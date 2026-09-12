@@ -37,7 +37,9 @@ from doeff_agents.sessionhost.acp.effects import (
     MintId,
     OwnershipProbe,
     ProbeAnswer,
+    ProfileUsageOutcome,
     Pushed,
+    ReadProfileUsage,
     Refused,
     SessionCapture,
     SessionCleanup,
@@ -78,6 +80,9 @@ class FakeAcp:
         self.push_seq: int = 0
         #: kind → list(AcpGet)で投げる例外(実弾 002 の Connection reset の再現)。
         self.list_failures: dict[str, Exception] = {}
+        #: 鍵 → 次の status の書き 1 回だけ Conflict で断る時の currentGeneration(agentd が読んだ
+        #: 後に他の書き手が行を進めた race の再現・1 回で消える)。
+        self.conflict_once: dict[str, int] = {}
         #: 全量 list(AcpGet)を受けた kind の列(差分の読みの検が数える)。
         self.lists: list[str] = []
         #: event の journal: (sequence, 鍵, post-image | None = delete)。event-window の材料。
@@ -160,6 +165,8 @@ class FakeAcp:
         existing = self.rows.get(row.key)
         if existing is None:
             return Refused(404, "no such row")
+        if row.key in self.conflict_once:
+            return Conflict(self.conflict_once.pop(row.key))
         if existing.generation != row.generation:
             return Conflict(existing.generation)
         self.rows[row.key] = AcpRow(
@@ -414,7 +421,8 @@ class FakeSessions:
 
 
 class FakeLocal:
-    """時計・計器・log・file の代わり。transcript / events は path → text の表(transcripts)。"""
+    """時計・計器・log・file・この機体の資格の残量の代わり。transcript / events は path → text の表
+    (transcripts)、残量は kind → 答えの列(usage・既定は空 = 持たない)。"""
 
     def __init__(self, now_ms: int = 1_000) -> None:
         self.now_ms: int = now_ms
@@ -427,6 +435,9 @@ class FakeLocal:
         #: 所有の検の答え(proof → 材料の値・無い proof は None = 読めない)と撃った proof の列。
         self.probe_answers: dict[str, str | None] = {}
         self.probes: list[str] = []
+        #: この機体の資格の残量(kind → 答えの列)と、読んだ (kind, cache_ttl_seconds) の列。
+        self.usage: dict[str, tuple[ProfileUsageOutcome, ...]] = {}
+        self.usage_reads: list[tuple[str, int]] = []
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(effect, MintId):
@@ -435,6 +446,9 @@ class FakeLocal:
         if isinstance(effect, OwnershipProbe):
             self.probes.append(effect.proof)
             return Resume(k, ProbeAnswer(value=self.probe_answers.get(effect.proof)))
+        if isinstance(effect, ReadProfileUsage):
+            self.usage_reads.append((effect.kind, effect.cache_ttl_seconds))
+            return Resume(k, self.usage.get(effect.kind, ()))
         if isinstance(effect, (ClockNowMs, MetricLine, LogLine)):
             return Resume(k, self._observe(effect))
         if isinstance(

@@ -26,8 +26,15 @@
 ;;; judgment.first-turn-carries-inputs・畳みは first-turn-prompt-of の 1 点)、after-start は send を
 ;;; 撃たない。tui は今日どおり launch の後に send。郵便の読み(mail-of)は腕を選んだ後・起こす前。
 ;;;
+;;; profile の残量(段 7 lane 7d-3・既知の形 = kubelet の node status): この機体が持つ資格の profile ごとに
+;;; 残量を読み(ReadProfileUsage — 読み口は agentcli の usage の 1 点・会社境界はその葉)、profile の
+;;; status.observed を post-image で書く(ifGeneration・変わった時だけ・世代の競合は 1 拍見送る)。
+;;; 断られた / 単位の違う profile は書かず理由を log に 1 行、この機体に無い profile は黙って書かない。
+;;; 判断(窓・残量・post-image)は judgment.profile-observed-of の 1 点、周期は
+;;; AgentdSettings.profile_observe_seconds(heartbeat より遅い別の腕)。枯渇の判断は controller(agora-budget)。
+;;;
 ;;; 書く欄は契約の writers どおり: agent-job の phase / sessionHandle / result / conditions、
-;;; node の status.lease / status.observations、turn-record の create と status。
+;;; node の status.lease / status.observations、turn-record の create と status、profile の status.observed。
 ;;; binding は書かない・Node の行は作らない(scheduling の欄と動詞)。
 
 (require doeff-hy.macros [defk <-])
@@ -81,7 +88,13 @@
   NEXT-ARM-RESUME
   NEXT-ARM-SEND
   NODE-KIND
+  PROFILE-KIND
+  PROFILE-USAGE-KIND
+  ProfileNotHeld
+  ProfileObservation
+  ProfileUnobserved
   Pushed
+  ReadProfileUsage
   Refused
   INTERRUPT-ARM-INTERRUPT
   STREAM-SOURCE-EVENTS
@@ -135,6 +148,10 @@
   node-row-named
   node-status-with-lease
   pane-frame
+  profile-observed-changed
+  profile-observed-of
+  profile-rows-active
+  profile-status-with-observed
   recovered-arm-of
   resume-params-of
   rows-of-kind
@@ -149,6 +166,7 @@
   turn-record-ended-status
   turn-record-key-of
   turn-record-spec-of
+  usage-by-profile
   wait-seconds-for
   warm-candidate-of
   with-job
@@ -211,6 +229,70 @@
         (when (isinstance outcome Refused)
           (<- (LogLine :text f"agentd: node lease refused ({outcome.status}): {outcome.error}")))
         (replace next :node-missing-logged False))))
+
+
+;; ---------------------------------------------------------------------------
+;; profile の残量の観測(段 7 lane 7d-3): この機体が持つ資格の profile の status.observed を書く
+;; ---------------------------------------------------------------------------
+
+(defk observe-profiles [settings state now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "観測の腕: 生きている profile の行を読み、この機体が持つ資格の残量を 1 度読み(ReadProfileUsage —
+   読み口は agentcli の 1 点・会社境界はその葉)、行ごとに判断の 1 点(profile-observed-of)で書く観測を
+   決めて、committed の observed と違う時だけ post-image を ifGeneration で書く。世代の競合(Conflict)は
+   この拍は見送り(次の周期に読み直す)、断り(Refused)と書かない理由は log に 1 行。行が無ければ
+   usage は読まない。計器 profile-observed を 1 行。"
+  (<- rows tuple (AcpGet :kind PROFILE-KIND))
+  (<- active tuple (profile-rows-active rows))
+  (setv next (replace state :last-profile-observed-ms now-ms))
+  (when active
+    (<- outcomes tuple (ReadProfileUsage :kind PROFILE-USAGE-KIND
+                                         :cache-ttl-seconds settings.profile-observe-seconds))
+    (<- by-name dict (usage-by-profile outcomes))
+    (setv counts {"held" 0 "written" 0 "unchanged" 0 "conflicts" 0 "refused" 0 "unobserved" 0})
+    (for [row active]
+      (setv name (str (.get row.spec "name" row.resource-id)))
+      (<- verdict (| ProfileObservation ProfileUnobserved ProfileNotHeld)
+          (profile-observed-of row (.get by-name name) settings.node-name))
+      (cond
+        (isinstance verdict ProfileNotHeld) None
+        (isinstance verdict ProfileUnobserved)
+        (do
+          (setv (get counts "unobserved") (+ (get counts "unobserved") 1))
+          (<- (LogLine :text f"agentd: profile {name} not observed: {verdict.reason}")))
+        True
+        (do
+          (setv (get counts "held") (+ (get counts "held") 1))
+          (<- changed bool (profile-observed-changed row verdict.observed))
+          (if (not changed)
+              (setv (get counts "unchanged") (+ (get counts "unchanged") 1))
+              (do
+                (<- status dict (profile-status-with-observed row verdict.observed))
+                (<- outcome (| Written Conflict Refused) (AcpPutStatus :row row :status status))
+                (cond
+                  (isinstance outcome Written)
+                  (setv (get counts "written") (+ (get counts "written") 1))
+                  (isinstance outcome Conflict)
+                  (do
+                    (setv (get counts "conflicts") (+ (get counts "conflicts") 1))
+                    (<- (LogLine :text (+ f"agentd: profile {name} observed not written — generation moved "
+                                               f"({row.generation} → {outcome.current-generation}); re-reading next period"))))
+                  True
+                  (do
+                    (setv (get counts "refused") (+ (get counts "refused") 1))
+                    (<- (LogLine :text f"agentd: profile {name} observed refused ({outcome.status}): {outcome.error}")))))))))
+    (<- (MetricLine :fields {"metric" "profile-observed"
+                                    "node" settings.node-name
+                                    "rows" (len active)
+                                    "held" (get counts "held")
+                                    "written" (get counts "written")
+                                    "unchanged" (get counts "unchanged")
+                                    "conflicts" (get counts "conflicts")
+                                    "refused" (get counts "refused")
+                                    "unobserved" (get counts "unobserved")
+                                    "atMs" now-ms})))
+  next)
 
 
 ;; ---------------------------------------------------------------------------
@@ -880,9 +962,9 @@
 (defk agentd-tick [settings state]
   {:pre [(: settings AgentdSettings) (: state AgentdState)]
    :post [(: % AgentdState)]}
-  "1 拍: watch を待つ → 参加の heartbeat → 結ばれた job の受け → 走っている job の観測。
-   3 つの腕は互いの I/O の失敗で止まらない(R9): 失敗は log して次の周期 / 次の拍へ持ち越す
-   (heartbeat と受けは周期の刻印を進めて洪水を避ける)。I/O より広い例外(bug)は捕まえない。"
+  "1 拍: watch を待つ → 参加の heartbeat → profile の残量の観測(遅い周期)→ 結ばれた job の受け →
+   走っている job の観測。腕は互いの I/O の失敗で止まらない(R9): 失敗は log して次の周期 / 次の拍へ
+   持ち越す(heartbeat・観測・受けは周期の刻印を進めて洪水を避ける)。I/O より広い例外(bug)は捕まえない。"
   (<- wait float (wait-seconds-for state settings))
   (<- signal WatchAdvance (AcpWatchSse :since state.since :wait-seconds wait))
   (<- now-ms int (ClockNowMs))
@@ -895,6 +977,14 @@
       (except [e IO-FAILURES]
         (<- (LogLine :text f"agentd: heartbeat failed: {(. (type e) __name__)}: {e}"))
         (setv current (replace current :last-heartbeat-ms now-ms)))))
+  (<- profiles-due bool (due current.last-profile-observed-ms now-ms settings.profile-observe-seconds))
+  (when profiles-due
+    (try
+      (<- profiled AgentdState (observe-profiles settings current now-ms))
+      (setv current profiled)
+      (except [e IO-FAILURES]
+        (<- (LogLine :text f"agentd: profile observation failed: {(. (type e) __name__)}: {e}"))
+        (setv current (replace current :last-profile-observed-ms now-ms)))))
   (<- mode str (list-mode-for signal current now-ms settings))
   (when (!= mode LIST-MODE-NONE)
     (try

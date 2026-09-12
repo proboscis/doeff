@@ -8,7 +8,7 @@ session を起こし、手番の記録と実況を ACP へ書く」腕で、判�
   ``AcpStreamPush`` / ``CustodyLeaseBorrow``(+ 返却の ``CustodyLeaseRevoke``)。
   agentd 自身の器(sessionhost の RPC)への要求 = ``Session*``、時計・計器・file の
   読み書き = ``ClockNowMs`` / ``MetricLine`` / ``LogLine`` / ``FsCanonicalPath`` /
-  ``FsWritePrivateText``。
+  ``FsWritePrivateText``、この機体が持つ資格の残量 = ``ReadProfileUsage``(段 7 lane 7d-3)。
 - 実 I/O は handlers.py(HTTP / RPC / file)、fake は fake.py、要求を並べる判断は
   judgment.hy(純関数)と agentd.hy(program)。handler の選択は runtime.py の 1 点。
 - 値の宣言の 1 点 = ``AgentdSettings``(lease の TTL と周期・watch の resync・frame の
@@ -39,6 +39,7 @@ AGENT_JOB_NAMESPACE = "acp-system"
 NODE_KIND = "node"
 MESSAGE_KIND = "message"
 TURN_RECORD_KIND = "turn-record"
+PROFILE_KIND = "profile"
 AGORA_KINDS_NAMESPACE = "default"
 #: agent-job の phase の閉語彙(AgentJob.hs phaseWord)— agentd が書くのは Running / Ended。
 PHASE_PENDING = "Pending"
@@ -51,6 +52,20 @@ TURN_RECORD_RUNNING = "running"
 TURN_RECORD_ENDED = "ended"
 #: node の terminal state(gone の行は同じ名の生きた行ではない)。
 NODE_GONE = "gone"
+#: profile の terminal state(契約 agora-kinds.json profile.declaration.states — retired は観測しない)。
+PROFILE_RETIRED = "retired"
+#: profile の spec.budget.unit のうち agentd が残量を写せる単位(契約: status.observed.remaining は
+#: budget と同じ単位で unit の欄は無い — provider の窓は percent なので percent の budget だけ)。
+PROFILE_BUDGET_UNIT_PERCENT = "percent"
+#: provider の窓の名(契約 profile.status.observed.window の綴り)と周期(秒)。窓の選び方は
+#: judgment.observed-window-of の 1 点: spec.reset.everySeconds と一致する窓、無ければ既定 = 5h。
+UsageWindowName = Literal["5h", "7d"]
+USAGE_WINDOW_5H: UsageWindowName = "5h"
+USAGE_WINDOW_7D: UsageWindowName = "7d"
+USAGE_WINDOW_SECONDS: dict[UsageWindowName, int] = {"5h": 18000, "7d": 604800}
+PROFILE_OBSERVED_WINDOW_DEFAULT: UsageWindowName = "5h"
+#: 残量の 1 窓の満量(provider の窓は percent — remaining = 満量 - 使用)。
+USAGE_WINDOW_FULL_PERCENT = 100.0
 #: 中継の frame の capability(docs/contracts/turn-delta.json capability.values)。
 StreamCapability = Literal["events", "frames", "none"]
 #: TurnDelta の種類(docs/contracts/turn-delta.json kinds)。
@@ -78,6 +93,10 @@ INTERRUPT_ARM_INTERRUPT: InterruptArm = "interrupt"
 INTERRUPT_ARM_NONE: InterruptArm = "none"
 #: custody の貸出の口の種類(POST /lease/claude | /lease/codex)。
 LeaseKind = Literal["claude", "codex"]
+#: profile の残量を読む資格の種類(段 7 lane 7d-3)。契約 profile の行は資格の種類を運ばず、本番の
+#: 行(区画 default・35 行)はこの Mac の claude の profile なので、観測は claude の 1 種に閉じる
+#: (codex の profile の行が立つ日に spec の欄と対で広げる)。値の宣言はここ 1 点。
+PROFILE_USAGE_KIND: LeaseKind = "claude"
 #: sessionhost の wire の agent_type とその貸出の種類の対応(policy.hy BINDING-KIND-AGENT-TYPE の逆)。
 AGENT_TYPE_LEASE_KIND: dict[str, LeaseKind] = {"claude": "claude", "codex": "codex"}
 #: 貸した Claude の札を載せる env(custodian /lease/claude の note どおり — 資格 file は書かない)。
@@ -222,6 +241,62 @@ class ProbeAnswer:
     value: str | None
 
 
+# ------------------------------------------------------------------ profile の残量(段 7 lane 7d-3)
+
+
+@dataclass(frozen=True)
+class UsageWindow:
+    """provider の 1 窓の使用(percent)と窓の戻る時刻(epoch ms・None = 窓は空で戻りの時刻が無い)。"""
+
+    name: UsageWindowName
+    used_percent: float
+    resets_at_ms: int | None
+
+
+@dataclass(frozen=True)
+class ProfileUsage:
+    """この機体が持つ 1 つの profile の残量の断面(読み口 = agentcli の usage の 1 点)。
+    ``captured_at_ms`` = 断面を取った時刻(observedAt の材料)。窓が無い profile は windows が空。"""
+
+    profile: str
+    captured_at_ms: int
+    windows: tuple[UsageWindow, ...]
+
+
+@dataclass(frozen=True)
+class ProfileUsageUnavailable:
+    """残量を読めなかった profile: 会社境界の断り(agentcli の葉が判定 — agentd は第 2 の判定を
+    持たない)・provider の失敗・断面の欠け。理由は人が読む 1 文(log に 1 行)。"""
+
+    profile: str
+    reason: str
+
+
+ProfileUsageOutcome: TypeAlias = "ProfileUsage | ProfileUsageUnavailable"
+
+
+@dataclass(frozen=True)
+class ProfileObservation:
+    """profile の行に書く status.observed(契約 {window, remaining, resetAt, observedAt, node})。"""
+
+    observed: JSONObject
+
+
+@dataclass(frozen=True)
+class ProfileUnobserved:
+    """この拍は書かない profile(断られた・単位が違う・窓の材料が無い)。理由は log に 1 行。"""
+
+    reason: str
+
+
+@dataclass(frozen=True)
+class ProfileNotHeld:
+    """この機体が資格を持たない profile(usage の列に無い)— 書かず、log もしない。"""
+
+
+ProfileVerdict: TypeAlias = "ProfileObservation | ProfileUnobserved | ProfileNotHeld"
+
+
 # ------------------------------------------------------------------ 値の宣言(1 点)
 
 
@@ -266,6 +341,11 @@ class AgentdSettings:
     #: 未観測)。composition root(runtime.settings_from_env)が env から読み、起動の前に
     #: join.ownership-preflight で検めた値だけがここに据わる(不一致 = 参加しない)。
     ownership: Ownership | None = None
+    #: この機体が持つ資格の profile の残量を読んで profile の status.observed に書く周期(段 7
+    #: lane 7d-3 — heartbeat より遅い別の周期・値の宣言はここ 1 点)。同じ値を usage の読み口の
+    #: cache の寿命にも渡す(1 周期より若い断面は読み直さない)。判断(窓・残量・post-image)は
+    #: judgment の純関数、時計は effect、拍は agentd-tick の 1 つの腕。
+    profile_observe_seconds: int = 300
 
 
 # ------------------------------------------------------------------ ACP の値
@@ -563,6 +643,9 @@ class AgentdState:
     retired: tuple[str, ...]
     #: claim を持ち越した job(会話の session が手番の途中)— log を 1 度にする cache。
     deferred: tuple[str, ...]
+    #: profile の残量の観測(段 7 lane 7d-3)の最後の拍。None = まだ 1 度も(起動直後は即・その後は
+    #: AgentdSettings.profile_observe_seconds の周期)。
+    last_profile_observed_ms: int | None = None
 
 
 # ------------------------------------------------------------------ 要求(ACP)
@@ -794,3 +877,15 @@ class OwnershipProbe(EffectBase):
     project-id)。結果 = ProbeAnswer(読めなければ value None — 判断は join.ownership-verdict)。"""
 
     proof: str
+
+
+@dataclass(frozen=True)
+class ReadProfileUsage(EffectBase):
+    """この機体が持つ資格(kind)の profile ごとの残量を読む(段 7 lane 7d-3)。読み口は dotfiles
+    agentcli の usage の 1 点(handlers.py の USAGE_COMMAND = `ai usage --json`)で、会社境界(会社
+    profile の API 呼び出しは会社機体だけ)はその葉が判定する — 断られた profile は
+    ProfileUsageUnavailable で返り、agentd は書かない。``cache_ttl_seconds`` より若い断面は読み直さない。
+    結果 = tuple[ProfileUsageOutcome, ...](この機体に無い profile は列に無い)。"""
+
+    kind: LeaseKind
+    cache_ttl_seconds: int

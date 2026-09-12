@@ -15,6 +15,12 @@ wire の綴り:
 - 所有の検(段 6 lane 6f)= GCE の metadata server ``GET http://metadata.google.internal/
   computeMetadata/v1/project/project-id``(header ``Metadata-Flavor: Google``)。届かない機体
   (Mac・GCE の外)は値 None — 判断(一致・不一致・読めない)は join.ownership-verdict。
+- profile の残量(段 7 lane 7d-3)= dotfiles agentcli の usage の 1 点を subprocess で読む
+  (``USAGE_COMMAND`` = ``ai usage --json [--cache-ttl N]`` → ``{"claude": [record…], "codex": […]}``)。
+  agentcli は doeff の tool env に無い(doeff は dotfiles の上流)ので import ではなく console script。
+  会社境界(会社 profile の API 呼び出しは会社機体だけ・unknown は不許可)は agentcli の葉
+  (company_boundary)がその中で判定し、断り・失敗は record の ``error`` に載る — ここは
+  ProfileUsageUnavailable に写すだけで第 2 の判定を持たない。
 
 秘密の扱い: 借りた access token・auth.json は値として返すだけで log に出さない。
 """
@@ -25,6 +31,7 @@ import json
 import os
 import queue
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -64,6 +71,7 @@ from doeff_agents.sessionhost.acp.effects import (
     FsWritePrivateText,
     JSONObject,
     LeaseGrant,
+    LeaseKind,
     LeaseOutcome,
     LeaseRefused,
     LogLine,
@@ -71,8 +79,12 @@ from doeff_agents.sessionhost.acp.effects import (
     MintId,
     OwnershipProbe,
     ProbeAnswer,
+    ProfileUsage,
+    ProfileUsageOutcome,
+    ProfileUsageUnavailable,
     Pushed,
     PushOutcome,
+    ReadProfileUsage,
     Refused,
     SessionCapture,
     SessionCleanup,
@@ -88,6 +100,8 @@ from doeff_agents.sessionhost.acp.effects import (
     SessionTranscript,
     SessionView,
     TranscriptChunk,
+    UsageWindow,
+    UsageWindowName,
     WatchAdvance,
     WriteOutcome,
     Written,
@@ -106,6 +120,17 @@ ACP_WRITE_SOURCE = "agentd"
 HTTP_TIMEOUT_SECONDS = 30.0
 WATCH_READ_TIMEOUT_SECONDS = 60.0
 WATCH_RECONNECT_SECONDS = 2.0
+#: profile の残量の読み口(段 7 lane 7d-3)= dotfiles agentcli の console script の 1 点。PATH で解く
+#: (launchd の job_env.sh は ~/.local/bin を載せる)。会社境界の判定はこの葉の中。
+USAGE_COMMAND: tuple[str, ...] = ("ai", "usage", "--json")
+USAGE_CACHE_TTL_FLAG = "--cache-ttl"
+#: 35 profile の live の照会(cache が古い時)を含めた上限。
+USAGE_TIMEOUT_SECONDS = 180.0
+#: agentcli の record の窓の綴り(`<key>_used_percentage` / `<key>_resets_at`)→ 契約の窓の名。
+USAGE_RECORD_WINDOWS: tuple[tuple[UsageWindowName, str], ...] = (
+    ("5h", "five_hour"),
+    ("7d", "seven_day"),
+)
 
 
 # ------------------------------------------------------------------ JSON の境界
@@ -764,13 +789,16 @@ def mint_ulid(now_ms: int, entropy: bytes) -> str:
 
 
 class LocalIo:
-    """時計・計器(stdout の JSON 行)・log(stderr)・file の読み書き・id の鋳造。"""
+    """時計・計器(stdout の JSON 行)・log(stderr)・file の読み書き・id の鋳造・この機体の
+    資格の残量(agentcli の usage の subprocess)。"""
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(effect, MintId):
             return Resume(k, mint_ulid(int(time.time() * 1000), os.urandom(10)))
         if isinstance(effect, OwnershipProbe):
             return Resume(k, probe_ownership(effect.proof))
+        if isinstance(effect, ReadProfileUsage):
+            return Resume(k, read_profile_usage(effect.kind, effect.cache_ttl_seconds))
         if isinstance(effect, (ClockNowMs, MetricLine, LogLine)):
             return Resume(k, self._observe(effect))
         if isinstance(
@@ -848,6 +876,81 @@ def _write_private(path: str, text: str) -> None:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
+
+
+# ------------------------------------------------------------------ profile の残量の読み(段 7 lane 7d-3)
+
+
+def _number_field(obj: Mapping[str, JSON], key: str) -> float | None:
+    found = obj.get(key)
+    if isinstance(found, bool) or not isinstance(found, (int, float)):
+        return None
+    return float(found)
+
+
+def _epoch_ms_of(value: JSON) -> int | None:
+    """agentcli の record の時刻(ISO 8601 の文字列・epoch 秒の数)→ epoch ms。読めなければ None。"""
+    if isinstance(value, str):
+        try:
+            return _epoch_ms_of_iso(value)
+        except ValueError:
+            return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return int(value * 1000)
+
+
+def decode_profile_usage(doc: JSON, kind: str) -> tuple[ProfileUsageOutcome, ...]:
+    """``ai usage --json`` の答え → 資格の種類(kind = 答えの鍵 claude | codex)の record ごとの答え。
+    ``error`` を持つ record(会社境界の断り・provider の失敗 — 判定は agentcli)は
+    ProfileUsageUnavailable、断面の時刻(captured_at_epoch)が無い record も同じ。窓は
+    ``<key>_used_percentage`` が数の窓だけ(欠けた窓は発明しない)。"""
+    records = _as_object(doc).get(kind)
+    out: list[ProfileUsageOutcome] = []
+    for record in records if isinstance(records, list) else []:
+        if not isinstance(record, dict):
+            continue
+        profile = _str_field(record, "profile")
+        if profile is None:
+            continue
+        error = _str_field(record, "error")
+        if error is not None:
+            out.append(ProfileUsageUnavailable(profile, error))
+            continue
+        captured = _number_field(record, "captured_at_epoch")
+        if captured is None:
+            out.append(ProfileUsageUnavailable(profile, "usage record has no captured_at_epoch"))
+            continue
+        windows: list[UsageWindow] = []
+        for name, key in USAGE_RECORD_WINDOWS:
+            used = _number_field(record, f"{key}_used_percentage")
+            if used is None:
+                continue
+            windows.append(UsageWindow(name, used, _epoch_ms_of(record.get(f"{key}_resets_at"))))
+        out.append(ProfileUsage(profile, int(captured * 1000), tuple(windows)))
+    return tuple(out)
+
+
+def read_profile_usage(kind: LeaseKind, cache_ttl_seconds: int) -> tuple[ProfileUsageOutcome, ...]:
+    """agentcli の usage の 1 点を subprocess で撃つ。起動できない・期限・非 0 の終了・JSON でない
+    答えは RuntimeError(tick の縁が log して次の周期へ)。答えの中の profile ごとの断り・失敗は
+    値(ProfileUsageUnavailable)で返る。"""
+    argv = [*USAGE_COMMAND, USAGE_CACHE_TTL_FLAG, str(cache_ttl_seconds)]
+    try:
+        completed = subprocess.run(
+            argv, capture_output=True, timeout=USAGE_TIMEOUT_SECONDS, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise RuntimeError(f"agentd: usage read `{' '.join(argv)}` failed: {error}") from error
+    if completed.returncode != 0:
+        tail = completed.stderr.decode("utf-8", errors="replace").strip()[-500:]
+        raise RuntimeError(
+            f"agentd: usage read `{' '.join(argv)}` exited {completed.returncode}: {tail}"
+        )
+    doc = _loads(completed.stdout)
+    if not isinstance(doc, dict) or kind not in doc:
+        raise RuntimeError(f"agentd: usage read `{' '.join(argv)}` answered no {kind!r} records")
+    return decode_profile_usage(doc, kind)
 
 
 # ------------------------------------------------------------------ 札の読み

@@ -16,6 +16,10 @@
 ;;;     resume | defer)の 1 点、手番の終わりは job-step-of の turn-end(host が刻んだ
 ;;;     turn_ended_at × 手番の始まりの下限 × 記録の進み)、idle の寿命は sessions-to-retire。
 ;;;   * capture の是非(購読者の数 → continue | stop・issue #1 の決定)と待ちの長さ。
+;;;   * profile の残量の観測 → status.observed の post-image(段 7 lane 7d-3・既知の形 = kubelet の
+;;;     node status: 観測は runner が書き、判断〔枯渇〕は controller〔agora-budget〕): 窓の選び方
+;;;     (observed-window-of)・percent の残量・resetAt = 窓の戻る時刻・断られた / 単位の違う profile は
+;;;     書かない(profile-observed-of の閉語彙 ProfileVerdict)。会社境界の判定は持たない(agentcli の葉)。
 ;;; wire の綴り(kind 名・phase・route)は effects.py だけが持ち、ここは import する。
 ;;; I/O は 1 つも無い(handlers.py が持つ)— 法 (b)(針: この file に job を選ぶ第 2 の
 ;;; 判定が無い・binding を書かない)。
@@ -63,6 +67,14 @@
   PHASE-ENDED
   PHASE-RUNNING
   PHASE-WITHDRAWN
+  PROFILE-BUDGET-UNIT-PERCENT
+  PROFILE-OBSERVED-WINDOW-DEFAULT
+  PROFILE-RETIRED
+  ProfileNotHeld
+  ProfileObservation
+  ProfileUnobserved
+  ProfileUsage
+  ProfileUsageUnavailable
   SESSION-OBSERVED-BUSY
   SESSION-OBSERVED-IDLE
   SESSION-TERMINAL-STATUSES
@@ -71,6 +83,8 @@
   SessionView
   TURN-RECORD-ENDED
   TURN-RECORD-KIND
+  USAGE-WINDOW-FULL-PERCENT
+  USAGE-WINDOW-SECONDS
   WatchAdvance])
 
 
@@ -666,6 +680,97 @@
     (setv (get observations "ownership")
           {"grade" settings.ownership.grade "proof" settings.ownership.proof}))
   (setv (get next "observations") observations)
+  next)
+
+
+;; ---------------------------------------------------------------------------
+;; 行の欄の写し(profile の残量の観測 — 段 7 lane 7d-3)
+;; ---------------------------------------------------------------------------
+
+(defk profile-rows-active [rows]
+  {:pre [(: rows tuple)]
+   :post [(: % tuple)]}
+  "profile の行のうち観測する行 = 生きている(state ≠ retired)行、行の順のまま。"
+  (setv out [])
+  (for [row rows]
+    (setv state (if (isinstance row.status dict) (.get row.status "state") None))
+    (when (!= state PROFILE-RETIRED)
+      (.append out row)))
+  (tuple out))
+
+
+(defk usage-by-profile [outcomes]
+  {:pre [(: outcomes tuple)]
+   :post [(: % dict)]}
+  "usage の答えの列 → profile の名 → 答え(同じ名は最後の答え)。"
+  (setv table {})
+  (for [outcome outcomes]
+    (setv (get table outcome.profile) outcome))
+  table)
+
+
+(defk observed-window-of [row]
+  {:pre [(: row AcpRow)]
+   :post [(: % str)]}
+  "どの窓を観測するか — 判断はここ 1 点: spec.reset.everySeconds と周期が一致する provider の窓
+   (effects.USAGE-WINDOW-SECONDS)、一致する窓が無ければ既定(5h)。"
+  (setv reset (.get row.spec "reset"))
+  (setv every (if (isinstance reset dict) (.get reset "everySeconds") None))
+  (setv found None)
+  (for [[name seconds] (.items USAGE-WINDOW-SECONDS)]
+    (when (and (is found None) (isinstance every int) (= seconds every))
+      (setv found name)))
+  (if (is found None) PROFILE-OBSERVED-WINDOW-DEFAULT found))
+
+
+(defk profile-observed-of [row usage node-name]
+  {:pre [(: row AcpRow) (: usage (| ProfileUsage ProfileUsageUnavailable None)) (: node-name str)]
+   :post [(: % (| ProfileObservation ProfileUnobserved ProfileNotHeld))]}
+  "1 つの profile の行と、この機体の usage の答えから、書く観測(閉語彙 effects.ProfileVerdict)を
+   決める 1 点: 答えが無い → 持たない(書かず log もしない)/ 読めなかった(会社境界の断り・
+   provider の失敗 — 判定は agentcli の葉)→ 書かない(理由を log)/ budget.unit が percent でない →
+   書かない(remaining の単位が無い)/ 選んだ窓が答えに無い → 書かない / それ以外 → observed
+   {window, remaining = 満量 - 使用(percent・0 未満は 0), resetAt = 窓の戻る時刻(窓が空で無ければ
+   観測の時刻 = 待つ窓が無い), observedAt = 断面の時刻, node = 自分}。値は発明しない。"
+  (setv budget (.get row.spec "budget"))
+  (setv unit (if (isinstance budget dict) (.get budget "unit") None))
+  (cond
+    (is usage None) (ProfileNotHeld)
+    (isinstance usage ProfileUsageUnavailable) (ProfileUnobserved :reason usage.reason)
+    (!= unit PROFILE-BUDGET-UNIT-PERCENT)
+    (ProfileUnobserved :reason f"budget.unit {unit !r} is not {PROFILE-BUDGET-UNIT-PERCENT} — remaining has no unit to report")
+    True
+    (do
+      (<- window-name str (observed-window-of row))
+      (setv window None)
+      (for [candidate usage.windows]
+        (when (and (is window None) (= candidate.name window-name))
+          (setv window candidate)))
+      (if (is window None)
+          (ProfileUnobserved :reason f"usage of {usage.profile} carries no {window-name} window")
+          (ProfileObservation
+            :observed {"window" window-name
+                       "remaining" (max 0.0 (- USAGE-WINDOW-FULL-PERCENT window.used-percent))
+                       "resetAt" (if (is window.resets-at-ms None) usage.captured-at-ms window.resets-at-ms)
+                       "observedAt" usage.captured-at-ms
+                       "node" node-name})))))
+
+
+(defk profile-observed-changed [row observed]
+  {:pre [(: row AcpRow) (: observed dict)]
+   :post [(: % bool)]}
+  "committed の status.observed と違うか(同じなら書かない — 断面が同じ拍は書きを起こさない)。"
+  (<- status dict (status-object-of row))
+  (!= (.get status "observed") observed))
+
+
+(defk profile-status-with-observed [row observed]
+  {:pre [(: row AcpRow) (: observed dict)]
+   :post [(: % dict)]}
+  "agentd が書く欄だけを更新した profile の status: committed の status(state・conditions は
+   他の書き手の欄 — 落とすと engine が断る)を写し、observed を据える。"
+  (<- next dict (status-object-of row))
+  (setv (get next "observed") observed)
   next)
 
 
