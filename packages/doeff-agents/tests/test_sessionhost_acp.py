@@ -1803,6 +1803,12 @@ def test_join_spec_refuses_missing_server_or_token_unknown_flags_and_bad_words()
             {"schema": "doeff.agentd-join.v1", "agentd": {"colour": "red"}},
         )
     assert isinstance(_join_spec(["--server", "http://a", "--token-file", "/t"]), JoinSpec)
+    # 空文字は「名乗らない」(宣言 file で欄を空にして外せる — runtime の env の読みと同じ)。
+    blank = _join_spec(
+        ["--server", "http://a", "--token-file", "/t", "--ownership", "", "--ownership-proof", ""]
+    )
+    assert isinstance(blank, JoinSpec)
+    assert blank.ownership is None
 
 
 def test_join_config_path_is_read_from_the_flag() -> None:

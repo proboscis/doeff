@@ -222,8 +222,9 @@
   (setv backend (.get agentd KEY-BACKEND BACKEND-HEADLESS))
   (when (not-in backend HOST-BACKENDS)
     (raise (ValueError (+ f"{FLAG-BACKEND} は " (.join "|" (sorted HOST-BACKENDS)) f" のどれか: {backend !r}"))))
+  ;; 空文字は「名乗らない」(宣言 file で欄を空にして外せる — runtime の env の読みと同じ)。
   (<- ownership (| Ownership None)
-      (ownership-of (.get agentd KEY-OWNERSHIP) (.get agentd KEY-OWNERSHIP-PROOF)))
+      (ownership-of (or (.get agentd KEY-OWNERSHIP) None) (or (.get agentd KEY-OWNERSHIP-PROOF) None)))
   (JoinSpec
     :server server
     :token-file token-file
