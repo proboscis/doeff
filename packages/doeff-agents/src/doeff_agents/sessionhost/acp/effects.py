@@ -69,7 +69,10 @@ ENTRY_KIND_ERROR: EntryKind = "error"
 #: 行の上限(契約 conventions.turnRecordEntries.byteBudget の写し — 書き手の側の宣言点はここ)。1 行の entries の JSON
 #: (UTF-8・compact)の上限 byte。超えたら古い見出しから落とし、先頭に印(TurnEntryDropMarker)を残す。段 9f lane 9f-4 で
 #: entry は見出しだけになった(本文は会話の記録の service)— 切り詰めの規則(summary / text の上限)は agentd から消えた。
-TURN_RECORD_ENTRIES_BYTE_BUDGET = 262_144
+#: 段 9f lane 9f-5 便 2b(agora-redesign #59): 262,144 → 32,768。見出しだけの行(1 entry ≤ 256 byte)の上限へ、ACP の契約の締め
+#: (便 2c — conventions.turnRecordEntries.byteBudget 32,768 と engine の statusByteBudget の門)より**先に**書き手が下げる(消費者が先)。
+#: 超えた行は古い見出しから落として印を残す(本文は会話の記録の service に在るので失われない)。
+TURN_RECORD_ENTRIES_BYTE_BUDGET = 32_768
 #: 見出しの 1 entry の compact JSON の上限 byte(契約 §2.2「1 entry ≤ 256 byte」の写し — 検の物差し。走行時の門は ACP の
 #: engine の statusByteBudget で、agentd は見出しに本文を持てない型で守る)。
 TURN_ENTRY_MAX_BYTES = 256
