@@ -97,6 +97,7 @@ from doeff_agents.sessionhost.acp.effects import (
     Pushed,
     PushOutcome,
     ReadProfileUsage,
+    RECORD_SPOOL_GIVEN_UP_DIR,
     RecordAppend,
     RecordAppended,
     RecordAppendOutcome,
@@ -106,6 +107,7 @@ from doeff_agents.sessionhost.acp.effects import (
     RecordPage,
     RecordRead,
     RecordReadOutcome,
+    RecordSpoolGiveUp,
     RecordSpoolList,
     RecordSpoolListing,
     RecordSpoolPut,
@@ -1142,6 +1144,8 @@ def socket_is_listening(path: str) -> bool:
 RECORD_HTTP_TIMEOUT_SECONDS = 5.0
 #: spool の file の拡張子(temp は `.` で始まり一覧に出ない)と本文の schema。
 RECORD_SPOOL_SUFFIX = ".json"
+#: 隔離した batch の隣に置く理由の file の接尾(段 9f lane 9f-8)。
+RECORD_SPOOL_REASON_SUFFIX = ".reason.txt"
 RECORD_SPOOL_SCHEMA = "doeff.agentd-record-spool.v1"
 
 
@@ -1351,6 +1355,22 @@ def _fsync_directory(directory: str) -> None:
         os.close(fd)
 
 
+def _replace_durably(directory: str, path: str, data: bytes) -> None:
+    """directory の中の path を data で置き換える(temp + fsync + rename + dir の fsync — 途中で落ちても半端な file を残さない)。"""
+    fd, tmp = tempfile.mkstemp(prefix=".spool-", dir=directory)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+    _fsync_directory(directory)
+
+
 class RecordSpool:
     """本文の batch の spool(1 batch 1 file・temp + fsync + rename + dir の fsync)— 送る前の outbox。"""
 
@@ -1366,6 +1386,9 @@ class RecordSpool:
         if isinstance(effect, RecordSpoolRemove):
             self.remove(effect.spool_key)
             return Resume(k, None)
+        if isinstance(effect, RecordSpoolGiveUp):
+            self.give_up(effect.spool_key, effect.reason)
+            return Resume(k, None)
         return Pass(effect, k)
 
     def _path(self, spool_key: str) -> str:
@@ -1376,17 +1399,22 @@ class RecordSpool:
         data = json.dumps(
             encode_spooled_batch(batch), ensure_ascii=False, separators=(",", ":")
         ).encode("utf-8")
-        fd, tmp = tempfile.mkstemp(prefix=".spool-", dir=self._directory)
-        try:
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(data)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp, self._path(batch.spool_key))
-        except BaseException:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp)
-            raise
+        _replace_durably(self._directory, self._path(batch.spool_key), data)
+
+    def give_up(self, spool_key: str, reason: str) -> None:
+        """決まった断りの batch を送る順から外す(段 9f lane 9f-8): file を given-up の置き場へ移し(本文は消さない)、
+        理由を隣に書く。既に無い file は移さず理由だけ残す(同じ鍵の二度目も壊れない)。"""
+        given_up = os.path.join(self._directory, RECORD_SPOOL_GIVEN_UP_DIR)
+        os.makedirs(given_up, mode=0o700, exist_ok=True)
+        with contextlib.suppress(FileNotFoundError):
+            os.replace(
+                self._path(spool_key), os.path.join(given_up, spool_key + RECORD_SPOOL_SUFFIX)
+            )
+        _replace_durably(
+            given_up,
+            os.path.join(given_up, spool_key + RECORD_SPOOL_REASON_SUFFIX),
+            reason.encode("utf-8"),
+        )
         _fsync_directory(self._directory)
 
     def listing(self) -> RecordSpoolListing:

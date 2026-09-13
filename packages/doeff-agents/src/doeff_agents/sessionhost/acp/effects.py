@@ -11,7 +11,8 @@ session を起こし、手番の記録と実況を ACP へ書く」腕で、判�
   ``FsWritePrivateText``、この機体が持つ資格の残量 = ``ReadProfileUsage``(段 7 lane 7d-3)、
   会話の記録(郵便 + 手番の記録)の読み = ``AcpConversationHistory``(段 8q の履歴からの再開)。
 - 会話の記録の service への二重書き(段 9f lane 9f-2)= ``RecordSpoolPut`` / ``RecordSpoolList`` /
-  ``RecordSpoolRemove``(本文の batch の spool — 送る前の outbox)と ``RecordAppend``(契約 record-service.json の
+  ``RecordSpoolRemove``(本文の batch の spool — 送る前の outbox)/ ``RecordSpoolGiveUp``(決まった断りの batch の隔離 —
+  段 9f lane 9f-8)と ``RecordAppend``(契約 record-service.json の
   appendEvents)。履歴からの再開の本文の読み(段 9f lane 9f-4)= ``RecordRead``(readEvents の before=latest の 1 頁)。
 - 実 I/O は handlers.py(HTTP / RPC / file)、fake は fake.py、要求を並べる判断は
   judgment.hy(純関数)と agentd.hy(program)。handler の選択は runtime.py の 1 点。
@@ -768,18 +769,24 @@ RecordStreamKind = Literal["turn", "mail"]
 RECORD_STREAM_TURN: RecordStreamKind = "turn"
 #: 1 要求の出来事の上限(契約 limits.batchMaxEvents の写し)— 超える拍は batch を分ける(judgment.record-batches-of)。
 RECORD_BATCH_MAX_EVENTS = 1_000
-#: 追記の結末の語(計器 agentd_record_append_total の outcome — judgment.record-append-word-of の閉語彙)。
-RecordAppendWord = Literal["ok", "conflict", "error"]
+#: 追記の結末の語(計器 agentd_record_append_total の outcome)= spool の扱いの閉語彙 — 決めるのは judgment.record-append-word-of の
+#: 1 点(段 9f lane 9f-8): ok = 受理(消す)/ conflict = 409(同じ鍵で違う本文 — 消す・赤)/ given-up = この batch だけの決まった
+#: 断り(隔離して理由を名乗り、後ろの batch へ進む)/ error = 系の側の送れなさ(残して backoff・この拍の残りも撃たない)。
+RecordAppendWord = Literal["ok", "conflict", "given-up", "error"]
 RECORD_APPEND_OK: RecordAppendWord = "ok"
 RECORD_APPEND_CONFLICT: RecordAppendWord = "conflict"
+RECORD_APPEND_GIVEN_UP: RecordAppendWord = "given-up"
 RECORD_APPEND_ERROR: RecordAppendWord = "error"
 #: 計器の名(MetricLine の metric — stdout の JSON 行)。
 METRIC_RECORD_APPEND_TOTAL = "agentd_record_append_total"
 METRIC_RECORD_SPOOL_DEPTH = "agentd_record_spool_depth"
 METRIC_RECORD_LAG_SEQ = "agentd_record_lag_seq"
-#: batch だけの断り(契約 refusal malformed = 400)— spool に残すが flush は次の batch へ進む。それ以外の送れなさ
-#: (届かない・5xx・札・窓)は系の側なので flush をそこで止める(judgment.record-halts-flush)。
-RECORD_STATUS_MALFORMED = 400
+#: この batch だけの決まった断り(契約 record-service.json: 400 malformed・422 unstorable — 撃ち直しても通らない)。札(401 / 403)・
+#: 窓(429)・届かない・5xx は batch ではなく系の側(機体の設定か一時的)なので含めない — 残しておけば、設定を直した後に
+#: 自動で送れる(judgment.record-append-word-of)。
+RECORD_BATCH_REFUSAL_STATUSES: frozenset[int] = frozenset({400, 422})
+#: 決まった断りの batch を隔離する spool の下の置き場(RecordSpoolList は読まない — 送る順から外れる)。
+RECORD_SPOOL_GIVEN_UP_DIR = "given-up"
 
 
 @dataclass(frozen=True)
@@ -822,7 +829,8 @@ class RecordConflicted:
 
 @dataclass(frozen=True)
 class RecordUnsent:
-    """送れなかった / 積まれなかった(status 0 = 届かない・400 / 401 / 403 / 429 / 5xx)。spool に残して再送する。"""
+    """送れなかった / 積まれなかった(status 0 = 届かない・400 / 401 / 403 / 422 / 429 / 5xx)。spool の扱い(残して再送する か
+    隔離する)は judgment.record-append-word-of が status から決める。"""
 
     status: int
     error: str
@@ -1110,6 +1118,15 @@ class RecordSpoolRemove(EffectBase):
     """受理された(か 409 で積めないと決まった)batch の file を消す(無ければ何もしない)。結果 = None。"""
 
     spool_key: str
+
+
+@dataclass(frozen=True)
+class RecordSpoolGiveUp(EffectBase):
+    """決まった断り(RECORD_BATCH_REFUSAL_STATUSES)の batch を送る順から外して隔離する(段 9f lane 9f-8): file を spool の下の
+    RECORD_SPOOL_GIVEN_UP_DIR へ移し、理由を隣に書く(本文は消さない — service が直った後に人が戻せる)。結果 = None。"""
+
+    spool_key: str
+    reason: str
 
 
 @dataclass(frozen=True)
