@@ -37,6 +37,7 @@ from doeff_agents.sessionhost.headless_protocol import (
     HeadlessObservation,
     JSONObject,
     TurnEnded,
+    claude_user_line,
     parse_record,
     turn_verdict,
 )
@@ -92,14 +93,27 @@ def _pause(seconds: float) -> None:
 def test_claude_dialogue_reads_init_and_result() -> None:
     dialogue = ClaudeDialogue()
     assert dialogue.opening() == ()
+    assert dialogue.one_process_per_turn is False  # 段 8 lane 4x: 温かい process
+    # 手番が走る前の割り込みは引き受けない(新しい手番を起こさない)
+    assert dialogue.inject("early").accepted is False
     turn = dialogue.turn("hello")
-    assert turn.sends == ("hello",)
-    assert turn.close_stdin is True
+    assert turn.sends == (claude_user_line("hello"),)
+    assert _record(turn.sends[0]) == {"type": "user", "message": {"role": "user", "content": "hello"}}
+    assert turn.close_stdin is False
+    assert dialogue.in_flight is True
     init = dialogue.on_line({"type": "system", "subtype": "init", "session_id": "sid-1"})
     assert init.conversation == {"session_id": "sid-1"}
     assert dialogue.on_line({"type": "assistant", "message": {}}).ended is None
+    # 走っている手番への割り込み = 同じ user の行(CLI が次の tool の境界で注入する)
+    injected = dialogue.inject("stop that")
+    assert injected.accepted is True
+    assert injected.sends == (claude_user_line("stop that"),)
     ended = dialogue.on_line({"type": "result", "subtype": "success", "is_error": False})
     assert ended.ended == TurnEnded(ok=True, detail="success")
+    assert dialogue.in_flight is False
+    assert dialogue.inject("late").accepted is False
+    # 次の手番は同じ process へ次の user の行
+    assert dialogue.turn("again").close_stdin is False
     failed = dialogue.on_line({"type": "result", "subtype": "error_max_turns", "is_error": True})
     assert failed.ended == TurnEnded(ok=False, detail="error_max_turns")
     assert dialogue.interrupt().signal is True
@@ -158,6 +172,49 @@ def test_codex_dialogue_handshake_turn_and_interrupt() -> None:
     second = dialogue.turn("again")
     assert _rpc(second.sends[0])["method"] == "turn/start"
     assert second.close_stdin is False
+
+
+def test_codex_dialogue_inject_interrupts_then_starts_the_next_turn_as_one_turn() -> None:
+    """段 8 lane 4x: 割り込みの本文 = turn/interrupt → interrupted の turn/completed を手番の終わりと
+    報告せず、同じ thread へ本文の turn/start(host から見て手番は 1 つのまま)。"""
+    dialogue = CodexDialogue(CodexPlan(cwd="/w"))
+    opening = dialogue.opening()
+    assert dialogue.inject("early").accepted is False  # thread も turn も無い
+    init_reply = dialogue.on_line({"id": _rpc(opening[0])["id"], "result": {}})
+    thread_start = _rpc(init_reply.sends[1])
+    opened = dialogue.on_line({"id": thread_start["id"], "result": {"thread": {"id": "thr-1"}}})
+    assert opened.sends == ()
+    assert dialogue.inject("still early").accepted is False  # turn が走っていない
+    turn_start = _rpc(dialogue.turn("work").sends[0])
+    dialogue.on_line({"id": turn_start["id"], "result": {"turn": {"id": "turn-1"}}})
+    injected = dialogue.inject("change course")
+    assert injected.accepted is True
+    assert [_rpc(line)["method"] for line in injected.sends] == ["turn/interrupt"]
+    assert _obj(_rpc(injected.sends[0]), "params") == {"threadId": "thr-1", "turnId": "turn-1"}
+    # 2 通目の割り込みは止める合図を重ねず本文を継ぎ足す
+    second = dialogue.inject("and this")
+    assert second.accepted is True
+    assert second.sends == ()
+    completed = dialogue.on_line(
+        {
+            "method": "turn/completed",
+            "params": {"threadId": "thr-1", "turn": {"id": "turn-1", "status": "interrupted"}},
+        }
+    )
+    assert completed.ended is None  # 手番の終わりではない
+    assert [_rpc(line)["method"] for line in completed.sends] == ["turn/start"]
+    restarted = _obj(_rpc(completed.sends[0]), "params")
+    assert restarted["threadId"] == "thr-1"
+    assert restarted["input"] == [{"type": "text", "text": "change course\n\nand this"}]
+    dialogue.on_line({"id": _rpc(completed.sends[0])["id"], "result": {"turn": {"id": "turn-2"}}})
+    mine = dialogue.on_line(
+        {
+            "method": "turn/completed",
+            "params": {"threadId": "thr-1", "turn": {"id": "turn-2", "status": "completed"}},
+        }
+    )
+    assert mine.ended == TurnEnded(ok=True, detail="completed")
+    assert dialogue.inject("late").accepted is False
 
 
 def test_codex_dialogue_refuses_unsupported_server_request_and_interrupts() -> None:
@@ -243,9 +300,11 @@ def test_headless_argv_is_print_mode_with_partial_messages() -> None:
     )
     argv = fresh["argv"]
     assert isinstance(argv, list)
-    assert argv[:6] == [
+    assert argv[:8] == [
         "claude",
         "-p",
+        "--input-format",
+        "stream-json",
         "--output-format",
         "stream-json",
         "--verbose",
@@ -383,44 +442,89 @@ def _wait_until(predicate: Callable[[], bool], timeout: float = 5.0) -> None:
     raise AssertionError("condition did not hold in time")
 
 
-def test_headless_process_claude_turn_writes_events_and_ends(tmp_path: Path) -> None:
+def test_headless_process_claude_turn_writes_events_and_stays_warm(tmp_path: Path) -> None:
     registry = HeadlessRegistry()
     events = str(tmp_path / "s1.events.jsonl")
     process = registry.spawn(
         "s1",
-        ["claude", "-p", "--session-id", "sid-1"],
+        ["claude", "-p", "--input-format", "stream-json", "--session-id", "sid-1"],
         str(tmp_path),
         _stub_env(),
         events,
         ClaudeDialogue(),
     )
     assert process.deliver("hello there") is True
-    _wait_until(lambda: not process.alive())
+    _wait_until(lambda: len(process.peek_records()) >= 5)
     observed = process.observe()
-    assert observed.alive is False
-    assert observed.exit_code == 0
+    # 段 8 lane 4x: result の後も process は生きて次の手番を受ける(温かい)
+    assert observed.alive is True
     assert observed.ended == (TurnEnded(ok=True, detail="success"),)
     assert observed.conversation == {"session_id": "sid-1"}
-    assert observed.accepts_turn is False
+    assert observed.accepts_turn is True
     kinds = [str(record.get("type")) for record in observed.records]
     assert kinds == ["system", "stream_event", "stream_event", "assistant", "result"]
     lines = Path(events).read_text(encoding="utf-8").splitlines()
     assert len(lines) == 5
     assert json.loads(lines[-1])["type"] == "result"
     assert turn_verdict(observed, True).kind == "turn-ended"
-    # 次の手番は同じ名で起こし直す(降りた process は置き換え可)
-    second = registry.spawn(
-        "s1",
-        ["claude", "-p", "--resume", "sid-1"],
+    # 手番の外の割り込みは引き受けない(新しい手番を起こさない)
+    assert process.inject("nothing runs") is False
+    # 次の手番は同じ process へ次の user の行
+    assert process.deliver("again") is True
+    _wait_until(lambda: len(Path(events).read_text(encoding="utf-8").splitlines()) >= 10)
+    again = process.observe()
+    assert again.ended == (TurnEnded(ok=True, detail="success"),)
+    assert again.alive is True
+    assert len(Path(events).read_text(encoding="utf-8").splitlines()) == 10
+    # 降ろす = stdin の EOF で自分で降りる
+    registry.kill("s1")
+    assert process.alive() is False
+    assert process.exit_code() == 0
+
+
+def assistant_texts(records: list[JSONObject]) -> list[str]:
+    """assistant の行の本文(text の block)を順に(検の読み口 — 形の合わない block は読まない)。"""
+    texts: list[str] = []
+    for record in records:
+        if record.get("type") != "assistant":
+            continue
+        content = _obj(record, "message").get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict):
+                text = block.get("text")
+                if isinstance(text, str):
+                    texts.append(text)
+    return texts
+
+
+def test_headless_process_claude_inject_reaches_the_running_turn(tmp_path: Path) -> None:
+    """段 8 lane 4x: 走っている手番へ書いた user の行は、その手番の中で反応され(result の前)、
+    手番は 1 つのまま終わる。"""
+    registry = HeadlessRegistry()
+    events = str(tmp_path / "s3.events.jsonl")
+    process = registry.spawn(
+        "s3",
+        ["claude", "-p", "--input-format", "stream-json", "--session-id", "sid-3"],
         str(tmp_path),
-        _stub_env(),
+        _stub_env({"DOEFF_HEADLESS_STUB_DELAY": "5"}),
         events,
         ClaudeDialogue(),
     )
-    assert second.deliver("again") is True
-    _wait_until(lambda: not second.alive())
-    assert len(Path(events).read_text(encoding="utf-8").splitlines()) == 10
-    registry.kill("s1")
+    assert process.deliver("slow work") is True
+    _wait_until(lambda: len(process.peek_records()) >= 4)
+    assert process.inject("stop and answer") is True
+    _wait_until(lambda: any(r.get("type") == "result" for r in process.peek_records()), timeout=10.0)
+    observed = process.observe()
+    assert observed.alive is True
+    assert observed.ended == (TurnEnded(ok=True, detail="success"),)
+    assert assistant_texts(list(observed.records)) == ["echo: slow work", "interrupted: stop and answer"]
+    result = [r for r in observed.records if r.get("type") == "result"][-1]
+    assert result["num_turns"] == 2
+    # 手番が終わった後は引き受けない
+    assert process.inject("too late") is False
+    registry.kill("s3")
 
 
 def test_headless_process_claude_sigint_ends_the_turn_as_interrupted(tmp_path: Path) -> None:
@@ -428,7 +532,7 @@ def test_headless_process_claude_sigint_ends_the_turn_as_interrupted(tmp_path: P
     events = str(tmp_path / "s2.events.jsonl")
     process = registry.spawn(
         "s2",
-        ["claude", "-p", "--session-id", "sid-2"],
+        ["claude", "-p", "--input-format", "stream-json", "--session-id", "sid-2"],
         str(tmp_path),
         _stub_env({"DOEFF_HEADLESS_STUB_DELAY": "30"}),
         events,
@@ -604,8 +708,10 @@ def _wait_turn_end(headless_host: Host, sid: str) -> JSONObject:
 
 
 def test_host_headless_claude_round_trip_launch_turn_end_send_resume_cleanup(
-    headless_host: Host,
+    headless_host: Host, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # 替え玉は 2 手番目の result の後に自分で降りる(3 手番目が --resume の起こし直しになる材料)
+    monkeypatch.setenv("DOEFF_HEADLESS_STUB_TURNS_BEFORE_EXIT", "2")
     launched = headless_host.ok(
         "session.launch", _launch_params(headless_host.root, "h-1", "claude")
     )
@@ -627,23 +733,77 @@ def test_host_headless_claude_round_trip_launch_turn_end_send_resume_cleanup(
     # capture = events file の末尾
     captured = headless_host.ok("session.capture", {"session_id": "h-1", "lines": 2})
     assert _record(_text(captured, "text").splitlines()[-1])["type"] == "result"
-    # 次の手番: --resume の process を起こし直し、awaiting が立って turn_ended_at が消える
+    # 次の手番: 温かい同じ process へ(段 8 lane 4x)— awaiting が立って turn_ended_at が消える
+    pid_before = _obj(ended, "backend_ref")["pid"]
     headless_host.ok(
         "session.send", {"session_id": "h-1", "message": "second turn", "awaiting": True}
     )
     after_send = headless_host.snap("h-1")
     assert after_send["awaiting_response"] is True
     assert not _has(after_send, "turn_ended_at")
-    assert "--resume" in _texts(_obj(after_send, "backend_ref"), "argv")
+    assert _obj(after_send, "backend_ref")["pid"] == pid_before
+    assert "--resume" not in _texts(_obj(after_send, "backend_ref"), "argv")
     ended_again = _wait_turn_end(headless_host, "h-1")
     assert _text(ended_again, "status") == "running"
     lines = events_path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 10
-    assert _record(lines[5])["resumed"] is True
+    assert _record(lines[5])["resumed"] is True  # 替え玉は 2 手番目から resumed を名乗る
+    # 手番の外の割り込みは型付きに断る(新しい手番を起こさない)
+    refused = headless_host.call(
+        "session.send", {"session_id": "h-1", "message": "nothing runs", "mode": "interrupt"}
+    )
+    assert refused["ok"] is False, refused
+    assert "no turn" in json.dumps(refused)
+    # 語彙の外の mode は断る
+    bad_mode = headless_host.call(
+        "session.send", {"session_id": "h-1", "message": "x", "mode": "shout"}
+    )
+    assert bad_mode["ok"] is False, bad_mode
+    # process が降りた後(替え玉は 2 手番目の result の後に自分で降りた — SIGINT で止めた・idle で退いた器の
+    # 再現)の次の手番は --resume の process を起こし直す。monitor は降りた process を idle と読む(failed にしない)。
+    monkeypatch.delenv("DOEFF_HEADLESS_STUB_TURNS_BEFORE_EXIT")
+    _pause(0.3)
+    headless_host.monitor()
+    assert headless_host.snap("h-1")["status"] == "running"
+    headless_host.ok(
+        "session.send", {"session_id": "h-1", "message": "third turn", "awaiting": True}
+    )
+    after_resume = headless_host.snap("h-1")
+    assert "--resume" in _texts(_obj(after_resume, "backend_ref"), "argv")
+    assert _obj(after_resume, "backend_ref")["pid"] != pid_before
+    ended_third = _wait_turn_end(headless_host, "h-1")
+    assert _text(ended_third, "status") == "running"
+    assert len(events_path.read_text(encoding="utf-8").splitlines()) == 15
     # cleanup = 終端
     cleaned = headless_host.ok("session.cleanup", {"session_id": "h-1"})
     assert _text(cleaned, "status") == "stopped"
     assert _has(cleaned, "cleaned_at")
+
+
+def test_host_headless_claude_interrupt_mode_reaches_the_running_turn(
+    headless_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """段 8 lane 4x: session.send の mode = interrupt は走っている手番へ本文を注入する — 手番は
+    1 つのまま(awaiting は触らない)、反応が実況(events)に出てから result。"""
+    monkeypatch.setenv("DOEFF_HEADLESS_STUB_DELAY", "5")
+    launched = headless_host.ok("session.launch", _launch_params(headless_host.root, "h-5", "claude"))
+    assert isinstance(launched, dict)
+    events_path = Path(_text(_obj(launched, "backend_ref"), "events_path"))
+    _wait_until(lambda: len(events_path.read_text(encoding="utf-8").splitlines()) >= 4 if events_path.exists() else False)
+    injected = headless_host.ok(
+        "session.send", {"session_id": "h-5", "message": "change of plan", "mode": "interrupt"}
+    )
+    assert isinstance(injected, dict)
+    assert injected["sent"] is True
+    still = headless_host.snap("h-5")
+    assert still["awaiting_response"] is True
+    assert not _has(still, "turn_ended_at")
+    ended = _wait_turn_end(headless_host, "h-5")
+    assert _text(ended, "status") == "running"
+    lines = [_record(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+    assert assistant_texts(lines) == ["echo: hello agent", "interrupted: change of plan"]
+    assert [r["type"] for r in lines].count("result") == 1
+    headless_host.ok("session.cleanup", {"session_id": "h-5"})
 
 
 def test_host_headless_interrupt_keeps_the_session_warm(

@@ -18,9 +18,16 @@
 ;;; 手番の途中か)。この program は effect を並べ、行の欄に写すだけ(substrate-clean)。
 ;;; 温かい session(ADR-DOE-AGENTS-012 R10): multi_turn の行は手番の終わりで status を
 ;;; 倒さず turn_ended_at を刻む(policy.hy の monitor と同じ level-triggered の欄)。
-;;; claude は 1 手番 1 process なので、次の手番の send は `--resume <sid>` の process を
-;;; 同じ session の名で起こし直してから stdin へ書く(温かい = 会話の資源としての行と
-;;; events file が続く)。codex の app-server は process が生きたまま turn/start。
+;;; claude も codex も process は手番の間も生きる(段 8 lane 4x から claude は
+;;; `--input-format stream-json` の温かい process)。process が降りていれば(SIGINT で
+;;; 止めた・idle で退いた)次の手番の send は `--resume <sid>` の process を同じ session の
+;;; 名で起こし直してから stdin へ書く(温かい = 会話の資源としての行と events file が続く)。
+;;;
+;;; 割り込みの本文(段 8 lane 4x・agora-redesign #56): session.send の mode = interrupt は
+;;; 走っている手番へ本文を注入する(HeadlessInject — claude は user の行を CLI が次の tool の
+;;; 境界で読む・codex は turn/interrupt → 同じ thread へ turn/start)。走っている手番が無ければ
+;;; 器は引き受けず、host は型付きに断る(誰の job でもない手番を起こさない — 呼び手の agentd は
+;;; 割り込みを行に残し、Messaging が queued へ積み直す)。
 
 (require doeff-hy.macros [defk deff <-])
 
@@ -34,6 +41,7 @@
   fs-read-text
   headless-deliver
   headless-has-session
+  headless-inject
   headless-interrupt
   headless-kill
   headless-poll
@@ -71,6 +79,12 @@
 ;; interrupt の監査 event(tmux / headless 共通の語)。
 (setv EVENT-SESSION-INTERRUPTED "session_interrupted")
 (setv EVENT-SESSION-TURN-ENDED "session_turn_ended")
+;; 割り込みの本文を走っている手番へ注入した監査 event(段 8 lane 4x)。
+(setv EVENT-SESSION-INJECTED "session_injected")
+;; session.send の mode(閉語彙): turn = 次の手番の本文(既定)/ interrupt = 割り込みの本文。
+(setv SEND-MODE-TURN "turn")
+(setv SEND-MODE-INTERRUPT "interrupt")
+(setv SEND-MODES #{SEND-MODE-TURN SEND-MODE-INTERRUPT})
 
 
 ;; ---------------------------------------------------------------------------
@@ -283,9 +297,9 @@
 (defk continue-headless-process [row]
   {:pre [(: row SessionRow)]
    :post [(: % SessionRow)]}
-  "claude の次の手番(1 手番 1 process): 行の会話 identity で `--resume <sid>` の process を
-   同じ session の名で起こし直す(events file は同じ path に追記)。会話の id が無い行は
-   続けられない(発明しない — 型付きに断る)。戻り値: backend_ref を更新した行。"
+  "降りた process の次の手番: 行の会話 identity で `--resume <sid>` の process を同じ session の
+   名で起こし直す(events file は同じ path に追記)。会話の id が無い行は続けられない(発明
+   しない — 型付きに断る)。戻り値: backend_ref を更新した行。"
   (when (is row.conversation None)
     (raise (RuntimeError
              (+ f"session.send: session {row.session-id} has no conversation identity — "
@@ -318,11 +332,33 @@
 ;; RPC の program(send / interrupt / cancel / cleanup / capture)
 ;; ---------------------------------------------------------------------------
 
+(defk headless-inject-program [session-id message]
+  {:pre [(: session-id str) (: message str)]
+   :post [(: % SessionRow)]}
+  "session.send の mode = interrupt(headless・段 8 lane 4x): 割り込みの本文を走っている手番へ
+   注入する(HeadlessInject)。器が引き受けなかった(process が無い / 降りている / 走っている
+   手番が無い / 手番の終わりを読んだ後)時は型付きに断る — 新しい手番を起こさない(その本文は
+   呼び手が queued として次の手番に運ぶ)。行の awaiting は触らない(手番は走ったまま)。"
+  (<- row (require-headless-row session-id))
+  (when (is-terminal-status row.status)
+    (raise (RuntimeError f"session {session-id} is {row.status}; cannot inject into a terminal session")))
+  (<- accepted (headless-inject row.session-name message))
+  (when (not accepted)
+    (raise (RuntimeError
+             (+ f"session.send: no turn of {session-id} is in flight to interrupt — "
+                "the text was not delivered (send it as the next turn)"))))
+  (<- now (clock-now))
+  (setv row (replace row :last-observed-at (iso-format now)))
+  (<- _ (session-store-upsert row))
+  (<- _ (session-store-record-event session-id EVENT-SESSION-INJECTED row))
+  row)
+
+
 (defk headless-send-program [session-id message awaiting]
   {:pre [(: session-id str) (: message str) (: awaiting bool)]
    :post [(: % SessionRow)]}
-  "session.send(headless): 次の手番の本文を stdin へ。process が次の手番を受けられる
-   (codex の生きた app-server)ならそのまま、受けられない(claude の降りた process)なら
+  "session.send(headless・mode = turn): 次の手番の本文を stdin へ。process が次の手番を
+   受けられる(生きた温かい process)ならそのまま、受けられない(降りた process)なら
    `--resume` で起こし直してから書く。awaiting(agentd の温かい手番)は latch を立て、
    turn_ended_at を None に戻す(次の手番が走り出した — level-triggered の欄)。"
   (<- row (require-headless-row session-id))

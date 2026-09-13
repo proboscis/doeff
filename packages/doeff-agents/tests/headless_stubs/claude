@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""claude の headless(print mode・stream-json)の替え玉 — 検の PATH に置く。
+"""claude の headless(print mode・stream-json の入出力)の替え玉 — 検の PATH に置く。
 
-実物と同じ形の行だけを出す: system/init(session_id)・stream_event の text_delta・
-assistant(usage つき)・result。DOEFF_HEADLESS_STUB_DELAY 秒だけ result の前で待つ
-(割り込みの検: その間の SIGINT で result を出さずに降りる = 実物と同じ)。
-API は撃たない。
+実物と同じ形の行だけを出す(実測 2026-09-13・conformance/interrupt-physics.md): stdin は
+``--input-format stream-json`` の user の行 ``{"type":"user","message":{"role":"user","content":…}}``
+を 1 行ずつ読み、1 行 = 1 手番: system/init(session_id)・stream_event の text_delta・
+assistant(usage つき)・result。result の後も process は生きて次の行を待ち(温かい)、stdin の
+EOF で降りる。DOEFF_HEADLESS_STUB_DELAY 秒だけ result の前で待つ(その間の SIGINT で result を
+出さずに降りる = 実物と同じ)。**待っている間に届いた user の行は走っている手番への割り込み**
+(実物: CLI が次の tool の境界で注入する)— その本文に反応した assistant の行を出してから
+result(num_turns が増える)。DOEFF_HEADLESS_STUB_TURNS_BEFORE_EXIT = N なら N 手番目の result の後に
+自分で降りる(SIGINT で止めた・idle で退いた器の再現 — 次の手番は --resume で起こし直される)。API は撃たない。
 """
 import json
 import os
+import select
 import sys
-import threading
 
 
 def _opt(args, name):
@@ -21,32 +26,84 @@ def _emit(obj):
     sys.stdout.flush()
 
 
+def _read_user_line(timeout):
+    """stdin の次の user の行の本文(timeout 秒の内に無ければ None・EOF は ""）。"""
+    while True:
+        ready, _, _ = select.select([sys.stdin], [], [], timeout)
+        if not ready:
+            return None
+        line = sys.stdin.readline()
+        if line == "":
+            return ""
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if record.get("type") != "user":
+            continue
+        content = record.get("message", {}).get("content")
+        if isinstance(content, list):
+            content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+        return str(content or "")
+
+
+def _text_blocks(sid, text):
+    for piece in (text[:5], text[5:]):
+        _emit({"type": "stream_event",
+               "event": {"type": "content_block_delta", "index": 0,
+                         "delta": {"type": "text_delta", "text": piece}},
+               "session_id": sid})
+
+
+def _turn(sid, prompt, resumed):
+    _emit({"type": "system", "subtype": "init", "session_id": sid, "model": "stub-model",
+           "cwd": os.getcwd(), "resumed": resumed})
+    text = "echo: " + prompt.strip().splitlines()[0] if prompt.strip() else "echo:"
+    _text_blocks(sid, text)
+    delay = float(os.environ.get("DOEFF_HEADLESS_STUB_DELAY", "0") or "0")
+    turns = 1
+    usage = {"input_tokens": 3, "output_tokens": 7, "cache_creation_input_tokens": 1,
+             "cache_read_input_tokens": 2}
+    _emit({"type": "assistant", "session_id": sid,
+           "message": {"id": "msg_stub", "role": "assistant", "model": "stub-model",
+                       "content": [{"type": "text", "text": text}], "usage": usage}})
+    if delay:
+        injected = _read_user_line(delay)
+        if injected:
+            # 割り込みの本文: 走っている手番の中でそれに反応する(実物の CLI と同じ順)
+            turns += 1
+            reaction = "interrupted: " + injected.strip().splitlines()[0]
+            _text_blocks(sid, reaction)
+            _emit({"type": "assistant", "session_id": sid,
+                   "message": {"id": "msg_stub_2", "role": "assistant", "model": "stub-model",
+                               "content": [{"type": "text", "text": reaction}], "usage": usage}})
+            text = reaction
+    _emit({"type": "result", "subtype": "success", "is_error": False, "result": text,
+           "session_id": sid, "usage": usage, "num_turns": turns})
+
+
 def main():
     args = sys.argv[1:]
     if "--help" in args:
         sys.stdout.write("stub claude\n")
         return 0
     sid = _opt(args, "--session-id") or _opt(args, "--resume") or "stub-session"
-    prompt = sys.stdin.read()
-    _emit({"type": "system", "subtype": "init", "session_id": sid, "model": "stub-model",
-           "cwd": os.getcwd(), "resumed": "--resume" in args})
-    text = "echo: " + prompt.strip().splitlines()[0] if prompt.strip() else "echo:"
-    for piece in (text[:5], text[5:]):
-        _emit({"type": "stream_event",
-               "event": {"type": "content_block_delta", "index": 0,
-                         "delta": {"type": "text_delta", "text": piece}},
-               "session_id": sid})
-    delay = float(os.environ.get("DOEFF_HEADLESS_STUB_DELAY", "0") or "0")
-    if delay:
-        threading.Event().wait(delay)
-    usage = {"input_tokens": 3, "output_tokens": 7, "cache_creation_input_tokens": 1,
-             "cache_read_input_tokens": 2}
-    _emit({"type": "assistant", "session_id": sid,
-           "message": {"id": "msg_stub", "role": "assistant", "model": "stub-model",
-                       "content": [{"type": "text", "text": text}], "usage": usage}})
-    _emit({"type": "result", "subtype": "success", "is_error": False, "result": text,
-           "session_id": sid, "usage": usage})
-    return 0
+    resumed = "--resume" in args
+    if "--input-format" not in args:
+        # 旧の作法(本文 + EOF)— 段 8 lane 4x より前の呼び手の互換
+        _turn(sid, sys.stdin.read(), resumed)
+        return 0
+    exit_after = int(os.environ.get("DOEFF_HEADLESS_STUB_TURNS_BEFORE_EXIT", "0") or "0")
+    turns = 0
+    while True:
+        prompt = _read_user_line(None)
+        if prompt == "" or prompt is None:
+            return 0
+        _turn(sid, prompt, resumed)
+        resumed = True
+        turns += 1
+        if exit_after and turns >= exit_after:
+            return 0
 
 
 if __name__ == "__main__":

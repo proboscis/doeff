@@ -30,6 +30,7 @@ from doeff_agents.sessionhost.acp.effects import (
     AgentdSettings,
     JSONObject,
     LeaseRefused,
+    SessionRefused,
     SessionView,
 )
 from doeff_agents.sessionhost.acp.fake import Birth, FakeAcp, FakeCustody, FakeLocal, FakeSessions
@@ -1051,6 +1052,135 @@ def test_withdrawn_job_whose_turn_already_ended_is_not_interrupted() -> None:
     assert world.sessions.interrupts == []
     assert world.sessions.cleanups == []
     assert world.state.jobs == ()
+
+
+# ---------------------------------------------------------------- 段 8 lane 4x: 割り込みの本文(agora-redesign #56)
+
+
+def _place_interrupt(world: World, job_id: str, message_ids: list[str]) -> None:
+    """Messaging の代わりに走っている job の行へ interrupts を載せる(他の欄は写す・generation + 1)。"""
+    running = world.job(job_id)
+    assert running.status is not None
+    placed: JSONObject = dict(running.status)
+    existing = placed.get("interrupts")
+    placed["interrupts"] = (list(existing) if isinstance(existing, list) else []) + list(message_ids)
+    world.acp.put_row(
+        row(
+            AGENT_JOB_NAMESPACE,
+            AGENT_JOB_KIND,
+            job_id,
+            running.spec,
+            placed,
+            created_at_ms=running.created_at_ms,
+        )
+    )
+
+
+def test_interrupt_on_a_running_job_is_handed_to_the_session_and_recorded_on_the_row() -> None:
+    """走っている自分の job の行に載った割り込み(status.interrupts)は、本文を鍵で読んで session.send の
+    mode = interrupt で器へ即座に渡し、同じ 1 回の CAS で interrupts から消して interruptsDelivered へ
+    足す。次の拍に同じ id を二度渡さない。"""
+    world = World()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"]))
+    world.tick()
+    sid = world.sid("j-1")
+    world.acp.put_row(message("m-i1", "stop and answer"))
+    world.acp.put_row(message("m-i2", "then continue"))
+    _place_interrupt(world, "j-1", ["m-i1", "m-i2"])
+    world.tick(advance_ms=1_000)
+    assert world.sessions.interjections == [(sid, "stop and answer"), (sid, "then continue")]
+    # 通常の send(次の手番)は撃たれていない・手番は 1 つのまま
+    assert [text for _sid, text, _awaiting in world.sessions.sends] == ["first"]
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_RUNNING
+    assert job.status["interrupts"] == []
+    assert job.status["interruptsDelivered"] == ["m-i1", "m-i2"]
+    assert job.status["sessionHandle"] == {"sessionId": sid, "stream": {"owner": "agentd", "name": sid}}
+    assert [j.interrupts_sent for j in world.state.jobs] == [("m-i1", "m-i2")]
+    # 次の拍: 行にも memory にも渡した印が在るので二度渡さない
+    world.tick(advance_ms=1_000)
+    assert len(world.sessions.interjections) == 2
+    # もう 1 通: 行の並びは delivered の末尾に足される
+    world.acp.put_row(message("m-i3", "one more"))
+    _place_interrupt(world, "j-1", ["m-i3"])
+    world.tick(advance_ms=1_000)
+    assert world.sessions.interjections[-1] == (sid, "one more")
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["interruptsDelivered"] == ["m-i1", "m-i2", "m-i3"]
+    assert job.status["interrupts"] == []
+
+
+def test_interrupt_refused_by_the_session_stays_on_the_row_and_is_not_recorded_as_delivered() -> None:
+    """器が断った(走っている手番が無い)割り込みは行に残す(渡していない印 = Messaging が終端の
+    行から queued へ積み直す材料)。本文の無い id は渡せない(log)が、行には残す。"""
+    world = World()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"]))
+    world.tick()
+    world.acp.put_row(message("m-i1", "too late"))
+    _place_interrupt(world, "j-1", ["m-i1", "m-missing"])
+    world.sessions.refuse_interject = SessionRefused("no turn in flight", None)
+    world.tick(advance_ms=1_000)
+    assert world.sessions.interjections == []
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["interrupts"] == ["m-i1", "m-missing"]
+    assert "interruptsDelivered" not in job.status
+    # 器が受けるようになれば同じ id を渡す(level-triggered — 断りは memory に残らない)
+    world.sessions.refuse_interject = None
+    world.tick(advance_ms=1_000)
+    assert world.sessions.interjections == [(world.sid("j-1"), "too late")]
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["interrupts"] == ["m-missing"]
+    assert job.status["interruptsDelivered"] == ["m-i1"]
+    # 本文の無い id は memory に写して撃ち直さない(行には残る)
+    world.tick(advance_ms=1_000)
+    assert len(world.sessions.interjections) == 1
+    assert [j.interrupts_sent for j in world.state.jobs] == [("m-i1", "m-missing")]
+
+
+def test_interrupts_are_only_delivered_to_jobs_this_agentd_runs() -> None:
+    """他の node の Running の行に載った割り込みは触らない(自分の job = memory の InFlightJob)。"""
+    world = World()
+    world.acp.put_row(message("m-i1", "for someone else"))
+    other = bound_job("j-x", inputs=["m-0"])
+    assert other.status is not None
+    other_status: JSONObject = dict(other.status)
+    other_status["phase"] = PHASE_RUNNING
+    other_status["binding"] = {"node": "other-node", "profile": "personal"}
+    other_status["sessionHandle"] = {"sessionId": "sid-x", "stream": {"owner": "agentd", "name": "sid-x"}}
+    other_status["interrupts"] = ["m-i1"]
+    world.acp.put_row(row(AGENT_JOB_NAMESPACE, AGENT_JOB_KIND, "j-x", other.spec, other_status))
+    world.tick()
+    assert world.sessions.interjections == []
+    job = world.job("j-x")
+    assert job.status is not None
+    assert job.status["interrupts"] == ["m-i1"]
+
+
+def test_pending_interrupts_of_and_the_delivered_status_are_pure() -> None:
+    """判断の純関数: 渡していない id = interrupts − interruptsDelivered − memory(順は載せた順・重複なし)。
+    渡した後の status = interrupts から消し delivered の末尾へ(既に在れば足さない)、他の欄は写す。"""
+    base = bound_job("j-p", inputs=["m-0"])
+    assert base.status is not None
+    status: JSONObject = dict(base.status)
+    status["interrupts"] = ["a", "b", "c", "b"]
+    status["interruptsDelivered"] = ["a"]
+    placed = row(AGENT_JOB_NAMESPACE, AGENT_JOB_KIND, "j-p", base.spec, status)
+    assert run(judgment.pending_interrupts_of(placed, ())) == ("b", "c")
+    assert run(judgment.pending_interrupts_of(placed, ("c",))) == ("b",)
+    assert run(judgment.pending_interrupts_of(base, ())) == ()
+    delivered = run(judgment.interrupts_delivered_status_of(status, ("b", "c")))
+    assert delivered["interrupts"] == []
+    assert delivered["interruptsDelivered"] == ["a", "b", "c"]
+    assert delivered["phase"] == PHASE_BOUND
+    assert delivered["binding"] == status["binding"]
+    again = run(judgment.interrupts_delivered_status_of(delivered, ("c",)))
+    assert again["interruptsDelivered"] == ["a", "b", "c"]
 
 
 def test_busy_conversation_session_defers_the_claim() -> None:

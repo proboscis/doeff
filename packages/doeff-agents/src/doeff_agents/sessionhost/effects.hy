@@ -773,8 +773,15 @@
   #^ Any dialogue)
 
 (defclass [(dataclass :frozen True :kw-only True)] HeadlessDeliver [EffectBase]
-  "次の手番の本文を process の stdin へ(綴りは Dialogue.turn — claude は本文 + EOF・
-   codex は turn/start)。戻り値: bool(process が生きていて書けたか)。"
+  "次の手番の本文を process の stdin へ(綴りは Dialogue.turn — claude は stream-json の
+   user の行・codex は turn/start)。戻り値: bool(process が生きていて書けたか)。"
+  #^ str session-name
+  #^ str text)
+
+(defclass [(dataclass :frozen True :kw-only True)] HeadlessInject [EffectBase]
+  "割り込みの本文を走っている手番へ(段 8 lane 4x・綴りは Dialogue.inject — claude は user の
+   行を CLI が次の tool の境界で注入・codex は turn/interrupt → 同じ thread へ turn/start)。
+   戻り値: bool(走っている手番が在って器が引き受けたか — 偽なら呼び手が queued へ倒す)。"
   #^ str session-name
   #^ str text)
 
@@ -1073,6 +1080,12 @@
    :post [(: % HeadlessInterrupt)]}
   "HeadlessInterrupt を構築する。"
   (HeadlessInterrupt :session-name session-name))
+
+(deff headless-inject [session-name text]
+  {:pre [(: session-name str) (: text str)]
+   :post [(: % HeadlessInject)]}
+  "HeadlessInject を構築する(段 8 lane 4x)。"
+  (HeadlessInject :session-name session-name :text text))
 
 (deff headless-kill [session-name]
   {:pre [(: session-name str)]

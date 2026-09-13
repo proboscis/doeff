@@ -97,6 +97,12 @@ ConditionType = Literal[
     "LaunchFailed", "CredentialUnavailable", "InputUnavailable", "SessionFailed", "Interrupted"
 ]
 CONDITION_INTERRUPTED: ConditionType = "Interrupted"
+#: 段 8 lane 4x(agora-redesign #56): agent-job の status の割り込みの 2 欄(契約
+#: docs/contracts/messaging.json interrupts — ACP Acp.App.Agent.AgentJob の綴りの写し)。
+#: interrupts = Messaging が載せた、まだ渡していない Message の id の並び / interruptsDelivered =
+#: この手番で agentd が CLI へ渡した id(append-only)。渡したら同じ 1 回の書きで前から消し後ろへ足す。
+JOB_INTERRUPTS_KEY: str = "interrupts"
+JOB_INTERRUPTS_DELIVERED_KEY: str = "interruptsDelivered"
 #: sessionhost の wire の backend_kind のうち agentd が読む語(host.hy の閉語彙 tmux | herdr |
 #: headless の写し — agora-redesign #37)。headless の session は実況を events file で読み
 #: (backend_ref.events_path)、node の streamCapability は events。
@@ -711,6 +717,10 @@ class InFlightJob:
     #: 読んだが行へまだ書けていない出来事(書きが断られた / 行がまだ無い拍の持ち越し)。次の拍の
     #: 追記と手番の終わりの書きに先頭で乗る(出来事は落とさない・順は seq)。
     pending_entries: tuple[JSONObject, ...] = ()
+    #: 段 8 lane 4x: この手番で器へ渡した割り込みの Message の id(memory の写し — 行の
+    #: interruptsDelivered への CAS が着地するまでの間、同じ id を二度渡さないための cache。正本は行:
+    #: 再起動で消えても、行の interruptsDelivered に在る id は渡さない)。
+    interrupts_sent: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -869,6 +879,24 @@ class SessionSend(EffectBase):
     session_id: str
     text: str
     awaiting: bool
+
+
+@dataclass(frozen=True)
+class Interjected:
+    """器が割り込みの本文を走っている手番へ引き受けた(段 8 lane 4x)。"""
+
+
+@dataclass(frozen=True)
+class SessionInterject(EffectBase):
+    """``session.send`` の mode = interrupt(段 8 lane 4x・agora-redesign #56): 割り込みの本文を
+    走っている手番へ即座に(CLI の支える形 — claude は stream-json の stdin の user の行、codex は
+    turn/interrupt → 同じ thread へ turn/start)。結果 = Interjected | SessionRefused(host の断り =
+    走っている手番が無い・器が無い — 本文は届いていない。呼び手は行の interrupts に残し、Messaging が
+    queued へ積み直す)。socket の失敗(OSError)は素通し(tick の縁が持ち越す)。
+    """
+
+    session_id: str
+    text: str
 
 
 @dataclass(frozen=True)

@@ -32,6 +32,7 @@ from doeff_agents.sessionhost.acp.effects import (
     FsCanonicalPath,
     FsFileSize,
     FsWritePrivateText,
+    Interjected,
     JSONObject,
     LeaseGrant,
     LeaseKind,
@@ -51,6 +52,7 @@ from doeff_agents.sessionhost.acp.effects import (
     SessionCleanup,
     SessionEvents,
     SessionGet,
+    SessionInterject,
     SessionInterrupt,
     SessionLaunch,
     SessionList,
@@ -291,6 +293,10 @@ class FakeSessions:
         self.cleanups: list[str] = []
         #: session.interrupt を受けた session の順(headless = SIGINT / turn/interrupt・tmux = Escape)。
         self.interrupts: list[str] = []
+        #: 段 8 lane 4x: 割り込みの本文(session.send の mode = interrupt)— (session_id, 本文)の順。
+        self.interjections: list[tuple[str, str]] = []
+        #: None = 引き受ける / SessionRefused = 器が断る(走っている手番が無い)。
+        self.refuse_interject: SessionRefused | None = None
         #: この器の backend(tmux | herdr | headless)と headless の events file の置き場。
         self.backend_kind: str = backend_kind
         self.events_root: str = events_root
@@ -314,7 +320,8 @@ class FakeSessions:
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(
-            effect, (SessionLaunch, SessionResume, SessionSend, SessionInterrupt, SessionCleanup)
+            effect,
+            (SessionLaunch, SessionResume, SessionSend, SessionInterject, SessionInterrupt, SessionCleanup),
         ):
             return Resume(k, self._act(effect))
         if isinstance(effect, (SessionGet, SessionList, SessionCapture)):
@@ -323,13 +330,23 @@ class FakeSessions:
 
     def _act(
         self,
-        effect: SessionLaunch | SessionResume | SessionSend | SessionInterrupt | SessionCleanup,
+        effect: SessionLaunch
+        | SessionResume
+        | SessionSend
+        | SessionInterject
+        | SessionInterrupt
+        | SessionCleanup,
     ) -> object:
         if isinstance(effect, (SessionLaunch, SessionResume)):
             return self._incarnate(effect)
         if isinstance(effect, SessionSend):
             self.sends.append((effect.session_id, effect.text, effect.awaiting))
             return None
+        if isinstance(effect, SessionInterject):
+            if self.refuse_interject is not None:
+                return self.refuse_interject
+            self.interjections.append((effect.session_id, effect.text))
+            return Interjected()
         if isinstance(effect, SessionInterrupt):
             self.interrupts.append(effect.session_id)
             return None

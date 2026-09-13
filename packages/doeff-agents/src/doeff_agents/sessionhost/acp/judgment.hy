@@ -60,6 +60,8 @@
   INTERRUPT-ARM-INTERRUPT
   INTERRUPT-ARM-NONE
   InFlightJob
+  JOB-INTERRUPTS-DELIVERED-KEY
+  JOB-INTERRUPTS-KEY
   JOB-STEP-FAIL-MISSING
   JOB-STEP-OBSERVE
   JOB-STEP-RECORD-END
@@ -489,6 +491,64 @@
     (.append conditions condition))
   (setv (get next "conditions") conditions)
   next)
+
+
+;; ---------------------------------------------------------------------------
+;; 割り込みの本文(段 8 lane 4x・agora-redesign #56): 行の interrupts を器へ渡す
+;; ---------------------------------------------------------------------------
+
+(defk string-list-of [status key]
+  {:pre [(: status dict) (: key str)]
+   :post [(: % tuple)]}
+  "status の欄 key の文字の列(無い・list でない・文字でない項は空 / 落とす — 発明しない)。"
+  (setv raw (.get status key))
+  (if (isinstance raw list)
+      (tuple (lfor item raw :if (isinstance item str) item))
+      #()))
+
+
+(defk pending-interrupts-of [row sent]
+  {:pre [(: row AcpRow) (: sent tuple)]
+   :post [(: % tuple)]}
+  "行の status.interrupts のうち、まだ器へ渡していない Message の id(載せた順): 行の
+   interruptsDelivered に無く、memory の sent(CAS が着地するまでの写し)にも無いもの。
+   level-triggered — 判断はこの行と memo だけで、前の拍の何も要らない。"
+  (<- status dict (status-object-of row))
+  (<- pending tuple (string-list-of status JOB-INTERRUPTS-KEY))
+  (<- delivered tuple (string-list-of status JOB-INTERRUPTS-DELIVERED-KEY))
+  (setv seen (set))
+  (setv out [])
+  (for [message-id pending]
+    (when (and (not-in message-id delivered) (not-in message-id sent) (not-in message-id seen))
+      (.add seen message-id)
+      (.append out message-id)))
+  (tuple out))
+
+
+(defk interrupts-delivered-status-of [status ids]
+  {:pre [(: status dict) (: ids tuple)]
+   :post [(: % dict)]}
+  "渡した割り込みを行に写した status(同じ 1 回の書き): interruptsDelivered の末尾に ids を足し
+   (既に在る id は足さない・順は保つ)、interrupts から渡した id を全部消す(ids と、既に
+   delivered に在った id — 載せ直された id を二度渡さない)。他の欄は写す。"
+  (setv next (dict status))
+  (<- pending tuple (string-list-of status JOB-INTERRUPTS-KEY))
+  (<- delivered tuple (string-list-of status JOB-INTERRUPTS-DELIVERED-KEY))
+  (setv all-delivered (+ (list delivered) (lfor message-id ids :if (not-in message-id delivered) message-id)))
+  (setv (get next JOB-INTERRUPTS-KEY) (lfor message-id pending :if (not-in message-id all-delivered) message-id))
+  (setv (get next JOB-INTERRUPTS-DELIVERED-KEY) all-delivered)
+  next)
+
+
+(defk job-row-keyed [rows job-key]
+  {:pre [(: rows tuple) (: job-key str)]
+   :post [(: % (| AcpRow None))]}
+  "cache の行を鍵で(無ければ None)。"
+  (setv found None)
+  (for [row rows]
+    (when (and (is found None) (= row.key job-key))
+      (setv found row)))
+  found)
 
 
 (defk stream-capability-of-backend [backend]
