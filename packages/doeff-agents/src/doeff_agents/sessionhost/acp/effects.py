@@ -276,6 +276,17 @@ ProfileUsageOutcome: TypeAlias = "ProfileUsage | ProfileUsageUnavailable"
 
 
 @dataclass(frozen=True)
+class ProfileHome:
+    """登録簿の 1 つの profile と、この機体にその家(config dir)が在るか(段 8e lane 4j)。
+    観測の材料で、判断(どの行を観測するか・usage を読むか)は judgment.profile-rows-held。
+    ``present`` = 家の dir が実在する(中身は検めない — 残量の読みの葉が答える)。"""
+
+    name: str
+    home: str
+    present: bool
+
+
+@dataclass(frozen=True)
 class ProfileObservation:
     """profile の行に書く status.observed(契約 {window, remaining, resetAt, observedAt, node})。"""
 
@@ -646,6 +657,9 @@ class AgentdState:
     #: profile の残量の観測(段 7 lane 7d-3)の最後の拍。None = まだ 1 度も(起動直後は即・その後は
     #: AgentdSettings.profile_observe_seconds の周期)。
     last_profile_observed_ms: int | None = None
+    #: 「この機体に家の在る profile が 1 つも無い」を 1 度だけ名乗った印(段 8e lane 4j — pool の
+    #: pod は profile を持たないので usage を読まず、周期ごとに同じ行を吐かない)。家が現れたら戻る。
+    no_profile_homes_logged: bool = False
 
 
 # ------------------------------------------------------------------ 要求(ACP)
@@ -877,6 +891,18 @@ class OwnershipProbe(EffectBase):
     project-id)。結果 = ProbeAnswer(読めなければ value None — 判断は join.ownership-verdict)。"""
 
     proof: str
+
+
+@dataclass(frozen=True)
+class ListProfileHomes(EffectBase):
+    """この機体が持つ資格(kind)の profile の家の在否を読む(段 8e lane 4j)。読み口は dotfiles
+    agentcli の登録簿の 1 点(handlers.py の PROFILES_COMMAND = `agentcli profiles list --json` —
+    ADR-DOTFILES-005 R2 の単一の正)と、その家(dir)の実在。結果 = tuple[ProfileHome, ...]
+    (登録簿の全 profile・家の無いものは present False)。家が 1 つも無い機体(pool の pod —
+    personal の資格は預かり所が観測し、会社 profile は会社機体だけ)では usage を読まない
+    (判断は judgment.profile-rows-held・agentd は usage の読み口の落ち方で判じない)。"""
+
+    kind: LeaseKind
 
 
 @dataclass(frozen=True)

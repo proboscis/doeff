@@ -15,6 +15,9 @@ wire の綴り:
 - 所有の検(段 6 lane 6f)= GCE の metadata server ``GET http://metadata.google.internal/
   computeMetadata/v1/project/project-id``(header ``Metadata-Flavor: Google``)。届かない機体
   (Mac・GCE の外)は値 None — 判断(一致・不一致・読めない)は join.ownership-verdict。
+- profile の家の在否(段 8e lane 4j)= dotfiles agentcli の登録簿の 1 点を subprocess で読み
+  (``PROFILES_COMMAND`` = ``agentcli profiles list --json --kind K`` → ``[{"name", "dir", …}…]``)、
+  その ``dir`` の実在をこの機体で検める。家の無い機体(pool の pod)は usage を読まない。
 - profile の残量(段 7 lane 7d-3)= dotfiles agentcli の usage の 1 点を subprocess で読む
   (``USAGE_COMMAND`` = ``ai usage --json [--cache-ttl N]`` → ``{"claude": [record…], "codex": […]}``)。
   agentcli は doeff の tool env に無い(doeff は dotfiles の上流)ので import ではなく console script。
@@ -74,11 +77,13 @@ from doeff_agents.sessionhost.acp.effects import (
     LeaseKind,
     LeaseOutcome,
     LeaseRefused,
+    ListProfileHomes,
     LogLine,
     MetricLine,
     MintId,
     OwnershipProbe,
     ProbeAnswer,
+    ProfileHome,
     ProfileUsage,
     ProfileUsageOutcome,
     ProfileUsageUnavailable,
@@ -124,6 +129,11 @@ WATCH_RECONNECT_SECONDS = 2.0
 #: (launchd の job_env.sh は ~/.local/bin を載せる)。会社境界の判定はこの葉の中。
 USAGE_COMMAND: tuple[str, ...] = ("ai", "usage", "--json")
 USAGE_CACHE_TTL_FLAG = "--cache-ttl"
+#: profile の登録簿の読み口(段 8e lane 4j)= agentcli の console script の 1 点(ADR-DOTFILES-005 R2
+#: 「profile 登録簿の問い合わせは単一の正」)。家(dir)の実在はこの機体で検める。
+PROFILES_COMMAND: tuple[str, ...] = ("agentcli", "profiles", "list", "--json")
+PROFILES_KIND_FLAG = "--kind"
+PROFILES_TIMEOUT_SECONDS = 30.0
 #: 35 profile の live の照会(cache が古い時)を含めた上限。
 USAGE_TIMEOUT_SECONDS = 180.0
 #: agentcli の record の窓の綴り(`<key>_used_percentage` / `<key>_resets_at`)→ 契約の窓の名。
@@ -797,6 +807,8 @@ class LocalIo:
             return Resume(k, mint_ulid(int(time.time() * 1000), os.urandom(10)))
         if isinstance(effect, OwnershipProbe):
             return Resume(k, probe_ownership(effect.proof))
+        if isinstance(effect, ListProfileHomes):
+            return Resume(k, list_profile_homes(effect.kind))
         if isinstance(effect, ReadProfileUsage):
             return Resume(k, read_profile_usage(effect.kind, effect.cache_ttl_seconds))
         if isinstance(effect, (ClockNowMs, MetricLine, LogLine)):
@@ -929,6 +941,43 @@ def decode_profile_usage(doc: JSON, kind: str) -> tuple[ProfileUsageOutcome, ...
             windows.append(UsageWindow(name, used, _epoch_ms_of(record.get(f"{key}_resets_at"))))
         out.append(ProfileUsage(profile, int(captured * 1000), tuple(windows)))
     return tuple(out)
+
+
+def decode_profile_homes(doc: JSON, present: Callable[[str], bool]) -> tuple[ProfileHome, ...]:
+    """``agentcli profiles list --json`` の答え(登録簿の record の列)→ profile ごとの家の在否。
+    ``name`` か ``dir`` の無い record は読まない(発明しない)。``present`` = 家の実在の検
+    (実 = os.path.isdir・検では表)。"""
+    out: list[ProfileHome] = []
+    for record in doc if isinstance(doc, list) else []:
+        if not isinstance(record, dict):
+            continue
+        name = _str_field(record, "name")
+        home = _str_field(record, "dir")
+        if name is None or home is None:
+            continue
+        out.append(ProfileHome(name, home, present(home)))
+    return tuple(out)
+
+
+def list_profile_homes(kind: LeaseKind) -> tuple[ProfileHome, ...]:
+    """agentcli の登録簿の 1 点を subprocess で撃ち、家の dir の実在を検める。起動できない・期限・
+    非 0 の終了・JSON でない答えは RuntimeError(tick の縁が log して次の周期へ)。"""
+    argv = [*PROFILES_COMMAND, PROFILES_KIND_FLAG, kind]
+    try:
+        completed = subprocess.run(
+            argv, capture_output=True, timeout=PROFILES_TIMEOUT_SECONDS, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise RuntimeError(f"agentd: profile registry read `{' '.join(argv)}` failed: {error}") from error
+    if completed.returncode != 0:
+        tail = completed.stderr.decode("utf-8", errors="replace").strip()[-500:]
+        raise RuntimeError(
+            f"agentd: profile registry read `{' '.join(argv)}` exited {completed.returncode}: {tail}"
+        )
+    doc = _loads(completed.stdout)
+    if not isinstance(doc, list):
+        raise RuntimeError(f"agentd: profile registry read `{' '.join(argv)}` did not answer a list")
+    return decode_profile_homes(doc, os.path.isdir)
 
 
 def read_profile_usage(kind: LeaseKind, cache_ttl_seconds: int) -> tuple[ProfileUsageOutcome, ...]:

@@ -59,6 +59,8 @@
 ;;; ProfileExhausted を判じられなかった。既知の形 = kubelet の node status(観測は runner が書き、判断は
 ;;; controller)。agentd は遅い周期(AgentdSettings.profile_observe_seconds)で、この機体が持つ資格の
 ;;; profile ごとに残量を読み(ReadProfileUsage — 読み口は dotfiles agentcli の usage の 1 点 `ai usage --json`・
+;;; その前に器の家の在否 ListProfileHomes = 登録簿 `agentcli profiles list --json` × dir の実在で観測する行を絞り、
+;;; 家の在る profile が無い機体〔pool の pod〕は usage を撃たず 1 度だけ名乗る — 段 8e lane 4j・
 ;;; 会社境界の判定はその葉)、judgment.profile-observed-of の 1 点で観測を決め、committed の行から組んだ
 ;;; post-image を ifGeneration で変わった時だけ書く。断られた / 単位の違う profile は書かず理由を log に 1 行。
 
@@ -72,7 +74,7 @@
         [AGENT-JOB-KIND AGENT-JOB-NAMESPACE AGORA-KINDS-NAMESPACE AcpRow AgentdSettings
          AgentdState CaptureGone JSONObject JoinArgv JoinDeclaration JoinPlan JoinSpec MESSAGE-KIND
          NODE-KIND Ownership PHASE-BOUND PHASE-ENDED PHASE-RUNNING PROFILE-KIND PROFILE-USAGE-KIND
-         ProfileUsage ProfileUsageUnavailable TURN-RECORD-KIND UsageWindow])
+         ProfileHome ProfileUsage ProfileUsageUnavailable TURN-RECORD-KIND UsageWindow])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeSessions])
 (import doeff_agents.sessionhost.acp.join [join-plan-of join-spec-of ownership-preflight])
 (import doeff_agents.sessionhost.acp.judgment [capture-verdict job-step-of stream-capability-of-backend])
@@ -353,7 +355,7 @@
      (rule R15 "session の id は agentd が鋳造する: 起こす session の id(session_id と session_name・sessionHandle.sessionId・stream の name)は effect MintId(ULID・時刻と乱数は handler)の答えで、charter(Messaging が組む launch の params)の session_id / session_name は読まない(judgment.launch-plan-of が落とす・据えるのは charter-with-session-id の 1 点)。実弾 2026-09-12: 温かい session が idle TTL で片付いた後、charter の固定の id の launch が `session is already registered`(host は片付いた行を登記のまま残す)に落ちて LaunchFailed で Ended した。")
      (rule R16 "headless の起こす手番は郵便を 1 手番目の本文に畳む: host の backend が headless(AgentdSettings.backend_kind — runtime.settings_from_env が valve.backend_of から導く 1 点・streamCapability と同じ源)なら、launch / resume の腕は charter の prompt(前置き)と inputs の郵便の本文を judgment.first-turn-prompt-of(空行区切り・郵便が無ければ charter だけ)で 1 つに畳んで起こし、after-start は session.send を撃たない。判定は judgment.first-turn-carries-inputs(backend ∧ 腕)の 1 点。send の腕(温かい session)は郵便の本文だけを send。tui(tmux / herdr)は今日どおり launch の後に send。turn-record の create・計器 agent-job-to-send・in-flight の登記は腕に依らず同じ。実弾 2026-09-12: launch の直後の send が `headless session already exists` で tick ごと落ち、turn-record が作られず job は拾い直しの腕へ。")
      (rule R17 "機体を足す手順は 1 命令 join: `doeff-sessionhost join --server <URL> --token-file <札> [--config <toml>] [--node-name] [--state-dir] [--backend] [--session-hooks] [--custody] [--borrower-key-file] [--ownership --ownership-proof]` の宣言は join.hy の join-spec-of(flag > toml(schema doeff.agentd-join.v1・flag と同名の鍵)> 既定)の 1 点で JoinSpec に組み、join-plan-of の 1 点で今日の起動が読む env の束(effects.py の *_ENV の綴り)と host の argv(--db / --socket / --max-running none / --backend / serve)に写す。entry.py は plan を process の env に据えて serve --acp と同じ経路を走る — env の名を entry / runtime が自分で組まない・読み手を増やさない。所有の等級 ownership(company | personal)は proof(gce-project:<project-id> | declared)と対でだけ宣言でき(片方だけは断る)、runtime.start_agentd_thread は thread を起こす前に join.ownership-preflight を撃ち(gce-project = OwnershipProbe の答え = metadata の project-id が一致する時だけ通す・declared = 撃たない)、不一致は AgentdPreflightError で参加しない。検めた等級は judgment.node-status-with-lease の 1 点で observations.ownership{grade, proof} に書く(宣言が無ければ欄ごと無い)。agentd.hy は ownership の語を比較しない。")
-     (rule R18 "profile の残量の観測は agentd が書く(段 7 lane 7d-3): agentd-tick の 1 つの腕 observe-profiles が AgentdSettings.profile_observe_seconds(既定 300・値の宣言は 1 点・同じ値を読み口の cache の寿命に渡す)の周期で生きている profile の行(state ≠ retired)を読み、この機体が持つ資格の残量を effect ReadProfileUsage(kind = effects.PROFILE_USAGE_KIND = claude・契約の行は資格の種類を運ばない)で 1 度読む。実 handler = handlers.read_profile_usage = dotfiles agentcli の console script(handlers.USAGE_COMMAND = `ai usage --json`)の subprocess ちょうど — sessionhost は agentcli を import しない・会社境界(company_boundary)の判定を持たない(断りは record の error → ProfileUsageUnavailable)。書く観測は judgment.profile-observed-of の 1 点(閉語彙 effects.ProfileVerdict): 窓 = observed-window-of(spec.reset.everySeconds と一致する窓・無ければ 5h)、remaining = 100 - used(percent・budget.unit ≠ percent は書かない)、resetAt = 窓の戻る時刻(無ければ observedAt)、observedAt = 断面の時刻、node = 自分。post-image は profile-status-with-observed(committed の state・conditions を写す)、committed と同じ observed は書かず(profile-observed-changed)、Conflict は log して次の周期、Refused / 書かない理由は log に 1 行、この機体に無い profile(ProfileNotHeld)は書かず log もしない。agentd.hy は窓の名・単位・境界の語を比較しない。")
+     (rule R18 "profile の残量の観測は agentd が書く(段 7 lane 7d-3): agentd-tick の 1 つの腕 observe-profiles が AgentdSettings.profile_observe_seconds(既定 300・値の宣言は 1 点・同じ値を読み口の cache の寿命に渡す)の周期で生きている profile の行(state ≠ retired)を読み、この機体の profile の家の在否を effect ListProfileHomes(段 8e lane 4j — 実 handler = handlers.list_profile_homes = 登録簿の 1 点 handlers.PROFILES_COMMAND = `agentcli profiles list --json` の subprocess + dir の実在)で読み、judgment.profile-rows-held の 1 点で観測する行を絞る: 家の在る行が 1 つも無い機体(pool の pod — personal の資格は預かり所が観測し、会社 profile は会社機体だけ)は usage を撃たず、「観測する profile なし」を AgentdState.no_profile_homes_logged で 1 度だけ log し(家が現れたら戻る)、計器 profile-observed(homes 0)は出す。家の在る行が在れば、この機体が持つ資格の残量を effect ReadProfileUsage(kind = effects.PROFILE_USAGE_KIND = claude・契約の行は資格の種類を運ばない)で 1 度読む。実 handler = handlers.read_profile_usage = dotfiles agentcli の console script(handlers.USAGE_COMMAND = `ai usage --json`)の subprocess ちょうど — sessionhost は agentcli を import しない・会社境界(company_boundary)の判定を持たない(断りは record の error → ProfileUsageUnavailable)・読み口の落ち方(profiles.gen.json の不在)で器の profile の有無を判じない。書く観測は judgment.profile-observed-of の 1 点(閉語彙 effects.ProfileVerdict): 窓 = observed-window-of(spec.reset.everySeconds と一致する窓・無ければ 5h)、remaining = 100 - used(percent・budget.unit ≠ percent は書かない)、resetAt = 窓の戻る時刻(無ければ observedAt)、observedAt = 断面の時刻、node = 自分。post-image は profile-status-with-observed(committed の state・conditions を写す)、committed と同じ observed は書かず(profile-observed-changed)、Conflict は log して次の周期、Refused / 書かない理由は log に 1 行、この機体に無い profile(ProfileNotHeld)は書かず log もしない。agentd.hy は窓の名・単位・境界の語を比較しない。")
      (rule R10 "session は会話の資源・job は手番(温かい session・設計 17.4): 会話 → 生きている session の対応は行(自分が claim した同じ subject の agent-job の sessionHandle)と器の現況から導き、Bound の job の起こし方は judgment.hy の next-arm-for-job(閉語彙 effects.NextArm = launch | send | resume | defer)の 1 点で決める — 同じ会話の生きて idle な session が在れば launch せず session.send(awaiting)だけ、sessionHandle はその session を指し、turn-record は手番ごと。手番の終わりは器の lifecycle multi_turn(launch.hy の閉語彙に足した語)で policy.hy の monitor が既存の turn-end の連言から行の turn_ended_at に刻み、agentd は job-step-of の turn-end(turn_ended_at > 手番の始まりの下限 ∧ 記録の進み)で読む — status は倒さず session は生かす。idle の寿命は AgentdSettings.session_idle_ttl_seconds の 1 点で、超過・Withdrawn・node の退役で session.cleanup。計器 agent-job-to-send は create → send のまま(温かい path で p99 < 2 秒)。")]
   :laws
     [(law agentd-exits-only-to-acp-and-custody
@@ -446,14 +448,16 @@
          [(counterexample "TTL を agentd.hy や handlers.py の literal に散らす — 値を変えた時に片方だけ残り、片付けの拍と観測の拍で寿命が食い違う")
           (counterexample "idle の session を永遠に生かす — 会話ごとの tmux の pane が増え続け、node の容量(capacity)が温かい session で埋まる")])
      (law profile-remaining-is-observed-by-agentd-from-one-usage-point
-       :statement "for_all live profile row p (state ≠ retired) at each period profile_observe_seconds: agentd issues exactly one ReadProfileUsage and, for p held by this node with a readable usage u and budget.unit = percent, writes status.observed(p) = {window = observed-window-of(p), remaining = 100 - used(u, window), resetAt, observedAt = captured(u), node = self} over the committed status (state and conditions preserved) with ifGeneration, only when it differs from the committed observed; refused / failed usage (ProfileUsageUnavailable — decided by the agentcli leaf, never by agentd) or a non-percent unit ⇒ no write and one log line; a profile not held ⇒ no write and no log; Conflict ⇒ no write this period and a re-read next period; the usage reader is handlers.read_profile_usage over USAGE_COMMAND and sessionhost imports nothing from agentcli"
+       :statement "at each period profile_observe_seconds agentd reads the homes of this node once (ListProfileHomes = the agentcli registry × the existence of each profile's dir) and keeps only the live profile rows p (state ≠ retired) whose home is present (judgment.profile-rows-held); when that set is empty it issues NO ReadProfileUsage, logs 'no profile has a home' exactly once (AgentdState.no_profile_homes_logged, reset when a home appears) and still emits the profile-observed metric with homes = 0; otherwise, for_all such p: agentd issues exactly one ReadProfileUsage and, for p held by this node with a readable usage u and budget.unit = percent, writes status.observed(p) = {window = observed-window-of(p), remaining = 100 - used(u, window), resetAt, observedAt = captured(u), node = self} over the committed status (state and conditions preserved) with ifGeneration, only when it differs from the committed observed; refused / failed usage (ProfileUsageUnavailable — decided by the agentcli leaf, never by agentd) or a non-percent unit ⇒ no write and one log line; a profile not held ⇒ no write and no log; Conflict ⇒ no write this period and a re-read next period; the usage reader is handlers.read_profile_usage over USAGE_COMMAND, the registry reader is handlers.list_profile_homes over PROFILES_COMMAND, and sessionhost imports nothing from agentcli"
        :counterexamples
          [(counterexample "agentd が profile の残量を書かない — controller は observed の不在を unobserved(Unknown)としか読めず、盤の health が『profile 35 本の残量の観測がどれも窓より古いか無い』のまま、Scheduling は枯渇を判じられない(実弾 2026-09-12 23:4x・本番の profile 35 行)")
           (counterexample "agentd が会社境界を自分で判定する(handlers / judgment に company の述語を置く)— 判定点が agentcli の葉と 2 つになり、名簿の改訂で片方だけ残る(operator の規則 2026-09-09 の否定)")
           (counterexample "断られた profile に cached の値を書く — 非会社機体が会社 profile の残量を名乗り、controller が会社 profile の観測の由来(observed.node の ownership)を読み違える")
           (counterexample "post-image を observed だけで組む(conditions を落とす)— agentd は conditions の書き手でないので engine が断り、観測が 1 行も着地しない")
           (counterexample "断面が同じ拍にも書く — 35 行 × 周期ごとの status_synced が event journal を埋め、watch の拍が起き続ける")
-          (counterexample "sessionhost が agentcli を import する — doeff(上流)が dotfiles(下流)に依存し、tool env(uv tool)では import が落ちて agentd が参加しない")])]
+          (counterexample "sessionhost が agentcli を import する — doeff(上流)が dotfiles(下流)に依存し、tool env(uv tool)では import が落ちて agentd が参加しない")
+          (counterexample "profile を 1 つも持たない器(pool の pod)で周期ごとに `ai usage` を撃つ — 登録簿の生成物(profiles.gen.json)の無い器では読み口が毎周 exit 1 で落ち、log が『profile observation failed: FileNotFoundError』で埋まる(実弾 2026-09-13 zeus の agentd-pool・段 8e lane 4j)。器の profile の集合は家の在否で先に読み、空なら撃たない")
+          (counterexample "読み口の落ち方(FileNotFoundError の文言)で『profile が無い』を判じる — 判定が dotfiles の内部の綴りに結ばれ、名簿の改訂で偽陰性・偽陽性になる")])]
   :enforcement
     [(deftest test-adr-doe-agents-012-no-agora-ledger-words-in-sessionhost
        ;; R1 の針: sessionhost の全 source(acp/ を含む)の code 行に agora の台帳 API の語が無い。
@@ -963,6 +967,11 @@
        (assert (= (len (lfor line handler-lines :if (.startswith line "USAGE_COMMAND") line)) 1)
                "usage の読み口の綴りは handlers.USAGE_COMMAND の 1 点(R18)")
        (assert (= (len (lfor line handler-lines :if (.startswith line "def read_profile_usage(") line)) 1))
+       ;; 段 8e lane 4j: 器の profile の集合は登録簿の 1 点(PROFILES_COMMAND)× 家の実在で読み、
+       ;; 判断(観測する行)は judgment.profile-rows-held の 1 つ。
+       (assert (= (len (lfor line handler-lines :if (.startswith line "PROFILES_COMMAND") line)) 1)
+               "登録簿の読み口の綴りは handlers.PROFILES_COMMAND の 1 点(R18・段 8e lane 4j)")
+       (assert (= (len (lfor line handler-lines :if (.startswith line "def list_profile_homes(") line)) 1))
        (for [path (source-files)]
          (for [line (code-lines path)]
            (assert (not (or (.startswith (.lstrip line) "import agentcli")
@@ -971,6 +980,7 @@
                    f"sessionhost は agentcli を import しない(R18): {(.relative-to path SESSIONHOST-DIR)}: {line}")))
        (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
        (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk profile-observed-of ") line)) 1))
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk profile-rows-held ") line)) 1))
        (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk profile-status-with-observed ") line)) 1))
        (for [line (code-lines (/ ACP-DIR "agentd.hy"))]
          (for [word ["\"5h\"" "\"7d\"" "\"percent\"" "company" "five_hour"]]
@@ -1014,11 +1024,26 @@
        ;; 同じ断面の次の周期は書かない。
        (.tick world (* 1000 world.settings.profile-observe-seconds))
        (assert (= (len (lfor [key status] world.acp.writes :if (in ":profile:" key) key)) 1)
-               "committed と同じ observed は書かない(R18)"))]
+               "committed と同じ observed は書かない(R18)")
+       ;; 反例(挙動・段 8e lane 4j): 家の在る profile が無い器は usage を撃たず、1 度だけ名乗る。
+       (setv bare (World))
+       (.put-row bare.acp (profile-row "p1" "percent"))
+       (setv (get bare.local.usage PROFILE-USAGE-KIND)
+             #((ProfileUsage :profile "p1" :captured-at-ms 5000
+                             :windows #((UsageWindow :name "5h" :used-percent 25.0 :resets-at-ms 9000)))))
+       (setv (get bare.local.homes PROFILE-USAGE-KIND) #((ProfileHome :name "p1" :home "/homes/p1" :present False)))
+       (.tick bare 0)
+       (.tick bare (* 1000 bare.settings.profile-observe-seconds))
+       (assert (= bare.local.usage-reads []) "家の無い器は usage を撃たない(R18・段 8e lane 4j)")
+       (assert (= (len bare.local.home-reads) 2) "家の在否は周期ごとに読み直す")
+       (assert (= (len (lfor line bare.local.logs :if (in "no profile has a home" line) line)) 1)
+               "『観測する profile なし』は 1 度だけ(R18・段 8e lane 4j)")
+       (assert (not-in "observed" (status-of (get bare.acp.rows f"{AGORA-KINDS-NAMESPACE}:{PROFILE-KIND}:p1")))))]
   :plans ["docs/impl-requests/stage2-lane-prompts/lane-2b-agentd.md(agora-redesign)"
           "docs/impl-requests/stage2-lane-prompts/lane-2b2-agentd-fix.md(agora-redesign・改訂 R7〜R9)"
           "docs/impl-requests/stage2-lane-prompts/lane-2b3-warm-session.md(agora-redesign・改訂 R10)"
           "docs/impl-requests/stage2-lane-prompts/lane-2d-headless-backend.md(agora-redesign・改訂 R11〜R14)"
           "docs/impl-requests/stage2-lane-prompts/lane-2d2-codex-headless-shim.md(agora-redesign・追補 R16)"
           "docs/impl-requests/stage6-lane-prompts/lane-6f-gcp-node-join.md(agora-redesign・追補 R17)"
-          "docs/impl-requests/stage7-lane-prompts/lane-7d3-agentd-profile-observed.md(agora-redesign・追補 R18)"])
+          "docs/impl-requests/stage7-lane-prompts/lane-7d3-agentd-profile-observed.md(agora-redesign・追補 R18)"
+          "docs/impl-requests/stage8-lane-prompts/lane-4j-acp-debts.md(agora-redesign・R18 の追補: 器の profile の集合は家の在否で先に読む)"])

@@ -133,6 +133,7 @@ def initial_state() -> AgentdState:
         retired=(),
         deferred=(),
         last_profile_observed_ms=None,
+        no_profile_homes_logged=False,
     )
 
 
