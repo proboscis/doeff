@@ -973,7 +973,8 @@
        (assert (in "(defk append-entries [job entries]" agentd-src) "追記の腕 append-entries が無い(R19)")
        (assert (in "(defk drain-stream [" agentd-src) "手番の終わりの読み drain-stream が無い(R19)")
        (setv effects-src (.read-text (/ ACP-DIR "effects.py") :encoding "utf-8"))
-       (assert (in "TURN_RECORD_ENTRIES_BYTE_BUDGET = 262_144" effects-src) "行の上限の宣言が 1 点に無い(R19)")
+       ;; 段 9f lane 9f-5 便 2b: 行の上限は見出しだけの行の 32,768(ACP の契約の締めより先に書き手が下げる)。
+       (assert (in "TURN_RECORD_ENTRIES_BYTE_BUDGET = 32_768" effects-src) "行の上限の宣言が 1 点に無い(R19)")
        ;; 段 9f lane 9f-4: 見出しの型は本文の欄を持たない・導く点と写す点は 1 つずつ・切り詰めの規則は agentd に無い。
        (assert (in "class TurnEntryHeadline:" effects-src) "見出しの型が無い(R19)")
        (for [field ["    text:" "    summary:" "    input:" "    output:" "    model:"]]
