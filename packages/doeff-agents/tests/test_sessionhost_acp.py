@@ -447,7 +447,8 @@ def test_deltas_of_claude_folds_blocks_and_counts_usage_once_per_message() -> No
     )
     batch = run(judgment.deltas_of("claude", "transcript", text, "job", 10, 777))
     assert [frame["kind"] for frame in batch.frames] == ["usage", "tool_use", "text", "tool_result"]
-    assert [entry["kind"] for entry in batch.entries] == ["tool_use", "text", "tool_result"]
+    assert [entry.kind for entry in batch.entries] == ["tool_use", "text", "tool_result"]
+    assert [body["kind"] for body in batch.bodies] == ["tool_use", "text", "tool_result"]
     assert batch.usage == {
         "input": 1,
         "output": 2,
@@ -858,7 +859,9 @@ def test_second_turn_of_the_same_conversation_is_sent_to_the_warm_session() -> N
     assert record.status["state"] == "ended"
     entries = record.status["entries"]
     assert isinstance(entries, list)
-    assert [e["text"] for e in entries if isinstance(e, dict)] == ["two"]
+    # 段 9f lane 9f-4: 行の entry は見出し(本文の欄は無い)— 2 手番目の本文 1 block が 1 見出し。
+    assert [e["kind"] for e in entries if isinstance(e, dict)] == ["text"]
+    assert all(isinstance(e, dict) and "text" not in e for e in entries)
     assert world.sessions.cleanups == []
     assert world.state.jobs == ()
 
@@ -1063,7 +1066,9 @@ def _place_interrupt(world: World, job_id: str, message_ids: list[str]) -> None:
     assert running.status is not None
     placed: JSONObject = dict(running.status)
     existing = placed.get("interrupts")
-    placed["interrupts"] = (list(existing) if isinstance(existing, list) else []) + list(message_ids)
+    placed["interrupts"] = (list(existing) if isinstance(existing, list) else []) + list(
+        message_ids
+    )
     world.acp.put_row(
         row(
             AGENT_JOB_NAMESPACE,
@@ -1097,7 +1102,10 @@ def test_interrupt_on_a_running_job_is_handed_to_the_session_and_recorded_on_the
     assert job.status["phase"] == PHASE_RUNNING
     assert job.status["interrupts"] == []
     assert job.status["interruptsDelivered"] == ["m-i1", "m-i2"]
-    assert job.status["sessionHandle"] == {"sessionId": sid, "stream": {"owner": "agentd", "name": sid}}
+    assert job.status["sessionHandle"] == {
+        "sessionId": sid,
+        "stream": {"owner": "agentd", "name": sid},
+    }
     assert [j.interrupts_sent for j in world.state.jobs] == [("m-i1", "m-i2")]
     # 次の拍: 行にも memory にも渡した印が在るので二度渡さない
     world.tick(advance_ms=1_000)
@@ -1113,7 +1121,9 @@ def test_interrupt_on_a_running_job_is_handed_to_the_session_and_recorded_on_the
     assert job.status["interrupts"] == []
 
 
-def test_interrupt_refused_by_the_session_stays_on_the_row_and_is_not_recorded_as_delivered() -> None:
+def test_interrupt_refused_by_the_session_stays_on_the_row_and_is_not_recorded_as_delivered() -> (
+    None
+):
     """器が断った(走っている手番が無い)割り込みは行に残す(渡していない印 = Messaging が終端の
     行から queued へ積み直す材料)。本文の無い id は渡せない(log)が、行には残す。"""
     world = World()
@@ -1152,7 +1162,10 @@ def test_interrupts_are_only_delivered_to_jobs_this_agentd_runs() -> None:
     other_status: JSONObject = dict(other.status)
     other_status["phase"] = PHASE_RUNNING
     other_status["binding"] = {"node": "other-node", "profile": "personal"}
-    other_status["sessionHandle"] = {"sessionId": "sid-x", "stream": {"owner": "agentd", "name": "sid-x"}}
+    other_status["sessionHandle"] = {
+        "sessionId": "sid-x",
+        "stream": {"owner": "agentd", "name": "sid-x"},
+    }
     other_status["interrupts"] = ["m-i1"]
     world.acp.put_row(row(AGENT_JOB_NAMESPACE, AGENT_JOB_KIND, "j-x", other.spec, other_status))
     world.tick()
@@ -1446,14 +1459,17 @@ class HeadlessWorld(World):
 
 
 def _assert_claude_headless_entries(entries: list[JSON]) -> None:
-    """段 8 lane 4u: 出来事の列の欄(system の 1 行・本文と model・道具の呼び出しと結果の toolUseId)。"""
+    """段 8 lane 4u → 段 9f lane 9f-4: 出来事の列の欄は見出し(system・text・道具の呼び出しと結果の toolUseId — 本文も
+    model も summary も無く、bytes / sha256 が本文の同一性を運ぶ)。"""
     system_entry = entries[0]
     assert isinstance(system_entry, dict)
-    assert system_entry["text"] == "session started"
+    assert system_entry["kind"] == "system"
+    assert set(system_entry) == {"seq", "at", "kind", "bytes", "sha256"}
     first_entry = entries[1]
     assert isinstance(first_entry, dict)
-    assert first_entry["text"] == "hello world"
-    assert first_entry["model"] == "claude-opus-5"
+    assert first_entry["kind"] == "text"
+    assert set(first_entry) == {"seq", "at", "kind", "bytes", "sha256"}
+    assert first_entry["bytes"] == len(b'{"text":"hello world"}')
     use_entry = entries[2]
     assert isinstance(use_entry, dict)
     assert use_entry == {
@@ -1462,12 +1478,13 @@ def _assert_claude_headless_entries(entries: list[JSON]) -> None:
         "kind": "tool_use",
         "toolName": "Bash",
         "toolUseId": "t1",
-        "summary": '{"command": "ls"}',
+        "bytes": use_entry["bytes"],
+        "sha256": use_entry["sha256"],
     }
     result_entry = entries[3]
     assert isinstance(result_entry, dict)
     assert result_entry["toolUseId"] == "t1"
-    assert result_entry["summary"] == "ok"
+    assert set(result_entry) == {"seq", "at", "kind", "toolUseId", "bytes", "sha256"}
     assert "isError" not in result_entry
 
 

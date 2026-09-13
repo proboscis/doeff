@@ -9,8 +9,11 @@
 ;;;     再起動で消えても行から組み直せる(in-flight-job-of の 1 点)。
 ;;;   * 行の欄の写し(charter・inputs・affinity → 起こし方 / status の書き換え / node の
 ;;;     lease の欄)— 判断ではなく契約の綴りの変換。
-;;;   * transcript の行 → TurnDelta の frame と turn-record の entries(契約
-;;;     docs/contracts/turn-delta.json / agora-kinds.json の欄へ写す)。
+;;;   * transcript の行 → TurnDelta の frame・本文(契約 record-service eventIn)・turn-record の entries
+;;;     (契約 docs/contracts/turn-delta.json / agora-kinds.json の欄へ写す)。段 9f lane 9f-4: ACP の entry は
+;;;     **見出しの閉じた欄**(TurnEntryHeadline — seq・at・kind・toolName・toolUseId・bytes・sha256・isError)で
+;;;     本文を持たない。見出しを導く点は headline-of-body の 1 つ、JSON への写しは entry-json-of の 1 つ。
+;;;     bytes / sha256 は service が冪等の判断に使う本文の同一性と同じ計算(record-body-bytes-of)。
 ;;;   * 温かい session(R10): 会話 → 生きている session の対応は行(agent-job の subject と
 ;;;     sessionHandle)から導き、Bound の job の起こし方は next-arm-for-job(launch | send |
 ;;;     resume | defer)の 1 点、手番の終わりは job-step-of の turn-end(host が刻んだ
@@ -33,6 +36,7 @@
 
 (import dataclasses [replace])
 (import datetime [datetime timezone])
+(import hashlib)
 (import json)
 (import re)
 
@@ -54,8 +58,7 @@
   ENTRY-KIND-TEXT
   ENTRY-KIND-TOOL-RESULT
   ENTRY-KIND-TOOL-USE
-  ENTRY-SUMMARY-MAX-CHARS
-  ENTRY-TEXT-MAX-CHARS
+  HeadlineTurns
   HistoryFold
   INTERRUPT-ARM-INTERRUPT
   INTERRUPT-ARM-NONE
@@ -97,13 +100,16 @@
   RECORD-APPEND-ERROR
   RECORD-APPEND-OK
   RECORD-BATCH-MAX-EVENTS
+  RECORD-REF-PREFIX
   RECORD-STATUS-MALFORMED
   RECORD-STREAM-TURN
   RecordAppended
   RecordBatch
   RecordConflicted
+  RecordEvent
   RecordStream
   RecordUnsent
+  RecordedTurns
   SESSION-OBSERVED-BUSY
   SESSION-OBSERVED-IDLE
   SESSION-TERMINAL-STATUSES
@@ -115,6 +121,8 @@
   TURN-RECORD-ENDED
   TURN-RECORD-ENTRIES-BYTE-BUDGET
   TURN-RECORD-KIND
+  TurnEntryDropMarker
+  TurnEntryHeadline
   USAGE-WINDOW-FULL-PERCENT
   USAGE-WINDOW-SECONDS
   WatchAdvance])
@@ -797,7 +805,7 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; 履歴からの再開(段 8q・R20): ACP の会話の記録 → 「これまでの会話」
+;; 履歴からの再開(段 8q・R20・段 9f lane 9f-4): 郵便(ACP)+ 手番の本文(会話の記録の service)→ 「これまでの会話」
 ;; ---------------------------------------------------------------------------
 
 (defk history-time-of [at]
@@ -821,37 +829,78 @@
   f"[{stamp}] {sender} → {to}({kind}): {text}")
 
 
-(defk history-entry-line [entry at]
-  {:pre [(: entry dict) (: at int)]
+(defk history-event-line [event]
+  {:pre [(: event RecordEvent)]
    :post [(: % (| str None))]}
-  "turn-record の出来事 1 つ → 「これまでの会話」の 1 項(kind ごとの畳み — 契約 turn-record の entries の
-   閉語彙: text / tool_use / tool_result / system / error。frame は tui の画面の断面で会話ではないので畳まない
-   = None)。"
-  (<- stamp str (history-time-of at))
-  (setv kind (.get entry "kind"))
-  (setv text (.get entry "text"))
-  (setv summary (.get entry "summary"))
-  (setv body (cond (isinstance text str) text (isinstance summary str) summary True ""))
-  (setv tool (.get entry "toolName" ""))
-  (setv failed (if (.get entry "isError") "(誤り)" ""))
+  "会話の記録の service の出来事 1 つ → 「これまでの会話」の 1 項(kind ごとの畳み — 契約 record-service の
+   eventKinds: text / tool_use / tool_result / system / error / user。frame は画面の断面で会話ではない・message は
+   郵便で ACP の行から畳む〔service の mail の stream はまだ書き手が無い — 書き手が立つ便で郵便の畳みの座を移す〕
+   = None)。本文が無い行(tombstone)は空の本文として畳む。"
+  (<- stamp str (history-time-of event.at))
+  (setv body (cond (isinstance event.text str) event.text
+                   (isinstance event.summary str) event.summary
+                   (isinstance event.input str) event.input
+                   (is-not event.input None) (json.dumps event.input :ensure-ascii False)
+                   (isinstance event.output str) event.output
+                   (is-not event.output None) (json.dumps event.output :ensure-ascii False)
+                   True ""))
+  (setv tool (if (isinstance event.tool-name str) event.tool-name ""))
+  (setv failed (if event.is-error "(誤り)" ""))
+  (setv cut (if event.truncated "(切り詰め)" ""))
   (cond
-    (= kind "text") f"[{stamp}] agent: {body}"
-    (= kind "tool_use") f"[{stamp}] agent の道具 {tool}: {body}"
-    (= kind "tool_result") f"[{stamp}] 道具の結果{failed}: {body}"
-    (= kind "system") f"[{stamp}] system: {body}"
-    (= kind "error") f"[{stamp}] 誤り: {body}"
+    (= event.kind "text") f"[{stamp}] agent: {body}{cut}"
+    (= event.kind "tool_use") f"[{stamp}] agent の道具 {tool}: {body}{cut}"
+    (= event.kind "tool_result") f"[{stamp}] 道具の結果{failed}: {body}{cut}"
+    (= event.kind "system") f"[{stamp}] system: {body}"
+    (= event.kind "error") f"[{stamp}] 誤り: {body}"
+    (= event.kind "user") f"[{stamp}] user: {body}{cut}"
     True None))
 
 
-(defk rehydrate-history-of [conversation-id messages records exclude budget]
-  {:pre [(: conversation-id str) (: messages tuple) (: records tuple) (: exclude tuple) (: budget int)]
+(defk history-headline-line [record]
+  {:pre [(: record AcpRow)]
+   :post [(: % (| str None))]}
+  "ACP の turn-record の行 1 つ(見出しだけ・本文なし)→ 薄い再開の 1 項: 手番の出来事の数を kind ごとに数え、道具の名を
+   並べる(本文の無い行を本文として扱わない — 中身は名乗れないので数と在処だけ)。見出しが無い行は None。"
+  (setv status (if (isinstance record.status dict) record.status {}))
+  (<- entries tuple (entries-of-status status))
+  (setv counts {})
+  (setv tools [])
+  (setv newest 0)
+  (for [entry entries]
+    (<- marker bool (is-drop-marker entry))
+    (when marker
+      (continue))
+    (setv kind (.get entry "kind"))
+    (when (isinstance kind str)
+      (setv (get counts kind) (+ (.get counts kind 0) 1)))
+    (setv tool (.get entry "toolName"))
+    (when (and (isinstance tool str) (not-in tool tools))
+      (.append tools tool))
+    (setv at (.get entry "at"))
+    (when (and (isinstance at int) (> at newest))
+      (setv newest at)))
+  (when (not counts)
+    (return None))
+  (<- stamp str (history-time-of (if (> newest 0) newest record.created-at-ms)))
+  (setv parts (.join "・" (lfor [kind count] (.items counts) f"{kind} {count}")))
+  (setv tool-names (.join ", " tools))
+  (setv tool-note (if tools f"(道具: {tool-names})" ""))
+  f"[{stamp}] 手番 {record.resource-id}(見出しだけ・本文は記録の service): {parts}{tool-note}")
+
+
+(defk rehydrate-history-of [conversation-id messages source exclude budget]
+  {:pre [(: conversation-id str) (: messages tuple) (: source (| RecordedTurns HeadlineTurns)) (: exclude tuple)
+         (: budget int)]
    :post [(: % HistoryFold)]}
-  "ACP の会話の記録 → 履歴からの再開の手番の最初の本文に畳む「これまでの会話」(段 8q・R20)— 判断はここ 1 点:
-   郵便(spec.to か spec.from がこの会話・exclude = この手番の inputs は除く — 本文として別に届く)と
-   turn-record(spec.conversationId がこの会話)の entries を時刻順(同じ時刻は郵便が先)に並べ、会話へ
-   届いた郵便(spec.to = この会話)ごとに手番に割る。UTF-8 で budget byte を超えたら**古い手番から要約せず
-   落とし**、落とした手番と項の数と全文の在処(ACP の会話の記録)を末尾に名乗る。最新の手番 1 つだけでも
-   超えるならその手番の先頭を落として末尾を残し、切った byte を名乗る。記録が無ければ text は空。"
+  "会話の記録 → 履歴からの再開の手番の最初の本文に畳む「これまでの会話」(段 8q・R20・段 9f lane 9f-4)— 判断はここ 1 点:
+   郵便(ACP の行 — spec.to か spec.from がこの会話・exclude = この手番の inputs は除く — 本文として別に届く)と手番の
+   材料(source — 型で 2 つ: RecordedTurns = 会話の記録の service の本文〔設計 §2.4・before=latest から〕/ HeadlineTurns =
+   ACP の見出しだけ〔service に届かない時の**薄い再開** — 本文は畳めないので手番ごとの数だけ・名乗る〕)を時刻順(同じ
+   時刻は郵便が先)に並べ、会話へ届いた郵便(spec.to = この会話)ごとに手番に割る。UTF-8 で budget byte を超えたら
+   **古い手番から要約せず落とし**、落とした手番と項の数と全文の在処を末尾に名乗る。最新の手番 1 つだけでも超えるなら
+   その手番の先頭を落として末尾を残し、切った byte を名乗る。記録が無ければ text は空(薄い再開でも空)。"
+  (setv thin (isinstance source HeadlineTurns))
   (setv items [])
   (setv order 0)
   (for [message messages]
@@ -863,28 +912,37 @@
       (<- line str (history-message-line message (if (isinstance at int) at message.created-at-ms)))
       (.append items #((if (isinstance at int) at message.created-at-ms) order inbound line))
       (setv order (+ order 1))))
-  (for [record records]
-    (when (= (.get record.spec "conversationId") conversation-id)
-      (setv status (if (isinstance record.status dict) record.status {}))
-      (setv entries (.get status "entries"))
-      (for [entry (if (isinstance entries list) entries [])]
-        (when (isinstance entry dict)
-          (setv at (.get entry "at"))
-          (setv stamp (if (isinstance at int) at record.created-at-ms))
-          (<- line (| str None) (history-entry-line entry stamp))
+  (if thin
+      (for [record source.records]
+        (when (= (.get record.spec "conversationId") conversation-id)
+          (<- line (| str None) (history-headline-line record))
           (when (is-not line None)
-            (.append items #(stamp order False line))
-            (setv order (+ order 1)))))))
+            (setv status (if (isinstance record.status dict) record.status {}))
+            (<- entries tuple (entries-of-status status))
+            (setv first-at (next (gfor entry entries :if (isinstance (.get entry "at") int) (get entry "at"))
+                                 record.created-at-ms))
+            (.append items #(first-at order False line))
+            (setv order (+ order 1)))))
+      (for [event source.events]
+        (<- line (| str None) (history-event-line event))
+        (when (is-not line None)
+          (.append items #(event.at order False line))
+          (setv order (+ order 1)))))
   (setv groups [])
   (for [item (sorted items :key (fn [item] #((get item 0) (get item 1))))]
     (if (or (not groups) (get item 2))
         (.append groups [(get item 3)])
         (.append (get groups -1) (get item 3))))
   (when (not groups)
-    (return (HistoryFold :text "" :kept-turns 0 :dropped-turns 0 :dropped-items 0 :size-bytes 0)))
-  (setv header f"これまでの会話(ACP の記録から組んだ写し・会話 {conversation-id}・古い順):")
-  (setv where (+ f"全文は ACP の会話 {conversation-id} の記録 — kind message(spec.to / spec.from = {conversation-id})"
-                 f"と kind turn-record(spec.conversationId = {conversation-id})の行 — にあります"))
+    (return (HistoryFold :text "" :kept-turns 0 :dropped-turns 0 :dropped-items 0 :size-bytes 0 :thin thin)))
+  (setv header
+        (if thin
+            (+ f"これまでの会話(薄い再開・会話 {conversation-id}・古い順): 会話の記録の service に届かなかった"
+               f"({source.reason})ため、手番の本文は無く ACP の見出し(出来事の数)だけです。郵便の本文は在ります。")
+            (+ f"これまでの会話(会話の記録の service と ACP の郵便から組んだ写し・会話 {conversation-id}・古い順"
+               (if source.complete "" "・会話の最初までは読んでいない") "):")))
+  (setv where (+ f"全文は会話 {conversation-id} の記録 — 郵便は ACP の kind message(spec.to / spec.from = {conversation-id})"
+                 f"の行・手番の本文は会話の記録の service(GET /v1/conversations/{conversation-id}/events)— にあります"))
   (setv blocks (lfor group groups (.join "\n" group)))
   (setv dropped-turns 0)
   (setv dropped-items 0)
@@ -908,7 +966,24 @@
                :kept-turns (- (len blocks) dropped-turns)
                :dropped-turns dropped-turns
                :dropped-items dropped-items
-               :size-bytes (len (.encode text "utf-8"))))
+               :size-bytes (len (.encode text "utf-8"))
+               :thin thin))
+
+
+(defk record-history-satisfied [events budget]
+  {:pre [(: events tuple) (: budget int)]
+   :post [(: % bool)]}
+  "履歴からの再開の後向きの読みを止めてよいか: 読めた出来事の本文の bytes(切る前の大きさ・契約 storedEvent.bytes)の
+   合計が畳みの上限(budget)に届いた(これより古い頁は畳みが落とす)。"
+  (>= (sum (gfor event events event.bytes)) budget))
+
+
+(defk record-page-advances [before next]
+  {:pre [(: before (| int None)) (: next (| int None))]
+   :post [(: % bool)]}
+  "次の頁を読んでよいか: cursor.next が在り(None = 会話の最初まで読めた)、今の before より小さい(後向きに進む)。進まない
+   答え(同じか大きい cursor)は契約違反なのでそこで止める — 読みを無限に繰り返さない。"
+  (and (is-not next None) (or (is before None) (< next before))))
 
 
 (defk inputs-of [row]
@@ -1228,19 +1303,19 @@
 (defk renumbered-entries [entries floor]
   {:pre [(: entries tuple) (: floor int)]
    :post [(: % tuple)]}
-  "新しい出来事の seq が行の採番(floor = 行の次の seq)より小さければ、floor から順に振り直す
-   (拾い直した job は 0 から数え直すので行の seq と衝突する)。衝突しなければそのまま。"
+  "新しい見出し(TurnEntryHeadline の列)の seq が行の採番(floor = 行の次の seq)より小さければ、floor から順に
+   振り直す(拾い直した job は 0 から数え直すので行の seq と衝突する)。衝突しなければそのまま。"
   (when (not entries)
     (return entries))
-  (setv first-seq (.get (get entries 0) "seq"))
-  (when (and (isinstance first-seq int) (>= first-seq floor))
+  (setv first (get entries 0))
+  (when (not (isinstance first TurnEntryHeadline))
+    (raise (TypeError f"renumbered-entries: entries must be TurnEntryHeadline, got {(. (type first) __name__)}")))
+  (when (>= first.seq floor)
     (return entries))
   (setv out [])
   (setv seq floor)
   (for [entry entries]
-    (setv copy (dict entry))
-    (setv (get copy "seq") seq)
-    (.append out copy)
+    (.append out (replace entry :seq seq))
     (setv seq (+ seq 1)))
   (tuple out))
 
@@ -1255,11 +1330,10 @@
 (defk drop-marker [dropped seq at]
   {:pre [(: dropped int) (: seq int) (: at int)]
    :post [(: % dict)]}
-  "行の上限で古い出来事を落とした印(kind system・truncated・dropped)— 落とした最古の seq と
-   最新の at を持ち、列の先頭に立つ。"
-  {"seq" seq "at" at "kind" ENTRY-KIND-SYSTEM
-   "text" f"行の上限で古い出来事 {dropped} 件を落とした(記録はこの先から)"
-   "truncated" True "dropped" dropped})
+  "行の上限で古い見出しを落とした印(kind system・truncated・dropped — 本文を持たないので text も bytes / sha256 も
+   無い)の JSON — 落とした最古の seq と最新の at を持ち、列の先頭に立つ。写しは entry-json-of の 1 点。"
+  (<- marker dict (entry-json-of (TurnEntryDropMarker :seq seq :at at :dropped dropped)))
+  marker)
 
 
 (defk is-drop-marker [entry]
@@ -1328,11 +1402,18 @@
 (defk turn-record-appended-status [status new-entries]
   {:pre [(: status dict) (: new-entries tuple)]
    :post [(: % dict)]}
-  "行の status に出来事を追記した status(post-image): entries = 行の entries + new-entries を
-   行の上限(TURN-RECORD-ENTRIES-BYTE-BUDGET)に収めたもの。他の欄は写す。"
+  "行の status に見出しを追記した status(post-image): entries = 行の entries + new-entries(TurnEntryHeadline の列 —
+   JSON への写しは entry-json-of の 1 点・本文の欄は型に無い)を行の上限(TURN-RECORD-ENTRIES-BYTE-BUDGET)に収めたもの。
+   他の欄は写す。"
   (setv next (dict status))
   (<- existing tuple (entries-of-status status))
-  (<- bounded tuple (entries-within-budget (+ existing new-entries) TURN-RECORD-ENTRIES-BYTE-BUDGET))
+  (setv rendered [])
+  (for [entry new-entries]
+    (when (not (isinstance entry TurnEntryHeadline))
+      (raise (TypeError f"turn-record entries must be TurnEntryHeadline, got {(. (type entry) __name__)}")))
+    (<- item dict (entry-json-of entry))
+    (.append rendered item))
+  (<- bounded tuple (entries-within-budget (+ existing (tuple rendered)) TURN-RECORD-ENTRIES-BYTE-BUDGET))
   (setv (get next "entries") (list bounded))
   next)
 
@@ -1340,8 +1421,8 @@
 (defk turn-record-ended-status [status usage entries]
   {:pre [(: status dict) (: usage (| dict None)) (: entries tuple)]
    :post [(: % dict)]}
-  "手番の終わりの turn-record の status: 残りの出来事(entries)を行の entries に**追記**した上で
-   state = ended・usage(素材があれば)。行の entries は落とさない(手番の間に追記した出来事が正本)。"
+  "手番の終わりの turn-record の status: 残りの見出し(entries — TurnEntryHeadline の列)を行の entries に**追記**
+   した上で state = ended・usage(素材があれば)。行の entries は落とさない(手番の間に追記した見出しが正本)。"
   (<- next dict (turn-record-appended-status status entries))
   (setv (get next "state") TURN-RECORD-ENDED)
   (when (is-not usage None)
@@ -1370,6 +1451,37 @@
   (<- stream-id str (record-stream-id-of job.job-id job.record-attempt))
   (RecordStream :kind RECORD-STREAM-TURN :stream-id stream-id :started-at-ms job.started-ms
                 :node job.node :profile job.profile :attempt job.record-attempt))
+
+
+(defk record-ref-of [conversation-id stream-id]
+  {:pre [(: conversation-id str) (: stream-id str)]
+   :post [(: % str)]}
+  "turn-record の status.recordRef の綴り(設計 §2.2): `record:<cid>/<streamId>` — 本文の在処の参照(claim check の札)。"
+  f"{RECORD-REF-PREFIX}{conversation-id}/{stream-id}")
+
+
+(defk record-stream-job-of [stream-id]
+  {:pre [(: stream-id str)]
+   :post [(: % str)]}
+  "stream id(record-stream-id-of の `<jobId>#a<attempt>`)→ agent-job の id(逆写像 — 拾い直しの番は最後の `#a` の後)。
+   受理の答えから turn-record の行(鍵 = job id)を引くのに使う。"
+  (setv parts (.rpartition stream-id "#a"))
+  (if (get parts 1) (get parts 0) stream-id))
+
+
+(defk turn-record-recorded-status [status record-ref highest]
+  {:pre [(: status dict) (: record-ref str) (: highest int)]
+   :post [(: % (| dict None))]}
+  "service が本文を受理した答え(highestProducerSeq)を turn-record の行へ写す status(post-image・設計 §2.2):
+   recordedSeq = 受理済みの本文の最大 producerSeq(後ろへ戻さない — 古い stream の遅れた再送は小さい値を持つ)・
+   recordRef = 本文の在処。進まない答え(既に同じか大きい値)は None(書かない)。他の欄は写す。"
+  (setv current (.get status "recordedSeq"))
+  (when (and (isinstance current int) (not (isinstance current bool)) (>= current highest))
+    (return None))
+  (setv next (dict status))
+  (setv (get next "recordRef") record-ref)
+  (setv (get next "recordedSeq") highest)
+  next)
 
 
 (defk record-spool-key-of [stream-id first-seq last-seq]
@@ -1568,11 +1680,26 @@
   (if (> (len text) limit) (cut text 0 limit) text))
 
 
-(defk clipped [text limit]
-  {:pre [(: text str) (: limit int)]
-   :post [(: % tuple)]}
-  "本文を limit 字で切る: #(text truncated)。"
-  (if (> (len text) limit) #((cut text 0 limit) True) #(text False)))
+(defk record-body-of [body]
+  {:pre [(: body dict)]
+   :post [(: % dict)]}
+  "本文(契約 eventIn)の同一性の材料 = text / summary / input / output の在る欄だけ(None は無いのと同じ)— service の
+   judgment.body-of と同じ形。"
+  (setv out {})
+  (for [name ["text" "summary" "input" "output"]]
+    (setv field (.get body name))
+    (when (is-not field None)
+      (setv (get out name) field)))
+  out)
+
+
+(defk record-body-bytes-of [body]
+  {:pre [(: body dict)]
+   :post [(: % bytes)]}
+  "本文の同一性の綴り = 材料(record-body-of)の compact JSON(鍵は sort・ASCII に逃がさない)の UTF-8 — service の
+   judgment.body-bytes-of と同じ 1 点(bytes と sha256 はこの綴りから)。"
+  (<- material dict (record-body-of body))
+  (.encode (json.dumps material :sort-keys True :separators #("," ":") :ensure-ascii False) "utf-8"))
 
 
 (defk text-body [seq at text model]
@@ -1616,87 +1743,56 @@
   {"producerSeq" seq "at" at "kind" kind "text" text})
 
 
-(defk entry-of-body [body]
+(defk headline-of-body [body]
   {:pre [(: body dict)]
+   :post [(: % TurnEntryHeadline)]}
+  "本文(契約 record-service eventIn の形 — 会話の記録の service へ切らずに運ぶ出来事)→ ACP の turn-record の見出し
+   (TurnEntryHeadline — 設計 §2.2 の閉じた欄)。**見出しを導く点はここ 1 つ**: seq = 本文の producerSeq(採番は 1 点)・
+   at・kind・toolName / toolUseId(道具)・isError・bytes / sha256 = 本文の同一性(record-body-bytes-of — service が
+   冪等の判断に使う値と同じ)。本文の欄(text / summary / input / output / model)は型に無い — 写さない・切らない。"
+  (<- material bytes (record-body-bytes-of body))
+  (setv tool-name (.get body "toolName"))
+  (setv tool-use-id (.get body "toolUseId"))
+  (TurnEntryHeadline :seq (get body "producerSeq")
+                     :at (get body "at")
+                     :kind (get body "kind")
+                     :bytes (len material)
+                     :sha256 (.hexdigest (hashlib.sha256 material))
+                     :tool-name (if (isinstance tool-name str) tool-name None)
+                     :tool-use-id (if (isinstance tool-use-id str) tool-use-id None)
+                     :is-error (is (.get body "isError") True)))
+
+
+(defk entry-json-of [entry]
+  {:pre [(: entry (| TurnEntryHeadline TurnEntryDropMarker))]
    :post [(: % dict)]}
-  "本文(契約 record-service eventIn の形 — 会話の記録の service へ切らずに運ぶ出来事)→ turn-record の entry(ACP の欄)。
-   切り詰めの定義点はここ 1 つ: text / system / error = text を ENTRY-TEXT-MAX-CHARS、tool_use / tool_result = 入力 /
-   出力の要約(summary-of)を ENTRY-SUMMARY-MAX-CHARS(切れば truncated)。seq = 本文の producerSeq(採番は 1 点)。"
-  (setv kind (get body "kind"))
-  (setv entry {"seq" (get body "producerSeq") "at" (get body "at") "kind" kind})
-  (setv truncated False)
-  (if (in kind #{ENTRY-KIND-TOOL-USE ENTRY-KIND-TOOL-RESULT})
+  "見出し(か行の上限の印)→ turn-record の status.entries の item の JSON(契約 agora-kinds.json §2.2 の閉じた欄)。
+   写す点はここ 1 つ: 見出し = {seq, at, kind, toolName?, toolUseId?, bytes, sha256, isError?}・印 = {seq, at, kind system,
+   truncated, dropped}。無い欄は書かない(null を発明しない)。本文の欄はどちらの型にも無い。"
+  (if (isinstance entry TurnEntryDropMarker)
+      {"seq" entry.seq "at" entry.at "kind" ENTRY-KIND-SYSTEM "truncated" True "dropped" entry.dropped}
       (do
-        (<- whole str (summary-of (.get body (if (= kind ENTRY-KIND-TOOL-USE) "input" "output")) 1000000000))
-        (<- summary-clip tuple (clipped whole ENTRY-SUMMARY-MAX-CHARS))
-        (when (= kind ENTRY-KIND-TOOL-USE)
-          (setv (get entry "toolName") (get body "toolName")))
-        (setv (get entry "summary") (get summary-clip 0))
-        (setv truncated (get summary-clip 1)))
-      (do
-        (<- text-clip tuple (clipped (get body "text") ENTRY-TEXT-MAX-CHARS))
-        (setv (get entry "text") (get text-clip 0))
-        (setv truncated (get text-clip 1))))
-  (when (in "model" body)
-    (setv (get entry "model") (get body "model")))
-  (when (in "toolUseId" body)
-    (setv (get entry "toolUseId") (get body "toolUseId")))
-  (when (is (.get body "isError") True)
-    (setv (get entry "isError") True))
-  (when truncated
-    (setv (get entry "truncated") True))
-  entry)
+        (setv item {"seq" entry.seq "at" entry.at "kind" entry.kind})
+        (when (is-not entry.tool-name None)
+          (setv (get item "toolName") entry.tool-name))
+        (when (is-not entry.tool-use-id None)
+          (setv (get item "toolUseId") entry.tool-use-id))
+        (setv (get item "bytes") entry.bytes)
+        (setv (get item "sha256") entry.sha256)
+        (when entry.is-error
+          (setv (get item "isError") True))
+        item)))
 
 
 (defk entries-of-bodies [bodies]
   {:pre [(: bodies tuple)]
    :post [(: % tuple)]}
-  "本文の列 → turn-record の entries の列(順と seq はそのまま・切り詰めは entry-of-body の 1 点)。"
+  "本文の列 → turn-record の見出しの列(TurnEntryHeadline・順と seq はそのまま・導く点は headline-of-body の 1 つ)。"
   (setv out [])
   (for [body bodies]
-    (<- entry dict (entry-of-body body))
-    (.append out entry))
+    (<- headline TurnEntryHeadline (headline-of-body body))
+    (.append out headline))
   (tuple out))
-
-
-(defk text-entry [seq at text model]
-  {:pre [(: seq int) (: at int) (: text str) (: model (| str None))]
-   :post [(: % dict)]}
-  "assistant の本文の 1 block → entry(kind text・上限 ENTRY-TEXT-MAX-CHARS・切れば truncated)= text-body を切った形。"
-  (<- body dict (text-body seq at text model))
-  (<- entry dict (entry-of-body body))
-  entry)
-
-
-(defk tool-use-entry [seq at tool-id name input]
-  {:pre [(: seq int) (: at int) (: tool-id str) (: name str)
-         (: input (| dict list str int float bool None))]
-   :post [(: % dict)]}
-  "道具の呼び出し → entry(kind tool_use・toolName・toolUseId・summary = 入力の要約 ≤ ENTRY-SUMMARY-MAX-CHARS)
-   = tool-use-body を切った形。"
-  (<- body dict (tool-use-body seq at tool-id name input))
-  (<- entry dict (entry-of-body body))
-  entry)
-
-
-(defk tool-result-entry [seq at tool-id output is-error]
-  {:pre [(: seq int) (: at int) (: tool-id str)
-         (: output (| dict list str int float bool None)) (: is-error bool)]
-   :post [(: % dict)]}
-  "道具の結果 → entry(kind tool_result・toolUseId・summary = 出力の要約 ≤ ENTRY-SUMMARY-MAX-CHARS・isError)
-   = tool-result-body を切った形。"
-  (<- body dict (tool-result-body seq at tool-id output is-error))
-  (<- entry dict (entry-of-body body))
-  entry)
-
-
-(defk note-entry [seq at kind text]
-  {:pre [(: seq int) (: at int) (: kind str) (: text str)]
-   :post [(: % dict)]}
-  "器の出来事(kind system)と手番の誤り(kind error)→ entry(text ≤ ENTRY-TEXT-MAX-CHARS)= note-body を切った形。"
-  (<- body dict (note-body seq at kind text))
-  (<- entry dict (entry-of-body body))
-  entry)
 
 
 (defk claude-system-note [record]
@@ -1775,8 +1871,8 @@
    block を text frame に。streamed では system の行(init / API の retry / hook の失敗 —
    claude-system-note)を kind system の entry に、result の行の誤り(claude-result-error)を
    kind error の entry に写す(手番の終わりの判定は host が読む — ここは記録だけ)。本文は
-   text-body 等で切らずに組み(DeltaBatch.bodies — 段 9f lane 9f-2)、entries はそこから entry-of-body の 1 点で
-   切って導く。"
+   text-body 等で切らずに組み(DeltaBatch.bodies — 段 9f lane 9f-2)、entries(見出し)はそこから headline-of-body の
+   1 点で導く(段 9f lane 9f-4 — 本文は ACP へ写さない)。"
   (setv frames [])
   (setv bodies [])
   (setv usage None)

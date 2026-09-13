@@ -72,9 +72,19 @@
 ;;; runner(agentd)が出来事の書き手、control plane(行)が正本、画面は read model。agentd は実況の材料を
 ;;; 読む拍ごとに、その拍の出来事(text / tool_use / tool_result / system / error)を turn-record の
 ;;; status.entries へ**追記**する(append-entries — informer と同じ CAS・Conflict は読み直して積み直す・
-;;; 断られた出来事は持ち越す)。上限と切り詰め(契約 conventions.turnRecordEntries の写し = effects.py の
-;;; TURN_RECORD_ENTRIES_BYTE_BUDGET / ENTRY_SUMMARY_MAX_CHARS / ENTRY_TEXT_MAX_CHARS)は judgment の純関数。
+;;; 断られた出来事は持ち越す)。行の上限(契約 conventions.turnRecordEntries の写し = effects.py の
+;;; TURN_RECORD_ENTRIES_BYTE_BUDGET)は judgment の純関数。
 ;;; 手番の終わりは最後の材料を同じ拍で読んで追記した上に ended・usage を書く(entries を置換しない)。
+;;;
+;;; 段 9f lane 9f-2 / 9f-4(agora-redesign #59・設計 conversation-record-service §2.2 / §2.4)の改訂 = R19 / R20 の追補:
+;;; 本文は会話の記録の service へ(spool → appendEvents・冪等)、ACP の turn-record の entry は**見出しの閉じた欄**
+;;; (effects.TurnEntryHeadline — seq・at・kind・toolName・toolUseId・bytes・sha256・isError。本文の欄 text / summary /
+;;; input / output / model は型に無い)。既知の形 = claim check(control plane には参照と見出し・本文は記録の service)。
+;;; 見出しを導く点は judgment.headline-of-body の 1 つ・JSON への写しは entry-json-of の 1 つ・bytes / sha256 は service の
+;;; 冪等の判断と同じ計算(record-body-bytes-of)。受理の答え(highestProducerSeq)は status.recordRef / recordedSeq に写す
+;;; (agentd.mark-recorded・judgment.turn-record-recorded-status)。履歴からの再開は service の before=latest から後向きに
+;;; 読み(agentd.record-turns-for・effect RecordRead)、届かない時は ACP の見出しで薄く再開すると名乗る(HeadlineTurns —
+;;; 本文の無い行を本文として扱わない・型で分ける)。
 
 (require doeff-adr.macros [defadr rule law])
 (require doeff-hy.macros [deftest])
@@ -372,8 +382,8 @@
      (rule R16 "headless の起こす手番は郵便を 1 手番目の本文に畳む: host の backend が headless(AgentdSettings.backend_kind — runtime.settings_from_env が valve.backend_of から導く 1 点・streamCapability と同じ源)なら、launch / resume の腕は charter の prompt(前置き)と inputs の郵便の本文を judgment.first-turn-prompt-of(空行区切り・郵便が無ければ charter だけ)で 1 つに畳んで起こし、after-start は session.send を撃たない。判定は judgment.first-turn-carries-inputs(backend ∧ 腕)の 1 点。send の腕(温かい session)は郵便の本文だけを send。tui(tmux / herdr)は今日どおり launch の後に send。turn-record の create・計器 agent-job-to-send・in-flight の登記は腕に依らず同じ。実弾 2026-09-12: launch の直後の send が `headless session already exists` で tick ごと落ち、turn-record が作られず job は拾い直しの腕へ。")
      (rule R17 "機体を足す手順は 1 命令 join: `doeff-sessionhost join --server <URL> --token-file <札> [--config <toml>] [--node-name] [--state-dir] [--backend] [--session-hooks] [--custody] [--borrower-key-file] [--ownership --ownership-proof]` の宣言は join.hy の join-spec-of(flag > toml(schema doeff.agentd-join.v1・flag と同名の鍵)> 既定)の 1 点で JoinSpec に組み、join-plan-of の 1 点で今日の起動が読む env の束(effects.py の *_ENV の綴り)と host の argv(--db / --socket / --max-running none / --backend / serve)に写す。entry.py は plan を process の env に据えて serve --acp と同じ経路を走る — env の名を entry / runtime が自分で組まない・読み手を増やさない。所有の等級 ownership(company | personal)は proof(gce-project:<project-id> | declared)と対でだけ宣言でき(片方だけは断る)、runtime.start_agentd_thread は thread を起こす前に join.ownership-preflight を撃ち(gce-project = OwnershipProbe の答え = metadata の project-id が一致する時だけ通す・declared = 撃たない)、不一致は AgentdPreflightError で参加しない。検めた等級は judgment.node-status-with-lease の 1 点で observations.ownership{grade, proof} に書く(宣言が無ければ欄ごと無い)。agentd.hy は ownership の語を比較しない。")
      (rule R18 "profile の残量の観測は agentd が書く(段 7 lane 7d-3): agentd-tick の 1 つの腕 observe-profiles が AgentdSettings.profile_observe_seconds(既定 300・値の宣言は 1 点・同じ値を読み口の cache の寿命に渡す)の周期で生きている profile の行(state ≠ retired)を読み、この機体の profile の家の在否を effect ListProfileHomes(段 8e lane 4j — 実 handler = handlers.list_profile_homes = 登録簿の 1 点 handlers.PROFILES_COMMAND = `agentcli profiles list --json` の subprocess + dir の実在)で読み、judgment.profile-rows-held の 1 点で観測する行を絞る: 家の在る行が 1 つも無い機体(pool の pod — personal の資格は預かり所が観測し、会社 profile は会社機体だけ)は usage を撃たず、「観測する profile なし」を AgentdState.no_profile_homes_logged で 1 度だけ log し(家が現れたら戻る)、計器 profile-observed(homes 0)は出す。家の在る行が在れば、この機体が持つ資格の残量を effect ReadProfileUsage(kind = effects.PROFILE_USAGE_KIND = claude・契約の行は資格の種類を運ばない)で 1 度読む。実 handler = handlers.read_profile_usage = dotfiles agentcli の console script(handlers.USAGE_COMMAND = `ai usage --json`)の subprocess ちょうど — sessionhost は agentcli を import しない・会社境界(company_boundary)の判定を持たない(断りは record の error → ProfileUsageUnavailable)・読み口の落ち方(profiles.gen.json の不在)で器の profile の有無を判じない。書く観測は judgment.profile-observed-of の 1 点(閉語彙 effects.ProfileVerdict): 窓 = observed-window-of(spec.reset.everySeconds と一致する窓・無ければ 5h)、remaining = 100 - used(percent・budget.unit ≠ percent は書かない)、resetAt = 窓の戻る時刻(無ければ observedAt)、observedAt = 断面の時刻、node = 自分。post-image は profile-status-with-observed(committed の state・conditions を写す)、committed と同じ observed は書かず(profile-observed-changed)、Conflict は log して次の周期、Refused / 書かない理由は log に 1 行、この機体に無い profile(ProfileNotHeld)は書かず log もしない。agentd.hy は窓の名・単位・境界の語を比較しない。")
-     (rule R19 "手番の出来事は拍ごとに turn-record へ追記する(段 8 lane 4u・agora-redesign #49): stream-records は実況の材料の追記を読むたびに、その拍の出来事(judgment.deltas-of の entries = 契約 agora-kinds.json の turn-record の status.entries の item — kind は effects.EntryKind の閉語彙 text / tool_use / tool_result / frame / system / error・at = 読んだ拍・seq = frame と共有の採番)を agentd.append-entries の 1 点で行の status.entries へ追記する(耐久化は手番の終わりを待たない)。書きは行の最後の image(InFlightJob.record — 無ければ鍵で読む)に対する CAS(AcpPutStatus の ifGeneration)で、Conflict は行を読み直して同じ出来事を 1 度だけ積み直し、Refused / 行の不在は出来事を InFlightJob.pending_entries に持ち越して次の拍か手番の終わりに乗せる(落とさない)。拾い直した job の採番(seq 0 から)が行の seq と衝突すれば judgment.next-seq-after / renumbered-entries で行の次から振り直す。entry の形と上限は judgment の純関数の 1 点ずつ(text-entry / tool-use-entry / tool-result-entry / note-entry — summary ≤ ENTRY_SUMMARY_MAX_CHARS・text ≤ ENTRY_TEXT_MAX_CHARS・切れば truncated = true・toolUseId は呼び出しと結果を結ぶ鍵)で、行の上限(TURN_RECORD_ENTRIES_BYTE_BUDGET = 262144 byte)は judgment.entries-within-budget が古い出来事から落とし先頭に印(kind system・truncated・dropped)を残す。claude の system の行(init / API の retry / hook の失敗)は kind system に、result の誤りは kind error に、codex の turn/completed の誤りも kind error に写す(手番の終わりの判定は host のまま — ここは記録だけ)。手番の終わり(finalize-job / interrupt-job)は drain-stream で最後の材料を同じ拍で読んで追記し、turn-record-ended-status は残りの出来事を**追記**した上で ended・usage を据える(entries を置換しない — 旧の形は最後の本文 1 行だった)。usage は手番の全材料の読み直し(turn-batch-of)から数える(message ごとの重複を跨がない)。")
-     (rule R20 "会話の cache を保つのは同じ機体 ∧ 同じ家の時だけ・それ以外は 履歴からの再開(ACP の記録から)(段 8q・agora-redesign #51・operator 決定 #54): Bound の job の起こし方は judgment.next-arm-for-job(candidate view home)の 1 点 — candidate = affinity.predecessor か会話の最後の手番の session(warm-candidate-of)、home = judgment.home-key-of(binding.account と charter の binding の対)、session の家は起こす時に刻んだ launch_attribution の agentd の欄(session-attribution-of / attribution-of-view — 回収される agent-job の行から導かない)。候補なし → launch / 生きて idle ∧ 同じ家 → send / 生きて idle ∧ 家が違う → 候補を session.cleanup して rehydrate / 生きていて idle でない → defer / 器に登記されて終端 ∧ 同じ家 → session.resume(cache を保つ)/ それ以外(器に無い = 別の機体・終端だが家が違う・帰属が無く家が分からない)→ rehydrate。rehydrate = session.launch で、最初の本文 = charter の prompt + judgment.rehydrate-history-of(会話の郵便と turn-record の entries を時刻順・kind ごとに畳み、この手番の inputs と frame は除き、AgentdSettings.rehydrate_history_byte_budget〔既定 65536 byte〕を超えたら古い手番から要約せず落として落とした数と全文の在処を名乗る)(+ headless は郵便の本文)。記録の材料は effect AcpConversationHistory(手番を起こし直す時の 1 回だけ)。resume が器に断られたら judgment.fallback-arm-of で同じ鋳造 id の rehydrate。家またぎの transcript の写し(sessionhost の transplant)には頼らない。turn-record の spec に sessionId(= sessionHandle.sessionId)を書く。node の observations は sessions の各項に account(帰属の account・null = 借りていない)、transcripts に終端の session のうち transcript の file がこの機体に在る会話ごとの最新(judgment.transcript-candidates-of・上限 AgentdSettings.transcripts_observed_max)を載せる — Scheduling はそれを (node, account) で読む(ACP 法 cd258b)。")
+     (rule R19 "手番の出来事は拍ごとに turn-record へ追記する(段 8 lane 4u・agora-redesign #49): stream-records は実況の材料の追記を読むたびに、その拍の出来事(judgment.deltas-of の entries = 契約 agora-kinds.json の turn-record の status.entries の item — kind は effects.EntryKind の閉語彙 text / tool_use / tool_result / frame / system / error・at = 読んだ拍・seq = frame と共有の採番)を agentd.append-entries の 1 点で行の status.entries へ追記する(耐久化は手番の終わりを待たない)。書きは行の最後の image(InFlightJob.record — 無ければ鍵で読む)に対する CAS(AcpPutStatus の ifGeneration)で、Conflict は行を読み直して同じ出来事を 1 度だけ積み直し、Refused / 行の不在は出来事を InFlightJob.pending_entries に持ち越して次の拍か手番の終わりに乗せる(落とさない)。拾い直した job の採番(seq 0 から)が行の seq と衝突すれば judgment.next-seq-after / renumbered-entries で行の次から振り直す。entry の形は見出しの閉じた型 effects.TurnEntryHeadline(段 9f lane 9f-4・設計 §2.2: seq・at・kind・toolName・toolUseId・bytes・sha256・isError — 本文の欄 text / summary / input / output / model は型に無く、写さない・切らない〔切り詰めは会話の記録の service の責務〕)で、導く点は judgment.headline-of-body の 1 つ・JSON への写しは entry-json-of の 1 つ・bytes / sha256 は service の冪等の判断と同じ計算(record-body-bytes-of = text / summary / input / output の在る欄だけの compact・鍵 sort・UTF-8)。toolUseId は呼び出しと結果を結ぶ鍵。行の上限(TURN_RECORD_ENTRIES_BYTE_BUDGET = 262144 byte)は judgment.entries-within-budget が古い見出しから落とし先頭に印(TurnEntryDropMarker → kind system・truncated・dropped — 本文も bytes / sha256 も無い)を残す。service が本文を受理した答え(highestProducerSeq)は agentd.mark-recorded が status.recordRef(`record:<cid>/<streamId>`)/ recordedSeq(後ろへ戻さない)に写す。claude の system の行(init / API の retry / hook の失敗)は kind system に、result の誤りは kind error に、codex の turn/completed の誤りも kind error に写す(手番の終わりの判定は host のまま — ここは記録だけ)。手番の終わり(finalize-job / interrupt-job)は drain-stream で最後の材料を同じ拍で読んで追記し、turn-record-ended-status は残りの出来事を**追記**した上で ended・usage を据える(entries を置換しない — 旧の形は最後の本文 1 行だった)。usage は手番の全材料の読み直し(turn-batch-of)から数える(message ごとの重複を跨がない)。")
+     (rule R20 "会話の cache を保つのは同じ機体 ∧ 同じ家の時だけ・それ以外は 履歴からの再開(ACP の記録から)(段 8q・agora-redesign #51・operator 決定 #54): Bound の job の起こし方は judgment.next-arm-for-job(candidate view home)の 1 点 — candidate = affinity.predecessor か会話の最後の手番の session(warm-candidate-of)、home = judgment.home-key-of(binding.account と charter の binding の対)、session の家は起こす時に刻んだ launch_attribution の agentd の欄(session-attribution-of / attribution-of-view — 回収される agent-job の行から導かない)。候補なし → launch / 生きて idle ∧ 同じ家 → send / 生きて idle ∧ 家が違う → 候補を session.cleanup して rehydrate / 生きていて idle でない → defer / 器に登記されて終端 ∧ 同じ家 → session.resume(cache を保つ)/ それ以外(器に無い = 別の機体・終端だが家が違う・帰属が無く家が分からない)→ rehydrate。rehydrate = session.launch で、最初の本文 = charter の prompt + judgment.rehydrate-history-of(会話の郵便〔ACP の kind message〕と手番の本文を時刻順・kind ごとに畳み、この手番の inputs と frame は除き、AgentdSettings.rehydrate_history_byte_budget〔既定 65536 byte〕を超えたら古い手番から要約せず落として落とした数と全文の在処を名乗る)(+ headless は郵便の本文)。手番の本文の材料は型で 2 つ(段 9f lane 9f-4・設計 §2.4): RecordedTurns = 会話の記録の service を before=latest から後向きに読んだ本文(agentd.record-turns-for — effect RecordRead を 1 頁 RECORD_PAGE_MAX_LIMIT ずつ、judgment.record-history-satisfied〔読めた bytes ≥ 上限〕か会話の最初まで)/ HeadlineTurns = service が配線されていない・届かない時の ACP の turn-record の見出しだけ(**薄い再開** — 手番ごとの出来事の数と道具の名だけを畳み、prompt の頭と log が薄い再開と理由を名乗る。本文の無い行を本文として扱わない)。郵便と行の材料は effect AcpConversationHistory(手番を起こし直す時の 1 回だけ)。resume が器に断られたら judgment.fallback-arm-of で同じ鋳造 id の rehydrate。家またぎの transcript の写し(sessionhost の transplant)には頼らない。turn-record の spec に sessionId(= sessionHandle.sessionId)を書く。node の observations は sessions の各項に account(帰属の account・null = 借りていない)、transcripts に終端の session のうち transcript の file がこの機体に在る会話ごとの最新(judgment.transcript-candidates-of・上限 AgentdSettings.transcripts_observed_max)を載せる — Scheduling はそれを (node, account) で読む(ACP 法 cd258b)。")
      (rule R21 "割り込みの本文は走っている手番へ即座に渡す(段 8 lane 4x・agora-redesign #56・operator 逐語 2026-09-13 \"messaging supports both 'queued/interrupting' messages\"): Messaging(ACP)が走っている手番の agent-job の status.interrupts に載せた Message の id を、agentd は毎拍・行の cache から・自分が走らせている job(memory の InFlightJob)についてだけ読み(agentd.deliver-interrupts の 1 点)、渡していない id(judgment.pending-interrupts-of = 行の interrupts − 行の interruptsDelivered − memory の interrupts_sent・載せた順)ごとに Message の本文を鍵で 1 行読んで SessionInterject(session.send の mode = interrupt)で器へ渡す。渡せた id は鍵で読み直した行に CAS で記録する(judgment.interrupts-delivered-status-of — 同じ 1 回の書きで interrupts から消し interruptsDelivered へ足す・他の欄は写す・Conflict は 1 度読み直す)。器が断った id(走っている手番が無い)はそこで止めて行に残す(順を跨いで後の id を先に渡さない)— 手番が終わればその行は終端の phase で interrupts を持ち、Messaging が queued として積み直す。器の側(sessionhost の headless): claude は `--input-format stream-json` の温かい process(impls/headless_argv.hy の CLAUDE-HEADLESS-FLAGS・実測 conformance/interrupt-physics.md — 手番の途中に書いた user の行は CLI が次の tool の境界で手番に注入し、result の後も process は生きて次の行が次の手番)で、割り込みの本文 = 同じ user の行(headless_protocol.ClaudeDialogue.inject — 走っている手番が無ければ accepted = False)、codex = turn/interrupt を送り interrupted の turn/completed を手番の終わりとして報告せず同じ thread へ本文の turn/start(CodexDialogue.inject — host から見て手番は 1 つのまま)。host は器が引き受けなかった時に型付きに断る(headless-inject-program — 誰の job でもない手番を起こさない)。agentd は器の作法(stdin の綴り・turn/interrupt)を 1 語も持たない。")
      (rule R22 "実況の push の周期は購読者が居る間 ≤ 50 ms(段 8 lane 4aa・agora-redesign #63): headless の器の実況は events file の行の増分で、file の追記は合図を持たない —— agentd が offset から読んで中継へ押す拍の周期がそのまま push の間隔になる。購読者が居る(InFlightJob.capturing)間の watch の待ちの上限は、この器の実況が events(AgentdSettings.stream_capability = events)なら AgentdSettings.events_poll_seconds(既定 0.05 = 出来事ごとの push に最も近い有界の拍)、frames(tui の pane の断面)なら frame_interval_seconds(2〜5 Hz・issue #1 の決定 4 のまま)。購読者が居なければ transcript_poll_seconds(記録の追記だけ)、job が無ければ idle_wait_seconds。判断は judgment.wait-seconds-for の 1 点、値の宣言は AgentdSettings の 1 点(handlers / agentd.hy に周期の literal を置かない)。本番 2026-09-13 17:1x: 実況の最初の tail が attach の後 247〜258 ms、割り込みの反映 219 ms — 画面の糊の側の根(会話簿の毎拍の組み直し)は agora-controllers 741e67d で直し、agentd の側の残りがこの周期(購読ありで 0.4 s・無しで 1.0 s の tick)だった。⚠ 記録(turn-record)への追記の拍は push の周期に**追随しない**(judgment.record-due — transcript_poll_seconds のまま・InFlightJob.last_record_ms): 追記は CAS の書き = ACP の event 1 つで、50 ms の拍ごとに書くと走っている手番 1 つで毎秒 10〜20 の event が journal に並び、画面の糊の watch の拍(1 event = 1 拍)が飽和する(実弾 2026-09-13 18:3x: 糊の占有 367 拍中 359 が 200〜500 ms・hello 15 s)。書かない拍の出来事は pending_entries に持ち越す(落とさない)。")
      (rule R10 "session は会話の資源・job は手番(温かい session・設計 17.4): 会話 → 生きている session の対応は行(自分が claim した同じ subject の agent-job の sessionHandle)と器の現況から導き、Bound の job の起こし方は judgment.hy の next-arm-for-job(閉語彙 effects.NextArm = launch | send | resume | rehydrate | defer — 家と機体の扱いは R20)の 1 点で決める — 同じ会話の生きて idle な session が在れば launch せず session.send(awaiting)だけ、sessionHandle はその session を指し、turn-record は手番ごと。手番の終わりは器の lifecycle multi_turn(launch.hy の閉語彙に足した語)で policy.hy の monitor が既存の turn-end の連言から行の turn_ended_at に刻み、agentd は job-step-of の turn-end(turn_ended_at > 手番の始まりの下限 ∧ 記録の進み)で読む — status は倒さず session は生かす。idle の寿命は AgentdSettings.session_idle_ttl_seconds の 1 点で、超過・Withdrawn・node の退役で session.cleanup。計器 agent-job-to-send は create → send のまま(温かい path で p99 < 2 秒)。")]
@@ -493,23 +503,26 @@
           (counterexample "profile を 1 つも持たない器(pool の pod)で周期ごとに `ai usage` を撃つ — 登録簿の生成物(profiles.gen.json)の無い器では読み口が毎周 exit 1 で落ち、log が『profile observation failed: FileNotFoundError』で埋まる(実弾 2026-09-13 zeus の agentd-pool・段 8e lane 4j)。器の profile の集合は家の在否で先に読み、空なら撃たない")
           (counterexample "読み口の落ち方(FileNotFoundError の文言)で『profile が無い』を判じる — 判定が dotfiles の内部の綴りに結ばれ、名簿の改訂で偽陰性・偽陽性になる")])
      (law conversation-cache-is-kept-only-on-the-same-node-and-home
-       :statement "for_all Bound job j of conversation c claimed on node n with home h = home-key-of(plan(j)) and candidate session s (affinity.predecessor, else the last session of c on n): the arm of j is judgment.next-arm-for-job(s, session.get(s), h) alone; s alive ∧ idle ∧ attribution.home(s) = h ⇒ send; s alive ∧ idle ∧ attribution.home(s) ≠ h ⇒ session.cleanup(s) ∧ rehydrate; s alive ∧ ¬idle ⇒ defer; s registered ∧ terminal ∧ attribution.home(s) = h ⇒ session.resume(s); otherwise ⇒ rehydrate = session.launch whose prompt = charter.prompt ++ rehydrate-history-of(c, messages and turn-records of c, inputs(j), rehydrate_history_byte_budget) (++ bodies on headless); a refused resume ⇒ rehydrate with the same minted id; turn-record(j).spec.sessionId = sessionHandle(j).sessionId; observations.sessions[*].account = attribution.account and observations.transcripts = the newest ended session per conversation whose transcript file exists, at most transcripts_observed_max"
+       :statement "for_all Bound job j of conversation c claimed on node n with home h = home-key-of(plan(j)) and candidate session s (affinity.predecessor, else the last session of c on n): the arm of j is judgment.next-arm-for-job(s, session.get(s), h) alone; s alive ∧ idle ∧ attribution.home(s) = h ⇒ send; s alive ∧ idle ∧ attribution.home(s) ≠ h ⇒ session.cleanup(s) ∧ rehydrate; s alive ∧ ¬idle ⇒ defer; s registered ∧ terminal ∧ attribution.home(s) = h ⇒ session.resume(s); otherwise ⇒ rehydrate = session.launch whose prompt = charter.prompt ++ rehydrate-history-of(c, messages of c, source, inputs(j), rehydrate_history_byte_budget) (++ bodies on headless) where source = RecordedTurns(the record service's events of c read backwards from before=latest until record-history-satisfied or the first page) when the record service answers, else HeadlineTurns(the turn-record rows of c) and the prompt's head and the log name the thin rehydrate and its reason; a refused resume ⇒ rehydrate with the same minted id; turn-record(j).spec.sessionId = sessionHandle(j).sessionId; observations.sessions[*].account = attribution.account and observations.transcripts = the newest ended session per conversation whose transcript file exists, at most transcripts_observed_max"
        :counterexamples
          [(counterexample "profile を変えた手番を同じ機体の温かい session へ send する — 前の家の資格と cache で走り、binding の account が効かない(2026-09-13 の code の読み: next-arm-for-job は家を見ていなかった)")
           (counterexample "家をまたいで --resume する(transcript を新しい家へ写す前提)— operator 決定 #54 は cache の失効を受け入れると決めた。別の家の --resume は transcript を見つけられず SessionRefused → LaunchFailed で会話が止まる")
           (counterexample "器に行の無い predecessor を resume する — 別の機体で走った会話が `session is not registered` で LaunchFailed(Rehydrate の腕が無かった)")
           (counterexample "turn-record の spec に sessionId を書かない — Messaging が predecessor を名指せず、温かい session が片付いた(idle TTL・agentd の再起動・agent-job の行の回収)次の手番は同じ家でも文脈なしで起きる(本番 2026-09-13: 起こし方は send 39・launch 21・resume 0)")
           (counterexample "session の会話を回収される agent-job の行から導く — 終端の後に行が回収されると node の観測から会話が消え、Scheduling が cache を持つ node を選べない")
-          (counterexample "「これまでの会話」を上限なしに畳む / 古い手番を黙って落とす — prompt が器の上限を超えるか、agent は落ちた事実も全文の在処も知らずに答える")])
+          (counterexample "「これまでの会話」を上限なしに畳む / 古い手番を黙って落とす — prompt が器の上限を超えるか、agent は落ちた事実も全文の在処も知らずに答える")
+          (counterexample "履歴からの再開を ACP の見出しから畳む(text の無い entry を本文として読む)— 手番の本文が全部空の『これまでの会話』を agent に渡し、agent は文脈が無いことを知らずに答える。本文は記録の service の before=latest から読み、届かない時は薄い再開と名乗る")])
      (law turn-events-are-appended-to-the-record-per-tick
-       :statement "for_all running job j observed by agentd and for_all tick t at which stream-records reads new material of j: the events e_1..e_n that judgment.deltas-of derives from that material are appended (not replaced) to the status.entries of turn-record(j) within the same tick by agentd.append-entries, each with at = t and a seq strictly greater than every seq already on the row, via one CAS write on the last known image of the row (Conflict ⇒ one re-read and one retry; Refused or missing row ⇒ the events stay in InFlightJob.pending_entries and ride the next write); the row's entries JSON never exceeds TURN_RECORD_ENTRIES_BYTE_BUDGET (the oldest events are dropped first and a single leading kind=system marker with truncated=true and dropped=k replaces them), each entry's summary / text respects ENTRY_SUMMARY_MAX_CHARS / ENTRY_TEXT_MAX_CHARS with truncated=true when cut; and the end of the turn drains the remaining material through the same point, then writes state=ended and usage over the appended entries without replacing them"
+       :statement "for_all running job j observed by agentd and for_all tick t at which stream-records reads new material of j: the events e_1..e_n that judgment.deltas-of derives from that material are appended (not replaced) to the status.entries of turn-record(j) within the same tick by agentd.append-entries, each with at = t and a seq strictly greater than every seq already on the row, via one CAS write on the last known image of the row (Conflict ⇒ one re-read and one retry; Refused or missing row ⇒ the events stay in InFlightJob.pending_entries and ride the next write); the row's entries JSON never exceeds TURN_RECORD_ENTRIES_BYTE_BUDGET (the oldest events are dropped first and a single leading kind=system marker with truncated=true and dropped=k replaces them); every appended entry is the JSON of a TurnEntryHeadline (seq, at, kind, toolName?, toolUseId?, bytes, sha256, isError?) derived by judgment.headline-of-body from the body sent to the record service — it carries no text / summary / input / output / model, and its sha256 = sha256 of record-body-bytes-of(body) (the service's identity of the same event); the record service's appendAnswer.highestProducerSeq for the stream of j lands as status.recordedSeq (never decreasing) with status.recordRef = record:<cid>/<streamId>; and the end of the turn drains the remaining material through the same point, then writes state=ended and usage over the appended entries without replacing them"
        :counterexamples
          [(counterexample "出来事を手番の終わりにだけ書く(旧の形・実弾 2026-09-13: 本番の turn-record 97 行の entries が最後の本文 1 行・at は全部同じ・途中で落ちた手番は空)— 会話の面に agent の出力の全史が無く、途中で落ちた手番は何も残らない")
           (counterexample "終わりの書きが entries を置換する(手番の全材料を読み直した列で上書き)— 拍ごとの at が消え、追記で残った印(dropped)も消え、同じ出来事が seq を変えて二度並ぶ")
           (counterexample "Refused を捨てる — ACP が一時的に断った拍の出来事が永久に消える。出来事は持ち越して次の書きに乗せる")
           (counterexample "拾い直した job が seq 0 から書く — 行の seq と衝突し、画面の行の鍵(<agentJobId>#<seq>)が同じになって別の出来事が 1 行に畳まれる")
           (counterexample "行の上限を持たない — 長い手番(道具 100 回 × 4 KB)で 1 行が数 MB になり、watch の差分と画面の全量の置換が拍ごとに膨れる。上限は書き手が守り、読み手は印で知る(推定しない)")
-          (counterexample "画面の糊や webapp が切り詰めを推定する(『entries が 1 件だから途中は無い』)— 落とした出来事と読めていない出来事を同じ顔で描く。印(dropped)が在る時だけ『落とした』と言える")])
+          (counterexample "画面の糊や webapp が切り詰めを推定する(『entries が 1 件だから途中は無い』)— 落とした出来事と読めていない出来事を同じ顔で描く。印(dropped)が在る時だけ『落とした』と言える")
+          (counterexample "ACP の entry に本文(text / summary / input)を写す(段 9f より前の形・本番 2026-09-13: 30k 行の entries が頭脳の live の大半)— control plane が本文の器になり、行の上限で本文が切れ、画面も再開も『切れた写し』を読む。見出し(bytes / sha256)だけを写し、本文は記録の service から取り寄せる(claim check)")
+          (counterexample "見出しを dict で組む(text を持てる型)— 1 箇所の書き手が本文を混ぜても検が落ちない。TurnEntryHeadline に本文の欄が無いので、本文を持つ entry は型で落ちる")])
      (law live-events-are-pushed-within-50ms-while-watched
        :statement "for_all agentd with stream_capability = events and for_all tick at which some InFlightJob is capturing (the last push answered subscribers > 0): the wait bound of AcpWatchSse is AgentdSettings.events_poll_seconds ≤ 0.05 and nothing else, so new lines of the events file reach the relay (AcpStreamPush) within one such tick; with stream_capability = frames the bound stays frame_interval_seconds (2–5 Hz capture); with no capturing job the bound is transcript_poll_seconds, with no job idle_wait_seconds; the choice is judgment.wait-seconds-for (pure) and every period is declared once on AgentdSettings. The turn-record append (agentd.append-entries, one ACP event per write) does NOT follow the poll: it happens only when judgment.record-due (last_record_ms + transcript_poll_seconds ≤ now, or never written) holds, and the events of the other ticks ride InFlightJob.pending_entries to the next write or the end of the turn"
        :counterexamples
@@ -671,15 +684,16 @@
        (assert (= (run (job-step-of None 0 True)) "fail-missing")))
      (deftest test-adr-doe-agents-012-capture-gone-is-terminal-and-ticks-do-not-share-failure
        ;; R8 の針: SessionCapture の答えは閉語彙(agentd.hy の bind の型)・実 handler は host の
-       ;; 断り(AgentdClientError)を CaptureGone に写す・R9 の縁は agentd-tick に 5 つ(R18 で観測の腕、R21 で割り込みの
-       ;; 配達の腕が 1 つずつ増えた)。
+       ;; 断り(AgentdClientError)を CaptureGone に写す・R9 の縁は agentd.hy に 7 つ(agentd-tick に heartbeat・profile の
+       ;; 観測〔R18〕・受け・割り込みの配達〔R21〕・job ごと・spool の送り〔段 9f lane 9f-2〕の 6 つ + 拍の途中の spool の
+       ;; 書き spool-record-bodies の 1 つ)。
        (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
        (setv handler-lines (code-lines (/ ACP-DIR "handlers.py")))
        (assert (any (gfor line agentd-lines (in "(<- outcome (| CaptureFrame CaptureGone)" line))))
        (assert (any (gfor line handler-lines (in "except AgentdClientError" line))))
        (assert (any (gfor line handler-lines (in "return CaptureGone(" line))))
-       (assert (= (len (lfor line agentd-lines :if (in "(except [e IO-FAILURES]" line) line)) 5)
-               "tick の縁は heartbeat・profile の観測・受け・割り込みの配達・job ごとの 5 つ(ADR-DOE-AGENTS-012 R9・R18・R21)")
+       (assert (= (len (lfor line agentd-lines :if (in "(except [e IO-FAILURES]" line) line)) 7)
+               "縁は heartbeat・profile の観測・受け・割り込みの配達・job ごと・spool の送り・spool の書きの 7 つ(ADR-DOE-AGENTS-012 R9・R18・R21・段 9f lane 9f-2)")
        ;; 反例(挙動): gone は例外にならず、capture を止め、器の終端で Ended と ended。
        (setv world (World))
        (.put-row world.acp (bound-row "s-gone" "mac-1" None "claude" PHASE-BOUND))
@@ -865,7 +879,11 @@
        (assert (= (lfor e entries :if (isinstance e dict) (get e "kind")) ["text"]))
        (setv first-entry (get entries 0))
        (assert (isinstance first-entry dict))
-       (assert (= (get first-entry "text") "abcd")))
+       (assert (not-in "text" first-entry) "見出しに本文が在る(段 9f lane 9f-4)")
+       (assert (= (get first-entry "bytes") (len (.encode "{\"text\":\"abcd\"}" "utf-8"))))
+       (setv digest (get first-entry "sha256"))
+       (assert (isinstance digest str))
+       (assert (= (len digest) 64)))
      (deftest test-adr-doe-agents-012-conversation-cache-only-on-the-same-node-and-home
        ;; R20 の針(構造): 起こし方・家の比較・畳み・charter の組み立ては judgment.hy の 1 点ずつ。agentd.hy は家を
        ;; 比較せず、記録の材料の読みは history-for の 1 行、上限は AgentdSettings の 1 点、spec は sessionId を名乗る。
@@ -876,6 +894,12 @@
        (assert (any (gfor line judgment-lines (in "\"sessionId\" job.session-id" line)))
                "turn-record の spec は sessionId を名乗る(R20)")
        (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
+       ;; 段 9f lane 9f-4: 手番の本文は service の before=latest から(record-turns-for の 1 腕・RecordRead)、届かなければ
+       ;; HeadlineTurns で薄く再開すると名乗る。
+       (assert (= (len (lfor line agentd-lines :if (.startswith line "(defk record-turns-for ") line)) 1) "record-turns-for が 1 点でない(R20)")
+       (assert (= (len (lfor line agentd-lines :if (in "(RecordRead :conversation-id" line) line)) 1) "RecordRead を撃つ点は 1 つ(R20)")
+       (assert (any (gfor line agentd-lines (in "rehydrates thinly from ACP headlines" line))) "薄い再開を名乗る log が無い(R20)")
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk record-history-satisfied ") line)) 1))
        (for [line agentd-lines]
          (assert (not-in "session-in-home" line) f"agentd.hy は家を比較しない(R20): {line}")
          (assert (not-in "plan.predecessor" line) f"resume の元は choice.source(R20): {line}"))
@@ -931,15 +955,26 @@
        (assert (= elsewhere.acp.history-reads ["e-1"])))
      (deftest test-adr-doe-agents-012-turn-events-are-durable-mid-turn
        ;; R19 の針: 追記の座は agentd.hy の append-entries の 1 点(AcpPutStatus を turn-record へ撃つ腕は
-       ;; append-entries と end-turn-record だけ)。反例(挙動): 出来事は手番の途中の拍に行に在り、at は
-       ;; 読んだ拍、終わりの書きは追記の上に ended(置換しない)。
+       ;; append-entries と end-turn-record と、受理の答えを写す mark-recorded〔段 9f lane 9f-4〕だけ)。反例(挙動):
+       ;; 出来事は手番の途中の拍に行に在り、at は読んだ拍、終わりの書きは追記の上に ended(置換しない)、見出しは本文を持たない。
        (setv agentd-src (.read-text (/ ACP-DIR "agentd.hy") :encoding "utf-8"))
        (assert (in "(defk append-entries [job entries]" agentd-src) "追記の腕 append-entries が無い(R19)")
        (assert (in "(defk drain-stream [" agentd-src) "手番の終わりの読み drain-stream が無い(R19)")
        (setv effects-src (.read-text (/ ACP-DIR "effects.py") :encoding "utf-8"))
        (assert (in "TURN_RECORD_ENTRIES_BYTE_BUDGET = 262_144" effects-src) "行の上限の宣言が 1 点に無い(R19)")
-       (assert (in "ENTRY_SUMMARY_MAX_CHARS = 2_048" effects-src))
-       (assert (in "ENTRY_TEXT_MAX_CHARS = 65_536" effects-src))
+       ;; 段 9f lane 9f-4: 見出しの型は本文の欄を持たない・導く点と写す点は 1 つずつ・切り詰めの規則は agentd に無い。
+       (assert (in "class TurnEntryHeadline:" effects-src) "見出しの型が無い(R19)")
+       (for [field ["    text:" "    summary:" "    input:" "    output:" "    model:"]]
+         (setv block (get (.split (get (.split effects-src "class TurnEntryHeadline:") 1) "\n\n\n") 0))
+         (assert (not-in field block) f"見出しの型に本文の欄 {field} が在る(R19)"))
+       (assert (not-in "ENTRY_SUMMARY_MAX_CHARS" effects-src) "agentd の切り詰めの規則が残っている(R19)")
+       (assert (not-in "ENTRY_TEXT_MAX_CHARS" effects-src) "agentd の切り詰めの規則が残っている(R19)")
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (for [name ["headline-of-body" "entry-json-of" "record-body-bytes-of" "turn-record-recorded-status"]]
+         (assert (= (len (lfor line judgment-lines :if (.startswith line f"(defk {name} ") line)) 1) f"{name} は 1 点(R19)"))
+       (for [name ["entry-of-body" "text-entry" "tool-use-entry" "tool-result-entry" "note-entry"]]
+         (assert (not (any (gfor line judgment-lines (.startswith line f"(defk {name} ")))) f"本文を写す {name} が残っている(R19)"))
+       (assert (in "(defk mark-recorded [" agentd-src) "受理の写しの腕 mark-recorded が無い(R19)")
        (setv world (World))
        (setv world.settings (AgentdSettings :node-name "mac-1" :homes-root "/homes" :backend-kind "headless" :stream-capability "events"))
        (setv world.sessions (FakeSessions :backend-kind "headless" :events-root "/events"))
@@ -971,6 +1006,11 @@
        (assert (isinstance ended-entries list))
        (assert (= (lfor e ended-entries :if (isinstance e dict) (get e "kind")) ["system" "tool_use" "tool_result" "text"])
                "終わりの書きは追記の上に ended(置換しない・R19)")
+       (for [e ended-entries]
+         (when (isinstance e dict)
+           (assert (= (set.intersection (set (.keys e)) #{"text" "summary" "input" "output" "model"}) (set))
+                   f"見出しに本文の欄が在る(R19・段 9f lane 9f-4): {e}")
+           (assert (and (in "bytes" e) (in "sha256" e)) f"見出しに同一性が無い(R19): {e}")))
        (assert (= (cut ended-entries 0 2) mid-entries) "途中の出来事(at・seq)が終わりの書きで変わった(R19)")
        (setv seqs [])
        (for [e ended-entries]
@@ -1316,4 +1356,6 @@
           "docs/impl-requests/stage8-lane-prompts/lane-4u-turn-events-persisted.md(agora-redesign #49・追補 R19)"
           "docs/impl-requests/stage8-lane-prompts/lane-4w-rehydrate-across-profiles.md(agora-redesign #51・operator 決定 #54・追補 R20)"
           "docs/impl-requests/stage8-lane-prompts/lane-4x-messaging-queued-and-interrupt.md(agora-redesign #56・追補 R21)"
-          "docs/impl-requests/stage8-lane-prompts/lane-4aa-live-tail-200ms.md(agora-redesign #63・追補 R22)"])
+          "docs/impl-requests/stage8-lane-prompts/lane-4aa-live-tail-200ms.md(agora-redesign #63・追補 R22)"
+          "docs/impl-requests/stage9-lane-prompts/lane-9f2-agentd-dual-write.md(agora-redesign #59・設計 §2.4・本文の二重書き)"
+          "docs/impl-requests/stage9-lane-prompts/lane-9f4-agentd-headline-entries.md(agora-redesign #59・設計 §2.2 / §2.4・R19 / R20 の追補: 見出しだけ・recordRef / recordedSeq・再開は service から)"])
