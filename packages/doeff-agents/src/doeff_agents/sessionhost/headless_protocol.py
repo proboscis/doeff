@@ -8,14 +8,22 @@ headless の session は tui の pane を持たない: agent は子 process で�
 検は同じ Dialogue を替え玉の書き手で回す(効果の値 = ``Step`` / ``TurnInput`` / ``Interrupt``)。
 
 kind ごとの物理(argv は impls/headless_argv.hy・stdin の綴りはここ):
-- claude: 1 手番 1 process。prompt は stdin の本文ちょうど(書いて閉じる)。手番の終わりは
-  ``{"type":"result"}`` の行、会話の id は ``{"type":"system","subtype":"init","session_id"}``。
-  割り込み = process へ SIGINT(stream-json の入力の口は使わない — 1 手番 1 process の作法)。
-  次の手番は ``--resume <sid>`` の新しい process(argv は impls 側・器は同じ名で起こし直す)。
+- claude: ``--input-format stream-json`` の温かい process(段 8 lane 4x・agora-redesign #56 —
+  実測 2026-09-13 = conformance/interrupt-physics.md)。prompt は stdin の user の行
+  ``{"type":"user","message":{"role":"user","content":<本文>}}`` で、stdin は閉じない: 手番の
+  終わり(``{"type":"result"}`` の行)の後も process は生き、次の user の行が次の手番になる
+  (同じ session_id・init の行がもう 1 度出る)。**手番の途中に書いた user の行は、CLI が次の
+  tool の境界で走っている手番に注入する**(assistant がその本文に反応してから result が出る・
+  num_turns が増える)= 割り込みの本文(``inject``)。会話の id は
+  ``{"type":"system","subtype":"init","session_id"}``。止める合図(withdraw)= process へ SIGINT
+  (result を出さずに降りる)。process が降りた後の次の手番は ``--resume <sid>`` の新しい process
+  (argv は impls 側・器は同じ名で起こし直す)。
 - codex: app-server の process を手番の間も生かす(温かい)。手番 = ``turn/start``、終わりは
-  自分の thread と turn の ``turn/completed``、割り込み = ``turn/interrupt``。server → client の
-  要求は方策の表(全面許可の範囲の 4 種だけ accept・他は断って手番を型付きの失敗にする —
-  dotfiles agentcli/codex_app_server.py と同じ規則)。
+  自分の thread と turn の ``turn/completed``、止める合図 = ``turn/interrupt``。割り込みの本文
+  (``inject``)= ``turn/interrupt`` を送り、interrupted の ``turn/completed`` を手番の終わりとして
+  報告せずに同じ thread へ ``turn/start`` を積む(host から見て手番は 1 つのまま)。server →
+  client の要求は方策の表(全面許可の範囲の 4 種だけ accept・他は断って手番を型付きの失敗に
+  する — dotfiles agentcli/codex_app_server.py と同じ規則)。
 
 「手番の途中か」の判断(verdict)も純関数 1 点(``turn_verdict``)。
 """
@@ -61,10 +69,21 @@ class TurnInput:
 
 @dataclass(frozen=True)
 class Interrupt:
-    """割り込みの伝え方: stdin へ書く行(codex の turn/interrupt)か process への SIGINT(claude)。"""
+    """止める合図の伝え方: stdin へ書く行(codex の turn/interrupt)か process への SIGINT(claude)。"""
 
     sends: tuple[str, ...] = ()
     signal: bool = False
+
+
+@dataclass(frozen=True)
+class Injection:
+    """割り込みの本文の伝え方(段 8 lane 4x): ``accepted`` = 走っている手番が在り本文を引き受けた
+    (偽 = 器は受け取らなかった — 呼び手が queued へ倒す)。``sends`` = stdin へ書く行: claude =
+    user の行(CLI が走っている手番に注入する)/ codex = turn/interrupt(次の turn/start は
+    Dialogue が完了の通知で積む・既に止めていれば行は無く本文を継ぎ足すだけ)。"""
+
+    accepted: bool = False
+    sends: tuple[str, ...] = ()
 
 
 def _dumps(value: JSONObject) -> str:
@@ -81,24 +100,39 @@ def _text_at(value: JSON, key: str) -> str:
     return inner if isinstance(inner, str) else ""
 
 
-# ------------------------------------------------------------------ claude(stream-json・1 手番 1 process)
+# ------------------------------------------------------------------ claude(stream-json の入出力・温かい process)
+
+
+def claude_user_line(text: str) -> str:
+    """``--input-format stream-json`` の stdin の 1 行 = user の message(実測の綴り)。"""
+    return _dumps({"type": "user", "message": {"role": "user", "content": text}})
 
 
 class ClaudeDialogue:
-    """``claude -p --output-format stream-json`` の作法。状態 = 会話の id(init で知る)だけ。"""
+    """``claude -p --input-format stream-json --output-format stream-json`` の作法。状態 = 会話の
+    id(init で知る)と「手番の途中か」(user の行を書いてから result を読むまで)。"""
 
     kind: AgentKind = "claude"
-    #: 1 手番 1 process: 手番の終わりで process が降りる。次の手番は起こし直す。
-    one_process_per_turn: bool = True
+    #: 温かい process(段 8 lane 4x): result の後も process は生きて次の user の行を待つ。
+    one_process_per_turn: bool = False
 
     def __init__(self) -> None:
         self.conversation: dict[str, str] | None = None
+        self.in_flight: bool = False
 
     def opening(self) -> tuple[str, ...]:
         return ()
 
     def turn(self, prompt: str) -> TurnInput:
-        return TurnInput(sends=(prompt,), close_stdin=True)
+        self.in_flight = True
+        return TurnInput(sends=(claude_user_line(prompt),), close_stdin=False)
+
+    def inject(self, text: str) -> Injection:
+        """走っている手番へ本文を注入する: 同じ user の行(CLI が次の tool の境界で読む)。手番が
+        走っていなければ書かない(書くと新しい手番になる — 誰の job でもない手番を起こさない)。"""
+        if not self.in_flight:
+            return Injection()
+        return Injection(accepted=True, sends=(claude_user_line(text),))
 
     def on_line(self, record: JSONObject) -> Step:
         kind = record.get("type")
@@ -109,6 +143,7 @@ class ClaudeDialogue:
                 return Step(conversation=self.conversation)
             return Step()
         if kind == "result":
+            self.in_flight = False
             is_error = record.get("is_error") is True
             subtype = _text_at(record, "subtype") or ("error" if is_error else "success")
             return Step(ended=TurnEnded(ok=not is_error, detail=subtype))
@@ -168,6 +203,9 @@ class _CodexState:
     turn_id: str = ""
     thread_open: bool = False
     pending_prompt: str | None = None
+    #: 段 8 lane 4x: 割り込みの本文 — turn/interrupt を送った後、interrupted の turn/completed で
+    #: 同じ thread へ turn/start する本文(host から見て手番は 1 つのまま)。
+    pending_injection: str | None = None
     failure: str = ""
     interrupt_sent: bool = False
     counter: int = 0
@@ -251,18 +289,33 @@ class CodexDialogue:
         self.state.pending_prompt = prompt
         return TurnInput(sends=(), close_stdin=False)
 
+    def _turn_interrupt(self) -> str:
+        return self._request(
+            REQ_TURN_INTERRUPT,
+            {"threadId": self.state.thread_id, "turnId": self.state.turn_id},
+        )
+
     def interrupt(self) -> Interrupt:
         if self.state.turn_id and self.state.thread_id and not self.state.interrupt_sent:
             self.state.interrupt_sent = True
-            return Interrupt(
-                sends=(
-                    self._request(
-                        REQ_TURN_INTERRUPT,
-                        {"threadId": self.state.thread_id, "turnId": self.state.turn_id},
-                    ),
-                )
-            )
+            return Interrupt(sends=(self._turn_interrupt(),))
         return Interrupt()
+
+    def inject(self, text: str) -> Injection:
+        """割り込みの本文(段 8 lane 4x): 走っている turn を turn/interrupt で止め、その完了の
+        通知(interrupted)で同じ thread へ本文の turn/start を積む — host から見て手番は
+        1 つのまま。走っている turn が無ければ受け取らない(sends が空)。"""
+        if not (self.state.turn_id and self.state.thread_id):
+            return Injection()
+        if self.state.pending_injection is not None:
+            # 前の割り込みの turn/start がまだ積まれていない: 本文を継ぎ足す(順は保つ)。
+            self.state.pending_injection = self.state.pending_injection + "\n\n" + text
+            return Injection(accepted=True)
+        self.state.pending_injection = text
+        if self.state.interrupt_sent:
+            return Injection(accepted=True)
+        self.state.interrupt_sent = True
+        return Injection(accepted=True, sends=(self._turn_interrupt(),))
 
     def on_line(self, record: JSONObject) -> Step:
         method = record.get("method")
@@ -345,7 +398,14 @@ class CodexDialogue:
             self.state.turn_id = ""
             if self.state.failure:
                 failure, self.state.failure = self.state.failure, ""
+                self.state.pending_injection = None
                 return Step(ended=TurnEnded(ok=False, detail=failure))
+            if self.state.pending_injection is not None:
+                # 段 8 lane 4x: 止めたのは割り込みの本文を渡すため — 手番の終わりではない。
+                # 同じ thread へ本文の turn を積む(turn_id は応答 / turn/started で知る)。
+                injected = self.state.pending_injection
+                self.state.pending_injection = None
+                return Step(sends=(self._turn_start(injected),))
             if status == "completed":
                 return Step(ended=TurnEnded(ok=True, detail=status))
             message = _text_at(_object_at(turn, "error"), "message")
@@ -386,7 +446,8 @@ class HeadlessObservation:
     ended: tuple[TurnEnded, ...] = ()
     conversation: dict[str, str] | None = None
     failure: str | None = None
-    #: 次の手番を同じ process で受けられるか(codex = 生きていれば真・claude = 偽)。
+    #: 次の手番を同じ process で受けられるか(生きていて stdin が開いていれば真 — claude も
+    #: 段 8 lane 4x から温かい process)。
     accepts_turn: bool = False
     #: この手番に割り込みの合図(SIGINT / turn/interrupt)を出したか — claude は SIGINT で
     #: result を出さずに降りるので、その死は失敗ではなく「止めた手番の終わり」。

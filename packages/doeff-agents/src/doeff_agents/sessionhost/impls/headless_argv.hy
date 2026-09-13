@@ -30,8 +30,11 @@
 ;; claude の print mode の旗(--verbose の後ろに --include-partial-messages: dotfiles
 ;; agentcli/headless.py _claude_build_cmd と同じ並び — 本文の途中(delta)を実況に含める。
 ;; この旗が無い stream は content block が完成した時にしか assistant を出さない)。
+;; --input-format stream-json(段 8 lane 4x・agora-redesign #56): stdin を user の行で読む温かい
+;; process — result の後も生きて次の行を次の手番にし、手番の途中の行は CLI が次の tool の
+;; 境界で走っている手番に注入する(割り込みの本文・実測 2026-09-13 conformance/interrupt-physics.md)。
 (setv CLAUDE-HEADLESS-FLAGS
-      ["-p" "--output-format" "stream-json" "--verbose" "--include-partial-messages"])
+      ["-p" "--input-format" "stream-json" "--output-format" "stream-json" "--verbose" "--include-partial-messages"])
 (setv CODEX-APP-SERVER-ARGS ["app-server" "--listen" "stdio://"])
 
 
@@ -44,7 +47,8 @@
    - 会話の最初の手番は `--session-id <sid>`(build-claude-argv が conversation から
      付ける — 登記時鋳造の id が初手番から会話の id)、続きの手番(resume_mode =
      \"resume\")は `--resume <sid>`
-   - dialogue = ClaudeDialogue(1 手番 1 process・prompt は stdin + EOF・result で終わり)"
+   - dialogue = ClaudeDialogue(温かい process・prompt は stdin の user の行・result で手番の
+     終わり・次の行が次の手番・途中の行は割り込みの本文)"
   (setv base-params (dict params))
   (setv resume-mode (.get params "resume_mode"))
   (setv conversation (.get params "conversation"))

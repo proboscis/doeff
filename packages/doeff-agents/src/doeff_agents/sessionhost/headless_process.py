@@ -79,7 +79,7 @@ class _StdinWriter:
 
 
 class HeadlessProcess:
-    """1 つの headless の agent の process(1 session に 1 つ・claude は手番ごとに起こし直す)。"""
+    """1 つの headless の agent の process(1 session に 1 つ・温かい — 手番の間も生きる)。"""
 
     def __init__(
         self,
@@ -153,6 +153,23 @@ class HeadlessProcess:
             self._writer.close()
         return True
 
+    def inject(self, text: str) -> bool:
+        """割り込みの本文を走っている手番へ(段 8 lane 4x — stdin の行・判断は Dialogue.inject)。
+        戻り = 器が受け取ったか(process が生きていて、走っている手番が在り、行を書いた)。
+        手番の終わりを読んで monitor がまだ受け取っていない拍も「走っていない」(その本文は
+        誰の手番でもない turn を起こしてはならない — 呼び手が queued へ倒す)。"""
+        if not self.alive() or self._writer.closed:
+            return False
+        with self._lock:
+            if self._ended:
+                return False
+        plan = self.dialogue.inject(text)
+        if not plan.accepted:
+            return False
+        for line in plan.sends:
+            self._writer.send(line)
+        return True
+
     def interrupt(self) -> bool:
         """走っている手番を止める合図(stdin の行か SIGINT)。戻り = 合図を出せたか。"""
         if not self.alive():
@@ -171,6 +188,11 @@ class HeadlessProcess:
             with self._lock:
                 self._interrupted = True
         return signalled
+
+    def peek_records(self) -> tuple[JSONObject, ...]:
+        """前の拍から読んだ stdout の行を**空にせずに**覗く(検の待ち条件・診断 — 観測の拍は observe)。"""
+        with self._lock:
+            return tuple(self._records)
 
     def observe(self) -> HeadlessObservation:
         """前の拍から読んだ事実を束ごと渡す(渡した後の束は空)。"""
@@ -262,7 +284,7 @@ class HeadlessRegistry:
         dialogue: Dialogue,
     ) -> HeadlessProcess:
         """名で起こす。同じ名の生きた process が在れば拒む(tmux の duplicate session と同じ)。
-        降りた process(claude の前の手番)は置き換える。"""
+        降りた process(SIGINT で止めた claude・idle で退いた器)は置き換える。"""
         with self._lock:
             existing = self._processes.get(name)
             if existing is not None and existing.alive():

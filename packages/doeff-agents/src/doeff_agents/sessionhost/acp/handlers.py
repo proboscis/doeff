@@ -51,10 +51,6 @@ from typing import TypeAlias
 from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.agentd_client import AgentdClient, AgentdClientError, launch_rpc_timeout_seconds
 from doeff_agents.sessionhost.acp.effects import (
-    JSON,
-    MESSAGE_KIND,
-    OWNERSHIP_PROOF_GCE_PREFIX,
-    TURN_RECORD_KIND,
     AcpConversationHistory,
     AcpCreate,
     AcpEventWindow,
@@ -76,6 +72,8 @@ from doeff_agents.sessionhost.acp.effects import (
     FsCanonicalPath,
     FsFileSize,
     FsWritePrivateText,
+    Interjected,
+    JSON,
     JSONObject,
     LeaseGrant,
     LeaseKind,
@@ -83,9 +81,11 @@ from doeff_agents.sessionhost.acp.effects import (
     LeaseRefused,
     ListProfileHomes,
     LogLine,
+    MESSAGE_KIND,
     MetricLine,
     MintId,
     OwnershipProbe,
+    OWNERSHIP_PROOF_GCE_PREFIX,
     ProbeAnswer,
     ProfileHome,
     ProfileUsage,
@@ -99,6 +99,7 @@ from doeff_agents.sessionhost.acp.effects import (
     SessionCleanup,
     SessionEvents,
     SessionGet,
+    SessionInterject,
     SessionInterrupt,
     SessionLaunch,
     SessionList,
@@ -109,6 +110,7 @@ from doeff_agents.sessionhost.acp.effects import (
     SessionTranscript,
     SessionView,
     TranscriptChunk,
+    TURN_RECORD_KIND,
     UsageWindow,
     UsageWindowName,
     WatchAdvance,
@@ -713,7 +715,8 @@ class SessionRpc:
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(
-            effect, (SessionLaunch, SessionResume, SessionSend, SessionInterrupt, SessionCleanup)
+            effect,
+            (SessionLaunch, SessionResume, SessionSend, SessionInterject, SessionInterrupt, SessionCleanup),
         ):
             return Resume(k, self._act(effect))
         if isinstance(effect, (SessionGet, SessionList, SessionCapture)):
@@ -722,9 +725,14 @@ class SessionRpc:
 
     def _act(
         self,
-        effect: SessionLaunch | SessionResume | SessionSend | SessionInterrupt | SessionCleanup,
+        effect: SessionLaunch
+        | SessionResume
+        | SessionSend
+        | SessionInterject
+        | SessionInterrupt
+        | SessionCleanup,
     ) -> object:
-        """器を動かす要求(起こす・送る・止める・片付ける)。"""
+        """器を動かす要求(起こす・送る・割り込む・止める・片付ける)。"""
         if isinstance(effect, SessionLaunch):
             return self._incarnate("session.launch", effect.params)
         if isinstance(effect, SessionResume):
@@ -732,6 +740,8 @@ class SessionRpc:
         if isinstance(effect, SessionInterrupt):
             self._client.request("session.interrupt", {"session_id": effect.session_id})
             return None
+        if isinstance(effect, SessionInterject):
+            return self._interject(effect.session_id, effect.text)
         if isinstance(effect, SessionSend):
             self._client.request(
                 "session.send",
@@ -757,6 +767,27 @@ class SessionRpc:
             views = [session_view_of(item) for item in items]
             return tuple(view for view in views if view is not None)
         return self._capture(effect.session_id, effect.lines)
+
+    def _interject(self, session_id: str, text: str) -> Interjected | SessionRefused:
+        """``session.send`` の mode = interrupt(段 8 lane 4x)→ 引き受けたか。host の断り(RPC の
+        error 封筒 — 走っている手番が無い・行が無い)は SessionRefused(本文は届いていない)。
+        socket の失敗(OSError)は素通し(tick の縁が持ち越す)。"""
+        try:
+            self._client.request(
+                "session.send",
+                {
+                    "session_id": session_id,
+                    "message": text,
+                    "literal": True,
+                    "enter": True,
+                    "awaiting": False,
+                    "mode": "interrupt",
+                },
+            )
+        except AgentdClientError as error:
+            code = error.error_code
+            return SessionRefused(str(error), str(code) if code is not None else None)
+        return Interjected()
 
     def _cleanup(self, session_id: str) -> bool:
         """``session.cleanup`` → 受けたか。host の断り(RPC の error 封筒 — 行が無い等)は

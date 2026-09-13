@@ -54,9 +54,18 @@
 ;;; 文脈の圧縮は別 issue #55)、resume が断られたら rehydrate(judgment.fallback-arm-of)。node の observations は sessions に account、transcripts に「終端だが
 ;;; transcript がこの機体に残る会話」を載せ、Scheduling は (node, account) で親和と起こし方の語を決める。
 ;;;
-;;; 書く欄は契約の writers どおり: agent-job の phase / sessionHandle / result / conditions、
-;;; node の status.lease / status.observations、turn-record の create と status、profile の status.observed。
-;;; binding は書かない・Node の行は作らない(scheduling の欄と動詞)。
+;;; 割り込みの本文(段 8 lane 4x・agora-redesign #56): Messaging が走っている手番の agent-job の
+;;; status.interrupts に載せた Message の id を、自分が走らせている job について行の cache の差分で読み
+;;; (deliver-interrupts — 判断は judgment.pending-interrupts-of: 行の interruptsDelivered にも memory の
+;;; interrupts-sent にも無い id)、本文を鍵で 1 行ずつ読んで session.send の mode = interrupt で器へ即座に
+;;; 渡す(claude = stream-json の stdin の user の行・codex = turn/interrupt → 同じ thread へ turn/start)。
+;;; 渡せたら鍵で読み直した行に CAS で interrupts から消し interruptsDelivered へ足す(同じ 1 回の書き —
+;;; 判断は interrupts-delivered-status-of)。器が断った(走っている手番が無い)id は行に残す —
+;;; 手番が終わればその行は終端の phase で interrupts を持ち、Messaging が queued として積み直す。
+;;;
+;;; 書く欄は契約の writers どおり: agent-job の phase / sessionHandle / result / conditions /
+;;; interrupts / interruptsDelivered、node の status.lease / status.observations、turn-record の create と
+;;; status、profile の status.observed。binding は書かない・Node の行は作らない(scheduling の欄と動詞)。
 
 (require doeff-hy.macros [defk <-])
 
@@ -93,6 +102,7 @@
   HistoryFold
   IO-FAILURES
   InFlightJob
+  Interjected
   JOB-STEP-FAIL-MISSING
   JOB-STEP-OBSERVE
   JOB-STEP-RECORD-END
@@ -129,6 +139,7 @@
   SessionCleanup
   SessionEvents
   SessionGet
+  SessionInterject
   SessionInterrupt
   SessionLaunch
   SessionList
@@ -164,6 +175,8 @@
   inputs-of
   interrupt-arm-for
   interrupted-status-of
+  interrupts-delivered-status-of
+  job-row-keyed
   job-outcome-of
   job-rows-bound-to
   job-rows-running-on
@@ -178,6 +191,7 @@
   node-row-named
   node-status-with-lease
   pane-frame
+  pending-interrupts-of
   profile-observed-changed
   profile-observed-of
   profile-rows-active
@@ -1082,6 +1096,90 @@
   current)
 
 
+(defk record-interrupts-delivered [job ids]
+  {:pre [(: job InFlightJob) (: ids tuple)]
+   :post [(: % bool)]}
+  "渡した割り込みを行へ写す(段 8 lane 4x): 鍵で読み直した行に CAS で interrupts から消し
+   interruptsDelivered へ足す(1 回の書き)。Conflict は 1 度だけ読み直して撃ち直す。戻り =
+   着地したか(しなければ memory の interrupts-sent が二度渡しを防ぎ、次の拍が同じ id で撃ち直す)。"
+  (<- fresh (| AcpRow None) (AcpGetRow :key job.job-key))
+  (when (is fresh None)
+    (<- (LogLine :text f"agentd: agent-job {job.job-id} vanished before its interrupts could be recorded"))
+    (return False))
+  (<- status dict (status-object-of fresh))
+  (<- delivered dict (interrupts-delivered-status-of status ids))
+  (<- wrote (| Written Conflict Refused) (AcpPutStatus :row fresh :status delivered))
+  (when (isinstance wrote Conflict)
+    (<- again (| AcpRow None) (AcpGetRow :key job.job-key))
+    (when (is-not again None)
+      (<- status-again dict (status-object-of again))
+      (<- delivered-again dict (interrupts-delivered-status-of status-again ids))
+      (<- wrote (| Written Conflict Refused) (AcpPutStatus :row again :status delivered-again))))
+  (when (not (isinstance wrote Written))
+    (<- (LogLine :text f"agentd: interrupts of job {job.job-id} delivered but not recorded ({wrote}); recording again next tick")))
+  (isinstance wrote Written))
+
+
+(defk deliver-interrupts-of [settings job row now-ms]
+  {:pre [(: settings AgentdSettings) (: job InFlightJob) (: row AcpRow) (: now-ms int)]
+   :post [(: % InFlightJob)]}
+  "1 つの走っている job の割り込み(段 8 lane 4x): 行の interrupts のうちまだ渡していない id を
+   載せた順に、本文を鍵で読み(mail-of と同じ 1 行ずつの読み)、session.send の mode = interrupt で
+   器へ渡す。器が断った(走っている手番が無い)id はそこで止めて行に残す(順を跨いで後の id を先に
+   渡さない)。渡せた id は memory に写し、行へ CAS で記録する。本文の無い id(Message の行が無い)は
+   渡せない — 1 行 log して memory に写す(行には残す = Messaging が queued で積み直した時に
+   InputUnavailable として名指す)。"
+  (<- pending tuple (pending-interrupts-of row job.interrupts-sent))
+  (when (not pending)
+    (return job))
+  (setv handed [])
+  (setv unreadable [])
+  (setv stopped False)
+  (for [message-id pending]
+    (when (not stopped)
+      (<- key str (message-key-of message-id))
+      (<- message (| AcpRow None) (AcpGetRow :key key))
+      (setv body (if (is message None) None (.get message.spec "body")))
+      (if (not (isinstance body str))
+          (do
+            (<- (LogLine :text f"agentd: interrupt {message-id} for job {job.job-id} has no readable Message; not delivered"))
+            (.append unreadable message-id))
+          (do
+            (<- outcome (| Interjected SessionRefused)
+                (SessionInterject :session-id job.session-id :text body))
+            (if (isinstance outcome Interjected)
+                (do
+                  (.append handed message-id)
+                  (<- (MetricLine :fields {"metric" "agent-job-interrupt"
+                                                  "agentJobId" job.job-id
+                                                  "sessionId" job.session-id
+                                                  "messageId" message-id
+                                                  "atMs" now-ms})))
+                (do
+                  (<- (LogLine :text (+ f"agentd: interrupt {message-id} for job {job.job-id} not accepted by the session "
+                                             f"({outcome.error}); left on the row")))
+                  (setv stopped True)))))))
+  (setv next (replace job :interrupts-sent (+ job.interrupts-sent (tuple handed) (tuple unreadable))))
+  (when handed
+    (<- (record-interrupts-delivered next (tuple handed)))
+    (<- (LogLine :text f"agentd: job {job.job-id} received {(len handed)} interrupt(s): {(.join ", " handed)}")))
+  next)
+
+
+(defk deliver-interrupts [settings state rows now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: rows tuple) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "自分が走らせている job(memory)ごとに、行の cache の割り込みを器へ渡す(段 8 lane 4x)。
+   行が cache に無い job は何もしない(次の拍)。"
+  (setv current state)
+  (for [job (list state.jobs)]
+    (<- row (| AcpRow None) (job-row-keyed rows job.job-key))
+    (when (is-not row None)
+      (<- delivered InFlightJob (deliver-interrupts-of settings job row now-ms))
+      (<- current AgentdState (with-job current delivered))))
+  current)
+
+
 (defk refresh-rows [state mode]
   {:pre [(: state AgentdState) (: mode str)]
    :post [(: % AgentdState)]}
@@ -1128,7 +1226,7 @@
    :post [(: % AgentdState)]}
   "行の cache を読み直し(mode = full | window — judgment.list-mode-for の 1 点)、自分に結ばれた
    Bound の行と自分が持つ Running の行のうち、まだ memory に無い行を行の順に受ける(Bound =
-   claim・Running = 行からの拾い直し)。取り下げられた行は先に割り込みの腕へ。claim を
+   claim・Running = 行からの拾い直し)。取り下げられた行は先に止める腕へ。claim を
    持ち越した job(defer)は拍ごとに読み直す。"
   (<- refreshed AgentdState (refresh-rows state mode))
   (setv rows refreshed.rows)
@@ -1151,8 +1249,9 @@
   {:pre [(: settings AgentdSettings) (: state AgentdState)]
    :post [(: % AgentdState)]}
   "1 拍: watch を待つ → 参加の heartbeat → profile の残量の観測(遅い周期)→ 結ばれた job の受け →
-   走っている job の観測。腕は互いの I/O の失敗で止まらない(R9): 失敗は log して次の周期 / 次の拍へ
-   持ち越す(heartbeat・観測・受けは周期の刻印を進めて洪水を避ける)。I/O より広い例外(bug)は捕まえない。"
+   走っている job への割り込みの配達(段 8 lane 4x)→ 走っている job の観測。腕は互いの I/O の失敗で
+   止まらない(R9): 失敗は log して次の周期 / 次の拍へ持ち越す(heartbeat・観測・受けは周期の刻印を
+   進めて洪水を避ける)。I/O より広い例外(bug)は捕まえない。"
   (<- wait float (wait-seconds-for state settings))
   (<- signal WatchAdvance (AcpWatchSse :since state.since :wait-seconds wait))
   (<- now-ms int (ClockNowMs))
@@ -1181,6 +1280,13 @@
       (except [e IO-FAILURES]
         (<- (LogLine :text f"agentd: receive failed: {(. (type e) __name__)}: {e}"))
         (setv current (replace current :last-resync-ms now-ms)))))
+  ;; 段 8 lane 4x: 走っている自分の job に載った割り込みを器へ — 毎拍・行の cache から(level-
+  ;; triggered: 器が断った id は cache に残り、次の拍が同じ id で撃ち直す。受けの拍でなくてもよい)。
+  (try
+    (<- interrupted AgentdState (deliver-interrupts settings current current.rows now-ms))
+    (setv current interrupted)
+    (except [e IO-FAILURES]
+      (<- (LogLine :text f"agentd: interrupt delivery failed: {(. (type e) __name__)}: {e}"))))
   (for [job (list current.jobs)]
     (try
       (<- observed AgentdState (observe-job settings current job now-ms))

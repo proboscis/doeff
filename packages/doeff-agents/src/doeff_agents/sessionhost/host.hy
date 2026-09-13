@@ -79,6 +79,10 @@
   headless-cancel-program
   headless-capture-program
   headless-cleanup-program
+  SEND-MODE-INTERRUPT
+  SEND-MODE-TURN
+  SEND-MODES
+  headless-inject-program
   headless-interrupt-program
   headless-launch-session
   headless-monitor-cycle
@@ -1341,10 +1345,22 @@
     (setv enter (bool (.get p "enter" True)))
     (setv literal (bool (.get p "literal" True)))
     (setv awaiting (bool (.get p "awaiting" False)))
+    ;; 段 8 lane 4x(agora-redesign #56): mode = turn(既定・次の手番の本文)| interrupt(割り込みの
+    ;; 本文 — 走っている手番へ即座に。headless は器へ注入し、走っている手番が無ければ型付きに
+    ;; 断る。tmux の tui は同じキー配送 — Claude Code / codex の tui は作業中の入力を自分で
+    ;; 走っている手番に読ませる)。語彙の外は断る(黙って turn にしない)。
+    (setv mode (.get p "mode" SEND-MODE-TURN))
+    (when (not-in mode SEND-MODES)
+      (raise (RuntimeError (+ "invalid params for session.send: mode must be one of "
+                            (.join " / " (sorted SEND-MODES)) f" (got: {mode !r})"))))
     (run-hosted config actor
-                (if (headless-backend? config)
-                    (headless-send-program sid message awaiting)
-                    (send-program sid message literal enter awaiting)))
+                (cond
+                  (and (headless-backend? config) (= mode SEND-MODE-INTERRUPT))
+                  (headless-inject-program sid message)
+                  (headless-backend? config)
+                  (headless-send-program sid message awaiting)
+                  True
+                  (send-program sid message literal enter awaiting)))
     (record-command actor sid "session.send" message)
     (return {"sent" True}))
 

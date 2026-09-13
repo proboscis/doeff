@@ -361,7 +361,7 @@
      (rule R6 "値の宣言は 1 点: lease の TTL と周期・watch の resync・frame の rate・購読の読み直しの周期は effects.AgentdSettings の既定値、env の名の綴り(URL・札・node の名・backend・所有)と host の argv の綴りは effects.py(R17 の join が同じ綴りを組む — 2026-09-12 改訂・以前は handlers.py / valve.py)、URL の既定値は handlers.py。")
      (rule R7 "job の進みは行から導く: 自分の Running(running-on-me)は memory に無くても resync の拍に拾い、次の 1 手は judgment.hy の job-step-of(器の現況 → observe | record-end | fail-missing・閉語彙 effects.JobStep)の 1 点で決める — memory に在る job の拍も同じ 1 点を通る。record-end は記録の腕(turn-record ended・result・phase Ended)だけを撃ち launch も send もし直さない。fail-missing は記録が在れば ended にし condition SessionFailed で Ended。終端の語彙(SESSION_TERMINAL_STATUSES)を読むのは judgment.hy だけ。")
      (rule R8 "capture の gone は終端の合図で例外ではない: SessionCapture の答えは閉語彙 CaptureFrame | CaptureGone、実 handler は host の断り(AgentdClientError)を CaptureGone に写す(host.hy / substrate は触らない)。gone の job は capturing = False・stream_gone = True で、以後 capture も購読の読み直しもせず、器の終端(同じ拍に読み直す)で記録の腕へ。器が終端の拍は capture を撃たない(job-step-of を実況より先に読む)。")
-     (rule R9 "tick の縁: heartbeat・profile の残量の観測(R18)・受け・job ごとの観測は互いの I/O の失敗(effects.IO_FAILURES = RuntimeError | OSError)で止まらない — program の agentd-tick が 4 つの腕をそれぞれ捕まえ、log して次の周期 / 次の拍へ持ち越す(condition には写さない — 一時の失敗を job の結末にしない)。I/O より広い例外は捕まえない(runtime.run_loop の縁)。")
+     (rule R9 "tick の縁: heartbeat・profile の残量の観測(R18)・受け・割り込みの配達(R21)・job ごとの観測は互いの I/O の失敗(effects.IO_FAILURES = RuntimeError | OSError)で止まらない — program の agentd-tick が 5 つの腕をそれぞれ捕まえ、log して次の周期 / 次の拍へ持ち越す(condition には写さない — 一時の失敗を job の結末にしない)。I/O より広い例外は捕まえない(runtime.run_loop の縁)。")
      (rule R11 "headless backend: host の backend の閉語彙は tmux | herdr | headless。headless の器は専用の program(sessionhost/headless.hy)と substrate(effects.hy の Headless* → substrate_headless.hy → headless_process.py)で、host.hy は backend の分岐だけ(RPC の語彙は同じ意味・session.interrupt を足す)。stdin / stdout の作法と手番の判断は headless_protocol.py の Dialogue / turn_verdict の純関数 1 点。claude の print mode の argv の家は impls/headless_argv.hy ちょうどで、semgrep doeff-agents-no-claude-print-mode の除外もその家と headless の substrate / program / 検だけ。admission と identity の準備は tui の launch と共有する(launch.hy admit-launch / prepare-launch-workspace)。")
      (rule R12 "events の実況: agentd は headless の器の実況を events file(wire の backend_ref.events_path)から offset で読み(SessionEvents)、純関数 judgment.events-to-deltas(claude = stream-json・codex = app-server の通知)で契約の種類の閉語彙(text / tool_use / tool_result / usage)の TurnDelta に写す。text の delta は 1 行ずつ frame、完成した本文は entries だけ。headless の器に pane の capture は撃たない。node の observations.streamCapability は host の backend から導く(judgment.stream-capability-of-backend の 1 点: headless = events・それ以外 = frames)。")
      (rule R13 "withdraw は中断の合図: 自分の走っている job の行が Withdrawn(書き手 = 作った側)になったら、judgment.interrupt-arm-for の 1 点で手番の途中なら session.interrupt(headless = SIGINT / turn/interrupt・tmux = Escape・session は残す)を撃ち、turn-record を ended(ここまでの entries と usage)、agent-job の conditions に Interrupted(phase は書かない)。session.cleanup は撃たない(温かい session は残す — 寿命は sessions-to-retire)。")
@@ -372,9 +372,24 @@
      (rule R18 "profile の残量の観測は agentd が書く(段 7 lane 7d-3): agentd-tick の 1 つの腕 observe-profiles が AgentdSettings.profile_observe_seconds(既定 300・値の宣言は 1 点・同じ値を読み口の cache の寿命に渡す)の周期で生きている profile の行(state ≠ retired)を読み、この機体の profile の家の在否を effect ListProfileHomes(段 8e lane 4j — 実 handler = handlers.list_profile_homes = 登録簿の 1 点 handlers.PROFILES_COMMAND = `agentcli profiles list --json` の subprocess + dir の実在)で読み、judgment.profile-rows-held の 1 点で観測する行を絞る: 家の在る行が 1 つも無い機体(pool の pod — personal の資格は預かり所が観測し、会社 profile は会社機体だけ)は usage を撃たず、「観測する profile なし」を AgentdState.no_profile_homes_logged で 1 度だけ log し(家が現れたら戻る)、計器 profile-observed(homes 0)は出す。家の在る行が在れば、この機体が持つ資格の残量を effect ReadProfileUsage(kind = effects.PROFILE_USAGE_KIND = claude・契約の行は資格の種類を運ばない)で 1 度読む。実 handler = handlers.read_profile_usage = dotfiles agentcli の console script(handlers.USAGE_COMMAND = `ai usage --json`)の subprocess ちょうど — sessionhost は agentcli を import しない・会社境界(company_boundary)の判定を持たない(断りは record の error → ProfileUsageUnavailable)・読み口の落ち方(profiles.gen.json の不在)で器の profile の有無を判じない。書く観測は judgment.profile-observed-of の 1 点(閉語彙 effects.ProfileVerdict): 窓 = observed-window-of(spec.reset.everySeconds と一致する窓・無ければ 5h)、remaining = 100 - used(percent・budget.unit ≠ percent は書かない)、resetAt = 窓の戻る時刻(無ければ observedAt)、observedAt = 断面の時刻、node = 自分。post-image は profile-status-with-observed(committed の state・conditions を写す)、committed と同じ observed は書かず(profile-observed-changed)、Conflict は log して次の周期、Refused / 書かない理由は log に 1 行、この機体に無い profile(ProfileNotHeld)は書かず log もしない。agentd.hy は窓の名・単位・境界の語を比較しない。")
      (rule R19 "手番の出来事は拍ごとに turn-record へ追記する(段 8 lane 4u・agora-redesign #49): stream-records は実況の材料の追記を読むたびに、その拍の出来事(judgment.deltas-of の entries = 契約 agora-kinds.json の turn-record の status.entries の item — kind は effects.EntryKind の閉語彙 text / tool_use / tool_result / frame / system / error・at = 読んだ拍・seq = frame と共有の採番)を agentd.append-entries の 1 点で行の status.entries へ追記する(耐久化は手番の終わりを待たない)。書きは行の最後の image(InFlightJob.record — 無ければ鍵で読む)に対する CAS(AcpPutStatus の ifGeneration)で、Conflict は行を読み直して同じ出来事を 1 度だけ積み直し、Refused / 行の不在は出来事を InFlightJob.pending_entries に持ち越して次の拍か手番の終わりに乗せる(落とさない)。拾い直した job の採番(seq 0 から)が行の seq と衝突すれば judgment.next-seq-after / renumbered-entries で行の次から振り直す。entry の形と上限は judgment の純関数の 1 点ずつ(text-entry / tool-use-entry / tool-result-entry / note-entry — summary ≤ ENTRY_SUMMARY_MAX_CHARS・text ≤ ENTRY_TEXT_MAX_CHARS・切れば truncated = true・toolUseId は呼び出しと結果を結ぶ鍵)で、行の上限(TURN_RECORD_ENTRIES_BYTE_BUDGET = 262144 byte)は judgment.entries-within-budget が古い出来事から落とし先頭に印(kind system・truncated・dropped)を残す。claude の system の行(init / API の retry / hook の失敗)は kind system に、result の誤りは kind error に、codex の turn/completed の誤りも kind error に写す(手番の終わりの判定は host のまま — ここは記録だけ)。手番の終わり(finalize-job / interrupt-job)は drain-stream で最後の材料を同じ拍で読んで追記し、turn-record-ended-status は残りの出来事を**追記**した上で ended・usage を据える(entries を置換しない — 旧の形は最後の本文 1 行だった)。usage は手番の全材料の読み直し(turn-batch-of)から数える(message ごとの重複を跨がない)。")
      (rule R20 "会話の cache を保つのは同じ機体 ∧ 同じ家の時だけ・それ以外は 履歴からの再開(ACP の記録から)(段 8q・agora-redesign #51・operator 決定 #54): Bound の job の起こし方は judgment.next-arm-for-job(candidate view home)の 1 点 — candidate = affinity.predecessor か会話の最後の手番の session(warm-candidate-of)、home = judgment.home-key-of(binding.account と charter の binding の対)、session の家は起こす時に刻んだ launch_attribution の agentd の欄(session-attribution-of / attribution-of-view — 回収される agent-job の行から導かない)。候補なし → launch / 生きて idle ∧ 同じ家 → send / 生きて idle ∧ 家が違う → 候補を session.cleanup して rehydrate / 生きていて idle でない → defer / 器に登記されて終端 ∧ 同じ家 → session.resume(cache を保つ)/ それ以外(器に無い = 別の機体・終端だが家が違う・帰属が無く家が分からない)→ rehydrate。rehydrate = session.launch で、最初の本文 = charter の prompt + judgment.rehydrate-history-of(会話の郵便と turn-record の entries を時刻順・kind ごとに畳み、この手番の inputs と frame は除き、AgentdSettings.rehydrate_history_byte_budget〔既定 65536 byte〕を超えたら古い手番から要約せず落として落とした数と全文の在処を名乗る)(+ headless は郵便の本文)。記録の材料は effect AcpConversationHistory(手番を起こし直す時の 1 回だけ)。resume が器に断られたら judgment.fallback-arm-of で同じ鋳造 id の rehydrate。家またぎの transcript の写し(sessionhost の transplant)には頼らない。turn-record の spec に sessionId(= sessionHandle.sessionId)を書く。node の observations は sessions の各項に account(帰属の account・null = 借りていない)、transcripts に終端の session のうち transcript の file がこの機体に在る会話ごとの最新(judgment.transcript-candidates-of・上限 AgentdSettings.transcripts_observed_max)を載せる — Scheduling はそれを (node, account) で読む(ACP 法 cd258b)。")
+     (rule R21 "割り込みの本文は走っている手番へ即座に渡す(段 8 lane 4x・agora-redesign #56・operator 逐語 2026-09-13 \"messaging supports both 'queued/interrupting' messages\"): Messaging(ACP)が走っている手番の agent-job の status.interrupts に載せた Message の id を、agentd は毎拍・行の cache から・自分が走らせている job(memory の InFlightJob)についてだけ読み(agentd.deliver-interrupts の 1 点)、渡していない id(judgment.pending-interrupts-of = 行の interrupts − 行の interruptsDelivered − memory の interrupts_sent・載せた順)ごとに Message の本文を鍵で 1 行読んで SessionInterject(session.send の mode = interrupt)で器へ渡す。渡せた id は鍵で読み直した行に CAS で記録する(judgment.interrupts-delivered-status-of — 同じ 1 回の書きで interrupts から消し interruptsDelivered へ足す・他の欄は写す・Conflict は 1 度読み直す)。器が断った id(走っている手番が無い)はそこで止めて行に残す(順を跨いで後の id を先に渡さない)— 手番が終わればその行は終端の phase で interrupts を持ち、Messaging が queued として積み直す。器の側(sessionhost の headless): claude は `--input-format stream-json` の温かい process(impls/headless_argv.hy の CLAUDE-HEADLESS-FLAGS・実測 conformance/interrupt-physics.md — 手番の途中に書いた user の行は CLI が次の tool の境界で手番に注入し、result の後も process は生きて次の行が次の手番)で、割り込みの本文 = 同じ user の行(headless_protocol.ClaudeDialogue.inject — 走っている手番が無ければ accepted = False)、codex = turn/interrupt を送り interrupted の turn/completed を手番の終わりとして報告せず同じ thread へ本文の turn/start(CodexDialogue.inject — host から見て手番は 1 つのまま)。host は器が引き受けなかった時に型付きに断る(headless-inject-program — 誰の job でもない手番を起こさない)。agentd は器の作法(stdin の綴り・turn/interrupt)を 1 語も持たない。")
      (rule R10 "session は会話の資源・job は手番(温かい session・設計 17.4): 会話 → 生きている session の対応は行(自分が claim した同じ subject の agent-job の sessionHandle)と器の現況から導き、Bound の job の起こし方は judgment.hy の next-arm-for-job(閉語彙 effects.NextArm = launch | send | resume | rehydrate | defer — 家と機体の扱いは R20)の 1 点で決める — 同じ会話の生きて idle な session が在れば launch せず session.send(awaiting)だけ、sessionHandle はその session を指し、turn-record は手番ごと。手番の終わりは器の lifecycle multi_turn(launch.hy の閉語彙に足した語)で policy.hy の monitor が既存の turn-end の連言から行の turn_ended_at に刻み、agentd は job-step-of の turn-end(turn_ended_at > 手番の始まりの下限 ∧ 記録の進み)で読む — status は倒さず session は生かす。idle の寿命は AgentdSettings.session_idle_ttl_seconds の 1 点で、超過・Withdrawn・node の退役で session.cleanup。計器 agent-job-to-send は create → send のまま(温かい path で p99 < 2 秒)。")]
   :laws
-    [(law agentd-exits-only-to-acp-and-custody
+    [(law interrupts-ride-the-running-turn-and-are-recorded-on-the-row
+       :statement "for_all Running job j run by this agentd with status.interrupts = [m1..mn]: each mi not in status.interruptsDelivered ∪ memory.interrupts_sent is handed to the session by SessionInterject(body(mi)) in placement order, and every accepted mi is written back by one CAS that removes it from interrupts and appends it to interruptsDelivered; a refused mi stops the order and stays on the row; agentd never starts a turn for an interrupt and never removes an id it did not hand over"
+       :counterexamples
+         [(counterexample "agentd が割り込みの id を行から消すだけの形(interruptsDelivered に足さない): Messaging の『載せた』と agentd の『渡した』の間で片方が再起動すると『渡した』と『まだ載せていない』が区別できず、同じ Message が二度 agent に届く。渡した id は行に残す(append-only)")
+          (counterexample "器が断った割り込み(走っている手番が無い)を agentd が interruptsDelivered に足す形: 本文は誰にも届いていないのに『渡した』と嘘をつき、Messaging が queued へ積み直せない。断られた id は行に残す")
+          (counterexample "割り込みの本文を agentd が session.send(mode = turn)で送る形: claude の温かい process では手番の外に書いた user の行が**次の手番**になり(job の無い手番・turn-record も result も無い)、手番の中でも『割り込み』の印が host に無い。mode = interrupt の 1 語で器の作法(注入 / turn/interrupt)を選ぶ")
+          (counterexample "codex の Dialogue が interrupted の turn/completed を手番の終わりとして報告してから turn/start する形: host が turn_ended_at を刻み、agentd が job を Ended にし、次の turn が job の無い手番になる。完了は飲んで同じ thread へ積む(手番は 1 つ)")
+          (counterexample "claude の headless を 1 手番 1 process(本文 + EOF)のまま割り込む形: stdin が閉じていて書けず、SIGINT は手番を止めるだけで本文を渡せない。--input-format stream-json の温かい process が割り込みの口(実測 2026-09-13)")]
+       :enforcement ["docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test-adr-doe-agents-012-interrupts-ride-the-running-turn"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_interrupt_on_a_running_job_is_handed_to_the_session_and_recorded_on_the_row"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_interrupt_refused_by_the_session_stays_on_the_row_and_is_not_recorded_as_delivered"
+                     "packages/doeff-agents/tests/test_sessionhost_headless.py::test_headless_process_claude_inject_reaches_the_running_turn"
+                     "packages/doeff-agents/tests/test_sessionhost_headless.py::test_codex_dialogue_inject_interrupts_then_starts_the_next_turn_as_one_turn"
+                     "packages/doeff-agents/tests/test_sessionhost_headless.py::test_host_headless_claude_interrupt_mode_reaches_the_running_turn"])
+     (law agentd-exits-only-to-acp-and-custody
        :statement "for_all source_file f in sessionhost/: agora_ledger_words(code_lines(f)) = ∅ — agentd(sessionhost)が話す相手は ACP と custody だけ"
        :counterexamples
          [(counterexample "sessionhost の handler が /api/state や turn-jobs の台帳を直に叩く — 共有状態が 2 つの store に割れ、段 4 で退役する agora の turn 系 API に新しい依存が生える")])
@@ -645,14 +660,15 @@
        (assert (= (run (job-step-of None 0 True)) "fail-missing")))
      (deftest test-adr-doe-agents-012-capture-gone-is-terminal-and-ticks-do-not-share-failure
        ;; R8 の針: SessionCapture の答えは閉語彙(agentd.hy の bind の型)・実 handler は host の
-       ;; 断り(AgentdClientError)を CaptureGone に写す・R9 の縁は agentd-tick に 4 つ(R18 で観測の腕が 1 つ増えた)。
+       ;; 断り(AgentdClientError)を CaptureGone に写す・R9 の縁は agentd-tick に 5 つ(R18 で観測の腕、R21 で割り込みの
+       ;; 配達の腕が 1 つずつ増えた)。
        (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
        (setv handler-lines (code-lines (/ ACP-DIR "handlers.py")))
        (assert (any (gfor line agentd-lines (in "(<- outcome (| CaptureFrame CaptureGone)" line))))
        (assert (any (gfor line handler-lines (in "except AgentdClientError" line))))
        (assert (any (gfor line handler-lines (in "return CaptureGone(" line))))
-       (assert (= (len (lfor line agentd-lines :if (in "(except [e IO-FAILURES]" line) line)) 4)
-               "tick の縁は heartbeat・profile の観測・受け・job ごとの 4 つ(ADR-DOE-AGENTS-012 R9・R18)")
+       (assert (= (len (lfor line agentd-lines :if (in "(except [e IO-FAILURES]" line) line)) 5)
+               "tick の縁は heartbeat・profile の観測・受け・割り込みの配達・job ごとの 5 つ(ADR-DOE-AGENTS-012 R9・R18・R21)")
        ;; 反例(挙動): gone は例外にならず、capture を止め、器の終端で Ended と ended。
        (setv world (World))
        (.put-row world.acp (bound-row "s-gone" "mac-1" None "claude" PHASE-BOUND))
@@ -779,14 +795,15 @@
        (assert (not-in minted #{"m-1" "charter-m-1"}))
        (assert (not-in "charter-m-1" (str launch))))
      (deftest test-adr-doe-agents-012-print-mode-has-one-home
-       ;; R11 の針: print mode の argv の綴り(`"-p" "--output-format"` / `"--print"`)は
+       ;; R11 の針: print mode の argv の綴り(`"-p" "--input-format"`〔段 8 lane 4x から stream-json の入力〕/
+       ;; `"-p" "--output-format"` / `"--print"`)は
        ;; impls/headless_argv.hy だけ(tmux の -p は capture-pane / paste-buffer の旗で別物)。host.hy の backend の
        ;; 閉語彙と分岐の述語は 1 点。semgrep の除外は headless の家だけ。
        (setv hits [])
        (for [path (source-files)]
          (when (= path.suffix ".hy")
            (for [line (code-lines path)]
-             (when (re.search r"\"-p\"\s+\"--output-format\"|\"--print\"" line)
+             (when (re.search r"\"-p\"\s+\"--(input|output)-format\"|\"--print\"" line)
                (.append hits (str (.relative-to path SESSIONHOST-DIR)))))))
        (assert (= (sorted (set hits)) ["impls/headless_argv.hy"])
                f"print mode の argv の家は impls/headless_argv.hy ちょうど: {hits}")
@@ -1188,7 +1205,61 @@
        (assert (= (len bare.local.home-reads) 2) "家の在否は周期ごとに読み直す")
        (assert (= (len (lfor line bare.local.logs :if (in "no profile has a home" line) line)) 1)
                "『観測する profile なし』は 1 度だけ(R18・段 8e lane 4j)")
-       (assert (not-in "observed" (status-of (get bare.acp.rows f"{AGORA-KINDS-NAMESPACE}:{PROFILE-KIND}:p1")))))]
+       (assert (not-in "observed" (status-of (get bare.acp.rows f"{AGORA-KINDS-NAMESPACE}:{PROFILE-KIND}:p1")))))
+     (deftest test-adr-doe-agents-012-interrupts-ride-the-running-turn
+       ;; R21 の針(構造): 判断は judgment.hy の 1 点ずつ・配達は agentd.deliver-interrupts の 1 点・agentd は器の作法の語を
+       ;; 持たない・claude の headless は stream-json の入力・sessionhost の割り込みの口は mode = interrupt の 1 語。
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (for [name ["pending-interrupts-of" "interrupts-delivered-status-of" "job-row-keyed"]]
+         (assert (= (len (lfor line judgment-lines :if (.startswith line f"(defk {name} ") line)) 1) name))
+       (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
+       (assert (= (len (lfor line agentd-lines :if (.startswith line "(defk deliver-interrupts ") line)) 1)
+               "割り込みの配達は agentd.deliver-interrupts の 1 点(R21)")
+       (assert (= (len (lfor line agentd-lines :if (in "(SessionInterject :session-id" line) line)) 1)
+               "器へ渡す点は 1 つ(R21)")
+       (for [line agentd-lines]
+         (for [word ["claude-user-line" "claude_user_line" "--input-format" "REQ_TURN_INTERRUPT" "HeadlessInject"]]
+           (assert (not-in word line) f"agentd.hy は器の作法の綴りを持たない(R21): {line}")))
+       (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
+       (assert (= (len (lfor line effects-lines :if (.startswith line "JOB_INTERRUPTS_KEY: str = \"interrupts\"") line)) 1))
+       (assert (= (len (lfor line effects-lines :if (.startswith line "JOB_INTERRUPTS_DELIVERED_KEY: str = \"interruptsDelivered\"") line)) 1))
+       (assert (= (len (lfor line effects-lines :if (.startswith line "    interrupts_sent: tuple[str, ...] = ()") line)) 1)
+               "渡した id の memory は InFlightJob の 1 欄(R21)")
+       (setv handler-lines (code-lines (/ ACP-DIR "handlers.py")))
+       (assert (= (len (lfor line handler-lines :if (in "\"mode\": \"interrupt\"" line) line)) 1)
+               "sessionhost への割り込みの口は session.send の mode = interrupt の 1 語(R21)")
+       (setv argv-lines (code-lines (/ SESSIONHOST-DIR "impls/headless_argv.hy")))
+       (assert (any (gfor line argv-lines (in "\"--input-format\" \"stream-json\"" line)))
+               "claude の headless は stream-json の入力の温かい process(R21)")
+       (setv protocol-lines (code-lines (/ SESSIONHOST-DIR "headless_protocol.py")))
+       (assert (= (len (lfor line protocol-lines :if (.startswith line "    def inject(self, text: str) -> Injection:") line)) 2)
+               "割り込みの本文の作法は Dialogue.inject の 2 腕(claude / codex)(R21)")
+       (assert (any (gfor line protocol-lines (in "one_process_per_turn: bool = False" line))))
+       (setv host-lines (code-lines (/ SESSIONHOST-DIR "host.hy")))
+       (assert (any (gfor line host-lines (in "(headless-inject-program sid message)" line)))
+               "host の mode = interrupt は inject の program へ(R21)")
+       ;; 反例(挙動): 行の interrupts は載せた順に器へ渡り、同じ 1 回の書きで interruptsDelivered へ移る。断られた id は残る。
+       (setv world (World))
+       (.put-row world.acp (message-row "m-x" "first"))
+       (.put-row world.acp (turn-row "t-2" "conv-i" "m-x" (- world.local.now-ms 300)))
+       (.tick world 1000)
+       (setv sid (sid-of world "t-2"))
+       (.put-row world.acp (message-row "m-i1" "stop"))
+       (.put-row world.acp (message-row "m-i2" "then continue"))
+       (setv running (get world.acp.rows "acp-system:agent-job:t-2"))
+       (setv #^ JSONObject placed (dict (status-of running)))
+       (setv (get placed "interrupts") ["m-i1" "m-i2"])
+       (.put-row world.acp (AcpRow :namespace running.namespace :key running.key :kind running.kind :resource-id running.resource-id
+                                   :version running.version :generation (+ running.generation 1) :created-at-ms running.created-at-ms
+                                   :labels running.labels :payload running.payload :spec running.spec :status placed))
+       (.tick world 1000)
+       (assert (= world.sessions.interjections [#(sid "stop") #(sid "then continue")]) "載せた順に器へ(R21)")
+       (setv after (status-of (get world.acp.rows "acp-system:agent-job:t-2")))
+       (assert (= (get after "interrupts") []) "渡した id は interrupts から消える(R21)")
+       (assert (= (get after "interruptsDelivered") ["m-i1" "m-i2"]) "渡した id は interruptsDelivered に残る(R21)")
+       (assert (= (get after "phase") PHASE-RUNNING) "他の欄は写す(R21)")
+       (.tick world 1000)
+       (assert (= (len world.sessions.interjections) 2) "二度渡さない(R21)"))]
   :plans ["docs/impl-requests/stage2-lane-prompts/lane-2b-agentd.md(agora-redesign)"
           "docs/impl-requests/stage2-lane-prompts/lane-2b2-agentd-fix.md(agora-redesign・改訂 R7〜R9)"
           "docs/impl-requests/stage2-lane-prompts/lane-2b3-warm-session.md(agora-redesign・改訂 R10)"
@@ -1198,4 +1269,5 @@
           "docs/impl-requests/stage7-lane-prompts/lane-7d3-agentd-profile-observed.md(agora-redesign・追補 R18)"
           "docs/impl-requests/stage8-lane-prompts/lane-4j-acp-debts.md(agora-redesign・R18 の追補: 器の profile の集合は家の在否で先に読む)"
           "docs/impl-requests/stage8-lane-prompts/lane-4u-turn-events-persisted.md(agora-redesign #49・追補 R19)"
-          "docs/impl-requests/stage8-lane-prompts/lane-4w-rehydrate-across-profiles.md(agora-redesign #51・operator 決定 #54・追補 R20)"])
+          "docs/impl-requests/stage8-lane-prompts/lane-4w-rehydrate-across-profiles.md(agora-redesign #51・operator 決定 #54・追補 R20)"
+          "docs/impl-requests/stage8-lane-prompts/lane-4x-messaging-queued-and-interrupt.md(agora-redesign #56・追補 R21)"])
