@@ -20,7 +20,8 @@
 ;;;     turn_ended_at × 手番の始まりの下限 × 記録の進み)、idle の寿命は sessions-to-retire。
 ;;;   * 会話の引き継ぎ(段 8q・R20): session の会話・手番・家は起こす時に launch_attribution へ刻み
 ;;;     (session-attribution-of)、器の眺めから読む(attribution-of-view)— 回収される agent-job の行から
-;;;     導かない。cache(温かい send / --resume)を保つのは同じ機体 ∧ 同じ家の時だけで、家か機体が違えば
+;;;     導かない。cache(温かい send / --resume)を保つのは同じ機体 ∧ 同じ家(account・binding・model の組 —
+;;;     段 9o lane 9o-3)の時だけで、家か機体が違えば
 ;;;     cache の失効を受け入れ、ACP の記録を最初の本文に畳んで新しい session を起こす(operator 決定 #54・
 ;;;     rehydrate-history-of・上限は AgentdSettings の 1 点)。
 ;;;   * capture の是非(購読者の数 → continue | stop・issue #1 の決定)と待ちの長さ。
@@ -315,12 +316,17 @@
 (defk home-key-of [plan]
   {:pre [(: plan LaunchPlan)]
    :post [(: % dict)]}
-  "job が走る家の鍵(段 8q・R20): 預かり所の account(借りる時の家 = <homes-root>/<種類>/<account>)と
-   charter の binding(借りない時の家・codex の profile_dir)の対。同じ鍵 = 同じ家(homes-root は機体に
-   1 つ)。欠けた欄は None のまま(発明しない)。"
+  "job が走る家の鍵(段 8q・R20・段 9o lane 9o-3): 預かり所の account(借りる時の家 = <homes-root>/<種類>/<account>)・
+   charter の binding(借りない時の家・codex の profile_dir)・charter の model(plan.model — 無ければ走行器の既定を
+   使う事実の名 \"default\")の組。同じ鍵 = 同じ器を使い回せる(homes-root は機体に 1 つ)。model を鍵に入れるのは、
+   走っている CLI の session は起こした時の model のまま手番を回すから(session.send に model の欄は無く、headless の
+   続きの process も器の行の model で起きる)— 宣言の model を変えた手番を温かい session へ送ると前の model で走る
+   (実射 2026-09-14: charter は claude-opus-5・「session started: model claude-sonnet-5」)。既知の形 = virtual actor の
+   器の再利用の鍵に宣言の欄を含める。欠けた欄は None のまま(発明しない)。"
   (setv binding (.get plan.charter "binding"))
   {"account" plan.account
-   "binding" (if (isinstance binding dict) binding None)})
+   "binding" (if (isinstance binding dict) binding None)
+   "model" plan.model})
 
 
 (defk attribution-of-view [view]
@@ -374,13 +380,14 @@
    :post [(: % ArmChoice)]}
   "Bound の job の起こし方(閉語彙 effects.NextArm)— 判断はここ 1 点(R10 / R20)。candidate = 会話の前の
    session(affinity.predecessor か会話の最後の手番の session — warm-candidate-of)、view = その器の眺め、
-   home = この job が走る家(home-key-of)。cache(温かい session / transcript)を保つのは同じ機体 ∧ 同じ家の
+   home = この job が走る家(home-key-of — account・binding・model の組)。cache(温かい session / transcript)を保つのは同じ機体 ∧ 同じ家の
    時だけで、機体か家(profile の家)が変わる時は cache の失効を受け入れて 履歴から再開する(ACP の全史から)
    (operator 決定 2026-09-13 #54 逐語 \"i want cache kept when both machine and a profile is not changed. in
    other cases, i think i need to accept the fact that cache gets invalidated\"):
    候補が無い → launch /
    候補が生きて idle ∧ 同じ家 → send(温かい)/
-   候補が生きて idle ∧ 家が違う → 候補を片付けて rehydrate(profile を変えた手番 — 失効した cache の器を残さない)/
+   候補が生きて idle ∧ 家が違う → 候補を片付けて rehydrate(profile か model を変えた手番 — 失効した cache の器を残さない・
+   新しい session は charter.model で起きる)/
    候補が生きていて idle でない → defer(手番の途中 — 走っている手番に本文を積まない)/
    候補が器に登記されて終端 ∧ 同じ家 → resume(温かい session が片付いた後も cache を保つ --resume)/
    それ以外(候補が器に無い = 別の機体・器の行が消えた / 終端だが家が違う)→ rehydrate(ACP の会話の記録を
