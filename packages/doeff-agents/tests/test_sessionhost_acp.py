@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from pathlib import Path
+from typing import get_args
 
 import hy  # noqa: F401  # registers the .hy importer
 import pytest
@@ -17,6 +19,7 @@ from doeff_agents.sessionhost.acp import judgment
 from doeff_agents.sessionhost.acp.effects import (
     AGENT_JOB_KIND,
     AGENT_JOB_NAMESPACE,
+    AGENTD_PRINCIPAL,
     AGORA_KINDS_NAMESPACE,
     CLAUDE_OAUTH_TOKEN_ENV,
     JSON,
@@ -25,9 +28,12 @@ from doeff_agents.sessionhost.acp.effects import (
     PHASE_BOUND,
     PHASE_ENDED,
     PHASE_RUNNING,
+    PROFILE_KIND,
+    TURN_RECORD_ENTRIES_BYTE_BUDGET,
     TURN_RECORD_KIND,
     AcpRow,
     AgentdSettings,
+    EntryKind,
     JSONObject,
     LeaseRefused,
     SessionRefused,
@@ -2233,3 +2239,107 @@ def test_node_observations_carry_the_ownership_when_declared() -> None:
         "transcripts": [],
         "ownership": {"grade": "company", "proof": "gce-project:cyberagent-050"},
     }
+
+
+# ------------------------------------------------------------------ 契約 agora-kinds.json の写しの自己整合(段 9f lane 9f-8)
+#
+# 正本は proboscis/agent-control-plane の docs/contracts/agora-kinds.json。写しと正本の byte 一致は正本側の
+# scripts/check_cross_repo_contracts.hy が撃つ(消費側は自分の checkout しか持たない)。ここが撃つのは写しの中で閉じる 3 点:
+# docs/contracts/reads.json の読む欄が写しに実在する(dot 区切り・* は辿らない)/ 写しが版と互換の規則を名乗り宣言 file が
+# 正本の在処を名乗る / effects.py が写しとして持つ値(principal・kind 名・entries の kind の語・行の上限・書き手の軸)が写しと一致する。
+
+#: packages/doeff-agents/tests/<this> → parents[3] = repo の root。
+_CONTRACTS_DIR = Path(__file__).resolve().parents[3] / "docs" / "contracts"
+_AGORA_KINDS_COPY = _CONTRACTS_DIR / "agora-kinds.json"
+_CONTRACT_READS = _CONTRACTS_DIR / "reads.json"
+_CONTRACT_DECLARATION = _CONTRACTS_DIR / "README.md"
+_AGORA_KINDS_CANON_MARKER = (
+    "acp-contract-canon: proboscis/agent-control-plane:docs/contracts/agora-kinds.json"
+)
+#: agentd が書き手として名乗る status の軸(kind → 軸)。
+_AGENTD_STATUS_AXES: tuple[tuple[str, str], ...] = (
+    (TURN_RECORD_KIND, "state"),
+    (TURN_RECORD_KIND, "usage"),
+    (TURN_RECORD_KIND, "entries"),
+    (NODE_KIND, "lease"),
+    (NODE_KIND, "observations"),
+    (PROFILE_KIND, "observed"),
+)
+
+
+class _Absent:
+    """path が写しに無い印(JSON の null と区別する)。"""
+
+
+_ABSENT = _Absent()
+
+
+def _load_json(path: Path) -> object:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _lookup(document: object, path: str) -> object:
+    """dot 区切りの path を object の鍵で辿る。途中で鍵が無い・object でない = _ABSENT。"""
+    node = document
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return _ABSENT
+        node = node[part]
+    return node
+
+
+def _string_list(value: object) -> list[str]:
+    assert isinstance(value, list), repr(value)
+    items: list[str] = []
+    for item in value:
+        assert isinstance(item, str), repr(item)
+        items.append(item)
+    return items
+
+
+def test_agora_kinds_reads_exist_in_the_copy() -> None:
+    reads = _load_json(_CONTRACT_READS)
+    assert _lookup(reads, "schema") == "acp.contract-reads.v1"
+    paths = _string_list(_lookup(reads, "reads.agora-kinds"))
+    assert paths, "agora-kinds の読む欄が 1 つも宣言されていない"
+    assert not [path for path in paths if "*" in path], "容器を開く * はこの検が辿らない"
+    copy = _load_json(_AGORA_KINDS_COPY)
+    missing = [path for path in paths if _lookup(copy, path) is _ABSENT]
+    assert missing == [], f"読む欄が写しに無い: {missing}"
+
+
+def test_agora_kinds_copy_names_its_version_and_the_canon() -> None:
+    copy = _load_json(_AGORA_KINDS_COPY)
+    version = _lookup(copy, "version")
+    assert isinstance(version, int), repr(version)
+    assert not isinstance(version, bool), repr(version)
+    assert version >= 1, repr(version)
+    assert _lookup(copy, "compatibility.rule") == "additive-only"
+    _string_list(_lookup(copy, "compatibility.deprecated"))
+    assert _AGORA_KINDS_CANON_MARKER in _CONTRACT_DECLARATION.read_text(encoding="utf-8")
+
+
+def test_agentd_values_copied_from_agora_kinds_match_the_copy() -> None:
+    copy = _load_json(_AGORA_KINDS_COPY)
+    assert AGENTD_PRINCIPAL in _string_list(_lookup(copy, "principals"))
+    for kind in (TURN_RECORD_KIND, NODE_KIND, PROFILE_KIND, MESSAGE_KIND):
+        assert _lookup(copy, f"kinds.{kind}.schema") is not _ABSENT, kind
+    entry_kinds = set(
+        _string_list(
+            _lookup(
+                copy,
+                "kinds.turn-record.schema.properties.status.properties.entries.items.properties.kind.enum",
+            )
+        )
+    )
+    written = set(get_args(EntryKind))
+    assert written <= entry_kinds, (
+        f"agentd が書く entries の kind が契約の語彙の外: {sorted(written - entry_kinds)}"
+    )
+    budget = _lookup(copy, "conventions.turnRecordEntries.byteBudget")
+    assert budget == TURN_RECORD_ENTRIES_BYTE_BUDGET, repr(budget)
+    for kind, axis in _AGENTD_STATUS_AXES:
+        writers = _string_list(_lookup(copy, f"kinds.{kind}.declaration.writers.status.{axis}"))
+        assert AGENTD_PRINCIPAL in writers, (
+            f"{kind}.status.{axis} の書き手に agentd が居ない: {writers}"
+        )
