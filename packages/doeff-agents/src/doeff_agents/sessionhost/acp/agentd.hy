@@ -36,6 +36,15 @@
 ;;; judgment.profile-rows-held): 家の在る profile が 1 つも無い機体(pool の pod)は usage を撃たず、
 ;;; 「観測する profile なし」を 1 度だけ名乗る(周期ごとに読み口の落ち方を吐かない)。
 ;;;
+;;; 手番の出来事の耐久化(段 8 lane 4u・agora-redesign #49): 実況の材料を読む拍ごとに、その拍の
+;;; entries(text / tool_use / tool_result / system / error)を turn-record の status.entries へ追記する
+;;; (append-entries — 耐久化は手番の終わりを待たない。落ちた手番も読んだ所までは残る)。書きは informer と
+;;; 同じ CAS(ifGeneration = 最後に知った行の generation)で、Conflict は行を読み直して同じ出来事を
+;;; 積み直し、断られた / 行がまだ無い拍の出来事は pending-entries に持ち越して次の拍か手番の終わりに乗せる。
+;;; 判断(出来事 → entry・上限・切り詰め・追記の post-image・採番の衝突)は judgment の純関数。
+;;; 手番の終わりは最後の材料を同じ拍で読み(実況の frame も押す)、残りを追記した上で ended と usage を書く
+;;; (usage は手番の全材料の読み直しから — message ごとの重複を跨いで数えない)。
+;;;
 ;;; 書く欄は契約の writers どおり: agent-job の phase / sessionHandle / result / conditions、
 ;;; node の status.lease / status.observations、turn-record の create と status、profile の status.observed。
 ;;; binding は書かない・Node の行は作らない(scheduling の欄と動詞)。
@@ -131,6 +140,9 @@
   deltas-of
   due
   ended-status-of
+  entries-of-status
+  next-seq-after
+  renumbered-entries
   first-turn-carries-inputs
   frame-lines-of
   in-flight-ids
@@ -168,6 +180,7 @@
   status-frame
   status-object-of
   stream-source-of
+  turn-record-appended-status
   turn-record-ended-status
   turn-record-key-of
   turn-record-spec-of
@@ -583,21 +596,68 @@
           lines)))
 
 
+(defk append-entries [job entries]
+  {:pre [(: job InFlightJob) (: entries tuple)]
+   :post [(: % InFlightJob)]}
+  "手番の出来事を turn-record の status.entries へ追記する(段 8 lane 4u): 行の最後の image
+   (job.record — 無ければ鍵で読む)に CAS(ifGeneration)で post-image を書く。Conflict は行を
+   読み直して同じ出来事を 1 度だけ積み直す。断られた・行が無い拍は出来事を pending-entries に
+   持ち越す(落とさない)。拾い直した job(seq が 0 から)の採番が行の seq と衝突すれば、行の次から
+   振り直す(判断は next-seq-after / renumbered-entries)。"
+  (when (not entries)
+    (return job))
+  (setv record job.record)
+  (when (is record None)
+    (<- key str (turn-record-key-of job.job-id))
+    (<- found (| AcpRow None) (AcpGetRow :key key))
+    (setv record found))
+  (when (is record None)
+    (<- (LogLine :text f"agentd: turn-record of job {job.job-id} is not readable; keeping {(len entries)} entries for the next tick"))
+    (return (replace job :pending-entries entries)))
+  (<- record-status dict (status-object-of record))
+  (<- existing tuple (entries-of-status record-status))
+  (<- floor int (next-seq-after existing 0))
+  (<- numbered tuple (renumbered-entries entries floor))
+  (setv delta-seq (max job.delta-seq (+ (get (get numbered -1) "seq") 1)))
+  (<- appended dict (turn-record-appended-status record-status numbered))
+  (<- wrote (| Written Conflict Refused) (AcpPutStatus :row record :status appended))
+  (when (isinstance wrote Conflict)
+    (<- key str (turn-record-key-of job.job-id))
+    (<- fresh (| AcpRow None) (AcpGetRow :key key))
+    (when (is-not fresh None)
+      (setv record fresh)
+      (<- record-status dict (status-object-of record))
+      (<- existing tuple (entries-of-status record-status))
+      (<- floor int (next-seq-after existing 0))
+      (<- numbered tuple (renumbered-entries entries floor))
+      (setv delta-seq (max job.delta-seq (+ (get (get numbered -1) "seq") 1)))
+      (<- appended dict (turn-record-appended-status record-status numbered))
+      (<- wrote (| Written Conflict Refused) (AcpPutStatus :row record :status appended))))
+  (if (isinstance wrote Written)
+      (replace job :record (replace record :generation (+ record.generation 1) :status appended)
+                   :pending-entries #()
+                   :delta-seq delta-seq)
+      (do
+        (<- (LogLine :text f"agentd: turn-record append for job {job.job-id} did not land ({wrote}); keeping {(len entries)} entries for the next tick"))
+        (replace job :record None :pending-entries entries :delta-seq delta-seq))))
+
+
 (defk stream-records [settings job source path now-ms]
   {:pre [(: settings AgentdSettings) (: job InFlightJob) (: source str) (: path str)
          (: now-ms int)]
    :post [(: % InFlightJob)]}
-  "実況の材料の追記を読み、TurnDelta(text / tool_use / tool_result / usage)を押す
-   (events は text の delta が 1 行ずつ・判断は純関数 deltas-of / events-to-deltas)。"
+  "実況の材料の追記を読み、TurnDelta(text / tool_use / tool_result / usage)を押し、その拍の
+   出来事(entries)を turn-record へ追記する(events は text の delta が 1 行ずつ・判断は純関数
+   deltas-of / events-to-deltas)。持ち越しの出来事(pending-entries)は先頭に乗る。"
   (<- chunk TranscriptChunk (read-stream source path job.transcript-offset))
   (<- batch DeltaBatch (deltas-of job.agent-type source chunk.text job.job-id job.delta-seq now-ms))
   (setv next (replace job :transcript-offset chunk.offset :delta-seq batch.next-seq))
-  (if batch.frames
-      (do
-        (<- subscribers (| int None) (push-frames settings next batch.frames))
-        (<- verdict str (capture-verdict subscribers))
-        (replace next :capturing (and (not next.stream-gone) (= verdict "continue"))))
-      next))
+  (when batch.frames
+    (<- subscribers (| int None) (push-frames settings next batch.frames))
+    (<- verdict str (capture-verdict subscribers))
+    (setv next (replace next :capturing (and (not next.stream-gone) (= verdict "continue")))))
+  (<- recorded InFlightJob (append-entries next (+ next.pending-entries batch.entries)))
+  recorded)
 
 
 (defk capture-frame [settings job now-ms]
@@ -661,8 +721,9 @@
 (defk end-turn-record [job-id usage entries]
   {:pre [(: job-id str) (: usage (| dict None)) (: entries tuple)]
    :post [(: % bool)]}
-  "turn-record を ended に(usage・entries)。戻り = 行が在って書けたか(無ければ False —
-   受けた直後に落ちた job には記録が無いのが普通なので、ここでは log しない)。"
+  "turn-record を ended に(usage・残りの entries を行の entries に追記)。行は鍵で読み直す
+   (正本は行)。戻り = 行が在って書けたか(無ければ False — 受けた直後に落ちた job には記録が
+   無いのが普通なので、ここでは log しない)。"
   (<- key str (turn-record-key-of job-id))
   (<- record (| AcpRow None) (AcpGetRow :key key))
   (if (is record None)
@@ -676,11 +737,25 @@
         (isinstance wrote Written))))
 
 
+(defk drain-stream [settings job source path now-ms]
+  {:pre [(: settings AgentdSettings) (: job InFlightJob) (: source (| str None))
+         (: path (| str None)) (: now-ms int)]
+   :post [(: % InFlightJob)]}
+  "手番の終わりの拍: まだ読んでいない材料の残り(最後の本文・result)を同じ拍で読み、実況の
+   frame を押し、出来事を追記する(stream-records と同じ 1 点)。材料が無ければそのまま。"
+  (if (or (is path None) (is source None))
+      job
+      (do
+        (<- drained InFlightJob (stream-records settings job source path now-ms))
+        drained)))
+
+
 (defk turn-batch-of [job source path now-ms]
   {:pre [(: job InFlightJob) (: source (| str None)) (: path (| str None)) (: now-ms int)]
    :post [(: % DeltaBatch)]}
-  "手番の始まりから今までの材料(transcript / events)を読み直し、記録の entries と usage を
-   組む(frame は押さない — 実況は拍ごとに押した)。材料が無ければ空。"
+  "手番の始まりから今までの材料(transcript / events)を読み直し、usage を組む(frame は押さない
+   — 実況は拍ごとに押した。entries も使わない — 出来事は拍ごとに行へ追記した側が正本で、ここは
+   message ごとの重複を跨いで数える usage のためだけ)。材料が無ければ空。"
   (if (or (is path None) (is source None))
       (DeltaBatch :frames #() :entries #() :usage None :next-seq 0 :model None)
       (do
@@ -699,9 +774,11 @@
    turn-end(温かい session の手番の終わり)は session を生かしたまま。record-end(器が終端)
    で器が multi_turn なら、host の掃き取りの対象外なので agentd が片付ける。"
   (<- outcome JobOutcome (job-outcome-of view))
-  (<- batch DeltaBatch (turn-batch-of job source path now-ms))
-  ;; turn-record → ended
-  (<- recorded bool (end-turn-record job.job-id batch.usage batch.entries))
+  ;; 最後の材料(まだ読んでいない本文・result)を同じ拍で読み、実況を押し、出来事を追記する。
+  (<- drained InFlightJob (drain-stream settings job source path now-ms))
+  (<- batch DeltaBatch (turn-batch-of drained source path now-ms))
+  ;; turn-record → ended(追記できずに持ち越した出来事があれば最後の書きに乗せる)
+  (<- recorded bool (end-turn-record drained.job-id batch.usage drained.pending-entries))
   (when (not recorded)
     (<- (LogLine :text f"agentd: turn-record for job {job.job-id} is missing at turn end")))
   ;; agent-job → Ended
@@ -715,8 +792,8 @@
         (<- wrote-job (| Written Conflict Refused) (AcpPutStatus :row fresh :status ended))
         (when (not (isinstance wrote-job Written))
           (<- (LogLine :text f"agentd: agent-job {job.job-id} not ended ({wrote-job})")))))
-  ;; 実況の終わりの印
-  (<- frame dict (status-frame job.job-id job.delta-seq now-ms "ended"))
+  ;; 実況の終わりの印(seq は最後の材料の読みの続き)
+  (<- frame dict (status-frame job.job-id drained.delta-seq now-ms "ended"))
   (<- (push-frames settings job #(frame)))
   ;; 札を返す
   (when (is-not job.lease-id None)
@@ -884,8 +961,9 @@
     (<- found tuple (stream-source-of view canon))
     (setv source (get found 0))
     (setv path (get found 1)))
-  (<- batch DeltaBatch (turn-batch-of job source path now-ms))
-  (<- (end-turn-record job.job-id batch.usage batch.entries))
+  (<- drained InFlightJob (drain-stream settings job source path now-ms))
+  (<- batch DeltaBatch (turn-batch-of drained source path now-ms))
+  (<- (end-turn-record drained.job-id batch.usage drained.pending-entries))
   (<- fresh (| AcpRow None) (AcpGetRow :key row.key))
   (setv target (if (is fresh None) row fresh))
   (<- status dict (status-object-of target))
@@ -893,7 +971,7 @@
   (<- wrote (| Written Conflict Refused) (AcpPutStatus :row target :status interrupted))
   (when (not (isinstance wrote Written))
     (<- (LogLine :text f"agentd: Interrupted condition of job {job.job-id} not written ({wrote})")))
-  (<- frame dict (status-frame job.job-id job.delta-seq now-ms "ended"))
+  (<- frame dict (status-frame job.job-id drained.delta-seq now-ms "ended"))
   (<- (push-frames settings job #(frame)))
   (when (is-not job.lease-id None)
     (<- (CustodyLeaseRevoke :lease-id job.lease-id)))

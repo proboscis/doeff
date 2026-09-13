@@ -50,6 +50,25 @@ PHASE_WITHDRAWN = "Withdrawn"
 #: turn-record の state(契約 agora-kinds.json turn-record.declaration.states)。
 TURN_RECORD_RUNNING = "running"
 TURN_RECORD_ENDED = "ended"
+
+#: turn-record の status.entries(手番の出来事の列・append-only の event log — 段 8 lane 4u・agora-redesign #49)の
+#: kind の閉語彙(契約 agora-kinds.json の kinds.turn-record … entries.items.kind の写し)。text = assistant の本文の
+#: 1 block / tool_use・tool_result = 道具の呼び出しと結果 / frame = tui の最後の pane の断面 / system = 器の system の
+#: 出来事(init・API の retry・hook の失敗)/ error = 手番が誤りで終わった(stream の result の is_error)。
+EntryKind = Literal["text", "tool_use", "tool_result", "frame", "system", "error"]
+ENTRY_KIND_TEXT: EntryKind = "text"
+ENTRY_KIND_TOOL_USE: EntryKind = "tool_use"
+ENTRY_KIND_TOOL_RESULT: EntryKind = "tool_result"
+ENTRY_KIND_FRAME: EntryKind = "frame"
+ENTRY_KIND_SYSTEM: EntryKind = "system"
+ENTRY_KIND_ERROR: EntryKind = "error"
+#: 上限と切り詰めの規則(契約 conventions.turnRecordEntries の写し — 書き手の側の宣言点はここ)。
+#: 1 行の entries の JSON(UTF-8・compact)の上限 byte。超えたら古い出来事から落とし、先頭に印を残す。
+TURN_RECORD_ENTRIES_BYTE_BUDGET = 262_144
+#: tool_use の入力の要約と tool_result の出力の要約(summary)の上限(字)。
+ENTRY_SUMMARY_MAX_CHARS = 2_048
+#: text / system / error の本文(text)の上限(字)。
+ENTRY_TEXT_MAX_CHARS = 65_536
 #: node の terminal state(gone の行は同じ名の生きた行ではない)。
 NODE_GONE = "gone"
 #: profile の terminal state(契約 agora-kinds.json profile.declaration.states — retired は観測しない)。
@@ -629,6 +648,13 @@ class InFlightJob:
     last_probe_ms: int
     #: 手番の途中で判った事実(inputs の欠け等)— Ended の書きで conditions に足す。
     pending_conditions: tuple[JSONObject, ...]
+    #: 手番の記録(turn-record)の行の最後に知った image(段 8 lane 4u — 出来事の追記の CAS の相手)。
+    #: None = まだ読んでいない(最初の追記で鍵から読む)。書けた拍に generation + 1 と書いた status で
+    #: 差し替え、Conflict は読み直して積み直す。正本は行(R7)— 再起動で消えても鍵から戻る。
+    record: AcpRow | None = None
+    #: 読んだが行へまだ書けていない出来事(書きが断られた / 行がまだ無い拍の持ち越し)。次の拍の
+    #: 追記と手番の終わりの書きに先頭で乗る(出来事は落とさない・順は seq)。
+    pending_entries: tuple[JSONObject, ...] = ()
 
 
 @dataclass(frozen=True)

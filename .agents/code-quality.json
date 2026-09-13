@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "_comment": "共通の品質検査(dotfiles agent/code_quality.py)の module 契約。初回の登録は段 2 の agentd(sessionhost/acp/・agora-redesign #19 / #20)だけ — 既存の sessionhost(deff / defhandler を持つ Hy)は投影の対象外なので include に入れず、依存先としてだけ宣言する。 段 2 lane 2d(agora-redesign #37)で headless backend の Python の module(headless_protocol / headless_process)と検を足す — headless.hy / substrate_headless.hy / impls/headless_argv.hy は deff / defhandler を持つ Hy なので、既存の sessionhost と同じく投影の対象外(依存先としてだけ宣言)。 段 6 lane 6f(agora-redesign #26)で 1 命令の参加 join の判断(join.hy・pure)を足す — env の綴りは effects.py の 1 点へ寄せたので valve / entry も effects を読む。 段 7 lane 7d-3(agora-redesign 7d の登記済み間隙 2)で profile の残量の観測(ReadProfileUsage → status.observed)の deftest(sessionhost_acp_profile_deftests.hy)を agentd-tests に足す(収集の wrapper .py は既存の wrapper 群と同じく契約の外)。",
+  "_comment": "共通の品質検査(dotfiles agent/code_quality.py)の module 契約。初回の登録は段 2 の agentd(sessionhost/acp/・agora-redesign #19 / #20)だけ — 既存の sessionhost(deff / defhandler を持つ Hy)は投影の対象外なので include に入れず、依存先としてだけ宣言する。 段 2 lane 2d(agora-redesign #37)で headless backend の Python の module(headless_protocol / headless_process)と検を足す — headless.hy / substrate_headless.hy / impls/headless_argv.hy は deff / defhandler を持つ Hy なので、既存の sessionhost と同じく投影の対象外(依存先としてだけ宣言)。 段 6 lane 6f(agora-redesign #26)で 1 命令の参加 join の判断(join.hy・pure)を足す — env の綴りは effects.py の 1 点へ寄せたので valve / entry も effects を読む。 段 7 lane 7d-3(agora-redesign 7d の登記済み間隙 2)で profile の残量の観測(ReadProfileUsage → status.observed)の deftest(sessionhost_acp_profile_deftests.hy)を agentd-tests に足す(収集の wrapper .py は既存の wrapper 群と同じく契約の外)。 段 8 lane 4u(agora-redesign #49)で手番の出来事の耐久化(turn-record の entries への追記)の deftest(sessionhost_acp_turn_events_deftests.hy)を同じ agentd-tests に足す。",
   "include": [
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/__init__.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py",
@@ -17,6 +17,7 @@
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/entry.py",
     "packages/doeff-agents/tests/test_sessionhost_acp.py",
     "packages/doeff-agents/tests/sessionhost_acp_profile_deftests.hy",
+    "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy",
     "docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy",
     "packages/doeff-agents/src/doeff_agents/sessionhost/headless_protocol.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/headless_process.py",
@@ -225,9 +226,10 @@
       "name": "agentd-tests",
       "paths": [
         "packages/doeff-agents/tests/test_sessionhost_acp.py",
-        "packages/doeff-agents/tests/sessionhost_acp_profile_deftests.hy"
+        "packages/doeff-agents/tests/sessionhost_acp_profile_deftests.hy",
+        "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy"
       ],
-      "responsibility": "agentd の焦点の検(fake の handler の e2e・判断の純関数・弁)と、profile の残量の観測の deftest(段 7 lane 7d-3・収集の wrapper test_sessionhost_acp_profile.py は他の *_deftests.hy の wrapper と同じ足場で契約の外)",
+      "responsibility": "agentd の焦点の検(fake の handler の e2e・判断の純関数・弁)と、profile の残量の観測の deftest(段 7 lane 7d-3)と、手番の出来事の耐久化の deftest(段 8 lane 4u・agora-redesign #49)。収集の wrapper test_sessionhost_acp_profile.py / test_sessionhost_acp_turn_events.py は他の *_deftests.hy の wrapper と同じ足場で契約の外",
       "layer": "runtime",
       "public": [],
       "allow": [
