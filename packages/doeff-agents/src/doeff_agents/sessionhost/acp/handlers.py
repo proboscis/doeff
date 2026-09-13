@@ -11,6 +11,9 @@ wire の綴り:
   bearer = 名簿の agentd の札(``Authorization: Bearer``)。
 - custody = ``POST /lease/{claude|codex}``(``{"account", "purpose"}``・身元 ``X-Borrower-Key``)、
   ``POST /lease/{id}/revoke``。
+- 会話の記録の service(段 9f lane 9f-2)= ``POST /v1/conversations/{cid}/streams/{streamId}/events``
+  (契約 record-service.json appendEvents・bearer = ACP と同じ名簿の agentd の札)。本文の batch の spool =
+  ``<spool dir>/<鍵>.json``(1 batch 1 file・temp + fsync + rename + dir の fsync — 送る前の outbox)。
 - 器 = sessionhost の RPC(``doeff_agents.agentd_client.AgentdClient`` の JSON-lines)。
 - 所有の検(段 6 lane 6f)= GCE の metadata server ``GET http://metadata.google.internal/
   computeMetadata/v1/project/project-id``(header ``Metadata-Flavor: Google``)。届かない機体
@@ -94,6 +97,18 @@ from doeff_agents.sessionhost.acp.effects import (
     Pushed,
     PushOutcome,
     ReadProfileUsage,
+    RecordAppend,
+    RecordAppended,
+    RecordAppendOutcome,
+    RecordBatch,
+    RecordConflicted,
+    RecordSpoolList,
+    RecordSpoolListing,
+    RecordSpoolPut,
+    RecordSpoolRemove,
+    RecordStream,
+    RecordStreamKind,
+    RecordUnsent,
     Refused,
     SessionCapture,
     SessionCleanup,
@@ -1102,3 +1117,214 @@ def socket_is_listening(path: str) -> bool:
         return False
     finally:
         probe.close()
+
+
+# ------------------------------------------------------------------ 会話の記録の service(段 9f lane 9f-2)
+
+#: service の HTTP の期限(秒)。ACP(30 s)より短く — 届かない service で agentd の loop を長く塞がない(送れなければ spool に
+#: 残して record_retry_seconds の後に再送)。
+RECORD_HTTP_TIMEOUT_SECONDS = 5.0
+#: spool の file の拡張子(temp は `.` で始まり一覧に出ない)と本文の schema。
+RECORD_SPOOL_SUFFIX = ".json"
+RECORD_SPOOL_SCHEMA = "doeff.agentd-record-spool.v1"
+
+
+def record_stream_wire(stream: RecordStream) -> JSONObject:
+    """契約 $defs.streamRef の綴り(node / profile は空なら名乗らない)。"""
+    wire: JSONObject = {
+        "kind": stream.kind,
+        "id": stream.stream_id,
+        "startedAt": stream.started_at_ms,
+        "attempt": stream.attempt,
+    }
+    if stream.node:
+        wire["node"] = stream.node
+    if stream.profile:
+        wire["profile"] = stream.profile
+    return wire
+
+
+def record_append_body(batch: RecordBatch) -> JSONObject:
+    """契約 $defs.appendRequest(stream + events — events は judgment が組んだ eventIn をそのまま)。"""
+    events: list[JSON] = list(batch.events)
+    return {"stream": record_stream_wire(batch.stream), "events": events}
+
+
+def _int_items(value: JSON) -> tuple[int, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(item for item in value if isinstance(item, int) and not isinstance(item, bool))
+
+
+def _record_error_text(reply: HttpReply) -> str:
+    reason = reply.body.get("reason")
+    error = _error_text(reply)
+    return f"{error}: {reason}" if isinstance(reason, str) else error
+
+
+def decode_record_reply(reply: HttpReply) -> RecordAppendOutcome:
+    """appendEvents の応答 → 結末(2xx = appendAnswer・409 = conflictAnswer・他 = 送れなかった)。"""
+    if 200 <= reply.status < 300:
+        highest = _int_field(reply.body, "highestProducerSeq")
+        if highest is None:
+            return RecordUnsent(reply.status, "appendAnswer without highestProducerSeq")
+        return RecordAppended(
+            highest_producer_seq=highest,
+            appended=_int_items(reply.body.get("appended")),
+            ignored=_int_items(reply.body.get("ignored")),
+        )
+    if reply.status == 409:
+        raw = reply.body.get("conflicts")
+        conflicts = tuple(item for item in raw if isinstance(item, dict)) if isinstance(raw, list) else ()
+        return RecordConflicted(conflicts=conflicts)
+    return RecordUnsent(reply.status, _record_error_text(reply))
+
+
+class RecordHttp:
+    """会話の記録の service への追記(契約 appendEvents)。bearer = 名簿の agentd の札(ACP と同じ札)。"""
+
+    def __init__(self, base_url: str, token: str) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._headers: dict[str, str] = {"Authorization": f"Bearer {token}"}
+
+    def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
+        if isinstance(effect, RecordAppend):
+            return Resume(k, self._append(effect.batch))
+        return Pass(effect, k)
+
+    def _append(self, batch: RecordBatch) -> RecordAppendOutcome:
+        cid = urllib.parse.quote(batch.conversation_id, safe="")
+        stream_id = urllib.parse.quote(batch.stream.stream_id, safe="")
+        url = f"{self._base_url}/v1/conversations/{cid}/streams/{stream_id}/events"
+        reply = _http_json(
+            "POST", url, self._headers, record_append_body(batch), RECORD_HTTP_TIMEOUT_SECONDS
+        )
+        return decode_record_reply(reply)
+
+
+def encode_spooled_batch(batch: RecordBatch) -> JSONObject:
+    """spool の file の本文(schema・鍵・会話・appendRequest そのもの)。"""
+    return {
+        "schema": RECORD_SPOOL_SCHEMA,
+        "spoolKey": batch.spool_key,
+        "conversationId": batch.conversation_id,
+        "request": record_append_body(batch),
+    }
+
+
+def _stream_kind_of(value: JSON) -> RecordStreamKind | None:
+    if value == "turn":
+        return "turn"
+    if value == "mail":
+        return "mail"
+    return None
+
+
+def decode_spooled_batch(doc: JSON) -> RecordBatch | None:
+    """spool の file の本文 → batch(形が合わなければ None — 読めない file として名乗る)。"""
+    if not isinstance(doc, dict) or doc.get("schema") != RECORD_SPOOL_SCHEMA:
+        return None
+    key = _str_field(doc, "spoolKey")
+    cid = _str_field(doc, "conversationId")
+    request = doc.get("request")
+    if key is None or cid is None or not isinstance(request, dict):
+        return None
+    stream = request.get("stream")
+    events = request.get("events")
+    if not isinstance(stream, dict) or not isinstance(events, list):
+        return None
+    kind = _stream_kind_of(stream.get("kind"))
+    stream_id = _str_field(stream, "id")
+    started = _int_field(stream, "startedAt")
+    attempt = _int_field(stream, "attempt")
+    if kind is None or stream_id is None or started is None or attempt is None:
+        return None
+    return RecordBatch(
+        spool_key=key,
+        conversation_id=cid,
+        stream=RecordStream(
+            kind=kind,
+            stream_id=stream_id,
+            started_at_ms=started,
+            node=_str_field(stream, "node") or "",
+            profile=_str_field(stream, "profile") or "",
+            attempt=attempt,
+        ),
+        events=tuple(event for event in events if isinstance(event, dict)),
+    )
+
+
+def _fsync_directory(directory: str) -> None:
+    """rename / unlink を耐久化する(dir の fsync)。"""
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+class RecordSpool:
+    """本文の batch の spool(1 batch 1 file・temp + fsync + rename + dir の fsync)— 送る前の outbox。"""
+
+    def __init__(self, directory: str) -> None:
+        self._directory = directory
+
+    def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
+        if isinstance(effect, RecordSpoolPut):
+            self.put(effect.batch)
+            return Resume(k, None)
+        if isinstance(effect, RecordSpoolList):
+            return Resume(k, self.listing())
+        if isinstance(effect, RecordSpoolRemove):
+            self.remove(effect.spool_key)
+            return Resume(k, None)
+        return Pass(effect, k)
+
+    def _path(self, spool_key: str) -> str:
+        return os.path.join(self._directory, spool_key + RECORD_SPOOL_SUFFIX)
+
+    def put(self, batch: RecordBatch) -> None:
+        os.makedirs(self._directory, mode=0o700, exist_ok=True)
+        data = json.dumps(
+            encode_spooled_batch(batch), ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8")
+        fd, tmp = tempfile.mkstemp(prefix=".spool-", dir=self._directory)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, self._path(batch.spool_key))
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            raise
+        _fsync_directory(self._directory)
+
+    def listing(self) -> RecordSpoolListing:
+        try:
+            names = sorted(os.listdir(self._directory))
+        except FileNotFoundError:
+            return RecordSpoolListing(batches=(), unreadable=())
+        batches: list[RecordBatch] = []
+        unreadable: list[str] = []
+        for name in names:
+            if name.startswith(".") or not name.endswith(RECORD_SPOOL_SUFFIX):
+                continue
+            try:
+                with open(os.path.join(self._directory, name), "rb") as handle:
+                    doc = _loads(handle.read())
+            except OSError:
+                unreadable.append(name)
+                continue
+            batch = decode_spooled_batch(doc)
+            if batch is None:
+                unreadable.append(name)
+            else:
+                batches.append(batch)
+        return RecordSpoolListing(batches=tuple(batches), unreadable=tuple(unreadable))
+
+    def remove(self, spool_key: str) -> None:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(self._path(spool_key))
+        _fsync_directory(self._directory)

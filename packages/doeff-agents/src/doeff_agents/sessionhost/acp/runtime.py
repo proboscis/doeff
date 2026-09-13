@@ -32,10 +32,14 @@ from doeff_agents.sessionhost.acp.effects import (
     BORROWER_KEY_PATH_ENV,
     CUSTODY_URL_ENV,
     HOMES_ROOT_ENV,
+    JOIN_RECORD_SPOOL_DIR,
+    JOIN_STATE_DIR_DEFAULT,
     NODE_NAME_ENV,
     OWNERSHIP_ENV,
     OWNERSHIP_GRADES,
     OWNERSHIP_PROOF_ENV,
+    RECORD_SPOOL_DIR_ENV,
+    RECORD_URL_ENV,
     AgentdSettings,
     AgentdState,
     JoinArgv,
@@ -52,6 +56,8 @@ from doeff_agents.sessionhost.acp.handlers import (
     AcpHttp,
     CustodyHttp,
     LocalIo,
+    RecordHttp,
+    RecordSpool,
     SessionRpc,
     read_secret_file,
     socket_is_listening,
@@ -83,6 +89,7 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         backend_kind=backend,
         stream_capability=_stream_capability(backend),
         ownership=_ownership_of_env(env),
+        record_enabled=bool(_record_url_of_env(env)),
     )
 
 
@@ -118,6 +125,19 @@ def _state_home(env: Mapping[str, str]) -> str:
     if explicit:
         return explicit
     return os.path.join(env.get("HOME", "."), ".local", "state")
+
+
+def _record_url_of_env(env: Mapping[str, str]) -> str:
+    """会話の記録の service の URL(段 9f lane 9f-2・空 = 二重書きなし — 弁の読みはこの 1 点)。"""
+    return (env.get(RECORD_URL_ENV) or "").strip()
+
+
+def record_spool_dir(env: Mapping[str, str]) -> str:
+    """本文の batch の spool の置き場: env(join が state_dir の下を導く)、無ければ join の既定の state_dir の下。"""
+    explicit = (env.get(RECORD_SPOOL_DIR_ENV) or "").strip()
+    if explicit:
+        return explicit
+    return os.path.join(_state_home(env), JOIN_STATE_DIR_DEFAULT, JOIN_RECORD_SPOOL_DIR)
 
 
 def initial_state() -> AgentdState:
@@ -196,7 +216,13 @@ def real_dispatchers(
     )
     sessions = SessionRpc(socket_path)
     local = LocalIo()
-    return [acp.dispatch, custody.dispatch, sessions.dispatch, local.dispatch], acp.close
+    dispatchers: list[Dispatcher] = [acp.dispatch, custody.dispatch, sessions.dispatch, local.dispatch]
+    record_url = _record_url_of_env(env)
+    if record_url:
+        # 段 9f lane 9f-2: 本文の二重書き — 札は ACP と同じ名簿の agentd の札(新しい secret を持たない)。外側に置く
+        # (Record* は拍に数回 — ACP / 器 / 時計の要求の手前で Pass の段を増やさない)。
+        dispatchers[:0] = [RecordHttp(record_url, token).dispatch, RecordSpool(record_spool_dir(env)).dispatch]
+    return dispatchers, acp.close
 
 
 def host_socket_path(host_argv: Sequence[str]) -> str:
@@ -242,7 +268,8 @@ def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> thr
                 return
             time.sleep(0.5)
         _stderr(
-            f"agentd: joined as node {settings.node_name!r} (ACP {env.get(ACP_URL_ENV) or ACP_URL_DEFAULT})"
+            f"agentd: joined as node {settings.node_name!r} (ACP {env.get(ACP_URL_ENV) or ACP_URL_DEFAULT}; "
+            f"record {_record_url_of_env(env) or 'off'})"
         )
         try:
             run_loop(settings, dispatchers, stop, _stderr)

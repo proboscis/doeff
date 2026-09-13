@@ -33,6 +33,7 @@ from doeff_agents.sessionhost.acp.effects import (
     FsFileSize,
     FsWritePrivateText,
     Interjected,
+    JSON,
     JSONObject,
     LeaseGrant,
     LeaseKind,
@@ -47,6 +48,16 @@ from doeff_agents.sessionhost.acp.effects import (
     ProfileUsageOutcome,
     Pushed,
     ReadProfileUsage,
+    RecordAppend,
+    RecordAppended,
+    RecordAppendOutcome,
+    RecordBatch,
+    RecordConflicted,
+    RecordSpoolList,
+    RecordSpoolListing,
+    RecordSpoolPut,
+    RecordSpoolRemove,
+    RecordUnsent,
     Refused,
     SessionCapture,
     SessionCleanup,
@@ -536,3 +547,85 @@ class FakeLocal:
             return TranscriptChunk("", effect.offset)
         complete = raw[: cut + 1]
         return TranscriptChunk(complete.decode("utf-8"), effect.offset + len(complete))
+
+
+class FakeRecord:
+    """会話の記録の service と本文の spool の代わり(段 9f lane 9f-2・memory)。冪等は契約どおり: 鍵(会話・stream・
+    producerSeq)が既在で本文(text / summary / input / output)が同じなら ignored、違えば 409(batch は丸ごと積まない)。
+    test は unreachable で届かない service を、stored に既在の出来事を置く。"""
+
+    def __init__(self) -> None:
+        #: spool の鍵 → batch(RecordSpoolPut で置き、RecordSpoolRemove で消える)。
+        self.spool: dict[str, RecordBatch] = {}
+        #: 置いた鍵の順(同じ拍の再送が同じ鍵かを test が読む)。
+        self.spooled: list[str] = []
+        #: (会話, stream, producerSeq) → 積んだ出来事。
+        self.stored: dict[tuple[str, str, int], JSONObject] = {}
+        #: RecordAppend を受けた batch の順(送れなかった要求も数える)。
+        self.appends: list[RecordBatch] = []
+        self.unreachable: bool = False
+
+    def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
+        if isinstance(effect, RecordSpoolPut):
+            self.spool[effect.batch.spool_key] = effect.batch
+            self.spooled.append(effect.batch.spool_key)
+            return Resume(k, None)
+        if isinstance(effect, RecordSpoolList):
+            batches = tuple(self.spool[key] for key in sorted(self.spool))
+            return Resume(k, RecordSpoolListing(batches=batches, unreadable=()))
+        if isinstance(effect, RecordSpoolRemove):
+            self.spool.pop(effect.spool_key, None)
+            return Resume(k, None)
+        if isinstance(effect, RecordAppend):
+            return Resume(k, self._append(effect.batch))
+        return Pass(effect, k)
+
+    def _append(self, batch: RecordBatch) -> RecordAppendOutcome:
+        self.appends.append(batch)
+        if self.unreachable:
+            return RecordUnsent(0, "unreachable: fake record service")
+        stream_id = batch.stream.stream_id
+        appended: list[int] = []
+        ignored: list[int] = []
+        conflicts: list[JSONObject] = []
+        for event in batch.events:
+            seq = _producer_seq(event)
+            stored = self.stored.get((batch.conversation_id, stream_id, seq))
+            if stored is None:
+                appended.append(seq)
+            elif _record_body(stored) == _record_body(event):
+                ignored.append(seq)
+            else:
+                conflicts.append({"producerSeq": seq})
+        if conflicts:
+            return RecordConflicted(conflicts=tuple(conflicts))
+        for event in batch.events:
+            self.stored.setdefault((batch.conversation_id, stream_id, _producer_seq(event)), dict(event))
+        highest = max(
+            seq for (cid, sid, seq) in self.stored if cid == batch.conversation_id and sid == stream_id
+        )
+        return RecordAppended(
+            highest_producer_seq=highest, appended=tuple(appended), ignored=tuple(ignored)
+        )
+
+    def events_of(self, conversation_id: str, stream_id: str) -> list[JSONObject]:
+        """積んだ出来事を producerSeq の順に(test の読み口)。"""
+        keys = sorted(key for key in self.stored if key[0] == conversation_id and key[1] == stream_id)
+        return [self.stored[key] for key in keys]
+
+
+def _producer_seq(event: JSONObject) -> int:
+    seq: JSON = event.get("producerSeq")
+    if isinstance(seq, bool) or not isinstance(seq, int):
+        raise ValueError(f"record event without an integer producerSeq: {event!r}")
+    return seq
+
+
+def _record_body(event: JSONObject) -> JSONObject:
+    """本文(契約の sha256 の材料 — text / summary / input / output の在る欄だけ・None は無いのと同じ)。"""
+    body: JSONObject = {}
+    for name in ("text", "summary", "input", "output"):
+        field = event.get(name)
+        if field is not None:
+            body[name] = field
+    return body
