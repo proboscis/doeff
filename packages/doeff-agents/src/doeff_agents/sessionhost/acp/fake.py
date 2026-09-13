@@ -32,11 +32,13 @@ from doeff_agents.sessionhost.acp.effects import (
     LeaseGrant,
     LeaseKind,
     LeaseRefused,
+    ListProfileHomes,
     LogLine,
     MetricLine,
     MintId,
     OwnershipProbe,
     ProbeAnswer,
+    ProfileHome,
     ProfileUsageOutcome,
     Pushed,
     ReadProfileUsage,
@@ -438,6 +440,10 @@ class FakeLocal:
         #: この機体の資格の残量(kind → 答えの列)と、読んだ (kind, cache_ttl_seconds) の列。
         self.usage: dict[str, tuple[ProfileUsageOutcome, ...]] = {}
         self.usage_reads: list[tuple[str, int]] = []
+        #: この機体の profile の家の在否(kind → 登録簿の列)と、読んだ kind の列。据えていない kind は
+        #: usage に答えのある profile の家が在る(usage を据えた検が家も据える手間を省く既定)。
+        self.homes: dict[str, tuple[ProfileHome, ...]] = {}
+        self.home_reads: list[str] = []
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(effect, MintId):
@@ -446,6 +452,9 @@ class FakeLocal:
         if isinstance(effect, OwnershipProbe):
             self.probes.append(effect.proof)
             return Resume(k, ProbeAnswer(value=self.probe_answers.get(effect.proof)))
+        if isinstance(effect, ListProfileHomes):
+            self.home_reads.append(effect.kind)
+            return Resume(k, self._homes_of(effect.kind))
         if isinstance(effect, ReadProfileUsage):
             self.usage_reads.append((effect.kind, effect.cache_ttl_seconds))
             return Resume(k, self.usage.get(effect.kind, ()))
@@ -457,6 +466,15 @@ class FakeLocal:
         ):
             return Resume(k, self._file(effect))
         return Pass(effect, k)
+
+    def _homes_of(self, kind: str) -> tuple[ProfileHome, ...]:
+        declared = self.homes.get(kind)
+        if declared is not None:
+            return declared
+        return tuple(
+            ProfileHome(outcome.profile, f"/homes/{outcome.profile}", True)
+            for outcome in self.usage.get(kind, ())
+        )
 
     def _observe(self, effect: ClockNowMs | MetricLine | LogLine) -> object:
         if isinstance(effect, ClockNowMs):

@@ -7,6 +7,7 @@
 ;;;   * 断られた profile(会社境界の断り — 判定は agentcli の葉)と単位の違う profile は書かない
 ;;;   * 世代の競合(Conflict)は 1 拍見送り、次の周期に書く
 ;;;   * 変わった時だけ書く・周期(profile_observe_seconds)の刻印・この機体に無い profile は黙る
+;;;   * 家の在る profile が 1 つも無い機体(pool の pod・段 8e lane 4j)は usage を撃たず 1 度だけ名乗る
 ;;; fake の handler で同じ program(agentd.hy)を一周させる。HTTP も subprocess も無い。
 
 (require doeff-hy.macros [deftest])
@@ -19,6 +20,7 @@
   NODE-KIND
   PROFILE-KIND
   PROFILE-USAGE-KIND
+  ProfileHome
   ProfileNotHeld
   ProfileObservation
   ProfileUnobserved
@@ -31,6 +33,7 @@
   profile-observed-changed
   profile-observed-of
   profile-rows-active
+  profile-rows-held
   profile-status-with-observed])
 (import doeff_agents.sessionhost.acp.runtime [initial-state run-tick])
 
@@ -255,3 +258,67 @@
   (.tick bare 0)
   (assert (= bare.local.usage-reads []))
   (assert (= (lfor m bare.local.metrics :if (= (get m "metric") "profile-observed") m) [])))
+
+
+;; ---------------------------------------------------------------------------
+;; 家の在否(段 8e lane 4j): pool の pod は profile を持たない — usage を撃たず 1 度だけ名乗る
+;; ---------------------------------------------------------------------------
+
+(deftest test-profile-rows-held-follows-the-homes-on-this-node
+  ;; 判断はここ 1 点: 生きている行のうち、家(config dir)の在る profile の行だけ(行の順のまま)。
+  (setv rows #((profile-row "personal" "percent" 18000 "active" None)
+               (profile-row "ca" "percent" 18000 "active" None)
+               (profile-row "vega" "percent" 18000 "active" None)))
+  (setv homes #((ProfileHome :name "personal" :home "/homes/personal" :present True)
+                (ProfileHome :name "ca" :home "/homes/ca" :present False)
+                (ProfileHome :name "kento" :home "/homes/kento" :present True)))
+  (assert (= (lfor row (run (profile-rows-held rows homes)) row.resource-id) ["personal"]))
+  ;; 家が 1 つも無い(登録簿はあるが dir が無い = pool の pod)→ 空。登録簿が空でも空。
+  (setv absent (tuple (gfor home homes (ProfileHome :name home.name :home home.home :present False))))
+  (assert (= (run (profile-rows-held rows absent)) #()))
+  (assert (= (run (profile-rows-held rows #())) #())))
+
+
+(deftest test-profile-usage-is-not-read-when-no-profile-has-a-home
+  ;; 実弾 2026-09-13(pool の agentd・zeus): profile.gen の無い器で `ai usage` が毎周 exit 1
+  ;; (FileNotFoundError)を吐いていた。家の在る profile が無い機体は usage を撃たず、
+  ;; 「観測する profile なし」を 1 度だけ名乗る。計器は出る(homes 0)。
+  (setv world (World))
+  (.put-row world.acp (profile-row "personal" "percent" 18000 "active" None))
+  (.put-row world.acp (profile-row "ca" "percent" 18000 "active" None))
+  (setv (get world.local.usage PROFILE-USAGE-KIND) #((usage-of "personal" 40.0 RESETS-MS)))
+  (setv (get world.local.homes PROFILE-USAGE-KIND)
+        #((ProfileHome :name "personal" :home "/homes/personal" :present False)
+          (ProfileHome :name "ca" :home "/homes/ca" :present False)))
+  (.tick world 0)
+  (assert (= world.local.home-reads [PROFILE-USAGE-KIND]))
+  (assert (= world.local.usage-reads []) "家の無い機体は usage を撃たない")
+  (assert (= (.profile-writes world) []))
+  (assert (not-in "observed" (.status-of world "personal")))
+  (assert (is world.state.no-profile-homes-logged True))
+  (setv quiet (lfor line world.local.logs :if (in "no profile has a home" line) line))
+  (assert (= (len quiet) 1) quiet)
+  (assert (in "registry 2 profiles" (get quiet 0)))
+  (assert (in "2 live rows" (get quiet 0)))
+  (setv metrics (lfor m world.local.metrics :if (= (get m "metric") "profile-observed") m))
+  (assert (= (len metrics) 1))
+  (assert (= (get (get metrics -1) "homes") 0))
+  (assert (= (get (get metrics -1) "rows") 2))
+  (assert (= (get (get metrics -1) "held") 0))
+  ;; 次の周期: 家は読み直すが usage は撃たず、名乗りは繰り返さない。
+  (.tick world (* 1000 world.settings.profile-observe-seconds))
+  (assert (= (len world.local.home-reads) 2))
+  (assert (= world.local.usage-reads []))
+  (assert (= (len (lfor line world.local.logs :if (in "no profile has a home" line) line)) 1))
+  ;; 家が現れたら(借用の後便)usage を読んで書き、印は戻る。
+  (setv (get world.local.homes PROFILE-USAGE-KIND)
+        #((ProfileHome :name "personal" :home "/homes/personal" :present True)
+          (ProfileHome :name "ca" :home "/homes/ca" :present False)))
+  (.tick world (* 1000 world.settings.profile-observe-seconds))
+  (assert (= (len world.local.usage-reads) 1))
+  (assert (= (get (get (.status-of world "personal") "observed") "remaining") 60.0))
+  (assert (not-in "observed" (.status-of world "ca")) "家の無い profile は usage の答えに依らず観測しない")
+  (assert (is world.state.no-profile-homes-logged False))
+  (setv last (get (lfor m world.local.metrics :if (= (get m "metric") "profile-observed") m) -1))
+  (assert (= (get last "homes") 1))
+  (assert (= (get last "held") 1)))

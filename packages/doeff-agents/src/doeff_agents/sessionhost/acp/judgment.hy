@@ -699,6 +699,17 @@
   (tuple out))
 
 
+(defk profile-rows-held [active homes]
+  {:pre [(: active tuple) (: homes tuple)]
+   :post [(: % tuple)]}
+  "生きている profile の行のうち、この機体に家(config dir)の在る profile の行 — 行の順のまま。
+   判断はここ 1 点(段 8e lane 4j): 空なら観測の腕は usage を読まない(pool の pod は profile を
+   1 つも持たない — 読み口が落ちる形で知るのではなく、家の在否で先に決める)。家は spec.name で
+   引く(登録簿の名と契約の行の名は同じ綴り)。"
+  (setv present (sfor home homes :if home.present home.name))
+  (tuple (lfor row active :if (in (str (.get row.spec "name" row.resource-id)) present) row)))
+
+
 (defk usage-by-profile [outcomes]
   {:pre [(: outcomes tuple)]
    :post [(: % dict)]}

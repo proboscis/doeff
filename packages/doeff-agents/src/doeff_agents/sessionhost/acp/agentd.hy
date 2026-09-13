@@ -32,6 +32,9 @@
 ;;; 断られた / 単位の違う profile は書かず理由を log に 1 行、この機体に無い profile は黙って書かない。
 ;;; 判断(窓・残量・post-image)は judgment.profile-observed-of の 1 点、周期は
 ;;; AgentdSettings.profile_observe_seconds(heartbeat より遅い別の腕)。枯渇の判断は controller(agora-budget)。
+;;; 器の profile の集合は先に読む(段 8e lane 4j — ListProfileHomes = 登録簿 × 家の実在・判断は
+;;; judgment.profile-rows-held): 家の在る profile が 1 つも無い機体(pool の pod)は usage を撃たず、
+;;; 「観測する profile なし」を 1 度だけ名乗る(周期ごとに読み口の落ち方を吐かない)。
 ;;;
 ;;; 書く欄は契約の writers どおり: agent-job の phase / sessionHandle / result / conditions、
 ;;; node の status.lease / status.observations、turn-record の create と status、profile の status.observed。
@@ -80,6 +83,7 @@
   LaunchPlan
   LeaseGrant
   LeaseRefused
+  ListProfileHomes
   LogLine
   MESSAGE-KIND
   MetricLine
@@ -151,6 +155,7 @@
   profile-observed-changed
   profile-observed-of
   profile-rows-active
+  profile-rows-held
   profile-status-with-observed
   recovered-arm-of
   resume-params-of
@@ -238,53 +243,37 @@
 (defk observe-profiles [settings state now-ms]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: now-ms int)]
    :post [(: % AgentdState)]}
-  "観測の腕: 生きている profile の行を読み、この機体が持つ資格の残量を 1 度読み(ReadProfileUsage —
-   読み口は agentcli の 1 点・会社境界はその葉)、行ごとに判断の 1 点(profile-observed-of)で書く観測を
-   決めて、committed の observed と違う時だけ post-image を ifGeneration で書く。世代の競合(Conflict)は
-   この拍は見送り(次の周期に読み直す)、断り(Refused)と書かない理由は log に 1 行。行が無ければ
-   usage は読まない。計器 profile-observed を 1 行。"
+  "観測の腕: 生きている profile の行を読み、この機体の家の在否(ListProfileHomes)で観測する行を
+   絞り(profile-rows-held — 空なら usage を撃たず『観測する profile なし』を 1 度だけ名乗る)、
+   この機体が持つ資格の残量を 1 度読み(ReadProfileUsage — 読み口は agentcli の 1 点・会社境界は
+   その葉)、行ごとに判断の 1 点(profile-observed-of)で書く観測を決めて、committed の observed と
+   違う時だけ post-image を ifGeneration で書く。世代の競合(Conflict)はこの拍は見送り(次の周期に
+   読み直す)、断り(Refused)と書かない理由は log に 1 行。行が無ければ家も usage も読まない。
+   計器 profile-observed を 1 行。"
   (<- rows tuple (AcpGet :kind PROFILE-KIND))
   (<- active tuple (profile-rows-active rows))
   (setv next (replace state :last-profile-observed-ms now-ms))
   (when active
-    (<- outcomes tuple (ReadProfileUsage :kind PROFILE-USAGE-KIND
-                                         :cache-ttl-seconds settings.profile-observe-seconds))
-    (<- by-name dict (usage-by-profile outcomes))
+    (<- homes tuple (ListProfileHomes :kind PROFILE-USAGE-KIND))
+    (<- held-rows tuple (profile-rows-held active homes))
     (setv counts {"held" 0 "written" 0 "unchanged" 0 "conflicts" 0 "refused" 0 "unobserved" 0})
-    (for [row active]
-      (setv name (str (.get row.spec "name" row.resource-id)))
-      (<- verdict (| ProfileObservation ProfileUnobserved ProfileNotHeld)
-          (profile-observed-of row (.get by-name name) settings.node-name))
-      (cond
-        (isinstance verdict ProfileNotHeld) None
-        (isinstance verdict ProfileUnobserved)
+    (if (not held-rows)
         (do
-          (setv (get counts "unobserved") (+ (get counts "unobserved") 1))
-          (<- (LogLine :text f"agentd: profile {name} not observed: {verdict.reason}")))
-        True
+          (when (not state.no-profile-homes-logged)
+            (<- (LogLine :text (+ f"agentd: no profile has a home on node {settings.node-name} — usage not read "
+                                       f"(registry {(len homes)} profiles, {(len active)} live rows)"))))
+          (setv next (replace next :no-profile-homes-logged True)))
         (do
-          (setv (get counts "held") (+ (get counts "held") 1))
-          (<- changed bool (profile-observed-changed row verdict.observed))
-          (if (not changed)
-              (setv (get counts "unchanged") (+ (get counts "unchanged") 1))
-              (do
-                (<- status dict (profile-status-with-observed row verdict.observed))
-                (<- outcome (| Written Conflict Refused) (AcpPutStatus :row row :status status))
-                (cond
-                  (isinstance outcome Written)
-                  (setv (get counts "written") (+ (get counts "written") 1))
-                  (isinstance outcome Conflict)
-                  (do
-                    (setv (get counts "conflicts") (+ (get counts "conflicts") 1))
-                    (<- (LogLine :text (+ f"agentd: profile {name} observed not written — generation moved "
-                                               f"({row.generation} → {outcome.current-generation}); re-reading next period"))))
-                  True
-                  (do
-                    (setv (get counts "refused") (+ (get counts "refused") 1))
-                    (<- (LogLine :text f"agentd: profile {name} observed refused ({outcome.status}): {outcome.error}")))))))))
+          (setv next (replace next :no-profile-homes-logged False))
+          (<- outcomes tuple (ReadProfileUsage :kind PROFILE-USAGE-KIND
+                                               :cache-ttl-seconds settings.profile-observe-seconds))
+          (<- by-name dict (usage-by-profile outcomes))
+          (<- observed-counts dict (observe-held-profiles settings held-rows by-name counts))
+          (setv counts observed-counts)))
     (<- (MetricLine :fields {"metric" "profile-observed"
                                     "node" settings.node-name
                                     "rows" (len active)
+                                    "homes" (len held-rows)
                                     "held" (get counts "held")
                                     "written" (get counts "written")
                                     "unchanged" (get counts "unchanged")
@@ -293,6 +282,46 @@
                                     "unobserved" (get counts "unobserved")
                                     "atMs" now-ms})))
   next)
+
+
+(defk observe-held-profiles [settings held-rows by-name counts]
+  {:pre [(: settings AgentdSettings) (: held-rows tuple) (: by-name dict) (: counts dict)]
+   :post [(: % dict)]}
+  "家の在る profile の行ごとに、usage の答えから書く観測を決めて書く(observe-profiles の内側 —
+   数えた結果を返す)。"
+  (setv counts (dict counts))
+  (for [row held-rows]
+    (setv name (str (.get row.spec "name" row.resource-id)))
+    (<- verdict (| ProfileObservation ProfileUnobserved ProfileNotHeld)
+        (profile-observed-of row (.get by-name name) settings.node-name))
+    (cond
+      (isinstance verdict ProfileNotHeld) None
+      (isinstance verdict ProfileUnobserved)
+      (do
+        (setv (get counts "unobserved") (+ (get counts "unobserved") 1))
+        (<- (LogLine :text f"agentd: profile {name} not observed: {verdict.reason}")))
+      True
+      (do
+        (setv (get counts "held") (+ (get counts "held") 1))
+        (<- changed bool (profile-observed-changed row verdict.observed))
+        (if (not changed)
+            (setv (get counts "unchanged") (+ (get counts "unchanged") 1))
+            (do
+              (<- status dict (profile-status-with-observed row verdict.observed))
+              (<- outcome (| Written Conflict Refused) (AcpPutStatus :row row :status status))
+              (cond
+                (isinstance outcome Written)
+                (setv (get counts "written") (+ (get counts "written") 1))
+                (isinstance outcome Conflict)
+                (do
+                  (setv (get counts "conflicts") (+ (get counts "conflicts") 1))
+                  (<- (LogLine :text (+ f"agentd: profile {name} observed not written — generation moved "
+                                             f"({row.generation} → {outcome.current-generation}); re-reading next period"))))
+                True
+                (do
+                  (setv (get counts "refused") (+ (get counts "refused") 1))
+                  (<- (LogLine :text f"agentd: profile {name} observed refused ({outcome.status}): {outcome.error}")))))))))
+  counts)
 
 
 ;; ---------------------------------------------------------------------------
