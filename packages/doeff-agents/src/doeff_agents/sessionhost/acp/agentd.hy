@@ -54,6 +54,14 @@
 ;;; 文脈の圧縮は別 issue #55)、resume が断られたら rehydrate(judgment.fallback-arm-of)。node の observations は sessions に account、transcripts に「終端だが
 ;;; transcript がこの機体に残る会話」を載せ、Scheduling は (node, account) で親和と起こし方の語を決める。
 ;;;
+;;; 会話の記録の service への二重書き(段 9f lane 9f-2・agora-redesign #59・設計 §2.4・既知の形 = runner の transactional
+;;; outbox): 本文は切らずに組み(DeltaBatch.bodies — 契約 record-service eventIn・producerSeq = entry の seq = InFlightJob の
+;;; delta-seq の 1 点)、読んだ拍に spool へ耐久化し(spool-record-bodies — 1 batch 1 file)、拍の終わりの flush-record-spool が
+;;; service へ送って受理(と 409)で消す。送れない batch は残し record_retry_seconds の後に再送(冪等 — 同じ鍵と本文は ignored)。
+;;; ACP の turn-record への追記は今日どおり(entries は本文から切り詰めの 1 点 entry-of-body で導く)。stream = 手番
+;;; `<jobId>#a<attempt>`(拾い直しは turn-record の行の generation + 1 — judgment.recovered-record-of)。弁 =
+;;; AgentdSettings.record_enabled(RECORD_SERVICE_URL の在否)— off の間は Record* を 1 つも撃たない。
+;;;
 ;;; 割り込みの本文(段 8 lane 4x・agora-redesign #56): Messaging が走っている手番の agent-job の
 ;;; status.interrupts に載せた Message の id を、自分が走らせている job について行の cache の差分で読み
 ;;; (deliver-interrupts — 判断は judgment.pending-interrupts-of: 行の interruptsDelivered にも memory の
@@ -118,8 +126,19 @@
   ListProfileHomes
   LogLine
   MESSAGE-KIND
+  METRIC-RECORD-APPEND-TOTAL
+  METRIC-RECORD-LAG-SEQ
+  METRIC-RECORD-SPOOL-DEPTH
   MetricLine
   MintId
+  RecordAppend
+  RecordAppended
+  RecordConflicted
+  RecordSpoolList
+  RecordSpoolListing
+  RecordSpoolPut
+  RecordSpoolRemove
+  RecordUnsent
   NEXT-ARM-DEFER
   NEXT-ARM-REHYDRATE
   NEXT-ARM-RESUME
@@ -162,6 +181,13 @@
   deltas-of
   due
   record-due
+  record-append-word-of
+  record-batches-of
+  record-flush-due
+  record-halts-flush
+  record-lag-of
+  record-release-of
+  recovered-record-of
   ended-status-of
   entries-of-status
   next-seq-after
@@ -751,6 +777,9 @@
   (<- chunk TranscriptChunk (read-stream source path job.transcript-offset))
   (<- batch DeltaBatch (deltas-of job.agent-type source chunk.text job.job-id job.delta-seq now-ms))
   (setv next (replace job :transcript-offset chunk.offset :delta-seq batch.next-seq))
+  ;; 段 9f lane 9f-2: 本文(切る前)は読んだ拍に spool へ(送るのは拍の終わりの flush-record-spool の 1 点)。
+  (when (and settings.record-enabled batch.bodies)
+    (<- (spool-record-bodies next batch.bodies)))
   (when batch.frames
     (<- subscribers (| int None) (push-frames settings next batch.frames))
     (<- verdict str (capture-verdict subscribers))
@@ -762,6 +791,64 @@
         (<- recorded InFlightJob (append-entries next carried))
         (replace recorded :last-record-ms now-ms))
       (replace next :pending-entries carried)))
+
+
+(defk spool-record-bodies [job bodies]
+  {:pre [(: job InFlightJob) (: bodies tuple)]
+   :post [(: % int)]}
+  "拍で読んだ本文を、会話の記録の service へ送る前に spool へ耐久化する(段 9f lane 9f-2・outbox の書き): 1 batch 1 file。
+   送りと消し込みは拍の終わりの flush-record-spool の 1 点。spool の I/O の失敗は log して手番を止めない(ACP の
+   turn-record は今日どおり出来事を持つ — 追いつきの差の計器が名乗る)。戻り = spool に置けた batch の数。"
+  (<- batches tuple (record-batches-of job bodies))
+  (setv spooled 0)
+  (try
+    (for [batch batches]
+      (<- (RecordSpoolPut :batch batch))
+      (setv spooled (+ spooled 1)))
+    (except [e IO-FAILURES]
+      (<- (LogLine :text f"agentd: record spool for job {job.job-id} failed after {spooled} of {(len batches)} batches: {(. (type e) __name__)}: {e}"))))
+  spooled)
+
+
+(defk flush-record-spool [settings state now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "spool の batch を鍵の順に会話の記録の service へ送り、受理(と 409)で消す(段 9f lane 9f-2・outbox の送り)。拍の終わりに
+   撃つので、送れている間は出来事を読んだ拍に送られる。送れなかった batch は残して backoff(judgment.record-flush-due)、
+   系の側の送れなさ(届かない・5xx・札)はこの拍の残りも撃たない(judgment.record-halts-flush)。計器: 追記の結末
+   (agentd_record_append_total)・追いつきの差(agentd_record_lag_seq)・spool の深さ(agentd_record_spool_depth — 変わった時)。"
+  (<- listing RecordSpoolListing (RecordSpoolList))
+  (for [name listing.unreadable]
+    (<- (LogLine :text f"agentd: record spool file {name} is unreadable; left in place")))
+  (setv remaining (+ (len listing.batches) (len listing.unreadable)))
+  (setv failed False)
+  (for [batch listing.batches]
+    (setv stream-id batch.stream.stream-id)
+    (<- outcome (| RecordAppended RecordConflicted RecordUnsent) (RecordAppend :batch batch))
+    (<- word str (record-append-word-of outcome))
+    (<- (MetricLine :fields {"metric" METRIC-RECORD-APPEND-TOTAL "outcome" word
+                                    "conversationId" batch.conversation-id "streamId" stream-id
+                                    "events" (len batch.events)}))
+    (<- release bool (record-release-of outcome))
+    (when release
+      (<- (RecordSpoolRemove :spool-key batch.spool-key))
+      (setv remaining (- remaining 1)))
+    (when (isinstance outcome RecordAppended)
+      (<- lag (| int None) (record-lag-of state.jobs stream-id outcome.highest-producer-seq))
+      (when (is-not lag None)
+        (<- (MetricLine :fields {"metric" METRIC-RECORD-LAG-SEQ "conversationId" batch.conversation-id
+                                        "streamId" stream-id "lag" lag}))))
+    (when (isinstance outcome RecordConflicted)
+      (<- (LogLine :text f"agentd: record append for {stream-id} conflicted (same key, different body); dropped from the spool: {outcome.conflicts}")))
+    (when (isinstance outcome RecordUnsent)
+      (setv failed True)
+      (<- (LogLine :text f"agentd: record append for {stream-id} was not accepted ({outcome.status}: {outcome.error}); kept in the spool")))
+    (<- halt bool (record-halts-flush outcome))
+    (when halt
+      (break)))
+  (when (!= remaining state.record-spool-depth)
+    (<- (MetricLine :fields {"metric" METRIC-RECORD-SPOOL-DEPTH "depth" remaining})))
+  (replace state :record-backoff-ms (if failed now-ms None) :record-spool-depth remaining))
 
 
 (defk capture-frame [settings job now-ms]
@@ -1036,6 +1123,11 @@
               (<- job InFlightJob
                   (in-flight-job-of row plan view settings.node-name row.created-at-ms
                                     row.created-at-ms (get start 1) lease #()))
+              ;; 段 9f lane 9f-2: 本文の stream の拾い直しの番と採番の下限は turn-record の行から(judgment.recovered-record-of)。
+              (<- record-key str (turn-record-key-of row.resource-id))
+              (<- record-row (| AcpRow None) (AcpGetRow :key record-key))
+              (<- resumed tuple (recovered-record-of record-row))
+              (setv job (replace job :record-attempt (get resumed 0) :delta-seq (get resumed 1)))
               (<- (LogLine :text f"agentd: recovered running job {row.resource-id} from its row ({step})"))
               (<- settled AgentdState (settle-known settings state job view step now-ms))
               settled)))))
@@ -1302,4 +1394,14 @@
       (setv current observed)
       (except [e IO-FAILURES]
         (<- (LogLine :text f"agentd: job {job.job-id} tick failed: {(. (type e) __name__)}: {e}")))))
+  ;; 段 9f lane 9f-2: この拍で spool に置いた本文(と前の拍に送れなかった残り)を会話の記録の service へ — 拍の終わりの 1 点。
+  (when settings.record-enabled
+    (<- flush bool (record-flush-due current now-ms settings))
+    (when flush
+      (try
+        (<- flushed AgentdState (flush-record-spool settings current now-ms))
+        (setv current flushed)
+        (except [e IO-FAILURES]
+          (<- (LogLine :text f"agentd: record flush failed: {(. (type e) __name__)}: {e}"))
+          (setv current (replace current :record-backoff-ms now-ms))))))
   current)

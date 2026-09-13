@@ -93,6 +93,17 @@
   ProfileUnobserved
   ProfileUsage
   ProfileUsageUnavailable
+  RECORD-APPEND-CONFLICT
+  RECORD-APPEND-ERROR
+  RECORD-APPEND-OK
+  RECORD-BATCH-MAX-EVENTS
+  RECORD-STATUS-MALFORMED
+  RECORD-STREAM-TURN
+  RecordAppended
+  RecordBatch
+  RecordConflicted
+  RecordStream
+  RecordUnsent
   SESSION-OBSERVED-BUSY
   SESSION-OBSERVED-IDLE
   SESSION-TERMINAL-STATUSES
@@ -1339,6 +1350,124 @@
 
 
 ;; ---------------------------------------------------------------------------
+;; 会話の記録の service への二重書き(段 9f lane 9f-2・agora-redesign #59・設計 §2.4)
+;; ---------------------------------------------------------------------------
+;; 既知の形 = runner の transactional outbox(spool に書いてから送る・受理で消す・冪等の再送)。判断はここ: batch の
+;; 組み立て・stream id・spool の鍵・結末の語・消し込みの可否・再送の周期・追いつきの差・拾い直しの番。採番(producerSeq)は
+;; 本文を組む時の seq = InFlightJob の delta-seq の 1 点で、ACP の見出しの seq と同じ値。
+
+(defk record-stream-id-of [job-id attempt]
+  {:pre [(: job-id str) (: attempt int)]
+   :post [(: % str)]}
+  "手番の stream の id(契約 streamRef.id・path の {streamId}): agent-job の id に拾い直しの番を含める(`<jobId>#a<attempt>`)。"
+  f"{job-id}#a{attempt}")
+
+
+(defk record-stream-of [job]
+  {:pre [(: job InFlightJob)]
+   :post [(: % RecordStream)]}
+  "走っている手番の本文の stream(kind turn・順の物差し = 手番の始まりの時刻・node・profile・拾い直しの番)。"
+  (<- stream-id str (record-stream-id-of job.job-id job.record-attempt))
+  (RecordStream :kind RECORD-STREAM-TURN :stream-id stream-id :started-at-ms job.started-ms
+                :node job.node :profile job.profile :attempt job.record-attempt))
+
+
+(defk record-spool-key-of [stream-id first-seq last-seq]
+  {:pre [(: stream-id str) (: first-seq int) (: last-seq int)]
+   :post [(: % str)]}
+  "spool の file の鍵(1 batch 1 file・辞書順 = 送る順): stream id の file に使えない字を `_` に、seq は 0 詰め 12 桁。"
+  (setv safe (re.sub r"[^A-Za-z0-9._-]" "_" stream-id))
+  (+ safe "." (.zfill (str first-seq) 12) "-" (.zfill (str last-seq) 12)))
+
+
+(defk record-batches-of [job bodies]
+  {:pre [(: job InFlightJob) (: bodies tuple)]
+   :post [(: % tuple)]}
+  "拍で読んだ本文の列 → batch の列(契約 limits.batchMaxEvents ごとに分ける)。会話 = job の subject・stream =
+   record-stream-of・events = 本文そのまま(producerSeq は組んだ時の seq・切らない)。同じ拍の再送は同じ鍵と本文。"
+  (when (not bodies)
+    (return #()))
+  (<- stream RecordStream (record-stream-of job))
+  (setv batches [])
+  (setv start 0)
+  (while (< start (len bodies))
+    (setv chunk (tuple (cut bodies start (+ start RECORD-BATCH-MAX-EVENTS))))
+    (<- key str (record-spool-key-of stream.stream-id (get (get chunk 0) "producerSeq")
+                                     (get (get chunk -1) "producerSeq")))
+    (.append batches (RecordBatch :spool-key key :conversation-id job.subject :stream stream :events chunk))
+    (setv start (+ start RECORD-BATCH-MAX-EVENTS)))
+  (tuple batches))
+
+
+(defk record-append-word-of [outcome]
+  {:pre [(: outcome (| RecordAppended RecordConflicted RecordUnsent))]
+   :post [(: % str)]}
+  "追記の結末 → 計器の語(ok | conflict | error — effects.RecordAppendWord の閉語彙)。"
+  (cond
+    (isinstance outcome RecordAppended) RECORD-APPEND-OK
+    (isinstance outcome RecordConflicted) RECORD-APPEND-CONFLICT
+    True RECORD-APPEND-ERROR))
+
+
+(defk record-release-of [outcome]
+  {:pre [(: outcome (| RecordAppended RecordConflicted RecordUnsent))]
+   :post [(: % bool)]}
+  "spool の file を消してよいか: 受理(ok)と 409(同じ鍵で違う本文 — 再送しても積めない・赤の計器で名乗る)は消す、
+   送れなかった(error)は残して再送する。"
+  (not (isinstance outcome RecordUnsent)))
+
+
+(defk record-halts-flush [outcome]
+  {:pre [(: outcome (| RecordAppended RecordConflicted RecordUnsent))]
+   :post [(: % bool)]}
+  "spool の再送をこの拍で止めるか: 送れなさが系の側(届かない・5xx・札・窓)なら止める(後ろの batch も同じ理由で
+   送れない)。batch だけの断り(400 malformed)は残して次の batch へ進む(1 つの壊れた batch で後ろを塞がない — spool の
+   深さの計器が名乗る)。"
+  (and (isinstance outcome RecordUnsent) (!= outcome.status RECORD-STATUS-MALFORMED)))
+
+
+(defk record-flush-due [state now-ms settings]
+  {:pre [(: state AgentdState) (: now-ms int) (: settings AgentdSettings)]
+   :post [(: % bool)]}
+  "spool を読んで送る拍か: 送れている間(backoff なし)は毎拍 — 出来事を読んだ拍の終わりに送る。送れなかった後は
+   record_retry_seconds の周期(届かない service へ拍ごとに撃って loop を塞がない)。"
+  (<- period-passed bool (due state.record-backoff-ms now-ms settings.record-retry-seconds))
+  period-passed)
+
+
+(defk record-lag-of [jobs stream-id highest]
+  {:pre [(: jobs tuple) (: stream-id str) (: highest int)]
+   :post [(: % (| int None))]}
+  "見出しと本文の追いつきの差(計器 agentd_record_lag_seq): stream が一致する走っている手番の ACP の見出しの最大 seq
+   (最後に書けた turn-record の image の entries)− service の答えの highestProducerSeq。本文が先(0 未満)は 0。
+   手番が memory に無い・見出しがまだ無い = None(名乗らない)。"
+  (for [job jobs]
+    (<- job-stream str (record-stream-id-of job.job-id job.record-attempt))
+    (when (and (= job-stream stream-id) (is-not job.record None))
+      (<- record-status dict (status-object-of job.record))
+      (<- existing tuple (entries-of-status record-status))
+      (<- head int (next-seq-after existing 0))
+      (when (> head 0)
+        (return (max 0 (- (- head 1) highest))))))
+  None)
+
+
+(defk recovered-record-of [record]
+  {:pre [(: record (| AcpRow None))]
+   :post [(: % tuple)]}
+  "拾い直した手番(recover-job)の本文の stream の番と採番の下限: #(attempt floor)。行が無ければ #(1 0)(最初の受けと
+   同じ)、在れば attempt = 行の generation + 1(最初の受け = 1 より大きく、行が進むごとに単調 — ACP に新しい欄を
+   書かない)・floor = 行の entries の seq の次(拾い直しの採番を見出しの seq の続きから — service の producerSeq と
+   ACP の見出しの seq を同じ値に保つ)。"
+  (when (is record None)
+    (return #(1 0)))
+  (<- record-status dict (status-object-of record))
+  (<- existing tuple (entries-of-status record-status))
+  (<- floor int (next-seq-after existing 0))
+  #((+ record.generation 1) floor))
+
+
+;; ---------------------------------------------------------------------------
 ;; transcript → TurnDelta / entries
 ;; ---------------------------------------------------------------------------
 
@@ -1446,16 +1575,96 @@
   (if (> (len text) limit) #((cut text 0 limit) True) #(text False)))
 
 
+(defk text-body [seq at text model]
+  {:pre [(: seq int) (: at int) (: text str) (: model (| str None))]
+   :post [(: % dict)]}
+  "assistant の本文の 1 block → 本文(契約 record-service eventIn・kind text・切らない — 段 9f lane 9f-2)。"
+  (setv body {"producerSeq" seq "at" at "kind" ENTRY-KIND-TEXT "text" text})
+  (when (isinstance model str)
+    (setv (get body "model") model))
+  body)
+
+
+(defk tool-use-body [seq at tool-id name input]
+  {:pre [(: seq int) (: at int) (: tool-id str) (: name str)
+         (: input (| dict list str int float bool None))]
+   :post [(: % dict)]}
+  "道具の呼び出し → 本文(kind tool_use・toolName・toolUseId・input = 入力そのもの)。"
+  (setv body {"producerSeq" seq "at" at "kind" ENTRY-KIND-TOOL-USE "toolName" name "input" input})
+  (when tool-id
+    (setv (get body "toolUseId") tool-id))
+  body)
+
+
+(defk tool-result-body [seq at tool-id output is-error]
+  {:pre [(: seq int) (: at int) (: tool-id str)
+         (: output (| dict list str int float bool None)) (: is-error bool)]
+   :post [(: % dict)]}
+  "道具の結果 → 本文(kind tool_result・toolUseId・output = 出力そのもの・isError は誤りの時だけ名乗る)。"
+  (setv body {"producerSeq" seq "at" at "kind" ENTRY-KIND-TOOL-RESULT "output" output})
+  (when tool-id
+    (setv (get body "toolUseId") tool-id))
+  (when is-error
+    (setv (get body "isError") True))
+  body)
+
+
+(defk note-body [seq at kind text]
+  {:pre [(: seq int) (: at int) (: kind str) (: text str)]
+   :post [(: % dict)]}
+  "器の出来事(kind system)と手番の誤り(kind error)→ 本文(text)。"
+  {"producerSeq" seq "at" at "kind" kind "text" text})
+
+
+(defk entry-of-body [body]
+  {:pre [(: body dict)]
+   :post [(: % dict)]}
+  "本文(契約 record-service eventIn の形 — 会話の記録の service へ切らずに運ぶ出来事)→ turn-record の entry(ACP の欄)。
+   切り詰めの定義点はここ 1 つ: text / system / error = text を ENTRY-TEXT-MAX-CHARS、tool_use / tool_result = 入力 /
+   出力の要約(summary-of)を ENTRY-SUMMARY-MAX-CHARS(切れば truncated)。seq = 本文の producerSeq(採番は 1 点)。"
+  (setv kind (get body "kind"))
+  (setv entry {"seq" (get body "producerSeq") "at" (get body "at") "kind" kind})
+  (setv truncated False)
+  (if (in kind #{ENTRY-KIND-TOOL-USE ENTRY-KIND-TOOL-RESULT})
+      (do
+        (<- whole str (summary-of (.get body (if (= kind ENTRY-KIND-TOOL-USE) "input" "output")) 1000000000))
+        (<- summary-clip tuple (clipped whole ENTRY-SUMMARY-MAX-CHARS))
+        (when (= kind ENTRY-KIND-TOOL-USE)
+          (setv (get entry "toolName") (get body "toolName")))
+        (setv (get entry "summary") (get summary-clip 0))
+        (setv truncated (get summary-clip 1)))
+      (do
+        (<- text-clip tuple (clipped (get body "text") ENTRY-TEXT-MAX-CHARS))
+        (setv (get entry "text") (get text-clip 0))
+        (setv truncated (get text-clip 1))))
+  (when (in "model" body)
+    (setv (get entry "model") (get body "model")))
+  (when (in "toolUseId" body)
+    (setv (get entry "toolUseId") (get body "toolUseId")))
+  (when (is (.get body "isError") True)
+    (setv (get entry "isError") True))
+  (when truncated
+    (setv (get entry "truncated") True))
+  entry)
+
+
+(defk entries-of-bodies [bodies]
+  {:pre [(: bodies tuple)]
+   :post [(: % tuple)]}
+  "本文の列 → turn-record の entries の列(順と seq はそのまま・切り詰めは entry-of-body の 1 点)。"
+  (setv out [])
+  (for [body bodies]
+    (<- entry dict (entry-of-body body))
+    (.append out entry))
+  (tuple out))
+
+
 (defk text-entry [seq at text model]
   {:pre [(: seq int) (: at int) (: text str) (: model (| str None))]
    :post [(: % dict)]}
-  "assistant の本文の 1 block → entry(kind text・上限 ENTRY-TEXT-MAX-CHARS・切れば truncated)。"
-  (<- clip tuple (clipped text ENTRY-TEXT-MAX-CHARS))
-  (setv entry {"seq" seq "at" at "kind" ENTRY-KIND-TEXT "text" (get clip 0)})
-  (when (isinstance model str)
-    (setv (get entry "model") model))
-  (when (get clip 1)
-    (setv (get entry "truncated") True))
+  "assistant の本文の 1 block → entry(kind text・上限 ENTRY-TEXT-MAX-CHARS・切れば truncated)= text-body を切った形。"
+  (<- body dict (text-body seq at text model))
+  (<- entry dict (entry-of-body body))
   entry)
 
 
@@ -1463,14 +1672,10 @@
   {:pre [(: seq int) (: at int) (: tool-id str) (: name str)
          (: input (| dict list str int float bool None))]
    :post [(: % dict)]}
-  "道具の呼び出し → entry(kind tool_use・toolName・toolUseId・summary = 入力の要約 ≤ ENTRY-SUMMARY-MAX-CHARS)。"
-  (<- whole str (summary-of input 1000000000))
-  (<- clip tuple (clipped whole ENTRY-SUMMARY-MAX-CHARS))
-  (setv entry {"seq" seq "at" at "kind" ENTRY-KIND-TOOL-USE "toolName" name "summary" (get clip 0)})
-  (when tool-id
-    (setv (get entry "toolUseId") tool-id))
-  (when (get clip 1)
-    (setv (get entry "truncated") True))
+  "道具の呼び出し → entry(kind tool_use・toolName・toolUseId・summary = 入力の要約 ≤ ENTRY-SUMMARY-MAX-CHARS)
+   = tool-use-body を切った形。"
+  (<- body dict (tool-use-body seq at tool-id name input))
+  (<- entry dict (entry-of-body body))
   entry)
 
 
@@ -1478,27 +1683,19 @@
   {:pre [(: seq int) (: at int) (: tool-id str)
          (: output (| dict list str int float bool None)) (: is-error bool)]
    :post [(: % dict)]}
-  "道具の結果 → entry(kind tool_result・toolUseId・summary = 出力の要約 ≤ ENTRY-SUMMARY-MAX-CHARS・isError)。"
-  (<- whole str (summary-of output 1000000000))
-  (<- clip tuple (clipped whole ENTRY-SUMMARY-MAX-CHARS))
-  (setv entry {"seq" seq "at" at "kind" ENTRY-KIND-TOOL-RESULT "summary" (get clip 0)})
-  (when tool-id
-    (setv (get entry "toolUseId") tool-id))
-  (when is-error
-    (setv (get entry "isError") True))
-  (when (get clip 1)
-    (setv (get entry "truncated") True))
+  "道具の結果 → entry(kind tool_result・toolUseId・summary = 出力の要約 ≤ ENTRY-SUMMARY-MAX-CHARS・isError)
+   = tool-result-body を切った形。"
+  (<- body dict (tool-result-body seq at tool-id output is-error))
+  (<- entry dict (entry-of-body body))
   entry)
 
 
 (defk note-entry [seq at kind text]
   {:pre [(: seq int) (: at int) (: kind str) (: text str)]
    :post [(: % dict)]}
-  "器の出来事(kind system)と手番の誤り(kind error)→ entry(text ≤ ENTRY-TEXT-MAX-CHARS)。"
-  (<- clip tuple (clipped text ENTRY-TEXT-MAX-CHARS))
-  (setv entry {"seq" seq "at" at "kind" kind "text" (get clip 0)})
-  (when (get clip 1)
-    (setv (get entry "truncated") True))
+  "器の出来事(kind system)と手番の誤り(kind error)→ entry(text ≤ ENTRY-TEXT-MAX-CHARS)= note-body を切った形。"
+  (<- body dict (note-body seq at kind text))
+  (<- entry dict (entry-of-body body))
   entry)
 
 
@@ -1577,10 +1774,11 @@
    entries だけ(同じ本文を frame で二度流さない)。transcript(streamed = False)は完成した
    block を text frame に。streamed では system の行(init / API の retry / hook の失敗 —
    claude-system-note)を kind system の entry に、result の行の誤り(claude-result-error)を
-   kind error の entry に写す(手番の終わりの判定は host が読む — ここは記録だけ)。entry の
-   上限と切り詰めは text-entry / tool-use-entry / tool-result-entry の 1 点ずつ。"
+   kind error の entry に写す(手番の終わりの判定は host が読む — ここは記録だけ)。本文は
+   text-body 等で切らずに組み(DeltaBatch.bodies — 段 9f lane 9f-2)、entries はそこから entry-of-body の 1 点で
+   切って導く。"
   (setv frames [])
-  (setv entries [])
+  (setv bodies [])
   (setv usage None)
   (setv seen-messages (set))
   (setv model None)
@@ -1591,14 +1789,14 @@
     (when (and streamed (= kind "system"))
       (<- note (| str None) (claude-system-note record))
       (when (is-not note None)
-        (<- system-entry dict (note-entry seq at ENTRY-KIND-SYSTEM note))
-        (.append entries system-entry)
+        (<- system-body dict (note-body seq at ENTRY-KIND-SYSTEM note))
+        (.append bodies system-body)
         (setv seq (+ seq 1))))
     (when (and streamed (= kind "result"))
       (<- failure (| str None) (claude-result-error record))
       (when (is-not failure None)
-        (<- error-entry dict (note-entry seq at ENTRY-KIND-ERROR failure))
-        (.append entries error-entry)
+        (<- error-body dict (note-body seq at ENTRY-KIND-ERROR failure))
+        (.append bodies error-body)
         (setv seq (+ seq 1))))
     (when (and streamed (= kind "stream_event"))
       (setv event (.get record "event"))
@@ -1639,9 +1837,9 @@
                 (when (not streamed)
                   (<- text-frame dict (delta-frame job-id seq at "text" payload))
                   (.append frames text-frame))
-                (<- entry dict (text-entry seq at (get block "text")
-                                           (if (isinstance message-model str) message-model None)))
-                (.append entries entry)
+                (<- block-body dict (text-body seq at (get block "text")
+                                                (if (isinstance message-model str) message-model None)))
+                (.append bodies block-body)
                 (setv seq (+ seq 1)))
               (and (= kind "assistant") (= block-type "tool_use"))
               (do
@@ -1651,8 +1849,8 @@
                 (<- use-frame dict (delta-frame job-id seq at "tool_use"
                                                 {"toolUseId" tool-id "name" name "summary" summary}))
                 (.append frames use-frame)
-                (<- use-entry dict (tool-use-entry seq at tool-id name (.get block "input")))
-                (.append entries use-entry)
+                (<- use-body dict (tool-use-body seq at tool-id name (.get block "input")))
+                (.append bodies use-body)
                 (setv seq (+ seq 1)))
               (and (= kind "user") (= block-type "tool_result"))
               (do
@@ -1666,11 +1864,12 @@
                                                     "bytes" size
                                                     "isError" is-error}))
                 (.append frames result-frame)
-                (<- result-entry dict (tool-result-entry seq at tool-id result is-error))
-                (.append entries result-entry)
+                (<- result-body dict (tool-result-body seq at tool-id result is-error))
+                (.append bodies result-body)
                 (setv seq (+ seq 1)))
               True None))))))
-  (DeltaBatch :frames (tuple frames) :entries (tuple entries) :usage usage
+  (<- entries tuple (entries-of-bodies (tuple bodies)))
+  (DeltaBatch :frames (tuple frames) :entries entries :bodies (tuple bodies) :usage usage
               :next-seq seq :model model))
 
 
@@ -1680,7 +1879,7 @@
   "codex の rollout の行(response_item の message / function_call /
    function_call_output・event_msg の token_count)→ frame と entries。読めない形は飛ばす。"
   (setv frames [])
-  (setv entries [])
+  (setv bodies [])
   (setv usage None)
   (setv seq seq-start)
   (for [record records]
@@ -1694,8 +1893,8 @@
           (when (and (isinstance block dict) (isinstance (.get block "text") str))
             (<- text-frame dict (delta-frame job-id seq at "text" {"text" (get block "text")}))
             (.append frames text-frame)
-            (<- entry dict (text-entry seq at (get block "text") None))
-            (.append entries entry)
+            (<- block-body dict (text-body seq at (get block "text") None))
+            (.append bodies block-body)
             (setv seq (+ seq 1))))
         (and (= kind "response_item") (= ptype "function_call"))
         (do
@@ -1705,8 +1904,8 @@
           (<- use-frame dict (delta-frame job-id seq at "tool_use"
                                           {"toolUseId" call-id "name" name "summary" summary}))
           (.append frames use-frame)
-          (<- use-entry dict (tool-use-entry seq at call-id name (.get payload "arguments")))
-          (.append entries use-entry)
+          (<- use-body dict (tool-use-body seq at call-id name (.get payload "arguments")))
+          (.append bodies use-body)
           (setv seq (+ seq 1)))
         (and (= kind "response_item") (= ptype "function_call_output"))
         (do
@@ -1719,8 +1918,8 @@
                                               "summary" summary
                                               "bytes" (len (.encode whole "utf-8"))}))
           (.append frames result-frame)
-          (<- result-entry dict (tool-result-entry seq at call-id output False))
-          (.append entries result-entry)
+          (<- result-body dict (tool-result-body seq at call-id output False))
+          (.append bodies result-body)
           (setv seq (+ seq 1)))
         (and (= kind "event_msg") (= ptype "token_count"))
         (do
@@ -1737,7 +1936,8 @@
             (.append frames usage-frame)
             (setv seq (+ seq 1))))
         True None)))
-  (DeltaBatch :frames (tuple frames) :entries (tuple entries) :usage usage
+  (<- entries tuple (entries-of-bodies (tuple bodies)))
+  (DeltaBatch :frames (tuple frames) :entries entries :bodies (tuple bodies) :usage usage
               :next-seq seq :model None))
 
 
@@ -1751,7 +1951,7 @@
    isError = exitCode ≠ 0)の frame と entries / thread/tokenUsage/updated → usage frame
    (累計なので最新で置き換える)。応答・他の通知は読まない。"
   (setv frames [])
-  (setv entries [])
+  (setv bodies [])
   (setv usage None)
   (setv seq seq-start)
   (for [record records]
@@ -1768,8 +1968,8 @@
         (and (= method "item/completed") (isinstance item dict)
              (= (.get item "type") "agentMessage") (isinstance (.get item "text") str))
         (do
-          (<- entry dict (text-entry seq at (get item "text") None))
-          (.append entries entry)
+          (<- item-body dict (text-body seq at (get item "text") None))
+          (.append bodies item-body)
           (setv seq (+ seq 1)))
         (and (= method "item/completed") (isinstance item dict)
              (= (.get item "type") "commandExecution") (isinstance (.get item "command") str))
@@ -1780,8 +1980,8 @@
                                           {"toolUseId" tool-id "name" "command_execution"
                                            "summary" summary}))
           (.append frames use-frame)
-          (<- use-entry dict (tool-use-entry seq at tool-id "command_execution" (get item "command")))
-          (.append entries use-entry)
+          (<- use-body dict (tool-use-body seq at tool-id "command_execution" (get item "command")))
+          (.append bodies use-body)
           (setv seq (+ seq 1))
           (setv output (.get item "aggregatedOutput"))
           (when (isinstance output str)
@@ -1793,8 +1993,8 @@
                                                 "bytes" (len (.encode output "utf-8"))
                                                 "isError" is-error}))
             (.append frames result-frame)
-            (<- result-entry dict (tool-result-entry seq at tool-id output is-error))
-            (.append entries result-entry)
+            (<- result-body dict (tool-result-body seq at tool-id output is-error))
+            (.append bodies result-body)
             (setv seq (+ seq 1))))
         (= method "turn/completed")
         (do
@@ -1805,9 +2005,9 @@
             (when (and (isinstance turn-status str) (!= turn-status "completed"))
               (setv error (.get turn "error"))
               (setv message (if (isinstance error dict) (.get error "message") None))
-              (<- error-entry dict (note-entry seq at ENTRY-KIND-ERROR
-                                               (if (isinstance message str) message f"turn-{turn-status}")))
-              (.append entries error-entry)
+              (<- error-body dict (note-body seq at ENTRY-KIND-ERROR
+                                             (if (isinstance message str) message f"turn-{turn-status}")))
+              (.append bodies error-body)
               (setv seq (+ seq 1)))))
         (= method "thread/tokenUsage/updated")
         (do
@@ -1823,7 +2023,8 @@
             (.append frames usage-frame)
             (setv seq (+ seq 1))))
         True None)))
-  (DeltaBatch :frames (tuple frames) :entries (tuple entries) :usage usage
+  (<- entries tuple (entries-of-bodies (tuple bodies)))
+  (DeltaBatch :frames (tuple frames) :entries entries :bodies (tuple bodies) :usage usage
               :next-seq seq :model None))
 
 

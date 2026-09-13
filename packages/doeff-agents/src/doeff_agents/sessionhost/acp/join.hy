@@ -35,6 +35,7 @@
   BACKEND-HEADLESS
   JOIN-DB-FILE
   JOIN-HEADLESS-DIR
+  JOIN-RECORD-SPOOL-DIR
   JOIN-SCHEMA
   JOIN-SESSION-HOOKS-DEFAULT
   JOIN-SOCKET-FILE
@@ -52,6 +53,8 @@
   Ownership
   OwnershipProbe
   ProbeAnswer
+  RECORD-SPOOL-DIR-ENV
+  RECORD-URL-ENV
   SESSION-HOOKS-ENV])
 
 
@@ -62,6 +65,8 @@
 ;; 宣言 file の表の名。
 (setv TABLE-AGENTD "agentd")
 (setv TABLE-CUSTODY "custody")
+;; 会話の記録の service の宛先(段 9f lane 9f-2・agora-redesign #59)。
+(setv TABLE-RECORD "record")
 ;; `[agentd]` の鍵(= flag の名の `-` を `_` にしたもの)。
 (setv KEY-SERVER "server")
 (setv KEY-TOKEN-FILE "token_file")
@@ -74,10 +79,13 @@
 ;; `[custody]` の鍵。
 (setv KEY-CUSTODY-URL "url")
 (setv KEY-BORROWER-KEY-FILE "borrower_key_file")
+;; `[record]` の鍵(札は [agentd].token_file の再利用 — 名簿の agentd が service の書き手なので鍵は宛先だけ)。
+(setv KEY-RECORD-URL "url")
 ;; 表 → 許す鍵(宣言に無い鍵は誤りとして名指す — 黙って読み飛ばさない)。
 (setv AGENTD-KEYS #{KEY-SERVER KEY-TOKEN-FILE KEY-NODE-NAME KEY-STATE-DIR KEY-BACKEND
                     KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF})
 (setv CUSTODY-KEYS #{KEY-CUSTODY-URL KEY-BORROWER-KEY-FILE})
+(setv RECORD-KEYS #{KEY-RECORD-URL})
 ;; flag の綴り(`--config` は composition root が先に読む — config-path-of)。
 (setv FLAG-CONFIG "--config")
 (setv FLAG-SERVER "--server")
@@ -90,6 +98,7 @@
 (setv FLAG-OWNERSHIP-PROOF "--ownership-proof")
 (setv FLAG-CUSTODY "--custody")
 (setv FLAG-BORROWER-KEY-FILE "--borrower-key-file")
+(setv FLAG-RECORD "--record")
 ;; flag → (表 . 鍵)。値を取る flag はこれで全部(それ以外は unknown argument)。
 (setv FLAG-KEYS {FLAG-SERVER #(TABLE-AGENTD KEY-SERVER)
                  FLAG-TOKEN-FILE #(TABLE-AGENTD KEY-TOKEN-FILE)
@@ -100,7 +109,8 @@
                  FLAG-OWNERSHIP #(TABLE-AGENTD KEY-OWNERSHIP)
                  FLAG-OWNERSHIP-PROOF #(TABLE-AGENTD KEY-OWNERSHIP-PROOF)
                  FLAG-CUSTODY #(TABLE-CUSTODY KEY-CUSTODY-URL)
-                 FLAG-BORROWER-KEY-FILE #(TABLE-CUSTODY KEY-BORROWER-KEY-FILE)})
+                 FLAG-BORROWER-KEY-FILE #(TABLE-CUSTODY KEY-BORROWER-KEY-FILE)
+                 FLAG-RECORD #(TABLE-RECORD KEY-RECORD-URL)})
 
 
 ;; ---------------------------------------------------------------------------
@@ -128,7 +138,7 @@
    :post [(: % dict)]}
   "join の argv → {表 {鍵 値}}(flag の値だけ・`--config` は除く)。未知の flag・値の無い flag は断る。"
   (setv items argv.items)
-  (setv values {TABLE-AGENTD {} TABLE-CUSTODY {}})
+  (setv values {TABLE-AGENTD {} TABLE-CUSTODY {} TABLE-RECORD {}})
   (setv index 0)
   (while (< index (len items))
     (setv arg (get items index))
@@ -158,7 +168,7 @@
   (when (and tables (!= (.get tables "schema") JOIN-SCHEMA))
     (raise (ValueError (+ "schema が " JOIN-SCHEMA " でない: " (repr (.get tables "schema"))))))
   (setv values {})
-  (for [[table allowed] [[TABLE-AGENTD AGENTD-KEYS] [TABLE-CUSTODY CUSTODY-KEYS]]]
+  (for [[table allowed] [[TABLE-AGENTD AGENTD-KEYS] [TABLE-CUSTODY CUSTODY-KEYS] [TABLE-RECORD RECORD-KEYS]]]
     (setv found (.get tables table {}))
     (when (not (isinstance found dict))
       (raise (ValueError f"[{table}] は表であること")))
@@ -175,7 +185,7 @@
   {:pre [(: flags dict) (: declared dict)]
    :post [(: % dict)]}
   "flag > 宣言 file(鍵ごとに flag が勝つ)。"
-  (dfor table [TABLE-AGENTD TABLE-CUSTODY]
+  (dfor table [TABLE-AGENTD TABLE-CUSTODY TABLE-RECORD]
         table (| (.get declared table {}) (.get flags table {}))))
 
 
@@ -213,6 +223,7 @@
   (<- values dict (merged-values-of flags declared))
   (setv agentd (get values TABLE-AGENTD))
   (setv custody (get values TABLE-CUSTODY))
+  (setv record (get values TABLE-RECORD))
   (setv server (.get agentd KEY-SERVER))
   (when (not server)
     (raise (ValueError f"{FLAG-SERVER} <ACP の URL> が要る(flag か宣言 file の [{TABLE-AGENTD}].{KEY-SERVER})")))
@@ -234,7 +245,9 @@
     :session-hooks (.get agentd KEY-SESSION-HOOKS JOIN-SESSION-HOOKS-DEFAULT)
     :custody-url (.get custody KEY-CUSTODY-URL)
     :borrower-key-file (.get custody KEY-BORROWER-KEY-FILE)
-    :ownership ownership))
+    :ownership ownership
+    ;; 空文字は「名乗らない」(二重書きなし — 宣言 file で欄を空にして外せる)。
+    :record-url (or (.get record KEY-RECORD-URL) None)))
 
 
 ;; ---------------------------------------------------------------------------
@@ -245,7 +258,7 @@
   {:pre [(: spec JoinSpec)]
    :post [(: % JoinPlan)]}
   "JoinSpec → JoinPlan。env の束は今日の serve --acp の起動が読む名ちょうど(弁 on・ACP の URL と札・
-   node の名・backend と headless の置き場・hooks・custody・所有)。名乗らない値は env に現れない
+   node の名・backend と headless の置き場・hooks・custody・所有・会話の記録の service の宛先と spool)。名乗らない値は env に現れない
    (handler の既定に任せる)。host の argv は db / socket(置き場の下)・上限なし・backend・serve。"
   (setv env [#(ACP-VALVE-ENV "on")
              #(ACP-URL-ENV spec.server)
@@ -262,6 +275,9 @@
   (when (is-not spec.ownership None)
     (.extend env [#(OWNERSHIP-ENV spec.ownership.grade)
                   #(OWNERSHIP-PROOF-ENV spec.ownership.proof)]))
+  (when (is-not spec.record-url None)
+    (.extend env [#(RECORD-URL-ENV spec.record-url)
+                  #(RECORD-SPOOL-DIR-ENV (+ spec.state-dir "/" JOIN-RECORD-SPOOL-DIR))]))
   (JoinPlan
     :host-argv #(HOST-DB-FLAG (+ spec.state-dir "/" JOIN-DB-FILE)
                  HOST-SOCKET-FLAG (+ spec.state-dir "/" JOIN-SOCKET-FILE)

@@ -1,0 +1,389 @@
+;;; 会話の記録の service への本文の二重書きの焦点の検(段 9f lane 9f-2・agora-redesign #59・設計 §2.4)。
+;;;
+;;; 既知の形 = runner(agentd)の transactional outbox: 本文は切らずに spool(1 batch 1 file)へ耐久化してから service へ
+;;; 送り、受理(と 409)で消す・送れなければ残して周期の後に再送(冪等)。ACP の turn-record への追記は今日どおり。
+;;; ここで撃つのは
+;;;   * 純関数: 本文は切らず entry は切る(切り詰めの 1 点 entry-of-body)・採番(producerSeq = entry の seq・単調・batch の
+;;;     上限で分ける)・同じ拍の再送は同じ鍵と本文・attempt が変わると stream が変わる・拾い直しの番と採番の下限・
+;;;     結末の語・消し込みの可否・flush を止めるか・wire の応答の写し
+;;;   * fake の handler で agentd を一周: ACP と service の両方に同じ seq が並ぶ(ACP の entries は二重書きの有無で同じ)・
+;;;     送れない → spool に残る → 周期の後の拍で送れて消える・409 は spool に残さず赤の計器・弁 off は Record* を撃たない
+;;;   * spool の handler(tmp dir の実 file): 置く → 鍵の順に読める → 消える・壊れた file は消さずに名乗る
+;;;   * join の宣言の [record] → RECORD_SERVICE_URL と spool の置き場・settings の弁
+;;; HTTP も subprocess も無い。
+
+(require doeff-hy.macros [deftest])
+
+(import json)
+(import os)
+(import tempfile)
+(import doeff [run])
+(import doeff_agents.sessionhost.acp.effects [
+  AGENT-JOB-KIND
+  AGENT-JOB-NAMESPACE
+  AGORA-KINDS-NAMESPACE
+  AcpRow
+  AgentdSettings
+  ENTRY-SUMMARY-MAX-CHARS
+  ENTRY-TEXT-MAX-CHARS
+  InFlightJob
+  JOIN-SCHEMA
+  JoinArgv
+  JoinDeclaration
+  MESSAGE-KIND
+  NODE-KIND
+  PHASE-BOUND
+  RECORD-BATCH-MAX-EVENTS
+  RECORD-SPOOL-DIR-ENV
+  RECORD-URL-ENV
+  RecordAppended
+  RecordConflicted
+  RecordUnsent
+  TURN-RECORD-KIND])
+(import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeRecord FakeSessions])
+(import doeff_agents.sessionhost.acp.handlers [HttpReply RecordSpool decode-record-reply record-append-body])
+(import doeff_agents.sessionhost.acp.join [join-plan-of join-spec-of])
+(import doeff_agents.sessionhost.acp.judgment [
+  entry-of-body
+  record-append-word-of
+  record-batches-of
+  record-halts-flush
+  record-release-of
+  recovered-record-of
+  text-body
+  text-entry
+  tool-result-body
+  tool-use-body
+  tool-use-entry])
+(import doeff_agents.sessionhost.acp.runtime [initial-state run-tick settings-from-env])
+
+
+(setv NODE "mac-1")
+(setv CONVERSATION "c-01ARZ3NDEKTSV4RRFFQ69G5FAV")
+(setv AT 1789000000000)
+(setv STREAM "j-1#a1")
+
+
+(defn #^ str stream-line [#^ dict record]
+  (+ (json.dumps record) "\n"))
+
+
+(defn #^ str claude-events [#^ str session-id #^ str text]
+  "claude の print mode(stream-json)の 1 手番の行(init・本文の delta・本文 + 道具・結果・result)。"
+  (setv usage {"input_tokens" 3 "output_tokens" 7 "cache_creation_input_tokens" 1 "cache_read_input_tokens" 2})
+  (.join "" [(stream-line {"type" "system" "subtype" "init" "session_id" session-id "model" "claude-opus-5"
+                           "permissionMode" "bypassPermissions" "cwd" "/work" "tools" ["Bash" "Read"]})
+             (stream-line {"type" "stream_event"
+                           "event" {"type" "content_block_delta" "index" 0
+                                    "delta" {"type" "text_delta" "text" text}}})
+             (stream-line {"type" "assistant"
+                           "message" {"id" "msg_1" "role" "assistant" "model" "claude-opus-5"
+                                      "content" [{"type" "text" "text" text}
+                                                 {"type" "tool_use" "id" "t1" "name" "Read"
+                                                  "input" {"file_path" "/work/a.txt"}}]
+                                      "usage" usage}})
+             (stream-line {"type" "user"
+                           "message" {"role" "user"
+                                      "content" [{"type" "tool_result" "tool_use_id" "t1"
+                                                  "content" "alpha" "is_error" False}]}})
+             (stream-line {"type" "result" "subtype" "success" "is_error" False "usage" usage})]))
+
+
+(defn #^ AcpRow row-of [#^ str namespace #^ str kind #^ str resource-id #^ dict spec #^ (| dict None) status]
+  (AcpRow :namespace namespace :key f"{namespace}:{kind}:{resource-id}" :kind kind :resource-id resource-id
+          :version "v1" :generation 1 :created-at-ms 500 :labels {} :payload {} :spec spec :status status))
+
+
+(defn #^ AcpRow bound-job [#^ str job-id #^ list inputs]
+  (row-of AGENT-JOB-NAMESPACE AGENT-JOB-KIND job-id
+          {"subject" CONVERSATION "inputs" inputs
+           "charter" {"session_id" f"charter-{job-id}" "session_name" f"charter-{job-id}"
+                      "agent_type" "claude" "work_dir" "/work" "prompt" "start" "model" "claude-opus-5"}}
+          {"phase" PHASE-BOUND "binding" {"node" NODE "profile" "personal" "account" "acct"} "conditions" []}))
+
+
+(defn #^ InFlightJob job-of [#^ int attempt]
+  "純関数の検の手番(memory の状態 — 欄は in-flight-job-of と同じ形)。"
+  (InFlightJob :job-key f"{AGENT-JOB-NAMESPACE}:{AGENT-JOB-KIND}:j-1" :job-namespace AGENT-JOB-NAMESPACE
+               :job-id "j-1" :subject CONVERSATION :session-id "sid-1" :agent-type "claude" :node NODE
+               :profile "personal" :model "claude-opus-5" :started-ms AT :turn-floor-ms AT :start-offset 0
+               :transcript-offset 0 :delta-seq 0 :lease-id None :lease-kind None :lease-account None
+               :lease-hold-ms None :capturing False :stream-gone False :last-frame-ms 0 :last-probe-ms 0
+               :pending-conditions #() :record-attempt attempt))
+
+
+(defclass RecordWorld []
+  "backend = headless の器(events file が実況の正本)で agentd を一周させる世界。record = True なら二重書き on
+   (FakeRecord を handler の列に足す — off の世界は FakeRecord を持たないので Record* を撃てば未処理で落ちる)。"
+  (defn #^ None __init__ [self #^ bool record]
+    (setv self.settings (AgentdSettings :node-name NODE :homes-root "/homes"
+                                        :backend-kind "headless" :stream-capability "events"
+                                        :record-enabled record))
+    (setv self.acp (FakeAcp :births {TURN-RECORD-KIND (Birth "state" "running")}))
+    (.put-row self.acp (row-of AGORA-KINDS-NAMESPACE NODE-KIND NODE
+                               {"name" NODE "labels" {} "capacity" 1 "streamCapability" "events"}
+                               {"state" "joined"}))
+    (.put-row self.acp (row-of AGORA-KINDS-NAMESPACE MESSAGE-KIND "m-1" {"id" "m-1" "body" "first"} {"state" "inbox"}))
+    (.put-row self.acp (bound-job "j-1" ["m-1"]))
+    (setv self.custody (FakeCustody :tokens {"acct" "sk-ant-oat01-secret"}))
+    (setv self.sessions (FakeSessions :agent-type "claude" :backend-kind "headless" :events-root "/events"))
+    (setv self.local (FakeLocal :now-ms 1000))
+    (setv self.record (FakeRecord))
+    (setv self.state (initial-state)))
+
+  (defn #^ list dispatchers [self]
+    (setv base [self.acp.dispatch self.custody.dispatch self.sessions.dispatch self.local.dispatch])
+    (if self.settings.record-enabled (+ [self.record.dispatch] base) base))
+
+  (defn #^ None tick [self #^ int advance-ms]
+    (setv self.local.now-ms (+ self.local.now-ms advance-ms))
+    (setv self.state (run-tick self.settings self.state (.dispatchers self)))
+    None)
+
+  (defn #^ str sid [self]
+    (setv status (. (get self.acp.rows f"{AGENT-JOB-NAMESPACE}:{AGENT-JOB-KIND}:j-1") status))
+    (assert (isinstance status dict))
+    (setv handle (get status "sessionHandle"))
+    (assert (isinstance handle dict))
+    (setv session-id (get handle "sessionId"))
+    (assert (isinstance session-id str))
+    session-id)
+
+  (defn #^ None write-events [self #^ str text]
+    (setv (get self.local.transcripts f"/events/{(.sid self)}.events.jsonl") text)
+    None)
+
+  (defn #^ list record-entries [self]
+    (setv status (. (get self.acp.rows f"{AGORA-KINDS-NAMESPACE}:{TURN-RECORD-KIND}:j-1") status))
+    (assert (isinstance status dict))
+    (list (.get status "entries" [])))
+
+  (defn #^ list metrics-named [self #^ str name]
+    (lfor line self.local.metrics :if (= (.get line "metric") name) line)))
+
+
+;; ---------------------------------------------------------------------------
+;; 純関数
+;; ---------------------------------------------------------------------------
+
+(deftest test-bodies-are-uncut-and-entries-are-cut-at-the-one-point
+  ;; text: 本文は切らない・entry は ENTRY-TEXT-MAX-CHARS で切って truncated(text-entry = text-body を切った形)。
+  (setv long-text (* "y" (+ ENTRY-TEXT-MAX-CHARS 5)))
+  (setv body (run (text-body 8 AT long-text "claude-opus-5")))
+  (assert (= body {"producerSeq" 8 "at" AT "kind" "text" "text" long-text "model" "claude-opus-5"}))
+  (setv entry (run (entry-of-body body)))
+  (assert (= entry (run (text-entry 8 AT long-text "claude-opus-5"))))
+  (assert (= (get entry "seq") 8) "entry の seq は本文の producerSeq(採番は 1 点)")
+  (assert (= (len (get entry "text")) ENTRY-TEXT-MAX-CHARS))
+  (assert (is (get entry "truncated") True))
+  ;; 道具: 本文は入力 / 出力そのもの(要約の欄を持たない)・entry は要約を切る。
+  (setv long-input {"command" (* "x" (+ ENTRY-SUMMARY-MAX-CHARS 10))})
+  (setv use (run (tool-use-body 4 AT "t2" "Bash" long-input)))
+  (assert (= (get use "input") long-input))
+  (assert (not (in "summary" use)))
+  (assert (= (run (entry-of-body use)) (run (tool-use-entry 4 AT "t2" "Bash" long-input))))
+  (setv result (run (tool-result-body 5 AT "t2" [{"type" "text" "text" "boom"}] True)))
+  (assert (= result {"producerSeq" 5 "at" AT "kind" "tool_result" "output" [{"type" "text" "text" "boom"}]
+                     "toolUseId" "t2" "isError" True})))
+
+
+(deftest test-batches-carry-the-job-counter-as-producer-seq-and-rebuild-identically
+  (setv job (job-of 1))
+  (setv bodies (tuple (lfor seq [3 4 7] (run (text-body seq AT f"t{seq}" None)))))
+  (setv batches (run (record-batches-of job bodies)))
+  (assert (= (len batches) 1))
+  (setv batch (get batches 0))
+  (assert (= batch.conversation-id CONVERSATION))
+  (assert (= batch.stream.stream-id STREAM))
+  (assert (= batch.stream.kind "turn"))
+  (assert (= batch.stream.started-at-ms AT))
+  (assert (= (lfor event batch.events (get event "producerSeq")) [3 4 7]))
+  (assert (= batch.events bodies) "本文をそのまま運ぶ(欄を足さない・切らない)")
+  ;; 同じ拍の再送 = 同じ鍵と本文(純関数)
+  (assert (= (run (record-batches-of job bodies)) batches))
+  ;; batch の上限で分ける — 鍵の辞書順 = 送る順・producerSeq は通して単調
+  (setv many (tuple (lfor seq (range (+ (* 2 RECORD-BATCH-MAX-EVENTS) 5)) (run (text-body seq AT "x" None)))))
+  (setv split (run (record-batches-of job many)))
+  (assert (= (lfor part split (len part.events)) [RECORD-BATCH-MAX-EVENTS RECORD-BATCH-MAX-EVENTS 5]))
+  (setv keys (lfor part split part.spool-key))
+  (assert (= keys (sorted keys)))
+  (assert (= (len (set keys)) 3))
+  (assert (= (lfor part split event part.events (get event "producerSeq")) (list (range (len many)))))
+  (assert (= (run (record-batches-of job #())) #())))
+
+
+(deftest test-attempt-changes-the-stream-and-recovery-derives-it-from-the-row
+  (setv bodies #((run (text-body 0 AT "t" None))))
+  (setv original (get (run (record-batches-of (job-of 1) bodies)) 0))
+  (setv again (get (run (record-batches-of (job-of 2) bodies)) 0))
+  (assert (= again.stream.stream-id "j-1#a2"))
+  (assert (= again.stream.attempt 2))
+  (assert (!= again.spool-key original.spool-key))
+  (assert (= again.events original.events))
+  ;; 拾い直し: 行が無ければ最初の受けと同じ・在れば generation + 1 と見出しの seq の続き
+  (assert (= (run (recovered-record-of None)) #(1 0)))
+  (setv row (AcpRow :namespace AGORA-KINDS-NAMESPACE :key f"{AGORA-KINDS-NAMESPACE}:{TURN-RECORD-KIND}:j-1"
+                    :kind TURN-RECORD-KIND :resource-id "j-1" :version "v1" :generation 5 :created-at-ms 500
+                    :labels {} :payload {} :spec {}
+                    :status {"state" "running"
+                             "entries" (lfor seq [0 1 2 9] {"seq" seq "at" AT "kind" "text" "text" "t"})}))
+  (assert (= (run (recovered-record-of row)) #(6 10))))
+
+
+(deftest test-outcomes-name-the-count-and-decide-the-spool
+  (setv ok (RecordAppended :highest-producer-seq 7 :appended #(6 7) :ignored #(5)))
+  (setv conflicted (RecordConflicted :conflicts #({"producerSeq" 5})))
+  (setv unreachable (RecordUnsent :status 0 :error "unreachable"))
+  (setv malformed (RecordUnsent :status 400 :error "malformed"))
+  (setv outcomes [ok conflicted unreachable malformed])
+  (assert (= (lfor outcome outcomes (run (record-append-word-of outcome))) ["ok" "conflict" "error" "error"]))
+  (assert (= (lfor outcome outcomes (run (record-release-of outcome))) [True True False False]))
+  (assert (= (lfor outcome outcomes (run (record-halts-flush outcome))) [False False True False]))
+  ;; wire の応答の写し(契約 appendAnswer / conflictAnswer / 届かない)
+  (assert (= (decode-record-reply (HttpReply 200 {"recordSeq" {"6" 11 "7" 12} "highestProducerSeq" 7
+                                                  "appended" [6 7] "ignored" [5]}))
+             ok))
+  (assert (= (decode-record-reply (HttpReply 409 {"error" "sha256-conflict" "conflicts" [{"producerSeq" 5}]}))
+             conflicted))
+  (assert (= (decode-record-reply (HttpReply 0 {"error" "unreachable: refused"}))
+             (RecordUnsent :status 0 :error "unreachable: refused")))
+  (assert (= (. (decode-record-reply (HttpReply 403 {"error" "forbidden" "reason" "not a writer"})) error)
+             "forbidden: not a writer"))
+  ;; appendRequest の綴り(契約 $defs.streamRef / eventIn)
+  (setv body (record-append-body (get (run (record-batches-of (job-of 1) #((run (text-body 0 AT "t" None))))) 0)))
+  (assert (= (get body "stream") {"kind" "turn" "id" STREAM "startedAt" AT "node" NODE "profile" "personal" "attempt" 1}))
+  (assert (= (get body "events") [{"producerSeq" 0 "at" AT "kind" "text" "text" "t"}])))
+
+
+;; ---------------------------------------------------------------------------
+;; fake の handler で agentd を一周
+;; ---------------------------------------------------------------------------
+
+(deftest test-dual-write-lands-the-same-seq-in-acp-and-the-record-service
+  (setv world (RecordWorld True))
+  (setv plain (RecordWorld False))
+  (for [each [world plain]]
+    (.tick each 0)
+    (.write-events each (claude-events (.sid each) "hello"))
+    (.tick each 1000))
+  (setv acp-entries (.record-entries world))
+  (assert (= (lfor entry acp-entries (get entry "kind")) ["system" "text" "tool_use" "tool_result"]))
+  (assert (= acp-entries (.record-entries plain)) "二重書きで ACP の entries が変わった")
+  (setv stored (.events-of world.record CONVERSATION STREAM))
+  (assert (= (lfor event stored (get event "producerSeq")) (lfor entry acp-entries (get entry "seq")))
+          "ACP の見出しの seq と service の producerSeq が違う")
+  (assert (= (lfor event stored (get event "kind")) (lfor entry acp-entries (get entry "kind"))))
+  (assert (= (get (get stored 2) "input") {"file_path" "/work/a.txt"}) "道具の本文は入力そのもの")
+  (assert (= (get (get stored 3) "output") "alpha"))
+  (assert (= world.record.spool {}) "受理された batch が spool に残っている")
+  (assert (= (lfor line (.metrics-named world "agentd_record_append_total") (get line "outcome")) ["ok"]))
+  (assert (= (lfor line (.metrics-named world "agentd_record_spool_depth") (get line "depth")) [0]))
+  (assert (= (lfor line (.metrics-named world "agentd_record_lag_seq") (get line "lag")) [0]))
+  (assert (= plain.record.appends []) "弁 off の世界で Record* を撃った")
+  (assert (= plain.record.spooled [])))
+
+
+(deftest test-unsent-batch-stays-in-the-spool-and-lands-after-the-retry-period
+  (setv world (RecordWorld True))
+  (.tick world 0)
+  (setv world.record.unreachable True)
+  (.write-events world (claude-events (.sid world) "hello"))
+  (.tick world 1000)
+  (assert (= (len world.record.spool) 1) "送れない batch が spool に無い")
+  (assert (= (len (.record-entries world)) 4) "service が届かなくても ACP の追記は今日どおり")
+  (assert (= (lfor line (.metrics-named world "agentd_record_append_total") (get line "outcome")) ["error"]))
+  (assert (= (get (get (.metrics-named world "agentd_record_spool_depth") -1) "depth") 1))
+  (assert (any (gfor line world.local.logs (in "kept in the spool" line))))
+  ;; 届くようになっても backoff の周期までは撃たない(拍ごとに届かない service を叩かない)
+  (setv world.record.unreachable False)
+  (.tick world 1000)
+  (assert (= (len world.record.appends) 1))
+  (assert (= (len world.record.spool) 1))
+  ;; 周期の後の拍で送れて消える(同じ鍵と本文の再送 — 冪等)
+  (.tick world (int (* 1000 world.settings.record-retry-seconds)))
+  (assert (= world.record.spool {}))
+  (assert (= (len world.record.appends) 2))
+  (assert (= (. (get world.record.appends 0) spool-key) (. (get world.record.appends 1) spool-key)))
+  (assert (= (. (get world.record.appends 0) events) (. (get world.record.appends 1) events)))
+  (assert (= (lfor event (.events-of world.record CONVERSATION STREAM) (get event "producerSeq"))
+             (lfor entry (.record-entries world) (get entry "seq"))))
+  (assert (= (get (get (.metrics-named world "agentd_record_spool_depth") -1) "depth") 0))
+  (assert (is world.state.record-backoff-ms None)))
+
+
+(deftest test-conflict-drops-the-spool-file-and-counts-red
+  (setv world (RecordWorld True))
+  (.tick world 0)
+  ;; 同じ鍵(会話・stream・producerSeq)に違う本文が既に在る形 — 拾い直しの番を焼き損ねた時の 409。
+  (for [seq (range 32)]
+    (setv (get world.record.stored #(CONVERSATION STREAM seq))
+          {"producerSeq" seq "at" AT "kind" "text" "text" "other"}))
+  (.write-events world (claude-events (.sid world) "hello"))
+  (.tick world 1000)
+  (assert (= world.record.spool {}) "409 の batch を spool に残した(再送しても積めない)")
+  (assert (= (lfor line (.metrics-named world "agentd_record_append_total") (get line "outcome")) ["conflict"]))
+  (assert (any (gfor line world.local.logs (in "conflicted" line))))
+  (assert (= (len (.record-entries world)) 4) "409 でも ACP の追記は今日どおり")
+  (assert (is world.state.record-backoff-ms None) "409 は送れなさではない(backoff しない)"))
+
+
+;; ---------------------------------------------------------------------------
+;; spool の handler(実 file)と join の宣言
+;; ---------------------------------------------------------------------------
+
+(deftest test-spool-files-hold-one-batch-each-and-list-in-key-order
+  (with [tmp (tempfile.TemporaryDirectory)]
+    (setv directory (os.path.join tmp "record-spool"))
+    (setv spool (RecordSpool directory))
+    (assert (= (. (.listing spool) batches) #()) "置き場が無い spool は空")
+    (setv job (job-of 1))
+    (setv early (get (run (record-batches-of job (tuple (lfor seq [5 6] (run (text-body seq AT f"t{seq}" None)))))) 0))
+    (setv late (get (run (record-batches-of job #((run (tool-use-body 9 AT "t9" "Read" {"file_path" "/a"}))))) 0))
+    (.put spool late)
+    (.put spool early)
+    (setv listing (.listing spool))
+    (assert (= listing.batches #(early late)) "鍵の順に読めない / 本文が往復で変わった")
+    (assert (= listing.unreadable #()))
+    (assert (= (sorted (os.listdir directory)) (sorted (lfor part [early late] (+ part.spool-key ".json"))))
+            "1 batch 1 file でない / temp が残った")
+    (.remove spool early.spool-key)
+    (.remove spool early.spool-key)
+    (assert (= (. (.listing spool) batches) #(late)))
+    (with [handle (open (os.path.join directory "broken.json") "w")]
+      (.write handle "{"))
+    (setv damaged (.listing spool))
+    (assert (= damaged.unreadable #("broken.json")))
+    (assert (= damaged.batches #(late)))))
+
+
+(deftest test-join-record-table-derives-the-record-env-and-settings-read-the-valve
+  (setv tables {"schema" JOIN-SCHEMA
+                "agentd" {"server" "http://acp:8868" "token_file" "/t/agentd.token" "state_dir" "/s"}
+                "record" {"url" "http://agora-record.example:8874"}})
+  (setv spec (run (join-spec-of (JoinArgv :items #()) (JoinDeclaration :tables tables) "/state")))
+  (assert (= spec.record-url "http://agora-record.example:8874"))
+  (setv env (dict (. (run (join-plan-of spec)) env)))
+  (assert (= (get env RECORD-URL-ENV) "http://agora-record.example:8874"))
+  (assert (= (get env RECORD-SPOOL-DIR-ENV) "/s/record-spool"))
+  ;; flag が宣言に勝つ
+  (setv flagged (run (join-spec-of (JoinArgv :items #("--record" "http://other:8874"))
+                                   (JoinDeclaration :tables tables) "/state")))
+  (assert (= flagged.record-url "http://other:8874"))
+  ;; 空の宛先 = env に現れない = 弁 off
+  (setv bare-tables (dict tables))
+  (setv (get bare-tables "record") {"url" ""})
+  (setv bare (run (join-plan-of (run (join-spec-of (JoinArgv :items #()) (JoinDeclaration :tables bare-tables) "/state")))))
+  (assert (not (in RECORD-URL-ENV (dict bare.env))))
+  (assert (not (in RECORD-SPOOL-DIR-ENV (dict bare.env))))
+  ;; [record] に宛先以外の鍵は置けない(札は [agentd].token_file の再利用)
+  (setv bad-tables (dict tables))
+  (setv (get bad-tables "record") {"url" "http://r:8874" "token_file" "/x"})
+  (setv refused "")
+  (try
+    (run (join-spec-of (JoinArgv :items #()) (JoinDeclaration :tables bad-tables) "/state"))
+    (except [error ValueError]
+      (setv refused (str error))))
+  (assert (in "[record].token_file" refused) "宣言に無い鍵を断らなかった")
+  ;; settings の弁 = RECORD_SERVICE_URL の在否
+  (assert (. (settings-from-env {"DOEFF_AGENTD_NODE_NAME" "n" RECORD-URL-ENV "http://r:8874"}) record-enabled))
+  (assert (not (. (settings-from-env {"DOEFF_AGENTD_NODE_NAME" "n"}) record-enabled))))

@@ -20,6 +20,7 @@
     "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy",
     "packages/doeff-agents/tests/sessionhost_acp_rehydrate_deftests.hy",
     "packages/doeff-agents/tests/sessionhost_acp_live_poll_deftests.hy",
+    "packages/doeff-agents/tests/sessionhost_acp_record_deftests.hy",
     "docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy",
     "packages/doeff-agents/src/doeff_agents/sessionhost/headless_protocol.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/headless_process.py",
@@ -231,7 +232,8 @@
         "packages/doeff-agents/tests/sessionhost_acp_profile_deftests.hy",
         "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy",
         "packages/doeff-agents/tests/sessionhost_acp_rehydrate_deftests.hy",
-        "packages/doeff-agents/tests/sessionhost_acp_live_poll_deftests.hy"
+        "packages/doeff-agents/tests/sessionhost_acp_live_poll_deftests.hy",
+        "packages/doeff-agents/tests/sessionhost_acp_record_deftests.hy"
       ],
       "responsibility": "agentd の焦点の検(fake の handler の e2e・判断の純関数・弁)と、profile の残量の観測の deftest(段 7 lane 7d-3)と、手番の出来事の耐久化の deftest(段 8 lane 4u・agora-redesign #49)と、実況の push の周期(購読者が居る間の events の読み ≤ 50 ms)の deftest(段 8 lane 4aa・agora-redesign #63)。収集の wrapper test_sessionhost_acp_profile.py / test_sessionhost_acp_turn_events.py / test_sessionhost_acp_live_poll.py は他の *_deftests.hy の wrapper と同じ足場で契約の外",
       "layer": "runtime",
@@ -241,6 +243,7 @@
         "agentd-judgment",
         "agentd-join",
         "agentd-fake",
+        "agentd-handlers",
         "agentd-runtime",
         "agentd-valve"
       ],

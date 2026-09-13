@@ -10,6 +10,9 @@ session を起こし、手番の記録と実況を ACP へ書く」腕で、判�
   読み書き = ``ClockNowMs`` / ``MetricLine`` / ``LogLine`` / ``FsCanonicalPath`` /
   ``FsWritePrivateText``、この機体が持つ資格の残量 = ``ReadProfileUsage``(段 7 lane 7d-3)、
   会話の記録(郵便 + 手番の記録)の読み = ``AcpConversationHistory``(段 8q の履歴からの再開)。
+- 会話の記録の service への二重書き(段 9f lane 9f-2)= ``RecordSpoolPut`` / ``RecordSpoolList`` /
+  ``RecordSpoolRemove``(本文の batch の spool — 送る前の outbox)と ``RecordAppend``(契約 record-service.json の
+  appendEvents)。
 - 実 I/O は handlers.py(HTTP / RPC / file)、fake は fake.py、要求を並べる判断は
   judgment.hy(純関数)と agentd.hy(program)。handler の選択は runtime.py の 1 点。
 - 値の宣言の 1 点 = ``AgentdSettings``(lease の TTL と周期・watch の resync・frame の
@@ -186,6 +189,11 @@ IO_FAILURES: tuple[type[Exception], ...] = (RuntimeError, OSError)
 ACP_VALVE_ENV = "DOEFF_AGENTD_ACP"
 ACP_URL_ENV = "ACP_DAEMON_URL"
 ACP_TOKEN_FILE_ENV = "ACP_AGENTD_TOKEN_FILE"
+#: 会話の記録の service(段 9f lane 9f-2・agora-redesign #59)の URL — 在れば本文の二重書きが on(runtime.settings_from_env の
+#: 1 点)。札は ACP_TOKEN_FILE_ENV の再利用(名簿の agentd = service の書き手・契約 record-service.json auth.principals.writers)。
+RECORD_URL_ENV = "RECORD_SERVICE_URL"
+#: 本文の batch の spool(送る前の outbox)の置き場。join は state_dir の下(JOIN_RECORD_SPOOL_DIR)を導く。
+RECORD_SPOOL_DIR_ENV = "DOEFF_AGENTD_RECORD_SPOOL_DIR"
 NODE_NAME_ENV = "DOEFF_AGENTD_NODE_NAME"
 HOMES_ROOT_ENV = "DOEFF_AGENTD_HOMES_ROOT"
 CUSTODY_URL_ENV = "AGORA_CUSTODY_URL"
@@ -212,6 +220,7 @@ JOIN_SCHEMA = "doeff.agentd-join.v1"
 JOIN_DB_FILE = "agentd.sqlite"
 JOIN_SOCKET_FILE = "agentd.sock"
 JOIN_HEADLESS_DIR = "headless-events"
+JOIN_RECORD_SPOOL_DIR = "record-spool"
 JOIN_STATE_DIR_DEFAULT = "doeff/acp-agentd"
 JOIN_SESSION_HOOKS_DEFAULT = "inherit"
 #: 機体の所有の等級(契約 agora-kinds.json node.status.observations.ownership.grade の閉語彙)と
@@ -261,6 +270,8 @@ class JoinSpec:
     custody_url: str | None
     borrower_key_file: str | None
     ownership: Ownership | None
+    #: 会話の記録の service の URL(段 9f lane 9f-2 — 宣言 file の [record].url・flag --record)。None = 二重書きなし。
+    record_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -408,6 +419,12 @@ class AgentdSettings:
     #: この機体に残るもの・会話ごとに最新の 1 つ・新しい順)。heartbeat ごとに node の行へ書くので小さく
     #: 保つ(契約の maxItems 64 以下)。
     transcripts_observed_max: int = 16
+    #: 会話の記録の service への本文の二重書き(段 9f lane 9f-2・設計 §2.4)。composition root(runtime.settings_from_env)が
+    #: RECORD_URL_ENV の在否から導く 1 点 — False の間 agentd は Record* の要求を 1 つも撃たない(ACP の追記は今日どおり)。
+    record_enabled: bool = False
+    #: spool の再送の周期(送れなかった拍の後 — 送れている間は出来事を読んだ拍の終わりに送る)。届かない service へ拍ごとに
+    #: 撃って loop を塞がないための有界の backoff(judgment.record-flush-due)。
+    record_retry_seconds: float = 15.0
 
 
 # ------------------------------------------------------------------ ACP の値
@@ -671,6 +688,9 @@ class DeltaBatch:
     usage: JSONObject | None
     next_seq: int
     model: str | None
+    #: 段 9f lane 9f-2: 切る前の本文(契約 record-service eventIn の形・producerSeq = entries の seq)。entries はここから
+    #: judgment.entry-of-body の 1 点で切り詰めて導く(本文は切らない — 切り詰めは service の責務)。
+    bodies: tuple[JSONObject, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -680,6 +700,84 @@ class JobOutcome:
     ended: bool
     result: JSON
     conditions: tuple[JSONObject, ...]
+
+
+# ------------------------------------------------------------------ 会話の記録の service(段 9f lane 9f-2)
+
+#: stream の種類(契約 record-service.json streamKinds の写し)。agentd が書くのは手番(turn)だけ。
+RecordStreamKind = Literal["turn", "mail"]
+RECORD_STREAM_TURN: RecordStreamKind = "turn"
+#: 1 要求の出来事の上限(契約 limits.batchMaxEvents の写し)— 超える拍は batch を分ける(judgment.record-batches-of)。
+RECORD_BATCH_MAX_EVENTS = 1_000
+#: 追記の結末の語(計器 agentd_record_append_total の outcome — judgment.record-append-word-of の閉語彙)。
+RecordAppendWord = Literal["ok", "conflict", "error"]
+RECORD_APPEND_OK: RecordAppendWord = "ok"
+RECORD_APPEND_CONFLICT: RecordAppendWord = "conflict"
+RECORD_APPEND_ERROR: RecordAppendWord = "error"
+#: 計器の名(MetricLine の metric — stdout の JSON 行)。
+METRIC_RECORD_APPEND_TOTAL = "agentd_record_append_total"
+METRIC_RECORD_SPOOL_DEPTH = "agentd_record_spool_depth"
+METRIC_RECORD_LAG_SEQ = "agentd_record_lag_seq"
+#: batch だけの断り(契約 refusal malformed = 400)— spool に残すが flush は次の batch へ進む。それ以外の送れなさ
+#: (届かない・5xx・札・窓)は系の側なので flush をそこで止める(judgment.record-halts-flush)。
+RECORD_STATUS_MALFORMED = 400
+
+
+@dataclass(frozen=True)
+class RecordStream:
+    """本文の stream(契約 $defs.streamRef)。手番 = agent-job の id に拾い直しの番を含めた綴り(`<jobId>#a<attempt>`)。"""
+
+    kind: RecordStreamKind
+    stream_id: str
+    started_at_ms: int
+    node: str
+    profile: str
+    attempt: int
+
+
+@dataclass(frozen=True)
+class RecordBatch:
+    """1 batch = spool の 1 file = appendEvents の 1 要求。events は契約 eventIn の形(judgment が本文から組む)。"""
+
+    spool_key: str
+    conversation_id: str
+    stream: RecordStream
+    events: tuple[JSONObject, ...]
+
+
+@dataclass(frozen=True)
+class RecordAppended:
+    """2xx(appendAnswer)— 新しく積んだ / 既在で同じ本文だった producerSeq と、stream の最大の producerSeq。"""
+
+    highest_producer_seq: int
+    appended: tuple[int, ...]
+    ignored: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class RecordConflicted:
+    """409(conflictAnswer)— 同じ鍵で本文の sha256 が違う。batch は丸ごと積まれていない(再送しても積めない)。"""
+
+    conflicts: tuple[JSONObject, ...]
+
+
+@dataclass(frozen=True)
+class RecordUnsent:
+    """送れなかった / 積まれなかった(status 0 = 届かない・400 / 401 / 403 / 429 / 5xx)。spool に残して再送する。"""
+
+    status: int
+    error: str
+
+
+RecordAppendOutcome: TypeAlias = "RecordAppended | RecordConflicted | RecordUnsent"
+
+
+@dataclass(frozen=True)
+class RecordSpoolListing:
+    """spool の中身(鍵の順 = 送る順)と、読めなかった file の名(消さずに残す)。"""
+
+    batches: tuple[RecordBatch, ...]
+    unreadable: tuple[str, ...]
 
 
 # ------------------------------------------------------------------ agentd の状態
@@ -736,6 +834,10 @@ class InFlightJob:
     #: (実弾 2026-09-13 18:3x: 糊の受け口の占有 367 拍中 359 が 200〜500 ms・hello 15 s)。書かない拍の出来事は pending_entries
     #: に持ち越す(落とさない・手番の終わりは残りを同じ点で書く)。
     last_record_ms: int = 0
+    #: 段 9f lane 9f-2: 本文の stream の拾い直しの番(stream id `<jobId>#a<attempt>`)。受けた手番 = 1、拾い直し(recover-job)=
+    #: その時の turn-record の行の generation + 1(judgment.recovered-record-of — 行が進むごとに単調・ACP に新しい欄を書かない)。
+    #: 採番(producerSeq)は delta_seq の 1 点のまま — service の producerSeq と ACP の見出しの seq は同じ値。
+    record_attempt: int = 1
 
 
 @dataclass(frozen=True)
@@ -767,6 +869,10 @@ class AgentdState:
     #: 「この機体に家の在る profile が 1 つも無い」を 1 度だけ名乗った印(段 8e lane 4j — pool の
     #: pod は profile を持たないので usage を読まず、周期ごとに同じ行を吐かない)。家が現れたら戻る。
     no_profile_homes_logged: bool = False
+    #: 段 9f lane 9f-2: spool の再送を止めている拍(最後に送れなかった ms・None = 送れている — 毎拍 flush する)。
+    record_backoff_ms: int | None = None
+    #: 最後に計器へ出した spool の深さ(None = まだ — 変わった時だけ agentd_record_spool_depth を出す)。
+    record_spool_depth: int | None = None
 
 
 # ------------------------------------------------------------------ 要求(ACP)
@@ -845,6 +951,36 @@ class AcpStreamPush(EffectBase):
     owner: str
     name: str
     frames: tuple[JSONObject, ...]
+
+
+# ------------------------------------------------------------------ 要求(会話の記録の service・段 9f lane 9f-2)
+
+
+@dataclass(frozen=True)
+class RecordSpoolPut(EffectBase):
+    """batch を spool に耐久化する(1 batch 1 file・temp + fsync + rename — 送る前の outbox)。結果 = None。"""
+
+    batch: RecordBatch
+
+
+@dataclass(frozen=True)
+class RecordSpoolList(EffectBase):
+    """spool の batch を鍵の順に読む。結果 = RecordSpoolListing。"""
+
+
+@dataclass(frozen=True)
+class RecordSpoolRemove(EffectBase):
+    """受理された(か 409 で積めないと決まった)batch の file を消す(無ければ何もしない)。結果 = None。"""
+
+    spool_key: str
+
+
+@dataclass(frozen=True)
+class RecordAppend(EffectBase):
+    """batch を会話の記録の service へ追記する(契約 appendEvents: ``POST /v1/conversations/{cid}/streams/{streamId}/events``・
+    Bearer = 名簿の agentd の札)。冪等 — 同じ鍵と本文の再送は ignored。結果 = RecordAppendOutcome(送れなさも値で返す)。"""
+
+    batch: RecordBatch
 
 
 # ------------------------------------------------------------------ 要求(custody)
