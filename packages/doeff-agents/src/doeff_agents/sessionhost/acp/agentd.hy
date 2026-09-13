@@ -63,7 +63,9 @@
 ;;; 受理した答え(highestProducerSeq)は mark-recorded が status.recordRef / recordedSeq に写す。履歴からの再開は service の
 ;;; before=latest から読み(record-turns-for)、届かなければ ACP の見出しで薄く再開すると名乗る。stream = 手番
 ;;; `<jobId>#a<attempt>`(拾い直しは turn-record の行の generation + 1 — judgment.recovered-record-of)。弁 =
-;;; AgentdSettings.record_enabled(RECORD_SERVICE_URL の在否)— off の間は Record* を 1 つも撃たない。
+;;; AgentdSettings.record_enabled(RECORD_SERVICE_URL の在否)— off の間は Record* を 1 つも撃たない。実運転の off は
+;;; 無い(段 9f lane 9f-6: 宛先を持たない agentd は参加の門 join.record-sink-of が断る)— off は test の対照(二重書きの
+;;; 有無で ACP の見出しが一致する検)だけ。
 ;;;
 ;;; 割り込みの本文(段 8 lane 4x・agora-redesign #56): Messaging が走っている手番の agent-job の
 ;;; status.interrupts に載せた Message の id を、自分が走らせている job について行の cache の差分で読み

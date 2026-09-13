@@ -191,8 +191,9 @@ IO_FAILURES: tuple[type[Exception], ...] = (RuntimeError, OSError)
 ACP_VALVE_ENV = "DOEFF_AGENTD_ACP"
 ACP_URL_ENV = "ACP_DAEMON_URL"
 ACP_TOKEN_FILE_ENV = "ACP_AGENTD_TOKEN_FILE"
-#: 会話の記録の service(段 9f lane 9f-2・agora-redesign #59)の URL — 在れば本文の二重書きが on(runtime.settings_from_env の
-#: 1 点)。札は ACP_TOKEN_FILE_ENV の再利用(名簿の agentd = service の書き手・契約 record-service.json auth.principals.writers)。
+#: 会話の記録の service(段 9f lane 9f-2・agora-redesign #59)の URL — 本文の二重書きの宛先(runtime.settings_from_env の
+#: 1 点)。無ければ参加を断る(段 9f lane 9f-6・join.record-sink-of の 1 点 — 本文の行き先を持たない agentd は走らない)。
+#: 札は ACP_TOKEN_FILE_ENV の再利用(名簿の agentd = service の書き手・契約 record-service.json auth.principals.writers)。
 RECORD_URL_ENV = "RECORD_SERVICE_URL"
 #: 本文の batch の spool(送る前の outbox)の置き場。join は state_dir の下(JOIN_RECORD_SPOOL_DIR)を導く。
 RECORD_SPOOL_DIR_ENV = "DOEFF_AGENTD_RECORD_SPOOL_DIR"
@@ -423,6 +424,8 @@ class AgentdSettings:
     transcripts_observed_max: int = 16
     #: 会話の記録の service への本文の二重書き(段 9f lane 9f-2・設計 §2.4)。composition root(runtime.settings_from_env)が
     #: RECORD_URL_ENV の在否から導く 1 点 — False の間 agentd は Record* の要求を 1 つも撃たない(ACP の追記は今日どおり)。
+    #: 実運転では常に True(段 9f lane 9f-6: 宛先を持たない agentd は参加の門 join.record-sink-of が理由つきで断る —
+    #: 本文の行き先が無いまま見出しだけを書く形は存在しない)。False は test の対照(二重書きの有無で見出しが一致する検)だけ。
     record_enabled: bool = False
     #: spool の再送の周期(送れなかった拍の後 — 送れている間は出来事を読んだ拍の終わりに送る)。届かない service へ拍ごとに
     #: 撃って loop を塞がないための有界の backoff(judgment.record-flush-due)。

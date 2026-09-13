@@ -12,6 +12,9 @@
 ;;;   * ownership-verdict / ownership-preflight  所有の等級の検: 宣言(grade + proof)と機体の証拠
 ;;;                    (OwnershipProbe の答え)の突合。不一致は ValueError(runtime が fail-closed に
 ;;;                    写す — 会社 profile の API 呼び出しは会社所有の機体だけ・CLAUDE.md の境界)。
+;;;   * record-sink-of 本文の行き先の検(段 9f lane 9f-6・agora-redesign #59): 会話の記録の service の
+;;;                    宛先を持たない agentd は参加を断る(ValueError — runtime が fail-closed に写す)。
+;;;                    宣言された状態で断り、推測しない。宛先が在って届かないのは spool が受ける。
 ;;; wire の綴り(env の名・host の flag・schema・閉語彙)は effects.py だけが持ち、ここは import する。
 ;;; I/O は 1 つも無い(file の読みは composition root・metadata の読みは handlers.py)。
 
@@ -246,8 +249,30 @@
     :custody-url (.get custody KEY-CUSTODY-URL)
     :borrower-key-file (.get custody KEY-BORROWER-KEY-FILE)
     :ownership ownership
-    ;; 空文字は「名乗らない」(二重書きなし — 宣言 file で欄を空にして外せる)。
+    ;; 空文字は「名乗らない」= env に現れない(参加の門 record-sink-of が読みの 1 点で断る — 段 9f lane 9f-6)。
     :record-url (or (.get record KEY-RECORD-URL) None)))
+
+
+;; ---------------------------------------------------------------------------
+;; 本文の行き先の検(参加の門・段 9f lane 9f-6)
+;; ---------------------------------------------------------------------------
+
+(defk record-sink-of [url]
+  {:pre [(: url (| str None))]
+   :post [(: % str)]}
+  "参加の門の 1 点(宣言 → 参加可否): 会話の記録の service の宛先(宣言 file の [record].url / flag
+   --record / env RECORD_SERVICE_URL — 綴りは join-plan-of が導く同じ 1 点)が無い agentd は参加を断る
+   (ValueError・理由つき — runtime.settings_from_env が AgentdPreflightError に写し、process は exit 2 で
+   宿〔launchd / k8s〕に再起動される = 宣言が直るまで参加しない)。本文の行き先を持たない agentd は ACP の
+   turn-record に見出しだけを書いて本文をどこにも残さない(設計の穴・lane 9f-4 の残上流 3)ので、宣言された
+   状態で断り、推測しない。宛先が在って届かないのは spool が受ける(参加は断らない — 検は record の deftest)。"
+  (setv sink (if (is url None) "" (.strip url)))
+  (when (not sink)
+    (raise (ValueError (+ "会話の記録の service の宛先が無い — 本文の行き先を持たない agentd は参加しない"
+                          "(ACP の turn-record に見出しだけを書いて本文を失う)。宣言 file の ["
+                          TABLE-RECORD "]." KEY-RECORD-URL " か flag " FLAG-RECORD " か env " RECORD-URL-ENV
+                          " で名乗る(段 9f lane 9f-6・agora-redesign #59)"))))
+  sink)
 
 
 ;; ---------------------------------------------------------------------------
