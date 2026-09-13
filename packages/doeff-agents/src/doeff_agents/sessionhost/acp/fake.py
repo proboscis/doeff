@@ -15,7 +15,7 @@ from doeff_agents.sessionhost.acp.effects import (
     JSON,
     MESSAGE_KIND,
     TURN_RECORD_KIND,
-    AcpConversationHistory,
+    AcpConversationMail,
     AcpCreate,
     AcpEventWindow,
     AcpGet,
@@ -23,12 +23,12 @@ from doeff_agents.sessionhost.acp.effects import (
     AcpPutStatus,
     AcpRow,
     AcpStreamPush,
+    AcpTurnHeadlines,
     AcpWatchSse,
     CaptureFrame,
     CaptureGone,
     ClockNowMs,
     Conflict,
-    ConversationHistory,
     CustodyLeaseBorrow,
     CustodyLeaseRevoke,
     EventWindow,
@@ -122,8 +122,10 @@ class FakeAcp:
         self.journal: list[tuple[int, str, AcpRow | None]] = []
         #: event-window を断る(cursor が retention の床の下の再現)。
         self.window_incomplete: bool = False
-        #: 会話の記録の材料を読んだ会話の id の順(履歴からの再開の読みは手番を起こし直す時だけ — 段 8q)。
+        #: 会話の郵便(AcpConversationMail)を読んだ会話の id の順(履歴からの再開の読みは手番を起こし直す時だけ — 段 8q)。
         self.history_reads: list[str] = []
+        #: 手番の見出し(AcpTurnHeadlines = kind turn-record の全量)を読んだ会話の id の順 — 薄い再開の拍だけ(段 9q・#77)。
+        self.headline_reads: list[str] = []
 
     def _land(self, key: str, row: AcpRow | None) -> None:
         self.sequence += 1
@@ -141,7 +143,8 @@ class FakeAcp:
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(
-            effect, (AcpGet, AcpGetRow, AcpEventWindow, AcpWatchSse, AcpConversationHistory)
+            effect,
+            (AcpGet, AcpGetRow, AcpEventWindow, AcpWatchSse, AcpConversationMail, AcpTurnHeadlines),
         ):
             return Resume(k, self._read(effect))
         if isinstance(effect, (AcpPutStatus, AcpCreate, AcpStreamPush)):
@@ -150,14 +153,15 @@ class FakeAcp:
 
     def _read(
         self,
-        effect: AcpGet | AcpGetRow | AcpEventWindow | AcpWatchSse | AcpConversationHistory,
+        effect: AcpGet
+        | AcpGetRow
+        | AcpEventWindow
+        | AcpWatchSse
+        | AcpConversationMail
+        | AcpTurnHeadlines,
     ) -> object:
-        if isinstance(effect, AcpConversationHistory):
-            self.history_reads.append(effect.conversation_id)
-            return ConversationHistory(
-                messages=tuple(row for row in self.rows.values() if row.kind == MESSAGE_KIND),
-                records=tuple(row for row in self.rows.values() if row.kind == TURN_RECORD_KIND),
-            )
+        if isinstance(effect, (AcpConversationMail, AcpTurnHeadlines)):
+            return self._history(effect)
         if isinstance(effect, AcpGet):
             failure = self.list_failures.get(effect.kind)
             if failure is not None:
@@ -172,6 +176,15 @@ class FakeAcp:
         if self.sequence > effect.since:
             return WatchAdvance(kind="changed", sequence=self.sequence)
         return WatchAdvance(kind="idle", sequence=effect.since)
+
+    def _history(self, effect: AcpConversationMail | AcpTurnHeadlines) -> tuple[AcpRow, ...]:
+        """履歴からの再開の材料(郵便 / 見出し)— 読んだ会話の id を種類ごとに数える(段 9q の検が読む:
+        見出し = kind turn-record の全量は薄い再開の拍にだけ)。"""
+        if isinstance(effect, AcpConversationMail):
+            self.history_reads.append(effect.conversation_id)
+            return tuple(row for row in self.rows.values() if row.kind == MESSAGE_KIND)
+        self.headline_reads.append(effect.conversation_id)
+        return tuple(row for row in self.rows.values() if row.kind == TURN_RECORD_KIND)
 
     def _write(self, effect: AcpPutStatus | AcpCreate | AcpStreamPush) -> object:
         if isinstance(effect, AcpPutStatus):
