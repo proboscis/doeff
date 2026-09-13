@@ -81,7 +81,20 @@
     session-id)
 
   (defn #^ float last-wait [self]
-    (get self.acp.waits -1)))
+    (get self.acp.waits -1))
+
+  (defn #^ dict record-status [self]
+    (setv status (. (get self.acp.rows f"{AGORA-KINDS-NAMESPACE}:{TURN-RECORD-KIND}:j-1") status))
+    (assert (isinstance status dict))
+    status)
+
+  (defn #^ list record-entries [self]
+    (setv entries (.get (.record-status self) "entries" []))
+    (assert (isinstance entries list))
+    (list entries))
+
+  (defn #^ list record-writes [self]
+    (lfor [key status] self.acp.writes :if (in f":{TURN-RECORD-KIND}:" key) status)))
 
 
 (deftest test-events-are-polled-every-50ms-while-someone-watches
@@ -137,3 +150,41 @@
   (setv resting (replace state :jobs #(idle-job)))
   (assert (= (run (wait-seconds-for resting events)) events.transcript-poll-seconds))
   (assert (= (run (wait-seconds-for resting frames)) frames.transcript-poll-seconds)))
+
+
+(deftest test-record-appends-keep-the-transcript-period-while-pushes-follow-the-poll
+  ;; 記録(turn-record)への追記は transcript の周期(1 s)のまま — 50 ms の拍ごとに書くと走っている手番 1 つで毎秒 10〜20 の
+  ;; event が ACP の journal に並び、画面の糊の watch の拍が飽和する(実弾 2026-09-13 18:3x)。push は拍ごと・書かない拍の
+  ;; 出来事は持ち越して次の追記に乗る(落とさない)。
+  (setv world (World))
+  (.tick world 0)
+  (setv sid (.sid world))
+  (.tick world 1000)
+  (setv (get world.acp.subscribers sid) 1)
+  ;; assistant の message の行 = 実況の frame(text)と記録の出来事(entry)の両方になる行。
+  (defn #^ str delta-line [#^ str text]
+    (stream-line {"type" "assistant"
+                  "message" {"id" (+ "msg-" text) "role" "assistant" "model" "claude-opus-5"
+                             "content" [{"type" "text" "text" text}]
+                             "usage" {"input_tokens" 1 "output_tokens" 1 "cache_creation_input_tokens" 0
+                                      "cache_read_input_tokens" 0}}}))
+  (setv lines (stream-line {"type" "system" "subtype" "init" "session_id" sid "model" "claude-opus-5"}))
+  (setv (get world.local.transcripts f"/events/{sid}.events.jsonl") lines)
+  (.tick world 1000)
+  (setv writes-before (len (.record-writes world))
+        pushes-before (len world.acp.pushes))
+  ;; 50 ms 刻みで 10 拍(合計 500 ms・追記の周期の中): push は拍ごと・記録の書きは増えない・出来事は持ち越し。
+  (for [i (range 10)]
+    (setv lines (+ lines (delta-line f"w{i} ")))
+    (setv (get world.local.transcripts f"/events/{sid}.events.jsonl") lines)
+    (.tick world 50))
+  (assert (>= (- (len world.acp.pushes) pushes-before) 10) "push は拍ごと")
+  (assert (= (len (.record-writes world)) writes-before) "記録の書きは周期の中では増えない")
+  (assert (= (len (. (get world.state.jobs 0) pending-entries)) 10) "書かない拍の出来事は持ち越す")
+  ;; 周期が経った拍に 1 回で書く(持ち越した 10 件が乗る)。
+  (setv lines (+ lines (delta-line "last ")))
+  (setv (get world.local.transcripts f"/events/{sid}.events.jsonl") lines)
+  (.tick world 600)
+  (assert (= (len (.record-writes world)) (+ writes-before 1)) "周期が経てば 1 回で書く")
+  (assert (= (len (. (get world.state.jobs 0) pending-entries)) 0))
+  (assert (= (len (lfor e (.record-entries world) :if (= (get e "kind") "text") e)) 11) "持ち越した出来事は落ちない"))

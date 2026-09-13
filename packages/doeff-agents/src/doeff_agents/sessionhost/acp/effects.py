@@ -369,7 +369,8 @@ class AgentdSettings:
     #: agora-redesign #63)。出来事ごとの push に最も近い有界の拍(≤ 50 ms の batch): file の追記は合図を持たないので
     #: 読みの拍がそのまま push の間隔になる。pane の capture の周期(frame_interval_seconds)とは別 — capture は
     #: 断面を撮る仕事で 2〜5 Hz が上限、events の読みは offset からの追記の読みで軽い。購読 0 の間は
-    #: transcript_poll_seconds(記録の追記だけ)。
+    #: transcript_poll_seconds(記録の追記だけ)。⚠ 記録(turn-record)への追記の周期はこれに**追随しない**
+    #: (transcript_poll_seconds のまま — InFlightJob.last_record_ms)。
     events_poll_seconds: float = 0.05
     #: 購読 0 で capture を止めた後、購読者の数を読み直す周期(status frame の push で読む)。
     subscriber_recheck_seconds: float = 5.0
@@ -729,6 +730,12 @@ class InFlightJob:
     #: interruptsDelivered への CAS が着地するまでの間、同じ id を二度渡さないための cache。正本は行:
     #: 再起動で消えても、行の interruptsDelivered に在る id は渡さない)。
     interrupts_sent: tuple[str, ...] = ()
+    #: 段 8 lane 4aa: 手番の記録(turn-record)へ最後に出来事を追記した拍(ms・0 = まだ)。実況の push は events の周期
+    #: (≤ 50 ms)で押すが、記録の追記(CAS の書き = ACP の event 1 つ)は transcript_poll_seconds の周期に保つ — 拍ごとに書くと
+    #: 走っている手番 1 つで毎秒 10〜20 の event が journal に並び、画面の糊の watch の拍(1 event = 1 拍)が飽和する
+    #: (実弾 2026-09-13 18:3x: 糊の受け口の占有 367 拍中 359 が 200〜500 ms・hello 15 s)。書かない拍の出来事は pending_entries
+    #: に持ち越す(落とさない・手番の終わりは残りを同じ点で書く)。
+    last_record_ms: int = 0
 
 
 @dataclass(frozen=True)

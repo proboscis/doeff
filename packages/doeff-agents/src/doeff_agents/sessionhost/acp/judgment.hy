@@ -1919,6 +1919,17 @@
     True (float settings.idle-wait-seconds)))
 
 
+(defk record-due [job now-ms settings]
+  {:pre [(: job InFlightJob) (: now-ms int) (: settings AgentdSettings)]
+   :post [(: % bool)]}
+  "手番の記録(turn-record)へ出来事を追記する拍か(段 8 lane 4aa): 最後の追記から transcript の
+   周期が経った(まだ 1 度も = 今)。push の周期(events_poll_seconds)には追随しない — 記録の書きは
+   ACP の event 1 つで、拍ごとに書くと journal と画面の糊の watch の拍が飽和する。"
+  (<- period-passed bool (due (if (= job.last-record-ms 0) None job.last-record-ms) now-ms
+                              settings.transcript-poll-seconds))
+  period-passed)
+
+
 (defk due [last-ms now-ms period-seconds]
   {:pre [(: last-ms (| int None)) (: now-ms int) (: period-seconds (| int float))]
    :post [(: % bool)]}

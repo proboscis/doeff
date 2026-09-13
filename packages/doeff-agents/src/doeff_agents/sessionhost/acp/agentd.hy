@@ -161,6 +161,7 @@
   condition-of
   deltas-of
   due
+  record-due
   ended-status-of
   entries-of-status
   next-seq-after
@@ -743,7 +744,10 @@
    :post [(: % InFlightJob)]}
   "実況の材料の追記を読み、TurnDelta(text / tool_use / tool_result / usage)を押し、その拍の
    出来事(entries)を turn-record へ追記する(events は text の delta が 1 行ずつ・判断は純関数
-   deltas-of / events-to-deltas)。持ち越しの出来事(pending-entries)は先頭に乗る。"
+   deltas-of / events-to-deltas)。持ち越しの出来事(pending-entries)は先頭に乗る。
+   ⚠ 追記の拍は transcript の周期(judgment.record-due — 段 8 lane 4aa): push は events の周期
+   (≤ 50 ms)で押すが、記録の書き(= ACP の event 1 つ)を拍ごとにすると journal と画面の糊の
+   watch の拍が飽和する。書かない拍の出来事は pending-entries に持ち越す(落とさない)。"
   (<- chunk TranscriptChunk (read-stream source path job.transcript-offset))
   (<- batch DeltaBatch (deltas-of job.agent-type source chunk.text job.job-id job.delta-seq now-ms))
   (setv next (replace job :transcript-offset chunk.offset :delta-seq batch.next-seq))
@@ -751,8 +755,13 @@
     (<- subscribers (| int None) (push-frames settings next batch.frames))
     (<- verdict str (capture-verdict subscribers))
     (setv next (replace next :capturing (and (not next.stream-gone) (= verdict "continue")))))
-  (<- recorded InFlightJob (append-entries next (+ next.pending-entries batch.entries)))
-  recorded)
+  (setv carried (+ next.pending-entries batch.entries))
+  (<- write-now bool (record-due next now-ms settings))
+  (if (and carried write-now)
+      (do
+        (<- recorded InFlightJob (append-entries next carried))
+        (replace recorded :last-record-ms now-ms))
+      (replace next :pending-entries carried)))
 
 
 (defk capture-frame [settings job now-ms]
