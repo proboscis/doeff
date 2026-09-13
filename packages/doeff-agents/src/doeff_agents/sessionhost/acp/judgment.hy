@@ -53,6 +53,8 @@
   BACKEND-HEADLESS
   CLAUDE-OAUTH-TOKEN-ENV
   CONDITION-INTERRUPTED
+  CONDITION-RECORD-UNAVAILABLE
+  Conflict
   DeltaBatch
   ENTRY-KIND-ERROR
   ENTRY-KIND-SYSTEM
@@ -101,6 +103,9 @@
   RECORD-APPEND-ERROR
   RECORD-APPEND-OK
   RECORD-BATCH-MAX-EVENTS
+  RECORD-CREATE-CREATED
+  RECORD-CREATE-GIVEN-UP
+  RECORD-CREATE-PENDING
   RECORD-REF-PREFIX
   RECORD-STATUS-MALFORMED
   RECORD-STREAM-TURN
@@ -111,6 +116,7 @@
   RecordStream
   RecordUnsent
   RecordedTurns
+  Refused
   SESSION-OBSERVED-BUSY
   SESSION-OBSERVED-IDLE
   SESSION-TERMINAL-STATUSES
@@ -126,7 +132,8 @@
   TurnEntryHeadline
   USAGE-WINDOW-FULL-PERCENT
   USAGE-WINDOW-SECONDS
-  WatchAdvance])
+  WatchAdvance
+  Written])
 
 
 ;; ---------------------------------------------------------------------------
@@ -1552,6 +1559,64 @@
    record_retry_seconds の周期(届かない service へ拍ごとに撃って loop を塞がない)。"
   (<- period-passed bool (due state.record-backoff-ms now-ms settings.record-retry-seconds))
   period-passed)
+
+
+(defk record-refusal-deterministic [status]
+  {:pre [(: status int)]
+   :post [(: % bool)]}
+  "turn-record の create の断りが決定論的か(段 9p): 4xx(408 / 429 を除く)は契約・札・区画の不備で、撃ち直しても
+   同じ答え(法 7: 決定論的な失敗は撃ち直さない)。0(到達不能)・5xx・408・429 は頭が答えていない — 撃ち直す。"
+  (and (>= status 400) (< status 500) (not-in status #{408 429})))
+
+
+(defk record-create-verdict [outcome started-ms now-ms deadline-seconds]
+  {:pre [(: outcome (| Written Conflict Refused)) (: started-ms int) (: now-ms int)
+         (: deadline-seconds (| int float))]
+   :post [(: % str)]}
+  "turn-record の create の結末 → 腕の状態(閉語彙 RecordCreateState・段 9p・agora-redesign #76)。
+   Written = 作れた / Conflict = 既に在る(同じ鍵は冪等 — 拾い直し)→ created。Refused は 2 種:
+   決定論的(record-refusal-deterministic)→ given-up / 頭が答えない → 期限(手番の始まり started-ms から
+   deadline-seconds)の内なら pending・越えたら given-up。判断はこの 1 点(呼び手は結果の語で分岐しない)。"
+  (if (or (isinstance outcome Written) (isinstance outcome Conflict))
+      RECORD-CREATE-CREATED
+      (do
+        (<- deterministic bool (record-refusal-deterministic outcome.status))
+        (cond
+          deterministic RECORD-CREATE-GIVEN-UP
+          (>= (- now-ms started-ms) (* 1000 deadline-seconds)) RECORD-CREATE-GIVEN-UP
+          True RECORD-CREATE-PENDING))))
+
+
+(defk record-create-applied [job outcome now-ms deadline-seconds]
+  {:pre [(: job InFlightJob) (: outcome (| Written Conflict Refused)) (: now-ms int)
+         (: deadline-seconds (| int float))]
+   :post [(: % InFlightJob)]}
+  "create の結末を job に写す(段 9p): 腕の状態(record-create-verdict)・最後に撃った拍・最後の断りの文。
+   given-up になった拍は condition RecordUnavailable(理由 = 最後の断りと経過)を pending-conditions に足す
+   (Ended の書きに乗る — 同じ型を二度足さない)。created は行の image を持たない(次の追記が鍵から読む)。"
+  (<- verdict str (record-create-verdict outcome job.started-ms now-ms deadline-seconds))
+  (setv refusal (if (isinstance outcome Refused) f"{outcome.status}: {outcome.error}" ""))
+  (setv next (replace job :record-create verdict :record-create-last-ms now-ms :record-create-refusal refusal))
+  (when (and (= verdict RECORD-CREATE-GIVEN-UP)
+             (not (any (gfor c job.pending-conditions (= (.get c "type") CONDITION-RECORD-UNAVAILABLE)))))
+    (setv elapsed-s (// (- now-ms job.started-ms) 1000))
+    (<- condition dict
+        (condition-of CONDITION-RECORD-UNAVAILABLE
+                      f"turn-record could not be created ({refusal}) after {elapsed-s} s; events of this turn were not recorded"))
+    (setv next (replace next :pending-conditions (+ job.pending-conditions #(condition)))))
+  next)
+
+
+(defk record-create-due [job now-ms settings]
+  {:pre [(: job InFlightJob) (: now-ms int) (: settings AgentdSettings)]
+   :post [(: % bool)]}
+  "この拍に turn-record を作り直すか(段 9p): 腕が pending で、最後に撃ってから record_retry_seconds(spool の再送と
+   同じ弁)が過ぎた時。created / given-up は撃たない。"
+  (if (!= job.record-create RECORD-CREATE-PENDING)
+      False
+      (do
+        (<- period-passed bool (due job.record-create-last-ms now-ms settings.record-retry-seconds))
+        period-passed)))
 
 
 (defk record-lag-of [jobs stream-id highest]

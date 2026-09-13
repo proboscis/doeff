@@ -163,6 +163,8 @@
   ProfileUnobserved
   Pushed
   ReadProfileUsage
+  RECORD-CREATE-GIVEN-UP
+  RECORD-CREATE-PENDING
   Refused
   INTERRUPT-ARM-INTERRUPT
   STREAM-SOURCE-EVENTS
@@ -195,6 +197,8 @@
   record-due
   record-append-word-of
   record-batches-of
+  record-create-applied
+  record-create-due
   record-flush-due
   record-halts-flush
   record-history-satisfied
@@ -724,8 +728,11 @@
   (<- spec dict (turn-record-spec-of job))
   (<- created (| Written Conflict Refused)
       (AcpCreate :namespace AGORA-KINDS-NAMESPACE :kind TURN-RECORD-KIND :resource-id job-id :spec spec))
+  ;; 段 9p(agora-redesign #76): 作れなかった結末は腕の状態に写す(pending = 頭が答えない → observe の拍が作り直す /
+  ;; given-up = 決定論的 → condition)。log の 1 行は結末の語で(記録なしで黙って進まない)。
+  (<- job InFlightJob (record-create-applied job created sent-ms settings.turn-record-create-deadline-seconds))
   (when (not (isinstance created Written))
-    (<- (LogLine :text f"agentd: turn-record for job {job-id} was not created ({created})")))
+    (<- (LogLine :text f"agentd: turn-record for job {job-id} was not created ({created}); record-create = {job.record-create}")))
   (<- job InFlightJob (probe-subscribers settings job sent-ms "running"))
   (<- next AgentdState (with-job state job))
   next)
@@ -967,6 +974,35 @@
                      :capturing (= verdict "continue")))))
 
 
+(defk ensure-turn-record [settings job now-ms force]
+  {:pre [(: settings AgentdSettings) (: job InFlightJob) (: now-ms int) (: force bool)]
+   :post [(: % InFlightJob)]}
+  "turn-record の行を作り直す腕(段 9p・agora-redesign #76): 腕が pending(頭が答えず作れていない)の job に、
+   record_retry_seconds の周期(record-create-due)か force(手番の終わり — 周期に依らず最後に 1 度)で create を撃ち直し、
+   結末を record-create-applied の 1 点で写す。created / given-up の job は 1 bit も触らない。作れた拍の出来事は
+   pending-entries に持ち越されているので、次の追記(append-entries)が鍵から行を読んで乗せる。"
+  (if (!= job.record-create RECORD-CREATE-PENDING)
+      job
+      (do
+        (<- due-now bool (record-create-due job now-ms settings))
+        (if (not (or due-now force))
+            job
+            (do
+              (<- spec dict (turn-record-spec-of job))
+              (<- created (| Written Conflict Refused)
+                  (AcpCreate :namespace AGORA-KINDS-NAMESPACE :kind TURN-RECORD-KIND :resource-id job.job-id :spec spec))
+              (<- applied InFlightJob
+                  (record-create-applied job created now-ms settings.turn-record-create-deadline-seconds))
+              (cond
+                (= applied.record-create RECORD-CREATE-PENDING)
+                (<- (LogLine :text f"agentd: turn-record for job {job.job-id} still not created ({created}); will retry"))
+                (= applied.record-create RECORD-CREATE-GIVEN-UP)
+                (<- (LogLine :text f"agentd: turn-record for job {job.job-id} given up ({created}); condition RecordUnavailable"))
+                True
+                (<- (LogLine :text f"agentd: turn-record for job {job.job-id} created after retry ({(len job.pending-entries)} entries carried)")))
+              applied)))))
+
+
 (defk stream-job [settings job view now-ms]
   {:pre [(: settings AgentdSettings) (: job InFlightJob) (: view SessionView) (: now-ms int)]
    :post [(: % InFlightJob)]}
@@ -977,7 +1013,8 @@
   (<- canon str (FsCanonicalPath :path view.work-dir))
   (<- source tuple (stream-source-of view canon))
   (setv path (get source 1))
-  (setv current job)
+  ;; 段 9p: 行を作れていない job は先に作り直す(周期は record_retry_seconds)— この拍の出来事が乗る先を用意する。
+  (<- current InFlightJob (ensure-turn-record settings job now-ms False))
   (when (is-not path None)
     (<- current InFlightJob (stream-records settings current (get source 0) path now-ms)))
   (setv frames-possible (!= (get source 0) STREAM-SOURCE-EVENTS))
@@ -1059,8 +1096,11 @@
    turn-end(温かい session の手番の終わり)は session を生かしたまま。record-end(器が終端)
    で器が multi_turn なら、host の掃き取りの対象外なので agentd が片付ける。"
   (<- outcome JobOutcome (job-outcome-of view))
+  ;; 段 9p: 行を作れていないまま終わりに来た job は周期に依らず最後に 1 度作り直す(記録なしで終わらない —
+  ;; それでも作れなければ given-up の condition が pending-conditions に乗り、下の Ended の書きが運ぶ)。
+  (<- ensured InFlightJob (ensure-turn-record settings job now-ms True))
   ;; 最後の材料(まだ読んでいない本文・result)を同じ拍で読み、実況を押し、出来事を追記する。
-  (<- drained InFlightJob (drain-stream settings job source path now-ms))
+  (<- drained InFlightJob (drain-stream settings ensured source path now-ms))
   (<- batch DeltaBatch (turn-batch-of drained source path now-ms))
   ;; turn-record → ended(追記できずに持ち越した出来事があれば最後の書きに乗せる)
   (<- recorded bool (end-turn-record drained.job-id batch.usage drained.pending-entries))
@@ -1072,8 +1112,9 @@
       (<- (LogLine :text f"agentd: agent-job {job.job-id} vanished before Ended"))
       (do
         (<- job-status dict (status-object-of fresh))
+        ;; conditions は最新の写し(drained — 段 9p の given-up の RecordUnavailable を含む)から。
         (<- ended dict (ended-status-of job-status outcome.result
-                                        (+ job.pending-conditions outcome.conditions)))
+                                        (+ drained.pending-conditions outcome.conditions)))
         (<- wrote-job (| Written Conflict Refused) (AcpPutStatus :row fresh :status ended))
         (when (not (isinstance wrote-job Written))
           (<- (LogLine :text f"agentd: agent-job {job.job-id} not ended ({wrote-job})")))))
