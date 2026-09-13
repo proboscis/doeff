@@ -12,7 +12,7 @@ session を起こし、手番の記録と実況を ACP へ書く」腕で、判�
   会話の記録(郵便 + 手番の記録)の読み = ``AcpConversationHistory``(段 8q の履歴からの再開)。
 - 会話の記録の service への二重書き(段 9f lane 9f-2)= ``RecordSpoolPut`` / ``RecordSpoolList`` /
   ``RecordSpoolRemove``(本文の batch の spool — 送る前の outbox)と ``RecordAppend``(契約 record-service.json の
-  appendEvents)。
+  appendEvents)。履歴からの再開の本文の読み(段 9f lane 9f-4)= ``RecordRead``(readEvents の before=latest の 1 頁)。
 - 実 I/O は handlers.py(HTTP / RPC / file)、fake は fake.py、要求を並べる判断は
   judgment.hy(純関数)と agentd.hy(program)。handler の選択は runtime.py の 1 点。
 - 値の宣言の 1 点 = ``AgentdSettings``(lease の TTL と周期・watch の resync・frame の
@@ -66,13 +66,15 @@ ENTRY_KIND_TOOL_RESULT: EntryKind = "tool_result"
 ENTRY_KIND_FRAME: EntryKind = "frame"
 ENTRY_KIND_SYSTEM: EntryKind = "system"
 ENTRY_KIND_ERROR: EntryKind = "error"
-#: 上限と切り詰めの規則(契約 conventions.turnRecordEntries の写し — 書き手の側の宣言点はここ)。
-#: 1 行の entries の JSON(UTF-8・compact)の上限 byte。超えたら古い出来事から落とし、先頭に印を残す。
+#: 行の上限(契約 conventions.turnRecordEntries.byteBudget の写し — 書き手の側の宣言点はここ)。1 行の entries の JSON
+#: (UTF-8・compact)の上限 byte。超えたら古い見出しから落とし、先頭に印(TurnEntryDropMarker)を残す。段 9f lane 9f-4 で
+#: entry は見出しだけになった(本文は会話の記録の service)— 切り詰めの規則(summary / text の上限)は agentd から消えた。
 TURN_RECORD_ENTRIES_BYTE_BUDGET = 262_144
-#: tool_use の入力の要約と tool_result の出力の要約(summary)の上限(字)。
-ENTRY_SUMMARY_MAX_CHARS = 2_048
-#: text / system / error の本文(text)の上限(字)。
-ENTRY_TEXT_MAX_CHARS = 65_536
+#: 見出しの 1 entry の compact JSON の上限 byte(契約 §2.2「1 entry ≤ 256 byte」の写し — 検の物差し。走行時の門は ACP の
+#: engine の statusByteBudget で、agentd は見出しに本文を持てない型で守る)。
+TURN_ENTRY_MAX_BYTES = 256
+#: turn-record の status.recordRef の綴り(`record:<cid>/<streamId>`)の頭。
+RECORD_REF_PREFIX = "record:"
 #: node の terminal state(gone の行は同じ名の生きた行ではない)。
 NODE_GONE = "gone"
 #: profile の terminal state(契約 agora-kinds.json profile.declaration.states — retired は観測しない)。
@@ -670,26 +672,61 @@ class ConversationHistory:
 class HistoryFold:
     """履歴からの再開の「これまでの会話」(judgment.rehydrate-history-of の答え)。text = 最初の本文に畳む
     文(記録が無ければ空)・kept_turns / dropped_turns = 残した / 上限で落とした手番の数・
-    dropped_items = 落とした出来事と郵便の数・size_bytes = text の UTF-8 の大きさ。"""
+    dropped_items = 落とした出来事と郵便の数・size_bytes = text の UTF-8 の大きさ・thin = 本文が無い薄い再開
+    (材料が HeadlineTurns — 記録の service に届かず ACP の見出しだけで組んだ)。"""
 
     text: str
     kept_turns: int
     dropped_turns: int
     dropped_items: int
     size_bytes: int
+    thin: bool
+
+
+# ------------------------------------------------------------------ turn-record の entry(見出し・段 9f lane 9f-4)
+
+
+@dataclass(frozen=True)
+class TurnEntryHeadline:
+    """ACP の turn-record の status.entries の 1 item = **見出しの閉じた欄**(設計 §2.2 — claim check: control plane には
+    参照と見出し・本文は会話の記録の service)。本文の欄(text / summary / input / output / model)はこの型に無い —
+    本文を持つ entry は型で落ちる。seq = 本文の producerSeq(採番は 1 点)・bytes / sha256 = 本文の同一性(service が
+    冪等の判断に使う値と同じ計算 — judgment.record-body-bytes-of)。"""
+
+    seq: int
+    at: int
+    kind: EntryKind
+    bytes: int
+    sha256: str
+    tool_name: str | None = None
+    tool_use_id: str | None = None
+    is_error: bool = False
+
+
+@dataclass(frozen=True)
+class TurnEntryDropMarker:
+    """行の上限で古い見出しを落とした印(kind system・truncated・dropped — 列の先頭に 1 つ)。本文を持たないので
+    bytes / sha256 も持たない。seq = 落とした最古の seq・at = 落とした最新の at。"""
+
+    seq: int
+    at: int
+    dropped: int
+
+
+TurnEntry: TypeAlias = "TurnEntryHeadline | TurnEntryDropMarker"
 
 
 @dataclass(frozen=True)
 class DeltaBatch:
-    """transcript の行の列から組んだ TurnDelta の frame と turn-record の entries。"""
+    """transcript の行の列から組んだ TurnDelta の frame と turn-record の entries(見出し)。"""
 
     frames: tuple[JSONObject, ...]
-    entries: tuple[JSONObject, ...]
+    entries: tuple[TurnEntryHeadline, ...]
     usage: JSONObject | None
     next_seq: int
     model: str | None
-    #: 段 9f lane 9f-2: 切る前の本文(契約 record-service eventIn の形・producerSeq = entries の seq)。entries はここから
-    #: judgment.entry-of-body の 1 点で切り詰めて導く(本文は切らない — 切り詰めは service の責務)。
+    #: 段 9f lane 9f-2: 切る前の本文(契約 record-service eventIn の形・producerSeq = entries の seq)。entries(見出し)は
+    #: ここから judgment.headline-of-body の 1 点で導く(本文は切らない — 切り詰めは service の責務)。
     bodies: tuple[JSONObject, ...] = ()
 
 
@@ -780,6 +817,75 @@ class RecordSpoolListing:
     unreadable: tuple[str, ...]
 
 
+#: 読みの 1 頁の上限(契約 limits.pageMaxLimit の写し)。履歴からの再開はこの大きさで後向きに読む。
+RECORD_PAGE_MAX_LIMIT = 1_000
+
+
+@dataclass(frozen=True)
+class RecordEvent:
+    """service に積まれた出来事の 1 つ(契約 $defs.storedEvent — 読みの答え・最新の版)。本文の欄は service が切った後の
+    値(truncated が真なら bytes が切る前の大きさ)。tombstone の行は本文の欄を持たない。"""
+
+    record_seq: int
+    stream_id: str
+    stream_kind: RecordStreamKind
+    producer_seq: int
+    at: int
+    kind: str
+    bytes: int
+    sha256: str
+    text: str | None = None
+    summary: str | None = None
+    input: JSON = None
+    output: JSON = None
+    tool_name: str | None = None
+    tool_use_id: str | None = None
+    model: str | None = None
+    is_error: bool = False
+    truncated: bool = False
+
+
+@dataclass(frozen=True)
+class RecordPage:
+    """readEvents の 1 頁(常に recordSeq 昇順)。next = 次の頁の cursor(before の読みでは列の最初の recordSeq・None =
+    会話の最初まで読めた)。"""
+
+    events: tuple[RecordEvent, ...]
+    next: int | None
+
+
+@dataclass(frozen=True)
+class RecordUnread:
+    """読めなかった(status 0 = 届かない・4xx / 5xx・答えの形が契約と違う)。"""
+
+    status: int
+    error: str
+
+
+RecordReadOutcome: TypeAlias = "RecordPage | RecordUnread"
+
+
+@dataclass(frozen=True)
+class RecordedTurns:
+    """履歴からの再開の手番の材料 = 会話の記録の service から読んだ本文(設計 §2.4 — before=latest から後向きに、
+    上限の byte に届くまで)。complete = 会話の最初まで読めた。"""
+
+    events: tuple[RecordEvent, ...]
+    complete: bool
+
+
+@dataclass(frozen=True)
+class HeadlineTurns:
+    """履歴からの再開の手番の材料 = ACP の turn-record の行(見出しだけ・本文なし)— 記録の service に届かなかった
+    (か配線されていない)時の**薄い再開**の材料。本文の無い行を本文として扱わない(型で分ける)。reason = 届かなかった理由。"""
+
+    records: tuple[AcpRow, ...]
+    reason: str
+
+
+HistorySource: TypeAlias = "RecordedTurns | HeadlineTurns"
+
+
 # ------------------------------------------------------------------ agentd の状態
 
 
@@ -823,7 +929,7 @@ class InFlightJob:
     record: AcpRow | None = None
     #: 読んだが行へまだ書けていない出来事(書きが断られた / 行がまだ無い拍の持ち越し)。次の拍の
     #: 追記と手番の終わりの書きに先頭で乗る(出来事は落とさない・順は seq)。
-    pending_entries: tuple[JSONObject, ...] = ()
+    pending_entries: tuple[TurnEntryHeadline, ...] = ()
     #: 段 8 lane 4x: この手番で器へ渡した割り込みの Message の id(memory の写し — 行の
     #: interruptsDelivered への CAS が着地するまでの間、同じ id を二度渡さないための cache。正本は行:
     #: 再起動で消えても、行の interruptsDelivered に在る id は渡さない)。
@@ -981,6 +1087,17 @@ class RecordAppend(EffectBase):
     Bearer = 名簿の agentd の札)。冪等 — 同じ鍵と本文の再送は ignored。結果 = RecordAppendOutcome(送れなさも値で返す)。"""
 
     batch: RecordBatch
+
+
+@dataclass(frozen=True)
+class RecordRead(EffectBase):
+    """会話の出来事を後向きに 1 頁読む(契約 readEvents: ``GET /v1/conversations/{cid}/events?before=<latest|recordSeq>&limit=``・
+    読み手 = 名簿の agentd)。before = None は latest(末尾の頁)。結果 = RecordReadOutcome(読めなさも値で返す)。
+    履歴からの再開(段 9f lane 9f-4・設計 §2.4)の 1 回だけ撃つ — watch の拍では撃たない。"""
+
+    conversation_id: str
+    before: int | None
+    limit: int
 
 
 # ------------------------------------------------------------------ 要求(custody)

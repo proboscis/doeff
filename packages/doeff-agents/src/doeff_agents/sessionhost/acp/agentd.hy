@@ -58,7 +58,10 @@
 ;;; outbox): 本文は切らずに組み(DeltaBatch.bodies — 契約 record-service eventIn・producerSeq = entry の seq = InFlightJob の
 ;;; delta-seq の 1 点)、読んだ拍に spool へ耐久化し(spool-record-bodies — 1 batch 1 file)、拍の終わりの flush-record-spool が
 ;;; service へ送って受理(と 409)で消す。送れない batch は残し record_retry_seconds の後に再送(冪等 — 同じ鍵と本文は ignored)。
-;;; ACP の turn-record への追記は今日どおり(entries は本文から切り詰めの 1 点 entry-of-body で導く)。stream = 手番
+;;; ACP の turn-record への追記は**見出しだけ**(段 9f lane 9f-4・設計 §2.2: entries は本文から judgment.headline-of-body の
+;;; 1 点で導く TurnEntryHeadline — seq・at・kind・toolName・toolUseId・bytes・sha256・isError。本文の欄は型に無い)。service が
+;;; 受理した答え(highestProducerSeq)は mark-recorded が status.recordRef / recordedSeq に写す。履歴からの再開は service の
+;;; before=latest から読み(record-turns-for)、届かなければ ACP の見出しで薄く再開すると名乗る。stream = 手番
 ;;; `<jobId>#a<attempt>`(拾い直しは turn-record の行の generation + 1 — judgment.recovered-record-of)。弁 =
 ;;; AgentdSettings.record_enabled(RECORD_SERVICE_URL の在否)— off の間は Record* を 1 つも撃たない。
 ;;;
@@ -107,6 +110,7 @@
   FsCanonicalPath
   FsFileSize
   FsWritePrivateText
+  HeadlineTurns
   HistoryFold
   IO-FAILURES
   InFlightJob
@@ -131,14 +135,19 @@
   METRIC-RECORD-SPOOL-DEPTH
   MetricLine
   MintId
+  RECORD-PAGE-MAX-LIMIT
   RecordAppend
   RecordAppended
   RecordConflicted
+  RecordPage
+  RecordRead
   RecordSpoolList
   RecordSpoolListing
   RecordSpoolPut
   RecordSpoolRemove
+  RecordUnread
   RecordUnsent
+  RecordedTurns
   NEXT-ARM-DEFER
   NEXT-ARM-REHYDRATE
   NEXT-ARM-RESUME
@@ -185,8 +194,12 @@
   record-batches-of
   record-flush-due
   record-halts-flush
+  record-history-satisfied
   record-lag-of
+  record-page-advances
+  record-ref-of
   record-release-of
+  record-stream-job-of
   recovered-record-of
   ended-status-of
   entries-of-status
@@ -243,6 +256,7 @@
   transcript-path-of
   turn-record-ended-status
   turn-record-key-of
+  turn-record-recorded-status
   turn-record-spec-of
   usage-by-profile
   wait-seconds-for
@@ -454,13 +468,49 @@
             #(lease None)))))
 
 
+(defk record-turns-for [settings subject records]
+  {:pre [(: settings AgentdSettings) (: subject str) (: records tuple)]
+   :post [(: % (| RecordedTurns HeadlineTurns))]}
+  "履歴からの再開の手番の材料(段 9f lane 9f-4・設計 §2.4): 会話の記録の service を before=latest から後向きに読み
+   (RecordRead — 1 頁 = RECORD-PAGE-MAX-LIMIT)、畳みの上限に届くか会話の最初まで読めたら止める(判断 =
+   judgment.record-history-satisfied)。service が配線されていない(弁 off)・届かない・頁の途中で読めなくなった時は
+   ACP の見出し(turn-record の行)で**薄く再開する**と名乗る(HeadlineTurns — 本文の無い行を本文として扱わない・型で
+   分ける)。"
+  (when (not settings.record-enabled)
+    (return (HeadlineTurns :records records :reason "record service is not configured (RECORD_SERVICE_URL is unset)")))
+  (setv events [])
+  (setv before None)
+  (setv complete False)
+  (while True
+    (<- page (| RecordPage RecordUnread) (RecordRead :conversation-id subject :before before :limit RECORD-PAGE-MAX-LIMIT))
+    (when (isinstance page RecordUnread)
+      (return (HeadlineTurns :records records :reason f"record service read failed ({page.status}: {page.error})")))
+    (setv events (+ (list page.events) events))
+    (when (is page.next None)
+      (setv complete True)
+      (break))
+    (<- enough bool (record-history-satisfied (tuple events) settings.rehydrate-history-byte-budget))
+    (when enough
+      (break))
+    (<- advances bool (record-page-advances before page.next))
+    (when (or (not advances) (not page.events))
+      (<- (LogLine :text f"agentd: record service page for {subject} does not advance (before {before} → next {page.next}); stopping the read"))
+      (break))
+    (setv before page.next))
+  (RecordedTurns :events (tuple events) :complete complete))
+
+
 (defk history-for [settings subject exclude]
   {:pre [(: settings AgentdSettings) (: subject str) (: exclude tuple)]
    :post [(: % HistoryFold)]}
-  "履歴からの再開の「これまでの会話」(R20): 会話の記録の材料を 1 度読み(AcpConversationHistory — 手番を起こし直す
-   時だけ)、畳みは judgment.rehydrate-history-of の 1 点(上限 AgentdSettings.rehydrate_history_byte_budget)。"
+  "履歴からの再開の「これまでの会話」(R20・段 9f lane 9f-4): 郵便と手番の行を ACP から 1 度読み(AcpConversationHistory —
+   手番を起こし直す時だけ)、手番の本文は会話の記録の service から(record-turns-for — 届かなければ ACP の見出しで薄い
+   再開)、畳みは judgment.rehydrate-history-of の 1 点(上限 AgentdSettings.rehydrate_history_byte_budget)。"
   (<- recorded ConversationHistory (AcpConversationHistory :conversation-id subject))
-  (<- fold HistoryFold (rehydrate-history-of subject recorded.messages recorded.records exclude
+  (<- source (| RecordedTurns HeadlineTurns) (record-turns-for settings subject recorded.records))
+  (when (isinstance source HeadlineTurns)
+    (<- (LogLine :text f"agentd: conversation {subject} rehydrates thinly from ACP headlines — {source.reason}")))
+  (<- fold HistoryFold (rehydrate-history-of subject recorded.messages source exclude
                                              settings.rehydrate-history-byte-budget))
   fold)
 
@@ -482,7 +532,8 @@
         (when (= choice.arm NEXT-ARM-REHYDRATE)
           (<- fold HistoryFold (history-for settings subject exclude))
           (setv history fold.text)
-          (<- (LogLine :text (+ f"agentd: job {job-id} rehydrates conversation {subject} from ACP records "
+          (<- (LogLine :text (+ f"agentd: job {job-id} rehydrates conversation {subject} "
+                                     (if fold.thin "thinly from ACP headlines " "from the record service ")
                                      f"({fold.kept-turns} turns kept, {fold.dropped-turns} dropped, "
                                      f"{fold.size-bytes} bytes)"))))
         (<- attribution dict (session-attribution-of plan job-id subject choice.arm))
@@ -740,7 +791,7 @@
   (<- existing tuple (entries-of-status record-status))
   (<- floor int (next-seq-after existing 0))
   (<- numbered tuple (renumbered-entries entries floor))
-  (setv delta-seq (max job.delta-seq (+ (get (get numbered -1) "seq") 1)))
+  (setv delta-seq (max job.delta-seq (+ (. (get numbered -1) seq) 1)))
   (<- appended dict (turn-record-appended-status record-status numbered))
   (<- wrote (| Written Conflict Refused) (AcpPutStatus :row record :status appended))
   (when (isinstance wrote Conflict)
@@ -752,7 +803,7 @@
       (<- existing tuple (entries-of-status record-status))
       (<- floor int (next-seq-after existing 0))
       (<- numbered tuple (renumbered-entries entries floor))
-      (setv delta-seq (max job.delta-seq (+ (get (get numbered -1) "seq") 1)))
+      (setv delta-seq (max job.delta-seq (+ (. (get numbered -1) seq) 1)))
       (<- appended dict (turn-record-appended-status record-status numbered))
       (<- wrote (| Written Conflict Refused) (AcpPutStatus :row record :status appended))))
   (if (isinstance wrote Written)
@@ -837,7 +888,9 @@
       (<- lag (| int None) (record-lag-of state.jobs stream-id outcome.highest-producer-seq))
       (when (is-not lag None)
         (<- (MetricLine :fields {"metric" METRIC-RECORD-LAG-SEQ "conversationId" batch.conversation-id
-                                        "streamId" stream-id "lag" lag}))))
+                                        "streamId" stream-id "lag" lag})))
+      (<- marked AgentdState (mark-recorded state batch.conversation-id stream-id outcome.highest-producer-seq))
+      (setv state marked))
     (when (isinstance outcome RecordConflicted)
       (<- (LogLine :text f"agentd: record append for {stream-id} conflicted (same key, different body); dropped from the spool: {outcome.conflicts}")))
     (when (isinstance outcome RecordUnsent)
@@ -849,6 +902,44 @@
   (when (!= remaining state.record-spool-depth)
     (<- (MetricLine :fields {"metric" METRIC-RECORD-SPOOL-DEPTH "depth" remaining})))
   (replace state :record-backoff-ms (if failed now-ms None) :record-spool-depth remaining))
+
+
+(defk mark-recorded [state conversation-id stream-id highest]
+  {:pre [(: state AgentdState) (: conversation-id str) (: stream-id str) (: highest int)]
+   :post [(: % AgentdState)]}
+  "service が本文を受理した答えを turn-record の行へ写す(段 9f lane 9f-4・設計 §2.2): status.recordRef = 本文の在処
+   (judgment.record-ref-of)・status.recordedSeq = 受理済みの最大 producerSeq(judgment.turn-record-recorded-status — 進む時
+   だけ・後ろへ戻さない)。行は走っている手番の memory の image(InFlightJob.record)があればそれに CAS(次の追記も
+   その image から続く)、無ければ鍵で読む(手番の終わりの後に届いた受理も行に写る)。Conflict は image を捨てて次の拍
+   (追記の腕が読み直す)。"
+  (<- job-id str (record-stream-job-of stream-id))
+  (<- key str (turn-record-key-of job-id))
+  (<- ref str (record-ref-of conversation-id stream-id))
+  (setv held None)
+  (for [job state.jobs]
+    (when (and (= job.job-id job-id) (is-not job.record None))
+      (setv held job)))
+  (setv record (if (is held None) None held.record))
+  (when (is record None)
+    (<- found (| AcpRow None) (AcpGetRow :key key))
+    (setv record found))
+  (when (is record None)
+    (<- (LogLine :text f"agentd: turn-record of job {job-id} is not readable; recordedSeq {highest} not written"))
+    (return state))
+  (<- record-status dict (status-object-of record))
+  (<- recorded (| dict None) (turn-record-recorded-status record-status ref highest))
+  (when (is recorded None)
+    (return state))
+  (<- wrote (| Written Conflict Refused) (AcpPutStatus :row record :status recorded))
+  (when (not (isinstance wrote Written))
+    (<- (LogLine :text f"agentd: recordedSeq {highest} for job {job-id} did not land ({wrote}); next flush retries")))
+  (when (is held None)
+    (return state))
+  (setv image (if (isinstance wrote Written)
+                  (replace record :generation (+ record.generation 1) :status recorded)
+                  None))
+  (<- next AgentdState (with-job state (replace held :record image)))
+  next)
 
 
 (defk capture-frame [settings job now-ms]

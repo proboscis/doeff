@@ -102,11 +102,16 @@ from doeff_agents.sessionhost.acp.effects import (
     RecordAppendOutcome,
     RecordBatch,
     RecordConflicted,
+    RecordEvent,
+    RecordPage,
+    RecordRead,
+    RecordReadOutcome,
     RecordSpoolList,
     RecordSpoolListing,
     RecordSpoolPut,
     RecordSpoolRemove,
     RecordStream,
+    RecordUnread,
     RecordStreamKind,
     RecordUnsent,
     Refused,
@@ -731,7 +736,14 @@ class SessionRpc:
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(
             effect,
-            (SessionLaunch, SessionResume, SessionSend, SessionInterject, SessionInterrupt, SessionCleanup),
+            (
+                SessionLaunch,
+                SessionResume,
+                SessionSend,
+                SessionInterject,
+                SessionInterrupt,
+                SessionCleanup,
+            ),
         ):
             return Resume(k, self._act(effect))
         if isinstance(effect, (SessionGet, SessionList, SessionCapture)):
@@ -1032,7 +1044,9 @@ def list_profile_homes(kind: LeaseKind) -> tuple[ProfileHome, ...]:
             argv, capture_output=True, timeout=PROFILES_TIMEOUT_SECONDS, check=False
         )
     except (OSError, subprocess.TimeoutExpired) as error:
-        raise RuntimeError(f"agentd: profile registry read `{' '.join(argv)}` failed: {error}") from error
+        raise RuntimeError(
+            f"agentd: profile registry read `{' '.join(argv)}` failed: {error}"
+        ) from error
     if completed.returncode != 0:
         tail = completed.stderr.decode("utf-8", errors="replace").strip()[-500:]
         raise RuntimeError(
@@ -1040,7 +1054,9 @@ def list_profile_homes(kind: LeaseKind) -> tuple[ProfileHome, ...]:
         )
     doc = _loads(completed.stdout)
     if not isinstance(doc, list):
-        raise RuntimeError(f"agentd: profile registry read `{' '.join(argv)}` did not answer a list")
+        raise RuntimeError(
+            f"agentd: profile registry read `{' '.join(argv)}` did not answer a list"
+        )
     return decode_profile_homes(doc, os.path.isdir)
 
 
@@ -1175,13 +1191,74 @@ def decode_record_reply(reply: HttpReply) -> RecordAppendOutcome:
         )
     if reply.status == 409:
         raw = reply.body.get("conflicts")
-        conflicts = tuple(item for item in raw if isinstance(item, dict)) if isinstance(raw, list) else ()
+        conflicts = (
+            tuple(item for item in raw if isinstance(item, dict)) if isinstance(raw, list) else ()
+        )
         return RecordConflicted(conflicts=conflicts)
     return RecordUnsent(reply.status, _record_error_text(reply))
 
 
+def decode_record_event(doc: JSON) -> RecordEvent | None:
+    """readEvents の 1 項(契約 $defs.storedEvent)→ RecordEvent(required の欄が欠けた項は None — 発明しない)。"""
+    if not isinstance(doc, dict):
+        return None
+    record_seq = _int_field(doc, "recordSeq")
+    stream_id = _str_field(doc, "streamId")
+    stream_kind = _stream_kind_of(doc.get("streamKind"))
+    producer_seq = _int_field(doc, "producerSeq")
+    at = _int_field(doc, "at")
+    kind = _str_field(doc, "kind")
+    size = _int_field(doc, "bytes")
+    digest = _str_field(doc, "sha256")
+    if (
+        record_seq is None
+        or stream_id is None
+        or stream_kind is None
+        or producer_seq is None
+        or at is None
+        or kind is None
+        or size is None
+        or digest is None
+    ):
+        return None
+    return RecordEvent(
+        record_seq=record_seq,
+        stream_id=stream_id,
+        stream_kind=stream_kind,
+        producer_seq=producer_seq,
+        at=at,
+        kind=kind,
+        bytes=size,
+        sha256=digest,
+        text=_str_field(doc, "text"),
+        summary=_str_field(doc, "summary"),
+        input=doc.get("input"),
+        output=doc.get("output"),
+        tool_name=_str_field(doc, "toolName"),
+        tool_use_id=_str_field(doc, "toolUseId"),
+        model=_str_field(doc, "model"),
+        is_error=doc.get("isError") is True,
+        truncated=doc.get("truncated") is True,
+    )
+
+
+def decode_record_page(reply: HttpReply) -> RecordReadOutcome:
+    """readEvents の応答 → 1 頁(2xx = eventsAnswer・他 = 読めなかった)。形が契約と違う項は落とす(発明しない)。"""
+    if not (200 <= reply.status < 300):
+        return RecordUnread(reply.status, _record_error_text(reply))
+    raw = reply.body.get("events")
+    cursor = reply.body.get("cursor")
+    if not isinstance(raw, list) or not isinstance(cursor, dict):
+        return RecordUnread(reply.status, "eventsAnswer without events / cursor")
+    events = tuple(
+        event for event in (decode_record_event(item) for item in raw) if event is not None
+    )
+    return RecordPage(events=events, next=_int_field(cursor, "next"))
+
+
 class RecordHttp:
-    """会話の記録の service への追記(契約 appendEvents)。bearer = 名簿の agentd の札(ACP と同じ札)。"""
+    """会話の記録の service への追記(契約 appendEvents)と履歴の読み(readEvents・before=latest から後向き)。
+    bearer = 名簿の agentd の札(ACP と同じ札 — 書き手と読み手の両方の名簿に agentd が在る)。"""
 
     def __init__(self, base_url: str, token: str) -> None:
         self._base_url = base_url.rstrip("/")
@@ -1190,6 +1267,8 @@ class RecordHttp:
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(effect, RecordAppend):
             return Resume(k, self._append(effect.batch))
+        if isinstance(effect, RecordRead):
+            return Resume(k, self._read(effect.conversation_id, effect.before, effect.limit))
         return Pass(effect, k)
 
     def _append(self, batch: RecordBatch) -> RecordAppendOutcome:
@@ -1200,6 +1279,15 @@ class RecordHttp:
             "POST", url, self._headers, record_append_body(batch), RECORD_HTTP_TIMEOUT_SECONDS
         )
         return decode_record_reply(reply)
+
+    def _read(self, conversation_id: str, before: int | None, limit: int) -> RecordReadOutcome:
+        cid = urllib.parse.quote(conversation_id, safe="")
+        query = urllib.parse.urlencode(
+            {"before": "latest" if before is None else str(before), "limit": str(limit)}
+        )
+        url = f"{self._base_url}/v1/conversations/{cid}/events?{query}"
+        reply = _http_json("GET", url, self._headers, None, RECORD_HTTP_TIMEOUT_SECONDS)
+        return decode_record_page(reply)
 
 
 def encode_spooled_batch(batch: RecordBatch) -> JSONObject:
