@@ -52,7 +52,10 @@ from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.agentd_client import AgentdClient, AgentdClientError, launch_rpc_timeout_seconds
 from doeff_agents.sessionhost.acp.effects import (
     JSON,
+    MESSAGE_KIND,
     OWNERSHIP_PROOF_GCE_PREFIX,
+    TURN_RECORD_KIND,
+    AcpConversationHistory,
     AcpCreate,
     AcpEventWindow,
     AcpGet,
@@ -66,6 +69,7 @@ from doeff_agents.sessionhost.acp.effects import (
     CaptureOutcome,
     ClockNowMs,
     Conflict,
+    ConversationHistory,
     CustodyLeaseBorrow,
     CustodyLeaseRevoke,
     EventWindow,
@@ -424,15 +428,25 @@ class AcpHttp:
         self._watch: WatchReader | None = None
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
-        if isinstance(effect, (AcpGet, AcpGetRow, AcpEventWindow, AcpWatchSse)):
+        if isinstance(
+            effect, (AcpGet, AcpGetRow, AcpEventWindow, AcpWatchSse, AcpConversationHistory)
+        ):
             return Resume(k, self._read(effect))
         if isinstance(effect, (AcpPutStatus, AcpCreate, AcpStreamPush)):
             return Resume(k, self._write(effect))
         return Pass(effect, k)
 
-    def _read(self, effect: AcpGet | AcpGetRow | AcpEventWindow | AcpWatchSse) -> object:
+    def _read(
+        self,
+        effect: AcpGet | AcpGetRow | AcpEventWindow | AcpWatchSse | AcpConversationHistory,
+    ) -> object:
         if isinstance(effect, AcpGet):
             return self._list(effect.kind)
+        if isinstance(effect, AcpConversationHistory):
+            # ACP に欄の絞りの口は無いので 2 つの kind を読むだけ(会話で絞るのは judgment)。
+            return ConversationHistory(
+                messages=self._list(MESSAGE_KIND), records=self._list(TURN_RECORD_KIND)
+            )
         if isinstance(effect, AcpGetRow):
             return self._row(effect.key)
         if isinstance(effect, AcpEventWindow):
@@ -664,7 +678,9 @@ def session_view_of(result: JSON) -> SessionView | None:
     identity = snapshot.get("effective_identity")
     cause = snapshot.get("terminal_cause")
     turn_ended = _str_field(snapshot, "turn_ended_at")
+    started = _str_field(snapshot, "started_at")
     backend_ref = snapshot.get("backend_ref")
+    attribution = snapshot.get("launch_attribution")
     return SessionView(
         session_id=session_id,
         agent_type=agent_type,
@@ -678,6 +694,8 @@ def session_view_of(result: JSON) -> SessionView | None:
         turn_ended_at_ms=None if turn_ended is None else _epoch_ms_of_iso(turn_ended),
         backend_kind=_str_field(snapshot, "backend_kind") or "tmux",
         backend_ref=backend_ref if isinstance(backend_ref, dict) else None,
+        launch_attribution=attribution if isinstance(attribution, dict) else None,
+        started_at_ms=None if started is None else _epoch_ms_of_iso(started),
     )
 
 

@@ -15,6 +15,11 @@
 ;;;     sessionHandle)から導き、Bound の job の起こし方は next-arm-for-job(launch | send |
 ;;;     resume | defer)の 1 点、手番の終わりは job-step-of の turn-end(host が刻んだ
 ;;;     turn_ended_at × 手番の始まりの下限 × 記録の進み)、idle の寿命は sessions-to-retire。
+;;;   * 会話の引き継ぎ(段 8q・R20): session の会話・手番・家は起こす時に launch_attribution へ刻み
+;;;     (session-attribution-of)、器の眺めから読む(attribution-of-view)— 回収される agent-job の行から
+;;;     導かない。cache(温かい send / --resume)を保つのは同じ機体 ∧ 同じ家の時だけで、家か機体が違えば
+;;;     cache の失効を受け入れ、ACP の記録を最初の本文に畳んで新しい session を起こす(operator 決定 #54・
+;;;     rehydrate-history-of・上限は AgentdSettings の 1 点)。
 ;;;   * capture の是非(購読者の数 → continue | stop・issue #1 の決定)と待ちの長さ。
 ;;;   * profile の残量の観測 → status.observed の post-image(段 7 lane 7d-3・既知の形 = kubelet の
 ;;;     node status: 観測は runner が書き、判断〔枯渇〕は controller〔agora-budget〕): 窓の選び方
@@ -35,9 +40,11 @@
   AGENT-TYPE-LEASE-KIND
   AGENTD-PRINCIPAL
   AGORA-KINDS-NAMESPACE
+  ATTRIBUTION-AGENTD-KEY
   AgentdSettings
   AgentdState
   AcpRow
+  ArmChoice
   BACKEND-HEADLESS
   CLAUDE-OAUTH-TOKEN-ENV
   CONDITION-INTERRUPTED
@@ -49,6 +56,7 @@
   ENTRY-KIND-TOOL-USE
   ENTRY-SUMMARY-MAX-CHARS
   ENTRY-TEXT-MAX-CHARS
+  HistoryFold
   INTERRUPT-ARM-INTERRUPT
   INTERRUPT-ARM-NONE
   InFlightJob
@@ -67,6 +75,7 @@
   LeaseGrant
   NEXT-ARM-DEFER
   NEXT-ARM-LAUNCH
+  NEXT-ARM-REHYDRATE
   NEXT-ARM-RESUME
   NEXT-ARM-SEND
   NODE-GONE
@@ -280,31 +289,122 @@
           sid)))
 
 
-(defk next-arm-for-job [plan view]
-  {:pre [(: plan LaunchPlan) (: view (| SessionView None))]
-   :post [(: % str)]}
-  "Bound の job の起こし方(閉語彙 effects.NextArm)— 判断はここ 1 点:
-   候補の session が生きて idle → send(温かい・predecessor が生きていればこれが温かい resume)/
-   候補が手番の途中 → defer(claim せず次の list で読み直す — 走っている手番に本文を積まない)/
-   predecessor が在る(が候補は生きていない)→ resume(cold の session.resume)/
-   それ以外 → launch。"
-  (<- idle bool (session-idle view))
-  (<- busy bool (session-busy view))
-  (cond
-    idle NEXT-ARM-SEND
-    busy NEXT-ARM-DEFER
-    (is-not plan.predecessor None) NEXT-ARM-RESUME
-    True NEXT-ARM-LAUNCH))
-
-
-(defk recovered-arm-of [plan]
+(defk home-key-of [plan]
   {:pre [(: plan LaunchPlan)]
+   :post [(: % dict)]}
+  "job が走る家の鍵(段 8q・R20): 預かり所の account(借りる時の家 = <homes-root>/<種類>/<account>)と
+   charter の binding(借りない時の家・codex の profile_dir)の対。同じ鍵 = 同じ家(homes-root は機体に
+   1 つ)。欠けた欄は None のまま(発明しない)。"
+  (setv binding (.get plan.charter "binding"))
+  {"account" plan.account
+   "binding" (if (isinstance binding dict) binding None)})
+
+
+(defk attribution-of-view [view]
+  {:pre [(: view SessionView)]
+   :post [(: % (| dict None))]}
+  "session の行に agentd が刻んだ帰属(wire の launch_attribution の ATTRIBUTION-AGENTD-KEY の欄 —
+   {conversationId, agentJobId, account, home, arm})。無ければ None(段 8q より前に起こした session・
+   他の起こし手 — 発明しない)。"
+  (setv attribution (or view.launch-attribution {}))
+  (setv mine (.get attribution ATTRIBUTION-AGENTD-KEY))
+  (if (and (isinstance mine dict) (isinstance (.get mine "conversationId") str)) mine None))
+
+
+(defk session-attribution-of [plan job-id subject arm]
+  {:pre [(: plan LaunchPlan) (: job-id str) (: subject str) (: arm str)]
+   :post [(: % dict)]}
+  "起こす session に刻む帰属(段 8q・R20): 会話・手番・家の account と鍵・起こし方。session の会話と家は
+   session の行が覚える事実で、終端の後に回収される agent-job の行から導かない。"
+  (<- home dict (home-key-of plan))
+  {"conversationId" subject
+   "agentJobId" job-id
+   "account" plan.account
+   "home" home
+   "arm" arm})
+
+
+(defk charter-with-attribution [charter attribution]
+  {:pre [(: charter dict) (: attribution dict)]
+   :post [(: % dict)]}
+  "charter の launch_attribution に agentd の欄を据える(作った側の欄は残す — host は opaque に保存して
+   wire の眺めに返し、session.resume の params も同じ欄を運ぶ)。"
+  (setv next (dict charter))
+  (setv existing (.get charter "launch_attribution"))
+  (setv merged (if (isinstance existing dict) (dict existing) {}))
+  (setv (get merged ATTRIBUTION-AGENTD-KEY) attribution)
+  (setv (get next "launch_attribution") merged)
+  next)
+
+
+(defk session-in-home [view home]
+  {:pre [(: view SessionView) (: home dict)]
+   :post [(: % bool)]}
+  "session がその家で走っているか: 刻んだ帰属の home が同じ鍵。帰属の無い session は家が分からない =
+   違う家と読む(cache の失効の側に倒す — 履歴からの再開は ACP の全史から会話を続ける)。"
+  (<- mine (| dict None) (attribution-of-view view))
+  (and (is-not mine None) (= (.get mine "home") home)))
+
+
+(defk next-arm-for-job [candidate view home]
+  {:pre [(: candidate (| str None)) (: view (| SessionView None)) (: home dict)]
+   :post [(: % ArmChoice)]}
+  "Bound の job の起こし方(閉語彙 effects.NextArm)— 判断はここ 1 点(R10 / R20)。candidate = 会話の前の
+   session(affinity.predecessor か会話の最後の手番の session — warm-candidate-of)、view = その器の眺め、
+   home = この job が走る家(home-key-of)。cache(温かい session / transcript)を保つのは同じ機体 ∧ 同じ家の
+   時だけで、機体か家(profile の家)が変わる時は cache の失効を受け入れて 履歴から再開する(ACP の全史から)
+   (operator 決定 2026-09-13 #54 逐語 \"i want cache kept when both machine and a profile is not changed. in
+   other cases, i think i need to accept the fact that cache gets invalidated\"):
+   候補が無い → launch /
+   候補が生きて idle ∧ 同じ家 → send(温かい)/
+   候補が生きて idle ∧ 家が違う → 候補を片付けて rehydrate(profile を変えた手番 — 失効した cache の器を残さない)/
+   候補が生きていて idle でない → defer(手番の途中 — 走っている手番に本文を積まない)/
+   候補が器に登記されて終端 ∧ 同じ家 → resume(温かい session が片付いた後も cache を保つ --resume)/
+   それ以外(候補が器に無い = 別の機体・器の行が消えた / 終端だが家が違う)→ rehydrate(ACP の会話の記録を
+   最初の本文に畳む)。"
+  (<- alive bool (session-alive view))
+  (<- idle bool (session-idle view))
+  (setv same False)
+  (when (isinstance view SessionView)
+    (<- in-home bool (session-in-home view home))
+    (setv same in-home))
+  (cond
+    (is candidate None) (ArmChoice :arm NEXT-ARM-LAUNCH :source None :retire None)
+    (and idle same) (ArmChoice :arm NEXT-ARM-SEND :source candidate :retire None)
+    idle (ArmChoice :arm NEXT-ARM-REHYDRATE :source None :retire candidate)
+    alive (ArmChoice :arm NEXT-ARM-DEFER :source candidate :retire None)
+    same (ArmChoice :arm NEXT-ARM-RESUME :source candidate :retire None)
+    True (ArmChoice :arm NEXT-ARM-REHYDRATE :source None :retire None)))
+
+
+(defk fallback-arm-of [choice]
+  {:pre [(: choice ArmChoice)]
+   :post [(: % (| ArmChoice None))]}
+  "起こす腕が器に断られた時の次の腕(R20): resume が断られた(transcript が見つからない・会話の identity が
+   無い・work_dir が無い…)→ rehydrate(cache が使えない会話は ACP の記録から続ける)/ それ以外 → None(launch /
+   rehydrate の断りは LaunchFailed)。断りの理由の語で分けない(器の admission の語彙に結ばない)。"
+  (if (= choice.arm NEXT-ARM-RESUME)
+      (ArmChoice :arm NEXT-ARM-REHYDRATE :source None :retire None)
+      None))
+
+
+(defk recovered-arm-of [plan view job-id]
+  {:pre [(: plan LaunchPlan) (: view SessionView) (: job-id str)]
    :post [(: % str)]}
-  "拾い直した Running の手番がどう始まっていたか(手番の始まりの offset の読み方): predecessor が
-   在れば resume(前の手番の行を混ぜない)、無ければ launch(file の頭から)。send は拾い直せない
-   (行に送った時刻が無い)ので resume と同じ読み(今の file の大きさ)にはしない — 拾い直しの
-   turn-floor は行の createdAt で、記録の進みは host の判定だけを信じる。"
-  (if (is plan.predecessor None) NEXT-ARM-LAUNCH NEXT-ARM-RESUME))
+  "拾い直した Running の手番がどう始まっていたか(手番の始まりの offset の読み方): この job が起こした
+   session なら刻んだ帰属の arm(launch / rehydrate = file の頭から・resume = 今の file の大きさ)、別の job が
+   起こした session なら send(温かい手番 — 前の手番の行を混ぜない)、帰属が無ければ predecessor が在れば
+   resume、無ければ launch。拾い直しの turn-floor は行の createdAt で、記録の進みは host の判定だけを信じる。"
+  (<- mine (| dict None) (attribution-of-view view))
+  (setv recorded (if (is mine None) None (.get mine "arm")))
+  (cond
+    (and (is-not mine None)
+         (= (.get mine "agentJobId") job-id)
+         (in recorded #{NEXT-ARM-LAUNCH NEXT-ARM-RESUME NEXT-ARM-REHYDRATE}))
+    recorded
+    (is-not mine None) NEXT-ARM-SEND
+    (is plan.predecessor None) NEXT-ARM-LAUNCH
+    True NEXT-ARM-RESUME))
 
 
 (defk cleanup-after-end [view]
@@ -399,39 +499,59 @@
   (if (= backend BACKEND-HEADLESS) "events" "frames"))
 
 
-(defk conversation-of-session [rows session-id node-name principal]
-  {:pre [(: rows tuple) (: session-id str) (: node-name str) (: principal str)]
-   :post [(: % (| str None))]}
-  "session の id → その session を使った(最新の)手番の会話(spec.subject)。無ければ None。"
-  (setv found None)
-  (setv found-at -1)
-  (for [row rows]
-    (<- sid (| str None) (handle-owned-by row node-name principal))
-    (when (and (= sid session-id) (> row.created-at-ms found-at))
-      (setv subject (.get row.spec "subject"))
-      (when (isinstance subject str)
-        (setv found subject)
-        (setv found-at row.created-at-ms))))
-  found)
-
-
-(defk session-observations-of [views rows node-name principal]
-  {:pre [(: views tuple) (: rows tuple) (: node-name str) (: principal str)]
+(defk session-observations-of [views]
+  {:pre [(: views tuple)]
    :post [(: % list)]}
-  "node の status.observations.sessions — 行と器から導いた
-   [{conversationId, sessionId, state}](生きている温かい session だけ・state は idle | busy)。
-   会話の id を引けない session(行が GC で消えた等)は載せない(発明しない)。"
+  "node の status.observations.sessions — 器の眺めと session に刻んだ帰属から導いた
+   [{conversationId, sessionId, state, account}](生きている温かい session だけ・state は idle | busy・
+   account = 帰属の account(null = 借りていない))。帰属の無い session(段 8q より前に起こした・他の
+   起こし手)は載せない(発明しない)。会話の対応は session の行が覚える事実で、回収される agent-job の
+   行に頼らない(R20)。"
   (setv out [])
   (for [view views]
     (<- alive bool (session-alive view))
     (when (and alive (= view.lifecycle LIFECYCLE-MULTI-TURN))
-      (<- subject (| str None) (conversation-of-session rows view.session-id node-name principal))
-      (when (is-not subject None)
+      (<- mine (| dict None) (attribution-of-view view))
+      (when (is-not mine None)
         (<- idle bool (session-idle view))
-        (.append out {"conversationId" subject
+        (.append out {"conversationId" (get mine "conversationId")
                       "sessionId" view.session-id
-                      "state" (if idle SESSION-OBSERVED-IDLE SESSION-OBSERVED-BUSY)}))))
+                      "state" (if idle SESSION-OBSERVED-IDLE SESSION-OBSERVED-BUSY)
+                      "account" (.get mine "account")}))))
   out)
+
+
+(defk transcript-candidates-of [views sessions limit]
+  {:pre [(: views tuple) (: sessions list) (: limit int)]
+   :post [(: % tuple)]}
+  "node の observations.transcripts の候補(段 8q・R20): 終端の session のうち agentd の帰属と会話の
+   identity を持ち、同じ会話の生きた session が sessions に無いもの — 会話ごとに最新(started_at)の 1 つを
+   新しい順に limit 件。transcript の在否は読まない(呼び手が FsFileSize で確かめる — I/O は handler)。"
+  (setv live (set (gfor item sessions (.get item "conversationId"))))
+  (setv newest {})
+  (for [view views]
+    (<- alive bool (session-alive view))
+    (when (and (not alive) (is-not view.conversation None))
+      (<- mine (| dict None) (attribution-of-view view))
+      (when (and (is-not mine None) (not-in (get mine "conversationId") live))
+        (setv conversation-id (get mine "conversationId"))
+        (setv held (.get newest conversation-id))
+        (when (or (is held None) (> (or view.started-at-ms 0) (or held.started-at-ms 0)))
+          (setv (get newest conversation-id) view)))))
+  (setv ordered (sorted (.values newest)
+                        :key (fn [view] #((- (or view.started-at-ms 0)) view.session-id))))
+  (tuple (cut ordered 0 limit)))
+
+
+(defk transcript-observation-of [view]
+  {:pre [(: view SessionView)]
+   :post [(: % dict)]}
+  "node の observations.transcripts の 1 項 {conversationId, sessionId, account}(帰属から)。"
+  (<- mine (| dict None) (attribution-of-view view))
+  (setv known (if (is mine None) {} mine))
+  {"conversationId" (.get known "conversationId")
+   "sessionId" view.session-id
+   "account" (.get known "account")})
 
 
 ;; ---------------------------------------------------------------------------
@@ -536,12 +656,12 @@
   {:pre [(: backend-kind str) (: arm str)]
    :post [(: % bool)]}
   "起こす手番の本文に inputs の郵便を畳むか — 判定はここ 1 点(R16): host の backend が headless
-   ∧ 腕が起こす腕(launch / resume)。headless の器は 1 手番 = 1 prompt(claude は 1 手番 1 process・
+   ∧ 腕が起こす腕(launch / resume / rehydrate)。headless の器は 1 手番 = 1 prompt(claude は 1 手番 1 process・
    codex は turn/start が手番)で、走っている手番の途中に次の本文を積めない(実弾 2026-09-12:
    launch の直後の send が同じ名で --resume を spawn し `headless session already exists`)。
    send の腕(温かい session)は起こさないので畳む先が無い(郵便の本文だけを send)。tui(tmux /
    herdr)は launch の後に send(pane の paste は手番の途中でも積める)で今日どおり。"
-  (and (= backend-kind BACKEND-HEADLESS) (in arm #{NEXT-ARM-LAUNCH NEXT-ARM-RESUME})))
+  (and (= backend-kind BACKEND-HEADLESS) (in arm #{NEXT-ARM-LAUNCH NEXT-ARM-RESUME NEXT-ARM-REHYDRATE})))
 
 
 (defk first-turn-prompt-of [charter-prompt bodies]
@@ -562,6 +682,160 @@
   (<- folded str (first-turn-prompt-of (if (isinstance prompt str) prompt "") bodies))
   (setv (get next "prompt") folded)
   next)
+
+
+(defk charter-with-history [charter history]
+  {:pre [(: charter dict) (: history str)]
+   :post [(: % dict)]}
+  "履歴からの再開の手番の charter(段 8q・R20): prompt(前置き)の後に「これまでの会話」を空行で足す(記録が無ければ
+   変えない)。郵便の本文はこの後に charter-with-first-turn が畳む(headless)か send で届く(tui)。"
+  (setv next (dict charter))
+  (when (.strip history)
+    (setv prompt (.get charter "prompt"))
+    (setv (get next "prompt")
+          (.join "\n\n" (lfor part [(if (isinstance prompt str) prompt "") history] :if (.strip part) part))))
+  next)
+
+
+(defk incarnation-charter-of [plan choice session-id bodies history attribution backend-kind lease homes-root]
+  {:pre [(: plan LaunchPlan) (: choice ArmChoice) (: session-id str) (: bodies tuple) (: history str)
+         (: attribution dict) (: backend-kind str) (: lease (| LeaseGrant None)) (: homes-root str)]
+   :post [(: % tuple)]}
+  "起こす session の charter を組む 1 点(launch / resume / rehydrate — send は起こさない): 鋳造した id →
+   (rehydrate)これまでの会話 → (headless の起こす腕)郵便の本文 → 借りた札の家 → 帰属。戻り =
+   #(charter auth-file-or-None)(codex の借りた auth.json の置き場 — 書くのは呼び手の effect)。"
+  (<- with-id dict (charter-with-session-id plan.charter session-id))
+  (setv charter with-id)
+  (when (= choice.arm NEXT-ARM-REHYDRATE)
+    (<- with-history dict (charter-with-history charter history))
+    (setv charter with-history))
+  (<- folds bool (first-turn-carries-inputs backend-kind choice.arm))
+  (when folds
+    (<- folded dict (charter-with-first-turn charter bodies))
+    (setv charter folded))
+  (setv auth-file None)
+  (when (and (is-not lease None) (is-not plan.lease-kind None) (is-not plan.account None))
+    (<- granted tuple (charter-with-grant charter plan.lease-kind plan.account
+                                          lease.access-token lease.auth-json homes-root))
+    (setv charter (get granted 0))
+    (setv auth-file (get granted 1)))
+  (<- stamped dict (charter-with-attribution charter attribution))
+  #(stamped auth-file))
+
+
+;; ---------------------------------------------------------------------------
+;; 履歴からの再開(段 8q・R20): ACP の会話の記録 → 「これまでの会話」
+;; ---------------------------------------------------------------------------
+
+(defk history-time-of [at]
+  {:pre [(: at int)]
+   :post [(: % str)]}
+  "記録の時刻(epoch ms)の人の読む綴り(UTC・秒)。"
+  (.strftime (datetime.fromtimestamp (/ at 1000) :tz timezone.utc) "%Y-%m-%dT%H:%M:%SZ"))
+
+
+(defk history-message-line [message at]
+  {:pre [(: message AcpRow) (: at int)]
+   :post [(: % str)]}
+  "郵便 1 通 → 「これまでの会話」の 1 項(差出人 → 宛先(種類): 本文)。"
+  (<- stamp str (history-time-of at))
+  (setv spec message.spec)
+  (setv sender (.get spec "from" "?"))
+  (setv to (.get spec "to" "?"))
+  (setv kind (.get spec "kind" "note"))
+  (setv body (.get spec "body"))
+  (setv text (if (isinstance body str) body ""))
+  f"[{stamp}] {sender} → {to}({kind}): {text}")
+
+
+(defk history-entry-line [entry at]
+  {:pre [(: entry dict) (: at int)]
+   :post [(: % (| str None))]}
+  "turn-record の出来事 1 つ → 「これまでの会話」の 1 項(kind ごとの畳み — 契約 turn-record の entries の
+   閉語彙: text / tool_use / tool_result / system / error。frame は tui の画面の断面で会話ではないので畳まない
+   = None)。"
+  (<- stamp str (history-time-of at))
+  (setv kind (.get entry "kind"))
+  (setv text (.get entry "text"))
+  (setv summary (.get entry "summary"))
+  (setv body (cond (isinstance text str) text (isinstance summary str) summary True ""))
+  (setv tool (.get entry "toolName" ""))
+  (setv failed (if (.get entry "isError") "(誤り)" ""))
+  (cond
+    (= kind "text") f"[{stamp}] agent: {body}"
+    (= kind "tool_use") f"[{stamp}] agent の道具 {tool}: {body}"
+    (= kind "tool_result") f"[{stamp}] 道具の結果{failed}: {body}"
+    (= kind "system") f"[{stamp}] system: {body}"
+    (= kind "error") f"[{stamp}] 誤り: {body}"
+    True None))
+
+
+(defk rehydrate-history-of [conversation-id messages records exclude budget]
+  {:pre [(: conversation-id str) (: messages tuple) (: records tuple) (: exclude tuple) (: budget int)]
+   :post [(: % HistoryFold)]}
+  "ACP の会話の記録 → 履歴からの再開の手番の最初の本文に畳む「これまでの会話」(段 8q・R20)— 判断はここ 1 点:
+   郵便(spec.to か spec.from がこの会話・exclude = この手番の inputs は除く — 本文として別に届く)と
+   turn-record(spec.conversationId がこの会話)の entries を時刻順(同じ時刻は郵便が先)に並べ、会話へ
+   届いた郵便(spec.to = この会話)ごとに手番に割る。UTF-8 で budget byte を超えたら**古い手番から要約せず
+   落とし**、落とした手番と項の数と全文の在処(ACP の会話の記録)を末尾に名乗る。最新の手番 1 つだけでも
+   超えるならその手番の先頭を落として末尾を残し、切った byte を名乗る。記録が無ければ text は空。"
+  (setv items [])
+  (setv order 0)
+  (for [message messages]
+    (setv spec message.spec)
+    (setv message-id (.get spec "id" message.resource-id))
+    (setv inbound (= (.get spec "to") conversation-id))
+    (when (and (or inbound (= (.get spec "from") conversation-id)) (not-in message-id exclude))
+      (setv at (.get spec "at"))
+      (<- line str (history-message-line message (if (isinstance at int) at message.created-at-ms)))
+      (.append items #((if (isinstance at int) at message.created-at-ms) order inbound line))
+      (setv order (+ order 1))))
+  (for [record records]
+    (when (= (.get record.spec "conversationId") conversation-id)
+      (setv status (if (isinstance record.status dict) record.status {}))
+      (setv entries (.get status "entries"))
+      (for [entry (if (isinstance entries list) entries [])]
+        (when (isinstance entry dict)
+          (setv at (.get entry "at"))
+          (setv stamp (if (isinstance at int) at record.created-at-ms))
+          (<- line (| str None) (history-entry-line entry stamp))
+          (when (is-not line None)
+            (.append items #(stamp order False line))
+            (setv order (+ order 1)))))))
+  (setv groups [])
+  (for [item (sorted items :key (fn [item] #((get item 0) (get item 1))))]
+    (if (or (not groups) (get item 2))
+        (.append groups [(get item 3)])
+        (.append (get groups -1) (get item 3))))
+  (when (not groups)
+    (return (HistoryFold :text "" :kept-turns 0 :dropped-turns 0 :dropped-items 0 :size-bytes 0)))
+  (setv header f"これまでの会話(ACP の記録から組んだ写し・会話 {conversation-id}・古い順):")
+  (setv where (+ f"全文は ACP の会話 {conversation-id} の記録 — kind message(spec.to / spec.from = {conversation-id})"
+                 f"と kind turn-record(spec.conversationId = {conversation-id})の行 — にあります"))
+  (setv blocks (lfor group groups (.join "\n" group)))
+  (setv dropped-turns 0)
+  (setv dropped-items 0)
+  (setv footer "")
+  (setv text (.join "\n\n" (+ [header] blocks)))
+  (while (and (> (len (.encode text "utf-8")) budget) (> (- (len blocks) dropped-turns) 1))
+    (setv dropped-items (+ dropped-items (len (get groups dropped-turns))))
+    (setv dropped-turns (+ dropped-turns 1))
+    (setv footer (+ f"(上限 {budget} byte を超えるため、古い手番 {dropped-turns} 件(出来事と郵便 {dropped-items} 件)を"
+                    f"要約せずに落としました。{where})"))
+    (setv text (.join "\n\n" (+ [header] (cut blocks dropped-turns None) [footer]))))
+  (when (> (len (.encode text "utf-8")) budget)
+    (setv newest (.encode (get blocks -1) "utf-8"))
+    (setv notice (+ f"(上限 {budget} byte を超えるため、" (if (> dropped-turns 0) f"古い手番 {dropped-turns} 件(出来事と郵便 {dropped-items} 件)を落とし、" "")
+                    f"最新の手番の先頭を落としました。{where})"))
+    (setv fixed (+ (len (.encode header "utf-8")) (len (.encode notice "utf-8")) 4))
+    (setv room (max 0 (- budget fixed)))
+    (setv tail (.decode (cut newest (max 0 (- (len newest) room)) None) "utf-8" :errors "ignore"))
+    (setv text (.join "\n\n" [header tail notice])))
+  (HistoryFold :text text
+               :kept-turns (- (len blocks) dropped-turns)
+               :dropped-turns dropped-turns
+               :dropped-items dropped-items
+               :size-bytes (len (.encode text "utf-8"))))
 
 
 (defk inputs-of [row]
@@ -669,11 +943,12 @@
   found)
 
 
-(defk node-status-with-lease [row settings now-ms sessions]
-  {:pre [(: row AcpRow) (: settings AgentdSettings) (: now-ms int) (: sessions list)]
+(defk node-status-with-lease [row settings now-ms sessions transcripts]
+  {:pre [(: row AcpRow) (: settings AgentdSettings) (: now-ms int) (: sessions list) (: transcripts list)]
    :post [(: % dict)]}
   "agentd が書く欄だけを更新した node の status: lease{owner, heartbeatAt, expiresAt} と
-   observations{streamCapability, sessions, ownership?}(sessions = session-observations-of の列・
+   observations{streamCapability, sessions, transcripts, ownership?}(sessions = session-observations-of の列・
+   transcripts = 終端の session のうち transcript がこの機体に残る会話の列〔段 8q〕・
    ownership = 起動の前に検めた所有の等級 {grade, proof} — 宣言が無ければ欄ごと書かない = 未観測・
    段 6 lane 6f)。state(scheduling の欄)は写すだけ。"
   (<- next dict (status-object-of row))
@@ -683,7 +958,8 @@
          "expiresAt" (+ now-ms (* 1000 settings.node-lease-ttl-seconds))})
   (setv observations
         {"streamCapability" settings.stream-capability
-         "sessions" sessions})
+         "sessions" sessions
+         "transcripts" transcripts})
   (when (is-not settings.ownership None)
     (setv (get observations "ownership")
           {"grade" settings.ownership.grade "proof" settings.ownership.proof}))
@@ -842,12 +1118,15 @@
 (defk turn-record-spec-of [job]
   {:pre [(: job InFlightJob)]
    :post [(: % dict)]}
-  "契約 turn-record の spec(conversationId・agentJobId・node・profile・model)。"
+  "契約 turn-record の spec(conversationId・agentJobId・node・profile・model・sessionId)。sessionId = この手番を
+   走らせた session(段 8q — Messaging が次の手番の affinity.predecessor に名指す綴り。書かないと会話の前の
+   session が名指されず、温かい session が片付いた次の手番は文脈なしで起きる)。"
   {"conversationId" job.subject
    "agentJobId" job.job-id
    "node" job.node
    "profile" job.profile
-   "model" job.model})
+   "model" job.model
+   "sessionId" job.session-id})
 
 
 (defk entries-of-status [status]

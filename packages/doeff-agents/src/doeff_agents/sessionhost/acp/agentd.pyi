@@ -8,6 +8,7 @@ from doeff_agents.sessionhost.acp.effects import (
     AcpRow,
     AgentdSettings,
     AgentdState,
+    ArmChoice,
     InFlightJob,
     LaunchPlan,
     LeaseGrant,
@@ -16,6 +17,7 @@ from doeff_agents.sessionhost.acp.effects import (
 
 def retire_sessions(session_ids: tuple, reason: str) -> Program: ...
 def join_tick(settings: AgentdSettings, state: AgentdState, now_ms: int) -> Program: ...
+def observe_transcripts(settings: AgentdSettings, views: tuple, sessions: list) -> Program: ...
 def observe_profiles(settings: AgentdSettings, state: AgentdState, now_ms: int) -> Program: ...
 def observe_held_profiles(
     settings: AgentdSettings, held_rows: tuple, by_name: dict, counts: dict
@@ -28,8 +30,30 @@ def end_job_now(
     pending: tuple,
     now_ms: int,
 ) -> Program: ...
-def borrow_for(settings: AgentdSettings, plan: LaunchPlan, purpose: str) -> Program: ...
-def incarnate(plan: LaunchPlan, charter: dict, arm: str, view: SessionView | None) -> Program: ...
+def borrow_lease(plan: LaunchPlan, purpose: str) -> Program: ...
+def history_for(settings: AgentdSettings, subject: str, exclude: tuple) -> Program: ...
+def incarnate(
+    settings: AgentdSettings,
+    plan: LaunchPlan,
+    choice: ArmChoice,
+    view: SessionView | None,
+    session_id: str,
+    lease: LeaseGrant | None,
+    bodies: tuple,
+    job_id: str,
+    subject: str,
+    exclude: tuple,
+) -> Program: ...
+def start_claimed(
+    settings: AgentdSettings,
+    state: AgentdState,
+    row: AcpRow,
+    plan: LaunchPlan,
+    choice: ArmChoice,
+    view: SessionView | None,
+    session_id: str,
+    now_ms: int,
+) -> Program: ...
 def claim_job(
     settings: AgentdSettings,
     state: AgentdState,
