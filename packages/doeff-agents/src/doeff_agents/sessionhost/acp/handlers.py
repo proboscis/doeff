@@ -54,7 +54,7 @@ from typing import TypeAlias
 from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.agentd_client import AgentdClient, AgentdClientError, launch_rpc_timeout_seconds
 from doeff_agents.sessionhost.acp.effects import (
-    AcpConversationHistory,
+    AcpConversationMail,
     AcpCreate,
     AcpEventWindow,
     AcpGet,
@@ -62,13 +62,13 @@ from doeff_agents.sessionhost.acp.effects import (
     AcpPutStatus,
     AcpRow,
     AcpStreamPush,
+    AcpTurnHeadlines,
     AcpWatchSse,
     CaptureFrame,
     CaptureGone,
     CaptureOutcome,
     ClockNowMs,
     Conflict,
-    ConversationHistory,
     CustodyLeaseBorrow,
     CustodyLeaseRevoke,
     EventWindow,
@@ -453,7 +453,8 @@ class AcpHttp:
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(
-            effect, (AcpGet, AcpGetRow, AcpEventWindow, AcpWatchSse, AcpConversationHistory)
+            effect,
+            (AcpGet, AcpGetRow, AcpEventWindow, AcpWatchSse, AcpConversationMail, AcpTurnHeadlines),
         ):
             return Resume(k, self._read(effect))
         if isinstance(effect, (AcpPutStatus, AcpCreate, AcpStreamPush)):
@@ -462,15 +463,21 @@ class AcpHttp:
 
     def _read(
         self,
-        effect: AcpGet | AcpGetRow | AcpEventWindow | AcpWatchSse | AcpConversationHistory,
+        effect: AcpGet
+        | AcpGetRow
+        | AcpEventWindow
+        | AcpWatchSse
+        | AcpConversationMail
+        | AcpTurnHeadlines,
     ) -> object:
         if isinstance(effect, AcpGet):
             return self._list(effect.kind)
-        if isinstance(effect, AcpConversationHistory):
-            # ACP に欄の絞りの口は無いので 2 つの kind を読むだけ(会話で絞るのは judgment)。
-            return ConversationHistory(
-                messages=self._list(MESSAGE_KIND), records=self._list(TURN_RECORD_KIND)
-            )
+        if isinstance(effect, AcpConversationMail):
+            # ACP に欄の絞りの口は無いので kind を読むだけ(会話で絞るのは judgment)。
+            return self._list(MESSAGE_KIND)
+        if isinstance(effect, AcpTurnHeadlines):
+            # 薄い再開の拍だけ(段 9q・#77): kind の全量(実測 29,913 行 / 172 MB / 59 秒)。
+            return self._list(TURN_RECORD_KIND)
         if isinstance(effect, AcpGetRow):
             return self._row(effect.key)
         if isinstance(effect, AcpEventWindow):

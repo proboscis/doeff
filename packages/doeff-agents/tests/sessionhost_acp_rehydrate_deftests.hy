@@ -13,6 +13,8 @@
 ;;;     turn-record の spec に sessionId / service が届かない・配線されていない → 薄い再開を名乗る / 上限まで頁を後向きに読む
 ;;;   * 家の鍵の model(段 9o lane 9o-3・agora-redesign #75): 同じ機体・profile の家・model なら温かい session へ send /
 ;;;     model だけが違えば送らず(片付いた session も --resume せず)charter.model の新しい session を履歴から再開(本文は service から)
+;;;   * 再開の材料は名指しの順(段 9q・agora-redesign #77): service が答えた拍は ACP の turn-record の全量(見出し)を読まない・
+;;;     家が変わる手番の claim は温かい手番と同じ拍に着地する(器の準備は claim の後)・見出しを読むのは薄い再開の拍だけ
 ;;; HTTP も subprocess も無い。
 
 (require doeff-hy.macros [deftest])
@@ -360,6 +362,7 @@
   (assert (= (.sid world "j-2") warm))
   (assert (= (get world.sessions.sends -1) #(warm "合言葉は何でしたか" True)))
   (assert (= world.acp.history-reads []) "温かい send は ACP の記録を読まない")
+  (assert (= world.acp.headline-reads []) "温かい send は ACP の見出しを読まない")
   (assert (= world.record-service.reads []) "温かい send は記録の service を読まない")
   (setv metric (get (lfor m world.local.metrics :if (= (get m "metric") "agent-job-to-send") m) -1))
   (assert (= (get metric "arm") "send")))
@@ -454,6 +457,7 @@
   (assert (not-in "覚えました" prompt) "見出しに無い本文が prompt に在る")
   (assert (any (gfor line world.local.logs (in "rehydrates thinly from ACP headlines" line))) world.local.logs)
   (assert (= (len world.record-service.reads) 1))
+  (assert (= world.acp.headline-reads [CONVERSATION]) "薄い再開の拍は見出し(turn-record の全量)を 1 度読む(段 9q)")
   ;; 配線されていない(弁 off)世界も薄い再開で、Record* は 1 つも撃たない。
   (setv bare (World "headless"))
   (.put-row bare.acp (message-row "m-1" CONVERSATION "operator" "合言葉は ひまわり" (- AT 9000)))
@@ -464,7 +468,83 @@
   (setv bare-prompt (str-at (get bare.sessions.launches 0) "prompt"))
   (assert (in "これまでの会話(薄い再開・" bare-prompt) bare-prompt)
   (assert (in "RECORD_SERVICE_URL is unset" bare-prompt) bare-prompt)
-  (assert (= bare.record-service.reads [])))
+  (assert (= bare.record-service.reads []))
+  (assert (= bare.acp.headline-reads [CONVERSATION]) "弁 off の薄い再開も見出しを 1 度読む(段 9q)"))
+
+
+(deftest test-rehydrate-reads-no-turn-record-list-when-the-record-service-answers
+  ;; 段 9q(agora-redesign #77): 記録の service が答えた拍は ACP の turn-record の全量(見出し)を読まない — 本番の kind は
+  ;; 29,913 行 / 172 MB / 頭の応答 59 秒で、claim(0.3 秒)の後の準備が 134 秒になり node の lease(90 秒)が切れていた。
+  ;; 材料 = 本文は service(RecordRead 1 頁)・郵便は kind message(AcpConversationMail 1 度)・見出しは読まない。
+  (setv world (World "tmux" True))
+  (setv warm (run-first-turn world))
+  (.put-row world.acp (record-row "j-old" CONVERSATION [{"seq" 0 "at" (- AT 8000) "kind" "text" "bytes" 20 "sha256" "0"}] (- AT 8500)))
+  (.put-row world.acp (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (+ world.local.now-ms 100)))
+  (.put-row world.acp (bound-row "j-2" ["m-2"] "other" warm))
+  (.tick world 1000)
+  (assert (= world.sessions.cleanups [warm]) world.local.logs)
+  (assert (= (len world.sessions.launches) 2) world.local.logs)
+  (assert (= world.record-service.reads [#(CONVERSATION None RECORD-PAGE-MAX-LIMIT)]) world.record-service.reads)
+  (assert (= world.acp.history-reads [CONVERSATION]) "郵便は 1 度読む")
+  (assert (= world.acp.headline-reads []) "service が答えた拍に turn-record の全量(見出し)を読んだ(段 9q)")
+  (assert (not-in TURN-RECORD-KIND world.acp.lists) "turn-record の全量 list(AcpGet)を撃った(段 9q)")
+  (setv prompt (str-at (get world.sessions.launches -1) "prompt"))
+  (assert (in "agent: 覚えました" prompt) prompt)
+  (assert (not-in "見出しだけ" prompt) "service が答えたのに見出しの行を畳んだ")
+  (setv line (get (lfor l world.local.logs :if (in f"rehydrates conversation {CONVERSATION} from the record service" l) l) -1))
+  (assert (in ", history read " line) line))
+
+
+(deftest test-home-change-claims-in-the-same-tick-as-a-warm-turn-without-a-turn-record-list
+  ;; 段 9q(agora-redesign #77)の受け入れ: 家が変わる手番(履歴からの再開)の claim は温かい手番と同じ拍に着地し
+  ;; (claim = 宣言の照合だけ・器の準備は claim の後)、その拍が ACP に撃つ全量 list は agent-job の 1 本と郵便の 1 度だけ
+  ;; (turn-record の全量は撃たない)。2 つの会話 — CONVERSATION は家が変わる手番・OTHER は同じ家の温かい手番 — を同じ拍に
+  ;; Bound にして、両方が同じ拍で Running(sessionHandle あり)になることを確かめる。
+  (setv world (World "tmux" True))
+  (setv warm (run-first-turn world))
+  (.put-row world.acp (message-row "o-1" OTHER "operator" "こんにちは" (- AT 400)))
+  (.put-row world.acp (AcpRow :namespace AGENT-JOB-NAMESPACE :key f"{AGENT-JOB-NAMESPACE}:{AGENT-JOB-KIND}:k-1"
+                              :kind AGENT-JOB-KIND :resource-id "k-1" :version "v1" :generation 1 :created-at-ms 600
+                              :labels {} :payload {}
+                              :spec {"subject" OTHER "inputs" ["o-1"]
+                                     "charter" {"agent_type" "claude" "work_dir" "/work" "prompt" "start" "model" "claude-opus-5"}}
+                              :status {"phase" PHASE-BOUND "binding" {"node" NODE "profile" "personal" "account" "acct"}
+                                       "conditions" []}))
+  (.tick world 1000)
+  (setv other-warm (.sid world "k-1"))
+  (setv other-path f"/homes/claude/acct/projects/-work/{other-warm}.jsonl")
+  (setv (get world.local.transcripts other-path)
+        (+ (.get world.local.transcripts other-path "") (assistant-line "こんにちは")))
+  (.tick world 1000)
+  (.finish-turn world.sessions other-warm (+ world.local.now-ms 200))
+  (.tick world 1000)
+  (assert (= world.state.jobs #()) world.local.logs)
+  (setv lists-before (len world.acp.lists))
+  ;; 同じ拍に 2 つの Bound: 家が変わる手番(CONVERSATION・account other)と温かい手番(OTHER・同じ家)。
+  (.put-row world.acp (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (+ world.local.now-ms 100)))
+  (.put-row world.acp (bound-row "j-2" ["m-2"] "other" warm))
+  (.put-row world.acp (message-row "o-2" OTHER "operator" "続き" (+ world.local.now-ms 100)))
+  (.put-row world.acp (AcpRow :namespace AGENT-JOB-NAMESPACE :key f"{AGENT-JOB-NAMESPACE}:{AGENT-JOB-KIND}:k-2"
+                              :kind AGENT-JOB-KIND :resource-id "k-2" :version "v1" :generation 1 :created-at-ms 700
+                              :labels {} :payload {}
+                              :spec {"subject" OTHER "inputs" ["o-2"] "affinity" {"predecessor" other-warm}
+                                     "charter" {"agent_type" "claude" "work_dir" "/work" "prompt" "start" "model" "claude-opus-5"}}
+                              :status {"phase" PHASE-BOUND "binding" {"node" NODE "profile" "personal" "account" "acct"}
+                                       "conditions" []}))
+  (.tick world 1000)
+  (assert (= (get (.job-status world "j-2") "phase") "Running") (.job-status world "j-2"))
+  (assert (= (get (.job-status world "k-2") "phase") "Running") (.job-status world "k-2"))
+  (assert (!= (.sid world "j-2") warm) "家が変わる手番は新しい session")
+  (assert (= (.sid world "k-2") other-warm) "温かい手番は同じ session へ")
+  (setv arms (dfor m world.local.metrics :if (= (get m "metric") "agent-job-to-send") (get m "agentJobId") (get m "arm")))
+  (assert (= (get arms "j-2") "rehydrate") arms)
+  (assert (= (get arms "k-2") "send") arms)
+  (assert (= world.acp.history-reads [CONVERSATION]) "郵便の読みは家が変わる手番の 1 度だけ")
+  (assert (= world.acp.headline-reads []) "service が答えた拍に turn-record の全量を読んだ(段 9q)")
+  (setv lists-in-tick (cut world.acp.lists lists-before None))
+  (assert (not-in TURN-RECORD-KIND lists-in-tick) lists-in-tick)
+  (assert (not-in MESSAGE-KIND lists-in-tick) lists-in-tick)
+  (assert (= world.record-service.reads [#(CONVERSATION None RECORD-PAGE-MAX-LIMIT)]) world.record-service.reads))
 
 
 (deftest test-rehydrate-pages-backwards-until-the-budget-is-covered

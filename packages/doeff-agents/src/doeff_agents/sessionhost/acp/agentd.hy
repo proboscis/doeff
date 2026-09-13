@@ -52,7 +52,11 @@
 ;;; binding・model の組 — 段 9o lane 9o-3)の時だけで、
 ;;; 家か機体が違えば cache の失効を受け入れ(operator 決定 #54)、家の違う温かい session は片付けて rehydrate(ACP の
 ;;; 会話の記録を最初の本文に畳む — judgment.rehydrate-history-of・上限は AgentdSettings.rehydrate_history_byte_budget・
-;;; 文脈の圧縮は別 issue #55)、resume が断られたら rehydrate(judgment.fallback-arm-of)。node の observations は sessions に account、transcripts に「終端だが
+;;; 文脈の圧縮は別 issue #55)、resume が断られたら rehydrate(judgment.fallback-arm-of)。再開の材料の読みは名指しの順(段 9q・#77):
+;;; 手番の本文は記録の service(RecordRead・会話 1 つ)、郵便は ACP の kind message(AcpConversationMail)、ACP の turn-record の
+;;; 見出し(AcpTurnHeadlines = kind の全量・実測 29,913 行 / 172 MB / 59 秒)は service が答えなかった薄い再開の拍にだけ読む —
+;;; claim(AcpPutStatus)は宣言の照合だけで即時(実測 0.3 秒)、器の準備(再開の読み・畳み)は claim の後の腕で、node の
+;;; lease(TTL 90 秒)より長く tick を塞いではならない。node の observations は sessions に account、transcripts に「終端だが
 ;;; transcript がこの機体に残る会話」を載せ、Scheduling は (node, account) で親和と起こし方の語を決める。
 ;;;
 ;;; 会話の記録の service への二重書き(段 9f lane 9f-2・agora-redesign #59・設計 §2.4・既知の形 = runner の transactional
@@ -88,7 +92,7 @@
 (import doeff_agents.sessionhost.acp.effects [
   AGENT-JOB-KIND
   AGORA-KINDS-NAMESPACE
-  AcpConversationHistory
+  AcpConversationMail
   AcpCreate
   AcpEventWindow
   AcpGet
@@ -96,6 +100,7 @@
   AcpPutStatus
   AcpRow
   AcpStreamPush
+  AcpTurnHeadlines
   AcpWatchSse
   AgentdSettings
   AgentdState
@@ -104,7 +109,6 @@
   CaptureGone
   ClockNowMs
   Conflict
-  ConversationHistory
   CustodyLeaseBorrow
   CustodyLeaseRevoke
   DeltaBatch
@@ -479,23 +483,39 @@
             #(lease None)))))
 
 
-(defk record-turns-for [settings subject records]
-  {:pre [(: settings AgentdSettings) (: subject str) (: records tuple)]
+(defk headline-turns-for [subject reason]
+  {:pre [(: subject str) (: reason str)]
+   :post [(: % HeadlineTurns)]}
+  "薄い再開の材料(段 9f lane 9f-4・段 9q・agora-redesign #77): ACP の turn-record の見出しは、記録の service が答えなかった
+   拍にだけ読む(AcpTurnHeadlines = kind の全量 list — 実測 2026-09-14: 29,913 行・172 MB・頭の応答 59 秒)。service が
+   答えた拍に撃つと、claim は 0.3 秒で着地しているのに送るまで 134 秒かかり、node の lease(TTL 90 秒)が切れて
+   Scheduling が Running の行を Pending に戻す(実弾 aj-E61AWHDW…・aj-HV9TMD3D…)。読む前に薄い再開と理由を名乗る。"
+  (<- (LogLine :text f"agentd: conversation {subject} rehydrates thinly from ACP headlines — {reason}"))
+  (<- records tuple (AcpTurnHeadlines :conversation-id subject))
+  (HeadlineTurns :records records :reason reason))
+
+
+(defk record-turns-for [settings subject]
+  {:pre [(: settings AgentdSettings) (: subject str)]
    :post [(: % (| RecordedTurns HeadlineTurns))]}
   "履歴からの再開の手番の材料(段 9f lane 9f-4・設計 §2.4): 会話の記録の service を before=latest から後向きに読み
    (RecordRead — 1 頁 = RECORD-PAGE-MAX-LIMIT)、畳みの上限に届くか会話の最初まで読めたら止める(判断 =
    judgment.record-history-satisfied)。service が配線されていない(弁 off)・届かない・頁の途中で読めなくなった時は
    ACP の見出し(turn-record の行)で**薄く再開する**と名乗る(HeadlineTurns — 本文の無い行を本文として扱わない・型で
-   分ける)。"
+   分ける)。見出しを読むのは headline-turns-for の 1 点で、service が答えた拍には読まない(段 9q)。"
   (when (not settings.record-enabled)
-    (return (HeadlineTurns :records records :reason "record service is not configured (RECORD_SERVICE_URL is unset)")))
+    (<- unconfigured HeadlineTurns
+        (headline-turns-for subject "record service is not configured (RECORD_SERVICE_URL is unset)"))
+    (return unconfigured))
   (setv events [])
   (setv before None)
   (setv complete False)
   (while True
     (<- page (| RecordPage RecordUnread) (RecordRead :conversation-id subject :before before :limit RECORD-PAGE-MAX-LIMIT))
     (when (isinstance page RecordUnread)
-      (return (HeadlineTurns :records records :reason f"record service read failed ({page.status}: {page.error})")))
+      (<- unread HeadlineTurns
+          (headline-turns-for subject f"record service read failed ({page.status}: {page.error})"))
+      (return unread))
     (setv events (+ (list page.events) events))
     (when (is page.next None)
       (setv complete True)
@@ -514,14 +534,13 @@
 (defk history-for [settings subject exclude]
   {:pre [(: settings AgentdSettings) (: subject str) (: exclude tuple)]
    :post [(: % HistoryFold)]}
-  "履歴からの再開の「これまでの会話」(R20・段 9f lane 9f-4): 郵便と手番の行を ACP から 1 度読み(AcpConversationHistory —
-   手番を起こし直す時だけ)、手番の本文は会話の記録の service から(record-turns-for — 届かなければ ACP の見出しで薄い
-   再開)、畳みは judgment.rehydrate-history-of の 1 点(上限 AgentdSettings.rehydrate_history_byte_budget)。"
-  (<- recorded ConversationHistory (AcpConversationHistory :conversation-id subject))
-  (<- source (| RecordedTurns HeadlineTurns) (record-turns-for settings subject recorded.records))
-  (when (isinstance source HeadlineTurns)
-    (<- (LogLine :text f"agentd: conversation {subject} rehydrates thinly from ACP headlines — {source.reason}")))
-  (<- fold HistoryFold (rehydrate-history-of subject recorded.messages source exclude
+  "履歴からの再開の「これまでの会話」(R20・段 9f lane 9f-4・段 9q): 手番の本文は会話の記録の service から
+   (record-turns-for — 届かなければ ACP の見出しで薄い再開・見出しはその拍にだけ読む)、郵便は ACP の kind message を
+   1 度読み(AcpConversationMail — 手番を起こし直す時だけ)、畳みは judgment.rehydrate-history-of の 1 点(上限
+   AgentdSettings.rehydrate_history_byte_budget)。"
+  (<- source (| RecordedTurns HeadlineTurns) (record-turns-for settings subject))
+  (<- messages tuple (AcpConversationMail :conversation-id subject))
+  (<- fold HistoryFold (rehydrate-history-of subject messages source exclude
                                              settings.rehydrate-history-byte-budget))
   fold)
 
@@ -541,12 +560,14 @@
       (do
         (setv history "")
         (when (= choice.arm NEXT-ARM-REHYDRATE)
+          (<- read-started int (ClockNowMs))
           (<- fold HistoryFold (history-for settings subject exclude))
+          (<- read-ended int (ClockNowMs))
           (setv history fold.text)
           (<- (LogLine :text (+ f"agentd: job {job-id} rehydrates conversation {subject} "
                                      (if fold.thin "thinly from ACP headlines " "from the record service ")
                                      f"({fold.kept-turns} turns kept, {fold.dropped-turns} dropped, "
-                                     f"{fold.size-bytes} bytes)"))))
+                                     f"{fold.size-bytes} bytes, history read {(- read-ended read-started)} ms)"))))
         (<- attribution dict (session-attribution-of plan job-id subject choice.arm))
         (<- built tuple (incarnation-charter-of plan choice session-id bodies history attribution
                                                 settings.backend-kind lease settings.homes-root))

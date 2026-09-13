@@ -9,7 +9,8 @@ session を起こし、手番の記録と実況を ACP へ書く」腕で、判�
   agentd 自身の器(sessionhost の RPC)への要求 = ``Session*``、時計・計器・file の
   読み書き = ``ClockNowMs`` / ``MetricLine`` / ``LogLine`` / ``FsCanonicalPath`` /
   ``FsWritePrivateText``、この機体が持つ資格の残量 = ``ReadProfileUsage``(段 7 lane 7d-3)、
-  会話の記録(郵便 + 手番の記録)の読み = ``AcpConversationHistory``(段 8q の履歴からの再開)。
+  履歴からの再開の材料(段 8q・段 9q)= 郵便の読み ``AcpConversationMail`` と、記録の service が答えなかった時だけの
+  手番の見出しの読み ``AcpTurnHeadlines``(薄い再開 — agora-redesign #77)。
 - 会話の記録の service への二重書き(段 9f lane 9f-2)= ``RecordSpoolPut`` / ``RecordSpoolList`` /
   ``RecordSpoolRemove``(本文の batch の spool — 送る前の outbox)/ ``RecordSpoolGiveUp``(決まった断りの batch の隔離 —
   段 9f lane 9f-8)と ``RecordAppend``(契約 record-service.json の
@@ -683,15 +684,6 @@ class ArmChoice:
 
 
 @dataclass(frozen=True)
-class ConversationHistory:
-    """1 つの会話の記録の材料(AcpConversationHistory の答え): 郵便(kind message)と手番の記録
-    (kind turn-record)の行。会話で絞るのは judgment(rehydrate-history-of)で、handler は読むだけ。"""
-
-    messages: tuple[AcpRow, ...]
-    records: tuple[AcpRow, ...]
-
-
-@dataclass(frozen=True)
 class HistoryFold:
     """履歴からの再開の「これまでの会話」(judgment.rehydrate-history-of の答え)。text = 最初の本文に畳む
     文(記録が無ければ空)・kept_turns / dropped_turns = 残した / 上限で落とした手番の数・
@@ -1038,11 +1030,23 @@ class AcpGetRow(EffectBase):
 
 
 @dataclass(frozen=True)
-class AcpConversationHistory(EffectBase):
-    """会話の記録の材料を読む(段 8q の履歴からの再開 — 手番を起こし直す時の 1 回だけ): kind message と
-    kind turn-record の行(``GET /api/resources?kind=``・ACP に欄の絞りの口は無い)。結果 =
-    ConversationHistory(``conversation_id`` での絞りは judgment.rehydrate-history-of)。watch の拍では
-    撃たない(郵便の本文は鍵で 1 行ずつ — R14)。"""
+class AcpConversationMail(EffectBase):
+    """会話の郵便を読む(段 8q の履歴からの再開 — 手番を起こし直す時の 1 回だけ): kind message の行
+    (``GET /api/resources?kind=message``・ACP に欄の絞りの口は無いので kind の全量 — ``conversation_id`` での
+    絞りは judgment.rehydrate-history-of)。結果 = tuple[AcpRow, ...]。手番の本文はここでは読まない(本文は
+    記録の service = RecordRead・見出しは AcpTurnHeadlines)。watch の拍では撃たない(郵便の本文は鍵で
+    1 行ずつ — R14)。"""
+
+    conversation_id: str
+
+
+@dataclass(frozen=True)
+class AcpTurnHeadlines(EffectBase):
+    """会話の手番の見出し(kind turn-record の行)を読む — **薄い再開の拍だけ**(記録の service が配線されて
+    いない・答えなかった時 — 段 9q・agora-redesign #77)。``GET /api/resources?kind=turn-record`` は kind の全量
+    (実測 2026-09-14: 29,913 行・172 MB・頭の応答 59 秒)なので、service が答えた拍には撃たない — 撃つと
+    claim の後の手番の準備が 2 分を超え、node の lease(TTL 90 秒)が切れて Scheduling が Running の行を
+    Pending に戻す。結果 = tuple[AcpRow, ...](``conversation_id`` での絞りは judgment.rehydrate-history-of)。"""
 
     conversation_id: str
 
