@@ -180,7 +180,11 @@ def _assert_joined_and_claimed(world: World) -> None:
     assert isinstance(lease, dict)
     assert lease["owner"] == "agentd"
     assert lease["expiresAt"] == 1_000 + 90 * 1_000
-    assert node.status["observations"] == {"streamCapability": "frames", "sessions": []}
+    assert node.status["observations"] == {
+        "streamCapability": "frames",
+        "sessions": [],
+        "transcripts": [],
+    }
     assert node.status["state"] == "joined"
 
     job = world.job("s-1")
@@ -215,6 +219,7 @@ def _assert_launched_with_borrowed_token(world: World) -> None:
         "node": NODE,
         "profile": "personal",
         "model": "claude-opus-5",
+        "sessionId": "sid-1",
     }
     assert record.status == {"state": "running"}
     assert world.pushed_kinds() == ["status"]
@@ -907,13 +912,15 @@ def test_idle_session_past_the_ttl_is_cleaned_up() -> None:
     assert world.sessions.cleanups == []
     world.tick(advance_ms=600_000)
     assert world.sessions.cleanups == [world.sid("j-1")]
-    # 片付いた後の次の手番は cold launch — 新しく鋳造した id(片付いた行と衝突しない)。
+    # 片付いた後の次の手番は同じ機体 ∧ 同じ家なので片付いた session から cold の --resume(cache を保つ・
+    # operator 決定 #54)— 新しく鋳造した id(片付いた行と衝突しない)。
     world.acp.put_row(message("m-2", "second"))
     world.acp.put_row(bound_job("j-2", inputs=["m-2"]))
     world.tick(advance_ms=1_000)
-    assert len(world.sessions.launches) == 2
+    assert len(world.sessions.launches) == 1
+    assert [resumed["session_id"] for resumed in world.sessions.resumes] == [world.sid("j-1")]
     assert world.sid("j-2") != world.sid("j-1")
-    assert world.sessions.launches[-1]["session_id"] == world.sid("j-2")
+    assert world.sessions.resumes[-1]["new_session_id"] == world.sid("j-2")
     job2 = world.job("j-2")
     assert job2.status is not None
     assert job2.status["phase"] == PHASE_RUNNING
@@ -934,7 +941,12 @@ def test_node_observations_carry_the_conversation_sessions() -> None:
     observations = node.status["observations"]
     assert isinstance(observations, dict)
     assert observations["sessions"] == [
-        {"conversationId": CONVERSATION, "sessionId": world.sid("j-1"), "state": "idle"}
+        {
+            "conversationId": CONVERSATION,
+            "sessionId": world.sid("j-1"),
+            "state": "idle",
+            "account": "acct",
+        }
     ]
 
 
@@ -1087,19 +1099,61 @@ def test_charter_lifecycle_is_respected_when_declared() -> None:
 
 
 def test_next_arm_for_job_is_the_one_decision() -> None:
-    plan_plain = run(judgment.launch_plan_of(bound_job("a", inputs=[])))
-    plan_pred = run(judgment.launch_plan_of(bound_job("b", inputs=[], predecessor="p")))
-    warm = _view("p", "running", lifecycle="multi_turn", turn_ended_at_ms=10)
-    busy = _view("p", "running", lifecycle="multi_turn", turn_ended_at_ms=None)
-    dead = _view("p", "exited", lifecycle="multi_turn", turn_ended_at_ms=10)
-    assert run(judgment.next_arm_for_job(plan_plain, None)) == "launch"
-    assert run(judgment.next_arm_for_job(plan_plain, warm)) == "send"
-    assert run(judgment.next_arm_for_job(plan_plain, busy)) == "defer"
-    assert run(judgment.next_arm_for_job(plan_plain, dead)) == "launch"
-    assert run(judgment.next_arm_for_job(plan_pred, None)) == "resume"
-    assert run(judgment.next_arm_for_job(plan_pred, warm)) == "send"
-    assert run(judgment.next_arm_for_job(plan_pred, busy)) == "defer"
-    assert run(judgment.next_arm_for_job(plan_pred, dead)) == "resume"
+    """起こし方の判定は judgment.next-arm-for-job の 1 点(R10 / R20)。cache(温かい send / --resume)を保つのは
+    同じ機体 ∧ 同じ家の時だけ(operator 決定 #54): 家が違えば温かい session を片付けて履歴からの再開、器に無い候補・
+    家の分からない(帰属の無い)session も履歴からの再開。resume が断られたら履歴からの再開(fallback-arm-of)。"""
+    from dataclasses import replace
+
+    from doeff_agents.sessionhost.acp.effects import ArmChoice
+
+    plan = run(judgment.launch_plan_of(bound_job("a", inputs=[])))
+    home = run(judgment.home_key_of(plan))
+    other_plan = run(judgment.launch_plan_of(bound_job("b", inputs=[], account="other")))
+    other = run(judgment.home_key_of(other_plan))
+    assert home == {"account": "acct", "binding": None}
+    assert other != home
+    stamp: JSONObject = {
+        "agentd": {
+            "conversationId": CONVERSATION,
+            "agentJobId": "a-0",
+            "account": "acct",
+            "home": {"account": "acct", "binding": None},
+            "arm": "launch",
+        }
+    }
+    warm = replace(
+        _view("p", "running", lifecycle="multi_turn", turn_ended_at_ms=10), launch_attribution=stamp
+    )
+    busy = replace(
+        _view("p", "running", lifecycle="multi_turn", turn_ended_at_ms=None),
+        launch_attribution=stamp,
+    )
+    dead = replace(
+        _view("p", "exited", lifecycle="multi_turn", turn_ended_at_ms=10), launch_attribution=stamp
+    )
+    bare_warm = _view("p", "running", lifecycle="multi_turn", turn_ended_at_ms=10)
+    bare_dead = _view("p", "exited", lifecycle="multi_turn", turn_ended_at_ms=10)
+
+    def arm(candidate: str | None, view: SessionView | None, at: JSONObject) -> ArmChoice:
+        choice = run(judgment.next_arm_for_job(candidate, view, at))
+        assert isinstance(choice, ArmChoice)
+        return choice
+
+    assert arm(None, None, home) == ArmChoice("launch", None, None)
+    assert arm("p", warm, home) == ArmChoice("send", "p", None)
+    assert arm("p", warm, other) == ArmChoice("rehydrate", None, "p")
+    assert arm("p", bare_warm, home) == ArmChoice("rehydrate", None, "p")
+    assert arm("p", busy, home) == ArmChoice("defer", "p", None)
+    assert arm("p", busy, other) == ArmChoice("defer", "p", None)
+    assert arm("p", dead, home) == ArmChoice("resume", "p", None)
+    assert arm("p", dead, other) == ArmChoice("rehydrate", None, None)
+    assert arm("p", bare_dead, home) == ArmChoice("rehydrate", None, None)
+    assert arm("p", None, home) == ArmChoice("rehydrate", None, None)
+    assert run(judgment.fallback_arm_of(ArmChoice("resume", "p", None))) == ArmChoice(
+        "rehydrate", None, None
+    )
+    assert run(judgment.fallback_arm_of(ArmChoice("launch", None, None))) is None
+    assert run(judgment.fallback_arm_of(ArmChoice("rehydrate", None, None))) is None
     assert run(judgment.launch_lifecycle_of({})) == "multi_turn"
     assert run(judgment.launch_lifecycle_of({"lifecycle": "interactive"})) == "interactive"
 
@@ -1678,12 +1732,13 @@ def test_session_id_is_minted_by_agentd_and_the_charter_id_is_ignored() -> None:
     assert "session_name" not in plan.charter
 
 
-def test_after_the_idle_ttl_the_next_job_launches_with_a_fresh_id_and_within_the_ttl_it_is_sent() -> (
+def test_after_the_idle_ttl_the_next_job_resumes_with_a_fresh_id_and_within_the_ttl_it_is_sent() -> (
     None
 ):
     """実弾 2026-09-12: 温かい session が idle TTL で片付いた後、次の job が charter の固定の id で
     `session is already registered` に落ちて LaunchFailed で Ended した。鋳造した id は片付いた
-    行(host に登記のまま残る)と衝突しない。TTL 内の同じ会話は send。"""
+    行(host に登記のまま残る)と衝突しない。TTL 内の同じ会話は send、TTL の後は同じ家の片付いた
+    session から --resume(段 8q・operator 決定 #54 — cache を保つのは同じ機体 ∧ 同じ家)。"""
     world = World()
     _run_first_turn(world)
     first = world.sid("j-1")
@@ -1704,11 +1759,12 @@ def test_after_the_idle_ttl_the_next_job_launches_with_a_fresh_id_and_within_the
     world.tick(advance_ms=601_000)
     assert world.sessions.cleanups == [first]
     assert world.sessions.views[first].status == "stopped"
-    # 次の job: 新しい id で launch に成功(charter の id は同じ固定の綴りのまま)
+    # 次の job: 片付いた session から新しい id で --resume に成功(charter の id は同じ固定の綴りのまま)
     world.acp.put_row(message("m-3", "third"))
     world.acp.put_row(bound_job("j-3", inputs=["m-3"]))
     world.tick(advance_ms=1_000)
-    assert len(world.sessions.launches) == 2
+    assert len(world.sessions.launches) == 1
+    assert [resumed["session_id"] for resumed in world.sessions.resumes] == [first]
     third = world.sid("j-3")
     assert third != first
     job = world.job("j-3")
@@ -2014,7 +2070,11 @@ def test_node_observations_carry_the_ownership_when_declared() -> None:
     world.tick()
     node = world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"]
     assert node.status is not None
-    assert node.status["observations"] == {"streamCapability": "frames", "sessions": []}
+    assert node.status["observations"] == {
+        "streamCapability": "frames",
+        "sessions": [],
+        "transcripts": [],
+    }
 
     owned = World()
     owned.settings = replace(
@@ -2026,5 +2086,6 @@ def test_node_observations_carry_the_ownership_when_declared() -> None:
     assert node.status["observations"] == {
         "streamCapability": "frames",
         "sessions": [],
+        "transcripts": [],
         "ownership": {"grade": "company", "proof": "gce-project:cyberagent-050"},
     }

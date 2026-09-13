@@ -8,7 +8,8 @@ session を起こし、手番の記録と実況を ACP へ書く」腕で、判�
   ``AcpStreamPush`` / ``CustodyLeaseBorrow``(+ 返却の ``CustodyLeaseRevoke``)。
   agentd 自身の器(sessionhost の RPC)への要求 = ``Session*``、時計・計器・file の
   読み書き = ``ClockNowMs`` / ``MetricLine`` / ``LogLine`` / ``FsCanonicalPath`` /
-  ``FsWritePrivateText``、この機体が持つ資格の残量 = ``ReadProfileUsage``(段 7 lane 7d-3)。
+  ``FsWritePrivateText``、この機体が持つ資格の残量 = ``ReadProfileUsage``(段 7 lane 7d-3)、
+  会話の記録(郵便 + 手番の記録)の読み = ``AcpConversationHistory``(段 8q の履歴からの再開)。
 - 実 I/O は handlers.py(HTTP / RPC / file)、fake は fake.py、要求を並べる判断は
   judgment.hy(純関数)と agentd.hy(program)。handler の選択は runtime.py の 1 点。
 - 値の宣言の 1 点 = ``AgentdSettings``(lease の TTL と周期・watch の resync・frame の
@@ -141,15 +142,24 @@ JOB_STEP_TURN_END: JobStep = "turn-end"
 #: multi_turn = 温かい session(手番の終わりで片付けない — 同じ会話の次の手番は send)。
 #: charter に lifecycle が無い時の agentd の既定(judgment.launch-lifecycle-of の 1 点)。
 LIFECYCLE_MULTI_TURN = "multi_turn"
-#: Bound の job の起こし方(judgment.next-arm-for-job の閉語彙 — ADR-DOE-AGENTS-012 R10)。
-#: send = 会話の session が生きて idle(温かい)/ resume = predecessor が在るが生きていない
-#: (cold の session.resume)/ launch = 会話の session が無い / defer = 会話の session が手番の
-#: 途中(claim せず次の list で読み直す — 走っている手番に本文を積まない)。
-NextArm = Literal["launch", "send", "resume", "defer"]
+#: Bound の job の起こし方(judgment.next-arm-for-job の閉語彙 — ADR-DOE-AGENTS-012 R10 / R20)。
+#: send = 会話の session が生きて idle ∧ 同じ家(温かい)/ resume = 会話の前の session がこの器に登記
+#: されて終端 ∧ 同じ家(cache を保つ cold の --resume)/ rehydrate = 会話の前の session がこの器に無い
+#: (別の機体・器の行が消えた)か家が違う(profile を変えた)か resume が断られた — cache の失効を受け入れ、
+#: ACP の会話の記録を最初の本文に畳んで新しい session を起こす(段 8q・operator 決定 #54: cache を保つのは
+#: 同じ機体 ∧ 同じ profile の家の時だけ)/ launch = 会話に前の session が無い / defer = 会話の session が
+#: 手番の途中(claim せず次の list で読み直す — 走っている手番に本文を積まない)。
+NextArm = Literal["launch", "send", "resume", "rehydrate", "defer"]
 NEXT_ARM_LAUNCH: NextArm = "launch"
 NEXT_ARM_SEND: NextArm = "send"
 NEXT_ARM_RESUME: NextArm = "resume"
+NEXT_ARM_REHYDRATE: NextArm = "rehydrate"
 NEXT_ARM_DEFER: NextArm = "defer"
+#: agentd が起こす session の launch_attribution(sessionhost が素通しで保存し wire の眺めに返す
+#: opaque な帰属)の中で agentd が持つ欄の鍵(段 8q)。値 = {conversationId, agentJobId, account,
+#: home, arm}: session の会話・手番・家は session の行に刻む事実で、終端の後に回収される agent-job の
+#: 行から導かない(判断 = judgment.session-attribution-of / attribution-of-view の 2 点)。
+ATTRIBUTION_AGENTD_KEY = "agentd"
 #: node の status.observations.sessions の state(段 3 の契約の追補で閉語彙になる予定 —
 #: それまで agentd 側の語: idle = 手番の間 / busy = 手番の途中)。
 SessionObservationState = Literal["idle", "busy"]
@@ -376,6 +386,13 @@ class AgentdSettings:
     #: cache の寿命にも渡す(1 周期より若い断面は読み直さない)。判断(窓・残量・post-image)は
     #: judgment の純関数、時計は effect、拍は agentd-tick の 1 つの腕。
     profile_observe_seconds: int = 300
+    #: 履歴からの再開(段 8q)で最初の本文に畳む「これまでの会話」の上限(UTF-8 の byte)。超えたら古い手番から
+    #: 要約せずに落とし、落とした数と全文の在処(ACP の会話の記録)を名乗る(judgment.rehydrate-history-of)。
+    rehydrate_history_byte_budget: int = 65_536
+    #: node の observations.transcripts に載せる件数の上限(段 8q — 終端の session のうち transcript が
+    #: この機体に残るもの・会話ごとに最新の 1 つ・新しい順)。heartbeat ごとに node の行へ書くので小さく
+    #: 保つ(契約の maxItems 64 以下)。
+    transcripts_observed_max: int = 16
 
 
 # ------------------------------------------------------------------ ACP の値
@@ -534,6 +551,11 @@ class SessionView:
     #: (headless = {events_path, pid, argv} — 実況の材料の在処)。
     backend_kind: str = "tmux"
     backend_ref: JSONObject | None = None
+    #: 起こした側が launch / resume の params で渡した帰属(wire の launch_attribution・host は解釈しない)。
+    #: agentd が起こした session は ATTRIBUTION_AGENTD_KEY の欄に会話・手番・家を持つ(段 8q)。
+    launch_attribution: JSONObject | None = None
+    #: 器が session を起こした時刻(wire の started_at・epoch ms・None = 読めない)。
+    started_at_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -589,6 +611,40 @@ class LaunchPlan:
     account: str | None
     profile: str
     model: str
+
+
+@dataclass(frozen=True)
+class ArmChoice:
+    """Bound の job の起こし方(judgment.next-arm-for-job の答え — 判断はその 1 点)。"""
+
+    arm: NextArm
+    #: send の宛先 / resume の元の session(launch・rehydrate・defer は None)。
+    source: str | None
+    #: 起こす前に片付ける温かい session(生きて idle だが家が違う — cache は失効したので、同じ会話の器を
+    #: 2 つ生かさない)。None = 片付けない。
+    retire: str | None
+
+
+@dataclass(frozen=True)
+class ConversationHistory:
+    """1 つの会話の記録の材料(AcpConversationHistory の答え): 郵便(kind message)と手番の記録
+    (kind turn-record)の行。会話で絞るのは judgment(rehydrate-history-of)で、handler は読むだけ。"""
+
+    messages: tuple[AcpRow, ...]
+    records: tuple[AcpRow, ...]
+
+
+@dataclass(frozen=True)
+class HistoryFold:
+    """履歴からの再開の「これまでの会話」(judgment.rehydrate-history-of の答え)。text = 最初の本文に畳む
+    文(記録が無ければ空)・kept_turns / dropped_turns = 残した / 上限で落とした手番の数・
+    dropped_items = 落とした出来事と郵便の数・size_bytes = text の UTF-8 の大きさ。"""
+
+    text: str
+    kept_turns: int
+    dropped_turns: int
+    dropped_items: int
+    size_bytes: int
 
 
 @dataclass(frozen=True)
@@ -703,6 +759,16 @@ class AcpGetRow(EffectBase):
     """1 行を鍵で読む(``GET /api/resources/<key>``)。結果 = AcpRow | None(404)。"""
 
     key: str
+
+
+@dataclass(frozen=True)
+class AcpConversationHistory(EffectBase):
+    """会話の記録の材料を読む(段 8q の履歴からの再開 — 手番を起こし直す時の 1 回だけ): kind message と
+    kind turn-record の行(``GET /api/resources?kind=``・ACP に欄の絞りの口は無い)。結果 =
+    ConversationHistory(``conversation_id`` での絞りは judgment.rehydrate-history-of)。watch の拍では
+    撃たない(郵便の本文は鍵で 1 行ずつ — R14)。"""
+
+    conversation_id: str
 
 
 @dataclass(frozen=True)

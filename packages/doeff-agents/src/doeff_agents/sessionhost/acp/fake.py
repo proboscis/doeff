@@ -6,10 +6,13 @@ test が状態を覗き、operator の代わりに行を置く(Bound の job・N
 """
 
 # pyright: strict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.sessionhost.acp.effects import (
+    MESSAGE_KIND,
+    TURN_RECORD_KIND,
+    AcpConversationHistory,
     AcpCreate,
     AcpEventWindow,
     AcpGet,
@@ -22,6 +25,7 @@ from doeff_agents.sessionhost.acp.effects import (
     CaptureGone,
     ClockNowMs,
     Conflict,
+    ConversationHistory,
     CustodyLeaseBorrow,
     CustodyLeaseRevoke,
     EventWindow,
@@ -91,6 +95,8 @@ class FakeAcp:
         self.journal: list[tuple[int, str, AcpRow | None]] = []
         #: event-window を断る(cursor が retention の床の下の再現)。
         self.window_incomplete: bool = False
+        #: 会話の記録の材料を読んだ会話の id の順(履歴からの再開の読みは手番を起こし直す時だけ — 段 8q)。
+        self.history_reads: list[str] = []
 
     def _land(self, key: str, row: AcpRow | None) -> None:
         self.sequence += 1
@@ -107,13 +113,24 @@ class FakeAcp:
         self._land(key, None)
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
-        if isinstance(effect, (AcpGet, AcpGetRow, AcpEventWindow, AcpWatchSse)):
+        if isinstance(
+            effect, (AcpGet, AcpGetRow, AcpEventWindow, AcpWatchSse, AcpConversationHistory)
+        ):
             return Resume(k, self._read(effect))
         if isinstance(effect, (AcpPutStatus, AcpCreate, AcpStreamPush)):
             return Resume(k, self._write(effect))
         return Pass(effect, k)
 
-    def _read(self, effect: AcpGet | AcpGetRow | AcpEventWindow | AcpWatchSse) -> object:
+    def _read(
+        self,
+        effect: AcpGet | AcpGetRow | AcpEventWindow | AcpWatchSse | AcpConversationHistory,
+    ) -> object:
+        if isinstance(effect, AcpConversationHistory):
+            self.history_reads.append(effect.conversation_id)
+            return ConversationHistory(
+                messages=tuple(row for row in self.rows.values() if row.kind == MESSAGE_KIND),
+                records=tuple(row for row in self.rows.values() if row.kind == TURN_RECORD_KIND),
+            )
         if isinstance(effect, AcpGet):
             failure = self.list_failures.get(effect.kind)
             if failure is not None:
@@ -287,6 +304,10 @@ class FakeSessions:
         #: session_id → session.get で投げる例外(器の RPC が落ちた job の再現)。
         self.failures: dict[str, Exception] = {}
         self.refuse_launch: SessionRefused | None = None
+        #: session.resume だけを断る(transcript が見つからない等の typed reject の再現 — 行は作らない)。
+        self.refuse_resume: SessionRefused | None = None
+        #: 器の時計(started_at の代わり — 起こすたびに 1 進む)。
+        self.clock: int = 0
         self.agent_type: str = agent_type
         self.work_dir: str = work_dir
         self.config_dir: str = "/homes/claude/acct"
@@ -345,6 +366,8 @@ class FakeSessions:
             session_id = params.get("new_session_id")
         if self.refuse_launch is not None:
             return self.refuse_launch
+        if isinstance(effect, SessionResume) and self.refuse_resume is not None:
+            return self.refuse_resume
         if not isinstance(session_id, str):
             return SessionRefused("missing session_id", None)
         if session_id in self.views:
@@ -358,6 +381,12 @@ class FakeSessions:
             if isinstance(declared, str):
                 config_dir = declared
         lifecycle = params.get("lifecycle")
+        if isinstance(effect, SessionResume):
+            # host と同じ意味論: 新しい incarnation は蘇生元の行の lifecycle を継ぐ(params の lifecycle は読まない)。
+            source = self.views.get(str(params.get("session_id")))
+            lifecycle = None if source is None else source.lifecycle
+        attribution = params.get("launch_attribution")
+        self.clock += 1
         view = SessionView(
             session_id=session_id,
             agent_type=self.agent_type,
@@ -378,6 +407,8 @@ class FakeSessions:
                 if self.backend_kind == "headless"
                 else None
             ),
+            launch_attribution=attribution if isinstance(attribution, dict) else None,
+            started_at_ms=self.clock,
         )
         self.views[session_id] = view
         return view
@@ -385,41 +416,20 @@ class FakeSessions:
     def finish(self, session_id: str, status: str, result: JSONObject | None = None) -> None:
         """test が器の終端を起こす(policy の turn-end が done へ倒す・死亡が exited 等)。"""
         view = self.views[session_id]
-        self.views[session_id] = SessionView(
-            session_id=view.session_id,
-            agent_type=view.agent_type,
+        self.views[session_id] = replace(
+            view,
             status=status,
-            work_dir=view.work_dir,
-            lifecycle=view.lifecycle,
-            conversation=view.conversation,
-            effective_identity=view.effective_identity,
             result_payload=result,
             terminal_cause=None
             if status == "done"
             else {"category": "run_failed", "reason": status},
-            turn_ended_at_ms=view.turn_ended_at_ms,
-            backend_kind=view.backend_kind,
-            backend_ref=view.backend_ref,
         )
 
     def finish_turn(self, session_id: str, at_ms: int | None) -> None:
         """test が温かい session の手番の終わりを起こす(host の monitor が turn_ended_at を
         刻むのと同じ意味・None = 次の手番が走り出した)。status は running のまま。"""
         view = self.views[session_id]
-        self.views[session_id] = SessionView(
-            session_id=view.session_id,
-            agent_type=view.agent_type,
-            status=view.status,
-            work_dir=view.work_dir,
-            lifecycle=view.lifecycle,
-            conversation=view.conversation,
-            effective_identity=view.effective_identity,
-            result_payload=view.result_payload,
-            terminal_cause=view.terminal_cause,
-            turn_ended_at_ms=at_ms,
-            backend_kind=view.backend_kind,
-            backend_ref=view.backend_ref,
-        )
+        self.views[session_id] = replace(view, turn_ended_at_ms=at_ms)
 
 
 class FakeLocal:
