@@ -10,6 +10,7 @@ from dataclasses import dataclass, replace
 
 from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.sessionhost.acp.effects import (
+    JSON,
     MESSAGE_KIND,
     TURN_RECORD_KIND,
     AcpConversationHistory,
@@ -33,7 +34,6 @@ from doeff_agents.sessionhost.acp.effects import (
     FsFileSize,
     FsWritePrivateText,
     Interjected,
-    JSON,
     JSONObject,
     LeaseGrant,
     LeaseKind,

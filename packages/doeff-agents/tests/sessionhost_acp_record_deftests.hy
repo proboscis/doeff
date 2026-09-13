@@ -156,7 +156,9 @@
   (defn #^ list record-entries [self]
     (setv status (. (get self.acp.rows f"{AGORA-KINDS-NAMESPACE}:{TURN-RECORD-KIND}:j-1") status))
     (assert (isinstance status dict))
-    (list (.get status "entries" [])))
+    (setv entries (.get status "entries" []))
+    (assert (isinstance entries list))
+    (list entries))
 
   (defn #^ list metrics-named [self #^ str name]
     (lfor line self.local.metrics :if (= (.get line "metric") name) line)))
@@ -247,8 +249,9 @@
              conflicted))
   (assert (= (decode-record-reply (HttpReply 0 {"error" "unreachable: refused"}))
              (RecordUnsent :status 0 :error "unreachable: refused")))
-  (assert (= (. (decode-record-reply (HttpReply 403 {"error" "forbidden" "reason" "not a writer"})) error)
-             "forbidden: not a writer"))
+  (setv refusal (decode-record-reply (HttpReply 403 {"error" "forbidden" "reason" "not a writer"})))
+  (assert (isinstance refusal RecordUnsent))
+  (assert (= refusal.error "forbidden: not a writer"))
   ;; appendRequest の綴り(契約 $defs.streamRef / eventIn)
   (setv body (record-append-body (get (run (record-batches-of (job-of 1) #((run (text-body 0 AT "t" None))))) 0)))
   (assert (= (get body "stream") {"kind" "turn" "id" STREAM "startedAt" AT "node" NODE "profile" "personal" "attempt" 1}))
