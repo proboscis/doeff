@@ -1,13 +1,15 @@
-;;; 会話の記録の service への本文の二重書きの焦点の検(段 9f lane 9f-2・agora-redesign #59・設計 §2.4)。
+;;; 会話の記録の service への本文の二重書きの焦点の検(段 9f lane 9f-2 / 9f-4・agora-redesign #59・設計 §2.2 / §2.4)。
 ;;;
-;;; 既知の形 = runner(agentd)の transactional outbox: 本文は切らずに spool(1 batch 1 file)へ耐久化してから service へ
-;;; 送り、受理(と 409)で消す・送れなければ残して周期の後に再送(冪等)。ACP の turn-record への追記は今日どおり。
-;;; ここで撃つのは
-;;;   * 純関数: 本文は切らず entry は切る(切り詰めの 1 点 entry-of-body)・採番(producerSeq = entry の seq・単調・batch の
-;;;     上限で分ける)・同じ拍の再送は同じ鍵と本文・attempt が変わると stream が変わる・拾い直しの番と採番の下限・
-;;;     結末の語・消し込みの可否・flush を止めるか・wire の応答の写し
-;;;   * fake の handler で agentd を一周: ACP と service の両方に同じ seq が並ぶ(ACP の entries は二重書きの有無で同じ)・
-;;;     送れない → spool に残る → 周期の後の拍で送れて消える・409 は spool に残さず赤の計器・弁 off は Record* を撃たない
+;;; 既知の形 = runner(agentd)の transactional outbox + claim check: 本文は切らずに spool(1 batch 1 file)へ耐久化してから
+;;; service へ送り、受理(と 409)で消す・送れなければ残して周期の後に再送(冪等)。ACP の turn-record には**見出しだけ**
+;;; (seq・at・kind・toolName・toolUseId・bytes・sha256・isError — 本文の欄は型に無い)と、受理の答えの写し
+;;; (recordRef / recordedSeq)。ここで撃つのは
+;;;   * 純関数: 本文は切らず見出しは本文を持たない(導く 1 点 headline-of-body・bytes / sha256 は service と同じ計算)・
+;;;     採番(producerSeq = 見出しの seq・単調・batch の上限で分ける)・同じ拍の再送は同じ鍵と本文・attempt が変わると
+;;;     stream が変わる・拾い直しの番と採番の下限・結末の語・消し込みの可否・flush を止めるか・wire の応答の写し
+;;;   * fake の handler で agentd を一周: ACP と service の両方に同じ seq が並び見出しの sha256 = service の本文の sha256・
+;;;     1 entry ≤ TURN-ENTRY-MAX-BYTES・recordRef / recordedSeq が行に写る・送れない → spool に残る(recordedSeq は進まない)
+;;;     → 周期の後の拍で送れて消える(進む)・409 は spool に残さず赤の計器・弁 off は Record* を撃たない(見出しは同じ)
 ;;;   * spool の handler(tmp dir の実 file): 置く → 鍵の順に読める → 消える・壊れた file は消さずに名乗る
 ;;;   * join の宣言の [record] → RECORD_SERVICE_URL と spool の置き場・settings の弁
 ;;; HTTP も subprocess も無い。
@@ -24,8 +26,6 @@
   AGORA-KINDS-NAMESPACE
   AcpRow
   AgentdSettings
-  ENTRY-SUMMARY-MAX-CHARS
-  ENTRY-TEXT-MAX-CHARS
   InFlightJob
   JOIN-SCHEMA
   JoinArgv
@@ -38,23 +38,32 @@
   RECORD-URL-ENV
   RecordAppended
   RecordConflicted
+  RecordEvent
+  RecordPage
+  RecordUnread
   RecordUnsent
-  TURN-RECORD-KIND])
-(import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeRecord FakeSessions])
-(import doeff_agents.sessionhost.acp.handlers [HttpReply RecordSpool decode-record-reply record-append-body])
+  TURN-ENTRY-MAX-BYTES
+  TURN-RECORD-KIND
+  TurnEntryHeadline])
+(import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeRecord FakeSessions record-body-sha256])
+(import doeff_agents.sessionhost.acp.handlers [
+  HttpReply RecordSpool decode-record-page decode-record-reply record-append-body])
 (import doeff_agents.sessionhost.acp.join [join-plan-of join-spec-of])
 (import doeff_agents.sessionhost.acp.judgment [
-  entry-of-body
+  entry-json-of
+  headline-of-body
   record-append-word-of
   record-batches-of
+  record-body-bytes-of
   record-halts-flush
+  record-ref-of
   record-release-of
+  record-stream-job-of
   recovered-record-of
   text-body
-  text-entry
   tool-result-body
   tool-use-body
-  tool-use-entry])
+  turn-record-recorded-status])
 (import doeff_agents.sessionhost.acp.runtime [initial-state run-tick settings-from-env])
 
 
@@ -153,10 +162,13 @@
     (setv (get self.local.transcripts f"/events/{(.sid self)}.events.jsonl") text)
     None)
 
-  (defn #^ list record-entries [self]
+  (defn #^ dict record-status [self]
     (setv status (. (get self.acp.rows f"{AGORA-KINDS-NAMESPACE}:{TURN-RECORD-KIND}:j-1") status))
     (assert (isinstance status dict))
-    (setv entries (.get status "entries" []))
+    status)
+
+  (defn #^ list record-entries [self]
+    (setv entries (.get (.record-status self) "entries" []))
     (assert (isinstance entries list))
     (list entries))
 
@@ -168,25 +180,47 @@
 ;; 純関数
 ;; ---------------------------------------------------------------------------
 
-(deftest test-bodies-are-uncut-and-entries-are-cut-at-the-one-point
-  ;; text: 本文は切らない・entry は ENTRY-TEXT-MAX-CHARS で切って truncated(text-entry = text-body を切った形)。
-  (setv long-text (* "y" (+ ENTRY-TEXT-MAX-CHARS 5)))
+(deftest test-bodies-are-uncut-and-headlines-carry-the-digest-and-no-body
+  ;; text: 本文は切らない・見出しは本文を持たず bytes / sha256(service の同一性の計算と同じ綴り)を持つ。
+  (setv long-text (* "y" 70000))
   (setv body (run (text-body 8 AT long-text "claude-opus-5")))
   (assert (= body {"producerSeq" 8 "at" AT "kind" "text" "text" long-text "model" "claude-opus-5"}))
-  (setv entry (run (entry-of-body body)))
-  (assert (= entry (run (text-entry 8 AT long-text "claude-opus-5"))))
-  (assert (= (get entry "seq") 8) "entry の seq は本文の producerSeq(採番は 1 点)")
-  (assert (= (len (get entry "text")) ENTRY-TEXT-MAX-CHARS))
-  (assert (is (get entry "truncated") True))
-  ;; 道具: 本文は入力 / 出力そのもの(要約の欄を持たない)・entry は要約を切る。
-  (setv long-input {"command" (* "x" (+ ENTRY-SUMMARY-MAX-CHARS 10))})
+  (setv head (run (headline-of-body body)))
+  (assert (isinstance head TurnEntryHeadline))
+  (assert (= head.seq 8) "見出しの seq は本文の producerSeq(採番は 1 点)")
+  (setv material (run (record-body-bytes-of body)))
+  (assert (= material (.encode (json.dumps {"text" long-text} :sort-keys True :separators #("," ":") :ensure-ascii False) "utf-8"))
+          "同一性の材料は text / summary / input / output の在る欄だけ・compact・鍵 sort")
+  (assert (= head.bytes (len material)))
+  (assert (= head.sha256 (record-body-sha256 body)) "見出しの sha256 が service の計算と違う")
+  (setv item (run (entry-json-of head)))
+  (assert (= item {"seq" 8 "at" AT "kind" "text" "bytes" head.bytes "sha256" head.sha256}))
+  (assert (<= (len (.encode (json.dumps item :ensure-ascii False :separators #("," ":")) "utf-8")) TURN-ENTRY-MAX-BYTES))
+  ;; 道具: 本文は入力 / 出力そのもの(要約の欄を持たない)・見出しは toolName / toolUseId と同一性だけ。
+  (setv long-input {"command" (* "x" 5000)})
   (setv use (run (tool-use-body 4 AT "t2" "Bash" long-input)))
   (assert (= (get use "input") long-input))
   (assert (not (in "summary" use)))
-  (assert (= (run (entry-of-body use)) (run (tool-use-entry 4 AT "t2" "Bash" long-input))))
+  (setv use-item (run (entry-json-of (run (headline-of-body use)))))
+  (assert (= (set (.keys use-item)) #{"seq" "at" "kind" "toolName" "toolUseId" "bytes" "sha256"}))
+  (assert (= (get use-item "sha256") (record-body-sha256 use)))
   (setv result (run (tool-result-body 5 AT "t2" [{"type" "text" "text" "boom"}] True)))
   (assert (= result {"producerSeq" 5 "at" AT "kind" "tool_result" "output" [{"type" "text" "text" "boom"}]
-                     "toolUseId" "t2" "isError" True})))
+                     "toolUseId" "t2" "isError" True}))
+  (setv result-item (run (entry-json-of (run (headline-of-body result)))))
+  (assert (= (set (.keys result-item)) #{"seq" "at" "kind" "toolUseId" "bytes" "sha256" "isError"}))
+  ;; 同じ本文は同じ sha256・違う本文は違う(冪等の判断と同じ物差し)。
+  (assert (= (. (run (headline-of-body (run (text-body 9 (+ AT 1) long-text None)))) sha256) head.sha256))
+  (assert (!= (. (run (headline-of-body (run (text-body 8 AT (+ long-text "!") None)))) sha256) head.sha256))
+  ;; recordRef の綴りと stream id → job id の逆写像・recordedSeq は進む時だけ書く。
+  (assert (= (run (record-ref-of CONVERSATION STREAM)) f"record:{CONVERSATION}/{STREAM}"))
+  (assert (= (run (record-stream-job-of STREAM)) "j-1"))
+  (assert (= (run (record-stream-job-of "aj-x#a12")) "aj-x"))
+  (setv marked (run (turn-record-recorded-status {"state" "running" "entries" []} "record:c/s" 7)))
+  (assert (= marked {"state" "running" "entries" [] "recordRef" "record:c/s" "recordedSeq" 7}))
+  (assert (is (run (turn-record-recorded-status marked "record:c/s" 7)) None) "同じ値は書かない")
+  (assert (is (run (turn-record-recorded-status marked "record:c/s" 3)) None) "後ろへ戻さない")
+  (assert (= (get (run (turn-record-recorded-status marked "record:c/s2" 9)) "recordedSeq") 9)))
 
 
 (deftest test-batches-carry-the-job-counter-as-producer-seq-and-rebuild-identically
@@ -252,6 +286,28 @@
   (setv refusal (decode-record-reply (HttpReply 403 {"error" "forbidden" "reason" "not a writer"})))
   (assert (isinstance refusal RecordUnsent))
   (assert (= refusal.error "forbidden: not a writer"))
+  ;; readEvents の応答の写し(契約 eventsAnswer / storedEvent — required の欠けた項は落とす・cursor.next は None も)
+  (setv page (decode-record-page (HttpReply 200 {"cid" CONVERSATION
+                                                 "events" [{"recordSeq" 3 "streamId" STREAM "streamKind" "turn" "producerSeq" 0
+                                                            "at" AT "kind" "text" "text" "t" "bytes" 12 "sha256" "ab" "version" 1}
+                                                           {"recordSeq" 4 "streamId" STREAM "streamKind" "turn" "producerSeq" 1
+                                                            "at" AT "kind" "tool_use" "toolName" "Read" "toolUseId" "t1"
+                                                            "input" {"file_path" "/a"} "bytes" 30 "sha256" "cd" "version" 1
+                                                            "truncated" True}
+                                                           {"recordSeq" 5 "streamId" STREAM}]
+                                                 "cursor" {"direction" "before" "next" 3}})))
+  (assert (isinstance page RecordPage))
+  (assert (= page.next 3))
+  (assert (= (len page.events) 2))
+  (assert (= (get page.events 0) (RecordEvent :record-seq 3 :stream-id STREAM :stream-kind "turn" :producer-seq 0 :at AT
+                                              :kind "text" :bytes 12 :sha256 "ab" :text "t")))
+  (assert (= (. (get page.events 1) input) {"file_path" "/a"}))
+  (assert (is (. (get page.events 1) truncated) True))
+  (setv last-page (decode-record-page (HttpReply 200 {"cid" CONVERSATION "events" [] "cursor" {"direction" "before" "next" None}})))
+  (assert (isinstance last-page RecordPage))
+  (assert (is last-page.next None))
+  (assert (= (decode-record-page (HttpReply 0 {"error" "unreachable: refused"})) (RecordUnread :status 0 :error "unreachable: refused")))
+  (assert (isinstance (decode-record-page (HttpReply 200 {"cid" CONVERSATION})) RecordUnread))
   ;; appendRequest の綴り(契約 $defs.streamRef / eventIn)
   (setv body (record-append-body (get (run (record-batches-of (job-of 1) #((run (text-body 0 AT "t" None))))) 0)))
   (assert (= (get body "stream") {"kind" "turn" "id" STREAM "startedAt" AT "node" NODE "profile" "personal" "attempt" 1}))
@@ -262,7 +318,7 @@
 ;; fake の handler で agentd を一周
 ;; ---------------------------------------------------------------------------
 
-(deftest test-dual-write-lands-the-same-seq-in-acp-and-the-record-service
+(deftest test-dual-write-lands-headlines-in-acp-and-bodies-in-the-record-service
   (setv world (RecordWorld True))
   (setv plain (RecordWorld False))
   (for [each [world plain]]
@@ -271,19 +327,44 @@
     (.tick each 1000))
   (setv acp-entries (.record-entries world))
   (assert (= (lfor entry acp-entries (get entry "kind")) ["system" "text" "tool_use" "tool_result"]))
-  (assert (= acp-entries (.record-entries plain)) "二重書きで ACP の entries が変わった")
+  (assert (= acp-entries (.record-entries plain)) "二重書きの有無で ACP の見出しが変わった")
+  ;; 見出しは本文の欄を持たず、1 entry の compact JSON は上限の中。
+  (for [entry acp-entries]
+    (assert (<= (len (set.intersection (set (.keys entry)) #{"text" "summary" "input" "output" "model"})) 0)
+            f"見出しに本文の欄が在る: {entry}")
+    (assert (<= (len (.encode (json.dumps entry :ensure-ascii False :separators #("," ":")) "utf-8")) TURN-ENTRY-MAX-BYTES) entry))
+  (assert (not-in "hello" (json.dumps acp-entries :ensure-ascii False)) "本文が ACP へ漏れた")
+  (assert (= (get (get acp-entries 2) "toolName") "Read"))
+  (assert (= (get (get acp-entries 2) "toolUseId") "t1"))
   (setv stored (.events-of world.record CONVERSATION STREAM))
   (assert (= (lfor event stored (get event "producerSeq")) (lfor entry acp-entries (get entry "seq")))
           "ACP の見出しの seq と service の producerSeq が違う")
   (assert (= (lfor event stored (get event "kind")) (lfor entry acp-entries (get entry "kind"))))
+  ;; 見出しの bytes / sha256 = service へ送った本文の同一性(service と同じ計算)。
+  (for [[entry event] (zip acp-entries stored)]
+    (assert (= (get entry "sha256") (record-body-sha256 event)) f"sha256 が本文と一致しない: {entry}")
+    (assert (= (get entry "bytes") (len (run (record-body-bytes-of event))))))
   (assert (= (get (get stored 2) "input") {"file_path" "/work/a.txt"}) "道具の本文は入力そのもの")
   (assert (= (get (get stored 3) "output") "alpha"))
   (assert (= world.record.spool {}) "受理された batch が spool に残っている")
+  ;; 受理の答えが行に写る: recordRef = 本文の在処・recordedSeq = 受理済みの最大 producerSeq。
+  (setv status (.record-status world))
+  (setv last-seq (get (get acp-entries -1) "seq"))
+  (assert (= (get status "recordRef") f"record:{CONVERSATION}/{STREAM}") status)
+  (assert (= (get status "recordedSeq") last-seq) status)
+  (assert (not-in "recordRef" (.record-status plain)) "弁 off の世界に recordRef が在る")
   (assert (= (lfor line (.metrics-named world "agentd_record_append_total") (get line "outcome")) ["ok"]))
   (assert (= (lfor line (.metrics-named world "agentd_record_spool_depth") (get line "depth")) [0]))
   (assert (= (lfor line (.metrics-named world "agentd_record_lag_seq") (get line "lag")) [0]))
   (assert (= plain.record.appends []) "弁 off の世界で Record* を撃った")
-  (assert (= plain.record.spooled [])))
+  (assert (= plain.record.spooled []))
+  ;; 手番の終わりの書き(ended)は recordRef / recordedSeq を写す(置換しない)。
+  (.finish-turn world.sessions (.sid world) (+ world.local.now-ms 100))
+  (.tick world 1000)
+  (assert (= world.state.jobs #()) world.local.logs)
+  (assert (= (get (.record-status world) "state") "ended"))
+  (assert (= (get (.record-status world) "recordedSeq") last-seq))
+  (assert (= (get (.record-status world) "recordRef") f"record:{CONVERSATION}/{STREAM}")))
 
 
 (deftest test-unsent-batch-stays-in-the-spool-and-lands-after-the-retry-period
@@ -293,7 +374,8 @@
   (.write-events world (claude-events (.sid world) "hello"))
   (.tick world 1000)
   (assert (= (len world.record.spool) 1) "送れない batch が spool に無い")
-  (assert (= (len (.record-entries world)) 4) "service が届かなくても ACP の追記は今日どおり")
+  (assert (= (len (.record-entries world)) 4) "service が届かなくても ACP の見出しの追記は今日どおり")
+  (assert (not-in "recordedSeq" (.record-status world)) "受理していないのに recordedSeq が在る")
   (assert (= (lfor line (.metrics-named world "agentd_record_append_total") (get line "outcome")) ["error"]))
   (assert (= (get (get (.metrics-named world "agentd_record_spool_depth") -1) "depth") 1))
   (assert (any (gfor line world.local.logs (in "kept in the spool" line))))
@@ -302,7 +384,13 @@
   (.tick world 1000)
   (assert (= (len world.record.appends) 1))
   (assert (= (len world.record.spool) 1))
-  ;; 周期の後の拍で送れて消える(同じ鍵と本文の再送 — 冪等)
+  ;; 手番が終わって job が memory から消えても spool は残る。
+  (.finish-turn world.sessions (.sid world) (+ world.local.now-ms 100))
+  (.tick world 1000)
+  (assert (= world.state.jobs #()) world.local.logs)
+  (assert (= (get (.record-status world) "state") "ended"))
+  (assert (not-in "recordedSeq" (.record-status world)))
+  ;; 周期の後の拍で送れて消える(同じ鍵と本文の再送 — 冪等)。手番の終わりの後の受理も行に写る(鍵で読む)。
   (.tick world (int (* 1000 world.settings.record-retry-seconds)))
   (assert (= world.record.spool {}))
   (assert (= (len world.record.appends) 2))
@@ -310,6 +398,10 @@
   (assert (= (. (get world.record.appends 0) events) (. (get world.record.appends 1) events)))
   (assert (= (lfor event (.events-of world.record CONVERSATION STREAM) (get event "producerSeq"))
              (lfor entry (.record-entries world) (get entry "seq"))))
+  (assert (= (get (.record-status world) "recordedSeq") (get (get (.record-entries world) -1) "seq"))
+          "再送の受理が recordedSeq に写らない")
+  (assert (= (get (.record-status world) "recordRef") f"record:{CONVERSATION}/{STREAM}"))
+  (assert (= (get (.record-status world) "state") "ended") "受理の写しが state を変えた")
   (assert (= (get (get (.metrics-named world "agentd_record_spool_depth") -1) "depth") 0))
   (assert (is world.state.record-backoff-ms None)))
 
@@ -326,7 +418,8 @@
   (assert (= world.record.spool {}) "409 の batch を spool に残した(再送しても積めない)")
   (assert (= (lfor line (.metrics-named world "agentd_record_append_total") (get line "outcome")) ["conflict"]))
   (assert (any (gfor line world.local.logs (in "conflicted" line))))
-  (assert (= (len (.record-entries world)) 4) "409 でも ACP の追記は今日どおり")
+  (assert (= (len (.record-entries world)) 4) "409 でも ACP の見出しの追記は今日どおり")
+  (assert (not-in "recordedSeq" (.record-status world)) "409 は受理ではない(recordedSeq を書かない)")
   (assert (is world.state.record-backoff-ms None) "409 は送れなさではない(backoff しない)"))
 
 

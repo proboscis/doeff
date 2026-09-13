@@ -6,6 +6,8 @@ test が状態を覗き、operator の代わりに行を置く(Bound の job・N
 """
 
 # pyright: strict
+import hashlib
+import json
 from dataclasses import dataclass, replace
 
 from doeff import EffectBase, K, Pass, Resume
@@ -53,10 +55,15 @@ from doeff_agents.sessionhost.acp.effects import (
     RecordAppendOutcome,
     RecordBatch,
     RecordConflicted,
+    RecordEvent,
+    RecordPage,
+    RecordRead,
+    RecordReadOutcome,
     RecordSpoolList,
     RecordSpoolListing,
     RecordSpoolPut,
     RecordSpoolRemove,
+    RecordUnread,
     RecordUnsent,
     Refused,
     SessionCapture,
@@ -335,7 +342,14 @@ class FakeSessions:
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(
             effect,
-            (SessionLaunch, SessionResume, SessionSend, SessionInterject, SessionInterrupt, SessionCleanup),
+            (
+                SessionLaunch,
+                SessionResume,
+                SessionSend,
+                SessionInterject,
+                SessionInterrupt,
+                SessionCleanup,
+            ),
         ):
             return Resume(k, self._act(effect))
         if isinstance(effect, (SessionGet, SessionList, SessionCapture)):
@@ -550,19 +564,26 @@ class FakeLocal:
 
 
 class FakeRecord:
-    """会話の記録の service と本文の spool の代わり(段 9f lane 9f-2・memory)。冪等は契約どおり: 鍵(会話・stream・
-    producerSeq)が既在で本文(text / summary / input / output)が同じなら ignored、違えば 409(batch は丸ごと積まない)。
-    test は unreachable で届かない service を、stored に既在の出来事を置く。"""
+    """会話の記録の service と本文の spool の代わり(段 9f lane 9f-2 / 9f-4・memory)。冪等は契約どおり: 鍵(会話・stream・
+    producerSeq)が既在で本文(text / summary / input / output)の sha256 が同じなら ignored、違えば 409(batch は丸ごと
+    積まない)。積んだ出来事は service と同じ計算の bytes / sha256(compact・鍵 sort・UTF-8)と会話ごとに単調な recordSeq を
+    持ち、RecordRead は before(latest か recordSeq)から後向きに limit 件を recordSeq 昇順で返す(cursor.next = 頁の最初の
+    recordSeq・これ以上無ければ None)。test は unreachable で届かない service を、stored に既在の出来事を置く。"""
 
     def __init__(self) -> None:
         #: spool の鍵 → batch(RecordSpoolPut で置き、RecordSpoolRemove で消える)。
         self.spool: dict[str, RecordBatch] = {}
         #: 置いた鍵の順(同じ拍の再送が同じ鍵かを test が読む)。
         self.spooled: list[str] = []
-        #: (会話, stream, producerSeq) → 積んだ出来事。
+        #: (会話, stream, producerSeq) → 積んだ出来事(契約 eventIn の形)。
         self.stored: dict[tuple[str, str, int], JSONObject] = {}
+        #: (会話, stream, producerSeq) → 積んだ時の recordSeq(会話ごとに単調)。test が stored に直に置いた出来事は
+        #: 最初の読みで採番する。
+        self.record_seqs: dict[tuple[str, str, int], int] = {}
         #: RecordAppend を受けた batch の順(送れなかった要求も数える)。
         self.appends: list[RecordBatch] = []
+        #: RecordRead を受けた (会話, before, limit) の順。
+        self.reads: list[tuple[str, int | None, int]] = []
         self.unreachable: bool = False
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
@@ -578,6 +599,8 @@ class FakeRecord:
             return Resume(k, None)
         if isinstance(effect, RecordAppend):
             return Resume(k, self._append(effect.batch))
+        if isinstance(effect, RecordRead):
+            return Resume(k, self._read(effect.conversation_id, effect.before, effect.limit))
         return Pass(effect, k)
 
     def _append(self, batch: RecordBatch) -> RecordAppendOutcome:
@@ -593,25 +616,93 @@ class FakeRecord:
             stored = self.stored.get((batch.conversation_id, stream_id, seq))
             if stored is None:
                 appended.append(seq)
-            elif _record_body(stored) == _record_body(event):
+            elif record_body_sha256(stored) == record_body_sha256(event):
                 ignored.append(seq)
             else:
                 conflicts.append({"producerSeq": seq})
         if conflicts:
             return RecordConflicted(conflicts=tuple(conflicts))
         for event in batch.events:
-            self.stored.setdefault((batch.conversation_id, stream_id, _producer_seq(event)), dict(event))
+            key = (batch.conversation_id, stream_id, _producer_seq(event))
+            if key not in self.stored:
+                self.stored[key] = dict(event)
+                self._number(key)
         highest = max(
-            seq for (cid, sid, seq) in self.stored if cid == batch.conversation_id and sid == stream_id
+            seq
+            for (cid, sid, seq) in self.stored
+            if cid == batch.conversation_id and sid == stream_id
         )
         return RecordAppended(
             highest_producer_seq=highest, appended=tuple(appended), ignored=tuple(ignored)
         )
 
+    def _number(self, key: tuple[str, str, int]) -> int:
+        """recordSeq を会話ごとに単調に採番する(既に採番済みならその値)。"""
+        known = self.record_seqs.get(key)
+        if known is not None:
+            return known
+        taken = [seq for (cid, _sid, _pseq), seq in self.record_seqs.items() if cid == key[0]]
+        record_seq = (max(taken) if taken else 0) + 1
+        self.record_seqs[key] = record_seq
+        return record_seq
+
+    def _read(self, conversation_id: str, before: int | None, limit: int) -> RecordReadOutcome:
+        self.reads.append((conversation_id, before, limit))
+        if self.unreachable:
+            return RecordUnread(0, "unreachable: fake record service")
+        rows: list[tuple[int, tuple[str, str, int]]] = []
+        for key in sorted(self.stored):
+            if key[0] != conversation_id:
+                continue
+            record_seq = self._number(key)
+            if before is None or record_seq < before:
+                rows.append((record_seq, key))
+        rows.sort()
+        page = rows[-limit:] if limit > 0 else []
+        events = tuple(self._event_of(record_seq, key) for record_seq, key in page)
+        remaining = len(rows) - len(page)
+        return RecordPage(events=events, next=page[0][0] if page and remaining > 0 else None)
+
+    def _event_of(self, record_seq: int, key: tuple[str, str, int]) -> RecordEvent:
+        stored = self.stored[key]
+        material = record_body_bytes(stored)
+        text = stored.get("text")
+        summary = stored.get("summary")
+        tool_name = stored.get("toolName")
+        tool_use_id = stored.get("toolUseId")
+        model = stored.get("model")
+        kind = stored.get("kind")
+        at = stored.get("at")
+        return RecordEvent(
+            record_seq=record_seq,
+            stream_id=key[1],
+            stream_kind="turn",
+            producer_seq=key[2],
+            at=at if isinstance(at, int) and not isinstance(at, bool) else 0,
+            kind=kind if isinstance(kind, str) else "text",
+            bytes=len(material),
+            sha256=hashlib.sha256(material).hexdigest(),
+            text=text if isinstance(text, str) else None,
+            summary=summary if isinstance(summary, str) else None,
+            input=stored.get("input"),
+            output=stored.get("output"),
+            tool_name=tool_name if isinstance(tool_name, str) else None,
+            tool_use_id=tool_use_id if isinstance(tool_use_id, str) else None,
+            model=model if isinstance(model, str) else None,
+            is_error=stored.get("isError") is True,
+            truncated=False,
+        )
+
     def events_of(self, conversation_id: str, stream_id: str) -> list[JSONObject]:
         """積んだ出来事を producerSeq の順に(test の読み口)。"""
-        keys = sorted(key for key in self.stored if key[0] == conversation_id and key[1] == stream_id)
+        keys = sorted(
+            key for key in self.stored if key[0] == conversation_id and key[1] == stream_id
+        )
         return [self.stored[key] for key in keys]
+
+    def sha256_of(self, conversation_id: str, stream_id: str, producer_seq: int) -> str:
+        """積んだ出来事の本文の sha256(service の計算と同じ — 見出しとの突合の読み口)。"""
+        return record_body_sha256(self.stored[(conversation_id, stream_id, producer_seq)])
 
 
 def _producer_seq(event: JSONObject) -> int:
@@ -621,11 +712,18 @@ def _producer_seq(event: JSONObject) -> int:
     return seq
 
 
-def _record_body(event: JSONObject) -> JSONObject:
-    """本文(契約の sha256 の材料 — text / summary / input / output の在る欄だけ・None は無いのと同じ)。"""
+def record_body_bytes(event: JSONObject) -> bytes:
+    """本文の同一性の綴り(契約: text / summary / input / output の在る欄だけ・None は無いのと同じ・compact JSON・鍵は sort・
+    UTF-8)— agora-controllers services/record/judgment.hy body-bytes-of と同じ計算。"""
     body: JSONObject = {}
     for name in ("text", "summary", "input", "output"):
         field = event.get(name)
         if field is not None:
             body[name] = field
-    return body
+    return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8"
+    )
+
+
+def record_body_sha256(event: JSONObject) -> str:
+    return hashlib.sha256(record_body_bytes(event)).hexdigest()
