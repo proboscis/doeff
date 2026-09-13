@@ -59,6 +59,7 @@ from doeff_agents.sessionhost.acp.effects import (
     RecordPage,
     RecordRead,
     RecordReadOutcome,
+    RecordSpoolGiveUp,
     RecordSpoolList,
     RecordSpoolListing,
     RecordSpoolPut,
@@ -576,7 +577,8 @@ class FakeRecord:
     producerSeq)が既在で本文(text / summary / input / output)の sha256 が同じなら ignored、違えば 409(batch は丸ごと
     積まない)。積んだ出来事は service と同じ計算の bytes / sha256(compact・鍵 sort・UTF-8)と会話ごとに単調な recordSeq を
     持ち、RecordRead は before(latest か recordSeq)から後向きに limit 件を recordSeq 昇順で返す(cursor.next = 頁の最初の
-    recordSeq・これ以上無ければ None)。test は unreachable で届かない service を、stored に既在の出来事を置く。"""
+    recordSeq・これ以上無ければ None)。test は unreachable で届かない service を、stored に既在の出来事を、refusals に届いた
+    service の断り(先頭から 1 要求ずつ使う — 段 9f lane 9f-8 の決まった断り)を置く。"""
 
     def __init__(self) -> None:
         #: spool の鍵 → batch(RecordSpoolPut で置き、RecordSpoolRemove で消える)。
@@ -593,28 +595,43 @@ class FakeRecord:
         #: RecordRead を受けた (会話, before, limit) の順。
         self.reads: list[tuple[str, int | None, int]] = []
         self.unreachable: bool = False
+        #: 届いた要求への断り(先頭から 1 つずつ使う)。
+        self.refusals: list[RecordUnsent] = []
+        #: RecordSpoolGiveUp で隔離した鍵 → 理由。
+        self.given_up: dict[str, str] = {}
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
-        if isinstance(effect, RecordSpoolPut):
-            self.spool[effect.batch.spool_key] = effect.batch
-            self.spooled.append(effect.batch.spool_key)
-            return Resume(k, None)
-        if isinstance(effect, RecordSpoolList):
-            batches = tuple(self.spool[key] for key in sorted(self.spool))
-            return Resume(k, RecordSpoolListing(batches=batches, unreadable=()))
-        if isinstance(effect, RecordSpoolRemove):
-            self.spool.pop(effect.spool_key, None)
-            return Resume(k, None)
+        if isinstance(
+            effect, RecordSpoolPut | RecordSpoolList | RecordSpoolRemove | RecordSpoolGiveUp
+        ):
+            return Resume(k, self._spool(effect))
         if isinstance(effect, RecordAppend):
             return Resume(k, self._append(effect.batch))
         if isinstance(effect, RecordRead):
             return Resume(k, self._read(effect.conversation_id, effect.before, effect.limit))
         return Pass(effect, k)
 
+    def _spool(
+        self, effect: RecordSpoolPut | RecordSpoolList | RecordSpoolRemove | RecordSpoolGiveUp
+    ) -> RecordSpoolListing | None:
+        if isinstance(effect, RecordSpoolPut):
+            self.spool[effect.batch.spool_key] = effect.batch
+            self.spooled.append(effect.batch.spool_key)
+            return None
+        if isinstance(effect, RecordSpoolList):
+            batches = tuple(self.spool[key] for key in sorted(self.spool))
+            return RecordSpoolListing(batches=batches, unreadable=())
+        self.spool.pop(effect.spool_key, None)
+        if isinstance(effect, RecordSpoolGiveUp):
+            self.given_up[effect.spool_key] = effect.reason
+        return None
+
     def _append(self, batch: RecordBatch) -> RecordAppendOutcome:
         self.appends.append(batch)
         if self.unreachable:
             return RecordUnsent(0, "unreachable: fake record service")
+        if self.refusals:
+            return self.refusals.pop(0)
         stream_id = batch.stream.stream_id
         appended: list[int] = []
         ignored: list[int] = []

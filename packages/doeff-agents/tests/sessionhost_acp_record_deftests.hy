@@ -6,11 +6,14 @@
 ;;; (recordRef / recordedSeq)。ここで撃つのは
 ;;;   * 純関数: 本文は切らず見出しは本文を持たない(導く 1 点 headline-of-body・bytes / sha256 は service と同じ計算)・
 ;;;     採番(producerSeq = 見出しの seq・単調・batch の上限で分ける)・同じ拍の再送は同じ鍵と本文・attempt が変わると
-;;;     stream が変わる・拾い直しの番と採番の下限・結末の語・消し込みの可否・flush を止めるか・wire の応答の写し
+;;;     stream が変わる・拾い直しの番と採番の下限・結末の語(= spool の扱い — 受理と 409 は消す / この batch だけの決まった断りは
+;;;     隔離して次へ / 系の側は残して止める)・wire の応答の写し
 ;;;   * fake の handler で agentd を一周: ACP と service の両方に同じ seq が並び見出しの sha256 = service の本文の sha256・
 ;;;     1 entry ≤ TURN-ENTRY-MAX-BYTES・recordRef / recordedSeq が行に写る・送れない → spool に残る(recordedSeq は進まない)
-;;;     → 周期の後の拍で送れて消える(進む)・409 は spool に残さず赤の計器・弁 off は Record* を撃たない(見出しは同じ)
-;;;   * spool の handler(tmp dir の実 file): 置く → 鍵の順に読める → 消える・壊れた file は消さずに名乗る
+;;;     → 周期の後の拍で送れて消える(進む)・409 は spool に残さず赤の計器・決まった断り(422)は隔離して同じ拍に後ろの batch を
+;;;     送り手番に理由の condition(段 9f lane 9f-8)・弁 off は Record* を撃たない(見出しは同じ)
+;;;   * spool の handler(tmp dir の実 file): 置く → 鍵の順に読める → 消える・壊れた file は消さずに名乗る・決まった断りは
+;;;     given-up の置き場へ移り理由が隣に在る
 ;;;   * join の宣言の [record] → RECORD_SERVICE_URL と spool の置き場・settings の弁
 ;;;   * 参加の門(段 9f lane 9f-6): 宛先なし → 参加を断る(理由 = 宣言の置き場)・宛先あり → 参加・宛先あり届かない →
 ;;;     参加して spool(門は宣言の検で、届くかは検めない)
@@ -36,6 +39,7 @@
   NODE-KIND
   PHASE-BOUND
   RECORD-BATCH-MAX-EVENTS
+  RECORD-SPOOL-GIVEN-UP-DIR
   RECORD-SPOOL-DIR-ENV
   RECORD-URL-ENV
   RecordAppended
@@ -49,7 +53,7 @@
   TurnEntryHeadline])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeRecord FakeSessions record-body-sha256])
 (import doeff_agents.sessionhost.acp.handlers [
-  HttpReply RecordSpool decode-record-page decode-record-reply record-append-body])
+  HttpReply RecordSpool decode-record-page decode-record-reply decode-spooled-batch record-append-body])
 (import doeff_agents.sessionhost.acp.join [join-plan-of join-spec-of record-sink-of])
 (import doeff_agents.sessionhost.acp.judgment [
   entry-json-of
@@ -57,9 +61,7 @@
   record-append-word-of
   record-batches-of
   record-body-bytes-of
-  record-halts-flush
   record-ref-of
-  record-release-of
   record-stream-job-of
   recovered-record-of
   text-body
@@ -273,10 +275,15 @@
   (setv conflicted (RecordConflicted :conflicts #({"producerSeq" 5})))
   (setv unreachable (RecordUnsent :status 0 :error "unreachable"))
   (setv malformed (RecordUnsent :status 400 :error "malformed"))
-  (setv outcomes [ok conflicted unreachable malformed])
-  (assert (= (lfor outcome outcomes (run (record-append-word-of outcome))) ["ok" "conflict" "error" "error"]))
-  (assert (= (lfor outcome outcomes (run (record-release-of outcome))) [True True False False]))
-  (assert (= (lfor outcome outcomes (run (record-halts-flush outcome))) [False False True False]))
+  (setv unstorable (RecordUnsent :status 422 :error "unstorable: SQLSTATE 22003: NumericValueOutOfRange: bigint out of range"))
+  (setv forbidden (RecordUnsent :status 403 :error "forbidden: not a writer"))
+  (setv throttled (RecordUnsent :status 429 :error "window-exceeded"))
+  (setv unavailable (RecordUnsent :status 503 :error "store-unavailable"))
+  (setv outcomes [ok conflicted unreachable malformed unstorable forbidden throttled unavailable])
+  ;; 語 = 計器の outcome と spool の扱いの 1 点(段 9f lane 9f-8): この batch だけの決まった断り(400 / 422)は given-up(隔離して
+  ;; 次へ)・札・窓・届かない・5xx は error(残して止める — 機体の設定か一時的)。
+  (assert (= (lfor outcome outcomes (run (record-append-word-of outcome)))
+             ["ok" "conflict" "error" "given-up" "given-up" "error" "error" "error"]))
   ;; wire の応答の写し(契約 appendAnswer / conflictAnswer / 届かない)
   (assert (= (decode-record-reply (HttpReply 200 {"recordSeq" {"6" 11 "7" 12} "highestProducerSeq" 7
                                                   "appended" [6 7] "ignored" [5]}))
@@ -288,6 +295,8 @@
   (setv refusal (decode-record-reply (HttpReply 403 {"error" "forbidden" "reason" "not a writer"})))
   (assert (isinstance refusal RecordUnsent))
   (assert (= refusal.error "forbidden: not a writer"))
+  (assert (= (decode-record-reply (HttpReply 422 {"error" "unstorable" "reason" "SQLSTATE 22P05: UntranslatableCharacter"}))
+             (RecordUnsent :status 422 :error "unstorable: SQLSTATE 22P05: UntranslatableCharacter")))
   ;; readEvents の応答の写し(契約 eventsAnswer / storedEvent — required の欠けた項は落とす・cursor.next は None も)
   (setv page (decode-record-page (HttpReply 200 {"cid" CONVERSATION
                                                  "events" [{"recordSeq" 3 "streamId" STREAM "streamKind" "turn" "producerSeq" 0
@@ -428,6 +437,37 @@
   (assert (is world.state.record-backoff-ms None) "409 は送れなさではない(backoff しない)"))
 
 
+(deftest test-a-batch-the-service-refuses-by-its-data-is-given-up-and-the-spool-moves-on
+  ;; 段 9f lane 9f-8(実弾 lane 9f-7): 記録の service がこの batch の値を持てないと決めた断り(422 unstorable — 旧くは本文の NUL を
+  ;; 503 と取り違えていた)を撃ち直し続けると、spool の先頭で同じ batch が詰まり後ろの本文も送れない。given-up = 隔離して理由を
+  ;; 名乗り、同じ拍に後ろの batch を送る・手番の condition RecordUnavailable に理由・backoff しない。
+  (setv world (RecordWorld True))
+  (.tick world 0)
+  (setv world.record.unreachable True)
+  (.write-events world (claude-events (.sid world) "hello"))
+  (.tick world 1000)
+  (.write-events world (+ (claude-events (.sid world) "hello") (claude-events (.sid world) "again")))
+  (.tick world (int (* 1000 world.settings.record-retry-seconds)))
+  (assert (= (len world.record.spool) 2) (sorted world.record.spool))
+  (setv [first-key second-key] (sorted world.record.spool))
+  (setv world.record.unreachable False)
+  (setv world.record.refusals [(RecordUnsent :status 422 :error "unstorable: SQLSTATE 22P05: UntranslatableCharacter: unsupported Unicode escape sequence")])
+  (.tick world (int (* 1000 world.settings.record-retry-seconds)))
+  (assert (= world.record.spool {}) "決まった断りの batch が先頭を塞いだ / 後ろの batch を送らなかった")
+  (assert (= (list (.keys world.record.given-up)) [first-key]))
+  (assert (in "422" (get world.record.given-up first-key)))
+  (assert (= (lfor line (cut (.metrics-named world "agentd_record_append_total") -2 None) (get line "outcome")) ["given-up" "ok"]))
+  (assert (= (. (get world.record.appends -1) spool-key) second-key))
+  (assert (= (get (get (.metrics-named world "agentd_record_spool_depth") -1) "depth") 0))
+  (assert (is world.state.record-backoff-ms None) "決まった断りは送れなさではない(backoff しない)")
+  (assert (any (gfor line world.local.logs (in "moved to the given-up spool" line))))
+  ;; 手番の condition RecordUnavailable に理由(Ended の書きに乗る)— 同じ型は 1 つだけ。
+  (setv job (get world.state.jobs 0))
+  (setv notes (lfor c job.pending-conditions :if (= (.get c "type") "RecordUnavailable") c))
+  (assert (= (len notes) 1) job.pending-conditions)
+  (setv note-reason (get (get notes 0) "reason"))
+  (assert (and (isinstance note-reason str) (in first-key note-reason)) note-reason))
+
 ;; ---------------------------------------------------------------------------
 ;; spool の handler(実 file)と join の宣言
 ;; ---------------------------------------------------------------------------
@@ -454,7 +494,17 @@
       (.write handle "{"))
     (setv damaged (.listing spool))
     (assert (= damaged.unreadable #("broken.json")))
-    (assert (= damaged.batches #(late)))))
+    (assert (= damaged.batches #(late)))
+    ;; 決まった断りの batch は送る順から外れて given-up の置き場へ(本文は消さない・理由が隣に在る — 段 9f lane 9f-8)。
+    (.give-up spool late.spool-key "422: unstorable")
+    (.give-up spool late.spool-key "422: unstorable")
+    (assert (= (. (.listing spool) batches) #()) "隔離した batch がまだ送る順に在る")
+    (setv given-up-dir (os.path.join directory RECORD-SPOOL-GIVEN-UP-DIR))
+    (assert (= (sorted (os.listdir given-up-dir)) [(+ late.spool-key ".json") (+ late.spool-key ".reason.txt")]))
+    (with [handle (open (os.path.join given-up-dir (+ late.spool-key ".json")) "rb")]
+      (assert (= (decode-spooled-batch (json.loads (.read handle))) late) "隔離で本文が変わった"))
+    (with [handle (open (os.path.join given-up-dir (+ late.spool-key ".reason.txt")) "r" :encoding "utf-8")]
+      (assert (= (.read handle) "422: unstorable")))))
 
 
 (deftest test-join-record-table-derives-the-record-env-and-settings-read-the-valve

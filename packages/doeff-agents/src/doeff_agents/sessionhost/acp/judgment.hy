@@ -101,13 +101,14 @@
   ProfileUsageUnavailable
   RECORD-APPEND-CONFLICT
   RECORD-APPEND-ERROR
+  RECORD-APPEND-GIVEN-UP
   RECORD-APPEND-OK
   RECORD-BATCH-MAX-EVENTS
   RECORD-CREATE-CREATED
   RECORD-CREATE-GIVEN-UP
   RECORD-CREATE-PENDING
   RECORD-REF-PREFIX
-  RECORD-STATUS-MALFORMED
+  RECORD-BATCH-REFUSAL-STATUSES
   RECORD-STREAM-TURN
   RecordAppended
   RecordBatch
@@ -1528,28 +1529,45 @@
 (defk record-append-word-of [outcome]
   {:pre [(: outcome (| RecordAppended RecordConflicted RecordUnsent))]
    :post [(: % str)]}
-  "追記の結末 → 計器の語(ok | conflict | error — effects.RecordAppendWord の閉語彙)。"
+  "追記の結末 → 語(effects.RecordAppendWord の閉語彙)— 計器の outcome と spool の扱いを**この 1 点**で決める(段 9f lane 9f-8):
+   ok = 受理(消す)/ conflict = 409(同じ鍵で違う本文 — 再送しても積めない・消して赤の計器)/ given-up = この batch だけの
+   決まった断り(RECORD-BATCH-REFUSAL-STATUSES = 400 malformed・422 unstorable — 撃ち直しても通らない〔法 7〕: 隔離して理由を
+   名乗り、後ろの batch へ進む — 断られた 1 つの batch で spool の先頭を塞がない)/ error = 系の側の送れなさ(届かない・5xx・
+   札 401 / 403・窓 429 — 残して backoff・後ろの batch も同じ理由で送れないのでこの拍の残りも撃たない)。
+   札を given-up にしないのは、断りが batch ではなく機体の設定の性質だから(設定を直せば残した batch が自動で送れる —
+   turn-record の create の record-refusal-deterministic とは扱う物の単位が違う)。"
   (cond
     (isinstance outcome RecordAppended) RECORD-APPEND-OK
     (isinstance outcome RecordConflicted) RECORD-APPEND-CONFLICT
+    (in outcome.status RECORD-BATCH-REFUSAL-STATUSES) RECORD-APPEND-GIVEN-UP
     True RECORD-APPEND-ERROR))
 
 
-(defk record-release-of [outcome]
-  {:pre [(: outcome (| RecordAppended RecordConflicted RecordUnsent))]
-   :post [(: % bool)]}
-  "spool の file を消してよいか: 受理(ok)と 409(同じ鍵で違う本文 — 再送しても積めない・赤の計器で名乗る)は消す、
-   送れなかった(error)は残して再送する。"
-  (not (isinstance outcome RecordUnsent)))
+(defk record-unavailable-noted [job reason]
+  {:pre [(: job InFlightJob) (: reason str)]
+   :post [(: % InFlightJob)]}
+  "手番の記録が欠けた理由を condition RecordUnavailable として job の pending-conditions に足す(Ended の書きに乗る — 同じ型を
+   二度足さない・最初の理由を残す)。turn-record の行を作れない(record-create-applied)と、本文の batch を service が決まった
+   断りで断った(record-given-up-noted)の 2 つの口が同じこの点を通る。"
+  (when (any (gfor c job.pending-conditions (= (.get c "type") CONDITION-RECORD-UNAVAILABLE)))
+    (return job))
+  (<- condition dict (condition-of CONDITION-RECORD-UNAVAILABLE reason))
+  (replace job :pending-conditions (+ job.pending-conditions #(condition))))
 
 
-(defk record-halts-flush [outcome]
-  {:pre [(: outcome (| RecordAppended RecordConflicted RecordUnsent))]
-   :post [(: % bool)]}
-  "spool の再送をこの拍で止めるか: 送れなさが系の側(届かない・5xx・札・窓)なら止める(後ろの batch も同じ理由で
-   送れない)。batch だけの断り(400 malformed)は残して次の batch へ進む(1 つの壊れた batch で後ろを塞がない — spool の
-   深さの計器が名乗る)。"
-  (and (isinstance outcome RecordUnsent) (!= outcome.status RECORD-STATUS-MALFORMED)))
+(defk record-given-up-noted [state stream-id reason]
+  {:pre [(: state AgentdState) (: stream-id str) (: reason str)]
+   :post [(: % AgentdState)]}
+  "決まった断りで隔離した本文の batch の理由を、その stream の手番が memory に居れば condition RecordUnavailable に写す
+   (段 9f lane 9f-8 — record-unavailable-noted)。手番が既に memory に無ければ state のまま(理由は log と隔離の置き場の
+   理由の file が名乗る)。"
+  (for [job state.jobs]
+    (<- job-stream str (record-stream-id-of job.job-id job.record-attempt))
+    (when (= job-stream stream-id)
+      (<- noted InFlightJob (record-unavailable-noted job reason))
+      (<- next AgentdState (with-job state noted))
+      (return next)))
+  state)
 
 
 (defk record-flush-due [state now-ms settings]
@@ -1597,13 +1615,11 @@
   (<- verdict str (record-create-verdict outcome job.started-ms now-ms deadline-seconds))
   (setv refusal (if (isinstance outcome Refused) f"{outcome.status}: {outcome.error}" ""))
   (setv next (replace job :record-create verdict :record-create-last-ms now-ms :record-create-refusal refusal))
-  (when (and (= verdict RECORD-CREATE-GIVEN-UP)
-             (not (any (gfor c job.pending-conditions (= (.get c "type") CONDITION-RECORD-UNAVAILABLE)))))
+  (when (= verdict RECORD-CREATE-GIVEN-UP)
     (setv elapsed-s (// (- now-ms job.started-ms) 1000))
-    (<- condition dict
-        (condition-of CONDITION-RECORD-UNAVAILABLE
-                      f"turn-record could not be created ({refusal}) after {elapsed-s} s; events of this turn were not recorded"))
-    (setv next (replace next :pending-conditions (+ job.pending-conditions #(condition)))))
+    (<- noted InFlightJob
+        (record-unavailable-noted next f"turn-record could not be created ({refusal}) after {elapsed-s} s; events of this turn were not recorded"))
+    (setv next noted))
   next)
 
 

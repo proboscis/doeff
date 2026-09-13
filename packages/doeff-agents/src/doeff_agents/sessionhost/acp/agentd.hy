@@ -147,6 +147,7 @@
   RecordSpoolList
   RecordSpoolListing
   RecordSpoolPut
+  RecordSpoolGiveUp
   RecordSpoolRemove
   RecordUnread
   RecordUnsent
@@ -163,6 +164,10 @@
   ProfileUnobserved
   Pushed
   ReadProfileUsage
+  RECORD-APPEND-CONFLICT
+  RECORD-APPEND-ERROR
+  RECORD-APPEND-GIVEN-UP
+  RECORD-APPEND-OK
   RECORD-CREATE-GIVEN-UP
   RECORD-CREATE-PENDING
   Refused
@@ -200,12 +205,11 @@
   record-create-applied
   record-create-due
   record-flush-due
-  record-halts-flush
+  record-given-up-noted
   record-history-satisfied
   record-lag-of
   record-page-advances
   record-ref-of
-  record-release-of
   record-stream-job-of
   recovered-record-of
   ended-status-of
@@ -876,7 +880,8 @@
    :post [(: % AgentdState)]}
   "spool の batch を鍵の順に会話の記録の service へ送り、受理(と 409)で消す(段 9f lane 9f-2・outbox の送り)。拍の終わりに
    撃つので、送れている間は出来事を読んだ拍に送られる。送れなかった batch は残して backoff(judgment.record-flush-due)、
-   系の側の送れなさ(届かない・5xx・札)はこの拍の残りも撃たない(judgment.record-halts-flush)。計器: 追記の結末
+   この batch だけの決まった断り(400 / 422)は隔離して理由を名乗り後ろの batch へ進み、系の側の送れなさ(届かない・5xx・札)は
+   この拍の残りも撃たない(扱いは judgment.record-append-word-of の 1 点・段 9f lane 9f-8)。計器: 追記の結末
    (agentd_record_append_total)・追いつきの差(agentd_record_lag_seq)・spool の深さ(agentd_record_spool_depth — 変わった時)。"
   (<- listing RecordSpoolListing (RecordSpoolList))
   (for [name listing.unreadable]
@@ -890,8 +895,7 @@
     (<- (MetricLine :fields {"metric" METRIC-RECORD-APPEND-TOTAL "outcome" word
                                     "conversationId" batch.conversation-id "streamId" stream-id
                                     "events" (len batch.events)}))
-    (<- release bool (record-release-of outcome))
-    (when release
+    (when (in word #(RECORD-APPEND-OK RECORD-APPEND-CONFLICT))
       (<- (RecordSpoolRemove :spool-key batch.spool-key))
       (setv remaining (- remaining 1)))
     (when (isinstance outcome RecordAppended)
@@ -904,10 +908,19 @@
     (when (isinstance outcome RecordConflicted)
       (<- (LogLine :text f"agentd: record append for {stream-id} conflicted (same key, different body); dropped from the spool: {outcome.conflicts}")))
     (when (isinstance outcome RecordUnsent)
-      (setv failed True)
-      (<- (LogLine :text f"agentd: record append for {stream-id} was not accepted ({outcome.status}: {outcome.error}); kept in the spool")))
-    (<- halt bool (record-halts-flush outcome))
-    (when halt
+      (if (= word RECORD-APPEND-GIVEN-UP)
+          (do
+            ;; この batch だけの決まった断り(段 9f lane 9f-8): 隔離して理由を名乗り、後ろの batch へ進む(先頭を塞がない)。
+            (setv reason f"record service refused the body batch {batch.spool-key} ({outcome.status}: {outcome.error}); moved to the given-up spool")
+            (<- (RecordSpoolGiveUp :spool-key batch.spool-key :reason reason))
+            (setv remaining (- remaining 1))
+            (<- (LogLine :text f"agentd: {reason}"))
+            (<- noted AgentdState (record-given-up-noted state stream-id reason))
+            (setv state noted))
+          (do
+            (setv failed True)
+            (<- (LogLine :text f"agentd: record append for {stream-id} was not accepted ({outcome.status}: {outcome.error}); kept in the spool")))))
+    (when (= word RECORD-APPEND-ERROR)
       (break)))
   (when (!= remaining state.record-spool-depth)
     (<- (MetricLine :fields {"metric" METRIC-RECORD-SPOOL-DEPTH "depth" remaining})))
