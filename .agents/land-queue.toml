@@ -16,6 +16,10 @@
 [land-queue]
 enabled = true
 base = "main"
+# 区画の名前(着地の台帳の repo 鍵・pod の窓が公開の鍵を引く区画)— checkout の path に依らない綴り。
+# 宣言が無い時は checkout の basename に畳まれるので値は同じ(dotfiles agentcli land.partition_name の
+# ② が読む・③ が既定)。herdr-hud / dotfiles と同じく明示する(段 9 lane 9m 便 2d・agora-redesign #71)。
+name = "doeff"
 
 [gate]
 # full = 日次検証便(ai land verify)と full_paths 便だけが使う(mode = "focus" の間、
@@ -92,7 +96,18 @@ join_s = 60
 ".agents/land-queue.toml" = "true"
 
 [policy]
-run_executors = ["landrun-doeff", "landrun-rollout", "machine"]
+# ⚠ 名簿は意味名で書く(dotfiles ADR-DOTFILES-017 R-6f25e8f4)。"machine" は種別の併記(互換)。
+# "land-runner@agora-1" = pod の窓の走行体(下の runner = "pod" と対の二重宣言 — 名簿に無いと pod の窓は開かない)。
+run_executors = ["landrun-doeff", "landrun-rollout", "machine", "land-runner@agora-1"]
+# 着地の窓を回す機体(dotfiles ADR-DOTFILES-017 law land-runner-by-repo-owner・段 9 lane 9m 便 2d・
+# agora-redesign #71・operator 裁定 2026-09-14 案 A)。この repo は個人の repo(会社 repo ではない)
+# なので、pod の service(herdr-hud deploy の container land-api・実行者 land-runner@agora-1)が
+# 窓を回す。Mac 側の起こし口はこの宣言を**本線の先端から**読んで「この repo の窓は pod が回す」
+# と名乗って見送る。戻すには runner の行を消す(Mac の窓が再び回る・1 行の便)。押す鍵 =
+# Secret land-key-doeff(GitHub の deploy key `agora-1-pod (write) land-runner doeff`・herdr-hud
+# deploy の env AGORA_LAND_SSH_KEYS の doeff の項 — 鍵は repo ごとに 1 つ・#71 便 2b)。
+# ⚠ `auto_run = true` は残す(pod の窓と `--machine` の資格の宣言 = 種別の照合)。
+runner = "pod"
 auto_run = true
 urgent_slots = 1
 push = "origin"
