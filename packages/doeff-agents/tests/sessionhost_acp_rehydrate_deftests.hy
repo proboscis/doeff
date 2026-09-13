@@ -11,6 +11,8 @@
 ;;;   * fake で agentd を一周: 家の違う温かい session は片付けて履歴からの再開(本文は service の before=latest から)/ 器に無い
 ;;;     predecessor は履歴からの再開 / 同じ家の片付いた session は --resume / resume の断りは同じ id で履歴からの再開 /
 ;;;     turn-record の spec に sessionId / service が届かない・配線されていない → 薄い再開を名乗る / 上限まで頁を後向きに読む
+;;;   * 家の鍵の model(段 9o lane 9o-3・agora-redesign #75): 同じ機体・profile の家・model なら温かい session へ send /
+;;;     model だけが違えば送らず(片付いた session も --resume せず)charter.model の新しい session を履歴から再開(本文は service から)
 ;;; HTTP も subprocess も無い。
 
 (require doeff-hy.macros [deftest])
@@ -80,11 +82,13 @@
           :status {"state" "ended" "entries" entries}))
 
 
-(defn #^ AcpRow bound-row [#^ str job-id #^ list inputs #^ str account #^ (| str None) predecessor]
-  "自分に結ばれた Bound の agent-job(binding.account = 借りる家・affinity.predecessor = 会話の前の session)。"
+(defn #^ AcpRow bound-row [#^ str job-id #^ list inputs #^ str account #^ (| str None) predecessor
+                           #^ str [model "claude-opus-5"]]
+  "自分に結ばれた Bound の agent-job(binding.account = 借りる家・affinity.predecessor = 会話の前の session・
+   model = charter.model — 配達の係が会話の宣言を重ねた値)。"
   (setv spec {"subject" CONVERSATION
               "inputs" inputs
-              "charter" {"agent_type" "claude" "work_dir" "/work" "prompt" "start" "model" "claude-opus-5"}})
+              "charter" {"agent_type" "claude" "work_dir" "/work" "prompt" "start" "model" model}})
   (when (is-not predecessor None)
     (setv (get spec "affinity") {"predecessor" predecessor}))
   (AcpRow :namespace AGENT-JOB-NAMESPACE :key f"{AGENT-JOB-NAMESPACE}:{AGENT-JOB-KIND}:{job-id}"
@@ -340,6 +344,76 @@
   (assert (= world.acp.history-reads [CONVERSATION]))
   (setv metric (get (lfor m world.local.metrics :if (= (get m "metric") "agent-job-to-send") m) -1))
   (assert (= (get metric "arm") "rehydrate")))
+
+
+(deftest test-same-node-profile-and-model-sends-to-the-warm-session
+  ;; 段 9o lane 9o-3(#75)の検 (a): 同じ機体・同じ profile の家・同じ model の手番は温かい session へ send する(起こさない・
+  ;; ACP の記録も記録の service も読まない)。
+  (setv world (World "tmux" True))
+  (setv warm (run-first-turn world))
+  (.put-row world.acp (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (+ world.local.now-ms 100)))
+  (.put-row world.acp (bound-row "j-2" ["m-2"] "acct" warm "claude-opus-5"))
+  (.tick world 1000)
+  (assert (= world.sessions.cleanups []) world.local.logs)
+  (assert (= world.sessions.resumes []))
+  (assert (= (len world.sessions.launches) 1) "同じ家の手番で session を起こした")
+  (assert (= (.sid world "j-2") warm))
+  (assert (= (get world.sessions.sends -1) #(warm "合言葉は何でしたか" True)))
+  (assert (= world.acp.history-reads []) "温かい send は ACP の記録を読まない")
+  (assert (= world.record-service.reads []) "温かい send は記録の service を読まない")
+  (setv metric (get (lfor m world.local.metrics :if (= (get m "metric") "agent-job-to-send") m) -1))
+  (assert (= (get metric "arm") "send")))
+
+
+(deftest test-model-change-alone-rehydrates-a-new-session-on-the-charter-model
+  ;; 段 9o lane 9o-3(#75)の検 (b)(c): 機体も profile の家も同じで、会話の宣言の model だけが変わった手番(charter.model が
+  ;; 違う)は温かい session へ send しない — 片付けて、新しい session を charter.model で起こし、最初の本文の「これまでの会話」は
+  ;; 会話の記録の service の before=latest から読む(9f-4 の形)。実射 2026-09-14: charter は claude-opus-5 なのに温かい session へ
+  ;; 送られ「session started: model claude-sonnet-5」。
+  (setv world (World "tmux" True))
+  (setv warm (run-first-turn world))
+  (.put-row world.acp (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (+ world.local.now-ms 100)))
+  (.put-row world.acp (bound-row "j-2" ["m-2"] "acct" warm "claude-sonnet-5"))
+  (.tick world 1000)
+  ;; (b) 送らない・片付ける・charter.model の新しい session
+  (assert (= world.sessions.cleanups [warm]) world.local.logs)
+  (assert (= world.sessions.resumes []))
+  (assert (= (len world.sessions.launches) 2) world.local.logs)
+  (setv launch (get world.sessions.launches -1))
+  (assert (= (get launch "model") "claude-sonnet-5") launch)
+  (setv fresh (.sid world "j-2"))
+  (assert (!= fresh warm))
+  (assert (= (get launch "session_id") fresh))
+  (assert (= (get world.sessions.sends -1) #(fresh "合言葉は何でしたか" True)))
+  (assert (not-in #(warm "合言葉は何でしたか" True) world.sessions.sends) "model の違う温かい session に送った")
+  (setv stamp (dict-at (dict-at launch "launch_attribution") "agentd"))
+  (assert (= (get stamp "arm") "rehydrate"))
+  (assert (= (dict-at stamp "home") {"account" "acct" "binding" None "model" "claude-sonnet-5"}) stamp)
+  (assert (= (get (. (.record world "j-2") spec) "model") "claude-sonnet-5"))
+  (assert (any (gfor line world.local.logs (in "runs in another home (account, binding or model)" line))) world.local.logs)
+  (setv metric (get (lfor m world.local.metrics :if (= (get m "metric") "agent-job-to-send") m) -1))
+  (assert (= (get metric "arm") "rehydrate"))
+  ;; (c) 最初の本文の「これまでの会話」は記録の service から(1 手番目の本文は ACP の見出しに無く service にだけ在る)
+  (setv prompt (str-at launch "prompt"))
+  (assert (.startswith prompt "start\n\nこれまでの会話(会話の記録の service と ACP の郵便から") prompt)
+  (assert (in f"operator → {CONVERSATION}(note): 合言葉は ひまわり" prompt) prompt)
+  (assert (in "agent: 覚えました" prompt) prompt)
+  (assert (= world.record-service.reads [#(CONVERSATION None RECORD-PAGE-MAX-LIMIT)]) world.record-service.reads)
+  (assert (any (gfor line world.local.logs (in "from the record service" line))) world.local.logs)
+  (assert (= world.acp.history-reads [CONVERSATION]))
+  ;; 片付いた(idle の寿命を超えた)session でも model が違えば --resume しない(起こした時の model の transcript の続きに
+  ;; なる)— 同じく charter.model の新しい session を履歴から再開する。
+  (setv cold (World "tmux" True))
+  (setv gone (run-first-turn cold))
+  (.tick cold 601000)
+  (assert (= cold.sessions.cleanups [gone]))
+  (.put-row cold.acp (message-row "m-2" CONVERSATION "operator" "second" (+ cold.local.now-ms 100)))
+  (.put-row cold.acp (bound-row "j-2" ["m-2"] "acct" gone "claude-sonnet-5"))
+  (.tick cold 1000)
+  (assert (= cold.sessions.resumes []) cold.local.logs)
+  (assert (= (len cold.sessions.launches) 2) cold.local.logs)
+  (assert (= (get (get cold.sessions.launches -1) "model") "claude-sonnet-5"))
+  (assert (= cold.record-service.reads [#(CONVERSATION None RECORD-PAGE-MAX-LIMIT)]) cold.record-service.reads))
 
 
 (deftest test-predecessor-unknown-to-this-node-rehydrates-from-the-record-service

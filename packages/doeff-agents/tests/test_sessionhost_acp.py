@@ -1253,14 +1253,16 @@ def test_next_arm_for_job_is_the_one_decision() -> None:
     home = run(judgment.home_key_of(plan))
     other_plan = run(judgment.launch_plan_of(bound_job("b", inputs=[], account="other")))
     other = run(judgment.home_key_of(other_plan))
-    assert home == {"account": "acct", "binding": None}
+    assert home == {"account": "acct", "binding": None, "model": "claude-opus-5"}
     assert other != home
+    # 段 9o lane 9o-3: model だけが違う手番も違う家(温かい session に送らない・片付いた session を --resume しない)。
+    other_model = {**home, "model": "claude-sonnet-5"}
     stamp: JSONObject = {
         "agentd": {
             "conversationId": CONVERSATION,
             "agentJobId": "a-0",
             "account": "acct",
-            "home": {"account": "acct", "binding": None},
+            "home": {"account": "acct", "binding": None, "model": "claude-opus-5"},
             "arm": "launch",
         }
     }
@@ -1290,6 +1292,9 @@ def test_next_arm_for_job_is_the_one_decision() -> None:
     assert arm("p", busy, other) == ArmChoice("defer", "p", None)
     assert arm("p", dead, home) == ArmChoice("resume", "p", None)
     assert arm("p", dead, other) == ArmChoice("rehydrate", None, None)
+    assert arm("p", warm, other_model) == ArmChoice("rehydrate", None, "p")
+    assert arm("p", busy, other_model) == ArmChoice("defer", "p", None)
+    assert arm("p", dead, other_model) == ArmChoice("rehydrate", None, None)
     assert arm("p", bare_dead, home) == ArmChoice("rehydrate", None, None)
     assert arm("p", None, home) == ArmChoice("rehydrate", None, None)
     assert run(judgment.fallback_arm_of(ArmChoice("resume", "p", None))) == ArmChoice(

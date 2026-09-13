@@ -48,7 +48,8 @@
 ;;; 会話の引き継ぎ(R20・段 8q・既知の形 = virtual actor の状態の移送): profile / 機体を変えた手番でも会話は続く。
 ;;; 起こす session には会話・手番・家を launch_attribution に刻み(session の行が覚える — 回収される agent-job の行に
 ;;; 頼らない)、turn-record の spec に sessionId を書く(Messaging が次の手番の affinity.predecessor に名指す)。
-;;; 起こし方は judgment.next-arm-for-job の 1 点: cache(温かい send / --resume)を保つのは同じ機体 ∧ 同じ家の時だけで、
+;;; 起こし方は judgment.next-arm-for-job の 1 点: cache(温かい send / --resume)を保つのは同じ機体 ∧ 同じ家(account・
+;;; binding・model の組 — 段 9o lane 9o-3)の時だけで、
 ;;; 家か機体が違えば cache の失効を受け入れ(operator 決定 #54)、家の違う温かい session は片付けて rehydrate(ACP の
 ;;; 会話の記録を最初の本文に畳む — judgment.rehydrate-history-of・上限は AgentdSettings.rehydrate_history_byte_budget・
 ;;; 文脈の圧縮は別 issue #55)、resume が断られたら rehydrate(judgment.fallback-arm-of)。node の observations は sessions に account、transcripts に「終端だが
@@ -580,7 +581,7 @@
       (do
         (when (is-not choice.retire None)
           (<- (retire-sessions #(choice.retire)
-                               f"job {job-id} runs in another home — the session cache is dropped and the conversation is rehydrated")))
+                               f"job {job-id} runs in another home (account, binding or model) — the session cache is dropped and the conversation is rehydrated")))
         (<- attempted (| SessionView SessionRefused)
             (incarnate settings plan choice view session-id lease bodies job-id subject exclude))
         (setv outcome attempted)
