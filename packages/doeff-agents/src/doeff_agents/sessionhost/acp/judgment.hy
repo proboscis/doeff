@@ -96,6 +96,8 @@
   SESSION-OBSERVED-BUSY
   SESSION-OBSERVED-IDLE
   SESSION-TERMINAL-STATUSES
+  STREAM-CAPABILITY-EVENTS
+  STREAM-CAPABILITY-FRAMES
   STREAM-SOURCE-EVENTS
   STREAM-SOURCE-TRANSCRIPT
   SessionView
@@ -556,7 +558,7 @@
    :post [(: % str)]}
   "node の observations.streamCapability は backend から導く(契約 turn-delta.json capability):
    headless = events(stdout の行の増分)・tmux / herdr = frames(pane の断面)。"
-  (if (= backend BACKEND-HEADLESS) "events" "frames"))
+  (if (= backend BACKEND-HEADLESS) STREAM-CAPABILITY-EVENTS STREAM-CAPABILITY-FRAMES))
 
 
 (defk session-observations-of [views]
@@ -1905,10 +1907,14 @@
 (defk wait-seconds-for [state settings]
   {:pre [(: state AgentdState) (: settings AgentdSettings)]
    :post [(: % float)]}
-  "次の watch の待ちの上限: capture 中は frame の間隔、手番が走っていれば transcript の
-   周期、何も無ければ idle の上限。"
+  "次の watch の待ちの上限: 購読者が居る(capturing)間は、この器の実況が events(headless —
+   file の追記の読み)なら events の周期(≤ 50 ms・段 8 lane 4aa)、frames(tui の pane の断面)なら
+   frame の間隔。手番が走っていれば transcript の周期、何も無ければ idle の上限。"
   (cond
-    (any (gfor job state.jobs job.capturing)) (float settings.frame-interval-seconds)
+    (any (gfor job state.jobs job.capturing))
+    (if (= settings.stream-capability STREAM-CAPABILITY-EVENTS)
+        (float settings.events-poll-seconds)
+        (float settings.frame-interval-seconds))
     state.jobs (float settings.transcript-poll-seconds)
     True (float settings.idle-wait-seconds)))
 

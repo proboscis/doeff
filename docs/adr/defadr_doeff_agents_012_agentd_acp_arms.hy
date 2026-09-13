@@ -80,16 +80,17 @@
 (require doeff-hy.macros [deftest])
 (import doeff-adr.macros [fact interpretation counterexample])
 (import re)
+(import dataclasses [replace])
 (import pathlib [Path])
 (import doeff [run])
 (import doeff_agents.sessionhost.acp.effects
         [AGENT-JOB-KIND AGENT-JOB-NAMESPACE AGORA-KINDS-NAMESPACE AcpRow AgentdSettings
-         AgentdState CaptureGone JSONObject JoinArgv JoinDeclaration JoinPlan JoinSpec MESSAGE-KIND
+         AgentdState CaptureGone InFlightJob JSONObject JoinArgv JoinDeclaration JoinPlan JoinSpec MESSAGE-KIND
          NODE-KIND Ownership PHASE-BOUND PHASE-ENDED PHASE-RUNNING PROFILE-KIND PROFILE-USAGE-KIND
          ProfileHome ProfileUsage ProfileUsageUnavailable TURN-RECORD-KIND UsageWindow])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeSessions])
 (import doeff_agents.sessionhost.acp.join [join-plan-of join-spec-of ownership-preflight])
-(import doeff_agents.sessionhost.acp.judgment [capture-verdict job-step-of stream-capability-of-backend])
+(import doeff_agents.sessionhost.acp.judgment [capture-verdict job-step-of stream-capability-of-backend wait-seconds-for])
 (import doeff_agents.sessionhost.acp.runtime [initial-state install run-tick settings-from-env])
 (import doeff_agents.sessionhost.acp.valve [ACP-VALVE-DEFAULT ACP-VALVE-ENV acp-valve])
 
@@ -373,6 +374,7 @@
      (rule R19 "手番の出来事は拍ごとに turn-record へ追記する(段 8 lane 4u・agora-redesign #49): stream-records は実況の材料の追記を読むたびに、その拍の出来事(judgment.deltas-of の entries = 契約 agora-kinds.json の turn-record の status.entries の item — kind は effects.EntryKind の閉語彙 text / tool_use / tool_result / frame / system / error・at = 読んだ拍・seq = frame と共有の採番)を agentd.append-entries の 1 点で行の status.entries へ追記する(耐久化は手番の終わりを待たない)。書きは行の最後の image(InFlightJob.record — 無ければ鍵で読む)に対する CAS(AcpPutStatus の ifGeneration)で、Conflict は行を読み直して同じ出来事を 1 度だけ積み直し、Refused / 行の不在は出来事を InFlightJob.pending_entries に持ち越して次の拍か手番の終わりに乗せる(落とさない)。拾い直した job の採番(seq 0 から)が行の seq と衝突すれば judgment.next-seq-after / renumbered-entries で行の次から振り直す。entry の形と上限は judgment の純関数の 1 点ずつ(text-entry / tool-use-entry / tool-result-entry / note-entry — summary ≤ ENTRY_SUMMARY_MAX_CHARS・text ≤ ENTRY_TEXT_MAX_CHARS・切れば truncated = true・toolUseId は呼び出しと結果を結ぶ鍵)で、行の上限(TURN_RECORD_ENTRIES_BYTE_BUDGET = 262144 byte)は judgment.entries-within-budget が古い出来事から落とし先頭に印(kind system・truncated・dropped)を残す。claude の system の行(init / API の retry / hook の失敗)は kind system に、result の誤りは kind error に、codex の turn/completed の誤りも kind error に写す(手番の終わりの判定は host のまま — ここは記録だけ)。手番の終わり(finalize-job / interrupt-job)は drain-stream で最後の材料を同じ拍で読んで追記し、turn-record-ended-status は残りの出来事を**追記**した上で ended・usage を据える(entries を置換しない — 旧の形は最後の本文 1 行だった)。usage は手番の全材料の読み直し(turn-batch-of)から数える(message ごとの重複を跨がない)。")
      (rule R20 "会話の cache を保つのは同じ機体 ∧ 同じ家の時だけ・それ以外は 履歴からの再開(ACP の記録から)(段 8q・agora-redesign #51・operator 決定 #54): Bound の job の起こし方は judgment.next-arm-for-job(candidate view home)の 1 点 — candidate = affinity.predecessor か会話の最後の手番の session(warm-candidate-of)、home = judgment.home-key-of(binding.account と charter の binding の対)、session の家は起こす時に刻んだ launch_attribution の agentd の欄(session-attribution-of / attribution-of-view — 回収される agent-job の行から導かない)。候補なし → launch / 生きて idle ∧ 同じ家 → send / 生きて idle ∧ 家が違う → 候補を session.cleanup して rehydrate / 生きていて idle でない → defer / 器に登記されて終端 ∧ 同じ家 → session.resume(cache を保つ)/ それ以外(器に無い = 別の機体・終端だが家が違う・帰属が無く家が分からない)→ rehydrate。rehydrate = session.launch で、最初の本文 = charter の prompt + judgment.rehydrate-history-of(会話の郵便と turn-record の entries を時刻順・kind ごとに畳み、この手番の inputs と frame は除き、AgentdSettings.rehydrate_history_byte_budget〔既定 65536 byte〕を超えたら古い手番から要約せず落として落とした数と全文の在処を名乗る)(+ headless は郵便の本文)。記録の材料は effect AcpConversationHistory(手番を起こし直す時の 1 回だけ)。resume が器に断られたら judgment.fallback-arm-of で同じ鋳造 id の rehydrate。家またぎの transcript の写し(sessionhost の transplant)には頼らない。turn-record の spec に sessionId(= sessionHandle.sessionId)を書く。node の observations は sessions の各項に account(帰属の account・null = 借りていない)、transcripts に終端の session のうち transcript の file がこの機体に在る会話ごとの最新(judgment.transcript-candidates-of・上限 AgentdSettings.transcripts_observed_max)を載せる — Scheduling はそれを (node, account) で読む(ACP 法 cd258b)。")
      (rule R21 "割り込みの本文は走っている手番へ即座に渡す(段 8 lane 4x・agora-redesign #56・operator 逐語 2026-09-13 \"messaging supports both 'queued/interrupting' messages\"): Messaging(ACP)が走っている手番の agent-job の status.interrupts に載せた Message の id を、agentd は毎拍・行の cache から・自分が走らせている job(memory の InFlightJob)についてだけ読み(agentd.deliver-interrupts の 1 点)、渡していない id(judgment.pending-interrupts-of = 行の interrupts − 行の interruptsDelivered − memory の interrupts_sent・載せた順)ごとに Message の本文を鍵で 1 行読んで SessionInterject(session.send の mode = interrupt)で器へ渡す。渡せた id は鍵で読み直した行に CAS で記録する(judgment.interrupts-delivered-status-of — 同じ 1 回の書きで interrupts から消し interruptsDelivered へ足す・他の欄は写す・Conflict は 1 度読み直す)。器が断った id(走っている手番が無い)はそこで止めて行に残す(順を跨いで後の id を先に渡さない)— 手番が終わればその行は終端の phase で interrupts を持ち、Messaging が queued として積み直す。器の側(sessionhost の headless): claude は `--input-format stream-json` の温かい process(impls/headless_argv.hy の CLAUDE-HEADLESS-FLAGS・実測 conformance/interrupt-physics.md — 手番の途中に書いた user の行は CLI が次の tool の境界で手番に注入し、result の後も process は生きて次の行が次の手番)で、割り込みの本文 = 同じ user の行(headless_protocol.ClaudeDialogue.inject — 走っている手番が無ければ accepted = False)、codex = turn/interrupt を送り interrupted の turn/completed を手番の終わりとして報告せず同じ thread へ本文の turn/start(CodexDialogue.inject — host から見て手番は 1 つのまま)。host は器が引き受けなかった時に型付きに断る(headless-inject-program — 誰の job でもない手番を起こさない)。agentd は器の作法(stdin の綴り・turn/interrupt)を 1 語も持たない。")
+     (rule R22 "実況の push の周期は購読者が居る間 ≤ 50 ms(段 8 lane 4aa・agora-redesign #63): headless の器の実況は events file の行の増分で、file の追記は合図を持たない —— agentd が offset から読んで中継へ押す拍の周期がそのまま push の間隔になる。購読者が居る(InFlightJob.capturing)間の watch の待ちの上限は、この器の実況が events(AgentdSettings.stream_capability = events)なら AgentdSettings.events_poll_seconds(既定 0.05 = 出来事ごとの push に最も近い有界の拍)、frames(tui の pane の断面)なら frame_interval_seconds(2〜5 Hz・issue #1 の決定 4 のまま)。購読者が居なければ transcript_poll_seconds(記録の追記だけ)、job が無ければ idle_wait_seconds。判断は judgment.wait-seconds-for の 1 点、値の宣言は AgentdSettings の 1 点(handlers / agentd.hy に周期の literal を置かない)。本番 2026-09-13 17:1x: 実況の最初の tail が attach の後 247〜258 ms、割り込みの反映 219 ms — 画面の糊の側の根(会話簿の毎拍の組み直し)は agora-controllers 741e67d で直し、agentd の側の残りがこの周期(購読ありで 0.4 s・無しで 1.0 s の tick)だった。")
      (rule R10 "session は会話の資源・job は手番(温かい session・設計 17.4): 会話 → 生きている session の対応は行(自分が claim した同じ subject の agent-job の sessionHandle)と器の現況から導き、Bound の job の起こし方は judgment.hy の next-arm-for-job(閉語彙 effects.NextArm = launch | send | resume | rehydrate | defer — 家と機体の扱いは R20)の 1 点で決める — 同じ会話の生きて idle な session が在れば launch せず session.send(awaiting)だけ、sessionHandle はその session を指し、turn-record は手番ごと。手番の終わりは器の lifecycle multi_turn(launch.hy の閉語彙に足した語)で policy.hy の monitor が既存の turn-end の連言から行の turn_ended_at に刻み、agentd は job-step-of の turn-end(turn_ended_at > 手番の始まりの下限 ∧ 記録の進み)で読む — status は倒さず session は生かす。idle の寿命は AgentdSettings.session_idle_ttl_seconds の 1 点で、超過・Withdrawn・node の退役で session.cleanup。計器 agent-job-to-send は create → send のまま(温かい path で p99 < 2 秒)。")]
   :laws
     [(law interrupts-ride-the-running-turn-and-are-recorded-on-the-row
@@ -506,7 +508,14 @@
           (counterexample "Refused を捨てる — ACP が一時的に断った拍の出来事が永久に消える。出来事は持ち越して次の書きに乗せる")
           (counterexample "拾い直した job が seq 0 から書く — 行の seq と衝突し、画面の行の鍵(<agentJobId>#<seq>)が同じになって別の出来事が 1 行に畳まれる")
           (counterexample "行の上限を持たない — 長い手番(道具 100 回 × 4 KB)で 1 行が数 MB になり、watch の差分と画面の全量の置換が拍ごとに膨れる。上限は書き手が守り、読み手は印で知る(推定しない)")
-          (counterexample "画面の糊や webapp が切り詰めを推定する(『entries が 1 件だから途中は無い』)— 落とした出来事と読めていない出来事を同じ顔で描く。印(dropped)が在る時だけ『落とした』と言える")])]
+          (counterexample "画面の糊や webapp が切り詰めを推定する(『entries が 1 件だから途中は無い』)— 落とした出来事と読めていない出来事を同じ顔で描く。印(dropped)が在る時だけ『落とした』と言える")])
+     (law live-events-are-pushed-within-50ms-while-watched
+       :statement "for_all agentd with stream_capability = events and for_all tick at which some InFlightJob is capturing (the last push answered subscribers > 0): the wait bound of AcpWatchSse is AgentdSettings.events_poll_seconds ≤ 0.05 and nothing else, so new lines of the events file reach the relay (AcpStreamPush) within one such tick; with stream_capability = frames the bound stays frame_interval_seconds (2–5 Hz capture); with no capturing job the bound is transcript_poll_seconds, with no job idle_wait_seconds; the choice is judgment.wait-seconds-for (pure) and every period is declared once on AgentdSettings"
+       :counterexamples
+         [(counterexample "headless の器でも frame の間隔(0.4 s)で events を読む — 画面が attach していても agent の出力が 400 ms 刻みでしか中継へ届かず、実況の最初の tail と割り込みの反映が 200 ms を超える(本番 2026-09-13 17:1x: 247〜258 ms / 219 ms の agentd 側の根)")
+          (counterexample "tui の器の capture の周期まで 50 ms にする — pane の断面を 20 Hz で撮り、tmux と中継の ring(2000 frame)が数分で埋まる(issue #1 の決定 4 の否定)")
+          (counterexample "購読者が居ない間も 50 ms で読む — 誰も見ていない手番のために agentd が 20 Hz で file を読み、記録の追記(CAS)の拍も細かくなって event journal を埋める")
+          (counterexample "周期を handlers.py や agentd.hy の literal に置く — 値を変えた時に片方だけ残り、判断(wait-seconds-for)の検が本番の周期を撃てない")])]
   :enforcement
     [(deftest test-adr-doe-agents-012-no-agora-ledger-words-in-sessionhost
        ;; R1 の針: sessionhost の全 source(acp/ を含む)の code 行に agora の台帳 API の語が無い。
@@ -969,6 +978,34 @@
            (.append seqs seq)))
        (assert (= seqs (sorted seqs)) "seq が単調でない(R19)")
        (assert (= (len (set seqs)) (len seqs)) "seq が衝突した(R19)"))
+     (deftest test-adr-doe-agents-012-live-events-are-polled-within-50ms-while-watched
+       ;; R22 の針(構造): 周期の宣言は AgentdSettings の 1 点(events_poll_seconds ≤ 0.05)・判断は judgment.wait-seconds-for の
+       ;; 1 点(events-poll-seconds を読むのは judgment だけ — agentd.hy / handlers.py には無い)。
+       (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
+       (setv declared (lfor line effects-lines :if (.startswith line "    events_poll_seconds: float = ") line))
+       (assert (= (len declared) 1) "events の周期の宣言は AgentdSettings の 1 点(R22)")
+       (assert (<= (float (.strip (get (.split (get declared 0) "=") 1))) 0.05) "events の周期は 50 ms の中(R22)")
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk wait-seconds-for ") line)) 1))
+       (assert (any (gfor line judgment-lines (in "settings.events-poll-seconds" line))) "判断が events の周期を読む(R22)")
+       (for [name ["agentd.hy" "handlers.py"]]
+         (for [line (code-lines (/ ACP-DIR name))]
+           (assert (not-in "events-poll-seconds" line) f"{name} は周期を読まない(R22): {line}")
+           (assert (not-in "events_poll_seconds" line) f"{name} は周期を読まない(R22): {line}")))
+       ;; 反例(挙動): capturing の job が在る時、events の器は events の周期・frames の器は capture の間隔。無ければ記録の周期。
+       (setv probe (InFlightJob :job-key "k" :job-namespace AGENT-JOB-NAMESPACE :job-id "j" :subject "c-1" :session-id "s"
+                                :agent-type "claude" :node "n" :profile "p" :model "m" :started-ms 0 :turn-floor-ms 0
+                                :start-offset 0 :transcript-offset 0 :delta-seq 0 :lease-id None :lease-kind None
+                                :lease-account None :lease-hold-ms None :capturing True :stream-gone False
+                                :last-frame-ms 0 :last-probe-ms 0 :pending-conditions #()))
+       (setv watched (replace (initial-state) :jobs #(probe))
+             unwatched (replace (initial-state) :jobs #((replace probe :capturing False)))
+             events (AgentdSettings :node-name "n" :backend-kind "headless" :stream-capability "events")
+             frames (AgentdSettings :node-name "n" :backend-kind "tmux" :stream-capability "frames"))
+       (assert (= (run (wait-seconds-for watched events)) events.events-poll-seconds) "events の器は events の周期(R22)")
+       (assert (= (run (wait-seconds-for watched frames)) frames.frame-interval-seconds) "frames の器は capture の間隔(R22)")
+       (assert (= (run (wait-seconds-for unwatched events)) events.transcript-poll-seconds) "購読 0 は記録の周期(R22)")
+       (assert (= (run (wait-seconds-for (initial-state) events)) events.idle-wait-seconds) "job なしは idle(R22)"))
      (deftest test-adr-doe-agents-012-withdraw-is-an-interrupt-signal
        ;; R13 の針: 割り込みの判定は judgment.hy の interrupt-arm-for の 1 点、agentd.hy の
        ;; withdraw の腕に SessionCleanup は無い。反例(挙動): 取り下げ → interrupt 1 回・
@@ -1270,4 +1307,5 @@
           "docs/impl-requests/stage8-lane-prompts/lane-4j-acp-debts.md(agora-redesign・R18 の追補: 器の profile の集合は家の在否で先に読む)"
           "docs/impl-requests/stage8-lane-prompts/lane-4u-turn-events-persisted.md(agora-redesign #49・追補 R19)"
           "docs/impl-requests/stage8-lane-prompts/lane-4w-rehydrate-across-profiles.md(agora-redesign #51・operator 決定 #54・追補 R20)"
-          "docs/impl-requests/stage8-lane-prompts/lane-4x-messaging-queued-and-interrupt.md(agora-redesign #56・追補 R21)"])
+          "docs/impl-requests/stage8-lane-prompts/lane-4x-messaging-queued-and-interrupt.md(agora-redesign #56・追補 R21)"
+          "docs/impl-requests/stage8-lane-prompts/lane-4aa-live-tail-200ms.md(agora-redesign #63・追補 R22)"])

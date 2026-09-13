@@ -88,6 +88,8 @@ PROFILE_OBSERVED_WINDOW_DEFAULT: UsageWindowName = "5h"
 USAGE_WINDOW_FULL_PERCENT = 100.0
 #: 中継の frame の capability(docs/contracts/turn-delta.json capability.values)。
 StreamCapability = Literal["events", "frames", "none"]
+STREAM_CAPABILITY_EVENTS: StreamCapability = "events"
+STREAM_CAPABILITY_FRAMES: StreamCapability = "frames"
 #: TurnDelta の種類(docs/contracts/turn-delta.json kinds)。
 DeltaKind = Literal["text", "tool_use", "tool_result", "usage", "status", "frame"]
 #: agent-job の conditions に agentd が書く type の語彙(AgentJob.hs は type を opaque に運ぶ —
@@ -361,8 +363,14 @@ class AgentdSettings:
     idle_wait_seconds: float = 5.0
     #: 手番が走っている(frame の capture は止まっている)時の transcript の追記を読む周期。
     transcript_poll_seconds: float = 1.0
-    #: frame の capture の間隔(2〜5 Hz の中・issue #1 の決定 4)。
+    #: frame の capture の間隔(2〜5 Hz の中・issue #1 の決定 4)— tui(tmux / herdr)の pane の断面の周期。
     frame_interval_seconds: float = 0.4
+    #: headless の器(実況 = events file の行の増分)で購読者が居る間の、events の追記を読んで押す周期(段 8 lane 4aa・
+    #: agora-redesign #63)。出来事ごとの push に最も近い有界の拍(≤ 50 ms の batch): file の追記は合図を持たないので
+    #: 読みの拍がそのまま push の間隔になる。pane の capture の周期(frame_interval_seconds)とは別 — capture は
+    #: 断面を撮る仕事で 2〜5 Hz が上限、events の読みは offset からの追記の読みで軽い。購読 0 の間は
+    #: transcript_poll_seconds(記録の追記だけ)。
+    events_poll_seconds: float = 0.05
     #: 購読 0 で capture を止めた後、購読者の数を読み直す周期(status frame の push で読む)。
     subscriber_recheck_seconds: float = 5.0
     #: capture する pane の行数。

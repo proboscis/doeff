@@ -85,6 +85,8 @@ class FakeAcp:
         self.writes: list[tuple[str, JSONObject]] = []
         self.pushes: list[tuple[str, str, tuple[JSONObject, ...]]] = []
         self.subscribers: dict[str, int] = {}
+        #: watch を待った上限(AcpWatchSse.wait_seconds の列 — 拍の周期の検が読む)。
+        self.waits: list[float] = []
         self.push_seq: int = 0
         #: kind → list(AcpGet)で投げる例外(実弾 002 の Connection reset の再現)。
         self.list_failures: dict[str, Exception] = {}
@@ -143,6 +145,7 @@ class FakeAcp:
             return self.rows.get(effect.key)
         if isinstance(effect, AcpEventWindow):
             return self._window(effect.after, effect.limit)
+        self.waits.append(effect.wait_seconds)
         if self.sequence > effect.since:
             return WatchAdvance(kind="changed", sequence=self.sequence)
         return WatchAdvance(kind="idle", sequence=effect.since)
