@@ -10,6 +10,8 @@
 ;;;   * 採番の衝突(拾い直した job の seq 0)は行の次から振り直す
 ;;;   * fake の handler で agentd を一周: 出来事は手番の**途中**で行に在る・Conflict は読み直して積み直す・
 ;;;     断られた出来事は持ち越して手番の終わりに乗る
+;;;   * 段 9p(agora-redesign #76): 行を作れない拍(頭が答えない)は周期で作り直し、作れた拍に持ち越した出来事が乗る・
+;;;     決定論的な断りと期限切れは given-up で Ended に condition RecordUnavailable(記録なしで黙って終わらない)
 ;;; HTTP も subprocess も無い。
 
 (require doeff-hy.macros [deftest])
@@ -23,12 +25,19 @@
   AGORA-KINDS-NAMESPACE
   AcpRow
   AgentdSettings
+  Conflict
+  InFlightJob
   MESSAGE-KIND
   NODE-KIND
   PHASE-BOUND
+  RECORD-CREATE-CREATED
+  RECORD-CREATE-GIVEN-UP
+  RECORD-CREATE-PENDING
+  Refused
   TURN-RECORD-ENTRIES-BYTE-BUDGET
   TURN-RECORD-KIND
-  TurnEntryHeadline])
+  TurnEntryHeadline
+  Written])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeSessions])
 (import doeff_agents.sessionhost.acp.judgment [
   claude-result-error
@@ -43,6 +52,7 @@
   text-body
   tool-result-body
   tool-use-body
+  record-create-verdict
   turn-record-appended-status
   turn-record-ended-status])
 (import doeff_agents.sessionhost.acp.runtime [initial-state run-tick])
@@ -393,3 +403,171 @@
   (setv entries (.record-entries world))
   (assert (= (lfor entry entries (get entry "kind")) ["system" "text"]) "持ち越した出来事が次の書きに乗っていない")
   (assert (< (get (get entries 0) "at") (get (get entries 1) "at")) "持ち越した出来事の at は読んだ拍のまま"))
+
+
+;; ---------------------------------------------------------------------------
+;; 段 9p(agora-redesign #76): 行を作れない拍の作り直し — 頭が答えない間は待って撃ち直す・記録なしで終わらない
+;; ---------------------------------------------------------------------------
+
+(defn #^ str record-key []
+  f"{AGORA-KINDS-NAMESPACE}:{TURN-RECORD-KIND}:j-1")
+
+
+(defn #^ list job-conditions [#^ World world]
+  (setv status (. (get world.acp.rows f"{AGENT-JOB-NAMESPACE}:{AGENT-JOB-KIND}:j-1") status))
+  (assert (isinstance status dict))
+  (setv conditions (.get status "conditions" []))
+  (assert (isinstance conditions list))
+  (list conditions))
+
+
+(defn #^ InFlightJob in-flight [#^ World world]
+  (setv found (next (gfor job world.state.jobs :if (= job.job-id "j-1") job) None))
+  (assert (isinstance found InFlightJob) "j-1 が memory に無い")
+  found)
+
+
+(deftest test-record-create-verdict-splits-deterministic-from-unreachable
+  ;; 純関数 1 点: Written / Conflict = created・4xx(408 / 429 を除く)= given-up・0 / 5xx / 408 / 429 = 期限内は pending。
+  (setv started 1000)
+  (assert (= (run (record-create-verdict (Written "ev-1") started 2000 300)) RECORD-CREATE-CREATED))
+  (assert (= (run (record-create-verdict (Conflict 3) started 2000 300)) RECORD-CREATE-CREATED))
+  (for [status [400 403 404 413 422]]
+    (assert (= (run (record-create-verdict (Refused status "no") started 2000 300)) RECORD-CREATE-GIVEN-UP) status))
+  (for [status [0 500 502 503 504 408 429]]
+    (assert (= (run (record-create-verdict (Refused status "later") started 2000 300)) RECORD-CREATE-PENDING) status)
+    ;; 期限(started + 300 s)を越えたら given-up
+    (assert (= (run (record-create-verdict (Refused status "later") started (+ started 300001) 300)) RECORD-CREATE-GIVEN-UP) status)))
+
+
+(deftest test-turn-record-is-created-after-the-head-answers-again
+  (setv world (World))
+  ;; 作り直しの周期を 2 秒に(検の拍の都合)。期限は既定(300 s)。
+  (setv world.settings (dataclasses.replace world.settings :record-retry-seconds 2.0))
+  ;; 頭が 2 度答えない(到達不能 → 503)— 3 度目で作れる。
+  (setv (get world.acp.create-refusals (record-key)) [(Refused 0 "unreachable: reset") (Refused 503 "restarting")])
+  (.tick world 0)
+  (setv sid (.sid world))
+  (assert (not-in (record-key) world.acp.rows) "受けた拍は作れていないはず")
+  (setv job (in-flight world))
+  (assert (= job.record-create RECORD-CREATE-PENDING))
+  (assert (any (gfor line world.local.logs (in "record-create = pending" line))))
+  ;; 拍 1(+1 s): 出来事は読むが、周期(2 s)の前なので create は撃たない → 持ち越し。
+  (setv part-1 (stream-line {"type" "system" "subtype" "init" "session_id" sid "model" "m"}))
+  (setv (get world.local.transcripts f"/events/{sid}.events.jsonl") part-1)
+  (.tick world 1000)
+  (assert (= (get world.acp.creates (record-key)) 1) "周期の前に create を撃っている")
+  (assert (not-in (record-key) world.acp.rows))
+  (setv job (in-flight world))
+  (assert (= (len job.pending-entries) 1) "持ち越していない")
+  ;; 拍 2(+2 s): 周期 → create(2 度目・503)→ まだ pending。
+  (.tick world 2000)
+  (assert (= (get world.acp.creates (record-key)) 2))
+  (assert (= (. (in-flight world) record-create) RECORD-CREATE-PENDING))
+  (assert (any (gfor line world.local.logs (in "still not created" line))))
+  ;; 拍 3(+2 s): 周期 → create(3 度目・答える)→ 行が出来て、持ち越した出来事と今の拍の出来事が乗る。
+  (setv part-2 (stream-line {"type" "assistant"
+                             "message" {"id" "msg_1" "role" "assistant" "model" "m"
+                                        "content" [{"type" "text" "text" "late"}]
+                                        "usage" {"input_tokens" 1 "output_tokens" 1
+                                                 "cache_creation_input_tokens" 0 "cache_read_input_tokens" 0}}}))
+  (setv (get world.local.transcripts f"/events/{sid}.events.jsonl") (+ part-1 part-2))
+  (.tick world 2000)
+  (assert (= (get world.acp.creates (record-key)) 3))
+  (assert (in (record-key) world.acp.rows) "3 度目で作れていない")
+  (assert (= (. (in-flight world) record-create) RECORD-CREATE-CREATED))
+  (assert (any (gfor line world.local.logs (in "created after retry" line))))
+  (assert (= (lfor entry (.record-entries world) (get entry "kind")) ["system" "text"]) "持ち越した出来事が乗っていない")
+  ;; 以後は撃たない(created)。手番の終わりも作り直さない・condition は無い。
+  (.tick world 1000)
+  (assert (= (get world.acp.creates (record-key)) 3))
+  (setv part-3 (stream-line {"type" "result" "subtype" "success" "is_error" False
+                             "usage" {"input_tokens" 1 "output_tokens" 1 "cache_creation_input_tokens" 0 "cache_read_input_tokens" 0}}))
+  (setv (get world.local.transcripts f"/events/{sid}.events.jsonl") (+ part-1 part-2 part-3))
+  (.finish-turn world.sessions sid (+ world.local.now-ms 100))
+  (.tick world 1000)
+  (assert (= (get (.record-status world) "state") "ended"))
+  (assert (= (get world.acp.creates (record-key)) 3))
+  (assert (not (any (gfor c (job-conditions world) (= (get c "type") "RecordUnavailable")))) "作れたのに condition"))
+
+
+(deftest test-deterministic-refusal-gives-up-at-once-and-ends-with-a-condition
+  (setv world (World))
+  (setv world.settings (dataclasses.replace world.settings :record-retry-seconds 1.0))
+  ;; 400 = 契約の不備(撃ち直しても同じ)→ 受けた拍で given-up。
+  (setv (get world.acp.create-refusals (record-key)) [(Refused 400 "kind turn-record is not declared")])
+  (.tick world 0)
+  (setv sid (.sid world))
+  (setv job (in-flight world))
+  (assert (= job.record-create RECORD-CREATE-GIVEN-UP))
+  (assert (= (len job.pending-conditions) 1))
+  (setv condition (get job.pending-conditions 0))
+  (assert (= (get condition "type") "RecordUnavailable"))
+  (setv reason (get condition "reason"))
+  (assert (isinstance reason str))
+  (assert (in "400: kind turn-record is not declared" reason))
+  ;; 以後の拍も手番の終わりも create を撃たない(法 7: 決定論的な失敗は撃ち直さない)。
+  (setv (get world.local.transcripts f"/events/{sid}.events.jsonl") (claude-events sid "hello"))
+  (.tick world 1500)
+  (.tick world 1500)
+  (assert (= (get world.acp.creates (record-key)) 1))
+  (.finish-turn world.sessions sid (+ world.local.now-ms 100))
+  (.tick world 1500)
+  (assert (= (get world.acp.creates (record-key)) 1))
+  (assert (not-in (record-key) world.acp.rows))
+  ;; Ended の conditions に理由つきで載る(記録なしで黙って終わらない)。
+  (setv conditions (job-conditions world))
+  (assert (= (lfor c conditions (get c "type")) ["RecordUnavailable"]) conditions)
+  (assert (any (gfor line world.local.logs (in "is missing at turn end" line)))))
+
+
+(deftest test-unreachable-head-past-the-deadline-gives-up-with-a-condition
+  (setv world (World))
+  ;; 周期 1 s・期限 3 s。頭はずっと答えない。
+  (setv world.settings (dataclasses.replace world.settings :record-retry-seconds 1.0
+                                            :turn-record-create-deadline-seconds 3.0))
+  (setv (get world.acp.create-refusals (record-key)) (lfor _ (range 20) (Refused 0 "unreachable: reset")))
+  (.tick world 0)
+  (setv sid (.sid world))
+  (assert (= (. (in-flight world) record-create) RECORD-CREATE-PENDING))
+  (setv (get world.local.transcripts f"/events/{sid}.events.jsonl")
+        (stream-line {"type" "system" "subtype" "init" "session_id" sid "model" "m"}))
+  ;; +1 s・+2 s: 期限の内 → 撃ち直して pending のまま。+3 s: 期限に達した拍の断りで given-up。
+  (.tick world 1000)
+  (.tick world 1000)
+  (assert (= (. (in-flight world) record-create) RECORD-CREATE-PENDING))
+  (assert (= (get world.acp.creates (record-key)) 3))
+  (.tick world 1000)
+  (assert (= (. (in-flight world) record-create) RECORD-CREATE-GIVEN-UP))
+  (assert (= (get world.acp.creates (record-key)) 4))
+  (assert (any (gfor line world.local.logs (in "given up" line))))
+  ;; given-up の後は撃たない — 手番の終わりも(force でも腕が given-up なら触らない)。
+  (.tick world 1000)
+  (assert (= (get world.acp.creates (record-key)) 4))
+  (.finish-turn world.sessions sid (+ world.local.now-ms 100))
+  (.tick world 1000)
+  (assert (= (get world.acp.creates (record-key)) 4))
+  (setv conditions (job-conditions world))
+  (assert (= (lfor c conditions (get c "type")) ["RecordUnavailable"]) conditions)
+  (assert (in "after 3 s" (get (get conditions 0) "reason")) conditions))
+
+
+(deftest test-turn-end-retries-the-create-once-even-before-the-period
+  (setv world (World))
+  ;; 周期 60 s(拍の間に周期が来ない)— 手番の終わりは周期に依らず最後に 1 度作り直す。
+  (setv world.settings (dataclasses.replace world.settings :record-retry-seconds 60.0))
+  (setv (get world.acp.create-refusals (record-key)) [(Refused 0 "unreachable: reset")])
+  (.tick world 0)
+  (setv sid (.sid world))
+  (assert (= (. (in-flight world) record-create) RECORD-CREATE-PENDING))
+  (setv (get world.local.transcripts f"/events/{sid}.events.jsonl") (claude-events sid "hello"))
+  (.tick world 1000)
+  (assert (= (get world.acp.creates (record-key)) 1) "周期の前に撃っている")
+  (.finish-turn world.sessions sid (+ world.local.now-ms 100))
+  (.tick world 1000)
+  ;; 終わりの拍: force の create(2 度目・答える)→ 行が出来て、持ち越した出来事が終わりの書きに乗り ended。
+  (assert (= (get world.acp.creates (record-key)) 2))
+  (assert (in (record-key) world.acp.rows))
+  (assert (= (get (.record-status world) "state") "ended"))
+  (assert (= (lfor entry (.record-entries world) (get entry "kind")) ["system" "text" "tool_use" "tool_result"]))
+  (assert (not (any (gfor c (job-conditions world) (= (get c "type") "RecordUnavailable"))))))

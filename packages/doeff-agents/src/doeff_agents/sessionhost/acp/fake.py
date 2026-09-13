@@ -111,6 +111,10 @@ class FakeAcp:
         #: 鍵 → 次の status の書き 1 回だけ Conflict で断る時の currentGeneration(agentd が読んだ
         #: 後に他の書き手が行を進めた race の再現・1 回で消える)。
         self.conflict_once: dict[str, int] = {}
+        #: 段 9p: create を鍵ごとに断る列(先頭から消費 — 頭が答えない拍 Refused(0, …) を N 回・決定論的な断り 400 等)。
+        #: 尽きたら普通に作る。作った回数は creates に鍵ごと数える。
+        self.create_refusals: dict[str, list[Refused]] = {}
+        self.creates: dict[str, int] = {}
         #: 全量 list(AcpGet)を受けた kind の列(差分の読みの検が数える)。
         self.lists: list[str] = []
         #: event の journal: (sequence, 鍵, post-image | None = delete)。event-window の材料。
@@ -230,6 +234,10 @@ class FakeAcp:
 
     def _create(self, effect: AcpCreate) -> Written | Conflict | Refused:
         key = f"{effect.namespace}:{effect.kind}:{effect.resource_id}"
+        self.creates[key] = self.creates.get(key, 0) + 1
+        queued = self.create_refusals.get(key)
+        if queued:
+            return queued.pop(0)
         if key in self.rows:
             return Refused(400, f"row {key} already exists")
         birth = self.births.get(effect.kind)

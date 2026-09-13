@@ -104,9 +104,20 @@ DeltaKind = Literal["text", "tool_use", "tool_result", "usage", "status", "frame
 #: 閉語彙は phase だけなので、agentd 側の語をここ 1 点で閉じる)。Interrupted = 取り下げ
 #: (Withdrawn)で走っている手番を止めた(phase は書き手 = 作った側のまま)。
 ConditionType = Literal[
-    "LaunchFailed", "CredentialUnavailable", "InputUnavailable", "SessionFailed", "Interrupted"
+    "LaunchFailed", "CredentialUnavailable", "InputUnavailable", "SessionFailed", "Interrupted",
+    "RecordUnavailable",
 ]
 CONDITION_INTERRUPTED: ConditionType = "Interrupted"
+#: 段 9p(agora-redesign #76): 手番の記録(turn-record)の行を作れないまま手番が終わった — 頭が答えない拍
+#: (入れ替え・到達不能)は期限まで再試行し、期限を越えた / 決定論的に断られた時だけ理由つきで立つ。
+CONDITION_RECORD_UNAVAILABLE: ConditionType = "RecordUnavailable"
+#: turn-record の行を作る腕の状態(judgment.record-create-applied の閉語彙): created = 行が在る(作れた・既に在った)/
+#: pending = 頭が答えず作れていない(期限まで record_retry_seconds の周期で作り直す — 出来事は pending_entries に持ち越し)/
+#: given-up = 期限を越えた・決定論的に断られた(condition RecordUnavailable を Ended に載せる・以後は作らない)。
+RecordCreateState = Literal["created", "pending", "given-up"]
+RECORD_CREATE_CREATED: RecordCreateState = "created"
+RECORD_CREATE_PENDING: RecordCreateState = "pending"
+RECORD_CREATE_GIVEN_UP: RecordCreateState = "given-up"
 #: 段 8 lane 4x(agora-redesign #56): agent-job の status の割り込みの 2 欄(契約
 #: docs/contracts/messaging.json interrupts — ACP Acp.App.Agent.AgentJob の綴りの写し)。
 #: interrupts = Messaging が載せた、まだ渡していない Message の id の並び / interruptsDelivered =
@@ -433,6 +444,11 @@ class AgentdSettings:
     #: spool の再送の周期(送れなかった拍の後 — 送れている間は出来事を読んだ拍の終わりに送る)。届かない service へ拍ごとに
     #: 撃って loop を塞がないための有界の backoff(judgment.record-flush-due)。
     record_retry_seconds: float = 15.0
+    #: 段 9p(agora-redesign #76): 手番の記録(turn-record)の行を作れない拍(頭の入れ替え・到達不能・5xx)に作り直しを
+    #: 続ける上限(手番の始まりから・秒)。周期は record_retry_seconds(spool の再送と同じ弁)。期限を越えたら理由つきで
+    #: condition RecordUnavailable(judgment.record-create-verdict の 1 点)。頭の入れ替え(image beat の再起動)の実測は
+    #: 数十秒〜2 分なので、その数倍。
+    turn_record_create_deadline_seconds: float = 300.0
 
 
 # ------------------------------------------------------------------ ACP の値
@@ -950,6 +966,15 @@ class InFlightJob:
     #: その時の turn-record の行の generation + 1(judgment.recovered-record-of — 行が進むごとに単調・ACP に新しい欄を書かない)。
     #: 採番(producerSeq)は delta_seq の 1 点のまま — service の producerSeq と ACP の見出しの seq は同じ値。
     record_attempt: int = 1
+    #: 段 9p(agora-redesign #76): turn-record の行を作る腕の状態(閉語彙 RecordCreateState)。受けた手番は after-start の
+    #: create の結末から(頭が答えなければ pending)、拾い直し(adopt)は行が在るので created。pending の間は observe の拍が
+    #: record_retry_seconds の周期で作り直し(judgment.record-create-due)、手番の終わりは周期に依らず最後に 1 度作り直す
+    #: — 記録なしで終わらない。期限を越えたら given-up(condition RecordUnavailable・理由 = 最後の断り)。
+    record_create: RecordCreateState = "created"
+    #: 最後に create を撃った拍(ms・0 = まだ — pending の周期の基準)。
+    record_create_last_ms: int = 0
+    #: 最後の断りの文(given-up の condition の理由に写す)。
+    record_create_refusal: str = ""
 
 
 @dataclass(frozen=True)
