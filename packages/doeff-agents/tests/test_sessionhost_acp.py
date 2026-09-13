@@ -1700,27 +1700,16 @@ def test_tui_launch_still_sends_the_mail_after_the_launch() -> None:
 def test_stream_capability_is_derived_from_the_host_backend() -> None:
     from doeff_agents.sessionhost.acp.runtime import settings_from_env
 
-    env = {"DOEFF_AGENTD_NODE_NAME": NODE, "DOEFF_SESSIONHOST_BACKEND": "headless"}
+    # 本文の行き先(段 9f lane 9f-6): 宛先の無い env は settings_from_env が参加を断るので、束に宛先を持たせる。
+    bare = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874"}
+    env = {**bare, "DOEFF_SESSIONHOST_BACKEND": "headless"}
     assert settings_from_env(env, ()).stream_capability == "events"
     assert settings_from_env(env, ()).backend_kind == "headless"
-    assert settings_from_env({"DOEFF_AGENTD_NODE_NAME": NODE}, ()).backend_kind == "tmux"
-    assert (
-        settings_from_env({"DOEFF_AGENTD_NODE_NAME": NODE}, ("--backend", "herdr")).backend_kind
-        == "herdr"
-    )
-    assert (
-        settings_from_env(
-            {"DOEFF_AGENTD_NODE_NAME": NODE}, ("--backend", "headless")
-        ).stream_capability
-        == "events"
-    )
-    assert settings_from_env({"DOEFF_AGENTD_NODE_NAME": NODE}, ()).stream_capability == "frames"
-    assert (
-        settings_from_env(
-            {"DOEFF_AGENTD_NODE_NAME": NODE}, ("--backend", "herdr")
-        ).stream_capability
-        == "frames"
-    )
+    assert settings_from_env(bare, ()).backend_kind == "tmux"
+    assert settings_from_env(bare, ("--backend", "herdr")).backend_kind == "herdr"
+    assert settings_from_env(bare, ("--backend", "headless")).stream_capability == "events"
+    assert settings_from_env(bare, ()).stream_capability == "frames"
+    assert settings_from_env(bare, ("--backend", "herdr")).stream_capability == "frames"
 
 
 def test_interrupt_arm_for_is_the_one_decision() -> None:
@@ -2155,6 +2144,7 @@ def test_settings_from_env_reads_the_ownership_and_the_valve_and_runtime_agree_o
                 custody_url=None,
                 borrower_key_file=None,
                 ownership=Ownership(grade="company", proof="gce-project:cyberagent-050"),
+                record_url="http://record:8874",
             )
         )
     )
@@ -2165,10 +2155,12 @@ def test_settings_from_env_reads_the_ownership_and_the_valve_and_runtime_agree_o
     assert settings.backend_kind == "headless"
     assert settings.stream_capability == "events"
     assert settings.ownership == Ownership(grade="company", proof="gce-project:cyberagent-050")
+    assert settings.record_enabled is True
     assert acp_valve(list(plan.host_argv), env).enabled is True
-    assert settings_from_env({"DOEFF_AGENTD_NODE_NAME": NODE}, ()).ownership is None
+    recorded = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874"}
+    assert settings_from_env(recorded, ()).ownership is None
     with pytest.raises(ValueError, match="DOEFF_AGENTD_OWNERSHIP"):
-        settings_from_env({"DOEFF_AGENTD_NODE_NAME": NODE, "DOEFF_AGENTD_OWNERSHIP": "corp"}, ())
+        settings_from_env({**recorded, "DOEFF_AGENTD_OWNERSHIP": "corp"}, ())
 
 
 def test_ownership_verdict_gce_project_must_match_and_declared_is_taken_as_is() -> None:

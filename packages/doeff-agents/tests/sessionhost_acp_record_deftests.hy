@@ -12,6 +12,8 @@
 ;;;     → 周期の後の拍で送れて消える(進む)・409 は spool に残さず赤の計器・弁 off は Record* を撃たない(見出しは同じ)
 ;;;   * spool の handler(tmp dir の実 file): 置く → 鍵の順に読める → 消える・壊れた file は消さずに名乗る
 ;;;   * join の宣言の [record] → RECORD_SERVICE_URL と spool の置き場・settings の弁
+;;;   * 参加の門(段 9f lane 9f-6): 宛先なし → 参加を断る(理由 = 宣言の置き場)・宛先あり → 参加・宛先あり届かない →
+;;;     参加して spool(門は宣言の検で、届くかは検めない)
 ;;; HTTP も subprocess も無い。
 
 (require doeff-hy.macros [deftest])
@@ -48,7 +50,7 @@
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeRecord FakeSessions record-body-sha256])
 (import doeff_agents.sessionhost.acp.handlers [
   HttpReply RecordSpool decode-record-page decode-record-reply record-append-body])
-(import doeff_agents.sessionhost.acp.join [join-plan-of join-spec-of])
+(import doeff_agents.sessionhost.acp.join [join-plan-of join-spec-of record-sink-of])
 (import doeff_agents.sessionhost.acp.judgment [
   entry-json-of
   headline-of-body
@@ -64,7 +66,7 @@
   tool-result-body
   tool-use-body
   turn-record-recorded-status])
-(import doeff_agents.sessionhost.acp.runtime [initial-state run-tick settings-from-env])
+(import doeff_agents.sessionhost.acp.runtime [AgentdPreflightError initial-state run-tick settings-from-env])
 
 
 (setv NODE "mac-1")
@@ -368,6 +370,9 @@
 
 
 (deftest test-unsent-batch-stays-in-the-spool-and-lands-after-the-retry-period
+  ;; 宛先あり届かない → 参加して spool(段 9f lane 9f-6): 参加の門は宣言の検で、届くかは検めない。
+  (assert (. (settings-from-env {"DOEFF_AGENTD_NODE_NAME" NODE RECORD-URL-ENV "http://127.0.0.1:1"}) record-enabled)
+          "届かない宛先でも宣言が在れば参加する(届かないのは spool が受ける)")
   (setv world (RecordWorld True))
   (.tick world 0)
   (setv world.record.unreachable True)
@@ -480,6 +485,49 @@
     (except [error ValueError]
       (setv refused (str error))))
   (assert (in "[record].token_file" refused) "宣言に無い鍵を断らなかった")
-  ;; settings の弁 = RECORD_SERVICE_URL の在否
-  (assert (. (settings-from-env {"DOEFF_AGENTD_NODE_NAME" "n" RECORD-URL-ENV "http://r:8874"}) record-enabled))
-  (assert (not (. (settings-from-env {"DOEFF_AGENTD_NODE_NAME" "n"}) record-enabled))))
+  ;; 宛先あり → 参加(settings の弁は on — 段 9f lane 9f-6 の門を通った形)
+  (assert (. (settings-from-env {"DOEFF_AGENTD_NODE_NAME" "n" RECORD-URL-ENV "http://r:8874"}) record-enabled)))
+
+
+(deftest test-join-without-a-record-sink-is-refused-with-the-reason
+  ;; 段 9f lane 9f-6(agora-redesign #59): 本文の行き先(会話の記録の service の宛先)を持たない agentd は参加を断る。
+  ;; 判断は join.record-sink-of の純関数 1 点(宣言 → 参加可否)で、理由は宣言の置き場を名指す。
+  (defn #^ str refusal-of [#^ (| str None) url]
+    (try
+      (run (record-sink-of url))
+      (except [error ValueError]
+        (return (str error))))
+    "")
+  (for [absent [None "" "   "]]
+    (setv reason (refusal-of absent))
+    (assert reason f"宛先 {absent !r} を断らなかった")
+    (assert (in "[record].url" reason) reason)
+    (assert (in "--record" reason) reason)
+    (assert (in RECORD-URL-ENV reason) reason)
+    (assert (in "見出し" reason) "理由に『見出しだけを書いて本文を失う』が無い"))
+  (assert (= (run (record-sink-of " http://r:8874 ")) "http://r:8874"))
+  ;; env の読みの 1 点(settings-from-env)が同じ門を撃つ = serve --acp の経路も join の経路も同じ断り。
+  (defn #^ str preflight-refusal-of [#^ dict env]
+    (try
+      (settings-from-env env)
+      (except [error AgentdPreflightError]
+        (return (str error))))
+    "")
+  (setv unset (preflight-refusal-of {"DOEFF_AGENTD_NODE_NAME" NODE}))
+  (assert (in "refuses to join" unset) unset)
+  (assert (in "[record].url" unset) unset)
+  (assert (in RECORD-URL-ENV (preflight-refusal-of {"DOEFF_AGENTD_NODE_NAME" NODE RECORD-URL-ENV " "})))
+  ;; 宣言 file に [record] が無い → join の env の束に宛先が無い → 同じ門で断る(宣言 → env → 門の一周)。
+  (setv tables {"schema" JOIN-SCHEMA
+                "agentd" {"server" "http://acp:8868" "token_file" "/t/agentd.token" "state_dir" "/s"}})
+  (setv plan (run (join-plan-of (run (join-spec-of (JoinArgv :items #()) (JoinDeclaration :tables tables) "/state")))))
+  (setv env (dict plan.env))
+  (assert (not-in RECORD-URL-ENV env))
+  (setv (get env "DOEFF_AGENTD_NODE_NAME") NODE)
+  (assert (in "[record].url" (preflight-refusal-of env)) "宣言 file に [record] が無い agentd が参加した")
+  ;; flag --record が宣言 file を補えば参加する。
+  (setv flagged (run (join-plan-of (run (join-spec-of (JoinArgv :items #("--record" "http://r:8874"))
+                                                     (JoinDeclaration :tables tables) "/state")))))
+  (setv env (dict flagged.env))
+  (setv (get env "DOEFF_AGENTD_NODE_NAME") NODE)
+  (assert (. (settings-from-env env flagged.host-argv) record-enabled)))

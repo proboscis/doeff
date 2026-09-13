@@ -6,6 +6,10 @@ sessionhost の socket の client(公開の境界)として同じ process の da
 host の起動(socket の bind)を待ってから参加し、host が死ねば thread も消える。
 所有の等級(ownership)が宣言されていれば、thread を起こす前に join.ownership-preflight で
 機体の証拠と突合し、不一致は AgentdPreflightError(参加しない — fail-closed)。
+会話の記録の service の宛先(RECORD_SERVICE_URL — join が宣言 file の [record].url から導く)が無ければ
+settings_from_env が join.record-sink-of の 1 点で参加を断る(AgentdPreflightError・理由つき —
+段 9f lane 9f-6: 本文の行き先を持たない agentd は見出しだけを書いて本文を失うので、宣言が直るまで
+参加しない。宛先が在って届かないのは spool が受ける)。
 
 判断は持たない: 1 tick = agentd.hy の ``agentd-tick``(program)を、ここで選んだ handler の
 下で走らせる(実 I/O = handlers.py)。test は同じ program を fake.py の handler で走らせる。
@@ -83,13 +87,16 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         raise ValueError(f"{NODE_NAME_ENV} is empty and the machine has no host name")
     homes_root = env.get(HOMES_ROOT_ENV) or os.path.join(_state_home(env), "doeff", "agentd-homes")
     backend = backend_of(host_argv, env)
+    ownership = _ownership_of_env(env)
+    # 参加の門(段 9f lane 9f-6): 本文の行き先が無ければここで断る(理由は AgentdPreflightError の文)。
+    record_sink = _record_sink_of_env(env)
     return AgentdSettings(
         node_name=node_name,
         homes_root=homes_root,
         backend_kind=backend,
         stream_capability=_stream_capability(backend),
-        ownership=_ownership_of_env(env),
-        record_enabled=bool(_record_url_of_env(env)),
+        ownership=ownership,
+        record_enabled=bool(record_sink),
     )
 
 
@@ -128,8 +135,21 @@ def _state_home(env: Mapping[str, str]) -> str:
 
 
 def _record_url_of_env(env: Mapping[str, str]) -> str:
-    """会話の記録の service の URL(段 9f lane 9f-2・空 = 二重書きなし — 弁の読みはこの 1 点)。"""
+    """会話の記録の service の URL(段 9f lane 9f-2・空 = 名乗っていない — env の読みはこの 1 点)。"""
     return (env.get(RECORD_URL_ENV) or "").strip()
+
+
+def _record_sink_of_env(env: Mapping[str, str]) -> str:
+    """参加の門(段 9f lane 9f-6): 宛先の在否 → 参加可否は join.record-sink-of の純関数 1 点。無ければ
+    AgentdPreflightError(理由 = 宣言の置き場)で、entry.py が stderr に書いて exit 2(宿が再起動する —
+    宣言が直るまで参加しない・process の中で再試行しない)。"""
+    try:
+        sink: object = PyVM().run(join.record_sink_of(_record_url_of_env(env) or None))
+    except ValueError as error:
+        raise AgentdPreflightError(f"agentd refuses to join: {error}") from error
+    if not isinstance(sink, str):
+        raise TypeError(f"record_sink_of returned {type(sink).__name__}")
+    return sink
 
 
 def record_spool_dir(env: Mapping[str, str]) -> str:
@@ -216,12 +236,18 @@ def real_dispatchers(
     )
     sessions = SessionRpc(socket_path)
     local = LocalIo()
-    dispatchers: list[Dispatcher] = [acp.dispatch, custody.dispatch, sessions.dispatch, local.dispatch]
-    record_url = _record_url_of_env(env)
-    if record_url:
-        # 段 9f lane 9f-2: 本文の二重書き — 札は ACP と同じ名簿の agentd の札(新しい secret を持たない)。外側に置く
-        # (Record* は拍に数回 — ACP / 器 / 時計の要求の手前で Pass の段を増やさない)。
-        dispatchers[:0] = [RecordHttp(record_url, token).dispatch, RecordSpool(record_spool_dir(env)).dispatch]
+    # 段 9f lane 9f-2: 本文の二重書き — 札は ACP と同じ名簿の agentd の札(新しい secret を持たない)。外側に置く
+    # (Record* は拍に数回 — ACP / 器 / 時計の要求の手前で Pass の段を増やさない)。宛先は参加の門(9f-6)を
+    # 通った値ちょうど — 無い形はここに来ない。
+    record_url = _record_sink_of_env(env)
+    dispatchers: list[Dispatcher] = [
+        RecordHttp(record_url, token).dispatch,
+        RecordSpool(record_spool_dir(env)).dispatch,
+        acp.dispatch,
+        custody.dispatch,
+        sessions.dispatch,
+        local.dispatch,
+    ]
     return dispatchers, acp.close
 
 
@@ -269,7 +295,7 @@ def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> thr
             time.sleep(0.5)
         _stderr(
             f"agentd: joined as node {settings.node_name!r} (ACP {env.get(ACP_URL_ENV) or ACP_URL_DEFAULT}; "
-            f"record {_record_url_of_env(env) or 'off'})"
+            f"record {_record_url_of_env(env)})"
         )
         try:
             run_loop(settings, dispatchers, stop, _stderr)
