@@ -1261,6 +1261,32 @@ class HeadlessWorld(World):
         )
 
 
+def _assert_claude_headless_entries(entries: list[JSON]) -> None:
+    """段 8 lane 4u: 出来事の列の欄(system の 1 行・本文と model・道具の呼び出しと結果の toolUseId)。"""
+    system_entry = entries[0]
+    assert isinstance(system_entry, dict)
+    assert system_entry["text"] == "session started"
+    first_entry = entries[1]
+    assert isinstance(first_entry, dict)
+    assert first_entry["text"] == "hello world"
+    assert first_entry["model"] == "claude-opus-5"
+    use_entry = entries[2]
+    assert isinstance(use_entry, dict)
+    assert use_entry == {
+        "seq": use_entry["seq"],
+        "at": use_entry["at"],
+        "kind": "tool_use",
+        "toolName": "Bash",
+        "toolUseId": "t1",
+        "summary": '{"command": "ls"}',
+    }
+    result_entry = entries[3]
+    assert isinstance(result_entry, dict)
+    assert result_entry["toolUseId"] == "t1"
+    assert result_entry["summary"] == "ok"
+    assert "isError" not in result_entry
+
+
 def test_headless_claude_turn_streams_text_deltas_and_records_entries() -> None:
     world = HeadlessWorld()
     world.acp.put_row(message("m-1", "first"))
@@ -1293,6 +1319,20 @@ def test_headless_claude_turn_streams_text_deltas_and_records_entries() -> None:
     world.tick(advance_ms=500)
     assert world.sessions.captures == []
     assert "frame" not in world.pushed_kinds()
+    # 段 8 lane 4u: 出来事は手番の**途中**で turn-record に耐久化されている(終わりを待たない)。
+    running = world.turn_record("j-1")
+    assert running is not None
+    assert running.status is not None
+    assert running.status["state"] == "running"
+    mid_turn = running.status["entries"]
+    assert isinstance(mid_turn, list)
+    assert [entry["kind"] for entry in mid_turn if isinstance(entry, dict)] == [
+        "system",
+        "text",
+        "tool_use",
+        "tool_result",
+    ]
+    assert "usage" not in running.status
     # 手番の終わり(host が result の行で刻む)→ turn-record の entries と usage
     world.sessions.finish_turn(sid, world.local.now_ms + 100)
     world.tick(advance_ms=1_000)
@@ -1302,14 +1342,15 @@ def test_headless_claude_turn_streams_text_deltas_and_records_entries() -> None:
     assert record.status["state"] == "ended"
     entries = record.status["entries"]
     assert isinstance(entries, list)
+    # 終わりの書きは途中の出来事を落とさず(追記)、同じ出来事を二度積まない。
     assert [entry["kind"] for entry in entries if isinstance(entry, dict)] == [
+        "system",
         "text",
         "tool_use",
         "tool_result",
     ]
-    first_entry = entries[0]
-    assert isinstance(first_entry, dict)
-    assert first_entry["text"] == "hello world"
+    assert entries == mid_turn
+    _assert_claude_headless_entries(entries)
     assert record.status["usage"] == {
         "input": 3,
         "output": 7,

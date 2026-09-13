@@ -42,6 +42,13 @@
   CLAUDE-OAUTH-TOKEN-ENV
   CONDITION-INTERRUPTED
   DeltaBatch
+  ENTRY-KIND-ERROR
+  ENTRY-KIND-SYSTEM
+  ENTRY-KIND-TEXT
+  ENTRY-KIND-TOOL-RESULT
+  ENTRY-KIND-TOOL-USE
+  ENTRY-SUMMARY-MAX-CHARS
+  ENTRY-TEXT-MAX-CHARS
   INTERRUPT-ARM-INTERRUPT
   INTERRUPT-ARM-NONE
   InFlightJob
@@ -82,6 +89,7 @@
   STREAM-SOURCE-TRANSCRIPT
   SessionView
   TURN-RECORD-ENDED
+  TURN-RECORD-ENTRIES-BYTE-BUDGET
   TURN-RECORD-KIND
   USAGE-WINDOW-FULL-PERCENT
   USAGE-WINDOW-SECONDS
@@ -842,15 +850,150 @@
    "model" job.model})
 
 
+(defk entries-of-status [status]
+  {:pre [(: status dict)]
+   :post [(: % tuple)]}
+  "行の status が持つ entries(無ければ空・object でない要素は落とす — 発明しない)。"
+  (setv entries (.get status "entries"))
+  (if (isinstance entries list)
+      (tuple (lfor entry entries :if (isinstance entry dict) entry))
+      #()))
+
+
+(defk next-seq-after [entries floor]
+  {:pre [(: entries tuple) (: floor int)]
+   :post [(: % int)]}
+  "行の entries の seq の次(既に在る seq と衝突しない採番の下限)と floor の大きい方。
+   拾い直し(再起動)の job は seq 0 から数え直すので、行の seq を越えた所から続ける。"
+  (setv top -1)
+  (for [entry entries]
+    (setv seq (.get entry "seq"))
+    (when (and (isinstance seq int) (> seq top))
+      (setv top seq)))
+  (max floor (+ top 1)))
+
+
+(defk renumbered-entries [entries floor]
+  {:pre [(: entries tuple) (: floor int)]
+   :post [(: % tuple)]}
+  "新しい出来事の seq が行の採番(floor = 行の次の seq)より小さければ、floor から順に振り直す
+   (拾い直した job は 0 から数え直すので行の seq と衝突する)。衝突しなければそのまま。"
+  (when (not entries)
+    (return entries))
+  (setv first-seq (.get (get entries 0) "seq"))
+  (when (and (isinstance first-seq int) (>= first-seq floor))
+    (return entries))
+  (setv out [])
+  (setv seq floor)
+  (for [entry entries]
+    (setv copy (dict entry))
+    (setv (get copy "seq") seq)
+    (.append out copy)
+    (setv seq (+ seq 1)))
+  (tuple out))
+
+
+(defk entry-bytes [entry]
+  {:pre [(: entry dict)]
+   :post [(: % int)]}
+  "entry 1 つの JSON(compact・UTF-8)の byte(行の上限の物差し — 契約 conventions.turnRecordEntries)。"
+  (len (.encode (json.dumps entry :ensure-ascii False :separators #("," ":")) "utf-8")))
+
+
+(defk drop-marker [dropped seq at]
+  {:pre [(: dropped int) (: seq int) (: at int)]
+   :post [(: % dict)]}
+  "行の上限で古い出来事を落とした印(kind system・truncated・dropped)— 落とした最古の seq と
+   最新の at を持ち、列の先頭に立つ。"
+  {"seq" seq "at" at "kind" ENTRY-KIND-SYSTEM
+   "text" f"行の上限で古い出来事 {dropped} 件を落とした(記録はこの先から)"
+   "truncated" True "dropped" dropped})
+
+
+(defk is-drop-marker [entry]
+  {:pre [(: entry dict)]
+   :post [(: % bool)]}
+  "行の上限の印(drop-marker)か(kind system で dropped を持つ)。"
+  (and (= (.get entry "kind") ENTRY-KIND-SYSTEM) (isinstance (.get entry "dropped") int)))
+
+
+(defk marker-bytes [dropped seq at]
+  {:pre [(: dropped int) (: seq int) (: at int)]
+   :post [(: % int)]}
+  "印(drop-marker)の byte(dropped の桁で伸びるので都度数える)。"
+  (<- marker dict (drop-marker (max dropped 1) seq at))
+  (<- size int (entry-bytes marker))
+  size)
+
+
+(defk entries-within-budget [entries budget]
+  {:pre [(: entries tuple) (: budget int)]
+   :post [(: % tuple)]}
+  "entries を行の上限(byte)に収める: 超えたら**古い出来事から**落とし、先頭に印(drop-marker)を
+   残す。既に印が先頭に在れば(前の拍で落としている)その dropped・最古の seq・最新の at を
+   引き継いで数える。収まっていればそのまま(印も足さない)。新しい出来事は必ず残る(印 + 新しい
+   側だけが列)。物差し = 各 entry の compact JSON の UTF-8 byte + 列の括弧と区切り。"
+  (setv rows (list entries))
+  (setv dropped 0)
+  (setv oldest-seq 0)
+  (setv newest-at 0)
+  (setv has-marker False)
+  (when rows
+    (<- flagged bool (is-drop-marker (get rows 0)))
+    (setv has-marker flagged))
+  (when has-marker
+    (setv marker (get rows 0))
+    (setv dropped (int (get marker "dropped")))
+    (setv oldest-seq (int (.get marker "seq" 0)))
+    (setv newest-at (int (.get marker "at" 0)))
+    (setv rows (cut rows 1 None)))
+  (setv sizes [])
+  (for [row rows]
+    (<- size int (entry-bytes row))
+    (.append sizes size))
+  (setv total (+ 2 (sum sizes) (len sizes)))
+  (when (and (= dropped 0) (<= total budget))
+    (return entries))
+  (setv index 0)
+  (while True
+    (<- marker-size int (marker-bytes dropped oldest-seq newest-at))
+    (when (or (not rows) (<= (+ total marker-size 1) budget))
+      (break))
+    (setv victim (get rows 0))
+    (setv rows (cut rows 1 None))
+    (setv total (- total (get sizes index) 1))
+    (setv index (+ index 1))
+    (when (= dropped 0)
+      (setv oldest-seq (int (.get victim "seq" 0))))
+    (setv dropped (+ dropped 1))
+    (setv newest-at (max newest-at (int (.get victim "at" 0)))))
+  (when (= dropped 0)
+    (return entries))
+  (<- marker dict (drop-marker dropped oldest-seq newest-at))
+  (tuple (+ [marker] rows)))
+
+
+(defk turn-record-appended-status [status new-entries]
+  {:pre [(: status dict) (: new-entries tuple)]
+   :post [(: % dict)]}
+  "行の status に出来事を追記した status(post-image): entries = 行の entries + new-entries を
+   行の上限(TURN-RECORD-ENTRIES-BYTE-BUDGET)に収めたもの。他の欄は写す。"
+  (setv next (dict status))
+  (<- existing tuple (entries-of-status status))
+  (<- bounded tuple (entries-within-budget (+ existing new-entries) TURN-RECORD-ENTRIES-BYTE-BUDGET))
+  (setv (get next "entries") (list bounded))
+  next)
+
+
 (defk turn-record-ended-status [status usage entries]
   {:pre [(: status dict) (: usage (| dict None)) (: entries tuple)]
    :post [(: % dict)]}
-  "手番の終わりの turn-record の status: state = ended・usage(素材があれば)・entries。"
-  (setv next (dict status))
+  "手番の終わりの turn-record の status: 残りの出来事(entries)を行の entries に**追記**した上で
+   state = ended・usage(素材があれば)。行の entries は落とさない(手番の間に追記した出来事が正本)。"
+  (<- next dict (turn-record-appended-status status entries))
   (setv (get next "state") TURN-RECORD-ENDED)
   (when (is-not usage None)
     (setv (get next "usage") usage))
-  (setv (get next "entries") (list entries))
   next)
 
 
@@ -955,6 +1098,127 @@
   (if (> (len text) limit) (cut text 0 limit) text))
 
 
+(defk clipped [text limit]
+  {:pre [(: text str) (: limit int)]
+   :post [(: % tuple)]}
+  "本文を limit 字で切る: #(text truncated)。"
+  (if (> (len text) limit) #((cut text 0 limit) True) #(text False)))
+
+
+(defk text-entry [seq at text model]
+  {:pre [(: seq int) (: at int) (: text str) (: model (| str None))]
+   :post [(: % dict)]}
+  "assistant の本文の 1 block → entry(kind text・上限 ENTRY-TEXT-MAX-CHARS・切れば truncated)。"
+  (<- clip tuple (clipped text ENTRY-TEXT-MAX-CHARS))
+  (setv entry {"seq" seq "at" at "kind" ENTRY-KIND-TEXT "text" (get clip 0)})
+  (when (isinstance model str)
+    (setv (get entry "model") model))
+  (when (get clip 1)
+    (setv (get entry "truncated") True))
+  entry)
+
+
+(defk tool-use-entry [seq at tool-id name input]
+  {:pre [(: seq int) (: at int) (: tool-id str) (: name str)
+         (: input (| dict list str int float bool None))]
+   :post [(: % dict)]}
+  "道具の呼び出し → entry(kind tool_use・toolName・toolUseId・summary = 入力の要約 ≤ ENTRY-SUMMARY-MAX-CHARS)。"
+  (<- whole str (summary-of input 1000000000))
+  (<- clip tuple (clipped whole ENTRY-SUMMARY-MAX-CHARS))
+  (setv entry {"seq" seq "at" at "kind" ENTRY-KIND-TOOL-USE "toolName" name "summary" (get clip 0)})
+  (when tool-id
+    (setv (get entry "toolUseId") tool-id))
+  (when (get clip 1)
+    (setv (get entry "truncated") True))
+  entry)
+
+
+(defk tool-result-entry [seq at tool-id output is-error]
+  {:pre [(: seq int) (: at int) (: tool-id str)
+         (: output (| dict list str int float bool None)) (: is-error bool)]
+   :post [(: % dict)]}
+  "道具の結果 → entry(kind tool_result・toolUseId・summary = 出力の要約 ≤ ENTRY-SUMMARY-MAX-CHARS・isError)。"
+  (<- whole str (summary-of output 1000000000))
+  (<- clip tuple (clipped whole ENTRY-SUMMARY-MAX-CHARS))
+  (setv entry {"seq" seq "at" at "kind" ENTRY-KIND-TOOL-RESULT "summary" (get clip 0)})
+  (when tool-id
+    (setv (get entry "toolUseId") tool-id))
+  (when is-error
+    (setv (get entry "isError") True))
+  (when (get clip 1)
+    (setv (get entry "truncated") True))
+  entry)
+
+
+(defk note-entry [seq at kind text]
+  {:pre [(: seq int) (: at int) (: kind str) (: text str)]
+   :post [(: % dict)]}
+  "器の出来事(kind system)と手番の誤り(kind error)→ entry(text ≤ ENTRY-TEXT-MAX-CHARS)。"
+  (<- clip tuple (clipped text ENTRY-TEXT-MAX-CHARS))
+  (setv entry {"seq" seq "at" at "kind" kind "text" (get clip 0)})
+  (when (get clip 1)
+    (setv (get entry "truncated") True))
+  entry)
+
+
+(defk claude-system-note [record]
+  {:pre [(: record dict)]
+   :post [(: % (| str None))]}
+  "claude の stream-json の system の行 → 人の読む 1 行(None = 記録しない出来事)。
+   init = session の始まり(model・permissionMode・cwd・tools の数)/ api_retry = API の再試行 /
+   hook_response = hook の失敗(exit ≠ 0 か outcome ≠ success)だけ。status / hook_started /
+   thinking_tokens / rate_limit は実況の雑音なので残さない。"
+  (setv subtype (.get record "subtype"))
+  (setv model (.get record "model"))
+  (setv permission (.get record "permissionMode"))
+  (setv cwd (.get record "cwd"))
+  (setv tools (.get record "tools"))
+  (setv attempt (.get record "attempt" "?"))
+  (setv max-retries (.get record "max_retries" "?"))
+  (setv error-status (.get record "error_status"))
+  (setv error (.get record "error"))
+  (setv hook-name (.get record "hook_name" "?"))
+  (setv exit-code (.get record "exit_code"))
+  (setv outcome (.get record "outcome"))
+  (setv stderr (.get record "stderr"))
+  (cond
+    (= subtype "init")
+    (+ "session started"
+       (if (isinstance model str) f": model {model}" "")
+       (if (isinstance permission str) f" · permission {permission}" "")
+       (if (isinstance cwd str) f" · cwd {cwd}" "")
+       (if (isinstance tools list) f" · tools {(len tools)}" ""))
+    (= subtype "api_retry")
+    (+ f"API retry {attempt}/{max-retries}"
+       (if (is-not error-status None) f": {error-status}" "")
+       (if (isinstance error str) f" {error}" ""))
+    (= subtype "hook_response")
+    (if (or (and (isinstance exit-code int) (!= exit-code 0))
+            (and (isinstance outcome str) (!= outcome "success")))
+        (+ f"hook {hook-name} failed"
+           (if (isinstance exit-code int) f" (exit {exit-code})" "")
+           (if (and (isinstance stderr str) (.strip stderr)) f": {(.strip stderr)}" ""))
+        None)
+    True None))
+
+
+(defk claude-result-error [record]
+  {:pre [(: record dict)]
+   :post [(: % (| str None))]}
+  "claude の stream-json の result の行 → 誤りの理由(None = 成功 — 記録しない)。"
+  (setv is-error (= (.get record "is_error") True))
+  (setv subtype (.get record "subtype"))
+  (if (or is-error (and (isinstance subtype str) (!= subtype "success")))
+      (do (setv body (.get record "result"))
+          (setv errors (.get record "errors"))
+          (cond
+            (and (isinstance body str) (.strip body)) body
+            (and (isinstance errors list) errors) (.join "\n" (lfor item errors (str item)))
+            (isinstance subtype str) subtype
+            True "error"))
+      None))
+
+
 (defk delta-frame [job-id seq at kind payload]
   {:pre [(: job-id str) (: seq int) (: at int) (: kind str) (: payload dict)]
    :post [(: % dict)]}
@@ -970,7 +1234,10 @@
    (1 message が block ごとの行に割れる)。streamed(headless の events): 本文の chunk は
    stream_event の text_delta を text frame に写し、完成した assistant の text block は
    entries だけ(同じ本文を frame で二度流さない)。transcript(streamed = False)は完成した
-   block を text frame に。system / result の行は読まない(手番の終わりは host が読む)。"
+   block を text frame に。streamed では system の行(init / API の retry / hook の失敗 —
+   claude-system-note)を kind system の entry に、result の行の誤り(claude-result-error)を
+   kind error の entry に写す(手番の終わりの判定は host が読む — ここは記録だけ)。entry の
+   上限と切り詰めは text-entry / tool-use-entry / tool-result-entry の 1 点ずつ。"
   (setv frames [])
   (setv entries [])
   (setv usage None)
@@ -980,6 +1247,18 @@
   (for [record records]
     (setv kind (.get record "type"))
     (setv message (.get record "message"))
+    (when (and streamed (= kind "system"))
+      (<- note (| str None) (claude-system-note record))
+      (when (is-not note None)
+        (<- system-entry dict (note-entry seq at ENTRY-KIND-SYSTEM note))
+        (.append entries system-entry)
+        (setv seq (+ seq 1))))
+    (when (and streamed (= kind "result"))
+      (<- failure (| str None) (claude-result-error record))
+      (when (is-not failure None)
+        (<- error-entry dict (note-entry seq at ENTRY-KIND-ERROR failure))
+        (.append entries error-entry)
+        (setv seq (+ seq 1))))
     (when (and streamed (= kind "stream_event"))
       (setv event (.get record "event"))
       (setv delta (if (isinstance event dict) (.get event "delta") None))
@@ -1019,9 +1298,8 @@
                 (when (not streamed)
                   (<- text-frame dict (delta-frame job-id seq at "text" payload))
                   (.append frames text-frame))
-                (setv entry {"seq" seq "at" at "kind" "text" "text" (get block "text")})
-                (when (isinstance message-model str)
-                  (setv (get entry "model") message-model))
+                (<- entry dict (text-entry seq at (get block "text")
+                                           (if (isinstance message-model str) message-model None)))
                 (.append entries entry)
                 (setv seq (+ seq 1)))
               (and (= kind "assistant") (= block-type "tool_use"))
@@ -1032,21 +1310,23 @@
                 (<- use-frame dict (delta-frame job-id seq at "tool_use"
                                                 {"toolUseId" tool-id "name" name "summary" summary}))
                 (.append frames use-frame)
-                (.append entries {"seq" seq "at" at "kind" "tool_use"
-                                  "toolName" name "summary" summary})
+                (<- use-entry dict (tool-use-entry seq at tool-id name (.get block "input")))
+                (.append entries use-entry)
                 (setv seq (+ seq 1)))
               (and (= kind "user") (= block-type "tool_result"))
               (do
                 (setv tool-id (str (.get block "tool_use_id" "")))
                 (setv result (.get block "content"))
+                (setv is-error (bool (.get block "is_error" False)))
                 (<- summary str (summary-of result 4000))
                 (setv size (len (.encode (json.dumps result :ensure-ascii False) "utf-8")))
                 (<- result-frame dict (delta-frame job-id seq at "tool_result"
                                                    {"toolUseId" tool-id "summary" summary
                                                     "bytes" size
-                                                    "isError" (bool (.get block "is_error" False))}))
+                                                    "isError" is-error}))
                 (.append frames result-frame)
-                (.append entries {"seq" seq "at" at "kind" "tool_result" "summary" summary})
+                (<- result-entry dict (tool-result-entry seq at tool-id result is-error))
+                (.append entries result-entry)
                 (setv seq (+ seq 1)))
               True None))))))
   (DeltaBatch :frames (tuple frames) :entries (tuple entries) :usage usage
@@ -1073,29 +1353,33 @@
           (when (and (isinstance block dict) (isinstance (.get block "text") str))
             (<- text-frame dict (delta-frame job-id seq at "text" {"text" (get block "text")}))
             (.append frames text-frame)
-            (.append entries {"seq" seq "at" at "kind" "text" "text" (get block "text")})
+            (<- entry dict (text-entry seq at (get block "text") None))
+            (.append entries entry)
             (setv seq (+ seq 1))))
         (and (= kind "response_item") (= ptype "function_call"))
         (do
           (setv name (str (.get payload "name" "")))
+          (setv call-id (str (.get payload "call_id" "")))
           (<- summary str (summary-of (.get payload "arguments") 4000))
           (<- use-frame dict (delta-frame job-id seq at "tool_use"
-                                          {"toolUseId" (str (.get payload "call_id" ""))
-                                           "name" name "summary" summary}))
+                                          {"toolUseId" call-id "name" name "summary" summary}))
           (.append frames use-frame)
-          (.append entries {"seq" seq "at" at "kind" "tool_use" "toolName" name "summary" summary})
+          (<- use-entry dict (tool-use-entry seq at call-id name (.get payload "arguments")))
+          (.append entries use-entry)
           (setv seq (+ seq 1)))
         (and (= kind "response_item") (= ptype "function_call_output"))
         (do
           (setv output (.get payload "output"))
+          (setv call-id (str (.get payload "call_id" "")))
           (<- summary str (summary-of output 4000))
           (<- whole str (summary-of output 1000000000))
           (<- result-frame dict (delta-frame job-id seq at "tool_result"
-                                             {"toolUseId" (str (.get payload "call_id" ""))
+                                             {"toolUseId" call-id
                                               "summary" summary
                                               "bytes" (len (.encode whole "utf-8"))}))
           (.append frames result-frame)
-          (.append entries {"seq" seq "at" at "kind" "tool_result" "summary" summary})
+          (<- result-entry dict (tool-result-entry seq at call-id output False))
+          (.append entries result-entry)
           (setv seq (+ seq 1)))
         (and (= kind "event_msg") (= ptype "token_count"))
         (do
@@ -1143,7 +1427,8 @@
         (and (= method "item/completed") (isinstance item dict)
              (= (.get item "type") "agentMessage") (isinstance (.get item "text") str))
         (do
-          (.append entries {"seq" seq "at" at "kind" "text" "text" (get item "text")})
+          (<- entry dict (text-entry seq at (get item "text") None))
+          (.append entries entry)
           (setv seq (+ seq 1)))
         (and (= method "item/completed") (isinstance item dict)
              (= (.get item "type") "commandExecution") (isinstance (.get item "command") str))
@@ -1154,21 +1439,35 @@
                                           {"toolUseId" tool-id "name" "command_execution"
                                            "summary" summary}))
           (.append frames use-frame)
-          (.append entries {"seq" seq "at" at "kind" "tool_use"
-                            "toolName" "command_execution" "summary" summary})
+          (<- use-entry dict (tool-use-entry seq at tool-id "command_execution" (get item "command")))
+          (.append entries use-entry)
           (setv seq (+ seq 1))
           (setv output (.get item "aggregatedOutput"))
           (when (isinstance output str)
             (<- result-summary str (summary-of output 4000))
             (setv exit-code (.get item "exitCode"))
+            (setv is-error (and (isinstance exit-code int) (!= exit-code 0)))
             (<- result-frame dict (delta-frame job-id seq at "tool_result"
                                                {"toolUseId" tool-id "summary" result-summary
                                                 "bytes" (len (.encode output "utf-8"))
-                                                "isError" (and (isinstance exit-code int)
-                                                               (!= exit-code 0))}))
+                                                "isError" is-error}))
             (.append frames result-frame)
-            (.append entries {"seq" seq "at" at "kind" "tool_result" "summary" result-summary})
+            (<- result-entry dict (tool-result-entry seq at tool-id output is-error))
+            (.append entries result-entry)
             (setv seq (+ seq 1))))
+        (= method "turn/completed")
+        (do
+          ;; 手番の終わりの誤り(status ≠ completed)を kind error の entry に(判定は host — ここは記録だけ)。
+          (setv turn (.get params "turn"))
+          (when (isinstance turn dict)
+            (setv turn-status (.get turn "status"))
+            (when (and (isinstance turn-status str) (!= turn-status "completed"))
+              (setv error (.get turn "error"))
+              (setv message (if (isinstance error dict) (.get error "message") None))
+              (<- error-entry dict (note-entry seq at ENTRY-KIND-ERROR
+                                               (if (isinstance message str) message f"turn-{turn-status}")))
+              (.append entries error-entry)
+              (setv seq (+ seq 1)))))
         (= method "thread/tokenUsage/updated")
         (do
           (setv token-usage (.get params "tokenUsage"))
