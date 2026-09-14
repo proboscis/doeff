@@ -132,6 +132,7 @@ ConditionType = Literal[
     "AgentdRestart",
     "InterruptEscalationUndeclared",
     "AttachmentIgnored",
+    "WorkDirMissing",
 ]
 CONDITION_INTERRUPTED: ConditionType = "Interrupted"
 #: 段 10 lane 10n(agora-redesign #93・依頼者の追補 2026-09-14): 割り込みを注入したが、この job の charter に
@@ -156,6 +157,11 @@ CONDITION_CREDENTIAL_SOURCE_MISSING: ConditionType = "CredentialSourceMissing"
 #: 口座の置き場(profile の行の spec.boundary)が自分の置き場(labels.place)と違う job を起こさなかった印
 #: (段 10 lane 10d 便 2・agora-redesign #85 の I5 — 判断は judgment.credential-place-mismatch の 1 点)。
 CONDITION_CREDENTIAL_PLACE_MISMATCH: ConditionType = "CredentialPlaceMismatch"
+#: 段 10 lane 10y(agora-redesign #110・依頼者の裁定 2026-09-15 案 A): 手番の work_dir(家からの相対 `~/…` は node の HOME で展開した後)が
+#: この node に無く、charter が scratch の印(CHARTER_WORK_DIR_SCRATCH_KEY = true)を持たない job を起こさなかった印。配車の係は
+#: この条件を「会話 × node」で読み、同じ会話の手番の候補からこの node を外す(ACP 側・lane 10d)。判断は judgment.work-dir-step-of の 1 点。
+#: 実弾 2026-09-15 02:54: charter.work_dir = /Users/s22625/.cache/acp-stage2-e2e/work(会社 Mac の絶対 path)の手番が proboscis-mbp で LaunchFailed。
+CONDITION_WORK_DIR_MISSING: ConditionType = "WorkDirMissing"
 #: 段 10 lane 10e(agora-redesign #53・設計 第 9 節 問 3 / 問 4): 会話の宣言(charter の欄)のうち、この node の agent の種類が
 #: 受けない欄・温かい session に送る手番では変えられない欄(workDir — cwd は起こした process のもの)を黙って落とさず、
 #: 手番の終わりの conditions に 1 欄 1 行で刻む(判断は judgment.ignored-settings-of の 1 点)。
@@ -183,6 +189,16 @@ NODE_CAPABILITIES_KEY = "capabilities"
 #: charter の欄 → 会話の宣言の欄の語(契約 conventions.agentSettings.settings)。profile は charter に無い(段 10c: 配置の係が
 #: 預かり所の account に解く — binding.account が家)。
 CHARTER_SETTING_KEYS: dict[str, AgentSetting] = {"model": "model", "effort": "effort", "work_dir": "workDir"}
+#: 段 10 lane 10y: charter の作業場の鍵(綴りの定義点は契約 agora-kinds.json の delivery-policy.spec.charter)。work_dir は絶対 path か
+#: 家からの相対(`~` / `~/…` — agentd が node の HOME で展開する・judgment.plan-with-node-home)。work_dir_scratch = true の時だけ、
+#: 無い work_dir を agentd が作ってよい(既定 = 無し = 作らない — repo を指す work_dir を空の dir で偽装しない)。
+CHARTER_WORK_DIR_KEY = "work_dir"
+CHARTER_WORK_DIR_SCRATCH_KEY = "work_dir_scratch"
+#: 作業場の段(judgment.work-dir-step-of の閉語彙): launch = 在る / 宣言なし・create = 無いが scratch の印・missing = 無い。
+WorkDirStep = Literal["launch", "create", "missing"]
+WORK_DIR_STEP_LAUNCH: WorkDirStep = "launch"
+WORK_DIR_STEP_CREATE: WorkDirStep = "create"
+WORK_DIR_STEP_MISSING: WorkDirStep = "missing"
 #: 手番の資格の出所(段 10c・judgment.credential-source-of の閉語彙): lease = binding.account が在り charter の agent_type に
 #: 貸与の種類がある(預かり所から借りる)/ missing = それが無く、この node は預かり所を宣言している(起こさない)/
 #: home = それが無く、預かり所を宣言していない node(移行前の機体 — charter の binding で起こす今日の経路)。
@@ -579,6 +595,9 @@ class AgentdSettings:
     lease_renew_margin_seconds: int = 120
     #: 借りた資格の家の根(claude = CLAUDE_CONFIG_DIR・codex = auth.json の置き場)。
     homes_root: str = ""
+    #: この node の家(段 10 lane 10y — composition root が env HOME から据える)。charter の work_dir の `~` はこの値で展開する
+    #: (judgment.plan-with-node-home)。空 = 展開しない(`~` のままの path は無い dir として WorkDirMissing に落ちる)。
+    home: str = ""
     #: この node が預かり所(custody)を宣言しているか(段 10c・agora-redesign #80)。composition root
     #: (runtime.settings_from_env)が CUSTODY_URL_ENV(join の [custody].url / --custody)の在否から導く 1 点。True の node は
     #: status.binding.account の無い agent-job を起こさない(judgment.credential-source-of)— charter の binding
@@ -1651,6 +1670,20 @@ class FsWritePrivateText(EffectBase):
 
     path: str
     text: str
+
+
+@dataclass(frozen=True)
+class FsDirectoryExists(EffectBase):
+    """path がこの機体に dir として在るか(段 10 lane 10y — 手番の work_dir の検)。結果 = bool。"""
+
+    path: str
+
+
+@dataclass(frozen=True)
+class FsMakeDirectories(EffectBase):
+    """dir を親ごと作る(段 10 lane 10y — scratch の印の在る work_dir だけ)。結果 = bool(作れた / 既に在る = True)。"""
+
+    path: str
 
 
 @dataclass(frozen=True)

@@ -37,6 +37,8 @@ from doeff_agents.sessionhost.acp.effects import (
     CustodyLeaseRevoke,
     EventWindow,
     FsCanonicalPath,
+    FsDirectoryExists,
+    FsMakeDirectories,
     FsFileSize,
     FsWritePrivateText,
     Escalated,
@@ -588,6 +590,12 @@ class FakeLocal:
         self.metrics: list[JSONObject] = []
         self.logs: list[str] = []
         self.files: dict[str, str] = {}
+        #: 段 10 lane 10y: 作業場の検 — 既定はどの dir も在る(検体の charter の work_dir を無い dir で落とさない)。無い dir は
+        #: missing_dirs に置く・作れない dir は unmakeable_dirs に置く。検めた path と作った path を順に数える。
+        self.missing_dirs: set[str] = set()
+        self.unmakeable_dirs: set[str] = set()
+        self.dir_checks: list[str] = []
+        self.made_dirs: list[str] = []
         self.transcripts: dict[str, str] = {}
         #: 鋳造した session の id の数(id = sid-<n> — charter の id とは別の綴り)。
         self.minted: int = 0
@@ -622,6 +630,15 @@ class FakeLocal:
             (FsCanonicalPath, FsFileSize, FsWritePrivateText, SessionTranscript, SessionEvents),
         ):
             return Resume(k, self._file(effect))
+        if isinstance(effect, FsDirectoryExists):
+            self.dir_checks.append(effect.path)
+            return Resume(k, effect.path not in self.missing_dirs)
+        if isinstance(effect, FsMakeDirectories):
+            if effect.path in self.unmakeable_dirs:
+                return Resume(k, False)
+            self.made_dirs.append(effect.path)
+            self.missing_dirs.discard(effect.path)
+            return Resume(k, True)
         return Pass(effect, k)
 
     def _homes_of(self, kind: str) -> tuple[ProfileHome, ...]:

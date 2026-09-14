@@ -447,6 +447,78 @@ def test_custody_declared_node_borrows_the_account_and_launches_in_the_borrowed_
     assert job.status["phase"] == PHASE_RUNNING
 
 
+def test_work_dir_missing_on_this_node_ends_the_job_without_launching() -> None:
+    """反例(段 10 lane 10y・agora-redesign #110 の実弾 2026-09-15 02:54): delivery-policy の charter.work_dir が会社 Mac の絶対 path
+    (/Users/s22625/.cache/acp-stage2-e2e/work)の手番が proboscis-mbp(user kento)に結ばれ、sessionhost の launch が LaunchFailed に
+    落ちた(本物の会話の手番 2 本)。work_dir がこの node に無く scratch の印の無い job は、起こさず(claim も launch もせず)
+    条件 WorkDirMissing(node の名と work_dir を名乗る)で Ended に閉じる — 配車の係が会話 × node で候補から外す材料。"""
+    world = World()
+    world.local.missing_dirs.add("/Users/s22625/.cache/acp-stage2-e2e/work")
+    world.acp.put_row(bound_job("w-1", inputs=[], work_dir="/Users/s22625/.cache/acp-stage2-e2e/work"))
+    world.tick()
+    assert world.sessions.launches == []
+    assert world.custody.borrowed == []
+    job = world.job("w-1")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_ENDED
+    conditions = job.status.get("conditions")
+    assert isinstance(conditions, list)
+    missing = [c for c in conditions if isinstance(c, dict) and c.get("type") == "WorkDirMissing"]
+    assert len(missing) == 1, conditions
+    reason = str(missing[0]["reason"])
+    assert NODE in reason and "/Users/s22625/.cache/acp-stage2-e2e/work" in reason
+    assert world.local.made_dirs == [], "印の無い work_dir を作らない(repo を指す作業場を空の dir で偽装しない)"
+
+
+def test_work_dir_home_relative_is_expanded_with_this_node_home_and_a_scratch_mark_creates_it() -> None:
+    """段 10 lane 10y(依頼者の裁定 案 A): work_dir は家からの相対(`~/…`)で宣言でき、agentd がこの node の HOME で展開して起こす。
+    無い work_dir は charter.work_dir_scratch = true の時だけ作ってから起こす。展開しない綴り(絶対 path)は触らない。"""
+    from dataclasses import replace
+
+    world = World()
+    world.settings = replace(world.settings, home="/Users/kento")
+    world.local.missing_dirs.add("/Users/kento/.cache/agora/work")
+    job_row = bound_job("w-2", inputs=[], work_dir="~/.cache/agora/work")
+    charter = job_row.spec["charter"]
+    assert isinstance(charter, dict)
+    world.acp.put_row(replace(job_row, spec={**job_row.spec, "charter": {**charter, "work_dir_scratch": True}}))
+    world.tick()
+    assert world.local.made_dirs == ["/Users/kento/.cache/agora/work"]
+    assert len(world.sessions.launches) == 1
+    assert world.sessions.launches[0]["work_dir"] == "/Users/kento/.cache/agora/work"
+    status = world.job("w-2").status
+    assert status is not None and status["phase"] == PHASE_RUNNING
+
+
+@pytest.mark.parametrize(
+    ("work_dir", "home", "expanded"),
+    [
+        ("~/repos/x", "/Users/kento", "/Users/kento/repos/x"),
+        ("~", "/home/kento/", "/home/kento"),
+        ("/Users/s22625/work", "/Users/kento", "/Users/s22625/work"),
+        ("~other/x", "/Users/kento", "~other/x"),
+        ("~/x", "", "~/x"),
+    ],
+)
+def test_plan_with_node_home_expands_only_tilde(work_dir: str, home: str, expanded: str) -> None:
+    plan = run(judgment.launch_plan_of(bound_job("x", inputs=[], work_dir=work_dir)))
+    out = run(judgment.plan_with_node_home(plan, home))
+    assert out.charter["work_dir"] == expanded
+
+
+@pytest.mark.parametrize(
+    ("exists", "scratch", "step"),
+    [(True, None, "launch"), (True, True, "launch"), (False, True, "create"), (False, None, "missing"), (False, "true", "missing")],
+)
+def test_work_dir_step_is_one_judgment(exists: bool, scratch: object, step: str) -> None:
+    from dataclasses import replace
+
+    plan = run(judgment.launch_plan_of(bound_job("x", inputs=[], work_dir="/w")))
+    if scratch is not None:
+        plan = replace(plan, charter={**plan.charter, "work_dir_scratch": scratch})
+    assert run(judgment.work_dir_step_of(plan, exists)) == step
+
+
 def test_undeclared_node_keeps_the_charter_home_for_a_job_without_an_account() -> None:
     """段 10c(R23): 預かり所を宣言していない node(移行前の機体)は今日どおり charter で起こす(借りない)。"""
     world = World()

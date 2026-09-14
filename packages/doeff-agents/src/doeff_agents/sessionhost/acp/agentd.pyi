@@ -60,6 +60,7 @@ def start_claimed(
     now_ms: int,
     opener: str | None,
 ) -> Program: ...
+def work_dir_ready(settings: AgentdSettings, row: AcpRow, plan: LaunchPlan, now_ms: int) -> Program: ...
 def claim_job(
     settings: AgentdSettings,
     state: AgentdState,
