@@ -55,6 +55,7 @@ from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.agentd_client import AgentdClient, AgentdClientError, launch_rpc_timeout_seconds
 from doeff_agents.sessionhost.attachment import TurnAttachment
 from doeff_agents.sessionhost.acp.effects import (
+    DECLARATION_FINGERPRINT_HEADER,
     JSON,
     MESSAGE_KIND,
     OWNERSHIP_PROOF_GCE_PREFIX,
@@ -517,9 +518,11 @@ class AcpHttp:
         if isinstance(effect, AcpPutStatus):
             return self._put_status(effect.row, effect.status)
         if isinstance(effect, AcpPutSpec):
-            return self._put_spec(effect.row, effect.spec)
+            return self._put_spec(effect.row, effect.spec, effect.declaration_sha256)
         if isinstance(effect, AcpCreate):
-            return self._create(effect.namespace, effect.kind, effect.resource_id, effect.spec)
+            return self._create(
+                effect.namespace, effect.kind, effect.resource_id, effect.spec, effect.declaration_sha256
+            )
         return self._push(effect.owner, effect.name, effect.frames)
 
     def close(self) -> None:
@@ -575,9 +578,15 @@ class AcpHttp:
             )
         return decode_event_window(after, reply.body)
 
-    def _post_event(self, body: JSONObject) -> WriteOutcome:
+    def _post_event(self, body: JSONObject, declaration_sha256: str | None = None) -> WriteOutcome:
+        # 段 10 lane 10y: 宣言 file の指紋は書きごとの header(kind node の declaredByFile の欄を変える書きだけが運ぶ)
+        headers = (
+            self._headers
+            if declaration_sha256 is None
+            else {**self._headers, DECLARATION_FINGERPRINT_HEADER: declaration_sha256}
+        )
         reply = _http_json(
-            "POST", f"{self._base_url}/api/events", self._headers, body, HTTP_TIMEOUT_SECONDS
+            "POST", f"{self._base_url}/api/events", headers, body, HTTP_TIMEOUT_SECONDS
         )
         if reply.status == 200:
             event_id = _str_field(reply.body, "eventId")
@@ -618,9 +627,9 @@ class AcpHttp:
             }
         )
 
-    def _put_spec(self, row: AcpRow, spec: JSONObject) -> WriteOutcome:
+    def _put_spec(self, row: AcpRow, spec: JSONObject, declaration_sha256: str | None = None) -> WriteOutcome:
         """段 10 lane 10d: 行の spec の書き(spec_applied・ifGeneration = 行の generation・status は運ばない —
-        engine の SpecApplied は status の軸を触らない)。"""
+        engine の SpecApplied は status の軸を触らない)。段 10 lane 10y: 指紋が在れば header で運ぶ。"""
         return self._post_event(
             {
                 "eventType": "control_plane.spec_applied",
@@ -633,11 +642,17 @@ class AcpHttp:
                     "cpSource": ACP_WRITE_SOURCE,
                     "cpAt": _iso_now(),
                 },
-            }
+            },
+            declaration_sha256,
         )
 
     def _create(
-        self, namespace: str, kind: str, resource_id: str, spec: JSONObject
+        self,
+        namespace: str,
+        kind: str,
+        resource_id: str,
+        spec: JSONObject,
+        declaration_sha256: str | None = None,
     ) -> WriteOutcome:
         key = f"{namespace}:{kind}:{resource_id}"
         row = AcpRow(
@@ -665,7 +680,8 @@ class AcpHttp:
                     "cpSource": ACP_WRITE_SOURCE,
                     "cpAt": _iso_now(),
                 },
-            }
+            },
+            declaration_sha256,
         )
 
     def _watch_take(self, since: int, wait_seconds: float) -> WatchAdvance:

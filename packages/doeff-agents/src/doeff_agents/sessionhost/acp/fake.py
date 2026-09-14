@@ -123,6 +123,8 @@ class FakeAcp:
         self.creates: dict[str, int] = {}
         #: 段 10 lane 10d: spec の書き(鍵・書いた spec)と、鍵ごとに spec の書きを断る列(先頭から消費)。
         self.spec_writes: list[tuple[str, JSONObject]] = []
+        #: 段 10 lane 10y: 誕生と spec の書きが運んだ宣言 file の指紋(鍵・指紋 | None)— 書きの順。
+        self.fingerprints: list[tuple[str, str | None]] = []
         self.spec_refusals: dict[str, list[Refused]] = {}
         #: 全量 list(AcpGet)を受けた kind の列(差分の読みの検が数える)。
         self.lists: list[str] = []
@@ -198,8 +200,10 @@ class FakeAcp:
         if isinstance(effect, AcpPutStatus):
             return self._put_status(effect.row, effect.status)
         if isinstance(effect, AcpPutSpec):
+            self.fingerprints.append((effect.row.key, effect.declaration_sha256))
             return self._put_spec(effect.row, effect.spec)
         if isinstance(effect, AcpCreate):
+            self.fingerprints.append((f"{effect.namespace}:{effect.kind}:{effect.resource_id}", effect.declaration_sha256))
             return self._create(effect)
         self.push_seq += len(effect.frames)
         self.pushes.append((effect.owner, effect.name, effect.frames))

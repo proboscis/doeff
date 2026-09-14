@@ -342,6 +342,12 @@ BORROWER_KEY_PATH_ENV = "AGORA_BORROWER_KEY_PATH"
 #: Authorization: Bearer で載せる(預かり所の k3s の backend が TokenReview で解く・借り手名 = ns/sa)。借り手札の経路
 #: (X-Borrower-Key — Mac の agentd)はそのまま残す。
 CUSTODY_SA_TOKEN_PATH_ENV = "AGORA_CUSTODY_SA_TOKEN_PATH"
+#: 段 10 lane 10y(agora-redesign #110・依頼者の裁定 2026-09-15): agentd が読んだ宣言 file の指紋(sha256 の小文字 hex)。join が
+#: --config の file の bytes から導いて据える。ACP の kind node の capacity は declaredByFile(ACP 段 10 lane 10t 便 1b)で、誕生を
+#: 含む書きは header x-declaration-sha256 を伴わなければ 403 declaration-needs-fingerprint — 宣言 file を読まない agentd は行を作れない。
+DECLARATION_SHA256_ENV = "DOEFF_AGENTD_DECLARATION_SHA256"
+#: 指紋を運ぶ header の綴り(ACP docs/contracts/operator-approval.json の fingerprint.header の写し)。
+DECLARATION_FINGERPRINT_HEADER = "x-declaration-sha256"
 #: 段 10f 便 2 追補 3(agora-redesign #82・依頼者 2026-09-14 17:1x 実測「agent が自分の会話 id を答えられない」): 手番の process
 #: の env(charter.session_env — host の launch-spawn-env が非 auth の overlay として spawn の env に混ぜる)に置く会話の身元。
 #: AGORA_CONVERSATION_ID = 会話の id(c-…・agent-job の spec.subject)/ AGORA_SEAT_OPENER = 会話の行の spec.opener の逐語
@@ -409,6 +415,10 @@ class JoinDeclaration:
     """宣言 file(toml)を読んだ木(境界の入力・tables が空 = file なし)。検めるのは join.hy。"""
 
     tables: dict[str, object]
+    #: 宣言 file の bytes の sha256(小文字の hex 64 桁 — 段 10 lane 10y・agora-redesign #110)。file なし = None。
+    #: 読んだ file そのものの指紋で、node の capacity(ACP の kind node の declaredByFile)を書く時に
+    #: header DECLARATION_FINGERPRINT_HEADER で運ぶ(engine は値を検めず出来事の封筒に記録・突合は日次の見張り)。
+    sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -437,6 +447,8 @@ class JoinSpec:
     #: 預かり所へ名乗る ServiceAccount の token の file(段 10 lane 10y — 宣言 file の [custody].service_account_token_file・
     #: flag --service-account-token-file)。None = 名乗らない(借り手札だけ)。
     service_account_token_file: str | None = None
+    #: 読んだ宣言 file の指紋(JoinDeclaration.sha256 の写し・段 10 lane 10y)。None = 宣言 file なし(flag だけの参加)。
+    declaration_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -569,6 +581,10 @@ class AgentdSettings:
     #: status.binding.account の無い agent-job を起こさない(judgment.credential-source-of)— charter の binding
     #: (機体の profile の家)で起こす経路は、預かり所を宣言していない node(移行前の機体)だけに残る。
     custody_declared: bool = False
+    #: 読んだ宣言 file の指紋(段 10 lane 10y・agora-redesign #110)— join が据えた DECLARATION_SHA256_ENV の写し(検は
+    #: join.declaration-sha256-of の 1 点)。node の行の誕生と spec の揃えに header で運ぶ。None = 宣言 file なし
+    #: (その agentd は kind node の capacity を書けない — ACP が 403 declaration-needs-fingerprint で断る)。
+    declaration_sha256: str | None = None
     #: host の backend(wire の閉語彙 tmux | herdr | headless の写し — agentd が読む語は
     #: BACKEND_HEADLESS だけ)。composition root(runtime.settings_from_env)が host の argv / env
     #: (valve.backend_of)から導く 1 点で、stream_capability も同じ源から導く。headless の器は
@@ -1302,6 +1318,9 @@ class AcpPutSpec(EffectBase):
 
     row: AcpRow
     spec: JSONObject
+    #: 読んだ宣言 file の指紋(段 10 lane 10y)— 在れば header x-declaration-sha256 で運ぶ(kind node の declaredByFile の欄を
+    #: 変える書き)。None = 運ばない。
+    declaration_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1315,6 +1334,8 @@ class AcpCreate(EffectBase):
     kind: str
     resource_id: str
     spec: JSONObject
+    #: 読んだ宣言 file の指紋(段 10 lane 10y)— 在れば header x-declaration-sha256 で運ぶ(誕生も declaredByFile の欄を置く書き)。
+    declaration_sha256: str | None = None
 
 
 @dataclass(frozen=True)
