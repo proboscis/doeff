@@ -35,6 +35,7 @@
 
 (require doeff-hy.macros [defk <-])
 
+(import copy)
 (import dataclasses [replace])
 (import datetime [datetime timezone])
 (import hashlib)
@@ -70,6 +71,9 @@
   CREDENTIAL-SOURCE-LEASE
   CREDENTIAL-SOURCE-MISSING
   Conflict
+  DELTA-CLIPPED-INPUT-ROOT
+  DELTA-FRAME-MAX-BYTES
+  DELTA-INPUT-STRING-LIMIT
   DeltaBatch
   ENTRY-KIND-ERROR
   ENTRY-KIND-SYSTEM
@@ -2429,6 +2433,71 @@
   {"agentJobId" job-id "seq" seq "at" at "kind" kind "payload" payload})
 
 
+(defk clip-input [value root limit]
+  {:pre [(: value (| dict list str int float bool None)) (: root str) (: limit int)]
+   :post [(: % tuple)]}
+  "実況に載せる入力 → #(載せる値 切った所の path の列)。入れ子の中の文字列を 1 つ limit 字で切り、切った所の path を
+   root から . で繋いで名乗る(object は key・array は添字 — 例 input.edits.0.old_string)。契約 turn-delta.json の
+   tool_use.input / clipped の規則で、agora の画面の糊が記録の行を切る規則(controllers/screen/runtime/protocol.hy の
+   _clip-json)と同じ綴り。切るものが無ければ値をそのまま返す(写しを作らない)。"
+  (setv paths []
+        stack [#(value root)])
+  (while stack
+    (setv [item path] (.pop stack))
+    (cond
+      (isinstance item str)
+      (when (> (len item) limit)
+        (.append paths path))
+      (isinstance item dict)
+      (for [[name child] (.items item)]
+        (.append stack #(child (+ path "." (str name)))))
+      (isinstance item list)
+      (for [[index child] (enumerate item)]
+        (.append stack #(child (+ path "." (str index)))))))
+  (when (not paths)
+    (return #(value [])))
+  (setv holder {root (copy.deepcopy value)}
+        places [#(holder root)])
+  (while places
+    (setv [container key] (.pop places)
+          item (get container key))
+    (cond
+      (isinstance item str)
+      (when (> (len item) limit)
+        (setv (get container key) (cut item 0 limit)))
+      (isinstance item dict)
+      (for [name (list item)]
+        (.append places #(item name)))
+      (isinstance item list)
+      (for [index (range (len item))]
+        (.append places #(item index)))))
+  #((get holder root) (sorted paths)))
+
+
+(defk tool-use-frame [job-id seq at tool-id name summary given]
+  {:pre [(: job-id str) (: seq int) (: at int) (: tool-id str) (: name str) (: summary str)
+         (: given (| dict list str int float bool None))]
+   :post [(: % dict)]}
+  "道具の呼び出しの実況の frame(契約 turn-delta.json の tool_use — 段 10 lane 10j・agora-redesign #87 の裁定 問 7 / 8)。
+   入力が object の時だけ input を載せ(文字列は DELTA-INPUT-STRING-LIMIT 字で切り、切った所を clipped が名乗る)、
+   encode した frame が DELTA-FRAME-MAX-BYTES を超える時は input を落として clipped を根の 1 語にする。object でない
+   入力(codex の function_call.arguments = JSON の文字列)は名乗らない —— 面は summary で描く。"
+  (setv payload {"toolUseId" tool-id "name" name "summary" summary})
+  (when (isinstance given dict)
+    (<- clip tuple (clip-input given DELTA-CLIPPED-INPUT-ROOT DELTA-INPUT-STRING-LIMIT))
+    (setv [carried marks] clip)
+    (setv (get payload "input") carried)
+    (when marks
+      (setv (get payload "clipped") (list marks))))
+  (<- frame dict (delta-frame job-id seq at "tool_use" payload))
+  (when (<= (len (.encode (json.dumps frame :ensure-ascii False) "utf-8")) DELTA-FRAME-MAX-BYTES)
+    (return frame))
+  (<- shrunk dict (delta-frame job-id seq at "tool_use"
+                               {"toolUseId" tool-id "name" name "summary" summary
+                                "clipped" [DELTA-CLIPPED-INPUT-ROOT]}))
+  shrunk)
+
+
 (defk claude-deltas-of [records job-id seq-start at streamed]
   {:pre [(: records tuple) (: job-id str) (: seq-start int) (: at int) (: streamed bool)]
    :post [(: % DeltaBatch)]}
@@ -2549,8 +2618,7 @@
                 (setv tool-id (str (.get block "id" "")))
                 (setv name (str (.get block "name" "")))
                 (<- summary str (summary-of (.get block "input") 4000))
-                (<- use-frame dict (delta-frame job-id seq at "tool_use"
-                                                {"toolUseId" tool-id "name" name "summary" summary}))
+                (<- use-frame dict (tool-use-frame job-id seq at tool-id name summary (.get block "input")))
                 (.append frames use-frame)
                 (<- use-body dict (tool-use-body seq at tool-id name (.get block "input")))
                 (.append bodies use-body)
@@ -2620,8 +2688,9 @@
           (setv name (str (.get payload "name" "")))
           (setv call-id (str (.get payload "call_id" "")))
           (<- summary str (summary-of (.get payload "arguments") 4000))
-          (<- use-frame dict (delta-frame job-id seq at "tool_use"
-                                          {"toolUseId" call-id "name" name "summary" summary}))
+          ;; codex の arguments は JSON の**文字列**(object ではない)。同じ 1 点を通すことで「object でない入力は
+          ;; 名乗らない」の規則を走行器ごとに書き分けない(契約 turn-delta.json の tool_use.input)。
+          (<- use-frame dict (tool-use-frame job-id seq at call-id name summary (.get payload "arguments")))
           (.append frames use-frame)
           (<- use-body dict (tool-use-body seq at call-id name (.get payload "arguments")))
           (.append bodies use-body)
@@ -2713,9 +2782,8 @@
         (do
           (setv tool-id (str (.get item "id" "")))
           (<- summary str (summary-of (get item "command") 4000))
-          (<- use-frame dict (delta-frame job-id seq at "tool_use"
-                                          {"toolUseId" tool-id "name" "command_execution"
-                                           "summary" summary}))
+          ;; codex の command は**文字列**(object ではない)ので input は載らない — 組む点は 1 つ(tool-use-frame)。
+          (<- use-frame dict (tool-use-frame job-id seq at tool-id "command_execution" summary (get item "command")))
           (.append frames use-frame)
           (<- use-body dict (tool-use-body seq at tool-id "command_execution" (get item "command")))
           (.append bodies use-body)

@@ -80,6 +80,16 @@ TURN_RECORD_ENTRIES_BYTE_BUDGET = 32_768
 #: 見出しの 1 entry の compact JSON の上限 byte(契約 §2.2「1 entry ≤ 256 byte」の写し — 検の物差し。走行時の門は ACP の
 #: engine の statusByteBudget で、agentd は見出しに本文を持てない型で守る)。
 TURN_ENTRY_MAX_BYTES = 256
+#: 実況(TurnDelta)の道具の呼び出しに載せる入力の切り方(契約 docs/contracts/turn-delta.json の tool_use.input /
+#: clipped — 段 10 lane 10j・agora-redesign #87 の裁定 問 7)。入力の object はそのまま載せ(表示のための whitelist は
+#: 使わない)、文字列は 1 つこの上限で切る(入れ子の中も同じ規則)。agora の画面の糊が記録の行を切る上限と同じ値。
+DELTA_INPUT_STRING_LIMIT = 64_000
+#: 実況の 1 frame の compact JSON(UTF-8)の上限 byte。越えた frame は input を載せず、切った印だけを名乗る
+#: (中継の 1 frame の上限は 4 MiB〔stream-relay.json ringBytes〕だが、記録の 1 出来事の上限〔record-service.json
+#: eventMaxBytes〕と同じ値で締める — 実況と記録で道具の入力の大きさをそろえる)。
+DELTA_FRAME_MAX_BYTES = 1_048_576
+#: 切った所の path の根(契約の clipped の綴り — 例 "input.old_string"・input ごと落ちた時は "input" ちょうど)。
+DELTA_CLIPPED_INPUT_ROOT = "input"
 #: turn-record の status.recordRef の綴り(`record:<cid>/<streamId>`)の頭。
 RECORD_REF_PREFIX = "record:"
 #: node の terminal state(gone の行は同じ名の生きた行ではない)。

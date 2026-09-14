@@ -26,6 +26,7 @@
   AcpRow
   AgentdSettings
   Conflict
+  DELTA-INPUT-STRING-LIMIT
   InFlightJob
   MESSAGE-KIND
   NODE-KIND
@@ -52,6 +53,7 @@
   text-body
   tool-result-body
   tool-use-body
+  tool-use-frame
   record-create-verdict
   turn-record-appended-status
   turn-record-ended-status])
@@ -213,6 +215,42 @@
   ;; transcript(tui)の行は system / result を読まない(従来どおり)。
   (setv quiet (run (deltas-of "claude" "transcript" text "job" 0 AT)))
   (assert (= quiet.entries #())))
+
+
+(deftest test-tool-use-frame-carries-the-input-and-names-what-it-clipped
+  ;; 段 10 lane 10j(agora-redesign #87 の裁定 問 7 / 8): 実況の道具の呼び出しは入力の object を**そのまま**運ぶ —
+  ;; 表示のための whitelist は使わない(MultiEdit の edits も Read の offset / limit も落ちない)。
+  (setv given {"file_path" "/work/a.ts" "offset" 10 "limit" 2
+               "edits" [{"old_string" "a" "new_string" "b"}]})
+  (setv frame (run (tool-use-frame "job" 3 AT "t1" "MultiEdit" "s" given)))
+  (assert (= (get frame "kind") "tool_use"))
+  (setv payload (get frame "payload"))
+  (assert (= (get payload "input") given) payload)
+  (assert (not-in "clipped" payload) payload)
+  ;; 文字列は 1 つ DELTA-INPUT-STRING-LIMIT 字で切り、切った所を path で名乗る(入れ子の中も同じ規則)。
+  (setv long (* "x" (+ DELTA-INPUT-STRING-LIMIT 1)))
+  (setv clipped-frame (run (tool-use-frame "job" 4 AT "t2" "MultiEdit" "s"
+                                           {"file_path" "/work/a.ts"
+                                            "edits" [{"old_string" long "new_string" "b"}]})))
+  (setv clipped-payload (get clipped-frame "payload"))
+  (assert (= (get clipped-payload "clipped") ["input.edits.0.old_string"]) clipped-payload)
+  (assert (= (len (get (get (get (get clipped-payload "input") "edits") 0) "old_string"))
+             DELTA-INPUT-STRING-LIMIT))
+  ;; encode した frame が上限を超える時は input を載せない(印は根の 1 語 — 面は summary で描く)。
+  (setv many (dfor index (range 20) f"k{index}" (* "y" DELTA-INPUT-STRING-LIMIT)))
+  (setv heavy (run (tool-use-frame "job" 5 AT "t3" "Write" "s" many)))
+  (setv heavy-payload (get heavy "payload"))
+  (assert (not-in "input" heavy-payload) (list heavy-payload))
+  (assert (= (get heavy-payload "clipped") ["input"]) heavy-payload)
+  ;; object でない入力(codex の function_call.arguments / commandExecution の command = 文字列)は名乗らない。
+  (setv codex (run (tool-use-frame "job" 6 AT "t4" "shell" "{\"command\":\"ls\"}" "{\"command\":\"ls\"}")))
+  (assert (not-in "input" (get codex "payload")) codex)
+  (assert (not-in "clipped" (get codex "payload")) codex)
+  ;; 走行器の行から組んだ実況にも input が載る(claude の stream-json の 1 手番)。
+  (setv batch (run (deltas-of "claude" "events" (claude-events "s-1" "本文") "job" 0 AT)))
+  (setv uses (lfor item batch.frames :if (= (get item "kind") "tool_use") item))
+  (assert (= (len uses) 1) uses)
+  (assert (= (get (get (get uses 0) "payload") "input") {"file_path" "/work/a.txt"}) uses))
 
 
 ;; ---------------------------------------------------------------------------
