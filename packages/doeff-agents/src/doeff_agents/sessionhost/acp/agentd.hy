@@ -317,7 +317,8 @@
   node-row-named
   node-spec-declared
   node-spec-of
-  node-status-with-lease
+  node-status-with-observations
+  node-status-with-renewed-lease
   pane-frame
   pending-interrupts-of
   profile-observed-changed
@@ -380,9 +381,11 @@
 (defk join-tick [settings state now-ms]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: now-ms int)]
    :post [(: % AgentdState)]}
-  "heartbeat の腕: 自分の Node の行を読み、無ければ機体の宣言から作り、在れば spec を宣言へ揃えてから status.lease と
-   status.observations(器の眺めと session に刻んだ帰属から導いた会話の session の一覧と、transcript が残る会話の一覧 —
-   R20)を書き、idle が TTL を過ぎた温かい session を片付ける。R28(段 10 lane 10d・agora-redesign #85): node の spec の
+  "参加の腕(tick の中・周期 = AgentdSettings.node-heartbeat-seconds): 自分の Node の行を読み、無ければ機体の宣言から作り、
+   在れば spec を宣言へ揃えてから status.observations(器の眺めと session に刻んだ帰属から導いた会話の session の一覧と、
+   transcript が残る会話の一覧 — R20)と capabilities を書き(write-node-observations)、idle が TTL を過ぎた温かい session を
+   片付ける。status.lease はここでは書かない — lease の書き手は tick と独立した heartbeat の thread(lease-heartbeat・
+   段 10 lane 10ba・agora-redesign #115)の 1 つ。R28(段 10 lane 10d・agora-redesign #85): node の spec の
    書き手は agentd(既知の形 = kubelet の Node の自己登記・spec の形は judgment.node-spec-of / node-spec-declared の 1 点)。
    行が無い拍は、node が退いた以上は温かい session を残さずに作る。作れない・揃えられない拍(書き手の断り等)は 1 度だけ
    log して次の周期に撃ち直す — 揃えられなくても lease は書く(参加の生存を spec の書きの成否に結ばない)。"
@@ -448,11 +451,61 @@
         (setv kept (tuple (lfor view views :if (not-in view.session-id expired) view)))
         (<- observations list (session-observations-of kept))
         (<- transcripts list (observe-transcripts settings views observations))
-        (<- status dict (node-status-with-lease row settings now-ms observations transcripts))
-        (<- outcome (| Written Conflict Refused) (AcpPutStatus :row row :status status))
-        (when (isinstance outcome Refused)
-          (<- (LogLine :text f"agentd: node lease refused ({outcome.status}): {outcome.error}")))
+        (<- (write-node-observations settings row.key observations transcripts))
         (replace next :node-missing-logged False :node-spec-refusal-logged spec-refusal-logged))))
+
+
+(defk write-node-observations [settings key sessions transcripts]
+  {:pre [(: settings AgentdSettings) (: key str) (: sessions list) (: transcripts list)]
+   :post [(: % str)]}
+  "参加の腕の観測の書き(段 10 lane 10ba・agora-redesign #115): lease は別の thread(lease-heartbeat)が書くので、観測を組んだ
+   後に行を読み直してから書く(器の眺めの読みや片付けの間に lease の書きが挟まっても、読みから書きまでを短くして CAS に
+   負けにくくする)。差し替えるのは observations と capabilities だけ(judgment.node-status-with-observations)。CAS に負けたら
+   読み直して 1 度だけ撃ち直し、それでも負けたら log して次の周期へ。戻り = 結末の語(written / no-node-row / refused / conflict)。"
+  (for [attempt [1 2]]
+    (<- fresh (| AcpRow None) (AcpGetRow :key key))
+    (when (is fresh None)
+      (return "no-node-row"))
+    (<- status dict (node-status-with-observations fresh settings sessions transcripts))
+    (<- outcome (| Written Conflict Refused) (AcpPutStatus :row fresh :status status))
+    (when (isinstance outcome Written)
+      (return "written"))
+    (when (isinstance outcome Refused)
+      (<- (LogLine :text f"agentd: node observations refused ({outcome.status}): {outcome.error}"))
+      (return "refused")))
+  (<- (LogLine :text f"agentd: node {settings.node-name !r} observations lost the write race twice; re-trying next heartbeat"))
+  "conflict")
+
+
+(defk lease-heartbeat [settings]
+  {:pre [(: settings AgentdSettings)]
+   :post [(: % str)]}
+  "node の lease の heartbeat(段 10 lane 10ba・agora-redesign #115・既知の形 = durable workflow の activity の heartbeat は
+   activity と独立): tick とは別の thread(runtime.run_heartbeat_loop)が自分の周期(AgentdSettings.node-heartbeat-seconds)で
+   撃つので、tick の I/O(薄い再開の読み・器の準備)が TTL(node-lease-ttl-seconds)を超えて塞がっても lease は切れない。
+   書くのは自分の node の行の status.lease だけ(spec にも観測の欄にも触らない — judgment.node-status-with-renewed-lease)。
+   行が無い拍は書かない(行を作るのは tick の参加の腕)。CAS に負けたら読み直して 1 度だけ撃ち直す。
+   戻り = 結末の語(renewed / no-node-row / refused / conflict)。"
+  (<- rows tuple (AcpGet :kind NODE-KIND))
+  (<- node (| AcpRow None) (node-row-named rows settings.node-name))
+  (when (is node None)
+    (return "no-node-row"))
+  (setv row node)
+  (for [attempt [1 2]]
+    (<- now-ms int (ClockNowMs))
+    (<- status dict (node-status-with-renewed-lease row settings now-ms))
+    (<- outcome (| Written Conflict Refused) (AcpPutStatus :row row :status status))
+    (when (isinstance outcome Written)
+      (return "renewed"))
+    (when (isinstance outcome Refused)
+      (<- (LogLine :text f"agentd: node lease refused ({outcome.status}): {outcome.error}"))
+      (return "refused"))
+    (<- fresh (| AcpRow None) (AcpGetRow :key row.key))
+    (when (is fresh None)
+      (return "no-node-row"))
+    (setv row fresh))
+  (<- (LogLine :text f"agentd: node {settings.node-name !r} lease lost the write race twice; re-trying next heartbeat"))
+  "conflict")
 
 
 (defk observe-transcripts [settings views sessions]
