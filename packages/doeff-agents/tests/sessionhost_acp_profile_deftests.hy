@@ -12,12 +12,14 @@
 
 (require doeff-hy.macros [deftest])
 
+(import dataclasses [replace])
 (import doeff [run])
 (import doeff_agents.sessionhost.acp.effects [
   AGORA-KINDS-NAMESPACE
   AcpRow
   AgentdSettings
   NODE-KIND
+  Ownership
   PROFILE-KIND
   PROFILE-USAGE-KIND
   ProfileHome
@@ -272,11 +274,60 @@
   (setv homes #((ProfileHome :name "personal" :home "/homes/personal" :present True)
                 (ProfileHome :name "ca" :home "/homes/ca" :present False)
                 (ProfileHome :name "kento" :home "/homes/kento" :present True)))
-  (assert (= (lfor row (run (profile-rows-held rows homes)) row.resource-id) ["personal"]))
+  (assert (= (lfor row (run (profile-rows-held rows homes (AgentdSettings :node-name NODE :homes-root "/homes"))) row.resource-id) ["personal"]))
   ;; 家が 1 つも無い(登録簿はあるが dir が無い = pool の pod)→ 空。登録簿が空でも空。
   (setv absent (tuple (gfor home homes (ProfileHome :name home.name :home home.home :present False))))
-  (assert (= (run (profile-rows-held rows absent)) #()))
-  (assert (= (run (profile-rows-held rows #())) #())))
+  (assert (= (run (profile-rows-held rows absent (AgentdSettings :node-name NODE :homes-root "/homes"))) #()))
+  (assert (= (run (profile-rows-held rows #() (AgentdSettings :node-name NODE :homes-root "/homes"))) #())))
+
+
+(defn #^ AcpRow company-row [#^ str name]
+  "契約 profile の 1 行で、口座の置き場が company のもの(会社の口座)。"
+  (setv row (profile-row name "percent" 18000 "active" None))
+  (AcpRow :namespace row.namespace :key row.key :kind row.kind :resource-id row.resource-id :version row.version
+          :generation row.generation :created-at-ms row.created-at-ms :labels row.labels :payload row.payload
+          :spec (| row.spec {"boundary" "company"}) :status row.status))
+
+
+(deftest test-profile-rows-held-keeps-company-accounts-off-a-machine-not-company-owned
+  ;; 反例(段 10 lane 10y・agora-redesign #110・operator 指示 2026-09-09「会社 profile の API 呼び出しは会社所有の機体だけ」):
+  ;; operator の個人の MacBook(proboscis-mbp・所有 personal)には ca / p10xxx の家が在る。家の在否だけで絞ると、会社の
+  ;; 口座の行が観測の列に入り、usage を読む列と log(`agentd: profile ca not observed: …`)に会社 profile が現れる。
+  ;; 所有が company でない機体(personal・未宣言)は、家が在っても boundary = company の行を持たない。軸は所有で置き場ではない。
+  (setv rows #((profile-row "kento" "percent" 18000 "active" None)
+               (company-row "ca")
+               (company-row "p10169")))
+  (setv homes #((ProfileHome :name "kento" :home "/homes/kento" :present True)
+                (ProfileHome :name "ca" :home "/homes/ca" :present True)
+                (ProfileHome :name "p10169" :home "/homes/p10169" :present True)))
+  (defn #^ list held [#^ (| Ownership None) ownership]
+    (lfor row (run (profile-rows-held rows homes (AgentdSettings :node-name NODE :homes-root "/homes" :ownership ownership)))
+          row.resource-id))
+  (assert (= (held (Ownership :grade "personal" :proof "declared")) ["kento"]))
+  (assert (= (held None) ["kento"]) "所有を名乗らない機体は会社所有と読まない(判らないものを許しにしない)")
+  ;; 会社所有の機体(会社 Mac — place は personal でも所有は company)は今日どおり会社の口座も観測する。
+  (assert (= (held (Ownership :grade "company" :proof "declared")) ["kento" "ca" "p10169"])))
+
+
+(deftest test-profile-observation-on-a-personal-machine-never-names-a-company-account
+  ;; 反例の一周(fake の handler): 所有 personal の機体に会社の口座の家が在っても、usage の答えに会社の口座の断りが
+  ;; 在っても、観測の log と書きに会社 profile の名は出ない。
+  (setv world (World))
+  (setv world.settings (replace world.settings :ownership (Ownership :grade "personal" :proof "declared")))
+  (.put-row world.acp (profile-row "kento" "percent" 18000 "active" None))
+  (.put-row world.acp (company-row "ca"))
+  (setv (get world.local.homes PROFILE-USAGE-KIND)
+        #((ProfileHome :name "kento" :home "/homes/kento" :present True)
+          (ProfileHome :name "ca" :home "/homes/ca" :present True)))
+  (setv (get world.local.usage PROFILE-USAGE-KIND)
+        #((usage-of "kento" 40.0 RESETS-MS)
+          (ProfileUsageUnavailable :profile "ca" :reason "company-boundary:company-credential-on-noncompany-host")))
+  (.tick world 0)
+  (assert (= (get (get (.status-of world "kento") "observed") "remaining") 60.0))
+  (assert (not-in "observed" (.status-of world "ca")))
+  (assert (= (lfor line world.local.logs :if (in "profile ca" line) line) []) world.local.logs)
+  (setv metrics (lfor m world.local.metrics :if (= (get m "metric") "profile-observed") m))
+  (assert (= (get (get metrics -1) "homes") 1)))
 
 
 (deftest test-profile-usage-is-not-read-when-no-profile-has-a-home

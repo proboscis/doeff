@@ -478,7 +478,7 @@
   (setv next (replace state :last-profile-observed-ms now-ms))
   (when active
     (<- homes tuple (ListProfileHomes :kind PROFILE-USAGE-KIND))
-    (<- held-rows tuple (profile-rows-held active homes))
+    (<- held-rows tuple (profile-rows-held active homes settings))
     (setv counts {"held" 0 "written" 0 "unchanged" 0 "conflicts" 0 "refused" 0 "unobserved" 0})
     (if (not held-rows)
         (do
