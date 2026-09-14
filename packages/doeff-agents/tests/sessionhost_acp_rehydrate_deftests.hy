@@ -40,7 +40,7 @@
   SessionRefused
   SessionView
   TURN-RECORD-KIND])
-(import doeff_agents.sessionhost.attachment [TurnAttachment])
+(import doeff_agents.sessionhost.attachment [TurnAttachment attachment-of-wire])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeRecord FakeSessions record-body-bytes record-body-sha256])
 (import doeff_agents.sessionhost.acp.judgment [
   record-history-satisfied
@@ -755,8 +755,18 @@
   ;; 起こす腕は畳んだ郵便の添付を 1 本に並べ、charter に載せる(添付が無ければ charter を変えない)。
   (assert (= (run (first-turn-attachments-of #(#(carried) #() #(carried)))) #(carried carried)))
   (assert (= (run (launch-charter-with-attachments {"prompt" "x"} #())) {"prompt" "x"}))
-  (assert (= (run (launch-charter-with-attachments {"prompt" "x"} #(carried)))
-             {"prompt" "x" "attachments" [carried]})))
+  ;; ⚠ charter は RPC へ出る object — **項の綴り**で載る(型つきの値のままではない)。
+  (setv charter (run (launch-charter-with-attachments {"prompt" "x"} #(carried))))
+  (assert (= charter {"prompt" "x"
+                      "attachments" [{"mime" "image/png" "data" PNG-B64 "bytes" carried.bytes
+                                      "sha256" carried.sha256 "name" "red.png"}]})
+          charter)
+  ;; 実弾 2026-09-15 03:08: 型つきの値のまま入れていたので RPC へ出す拍に
+  ;; TypeError: Object of type TurnAttachment is not JSON serializable で tick ごと落ちていた。
+  (json.dumps charter)
+  ;; host の口は同じ 1 点で型つきに戻す(書き手と読み手が同じ綴りを見る)。
+  (setv back (attachment-of-wire (get (get charter "attachments") 0)))
+  (assert (= back carried) #(back carried)))
 
 
 (deftest test-the-headline-is-measured-on-the-raw-image-not-on-the-stored-event

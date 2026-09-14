@@ -44,7 +44,7 @@
 (import json)
 (import re)
 
-(import doeff_agents.sessionhost.attachment [TurnAttachment])
+(import doeff_agents.sessionhost.attachment [TurnAttachment attachment-wire])
 (import doeff_agents.sessionhost.acp.effects [
   AGENT-ATTACHMENT-CAPABILITY
   AGENT-CAPABILITIES
@@ -1674,9 +1674,14 @@
   {:pre [(: charter dict) (: attachments tuple)]
    :post [(: % dict)]}
   "起こす charter に 1 手番目の添付を載せる(添付が無ければ charter は 1 byte も変えない — 欄を作らない)。
-   ⚠ 画像の綴りはここに無い: 器が型つきのまま受け取り、kind ごとの Dialogue が組む(法 012 R21)。"
+   ⚠ charter は **RPC へ出る object** なので、型つきの値のままでは JSON にできない — 項の綴りの 1 点
+   (sessionhost.attachment.attachment-wire)で書く。host の口が同じ 1 点で型つきに戻す。
+   ⚠ 画像の CLI の綴りはここに無い: 器が型つきで受け取り、kind ごとの Dialogue が組む(法 012 R21)。
+   実弾 2026-09-15 03:08: 型つきのまま入れていたので RPC へ出す拍に
+   `TypeError: Object of type TurnAttachment is not JSON serializable` で tick ごと落ち、
+   手番が SessionFailed で終わっていた(画像も本文も届かない)。"
   (if attachments
-      (dict charter #** {MESSAGE-ATTACHMENTS-KEY (list attachments)})
+      (dict charter #** {MESSAGE-ATTACHMENTS-KEY (lfor one attachments (attachment-wire one))})
       charter))
 
 

@@ -491,6 +491,9 @@ class FakeSessions:
 
     def _incarnate(self, effect: SessionLaunch | SessionResume) -> SessionView | SessionRefused:
         params = effect.params
+        # 段 10 lane 10o(実弾 2026-09-15 03:08): 起こす params は **RPC へ出る object** — 本物の handler は
+        # これを JSON にする。偽の器も同じ約束で受ける(JSON にできない値が混じったら、本番と同じ拍で落ちる)。
+        json.dumps(params)
         if isinstance(effect, SessionLaunch):
             self.launches.append(dict(params))
             session_id = params.get("session_id")
