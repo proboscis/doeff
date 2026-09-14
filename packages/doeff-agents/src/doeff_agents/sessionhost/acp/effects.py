@@ -107,12 +107,23 @@ DeltaKind = Literal["text", "tool_use", "tool_result", "usage", "status", "frame
 #: (Withdrawn)で走っている手番を止めた(phase は書き手 = 作った側のまま)。
 ConditionType = Literal[
     "LaunchFailed", "CredentialUnavailable", "InputUnavailable", "SessionFailed", "Interrupted",
-    "RecordUnavailable",
+    "RecordUnavailable", "CredentialSourceMissing",
 ]
 CONDITION_INTERRUPTED: ConditionType = "Interrupted"
 #: 段 9p(agora-redesign #76): 手番の記録(turn-record)の行を作れないまま手番が終わった — 頭が答えない拍
 #: (入れ替え・到達不能)は期限まで再試行し、期限を越えた / 決定論的に断られた時だけ理由つきで立つ。
 CONDITION_RECORD_UNAVAILABLE: ConditionType = "RecordUnavailable"
+#: 段 10c(agora-redesign #80): 預かり所(custody)を宣言した node に status.binding.account の無い agent-job が結ばれた —
+#: 手番の資格は預かり所の貸与ちょうどなので、起こさず(Running も sessionHandle も書かず)この条件で Ended に閉じる
+#: (判断は judgment.credential-source-of の 1 点)。
+CONDITION_CREDENTIAL_SOURCE_MISSING: ConditionType = "CredentialSourceMissing"
+#: 手番の資格の出所(段 10c・judgment.credential-source-of の閉語彙): lease = binding.account が在り charter の agent_type に
+#: 貸与の種類がある(預かり所から借りる)/ missing = それが無く、この node は預かり所を宣言している(起こさない)/
+#: home = それが無く、預かり所を宣言していない node(移行前の機体 — charter の binding で起こす今日の経路)。
+TurnCredentialSource = Literal["lease", "home", "missing"]
+CREDENTIAL_SOURCE_LEASE: TurnCredentialSource = "lease"
+CREDENTIAL_SOURCE_HOME: TurnCredentialSource = "home"
+CREDENTIAL_SOURCE_MISSING: TurnCredentialSource = "missing"
 #: turn-record の行を作る腕の状態(judgment.record-create-applied の閉語彙): created = 行が在る(作れた・既に在った)/
 #: pending = 頭が答えず作れていない(期限まで record_retry_seconds の周期で作り直す — 出来事は pending_entries に持ち越し)/
 #: given-up = 期限を越えた・決定論的に断られた(condition RecordUnavailable を Ended に載せる・以後は作らない)。
@@ -410,6 +421,11 @@ class AgentdSettings:
     lease_renew_margin_seconds: int = 120
     #: 借りた資格の家の根(claude = CLAUDE_CONFIG_DIR・codex = auth.json の置き場)。
     homes_root: str = ""
+    #: この node が預かり所(custody)を宣言しているか(段 10c・agora-redesign #80)。composition root
+    #: (runtime.settings_from_env)が CUSTODY_URL_ENV(join の [custody].url / --custody)の在否から導く 1 点。True の node は
+    #: status.binding.account の無い agent-job を起こさない(judgment.credential-source-of)— charter の binding
+    #: (機体の profile の家)で起こす経路は、預かり所を宣言していない node(移行前の機体)だけに残る。
+    custody_declared: bool = False
     #: host の backend(wire の閉語彙 tmux | herdr | headless の写し — agentd が読む語は
     #: BACKEND_HEADLESS だけ)。composition root(runtime.settings_from_env)が host の argv / env
     #: (valve.backend_of)から導く 1 点で、stream_capability も同じ源から導く。headless の器は

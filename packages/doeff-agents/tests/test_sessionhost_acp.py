@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import get_args
 
@@ -22,6 +23,7 @@ from doeff_agents.sessionhost.acp.effects import (
     AGENTD_PRINCIPAL,
     AGORA_KINDS_NAMESPACE,
     CLAUDE_OAUTH_TOKEN_ENV,
+    CONDITION_CREDENTIAL_SOURCE_MISSING,
     JSON,
     MESSAGE_KIND,
     NODE_KIND,
@@ -361,6 +363,65 @@ def test_custody_refusal_ends_the_job_without_launching() -> None:
     last = conditions[-1]
     assert isinstance(last, dict)
     assert last["type"] == "CredentialUnavailable"
+
+
+def test_custody_declared_node_does_not_launch_a_job_without_an_account() -> None:
+    """段 10c(agora-redesign #80・R23): 預かり所を宣言した node は account の無い job を起こさず(claim も書かず)、
+    条件 CredentialSourceMissing で閉じる — 黙って charter の家(機体の profile の家)へ落ちない。"""
+    world = World()
+    world.settings = replace(world.settings, custody_declared=True)
+    world.acp.put_row(bound_job("s-4", inputs=[], account=None))
+    world.tick()
+    assert world.sessions.launches == []
+    assert world.custody.borrowed == []
+    job = world.job("s-4")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_ENDED
+    assert "sessionHandle" not in job.status
+    conditions = job.status["conditions"]
+    assert isinstance(conditions, list)
+    last = conditions[-1]
+    assert isinstance(last, dict)
+    assert last["type"] == CONDITION_CREDENTIAL_SOURCE_MISSING
+    assert "custody" in str(last["reason"])
+    assert world.state.jobs == ()
+
+
+def test_custody_declared_node_borrows_the_account_and_launches_in_the_borrowed_home() -> None:
+    """段 10c(R23): 預かり所を宣言した node でも account の在る job は預かり所から借り、借りた家で起こす。"""
+    world = World()
+    world.settings = replace(world.settings, custody_declared=True)
+    world.acp.put_row(bound_job("s-5", inputs=[]))
+    world.tick()
+    assert world.custody.borrowed == [("claude", "acct", "agent-job s-5")]
+    launch = world.sessions.launches[0]
+    env = launch["session_env"]
+    assert isinstance(env, dict)
+    assert env[CLAUDE_OAUTH_TOKEN_ENV] == TOKEN
+    assert launch["binding"] == {"kind": "claude-code", "config_dir": f"{HOMES}/claude/acct"}
+    job = world.job("s-5")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_RUNNING
+
+
+def test_undeclared_node_keeps_the_charter_home_for_a_job_without_an_account() -> None:
+    """段 10c(R23): 預かり所を宣言していない node(移行前の機体)は今日どおり charter で起こす(借りない)。"""
+    world = World()
+    assert world.settings.custody_declared is False
+    world.acp.put_row(bound_job("s-6", inputs=[], account=None))
+    world.tick()
+    assert world.custody.borrowed == []
+    assert len(world.sessions.launches) == 1
+    assert "binding" not in world.sessions.launches[0]
+
+
+@pytest.mark.parametrize(
+    ("account", "declared", "verdict"),
+    [("acct", True, "lease"), ("acct", False, "lease"), (None, True, "missing"), (None, False, "home")],
+)
+def test_credential_source_is_one_judgment(account: str | None, declared: bool, verdict: str) -> None:
+    plan = run(judgment.launch_plan_of(bound_job("x", inputs=[], account=account)))
+    assert run(judgment.credential_source_of(plan, declared)) == verdict
 
 
 def test_missing_node_row_is_logged_once_and_re_read() -> None:
@@ -1256,9 +1317,9 @@ def test_next_arm_for_job_is_the_one_decision() -> None:
     from doeff_agents.sessionhost.acp.effects import ArmChoice
 
     plan = run(judgment.launch_plan_of(bound_job("a", inputs=[])))
-    home = run(judgment.home_key_of(plan))
+    home = run(judgment.session_affinity_key_of(plan))
     other_plan = run(judgment.launch_plan_of(bound_job("b", inputs=[], account="other")))
-    other = run(judgment.home_key_of(other_plan))
+    other = run(judgment.session_affinity_key_of(other_plan))
     assert home == {"account": "acct", "binding": None, "model": "claude-opus-5"}
     assert other != home
     # 段 9o lane 9o-3: model だけが違う手番も違う家(温かい session に送らない・片付いた session を --resume しない)。
@@ -2167,9 +2228,13 @@ def test_settings_from_env_reads_the_ownership_and_the_valve_and_runtime_agree_o
     assert settings.stream_capability == "events"
     assert settings.ownership == Ownership(grade="company", proof="gce-project:cyberagent-050")
     assert settings.record_enabled is True
+    # 段 10c(R23): 預かり所の宣言の有無は CUSTODY_URL_ENV の在否 1 点(この束は custody_url を名乗らない)
+    assert settings.custody_declared is False
     assert acp_valve(list(plan.host_argv), env).enabled is True
     recorded = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874"}
     assert settings_from_env(recorded, ()).ownership is None
+    assert settings_from_env({**recorded, "AGORA_CUSTODY_URL": "http://custody:8320"}, ()).custody_declared is True
+    assert settings_from_env({**recorded, "AGORA_CUSTODY_URL": "  "}, ()).custody_declared is False
     with pytest.raises(ValueError, match="DOEFF_AGENTD_OWNERSHIP"):
         settings_from_env({**recorded, "DOEFF_AGENTD_OWNERSHIP": "corp"}, ())
 
