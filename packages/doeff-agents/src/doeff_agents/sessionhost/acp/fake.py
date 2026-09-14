@@ -14,7 +14,9 @@ from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.sessionhost.attachment import TurnAttachment
 from doeff_agents.sessionhost.acp.effects import (
     JSON,
+    MESSAGE_CONVERSATION_FIELDS,
     MESSAGE_KIND,
+    TURN_RECORD_CONVERSATION_FIELD,
     TURN_RECORD_KIND,
     AcpConversationMail,
     AcpCreate,
@@ -193,12 +195,22 @@ class FakeAcp:
 
     def _history(self, effect: AcpConversationMail | AcpTurnHeadlines) -> tuple[AcpRow, ...]:
         """履歴からの再開の材料(郵便 / 見出し)— 読んだ会話の id を種類ごとに数える(段 9q の検が読む:
-        見出し = kind turn-record の全量は薄い再開の拍にだけ)。"""
+        見出しは薄い再開の拍にだけ)。返すのは engine の field selector と同じ絞り(段 10 lane 10ba): 郵便は
+        MESSAGE_CONVERSATION_FIELDS のどれかがこの会話の行、見出しは spec.conversationId がこの会話の行。"""
+        wanted = effect.conversation_id
         if isinstance(effect, AcpConversationMail):
-            self.history_reads.append(effect.conversation_id)
-            return tuple(row for row in self.rows.values() if row.kind == MESSAGE_KIND)
-        self.headline_reads.append(effect.conversation_id)
-        return tuple(row for row in self.rows.values() if row.kind == TURN_RECORD_KIND)
+            self.history_reads.append(wanted)
+            return tuple(
+                row
+                for row in self.rows.values()
+                if row.kind == MESSAGE_KIND and any(row.spec.get(field) == wanted for field in MESSAGE_CONVERSATION_FIELDS)
+            )
+        self.headline_reads.append(wanted)
+        return tuple(
+            row
+            for row in self.rows.values()
+            if row.kind == TURN_RECORD_KIND and row.spec.get(TURN_RECORD_CONVERSATION_FIELD) == wanted
+        )
 
     def _write(self, effect: AcpPutStatus | AcpPutSpec | AcpCreate | AcpStreamPush) -> object:
         if isinstance(effect, AcpPutStatus):

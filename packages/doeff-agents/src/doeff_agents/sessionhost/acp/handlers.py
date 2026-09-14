@@ -57,10 +57,12 @@ from doeff_agents.sessionhost.attachment import TurnAttachment, attachment_wire
 from doeff_agents.sessionhost.acp.effects import (
     DECLARATION_FINGERPRINT_HEADER,
     JSON,
+    MESSAGE_CONVERSATION_FIELDS,
     MESSAGE_KIND,
     OWNERSHIP_PROOF_GCE_PREFIX,
     RECORD_PAGE_MAX_LIMIT,
     RECORD_SPOOL_GIVEN_UP_DIR,
+    TURN_RECORD_CONVERSATION_FIELD,
     TURN_RECORD_KIND,
     AcpConversationMail,
     AcpCreate,
@@ -497,11 +499,13 @@ class AcpHttp:
         if isinstance(effect, AcpGet):
             return self._list(effect.kind)
         if isinstance(effect, AcpConversationMail):
-            # ACP に欄の絞りの口は無いので kind を読むだけ(会話で絞るのは judgment)。
-            return self._list(MESSAGE_KIND)
+            # 段 10 lane 10ba(#115): この会話を名指す郵便だけ(欄ごとの field selector・履歴に入れる判断は judgment)。
+            return self._conversation_mail(effect.conversation_id)
         if isinstance(effect, AcpTurnHeadlines):
-            # 薄い再開の拍だけ(段 9q・#77): kind の全量(実測 29,913 行 / 172 MB / 59 秒)。
-            return self._list(TURN_RECORD_KIND)
+            # 薄い再開の拍だけ(段 9q・#77)— 段 10 lane 10ba: この会話の行だけ(旧来の kind の全量は 172 MB / 59 秒)。
+            return self._list(
+                TURN_RECORD_KIND, f"spec.{TURN_RECORD_CONVERSATION_FIELD}={effect.conversation_id}"
+            )
         if isinstance(effect, AcpGetRow):
             return self._row(effect.key)
         if isinstance(effect, AcpEventWindow):
@@ -523,8 +527,21 @@ class AcpHttp:
         if self._watch is not None:
             self._watch.stop()
 
-    def _list(self, kind: str) -> tuple[AcpRow, ...]:
-        url = f"{self._base_url}/api/resources?kind={urllib.parse.quote(kind, safe='')}"
+    def _conversation_mail(self, conversation_id: str) -> tuple[AcpRow, ...]:
+        """会話の郵便(段 10 lane 10ba): spec の MESSAGE_CONVERSATION_FIELDS の欄ごとに ACP の field selector で 1 回ずつ
+        読み(ACP の field selector は 1 回の読みに条件 1 つ)、同じ行(自分宛の自分の郵便)は鍵で 1 つにする。順は読んだ順。"""
+        merged: dict[str, AcpRow] = {}
+        for field in MESSAGE_CONVERSATION_FIELDS:
+            for row in self._list(MESSAGE_KIND, f"spec.{field}={conversation_id}"):
+                merged.setdefault(row.key, row)
+        return tuple(merged.values())
+
+    def _list(self, kind: str, field_selector: str | None = None) -> tuple[AcpRow, ...]:
+        """kind の行の一覧。field_selector(``spec.<欄>=<値>`` — 段 10 lane 10ba)が在れば engine がその行だけを返す。"""
+        query = f"kind={urllib.parse.quote(kind, safe='')}"
+        if field_selector is not None:
+            query = f"{query}&fieldSelector={urllib.parse.quote(field_selector, safe='')}"
+        url = f"{self._base_url}/api/resources?{query}"
         request = urllib.request.Request(url, method="GET")
         for name, value in self._headers.items():
             request.add_header(name, value)
@@ -532,7 +549,8 @@ class AcpHttp:
             with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
                 listed = _loads(response.read())
         except (urllib.error.URLError, OSError, TimeoutError) as error:
-            raise RuntimeError(f"agentd: ACP list of {kind} failed: {error}") from error
+            narrowed = "" if field_selector is None else f" ({field_selector})"
+            raise RuntimeError(f"agentd: ACP list of {kind}{narrowed} failed: {error}") from error
         if not isinstance(listed, list):
             return ()
         decoded = [decode_row(item) for item in listed]

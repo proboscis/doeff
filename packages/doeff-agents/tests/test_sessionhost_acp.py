@@ -3435,6 +3435,73 @@ def test_acp_writes_put_the_fingerprint_header_only_on_the_writes_that_carry_it(
     assert all(headers.get("Authorization") == "Bearer tok" for headers in seen)
 
 
+def test_acp_history_reads_name_one_conversation_with_the_field_selector(monkeypatch: pytest.MonkeyPatch) -> None:
+    """段 10 lane 10ba(agora-redesign #115): handlers.AcpHttp の履歴の 2 つの読みは会話 1 つ分だけを名指す — 見出しは
+    spec.conversationId の field selector を 1 回、郵便は spec.to と spec.from を 1 回ずつ撃ち、同じ行(自分宛の自分の
+    郵便)は鍵で 1 つにする。kind の全量の読み(field selector の無い URL)は撃たない。"""
+    import urllib.parse
+    import urllib.request
+
+    from doeff_agents.sessionhost.acp.effects import AcpConversationMail, AcpTurnHeadlines
+
+    cid = "c-01ABCDEFGHJKMNPQRSTVWXYZ01"
+
+    def wire_row(key: str, kind: str, spec: dict[str, object]) -> dict[str, object]:
+        return {
+            "resourceNamespace": "default",
+            "resourceKey": key,
+            "resourceKind": kind,
+            "resourceId": key.rsplit(":", 1)[-1],
+            "resourceVersion": "v1",
+            "resourceCreatedAt": "2026-09-15T00:00:00Z",
+            "resourceSpecJson": spec,
+        }
+
+    both = wire_row("default:message:lt-3", "message", {"to": cid, "from": cid})
+    answers: dict[str, list[dict[str, object]]] = {
+        f"spec.to={cid}": [wire_row("default:message:lt-1", "message", {"to": cid, "from": "operator"}), both],
+        f"spec.from={cid}": [wire_row("default:message:lt-2", "message", {"to": "operator", "from": cid}), both],
+        f"spec.conversationId={cid}": [wire_row("default:turn-record:aj-1", "turn-record", {"conversationId": cid})],
+    }
+    urls: list[str] = []
+
+    class Reply:
+        def __init__(self, body: bytes) -> None:
+            self.body = body
+
+        def read(self) -> bytes:
+            return self.body
+
+        def __enter__(self) -> "Reply":
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+    def fake_urlopen(request: urllib.request.Request, timeout: float) -> Reply:
+        urls.append(request.full_url)
+        selector = urllib.parse.unquote(request.full_url.split("fieldSelector=", 1)[1])
+        return Reply(json.dumps(answers[selector]).encode("utf-8"))
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    acp = handlers.AcpHttp("http://acp.test", "tok")
+    mail = acp._read(AcpConversationMail(conversation_id=cid))
+    headlines = acp._read(AcpTurnHeadlines(conversation_id=cid))
+    assert isinstance(mail, tuple)
+    assert isinstance(headlines, tuple)
+    assert [row.key for row in mail if isinstance(row, AcpRow)] == [
+        "default:message:lt-1",
+        "default:message:lt-3",
+        "default:message:lt-2",
+    ]
+    assert [row.key for row in headlines if isinstance(row, AcpRow)] == ["default:turn-record:aj-1"]
+    assert urls == [
+        f"http://acp.test/api/resources?kind=message&fieldSelector=spec.to%3D{cid}",
+        f"http://acp.test/api/resources?kind=message&fieldSelector=spec.from%3D{cid}",
+        f"http://acp.test/api/resources?kind=turn-record&fieldSelector=spec.conversationId%3D{cid}",
+    ]
+
+
 def test_settings_from_env_reads_the_ownership_and_the_valve_and_runtime_agree_on_the_bundle() -> (
     None
 ):
