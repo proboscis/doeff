@@ -34,6 +34,7 @@ from doeff_agents.sessionhost.acp.effects import (
     ACP_TOKEN_FILE_ENV,
     ACP_URL_ENV,
     BORROWER_KEY_PATH_ENV,
+    CUSTODY_SA_TOKEN_PATH_ENV,
     CAPACITY_ENV,
     PLACE_ENV,
     CUSTODY_URL_ENV,
@@ -343,6 +344,8 @@ def real_dispatchers(
         # 宣言ちょうど(既定の宿は無い — 段 10 lane 10d 便 2)。空 = 借りない機体で、借りの要求はそこで断られる
         (env.get(CUSTODY_URL_ENV) or "").strip(),
         read_secret_file(env.get(BORROWER_KEY_PATH_ENV) or BORROWER_KEY_PATH_DEFAULT),
+        # 段 10 lane 10y: pod の ServiceAccount の token の file(宣言が在る時だけ・要求ごとに読む)
+        (env.get(CUSTODY_SA_TOKEN_PATH_ENV) or "").strip() or None,
     )
     sessions = SessionRpc(socket_path)
     local = LocalIo()

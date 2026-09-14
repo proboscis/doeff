@@ -28,6 +28,7 @@
   ACP-URL-ENV
   ACP-VALVE-ENV
   BORROWER-KEY-PATH-ENV
+  CUSTODY-SA-TOKEN-PATH-ENV
   AGENTD-PLACES
   CAPACITY-ENV
   CUSTODY-URL-ENV
@@ -92,12 +93,14 @@
 ;; `[custody]` の鍵。
 (setv KEY-CUSTODY-URL "url")
 (setv KEY-BORROWER-KEY-FILE "borrower_key_file")
+;; pod の ServiceAccount の token の file(段 10 lane 10y・agora-redesign #110)— 預かり所へ Bearer で名乗る。
+(setv KEY-SERVICE-ACCOUNT-TOKEN-FILE "service_account_token_file")
 ;; `[record]` の鍵(札は [agentd].token_file の再利用 — 名簿の agentd が service の書き手なので鍵は宛先だけ)。
 (setv KEY-RECORD-URL "url")
 ;; 表 → 許す鍵(宣言に無い鍵は誤りとして名指す — 黙って読み飛ばさない)。
 (setv AGENTD-KEYS #{KEY-SERVER KEY-TOKEN-FILE KEY-NODE-NAME KEY-STATE-DIR KEY-BACKEND
                     KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY KEY-PLACE})
-(setv CUSTODY-KEYS #{KEY-CUSTODY-URL KEY-BORROWER-KEY-FILE})
+(setv CUSTODY-KEYS #{KEY-CUSTODY-URL KEY-BORROWER-KEY-FILE KEY-SERVICE-ACCOUNT-TOKEN-FILE})
 (setv RECORD-KEYS #{KEY-RECORD-URL})
 ;; flag の綴り(`--config` は composition root が先に読む — config-path-of)。
 (setv FLAG-CONFIG "--config")
@@ -113,6 +116,7 @@
 (setv FLAG-PLACE "--place")
 (setv FLAG-CUSTODY "--custody")
 (setv FLAG-BORROWER-KEY-FILE "--borrower-key-file")
+(setv FLAG-SERVICE-ACCOUNT-TOKEN-FILE "--service-account-token-file")
 (setv FLAG-RECORD "--record")
 ;; flag → (表 . 鍵)。値を取る flag はこれで全部(それ以外は unknown argument)。
 (setv FLAG-KEYS {FLAG-SERVER #(TABLE-AGENTD KEY-SERVER)
@@ -127,6 +131,7 @@
                  FLAG-PLACE #(TABLE-AGENTD KEY-PLACE)
                  FLAG-CUSTODY #(TABLE-CUSTODY KEY-CUSTODY-URL)
                  FLAG-BORROWER-KEY-FILE #(TABLE-CUSTODY KEY-BORROWER-KEY-FILE)
+                 FLAG-SERVICE-ACCOUNT-TOKEN-FILE #(TABLE-CUSTODY KEY-SERVICE-ACCOUNT-TOKEN-FILE)
                  FLAG-RECORD #(TABLE-RECORD KEY-RECORD-URL)})
 
 
@@ -301,6 +306,8 @@
     :session-hooks (.get agentd KEY-SESSION-HOOKS JOIN-SESSION-HOOKS-DEFAULT)
     :custody-url (.get custody KEY-CUSTODY-URL)
     :borrower-key-file (.get custody KEY-BORROWER-KEY-FILE)
+    ;; 空文字は「名乗らない」(宣言 file で欄を空にして外せる)。
+    :service-account-token-file (or (.get custody KEY-SERVICE-ACCOUNT-TOKEN-FILE) None)
     :ownership ownership
     :capacity capacity
     :place place
@@ -354,6 +361,8 @@
     (.append env #(CUSTODY-URL-ENV spec.custody-url)))
   (when (is-not spec.borrower-key-file None)
     (.append env #(BORROWER-KEY-PATH-ENV spec.borrower-key-file)))
+  (when (is-not spec.service-account-token-file None)
+    (.append env #(CUSTODY-SA-TOKEN-PATH-ENV spec.service-account-token-file)))
   (when (is-not spec.ownership None)
     (.extend env [#(OWNERSHIP-ENV spec.ownership.grade)
                   #(OWNERSHIP-PROOF-ENV spec.ownership.proof)]))
