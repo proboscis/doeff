@@ -101,6 +101,7 @@
   AcpEventWindow
   AcpGet
   AcpGetRow
+  AcpPutSpec
   AcpPutStatus
   AcpRow
   AcpStreamPush
@@ -266,6 +267,8 @@
   conversation-key-of
   with-context-percent
   node-row-named
+  node-spec-declared
+  node-spec-of
   node-status-with-lease
   pane-frame
   pending-interrupts-of
@@ -327,39 +330,74 @@
 (defk join-tick [settings state now-ms]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: now-ms int)]
    :post [(: % AgentdState)]}
-  "heartbeat の腕: 自分の Node の行を読み、在れば status.lease と status.observations
-   (器の眺めと session に刻んだ帰属から導いた会話の session の一覧と、transcript が残る会話の一覧 — R20)を書き、idle が TTL を過ぎた温かい session を
-   片付ける。無ければ 1 行 log して次の周期に読み直し(行を作るのは acp-scheduling — 段 2
-   では lane 2c の道具 register-node)、node が退いた以上は温かい session を残さない。"
+  "heartbeat の腕: 自分の Node の行を読み、無ければ機体の宣言から作り、在れば spec を宣言へ揃えてから status.lease と
+   status.observations(器の眺めと session に刻んだ帰属から導いた会話の session の一覧と、transcript が残る会話の一覧 —
+   R20)を書き、idle が TTL を過ぎた温かい session を片付ける。R28(段 10 lane 10d・agora-redesign #85): node の spec の
+   書き手は agentd(既知の形 = kubelet の Node の自己登記・spec の形は judgment.node-spec-of / node-spec-declared の 1 点)。
+   行が無い拍は、node が退いた以上は温かい session を残さずに作る。作れない・揃えられない拍(書き手の断り等)は 1 度だけ
+   log して次の周期に撃ち直す — 揃えられなくても lease は書く(参加の生存を spec の書きの成否に結ばない)。"
   (<- rows tuple (AcpGet :kind NODE-KIND))
   (<- node (| AcpRow None) (node-row-named rows settings.node-name))
   (<- views tuple (SessionList :lifecycle LIFECYCLE-MULTI-TURN))
   (setv next (replace state :last-heartbeat-ms now-ms))
   (if (is node None)
       (do
-        (when (not state.node-missing-logged)
-          (<- (LogLine :text (+ f"agentd: node row {settings.node-name !r} is not in ACP "
-                                     "yet (created by acp-scheduling / register-node); "
-                                     "re-reading each heartbeat"))))
         (setv alive [])
         (for [view views]
           (<- live bool (session-alive view))
           (when live
             (.append alive view.session-id)))
         (<- (retire-sessions (tuple alive) "node is not in ACP"))
-        (replace next :node-missing-logged True))
+        (<- spec dict (node-spec-of settings))
+        (<- created (| Written Conflict Refused)
+            (AcpCreate :namespace AGORA-KINDS-NAMESPACE :kind NODE-KIND :resource-id settings.node-name :spec spec))
+        (if (isinstance created Written)
+            (do
+              (<- (LogLine :text (+ f"agentd: registered node row {settings.node-name !r} from the declaration "
+                                    f"(capacity {settings.node-capacity}, streamCapability {settings.stream-capability})")))
+              (replace next :node-missing-logged False))
+            (do
+              (setv why (if (isinstance created Refused)
+                            f"{created.status}: {created.error}"
+                            f"conflict at generation {created.current-generation}"))
+              (when (not state.node-missing-logged)
+                (<- (LogLine :text (+ f"agentd: node row {settings.node-name !r} is not in ACP and could not be "
+                                      f"registered ({why}); re-trying each heartbeat"))))
+              (replace next :node-missing-logged True))))
       (do
+        (<- declared dict (node-spec-declared node.spec settings))
+        (setv row node)
+        (setv spec-refusal-logged state.node-spec-refusal-logged)
+        (when (!= declared node.spec)
+          (setv was (.get node.spec "capacity"))
+          (<- aligned (| Written Conflict Refused) (AcpPutSpec :row node :spec declared))
+          (if (isinstance aligned Written)
+              (do
+                (<- (LogLine :text (+ f"agentd: node row {settings.node-name !r} spec aligned to the declaration "
+                                      f"(capacity {was} -> {settings.node-capacity})")))
+                (<- fresh (| AcpRow None) (AcpGetRow :key node.key))
+                (when (is-not fresh None)
+                  (setv row fresh))
+                (setv spec-refusal-logged False))
+              (do
+                (setv why (if (isinstance aligned Refused)
+                              f"{aligned.status}: {aligned.error}"
+                              f"conflict at generation {aligned.current-generation}"))
+                (when (not spec-refusal-logged)
+                  (<- (LogLine :text (+ f"agentd: node row {settings.node-name !r} spec differs from the declaration "
+                                        f"and could not be aligned ({why}); the lease is still written"))))
+                (setv spec-refusal-logged True))))
         ;; 片付けてから観測を書く(観測 = 片付けた後の現況)。
         (<- expired tuple (sessions-to-retire views now-ms settings.session-idle-ttl-seconds))
         (<- (retire-sessions expired f"idle past {settings.session-idle-ttl-seconds}s"))
         (setv kept (tuple (lfor view views :if (not-in view.session-id expired) view)))
         (<- observations list (session-observations-of kept))
         (<- transcripts list (observe-transcripts settings views observations))
-        (<- status dict (node-status-with-lease node settings now-ms observations transcripts))
-        (<- outcome (| Written Conflict Refused) (AcpPutStatus :row node :status status))
+        (<- status dict (node-status-with-lease row settings now-ms observations transcripts))
+        (<- outcome (| Written Conflict Refused) (AcpPutStatus :row row :status status))
         (when (isinstance outcome Refused)
           (<- (LogLine :text f"agentd: node lease refused ({outcome.status}): {outcome.error}")))
-        (replace next :node-missing-logged False))))
+        (replace next :node-missing-logged False :node-spec-refusal-logged spec-refusal-logged))))
 
 
 (defk observe-transcripts [settings views sessions]

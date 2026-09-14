@@ -59,6 +59,7 @@ from doeff_agents.sessionhost.acp.effects import (
     AcpEventWindow,
     AcpGet,
     AcpGetRow,
+    AcpPutSpec,
     AcpPutStatus,
     AcpRow,
     AcpStreamPush,
@@ -458,7 +459,7 @@ class AcpHttp:
             (AcpGet, AcpGetRow, AcpEventWindow, AcpWatchSse, AcpConversationMail, AcpTurnHeadlines),
         ):
             return Resume(k, self._read(effect))
-        if isinstance(effect, (AcpPutStatus, AcpCreate, AcpStreamPush)):
+        if isinstance(effect, (AcpPutStatus, AcpPutSpec, AcpCreate, AcpStreamPush)):
             return Resume(k, self._write(effect))
         return Pass(effect, k)
 
@@ -485,9 +486,11 @@ class AcpHttp:
             return self._event_window(effect.after, effect.limit)
         return self._watch_take(effect.since, effect.wait_seconds)
 
-    def _write(self, effect: AcpPutStatus | AcpCreate | AcpStreamPush) -> object:
+    def _write(self, effect: AcpPutStatus | AcpPutSpec | AcpCreate | AcpStreamPush) -> object:
         if isinstance(effect, AcpPutStatus):
             return self._put_status(effect.row, effect.status)
+        if isinstance(effect, AcpPutSpec):
+            return self._put_spec(effect.row, effect.spec)
         if isinstance(effect, AcpCreate):
             return self._create(effect.namespace, effect.kind, effect.resource_id, effect.spec)
         return self._push(effect.owner, effect.name, effect.frames)
@@ -582,6 +585,24 @@ class AcpHttp:
                     "cpKind": row.kind,
                     "cpResourceKey": row.key,
                     "cpStatus": self._post_image(row, None, status),
+                    "cpSource": ACP_WRITE_SOURCE,
+                    "cpAt": _iso_now(),
+                },
+            }
+        )
+
+    def _put_spec(self, row: AcpRow, spec: JSONObject) -> WriteOutcome:
+        """段 10 lane 10d: 行の spec の書き(spec_applied・ifGeneration = 行の generation・status は運ばない —
+        engine の SpecApplied は status の軸を触らない)。"""
+        return self._post_event(
+            {
+                "eventType": "control_plane.spec_applied",
+                "ifGeneration": row.generation,
+                "payload": {
+                    "cpNamespace": row.namespace,
+                    "cpKind": row.kind,
+                    "cpResourceKey": row.key,
+                    "cpSpec": self._post_image(row, spec, None),
                     "cpSource": ACP_WRITE_SOURCE,
                     "cpAt": _iso_now(),
                 },

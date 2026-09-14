@@ -12,6 +12,9 @@
 ;;;   * ownership-verdict / ownership-preflight  所有の等級の検: 宣言(grade + proof)と機体の証拠
 ;;;                    (OwnershipProbe の答え)の突合。不一致は ValueError(runtime が fail-closed に
 ;;;                    写す — 会社 profile の API 呼び出しは会社所有の機体だけ・CLAUDE.md の境界)。
+;;;   * capacity-of    node の capacity の読み(段 10 lane 10d・agora-redesign #85): 宣言 file の [agentd].capacity /
+;;;                    flag --capacity(10 進の非負の整数)。無い・読めない agentd は参加しない(ValueError)— agentd は
+;;;                    自分の node の行をこの値から名乗る(既知の形 = kubelet の Node の自己登記)。
 ;;;   * record-sink-of 本文の行き先の検(段 9f lane 9f-6・agora-redesign #59): 会話の記録の service の
 ;;;                    宛先を持たない agentd は参加を断る(ValueError — runtime が fail-closed に写す)。
 ;;;                    宣言された状態で断り、推測しない。宛先が在って届かないのは spool が受ける。
@@ -25,6 +28,7 @@
   ACP-URL-ENV
   ACP-VALVE-ENV
   BORROWER-KEY-PATH-ENV
+  CAPACITY-ENV
   CUSTODY-URL-ENV
   HEADLESS-DIR-ENV
   HOST-BACKEND-ENV
@@ -79,6 +83,8 @@
 (setv KEY-SESSION-HOOKS "session_hooks")
 (setv KEY-OWNERSHIP "ownership")
 (setv KEY-OWNERSHIP-PROOF "ownership_proof")
+;; node の spec.capacity(同時に走らせられる手番の数 — 段 10 lane 10d・必須)。
+(setv KEY-CAPACITY "capacity")
 ;; `[custody]` の鍵。
 (setv KEY-CUSTODY-URL "url")
 (setv KEY-BORROWER-KEY-FILE "borrower_key_file")
@@ -86,7 +92,7 @@
 (setv KEY-RECORD-URL "url")
 ;; 表 → 許す鍵(宣言に無い鍵は誤りとして名指す — 黙って読み飛ばさない)。
 (setv AGENTD-KEYS #{KEY-SERVER KEY-TOKEN-FILE KEY-NODE-NAME KEY-STATE-DIR KEY-BACKEND
-                    KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF})
+                    KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY})
 (setv CUSTODY-KEYS #{KEY-CUSTODY-URL KEY-BORROWER-KEY-FILE})
 (setv RECORD-KEYS #{KEY-RECORD-URL})
 ;; flag の綴り(`--config` は composition root が先に読む — config-path-of)。
@@ -99,6 +105,7 @@
 (setv FLAG-SESSION-HOOKS "--session-hooks")
 (setv FLAG-OWNERSHIP "--ownership")
 (setv FLAG-OWNERSHIP-PROOF "--ownership-proof")
+(setv FLAG-CAPACITY "--capacity")
 (setv FLAG-CUSTODY "--custody")
 (setv FLAG-BORROWER-KEY-FILE "--borrower-key-file")
 (setv FLAG-RECORD "--record")
@@ -111,6 +118,7 @@
                  FLAG-SESSION-HOOKS #(TABLE-AGENTD KEY-SESSION-HOOKS)
                  FLAG-OWNERSHIP #(TABLE-AGENTD KEY-OWNERSHIP)
                  FLAG-OWNERSHIP-PROOF #(TABLE-AGENTD KEY-OWNERSHIP-PROOF)
+                 FLAG-CAPACITY #(TABLE-AGENTD KEY-CAPACITY)
                  FLAG-CUSTODY #(TABLE-CUSTODY KEY-CUSTODY-URL)
                  FLAG-BORROWER-KEY-FILE #(TABLE-CUSTODY KEY-BORROWER-KEY-FILE)
                  FLAG-RECORD #(TABLE-RECORD KEY-RECORD-URL)})
@@ -215,6 +223,23 @@
     True (Ownership :grade grade :proof proof)))
 
 
+(defk capacity-of [text]
+  {:pre [(: text (| str None))]
+   :post [(: % int)]}
+  "node の capacity の読み(段 10 lane 10d・agora-redesign #85): 宣言 file の [agentd].capacity / flag --capacity の
+   文字列(10 進の非負の整数)→ int。無い・空・読めない値は ValueError(参加しない — 名乗らない node は配車の
+   候補にならない)。値は家(profile の置き場)の数から導かない — 資格は預かり所の貸与なので、同時に走らせる
+   手番の数は機体の宣言ちょうど。"
+  (setv word (if (is text None) "" (.strip text)))
+  (when (not word)
+    (raise (ValueError (+ "node の capacity が宣言されていない — 宣言 file の [" TABLE-AGENTD "]." KEY-CAPACITY
+                          " か flag " FLAG-CAPACITY " で同時に走らせられる手番の数を名乗る(段 10 lane 10d・"
+                          "agora-redesign #85: 名乗らない agentd は参加しない)"))))
+  (when (not (and (.isascii word) (.isdigit word)))
+    (raise (ValueError f"[{TABLE-AGENTD}].{KEY-CAPACITY} は 0 以上の整数(10 進の数字)であること: {word !r}")))
+  (int word))
+
+
 (defk join-spec-of [argv declaration state-home]
   {:pre [(: argv JoinArgv) (: declaration JoinDeclaration) (: state-home str)]
    :post [(: % JoinSpec)]}
@@ -239,6 +264,8 @@
   ;; 空文字は「名乗らない」(宣言 file で欄を空にして外せる — runtime の env の読みと同じ)。
   (<- ownership (| Ownership None)
       (ownership-of (or (.get agentd KEY-OWNERSHIP) None) (or (.get agentd KEY-OWNERSHIP-PROOF) None)))
+  ;; node の capacity(段 10 lane 10d)— 他の宣言の誤りを先に名指してから読む。
+  (<- capacity int (capacity-of (.get agentd KEY-CAPACITY)))
   (JoinSpec
     :server server
     :token-file token-file
@@ -249,6 +276,7 @@
     :custody-url (.get custody KEY-CUSTODY-URL)
     :borrower-key-file (.get custody KEY-BORROWER-KEY-FILE)
     :ownership ownership
+    :capacity capacity
     ;; 空文字は「名乗らない」= env に現れない(参加の門 record-sink-of が読みの 1 点で断る — 段 9f lane 9f-6)。
     :record-url (or (.get record KEY-RECORD-URL) None)))
 
@@ -290,6 +318,7 @@
              #(ACP-TOKEN-FILE-ENV spec.token-file)])
   (when (is-not spec.node-name None)
     (.append env #(NODE-NAME-ENV spec.node-name)))
+  (.append env #(CAPACITY-ENV (str spec.capacity)))
   (.extend env [#(HOST-BACKEND-ENV spec.backend)
                 #(HEADLESS-DIR-ENV (+ spec.state-dir "/" JOIN-HEADLESS-DIR))
                 #(SESSION-HOOKS-ENV spec.session-hooks)])

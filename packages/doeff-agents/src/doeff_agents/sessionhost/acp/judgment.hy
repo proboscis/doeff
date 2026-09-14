@@ -1415,6 +1415,31 @@
   found)
 
 
+(defk node-spec-of [settings]
+  {:pre [(: settings AgentdSettings)]
+   :post [(: % dict)]}
+  "機体が名乗る自分の node の spec(R28・段 10 lane 10d・agora-redesign #85 — 既知の形 = kubelet の Node の自己登記):
+   name = 機体の名・capacity = 宣言 file の [agentd].capacity・streamCapability = backend から導いた語・labels = 空
+   (行を作る時 — 宣言は labels の表を持たない)。"
+  {"name" settings.node-name
+   "labels" {}
+   "capacity" settings.node-capacity
+   "streamCapability" settings.stream-capability})
+
+
+(defk node-spec-declared [spec settings]
+  {:pre [(: spec dict) (: settings AgentdSettings)]
+   :post [(: % dict)]}
+  "既に在る自分の node の行の spec を宣言へ揃えた形(R28): name・capacity・streamCapability は宣言から、labels は行の
+   まま(行の labels は宣言の外の名乗り — 会社境界の boundary 等 — を運ぶので agentd は触らない・欠落 / 型違いは空)。
+   宣言と一致していれば行の spec と等しい dict(呼び手は等しくない時だけ書く)。"
+  (setv labels (.get spec "labels"))
+  {"name" settings.node-name
+   "labels" (if (isinstance labels dict) labels {})
+   "capacity" settings.node-capacity
+   "streamCapability" settings.stream-capability})
+
+
 (defk node-status-with-lease [row settings now-ms sessions transcripts]
   {:pre [(: row AcpRow) (: settings AgentdSettings) (: now-ms int) (: sessions list) (: transcripts list)]
    :post [(: % dict)]}
