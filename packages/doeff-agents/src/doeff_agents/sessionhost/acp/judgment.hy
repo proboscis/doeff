@@ -64,6 +64,11 @@
   AGENT-SETTINGS
   AGENT-TYPE-LEASE-KIND
   CHARTER-SETTING-KEYS
+  CHARTER-WORK-DIR-KEY
+  CHARTER-WORK-DIR-SCRATCH-KEY
+  WORK-DIR-STEP-CREATE
+  WORK-DIR-STEP-LAUNCH
+  WORK-DIR-STEP-MISSING
   CONDITION-AGENT-SETTING-IGNORED
   AGENTD-PLACES
   NODE-CAPABILITIES-KEY
@@ -447,6 +452,39 @@
               ;; 段 10 lane 10o(agora-redesign #96): 受ける添付の種類の語の列(閉語彙 effects.AttachmentKind)。
               ;; 欠落 = 何も受けない — だから名乗る種類は表に在る種類ちょうど(発明しない)。
               NODE-CAPABILITY-ATTACHMENTS-KEY (list (.get AGENT-ATTACHMENT-CAPABILITY kind #()))}))
+
+
+(defk plan-with-node-home [plan home]
+  {:pre [(: plan LaunchPlan) (: home str)]
+   :post [(: % LaunchPlan)]}
+  "charter の work_dir を node の家で展開した plan(段 10 lane 10y・agora-redesign #110・依頼者の裁定 2026-09-15 案 A): `~` と `~/…`
+   だけを home で置き換える(それ以外 — 絶対 path・`~user`・相対 — は触らない)。home が空なら展開しない(`~` のままの path は
+   work-dir-step-of で無い dir に落ちる)。作業場を機体に依らない綴りで宣言でき、会社 Mac の絶対 path に結ばれない。"
+  (setv work-dir (.get plan.charter CHARTER-WORK-DIR-KEY))
+  (when (or (not (isinstance work-dir str)) (not home) (not (or (= work-dir "~") (.startswith work-dir "~/"))))
+    (return plan))
+  (setv expanded (+ (.rstrip home "/") (cut work-dir 1 None)))
+  (replace plan :charter (| plan.charter {CHARTER-WORK-DIR-KEY expanded})))
+
+
+(defk work-dir-of [plan]
+  {:pre [(: plan LaunchPlan)]
+   :post [(: % (| str None))]}
+  "手番の作業場(charter の work_dir・展開の後)。宣言が無い・空 = None(検める作業場が無い — 走行器の既定)。"
+  (setv work-dir (.get plan.charter CHARTER-WORK-DIR-KEY))
+  (if (and (isinstance work-dir str) work-dir) work-dir None))
+
+
+(defk work-dir-step-of [plan exists]
+  {:pre [(: plan LaunchPlan) (: exists bool)]
+   :post [(: % str)]}
+  "作業場の段の 1 点(段 10 lane 10y・閉語彙 effects.WorkDirStep): 在る(か宣言が無い)= launch / 無いが charter の
+   work_dir_scratch が true = create(agentd が作ってよい scratch)/ 無い = missing(起こさずに条件 WorkDirMissing — repo を指す
+   work_dir を空の dir で偽装しない)。印は bool の true ちょうど(文字列の true 等は印ではない — 発明しない)。"
+  (<- work-dir (| str None) (work-dir-of plan))
+  (cond (or (is work-dir None) exists) WORK-DIR-STEP-LAUNCH
+        (is (.get plan.charter CHARTER-WORK-DIR-SCRATCH-KEY) True) WORK-DIR-STEP-CREATE
+        True WORK-DIR-STEP-MISSING))
 
 
 (defk effort-of-plan [plan]

@@ -140,7 +140,9 @@
   EVENT-WINDOW-LIMIT
   EventWindow
   FsCanonicalPath
+  FsDirectoryExists
   FsFileSize
+  FsMakeDirectories
   FsWritePrivateText
   HeadlineTurns
   HistoryFold
@@ -185,6 +187,9 @@
   RecordUnsent
   RecordedTurns
   CONDITION-CREDENTIAL-PLACE-MISMATCH
+  CONDITION-WORK-DIR-MISSING
+  WORK-DIR-STEP-CREATE
+  WORK-DIR-STEP-LAUNCH
   CONDITION-CREDENTIAL-SOURCE-MISSING
   CONDITION-INTERRUPT-ESCALATION-UNDECLARED
   CREDENTIAL-SOURCE-MISSING
@@ -284,6 +289,9 @@
   job-rows-running-on
   job-step-of
   launch-plan-of
+  plan-with-node-home
+  work-dir-of
+  work-dir-step-of
   lease-renew-due
   list-mode-for
   merge-rows
@@ -754,6 +762,34 @@
               started)))))
 
 
+(defk work-dir-ready [settings row plan now-ms]
+  {:pre [(: settings AgentdSettings) (: row AcpRow) (: plan LaunchPlan) (: now-ms int)]
+   :post [(: % bool)]}
+  "手番の作業場の門(段 10 lane 10y・agora-redesign #110・依頼者の裁定 2026-09-15 案 A): 展開した work_dir がこの node に在るかを
+   読み(FsDirectoryExists)、段は judgment.work-dir-step-of の 1 点。create(scratch の印)は作ってから進み、missing と作れない拍は
+   起こさずに条件 WorkDirMissing で Ended に閉じる(Running も sessionHandle も書かない — 配車の係が会話 × node で候補から外す材料)。
+   戻り = 起こしてよいか。"
+  (<- work-dir (| str None) (work-dir-of plan))
+  (when (is work-dir None)
+    (return True))
+  (<- exists bool (FsDirectoryExists :path work-dir))
+  (<- step str (work-dir-step-of plan exists))
+  (when (= step WORK-DIR-STEP-LAUNCH)
+    (return True))
+  (when (= step WORK-DIR-STEP-CREATE)
+    (<- made bool (FsMakeDirectories :path work-dir))
+    (when made
+      (<- (LogLine :text f"agentd: job {row.resource-id} created its scratch work_dir {work-dir} on node {settings.node-name}"))
+      (return True)))
+  (<- (end-job-now settings row CONDITION-WORK-DIR-MISSING
+                   (+ f"agent-job {row.resource-id} declares work_dir {work-dir} which does not exist on node {settings.node-name}"
+                      (if (= step WORK-DIR-STEP-CREATE)
+                          " and could not be created (work_dir_scratch)"
+                          " (no work_dir_scratch mark — agentd does not create it)"))
+                   #() now-ms))
+  False)
+
+
 (defk claim-job [settings state rows row previously-deferred now-ms]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: rows tuple) (: row AcpRow)
          (: previously-deferred tuple) (: now-ms int)]
@@ -765,7 +801,9 @@
    defer(会話の session が手番の途中)なら claim せず次の list へ。それ以外は Running + sessionHandle を
    CAS で書き(負けたら次の list へ)、start-claimed で起こす — 所要を計器に 1 行、turn-record を作り、
    status frame を 1 つ押す。起こす session の id は agentd が鋳造する(MintId — charter の id は読まない)。"
-  (<- plan LaunchPlan (launch-plan-of row))
+  ;; 段 10 lane 10y: charter の work_dir の `~` はこの node の家で展開する(以降の判断と起こす params は展開した plan を読む)。
+  (<- declared-plan LaunchPlan (launch-plan-of row))
+  (<- plan LaunchPlan (plan-with-node-home declared-plan settings.home))
   ;; 段 10c(agora-redesign #80・R23): 手番の資格の出所。預かり所を宣言した node で account の無い job は起こさない
   ;; (Running も sessionHandle も書かず、条件 CredentialSourceMissing で Ended に閉じる — 黙って charter の家へ落ちない)。
   (<- source str (credential-source-of plan settings.custody-declared))
@@ -790,6 +828,10 @@
                           f"{settings.node-name} is place {settings.place} — 資格はその置き場の外へ出さない")
                        #() now-ms))
       (return state)))
+  ;; 段 10 lane 10y(agora-redesign #110): 作業場がこの node に無い job は起こさない(scratch の印が在れば作る)。
+  (<- ready bool (work-dir-ready settings row plan now-ms))
+  (when (not ready)
+    (return state))
   (setv job-id row.resource-id)
   (setv subject (str (.get row.spec "subject" job-id)))
   (<- candidate (| str None)

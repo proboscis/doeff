@@ -116,6 +116,8 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         # 据わる 1 点。宣言した node は account の無い job を起こさない(judgment.credential-source-of)。
         custody_declared=bool((env.get(CUSTODY_URL_ENV) or "").strip()),
         declaration_sha256=declaration_sha256,
+        # 段 10 lane 10y: charter の work_dir の `~` を展開する node の家(env HOME ちょうど・無ければ process の家)
+        home=(env.get("HOME") or os.path.expanduser("~")).strip(),
     )
 
 

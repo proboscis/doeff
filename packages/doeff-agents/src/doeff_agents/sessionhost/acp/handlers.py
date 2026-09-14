@@ -84,6 +84,8 @@ from doeff_agents.sessionhost.acp.effects import (
     Escalated,
     EventWindow,
     FsCanonicalPath,
+    FsDirectoryExists,
+    FsMakeDirectories,
     FsFileSize,
     FsWritePrivateText,
     Interjected,
@@ -1068,6 +1070,10 @@ class LocalIo:
             (FsCanonicalPath, FsFileSize, FsWritePrivateText, SessionTranscript, SessionEvents),
         ):
             return Resume(k, self._file(effect))
+        if isinstance(effect, FsDirectoryExists):
+            return Resume(k, os.path.isdir(effect.path))
+        if isinstance(effect, FsMakeDirectories):
+            return Resume(k, make_directories(effect.path))
         return Pass(effect, k)
 
     def _observe(self, effect: ClockNowMs | MetricLine | LogLine) -> object:
@@ -1122,6 +1128,15 @@ def read_transcript(path: str, offset: int) -> TranscriptChunk:
         return TranscriptChunk("", offset)
     complete = raw[: cut + 1]
     return TranscriptChunk(complete.decode("utf-8", errors="replace"), offset + len(complete))
+
+
+def make_directories(path: str) -> bool:
+    """dir を親ごと作る(段 10 lane 10y — scratch の work_dir)。作れた / 既に在る = True・作れない(権限・file が居る)= False。"""
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError:
+        return False
+    return os.path.isdir(path)
 
 
 def _write_private(path: str, text: str) -> None:
