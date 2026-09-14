@@ -509,6 +509,33 @@ def test_node_row_writes_carry_the_fingerprint_of_the_declaration_file_the_agent
     assert world.acp.rows[key].spec["capacity"] == 3
 
 
+def test_a_withdrawn_node_re_joins_as_a_new_incarnation_of_the_same_identity() -> None:
+    """段 10 lane 10d 便 4(agora-redesign #107 の (3)): 配車から外された(gone の)行が名の鍵を占めていても、
+    agentd は**同じ身元**(spec.name)の新しい incarnation として再参加する。
+
+    実弾(2026-09-14〜15): agentd の入れ替えのたびに配車が node を withdraw し、行が gone になる。agentd は
+    同じ鍵で作り直そうとして 409 で回り続け、依頼者が status を手で書いて戻していた。⚠ 身元は spec.name の
+    1 点(契約 node の identityKey)で、resource-id は行の器の名 — engine は**生きた**行が身元を持つ時だけ断る。
+    """
+    world = World()
+    key = f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"
+    gone = world.acp.rows[key]
+    world.acp.put_row(replace(gone, status={"state": "gone"}))
+    world.tick()
+    fresh_key = f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}-2"
+    assert fresh_key in world.acp.rows, "gone の行に阻まれて再参加できていない(#107 の (3))"
+    fresh = world.acp.rows[fresh_key]
+    assert fresh.spec["name"] == NODE, "新しい incarnation が同じ身元を名乗っていない"
+    status = world.acp.rows[key].status
+    assert isinstance(status, dict) and status.get("state") == "gone", "外された行を触っている(状態の書き手は配車)"
+    assert any(f"re-joined as {NODE + '-2'!r}" in line for line in world.local.logs), (
+        "再参加を log で名乗っていない(器の名が変わったことが読めない)"
+    )
+    # 拍を重ねても鍵は増えない(同じ incarnation の上に lease を書く)
+    world.tick(advance_ms=30_000)
+    assert [k for k in world.acp.rows if k.startswith(f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:")] == [key, fresh_key]
+
+
 def test_node_registration_refused_is_logged_once_and_retried_each_heartbeat() -> None:
     """R28: 作れない拍(契約の書き手の登録し直しの前など)は 1 度だけ log し、heartbeat ごとに撃ち直す。"""
     from doeff_agents.sessionhost.acp.effects import Refused
