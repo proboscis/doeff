@@ -30,7 +30,7 @@ from doeff_vm import PyVM, WithHandler
 from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.agentd_client import default_agentd_paths
 from doeff_agents.sessionhost.acp import join
-from doeff_agents.sessionhost.acp.agentd import agentd_tick, close_jobs_for_stop
+from doeff_agents.sessionhost.acp.agentd import agentd_tick, close_jobs_for_stop, lease_heartbeat
 from doeff_agents.sessionhost.acp.effects import (
     ACP_TOKEN_FILE_ENV,
     ACP_URL_ENV,
@@ -271,6 +271,40 @@ def run_loop(
             backoff = min(TICK_BACKOFF_MAX_SECONDS, backoff * 2)
 
 
+def run_heartbeat(settings: AgentdSettings, dispatchers: Sequence[Dispatcher]) -> str:
+    """lease の heartbeat を handler の下で 1 度走らせる(test も同じ入口を使う)。戻り = 結末の語。"""
+    result: object = PyVM().run(install(lease_heartbeat(settings), dispatchers))
+    if not isinstance(result, str):
+        raise TypeError(f"agentd lease heartbeat returned {type(result).__name__}, expected str")
+    return result
+
+
+def run_heartbeat_loop(
+    settings: AgentdSettings,
+    dispatchers: Sequence[Dispatcher],
+    stop: threading.Event,
+    log: Callable[[str], None],
+    pause: Callable[[], bool] | None = None,
+) -> None:
+    """lease の heartbeat を tick と独立に回す(段 10 lane 10ba・agora-redesign #115・既知の形 = durable workflow の
+    activity の heartbeat は activity と独立): 撃ってから周期(AgentdSettings.node_heartbeat_seconds)だけ待つ。tick の
+    loop とは別の thread で走るので、tick の I/O が TTL を超えて塞がっても lease は切れない。停止は tick の loop と
+    同じ stop の合図 1 つ(待ちの途中でも降りる)。例外は log して次の周期へ(1 拍の失敗で腕を落とさない)。
+    pause = 待ちの差し替え(test が拍を決める — 戻りが True なら降りる)。"""
+
+    def wait_period() -> bool:
+        return stop.wait(settings.node_heartbeat_seconds)
+
+    wait = pause if pause is not None else wait_period
+    while not stop.is_set():
+        try:
+            run_heartbeat(settings, dispatchers)
+        except Exception as error:  # loop の縁: 落とさず log して次の周期へ(Exception より下は握らない)
+            log(f"agentd: lease heartbeat failed: {type(error).__name__}: {error}")
+        if wait():
+            return
+
+
 def run_close_for_stop(
     settings: AgentdSettings,
     state: AgentdState,
@@ -289,7 +323,7 @@ def run_close_for_stop(
 
 
 class AgentdRun:
-    """起こした agentd の thread と、その停止の腕(段 10 lane 10h 便 2)。"""
+    """起こした agentd の thread(tick の loop と lease の heartbeat — 段 10 lane 10ba)と、その停止の腕(段 10 lane 10h 便 2)。"""
 
     def __init__(
         self,
@@ -299,6 +333,7 @@ class AgentdRun:
         holder: StateHolder,
         thread: threading.Thread,
         close: Callable[[], None],
+        heartbeat: threading.Thread,
     ) -> None:
         self.settings = settings
         self.dispatchers = dispatchers
@@ -306,6 +341,7 @@ class AgentdRun:
         self.holder = holder
         self.thread = thread
         self._close = close
+        self.heartbeat = heartbeat
 
     def close_for_stop(self, reason: str) -> int:
         """host の停止の前に呼ぶ(host の accept loop が生きている間 — 器の眺めは RPC で読む): loop を止め、
@@ -313,6 +349,10 @@ class AgentdRun:
         (I/O で塞がっている)時も待たずに進む — 同じ job を二度閉じる書きは CAS で負けるだけで害は無い。"""
         self.stop.set()
         self.thread.join(STOP_JOIN_SECONDS)
+        # 段 10 lane 10ba: heartbeat の thread も同じ stop の合図で降りる(周期の待ちの途中でも起きる)。起こす前に止まった
+        # (host の socket が出なかった)thread は join しない。
+        if self.heartbeat.ident is not None:
+            self.heartbeat.join(STOP_JOIN_SECONDS)
         if self.thread.is_alive():
             _stderr(
                 f"agentd: stop — the loop did not finish its tick within {STOP_JOIN_SECONDS:.0f}s; closing "
@@ -336,10 +376,8 @@ class AgentdPreflightError(RuntimeError):
     """弁が on なのに参加に要る札が無い(fail-closed — 黙って read-only で走らない)。"""
 
 
-def real_dispatchers(
-    env: Mapping[str, str], socket_path: str
-) -> tuple[list[Dispatcher], Callable[[], None]]:
-    """実 I/O の handler の列と、その後始末。"""
+def _acp_token_of_env(env: Mapping[str, str]) -> str:
+    """agentd の名簿の札(ACP の書きと記録の service の書きが同じ札を使う)。無ければ参加を断る。"""
     token_file = env.get(ACP_TOKEN_FILE_ENV)
     token = read_secret_file(token_file) if token_file else None
     if token is None:
@@ -347,15 +385,34 @@ def real_dispatchers(
             f"agentd needs the roster token of principal 'agentd' — set {ACP_TOKEN_FILE_ENV} to a file "
             "holding the bearer (ACP principals.json 段 0 lane 0a); status writes are refused without it"
         )
-    # 段 10 lane 10h 便 2(agora-redesign #84): ACP の宛先(実況の push・行の読み書き・watch の全部)は宣言(join の
-    # --server / [agentd].server → ACP_DAEMON_URL)ちょうど — localhost の既定値は持たない(宣言の無い agentd は参加しない)。
+    return token
+
+
+def _acp_url_of_env(env: Mapping[str, str]) -> str:
+    """ACP の宛先。段 10 lane 10h 便 2(agora-redesign #84): ACP の宛先(実況の push・行の読み書き・watch の全部)は宣言
+    (join の --server / [agentd].server → ACP_DAEMON_URL)ちょうど — localhost の既定値は持たない(宣言の無い agentd は参加しない)。"""
     acp_url = (env.get(ACP_URL_ENV) or "").strip()
     if not acp_url:
         raise AgentdPreflightError(
             f"agentd needs the ACP daemon URL — set {ACP_URL_ENV} (join --server / [agentd].server); the live "
             "stream push and every ACP read / write go to that address and there is no localhost default"
         )
-    acp = AcpHttp(acp_url, token)
+    return acp_url
+
+
+def heartbeat_dispatchers(env: Mapping[str, str]) -> tuple[list[Dispatcher], Callable[[], None]]:
+    """lease の heartbeat の thread の handler の列と、その後始末(段 10 lane 10ba): tick の handler とは別の AcpHttp を持つ
+    (thread ごとに接続を分け、tick の読みの I/O と待ちを共有しない)。宛先と札は tick と同じ 1 点から読む。"""
+    acp = AcpHttp(_acp_url_of_env(env), _acp_token_of_env(env))
+    return [acp.dispatch, LocalIo().dispatch], acp.close
+
+
+def real_dispatchers(
+    env: Mapping[str, str], socket_path: str
+) -> tuple[list[Dispatcher], Callable[[], None]]:
+    """実 I/O の handler の列と、その後始末。"""
+    token = _acp_token_of_env(env)
+    acp = AcpHttp(_acp_url_of_env(env), token)
     custody = CustodyHttp(
         # 宣言ちょうど(既定の宿は無い — 段 10 lane 10d 便 2)。空 = 借りない機体で、借りの要求はそこで断られる
         (env.get(CUSTODY_URL_ENV) or "").strip(),
@@ -426,6 +483,16 @@ def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> Age
         _stderr(f"agentd: custody contract {CUSTODY_CONTRACT_VERSION} verified")
     stop = threading.Event()
     holder = StateHolder()
+    beat_dispatchers, beat_close = heartbeat_dispatchers(env)
+
+    def close_all() -> None:
+        close()
+        beat_close()
+
+    def beat() -> None:
+        run_heartbeat_loop(settings, beat_dispatchers, stop, _stderr)
+
+    heartbeat = threading.Thread(target=beat, name="sessionhost-agentd-heartbeat", daemon=True)
 
     def body() -> None:
         deadline = time.monotonic() + HOST_WAIT_SECONDS
@@ -434,20 +501,23 @@ def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> Age
                 _stderr(
                     f"agentd: sessionhost socket {socket_path} did not appear in {HOST_WAIT_SECONDS:.0f}s; not joining"
                 )
-                close()
+                close_all()
                 return
             time.sleep(0.5)
         _stderr(
             f"agentd: joined as node {settings.node_name!r} (ACP {env.get(ACP_URL_ENV)}; "
             f"record {_record_url_of_env(env)})"
         )
+        # 段 10 lane 10ba(agora-redesign #115): lease の heartbeat は tick と独立した thread で先に起こす — tick の I/O が
+        # TTL を超えて塞がっても lease は切れない。停止は同じ stop の合図 1 つ。
+        heartbeat.start()
         # 後始末(watch の thread を閉じる)は停止の腕 AgentdRun.close_for_stop が最後に行う — loop は stop が
         # 立った時にだけ抜けるので、ここで閉じると停止の腕が器と ACP を読めない。
         run_loop(settings, dispatchers, stop, _stderr, holder)
 
     thread = threading.Thread(target=body, name="sessionhost-agentd", daemon=True)
     thread.start()
-    return AgentdRun(settings, dispatchers, stop, holder, thread, close)
+    return AgentdRun(settings, dispatchers, stop, holder, thread, close_all, heartbeat)
 
 
 # ------------------------------------------------------------------ 1 命令の参加(join・段 6 lane 6f)

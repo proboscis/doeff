@@ -1874,19 +1874,36 @@
   placed)
 
 
-(defk node-status-with-lease [row settings now-ms sessions transcripts]
-  {:pre [(: row AcpRow) (: settings AgentdSettings) (: now-ms int) (: sessions list) (: transcripts list)]
+(defk node-lease-of [settings now-ms]
+  {:pre [(: settings AgentdSettings) (: now-ms int)]
    :post [(: % dict)]}
-  "agentd が書く欄だけを更新した node の status: lease{owner, heartbeatAt, expiresAt} と
-   observations{streamCapability, sessions, transcripts, ownership?}(sessions = session-observations-of の列・
+  "node の lease{owner, heartbeatAt, expiresAt}。expiresAt = now + TTL(周期と TTL の定義点は effects.AgentdSettings の
+   node-heartbeat-seconds / node-lease-ttl-seconds の 1 点)。"
+  {"owner" settings.principal
+   "heartbeatAt" now-ms
+   "expiresAt" (+ now-ms (* 1000 settings.node-lease-ttl-seconds))})
+
+
+(defk node-status-with-renewed-lease [row settings now-ms]
+  {:pre [(: row AcpRow) (: settings AgentdSettings) (: now-ms int)]
+   :post [(: % dict)]}
+  "lease の heartbeat が書く node の status(段 10 lane 10ba・agora-redesign #115): committed の status を写し、lease だけを
+   新しくする(observations・capabilities・state には触らない — lease の書き手は heartbeat の thread の 1 つ)。"
+  (<- next dict (status-object-of row))
+  (<- lease dict (node-lease-of settings now-ms))
+  (setv (get next "lease") lease)
+  next)
+
+
+(defk node-status-with-observations [row settings sessions transcripts]
+  {:pre [(: row AcpRow) (: settings AgentdSettings) (: sessions list) (: transcripts list)]
+   :post [(: % dict)]}
+  "tick の参加の腕が書く node の status: committed の status を写し(lease は写すだけ — 書くのは heartbeat の thread・
+   段 10 lane 10ba)、observations{streamCapability, sessions, transcripts, ownership?}(sessions = session-observations-of の列・
    transcripts = 終端の session のうち transcript がこの機体に残る会話の列〔段 8q〕・
    ownership = 起動の前に検めた所有の等級 {grade, proof} — 宣言が無ければ欄ごと書かない = 未観測・
-   段 6 lane 6f)と capabilities(能力の表 — 段 10 lane 10e・capabilities-of)。state(scheduling の欄)は写すだけ。"
+   段 6 lane 6f)と capabilities(能力の表 — 段 10 lane 10e・capabilities-of)を差し替える。state(scheduling の欄)は写すだけ。"
   (<- next dict (status-object-of row))
-  (setv (get next "lease")
-        {"owner" settings.principal
-         "heartbeatAt" now-ms
-         "expiresAt" (+ now-ms (* 1000 settings.node-lease-ttl-seconds))})
   (setv observations
         {"streamCapability" settings.stream-capability
          "sessions" sessions

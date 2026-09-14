@@ -47,7 +47,13 @@ from doeff_agents.sessionhost.acp.effects import (
     TURN_RECORD_KIND,
 )
 from doeff_agents.sessionhost.acp.fake import Birth, FakeAcp, FakeCustody, FakeLocal, FakeSessions
-from doeff_agents.sessionhost.acp.runtime import initial_state, run_close_for_stop, run_tick
+from doeff_agents.sessionhost.acp.runtime import (
+    initial_state,
+    run_close_for_stop,
+    run_heartbeat,
+    run_heartbeat_loop,
+    run_tick,
+)
 from doeff_agents.sessionhost.acp.valve import ACP_VALVE_ENV, acp_valve
 
 from doeff import run
@@ -160,6 +166,11 @@ class World:
             [self.acp.dispatch, self.custody.dispatch, self.sessions.dispatch, self.local.dispatch],
         )
 
+    def heartbeat(self, advance_ms: int = 0) -> str:
+        """lease の heartbeat の 1 拍(段 10 lane 10ba — 本番は tick と別の thread の runtime.run_heartbeat_loop)。"""
+        self.local.now_ms += advance_ms
+        return run_heartbeat(self.settings, [self.acp.dispatch, self.local.dispatch])
+
     def job(self, job_id: str) -> AcpRow:
         return self.acp.rows[f"{AGENT_JOB_NAMESPACE}:{AGENT_JOB_KIND}:{job_id}"]
 
@@ -200,10 +211,8 @@ def transcript_line(kind: str, content: list[JSONObject], usage: JSONObject | No
 def _assert_joined_and_claimed(world: World) -> None:
     node = world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"]
     assert node.status is not None
-    lease = node.status["lease"]
-    assert isinstance(lease, dict)
-    assert lease["owner"] == "agentd"
-    assert lease["expiresAt"] == 1_000 + 90 * 1_000
+    # 段 10 lane 10ba: tick は lease を書かない(書き手は tick と独立した heartbeat の thread — lease の検は heartbeat の検が持つ)。
+    assert "lease" not in node.status
     assert node.status["observations"] == {
         "streamCapability": "frames",
         "sessions": [],
@@ -545,6 +554,8 @@ def test_missing_node_row_is_registered_from_the_declaration_and_joined_on_the_n
     world = World()
     key = f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"
     del world.acp.rows[key]
+    # 行が無い拍の heartbeat は書かない(行を作るのは tick の参加の腕)
+    assert world.heartbeat() == "no-node-row"
     world.tick()
     assert world.acp.rows[key].spec == {"name": NODE, "labels": {}, "capacity": 1, "streamCapability": "frames"}
     assert [line for line in world.local.logs if "node row" in line] == [
@@ -552,6 +563,7 @@ def test_missing_node_row_is_registered_from_the_declaration_and_joined_on_the_n
     ]
     assert world.state.node_missing_logged is False
     world.tick(advance_ms=30_000)
+    assert world.heartbeat() == "renewed"
     status = world.acp.rows[key].status
     assert isinstance(status, dict)
     lease = status.get("lease")
@@ -653,8 +665,9 @@ def test_node_registration_refused_is_logged_once_and_retried_each_heartbeat() -
     assert world.state.node_missing_logged is False
 
 
-def test_node_spec_is_aligned_to_the_declaration_keeping_labels_and_the_lease_is_written_in_the_same_tick() -> None:
-    """R28: 手で登記された行(capacity 0・labels boundary / pool)は宣言へ揃う — labels は触らず、同じ拍に lease も書く。"""
+def test_node_spec_is_aligned_to_the_declaration_keeping_labels_and_the_lease_is_left_to_the_heartbeat() -> None:
+    """R28: 手で登記された行(capacity 0・labels boundary / pool)は宣言へ揃う — labels は触らない。lease は tick では書かず、
+    tick と独立した heartbeat が書く(段 10 lane 10ba)— heartbeat は揃えた spec に触らない。"""
     from dataclasses import replace
 
     world = World()
@@ -672,7 +685,12 @@ def test_node_spec_is_aligned_to_the_declaration_keeping_labels_and_the_lease_is
     assert now_row.spec == aligned
     assert isinstance(now_row.status, dict)
     assert now_row.status["state"] == "joined"
-    lease = now_row.status.get("lease")
+    assert "lease" not in now_row.status
+    assert world.heartbeat() == "renewed"
+    beaten = world.acp.rows[key]
+    assert beaten.spec == aligned
+    assert isinstance(beaten.status, dict)
+    lease = beaten.status.get("lease")
     assert isinstance(lease, dict)
     assert lease["owner"] == world.settings.principal
     assert [line for line in world.local.logs if "node row" in line] == [
@@ -695,6 +713,7 @@ def test_node_spec_alignment_refused_still_writes_the_lease_and_logs_once() -> N
     world.acp.spec_refusals[key] = [Refused(403, refusal), Refused(403, refusal)]
     world.tick()
     world.tick(advance_ms=30_000)
+    assert world.heartbeat() == "renewed"
     assert world.acp.spec_writes == []
     now_row = world.acp.rows[key]
     assert now_row.spec["capacity"] == 1
@@ -707,6 +726,120 @@ def test_node_spec_alignment_refused_still_writes_the_lease_and_logs_once() -> N
         "the lease is still written"
     ]
     assert world.state.node_spec_refusal_logged is True
+
+
+def _node_lease(world: World) -> dict[str, object]:
+    status = world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"].status
+    assert isinstance(status, dict)
+    lease = status.get("lease")
+    assert isinstance(lease, dict)
+    return {str(name): value for name, value in lease.items()}
+
+
+def test_the_lease_heartbeat_writes_only_the_lease() -> None:
+    """段 10 lane 10ba(agora-redesign #115): lease の heartbeat が書くのは自分の node の行の status.lease だけ — spec にも tick の
+    観測の欄(observations・capabilities)にも state にも触らない。tick は lease を書かない(lease の書き手は heartbeat の 1 つ)。"""
+    world = World()
+    key = f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"
+    world.tick()
+    ticked = world.acp.rows[key]
+    assert isinstance(ticked.status, dict)
+    assert "lease" not in ticked.status, "tick が lease を書いている(書き手が 2 つ)"
+    assert "observations" in ticked.status
+    assert world.heartbeat(advance_ms=5_000) == "renewed"
+    beaten = world.acp.rows[key]
+    assert beaten.spec == ticked.spec
+    assert isinstance(beaten.status, dict)
+    assert {name: value for name, value in beaten.status.items() if name != "lease"} == ticked.status
+    assert _node_lease(world) == {"owner": world.settings.principal, "heartbeatAt": 6_000, "expiresAt": 6_000 + 90_000}
+    assert world.acp.spec_writes == []
+
+
+def test_the_heartbeat_and_the_tick_re_read_the_node_row_when_they_lose_the_write_race() -> None:
+    """段 10 lane 10ba: lease(heartbeat の thread)と観測(tick)は同じ node の行の status を別々の拍に書く。CAS に負けた方は
+    行を読み直して 1 度だけ撃ち直し、相手の欄を落とさない。"""
+    world = World()
+    key = f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"
+    world.acp.conflict_once[key] = 1
+    world.tick()
+    status = world.acp.rows[key].status
+    assert isinstance(status, dict)
+    assert "observations" in status, "tick の観測の書きが CAS に 1 度負けて落ちた"
+    assert world.heartbeat() == "renewed"
+    world.acp.conflict_once[key] = 2
+    assert world.heartbeat(advance_ms=30_000) == "renewed"
+    status = world.acp.rows[key].status
+    assert isinstance(status, dict)
+    assert "observations" in status, "heartbeat が観測の欄を落とした"
+    assert _node_lease(world)["heartbeatAt"] == world.local.now_ms
+    assert not [line for line in world.local.logs if "lost the write race" in line]
+
+
+def test_the_lease_does_not_expire_while_the_tick_is_stuck_in_io() -> None:
+    """段 10 lane 10ba(agora-redesign #115)の受入: tick の中の I/O が TTL(90 秒)を超えて塞がっていても、tick と別の thread の
+    lease の heartbeat は周期ごとに lease を書き続け、lease は切れない(既知の形 = durable workflow の activity の heartbeat は
+    activity と独立)。偽の I/O = tick の watch の読みが、偽の時計で 180 秒のあいだ答えない。停止は 1 つの stop の合図で
+    heartbeat の thread が降りる(周期の待ちの途中でも)。"""
+    import threading
+
+    from doeff import EffectBase, K, Pass, Resume
+    from doeff_agents.sessionhost.acp.effects import AcpWatchSse
+
+    world = World()
+    entered = threading.Event()
+    released = threading.Event()
+
+    def stuck_acp(effect: EffectBase, k: K) -> Resume | Pass:
+        if isinstance(effect, AcpWatchSse):
+            entered.set()
+            released.wait(60)
+        return world.acp.dispatch(effect, k)
+
+    ticked: list[object] = []
+
+    def tick_body() -> None:
+        ticked.append(
+            run_tick(world.settings, world.state, [stuck_acp, world.custody.dispatch, world.sessions.dispatch, world.local.dispatch])
+        )
+
+    tick_thread = threading.Thread(target=tick_body, daemon=True)
+    tick_thread.start()
+    assert entered.wait(10), "tick が偽の I/O に入っていない"
+
+    stop = threading.Event()
+    beats = threading.Semaphore(0)
+    beaten = threading.Semaphore(0)
+    logs: list[str] = []
+
+    def pause() -> bool:
+        beaten.release()
+        if not beats.acquire(timeout=60):
+            return True
+        return stop.is_set()
+
+    def heartbeat_body() -> None:
+        run_heartbeat_loop(world.settings, [world.acp.dispatch, world.local.dispatch], stop, logs.append, pause)
+
+    heartbeat_thread = threading.Thread(target=heartbeat_body, daemon=True)
+    heartbeat_thread.start()
+    stuck_since = world.local.now_ms
+    for step in range(7):
+        assert beaten.acquire(timeout=10), f"heartbeat の {step} 拍目が来ない(tick の I/O に塞がれている)"
+        now = world.local.now_ms
+        assert _node_lease(world) == {"owner": world.settings.principal, "heartbeatAt": now, "expiresAt": now + 90_000}
+        assert tick_thread.is_alive() and not ticked, "tick の偽の I/O がまだ答えていないはず"
+        if step < 6:
+            world.local.now_ms += 30_000
+            beats.release()
+    assert world.local.now_ms - stuck_since == 180_000, "偽の I/O が TTL を超えて塞がっていない"
+    stop.set()
+    beats.release()
+    heartbeat_thread.join(10)
+    assert not heartbeat_thread.is_alive(), "stop の合図で heartbeat の thread が降りない"
+    assert logs == []
+    released.set()
+    tick_thread.join(10)
+    assert len(ticked) == 1
 
 
 def test_node_spec_of_and_node_spec_declared_are_one_judgment() -> None:
@@ -1089,11 +1222,8 @@ def test_one_job_failure_does_not_stop_the_heartbeat_or_other_jobs() -> None:
     world.sessions.failures[world.sid("s-a")] = RuntimeError("socket reset")
     world.sessions.finish(world.sid("s-b"), "done", {"ok": True})
     world.tick(advance_ms=30_000)
-    node = world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"]
-    assert node.status is not None
-    lease = node.status["lease"]
-    assert isinstance(lease, dict)
-    assert lease["heartbeatAt"] == 31_000
+    # 参加の腕(観測の書き)はこの拍にも走った — lease の heartbeat は tick と別の thread(段 10 lane 10ba)
+    assert world.state.last_heartbeat_ms == 31_000
     ended = world.job("s-b")
     assert ended.status is not None
     assert ended.status["phase"] == PHASE_ENDED
@@ -3639,7 +3769,7 @@ def test_ownership_preflight_probes_gce_only_for_a_gce_proof_and_refuses_a_misma
 
 def test_node_observations_carry_the_ownership_when_declared() -> None:
     """node の status.observations.ownership = {grade, proof}(宣言が在る時だけ・無ければ欄ごと無い =
-    未観測)。書く点は judgment.node-status-with-lease の 1 点。"""
+    未観測)。書く点は judgment.node-status-with-observations の 1 点。"""
     from dataclasses import replace
 
     from doeff_agents.sessionhost.acp.effects import Ownership
