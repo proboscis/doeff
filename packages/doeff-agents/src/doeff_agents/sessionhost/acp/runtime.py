@@ -16,6 +16,7 @@ settings_from_env が join.record-sink-of の 1 点で参加を断る(AgentdPref
 """
 
 # pyright: strict
+import hashlib
 import os
 import platform
 import sys
@@ -35,6 +36,7 @@ from doeff_agents.sessionhost.acp.effects import (
     ACP_URL_ENV,
     BORROWER_KEY_PATH_ENV,
     CUSTODY_SA_TOKEN_PATH_ENV,
+    DECLARATION_SHA256_ENV,
     CAPACITY_ENV,
     PLACE_ENV,
     CUSTODY_URL_ENV,
@@ -98,6 +100,8 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
     node_capacity = _capacity_of_env(env)
     # 段 10 lane 10d 便 2(agora-redesign #85): 機体の置き場は宣言ちょうど — 名乗らない agentd は参加しない
     place = _place_of_env(env)
+    # 段 10 lane 10y(agora-redesign #110): 読んだ宣言 file の指紋 — node の行の capacity の書きに header で運ぶ
+    declaration_sha256 = _declaration_sha256_of_env(env)
     return AgentdSettings(
         node_name=node_name,
         node_capacity=node_capacity,
@@ -110,6 +114,7 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         # 段 10c(agora-redesign #80・R23): 預かり所を宣言した node か — join の [custody].url / --custody が CUSTODY_URL_ENV に
         # 据わる 1 点。宣言した node は account の無い job を起こさない(judgment.credential-source-of)。
         custody_declared=bool((env.get(CUSTODY_URL_ENV) or "").strip()),
+        declaration_sha256=declaration_sha256,
     )
 
 
@@ -118,6 +123,14 @@ def _capacity_of_env(env: Mapping[str, str]) -> int:
     verdict: object = PyVM().run(join.capacity_of(env.get(CAPACITY_ENV)))
     if not isinstance(verdict, int):
         raise TypeError(f"capacity_of returned {type(verdict).__name__}")
+    return verdict
+
+
+def _declaration_sha256_of_env(env: Mapping[str, str]) -> str | None:
+    """読んだ宣言 file の指紋(段 10 lane 10y)。読みの規則は join.declaration-sha256-of の 1 点(無い = None・形違い = ValueError)。"""
+    verdict: object = PyVM().run(join.declaration_sha256_of(env.get(DECLARATION_SHA256_ENV)))
+    if verdict is not None and not isinstance(verdict, str):
+        raise TypeError(f"declaration_sha256_of returned {type(verdict).__name__}")
     return verdict
 
 
@@ -431,10 +444,16 @@ def read_join_declaration(path: str | None) -> JoinDeclaration:
         return JoinDeclaration(tables={})
     try:
         with open(path, "rb") as handle:
-            return JoinDeclaration(tables=tomllib.load(handle))
+            data = handle.read()
+        # 段 10 lane 10y: 指紋は読んだ bytes そのもの(描いた写しの file — 読み直さない・整形しない)
+        return JoinDeclaration(tables=tomllib.loads(data.decode("utf-8")), sha256=hashlib.sha256(data).hexdigest())
     except OSError as error:
         raise AgentdPreflightError(
             f"join: cannot read the declaration file {path}: {error}"
+        ) from error
+    except UnicodeDecodeError as error:
+        raise AgentdPreflightError(
+            f"join: the declaration file {path} is not UTF-8: {error}"
         ) from error
     except tomllib.TOMLDecodeError as error:
         raise AgentdPreflightError(

@@ -29,6 +29,7 @@
   ACP-VALVE-ENV
   BORROWER-KEY-PATH-ENV
   CUSTODY-SA-TOKEN-PATH-ENV
+  DECLARATION-SHA256-ENV
   AGENTD-PLACES
   CAPACITY-ENV
   CUSTODY-URL-ENV
@@ -251,6 +252,20 @@
   (int word))
 
 
+(defk declaration-sha256-of [text]
+  {:pre [(: text (| str None))]
+   :post [(: % (| str None))]}
+  "読んだ宣言 file の指紋の読み(段 10 lane 10y・agora-redesign #110): sha256 の小文字の hex 64 桁 → そのまま。無い・空 = None
+   (宣言 file なしの参加 — node の capacity は書けない)。形の違う値は ValueError(参加しない — 指紋を名乗り損ねた agentd が
+   ACP の 400 declaration-fingerprint-invalid で毎拍断られる形を、起動の門で先に止める)。"
+  (setv word (if (is text None) "" (.strip text)))
+  (when (not word)
+    (return None))
+  (when (not (and (= (len word) 64) (all (gfor ch word (in ch "0123456789abcdef")))))
+    (raise (ValueError f"{DECLARATION-SHA256-ENV} は sha256 の小文字の hex 64 桁であること: {word !r}")))
+  word)
+
+
 (defk place-of [text]
   {:pre [(: text (| str None))]
    :post [(: % str)]}
@@ -308,6 +323,8 @@
     :borrower-key-file (.get custody KEY-BORROWER-KEY-FILE)
     ;; 空文字は「名乗らない」(宣言 file で欄を空にして外せる)。
     :service-account-token-file (or (.get custody KEY-SERVICE-ACCOUNT-TOKEN-FILE) None)
+    ;; 読んだ宣言 file の指紋(段 10 lane 10y)— file の bytes から composition root が導いた値をそのまま運ぶ。
+    :declaration-sha256 declaration.sha256
     :ownership ownership
     :capacity capacity
     :place place
@@ -363,6 +380,8 @@
     (.append env #(BORROWER-KEY-PATH-ENV spec.borrower-key-file)))
   (when (is-not spec.service-account-token-file None)
     (.append env #(CUSTODY-SA-TOKEN-PATH-ENV spec.service-account-token-file)))
+  (when (is-not spec.declaration-sha256 None)
+    (.append env #(DECLARATION-SHA256-ENV spec.declaration-sha256)))
   (when (is-not spec.ownership None)
     (.extend env [#(OWNERSHIP-ENV spec.ownership.grade)
                   #(OWNERSHIP-PROOF-ENV spec.ownership.proof)]))

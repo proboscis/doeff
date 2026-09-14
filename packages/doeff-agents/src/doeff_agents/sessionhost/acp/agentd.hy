@@ -390,7 +390,8 @@
         (<- (retire-sessions (tuple alive) "node is not in ACP"))
         (<- spec dict (node-spec-of settings))
         (<- created (| Written Conflict Refused)
-            (AcpCreate :namespace AGORA-KINDS-NAMESPACE :kind NODE-KIND :resource-id settings.node-name :spec spec))
+            (AcpCreate :namespace AGORA-KINDS-NAMESPACE :kind NODE-KIND :resource-id settings.node-name :spec spec
+                       :declaration-sha256 settings.declaration-sha256))
         (if (isinstance created Written)
             (do
               (<- (LogLine :text (+ f"agentd: registered node row {settings.node-name !r} from the declaration "
@@ -410,7 +411,7 @@
         (setv spec-refusal-logged state.node-spec-refusal-logged)
         (when (!= declared node.spec)
           (setv was (.get node.spec "capacity"))
-          (<- aligned (| Written Conflict Refused) (AcpPutSpec :row node :spec declared))
+          (<- aligned (| Written Conflict Refused) (AcpPutSpec :row node :spec declared :declaration-sha256 settings.declaration-sha256))
           (if (isinstance aligned Written)
               (do
                 (<- (LogLine :text (+ f"agentd: node row {settings.node-name !r} spec aligned to the declaration "

@@ -486,6 +486,29 @@ def test_missing_node_row_is_registered_from_the_declaration_and_joined_on_the_n
     assert lease["owner"] == world.settings.principal
 
 
+def test_node_row_writes_carry_the_fingerprint_of_the_declaration_file_the_agentd_read() -> None:
+    """反例(段 10 lane 10y・agora-redesign #110 の実測 2026-09-15 02:39): ACP の kind node の capacity は declaredByFile
+    (ACP 段 10 lane 10t 便 1b)で、誕生を含む書きは header x-declaration-sha256 が要る。指紋を運ばない agentd は
+    "node row 'Proboscis-MBP' is not in ACP and could not be registered (403: … needs the file's fingerprint …)" で新しい節が
+    1 つも参加できなかった。agentd は読んだ宣言 file の指紋(settings.declaration_sha256)を node の行の誕生と spec の揃えの
+    両方に運ぶ。lease(status の書き)は declaredByFile の欄を変えないので運ばない。"""
+    from dataclasses import replace
+
+    fingerprint = "ab" * 32
+    world = World()
+    world.settings = replace(world.settings, declaration_sha256=fingerprint)
+    key = f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"
+    del world.acp.rows[key]
+    world.tick()
+    assert key in world.acp.rows
+    assert world.acp.fingerprints == [(key, fingerprint)]
+    # 宣言の capacity を変えた agentd の揃えの書きも同じ指紋を運ぶ
+    world.settings = replace(world.settings, node_capacity=3)
+    world.tick(advance_ms=30_000)
+    assert world.acp.fingerprints == [(key, fingerprint), (key, fingerprint)]
+    assert world.acp.rows[key].spec["capacity"] == 3
+
+
 def test_node_registration_refused_is_logged_once_and_retried_each_heartbeat() -> None:
     """R28: 作れない拍(契約の書き手の登録し直しの前など)は 1 度だけ log し、heartbeat ごとに撃ち直す。"""
     from doeff_agents.sessionhost.acp.effects import Refused
@@ -3204,6 +3227,70 @@ def test_join_plan_derives_the_host_argv_and_the_env_bundle_from_the_spec() -> N
     assert "DOEFF_AGENTD_NODE_NAME" not in names
     assert "AGORA_CUSTODY_URL" not in names
     assert "DOEFF_AGENTD_OWNERSHIP" not in names
+
+
+def test_join_reads_the_fingerprint_of_the_declaration_file_bytes_into_the_env_and_settings(tmp_path: Path) -> None:
+    """段 10 lane 10y(agora-redesign #110・依頼者の裁定 2026-09-15): 指紋 = agentd が読んだ宣言 file(描いた写し)の bytes の
+    sha256。composition root(runtime.read_join_declaration)が境界で読み、JoinSpec → env DOEFF_AGENTD_DECLARATION_SHA256 →
+    AgentdSettings.declaration_sha256。宣言 file の無い参加(flag だけ)は指紋を持たない。形の違う指紋の env は参加を断る。"""
+    import hashlib
+
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import JoinSpec
+    from doeff_agents.sessionhost.acp.runtime import join_plan, read_join_declaration, settings_from_env
+
+    text = (
+        'schema = "doeff.agentd-join.v1"\n\n[agentd]\nserver = "http://acp:8868"\ntoken_file = "/t/agentd.token"\n'
+        'capacity = "2"\nplace = "personal"\n\n[record]\nurl = "http://record:8874"\n'
+    )
+    path = tmp_path / "agentd.toml"
+    path.write_bytes(text.encode("utf-8"))
+    expected = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    declaration = read_join_declaration(str(path))
+    assert declaration.sha256 == expected
+    plan = join_plan(["--config", str(path)], {"HOME": str(tmp_path)})
+    env = dict(plan.env)
+    assert env["DOEFF_AGENTD_DECLARATION_SHA256"] == expected
+    assert settings_from_env(env, plan.host_argv).declaration_sha256 == expected
+    # 宣言 file なし(flag だけ)= 指紋なし
+    bare = _join_spec(["--server", "http://acp:8868", "--token-file", "/t", "--capacity", "1", "--place", "personal"])
+    assert isinstance(bare, JoinSpec)
+    assert bare.declaration_sha256 is None
+    assert "DOEFF_AGENTD_DECLARATION_SHA256" not in dict(run(join.join_plan_of(bare)).env)
+    recorded = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACE": "personal"}
+    assert settings_from_env(recorded, ()).declaration_sha256 is None
+    with pytest.raises(ValueError, match="DOEFF_AGENTD_DECLARATION_SHA256"):
+        settings_from_env({**recorded, "DOEFF_AGENTD_DECLARATION_SHA256": "AB" * 32}, ())
+    with pytest.raises(ValueError, match="DOEFF_AGENTD_DECLARATION_SHA256"):
+        settings_from_env({**recorded, "DOEFF_AGENTD_DECLARATION_SHA256": "ab" * 31}, ())
+
+
+def test_acp_writes_put_the_fingerprint_header_only_on_the_writes_that_carry_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """handlers.AcpHttp: 指紋は書きごとの header x-declaration-sha256(誕生・spec の書きが運ぶ時だけ)。運ばない書きと status の
+    書きの header は札だけ。"""
+    from doeff_agents.sessionhost.acp.effects import AcpCreate, AcpPutSpec, AcpPutStatus
+
+    seen: list[dict[str, str]] = []
+
+    def fake_http(
+        method: str, url: str, headers: Mapping[str, str], body: JSON, timeout: float
+    ) -> handlers.HttpReply:
+        seen.append(dict(headers))
+        return handlers.HttpReply(200, {"eventId": "ev-1"})
+
+    monkeypatch.setattr(handlers, "_http_json", fake_http)
+    acp = handlers.AcpHttp("http://acp.test", "tok")
+    fingerprint = "cd" * 32
+    acp._write(AcpCreate(namespace="default", kind="node", resource_id="n-1", spec={"capacity": 2}, declaration_sha256=fingerprint))
+    row = AcpRow(
+        namespace="default", key="default:node:n-1", kind="node", resource_id="n-1", version="v1", generation=1,
+        created_at_ms=0, labels={}, payload={}, spec={"capacity": 2}, status=None,
+    )
+    acp._write(AcpPutSpec(row=row, spec={"capacity": 3}, declaration_sha256=fingerprint))
+    acp._write(AcpPutSpec(row=row, spec={"capacity": 3}))
+    acp._write(AcpPutStatus(row=row, status={"state": "joined"}))
+    assert [headers.get("x-declaration-sha256") for headers in seen] == [fingerprint, fingerprint, None, None]
+    assert all(headers.get("Authorization") == "Bearer tok" for headers in seen)
 
 
 def test_settings_from_env_reads_the_ownership_and_the_valve_and_runtime_agree_on_the_bundle() -> (
