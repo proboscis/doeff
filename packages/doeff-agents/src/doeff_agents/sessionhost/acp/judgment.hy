@@ -1728,6 +1728,31 @@
   found)
 
 
+(defk node-resource-id-of [rows name]
+  {:pre [(: rows tuple) (: name str)]
+   :post [(: % str)]}
+  "自分の node の行を**作る**時の resource-id(段 10 lane 10d 便 4・agora-redesign #107 の (3))。
+
+   身元は spec.name の 1 点(契約 node の identityKey)で、resource-id は行の器の名にすぎない。engine は
+   『**生きた**行が身元を持っている』時だけ身元の衝突を断るので、配車から外された(gone の)行は身元を
+   占めない — が、その行が name の**鍵**を占めているので、同じ鍵での create は永久に conflict になる
+   (本番の実弾 2026-09-14〜15: agentd の入れ替えのたびに行が gone になり、再参加が 409 で回り続け、
+   依頼者が status を手で書いて戻していた)。⇒ 鍵が空いていなければ、同じ身元の**新しい incarnation**
+   として空いている `<name>-<n>`(n は 2 から)を選ぶ。読み手は spec.name で引くので面は変わらない。"
+  (setv taken #{})
+  (for [row rows]
+    (setv key (str row.key))
+    (setv at (.rfind key ":"))
+    (.add taken (if (= at -1) key (cut key (+ at 1) None))))
+  (if (not-in name taken)
+      name
+      (do
+        (setv n 2)
+        (while (in f"{name}-{n}" taken)
+          (setv n (+ n 1)))
+        f"{name}-{n}")))
+
+
 (defk node-labels-of [settings labels]
   {:pre [(: settings AgentdSettings) (: labels dict)]
    :post [(: % dict)]}

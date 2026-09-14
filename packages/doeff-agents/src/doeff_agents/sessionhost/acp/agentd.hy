@@ -304,6 +304,7 @@
   context-percent-of
   conversation-key-of
   with-context-percent
+  node-resource-id-of
   node-row-named
   node-spec-declared
   node-spec-of
@@ -389,13 +390,17 @@
             (.append alive view.session-id)))
         (<- (retire-sessions (tuple alive) "node is not in ACP"))
         (<- spec dict (node-spec-of settings))
+        ;; 段 10 lane 10d 便 4(#107 の (3)): 配車から外された行が名の鍵を占めていたら、同じ身元
+        ;; (spec.name)の新しい incarnation の鍵で作る — 鍵は器の名で、身元ではない。
+        (<- resource-id str (node-resource-id-of rows settings.node-name))
         (<- created (| Written Conflict Refused)
-            (AcpCreate :namespace AGORA-KINDS-NAMESPACE :kind NODE-KIND :resource-id settings.node-name :spec spec
+            (AcpCreate :namespace AGORA-KINDS-NAMESPACE :kind NODE-KIND :resource-id resource-id :spec spec
                        :declaration-sha256 settings.declaration-sha256))
         (if (isinstance created Written)
             (do
               (<- (LogLine :text (+ f"agentd: registered node row {settings.node-name !r} from the declaration "
-                                    f"(capacity {settings.node-capacity}, streamCapability {settings.stream-capability})")))
+                                    f"(capacity {settings.node-capacity}, streamCapability {settings.stream-capability}"
+                                    (if (= resource-id settings.node-name) "" f", re-joined as {resource-id !r}") ")")))
               (replace next :node-missing-logged False))
             (do
               (setv why (if (isinstance created Refused)
