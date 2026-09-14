@@ -153,6 +153,7 @@
   RecordConflicted
   RecordPage
   RecordRead
+  RecordReadStream
   RecordSpoolList
   RecordSpoolListing
   RecordSpoolPut
@@ -250,7 +251,9 @@
   lease-renew-due
   list-mode-for
   merge-rows
+  mail-text-of
   message-bodies-of
+  message-body-ref-of
   message-key-of
   ignored-settings-of
   next-arm-for-job
@@ -553,8 +556,9 @@
    AgentdSettings.rehydrate_history_byte_budget)。"
   (<- source (| RecordedTurns HeadlineTurns) (record-turns-for settings subject))
   (<- messages tuple (AcpConversationMail :conversation-id subject))
+  (<- fetched dict (mail-bodies-by-ref settings messages))
   (<- fold HistoryFold (rehydrate-history-of subject messages source exclude
-                                             settings.rehydrate-history-byte-budget))
+                                             settings.rehydrate-history-byte-budget fetched))
   fold)
 
 
@@ -608,7 +612,7 @@
    畳み(first-turn-carries-inputs)、それ以外は after-start が send する。"
   (setv job-id row.resource-id)
   (setv subject (str (.get row.spec "subject" job-id)))
-  (<- mail tuple (mail-of row))
+  (<- mail tuple (mail-of settings row))
   (setv bodies (get mail 0))
   (<- exclude tuple (inputs-of row))
   (<- borrowed tuple (borrow-lease plan f"agent-job {job-id}"))
@@ -711,8 +715,33 @@
                     started)))))))
 
 
-(defk mail-of [row]
-  {:pre [(: row AcpRow)]
+(defk mail-bodies-by-ref [settings messages]
+  {:pre [(: settings AgentdSettings) (: messages tuple)]
+   :post [(: % dict)]}
+  "段 10f 便 1b(agora-redesign #82): 本文を記録の service に置いた郵便(message.spec.bodyRef)の本文を stream ごとに
+   読み集める — 郵便 id → 本文。判断(どの郵便を読むか・出来事から本文)は judgment の message-body-ref-of /
+   mail-text-of の 1 点で、ここは RecordReadStream を撃つだけ。service が配線されていない・読めない郵便は表に載せず
+   1 行 log する(読み手が missing と名乗る — 本文を発明しない)。手番の入力・履歴の 1 項・割り込みの本文の 3 か所が借りる。"
+  (setv fetched {})
+  (for [message messages]
+    (<- ref (| tuple None) (message-body-ref-of message.spec))
+    (when (is-not ref None)
+      (setv message-id (.get message.spec "id" message.resource-id))
+      (if (not settings.record-enabled)
+          (<- (LogLine :text f"agentd: message {message-id} keeps its body in the record service, which is not configured; body unavailable"))
+          (do
+            (<- page (| RecordPage RecordUnread) (RecordReadStream :conversation-id (get ref 0) :stream-id (get ref 1)))
+            (if (isinstance page RecordUnread)
+                (<- (LogLine :text f"agentd: body of message {message-id} could not be read from the record service ({page.status}: {page.error})"))
+                (do
+                  (<- text (| str None) (mail-text-of page.events))
+                  (when (is-not text None)
+                    (setv (get fetched message-id) text))))))))
+  fetched)
+
+
+(defk mail-of [settings row]
+  {:pre [(: settings AgentdSettings) (: row AcpRow)]
    :post [(: % tuple)]}
   "inputs の郵便の本文と見つからなかった id: #(bodies missing)。本文は鍵で 1 行ずつ読む
    (郵便の全量 list を watch の拍ごとに撃たない — R14)。"
@@ -723,7 +752,8 @@
     (<- message (| AcpRow None) (AcpGetRow :key key))
     (when (is-not message None)
       (.append found message)))
-  (<- pair tuple (message-bodies-of (tuple found) inputs))
+  (<- fetched dict (mail-bodies-by-ref settings (tuple found)))
+  (<- pair tuple (message-bodies-of (tuple found) inputs fetched))
   pair)
 
 
@@ -1501,6 +1531,10 @@
       (<- key str (message-key-of message-id))
       (<- message (| AcpRow None) (AcpGetRow :key key))
       (setv body (if (is message None) None (.get message.spec "body")))
+      ;; 段 10f 便 1b: 本文を記録の service に置いた郵便は stream から読む(mail-bodies-by-ref の同じ 1 点)。
+      (when (and (is-not message None) (not (isinstance body str)))
+        (<- fetched dict (mail-bodies-by-ref settings #(message)))
+        (setv body (.get fetched (.get message.spec "id" message.resource-id))))
       (if (not (isinstance body str))
           (do
             (<- (LogLine :text f"agentd: interrupt {message-id} for job {job.job-id} has no readable Message; not delivered"))

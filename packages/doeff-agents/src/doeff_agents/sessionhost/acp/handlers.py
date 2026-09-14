@@ -106,6 +106,8 @@ from doeff_agents.sessionhost.acp.effects import (
     RecordEvent,
     RecordPage,
     RecordRead,
+    RecordReadStream,
+    RECORD_PAGE_MAX_LIMIT,
     RecordReadOutcome,
     RecordSpoolGiveUp,
     RecordSpoolList,
@@ -1281,6 +1283,8 @@ class RecordHttp:
             return Resume(k, self._append(effect.batch))
         if isinstance(effect, RecordRead):
             return Resume(k, self._read(effect.conversation_id, effect.before, effect.limit))
+        if isinstance(effect, RecordReadStream):
+            return Resume(k, self._read_stream(effect.conversation_id, effect.stream_id))
         return Pass(effect, k)
 
     def _append(self, batch: RecordBatch) -> RecordAppendOutcome:
@@ -1298,6 +1302,15 @@ class RecordHttp:
             {"before": "latest" if before is None else str(before), "limit": str(limit)}
         )
         url = f"{self._base_url}/v1/conversations/{cid}/events?{query}"
+        reply = _http_json("GET", url, self._headers, None, RECORD_HTTP_TIMEOUT_SECONDS)
+        return decode_record_page(reply)
+
+    def _read_stream(self, conversation_id: str, stream_id: str) -> RecordReadOutcome:
+        """段 10f 便 1b: 郵便 1 通の stream を前向きに 1 頁(1 郵便 = 1 出来事なので 1 頁で足りる)。"""
+        cid = urllib.parse.quote(conversation_id, safe="")
+        stream = urllib.parse.quote(stream_id, safe="")
+        query = urllib.parse.urlencode({"since": "0", "limit": str(RECORD_PAGE_MAX_LIMIT)})
+        url = f"{self._base_url}/v1/conversations/{cid}/streams/{stream}/events?{query}"
         reply = _http_json("GET", url, self._headers, None, RECORD_HTTP_TIMEOUT_SECONDS)
         return decode_record_page(reply)
 
