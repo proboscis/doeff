@@ -804,6 +804,10 @@
   "名の process が登記されて生きているか。戻り値: bool。"
   #^ str session-name)
 
+(defclass [(dataclass :frozen True :kw-only True)] HeadlessKillAll [EffectBase]
+  "登記の全 process を段ごとに並列で降ろして忘れる(host の停止 — 段 10 lane 10h 便 2: stdin の EOF → SIGTERM →
+   SIGKILL の猶予を process の数だけ直列に積まない)。戻り値: int(降ろした登記の数)。")
+
 (defclass [(dataclass :frozen True :kw-only True)] HeadlessLiveness [EffectBase]
   "行の backend(子 process)の生死の観測(段 10 lane 10h・agora-redesign #84): pid の存在(kill 0)と
    所有(この host の registry が同じ pid の生きた process を持つ)。判断は持たない — 戻り値:
@@ -1105,6 +1109,12 @@
    :post [(: % HeadlessHasSession)]}
   "HeadlessHasSession を構築する。"
   (HeadlessHasSession :session-name session-name))
+
+(deff headless-kill-all []
+  {:pre []
+   :post [(: % HeadlessKillAll)]}
+  "HeadlessKillAll を構築する(段 10 lane 10h 便 2)。"
+  (HeadlessKillAll))
 
 (deff headless-liveness [session-name pid]
   {:pre [(: session-name str) (: pid (| int None))]

@@ -142,8 +142,7 @@ from doeff_agents.sessionhost.acp.effects import (
 
 Dispatcher: TypeAlias = Callable[[EffectBase, K], "Resume | Pass"]
 
-#: ACP の URL の既定(= Mac の bridge が k3s へ透過する loopback)— env の名は effects.py。
-ACP_URL_DEFAULT = "http://127.0.0.1:8868"
+#: ACP の URL に既定は無い(段 10 lane 10h 便 2 — 宣言 ACP_DAEMON_URL ちょうど・localhost の bridge は段 9p で退役)。
 #: custody の URL の既定(dotfiles agentcli/lease.py と同じ綴り)— env の名は effects.py。
 CUSTODY_URL_DEFAULT = "http://127.0.0.1:8320"
 BORROWER_KEY_PATH_DEFAULT = "~/.local/state/agora/borrower-key"

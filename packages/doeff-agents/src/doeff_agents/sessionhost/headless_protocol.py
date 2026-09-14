@@ -560,6 +560,19 @@ def recovery_verdict(
     )
 
 
+StopKind = Literal["keep", "turn-cut"]
+
+
+def stop_verdict(status_terminal: bool, in_flight: bool) -> StopKind:
+    """host の停止(TERM)の前の 1 行の判断(段 10 lane 10h 便 2): headless の子 process は host と共に降りるので、
+    手番の途中(awaiting)の非終端の行は turn-cut(呼び手が stopped + cause cancelled(理由 = host の停止)にして
+    黙って残さない)/ 終端の行・idle の温かい行は keep(行は触らない — 次の host の send が --resume で同じ session を
+    起こし直す。process は行に依らず全部降ろす)。"""
+    if status_terminal or not in_flight:
+        return "keep"
+    return "turn-cut"
+
+
 def parse_record(line: str) -> JSONObject | None:
     """stdout の 1 行 → JSON の object(壊れた行・object でない行は None — 発明しない)。"""
     stripped = line.strip()

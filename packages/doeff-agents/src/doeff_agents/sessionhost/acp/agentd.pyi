@@ -10,6 +10,7 @@ from doeff_agents.sessionhost.acp.effects import (
     AgentdState,
     ArmChoice,
     InFlightJob,
+    JobOutcome,
     LaunchPlan,
     LeaseGrant,
     SessionView,
@@ -99,6 +100,17 @@ def drain_stream(
 def turn_batch_of(
     job: InFlightJob, source: str | None, path: str | None, now_ms: int
 ) -> Program: ...
+def settle_record(
+    settings: AgentdSettings,
+    state: AgentdState,
+    job: InFlightJob,
+    view: SessionView | None,
+    source: str | None,
+    path: str | None,
+    outcome: JobOutcome,
+    step: str,
+    now_ms: int,
+) -> Program: ...
 def finalize_job(
     settings: AgentdSettings,
     state: AgentdState,
@@ -155,3 +167,6 @@ def mark_recorded(
     state: AgentdState, conversation_id: str, stream_id: str, highest: int
 ) -> Program: ...
 def agentd_tick(settings: AgentdSettings, state: AgentdState) -> Program: ...
+def close_jobs_for_stop(
+    settings: AgentdSettings, state: AgentdState, now_ms: int, reason: str
+) -> Program: ...
