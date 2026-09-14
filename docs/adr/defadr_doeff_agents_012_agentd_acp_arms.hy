@@ -472,6 +472,7 @@
      (rule R28 "node の行は機体が自分で名乗る(段 10 lane 10d・agora-redesign #85・依頼者の回答 問 A = 案 1 — 既知の形 = k8s の kubelet が Node を自分で登記する): agentd は heartbeat の腕(agentd.join-tick)で、自分の名の生きた node の行が無ければ AcpCreate で作り、在れば spec を宣言へ揃える(AcpPutSpec — engine の SpecApplied は status の軸を触らない)。spec の形は judgment.node-spec-of(作る時: name・labels 空・capacity・streamCapability)/ node-spec-declared(揃える時: labels は行のまま — 宣言の外の名乗り〔会社境界の boundary 等〕を運ぶ)の 1 点。capacity は機体の宣言 file の [agentd].capacity(flag --capacity)ちょうどで join.capacity-of が読み、無い・読めない agentd は参加しない(runtime.settings_from_env)— 家(profile の置き場)の数から導かない(資格は預かり所の貸与)。作れない・揃えられない拍(書き手の断り等)は1 度だけ log して次の heartbeat で撃ち直し、揃えられなくても lease は書く(参加の生存を spec の書きの成否に結ばない)。契約 agora-kinds.json の node の writers.create / update = agentd(withdraw は acp-scheduling)。2026-09-13 までは仮の道具 register-node(札 acp-scheduling)を人が撃ち、pod の名が変わるたびに手で作り直し、pool の capacity 0 は CR の註の写しだった(実測 #85)。")
      (rule R29 "割り込みの約束 = 期限までに model が読む(段 10 lane 10n・agora-redesign #93・operator 2026-09-14 逐語 \"メッセージについてはキューするか割り込みするかっていうオプションがあるはずなのに、キューしか実装されてないんじゃないかっていう疑いがあって、ちゃんと割り込みできるように設計してほしい\"・既知の形 = cooperative cancel → hard cancel の 2 段・actor への signal): (1) 注入の行の名 = Message の id — agentd は SessionInterject の ref に Message の id を渡し、host は session.send の params.ref を器へ運び、claude の Dialogue.inject は user の行の最上位の uuid に写す(実測 conformance/interrupt-physics.md 2026-09-14: CLI は command_lifecycle でその綴りの運命を名乗る — queued / started〔model が読む拍〕/ completed / cancelled / discarded / refused。uuid は UUID の形でなくてよい)。(2) 読んだ証拠 = 材料の中の command_lifecycle started(claude)/ 止めた後の turn/started(codex — 注入の段が無く名も無いので未読を全部)で、judgment.claude-deltas-of / codex-event-deltas-of が kind system の entry と DeltaBatch.interrupt-reads にし、agentd.stream-records が judgment.interrupt-reads-of の 1 点で memory に写す。『注入の後に assistant の出来事が在る』は証拠にしない(実測: 道具の無い生成の途中の注入は畳まれず、次の手番になる — 偽陽性)。(3) 期限 = job の charter.interruptEscalationSeconds ちょうど(judgment.escalation-seconds-of-charter の 1 点・依頼者の追補 2026-09-14: 方策の行の値を Messaging の Plan.charterFor が会話の宣言で重ねて写す)— agentd は方策の行も会話の行も読まず、code に既定の定数を置かない。無い job は注入だけにして、渡した印と同じ 1 回の書きで条件 InterruptEscalationUndeclared を行に足す。(4) 注入から期限が経って読んだ証拠も止めた印も無い id が在れば(judgment.interrupts-due-for-escalation の 1 点)agentd.settle-interrupts が SessionEscalate(session.escalate)を 1 度出し、未読の id 全部に止めた時刻の印。host の headless-escalate-program は Dialogue.escalate の 1 点で判断(queued の注入が無い・既に出して答え待ち・手番が走っていない → 型付きに断る)、claude = control_request interrupt・codex = 出す物が無い(inject が turn/interrupt で止めて渡す)・tui = 断る。(5) 停止の合図の後の result(is_error・error_during_execution — interrupted という subtype は無い)は止めた段の終わりで手番の終わりではない: ClaudeDialogue は control_response の still_queued に注入の uuid が名指されていれば result を飲み(in_flight のまま・CLI が注入の行を同じ session の次の手番として即座に走らせる — 実測 6 ms・codex の inject と同じ扱い)、無ければ interrupted として報告する。停止の合図を出していない result の時点で queued のままの注入も同じ(CLI が次の手番として走らせる)— 走らずに終わった(cancelled / discarded / refused)拍に手番の終わり。agentd の deltas-of は control_response(still_queued)を kind system の entry にし、同じ材料の続く is_error の result も kind system(誤りではない)。(6) 印は行の status.interruptsRead {id: 証拠の seq} / status.interruptsEscalated {id: ms}(書き手 agentd・additive・append-only の map — judgment.interrupt-marks-status-of の 1 点)へ agentd.record-interrupt-marks が CAS で写し、断られた拍は memory の dirty で持ち越す。拾い直し(recover-job)は行の interruptsDelivered − interruptsRead − interruptsEscalated を拾い直した時刻から数える(judgment.recovered-interrupts-of)。(7) 受け取りは watch: AcpWatchSse が changed で即座に拍を起こし、同じ拍の window の読み直しが interrupts を cache に載せ、deliver-interrupts が同じ拍で渡す(拍の周期は保険)。(8) node の status.capabilities[kind].interrupt = steer-then-stop(claude)| stop(codex)(effects.AGENT-INTERRUPT-CAPABILITY・契約 agora-kinds.json)— 面の文言はこれに従う。")
      (rule R30 "手番の資格は引換券で借り、置き場を名乗り、手番ごとに運ぶ(段 10 lane 10d 便 2・agora-redesign #85・依頼者の回答 問 1〜8 と追補 2 / 3・既知の形 = HashiCorp Boundary の controller〔口座の見出しと貸与〕と worker〔封じた資格〕の分離): (1) 借りは 2 段 — agentd は宣言された預かり所(join の [custody].url = **master**・既定の宿を発明しない)へ POST /lease/{kind} で頼み、答えの引換券(voucher)と口座の worker の基点(workerUrl)を受け、その worker へ POST /redeem で引換券を札に換える。札は master を通らず、引換券は一回限りで期限は貸与の hold ちょうど。どちらの段の断りも LeaseRefused でそのまま呼び手へ(409 の hold は master の答えの holdExpiresAt から)。判断は handlers.CustodyHttp._borrow の 1 点で、宣言の無い呼びは 503(_UNDECLARED)。(2) 機体は自分の置き場を宣言する — join の [agentd].place / --place / DOEFF_AGENTD_PLACE(閉語彙 effects.AGENTD-PLACES = company | personal・ACP の契約 agora-kinds.json の profile.spec.boundary と同じ綴り)を join.place-of が読み、node の spec.labels.place に名乗る(judgment.node-labels-of)。claim の頭で、結ばれた口座の profile の行が名乗る置き場(spec.boundary)と自分の置き場が**両方名乗っていて違う**時だけ job を CredentialPlaceMismatch で閉じる(judgment.credential-place-mismatch — 判らない側が在る拍は止めない。最後の門は預かり所の側に在る)。(3) 手番ごとの札は行に残さず、その手番の送りが運ぶ(追補 2・実弾 #92 = 預かり所が口座を更新した拍に、温かい session の再開の手番が誕生時の access token を使い回して 401 revoked): agentd は借りた札を SessionSend.session_env に載せ(judgment.turn-session-env-of の 1 点・claude は CLAUDE_CODE_OAUTH_TOKEN・codex は家の中の auth file が運ぶので空)、host の session.send は params.session_env を launch と同じ関所(policy.session-env-admission-error)に通してから headless-send-program へ渡し、降りた process の起こし直し(continue-headless-process)は行の誕生の env にこの手番の env を重ねて起こす。行へ永続化する launch の意図からは手番ごとの札を落とす(policy.overlay-without-turn-auth — 行にも log にも値を残さない)。手番ごとの env を運べない組み合わせ(tmux の器・mode = interrupt)は黙って落とさず型付きに断る。(4) 手番の CLI は agentd の env を継がない(追補 3・実弾 #95): 子 process が機体から継ぐ env は policy.inheritable-spawn-env の名簿(場所・家・地域・証明書・proxy・ssh の agent)だけで、会話ごとの値は charter(session_env と binding 由来の auth env)が運ぶ 1 点に閉じる — ACP_* / DOEFF_* / AGORA_BORROWER_KEY_PATH / AGORA_CUSTODY_URL / RECORD_SERVICE_URL は届かない。")
+     (rule R31 "郵便の添付は型つきで器へ・CLI の綴りは Dialogue(段 10 lane 10o・agora-redesign #96・operator の問い 2026-09-14「もしかして upload_image も conversation で未実装か」・依頼者の追補 2026-09-14 21:5x): (1) 郵便の行は添付の**見出し**だけを運ぶ(message.spec.attachments = {ref{conversation, stream}, seq, mime, bytes, sha256, name?}・中身は記録の service — claim check)。agentd は本文と同じ 1 回の stream の読み(agentd.mail-bodies-by-ref)で添付の出来事(kind attachment・producerSeq = 見出しの seq・0 は本文)も拾い、judgment.attachment-of が見出しの mime / bytes / sha256 と食い違わない時だけ型つきの値(sessionhost.attachment.TurnAttachment)にする(食い違い・欠落は値を作らず、呼び手が条件 AttachmentIgnored)。本文と添付の並びは judgment.message-bodies-of の**同じ 1 つの述語**で作る(2 つの関数に分けると並びがずれる)。(2) agentd は添付を SessionSend / SessionInterject の型つきの欄で host へ渡すだけで、CLI の綴りを 1 語も持たない — acp/agentd.hy と acp/judgment.hy に \"image\" / \"media_type\" / \"source\" の綴りは無い。綴りの座は sessionhost/headless_protocol.py の kind ごとの Dialogue ちょうど(R21 と同じ形): claude = Messages API と同じ content の block(claude_image_block)・codex = turn/start の input の項(codex_input_items)。どちらも便 1 の実測(conformance/attachment-physics.md 2026-09-14)の綴りで、codex は data URL と localImage が API へ同じ input_image になるので一時 file を作らない。(3) 起こす腕(first-turn-carries-inputs)は郵便を 1 手番目に畳むので、その郵便の添付も同じ 1 手番に載る(judgment.first-turn-attachments-of → launch-charter-with-attachments → host の session.launch → headless-deliver → Dialogue.turn)。(4) 添付の段を持たない器(tui = tmux / herdr の pane へのキー配送)は host が断りを答えに名乗り(attachmentsIgnored)、agentd が条件 AttachmentIgnored(effects.CONDITION-ATTACHMENT-IGNORED)に写す — 黙って落とさない。本文そのものは届く。(5) node の status.capabilities[kind].attachments = 受ける添付の種類の語の列(effects.AGENT-ATTACHMENT-CAPABILITY・今日は claude も codex も image・欠落 = 何も受けない)。(6) 綴りは偽 CLI(tests/headless_stubs の claude / codex)が凍結する: 綴りの違う block / 項は RuntimeError で落とす(実物は黙って劣化して success を返すので、替え玉が誤綴りを検で赤にする役を持つ)。")
      (rule R10 "session は会話の資源・job は手番(温かい session・設計 17.4): 会話 → 生きている session の対応は行(自分が claim した同じ subject の agent-job の sessionHandle)と器の現況から導き、Bound の job の起こし方は judgment.hy の next-arm-for-job(閉語彙 effects.NextArm = launch | send | resume | rehydrate | defer — 家と機体の扱いは R20)の 1 点で決める — 同じ会話の生きて idle な session が在れば launch せず session.send(awaiting)だけ、sessionHandle はその session を指し、turn-record は手番ごと。手番の終わりは器の lifecycle multi_turn(launch.hy の閉語彙に足した語)で policy.hy の monitor が既存の turn-end の連言から行の turn_ended_at に刻み、agentd は job-step-of の turn-end(turn_ended_at > 手番の始まりの下限 ∧ 記録の進み)で読む — status は倒さず session は生かす。idle の寿命は AgentdSettings.session_idle_ttl_seconds の 1 点で、超過・Withdrawn・node の退役で session.cleanup。計器 agent-job-to-send は create → send のまま(温かい path で p99 < 2 秒)。")]
   :laws
     [(law interrupts-ride-the-running-turn-and-are-recorded-on-the-row
@@ -1888,8 +1889,9 @@
        (setv host-lines (code-lines (/ SESSIONHOST-DIR "host.hy")))
        (assert (= (len (lfor line host-lines :if (in "(session-env-admission-error session-env \"session.send\")" line) line)) 1)
                "送りの口の関所は launch と同じ 1 点(R30)")
-       (assert (any (gfor line host-lines (in "(headless-send-program sid message awaiting session-env)" line)))
-               "手番ごとの env は送りの腕へ渡る(R30)")
+       ;; 段 10 lane 10o(R31): 同じ腕が郵便の添付も型つきで運ぶ(綴りは器の Dialogue)。
+       (assert (any (gfor line host-lines (in "(headless-send-program sid message awaiting session-env attachments)" line)))
+               "手番ごとの env は送りの腕へ渡る(R30・添付は R31)")
        (setv launch-lines (code-lines (/ SESSIONHOST-DIR "launch.hy")))
        (assert (= (len (lfor line launch-lines :if (in "(session-env-admission-error session-env \"session.launch\")" line) line)) 1)
                "launch の関所も同じ 1 点(R30)")
@@ -1902,6 +1904,65 @@
        (setv substrate-lines (code-lines (/ SESSIONHOST-DIR "substrate_headless.hy")))
        (assert (= (len (lfor line substrate-lines :if (in "(inheritable-spawn-env (dict os.environ))" line) line)) 1)
                "機体から継ぐ env は名簿の 1 点を通る(R30)"))
+     (deftest test-adr-doe-agents-012-attachment-spelling-lives-in-the-dialogue
+      ;; R31 の針 1(構造): agentd は CLI の綴りを 1 語も持たず、綴りの座は Dialogue の 2 腕ちょうど。
+      (for [name ["agentd.hy" "judgment.hy"]]
+        (setv lines (code-lines (/ ACP-DIR name)))
+        (for [line lines]
+          (for [word ["\"image\"" "\"media_type\"" "\"source\"" "media_type" "base64," "data:"]]
+            (assert (not-in word line)
+                    f"{name} は画像の綴りを持たない(R30・法 012 R21 と同じ形): {line}"))))
+      (setv protocol-lines (code-lines (/ SESSIONHOST-DIR "headless_protocol.py")))
+      (assert (= (len (lfor line protocol-lines :if (.startswith line "def claude_image_block(") line)) 1)
+              "claude の image の block の座は 1 点(R31)")
+      (assert (= (len (lfor line protocol-lines :if (.startswith line "def codex_input_items(") line)) 1)
+              "codex の input の項の座は 1 点(R31)")
+      (for [word ["\"media_type\": attachment.mime" "\"type\": \"base64\"" "f\"data:{attachment.mime};base64,{attachment.data}\""]]
+        (assert (any (gfor line protocol-lines (in word line)))
+                f"便 1 の実測の綴りが Dialogue に在る(R31): {word}"))
+      ;; 型つきの値は器に依らない module の 1 点(Dialogue も agentd もここから引く)。
+      (setv value-lines (code-lines (/ SESSIONHOST-DIR "attachment.py")))
+      (for [name ["class TurnAttachment" "class AttachmentRefused" "class TurnContent"]]
+        (assert (= (len (lfor line value-lines :if (.startswith line name) line)) 1) name))
+      ;; 型の module は値だけ — wire の綴り(block / 項の鍵)を組む code は持たない。
+      (for [line value-lines]
+        (for [word ["\"media_type\"" "\"source\"" "\"type\": \"image\"" "base64,"]]
+          (assert (not-in word line) f"添付の型の module に綴りは無い(R31): {line}")))
+      ;; 器へ渡す口は 2 つ(手番 / 割り込み)で、どちらも型つきの欄を持つ。
+      (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
+      (assert (= (len (lfor line effects-lines :if (.startswith line "    attachments: tuple[TurnAttachment, ...] = ()") line)) 2)
+              "SessionSend と SessionInterject の 2 つが型つきの添付を運ぶ(R31)")
+      (assert (= (len (lfor line effects-lines :if (.startswith line "CONDITION_ATTACHMENT_IGNORED: ConditionType = \"AttachmentIgnored\"") line)) 1))
+      (assert (= (len (lfor line effects-lines :if (.startswith line "NODE_CAPABILITY_ATTACHMENTS_KEY: str = \"attachments\"") line)) 1))
+      ;; 本文と添付の並びは 1 つの述語(2 つ目の並べ手を置かない)。
+      (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+      (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk message-bodies-of ") line)) 1))
+      (assert (not (any (gfor line judgment-lines (.startswith line "(defk message-attachments-by-input-of "))))
+              "本文と添付を別々に並べる第 2 の述語を置かない(R31)"))
+
+     (deftest test-adr-doe-agents-012-fake-clis-freeze-the-attachment-spelling
+      ;; R31 の針 2(構造): 偽 CLI は実測の綴りだけを読み、違う綴りは落とす(実物は黙って劣化するので替え玉が赤にする)。
+      ;; 振る舞いそのものは test_sessionhost_headless.py の 2 本(替え玉を実 process として起こす)が撃つ。
+      (setv stubs (/ (. (Path __file__) parent parent parent) "packages" "doeff-agents" "tests" "headless_stubs"))
+      (setv claude-lines (code-lines (/ stubs "claude")))
+      (assert (= (len (lfor line claude-lines :if (.startswith line "def _user_images(") line)) 1)
+              "偽 claude の画像の読みは 1 点(R31)")
+      (for [word ["part.get(\"type\") != \"image\""
+                  "source.get(\"type\") != \"base64\""
+                  "source.get(\"media_type\")"]]
+        (assert (any (gfor line claude-lines (in word line)))
+                f"偽 claude が実測の綴りを名指す(R31): {word}"))
+      (assert (<= 3 (len (lfor line claude-lines :if (in "raise RuntimeError" line) line)))
+              "誤った綴りは落とす(R31) — 黙って劣化させない")
+      (setv codex-lines (code-lines (/ stubs "codex")))
+      (assert (= (len (lfor line codex-lines :if (.startswith line "def _turn_input_text(") line)) 1)
+              "偽 codex の入力の読みは 1 点(R31)")
+      (for [word ["DATA_URL_PREFIX = \"data:\"" "\";base64,\" in url" "kind != \"image\""]]
+        (assert (any (gfor line codex-lines (in word line)))
+                f"偽 codex が実測の綴りを名指す(R31): {word}"))
+      (assert (<= 3 (len (lfor line codex-lines :if (in "raise RuntimeError" line) line)))
+              "誤った綴り(localImage の path・素の URL)は落とす(R31)"))
+
      (deftest test-adr-doe-agents-012-interrupts-ride-the-running-turn
        ;; R21 の針(構造): 判断は judgment.hy の 1 点ずつ・配達は agentd.deliver-interrupts の 1 点・agentd は器の作法の語を
        ;; 持たない・claude の headless は stream-json の入力・sessionhost の割り込みの口は mode = interrupt の 1 語。
@@ -1928,12 +1989,13 @@
        (assert (any (gfor line argv-lines (in "\"--input-format\" \"stream-json\"" line)))
                "claude の headless は stream-json の入力の温かい process(R21)")
        (setv protocol-lines (code-lines (/ SESSIONHOST-DIR "headless_protocol.py")))
-       (assert (= (len (lfor line protocol-lines :if (.startswith line "    def inject(self, text: str, ref: str = \"\") -> Injection:") line)) 2)
-               "割り込みの本文の作法は Dialogue.inject の 2 腕(claude / codex)(R21・ref は R28)")
+       ;; 段 10 lane 10o(agora-redesign #96): 本文と添付は 1 つの型つきの値(TurnContent)で渡る — 綴りは Dialogue が組む。
+       (assert (= (len (lfor line protocol-lines :if (.startswith line "    def inject(self, content: TurnContent, ref: str = \"\") -> Injection:") line)) 2)
+               "割り込みの本文の作法は Dialogue.inject の 2 腕(claude / codex)(R21・ref は R28・添付は R22)")
        (assert (any (gfor line protocol-lines (in "one_process_per_turn: bool = False" line))))
        (setv host-lines (code-lines (/ SESSIONHOST-DIR "host.hy")))
-       (assert (any (gfor line host-lines (in "(headless-inject-program sid message ref)" line)))
-               "host の mode = interrupt は inject の program へ(R21)")
+       (assert (any (gfor line host-lines (in "(headless-inject-program sid message ref attachments)" line)))
+               "host の mode = interrupt は inject の program へ(R21・添付は R22)")
        ;; 反例(挙動): 行の interrupts は載せた順に器へ渡り、同じ 1 回の書きで interruptsDelivered へ移る。断られた id は残る。
        (setv world (World))
        (.put-row world.acp (message-row "m-x" "first"))

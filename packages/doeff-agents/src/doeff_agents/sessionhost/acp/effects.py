@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import Literal, TypeAlias, get_args
 
 from doeff import EffectBase
+from doeff_agents.sessionhost.attachment import TurnAttachment
 
 #: JSON の値(ACP の行の spec / status・中継の frame はこの形のまま運ぶ)。
 JSON: TypeAlias = "dict[str, JSON] | list[JSON] | str | int | float | bool | None"
@@ -130,6 +131,7 @@ ConditionType = Literal[
     "SessionLost",
     "AgentdRestart",
     "InterruptEscalationUndeclared",
+    "AttachmentIgnored",
 ]
 CONDITION_INTERRUPTED: ConditionType = "Interrupted"
 #: 段 10 lane 10n(agora-redesign #93・依頼者の追補 2026-09-14): 割り込みを注入したが、この job の charter に
@@ -158,6 +160,10 @@ CONDITION_CREDENTIAL_PLACE_MISMATCH: ConditionType = "CredentialPlaceMismatch"
 #: 受けない欄・温かい session に送る手番では変えられない欄(workDir — cwd は起こした process のもの)を黙って落とさず、
 #: 手番の終わりの conditions に 1 欄 1 行で刻む(判断は judgment.ignored-settings-of の 1 点)。
 CONDITION_AGENT_SETTING_IGNORED: ConditionType = "AgentSettingIgnored"
+#: 段 10 lane 10o(agora-redesign #96・依頼者の追補 2026-09-14): 郵便に添付が在ったのに器へ渡せなかった
+#: (器が添付の段を持たない・読めなかった・見出しと中身が食い違った)。黙って落とさず手番の conditions に 1 行。
+#: 本文そのものは届いている — この条件は添付だけの話。判断は judgment.attachment-ignored-of の 1 点。
+CONDITION_ATTACHMENT_IGNORED: ConditionType = "AttachmentIgnored"
 #: 段 10 lane 10e: 会話の宣言の欄の閉語彙(ACP の契約 agora-kinds.json conventions.agentSettings.settings の写し)と、
 #: agent の種類(charter.agent_type の語)ごとの能力の表 = 受ける欄(settings)と変えたら session を作り直す欄(restartOn)。
 #: node の status.capabilities に名乗る(judgment.capabilities-of)。restartOn = session-affinity-key-of の鍵の欄ちょうど
@@ -214,6 +220,16 @@ AGENT_INTERRUPT_CAPABILITY: dict[str, InterruptCapability] = {
     "codex": "stop",
 }
 NODE_CAPABILITY_INTERRUPT_KEY: str = "interrupt"
+#: 段 10 lane 10o(agora-redesign #96・裁定 問い 5 案 A): agent の種類ごとに受ける添付の種類
+#: (node の status.capabilities[kind].attachments — 契約 agora-kinds.json の閉語彙)。欠落 = 何も受けない。
+#: 今日の 2 種類はどちらも画像を受ける(便 1 の実測 — claude の content の block・codex の input の項)。
+AttachmentKind = Literal["image"]
+ATTACHMENT_KIND_IMAGE: AttachmentKind = "image"
+AGENT_ATTACHMENT_CAPABILITY: dict[str, tuple[AttachmentKind, ...]] = {
+    "claude": (ATTACHMENT_KIND_IMAGE,),
+    "codex": (ATTACHMENT_KIND_IMAGE,),
+}
+NODE_CAPABILITY_ATTACHMENTS_KEY: str = "attachments"
 #: sessionhost の wire の backend_kind のうち agentd が読む語(host.hy の閉語彙 tmux | herdr |
 #: headless の写し — agora-redesign #37)。headless の session は実況を events file で読み
 #: (backend_ref.events_path)、node の streamCapability は events。
@@ -1004,6 +1020,20 @@ RECORD_PAGE_MAX_LIMIT = 1_000
 #: eventKinds の message・1 郵便 = 1 出来事・stream = 郵便の id)。
 RECORD_MAIL_EVENT_KIND = "message"
 
+#: 段 10 lane 10o(agora-redesign #96): 郵便の添付の画像 1 枚を置いた出来事の kind(契約 record-service.json の
+#: eventKinds の attachment・1 添付 1 出来事・stream = 郵便の id・producerSeq は 1 から〔0 は本文〕)。
+RECORD_ATTACHMENT_EVENT_KIND = "attachment"
+#: 郵便の行が運ぶ添付の見出しの列の欄(契約 agora-kinds.json message.spec.attachments)と、見出しの欄の綴り。
+#: 中身(data)は行に載らない — 見出しの ref と seq で記録の service から取り寄せる(claim check)。
+MESSAGE_ATTACHMENTS_KEY = "attachments"
+ATTACHMENT_REF_KEY = "ref"
+ATTACHMENT_SEQ_KEY = "seq"
+ATTACHMENT_MIME_KEY = "mime"
+ATTACHMENT_BYTES_KEY = "bytes"
+ATTACHMENT_SHA256_KEY = "sha256"
+ATTACHMENT_NAME_KEY = "name"
+ATTACHMENT_DATA_KEY = "data"
+
 
 @dataclass(frozen=True)
 class RecordEvent:
@@ -1027,6 +1057,11 @@ class RecordEvent:
     model: str | None = None
     is_error: bool = False
     truncated: bool = False
+    #: 段 10 lane 10o(agora-redesign #96): 添付の出来事(kind attachment)の欄 — mime と元の file 名は
+    #: 見出しの欄・data は本文の欄(base64 の逐語・tombstone で消える)。他の kind では欠ける。
+    mime: str | None = None
+    name: str | None = None
+    data: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1413,6 +1448,10 @@ class SessionSend(EffectBase):
     text: str
     awaiting: bool
     session_env: JSONObject = field(default_factory=_empty_json_object)
+    #: 段 10 lane 10o(agora-redesign #96・依頼者の追補 2026-09-14・法 012 R21): 郵便の添付を**型つき**で
+    #: 器へ渡す。CLI の綴り(block / input の項)は kind ごとの Dialogue が組む — agentd は組まない。
+    #: 受けない器は SessionRefused で断り、呼び手が条件 AttachmentIgnored に写す(黙って落とさない)。
+    attachments: tuple[TurnAttachment, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1434,6 +1473,8 @@ class SessionInterject(EffectBase):
     #: 段 10 lane 10n: 注入の行の名(headless の claude は user の行の uuid — CLI の command_lifecycle がこの綴りで運命を
     #: 名乗る)。agentd は Message の id そのものを渡す(対応表なし・events の行が messageId を名指す)。
     ref: str = ""
+    #: 段 10 lane 10o: 割り込みの郵便の添付(型つき — 綴りは Dialogue)。
+    attachments: tuple[TurnAttachment, ...] = ()
 
 
 @dataclass(frozen=True)

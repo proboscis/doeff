@@ -32,6 +32,7 @@ import pytest
 from doeff_agents.sessionhost import headless as headless_hy
 from doeff_agents.sessionhost import host
 from doeff_agents.sessionhost.headless_process import HeadlessRegistry
+from doeff_agents.sessionhost.attachment import TurnAttachment, TurnContent
 from doeff_agents.sessionhost.headless_protocol import (
     JSON,
     BackendLiveness,
@@ -57,6 +58,11 @@ STUBS = Path(__file__).parent / "headless_stubs"
 
 
 # ---------------------------------------------------------------- JSON の読み(検の narrowing の小片)
+
+
+def _content(text: str, attachments: tuple[TurnAttachment, ...] = ()) -> TurnContent:
+    """Dialogue が受ける手番 1 回分の入力(段 10 lane 10o: 本文 + 添付の型つきの値)。"""
+    return TurnContent(text=text, attachments=attachments)
 
 
 def _obj(value: JSON, key: str) -> JSONObject:
@@ -104,8 +110,8 @@ def test_claude_dialogue_reads_init_and_result() -> None:
     assert dialogue.opening() == ()
     assert dialogue.one_process_per_turn is False  # 段 8 lane 4x: 温かい process
     # 手番が走る前の割り込みは引き受けない(新しい手番を起こさない)
-    assert dialogue.inject("early").accepted is False
-    turn = dialogue.turn("hello")
+    assert dialogue.inject(_content("early")).accepted is False
+    turn = dialogue.turn(_content("hello"))
     assert turn.sends == (claude_user_line("hello"),)
     assert _record(turn.sends[0]) == {"type": "user", "message": {"role": "user", "content": "hello"}}
     assert turn.close_stdin is False
@@ -115,7 +121,7 @@ def test_claude_dialogue_reads_init_and_result() -> None:
     assert dialogue.on_line({"type": "assistant", "message": {}}).ended is None
     # 走っている手番への割り込み = 同じ user の行(CLI が次の tool の境界で注入する)。行の uuid は
     # 呼び手の ref(無ければ鋳造)— CLI の command_lifecycle がこの綴りで運命を名乗る(段 10 lane 10n)。
-    injected = dialogue.inject("stop that")
+    injected = dialogue.inject(_content("stop that"))
     assert injected.accepted is True
     assert injected.ref
     assert injected.sends == (claude_user_line("stop that", injected.ref),)
@@ -129,9 +135,9 @@ def test_claude_dialogue_reads_init_and_result() -> None:
     assert ended.ended == TurnEnded(ok=True, detail="success")
     assert dialogue.in_flight is False
     assert dialogue.injections == {}
-    assert dialogue.inject("late").accepted is False
+    assert dialogue.inject(_content("late")).accepted is False
     # 次の手番は同じ process へ次の user の行
-    assert dialogue.turn("again").close_stdin is False
+    assert dialogue.turn(_content("again")).close_stdin is False
     failed = dialogue.on_line({"type": "result", "subtype": "error_max_turns", "is_error": True})
     assert failed.ended == TurnEnded(ok=False, detail="error_max_turns")
     assert dialogue.interrupt().signal is True
@@ -161,10 +167,10 @@ def test_claude_dialogue_escalates_an_unread_injection_and_the_next_turn_carries
     result(is_error)は手番の終わりとして報告しない(飲む)。started が読んだ印・次の result が手番の終わり。"""
     dialogue = ClaudeDialogue()
     assert dialogue.escalate().accepted is False  # 手番が走っていない
-    dialogue.turn("long tool")
+    dialogue.turn(_content("long tool"))
     dialogue.on_line(_init())
     assert dialogue.escalate().accepted is False  # queued の注入が無い
-    injected = dialogue.inject("stop now", "msg-1")
+    injected = dialogue.inject(_content("stop now"), "msg-1")
     assert injected.ref == "msg-1"
     assert _record(injected.sends[0])["uuid"] == "msg-1"
     assert dialogue.on_line(_lifecycle("msg-1", "queued")).ended is None
@@ -198,9 +204,9 @@ def test_claude_dialogue_escalation_without_survivors_ends_the_turn_as_interrupt
     """still_queued に注入が無い(abort の瞬間に畳みの途中だった)→ 次の手番は来ないので result で手番の終わり
     (interrupted)。答えが error なら合図は効かなかった — もう 1 度出せる。"""
     dialogue = ClaudeDialogue()
-    dialogue.turn("x")
+    dialogue.turn(_content("x"))
     dialogue.on_line(_init())
-    dialogue.inject("a", "msg-1")
+    dialogue.inject(_content("a"), "msg-1")
     first = dialogue.escalate()
     assert dialogue.on_line(_control_response(first.request_id, [], subtype="error")).ended is None
     assert dialogue.escalation is None
@@ -221,9 +227,9 @@ def test_claude_dialogue_keeps_the_turn_while_an_injection_is_still_queued_at_th
     result の時点で queued のままの注入が在れば手番は続く(誰の job でもない手番を作らない)。その注入が走らずに
     終わった(discarded / cancelled / refused)なら、そこで手番の終わり。"""
     dialogue = ClaudeDialogue()
-    dialogue.turn("x")
+    dialogue.turn(_content("x"))
     dialogue.on_line(_init())
-    dialogue.inject("late", "msg-1")
+    dialogue.inject(_content("late"), "msg-1")
     dialogue.on_line(_lifecycle("msg-1", "queued"))
     assert dialogue.on_line({"type": "result", "subtype": "success", "is_error": False}).ended is None
     assert dialogue.in_flight is True
@@ -232,8 +238,8 @@ def test_claude_dialogue_keeps_the_turn_while_an_injection_is_still_queued_at_th
     assert ended.ended == TurnEnded(ok=False, detail="interrupt-discarded")
     assert dialogue.in_flight is False
     # 同じ形で started → init → result なら普通の終わり
-    dialogue.turn("y")
-    dialogue.inject("late again", "msg-2")
+    dialogue.turn(_content("y"))
+    dialogue.inject(_content("late again"), "msg-2")
     dialogue.on_line(_lifecycle("msg-2", "queued"))
     assert dialogue.on_line({"type": "result", "subtype": "success", "is_error": False}).ended is None
     dialogue.on_line(_lifecycle("msg-2", "started"))
@@ -252,10 +258,10 @@ def test_claude_dialogue_without_the_lifecycle_capability_injects_only_and_ends_
     bare: JSONObject = {"type": "system", "subtype": "init", "session_id": "sid-1"}
     for init in (_init(lifecycle=False), bare):
         dialogue = ClaudeDialogue()
-        dialogue.turn("x")
+        dialogue.turn(_content("x"))
         dialogue.on_line(init)
         assert dialogue.lifecycle is False
-        injected = dialogue.inject("stop", "msg-1")
+        injected = dialogue.inject(_content("stop"), "msg-1")
         assert injected.accepted is True
         assert _record(injected.sends[0])["uuid"] == "msg-1"
         assert dialogue.injections == {}
@@ -270,9 +276,9 @@ def test_codex_dialogue_does_not_escalate() -> None:
     dialogue.opening()
     dialogue.on_line({"id": "initialize#1", "result": {}})
     dialogue.on_line({"id": "thread/start#2", "result": {"thread": {"id": "thr"}}})
-    dialogue.turn("go")
+    dialogue.turn(_content("go"))
     dialogue.on_line({"method": "turn/started", "params": {"threadId": "thr", "turn": {"id": "t1"}}})
-    injected = dialogue.inject("stop", "msg-1")
+    injected = dialogue.inject(_content("stop"), "msg-1")
     assert injected.accepted is True
     assert injected.ref == "msg-1"
     assert dialogue.escalate().accepted is False
@@ -287,7 +293,7 @@ def test_codex_dialogue_handshake_turn_and_interrupt() -> None:
     opening = dialogue.opening()
     assert [_rpc(line)["method"] for line in opening] == ["initialize"]
     # prompt は thread が開くまで積む
-    assert dialogue.turn("hi").sends == ()
+    assert dialogue.turn(_content("hi")).sends == ()
     init_reply = dialogue.on_line({"id": _rpc(opening[0])["id"], "result": {}})
     assert [_rpc(line)["method"] for line in init_reply.sends] == ["initialized", "thread/start"]
     thread_start = _rpc(init_reply.sends[1])
@@ -328,7 +334,7 @@ def test_codex_dialogue_handshake_turn_and_interrupt() -> None:
     )
     assert mine.ended == TurnEnded(ok=False, detail="turn-interrupted")
     # 温かい process: 次の手番は直ちに turn/start
-    second = dialogue.turn("again")
+    second = dialogue.turn(_content("again"))
     assert _rpc(second.sends[0])["method"] == "turn/start"
     assert second.close_stdin is False
 
@@ -338,20 +344,20 @@ def test_codex_dialogue_inject_interrupts_then_starts_the_next_turn_as_one_turn(
     報告せず、同じ thread へ本文の turn/start(host から見て手番は 1 つのまま)。"""
     dialogue = CodexDialogue(CodexPlan(cwd="/w"))
     opening = dialogue.opening()
-    assert dialogue.inject("early").accepted is False  # thread も turn も無い
+    assert dialogue.inject(_content("early")).accepted is False  # thread も turn も無い
     init_reply = dialogue.on_line({"id": _rpc(opening[0])["id"], "result": {}})
     thread_start = _rpc(init_reply.sends[1])
     opened = dialogue.on_line({"id": thread_start["id"], "result": {"thread": {"id": "thr-1"}}})
     assert opened.sends == ()
-    assert dialogue.inject("still early").accepted is False  # turn が走っていない
-    turn_start = _rpc(dialogue.turn("work").sends[0])
+    assert dialogue.inject(_content("still early")).accepted is False  # turn が走っていない
+    turn_start = _rpc(dialogue.turn(_content("work")).sends[0])
     dialogue.on_line({"id": turn_start["id"], "result": {"turn": {"id": "turn-1"}}})
-    injected = dialogue.inject("change course")
+    injected = dialogue.inject(_content("change course"))
     assert injected.accepted is True
     assert [_rpc(line)["method"] for line in injected.sends] == ["turn/interrupt"]
     assert _obj(_rpc(injected.sends[0]), "params") == {"threadId": "thr-1", "turnId": "turn-1"}
     # 2 通目の割り込みは止める合図を重ねず本文を継ぎ足す
-    second = dialogue.inject("and this")
+    second = dialogue.inject(_content("and this"))
     assert second.accepted is True
     assert second.sends == ()
     completed = dialogue.on_line(
@@ -373,7 +379,7 @@ def test_codex_dialogue_inject_interrupts_then_starts_the_next_turn_as_one_turn(
         }
     )
     assert mine.ended == TurnEnded(ok=True, detail="completed")
-    assert dialogue.inject("late").accepted is False
+    assert dialogue.inject(_content("late")).accepted is False
 
 
 def test_codex_dialogue_refuses_unsupported_server_request_and_interrupts() -> None:
@@ -385,7 +391,7 @@ def test_codex_dialogue_refuses_unsupported_server_request_and_interrupts() -> N
     dialogue.on_line(
         {"id": _rpc(init_reply.sends[1])["id"], "result": {"thread": {"id": "thr-old"}}}
     )
-    started = dialogue.turn("go")
+    started = dialogue.turn(_content("go"))
     dialogue.on_line({"id": _rpc(started.sends[0])["id"], "result": {"turn": {"id": "t1"}}})
     accepted = dialogue.on_line(
         {
@@ -613,7 +619,7 @@ def test_codex_headless_argv_carries_no_override_the_router_shim_refuses() -> No
     assert thread_params["model"] == "gpt-5"
     # turn/start
     dialogue.on_line({"id": thread_start["id"], "result": {"thread": {"id": "thr-1"}}})
-    turn_start = _rpc(dialogue.turn("hi").sends[0])
+    turn_start = _rpc(dialogue.turn(_content("hi")).sends[0])
     assert turn_start["method"] == "turn/start"
     assert _obj(turn_start, "params")["sandboxPolicy"] == {"type": "dangerFullAccess"}
     # 続きの手番(resume)の thread/resume も同じ方策
@@ -652,6 +658,54 @@ def _wait_until(predicate: Callable[[], bool], timeout: float = 5.0) -> None:
             return
         _pause(0.02)
     raise AssertionError("condition did not hold in time")
+
+
+def test_headless_process_claude_carries_the_image_to_the_stub_cli(tmp_path: Path) -> None:
+    """段 10 lane 10o(agora-redesign #96): 型つきの添付を deliver に渡すと、Dialogue が組んだ image の
+    block が実 process(替え玉 CLI)に届く。替え玉は綴りが実測どおりの時だけ読み、答えに何を見たかを言う
+    (綴りが違えば替え玉が落ちる = 検が赤)。"""
+    registry = HeadlessRegistry()
+    events = str(tmp_path / "s-img.events.jsonl")
+    process = registry.spawn(
+        "s-img",
+        ["claude", "-p", "--input-format", "stream-json", "--session-id", "sid-img"],
+        str(tmp_path),
+        _stub_env(),
+        events,
+        ClaudeDialogue(),
+    )
+    assert process.deliver("この色は", (_png(),)) is True
+    _wait_until(lambda: len(process.peek_records()) >= 5)
+    observed = process.observe()
+    assert observed.ended == (TurnEnded(ok=True, detail="success"),)
+    said = [
+        str(_obj(record, "message").get("content"))
+        for record in observed.records
+        if record.get("type") == "assistant"
+    ]
+    assert any(f"[saw image/png {len(PNG_B64)}b]" in text for text in said), said
+    registry.kill("s-img")
+
+
+def test_headless_process_codex_carries_the_image_to_the_stub_app_server(tmp_path: Path) -> None:
+    """段 10 lane 10o: codex の替え玉(app-server)も data URL の image の項だけを読む。"""
+    registry = HeadlessRegistry()
+    events = str(tmp_path / "s-cimg.events.jsonl")
+    process = registry.spawn(
+        "s-cimg",
+        ["codex", "app-server", "--listen", "stdio://"],
+        str(tmp_path),
+        _stub_env(),
+        events,
+        CodexDialogue(CodexPlan(cwd=str(tmp_path))),
+    )
+    assert process.deliver("この色は", (_png(),)) is True
+    _wait_until(lambda: any(
+        "agentMessage" in json.dumps(record) for record in process.peek_records()
+    ))
+    said = json.dumps(process.peek_records(), ensure_ascii=False)
+    assert f"[saw image/png {len(PNG_B64)}b]" in said, said
+    registry.kill("s-cimg")
 
 
 def test_headless_process_claude_turn_writes_events_and_stays_warm(tmp_path: Path) -> None:
@@ -1555,6 +1609,112 @@ def test_host_headless_run_to_completion_ends_done_and_is_swept(headless_host: H
 def test_host_headless_rejects_tmux_backend_vocabulary_for_unknown_backend() -> None:
     with pytest.raises(ValueError, match=r"tmux\|herdr\|headless"):
         host.parse_args(["--backend", "pane", "serve"])
+
+
+# ---------------------------------------------------------------- 段 10 lane 10o: 添付の綴りの凍結
+
+
+PNG_B64 = "iVBORw0KGgo="
+JPEG_B64 = "/9j/4AAQSkZJRg=="
+
+
+def _png(name: str = "red.png") -> TurnAttachment:
+    return TurnAttachment(mime="image/png", data=PNG_B64, bytes=8, sha256="a" * 64, name=name)
+
+
+def test_claude_turn_and_injection_carry_the_measured_image_block() -> None:
+    """段 10 lane 10o(agora-redesign #96・conformance/attachment-physics.md の実測): claude の
+    添付の綴りは Messages API と同じ image の block で、手番の行にも注入の行にも同じ形で載る。
+    綴りの座は Dialogue 1 点 — agentd は型つきの TurnAttachment を渡すだけ(法 012 R21)。"""
+    dialogue = ClaudeDialogue()
+    turn = dialogue.turn(_content("見て", (_png(), TurnAttachment(mime="image/jpeg", data=JPEG_B64))))
+    record = _record(turn.sends[0])
+    message = record["message"]
+    assert isinstance(message, dict)
+    assert message["content"] == [
+        {"type": "text", "text": "見て"},
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": PNG_B64}},
+        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": JPEG_B64}},
+    ]
+    # 添付の無い手番の綴りは 1 byte も変わらない(content は素の文字列のまま)。
+    plain = _record(dialogue.turn(_content("やあ")).sends[0])
+    plain_message = plain["message"]
+    assert isinstance(plain_message, dict)
+    assert plain_message["content"] == "やあ"
+    # 本文が空で添付だけの郵便も通る(image の block だけ)。
+    only = _record(dialogue.turn(_content("", (_png(),))).sends[0])
+    only_message = only["message"]
+    assert isinstance(only_message, dict)
+    assert only_message["content"] == [
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": PNG_B64}}
+    ]
+    # 注入(走っている手番への割り込み)も同じ形 + 行の名(uuid)。
+    dialogue.on_line(_init())
+    injected = dialogue.inject(_content("これも見て", (_png(),)), "msg-1")
+    assert injected.accepted is True
+    injected_record = _record(injected.sends[0])
+    assert injected_record["uuid"] == "msg-1"
+    injected_message = injected_record["message"]
+    assert isinstance(injected_message, dict)
+    assert injected_message["content"] == [
+        {"type": "text", "text": "これも見て"},
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": PNG_B64}},
+    ]
+
+
+def _opened_codex() -> CodexDialogue:
+    """thread が開いた codex の Dialogue(検の下ごしらえ — 綴りは既存の握手の検と同じ)。"""
+    dialogue = CodexDialogue(CodexPlan(cwd="/w"))
+    opening = dialogue.opening()
+    init_reply = dialogue.on_line({"id": _rpc(opening[0])["id"], "result": {}})
+    thread_start = _rpc(init_reply.sends[1])
+    dialogue.on_line({"id": thread_start["id"], "result": {"thread": {"id": "thr-1"}}})
+    return dialogue
+
+
+def test_codex_turn_carries_the_measured_data_url_item() -> None:
+    """段 10 lane 10o: codex の添付は turn/start の input の data URL の image の項(実測: data URL と
+    localImage は API へ同じ input_image になるので、agentd は一時 file を作らない)。"""
+    dialogue = _opened_codex()
+    started = dialogue.turn(_content("見て", (_png(),)))
+    params = _obj(_rpc(started.sends[0]), "params")
+    assert params["input"] == [
+        {"type": "text", "text": "見て"},
+        {"type": "image", "url": f"data:image/png;base64,{PNG_B64}"},
+    ]
+    # 添付の無い手番の綴りは変わらない(text の項だけ)。
+    plain = _obj(_rpc(dialogue.turn(_content("やあ")).sends[0]), "params")
+    assert plain["input"] == [{"type": "text", "text": "やあ"}]
+    # 本文が空で添付だけの郵便は image の項だけ(空の text の項を作らない)。
+    only = _obj(_rpc(dialogue.turn(_content("", (_png(),))).sends[0]), "params")
+    assert only["input"] == [{"type": "image", "url": f"data:image/png;base64,{PNG_B64}"}]
+
+
+def test_codex_injection_concatenation_keeps_both_texts_and_both_images() -> None:
+    """段 10 lane 10o: turn/start がまだ積まれていない間に来た 2 通目の割り込みは、本文を空行で繋ぎ
+    添付を順に並べる(本文が文字列の連結だけだった頃は 2 通目の画像が落ちる形だった)。"""
+    dialogue = _opened_codex()
+    started = dialogue.turn(_content("work"))
+    turn_start = _rpc(started.sends[0])
+    dialogue.on_line({"id": turn_start["id"], "result": {"turn": {"id": "turn-1"}}})
+    first = dialogue.inject(_content("止めて", (_png("one.png"),)), "msg-1")
+    assert first.accepted is True
+    second = dialogue.inject(
+        _content("これも", (TurnAttachment(mime="image/jpeg", data=JPEG_B64),)), "msg-2"
+    )
+    assert second.accepted is True and second.sends == ()
+    step = dialogue.on_line(
+        {
+            "method": "turn/completed",
+            "params": {"threadId": "thr-1", "turn": {"id": "turn-1", "status": "interrupted"}},
+        }
+    )
+    params = _obj(_rpc(step.sends[0]), "params")
+    assert params["input"] == [
+        {"type": "text", "text": "止めて\n\nこれも"},
+        {"type": "image", "url": f"data:image/png;base64,{PNG_B64}"},
+        {"type": "image", "url": f"data:image/jpeg;base64,{JPEG_B64}"},
+    ]
 
 
 # ---------------------------------------------------------------- 実 binary の smoke(API を撃たない)

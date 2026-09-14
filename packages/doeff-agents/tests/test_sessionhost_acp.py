@@ -1221,6 +1221,7 @@ def test_node_status_names_the_capability_table() -> None:
     (契約 kinds.node.status.capabilities・書き手 agentd・lease と同じ拍)。restartOn = session-affinity-key-of の鍵の欄
     (model・profile)ちょうどで、effort と workDir は受けるが session を作り直さない。"""
     from doeff_agents.sessionhost.acp.effects import (
+        AGENT_ATTACHMENT_CAPABILITY,
         AGENT_CAPABILITIES,
         AGENT_INTERRUPT_CAPABILITY,
         AGENT_SETTINGS,
@@ -1237,11 +1238,14 @@ def test_node_status_names_the_capability_table() -> None:
     for kind, entry in table.items():
         assert isinstance(entry, dict)
         # 段 10 lane 10n: 割り込みの能力(steer-then-stop = 注入 → 期限で停止の合図 / stop = 即座に止めて渡す)
+        # 段 10 lane 10o(agora-redesign #96): 受ける添付の種類の語の列(欠落 = 何も受けない)
         assert entry == {
             "settings": list(AGENT_CAPABILITIES[kind]["settings"]),
             "restartOn": list(AGENT_CAPABILITIES[kind]["restartOn"]),
             "interrupt": AGENT_INTERRUPT_CAPABILITY[kind],
+            "attachments": list(AGENT_ATTACHMENT_CAPABILITY[kind]),
         }
+        assert entry["attachments"] == ["image"]
         settings_of_kind = entry["settings"]
         restart_of_kind = entry["restartOn"]
         assert isinstance(settings_of_kind, list) and isinstance(restart_of_kind, list)

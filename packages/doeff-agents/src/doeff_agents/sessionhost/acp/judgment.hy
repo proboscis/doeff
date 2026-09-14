@@ -42,9 +42,21 @@
 (import json)
 (import re)
 
+(import doeff_agents.sessionhost.attachment [TurnAttachment])
 (import doeff_agents.sessionhost.acp.effects [
+  AGENT-ATTACHMENT-CAPABILITY
   AGENT-CAPABILITIES
   AGENT-INTERRUPT-CAPABILITY
+  ATTACHMENT-BYTES-KEY
+  ATTACHMENT-MIME-KEY
+  ATTACHMENT-NAME-KEY
+  ATTACHMENT-REF-KEY
+  ATTACHMENT-SEQ-KEY
+  ATTACHMENT-SHA256-KEY
+  CONDITION-ATTACHMENT-IGNORED
+  MESSAGE-ATTACHMENTS-KEY
+  NODE-CAPABILITY-ATTACHMENTS-KEY
+  RECORD-ATTACHMENT-EVENT-KIND
   CHARTER-INTERRUPT-ESCALATION-KEY
   CONDITION-INTERRUPT-ESCALATION-UNDECLARED
   AGENT-SETTINGS
@@ -427,7 +439,10 @@
         kind {"settings" (list (get entry "settings"))
               "restartOn" (list (get entry "restartOn"))
               ;; 段 10 lane 10n: 割り込みの能力(閉語彙 effects.InterruptCapability)— 面の文言はこれに従う。
-              NODE-CAPABILITY-INTERRUPT-KEY (get AGENT-INTERRUPT-CAPABILITY kind)}))
+              NODE-CAPABILITY-INTERRUPT-KEY (get AGENT-INTERRUPT-CAPABILITY kind)
+              ;; 段 10 lane 10o(agora-redesign #96): 受ける添付の種類の語の列(閉語彙 effects.AttachmentKind)。
+              ;; 欠落 = 何も受けない — だから名乗る種類は表に在る種類ちょうど(発明しない)。
+              NODE-CAPABILITY-ATTACHMENTS-KEY (list (.get AGENT-ATTACHMENT-CAPABILITY kind #()))}))
 
 
 (defk effort-of-plan [plan]
@@ -1558,6 +1573,63 @@
       None))
 
 
+(defk message-attachments-of [spec]
+  {:pre [(: spec dict)]
+   :post [(: % tuple)]}
+  "段 10 lane 10o(agora-redesign #96・契約 agora-kinds.json message.spec.attachments): 郵便の行が運ぶ添付の
+   見出しの列 → #(#(stream seq) …) の並び(読む順)。形の合わない項は落とす(発明しない)。見出しは本文と
+   同じ stream(郵便の id)を名指すので、ここは stream と作り手の序数だけを取り出す — 中身は記録の service。
+   ⚠ 種類(mime)の判断はここに置かない: 受ける種類は ACP の契約と画面の糊が決め、agentd は運ぶだけ。"
+  (setv found [])
+  (setv headlines (.get spec MESSAGE-ATTACHMENTS-KEY))
+  (when (isinstance headlines list)
+    (for [headline headlines]
+      (when (isinstance headline dict)
+        (setv ref (.get headline ATTACHMENT-REF-KEY))
+        (setv seq (.get headline ATTACHMENT-SEQ-KEY))
+        (when (and (isinstance ref dict)
+                   (isinstance (.get ref "conversation") str)
+                   (isinstance (.get ref "stream") str)
+                   (isinstance seq int)
+                   (not (isinstance seq bool))
+                   (>= seq 0))
+          (.append found #((get ref "conversation") (get ref "stream") seq
+                           (.get headline ATTACHMENT-MIME-KEY)
+                           (.get headline ATTACHMENT-BYTES-KEY)
+                           (.get headline ATTACHMENT-SHA256-KEY)
+                           (.get headline ATTACHMENT-NAME-KEY)))))))
+  (tuple found))
+
+
+(defk attachment-of [events headline]
+  {:pre [(: events tuple) (: headline tuple)]
+   :post [(: % (| TurnAttachment None))]}
+  "見出し 1 つ + その stream の出来事の列 → 器へ渡す型つきの添付。名指した作り手の序数の kind attachment の
+   出来事に中身(data)が在り、見出しの mime / bytes / sha256 と食い違わない時だけ値を返す。無い・欠けた・
+   食い違う時は None(呼び手が条件 AttachmentIgnored に写す — 黙って落とさない・中身を発明しない)。"
+  (setv seq (get headline 2))
+  (setv mime (get headline 3))
+  (setv size (get headline 4))
+  (setv digest (get headline 5))
+  (setv name (get headline 6))
+  (setv found None)
+  (for [event events]
+    (when (and (is found None)
+               (= event.producer-seq seq)
+               (= event.kind RECORD-ATTACHMENT-EVENT-KIND)
+               (isinstance event.data str)
+               (isinstance event.mime str)
+               (or (not (isinstance mime str)) (= event.mime mime))
+               (or (not (isinstance size int)) (isinstance size bool) (= event.bytes size))
+               (or (not (isinstance digest str)) (= event.sha256 digest)))
+      (setv found (TurnAttachment :mime event.mime
+                                  :data event.data
+                                  :bytes event.bytes
+                                  :sha256 event.sha256
+                                  :name (if (isinstance name str) name "")))))
+  found)
+
+
 (defk mail-text-of [events]
   {:pre [(: events tuple)]
    :post [(: % (| str None))]}
@@ -1570,16 +1642,42 @@
   found)
 
 
-(defk message-bodies-of [rows inputs fetched]
-  {:pre [(: rows tuple) (: inputs tuple) (: fetched dict)]
+(defk first-turn-attachments-of [carried]
+  {:pre [(: carried tuple)]
    :post [(: % tuple)]}
-  "inputs の id に対応する Message の本文(spec.body)を inputs の順に。戻り =
-   #(bodies missing-ids)。鍵は契約の identityKey(spec.id)、無ければ行の resourceId。"
+  "段 10 lane 10o(agora-redesign #96): 起こす腕が 1 手番目に畳む郵便の添付 = 畳む郵便すべての添付を順に
+   1 本に並べたもの(本文が 1 つの prompt に畳まれるので、添付も同じ 1 手番に載る)。"
+  (setv flat [])
+  (for [one carried]
+    (for [attachment one]
+      (.append flat attachment)))
+  (tuple flat))
+
+
+(defk launch-charter-with-attachments [charter attachments]
+  {:pre [(: charter dict) (: attachments tuple)]
+   :post [(: % dict)]}
+  "起こす charter に 1 手番目の添付を載せる(添付が無ければ charter は 1 byte も変えない — 欄を作らない)。
+   ⚠ 画像の綴りはここに無い: 器が型つきのまま受け取り、kind ごとの Dialogue が組む(法 012 R21)。"
+  (if attachments
+      (dict charter #** {MESSAGE-ATTACHMENTS-KEY (list attachments)})
+      charter))
+
+
+(defk message-bodies-of [rows inputs fetched carried]
+  {:pre [(: rows tuple) (: inputs tuple) (: fetched dict) (: carried dict)]
+   :post [(: % tuple)]}
+  "inputs の id に対応する Message の本文(spec.body)と添付を inputs の順に。戻り =
+   #(bodies attachments missing-ids)。鍵は契約の identityKey(spec.id)、無ければ行の resourceId。
+   段 10 lane 10o(agora-redesign #96): 本文と添付は**同じ 1 つの述語**でここ 1 点で並べる —
+   bodies の i 番と attachments の i 番は同じ郵便(2 つの関数に分けると並びがずれる)。本文の無い
+   郵便は missing で、その添付も並びに載らない(本文と添付は同じ郵便の同じ 1 手番)。"
   (setv by-id {})
   (for [row rows]
     (setv spec-id (.get row.spec "id"))
     (setv (get by-id (if (isinstance spec-id str) spec-id row.resource-id)) row))
   (setv bodies [])
+  (setv attachments [])
   (setv missing [])
   (for [input-id inputs]
     (setv row (.get by-id input-id))
@@ -1588,9 +1686,12 @@
                      (isinstance (.get row.spec "body") str) (.get row.spec "body")
                      True (.get fetched input-id)))
     (if (isinstance body str)
-        (.append bodies body)
+        (do
+          (.append bodies body)
+          ;; 読めなかった添付は carried に載っていない = 空(呼び手が条件 AttachmentIgnored に写す)。
+          (.append attachments (.get carried input-id #())))
         (.append missing input-id)))
-  #((tuple bodies) (tuple missing)))
+  #((tuple bodies) (tuple attachments) (tuple missing)))
 
 
 ;; ---------------------------------------------------------------------------

@@ -70,7 +70,9 @@
       "public": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py"
       ],
-      "allow": [],
+      "allow": [
+        "sessionhost-attachment"
+      ],
       "typed": true
     },
     {
@@ -86,7 +88,8 @@
         "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.pyi"
       ],
       "allow": [
-        "agentd-effects"
+        "agentd-effects",
+        "sessionhost-attachment"
       ],
       "typed": true
     },
@@ -121,7 +124,8 @@
       ],
       "allow": [
         "agentd-effects",
-        "agentd-judgment"
+        "agentd-judgment",
+        "sessionhost-attachment"
       ],
       "typed": true
     },
@@ -137,7 +141,8 @@
       ],
       "allow": [
         "agentd-effects",
-        "agentd-client"
+        "agentd-client",
+        "sessionhost-attachment"
       ],
       "typed": true
     },
@@ -152,7 +157,8 @@
         "packages/doeff-agents/src/doeff_agents/sessionhost/acp/fake.py"
       ],
       "allow": [
-        "agentd-effects"
+        "agentd-effects",
+        "sessionhost-attachment"
       ],
       "typed": true
     },
@@ -248,7 +254,8 @@
         "agentd-fake",
         "agentd-handlers",
         "agentd-runtime",
-        "agentd-valve"
+        "agentd-valve",
+        "sessionhost-attachment"
       ],
       "typed": true
     },
@@ -312,7 +319,9 @@
       "public": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/headless_protocol.py"
       ],
-      "allow": [],
+      "allow": [
+        "sessionhost-attachment"
+      ],
       "typed": true
     },
     {
@@ -326,7 +335,8 @@
         "packages/doeff-agents/src/doeff_agents/sessionhost/headless_process.py"
       ],
       "allow": [
-        "sessionhost-headless-protocol"
+        "sessionhost-headless-protocol",
+        "sessionhost-attachment"
       ],
       "typed": true
     },
@@ -345,7 +355,8 @@
         "sessionhost-headless",
         "sessionhost-headless-argv",
         "sessionhost-store",
-        "agentd-client"
+        "agentd-client",
+        "sessionhost-attachment"
       ],
       "typed": true
     },
@@ -363,7 +374,8 @@
       ],
       "allow": [
         "sessionhost-store",
-        "sessionhost-headless-process"
+        "sessionhost-headless-process",
+        "sessionhost-attachment"
       ],
       "typed": false
     },
@@ -839,6 +851,19 @@
       ],
       "responsibility": "TypeCheck を果たす 2 つの家(既定 off / 検 on)と composition root",
       "layer": "io",
+      "typed": true
+    },
+    {
+      "name": "sessionhost-attachment",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/attachment.py"
+      ],
+      "responsibility": "手番の入力に付く添付(画像)の型 — 器に依らない値ちょうど(段 10 lane 10o・agora-redesign #96)。mime と base64 の逐語・見出しの検めの材料・器の断りの理由・手番 1 回分の入力(本文 + 添付)。CLI の綴り(claude の block・codex の input の項)は持たない = 綴りの座は sessionhost-headless-protocol の Dialogue。判断も I/O も持たない",
+      "layer": "pure",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/attachment.py"
+      ],
+      "allow": [],
       "typed": true
     }
   ],

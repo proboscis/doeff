@@ -38,11 +38,16 @@
   SessionRefused
   SessionView
   TURN-RECORD-KIND])
-(import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeRecord FakeSessions])
+(import doeff_agents.sessionhost.attachment [TurnAttachment])
+(import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeRecord FakeSessions record-body-bytes record-body-sha256])
 (import doeff_agents.sessionhost.acp.judgment [
   record-history-satisfied
   record-page-advances
+  attachment-of
+  first-turn-attachments-of
+  launch-charter-with-attachments
   mail-text-of
+  message-attachments-of
   message-bodies-of
   message-body-ref-of
   rehydrate-history-of
@@ -75,7 +80,9 @@
                :text (.get fields "text") :summary (.get fields "summary") :input (.get fields "input")
                :output (.get fields "output") :tool-name (.get fields "toolName") :tool-use-id (.get fields "toolUseId")
                :model (.get fields "model") :is-error (= (.get fields "isError") True)
-               :truncated (= (.get fields "truncated") True)))
+               :truncated (= (.get fields "truncated") True)
+               ;; 段 10 lane 10o(agora-redesign #96): 添付の出来事(kind attachment)の 3 欄。
+               :mime (.get fields "mime") :name (.get fields "name") :data (.get fields "data")))
 
 
 (defn #^ AcpRow record-row [#^ str job-id #^ str conversation #^ list entries #^ int at]
@@ -658,8 +665,11 @@
   (assert (= (run (mail-text-of #((event-of 1 "m-b" 1 AT "message" {"text" "長い本文"})))) "長い本文"))
   (assert (is (run (mail-text-of #((event-of 1 "m-b" 1 AT "text" {"text" "手番の本文"})))) None))
   (setv inline (message-row "m-1" CONVERSATION "operator" "短い本文" AT))
-  (assert (= (run (message-bodies-of #(inline ref-row) #("m-1" "m-b") {"m-b" "長い本文"})) #(#("短い本文" "長い本文") #())))
-  (assert (= (run (message-bodies-of #(inline ref-row) #("m-1" "m-b") {})) #(#("短い本文") #("m-b"))))
+  ;; 段 10 lane 10o: 戻りは #(bodies attachments missing)— 本文と添付は同じ 1 つの述語で並ぶ。
+  (assert (= (run (message-bodies-of #(inline ref-row) #("m-1" "m-b") {"m-b" "長い本文"} {}))
+             #(#("短い本文" "長い本文") #(#() #()) #())))
+  (assert (= (run (message-bodies-of #(inline ref-row) #("m-1" "m-b") {} {}))
+             #(#("短い本文") #(#()) #("m-b"))))
   (setv fold (run (rehydrate-history-of CONVERSATION #(ref-row) (RecordedTurns :events #() :complete True) #() 65536 {"m-b" "長い本文"})))
   (assert (in "長い本文" fold.text) fold.text))
 
@@ -675,3 +685,116 @@
   (setv carried (+ (lfor launch world.sessions.launches (str (.get launch "prompt" "")))
                    (lfor send world.sessions.sends (str (get send 1)))))
   (assert (any (gfor text carried (in "長い本文の依頼" text))) carried))
+
+
+;; ---------------------------------------------------------------------------
+;; 段 10 lane 10o(agora-redesign #96): 郵便の添付は見出し + 記録の service の中身
+;; ---------------------------------------------------------------------------
+
+(setv PNG-B64 "iVBORw0KGgo=")
+
+
+(defn #^ AcpRow attached-message-row [#^ str message-id #^ str to #^ str sender #^ str body
+                                      #^ str stream-conversation #^ int at #^ list headlines]
+  "契約 message の 1 通 — 本文は行に、添付は見出しの列(中身は記録の service)。"
+  (AcpRow :namespace AGORA-KINDS-NAMESPACE :key f"{AGORA-KINDS-NAMESPACE}:{MESSAGE-KIND}:{message-id}"
+          :kind MESSAGE-KIND :resource-id message-id :version "v1" :generation 1 :created-at-ms at
+          :labels {} :payload {}
+          :spec {"id" message-id "to" to "from" sender "kind" "ask" "items" [] "refs" []
+                 "body" body "attachments" headlines
+                 "sha256" (* "0" 64) "at" at}
+          :status {"state" "delivered"}))
+
+
+(defn #^ dict headline-of [#^ str conversation #^ str stream #^ int seq #^ str mime #^ str digest
+                           #^ (| str None) [name None] #^ int [size 8]]
+  (setv one {"ref" {"conversation" conversation "stream" stream} "seq" seq "mime" mime
+             "bytes" size "sha256" digest})
+  (when (is-not name None)
+    (setv (get one "name") name))
+  one)
+
+
+(deftest test-attachment-headlines-are-read-and-only-the-matching-event-becomes-a-typed-value
+  ;; 判断(純関数): 見出しの形 → #(conversation stream seq mime bytes sha256 name)・出来事 → 型つきの値。
+  ;; 見出しと食い違う出来事(mime 違い・sha256 違い・中身なし)は値にしない(呼び手が AttachmentIgnored)。
+  ;; event-of が置く同一性の綴り(sha256 "0" / bytes 8)に見出しを合わせる。
+  (setv digest "0")
+  (setv row (attached-message-row "m-i" CONVERSATION "operator" "見て" OTHER AT
+                                  [(headline-of OTHER "m-i" 1 "image/png" digest "red.png")]))
+  (setv headlines (run (message-attachments-of row.spec)))
+  (assert (= (len headlines) 1) headlines)
+  (assert (= (cut (get headlines 0) 0 4) #(OTHER "m-i" 1 "image/png")) headlines)
+  ;; 形の外の項は落とす(ref が無い・seq が負・seq が bool)。
+  (setv broken (attached-message-row "m-x" CONVERSATION "operator" "見て" OTHER AT
+                                     [{"seq" 1 "mime" "image/png"}
+                                      (headline-of OTHER "m-x" -1 "image/png" digest)
+                                      "画像"]))
+  (assert (= (run (message-attachments-of broken.spec)) #()) "形の外は落とす")
+  ;; 見出しと合う出来事だけが型つきの値になる。
+  (setv good (event-of 2 "m-i" 1 AT "attachment"
+                       {"mime" "image/png" "data" PNG-B64 "name" "red.png" "bytes" 8}))
+  (setv carried (run (attachment-of #(good) (get headlines 0))))
+  (assert (isinstance carried TurnAttachment) carried)
+  (assert (= #(carried.mime carried.data carried.name) #("image/png" PNG-B64 "red.png")) carried)
+  ;; sha256 が食い違えば値にしない(中身を発明しない)。
+  (setv forged (headline-of OTHER "m-i" 1 "image/png" (* "b" 64) "red.png"))
+  (setv forged-headlines (run (message-attachments-of
+                                (. (attached-message-row "m-i" CONVERSATION "operator" "見て" OTHER AT [forged]) spec))))
+  (assert (is (run (attachment-of #(good) (get forged-headlines 0))) None) "見出しと食い違う中身は運ばない")
+  ;; 出来事が無い(取り寄せられなかった)拍も None。
+  (assert (is (run (attachment-of #() (get headlines 0))) None))
+  ;; 起こす腕は畳んだ郵便の添付を 1 本に並べ、charter に載せる(添付が無ければ charter を変えない)。
+  (assert (= (run (first-turn-attachments-of #(#(carried) #() #(carried)))) #(carried carried)))
+  (assert (= (run (launch-charter-with-attachments {"prompt" "x"} #())) {"prompt" "x"}))
+  (assert (= (run (launch-charter-with-attachments {"prompt" "x"} #(carried)))
+             {"prompt" "x" "attachments" [carried]})))
+
+
+(deftest test-the-first-turn-carries-the-attachment-to-the-substrate-as-a-typed-value
+  ;; agentd の 1 点(mail-bodies-by-ref): 添付の見出しを持つ郵便は本文と同じ 1 回の stream の読みで中身も拾い、
+  ;; 器へは型つきのまま渡る(agentd は CLI の綴りを組まない)。
+  (setv world (World "tmux" :record True))
+  (setv digest (* "a" 64))
+  (setv (get world.record-service.stored #(OTHER "m-i" 1))
+        {"producerSeq" 1 "at" AT "kind" "attachment" "mime" "image/png" "data" PNG-B64 "name" "red.png"})
+  (setv stored-digest (record-body-sha256 {"data" PNG-B64}))
+  (setv stored-bytes (len (record-body-bytes {"data" PNG-B64})))
+  (.put-row world.acp (attached-message-row "m-i" CONVERSATION "operator" "見て" OTHER (- AT 500)
+                                            [(headline-of OTHER "m-i" 1 "image/png" stored-digest "red.png"
+                                                          stored-bytes)]))
+  (.put-row world.acp (bound-row "j-i" ["m-i"] "acct" None))
+  (.tick world 0)
+  (assert (in #(OTHER "m-i") world.record-service.stream-reads) world.local.logs)
+  (setv handed world.sessions.sent-attachments)
+  (assert (= (len handed) 1) handed)
+  (setv carried (get (get handed 0) 1))
+  (assert (= (len carried) 1) carried)
+  (assert (isinstance (get carried 0) TurnAttachment) carried)
+  (assert (= #((. (get carried 0) mime) (. (get carried 0) data) (. (get carried 0) name))
+             #("image/png" PNG-B64 "red.png")) carried))
+
+
+(deftest test-a-substrate-that-refuses-attachments-gets-the-condition-not-silence
+  ;; 器が添付を落とした拍は条件 AttachmentIgnored が手番に付く(本文は届く・黙って落とさない)。
+  (setv world (World "tmux" :record True))
+  (setv world.sessions.attachments-ignored "this substrate cannot carry attachments")
+  (setv (get world.record-service.stored #(OTHER "m-j" 1))
+        {"producerSeq" 1 "at" AT "kind" "attachment" "mime" "image/png" "data" PNG-B64})
+  (setv stored-digest (record-body-sha256 {"data" PNG-B64}))
+  (setv stored-bytes (len (record-body-bytes {"data" PNG-B64})))
+  (.put-row world.acp (attached-message-row "m-j" CONVERSATION "operator" "見て" OTHER (- AT 500)
+                                            [(headline-of OTHER "m-j" 1 "image/png" stored-digest None
+                                                          stored-bytes)]))
+  (.put-row world.acp (bound-row "j-j" ["m-j"] "acct" None))
+  (.tick world 0)
+  ;; 条件は手番の途中の事実として in-flight に積まれ、手番の終わりに Ended へ乗る(InputUnavailable と同じ路)。
+  (setv in-flight (lfor job world.state.jobs :if (= job.job-id "j-j") job))
+  (assert (= (len in-flight) 1) world.state.jobs)
+  (assert (in "AttachmentIgnored"
+              (lfor one (. (get in-flight 0) pending-conditions) (.get one "type")))
+          #((. (get in-flight 0) pending-conditions) world.local.logs))
+  ;; 本文そのものは器へ届いている。
+  (setv said (+ (lfor launch world.sessions.launches (str (.get launch "prompt" "")))
+                (lfor send world.sessions.sends (str (get send 1)))))
+  (assert (any (gfor text said (in "見て" text))) said))

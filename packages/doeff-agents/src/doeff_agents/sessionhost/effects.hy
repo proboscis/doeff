@@ -776,7 +776,9 @@
   "次の手番の本文を process の stdin へ(綴りは Dialogue.turn — claude は stream-json の
    user の行・codex は turn/start)。戻り値: bool(process が生きていて書けたか)。"
   #^ str session-name
-  #^ str text)
+  #^ str text
+  ;; 段 10 lane 10o(agora-redesign #96): 手番の添付(型つき — 綴りは Dialogue が組む)。
+  #^ tuple attachments)
 
 (defclass [(dataclass :frozen True :kw-only True)] HeadlessInject [EffectBase]
   "割り込みの本文を走っている手番へ(段 8 lane 4x・綴りは Dialogue.inject — claude は user の
@@ -786,7 +788,9 @@
    戻り値: bool(走っている手番が在って器が引き受けたか — 偽なら呼び手が queued へ倒す)。"
   #^ str session-name
   #^ str text
-  #^ str ref)
+  #^ str ref
+  ;; 段 10 lane 10o: 割り込みの添付(型つき — 綴りは Dialogue が組む)。
+  #^ tuple attachments)
 
 (defclass [(dataclass :frozen True :kw-only True)] HeadlessEscalate [EffectBase]
   "停止の合図(段 10 lane 10n・判断は Dialogue.escalate): 走っている手番に model がまだ読んでいない
@@ -1083,11 +1087,11 @@
   (HeadlessSpawn :session-name session-name :work-dir work-dir :env env :argv argv
                  :events-path events-path :dialogue dialogue))
 
-(deff headless-deliver [session-name text]
-  {:pre [(: session-name str) (: text str)]
+(deff headless-deliver [session-name text [attachments #()]]
+  {:pre [(: session-name str) (: text str) (: attachments tuple)]
    :post [(: % HeadlessDeliver)]}
-  "HeadlessDeliver を構築する。"
-  (HeadlessDeliver :session-name session-name :text text))
+  "HeadlessDeliver を構築する(添付は段 10 lane 10o — 型つきのまま器へ)。"
+  (HeadlessDeliver :session-name session-name :text text :attachments attachments))
 
 (deff headless-poll [session-name]
   {:pre [(: session-name str)]
@@ -1101,11 +1105,11 @@
   "HeadlessInterrupt を構築する。"
   (HeadlessInterrupt :session-name session-name))
 
-(deff headless-inject [session-name text ref]
-  {:pre [(: session-name str) (: text str) (: ref str)]
+(deff headless-inject [session-name text ref [attachments #()]]
+  {:pre [(: session-name str) (: text str) (: ref str) (: attachments tuple)]
    :post [(: % HeadlessInject)]}
-  "HeadlessInject を構築する(段 8 lane 4x・ref は段 10 lane 10n)。"
-  (HeadlessInject :session-name session-name :text text :ref ref))
+  "HeadlessInject を構築する(段 8 lane 4x・ref は段 10 lane 10n・添付は段 10 lane 10o)。"
+  (HeadlessInject :session-name session-name :text text :ref ref :attachments attachments))
 
 (deff headless-escalate [session-name]
   {:pre [(: session-name str)]

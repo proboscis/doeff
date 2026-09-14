@@ -11,6 +11,7 @@ import json
 from dataclasses import dataclass, replace
 
 from doeff import EffectBase, K, Pass, Resume
+from doeff_agents.sessionhost.attachment import TurnAttachment
 from doeff_agents.sessionhost.acp.effects import (
     JSON,
     MESSAGE_KIND,
@@ -358,6 +359,10 @@ class FakeSessions:
         self.sends: list[tuple[str, str, bool]] = []
         #: 段 10 lane 10d 便 2 追補 2: 送りが運んだ手番ごとの env — (session_id, env)の順。
         self.send_envs: list[tuple[str, JSONObject]] = []
+        #: 段 10 lane 10o(agora-redesign #96): 器へ渡した型つきの添付(session_id と並び)。
+        self.sent_attachments: list[tuple[str, tuple[TurnAttachment, ...]]] = []
+        #: 器が添付を落とす時の理由(空 = 受ける — 検で tui の器を真似る)。
+        self.attachments_ignored: str = ""
         #: session.cleanup を受けた session の順。
         self.cleanups: list[str] = []
         #: session.interrupt を受けた session の順(headless = SIGINT / turn/interrupt・tmux = Escape)。
@@ -427,17 +432,20 @@ class FakeSessions:
             # 追補 2(実弾 #92): 手番ごとの env は「その送りが運ぶ値」— 検はこの列で
             # 「起こし直しがこの手番の札で起きる」ことを読む。
             self.send_envs.append((effect.session_id, dict(effect.session_env)))
+            # 段 10 lane 10o(agora-redesign #96): 型つきの添付を器へ渡した記録(綴りは器の Dialogue)。
+            self.sent_attachments.append((effect.session_id, effect.attachments))
             # host と同じ意味論(headless.hy headless-send-program): 降りた process への次の手番は
             # --resume で起こし直す = 送った session の backend は生きる。
             if effect.session_id in self.views:
                 self.views[effect.session_id] = replace(
                     self.views[effect.session_id], backend_alive=True
                 )
-            return None
+            return self.attachments_ignored or None
         if isinstance(effect, SessionInterject):
             if self.refuse_interject is not None:
                 return self.refuse_interject
             self.interjections.append((effect.session_id, effect.text))
+            self.sent_attachments.append((effect.session_id, effect.attachments))
             self.interjection_refs.append((effect.session_id, effect.ref))
             return Interjected()
         if isinstance(effect, SessionEscalate):
@@ -782,6 +790,9 @@ class FakeRecord:
         model = stored.get("model")
         kind = stored.get("kind")
         at = stored.get("at")
+        mime = stored.get("mime")
+        name = stored.get("name")
+        data = stored.get("data")
         return RecordEvent(
             record_seq=record_seq,
             stream_id=key[1],
@@ -795,6 +806,10 @@ class FakeRecord:
             summary=summary if isinstance(summary, str) else None,
             input=stored.get("input"),
             output=stored.get("output"),
+            # 段 10 lane 10o(agora-redesign #96): 添付の出来事(kind attachment)の 3 欄を素通しする。
+            mime=mime if isinstance(mime, str) else None,
+            name=name if isinstance(name, str) else None,
+            data=data if isinstance(data, str) else None,
             tool_name=tool_name if isinstance(tool_name, str) else None,
             tool_use_id=tool_use_id if isinstance(tool_use_id, str) else None,
             model=model if isinstance(model, str) else None,
@@ -822,10 +837,11 @@ def _producer_seq(event: JSONObject) -> int:
 
 
 def record_body_bytes(event: JSONObject) -> bytes:
-    """本文の同一性の綴り(契約: text / summary / input / output の在る欄だけ・None は無いのと同じ・compact JSON・鍵は sort・
-    UTF-8)— agora-controllers services/record/judgment.hy body-bytes-of と同じ計算。"""
+    """本文の同一性の綴り(契約: text / summary / input / output / data の在る欄だけ・None は無いのと同じ・compact JSON・
+    鍵は sort・UTF-8)— agora-controllers services/record/vocabulary.BODY_FIELDS と judgment.hy body-bytes-of の写し。
+    段 10 lane 10o(agora-redesign #96): 添付の画像の base64(data)も本文の欄(見出しの mime / name は本文ではない)。"""
     body: JSONObject = {}
-    for name in ("text", "summary", "input", "output"):
+    for name in ("text", "summary", "input", "output", "data"):
         field = event.get(name)
         if field is not None:
             body[name] = field

@@ -53,6 +53,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
+from doeff_agents.sessionhost.attachment import AttachmentRefused, TurnAttachment, TurnContent
+
 JSON: TypeAlias = "dict[str, JSON] | list[JSON] | str | int | float | bool | None"
 JSONObject: TypeAlias = "dict[str, JSON]"
 
@@ -81,10 +83,13 @@ class Step:
 
 @dataclass(frozen=True)
 class TurnInput:
-    """次の手番の本文を stdin へどう書くか。close_stdin = 書いた後に EOF(claude の 1 手番 1 process)。"""
+    """次の手番の本文を stdin へどう書くか。close_stdin = 書いた後に EOF(claude の 1 手番 1 process)。
+    ``refused`` = 受けなかった添付の断り(段 10 lane 10o — 本文は送る・添付だけ落とす。呼び手が
+    条件 AttachmentIgnored に写す)。"""
 
     sends: tuple[str, ...]
     close_stdin: bool
+    refused: AttachmentRefused | None = None
 
 
 @dataclass(frozen=True)
@@ -107,6 +112,8 @@ class Injection:
     accepted: bool = False
     sends: tuple[str, ...] = ()
     ref: str = ""
+    #: 段 10 lane 10o: 受けなかった添付の断り(本文は届く・添付だけ落とす)。
+    refused: AttachmentRefused | None = None
 
 
 @dataclass(frozen=True)
@@ -138,10 +145,29 @@ def _text_at(value: JSON, key: str) -> str:
 # ------------------------------------------------------------------ claude(stream-json の入出力・温かい process)
 
 
-def claude_user_line(text: str, ref: str = "") -> str:
+def claude_image_block(attachment: TurnAttachment) -> JSONObject:
+    """添付 1 つ = Messages API と同じ image の block(実測 2026-09-14・conformance/attachment-physics.md)。
+    ⚠ この綴り(``image`` / ``source`` / ``media_type`` / ``base64``)の座はここ 1 点 — agentd は型つきの
+    ``TurnAttachment`` を渡すだけ(法 012 R21・段 10 lane 10o の追補)。"""
+    return {
+        "type": "image",
+        "source": {"type": "base64", "media_type": attachment.mime, "data": attachment.data},
+    }
+
+
+def claude_user_line(
+    text: str, ref: str = "", attachments: tuple[TurnAttachment, ...] = ()
+) -> str:
     """``--input-format stream-json`` の stdin の 1 行 = user の message(実測の綴り)。``ref`` を
-    付けると最上位の ``uuid`` に写す(CLI が command_lifecycle でこの綴りを名乗り返す — 段 10 lane 10n)。"""
-    record: JSONObject = {"type": "user", "message": {"role": "user", "content": text}}
+    付けると最上位の ``uuid`` に写す(CLI が command_lifecycle でこの綴りを名乗り返す — 段 10 lane 10n)。
+    ``attachments`` が在れば content を block の列にする(text → image の順・段 10 lane 10o の実測: 順は
+    どちらでも model が読む)。添付が無い手番の綴りは 1 byte も変えない(content は素の文字列のまま)。"""
+    content: JSON = text
+    if attachments:
+        blocks: list[JSON] = [{"type": "text", "text": text}] if text else []
+        blocks.extend(claude_image_block(attachment) for attachment in attachments)
+        content = blocks
+    record: JSONObject = {"type": "user", "message": {"role": "user", "content": content}}
     if ref:
         record["uuid"] = ref
     return _dumps(record)
@@ -213,25 +239,36 @@ class ClaudeDialogue:
     def opening(self) -> tuple[str, ...]:
         return ()
 
-    def turn(self, prompt: str) -> TurnInput:
+    def turn(self, content: TurnContent) -> TurnInput:
+        """手番の本文(と添付)を stdin へ。添付は同じ user の行の content の block に載る
+        (段 10 lane 10o の実測 — 温かい process の 2 手番目も同じ形)。"""
         self.in_flight = True
         self.cli_turn_open = True
-        return TurnInput(sends=(claude_user_line(prompt),), close_stdin=False)
+        return TurnInput(
+            sends=(claude_user_line(content.text, attachments=content.attachments),),
+            close_stdin=False,
+        )
 
     def queued_injections(self) -> tuple[str, ...]:
         """まだ model に読まれていない(queued の)注入の ref(注入した順)。"""
         return tuple(ref for ref, state in self.injections.items() if state == "queued")
 
-    def inject(self, text: str, ref: str = "") -> Injection:
+    def inject(self, content: TurnContent, ref: str = "") -> Injection:
         """走っている手番へ本文を注入する: 同じ user の行(CLI が次の tool の境界で読む)。手番が
         走っていなければ書かない(書くと新しい手番になる — 誰の job でもない手番を起こさない)。
-        ``ref`` は行の uuid(無ければ鋳造)— CLI の command_lifecycle がこの綴りで運命を名乗る。"""
+        ``ref`` は行の uuid(無ければ鋳造)— CLI の command_lifecycle がこの綴りで運命を名乗る。
+        添付は手番の本文と同じ block の列で運べる(段 10 lane 10o の実測: 走っている手番の途中に
+        text + image を書くと、次の道具の境界で model が見た)。"""
         if not self.in_flight:
             return Injection()
         name = ref or str(uuid.uuid4())
         if self.lifecycle:
             self.injections[name] = "queued"
-        return Injection(accepted=True, sends=(claude_user_line(text, name),), ref=name)
+        return Injection(
+            accepted=True,
+            sends=(claude_user_line(content.text, name, content.attachments),),
+            ref=name,
+        )
 
     def escalate(self) -> Escalation:
         """停止の合図(段 10 lane 10n): 走っている手番に queued のままの注入が在り、まだ合図を出して
@@ -369,6 +406,20 @@ THREAD_FULL_ACCESS: JSONObject = {"approvalPolicy": "never", "sandbox": "danger-
 TURN_FULL_ACCESS: JSONObject = {"sandboxPolicy": {"type": "dangerFullAccess"}}
 
 
+def codex_input_items(content: TurnContent) -> list[JSON]:
+    """``turn/start`` の ``input`` の項の列(実測 2026-09-14・conformance/attachment-physics.md)。
+    添付は data URL の ``image`` の項にする — 実測で ``localImage``(一時 file の path)と API への
+    入力が同じ(同じ sha256 の input_image)だったので、agentd は file を作らない。
+    ⚠ この綴り(``image`` / ``url`` / ``data:``)の座はここ 1 点 — agentd は型つきの ``TurnAttachment``
+    を渡すだけ(法 012 R21・段 10 lane 10o の追補)。"""
+    items: list[JSON] = []
+    if content.text or not content.attachments:
+        items.append({"type": "text", "text": content.text})
+    for attachment in content.attachments:
+        items.append({"type": "image", "url": f"data:{attachment.mime};base64,{attachment.data}"})
+    return items
+
+
 @dataclass(frozen=True)
 class CodexPlan:
     """thread を開く時の値(cwd・model・続きの thread の id)。effort は手番ごと。"""
@@ -384,10 +435,10 @@ class _CodexState:
     thread_id: str = ""
     turn_id: str = ""
     thread_open: bool = False
-    pending_prompt: str | None = None
+    pending_prompt: TurnContent | None = None
     #: 段 8 lane 4x: 割り込みの本文 — turn/interrupt を送った後、interrupted の turn/completed で
     #: 同じ thread へ turn/start する本文(host から見て手番は 1 つのまま)。
-    pending_injection: str | None = None
+    pending_injection: TurnContent | None = None
     failure: str = ""
     interrupt_sent: bool = False
     counter: int = 0
@@ -440,10 +491,10 @@ class CodexDialogue:
             params["model"] = self.plan.model
         return params
 
-    def _turn_start(self, prompt: str) -> str:
+    def _turn_start(self, content: TurnContent) -> str:
         params: JSONObject = {
             "threadId": self.state.thread_id,
-            "input": [{"type": "text", "text": prompt}],
+            "input": codex_input_items(content),
         }
         params.update(TURN_FULL_ACCESS)
         if self.plan.effort:
@@ -465,10 +516,11 @@ class CodexDialogue:
     def opening(self) -> tuple[str, ...]:
         return (self._request(REQ_INITIALIZE, {"clientInfo": dict(CLIENT_INFO)}),)
 
-    def turn(self, prompt: str) -> TurnInput:
+    def turn(self, content: TurnContent) -> TurnInput:
+        """手番の本文(と添付)。thread がまだ開いていなければ、開いた拍に積む(本文も添付も持ち越す)。"""
         if self.state.thread_open:
-            return TurnInput(sends=(self._turn_start(prompt),), close_stdin=False)
-        self.state.pending_prompt = prompt
+            return TurnInput(sends=(self._turn_start(content),), close_stdin=False)
+        self.state.pending_prompt = content
         return TurnInput(sends=(), close_stdin=False)
 
     def _turn_interrupt(self) -> str:
@@ -483,18 +535,19 @@ class CodexDialogue:
             return Interrupt(sends=(self._turn_interrupt(),))
         return Interrupt()
 
-    def inject(self, text: str, ref: str = "") -> Injection:
+    def inject(self, content: TurnContent, ref: str = "") -> Injection:
         """割り込みの本文(段 8 lane 4x): 走っている turn を turn/interrupt で止め、その完了の
         通知(interrupted)で同じ thread へ本文の turn/start を積む — host から見て手番は
         1 つのまま。走っている turn が無ければ受け取らない(sends が空)。``ref`` は運ぶ欄が無い
-        (app-server の turn/start に名は無い)— 注入の段が無いので読んだ証拠は次の turn/started。"""
+        (app-server の turn/start に名は無い)— 注入の段が無いので読んだ証拠は次の turn/started。
+        添付は turn/start の input の項として同じ turn に載る(段 10 lane 10o)。"""
         if not (self.state.turn_id and self.state.thread_id):
             return Injection()
         if self.state.pending_injection is not None:
-            # 前の割り込みの turn/start がまだ積まれていない: 本文を継ぎ足す(順は保つ)。
-            self.state.pending_injection = self.state.pending_injection + "\n\n" + text
+            # 前の割り込みの turn/start がまだ積まれていない: 本文と添付を継ぎ足す(順は保つ)。
+            self.state.pending_injection = self.state.pending_injection.then(content)
             return Injection(accepted=True, ref=ref)
-        self.state.pending_injection = text
+        self.state.pending_injection = content
         if self.state.interrupt_sent:
             return Injection(accepted=True, ref=ref)
         self.state.interrupt_sent = True
@@ -567,9 +620,9 @@ class CodexDialogue:
         self.conversation = {"session_id": self.state.thread_id}
         sends: tuple[str, ...] = ()
         if self.state.pending_prompt is not None:
-            prompt = self.state.pending_prompt
+            opening_turn = self.state.pending_prompt
             self.state.pending_prompt = None
-            sends = (self._turn_start(prompt),)
+            sends = (self._turn_start(opening_turn),)
         return Step(sends=sends, conversation=self.conversation)
 
     def _on_notification(self, method: str, params: JSONObject) -> Step:
