@@ -642,10 +642,12 @@ def test_deltas_of_claude_folds_blocks_and_counts_usage_once_per_message() -> No
         "model": "claude-opus-5",
     }
     assert batch.next_seq == 14
+    # 段 10 lane 10j(agora-redesign #87 の裁定 問 7): 実況の道具の呼び出しは入力の object をそのまま運ぶ(契約 turn-delta.json)
     assert batch.frames[1]["payload"] == {
         "toolUseId": "t1",
         "name": "Bash",
         "summary": '{"command": "ls"}',
+        "input": {"command": "ls"},
     }
     assert batch.frames[3]["payload"] == {
         "toolUseId": "t1",
