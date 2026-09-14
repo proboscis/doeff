@@ -56,6 +56,40 @@ INTERRUPT = threading.Event()
 TURN_COUNTER = [0]
 
 
+DATA_URL_PREFIX = "data:"
+
+
+def _turn_input_text(items):
+    """段 10 lane 10o(実測 2026-09-14・conformance/attachment-physics.md): turn/start の input の項の綴りを凍結する。
+
+    受けるのは ``{"type":"text","text":…}`` と ``{"type":"image","url":"data:<mime>;base64,<data>"}`` ちょうど
+    (実測: data URL と localImage は API へ同じ input_image になる)。綴りの違う項は **RuntimeError** で落とす:
+    実物は黙って劣化する(turn は completed のまま画像を読まない)ので、替え玉が誤綴りを検で赤にする。
+    戻り = 本文 + 見た画像の印(検が「model が画像を受け取った」ことを読める形)。
+    """
+    if not isinstance(items, list):
+        return ""
+    said = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise RuntimeError(f"turn input item must be an object: {item!r}")
+        kind = item.get("type")
+        if kind == "text":
+            said.append(str(item.get("text", "")))
+            continue
+        if kind != "image":
+            raise RuntimeError(f"unknown turn input item type: {kind!r}")
+        url = item.get("url")
+        if not (isinstance(url, str) and url.startswith(DATA_URL_PREFIX) and ";base64," in url):
+            raise RuntimeError(f"image item needs a base64 data URL in `url`: {item!r}")
+        mime = url[len(DATA_URL_PREFIX):url.index(";base64,")]
+        data = url[url.index(";base64,") + len(";base64,"):]
+        if not (mime and data):
+            raise RuntimeError(f"image data URL needs a mime and a payload: {url!r}")
+        said.append(f"[saw {mime} {len(data)}b]")
+    return " ".join(part for part in said if part)
+
+
 def run_turn(thread_id, turn_id, text):
     _emit({"jsonrpc": "2.0", "method": "turn/started",
            "params": {"threadId": thread_id, "turn": {"id": turn_id}}})
@@ -128,7 +162,7 @@ def main():
             turn_id = f"turn-{TURN_COUNTER[0]}"
             INTERRUPT.clear()
             _emit({"jsonrpc": "2.0", "id": rid, "result": {"turn": {"id": turn_id}}})
-            text = "echo: " + str((params.get("input") or [{}])[0].get("text", ""))
+            text = "echo: " + _turn_input_text(params.get("input"))
             threading.Thread(target=run_turn, args=(thread_id, turn_id, text),
                              daemon=True).start()
         elif method == "turn/interrupt":

@@ -68,9 +68,9 @@
                           (headless-spawn-env env) events-path dialogue))
     (resume process.pid))
 
-  (HeadlessDeliver [session-name text]
+  (HeadlessDeliver [session-name text attachments]
     (setv process (.get registry session-name))
-    (resume (if (is process None) False (.deliver process text))))
+    (resume (if (is process None) False (.deliver process text attachments))))
 
   (HeadlessPoll [session-name]
     (setv process (.get registry session-name))
@@ -80,9 +80,9 @@
     (setv process (.get registry session-name))
     (resume (if (is process None) False (.interrupt process))))
 
-  (HeadlessInject [session-name text ref]
+  (HeadlessInject [session-name text ref attachments]
     (setv process (.get registry session-name))
-    (resume (if (is process None) False (.inject process text ref))))
+    (resume (if (is process None) False (.inject process text ref attachments))))
 
   (HeadlessEscalate [session-name]
     (setv process (.get registry session-name))

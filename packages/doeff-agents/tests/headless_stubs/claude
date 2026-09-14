@@ -82,6 +82,35 @@ def _user_text(record):
     return str(content or "")
 
 
+def _user_images(record):
+    """段 10 lane 10o(実測 2026-09-14・conformance/attachment-physics.md): 添付の block の綴りを凍結する。
+
+    受けるのは Messages API と同じ形ちょうど —
+    ``{"type":"image","source":{"type":"base64","media_type":<mime>,"data":<base64>}}``。
+    content が素の文字列なら添付なし。綴りの違う block(url の形・media-type の綴り違い・source が
+    object でない)は **RuntimeError** で落とす: 実物は黙って劣化する(結果が success のまま画像を読まない)ので、
+    替え玉は誤綴りを検で赤にする役を持つ。戻り = [(media_type, data), …]。
+    """
+    content = record.get("message", {}).get("content")
+    if not isinstance(content, list):
+        return []
+    images = []
+    for part in content:
+        if not isinstance(part, dict) or part.get("type") != "image":
+            continue
+        source = part.get("source")
+        if not isinstance(source, dict):
+            raise RuntimeError(f"image block without an object `source`: {part!r}")
+        if source.get("type") != "base64":
+            raise RuntimeError(f"image source type must be 'base64': {source!r}")
+        media_type = source.get("media_type")
+        data = source.get("data")
+        if not (isinstance(media_type, str) and media_type and isinstance(data, str) and data):
+            raise RuntimeError(f"image source needs `media_type` and `data`: {source!r}")
+        images.append((media_type, data))
+    return images
+
+
 def _text_blocks(sid, text):
     for piece in (text[:5], text[5:]):
         _emit({"type": "stream_event",
@@ -127,7 +156,12 @@ def _turn(sid, prompt, uuid, resumed, carried=False):
             if record is None or record == "":
                 break
             if record.get("type") == "user":
-                queued.append((_user_text(record), record.get("uuid")))
+                injected_text = _user_text(record)
+                injected_seen = _user_images(record)
+                if injected_seen:
+                    injected_text = injected_text + "".join(
+                        f" [saw {mime} {len(data)}b]" for mime, data in injected_seen)
+                queued.append((injected_text, record.get("uuid")))
                 _lifecycle(sid, record[
                     "uuid"] if record.get("uuid") else None, "queued")
                 if deadline_tool > 0:
@@ -186,6 +220,10 @@ def main():
             if record.get("type") != "user":
                 continue
             prompt, uuid = _user_text(record), record.get("uuid")
+            # 段 10 lane 10o: 見た添付を答えに混ぜる(検が「model が画像を受け取った」ことを読める形)。
+            seen = _user_images(record)
+            if seen:
+                prompt = prompt + "".join(f" [saw {mime} {len(data)}b]" for mime, data in seen)
             _lifecycle(sid, uuid, "queued")
         carried = _turn(sid, prompt, uuid, resumed, was_carried)
         resumed = True

@@ -5,7 +5,7 @@
     "rule": "additive-only",
     "ruleComment": "採用 9(agora-redesign #38・schema registry / Pact の形): 欄の追加だけ可(version は据え置き)。欄の削除・改名・意味の変更は先に deprecated に path を載せ(その版では残す)、次の version で消す(消す便で version を 1 上げる)。消費者(写しを持つ repo)は docs/contracts/reads.json に自分が読む欄の path を宣言し、正本側の検 scripts/check_cross_repo_contracts.hy が『読む欄が正本に実在するか・deprecated を読んでいないか』を突き合わせる。",
     "deprecated": ["kinds.delivery-policy.schema.properties.spec.properties.charter.properties.binding.properties.config_dir", "kinds.delivery-policy.schema.properties.spec.properties.defaultProfile", "kinds.message.schema.properties.spec.properties.request"],
-    "versionsComment": "版の記録: v1(段 0〜5b)。v2(段 7 lane 7e・2026-09-12)= 盤の書き手 agora-kanban の 1 名が身分 3 つ(agora-kanban-observe / agora-kanban-sync / agora-kanban-dialogue)へ割れた(決定 #33-3 B)。principals と kind intent の writers.status の値を差し替えた(欄は 1 つも消していないので deprecated は空 — 上げたのは既に在る欄の値の意味の変更)。身分と書ける欄の割りの正本は docs/contracts/kanban-kinds.json の identities。同じ v2 の中に段 7 lane 7d(決定 #33-2 B・同日)の追加が乗る = principal agora-budget・kind profile の status.conditions(schema と writers.status.conditions)— 欄の追加だけなので採用 9 の規則で version は上げない(7e の v2 に足した)。同じ v2 に段 7 lane 7b-2(2026-09-13)の追加が乗る = principal merge-queue(取り込みの controller — この契約の kind は 1 つも書かず、名簿の閉語彙としてだけ並ぶ。書く先は docs/contracts/land-queue.json)。名の追加だけなので同じく version は据え置き。同じ v2 に段 4 lane 4c-4(2026-09-13・agora-redesign #22)の追加が乗る = principal agora-1(画面の糊 = WebUI の入口の身元 — 書くのは intake の append ちょうどで、この契約の kind は 1 つも書かない)。名の追加だけなので version は据え置き。同じ v2 に段 8 lane 4u(2026-09-13・agora-redesign #49)の追加が乗る = kind turn-record の status.entries の items.kind に system / error、欄 toolUseId / isError / truncated / dropped、conventions.turnRecordEntries(行の上限と切り詰めの規則)。欄と語の追加だけ(既存の kind の意味は変えない: text = assistant の本文の 1 block のまま)なので version は据え置き。同じ v2 に段 8 lane 4v(2026-09-13・agora-redesign #50)の追加が乗る = kind turn-record の status.entries の items.kind に user(旧の系から写した手番の送信の本文 — 語の追加だけ)。version は据え置き。同じ v2 に段 8q(2026-09-13・agora-redesign #51)の追加が乗る = kind node の status.observations.sessions の要素に account(家の account・null = 借りていない・欠落 = 不明)、終端の session の残った transcript の列 transcripts{conversationId, sessionId, account?} を足し、transcriptCache を deprecated に載せた(書き手は一度も無く、読み手 Scheduling は transcripts へ移った — 消すのは次の version)。欄の追加と 1 欄の deprecated だけなので version は据え置き。同じ v2 に段 9o-1(2026-09-14・agora-redesign #75)の追加が乗る = kind conversation の status.agent{model?, profile?, workDir?}(会話ごとの agent の宣言・書き手 C)と writers.status.agent。欄の追加だけなので version は据え置き。同じ v2 に段 9f lane 9f-5 便 2a(2026-09-14・agora-redesign #59)の追加が乗る = kind turn-record の status.recordRef / status.recordedSeq と status.entries の items.bytes / items.sha256(claim check の見出し — 段 9f-4 の agentd と移行の道具が既に書いている欄を宣言した)。欄の追加だけなので version は据え置き。v3(段 9f lane 9f-7 便 2c・2026-09-14・agora-redesign #59)= 欄の削除: kind turn-record の status.entries.items から本文の欄 text / summary / input / model を消した(claim check — 本文の正本は会話の記録の service)。読み手 agora-controllers の画面の糊は e3d982b で読みをやめて reads.json から外し、書き手 doeff の agentd は段 9f-4(L78)から見出しだけを書き、L81 で行の上限の定数を 32,768 に下げた。v2 で deprecated に載せた kinds.node の status.observations.transcriptCache も、規則どおりこの版で消した。欄の削除なので version を 1 上げた。⚠ 本文の 4 欄は deprecated の版を挟まずに消した — 消費者の reads.json のどれもこの 4 欄を読まないこと(正本側の検 scripts/check_cross_repo_contracts.hy が突き合わせる)を先に確かめたので、deprecated の版が守る『読み手がまだ居る』状態が無い。同じ版で conventions.turnRecordEntries.byteBudget を 262,144 → 32,768 に締め、turn-record の宣言に statusByteBudget 36,864 と carriesBody: false を置いた(engine の門 — 段 9f-5 便 2a の rowStatusBoundsError)。同じ v3 に段 9f lane 9f-9(2026-09-14・agora-redesign #72)の追加が乗る = kind turn-record の status.entriesTruncated{droppedCount, firstKeptSeq, recordRef}(上限を超えたまま残っていた行の見出しの列を末尾から縮めた印 — 書くのは ACP scripts/shrink_turn_record_headlines.hy の縮め)。欄の追加だけなので version は据え置き。 同じ v3 に段 10c(2026-09-14・agora-redesign #80)の追加が乗る = delivery-policy の spec.defaultProfile(欄の追加)と、charter の binding.config_dir を deprecated に載せた(charter は形の宣言を持たない object だったので、deprecated の path が実在するよう charter.properties.binding.properties.config_dir を記述として足した — 値の形は変えていない)。conversation.status.agent.profile と profile.spec.account は説明の改訂(profile は charter に写さず Scheduling が預かり所の account に解く)。欄の追加だけなので version は据え置き。同じ v3 に段 10 lane 10e(2026-09-14・agora-redesign #53)の追加が乗る = kind conversation の status.agent.effort(閉語彙 4 語)・kind node の status.capabilities(agentd が名乗る能力の表)と writers.status.capabilities・kind operator-preference(operator の既定 1 行 default・書き手 agora-conversation)・conventions.agentSettings(閉語彙と許可名簿の投影の規則 + example)。欄と kind と語の追加だけなので version は据え置き。 同じ v3 に段 10f 便 1(2026-09-14・agora-redesign #82・設計 = 依頼書 lane-10f 便 1)の追加が乗る = kind message の spec.kind に ask / accept / send-back / withdraw、spec.class(investigate / dev / discuss / verify / operate)と spec.parent、spec.to の literal reception(宛先未定)、status.routedTo / routedAt(と writers.status)、spec.request を deprecated に載せた / kind conversation の spec.opener に system、status.agent.compactAt / kind delivery-policy の spec.reception{conversation, rules}。欄と語の追加と 1 欄の deprecated だけなので version は据え置き。 同じ v3 の段 10f 便 1 に設計の検証の註(SAAM の相互作用 2)と operator 指示「郵便の本文に上限を設けない」が乗る = 最上位の節 identity(身元の literal operator / system / reception の綴りと現れる欄)を足し、message.spec.body の maxLength(200000 字)を消した(大きさの扱いは配達の層の内部 — この欄の上限を読む消費者は 2026-09-14 の reads.json に 0)。制約を外しただけで欄は消していないので version は据え置き。 同じ v3 の段 10f 便 1 に問い 1〜14 の回答(2026-09-14・依頼書 a66aeaf)が乗る = principals に agora-reception、kind message の spec.bodyRef{conversation, stream}・spec.bytes、spec.body を必須から外した(body と bodyRef はちょうど一方)、宣言に specByteBudget 32,768(engine の門)。欄・名・宣言の欄の追加と必須の緩めだけなので version は据え置き。 同じ v3 に段 10 lane 10i(2026-09-14・agora-redesign #86)の追加が乗る = kind message の status.delivery.via(turn | next-turn | interrupt・書き手 D・欠落 = 旧の行)。欄の追加だけなので version は据え置き。 同じ v3 に段 10 lane 10k 便 1(2026-09-14・agora-redesign #88・依頼書 lane-10k 確定 1 と依頼者の回答 18:2x 案 A)の追加が乗る = kind profile の spec.kind(閉語彙 claude / codex・書き手 E)と status.windows{capturedAt, fiveHour, sevenDay, fableWeekly: {utilization, resetsAt}}(時刻は conventions.time の epoch ms)、writers.status.windows = acp-scheduling(observed は agentd のまま — 1 欄 1 書き手)。欄と名の追加だけなので version は据え置き。 同じ v3 に段 10 lane 10l(2026-09-14・agora-redesign #89)の追加が乗る = principals に agora-automation、kind intent の writers.status(state / reason / result)に agora-automation。名と値の追加だけなので version は据え置き。 同じ v3 に段 10 lane 10p(2026-09-14・agora-redesign #97)の追加が乗る = kind delivery-policy の spec.defaultProfiles(閉じた並び)を足し spec.defaultProfile を deprecated に載せた(読み手は無い — 消すのは次の version)・kind profile の status.conditions の items.type に AccountAmbiguous / AccountMissing・reason に account-ambiguous / account-missing・欄 message・writers.status.conditions に acp-scheduling。欄と語の追加と 1 欄の deprecated だけなので version は据え置き。同じ v3 に段 10 lane 10n(2026-09-14・agora-redesign #93)の追加が乗る = kind node の status.capabilities[kind].interrupt(steer-then-stop / stop)、kind conversation の status.agent.interruptEscalationSeconds(任意・非負の整数)、kind delivery-policy の spec.interruptEscalationSeconds(任意 — 方策の行の既定・依頼者が apply)。欄の追加だけなので version は据え置き。追補(同日・依頼者の裁定): 便 3 で required に足した interruptEscalationSeconds を required から外した — engine は行を schema で検めない(kindRegistrationOutcome は宣言の突合だけ)ので required は登録の検にならず、消費者(herdr-hud の zod・agora-controllers の Hy)の写しが生きている方策の行を欠落で落とすだけだった。必須を緩めただけなので version は据え置き。"
+    "versionsComment": "版の記録: v1(段 0〜5b)。v2(段 7 lane 7e・2026-09-12)= 盤の書き手 agora-kanban の 1 名が身分 3 つ(agora-kanban-observe / agora-kanban-sync / agora-kanban-dialogue)へ割れた(決定 #33-3 B)。principals と kind intent の writers.status の値を差し替えた(欄は 1 つも消していないので deprecated は空 — 上げたのは既に在る欄の値の意味の変更)。身分と書ける欄の割りの正本は docs/contracts/kanban-kinds.json の identities。同じ v2 の中に段 7 lane 7d(決定 #33-2 B・同日)の追加が乗る = principal agora-budget・kind profile の status.conditions(schema と writers.status.conditions)— 欄の追加だけなので採用 9 の規則で version は上げない(7e の v2 に足した)。同じ v2 に段 7 lane 7b-2(2026-09-13)の追加が乗る = principal merge-queue(取り込みの controller — この契約の kind は 1 つも書かず、名簿の閉語彙としてだけ並ぶ。書く先は docs/contracts/land-queue.json)。名の追加だけなので同じく version は据え置き。同じ v2 に段 4 lane 4c-4(2026-09-13・agora-redesign #22)の追加が乗る = principal agora-1(画面の糊 = WebUI の入口の身元 — 書くのは intake の append ちょうどで、この契約の kind は 1 つも書かない)。名の追加だけなので version は据え置き。同じ v2 に段 8 lane 4u(2026-09-13・agora-redesign #49)の追加が乗る = kind turn-record の status.entries の items.kind に system / error、欄 toolUseId / isError / truncated / dropped、conventions.turnRecordEntries(行の上限と切り詰めの規則)。欄と語の追加だけ(既存の kind の意味は変えない: text = assistant の本文の 1 block のまま)なので version は据え置き。同じ v2 に段 8 lane 4v(2026-09-13・agora-redesign #50)の追加が乗る = kind turn-record の status.entries の items.kind に user(旧の系から写した手番の送信の本文 — 語の追加だけ)。version は据え置き。同じ v2 に段 8q(2026-09-13・agora-redesign #51)の追加が乗る = kind node の status.observations.sessions の要素に account(家の account・null = 借りていない・欠落 = 不明)、終端の session の残った transcript の列 transcripts{conversationId, sessionId, account?} を足し、transcriptCache を deprecated に載せた(書き手は一度も無く、読み手 Scheduling は transcripts へ移った — 消すのは次の version)。欄の追加と 1 欄の deprecated だけなので version は据え置き。同じ v2 に段 9o-1(2026-09-14・agora-redesign #75)の追加が乗る = kind conversation の status.agent{model?, profile?, workDir?}(会話ごとの agent の宣言・書き手 C)と writers.status.agent。欄の追加だけなので version は据え置き。同じ v2 に段 9f lane 9f-5 便 2a(2026-09-14・agora-redesign #59)の追加が乗る = kind turn-record の status.recordRef / status.recordedSeq と status.entries の items.bytes / items.sha256(claim check の見出し — 段 9f-4 の agentd と移行の道具が既に書いている欄を宣言した)。欄の追加だけなので version は据え置き。v3(段 9f lane 9f-7 便 2c・2026-09-14・agora-redesign #59)= 欄の削除: kind turn-record の status.entries.items から本文の欄 text / summary / input / model を消した(claim check — 本文の正本は会話の記録の service)。読み手 agora-controllers の画面の糊は e3d982b で読みをやめて reads.json から外し、書き手 doeff の agentd は段 9f-4(L78)から見出しだけを書き、L81 で行の上限の定数を 32,768 に下げた。v2 で deprecated に載せた kinds.node の status.observations.transcriptCache も、規則どおりこの版で消した。欄の削除なので version を 1 上げた。⚠ 本文の 4 欄は deprecated の版を挟まずに消した — 消費者の reads.json のどれもこの 4 欄を読まないこと(正本側の検 scripts/check_cross_repo_contracts.hy が突き合わせる)を先に確かめたので、deprecated の版が守る『読み手がまだ居る』状態が無い。同じ版で conventions.turnRecordEntries.byteBudget を 262,144 → 32,768 に締め、turn-record の宣言に statusByteBudget 36,864 と carriesBody: false を置いた(engine の門 — 段 9f-5 便 2a の rowStatusBoundsError)。同じ v3 に段 9f lane 9f-9(2026-09-14・agora-redesign #72)の追加が乗る = kind turn-record の status.entriesTruncated{droppedCount, firstKeptSeq, recordRef}(上限を超えたまま残っていた行の見出しの列を末尾から縮めた印 — 書くのは ACP scripts/shrink_turn_record_headlines.hy の縮め)。欄の追加だけなので version は据え置き。 同じ v3 に段 10c(2026-09-14・agora-redesign #80)の追加が乗る = delivery-policy の spec.defaultProfile(欄の追加)と、charter の binding.config_dir を deprecated に載せた(charter は形の宣言を持たない object だったので、deprecated の path が実在するよう charter.properties.binding.properties.config_dir を記述として足した — 値の形は変えていない)。conversation.status.agent.profile と profile.spec.account は説明の改訂(profile は charter に写さず Scheduling が預かり所の account に解く)。欄の追加だけなので version は据え置き。同じ v3 に段 10 lane 10e(2026-09-14・agora-redesign #53)の追加が乗る = kind conversation の status.agent.effort(閉語彙 4 語)・kind node の status.capabilities(agentd が名乗る能力の表)と writers.status.capabilities・kind operator-preference(operator の既定 1 行 default・書き手 agora-conversation)・conventions.agentSettings(閉語彙と許可名簿の投影の規則 + example)。欄と kind と語の追加だけなので version は据え置き。 同じ v3 に段 10f 便 1(2026-09-14・agora-redesign #82・設計 = 依頼書 lane-10f 便 1)の追加が乗る = kind message の spec.kind に ask / accept / send-back / withdraw、spec.class(investigate / dev / discuss / verify / operate)と spec.parent、spec.to の literal reception(宛先未定)、status.routedTo / routedAt(と writers.status)、spec.request を deprecated に載せた / kind conversation の spec.opener に system、status.agent.compactAt / kind delivery-policy の spec.reception{conversation, rules}。欄と語の追加と 1 欄の deprecated だけなので version は据え置き。 同じ v3 の段 10f 便 1 に設計の検証の註(SAAM の相互作用 2)と operator 指示「郵便の本文に上限を設けない」が乗る = 最上位の節 identity(身元の literal operator / system / reception の綴りと現れる欄)を足し、message.spec.body の maxLength(200000 字)を消した(大きさの扱いは配達の層の内部 — この欄の上限を読む消費者は 2026-09-14 の reads.json に 0)。制約を外しただけで欄は消していないので version は据え置き。 同じ v3 の段 10f 便 1 に問い 1〜14 の回答(2026-09-14・依頼書 a66aeaf)が乗る = principals に agora-reception、kind message の spec.bodyRef{conversation, stream}・spec.bytes、spec.body を必須から外した(body と bodyRef はちょうど一方)、宣言に specByteBudget 32,768(engine の門)。欄・名・宣言の欄の追加と必須の緩めだけなので version は据え置き。 同じ v3 に段 10 lane 10i(2026-09-14・agora-redesign #86)の追加が乗る = kind message の status.delivery.via(turn | next-turn | interrupt・書き手 D・欠落 = 旧の行)。欄の追加だけなので version は据え置き。 同じ v3 に段 10 lane 10k 便 1(2026-09-14・agora-redesign #88・依頼書 lane-10k 確定 1 と依頼者の回答 18:2x 案 A)の追加が乗る = kind profile の spec.kind(閉語彙 claude / codex・書き手 E)と status.windows{capturedAt, fiveHour, sevenDay, fableWeekly: {utilization, resetsAt}}(時刻は conventions.time の epoch ms)、writers.status.windows = acp-scheduling(observed は agentd のまま — 1 欄 1 書き手)。欄と名の追加だけなので version は据え置き。 同じ v3 に段 10 lane 10l(2026-09-14・agora-redesign #89)の追加が乗る = principals に agora-automation、kind intent の writers.status(state / reason / result)に agora-automation。名と値の追加だけなので version は据え置き。 同じ v3 に段 10 lane 10p(2026-09-14・agora-redesign #97)の追加が乗る = kind delivery-policy の spec.defaultProfiles(閉じた並び)を足し spec.defaultProfile を deprecated に載せた(読み手は無い — 消すのは次の version)・kind profile の status.conditions の items.type に AccountAmbiguous / AccountMissing・reason に account-ambiguous / account-missing・欄 message・writers.status.conditions に acp-scheduling。欄と語の追加と 1 欄の deprecated だけなので version は据え置き。同じ v3 に段 10 lane 10n(2026-09-14・agora-redesign #93)の追加が乗る = kind node の status.capabilities[kind].interrupt(steer-then-stop / stop)、kind conversation の status.agent.interruptEscalationSeconds(任意・非負の整数)、kind delivery-policy の spec.interruptEscalationSeconds(任意 — 方策の行の既定・依頼者が apply)。欄の追加だけなので version は据え置き。追補(同日・依頼者の裁定): 便 3 で required に足した interruptEscalationSeconds を required から外した — engine は行を schema で検めない(kindRegistrationOutcome は宣言の突合だけ)ので required は登録の検にならず、消費者(herdr-hud の zod・agora-controllers の Hy)の写しが生きている方策の行を欠落で落とすだけだった。必須を緩めただけなので version は据え置き。同じ v3 に段 10 lane 10s(2026-09-14・agora-redesign #100)の追加が乗る = kind view(名前つきの述語で実体の集合を選ぶ行・spec = protocol の ViewSchema の逐語・書き手 agora-conversation・intent set-view / withdraw-view)と kind operator-preference の spec.notifyView(通知の指し先 = view の id・欠落 = 絞らない)。kind と欄の追加だけなので version は据え置き。 同じ v3 に段 10 lane 10t(2026-09-14・agora-redesign #102)の追加が乗る = kind profile の宣言 operatorDeclared [seats, budget, reset]・kind delivery-policy の宣言 operatorDeclared(spec の全欄・name を除く)・conventions.operatorDeclared。宣言の欄の追加だけ(schema は不変・書き手の名簿も不変 — 加わるのは承認の札の要件で、語彙の正本は docs/contracts/operator-approval.json)なので version は据え置き。便 1b(同日)= kind node の宣言 declaredByFile [capacity](裁定 3・7)— 欄の追加だけなので version は据え置き。"
   },
   "comment": "段 1(agora-redesign #18): agora の 5 つの entity(会話・郵便・手番の作業記録・node・profile)を ACP の kind として data だけで登録するための機械可読の正本(2026-09-12)。段 3(agora-redesign #21・法 defadr_20260912_stage3_scheduling_operator_decides_outside_the_engine_cd258b)の追補 = node の status.observations の閉語彙・turn-record の spec.sessionId と status.transcriptRef・profile の spec.account と status.observed.node(宣言は turn-record の writers.status に transcriptRef = agentd を足すだけ・他は schema が増えるだけで、登録の口の再登録が declaration-differs / schema-differs として置き換える)。段 3 lane 3b(agora-redesign #21・#19)の直し = node の status.observations.sessions を数から agentd が書く列 [{conversationId, sessionId, state: idle | busy}] へ揃え、列から導ける conversations を落とした(schema だけの変更・宣言は不変 — 数の形では agentd の行を読めず、本番の scheduling operator が node を 0 と数えた)。核の型は変えない・弁なし・既存の経路は変えない。段 4(agora-redesign #22・#7・法 defadr_20260912_stage4_messaging_operator_delivers_by_policy_e61f6e)の追補 = kind intent(intake の要求の実体化・1 requestId 1 行)と kind delivery-policy(配達の許可の方策の 1 行 current・agora の turn-wake-allowlist の写し)。両方の書き手は agora-messaging(D)。intent の name の閉語彙と payload の schema・配達の許可の出力の閉語彙は docs/contracts/messaging.json(第 2 の定義点を作らない — ここは kind の宣言と欄の形だけ)。立法 = docs/adr/defadr_20260912_stage1_kinds_declared_from_contracts_2adf77.hy。登録の口 = scripts/register_contract_kinds.hy(この file を読んで宣言を POST /api/namespaces/<ns>/kinds へ冪等に運ぶ。kind ごとの語彙をその script は 1 語も持たない)。出自 = 設計 agora-redesign docs/design/design-entities-and-boundaries-2026-09-11.md 第 3 節(entity)・第 13.6 節(data は ACP の kind)・第 15.3 節(R2-a: 共有状態は ACP の store 1 つ・TurnRecord)・第 16 節 段 1・第 17 節(TurnDelta)/ 所有の表 docs/design/bounded-contexts-2026-09-11.md(C 会話 / D 郵便 / E 配置 / F 実行)。各 kind の declaration は engine の KindDeclaration(src/Acp/App/ResourceKindRegistry.hs)の JSON と同じ綴り(states / terminal / stateKey / initial / parent / lifetime / identityKey / writers / withdraw)で、GET /api/kinds が返す形と一致する(欄の無い writers の動詞は書かない・空の status は書かない — 冪等の比較はこの綴りで行う)。schema は spec と status の欄の JSON Schema(draft 2020-12)。engine は schema を保存するだけで検証しない(消費者 zod / Hy がここから写す・第 2 の定義点を作らない)。",
   "principals": [
@@ -23,6 +23,9 @@
   , "agora-reception", "agora-automation"],
   "principalsComment": "書き手の名(engine の roster の名の綴り・段 0 lane 0a の principals.json への登録は段 2〜4 の担当 — 今は名だけ)。agora-conversation = C 会話(agora の operator・Hy)/ agora-messaging = D 郵便(ACP の app・Haskell)/ acp-scheduling = E 配置(scheduling operator)/ agentd = F 実行(node の sessionhost)/ acp-work = W 仕事(段 5a の work operator `acp work` — docs/contracts/work-request.json の書き手。ここでは intent の結末〔status.state / reason / result〕を route-* の name の行に書くためだけに名乗る)。/ agora-kanban-observe · agora-kanban-sync · agora-kanban-dialogue = K 盤(段 5b の kanban operator を段 7 lane 7e で身分 3 つへ割ったもの — code は proboscis/agora-controllers の controllers/kanban/{observe,sync,dialogue}/・書ける欄の割りの正本は docs/contracts/kanban-kinds.json の identities。ここでは kanban-* の name の行の結末を書くためだけに名乗り、名乗るのは実体化する 2 身分〔agora-kanban-sync = 確認と差し戻し / agora-kanban-dialogue = 言う・動かす・やる〕ちょうど — 観測系 agora-kanban-observe は intent を 1 つも実体化しないので並ばない)。/ agora-budget = E 配置の観測側(段 7 lane 7d・agora-redesign #36 決定 #33-2 B — 口座の予算の controller・agora-controllers controllers/budget・Hy。profile の status.conditions〔type ProfileExhausted〕だけを書く。API を呼ばず、agentd が書いた status.observed を読むだけ)。/ merge-queue = 取り込みの controller(段 7 lane 7b-2・agora-redesign #35 / #36 — repo proboscis/merge-queue・agora-1 の pod の 1 container)。⚠ **この名は agora の kind を 1 つも書かない** — 書く先は着地の列の契約 docs/contracts/land-queue.json の 3 kind の status と自分の leader lease `merge-queue-lease` ちょうどで、ここに並ぶのは principal の名簿(engine の roster `principals.json` に載る名)の閉語彙をこの file が持っており、法 2adf77 の EXPECTED-PRINCIPALS がその全部を pin しているから(名簿に無い名は writers に書けない = 誰も撃てない kind が生まれる、を防ぐ側の宣言)。/ agora-1 = I 画面と糊(段 4 lane 4c-4・agora-redesign #22 — WebUI の入口の身元 = 頭脳自身の札・herdr-hud 法 operator-entrance-carries-the-brain-identity。code は proboscis/agora-controllers の controllers/screen・Deployment agora-screen・札は ns herdr-hud の Secret screen-principal の key agora-1.token)。⚠ **この名もこの契約の kind を 1 つも書かない** — 書くのは intake の append(POST /api/intake)ちょうどで、intake の受け口は名簿の認証だけを通し writers を読まない(法 2d5436 — 受理の返事の路に許可の判定を置かない)。intent の行を作るのは Intent controller(agora-messaging)の 1 点で、差出の名は spec.by に写るだけ。writers.create に並べると intake を経ずに intent の行を直に作れる第 2 の口になるので並べない(engine は agora-1 の intent / conversation の直の書きを 403 で断る — hspec DeclaredWriteSpec の agora-1 の節)。writers に現れる名はこの 11 語の閉語彙の中に限る(法 2adf77)。 段 10f 便 1(agora-redesign #82 問い 7): agora-reception = 受付の腕が名乗る名(intake の by・delivery-policy の openers に現れる — この契約の kind は forward-message の intent の実体化を通してだけ書く)。名の追加だけ。 段 10 lane 10l(agora-redesign #89): agora-automation = 盤の自動処理の係(agora-controllers controllers/automation・Hy)— kind intent の結末(kanban-convert の実体化)を書き、intake へ post-message を投函する(依頼の郵便)。盤の身分と同じく kanban-* の name の行の結末を書くためだけに名乗る。名の追加だけ。",
   "conventions": {
+    "operatorDeclared": {
+      "comment": "段 10 lane 10t(agora-redesign #102・#78): kind の宣言の欄 operatorDeclared = spec 側の path の列(identityKey と同じ形)。便 1b(裁定 3・4): 並ぶ欄 declaredByFile = operator が宣言 file で決める path(node の capacity — agentd が読んだ宣言 file の sha256 を header x-declaration-sha256 で運び、engine は検めず出来事の封筒に declarationSha256 を記録・突合は日次の見張りが commit 済みの file と)。同じ path を両方に持てない。登録の ratchet: 再登録で path を足すのは自由、外す / 減らすのは承認の札(対象 crd/<kind>・paths = 減らした欄の名 operatorDeclared / declaredByFile)。その path の値を変える spec の書き(誕生を含む)は、書き手の名簿(writers)に加えて operator の承認の札(header x-approval-token・ACP の POST /api/operator-approvals が鋳造・verb set-declaration・対象 = 区画 / kind / 行の id・変えてよい path・1 回・10 分)を伴わなければ 403 declaration-needs-approval。通った書きの出来事の封筒は approval{id, quote, by} を持つ(GET /api/events)。語彙・口・断りの語の正本は docs/contracts/operator-approval.json。初期の対象 = profile の seats / budget / reset・delivery-policy の spec の全欄(name を除く)。node の capacity は指紋の路(宣言 file の sha256)が着くまで宣言しない(#102 問 3)。"
+    },
     "time": "時刻の欄はすべて epoch ミリ秒の整数(agora の Letter.at・state-store の updatedAt と同じ物差し)。",
     "createdAt": "行の誕生時刻 createdAt は engine が刻む(resourceCreatedAt — 書き手は指定できない)。spec の createdAt / at は『その系の時計でその事実が起きた時刻』で、ACP の行の誕生とは別の欄(移行で古い行を後から書く時に食い違ってよい)。",
     "state": "状態は status の stateKey(state)の 1 語ちょうど。spec / payload の fields に状態を置かない(engine は statusJson[stateKey] だけを見る)。",
@@ -46,25 +49,27 @@
         "codex": {"models": ["gpt-6-astra"]}
       },
       "catalog": {
-        "comment": "許可名簿は**投影**(保存しない — CQRS の read model・設計 第 9 節 問 1 案 A)。材料 = kind profile の生きた行(state ≠ retired)× kind node の生きた行(state = joined ∧ lease.expiresAt > now)の status.capabilities。規則(agent の種類 t ごと): (1) t を名乗る生きた node が 1 つも無ければ t は名簿に無い / (2) settings = その node たちが名乗る settings の**和**(どれかの node が受ける)・restartOn も和 / (3) models = agentTypes[t].models(settings に model が在る時・無ければ空)/ (4) profiles = 生きた profile のうち t を名乗る生きた node のどれかが受ける行の名(会社 profile は spec.labels.boundary = company の node だけ — Scheduling の nodeAcceptsProfile と同じ規則・第 2 の判定点を作らない)(settings に profile が在る時)/ (5) efforts = 契約の efforts(settings に effort が在る時)/ (6) workDir は値の集合を持たない(settings に在るかだけ)。判断 = 純関数 1 点(ACP Acp.App.Messaging.Catalog.catalogOf → admit・画面の糊は同じ規則を同じ材料から導く — hspec と glue の検が下の example を撃つ)。Intent の腕(set-conversation-agent / set-operator-preference / open-conversation)は宣言の欄ごとに『agent の種類の名簿に在るか』で検め、外は rejected{agent-outside-catalog: <欄と理由>}。agent の種類 = 宣言(patch を今の宣言に重ねた全体)の model が属する種類(この agentTypes の表 — 段 10f 便 2・agora-redesign #82 回答 2 問い 1 案 A・判断は Acp.App.Messaging.Catalog.agentKindOf の 1 点)、model が無い・種類の無い model なら方策の charter.agent_type(無ければ claude)。",
+        "comment": "許可名簿は**投影**(保存しない — CQRS の read model・設計 第 9 節 問 1 案 A)。材料 = kind profile の生きた行(state ≠ retired)× kind node の生きた行(state = joined ∧ lease.expiresAt > now)の status.capabilities。規則(agent の種類 t ごと): (1) t を名乗る生きた node が 1 つも無ければ t は名簿に無い / (2) settings = その node たちが名乗る settings の**和**(どれかの node が受ける)・restartOn も和 / (3) models = agentTypes[t].models(settings に model が在る時・無ければ空)/ (4) profiles = 生きた profile のうち spec.kind が t ちょうどで(kind の無い行はどの種類にも出さない — 配置が結ばない profile を名簿に出さない。Scheduling の profileServesAgentKind と同じ判断・段 10 lane 10r)、t を名乗る生きた node のどれかが受ける行の名(会社 profile は spec.labels.boundary = company の node だけ — Scheduling の nodeAcceptsProfile と同じ規則・第 2 の判定点を作らない)(settings に profile が在る時)/ (5) efforts = 契約の efforts(settings に effort が在る時)/ (6) workDir は値の集合を持たない(settings に在るかだけ)。判断 = 純関数 1 点(ACP Acp.App.Messaging.Catalog.catalogOf → admit・画面の糊は同じ規則を同じ材料から導く — hspec と glue の検が下の example を撃つ)。Intent の腕(set-conversation-agent / set-operator-preference / open-conversation)は宣言の欄ごとに『agent の種類の名簿に在るか』で検め、外は rejected{agent-outside-catalog: <欄と理由>}。agent の種類 = 宣言(patch を今の宣言に重ねた全体)の model が属する種類(この agentTypes の表 — 段 10f 便 2・agora-redesign #82 回答 2 問い 1 案 A・判断は Acp.App.Messaging.Catalog.agentKindOf の 1 点)、model が無い・種類の無い model なら方策の charter.agent_type(無ければ claude)。",
         "example": {
           "now": 1789400000000,
           "profiles": [
-            {"name": "kento", "boundary": "personal", "state": "active"},
-            {"name": "ca", "boundary": "company", "state": "active"},
-            {"name": "old", "boundary": "personal", "state": "retired"}
+            {"name": "kento", "boundary": "personal", "kind": "claude", "state": "active"},
+            {"name": "codex-personal", "boundary": "personal", "kind": "codex", "state": "active"},
+            {"name": "personal", "boundary": "personal", "state": "active"},
+            {"name": "ca", "boundary": "company", "kind": "claude", "state": "active"},
+            {"name": "old", "boundary": "personal", "kind": "claude", "state": "retired"}
           ],
           "nodes": [
             {"name": "pool-1", "labels": {"boundary": "personal"}, "state": "joined", "lease": {"expiresAt": 1789400060000}, "capabilities": {"claude": {"settings": ["model", "profile", "effort", "workDir"], "restartOn": ["model", "profile"]}}},
             {"name": "mac-1", "labels": {"boundary": "company"}, "state": "joined", "lease": {"expiresAt": 1789399000000}, "capabilities": {"claude": {"settings": ["model", "profile", "effort", "workDir"], "restartOn": ["model", "profile"]}, "codex": {"settings": ["model"], "restartOn": ["model"]}}},
-            {"name": "mac-2", "labels": {"boundary": "company"}, "state": "joined", "lease": {"expiresAt": 1789400060000}, "capabilities": {"codex": {"settings": ["model", "effort"], "restartOn": ["model"]}}},
+            {"name": "mac-2", "labels": {"boundary": "company"}, "state": "joined", "lease": {"expiresAt": 1789400060000}, "capabilities": {"codex": {"settings": ["model", "profile", "effort"], "restartOn": ["model", "profile"]}}},
             {"name": "gone-1", "labels": {}, "state": "gone", "lease": {"expiresAt": 1789400060000}, "capabilities": {"claude": {"settings": ["model", "profile", "effort", "workDir"], "restartOn": ["model", "profile"]}}}
           ],
           "catalog": {
             "claude": {"settings": ["model", "profile", "effort", "workDir"], "restartOn": ["model", "profile"], "models": ["claude-opus-5", "claude-sonnet-5", "claude-fable-5-1"], "profiles": ["kento"], "efforts": ["low", "medium", "high", "xhigh"], "nodes": ["pool-1"]},
-            "codex": {"settings": ["model", "effort"], "restartOn": ["model"], "models": ["gpt-6-astra"], "profiles": [], "efforts": ["low", "medium", "high", "xhigh"], "nodes": ["mac-2"]}
+            "codex": {"settings": ["model", "profile", "effort"], "restartOn": ["model", "profile"], "models": ["gpt-6-astra"], "profiles": ["codex-personal"], "efforts": ["low", "medium", "high", "xhigh"], "nodes": ["mac-2"]}
           },
-          "exampleComment": "mac-1 は lease が切れている(1789399000000 < now)ので材料に入らず、gone-1 は退役。claude を名乗る生きた node は pool-1(personal)だけなので会社 profile ca は claude の名簿に無く(nodeAcceptsProfile)、old は retired で無い。codex は mac-2 だけが名乗り、profile を受けないので profiles は空(欄は出す・値は無い)、effort を受けるので efforts は契約の 4 語。列の順 = settings / restartOn は契約の settings の順、models は agentTypes の順、profiles と nodes は名の辞書順。"
+          "exampleComment": "mac-1 は lease が切れている(1789399000000 < now)ので材料に入らず、gone-1 は退役。claude を名乗る生きた node は pool-1(personal)だけなので会社 profile ca は claude の名簿に無く(nodeAcceptsProfile)、old は retired で無い。profile の名簿は spec.kind が種類ちょうどの行だけ(段 10 lane 10r)— kind codex の codex-personal は claude に出ず、kind の無い personal はどの種類にも出ない。codex は mac-2 だけが名乗り、profile を受けるので profiles は kind codex の codex-personal だけ(mac-2 は会社の node だが codex-personal は個人 profile なので nodeAcceptsProfile は通す)、effort を受けるので efforts は契約の 4 語。列の順 = settings / restartOn は契約の settings の順、models は agentTypes の順、profiles と nodes は名の辞書順。"
         }
       }
     }
@@ -223,9 +228,10 @@
               "class": {"type": "string", "enum": ["investigate", "dev", "discuss", "verify", "operate"], "description": "段 10f 便 1(agora-redesign #82): 依頼の種類(kind = ask の時だけ・任意)。受付が delivery-policy.spec.reception.rules で担い手の会話の開き方を引く鍵。"},
               "parent": {"type": "string", "pattern": "^lt-[0-9A-HJKMNP-TV-Z]{26}$", "description": "段 10f 便 1(agora-redesign #82): 親の依頼の id(kind = ask の時だけ・任意)。依頼の木は docs/contracts/requests-projection.json の投影が導く。"},
               "items": {"type": "array", "maxItems": 48, "items": {"type": "object"}, "description": "押せる項目(report = 標準 1 項目 / question = 送り手の著作 / note・answer = 空)。"},
-              "body": {"type": "string", "description": "本文(Markdown)。段 10f 便 1(agora-redesign #82・operator 指示 2026-09-14 \"we never want such max text length for messaging\"): 本文に上限を設けない — 大きさの扱い(記録の service への claim check・分割)は配達の層(agora-messaging の post-message の実体化)の内部で、公開の契約に上限を置かない。 body と bodyRef はちょうど一方(段 10f 便 1 問い 11)。"},
+              "body": {"type": "string", "description": "本文(Markdown)。段 10f 便 1(agora-redesign #82・operator 指示 2026-09-14 \"we never want such max text length for messaging\"): 本文に上限を設けない — 大きさの扱い(記録の service への claim check・分割)は配達の層(agora-messaging の post-message の実体化)の内部で、公開の契約に上限を置かない。 body と bodyRef はちょうど一方(段 10f 便 1 問い 11)。段 10 lane 10o(#96): 添付(attachments)だけの郵便は body も bodyRef も持たない — body / bodyRef / attachments のいずれか 1 つ以上。"},
               "bodyRef": {"type": "object", "properties": {"conversation": {"type": "string", "pattern": "^c-[0-9A-HJKMNP-TV-Z]{26}$"}, "stream": {"type": "string", "pattern": "^lt-[0-9A-HJKMNP-TV-Z]{26}$"}}, "required": ["conversation", "stream"], "additionalProperties": false, "description": "段 10f 便 1(agora-redesign #82 問い 9): 記録の service が持つ本文の在処 — conversation = from が会話ならその会話・from が operator / system なら宛先の会話(to = reception なら方策の受付の会話)、stream = この郵便の id(出来事 kind message・1 郵便 = 1 出来事)。書き手は差出人側の messaging の client(本文が kind message の specByteBudget に収まらない時だけ)。body とちょうど一方。"},
               "bytes": {"type": "integer", "minimum": 0, "description": "段 10f 便 1(問い 14): bodyRef が指す本文全体の UTF-8 byte 数(bodyRef と対)。"},
+              "attachments": {"type": "array", "maxItems": 16, "items": {"type": "object", "properties": {"ref": {"type": "object", "properties": {"conversation": {"type": "string", "pattern": "^c-[0-9A-HJKMNP-TV-Z]{26}$"}, "stream": {"type": "string", "pattern": "^lt-[0-9A-HJKMNP-TV-Z]{26}$"}}, "required": ["conversation", "stream"], "additionalProperties": false}, "seq": {"type": "integer", "minimum": 0}, "mime": {"type": "string", "enum": ["image/png", "image/jpeg", "image/gif", "image/webp"]}, "bytes": {"type": "integer", "minimum": 0}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "name": {"type": "string", "minLength": 1, "maxLength": 256}}, "required": ["ref", "seq", "mime", "bytes", "sha256"], "additionalProperties": false}, "description": "段 10 lane 10o(agora-redesign #96): 郵便に付く画像の見出しの列(1 添付 = 1 見出し)。画像の中身は記録の service(agora-controllers docs/contracts/record-service.json の出来事 kind attachment)に置き(claim check)、行は見出しだけを持つ — ref = 本文の bodyRef と同じ形(conversation = 記録の会話・stream = この郵便の id)、seq = その stream の中の出来事の序数、mime = 画像の種類、bytes / sha256 = 画像の生の byte 数と sha256(書き手が計算)、name = 元の名(任意)。書き手は差出人側の client(画面の糊・agentd)で、ACP は記録の service を呼ばない。body / bodyRef / attachments のいずれか 1 つ以上(body と bodyRef はちょうど一方のまま)。letter/v1 の sha256(body + items の束縛)に添付は入らない — 添付は見出しの sha256 が束ねる。"},
               "refs": {"type": "array", "maxItems": 64, "items": {"type": "string", "minLength": 1, "maxLength": 1024}, "description": "成果物・着地・card の参照。"},
               "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "body + items の束縛(答えはこの sha に束ぶ)。"},
               "at": {"type": "integer", "minimum": 0, "description": "鋳造の時刻(epoch ミリ秒・差出側の時計)。"},
@@ -387,7 +393,8 @@
             "capabilities": ["agentd"]
           }
         },
-        "withdraw": {"state": "gone"}
+        "withdraw": {"state": "gone"},
+        "declaredByFile": ["capacity"]
       },
       "schema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -471,13 +478,14 @@
               },
               "capabilities": {
                 "type": "object",
-                "description": "段 10 lane 10e(agora-redesign #53): node の能力の表 — 鍵 = agent の種類(agent-job の charter.agent_type の語・agentd の閉語彙 claude / codex)、値 = {settings: この agent の種類が受ける会話の宣言の欄(conventions.agentSettings.settings の部分集合), restartOn: 変えたら session を作り直す欄(settings の部分集合 — agentd の session-affinity-key-of の鍵はこの欄ちょうど)}。書き手 = agentd(node-status-with-lease の 1 点・lease と同じ拍)。欠落 = 名乗っていない(読み手は『受ける欄なし』と読む — 推測しない)。読み手 = 許可名簿の投影(Intent の腕・画面の糊の entity_query agent-catalog)。",
+                "description": "段 10 lane 10e(agora-redesign #53): node の能力の表 — 鍵 = agent の種類(agent-job の charter.agent_type の語・agentd の閉語彙 claude / codex)、値 = {settings: この agent の種類が受ける会話の宣言の欄(conventions.agentSettings.settings の部分集合), restartOn: 変えたら session を作り直す欄(settings の部分集合 — agentd の session-affinity-key-of の鍵はこの欄ちょうど), attachments?: 受ける添付の種類の語の列(段 10 lane 10o)}。書き手 = agentd(node-status-with-lease の 1 点・lease と同じ拍)。欠落 = 名乗っていない(読み手は『受ける欄なし』と読む — 推測しない)。読み手 = 許可名簿の投影(Intent の腕・画面の糊の entity_query agent-catalog)。",
                 "additionalProperties": {
                   "type": "object",
                   "properties": {
                     "settings": {"type": "array", "items": {"type": "string", "enum": ["model", "profile", "effort", "workDir"]}, "uniqueItems": true, "description": "受ける欄(会話の status.agent の鍵の綴り)。"},
                     "restartOn": {"type": "array", "items": {"type": "string", "enum": ["model", "profile", "effort", "workDir"]}, "uniqueItems": true, "description": "変えたら session を作り直す欄(settings の部分集合)。"},
-                    "interrupt": {"type": "string", "enum": ["steer-then-stop", "stop"], "description": "段 10 lane 10n(agora-redesign #93): この agent の種類の割り込み(message.spec.delivery.mode = interrupt)の届き方。steer-then-stop = 走っている手番へ本文を注入し(CLI が次の道具の境界で model に見せる)、注入から charter.interruptEscalationSeconds の間に model が読まなければ停止の合図で今の手番を止めて次の手番として即座に渡す(claude の headless)/ stop = 注入の段が無く、即座に止めて渡す(codex の app-server)。面の文言はこの語に従う。欠落 = 名乗っていない(旧の agentd)。"}
+                    "interrupt": {"type": "string", "enum": ["steer-then-stop", "stop"], "description": "段 10 lane 10n(agora-redesign #93): この agent の種類の割り込み(message.spec.delivery.mode = interrupt)の届き方。steer-then-stop = 走っている手番へ本文を注入し(CLI が次の道具の境界で model に見せる)、注入から charter.interruptEscalationSeconds の間に model が読まなければ停止の合図で今の手番を止めて次の手番として即座に渡す(claude の headless)/ stop = 注入の段が無く、即座に止めて渡す(codex の app-server)。面の文言はこの語に従う。欠落 = 名乗っていない(旧の agentd)。"},
+                    "attachments": {"type": "array", "items": {"type": "string", "enum": ["image"]}, "uniqueItems": true, "description": "段 10 lane 10o(agora-redesign #96・裁定 問い 5 案 A): この agent の種類が手番の入力として受ける郵便の添付の種類(語の列 — 今は image だけ)。欠落 = 何も受けない(読み手は推測しない)。書き手 = agentd(settings と同じ拍・値は agentd の能力の表の 1 点)。受けない器(tmux の器・表に無い種類)に届いた添付は、agentd が agent-job の status.conditions に AttachmentIgnored を書く(黙って落とさない)。"}
                   },
                   "required": ["settings", "restartOn"],
                   "additionalProperties": false
@@ -514,7 +522,8 @@
             "conditions": ["agora-budget", "acp-scheduling"]
           }
         },
-        "withdraw": {"state": "retired"}
+        "withdraw": {"state": "retired"},
+        "operatorDeclared": ["seats", "budget", "reset"]
       },
       "schema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -547,7 +556,7 @@
               },
               "seats": {"type": "integer", "minimum": 0, "description": "この profile で同時に走らせてよい手番の数。"},
               "account": {"type": "string", "minLength": 1, "maxLength": 256, "description": "この profile の資格を預かり所(custody)から借りる時の口座の名 = custodian の /lease/{claude|codex} の body の account(Claude は資格の家の .claude.json の oauthAccount.accountUuid — 預かり所の簿の鍵 claude:<その sha256 の先頭 16 桁> で照合される)。書き手 E(acp-scheduling)。段 3(agora-redesign #21)の追補で任意の欄。段 10c(agora-redesign #80)から、この欄の無い profile に手番は結ばれない: Scheduling が binding.account に写し agentd が借りる(借りた token は手番ごとに <homes-root>/<種類>/<account> の家へ書き、終わりに返す)。無い = Unschedulable{credential-unresolved}(機体の手元の資格へ落ちない)。段 10 lane 10p(agora-redesign #97)から書き手 E の観測の腕が在庫から自動で写す — 値は在庫の accountKey(<kind>:<sha256 の先頭 16 桁>・預かり所の貸与・usage の口は 2026-09-14〔custody 37edd70〕からこの綴りをそのまま引く)。生の id を手で書いた行(10c)は同じ口座と指紋で分かるので書き換えない。"},
-              "kind": {"type": "string", "enum": ["claude", "codex"], "description": "段 10 lane 10k(agora-redesign #88): この profile の口座の種類(閉語彙 claude / codex = 預かり所の在庫 GET /custody/agent-credentials の credentials[].kind と同じ綴り)。書き手 E(acp-scheduling — 配置の operator の観測の腕が在庫から解いて写す: spec.account の指紋 <kind>:<sha256 の先頭 16 桁> が在庫の accountKey に当たればその kind、無ければ name を aliases に持つ在庫の kind がちょうど 1 つの時だけ)。任意の欄 — 欠落 = 在庫がその口座を言わない / 名が 2 種類の口座の別名(実測 2026-09-14: personal は claude と codex の両方の別名)で決められない。発明しない・消さない。"}
+              "kind": {"type": "string", "enum": ["claude", "codex"], "description": "段 10 lane 10k(agora-redesign #88): この profile の口座の種類(閉語彙 claude / codex = 預かり所の在庫 GET /custody/agent-credentials の credentials[].kind と同じ綴り)。書き手 E(acp-scheduling — 配置の operator の観測の腕が在庫から解いて写す: spec.account の指紋 <kind>:<sha256 の先頭 16 桁> が在庫の accountKey に当たればその kind、無ければ name を aliases に持つ在庫の kind がちょうど 1 つの時だけ)。任意の欄 — 欠落 = 在庫がその口座を言わない / 名が 2 種類の口座の別名(実測 2026-09-14: personal は claude と codex の両方の別名)で決められない。発明しない・消さない。段 10 lane 10r(agora-redesign #99): 配置(Scheduling)はこの欄が手番の agent の種類(job の charter.agent_type)ちょうどの profile だけを結び(宣言した profile が違えば Unschedulable{profile-kind-mismatch}・宣言の無い会話の候補からは外す)、許可名簿の投影もその種類の下にだけ出す — 欠落 = どの種類にも仕えない(判断 = Acp.App.Scheduling.Decide.profileServesAgentKind の 1 点)。"}
             },
             "required": ["name", "boundary", "budget", "reset", "seats"],
             "additionalProperties": false
@@ -664,7 +673,7 @@
     },
     "delivery-policy": {
       "owner": "D",
-      "comment": "配達の許可の方策(設計 第 6.2 節『配達の許可』・段 4)。agora の状態台帳 turn-wake-allowlist の鍵 current の写し(herdr-hud packages/daemon/src/turn-wake-admission.ts turnWakePolicyOf の 5 欄 senders / reasons / ids / openers / arrivals{since})を ACP の 1 行(spec.name = current・identityKey [name])で持つ。読み手は Messaging operator の純関数(郵便を配るか止めるか)と Intent controller(open-conversation の起票者が openers に在るか)。書き手は D(agora-messaging)— operator が data を置き換える便は intent か ai の道具で D の札を使う。既定(行が無い・retired)= operator の郵便だけ(agora の TURN_WAKE_DEFAULT_SENDERS と同じ)。⚠ from = operator の郵便は方策の行に依らず常に通る(依頼書 lane-4a やること 3・今日の既定と同じ)。reasons は段 4 では照合の対象が無い(message に reason の欄が無い)ので写しとして運ぶだけ。arrivals.since は契約の物差し(epoch ミリ秒)— agora の行は epoch 秒なので写す時に ×1000。charter は operator が agent-job に添える session.launch の params の既定(段 2 の形: agent_type / work_dir / model / binding …・session の id は agentd が鋳造するので刻まない)— conversation の spec に charter は無いので方策の行が既定を持つ(方策の定義点 1 つ)。状態 active → retired(終端 retired)。withdraw(retired へ)は D の動詞で、退役した行は既定へ戻す。段 10c(agora-redesign #80)で spec.defaultProfile(会話が profile を宣言しない時の既定)を足した — 読み手は配置の係(acp-scheduling)で、手番の資格〔預かり所の account〕に解く。charter に profile の家(binding.config_dir)を置く形は deprecated(次の版で消す)。段 10 lane 10p(agora-redesign #97)で 1 名の既定 defaultProfile を退役(deprecated・次の版で消す)し、閉じた並び defaultProfiles(欠落 = 生きた・口座のある profile 全部)から配置が選ぶ形へ(温かい session の profile → 席の空きが最も多い profile。規則の正本 = docs/contracts/scheduling.json profileChoice)。",
+      "comment": "配達の許可の方策(設計 第 6.2 節『配達の許可』・段 4)。agora の状態台帳 turn-wake-allowlist の鍵 current の写し(herdr-hud packages/daemon/src/turn-wake-admission.ts turnWakePolicyOf の 5 欄 senders / reasons / ids / openers / arrivals{since})を ACP の 1 行(spec.name = current・identityKey [name])で持つ。読み手は Messaging operator の純関数(郵便を配るか止めるか)と Intent controller(open-conversation の起票者が openers に在るか)。書き手は D(agora-messaging)— operator が data を置き換える便は intent か ai の道具で D の札を使う。既定(行が無い・retired)= operator の郵便だけ(agora の TURN_WAKE_DEFAULT_SENDERS と同じ)。⚠ from = operator の郵便は方策の行に依らず常に通る(依頼書 lane-4a やること 3・今日の既定と同じ)。reasons は段 4 では照合の対象が無い(message に reason の欄が無い)ので写しとして運ぶだけ。arrivals.since は契約の物差し(epoch ミリ秒)— agora の行は epoch 秒なので写す時に ×1000。charter は operator が agent-job に添える session.launch の params の既定(段 2 の形: agent_type / work_dir / model / binding …・session の id は agentd が鋳造するので刻まない)— conversation の spec に charter は無いので方策の行が既定を持つ(方策の定義点 1 つ)。状態 active → retired(終端 retired)。withdraw(retired へ)は D の動詞で、退役した行は既定へ戻す。段 10c(agora-redesign #80)で spec.defaultProfile(会話が profile を宣言しない時の既定)を足した — 読み手は配置の係(acp-scheduling)で、手番の資格〔預かり所の account〕に解く。charter に profile の家(binding.config_dir)を置く形は deprecated(次の版で消す)。段 10 lane 10p(agora-redesign #97)で 1 名の既定 defaultProfile を退役(deprecated・次の版で消す)し、閉じた並び defaultProfiles(欠落 = 生きた・口座のある profile 全部)から配置が選ぶ形へ(温かい session の profile → 最初の手番は宣言 → 走っている手番の最も少ない profile。規則の正本 = docs/contracts/scheduling.json profileChoice)。",
       "declaration": {
         "states": ["active", "retired"],
         "terminal": ["retired"],
@@ -681,7 +690,8 @@
             "state": ["agora-messaging"]
           }
         },
-        "withdraw": {"state": "retired"}
+        "withdraw": {"state": "retired"},
+        "operatorDeclared": ["senders", "reasons", "ids", "openers", "arrivals", "reminders", "defaultProfile", "defaultProfiles", "interruptEscalationSeconds", "reception", "charter"]
       },
       "schema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -713,7 +723,7 @@
                 "additionalProperties": false
               },
               "defaultProfile": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$", "maxLength": 128, "deprecated": true, "description": "deprecated(段 10 lane 10p・agora-redesign #97 — 次の版で消す): 段 10c の 1 名の既定。会話が宣言しない時の profile は defaultProfiles から配置が選ぶ形へ移り、この欄は誰も読まない(残っていても効かない)。"},
-              "defaultProfiles": {"type": "array", "items": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$", "maxLength": 128}, "description": "段 10 lane 10p(agora-redesign #97): 会話が status.agent.profile を宣言しない時に配置が選んでよい profile の閉じた並び(kind profile の spec.name)。読み手は配置の係 acp-scheduling ちょうど: 並びのうち生きた行で spec.account を持ち梯子が運ぶものを候補にし(それ以外の名は飛ばす)、温かい session の profile(node の status.observations.sessions の会話の session の家 = 候補の spec.account)が在ればそれ、無ければ席の空き(seats − 走っている手番)が最も多い profile(同点は名の順)を選んで agent-job の status.binding.{profile, account} に置く(規則の正本 = docs/contracts/scheduling.json profileChoice・判断は純関数 Acp.App.Scheduling.Decide.credentialFor / chooseAmong)。欄が無い = 生きた・spec.account のある profile 全部。空の並び = 選べる profile なし(宣言しない会話の手番は Unschedulable{credential-unresolved})。charter には写さない。"},
+              "defaultProfiles": {"type": "array", "items": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$", "maxLength": 128}, "description": "段 10 lane 10p(agora-redesign #97): 会話が status.agent.profile を宣言しない時に配置が選んでよい profile の閉じた並び(kind profile の spec.name)。読み手は配置の係 acp-scheduling ちょうど: 並びのうち生きた行で spec.account を持ち梯子が運ぶものを候補にし(それ以外の名は飛ばす)、温かい session の profile(node の status.observations.sessions の会話の session の家 = 候補の spec.account)が在ればそれ、無ければ走っている手番の最も少ない profile(engine の段の中の spread と同じ物差し・同点は段 → 名の順)を選んで agent-job の status.binding.{profile, account} に置く(規則の正本 = docs/contracts/scheduling.json profileChoice・判断は純関数 Acp.App.Scheduling.Decide.credentialFor / chooseAmong)。欄が無い = 生きた・spec.account のある profile 全部。空の並び = 選べる profile なし(宣言しない会話の手番は Unschedulable{credential-unresolved})。charter には写さない。"},
               "interruptEscalationSeconds": {"type": "integer", "minimum": 0, "description": "段 10 lane 10n(agora-redesign #93・依頼者の追補 2026-09-14): 割り込み(message.spec.delivery.mode = interrupt)の本文を走っている手番へ注入してから、model が読んだ証拠が無ければ停止の合図で手番を止めて次の手番として渡すまでの秒の既定。任意(段 10 lane 10n 追補 2026-09-14・依頼者の裁定: engine は行を schema で検めないので required は登録の検にならず、消費者の zod / Hy の写しが生きている方策の行を落とすだけ — required に置かない)。運用の既定 = 20(依頼者が方策の行 default:delivery-policy:current に apply した値・2026-09-14)。欠落 = 会話の宣言も無ければ charter に値が無く、agentd は注入だけ(停止の合図を出さない)+ 条件 InterruptEscalationUndeclared。会話の status.agent.interruptEscalationSeconds(任意)が在ればそれが勝つ。運搬路は charter の 1 本: 配達の係の Acp.App.Messaging.Plan.charterFor が agent-job の charter.interruptEscalationSeconds に写し、agentd は charter の値だけを読む(方策の行も会話の行も読まない・code に既定の定数を置かない)。charter に値の無い job は注入だけにして条件 InterruptEscalationUndeclared。"},
               "reception": {"type": "object", "description": "段 10f 便 1(agora-redesign #82): 受付の宣言。conversation = 受付の会話(opener system — kind message の to = reception の郵便はここへ届く)。rules = 受付の決め方の表(受付が読む — 機械はまだ判定しない)。書き手 = agora-messaging(方策の行の 1 点)。欄が無い = 受付なし。", "properties": {"conversation": {"type": "string", "pattern": "^c-[0-9A-HJKMNP-TV-Z]{26}$"}, "rules": {"type": "array", "items": {"type": "object", "properties": {"class": {"type": "string", "enum": ["investigate", "dev", "discuss", "verify", "operate", "*"], "description": "当たる依頼の class(* = 他のどの行にも当たらない時)。"}, "open": {"type": "object", "properties": {"model": {"type": "string", "minLength": 1, "maxLength": 256}, "profile": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$", "maxLength": 128}, "effort": {"type": "string", "enum": ["low", "medium", "high", "xhigh"]}}, "additionalProperties": false, "description": "開く会話の agent の宣言。"}, "note": {"type": "string", "maxLength": 2000}}, "required": ["class"], "additionalProperties": false}}}, "required": ["conversation"], "additionalProperties": false},
               "charter": {"type": "object", "description": "operator が作る agent-job の spec.charter(session.launch の params の土台)そのもの。session の id は operator が刻まない — agentd が起こす時に鋳造する(段 2 lane 2d・doeff L62・charter の session_id / session_name は読まれない)。欄が無い = 空の object(agentd は agent_type 等の欠けを LaunchFailed で名指す)。段 10c(agora-redesign #80): charter に手番の資格を置かない — binding.config_dir(機体の profile の家)は deprecated(次の版で消す)で、Scheduling も agentd も手番の資格として採らない方向(資格は status.binding.account の貸与ちょうど)。", "properties": {"binding": {"type": "object", "description": "session.launch の typed binding(段 2 の形)。", "properties": {"config_dir": {"type": "string", "deprecated": true, "description": "deprecated(段 10c・agora-redesign #80): 機体の profile の家を手番の資格として charter に書く形。手番の資格は預かり所の貸与(agent-job の status.binding.account)ちょうど。次の版で消す。"}}}}}
@@ -794,7 +804,7 @@
     },
     "operator-preference": {
       "owner": "C",
-      "comment": "段 10 lane 10e(agora-redesign #53・設計 第 9 節 問 2): operator の既定(新しい会話に何を継ぐか)の小さな集約 — 既知の形 = control plane の望む状態(entity)。行は operator の既定 1 行 `default`(identityKey [id]・spec.id = default)ちょうどで、spec.agent は会話の status.agent と同じ 4 欄(model / profile / effort / workDir・全部任意)。書き手 = C の腕(agora-conversation・intent set-operator-preference — 面の localStorage を正本にしない: 端末が変わると消える)。読み手 = 画面の糊の投影 1 点(entity_query agent-catalog / operator-preference)が、新しい会話の初期値を『会話の宣言 ⊕ operator-preference ⊕ 系の既定(delivery-policy.spec.charter)』の 3 段で合成する — 配達の係(charterFor)はこの行を**読まない**(会話の行に宣言が無ければ方策の既定 — 既定の継承は会話を開く時に画面の糊が会話へ写す)。spec は望む状態なので update を許す(create と同じ書き手・同じ鍵の create は spec の再適用)。状態 active → retired(終端 retired)。withdraw(retired へ)は C の動詞で、退役 = 既定を消した(新しい会話は系の既定だけ)。",
+      "comment": "段 10 lane 10e(agora-redesign #53・設計 第 9 節 問 2): operator の既定(新しい会話に何を継ぐか)の小さな集約 — 既知の形 = control plane の望む状態(entity)。行は operator の既定 1 行 `default`(identityKey [id]・spec.id = default)ちょうどで、spec.agent は会話の status.agent と同じ 4 欄(model / profile / effort / workDir・全部任意)。書き手 = C の腕(agora-conversation・intent set-operator-preference — 面の localStorage を正本にしない: 端末が変わると消える)。読み手 = 画面の糊の投影 1 点(entity_query agent-catalog / operator-preference)が、新しい会話の初期値を『会話の宣言 ⊕ operator-preference ⊕ 系の既定(delivery-policy.spec.charter)』の 3 段で合成する — 配達の係(charterFor)はこの行を**読まない**(会話の行に宣言が無ければ方策の既定 — 既定の継承は会話を開く時に画面の糊が会話へ写す)。spec は望む状態なので update を許す(create と同じ書き手・同じ鍵の create は spec の再適用)。状態 active → retired(終端 retired)。withdraw(retired へ)は C の動詞で、退役 = 既定を消した(新しい会話は系の既定だけ)。段 10 lane 10s(agora-redesign #100): 同じ行に通知の指し先 spec.notifyView(view の id・欠落 = 絞らない)が同居する — operator の既定の集約は 1 行で、view の通知の指し先も operator の既定(旧 daemon の行簿 views の行 notify)だから。",
       "declaration": {
         "states": ["active", "retired"],
         "terminal": ["retired"],
@@ -832,9 +842,129 @@
                   "effort": {"type": "string", "enum": ["low", "medium", "high", "xhigh"]}
                 },
                 "additionalProperties": false
-              }
+              },
+              "notifyView": {"type": "string", "minLength": 1, "maxLength": 64, "description": "段 10 lane 10s(agora-redesign #100): 通知の指し先 = 『どの view に入る実体の出来事を鳴らすか』の view の id(kind view の spec.id)。欠落 = 指し先なし = 絞らない(旧 daemon の views/notify = null と同じ意味)。書き手は agent の既定と同じ C の腕(intent set-operator-preference の payload notifyView — string で立て、null で欄ごと消す)。腕は view の実在を検めない(view は後から退役できるので『在る』は一瞬の事実 — 面が rows と突き合わせて消えた指し先を正直に描く)。読み手 = 画面の糊(queue_watch 相乗りの views の notify)。通知の発火(Push)は 10n / reminders の後。"}
             },
             "required": ["id", "agent"],
+            "additionalProperties": false
+          },
+          "status": {
+            "type": "object",
+            "properties": {
+              "state": {"type": "string", "enum": ["active", "retired"]}
+            },
+            "required": ["state"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["spec", "status"],
+        "additionalProperties": false
+      }
+    },
+    "view": {
+      "owner": "C",
+      "comment": "段 10 lane 10s(agora-redesign #100・herdr-hud ADR 0012 law view-is-first-class・operator 指示 2026-09-14 21:5x「also the 'view' feature of agora must be supported」): view = 名前つきの述語で実体(会話・依頼・書・手紙)の集合を選ぶ台帳の行。効くのは見え方と通知だけ(在籍・配達・起床には 1 bit も触れない)。既知の形 = control plane の望む状態(entity・operator-preference と同じ)。spec = herdr-hud packages/protocol/src/view.ts の ViewSchema の逐語(id / name / owner? / seeds? / closure? / expr? — 面が送る形をそのまま保管する。判定の純関数 viewMembership は protocol の TS 1 点で、engine も糊も述語を解釈しない: engine は行の**形**だけを Intent の腕〔Acp.App.Messaging.Intent.viewSpec〕で zod と同じ上限で検め、正規の欄だけを書く)。書き手 = C の腕(agora-conversation): intent set-view {view} = 全置換の upsert(行が無ければ誕生・在れば spec 全体を置き換える create〔同じ鍵の create = spec の再適用・update の書き手も C〕・同じなら done・退役した同じ id は state: active を運んで生き返る)/ withdraw-view {id} = retired へ(無い / 既に retired = done — 旧 daemon の『削除で不在 = no-op の ok』と同じ冪等)。状態 active → retired(終端 retired)。identityKey [id](面が採番する不透明な短 id — 旧 daemon と同じ v-<base36>-<6 字>)。preset は蒔かない(operator 裁定 2026-09-05「系は preset に依存しない」)。読み手 = 画面の糊(queue_watch 相乗りの語 views {rows, notify} — 契約 screen-socket.json)。通知の指し先は kind operator-preference の spec.notifyView。旧 daemon の行簿 views は退役(2026-09-14)。",
+      "declaration": {
+        "states": ["active", "retired"],
+        "terminal": ["retired"],
+        "stateKey": "state",
+        "initial": "active",
+        "parent": "root",
+        "lifetime": "record",
+        "identityKey": ["id"],
+        "writers": {
+          "create": ["agora-conversation"],
+          "update": ["agora-conversation"],
+          "withdraw": ["agora-conversation"],
+          "status": {
+            "state": ["agora-conversation"]
+          }
+        },
+        "withdraw": {"state": "retired"}
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "acp.agora-kinds.v1/view",
+        "type": "object",
+        "$defs": {
+          "words": {"type": "array", "maxItems": 64, "items": {"type": "string", "minLength": 1, "maxLength": 200}, "description": "facet の値の列(facet 内は OR・空 = 絞らない)。"},
+          "epochMs": {"type": "integer", "description": "時刻の窓の端(epoch ミリ秒)。"},
+          "seeds": {
+            "type": "object",
+            "description": "種類ごとの facet の組(ViewSeedsSchema の逐語)。組の中は facet 間 AND・facet 内 OR。手紙(letter)は種にならず閉包で入る。",
+            "properties": {
+              "conversation": {
+                "type": "object",
+                "properties": {
+                  "tags": {"$ref": "#/$defs/words"},
+                  "repos": {"$ref": "#/$defs/words"},
+                  "bands": {"$ref": "#/$defs/words"},
+                  "states": {"$ref": "#/$defs/words"},
+                  "pinned": {"type": "boolean"},
+                  "openers": {"type": "array", "maxItems": 3, "items": {"type": "string", "enum": ["operator", "machine"]}},
+                  "hosts": {"$ref": "#/$defs/words"},
+                  "profiles": {"$ref": "#/$defs/words"},
+                  "models": {"$ref": "#/$defs/words"},
+                  "updatedAfter": {"$ref": "#/$defs/epochMs"},
+                  "updatedBefore": {"$ref": "#/$defs/epochMs"}
+                },
+                "additionalProperties": false
+              },
+              "assignment": {
+                "type": "object",
+                "properties": {
+                  "tags": {"$ref": "#/$defs/words"},
+                  "requesters": {"$ref": "#/$defs/words"},
+                  "requesterClasses": {"type": "array", "maxItems": 4, "items": {"type": "string", "enum": ["operator", "conversation", "cron", "unknown"]}},
+                  "states": {"$ref": "#/$defs/words"},
+                  "unfinished": {"type": "boolean"},
+                  "pin": {"type": "boolean"},
+                  "urgent": {"type": "boolean"},
+                  "mintedAfter": {"$ref": "#/$defs/epochMs"},
+                  "mintedBefore": {"$ref": "#/$defs/epochMs"}
+                },
+                "additionalProperties": false
+              },
+              "paper": {
+                "type": "object",
+                "properties": {
+                  "kinds": {"type": "array", "maxItems": 3, "items": {"type": "string", "enum": ["request", "review", "impl-request"]}},
+                  "calls": {"$ref": "#/$defs/words"},
+                  "gatings": {"$ref": "#/$defs/words"},
+                  "ranks": {"type": "array", "maxItems": 16, "items": {"type": "integer"}},
+                  "states": {"$ref": "#/$defs/words"},
+                  "worlds": {"$ref": "#/$defs/words"},
+                  "tags": {"$ref": "#/$defs/words"},
+                  "openedAfter": {"$ref": "#/$defs/epochMs"},
+                  "openedBefore": {"$ref": "#/$defs/epochMs"}
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "expr": {
+            "description": "view の中身の式(ViewExpr の逐語・strict — 葉と節を鍵で見分ける): {group: seeds, closure?} = 条件の組(葉)/ {view: id} = 保存済み view の参照 / {and: [expr…]} / {or: [expr…]}(子は 2〜16)。閉包は葉ごと(式の後に掛けない)。深さの上限(8)と循環・消えた参照は面の判定 viewMembership が『壊れた view』として名乗る — engine は形だけ。",
+            "oneOf": [
+              {"type": "object", "properties": {"group": {"$ref": "#/$defs/seeds"}, "closure": {"type": "boolean"}}, "required": ["group"], "additionalProperties": false},
+              {"type": "object", "properties": {"view": {"type": "string", "minLength": 1, "maxLength": 64}}, "required": ["view"], "additionalProperties": false},
+              {"type": "object", "properties": {"and": {"type": "array", "minItems": 2, "maxItems": 16, "items": {"$ref": "#/$defs/expr"}}}, "required": ["and"], "additionalProperties": false},
+              {"type": "object", "properties": {"or": {"type": "array", "minItems": 2, "maxItems": 16, "items": {"$ref": "#/$defs/expr"}}}, "required": ["or"], "additionalProperties": false}
+            ]
+          }
+        },
+        "properties": {
+          "spec": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string", "minLength": 1, "maxLength": 64, "description": "view の id(面が採番する不透明な短 id)。冪等の鍵(identityKey)。"},
+              "name": {"type": "string", "minLength": 1, "maxLength": 80, "description": "人が読む名。"},
+              "owner": {"type": "string", "maxLength": 200, "description": "作った側(任意・旧 daemon の逐語)。"},
+              "seeds": {"$ref": "#/$defs/seeds", "description": "旧形の行の条件の組(expr が在れば読まない — 前方互換の読みは protocol の viewExprOf 1 点)。"},
+              "closure": {"type": "boolean", "description": "旧形の行の関係の閉包(担い手の会話・依頼書へ 2 hop)を採るか。欠落の既定は protocol の viewGroupClosureDefault 1 点。"},
+              "expr": {"$ref": "#/$defs/expr"}
+            },
+            "required": ["id", "name"],
             "additionalProperties": false
           },
           "status": {

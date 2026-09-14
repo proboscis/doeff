@@ -302,7 +302,10 @@
           (if (is-not expected-result None)
               (+ prompt RESULT-PROTOCOL-INSTRUCTION)
               prompt))
-    (<- delivered (headless-deliver session-name full-prompt))
+    ;; 段 10 lane 10o(agora-redesign #96): 起こす腕は郵便を 1 手番目に畳む(first-turn-carries-inputs)ので、
+    ;; その郵便の添付もこの 1 手番に載る(綴りは Dialogue.turn)。
+    (setv launch-attachments (tuple (.get params "attachments" #())))
+    (<- delivered (headless-deliver session-name full-prompt launch-attachments))
     (when (not delivered)
       (<- fail-now (clock-now))
       (setv failed-row (replace row
@@ -368,8 +371,8 @@
 ;; RPC の program(send / interrupt / cancel / cleanup / capture)
 ;; ---------------------------------------------------------------------------
 
-(defk headless-inject-program [session-id message ref]
-  {:pre [(: session-id str) (: message str) (: ref str)]
+(defk headless-inject-program [session-id message ref [attachments #()]]
+  {:pre [(: session-id str) (: message str) (: ref str) (: attachments tuple)]
    :post [(: % SessionRow)]}
   "session.send の mode = interrupt(headless・段 8 lane 4x): 割り込みの本文を走っている手番へ
    注入する(HeadlessInject)。器が引き受けなかった(process が無い / 降りている / 走っている
@@ -379,7 +382,7 @@
   (<- row (require-headless-row session-id))
   (when (is-terminal-status row.status)
     (raise (RuntimeError f"session {session-id} is {row.status}; cannot inject into a terminal session")))
-  (<- accepted (headless-inject row.session-name message ref))
+  (<- accepted (headless-inject row.session-name message ref attachments))
   (when (not accepted)
     (raise (RuntimeError
              (+ f"session.send: no turn of {session-id} is in flight to interrupt — "
@@ -391,8 +394,9 @@
   row)
 
 
-(defk headless-send-program [session-id message awaiting turn-env]
-  {:pre [(: session-id str) (: message str) (: awaiting bool) (: turn-env (| dict None))]
+(defk headless-send-program [session-id message awaiting turn-env [attachments #()]]
+  {:pre [(: session-id str) (: message str) (: awaiting bool) (: turn-env (| dict None))
+         (: attachments tuple)]
    :post [(: % SessionRow)]}
   "session.send(headless・mode = turn): 次の手番の本文を stdin へ。process が次の手番を
    受けられる(生きた温かい process)ならそのまま、受けられない(降りた process)なら
@@ -408,7 +412,7 @@
   (when (not accepts)
     (<- continued (continue-headless-process row turn-env))
     (setv row continued))
-  (<- delivered (headless-deliver row.session-name message))
+  (<- delivered (headless-deliver row.session-name message attachments))
   (when (not delivered)
     (raise (RuntimeError
              f"session.send: headless process of {session-id} is not accepting input")))

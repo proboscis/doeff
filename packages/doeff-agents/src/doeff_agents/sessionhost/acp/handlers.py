@@ -53,6 +53,7 @@ from typing import TypeAlias
 
 from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.agentd_client import AgentdClient, AgentdClientError, launch_rpc_timeout_seconds
+from doeff_agents.sessionhost.attachment import TurnAttachment
 from doeff_agents.sessionhost.acp.effects import (
     JSON,
     MESSAGE_KIND,
@@ -176,6 +177,30 @@ USAGE_RECORD_WINDOWS: tuple[tuple[UsageWindowName, str], ...] = (
 
 
 # ------------------------------------------------------------------ JSON の境界
+
+
+def attachment_params(attachments: tuple[TurnAttachment, ...]) -> list[JSON]:
+    """段 10 lane 10o(agora-redesign #96): 型つきの添付 → session.send の wire の項。mime と base64 の
+    逐語を運ぶだけ — 画像の綴り(block / input の項)は器の Dialogue が組む(法 012 R21)。"""
+    return [
+        {
+            "mime": attachment.mime,
+            "data": attachment.data,
+            "bytes": attachment.bytes,
+            "sha256": attachment.sha256,
+            "name": attachment.name,
+        }
+        for attachment in attachments
+    ]
+
+
+def attachments_ignored_of(answer: JSON) -> str | None:
+    """session.send の答え → 器が添付を落とした理由(落としていなければ None)。呼び手(agentd)が
+    条件 AttachmentIgnored に写す — 黙って落とさない。"""
+    if not isinstance(answer, dict):
+        return None
+    reason = answer.get("attachmentsIgnored")
+    return reason if isinstance(reason, str) and reason else None
 
 
 def _json_object(pairs: list[tuple[str, JSON]]) -> JSONObject:
@@ -850,8 +875,11 @@ class SessionRpc:
             # 値は秘密 — ここでも log に出さない。
             if effect.session_env:
                 params["session_env"] = dict(effect.session_env)
-            self._client.request("session.send", params)
-            return None
+            # 段 10 lane 10o(agora-redesign #96): 添付は型つきのまま wire の項にする(綴りは器の Dialogue)。
+            if effect.attachments:
+                params["attachments"] = attachment_params(effect.attachments)
+            answer = self._client.request("session.send", params)
+            return attachments_ignored_of(answer)
         return self._cleanup(effect.session_id)
 
     def _look(self, effect: SessionGet | SessionList | SessionCapture) -> object:
@@ -871,10 +899,18 @@ class SessionRpc:
     ) -> Interjected | Escalated | SessionRefused:
         """割り込みの 2 腕(注入 / 停止の合図 — 段 8 lane 4x・段 10 lane 10n)。"""
         if isinstance(effect, SessionInterject):
-            return self._interject(effect.session_id, effect.text, effect.ref)
+            return self._interject(
+                effect.session_id, effect.text, effect.ref, effect.attachments
+            )
         return self._escalate(effect.session_id)
 
-    def _interject(self, session_id: str, text: str, ref: str) -> Interjected | SessionRefused:
+    def _interject(
+        self,
+        session_id: str,
+        text: str,
+        ref: str,
+        attachments: tuple[TurnAttachment, ...] = (),
+    ) -> Interjected | SessionRefused:
         """``session.send`` の mode = interrupt(段 8 lane 4x)→ 引き受けたか。host の断り(RPC の
         error 封筒 — 走っている手番が無い・行が無い)は SessionRefused(本文は届いていない)。
         socket の失敗(OSError)は素通し(tick の縁が持ち越す)。ref = 注入の行の名(段 10 lane 10n)。"""
@@ -889,6 +925,8 @@ class SessionRpc:
                     "awaiting": False,
                     "mode": "interrupt",
                     "ref": ref,
+                    # 段 10 lane 10o: 割り込みの郵便の添付(型つき — 綴りは器の Dialogue)。
+                    "attachments": attachment_params(attachments),
                 },
             )
         except AgentdClientError as error:
@@ -1331,6 +1369,9 @@ def decode_record_event(doc: JSON) -> RecordEvent | None:
         model=_str_field(doc, "model"),
         is_error=doc.get("isError") is True,
         truncated=doc.get("truncated") is True,
+        mime=_str_field(doc, "mime"),
+        name=_str_field(doc, "name"),
+        data=_str_field(doc, "data"),
     )
 
 

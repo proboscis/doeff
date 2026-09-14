@@ -57,6 +57,11 @@
 ;;; 家か機体が違えば cache の失効を受け入れ(operator 決定 #54)、家の違う温かい session は片付けて rehydrate(ACP の
 ;;; 会話の記録を最初の本文に畳む — judgment.rehydrate-history-of・上限は AgentdSettings.rehydrate_history_byte_budget・
 ;;; 文脈の圧縮は別 issue #55)、resume が断られたら rehydrate(judgment.fallback-arm-of)。再開の材料の読みは名指しの順(段 9q・#77):
+;;; 段 10 lane 10o(agora-redesign #96・依頼者の追補): 郵便の添付(画像)は行が見出しだけを運び、中身は本文と同じ 1 回の
+;;; stream の読み(mail-bodies-by-ref)で拾う。器へは**型つき**(TurnAttachment)のまま SessionSend / SessionInterject で
+;;; 渡すだけで、CLI の綴り(claude の content の block・codex の input の項)はこの module に 1 語も無い — 組むのは
+;;; sessionhost/headless_protocol.py の kind ごとの Dialogue(法 012 R30・R21 と同じ形)。器が添付を落とした拍は
+;;; 条件 AttachmentIgnored を手番に付ける(黙って落とさない・本文は届いている)。
 ;;; 手番の本文は記録の service(RecordRead・会話 1 つ)、郵便は ACP の kind message(AcpConversationMail)、ACP の turn-record の
 ;;; 見出し(AcpTurnHeadlines = kind の全量・実測 29,913 行 / 172 MB / 59 秒)は service が答えなかった薄い再開の拍にだけ読む —
 ;;; claim(AcpPutStatus)は宣言の照合だけで即時(実測 0.3 秒)、器の準備(再開の読み・畳み)は claim の後の腕で、node の
@@ -106,7 +111,9 @@
 
 (import dataclasses [replace])
 
+(import doeff_agents.sessionhost.attachment [TurnAttachment])
 (import doeff_agents.sessionhost.acp.effects [
+  CONDITION-ATTACHMENT-IGNORED
   AGENT-JOB-KIND
   AGORA-KINDS-NAMESPACE
   AcpConversationMail
@@ -281,6 +288,10 @@
   list-mode-for
   merge-rows
   mail-text-of
+  attachment-of
+  first-turn-attachments-of
+  launch-charter-with-attachments
+  message-attachments-of
   message-bodies-of
   message-body-ref-of
   message-key-of
@@ -631,16 +642,17 @@
    AgentdSettings.rehydrate_history_byte_budget)。"
   (<- source (| RecordedTurns HeadlineTurns) (record-turns-for settings subject))
   (<- messages tuple (AcpConversationMail :conversation-id subject))
-  (<- fetched dict (mail-bodies-by-ref settings messages))
+  (<- read tuple (mail-bodies-by-ref settings messages))
   (<- fold HistoryFold (rehydrate-history-of subject messages source exclude
-                                             settings.rehydrate-history-byte-budget fetched))
+                                             settings.rehydrate-history-byte-budget (get read 0)))
   fold)
 
 
-(defk incarnate [settings plan choice view session-id lease bodies job-id subject exclude opener]
+(defk incarnate [settings plan choice view session-id lease bodies carried job-id subject exclude opener]
   {:pre [(: settings AgentdSettings) (: plan LaunchPlan) (: choice ArmChoice)
          (: view (| SessionView None)) (: session-id str) (: lease (| LeaseGrant None))
-         (: bodies tuple) (: job-id str) (: subject str) (: exclude tuple) (: opener (| str None))]
+         (: bodies tuple) (: carried tuple) (: job-id str) (: subject str) (: exclude tuple)
+         (: opener (| str None))]
    :post [(: % (| SessionView SessionRefused))]}
   "起こし方の腕を器に写す: send = 既存の session(眺めはそのまま)/ resume = 会話の前の session
    (choice.source)から同じ家で cold に起こし直す(cache を保つ)/
@@ -667,6 +679,10 @@
         (setv auth-file (get built 1))
         (when (and (is-not auth-file None) (is-not lease None) (is-not lease.auth-json None))
           (<- (FsWritePrivateText :path auth-file :text lease.auth-json)))
+        ;; 段 10 lane 10o(agora-redesign #96): 起こす腕は郵便を 1 手番目の本文に畳む(first-turn-carries-inputs)。
+        ;; その郵便の添付も同じ 1 手番に載せる — 綴りは器の Dialogue が組む(agentd は型つきのまま運ぶ)。
+        (<- first-turn tuple (first-turn-attachments-of carried))
+        (<- charter dict (launch-charter-with-attachments charter first-turn))
         (if (and (= choice.arm NEXT-ARM-RESUME) (is-not choice.source None))
             (do
               (<- params dict (resume-params-of choice.source charter))
@@ -689,6 +705,8 @@
   (setv subject (str (.get row.spec "subject" job-id)))
   (<- mail tuple (mail-of settings row))
   (setv bodies (get mail 0))
+  ;; 段 10 lane 10o: 郵便の添付(bodies と同じ並び)。畳む腕は 1 手番目に、送る腕は SessionSend に載る。
+  (setv carried (get mail 1))
   (<- exclude tuple (inputs-of row))
   (<- borrowed tuple (borrow-lease plan f"agent-job {job-id}"))
   (setv lease (get borrowed 0))
@@ -704,7 +722,7 @@
           (<- why str (retire-reason-of choice view job-id))
           (<- (retire-sessions #(choice.retire) why)))
         (<- attempted (| SessionView SessionRefused)
-            (incarnate settings plan choice view session-id lease bodies job-id subject exclude opener))
+            (incarnate settings plan choice view session-id lease bodies carried job-id subject exclude opener))
         (setv outcome attempted)
         (setv used choice)
         (when (isinstance attempted SessionRefused)
@@ -713,7 +731,7 @@
             (<- (LogLine :text (+ f"agentd: resume of session {choice.source} for job {job-id} refused "
                                        f"({attempted.error-code}): {attempted.error}; rehydrating")))
             (<- retried (| SessionView SessionRefused)
-                (incarnate settings plan fallback None session-id lease bodies job-id subject exclude opener))
+                (incarnate settings plan fallback None session-id lease bodies carried job-id subject exclude opener))
             (setv outcome retried)
             (setv used fallback)))
         (if (isinstance outcome SessionRefused)
@@ -726,7 +744,7 @@
               (<- folds bool (first-turn-carries-inputs settings.backend-kind used.arm))
               (<- started AgentdState
                   (after-start settings state row plan outcome lease used.arm now-ms
-                               (if folds #() bodies) (get mail 1)))
+                               (if folds #() bodies) (if folds #() carried) (get mail 2)))
               started)))))
 
 
@@ -825,34 +843,51 @@
 
 (defk mail-bodies-by-ref [settings messages]
   {:pre [(: settings AgentdSettings) (: messages tuple)]
-   :post [(: % dict)]}
+   :post [(: % tuple)]}
   "段 10f 便 1b(agora-redesign #82): 本文を記録の service に置いた郵便(message.spec.bodyRef)の本文を stream ごとに
-   読み集める — 郵便 id → 本文。判断(どの郵便を読むか・出来事から本文)は judgment の message-body-ref-of /
+   読み集める — 戻り = #(郵便 id → 本文, 郵便 id → 添付の並び)(段 10 lane 10o: 添付の中身も同じ 1 回の読みで拾う)。判断(どの郵便を読むか・出来事から本文)は judgment の message-body-ref-of /
    mail-text-of の 1 点で、ここは RecordReadStream を撃つだけ。service が配線されていない・読めない郵便は表に載せず
    1 行 log する(読み手が missing と名乗る — 本文を発明しない)。手番の入力・履歴の 1 項・割り込みの本文の 3 か所が借りる。"
   (setv fetched {})
+  (setv carried-attachments {})
   (for [message messages]
     (<- ref (| tuple None) (message-body-ref-of message.spec))
-    (when (is-not ref None)
+    ;; 段 10 lane 10o(agora-redesign #96): 添付の見出しも本文と同じ stream(郵便の id)を名指すので、
+    ;; 読みは 1 郵便 1 回のまま — 本文が行に在っても添付が在れば読む。
+    (<- headlines tuple (message-attachments-of message.spec))
+    (setv attachment-ref (if (and (is ref None) headlines)
+                             #((get (get headlines 0) 0) (get (get headlines 0) 1))
+                             ref))
+    (when (is-not attachment-ref None)
       (setv message-id (.get message.spec "id" message.resource-id))
       (if (not settings.record-enabled)
           (<- (LogLine :text f"agentd: message {message-id} keeps its body in the record service, which is not configured; body unavailable"))
           (do
-            (<- page (| RecordPage RecordUnread) (RecordReadStream :conversation-id (get ref 0) :stream-id (get ref 1)))
+            (<- page (| RecordPage RecordUnread)
+                (RecordReadStream :conversation-id (get attachment-ref 0) :stream-id (get attachment-ref 1)))
             (if (isinstance page RecordUnread)
                 (<- (LogLine :text f"agentd: body of message {message-id} could not be read from the record service ({page.status}: {page.error})"))
                 (do
-                  (<- text (| str None) (mail-text-of page.events))
-                  (when (is-not text None)
-                    (setv (get fetched message-id) text))))))))
-  fetched)
+                  (when (is-not ref None)
+                    (<- text (| str None) (mail-text-of page.events))
+                    (when (is-not text None)
+                      (setv (get fetched message-id) text)))
+                  (when headlines
+                    (setv carried [])
+                    (for [headline headlines]
+                      (<- one (| TurnAttachment None) (attachment-of page.events headline))
+                      (if (is one None)
+                          (<- (LogLine :text f"agentd: attachment {(get headline 2)} of message {message-id} could not be read from the record service"))
+                          (.append carried one)))
+                    (setv (get carried-attachments message-id) (tuple carried)))))))))
+  #(fetched carried-attachments))
 
 
 (defk mail-of [settings row]
   {:pre [(: settings AgentdSettings) (: row AcpRow)]
    :post [(: % tuple)]}
-  "inputs の郵便の本文と見つからなかった id: #(bodies missing)。本文は鍵で 1 行ずつ読む
-   (郵便の全量 list を watch の拍ごとに撃たない — R14)。"
+  "inputs の郵便の本文・添付・見つからなかった id: #(bodies attachments missing)。本文は鍵で 1 行ずつ読む
+   (郵便の全量 list を watch の拍ごとに撃たない — R14)。添付は段 10 lane 10o(型つき — 綴りは Dialogue)。"
   (<- inputs tuple (inputs-of row))
   (setv found [])
   (for [input-id inputs]
@@ -860,9 +895,10 @@
     (<- message (| AcpRow None) (AcpGetRow :key key))
     (when (is-not message None)
       (.append found message)))
-  (<- fetched dict (mail-bodies-by-ref settings (tuple found)))
-  (<- pair tuple (message-bodies-of (tuple found) inputs fetched))
-  pair)
+  (<- read tuple (mail-bodies-by-ref settings (tuple found)))
+  ;; 段 10 lane 10o: 本文と添付は同じ 1 つの判断で inputs の順に並ぶ(並びがずれる第 2 の述語を置かない)。
+  (<- triple tuple (message-bodies-of (tuple found) inputs (get read 0) (get read 1)))
+  triple)
 
 
 (defk start-offset-of [view arm]
@@ -881,10 +917,10 @@
   #(path start-offset))
 
 
-(defk after-start [settings state row plan view lease arm now-ms bodies missing]
+(defk after-start [settings state row plan view lease arm now-ms bodies carried missing]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: row AcpRow) (: plan LaunchPlan)
          (: view SessionView) (: lease (| LeaseGrant None)) (: arm str) (: now-ms int)
-         (: bodies tuple) (: missing tuple)]
+         (: bodies tuple) (: carried tuple) (: missing tuple)]
    :post [(: % AgentdState)]}
   "手番の始まり(session を起こした後・温かい session ならそのまま): 郵便の本文(bodies — headless の
    起こす腕では空: 本文は起こした prompt に畳んである)を送る(awaiting — 送った本文は owed)・
@@ -897,9 +933,17 @@
   ;; `--resume` で起こし直すことがある — その起こしに **この手番で借りた札** を載せる
   ;; (行に残った誕生の札で起こすと、更新で回った後は 401 を食う)。判断は judgment の 1 点。
   (<- turn-env dict (turn-session-env-of lease))
-  (for [body bodies]
-    (<- (SessionSend :session-id view.session-id :text body :awaiting True
-                     :session-env turn-env)))
+  ;; 段 10 lane 10o(agora-redesign #96・依頼者の追補): 添付は型つきのまま器へ渡す(綴りは Dialogue)。
+  ;; 器が受けなかった(SessionSend の答えが断りを名乗った)拍は条件 AttachmentIgnored に写す。
+  (for [[index body] (enumerate bodies)]
+    (setv attachments (if (< index (len carried)) (get carried index) #()))
+    (<- ignored (| str None)
+        (SessionSend :session-id view.session-id :text body :awaiting True
+                     :session-env turn-env
+                     :attachments attachments))
+    (when (and (isinstance ignored str) ignored)
+      (<- condition dict (condition-of CONDITION-ATTACHMENT-IGNORED ignored))
+      (.append pending condition)))
   (when missing
     (<- condition dict (condition-of "InputUnavailable"
                                      (+ "messages not found: " (.join ", " missing))))
@@ -1731,9 +1775,17 @@
       (<- message (| AcpRow None) (AcpGetRow :key key))
       (setv body (if (is message None) None (.get message.spec "body")))
       ;; 段 10f 便 1b: 本文を記録の service に置いた郵便は stream から読む(mail-bodies-by-ref の同じ 1 点)。
-      (when (and (is-not message None) (not (isinstance body str)))
-        (<- fetched dict (mail-bodies-by-ref settings #(message)))
-        (setv body (.get fetched (.get message.spec "id" message.resource-id))))
+      (setv carried #())
+      (when (is-not message None)
+        ;; 読みの表の鍵は郵便の identityKey(spec.id・無ければ行の resourceId)— 割り込みの列の id は上書きしない。
+        (setv fetch-key (str (.get message.spec "id" message.resource-id)))
+        (<- headlines tuple (message-attachments-of message.spec))
+        (when (or (not (isinstance body str)) headlines)
+          (<- read tuple (mail-bodies-by-ref settings #(message)))
+          (when (not (isinstance body str))
+            (setv body (.get (get read 0) fetch-key)))
+          ;; 段 10 lane 10o: 割り込みの郵便の添付も型つきで運ぶ(綴りは Dialogue)。
+          (setv carried (.get (get read 1) fetch-key #()))))
       (if (not (isinstance body str))
           (do
             (<- (LogLine :text f"agentd: interrupt {message-id} for job {job.job-id} has no readable Message; not delivered"))
@@ -1741,7 +1793,8 @@
           (do
             ;; 段 10 lane 10n: 注入の行の名 = Message の id(CLI の command_lifecycle がこの綴りで運命を名乗る)。
             (<- outcome (| Interjected SessionRefused)
-                (SessionInterject :session-id job.session-id :text body :ref message-id))
+                (SessionInterject :session-id job.session-id :text body :ref message-id
+                                  :attachments carried))
             (if (isinstance outcome Interjected)
                 (do
                   (.append handed message-id)

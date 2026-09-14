@@ -28,6 +28,7 @@
 (import sqlite3)
 (import sys)
 (import threading)
+(import doeff_agents.sessionhost.attachment [TurnAttachment])
 (import time)
 
 (import doeff [run])
@@ -653,6 +654,41 @@
     (raise (RuntimeError f"invalid params for {method}: missing field `{key}`")))
   value)
 
+;; 段 10 lane 10o(agora-redesign #96): 添付の段を持たない器(tui = tmux / herdr の pane)の断りの理由。
+;; 呼び手(agentd)はこれを条件 AttachmentIgnored の reason に写す(黙って落とさない)。
+(setv ATTACHMENTS-UNSUPPORTED-REASON
+      "the session substrate delivers keystrokes to a pane and cannot carry attachments")
+
+
+(deff turn-attachments-of [params method]
+  {:pre [(: params dict) (: method str)]
+   :post [(: % tuple)]}
+  "RPC の params の attachments(呼び手 = agentd)→ 型つきの添付の並び。欄が無ければ空。
+   形(mime と data が文字列)の合わない項は断る — 黙って落とさない・発明しない。
+   ⚠ 画像の綴り(block / input の項)はここに無い: 組むのは kind ごとの Dialogue(法 012 R21)。"
+  (setv raw (.get params "attachments" []))
+  (when (not (isinstance raw list))
+    (raise (RuntimeError f"invalid params for {method}: attachments must be a list")))
+  (setv built [])
+  (for [item raw]
+    (when (not (isinstance item dict))
+      (raise (RuntimeError f"invalid params for {method}: each attachment must be an object")))
+    (setv mime (.get item "mime"))
+    (setv data (.get item "data"))
+    (when (not (and (isinstance mime str) mime (isinstance data str) data))
+      (raise (RuntimeError
+               f"invalid params for {method}: each attachment needs a non-empty `mime` and `data`")))
+    (setv size (.get item "bytes" 0))
+    (setv digest (.get item "sha256" ""))
+    (setv name (.get item "name" ""))
+    (.append built (TurnAttachment :mime mime
+                                   :data data
+                                   :bytes (if (and (isinstance size int) (not (isinstance size bool))) size 0)
+                                   :sha256 (if (isinstance digest str) digest "")
+                                   :name (if (isinstance name str) name ""))))
+  (tuple built))
+
+
 (deff admit-expected-result [params method]
   {:pre [(: params dict) (: method str)]
    :post [(: % "None — 不適合は raise")]}
@@ -1150,6 +1186,15 @@
   (when (= method "session.launch")
     (setv wire-params (params-object params "session.launch"))
     (setv program-params (build-launch-program-params wire-params config))
+    ;; 段 10 lane 10o(agora-redesign #96): 起こす腕は郵便を 1 手番目に畳むので、その郵便の添付も
+    ;; この launch に載る。型つきに解いて器へ渡す(綴りは器の Dialogue)— 添付の段を持たない器
+    ;; (tui)には渡さず、断りを答えに名乗る。
+    (setv launch-attachments (turn-attachments-of wire-params "session.launch"))
+    (setv launch-ignored (if (and launch-attachments (not (headless-backend? config)))
+                             ATTACHMENTS-UNSUPPORTED-REASON
+                             ""))
+    (setv (get program-params "attachments")
+          (if launch-ignored #() launch-attachments))
     ;; DOE-003 R3 staged enforcement の warning(oracle :1721-1730 verbatim —
     ;; 運用ログは host の外部性。S11b が daemon log でこの文言を assert する)。
     ;; R7 後の運搬手段は typed binding — overlay session_env は admission で
@@ -1170,6 +1215,8 @@
     (setv sid row.session-id)
     (setv wire (wire-snapshot actor sid))
     (record-command actor sid "session.launch" wire)
+    (when launch-ignored
+      (setv wire (dict wire #** {"attachmentsIgnored" launch-ignored})))
     (return wire))
 
   ;; ADR-DOE-AGENTS-006 R4: 会話の新 incarnation。program(resume-session)が
@@ -1418,16 +1465,27 @@
         (raise (RuntimeError
                  (+ "session.send: session_env belongs to mode = " SEND-MODE-TURN
                     " — an interrupt is poured into the turn already in flight and starts no process.")))))
+    ;; 段 10 lane 10o(agora-redesign #96・依頼者の追補): 郵便の添付は**型つき**で受け取り、そのまま
+    ;; 器へ渡す(CLI の綴りは kind ごとの Dialogue が組む — この module に画像の綴りは無い)。
+    ;; 添付の段を持たない器(tui = tmux / herdr)は断りを名乗る — 本文は届く・添付だけ落ちる。
+    (setv attachments (turn-attachments-of p "session.send"))
+    (setv ignored (if (and attachments (not (headless-backend? config)))
+                      ATTACHMENTS-UNSUPPORTED-REASON
+                      ""))
+    (when ignored
+      (setv attachments #()))
     (run-hosted config actor
                 (cond
                   (and (headless-backend? config) (= mode SEND-MODE-INTERRUPT))
-                  (headless-inject-program sid message ref)
+                  (headless-inject-program sid message ref attachments)
                   (headless-backend? config)
-                  (headless-send-program sid message awaiting session-env)
+                  (headless-send-program sid message awaiting session-env attachments)
                   True
                   (send-program sid message literal enter awaiting)))
     (record-command actor sid "session.send" message)
-    (return {"sent" True}))
+    (if ignored
+        (return {"sent" True "attachmentsIgnored" ignored})
+        (return {"sent" True})))
 
   ;; agora-redesign #37: 走っている手番だけを止め、session は残す(withdraw = 中断の
   ;; 合図)。cancel(終端)とは別の動詞 — 1 つの動詞に「終端」と「残す」を同居させない。

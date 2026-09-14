@@ -43,6 +43,7 @@ def incarnate(
     session_id: str,
     lease: LeaseGrant | None,
     bodies: tuple,
+    carried: tuple,
     job_id: str,
     subject: str,
     exclude: tuple,
@@ -80,6 +81,7 @@ def after_start(
     arm: str,
     now_ms: int,
     bodies: tuple,
+    carried: tuple,
     missing: tuple,
 ) -> Program: ...
 def push_frames(settings: AgentdSettings, job: InFlightJob, frames: tuple) -> Program: ...

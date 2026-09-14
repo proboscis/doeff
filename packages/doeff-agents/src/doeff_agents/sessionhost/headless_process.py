@@ -26,6 +26,7 @@ import time
 from collections.abc import Mapping, Sequence
 from typing import IO
 
+from doeff_agents.sessionhost.attachment import TurnAttachment, TurnContent
 from doeff_agents.sessionhost.headless_protocol import (
     Dialogue,
     HeadlessObservation,
@@ -143,18 +144,21 @@ class HeadlessProcess:
 
     # -- 運ぶ(Dialogue の効果の値 → I/O) -------------------------------------------
 
-    def deliver(self, prompt: str) -> bool:
-        """次の手番の本文を stdin へ。戻り = process が生きていて書ける状態だったか。"""
+    def deliver(self, prompt: str, attachments: tuple[TurnAttachment, ...] = ()) -> bool:
+        """次の手番の本文(と添付)を stdin へ。戻り = process が生きていて書ける状態だったか。
+        綴りは Dialogue が組む(段 10 lane 10o の追補・法 012 R21)— ここは運ぶだけ。"""
         if not self.alive() or self._writer.closed:
             return False
-        plan = self.dialogue.turn(prompt)
+        plan = self.dialogue.turn(TurnContent(text=prompt, attachments=attachments))
         for line in plan.sends:
             self._writer.send(line)
         if plan.close_stdin:
             self._writer.close()
         return True
 
-    def inject(self, text: str, ref: str = "") -> bool:
+    def inject(
+        self, text: str, ref: str = "", attachments: tuple[TurnAttachment, ...] = ()
+    ) -> bool:
         """割り込みの本文を走っている手番へ(段 8 lane 4x — stdin の行・判断は Dialogue.inject)。
         戻り = 器が受け取ったか(process が生きていて、走っている手番が在り、行を書いた)。
         手番の終わりを読んで monitor がまだ受け取っていない拍も「走っていない」(その本文は
@@ -165,7 +169,7 @@ class HeadlessProcess:
         with self._lock:
             if self._ended:
                 return False
-        plan = self.dialogue.inject(text, ref)
+        plan = self.dialogue.inject(TurnContent(text=text, attachments=attachments), ref)
         if not plan.accepted:
             return False
         for line in plan.sends:
