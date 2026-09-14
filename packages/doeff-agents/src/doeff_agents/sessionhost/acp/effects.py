@@ -327,7 +327,10 @@ NODE_NAME_ENV = "DOEFF_AGENTD_NODE_NAME"
 AgentdPlace = Literal["company", "personal"]
 #: 綴りの定義点は上の型 1 つ(実行時の照合はここから導く — 語彙を 2 度書かない)。
 AGENTD_PLACES: frozenset[str] = frozenset(get_args(AgentdPlace))
-#: node の spec.labels のうち置き場を名乗る鍵(配車の絞りが読む 1 点)。
+#: node の spec のうち置き場を名乗る**型つきの欄**(契約 agora-kinds.json node.spec.place・
+#: 段 10 lane 10d 便 4・依頼者の裁定 2026-09-15 問 3)。配車の絞りはこの欄だけを読む。
+NODE_SPEC_PLACE = "place"
+#: 同じ置き場を写す labels の鍵(DEPRECATED — 読み手が残る間だけ書き続ける面。配車は読まない)。
 NODE_LABEL_PLACE = "place"
 #: 置き場の env(join が宣言 file の [agentd].place / flag --place から据える)。無い agentd は参加しない。
 PLACE_ENV = "DOEFF_AGENTD_PLACE"

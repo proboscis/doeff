@@ -66,6 +66,7 @@
   AGENTD-PLACES
   NODE-CAPABILITIES-KEY
   NODE-LABEL-PLACE
+  NODE-SPEC-PLACE
   PROFILE-KIND
   AGENTD-PRINCIPAL
   AGORA-KINDS-NAMESPACE
@@ -1725,31 +1726,46 @@
   next)
 
 
+(defk node-place-of [settings spec]
+  {:pre [(: settings AgentdSettings) (: spec dict)]
+   :post [(: % dict)]}
+  "宣言から名乗る置き場を spec の欄 place に置いた写し(段 10 lane 10d 便 4・agora-redesign #85・依頼者の裁定
+   2026-09-15 問 3)。**名乗りの座はこの型つきの欄 1 つ** — 配車の絞り(ACP の nodeAcceptsProfile)はここだけを読む。
+   置き場の宣言が空の断面(検体の既定 — 本番は composition root が参加を断る)では足さない: 嘘の名乗りを書かない。"
+  (setv next (dict spec))
+  (when settings.place
+    (setv (get next NODE-SPEC-PLACE) settings.place))
+  next)
+
+
 (defk node-spec-of [settings]
   {:pre [(: settings AgentdSettings)]
    :post [(: % dict)]}
   "機体が名乗る自分の node の spec(R28・段 10 lane 10d・agora-redesign #85 — 既知の形 = kubelet の Node の自己登記):
-   name = 機体の名・capacity = 宣言 file の [agentd].capacity・streamCapability = backend から導いた語・
-   labels = 宣言から名乗る置き場(labels.place — 便 2: 配車の絞りが読む 1 点)。"
+   name = 機体の名・place = 宣言 file の [agentd].place(**配車の絞りが読む 1 点**)・
+   capacity = 宣言 file の [agentd].capacity・streamCapability = backend から導いた語・
+   labels = 同じ置き場の写し(labels.place — 読み手が残る間の deprecated の面。配車は読まない)。"
   (<- labels dict (node-labels-of settings {}))
-  {"name" settings.node-name
-   "labels" labels
-   "capacity" settings.node-capacity
-   "streamCapability" settings.stream-capability})
+  (<- placed dict (node-place-of settings {"name" settings.node-name
+                                           "labels" labels
+                                           "capacity" settings.node-capacity
+                                           "streamCapability" settings.stream-capability}))
+  placed)
 
 
 (defk node-spec-declared [spec settings]
   {:pre [(: spec dict) (: settings AgentdSettings)]
    :post [(: % dict)]}
-  "既に在る自分の node の行の spec を宣言へ揃えた形(R28): name・capacity・streamCapability・labels.place は宣言から、
-   labels の他の名乗り(会社境界の boundary 等 — 宣言の外)は行のまま(agentd は触らない・欠落 / 型違いは空)。
+  "既に在る自分の node の行の spec を宣言へ揃えた形(R28): name・place・capacity・streamCapability・labels.place は
+   宣言から、labels の他の名乗り(会社境界の boundary 等 — 宣言の外)は行のまま(agentd は触らない・欠落 / 型違いは空)。
    宣言と一致していれば行の spec と等しい dict(呼び手は等しくない時だけ書く)。"
   (setv labels (.get spec "labels"))
   (<- declared dict (node-labels-of settings (if (isinstance labels dict) labels {})))
-  {"name" settings.node-name
-   "labels" declared
-   "capacity" settings.node-capacity
-   "streamCapability" settings.stream-capability})
+  (<- placed dict (node-place-of settings {"name" settings.node-name
+                                           "labels" declared
+                                           "capacity" settings.node-capacity
+                                           "streamCapability" settings.stream-capability}))
+  placed)
 
 
 (defk node-status-with-lease [row settings now-ms sessions transcripts]
