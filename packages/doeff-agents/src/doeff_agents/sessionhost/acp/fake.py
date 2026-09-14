@@ -31,6 +31,8 @@ from doeff_agents.sessionhost.acp.effects import (
     CaptureGone,
     ClockNowMs,
     Conflict,
+    CUSTODY_CONTRACT_VERSION,
+    CustodyHealth,
     CustodyLeaseBorrow,
     CustodyLeaseRevoke,
     EventWindow,
@@ -318,8 +320,12 @@ class FakeCustody:
         self.revoked: list[str] = []
         self.refuse_with: LeaseRefused | None = None
         self.counter: int = 0
+        #: 段 10 lane 10d 便 4: /health が名乗る答え(None = 読めない・欄なし = 版 1 の預かり所)。
+        self.health: JSONObject | None = {"ok": True, "role": "master", "contract": CUSTODY_CONTRACT_VERSION}
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
+        if isinstance(effect, CustodyHealth):
+            return Resume(k, self.health)
         if isinstance(effect, CustodyLeaseBorrow):
             if self.refuse_with is not None:
                 return Resume(k, self.refuse_with)

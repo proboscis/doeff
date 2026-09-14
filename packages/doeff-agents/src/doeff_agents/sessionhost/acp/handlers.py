@@ -78,6 +78,7 @@ from doeff_agents.sessionhost.acp.effects import (
     CaptureOutcome,
     ClockNowMs,
     Conflict,
+    CustodyHealth,
     CustodyLeaseBorrow,
     CustodyLeaseRevoke,
     Escalated,
@@ -746,6 +747,13 @@ class CustodyHttp:
     )
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
+        if isinstance(effect, CustodyHealth):
+            # 版の読み — 札は要らない(契約 custody-api.json の health は auth = none)。
+            # 届かない / 200 でない拍は None(判断は持たない — 判じるのは judgment の 1 点)。
+            if not self._base_url:
+                return Resume(k, None)
+            reply = _http_json("GET", f"{self._base_url}/health", {}, None, HTTP_TIMEOUT_SECONDS)
+            return Resume(k, reply.body if reply.status == 200 else None)
         if isinstance(effect, CustodyLeaseBorrow):
             return Resume(k, self._borrow(effect))
         if isinstance(effect, CustodyLeaseRevoke):

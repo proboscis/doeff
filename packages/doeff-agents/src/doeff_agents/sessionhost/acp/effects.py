@@ -1430,6 +1430,24 @@ class RecordReadStream(EffectBase):
 # ------------------------------------------------------------------ 要求(custody)
 
 
+#: 走行係が**話せる**貸与の契約の版(段 10 lane 10d 便 4・agora-redesign #85)。預かり所が
+#: /health の欄 contract で名乗る版とこの数が合わない機体は参加しない(起動の前段で断る)。
+#: ⚠ 版の**定義点は預かり所**(custody の Custody.Contract.Version と契約 custody-api.json の
+#: version)で、ここは「この客が話せる版」の宣言 — 上げるのは預かり所が先・客は後。
+#: 起点(実弾 2026-09-15 01:48〜02:37): 版 2 を話す agentd が版 1 の預かり所より先に本番へ出て、
+#: 貸与の答えを malformed grant と読み、本番の手番が 49 分間 1 つも走らなかった。
+CUSTODY_CONTRACT_VERSION = 2
+
+
+@dataclass(frozen=True)
+class CustodyHealth(EffectBase):
+    """預かり所の健康と**契約の版**の読み(``GET /health``・札は要らない)。
+
+    結果 = 答えの body(JSONObject)か None(届かない / JSON でない)。判断は持たない —
+    版が話せるかを判じるのは judgment.custody-contract-refusal の 1 点。
+    """
+
+
 @dataclass(frozen=True)
 class CustodyLeaseBorrow(EffectBase):
     """預かり所から札を借りる(``POST /lease/<kind>``・身元は借り手札)。結果 = LeaseOutcome。"""
