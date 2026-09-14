@@ -38,6 +38,8 @@
 (import copy)
 (import dataclasses [replace])
 (import datetime [datetime timezone])
+(import base64)
+(import binascii)
 (import hashlib)
 (import json)
 (import re)
@@ -1608,7 +1610,14 @@
    :post [(: % (| TurnAttachment None))]}
   "見出し 1 つ + その stream の出来事の列 → 器へ渡す型つきの添付。名指した作り手の序数の kind attachment の
    出来事に中身(data)が在り、見出しの mime / bytes / sha256 と食い違わない時だけ値を返す。無い・欠けた・
-   食い違う時は None(呼び手が条件 AttachmentIgnored に写す — 黙って落とさない・中身を発明しない)。"
+   食い違う時は None(呼び手が条件 AttachmentIgnored に写す — 黙って落とさない・中身を発明しない)。
+
+   ⚠ **見出しの bytes / sha256 は画像の生の byte**(差出人の client の 1 点 attachments-plan が測る材料 —
+   ACP の法 89ce1f)。記録の service の出来事が名乗る bytes / sha256 は**本文の欄の compact JSON**を測った
+   別の値なので、そのまま比べてはならない。⇒ base64 を解いた**生の byte**で比べる。
+   実弾 2026-09-15 02:39(本番の e2e chat.send-image): 出来事の値と見出しを比べていたので必ず食い違い、
+   本番の log に『attachment 1 of message … could not be read from the record service』が出て、
+   画像が 1 枚も CLI へ渡らなかった(手番は条件なしで終わるので、黙って画像だけが落ちていた)。"
   (setv seq (get headline 2))
   (setv mime (get headline 3))
   (setv size (get headline 4))
@@ -1621,14 +1630,19 @@
                (= event.kind RECORD-ATTACHMENT-EVENT-KIND)
                (isinstance event.data str)
                (isinstance event.mime str)
-               (or (not (isinstance mime str)) (= event.mime mime))
-               (or (not (isinstance size int)) (isinstance size bool) (= event.bytes size))
-               (or (not (isinstance digest str)) (= event.sha256 digest)))
-      (setv found (TurnAttachment :mime event.mime
-                                  :data event.data
-                                  :bytes event.bytes
-                                  :sha256 event.sha256
-                                  :name (if (isinstance name str) name "")))))
+               (or (not (isinstance mime str)) (= event.mime mime)))
+      ;; 生の byte(見出しが名乗る材料)。解けない綴りは値にしない — 中身を発明しない。
+      (setv raw (try (base64.b64decode event.data :validate True)
+                     (except [[binascii.Error ValueError]] None)))
+      (when (and (is-not raw None)
+                 (or (not (isinstance size int)) (isinstance size bool) (= (len raw) size))
+                 (or (not (isinstance digest str))
+                     (= (.hexdigest (hashlib.sha256 raw)) digest)))
+        (setv found (TurnAttachment :mime event.mime
+                                    :data event.data
+                                    :bytes (len raw)
+                                    :sha256 (.hexdigest (hashlib.sha256 raw))
+                                    :name (if (isinstance name str) name ""))))))
   found)
 
 
