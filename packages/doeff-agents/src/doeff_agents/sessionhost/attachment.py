@@ -29,6 +29,54 @@ class TurnAttachment:
     name: str = ""
 
 
+#: 段 10 lane 10o(agora-redesign #96): 型つきの添付を **RPC の項**にする時の欄の綴り。
+#: ⚠ ここが唯一の定義点 — agentd の wire の handler も、起こす charter も、host の解きも、この 4 つを使う
+#: (2 か所で綴ると、片方だけ直した日に「起こす腕だけ画像が落ちる」が出る)。
+#: ⚠ これは **RPC の綴り**で、CLI の綴り(claude の block・codex の input の項)ではない — そちらは Dialogue。
+ATTACHMENT_WIRE_MIME = "mime"
+ATTACHMENT_WIRE_DATA = "data"
+ATTACHMENT_WIRE_BYTES = "bytes"
+ATTACHMENT_WIRE_SHA256 = "sha256"
+ATTACHMENT_WIRE_NAME = "name"
+
+
+def attachment_wire(attachment: "TurnAttachment") -> dict[str, str | int]:
+    """型つきの添付 → RPC の項(JSON にできる形)。
+
+    実弾 2026-09-15 03:08: 起こす腕の charter に**型つきの値のまま**入れていたので、
+    RPC へ出す時に ``TypeError: Object of type TurnAttachment is not JSON serializable`` で
+    tick ごと落ち、手番が SessionFailed で終わっていた(画像も本文も届かない)。
+    """
+    return {
+        ATTACHMENT_WIRE_MIME: attachment.mime,
+        ATTACHMENT_WIRE_DATA: attachment.data,
+        ATTACHMENT_WIRE_BYTES: attachment.bytes,
+        ATTACHMENT_WIRE_SHA256: attachment.sha256,
+        ATTACHMENT_WIRE_NAME: attachment.name,
+    }
+
+
+def attachment_of_wire(item: object) -> "TurnAttachment | None":
+    """RPC の項 → 型つきの添付。mime と data が空でない文字列の時だけ値にする(発明しない)。
+    ⚠ 断る/断らないの判断は呼び手(host の口)が持つ — ここは形の読みちょうど。"""
+    if not isinstance(item, dict):
+        return None
+    mime = item.get(ATTACHMENT_WIRE_MIME)
+    data = item.get(ATTACHMENT_WIRE_DATA)
+    if not (isinstance(mime, str) and mime and isinstance(data, str) and data):
+        return None
+    size = item.get(ATTACHMENT_WIRE_BYTES, 0)
+    digest = item.get(ATTACHMENT_WIRE_SHA256, "")
+    name = item.get(ATTACHMENT_WIRE_NAME, "")
+    return TurnAttachment(
+        mime=mime,
+        data=data,
+        bytes=size if isinstance(size, int) and not isinstance(size, bool) else 0,
+        sha256=digest if isinstance(digest, str) else "",
+        name=name if isinstance(name, str) else "",
+    )
+
+
 @dataclass(frozen=True)
 class AttachmentRefused:
     """器が添付を受けなかった(理由つき)。呼び手(agentd)は条件 ``AttachmentIgnored`` に写す。

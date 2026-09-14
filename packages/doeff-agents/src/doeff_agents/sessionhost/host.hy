@@ -28,7 +28,7 @@
 (import sqlite3)
 (import sys)
 (import threading)
-(import doeff_agents.sessionhost.attachment [TurnAttachment])
+(import doeff_agents.sessionhost.attachment [TurnAttachment attachment-of-wire])
 (import time)
 
 (import doeff [run])
@@ -671,21 +671,12 @@
     (raise (RuntimeError f"invalid params for {method}: attachments must be a list")))
   (setv built [])
   (for [item raw]
-    (when (not (isinstance item dict))
-      (raise (RuntimeError f"invalid params for {method}: each attachment must be an object")))
-    (setv mime (.get item "mime"))
-    (setv data (.get item "data"))
-    (when (not (and (isinstance mime str) mime (isinstance data str) data))
+    ;; 項の綴りの読みは 1 点(sessionhost.attachment.attachment-of-wire)— agentd の書き手と同じ座。
+    (setv one (attachment-of-wire item))
+    (when (is one None)
       (raise (RuntimeError
                f"invalid params for {method}: each attachment needs a non-empty `mime` and `data`")))
-    (setv size (.get item "bytes" 0))
-    (setv digest (.get item "sha256" ""))
-    (setv name (.get item "name" ""))
-    (.append built (TurnAttachment :mime mime
-                                   :data data
-                                   :bytes (if (and (isinstance size int) (not (isinstance size bool))) size 0)
-                                   :sha256 (if (isinstance digest str) digest "")
-                                   :name (if (isinstance name str) name ""))))
+    (.append built one))
   (tuple built))
 
 
