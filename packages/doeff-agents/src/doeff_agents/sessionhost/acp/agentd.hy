@@ -223,6 +223,7 @@
   entries-of-status
   next-seq-after
   renumbered-entries
+  effort-of-plan
   fallback-arm-of
   first-turn-carries-inputs
   frame-lines-of
@@ -245,6 +246,7 @@
   merge-rows
   message-bodies-of
   message-key-of
+  ignored-settings-of
   next-arm-for-job
   node-row-named
   node-status-with-lease
@@ -613,7 +615,9 @@
       (do
         (when (is-not choice.retire None)
           (<- (retire-sessions #(choice.retire)
-                               f"job {job-id} runs in another home (account, binding or model) — the session cache is dropped and the conversation is rehydrated")))
+                               (if (= choice.arm NEXT-ARM-RESUME)
+                                   f"job {job-id} declares another effort — the warm process is replaced by a --resume of the same session with the new flags (cache kept)"
+                                   f"job {job-id} runs in another home (account, binding or model) — the session cache is dropped and the conversation is rehydrated"))))
         (<- attempted (| SessionView SessionRefused)
             (incarnate settings plan choice view session-id lease bodies job-id subject exclude))
         (setv outcome attempted)
@@ -671,7 +675,8 @@
     (<- looked (| SessionView None) (SessionGet :session-id candidate))
     (setv view looked))
   (<- home dict (session-affinity-key-of plan))
-  (<- choice ArmChoice (next-arm-for-job candidate view home))
+  (<- effort (| str None) (effort-of-plan plan))
+  (<- choice ArmChoice (next-arm-for-job candidate view home effort))
   (if (= choice.arm NEXT-ARM-DEFER)
       (do
         (when (not-in job-id previously-deferred)
@@ -749,6 +754,11 @@
   (when missing
     (<- condition dict (condition-of "InputUnavailable"
                                      (+ "messages not found: " (.join ", " missing))))
+    (.append pending condition))
+  ;; 段 10 lane 10e: この手番で効かない会話の宣言の欄は黙って落とさず条件に(判断は ignored-settings-of の 1 点)。
+  (<- ignored tuple (ignored-settings-of plan view arm))
+  (for [condition ignored]
+    (<- (LogLine :text f"agentd: job {job-id} ignores an agent setting — {(get condition "reason")}"))
     (.append pending condition))
   (<- sent-ms int (ClockNowMs))
   ;; 始点 = 行の生まれの着地(generation 1 の image の landed_at・ns 精度 — 秒の粒度の

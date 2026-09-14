@@ -99,6 +99,12 @@
 ;;; は status.binding.account の無い Bound の job を起こさず、条件 CredentialSourceMissing で閉じる。charter の binding(機体の profile の
 ;;; 家)で起こす経路は宣言の無い node だけ。session を使い回す鍵は session-affinity-key-of(旧名 home-key-of — 資格ではないことを名で
 ;;; 分かるように)。ACP の側の半分(配置が会話の profile から預かり所の account を解いて結ぶ)は ACP の法 c744ca(L769)。
+;;; 段 10 lane 10e 便 2(agora-redesign #53・設計 agent-settings-c4-context-map 第 9 節 問 3 / 問 5)の改訂 = R24: node は能力の表
+;;; (status.capabilities = agent の種類ごとの settings / restartOn — effects.AGENT-CAPABILITIES の写し・judgment.capabilities-of)を
+;;; lease と同じ拍に名乗り、restartOn は session-affinity-key-of の鍵の欄(model・profile)ちょうど。effort は鍵に入れず、同じ家で
+;;; effort だけ違う温かい session は片付けて同じ session を新しい旗で --resume(next-arm-for-job の effort の腕・cache は保つ)。
+;;; 効かない宣言の欄(受けない種類・温かい send で違う workDir)は条件 AgentSettingIgnored(judgment.ignored-settings-of の 1 点)。
+;;; ACP の側(会話の宣言の effort・許可名簿の投影・charter.effort)は ACP の法 eda1e8(L771)。
 
 (require doeff-adr.macros [defadr rule law])
 (require doeff-hy.macros [deftest])
@@ -413,6 +419,7 @@
      (rule R21 "割り込みの本文は走っている手番へ即座に渡す(段 8 lane 4x・agora-redesign #56・operator 逐語 2026-09-13 \"messaging supports both 'queued/interrupting' messages\"): Messaging(ACP)が走っている手番の agent-job の status.interrupts に載せた Message の id を、agentd は毎拍・行の cache から・自分が走らせている job(memory の InFlightJob)についてだけ読み(agentd.deliver-interrupts の 1 点)、渡していない id(judgment.pending-interrupts-of = 行の interrupts − 行の interruptsDelivered − memory の interrupts_sent・載せた順)ごとに Message の本文を鍵で 1 行読んで SessionInterject(session.send の mode = interrupt)で器へ渡す。渡せた id は鍵で読み直した行に CAS で記録する(judgment.interrupts-delivered-status-of — 同じ 1 回の書きで interrupts から消し interruptsDelivered へ足す・他の欄は写す・Conflict は 1 度読み直す)。器が断った id(走っている手番が無い)はそこで止めて行に残す(順を跨いで後の id を先に渡さない)— 手番が終わればその行は終端の phase で interrupts を持ち、Messaging が queued として積み直す。器の側(sessionhost の headless): claude は `--input-format stream-json` の温かい process(impls/headless_argv.hy の CLAUDE-HEADLESS-FLAGS・実測 conformance/interrupt-physics.md — 手番の途中に書いた user の行は CLI が次の tool の境界で手番に注入し、result の後も process は生きて次の行が次の手番)で、割り込みの本文 = 同じ user の行(headless_protocol.ClaudeDialogue.inject — 走っている手番が無ければ accepted = False)、codex = turn/interrupt を送り interrupted の turn/completed を手番の終わりとして報告せず同じ thread へ本文の turn/start(CodexDialogue.inject — host から見て手番は 1 つのまま)。host は器が引き受けなかった時に型付きに断る(headless-inject-program — 誰の job でもない手番を起こさない)。agentd は器の作法(stdin の綴り・turn/interrupt)を 1 語も持たない。")
      (rule R22 "実況の push の周期は購読者が居る間 ≤ 50 ms(段 8 lane 4aa・agora-redesign #63): headless の器の実況は events file の行の増分で、file の追記は合図を持たない —— agentd が offset から読んで中継へ押す拍の周期がそのまま push の間隔になる。購読者が居る(InFlightJob.capturing)間の watch の待ちの上限は、この器の実況が events(AgentdSettings.stream_capability = events)なら AgentdSettings.events_poll_seconds(既定 0.05 = 出来事ごとの push に最も近い有界の拍)、frames(tui の pane の断面)なら frame_interval_seconds(2〜5 Hz・issue #1 の決定 4 のまま)。購読者が居なければ transcript_poll_seconds(記録の追記だけ)、job が無ければ idle_wait_seconds。判断は judgment.wait-seconds-for の 1 点、値の宣言は AgentdSettings の 1 点(handlers / agentd.hy に周期の literal を置かない)。本番 2026-09-13 17:1x: 実況の最初の tail が attach の後 247〜258 ms、割り込みの反映 219 ms — 画面の糊の側の根(会話簿の毎拍の組み直し)は agora-controllers 741e67d で直し、agentd の側の残りがこの周期(購読ありで 0.4 s・無しで 1.0 s の tick)だった。⚠ 記録(turn-record)への追記の拍は push の周期に**追随しない**(judgment.record-due — transcript_poll_seconds のまま・InFlightJob.last_record_ms): 追記は CAS の書き = ACP の event 1 つで、50 ms の拍ごとに書くと走っている手番 1 つで毎秒 10〜20 の event が journal に並び、画面の糊の watch の拍(1 event = 1 拍)が飽和する(実弾 2026-09-13 18:3x: 糊の占有 367 拍中 359 が 200〜500 ms・hello 15 s)。書かない拍の出来事は pending_entries に持ち越す(落とさない)。")
      (rule R23 "手番の資格の出所は judgment.credential-source-of の 1 点(段 10 lane 10c・agora-redesign #80・operator 決定 2026-09-14 \"access token is to be fetched from k3s\"): launch-plan-of が据えた plan.account(binding.account ∧ charter の agent_type に貸与の種類)が在れば lease(預かり所から借り、借りた家で起こす)、無ければ node が預かり所を宣言している(AgentdSettings.custody_declared — runtime.settings_from_env が CUSTODY_URL_ENV = join の [custody].url の在否から導く 1 点)時 missing、宣言していなければ home。agentd.claim-job は plan を読んだ直後にこの答えを読み、missing の job は起こさず Running も sessionHandle も書かず、end-job-now で条件 CredentialSourceMissing つきの Ended に閉じる(黙って charter の binding = 機体の profile の家へ落ちない)。home(charter の binding で起こす)の経路は預かり所を宣言していない node(移行前の機体)だけに残る。session を使い回す鍵は judgment.session-affinity-key-of(旧名 home-key-of — 鍵の中身は account・binding・model のまま不変で、資格ではない)。ACP の側の半分(配置が会話の profile → profile の行 → spec.account を解いて status.binding.account に置く)は ACP の法 defadr_20260914_turn_credential_is_the_custody_lease_c744ca。")
+     (rule R24 "node の能力の表と、効かない宣言の欄の条件(段 10 lane 10e・agora-redesign #53・operator 決定 2026-09-14 \"all lgtm\"): agentd は node の status.capabilities に agent の種類(charter.agent_type の語 claude / codex)ごとの {settings: 受ける欄, restartOn: 変えたら session を作り直す欄} を lease と同じ拍に名乗る(judgment.capabilities-of — 値は effects.AGENT-CAPABILITIES の 1 点・契約 agora-kinds.json conventions.agentSettings.settings の綴り)。restartOn は session-affinity-key-of の鍵の欄(model・profile = account と binding の家)ちょうどで、effort と workDir は受けるが鍵に入れない。effort は claude の --effort / codex の -c model_reasoning_effort(process の旗)なので、同じ家で effort だけ違う温かい session は片付けて同じ session を新しい旗で --resume する(next-arm-for-job の 4 つ目の引数・帰属の effort の欄と比べる — session は作り直さず cache を保つ)。この手番で効かない宣言の欄(能力の表に無い種類・受けない欄・温かい session への send で charter.work_dir が session の cwd と違う)は、judgment.ignored-settings-of の 1 点が条件 AgentSettingIgnored(1 欄 1 行・reason = <欄>=<値>: <理由>)にして手番の終わりに刻む(黙って落とさない)。")
      (rule R10 "session は会話の資源・job は手番(温かい session・設計 17.4): 会話 → 生きている session の対応は行(自分が claim した同じ subject の agent-job の sessionHandle)と器の現況から導き、Bound の job の起こし方は judgment.hy の next-arm-for-job(閉語彙 effects.NextArm = launch | send | resume | rehydrate | defer — 家と機体の扱いは R20)の 1 点で決める — 同じ会話の生きて idle な session が在れば launch せず session.send(awaiting)だけ、sessionHandle はその session を指し、turn-record は手番ごと。手番の終わりは器の lifecycle multi_turn(launch.hy の閉語彙に足した語)で policy.hy の monitor が既存の turn-end の連言から行の turn_ended_at に刻み、agentd は job-step-of の turn-end(turn_ended_at > 手番の始まりの下限 ∧ 記録の進み)で読む — status は倒さず session は生かす。idle の寿命は AgentdSettings.session_idle_ttl_seconds の 1 点で、超過・Withdrawn・node の退役で session.cleanup。計器 agent-job-to-send は create → send のまま(温かい path で p99 < 2 秒)。")]
   :laws
     [(law interrupts-ride-the-running-turn-and-are-recorded-on-the-row
@@ -551,6 +558,15 @@
           (counterexample "資格の出所を claim の腕ごとに判じる(launch / resume / rehydrate / recover の各所で account を見る)— 判定点が増え、1 つの腕だけが家へ落ちる形が生える。出所は credential-source-of の 1 点で claim の頭に 1 度")
           (counterexample "預かり所の宣言の有無を URL の既定値(CUSTODY_URL_DEFAULT)の在否で判じる — 既定の URL は常に在るので全 node が宣言した扱いになり、移行前の機体の手番が全部断られる。宣言は join の env の在否 1 点")
           (counterexample "session を使い回す鍵を『家の鍵』と呼ぶ — 資格の選択と cache の同一性が同じ語で語られ、鍵の一致を資格の一致と読み違える(operator 逐語 2026-09-14 \"oh my god, there's home key???\")。鍵の名は session-affinity-key-of")])
+     (law node-names-its-capability-table-and-never-drops-a-setting-silently
+       :statement "for_all node n joined by agentd: n.status.capabilities = judgment.capabilities-of alone, one entry per agent kind agentd can launch with settings ⊇ restartOn and restartOn = the fields of session-affinity-key-of; for_all Bound job j whose declared effort differs from the warm session's launched effort in the same home: the session is cleaned up and the same session is resumed with the new effort; for_all declared field f of j's charter that this node cannot apply on this turn: j's ended conditions carry AgentSettingIgnored naming f, its value and why"
+       :counterexamples
+         [(counterexample "能力の表を名乗らない(段 10 lane 10e より前の agentd)— ACP の許可名簿の投影は『受ける欄なし』と読み、この node しか無い時は operator が model も effort も選べない。名乗りは lease と同じ拍で必ず書く")
+          (counterexample "effort を session-affinity-key-of の鍵に入れる — effort を変えるたびに履歴からの再開(cache の失効)になる。effort は process の旗で、同じ session を --resume すれば足りる")
+          (counterexample "effort が違う温かい session にそのまま send する — process の旗は起動時のものなので前の effort で走る(黙って落とす)。帰属の effort と比べて起こし直す")
+          (counterexample "温かい send で違う work_dir を黙って前の cwd で走らせる — operator は宣言が効いたと思う。条件 AgentSettingIgnored で名指す(session は作り直さない・次に起こす時に効く)")
+          (counterexample "能力の表の値を judgment.hy と effects.py と agentd.hy に別々に書く — 名乗りと判断が食い違う。表は effects.AGENT-CAPABILITIES の 1 点で、名乗りも判断もそこから読む")
+          (counterexample "restartOn に settings に無い欄を書く — ACP の読み手(nodeViewOf)が行の誤りとして node を落とし、投影から消える")])
      (law turn-events-are-appended-to-the-record-per-tick
        :statement "for_all running job j observed by agentd and for_all tick t at which stream-records reads new material of j: the events e_1..e_n that judgment.deltas-of derives from that material are appended (not replaced) to the status.entries of turn-record(j) within the same tick by agentd.append-entries, each with at = t and a seq strictly greater than every seq already on the row, via one CAS write on the last known image of the row (Conflict ⇒ one re-read and one retry; Refused or missing row ⇒ the events stay in InFlightJob.pending_entries and ride the next write); the row's entries JSON never exceeds TURN_RECORD_ENTRIES_BYTE_BUDGET (the oldest events are dropped first and a single leading kind=system marker with truncated=true and dropped=k replaces them); every appended entry is the JSON of a TurnEntryHeadline (seq, at, kind, toolName?, toolUseId?, bytes, sha256, isError?) derived by judgment.headline-of-body from the body sent to the record service — it carries no text / summary / input / output / model, and its sha256 = sha256 of record-body-bytes-of(body) (the service's identity of the same event); the record service's appendAnswer.highestProducerSeq for the stream of j lands as status.recordedSeq (never decreasing) with status.recordRef = record:<cid>/<streamId>; and the end of the turn drains the remaining material through the same point, then writes state=ended and usage over the appended entries without replacing them"
        :counterexamples
@@ -1385,6 +1401,32 @@
                    "test_undeclared_node_keeps_the_charter_home_for_a_job_without_an_account"
                    "test_credential_source_is_one_judgment"]]
          (assert (in (+ "def " name "(") tests) f"R23 の反例の検が無い: {name}")))
+     (deftest test-adr-doe-agents-012-capability-table-and-agent-setting-ignored-are-one-judgment
+       ;; R24 の針(構造): 能力の表は effects.AGENT-CAPABILITIES の 1 点で、judgment.capabilities-of だけがそれを node の status に
+       ;; 写し、node-status-with-lease がその 1 点を呼ぶ。効かない欄の条件は judgment.ignored-settings-of の 1 点で、agentd.hy は
+       ;; after-start でその答えだけを pending に積む。effort の腕は next-arm-for-job の中(agentd.hy は effort-of-plan の答えを渡すだけ)。
+       ;; 反例(挙動)は test_sessionhost_acp.py の 4 本。
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk capabilities-of ") line)) 1))
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk ignored-settings-of ") line)) 1))
+       (assert (= (len (lfor line judgment-lines :if (in "(.items AGENT-CAPABILITIES)" line) line)) 1) "能力の表を写す点が 1 つでない(R24)")
+       (assert (any (gfor line judgment-lines (in "(setv (get next NODE-CAPABILITIES-KEY) table)" line))) "node-status-with-lease が能力の表を書かない(R24)")
+       (assert (any (gfor line judgment-lines (in "(and idle same) (ArmChoice :arm NEXT-ARM-RESUME :source candidate :retire candidate)" line)))
+               "effort だけ違う温かい session を片付けて resume する腕が無い(R24)")
+       (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
+       (assert (= (len (lfor line agentd-lines :if (in "(ignored-settings-of plan view arm)" line) line)) 1) "agentd.hy が効かない欄を 1 点から読まない(R24)")
+       (assert (= (len (lfor line agentd-lines :if (in "(next-arm-for-job candidate view home effort)" line) line)) 1) "agentd.hy が effort を腕へ渡さない(R24)")
+       (for [line agentd-lines]
+         (assert (not-in "AGENT-CAPABILITIES" line) f"agentd.hy が能力の表を自分で読む(R24): {line}")
+         (assert (not-in "CONDITION-AGENT-SETTING-IGNORED" line) f"agentd.hy が条件を自分で組む(R24): {line}"))
+       (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
+       (assert (any (gfor line effects-lines (.startswith line "AGENT_CAPABILITIES: dict[str, dict[str, tuple[AgentSetting, ...]]] = {"))) "能力の表の定義点が effects.py に無い(R24)")
+       (setv tests (.read-text (/ (. (Path __file__) parent parent parent) "packages" "doeff-agents" "tests" "test_sessionhost_acp.py") :encoding "utf-8"))
+       (for [name ["test_node_status_names_the_capability_table"
+                   "test_ignored_settings_of_is_the_one_decision"
+                   "test_second_turn_with_another_effort_resumes_the_same_session_with_the_new_flag"
+                   "test_warm_send_with_another_work_dir_records_agent_setting_ignored"]]
+         (assert (in (+ "def " name "(") tests) f"R24 の反例の検が無い: {name}")))
      (deftest test-adr-doe-agents-012-interrupts-ride-the-running-turn
        ;; R21 の針(構造): 判断は judgment.hy の 1 点ずつ・配達は agentd.deliver-interrupts の 1 点・agentd は器の作法の語を
        ;; 持たない・claude の headless は stream-json の入力・sessionhost の割り込みの口は mode = interrupt の 1 語。
@@ -1453,4 +1495,5 @@
           "docs/impl-requests/stage8-lane-prompts/lane-4aa-live-tail-200ms.md(agora-redesign #63・追補 R22)"
           "docs/impl-requests/stage9-lane-prompts/lane-9f2-agentd-dual-write.md(agora-redesign #59・設計 §2.4・本文の二重書き)"
           "docs/impl-requests/stage9-lane-prompts/lane-9f4-agentd-headline-entries.md(agora-redesign #59・設計 §2.2 / §2.4・R19 / R20 の追補: 見出しだけ・recordRef / recordedSeq・再開は service から)"
-          "docs/impl-requests/stage9-lane-prompts/lane-9o3-agentd-warm-session-honors-model.md(agora-redesign #75・R20 の追補: 家の鍵に model)"])
+          "docs/impl-requests/stage9-lane-prompts/lane-9o3-agentd-warm-session-honors-model.md(agora-redesign #75・R20 の追補: 家の鍵に model)"
+          "docs/impl-requests/stage10-lane-prompts/lane-10e-agent-settings-catalog-and-chip.md(agora-redesign #53・追補 R24: 能力の表・effort の腕・AgentSettingIgnored)"])

@@ -88,6 +88,9 @@ def bound_job(
     predecessor: str | None = None,
     lifecycle: str | None = None,
     created_at_ms: int = 500,
+    effort: str | None = None,
+    work_dir: str = "/work",
+    agent_type: str = "claude",
 ) -> AcpRow:
     binding: JSONObject = {"node": NODE, "profile": "personal"}
     if account is not None:
@@ -97,13 +100,15 @@ def bound_job(
         # 読んだら検が割れるよう、job の id とも鋳造の綴り(sid-<n>)とも違う綴りにする。
         "session_id": f"charter-{job_id}",
         "session_name": f"charter-{job_id}",
-        "agent_type": "claude",
-        "work_dir": "/work",
+        "agent_type": agent_type,
+        "work_dir": work_dir,
         "prompt": "start",
         "model": "claude-opus-5",
     }
     if lifecycle is not None:
         charter["lifecycle"] = lifecycle
+    if effort is not None:
+        charter["effort"] = effort
     spec: JSONObject = {
         "subject": subject,
         "inputs": list(inputs),
@@ -1021,6 +1026,153 @@ def test_node_observations_carry_the_conversation_sessions() -> None:
     ]
 
 
+def test_node_status_names_the_capability_table() -> None:
+    """段 10 lane 10e(agora-redesign #53): node の status.capabilities = agent の種類ごとの {settings, restartOn}
+    (契約 kinds.node.status.capabilities・書き手 agentd・lease と同じ拍)。restartOn = session-affinity-key-of の鍵の欄
+    (model・profile)ちょうどで、effort と workDir は受けるが session を作り直さない。"""
+    from doeff_agents.sessionhost.acp.effects import AGENT_CAPABILITIES, AGENT_SETTINGS
+
+    world = World()
+    world.tick()
+    node = world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"]
+    assert node.status is not None
+    table = node.status["capabilities"]
+    assert isinstance(table, dict)
+    assert table == run(judgment.capabilities_of())
+    assert set(table) == {"claude", "codex"}
+    for kind, entry in table.items():
+        assert isinstance(entry, dict)
+        assert entry == {
+            "settings": list(AGENT_CAPABILITIES[kind]["settings"]),
+            "restartOn": list(AGENT_CAPABILITIES[kind]["restartOn"]),
+        }
+        settings_of_kind = entry["settings"]
+        restart_of_kind = entry["restartOn"]
+        assert isinstance(settings_of_kind, list) and isinstance(restart_of_kind, list)
+        assert settings_of_kind == list(AGENT_SETTINGS)
+        assert set(restart_of_kind) <= set(settings_of_kind)
+        assert restart_of_kind == ["model", "profile"]
+    # 鍵の欄 ⇔ restartOn: 鍵は account(profile の家)・binding(profile の家)・model の 3 欄で、effort / workDir は無い。
+    plan = run(judgment.launch_plan_of(bound_job("a", inputs=[], effort="xhigh", work_dir="/elsewhere")))
+    key = run(judgment.session_affinity_key_of(plan))
+    assert set(key) == {"account", "binding", "model"}
+    assert "effort" not in key and "workDir" not in key and "work_dir" not in key
+
+
+def test_ignored_settings_of_is_the_one_decision() -> None:
+    """段 10 lane 10e: 効かない会話の宣言の欄は条件 AgentSettingIgnored(1 欄 1 行)— 判断は ignored-settings-of の 1 点。
+    claude が全部受ける手番は空 / 能力の表に無い種類は宣言した欄が全部 / 温かい session への send で work_dir が
+    session の cwd と違う時は workDir(session は作り直さない・次に起こす時に効く)。"""
+    plan = run(judgment.launch_plan_of(bound_job("a", inputs=[], effort="xhigh")))
+    warm = _view("p", "running", lifecycle="multi_turn", turn_ended_at_ms=10)
+    assert run(judgment.ignored_settings_of(plan, None, "launch")) == ()
+    assert run(judgment.ignored_settings_of(plan, warm, "send")) == ()
+    elsewhere = run(judgment.launch_plan_of(bound_job("b", inputs=[], work_dir="/elsewhere")))
+    assert run(judgment.ignored_settings_of(elsewhere, None, "launch")) == ()
+    ignored = run(judgment.ignored_settings_of(elsewhere, warm, "send"))
+    assert isinstance(ignored, tuple) and len(ignored) == 1
+    assert ignored[0]["type"] == "AgentSettingIgnored"
+    assert ignored[0]["status"] == "True"
+    assert ignored[0]["reason"].startswith("workDir=/elsewhere: the warm session keeps its cwd /work")
+    unknown = run(judgment.launch_plan_of(bound_job("c", inputs=[], effort="low", agent_type="gemini")))
+    reasons = [c["reason"] for c in run(judgment.ignored_settings_of(unknown, None, "launch"))]
+    assert reasons == [
+        "model=claude-opus-5: agent kind 'gemini' names no capability table",
+        "effort=low: agent kind 'gemini' names no capability table",
+        "workDir=/work: agent kind 'gemini' names no capability table",
+    ]
+
+
+def test_second_turn_with_another_effort_resumes_the_same_session_with_the_new_flag() -> None:
+    """段 10 lane 10e: effort は process の旗なので温かい process には届かない — 同じ家で effort だけ違う次の手番は、
+    温かい session を片付けて同じ session を新しい effort で --resume する(session は作り直さない・cache は保つ)。
+    同じ effort の手番は今までどおり send。"""
+    world = World()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"], effort="high", created_at_ms=world.local.now_ms - 400))
+    world.tick()
+    first = world.sid("j-1")
+    assert world.sessions.launches[-1]["effort"] == "high"
+    attribution = world.sessions.views[first].launch_attribution
+    assert isinstance(attribution, dict)
+    mine = attribution["agentd"]
+    assert isinstance(mine, dict)
+    assert mine["effort"] == "high"
+    path = f"{HOMES}/claude/acct/projects/-work/{first}.jsonl"
+    world.local.transcripts[path] = transcript_line("assistant", [{"type": "text", "text": "one"}])
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(first, world.local.now_ms + 500)
+    world.tick(advance_ms=1_000)
+    assert world.state.jobs == ()
+    # 同じ effort → send(片付けない・resume しない)
+    world.acp.put_row(message("m-2", "second"))
+    world.acp.put_row(bound_job("j-2", inputs=["m-2"], effort="high", created_at_ms=world.local.now_ms + 700))
+    world.tick(advance_ms=1_000)
+    assert world.sessions.cleanups == []
+    assert world.sessions.resumes == []
+    assert world.sessions.sends[-1] == (first, "second", True)
+    world.local.transcripts[path] += transcript_line("assistant", [{"type": "text", "text": "two"}])
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(first, world.local.now_ms + 200)
+    world.tick(advance_ms=1_000)
+    assert world.state.jobs == ()
+    # 違う effort → 片付けて同じ session を新しい旗で resume
+    world.acp.put_row(message("m-3", "third"))
+    world.acp.put_row(bound_job("j-3", inputs=["m-3"], effort="xhigh", created_at_ms=world.local.now_ms + 700))
+    world.tick(advance_ms=1_000)
+    assert world.sessions.cleanups == [first]
+    assert len(world.sessions.launches) == 1
+    assert len(world.sessions.resumes) == 1
+    resumed = world.sessions.resumes[-1]
+    assert resumed["session_id"] == first
+    assert resumed["effort"] == "xhigh"
+    third = world.sid("j-3")
+    assert third != first
+    assert resumed["new_session_id"] == third
+    stamped = world.sessions.views[third].launch_attribution
+    assert isinstance(stamped, dict)
+    stamped_mine = stamped["agentd"]
+    assert isinstance(stamped_mine, dict)
+    assert stamped_mine["effort"] == "xhigh"
+    assert stamped_mine["arm"] == "resume"
+    job = world.job("j-3")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_RUNNING
+    handle = job.status["sessionHandle"]
+    assert isinstance(handle, dict)
+    assert handle["sessionId"] == third
+    assert job.status.get("conditions", []) == []
+
+
+def test_warm_send_with_another_work_dir_records_agent_setting_ignored() -> None:
+    """段 10 lane 10e: 温かい session への send で charter の work_dir が違う手番は、送りはするが条件
+    AgentSettingIgnored{workDir} を手番の終わりに刻む(黙って落とさない)。"""
+    world = World()
+    path = _run_first_turn(world)
+    world.acp.put_row(message("m-2", "second"))
+    world.acp.put_row(
+        bound_job("j-2", inputs=["m-2"], work_dir="/elsewhere", created_at_ms=world.local.now_ms + 700)
+    )
+    world.tick(advance_ms=1_000)
+    warm = world.sid("j-1")
+    assert world.sessions.sends[-1] == (warm, "second", True)
+    assert world.sessions.cleanups == []
+    world.local.transcripts[path] += transcript_line("assistant", [{"type": "text", "text": "two"}])
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(warm, world.local.now_ms + 200)
+    world.tick(advance_ms=1_000)
+    ended = world.job("j-2")
+    assert ended.status is not None
+    assert ended.status["phase"] == PHASE_ENDED
+    conditions = ended.status["conditions"]
+    assert isinstance(conditions, list)
+    ignored = [c for c in conditions if isinstance(c, dict) and c.get("type") == "AgentSettingIgnored"]
+    assert len(ignored) == 1
+    assert ignored[0]["status"] == "True"
+    assert str(ignored[0]["reason"]).startswith("workDir=/elsewhere: the warm session keeps its cwd /work")
+    assert any("ignores an agent setting" in line for line in world.local.logs)
+
+
 def test_predecessor_alive_is_sent_and_terminal_predecessor_is_resumed() -> None:
     world = World()
     _run_first_turn(world)
@@ -1346,12 +1498,26 @@ def test_next_arm_for_job_is_the_one_decision() -> None:
     bare_warm = _view("p", "running", lifecycle="multi_turn", turn_ended_at_ms=10)
     bare_dead = _view("p", "exited", lifecycle="multi_turn", turn_ended_at_ms=10)
 
-    def arm(candidate: str | None, view: SessionView | None, at: JSONObject) -> ArmChoice:
-        choice = run(judgment.next_arm_for_job(candidate, view, at))
+    def arm(
+        candidate: str | None, view: SessionView | None, at: JSONObject, effort: str | None = None
+    ) -> ArmChoice:
+        choice = run(judgment.next_arm_for_job(candidate, view, at, effort))
         assert isinstance(choice, ArmChoice)
         return choice
 
     assert arm(None, None, home) == ArmChoice("launch", None, None)
+    # 段 10 lane 10e: effort は鍵に入れない — 同じ家で effort だけ違う温かい session は片付けて同じ session を
+    # 新しい旗で --resume(cache は保つ)。帰属に effort の欄が無い(前の agentd が起こした)session は「既定で起きた」と読む。
+    stamped_agentd = stamp["agentd"]
+    assert isinstance(stamped_agentd, dict)
+    stamped_high = replace(warm, launch_attribution={"agentd": {**stamped_agentd, "effort": "high"}})
+    assert arm("p", stamped_high, home, "high") == ArmChoice("send", "p", None)
+    assert arm("p", stamped_high, home, "xhigh") == ArmChoice("resume", "p", "p")
+    assert arm("p", stamped_high, home, None) == ArmChoice("resume", "p", "p")
+    assert arm("p", warm, home, "high") == ArmChoice("resume", "p", "p")
+    assert arm("p", busy, home, "xhigh") == ArmChoice("defer", "p", None)
+    assert arm("p", dead, home, "xhigh") == ArmChoice("resume", "p", None)
+    assert arm("p", stamped_high, other, "xhigh") == ArmChoice("rehydrate", None, "p")
     assert arm("p", warm, home) == ArmChoice("send", "p", None)
     assert arm("p", warm, other) == ArmChoice("rehydrate", None, "p")
     assert arm("p", bare_warm, home) == ArmChoice("rehydrate", None, "p")
@@ -2328,6 +2494,7 @@ _AGENTD_STATUS_AXES: tuple[tuple[str, str], ...] = (
     (TURN_RECORD_KIND, "entries"),
     (NODE_KIND, "lease"),
     (NODE_KIND, "observations"),
+    (NODE_KIND, "capabilities"),
     (PROFILE_KIND, "observed"),
 )
 
@@ -2408,3 +2575,17 @@ def test_agentd_values_copied_from_agora_kinds_match_the_copy() -> None:
         assert AGENTD_PRINCIPAL in writers, (
             f"{kind}.status.{axis} の書き手に agentd が居ない: {writers}"
         )
+    # 段 10 lane 10e: 能力の表の語彙(settings / restartOn の語)は契約の settings の閉語彙と同じ綴り、
+    # effort の語は契約の efforts の閉語彙(claude の --effort / codex の model_reasoning_effort に渡す語)。
+    from doeff_agents.sessionhost.acp.effects import AGENT_CAPABILITIES, AGENT_SETTINGS
+
+    settings_words = _string_list(_lookup(copy, "conventions.agentSettings.settings"))
+    assert list(AGENT_SETTINGS) == settings_words, (AGENT_SETTINGS, settings_words)
+    table_schema = _lookup(copy, "kinds.node.schema.properties.status.properties.capabilities.additionalProperties.properties")
+    for axis in ("settings", "restartOn"):
+        assert _string_list(_lookup(table_schema, f"{axis}.items.enum")) == settings_words
+    for kind, entry in AGENT_CAPABILITIES.items():
+        assert set(entry["restartOn"]) <= set(entry["settings"]), kind
+        assert set(entry["settings"]) <= set(settings_words), kind
+    efforts = _string_list(_lookup(copy, "conventions.agentSettings.efforts"))
+    assert efforts == ["low", "medium", "high", "xhigh"]

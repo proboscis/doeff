@@ -107,7 +107,7 @@ DeltaKind = Literal["text", "tool_use", "tool_result", "usage", "status", "frame
 #: (Withdrawn)で走っている手番を止めた(phase は書き手 = 作った側のまま)。
 ConditionType = Literal[
     "LaunchFailed", "CredentialUnavailable", "InputUnavailable", "SessionFailed", "Interrupted",
-    "RecordUnavailable", "CredentialSourceMissing",
+    "RecordUnavailable", "CredentialSourceMissing", "AgentSettingIgnored",
 ]
 CONDITION_INTERRUPTED: ConditionType = "Interrupted"
 #: 段 9p(agora-redesign #76): 手番の記録(turn-record)の行を作れないまま手番が終わった — 頭が答えない拍
@@ -117,6 +117,29 @@ CONDITION_RECORD_UNAVAILABLE: ConditionType = "RecordUnavailable"
 #: 手番の資格は預かり所の貸与ちょうどなので、起こさず(Running も sessionHandle も書かず)この条件で Ended に閉じる
 #: (判断は judgment.credential-source-of の 1 点)。
 CONDITION_CREDENTIAL_SOURCE_MISSING: ConditionType = "CredentialSourceMissing"
+#: 段 10 lane 10e(agora-redesign #53・設計 第 9 節 問 3 / 問 4): 会話の宣言(charter の欄)のうち、この node の agent の種類が
+#: 受けない欄・温かい session に送る手番では変えられない欄(workDir — cwd は起こした process のもの)を黙って落とさず、
+#: 手番の終わりの conditions に 1 欄 1 行で刻む(判断は judgment.ignored-settings-of の 1 点)。
+CONDITION_AGENT_SETTING_IGNORED: ConditionType = "AgentSettingIgnored"
+#: 段 10 lane 10e: 会話の宣言の欄の閉語彙(ACP の契約 agora-kinds.json conventions.agentSettings.settings の写し)と、
+#: agent の種類(charter.agent_type の語)ごとの能力の表 = 受ける欄(settings)と変えたら session を作り直す欄(restartOn)。
+#: node の status.capabilities に名乗る(judgment.capabilities-of)。restartOn = session-affinity-key-of の鍵の欄ちょうど
+#: (model・profile〔= account と binding の家〕)。effort は claude が `--effort`(2.1.270 の実物)・codex が
+#: `-c model_reasoning_effort` で受け、process を起こし直せば同じ session のまま変えられる(session は作り直さない)。
+#: workDir は起こす時の cwd(session を作り直さないが、温かい session へ送る手番では変えられない → AgentSettingIgnored)。
+AgentSetting = Literal["model", "profile", "effort", "workDir"]
+AGENT_SETTINGS: tuple[AgentSetting, ...] = ("model", "profile", "effort", "workDir")
+AGENT_SETTINGS_RESTART_ON: tuple[AgentSetting, ...] = ("model", "profile")
+#: 種類 → {settings, restartOn}(agentd が起こせる種類は launch の argv builder を持つ claude / codex の 2 つ)。
+AGENT_CAPABILITIES: dict[str, dict[str, tuple[AgentSetting, ...]]] = {
+    "claude": {"settings": AGENT_SETTINGS, "restartOn": AGENT_SETTINGS_RESTART_ON},
+    "codex": {"settings": AGENT_SETTINGS, "restartOn": AGENT_SETTINGS_RESTART_ON},
+}
+#: node の status に能力の表を書く欄の名(契約 kinds.node.schema.properties.status.properties.capabilities・書き手 agentd)。
+NODE_CAPABILITIES_KEY = "capabilities"
+#: charter の欄 → 会話の宣言の欄の語(契約 conventions.agentSettings.settings)。profile は charter に無い(段 10c: 配置の係が
+#: 預かり所の account に解く — binding.account が家)。
+CHARTER_SETTING_KEYS: dict[str, AgentSetting] = {"model": "model", "effort": "effort", "work_dir": "workDir"}
 #: 手番の資格の出所(段 10c・judgment.credential-source-of の閉語彙): lease = binding.account が在り charter の agent_type に
 #: 貸与の種類がある(預かり所から借りる)/ missing = それが無く、この node は預かり所を宣言している(起こさない)/
 #: home = それが無く、預かり所を宣言していない node(移行前の機体 — charter の binding で起こす今日の経路)。

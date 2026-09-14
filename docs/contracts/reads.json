@@ -1,6 +1,6 @@
 {
   "schema": "acp.contract-reads.v1",
-  "comment": "doeff の agentd(packages/doeff-agents/src/doeff_agents/sessionhost/acp)の code が読み書きする契約の欄(dot 区切りの path)。書く欄も載せる — 正本が欄を deprecated にした時に書き手の追随の忘れを正本側の検が赤にするため(Pact の形・採用 9)。段 9f lane 9f-8(agora-redesign #59)。追いつきの計器 agentd_record_lag_seq(judgment.record-lag-of = 見出しの最大 seq − 受理済みの最大 producerSeq)が依る欄は turn-record の entries の seq と recordedSeq。",
+  "comment": "doeff の agentd(packages/doeff-agents/src/doeff_agents/sessionhost/acp)の code が読み書きする契約の欄(dot 区切りの path)。書く欄も載せる — 正本が欄を deprecated にした時に書き手の追随の忘れを正本側の検が赤にするため(Pact の形・採用 9)。段 9f lane 9f-8(agora-redesign #59)。追いつきの計器 agentd_record_lag_seq(judgment.record-lag-of = 見出しの最大 seq − 受理済みの最大 producerSeq)が依る欄は turn-record の entries の seq と recordedSeq。段 10 lane 10e(agora-redesign #53): node の status.capabilities(agentd が書く能力の表)と conventions.agentSettings の閉語彙(settings / efforts — effects.py の AGENT_SETTINGS が写し)。",
   "reads": {
     "agora-kinds": [
       "principals",
@@ -42,6 +42,9 @@
       "kinds.node.schema.properties.status.properties.observations.properties.transcripts",
       "kinds.node.schema.properties.status.properties.observations.properties.ownership.properties.grade",
       "kinds.node.schema.properties.status.properties.observations.properties.ownership.properties.proof",
+      "kinds.node.schema.properties.status.properties.capabilities",
+      "conventions.agentSettings.settings",
+      "conventions.agentSettings.efforts",
       "kinds.profile.declaration.writers.status",
       "kinds.profile.schema.properties.spec.properties.name",
       "kinds.profile.schema.properties.spec.properties.budget.properties.unit",
