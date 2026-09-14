@@ -391,6 +391,12 @@ class FakeSessions:
             return self._incarnate(effect)
         if isinstance(effect, SessionSend):
             self.sends.append((effect.session_id, effect.text, effect.awaiting))
+            # host と同じ意味論(headless.hy headless-send-program): 降りた process への次の手番は
+            # --resume で起こし直す = 送った session の backend は生きる。
+            if effect.session_id in self.views:
+                self.views[effect.session_id] = replace(
+                    self.views[effect.session_id], backend_alive=True
+                )
             return None
         if isinstance(effect, SessionInterject):
             if self.refuse_interject is not None:
@@ -476,12 +482,15 @@ class FakeSessions:
             ),
             launch_attribution=attribution if isinstance(attribution, dict) else None,
             started_at_ms=self.clock,
+            # host と同じ意味論: 起こした直後の眺めの backend は生きている(観測)。
+            backend_alive=True,
         )
         self.views[session_id] = view
         return view
 
     def finish(self, session_id: str, status: str, result: JSONObject | None = None) -> None:
-        """test が器の終端を起こす(policy の turn-end が done へ倒す・死亡が exited 等)。"""
+        """test が器の終端を起こす(policy の turn-end が done へ倒す・死亡が exited 等)。終端の行の
+        backend は host と同じく観測せず false。"""
         view = self.views[session_id]
         self.views[session_id] = replace(
             view,
@@ -490,7 +499,15 @@ class FakeSessions:
             terminal_cause=None
             if status == "done"
             else {"category": "run_failed", "reason": status},
+            backend_alive=False,
         )
+
+    def kill_backend(self, session_id: str) -> None:
+        """test が backend(子 process)の死だけを起こす(段 10 lane 10h・実弾 2026-09-14: agentd の
+        kickstart -k で子 process が道連れ — 行の status は running のまま、host の観測 backend_alive が
+        false)。"""
+        view = self.views[session_id]
+        self.views[session_id] = replace(view, backend_alive=False)
 
     def finish_turn(self, session_id: str, at_ms: int | None) -> None:
         """test が温かい session の手番の終わりを起こす(host の monitor が turn_ended_at を

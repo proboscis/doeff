@@ -12,7 +12,9 @@
 ;;; 効果の値で返す — この handler はどちらも持たない(運ぶだけ)。registry は host の
 ;;; process に 1 つ(module の値)— session の名 → process の対応で、host が落ちれば
 ;;; process も消える(pipe の子)。再起動後の行は HeadlessPoll が None を返し、monitor が
-;;; gone と読む。
+;;; gone と読む。手番の途中のまま残った行は host の起動時の復帰(headless.hy
+;;; recover-headless-rows)が HeadlessLiveness(pid の存在 + registry の所有)で観測して終端に倒す
+;;; (段 10 lane 10h・agora-redesign #84)。
 ;;;
 ;;; 禁止 env(ANTHROPIC_API_KEY*)の hard reject は tmux の substrate と同じ 1 点
 ;;; (ensure-no-forbidden-agent-env)を使う。
@@ -27,9 +29,11 @@
   HeadlessInject
   HeadlessInterrupt
   HeadlessKill
+  HeadlessLiveness
   HeadlessPoll
   HeadlessSpawn])
-(import doeff_agents.sessionhost.headless_process [HeadlessRegistry])
+(import doeff_agents.sessionhost.headless_process [HeadlessRegistry pid-exists])
+(import doeff_agents.sessionhost.headless_protocol [BackendLiveness])
 (import doeff_agents.sessionhost.substrate [
   SHELL-PROMPT-SUPPRESSING-ENV
   ensure-no-forbidden-agent-env])
@@ -80,4 +84,16 @@
     (resume (.kill registry session-name)))
 
   (HeadlessHasSession [session-name]
-    (resume (.has-alive registry session-name))))
+    (resume (.has-alive registry session-name)))
+
+  (HeadlessLiveness [session-name pid]
+    ;; 観測だけ(判断は headless_protocol.recovery_verdict / backend_alive): pid の存在は kill 0、
+    ;; 所有は registry の同じ名の生きた process の pid が一致すること。
+    (setv process (.get registry session-name))
+    (setv owned (and (is-not pid None)
+                     (is-not process None)
+                     (.alive process)
+                     (= process.pid pid)))
+    (resume (BackendLiveness :pid pid
+                             :exists (and (is-not pid None) (pid-exists pid))
+                             :owned owned))))

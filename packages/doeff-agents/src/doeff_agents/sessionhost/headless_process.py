@@ -267,6 +267,19 @@ class HeadlessProcess:
                 self._stderr.close()
 
 
+def pid_exists(pid: int) -> bool:
+    """pid の process が在るか(kill 0 — 送らない)。他人の process(EPERM)も在る。"""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 class HeadlessRegistry:
     """session の名 → 生きている(か降りたばかりの)process。host の process に 1 つ。"""
 
