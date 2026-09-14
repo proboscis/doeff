@@ -1295,11 +1295,21 @@ class AcpGetRow(EffectBase):
     key: str
 
 
+#: 段 10 lane 10ba(agora-redesign #115): 郵便の行が会話を名指す spec の欄(契約 agora-kinds の message.spec の
+#: to / from)。郵便の読み(AcpConversationMail)は ACP の一覧の field selector を欄ごとに 1 回撃つ(ACP の
+#: field selector は 1 回の読みに条件 1 つ)。どの郵便を履歴に入れるかの判断は judgment.rehydrate-history-of の 1 点。
+MESSAGE_CONVERSATION_FIELDS: tuple[str, ...] = ("to", "from")
+#: 段 10 lane 10ba: 手番の記録の行が会話を名指す spec の欄(契約 agora-kinds の turn-record.spec.conversationId)。
+TURN_RECORD_CONVERSATION_FIELD = "conversationId"
+
+
 @dataclass(frozen=True)
 class AcpConversationMail(EffectBase):
-    """会話の郵便を読む(段 8q の履歴からの再開 — 手番を起こし直す時の 1 回だけ): kind message の行
-    (``GET /api/resources?kind=message``・ACP に欄の絞りの口は無いので kind の全量 — ``conversation_id`` での
-    絞りは judgment.rehydrate-history-of)。結果 = tuple[AcpRow, ...]。手番の本文はここでは読まない(本文は
+    """会話の郵便を読む(段 8q の履歴からの再開 — 手番を起こし直す時の 1 回だけ): kind message のうち、
+    spec の MESSAGE_CONVERSATION_FIELDS(to / from)のどれかがこの会話の行だけ(段 10 lane 10ba・agora-redesign #115:
+    ``GET /api/resources?kind=message&fieldSelector=spec.<欄>=<conversation_id>`` を欄ごとに 1 回撃ち、行の鍵で
+    合わせる — 旧来は kind の全量で、本番の実測 1,630 行・6 MB・5.4〜5.7 秒)。どの郵便を履歴に入れるかの判断は
+    judgment.rehydrate-history-of の 1 点のまま。結果 = tuple[AcpRow, ...]。手番の本文はここでは読まない(本文は
     記録の service = RecordRead・見出しは AcpTurnHeadlines)。watch の拍では撃たない(郵便の本文は鍵で
     1 行ずつ — R14)。"""
 
@@ -1309,10 +1319,11 @@ class AcpConversationMail(EffectBase):
 @dataclass(frozen=True)
 class AcpTurnHeadlines(EffectBase):
     """会話の手番の見出し(kind turn-record の行)を読む — **薄い再開の拍だけ**(記録の service が配線されて
-    いない・答えなかった時 — 段 9q・agora-redesign #77)。``GET /api/resources?kind=turn-record`` は kind の全量
-    (実測 2026-09-14: 29,913 行・172 MB・頭の応答 59 秒)なので、service が答えた拍には撃たない — 撃つと
-    claim の後の手番の準備が 2 分を超え、node の lease(TTL 90 秒)が切れて Scheduling が Running の行を
-    Pending に戻す。結果 = tuple[AcpRow, ...](``conversation_id`` での絞りは judgment.rehydrate-history-of)。"""
+    いない・答えなかった時 — 段 9q・agora-redesign #77)。読みはこの会話の行だけ(段 10 lane 10ba・#115:
+    ``GET /api/resources?kind=turn-record&fieldSelector=spec.conversationId=<conversation_id>``)。旧来の kind の
+    全量(実測 2026-09-14: 29,913 行・172 MB・頭の応答 59 秒)は、claim の後の手番の準備を 2 分超えさせ、node の
+    lease(TTL 90 秒)が切れて Scheduling が Running の行を Pending に戻した。service が答えた拍には撃たない。
+    結果 = tuple[AcpRow, ...](畳みの判断は judgment.rehydrate-history-of)。"""
 
     conversation_id: str
 

@@ -63,7 +63,8 @@
 ;;; sessionhost/headless_protocol.py の kind ごとの Dialogue(法 012 R30・R21 と同じ形)。器が添付を落とした拍は
 ;;; 条件 AttachmentIgnored を手番に付ける(黙って落とさない・本文は届いている)。
 ;;; 手番の本文は記録の service(RecordRead・会話 1 つ)、郵便は ACP の kind message(AcpConversationMail)、ACP の turn-record の
-;;; 見出し(AcpTurnHeadlines = kind の全量・実測 29,913 行 / 172 MB / 59 秒)は service が答えなかった薄い再開の拍にだけ読む —
+;;; 見出し(AcpTurnHeadlines)は service が答えなかった薄い再開の拍にだけ読む。どちらの読みも会話 1 つ分だけ(段 10 lane 10ba・
+;;; agora-redesign #115: ACP の一覧の field selector — 旧来の kind の全量は見出しで 29,913 行 / 172 MB / 59 秒だった)—
 ;;; claim(AcpPutStatus)は宣言の照合だけで即時(実測 0.3 秒)、器の準備(再開の読み・畳み)は claim の後の腕で、node の
 ;;; lease(TTL 90 秒)より長く tick を塞いではならない。node の observations は sessions に account、transcripts に「終端だが
 ;;; transcript がこの機体に残る会話」を載せ、Scheduling は (node, account) で親和と起こし方の語を決める。
@@ -603,11 +604,18 @@
   {:pre [(: subject str) (: reason str)]
    :post [(: % HeadlineTurns)]}
   "薄い再開の材料(段 9f lane 9f-4・段 9q・agora-redesign #77): ACP の turn-record の見出しは、記録の service が答えなかった
-   拍にだけ読む(AcpTurnHeadlines = kind の全量 list — 実測 2026-09-14: 29,913 行・172 MB・頭の応答 59 秒)。service が
-   答えた拍に撃つと、claim は 0.3 秒で着地しているのに送るまで 134 秒かかり、node の lease(TTL 90 秒)が切れて
-   Scheduling が Running の行を Pending に戻す(実弾 aj-E61AWHDW…・aj-HV9TMD3D…)。読む前に薄い再開と理由を名乗る。"
+   拍にだけ読み、読むのはこの会話の行だけ(AcpTurnHeadlines — 段 10 lane 10ba・#115 の field selector)。旧来の kind の全量
+   (実測 2026-09-14: 29,913 行・172 MB・頭の応答 59 秒)では、claim は 0.3 秒で着地しているのに送るまで 134 秒かかり、
+   node の lease(TTL 90 秒)が切れて Scheduling が Running の行を Pending に戻した(実弾 aj-E61AWHDW…・aj-HV9TMD3D…)。
+   読む前に薄い再開と理由を名乗り、読みの所要を計器 rehydrate-headline-read に 1 行(行数と ms)。"
   (<- (LogLine :text f"agentd: conversation {subject} rehydrates thinly from ACP headlines — {reason}"))
+  (<- started int (ClockNowMs))
   (<- records tuple (AcpTurnHeadlines :conversation-id subject))
+  (<- ended int (ClockNowMs))
+  (<- (MetricLine :fields {"metric" "rehydrate-headline-read"
+                                  "conversationId" subject
+                                  "rows" (len records)
+                                  "ms" (- ended started)}))
   (HeadlineTurns :records records :reason reason))
 
 
@@ -651,11 +659,18 @@
   {:pre [(: settings AgentdSettings) (: subject str) (: exclude tuple)]
    :post [(: % HistoryFold)]}
   "履歴からの再開の「これまでの会話」(R20・段 9f lane 9f-4・段 9q): 手番の本文は会話の記録の service から
-   (record-turns-for — 届かなければ ACP の見出しで薄い再開・見出しはその拍にだけ読む)、郵便は ACP の kind message を
-   1 度読み(AcpConversationMail — 手番を起こし直す時だけ)、畳みは judgment.rehydrate-history-of の 1 点(上限
+   (record-turns-for — 届かなければ ACP の見出しで薄い再開・見出しはその拍にだけ読む)、郵便は ACP の kind message のうち
+   この会話を名指す行を 1 度読み(AcpConversationMail — 手番を起こし直す時だけ・段 10 lane 10ba の field selector)、
+   読みの所要を計器 rehydrate-mail-read に 1 行(行数と ms)、畳みは judgment.rehydrate-history-of の 1 点(上限
    AgentdSettings.rehydrate_history_byte_budget)。"
   (<- source (| RecordedTurns HeadlineTurns) (record-turns-for settings subject))
+  (<- mail-started int (ClockNowMs))
   (<- messages tuple (AcpConversationMail :conversation-id subject))
+  (<- mail-ended int (ClockNowMs))
+  (<- (MetricLine :fields {"metric" "rehydrate-mail-read"
+                                  "conversationId" subject
+                                  "rows" (len messages)
+                                  "ms" (- mail-ended mail-started)}))
   (<- read tuple (mail-bodies-by-ref settings messages))
   (<- fold HistoryFold (rehydrate-history-of subject messages source exclude
                                              settings.rehydrate-history-byte-budget (get read 0)))
