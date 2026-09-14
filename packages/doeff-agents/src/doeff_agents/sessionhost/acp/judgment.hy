@@ -1519,9 +1519,10 @@
    (transcript の家 = この config_dir の projects/ 配下)。
    codex: 札 = auth.json の中身。<homes-root>/codex/<account>/auth.json へ置き(家の中の
    auth file — 法 (e) の唯一の許された平文)、binding {kind codex, auth_file, profile_dir}
-   の二軸で host の fs-compose-home-view に家を組ませる。profile_dir は charter の binding
-   の profile_dir(無ければ codex_home)— どちらも無ければ charter は変えない(借りた札を
-   使う家が無い)。"
+   の二軸で host の fs-compose-home-view に家を組ませる。profile_dir は claude の config_dir と
+   同じく <homes-root>/codex/<account> ちょうど(段 10 lane 10r・agora-redesign #99 — ACP は段 10c
+   から charter に binding を書かないので、charter の binding の profile_dir / codex_home を読むと
+   家が無く札が使われない。読みもしない: 機体の家を借りた札の家にしない)。"
   (setv next (dict charter))
   (setv safe-account (re.sub r"[^A-Za-z0-9._-]" "_" account))
   (cond
@@ -1535,17 +1536,14 @@
             {"kind" "claude-code" "config_dir" f"{homes-root}/claude/{safe-account}"})
       #(next None))
     (= lease-kind "codex")
-    (do
-      (setv binding (.get charter "binding"))
-      (setv binding (if (isinstance binding dict) binding {}))
-      (setv profile-dir (or (.get binding "profile_dir") (.get binding "codex_home")))
-      (if (or (is auth-json None) (not (isinstance profile-dir str)) (not profile-dir))
-          #(next None)
-          (do
-            (setv auth-file f"{homes-root}/codex/{safe-account}/auth.json")
-            (setv (get next "binding")
-                  {"kind" "codex" "auth_file" auth-file "profile_dir" profile-dir})
-            #(next auth-file))))
+    (if (is auth-json None)
+        #(next None)
+        (do
+          (setv profile-dir f"{homes-root}/codex/{safe-account}")
+          (setv auth-file f"{profile-dir}/auth.json")
+          (setv (get next "binding")
+                {"kind" "codex" "auth_file" auth-file "profile_dir" profile-dir})
+          #(next auth-file)))
     True
     #(next None)))
 
