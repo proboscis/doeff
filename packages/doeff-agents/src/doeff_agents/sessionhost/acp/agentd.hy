@@ -156,6 +156,8 @@
   RecordUnread
   RecordUnsent
   RecordedTurns
+  CONDITION-CREDENTIAL-SOURCE-MISSING
+  CREDENTIAL-SOURCE-MISSING
   NEXT-ARM-DEFER
   NEXT-ARM-REHYDRATE
   NEXT-ARM-RESUME
@@ -201,6 +203,7 @@
   capture-verdict
   cleanup-after-end
   condition-of
+  credential-source-of
   deltas-of
   due
   record-due
@@ -223,7 +226,7 @@
   fallback-arm-of
   first-turn-carries-inputs
   frame-lines-of
-  home-key-of
+  session-affinity-key-of
   in-flight-ids
   in-flight-job-of
   incarnation-charter-of
@@ -643,11 +646,22 @@
          (: previously-deferred tuple) (: now-ms int)]
    :post [(: % AgentdState)]}
   "1 つの Bound の行を受ける: 会話の前の session の候補(affinity.predecessor か行から)を器で眺め、
-   この job の家(home-key-of)と合わせて起こし方を next-arm-for-job の 1 点で決める(R10 / R20)。
+   この job の session を使い回す鍵(session-affinity-key-of)と合わせて起こし方を next-arm-for-job の 1 点で決める(R10 / R20)。
+   その前に手番の資格の出所を credential-source-of の 1 点で読み、預かり所を宣言した node で account の無い job は起こさず
+   条件 CredentialSourceMissing で閉じる(段 10c・R23)。
    defer(会話の session が手番の途中)なら claim せず次の list へ。それ以外は Running + sessionHandle を
    CAS で書き(負けたら次の list へ)、start-claimed で起こす — 所要を計器に 1 行、turn-record を作り、
    status frame を 1 つ押す。起こす session の id は agentd が鋳造する(MintId — charter の id は読まない)。"
   (<- plan LaunchPlan (launch-plan-of row))
+  ;; 段 10c(agora-redesign #80・R23): 手番の資格の出所。預かり所を宣言した node で account の無い job は起こさない
+  ;; (Running も sessionHandle も書かず、条件 CredentialSourceMissing で Ended に閉じる — 黙って charter の家へ落ちない)。
+  (<- source str (credential-source-of plan settings.custody-declared))
+  (when (= source CREDENTIAL-SOURCE-MISSING)
+    (<- (end-job-now settings row CONDITION-CREDENTIAL-SOURCE-MISSING
+                     (+ f"agent-job {row.resource-id} carries no custody account (status.binding.account) and node "
+                        f"{settings.node-name} declares the custody service — the turn's credential is the custody lease only")
+                     #() now-ms))
+    (return state))
   (setv job-id row.resource-id)
   (setv subject (str (.get row.spec "subject" job-id)))
   (<- candidate (| str None)
@@ -656,7 +670,7 @@
   (when (is-not candidate None)
     (<- looked (| SessionView None) (SessionGet :session-id candidate))
     (setv view looked))
-  (<- home dict (home-key-of plan))
+  (<- home dict (session-affinity-key-of plan))
   (<- choice ArmChoice (next-arm-for-job candidate view home))
   (if (= choice.arm NEXT-ARM-DEFER)
       (do

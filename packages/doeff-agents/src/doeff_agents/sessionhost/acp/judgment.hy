@@ -54,6 +54,9 @@
   CLAUDE-OAUTH-TOKEN-ENV
   CONDITION-INTERRUPTED
   CONDITION-RECORD-UNAVAILABLE
+  CREDENTIAL-SOURCE-HOME
+  CREDENTIAL-SOURCE-LEASE
+  CREDENTIAL-SOURCE-MISSING
   Conflict
   DeltaBatch
   ENTRY-KIND-ERROR
@@ -321,10 +324,11 @@
           sid)))
 
 
-(defk home-key-of [plan]
+(defk session-affinity-key-of [plan]
   {:pre [(: plan LaunchPlan)]
    :post [(: % dict)]}
-  "job が走る家の鍵(段 8q・R20・段 9o lane 9o-3): 預かり所の account(借りる時の家 = <homes-root>/<種類>/<account>)・
+  "session を使い回す鍵(段 8q・R20・段 9o lane 9o-3・段 10c で session-affinity-key-of から改名 — 資格ではなく cache の同一性の鍵。
+   手番の資格の出所は credential-source-of の 1 点): 預かり所の account(借りる時の家 = <homes-root>/<種類>/<account>)・
    charter の binding(借りない時の家・codex の profile_dir)・charter の model(plan.model — 無ければ走行器の既定を
    使う事実の名 \"default\")の組。同じ鍵 = 同じ器を使い回せる(homes-root は機体に 1 つ)。model を鍵に入れるのは、
    走っている CLI の session は起こした時の model のまま手番を回すから(session.send に model の欄は無く、headless の
@@ -353,7 +357,7 @@
    :post [(: % dict)]}
   "起こす session に刻む帰属(段 8q・R20): 会話・手番・家の account と鍵・起こし方。session の会話と家は
    session の行が覚える事実で、終端の後に回収される agent-job の行から導かない。"
-  (<- home dict (home-key-of plan))
+  (<- home dict (session-affinity-key-of plan))
   {"conversationId" subject
    "agentJobId" job-id
    "account" plan.account
@@ -388,7 +392,7 @@
    :post [(: % ArmChoice)]}
   "Bound の job の起こし方(閉語彙 effects.NextArm)— 判断はここ 1 点(R10 / R20)。candidate = 会話の前の
    session(affinity.predecessor か会話の最後の手番の session — warm-candidate-of)、view = その器の眺め、
-   home = この job が走る家(home-key-of — account・binding・model の組)。cache(温かい session / transcript)を保つのは同じ機体 ∧ 同じ家の
+   home = この job が走る家(session-affinity-key-of — account・binding・model の組)。cache(温かい session / transcript)を保つのは同じ機体 ∧ 同じ家の
    時だけで、機体か家(profile の家)が変わる時は cache の失効を受け入れて 履歴から再開する(ACP の全史から)
    (operator 決定 2026-09-13 #54 逐語 \"i want cache kept when both machine and a profile is not changed. in
    other cases, i think i need to accept the fact that cache gets invalidated\"):
@@ -735,6 +739,21 @@
     :account (if (is lease-kind None) None account)
     :profile (if (and (isinstance profile str) profile) profile "unbound")
     :model (if (and (isinstance model str) model) model "default")))
+
+
+(defk credential-source-of [plan custody-declared]
+  {:pre [(: plan LaunchPlan) (: custody-declared bool)]
+   :post [(: % str)]}
+  "手番の資格の出所(段 10c・agora-redesign #80・operator 決定 2026-09-14 \"access token is to be fetched from k3s\")—
+   判断はここ 1 点(effects.TurnCredentialSource の閉語彙):
+   lease = binding.account が在り、charter の agent_type に貸与の種類がある(launch-plan-of が plan.account を据えた)—
+   預かり所から借りる / missing = それが無く、この node は預かり所を宣言している — 起こさない(claim も書かず、
+   条件 CredentialSourceMissing で閉じる: 手番の資格は貸与ちょうどで、機体の profile の家へ黙って落ちない)/
+   home = それが無く、預かり所を宣言していない node(移行前の機体)— charter の binding で起こす今日の経路。"
+  (cond
+    (and (is-not plan.lease-kind None) (is-not plan.account None)) CREDENTIAL-SOURCE-LEASE
+    custody-declared CREDENTIAL-SOURCE-MISSING
+    True CREDENTIAL-SOURCE-HOME))
 
 
 (defk charter-with-session-id [charter session-id]

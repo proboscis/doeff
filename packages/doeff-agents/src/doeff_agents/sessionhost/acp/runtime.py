@@ -97,6 +97,9 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         stream_capability=_stream_capability(backend),
         ownership=ownership,
         record_enabled=bool(record_sink),
+        # 段 10c(agora-redesign #80・R23): 預かり所を宣言した node か — join の [custody].url / --custody が CUSTODY_URL_ENV に
+        # 据わる 1 点。宣言した node は account の無い job を起こさない(judgment.credential-source-of)。
+        custody_declared=bool((env.get(CUSTODY_URL_ENV) or "").strip()),
     )
 
 
