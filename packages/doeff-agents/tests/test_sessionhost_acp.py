@@ -16,7 +16,7 @@ from typing import get_args
 
 import hy  # noqa: F401  # registers the .hy importer
 import pytest
-from doeff_agents.sessionhost.acp import handlers, judgment
+from doeff_agents.sessionhost.acp import handlers, join, judgment
 from doeff_agents.sessionhost.acp.effects import (
     AGENTD_PRINCIPAL,
     AGENT_JOB_KIND,
@@ -588,20 +588,20 @@ def test_the_custody_contract_version_gate_refuses_a_machine_that_cannot_speak_i
     実弾 2026-09-15 01:48〜02:37: 版 2 を話す agentd が版 1 の預かり所より**先に**本番へ出て、
     貸与の答えを `malformed grant` と読み、本番の手番が 49 分間 1 つも走らなかった。
     ⇒ 走行係は起動の前段で預かり所が名乗る版を読み、話せなければ参加しない(loud に断る)。
-    判断は judgment.custody-contract-refusal の 1 点で、版の定義点は預かり所の /health。
+    判断は join.custody-contract-refusal の 1 点で、版の定義点は預かり所の /health。
     """
     spoken = CUSTODY_CONTRACT_VERSION
     # 同じ版 = 参加してよい(断りは無い)
-    assert run(judgment.custody_contract_refusal({"ok": True, "contract": spoken}, spoken)) is None
+    assert run(join.custody_contract_refusal({"ok": True, "contract": spoken}, spoken)) is None
     # 版 1 の預かり所(欄が無い)= 参加しない。理由は「順は server が先」を必ず名乗る
-    older = run(judgment.custody_contract_refusal({"ok": True, "role": "master"}, spoken))
+    older = run(join.custody_contract_refusal({"ok": True, "role": "master"}, spoken))
     assert isinstance(older, str) and "contract の欄が無い" in older
     assert "預かり所(server)が先" in older, "直し方の順を名乗っていない(読み手が次の手を打てない)"
     # 数が違う = 参加しない(どちらが新しいかに依らない)
-    newer = run(judgment.custody_contract_refusal({"ok": True, "contract": spoken + 1}, spoken))
+    newer = run(join.custody_contract_refusal({"ok": True, "contract": spoken + 1}, spoken))
     assert isinstance(newer, str) and str(spoken + 1) in newer and str(spoken) in newer
     # 読めない(届かない / 200 でない)= 参加しない — 観測断を「話せる」と読まない
-    unreachable = run(judgment.custody_contract_refusal(None, spoken))
+    unreachable = run(join.custody_contract_refusal(None, spoken))
     assert isinstance(unreachable, str) and "/health が読めない" in unreachable
 
 
