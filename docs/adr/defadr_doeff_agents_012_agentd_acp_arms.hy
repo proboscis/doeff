@@ -113,6 +113,12 @@
 ;;; 観測断 ≠ 死亡)を job-step-of(session-lost → 記録の腕と条件 SessionLost)と next-arm-for-job(手番の途中でも backend が死んで
 ;;; いれば待たず、候補を片付けて resume / rehydrate)が読む。resume の腕の KeyError 2 つ(store.hy の cause の decode・launch.hy の
 ;;; events_root)も同じ便で直した(既知の形 = kubelet が node の再起動の後に container の生死を観測して pod の状態を直す)。
+;;; 便 2 = R26: 停止(TERM)で子を黙って道連れにしない — host は TERM の 1 度目に accept を生かしたまま別 thread で停止の hook
+;;; (entry.py が登録する agentd の close_for_stop = 走っている job を turn-record ended・Ended〔AgentdRestart〕)→ headless の行の停止
+;;; (stop-headless-rows: 手番の途中の行を stopped + cancelled・全 process を並列の猶予で降ろす・判断 headless_protocol.stop_verdict の
+;;; 1 点)を走らせ、自分に同じ信号を撃ち直して 2 度目で SystemExit。headless の子を pipe から切り離して拾い直す形(detach)は取らない —
+;;; stdin / stdout の pipe の親を失った process は器として使えない(events file の書き手も Dialogue も host に在る)。ACP の宛先
+;;; (実況の push を含む)は宣言 ACP_DAEMON_URL ちょうどで、127.0.0.1:8868 の既定値は消した(宣言の無い agentd は参加しない)。
 
 (require doeff-adr.macros [defadr rule law])
 (require doeff-hy.macros [deftest])
@@ -429,6 +435,7 @@
      (rule R23 "手番の資格の出所は judgment.credential-source-of の 1 点(段 10 lane 10c・agora-redesign #80・operator 決定 2026-09-14 \"access token is to be fetched from k3s\"): launch-plan-of が据えた plan.account(binding.account ∧ charter の agent_type に貸与の種類)が在れば lease(預かり所から借り、借りた家で起こす)、無ければ node が預かり所を宣言している(AgentdSettings.custody_declared — runtime.settings_from_env が CUSTODY_URL_ENV = join の [custody].url の在否から導く 1 点)時 missing、宣言していなければ home。agentd.claim-job は plan を読んだ直後にこの答えを読み、missing の job は起こさず Running も sessionHandle も書かず、end-job-now で条件 CredentialSourceMissing つきの Ended に閉じる(黙って charter の binding = 機体の profile の家へ落ちない)。home(charter の binding で起こす)の経路は預かり所を宣言していない node(移行前の機体)だけに残る。session を使い回す鍵は judgment.session-affinity-key-of(旧名 home-key-of — 鍵の中身は account・binding・model のまま不変で、資格ではない)。ACP の側の半分(配置が会話の profile → profile の行 → spec.account を解いて status.binding.account に置く)は ACP の法 defadr_20260914_turn_credential_is_the_custody_lease_c744ca。")
      (rule R24 "node の能力の表と、効かない宣言の欄の条件(段 10 lane 10e・agora-redesign #53・operator 決定 2026-09-14 \"all lgtm\"): agentd は node の status.capabilities に agent の種類(charter.agent_type の語 claude / codex)ごとの {settings: 受ける欄, restartOn: 変えたら session を作り直す欄} を lease と同じ拍に名乗る(judgment.capabilities-of — 値は effects.AGENT-CAPABILITIES の 1 点・契約 agora-kinds.json conventions.agentSettings.settings の綴り)。restartOn は session-affinity-key-of の鍵の欄(model・profile = account と binding の家)ちょうどで、effort と workDir は受けるが鍵に入れない。effort は claude の --effort / codex の -c model_reasoning_effort(process の旗)なので、同じ家で effort だけ違う温かい session は片付けて同じ session を新しい旗で --resume する(next-arm-for-job の 4 つ目の引数・帰属の effort の欄と比べる — session は作り直さず cache を保つ)。この手番で効かない宣言の欄(能力の表に無い種類・受けない欄・温かい session への send で charter.work_dir が session の cwd と違う)は、judgment.ignored-settings-of の 1 点が条件 AgentSettingIgnored(1 欄 1 行・reason = <欄>=<値>: <理由>)にして手番の終わりに刻む(黙って落とさない)。")
      (rule R25 "backend の生死は host の観測で決め、status の語から推測しない(段 10 lane 10h・agora-redesign #84・既知の形 = kubelet の node 再起動後の container の生死の観測): sessionhost は headless の行の backend(子 process)の生死を観測で決める — pid の存在(kill 0)+ 所有(この host の registry が同じ pid の生きた process を持つ・effect HeadlessLiveness・値 headless_protocol.BackendLiveness)。host の起動時(accept より前・awaiting latch の clear より前)に headless.hy recover-headless-rows が非終端の headless 行を観測し、判断 headless_protocol.recovery_verdict(status_terminal, in_flight, liveness)の 1 点で『手番の途中(awaiting)∧ backend が死んでいる』行だけを exited + cause vanished(ADR-DOE-AGENTS-009 の証拠つき死亡の語彙・reason に pid と観測の文)にして session_exited を刻む。idle の温かい行は触らない(次の send が --resume で同じ session を起こし直す)。awaiting latch の起動時の全 clear(store.hy db-clear-awaiting-latches)は headless の行を対象にしない(headless の latch は『手番の途中』の事実そのもの)。wire の session.get / session.list は backend_alive(headless = 上の観測・tmux / herdr = 行の pane が session の pane の集合に在る・終端の行は観測せず false)を毎回載せる。agentd は判断 judgment.backend-alive の 1 点(器に無い → 偽・明示の False → 偽・観測の無い眺め〔launch / resume の応答の backend_alive = None〕→ 真: 観測の無さは死亡の証拠ではない)を job-step-of(非終端 ∧ 手番の終わりでない ∧ backend が死 → session-lost = 記録の腕と条件 SessionLost〔reason に session・backend の種類・pid・観測の時刻 — judgment.session-lost-condition-of〕で Ended・session は host の monitor に任せて片付けない)と next-arm-for-job(候補が生きて idle でない ∧ backend が生 → defer / ∧ backend が死 → 同じ家なら候補を片付けて resume・違う家なら片付けて rehydrate)で読む。agentd.hy は backend_alive の欄も終端の語も直に読まない。headless の session.resume の腕は launch-params に events_root を運ぶ(launch.hy resume-session — 運ばないと headless-launch-session が KeyError で断り、全部 rehydrate に落ちる)。店の cause の decode(store.hy terminal-cause-from-dict)は契約の欄(category / observed_at)を持たない persisted cause を None(typed には cause なし)と読み、行ごと KeyError で読めなくしない(wire は raw を運ぶ・DB の COALESCE が raw を消さない)。")
+     (rule R26 "停止で子を黙って道連れにしない(段 10 lane 10h 便 2・agora-redesign #84): launchd の bootout / kickstart は process group ごと殺すので headless の子 process(pipe の子)は host と共に死ぬ — pipe から切り離して拾い直す形(detach)は取らない(親を失った process は器として使えない: events file の書き手も Dialogue の状態も host に在る)。代わりに host は TERM の 1 度目に accept loop を生かしたまま別 thread(host.hy graceful-stop)で (1) 登録された停止の hook(host.register-shutdown-hook — entry.py が agentd の AgentdRun.close_for_stop を登録する: loop を止めて今の拍を有界に待ち、memory の走っている job を agentd.close-jobs-for-stop で 1 つずつ記録の腕〔残りの材料・turn-record ended〕と条件 AgentdRestart〔judgment.restart-condition-of の 1 点 — node・理由・session・時刻〕で Ended・status frame ended・札の返却。session は片付けない)(2) headless の行の停止の腕(headless.hy stop-headless-rows: 判断 headless_protocol.stop_verdict の 1 点で手番の途中の非終端の行だけ stopped + cause cancelled〔reason = host の停止と信号〕+ session_cancelled・idle の温かい行は触らない・登記の全 process を HeadlessKillAll で段ごとに並列の猶予〔EOF → TERM → KILL〕で降ろす)を走らせ、stderr に数を 1 行ずつ書き、自分に同じ信号を撃ち直す(実の信号 — _thread.interrupt_main は accept の syscall を起こさない)。2 度目の TERM は SystemExit(0) で finally(lease の釈放)へ。SIGKILL には手が無い — 次の起動の復帰(R25)が拾う。Mac の agentd の入れ替えは走っている job が 0 の拍に launchctl の bootout → bootstrap(TERM の経路)で行い、kickstart -k(即時)は使わない。ACP の宛先(実況の push・行の読み書き・watch の全部)は宣言(join の --server / [agentd].server → ACP_DAEMON_URL)ちょうどで、handlers.py に 127.0.0.1:8868 の既定値は無い(runtime.real_dispatchers は宣言の無い env を AgentdPreflightError で断る)。")
      (rule R10 "session は会話の資源・job は手番(温かい session・設計 17.4): 会話 → 生きている session の対応は行(自分が claim した同じ subject の agent-job の sessionHandle)と器の現況から導き、Bound の job の起こし方は judgment.hy の next-arm-for-job(閉語彙 effects.NextArm = launch | send | resume | rehydrate | defer — 家と機体の扱いは R20)の 1 点で決める — 同じ会話の生きて idle な session が在れば launch せず session.send(awaiting)だけ、sessionHandle はその session を指し、turn-record は手番ごと。手番の終わりは器の lifecycle multi_turn(launch.hy の閉語彙に足した語)で policy.hy の monitor が既存の turn-end の連言から行の turn_ended_at に刻み、agentd は job-step-of の turn-end(turn_ended_at > 手番の始まりの下限 ∧ 記録の進み)で読む — status は倒さず session は生かす。idle の寿命は AgentdSettings.session_idle_ttl_seconds の 1 点で、超過・Withdrawn・node の退役で session.cleanup。計器 agent-job-to-send は create → send のまま(温かい path で p99 < 2 秒)。")]
   :laws
     [(law interrupts-ride-the-running-turn-and-are-recorded-on-the-row
@@ -588,6 +595,16 @@
           (counterexample "新しい cause の category(backend_process_dead)を凍結表に足す — 証拠つき死亡の語彙は vanished の 1 つ(ADR-DOE-AGENTS-009)で、同じ事実に 2 つ目の概念が生える")
           (counterexample "resume の腕が persisted cause の欄を get で読む(store.hy)— 手で書かれた行 1 つで session.get も resume も読めず、会話が rehydrate に落ちる(2026-09-14 18:5x 実弾 KeyError 'category')")
           (counterexample "headless の session.resume の launch-params に events_root を運ばない — headless-launch-session の (get params \"events_root\") で KeyError、本番の --resume が全部 rehydrate に落ちる(2026-09-14 実弾 2 件)")])
+     (law stop-closes-running-turns-instead-of-taking-the-children-down-silently
+       :statement "for_all sessionhost host h receiving SIGTERM with the accept loop alive: before h exits, every registered shutdown hook runs (agentd: for_all running job j in memory: turn-record(j).state = ended ∧ phase(j) = Ended ∧ conditions(j) ∋ AgentdRestart naming the node, the reason, the session and the time, with the lease revoked and the status frame ended), then for_all non-terminal headless row r of h: in_flight(r) ⇒ status(r) = stopped ∧ cause(r).category = cancelled ∧ cause(r).reason names the host stop; ¬in_flight(r) ⇒ r is untouched; every registered headless process is terminated with one parallel grace (EOF → TERM → KILL) instead of one grace per process; the decision is headless_protocol.stop_verdict alone; h then re-raises the same signal to itself and exits through its finally (lease released); and the ACP address of agentd (stream push included) is the declared ACP_DAEMON_URL with no localhost default"
+       :counterexamples
+         [(counterexample "TERM で SystemExit だけ投げて子を process group の kill に任せる — 手番の途中の行と job が黙って残り、次の起動の復帰が『死んだ』と観測するまで会話が「動いている」のまま(2026-09-14 14:35〜18:5x 実弾の入口)")
+          (counterexample "headless の子を setsid で切り離して復帰で拾おうとする — stdin / stdout の pipe の親が死ぬと子は EPIPE で降りるか、生きても events file の書き手が居ない。器として使えない process を『生きている』と数える")
+          (counterexample "停止の hook を SystemExit の後の finally で走らせる — accept loop が死んだ後は agentd の器の RPC(session.get)が応えず、hook が hang するか眺めを読めない。hook は 1 度目の TERM の別 thread で、accept を生かしたまま")
+          (counterexample "撃ち直しを _thread.interrupt_main で行う — main thread は accept の blocking syscall の中で、次の接続が来るまで handler に来ない(実測 2026-09-14: 30 s 待っても exit しない)。実の os.kill で撃ち直す")
+          (counterexample "process を 1 つずつ kill() で降ろす — EOF 5 s + TERM 5 s の猶予が process の数だけ直列に積み、launchd の ExitTimeOut(20 s)を越えて SIGKILL され、残りの行が黙って残る")
+          (counterexample "停止の腕が idle の温かい行も stopped にする — 再起動のたびに会話の cache を捨てる(次の send が --resume で同じ session を起こし直す設計を壊す)")
+          (counterexample "実況の push の宛先に 127.0.0.1:8868 の既定値を残す — 宣言の無い agentd が黙って退役した Mac の中継へ押し続ける。宛先は宣言ちょうど・無ければ参加しない")])
      (law turn-events-are-appended-to-the-record-per-tick
        :statement "for_all running job j observed by agentd and for_all tick t at which stream-records reads new material of j: the events e_1..e_n that judgment.deltas-of derives from that material are appended (not replaced) to the status.entries of turn-record(j) within the same tick by agentd.append-entries, each with at = t and a seq strictly greater than every seq already on the row, via one CAS write on the last known image of the row (Conflict ⇒ one re-read and one retry; Refused or missing row ⇒ the events stay in InFlightJob.pending_entries and ride the next write); the row's entries JSON never exceeds TURN_RECORD_ENTRIES_BYTE_BUDGET (the oldest events are dropped first and a single leading kind=system marker with truncated=true and dropped=k replaces them); every appended entry is the JSON of a TurnEntryHeadline (seq, at, kind, toolName?, toolUseId?, bytes, sha256, isError?) derived by judgment.headline-of-body from the body sent to the record service — it carries no text / summary / input / output / model, and its sha256 = sha256 of record-body-bytes-of(body) (the service's identity of the same event); the record service's appendAnswer.highestProducerSeq for the stream of j lands as status.recordedSeq (never decreasing) with status.recordRef = record:<cid>/<streamId>; and the end of the turn drains the remaining material through the same point, then writes state=ended and usage over the appended entries without replacing them"
        :counterexamples
@@ -1519,6 +1536,53 @@
                    "test_host_headless_startup_recovery_ends_the_dead_mid_turn_row_and_keeps_the_idle_one"
                    "test_host_headless_resume_reads_a_row_whose_persisted_cause_lacks_the_contract_fields"]]
          (assert (in (+ "def " name "(") host-tests) f"R25 の host の反例の検が無い: {name}")))
+     (deftest test-adr-doe-agents-012-stop-closes-running-turns
+       ;; R26 の針(構造): 判断は headless_protocol.stop_verdict の 1 点・host の TERM の 1 度目は graceful-stop の thread で
+       ;; hook → stop-headless-rows → 実の信号の撃ち直し・entry.py が agentd の close_for_stop を hook に登録・agentd の停止の腕は
+       ;; close-jobs-for-stop の 1 点で条件は restart-condition-of から・process は kill_all の並列の猶予・ACP の宛先に既定値は無い。
+       ;; 反例(挙動)は test_sessionhost_headless.py の 3 本(判断・program・実 binary の TERM)と test_sessionhost_acp.py の 2 本。
+       (setv protocol-lines (code-lines (/ SESSIONHOST-DIR "headless_protocol.py")))
+       (assert (= (len (lfor line protocol-lines :if (.startswith line "def stop_verdict(") line)) 1) "停止の判断は stop_verdict の 1 点(R26)")
+       (setv headless-lines (code-lines (/ SESSIONHOST-DIR "headless.hy")))
+       (assert (= (len (lfor line headless-lines :if (.startswith line "(defk stop-headless-rows ") line)) 1))
+       (assert (= (len (lfor line headless-lines :if (in "(stop-verdict (is-terminal-status row.status) row.awaiting-response)" line) line)) 1))
+       (assert (any (gfor line headless-lines (in "(headless-kill-all)" line))) "process は kill_all で並列に降ろす(R26)")
+       (setv process-lines (code-lines (/ SESSIONHOST-DIR "headless_process.py")))
+       (assert (= (len (lfor line process-lines :if (.startswith line "    def kill_all(self) -> int:") line)) 1))
+       (assert (= (len (lfor line process-lines :if (.startswith line "def _wait_all(") line)) 1) "猶予は並列(R26)")
+       (setv host-lines (code-lines (/ SESSIONHOST-DIR "host.hy")))
+       (assert (= (len (lfor line host-lines :if (.startswith line "(defn graceful-stop ") line)) 1))
+       (assert (= (len (lfor line host-lines :if (.startswith line "(defn register-shutdown-hook ") line)) 1))
+       (assert (any (gfor line host-lines (in "(os.kill (os.getpid) signum)" line))) "撃ち直しは実の信号(R26)")
+       (for [line host-lines]
+         (assert (not-in "interrupt-main" line) f"_thread.interrupt_main は accept を起こさない(R26): {line}"))
+       (setv install-at (next (gfor [i line] (enumerate host-lines) :if (in "(install-graceful-stop config actor)" line) i) None))
+       (setv serve-at (next (gfor [i line] (enumerate host-lines) :if (in "(serve config actor listener shutdown-event)" line) i) None))
+       (assert (and (is-not install-at None) (is-not serve-at None) (< install-at serve-at)) "graceful の handler は serve の前に据える(R26)")
+       (setv entry-lines (code-lines (/ ACP-DIR "entry.py")))
+       (assert (any (gfor line entry-lines (in "register_shutdown_hook(lambda: run.close_for_stop(" line))) "entry.py が agentd の停止の腕を hook に登録する(R26)")
+       (setv runtime-lines (code-lines (/ ACP-DIR "runtime.py")))
+       (assert (= (len (lfor line runtime-lines :if (.startswith line "    def close_for_stop(self, reason: str) -> int:") line)) 1))
+       (for [line runtime-lines]
+         (assert (not-in "ACP_URL_DEFAULT" line) f"ACP の宛先に既定値は無い(R26): {line}"))
+       (setv handler-lines (code-lines (/ ACP-DIR "handlers.py")))
+       (for [line handler-lines]
+         (assert (not-in "127.0.0.1:8868" line) f"実況の push の宛先の literal(R26): {line}"))
+       (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
+       (assert (= (len (lfor line agentd-lines :if (.startswith line "(defk close-jobs-for-stop ") line)) 1))
+       (assert (= (len (lfor line agentd-lines :if (in "(restart-condition-of job settings.node-name reason now-ms)" line) line)) 1) "AgentdRestart の条件は judgment の 1 点から(R26)")
+       (assert (= (len (lfor line agentd-lines :if (.startswith line "(defk settle-record ") line)) 1) "記録の腕の本体は finalize-job と停止の腕の共有(R26)")
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk restart-condition-of ") line)) 1))
+       (setv tests (.read-text (/ (. (Path __file__) parent parent parent) "packages" "doeff-agents" "tests" "test_sessionhost_acp.py") :encoding "utf-8"))
+       (for [name ["test_stop_closes_running_jobs_with_agentd_restart_and_leaves_the_session_to_the_host"
+                   "test_acp_url_has_no_localhost_default_and_the_join_bundle_carries_it"]]
+         (assert (in (+ "def " name "(") tests) f"R26 の反例の検が無い: {name}"))
+       (setv host-tests (.read-text (/ (. (Path __file__) parent parent parent) "packages" "doeff-agents" "tests" "test_sessionhost_headless.py") :encoding "utf-8"))
+       (for [name ["test_stop_verdict_cuts_only_the_mid_turn_rows"
+                   "test_host_headless_stop_cuts_the_mid_turn_row_and_terminates_every_process"
+                   "test_real_host_sigterm_closes_the_running_turn_before_exit"]]
+         (assert (in (+ "def " name "(") host-tests) f"R26 の host の反例の検が無い: {name}")))
      (deftest test-adr-doe-agents-012-interrupts-ride-the-running-turn
        ;; R21 の針(構造): 判断は judgment.hy の 1 点ずつ・配達は agentd.deliver-interrupts の 1 点・agentd は器の作法の語を
        ;; 持たない・claude の headless は stream-json の入力・sessionhost の割り込みの口は mode = interrupt の 1 語。
@@ -1589,4 +1653,4 @@
           "docs/impl-requests/stage9-lane-prompts/lane-9f4-agentd-headline-entries.md(agora-redesign #59・設計 §2.2 / §2.4・R19 / R20 の追補: 見出しだけ・recordRef / recordedSeq・再開は service から)"
           "docs/impl-requests/stage9-lane-prompts/lane-9o3-agentd-warm-session-honors-model.md(agora-redesign #75・R20 の追補: 家の鍵に model)"
           "docs/impl-requests/stage10-lane-prompts/lane-10e-agent-settings-catalog-and-chip.md(agora-redesign #53・追補 R24: 能力の表・effort の腕・AgentSettingIgnored)"
-          "docs/impl-requests/stage10-lane-prompts/lane-10h-agentd-dead-backend-recovery.md(agora-redesign #84・追補 R25: backend の生死は観測で・復帰・session-lost・resume の KeyError)"])
+          "docs/impl-requests/stage10-lane-prompts/lane-10h-agentd-dead-backend-recovery.md(agora-redesign #84・追補 R25 / R26: backend の生死は観測で・復帰・session-lost・resume の KeyError・停止で子を黙って道連れにしない・ACP の宛先は宣言ちょうど)"])

@@ -29,6 +29,7 @@
   HeadlessInject
   HeadlessInterrupt
   HeadlessKill
+  HeadlessKillAll
   HeadlessLiveness
   HeadlessPoll
   HeadlessSpawn])
@@ -85,6 +86,9 @@
 
   (HeadlessHasSession [session-name]
     (resume (.has-alive registry session-name)))
+
+  (HeadlessKillAll []
+    (resume (.kill-all registry)))
 
   (HeadlessLiveness [session-name pid]
     ;; 観測だけ(判断は headless_protocol.recovery_verdict / backend_alive): pid の存在は kill 0、

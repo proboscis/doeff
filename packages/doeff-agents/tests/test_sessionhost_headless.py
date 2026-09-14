@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import sqlite3
 import subprocess
 import tempfile
@@ -43,10 +44,12 @@ from doeff_agents.sessionhost.headless_protocol import (
     claude_user_line,
     parse_record,
     recovery_verdict,
+    stop_verdict,
     turn_verdict,
 )
 from doeff_agents.sessionhost.impls import headless_argv
 from doeff_agents.sessionhost.store import StoreActor, terminal_cause_from_dict
+from sessionhost_bin import resolve_sessionhost_bin
 
 STUBS = Path(__file__).parent / "headless_stubs"
 
@@ -327,6 +330,14 @@ def test_recovery_verdict_is_the_one_decision(
         assert f"pid {liveness.pid if liveness.pid is not None else 'none'}" in verdict.detail
         assert ("not owned" in verdict.detail) is liveness.exists
     assert backend_alive(liveness) is (liveness.exists and liveness.owned)
+
+
+def test_stop_verdict_cuts_only_the_mid_turn_rows() -> None:
+    """段 10 lane 10h 便 2: host の停止の前の判断は stop_verdict の 1 点 — 手番の途中の非終端の行だけ turn-cut。"""
+    assert stop_verdict(False, True) == "turn-cut"
+    assert stop_verdict(False, False) == "keep"
+    assert stop_verdict(True, True) == "keep"
+    assert stop_verdict(True, False) == "keep"
 
 
 def test_terminal_cause_from_dict_is_total_over_the_store() -> None:
@@ -1005,6 +1016,142 @@ def test_host_headless_resume_reads_a_row_whose_persisted_cause_lacks_the_contra
     again = _wait_turn_end(headless_host, "h-6-r")
     assert _text(again, "status") == "running"
     headless_host.ok("session.cleanup", {"session_id": "h-6-r"})
+
+
+def test_host_headless_stop_cuts_the_mid_turn_row_and_terminates_every_process(
+    headless_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """段 10 lane 10h 便 2(agora-redesign #84): host の停止の腕は手番の途中の行を stopped + cancelled(理由 =
+    host の停止)にして黙って残さず、idle の温かい行は触らず、登記の全 process を並列の猶予で降ろす。
+    次の起動の復帰は stopped の行を keep(vanished に読み替えない)・idle の行を keep。"""
+    monkeypatch.setenv("DOEFF_HEADLESS_STUB_DELAY", "30")
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-busy", "claude"))
+    monkeypatch.setenv("DOEFF_HEADLESS_STUB_DELAY", "0")
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-idle", "claude"))
+    _wait_turn_end(headless_host, "h-idle")
+    busy_pid = _obj(headless_host.snap("h-busy"), "backend_ref")["pid"]
+    idle_pid = _obj(headless_host.snap("h-idle"), "backend_ref")["pid"]
+    assert isinstance(busy_pid, int)
+    assert isinstance(idle_pid, int)
+    started = time.monotonic()
+    outcomes = host.run_hosted(headless_host.config, headless_host.actor, headless_hy.stop_headless_rows("SIGTERM"))
+    assert outcomes == {"h-busy": "stopped", "h-idle": "running", "killed": 2}
+    assert time.monotonic() - started < 12.0  # 並列の猶予(EOF 5 s + TERM 5 s を process の数だけ積まない)
+    _wait_until(lambda: not _pid_alive(busy_pid) and not _pid_alive(idle_pid))
+    cut = headless_host.snap("h-busy")
+    assert _text(cut, "status") == "stopped"
+    assert cut["awaiting_response"] is False
+    cause = _obj(cut, "terminal_cause")
+    assert cause["category"] == "cancelled"
+    assert "sessionhost stopped (SIGTERM)" in _text(cause, "reason")
+    kept = headless_host.snap("h-idle")
+    assert _text(kept, "status") == "running"
+    assert _has(kept, "turn_ended_at")
+    assert host.HEADLESS_REGISTRY.names() == ()
+    # 次の起動の復帰: stopped の行は終端 = keep(vanished に読み替えない)・idle の行は keep
+    monkeypatch.setattr(host, "HEADLESS_REGISTRY", HeadlessRegistry())
+    recovered = host.run_hosted(headless_host.config, headless_host.actor, headless_hy.recover_headless_rows())
+    assert recovered == {"h-idle": "running"}
+    assert _text(headless_host.snap("h-busy"), "status") == "stopped"
+    headless_host.ok("session.cleanup", {"session_id": "h-idle"})
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _spawn_real_headless_host(root: Path) -> subprocess.Popen[str]:
+    """実 binary の headless の host を tmpdir で起こす(替え玉の claude・result の前で 30 秒待つ)。"""
+    env = dict(os.environ)
+    env["PATH"] = f"{STUBS}{os.pathsep}{env.get('PATH', '')}"
+    env["DOEFF_SESSIONHOST_HEADLESS_DIR"] = str(root / "events")
+    env["DOEFF_HEADLESS_STUB_DELAY"] = "30"
+    env["XDG_STATE_HOME"] = str(root / "state")
+    env.pop("DOEFF_AGENTD_ACP", None)
+    with (root / "host.log").open("w", encoding="utf-8") as log:
+        return subprocess.Popen(
+            [
+                str(resolve_sessionhost_bin()),
+                "--db", str(root / "agentd.sqlite"), "--socket", str(root / "agentd.sock"),
+                "--prompt-judge-cmd", "", "--backend", "headless", "serve",
+            ],
+            cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT, text=True,
+        )
+
+
+def _wait_real_host(proc: subprocess.Popen[str], root: Path) -> None:
+    from doeff_agents.agentd_client import AgentdClient
+
+    client = AgentdClient(root / "agentd.sock", timeout=2.0)
+    deadline = time.monotonic() + 15.0
+    while True:
+        if proc.poll() is not None:
+            raise AssertionError(f"host exited early: {proc.returncode}\n{(root / 'host.log').read_text(encoding='utf-8')}")
+        try:
+            client.status()
+            return
+        except Exception:
+            if time.monotonic() > deadline:
+                raise AssertionError(f"host did not come up\n{(root / 'host.log').read_text(encoding='utf-8')}") from None
+            _pause(0.1)
+
+
+def _stored_row(root: Path, session_id: str) -> tuple[str, int, JSONObject]:
+    conn = sqlite3.connect(root / "agentd.sqlite")
+    try:
+        row = conn.execute(
+            "SELECT status, awaiting_response, terminal_cause_json FROM agent_sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    cause = json.loads(row[2])
+    assert isinstance(cause, dict)
+    return (str(row[0]), int(row[1]), cause)
+
+
+def test_real_host_sigterm_closes_the_running_turn_before_exit() -> None:
+    """段 10 lane 10h 便 2(agora-redesign #84・実 binary): headless の host に TERM を送ると、exit の前に
+    手番の途中の行が stopped + cancelled になり、子 process が降り、lease が釈放される(黙って道連れにしない)。
+    2 度目の TERM(撃ち直し)で SystemExit → finally の lease 釈放まで届く。"""
+    from doeff_agents.agentd_client import AgentdClient
+
+    root = Path(tempfile.mkdtemp(prefix="doeff-headless-term-"))
+    try:
+        proc = _spawn_real_headless_host(root)
+        try:
+            _wait_real_host(proc, root)
+            client = AgentdClient(root / "agentd.sock", timeout=2.0)
+            launched = client.request("session.launch", _launch_params(root, "h-term", "claude"))
+            assert isinstance(launched, dict)
+            assert launched["awaiting_response"] is True
+            child_pid = _obj(launched, "backend_ref")["pid"]
+            assert isinstance(child_pid, int)
+            assert _pid_alive(child_pid)
+            proc.send_signal(signal.SIGTERM)
+            proc.wait(timeout=30.0)
+            assert proc.returncode == 0, (root / "host.log").read_text(encoding="utf-8")
+            _wait_until(lambda: not _pid_alive(child_pid))
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=5.0)
+        text = (root / "host.log").read_text(encoding="utf-8")
+        assert "doeff-sessionhost stop (SIGTERM): closing running turns before exit" in text
+        assert "1 headless process(es) terminated, 1 mid-turn row(s) ended as stopped/cancelled: h-term" in text
+        assert "doeff-sessionhost lease released on shutdown" in text
+        status, awaiting, cause = _stored_row(root, "h-term")
+        assert status == "stopped"
+        assert awaiting == 0
+        assert cause["category"] == "cancelled"
+        assert "sessionhost stopped (SIGTERM)" in _text(cause, "reason")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def test_host_headless_run_to_completion_ends_done_and_is_swept(headless_host: Host) -> None:

@@ -265,6 +265,7 @@
   profile-status-with-observed
   recovered-arm-of
   rehydrate-history-of
+  restart-condition-of
   retire-reason-of
   resume-params-of
   rows-of-kind
@@ -1172,6 +1173,18 @@
       (do
         (<- read JobOutcome (job-outcome-of view))
         (setv outcome read)))
+  (<- settled AgentdState (settle-record settings state job view source path outcome step now-ms))
+  settled)
+
+
+(defk settle-record [settings state job view source path outcome step now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: job InFlightJob)
+         (: view (| SessionView None)) (: source (| str None)) (: path (| str None))
+         (: outcome JobOutcome) (: step str) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "記録の腕の本体(finalize-job と close-jobs-for-stop の共有 — 結末は呼び手が決める): 最後の材料を読んで
+   turn-record を ended に、agent-job を Ended(result / conditions)に、status frame ended を押し、札を返し、
+   memory から外す。record-end で器が multi_turn なら agentd が片付ける(他の step は session を残す)。"
   ;; 段 9p: 行を作れていないまま終わりに来た job は周期に依らず最後に 1 度作り直す(記録なしで終わらない —
   ;; それでも作れなければ given-up の condition が pending-conditions に乗り、下の Ended の書きが運ぶ)。
   (<- ensured InFlightJob (ensure-turn-record settings job now-ms True))
@@ -1203,14 +1216,48 @@
   (<- (MetricLine :fields {"metric" "agent-job-turn"
                                   "agentJobId" job.job-id
                                   "sessionId" job.session-id
-                                  "status" view.status
+                                  "status" (if (isinstance view SessionView) view.status "missing")
                                   "step" step
                                   "ms" (- now-ms job.started-ms)}))
-  (<- retire bool (cleanup-after-end view))
-  (when (and (= step JOB-STEP-RECORD-END) retire)
-    (<- (retire-sessions #(job.session-id) f"session {view.status} at the end of job {job.job-id}")))
+  (when (and (= step JOB-STEP-RECORD-END) (isinstance view SessionView))
+    (<- retire bool (cleanup-after-end view))
+    (when retire
+      (<- (retire-sessions #(job.session-id) f"session {view.status} at the end of job {job.job-id}"))))
   (<- next AgentdState (without-job state job.job-id))
   next)
+
+
+;; ---------------------------------------------------------------------------
+;; agentd の停止(段 10 lane 10h 便 2): 走っている手番を黙って残さない
+;; ---------------------------------------------------------------------------
+
+(defk close-jobs-for-stop [settings state now-ms reason]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: now-ms int) (: reason str)]
+   :post [(: % AgentdState)]}
+  "agentd の停止(TERM)の前の腕(段 10 lane 10h 便 2・agora-redesign #84): headless の子 process は host と共に
+   降りるので、memory の走っている job は手番の途中のまま残せない — job ごとに記録の腕(残りの材料を読んで
+   turn-record を ended)と条件 AgentdRestart(judgment.restart-condition-of の 1 点 — node・理由・session・時刻)で
+   Ended にし、status frame ended を押し、札を返す(settle-record — finalize-job と同じ本体)。session は片付けない
+   (host が降ろし、行は host の停止の腕が倒す)。黙って残さない: job ごとに log 1 行。戻り = jobs を空にした state。"
+  (setv current state)
+  (for [job (list state.jobs)]
+    (<- view (| SessionView None) (SessionGet :session-id job.session-id))
+    (setv source None)
+    (setv path None)
+    (when (isinstance view SessionView)
+      (<- canon str (FsCanonicalPath :path view.work-dir))
+      (<- found tuple (stream-source-of view canon))
+      (setv source (get found 0))
+      (setv path (get found 1)))
+    (<- condition dict (restart-condition-of job settings.node-name reason now-ms))
+    (setv condition-reason (get condition "reason"))
+    (<- (LogLine :text f"agentd: job {job.job-id} closed for the stop of agentd — {condition-reason}"))
+    (<- settled AgentdState
+        (settle-record settings current job view source path
+                       (JobOutcome :ended True :result None :conditions #(condition))
+                       "agentd-stop" now-ms))
+    (setv current settled))
+  current)
 
 
 (defk fail-missing-arm [settings job-key job-id pending lease-id now-ms]

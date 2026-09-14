@@ -57,6 +57,7 @@
   ArmChoice
   BACKEND-HEADLESS
   CLAUDE-OAUTH-TOKEN-ENV
+  CONDITION-AGENTD-RESTART
   CONDITION-INTERRUPTED
   CONDITION-RECORD-UNAVAILABLE
   CONDITION-SESSION-LOST
@@ -245,6 +246,19 @@
     JOB-STEP-TURN-END
     (not live-backend) JOB-STEP-SESSION-LOST
     True JOB-STEP-OBSERVE))
+
+
+(defk restart-condition-of [job node-name reason now-ms]
+  {:pre [(: job InFlightJob) (: node-name str) (: reason str) (: now-ms int)]
+   :post [(: % dict)]}
+  "agentd の停止で閉じた手番の条件(段 10 lane 10h 便 2): type AgentdRestart・reason に node・停止の理由(signal)・
+   session・時刻(UTC)。手番の本文の結末は無い(result なし)— 次の手番は同じ会話の次の郵便が起こす。"
+  (<- at str (history-time-of now-ms))
+  (<- condition dict
+      (condition-of CONDITION-AGENTD-RESTART
+                    (+ f"agentd on node {node-name} stopped ({reason}) at {at} while the turn was running in "
+                       f"session {job.session-id} — the headless process goes down with the host, so the turn is closed here")))
+  condition)
 
 
 (defk session-lost-condition-of [view now-ms]
