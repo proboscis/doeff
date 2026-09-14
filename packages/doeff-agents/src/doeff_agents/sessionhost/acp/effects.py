@@ -106,10 +106,22 @@ DeltaKind = Literal["text", "tool_use", "tool_result", "usage", "status", "frame
 #: 閉語彙は phase だけなので、agentd 側の語をここ 1 点で閉じる)。Interrupted = 取り下げ
 #: (Withdrawn)で走っている手番を止めた(phase は書き手 = 作った側のまま)。
 ConditionType = Literal[
-    "LaunchFailed", "CredentialUnavailable", "InputUnavailable", "SessionFailed", "Interrupted",
-    "RecordUnavailable", "CredentialSourceMissing", "AgentSettingIgnored",
+    "LaunchFailed",
+    "CredentialUnavailable",
+    "InputUnavailable",
+    "SessionFailed",
+    "Interrupted",
+    "RecordUnavailable",
+    "CredentialSourceMissing",
+    "AgentSettingIgnored",
+    "SessionLost",
 ]
 CONDITION_INTERRUPTED: ConditionType = "Interrupted"
+#: 段 10 lane 10h(agora-redesign #84): 走っている手番の session の backend(headless の子 process / tmux の pane)が
+#: host の観測(SessionView.backend_alive)で死んでいた — 手番は終わらないので turn-record を ended・job をこの条件で Ended に
+#: 閉じる(reason に session・pid・観測の時刻)。実弾 2026-09-14: agentd の再起動(kickstart -k)で子 process が道連れになり、
+#: 行は running のままだったので会話が永久に「動いている」・次の郵便が Pending だった。
+CONDITION_SESSION_LOST: ConditionType = "SessionLost"
 #: 段 9p(agora-redesign #76): 手番の記録(turn-record)の行を作れないまま手番が終わった — 頭が答えない拍
 #: (入れ替え・到達不能)は期限まで再試行し、期限を越えた / 決定論的に断られた時だけ理由つきで立つ。
 CONDITION_RECORD_UNAVAILABLE: ConditionType = "RecordUnavailable"
@@ -196,11 +208,15 @@ SESSION_TERMINAL_STATUSES: frozenset[str] = frozenset(
 #: (記録が在れば ended にし、condition SessionFailed で Ended)/ turn-end = 温かい session の
 #: 手番の終わり(器は生きたまま turn_ended_at が手番の始まりより後に付いた: 記録の腕だけを撃ち、
 #: session は片付けない)。
-JobStep = Literal["observe", "record-end", "fail-missing", "turn-end"]
+#: session-lost = 器の行は非終端だが backend が死んでいる(host の観測 SessionView.backend_alive = False — 段 10 lane 10h・
+#: agora-redesign #84: 手番は終わらないので記録の腕を撃ち、job は condition SessionLost で Ended。session は host の monitor が
+#: 終端に倒す — agentd は片付けない)。
+JobStep = Literal["observe", "record-end", "fail-missing", "turn-end", "session-lost"]
 JOB_STEP_OBSERVE: JobStep = "observe"
 JOB_STEP_RECORD_END: JobStep = "record-end"
 JOB_STEP_FAIL_MISSING: JobStep = "fail-missing"
 JOB_STEP_TURN_END: JobStep = "turn-end"
+JOB_STEP_SESSION_LOST: JobStep = "session-lost"
 #: sessionhost の lifecycle の語のうち agentd が使うもの(launch.hy LIFECYCLE-* の写し)。
 #: multi_turn = 温かい session(手番の終わりで片付けない — 同じ会話の次の手番は send)。
 #: charter に lifecycle が無い時の agentd の既定(judgment.launch-lifecycle-of の 1 点)。
@@ -653,6 +669,11 @@ class SessionView:
     launch_attribution: JSONObject | None = None
     #: 器が session を起こした時刻(wire の started_at・epoch ms・None = 読めない)。
     started_at_ms: int | None = None
+    #: 段 10 lane 10h(agora-redesign #84): 行の backend(headless の子 process / tmux の pane)が今 host で生きているかの
+    #: host の観測(wire の backend_alive — session.get / session.list が毎回観測して載せる)。None = この眺めには観測が
+    #: 無い(launch / resume の応答)— 観測の無さは死亡の証拠ではない(ADR-DOE-AGENTS-009: 観測断 ≠ 死亡)ので、判断
+    #: (judgment.backend-alive)は明示の False だけを死と読む。
+    backend_alive: bool | None = None
 
 
 @dataclass(frozen=True)

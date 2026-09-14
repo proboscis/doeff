@@ -23,6 +23,17 @@
 ;;; 止めた・idle で退いた)次の手番の send は `--resume <sid>` の process を同じ session の
 ;;; 名で起こし直してから stdin へ書く(温かい = 会話の資源としての行と events file が続く)。
 ;;;
+;;; host の再起動の後の復帰(段 10 lane 10h・agora-redesign #84・既知の形 = kubelet の node 再起動後の
+;;; container の生死の観測): registry は host の process と共に消え、launchd の kickstart は子 process も
+;;; 道連れにするので、手番の途中(awaiting)のまま残った行は誰も終端に倒さない — 会話が永久に「動いている」
+;;; になり、agentd は defer を返し続けた(実弾 2026-09-14 14:35〜18:5x)。host は accept を始める前に
+;;; recover-headless-rows で各行の backend を観測(HeadlessLiveness = pid の存在 + registry の所有)し、
+;;; 判断 headless_protocol.recovery_verdict の 1 点で「手番の途中 ∧ backend が死んでいる」行だけを
+;;; exited + cause vanished(ADR-DOE-AGENTS-009: 証拠つき死亡の語彙・reason に pid と観測の文)にして
+;;; session_exited を刻む。idle の温かい行は触らない(次の send が --resume で同じ session を起こし直す)。
+;;; 起動時の awaiting latch の全 clear(store.hy db-clear-awaiting-latches — tui の物理)は headless の行を
+;;; 対象にしない: headless の latch は「手番の途中」の事実そのもので、消すと復帰が判断できない。
+;;;
 ;;; 割り込みの本文(段 8 lane 4x・agora-redesign #56): session.send の mode = interrupt は
 ;;; 走っている手番へ本文を注入する(HeadlessInject — claude は user の行を CLI が次の tool の
 ;;; 境界で読む・codex は turn/interrupt → 同じ thread へ turn/start)。走っている手番が無ければ
@@ -44,6 +55,7 @@
   headless-inject
   headless-interrupt
   headless-kill
+  headless-liveness
   headless-poll
   headless-spawn
   session-store-get
@@ -53,8 +65,11 @@
   session-store-upsert
   wire-result-channel])
 (import doeff_agents.sessionhost.headless_protocol [
+  BackendLiveness
   HeadlessObservation
+  RecoveryVerdict
   Verdict
+  recovery-verdict
   turn-verdict])
 (import doeff_agents.sessionhost.launch [
   INTERACTIVE-AGENT-TYPES
@@ -124,6 +139,15 @@
   (setv ref (or row.backend-ref {}))
   (setv path (.get ref "events_path"))
   (if (isinstance path str) path None))
+
+
+(deff pid-of-row [row]
+  {:pre [(: row SessionRow)]
+   :post [(: % (| int None))]}
+  "行の backend_ref の pid(headless-backend-ref が書いた int・無ければ None — 発明しない)。"
+  (setv ref (or row.backend-ref {}))
+  (setv pid (.get ref "pid"))
+  (if (and (isinstance pid int) (not (isinstance pid bool))) pid None))
 
 
 (defk require-headless-row [session-id]
@@ -563,6 +587,58 @@
   (when killed
     (<- _ (session-store-record-event row.session-id "session_cleaned" row)))
   row)
+
+
+(defk observe-backend-liveness [row]
+  {:pre [(: row SessionRow)]
+   :post [(: % BackendLiveness)]}
+  "行の backend の生死の観測(段 10 lane 10h): pid の存在と registry の所有。判断は持たない。"
+  (<- liveness (headless-liveness row.session-name (pid-of-row row)))
+  liveness)
+
+
+(defk recover-headless-row [row]
+  {:pre [(: row SessionRow)]
+   :post [(: % SessionRow)]}
+  "host の起動時の復帰の 1 行(段 10 lane 10h・agora-redesign #84): backend を観測し、判断
+   (recovery_verdict の 1 点)が backend-dead なら exited + cause vanished(証拠つき死亡 —
+   reason に pid と観測の文)・awaiting を下ろし・session_exited を刻む。keep はそのまま。"
+  (<- liveness (observe-backend-liveness row))
+  (setv verdict (recovery-verdict (is-terminal-status row.status) row.awaiting-response liveness))
+  (when (!= verdict.kind "backend-dead")
+    (return row))
+  (<- now (clock-now))
+  (setv observed-at (iso-format now))
+  (setv row (replace row :status "exited"
+                         :finished-at (or row.finished-at observed-at)
+                         :last-observed-at observed-at
+                         :awaiting-response False
+                         :awaiting-response-since None
+                         :last-validation-error verdict.detail))
+  (setv row (cause-if-absent row (make-cause "vanished" verdict.detail observed-at)))
+  (<- _ (session-store-upsert row))
+  (<- _ (session-store-record-event row.session-id "session_exited" row))
+  row)
+
+
+(defk recover-headless-rows []
+  {:pre []
+   :post [(: % dict)]}
+  "host の起動時の復帰(段 10 lane 10h): 非終端の headless 行を 1 行ずつ recover-headless-row へ。
+   accept を始める前・awaiting latch の clear より前に 1 度だけ走る。per-session 隔離(1 行の例外は
+   捕捉して次へ)。戻り値: {session-id: 処理後 status | \"error:<ExceptionType>\"}(exited に倒した行と
+   keep の行の両方 — 呼び手が log に数を出す)。tui の行には触れない。"
+  (<- rows (session-store-list-active))
+  (setv outcomes {})
+  (for [row (sorted rows :key (fn [r] r.session-id))]
+    (when (is-headless-row row)
+      (try
+        (<- recovered (recover-headless-row row))
+        (setv (get outcomes row.session-id) recovered.status)
+        (except [e Exception]
+          (setv (get outcomes row.session-id)
+                f"error:{(. (type e) __name__)}")))))
+  outcomes)
 
 
 (defk headless-monitor-cycle []

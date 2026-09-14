@@ -1254,6 +1254,10 @@
          "max_running" (.get params "max_running")
          "repl_idle_max_wait_seconds" (.get params "repl_idle_max_wait_seconds")
          "backend_kind" (.get params "backend_kind" "tmux")
+         ;; headless の実況の正本の置き場(host の config が program-params に運ぶ — 段 10 lane 10h・
+         ;; agora-redesign #84: 運んでいなかったので headless の session.resume は headless-launch-session の
+         ;; (get params "events_root") で KeyError になり、本番の --resume が全部 rehydrate に落ちていた)。
+         "events_root" (.get params "events_root")
          "resume_context" {"mode" mode
                            "conversation" conv
                            "generation" gen

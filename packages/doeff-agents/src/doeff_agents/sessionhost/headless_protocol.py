@@ -26,6 +26,13 @@ kind ごとの物理(argv は impls/headless_argv.hy・stdin の綴りはここ)
   する — dotfiles agentcli/codex_app_server.py と同じ規則)。
 
 「手番の途中か」の判断(verdict)も純関数 1 点(``turn_verdict``)。
+
+host の再起動の後の復帰(段 10 lane 10h・agora-redesign #84・既知の形 = kubelet が node の再起動の後に
+container の生死を観測して pod の状態を直す): registry(host の process に 1 つ)は host と共に消えるので、
+行が手番の途中(awaiting)のまま残った session の backend は観測で決める — pid の存在(kill 0)と所有(この
+host の registry が同じ pid の生きた process を持つ)。判断は ``recovery_verdict`` の 1 点: 手番の途中 ∧
+backend が死んでいる → 終端(``backend-dead``)/ それ以外 → keep(idle の温かい行は process が降りていても
+次の send が --resume で同じ session を起こし直す設計なので触らない)。
 """
 
 # pyright: strict
@@ -497,6 +504,59 @@ def _exit_verdict(observation: HeadlessObservation) -> Verdict:
         "failed",
         ok=False,
         detail=f"process exited with code {observation.exit_code} before the turn ended",
+    )
+
+
+# ------------------------------------------------------------------ backend の生死と再起動の後の復帰(純関数 1 点)
+
+
+@dataclass(frozen=True)
+class BackendLiveness:
+    """器の backend(headless の子 process)の生死の観測(段 10 lane 10h): ``exists`` = pid が在る(kill 0)、
+    ``owned`` = この host の registry がその名で同じ pid の生きた process を持つ(stdin / stdout の pipe を
+    握っているのはこの host)。host の再起動の後は registry が空なので owned は必ず偽 — 親を失った process は
+    在っても器としては使えない(pipe の読み手が居ない)。"""
+
+    pid: int | None
+    exists: bool
+    owned: bool
+
+
+def backend_alive(liveness: BackendLiveness) -> bool:
+    """backend が生きている = pid が在り ∧ この host が所有する。"""
+    return liveness.exists and liveness.owned
+
+
+RecoveryKind = Literal["keep", "backend-dead"]
+
+
+@dataclass(frozen=True)
+class RecoveryVerdict:
+    kind: RecoveryKind
+    detail: str = ""
+
+
+def recovery_verdict(
+    status_terminal: bool, in_flight: bool, liveness: BackendLiveness
+) -> RecoveryVerdict:
+    """host の起動時の復帰の 1 行の判断(閉語彙 RecoveryKind)— 行の事実と backend の観測から:
+    終端の行 → keep / 手番の途中でない(idle の温かい行 — 次の send が --resume で同じ session を起こし直す)
+    → keep / 手番の途中 ∧ backend が生きて所有 → keep(起こした process が在る)/ 手番の途中 ∧ backend が
+    死んでいる(pid が無い・この host の所有でない)→ backend-dead(呼び手が status を終端に倒し、cause と
+    event を刻む)。detail は cause の reason に載る観測の文(pid と在否・所有)。"""
+    if status_terminal or not in_flight:
+        return RecoveryVerdict("keep")
+    if backend_alive(liveness):
+        return RecoveryVerdict("keep")
+    pid = "none" if liveness.pid is None else str(liveness.pid)
+    fact = (
+        "not running"
+        if not liveness.exists
+        else "running but not owned by this host (its stdio pipes died with the previous host)"
+    )
+    return RecoveryVerdict(
+        "backend-dead",
+        detail=f"backend process dead: headless process pid {pid} is {fact} while the turn was in flight",
     )
 
 

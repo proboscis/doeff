@@ -804,6 +804,13 @@
   "名の process が登記されて生きているか。戻り値: bool。"
   #^ str session-name)
 
+(defclass [(dataclass :frozen True :kw-only True)] HeadlessLiveness [EffectBase]
+  "行の backend(子 process)の生死の観測(段 10 lane 10h・agora-redesign #84): pid の存在(kill 0)と
+   所有(この host の registry が同じ pid の生きた process を持つ)。判断は持たない — 戻り値:
+   headless_protocol.BackendLiveness。pid が None の行(backend_ref に pid が無い)は存在も所有も偽。"
+  #^ str session-name
+  #^ (| int None) pid)
+
 
 ;; ===========================================================================
 ;; deff 構築子(署名 = 契約面)
@@ -1098,3 +1105,9 @@
    :post [(: % HeadlessHasSession)]}
   "HeadlessHasSession を構築する。"
   (HeadlessHasSession :session-name session-name))
+
+(deff headless-liveness [session-name pid]
+  {:pre [(: session-name str) (: pid (| int None))]
+   :post [(: % HeadlessLiveness)]}
+  "HeadlessLiveness を構築する(段 10 lane 10h)。"
+  (HeadlessLiveness :session-name session-name :pid pid))

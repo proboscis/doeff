@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -31,18 +32,21 @@ from doeff_agents.sessionhost import host
 from doeff_agents.sessionhost.headless_process import HeadlessRegistry
 from doeff_agents.sessionhost.headless_protocol import (
     JSON,
+    BackendLiveness,
     ClaudeDialogue,
     CodexDialogue,
     CodexPlan,
     HeadlessObservation,
     JSONObject,
     TurnEnded,
+    backend_alive,
     claude_user_line,
     parse_record,
+    recovery_verdict,
     turn_verdict,
 )
 from doeff_agents.sessionhost.impls import headless_argv
-from doeff_agents.sessionhost.store import StoreActor
+from doeff_agents.sessionhost.store import StoreActor, terminal_cause_from_dict
 
 STUBS = Path(__file__).parent / "headless_stubs"
 
@@ -292,6 +296,51 @@ def test_turn_verdict_closed_vocabulary(
     verdict = turn_verdict(observation, in_flight)
     assert verdict.kind == kind
     assert verdict.ok is ok
+
+
+@pytest.mark.parametrize(
+    ("terminal", "in_flight", "liveness", "kind"),
+    [
+        # 終端の行は観測に依らず keep
+        (True, True, BackendLiveness(pid=1, exists=False, owned=False), "keep"),
+        # idle の温かい行(process が降りていても)は keep — 次の send が --resume で起こし直す
+        (False, False, BackendLiveness(pid=1, exists=False, owned=False), "keep"),
+        # 手番の途中 ∧ backend が生きて所有 → keep
+        (False, True, BackendLiveness(pid=1, exists=True, owned=True), "keep"),
+        # 手番の途中 ∧ pid が無い → backend-dead
+        (False, True, BackendLiveness(pid=22663, exists=False, owned=False), "backend-dead"),
+        # 手番の途中 ∧ pid は在るが所有でない(親を失った孤児)→ backend-dead
+        (False, True, BackendLiveness(pid=22663, exists=True, owned=False), "backend-dead"),
+        # 手番の途中 ∧ backend_ref に pid が無い → backend-dead
+        (False, True, BackendLiveness(pid=None, exists=False, owned=False), "backend-dead"),
+    ],
+)
+def test_recovery_verdict_is_the_one_decision(
+    terminal: bool, in_flight: bool, liveness: BackendLiveness, kind: str
+) -> None:
+    """段 10 lane 10h(agora-redesign #84): 起動時の復帰の判断は recovery_verdict の 1 点 —
+    手番の途中 ∧ backend が死んでいる(pid が無い / この host の所有でない)時だけ終端。"""
+    verdict = recovery_verdict(terminal, in_flight, liveness)
+    assert verdict.kind == kind
+    if kind == "backend-dead":
+        assert "backend process dead" in verdict.detail
+        assert f"pid {liveness.pid if liveness.pid is not None else 'none'}" in verdict.detail
+        assert ("not owned" in verdict.detail) is liveness.exists
+    assert backend_alive(liveness) is (liveness.exists and liveness.owned)
+
+
+def test_terminal_cause_from_dict_is_total_over_the_store() -> None:
+    """段 10 lane 10h(agora-redesign #84 副次): 契約の欄を持たない persisted cause(手で書かれた
+    {"cause": …})は typed には None — 行ごと読めなくなる KeyError 'category'(store.hy の decode が根)
+    を出さない。契約どおりの payload はそのまま TerminalCause。"""
+    assert terminal_cause_from_dict({"cause": "backend-process-dead", "pid": 22663}) is None
+    assert terminal_cause_from_dict({"category": "vanished"}) is None  # observed_at 無し
+    cause = terminal_cause_from_dict(
+        {"category": "vanished", "reason": "r", "retryable": True, "observed_at": "2026-09-14T00:00:00+00:00"}
+    )
+    assert cause is not None
+    assert cause.category == "vanished"
+    assert cause.retryable is True
 
 
 def test_headless_argv_is_print_mode_with_partial_messages() -> None:
@@ -850,6 +899,112 @@ def test_host_headless_codex_round_trip_is_warm(headless_host: Host) -> None:
     ended_again = _wait_turn_end(headless_host, "h-3")
     assert _obj(ended_again, "backend_ref")["pid"] == pid_before  # 同じ process(温かい)
     headless_host.ok("session.cleanup", {"session_id": "h-3"})
+
+
+def test_host_headless_startup_recovery_ends_the_dead_mid_turn_row_and_keeps_the_idle_one(
+    headless_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """段 10 lane 10h(agora-redesign #84・実弾 2026-09-14 14:35): host の再起動(registry が消え、
+    launchd の kickstart が子 process を道連れにする)の後、手番の途中のまま残った行は起動時の復帰が
+    backend を観測して exited + vanished に倒す(session_exited・reason に pid)。idle の温かい行は
+    触らない(次の send が --resume で同じ session を起こし直す)。wire の backend_alive は観測から。"""
+    # h-busy: 手番の途中(替え玉は result の前で 30 秒待つ)/ h-idle: 手番が終わって温かい
+    monkeypatch.setenv("DOEFF_HEADLESS_STUB_DELAY", "30")
+    busy = headless_host.ok("session.launch", _launch_params(headless_host.root, "h-busy", "claude"))
+    assert isinstance(busy, dict)
+    assert busy["awaiting_response"] is True
+    monkeypatch.setenv("DOEFF_HEADLESS_STUB_DELAY", "0")
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-idle", "claude"))
+    idle = _wait_turn_end(headless_host, "h-idle")
+    assert _has(idle, "turn_ended_at")
+    # 生きている間の観測: どちらも backend_alive
+    assert headless_host.snap("h-busy")["backend_alive"] is True
+    assert headless_host.snap("h-idle")["backend_alive"] is True
+    busy_pid = _obj(headless_host.snap("h-busy"), "backend_ref")["pid"]
+    idle_pid = _obj(headless_host.snap("h-idle"), "backend_ref")["pid"]
+    assert isinstance(busy_pid, int)
+    assert isinstance(idle_pid, int)
+    # 再起動の再現: launchd の kickstart -k は process group ごと殺す(子も死ぬ)→ 新しい host の registry は空
+    old_registry = host.HEADLESS_REGISTRY
+    for pid in (busy_pid, idle_pid):
+        os.kill(pid, 9)
+    _wait_until(lambda: not old_registry.has_alive("h-busy") and not old_registry.has_alive("h-idle"))
+    monkeypatch.setattr(host, "HEADLESS_REGISTRY", HeadlessRegistry())
+    # 復帰の前: 手番の途中の行は running のまま(誰も倒していない = 実弾の形)、backend_alive は観測で false
+    before = headless_host.snap("h-busy")
+    assert _text(before, "status") == "running"
+    assert before["backend_alive"] is False
+    outcomes = host.run_hosted(headless_host.config, headless_host.actor, headless_hy.recover_headless_rows())
+    assert outcomes == {"h-busy": "exited", "h-idle": "running"}
+    after = headless_host.snap("h-busy")
+    assert _text(after, "status") == "exited"
+    assert after["awaiting_response"] is False
+    cause = _obj(after, "terminal_cause")
+    assert cause["category"] == "vanished"
+    assert cause["retryable"] is True
+    assert f"pid {busy_pid}" in _text(cause, "reason")
+    assert "backend process dead" in _text(cause, "reason")
+    assert after["backend_alive"] is False
+    kept = headless_host.snap("h-idle")
+    assert _text(kept, "status") == "running"
+    assert _has(kept, "turn_ended_at")
+    assert kept["backend_alive"] is False  # process は降りている(観測)— 行は温かいまま
+    # 復帰は冪等(2 度目は何も倒さない)
+    again = host.run_hosted(headless_host.config, headless_host.actor, headless_hy.recover_headless_rows())
+    assert again == {"h-idle": "running"}
+    # idle の温かい行は次の手番を --resume で受ける(復帰が壊していない)
+    headless_host.ok("session.send", {"session_id": "h-idle", "message": "after restart", "awaiting": True})
+    resumed = headless_host.snap("h-idle")
+    assert "--resume" in _texts(_obj(resumed, "backend_ref"), "argv")
+    assert resumed["backend_alive"] is True
+    ended = _wait_turn_end(headless_host, "h-idle")
+    assert _text(ended, "status") == "running"
+    headless_host.ok("session.cleanup", {"session_id": "h-idle"})
+    # 終端の行に対しても 2 度目の復帰は keep(手番の途中でない)
+    assert host.run_hosted(headless_host.config, headless_host.actor, headless_hy.recover_headless_rows()) == {}
+
+
+def test_host_headless_resume_reads_a_row_whose_persisted_cause_lacks_the_contract_fields(
+    headless_host: Host,
+) -> None:
+    """段 10 lane 10h(agora-redesign #84 副次・実弾 2026-09-14): headless の session.resume の腕の
+    KeyError は 2 つ — (1) 手で書かれた terminal_cause({"cause": …}・category も observed_at も無い)の
+    行は session.get も session.resume も読めず KeyError 'category'(store.hy terminal-cause-from-dict の
+    get)で断られた(18:5x)。typed には cause なしとして読み、wire は raw を運ぶ。(2) launch.hy
+    resume-session の launch-params が events_root を運ばず、headless-launch-session の
+    (get params "events_root") で KeyError 'events_root'(本番 log 2 件)— headless の --resume は 1 度も
+    通っておらず全部 rehydrate に落ちていた。この検は両方を実 host(replaced CLI)で通す。"""
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-6", "claude"))
+    ended = _wait_turn_end(headless_host, "h-6")
+    assert _text(ended, "status") == "running"
+    headless_host.ok("session.cleanup", {"session_id": "h-6"})
+    raw = json.dumps({"cause": "backend-process-dead", "by": "operator-delegate (stopgap)", "pid": 22663})
+    def _write_raw_cause(conn: object) -> object:
+        assert isinstance(conn, sqlite3.Connection)
+        return conn.execute(
+            "UPDATE agent_sessions SET terminal_cause_json = ? WHERE session_id = ?", (raw, "h-6")
+        )
+
+    headless_host.actor.submit(_write_raw_cause)
+    snap = headless_host.snap("h-6")
+    assert _text(snap, "status") == "stopped"
+    assert snap["terminal_cause"] == json.loads(raw)  # wire は raw のまま
+    # resume の admission が要る transcript(replaced CLI が書く projects/<mangled cwd>/<conv>.jsonl)を置く
+    conversation = _text(_obj(snap, "conversation"), "session_id")
+    canonical = os.path.realpath(_text(snap, "work_dir"))
+    mangled = "".join(ch if ch.isalnum() else "-" for ch in canonical)
+    transcript = headless_host.root / "claude-home" / "projects" / mangled / f"{conversation}.jsonl"
+    transcript.parent.mkdir(parents=True, exist_ok=True)
+    transcript.write_text("{}\n", encoding="utf-8")
+    resumed = headless_host.ok(
+        "session.resume", {"session_id": "h-6", "new_session_id": "h-6-r", "prompt": "again"}
+    )
+    assert isinstance(resumed, dict)
+    assert _text(resumed, "session_id") == "h-6-r"
+    assert "--resume" in _texts(_obj(resumed, "backend_ref"), "argv")
+    again = _wait_turn_end(headless_host, "h-6-r")
+    assert _text(again, "status") == "running"
+    headless_host.ok("session.cleanup", {"session_id": "h-6-r"})
 
 
 def test_host_headless_run_to_completion_ends_done_and_is_swept(headless_host: Host) -> None:

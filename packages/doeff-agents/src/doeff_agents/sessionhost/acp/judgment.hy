@@ -59,6 +59,7 @@
   CLAUDE-OAUTH-TOKEN-ENV
   CONDITION-INTERRUPTED
   CONDITION-RECORD-UNAVAILABLE
+  CONDITION-SESSION-LOST
   CREDENTIAL-SOURCE-HOME
   CREDENTIAL-SOURCE-LEASE
   CREDENTIAL-SOURCE-MISSING
@@ -79,6 +80,7 @@
   JOB-STEP-FAIL-MISSING
   JOB-STEP-OBSERVE
   JOB-STEP-RECORD-END
+  JOB-STEP-SESSION-LOST
   JOB-STEP-TURN-END
   JSONObject
   JobOutcome
@@ -227,7 +229,12 @@
    温かい session(multi_turn)で host が手番の終わり(turn_ended_at)をこの手番の始まりの
    下限(floor = 本文を送った時刻)より後に刻み、記録が進んでいる(送った本文が届いて手番が
    始まった証拠 = 前の手番の終わりの stale な観測と区別する)→ turn-end(記録の腕だけ・
-   session は生かす)/ それ以外 → observe。memory に在る job も無い job も同じ 1 点で決める。"
+   session は生かす)/ 行は非終端だが host の観測で backend が死んでいる(段 10 lane 10h —
+   手番は終わらない)→ session-lost(記録の腕・job は SessionLost で Ended・session は host の
+   monitor に任せる)/ それ以外 → observe。memory に在る job も無い job も同じ 1 点で決める。
+   backend の生死は status の語から推測しない(judgment.backend-alive — 観測の無い眺めは生きて
+   いると読む: 観測断 ≠ 死亡)。"
+  (<- live-backend bool (backend-alive view))
   (cond
     (is view None) JOB-STEP-FAIL-MISSING
     (in view.status SESSION-TERMINAL-STATUSES) JOB-STEP-RECORD-END
@@ -236,7 +243,24 @@
          (> view.turn-ended-at-ms floor-ms)
          progressed)
     JOB-STEP-TURN-END
+    (not live-backend) JOB-STEP-SESSION-LOST
     True JOB-STEP-OBSERVE))
+
+
+(defk session-lost-condition-of [view now-ms]
+  {:pre [(: view SessionView) (: now-ms int)]
+   :post [(: % dict)]}
+  "session-lost の条件(段 10 lane 10h・agora-redesign #84): reason に session の id・backend の種類・
+   pid(headless の backend_ref.pid — 無ければ none)・観測の時刻(UTC)。"
+  (setv ref (or view.backend-ref {}))
+  (setv pid (.get ref "pid"))
+  (setv pid-text (if (and (isinstance pid int) (not (isinstance pid bool))) (str pid) "none"))
+  (<- at str (history-time-of now-ms))
+  (<- condition dict
+      (condition-of CONDITION-SESSION-LOST
+                    (+ f"session {view.session-id} ({view.backend-kind}, pid {pid-text}) has no live backend "
+                       f"process at {at} while the turn was running — the turn cannot end")))
+  condition)
 
 
 ;; ---------------------------------------------------------------------------
@@ -255,8 +279,18 @@
 (defk session-alive [view]
   {:pre [(: view (| SessionView None))]
    :post [(: % bool)]}
-  "器に在り、終端でない。"
+  "器に在り、終端でない(session = 会話の資源としての行の生死 — process の生死ではない)。"
   (and (is-not view None) (not-in view.status SESSION-TERMINAL-STATUSES)))
+
+
+(defk backend-alive [view]
+  {:pre [(: view (| SessionView None))]
+   :post [(: % bool)]}
+  "行の backend(headless の子 process / tmux の pane)が生きているかの host の観測(段 10 lane 10h・
+   agora-redesign #84)。器に無い → 偽。観測が無い眺め(backend_alive = None — launch / resume の応答)は
+   生きていると読む: 観測の無さは死亡の証拠ではない(ADR-DOE-AGENTS-009: 観測断 ≠ 死亡)。status の語は
+   読まない — 死は明示の False だけ。"
+  (and (is-not view None) (is-not view.backend-alive False)))
 
 
 (defk session-idle [view]
@@ -475,13 +509,19 @@
    温かい process には届かない — 同じ session を新しい旗で --resume する。cache は保つ・session は作り直さない)/
    候補が生きて idle ∧ 家が違う → 候補を片付けて rehydrate(profile か model を変えた手番 — 失効した cache の器を残さない・
    新しい session は charter.model で起きる)/
-   候補が生きていて idle でない → defer(手番の途中 — 走っている手番に本文を積まない)/
+   候補が生きていて idle でない ∧ backend が生きている(host の観測)→ defer(手番の途中 — 走っている手番に本文を
+   積まない)/
+   候補が生きていて idle でない ∧ backend が死んでいる(段 10 lane 10h・agora-redesign #84: 行は running のままだが
+   process が無い — 手番は終わらないので待たない)→ 同じ家なら候補を片付けて resume(cache は保つ)、家が違えば
+   候補を片付けて rehydrate(status の語で生死を推測しない — 観測は judgment.backend-alive の 1 点)/
    候補が器に登記されて終端 ∧ 同じ家 → resume(温かい session が片付いた後も cache を保つ --resume・effort は resume の
    params が運ぶ)/
    それ以外(候補が器に無い = 別の機体・器の行が消えた / 終端だが家が違う)→ rehydrate(ACP の会話の記録を
-   最初の本文に畳む)。"
+   最初の本文に畳む)。idle の温かい session は process が降りていても send(host の send が同じ session を --resume で
+   起こし直す — backend の観測は手番の途中の判定にだけ効く)。"
   (<- alive bool (session-alive view))
   (<- idle bool (session-idle view))
+  (<- live-backend bool (backend-alive view))
   (setv same False)
   (setv same-effort True)
   (when (isinstance view SessionView)
@@ -494,9 +534,27 @@
     (and idle same same-effort) (ArmChoice :arm NEXT-ARM-SEND :source candidate :retire None)
     (and idle same) (ArmChoice :arm NEXT-ARM-RESUME :source candidate :retire candidate)
     idle (ArmChoice :arm NEXT-ARM-REHYDRATE :source None :retire candidate)
-    alive (ArmChoice :arm NEXT-ARM-DEFER :source candidate :retire None)
+    (and alive live-backend) (ArmChoice :arm NEXT-ARM-DEFER :source candidate :retire None)
+    (and alive same) (ArmChoice :arm NEXT-ARM-RESUME :source candidate :retire candidate)
+    alive (ArmChoice :arm NEXT-ARM-REHYDRATE :source None :retire candidate)
     same (ArmChoice :arm NEXT-ARM-RESUME :source candidate :retire None)
     True (ArmChoice :arm NEXT-ARM-REHYDRATE :source None :retire None)))
+
+
+(defk retire-reason-of [choice view job-id]
+  {:pre [(: choice ArmChoice) (: view (| SessionView None)) (: job-id str)]
+   :post [(: % str)]}
+  "候補を片付ける理由の文(log の 1 行 — 判断は next-arm-for-job と同じ観測から): rehydrate = 家が違う /
+   resume ∧ 候補が idle = effort が違う(温かい process を新しい旗で起こし直す)/ resume ∧ 候補が手番の途中 =
+   backend が死んでいる(段 10 lane 10h — 手番は終わらないので待たない)。"
+  (<- idle bool (session-idle view))
+  (cond
+    (= choice.arm NEXT-ARM-REHYDRATE)
+    f"job {job-id} runs in another home (account, binding or model) — the session cache is dropped and the conversation is rehydrated"
+    idle
+    f"job {job-id} declares another effort — the warm process is replaced by a --resume of the same session with the new flags (cache kept)"
+    True
+    f"job {job-id} found the conversation's session mid-turn with a dead backend process — the row is retired and the same session is resumed (cache kept)"))
 
 
 (defk fallback-arm-of [choice]

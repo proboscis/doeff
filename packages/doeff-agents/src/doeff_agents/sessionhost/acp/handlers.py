@@ -712,6 +712,7 @@ def session_view_of(result: JSON) -> SessionView | None:
     started = _str_field(snapshot, "started_at")
     backend_ref = snapshot.get("backend_ref")
     attribution = snapshot.get("launch_attribution")
+    alive = snapshot.get("backend_alive")
     return SessionView(
         session_id=session_id,
         agent_type=agent_type,
@@ -727,6 +728,7 @@ def session_view_of(result: JSON) -> SessionView | None:
         backend_ref=backend_ref if isinstance(backend_ref, dict) else None,
         launch_attribution=attribution if isinstance(attribution, dict) else None,
         started_at_ms=None if started is None else _epoch_ms_of_iso(started),
+        backend_alive=alive if isinstance(alive, bool) else None,
     )
 
 

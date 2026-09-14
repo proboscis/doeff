@@ -46,7 +46,8 @@
   tmux-capture
   tmux-has-session
   tmux-kill-session
-  tmux-send-keys])
+  tmux-send-keys
+  tmux-session-pane-ids])
 (import doeff_agents.sessionhost.adopt [AdoptTargetNotFound adopt-program])
 (import doeff_agents.sessionhost.impls.claude_code [claude-code-impl])
 (import doeff_agents.sessionhost.impls.codex [codex-impl])
@@ -72,7 +73,8 @@
 (import doeff_agents.sessionhost.substrate_herdr [DEFAULT-HERDR-SOCKET herdr-substrate])
 (import doeff_agents.sessionhost.substrate_headless [HEADLESS-REGISTRY headless-substrate])
 (import doeff_agents.sessionhost.impls.headless_argv [headless-argv-impl])
-(import doeff_agents.sessionhost.effects [headless-kill])
+(import doeff_agents.sessionhost.effects [headless-kill headless-liveness])
+(import doeff_agents.sessionhost.headless_protocol [backend-alive])
 (import doeff_agents.sessionhost.headless [
   HEADLESS-BACKEND-KIND
   EVENT-SESSION-INTERRUPTED
@@ -86,7 +88,8 @@
   headless-interrupt-program
   headless-launch-session
   headless-monitor-cycle
-  headless-send-program])
+  headless-send-program
+  recover-headless-rows])
 (import doeff_agents.sessionhost.store [
   HISTORY-PRUNE-BATCH-ROWS
   LEASE-TTL-SECONDS
@@ -881,6 +884,25 @@
   (<- present (tmux-has-session session-name))
   (bool present))
 
+(defk backend-alive-program [backend-kind session-name pane-id backend-ref]
+  {:pre [(: backend-kind str) (: session-name str) (: pane-id str) (: backend-ref (| dict None))]
+   :post [(: % bool)]}
+  "wire の backend_alive(段 10 lane 10h・agora-redesign #84): 行の backend が今この host で生きて
+   いるかの観測 — headless = 子 process の pid の存在 ∧ registry の所有(HeadlessLiveness・判断は
+   headless_protocol.backend_alive)、tmux / herdr = 行の pane が session の pane の集合に在る
+   (TmuxSessionPaneIds — monitor の帰属検証と同じ観測)。status の語からは導かない(推測しない)。"
+  (if (= backend-kind HEADLESS-BACKEND-KIND)
+      (do
+        (setv pid (.get (or backend-ref {}) "pid"))
+        (<- liveness (headless-liveness session-name
+                                        (if (and (isinstance pid int) (not (isinstance pid bool)))
+                                            pid
+                                            None)))
+        (backend-alive liveness))
+      (do
+        (<- pane-ids (tmux-session-pane-ids session-name))
+        (in pane-id pane-ids))))
+
 (deff wire-with-stalled [wire]
   {:pre [(: wire dict)]
    :post [(: % dict)]}
@@ -902,9 +924,22 @@
      close 済み(WAIT 待ち)は経過によらず false。signal only(R4)。
    - substrate_present / substrate_checked_at: 免除行(adopted または
      interactive)かつ非終端の行だけに載る突合表示(条項 3 — 消滅 pane を
-     exited と裁定せず、乖離として見せる)。"
+     exited と裁定せず、乖離として見せる)。
+   - backend_alive: 行の backend(headless の子 process / tmux の pane)が今この host で
+     生きているかの観測(段 10 lane 10h — agentd の recover-job / next-arm-for-job が
+     status の語ではなくこれで判断する)。終端の行は観測せず false(host が既に終端と
+     裁定した行の backend は片付けの対象で、次の手番を受ける器ではない)。"
   (setv wire (wire-with-stalled wire))
   (setv now (datetime.now timezone.utc))
+  (setv (get wire "backend_alive")
+        (if (is-terminal-status (get wire "status"))
+            False
+            (bool (run-hosted config actor
+                              (backend-alive-program
+                                (get wire "backend_kind")
+                                (get wire "session_name")
+                                (get wire "pane_id")
+                                (.get wire "backend_ref"))))))
   (setv exempt (or (bool (.get wire "adopted"))
                    (= (get wire "lifecycle") "interactive")))
   (when (and exempt (not (is-terminal-status (get wire "status"))))
@@ -1746,6 +1781,16 @@
   ;; SIGKILL / crash は従来どおり TTL 失効がバックストップ。
   (setv shutdown-event (threading.Event))
   (try
+    ;; 段 10 lane 10h(agora-redesign #84): headless の host は latch の clear より前・accept より前に
+    ;; 復帰を 1 度走らせる — 手番の途中のまま残った行の backend を観測し、死んでいれば exited +
+    ;; vanished に倒す(判断は headless_protocol.recovery_verdict の 1 点)。log に数を 1 行。
+    (when (headless-backend? config)
+      (setv recovered (run-hosted config actor (recover-headless-rows)))
+      (setv dead (lfor [sid status] (.items recovered) :if (= status "exited") sid))
+      (print (+ f"doeff-sessionhost startup recovery: {(len recovered)} headless rows observed, "
+                f"{(len dead)} ended as exited/vanished (backend process dead)"
+                (if dead f": {(.join ", " dead)}" ""))
+             :file sys.stderr))
     (.submit actor (fn [conn] (db-clear-awaiting-latches conn)))
     ;; 監査履歴の retention + 物理回収(2026-07-27 wedge 根治)。VACUUM は
     ;; 全書き換えなので accept 開始前のここでだけ走る(serve 中は禁止 —

@@ -351,14 +351,15 @@
         "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
         "packages/doeff-agents/src/doeff_agents/sessionhost/host.pyi"
       ],
-      "responsibility": "sessionhost の host(RPC の dispatch・handler stack・monitor loop — deff / defhandler の Hy・既存 + backend=headless の分岐。依存先として宣言・検が触る面の pyi)",
+      "responsibility": "sessionhost の host(RPC の dispatch・handler stack・monitor loop — deff / defhandler の Hy・既存 + backend=headless の分岐。依存先として宣言・検が触る面の pyi。headless の登記簿 HEADLESS_REGISTRY を substrate_headless から持ち、検が再起動を再現する時に差し替える — 段 10 lane 10h)",
       "layer": "runtime",
       "public": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
         "packages/doeff-agents/src/doeff_agents/sessionhost/host.pyi"
       ],
       "allow": [
-        "sessionhost-store"
+        "sessionhost-store",
+        "sessionhost-headless-process"
       ],
       "typed": false
     },

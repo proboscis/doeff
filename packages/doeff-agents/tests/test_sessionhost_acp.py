@@ -1433,6 +1433,134 @@ def test_busy_conversation_session_defers_the_claim() -> None:
     assert any("deferred" in line for line in world.local.logs)
 
 
+def test_dead_backend_of_a_running_job_ends_it_with_session_lost_and_the_next_turn_resumes() -> None:
+    """段 10 lane 10h(agora-redesign #84・実弾 2026-09-14 14:35): agentd の再起動で手番の子 process が
+    道連れになり、行は running のまま(turn_ended_at 無し)。復帰(recover-job)は status の語ではなく host の
+    観測 backend_alive で判断し、turn-record を ended・job を SessionLost(理由に session・pid・時刻)で Ended に
+    する。次の Pending(同じ会話の Bound)は defer せず、候補を片付けて同じ session を --resume する。"""
+    world = World()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"]))
+    world.tick()
+    sid = world.sid("j-1")
+    assert len(world.state.jobs) == 1
+    # 再起動: memory を捨てる・子 process は死んだ(観測)・行は running のまま
+    world.state = initial_state()
+    world.sessions.kill_backend(sid)
+    assert world.sessions.views[sid].status == "running"
+    assert world.sessions.views[sid].turn_ended_at_ms is None
+    world.tick(advance_ms=1_000)
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_ENDED
+    assert "result" not in job.status
+    conditions = job.status["conditions"]
+    assert isinstance(conditions, list)
+    last = conditions[-1]
+    assert isinstance(last, dict)
+    assert last["type"] == "SessionLost"
+    reason = last["reason"]
+    assert isinstance(reason, str)
+    assert sid in reason
+    assert "pid none" in reason  # fake の backend_ref には pid が無い(発明しない)
+    assert "1970-01-01T00:00:02Z" in reason  # 観測の時刻(fake の時計 2_000 ms)
+    record = world.turn_record("j-1")
+    assert record is not None
+    assert record.status is not None
+    assert record.status["state"] == "ended"
+    assert world.state.jobs == ()
+    assert any("lost its session" in line for line in world.local.logs)
+    # session は agentd が片付けない(host の monitor が終端に倒す — cause は host の観測の方が詳しい)
+    assert world.sessions.cleanups == []
+    assert world.sessions.launches[-1]["session_id"] == sid
+    # 次の Pending: 行は running のまま(host の monitor がまだ倒していない拍)でも defer しない —
+    # backend が死んでいるので候補を片付けて同じ家で --resume(cache は保つ)
+    world.acp.put_row(message("m-2", "second"))
+    world.acp.put_row(bound_job("j-2", inputs=["m-2"], created_at_ms=world.local.now_ms))
+    world.tick(advance_ms=1_000)
+    assert not any("deferred" in line for line in world.local.logs)
+    assert world.sessions.cleanups == [sid]
+    assert len(world.sessions.resumes) == 1
+    assert world.sessions.resumes[0]["session_id"] == sid
+    next_job = world.job("j-2")
+    assert next_job.status is not None
+    assert next_job.status["phase"] == PHASE_RUNNING
+    assert world.sid("j-2") != sid
+
+
+def test_live_backend_of_a_recovered_job_is_observed_not_lost() -> None:
+    """段 10 lane 10h の対照: 再起動後も backend が生きていれば(host の観測)recover-job は observe のまま —
+    SessionLost を書かない。観測の無い眺め(backend_alive = None)も死とは読まない(観測断 ≠ 死亡)。"""
+    world = World()
+    world.acp.put_row(bound_job("j-live", inputs=[]))
+    world.tick()
+    sid = world.sid("j-live")
+    world.state = initial_state()
+    world.tick(advance_ms=1_000)
+    assert [job.job_id for job in world.state.jobs] == ["j-live"]
+    job = world.job("j-live")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_RUNNING
+    conditions = job.status.get("conditions")
+    assert isinstance(conditions, list)
+    assert not any(isinstance(c, dict) and c.get("type") == "SessionLost" for c in conditions)
+    # 観測の無い眺め: 生きていると読む
+    world.sessions.views[sid] = replace(world.sessions.views[sid], backend_alive=None)
+    world.tick(advance_ms=1_000)
+    assert [job.job_id for job in world.state.jobs] == ["j-live"]
+    still = world.job("j-live")
+    assert still.status is not None
+    assert still.status["phase"] == PHASE_RUNNING
+
+
+def test_backend_liveness_is_read_from_the_observation_not_the_status_word() -> None:
+    """段 10 lane 10h: job-step-of と next-arm-for-job は backend の生死を眺めの backend_alive(host の観測)で
+    読む。running の語のまま backend が死んだ行 → session-lost / 手番の途中で死んだ候補 → 片付けて resume(同じ家)
+    か rehydrate(違う家)/ idle の温かい候補は process が降りていても send(host の send が --resume で起こし直す)。"""
+    from doeff_agents.sessionhost.acp.effects import ArmChoice
+
+    plan = run(judgment.launch_plan_of(bound_job("a", inputs=[])))
+    home = run(judgment.session_affinity_key_of(plan))
+    other = {**home, "account": "other"}
+    stamp: JSONObject = {
+        "agentd": {
+            "conversationId": CONVERSATION,
+            "agentJobId": "a-0",
+            "account": "acct",
+            "home": home,
+            "arm": "launch",
+        }
+    }
+    busy_alive = replace(
+        _view("p", "running", lifecycle="multi_turn", turn_ended_at_ms=None),
+        launch_attribution=stamp, backend_alive=True,
+    )
+    busy_dead = replace(busy_alive, backend_alive=False)
+    busy_unobserved = replace(busy_alive, backend_alive=None)
+    idle_dead = replace(busy_dead, turn_ended_at_ms=10)
+    assert run(judgment.backend_alive(busy_alive)) is True
+    assert run(judgment.backend_alive(busy_dead)) is False
+    assert run(judgment.backend_alive(busy_unobserved)) is True
+    assert run(judgment.backend_alive(None)) is False
+    assert run(judgment.job_step_of(busy_alive, 0, True)) == "observe"
+    assert run(judgment.job_step_of(busy_unobserved, 0, True)) == "observe"
+    assert run(judgment.job_step_of(busy_dead, 0, True)) == "session-lost"
+    # 終端の語・手番の終わりは backend の観測より先に読む(死んだ後に host が倒した行は record-end)
+    assert run(judgment.job_step_of(replace(busy_dead, status="exited"), 0, True)) == "record-end"
+    assert run(judgment.job_step_of(idle_dead, 0, True)) == "turn-end"
+    assert run(judgment.job_step_of(idle_dead, 20, True)) == "session-lost"
+    assert run(judgment.next_arm_for_job("p", busy_alive, home, None)) == ArmChoice("defer", "p", None)
+    assert run(judgment.next_arm_for_job("p", busy_unobserved, home, None)) == ArmChoice("defer", "p", None)
+    assert run(judgment.next_arm_for_job("p", busy_dead, home, None)) == ArmChoice("resume", "p", "p")
+    assert run(judgment.next_arm_for_job("p", busy_dead, other, None)) == ArmChoice("rehydrate", None, "p")
+    assert run(judgment.next_arm_for_job("p", idle_dead, home, None)) == ArmChoice("send", "p", None)
+    condition = run(judgment.session_lost_condition_of(replace(busy_dead, backend_kind="headless", backend_ref={"pid": 22663}), 1_789_365_000_000))
+    assert condition["type"] == "SessionLost"
+    assert "pid 22663" in condition["reason"]
+    assert "headless" in condition["reason"]
+    assert "2026-09-14T05:50:00Z" in condition["reason"]
+
+
 def test_terminal_warm_session_is_cleaned_up_at_record_end() -> None:
     """multi_turn の器が終端(awaiting の期限で failed 等)になった手番は、記録の腕の後に
     agentd が session.cleanup で片付ける(host は multi_turn を掃かない)。"""

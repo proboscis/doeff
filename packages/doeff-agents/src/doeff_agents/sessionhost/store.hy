@@ -259,14 +259,24 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
 
 (deff terminal-cause-from-dict [payload]
   {:pre [(: payload dict)]
-   :post [(: % TerminalCause)]}
+   :post [(: % (| TerminalCause None))]}
   "永続 JSON dict → TerminalCause(oracle の追加 optional field —
    retry_after_seconds / backend_error_code / exit_code / signal — は
-   policy 契約外なので落とす。行の JSON はそのまま保たれる)。"
-  (TerminalCause :category (get payload "category")
-                 :reason (.get payload "reason")
-                 :retryable (bool (.get payload "retryable" False))
-                 :observed-at (get payload "observed_at")))
+   policy 契約外なので落とす。行の JSON はそのまま保たれる)。
+   契約の必須欄(category / observed_at が str)を持たない payload は None —
+   行の typed な眺めでは『cause なし』(段 10 lane 10h・agora-redesign #84: 手で書かれた
+   {\"cause\": …} の行を session.get / session.resume が KeyError 'category' で読めず、
+   会話の --resume が断られていた)。wire(snapshot-to-wire-dict)は raw の JSON を
+   そのまま運び、DB の COALESCE(first-write-wins)が raw を消さないので、None は
+   発明ではなく『typed には読めない』の正直な形。"
+  (setv category (.get payload "category"))
+  (setv observed-at (.get payload "observed_at"))
+  (if (and (isinstance category str) (isinstance observed-at str))
+      (TerminalCause :category category
+                     :reason (.get payload "reason")
+                     :retryable (bool (.get payload "retryable" False))
+                     :observed-at observed-at)
+      None))
 
 (deff snapshot-from-db-row [db-row]
   {:pre [(: db-row tuple)]
@@ -754,11 +764,16 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
   "起動時の awaiting_response latch 全 clear(oracle main :591-596 verbatim —
    唯一の意図的破棄。latch の意味は死んだ process の再促に束縛されている)。
    期限の基点 awaiting_response_since も同時に消す(issue #568 /
-   ADR-DOE-AGENTS-010 R3 — 基点も同じく死んだ process の配送に束縛されている)。"
+   ADR-DOE-AGENTS-010 R3 — 基点も同じく死んだ process の配送に束縛されている)。
+   headless の行は対象外(段 10 lane 10h・agora-redesign #84): headless の latch は
+   『手番の途中』の事実そのもので、消すと再起動後の復帰(headless.hy
+   recover-headless-rows — backend の生死を観測して手番の途中の行を終端に倒す)が
+   判断できず、死んだ手番が running のまま永久に残る(実弾 2026-09-14 14:35)。"
   (.execute conn
             (+ "UPDATE agent_sessions SET awaiting_response = 0, "
                "awaiting_response_since = NULL "
                "WHERE awaiting_response = 1 "
+               "AND backend_kind != 'headless' "
                "AND status NOT IN ('done','failed','exited','stopped','cancelled')"))
   None)
 

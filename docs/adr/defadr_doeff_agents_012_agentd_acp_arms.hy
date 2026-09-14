@@ -105,6 +105,14 @@
 ;;; effort だけ違う温かい session は片付けて同じ session を新しい旗で --resume(next-arm-for-job の effort の腕・cache は保つ)。
 ;;; 効かない宣言の欄(受けない種類・温かい send で違う workDir)は条件 AgentSettingIgnored(judgment.ignored-settings-of の 1 点)。
 ;;; ACP の側(会話の宣言の effort・許可名簿の投影・charter.effort)は ACP の法 eda1e8(L771)。
+;;; 段 10 lane 10h 便 1(agora-redesign #84・実弾 2026-09-14 14:35〜18:5x: agentd の kickstart -k で headless の子 process が
+;;; 道連れになり、行は running のまま・agentd は observe / defer を返し続け、会話が永久に「動いている」・次の郵便が Pending)の
+;;; 改訂 = R25: backend の生死は host の観測で決め、status の語から推測しない。host = 起動時の復帰(headless.hy
+;;; recover-headless-rows・判断 headless_protocol.recovery_verdict の 1 点: 手番の途中 ∧ backend が死んでいる → exited + vanished)と
+;;; wire の backend_alive(session.get / session.list が毎回観測)。agentd = judgment.backend-alive(観測の無い眺めは生きていると読む —
+;;; 観測断 ≠ 死亡)を job-step-of(session-lost → 記録の腕と条件 SessionLost)と next-arm-for-job(手番の途中でも backend が死んで
+;;; いれば待たず、候補を片付けて resume / rehydrate)が読む。resume の腕の KeyError 2 つ(store.hy の cause の decode・launch.hy の
+;;; events_root)も同じ便で直した(既知の形 = kubelet が node の再起動の後に container の生死を観測して pod の状態を直す)。
 
 (require doeff-adr.macros [defadr rule law])
 (require doeff-hy.macros [deftest])
@@ -420,6 +428,7 @@
      (rule R22 "実況の push の周期は購読者が居る間 ≤ 50 ms(段 8 lane 4aa・agora-redesign #63): headless の器の実況は events file の行の増分で、file の追記は合図を持たない —— agentd が offset から読んで中継へ押す拍の周期がそのまま push の間隔になる。購読者が居る(InFlightJob.capturing)間の watch の待ちの上限は、この器の実況が events(AgentdSettings.stream_capability = events)なら AgentdSettings.events_poll_seconds(既定 0.05 = 出来事ごとの push に最も近い有界の拍)、frames(tui の pane の断面)なら frame_interval_seconds(2〜5 Hz・issue #1 の決定 4 のまま)。購読者が居なければ transcript_poll_seconds(記録の追記だけ)、job が無ければ idle_wait_seconds。判断は judgment.wait-seconds-for の 1 点、値の宣言は AgentdSettings の 1 点(handlers / agentd.hy に周期の literal を置かない)。本番 2026-09-13 17:1x: 実況の最初の tail が attach の後 247〜258 ms、割り込みの反映 219 ms — 画面の糊の側の根(会話簿の毎拍の組み直し)は agora-controllers 741e67d で直し、agentd の側の残りがこの周期(購読ありで 0.4 s・無しで 1.0 s の tick)だった。⚠ 記録(turn-record)への追記の拍は push の周期に**追随しない**(judgment.record-due — transcript_poll_seconds のまま・InFlightJob.last_record_ms): 追記は CAS の書き = ACP の event 1 つで、50 ms の拍ごとに書くと走っている手番 1 つで毎秒 10〜20 の event が journal に並び、画面の糊の watch の拍(1 event = 1 拍)が飽和する(実弾 2026-09-13 18:3x: 糊の占有 367 拍中 359 が 200〜500 ms・hello 15 s)。書かない拍の出来事は pending_entries に持ち越す(落とさない)。")
      (rule R23 "手番の資格の出所は judgment.credential-source-of の 1 点(段 10 lane 10c・agora-redesign #80・operator 決定 2026-09-14 \"access token is to be fetched from k3s\"): launch-plan-of が据えた plan.account(binding.account ∧ charter の agent_type に貸与の種類)が在れば lease(預かり所から借り、借りた家で起こす)、無ければ node が預かり所を宣言している(AgentdSettings.custody_declared — runtime.settings_from_env が CUSTODY_URL_ENV = join の [custody].url の在否から導く 1 点)時 missing、宣言していなければ home。agentd.claim-job は plan を読んだ直後にこの答えを読み、missing の job は起こさず Running も sessionHandle も書かず、end-job-now で条件 CredentialSourceMissing つきの Ended に閉じる(黙って charter の binding = 機体の profile の家へ落ちない)。home(charter の binding で起こす)の経路は預かり所を宣言していない node(移行前の機体)だけに残る。session を使い回す鍵は judgment.session-affinity-key-of(旧名 home-key-of — 鍵の中身は account・binding・model のまま不変で、資格ではない)。ACP の側の半分(配置が会話の profile → profile の行 → spec.account を解いて status.binding.account に置く)は ACP の法 defadr_20260914_turn_credential_is_the_custody_lease_c744ca。")
      (rule R24 "node の能力の表と、効かない宣言の欄の条件(段 10 lane 10e・agora-redesign #53・operator 決定 2026-09-14 \"all lgtm\"): agentd は node の status.capabilities に agent の種類(charter.agent_type の語 claude / codex)ごとの {settings: 受ける欄, restartOn: 変えたら session を作り直す欄} を lease と同じ拍に名乗る(judgment.capabilities-of — 値は effects.AGENT-CAPABILITIES の 1 点・契約 agora-kinds.json conventions.agentSettings.settings の綴り)。restartOn は session-affinity-key-of の鍵の欄(model・profile = account と binding の家)ちょうどで、effort と workDir は受けるが鍵に入れない。effort は claude の --effort / codex の -c model_reasoning_effort(process の旗)なので、同じ家で effort だけ違う温かい session は片付けて同じ session を新しい旗で --resume する(next-arm-for-job の 4 つ目の引数・帰属の effort の欄と比べる — session は作り直さず cache を保つ)。この手番で効かない宣言の欄(能力の表に無い種類・受けない欄・温かい session への send で charter.work_dir が session の cwd と違う)は、judgment.ignored-settings-of の 1 点が条件 AgentSettingIgnored(1 欄 1 行・reason = <欄>=<値>: <理由>)にして手番の終わりに刻む(黙って落とさない)。")
+     (rule R25 "backend の生死は host の観測で決め、status の語から推測しない(段 10 lane 10h・agora-redesign #84・既知の形 = kubelet の node 再起動後の container の生死の観測): sessionhost は headless の行の backend(子 process)の生死を観測で決める — pid の存在(kill 0)+ 所有(この host の registry が同じ pid の生きた process を持つ・effect HeadlessLiveness・値 headless_protocol.BackendLiveness)。host の起動時(accept より前・awaiting latch の clear より前)に headless.hy recover-headless-rows が非終端の headless 行を観測し、判断 headless_protocol.recovery_verdict(status_terminal, in_flight, liveness)の 1 点で『手番の途中(awaiting)∧ backend が死んでいる』行だけを exited + cause vanished(ADR-DOE-AGENTS-009 の証拠つき死亡の語彙・reason に pid と観測の文)にして session_exited を刻む。idle の温かい行は触らない(次の send が --resume で同じ session を起こし直す)。awaiting latch の起動時の全 clear(store.hy db-clear-awaiting-latches)は headless の行を対象にしない(headless の latch は『手番の途中』の事実そのもの)。wire の session.get / session.list は backend_alive(headless = 上の観測・tmux / herdr = 行の pane が session の pane の集合に在る・終端の行は観測せず false)を毎回載せる。agentd は判断 judgment.backend-alive の 1 点(器に無い → 偽・明示の False → 偽・観測の無い眺め〔launch / resume の応答の backend_alive = None〕→ 真: 観測の無さは死亡の証拠ではない)を job-step-of(非終端 ∧ 手番の終わりでない ∧ backend が死 → session-lost = 記録の腕と条件 SessionLost〔reason に session・backend の種類・pid・観測の時刻 — judgment.session-lost-condition-of〕で Ended・session は host の monitor に任せて片付けない)と next-arm-for-job(候補が生きて idle でない ∧ backend が生 → defer / ∧ backend が死 → 同じ家なら候補を片付けて resume・違う家なら片付けて rehydrate)で読む。agentd.hy は backend_alive の欄も終端の語も直に読まない。headless の session.resume の腕は launch-params に events_root を運ぶ(launch.hy resume-session — 運ばないと headless-launch-session が KeyError で断り、全部 rehydrate に落ちる)。店の cause の decode(store.hy terminal-cause-from-dict)は契約の欄(category / observed_at)を持たない persisted cause を None(typed には cause なし)と読み、行ごと KeyError で読めなくしない(wire は raw を運ぶ・DB の COALESCE が raw を消さない)。")
      (rule R10 "session は会話の資源・job は手番(温かい session・設計 17.4): 会話 → 生きている session の対応は行(自分が claim した同じ subject の agent-job の sessionHandle)と器の現況から導き、Bound の job の起こし方は judgment.hy の next-arm-for-job(閉語彙 effects.NextArm = launch | send | resume | rehydrate | defer — 家と機体の扱いは R20)の 1 点で決める — 同じ会話の生きて idle な session が在れば launch せず session.send(awaiting)だけ、sessionHandle はその session を指し、turn-record は手番ごと。手番の終わりは器の lifecycle multi_turn(launch.hy の閉語彙に足した語)で policy.hy の monitor が既存の turn-end の連言から行の turn_ended_at に刻み、agentd は job-step-of の turn-end(turn_ended_at > 手番の始まりの下限 ∧ 記録の進み)で読む — status は倒さず session は生かす。idle の寿命は AgentdSettings.session_idle_ttl_seconds の 1 点で、超過・Withdrawn・node の退役で session.cleanup。計器 agent-job-to-send は create → send のまま(温かい path で p99 < 2 秒)。")]
   :laws
     [(law interrupts-ride-the-running-turn-and-are-recorded-on-the-row
@@ -567,6 +576,18 @@
           (counterexample "温かい send で違う work_dir を黙って前の cwd で走らせる — operator は宣言が効いたと思う。条件 AgentSettingIgnored で名指す(session は作り直さない・次に起こす時に効く)")
           (counterexample "能力の表の値を judgment.hy と effects.py と agentd.hy に別々に書く — 名乗りと判断が食い違う。表は effects.AGENT-CAPABILITIES の 1 点で、名乗りも判断もそこから読む")
           (counterexample "restartOn に settings に無い欄を書く — ACP の読み手(nodeViewOf)が行の誤りとして node を落とし、投影から消える")])
+     (law backend-liveness-is-observed-not-inferred-from-the-status-word
+       :statement "for_all headless session row r of a sessionhost host h at h's startup: in_flight(r) ∧ ¬(pid(r) exists ∧ owned_by(h, pid(r))) ⇒ status(r) = exited ∧ cause(r).category = vanished ∧ cause(r).reason names pid(r), before h accepts its first RPC; ¬in_flight(r) ∨ terminal(r) ⇒ r is untouched; the decision is headless_protocol.recovery_verdict alone; for_all session.get / session.list answer v of a non-terminal row: v.backend_alive = the host's observation of that row's backend (headless: pid exists ∧ owned; tmux / herdr: pane ∈ panes(session)); for_all Running job j of agentd with view v: v ≠ None ∧ ¬terminal(v) ∧ ¬turn-ended(v) ∧ v.backend_alive = False ⇒ job-step-of = session-lost ⇒ turn-record(j).state = ended ∧ phase(j) = Ended ∧ conditions(j) ∋ SessionLost naming session, pid and the observed time, without session.cleanup; v.backend_alive = None ⇒ judged as alive; for_all Bound job with a busy candidate s: s.backend_alive = False ⇒ next-arm-for-job ∈ {resume, rehydrate} with retire = s (never defer)"
+       :counterexamples
+         [(counterexample "再起動の後の復帰が『器の行が在る = 走っている』と読んで observe を返す(2026-09-14 14:35 実弾: kickstart -k で子 process が道連れ・行は running のまま・agentd は observe / defer を返し続け、会話が永久に「動いている」・次の郵便が Unschedulable: conversation-turn-in-flight で永久 Pending)")
+          (counterexample "起動時の awaiting latch の全 clear を headless の行にも掛ける — 『手番の途中』の事実が消えて monitor の gone の腕も復帰も判断できず、死んだ手番が running のまま残る")
+          (counterexample "backend の生死を wire の status の語(running / finished)で判じる — status は host が書いた語で、host が観測していない(再起動で registry を失った)拍には現実を映さない。生死は pid と所有の観測から")
+          (counterexample "観測の無い眺め(launch の応答の backend_alive = None)を死と読む — 起こした直後の job が全部 SessionLost で閉じる。観測断 ≠ 死亡(ADR-DOE-AGENTS-009)")
+          (counterexample "idle の温かい行を process が降りているという理由で復帰が終端に倒す — 温かい session の設計(send が --resume で同じ session を起こし直す)が壊れ、再起動のたびに会話の cache を捨てる")
+          (counterexample "session-lost の job の session を agentd が session.cleanup で片付ける — host の monitor が観測した終端(exit code つきの failed / vanished)より粗い cancelled で上書きする。session は host に任せる")
+          (counterexample "新しい cause の category(backend_process_dead)を凍結表に足す — 証拠つき死亡の語彙は vanished の 1 つ(ADR-DOE-AGENTS-009)で、同じ事実に 2 つ目の概念が生える")
+          (counterexample "resume の腕が persisted cause の欄を get で読む(store.hy)— 手で書かれた行 1 つで session.get も resume も読めず、会話が rehydrate に落ちる(2026-09-14 18:5x 実弾 KeyError 'category')")
+          (counterexample "headless の session.resume の launch-params に events_root を運ばない — headless-launch-session の (get params \"events_root\") で KeyError、本番の --resume が全部 rehydrate に落ちる(2026-09-14 実弾 2 件)")])
      (law turn-events-are-appended-to-the-record-per-tick
        :statement "for_all running job j observed by agentd and for_all tick t at which stream-records reads new material of j: the events e_1..e_n that judgment.deltas-of derives from that material are appended (not replaced) to the status.entries of turn-record(j) within the same tick by agentd.append-entries, each with at = t and a seq strictly greater than every seq already on the row, via one CAS write on the last known image of the row (Conflict ⇒ one re-read and one retry; Refused or missing row ⇒ the events stay in InFlightJob.pending_entries and ride the next write); the row's entries JSON never exceeds TURN_RECORD_ENTRIES_BYTE_BUDGET (the oldest events are dropped first and a single leading kind=system marker with truncated=true and dropped=k replaces them); every appended entry is the JSON of a TurnEntryHeadline (seq, at, kind, toolName?, toolUseId?, bytes, sha256, isError?) derived by judgment.headline-of-body from the body sent to the record service — it carries no text / summary / input / output / model, and its sha256 = sha256 of record-body-bytes-of(body) (the service's identity of the same event); the record service's appendAnswer.highestProducerSeq for the stream of j lands as status.recordedSeq (never decreasing) with status.recordRef = record:<cid>/<streamId>; and the end of the turn drains the remaining material through the same point, then writes state=ended and usage over the appended entries without replacing them"
        :counterexamples
@@ -1427,6 +1448,77 @@
                    "test_second_turn_with_another_effort_resumes_the_same_session_with_the_new_flag"
                    "test_warm_send_with_another_work_dir_records_agent_setting_ignored"]]
          (assert (in (+ "def " name "(") tests) f"R24 の反例の検が無い: {name}")))
+     (deftest test-adr-doe-agents-012-backend-liveness-is-observed
+       ;; R25 の針(構造): 復帰の判断は headless_protocol.recovery_verdict の 1 点で host.hy の main が accept より前・latch の
+       ;; clear より前に recover-headless-rows を呼ぶ。latch の clear は headless を対象にしない。wire の backend_alive は
+       ;; augment-wire-snapshot の 1 点。agentd の判断は judgment.backend-alive の 1 点で、job-step-of と next-arm-for-job が
+       ;; それを読み、agentd.hy は backend-alive の欄を直に読まない。resume の腕は events_root を運ぶ。
+       ;; 反例(挙動)は test_sessionhost_acp.py の 3 本と test_sessionhost_headless.py の 4 本。
+       (setv protocol-lines (code-lines (/ SESSIONHOST-DIR "headless_protocol.py")))
+       (assert (= (len (lfor line protocol-lines :if (.startswith line "def recovery_verdict(") line)) 1) "復帰の判断は recovery_verdict の 1 点(R25)")
+       (assert (= (len (lfor line protocol-lines :if (.startswith line "def backend_alive(") line)) 1))
+       (setv headless-lines (code-lines (/ SESSIONHOST-DIR "headless.hy")))
+       (assert (= (len (lfor line headless-lines :if (.startswith line "(defk recover-headless-rows ") line)) 1))
+       (assert (= (len (lfor line headless-lines :if (in "(recovery-verdict (is-terminal-status row.status) row.awaiting-response liveness)" line) line)) 1)
+               "復帰の 1 行は行の事実と観測を判断の 1 点へ渡す(R25)")
+       (assert (any (gfor line headless-lines (in "(make-cause \"vanished\" verdict.detail observed-at)" line))) "証拠つき死亡の語彙は vanished(R25 / ADR-009)")
+       (setv host-lines (code-lines (/ SESSIONHOST-DIR "host.hy")))
+       (setv recover-at (next (gfor [i line] (enumerate host-lines) :if (in "(recover-headless-rows)" line) i) None))
+       (setv clear-at (next (gfor [i line] (enumerate host-lines) :if (in "(db-clear-awaiting-latches conn)" line) i) None))
+       (setv serve-at (next (gfor [i line] (enumerate host-lines) :if (in "(serve config actor listener shutdown-event)" line) i) None))
+       (assert (and (is-not recover-at None) (is-not clear-at None) (is-not serve-at None)))
+       (assert (< recover-at clear-at serve-at) "復帰は latch の clear より前・accept より前(R25)")
+       (assert (= (len (lfor line host-lines :if (in "(setv (get wire \"backend_alive\")" line) line)) 1) "wire の backend_alive は augment-wire-snapshot の 1 点(R25)")
+       (setv store-lines (code-lines (/ SESSIONHOST-DIR "store.hy")))
+       (assert (any (gfor line store-lines (in "\"AND backend_kind != 'headless' \"" line))) "latch の clear は headless を対象にしない(R25)")
+       (assert (not (any (gfor line store-lines (in "(TerminalCause :category (get payload \"category\")" line)))) "cause の decode は get で読まない(R25)")
+       (setv launch-lines (code-lines (/ SESSIONHOST-DIR "launch.hy")))
+       (assert (any (gfor line launch-lines (in "\"events_root\" (.get params \"events_root\")" line))) "resume の腕は events_root を運ぶ(R25)")
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk backend-alive ") line)) 1) "agentd の生死の判断は backend-alive の 1 点(R25)")
+       (assert (= (len (lfor line judgment-lines :if (in "view.backend-alive" line) line)) 1) "backend_alive の欄を読む点は backend-alive ちょうど(R25)")
+       (assert (= (len (lfor line judgment-lines :if (in "JOB-STEP-SESSION-LOST" line) line)) 2) "session-lost を返す点は job-step-of ちょうど(import の項 + 1)(R25)")
+       (assert (any (gfor line judgment-lines (in "(and alive live-backend) (ArmChoice :arm NEXT-ARM-DEFER :source candidate :retire None)" line))) "defer は backend が生きている時だけ(R25)")
+       (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
+       (for [line agentd-lines]
+         (assert (not-in "backend-alive" line) f"agentd.hy は backend_alive を直に読まない(R25): {line}"))
+       (assert (= (len (lfor line agentd-lines :if (in "(session-lost-condition-of view now-ms)" line) line)) 1) "SessionLost の条件は judgment の 1 点から(R25)")
+       ;; 反例(挙動): 再起動後、行は running のままでも backend が死んでいれば SessionLost で閉じ、次の Bound は defer しない。
+       (setv world (World))
+       (.put-row world.acp (message-row "m-l" "first"))
+       (.put-row world.acp (turn-row "t-lost" "conv-l" "m-l" (- world.local.now-ms 300)))
+       (.tick world 1000)
+       (setv sid (sid-of world "t-lost"))
+       (setv world.state (initial-state))
+       (.kill-backend world.sessions sid)
+       (.tick world 1000)
+       (setv lost (status-of (get world.acp.rows "acp-system:agent-job:t-lost")))
+       (assert (= (get lost "phase") PHASE-ENDED))
+       (assert (= (last-condition-type lost) "SessionLost"))
+       (assert (= (get (status-of (get world.acp.rows "default:turn-record:t-lost")) "state") "ended"))
+       (assert (= world.sessions.cleanups []) "session は host に任せる(R25)")
+       (.put-row world.acp (message-row "m-l2" "second"))
+       (.put-row world.acp (turn-row "t-next" "conv-l" "m-l2" world.local.now-ms))
+       (.tick world 1000)
+       (assert (= world.sessions.cleanups [sid]) "手番の途中で死んだ候補は片付けて resume(R25)")
+       (assert (= (len world.sessions.resumes) 1))
+       (assert (= (get (status-of (get world.acp.rows "acp-system:agent-job:t-next")) "phase") PHASE-RUNNING))
+       (assert (any (gfor line world.local.logs (in "mid-turn with a dead backend process" line))) "片付けの理由は観測の語で(R25)")
+       ;; 純関数: 観測の無い眺めは生きていると読む・死は明示の False だけ(片付けた後の行は終端なので running に戻して読む)。
+       (setv view (replace (get world.sessions.views sid) :status "running" :turn-ended-at-ms None))
+       (assert (= (run (job-step-of (replace view :backend-alive None) 0 True)) "observe"))
+       (assert (= (run (job-step-of (replace view :backend-alive False) 0 True)) "session-lost"))
+       (setv tests (.read-text (/ (. (Path __file__) parent parent parent) "packages" "doeff-agents" "tests" "test_sessionhost_acp.py") :encoding "utf-8"))
+       (for [name ["test_dead_backend_of_a_running_job_ends_it_with_session_lost_and_the_next_turn_resumes"
+                   "test_live_backend_of_a_recovered_job_is_observed_not_lost"
+                   "test_backend_liveness_is_read_from_the_observation_not_the_status_word"]]
+         (assert (in (+ "def " name "(") tests) f"R25 の反例の検が無い: {name}"))
+       (setv host-tests (.read-text (/ (. (Path __file__) parent parent parent) "packages" "doeff-agents" "tests" "test_sessionhost_headless.py") :encoding "utf-8"))
+       (for [name ["test_recovery_verdict_is_the_one_decision"
+                   "test_terminal_cause_from_dict_is_total_over_the_store"
+                   "test_host_headless_startup_recovery_ends_the_dead_mid_turn_row_and_keeps_the_idle_one"
+                   "test_host_headless_resume_reads_a_row_whose_persisted_cause_lacks_the_contract_fields"]]
+         (assert (in (+ "def " name "(") host-tests) f"R25 の host の反例の検が無い: {name}")))
      (deftest test-adr-doe-agents-012-interrupts-ride-the-running-turn
        ;; R21 の針(構造): 判断は judgment.hy の 1 点ずつ・配達は agentd.deliver-interrupts の 1 点・agentd は器の作法の語を
        ;; 持たない・claude の headless は stream-json の入力・sessionhost の割り込みの口は mode = interrupt の 1 語。
@@ -1496,4 +1588,5 @@
           "docs/impl-requests/stage9-lane-prompts/lane-9f2-agentd-dual-write.md(agora-redesign #59・設計 §2.4・本文の二重書き)"
           "docs/impl-requests/stage9-lane-prompts/lane-9f4-agentd-headline-entries.md(agora-redesign #59・設計 §2.2 / §2.4・R19 / R20 の追補: 見出しだけ・recordRef / recordedSeq・再開は service から)"
           "docs/impl-requests/stage9-lane-prompts/lane-9o3-agentd-warm-session-honors-model.md(agora-redesign #75・R20 の追補: 家の鍵に model)"
-          "docs/impl-requests/stage10-lane-prompts/lane-10e-agent-settings-catalog-and-chip.md(agora-redesign #53・追補 R24: 能力の表・effort の腕・AgentSettingIgnored)"])
+          "docs/impl-requests/stage10-lane-prompts/lane-10e-agent-settings-catalog-and-chip.md(agora-redesign #53・追補 R24: 能力の表・effort の腕・AgentSettingIgnored)"
+          "docs/impl-requests/stage10-lane-prompts/lane-10h-agentd-dead-backend-recovery.md(agora-redesign #84・追補 R25: backend の生死は観測で・復帰・session-lost・resume の KeyError)"])

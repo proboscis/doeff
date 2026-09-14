@@ -11,7 +11,11 @@
 ;;; から組み直す(recover-job)。次の 1 手は memory の有無に依らず judgment.job-step-of の
 ;;; 1 点(器が無い → fail-missing / 終端 → record-end / 走っている → observe)。
 ;;; capture の gone は終端の合図で例外ではない(R8)。tick の縁(heartbeat・受け・job ごと)は
-;;; 互いの I/O の失敗で止まらない(R9)。
+;;; 互いの I/O の失敗で止まらない(R9)。backend の生死は host の観測(眺めの backend_alive)で
+;;; 決め、status の語から推測しない(段 10 lane 10h・agora-redesign #84: 再起動で死んだ手番が
+;;; running のまま残り、recover-job が observe・next-arm-for-job が defer を返し続けた)—
+;;; job-step-of の session-lost は記録の腕と SessionLost で閉じ、next-arm-for-job は手番の途中でも
+;;; backend が死んでいれば待たずに候補を片付けて resume / rehydrate する。
 ;;;
 ;;; 温かい session(R10・設計 17.4): session は会話の資源で job は手番。会話 → 生きている
 ;;; session の対応は行(agent-job の subject と sessionHandle)から導き、Bound の job の起こし方は
@@ -125,6 +129,7 @@
   JOB-STEP-FAIL-MISSING
   JOB-STEP-OBSERVE
   JOB-STEP-RECORD-END
+  JOB-STEP-SESSION-LOST
   JOB-STEP-TURN-END
   JobOutcome
   LIFECYCLE-MULTI-TURN
@@ -228,6 +233,7 @@
   first-turn-carries-inputs
   frame-lines-of
   session-affinity-key-of
+  session-lost-condition-of
   in-flight-ids
   in-flight-job-of
   incarnation-charter-of
@@ -259,6 +265,7 @@
   profile-status-with-observed
   recovered-arm-of
   rehydrate-history-of
+  retire-reason-of
   resume-params-of
   rows-of-kind
   running-status-of
@@ -614,10 +621,8 @@
         state)
       (do
         (when (is-not choice.retire None)
-          (<- (retire-sessions #(choice.retire)
-                               (if (= choice.arm NEXT-ARM-RESUME)
-                                   f"job {job-id} declares another effort — the warm process is replaced by a --resume of the same session with the new flags (cache kept)"
-                                   f"job {job-id} runs in another home (account, binding or model) — the session cache is dropped and the conversation is rehydrated"))))
+          (<- why str (retire-reason-of choice view job-id))
+          (<- (retire-sessions #(choice.retire) why)))
         (<- attempted (| SessionView SessionRefused)
             (incarnate settings plan choice view session-id lease bodies job-id subject exclude))
         (setv outcome attempted)
@@ -1152,8 +1157,21 @@
   "手番の終わり(記録の腕): transcript から entries と usage を組み turn-record を ended に、
    agent-job を Ended(result / conditions)に、status frame ended を押し、札を返す。
    turn-end(温かい session の手番の終わり)は session を生かしたまま。record-end(器が終端)
-   で器が multi_turn なら、host の掃き取りの対象外なので agentd が片付ける。"
-  (<- outcome JobOutcome (job-outcome-of view))
+   で器が multi_turn なら、host の掃き取りの対象外なので agentd が片付ける。
+   session-lost(段 10 lane 10h: 行は非終端だが host の観測で backend が死んでいる)は結末を
+   器から読まず condition SessionLost(judgment.session-lost-condition-of — session・pid・時刻)で
+   Ended・result なし。session は片付けない(host の monitor が終端に倒す — 終端の cause は
+   host の観測の方が詳しい)。"
+  (setv outcome None)
+  (if (= step JOB-STEP-SESSION-LOST)
+      (do
+        (<- lost dict (session-lost-condition-of view now-ms))
+        (setv lost-reason (get lost "reason"))
+        (<- (LogLine :text f"agentd: job {job.job-id} lost its session — {lost-reason}"))
+        (setv outcome (JobOutcome :ended True :result None :conditions #(lost))))
+      (do
+        (<- read JobOutcome (job-outcome-of view))
+        (setv outcome read)))
   ;; 段 9p: 行を作れていないまま終わりに来た job は周期に依らず最後に 1 度作り直す(記録なしで終わらない —
   ;; それでも作れなければ given-up の condition が pending-conditions に乗り、下の Ended の書きが運ぶ)。
   (<- ensured InFlightJob (ensure-turn-record settings job now-ms True))
@@ -1218,14 +1236,14 @@
          (: view (| SessionView None)) (: step str) (: now-ms int)]
    :post [(: % AgentdState)]}
   "job-step-of の答えを腕に写す: fail-missing → 記録と SessionFailed で閉じる /
-   record-end・turn-end → 記録の腕(finalize)/ observe → memory に置く(観測は次の拍)。"
+   record-end・turn-end・session-lost → 記録の腕(finalize)/ observe → memory に置く(観測は次の拍)。"
   (cond
     (= step JOB-STEP-FAIL-MISSING)
     (do
       (<- (fail-missing-arm settings job.job-key job.job-id job.pending-conditions job.lease-id now-ms))
       (<- dropped AgentdState (without-job state job.job-id))
       dropped)
-    (and (in step #{JOB-STEP-RECORD-END JOB-STEP-TURN-END}) (isinstance view SessionView))
+    (and (in step #{JOB-STEP-RECORD-END JOB-STEP-TURN-END JOB-STEP-SESSION-LOST}) (isinstance view SessionView))
     (do
       (<- canon str (FsCanonicalPath :path view.work-dir))
       (<- source tuple (stream-source-of view canon))
@@ -1286,8 +1304,10 @@
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: row AcpRow) (: now-ms int)]
    :post [(: % AgentdState)]}
   "自分が持つ Running の行(memory に無い)の続きを行と器の現況から決める(R7): 器が無ければ
-   記録と SessionFailed で閉じる / 終端なら記録の腕だけ / 走っていれば札を借り直して
-   InFlightJob を行から組み、観測を続ける。launch も send もし直さない。"
+   記録と SessionFailed で閉じる / 終端なら記録の腕だけ / 行は非終端でも host の観測で backend が
+   死んでいれば(段 10 lane 10h — job-step-of の session-lost)記録の腕と SessionLost で閉じる /
+   走っていれば札を借り直して InFlightJob を行から組み、観測を続ける。launch も send もし直さない。
+   生死は status の語ではなく眺めの backend_alive(host の観測)で決める。"
   (<- session-id (| str None) (session-id-of-handle row))
   (if (is session-id None)
       (do
