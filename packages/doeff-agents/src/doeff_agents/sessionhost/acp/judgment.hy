@@ -42,7 +42,12 @@
 (import re)
 
 (import doeff_agents.sessionhost.acp.effects [
+  AGENT-CAPABILITIES
+  AGENT-SETTINGS
   AGENT-TYPE-LEASE-KIND
+  CHARTER-SETTING-KEYS
+  CONDITION-AGENT-SETTING-IGNORED
+  NODE-CAPABILITIES-KEY
   AGENTD-PRINCIPAL
   AGORA-KINDS-NAMESPACE
   ATTRIBUTION-AGENTD-KEY
@@ -334,11 +339,66 @@
    走っている CLI の session は起こした時の model のまま手番を回すから(session.send に model の欄は無く、headless の
    続きの process も器の行の model で起きる)— 宣言の model を変えた手番を温かい session へ送ると前の model で走る
    (実射 2026-09-14: charter は claude-opus-5・「session started: model claude-sonnet-5」)。既知の形 = virtual actor の
-   器の再利用の鍵に宣言の欄を含める。欠けた欄は None のまま(発明しない)。"
+   器の再利用の鍵に宣言の欄を含める。欠けた欄は None のまま(発明しない)。
+   段 10 lane 10e(agora-redesign #53・設計 第 9 節 問 5): この鍵の欄 = node が名乗る能力の表の restartOn(model・
+   profile〔= account と binding の家〕)ちょうど(capabilities-of)。effort は鍵に入れない — 温かい process を
+   起こし直す(--resume・cache は保つ)だけで同じ session のまま変えられる(next-arm-for-job の effort の腕)。"
   (setv binding (.get plan.charter "binding"))
   {"account" plan.account
    "binding" (if (isinstance binding dict) binding None)
    "model" plan.model})
+
+
+(defk capabilities-of []
+  {:pre []
+   :post [(: % dict)]}
+  "node の status.capabilities に名乗る能力の表(段 10 lane 10e・agora-redesign #53・契約 agora-kinds.json
+   kinds.node.status.capabilities — 既知の形 = CI runner の label): agent の種類(charter.agent_type の語)ごとに
+   settings(受ける欄)と restartOn(変えたら session を作り直す欄 — session-affinity-key-of の鍵の欄)。値は
+   effects.AGENT-CAPABILITIES の写し(list に直すだけ — JSON の形)。"
+  (dfor [kind entry] (.items AGENT-CAPABILITIES)
+        kind {"settings" (list (get entry "settings")) "restartOn" (list (get entry "restartOn"))}))
+
+
+(defk effort-of-plan [plan]
+  {:pre [(: plan LaunchPlan)]
+   :post [(: % (| str None))]}
+  "charter の effort(会話の宣言 → 配達の係が charter.effort に写した語)。無ければ None(走行器の既定)。"
+  (setv effort (.get plan.charter "effort"))
+  (if (and (isinstance effort str) effort) effort None))
+
+
+(defk ignored-settings-of [plan view arm]
+  {:pre [(: plan LaunchPlan) (: view (| SessionView None)) (: arm str)]
+   :post [(: % tuple)]}
+  "黙って落とさない(段 10 lane 10e・設計 第 9 節 問 3 / 問 4): charter に載った会話の宣言の欄のうち、この手番で効かない
+   欄を条件 AgentSettingIgnored(1 欄 1 行・reason = <欄>=<値>: <理由>)にして返す。判断はここ 1 点:
+   (1) charter.agent_type の種類が能力の表(AGENT-CAPABILITIES)に無い・その種類が受けない欄(settings に無い)—
+       起こす前から分かる。
+   (2) 温かい session へ送る手番(arm = send)で charter の work_dir が session の cwd と違う — cwd は起こした process の
+       もので、send では変えられない(workDir は restartOn に無いので session は作り直さない・次に起こす時に効く)。
+   model と profile は鍵(session-affinity-key-of)なので違えば send にならず、effort は違えば process を起こし直す
+   (next-arm-for-job)— どちらもここには来ない。"
+  (setv found [])
+  (setv agent-type (.get plan.charter "agent_type"))
+  (setv entry (if (isinstance agent-type str) (.get AGENT-CAPABILITIES agent-type) None))
+  (setv accepted (if (is entry None) #() (get entry "settings")))
+  (for [[charter-key setting] (.items CHARTER-SETTING-KEYS)]
+    (setv value (.get plan.charter charter-key))
+    (when (and (isinstance value str) value (not (in setting accepted)))
+      (.append found
+               {"type" CONDITION-AGENT-SETTING-IGNORED
+                "status" "True"
+                "reason" (+ f"{setting}={value}: agent kind "
+                            (if (is entry None) f"{(repr agent-type)} names no capability table" f"{agent-type} does not accept {setting}"))})))
+  (when (and (= arm NEXT-ARM-SEND) (isinstance view SessionView))
+    (setv wanted (.get plan.charter "work_dir"))
+    (when (and (isinstance wanted str) wanted (!= wanted view.work-dir) (in "workDir" accepted))
+      (.append found
+               {"type" CONDITION-AGENT-SETTING-IGNORED
+                "status" "True"
+                "reason" f"workDir={wanted}: the warm session keeps its cwd {view.work-dir} (applies when the session is next launched)"})))
+  (tuple found))
 
 
 (defk attribution-of-view [view]
@@ -358,11 +418,13 @@
   "起こす session に刻む帰属(段 8q・R20): 会話・手番・家の account と鍵・起こし方。session の会話と家は
    session の行が覚える事実で、終端の後に回収される agent-job の行から導かない。"
   (<- home dict (session-affinity-key-of plan))
+  (<- effort (| str None) (effort-of-plan plan))
   {"conversationId" subject
    "agentJobId" job-id
    "account" plan.account
    "home" home
-   "arm" arm})
+   "arm" arm
+   "effort" effort})
 
 
 (defk charter-with-attribution [charter attribution]
@@ -387,32 +449,50 @@
   (and (is-not mine None) (= (.get mine "home") home)))
 
 
-(defk next-arm-for-job [candidate view home]
-  {:pre [(: candidate (| str None)) (: view (| SessionView None)) (: home dict)]
+(defk session-effort-of [view]
+  {:pre [(: view SessionView)]
+   :post [(: % (| str None))]}
+  "session を起こした時の effort(帰属の effort の欄 — session-attribution-of が刻む)。欄が無い(段 10 lane 10e より前に
+   起こした session)は None = 走行器の既定で起きた、と読む。"
+  (<- mine (| dict None) (attribution-of-view view))
+  (setv effort (if (is mine None) None (.get mine "effort")))
+  (if (and (isinstance effort str) effort) effort None))
+
+
+(defk next-arm-for-job [candidate view home effort]
+  {:pre [(: candidate (| str None)) (: view (| SessionView None)) (: home dict) (: effort (| str None))]
    :post [(: % ArmChoice)]}
   "Bound の job の起こし方(閉語彙 effects.NextArm)— 判断はここ 1 点(R10 / R20)。candidate = 会話の前の
    session(affinity.predecessor か会話の最後の手番の session — warm-candidate-of)、view = その器の眺め、
-   home = この job が走る家(session-affinity-key-of — account・binding・model の組)。cache(温かい session / transcript)を保つのは同じ機体 ∧ 同じ家の
+   home = この job が走る家(session-affinity-key-of — account・binding・model の組)、effort = この job の charter の effort
+   (段 10 lane 10e・None = 走行器の既定)。cache(温かい session / transcript)を保つのは同じ機体 ∧ 同じ家の
    時だけで、機体か家(profile の家)が変わる時は cache の失効を受け入れて 履歴から再開する(ACP の全史から)
    (operator 決定 2026-09-13 #54 逐語 \"i want cache kept when both machine and a profile is not changed. in
    other cases, i think i need to accept the fact that cache gets invalidated\"):
    候補が無い → launch /
-   候補が生きて idle ∧ 同じ家 → send(温かい)/
+   候補が生きて idle ∧ 同じ家 ∧ 同じ effort → send(温かい)/
+   候補が生きて idle ∧ 同じ家 ∧ effort が違う → 候補を片付けて resume(段 10 lane 10e: effort は process の旗なので
+   温かい process には届かない — 同じ session を新しい旗で --resume する。cache は保つ・session は作り直さない)/
    候補が生きて idle ∧ 家が違う → 候補を片付けて rehydrate(profile か model を変えた手番 — 失効した cache の器を残さない・
    新しい session は charter.model で起きる)/
    候補が生きていて idle でない → defer(手番の途中 — 走っている手番に本文を積まない)/
-   候補が器に登記されて終端 ∧ 同じ家 → resume(温かい session が片付いた後も cache を保つ --resume)/
+   候補が器に登記されて終端 ∧ 同じ家 → resume(温かい session が片付いた後も cache を保つ --resume・effort は resume の
+   params が運ぶ)/
    それ以外(候補が器に無い = 別の機体・器の行が消えた / 終端だが家が違う)→ rehydrate(ACP の会話の記録を
    最初の本文に畳む)。"
   (<- alive bool (session-alive view))
   (<- idle bool (session-idle view))
   (setv same False)
+  (setv same-effort True)
   (when (isinstance view SessionView)
     (<- in-home bool (session-in-home view home))
-    (setv same in-home))
+    (setv same in-home)
+    (<- launched-effort (| str None) (session-effort-of view))
+    (setv same-effort (= launched-effort effort)))
   (cond
     (is candidate None) (ArmChoice :arm NEXT-ARM-LAUNCH :source None :retire None)
-    (and idle same) (ArmChoice :arm NEXT-ARM-SEND :source candidate :retire None)
+    (and idle same same-effort) (ArmChoice :arm NEXT-ARM-SEND :source candidate :retire None)
+    (and idle same) (ArmChoice :arm NEXT-ARM-RESUME :source candidate :retire candidate)
     idle (ArmChoice :arm NEXT-ARM-REHYDRATE :source None :retire candidate)
     alive (ArmChoice :arm NEXT-ARM-DEFER :source candidate :retire None)
     same (ArmChoice :arm NEXT-ARM-RESUME :source candidate :retire None)
@@ -1132,7 +1212,7 @@
    observations{streamCapability, sessions, transcripts, ownership?}(sessions = session-observations-of の列・
    transcripts = 終端の session のうち transcript がこの機体に残る会話の列〔段 8q〕・
    ownership = 起動の前に検めた所有の等級 {grade, proof} — 宣言が無ければ欄ごと書かない = 未観測・
-   段 6 lane 6f)。state(scheduling の欄)は写すだけ。"
+   段 6 lane 6f)と capabilities(能力の表 — 段 10 lane 10e・capabilities-of)。state(scheduling の欄)は写すだけ。"
   (<- next dict (status-object-of row))
   (setv (get next "lease")
         {"owner" settings.principal
@@ -1146,6 +1226,9 @@
     (setv (get observations "ownership")
           {"grade" settings.ownership.grade "proof" settings.ownership.proof}))
   (setv (get next "observations") observations)
+  ;; 段 10 lane 10e: 能力の表(受ける欄 / 作り直す欄)を lease と同じ拍に名乗る(契約の書き手 = agentd)。
+  (<- table dict (capabilities-of))
+  (setv (get next NODE-CAPABILITIES-KEY) table)
   next)
 
 
