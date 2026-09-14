@@ -165,6 +165,9 @@ INJECTION_TERMINAL_STATES: tuple[InjectionState, ...] = (
 )
 #: 停止の合図で止めた段の終わり(手番の終わりとして報告する時の detail)。
 INTERRUPTED_DETAIL = "interrupted"
+#: CLI が system/init の capabilities で名乗る、注入の行の運命(command_lifecycle)を出す能力(実測 2.1.270)。名乗らない
+#: CLI(旧い版)では運命が来ないので、注入は追わず(result で手番が終わる・停止の合図は出さない = 今日どおりの注入だけ)。
+LIFECYCLE_CAPABILITY = "msg_lifecycle_v1"
 
 
 _INJECTION_STATES: dict[str, InjectionState] = {
@@ -203,6 +206,9 @@ class ClaudeDialogue:
         #: CLI の手番が開いているか(user の行 / init から result まで — 停止で閉じた段の後、注入の行が
         #: 次の手番として走り出すまでの隙間を見分ける)。
         self.cli_turn_open: bool = False
+        #: CLI が注入の行の運命(command_lifecycle)を名乗るか(init の capabilities に LIFECYCLE_CAPABILITY)。名乗らない
+        #: CLI では注入を追わない(追うと queued のままの注入が result を飲み続けて手番が終わらない)。
+        self.lifecycle: bool = False
 
     def opening(self) -> tuple[str, ...]:
         return ()
@@ -223,7 +229,8 @@ class ClaudeDialogue:
         if not self.in_flight:
             return Injection()
         name = ref or str(uuid.uuid4())
-        self.injections[name] = "queued"
+        if self.lifecycle:
+            self.injections[name] = "queued"
         return Injection(accepted=True, sends=(claude_user_line(text, name),), ref=name)
 
     def escalate(self) -> Escalation:
@@ -251,6 +258,9 @@ class ClaudeDialogue:
         kind = record.get("type")
         if kind == "system" and record.get("subtype") == "init":
             self.cli_turn_open = True
+            capabilities = record.get("capabilities")
+            if isinstance(capabilities, list):
+                self.lifecycle = LIFECYCLE_CAPABILITY in capabilities
             session_id = _text_at(record, "session_id")
             if session_id:
                 self.conversation = {"session_id": session_id}

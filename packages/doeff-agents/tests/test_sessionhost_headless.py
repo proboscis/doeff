@@ -109,7 +109,7 @@ def test_claude_dialogue_reads_init_and_result() -> None:
     assert _record(turn.sends[0]) == {"type": "user", "message": {"role": "user", "content": "hello"}}
     assert turn.close_stdin is False
     assert dialogue.in_flight is True
-    init = dialogue.on_line({"type": "system", "subtype": "init", "session_id": "sid-1"})
+    init = dialogue.on_line(_init())
     assert init.conversation == {"session_id": "sid-1"}
     assert dialogue.on_line({"type": "assistant", "message": {}}).ended is None
     # 走っている手番への割り込み = 同じ user の行(CLI が次の tool の境界で注入する)。行の uuid は
@@ -140,6 +140,14 @@ def _lifecycle(ref: str, state: str) -> JSONObject:
     return {"type": "command_lifecycle", "command_uuid": ref, "state": state}
 
 
+def _init(session_id: str = "sid-1", lifecycle: bool = True) -> JSONObject:
+    """実物 2.1.270 の system/init(capabilities に msg_lifecycle_v1)— lifecycle=False は旧い CLI(名乗らない)。"""
+    capabilities: list[JSON] = (
+        ["interrupt_receipt_v1", "interrupt_cancel_queued_v1", "msg_lifecycle_v1"] if lifecycle else []
+    )
+    return {"type": "system", "subtype": "init", "session_id": session_id, "capabilities": capabilities}
+
+
 def _control_response(request_id: str, still_queued: list[str], subtype: str = "success") -> JSONObject:
     payload: JSONObject = {"still_queued": list(still_queued)}
     response: JSONObject = {"subtype": subtype, "request_id": request_id, "response": payload}
@@ -153,7 +161,7 @@ def test_claude_dialogue_escalates_an_unread_injection_and_the_next_turn_carries
     dialogue = ClaudeDialogue()
     assert dialogue.escalate().accepted is False  # 手番が走っていない
     dialogue.turn("long tool")
-    dialogue.on_line({"type": "system", "subtype": "init", "session_id": "sid-1"})
+    dialogue.on_line(_init())
     assert dialogue.escalate().accepted is False  # queued の注入が無い
     injected = dialogue.inject("stop now", "msg-1")
     assert injected.ref == "msg-1"
@@ -176,7 +184,7 @@ def test_claude_dialogue_escalates_an_unread_injection_and_the_next_turn_carries
     assert dialogue.cli_turn_open is False
     assert dialogue.on_line(_lifecycle("msg-1", "started")).ended is None
     assert dialogue.injections == {"msg-1": "started"}
-    assert dialogue.on_line({"type": "system", "subtype": "init", "session_id": "sid-1"}).ended is None
+    assert dialogue.on_line(_init()).ended is None
     assert dialogue.cli_turn_open is True
     ended = dialogue.on_line({"type": "result", "subtype": "success", "is_error": False})
     assert ended.ended == TurnEnded(ok=True, detail="success")
@@ -190,6 +198,7 @@ def test_claude_dialogue_escalation_without_survivors_ends_the_turn_as_interrupt
     (interrupted)。答えが error なら合図は効かなかった — もう 1 度出せる。"""
     dialogue = ClaudeDialogue()
     dialogue.turn("x")
+    dialogue.on_line(_init())
     dialogue.inject("a", "msg-1")
     first = dialogue.escalate()
     assert dialogue.on_line(_control_response(first.request_id, [], subtype="error")).ended is None
@@ -212,6 +221,7 @@ def test_claude_dialogue_keeps_the_turn_while_an_injection_is_still_queued_at_th
     終わった(discarded / cancelled / refused)なら、そこで手番の終わり。"""
     dialogue = ClaudeDialogue()
     dialogue.turn("x")
+    dialogue.on_line(_init())
     dialogue.inject("late", "msg-1")
     dialogue.on_line(_lifecycle("msg-1", "queued"))
     assert dialogue.on_line({"type": "result", "subtype": "success", "is_error": False}).ended is None
@@ -226,12 +236,31 @@ def test_claude_dialogue_keeps_the_turn_while_an_injection_is_still_queued_at_th
     dialogue.on_line(_lifecycle("msg-2", "queued"))
     assert dialogue.on_line({"type": "result", "subtype": "success", "is_error": False}).ended is None
     dialogue.on_line(_lifecycle("msg-2", "started"))
-    dialogue.on_line({"type": "system", "subtype": "init", "session_id": "sid-1"})
+    dialogue.on_line(_init())
     # 手番が開いている間の cancelled(手番ごと abort された)は手番を閉じない — result が閉じる
     assert dialogue.on_line(_lifecycle("msg-2", "cancelled")).ended is None
     assert dialogue.on_line({"type": "result", "subtype": "success", "is_error": False}).ended == TurnEnded(
         ok=True, detail="success"
     )
+
+
+def test_claude_dialogue_without_the_lifecycle_capability_injects_only_and_ends_on_result() -> None:
+    """旧い CLI(init の capabilities に msg_lifecycle_v1 が無い)は注入の行の運命を名乗らない — 注入は受けるが追わず
+    (result で手番が終わる・queued のままの注入を待って result を飲まない・停止の合図は出さない = 今日どおりの注入だけ)。
+    capabilities の無い init も同じ(名乗らない = 無い)。"""
+    bare: JSONObject = {"type": "system", "subtype": "init", "session_id": "sid-1"}
+    for init in (_init(lifecycle=False), bare):
+        dialogue = ClaudeDialogue()
+        dialogue.turn("x")
+        dialogue.on_line(init)
+        assert dialogue.lifecycle is False
+        injected = dialogue.inject("stop", "msg-1")
+        assert injected.accepted is True
+        assert _record(injected.sends[0])["uuid"] == "msg-1"
+        assert dialogue.injections == {}
+        assert dialogue.escalate().accepted is False
+        assert dialogue.on_line({"type": "result", "subtype": "success", "is_error": False}).ended == TurnEnded(ok=True, detail="success")
+        assert dialogue.in_flight is False
 
 
 def test_codex_dialogue_does_not_escalate() -> None:
