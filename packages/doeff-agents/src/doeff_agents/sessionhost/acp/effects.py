@@ -115,6 +115,7 @@ ConditionType = Literal[
     "CredentialSourceMissing",
     "AgentSettingIgnored",
     "SessionLost",
+    "AgentdRestart",
 ]
 CONDITION_INTERRUPTED: ConditionType = "Interrupted"
 #: 段 10 lane 10h(agora-redesign #84): 走っている手番の session の backend(headless の子 process / tmux の pane)が
@@ -122,6 +123,9 @@ CONDITION_INTERRUPTED: ConditionType = "Interrupted"
 #: 閉じる(reason に session・pid・観測の時刻)。実弾 2026-09-14: agentd の再起動(kickstart -k)で子 process が道連れになり、
 #: 行は running のままだったので会話が永久に「動いている」・次の郵便が Pending だった。
 CONDITION_SESSION_LOST: ConditionType = "SessionLost"
+#: 段 10 lane 10h 便 2: agentd の停止(TERM)の前に、走っている手番を黙って残さず閉じた — headless の子 process は host と共に
+#: 降りる(pipe の子)ので、turn-record を ended・job をこの条件で Ended にする(reason に node・理由・session・時刻)。
+CONDITION_AGENTD_RESTART: ConditionType = "AgentdRestart"
 #: 段 9p(agora-redesign #76): 手番の記録(turn-record)の行を作れないまま手番が終わった — 頭が答えない拍
 #: (入れ替え・到達不能)は期限まで再試行し、期限を越えた / 決定論的に断られた時だけ理由つきで立つ。
 CONDITION_RECORD_UNAVAILABLE: ConditionType = "RecordUnavailable"

@@ -198,7 +198,7 @@
       "paths": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/acp/entry.py"
       ],
-      "responsibility": "console script doeff-sessionhost の入口: 弁(serve --acp / DOEFF_AGENTD_ACP)が on なら agentd の thread を起こし、残りは今日の hostmain.main へ渡す。join(段 6 lane 6f)は宣言から env の束と host の argv を導いて同じ経路へ",
+      "responsibility": "console script doeff-sessionhost の入口: 弁(serve --acp / DOEFF_AGENTD_ACP)が on なら agentd の thread を起こし、host の停止の hook に agentd の close_for_stop を登録し(段 10 lane 10h 便 2)、残りは今日の hostmain.main へ渡す。join(段 6 lane 6f)は宣言から env の束と host の argv を導いて同じ経路へ",
       "layer": "runtime",
       "public": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/acp/entry.py"
@@ -208,7 +208,8 @@
         "agentd-valve",
         "agentd-runtime",
         "sessionhost-hostmain",
-        "sessionhost-relaymain"
+        "sessionhost-relaymain",
+        "sessionhost-host"
       ],
       "typed": true
     },
@@ -332,7 +333,7 @@
       "paths": [
         "packages/doeff-agents/tests/test_sessionhost_headless.py"
       ],
-      "responsibility": "headless backend の焦点の検: 純粋な作法・器(替え玉の claude / codex の実 process)・host の RPC(backend=headless・tmpdir の store)・実 binary の --help の smoke",
+      "responsibility": "headless backend の焦点の検: 純粋な作法・器(替え玉の claude / codex の実 process)・host の RPC(backend=headless・tmpdir の store)・実 binary の --help の smoke と TERM の停止(段 10 lane 10h 便 2 — client は agentd-client)",
       "layer": "runtime",
       "public": [],
       "allow": [
@@ -341,7 +342,8 @@
         "sessionhost-host",
         "sessionhost-headless",
         "sessionhost-headless-argv",
-        "sessionhost-store"
+        "sessionhost-store",
+        "agentd-client"
       ],
       "typed": true
     },

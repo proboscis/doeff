@@ -22,6 +22,7 @@ import queue
 import signal
 import subprocess
 import threading
+import time
 from collections.abc import Mapping, Sequence
 from typing import IO
 
@@ -224,19 +225,41 @@ class HeadlessProcess:
 
     def kill(self) -> None:
         """stdin を閉じ、猶予の後に SIGTERM → SIGKILL。thread は最後に合流する。"""
-        self._writer.close()
+        self.close_stdin()
         if self.alive():
             try:
                 self._process.wait(timeout=EOF_GRACE_SECONDS)
             except subprocess.TimeoutExpired:
-                self._process.terminate()
+                self.terminate()
                 try:
                     self._process.wait(timeout=TERM_GRACE_SECONDS)
                 except subprocess.TimeoutExpired:
-                    self._process.kill()
+                    self.force_kill()
                     self._process.wait(timeout=TERM_GRACE_SECONDS)
-        self._writer.join(2.0)
-        self._reader.join(2.0)
+        self.join_io(2.0)
+
+    # -- 降ろす段(kill と kill_all が共有する 1 段ずつの動詞) ---------------------------
+
+    def close_stdin(self) -> None:
+        """stdin に EOF を出す(積んだ行の後・冪等)— 温かい claude はこれで降りる。"""
+        self._writer.close()
+
+    def terminate(self) -> None:
+        """SIGTERM(降りていなければ)。"""
+        if self.alive():
+            with contextlib.suppress(OSError):
+                self._process.terminate()
+
+    def force_kill(self) -> None:
+        """SIGKILL(降りていなければ)。"""
+        if self.alive():
+            with contextlib.suppress(OSError):
+                self._process.kill()
+
+    def join_io(self, timeout: float) -> None:
+        """書き手と読み手の thread に合流する(降りた後)。"""
+        self._writer.join(timeout)
+        self._reader.join(timeout)
 
     # -- 読み手 -----------------------------------------------------------------------
 
@@ -326,3 +349,30 @@ class HeadlessRegistry:
     def names(self) -> tuple[str, ...]:
         with self._lock:
             return tuple(sorted(self._processes))
+
+    def kill_all(self) -> int:
+        """登記の全 process を段ごとに並列で降ろして忘れる(host の停止 — 段 10 lane 10h 便 2): 全部の stdin を
+        閉じ → EOF の猶予を一緒に待ち → 生き残りに SIGTERM → 猶予 → SIGKILL。1 つずつ kill() すると猶予が
+        process の数だけ直列に積み、launchd の ExitTimeOut(既定 20 s)を越える。戻り = 降ろした登記の数。"""
+        with self._lock:
+            processes = list(self._processes.values())
+            self._processes = {}
+        for process in processes:
+            process.close_stdin()
+        _wait_all(processes, EOF_GRACE_SECONDS)
+        for process in processes:
+            process.terminate()
+        _wait_all(processes, TERM_GRACE_SECONDS)
+        for process in processes:
+            process.force_kill()
+        _wait_all(processes, TERM_GRACE_SECONDS)
+        for process in processes:
+            process.join_io(1.0)
+        return len(processes)
+
+
+def _wait_all(processes: Sequence[HeadlessProcess], grace: float) -> None:
+    """全部が降りるか猶予が尽きるまで待つ(並列の猶予 — 1 つずつ wait しない)。"""
+    deadline = time.monotonic() + grace
+    while time.monotonic() < deadline and any(process.alive() for process in processes):
+        time.sleep(0.05)
