@@ -270,6 +270,9 @@ RECORD_URL_ENV = "RECORD_SERVICE_URL"
 #: 本文の batch の spool(送る前の outbox)の置き場。join は state_dir の下(JOIN_RECORD_SPOOL_DIR)を導く。
 RECORD_SPOOL_DIR_ENV = "DOEFF_AGENTD_RECORD_SPOOL_DIR"
 NODE_NAME_ENV = "DOEFF_AGENTD_NODE_NAME"
+#: node の spec.capacity(同時に走らせられる手番の数 — 段 10 lane 10d・agora-redesign #85)。join が宣言 file の
+#: [agentd].capacity / flag --capacity から据える。無い agentd は参加しない(runtime.settings_from_env)。
+CAPACITY_ENV = "DOEFF_AGENTD_CAPACITY"
 HOMES_ROOT_ENV = "DOEFF_AGENTD_HOMES_ROOT"
 CUSTODY_URL_ENV = "AGORA_CUSTODY_URL"
 BORROWER_KEY_PATH_ENV = "AGORA_BORROWER_KEY_PATH"
@@ -352,6 +355,8 @@ class JoinSpec:
     custody_url: str | None
     borrower_key_file: str | None
     ownership: Ownership | None
+    #: node の spec.capacity(宣言 file の [agentd].capacity・flag --capacity・必須 — 段 10 lane 10d)。
+    capacity: int
     #: 会話の記録の service の URL(段 9f lane 9f-2 — 宣言 file の [record].url・flag --record)。None = 二重書きなし。
     record_url: str | None = None
 
@@ -446,6 +451,10 @@ class AgentdSettings:
     """agentd の値の宣言。既定値がここ 1 点、env からの上書きは runtime.py が行う。"""
 
     node_name: str
+    #: 自分の node の spec.capacity(段 10 lane 10d・agora-redesign #85): 機体の宣言 file の [agentd].capacity の写し。
+    #: agentd は自分の node の行を宣言から名乗る(judgment.node-spec-of / node-spec-declared)。composition root
+    #: (runtime.settings_from_env)は宣言が無ければ参加を断るので、この既定 0(手番を受けない)は検体の値。
+    node_capacity: int = 0
     principal: str = AGENTD_PRINCIPAL
     #: 参加の lease: heartbeat ごとに expiresAt = now + TTL を書き、周期は TTL / 3。
     node_lease_ttl_seconds: int = 90
@@ -1093,6 +1102,9 @@ class AgentdState:
     #: 「この機体に家の在る profile が 1 つも無い」を 1 度だけ名乗った印(段 8e lane 4j — pool の
     #: pod は profile を持たないので usage を読まず、周期ごとに同じ行を吐かない)。家が現れたら戻る。
     no_profile_homes_logged: bool = False
+    #: 段 10 lane 10d: 自分の node の行の spec を宣言へ揃えられなかった(書き手の断り等)ことを 1 度だけ名乗った印。
+    #: 揃えられた拍に戻る(heartbeat ごとに同じ断りを吐かない)。
+    node_spec_refusal_logged: bool = False
     #: 段 9f lane 9f-2: spool の再送を止めている拍(最後に送れなかった ms・None = 送れている — 毎拍 flush する)。
     record_backoff_ms: int | None = None
     #: 最後に計器へ出した spool の深さ(None = まだ — 変わった時だけ agentd_record_spool_depth を出す)。
@@ -1153,6 +1165,18 @@ class AcpPutStatus(EffectBase):
 
     row: AcpRow
     status: JSONObject
+
+
+@dataclass(frozen=True)
+class AcpPutSpec(EffectBase):
+    """行の spec を丸ごと書く(``POST /api/events`` の spec_applied・ifGeneration = 行の generation)。
+
+    段 10 lane 10d(agora-redesign #85): node の spec は agentd が機体の宣言から名乗る。engine の SpecApplied は
+    status の軸を触らない(Acp.App.Schema.State.axisScopedResource)。結果 = WriteOutcome。
+    """
+
+    row: AcpRow
+    spec: JSONObject
 
 
 @dataclass(frozen=True)

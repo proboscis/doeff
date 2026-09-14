@@ -20,6 +20,7 @@ from doeff_agents.sessionhost.acp.effects import (
     AcpEventWindow,
     AcpGet,
     AcpGetRow,
+    AcpPutSpec,
     AcpPutStatus,
     AcpRow,
     AcpStreamPush,
@@ -117,6 +118,9 @@ class FakeAcp:
         #: 尽きたら普通に作る。作った回数は creates に鍵ごと数える。
         self.create_refusals: dict[str, list[Refused]] = {}
         self.creates: dict[str, int] = {}
+        #: 段 10 lane 10d: spec の書き(鍵・書いた spec)と、鍵ごとに spec の書きを断る列(先頭から消費)。
+        self.spec_writes: list[tuple[str, JSONObject]] = []
+        self.spec_refusals: dict[str, list[Refused]] = {}
         #: 全量 list(AcpGet)を受けた kind の列(差分の読みの検が数える)。
         self.lists: list[str] = []
         #: event の journal: (sequence, 鍵, post-image | None = delete)。event-window の材料。
@@ -148,7 +152,7 @@ class FakeAcp:
             (AcpGet, AcpGetRow, AcpEventWindow, AcpWatchSse, AcpConversationMail, AcpTurnHeadlines),
         ):
             return Resume(k, self._read(effect))
-        if isinstance(effect, (AcpPutStatus, AcpCreate, AcpStreamPush)):
+        if isinstance(effect, (AcpPutStatus, AcpPutSpec, AcpCreate, AcpStreamPush)):
             return Resume(k, self._write(effect))
         return Pass(effect, k)
 
@@ -187,9 +191,11 @@ class FakeAcp:
         self.headline_reads.append(effect.conversation_id)
         return tuple(row for row in self.rows.values() if row.kind == TURN_RECORD_KIND)
 
-    def _write(self, effect: AcpPutStatus | AcpCreate | AcpStreamPush) -> object:
+    def _write(self, effect: AcpPutStatus | AcpPutSpec | AcpCreate | AcpStreamPush) -> object:
         if isinstance(effect, AcpPutStatus):
             return self._put_status(effect.row, effect.status)
+        if isinstance(effect, AcpPutSpec):
+            return self._put_spec(effect.row, effect.spec)
         if isinstance(effect, AcpCreate):
             return self._create(effect)
         self.push_seq += len(effect.frames)
@@ -245,6 +251,21 @@ class FakeAcp:
         )
         self._land(row.key, self.rows[row.key])
         self.writes.append((row.key, dict(status)))
+        return Written(f"ev-{self.sequence}")
+
+    def _put_spec(self, row: AcpRow, spec: JSONObject) -> Written | Conflict | Refused:
+        """段 10 lane 10d: 行の spec の書き(status は保つ — engine の SpecApplied は status の軸を触らない)。"""
+        existing = self.rows.get(row.key)
+        if existing is None:
+            return Refused(404, "no such row")
+        queued = self.spec_refusals.get(row.key)
+        if queued:
+            return queued.pop(0)
+        if existing.generation != row.generation:
+            return Conflict(existing.generation)
+        self.rows[row.key] = replace(existing, generation=existing.generation + 1, spec=dict(spec))
+        self._land(row.key, self.rows[row.key])
+        self.spec_writes.append((row.key, dict(spec)))
         return Written(f"ev-{self.sequence}")
 
     def _create(self, effect: AcpCreate) -> Written | Conflict | Refused:

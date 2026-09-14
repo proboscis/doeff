@@ -34,6 +34,7 @@ from doeff_agents.sessionhost.acp.effects import (
     ACP_TOKEN_FILE_ENV,
     ACP_URL_ENV,
     BORROWER_KEY_PATH_ENV,
+    CAPACITY_ENV,
     CUSTODY_URL_ENV,
     HOMES_ROOT_ENV,
     JOIN_RECORD_SPOOL_DIR,
@@ -92,8 +93,11 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
     ownership = _ownership_of_env(env)
     # 参加の門(段 9f lane 9f-6): 本文の行き先が無ければここで断る(理由は AgentdPreflightError の文)。
     record_sink = _record_sink_of_env(env)
+    # 段 10 lane 10d: node の capacity は機体の宣言の 1 点(無い・読めない = 参加しない — join.capacity-of)。
+    node_capacity = _capacity_of_env(env)
     return AgentdSettings(
         node_name=node_name,
+        node_capacity=node_capacity,
         homes_root=homes_root,
         backend_kind=backend,
         stream_capability=_stream_capability(backend),
@@ -103,6 +107,14 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         # 据わる 1 点。宣言した node は account の無い job を起こさない(judgment.credential-source-of)。
         custody_declared=bool((env.get(CUSTODY_URL_ENV) or "").strip()),
     )
+
+
+def _capacity_of_env(env: Mapping[str, str]) -> int:
+    """node の capacity(段 10 lane 10d・agora-redesign #85)。読みの規則は join.capacity-of の 1 点。"""
+    verdict: object = PyVM().run(join.capacity_of(env.get(CAPACITY_ENV)))
+    if not isinstance(verdict, int):
+        raise TypeError(f"capacity_of returned {type(verdict).__name__}")
+    return verdict
 
 
 def _ownership_of_env(env: Mapping[str, str]) -> Ownership | None:

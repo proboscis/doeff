@@ -126,7 +126,8 @@ class World:
     """fake の 4 handler と値の宣言(test の 1 つの世界)。"""
 
     def __init__(self) -> None:
-        self.settings = AgentdSettings(node_name=NODE, homes_root=HOMES)
+        # 段 10 lane 10d(R28): 宣言の capacity は種の node の行と同じ値 — 揃えの書きを検体の拍に混ぜない。
+        self.settings = AgentdSettings(node_name=NODE, homes_root=HOMES, node_capacity=1)
         self.acp = FakeAcp(births={TURN_RECORD_KIND: Birth("state", "running")})
         self.custody = FakeCustody(tokens={"acct": TOKEN})
         self.sessions = FakeSessions()
@@ -429,15 +430,122 @@ def test_credential_source_is_one_judgment(account: str | None, declared: bool, 
     assert run(judgment.credential_source_of(plan, declared)) == verdict
 
 
-def test_missing_node_row_is_logged_once_and_re_read() -> None:
+def test_missing_node_row_is_registered_from_the_declaration_and_joined_on_the_next_heartbeat() -> None:
+    """R28(段 10 lane 10d・agora-redesign #85): 行の無い node は agentd が機体の宣言から自分の行を作る
+    (name・capacity = 宣言・streamCapability = backend の語・labels は空)— 人が撃つ register-node の段は無い。"""
     world = World()
-    del world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"]
+    key = f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"
+    del world.acp.rows[key]
+    world.tick()
+    assert world.acp.rows[key].spec == {"name": NODE, "labels": {}, "capacity": 1, "streamCapability": "frames"}
+    assert [line for line in world.local.logs if "node row" in line] == [
+        f"agentd: registered node row {NODE!r} from the declaration (capacity 1, streamCapability frames)"
+    ]
+    assert world.state.node_missing_logged is False
+    world.tick(advance_ms=30_000)
+    status = world.acp.rows[key].status
+    assert isinstance(status, dict)
+    lease = status.get("lease")
+    assert isinstance(lease, dict)
+    assert lease["owner"] == world.settings.principal
+
+
+def test_node_registration_refused_is_logged_once_and_retried_each_heartbeat() -> None:
+    """R28: 作れない拍(契約の書き手の登録し直しの前など)は 1 度だけ log し、heartbeat ごとに撃ち直す。"""
+    from doeff_agents.sessionhost.acp.effects import Refused
+
+    world = World()
+    key = f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"
+    del world.acp.rows[key]
+    refusal = "principal agentd is not a writer of node create"
+    world.acp.create_refusals[key] = [Refused(403, refusal), Refused(403, refusal)]
     world.tick()
     world.tick(advance_ms=30_000)
+    assert world.acp.creates[key] == 2
+    assert key not in world.acp.rows
     assert [line for line in world.local.logs if "node row" in line] == [
-        f"agentd: node row {NODE!r} is not in ACP yet (created by acp-scheduling / register-node); re-reading each heartbeat"
+        f"agentd: node row {NODE!r} is not in ACP and could not be registered (403: {refusal}); re-trying each heartbeat"
     ]
-    assert world.state.node_missing_logged is True
+    world.tick(advance_ms=30_000)
+    assert key in world.acp.rows
+    assert world.state.node_missing_logged is False
+
+
+def test_node_spec_is_aligned_to_the_declaration_keeping_labels_and_the_lease_is_written_in_the_same_tick() -> None:
+    """R28: 手で登記された行(capacity 0・labels boundary / pool)は宣言へ揃う — labels は触らず、同じ拍に lease も書く。"""
+    from dataclasses import replace
+
+    world = World()
+    world.settings = replace(world.settings, node_capacity=2)
+    key = f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"
+    labels = {"boundary": "personal", "pool": "agentd-pool"}
+    seeded = world.acp.rows[key]
+    world.acp.put_row(
+        replace(seeded, spec={"name": NODE, "labels": labels, "capacity": 0, "streamCapability": "frames"})
+    )
+    world.tick()
+    aligned = {"name": NODE, "labels": labels, "capacity": 2, "streamCapability": "frames"}
+    assert world.acp.spec_writes == [(key, aligned)]
+    now_row = world.acp.rows[key]
+    assert now_row.spec == aligned
+    assert isinstance(now_row.status, dict)
+    assert now_row.status["state"] == "joined"
+    lease = now_row.status.get("lease")
+    assert isinstance(lease, dict)
+    assert lease["owner"] == world.settings.principal
+    assert [line for line in world.local.logs if "node row" in line] == [
+        f"agentd: node row {NODE!r} spec aligned to the declaration (capacity 0 -> 2)"
+    ]
+    world.tick(advance_ms=30_000)
+    assert len(world.acp.spec_writes) == 1
+
+
+def test_node_spec_alignment_refused_still_writes_the_lease_and_logs_once() -> None:
+    """R28: 揃えられない拍(書き手の断り)も lease は書く — 参加の生存を spec の書きの成否に結ばない。log は 1 度。"""
+    from dataclasses import replace
+
+    from doeff_agents.sessionhost.acp.effects import Refused
+
+    world = World()
+    world.settings = replace(world.settings, node_capacity=2)
+    key = f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"
+    refusal = "principal agentd is not a writer of node update"
+    world.acp.spec_refusals[key] = [Refused(403, refusal), Refused(403, refusal)]
+    world.tick()
+    world.tick(advance_ms=30_000)
+    assert world.acp.spec_writes == []
+    now_row = world.acp.rows[key]
+    assert now_row.spec["capacity"] == 1
+    assert isinstance(now_row.status, dict)
+    lease = now_row.status.get("lease")
+    assert isinstance(lease, dict)
+    assert lease["heartbeatAt"] == world.local.now_ms
+    assert [line for line in world.local.logs if "node row" in line] == [
+        f"agentd: node row {NODE!r} spec differs from the declaration and could not be aligned (403: {refusal}); "
+        "the lease is still written"
+    ]
+    assert world.state.node_spec_refusal_logged is True
+
+
+def test_node_spec_of_and_node_spec_declared_are_one_judgment() -> None:
+    """R28: 作る時の spec(labels 空)と、揃える時の spec(labels は行のまま・欠落は空)は judgment の 2 点。"""
+    settings = AgentdSettings(node_name="pool-1", node_capacity=2, stream_capability="events")
+    assert run(judgment.node_spec_of(settings)) == {
+        "name": "pool-1",
+        "labels": {},
+        "capacity": 2,
+        "streamCapability": "events",
+    }
+    hand = {"name": "pool-1", "labels": {"boundary": "company"}, "capacity": 0, "streamCapability": "events"}
+    assert run(judgment.node_spec_declared(hand, settings)) == {**hand, "capacity": 2}
+    assert run(judgment.node_spec_declared({**hand, "capacity": 2}, settings)) == {**hand, "capacity": 2}
+    bare = {"name": "pool-1", "capacity": 2, "streamCapability": "frames"}
+    assert run(judgment.node_spec_declared(bare, settings)) == {
+        "name": "pool-1",
+        "labels": {},
+        "capacity": 2,
+        "streamCapability": "events",
+    }
 
 
 # ---------------------------------------------------------------- 判断の純関数
@@ -1888,9 +1996,18 @@ class HeadlessWorld(World):
 
     def __init__(self, agent_type: str = "claude") -> None:
         super().__init__()
+        from dataclasses import replace
+
         self.settings = AgentdSettings(
-            node_name=NODE, homes_root=HOMES, backend_kind="headless", stream_capability="events"
+            node_name=NODE,
+            homes_root=HOMES,
+            backend_kind="headless",
+            stream_capability="events",
+            node_capacity=1,
         )
+        # 段 10 lane 10d(R28): 種の node の行も events の器の宣言と同じ spec にする(揃えの書きを混ぜない)。
+        seeded = self.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"]
+        self.acp.put_row(replace(seeded, spec={**seeded.spec, "streamCapability": "events"}))
         self.sessions = FakeSessions(
             agent_type=agent_type, backend_kind="headless", events_root="/events"
         )
@@ -2139,7 +2256,7 @@ def test_stream_capability_is_derived_from_the_host_backend() -> None:
     from doeff_agents.sessionhost.acp.runtime import settings_from_env
 
     # 本文の行き先(段 9f lane 9f-6): 宛先の無い env は settings_from_env が参加を断るので、束に宛先を持たせる。
-    bare = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874"}
+    bare = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1"}
     env = {**bare, "DOEFF_SESSIONHOST_BACKEND": "headless"}
     assert settings_from_env(env, ()).stream_capability == "events"
     assert settings_from_env(env, ()).backend_kind == "headless"
@@ -2369,7 +2486,7 @@ def test_join_spec_is_flags_over_declaration_over_defaults() -> None:
     hooks は inherit・custody は無し(既定の URL は handler)・所有は名乗らない。"""
     from doeff_agents.sessionhost.acp.effects import JoinSpec, Ownership
 
-    bare = _join_spec(["--server", "http://acp:8868", "--token-file", "/t/agentd.token"])
+    bare = _join_spec(["--server", "http://acp:8868", "--token-file", "/t/agentd.token", "--capacity", "1"])
     assert bare == JoinSpec(
         server="http://acp:8868",
         token_file="/t/agentd.token",
@@ -2380,6 +2497,7 @@ def test_join_spec_is_flags_over_declaration_over_defaults() -> None:
         custody_url=None,
         borrower_key_file=None,
         ownership=None,
+        capacity=1,
     )
     declaration: dict[str, object] = {
         "schema": "doeff.agentd-join.v1",
@@ -2392,6 +2510,7 @@ def test_join_spec_is_flags_over_declaration_over_defaults() -> None:
             "session_hooks": "none",
             "ownership": "company",
             "ownership_proof": "gce-project:cyberagent-050",
+            "capacity": "2",
         },
         "custody": {"url": "http://custody:8320", "borrower_key_file": "/toml/borrower"},
     }
@@ -2406,6 +2525,7 @@ def test_join_spec_is_flags_over_declaration_over_defaults() -> None:
         custody_url="http://custody:8320",
         borrower_key_file="/toml/borrower",
         ownership=Ownership(grade="company", proof="gce-project:cyberagent-050"),
+        capacity=2,
     )
     flagged = _join_spec(
         [
@@ -2419,6 +2539,8 @@ def test_join_spec_is_flags_over_declaration_over_defaults() -> None:
             "declared",
             "--backend",
             "headless",
+            "--capacity",
+            "3",
         ],
         declaration,
     )
@@ -2428,6 +2550,7 @@ def test_join_spec_is_flags_over_declaration_over_defaults() -> None:
     assert flagged.node_name == "mac-9"
     assert flagged.backend == "headless"
     assert flagged.ownership == Ownership(grade="personal", proof="declared")
+    assert flagged.capacity == 3  # flag > toml(段 10 lane 10d・R28)
 
 
 def test_join_spec_refuses_missing_server_or_token_unknown_flags_and_bad_words() -> None:
@@ -2473,10 +2596,17 @@ def test_join_spec_refuses_missing_server_or_token_unknown_flags_and_bad_words()
             ["--server", "http://a", "--token-file", "/t"],
             {"schema": "doeff.agentd-join.v1", "agentd": {"colour": "red"}},
         )
-    assert isinstance(_join_spec(["--server", "http://a", "--token-file", "/t"]), JoinSpec)
+    # 段 10 lane 10d(R28): node の capacity は宣言の 1 点 — 無い・読めない agentd は参加しない。
+    with pytest.raises(ValueError, match="capacity"):
+        _join_spec(["--server", "http://a", "--token-file", "/t"])
+    with pytest.raises(ValueError, match="capacity"):
+        _join_spec(["--server", "http://a", "--token-file", "/t", "--capacity", "two"])
+    with pytest.raises(ValueError, match="capacity"):
+        _join_spec(["--server", "http://a", "--token-file", "/t", "--capacity", "-1"])
+    assert isinstance(_join_spec(["--server", "http://a", "--token-file", "/t", "--capacity", "0"]), JoinSpec)
     # 空文字は「名乗らない」(宣言 file で欄を空にして外せる — runtime の env の読みと同じ)。
     blank = _join_spec(
-        ["--server", "http://a", "--token-file", "/t", "--ownership", "", "--ownership-proof", ""]
+        ["--server", "http://a", "--token-file", "/t", "--ownership", "", "--ownership-proof", "", "--capacity", "1"]
     )
     assert isinstance(blank, JoinSpec)
     assert blank.ownership is None
@@ -2510,6 +2640,7 @@ def test_join_plan_derives_the_host_argv_and_the_env_bundle_from_the_spec() -> N
         custody_url="http://custody:8320",
         borrower_key_file="/etc/doeff/borrower-key",
         ownership=Ownership(grade="company", proof="gce-project:cyberagent-050"),
+        capacity=2,
     )
     plan = run(join.join_plan_of(spec))
     assert plan == JoinPlan(
@@ -2529,6 +2660,7 @@ def test_join_plan_derives_the_host_argv_and_the_env_bundle_from_the_spec() -> N
             ("ACP_DAEMON_URL", "http://acp:8868"),
             ("ACP_AGENTD_TOKEN_FILE", "/t/agentd.token"),
             ("DOEFF_AGENTD_NODE_NAME", "gcp-0"),
+            ("DOEFF_AGENTD_CAPACITY", "2"),
             ("DOEFF_SESSIONHOST_BACKEND", "headless"),
             ("DOEFF_SESSIONHOST_HEADLESS_DIR", "/var/lib/doeff/agentd/headless-events"),
             ("DOEFF_AGENTD_SESSION_HOOKS", "inherit"),
@@ -2551,6 +2683,7 @@ def test_join_plan_derives_the_host_argv_and_the_env_bundle_from_the_spec() -> N
                 custody_url=None,
                 borrower_key_file=None,
                 ownership=None,
+                capacity=0,
             )
         )
     )
@@ -2582,6 +2715,7 @@ def test_settings_from_env_reads_the_ownership_and_the_valve_and_runtime_agree_o
                 custody_url=None,
                 borrower_key_file=None,
                 ownership=Ownership(grade="company", proof="gce-project:cyberagent-050"),
+                capacity=2,
                 record_url="http://record:8874",
             )
         )
@@ -2590,6 +2724,7 @@ def test_settings_from_env_reads_the_ownership_and_the_valve_and_runtime_agree_o
     env = dict(plan.env)
     settings = settings_from_env(env, plan.host_argv)
     assert settings.node_name == "gcp-0"
+    assert settings.node_capacity == 2
     assert settings.backend_kind == "headless"
     assert settings.stream_capability == "events"
     assert settings.ownership == Ownership(grade="company", proof="gce-project:cyberagent-050")
@@ -2597,12 +2732,16 @@ def test_settings_from_env_reads_the_ownership_and_the_valve_and_runtime_agree_o
     # 段 10c(R23): 預かり所の宣言の有無は CUSTODY_URL_ENV の在否 1 点(この束は custody_url を名乗らない)
     assert settings.custody_declared is False
     assert acp_valve(list(plan.host_argv), env).enabled is True
-    recorded = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874"}
+    recorded = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1"}
     assert settings_from_env(recorded, ()).ownership is None
     assert settings_from_env({**recorded, "AGORA_CUSTODY_URL": "http://custody:8320"}, ()).custody_declared is True
     assert settings_from_env({**recorded, "AGORA_CUSTODY_URL": "  "}, ()).custody_declared is False
     with pytest.raises(ValueError, match="DOEFF_AGENTD_OWNERSHIP"):
         settings_from_env({**recorded, "DOEFF_AGENTD_OWNERSHIP": "corp"}, ())
+    # 段 10 lane 10d(R28): capacity の無い env は参加を断る(join.capacity-of の 1 点)。
+    without_capacity = {name: value for name, value in recorded.items() if name != "DOEFF_AGENTD_CAPACITY"}
+    with pytest.raises(ValueError, match="capacity"):
+        settings_from_env(without_capacity, ())
 
 
 def test_acp_url_has_no_localhost_default_and_the_join_bundle_carries_it(tmp_path: Path) -> None:
@@ -2620,7 +2759,7 @@ def test_acp_url_has_no_localhost_default_and_the_join_bundle_carries_it(tmp_pat
     assert not hasattr(handlers, "ACP_URL_DEFAULT")
     token = tmp_path / "agentd.token"
     token.write_text("sk-roster-token\n", encoding="utf-8")
-    env = {ACP_TOKEN_FILE_ENV: str(token), "RECORD_SERVICE_URL": "http://record:8874"}
+    env = {ACP_TOKEN_FILE_ENV: str(token), "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1"}
     with pytest.raises(AgentdPreflightError, match=ACP_URL_ENV):
         real_dispatchers(env, str(tmp_path / "agentd.sock"))
     with pytest.raises(AgentdPreflightError, match=ACP_URL_ENV):
@@ -2637,6 +2776,7 @@ def test_acp_url_has_no_localhost_default_and_the_join_bundle_carries_it(tmp_pat
                 custody_url=None,
                 borrower_key_file=None,
                 ownership=None,
+                capacity=1,
                 record_url="http://record:8874",
             )
         )

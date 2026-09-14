@@ -445,6 +445,7 @@
      (rule R25 "backend の生死は host の観測で決め、status の語から推測しない(段 10 lane 10h・agora-redesign #84・既知の形 = kubelet の node 再起動後の container の生死の観測): sessionhost は headless の行の backend(子 process)の生死を観測で決める — pid の存在(kill 0)+ 所有(この host の registry が同じ pid の生きた process を持つ・effect HeadlessLiveness・値 headless_protocol.BackendLiveness)。host の起動時(accept より前・awaiting latch の clear より前)に headless.hy recover-headless-rows が非終端の headless 行を観測し、判断 headless_protocol.recovery_verdict(status_terminal, in_flight, liveness)の 1 点で『手番の途中(awaiting)∧ backend が死んでいる』行だけを exited + cause vanished(ADR-DOE-AGENTS-009 の証拠つき死亡の語彙・reason に pid と観測の文)にして session_exited を刻む。idle の温かい行は触らない(次の send が --resume で同じ session を起こし直す)。awaiting latch の起動時の全 clear(store.hy db-clear-awaiting-latches)は headless の行を対象にしない(headless の latch は『手番の途中』の事実そのもの)。wire の session.get / session.list は backend_alive(headless = 上の観測・tmux / herdr = 行の pane が session の pane の集合に在る・終端の行は観測せず false)を毎回載せる。agentd は判断 judgment.backend-alive の 1 点(器に無い → 偽・明示の False → 偽・観測の無い眺め〔launch / resume の応答の backend_alive = None〕→ 真: 観測の無さは死亡の証拠ではない)を job-step-of(非終端 ∧ 手番の終わりでない ∧ backend が死 → session-lost = 記録の腕と条件 SessionLost〔reason に session・backend の種類・pid・観測の時刻 — judgment.session-lost-condition-of〕で Ended・session は host の monitor に任せて片付けない)と next-arm-for-job(候補が生きて idle でない ∧ backend が生 → defer / ∧ backend が死 → 同じ家なら候補を片付けて resume・違う家なら片付けて rehydrate)で読む。agentd.hy は backend_alive の欄も終端の語も直に読まない。headless の session.resume の腕は launch-params に events_root を運ぶ(launch.hy resume-session — 運ばないと headless-launch-session が KeyError で断り、全部 rehydrate に落ちる)。店の cause の decode(store.hy terminal-cause-from-dict)は契約の欄(category / observed_at)を持たない persisted cause を None(typed には cause なし)と読み、行ごと KeyError で読めなくしない(wire は raw を運ぶ・DB の COALESCE が raw を消さない)。")
      (rule R26 "停止で子を黙って道連れにしない(段 10 lane 10h 便 2・agora-redesign #84): launchd の bootout / kickstart は process group ごと殺すので headless の子 process(pipe の子)は host と共に死ぬ — pipe から切り離して拾い直す形(detach)は取らない(親を失った process は器として使えない: events file の書き手も Dialogue の状態も host に在る)。代わりに host は TERM の 1 度目に accept loop を生かしたまま別 thread(host.hy graceful-stop)で (1) 登録された停止の hook(host.register-shutdown-hook — entry.py が agentd の AgentdRun.close_for_stop を登録する: loop を止めて今の拍を有界に待ち、memory の走っている job を agentd.close-jobs-for-stop で 1 つずつ記録の腕〔残りの材料・turn-record ended〕と条件 AgentdRestart〔judgment.restart-condition-of の 1 点 — node・理由・session・時刻〕で Ended・status frame ended・札の返却。session は片付けない)(2) headless の行の停止の腕(headless.hy stop-headless-rows: 判断 headless_protocol.stop_verdict の 1 点で手番の途中の非終端の行だけ stopped + cause cancelled〔reason = host の停止と信号〕+ session_cancelled・idle の温かい行は触らない・登記の全 process を HeadlessKillAll で段ごとに並列の猶予〔EOF → TERM → KILL〕で降ろす)を走らせ、stderr に数を 1 行ずつ書き、自分に同じ信号を撃ち直す(実の信号 — _thread.interrupt_main は accept の syscall を起こさない)。2 度目の TERM は SystemExit(0) で finally(lease の釈放)へ。SIGKILL には手が無い — 次の起動の復帰(R25)が拾う。Mac の agentd の入れ替えは走っている job が 0 の拍に launchctl の bootout → bootstrap(TERM の経路)で行い、kickstart -k(即時)は使わない。ACP の宛先(実況の push・行の読み書き・watch の全部)は宣言(join の --server / [agentd].server → ACP_DAEMON_URL)ちょうどで、handlers.py に 127.0.0.1:8868 の既定値は無い(runtime.real_dispatchers は宣言の無い env を AgentdPreflightError で断る)。")
      (rule R27 "会話は自分で圧縮する — 閾値は会話の宣言・実測は agentd・腕は履歴からの再開(段 10f 便 2・agora-redesign #82・operator 2026-09-14 逐語 \"that routing agent should compact itself with some threshold\"): 会話の行の status.agent.compactAt(0〜100 の整数・任意・書き手 agora-conversation・契約 agora-kinds.json)は文脈の使用率の閾値。agentd は手番の終わり(settle-record と interrupt-job — 記録の腕)に材料の末尾から文脈の大きさを測り(judgment の deltas-of が DeltaBatch.context = {tokens, window} を組む: claude = 最後の assistant の message の usage の input + cacheRead + cacheWrite + output と result の modelUsage[その model].contextWindow / codex = token_count の last_token_usage〔app-server は tokenUsage.last〕の input + output と model_context_window〔modelContextWindow〕)、judgment.context-percent-of で %(切り捨て・上限 100・窓が無ければ None = 測れない)にして session ごとに AgentdState.context_by_session へ置く(with-context-percent — memory の cache・再起動で消え次の手番の終わりに測り直す)。claim の腕は候補の session が在る時だけ会話の行を鍵で 1 回読み(conversation-key-of・AcpGetRow)、compact-at-of と context-percent-for から judgment.compaction-due(宣言あり ∧ 実測あり ∧ 実測 ≥ 閾値)を求め、next-arm-for-job の 5 つ目の引数 compact に渡す。腕: compact ∧ 候補あり ∧ 手番の途中でない → rehydrate(ArmChoice.compacts = True・生きている候補は片付ける — 温かい cache を捨てて記録の service の履歴を縮めて畳むのが圧縮の意味)/ 手番の途中(backend が生)は defer が先 / 候補なしは launch。compacts の拍に計器 agentd_compactions_total{conversation, agentJobId, sessionId} と log 1 行(retire-reason-of が理由を名乗る)。turn-record の usage には書かない(契約に欄が無い — 耐久にする時は契約の便で contextTokens / contextWindow を足してから)。追補 3(依頼者 2026-09-14 17:1x・実測「agent が自分の会話 id を答えられず session の UUID を答えた」): 起こす手番(launch / resume / rehydrate)の charter.session_env(host の launch-spawn-env が非 auth の overlay として process の env に混ぜる)に AGORA_CONVERSATION_ID(会話の id = 帰属の conversationId)と AGORA_SEAT_OPENER(claim の腕が読んだ会話の行の spec.opener の逐語・読めなければ置かない)を置く — 1 点 judgment.charter-with-conversation-env(incarnation-charter-of が呼ぶ)。`ai tell` / `ai forward` / `ai artifact put` の差出人・著者はこの会話 id ちょうど(便 3 = CLI が読む側)。")
+     (rule R28 "node の行は機体が自分で名乗る(段 10 lane 10d・agora-redesign #85・依頼者の回答 問 A = 案 1 — 既知の形 = k8s の kubelet が Node を自分で登記する): agentd は heartbeat の腕(agentd.join-tick)で、自分の名の生きた node の行が無ければ AcpCreate で作り、在れば spec を宣言へ揃える(AcpPutSpec — engine の SpecApplied は status の軸を触らない)。spec の形は judgment.node-spec-of(作る時: name・labels 空・capacity・streamCapability)/ node-spec-declared(揃える時: labels は行のまま — 宣言の外の名乗り〔会社境界の boundary 等〕を運ぶ)の 1 点。capacity は機体の宣言 file の [agentd].capacity(flag --capacity)ちょうどで join.capacity-of が読み、無い・読めない agentd は参加しない(runtime.settings_from_env)— 家(profile の置き場)の数から導かない(資格は預かり所の貸与)。作れない・揃えられない拍(書き手の断り等)は1 度だけ log して次の heartbeat で撃ち直し、揃えられなくても lease は書く(参加の生存を spec の書きの成否に結ばない)。契約 agora-kinds.json の node の writers.create / update = agentd(withdraw は acp-scheduling)。2026-09-13 までは仮の道具 register-node(札 acp-scheduling)を人が撃ち、pod の名が変わるたびに手で作り直し、pool の capacity 0 は CR の註の写しだった(実測 #85)。")
      (rule R10 "session は会話の資源・job は手番(温かい session・設計 17.4): 会話 → 生きている session の対応は行(自分が claim した同じ subject の agent-job の sessionHandle)と器の現況から導き、Bound の job の起こし方は judgment.hy の next-arm-for-job(閉語彙 effects.NextArm = launch | send | resume | rehydrate | defer — 家と機体の扱いは R20)の 1 点で決める — 同じ会話の生きて idle な session が在れば launch せず session.send(awaiting)だけ、sessionHandle はその session を指し、turn-record は手番ごと。手番の終わりは器の lifecycle multi_turn(launch.hy の閉語彙に足した語)で policy.hy の monitor が既存の turn-end の連言から行の turn_ended_at に刻み、agentd は job-step-of の turn-end(turn_ended_at > 手番の始まりの下限 ∧ 記録の進み)で読む — status は倒さず session は生かす。idle の寿命は AgentdSettings.session_idle_ttl_seconds の 1 点で、超過・Withdrawn・node の退役で session.cleanup。計器 agent-job-to-send は create → send のまま(温かい path で p99 < 2 秒)。")]
   :laws
     [(law interrupts-ride-the-running-turn-and-are-recorded-on-the-row
@@ -626,6 +627,19 @@
           (counterexample "実測を turn-record の status.usage に書く(契約に無い欄)— 読み手の zod / Hy の写しが行を落とすか、engine の statusByteBudget の外で書き手が第 2 の定義点を作る。耐久にするなら契約の便が先")
           (counterexample "手番の process に会話の id を渡さない(env は agentd 自身の AGORA_CUSTODY_URL 等の継承だけ)— agent が自分の会話 id を答えられず session の UUID を答える(依頼者の実測 2026-09-14 17:1x)。`ai tell` の差出人が名乗れない")
           (counterexample "opener を agentd が推測して置く(system 以外は machine と決め打つ)— operator が自分で開いた会話の手番が machine を名乗り、決裁書の門(law decision-paper-gates-bind-only-agora-opened-conversations)が誤って立つ。読めなければ置かない")])
+     (law node-row-is-named-by-the-machine-from-its-declaration
+       :statement "for_all heartbeat of agentd a with settings s: no live node row named s.node_name => AcpCreate(node, s.node_name, node-spec-of(s)); a live node row n with n.spec != node-spec-declared(n.spec, s) => AcpPutSpec(n, node-spec-declared(n.spec, s)) and the lease is written in the same heartbeat whether or not the spec write lands; s.node_capacity = int([agentd].capacity) and a declaration without it refuses to join"
+       :counterexamples
+         [(counterexample "行を作るのを人の道具(register-node)に残す — pod の名が変わるたびに行が無く、heartbeat が『not in ACP yet』を吐いて待ち続け、手で撃たれた値(capacity 0)が宣言と食い違ったまま配車の候補から外れる(実測 2026-09-13・#85)")
+          (counterexample "capacity を機体の家(profile の置き場)の数から導く — 資格は預かり所の貸与なので pool の pod の家は 0 で、名乗る容量が常に 0 になる")
+          (counterexample "spec を揃える時に labels を宣言の空で上書きする — 手で置かれた会社境界の boundary = company が消え、会社の会話が結べる node が黙って無くなる")
+          (counterexample "spec の書きが断られた拍に lease も書かない — 契約の書き手の登録し直しの前後で node の lease が切れ、走っている手番が LostLeaseExpired になる")]
+       :enforcement ["docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test-adr-doe-agents-012-node-row-is-named-by-the-machine"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_missing_node_row_is_registered_from_the_declaration_and_joined_on_the_next_heartbeat"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_node_registration_refused_is_logged_once_and_retried_each_heartbeat"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_node_spec_is_aligned_to_the_declaration_keeping_labels_and_the_lease_is_written_in_the_same_tick"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_node_spec_alignment_refused_still_writes_the_lease_and_logs_once"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_join_spec_refuses_missing_server_or_token_unknown_flags_and_bad_words"])
      (law turn-events-are-appended-to-the-record-per-tick
        :statement "for_all running job j observed by agentd and for_all tick t at which stream-records reads new material of j: the events e_1..e_n that judgment.deltas-of derives from that material are appended (not replaced) to the status.entries of turn-record(j) within the same tick by agentd.append-entries, each with at = t and a seq strictly greater than every seq already on the row, via one CAS write on the last known image of the row (Conflict ⇒ one re-read and one retry; Refused or missing row ⇒ the events stay in InFlightJob.pending_entries and ride the next write); the row's entries JSON never exceeds TURN_RECORD_ENTRIES_BYTE_BUDGET (the oldest events are dropped first and a single leading kind=system marker with truncated=true and dropped=k replaces them); every appended entry is the JSON of a TurnEntryHeadline (seq, at, kind, toolName?, toolUseId?, bytes, sha256, isError?) derived by judgment.headline-of-body from the body sent to the record service — it carries no text / summary / input / output / model, and its sha256 = sha256 of record-body-bytes-of(body) (the service's identity of the same event); the record service's appendAnswer.highestProducerSeq for the stream of j lands as status.recordedSeq (never decreasing) with status.recordRef = record:<cid>/<streamId>; and the end of the turn drains the remaining material through the same point, then writes state=ended and usage over the appended entries without replacing them"
        :counterexamples
@@ -1291,18 +1305,22 @@
        ;; 反例(挙動): 宣言 → plan → 今日の読み手が同じ束を読む(第 2 の綴りが無い)。
        (setv spec (run (join-spec-of
                          (JoinArgv :items #("--server" "http://acp:8868" "--token-file" "/t/agentd.token"
-                                            "--ownership" "company" "--ownership-proof" "gce-project:p-1"))
+                                            "--ownership" "company" "--ownership-proof" "gce-project:p-1"
+                                            "--capacity" "2"))
                          (JoinDeclaration :tables {"schema" "doeff.agentd-join.v1"
                                                    "agentd" {"node_name" "gcp-0"}
                                                    "record" {"url" "http://record:8874"}})
                          "/state")))
        (assert (isinstance spec JoinSpec))
        (assert (= spec.node-name "gcp-0"))
+       ;; 段 10 lane 10d(R28): node の capacity も同じ束で運ばれ、同じ読み(settings-from-env)が読む。
+       (assert (= spec.capacity 2))
        (setv plan (run (join-plan-of spec)))
        (assert (isinstance plan JoinPlan))
        (setv env (dict plan.env))
        (setv settings (settings-from-env env plan.host-argv))
        (assert (= settings.node-name "gcp-0"))
+       (assert (= settings.node-capacity 2))
        (assert (= settings.backend-kind "headless"))
        (assert (= settings.ownership (Ownership :grade "company" :proof "gce-project:p-1")))
        (assert (is settings.record-enabled True))
@@ -1311,7 +1329,7 @@
        ;; 判断は join.record-sink-of の 1 点(宣言の検・届くかは検めない)。焦点の検は tests/sessionhost_acp_record_deftests.hy。
        (assert (= (len (lfor line join-lines :if (.startswith line "(defk record-sink-of ") line)) 1))
        (setv unsinked (dict (. (run (join-plan-of (run (join-spec-of
-                                                          (JoinArgv :items #("--server" "http://acp:8868" "--token-file" "/t"))
+                                                          (JoinArgv :items #("--server" "http://acp:8868" "--token-file" "/t" "--capacity" "1"))
                                                           (JoinDeclaration :tables {}) "/state"))))
                                env)))
        (setv refused-for "")
@@ -1323,7 +1341,7 @@
        ;; 等級だけ(proof なし)は断る。
        (setv refused False)
        (try
-         (run (join-spec-of (JoinArgv :items #("--server" "http://a" "--token-file" "/t" "--ownership" "company"))
+         (run (join-spec-of (JoinArgv :items #("--server" "http://a" "--token-file" "/t" "--ownership" "company" "--capacity" "1"))
                             (JoinDeclaration :tables {}) "/state"))
          (except [ValueError]
            (setv refused True)))
@@ -1649,6 +1667,27 @@
                    "test-codex-rollout-and-app-server-measure-the-last-response"
                    "test-every-incarnation-arm-puts-the-conversation-identity-in-the-process-env"]]
          (assert (in (+ "(deftest " name) tests) f"R27 の反例の検が無い: {name}")))
+     (deftest test-adr-doe-agents-012-node-row-is-named-by-the-machine
+       ;; R28 の針(構造): node の行の spec の形は judgment の 2 点・join-tick が AcpCreate / AcpPutSpec で名乗る・capacity は
+       ;; join.capacity-of の 1 点で runtime もそれを読む・register-node の文言が agentd の腕に残っていない・契約の写しの node の
+       ;; writers(create / update = agentd・withdraw = acp-scheduling)。反例(挙動)は test_sessionhost_acp.py の 5 本。
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk node-spec-of ") line)) 1) "作る時の spec は node-spec-of の 1 点(R28)")
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk node-spec-declared ") line)) 1) "揃える時の spec は node-spec-declared の 1 点(R28)")
+       (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
+       (assert (any (gfor line agentd-lines (in "(AcpCreate :namespace AGORA-KINDS-NAMESPACE :kind NODE-KIND :resource-id settings.node-name :spec spec)" line))) "行が無ければ agentd が作る(R28)")
+       (assert (any (gfor line agentd-lines (in "(AcpPutSpec :row node :spec declared)" line))) "宣言と違えば agentd が揃える(R28)")
+       (for [line agentd-lines]
+         (assert (not-in "register-node" line) f"node の行を作るのは人の道具ではない(R28): {line}"))
+       (setv join-lines (code-lines (/ ACP-DIR "join.hy")))
+       (assert (= (len (lfor line join-lines :if (.startswith line "(defk capacity-of ") line)) 1) "capacity の読みは capacity-of の 1 点(R28)")
+       (setv runtime-lines (code-lines (/ ACP-DIR "runtime.py")))
+       (assert (any (gfor line runtime-lines (in "join.capacity_of(env.get(CAPACITY_ENV))" line))) "runtime は capacity を join の 1 点で読む(R28)")
+       (setv kinds (json.loads (.read-text (/ (. (Path __file__) parent parent) "contracts" "agora-kinds.json") :encoding "utf-8")))
+       (setv writers (get kinds "kinds" "node" "declaration" "writers"))
+       (assert (= (get writers "create") ["agentd"]) "契約の写しの node の create の書き手は agentd(R28)")
+       (assert (= (get writers "update") ["agentd"]) "契約の写しの node の update の書き手は agentd(R28)")
+       (assert (= (get writers "withdraw") ["acp-scheduling"]) "withdraw は配置 E のまま(R28)"))
      (deftest test-adr-doe-agents-012-interrupts-ride-the-running-turn
        ;; R21 の針(構造): 判断は judgment.hy の 1 点ずつ・配達は agentd.deliver-interrupts の 1 点・agentd は器の作法の語を
        ;; 持たない・claude の headless は stream-json の入力・sessionhost の割り込みの口は mode = interrupt の 1 語。
