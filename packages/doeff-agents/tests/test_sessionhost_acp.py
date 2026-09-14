@@ -719,16 +719,37 @@ def test_charter_with_grant_claude_rides_env_not_disk() -> None:
 
 
 def test_charter_with_grant_codex_places_auth_json_inside_the_home() -> None:
+    # 段 10 lane 10r(agora-redesign #99): ACP は charter に binding を書かない(段 10c)— 借りた codex の
+    # 家は claude と同じく <homes-root>/codex/<account> ちょうどで、auth.json はその家の中に置く。
+    charter: JSONObject = {"session_id": "s", "agent_type": "codex"}
+    rebuilt, auth_file = run(
+        judgment.charter_with_grant(charter, "codex", "a@b", None, '{"tokens": {}}', HOMES)
+    )
+    assert auth_file == f"{HOMES}/codex/a_b/auth.json"
+    assert rebuilt["binding"] == {
+        "kind": "codex",
+        "auth_file": auth_file,
+        "profile_dir": f"{HOMES}/codex/a_b",
+    }
+
+
+def test_charter_with_grant_codex_ignores_a_machine_home_in_the_charter() -> None:
+    # 機体の家(charter の binding の codex_home / profile_dir)は借りた札の家にならない —
+    # 家を charter から読むと、借りた auth.json が機体の codex の家の履歴と設定に混ざる。
     charter: JSONObject = {
         "session_id": "s",
         "agent_type": "codex",
-        "binding": {"kind": "codex", "codex_home": "/bundle"},
+        "binding": {"kind": "codex", "codex_home": "/bundle", "profile_dir": "/machine"},
     }
     rebuilt, auth_file = run(
         judgment.charter_with_grant(charter, "codex", "acct", None, '{"tokens": {}}', HOMES)
     )
     assert auth_file == f"{HOMES}/codex/acct/auth.json"
-    assert rebuilt["binding"] == {"kind": "codex", "auth_file": auth_file, "profile_dir": "/bundle"}
+    assert rebuilt["binding"] == {
+        "kind": "codex",
+        "auth_file": auth_file,
+        "profile_dir": f"{HOMES}/codex/acct",
+    }
 
 
 def test_deltas_of_claude_folds_blocks_and_counts_usage_once_per_message() -> None:
@@ -1148,7 +1169,6 @@ def test_warm_send_of_a_codex_conversation_carries_no_env() -> None:
     charter = charter_job.spec["charter"]
     assert isinstance(charter, dict)
     charter["agent_type"] = "codex"
-    charter["binding"] = {"kind": "codex", "codex_home": "/bundle"}
     world.custody = FakeCustody(auth_jsons={"acct": '{"tokens": {}}'})
     world.acp.put_row(message("m-1", "first"))
     world.acp.put_row(charter_job)
@@ -2668,7 +2688,6 @@ def test_headless_codex_turn_streams_deltas_and_records_command_execution() -> N
     charter = charter_job.spec["charter"]
     assert isinstance(charter, dict)
     charter["agent_type"] = "codex"
-    charter["binding"] = {"kind": "codex", "codex_home": "/bundle"}
     world.custody = FakeCustody(auth_jsons={"acct": '{"tokens": {}}'})
     world.acp.put_row(charter_job)
     world.tick()
