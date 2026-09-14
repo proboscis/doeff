@@ -19,6 +19,8 @@
 
 (require doeff-hy.macros [deftest])
 
+(import base64)
+(import hashlib)
 (import json)
 (import doeff [run])
 (import doeff_agents.sessionhost.acp.effects [
@@ -718,10 +720,12 @@
 (deftest test-attachment-headlines-are-read-and-only-the-matching-event-becomes-a-typed-value
   ;; 判断(純関数): 見出しの形 → #(conversation stream seq mime bytes sha256 name)・出来事 → 型つきの値。
   ;; 見出しと食い違う出来事(mime 違い・sha256 違い・中身なし)は値にしない(呼び手が AttachmentIgnored)。
-  ;; event-of が置く同一性の綴り(sha256 "0" / bytes 8)に見出しを合わせる。
-  (setv digest "0")
+  ;; ⚠ 見出しの bytes / sha256 は**画像の生の byte**(差出人の client の attachments-plan と同じ材料)。
+  ;; 記録の service の出来事が名乗る値(本文の欄の compact JSON を測った物)ではない — 実弾 2026-09-15。
+  (setv digest (.hexdigest (hashlib.sha256 (base64.b64decode PNG-B64))))
+  (setv raw-size (len (base64.b64decode PNG-B64)))
   (setv row (attached-message-row "m-i" CONVERSATION "operator" "見て" OTHER AT
-                                  [(headline-of OTHER "m-i" 1 "image/png" digest "red.png")]))
+                                  [(headline-of OTHER "m-i" 1 "image/png" digest "red.png" raw-size)]))
   (setv headlines (run (message-attachments-of row.spec)))
   (assert (= (len headlines) 1) headlines)
   (assert (= (cut (get headlines 0) 0 4) #(OTHER "m-i" 1 "image/png")) headlines)
@@ -732,13 +736,17 @@
                                       "画像"]))
   (assert (= (run (message-attachments-of broken.spec)) #()) "形の外は落とす")
   ;; 見出しと合う出来事だけが型つきの値になる。
+  ;; 記録の出来事は本文の欄を測った bytes / sha256 を名乗る(見出しとは別の値)— それでも通ることを見る。
   (setv good (event-of 2 "m-i" 1 AT "attachment"
-                       {"mime" "image/png" "data" PNG-B64 "name" "red.png" "bytes" 8}))
+                       {"mime" "image/png" "data" PNG-B64 "name" "red.png" "bytes" 999}))
   (setv carried (run (attachment-of #(good) (get headlines 0))))
   (assert (isinstance carried TurnAttachment) carried)
   (assert (= #(carried.mime carried.data carried.name) #("image/png" PNG-B64 "red.png")) carried)
+  ;; 型つきの値が名乗る大きさと指紋も**生の byte**の物(出来事の 999 を写さない)。
+  (assert (= carried.bytes raw-size) carried)
+  (assert (= carried.sha256 digest) carried)
   ;; sha256 が食い違えば値にしない(中身を発明しない)。
-  (setv forged (headline-of OTHER "m-i" 1 "image/png" (* "b" 64) "red.png"))
+  (setv forged (headline-of OTHER "m-i" 1 "image/png" (* "b" 64) "red.png" raw-size))
   (setv forged-headlines (run (message-attachments-of
                                 (. (attached-message-row "m-i" CONVERSATION "operator" "見て" OTHER AT [forged]) spec))))
   (assert (is (run (attachment-of #(good) (get forged-headlines 0))) None) "見出しと食い違う中身は運ばない")
@@ -751,6 +759,34 @@
              {"prompt" "x" "attachments" [carried]})))
 
 
+(deftest test-the-headline-is-measured-on-the-raw-image-not-on-the-stored-event
+  ;; 実弾 2026-09-15 02:39(本番の e2e chat.send-image): 見出しの bytes / sha256 は差出人が測る**画像の生の byte**
+  ;; なのに、記録の service の出来事が名乗る値(本文の欄の compact JSON を測った物)と比べていた。
+  ;; ⇒ 必ず食い違い、本番の log に『attachment 1 of message … could not be read from the record service』が出て、
+  ;; 画像が 1 枚も CLI へ渡らないまま手番が条件なしで終わっていた(黙って画像だけが落ちた)。
+  ;; この検は「出来事が**別の値**を名乗っても、生の byte が見出しと合えば通る」ことを固定する。
+  (setv raw (base64.b64decode PNG-B64))
+  (setv digest (.hexdigest (hashlib.sha256 raw)))
+  (setv row (attached-message-row "m-r" CONVERSATION "operator" "見て" OTHER AT
+                                  [(headline-of OTHER "m-r" 1 "image/png" digest "red.png" (len raw))]))
+  (setv headlines (run (message-attachments-of row.spec)))
+  (assert (= (len headlines) 1) headlines)
+  ;; 記録の service が名乗る bytes / sha256 は本文の欄を測った別の値(本番と同じ形)。
+  (setv stored (event-of 7 "m-r" 1 AT "attachment"
+                         {"mime" "image/png" "data" PNG-B64 "name" "red.png"
+                          "bytes" (len (record-body-bytes {"data" PNG-B64}))}))
+  (assert (!= stored.bytes (len raw)) "この検の前提: 出来事の値と生の byte は別物")
+  (setv carried (run (attachment-of #(stored) (get headlines 0))))
+  (assert (isinstance carried TurnAttachment) #(carried stored.bytes (len raw)))
+  (assert (= #(carried.bytes carried.sha256) #((len raw) digest)) carried)
+  ;; 反例: 生の byte が見出しと食い違う中身は運ばない(中身を発明しない)。
+  (setv other (event-of 8 "m-r" 1 AT "attachment" {"mime" "image/png" "data" "AAAA"}))
+  (assert (is (run (attachment-of #(other) (get headlines 0))) None) "生の byte が違えば運ばない")
+  ;; 反例: base64 として解けない綴りも運ばない。
+  (setv broken (event-of 9 "m-r" 1 AT "attachment" {"mime" "image/png" "data" "!!!not-base64!!!"}))
+  (assert (is (run (attachment-of #(broken) (get headlines 0))) None) "解けない綴りは運ばない"))
+
+
 (deftest test-the-first-turn-carries-the-attachment-to-the-substrate-as-a-typed-value
   ;; agentd の 1 点(mail-bodies-by-ref): 添付の見出しを持つ郵便は本文と同じ 1 回の stream の読みで中身も拾い、
   ;; 器へは型つきのまま渡る(agentd は CLI の綴りを組まない)。
@@ -758,11 +794,12 @@
   (setv digest (* "a" 64))
   (setv (get world.record-service.stored #(OTHER "m-i" 1))
         {"producerSeq" 1 "at" AT "kind" "attachment" "mime" "image/png" "data" PNG-B64 "name" "red.png"})
-  (setv stored-digest (record-body-sha256 {"data" PNG-B64}))
-  (setv stored-bytes (len (record-body-bytes {"data" PNG-B64})))
+  ;; 見出しは差出人が測る**生の byte**(記録の service が名乗る値ではない — 実弾 2026-09-15)。
+  (setv raw (base64.b64decode PNG-B64))
+  (setv stored-digest (.hexdigest (hashlib.sha256 raw)))
   (.put-row world.acp (attached-message-row "m-i" CONVERSATION "operator" "見て" OTHER (- AT 500)
                                             [(headline-of OTHER "m-i" 1 "image/png" stored-digest "red.png"
-                                                          stored-bytes)]))
+                                                          (len raw))]))
   (.put-row world.acp (bound-row "j-i" ["m-i"] "acct" None))
   (.tick world 0)
   (assert (in #(OTHER "m-i") world.record-service.stream-reads) world.local.logs)
@@ -781,11 +818,11 @@
   (setv world.sessions.attachments-ignored "this substrate cannot carry attachments")
   (setv (get world.record-service.stored #(OTHER "m-j" 1))
         {"producerSeq" 1 "at" AT "kind" "attachment" "mime" "image/png" "data" PNG-B64})
-  (setv stored-digest (record-body-sha256 {"data" PNG-B64}))
-  (setv stored-bytes (len (record-body-bytes {"data" PNG-B64})))
+  (setv raw (base64.b64decode PNG-B64))
+  (setv stored-digest (.hexdigest (hashlib.sha256 raw)))
   (.put-row world.acp (attached-message-row "m-j" CONVERSATION "operator" "見て" OTHER (- AT 500)
                                             [(headline-of OTHER "m-j" 1 "image/png" stored-digest None
-                                                          stored-bytes)]))
+                                                          (len raw))]))
   (.put-row world.acp (bound-row "j-j" ["m-j"] "acct" None))
   (.tick world 0)
   ;; 条件は手番の途中の事実として in-flight に積まれ、手番の終わりに Ended へ乗る(InputUnavailable と同じ路)。
