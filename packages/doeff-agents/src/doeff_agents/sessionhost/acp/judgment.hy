@@ -126,6 +126,7 @@
   NEXT-ARM-RESUME
   NEXT-ARM-SEND
   NODE-GONE
+  OWNERSHIP-GRADE-COMPANY
   PHASE-BOUND
   PHASE-ENDED
   PHASE-RUNNING
@@ -1794,15 +1795,24 @@
   (tuple out))
 
 
-(defk profile-rows-held [active homes]
-  {:pre [(: active tuple) (: homes tuple)]
+(defk profile-rows-held [active homes settings]
+  {:pre [(: active tuple) (: homes tuple) (: settings AgentdSettings)]
    :post [(: % tuple)]}
   "生きている profile の行のうち、この機体に家(config dir)の在る profile の行 — 行の順のまま。
    判断はここ 1 点(段 8e lane 4j): 空なら観測の腕は usage を読まない(pool の pod は profile を
    1 つも持たない — 読み口が落ちる形で知るのではなく、家の在否で先に決める)。家は spec.name で
-   引く(登録簿の名と契約の行の名は同じ綴り)。"
+   引く(登録簿の名と契約の行の名は同じ綴り)。
+   段 10 lane 10y(agora-redesign #110・operator 指示 2026-09-09「会社 profile の API 呼び出しは会社所有の機体だけ」):
+   宣言の所有の等級(join で検めた settings.ownership)が company でない機体(personal・未宣言)は、spec.boundary = company の
+   行を家が在っても持たない — usage を読む列にも log にも会社の口座が現れない。軸は機体の所有で、置き場(place)では
+   ない(会社 Mac は place personal でも所有は company で、会社の口座を今日どおり観測する)。provider を呼んでよいかの
+   最後の判定は今日どおり agentcli の葉(ReadProfileUsage の断り)が持つ。"
   (setv present (sfor home homes :if home.present home.name))
-  (tuple (lfor row active :if (in (str (.get row.spec "name" row.resource-id)) present) row)))
+  (setv company-owned (and (is-not settings.ownership None) (= settings.ownership.grade OWNERSHIP-GRADE-COMPANY)))
+  (tuple (lfor row active
+               :if (and (in (str (.get row.spec "name" row.resource-id)) present)
+                        (or company-owned (!= (.get row.spec "boundary") OWNERSHIP-GRADE-COMPANY)))
+               row)))
 
 
 (defk usage-by-profile [outcomes]

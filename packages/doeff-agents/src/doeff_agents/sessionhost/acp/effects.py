@@ -374,6 +374,10 @@ JOIN_SESSION_HOOKS_DEFAULT = "inherit"
 #: declared = 宣言のみ(検なし — 機体の所有の判定は別の座が持つ)。
 OwnershipGrade = Literal["company", "personal"]
 OWNERSHIP_GRADES: frozenset[OwnershipGrade] = frozenset({"company", "personal"})
+#: 会社の綴り(段 10 lane 10y・agora-redesign #110): 機体の所有の等級(OwnershipGrade)と口座の置き場
+#: (profile.spec.boundary・AgentdPlace)の company は契約で同じ綴り。会社の口座の行を観測してよい機体かの
+#: 判断(judgment.profile-rows-held)が両側をこの 1 語で読む。
+OWNERSHIP_GRADE_COMPANY: OwnershipGrade = "company"
 OWNERSHIP_PROOF_GCE_PREFIX = "gce-project:"
 OWNERSHIP_PROOF_DECLARED = "declared"
 
