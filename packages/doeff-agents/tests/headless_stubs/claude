@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """claude の headless(print mode・stream-json の入出力)の替え玉 — 検の PATH に置く。
 
-実物と同じ形の行だけを出す(実測 2026-09-13・conformance/interrupt-physics.md): stdin は
+実物と同じ形の行だけを出す(実測 2026-09-13 / 2026-09-14・conformance/interrupt-physics.md): stdin は
 ``--input-format stream-json`` の user の行 ``{"type":"user","message":{"role":"user","content":…}}``
 を 1 行ずつ読み、1 行 = 1 手番: system/init(session_id)・stream_event の text_delta・
 assistant(usage つき)・result。result の後も process は生きて次の行を待ち(温かい)、stdin の
@@ -10,11 +10,23 @@ EOF で降りる。DOEFF_HEADLESS_STUB_DELAY 秒だけ result の前で待つ(�
 (実物: CLI が次の tool の境界で注入する)— その本文に反応した assistant の行を出してから
 result(num_turns が増える)。DOEFF_HEADLESS_STUB_TURNS_BEFORE_EXIT = N なら N 手番目の result の後に
 自分で降りる(SIGINT で止めた・idle で退いた器の再現 — 次の手番は --resume で起こし直される)。API は撃たない。
+
+段 10 lane 10n(実測 2026-09-14): user の行に ``uuid`` が在れば ``command_lifecycle`` でその運命を名乗る
+(queued → started → completed / cancelled)。DOEFF_HEADLESS_STUB_TOOL_SECONDS = T > 0 は「T 秒の道具の途中」
+= その間は境界が来ないので注入の行は queued のまま(started を出さない)。その間の
+``{"type":"control_request","request":{"subtype":"interrupt"}}`` は道具を止める: control_response(success・
+still_queued = queued のままの注入の uuid)→ user の "[Request interrupted by user for tool use]" → result
+error_during_execution(is_error)→ 元の手番の uuid は cancelled → 注入の行を次の手番として走らせる
+(started → init → 反応 → result → completed)。道具が無ければ(T = 0)DELAY の後の境界で畳む(started →
+反応 → completed → result・result は 1 つ)。
 """
 import json
 import os
 import select
 import sys
+
+USAGE = {"input_tokens": 3, "output_tokens": 7, "cache_creation_input_tokens": 1,
+         "cache_read_input_tokens": 2}
 
 
 def _opt(args, name):
@@ -26,8 +38,13 @@ def _emit(obj):
     sys.stdout.flush()
 
 
-def _read_user_line(timeout):
-    """stdin の次の user の行の本文(timeout 秒の内に無ければ None・EOF は ""）。"""
+def _lifecycle(sid, uuid, state):
+    if uuid:
+        _emit({"type": "command_lifecycle", "command_uuid": uuid, "state": state, "session_id": sid})
+
+
+def _read_record(timeout):
+    """stdin の次の行の record(timeout 秒の内に無ければ None・EOF は "")。"""
     while True:
         ready, _, _ = select.select([sys.stdin], [], [], timeout)
         if not ready:
@@ -39,12 +56,15 @@ def _read_user_line(timeout):
             record = json.loads(line)
         except ValueError:
             continue
-        if record.get("type") != "user":
-            continue
-        content = record.get("message", {}).get("content")
-        if isinstance(content, list):
-            content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
-        return str(content or "")
+        if isinstance(record, dict):
+            return record
+
+
+def _user_text(record):
+    content = record.get("message", {}).get("content")
+    if isinstance(content, list):
+        content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+    return str(content or "")
 
 
 def _text_blocks(sid, text):
@@ -55,31 +75,70 @@ def _text_blocks(sid, text):
                "session_id": sid})
 
 
-def _turn(sid, prompt, resumed):
+def _assistant(sid, message_id, text):
+    _text_blocks(sid, text)
+    _emit({"type": "assistant", "session_id": sid,
+           "message": {"id": message_id, "role": "assistant", "model": "stub-model",
+                       "content": [{"type": "text", "text": text}], "usage": USAGE}})
+
+
+def _result(sid, text, turns):
+    _emit({"type": "result", "subtype": "success", "is_error": False, "result": text,
+           "session_id": sid, "usage": USAGE, "num_turns": turns})
+
+
+def _turn(sid, prompt, uuid, resumed, carried=False):
+    """1 手番。戻り = 次の手番として走らせる (本文, uuid)(停止の合図で注入の行が生き残った時)か None。
+    carried = 停止の合図で生き残った注入の行の手番(実物: 短い返答 — 道具も待ちも無い)。"""
+    _lifecycle(sid, uuid, "started")
     _emit({"type": "system", "subtype": "init", "session_id": sid, "model": "stub-model",
            "cwd": os.getcwd(), "resumed": resumed})
     text = "echo: " + prompt.strip().splitlines()[0] if prompt.strip() else "echo:"
-    _text_blocks(sid, text)
-    delay = float(os.environ.get("DOEFF_HEADLESS_STUB_DELAY", "0") or "0")
+    delay = 0.0 if carried else float(os.environ.get("DOEFF_HEADLESS_STUB_DELAY", "0") or "0")
+    tool = 0.0 if carried else float(os.environ.get("DOEFF_HEADLESS_STUB_TOOL_SECONDS", "0") or "0")
     turns = 1
-    usage = {"input_tokens": 3, "output_tokens": 7, "cache_creation_input_tokens": 1,
-             "cache_read_input_tokens": 2}
-    _emit({"type": "assistant", "session_id": sid,
-           "message": {"id": "msg_stub", "role": "assistant", "model": "stub-model",
-                       "content": [{"type": "text", "text": text}], "usage": usage}})
+    _assistant(sid, "msg_stub", text)
+    queued = []  # 境界を待つ注入の (本文, uuid)
     if delay:
-        injected = _read_user_line(delay)
-        if injected:
-            # 割り込みの本文: 走っている手番の中でそれに反応する(実物の CLI と同じ順)
+        # 道具の途中(tool 秒)は境界が来ない: 注入は queued のまま、停止の合図で止まる。
+        deadline_tool = tool
+        while True:
+            wait = deadline_tool if deadline_tool > 0 else delay
+            record = _read_record(wait)
+            if record is None or record == "":
+                break
+            if record.get("type") == "user":
+                queued.append((_user_text(record), record.get("uuid")))
+                _lifecycle(sid, record[
+                    "uuid"] if record.get("uuid") else None, "queued")
+                if deadline_tool > 0:
+                    continue
+                break
+            if record.get("type") == "control_request" and \
+                    record.get("request", {}).get("subtype") == "interrupt":
+                still = [u for _, u in queued if u]
+                _emit({"type": "control_response",
+                       "response": {"subtype": "success", "request_id": record.get("request_id"),
+                                    "response": {"still_queued": still}}})
+                _emit({"type": "user", "session_id": sid,
+                       "message": {"role": "user", "content": [
+                           {"type": "text", "text": "[Request interrupted by user for tool use]"}]}})
+                _emit({"type": "result", "subtype": "error_during_execution", "is_error": True,
+                       "result": "", "session_id": sid, "usage": USAGE, "num_turns": turns,
+                       "errors": ["[ede_diagnostic] stop_reason=tool_use"]})
+                _lifecycle(sid, uuid, "cancelled")
+                return queued[0] if queued else None
+        # 境界: 畳む(実物: 次の tool の境界で注入を model に見せる)
+        for injected, injected_uuid in queued:
             turns += 1
+            _lifecycle(sid, injected_uuid, "started")
             reaction = "interrupted: " + injected.strip().splitlines()[0]
-            _text_blocks(sid, reaction)
-            _emit({"type": "assistant", "session_id": sid,
-                   "message": {"id": "msg_stub_2", "role": "assistant", "model": "stub-model",
-                               "content": [{"type": "text", "text": reaction}], "usage": usage}})
+            _assistant(sid, "msg_stub_2", reaction)
+            _lifecycle(sid, injected_uuid, "completed")
             text = reaction
-    _emit({"type": "result", "subtype": "success", "is_error": False, "result": text,
-           "session_id": sid, "usage": usage, "num_turns": turns})
+    _result(sid, text, turns)
+    _lifecycle(sid, uuid, "completed")
+    return None
 
 
 def main():
@@ -91,15 +150,25 @@ def main():
     resumed = "--resume" in args
     if "--input-format" not in args:
         # 旧の作法(本文 + EOF)— 段 8 lane 4x より前の呼び手の互換
-        _turn(sid, sys.stdin.read(), resumed)
+        _turn(sid, sys.stdin.read(), None, resumed)
         return 0
     exit_after = int(os.environ.get("DOEFF_HEADLESS_STUB_TURNS_BEFORE_EXIT", "0") or "0")
     turns = 0
+    carried = None
     while True:
-        prompt = _read_user_line(None)
-        if prompt == "" or prompt is None:
-            return 0
-        _turn(sid, prompt, resumed)
+        was_carried = carried is not None
+        if carried is not None:
+            prompt, uuid = carried
+            carried = None
+        else:
+            record = _read_record(None)
+            if record == "" or record is None:
+                return 0
+            if record.get("type") != "user":
+                continue
+            prompt, uuid = _user_text(record), record.get("uuid")
+            _lifecycle(sid, uuid, "queued")
+        carried = _turn(sid, prompt, uuid, resumed, was_carried)
         resumed = True
         turns += 1
         if exit_after and turns >= exit_after:

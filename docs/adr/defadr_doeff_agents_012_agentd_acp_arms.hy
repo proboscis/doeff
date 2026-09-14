@@ -251,6 +251,30 @@
           :labels base.labels :payload base.payload :spec spec :status base.status))
 
 
+(defclass HeadlessWorld [World]
+  "backend = headless の世界(events file が実況の正本 — R29 の反例は CLI の行を読む)。"
+  (defn #^ None __init__ [self]
+    (.__init__ (super))
+    (setv self.settings (AgentdSettings :node-name "mac-1" :homes-root "/homes"
+                                        :backend-kind "headless" :stream-capability "events"))
+    (setv self.sessions (FakeSessions :agent-type "claude" :backend-kind "headless" :events-root "/events"))))
+
+
+(defn #^ AcpRow turn-row-timed [#^ str job-id #^ str subject #^ str message-id #^ int created-at-ms
+                                #^ int escalation-seconds]
+  "turn-row + charter.interruptEscalationSeconds(R29 — 期限は charter の値ちょうど)。"
+  (setv base (turn-row job-id subject message-id created-at-ms))
+  (setv #^ JSONObject spec (dict base.spec))
+  (setv raw-charter (get spec "charter"))
+  (assert (isinstance raw-charter dict))
+  (setv #^ JSONObject charter (dict raw-charter))
+  (setv (get charter "interruptEscalationSeconds") escalation-seconds)
+  (setv (get spec "charter") charter)
+  (AcpRow :namespace base.namespace :key base.key :kind base.kind :resource-id base.resource-id
+          :version base.version :generation base.generation :created-at-ms created-at-ms
+          :labels base.labels :payload base.payload :spec spec :status base.status))
+
+
 (defn #^ AcpRow message-row [#^ str message-id #^ str body]
   (AcpRow :namespace AGORA-KINDS-NAMESPACE
           :key f"{AGORA-KINDS-NAMESPACE}:{MESSAGE-KIND}:{message-id}"
@@ -446,6 +470,7 @@
      (rule R26 "停止で子を黙って道連れにしない(段 10 lane 10h 便 2・agora-redesign #84): launchd の bootout / kickstart は process group ごと殺すので headless の子 process(pipe の子)は host と共に死ぬ — pipe から切り離して拾い直す形(detach)は取らない(親を失った process は器として使えない: events file の書き手も Dialogue の状態も host に在る)。代わりに host は TERM の 1 度目に accept loop を生かしたまま別 thread(host.hy graceful-stop)で (1) 登録された停止の hook(host.register-shutdown-hook — entry.py が agentd の AgentdRun.close_for_stop を登録する: loop を止めて今の拍を有界に待ち、memory の走っている job を agentd.close-jobs-for-stop で 1 つずつ記録の腕〔残りの材料・turn-record ended〕と条件 AgentdRestart〔judgment.restart-condition-of の 1 点 — node・理由・session・時刻〕で Ended・status frame ended・札の返却。session は片付けない)(2) headless の行の停止の腕(headless.hy stop-headless-rows: 判断 headless_protocol.stop_verdict の 1 点で手番の途中の非終端の行だけ stopped + cause cancelled〔reason = host の停止と信号〕+ session_cancelled・idle の温かい行は触らない・登記の全 process を HeadlessKillAll で段ごとに並列の猶予〔EOF → TERM → KILL〕で降ろす)を走らせ、stderr に数を 1 行ずつ書き、自分に同じ信号を撃ち直す(実の信号 — _thread.interrupt_main は accept の syscall を起こさない)。2 度目の TERM は SystemExit(0) で finally(lease の釈放)へ。SIGKILL には手が無い — 次の起動の復帰(R25)が拾う。Mac の agentd の入れ替えは走っている job が 0 の拍に launchctl の bootout → bootstrap(TERM の経路)で行い、kickstart -k(即時)は使わない。ACP の宛先(実況の push・行の読み書き・watch の全部)は宣言(join の --server / [agentd].server → ACP_DAEMON_URL)ちょうどで、handlers.py に 127.0.0.1:8868 の既定値は無い(runtime.real_dispatchers は宣言の無い env を AgentdPreflightError で断る)。")
      (rule R27 "会話は自分で圧縮する — 閾値は会話の宣言・実測は agentd・腕は履歴からの再開(段 10f 便 2・agora-redesign #82・operator 2026-09-14 逐語 \"that routing agent should compact itself with some threshold\"): 会話の行の status.agent.compactAt(0〜100 の整数・任意・書き手 agora-conversation・契約 agora-kinds.json)は文脈の使用率の閾値。agentd は手番の終わり(settle-record と interrupt-job — 記録の腕)に材料の末尾から文脈の大きさを測り(judgment の deltas-of が DeltaBatch.context = {tokens, window} を組む: claude = 最後の assistant の message の usage の input + cacheRead + cacheWrite + output と result の modelUsage[その model].contextWindow / codex = token_count の last_token_usage〔app-server は tokenUsage.last〕の input + output と model_context_window〔modelContextWindow〕)、judgment.context-percent-of で %(切り捨て・上限 100・窓が無ければ None = 測れない)にして session ごとに AgentdState.context_by_session へ置く(with-context-percent — memory の cache・再起動で消え次の手番の終わりに測り直す)。claim の腕は候補の session が在る時だけ会話の行を鍵で 1 回読み(conversation-key-of・AcpGetRow)、compact-at-of と context-percent-for から judgment.compaction-due(宣言あり ∧ 実測あり ∧ 実測 ≥ 閾値)を求め、next-arm-for-job の 5 つ目の引数 compact に渡す。腕: compact ∧ 候補あり ∧ 手番の途中でない → rehydrate(ArmChoice.compacts = True・生きている候補は片付ける — 温かい cache を捨てて記録の service の履歴を縮めて畳むのが圧縮の意味)/ 手番の途中(backend が生)は defer が先 / 候補なしは launch。compacts の拍に計器 agentd_compactions_total{conversation, agentJobId, sessionId} と log 1 行(retire-reason-of が理由を名乗る)。turn-record の usage には書かない(契約に欄が無い — 耐久にする時は契約の便で contextTokens / contextWindow を足してから)。追補 3(依頼者 2026-09-14 17:1x・実測「agent が自分の会話 id を答えられず session の UUID を答えた」): 起こす手番(launch / resume / rehydrate)の charter.session_env(host の launch-spawn-env が非 auth の overlay として process の env に混ぜる)に AGORA_CONVERSATION_ID(会話の id = 帰属の conversationId)と AGORA_SEAT_OPENER(claim の腕が読んだ会話の行の spec.opener の逐語・読めなければ置かない)を置く — 1 点 judgment.charter-with-conversation-env(incarnation-charter-of が呼ぶ)。`ai tell` / `ai forward` / `ai artifact put` の差出人・著者はこの会話 id ちょうど(便 3 = CLI が読む側)。")
      (rule R28 "node の行は機体が自分で名乗る(段 10 lane 10d・agora-redesign #85・依頼者の回答 問 A = 案 1 — 既知の形 = k8s の kubelet が Node を自分で登記する): agentd は heartbeat の腕(agentd.join-tick)で、自分の名の生きた node の行が無ければ AcpCreate で作り、在れば spec を宣言へ揃える(AcpPutSpec — engine の SpecApplied は status の軸を触らない)。spec の形は judgment.node-spec-of(作る時: name・labels 空・capacity・streamCapability)/ node-spec-declared(揃える時: labels は行のまま — 宣言の外の名乗り〔会社境界の boundary 等〕を運ぶ)の 1 点。capacity は機体の宣言 file の [agentd].capacity(flag --capacity)ちょうどで join.capacity-of が読み、無い・読めない agentd は参加しない(runtime.settings_from_env)— 家(profile の置き場)の数から導かない(資格は預かり所の貸与)。作れない・揃えられない拍(書き手の断り等)は1 度だけ log して次の heartbeat で撃ち直し、揃えられなくても lease は書く(参加の生存を spec の書きの成否に結ばない)。契約 agora-kinds.json の node の writers.create / update = agentd(withdraw は acp-scheduling)。2026-09-13 までは仮の道具 register-node(札 acp-scheduling)を人が撃ち、pod の名が変わるたびに手で作り直し、pool の capacity 0 は CR の註の写しだった(実測 #85)。")
+     (rule R29 "割り込みの約束 = 期限までに model が読む(段 10 lane 10n・agora-redesign #93・operator 2026-09-14 逐語 \"メッセージについてはキューするか割り込みするかっていうオプションがあるはずなのに、キューしか実装されてないんじゃないかっていう疑いがあって、ちゃんと割り込みできるように設計してほしい\"・既知の形 = cooperative cancel → hard cancel の 2 段・actor への signal): (1) 注入の行の名 = Message の id — agentd は SessionInterject の ref に Message の id を渡し、host は session.send の params.ref を器へ運び、claude の Dialogue.inject は user の行の最上位の uuid に写す(実測 conformance/interrupt-physics.md 2026-09-14: CLI は command_lifecycle でその綴りの運命を名乗る — queued / started〔model が読む拍〕/ completed / cancelled / discarded / refused。uuid は UUID の形でなくてよい)。(2) 読んだ証拠 = 材料の中の command_lifecycle started(claude)/ 止めた後の turn/started(codex — 注入の段が無く名も無いので未読を全部)で、judgment.claude-deltas-of / codex-event-deltas-of が kind system の entry と DeltaBatch.interrupt-reads にし、agentd.stream-records が judgment.interrupt-reads-of の 1 点で memory に写す。『注入の後に assistant の出来事が在る』は証拠にしない(実測: 道具の無い生成の途中の注入は畳まれず、次の手番になる — 偽陽性)。(3) 期限 = job の charter.interruptEscalationSeconds ちょうど(judgment.escalation-seconds-of-charter の 1 点・依頼者の追補 2026-09-14: 方策の行の値を Messaging の Plan.charterFor が会話の宣言で重ねて写す)— agentd は方策の行も会話の行も読まず、code に既定の定数を置かない。無い job は注入だけにして、渡した印と同じ 1 回の書きで条件 InterruptEscalationUndeclared を行に足す。(4) 注入から期限が経って読んだ証拠も止めた印も無い id が在れば(judgment.interrupts-due-for-escalation の 1 点)agentd.settle-interrupts が SessionEscalate(session.escalate)を 1 度出し、未読の id 全部に止めた時刻の印。host の headless-escalate-program は Dialogue.escalate の 1 点で判断(queued の注入が無い・既に出して答え待ち・手番が走っていない → 型付きに断る)、claude = control_request interrupt・codex = 出す物が無い(inject が turn/interrupt で止めて渡す)・tui = 断る。(5) 停止の合図の後の result(is_error・error_during_execution — interrupted という subtype は無い)は止めた段の終わりで手番の終わりではない: ClaudeDialogue は control_response の still_queued に注入の uuid が名指されていれば result を飲み(in_flight のまま・CLI が注入の行を同じ session の次の手番として即座に走らせる — 実測 6 ms・codex の inject と同じ扱い)、無ければ interrupted として報告する。停止の合図を出していない result の時点で queued のままの注入も同じ(CLI が次の手番として走らせる)— 走らずに終わった(cancelled / discarded / refused)拍に手番の終わり。agentd の deltas-of は control_response(still_queued)を kind system の entry にし、同じ材料の続く is_error の result も kind system(誤りではない)。(6) 印は行の status.interruptsRead {id: 証拠の seq} / status.interruptsEscalated {id: ms}(書き手 agentd・additive・append-only の map — judgment.interrupt-marks-status-of の 1 点)へ agentd.record-interrupt-marks が CAS で写し、断られた拍は memory の dirty で持ち越す。拾い直し(recover-job)は行の interruptsDelivered − interruptsRead − interruptsEscalated を拾い直した時刻から数える(judgment.recovered-interrupts-of)。(7) 受け取りは watch: AcpWatchSse が changed で即座に拍を起こし、同じ拍の window の読み直しが interrupts を cache に載せ、deliver-interrupts が同じ拍で渡す(拍の周期は保険)。(8) node の status.capabilities[kind].interrupt = steer-then-stop(claude)| stop(codex)(effects.AGENT-INTERRUPT-CAPABILITY・契約 agora-kinds.json)— 面の文言はこれに従う。")
      (rule R10 "session は会話の資源・job は手番(温かい session・設計 17.4): 会話 → 生きている session の対応は行(自分が claim した同じ subject の agent-job の sessionHandle)と器の現況から導き、Bound の job の起こし方は judgment.hy の next-arm-for-job(閉語彙 effects.NextArm = launch | send | resume | rehydrate | defer — 家と機体の扱いは R20)の 1 点で決める — 同じ会話の生きて idle な session が在れば launch せず session.send(awaiting)だけ、sessionHandle はその session を指し、turn-record は手番ごと。手番の終わりは器の lifecycle multi_turn(launch.hy の閉語彙に足した語)で policy.hy の monitor が既存の turn-end の連言から行の turn_ended_at に刻み、agentd は job-step-of の turn-end(turn_ended_at > 手番の始まりの下限 ∧ 記録の進み)で読む — status は倒さず session は生かす。idle の寿命は AgentdSettings.session_idle_ttl_seconds の 1 点で、超過・Withdrawn・node の退役で session.cleanup。計器 agent-job-to-send は create → send のまま(温かい path で p99 < 2 秒)。")]
   :laws
     [(law interrupts-ride-the-running-turn-and-are-recorded-on-the-row
@@ -462,6 +487,30 @@
                      "packages/doeff-agents/tests/test_sessionhost_headless.py::test_headless_process_claude_inject_reaches_the_running_turn"
                      "packages/doeff-agents/tests/test_sessionhost_headless.py::test_codex_dialogue_inject_interrupts_then_starts_the_next_turn_as_one_turn"
                      "packages/doeff-agents/tests/test_sessionhost_headless.py::test_host_headless_claude_interrupt_mode_reaches_the_running_turn"])
+     (law interrupts-are-read-within-the-deadline-or-the-turn-is-stopped
+       :statement "for_all Running job j run by this agentd and interrupt mi handed by SessionInterject(body(mi), ref = mi): (a) the CLI names mi's fate by command_lifecycle(mi) and read(mi) := the seq of the first `started` (claude) or of the first turn/started after the hand-over (codex), written to status.interruptsRead[mi]; (b) if charter(j).interruptEscalationSeconds = T is declared and now − injected(mi) ≥ T·1000 with no read(mi) and no escalated(mi), exactly one SessionEscalate(session(j)) is sent and status.interruptsEscalated[m] := now for every unread m; (c) if T is undeclared, no signal is ever sent and conditions(j) ∋ InterruptEscalationUndeclared; (d) after the signal, the CLI's result that ends the stopped stage is not a turn end while still_queued ∋ mi — the injected line runs as the next CLI turn of the same session and j stays Running; (e) agentd reads T from the charter only and holds no default"
+       :counterexamples
+         [(counterexample "『注入の後に assistant の出来事が在る』を読んだ証拠にする形: 道具の無い生成の途中に注入した行は畳まれず、assistant は注入と無関係の本文を出してから result になる(実測 2026-09-14 第 1 走)— 読んでいないのに『読んだ』と印が付き、停止の合図が出ない。証拠は CLI が名乗る command_lifecycle started だけ")
+          (counterexample "注入の行に uuid を付けない形(今日の inject): CLI は lifecycle を名乗らず、読んだ拍が判らない — 期限の判断が『時間が経った』しか持たず、境界で読まれた直後の手番を止めてしまう")
+          (counterexample "期限の既定を agentd の code に置く形(既定 20): 方策の定義点が方策の行と code の 2 つになり、方策を変えても機体ごとに古い既定で止める。charter に無い job は注入だけにして条件で名乗る")
+          (counterexample "agentd が方策の行(delivery-policy)や会話の行を読んで期限を決める形: 判断の点が Messaging の charterFor と agentd の 2 つに割れ、会話の宣言の重ね方が 2 か所で食い違う。運搬路は charter の 1 本")
+          (counterexample "停止の合図の後の result(is_error)を手番の終わりとして報告する形: host が turn_ended_at を刻み agentd が job を Ended にし、注入の行の手番(INTERRUPTED-ACK)が誰の job でもない手番になる(実測: 停止から 6 ms で次の手番が走る)。still_queued に名指された注入が在れば result は飲む")
+          (counterexample "still_queued を読まずに result を常に飲む形: abort の瞬間に畳みの途中だった注入は次の手番にならず(bundle の記述)、host は永久に手番の途中のまま。答えを読んで、生き残りが無ければ interrupted で終える")
+          (counterexample "停止の合図を拍ごとに撃ち直す形: control_request は手番ごとに 1 度で足りる(queued の注入を全部次の手番に運ぶ)— 二度目は次の手番(注入の行の手番)を止めてしまう。合図は session に 1 つ・答え待ちの間は出さない")
+          (counterexample "codex に停止の合図を出す形: 注入の段が無く inject が turn/interrupt で既に止めている — 二度目の turn/interrupt は注入の行の turn を止める。codex の能力は stop で、読んだ証拠は turn/started")
+          (counterexample "interrupts を拍の周期(transcript の周期)で polling する形: 載せてから注入まで拍の分だけ遅れる。watch の changed で拍を起こし、同じ拍で渡す(目標 1 秒以内)")]
+       :enforcement ["docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test-adr-doe-agents-012-interrupts-are-read-within-the-deadline"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_interrupt_is_injected_with_the_message_id_as_its_name_and_read_at_the_boundary_is_recorded"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_interrupt_unread_past_the_deadline_escalates_once_and_the_next_turn_carries_it"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_interrupt_without_a_declared_deadline_is_injected_only_and_names_the_condition"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_codex_interrupt_is_read_at_the_turn_started_after_the_stop"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_interrupt_judgments_are_pure"
+                     "packages/doeff-agents/tests/test_sessionhost_headless.py::test_claude_dialogue_escalates_an_unread_injection_and_the_next_turn_carries_it"
+                     "packages/doeff-agents/tests/test_sessionhost_headless.py::test_claude_dialogue_escalation_without_survivors_ends_the_turn_as_interrupted"
+                     "packages/doeff-agents/tests/test_sessionhost_headless.py::test_claude_dialogue_keeps_the_turn_while_an_injection_is_still_queued_at_the_result"
+                     "packages/doeff-agents/tests/test_sessionhost_headless.py::test_codex_dialogue_does_not_escalate"
+                     "packages/doeff-agents/tests/test_sessionhost_headless.py::test_headless_process_claude_escalate_stops_the_tool_and_the_injection_runs_next"
+                     "packages/doeff-agents/tests/test_sessionhost_headless.py::test_host_headless_escalate_stops_the_turn_and_keeps_awaiting"])
      (law agentd-exits-only-to-acp-and-custody
        :statement "for_all source_file f in sessionhost/: agora_ledger_words(code_lines(f)) = ∅ — agentd(sessionhost)が話す相手は ACP と custody だけ"
        :counterexamples
@@ -1688,6 +1737,82 @@
        (assert (= (get writers "create") ["agentd"]) "契約の写しの node の create の書き手は agentd(R28)")
        (assert (= (get writers "update") ["agentd"]) "契約の写しの node の update の書き手は agentd(R28)")
        (assert (= (get writers "withdraw") ["acp-scheduling"]) "withdraw は配置 E のまま(R28)"))
+     (deftest test-adr-doe-agents-012-interrupts-are-read-within-the-deadline
+       ;; R29 の針(構造): 判断は judgment.hy の 1 点ずつ・期限は charter だけ(既定の定数なし・方策 / 会話の行を読まない)・
+       ;; 停止の合図の腕は agentd.settle-interrupts の 1 点・器の作法(control_request・uuid)は headless_protocol.py だけ・
+       ;; host の口は session.escalate・codex は出さない・能力の表に interrupt。
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (for [name ["escalation-seconds-of-charter" "interrupt-reads-of" "interrupts-due-for-escalation"
+                   "interrupt-marks-status-of" "recovered-interrupts-of" "with-injected-interrupts"]]
+         (assert (= (len (lfor line judgment-lines :if (.startswith line f"(defk {name} ") line)) 1) name))
+       (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
+       (assert (= (len (lfor line agentd-lines :if (.startswith line "(defk settle-interrupts ") line)) 1)
+               "停止の合図の腕は agentd.settle-interrupts の 1 点(R29)")
+       (assert (= (len (lfor line agentd-lines :if (in "(SessionEscalate :session-id" line) line)) 1)
+               "合図を出す点は 1 つ(R29)")
+       (assert (any (gfor line agentd-lines (in ":ref message-id" line)))
+               "注入の行の名は Message の id(R29)")
+       (for [line (+ agentd-lines judgment-lines)]
+         (assert (not-in "delivery-policy" line) f"agentd は方策の行を読まない — 期限は charter だけ(R29): {line}")
+         (assert (not-in "control_request" line) f"agentd / judgment は器の作法の綴り control_request を書かない(R29): {line}"))
+       (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
+       (assert (= (len (lfor line effects-lines :if (.startswith line "JOB_INTERRUPTS_READ_KEY: str = \"interruptsRead\"") line)) 1))
+       (assert (= (len (lfor line effects-lines :if (.startswith line "JOB_INTERRUPTS_ESCALATED_KEY: str = \"interruptsEscalated\"") line)) 1))
+       (assert (= (len (lfor line effects-lines :if (.startswith line "CHARTER_INTERRUPT_ESCALATION_KEY: str = \"interruptEscalationSeconds\"") line)) 1))
+       (assert (= (len (lfor line effects-lines :if (.startswith line "    interrupt_escalation_seconds: int | None = None") line)) 1)
+               "期限の memory は InFlightJob の 1 欄・既定は None(宣言なし)で数の既定を置かない(R29)")
+       (for [line effects-lines]
+         (assert (not (re.search r"ESCALATION_SECONDS\w*\s*(:\s*int)?\s*=\s*\d" line)) f"期限の既定の定数を置かない(R29): {line}"))
+       (assert (any (gfor line effects-lines (in "\"claude\": \"steer-then-stop\"" line))))
+       (assert (any (gfor line effects-lines (in "\"codex\": \"stop\"" line))))
+       (setv handler-lines (code-lines (/ ACP-DIR "handlers.py")))
+       (assert (= (len (lfor line handler-lines :if (in "\"session.escalate\"" line) line)) 1)
+               "sessionhost への停止の合図の口は session.escalate の 1 語(R29)")
+       (setv protocol-lines (code-lines (/ SESSIONHOST-DIR "headless_protocol.py")))
+       (assert (= (len (lfor line protocol-lines :if (.startswith line "    def escalate(self) -> Escalation:") line)) 2)
+               "停止の合図の作法は Dialogue.escalate の 2 腕(claude / codex)(R29)")
+       (assert (any (gfor line protocol-lines (in "\"subtype\": \"interrupt\"" line)))
+               "claude の停止の合図は control_request interrupt(R29)")
+       (assert (any (gfor line protocol-lines (in "record[\"uuid\"] = ref" line)))
+               "注入の行の名は user の行の uuid(R29)")
+       (setv host-lines (code-lines (/ SESSIONHOST-DIR "host.hy")))
+       (assert (= (len (lfor line host-lines :if (in "(when (= method \"session.escalate\")" line) line)) 1))
+       (assert (any (gfor line host-lines (in "(headless-escalate-program sid)" line))))
+       ;; 反例(挙動): 期限を越えた未読の割り込みは合図 1 つ・止めた印・読んだ印は started の seq。
+       (setv world (HeadlessWorld))
+       (.put-row world.acp (message-row "m-x" "first"))
+       (.put-row world.acp (turn-row-timed "t-3" "conv-e" "m-x" (- world.local.now-ms 300) 20))
+       (.tick world 1000)
+       (setv sid (sid-of world "t-3"))
+       (setv (get world.local.transcripts f"/events/{sid}.events.jsonl")
+             (+ (json.dumps {"type" "system" "subtype" "init" "session_id" sid}) "\n"))
+       (.tick world 1000)
+       (.put-row world.acp (message-row "m-i1" "stop"))
+       (setv running (get world.acp.rows "acp-system:agent-job:t-3"))
+       (setv #^ JSONObject placed (dict (status-of running)))
+       (setv (get placed "interrupts") ["m-i1"])
+       (.put-row world.acp (AcpRow :namespace running.namespace :key running.key :kind running.kind :resource-id running.resource-id
+                                   :version running.version :generation (+ running.generation 1) :created-at-ms running.created-at-ms
+                                   :labels running.labels :payload running.payload :spec running.spec :status placed))
+       (.tick world 1000)
+       (assert (= world.sessions.interjection-refs [#(sid "m-i1")]) "注入の行の名は Message の id(R29)")
+       (.tick world 19000)
+       (assert (= world.sessions.escalations []) "期限の手前では出さない(R29)")
+       (.tick world 2000)
+       (assert (= world.sessions.escalations [sid]) "期限を越えた未読の割り込みは合図 1 つ(R29)")
+       (setv after (status-of (get world.acp.rows "acp-system:agent-job:t-3")))
+       (assert (= (get after "interruptsEscalated") {"m-i1" world.local.now-ms}) "止めた印は時刻(R29)")
+       (.tick world 1000)
+       (assert (= world.sessions.escalations [sid]) "二度出さない(R29)")
+       (setv (get world.local.transcripts f"/events/{sid}.events.jsonl")
+             (+ (get world.local.transcripts f"/events/{sid}.events.jsonl")
+                (json.dumps {"type" "command_lifecycle" "command_uuid" "m-i1" "state" "started"}) "\n"))
+       (.tick world 1000)
+       (setv read-after (status-of (get world.acp.rows "acp-system:agent-job:t-3")))
+       (setv read-marks (get read-after "interruptsRead"))
+       (assert (isinstance read-marks dict))
+       (assert (in "m-i1" read-marks) "読んだ印は started の seq(R29)")
+       (assert (= (get read-after "phase") "Running") "手番は続く(R29)"))
      (deftest test-adr-doe-agents-012-interrupts-ride-the-running-turn
        ;; R21 の針(構造): 判断は judgment.hy の 1 点ずつ・配達は agentd.deliver-interrupts の 1 点・agentd は器の作法の語を
        ;; 持たない・claude の headless は stream-json の入力・sessionhost の割り込みの口は mode = interrupt の 1 語。
@@ -1714,11 +1839,11 @@
        (assert (any (gfor line argv-lines (in "\"--input-format\" \"stream-json\"" line)))
                "claude の headless は stream-json の入力の温かい process(R21)")
        (setv protocol-lines (code-lines (/ SESSIONHOST-DIR "headless_protocol.py")))
-       (assert (= (len (lfor line protocol-lines :if (.startswith line "    def inject(self, text: str) -> Injection:") line)) 2)
-               "割り込みの本文の作法は Dialogue.inject の 2 腕(claude / codex)(R21)")
+       (assert (= (len (lfor line protocol-lines :if (.startswith line "    def inject(self, text: str, ref: str = \"\") -> Injection:") line)) 2)
+               "割り込みの本文の作法は Dialogue.inject の 2 腕(claude / codex)(R21・ref は R28)")
        (assert (any (gfor line protocol-lines (in "one_process_per_turn: bool = False" line))))
        (setv host-lines (code-lines (/ SESSIONHOST-DIR "host.hy")))
-       (assert (any (gfor line host-lines (in "(headless-inject-program sid message)" line)))
+       (assert (any (gfor line host-lines (in "(headless-inject-program sid message ref)" line)))
                "host の mode = interrupt は inject の program へ(R21)")
        ;; 反例(挙動): 行の interrupts は載せた順に器へ渡り、同じ 1 回の書きで interruptsDelivered へ移る。断られた id は残る。
        (setv world (World))

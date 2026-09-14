@@ -1,8 +1,8 @@
 """headless backend の器 — 子 process(claude -p / codex app-server)の起動・stdin の書き手・
 stdout の読み手・events file への追記・観測の束(agora-redesign #37・段 2 lane 2d)。
 
-判断は持たない: 「何を stdin へ書くか・手番はいつ終わるか」は headless_protocol.py の Dialogue
-(純粋)が効果の値で返し、ここはそれを運ぶだけ(書き手 thread へ積む・SIGINT を送る・process を
+判断は持たない: 「何を stdin へ書くか・手番はいつ終わるか・停止の合図を出すか」は headless_protocol.py の
+Dialogue(純粋)が効果の値で返し、ここはそれを運ぶだけ(書き手 thread へ積む・SIGINT を送る・process を
 降ろす)。読み手 thread は stdout の 1 行ごとに (1) events file へ逐語で追記(1 行 1 event —
 agentd が offset から読む実況の正本)、(2) Dialogue.on_line の答えの sends を書き手へ、(3) 手番の
 終わり・会話の id・型付きの失敗を観測の束へ積む。monitor の拍(HeadlessPoll)が束を空にして
@@ -154,17 +154,34 @@ class HeadlessProcess:
             self._writer.close()
         return True
 
-    def inject(self, text: str) -> bool:
+    def inject(self, text: str, ref: str = "") -> bool:
         """割り込みの本文を走っている手番へ(段 8 lane 4x — stdin の行・判断は Dialogue.inject)。
         戻り = 器が受け取ったか(process が生きていて、走っている手番が在り、行を書いた)。
         手番の終わりを読んで monitor がまだ受け取っていない拍も「走っていない」(その本文は
-        誰の手番でもない turn を起こしてはならない — 呼び手が queued へ倒す)。"""
+        誰の手番でもない turn を起こしてはならない — 呼び手が queued へ倒す)。``ref`` = 行の名
+        (段 10 lane 10n — claude の uuid・CLI の command_lifecycle がこの綴りで運命を名乗る)。"""
         if not self.alive() or self._writer.closed:
             return False
         with self._lock:
             if self._ended:
                 return False
-        plan = self.dialogue.inject(text)
+        plan = self.dialogue.inject(text, ref)
+        if not plan.accepted:
+            return False
+        for line in plan.sends:
+            self._writer.send(line)
+        return True
+
+    def escalate(self) -> bool:
+        """停止の合図(段 10 lane 10n — 判断は Dialogue.escalate): 走っている手番に読まれていない注入が
+        在れば control_request interrupt を stdin へ。戻り = 合図を出したか(出す物が無ければ偽 —
+        手番が走っていない・queued の注入が無い・既に出して答え待ち・注入の段の無い器)。"""
+        if not self.alive() or self._writer.closed:
+            return False
+        with self._lock:
+            if self._ended:
+                return False
+        plan = self.dialogue.escalate()
         if not plan.accepted:
             return False
         for line in plan.sends:

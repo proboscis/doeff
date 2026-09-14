@@ -43,6 +43,9 @@
 
 (import doeff_agents.sessionhost.acp.effects [
   AGENT-CAPABILITIES
+  AGENT-INTERRUPT-CAPABILITY
+  CHARTER-INTERRUPT-ESCALATION-KEY
+  CONDITION-INTERRUPT-ESCALATION-UNDECLARED
   AGENT-SETTINGS
   AGENT-TYPE-LEASE-KIND
   CHARTER-SETTING-KEYS
@@ -78,8 +81,12 @@
   INTERRUPT-ARM-INTERRUPT
   INTERRUPT-ARM-NONE
   InFlightJob
+  InterruptRead
   JOB-INTERRUPTS-DELIVERED-KEY
+  JOB-INTERRUPTS-ESCALATED-KEY
   JOB-INTERRUPTS-KEY
+  JOB-INTERRUPTS-READ-KEY
+  NODE-CAPABILITY-INTERRUPT-KEY
   JOB-STEP-FAIL-MISSING
   JOB-STEP-OBSERVE
   JOB-STEP-RECORD-END
@@ -406,10 +413,14 @@
    :post [(: % dict)]}
   "node の status.capabilities に名乗る能力の表(段 10 lane 10e・agora-redesign #53・契約 agora-kinds.json
    kinds.node.status.capabilities — 既知の形 = CI runner の label): agent の種類(charter.agent_type の語)ごとに
-   settings(受ける欄)と restartOn(変えたら session を作り直す欄 — session-affinity-key-of の鍵の欄)。値は
-   effects.AGENT-CAPABILITIES の写し(list に直すだけ — JSON の形)。"
+   settings(受ける欄)と restartOn(変えたら session を作り直す欄 — session-affinity-key-of の鍵の欄)と
+   interrupt(割り込みの能力 — 段 10 lane 10n: steer-then-stop = 注入 → 期限で停止の合図 / stop = 即座に止めて渡す)。値は
+   effects.AGENT-CAPABILITIES / AGENT-INTERRUPT-CAPABILITY の写し(list に直すだけ — JSON の形)。"
   (dfor [kind entry] (.items AGENT-CAPABILITIES)
-        kind {"settings" (list (get entry "settings")) "restartOn" (list (get entry "restartOn"))}))
+        kind {"settings" (list (get entry "settings"))
+              "restartOn" (list (get entry "restartOn"))
+              ;; 段 10 lane 10n: 割り込みの能力(閉語彙 effects.InterruptCapability)— 面の文言はこれに従う。
+              NODE-CAPABILITY-INTERRUPT-KEY (get AGENT-INTERRUPT-CAPABILITY kind)}))
 
 
 (defk effort-of-plan [plan]
@@ -810,6 +821,136 @@
   (setv (get next JOB-INTERRUPTS-KEY) (lfor message-id pending :if (not-in message-id all-delivered) message-id))
   (setv (get next JOB-INTERRUPTS-DELIVERED-KEY) all-delivered)
   next)
+
+
+(defk escalation-seconds-of-charter [charter]
+  {:pre [(: charter dict)]
+   :post [(: % (| int None))]}
+  "期限(秒)= charter.interruptEscalationSeconds(段 10 lane 10n・依頼者の追補 2026-09-14: 方策の行の値を Messaging の
+   Plan.charterFor が会話の宣言で重ねて charter に写す)。agentd はこの欄だけを読む — 方策も会話も読まず、code に既定を
+   置かない。無い・整数でない・負 = None(宣言なし → 注入だけ + 条件 InterruptEscalationUndeclared)。"
+  (setv raw (.get charter CHARTER-INTERRUPT-ESCALATION-KEY))
+  (if (and (isinstance raw int) (not (isinstance raw bool)) (>= raw 0)) raw None))
+
+
+(defk with-injected-interrupts [job ids now-ms]
+  {:pre [(: job InFlightJob) (: ids tuple) (: now-ms int)]
+   :post [(: % InFlightJob)]}
+  "注入した割り込みを memory に積む(id → 注入した時刻・既に在る id は積まない)。"
+  (setv known (sfor [message-id _] job.interrupts-injected message-id))
+  (setv added (tuple (lfor message-id ids :if (not-in message-id known) #(message-id now-ms))))
+  (replace job :interrupts-injected (+ job.interrupts-injected added)))
+
+
+(defk unread-interrupts-of [job]
+  {:pre [(: job InFlightJob)]
+   :post [(: % tuple)]}
+  "注入したが model が読んだ証拠のまだ無い割り込みの id(注入した順)。"
+  (setv read-ids (sfor [message-id _] job.interrupts-read message-id))
+  (tuple (lfor [message-id _] job.interrupts-injected :if (not-in message-id read-ids) message-id)))
+
+
+(defk interrupt-reads-of [job reads]
+  {:pre [(: job InFlightJob) (: reads tuple)]
+   :post [(: % tuple)]}
+  "材料の証拠(DeltaBatch.interrupt-reads)→ 新しく読んだと判る (id, seq) の列(判断はここ 1 点): 名の在る証拠
+   (claude の command_lifecycle started の command_uuid = Message の id)はその id だけ、名の無い証拠(codex の
+   turn/started — 止めた後の手番は積んであった注入を全部読む)は未読の id を全部、その証拠の seq で。同じ id は
+   最初の証拠だけ(順は注入した順)。"
+  (<- unread-ids tuple (unread-interrupts-of job))
+  (setv unread (list unread-ids))
+  (setv out [])
+  (for [evidence reads]
+    (if (is evidence.ref None)
+        (do
+          (for [message-id unread]
+            (.append out #(message-id evidence.seq)))
+          (setv unread []))
+        (when (in evidence.ref unread)
+          (.append out #(evidence.ref evidence.seq))
+          (.remove unread evidence.ref))))
+  (tuple out))
+
+
+(defk interrupts-due-for-escalation [job now-ms]
+  {:pre [(: job InFlightJob) (: now-ms int)]
+   :post [(: % tuple)]}
+  "停止の合図を出す拍か(判断はここ 1 点): 期限が宣言されていて(charter の値・None = 出さない)、注入から期限の秒が
+   経ち、読んだ証拠も出した印も無い id(注入した順)。1 つでも在れば呼び手が合図を 1 度出し、未読の id 全部に印を付ける
+   (合図は session に 1 つ — CLI は queued の注入を全部次の手番に運ぶ)。"
+  (setv seconds job.interrupt-escalation-seconds)
+  (if (is seconds None)
+      #()
+      (do
+        (setv read-ids (sfor [message-id _] job.interrupts-read message-id))
+        (setv escalated-ids (sfor [message-id _] job.interrupts-escalated message-id))
+        (tuple (lfor [message-id at-ms] job.interrupts-injected
+                     :if (and (not-in message-id read-ids)
+                              (not-in message-id escalated-ids)
+                              (>= (- now-ms at-ms) (* 1000 seconds)))
+                     message-id)))))
+
+
+(defk interrupt-marks-status-of [status read escalated]
+  {:pre [(: status dict) (: read tuple) (: escalated tuple)]
+   :post [(: % dict)]}
+  "読んだ / 止めた印を行の status に写す(同じ 1 回の書き・additive): interruptsRead は {id: seq}・interruptsEscalated は
+   {id: ms} の map に足す(既に在る id は変えない — append-only)。他の欄は写す。"
+  (setv next (dict status))
+  (for [[key marks] [#(JOB-INTERRUPTS-READ-KEY read) #(JOB-INTERRUPTS-ESCALATED-KEY escalated)]]
+    (setv existing (.get status key))
+    (setv table (if (isinstance existing dict) (dict existing) {}))
+    (for [[message-id value] marks]
+      (when (not-in message-id table)
+        (setv (get table message-id) value)))
+    (when (or table (isinstance existing dict))
+      (setv (get next key) table)))
+  next)
+
+
+(defk status-with-condition [status condition-type reason]
+  {:pre [(: status dict) (: condition-type str) (: reason str)]
+   :post [(: % dict)]}
+  "status の conditions に type の条件を 1 つ足す(既に在れば足さない・他の欄は写す)。"
+  (setv next (dict status))
+  (setv existing (.get status "conditions"))
+  (setv conditions (if (isinstance existing list) (list existing) []))
+  (when (not (any (gfor item conditions
+                        (and (isinstance item dict) (= (.get item "type") condition-type)))))
+    (<- condition dict (condition-of condition-type reason))
+    (.append conditions condition))
+  (setv (get next "conditions") conditions)
+  next)
+
+
+(defk interrupt-escalation-undeclared-reason [job]
+  {:pre [(: job InFlightJob)]
+   :post [(: % str)]}
+  "条件 InterruptEscalationUndeclared の理由の文(charter に期限が無い job に割り込みを注入した)。"
+  (+ f"charter of agent-job {job.job-id} declares no {CHARTER-INTERRUPT-ESCALATION-KEY}; "
+     "the interrupt was injected but no stop signal will follow"))
+
+
+(defk recovered-interrupts-of [job row now-ms]
+  {:pre [(: job InFlightJob) (: row AcpRow) (: now-ms int)]
+   :post [(: % InFlightJob)]}
+  "拾い直し(再起動後)の割り込みの memory: 行の interruptsDelivered(渡した id)のうち、行の interruptsRead にも
+   interruptsEscalated にも無い id を、拾い直した時刻で注入したものとして積む(期限はそこから数える — 注入の時刻は
+   行に無い)。読んだ / 止めた印は行の写し。"
+  (<- status dict (status-object-of row))
+  (<- delivered tuple (string-list-of status JOB-INTERRUPTS-DELIVERED-KEY))
+  (setv read-table (.get status JOB-INTERRUPTS-READ-KEY))
+  (setv escalated-table (.get status JOB-INTERRUPTS-ESCALATED-KEY))
+  (setv read (tuple (lfor [message-id seq] (.items (if (isinstance read-table dict) read-table {}))
+                          :if (and (isinstance message-id str) (isinstance seq int) (not (isinstance seq bool)))
+                          #(message-id seq))))
+  (setv escalated (tuple (lfor [message-id at-ms] (.items (if (isinstance escalated-table dict) escalated-table {}))
+                               :if (and (isinstance message-id str) (isinstance at-ms int) (not (isinstance at-ms bool)))
+                               #(message-id at-ms))))
+  (setv settled (| (sfor [message-id _] read message-id) (sfor [message-id _] escalated message-id)))
+  (setv injected (tuple (lfor message-id delivered :if (not-in message-id settled) #(message-id now-ms))))
+  (replace job :interrupts-injected injected :interrupts-read read :interrupts-escalated escalated
+               :interrupts-sent (+ job.interrupts-sent delivered)))
 
 
 (defk job-row-keyed [rows job-key]
@@ -1588,7 +1729,9 @@
   "agent-job の行 + 起こし方の写し + 器の眺めから、観測に要る memory の状態を組む 1 点。
    受けた直後(after-start)も再起動後の拾い直し(adopt)も同じ形 — 行と器に無い欄
    (offset・seq・capture の可否)は始まりの値で、発明しない。turn-floor-ms = この手番の
-   始まりの下限(送った時刻・拾い直しは行の createdAt)。"
+   始まりの下限(送った時刻・拾い直しは行の createdAt)。期限(interrupt-escalation-seconds)は charter の値ちょうど
+   (段 10 lane 10n・None = 宣言なし)。"
+  (<- escalation-seconds (| int None) (escalation-seconds-of-charter plan.charter))
   (InFlightJob
     :job-key row.key
     :job-namespace row.namespace
@@ -1612,7 +1755,8 @@
     :stream-gone False
     :last-frame-ms 0
     :last-probe-ms 0
-    :pending-conditions pending))
+    :pending-conditions pending
+    :interrupt-escalation-seconds escalation-seconds))
 
 
 (defk turn-record-spec-of [job]
@@ -2308,9 +2452,33 @@
   ;; modelUsage[model].contextWindow(CLI 2.x の result 行の欄・model = 最後に見た message の model)。材料の末尾の値が勝つ。
   (setv context-tokens None)
   (setv context-window None)
+  ;; 段 10 lane 10n: 割り込みの証拠(command_lifecycle started = model が読む拍)と停止の合図の答え(control_response の
+  ;; still_queued)— どちらも kind system の entry にして seq を持たせる。合図の答えの後の result(is_error)は「止めた段の
+  ;; 終わり」で誤りではない(同じ材料の中で読めた時 — 実測 4 ms 差)。
+  (setv reads [])
+  (setv stopped-by-signal False)
   (for [record records]
     (setv kind (.get record "type"))
     (setv message (.get record "message"))
+    (when (and streamed (= kind "command_lifecycle") (= (.get record "state") "started")
+               (isinstance (.get record "command_uuid") str))
+      (setv command-uuid (get record "command_uuid"))
+      (<- read-body dict (note-body seq at ENTRY-KIND-SYSTEM f"interrupt read by the model: {command-uuid}"))
+      (.append bodies read-body)
+      (.append reads (InterruptRead :ref command-uuid :seq seq))
+      (setv seq (+ seq 1)))
+    (when (and streamed (= kind "control_response"))
+      (setv response (.get record "response"))
+      (setv payload (if (isinstance response dict) (.get response "response") None))
+      (setv still (if (isinstance payload dict) (.get payload "still_queued") None))
+      (when (and (isinstance response dict) (= (.get response "subtype") "success") (isinstance still list))
+        (setv stopped-by-signal True)
+        (setv names (.join ", " (lfor item still :if (isinstance item str) item)))
+        (<- stop-body dict (note-body seq at ENTRY-KIND-SYSTEM
+                                      (+ "interrupt escalated: the running turn was stopped; "
+                                         (if names f"queued for the next turn: {names}" "nothing queued for the next turn"))))
+        (.append bodies stop-body)
+        (setv seq (+ seq 1))))
     (when (and streamed (= kind "result"))
       (setv model-usage (.get record "modelUsage"))
       (when (and (isinstance model-usage dict) (isinstance model str))
@@ -2327,9 +2495,11 @@
     (when (and streamed (= kind "result"))
       (<- failure (| str None) (claude-result-error record))
       (when (is-not failure None)
-        (<- error-body dict (note-body seq at ENTRY-KIND-ERROR failure))
+        (<- error-body dict (note-body seq at (if stopped-by-signal ENTRY-KIND-SYSTEM ENTRY-KIND-ERROR)
+                                       (if stopped-by-signal f"turn stopped by the interrupt signal ({failure})" failure)))
         (.append bodies error-body)
-        (setv seq (+ seq 1))))
+        (setv seq (+ seq 1)))
+      (setv stopped-by-signal False))
     (when (and streamed (= kind "stream_event"))
       (setv event (.get record "event"))
       (setv delta (if (isinstance event dict) (.get event "delta") None))
@@ -2404,7 +2574,8 @@
   (<- entries tuple (entries-of-bodies (tuple bodies)))
   (DeltaBatch :frames (tuple frames) :entries entries :bodies (tuple bodies) :usage usage
               :next-seq seq :model model
-              :context (if (is context-tokens None) None {"tokens" context-tokens "window" context-window})))
+              :context (if (is context-tokens None) None {"tokens" context-tokens "window" context-window})
+              :interrupt-reads (tuple reads)))
 
 
 (defk codex-context-of [last window]
@@ -2511,12 +2682,21 @@
   (setv usage None)
   (setv context None)
   (setv seq seq-start)
+  ;; 段 10 lane 10n: codex に注入の段は無い(inject = turn/interrupt → 同じ thread へ turn/start)。止めた後の
+  ;; turn/started が「積んであった注入を model が読む拍」— 名を運ぶ欄が無いので ref = None(未読を全部)。
+  (setv reads [])
   (for [record records]
     (setv method (.get record "method"))
     (setv params (.get record "params"))
     (when (and (isinstance method str) (isinstance params dict))
       (setv item (.get params "item"))
       (cond
+        (= method "turn/started")
+        (do
+          (<- started-body dict (note-body seq at ENTRY-KIND-SYSTEM "turn started"))
+          (.append bodies started-body)
+          (.append reads (InterruptRead :ref None :seq seq))
+          (setv seq (+ seq 1)))
         (and (= method "item/agentMessage/delta") (isinstance (.get params "delta") str))
         (do
           (<- chunk-frame dict (delta-frame job-id seq at "text" {"text" (get params "delta")}))
@@ -2556,14 +2736,19 @@
         (= method "turn/completed")
         (do
           ;; 手番の終わりの誤り(status ≠ completed)を kind error の entry に(判定は host — ここは記録だけ)。
+          ;; 段 10 lane 10n: interrupted は止めた段の終わり(割り込みの本文を渡すため・取り下げ)で誤りではない → kind system。
           (setv turn (.get params "turn"))
           (when (isinstance turn dict)
             (setv turn-status (.get turn "status"))
             (when (and (isinstance turn-status str) (!= turn-status "completed"))
               (setv error (.get turn "error"))
               (setv message (if (isinstance error dict) (.get error "message") None))
-              (<- error-body dict (note-body seq at ENTRY-KIND-ERROR
-                                             (if (isinstance message str) message f"turn-{turn-status}")))
+              (setv interrupted (= turn-status "interrupted"))
+              (<- error-body dict (note-body seq at (if interrupted ENTRY-KIND-SYSTEM ENTRY-KIND-ERROR)
+                                             (cond
+                                               interrupted "turn stopped by the interrupt signal"
+                                               (isinstance message str) message
+                                               True f"turn-{turn-status}")))
               (.append bodies error-body)
               (setv seq (+ seq 1)))))
         (= method "thread/tokenUsage/updated")
@@ -2590,7 +2775,7 @@
         True None)))
   (<- entries tuple (entries-of-bodies (tuple bodies)))
   (DeltaBatch :frames (tuple frames) :entries entries :bodies (tuple bodies) :usage usage
-              :next-seq seq :model None :context context))
+              :next-seq seq :model None :context context :interrupt-reads (tuple reads)))
 
 
 (defk events-to-deltas [agent-type text job-id seq-start at]

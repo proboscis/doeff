@@ -18,6 +18,18 @@ kind ごとの物理(argv は impls/headless_argv.hy・stdin の綴りはここ)
   ``{"type":"system","subtype":"init","session_id"}``。止める合図(withdraw)= process へ SIGINT
   (result を出さずに降りる)。process が降りた後の次の手番は ``--resume <sid>`` の新しい process
   (argv は impls 側・器は同じ名で起こし直す)。
+  段 10 lane 10n(agora-redesign #93・実測 2026-09-14 = 同 md の追記): 注入の行に ``uuid``(呼び手の
+  ref = ACP の Message の id・UUID の形でなくてよい)を付けると CLI が
+  ``{"type":"command_lifecycle","command_uuid":…,"state":queued|started|completed|cancelled|discarded|refused}``
+  でその行の運命を名乗る — **started = model がその本文を読む拍**(道具の境界で畳まれた・または次の手番として
+  走り出した)。道具が長くて境界が来ない間は queued のまま。停止の合図(``escalate``)=
+  ``{"type":"control_request","request_id":…,"request":{"subtype":"interrupt"}}`` で、走っている道具 / 生成を
+  止める: 答え ``control_response`` の ``still_queued`` に注入の uuid が在れば、続く ``result``(is_error・
+  error_during_execution)は「止めた段の終わり」であって host から見た手番の終わりではない(CLI が注入の行を
+  同じ session の次の手番として即座に走らせる — codex の inject と同じ扱い)。``still_queued`` に無い注入は
+  次の手番にならない(畳みの途中で abort された)ので手番の終わり(interrupted)を報告する。停止の合図を
+  出していない ``result`` の時点で queued のままの注入(道具の無い生成の途中に書いた行 — 実測の第 1 走)も
+  同じ: CLI が次の手番として走らせるので手番は続く。
 - codex: app-server の process を手番の間も生かす(温かい)。手番 = ``turn/start``、終わりは
   自分の thread と turn の ``turn/completed``、止める合図 = ``turn/interrupt``。割り込みの本文
   (``inject``)= ``turn/interrupt`` を送り、interrupted の ``turn/completed`` を手番の終わりとして
@@ -37,6 +49,7 @@ backend が死んでいる → 終端(``backend-dead``)/ それ以外 → keep(i
 
 # pyright: strict
 import json
+import uuid
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
@@ -87,10 +100,25 @@ class Injection:
     """割り込みの本文の伝え方(段 8 lane 4x): ``accepted`` = 走っている手番が在り本文を引き受けた
     (偽 = 器は受け取らなかった — 呼び手が queued へ倒す)。``sends`` = stdin へ書く行: claude =
     user の行(CLI が走っている手番に注入する)/ codex = turn/interrupt(次の turn/start は
-    Dialogue が完了の通知で積む・既に止めていれば行は無く本文を継ぎ足すだけ)。"""
+    Dialogue が完了の通知で積む・既に止めていれば行は無く本文を継ぎ足すだけ)。``ref`` = 注入の行の
+    名(段 10 lane 10n — claude は user の行の uuid に写し、CLI の command_lifecycle がこの綴りで
+    運命を名乗る。codex は名を運ぶ欄が無い)。"""
 
     accepted: bool = False
     sends: tuple[str, ...] = ()
+    ref: str = ""
+
+
+@dataclass(frozen=True)
+class Escalation:
+    """停止の合図の伝え方(段 10 lane 10n): ``accepted`` = 走っている手番へ注入した行がまだ読まれて
+    いない(queued)ので合図を出す / 偽 = 出す物が無い(手番が走っていない・queued の注入が無い・
+    既に合図を出して答えを待っている・注入の段の無い器)。``sends`` = stdin へ書く行(claude =
+    control_request interrupt)。``request_id`` = 答え(control_response)を結ぶ id。"""
+
+    accepted: bool = False
+    sends: tuple[str, ...] = ()
+    request_id: str = ""
 
 
 def _dumps(value: JSONObject) -> str:
@@ -110,14 +138,54 @@ def _text_at(value: JSON, key: str) -> str:
 # ------------------------------------------------------------------ claude(stream-json の入出力・温かい process)
 
 
-def claude_user_line(text: str) -> str:
-    """``--input-format stream-json`` の stdin の 1 行 = user の message(実測の綴り)。"""
-    return _dumps({"type": "user", "message": {"role": "user", "content": text}})
+def claude_user_line(text: str, ref: str = "") -> str:
+    """``--input-format stream-json`` の stdin の 1 行 = user の message(実測の綴り)。``ref`` を
+    付けると最上位の ``uuid`` に写す(CLI が command_lifecycle でこの綴りを名乗り返す — 段 10 lane 10n)。"""
+    record: JSONObject = {"type": "user", "message": {"role": "user", "content": text}}
+    if ref:
+        record["uuid"] = ref
+    return _dumps(record)
+
+
+def claude_interrupt_request_line(request_id: str) -> str:
+    """停止の合図の 1 行(実測 2026-09-14): ``control_request`` の subtype ``interrupt``。"""
+    return _dumps(
+        {"type": "control_request", "request_id": request_id, "request": {"subtype": "interrupt"}}
+    )
+
+
+#: 注入の行の運命(CLI の command_lifecycle の state の閉語彙・実測 2026-09-14)。queued = 命令の列に入った /
+#: started = 手番に汲まれた(model が読む拍)/ 終端 = completed | cancelled | discarded | refused。
+InjectionState = Literal["queued", "started", "completed", "cancelled", "discarded", "refused"]
+INJECTION_TERMINAL_STATES: tuple[InjectionState, ...] = (
+    "completed",
+    "cancelled",
+    "discarded",
+    "refused",
+)
+#: 停止の合図で止めた段の終わり(手番の終わりとして報告する時の detail)。
+INTERRUPTED_DETAIL = "interrupted"
+
+
+_INJECTION_STATES: dict[str, InjectionState] = {
+    "queued": "queued",
+    "started": "started",
+    "completed": "completed",
+    "cancelled": "cancelled",
+    "discarded": "discarded",
+    "refused": "refused",
+}
+
+
+def injection_state_of(value: JSON) -> InjectionState | None:
+    """command_lifecycle の state の語 → 閉語彙(語彙の外は None — 発明しない)。"""
+    return _INJECTION_STATES.get(value) if isinstance(value, str) else None
 
 
 class ClaudeDialogue:
     """``claude -p --input-format stream-json --output-format stream-json`` の作法。状態 = 会話の
-    id(init で知る)と「手番の途中か」(user の行を書いてから result を読むまで)。"""
+    id(init で知る)と「手番の途中か」(user の行を書いてから result を読むまで)、注入した行の運命
+    (ref → InjectionState・段 10 lane 10n)と出した停止の合図(request_id と答えの still_queued)。"""
 
     kind: AgentKind = "claude"
     #: 温かい process(段 8 lane 4x): result の後も process は生きて次の user の行を待つ。
@@ -126,35 +194,132 @@ class ClaudeDialogue:
     def __init__(self) -> None:
         self.conversation: dict[str, str] | None = None
         self.in_flight: bool = False
+        #: この手番に注入した行の運命(ref → state)。手番の終わりを報告した時に空にする。
+        self.injections: dict[str, InjectionState] = {}
+        #: 出した停止の合図の request_id(None = 出していない / 答えの後の result を読んだ)。
+        self.escalation: str | None = None
+        #: 停止の合図の答え: 次の手番として生き残る注入の ref(None = まだ答えを読んでいない)。
+        self.still_queued: tuple[str, ...] | None = None
+        #: CLI の手番が開いているか(user の行 / init から result まで — 停止で閉じた段の後、注入の行が
+        #: 次の手番として走り出すまでの隙間を見分ける)。
+        self.cli_turn_open: bool = False
 
     def opening(self) -> tuple[str, ...]:
         return ()
 
     def turn(self, prompt: str) -> TurnInput:
         self.in_flight = True
+        self.cli_turn_open = True
         return TurnInput(sends=(claude_user_line(prompt),), close_stdin=False)
 
-    def inject(self, text: str) -> Injection:
+    def queued_injections(self) -> tuple[str, ...]:
+        """まだ model に読まれていない(queued の)注入の ref(注入した順)。"""
+        return tuple(ref for ref, state in self.injections.items() if state == "queued")
+
+    def inject(self, text: str, ref: str = "") -> Injection:
         """走っている手番へ本文を注入する: 同じ user の行(CLI が次の tool の境界で読む)。手番が
-        走っていなければ書かない(書くと新しい手番になる — 誰の job でもない手番を起こさない)。"""
+        走っていなければ書かない(書くと新しい手番になる — 誰の job でもない手番を起こさない)。
+        ``ref`` は行の uuid(無ければ鋳造)— CLI の command_lifecycle がこの綴りで運命を名乗る。"""
         if not self.in_flight:
             return Injection()
-        return Injection(accepted=True, sends=(claude_user_line(text),))
+        name = ref or str(uuid.uuid4())
+        self.injections[name] = "queued"
+        return Injection(accepted=True, sends=(claude_user_line(text, name),), ref=name)
+
+    def escalate(self) -> Escalation:
+        """停止の合図(段 10 lane 10n): 走っている手番に queued のままの注入が在り、まだ合図を出して
+        いなければ control_request interrupt を書く。答え(control_response)の still_queued と続く
+        result の扱いは on_line。"""
+        if not self.in_flight or self.escalation is not None or not self.queued_injections():
+            return Escalation()
+        request_id = str(uuid.uuid4())
+        self.escalation = request_id
+        self.still_queued = None
+        return Escalation(
+            accepted=True, sends=(claude_interrupt_request_line(request_id),), request_id=request_id
+        )
+
+    def _end(self, ok: bool, detail: str) -> Step:
+        self.in_flight = False
+        self.cli_turn_open = False
+        self.injections = {}
+        self.escalation = None
+        self.still_queued = None
+        return Step(ended=TurnEnded(ok=ok, detail=detail))
 
     def on_line(self, record: JSONObject) -> Step:
         kind = record.get("type")
         if kind == "system" and record.get("subtype") == "init":
+            self.cli_turn_open = True
             session_id = _text_at(record, "session_id")
             if session_id:
                 self.conversation = {"session_id": session_id}
                 return Step(conversation=self.conversation)
             return Step()
+        if kind == "command_lifecycle":
+            return self._on_lifecycle(record)
+        if kind == "control_response":
+            return self._on_control_response(record)
         if kind == "result":
-            self.in_flight = False
-            is_error = record.get("is_error") is True
-            subtype = _text_at(record, "subtype") or ("error" if is_error else "success")
-            return Step(ended=TurnEnded(ok=not is_error, detail=subtype))
+            return self._on_result(record)
         return Step()
+
+    def _on_lifecycle(self, record: JSONObject) -> Step:
+        """注入した行の運命を写す。queued の注入を待って手番を続けていた(result を飲んだ)後に、その注入が
+        走らずに終わった(cancelled / discarded / refused)なら、残りの queued も無ければ手番の終わり。"""
+        ref = _text_at(record, "command_uuid")
+        state = injection_state_of(record.get("state"))
+        if not ref or state is None or ref not in self.injections:
+            return Step()
+        self.injections[ref] = state
+        if (
+            self.in_flight
+            and not self.cli_turn_open
+            and state in INJECTION_TERMINAL_STATES
+            and state != "completed"
+            and not self.queued_injections()
+        ):
+            return self._end(False, f"interrupt-{state}")
+        return Step()
+
+    def _on_control_response(self, record: JSONObject) -> Step:
+        """停止の合図の答え: success なら still_queued(次の手番として走る注入の ref)を覚える。
+        error なら合図は効かなかった — 出していない状態に戻す(呼び手が撃ち直せる)。"""
+        response = _object_at(record, "response")
+        if self.escalation is None or _text_at(response, "request_id") != self.escalation:
+            return Step()
+        if _text_at(response, "subtype") != "success":
+            self.escalation = None
+            self.still_queued = None
+            return Step()
+        payload = _object_at(response, "response")
+        raw = payload.get("still_queued")
+        self.still_queued = tuple(
+            item for item in (raw if isinstance(raw, list) else []) if isinstance(item, str)
+        )
+        return Step()
+
+    def _on_result(self, record: JSONObject) -> Step:
+        """result の行: queued のままの注入(停止の合図の後は still_queued に名指されたもの)が在れば CLI が
+        次の手番として走らせるので手番は続く(飲む)。無ければ手番の終わり。"""
+        self.cli_turn_open = False
+        queued = self.queued_injections()
+        is_error = record.get("is_error") is True
+        subtype = _text_at(record, "subtype") or ("error" if is_error else "success")
+        if self.escalation is not None:
+            survivors = (
+                tuple(ref for ref in queued if ref in self.still_queued)
+                if self.still_queued is not None
+                else queued
+            )
+            self.escalation = None
+            self.still_queued = None
+            if survivors:
+                return Step()
+            return self._end(False, INTERRUPTED_DETAIL)
+        if queued:
+            return Step()
+        return self._end(not is_error, subtype)
 
     def interrupt(self) -> Interrupt:
         return Interrupt(signal=True)
@@ -308,21 +473,27 @@ class CodexDialogue:
             return Interrupt(sends=(self._turn_interrupt(),))
         return Interrupt()
 
-    def inject(self, text: str) -> Injection:
+    def inject(self, text: str, ref: str = "") -> Injection:
         """割り込みの本文(段 8 lane 4x): 走っている turn を turn/interrupt で止め、その完了の
         通知(interrupted)で同じ thread へ本文の turn/start を積む — host から見て手番は
-        1 つのまま。走っている turn が無ければ受け取らない(sends が空)。"""
+        1 つのまま。走っている turn が無ければ受け取らない(sends が空)。``ref`` は運ぶ欄が無い
+        (app-server の turn/start に名は無い)— 注入の段が無いので読んだ証拠は次の turn/started。"""
         if not (self.state.turn_id and self.state.thread_id):
             return Injection()
         if self.state.pending_injection is not None:
             # 前の割り込みの turn/start がまだ積まれていない: 本文を継ぎ足す(順は保つ)。
             self.state.pending_injection = self.state.pending_injection + "\n\n" + text
-            return Injection(accepted=True)
+            return Injection(accepted=True, ref=ref)
         self.state.pending_injection = text
         if self.state.interrupt_sent:
-            return Injection(accepted=True)
+            return Injection(accepted=True, ref=ref)
         self.state.interrupt_sent = True
-        return Injection(accepted=True, sends=(self._turn_interrupt(),))
+        return Injection(accepted=True, sends=(self._turn_interrupt(),), ref=ref)
+
+    def escalate(self) -> Escalation:
+        """codex に注入の段は無い(inject が turn/interrupt で即座に止めて渡す — 能力 stop)。
+        停止の合図は出す物が無い。"""
+        return Escalation()
 
     def on_line(self, record: JSONObject) -> Step:
         method = record.get("method")

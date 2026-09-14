@@ -25,6 +25,7 @@
 
 (import doeff_agents.sessionhost.effects [
   HeadlessDeliver
+  HeadlessEscalate
   HeadlessHasSession
   HeadlessInject
   HeadlessInterrupt
@@ -77,9 +78,13 @@
     (setv process (.get registry session-name))
     (resume (if (is process None) False (.interrupt process))))
 
-  (HeadlessInject [session-name text]
+  (HeadlessInject [session-name text ref]
     (setv process (.get registry session-name))
-    (resume (if (is process None) False (.inject process text))))
+    (resume (if (is process None) False (.inject process text ref))))
+
+  (HeadlessEscalate [session-name]
+    (setv process (.get registry session-name))
+    (resume (if (is process None) False (.escalate process))))
 
   (HeadlessKill [session-name]
     (resume (.kill registry session-name)))

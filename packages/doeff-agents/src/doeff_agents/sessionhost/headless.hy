@@ -51,6 +51,7 @@
   clock-now
   fs-read-text
   headless-deliver
+  headless-escalate
   headless-has-session
   headless-inject
   headless-interrupt
@@ -98,6 +99,8 @@
 (setv EVENT-SESSION-TURN-ENDED "session_turn_ended")
 ;; 割り込みの本文を走っている手番へ注入した監査 event(段 8 lane 4x)。
 (setv EVENT-SESSION-INJECTED "session_injected")
+;; 停止の合図(段 10 lane 10n)の監査 event。
+(setv EVENT-SESSION-ESCALATED "session_interrupt_escalated")
 ;; session.send の mode(閉語彙): turn = 次の手番の本文(既定)/ interrupt = 割り込みの本文。
 (setv SEND-MODE-TURN "turn")
 (setv SEND-MODE-INTERRUPT "interrupt")
@@ -358,17 +361,18 @@
 ;; RPC の program(send / interrupt / cancel / cleanup / capture)
 ;; ---------------------------------------------------------------------------
 
-(defk headless-inject-program [session-id message]
-  {:pre [(: session-id str) (: message str)]
+(defk headless-inject-program [session-id message ref]
+  {:pre [(: session-id str) (: message str) (: ref str)]
    :post [(: % SessionRow)]}
   "session.send の mode = interrupt(headless・段 8 lane 4x): 割り込みの本文を走っている手番へ
    注入する(HeadlessInject)。器が引き受けなかった(process が無い / 降りている / 走っている
    手番が無い / 手番の終わりを読んだ後)時は型付きに断る — 新しい手番を起こさない(その本文は
-   呼び手が queued として次の手番に運ぶ)。行の awaiting は触らない(手番は走ったまま)。"
+   呼び手が queued として次の手番に運ぶ)。行の awaiting は触らない(手番は走ったまま)。
+   ref = 注入の行の名(段 10 lane 10n・claude の uuid — 空なら器が鋳造)。"
   (<- row (require-headless-row session-id))
   (when (is-terminal-status row.status)
     (raise (RuntimeError f"session {session-id} is {row.status}; cannot inject into a terminal session")))
-  (<- accepted (headless-inject row.session-name message))
+  (<- accepted (headless-inject row.session-name message ref))
   (when (not accepted)
     (raise (RuntimeError
              (+ f"session.send: no turn of {session-id} is in flight to interrupt — "
@@ -407,6 +411,30 @@
                            :turn-ended-at None)))
   (<- _ (session-store-upsert row))
   (<- _ (session-store-record-event session-id "session_sent" row))
+  row)
+
+
+(defk headless-escalate-program [session-id]
+  {:pre [(: session-id str)]
+   :post [(: % SessionRow)]}
+  "session.escalate(headless・段 10 lane 10n): 注入した本文を model が期限まで読まなかった時の
+   停止の合図(claude = control_request interrupt — 走っている道具 / 生成を止め、注入の行が同じ
+   session の次の手番として即座に走る。codex は注入の段が無いので出す物が無い)。判断は
+   Dialogue.escalate の 1 点(queued の注入が無い・既に出した・手番が走っていない → 出さない)。
+   出す物が無かった時は型付きに断る(呼び手が『止めた』と記録しないため)。行の awaiting は触らない
+   (host から見た手番は続く — 器は止めた段の result を手番の終わりとして報告しない)。"
+  (<- row (require-headless-row session-id))
+  (when (is-terminal-status row.status)
+    (raise (RuntimeError f"session {session-id} is {row.status}; cannot escalate a terminal session")))
+  (<- signalled (headless-escalate row.session-name))
+  (when (not signalled)
+    (raise (RuntimeError
+             (+ f"session.escalate: nothing to escalate for {session-id} — "
+                "no unread interrupt is queued on a running turn (or the signal was already sent)"))))
+  (<- now (clock-now))
+  (setv row (replace row :last-observed-at (iso-format now)))
+  (<- _ (session-store-upsert row))
+  (<- _ (session-store-record-event session-id EVENT-SESSION-ESCALATED row))
   row)
 
 
