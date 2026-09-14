@@ -1549,11 +1549,11 @@ def test_backend_liveness_is_read_from_the_observation_not_the_status_word() -> 
     assert run(judgment.job_step_of(replace(busy_dead, status="exited"), 0, True)) == "record-end"
     assert run(judgment.job_step_of(idle_dead, 0, True)) == "turn-end"
     assert run(judgment.job_step_of(idle_dead, 20, True)) == "session-lost"
-    assert run(judgment.next_arm_for_job("p", busy_alive, home, None)) == ArmChoice("defer", "p", None)
-    assert run(judgment.next_arm_for_job("p", busy_unobserved, home, None)) == ArmChoice("defer", "p", None)
-    assert run(judgment.next_arm_for_job("p", busy_dead, home, None)) == ArmChoice("resume", "p", "p")
-    assert run(judgment.next_arm_for_job("p", busy_dead, other, None)) == ArmChoice("rehydrate", None, "p")
-    assert run(judgment.next_arm_for_job("p", idle_dead, home, None)) == ArmChoice("send", "p", None)
+    assert run(judgment.next_arm_for_job("p", busy_alive, home, None, False)) == ArmChoice("defer", "p", None)
+    assert run(judgment.next_arm_for_job("p", busy_unobserved, home, None, False)) == ArmChoice("defer", "p", None)
+    assert run(judgment.next_arm_for_job("p", busy_dead, home, None, False)) == ArmChoice("resume", "p", "p")
+    assert run(judgment.next_arm_for_job("p", busy_dead, other, None, False)) == ArmChoice("rehydrate", None, "p")
+    assert run(judgment.next_arm_for_job("p", idle_dead, home, None, False)) == ArmChoice("send", "p", None)
     condition = run(judgment.session_lost_condition_of(replace(busy_dead, backend_kind="headless", backend_ref={"pid": 22663}), 1_789_365_000_000))
     assert condition["type"] == "SessionLost"
     assert "pid 22663" in condition["reason"]
@@ -1688,9 +1688,13 @@ def test_next_arm_for_job_is_the_one_decision() -> None:
     bare_dead = _view("p", "exited", lifecycle="multi_turn", turn_ended_at_ms=10)
 
     def arm(
-        candidate: str | None, view: SessionView | None, at: JSONObject, effort: str | None = None
+        candidate: str | None,
+        view: SessionView | None,
+        at: JSONObject,
+        effort: str | None = None,
+        compact: bool = False,
     ) -> ArmChoice:
-        choice = run(judgment.next_arm_for_job(candidate, view, at, effort))
+        choice = run(judgment.next_arm_for_job(candidate, view, at, effort, compact))
         assert isinstance(choice, ArmChoice)
         return choice
 
@@ -1719,6 +1723,13 @@ def test_next_arm_for_job_is_the_one_decision() -> None:
     assert arm("p", dead, other_model) == ArmChoice("rehydrate", None, None)
     assert arm("p", bare_dead, home) == ArmChoice("rehydrate", None, None)
     assert arm("p", None, home) == ArmChoice("rehydrate", None, None)
+    # 段 10f 便 2(agora-redesign #82): 圧縮の手番 — 同じ家の温かい session でも送らず片付けて履歴から再開(compacts)。
+    # 終端の候補は片付ける物が無い。手番の途中は圧縮より defer が先(走っている手番に本文を積まない)。候補が無ければ launch。
+    assert arm("p", warm, home, None, True) == ArmChoice("rehydrate", None, "p", True)
+    assert arm("p", stamped_high, home, "high", True) == ArmChoice("rehydrate", None, "p", True)
+    assert arm("p", dead, home, None, True) == ArmChoice("rehydrate", None, None, True)
+    assert arm("p", busy, home, None, True) == ArmChoice("defer", "p", None)
+    assert arm(None, None, home, None, True) == ArmChoice("launch", None, None)
     assert run(judgment.fallback_arm_of(ArmChoice("resume", "p", None))) == ArmChoice(
         "rehydrate", None, None
     )

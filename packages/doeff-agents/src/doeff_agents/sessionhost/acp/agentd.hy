@@ -142,6 +142,7 @@
   ListProfileHomes
   LogLine
   MESSAGE-KIND
+  METRIC-COMPACTIONS-TOTAL
   METRIC-RECORD-APPEND-TOTAL
   METRIC-RECORD-LAG-SEQ
   METRIC-RECORD-SPOOL-DEPTH
@@ -257,6 +258,12 @@
   message-key-of
   ignored-settings-of
   next-arm-for-job
+  compact-at-of
+  compaction-due
+  context-percent-for
+  context-percent-of
+  conversation-key-of
+  with-context-percent
   node-row-named
   node-status-with-lease
   pane-frame
@@ -686,7 +693,23 @@
     (setv view looked))
   (<- home dict (session-affinity-key-of plan))
   (<- effort (| str None) (effort-of-plan plan))
-  (<- choice ArmChoice (next-arm-for-job candidate view home effort))
+  ;; 段 10f 便 2(agora-redesign #82): 自己圧縮の材料 — 会話の宣言 compactAt(会話の行を鍵で 1 回読む)と、候補の session の
+  ;; 直前の手番の文脈の使用率(手番の終わりに測った memory の cache)。候補が無ければ縮める文脈も無いので読まない。
+  (setv compact False)
+  (when (is-not candidate None)
+    (<- conversation-key str (conversation-key-of subject))
+    (<- conversation-row (| AcpRow None) (AcpGetRow :key conversation-key))
+    (<- compact-at (| int None) (compact-at-of conversation-row))
+    (<- percent (| int None) (context-percent-for state candidate))
+    (<- due bool (compaction-due compact-at percent))
+    (setv compact due))
+  (<- choice ArmChoice (next-arm-for-job candidate view home effort compact))
+  (when choice.compacts
+    (<- (LogLine :text (+ f"agentd: job {job-id} of conversation {subject} starts compacted — the last turn of session "
+                          f"{candidate} used {(context-percent-for state candidate)}% of the context window, "
+                          f"at or above the conversation's compactAt")))
+    (<- (MetricLine :fields {"metric" METRIC-COMPACTIONS-TOTAL "conversation" subject
+                             "agentJobId" job-id "sessionId" candidate})))
   (if (= choice.arm NEXT-ARM-DEFER)
       (do
         (when (not-in job-id previously-deferred)
@@ -1221,6 +1244,10 @@
   ;; 最後の材料(まだ読んでいない本文・result)を同じ拍で読み、実況を押し、出来事を追記する。
   (<- drained InFlightJob (drain-stream settings ensured source path now-ms))
   (<- batch DeltaBatch (turn-batch-of drained source path now-ms))
+  ;; 段 10f 便 2: 手番の終わりの文脈の使用率(材料の末尾の実測)を session の cache に置く — 次の手番の claim が
+  ;; 会話の宣言 compactAt と比べる材料。測れなかった手番(window が無い)は消す(古い値で圧縮しない)。
+  (<- percent (| int None) (context-percent-of batch.context))
+  (<- measured AgentdState (with-context-percent state job.session-id percent))
   ;; turn-record → ended(追記できずに持ち越した出来事があれば最後の書きに乗せる)
   (<- recorded bool (end-turn-record drained.job-id batch.usage drained.pending-entries))
   (when (not recorded)
@@ -1253,7 +1280,7 @@
     (<- retire bool (cleanup-after-end view))
     (when retire
       (<- (retire-sessions #(job.session-id) f"session {view.status} at the end of job {job.job-id}"))))
-  (<- next AgentdState (without-job state job.job-id))
+  (<- next AgentdState (without-job measured job.job-id))
   next)
 
 
@@ -1449,6 +1476,9 @@
     (setv path (get found 1)))
   (<- drained InFlightJob (drain-stream settings job source path now-ms))
   (<- batch DeltaBatch (turn-batch-of drained source path now-ms))
+  ;; 段 10f 便 2: 割り込みで終わる手番も文脈の実測を session の cache に置く(settle-record と同じ 1 点の判断)。
+  (<- percent (| int None) (context-percent-of batch.context))
+  (<- measured AgentdState (with-context-percent state job.session-id percent))
   (<- (end-turn-record drained.job-id batch.usage drained.pending-entries))
   (<- fresh (| AcpRow None) (AcpGetRow :key row.key))
   (setv target (if (is fresh None) row fresh))
@@ -1463,7 +1493,7 @@
     (<- (CustodyLeaseRevoke :lease-id job.lease-id)))
   (<- (LogLine :text (+ f"agentd: job {job.job-id} withdrawn ({arm}); turn-record ended, "
                              f"session {job.session-id} kept")))
-  (<- dropped AgentdState (without-job state job.job-id))
+  (<- dropped AgentdState (without-job measured job.job-id))
   dropped)
 
 

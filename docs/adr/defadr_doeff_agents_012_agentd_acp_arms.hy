@@ -119,10 +119,18 @@
 ;;; 1 点)を走らせ、自分に同じ信号を撃ち直して 2 度目で SystemExit。headless の子を pipe から切り離して拾い直す形(detach)は取らない —
 ;;; stdin / stdout の pipe の親を失った process は器として使えない(events file の書き手も Dialogue も host に在る)。ACP の宛先
 ;;; (実況の push を含む)は宣言 ACP_DAEMON_URL ちょうどで、127.0.0.1:8868 の既定値は消した(宣言の無い agentd は参加しない)。
+;;; 段 10f 便 2(agora-redesign #82・operator 2026-09-14 逐語 "that routing agent should compact itself with some threshold")の
+;;; 改訂 = R27: 会話の宣言 status.agent.compactAt(文脈の使用率 % の閾値・任意・書き手 agora-conversation)を、直前の手番の
+;;; 文脈の使用率が超えていたら、次の手番を履歴からの再開(rehydrate — R20 の腕そのまま)で起こす。turn-record の usage に同等の
+;;; 欄が無い(token の和は文脈の大きさではない)ので実測は agentd: 手番の終わりに材料の末尾(claude = 最後の assistant の usage の
+;;; 入力側 + 出力と result の modelUsage[model].contextWindow / codex = last_token_usage と model_context_window)から測り
+;;; (judgment.context-percent-of)、session ごとに memory(AgentdState.context_by_session)に持つ。判断は next-arm-for-job の
+;;; 1 点に条件 compact(judgment.compaction-due = 宣言あり ∧ 実測あり ∧ 実測 ≥ 閾値)を足す形。計器 agentd_compactions_total{conversation}。
 
 (require doeff-adr.macros [defadr rule law])
 (require doeff-hy.macros [deftest])
 (import doeff-adr.macros [fact interpretation counterexample])
+(import json)
 (import re)
 (import dataclasses [replace])
 (import pathlib [Path])
@@ -436,6 +444,7 @@
      (rule R24 "node の能力の表と、効かない宣言の欄の条件(段 10 lane 10e・agora-redesign #53・operator 決定 2026-09-14 \"all lgtm\"): agentd は node の status.capabilities に agent の種類(charter.agent_type の語 claude / codex)ごとの {settings: 受ける欄, restartOn: 変えたら session を作り直す欄} を lease と同じ拍に名乗る(judgment.capabilities-of — 値は effects.AGENT-CAPABILITIES の 1 点・契約 agora-kinds.json conventions.agentSettings.settings の綴り)。restartOn は session-affinity-key-of の鍵の欄(model・profile = account と binding の家)ちょうどで、effort と workDir は受けるが鍵に入れない。effort は claude の --effort / codex の -c model_reasoning_effort(process の旗)なので、同じ家で effort だけ違う温かい session は片付けて同じ session を新しい旗で --resume する(next-arm-for-job の 4 つ目の引数・帰属の effort の欄と比べる — session は作り直さず cache を保つ)。この手番で効かない宣言の欄(能力の表に無い種類・受けない欄・温かい session への send で charter.work_dir が session の cwd と違う)は、judgment.ignored-settings-of の 1 点が条件 AgentSettingIgnored(1 欄 1 行・reason = <欄>=<値>: <理由>)にして手番の終わりに刻む(黙って落とさない)。")
      (rule R25 "backend の生死は host の観測で決め、status の語から推測しない(段 10 lane 10h・agora-redesign #84・既知の形 = kubelet の node 再起動後の container の生死の観測): sessionhost は headless の行の backend(子 process)の生死を観測で決める — pid の存在(kill 0)+ 所有(この host の registry が同じ pid の生きた process を持つ・effect HeadlessLiveness・値 headless_protocol.BackendLiveness)。host の起動時(accept より前・awaiting latch の clear より前)に headless.hy recover-headless-rows が非終端の headless 行を観測し、判断 headless_protocol.recovery_verdict(status_terminal, in_flight, liveness)の 1 点で『手番の途中(awaiting)∧ backend が死んでいる』行だけを exited + cause vanished(ADR-DOE-AGENTS-009 の証拠つき死亡の語彙・reason に pid と観測の文)にして session_exited を刻む。idle の温かい行は触らない(次の send が --resume で同じ session を起こし直す)。awaiting latch の起動時の全 clear(store.hy db-clear-awaiting-latches)は headless の行を対象にしない(headless の latch は『手番の途中』の事実そのもの)。wire の session.get / session.list は backend_alive(headless = 上の観測・tmux / herdr = 行の pane が session の pane の集合に在る・終端の行は観測せず false)を毎回載せる。agentd は判断 judgment.backend-alive の 1 点(器に無い → 偽・明示の False → 偽・観測の無い眺め〔launch / resume の応答の backend_alive = None〕→ 真: 観測の無さは死亡の証拠ではない)を job-step-of(非終端 ∧ 手番の終わりでない ∧ backend が死 → session-lost = 記録の腕と条件 SessionLost〔reason に session・backend の種類・pid・観測の時刻 — judgment.session-lost-condition-of〕で Ended・session は host の monitor に任せて片付けない)と next-arm-for-job(候補が生きて idle でない ∧ backend が生 → defer / ∧ backend が死 → 同じ家なら候補を片付けて resume・違う家なら片付けて rehydrate)で読む。agentd.hy は backend_alive の欄も終端の語も直に読まない。headless の session.resume の腕は launch-params に events_root を運ぶ(launch.hy resume-session — 運ばないと headless-launch-session が KeyError で断り、全部 rehydrate に落ちる)。店の cause の decode(store.hy terminal-cause-from-dict)は契約の欄(category / observed_at)を持たない persisted cause を None(typed には cause なし)と読み、行ごと KeyError で読めなくしない(wire は raw を運ぶ・DB の COALESCE が raw を消さない)。")
      (rule R26 "停止で子を黙って道連れにしない(段 10 lane 10h 便 2・agora-redesign #84): launchd の bootout / kickstart は process group ごと殺すので headless の子 process(pipe の子)は host と共に死ぬ — pipe から切り離して拾い直す形(detach)は取らない(親を失った process は器として使えない: events file の書き手も Dialogue の状態も host に在る)。代わりに host は TERM の 1 度目に accept loop を生かしたまま別 thread(host.hy graceful-stop)で (1) 登録された停止の hook(host.register-shutdown-hook — entry.py が agentd の AgentdRun.close_for_stop を登録する: loop を止めて今の拍を有界に待ち、memory の走っている job を agentd.close-jobs-for-stop で 1 つずつ記録の腕〔残りの材料・turn-record ended〕と条件 AgentdRestart〔judgment.restart-condition-of の 1 点 — node・理由・session・時刻〕で Ended・status frame ended・札の返却。session は片付けない)(2) headless の行の停止の腕(headless.hy stop-headless-rows: 判断 headless_protocol.stop_verdict の 1 点で手番の途中の非終端の行だけ stopped + cause cancelled〔reason = host の停止と信号〕+ session_cancelled・idle の温かい行は触らない・登記の全 process を HeadlessKillAll で段ごとに並列の猶予〔EOF → TERM → KILL〕で降ろす)を走らせ、stderr に数を 1 行ずつ書き、自分に同じ信号を撃ち直す(実の信号 — _thread.interrupt_main は accept の syscall を起こさない)。2 度目の TERM は SystemExit(0) で finally(lease の釈放)へ。SIGKILL には手が無い — 次の起動の復帰(R25)が拾う。Mac の agentd の入れ替えは走っている job が 0 の拍に launchctl の bootout → bootstrap(TERM の経路)で行い、kickstart -k(即時)は使わない。ACP の宛先(実況の push・行の読み書き・watch の全部)は宣言(join の --server / [agentd].server → ACP_DAEMON_URL)ちょうどで、handlers.py に 127.0.0.1:8868 の既定値は無い(runtime.real_dispatchers は宣言の無い env を AgentdPreflightError で断る)。")
+     (rule R27 "会話は自分で圧縮する — 閾値は会話の宣言・実測は agentd・腕は履歴からの再開(段 10f 便 2・agora-redesign #82・operator 2026-09-14 逐語 \"that routing agent should compact itself with some threshold\"): 会話の行の status.agent.compactAt(0〜100 の整数・任意・書き手 agora-conversation・契約 agora-kinds.json)は文脈の使用率の閾値。agentd は手番の終わり(settle-record と interrupt-job — 記録の腕)に材料の末尾から文脈の大きさを測り(judgment の deltas-of が DeltaBatch.context = {tokens, window} を組む: claude = 最後の assistant の message の usage の input + cacheRead + cacheWrite + output と result の modelUsage[その model].contextWindow / codex = token_count の last_token_usage〔app-server は tokenUsage.last〕の input + output と model_context_window〔modelContextWindow〕)、judgment.context-percent-of で %(切り捨て・上限 100・窓が無ければ None = 測れない)にして session ごとに AgentdState.context_by_session へ置く(with-context-percent — memory の cache・再起動で消え次の手番の終わりに測り直す)。claim の腕は候補の session が在る時だけ会話の行を鍵で 1 回読み(conversation-key-of・AcpGetRow)、compact-at-of と context-percent-for から judgment.compaction-due(宣言あり ∧ 実測あり ∧ 実測 ≥ 閾値)を求め、next-arm-for-job の 5 つ目の引数 compact に渡す。腕: compact ∧ 候補あり ∧ 手番の途中でない → rehydrate(ArmChoice.compacts = True・生きている候補は片付ける — 温かい cache を捨てて記録の service の履歴を縮めて畳むのが圧縮の意味)/ 手番の途中(backend が生)は defer が先 / 候補なしは launch。compacts の拍に計器 agentd_compactions_total{conversation, agentJobId, sessionId} と log 1 行(retire-reason-of が理由を名乗る)。turn-record の usage には書かない(契約に欄が無い — 耐久にする時は契約の便で contextTokens / contextWindow を足してから)。")
      (rule R10 "session は会話の資源・job は手番(温かい session・設計 17.4): 会話 → 生きている session の対応は行(自分が claim した同じ subject の agent-job の sessionHandle)と器の現況から導き、Bound の job の起こし方は judgment.hy の next-arm-for-job(閉語彙 effects.NextArm = launch | send | resume | rehydrate | defer — 家と機体の扱いは R20)の 1 点で決める — 同じ会話の生きて idle な session が在れば launch せず session.send(awaiting)だけ、sessionHandle はその session を指し、turn-record は手番ごと。手番の終わりは器の lifecycle multi_turn(launch.hy の閉語彙に足した語)で policy.hy の monitor が既存の turn-end の連言から行の turn_ended_at に刻み、agentd は job-step-of の turn-end(turn_ended_at > 手番の始まりの下限 ∧ 記録の進み)で読む — status は倒さず session は生かす。idle の寿命は AgentdSettings.session_idle_ttl_seconds の 1 点で、超過・Withdrawn・node の退役で session.cleanup。計器 agent-job-to-send は create → send のまま(温かい path で p99 < 2 秒)。")]
   :laws
     [(law interrupts-ride-the-running-turn-and-are-recorded-on-the-row
@@ -605,6 +614,16 @@
           (counterexample "process を 1 つずつ kill() で降ろす — EOF 5 s + TERM 5 s の猶予が process の数だけ直列に積み、launchd の ExitTimeOut(20 s)を越えて SIGKILL され、残りの行が黙って残る")
           (counterexample "停止の腕が idle の温かい行も stopped にする — 再起動のたびに会話の cache を捨てる(次の send が --resume で同じ session を起こし直す設計を壊す)")
           (counterexample "実況の push の宛先に 127.0.0.1:8868 の既定値を残す — 宣言の無い agentd が黙って退役した Mac の中継へ押し続ける。宛先は宣言ちょうど・無ければ参加しない")])
+     (law conversations-compact-themselves-at-their-declared-threshold
+       :statement "for_all conversation c with a row whose status.agent.compactAt = k (an integer 0..100) and for_all Bound job j of c claimed by agentd with a candidate session s that is not mid-turn: percent(s) = judgment.context-percent-of(context measured at the end of s's last turn) and (percent(s) ≠ None ∧ percent(s) ≥ k) ⇒ next-arm-for-job(s, view(s), home, effort, compact = True) = rehydrate with compacts = True and retire = s when s is alive, and agentd emits one agentd_compactions_total line naming c; (k absent ∨ percent(s) = None ∨ percent(s) < k) ⇒ compact = False and the arm is R20's; the measurement is judgment.deltas-of (DeltaBatch.context from the last assistant usage and the result's modelUsage[model].contextWindow for claude, the last token usage and the model context window for codex) and agentd writes it to no ACP row"
+       :counterexamples
+         [(counterexample "受付の会話(永続・郵便が絶えない)を温かい session へ送り続ける — 文脈が窓を埋め、agent が古い郵便を忘れるか CLI が自分で要約して振り分けの根拠が消える(operator 2026-09-14「that routing agent should compact itself」の実弾)")
+          (counterexample "閾値を agentd の値の宣言(AgentdSettings)に置く — 会話ごとに違う閾値(受付 60・議論 90)を表せず、宣言の座が会話の行(agora-conversation が書く)と agentd の 2 つになる")
+          (counterexample "文脈の大きさを turn-record の usage の和(input + cacheRead + …)から導く — 和は手番の全 message の入力の合計で、最後の prompt の大きさではない(3 message の手番は 3 倍に見える)")
+          (counterexample "窓の大きさを model の名から agentd が推測する(claude は 200k と決め打つ)— [1m] の model や codex の窓が違い、実測の無い値で圧縮の拍を決める。窓は器が名乗った値(result の modelUsage / model_context_window)だけ")
+          (counterexample "圧縮の手番を手番の途中の候補にも撃つ(defer より先に rehydrate)— 走っている手番の session を片付け、その手番の結末が消える")
+          (counterexample "圧縮の判断を claim の腕(agentd.hy)で行い next-arm-for-job にも家の判断を残す — 起こし方の判定点が 2 つになり、fake で反例を撃てない(R10 の反例と同じ)")
+          (counterexample "実測を turn-record の status.usage に書く(契約に無い欄)— 読み手の zod / Hy の写しが行を落とすか、engine の statusByteBudget の外で書き手が第 2 の定義点を作る。耐久にするなら契約の便が先")])
      (law turn-events-are-appended-to-the-record-per-tick
        :statement "for_all running job j observed by agentd and for_all tick t at which stream-records reads new material of j: the events e_1..e_n that judgment.deltas-of derives from that material are appended (not replaced) to the status.entries of turn-record(j) within the same tick by agentd.append-entries, each with at = t and a seq strictly greater than every seq already on the row, via one CAS write on the last known image of the row (Conflict ⇒ one re-read and one retry; Refused or missing row ⇒ the events stay in InFlightJob.pending_entries and ride the next write); the row's entries JSON never exceeds TURN_RECORD_ENTRIES_BYTE_BUDGET (the oldest events are dropped first and a single leading kind=system marker with truncated=true and dropped=k replaces them); every appended entry is the JSON of a TurnEntryHeadline (seq, at, kind, toolName?, toolUseId?, bytes, sha256, isError?) derived by judgment.headline-of-body from the body sent to the record service — it carries no text / summary / input / output / model, and its sha256 = sha256 of record-body-bytes-of(body) (the service's identity of the same event); the record service's appendAnswer.highestProducerSeq for the stream of j lands as status.recordedSeq (never decreasing) with status.recordRef = record:<cid>/<streamId>; and the end of the turn drains the remaining material through the same point, then writes state=ended and usage over the appended entries without replacing them"
        :counterexamples
@@ -1453,7 +1472,7 @@
                "effort だけ違う温かい session を片付けて resume する腕が無い(R24)")
        (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
        (assert (= (len (lfor line agentd-lines :if (in "(ignored-settings-of plan view arm)" line) line)) 1) "agentd.hy が効かない欄を 1 点から読まない(R24)")
-       (assert (= (len (lfor line agentd-lines :if (in "(next-arm-for-job candidate view home effort)" line) line)) 1) "agentd.hy が effort を腕へ渡さない(R24)")
+       (assert (= (len (lfor line agentd-lines :if (in "(next-arm-for-job candidate view home effort compact)" line) line)) 1) "agentd.hy が effort を腕へ渡さない(R24)")
        (for [line agentd-lines]
          (assert (not-in "AGENT-CAPABILITIES" line) f"agentd.hy が能力の表を自分で読む(R24): {line}")
          (assert (not-in "CONDITION-AGENT-SETTING-IGNORED" line) f"agentd.hy が条件を自分で組む(R24): {line}"))
@@ -1495,7 +1514,7 @@
        (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk backend-alive ") line)) 1) "agentd の生死の判断は backend-alive の 1 点(R25)")
        (assert (= (len (lfor line judgment-lines :if (in "view.backend-alive" line) line)) 1) "backend_alive の欄を読む点は backend-alive ちょうど(R25)")
        (assert (= (len (lfor line judgment-lines :if (in "JOB-STEP-SESSION-LOST" line) line)) 2) "session-lost を返す点は job-step-of ちょうど(import の項 + 1)(R25)")
-       (assert (any (gfor line judgment-lines (in "(and alive live-backend) (ArmChoice :arm NEXT-ARM-DEFER :source candidate :retire None)" line))) "defer は backend が生きている時だけ(R25)")
+       (assert (any (gfor line judgment-lines (in "(and alive (not idle) live-backend) (ArmChoice :arm NEXT-ARM-DEFER :source candidate :retire None)" line))) "defer は backend が生きている時だけ(R25)")
        (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
        (for [line agentd-lines]
          (assert (not-in "backend-alive" line) f"agentd.hy は backend_alive を直に読まない(R25): {line}"))
@@ -1583,6 +1602,42 @@
                    "test_host_headless_stop_cuts_the_mid_turn_row_and_terminates_every_process"
                    "test_real_host_sigterm_closes_the_running_turn_before_exit"]]
          (assert (in (+ "def " name "(") host-tests) f"R26 の host の反例の検が無い: {name}")))
+     (deftest test-adr-doe-agents-012-conversations-compact-at-their-threshold
+       ;; R27 の針(構造): 判断は judgment の 1 点ずつ(compaction-due・context-percent-of・compact-at-of)・腕は next-arm-for-job の
+       ;; compact の引数 1 つ・claim の腕は会話の行を鍵で読み compaction-due を呼ぶ・実測は記録の腕(settle-record・interrupt-job)の
+       ;; 2 か所が同じ 1 点(with-context-percent)へ置く・turn-record の usage へは書かない・計器の名は effects の 1 点。
+       ;; 反例(挙動)は sessionhost_acp_compact_deftests.hy(実測・判断・fake で一周)と test_sessionhost_acp.py の the-one-decision。
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (for [name ["compaction-due" "context-percent-of" "compact-at-of" "conversation-key-of" "context-percent-for" "with-context-percent" "codex-context-of"]]
+         (assert (= (len (lfor line judgment-lines :if (.startswith line f"(defk {name} ") line)) 1) f"判断は 1 点(R27): {name}"))
+       (assert (any (gfor line judgment-lines (.startswith line "(defk next-arm-for-job [candidate view home effort compact]"))) "圧縮は next-arm-for-job の 5 つ目の引数(R27)")
+       (assert (any (gfor line judgment-lines (in "compact (ArmChoice :arm NEXT-ARM-REHYDRATE :source None :retire (if alive candidate None) :compacts True)" line))) "圧縮の腕は rehydrate + compacts(R27)")
+       (setv defer-at (next (gfor [i line] (enumerate judgment-lines) :if (in "(and alive (not idle) live-backend) (ArmChoice :arm NEXT-ARM-DEFER" line) i) None))
+       (setv compact-at (next (gfor [i line] (enumerate judgment-lines) :if (in "compact (ArmChoice :arm NEXT-ARM-REHYDRATE" line) i) None))
+       (assert (and (is-not defer-at None) (is-not compact-at None) (< defer-at compact-at)) "手番の途中は圧縮より defer が先(R27)")
+       (assert (= (len (lfor line judgment-lines :if (in ":context (if (is context-tokens None) None {\"tokens\" context-tokens \"window\" context-window})" line) line)) 1) "claude の実測は deltas の 1 点(R27)")
+       (assert (= (len (lfor line judgment-lines :if (in "(codex-context-of (if (isinstance last-usage dict) last-usage None)" line) line)) 2) "codex の実測は rollout と app-server の 2 か所が同じ 1 点を呼ぶ(R27)")
+       (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
+       (assert (= (len (lfor line agentd-lines :if (in "(<- due bool (compaction-due compact-at percent))" line) line)) 1) "claim の腕は compaction-due を 1 度呼ぶ(R27)")
+       (assert (= (len (lfor line agentd-lines :if (in "(next-arm-for-job candidate view home effort compact)" line) line)) 1) "腕の呼び手は 1 つ(R27)")
+       (assert (= (len (lfor line agentd-lines :if (in "(<- measured AgentdState (with-context-percent state job.session-id percent))" line) line)) 2) "実測を置く点は記録の腕の 2 か所(settle-record・interrupt-job)(R27)")
+       (assert (= (len (lfor line agentd-lines :if (in "(AcpGetRow :key conversation-key)" line) line)) 1) "会話の行は鍵で 1 回読む(R27)")
+       (assert (= (len (lfor line agentd-lines :if (in "\"metric\" METRIC-COMPACTIONS-TOTAL" line) line)) 1) "計器は 1 点(R27)")
+       (for [line agentd-lines]
+         (assert (not-in "contextPercent" line) f"turn-record に文脈の欄を書かない(R27): {line}")
+         (assert (not-in "\"compactAt\"" line) f"agentd.hy は compactAt の綴りを直に読まない(R27): {line}"))
+       (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
+       (assert (any (gfor line effects-lines (.startswith line "METRIC_COMPACTIONS_TOTAL = \"agentd_compactions_total\""))) "計器の名は effects の 1 点(R27)")
+       (assert (any (gfor line effects-lines (.startswith line "    compacts: bool = False"))) "ArmChoice.compacts(R27)")
+       (assert (any (gfor line effects-lines (.startswith line "    context_by_session: tuple[tuple[str, int], ...] = ()"))) "実測の cache は AgentdState の 1 欄(R27)")
+       (setv reads (json.loads (.read-text (/ (. (Path __file__) parent parent) "contracts" "reads.json") :encoding "utf-8")))
+       (assert (in "kinds.conversation.schema.properties.status.properties.agent.properties.compactAt" (get (get reads "reads") "agora-kinds")) "読む欄の宣言(R27)")
+       (setv tests (.read-text (/ (. (Path __file__) parent parent parent) "packages" "doeff-agents" "tests" "sessionhost_acp_compact_deftests.hy") :encoding "utf-8"))
+       (for [name ["test-a-turn-end-measures-the-context-and-the-next-turn-over-compact-at-rehydrates"
+                   "test-below-the-threshold-or-without-a-declaration-the-warm-session-is-kept"
+                   "test-claude-events-measure-the-last-message-against-the-result-context-window"
+                   "test-codex-rollout-and-app-server-measure-the-last-response"]]
+         (assert (in (+ "(deftest " name) tests) f"R27 の反例の検が無い: {name}")))
      (deftest test-adr-doe-agents-012-interrupts-ride-the-running-turn
        ;; R21 の針(構造): 判断は judgment.hy の 1 点ずつ・配達は agentd.deliver-interrupts の 1 点・agentd は器の作法の語を
        ;; 持たない・claude の headless は stream-json の入力・sessionhost の割り込みの口は mode = interrupt の 1 語。

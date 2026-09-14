@@ -61,6 +61,7 @@
   CONDITION-INTERRUPTED
   CONDITION-RECORD-UNAVAILABLE
   CONDITION-SESSION-LOST
+  CONVERSATION-KIND
   CREDENTIAL-SOURCE-HOME
   CREDENTIAL-SOURCE-LEASE
   CREDENTIAL-SOURCE-MISSING
@@ -508,17 +509,90 @@
   (if (and (isinstance effort str) effort) effort None))
 
 
-(defk next-arm-for-job [candidate view home effort]
-  {:pre [(: candidate (| str None)) (: view (| SessionView None)) (: home dict) (: effort (| str None))]
+;; ---------------------------------------------------------------------------
+;; 自己圧縮(段 10f 便 2・agora-redesign #82・operator 2026-09-14「that routing agent should compact itself with some
+;; threshold」): 会話の宣言 status.agent.compactAt(文脈の使用率 % の閾値・任意)を、直前の手番の文脈の使用率(agentd の
+;; 実測 — turn-record の usage に同等の欄が無い)が超えていたら、次の手番を履歴からの再開(rehydrate)で起こす。
+;; 判断は next-arm-for-job の 1 点に条件 compact を足す形で、材料の読み(会話の行・実測の cache)は agentd.hy。
+;; ---------------------------------------------------------------------------
+
+(defk conversation-key-of [conversation-id]
+  {:pre [(: conversation-id str)]
+   :post [(: % str)]}
+  "会話の行の鍵(identityKey = id・区画 = agora の kind の区画)— compactAt は鍵で 1 行読む(全量 list は撃たない)。"
+  f"{AGORA-KINDS-NAMESPACE}:{CONVERSATION-KIND}:{conversation-id}")
+
+
+(defk compact-at-of [row]
+  {:pre [(: row (| AcpRow None))]
+   :post [(: % (| int None))]}
+  "会話の行の status.agent.compactAt(契約 agora-kinds.json conversation.status.agent.compactAt — 0〜100 の整数)。
+   行が無い・欄が無い・形が違う = None(圧縮しない — 発明しない)。"
+  (when (is row None)
+    (return None))
+  (setv agent (if (isinstance row.status dict) (.get row.status "agent") None))
+  (setv value (if (isinstance agent dict) (.get agent "compactAt") None))
+  (if (and (isinstance value int) (not (isinstance value bool)) (<= 0 value 100)) value None))
+
+
+(defk context-percent-of [context]
+  {:pre [(: context (| dict None))]
+   :post [(: % (| int None))]}
+  "材料の末尾で測った文脈の大きさ(DeltaBatch.context = {tokens, window})→ 使用率(% の整数・切り捨て・上限 100)。
+   window が無い(result の modelUsage が無い・codex が model_context_window を名乗らない)= None(比べない)。"
+  (when (is context None)
+    (return None))
+  (setv tokens (.get context "tokens"))
+  (setv window (.get context "window"))
+  (if (and (isinstance tokens int) (isinstance window int) (> window 0))
+      (min 100 (int (// (* 100 tokens) window)))
+      None))
+
+
+(defk compaction-due [compact-at percent]
+  {:pre [(: compact-at (| int None)) (: percent (| int None))]
+   :post [(: % bool)]}
+  "この手番を圧縮して始めるか: 会話が閾値を宣言し(compactAt)、直前の手番の実測(percent)がそれ以上。
+   どちらかが無ければ False(宣言の無い会話・測れていない session は圧縮しない)。"
+  (and (is-not compact-at None) (is-not percent None) (>= percent compact-at)))
+
+
+(defk context-percent-for [state session-id]
+  {:pre [(: state AgentdState) (: session-id (| str None))]
+   :post [(: % (| int None))]}
+  "state の cache から session の直前の手番の文脈の使用率を引く(無ければ None)。"
+  (when (is session-id None)
+    (return None))
+  (setv found None)
+  (for [[sid percent] state.context-by-session]
+    (when (= sid session-id)
+      (setv found percent)))
+  found)
+
+
+(defk with-context-percent [state session-id percent]
+  {:pre [(: state AgentdState) (: session-id str) (: percent (| int None))]
+   :post [(: % AgentdState)]}
+  "session の直前の手番の実測を state の cache に置く(同じ session は置き換え・None = 測れなかったので消す)。"
+  (setv rest (tuple (lfor pair state.context-by-session :if (!= (get pair 0) session-id) pair)))
+  (replace state :context-by-session (if (is percent None) rest (+ rest #(#(session-id percent))))))
+
+
+(defk next-arm-for-job [candidate view home effort compact]
+  {:pre [(: candidate (| str None)) (: view (| SessionView None)) (: home dict) (: effort (| str None)) (: compact bool)]
    :post [(: % ArmChoice)]}
   "Bound の job の起こし方(閉語彙 effects.NextArm)— 判断はここ 1 点(R10 / R20)。candidate = 会話の前の
    session(affinity.predecessor か会話の最後の手番の session — warm-candidate-of)、view = その器の眺め、
    home = この job が走る家(session-affinity-key-of — account・binding・model の組)、effort = この job の charter の effort
-   (段 10 lane 10e・None = 走行器の既定)。cache(温かい session / transcript)を保つのは同じ機体 ∧ 同じ家の
-   時だけで、機体か家(profile の家)が変わる時は cache の失効を受け入れて 履歴から再開する(ACP の全史から)
-   (operator 決定 2026-09-13 #54 逐語 \"i want cache kept when both machine and a profile is not changed. in
+   (段 10 lane 10e・None = 走行器の既定)、compact = この手番は文脈を縮めて始める(段 10f 便 2・agora-redesign #82:
+   会話の宣言 compactAt を直前の手番の文脈の使用率が超えた — compaction-due の 1 点)。cache(温かい session / transcript)を
+   保つのは同じ機体 ∧ 同じ家の時だけで、機体か家(profile の家)が変わる時は cache の失効を受け入れて 履歴から再開する
+   (ACP の全史から)(operator 決定 2026-09-13 #54 逐語 \"i want cache kept when both machine and a profile is not changed. in
    other cases, i think i need to accept the fact that cache gets invalidated\"):
    候補が無い → launch /
+   候補が生きていて idle でない ∧ backend が生きている → defer(手番の途中 — 圧縮も待つ)/
+   compact ∧ 候補が在る → rehydrate(compacts — 温かい cache を捨てて記録の service の履歴から縮めて始めるのが圧縮の意味・
+   生きている候補は片付ける。operator 2026-09-14 逐語 \"that routing agent should compact itself with some threshold\")/
    候補が生きて idle ∧ 同じ家 ∧ 同じ effort → send(温かい)/
    候補が生きて idle ∧ 同じ家 ∧ effort が違う → 候補を片付けて resume(段 10 lane 10e: effort は process の旗なので
    温かい process には届かない — 同じ session を新しい旗で --resume する。cache は保つ・session は作り直さない)/
@@ -546,10 +620,11 @@
     (setv same-effort (= launched-effort effort)))
   (cond
     (is candidate None) (ArmChoice :arm NEXT-ARM-LAUNCH :source None :retire None)
+    (and alive (not idle) live-backend) (ArmChoice :arm NEXT-ARM-DEFER :source candidate :retire None)
+    compact (ArmChoice :arm NEXT-ARM-REHYDRATE :source None :retire (if alive candidate None) :compacts True)
     (and idle same same-effort) (ArmChoice :arm NEXT-ARM-SEND :source candidate :retire None)
     (and idle same) (ArmChoice :arm NEXT-ARM-RESUME :source candidate :retire candidate)
     idle (ArmChoice :arm NEXT-ARM-REHYDRATE :source None :retire candidate)
-    (and alive live-backend) (ArmChoice :arm NEXT-ARM-DEFER :source candidate :retire None)
     (and alive same) (ArmChoice :arm NEXT-ARM-RESUME :source candidate :retire candidate)
     alive (ArmChoice :arm NEXT-ARM-REHYDRATE :source None :retire candidate)
     same (ArmChoice :arm NEXT-ARM-RESUME :source candidate :retire None)
@@ -564,6 +639,8 @@
    backend が死んでいる(段 10 lane 10h — 手番は終わらないので待たない)。"
   (<- idle bool (session-idle view))
   (cond
+    choice.compacts
+    f"job {job-id} starts compacted — the conversation's context passed its compactAt threshold, so the warm session is dropped and the conversation is rehydrated from the record service (段 10f 便 2)"
     (= choice.arm NEXT-ARM-REHYDRATE)
     f"job {job-id} runs in another home (account, binding or model) — the session cache is dropped and the conversation is rehydrated"
     idle
@@ -2172,9 +2249,20 @@
   (setv seen-messages (set))
   (setv model None)
   (setv seq seq-start)
+  ;; 段 10f 便 2: 文脈の大きさ = 最後の assistant の message の usage(入力側 + 出力)・window = result の
+  ;; modelUsage[model].contextWindow(CLI 2.x の result 行の欄・model = 最後に見た message の model)。材料の末尾の値が勝つ。
+  (setv context-tokens None)
+  (setv context-window None)
   (for [record records]
     (setv kind (.get record "type"))
     (setv message (.get record "message"))
+    (when (and streamed (= kind "result"))
+      (setv model-usage (.get record "modelUsage"))
+      (when (and (isinstance model-usage dict) (isinstance model str))
+        (setv entry (.get model-usage model))
+        (setv window (if (isinstance entry dict) (.get entry "contextWindow") None))
+        (when (and (isinstance window int) (not (isinstance window bool)) (> window 0))
+          (setv context-window window))))
     (when (and streamed (= kind "system"))
       (<- note (| str None) (claude-system-note record))
       (when (is-not note None)
@@ -2210,6 +2298,7 @@
           (.add seen-messages message-id)
           (<- part dict (usage-of-claude-message message-usage message-model))
           (<- usage dict (add-usage usage part))
+          (setv context-tokens (+ (get part "input") (get part "cacheRead") (get part "cacheWrite") (get part "output")))
           (<- usage-frame dict (delta-frame job-id seq at "usage" part))
           (.append frames usage-frame)
           (setv seq (+ seq 1))))
@@ -2259,7 +2348,21 @@
               True None))))))
   (<- entries tuple (entries-of-bodies (tuple bodies)))
   (DeltaBatch :frames (tuple frames) :entries entries :bodies (tuple bodies) :usage usage
-              :next-seq seq :model model))
+              :next-seq seq :model model
+              :context (if (is context-tokens None) None {"tokens" context-tokens "window" context-window})))
+
+
+(defk codex-context-of [last window]
+  {:pre [(: last (| dict None)) (: window (| int None))]
+   :post [(: % (| dict None))]}
+  "codex の直近の応答の token(rollout の last_token_usage / app-server の tokenUsage.last)と model の窓 → 文脈の大きさ
+   {tokens, window}(段 10f 便 2)。last が無ければ None。tokens = 入力(cache を含む)+ 出力。"
+  (when (is last None)
+    (return None))
+  (setv input-tokens (or (.get last "input_tokens") (.get last "inputTokens") 0))
+  (setv output-tokens (or (.get last "output_tokens") (.get last "outputTokens") 0))
+  {"tokens" (+ (int input-tokens) (int output-tokens))
+   "window" (if (and (isinstance window int) (not (isinstance window bool)) (> window 0)) window None)})
 
 
 (defk codex-deltas-of [records job-id seq-start at]
@@ -2270,6 +2373,7 @@
   (setv frames [])
   (setv bodies [])
   (setv usage None)
+  (setv context None)
   (setv seq seq-start)
   (for [record records]
     (setv kind (.get record "type"))
@@ -2323,11 +2427,19 @@
             (setv usage part)
             (<- usage-frame dict (delta-frame job-id seq at "usage" part))
             (.append frames usage-frame)
-            (setv seq (+ seq 1))))
+            (setv seq (+ seq 1)))
+          ;; 段 10f 便 2: 文脈の大きさ = 直近の応答(last_token_usage)と model の窓(最新が勝つ)。
+          (when (isinstance info dict)
+            (setv last-usage (.get info "last_token_usage"))
+            (setv model-window (.get info "model_context_window"))
+            (<- measured (| dict None) (codex-context-of (if (isinstance last-usage dict) last-usage None)
+                                                         (if (and (isinstance model-window int) (not (isinstance model-window bool))) model-window None)))
+            (when (is-not measured None)
+              (setv context measured))))
         True None)))
   (<- entries tuple (entries-of-bodies (tuple bodies)))
   (DeltaBatch :frames (tuple frames) :entries entries :bodies (tuple bodies) :usage usage
-              :next-seq seq :model None))
+              :next-seq seq :model None :context context))
 
 
 (defk codex-event-deltas-of [records job-id seq-start at]
@@ -2342,6 +2454,7 @@
   (setv frames [])
   (setv bodies [])
   (setv usage None)
+  (setv context None)
   (setv seq seq-start)
   (for [record records]
     (setv method (.get record "method"))
@@ -2410,11 +2523,19 @@
             (setv usage part)
             (<- usage-frame dict (delta-frame job-id seq at "usage" part))
             (.append frames usage-frame)
-            (setv seq (+ seq 1))))
+            (setv seq (+ seq 1)))
+          ;; 段 10f 便 2: 文脈の大きさ = 直近の応答(tokenUsage.last)と model の窓(modelContextWindow・最新が勝つ)。
+          (when (isinstance token-usage dict)
+            (setv last-usage (.get token-usage "last"))
+            (setv model-window (.get token-usage "modelContextWindow"))
+            (<- measured (| dict None) (codex-context-of (if (isinstance last-usage dict) last-usage None)
+                                                         (if (and (isinstance model-window int) (not (isinstance model-window bool))) model-window None)))
+            (when (is-not measured None)
+              (setv context measured))))
         True None)))
   (<- entries tuple (entries-of-bodies (tuple bodies)))
   (DeltaBatch :frames (tuple frames) :entries entries :bodies (tuple bodies) :usage usage
-              :next-seq seq :model None))
+              :next-seq seq :model None :context context))
 
 
 (defk events-to-deltas [agent-type text job-id seq-start at]
