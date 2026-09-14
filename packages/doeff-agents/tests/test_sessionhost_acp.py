@@ -3020,6 +3020,40 @@ def test_join_spec_is_flags_over_declaration_over_defaults() -> None:
     assert flagged.capacity == 3  # flag > toml(段 10 lane 10d・R28)
 
 
+def test_join_spec_carries_the_service_account_token_file_to_the_custody_env() -> None:
+    """段 10 lane 10y(agora-redesign #110・依頼者の裁定 問い 3 案 A): k8s の pod の agentd は預かり所へ ServiceAccount の
+    token で名乗る。宣言 file の [custody].service_account_token_file(flag --service-account-token-file が優先)が
+    JoinSpec を通って env AGORA_CUSTODY_SA_TOKEN_PATH に写る。名乗らない宣言(欄なし・空文字)は env に現れない。"""
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import JoinSpec
+
+    base = ["--server", "http://acp:8868", "--token-file", "/t/agentd.token", "--capacity", "2", "--place", "personal"]
+    sa_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    declaration: dict[str, object] = {
+        "schema": "doeff.agentd-join.v1",
+        "custody": {"url": "http://custodian.agora-custody.svc.cluster.local:8320", "service_account_token_file": sa_path},
+    }
+    from_toml = _join_spec(base, declaration)
+    assert isinstance(from_toml, JoinSpec)
+    assert from_toml.service_account_token_file == sa_path
+    assert from_toml.borrower_key_file is None
+    env = dict(run(join.join_plan_of(from_toml)).env)
+    assert env["AGORA_CUSTODY_SA_TOKEN_PATH"] == sa_path
+    assert "AGORA_BORROWER_KEY_PATH" not in env
+    flagged = _join_spec([*base, "--service-account-token-file", "/flag/token"], declaration)
+    assert isinstance(flagged, JoinSpec)
+    assert flagged.service_account_token_file == "/flag/token"
+    absents: list[dict[str, object]] = [
+        {"schema": "doeff.agentd-join.v1"},
+        {"schema": "doeff.agentd-join.v1", "custody": {"service_account_token_file": ""}},
+    ]
+    for absent in absents:
+        spec = _join_spec(base, absent)
+        assert isinstance(spec, JoinSpec)
+        assert spec.service_account_token_file is None
+        assert "AGORA_CUSTODY_SA_TOKEN_PATH" not in dict(run(join.join_plan_of(spec)).env)
+
+
 def test_join_spec_refuses_missing_server_or_token_unknown_flags_and_bad_words() -> None:
     from doeff_agents.sessionhost.acp.effects import JoinSpec
 
@@ -3511,6 +3545,70 @@ def test_borrow_refuses_when_the_voucher_cannot_be_redeemed(monkeypatch: pytest.
     refused = custody._borrow(CustodyLeaseBorrow(kind="claude", account="acct", purpose="p"))
     assert isinstance(refused, LeaseRefused)
     assert refused.status == 410 and refused.hold_expires_at_ms == _epoch_ms("2026-09-14T12:00:00.000Z")
+
+
+def test_borrow_names_the_pod_by_its_service_account_token_to_master_and_worker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """反例(段 10 lane 10y・agora-redesign #110 の実測 2026-09-15 02:09): k3s の pool の agentd は借り手札を持たず、
+    X-Borrower-Key だけを送る CustodyHttp は預かり所に『身元が要る(SA token か借り手札)』の 401 で断られ、配車が届いた
+    手番が全部 CredentialUnavailable で終わった。SA token の file を宣言した agentd は、貸与(master)・引換券の redeem
+    (worker)・返却のどれにも Authorization: Bearer で名乗る。file は要求ごとに読む(kubelet が回した後の値で名乗る)。"""
+    seen: list[tuple[str, dict[str, str]]] = []
+
+    def fake_http(
+        method: str, url: str, headers: Mapping[str, str], body: JSON, timeout: float
+    ) -> handlers.HttpReply:
+        seen.append((url, dict(headers)))
+        if url.endswith("/lease/claude"):
+            return handlers.HttpReply(200, _lease_answer())
+        return handlers.HttpReply(200, {"ok": True, "leaseId": "lease-9", "accessToken": "tok-1"})
+
+    monkeypatch.setattr(handlers, "_http_json", fake_http)
+    token_file = tmp_path / "token"
+    token_file.write_text("sa-token-1\n", encoding="utf-8")
+    custody = handlers.CustodyHttp("http://master.test", None, str(token_file))
+    grant = custody._borrow(CustodyLeaseBorrow(kind="claude", account="acct", purpose="agent-job s-1"))
+    assert isinstance(grant, LeaseGrant)
+    assert [(url, headers) for url, headers in seen] == [
+        ("http://master.test/lease/claude", {"Authorization": "Bearer sa-token-1"}),
+        ("https://worker.test/redeem", {"Authorization": "Bearer sa-token-1"}),
+    ]
+    token_file.write_text("sa-token-2", encoding="utf-8")
+    seen.clear()
+    assert custody._revoke("lease-9") is True
+    assert seen == [("http://master.test/lease/lease-9/revoke", {"Authorization": "Bearer sa-token-2"})]
+
+
+def test_borrow_with_a_declared_but_unreadable_service_account_token_refuses_without_asking(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """SA token の file を宣言したのに無い・空の拍は、名乗らずに撃って 401 で知るのではなく、宣言の置き場を名指して断る。
+    借り手札だけの agentd(会社 Mac)は今日どおり X-Borrower-Key だけを送る。"""
+
+    def refuse_http(*args: object, **kw: object) -> handlers.HttpReply:  # pragma: no cover - 呼ばれたら失敗
+        raise AssertionError("身元の無い要求を預かり所へ撃った")
+
+    monkeypatch.setattr(handlers, "_http_json", refuse_http)
+    refused = handlers.CustodyHttp("http://master.test", None, str(tmp_path / "absent"))._borrow(
+        CustodyLeaseBorrow(kind="claude", account="acct", purpose="p")
+    )
+    assert isinstance(refused, LeaseRefused) and refused.status == 503
+    assert "AGORA_CUSTODY_SA_TOKEN_PATH" in refused.error
+
+    seen: list[dict[str, str]] = []
+
+    def fake_http(
+        method: str, url: str, headers: Mapping[str, str], body: JSON, timeout: float
+    ) -> handlers.HttpReply:
+        seen.append(dict(headers))
+        return handlers.HttpReply(409, {"ok": False, "error": "held"})
+
+    monkeypatch.setattr(handlers, "_http_json", fake_http)
+    handlers.CustodyHttp("http://master.test", "borrower-key")._borrow(
+        CustodyLeaseBorrow(kind="claude", account="acct", purpose="p")
+    )
+    assert seen == [{"X-Borrower-Key": "borrower-key"}]
 
 
 def test_borrow_without_a_declared_custody_url_refuses_without_asking(

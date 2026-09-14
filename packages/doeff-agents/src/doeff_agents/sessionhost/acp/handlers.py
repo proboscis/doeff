@@ -692,14 +692,35 @@ class AcpHttp:
 
 
 class CustodyHttp:
-    """預かり所の貸出と返却。身元は借り手札(``X-Borrower-Key``)。"""
+    """預かり所の貸出と返却。身元は借り手札(``X-Borrower-Key`` — Mac の agentd)と、宣言が在れば pod の
+    ServiceAccount の token(``Authorization: Bearer`` — 預かり所の k3s の backend が TokenReview で解く・段 10 lane 10y)。"""
 
-    def __init__(self, base_url: str, borrower_key: str | None) -> None:
+    def __init__(
+        self, base_url: str, borrower_key: str | None, service_account_token_file: str | None = None
+    ) -> None:
         #: 宣言の無い機体は空(借りの要求はここで断る — 既定の宿を発明しない・段 10 lane 10d 便 2)。
         self._base_url = base_url.rstrip("/")
-        self._headers: dict[str, str] = {}
-        if borrower_key:
-            self._headers["X-Borrower-Key"] = borrower_key
+        self._borrower_key = borrower_key
+        #: token の file は要求ごとに読む(kubelet が projected の token を回すので、起動時の値を持ち続けない)。
+        self._service_account_token_file = service_account_token_file
+
+    def _identity_headers(self) -> dict[str, str] | LeaseRefused:
+        """要求に載せる身元の header。SA token の file を宣言したのに読めない拍は断り(名乗らずに撃って
+        預かり所の 401 で知るのではなく、宣言の置き場を名指して止める)。"""
+        headers: dict[str, str] = {}
+        if self._borrower_key:
+            headers["X-Borrower-Key"] = self._borrower_key
+        if self._service_account_token_file is not None:
+            token = read_secret_file(self._service_account_token_file)
+            if token is None:
+                return LeaseRefused(
+                    503,
+                    f"service account token file {self._service_account_token_file} is absent or empty "
+                    "(join の [custody].service_account_token_file → AGORA_CUSTODY_SA_TOKEN_PATH)",
+                    None,
+                )
+            headers["Authorization"] = f"Bearer {token}"
+        return headers
 
     #: 宣言が無い時の断り(呼び手には LeaseRefused として返る — 到達不能と同じ扱いで job は終端へ)。
     _UNDECLARED = LeaseRefused(
@@ -712,17 +733,24 @@ class CustodyHttp:
         if isinstance(effect, CustodyLeaseBorrow):
             return Resume(k, self._borrow(effect))
         if isinstance(effect, CustodyLeaseRevoke):
-            if not self._base_url:
-                return Resume(k, False)
-            reply = _http_json(
-                "POST",
-                f"{self._base_url}/lease/{effect.lease_id}/revoke",
-                self._headers,
-                {},
-                HTTP_TIMEOUT_SECONDS,
-            )
-            return Resume(k, reply.status == 200)
+            return Resume(k, self._revoke(effect.lease_id))
         return Pass(effect, k)
+
+    def _revoke(self, lease_id: str) -> bool:
+        """借りた札を返す。宣言が無い・身元が組めない拍は返せない(False)。"""
+        if not self._base_url:
+            return False
+        headers = self._identity_headers()
+        if isinstance(headers, LeaseRefused):
+            return False
+        reply = _http_json(
+            "POST",
+            f"{self._base_url}/lease/{lease_id}/revoke",
+            headers,
+            {},
+            HTTP_TIMEOUT_SECONDS,
+        )
+        return reply.status == 200
 
     def _borrow(self, effect: CustodyLeaseBorrow) -> LeaseOutcome:
         """借りは 2 段(預かり所の契約 v2・段 10 lane 10d): master へ貸与を頼んで**引換券**と口座の worker の基点を受け、
@@ -731,10 +759,13 @@ class CustodyHttp:
         """
         if not self._base_url:
             return self._UNDECLARED
+        headers = self._identity_headers()
+        if isinstance(headers, LeaseRefused):
+            return headers
         reply = _http_json(
             "POST",
             f"{self._base_url}/lease/{effect.kind}",
-            self._headers,
+            headers,
             {"account": effect.account, "purpose": effect.purpose},
             HTTP_TIMEOUT_SECONDS,
         )
@@ -755,7 +786,7 @@ class CustodyHttp:
         redeemed = _http_json(
             "POST",
             f"{worker_url.rstrip('/')}/redeem",
-            self._headers,
+            headers,
             {"voucher": voucher},
             HTTP_TIMEOUT_SECONDS,
         )

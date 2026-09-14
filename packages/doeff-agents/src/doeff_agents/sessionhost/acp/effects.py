@@ -337,6 +337,11 @@ CAPACITY_ENV = "DOEFF_AGENTD_CAPACITY"
 HOMES_ROOT_ENV = "DOEFF_AGENTD_HOMES_ROOT"
 CUSTODY_URL_ENV = "AGORA_CUSTODY_URL"
 BORROWER_KEY_PATH_ENV = "AGORA_BORROWER_KEY_PATH"
+#: 段 10 lane 10y(agora-redesign #110・依頼者の裁定 問い 3 案 A): k8s の pod の身元 = ServiceAccount の token の file。
+#: 宣言(join の [custody].service_account_token_file / flag --service-account-token-file)が在る時だけ、預かり所への要求に
+#: Authorization: Bearer で載せる(預かり所の k3s の backend が TokenReview で解く・借り手名 = ns/sa)。借り手札の経路
+#: (X-Borrower-Key — Mac の agentd)はそのまま残す。
+CUSTODY_SA_TOKEN_PATH_ENV = "AGORA_CUSTODY_SA_TOKEN_PATH"
 #: 段 10f 便 2 追補 3(agora-redesign #82・依頼者 2026-09-14 17:1x 実測「agent が自分の会話 id を答えられない」): 手番の process
 #: の env(charter.session_env — host の launch-spawn-env が非 auth の overlay として spawn の env に混ぜる)に置く会話の身元。
 #: AGORA_CONVERSATION_ID = 会話の id(c-…・agent-job の spec.subject)/ AGORA_SEAT_OPENER = 会話の行の spec.opener の逐語
@@ -429,6 +434,9 @@ class JoinSpec:
     place: str
     #: 会話の記録の service の URL(段 9f lane 9f-2 — 宣言 file の [record].url・flag --record)。None = 二重書きなし。
     record_url: str | None = None
+    #: 預かり所へ名乗る ServiceAccount の token の file(段 10 lane 10y — 宣言 file の [custody].service_account_token_file・
+    #: flag --service-account-token-file)。None = 名乗らない(借り手札だけ)。
+    service_account_token_file: str | None = None
 
 
 @dataclass(frozen=True)
