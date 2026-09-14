@@ -1728,6 +1728,32 @@
   found)
 
 
+(defk custody-contract-refusal [answer spoken]
+  {:pre [(: answer (| dict None)) (: spoken int)]
+   :post [(: % (| str None))]}
+  "預かり所の /health の答えから「この走行係はこの預かり所と話せるか」を判じる 1 点
+   (段 10 lane 10d 便 4・agora-redesign #85・依頼者の裁定 2026-09-15)。
+   None = 話せる。文字列 = 参加しない理由(そのまま起動の断りの文になる)。
+
+   ⚠ 版の**定義点は預かり所**(/health の欄 contract)で、走行係は読むだけ。
+   答えが無い(届かない)・欄が無い(版 1 の預かり所)・数が違う、のどれも参加しない:
+   起点の実弾 2026-09-15 01:48〜02:37 = 版 2 を話す agentd が版 1 の預かり所より**先に**本番へ出て、
+   貸与の答えを malformed grant と読み、手番が 49 分間 1 つも走らなかった。順は
+   **預かり所(server)が先・走行係(client)が後**で、それを機械で守る材料がこの名乗り。"
+  (setv order "順は預かり所(server)が先・走行係(client)が後 — 預かり所を先に上げてから機体を入れ替える")
+  (cond
+    (is answer None)
+    (+ "預かり所の /health が読めない(届かないか 200 でない)— 版を確かめられない機体は参加しない。" order)
+    (not (isinstance (.get answer "contract") int))
+    (+ f"預かり所が契約の版を名乗らない(/health に contract の欄が無い = 版 {spoken} より前の預かり所)。" order)
+    (!= (get answer "contract") spoken)
+    (do
+      (setv named (get answer "contract"))
+      (+ f"預かり所の契約の版 {named} とこの走行係が話せる版 {spoken} が違う。" order))
+    True
+    None))
+
+
 (defk node-resource-id-of [rows name]
   {:pre [(: rows tuple) (: name str)]
    :post [(: % str)]}

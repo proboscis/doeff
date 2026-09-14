@@ -33,6 +33,7 @@
   AGENTD-PLACES
   CAPACITY-ENV
   CUSTODY-URL-ENV
+  CustodyHealth
   HEADLESS-DIR-ENV
   HOST-BACKEND-ENV
   HOST-BACKEND-FLAG
@@ -67,6 +68,7 @@
   RECORD-SPOOL-DIR-ENV
   RECORD-URL-ENV
   SESSION-HOOKS-ENV])
+(import doeff_agents.sessionhost.acp.judgment [custody-contract-refusal])
 
 
 ;; ---------------------------------------------------------------------------
@@ -421,6 +423,17 @@
         True ownership))
     True
     (raise (ValueError f"ownership proof {ownership.proof !r} is not a known method"))))
+
+
+(defk custody-contract-preflight [spoken]
+  {:pre [(: spoken int)]
+   :post [(: % (| str None))]}
+  "起動の前に 1 回撃つ検(段 10 lane 10d 便 4・agora-redesign #85): 預かり所が /health で名乗る
+   契約の版を読み、この走行係が話せるかを判じる。None = 参加してよい・文字列 = 参加しない理由。
+   判断は judgment.custody-contract-refusal の 1 点で、ここは読みを運ぶだけ。"
+  (<- answer (| dict None) (CustodyHealth))
+  (<- refusal (| str None) (custody-contract-refusal answer spoken))
+  refusal)
 
 
 (defk ownership-preflight [ownership]

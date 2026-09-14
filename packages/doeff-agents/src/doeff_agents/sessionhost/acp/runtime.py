@@ -39,6 +39,7 @@ from doeff_agents.sessionhost.acp.effects import (
     DECLARATION_SHA256_ENV,
     CAPACITY_ENV,
     PLACE_ENV,
+    CUSTODY_CONTRACT_VERSION,
     CUSTODY_URL_ENV,
     HOMES_ROOT_ENV,
     JOIN_RECORD_SPOOL_DIR,
@@ -408,6 +409,19 @@ def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> Age
             close()
             raise TypeError(f"ownership_preflight returned {type(verified).__name__}")
         _stderr(f"agentd: ownership {verified.grade} verified by {verified.proof}")
+    # 段 10 lane 10d 便 4(agora-redesign #85・依頼者の裁定 2026-09-15): 貸与の契約の版の門。
+    # 預かり所が /health で名乗る版をこの機体が話せなければ**参加しない**(loud に断って落ちる)。
+    # 版の定義点は預かり所の 1 点で、ここは読んで判じるだけ(判断は judgment の 1 点)。
+    # 起点 = 実弾 2026-09-15 01:48〜02:37: 版 2 を話す agentd が版 1 の預かり所より先に本番へ出て、
+    # 手番が 49 分間 1 つも走らなかった。順は server が先・client が後。
+    if settings.custody_declared:
+        refusal: object = PyVM().run(
+            install(join.custody_contract_preflight(CUSTODY_CONTRACT_VERSION), dispatchers)
+        )
+        if isinstance(refusal, str) and refusal:
+            close()
+            raise AgentdPreflightError(f"agentd custody contract check refused: {refusal}")
+        _stderr(f"agentd: custody contract {CUSTODY_CONTRACT_VERSION} verified")
     stop = threading.Event()
     holder = StateHolder()
 
