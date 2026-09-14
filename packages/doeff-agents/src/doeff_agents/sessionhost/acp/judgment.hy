@@ -124,6 +124,7 @@
   RecordAppended
   RecordBatch
   RecordConflicted
+  RECORD-MAIL-EVENT-KIND
   RecordEvent
   RecordStream
   RecordUnsent
@@ -1001,16 +1002,17 @@
   (.strftime (datetime.fromtimestamp (/ at 1000) :tz timezone.utc) "%Y-%m-%dT%H:%M:%SZ"))
 
 
-(defk history-message-line [message at]
-  {:pre [(: message AcpRow) (: at int)]
+(defk history-message-line [message at fetched]
+  {:pre [(: message AcpRow) (: at int) (: fetched dict)]
    :post [(: % str)]}
-  "郵便 1 通 → 「これまでの会話」の 1 項(差出人 → 宛先(種類): 本文)。"
+  "郵便 1 通 → 「これまでの会話」の 1 項(差出人 → 宛先(種類): 本文)。段 10f 便 1b: 本文を記録の service に置いた郵便は
+   fetched(郵便 id → 本文 — agentd の mail-bodies-by-ref が読み集めた表)から引く。"
   (<- stamp str (history-time-of at))
   (setv spec message.spec)
   (setv sender (.get spec "from" "?"))
   (setv to (.get spec "to" "?"))
   (setv kind (.get spec "kind" "note"))
-  (setv body (.get spec "body"))
+  (setv body (if (isinstance (.get spec "body") str) (.get spec "body") (.get fetched (.get spec "id" message.resource-id))))
   (setv text (if (isinstance body str) body ""))
   f"[{stamp}] {sender} → {to}({kind}): {text}")
 
@@ -1075,9 +1077,9 @@
   f"[{stamp}] 手番 {record.resource-id}(見出しだけ・本文は記録の service): {parts}{tool-note}")
 
 
-(defk rehydrate-history-of [conversation-id messages source exclude budget]
+(defk rehydrate-history-of [conversation-id messages source exclude budget fetched]
   {:pre [(: conversation-id str) (: messages tuple) (: source (| RecordedTurns HeadlineTurns)) (: exclude tuple)
-         (: budget int)]
+         (: budget int) (: fetched dict)]
    :post [(: % HistoryFold)]}
   "会話の記録 → 履歴からの再開の手番の最初の本文に畳む「これまでの会話」(段 8q・R20・段 9f lane 9f-4)— 判断はここ 1 点:
    郵便(ACP の行 — spec.to か spec.from がこの会話・exclude = この手番の inputs は除く — 本文として別に届く)と手番の
@@ -1095,7 +1097,7 @@
     (setv inbound (= (.get spec "to") conversation-id))
     (when (and (or inbound (= (.get spec "from") conversation-id)) (not-in message-id exclude))
       (setv at (.get spec "at"))
-      (<- line str (history-message-line message (if (isinstance at int) at message.created-at-ms)))
+      (<- line str (history-message-line message (if (isinstance at int) at message.created-at-ms) fetched))
       (.append items #((if (isinstance at int) at message.created-at-ms) order inbound line))
       (setv order (+ order 1))))
   (if thin
@@ -1239,8 +1241,34 @@
     #(next None)))
 
 
-(defk message-bodies-of [rows inputs]
-  {:pre [(: rows tuple) (: inputs tuple)]
+(defk message-body-ref-of [spec]
+  {:pre [(: spec dict)]
+   :post [(: % (| tuple None))]}
+  "段 10f 便 1b(agora-redesign #82・契約 agora-kinds.json message.spec.bodyRef): 本文を記録の service に置いた郵便の
+   在処 #(conversation stream)。本文(spec.body)を行に持つ郵便・bodyRef の形が合わない郵便は None(読みに行かない)。"
+  (setv ref (.get spec "bodyRef"))
+  (if (and (not (isinstance (.get spec "body") str))
+           (isinstance ref dict)
+           (isinstance (.get ref "conversation") str)
+           (isinstance (.get ref "stream") str))
+      #((get ref "conversation") (get ref "stream"))
+      None))
+
+
+(defk mail-text-of [events]
+  {:pre [(: events tuple)]
+   :post [(: % (| str None))]}
+  "段 10f 便 1b: 郵便の stream の出来事の列(1 郵便 = 1 出来事 kind message)→ 本文。本文を持つ kind message の出来事が
+   無ければ None(読めない郵便 — 呼び手が missing と名乗る・本文を発明しない)。"
+  (setv found None)
+  (for [event events]
+    (when (and (is found None) (= event.kind RECORD-MAIL-EVENT-KIND) (isinstance event.text str))
+      (setv found event.text)))
+  found)
+
+
+(defk message-bodies-of [rows inputs fetched]
+  {:pre [(: rows tuple) (: inputs tuple) (: fetched dict)]
    :post [(: % tuple)]}
   "inputs の id に対応する Message の本文(spec.body)を inputs の順に。戻り =
    #(bodies missing-ids)。鍵は契約の identityKey(spec.id)、無ければ行の resourceId。"
@@ -1252,7 +1280,10 @@
   (setv missing [])
   (for [input-id inputs]
     (setv row (.get by-id input-id))
-    (setv body (if (is row None) None (.get row.spec "body")))
+    ;; 段 10f 便 1b: 本文を記録の service に置いた郵便は fetched(郵便 id → 本文)から引く。
+    (setv body (cond (is row None) None
+                     (isinstance (.get row.spec "body") str) (.get row.spec "body")
+                     True (.get fetched input-id)))
     (if (isinstance body str)
         (.append bodies body)
         (.append missing input-id)))

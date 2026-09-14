@@ -58,6 +58,7 @@ from doeff_agents.sessionhost.acp.effects import (
     RecordEvent,
     RecordPage,
     RecordRead,
+    RecordReadStream,
     RecordReadOutcome,
     RecordSpoolGiveUp,
     RecordSpoolList,
@@ -624,6 +625,8 @@ class FakeRecord:
         self.appends: list[RecordBatch] = []
         #: RecordRead を受けた (会話, before, limit) の順。
         self.reads: list[tuple[str, int | None, int]] = []
+        #: 段 10f 便 1b: RecordReadStream を受けた (会話, stream) の順。
+        self.stream_reads: list[tuple[str, str]] = []
         self.unreachable: bool = False
         #: 届いた要求への断り(先頭から 1 つずつ使う)。
         self.refusals: list[RecordUnsent] = []
@@ -639,6 +642,8 @@ class FakeRecord:
             return Resume(k, self._append(effect.batch))
         if isinstance(effect, RecordRead):
             return Resume(k, self._read(effect.conversation_id, effect.before, effect.limit))
+        if isinstance(effect, RecordReadStream):
+            return Resume(k, self._read_stream(effect.conversation_id, effect.stream_id))
         return Pass(effect, k)
 
     def _spool(
@@ -717,6 +722,14 @@ class FakeRecord:
         events = tuple(self._event_of(record_seq, key) for record_seq, key in page)
         remaining = len(rows) - len(page)
         return RecordPage(events=events, next=page[0][0] if page and remaining > 0 else None)
+
+    def _read_stream(self, conversation_id: str, stream_id: str) -> RecordReadOutcome:
+        """段 10f 便 1b: 郵便 1 通の stream の出来事(producerSeq の順・1 頁)。"""
+        self.stream_reads.append((conversation_id, stream_id))
+        if self.unreachable:
+            return RecordUnread(0, "unreachable: fake record service")
+        keys = sorted(key for key in self.stored if key[0] == conversation_id and key[1] == stream_id)
+        return RecordPage(events=tuple(self._event_of(self._number(key), key) for key in keys), next=None)
 
     def _event_of(self, record_seq: int, key: tuple[str, str, int]) -> RecordEvent:
         stored = self.stored[key]

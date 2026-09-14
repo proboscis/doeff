@@ -906,6 +906,10 @@ class RecordSpoolListing:
 #: 読みの 1 頁の上限(契約 limits.pageMaxLimit の写し)。履歴からの再開はこの大きさで後向きに読む。
 RECORD_PAGE_MAX_LIMIT = 1_000
 
+#: 段 10f 便 1b(agora-redesign #82): 郵便の本文を記録の service に置いた時の出来事の kind(契約 record-service.json の
+#: eventKinds の message・1 郵便 = 1 出来事・stream = 郵便の id)。
+RECORD_MAIL_EVENT_KIND = "message"
+
 
 @dataclass(frozen=True)
 class RecordEvent:
@@ -1214,6 +1218,17 @@ class RecordRead(EffectBase):
     conversation_id: str
     before: int | None
     limit: int
+
+
+@dataclass(frozen=True)
+class RecordReadStream(EffectBase):
+    """段 10f 便 1b(agora-redesign #82): 郵便 1 通の本文を読む(契約 readStreamEvents:
+    ``GET /v1/conversations/{cid}/streams/{streamId}/events?since=0&limit=``・読み手 = 名簿の agentd)。
+    会話と stream は郵便の spec.bodyRef ちょうど(1 郵便 = 1 出来事 kind message)。結果 = RecordReadOutcome
+    (読めなさも値で返す)。郵便の本文が行に無い時だけ撃つ。"""
+
+    conversation_id: str
+    stream_id: str
 
 
 # ------------------------------------------------------------------ 要求(custody)

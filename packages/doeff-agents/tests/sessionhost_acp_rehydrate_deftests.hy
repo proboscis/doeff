@@ -42,6 +42,9 @@
 (import doeff_agents.sessionhost.acp.judgment [
   record-history-satisfied
   record-page-advances
+  mail-text-of
+  message-bodies-of
+  message-body-ref-of
   rehydrate-history-of
   session-observations-of
   transcript-candidates-of])
@@ -210,7 +213,7 @@
                  (event-of 6 "j-1#a1" 5 (+ AT 1500) "frame" {"text" "❯ pane"})
                  (event-of 7 "m-1#mail" 0 (+ AT 1600) "message" {"text" "郵便の写し"})
                  (event-of 8 "old#a1" 0 (+ AT 1700) "user" {"text" "旧の手番の送信" "truncated" True})))
-  (setv fold (run (rehydrate-history-of CONVERSATION messages (RecordedTurns :events events :complete True) #("m-2") 65536)))
+  (setv fold (run (rehydrate-history-of CONVERSATION messages (RecordedTurns :events events :complete True) #("m-2") 65536 {})))
   (assert (isinstance fold HistoryFold))
   (assert (not fold.thin))
   (assert (= #(fold.kept-turns fold.dropped-turns fold.dropped-items) #(1 0 0)) fold)
@@ -229,10 +232,10 @@
   (assert (.startswith (get lines 0) "[2026-09-") (get lines 0))
   (assert (= fold.size-bytes (len (.encode fold.text "utf-8"))))
   ;; 会話の最初まで読めていない時はそれを名乗る。
-  (setv partial (run (rehydrate-history-of CONVERSATION messages (RecordedTurns :events events :complete False) #("m-2") 65536)))
+  (setv partial (run (rehydrate-history-of CONVERSATION messages (RecordedTurns :events events :complete False) #("m-2") 65536 {})))
   (assert (in "会話の最初までは読んでいない" partial.text))
   ;; 記録の無い会話は空(最初の本文を変えない)。
-  (assert (= (. (run (rehydrate-history-of THIRD messages (RecordedTurns :events #() :complete True) #() 65536)) text) "")))
+  (assert (= (. (run (rehydrate-history-of THIRD messages (RecordedTurns :events #() :complete True) #() 65536 {})) text) "")))
 
 
 (deftest test-history-fold-from-headlines-is-thin-and-says-so
@@ -249,7 +252,7 @@
                   (record-row "j-x" OTHER [{"seq" 0 "at" (+ AT 1000) "kind" "text" "bytes" 5 "sha256" "0"}] AT)
                   (record-row "j-empty" CONVERSATION [] (+ AT 2000))))
   (setv source (HeadlineTurns :records records :reason "record service read failed (0: unreachable)"))
-  (setv fold (run (rehydrate-history-of CONVERSATION messages source #("m-2") 65536)))
+  (setv fold (run (rehydrate-history-of CONVERSATION messages source #("m-2") 65536 {})))
   (assert fold.thin)
   (assert (= #(fold.kept-turns fold.dropped-turns) #(1 0)) fold)
   (assert (.startswith fold.text f"これまでの会話(薄い再開・会話 {CONVERSATION}・古い順): 会話の記録の service に届かなかった(record service read failed (0: unreachable))ため") fold.text)
@@ -262,7 +265,7 @@
   (assert (not-in "j-x" fold.text) "別の会話の手番を畳んだ")
   (assert (not-in "j-empty" fold.text) "見出しの無い行を畳んだ")
   ;; 見出しが無い会話は空。
-  (assert (= (. (run (rehydrate-history-of THIRD messages source #() 65536)) text) "")))
+  (assert (= (. (run (rehydrate-history-of THIRD messages source #() 65536 {})) text) "")))
 
 
 (deftest test-history-fold-drops-the-oldest-turns-and-names-where-the-rest-is
@@ -272,11 +275,11 @@
                                            (+ AT (* n 1000))))))
   (setv records (RecordedTurns :events (tuple (lfor n (range 6) (event-of (+ n 1) "j-a#a1" n (+ AT (* n 1000) 10) "text" {"text" f"答え {n}"})))
                                :complete True))
-  (setv whole (run (rehydrate-history-of CONVERSATION messages records #("m-5") 65536)))
+  (setv whole (run (rehydrate-history-of CONVERSATION messages records #("m-5") 65536 {})))
   (assert (= #(whole.kept-turns whole.dropped-turns) #(5 0)) whole)
   (assert (not-in "問い 5" whole.text) "この手番の inputs は畳まない")
   (assert (in "答え 5" whole.text))
-  (setv small (run (rehydrate-history-of CONVERSATION messages records #("m-5") 2000)))
+  (setv small (run (rehydrate-history-of CONVERSATION messages records #("m-5") 2000 {})))
   (assert (<= small.size-bytes 2000) small.size-bytes)
   (assert (>= small.dropped-turns 1) small)
   (assert (= (+ small.kept-turns small.dropped-turns) 5))
@@ -287,7 +290,7 @@
   (assert (in f"GET /v1/conversations/{CONVERSATION}/events" small.text) small.text)
   ;; 最新の手番 1 つだけで超える: その手番の先頭を落として末尾を残し、切ったことを名乗る。
   (setv huge #((message-row "m-h" CONVERSATION "operator" (+ "はじまり" (* "い" 3000) "しっぽ") AT)))
-  (setv cut-fold (run (rehydrate-history-of CONVERSATION huge (RecordedTurns :events #() :complete True) #() 1500)))
+  (setv cut-fold (run (rehydrate-history-of CONVERSATION huge (RecordedTurns :events #() :complete True) #() 1500 {})))
   (assert (<= cut-fold.size-bytes 1500) cut-fold.size-bytes)
   (assert (in "しっぽ" cut-fold.text))
   (assert (not-in "はじまり" cut-fold.text))
@@ -630,3 +633,45 @@
   (setv (get world.local.transcripts f"/homes/claude/acct/projects/-work/{warm}.jsonl") "")
   (.tick world 30000)
   (assert (= (get (.observations world) "transcripts") []) "transcript の file が無い session は載せない"))
+
+
+;; ---------------------------------------------------------------------------
+;; 段 10f 便 1b(agora-redesign #82): 本文を記録の service に置いた郵便(bodyRef)を読み手が取り寄せる
+;; ---------------------------------------------------------------------------
+
+(defn #^ AcpRow ref-message-row [#^ str message-id #^ str to #^ str sender #^ str stream-conversation #^ int at]
+  "契約 message の 1 通 — 本文は記録の service(spec.bodyRef + bytes・body は無い)。"
+  (AcpRow :namespace AGORA-KINDS-NAMESPACE :key f"{AGORA-KINDS-NAMESPACE}:{MESSAGE-KIND}:{message-id}"
+          :kind MESSAGE-KIND :resource-id message-id :version "v1" :generation 1 :created-at-ms at
+          :labels {} :payload {}
+          :spec {"id" message-id "to" to "from" sender "kind" "ask" "items" [] "refs" []
+                 "bodyRef" {"conversation" stream-conversation "stream" message-id} "bytes" 70000
+                 "sha256" (* "0" 64) "at" at}
+          :status {"state" "delivered"}))
+
+
+(deftest test-a-body-ref-is-read-by-its-stream-and-folded-where-the-body-was
+  ;; 判断(純関数): bodyRef の在処・stream の出来事から本文・本文の表を引く読み(手番の入力と履歴の 1 項)。
+  (setv ref-row (ref-message-row "m-b" CONVERSATION "operator" OTHER AT))
+  (assert (= (run (message-body-ref-of ref-row.spec)) #(OTHER "m-b")))
+  (assert (is (run (message-body-ref-of (. (message-row "m-1" CONVERSATION "operator" "本文" AT) spec))) None))
+  (assert (= (run (mail-text-of #((event-of 1 "m-b" 1 AT "message" {"text" "長い本文"})))) "長い本文"))
+  (assert (is (run (mail-text-of #((event-of 1 "m-b" 1 AT "text" {"text" "手番の本文"})))) None))
+  (setv inline (message-row "m-1" CONVERSATION "operator" "短い本文" AT))
+  (assert (= (run (message-bodies-of #(inline ref-row) #("m-1" "m-b") {"m-b" "長い本文"})) #(#("短い本文" "長い本文") #())))
+  (assert (= (run (message-bodies-of #(inline ref-row) #("m-1" "m-b") {})) #(#("短い本文") #("m-b"))))
+  (setv fold (run (rehydrate-history-of CONVERSATION #(ref-row) (RecordedTurns :events #() :complete True) #() 65536 {"m-b" "長い本文"})))
+  (assert (in "長い本文" fold.text) fold.text))
+
+
+(deftest test-the-first-turn-reads-a-body-ref-from-the-record-service
+  ;; agentd の 1 点(mail-bodies-by-ref): bodyRef の郵便は RecordReadStream で stream を読み、本文を手番に畳む。
+  (setv world (World "tmux" :record True))
+  (setv (get world.record-service.stored #(OTHER "m-b" 1)) {"producerSeq" 1 "at" AT "kind" "message" "text" "長い本文の依頼"})
+  (.put-row world.acp (ref-message-row "m-b" CONVERSATION "operator" OTHER (- AT 500)))
+  (.put-row world.acp (bound-row "j-b" ["m-b"] "acct" None))
+  (.tick world 0)
+  (assert (in #(OTHER "m-b") world.record-service.stream-reads) world.local.logs)
+  (setv carried (+ (lfor launch world.sessions.launches (str (.get launch "prompt" "")))
+                   (lfor send world.sessions.sends (str (get send 1)))))
+  (assert (any (gfor text carried (in "長い本文の依頼" text))) carried))
