@@ -53,7 +53,7 @@ from typing import TypeAlias
 
 from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.agentd_client import AgentdClient, AgentdClientError, launch_rpc_timeout_seconds
-from doeff_agents.sessionhost.attachment import TurnAttachment
+from doeff_agents.sessionhost.attachment import TurnAttachment, attachment_wire
 from doeff_agents.sessionhost.acp.effects import (
     DECLARATION_FINGERPRINT_HEADER,
     JSON,
@@ -184,16 +184,7 @@ USAGE_RECORD_WINDOWS: tuple[tuple[UsageWindowName, str], ...] = (
 def attachment_params(attachments: tuple[TurnAttachment, ...]) -> list[JSON]:
     """段 10 lane 10o(agora-redesign #96): 型つきの添付 → session.send の wire の項。mime と base64 の
     逐語を運ぶだけ — 画像の綴り(block / input の項)は器の Dialogue が組む(法 012 R21)。"""
-    return [
-        {
-            "mime": attachment.mime,
-            "data": attachment.data,
-            "bytes": attachment.bytes,
-            "sha256": attachment.sha256,
-            "name": attachment.name,
-        }
-        for attachment in attachments
-    ]
+    return [attachment_wire(attachment) for attachment in attachments]
 
 
 def attachments_ignored_of(answer: JSON) -> str | None:
