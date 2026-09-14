@@ -2988,6 +2988,24 @@ def test_headless_launch_folds_the_mail_into_the_first_turn_and_does_not_send() 
     assert world.local.metrics[-1]["arm"] == "resume"
 
 
+def test_the_first_status_frame_is_pushed_before_the_turn_record_is_created() -> None:
+    """段 10 lane 10s 追補 3(agora-redesign #79): 手番の最初の frame(status running・at = sent-ms)は送った拍に中継へ出る —
+    turn-record の作成(頭への書き 1 往復)より先。本番の実射 2026-09-15: 作成の後ろに置くと最初の frame が名乗る at より
+    1 往復(60〜100 ms)遅れて届き、画面の最初の差分が 250〜330 ms(上限 200)に伸びていた。"""
+    world = HeadlessWorld()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400))
+    world.tick()
+    sid = world.sid("j-1")
+    assert world.pushed_kinds() == ["status"]
+    assert world.turn_record("j-1") is not None
+    create = f"{AGORA_KINDS_NAMESPACE}:{TURN_RECORD_KIND}:j-1"
+    assert world.acp.trace.index(("push", sid)) < world.acp.trace.index(("create", create)), world.acp.trace
+    # frame の at = 送った拍(sent-ms)— 作成の往復の後の時刻ではない
+    frame = world.acp.pushes[0][2][0]
+    assert frame["at"] == world.local.metrics[-1]["sentAtMs"]
+
+
 def test_headless_launch_without_mail_or_with_missing_mail_uses_the_charter_alone() -> None:
     world = HeadlessWorld()
     # 郵便が無い job は charter だけ
