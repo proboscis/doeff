@@ -572,9 +572,16 @@ def test_node_spec_of_and_node_spec_declared_are_one_judgment() -> None:
         "capacity": 2,
         "streamCapability": "events",
     }
-    # 段 10 lane 10d 便 2: 宣言した置き場は node の labels.place に名乗る(配車の絞りが読む 1 点)
+    # 段 10 lane 10d 便 4(依頼者の裁定 2026-09-15 問 3): 宣言した置き場は **型つきの欄 spec.place**
+    # に名乗る(配車の絞りが読む 1 点)。labels.place は読み手が残る間の写し(deprecated)で、
+    # 同じ値を書き続ける — 面を落とさない。
     placed = replace(settings, place="personal")
-    assert run(judgment.node_spec_of(placed))["labels"] == {"place": "personal"}
+    named = run(judgment.node_spec_of(placed))
+    assert isinstance(named, dict)
+    assert named["place"] == "personal", "置き場を型つきの欄で名乗っていない(配車が絞れない)"
+    assert named["labels"] == {"place": "personal"}, "deprecated の写しを落とした(読み手が残っている)"
+    # 置き場を宣言しない断面(検体の既定)では欄ごと足さない — 嘘の名乗りを書かない
+    assert "place" not in run(judgment.node_spec_of(settings))
     kept = run(
         judgment.node_spec_declared(
             {"name": "pool-1", "labels": {"boundary": "personal", "pool": "agentd-pool"}, "capacity": 0, "streamCapability": "events"},
@@ -584,6 +591,7 @@ def test_node_spec_of_and_node_spec_declared_are_one_judgment() -> None:
     assert kept["labels"] == {"boundary": "personal", "pool": "agentd-pool", "place": "personal"}, (
         "宣言の外の名乗り(boundary 等)を触るか、置き場を名乗れていない"
     )
+    assert kept["place"] == "personal", "揃える時に型つきの欄を名乗っていない(便 4)"
     hand = {"name": "pool-1", "labels": {"boundary": "company"}, "capacity": 0, "streamCapability": "events"}
     assert run(judgment.node_spec_declared(hand, settings)) == {**hand, "capacity": 2}
     assert run(judgment.node_spec_declared({**hand, "capacity": 2}, settings)) == {**hand, "capacity": 2}
