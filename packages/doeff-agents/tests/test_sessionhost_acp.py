@@ -42,7 +42,7 @@ from doeff_agents.sessionhost.acp.effects import (
     SessionView,
 )
 from doeff_agents.sessionhost.acp.fake import Birth, FakeAcp, FakeCustody, FakeLocal, FakeSessions
-from doeff_agents.sessionhost.acp.runtime import initial_state, run_tick
+from doeff_agents.sessionhost.acp.runtime import initial_state, run_close_for_stop, run_tick
 from doeff_agents.sessionhost.acp.valve import ACP_VALVE_ENV, acp_valve
 
 from doeff import run
@@ -1561,6 +1561,67 @@ def test_backend_liveness_is_read_from_the_observation_not_the_status_word() -> 
     assert "2026-09-14T05:50:00Z" in condition["reason"]
 
 
+def test_stop_closes_running_jobs_with_agentd_restart_and_leaves_the_session_to_the_host() -> None:
+    """段 10 lane 10h 便 2(agora-redesign #84): agentd の停止(TERM)の前に、走っている job は記録の腕
+    (残りの材料・turn-record ended)と条件 AgentdRestart(node・理由・session・時刻)で Ended になり、status frame
+    ended・札の返却まで済む。session は片付けない(host が降ろす)。job の無い停止は何も書かない。"""
+    world = World()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"]))
+    world.tick()
+    sid = world.sid("j-1")
+    path = f"{HOMES}/claude/acct/projects/-work/{sid}.jsonl"
+    world.local.transcripts[path] = transcript_line("assistant", [{"type": "text", "text": "partial"}])
+    assert len(world.state.jobs) == 1
+    world.state = run_close_for_stop(
+        world.settings,
+        world.state,
+        [world.acp.dispatch, world.custody.dispatch, world.sessions.dispatch, world.local.dispatch],
+        "SIGTERM",
+    )
+    assert world.state.jobs == ()
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_ENDED
+    assert "result" not in job.status
+    conditions = job.status["conditions"]
+    assert isinstance(conditions, list)
+    last = conditions[-1]
+    assert isinstance(last, dict)
+    assert last["type"] == "AgentdRestart"
+    reason = last["reason"]
+    assert isinstance(reason, str)
+    assert f"agentd on node {NODE} stopped (SIGTERM)" in reason
+    assert sid in reason
+    record = world.turn_record("j-1")
+    assert record is not None
+    assert record.status is not None
+    assert record.status["state"] == "ended"
+    entries = record.status["entries"]
+    assert isinstance(entries, list)
+    assert [e["kind"] for e in entries if isinstance(e, dict)] == ["text"]  # 停止の前に読んだ材料は残る
+    assert world.pushed_kinds()[-1] == "status"
+    assert world.custody.revoked == ["lease-1"]
+    assert world.sessions.cleanups == []
+    assert world.sessions.views[sid].status == "running"
+    assert any("closed for the stop of agentd" in line for line in world.local.logs)
+    assert world.local.metrics[-1]["metric"] == "agent-job-turn"
+    assert world.local.metrics[-1]["step"] == "agentd-stop"
+    # 再起動後の最初の拍: Ended の行は拾わない(running-on-me でない)— 二度閉じない
+    world.state = initial_state()
+    world.tick(advance_ms=1_000)
+    assert world.state.jobs == ()
+    # job の無い停止は書かない
+    writes_before = len(world.acp.writes)
+    world.state = run_close_for_stop(
+        world.settings,
+        world.state,
+        [world.acp.dispatch, world.custody.dispatch, world.sessions.dispatch, world.local.dispatch],
+        "SIGTERM",
+    )
+    assert len(world.acp.writes) == writes_before
+
+
 def test_terminal_warm_session_is_cleaned_up_at_record_end() -> None:
     """multi_turn の器が終端(awaiting の期限で failed 等)になった手番は、記録の腕の後に
     agentd が session.cleanup で片付ける(host は multi_turn を掃かない)。"""
@@ -2531,6 +2592,46 @@ def test_settings_from_env_reads_the_ownership_and_the_valve_and_runtime_agree_o
     assert settings_from_env({**recorded, "AGORA_CUSTODY_URL": "  "}, ()).custody_declared is False
     with pytest.raises(ValueError, match="DOEFF_AGENTD_OWNERSHIP"):
         settings_from_env({**recorded, "DOEFF_AGENTD_OWNERSHIP": "corp"}, ())
+
+
+def test_acp_url_has_no_localhost_default_and_the_join_bundle_carries_it(tmp_path: Path) -> None:
+    """段 10 lane 10h 便 2(agora-redesign #84): 実況の push を含む ACP の全部の宛先は宣言(join の --server /
+    [agentd].server → ACP_DAEMON_URL)ちょうどで、127.0.0.1:8868 の既定値は無い — 宣言の無い agentd は参加を断る。"""
+    from doeff_agents.sessionhost.acp import handlers, join
+    from doeff_agents.sessionhost.acp.effects import (
+        ACP_TOKEN_FILE_ENV,
+        ACP_URL_ENV,
+        JoinPlan,
+        JoinSpec,
+    )
+    from doeff_agents.sessionhost.acp.runtime import AgentdPreflightError, real_dispatchers
+
+    assert not hasattr(handlers, "ACP_URL_DEFAULT")
+    token = tmp_path / "agentd.token"
+    token.write_text("sk-roster-token\n", encoding="utf-8")
+    env = {ACP_TOKEN_FILE_ENV: str(token), "RECORD_SERVICE_URL": "http://record:8874"}
+    with pytest.raises(AgentdPreflightError, match=ACP_URL_ENV):
+        real_dispatchers(env, str(tmp_path / "agentd.sock"))
+    with pytest.raises(AgentdPreflightError, match=ACP_URL_ENV):
+        real_dispatchers({**env, ACP_URL_ENV: "  "}, str(tmp_path / "agentd.sock"))
+    plan = run(
+        join.join_plan_of(
+            JoinSpec(
+                server="http://acp-control.example.ts.net:8868",
+                token_file=str(token),
+                node_name="mac-1",
+                state_dir=str(tmp_path),
+                backend="headless",
+                session_hooks="inherit",
+                custody_url=None,
+                borrower_key_file=None,
+                ownership=None,
+                record_url="http://record:8874",
+            )
+        )
+    )
+    assert isinstance(plan, JoinPlan)
+    assert dict(plan.env)[ACP_URL_ENV] == "http://acp-control.example.ts.net:8868"
 
 
 def test_ownership_verdict_gce_project_must_match_and_declared_is_taken_as_is() -> None:

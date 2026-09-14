@@ -55,6 +55,7 @@
   headless-inject
   headless-interrupt
   headless-kill
+  headless-kill-all
   headless-liveness
   headless-poll
   headless-spawn
@@ -70,6 +71,7 @@
   RecoveryVerdict
   Verdict
   recovery-verdict
+  stop-verdict
   turn-verdict])
 (import doeff_agents.sessionhost.launch [
   INTERACTIVE-AGENT-TYPES
@@ -638,6 +640,53 @@
         (except [e Exception]
           (setv (get outcomes row.session-id)
                 f"error:{(. (type e) __name__)}")))))
+  outcomes)
+
+
+(defk stop-headless-row [row reason]
+  {:pre [(: row SessionRow) (: reason str)]
+   :post [(: % SessionRow)]}
+  "host の停止の前の 1 行(段 10 lane 10h 便 2): 判断(stop_verdict の 1 点)が turn-cut なら stopped +
+   cause cancelled(reason = host の停止と信号)・awaiting を下ろし・session_cancelled を刻む。keep はそのまま。"
+  (setv verdict (stop-verdict (is-terminal-status row.status) row.awaiting-response))
+  (when (!= verdict "turn-cut")
+    (return row))
+  (<- now (clock-now))
+  (setv now-str (iso-format now))
+  (setv detail (+ f"sessionhost stopped ({reason}) while the turn was running — the headless process "
+                  "goes down with the host, so the turn is cut here (the next turn resumes the session)"))
+  (setv row (replace row :status "stopped"
+                         :finished-at (or row.finished-at now-str)
+                         :last-observed-at now-str
+                         :awaiting-response False
+                         :awaiting-response-since None
+                         :last-validation-error detail))
+  (setv row (cause-if-absent row (make-cause "cancelled" detail now-str)))
+  (<- _ (session-store-upsert row))
+  (<- _ (session-store-record-event row.session-id "session_cancelled" row))
+  row)
+
+
+(defk stop-headless-rows [reason]
+  {:pre [(: reason str)]
+   :post [(: % dict)]}
+  "host の停止(TERM)の腕(段 10 lane 10h 便 2・agora-redesign #84): 非終端の headless 行を 1 行ずつ
+   stop-headless-row へ(手番の途中の行は stopped・idle の温かい行は触らない)、それから登記の全 process を
+   並列の猶予で降ろす(HeadlessKillAll — launchd の process group の kill に任せて黙って落とさない)。
+   行を先に倒す(停止の途中で SIGKILL されても、残りは次の起動の復帰が拾う)。per-session 隔離。
+   戻り値: {session-id: 処理後 status | \"error:<ExceptionType>\", \"killed\": 降ろした数}。"
+  (<- rows (session-store-list-active))
+  (setv outcomes {})
+  (for [row (sorted rows :key (fn [r] r.session-id))]
+    (when (is-headless-row row)
+      (try
+        (<- stopped (stop-headless-row row reason))
+        (setv (get outcomes row.session-id) stopped.status)
+        (except [e Exception]
+          (setv (get outcomes row.session-id)
+                f"error:{(. (type e) __name__)}")))))
+  (<- killed (headless-kill-all))
+  (setv (get outcomes "killed") killed)
   outcomes)
 
 

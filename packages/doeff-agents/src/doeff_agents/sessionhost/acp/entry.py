@@ -50,11 +50,15 @@ def main() -> None:
     if verdict.enabled:
         # agentd の runtime は Hy の program を import する — 弁が on の時だけ払う。
         from doeff_agents.sessionhost.acp.runtime import AgentdPreflightError, start_agentd_thread
+        from doeff_agents.sessionhost.host import register_shutdown_hook
 
         try:
-            start_agentd_thread(verdict.host_argv, os.environ)
+            run = start_agentd_thread(verdict.host_argv, os.environ)
         except AgentdPreflightError as error:
             sys.stderr.write(f"doeff-sessionhost: {error}\n")
             raise SystemExit(2) from error
+        # 段 10 lane 10h 便 2(agora-redesign #84): host の停止(TERM)の前に agentd が走っている手番を閉じる
+        # (turn-record ended・job Ended = AgentdRestart)— host の accept loop が生きている間に走る hook。
+        register_shutdown_hook(lambda: run.close_for_stop("SIGTERM"))
     sys.argv = [sys.argv[0], *verdict.host_argv]
     host_main()

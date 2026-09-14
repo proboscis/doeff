@@ -89,7 +89,8 @@
   headless-launch-session
   headless-monitor-cycle
   headless-send-program
-  recover-headless-rows])
+  recover-headless-rows
+  stop-headless-rows])
 (import doeff_agents.sessionhost.store [
   HISTORY-PRUNE-BATCH-ROWS
   LEASE-TTL-SECONDS
@@ -1750,6 +1751,72 @@
 ;; entry(oracle main :566-598)
 ;; ---------------------------------------------------------------------------
 
+;; ---------------------------------------------------------------------------
+;; 停止の作法(段 10 lane 10h 便 2・agora-redesign #84): TERM で子を黙って道連れにしない
+;; ---------------------------------------------------------------------------
+;;
+;; launchd の bootout / kickstart は process group ごと殺すので、headless の子 process(pipe の子)は
+;; host と共に死ぬ。手番の途中の行と agent-job をそのまま残すと、次の起動の復帰(recover-headless-rows・
+;; agentd の recover-job)が「死んだ」と観測して閉じるまで会話が「動いている」のままになる。TERM の
+;; 1 度目は accept loop を生かしたまま別 thread で (1) 登録された停止の hook(entry.py が agentd の
+;; close_for_stop を登録する — 器の眺めを host の RPC で読むので accept が要る)(2) headless の行の
+;; 停止の腕(stop-headless-rows — 手番の途中の行を stopped に・全 process を並列の猶予で降ろす)を
+;; 走らせ、済んだら自分に同じ信号を撃ち直す = 2 度目は SystemExit(0) で finally(lease の
+;; 釈放)へ。判断は headless_protocol.stop_verdict の 1 点。SIGKILL(kickstart -k の即時)には手が
+;; 無い — その時は次の起動の復帰が拾う(便 1)。
+
+;; entry.py が登録する停止の hook(agentd の close_for_stop)— host は中身を知らない。
+(setv SHUTDOWN-HOOKS [])
+
+(defn register-shutdown-hook [hook]
+  "host の停止(TERM)の前に走らせる hook を登録する(agentd 等 — 引数なし・戻り値は読まない)。"
+  (.append SHUTDOWN-HOOKS hook)
+  None)
+
+(defn graceful-stop [config actor signum]
+  "TERM の 1 度目の腕(別 thread): hook → headless の行の停止 → 自分に同じ信号を撃ち直す。
+   hook / 腕の例外は log して次へ(停止を止めない)。"
+  (setv name (. (signal.Signals signum) name))
+  (print f"doeff-sessionhost stop ({name}): closing running turns before exit" :file sys.stderr)
+  (for [hook (list SHUTDOWN-HOOKS)]
+    (try
+      (hook)
+      (except [e Exception]
+        (print f"doeff-sessionhost stop: hook failed: {(. (type e) __name__)}: {e}" :file sys.stderr))))
+  (when (headless-backend? config)
+    (try
+      (setv outcomes (run-hosted config actor (stop-headless-rows name)))
+      (setv cut (lfor [sid status] (.items outcomes) :if (and (!= sid "killed") (= status "stopped")) sid))
+      (print (+ f"doeff-sessionhost stop ({name}): {(.get outcomes "killed" 0)} headless process(es) terminated, "
+                f"{(len cut)} mid-turn row(s) ended as stopped/cancelled"
+                (if cut f": {(.join ", " cut)}" ""))
+             :file sys.stderr)
+      (except [e Exception]
+        (print f"doeff-sessionhost stop: headless rows not settled: {(. (type e) __name__)}: {e}" :file sys.stderr))))
+  (.flush sys.stderr)
+  ;; 実の信号で撃ち直す(_thread.interrupt_main は accept の blocking syscall を起こさない — main thread は
+  ;; 次の接続まで handler に来ない。実の TERM は EINTR で accept を抜け、2 度目の handler が SystemExit を投げる)。
+  (os.kill (os.getpid) signum)
+  None)
+
+(defn install-graceful-stop [config actor]
+  "TERM の handler を据える(lease を取った後・serve の前): 1 度目は graceful-stop の thread、2 度目
+   (撃ち直し・停止中の再送)は SystemExit(0)。"
+  (setv stopping (threading.Event))
+  (defn on-term [signum frame]
+    (if (.is-set stopping)
+        (raise (SystemExit 0))
+        (do
+          (.set stopping)
+          (setv worker (threading.Thread :target graceful-stop
+                                         :args #(config actor signum)
+                                         :daemon True
+                                         :name "sessionhost-graceful-stop"))
+          (.start worker))))
+  (signal.signal signal.SIGTERM on-term)
+  None)
+
+
 (defn main []
   "serve entry(console script doeff-sessionhost の serve 経路 — subcommand
    dispatch は hostmain.py 所有で、report-result-mcp は relaymain.py へ
@@ -1780,6 +1847,8 @@
   ;; KeepAlive の即 spawn 後継が lease-conflict で敗死しない(issue #565)。
   ;; SIGKILL / crash は従来どおり TTL 失効がバックストップ。
   (setv shutdown-event (threading.Event))
+  ;; 段 10 lane 10h 便 2: lease を取った後は TERM を graceful に(走っている手番を閉じてから finally へ)。
+  (install-graceful-stop config actor)
   (try
     ;; 段 10 lane 10h(agora-redesign #84): headless の host は latch の clear より前・accept より前に
     ;; 復帰を 1 度走らせる — 手番の途中のまま残った行の backend を観測し、死んでいれば exited +

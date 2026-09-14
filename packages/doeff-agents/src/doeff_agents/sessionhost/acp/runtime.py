@@ -29,7 +29,7 @@ from doeff_vm import PyVM, WithHandler
 from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.agentd_client import default_agentd_paths
 from doeff_agents.sessionhost.acp import join
-from doeff_agents.sessionhost.acp.agentd import agentd_tick
+from doeff_agents.sessionhost.acp.agentd import agentd_tick, close_jobs_for_stop
 from doeff_agents.sessionhost.acp.effects import (
     ACP_TOKEN_FILE_ENV,
     ACP_URL_ENV,
@@ -54,7 +54,6 @@ from doeff_agents.sessionhost.acp.effects import (
     StreamCapability,
 )
 from doeff_agents.sessionhost.acp.handlers import (
-    ACP_URL_DEFAULT,
     BORROWER_KEY_PATH_DEFAULT,
     CUSTODY_URL_DEFAULT,
     AcpHttp,
@@ -75,6 +74,9 @@ Dispatcher = Callable[[EffectBase, K], "Resume | Pass"]
 HOST_WAIT_SECONDS = 120.0
 TICK_BACKOFF_SECONDS = 1.0
 TICK_BACKOFF_MAX_SECONDS = 30.0
+#: 停止(段 10 lane 10h 便 2): loop の thread が今の拍を終えるのを待つ上限。launchd の ExitTimeOut(既定 20 s)の
+#: 内側で、host の子 process の片付け(EOF → TERM → KILL の猶予 ≤ 10 s)と合わせて収める。
+STOP_JOIN_SECONDS = 5.0
 
 
 def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> AgentdSettings:
@@ -198,23 +200,95 @@ def run_tick(
     return result
 
 
+class StateHolder:
+    """loop の最後の状態の置き場(段 10 lane 10h 便 2): 停止の腕が loop の外から読む — 書くのは loop の thread だけ。"""
+
+    def __init__(self) -> None:
+        self.state: AgentdState = initial_state()
+
+
 def run_loop(
     settings: AgentdSettings,
     dispatchers: Sequence[Dispatcher],
     stop: threading.Event,
     log: Callable[[str], None],
+    holder: StateHolder | None = None,
 ) -> None:
-    """tick を回し続ける。例外は log して有界の backoff で続ける(1 拍の失敗で腕を落とさない)。"""
+    """tick を回し続ける。例外は log して有界の backoff で続ける(1 拍の失敗で腕を落とさない)。
+    holder が在れば拍ごとの状態を置く(停止の腕が読む)。"""
     state = initial_state()
     backoff = TICK_BACKOFF_SECONDS
     while not stop.is_set():
         try:
             state = run_tick(settings, state, dispatchers)
+            if holder is not None:
+                holder.state = state
             backoff = TICK_BACKOFF_SECONDS
         except Exception as error:  # loop の縁: 落とさず log して続ける(Exception より下は握らない)
             log(f"agentd: tick failed: {type(error).__name__}: {error}")
             stop.wait(backoff)
             backoff = min(TICK_BACKOFF_MAX_SECONDS, backoff * 2)
+
+
+def run_close_for_stop(
+    settings: AgentdSettings,
+    state: AgentdState,
+    dispatchers: Sequence[Dispatcher],
+    reason: str,
+) -> AgentdState:
+    """停止の腕を handler の下で 1 度走らせる(test も同じ入口を使う): 走っている job を全部
+    turn-record ended・Ended(AgentdRestart)にした state を返す。"""
+    now_ms = int(time.time() * 1000)
+    result: object = PyVM().run(
+        install(close_jobs_for_stop(settings, state, now_ms, reason), dispatchers)
+    )
+    if not isinstance(result, AgentdState):
+        raise TypeError(f"agentd stop returned {type(result).__name__}, expected AgentdState")
+    return result
+
+
+class AgentdRun:
+    """起こした agentd の thread と、その停止の腕(段 10 lane 10h 便 2)。"""
+
+    def __init__(
+        self,
+        settings: AgentdSettings,
+        dispatchers: Sequence[Dispatcher],
+        stop: threading.Event,
+        holder: StateHolder,
+        thread: threading.Thread,
+        close: Callable[[], None],
+    ) -> None:
+        self.settings = settings
+        self.dispatchers = dispatchers
+        self.stop = stop
+        self.holder = holder
+        self.thread = thread
+        self._close = close
+
+    def close_for_stop(self, reason: str) -> int:
+        """host の停止の前に呼ぶ(host の accept loop が生きている間 — 器の眺めは RPC で読む): loop を止め、
+        今の拍が終わるのを有界に待ち、走っている job を閉じる。戻り = 閉じた job の数。loop が拍を終えない
+        (I/O で塞がっている)時も待たずに進む — 同じ job を二度閉じる書きは CAS で負けるだけで害は無い。"""
+        self.stop.set()
+        self.thread.join(STOP_JOIN_SECONDS)
+        if self.thread.is_alive():
+            _stderr(
+                f"agentd: stop — the loop did not finish its tick within {STOP_JOIN_SECONDS:.0f}s; closing "
+                "running jobs from the last known state"
+            )
+        state = self.holder.state
+        running = len(state.jobs)
+        try:
+            if running == 0:
+                _stderr(f"agentd: stop ({reason}) — no running job to close")
+                return 0
+            closed = run_close_for_stop(self.settings, state, self.dispatchers, reason)
+            self.holder.state = closed
+            _stderr(f"agentd: stop ({reason}) — closed {running} running job(s) with AgentdRestart")
+            return running
+        finally:
+            self._close()
 
 
 class AgentdPreflightError(RuntimeError):
@@ -232,7 +306,15 @@ def real_dispatchers(
             f"agentd needs the roster token of principal 'agentd' — set {ACP_TOKEN_FILE_ENV} to a file "
             "holding the bearer (ACP principals.json 段 0 lane 0a); status writes are refused without it"
         )
-    acp = AcpHttp(env.get(ACP_URL_ENV) or ACP_URL_DEFAULT, token)
+    # 段 10 lane 10h 便 2(agora-redesign #84): ACP の宛先(実況の push・行の読み書き・watch の全部)は宣言(join の
+    # --server / [agentd].server → ACP_DAEMON_URL)ちょうど — localhost の既定値は持たない(宣言の無い agentd は参加しない)。
+    acp_url = (env.get(ACP_URL_ENV) or "").strip()
+    if not acp_url:
+        raise AgentdPreflightError(
+            f"agentd needs the ACP daemon URL — set {ACP_URL_ENV} (join --server / [agentd].server); the live "
+            "stream push and every ACP read / write go to that address and there is no localhost default"
+        )
+    acp = AcpHttp(acp_url, token)
     custody = CustodyHttp(
         env.get(CUSTODY_URL_ENV) or CUSTODY_URL_DEFAULT,
         read_secret_file(env.get(BORROWER_KEY_PATH_ENV) or BORROWER_KEY_PATH_DEFAULT),
@@ -267,8 +349,9 @@ def _stderr(text: str) -> None:
     sys.stderr.flush()
 
 
-def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> threading.Thread:
-    """弁が on の時の 1 点: 前提を検め(札)、host の socket を待ってから loop を回す thread を起こす。"""
+def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> AgentdRun:
+    """弁が on の時の 1 点: 前提を検め(札)、host の socket を待ってから loop を回す thread を起こす。
+    戻り = thread と停止の腕(entry.py が host の停止の hook に登録する)。"""
     settings = settings_from_env(env, host_argv)
     socket_path = host_socket_path(host_argv)
     dispatchers, close = real_dispatchers(env, socket_path)
@@ -285,6 +368,7 @@ def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> thr
             raise TypeError(f"ownership_preflight returned {type(verified).__name__}")
         _stderr(f"agentd: ownership {verified.grade} verified by {verified.proof}")
     stop = threading.Event()
+    holder = StateHolder()
 
     def body() -> None:
         deadline = time.monotonic() + HOST_WAIT_SECONDS
@@ -297,17 +381,16 @@ def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> thr
                 return
             time.sleep(0.5)
         _stderr(
-            f"agentd: joined as node {settings.node_name!r} (ACP {env.get(ACP_URL_ENV) or ACP_URL_DEFAULT}; "
+            f"agentd: joined as node {settings.node_name!r} (ACP {env.get(ACP_URL_ENV)}; "
             f"record {_record_url_of_env(env)})"
         )
-        try:
-            run_loop(settings, dispatchers, stop, _stderr)
-        finally:
-            close()
+        # 後始末(watch の thread を閉じる)は停止の腕 AgentdRun.close_for_stop が最後に行う — loop は stop が
+        # 立った時にだけ抜けるので、ここで閉じると停止の腕が器と ACP を読めない。
+        run_loop(settings, dispatchers, stop, _stderr, holder)
 
     thread = threading.Thread(target=body, name="sessionhost-agentd", daemon=True)
     thread.start()
-    return thread
+    return AgentdRun(settings, dispatchers, stop, holder, thread, close)
 
 
 # ------------------------------------------------------------------ 1 命令の参加(join・段 6 lane 6f)
