@@ -77,8 +77,9 @@
   launch-not-ready-category
   launch-not-ready-reason
   make-cause
-  metered-credential-env-offenders
   overlay-env-offenders
+  overlay-without-turn-auth
+  session-env-admission-error
   seconds-since])
 
 
@@ -638,22 +639,12 @@
   (setv binding-error (binding-admission-error binding agent-type))
   (when (is-not binding-error None)
     (raise (RuntimeError f"session.launch: invalid binding — {binding-error}")))
-  (setv offenders (overlay-env-offenders session-env))
-  (when offenders
-    (raise (RuntimeError
-             (+ "session.launch: session_env is a non-auth overlay and may not "
-                f"carry binding-owned auth env (offending: {(.join ", " offenders) }). "
-                "Declare the auth profile through the typed `binding` field "
-                "(ADR-DOE-AGENTS-004 R7)."))))
   ;; 従量課金 credential は binding 所有キーと違い「正しい家」が無い — どの
   ;; 経路でも受けない(operator 裁定 2026-08-26。resume も本関所を通る)。
-  (<- metered-offenders (metered-credential-env-offenders session-env))
-  (when metered-offenders
-    (raise (RuntimeError
-             (+ "session.launch: metered-billing credentials are forbidden in "
-                f"agent sessions (offending: {(.join ", " metered-offenders) }). "
-                "Agent seats authenticate with subscription profiles via the "
-                "typed `binding` field only (operator ruling 2026-08-26)."))))
+  ;; 判定は policy の 1 点(session.send の手番ごとの env も同じ関所を通る)。
+  (setv env-error (session-env-admission-error session-env "session.launch"))
+  (when (is-not env-error None)
+    (raise (RuntimeError env-error)))
 
   ;; --- admission(oracle 順序: lifecycle → 重複 → 既存 tmux)。
   (when (not-in lifecycle LIFECYCLES)
@@ -916,7 +907,9 @@
                             "pane_id" pane-id
                             "command" command-line}
               ;; ADR-006: 非 auth の launch 意図を行に永続化(resume の復元源)。
-              :launch-overlay {"session_env" session-env
+              ;; 段 10 lane 10d 便 2 追補 2: 手番ごとの資格の札(TURN-AUTH-ENV-KEYS)は
+              ;; 復元源にならない — 行に残さず、再開はその手番の送りが運ぶ env で起こす。
+              :launch-overlay {"session_env" (overlay-without-turn-auth session-env)
                                "model" (.get params "model")
                                "effort" (.get params "effort")
                                "mcp_servers" (or (.get params "mcp_servers") {})}
