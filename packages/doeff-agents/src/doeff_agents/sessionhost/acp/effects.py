@@ -118,8 +118,13 @@ ConditionType = Literal[
     "AgentSettingIgnored",
     "SessionLost",
     "AgentdRestart",
+    "InterruptEscalationUndeclared",
 ]
 CONDITION_INTERRUPTED: ConditionType = "Interrupted"
+#: 段 10 lane 10n(agora-redesign #93・依頼者の追補 2026-09-14): 割り込みを注入したが、この job の charter に
+#: interruptEscalationSeconds(期限 — 方策の行の値を Messaging が会話の宣言で重ねて charter に写す)が無いので、
+#: 注入だけにして期限つきの停止の合図は出さない。agentd は charter の値だけを読み、code に既定を置かない。
+CONDITION_INTERRUPT_ESCALATION_UNDECLARED: ConditionType = "InterruptEscalationUndeclared"
 #: 段 10 lane 10h(agora-redesign #84): 走っている手番の session の backend(headless の子 process / tmux の pane)が
 #: host の観測(SessionView.backend_alive)で死んでいた — 手番は終わらないので turn-record を ended・job をこの条件で Ended に
 #: 閉じる(reason に session・pid・観測の時刻)。実弾 2026-09-14: agentd の再起動(kickstart -k)で子 process が道連れになり、
@@ -178,6 +183,23 @@ RECORD_CREATE_GIVEN_UP: RecordCreateState = "given-up"
 #: この手番で agentd が CLI へ渡した id(append-only)。渡したら同じ 1 回の書きで前から消し後ろへ足す。
 JOB_INTERRUPTS_KEY: str = "interrupts"
 JOB_INTERRUPTS_DELIVERED_KEY: str = "interruptsDelivered"
+#: 段 10 lane 10n(agora-redesign #93): 割り込みの観測の 2 欄(書き手 agentd・additive・append-only の map)。
+#: interruptsRead = {Message の id: model がその本文を読んだ証拠の出来事の seq}(claude = 注入の行の
+#: command_lifecycle started・codex = 止めた後の turn/started)/ interruptsEscalated = {Message の id: 停止の合図を
+#: 送った時刻 ms}。契約 = ACP docs/contracts/messaging.json interrupts(便 3)。
+JOB_INTERRUPTS_READ_KEY: str = "interruptsRead"
+JOB_INTERRUPTS_ESCALATED_KEY: str = "interruptsEscalated"
+#: 段 10 lane 10n: 期限(秒)を運ぶ charter の欄 — Messaging の Plan.charterFor が方策の行の値を会話の宣言で重ねて写す。
+#: agentd はこの欄だけを読む(方策・会話の行は読まない・既定の定数を置かない — 無い job は注入だけ + 条件)。
+CHARTER_INTERRUPT_ESCALATION_KEY: str = "interruptEscalationSeconds"
+#: 段 10 lane 10n: agent の種類ごとの割り込みの能力(node の status.capabilities[kind].interrupt の閉語彙):
+#: steer-then-stop = 注入(道具の境界で読む)→ 期限で停止の合図(claude)/ stop = 即座に止めて渡す(codex)。
+InterruptCapability = Literal["steer-then-stop", "stop"]
+AGENT_INTERRUPT_CAPABILITY: dict[str, InterruptCapability] = {
+    "claude": "steer-then-stop",
+    "codex": "stop",
+}
+NODE_CAPABILITY_INTERRUPT_KEY: str = "interrupt"
 #: sessionhost の wire の backend_kind のうち agentd が読む語(host.hy の閉語彙 tmux | herdr |
 #: headless の写し — agora-redesign #37)。headless の session は実況を events file で読み
 #: (backend_ref.events_path)、node の streamCapability は events。
@@ -817,6 +839,16 @@ TurnEntry: TypeAlias = "TurnEntryHeadline | TurnEntryDropMarker"
 
 
 @dataclass(frozen=True)
+class InterruptRead:
+    """model が割り込みの本文を読んだ証拠(段 10 lane 10n): ``ref`` = 注入の行の名(claude の command_lifecycle の
+    command_uuid = Message の id)/ None = 名を運ばない器(codex — 止めた後の turn/started は積んであった注入を全部
+    読む)。``seq`` = その証拠の出来事(kind system の entry)の seq。"""
+
+    ref: str | None
+    seq: int
+
+
+@dataclass(frozen=True)
 class DeltaBatch:
     """transcript の行の列から組んだ TurnDelta の frame と turn-record の entries(見出し)。"""
 
@@ -833,6 +865,8 @@ class DeltaBatch:
     #: codex = token_count の last_token_usage と model_context_window)。None = 材料に無い。turn-record の usage には
     #: 同等の欄が無い(和は文脈の大きさではない)ので agentd が自分で測る — 判断は judgment.context-percent-of の 1 点。
     context: JSONObject | None = None
+    #: 段 10 lane 10n(agora-redesign #93): この材料で読めた「model が割り込みを読んだ」証拠(順は出来事の順)。
+    interrupt_reads: tuple[InterruptRead, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1052,6 +1086,18 @@ class InFlightJob:
     #: interruptsDelivered への CAS が着地するまでの間、同じ id を二度渡さないための cache。正本は行:
     #: 再起動で消えても、行の interruptsDelivered に在る id は渡さない)。
     interrupts_sent: tuple[str, ...] = ()
+    #: 段 10 lane 10n(agora-redesign #93): 期限(秒)= 行の charter.interruptEscalationSeconds の写し(None = 宣言なし —
+    #: 注入だけにして条件 InterruptEscalationUndeclared・停止の合図は出さない)。code に既定を置かない。
+    interrupt_escalation_seconds: int | None = None
+    #: 注入した割り込み(Message の id → 注入した時刻 ms・注入した順)。期限の判断(judgment.interrupts-due-for-escalation)
+    #: の材料。拾い直し(recover-job)は行の interruptsDelivered のうち読まれていない id を拾い直した時刻で積む。
+    interrupts_injected: tuple[tuple[str, int], ...] = ()
+    #: model が読んだ証拠(Message の id → 証拠の出来事の seq)— 行の interruptsRead の写し(memory)。
+    interrupts_read: tuple[tuple[str, int], ...] = ()
+    #: 停止の合図を送った(Message の id → 送った時刻 ms)— 行の interruptsEscalated の写し(memory)。
+    interrupts_escalated: tuple[tuple[str, int], ...] = ()
+    #: 読んだ / 止めた印のうち行へまだ書けていないものが在る(書きが断られた拍の持ち越し — 次の拍に撃ち直す)。
+    interrupt_marks_dirty: bool = False
     #: 段 8 lane 4aa: 手番の記録(turn-record)へ最後に出来事を追記した拍(ms・0 = まだ)。実況の push は events の周期
     #: (≤ 50 ms)で押すが、記録の追記(CAS の書き = ACP の event 1 つ)は transcript_poll_seconds の周期に保つ — 拍ごとに書くと
     #: 走っている手番 1 つで毎秒 10〜20 の event が journal に並び、画面の糊の watch の拍(1 event = 1 拍)が飽和する
@@ -1343,6 +1389,25 @@ class SessionInterject(EffectBase):
 
     session_id: str
     text: str
+    #: 段 10 lane 10n: 注入の行の名(headless の claude は user の行の uuid — CLI の command_lifecycle がこの綴りで運命を
+    #: 名乗る)。agentd は Message の id そのものを渡す(対応表なし・events の行が messageId を名指す)。
+    ref: str = ""
+
+
+@dataclass(frozen=True)
+class Escalated:
+    """器が停止の合図を出した(段 10 lane 10n)。"""
+
+
+@dataclass(frozen=True)
+class SessionEscalate(EffectBase):
+    """``session.escalate``(段 10 lane 10n・agora-redesign #93): 注入した割り込みの本文を model が期限まで読まなかった
+    時の停止の合図 — headless の claude = control_request interrupt(走っている道具 / 生成を止め、注入の行が同じ session の
+    次の手番として即座に走る・host から見た手番は続く)/ codex は注入の段が無い(inject が止めて渡す)ので host が断る。
+    結果 = Escalated | SessionRefused(host の断り = 出す物が無い・器が無い)。socket の失敗(OSError)は素通し。
+    """
+
+    session_id: str
 
 
 @dataclass(frozen=True)

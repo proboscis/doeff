@@ -36,6 +36,7 @@ from doeff_agents.sessionhost.acp.effects import (
     AcpRow,
     AgentdSettings,
     EntryKind,
+    InFlightJob,
     JSONObject,
     LeaseRefused,
     SessionRefused,
@@ -91,6 +92,7 @@ def bound_job(
     effort: str | None = None,
     work_dir: str = "/work",
     agent_type: str = "claude",
+    escalation_seconds: int | None = None,
 ) -> AcpRow:
     binding: JSONObject = {"node": NODE, "profile": "personal"}
     if account is not None:
@@ -109,6 +111,9 @@ def bound_job(
         charter["lifecycle"] = lifecycle
     if effort is not None:
         charter["effort"] = effort
+    if escalation_seconds is not None:
+        # 段 10 lane 10n: 期限は charter の値ちょうど(Messaging が方策の行の値を会話の宣言で重ねて写す)。
+        charter["interruptEscalationSeconds"] = escalation_seconds
     spec: JSONObject = {
         "subject": subject,
         "inputs": list(inputs),
@@ -1138,7 +1143,11 @@ def test_node_status_names_the_capability_table() -> None:
     """段 10 lane 10e(agora-redesign #53): node の status.capabilities = agent の種類ごとの {settings, restartOn}
     (契約 kinds.node.status.capabilities・書き手 agentd・lease と同じ拍)。restartOn = session-affinity-key-of の鍵の欄
     (model・profile)ちょうどで、effort と workDir は受けるが session を作り直さない。"""
-    from doeff_agents.sessionhost.acp.effects import AGENT_CAPABILITIES, AGENT_SETTINGS
+    from doeff_agents.sessionhost.acp.effects import (
+        AGENT_CAPABILITIES,
+        AGENT_INTERRUPT_CAPABILITY,
+        AGENT_SETTINGS,
+    )
 
     world = World()
     world.tick()
@@ -1150,9 +1159,11 @@ def test_node_status_names_the_capability_table() -> None:
     assert set(table) == {"claude", "codex"}
     for kind, entry in table.items():
         assert isinstance(entry, dict)
+        # 段 10 lane 10n: 割り込みの能力(steer-then-stop = 注入 → 期限で停止の合図 / stop = 即座に止めて渡す)
         assert entry == {
             "settings": list(AGENT_CAPABILITIES[kind]["settings"]),
             "restartOn": list(AGENT_CAPABILITIES[kind]["restartOn"]),
+            "interrupt": AGENT_INTERRUPT_CAPABILITY[kind],
         }
         settings_of_kind = entry["settings"]
         restart_of_kind = entry["restartOn"]
@@ -1160,6 +1171,12 @@ def test_node_status_names_the_capability_table() -> None:
         assert settings_of_kind == list(AGENT_SETTINGS)
         assert set(restart_of_kind) <= set(settings_of_kind)
         assert restart_of_kind == ["model", "profile"]
+    claude_entry = table["claude"]
+    codex_entry = table["codex"]
+    assert isinstance(claude_entry, dict)
+    assert isinstance(codex_entry, dict)
+    assert claude_entry["interrupt"] == "steer-then-stop"
+    assert codex_entry["interrupt"] == "stop"
     # 鍵の欄 ⇔ restartOn: 鍵は account(profile の家)・binding(profile の家)・model の 3 欄で、effort / workDir は無い。
     plan = run(judgment.launch_plan_of(bound_job("a", inputs=[], effort="xhigh", work_dir="/elsewhere")))
     key = run(judgment.session_affinity_key_of(plan))
@@ -1478,6 +1495,367 @@ def test_interrupt_refused_by_the_session_stays_on_the_row_and_is_not_recorded_a
     world.tick(advance_ms=1_000)
     assert len(world.sessions.interjections) == 1
     assert [j.interrupts_sent for j in world.state.jobs] == [("m-i1", "m-missing")]
+
+
+def _claude_running_turn(session_id: str) -> str:
+    """claude の走っている手番の行(init・道具の呼び出しまで — result はまだ)。"""
+    return "".join(
+        [
+            _stream_line({"type": "system", "subtype": "init", "session_id": session_id}),
+            _stream_line(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "id": "msg_1",
+                        "role": "assistant",
+                        "model": "claude-opus-5",
+                        "content": [
+                            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "sleep 90"}}
+                        ],
+                        "usage": {"input_tokens": 3, "output_tokens": 7},
+                    },
+                }
+            ),
+        ]
+    )
+
+
+def _condition_types(status: JSONObject) -> list[str]:
+    """status.conditions の type の列(InterruptEscalationUndeclared の在否の読み口)。"""
+    conditions = status["conditions"]
+    assert isinstance(conditions, list)
+    return [
+        str(c["type"]) for c in conditions
+        if isinstance(c, dict) and c.get("type") == "InterruptEscalationUndeclared"
+    ]
+
+
+def _entry_seqs_of_kind(world: World, job_id: str, kind: str) -> list[int]:
+    record = world.turn_record(job_id)
+    assert record is not None
+    assert record.status is not None
+    entries = record.status["entries"]
+    assert isinstance(entries, list)
+    out: list[int] = []
+    for entry in entries:
+        assert isinstance(entry, dict)
+        if entry["kind"] == kind:
+            seq = entry["seq"]
+            assert isinstance(seq, int)
+            out.append(seq)
+    return out
+
+
+def _entry_kinds(world: World, job_id: str) -> list[str]:
+    record = world.turn_record(job_id)
+    assert record is not None
+    assert record.status is not None
+    entries = record.status["entries"]
+    assert isinstance(entries, list)
+    return [str(entry["kind"]) for entry in entries if isinstance(entry, dict)]
+
+
+def test_interrupt_is_injected_with_the_message_id_as_its_name_and_read_at_the_boundary_is_recorded() -> None:
+    """段 10 lane 10n(agora-redesign #93): 注入の行の名 = Message の id(session.send の ref)。材料の
+    command_lifecycle started(model が読む拍 — 実測 2026-09-14)を kind system の entry にし、その seq を
+    行の status.interruptsRead に写す。期限の前に読めたので停止の合図は出ない。"""
+    world = HeadlessWorld()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(
+        bound_job("j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400, escalation_seconds=20)
+    )
+    world.tick()
+    sid = world.sid("j-1")
+    events = f"/events/{sid}.events.jsonl"
+    world.local.transcripts[events] = _claude_running_turn(sid)
+    world.tick(advance_ms=1_000)
+    world.acp.put_row(message("m-i1", "stop and answer"))
+    _place_interrupt(world, "j-1", ["m-i1"])
+    world.tick(advance_ms=1_000)
+    assert world.sessions.interjections == [(sid, "stop and answer")]
+    assert world.sessions.interjection_refs == [(sid, "m-i1")]
+    assert [j.interrupts_injected for j in world.state.jobs] == [(("m-i1", world.local.now_ms),)]
+    assert [j.interrupt_escalation_seconds for j in world.state.jobs] == [20]
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["interruptsDelivered"] == ["m-i1"]
+    assert "interruptsRead" not in job.status
+    assert _condition_types(job.status) == []
+    # 道具の境界で畳まれた: CLI が started を名乗る(queued の行は証拠ではない)
+    world.local.transcripts[events] += _stream_line(
+        {"type": "command_lifecycle", "command_uuid": "m-i1", "state": "queued", "session_id": sid}
+    )
+    world.tick(advance_ms=1_000)
+    job = world.job("j-1")
+    assert job.status is not None
+    assert "interruptsRead" not in job.status
+    world.local.transcripts[events] += _stream_line(
+        {"type": "command_lifecycle", "command_uuid": "m-i1", "state": "started", "session_id": sid}
+    )
+    world.tick(advance_ms=1_000)
+    job = world.job("j-1")
+    assert job.status is not None
+    read = job.status["interruptsRead"]
+    assert isinstance(read, dict)
+    seqs = _entry_seqs_of_kind(world, "j-1", "system")
+    assert read == {"m-i1": seqs[-1]}
+    assert world.sessions.escalations == []
+    assert [j.interrupt_marks_dirty for j in world.state.jobs] == [False]
+    # 期限を越えても読んだ id には合図を出さない
+    world.tick(advance_ms=30_000)
+    assert world.sessions.escalations == []
+    job = world.job("j-1")
+    assert job.status is not None
+    assert "interruptsEscalated" not in job.status
+
+
+def test_interrupt_unread_past_the_deadline_escalates_once_and_the_next_turn_carries_it() -> None:
+    """段 10 lane 10n: 注入から charter.interruptEscalationSeconds の間に読んだ証拠が無ければ session.escalate を
+    1 度出し、未読の id に止めた時刻を status.interruptsEscalated へ写す。止めた段の材料(control_response の
+    still_queued・is_error の result・started)は kind system の entry(誤りではない)で、started が読んだ印。"""
+    world = HeadlessWorld()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(
+        bound_job("j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400, escalation_seconds=20)
+    )
+    world.tick()
+    sid = world.sid("j-1")
+    events = f"/events/{sid}.events.jsonl"
+    world.local.transcripts[events] = _claude_running_turn(sid)
+    world.tick(advance_ms=1_000)
+    world.acp.put_row(message("m-i1", "stop and answer"))
+    world.acp.put_row(message("m-i2", "and this"))
+    _place_interrupt(world, "j-1", ["m-i1", "m-i2"])
+    world.tick(advance_ms=1_000)
+    injected_ms = world.local.now_ms
+    world.local.transcripts[events] += _stream_line(
+        {"type": "command_lifecycle", "command_uuid": "m-i1", "state": "queued", "session_id": sid}
+    ) + _stream_line(
+        {"type": "command_lifecycle", "command_uuid": "m-i2", "state": "queued", "session_id": sid}
+    )
+    # 期限の手前では出さない
+    world.tick(advance_ms=19_000)
+    assert world.sessions.escalations == []
+    # 期限: 合図は session に 1 つ・未読の id 全部に止めた印
+    world.tick(advance_ms=1_500)
+    assert world.sessions.escalations == [sid]
+    escalated_ms = world.local.now_ms
+    assert escalated_ms - injected_ms >= 20_000
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["interruptsEscalated"] == {"m-i1": escalated_ms, "m-i2": escalated_ms}
+    assert "interruptsRead" not in job.status
+    assert job.status["phase"] == PHASE_RUNNING
+    # 次の拍に二度出さない
+    world.tick(advance_ms=1_000)
+    assert world.sessions.escalations == [sid]
+    # 止めた段の材料 → 注入の行が次の手番として走る(host から見た手番は続く — 器の Dialogue が result を飲む)
+    world.local.transcripts[events] += "".join(
+        [
+            _stream_line(
+                {
+                    "type": "control_response",
+                    "response": {
+                        "subtype": "success",
+                        "request_id": "r-1",
+                        "response": {"still_queued": ["m-i1", "m-i2"]},
+                    },
+                }
+            ),
+            _stream_line(
+                {
+                    "type": "result",
+                    "subtype": "error_during_execution",
+                    "is_error": True,
+                    "result": "",
+                    "errors": ["[ede_diagnostic] stop_reason=tool_use"],
+                }
+            ),
+            _stream_line(
+                {"type": "command_lifecycle", "command_uuid": "m-i1", "state": "started", "session_id": sid}
+            ),
+            _stream_line(
+                {"type": "command_lifecycle", "command_uuid": "m-i2", "state": "started", "session_id": sid}
+            ),
+            _stream_line({"type": "system", "subtype": "init", "session_id": sid}),
+        ]
+    )
+    world.tick(advance_ms=1_000)
+    job = world.job("j-1")
+    assert job.status is not None
+    read = job.status["interruptsRead"]
+    assert isinstance(read, dict)
+    assert set(read) == {"m-i1", "m-i2"}
+    first_seq = read["m-i1"]
+    second_seq = read["m-i2"]
+    assert isinstance(first_seq, int)
+    assert isinstance(second_seq, int)
+    assert first_seq < second_seq
+    kinds = _entry_kinds(world, "j-1")
+    assert "error" not in kinds, kinds
+    # 止めた印 → 止めた段の終わり(system)→ 読んだ証拠 2 つ → 次の手番の始まり
+    assert kinds[-5:] == ["system", "system", "system", "system", "system"]
+    assert job.status["interruptsEscalated"] == {"m-i1": escalated_ms, "m-i2": escalated_ms}
+    assert job.status["phase"] == PHASE_RUNNING
+
+
+def test_interrupt_without_a_declared_deadline_is_injected_only_and_names_the_condition() -> None:
+    """段 10 lane 10n(依頼者の追補 2026-09-14): charter に interruptEscalationSeconds が無い job は注入だけ —
+    停止の合図は出さず、条件 InterruptEscalationUndeclared を渡した印と同じ書きで行に足す(code に既定の期限は無い)。"""
+    world = HeadlessWorld()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400))
+    world.tick()
+    sid = world.sid("j-1")
+    world.local.transcripts[f"/events/{sid}.events.jsonl"] = _claude_running_turn(sid)
+    world.tick(advance_ms=1_000)
+    world.acp.put_row(message("m-i1", "stop"))
+    _place_interrupt(world, "j-1", ["m-i1"])
+    world.tick(advance_ms=1_000)
+    assert world.sessions.interjection_refs == [(sid, "m-i1")]
+    assert [j.interrupt_escalation_seconds for j in world.state.jobs] == [None]
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["interruptsDelivered"] == ["m-i1"]
+    assert _condition_types(job.status) == ["InterruptEscalationUndeclared"]
+    conditions = job.status["conditions"]
+    assert isinstance(conditions, list)
+    reasons = [str(c["reason"]) for c in conditions if isinstance(c, dict)]
+    assert any("interruptEscalationSeconds" in reason for reason in reasons)
+    world.tick(advance_ms=120_000)
+    assert world.sessions.escalations == []
+    job = world.job("j-1")
+    assert job.status is not None
+    assert "interruptsEscalated" not in job.status
+    # 条件は 1 つのまま(二度足さない)
+    world.acp.put_row(message("m-i2", "again"))
+    _place_interrupt(world, "j-1", ["m-i2"])
+    world.tick(advance_ms=1_000)
+    job = world.job("j-1")
+    assert job.status is not None
+    assert _condition_types(job.status) == ["InterruptEscalationUndeclared"]
+
+
+def test_codex_interrupt_is_read_at_the_turn_started_after_the_stop() -> None:
+    """段 10 lane 10n・確定 4: codex に注入の段は無い(inject = turn/interrupt → 同じ thread へ turn/start)。
+    止めた後の turn/started が「積んであった注入を model が読む拍」— 名は無いので未読の id 全部に同じ seq。
+    interrupted の turn/completed は kind system(誤りではない)。期限を越えても codex には合図を出さない
+    (読んだ印が先に付く)。"""
+    world = HeadlessWorld(agent_type="codex")
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(
+        bound_job(
+            "j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400, agent_type="codex",
+            escalation_seconds=20,
+        )
+    )
+    world.tick()
+    sid = world.sid("j-1")
+    events = f"/events/{sid}.events.jsonl"
+    world.local.transcripts[events] = "".join(
+        [
+            _stream_line({"id": "thread/start#2", "result": {"thread": {"id": "thr-1"}}}),
+            _stream_line({"method": "turn/started", "params": {"threadId": "thr-1", "turn": {"id": "t1"}}}),
+        ]
+    )
+    world.tick(advance_ms=1_000)
+    world.acp.put_row(message("m-i1", "stop and answer"))
+    _place_interrupt(world, "j-1", ["m-i1"])
+    world.tick(advance_ms=1_000)
+    assert world.sessions.interjection_refs == [(sid, "m-i1")]
+    world.local.transcripts[events] += "".join(
+        [
+            _stream_line(
+                {
+                    "method": "turn/completed",
+                    "params": {"threadId": "thr-1", "turn": {"id": "t1", "status": "interrupted"}},
+                }
+            ),
+            _stream_line({"method": "turn/started", "params": {"threadId": "thr-1", "turn": {"id": "t2"}}}),
+        ]
+    )
+    world.tick(advance_ms=1_000)
+    job = world.job("j-1")
+    assert job.status is not None
+    read = job.status["interruptsRead"]
+    assert isinstance(read, dict)
+    assert read == {"m-i1": _entry_seqs_of_kind(world, "j-1", "system")[-1]}
+    assert "error" not in _entry_kinds(world, "j-1")
+    world.tick(advance_ms=60_000)
+    assert world.sessions.escalations == []
+
+
+def _in_flight_job(job_id: str, session_id: str) -> InFlightJob:
+    """判断の純関数の検の材料(memory の 1 job — 欄は始まりの値)。"""
+    return InFlightJob(
+        job_key=f"{AGENT_JOB_NAMESPACE}:{AGENT_JOB_KIND}:{job_id}",
+        job_namespace=AGENT_JOB_NAMESPACE,
+        job_id=job_id,
+        subject=CONVERSATION,
+        session_id=session_id,
+        agent_type="claude",
+        node=NODE,
+        profile="personal",
+        model="claude-opus-5",
+        started_ms=0,
+        turn_floor_ms=0,
+        start_offset=0,
+        transcript_offset=0,
+        delta_seq=0,
+        lease_id=None,
+        lease_kind=None,
+        lease_account=None,
+        lease_hold_ms=None,
+        capturing=False,
+        stream_gone=False,
+        last_frame_ms=0,
+        last_probe_ms=0,
+        pending_conditions=(),
+    )
+
+
+def test_interrupt_judgments_are_pure() -> None:
+    """判断の純関数(段 10 lane 10n): 期限は charter の整数だけ(bool・負・欠落は None)/ 読んだ証拠は名の在る証拠が
+    その id・名の無い証拠が未読の全部(同じ id は最初の証拠)/ 期限の判断 = 注入 + 期限 ≤ 今 ∧ 未読 ∧ 未合図 /
+    印の写しは append-only の map / 拾い直しは渡した - 読んだ - 止めた を今から数える。"""
+    from doeff_agents.sessionhost.acp.effects import InterruptRead
+
+    assert run(judgment.escalation_seconds_of_charter({"interruptEscalationSeconds": 20})) == 20
+    assert run(judgment.escalation_seconds_of_charter({"interruptEscalationSeconds": 0})) == 0
+    assert run(judgment.escalation_seconds_of_charter({"interruptEscalationSeconds": True})) is None
+    assert run(judgment.escalation_seconds_of_charter({"interruptEscalationSeconds": -1})) is None
+    assert run(judgment.escalation_seconds_of_charter({"interruptEscalationSeconds": "20"})) is None
+    assert run(judgment.escalation_seconds_of_charter({})) is None
+    base = _in_flight_job("j-1", "sid-1")
+    job = run(judgment.with_injected_interrupts(base, ("a", "b"), 1_000))
+    assert job.interrupts_injected == (("a", 1_000), ("b", 1_000))
+    assert run(judgment.with_injected_interrupts(job, ("a", "c"), 2_000)).interrupts_injected == (
+        ("a", 1_000), ("b", 1_000), ("c", 2_000),
+    )
+    assert run(judgment.interrupt_reads_of(job, (InterruptRead("b", 7), InterruptRead("x", 8)))) == (("b", 7),)
+    assert run(judgment.interrupt_reads_of(job, (InterruptRead(None, 9),))) == (("a", 9), ("b", 9))
+    assert run(judgment.interrupt_reads_of(job, (InterruptRead("a", 5), InterruptRead("a", 6)))) == (("a", 5),)
+    read_a = replace(job, interrupts_read=(("a", 5),))
+    assert run(judgment.interrupt_reads_of(read_a, (InterruptRead(None, 9),))) == (("b", 9),)
+    timed = replace(job, interrupt_escalation_seconds=20)
+    assert run(judgment.interrupts_due_for_escalation(timed, 20_999)) == ()
+    assert run(judgment.interrupts_due_for_escalation(timed, 21_000)) == ("a", "b")
+    assert run(judgment.interrupts_due_for_escalation(replace(timed, interrupts_read=(("a", 5),)), 21_000)) == ("b",)
+    assert run(judgment.interrupts_due_for_escalation(replace(timed, interrupts_escalated=(("b", 21_000),)), 30_000)) == ("a",)
+    assert run(judgment.interrupts_due_for_escalation(job, 99_000)) == ()  # 宣言なし → 出さない
+    status: JSONObject = {"phase": "Running", "interruptsRead": {"a": 5}}
+    marked = run(judgment.interrupt_marks_status_of(status, (("a", 99), ("b", 7)), (("b", 21_000),)))
+    assert marked == {"phase": "Running", "interruptsRead": {"a": 5, "b": 7}, "interruptsEscalated": {"b": 21_000}}
+    assert run(judgment.interrupt_marks_status_of({"phase": "Running"}, (), ())) == {"phase": "Running"}
+    recovered_row = row(
+        AGENT_JOB_NAMESPACE, AGENT_JOB_KIND, "j-1", {},
+        {"phase": "Running", "interruptsDelivered": ["a", "b", "c"], "interruptsRead": {"a": 5},
+         "interruptsEscalated": {"b": 21_000}},
+    )
+    recovered = run(judgment.recovered_interrupts_of(base, recovered_row, 50_000))
+    assert recovered.interrupts_injected == (("c", 50_000),)
+    assert recovered.interrupts_read == (("a", 5),)
+    assert recovered.interrupts_escalated == (("b", 21_000),)
 
 
 def test_interrupts_are_only_delivered_to_jobs_this_agentd_runs() -> None:
@@ -2150,7 +2528,10 @@ def test_headless_codex_turn_streams_deltas_and_records_command_execution() -> N
     assert record.status is not None
     entries = record.status["entries"]
     assert isinstance(entries, list)
+    # 段 10 lane 10n: codex の turn/started は kind system の entry("turn started" — 止めた後の手番なら
+    # 積んであった割り込みを model が読む拍の証拠)。
     assert [entry["kind"] for entry in entries if isinstance(entry, dict)] == [
+        "system",
         "text",
         "tool_use",
         "tool_result",

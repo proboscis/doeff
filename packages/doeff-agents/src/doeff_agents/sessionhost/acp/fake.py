@@ -36,6 +36,7 @@ from doeff_agents.sessionhost.acp.effects import (
     FsCanonicalPath,
     FsFileSize,
     FsWritePrivateText,
+    Escalated,
     Interjected,
     JSONObject,
     LeaseGrant,
@@ -73,6 +74,7 @@ from doeff_agents.sessionhost.acp.effects import (
     SessionCleanup,
     SessionEvents,
     SessionGet,
+    SessionEscalate,
     SessionInterject,
     SessionInterrupt,
     SessionLaunch,
@@ -362,6 +364,11 @@ class FakeSessions:
         self.interjections: list[tuple[str, str]] = []
         #: None = 引き受ける / SessionRefused = 器が断る(走っている手番が無い)。
         self.refuse_interject: SessionRefused | None = None
+        #: 段 10 lane 10n: 注入の行の名(session_id, ref)の順 — agentd は Message の id を渡す。
+        self.interjection_refs: list[tuple[str, str]] = []
+        #: 段 10 lane 10n: 停止の合図(session.escalate)を受けた session の順と、断り(None = 出す)。
+        self.escalations: list[str] = []
+        self.refuse_escalate: SessionRefused | None = None
         #: この器の backend(tmux | herdr | headless)と headless の events file の置き場。
         self.backend_kind: str = backend_kind
         self.events_root: str = events_root
@@ -391,6 +398,7 @@ class FakeSessions:
                 SessionResume,
                 SessionSend,
                 SessionInterject,
+                SessionEscalate,
                 SessionInterrupt,
                 SessionCleanup,
             ),
@@ -406,6 +414,7 @@ class FakeSessions:
         | SessionResume
         | SessionSend
         | SessionInterject
+        | SessionEscalate
         | SessionInterrupt
         | SessionCleanup,
     ) -> object:
@@ -424,7 +433,13 @@ class FakeSessions:
             if self.refuse_interject is not None:
                 return self.refuse_interject
             self.interjections.append((effect.session_id, effect.text))
+            self.interjection_refs.append((effect.session_id, effect.ref))
             return Interjected()
+        if isinstance(effect, SessionEscalate):
+            if self.refuse_escalate is not None:
+                return self.refuse_escalate
+            self.escalations.append(effect.session_id)
+            return Escalated()
         if isinstance(effect, SessionInterrupt):
             self.interrupts.append(effect.session_id)
             return None

@@ -41,6 +41,7 @@ from doeff_agents.sessionhost.headless_protocol import (
     JSONObject,
     TurnEnded,
     backend_alive,
+    claude_interrupt_request_line,
     claude_user_line,
     parse_record,
     recovery_verdict,
@@ -111,19 +112,140 @@ def test_claude_dialogue_reads_init_and_result() -> None:
     init = dialogue.on_line({"type": "system", "subtype": "init", "session_id": "sid-1"})
     assert init.conversation == {"session_id": "sid-1"}
     assert dialogue.on_line({"type": "assistant", "message": {}}).ended is None
-    # 走っている手番への割り込み = 同じ user の行(CLI が次の tool の境界で注入する)
+    # 走っている手番への割り込み = 同じ user の行(CLI が次の tool の境界で注入する)。行の uuid は
+    # 呼び手の ref(無ければ鋳造)— CLI の command_lifecycle がこの綴りで運命を名乗る(段 10 lane 10n)。
     injected = dialogue.inject("stop that")
     assert injected.accepted is True
-    assert injected.sends == (claude_user_line("stop that"),)
+    assert injected.ref
+    assert injected.sends == (claude_user_line("stop that", injected.ref),)
+    assert _record(injected.sends[0])["uuid"] == injected.ref
+    assert dialogue.injections == {injected.ref: "queued"}
+    # 境界で畳まれた(started → completed が result の前)→ result は手番の終わり
+    assert dialogue.on_line({"type": "command_lifecycle", "command_uuid": injected.ref, "state": "started"}).ended is None
+    assert dialogue.injections == {injected.ref: "started"}
+    assert dialogue.on_line({"type": "command_lifecycle", "command_uuid": injected.ref, "state": "completed"}).ended is None
     ended = dialogue.on_line({"type": "result", "subtype": "success", "is_error": False})
     assert ended.ended == TurnEnded(ok=True, detail="success")
     assert dialogue.in_flight is False
+    assert dialogue.injections == {}
     assert dialogue.inject("late").accepted is False
     # 次の手番は同じ process へ次の user の行
     assert dialogue.turn("again").close_stdin is False
     failed = dialogue.on_line({"type": "result", "subtype": "error_max_turns", "is_error": True})
     assert failed.ended == TurnEnded(ok=False, detail="error_max_turns")
     assert dialogue.interrupt().signal is True
+
+
+def _lifecycle(ref: str, state: str) -> JSONObject:
+    return {"type": "command_lifecycle", "command_uuid": ref, "state": state}
+
+
+def _control_response(request_id: str, still_queued: list[str], subtype: str = "success") -> JSONObject:
+    payload: JSONObject = {"still_queued": list(still_queued)}
+    response: JSONObject = {"subtype": subtype, "request_id": request_id, "response": payload}
+    return {"type": "control_response", "response": response}
+
+
+def test_claude_dialogue_escalates_an_unread_injection_and_the_next_turn_carries_it() -> None:
+    """段 10 lane 10n(実測 2026-09-14 場面 A): 道具の途中に注入した行は queued のまま → 停止の合図
+    (control_request interrupt)→ 答えの still_queued に名指された注入は次の手番として走るので、止めた段の
+    result(is_error)は手番の終わりとして報告しない(飲む)。started が読んだ印・次の result が手番の終わり。"""
+    dialogue = ClaudeDialogue()
+    assert dialogue.escalate().accepted is False  # 手番が走っていない
+    dialogue.turn("long tool")
+    dialogue.on_line({"type": "system", "subtype": "init", "session_id": "sid-1"})
+    assert dialogue.escalate().accepted is False  # queued の注入が無い
+    injected = dialogue.inject("stop now", "msg-1")
+    assert injected.ref == "msg-1"
+    assert _record(injected.sends[0])["uuid"] == "msg-1"
+    assert dialogue.on_line(_lifecycle("msg-1", "queued")).ended is None
+    signal = dialogue.escalate()
+    assert signal.accepted is True
+    assert signal.sends == (claude_interrupt_request_line(signal.request_id),)
+    assert _record(signal.sends[0]) == {
+        "type": "control_request",
+        "request_id": signal.request_id,
+        "request": {"subtype": "interrupt"},
+    }
+    assert dialogue.escalate().accepted is False  # 出して答え待ち — 二度出さない
+    assert dialogue.on_line(_control_response(signal.request_id, ["msg-1"])).ended is None
+    assert dialogue.still_queued == ("msg-1",)
+    swallowed = dialogue.on_line({"type": "result", "subtype": "error_during_execution", "is_error": True})
+    assert swallowed.ended is None
+    assert dialogue.in_flight is True
+    assert dialogue.cli_turn_open is False
+    assert dialogue.on_line(_lifecycle("msg-1", "started")).ended is None
+    assert dialogue.injections == {"msg-1": "started"}
+    assert dialogue.on_line({"type": "system", "subtype": "init", "session_id": "sid-1"}).ended is None
+    assert dialogue.cli_turn_open is True
+    ended = dialogue.on_line({"type": "result", "subtype": "success", "is_error": False})
+    assert ended.ended == TurnEnded(ok=True, detail="success")
+    assert dialogue.in_flight is False
+    # 手番の終わりの後の completed は知らない ref(空にした)— 何も起きない
+    assert dialogue.on_line(_lifecycle("msg-1", "completed")).ended is None
+
+
+def test_claude_dialogue_escalation_without_survivors_ends_the_turn_as_interrupted() -> None:
+    """still_queued に注入が無い(abort の瞬間に畳みの途中だった)→ 次の手番は来ないので result で手番の終わり
+    (interrupted)。答えが error なら合図は効かなかった — もう 1 度出せる。"""
+    dialogue = ClaudeDialogue()
+    dialogue.turn("x")
+    dialogue.inject("a", "msg-1")
+    first = dialogue.escalate()
+    assert dialogue.on_line(_control_response(first.request_id, [], subtype="error")).ended is None
+    assert dialogue.escalation is None
+    second = dialogue.escalate()
+    assert second.accepted is True
+    assert second.request_id != first.request_id
+    # 別の request_id の答えは無視する
+    assert dialogue.on_line(_control_response("other", ["msg-1"])).ended is None
+    assert dialogue.still_queued is None
+    assert dialogue.on_line(_control_response(second.request_id, [])).ended is None
+    ended = dialogue.on_line({"type": "result", "subtype": "error_during_execution", "is_error": True})
+    assert ended.ended == TurnEnded(ok=False, detail="interrupted")
+    assert dialogue.in_flight is False
+
+
+def test_claude_dialogue_keeps_the_turn_while_an_injection_is_still_queued_at_the_result() -> None:
+    """実測 2026-09-14 第 1 走: 道具の無い生成の途中に注入した行は畳まれず、result の後に次の手番として走る。
+    result の時点で queued のままの注入が在れば手番は続く(誰の job でもない手番を作らない)。その注入が走らずに
+    終わった(discarded / cancelled / refused)なら、そこで手番の終わり。"""
+    dialogue = ClaudeDialogue()
+    dialogue.turn("x")
+    dialogue.inject("late", "msg-1")
+    dialogue.on_line(_lifecycle("msg-1", "queued"))
+    assert dialogue.on_line({"type": "result", "subtype": "success", "is_error": False}).ended is None
+    assert dialogue.in_flight is True
+    # 走らずに終わった → 手番の終わり(interrupt-discarded)
+    ended = dialogue.on_line(_lifecycle("msg-1", "discarded"))
+    assert ended.ended == TurnEnded(ok=False, detail="interrupt-discarded")
+    assert dialogue.in_flight is False
+    # 同じ形で started → init → result なら普通の終わり
+    dialogue.turn("y")
+    dialogue.inject("late again", "msg-2")
+    dialogue.on_line(_lifecycle("msg-2", "queued"))
+    assert dialogue.on_line({"type": "result", "subtype": "success", "is_error": False}).ended is None
+    dialogue.on_line(_lifecycle("msg-2", "started"))
+    dialogue.on_line({"type": "system", "subtype": "init", "session_id": "sid-1"})
+    # 手番が開いている間の cancelled(手番ごと abort された)は手番を閉じない — result が閉じる
+    assert dialogue.on_line(_lifecycle("msg-2", "cancelled")).ended is None
+    assert dialogue.on_line({"type": "result", "subtype": "success", "is_error": False}).ended == TurnEnded(
+        ok=True, detail="success"
+    )
+
+
+def test_codex_dialogue_does_not_escalate() -> None:
+    """確定 4: codex に注入の段は無い(inject が turn/interrupt で止めて渡す・能力 stop)— 停止の合図は出す物が無い。"""
+    dialogue = CodexDialogue(CodexPlan(cwd="/w"))
+    dialogue.opening()
+    dialogue.on_line({"id": "initialize#1", "result": {}})
+    dialogue.on_line({"id": "thread/start#2", "result": {"thread": {"id": "thr"}}})
+    dialogue.turn("go")
+    dialogue.on_line({"method": "turn/started", "params": {"threadId": "thr", "turn": {"id": "t1"}}})
+    injected = dialogue.inject("stop", "msg-1")
+    assert injected.accepted is True
+    assert injected.ref == "msg-1"
+    assert dialogue.escalate().accepted is False
 
 
 def _rpc(line: str) -> JSONObject:
@@ -587,6 +709,52 @@ def test_headless_process_claude_inject_reaches_the_running_turn(tmp_path: Path)
     registry.kill("s3")
 
 
+def test_headless_process_claude_escalate_stops_the_tool_and_the_injection_runs_next(tmp_path: Path) -> None:
+    """段 10 lane 10n: 道具の途中(境界が来ない)に注入 → queued のまま → escalate(control_request interrupt)→ 替え玉は
+    実物の順(control_response の still_queued → 止めた段の result (is_error) → started → init → 反応 → result)。
+    器の観測は手番の終わり 1 つ(止めた段の result は飲む)・process は生きたまま。"""
+    registry = HeadlessRegistry()
+    events = str(tmp_path / "s4.events.jsonl")
+    process = registry.spawn(
+        "s4",
+        ["claude", "-p", "--input-format", "stream-json", "--session-id", "sid-4"],
+        str(tmp_path),
+        _stub_env({"DOEFF_HEADLESS_STUB_DELAY": "30", "DOEFF_HEADLESS_STUB_TOOL_SECONDS": "30"}),
+        events,
+        ClaudeDialogue(),
+    )
+    assert process.escalate() is False  # 手番が走っていない
+    assert process.deliver("long tool") is True
+    _wait_until(lambda: len(process.peek_records()) >= 4)
+    assert process.escalate() is False  # queued の注入が無い
+    assert process.inject("stop and answer", "msg-1") is True
+    _wait_until(lambda: any(r.get("type") == "command_lifecycle" and r.get("command_uuid") == "msg-1" for r in process.peek_records()))
+    assert process.escalate() is True
+    assert process.escalate() is False  # 答え待ち
+    _wait_until(
+        lambda: sum(1 for r in process.peek_records() if r.get("type") == "result") >= 2, timeout=10.0
+    )
+    _wait_until(lambda: any(r.get("type") == "command_lifecycle" and r.get("state") == "completed" and r.get("command_uuid") == "msg-1" for r in process.peek_records()), timeout=5.0)
+    observed = process.observe()
+    assert observed.alive is True
+    assert observed.ended == (TurnEnded(ok=True, detail="success"),)
+    kinds = [r["type"] for r in observed.records]
+    assert kinds.count("result") == 2
+    assert kinds.count("control_response") == 1
+    assert kinds.index("control_response") < kinds.index("result")
+    assert assistant_texts(list(observed.records)) == ["echo: long tool", "echo: stop and answer"]
+    results = [r for r in observed.records if r.get("type") == "result"]
+    assert results[0]["subtype"] == "error_during_execution"
+    assert results[0]["is_error"] is True
+    assert results[1]["subtype"] == "success"
+    states = [(r["command_uuid"], r["state"]) for r in observed.records if r.get("type") == "command_lifecycle" and r.get("command_uuid") == "msg-1"]
+    assert states == [("msg-1", "queued"), ("msg-1", "started"), ("msg-1", "completed")]
+    # 手番が終わった後は引き受けない・出す物も無い
+    assert process.inject("too late", "msg-2") is False
+    assert process.escalate() is False
+    registry.kill("s4")
+
+
 def test_headless_process_claude_sigint_ends_the_turn_as_interrupted(tmp_path: Path) -> None:
     registry = HeadlessRegistry()
     events = str(tmp_path / "s2.events.jsonl")
@@ -864,6 +1032,48 @@ def test_host_headless_claude_interrupt_mode_reaches_the_running_turn(
     assert assistant_texts(lines) == ["echo: hello agent", "interrupted: change of plan"]
     assert [r["type"] for r in lines].count("result") == 1
     headless_host.ok("session.cleanup", {"session_id": "h-5"})
+
+
+def test_host_headless_escalate_stops_the_turn_and_keeps_awaiting(
+    headless_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """段 10 lane 10n: session.send(mode = interrupt・ref)の後の session.escalate は停止の合図を出す —
+    行の awaiting は触らない(host から見た手番は続く)。出す物が無い時(queued の注入が無い・既に出した)は
+    型付きに断る。手番の終わりは注入の行の手番の result で 1 つ。"""
+    monkeypatch.setenv("DOEFF_HEADLESS_STUB_DELAY", "30")
+    monkeypatch.setenv("DOEFF_HEADLESS_STUB_TOOL_SECONDS", "30")
+    launched = headless_host.ok("session.launch", _launch_params(headless_host.root, "h-7", "claude"))
+    assert isinstance(launched, dict)
+    events_path = Path(_text(_obj(launched, "backend_ref"), "events_path"))
+    _wait_until(lambda: len(events_path.read_text(encoding="utf-8").splitlines()) >= 4 if events_path.exists() else False)
+    refused = headless_host.call("session.escalate", {"session_id": "h-7"})
+    assert refused["ok"] is False
+    assert "nothing to escalate" in str(refused["error"])
+    injected = headless_host.ok(
+        "session.send", {"session_id": "h-7", "message": "change of plan", "mode": "interrupt", "ref": "msg-7"}
+    )
+    assert isinstance(injected, dict)
+    assert injected["sent"] is True
+    _wait_until(
+        lambda: any(
+            _record(line).get("command_uuid") == "msg-7"
+            for line in events_path.read_text(encoding="utf-8").splitlines()
+        )
+    )
+    escalated = headless_host.ok("session.escalate", {"session_id": "h-7"})
+    assert isinstance(escalated, dict)
+    assert _text(escalated, "status") == "running"
+    assert escalated["awaiting_response"] is True
+    again = headless_host.call("session.escalate", {"session_id": "h-7"})
+    assert again["ok"] is False
+    ended = _wait_turn_end(headless_host, "h-7")
+    assert _text(ended, "status") == "running"
+    lines = [_record(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+    assert assistant_texts(lines) == ["echo: hello agent", "echo: change of plan"]
+    assert [r["type"] for r in lines].count("result") == 2
+    assert [r["type"] for r in lines].count("control_response") == 1
+    monkeypatch.setenv("DOEFF_HEADLESS_STUB_TOOL_SECONDS", "0")
+    headless_host.ok("session.cleanup", {"session_id": "h-7"})
 
 
 def test_host_headless_interrupt_keeps_the_session_warm(

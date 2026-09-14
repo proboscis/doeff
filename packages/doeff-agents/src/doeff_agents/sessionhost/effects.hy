@@ -781,9 +781,18 @@
 (defclass [(dataclass :frozen True :kw-only True)] HeadlessInject [EffectBase]
   "割り込みの本文を走っている手番へ(段 8 lane 4x・綴りは Dialogue.inject — claude は user の
    行を CLI が次の tool の境界で注入・codex は turn/interrupt → 同じ thread へ turn/start)。
+   ref = 注入の行の名(段 10 lane 10n — claude は user の行の uuid・CLI の command_lifecycle がこの
+   綴りで運命を名乗る。空 = Dialogue が鋳造)。
    戻り値: bool(走っている手番が在って器が引き受けたか — 偽なら呼び手が queued へ倒す)。"
   #^ str session-name
-  #^ str text)
+  #^ str text
+  #^ str ref)
+
+(defclass [(dataclass :frozen True :kw-only True)] HeadlessEscalate [EffectBase]
+  "停止の合図(段 10 lane 10n・判断は Dialogue.escalate): 走っている手番に model がまだ読んでいない
+   注入(queued)が在れば claude の control_request interrupt を stdin へ(codex は注入の段が無いので
+   出す物が無い)。戻り値: bool(合図を出したか)。"
+  #^ str session-name)
 
 (defclass [(dataclass :frozen True :kw-only True)] HeadlessPoll [EffectBase]
   "monitor の拍: 前の拍から読んだ事実(行・手番の終わり・会話の id・型付きの失敗)と
@@ -1092,11 +1101,17 @@
   "HeadlessInterrupt を構築する。"
   (HeadlessInterrupt :session-name session-name))
 
-(deff headless-inject [session-name text]
-  {:pre [(: session-name str) (: text str)]
+(deff headless-inject [session-name text ref]
+  {:pre [(: session-name str) (: text str) (: ref str)]
    :post [(: % HeadlessInject)]}
-  "HeadlessInject を構築する(段 8 lane 4x)。"
-  (HeadlessInject :session-name session-name :text text))
+  "HeadlessInject を構築する(段 8 lane 4x・ref は段 10 lane 10n)。"
+  (HeadlessInject :session-name session-name :text text :ref ref))
+
+(deff headless-escalate [session-name]
+  {:pre [(: session-name str)]
+   :post [(: % HeadlessEscalate)]}
+  "HeadlessEscalate を構築する(段 10 lane 10n)。"
+  (HeadlessEscalate :session-name session-name))
 
 (deff headless-kill [session-name]
   {:pre [(: session-name str)]

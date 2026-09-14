@@ -84,6 +84,7 @@
   SEND-MODE-INTERRUPT
   SEND-MODE-TURN
   SEND-MODES
+  headless-escalate-program
   headless-inject-program
   headless-interrupt-program
   headless-launch-session
@@ -1389,10 +1390,15 @@
     (when (not-in mode SEND-MODES)
       (raise (RuntimeError (+ "invalid params for session.send: mode must be one of "
                             (.join " / " (sorted SEND-MODES)) f" (got: {mode !r})"))))
+    ;; 段 10 lane 10n: ref = 注入の行の名(headless の claude は user の行の uuid — CLI の
+    ;; command_lifecycle がこの綴りで運命を名乗る)。無ければ器が鋳造。
+    (setv ref (.get p "ref" ""))
+    (when (not (isinstance ref str))
+      (raise (RuntimeError f"invalid params for session.send: ref must be a string (got: {ref !r})")))
     (run-hosted config actor
                 (cond
                   (and (headless-backend? config) (= mode SEND-MODE-INTERRUPT))
-                  (headless-inject-program sid message)
+                  (headless-inject-program sid message ref)
                   (headless-backend? config)
                   (headless-send-program sid message awaiting)
                   True
@@ -1411,6 +1417,19 @@
                     (interrupt-program sid)))
     (setv wire (wire-snapshot actor sid))
     (record-command actor sid "session.interrupt" wire)
+    (return wire))
+
+  ;; 段 10 lane 10n(agora-redesign #93): 注入した本文を model が期限まで読まなかった時の停止の合図
+  ;; (headless の claude = control_request interrupt・codex は出す物が無い)。tui の backend には
+  ;; 注入の段が無い(キー配送は作業中の入力を model が自分で読む)ので断る。
+  (when (= method "session.escalate")
+    (setv p (params-object params "session.escalate"))
+    (setv sid (required-str-param p "session_id" "session.escalate"))
+    (when (not (headless-backend? config))
+      (raise (RuntimeError "session.escalate is only supported by the headless backend")))
+    (run-hosted config actor (headless-escalate-program sid))
+    (setv wire (wire-snapshot actor sid))
+    (record-command actor sid "session.escalate" wire)
     (return wire))
 
   (when (= method "session.cancel")

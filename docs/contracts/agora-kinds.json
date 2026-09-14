@@ -475,7 +475,8 @@
                   "type": "object",
                   "properties": {
                     "settings": {"type": "array", "items": {"type": "string", "enum": ["model", "profile", "effort", "workDir"]}, "uniqueItems": true, "description": "受ける欄(会話の status.agent の鍵の綴り)。"},
-                    "restartOn": {"type": "array", "items": {"type": "string", "enum": ["model", "profile", "effort", "workDir"]}, "uniqueItems": true, "description": "変えたら session を作り直す欄(settings の部分集合)。"}
+                    "restartOn": {"type": "array", "items": {"type": "string", "enum": ["model", "profile", "effort", "workDir"]}, "uniqueItems": true, "description": "変えたら session を作り直す欄(settings の部分集合)。"},
+                    "interrupt": {"type": "string", "enum": ["steer-then-stop", "stop"], "description": "段 10 lane 10n(agora-redesign #93): この agent の種類の割り込み(message.spec.delivery.mode = interrupt)の届き方。steer-then-stop = 走っている手番へ本文を注入し(CLI が次の道具の境界で model に見せる)、注入から charter.interruptEscalationSeconds の間に model が読まなければ停止の合図で今の手番を止めて次の手番として即座に渡す(claude の headless)/ stop = 注入の段が無く、即座に止めて渡す(codex の app-server)。面の文言はこの語に従う。欠落 = 名乗っていない(旧の agentd)。"}
                   },
                   "required": ["settings", "restartOn"],
                   "additionalProperties": false

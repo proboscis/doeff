@@ -85,8 +85,21 @@
 ;;; 判断は interrupts-delivered-status-of)。器が断った(走っている手番が無い)id は行に残す —
 ;;; 手番が終わればその行は終端の phase で interrupts を持ち、Messaging が queued として積み直す。
 ;;;
+;;; 割り込みの約束 = 「期限までに model が読む」(段 10 lane 10n・agora-redesign #93・既知の形 = cooperative cancel →
+;;; hard cancel の 2 段): 注入の行の名 = Message の id(claude の user の行の uuid — CLI の command_lifecycle がこの綴りで
+;;; 運命を名乗る・実測 conformance/interrupt-physics.md 2026-09-14)。読んだ証拠 = 材料の中の started(claude)/ 止めた後の
+;;; turn/started(codex)— judgment.claude-deltas-of / codex-event-deltas-of が kind system の entry と DeltaBatch.interrupt-reads
+;;; にし、stream-records が interrupt-reads-of で memory に写す。期限 = job の charter.interruptEscalationSeconds ちょうど
+;;; (方策の行の値を Messaging が会話の宣言で重ねて charter に写す — agentd は方策も会話も読まず、code に既定を置かない。
+;;; 無い job は注入だけ + 条件 InterruptEscalationUndeclared)。期限を過ぎて未読なら SessionEscalate(session.escalate =
+;;; claude の control_request interrupt・codex は注入の段が無く host が断る)を 1 度出し、未読の id 全部に止めた印。
+;;; 印は行の status.interruptsRead {id: seq} / interruptsEscalated {id: ms} へ CAS で写す(record-interrupt-marks —
+;;; 断られた拍は memory の dirty で持ち越す)。判断は judgment の純関数 1 点ずつ(interrupts-due-for-escalation・
+;;; interrupt-reads-of・interrupt-marks-status-of)。受け取りは watch(AcpWatchSse が changed で即座に拍を起こし、同じ拍の
+;;; window の読み直しで interrupts が cache に載る — 拍の周期は保険)。
+;;;
 ;;; 書く欄は契約の writers どおり: agent-job の phase / sessionHandle / result / conditions /
-;;; interrupts / interruptsDelivered、node の status.lease / status.observations、turn-record の create と
+;;; interrupts / interruptsDelivered / interruptsRead / interruptsEscalated、node の status.lease / status.observations、turn-record の create と
 ;;; status、profile の status.observed。binding は書かない・Node の行は作らない(scheduling の欄と動詞)。
 
 (require doeff-hy.macros [defk <-])
@@ -165,6 +178,7 @@
   RecordUnsent
   RecordedTurns
   CONDITION-CREDENTIAL-SOURCE-MISSING
+  CONDITION-INTERRUPT-ESCALATION-UNDECLARED
   CREDENTIAL-SOURCE-MISSING
   NEXT-ARM-DEFER
   NEXT-ARM-REHYDRATE
@@ -187,8 +201,10 @@
   Refused
   INTERRUPT-ARM-INTERRUPT
   STREAM-SOURCE-EVENTS
+  Escalated
   SessionCapture
   SessionCleanup
+  SessionEscalate
   SessionEvents
   SessionGet
   SessionInterject
@@ -242,8 +258,15 @@
   incarnation-charter-of
   inputs-of
   interrupt-arm-for
+  interrupt-escalation-undeclared-reason
+  interrupt-marks-status-of
+  interrupt-reads-of
   interrupted-status-of
   interrupts-delivered-status-of
+  interrupts-due-for-escalation
+  recovered-interrupts-of
+  status-with-condition
+  with-injected-interrupts
   job-row-keyed
   job-outcome-of
   job-rows-bound-to
@@ -987,6 +1010,13 @@
   (<- chunk TranscriptChunk (read-stream source path job.transcript-offset))
   (<- batch DeltaBatch (deltas-of job.agent-type source chunk.text job.job-id job.delta-seq now-ms))
   (setv next (replace job :transcript-offset chunk.offset :delta-seq batch.next-seq))
+  ;; 段 10 lane 10n: 材料の中の「model が割り込みを読んだ」証拠を memory に写す(行への書きは settle-interrupts)。
+  (<- read tuple (interrupt-reads-of next batch.interrupt-reads))
+  (when read
+    (setv next (replace next :interrupts-read (+ next.interrupts-read read) :interrupt-marks-dirty True))
+    (for [[message-id seq] read]
+      (<- (MetricLine :fields {"metric" "agent-job-interrupt-read" "agentJobId" job.job-id
+                                      "sessionId" job.session-id "messageId" message-id "seq" seq "atMs" now-ms}))))
   ;; 段 9f lane 9f-2: 本文(切る前)は読んだ拍に spool へ(送るのは拍の終わりの flush-record-spool の 1 点)。
   (when (and settings.record-enabled batch.bodies)
     (<- (spool-record-bodies next batch.bodies)))
@@ -1161,6 +1191,58 @@
               applied)))))
 
 
+(defk record-interrupt-marks [job]
+  {:pre [(: job InFlightJob)]
+   :post [(: % InFlightJob)]}
+  "読んだ / 止めた印を行へ写す(段 10 lane 10n): 鍵で読み直した行に CAS で interruptsRead / interruptsEscalated を
+   足す(1 回の書き・append-only — 判断は interrupt-marks-status-of)。Conflict は 1 度読み直して撃ち直す。着地しなければ
+   dirty のまま次の拍が撃ち直す。"
+  (<- fresh (| AcpRow None) (AcpGetRow :key job.job-key))
+  (when (is fresh None)
+    (<- (LogLine :text f"agentd: agent-job {job.job-id} vanished before its interrupt marks could be recorded"))
+    (return (replace job :interrupt-marks-dirty False)))
+  (<- status dict (status-object-of fresh))
+  (<- marked dict (interrupt-marks-status-of status job.interrupts-read job.interrupts-escalated))
+  (<- wrote (| Written Conflict Refused) (AcpPutStatus :row fresh :status marked))
+  (when (isinstance wrote Conflict)
+    (<- again (| AcpRow None) (AcpGetRow :key job.job-key))
+    (when (is-not again None)
+      (<- status-again dict (status-object-of again))
+      (<- marked-again dict (interrupt-marks-status-of status-again job.interrupts-read job.interrupts-escalated))
+      (<- wrote (| Written Conflict Refused) (AcpPutStatus :row again :status marked-again))))
+  (when (not (isinstance wrote Written))
+    (<- (LogLine :text f"agentd: interrupt marks of job {job.job-id} not recorded ({wrote}); recording again next tick")))
+  (replace job :interrupt-marks-dirty (not (isinstance wrote Written))))
+
+
+(defk settle-interrupts [job now-ms]
+  {:pre [(: job InFlightJob) (: now-ms int)]
+   :post [(: % InFlightJob)]}
+  "割り込みの約束の拍(段 10 lane 10n): 注入から期限(charter の値)が経って読んだ証拠の無い id が在れば停止の合図
+   (SessionEscalate)を 1 度出し、未読の id 全部に止めた印(時刻)。器が断った(出す物が無い — 既に読んでいて証拠が
+   次の材料に在る・手番が終わった)拍は印を付けず log 1 行(次の拍が判断し直す)。印(読んだ / 止めた)のうち行へまだ
+   書けていないものが在れば record-interrupt-marks。"
+  (<- due tuple (interrupts-due-for-escalation job now-ms))
+  (setv current job)
+  (when due
+    (<- outcome (| Escalated SessionRefused) (SessionEscalate :session-id job.session-id))
+    (if (isinstance outcome Escalated)
+        (do
+          (setv marks (tuple (lfor message-id due #(message-id now-ms))))
+          (setv current (replace current :interrupts-escalated (+ current.interrupts-escalated marks)
+                                         :interrupt-marks-dirty True))
+          (<- (LogLine :text (+ f"agentd: job {job.job-id}: interrupt(s) {(.join ", " due)} not read by the model within "
+                                     f"{job.interrupt-escalation-seconds} s; stop signal sent")))
+          (for [message-id due]
+            (<- (MetricLine :fields {"metric" "agent-job-interrupt-escalated" "agentJobId" job.job-id
+                                            "sessionId" job.session-id "messageId" message-id "atMs" now-ms}))))
+        (<- (LogLine :text (+ f"agentd: job {job.job-id}: stop signal for interrupt(s) {(.join ", " due)} not accepted "
+                                   f"by the session ({outcome.error}); judging again next tick")))))
+  (when current.interrupt-marks-dirty
+    (<- current InFlightJob (record-interrupt-marks current)))
+  current)
+
+
 (defk stream-job [settings job view now-ms]
   {:pre [(: settings AgentdSettings) (: job InFlightJob) (: view SessionView) (: now-ms int)]
    :post [(: % InFlightJob)]}
@@ -1175,6 +1257,9 @@
   (<- current InFlightJob (ensure-turn-record settings job now-ms False))
   (when (is-not path None)
     (<- current InFlightJob (stream-records settings current (get source 0) path now-ms)))
+  ;; 段 10 lane 10n: 割り込みの約束(期限の判断・停止の合図・印の書き)— 材料を読んだ後の同じ拍。
+  (when (or current.interrupts-injected current.interrupt-marks-dirty)
+    (<- current InFlightJob (settle-interrupts current now-ms)))
   (setv frames-possible (!= (get source 0) STREAM-SOURCE-EVENTS))
   (<- frame-due bool (due current.last-frame-ms now-ms settings.frame-interval-seconds))
   (when (and frames-possible current.capturing frame-due)
@@ -1486,6 +1571,8 @@
               (<- record-row (| AcpRow None) (AcpGetRow :key record-key))
               (<- resumed tuple (recovered-record-of record-row))
               (setv job (replace job :record-attempt (get resumed 0) :delta-seq (get resumed 1)))
+              ;; 段 10 lane 10n: 渡したが読まれていない割り込みは拾い直した時刻から期限を数える(行の印は写す)。
+              (<- job InFlightJob (recovered-interrupts-of job row now-ms))
               (<- (LogLine :text f"agentd: recovered running job {row.resource-id} from its row ({step})"))
               (<- settled AgentdState (settle-known settings state job view step now-ms))
               settled)))))
@@ -1558,24 +1645,39 @@
   current)
 
 
+(defk delivered-status-with-undeclared [job status ids]
+  {:pre [(: job InFlightJob) (: status dict) (: ids tuple)]
+   :post [(: % dict)]}
+  "渡した印の status(interrupts-delivered-status-of)に、期限の宣言が無い job なら条件 InterruptEscalationUndeclared を
+   同じ 1 回の書きで足す(段 10 lane 10n — 注入だけで停止の合図は出さないことを行に名乗る)。"
+  (<- delivered dict (interrupts-delivered-status-of status ids))
+  (if (is job.interrupt-escalation-seconds None)
+      (do
+        (<- reason str (interrupt-escalation-undeclared-reason job))
+        (<- with-condition dict (status-with-condition delivered CONDITION-INTERRUPT-ESCALATION-UNDECLARED reason))
+        with-condition)
+      delivered))
+
+
 (defk record-interrupts-delivered [job ids]
   {:pre [(: job InFlightJob) (: ids tuple)]
    :post [(: % bool)]}
   "渡した割り込みを行へ写す(段 8 lane 4x): 鍵で読み直した行に CAS で interrupts から消し
-   interruptsDelivered へ足す(1 回の書き)。Conflict は 1 度だけ読み直して撃ち直す。戻り =
+   interruptsDelivered へ足す(1 回の書き・期限の宣言が無い job は条件 InterruptEscalationUndeclared も同じ書き —
+   段 10 lane 10n)。Conflict は 1 度だけ読み直して撃ち直す。戻り =
    着地したか(しなければ memory の interrupts-sent が二度渡しを防ぎ、次の拍が同じ id で撃ち直す)。"
   (<- fresh (| AcpRow None) (AcpGetRow :key job.job-key))
   (when (is fresh None)
     (<- (LogLine :text f"agentd: agent-job {job.job-id} vanished before its interrupts could be recorded"))
     (return False))
   (<- status dict (status-object-of fresh))
-  (<- delivered dict (interrupts-delivered-status-of status ids))
+  (<- delivered dict (delivered-status-with-undeclared job status ids))
   (<- wrote (| Written Conflict Refused) (AcpPutStatus :row fresh :status delivered))
   (when (isinstance wrote Conflict)
     (<- again (| AcpRow None) (AcpGetRow :key job.job-key))
     (when (is-not again None)
       (<- status-again dict (status-object-of again))
-      (<- delivered-again dict (interrupts-delivered-status-of status-again ids))
+      (<- delivered-again dict (delivered-status-with-undeclared job status-again ids))
       (<- wrote (| Written Conflict Refused) (AcpPutStatus :row again :status delivered-again))))
   (when (not (isinstance wrote Written))
     (<- (LogLine :text f"agentd: interrupts of job {job.job-id} delivered but not recorded ({wrote}); recording again next tick")))
@@ -1611,8 +1713,9 @@
             (<- (LogLine :text f"agentd: interrupt {message-id} for job {job.job-id} has no readable Message; not delivered"))
             (.append unreadable message-id))
           (do
+            ;; 段 10 lane 10n: 注入の行の名 = Message の id(CLI の command_lifecycle がこの綴りで運命を名乗る)。
             (<- outcome (| Interjected SessionRefused)
-                (SessionInterject :session-id job.session-id :text body))
+                (SessionInterject :session-id job.session-id :text body :ref message-id))
             (if (isinstance outcome Interjected)
                 (do
                   (.append handed message-id)
@@ -1627,8 +1730,13 @@
                   (setv stopped True)))))))
   (setv next (replace job :interrupts-sent (+ job.interrupts-sent (tuple handed) (tuple unreadable))))
   (when handed
+    ;; 段 10 lane 10n: 注入した時刻を memory に(期限の判断の材料)。
+    (<- next InFlightJob (with-injected-interrupts next (tuple handed) now-ms))
     (<- (record-interrupts-delivered next (tuple handed)))
-    (<- (LogLine :text f"agentd: job {job.job-id} received {(len handed)} interrupt(s): {(.join ", " handed)}")))
+    (<- (LogLine :text (+ f"agentd: job {job.job-id} received {(len handed)} interrupt(s): {(.join ", " handed)}"
+                               (if (is next.interrupt-escalation-seconds None)
+                                   " (no interruptEscalationSeconds in the charter — injected only, no stop signal)"
+                                   f" (stop signal after {next.interrupt-escalation-seconds} s unless read)")))))
   next)
 
 
