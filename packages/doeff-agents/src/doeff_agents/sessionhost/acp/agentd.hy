@@ -1083,6 +1083,11 @@
   (<- job InFlightJob
       (in-flight-job-of row plan view settings.node-name now-ms sent-ms (get start 1) lease
                         (tuple pending)))
+  ;; 段 10 lane 10s 追補 3(agora-redesign #79): 手番の最初の frame(status running・at = sent-ms)は**送った拍に押す** —
+  ;; turn-record の作成(頭への書き 1 往復 ≈ 60〜100 ms・Mac → tailnet)の後ろに置くと、frame が名乗る at より 1 往復
+  ;; 遅れて中継に届き、画面の最初の差分(chat.live-first-tail)が 250〜330 ms に伸びていた(本番の実射 2026-09-15:
+  ;; 押し 1 往復 ≈ 70 ms・中継 → 画面 ≈ 20 ms・画面 → 面 ≈ 30〜50 ms)。frame は記録の行に依らない(中継は共有状態ではない)。
+  (<- job InFlightJob (probe-subscribers settings job sent-ms "running"))
   (<- spec dict (turn-record-spec-of job))
   (<- created (| Written Conflict Refused)
       (AcpCreate :namespace AGORA-KINDS-NAMESPACE :kind TURN-RECORD-KIND :resource-id job-id :spec spec))
@@ -1091,7 +1096,6 @@
   (<- job InFlightJob (record-create-applied job created sent-ms settings.turn-record-create-deadline-seconds))
   (when (not (isinstance created Written))
     (<- (LogLine :text f"agentd: turn-record for job {job-id} was not created ({created}); record-create = {job.record-create}")))
-  (<- job InFlightJob (probe-subscribers settings job sent-ms "running"))
   (<- next AgentdState (with-job state job))
   next)
 

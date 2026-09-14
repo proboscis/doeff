@@ -113,6 +113,9 @@ class FakeAcp:
         self.rows: dict[str, AcpRow] = {}
         self.sequence: int = 0
         self.writes: list[tuple[str, JSONObject]] = []
+        #: 書きと押しの**順**(段 10 lane 10s 追補 3): ("create", 鍵) / ("push", stream の名)— 手番の最初の frame が
+        #: turn-record の作成より先に中継へ出ることを検が読む。
+        self.trace: list[tuple[str, str]] = []
         self.pushes: list[tuple[str, str, tuple[JSONObject, ...]]] = []
         self.subscribers: dict[str, int] = {}
         #: watch を待った上限(AcpWatchSse.wait_seconds の列 — 拍の周期の検が読む)。
@@ -220,9 +223,11 @@ class FakeAcp:
             return self._put_spec(effect.row, effect.spec)
         if isinstance(effect, AcpCreate):
             self.fingerprints.append((f"{effect.namespace}:{effect.kind}:{effect.resource_id}", effect.declaration_sha256))
+            self.trace.append(("create", f"{effect.namespace}:{effect.kind}:{effect.resource_id}"))
             return self._create(effect)
         self.push_seq += len(effect.frames)
         self.pushes.append((effect.owner, effect.name, effect.frames))
+        self.trace.append(("push", effect.name))
         return Pushed(self.push_seq, self.subscribers.get(effect.name, 0))
 
     def _window(self, after: int, limit: int) -> EventWindow:
