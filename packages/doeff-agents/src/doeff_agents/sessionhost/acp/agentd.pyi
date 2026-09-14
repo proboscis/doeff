@@ -46,6 +46,7 @@ def incarnate(
     job_id: str,
     subject: str,
     exclude: tuple,
+    opener: str | None,
 ) -> Program: ...
 def start_claimed(
     settings: AgentdSettings,
@@ -56,6 +57,7 @@ def start_claimed(
     view: SessionView | None,
     session_id: str,
     now_ms: int,
+    opener: str | None,
 ) -> Program: ...
 def claim_job(
     settings: AgentdSettings,

@@ -273,6 +273,13 @@ NODE_NAME_ENV = "DOEFF_AGENTD_NODE_NAME"
 HOMES_ROOT_ENV = "DOEFF_AGENTD_HOMES_ROOT"
 CUSTODY_URL_ENV = "AGORA_CUSTODY_URL"
 BORROWER_KEY_PATH_ENV = "AGORA_BORROWER_KEY_PATH"
+#: 段 10f 便 2 追補 3(agora-redesign #82・依頼者 2026-09-14 17:1x 実測「agent が自分の会話 id を答えられない」): 手番の process
+#: の env(charter.session_env — host の launch-spawn-env が非 auth の overlay として spawn の env に混ぜる)に置く会話の身元。
+#: AGORA_CONVERSATION_ID = 会話の id(c-…・agent-job の spec.subject)/ AGORA_SEAT_OPENER = 会話の行の spec.opener の逐語
+#: (operator / machine / system)。`ai tell` / `ai forward` / `ai artifact put` の差出人・著者はこの会話 id ちょうど(便 3 = CLI が読む側)。
+#: 置く点は judgment.charter-with-conversation-env の 1 点(incarnation-charter-of が呼ぶ — launch / resume / rehydrate)。
+CONVERSATION_ID_ENV = "AGORA_CONVERSATION_ID"
+SEAT_OPENER_ENV = "AGORA_SEAT_OPENER"
 HOST_BACKEND_ENV = "DOEFF_SESSIONHOST_BACKEND"
 HEADLESS_DIR_ENV = "DOEFF_SESSIONHOST_HEADLESS_DIR"
 SESSION_HOOKS_ENV = "DOEFF_AGENTD_SESSION_HOOKS"
