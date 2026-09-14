@@ -28,6 +28,7 @@
   ACP-URL-ENV
   ACP-VALVE-ENV
   BORROWER-KEY-PATH-ENV
+  AGENTD-PLACES
   CAPACITY-ENV
   CUSTODY-URL-ENV
   HEADLESS-DIR-ENV
@@ -52,6 +53,7 @@
   JoinPlan
   JoinSpec
   NODE-NAME-ENV
+  PLACE-ENV
   OWNERSHIP-ENV
   OWNERSHIP-GRADES
   OWNERSHIP-PROOF-DECLARED
@@ -85,6 +87,8 @@
 (setv KEY-OWNERSHIP-PROOF "ownership_proof")
 ;; node の spec.capacity(同時に走らせられる手番の数 — 段 10 lane 10d・必須)。
 (setv KEY-CAPACITY "capacity")
+;; 機体の置き場(company | personal — 段 10 lane 10d 便 2・必須)。node の spec.labels.place に名乗る。
+(setv KEY-PLACE "place")
 ;; `[custody]` の鍵。
 (setv KEY-CUSTODY-URL "url")
 (setv KEY-BORROWER-KEY-FILE "borrower_key_file")
@@ -92,7 +96,7 @@
 (setv KEY-RECORD-URL "url")
 ;; 表 → 許す鍵(宣言に無い鍵は誤りとして名指す — 黙って読み飛ばさない)。
 (setv AGENTD-KEYS #{KEY-SERVER KEY-TOKEN-FILE KEY-NODE-NAME KEY-STATE-DIR KEY-BACKEND
-                    KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY})
+                    KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY KEY-PLACE})
 (setv CUSTODY-KEYS #{KEY-CUSTODY-URL KEY-BORROWER-KEY-FILE})
 (setv RECORD-KEYS #{KEY-RECORD-URL})
 ;; flag の綴り(`--config` は composition root が先に読む — config-path-of)。
@@ -106,6 +110,7 @@
 (setv FLAG-OWNERSHIP "--ownership")
 (setv FLAG-OWNERSHIP-PROOF "--ownership-proof")
 (setv FLAG-CAPACITY "--capacity")
+(setv FLAG-PLACE "--place")
 (setv FLAG-CUSTODY "--custody")
 (setv FLAG-BORROWER-KEY-FILE "--borrower-key-file")
 (setv FLAG-RECORD "--record")
@@ -119,6 +124,7 @@
                  FLAG-OWNERSHIP #(TABLE-AGENTD KEY-OWNERSHIP)
                  FLAG-OWNERSHIP-PROOF #(TABLE-AGENTD KEY-OWNERSHIP-PROOF)
                  FLAG-CAPACITY #(TABLE-AGENTD KEY-CAPACITY)
+                 FLAG-PLACE #(TABLE-AGENTD KEY-PLACE)
                  FLAG-CUSTODY #(TABLE-CUSTODY KEY-CUSTODY-URL)
                  FLAG-BORROWER-KEY-FILE #(TABLE-CUSTODY KEY-BORROWER-KEY-FILE)
                  FLAG-RECORD #(TABLE-RECORD KEY-RECORD-URL)})
@@ -240,6 +246,24 @@
   (int word))
 
 
+(defk place-of [text]
+  {:pre [(: text (| str None))]
+   :post [(: % str)]}
+  "機体の置き場の読み(段 10 lane 10d 便 2・agora-redesign #85): 宣言 file の [agentd].place / flag --place の
+   文字列 → 閉語彙 company | personal。無い・空・語彙の外は ValueError(参加しない — 名乗らない agentd は
+   配車の候補にならない)。綴りは ACP の契約 agora-kinds.json の profile.spec.boundary と同じ(新しい語を作らない)。
+   置き場は機体の所有で切る区画で、会社の資格は company の機体の外へ出ない(不変条件 I1)。"
+  (setv word (if (is text None) "" (.strip text)))
+  (when (not word)
+    (raise (ValueError (+ "機体の置き場が宣言されていない — 宣言 file の [" TABLE-AGENTD "]." KEY-PLACE
+                          " か flag " FLAG-PLACE " で " (.join " | " (sorted AGENTD-PLACES))
+                          " を名乗る(段 10 lane 10d 便 2・agora-redesign #85: 名乗らない agentd は参加しない)"))))
+  (when (not-in word AGENTD-PLACES)
+    (raise (ValueError (+ f"[{TABLE-AGENTD}].{KEY-PLACE} は " (.join " | " (sorted AGENTD-PLACES))
+                          f" のどれか: {word !r}"))))
+  word)
+
+
 (defk join-spec-of [argv declaration state-home]
   {:pre [(: argv JoinArgv) (: declaration JoinDeclaration) (: state-home str)]
    :post [(: % JoinSpec)]}
@@ -266,6 +290,8 @@
       (ownership-of (or (.get agentd KEY-OWNERSHIP) None) (or (.get agentd KEY-OWNERSHIP-PROOF) None)))
   ;; node の capacity(段 10 lane 10d)— 他の宣言の誤りを先に名指してから読む。
   (<- capacity int (capacity-of (.get agentd KEY-CAPACITY)))
+  ;; 機体の置き場(段 10 lane 10d 便 2)。
+  (<- place str (place-of (.get agentd KEY-PLACE)))
   (JoinSpec
     :server server
     :token-file token-file
@@ -277,6 +303,7 @@
     :borrower-key-file (.get custody KEY-BORROWER-KEY-FILE)
     :ownership ownership
     :capacity capacity
+    :place place
     ;; 空文字は「名乗らない」= env に現れない(参加の門 record-sink-of が読みの 1 点で断る — 段 9f lane 9f-6)。
     :record-url (or (.get record KEY-RECORD-URL) None)))
 
@@ -319,6 +346,7 @@
   (when (is-not spec.node-name None)
     (.append env #(NODE-NAME-ENV spec.node-name)))
   (.append env #(CAPACITY-ENV (str spec.capacity)))
+  (.append env #(PLACE-ENV spec.place))
   (.extend env [#(HOST-BACKEND-ENV spec.backend)
                 #(HEADLESS-DIR-ENV (+ spec.state-dir "/" JOIN-HEADLESS-DIR))
                 #(SESSION-HOOKS-ENV spec.session-hooks)])

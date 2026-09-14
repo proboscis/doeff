@@ -51,7 +51,10 @@
   AGENT-TYPE-LEASE-KIND
   CHARTER-SETTING-KEYS
   CONDITION-AGENT-SETTING-IGNORED
+  AGENTD-PLACES
   NODE-CAPABILITIES-KEY
+  NODE-LABEL-PLACE
+  PROFILE-KIND
   AGENTD-PRINCIPAL
   AGORA-KINDS-NAMESPACE
   ATTRIBUTION-AGENTD-KEY
@@ -538,6 +541,33 @@
    :post [(: % str)]}
   "会話の行の鍵(identityKey = id・区画 = agora の kind の区画)— compactAt は鍵で 1 行読む(全量 list は撃たない)。"
   f"{AGORA-KINDS-NAMESPACE}:{CONVERSATION-KIND}:{conversation-id}")
+
+
+(defk profile-key-of [profile]
+  {:pre [(: profile str)]
+   :post [(: % str)]}
+  "profile の行の鍵(identityKey = 名・区画 = agora の kind の区画)— 置き場の名乗りは鍵で 1 行読む(全量 list は撃たない)。"
+  f"{AGORA-KINDS-NAMESPACE}:{PROFILE-KIND}:{profile}")
+
+
+(defk credential-place-of [row]
+  {:pre [(: row (| AcpRow None))]
+   :post [(: % (| str None))]}
+  "結ばれた profile の行が名乗る置き場(spec.boundary — ACP の契約 agora-kinds.json の閉語彙 company | personal)。
+   行が無い・欄が無い・語彙の外は None: **判らないものを食い違いと読まない**(封じた資格はその置き場の worker に
+   しか無く、最後の門は預かり所の redeem が持つ — ここは走行係自身の前段の門・段 10 lane 10d 便 2 の I5)。"
+  (when (is-not row None)
+    (setv boundary (.get row.spec "boundary"))
+    (when (and (isinstance boundary str) (in boundary AGENTD-PLACES))
+      boundary)))
+
+
+(defk credential-place-mismatch [place boundary]
+  {:pre [(: place str) (: boundary (| str None))]
+   :post [(: % bool)]}
+  "自分の置き場と口座の置き場の食い違い(I5)— 両方が名乗っていて違う時だけ真。名乗りの無い側が在る拍は偽
+   (前段の門は判らないもので止めない — 止めるのは預かり所の側の構造)。"
+  (and (bool place) (is-not boundary None) (!= place boundary)))
 
 
 (defk compact-at-of [row]
@@ -1133,6 +1163,14 @@
     True CREDENTIAL-SOURCE-HOME))
 
 
+(defk credential-from-custody [source]
+  {:pre [(: source str)]
+   :post [(: % bool)]}
+  "この手番の資格が預かり所の貸与か(段 10 lane 10d 便 2)。出所の語を比べるのは judgment の中だけ —
+   呼び手(claim の腕)は真偽だけを読む(R23: 出所の判断点を増やさない)。"
+  (= source CREDENTIAL-SOURCE-LEASE))
+
+
 (defk charter-with-session-id [charter session-id]
   {:pre [(: charter dict) (: session-id str)]
    :post [(: % dict)]}
@@ -1493,6 +1531,19 @@
     #(next None)))
 
 
+(defk turn-session-env-of [lease]
+  {:pre [(: lease (| LeaseGrant None))]
+   :post [(: % dict)]}
+  "手番ごとの資格の env(段 10 lane 10d 便 2 の追補 2・実弾 #92 = 預かり所が口座を更新した後、
+   誕生の札で再開した温かい手番が 401 を食った)。温かい session への送りは、降りた process を
+   `--resume` で起こし直すことがある — その起こしに **この手番で借りた札** を載せる。
+   claude の綴りは charter-with-grant と同じ 1 点(CLAUDE-OAUTH-TOKEN-ENV)。codex の札は
+   家の中の auth file が運ぶので env は空(値は log にも行にも出さない)。"
+  (if (or (is lease None) (is lease.access-token None))
+      {}
+      {CLAUDE-OAUTH-TOKEN-ENV lease.access-token}))
+
+
 (defk message-body-ref-of [spec]
   {:pre [(: spec dict)]
    :post [(: % (| tuple None))]}
@@ -1560,14 +1611,27 @@
   found)
 
 
+(defk node-labels-of [settings labels]
+  {:pre [(: settings AgentdSettings) (: labels dict)]
+   :post [(: % dict)]}
+  "行の labels に、宣言から名乗る置き場(labels.place)を重ねた形(段 10 lane 10d 便 2・agora-redesign #85)。
+   行の他の名乗り(会社境界の boundary 等・宣言の外のもの)は触らない。置き場の宣言が空の断面(検体の既定 —
+   本番は composition root が参加を断る)では足さない: 嘘の名乗りを書かない。"
+  (setv next (dict labels))
+  (when settings.place
+    (setv (get next NODE-LABEL-PLACE) settings.place))
+  next)
+
+
 (defk node-spec-of [settings]
   {:pre [(: settings AgentdSettings)]
    :post [(: % dict)]}
   "機体が名乗る自分の node の spec(R28・段 10 lane 10d・agora-redesign #85 — 既知の形 = kubelet の Node の自己登記):
-   name = 機体の名・capacity = 宣言 file の [agentd].capacity・streamCapability = backend から導いた語・labels = 空
-   (行を作る時 — 宣言は labels の表を持たない)。"
+   name = 機体の名・capacity = 宣言 file の [agentd].capacity・streamCapability = backend から導いた語・
+   labels = 宣言から名乗る置き場(labels.place — 便 2: 配車の絞りが読む 1 点)。"
+  (<- labels dict (node-labels-of settings {}))
   {"name" settings.node-name
-   "labels" {}
+   "labels" labels
    "capacity" settings.node-capacity
    "streamCapability" settings.stream-capability})
 
@@ -1575,12 +1639,13 @@
 (defk node-spec-declared [spec settings]
   {:pre [(: spec dict) (: settings AgentdSettings)]
    :post [(: % dict)]}
-  "既に在る自分の node の行の spec を宣言へ揃えた形(R28): name・capacity・streamCapability は宣言から、labels は行の
-   まま(行の labels は宣言の外の名乗り — 会社境界の boundary 等 — を運ぶので agentd は触らない・欠落 / 型違いは空)。
+  "既に在る自分の node の行の spec を宣言へ揃えた形(R28): name・capacity・streamCapability・labels.place は宣言から、
+   labels の他の名乗り(会社境界の boundary 等 — 宣言の外)は行のまま(agentd は触らない・欠落 / 型違いは空)。
    宣言と一致していれば行の spec と等しい dict(呼び手は等しくない時だけ書く)。"
   (setv labels (.get spec "labels"))
+  (<- declared dict (node-labels-of settings (if (isinstance labels dict) labels {})))
   {"name" settings.node-name
-   "labels" (if (isinstance labels dict) labels {})
+   "labels" declared
    "capacity" settings.node-capacity
    "streamCapability" settings.stream-capability})
 

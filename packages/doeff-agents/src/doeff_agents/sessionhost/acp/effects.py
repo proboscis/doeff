@@ -25,8 +25,8 @@ wire の綴り(ACP の route・kind 名・phase の語)はこの file が唯一�
 """
 
 # pyright: strict
-from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from dataclasses import dataclass, field
+from typing import Literal, TypeAlias, get_args
 
 from doeff import EffectBase
 
@@ -125,6 +125,7 @@ ConditionType = Literal[
     "Interrupted",
     "RecordUnavailable",
     "CredentialSourceMissing",
+    "CredentialPlaceMismatch",
     "AgentSettingIgnored",
     "SessionLost",
     "AgentdRestart",
@@ -150,6 +151,9 @@ CONDITION_RECORD_UNAVAILABLE: ConditionType = "RecordUnavailable"
 #: 手番の資格は預かり所の貸与ちょうどなので、起こさず(Running も sessionHandle も書かず)この条件で Ended に閉じる
 #: (判断は judgment.credential-source-of の 1 点)。
 CONDITION_CREDENTIAL_SOURCE_MISSING: ConditionType = "CredentialSourceMissing"
+#: 口座の置き場(profile の行の spec.boundary)が自分の置き場(labels.place)と違う job を起こさなかった印
+#: (段 10 lane 10d 便 2・agora-redesign #85 の I5 — 判断は judgment.credential-place-mismatch の 1 点)。
+CONDITION_CREDENTIAL_PLACE_MISMATCH: ConditionType = "CredentialPlaceMismatch"
 #: 段 10 lane 10e(agora-redesign #53・設計 第 9 節 問 3 / 問 4): 会話の宣言(charter の欄)のうち、この node の agent の種類が
 #: 受けない欄・温かい session に送る手番では変えられない欄(workDir — cwd は起こした process のもの)を黙って落とさず、
 #: 手番の終わりの conditions に 1 欄 1 行で刻む(判断は judgment.ignored-settings-of の 1 点)。
@@ -302,6 +306,15 @@ RECORD_URL_ENV = "RECORD_SERVICE_URL"
 #: 本文の batch の spool(送る前の outbox)の置き場。join は state_dir の下(JOIN_RECORD_SPOOL_DIR)を導く。
 RECORD_SPOOL_DIR_ENV = "DOEFF_AGENTD_RECORD_SPOOL_DIR"
 NODE_NAME_ENV = "DOEFF_AGENTD_NODE_NAME"
+#: 機体の置き場(段 10 lane 10d 便 2・agora-redesign #85)— 閉語彙は ACP の契約 agora-kinds.json の
+#: profile.spec.boundary / node.spec.labels.place と**同じ綴り**(新しい語を作らない)。
+AgentdPlace = Literal["company", "personal"]
+#: 綴りの定義点は上の型 1 つ(実行時の照合はここから導く — 語彙を 2 度書かない)。
+AGENTD_PLACES: frozenset[str] = frozenset(get_args(AgentdPlace))
+#: node の spec.labels のうち置き場を名乗る鍵(配車の絞りが読む 1 点)。
+NODE_LABEL_PLACE = "place"
+#: 置き場の env(join が宣言 file の [agentd].place / flag --place から据える)。無い agentd は参加しない。
+PLACE_ENV = "DOEFF_AGENTD_PLACE"
 #: node の spec.capacity(同時に走らせられる手番の数 — 段 10 lane 10d・agora-redesign #85)。join が宣言 file の
 #: [agentd].capacity / flag --capacity から据える。無い agentd は参加しない(runtime.settings_from_env)。
 CAPACITY_ENV = "DOEFF_AGENTD_CAPACITY"
@@ -389,6 +402,11 @@ class JoinSpec:
     ownership: Ownership | None
     #: node の spec.capacity(宣言 file の [agentd].capacity・flag --capacity・必須 — 段 10 lane 10d)。
     capacity: int
+    #: 機体の置き場(宣言 file の [agentd].place・flag --place・必須 — 段 10 lane 10d 便 2)。
+    #: node の spec.labels.place に名乗り、自分と違う置き場の口座の job は起こさない(I5)。
+    #: ⚠ 閉語彙(AGENTD_PLACES)の検は join.place-of の 1 点 — ここは検を通った値を運ぶ欄で、
+    #: 型は str(Hy の側は Literal へ絞れないので、2 つ目の検を型で偽装しない)。
+    place: str
     #: 会話の記録の service の URL(段 9f lane 9f-2 — 宣言 file の [record].url・flag --record)。None = 二重書きなし。
     record_url: str | None = None
 
@@ -487,6 +505,10 @@ class AgentdSettings:
     #: agentd は自分の node の行を宣言から名乗る(judgment.node-spec-of / node-spec-declared)。composition root
     #: (runtime.settings_from_env)は宣言が無ければ参加を断るので、この既定 0(手番を受けない)は検体の値。
     node_capacity: int = 0
+    #: 自分の置き場(段 10 lane 10d 便 2)— 宣言 file の [agentd].place の写し。node の spec.labels.place に名乗り、
+    #: 違う置き場の口座を持つ job は起こさない(judgment.credential-place-verdict)。composition root は宣言が
+    #: 無ければ参加を断るので、この空の既定は検体の値。
+    place: str = ""
     principal: str = AGENTD_PRINCIPAL
     #: 参加の lease: heartbeat ごとに expiresAt = now + TTL を書き、周期は TTL / 3。
     node_lease_ttl_seconds: int = 90
@@ -1370,17 +1392,27 @@ class SessionResume(EffectBase):
     params: JSONObject
 
 
+def _empty_json_object() -> JSONObject:
+    """既定の空の env(型のついた工場 — 既定値を共有しない)。"""
+    return {}
+
+
 @dataclass(frozen=True)
 class SessionSend(EffectBase):
     """``session.send``(本文を live の composer へ paste + Enter)。結果 = None。
 
     ``awaiting`` = 送った本文は agent への prompt で owed(host が awaiting latch を立て、正の
     作業証拠が出るまで見かけの turn-end を評価しない — 温かい手番の始まりの印)。
+
+    ``session_env`` = **この手番の** env(段 10 lane 10d 便 2 の追補 2・実弾 #92)。降りた process を
+    器が ``--resume`` で起こし直す時に重ねる値で、預かり所の貸与の札はここで運ぶ(行には残らない)。
+    値は秘密 — log・簿・argv に出さない。
     """
 
     session_id: str
     text: str
     awaiting: bool
+    session_env: JSONObject = field(default_factory=_empty_json_object)
 
 
 @dataclass(frozen=True)

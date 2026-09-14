@@ -356,6 +356,8 @@ class FakeSessions:
         self.resumes: list[JSONObject] = []
         #: (session_id, 本文, awaiting)
         self.sends: list[tuple[str, str, bool]] = []
+        #: 段 10 lane 10d 便 2 追補 2: 送りが運んだ手番ごとの env — (session_id, env)の順。
+        self.send_envs: list[tuple[str, JSONObject]] = []
         #: session.cleanup を受けた session の順。
         self.cleanups: list[str] = []
         #: session.interrupt を受けた session の順(headless = SIGINT / turn/interrupt・tmux = Escape)。
@@ -422,6 +424,9 @@ class FakeSessions:
             return self._incarnate(effect)
         if isinstance(effect, SessionSend):
             self.sends.append((effect.session_id, effect.text, effect.awaiting))
+            # 追補 2(実弾 #92): 手番ごとの env は「その送りが運ぶ値」— 検はこの列で
+            # 「起こし直しがこの手番の札で起きる」ことを読む。
+            self.send_envs.append((effect.session_id, dict(effect.session_env)))
             # host と同じ意味論(headless.hy headless-send-program): 降りた process への次の手番は
             # --resume で起こし直す = 送った session の backend は生きる。
             if effect.session_id in self.views:

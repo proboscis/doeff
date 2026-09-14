@@ -35,6 +35,7 @@ from doeff_agents.sessionhost.acp.effects import (
     ACP_URL_ENV,
     BORROWER_KEY_PATH_ENV,
     CAPACITY_ENV,
+    PLACE_ENV,
     CUSTODY_URL_ENV,
     HOMES_ROOT_ENV,
     JOIN_RECORD_SPOOL_DIR,
@@ -56,7 +57,6 @@ from doeff_agents.sessionhost.acp.effects import (
 )
 from doeff_agents.sessionhost.acp.handlers import (
     BORROWER_KEY_PATH_DEFAULT,
-    CUSTODY_URL_DEFAULT,
     AcpHttp,
     CustodyHttp,
     LocalIo,
@@ -95,9 +95,12 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
     record_sink = _record_sink_of_env(env)
     # 段 10 lane 10d: node の capacity は機体の宣言の 1 点(無い・読めない = 参加しない — join.capacity-of)。
     node_capacity = _capacity_of_env(env)
+    # 段 10 lane 10d 便 2(agora-redesign #85): 機体の置き場は宣言ちょうど — 名乗らない agentd は参加しない
+    place = _place_of_env(env)
     return AgentdSettings(
         node_name=node_name,
         node_capacity=node_capacity,
+        place=place,
         homes_root=homes_root,
         backend_kind=backend,
         stream_capability=_stream_capability(backend),
@@ -114,6 +117,15 @@ def _capacity_of_env(env: Mapping[str, str]) -> int:
     verdict: object = PyVM().run(join.capacity_of(env.get(CAPACITY_ENV)))
     if not isinstance(verdict, int):
         raise TypeError(f"capacity_of returned {type(verdict).__name__}")
+    return verdict
+
+
+def _place_of_env(env: Mapping[str, str]) -> str:
+    """機体の置き場(段 10 lane 10d 便 2・agora-redesign #85)。読みの規則は join.place-of の 1 点
+    (閉語彙 company | personal・無ければ ValueError = 参加しない)。"""
+    verdict: object = PyVM().run(join.place_of(env.get(PLACE_ENV)))
+    if not isinstance(verdict, str):
+        raise TypeError(f"place_of returned {type(verdict).__name__}")
     return verdict
 
 
@@ -328,7 +340,8 @@ def real_dispatchers(
         )
     acp = AcpHttp(acp_url, token)
     custody = CustodyHttp(
-        env.get(CUSTODY_URL_ENV) or CUSTODY_URL_DEFAULT,
+        # 宣言ちょうど(既定の宿は無い — 段 10 lane 10d 便 2)。空 = 借りない機体で、借りの要求はそこで断られる
+        (env.get(CUSTODY_URL_ENV) or "").strip(),
         read_secret_file(env.get(BORROWER_KEY_PATH_ENV) or BORROWER_KEY_PATH_DEFAULT),
     )
     sessions = SessionRpc(socket_path)

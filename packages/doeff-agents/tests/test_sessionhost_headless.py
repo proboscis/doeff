@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -871,6 +872,14 @@ def test_headless_process_codex_interrupt_completes_as_interrupted(tmp_path: Pat
 # ---------------------------------------------------------------- 3. host の RPC(backend=headless)
 
 
+def _carries_turn_env(method: str, params: JSONObject) -> bool:
+    """この呼びが process を起こす(= charter の env が子に届く)か。割り込みの送りは
+    走っている手番へ本文を注ぐだけで process を起こさないので env を載せない(host が断る)。"""
+    if method == "session.launch":
+        return True
+    return method == "session.send" and params.get("mode", "turn") == "turn"
+
+
 class Host:
     """tmpdir の store + backend=headless の config(dispatch-line を直接叩く — socket なし)。"""
 
@@ -891,9 +900,18 @@ class Host:
         )
         self.actor = StoreActor(self.config.db_path)
         self.counter = 0
+        #: 替え玉の摘み(DOEFF_HEADLESS_STUB_*)は **charter の env** で運ぶ。段 10 lane 10d 便 2 の
+        #: 追補 3 で、起こす process は agentd の process env を継がなくなった(名簿の外は届かない)—
+        #: 検も本番と同じ路で摘みを渡す。値を替えると、その後に起こる process から効く
+        #: (monkeypatch.setenv と同じ意味論: 走っている process の env は変わらない)。
+        self.stub_env: dict[str, str] = {}
 
     def call(self, method: str, params: JSONObject) -> JSONObject:
         self.counter += 1
+        if self.stub_env and _carries_turn_env(method, params):
+            declared = params.get("session_env")
+            overlay: JSONObject = dict(declared) if isinstance(declared, dict) else {}
+            params = {**params, "session_env": {**self.stub_env, **overlay}}
         line = json.dumps({"id": self.counter, "method": method, "params": params})
         return _record(host.dispatch_line(line, self.config, self.actor))
 
@@ -965,10 +983,10 @@ def _wait_turn_end(headless_host: Host, sid: str) -> JSONObject:
 
 
 def test_host_headless_claude_round_trip_launch_turn_end_send_resume_cleanup(
-    headless_host: Host, monkeypatch: pytest.MonkeyPatch,
+    headless_host: Host,
 ) -> None:
     # 替え玉は 2 手番目の result の後に自分で降りる(3 手番目が --resume の起こし直しになる材料)
-    monkeypatch.setenv("DOEFF_HEADLESS_STUB_TURNS_BEFORE_EXIT", "2")
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_TURNS_BEFORE_EXIT"] = "2"
     launched = headless_host.ok(
         "session.launch", _launch_params(headless_host.root, "h-1", "claude")
     )
@@ -1018,7 +1036,7 @@ def test_host_headless_claude_round_trip_launch_turn_end_send_resume_cleanup(
     assert bad_mode["ok"] is False, bad_mode
     # process が降りた後(替え玉は 2 手番目の result の後に自分で降りた — SIGINT で止めた・idle で退いた器の
     # 再現)の次の手番は --resume の process を起こし直す。monitor は降りた process を idle と読む(failed にしない)。
-    monkeypatch.delenv("DOEFF_HEADLESS_STUB_TURNS_BEFORE_EXIT")
+    headless_host.stub_env.pop("DOEFF_HEADLESS_STUB_TURNS_BEFORE_EXIT")
     _pause(0.3)
     headless_host.monitor()
     assert headless_host.snap("h-1")["status"] == "running"
@@ -1038,11 +1056,11 @@ def test_host_headless_claude_round_trip_launch_turn_end_send_resume_cleanup(
 
 
 def test_host_headless_claude_interrupt_mode_reaches_the_running_turn(
-    headless_host: Host, monkeypatch: pytest.MonkeyPatch
+    headless_host: Host,
 ) -> None:
     """段 8 lane 4x: session.send の mode = interrupt は走っている手番へ本文を注入する — 手番は
     1 つのまま(awaiting は触らない)、反応が実況(events)に出てから result。"""
-    monkeypatch.setenv("DOEFF_HEADLESS_STUB_DELAY", "5")
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_DELAY"] = "5"
     launched = headless_host.ok("session.launch", _launch_params(headless_host.root, "h-5", "claude"))
     assert isinstance(launched, dict)
     events_path = Path(_text(_obj(launched, "backend_ref"), "events_path"))
@@ -1064,13 +1082,13 @@ def test_host_headless_claude_interrupt_mode_reaches_the_running_turn(
 
 
 def test_host_headless_escalate_stops_the_turn_and_keeps_awaiting(
-    headless_host: Host, monkeypatch: pytest.MonkeyPatch
+    headless_host: Host,
 ) -> None:
     """段 10 lane 10n: session.send(mode = interrupt・ref)の後の session.escalate は停止の合図を出す —
     行の awaiting は触らない(host から見た手番は続く)。出す物が無い時(queued の注入が無い・既に出した)は
     型付きに断る。手番の終わりは注入の行の手番の result で 1 つ。"""
-    monkeypatch.setenv("DOEFF_HEADLESS_STUB_DELAY", "30")
-    monkeypatch.setenv("DOEFF_HEADLESS_STUB_TOOL_SECONDS", "30")
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_DELAY"] = "30"
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_TOOL_SECONDS"] = "30"
     launched = headless_host.ok("session.launch", _launch_params(headless_host.root, "h-7", "claude"))
     assert isinstance(launched, dict)
     events_path = Path(_text(_obj(launched, "backend_ref"), "events_path"))
@@ -1101,14 +1119,14 @@ def test_host_headless_escalate_stops_the_turn_and_keeps_awaiting(
     assert assistant_texts(lines) == ["echo: hello agent", "echo: change of plan"]
     assert [r["type"] for r in lines].count("result") == 2
     assert [r["type"] for r in lines].count("control_response") == 1
-    monkeypatch.setenv("DOEFF_HEADLESS_STUB_TOOL_SECONDS", "0")
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_TOOL_SECONDS"] = "0"
     headless_host.ok("session.cleanup", {"session_id": "h-7"})
 
 
 def test_host_headless_interrupt_keeps_the_session_warm(
-    headless_host: Host, monkeypatch: pytest.MonkeyPatch
+    headless_host: Host,
 ) -> None:
-    monkeypatch.setenv("DOEFF_HEADLESS_STUB_DELAY", "30")
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_DELAY"] = "30"
     headless_host.ok("session.launch", _launch_params(headless_host.root, "h-2", "claude"))
     _pause(0.3)
     headless_host.monitor()
@@ -1121,7 +1139,7 @@ def test_host_headless_interrupt_keeps_the_session_warm(
     assert _has(ended, "turn_ended_at")
     assert ended["awaiting_response"] is False
     # 温かいまま次の手番を受ける
-    monkeypatch.setenv("DOEFF_HEADLESS_STUB_DELAY", "0")
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_DELAY"] = "0"
     headless_host.ok(
         "session.send", {"session_id": "h-2", "message": "after interrupt", "awaiting": True}
     )
@@ -1129,6 +1147,136 @@ def test_host_headless_interrupt_keeps_the_session_warm(
     assert _text(again, "status") == "running"
     headless_host.ok("session.cancel", {"session_id": "h-2"})
     assert _text(headless_host.snap("h-2"), "status") == "stopped"
+
+
+def _digest(token: str) -> str:
+    """替え玉が名乗る資格の指紋と同じ綴り(検も値そのものは持ち回らない)。"""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:12]
+
+
+def _init_records(events_path: Path) -> list[JSONObject]:
+    """events の init の行(= process が起きるたびに 1 行 — 何番目の process が何を名乗ったか)。"""
+    return [
+        record
+        for line in events_path.read_text(encoding="utf-8").splitlines()
+        for record in [_record(line)]
+        if record.get("subtype") == "init"
+    ]
+
+
+def _init_digests(events_path: Path) -> list[str]:
+    """events の init の行が名乗った資格の指紋を順に(= 何番目の process がどの札で起きたか)。"""
+    return [str(record.get("auth_digest", "")) for record in _init_records(events_path)]
+
+
+def test_host_headless_resume_starts_with_the_token_the_turn_carries(headless_host: Host) -> None:
+    """段 10 lane 10d 便 2 の追補 2(実弾 #92 — 預かり所が口座を更新した拍に、温かい session の
+    再開の手番が誕生時の access token を使い回して 401 revoked)。降りた process の起こし直しは
+    **その手番の送りが運ぶ env** で起き、行には札を残さない(検は指紋だけを読む)。"""
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_TURNS_BEFORE_EXIT"] = "1"
+    params = _launch_params(headless_host.root, "h-9", "claude")
+    params["session_env"] = {"CLAUDE_CODE_OAUTH_TOKEN": "tok-birth"}
+    launched = headless_host.ok("session.launch", params)
+    assert isinstance(launched, dict)
+    events_path = Path(_text(_obj(launched, "backend_ref"), "events_path"))
+    # 行に残る launch の意図(再開の材料)から手番ごとの札は落ちている — 非 auth の宣言は残る
+    overlay = _obj(_obj(launched, "launch_overlay"), "session_env")
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in overlay
+    assert overlay["DOEFF_HEADLESS_STUB_TURNS_BEFORE_EXIT"] == "1"
+    # 誕生の process はその手番の札(= launch の charter の札)で起きた
+    _wait_until(lambda: _init_digests(events_path) == [_digest("tok-birth")])
+    _wait_turn_end(headless_host, "h-9")
+    # 替え玉は 1 手番目の result の後に降りる(idle で退いた器の再現)
+    _wait_until(lambda: headless_host.snap("h-9")["backend_alive"] is False)
+    pid_before = _obj(headless_host.snap("h-9"), "backend_ref")["pid"]
+    # 次の手番は新しい札で来る(貸与が回った拍)— 起こし直しはこの札で起きる
+    headless_host.ok(
+        "session.send",
+        {
+            "session_id": "h-9",
+            "message": "second turn",
+            "awaiting": True,
+            "session_env": {"CLAUDE_CODE_OAUTH_TOKEN": "tok-turn2"},
+        },
+    )
+    after = headless_host.snap("h-9")
+    assert "--resume" in _texts(_obj(after, "backend_ref"), "argv")
+    assert _obj(after, "backend_ref")["pid"] != pid_before
+    # 起こし直した process の init は非同期に書かれる — 指紋が 2 つ並ぶまで待つ
+    _wait_until(
+        lambda: _init_digests(events_path) == [_digest("tok-birth"), _digest("tok-turn2")]
+    )
+    # 行は札を持たないまま(手番が運んだ札も残さない)
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in _obj(_obj(after, "launch_overlay"), "session_env")
+    _wait_turn_end(headless_host, "h-9")
+    headless_host.ok("session.cleanup", {"session_id": "h-9"})
+
+
+def test_host_headless_send_refuses_the_env_it_cannot_carry(headless_host: Host) -> None:
+    """手番ごとの env の関所は launch と同じ 1 点(binding 所有キー・従量課金 credential は
+    送りの口でも受けない)。運べない組み合わせ(割り込みの送り)は黙って落とさず断る —
+    落とすと誕生の札で手番が走る(実弾 #92 の形)。"""
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-10", "claude"))
+    _wait_turn_end(headless_host, "h-10")
+    binding_owned = headless_host.call(
+        "session.send",
+        {"session_id": "h-10", "message": "x", "session_env": {"CLAUDE_CONFIG_DIR": "/tmp/elsewhere"}},
+    )
+    assert binding_owned["ok"] is False
+    assert "non-auth overlay" in json.dumps(binding_owned)
+    metered = headless_host.call(
+        "session.send",
+        {"session_id": "h-10", "message": "x", "session_env": {"ANTHROPIC_AUTH_TOKEN": "k"}},
+    )
+    assert metered["ok"] is False
+    assert "metered-billing credentials are forbidden" in json.dumps(metered)
+    interrupting = headless_host.call(
+        "session.send",
+        {
+            "session_id": "h-10",
+            "message": "x",
+            "mode": "interrupt",
+            "session_env": {"CLAUDE_CODE_OAUTH_TOKEN": "tok"},
+        },
+    )
+    assert interrupting["ok"] is False
+    assert "starts no process" in json.dumps(interrupting)
+    headless_host.ok("session.cleanup", {"session_id": "h-10"})
+
+
+def test_the_spawned_turn_inherits_no_agentd_env(
+    headless_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """段 10 lane 10d 便 2 の追補 3(実弾 #95): 手番の CLI は agentd の env を継がない。
+    機体から継ぐのは基本の名簿だけで、会話ごとの値は charter が運ぶ — 起こした process の
+    env に ACP_ / DOEFF_ の鍵は 0(charter が運んだ摘みを除く)、預かり所・記録・借り手札の
+    宛先も届かない。⚠ 検は**名の在否**だけを読む(値は 1 つも持ち回らない)。"""
+    for name, value in {
+        "ACP_BASE_URL": "https://acp.example",
+        "ACP_AGENTD_TOKEN_FILE": "/run/secrets/acp-token",
+        "DOEFF_AGENTD_NODE_NAME": "mac",
+        "AGORA_BORROWER_KEY_PATH": "/run/secrets/borrower",
+        "AGORA_CUSTODY_URL": "https://custodian.example",
+        "RECORD_SERVICE_URL": "https://record.example",
+    }.items():
+        monkeypatch.setenv(name, value)
+    params = _launch_params(headless_host.root, "h-11", "claude")
+    params["session_env"] = {"AGORA_CONVERSATION_ID": "c-1", "AGORA_SEAT_OPENER": "machine"}
+    launched = headless_host.ok("session.launch", params)
+    assert isinstance(launched, dict)
+    events_path = Path(_text(_obj(launched, "backend_ref"), "events_path"))
+    _wait_until(lambda: bool(_init_records(events_path)))
+    seen = _texts(_init_records(events_path)[0], "system_env_names")
+    # charter が運んだ名だけが子に居る(摘みは Host の harness が charter へ載せる)
+    assert sorted(seen) == sorted(
+        ["AGORA_CONVERSATION_ID", "AGORA_SEAT_OPENER"]
+        + list(headless_host.stub_env)
+    ), f"手番の CLI が agentd の env を継いでいる: {seen}"
+    assert not [name for name in seen if name.startswith("ACP_")]
+    for dropped in ("AGORA_BORROWER_KEY_PATH", "AGORA_CUSTODY_URL", "RECORD_SERVICE_URL"):
+        assert dropped not in seen
+    _wait_turn_end(headless_host, "h-11")
+    headless_host.ok("session.cleanup", {"session_id": "h-11"})
 
 
 def test_host_headless_codex_round_trip_is_warm(headless_host: Host) -> None:
@@ -1159,11 +1307,11 @@ def test_host_headless_startup_recovery_ends_the_dead_mid_turn_row_and_keeps_the
     backend を観測して exited + vanished に倒す(session_exited・reason に pid)。idle の温かい行は
     触らない(次の send が --resume で同じ session を起こし直す)。wire の backend_alive は観測から。"""
     # h-busy: 手番の途中(替え玉は result の前で 30 秒待つ)/ h-idle: 手番が終わって温かい
-    monkeypatch.setenv("DOEFF_HEADLESS_STUB_DELAY", "30")
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_DELAY"] = "30"
     busy = headless_host.ok("session.launch", _launch_params(headless_host.root, "h-busy", "claude"))
     assert isinstance(busy, dict)
     assert busy["awaiting_response"] is True
-    monkeypatch.setenv("DOEFF_HEADLESS_STUB_DELAY", "0")
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_DELAY"] = "0"
     headless_host.ok("session.launch", _launch_params(headless_host.root, "h-idle", "claude"))
     idle = _wait_turn_end(headless_host, "h-idle")
     assert _has(idle, "turn_ended_at")
@@ -1263,9 +1411,9 @@ def test_host_headless_stop_cuts_the_mid_turn_row_and_terminates_every_process(
     """段 10 lane 10h 便 2(agora-redesign #84): host の停止の腕は手番の途中の行を stopped + cancelled(理由 =
     host の停止)にして黙って残さず、idle の温かい行は触らず、登記の全 process を並列の猶予で降ろす。
     次の起動の復帰は stopped の行を keep(vanished に読み替えない)・idle の行を keep。"""
-    monkeypatch.setenv("DOEFF_HEADLESS_STUB_DELAY", "30")
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_DELAY"] = "30"
     headless_host.ok("session.launch", _launch_params(headless_host.root, "h-busy", "claude"))
-    monkeypatch.setenv("DOEFF_HEADLESS_STUB_DELAY", "0")
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_DELAY"] = "0"
     headless_host.ok("session.launch", _launch_params(headless_host.root, "h-idle", "claude"))
     _wait_turn_end(headless_host, "h-idle")
     busy_pid = _obj(headless_host.snap("h-busy"), "backend_ref")["pid"]

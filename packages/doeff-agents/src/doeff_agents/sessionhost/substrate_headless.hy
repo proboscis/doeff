@@ -36,6 +36,7 @@
   HeadlessSpawn])
 (import doeff_agents.sessionhost.headless_process [HeadlessRegistry pid-exists])
 (import doeff_agents.sessionhost.headless_protocol [BackendLiveness])
+(import doeff_agents.sessionhost.policy [inheritable-spawn-env])
 (import doeff_agents.sessionhost.substrate [
   SHELL-PROMPT-SUPPRESSING-ENV
   ensure-no-forbidden-agent-env])
@@ -46,12 +47,13 @@
 
 
 (defn headless-spawn-env [env]
-  "子 process の実効 env: 呼び手の env(非 auth overlay ∪ binding 由来の auth env)を
-   host の process env の上に重ねる(PATH・HOME を継ぐ — tmux が shell 経由で継ぐのと
-   同じ物理)。prompt 抑制 env は tui の物理で headless には要らないが、置いても害は
-   無く、shell を経由する hook との parity のため揃える。"
+  "子 process の実効 env: 呼び手の env(非 auth overlay ∪ binding 由来の auth env)を、
+   機体から継いでよい基本の env(policy の名簿 1 点 — 段 10 lane 10d 便 2 の追補 3・実弾 #95)の
+   上に重ねる。agentd の身元と宛先(ACP_* / DOEFF_* / 借り手札の path / 預かり所と記録の URL)は
+   継がせない — 手番の CLI が agentd の名で系を撃てる形を作らない。prompt 抑制 env は tui の
+   物理で headless には要らないが、置いても害は無く、shell を経由する hook との parity のため揃える。"
   (ensure-no-forbidden-agent-env env)
-  (setv effective (dict os.environ))
+  (setv effective (inheritable-spawn-env (dict os.environ)))
   (for [[key value] SHELL-PROMPT-SUPPRESSING-ENV]
     (when (not-in key env)
       (setv (get effective key) value)))

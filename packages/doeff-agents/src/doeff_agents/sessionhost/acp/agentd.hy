@@ -177,6 +177,7 @@
   RecordUnread
   RecordUnsent
   RecordedTurns
+  CONDITION-CREDENTIAL-PLACE-MISMATCH
   CONDITION-CREDENTIAL-SOURCE-MISSING
   CONDITION-INTERRUPT-ESCALATION-UNDECLARED
   CREDENTIAL-SOURCE-MISSING
@@ -227,6 +228,9 @@
   capture-verdict
   cleanup-after-end
   condition-of
+  credential-place-mismatch
+  credential-place-of
+  credential-from-custody
   credential-source-of
   deltas-of
   due
@@ -297,6 +301,7 @@
   pending-interrupts-of
   profile-observed-changed
   profile-observed-of
+  profile-key-of
   profile-rows-active
   profile-rows-held
   profile-status-with-observed
@@ -323,6 +328,7 @@
   turn-record-key-of
   turn-record-recorded-status
   turn-record-spec-of
+  turn-session-env-of
   usage-by-profile
   wait-seconds-for
   warm-candidate-of
@@ -745,6 +751,21 @@
                         f"{settings.node-name} declares the custody service — the turn's credential is the custody lease only")
                      #() now-ms))
     (return state))
+  ;; 段 10 lane 10d 便 2(agora-redesign #85・不変条件 I5): 自分の置き場と違う置き場の口座の job は起こさない。
+  ;; 置き場は結ばれた profile の行の名乗り(spec.boundary)を鍵で 1 行読む — 判らない拍は進む(封じた資格はその
+  ;; 置き場の worker にしか無く、最後の門は預かり所の redeem)。走行係自身の知識による前段の門で、第 2 の方策点ではない。
+  (<- from-custody bool (credential-from-custody source))
+  (when from-custody
+    (<- profile-key str (profile-key-of plan.profile))
+    (<- profile-row (| AcpRow None) (AcpGetRow :key profile-key))
+    (<- boundary (| str None) (credential-place-of profile-row))
+    (<- mismatched bool (credential-place-mismatch settings.place boundary))
+    (when mismatched
+      (<- (end-job-now settings row CONDITION-CREDENTIAL-PLACE-MISMATCH
+                       (+ f"agent-job {row.resource-id} binds profile {plan.profile} (place {boundary}) but node "
+                          f"{settings.node-name} is place {settings.place} — 資格はその置き場の外へ出さない")
+                       #() now-ms))
+      (return state)))
   (setv job-id row.resource-id)
   (setv subject (str (.get row.spec "subject" job-id)))
   (<- candidate (| str None)
@@ -872,8 +893,13 @@
   (setv job-id row.resource-id)
   (setv pending [])
   (<- start tuple (start-offset-of view arm))
+  ;; 段 10 lane 10d 便 2 追補 2(実弾 #92): 温かい session への送りは、降りた process を器が
+  ;; `--resume` で起こし直すことがある — その起こしに **この手番で借りた札** を載せる
+  ;; (行に残った誕生の札で起こすと、更新で回った後は 401 を食う)。判断は judgment の 1 点。
+  (<- turn-env dict (turn-session-env-of lease))
   (for [body bodies]
-    (<- (SessionSend :session-id view.session-id :text body :awaiting True)))
+    (<- (SessionSend :session-id view.session-id :text body :awaiting True
+                     :session-env turn-env)))
   (when missing
     (<- condition dict (condition-of "InputUnavailable"
                                      (+ "messages not found: " (.join ", " missing))))

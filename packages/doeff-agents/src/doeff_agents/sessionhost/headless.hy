@@ -83,6 +83,7 @@
   session-hooks-mode])
 (import doeff_agents.sessionhost.policy [
   cause-if-absent
+  overlay-without-turn-auth
   event-type-for-status
   is-multi-turn
   is-run-to-completion
@@ -277,7 +278,8 @@
               :backend-kind HEADLESS-BACKEND-KIND
               :backend-ref (headless-backend-ref session-name pid events-path argv
                                                  (str (.get params "socket_path" "")))
-              :launch-overlay {"session_env" session-env
+              ;; 追補 2(実弾 #92): 手番ごとの資格の札は行に残さない — 再開はその手番の送りが運ぶ env で起こす
+              :launch-overlay {"session_env" (overlay-without-turn-auth session-env)
                                "model" (.get params "model")
                                "effort" (.get params "effort")
                                "mcp_servers" (or (.get params "mcp_servers") {})}
@@ -323,12 +325,16 @@
   row)
 
 
-(defk continue-headless-process [row]
-  {:pre [(: row SessionRow)]
+(defk continue-headless-process [row turn-env]
+  {:pre [(: row SessionRow) (: turn-env (| dict None))]
    :post [(: % SessionRow)]}
   "降りた process の次の手番: 行の会話 identity で `--resume <sid>` の process を同じ session の
    名で起こし直す(events file は同じ path に追記)。会話の id が無い行は続けられない(発明
-   しない — 型付きに断る)。戻り値: backend_ref を更新した行。"
+   しない — 型付きに断る)。戻り値: backend_ref を更新した行。
+
+   段 10 lane 10d 便 2 の追補 2(実弾 #92): 資格の env は**この手番の送りが運ぶ値**(turn-env)を重ねる。
+   誕生時の env は行に札を残さない(overlay-without-turn-auth)ので、更新で回って revoke された札で
+   起こすことは構造的に無い。turn-env が無い呼び(operator の救援等)は行の非 auth の意図だけで起きる。"
   (when (is row.conversation None)
     (raise (RuntimeError
              (+ f"session.send: session {row.session-id} has no conversation identity — "
@@ -345,7 +351,8 @@
                                   (str (.get ref "socket_path" "")) row.session-id))
   (setv argv (get built "argv"))
   (setv effective-env (launch-spawn-env row.effective-identity
-                                        (dict (or (.get overlay "session_env") {}))))
+                                        (| (dict (or (.get overlay "session_env") {}))
+                                           (dict (or turn-env {})))))
   (setv events-path (or (events-path-of-row row)
                         (raise (RuntimeError
                                  f"session {row.session-id} has no events_path in backend_ref"))))
@@ -384,20 +391,22 @@
   row)
 
 
-(defk headless-send-program [session-id message awaiting]
-  {:pre [(: session-id str) (: message str) (: awaiting bool)]
+(defk headless-send-program [session-id message awaiting turn-env]
+  {:pre [(: session-id str) (: message str) (: awaiting bool) (: turn-env (| dict None))]
    :post [(: % SessionRow)]}
   "session.send(headless・mode = turn): 次の手番の本文を stdin へ。process が次の手番を
    受けられる(生きた温かい process)ならそのまま、受けられない(降りた process)なら
    `--resume` で起こし直してから書く。awaiting(agentd の温かい手番)は latch を立て、
-   turn_ended_at を None に戻す(次の手番が走り出した — level-triggered の欄)。"
+   turn_ended_at を None に戻す(次の手番が走り出した — level-triggered の欄)。
+   turn-env = **この手番の** env(段 10 lane 10d 便 2 追補 2・実弾 #92): 起こし直す時に重ねる
+   (預かり所の貸与の札はここで来る — 行に残った誕生の札では起こさない)。"
   (<- row (require-headless-row session-id))
   (when (is-terminal-status row.status)
     (raise (RuntimeError f"session {session-id} is {row.status}; cannot send to a terminal session")))
   (<- observed (headless-poll row.session-name))
   (setv accepts (and (isinstance observed HeadlessObservation) observed.accepts-turn))
   (when (not accepts)
-    (<- continued (continue-headless-process row))
+    (<- continued (continue-headless-process row turn-env))
     (setv row continued))
   (<- delivered (headless-deliver row.session-name message))
   (when (not delivered)

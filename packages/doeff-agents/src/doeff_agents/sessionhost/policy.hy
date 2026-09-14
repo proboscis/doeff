@@ -343,6 +343,54 @@
                 :if (in (policy-normalized-env-key key) BINDING-OWNED-ENV-KEYS)
                 key)))
 
+;; 手番ごとの資格の env(段 10 lane 10d 便 2 の追補 2・実弾 #92 = 預かり所が口座を更新した後、
+;; 誕生の札で再開した手番が 401 を食った)。預かり所の貸与の札はこの名で運ぶ。判定点はここ 1 つ。
+;; **行には残さない** — 行に残った誕生の env で再開すると、更新で回った(revoke 済みの)札で起こす。
+;; 再開の process は「その手番の送りが運ぶ env」で起きる(host の session.send の session_env)。
+(setv TURN-AUTH-ENV-KEYS #{"CLAUDE_CODE_OAUTH_TOKEN"})
+
+(deff overlay-without-turn-auth [env]
+  {:pre [(: env (| dict None))]
+   :post [(: % dict)]}
+  "行へ永続化する launch の意図から、手番ごとの資格の env を落とした写し
+   (札の値は行にも log にも残らない — 再開はその手番の送りが運ぶ env で起きる)。"
+  (dfor [name value] (.items (or env {}))
+        :if (not-in (policy-normalized-env-key name) TURN-AUTH-ENV-KEYS)
+        name value))
+
+;; 手番の CLI が機体から継ぐ env の名簿(段 10 lane 10d 便 2 の追補 3・実弾 #95)。
+;; agentd の process env には系の身元と宛先(ACP の口と札・借り手札の path・預かり所と記録の
+;; service の URL)が居る — 子の CLI がそれを丸ごと継ぐと、手番の中の道具が agentd の名で
+;; 系を撃てるし、宛先の綴りも会話へ漏れる。だから継ぐのは**機体の基本**(場所・言語・
+;; 証明書・proxy・ssh の agent)だけを名指しの名簿で選び、会話ごとの値は charter(呼び手の
+;; session_env ∪ binding 由来の auth env)が運ぶ 1 点に閉じる。名簿に無い名は継がない
+;; (既定は落とす — 新しい ACP_*/DOEFF_*/AGORA_* が増えても語彙の改訂なしに締まる)。
+(setv SPAWN-INHERITED-ENV-KEYS
+      #{"PATH" "HOME" "USER" "LOGNAME" "SHELL" "TMPDIR" "TERM" "TZ" "LANG"
+        "SSH_AUTH_SOCK"
+        "SSL_CERT_FILE" "SSL_CERT_DIR" "NODE_EXTRA_CA_CERTS" "REQUESTS_CA_BUNDLE"
+        "HTTP_PROXY" "HTTPS_PROXY" "NO_PROXY"})
+
+;; 綴りの族で継ぐ名(地域の宣言は LC_ALL / LC_CTYPE / … と数が決まっていない)。
+(setv SPAWN-INHERITED-ENV-PREFIXES #("LC_"))
+
+(deff spawn-env-inherited? [key]
+  {:pre [(: key str)]
+   :post [(: % bool)]}
+  "この env の名を機体から継ぐか(名簿 ∪ 族の接頭 — 判定は正規化した綴りで行う)。"
+  (setv normalized (policy-normalized-env-key key))
+  (or (in normalized SPAWN-INHERITED-ENV-KEYS)
+      (any (gfor prefix SPAWN-INHERITED-ENV-PREFIXES (.startswith normalized prefix)))))
+
+(deff inheritable-spawn-env [process-env]
+  {:pre [(: process-env dict)]
+   :post [(: % dict)]}
+  "機体の process env から、手番の CLI が継いでよい分だけを写した env(綴りは元のまま)。
+   器(headless の spawn)はこの上に呼び手の env を重ねる — 名簿の外は届かない。"
+  (dfor [key value] (.items process-env)
+        :if (spawn-env-inherited? key)
+        key value))
+
 ;; 従量課金 credential の締め出し(operator 裁定 2026-08-26 —「このシステムで
 ;; API キーを利用してはならない。従量課金を利用してはならない」。音声モードは
 ;; 唯一の例外だが、この host を通らない)。binding 所有キーと違い「正しい家」が
@@ -354,15 +402,35 @@
 (setv METERED-CREDENTIAL-ENV-ALIASES
       #{"ANTHROPIC_AUTH_TOKEN" "OPENAI_KEY" "GOOGLE_GENAI_KEY"})
 
-(defk metered-credential-env-offenders [session-env]
+(deff metered-credential-env-offenders [session-env]
   {:pre [(: session-env dict)]
    :post [(: % list)]}
-  "session_env に居てはならない従量課金 credential 形のキーの列挙。"
+  "session_env に居てはならない従量課金 credential 形のキーの列挙(純粋の 1 点)。"
   (sorted (lfor key (.keys session-env)
                 :if (do (setv normalized (policy-normalized-env-key key))
                         (or (.endswith normalized "_API_KEY")
                             (in normalized METERED-CREDENTIAL-ENV-ALIASES)))
                 key)))
+
+(deff session-env-admission-error [session-env verb]
+  {:pre [(: session-env dict) (: verb str)]
+   :post [(: % (| str None))]}
+  "session_env の関所(None = 適合・文字列 = reject 理由)。launch の口と
+   session.send の口(段 10 lane 10d 便 2 追補 2 の手番ごとの env)が同じ 1 点を
+   通る — 運ぶ口が増えても判定を並行実装しない。verb は名乗る動詞名。"
+  (setv offenders (overlay-env-offenders session-env))
+  (when offenders
+    (return (+ f"{verb}: session_env is a non-auth overlay and may not "
+               f"carry binding-owned auth env (offending: {(.join ", " offenders) }). "
+               "Declare the auth profile through the typed `binding` field "
+               "(ADR-DOE-AGENTS-004 R7).")))
+  (setv metered (metered-credential-env-offenders session-env))
+  (when metered
+    (return (+ f"{verb}: metered-billing credentials are forbidden in "
+               f"agent sessions (offending: {(.join ", " metered) }). "
+               "Agent seats authenticate with subscription profiles via the "
+               "typed `binding` field only (operator ruling 2026-08-26).")))
+  None)
 
 (deff binding-admission-error [binding agent-type]
   {:pre [(: binding (| dict None)) (: agent-type str)]

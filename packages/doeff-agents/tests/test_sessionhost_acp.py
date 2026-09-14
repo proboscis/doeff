@@ -16,31 +16,34 @@ from typing import get_args
 
 import hy  # noqa: F401  # registers the .hy importer
 import pytest
-from doeff_agents.sessionhost.acp import judgment
+from doeff_agents.sessionhost.acp import handlers, judgment
 from doeff_agents.sessionhost.acp.effects import (
+    AGENTD_PRINCIPAL,
     AGENT_JOB_KIND,
     AGENT_JOB_NAMESPACE,
-    AGENTD_PRINCIPAL,
     AGORA_KINDS_NAMESPACE,
+    AcpRow,
+    AgentdSettings,
     CLAUDE_OAUTH_TOKEN_ENV,
+    CONDITION_CREDENTIAL_PLACE_MISMATCH,
     CONDITION_CREDENTIAL_SOURCE_MISSING,
+    CustodyLeaseBorrow,
+    EntryKind,
+    InFlightJob,
     JSON,
+    JSONObject,
+    LeaseGrant,
+    LeaseRefused,
     MESSAGE_KIND,
     NODE_KIND,
     PHASE_BOUND,
     PHASE_ENDED,
     PHASE_RUNNING,
     PROFILE_KIND,
-    TURN_RECORD_ENTRIES_BYTE_BUDGET,
-    TURN_RECORD_KIND,
-    AcpRow,
-    AgentdSettings,
-    EntryKind,
-    InFlightJob,
-    JSONObject,
-    LeaseRefused,
     SessionRefused,
     SessionView,
+    TURN_RECORD_ENTRIES_BYTE_BUDGET,
+    TURN_RECORD_KIND,
 )
 from doeff_agents.sessionhost.acp.fake import Birth, FakeAcp, FakeCustody, FakeLocal, FakeSessions
 from doeff_agents.sessionhost.acp.runtime import initial_state, run_close_for_stop, run_tick
@@ -398,6 +401,34 @@ def test_custody_declared_node_does_not_launch_a_job_without_an_account() -> Non
     assert world.state.jobs == ()
 
 
+def test_a_job_bound_to_another_places_account_is_not_launched() -> None:
+    """段 10 lane 10d 便 2(agora-redesign #85・不変条件 I5): 自分の置き場と違う置き場の口座の job は起こさない —
+    借りもせず(封じた資格はその置き場の worker にしか無い)、条件 CredentialPlaceMismatch で閉じる。"""
+    world = World()
+    world.settings = replace(world.settings, custody_declared=True, place="personal")
+    world.acp.put_row(row("default", "profile", "personal", {"boundary": "company"}, {}))
+    world.acp.put_row(bound_job("s-place", inputs=[]))
+    world.tick()
+    assert world.custody.borrowed == [], "違う置き場の口座を借りに行った"
+    assert world.sessions.launches == []
+    job = world.job("s-place")
+    assert job.status is not None and job.status["phase"] == PHASE_ENDED
+    conditions = job.status["conditions"]
+    assert isinstance(conditions, list)
+    last = conditions[-1]
+    assert isinstance(last, dict) and last["type"] == CONDITION_CREDENTIAL_PLACE_MISMATCH
+    assert "place" in str(last["reason"])
+
+
+def test_a_job_whose_profile_does_not_name_a_place_is_launched() -> None:
+    """置き場を名乗らない profile の行(旧い行)は食い違いと読まない — 最後の門は預かり所の redeem(判らないもので止めない)。"""
+    world = World()
+    world.settings = replace(world.settings, custody_declared=True, place="personal")
+    world.acp.put_row(bound_job("s-noplace", inputs=[]))
+    world.tick()
+    assert world.custody.borrowed == [("claude", "acct", "agent-job s-noplace")]
+
+
 def test_custody_declared_node_borrows_the_account_and_launches_in_the_borrowed_home() -> None:
     """段 10c(R23): 預かり所を宣言した node でも account の在る job は預かり所から借り、借りた家で起こす。"""
     world = World()
@@ -541,6 +572,18 @@ def test_node_spec_of_and_node_spec_declared_are_one_judgment() -> None:
         "capacity": 2,
         "streamCapability": "events",
     }
+    # 段 10 lane 10d 便 2: 宣言した置き場は node の labels.place に名乗る(配車の絞りが読む 1 点)
+    placed = replace(settings, place="personal")
+    assert run(judgment.node_spec_of(placed))["labels"] == {"place": "personal"}
+    kept = run(
+        judgment.node_spec_declared(
+            {"name": "pool-1", "labels": {"boundary": "personal", "pool": "agentd-pool"}, "capacity": 0, "streamCapability": "events"},
+            placed,
+        )
+    )
+    assert kept["labels"] == {"boundary": "personal", "pool": "agentd-pool", "place": "personal"}, (
+        "宣言の外の名乗り(boundary 等)を触るか、置き場を名乗れていない"
+    )
     hand = {"name": "pool-1", "labels": {"boundary": "company"}, "capacity": 0, "streamCapability": "events"}
     assert run(judgment.node_spec_declared(hand, settings)) == {**hand, "capacity": 2}
     assert run(judgment.node_spec_declared({**hand, "capacity": 2}, settings)) == {**hand, "capacity": 2}
@@ -997,6 +1040,38 @@ def _run_first_turn(world: World, job_id: str = "j-1") -> str:
     assert world.sessions.views[sid].status == "running"
     assert world.state.jobs == ()
     return path
+
+
+def test_warm_send_carries_the_token_this_turn_borrowed() -> None:
+    """段 10 lane 10d 便 2 の追補 2(実弾 #92 = 預かり所が口座を更新した拍に、温かい session の再開の
+    手番が誕生時の access token を使い回して 401 revoked)。温かい手番の送りは **その手番で借りた札**
+    を env で運ぶ — 器が降りた process を `--resume` で起こし直す時に使う値で、行には残らない。"""
+    world = World()
+    _run_first_turn(world)
+    warm = world.sid("j-1")
+    assert world.sessions.send_envs[-1] == (warm, {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN})
+    # 預かり所が口座を更新して札が回った(誕生の札は revoke されている)
+    world.custody.tokens["acct"] = "sk-ant-oat01-rotated"
+    world.acp.put_row(message("m-2", "second"))
+    world.acp.put_row(bound_job("j-2", inputs=["m-2"], created_at_ms=world.local.now_ms + 700))
+    world.tick(advance_ms=1_000)
+    assert world.sessions.sends[-1] == (warm, "second", True)
+    assert world.sessions.send_envs[-1] == (warm, {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-rotated"})
+
+
+def test_warm_send_of_a_codex_conversation_carries_no_env() -> None:
+    """codex の札は家の中の auth file が運ぶ(env には出さない)— 手番の送りが運ぶ env は空。"""
+    world = World()
+    charter_job = bound_job("j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400)
+    charter = charter_job.spec["charter"]
+    assert isinstance(charter, dict)
+    charter["agent_type"] = "codex"
+    charter["binding"] = {"kind": "codex", "codex_home": "/bundle"}
+    world.custody = FakeCustody(auth_jsons={"acct": '{"tokens": {}}'})
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(charter_job)
+    world.tick()
+    assert world.sessions.send_envs[-1] == (world.sid("j-1"), {})
 
 
 def test_second_turn_of_the_same_conversation_is_sent_to_the_warm_session() -> None:
@@ -2639,7 +2714,7 @@ def test_stream_capability_is_derived_from_the_host_backend() -> None:
     from doeff_agents.sessionhost.acp.runtime import settings_from_env
 
     # 本文の行き先(段 9f lane 9f-6): 宛先の無い env は settings_from_env が参加を断るので、束に宛先を持たせる。
-    bare = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1"}
+    bare = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACE": "personal"}
     env = {**bare, "DOEFF_SESSIONHOST_BACKEND": "headless"}
     assert settings_from_env(env, ()).stream_capability == "events"
     assert settings_from_env(env, ()).backend_kind == "headless"
@@ -2869,7 +2944,7 @@ def test_join_spec_is_flags_over_declaration_over_defaults() -> None:
     hooks は inherit・custody は無し(既定の URL は handler)・所有は名乗らない。"""
     from doeff_agents.sessionhost.acp.effects import JoinSpec, Ownership
 
-    bare = _join_spec(["--server", "http://acp:8868", "--token-file", "/t/agentd.token", "--capacity", "1"])
+    bare = _join_spec(["--server", "http://acp:8868", "--token-file", "/t/agentd.token", "--capacity", "1", "--place", "personal"])
     assert bare == JoinSpec(
         server="http://acp:8868",
         token_file="/t/agentd.token",
@@ -2881,6 +2956,7 @@ def test_join_spec_is_flags_over_declaration_over_defaults() -> None:
         borrower_key_file=None,
         ownership=None,
         capacity=1,
+        place="personal",
     )
     declaration: dict[str, object] = {
         "schema": "doeff.agentd-join.v1",
@@ -2894,6 +2970,7 @@ def test_join_spec_is_flags_over_declaration_over_defaults() -> None:
             "ownership": "company",
             "ownership_proof": "gce-project:cyberagent-050",
             "capacity": "2",
+            "place": "personal",
         },
         "custody": {"url": "http://custody:8320", "borrower_key_file": "/toml/borrower"},
     }
@@ -2909,6 +2986,7 @@ def test_join_spec_is_flags_over_declaration_over_defaults() -> None:
         borrower_key_file="/toml/borrower",
         ownership=Ownership(grade="company", proof="gce-project:cyberagent-050"),
         capacity=2,
+        place="personal",
     )
     flagged = _join_spec(
         [
@@ -2924,6 +3002,8 @@ def test_join_spec_is_flags_over_declaration_over_defaults() -> None:
             "headless",
             "--capacity",
             "3",
+            "--place",
+            "personal",
         ],
         declaration,
     )
@@ -2986,10 +3066,10 @@ def test_join_spec_refuses_missing_server_or_token_unknown_flags_and_bad_words()
         _join_spec(["--server", "http://a", "--token-file", "/t", "--capacity", "two"])
     with pytest.raises(ValueError, match="capacity"):
         _join_spec(["--server", "http://a", "--token-file", "/t", "--capacity", "-1"])
-    assert isinstance(_join_spec(["--server", "http://a", "--token-file", "/t", "--capacity", "0"]), JoinSpec)
+    assert isinstance(_join_spec(["--server", "http://a", "--token-file", "/t", "--capacity", "0", "--place", "personal"]), JoinSpec)
     # 空文字は「名乗らない」(宣言 file で欄を空にして外せる — runtime の env の読みと同じ)。
     blank = _join_spec(
-        ["--server", "http://a", "--token-file", "/t", "--ownership", "", "--ownership-proof", "", "--capacity", "1"]
+        ["--server", "http://a", "--token-file", "/t", "--ownership", "", "--ownership-proof", "", "--capacity", "1", "--place", "personal"]
     )
     assert isinstance(blank, JoinSpec)
     assert blank.ownership is None
@@ -3024,6 +3104,7 @@ def test_join_plan_derives_the_host_argv_and_the_env_bundle_from_the_spec() -> N
         borrower_key_file="/etc/doeff/borrower-key",
         ownership=Ownership(grade="company", proof="gce-project:cyberagent-050"),
         capacity=2,
+        place="personal",
     )
     plan = run(join.join_plan_of(spec))
     assert plan == JoinPlan(
@@ -3044,6 +3125,7 @@ def test_join_plan_derives_the_host_argv_and_the_env_bundle_from_the_spec() -> N
             ("ACP_AGENTD_TOKEN_FILE", "/t/agentd.token"),
             ("DOEFF_AGENTD_NODE_NAME", "gcp-0"),
             ("DOEFF_AGENTD_CAPACITY", "2"),
+            ("DOEFF_AGENTD_PLACE", "personal"),
             ("DOEFF_SESSIONHOST_BACKEND", "headless"),
             ("DOEFF_SESSIONHOST_HEADLESS_DIR", "/var/lib/doeff/agentd/headless-events"),
             ("DOEFF_AGENTD_SESSION_HOOKS", "inherit"),
@@ -3067,6 +3149,7 @@ def test_join_plan_derives_the_host_argv_and_the_env_bundle_from_the_spec() -> N
                 borrower_key_file=None,
                 ownership=None,
                 capacity=0,
+                place="personal",
             )
         )
     )
@@ -3099,6 +3182,7 @@ def test_settings_from_env_reads_the_ownership_and_the_valve_and_runtime_agree_o
                 borrower_key_file=None,
                 ownership=Ownership(grade="company", proof="gce-project:cyberagent-050"),
                 capacity=2,
+                place="personal",
                 record_url="http://record:8874",
             )
         )
@@ -3115,7 +3199,7 @@ def test_settings_from_env_reads_the_ownership_and_the_valve_and_runtime_agree_o
     # 段 10c(R23): 預かり所の宣言の有無は CUSTODY_URL_ENV の在否 1 点(この束は custody_url を名乗らない)
     assert settings.custody_declared is False
     assert acp_valve(list(plan.host_argv), env).enabled is True
-    recorded = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1"}
+    recorded = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACE": "personal"}
     assert settings_from_env(recorded, ()).ownership is None
     assert settings_from_env({**recorded, "AGORA_CUSTODY_URL": "http://custody:8320"}, ()).custody_declared is True
     assert settings_from_env({**recorded, "AGORA_CUSTODY_URL": "  "}, ()).custody_declared is False
@@ -3125,6 +3209,13 @@ def test_settings_from_env_reads_the_ownership_and_the_valve_and_runtime_agree_o
     without_capacity = {name: value for name, value in recorded.items() if name != "DOEFF_AGENTD_CAPACITY"}
     with pytest.raises(ValueError, match="capacity"):
         settings_from_env(without_capacity, ())
+    # 段 10 lane 10d 便 2: 置き場も宣言ちょうど — 無い env と語彙の外は参加を断る(join.place-of の 1 点)
+    assert settings_from_env(recorded, ()).place == "personal"
+    without_place = {name: value for name, value in recorded.items() if name != "DOEFF_AGENTD_PLACE"}
+    with pytest.raises(ValueError, match="place"):
+        settings_from_env(without_place, ())
+    with pytest.raises(ValueError, match="company | personal"):
+        settings_from_env({**recorded, "DOEFF_AGENTD_PLACE": "k3s:cluster"}, ())
 
 
 def test_acp_url_has_no_localhost_default_and_the_join_bundle_carries_it(tmp_path: Path) -> None:
@@ -3142,7 +3233,7 @@ def test_acp_url_has_no_localhost_default_and_the_join_bundle_carries_it(tmp_pat
     assert not hasattr(handlers, "ACP_URL_DEFAULT")
     token = tmp_path / "agentd.token"
     token.write_text("sk-roster-token\n", encoding="utf-8")
-    env = {ACP_TOKEN_FILE_ENV: str(token), "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1"}
+    env = {ACP_TOKEN_FILE_ENV: str(token), "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACE": "personal"}
     with pytest.raises(AgentdPreflightError, match=ACP_URL_ENV):
         real_dispatchers(env, str(tmp_path / "agentd.sock"))
     with pytest.raises(AgentdPreflightError, match=ACP_URL_ENV):
@@ -3160,6 +3251,7 @@ def test_acp_url_has_no_localhost_default_and_the_join_bundle_carries_it(tmp_pat
                 borrower_key_file=None,
                 ownership=None,
                 capacity=1,
+                place="personal",
                 record_url="http://record:8874",
             )
         )
@@ -3352,3 +3444,88 @@ def test_agentd_values_copied_from_agora_kinds_match_the_copy() -> None:
         assert set(entry["settings"]) <= set(settings_words), kind
     efforts = _string_list(_lookup(copy, "conventions.agentSettings.efforts"))
     assert efforts == ["low", "medium", "high", "xhigh"]
+
+
+# ---------------------------------------------------------------------------
+# 借りは 2 段(段 10 lane 10d・預かり所の契約 v2): master の貸与 = 引換券、札は口座の worker で受ける
+# ---------------------------------------------------------------------------
+
+
+def _lease_answer() -> JSONObject:
+    return {
+        "ok": True,
+        "leaseId": "lease-9",
+        "renewed": False,
+        "voucher": "vch-0123456789ABCDEFGHJKMNPQRS",
+        "workerUrl": "https://worker.test/",
+        "holdExpiresAt": "2026-09-14T12:00:00.000Z",
+        "note": "引換券を workerUrl の POST /redeem へ",
+    }
+
+
+def test_borrow_takes_the_voucher_to_the_worker_and_the_token_never_touches_the_master(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """貸与の答えは引換券と worker の基点で、札はその worker の redeem で受ける(札は master を通らない)。"""
+    seen: list[tuple[str, str, JSON]] = []
+
+    def fake_http(
+        method: str, url: str, headers: Mapping[str, str], body: JSON, timeout: float
+    ) -> handlers.HttpReply:
+        seen.append((method, url, body))
+        if url.endswith("/lease/claude"):
+            return handlers.HttpReply(200, _lease_answer())
+        return handlers.HttpReply(200, {"ok": True, "leaseId": "lease-9", "accessToken": "tok-1"})
+
+    monkeypatch.setattr(handlers, "_http_json", fake_http)
+    custody = handlers.CustodyHttp("http://master.test", "borrower-key")
+    grant = custody._borrow(CustodyLeaseBorrow(kind="claude", account="acct", purpose="agent-job s-1"))
+
+    assert [(method, url) for method, url, _ in seen] == [
+        ("POST", "http://master.test/lease/claude"),
+        ("POST", "https://worker.test/redeem"),
+    ], "貸与 → 引換券の redeem の 2 呼びでない"
+    assert seen[1][2] == {"voucher": "vch-0123456789ABCDEFGHJKMNPQRS"}
+    assert isinstance(grant, LeaseGrant)
+    assert grant.lease_id == "lease-9" and grant.access_token == "tok-1"
+    assert grant.hold_expires_at_ms == _epoch_ms("2026-09-14T12:00:00.000Z")
+    assert "tok-1" not in json.dumps(seen[0][2], ensure_ascii=False), "札が master への要求に混ざっている"
+
+
+def test_borrow_refuses_when_the_voucher_cannot_be_redeemed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """引換券を札に換えられない拍(worker 不達・期限切れ・別の借り手)は断り — 貸与の hold は master の答えから運ぶ。"""
+
+    def fake_http(
+        method: str, url: str, headers: Mapping[str, str], body: JSON, timeout: float
+    ) -> handlers.HttpReply:
+        if url.endswith("/lease/claude"):
+            return handlers.HttpReply(200, _lease_answer())
+        return handlers.HttpReply(410, {"ok": False, "code": "voucher-expired", "error": "期限が過ぎた"})
+
+    monkeypatch.setattr(handlers, "_http_json", fake_http)
+    custody = handlers.CustodyHttp("http://master.test", "borrower-key")
+    refused = custody._borrow(CustodyLeaseBorrow(kind="claude", account="acct", purpose="p"))
+    assert isinstance(refused, LeaseRefused)
+    assert refused.status == 410 and refused.hold_expires_at_ms == _epoch_ms("2026-09-14T12:00:00.000Z")
+
+
+def test_borrow_without_a_declared_custody_url_refuses_without_asking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """預かり所の宣言が無い機体は借りない(既定の宿を発明しない — 段 10 lane 10d 便 2)。"""
+
+    def fake_http(*args: object, **kw: object) -> handlers.HttpReply:  # pragma: no cover - 呼ばれたら失敗
+        raise AssertionError("宣言が無いのに預かり所を叩いた")
+
+    monkeypatch.setattr(handlers, "_http_json", fake_http)
+    refused = handlers.CustodyHttp("", None)._borrow(
+        CustodyLeaseBorrow(kind="claude", account="acct", purpose="p")
+    )
+    assert isinstance(refused, LeaseRefused) and refused.status == 503
+    assert "AGORA_CUSTODY_URL" in refused.error
+
+
+def _epoch_ms(iso: str) -> int:
+    from datetime import datetime
+
+    return int(datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp() * 1000)

@@ -471,6 +471,7 @@
      (rule R27 "会話は自分で圧縮する — 閾値は会話の宣言・実測は agentd・腕は履歴からの再開(段 10f 便 2・agora-redesign #82・operator 2026-09-14 逐語 \"that routing agent should compact itself with some threshold\"): 会話の行の status.agent.compactAt(0〜100 の整数・任意・書き手 agora-conversation・契約 agora-kinds.json)は文脈の使用率の閾値。agentd は手番の終わり(settle-record と interrupt-job — 記録の腕)に材料の末尾から文脈の大きさを測り(judgment の deltas-of が DeltaBatch.context = {tokens, window} を組む: claude = 最後の assistant の message の usage の input + cacheRead + cacheWrite + output と result の modelUsage[その model].contextWindow / codex = token_count の last_token_usage〔app-server は tokenUsage.last〕の input + output と model_context_window〔modelContextWindow〕)、judgment.context-percent-of で %(切り捨て・上限 100・窓が無ければ None = 測れない)にして session ごとに AgentdState.context_by_session へ置く(with-context-percent — memory の cache・再起動で消え次の手番の終わりに測り直す)。claim の腕は候補の session が在る時だけ会話の行を鍵で 1 回読み(conversation-key-of・AcpGetRow)、compact-at-of と context-percent-for から judgment.compaction-due(宣言あり ∧ 実測あり ∧ 実測 ≥ 閾値)を求め、next-arm-for-job の 5 つ目の引数 compact に渡す。腕: compact ∧ 候補あり ∧ 手番の途中でない → rehydrate(ArmChoice.compacts = True・生きている候補は片付ける — 温かい cache を捨てて記録の service の履歴を縮めて畳むのが圧縮の意味)/ 手番の途中(backend が生)は defer が先 / 候補なしは launch。compacts の拍に計器 agentd_compactions_total{conversation, agentJobId, sessionId} と log 1 行(retire-reason-of が理由を名乗る)。turn-record の usage には書かない(契約に欄が無い — 耐久にする時は契約の便で contextTokens / contextWindow を足してから)。追補 3(依頼者 2026-09-14 17:1x・実測「agent が自分の会話 id を答えられず session の UUID を答えた」): 起こす手番(launch / resume / rehydrate)の charter.session_env(host の launch-spawn-env が非 auth の overlay として process の env に混ぜる)に AGORA_CONVERSATION_ID(会話の id = 帰属の conversationId)と AGORA_SEAT_OPENER(claim の腕が読んだ会話の行の spec.opener の逐語・読めなければ置かない)を置く — 1 点 judgment.charter-with-conversation-env(incarnation-charter-of が呼ぶ)。`ai tell` / `ai forward` / `ai artifact put` の差出人・著者はこの会話 id ちょうど(便 3 = CLI が読む側)。")
      (rule R28 "node の行は機体が自分で名乗る(段 10 lane 10d・agora-redesign #85・依頼者の回答 問 A = 案 1 — 既知の形 = k8s の kubelet が Node を自分で登記する): agentd は heartbeat の腕(agentd.join-tick)で、自分の名の生きた node の行が無ければ AcpCreate で作り、在れば spec を宣言へ揃える(AcpPutSpec — engine の SpecApplied は status の軸を触らない)。spec の形は judgment.node-spec-of(作る時: name・labels 空・capacity・streamCapability)/ node-spec-declared(揃える時: labels は行のまま — 宣言の外の名乗り〔会社境界の boundary 等〕を運ぶ)の 1 点。capacity は機体の宣言 file の [agentd].capacity(flag --capacity)ちょうどで join.capacity-of が読み、無い・読めない agentd は参加しない(runtime.settings_from_env)— 家(profile の置き場)の数から導かない(資格は預かり所の貸与)。作れない・揃えられない拍(書き手の断り等)は1 度だけ log して次の heartbeat で撃ち直し、揃えられなくても lease は書く(参加の生存を spec の書きの成否に結ばない)。契約 agora-kinds.json の node の writers.create / update = agentd(withdraw は acp-scheduling)。2026-09-13 までは仮の道具 register-node(札 acp-scheduling)を人が撃ち、pod の名が変わるたびに手で作り直し、pool の capacity 0 は CR の註の写しだった(実測 #85)。")
      (rule R29 "割り込みの約束 = 期限までに model が読む(段 10 lane 10n・agora-redesign #93・operator 2026-09-14 逐語 \"メッセージについてはキューするか割り込みするかっていうオプションがあるはずなのに、キューしか実装されてないんじゃないかっていう疑いがあって、ちゃんと割り込みできるように設計してほしい\"・既知の形 = cooperative cancel → hard cancel の 2 段・actor への signal): (1) 注入の行の名 = Message の id — agentd は SessionInterject の ref に Message の id を渡し、host は session.send の params.ref を器へ運び、claude の Dialogue.inject は user の行の最上位の uuid に写す(実測 conformance/interrupt-physics.md 2026-09-14: CLI は command_lifecycle でその綴りの運命を名乗る — queued / started〔model が読む拍〕/ completed / cancelled / discarded / refused。uuid は UUID の形でなくてよい)。(2) 読んだ証拠 = 材料の中の command_lifecycle started(claude)/ 止めた後の turn/started(codex — 注入の段が無く名も無いので未読を全部)で、judgment.claude-deltas-of / codex-event-deltas-of が kind system の entry と DeltaBatch.interrupt-reads にし、agentd.stream-records が judgment.interrupt-reads-of の 1 点で memory に写す。『注入の後に assistant の出来事が在る』は証拠にしない(実測: 道具の無い生成の途中の注入は畳まれず、次の手番になる — 偽陽性)。(3) 期限 = job の charter.interruptEscalationSeconds ちょうど(judgment.escalation-seconds-of-charter の 1 点・依頼者の追補 2026-09-14: 方策の行の値を Messaging の Plan.charterFor が会話の宣言で重ねて写す)— agentd は方策の行も会話の行も読まず、code に既定の定数を置かない。無い job は注入だけにして、渡した印と同じ 1 回の書きで条件 InterruptEscalationUndeclared を行に足す。(4) 注入から期限が経って読んだ証拠も止めた印も無い id が在れば(judgment.interrupts-due-for-escalation の 1 点)agentd.settle-interrupts が SessionEscalate(session.escalate)を 1 度出し、未読の id 全部に止めた時刻の印。host の headless-escalate-program は Dialogue.escalate の 1 点で判断(queued の注入が無い・既に出して答え待ち・手番が走っていない → 型付きに断る)、claude = control_request interrupt・codex = 出す物が無い(inject が turn/interrupt で止めて渡す)・tui = 断る。(5) 停止の合図の後の result(is_error・error_during_execution — interrupted という subtype は無い)は止めた段の終わりで手番の終わりではない: ClaudeDialogue は control_response の still_queued に注入の uuid が名指されていれば result を飲み(in_flight のまま・CLI が注入の行を同じ session の次の手番として即座に走らせる — 実測 6 ms・codex の inject と同じ扱い)、無ければ interrupted として報告する。停止の合図を出していない result の時点で queued のままの注入も同じ(CLI が次の手番として走らせる)— 走らずに終わった(cancelled / discarded / refused)拍に手番の終わり。agentd の deltas-of は control_response(still_queued)を kind system の entry にし、同じ材料の続く is_error の result も kind system(誤りではない)。(6) 印は行の status.interruptsRead {id: 証拠の seq} / status.interruptsEscalated {id: ms}(書き手 agentd・additive・append-only の map — judgment.interrupt-marks-status-of の 1 点)へ agentd.record-interrupt-marks が CAS で写し、断られた拍は memory の dirty で持ち越す。拾い直し(recover-job)は行の interruptsDelivered − interruptsRead − interruptsEscalated を拾い直した時刻から数える(judgment.recovered-interrupts-of)。(7) 受け取りは watch: AcpWatchSse が changed で即座に拍を起こし、同じ拍の window の読み直しが interrupts を cache に載せ、deliver-interrupts が同じ拍で渡す(拍の周期は保険)。(8) node の status.capabilities[kind].interrupt = steer-then-stop(claude)| stop(codex)(effects.AGENT-INTERRUPT-CAPABILITY・契約 agora-kinds.json)— 面の文言はこれに従う。")
+     (rule R30 "手番の資格は引換券で借り、置き場を名乗り、手番ごとに運ぶ(段 10 lane 10d 便 2・agora-redesign #85・依頼者の回答 問 1〜8 と追補 2 / 3・既知の形 = HashiCorp Boundary の controller〔口座の見出しと貸与〕と worker〔封じた資格〕の分離): (1) 借りは 2 段 — agentd は宣言された預かり所(join の [custody].url = **master**・既定の宿を発明しない)へ POST /lease/{kind} で頼み、答えの引換券(voucher)と口座の worker の基点(workerUrl)を受け、その worker へ POST /redeem で引換券を札に換える。札は master を通らず、引換券は一回限りで期限は貸与の hold ちょうど。どちらの段の断りも LeaseRefused でそのまま呼び手へ(409 の hold は master の答えの holdExpiresAt から)。判断は handlers.CustodyHttp._borrow の 1 点で、宣言の無い呼びは 503(_UNDECLARED)。(2) 機体は自分の置き場を宣言する — join の [agentd].place / --place / DOEFF_AGENTD_PLACE(閉語彙 effects.AGENTD-PLACES = company | personal・ACP の契約 agora-kinds.json の profile.spec.boundary と同じ綴り)を join.place-of が読み、node の spec.labels.place に名乗る(judgment.node-labels-of)。claim の頭で、結ばれた口座の profile の行が名乗る置き場(spec.boundary)と自分の置き場が**両方名乗っていて違う**時だけ job を CredentialPlaceMismatch で閉じる(judgment.credential-place-mismatch — 判らない側が在る拍は止めない。最後の門は預かり所の側に在る)。(3) 手番ごとの札は行に残さず、その手番の送りが運ぶ(追補 2・実弾 #92 = 預かり所が口座を更新した拍に、温かい session の再開の手番が誕生時の access token を使い回して 401 revoked): agentd は借りた札を SessionSend.session_env に載せ(judgment.turn-session-env-of の 1 点・claude は CLAUDE_CODE_OAUTH_TOKEN・codex は家の中の auth file が運ぶので空)、host の session.send は params.session_env を launch と同じ関所(policy.session-env-admission-error)に通してから headless-send-program へ渡し、降りた process の起こし直し(continue-headless-process)は行の誕生の env にこの手番の env を重ねて起こす。行へ永続化する launch の意図からは手番ごとの札を落とす(policy.overlay-without-turn-auth — 行にも log にも値を残さない)。手番ごとの env を運べない組み合わせ(tmux の器・mode = interrupt)は黙って落とさず型付きに断る。(4) 手番の CLI は agentd の env を継がない(追補 3・実弾 #95): 子 process が機体から継ぐ env は policy.inheritable-spawn-env の名簿(場所・家・地域・証明書・proxy・ssh の agent)だけで、会話ごとの値は charter(session_env と binding 由来の auth env)が運ぶ 1 点に閉じる — ACP_* / DOEFF_* / AGORA_BORROWER_KEY_PATH / AGORA_CUSTODY_URL / RECORD_SERVICE_URL は届かない。")
      (rule R10 "session は会話の資源・job は手番(温かい session・設計 17.4): 会話 → 生きている session の対応は行(自分が claim した同じ subject の agent-job の sessionHandle)と器の現況から導き、Bound の job の起こし方は judgment.hy の next-arm-for-job(閉語彙 effects.NextArm = launch | send | resume | rehydrate | defer — 家と機体の扱いは R20)の 1 点で決める — 同じ会話の生きて idle な session が在れば launch せず session.send(awaiting)だけ、sessionHandle はその session を指し、turn-record は手番ごと。手番の終わりは器の lifecycle multi_turn(launch.hy の閉語彙に足した語)で policy.hy の monitor が既存の turn-end の連言から行の turn_ended_at に刻み、agentd は job-step-of の turn-end(turn_ended_at > 手番の始まりの下限 ∧ 記録の進み)で読む — status は倒さず session は生かす。idle の寿命は AgentdSettings.session_idle_ttl_seconds の 1 点で、超過・Withdrawn・node の退役で session.cleanup。計器 agent-job-to-send は create → send のまま(温かい path で p99 < 2 秒)。")]
   :laws
     [(law interrupts-ride-the-running-turn-and-are-recorded-on-the-row
@@ -676,6 +677,30 @@
           (counterexample "実測を turn-record の status.usage に書く(契約に無い欄)— 読み手の zod / Hy の写しが行を落とすか、engine の statusByteBudget の外で書き手が第 2 の定義点を作る。耐久にするなら契約の便が先")
           (counterexample "手番の process に会話の id を渡さない(env は agentd 自身の AGORA_CUSTODY_URL 等の継承だけ)— agent が自分の会話 id を答えられず session の UUID を答える(依頼者の実測 2026-09-14 17:1x)。`ai tell` の差出人が名乗れない")
           (counterexample "opener を agentd が推測して置く(system 以外は machine と決め打つ)— operator が自分で開いた会話の手番が machine を名乗り、決裁書の門(law decision-paper-gates-bind-only-agora-opened-conversations)が誤って立つ。読めなければ置かない")])
+     (law turn-credential-is-borrowed-with-a-voucher-from-the-account-s-worker
+       :statement "for_all borrow of agentd a with declared custody master m: a issues POST m/lease/{kind}{account, purpose} and, on 200 with leaseId and holdExpiresAt and voucher and workerUrl, exactly one POST workerUrl/redeem{voucher} whose 200 body alone carries the credential (accessToken for claude, authJson for codex); LeaseGrant.hold_expires_at_ms = holdExpiresAt of the master answer; a non-200 at either step => LeaseRefused(status, error, hold from the master answer when known) and no credential; a 200 grant missing any of the four fields => LeaseRefused(malformed grant); no declared custody URL => LeaseRefused(503) with no request and no invented host; the decision is handlers.CustodyHttp._borrow alone"
+       :counterexamples
+         [(counterexample "預かり所の URL に既定値(http://custodian…)を残す — 宣言していない機体が黙って誰かの宿へ札を求め、会社の資格が非会社の機体へ渡り得る。宿は宣言ちょうど・無ければ断る")
+          (counterexample "master の答えの札(accessToken)をそのまま使う(引換券を換えない)— 封じた資格が master に居ることになり、master と worker の分割(会社の資格は会社の機体の中だけ)が消える")
+          (counterexample "引換券を複数回換える(失敗の再試行で同じ券を撃ち直す)— 一回限りの CAS が 409 を返すか、二重に貸した札が生きる。再試行は貸与からやり直す")
+          (counterexample "worker の断りを握って master の答えだけで LeaseGrant を組む(access_token = None のまま起こす)— 資格の無い process が起き、CLI が 401 で落ちるまで誰も気づかない")
+          (counterexample "hold の期限を worker の redeem の答えから導く — 期限の定義点が master の引換券の行と worker の 2 つになり、更新の見回りと貸与が別の期限を見る")])
+     (law the-machine-names-its-place-and-refuses-another-place-s-account
+       :statement "for_all agentd a: a.settings.place = join.place-of([agentd].place / --place / DOEFF_AGENTD_PLACE) in {company, personal} and node-spec-of(a) puts it in spec.labels.place; for_all Bound job j claimed by a with credential source = lease and profile row p of j's account: place(a) non-empty and boundary(p) non-empty and place(a) != boundary(p) => j is Ended with condition CredentialPlaceMismatch and no session is launched; boundary(p) unknown (row absent, field absent, outside the closed vocabulary) => the turn proceeds; the comparison is judgment.credential-place-mismatch alone"
+       :counterexamples
+         [(counterexample "置き場を宣言しない機体を参加させ、口座の置き場だけで配車する — 会社の口座の手番が個人の機体で起き、会社 profile の API 呼び出しが非会社機体から飛ぶ(operator 指示 2026-09-09 の禁止そのもの)")
+          (counterexample "判らない置き場(profile の行が読めない・欄が無い)を食い違いと読んで閉じる — 預かり所へ移る途中の口座の手番が全部落ちる。前段の門は判らないもので止めない")
+          (counterexample "置き場の語彙を機体ごとに決める(company-mac / mac-company)— ACP の契約の boundary と綴りが合わず、突合が常に偽になる。語彙は契約の閉語彙ちょうど")
+          (counterexample "食い違いの判定を claim の腕と配車の両方に書く — 判定点が 2 つになり、片方だけ直る。比べる点は judgment の 1 つ")])
+     (law the-turn-s-credential-rides-the-turn-and-the-cli-inherits-no-agentd-env
+       :statement "for_all warm send of agentd a for job j with lease l: SessionSend(j).session_env = judgment.turn-session-env-of(l) (claude: {CLAUDE_CODE_OAUTH_TOKEN: l.access_token}; codex or no lease: {}); for_all session.send received by the host with session_env e: e passes policy.session-env-admission-error (binding-owned keys and metered credentials refused) and backend = headless and mode = turn, otherwise the call is refused; for_all resume of a headless row r for that send: the spawned process env = launch-spawn-env(identity(r), overlay(r) merged with e) and overlay(r) carries no key of policy.TURN-AUTH-ENV-KEYS (the row never stores the turn credential); for_all headless spawn: the machine env reaching the child = policy.inheritable-spawn-env(os.environ) alone, so no ACP_* / DOEFF_* key and no custody / record / borrower address is inherited"
+       :counterexamples
+         [(counterexample "再開の process を行の launch_overlay の誕生の token で起こす — 預かり所が口座を更新した拍(実弾 #92 2026-09-14)に revoke 済みの札で起き、温かい会話の次の手番が 401 で落ちる")
+          (counterexample "手番ごとの札を行(launch_overlay)に上書きで残す — 秘密が sqlite の行と session.get の答えに載り、log と検分の眺めへ漏れる。行に残すのは非 auth の意図だけ")
+          (counterexample "session.send の session_env を launch と別の関所に通す(素通しする)— binding 所有キーの裏口が送りの口に開き、auth の合成の 1 点(R7)が壊れる")
+          (counterexample "運べない組み合わせ(tmux の器・mode = interrupt)で session_env を黙って落とす — 呼び手は新しい札で起きたと思い、実際は誕生の札の process が走る(#92 の形が別の口で再生する)")
+          (counterexample "手番の CLI に agentd の process env を丸ごと継がせる — 会話の中の道具が ACP の札と口・預かり所の URL・借り手札の path を読め、agentd の名で系を撃てる(実弾 #95 2026-09-14)")
+          (counterexample "継がせない名を否定の名簿(ACP_* / DOEFF_* を落とす)で書く — 新しい接頭の env が増えるたびに漏れ、名簿の改訂を忘れた拍に静かに破れる。名簿は許可の側で書く")])
      (law node-row-is-named-by-the-machine-from-its-declaration
        :statement "for_all heartbeat of agentd a with settings s: no live node row named s.node_name => AcpCreate(node, s.node_name, node-spec-of(s)); a live node row n with n.spec != node-spec-declared(n.spec, s) => AcpPutSpec(n, node-spec-declared(n.spec, s)) and the lease is written in the same heartbeat whether or not the spec write lands; s.node_capacity = int([agentd].capacity) and a declaration without it refuses to join"
        :counterexamples
@@ -1355,21 +1380,23 @@
        (setv spec (run (join-spec-of
                          (JoinArgv :items #("--server" "http://acp:8868" "--token-file" "/t/agentd.token"
                                             "--ownership" "company" "--ownership-proof" "gce-project:p-1"
-                                            "--capacity" "2"))
+                                            "--capacity" "2" "--place" "company"))
                          (JoinDeclaration :tables {"schema" "doeff.agentd-join.v1"
                                                    "agentd" {"node_name" "gcp-0"}
                                                    "record" {"url" "http://record:8874"}})
                          "/state")))
        (assert (isinstance spec JoinSpec))
        (assert (= spec.node-name "gcp-0"))
-       ;; 段 10 lane 10d(R28): node の capacity も同じ束で運ばれ、同じ読み(settings-from-env)が読む。
+       ;; 段 10 lane 10d(R28 / R30): node の capacity と機体の置き場も同じ束で運ばれ、同じ読み(settings-from-env)が読む。
        (assert (= spec.capacity 2))
+       (assert (= spec.place "company"))
        (setv plan (run (join-plan-of spec)))
        (assert (isinstance plan JoinPlan))
        (setv env (dict plan.env))
        (setv settings (settings-from-env env plan.host-argv))
        (assert (= settings.node-name "gcp-0"))
        (assert (= settings.node-capacity 2))
+       (assert (= settings.place "company"))
        (assert (= settings.backend-kind "headless"))
        (assert (= settings.ownership (Ownership :grade "company" :proof "gce-project:p-1")))
        (assert (is settings.record-enabled True))
@@ -1378,7 +1405,7 @@
        ;; 判断は join.record-sink-of の 1 点(宣言の検・届くかは検めない)。焦点の検は tests/sessionhost_acp_record_deftests.hy。
        (assert (= (len (lfor line join-lines :if (.startswith line "(defk record-sink-of ") line)) 1))
        (setv unsinked (dict (. (run (join-plan-of (run (join-spec-of
-                                                          (JoinArgv :items #("--server" "http://acp:8868" "--token-file" "/t" "--capacity" "1"))
+                                                          (JoinArgv :items #("--server" "http://acp:8868" "--token-file" "/t" "--capacity" "1" "--place" "personal"))
                                                           (JoinDeclaration :tables {}) "/state"))))
                                env)))
        (setv refused-for "")
@@ -1390,7 +1417,7 @@
        ;; 等級だけ(proof なし)は断る。
        (setv refused False)
        (try
-         (run (join-spec-of (JoinArgv :items #("--server" "http://a" "--token-file" "/t" "--ownership" "company" "--capacity" "1"))
+         (run (join-spec-of (JoinArgv :items #("--server" "http://a" "--token-file" "/t" "--ownership" "company" "--capacity" "1" "--place" "company"))
                             (JoinDeclaration :tables {}) "/state"))
          (except [ValueError]
            (setv refused True)))
@@ -1813,6 +1840,68 @@
        (assert (isinstance read-marks dict))
        (assert (in "m-i1" read-marks) "読んだ印は started の seq(R29)")
        (assert (= (get read-after "phase") "Running") "手番は続く(R29)"))
+     (deftest test-adr-doe-agents-012-turn-credential-rides-the-turn
+       ;; R30 の針(構造): 借りの 2 段は handlers の 1 点・預かり所の URL の既定値は無い・置き場の語彙と読みは
+       ;; 1 点ずつ・手番ごとの env の判断は judgment の 1 点・送りの関所は launch と同じ 1 点・行に札を残さない・
+       ;; 継ぐ env は許可の名簿。反例(挙動)は test_sessionhost_acp.py と test_sessionhost_headless.py の 9 本。
+       (setv handler-lines (code-lines (/ ACP-DIR "handlers.py")))
+       (assert (= (len (lfor line handler-lines :if (.startswith line "    def _borrow(self, effect: CustodyLeaseBorrow) -> LeaseOutcome:") line)) 1)
+               "借りの判断は CustodyHttp._borrow の 1 点(R30)")
+       (assert (= (len (lfor line handler-lines :if (in "f\"{self._base_url}/lease/{effect.kind}\"" line) line)) 1)
+               "貸与は master の /lease/{kind} へ 1 度(R30)")
+       (assert (= (len (lfor line handler-lines :if (in "f\"{worker_url.rstrip('/')}/redeem\"" line) line)) 1)
+               "引換券を換えるのは口座の worker の /redeem へ 1 度(R30)")
+       (assert (any (gfor line handler-lines (in "_UNDECLARED" line)))
+               "宣言の無い預かり所は型付きに断る(R30)")
+       (for [path (sorted (.glob (/ ACP-DIR "..") "**/*.py"))]
+         (for [line (code-lines path)]
+           (assert (not-in "CUSTODY_URL_DEFAULT" line)
+                   f"預かり所の URL に既定値を置かない(R30): {path.name}: {line}")))
+       (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
+       (assert (any (gfor line effects-lines (.startswith line "AGENTD_PLACES")))
+               "置き場の閉語彙は effects の 1 点(R30)")
+       (assert (any (gfor line effects-lines (.startswith line "PLACE_ENV = \"DOEFF_AGENTD_PLACE\"")))
+               "置き場の env の名は effects の 1 点(R30)")
+       (assert (any (gfor line effects-lines (in "CONDITION_CREDENTIAL_PLACE_MISMATCH" line)))
+               "食い違いの条件の名は effects の 1 点(R30)")
+       (setv join-lines (code-lines (/ ACP-DIR "join.hy")))
+       (assert (= (len (lfor line join-lines :if (.startswith line "(defk place-of ") line)) 1)
+               "置き場の読みは join.place-of の 1 点(R30)")
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (for [name ["credential-place-of" "credential-place-mismatch" "turn-session-env-of" "node-labels-of"]]
+         (assert (= (len (lfor line judgment-lines :if (.startswith line f"(defk {name} ") line)) 1) name))
+       (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
+       (assert (= (len (lfor line agentd-lines :if (in "(credential-place-mismatch settings.place boundary)" line) line)) 1)
+               "置き場の突合は claim の腕で 1 度(R30)")
+       (assert (= (len (lfor line agentd-lines :if (in "(turn-session-env-of lease)" line) line)) 1)
+               "手番ごとの env を組む点は 1 つ(R30)")
+       (for [line agentd-lines]
+         (assert (not-in "CLAUDE_CODE_OAUTH_TOKEN" line)
+                 f"agentd.hy は札の env の名を直に持たない(R30): {line}"))
+       (setv policy-lines (code-lines (/ SESSIONHOST-DIR "policy.hy")))
+       (for [name ["session-env-admission-error" "overlay-without-turn-auth" "inheritable-spawn-env" "spawn-env-inherited?"]]
+         (assert (= (len (lfor line policy-lines :if (.startswith line f"(deff {name} ") line)) 1) name))
+       (assert (any (gfor line policy-lines (.startswith line "(setv TURN-AUTH-ENV-KEYS")))
+               "手番ごとの資格の env の名は policy の 1 点(R30)")
+       (assert (any (gfor line policy-lines (.startswith line "(setv SPAWN-INHERITED-ENV-KEYS")))
+               "継ぐ env は許可の名簿(R30)")
+       (setv host-lines (code-lines (/ SESSIONHOST-DIR "host.hy")))
+       (assert (= (len (lfor line host-lines :if (in "(session-env-admission-error session-env \"session.send\")" line) line)) 1)
+               "送りの口の関所は launch と同じ 1 点(R30)")
+       (assert (any (gfor line host-lines (in "(headless-send-program sid message awaiting session-env)" line)))
+               "手番ごとの env は送りの腕へ渡る(R30)")
+       (setv launch-lines (code-lines (/ SESSIONHOST-DIR "launch.hy")))
+       (assert (= (len (lfor line launch-lines :if (in "(session-env-admission-error session-env \"session.launch\")" line) line)) 1)
+               "launch の関所も同じ 1 点(R30)")
+       (setv headless-lines (code-lines (/ SESSIONHOST-DIR "headless.hy")))
+       (for [lines [launch-lines headless-lines]]
+         (assert (= (len (lfor line lines :if (in ":launch-overlay {\"session_env\" (overlay-without-turn-auth session-env)" line) line)) 1)
+                 "行には手番ごとの札を残さない(R30)"))
+       (assert (any (gfor line headless-lines (in "(| (dict (or (.get overlay \"session_env\") {}))" line)))
+               "起こし直しは誕生の env にこの手番の env を重ねる(R30)")
+       (setv substrate-lines (code-lines (/ SESSIONHOST-DIR "substrate_headless.hy")))
+       (assert (= (len (lfor line substrate-lines :if (in "(inheritable-spawn-env (dict os.environ))" line) line)) 1)
+               "機体から継ぐ env は名簿の 1 点を通る(R30)"))
      (deftest test-adr-doe-agents-012-interrupts-ride-the-running-turn
        ;; R21 の針(構造): 判断は judgment.hy の 1 点ずつ・配達は agentd.deliver-interrupts の 1 点・agentd は器の作法の語を
        ;; 持たない・claude の headless は stream-json の入力・sessionhost の割り込みの口は mode = interrupt の 1 語。

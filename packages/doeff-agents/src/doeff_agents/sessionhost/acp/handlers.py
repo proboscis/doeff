@@ -148,8 +148,8 @@ from doeff_agents.sessionhost.acp.effects import (
 Dispatcher: TypeAlias = Callable[[EffectBase, K], "Resume | Pass"]
 
 #: ACP の URL に既定は無い(段 10 lane 10h 便 2 — 宣言 ACP_DAEMON_URL ちょうど・localhost の bridge は段 9p で退役)。
-#: custody の URL の既定(dotfiles agentcli/lease.py と同じ綴り)— env の名は effects.py。
-CUSTODY_URL_DEFAULT = "http://127.0.0.1:8320"
+#: custody の URL に既定は無い(段 10 lane 10d 便 2・agora-redesign #85)— 宣言(join の [custody].url / --custody →
+#: AGORA_CUSTODY_URL)ちょうど。宣言の無い機体は借りない(custody_declared が偽の node は口座の要る job を起こさない)。
 BORROWER_KEY_PATH_DEFAULT = "~/.local/state/agora/borrower-key"
 #: agentd の書きが乗る source(ACP の cpSource — 登録の無い source は無制限)。
 ACP_WRITE_SOURCE = "agentd"
@@ -670,15 +670,25 @@ class CustodyHttp:
     """預かり所の貸出と返却。身元は借り手札(``X-Borrower-Key``)。"""
 
     def __init__(self, base_url: str, borrower_key: str | None) -> None:
+        #: 宣言の無い機体は空(借りの要求はここで断る — 既定の宿を発明しない・段 10 lane 10d 便 2)。
         self._base_url = base_url.rstrip("/")
         self._headers: dict[str, str] = {}
         if borrower_key:
             self._headers["X-Borrower-Key"] = borrower_key
 
+    #: 宣言が無い時の断り(呼び手には LeaseRefused として返る — 到達不能と同じ扱いで job は終端へ)。
+    _UNDECLARED = LeaseRefused(
+        503,
+        "custody URL is not declared (join の [custody].url / --custody → AGORA_CUSTODY_URL) — 既定の宿は無い",
+        None,
+    )
+
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(effect, CustodyLeaseBorrow):
             return Resume(k, self._borrow(effect))
         if isinstance(effect, CustodyLeaseRevoke):
+            if not self._base_url:
+                return Resume(k, False)
             reply = _http_json(
                 "POST",
                 f"{self._base_url}/lease/{effect.lease_id}/revoke",
@@ -690,6 +700,12 @@ class CustodyHttp:
         return Pass(effect, k)
 
     def _borrow(self, effect: CustodyLeaseBorrow) -> LeaseOutcome:
+        """借りは 2 段(預かり所の契約 v2・段 10 lane 10d): master へ貸与を頼んで**引換券**と口座の worker の基点を受け、
+        その worker で引換券を札に換える。札は master を通らない(引換券は一回限り・期限は貸与の hold ちょうど)。
+        どちらの段の断りもそのまま LeaseRefused(呼び手は今日と同じ扱い — 409 の hold も master の答えから運ぶ)。
+        """
+        if not self._base_url:
+            return self._UNDECLARED
         reply = _http_json(
             "POST",
             f"{self._base_url}/lease/{effect.kind}",
@@ -703,15 +719,31 @@ class CustodyHttp:
                 reply.status, _error_text(reply), _epoch_ms_of_iso(hold) if hold else None
             )
         lease_id = _str_field(reply.body, "leaseId")
-        if lease_id is None or hold is None:
-            return LeaseRefused(reply.status, "malformed grant (no leaseId / holdExpiresAt)", None)
-        auth_json_value = reply.body.get("authJson")
+        voucher = _str_field(reply.body, "voucher")
+        worker_url = _str_field(reply.body, "workerUrl")
+        if lease_id is None or hold is None or voucher is None or worker_url is None:
+            return LeaseRefused(
+                reply.status,
+                "malformed grant (no leaseId / holdExpiresAt / voucher / workerUrl)",
+                None,
+            )
+        redeemed = _http_json(
+            "POST",
+            f"{worker_url.rstrip('/')}/redeem",
+            self._headers,
+            {"voucher": voucher},
+            HTTP_TIMEOUT_SECONDS,
+        )
+        if redeemed.status != 200:
+            # 引換券を札に換えられなかった拍(worker 不達・期限切れ・別の借り手)— 貸与の hold は master の答えから運ぶ
+            return LeaseRefused(redeemed.status, _error_text(redeemed), _epoch_ms_of_iso(hold))
+        auth_json_value = redeemed.body.get("authJson")
         return LeaseGrant(
             lease_id=lease_id,
             kind=effect.kind,
             renewed=reply.body.get("renewed") is True,
             hold_expires_at_ms=_epoch_ms_of_iso(hold),
-            access_token=_str_field(reply.body, "accessToken"),
+            access_token=_str_field(redeemed.body, "accessToken"),
             auth_json=None
             if auth_json_value is None
             else json.dumps(auth_json_value, ensure_ascii=False),
@@ -807,16 +839,18 @@ class SessionRpc:
         if isinstance(effect, (SessionInterject, SessionEscalate)):
             return self._interrupt_arm(effect)
         if isinstance(effect, SessionSend):
-            self._client.request(
-                "session.send",
-                {
-                    "session_id": effect.session_id,
-                    "message": effect.text,
-                    "literal": True,
-                    "enter": True,
-                    "awaiting": effect.awaiting,
-                },
-            )
+            params: JSONObject = {
+                "session_id": effect.session_id,
+                "message": effect.text,
+                "literal": True,
+                "enter": True,
+                "awaiting": effect.awaiting,
+            }
+            # 追補 2(実弾 #92): この手番の env は空でない時だけ載せる(器が起こし直す時に重ねる)。
+            # 値は秘密 — ここでも log に出さない。
+            if effect.session_env:
+                params["session_env"] = dict(effect.session_env)
+            self._client.request("session.send", params)
             return None
         return self._cleanup(effect.session_id)
 

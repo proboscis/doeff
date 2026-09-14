@@ -66,6 +66,7 @@
   iso-format
   make-cause
   monitor-cycle
+  session-env-admission-error
   tail-chars
   turn-stalled])
 (import doeff_agents.sessionhost.schema [validate-against-schema schema-admission-error])
@@ -1395,12 +1396,34 @@
     (setv ref (.get p "ref" ""))
     (when (not (isinstance ref str))
       (raise (RuntimeError f"invalid params for session.send: ref must be a string (got: {ref !r})")))
+    ;; 段 10 lane 10d 便 2 追補 2(実弾 #92): session_env = **この手番の** env(預かり所の貸与の札は
+    ;; 手番ごとに回る)。降りた process を起こし直す時、行に残った誕生の env ではなくこの値を重ねる。
+    ;; admission は launch と同じ 1 点(binding 所有キー・従量課金 credential は送りの口でも受けない)。
+    (setv session-env (or (.get p "session_env") {}))
+    (when (not (isinstance session-env dict))
+      (raise (RuntimeError
+               f"invalid params for session.send: session_env must be an object (got: {session-env !r})")))
+    (setv send-env-error (session-env-admission-error session-env "session.send"))
+    (when (is-not send-env-error None)
+      (raise (RuntimeError send-env-error)))
+    ;; 手番ごとの env を運べない組み合わせは黙って落とさず断る(落とすと誕生の札で手番が走る =
+    ;; まさに #92 の形): tmux の器には手番ごとの env が無く、mode = interrupt は走っている手番へ
+    ;; 本文を注ぐだけで process を起こさない。
+    (when session-env
+      (when (not (headless-backend? config))
+        (raise (RuntimeError
+                 (+ "session.send: session_env is only carried by the headless backend "
+                    f"(backend: {config.backend}). The tmux container has no per-turn env."))))
+      (when (= mode SEND-MODE-INTERRUPT)
+        (raise (RuntimeError
+                 (+ "session.send: session_env belongs to mode = " SEND-MODE-TURN
+                    " — an interrupt is poured into the turn already in flight and starts no process.")))))
     (run-hosted config actor
                 (cond
                   (and (headless-backend? config) (= mode SEND-MODE-INTERRUPT))
                   (headless-inject-program sid message ref)
                   (headless-backend? config)
-                  (headless-send-program sid message awaiting)
+                  (headless-send-program sid message awaiting session-env)
                   True
                   (send-program sid message literal enter awaiting)))
     (record-command actor sid "session.send" message)
