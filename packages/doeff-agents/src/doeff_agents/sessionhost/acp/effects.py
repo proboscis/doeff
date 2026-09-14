@@ -46,6 +46,8 @@ NODE_KIND = "node"
 MESSAGE_KIND = "message"
 TURN_RECORD_KIND = "turn-record"
 PROFILE_KIND = "profile"
+#: 段 10f 便 2(agora-redesign #82): 会話の行(status.agent.compactAt = 文脈の使用率の閾値・agentd は読むだけ)。
+CONVERSATION_KIND = "conversation"
 AGORA_KINDS_NAMESPACE = "default"
 #: agent-job の phase の閉語彙(AgentJob.hs phaseWord)— agentd が書くのは Running / Ended。
 PHASE_PENDING = "Pending"
@@ -745,6 +747,9 @@ class ArmChoice:
     #: 起こす前に片付ける温かい session(生きて idle だが家が違う — cache は失効したので、同じ会話の器を
     #: 2 つ生かさない)。None = 片付けない。
     retire: str | None
+    #: 段 10f 便 2(agora-redesign #82): この rehydrate は文脈の圧縮(会話の宣言 compactAt を直前の手番の文脈の使用率が
+    #: 超えた)のために選ばれた — 同じ家の温かい session を送らず片付けて履歴から再開する。計器 agentd_compactions_total の根拠。
+    compacts: bool = False
 
 
 @dataclass(frozen=True)
@@ -807,6 +812,11 @@ class DeltaBatch:
     #: 段 9f lane 9f-2: 切る前の本文(契約 record-service eventIn の形・producerSeq = entries の seq)。entries(見出し)は
     #: ここから judgment.headline-of-body の 1 点で導く(本文は切らない — 切り詰めは service の責務)。
     bodies: tuple[JSONObject, ...] = ()
+    #: 段 10f 便 2(agora-redesign #82): 材料の末尾で測った文脈の大きさ ``{"tokens": int, "window": int | None}``
+    #: (claude = 最後の assistant の message の usage の入力側 + 出力・window = result の modelUsage[model].contextWindow /
+    #: codex = token_count の last_token_usage と model_context_window)。None = 材料に無い。turn-record の usage には
+    #: 同等の欄が無い(和は文脈の大きさではない)ので agentd が自分で測る — 判断は judgment.context-percent-of の 1 点。
+    context: JSONObject | None = None
 
 
 @dataclass(frozen=True)
@@ -837,6 +847,8 @@ RECORD_APPEND_ERROR: RecordAppendWord = "error"
 METRIC_RECORD_APPEND_TOTAL = "agentd_record_append_total"
 METRIC_RECORD_SPOOL_DEPTH = "agentd_record_spool_depth"
 METRIC_RECORD_LAG_SEQ = "agentd_record_lag_seq"
+#: 段 10f 便 2(agora-redesign #82): 会話の宣言 compactAt を超えたので履歴からの再開で文脈を縮めた回数(label = conversation)。
+METRIC_COMPACTIONS_TOTAL = "agentd_compactions_total"
 #: この batch だけの決まった断り(契約 record-service.json: 400 malformed・422 unstorable — 撃ち直しても通らない)。札(401 / 403)・
 #: 窓(429)・届かない・5xx は batch ではなく系の側(機体の設定か一時的)なので含めない — 残しておけば、設定を直した後に
 #: 自動で送れる(judgment.record-append-word-of)。
@@ -1078,6 +1090,10 @@ class AgentdState:
     record_backoff_ms: int | None = None
     #: 最後に計器へ出した spool の深さ(None = まだ — 変わった時だけ agentd_record_spool_depth を出す)。
     record_spool_depth: int | None = None
+    #: 段 10f 便 2(agora-redesign #82): session ごとの直前の手番の文脈の使用率(%・手番の終わりに材料の末尾から測る —
+    #: judgment.context-percent-of)。次の手番の claim が会話の宣言 compactAt と比べる材料(judgment.compaction-due)。
+    #: memory の cache — agentd の再起動で消え、次の手番の終わりに測り直す(turn-record に同等の欄が無い間の実測)。
+    context_by_session: tuple[tuple[str, int], ...] = ()
 
 
 # ------------------------------------------------------------------ 要求(ACP)
