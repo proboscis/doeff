@@ -15,6 +15,8 @@
 ;;;   * fake で一周(headless): 1 手番目の終わりに実測が state に載る → 会話の行が compactAt を宣言し実測が超えていれば
 ;;;     2 手番目は温かい session を片付けて rehydrate(prompt に「これまでの会話」)・計器 agentd_compactions_total・
 ;;;     宣言が無い会話は send のまま・閾値の下も send のまま
+;;;   * 追補 3(会話の身元の env): 起こす手番(launch / rehydrate / resume)の params の session_env に AGORA_CONVERSATION_ID と
+;;;     AGORA_SEAT_OPENER(会話の行の opener の逐語)が載る・行が読めなければ opener は置かない・呼び手の session_env は残る
 ;;; HTTP も subprocess も無い。
 
 (require doeff-hy.macros [deftest])
@@ -28,12 +30,14 @@
   AcpRow
   AgentdSettings
   ArmChoice
+  CONVERSATION-ID-ENV
   CONVERSATION-KIND
   DeltaBatch
   MESSAGE-KIND
   METRIC-COMPACTIONS-TOTAL
   NODE-KIND
   PHASE-BOUND
+  SEAT-OPENER-ENV
   TURN-RECORD-KIND])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeRecord FakeSessions])
 (import doeff_agents.sessionhost.acp.judgment [
@@ -42,6 +46,8 @@
   context-percent-for
   context-percent-of
   conversation-key-of
+  conversation-opener-of
+  charter-with-conversation-env
   deltas-of
   with-context-percent])
 (import doeff_agents.sessionhost.acp.runtime [initial-state run-tick])
@@ -172,6 +178,13 @@
 ;; fake で一周(headless — 実測は events の末尾から)
 ;; ---------------------------------------------------------------------------
 
+(defn #^ dict env-of [#^ dict params]
+  "launch / resume の params の session_env を object として読む(型を絞る — 違えば赤)。"
+  (setv env (.get params "session_env"))
+  (assert (isinstance env dict) f"session_env が object でない: {env !r}")
+  env)
+
+
 (defn #^ AcpRow row-of [#^ str namespace #^ str kind #^ str resource-id #^ dict spec #^ (| dict None) status]
   (AcpRow :namespace namespace :key f"{namespace}:{kind}:{resource-id}" :kind kind :resource-id resource-id
           :version "v1" :generation 1 :created-at-ms 500 :labels {} :payload {} :spec spec :status status))
@@ -295,3 +308,41 @@
   (assert (= plain.sessions.cleanups []) plain.local.logs)
   (assert (= (.sid plain "j-2") kept))
   (assert (= (lfor m plain.local.metrics :if (= (get m "metric") METRIC-COMPACTIONS-TOTAL) m) [])))
+
+
+;; ---------------------------------------------------------------------------
+;; 追補 3(依頼者 2026-09-14 17:1x): 手番の CLI の env に会話の身元
+;; ---------------------------------------------------------------------------
+
+(deftest test-charter-env-carries-the-conversation-id-and-the-opener
+  ;; 純関数: 呼び手の session_env は残し、AGORA_CONVERSATION_ID と AGORA_SEAT_OPENER を置く。opener が読めなければ置かない。
+  (setv charter {"agent_type" "claude" "session_env" {"FOO" "1"}})
+  (setv env (get (run (charter-with-conversation-env charter CONVERSATION "system")) "session_env"))
+  (assert (= env {"FOO" "1" CONVERSATION-ID-ENV CONVERSATION SEAT-OPENER-ENV "system"}) env)
+  (setv bare (get (run (charter-with-conversation-env {"agent_type" "claude"} CONVERSATION None)) "session_env"))
+  (assert (= bare {CONVERSATION-ID-ENV CONVERSATION}) bare)
+  (assert (= (get charter "session_env") {"FOO" "1"}) "元の charter の session_env を変えた")
+  (assert (= (run (conversation-opener-of (conversation-row None))) "system"))
+  (assert (is (run (conversation-opener-of None)) None)))
+
+
+(deftest test-every-incarnation-arm-puts-the-conversation-identity-in-the-process-env
+  ;; fake で一周: launch(1 手番目)・rehydrate(圧縮)の params の session_env に会話の id と opener(会話の行 = system)が載る。
+  (setv world (World {"model" "claude-opus-5" "compactAt" 60}))
+  (setv warm (.run-first-turn world 60000))
+  (setv launched (env-of (get world.sessions.launches 0)))
+  (assert (= (get launched CONVERSATION-ID-ENV) CONVERSATION) launched)
+  (assert (= (get launched SEAT-OPENER-ENV) "system") launched)
+  (.put-row world.acp (message-row "m-2" "合言葉は何でしたか" (+ world.local.now-ms 100)))
+  (.put-row world.acp (bound-row "j-2" ["m-2"] warm))
+  (.tick world 1000)
+  (setv rehydrated (env-of (get world.sessions.launches -1)))
+  (assert (= (get rehydrated CONVERSATION-ID-ENV) CONVERSATION) rehydrated)
+  (assert (= (get rehydrated SEAT-OPENER-ENV) "system") rehydrated)
+  ;; 会話の行が無い世界(旧の会話・読めない拍)でも id は載り、opener は置かない。
+  (setv orphan (World None))
+  (.delete-row orphan.acp f"{AGORA-KINDS-NAMESPACE}:{CONVERSATION-KIND}:{CONVERSATION}")
+  (.run-first-turn orphan 10)
+  (setv env (env-of (get orphan.sessions.launches 0)))
+  (assert (= (get env CONVERSATION-ID-ENV) CONVERSATION) env)
+  (assert (not-in SEAT-OPENER-ENV env) env))

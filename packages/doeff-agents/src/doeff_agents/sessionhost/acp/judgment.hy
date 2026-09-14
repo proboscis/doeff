@@ -61,6 +61,7 @@
   CONDITION-INTERRUPTED
   CONDITION-RECORD-UNAVAILABLE
   CONDITION-SESSION-LOST
+  CONVERSATION-ID-ENV
   CONVERSATION-KIND
   CREDENTIAL-SOURCE-HOME
   CREDENTIAL-SOURCE-LEASE
@@ -131,6 +132,7 @@
   RecordUnsent
   RecordedTurns
   Refused
+  SEAT-OPENER-ENV
   SESSION-OBSERVED-BUSY
   SESSION-OBSERVED-IDLE
   SESSION-TERMINAL-STATUSES
@@ -1042,15 +1044,43 @@
   next)
 
 
-(defk incarnation-charter-of [plan choice session-id bodies history attribution backend-kind lease homes-root]
+(defk conversation-opener-of [row]
+  {:pre [(: row (| AcpRow None))]
+   :post [(: % (| str None))]}
+  "会話の行の spec.opener の逐語(契約 agora-kinds.json conversation.spec.opener — operator / machine / system)。行が無い・欄が
+   文字列でない = None(発明しない — env には置かない)。"
+  (when (is row None)
+    (return None))
+  (setv opener (.get row.spec "opener"))
+  (if (and (isinstance opener str) opener) opener None))
+
+
+(defk charter-with-conversation-env [charter conversation-id opener]
+  {:pre [(: charter dict) (: conversation-id str) (: opener (| str None))]
+   :post [(: % dict)]}
+  "段 10f 便 2 追補 3(agora-redesign #82): 手番の process の env(charter.session_env — 非 auth の overlay)に会話の身元を置く 1 点:
+   AGORA_CONVERSATION_ID = 会話の id・AGORA_SEAT_OPENER = 会話の行の opener の逐語(読めなければ置かない)。呼び手が置いた
+   他の session_env の欄は残す。"
+  (setv next (dict charter))
+  (setv env (dict (or (.get charter "session_env") {})))
+  (setv (get env CONVERSATION-ID-ENV) conversation-id)
+  (when (is-not opener None)
+    (setv (get env SEAT-OPENER-ENV) opener))
+  (setv (get next "session_env") env)
+  next)
+
+
+(defk incarnation-charter-of [plan choice session-id bodies history attribution backend-kind lease homes-root opener]
   {:pre [(: plan LaunchPlan) (: choice ArmChoice) (: session-id str) (: bodies tuple) (: history str)
-         (: attribution dict) (: backend-kind str) (: lease (| LeaseGrant None)) (: homes-root str)]
+         (: attribution dict) (: backend-kind str) (: lease (| LeaseGrant None)) (: homes-root str) (: opener (| str None))]
    :post [(: % tuple)]}
   "起こす session の charter を組む 1 点(launch / resume / rehydrate — send は起こさない): 鋳造した id →
+   会話の身元の env(段 10f 便 2 追補 3 — 会話の id は帰属の conversationId・opener は会話の行から)→
    (rehydrate)これまでの会話 → (headless の起こす腕)郵便の本文 → 借りた札の家 → 帰属。戻り =
    #(charter auth-file-or-None)(codex の借りた auth.json の置き場 — 書くのは呼び手の effect)。"
   (<- with-id dict (charter-with-session-id plan.charter session-id))
-  (setv charter with-id)
+  (<- with-env dict (charter-with-conversation-env with-id (str (get attribution "conversationId")) opener))
+  (setv charter with-env)
   (when (= choice.arm NEXT-ARM-REHYDRATE)
     (<- with-history dict (charter-with-history charter history))
     (setv charter with-history))

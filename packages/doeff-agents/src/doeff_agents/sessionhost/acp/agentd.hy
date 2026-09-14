@@ -260,6 +260,7 @@
   next-arm-for-job
   compact-at-of
   compaction-due
+  conversation-opener-of
   context-percent-for
   context-percent-of
   conversation-key-of
@@ -569,10 +570,10 @@
   fold)
 
 
-(defk incarnate [settings plan choice view session-id lease bodies job-id subject exclude]
+(defk incarnate [settings plan choice view session-id lease bodies job-id subject exclude opener]
   {:pre [(: settings AgentdSettings) (: plan LaunchPlan) (: choice ArmChoice)
          (: view (| SessionView None)) (: session-id str) (: lease (| LeaseGrant None))
-         (: bodies tuple) (: job-id str) (: subject str) (: exclude tuple)]
+         (: bodies tuple) (: job-id str) (: subject str) (: exclude tuple) (: opener (| str None))]
    :post [(: % (| SessionView SessionRefused))]}
   "起こし方の腕を器に写す: send = 既存の session(眺めはそのまま)/ resume = 会話の前の session
    (choice.source)から同じ家で cold に起こし直す(cache を保つ)/
@@ -594,7 +595,7 @@
                                      f"{fold.size-bytes} bytes, history read {(- read-ended read-started)} ms)"))))
         (<- attribution dict (session-attribution-of plan job-id subject choice.arm))
         (<- built tuple (incarnation-charter-of plan choice session-id bodies history attribution
-                                                settings.backend-kind lease settings.homes-root))
+                                                settings.backend-kind lease settings.homes-root opener))
         (setv charter (get built 0))
         (setv auth-file (get built 1))
         (when (and (is-not auth-file None) (is-not lease None) (is-not lease.auth-json None))
@@ -609,9 +610,9 @@
               launched)))))
 
 
-(defk start-claimed [settings state row plan choice view session-id now-ms]
+(defk start-claimed [settings state row plan choice view session-id now-ms opener]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: row AcpRow) (: plan LaunchPlan)
-         (: choice ArmChoice) (: view (| SessionView None)) (: session-id str) (: now-ms int)]
+         (: choice ArmChoice) (: view (| SessionView None)) (: session-id str) (: now-ms int) (: opener (| str None))]
    :post [(: % AgentdState)]}
   "claim が着地した job を起こす: inputs の郵便を読み、札を借り、家の違う温かい session を片付け
    (choice.retire)、腕を器に写す。resume が断られたら judgment.fallback-arm-of の腕(rehydrate)で同じ id の
@@ -636,7 +637,7 @@
           (<- why str (retire-reason-of choice view job-id))
           (<- (retire-sessions #(choice.retire) why)))
         (<- attempted (| SessionView SessionRefused)
-            (incarnate settings plan choice view session-id lease bodies job-id subject exclude))
+            (incarnate settings plan choice view session-id lease bodies job-id subject exclude opener))
         (setv outcome attempted)
         (setv used choice)
         (when (isinstance attempted SessionRefused)
@@ -645,7 +646,7 @@
             (<- (LogLine :text (+ f"agentd: resume of session {choice.source} for job {job-id} refused "
                                        f"({attempted.error-code}): {attempted.error}; rehydrating")))
             (<- retried (| SessionView SessionRefused)
-                (incarnate settings plan fallback None session-id lease bodies job-id subject exclude))
+                (incarnate settings plan fallback None session-id lease bodies job-id subject exclude opener))
             (setv outcome retried)
             (setv used fallback)))
         (if (isinstance outcome SessionRefused)
@@ -693,12 +694,14 @@
     (setv view looked))
   (<- home dict (session-affinity-key-of plan))
   (<- effort (| str None) (effort-of-plan plan))
-  ;; 段 10f 便 2(agora-redesign #82): 自己圧縮の材料 — 会話の宣言 compactAt(会話の行を鍵で 1 回読む)と、候補の session の
-  ;; 直前の手番の文脈の使用率(手番の終わりに測った memory の cache)。候補が無ければ縮める文脈も無いので読まない。
+  ;; 段 10f 便 2(agora-redesign #82): 会話の行を鍵で 1 回読む — 追補 3 の手番の env(spec.opener)と自己圧縮の材料
+  ;; (status.agent.compactAt)。行が無い(読めない)手番は env の opener を置かず、圧縮もしない(発明しない)。
+  (<- conversation-key str (conversation-key-of subject))
+  (<- conversation-row (| AcpRow None) (AcpGetRow :key conversation-key))
+  (<- opener (| str None) (conversation-opener-of conversation-row))
+  ;; 自己圧縮: 会話の宣言 compactAt と、候補の session の直前の手番の文脈の使用率(手番の終わりに測った memory の cache)。
   (setv compact False)
   (when (is-not candidate None)
-    (<- conversation-key str (conversation-key-of subject))
-    (<- conversation-row (| AcpRow None) (AcpGetRow :key conversation-key))
     (<- compact-at (| int None) (compact-at-of conversation-row))
     (<- percent (| int None) (context-percent-for state candidate))
     (<- due bool (compaction-due compact-at percent))
@@ -734,7 +737,7 @@
                     state)
                   (do
                     (<- started AgentdState
-                        (start-claimed settings state row plan choice view session-id now-ms))
+                        (start-claimed settings state row plan choice view session-id now-ms opener))
                     started)))))))
 
 
