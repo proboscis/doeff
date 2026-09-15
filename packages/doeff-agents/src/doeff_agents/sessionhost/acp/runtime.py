@@ -39,8 +39,9 @@ from doeff_agents.sessionhost.acp.effects import (
     DECLARATION_SHA256_ENV,
     WORK_ROOTS_ENV,
     WorkRoots,
+    Places,
     CAPACITY_ENV,
-    PLACE_ENV,
+    PLACES_ENV,
     CUSTODY_CONTRACT_VERSION,
     CUSTODY_URL_ENV,
     HOMES_ROOT_ENV,
@@ -101,8 +102,8 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
     record_sink = _record_sink_of_env(env)
     # 段 10 lane 10d: node の capacity は機体の宣言の 1 点(無い・読めない = 参加しない — join.capacity-of)。
     node_capacity = _capacity_of_env(env)
-    # 段 10 lane 10d 便 2(agora-redesign #85): 機体の置き場は宣言ちょうど — 名乗らない agentd は参加しない
-    place = _place_of_env(env)
+    # 段 11 lane 11u(agora-redesign #224): 機体が仕える置き場の集合は宣言ちょうど — 名乗らない agentd は参加しない
+    places = _places_of_env(env)
     # 段 10 lane 10y(agora-redesign #110): 読んだ宣言 file の指紋 — node の行の capacity の書きに header で運ぶ
     declaration_sha256 = _declaration_sha256_of_env(env)
     # 段 10 lane 10y 案 C: node が持つ作業場の根(宣言が在る時だけ spec.workRoots に名乗る)
@@ -110,7 +111,7 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
     return AgentdSettings(
         node_name=node_name,
         node_capacity=node_capacity,
-        place=place,
+        places=places,
         homes_root=homes_root,
         backend_kind=backend,
         stream_capability=_stream_capability(backend),
@@ -152,13 +153,13 @@ def _declaration_sha256_of_env(env: Mapping[str, str]) -> str | None:
     return verdict
 
 
-def _place_of_env(env: Mapping[str, str]) -> str:
-    """機体の置き場(段 10 lane 10d 便 2・agora-redesign #85)。読みの規則は join.place-of の 1 点
-    (閉語彙 company | personal・無ければ ValueError = 参加しない)。"""
-    verdict: object = PyVM().run(join.place_of(env.get(PLACE_ENV)))
-    if not isinstance(verdict, str):
-        raise TypeError(f"place_of returned {type(verdict).__name__}")
-    return verdict
+def _places_of_env(env: Mapping[str, str]) -> tuple[str, ...]:
+    """機体が仕える置き場の集合(段 11 lane 11u・agora-redesign #224)。読みの規則は join.places-of の 1 点
+    (, 区切り・閉語彙 company | personal・無い / 空 / 重複は ValueError = 参加しない)。"""
+    verdict: object = PyVM().run(join.places_of(env.get(PLACES_ENV)))
+    if not isinstance(verdict, Places):
+        raise TypeError(f"places_of returned {type(verdict).__name__}")
+    return verdict.words
 
 
 def _ownership_of_env(env: Mapping[str, str]) -> Ownership | None:

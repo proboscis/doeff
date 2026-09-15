@@ -34,6 +34,7 @@
   WORK-ROOTS-MAX
   WORK-ROOTS-SEPARATOR
   WorkRoots
+  Places
   AGENTD-PLACES
   CAPACITY-ENV
   CUSTODY-URL-ENV
@@ -61,7 +62,8 @@
   JoinPlan
   JoinSpec
   NODE-NAME-ENV
-  PLACE-ENV
+  PLACES-ENV
+  PLACES-SEPARATOR
   OWNERSHIP-ENV
   OWNERSHIP-GRADES
   OWNERSHIP-PROOF-DECLARED
@@ -95,8 +97,9 @@
 (setv KEY-OWNERSHIP-PROOF "ownership_proof")
 ;; node の spec.capacity(同時に走らせられる手番の数 — 段 10 lane 10d・必須)。
 (setv KEY-CAPACITY "capacity")
-;; 機体の置き場(company | personal — 段 10 lane 10d 便 2・必須)。node の spec.labels.place に名乗る。
-(setv KEY-PLACE "place")
+;; 機体が仕える置き場の集合(company / personal の , 区切り — 段 11 lane 11u・agora-redesign #224・必須で空でない)。
+;; node の spec.places に名乗る。1 値の鍵 place(段 10 lane 10d 便 2)は退役 — 宣言に残っていれば「宣言に無い鍵」として断る。
+(setv KEY-PLACES "places")
 ;; node が持つ作業場の根(段 10 lane 10y 案 C・任意)。node の spec.workRoots に名乗る。
 (setv KEY-WORK-ROOTS "work_roots")
 ;; 従量課金の binding kind を受けるか(従量課金の便 lane A・任意・既定 false)。
@@ -112,7 +115,7 @@
 (setv KEY-RECORD-URL "url")
 ;; 表 → 許す鍵(宣言に無い鍵は誤りとして名指す — 黙って読み飛ばさない)。
 (setv AGENTD-KEYS #{KEY-SERVER KEY-TOKEN-FILE KEY-NODE-NAME KEY-STATE-DIR KEY-BACKEND
-                    KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY KEY-PLACE KEY-WORK-ROOTS
+                    KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY KEY-PLACES KEY-WORK-ROOTS
                     KEY-ALLOW-METERED-BILLING})
 (setv CUSTODY-KEYS #{KEY-CUSTODY-URL KEY-BORROWER-KEY-FILE KEY-SERVICE-ACCOUNT-TOKEN-FILE})
 (setv RECORD-KEYS #{KEY-RECORD-URL})
@@ -127,7 +130,7 @@
 (setv FLAG-OWNERSHIP "--ownership")
 (setv FLAG-OWNERSHIP-PROOF "--ownership-proof")
 (setv FLAG-CAPACITY "--capacity")
-(setv FLAG-PLACE "--place")
+(setv FLAG-PLACES "--places")
 (setv FLAG-WORK-ROOTS "--work-roots")
 (setv FLAG-ALLOW-METERED-BILLING "--allow-metered-billing")
 (setv FLAG-CUSTODY "--custody")
@@ -144,7 +147,7 @@
                  FLAG-OWNERSHIP #(TABLE-AGENTD KEY-OWNERSHIP)
                  FLAG-OWNERSHIP-PROOF #(TABLE-AGENTD KEY-OWNERSHIP-PROOF)
                  FLAG-CAPACITY #(TABLE-AGENTD KEY-CAPACITY)
-                 FLAG-PLACE #(TABLE-AGENTD KEY-PLACE)
+                 FLAG-PLACES #(TABLE-AGENTD KEY-PLACES)
                  FLAG-WORK-ROOTS #(TABLE-AGENTD KEY-WORK-ROOTS)
                  FLAG-ALLOW-METERED-BILLING #(TABLE-AGENTD KEY-ALLOW-METERED-BILLING)
                  FLAG-CUSTODY #(TABLE-CUSTODY KEY-CUSTODY-URL)
@@ -169,9 +172,11 @@
         TABLE-AGENTD "]." KEY-TOKEN-FILE ")."))
    #(FLAG-CAPACITY "<n>"
      "How many concurrent turns this node accepts. Required, a non-negative integer.")
-   #(FLAG-PLACE (+ "<" (.join "|" (sorted AGENTD-PLACES)) ">")
-     (+ "Where this machine sits. Required — company credentials never leave a "
-        "company machine, so an unnamed node is not a dispatch candidate."))
+   #(FLAG-PLACES (+ "<" (.join PLACES-SEPARATOR (sorted AGENTD-PLACES)) ">")
+     (+ "Which places this machine serves — a comma-separated, non-empty subset of "
+        (.join PLACES-SEPARATOR (sorted AGENTD-PLACES)) ". Required: the placement binds a "
+        "profile only to a node whose set holds its boundary (company credentials never "
+        "leave a company machine), so an unnamed node is not a dispatch candidate."))
    #(FLAG-RECORD "<URL>"
      (+ "Conversation-record service that stores turn bodies. Required — a node "
         "without a sink would leave headline-only turns in the control plane."))
@@ -364,22 +369,29 @@
   word)
 
 
-(defk place-of [text]
+(defk places-of [text]
   {:pre [(: text (| str None))]
-   :post [(: % str)]}
-  "機体の置き場の読み(段 10 lane 10d 便 2・agora-redesign #85): 宣言 file の [agentd].place / flag --place の
-   文字列 → 閉語彙 company | personal。無い・空・語彙の外は ValueError(参加しない — 名乗らない agentd は
-   配車の候補にならない)。綴りは ACP の契約 agora-kinds.json の profile.spec.boundary と同じ(新しい語を作らない)。
-   置き場は機体の所有で切る区画で、会社の資格は company の機体の外へ出ない(不変条件 I1)。"
-  (setv word (if (is text None) "" (.strip text)))
-  (when (not word)
-    (raise (ValueError (+ "機体の置き場が宣言されていない — 宣言 file の [" TABLE-AGENTD "]." KEY-PLACE
-                          " か flag " FLAG-PLACE " で " (.join " | " (sorted AGENTD-PLACES))
-                          " を名乗る(段 10 lane 10d 便 2・agora-redesign #85: 名乗らない agentd は参加しない)"))))
-  (when (not-in word AGENTD-PLACES)
-    (raise (ValueError (+ f"[{TABLE-AGENTD}].{KEY-PLACE} は " (.join " | " (sorted AGENTD-PLACES))
-                          f" のどれか: {word !r}"))))
-  word)
+   :post [(: % Places)]}
+  "機体が仕える置き場の集合の読み(段 11 lane 11u・agora-redesign #224・依頼者の裁定 2026-09-16): 宣言 file の
+   [agentd].places / flag --places / env の , 区切りの文字列 → 閉語彙 company | personal の語の tuple(宣言の順・
+   重複なし)。無い・空・語彙の外・同じ語の重複は ValueError(参加しない — 名乗らない agentd は配車の候補にならない)。
+   綴りは ACP の契約 agora-kinds.json の profile.spec.boundary / node.spec.places.items と同じ(新しい語を作らない)。
+   置き場は機体の所有で切る区画で、会社の資格は company を名乗る機体の外へ出ない(不変条件 I1)。会社 Mac は
+   両方を名乗って会社と個人の worker として寄与する(operator 決定 2026-09-05)— 1 値(段 10 lane 10d 便 2)では
+   言えなかった形。1 値の宣言を 1 要素の集合と読み替える互換は置かない(鍵の綴りが places へ移る)。"
+  (setv words (lfor part (.split (if (is text None) "" text) PLACES-SEPARATOR)
+                    :if (.strip part) (.strip part)))
+  (when (not words)
+    (raise (ValueError (+ "機体の置き場の集合が宣言されていない — 宣言 file の [" TABLE-AGENTD "]." KEY-PLACES
+                          " か flag " FLAG-PLACES " で " (.join PLACES-SEPARATOR (sorted AGENTD-PLACES))
+                          " の空でない部分集合を , 区切りで名乗る(段 11 lane 11u・agora-redesign #224: 名乗らない agentd は参加しない)"))))
+  (for [word words]
+    (when (not-in word AGENTD-PLACES)
+      (raise (ValueError (+ f"[{TABLE-AGENTD}].{KEY-PLACES} の語は " (.join " | " (sorted AGENTD-PLACES))
+                            f" のどれか: {word !r}")))))
+  (when (!= (len (set words)) (len words))
+    (raise (ValueError f"[{TABLE-AGENTD}].{KEY-PLACES} に同じ語が 2 度: {words !r}(集合なので 1 度だけ)")))
+  (Places :words (tuple words)))
 
 
 (defk allow-metered-billing-of [text]
@@ -426,8 +438,8 @@
       (ownership-of (or (.get agentd KEY-OWNERSHIP) None) (or (.get agentd KEY-OWNERSHIP-PROOF) None)))
   ;; node の capacity(段 10 lane 10d)— 他の宣言の誤りを先に名指してから読む。
   (<- capacity int (capacity-of (.get agentd KEY-CAPACITY)))
-  ;; 機体の置き場(段 10 lane 10d 便 2)。
-  (<- place str (place-of (.get agentd KEY-PLACE)))
+  ;; 機体が仕える置き場の集合(段 11 lane 11u — 1 値の place は退役)。
+  (<- declared-places Places (places-of (.get agentd KEY-PLACES)))
   ;; node が持つ作業場の根(段 10 lane 10y 案 C・任意)。
   (<- declared-roots (| WorkRoots None) (work-roots-of (.get agentd KEY-WORK-ROOTS)))
   ;; 従量課金の binding kind を受けるか(従量課金の便 lane A・任意・既定 false)。
@@ -449,7 +461,7 @@
     :work-roots (if (is declared-roots None) None declared-roots.roots)
     :ownership ownership
     :capacity capacity
-    :place place
+    :places declared-places.words
     ;; 空文字は「名乗らない」= env に現れない(参加の門 record-sink-of が読みの 1 点で断る — 段 9f lane 9f-6)。
     ;; 従量課金の binding kind を受けるか(従量課金の便 lane A)— 真のときだけ host の argv に旗が立つ。
     :allow-metered-billing allow-metered
@@ -494,7 +506,8 @@
   (when (is-not spec.node-name None)
     (.append env #(NODE-NAME-ENV spec.node-name)))
   (.append env #(CAPACITY-ENV (str spec.capacity)))
-  (.append env #(PLACE-ENV spec.place))
+  ;; 段 11 lane 11u: 置き場の集合は , 区切りの 1 文字列で運ぶ(読みは runtime の places-of の 1 点)。
+  (.append env #(PLACES-ENV (.join PLACES-SEPARATOR spec.places)))
   (.extend env [#(HOST-BACKEND-ENV spec.backend)
                 #(HEADLESS-DIR-ENV (+ spec.state-dir "/" JOIN-HEADLESS-DIR))
                 #(SESSION-HOOKS-ENV spec.session-hooks)])

@@ -415,7 +415,7 @@ def test_a_job_bound_to_another_places_account_is_not_launched() -> None:
     """段 10 lane 10d 便 2(agora-redesign #85・不変条件 I5): 自分の置き場と違う置き場の口座の job は起こさない —
     借りもせず(封じた資格はその置き場の worker にしか無い)、条件 CredentialPlaceMismatch で閉じる。"""
     world = World()
-    world.settings = replace(world.settings, custody_declared=True, place="personal")
+    world.settings = replace(world.settings, custody_declared=True, places=("personal",))
     world.acp.put_row(row("default", "profile", "personal", {"boundary": "company"}, {}))
     world.acp.put_row(bound_job("s-place", inputs=[]))
     world.tick()
@@ -433,10 +433,39 @@ def test_a_job_bound_to_another_places_account_is_not_launched() -> None:
 def test_a_job_whose_profile_does_not_name_a_place_is_launched() -> None:
     """置き場を名乗らない profile の行(旧い行)は食い違いと読まない — 最後の門は預かり所の redeem(判らないもので止めない)。"""
     world = World()
-    world.settings = replace(world.settings, custody_declared=True, place="personal")
+    world.settings = replace(world.settings, custody_declared=True, places=("personal",))
     world.acp.put_row(bound_job("s-noplace", inputs=[]))
     world.tick()
     assert world.custody.borrowed == [("claude", "acct", "agent-job s-noplace")]
+
+
+def test_a_node_serving_both_places_takes_company_and_personal_accounts_and_a_company_only_node_refuses_personal() -> None:
+    """段 11 lane 11u(agora-redesign #224・依頼者の裁定 2026-09-16): 置き場は集合。会社 Mac(company と personal の両方を
+    名乗る)は会社の口座も個人の口座も起こす(1 値の place ではどちらかが CredentialPlaceMismatch で落ちた — 2026-09-15 の実弾)。
+    判定は両向き — company だけを名乗る node は個人の口座を断る(judgment.credential-place-mismatch の 1 点)。"""
+    both = World()
+    both.settings = replace(both.settings, custody_declared=True, places=("company", "personal"))
+    both.acp.put_row(row("default", "profile", "personal", {"boundary": "company"}, {}))
+    both.acp.put_row(bound_job("s-both", inputs=[]))
+    both.tick()
+    assert both.custody.borrowed == [("claude", "acct", "agent-job s-both")], "両方を名乗る node が会社の口座を断った"
+    company_only = World()
+    company_only.settings = replace(company_only.settings, custody_declared=True, places=("company",))
+    company_only.acp.put_row(row("default", "profile", "personal", {"boundary": "personal"}, {}))
+    company_only.acp.put_row(bound_job("s-personal", inputs=[]))
+    company_only.tick()
+    assert company_only.custody.borrowed == [], "company だけの node が個人の口座を借りに行った(判定が片向きのまま)"
+    job = company_only.job("s-personal")
+    assert job.status is not None and job.status["phase"] == PHASE_ENDED
+    conditions = job.status["conditions"]
+    assert isinstance(conditions, list)
+    last = conditions[-1]
+    assert isinstance(last, dict) and last["type"] == CONDITION_CREDENTIAL_PLACE_MISMATCH
+    assert "places" in str(last["reason"])
+    assert run(judgment.credential_place_mismatch(("company", "personal"), "personal")) is False
+    assert run(judgment.credential_place_mismatch(("personal",), "company")) is True
+    assert run(judgment.credential_place_mismatch((), "company")) is False, "名乗りの無い断面は止めない(検体の既定)"
+    assert run(judgment.credential_place_mismatch(("personal",), None)) is False, "判らない口座は止めない"
 
 
 def test_custody_declared_node_borrows_the_account_and_launches_in_the_borrowed_home() -> None:
@@ -874,26 +903,28 @@ def test_node_spec_of_and_node_spec_declared_are_one_judgment() -> None:
         "capacity": 2,
         "streamCapability": "events",
     }
-    # 段 10 lane 10d 便 4(依頼者の裁定 2026-09-15 問 3): 宣言した置き場は **型つきの欄 spec.place**
-    # に名乗る(配車の絞りが読む 1 点)。labels.place は読み手が残る間の写し(deprecated)で、
-    # 同じ値を書き続ける — 面を落とさない。
-    placed = replace(settings, place="personal")
+    # 段 11 lane 11u(agora-redesign #224・依頼者の裁定 2026-09-16): 宣言した置き場の**集合**は型つきの欄 spec.places
+    # (語の list・宣言の順)に名乗る(配車の絞りが読む 1 点・契約 v4)。labels.places は読み手が残る間の写し(deprecated・
+    # , 区切りの 1 文字列)で、同じ値を書き続ける — 面を落とさない。1 値の place(10d 便 4)は書かない。
+    placed = replace(settings, places=("company", "personal"))
     named = run(judgment.node_spec_of(placed))
     assert isinstance(named, dict)
-    assert named["place"] == "personal", "置き場を型つきの欄で名乗っていない(配車が絞れない)"
-    assert named["labels"] == {"place": "personal"}, "deprecated の写しを落とした(読み手が残っている)"
+    assert named["places"] == ["company", "personal"], "置き場の集合を型つきの欄で名乗っていない(配車が絞れない)"
+    assert named["labels"] == {"places": "company,personal"}, "deprecated の写しを落とした(読み手が残っている)"
+    assert "place" not in named, "退役した 1 値の place を書いている(契約 v4 の配車は行の誤りとして断る)"
     # 置き場を宣言しない断面(検体の既定)では欄ごと足さない — 嘘の名乗りを書かない
-    assert "place" not in run(judgment.node_spec_of(settings))
+    assert "places" not in run(judgment.node_spec_of(settings))
     kept = run(
         judgment.node_spec_declared(
-            {"name": "pool-1", "labels": {"boundary": "personal", "pool": "agentd-pool"}, "capacity": 0, "streamCapability": "events"},
+            {"name": "pool-1", "labels": {"boundary": "personal", "pool": "agentd-pool", "place": "personal"}, "place": "personal", "capacity": 0, "streamCapability": "events"},
             placed,
         )
     )
-    assert kept["labels"] == {"boundary": "personal", "pool": "agentd-pool", "place": "personal"}, (
-        "宣言の外の名乗り(boundary 等)を触るか、置き場を名乗れていない"
+    assert kept["labels"] == {"boundary": "personal", "pool": "agentd-pool", "places": "company,personal"}, (
+        "宣言の外の名乗り(boundary 等)を触るか、置き場を名乗れていないか、退役した labels.place を残している"
     )
-    assert kept["place"] == "personal", "揃える時に型つきの欄を名乗っていない(便 4)"
+    assert kept["places"] == ["company", "personal"], "揃える時に型つきの欄を名乗っていない"
+    assert "place" not in kept, "旧い agentd が書いた 1 値の place を揃えの写しに残している(配車が行を断る)"
     hand = {"name": "pool-1", "labels": {"boundary": "company"}, "capacity": 0, "streamCapability": "events"}
     assert run(judgment.node_spec_declared(hand, settings)) == {**hand, "capacity": 2}
     assert run(judgment.node_spec_declared({**hand, "capacity": 2}, settings)) == {**hand, "capacity": 2}
@@ -3123,7 +3154,7 @@ def test_stream_capability_is_derived_from_the_host_backend() -> None:
     from doeff_agents.sessionhost.acp.runtime import settings_from_env
 
     # 本文の行き先(段 9f lane 9f-6): 宛先の無い env は settings_from_env が参加を断るので、束に宛先を持たせる。
-    bare = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACE": "personal"}
+    bare = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACES": "personal"}
     env = {**bare, "DOEFF_SESSIONHOST_BACKEND": "headless"}
     assert settings_from_env(env, ()).stream_capability == "events"
     assert settings_from_env(env, ()).backend_kind == "headless"
@@ -3353,7 +3384,7 @@ def test_join_spec_is_flags_over_declaration_over_defaults() -> None:
     hooks は inherit・custody は無し(既定の URL は handler)・所有は名乗らない。"""
     from doeff_agents.sessionhost.acp.effects import JoinSpec, Ownership
 
-    bare = _join_spec(["--server", "http://acp:8868", "--token-file", "/t/agentd.token", "--capacity", "1", "--place", "personal"])
+    bare = _join_spec(["--server", "http://acp:8868", "--token-file", "/t/agentd.token", "--capacity", "1", "--places", "personal"])
     assert bare == JoinSpec(
         server="http://acp:8868",
         token_file="/t/agentd.token",
@@ -3365,7 +3396,7 @@ def test_join_spec_is_flags_over_declaration_over_defaults() -> None:
         borrower_key_file=None,
         ownership=None,
         capacity=1,
-        place="personal",
+        places=("personal",),
     )
     declaration: dict[str, object] = {
         "schema": "doeff.agentd-join.v1",
@@ -3379,7 +3410,7 @@ def test_join_spec_is_flags_over_declaration_over_defaults() -> None:
             "ownership": "company",
             "ownership_proof": "gce-project:cyberagent-050",
             "capacity": "2",
-            "place": "personal",
+            "places": "personal",
         },
         "custody": {"url": "http://custody:8320", "borrower_key_file": "/toml/borrower"},
     }
@@ -3395,7 +3426,7 @@ def test_join_spec_is_flags_over_declaration_over_defaults() -> None:
         borrower_key_file="/toml/borrower",
         ownership=Ownership(grade="company", proof="gce-project:cyberagent-050"),
         capacity=2,
-        place="personal",
+        places=("personal",),
     )
     flagged = _join_spec(
         [
@@ -3411,7 +3442,7 @@ def test_join_spec_is_flags_over_declaration_over_defaults() -> None:
             "headless",
             "--capacity",
             "3",
-            "--place",
+            "--places",
             "personal",
         ],
         declaration,
@@ -3432,7 +3463,7 @@ def test_join_spec_carries_the_service_account_token_file_to_the_custody_env() -
     from doeff_agents.sessionhost.acp import join
     from doeff_agents.sessionhost.acp.effects import JoinSpec
 
-    base = ["--server", "http://acp:8868", "--token-file", "/t/agentd.token", "--capacity", "2", "--place", "personal"]
+    base = ["--server", "http://acp:8868", "--token-file", "/t/agentd.token", "--capacity", "2", "--places", "personal"]
     sa_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
     declaration: dict[str, object] = {
         "schema": "doeff.agentd-join.v1",
@@ -3509,10 +3540,10 @@ def test_join_spec_refuses_missing_server_or_token_unknown_flags_and_bad_words()
         _join_spec(["--server", "http://a", "--token-file", "/t", "--capacity", "two"])
     with pytest.raises(ValueError, match="capacity"):
         _join_spec(["--server", "http://a", "--token-file", "/t", "--capacity", "-1"])
-    assert isinstance(_join_spec(["--server", "http://a", "--token-file", "/t", "--capacity", "0", "--place", "personal"]), JoinSpec)
+    assert isinstance(_join_spec(["--server", "http://a", "--token-file", "/t", "--capacity", "0", "--places", "personal"]), JoinSpec)
     # 空文字は「名乗らない」(宣言 file で欄を空にして外せる — runtime の env の読みと同じ)。
     blank = _join_spec(
-        ["--server", "http://a", "--token-file", "/t", "--ownership", "", "--ownership-proof", "", "--capacity", "1", "--place", "personal"]
+        ["--server", "http://a", "--token-file", "/t", "--ownership", "", "--ownership-proof", "", "--capacity", "1", "--places", "personal"]
     )
     assert isinstance(blank, JoinSpec)
     assert blank.ownership is None
@@ -3565,7 +3596,7 @@ def test_join_plan_derives_the_host_argv_and_the_env_bundle_from_the_spec() -> N
         borrower_key_file="/etc/doeff/borrower-key",
         ownership=Ownership(grade="company", proof="gce-project:cyberagent-050"),
         capacity=2,
-        place="personal",
+        places=("personal",),
     )
     plan = run(join.join_plan_of(spec))
     assert plan == JoinPlan(
@@ -3586,7 +3617,7 @@ def test_join_plan_derives_the_host_argv_and_the_env_bundle_from_the_spec() -> N
             ("ACP_AGENTD_TOKEN_FILE", "/t/agentd.token"),
             ("DOEFF_AGENTD_NODE_NAME", "gcp-0"),
             ("DOEFF_AGENTD_CAPACITY", "2"),
-            ("DOEFF_AGENTD_PLACE", "personal"),
+            ("DOEFF_AGENTD_PLACES", "personal"),
             ("DOEFF_SESSIONHOST_BACKEND", "headless"),
             ("DOEFF_SESSIONHOST_HEADLESS_DIR", "/var/lib/doeff/agentd/headless-events"),
             ("DOEFF_AGENTD_SESSION_HOOKS", "inherit"),
@@ -3610,7 +3641,7 @@ def test_join_plan_derives_the_host_argv_and_the_env_bundle_from_the_spec() -> N
                 borrower_key_file=None,
                 ownership=None,
                 capacity=0,
-                place="personal",
+                places=("personal",),
             )
         )
     )
@@ -3633,7 +3664,7 @@ def test_join_reads_the_fingerprint_of_the_declaration_file_bytes_into_the_env_a
 
     text = (
         'schema = "doeff.agentd-join.v1"\n\n[agentd]\nserver = "http://acp:8868"\ntoken_file = "/t/agentd.token"\n'
-        'capacity = "2"\nplace = "personal"\n\n[record]\nurl = "http://record:8874"\n'
+        'capacity = "2"\nplaces = "personal"\n\n[record]\nurl = "http://record:8874"\n'
     )
     path = tmp_path / "agentd.toml"
     path.write_bytes(text.encode("utf-8"))
@@ -3645,11 +3676,11 @@ def test_join_reads_the_fingerprint_of_the_declaration_file_bytes_into_the_env_a
     assert env["DOEFF_AGENTD_DECLARATION_SHA256"] == expected
     assert settings_from_env(env, plan.host_argv).declaration_sha256 == expected
     # 宣言 file なし(flag だけ)= 指紋なし
-    bare = _join_spec(["--server", "http://acp:8868", "--token-file", "/t", "--capacity", "1", "--place", "personal"])
+    bare = _join_spec(["--server", "http://acp:8868", "--token-file", "/t", "--capacity", "1", "--places", "personal"])
     assert isinstance(bare, JoinSpec)
     assert bare.declaration_sha256 is None
     assert "DOEFF_AGENTD_DECLARATION_SHA256" not in dict(run(join.join_plan_of(bare)).env)
-    recorded = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACE": "personal"}
+    recorded = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACES": "personal"}
     assert settings_from_env(recorded, ()).declaration_sha256 is None
     with pytest.raises(ValueError, match="DOEFF_AGENTD_DECLARATION_SHA256"):
         settings_from_env({**recorded, "DOEFF_AGENTD_DECLARATION_SHA256": "AB" * 32}, ())
@@ -3665,14 +3696,14 @@ def test_join_reads_work_roots_into_the_env_and_settings_and_refuses_ambiguous_r
     from doeff_agents.sessionhost.acp.effects import JoinSpec
     from doeff_agents.sessionhost.acp.runtime import settings_from_env
 
-    base = ["--server", "http://acp:8868", "--token-file", "/t", "--capacity", "2", "--place", "personal"]
+    base = ["--server", "http://acp:8868", "--token-file", "/t", "--capacity", "2", "--places", "personal"]
     declaration: dict[str, object] = {"schema": "doeff.agentd-join.v1", "agentd": {"work_roots": " ~/ , /Users/s22625/ ,~/ "}}
     spec = _join_spec(base, declaration)
     assert isinstance(spec, JoinSpec)
     assert spec.work_roots == ("~/", "/Users/s22625/")
     env = dict(run(join.join_plan_of(spec)).env)
     assert env["DOEFF_AGENTD_WORK_ROOTS"] == "~/,/Users/s22625/"
-    recorded = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACE": "personal"}
+    recorded = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACES": "personal"}
     assert settings_from_env({**recorded, "DOEFF_AGENTD_WORK_ROOTS": env["DOEFF_AGENTD_WORK_ROOTS"]}, ()).work_roots == ("~/", "/Users/s22625/")
     assert settings_from_env(recorded, ()).work_roots is None
     bare = _join_spec(base)
@@ -3808,7 +3839,7 @@ def test_settings_from_env_reads_the_ownership_and_the_valve_and_runtime_agree_o
                 borrower_key_file=None,
                 ownership=Ownership(grade="company", proof="gce-project:cyberagent-050"),
                 capacity=2,
-                place="personal",
+                places=("personal",),
                 record_url="http://record:8874",
             )
         )
@@ -3825,7 +3856,7 @@ def test_settings_from_env_reads_the_ownership_and_the_valve_and_runtime_agree_o
     # 段 10c(R23): 預かり所の宣言の有無は CUSTODY_URL_ENV の在否 1 点(この束は custody_url を名乗らない)
     assert settings.custody_declared is False
     assert acp_valve(list(plan.host_argv), env).enabled is True
-    recorded = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACE": "personal"}
+    recorded = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACES": "personal"}
     assert settings_from_env(recorded, ()).ownership is None
     assert settings_from_env({**recorded, "AGORA_CUSTODY_URL": "http://custody:8320"}, ()).custody_declared is True
     assert settings_from_env({**recorded, "AGORA_CUSTODY_URL": "  "}, ()).custody_declared is False
@@ -3835,13 +3866,22 @@ def test_settings_from_env_reads_the_ownership_and_the_valve_and_runtime_agree_o
     without_capacity = {name: value for name, value in recorded.items() if name != "DOEFF_AGENTD_CAPACITY"}
     with pytest.raises(ValueError, match="capacity"):
         settings_from_env(without_capacity, ())
-    # 段 10 lane 10d 便 2: 置き場も宣言ちょうど — 無い env と語彙の外は参加を断る(join.place-of の 1 点)
-    assert settings_from_env(recorded, ()).place == "personal"
-    without_place = {name: value for name, value in recorded.items() if name != "DOEFF_AGENTD_PLACE"}
-    with pytest.raises(ValueError, match="place"):
+    # 段 11 lane 11u(#224): 置き場の集合も宣言ちょうど — 無い env・空・語彙の外・重複は参加を断る(join.places-of の 1 点)
+    assert settings_from_env(recorded, ()).places == ("personal",)
+    assert settings_from_env({**recorded, "DOEFF_AGENTD_PLACES": "company,personal"}, ()).places == ("company", "personal")
+    assert settings_from_env({**recorded, "DOEFF_AGENTD_PLACES": " personal , company "}, ()).places == ("personal", "company")
+    without_place = {name: value for name, value in recorded.items() if name != "DOEFF_AGENTD_PLACES"}
+    with pytest.raises(ValueError, match="places"):
         settings_from_env(without_place, ())
+    with pytest.raises(ValueError, match="places"):
+        settings_from_env({**recorded, "DOEFF_AGENTD_PLACES": " , "}, ())
     with pytest.raises(ValueError, match="company | personal"):
-        settings_from_env({**recorded, "DOEFF_AGENTD_PLACE": "k3s:cluster"}, ())
+        settings_from_env({**recorded, "DOEFF_AGENTD_PLACES": "k3s:cluster"}, ())
+    with pytest.raises(ValueError, match="2 度"):
+        settings_from_env({**recorded, "DOEFF_AGENTD_PLACES": "personal,personal"}, ())
+    # 1 値の env(段 10 lane 10d 便 2 の DOEFF_AGENTD_PLACE)は読まない — 互換の読み替えを置かない
+    with pytest.raises(ValueError, match="places"):
+        settings_from_env({**without_place, "DOEFF_AGENTD_PLACE": "personal"}, ())
 
 
 def test_acp_url_has_no_localhost_default_and_the_join_bundle_carries_it(tmp_path: Path) -> None:
@@ -3859,7 +3899,7 @@ def test_acp_url_has_no_localhost_default_and_the_join_bundle_carries_it(tmp_pat
     assert not hasattr(handlers, "ACP_URL_DEFAULT")
     token = tmp_path / "agentd.token"
     token.write_text("sk-roster-token\n", encoding="utf-8")
-    env = {ACP_TOKEN_FILE_ENV: str(token), "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACE": "personal"}
+    env = {ACP_TOKEN_FILE_ENV: str(token), "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACES": "personal"}
     with pytest.raises(AgentdPreflightError, match=ACP_URL_ENV):
         real_dispatchers(env, str(tmp_path / "agentd.sock"))
     with pytest.raises(AgentdPreflightError, match=ACP_URL_ENV):
@@ -3877,7 +3917,7 @@ def test_acp_url_has_no_localhost_default_and_the_join_bundle_carries_it(tmp_pat
                 borrower_key_file=None,
                 ownership=None,
                 capacity=1,
-                place="personal",
+                places=("personal",),
                 record_url="http://record:8874",
             )
         )
