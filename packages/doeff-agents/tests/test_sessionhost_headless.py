@@ -1036,6 +1036,44 @@ def _wait_turn_end(headless_host: Host, sid: str) -> JSONObject:
     raise AssertionError("turn did not end")
 
 
+def test_host_headless_turn_refused_by_the_provider_limit_fails_the_session_with_the_cause(
+    headless_host: Host,
+) -> None:
+    """段 11 lane 11n 便 C(agora-redesign #179・依頼者の裁定 2026-09-15 案 c′): CLI が限度で断った
+    手番は、温かい session を残さず **器ごと** 終端(status failed・cause rate_limited)にする。
+
+    族の表は impls/markers.hy の 1 点(pane の路と同じ表)で、当てるのは headless.hy の手番の腕の
+    1 点(headless-turn-limit-cause)。制御面(agentd)はこの欄を読んで agent-job に条件
+    ProviderLimit を刻む —— 実弾 2026-09-15 13:2x では器が running のまま残り、行に何も残らず、
+    同じ profile の次の手番も同じ限度で断られ続けた(5 連敗)。
+    """
+    limit_text = "You've reached your Fable limit. /model to switch models."
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_LIMIT_TEXT"] = limit_text
+    launched = headless_host.ok(
+        "session.launch", _launch_params(headless_host.root, "h-limit", "claude")
+    )
+    assert isinstance(launched, dict)
+    assert _text(launched, "status") == "running"
+    ended = _wait_turn_end(headless_host, "h-limit")
+    # 温かいままにしない: 行は failed で、cause は rate_limited(理由は CLI の文そのまま)
+    assert _text(ended, "status") == "failed", ended
+    cause = _obj(ended, "terminal_cause")
+    assert _text(cause, "category") == "rate_limited", cause
+    assert limit_text in _text(cause, "reason"), cause
+    assert ended["awaiting_response"] is False
+    # 手番の終わりの印も立つ(手番は終わっている — level-triggered の欄)
+    assert _has(ended, "turn_ended_at")
+    # 限度でない普通の手番は今日どおり温かい(同じ腕が二重に効かない)
+    headless_host.stub_env.pop("DOEFF_HEADLESS_STUB_LIMIT_TEXT")
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-warm", "claude"))
+    warm = _wait_turn_end(headless_host, "h-warm")
+    assert _text(warm, "status") == "running", warm
+    assert not _has(warm, "terminal_cause")
+    # 器を片付ける(登記簿は module をまたぐので、残した process は他の検の数を狂わせる)
+    for sid in ("h-limit", "h-warm"):
+        headless_host.ok("session.cleanup", {"session_id": sid})
+
+
 def test_host_headless_claude_round_trip_launch_turn_end_send_resume_cleanup(
     headless_host: Host,
 ) -> None:
