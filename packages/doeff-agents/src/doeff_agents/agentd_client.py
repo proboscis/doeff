@@ -116,12 +116,16 @@ class AgentdSupervisorConfigError(AgentdClientError):
 
 @dataclass(frozen=True)
 class AgentdPaths:
-    """Default filesystem locations for doeff-agentd state and control socket."""
+    """Default filesystem locations for the session host's state and socket."""
 
     db_path: Path
     socket_path: Path
     log_path: Path
     supervisor_path: Path
+    #: True when $DOEFF_AGENTD_SOCKET named the socket instead of the XDG
+    #: defaults deriving it.  A named socket belongs to whoever declared it, so
+    #: callers use it or fail rather than starting a host against it.
+    socket_is_named: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -229,6 +233,13 @@ AGENTD_START_POLL_SECONDS: float = 0.1
 # socket listener; this budget only bounds how long ensure waits for the
 # busy host to answer before failing LOUDLY (never by spawning).
 AGENTD_BUSY_STATUS_TIMEOUT_SECONDS: float = 15.0
+#: Environment variable naming the socket to talk to, overriding the XDG
+#: defaults.  A host started by `doeff-sessionhost join` listens under its own
+#: state directory, which the defaults never name; this is the one place that
+#: teaches every caller (the CLI included) where to look.  The spelling is the
+#: one already used to tell an agent process where the host is, so no second
+#: vocabulary appears.  The default order stays untouched when it is unset.
+AGENTD_SOCKET_ENV = "DOEFF_AGENTD_SOCKET"
 
 
 class AgentdClient:
@@ -663,11 +674,24 @@ class LazyAgentdClient:
 
 
 def agentd_paths_from_env(
-    state_home: str | None, runtime_dir: str | None, user: str | None, home: str
+    state_home: str | None,
+    runtime_dir: str | None,
+    user: str | None,
+    home: str,
+    socket_override: str | None = None,
 ) -> AgentdPaths:
-    """Pure judgment: the XDG-style default paths implied by this environment."""
+    """Pure judgment: the XDG-style default paths implied by this environment.
+
+    ``socket_override`` is ``$DOEFF_AGENTD_SOCKET``: a host started by
+    ``doeff-sessionhost join`` listens under its own state directory, so the
+    XDG defaults below never name it and the CLI could not observe it. The
+    environment variable names the socket instead; the default order
+    (``XDG_RUNTIME_DIR`` then ``/tmp``) is unchanged when it is absent.
+    """
     state_root = Path(state_home) if state_home else Path(home) / ".local" / "state"
-    if runtime_dir:
+    if socket_override:
+        socket_path = Path(socket_override)
+    elif runtime_dir:
         socket_path = Path(runtime_dir) / "doeff" / "agentd.sock"
     else:
         socket_path = Path("/tmp") / f"doeff-agentd-{user or 'unknown'}.sock"
@@ -677,6 +701,7 @@ def agentd_paths_from_env(
         socket_path=socket_path,
         log_path=state_dir / "agentd.log",
         supervisor_path=state_dir / "agentd.supervisor.json",
+        socket_is_named=bool(socket_override),
     )
 
 
@@ -689,7 +714,8 @@ def default_agentd_paths_program() -> IoGenerator[AgentdPaths]:
     if not user:
         user = as_optional_str((yield env_value("LOGNAME")))
     home = as_str((yield home_path()))
-    return agentd_paths_from_env(state_home, runtime_dir, user, home)
+    socket_override = as_optional_str((yield env_value(AGENTD_SOCKET_ENV)))
+    return agentd_paths_from_env(state_home, runtime_dir, user, home, socket_override)
 
 
 def default_agentd_paths(*, io_root: IoRoot | None = None) -> AgentdPaths:
@@ -827,15 +853,34 @@ def ensure_agentd(
     # restart window.  An unparseable file might be declaring any socket,
     # so no call on this machine may treat it as absent.
     declaration = load_supervisor_declaration(paths.supervisor_path, io_root=root)
+    # A socket named by $DOEFF_AGENTD_SOCKET belongs to whoever declared it --
+    # a `join`ed host, launchd, systemd.  Naming it says "talk to that host",
+    # so this call uses it or fails; it neither audits the host's database
+    # against the canonical one (a joined host keeps its own, by design) nor
+    # starts a competitor against someone else's socket.
+    named_socket = paths.socket_is_named and socket_path is None
     status = _agentd_status_if_ready(client)
     if status is not None:
-        _validate_agentd_identity(
-            status,
-            expected_db_path=active_db_path,
-            expected_socket_path=active_socket_path,
-            command=command,
-        )
+        if not named_socket:
+            _validate_agentd_identity(
+                status,
+                expected_db_path=active_db_path,
+                expected_socket_path=active_socket_path,
+                command=command,
+            )
         return client
+
+    if named_socket:
+        raise AgentdUnavailableError(
+            f"{AGENTD_SOCKET_ENV} names {active_socket_path}, but nothing is "
+            "listening there. That socket belongs to whoever declared it (a "
+            "host started by `doeff-sessionhost join`, launchd, systemd), so "
+            "this command will not start one against it. Start the host there, "
+            f"or unset {AGENTD_SOCKET_ENV} to use the canonical one:\n"
+            f"  {shlex.join(command)}",
+            socket_path=active_socket_path,
+            start_command=tuple(command),
+        )
 
     # Spawn predicate: only the ABSENCE of a live listener proves the
     # daemon is dead.  A listener that accepts connect() but misses the
