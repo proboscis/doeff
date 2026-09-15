@@ -3603,6 +3603,13 @@ def test_join_reads_work_roots_into_the_env_and_settings_and_refuses_ambiguous_r
     for wrong in ("/Users/s2", "repos/", "~kento/", "~"):
         with pytest.raises(ValueError, match="work_roots"):
             _join_spec([*base, "--work-roots", wrong])
+    # 契約の maxItems 16(越える宣言は node の行ごと断られる)— 17 本は起動の門で断り、16 本は通る
+    many = ",".join(f"/srv/r{i}/" for i in range(17))
+    with pytest.raises(ValueError, match="16"):
+        _join_spec([*base, "--work-roots", many])
+    sixteen = _join_spec([*base, "--work-roots", ",".join(f"/srv/r{i}/" for i in range(16))])
+    assert isinstance(sixteen, JoinSpec)
+    assert sixteen.work_roots is not None and len(sixteen.work_roots) == 16
 
 
 def test_acp_writes_put_the_fingerprint_header_only_on_the_writes_that_carry_it(monkeypatch: pytest.MonkeyPatch) -> None:

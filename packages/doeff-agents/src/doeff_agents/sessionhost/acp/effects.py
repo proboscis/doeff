@@ -356,6 +356,8 @@ NODE_SPEC_WORK_ROOTS = "workRoots"
 WORK_ROOTS_ENV = "DOEFF_AGENTD_WORK_ROOTS"
 #: 宣言の綴り(1 つの文字列に , 区切り — 宣言 file の値は文字列ちょうど)と env の区切り。
 WORK_ROOTS_SEPARATOR = ","
+#: 根の本数の上限(契約 agora-kinds.json node.spec.workRoots.maxItems の写し — 越える宣言は行ごと断られるので起動の門で先に止める)。
+WORK_ROOTS_MAX = 16
 
 
 @dataclass(frozen=True)
