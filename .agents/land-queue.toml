@@ -114,3 +114,30 @@ push = "origin"
 base_move_follow_retries = 2
 # 日次検証の全走が緑の断面だけが昇格する(R-7a95702d)
 stable_branch = "stable"
+
+# ───────────────────────────────────────────────────────────────────────────
+# 全体・広範囲テストの走行の受付(dotfiles ADR-DOTFILES-027 law
+# broad-test-runs-need-an-explicit-grant・operator 指示 2026-09-10「全体テストは
+# 明示の指示と警告なしに撃てない形にする」)の**値の宣言**。
+# 2026-09-15・段 11 lane 11k(agora-redesign #64 の c)で、この repo も受付に参加した。
+#
+# ⚠ 判定(広範囲か)・30 分の窓の合算・許可の消費は**正本 1 点**(agora の道具立て
+#   ~/dotfiles/agent/tests/broad_run_admission.py)が持つ。この repo は値の宣言と
+#   conftest.py の委譲 1 行だけを持ち、判定の写しを持たない。
+# ⚠ 道具立ての無い機体(この repo だけを clone した利用者)では conftest が素通しにして
+#   1 行を名乗る — 許可の口も頭脳も無い宿で門を立てると検体が 1 本も走らない。
+#
+# 値の根拠(2026-09-15 の実測 = 収集だけの走行 `pytest -q -m 'not e2e' --collect-only`):
+#   1,521 本(e2e を除く)。dir 単位の最大は tests/effects の 219 本、次が tests/core 186・
+#   docs/adr 153・tests/cli 97・tests/public_api 96。file 単位の最大は tests/test_scheduler.py の 75 本。
+#   ⇒ 1 走行 400 = 触った層(dir 1〜2 つ)の検証は焦点走のまま通し、全数(1,521)は広範囲。
+#      窓 800 = 分けて撃っても 30 分で全数に届く前に当たる。
+#   ⚠ 数字は日付と断面に固定した観測で、守るのは「1 走行の上限 < 全数」の関係のほう。
+[test-admission]
+per_run_max = 400
+window_max = 800
+window_s = 1800
+# 日次の全体検証(ai land verify)が [gate] full で撃つ pytest の走行の数 = 1 本
+# (remote_check の中の `uv run --no-sync pytest -q -m 'not e2e'`。遠隔が使えない拍は
+#  同じ 1 本をこの機体で走らせる — どちらでも走行は 1 つ)。
+full_sessions = 1
