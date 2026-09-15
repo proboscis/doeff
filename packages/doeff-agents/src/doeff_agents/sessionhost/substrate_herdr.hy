@@ -11,7 +11,13 @@
 ;;; 物理の出典は Phase 0 プローブ実測(herdr 0.7.1 / protocol 14、2026-07-07、
 ;;; conformance/herdr-physics.md に記録。agent.start の改形は herdr 0.7.5 /
 ;;; protocol 17 で 2026-07-29 再実測、session 同一性アンカーは 2026-08-01 /
-;;; 08-09 再実測 — 同文書の追補):
+;;; 08-09 再実測、herdr 0.8.2 / protocol 20 で 2026-09-15 再実測 — 同文書の
+;;; 追補)。p20 で変わっていないこと / 変わったこと(2026-09-15 実測):
+;;;   agent.start は {name, kind, pane_id} 必須のまま(束縛替えの前提は成立)、
+;;;   workspace.create の欄も {label, cwd, env, focus} のまま。増えたのは
+;;;   pane.read の strip_ansi(既定 true)1 点で、これは format=ansi の読みには
+;;;   掛からない(既定・true・false の 3 通りとも SGR と行末スペースを保持)—
+;;;   下の capture 物理は無改変で成立する:
 ;;;   - transport: newline-JSON over unix socket(~/.config/herdr/herdr.sock)。
 ;;;     request line 全体に ~1MiB 上限(実測境界 1,048,336B OK / 1,049,344B 拒否、
 ;;;     超過は server 側 "api request line is too large" + BrokenPipe)。

@@ -252,6 +252,22 @@ substrate is installed answers the same kill effect, so the CLI does not branch
 on the backend. The row ends as `stopped` with cause `cancelled`, and a session
 already terminal stays as it was.
 
+The table states what each backend implements. What was measured end to end is
+narrower and worth stating separately. On 2026-09-15, against herdr 0.8.2
+(protocol 20) and an isolated host, a **launched** herdr session — one the host
+created, so doeff owns its workspace label — stopped in 0.25s: exit 0, row
+`stopped` with cause `cancelled` and `finished_at` stamped, the label's holder
+set empty, `pane.list` answering `workspace_not_found`, and the pane's child
+process gone. The headless and tmux launched sessions were measured the same way
+on the same day and the same base — exit 0, substrate gone, row `stopped` with
+cause `cancelled`. A herdr seat that only lives in herdr's **agent registry**, with
+no doeff-owned workspace label (an interactive seat some other tool named), is a
+deliberately different case: the host observes it and `agentd adopt` accepts it
+with `substrate_present: true`, but `stop` refuses it — exit 1, `herdr
+kill-session failed`, the row left `running` and the seat still alive. doeff does
+not close a seat it did not create (ADR-DOE-AGENTS-004 R12, law
+`herdr-session-identity-is-workspace-label`).
+
 The one CLI limitation left, stated as it is rather than as it should be:
 
 - `attach` is tmux-only. It refuses a non-tmux session explicitly, naming the

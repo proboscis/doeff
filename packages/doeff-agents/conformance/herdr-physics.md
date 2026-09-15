@@ -546,3 +546,50 @@ label holder が在る」(名簿を先に引くのは費用 — 対話席用 hos
 `test-herdr-registry-agent-pane-id-requires-exact-name`、conformance S29
 (`test_s29_external_seat_adopt.py`)、ADR-DOE-AGENTS-004 law
 `herdr-session-identity-is-workspace-label`(R12)。
+
+## 追補: herdr 0.8.2 / protocol 20 での再実測(2026-09-15・PR #594 載せ直し便)
+
+protocol 17 追随の実装は 2026-08-17 に書かれ、着地まで 1 か月空いた。その間に
+稼働 herdr が 0.7.5 / protocol 17 → **0.8.2 / protocol 20**(`herdr status server`
+= running / 0.8.2 / protocol 20 / compatible yes、`herdr api schema --json` の
+`protocol: 20` / `schema_version: 1`)へ進んだので、この便で束縛の前提を撃ち直した。
+
+実測手段: bundled schema(`herdr api schema --json` の
+`schemas.request.$defs`)の直読 + 自分の試験 workspace(label
+`p20read-probe`・実測後に `workspace.close` で holder 0 を確認)への
+socket 直叩き。常駐 host と他席の session は使っていない。
+
+- **`agent.start` は p17 と同じ**: `AgentStartParams.required = ["name", "kind",
+  "pane_id"]`(任意 `args` / `timeout_ms`)。つまり「既存 pane で herdr 自身が
+  agent を起こす」API のまま、名前付き shell pane の工場ではない — `agent.start`
+  を呼ばない追随(`workspace.create` への束縛替え)が p20 でも正しい。
+- **未改変 main の赤の署名も同じ**: `27fdadc5` × herdr 0.8.2 で
+  `packages/doeff-agents/tests/test_sessionhost_substrate_herdr.py` = **5 failed
+  / 6 passed**、5 本すべて `HerdrApiError herdr api error invalid_request:
+  invalid request: missing field `kind` at line 1 column 28x`。本便の束縛替え後は
+  同じ suite が **18 passed**(17.2s・load average ~12)。
+- **`workspace.create` の欄も同じ**: `WorkspaceCreateParams` = `{label, cwd, env,
+  focus}`(必須欄なし・`focus` 既定 false)。応答は `workspace.workspace_id` と
+  `root_pane.pane_id` で、root pane がそのまま session pane。
+- **p20 の差分は `pane.read` に `strip_ansi`(既定 true)が増えた 1 点**。capture は
+  `format=ansi` で読むので、この欄が ansi 読みに掛かるかどうかが S18-herdr の
+  前提(行末スペース保持)に直接効く。実測(pane に
+  `printf '\033[38;5;1mRED\033[0m\nPROMPTMARK \n'` を流して読み比べ):
+
+  | 読み方 | SGR | `PROMPTMARK ` の行末スペース |
+  |---|---|---|
+  | `format=ansi`(`strip_ansi` 既定 = true) | 保持 | **保持** |
+  | `format=ansi` + `strip_ansi=true`(明示) | 保持 | **保持** |
+  | `format=ansi` + `strip_ansi=false` | 保持 | **保持** |
+  | `format=text`(`strip_ansi` 既定) | 除去 | 除去(トリム) |
+
+  → **`strip_ansi` は `format=ansi` の読みには掛からない**(3 通りとも同一の
+  `'\x1b[0m\x1b[38;5;1mRED\x1b[0m'` / `'PROMPTMARK '` を返す)。`format=text` の
+  行末トリムは 0.7.1 からの挙動のまま。よって `herdr-capture-io` は
+  `strip_ansi` を明示せずに済み(既定のまま ansi 読み + `normalize-ansi-read`)、
+  capture parity の設計は p20 で無改変のまま成立する。
+- **`recent` / `recent_unwrapped` の空 quirk も同じ**: スクロールバックが空の間は
+  空文字を返し、`visible` への fallback が要る(0.7.1 からの挙動)。
+
+実装への反映: なし(前提が全部そのまま成立したので束縛は無変更)。この節は
+「1 か月空いた実装を撃ち直した」記録で、protocol が動いた時に最初に読む場所。
