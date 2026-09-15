@@ -40,6 +40,7 @@
   tmux-send-keys])
 (import doeff_agents.sessionhost.policy [
   BILLING-METERED
+  BILLING-SUBSCRIPTION
   CLAUDE-SETTINGS-API-KEY-HELPER
   CLAUDE-SETTINGS-VERTEX-ENV
   CLAUDE-SETTINGS-VERTEX-PROJECT-ENV
@@ -224,6 +225,28 @@
   ;; 在り、config-dir は binding 由来(env / $HOME への fallback には届かない)。
   (<- settings-text (fs-read-text f"{config-dir}/{CLAUDE-SETTINGS-FILE}"))
   (setv [settings-status declarations usable] (claude-home-metered-reading settings-text))
+  ;; lane B の締め直し(ADR-DOE-AGENTS-003 R4 改訂): **定額**の kind の家に従量課金の
+  ;; 宣言があれば拒否する。今日の検査は env の名しか見ないので、家の中に鍵を入れれば
+  ;; 黙って通る道が開いていた — 黙って通る道は運用主の不変条件(従量課金を系に入れない)
+  ;; を人の注意力だけで守る形で、課金の階級も型に現れない。宣言があるなら kind で
+  ;; 名乗る(claude-code-metered)か、家から宣言を外す。
+  ;; account(どの人の login か)は今も検めない — 検めるのは課金の階級の宣言だけ。
+  ;; 破損・不在の settings.json は **通す**(今日と同じ。破損は claude 自身が loud に
+  ;; 落ちる)— ただし破損は warning に 1 行残す。
+  (when (and (= billing BILLING-SUBSCRIPTION) declarations)
+    (raise (RuntimeError
+             (+ f"session.launch: binding kind '{(.get (.get params "binding") "kind")}' is a "
+                f"subscription kind, but {config-dir}/{CLAUDE-SETTINGS-FILE} declares metered "
+                f"billing ({(.join ", " declarations)}). Either declare the home with the "
+                "metered kind 'claude-code-metered', or remove the metered declaration from "
+                "the home. The billing class must be visible in the binding kind — a "
+                "subscription kind whose home bills per use is exactly the silent path this "
+                "contract closes (ADR-DOE-AGENTS-003 R4 / -004 R9)."))))
+  (when (and (= billing BILLING-SUBSCRIPTION) (= settings-status HOME-READING-MALFORMED))
+    (.append warnings
+             (+ f"{config-dir}/{CLAUDE-SETTINGS-FILE} is not a JSON object, so its billing "
+                "declaration could not be checked (the CLI fails loud on a broken settings "
+                "file; ADR-DOE-AGENTS-003 R4)")))
   (when (and (= billing BILLING-METERED) (is usable None))
     (raise (RuntimeError
              (+ "session.launch: binding kind 'claude-code-metered' declares metered "
