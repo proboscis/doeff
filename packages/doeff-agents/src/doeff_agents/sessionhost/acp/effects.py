@@ -348,6 +348,21 @@ AGENTD_PLACES: frozenset[str] = frozenset(get_args(AgentdPlace))
 NODE_SPEC_PLACE = "place"
 #: 同じ置き場を写す labels の鍵(DEPRECATED — 読み手が残る間だけ書き続ける面。配車は読まない)。
 NODE_LABEL_PLACE = "place"
+#: node が持つ作業場の根(段 10 lane 10y・agora-redesign #110・依頼者の裁定 2026-09-15 案 C・既知の形 = volume topology の先読み):
+#: 契約 agora-kinds.json node.spec.workRoots(文字列の list・欄の定義点は契約 — ACP 側 10d)。配車は絶対 path の work_dir をこの根で
+#: 篩う(`~/…` はどの node も通す)。agentd は宣言(join の [agentd].work_roots / --work-roots → DOEFF_AGENTD_WORK_ROOTS)が在る時だけ
+#: 書く(judgment.node-work-roots-of)。各根は `/` で終わる絶対 path か `~/`(接頭辞の曖昧さを宣言で塞ぐ・検は join.work-roots-of)。
+NODE_SPEC_WORK_ROOTS = "workRoots"
+WORK_ROOTS_ENV = "DOEFF_AGENTD_WORK_ROOTS"
+#: 宣言の綴り(1 つの文字列に , 区切り — 宣言 file の値は文字列ちょうど)と env の区切り。
+WORK_ROOTS_SEPARATOR = ","
+
+
+@dataclass(frozen=True)
+class WorkRoots:
+    """node が持つ作業場の根の宣言(join.work-roots-of の答え — 検を通った根を宣言の順・重複なしで運ぶ)。"""
+
+    roots: tuple[str, ...]
 #: 置き場の env(join が宣言 file の [agentd].place / flag --place から据える)。無い agentd は参加しない。
 PLACE_ENV = "DOEFF_AGENTD_PLACE"
 #: node の spec.capacity(同時に走らせられる手番の数 — 段 10 lane 10d・agora-redesign #85)。join が宣言 file の
@@ -468,6 +483,8 @@ class JoinSpec:
     service_account_token_file: str | None = None
     #: 読んだ宣言 file の指紋(JoinDeclaration.sha256 の写し・段 10 lane 10y)。None = 宣言 file なし(flag だけの参加)。
     declaration_sha256: str | None = None
+    #: node が持つ作業場の根(段 10 lane 10y 案 C — 宣言 file の [agentd].work_roots)。None = 名乗らない(spec に欄を書かない)。
+    work_roots: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -607,6 +624,9 @@ class AgentdSettings:
     #: join.declaration-sha256-of の 1 点)。node の行の誕生と spec の揃えに header で運ぶ。None = 宣言 file なし
     #: (その agentd は kind node の capacity を書けない — ACP が 403 declaration-needs-fingerprint で断る)。
     declaration_sha256: str | None = None
+    #: node が持つ作業場の根(段 10 lane 10y 案 C — join が据えた WORK_ROOTS_ENV の写し・検は join.work-roots-of の 1 点)。
+    #: None = 宣言なし(node の spec に workRoots を書かない — 欄の無い node の読み方は配車の側が決める)。
+    work_roots: tuple[str, ...] | None = None
     #: host の backend(wire の閉語彙 tmux | herdr | headless の写し — agentd が読む語は
     #: BACKEND_HEADLESS だけ)。composition root(runtime.settings_from_env)が host の argv / env
     #: (valve.backend_of)から導く 1 点で、stream_capability も同じ源から導く。headless の器は

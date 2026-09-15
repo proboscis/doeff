@@ -37,6 +37,8 @@ from doeff_agents.sessionhost.acp.effects import (
     BORROWER_KEY_PATH_ENV,
     CUSTODY_SA_TOKEN_PATH_ENV,
     DECLARATION_SHA256_ENV,
+    WORK_ROOTS_ENV,
+    WorkRoots,
     CAPACITY_ENV,
     PLACE_ENV,
     CUSTODY_CONTRACT_VERSION,
@@ -103,6 +105,8 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
     place = _place_of_env(env)
     # 段 10 lane 10y(agora-redesign #110): 読んだ宣言 file の指紋 — node の行の capacity の書きに header で運ぶ
     declaration_sha256 = _declaration_sha256_of_env(env)
+    # 段 10 lane 10y 案 C: node が持つ作業場の根(宣言が在る時だけ spec.workRoots に名乗る)
+    work_roots = _work_roots_of_env(env)
     return AgentdSettings(
         node_name=node_name,
         node_capacity=node_capacity,
@@ -116,6 +120,7 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         # 据わる 1 点。宣言した node は account の無い job を起こさない(judgment.credential-source-of)。
         custody_declared=bool((env.get(CUSTODY_URL_ENV) or "").strip()),
         declaration_sha256=declaration_sha256,
+        work_roots=work_roots,
         # 段 10 lane 10y: charter の work_dir の `~` を展開する node の家(env HOME ちょうど・無ければ process の家)
         home=(env.get("HOME") or os.path.expanduser("~")).strip(),
     )
@@ -127,6 +132,16 @@ def _capacity_of_env(env: Mapping[str, str]) -> int:
     if not isinstance(verdict, int):
         raise TypeError(f"capacity_of returned {type(verdict).__name__}")
     return verdict
+
+
+def _work_roots_of_env(env: Mapping[str, str]) -> tuple[str, ...] | None:
+    """node が持つ作業場の根(段 10 lane 10y 案 C)。読みの規則は join.work-roots-of の 1 点(無い = None・形違い = ValueError)。"""
+    verdict: object = PyVM().run(join.work_roots_of(env.get(WORK_ROOTS_ENV)))
+    if verdict is None:
+        return None
+    if not isinstance(verdict, WorkRoots):
+        raise TypeError(f"work_roots_of returned {type(verdict).__name__}")
+    return verdict.roots
 
 
 def _declaration_sha256_of_env(env: Mapping[str, str]) -> str | None:

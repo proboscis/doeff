@@ -74,6 +74,7 @@
   NODE-CAPABILITIES-KEY
   NODE-LABEL-PLACE
   NODE-SPEC-PLACE
+  NODE-SPEC-WORK-ROOTS
   PROFILE-KIND
   AGENTD-PRINCIPAL
   AGORA-KINDS-NAMESPACE
@@ -1824,6 +1825,17 @@
   next)
 
 
+(defk node-work-roots-of [settings spec]
+  {:pre [(: settings AgentdSettings) (: spec dict)]
+   :post [(: % dict)]}
+  "宣言から名乗る作業場の根を spec の欄 workRoots(文字列の list・宣言の順)に置いた写し(段 10 lane 10y・agora-redesign #110・依頼者の
+   裁定 2026-09-15 案 C)。宣言が無い(None)なら足さない — 名乗らない node の行に欄は無く、読み方は配車の側が決める。"
+  (setv next (dict spec))
+  (when (is-not settings.work-roots None)
+    (setv (get next NODE-SPEC-WORK-ROOTS) (list settings.work-roots)))
+  next)
+
+
 (defk node-spec-of [settings]
   {:pre [(: settings AgentdSettings)]
    :post [(: % dict)]}
@@ -1836,7 +1848,8 @@
                                            "labels" labels
                                            "capacity" settings.node-capacity
                                            "streamCapability" settings.stream-capability}))
-  placed)
+  (<- rooted dict (node-work-roots-of settings placed))
+  rooted)
 
 
 (defk node-spec-declared [spec settings]
@@ -1851,7 +1864,8 @@
                                            "labels" declared
                                            "capacity" settings.node-capacity
                                            "streamCapability" settings.stream-capability}))
-  placed)
+  (<- rooted dict (node-work-roots-of settings placed))
+  rooted)
 
 
 (defk node-lease-of [settings now-ms]

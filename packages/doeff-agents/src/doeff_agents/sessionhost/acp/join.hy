@@ -30,6 +30,9 @@
   BORROWER-KEY-PATH-ENV
   CUSTODY-SA-TOKEN-PATH-ENV
   DECLARATION-SHA256-ENV
+  WORK-ROOTS-ENV
+  WORK-ROOTS-SEPARATOR
+  WorkRoots
   AGENTD-PLACES
   CAPACITY-ENV
   CUSTODY-URL-ENV
@@ -92,6 +95,8 @@
 (setv KEY-CAPACITY "capacity")
 ;; 機体の置き場(company | personal — 段 10 lane 10d 便 2・必須)。node の spec.labels.place に名乗る。
 (setv KEY-PLACE "place")
+;; node が持つ作業場の根(段 10 lane 10y 案 C・任意)。node の spec.workRoots に名乗る。
+(setv KEY-WORK-ROOTS "work_roots")
 ;; `[custody]` の鍵。
 (setv KEY-CUSTODY-URL "url")
 (setv KEY-BORROWER-KEY-FILE "borrower_key_file")
@@ -101,7 +106,7 @@
 (setv KEY-RECORD-URL "url")
 ;; 表 → 許す鍵(宣言に無い鍵は誤りとして名指す — 黙って読み飛ばさない)。
 (setv AGENTD-KEYS #{KEY-SERVER KEY-TOKEN-FILE KEY-NODE-NAME KEY-STATE-DIR KEY-BACKEND
-                    KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY KEY-PLACE})
+                    KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY KEY-PLACE KEY-WORK-ROOTS})
 (setv CUSTODY-KEYS #{KEY-CUSTODY-URL KEY-BORROWER-KEY-FILE KEY-SERVICE-ACCOUNT-TOKEN-FILE})
 (setv RECORD-KEYS #{KEY-RECORD-URL})
 ;; flag の綴り(`--config` は composition root が先に読む — config-path-of)。
@@ -116,6 +121,7 @@
 (setv FLAG-OWNERSHIP-PROOF "--ownership-proof")
 (setv FLAG-CAPACITY "--capacity")
 (setv FLAG-PLACE "--place")
+(setv FLAG-WORK-ROOTS "--work-roots")
 (setv FLAG-CUSTODY "--custody")
 (setv FLAG-BORROWER-KEY-FILE "--borrower-key-file")
 (setv FLAG-SERVICE-ACCOUNT-TOKEN-FILE "--service-account-token-file")
@@ -131,6 +137,7 @@
                  FLAG-OWNERSHIP-PROOF #(TABLE-AGENTD KEY-OWNERSHIP-PROOF)
                  FLAG-CAPACITY #(TABLE-AGENTD KEY-CAPACITY)
                  FLAG-PLACE #(TABLE-AGENTD KEY-PLACE)
+                 FLAG-WORK-ROOTS #(TABLE-AGENTD KEY-WORK-ROOTS)
                  FLAG-CUSTODY #(TABLE-CUSTODY KEY-CUSTODY-URL)
                  FLAG-BORROWER-KEY-FILE #(TABLE-CUSTODY KEY-BORROWER-KEY-FILE)
                  FLAG-SERVICE-ACCOUNT-TOKEN-FILE #(TABLE-CUSTODY KEY-SERVICE-ACCOUNT-TOKEN-FILE)
@@ -253,6 +260,27 @@
   (int word))
 
 
+(defk work-roots-of [text]
+  {:pre [(: text (| str None))]
+   :post [(: % (| WorkRoots None))]}
+  "node が持つ作業場の根の読み(段 10 lane 10y・agora-redesign #110・依頼者の裁定 2026-09-15 案 C): 宣言 file の [agentd].work_roots /
+   flag --work-roots / env の , 区切りの 1 つの文字列 → 根の tuple(宣言の順・重複は 1 つ)。無い・空 = None(名乗らない)。各根は
+   `~/` か `/` で始まり `/` で終わる形だけ — 相対・`~user`・終わりの `/` の無い根(/Users/s2 が /Users/s22625 に当たる接頭辞の曖昧さ)は
+   ValueError(参加しない — 篩う材料を嘘で名乗らない)。"
+  (setv word (if (is text None) "" (.strip text)))
+  (when (not word)
+    (return None))
+  (setv roots [])
+  (for [part (.split word WORK-ROOTS-SEPARATOR)]
+    (setv root (.strip part))
+    (when (not (and (or (.startswith root "~/") (.startswith root "/")) (.endswith root "/")))
+      (raise (ValueError (+ f"[{TABLE-AGENTD}].{KEY-WORK-ROOTS} の各根は ~/ か / で始まり / で終わる path であること: {root !r}"
+                            f"(宣言 {word !r})"))))
+    (when (not-in root roots)
+      (.append roots root)))
+  (WorkRoots :roots (tuple roots)))
+
+
 (defk declaration-sha256-of [text]
   {:pre [(: text (| str None))]
    :post [(: % (| str None))]}
@@ -313,6 +341,8 @@
   (<- capacity int (capacity-of (.get agentd KEY-CAPACITY)))
   ;; 機体の置き場(段 10 lane 10d 便 2)。
   (<- place str (place-of (.get agentd KEY-PLACE)))
+  ;; node が持つ作業場の根(段 10 lane 10y 案 C・任意)。
+  (<- declared-roots (| WorkRoots None) (work-roots-of (.get agentd KEY-WORK-ROOTS)))
   (JoinSpec
     :server server
     :token-file token-file
@@ -326,6 +356,8 @@
     :service-account-token-file (or (.get custody KEY-SERVICE-ACCOUNT-TOKEN-FILE) None)
     ;; 読んだ宣言 file の指紋(段 10 lane 10y)— file の bytes から composition root が導いた値をそのまま運ぶ。
     :declaration-sha256 declaration.sha256
+    ;; node が持つ作業場の根(段 10 lane 10y 案 C)— 形の検は work-roots-of の 1 点(形違いは参加しない)。
+    :work-roots (if (is declared-roots None) None declared-roots.roots)
     :ownership ownership
     :capacity capacity
     :place place
@@ -383,6 +415,8 @@
     (.append env #(CUSTODY-SA-TOKEN-PATH-ENV spec.service-account-token-file)))
   (when (is-not spec.declaration-sha256 None)
     (.append env #(DECLARATION-SHA256-ENV spec.declaration-sha256)))
+  (when (is-not spec.work-roots None)
+    (.append env #(WORK-ROOTS-ENV (.join WORK-ROOTS-SEPARATOR spec.work-roots))))
   (when (is-not spec.ownership None)
     (.extend env [#(OWNERSHIP-ENV spec.ownership.grade)
                   #(OWNERSHIP-PROOF-ENV spec.ownership.proof)]))
