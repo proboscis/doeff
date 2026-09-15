@@ -644,6 +644,29 @@ def test_a_withdrawn_node_re_joins_as_a_new_incarnation_of_the_same_identity() -
     assert [k for k in world.acp.rows if k.startswith(f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:")] == [key, fresh_key]
 
 
+def test_node_row_names_its_work_roots_only_when_declared() -> None:
+    """段 10 lane 10y(agora-redesign #110・依頼者の裁定 2026-09-15 案 C): 配車が絶対 path の work_dir を結ぶ前に篩う材料 = node の
+    spec.workRoots。反例の実弾 = 10:55 に /Users/s22625/repos/mediagen を宣言した会話の手番が pool(家 /home/kento)に結ばれ、落ちてから
+    しか外れなかった。agentd は宣言の根を宣言の順の list で誕生と揃えの両方に書き、宣言の無い agentd の行には欄を書かない。"""
+    from dataclasses import replace
+
+    world = World()
+    world.settings = replace(world.settings, work_roots=("~/", "/Users/s22625/"))
+    key = f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"
+    del world.acp.rows[key]
+    world.tick()
+    assert world.acp.rows[key].spec["workRoots"] == ["~/", "/Users/s22625/"]
+    # 宣言を変えた agentd は揃えの書きで根を名乗り直す
+    world.settings = replace(world.settings, work_roots=("~/",))
+    world.tick(advance_ms=30_000)
+    assert world.acp.rows[key].spec["workRoots"] == ["~/"]
+    # 宣言の無い agentd の誕生には欄が無い
+    bare = World()
+    del bare.acp.rows[key]
+    bare.tick()
+    assert "workRoots" not in bare.acp.rows[key].spec
+
+
 def test_node_registration_refused_is_logged_once_and_retried_each_heartbeat() -> None:
     """R28: 作れない拍(契約の書き手の登録し直しの前など)は 1 度だけ log し、heartbeat ごとに撃ち直す。"""
     from doeff_agents.sessionhost.acp.effects import Refused
@@ -3553,6 +3576,33 @@ def test_join_reads_the_fingerprint_of_the_declaration_file_bytes_into_the_env_a
         settings_from_env({**recorded, "DOEFF_AGENTD_DECLARATION_SHA256": "AB" * 32}, ())
     with pytest.raises(ValueError, match="DOEFF_AGENTD_DECLARATION_SHA256"):
         settings_from_env({**recorded, "DOEFF_AGENTD_DECLARATION_SHA256": "ab" * 31}, ())
+
+
+def test_join_reads_work_roots_into_the_env_and_settings_and_refuses_ambiguous_roots() -> None:
+    """段 10 lane 10y 案 C: [agentd].work_roots(, 区切りの 1 つの文字列 — 宣言 file の値は文字列)→ JoinSpec.work_roots → env
+    DOEFF_AGENTD_WORK_ROOTS → AgentdSettings.work_roots。無い = None(env にも出ない)。各根は ~/ か / で始まり / で終わる形だけ —
+    終わりの / の無い根(/Users/s2 が /Users/s22625 に当たる接頭辞の曖昧さ)・相対・~user は参加を断る。"""
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import JoinSpec
+    from doeff_agents.sessionhost.acp.runtime import settings_from_env
+
+    base = ["--server", "http://acp:8868", "--token-file", "/t", "--capacity", "2", "--place", "personal"]
+    declaration: dict[str, object] = {"schema": "doeff.agentd-join.v1", "agentd": {"work_roots": " ~/ , /Users/s22625/ ,~/ "}}
+    spec = _join_spec(base, declaration)
+    assert isinstance(spec, JoinSpec)
+    assert spec.work_roots == ("~/", "/Users/s22625/")
+    env = dict(run(join.join_plan_of(spec)).env)
+    assert env["DOEFF_AGENTD_WORK_ROOTS"] == "~/,/Users/s22625/"
+    recorded = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACE": "personal"}
+    assert settings_from_env({**recorded, "DOEFF_AGENTD_WORK_ROOTS": env["DOEFF_AGENTD_WORK_ROOTS"]}, ()).work_roots == ("~/", "/Users/s22625/")
+    assert settings_from_env(recorded, ()).work_roots is None
+    bare = _join_spec(base)
+    assert isinstance(bare, JoinSpec)
+    assert bare.work_roots is None
+    assert "DOEFF_AGENTD_WORK_ROOTS" not in dict(run(join.join_plan_of(bare)).env)
+    for wrong in ("/Users/s2", "repos/", "~kento/", "~"):
+        with pytest.raises(ValueError, match="work_roots"):
+            _join_spec([*base, "--work-roots", wrong])
 
 
 def test_acp_writes_put_the_fingerprint_header_only_on_the_writes_that_carry_it(monkeypatch: pytest.MonkeyPatch) -> None:
