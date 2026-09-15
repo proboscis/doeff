@@ -269,6 +269,7 @@
   first-turn-carries-inputs
   frame-lines-of
   session-affinity-key-of
+  provider-limit-condition-of
   session-lost-condition-of
   in-flight-ids
   in-flight-job-of
@@ -1569,6 +1570,16 @@
   (<- recorded bool (end-turn-record drained.job-id batch.usage drained.pending-entries))
   (when (not recorded)
     (<- (LogLine :text f"agentd: turn-record for job {job.job-id} is missing at turn end")))
+  ;; 段 11 lane 11n 便 C(agora-redesign #179・依頼者の裁定 2026-09-15 案 c′): 器が provider の限度で
+  ;; 終わった手番は、その事実を型で残す(判断は judgment.provider-limit-condition-of の 1 点で、読むのは
+  ;; 器が書いた終端の cause ちょうど・None = 限度の断りではない)。この条件が無いと「どの model が
+  ;; 枯れたか」が行に 1 bit も残らず、予算の判断へ戻る道が無い(実弾 2026-09-15 13:2x)。
+  (<- limit (| dict None) (provider-limit-condition-of
+                            (if (isinstance view SessionView) view.terminal-cause None)
+                            job.model))
+  (when (is-not limit None)
+    (<- (LogLine :text (+ f"agentd: job {job.job-id} was refused by the provider's limit "
+                               f"(model {job.model}): {(get limit "message")}"))))
   ;; agent-job → Ended
   (<- fresh (| AcpRow None) (AcpGetRow :key job.job-key))
   (if (is fresh None)
@@ -1577,7 +1588,8 @@
         (<- job-status dict (status-object-of fresh))
         ;; conditions は最新の写し(drained — 段 9p の given-up の RecordUnavailable を含む)から。
         (<- ended dict (ended-status-of job-status outcome.result
-                                        (+ drained.pending-conditions outcome.conditions)))
+                                        (+ drained.pending-conditions outcome.conditions
+                                           (if (is limit None) #() #(limit)))))
         (<- wrote-job (| Written Conflict Refused) (AcpPutStatus :row fresh :status ended))
         (when (not (isinstance wrote-job Written))
           (<- (LogLine :text f"agentd: agent-job {job.job-id} not ended ({wrote-job})")))))

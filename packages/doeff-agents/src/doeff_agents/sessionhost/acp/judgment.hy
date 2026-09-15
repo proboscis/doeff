@@ -56,6 +56,10 @@
   ATTACHMENT-SEQ-KEY
   ATTACHMENT-SHA256-KEY
   CONDITION-ATTACHMENT-IGNORED
+  CAUSE-CATEGORY-RATE-LIMITED
+  CONDITION-PROVIDER-LIMIT
+  MODEL-UNDECLARED
+  REASON-RATE-LIMITED
   MESSAGE-ATTACHMENTS-KEY
   NODE-CAPABILITY-ATTACHMENTS-KEY
   RECORD-ATTACHMENT-EVENT-KIND
@@ -298,6 +302,40 @@
       (condition-of CONDITION-AGENTD-RESTART
                     (+ f"agentd on node {node-name} stopped ({reason}) at {at} while the turn was running in "
                        f"session {job.session-id} — the headless process goes down with the host, so the turn is closed here")))
+  condition)
+
+
+(defk provider-limit-condition-of [cause model]
+  {:pre [(: cause (| dict None)) (: model (| str None))]
+   :post [(: % (| dict None))]}
+  "段 11 lane 11n 便 C(agora-redesign #179・依頼者の裁定 2026-09-15 案 c′): 器の終端の cause
+   (SessionView.terminal-cause)→ provider の限度の条件 1 項(None = 限度の断りではない)。
+
+   **族の表はここに無い**(ADR-DOE-AGENTS-008 R1: 観測形式のテキスト物理の家は impls/markers.hy
+   ちょうど)。CLI の文に表を当てるのは器の側の 1 点 —— headless.hy の手番の腕が verdict の
+   detail に markers.has-api-limit-marker を当て、当たった行を status failed + cause
+   {category: rate_limited, reason: <CLI の文>} にする(pane の路の policy.hy と同じ表・同じ語彙)。
+   制御面はその**欄**を読む(既知の形: runner が結末を書き、control plane が欄を読む)。
+
+   model = **手番が走らせようとした model**(InFlightJob.model = charter.model)で、材料の中の
+   message.model ではない: 限度の断りの拍の usage.model は `<synthetic>`(実測 2026-09-15 11:17)で、
+   どの model が枯れたかを名乗らない。宣言が無い手番(effects.MODEL-UNDECLARED)は欄を落とす。
+
+   until は書かない —— 窓(いつ戻るか)を知るのは予算の controller で、この条件は『断られた』の
+   事実ちょうど。⚠ status.result には書かない(result が在ることは『手番が結果を報告した』の
+   意味で、await の終端の別〔Acp.App.Agent.AgentJob.awaitOutcomeOf〕が反転する)。"
+  (when (not (isinstance cause dict))
+    (return None))
+  (when (!= (.get cause "category") CAUSE-CATEGORY-RATE-LIMITED)
+    (return None))
+  (setv reason (.get cause "reason"))
+  (setv line (if (and (isinstance reason str) (.strip reason))
+                 (get (.splitlines (.strip reason)) 0)
+                 CAUSE-CATEGORY-RATE-LIMITED))
+  (setv condition {"type" CONDITION-PROVIDER-LIMIT "status" "True" "reason" REASON-RATE-LIMITED
+                   "message" line})
+  (when (and (isinstance model str) (.strip model) (!= model MODEL-UNDECLARED))
+    (setv (get condition "model") model))
   condition)
 
 
@@ -1203,7 +1241,7 @@
     :lease-kind lease-kind
     :account (if (is lease-kind None) None account)
     :profile (if (and (isinstance profile str) profile) profile "unbound")
-    :model (if (and (isinstance model str) model) model "default")))
+    :model (if (and (isinstance model str) model) model MODEL-UNDECLARED)))
 
 
 (defk credential-source-of [plan custody-declared]

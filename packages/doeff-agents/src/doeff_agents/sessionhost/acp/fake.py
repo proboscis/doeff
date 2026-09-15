@@ -570,9 +570,19 @@ class FakeSessions:
         self.views[session_id] = view
         return view
 
-    def finish(self, session_id: str, status: str, result: JSONObject | None = None) -> None:
+    def finish(
+        self,
+        session_id: str,
+        status: str,
+        result: JSONObject | None = None,
+        cause: JSONObject | None = None,
+    ) -> None:
         """test が器の終端を起こす(policy の turn-end が done へ倒す・死亡が exited 等)。終端の行の
-        backend は host と同じく観測せず false。"""
+        backend は host と同じく観測せず false。
+
+        cause = 器が書いた終端の cause(段 11 lane 11n 便 C: provider の限度の断りは
+        ``{"category": "rate_limited", "reason": <CLI の文>}``)。省略 = 今日どおり
+        ``{"category": "run_failed", "reason": status}``(done は cause なし)。"""
         view = self.views[session_id]
         self.views[session_id] = replace(
             view,
@@ -580,7 +590,7 @@ class FakeSessions:
             result_payload=result,
             terminal_cause=None
             if status == "done"
-            else {"category": "run_failed", "reason": status},
+            else (cause if cause is not None else {"category": "run_failed", "reason": status}),
             backend_alive=False,
         )
 
