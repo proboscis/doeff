@@ -428,6 +428,11 @@ HOST_SOCKET_FLAG = "--socket"
 HOST_MAX_RUNNING_FLAG = "--max-running"
 HOST_MAX_RUNNING_UNLIMITED = "none"
 HOST_BACKEND_FLAG = "--backend"
+#: 2026-09 の従量課金の便(lane A): 従量課金の binding kind を
+#: 受ける host の方針。値を取らない旗で、既定 off。綴りの定義点はここ 1 つ(host.hy の
+#: parse-args が読み、join が argv に足す)。同名の env は **作らない** — 課金の方針を
+#: env の 1 語で変えられる形は ADR-DOE-AGENTS-004 R10(d) が退けた形と同じ。
+HOST_ALLOW_METERED_BILLING_FLAG = "--allow-metered-billing"
 HOST_SERVE_COMMAND = "serve"
 #: host の backend の閉語彙(host.hy parse-args と同じ 3 語)と agentd の既定(join の既定 = headless)。
 HOST_BACKENDS: frozenset[str] = frozenset({"tmux", "herdr", BACKEND_HEADLESS})
@@ -513,6 +518,10 @@ class JoinSpec:
     declaration_sha256: str | None = None
     #: node が持つ作業場の根(段 10 lane 10y 案 C — 宣言 file の [agentd].work_roots)。None = 名乗らない(spec に欄を書かない)。
     work_roots: tuple[str, ...] | None = None
+    #: 従量課金の binding kind を受けるか(従量課金の便 lane A — 宣言 file の
+    #: [agentd].allow_metered_billing・flag --allow-metered-billing)。False = 受けない(既定)。
+    #: 真のときだけ join が host の argv へ値なしの旗を足す。env は作らない(方針は argv の 1 点)。
+    allow_metered_billing: bool = False
 
 
 @dataclass(frozen=True)

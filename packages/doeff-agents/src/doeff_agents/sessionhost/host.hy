@@ -206,6 +206,12 @@
   ;; ⚠ 0 は無制限ではなく全拒否(判定が `owned-count >= max-running` なので
   ;; 0 は常に真)。CLI は 0 を typed に拒む。
   #^ (| int None) max-running
+  ;; 従量課金の binding kind を受けるか(2026-09・ADR-DOE-AGENTS-004 R9 改訂)。
+  ;; 既定 False = fail-closed: 旗を立てていない配備では metered の kind は
+  ;; 1 件も起動しない(判定は launch.hy の admission の 1 点)。起動時に固定で
+  ;; 再読込は無い — 変えるには host の再起動(所有者は supervisor・R10(d))。
+  #^ bool allow-metered-billing
+  (setv allow-metered-billing False)
   #^ int result-solicitation-limit
   #^ int prompt-stall-seconds
   #^ int prompt-unblock-limit
@@ -325,6 +331,10 @@
   (setv tmux-bin "tmux")
   (setv monitor-interval-seconds (/ DEFAULT-MONITOR-INTERVAL-MS 1000))
   (setv max-running DEFAULT-MAX-RUNNING-SESSIONS)
+  ;; 値を取らない旗(既定 off)。env knob は作らない — 課金の方針を env の 1 語で
+  ;; 変えられる形は ADR-DOE-AGENTS-004 R10(d) が退けた形と同じ(監督の穴を env
+  ;; 宣言は塞げない)。配備は argv(launchd / systemd の ExecStart)で名乗る。
+  (setv allow-metered-billing False)
   (setv result-solicitation-limit
         (or (env-u32 "DOEFF_AGENTD_RESULT_SOLICITATIONS")
             DEFAULT-RESULT-SOLICITATION-LIMIT))
@@ -394,6 +404,8 @@
                            (+ "--max-running 0 rejects every launch "
                               "(admission is `owned >= max`); use "
                               "`--max-running none` for unlimited")))))))
+      (= arg "--allow-metered-billing")
+      (setv allow-metered-billing True)
       (= arg "--result-solicitations")
       (do (+= index 1)
           (setv raw (required-arg args index "--result-solicitations"))
@@ -437,6 +449,7 @@
     :tmux-bin tmux-bin
     :monitor-interval-seconds monitor-interval-seconds
     :max-running max-running
+    :allow-metered-billing allow-metered-billing
     :result-solicitation-limit result-solicitation-limit
     :prompt-stall-seconds prompt-stall-seconds
     :prompt-unblock-limit prompt-unblock-limit
@@ -875,6 +888,8 @@
    "launch_attribution" (.get params "launch_attribution")
    "socket_path" config.socket-path
    "max_running" config.max-running
+   ;; 課金の階級の方針(host 所有値 — launch.hy の admission が読む 1 点)。
+   "allow_metered_billing" config.allow-metered-billing
    ;; repl-idle 予算の env-only knob(S19 watchdog knob と同じ use-site 読み。
    ;; 未設定なら None → launch.hy が oracle 定数 120s に fallback)。
    "repl_idle_max_wait_seconds" (env-positive-i64
@@ -1164,6 +1179,9 @@
              "db_path" config.db-path
              "socket_path" config.socket-path
              "max_running" config.max-running
+             ;; host の方針は読めること(配備が従量課金を許しているかを argv を
+             ;; 覗かずに確かめる読み口。additive field)。
+             "allow_metered_billing" config.allow-metered-billing
              "active_sessions" (.submit actor db-count-active)
              "lease" (.submit actor db-read-lease)
              ;; ADR-007 §4: turn 打刻 counters(additive・in-memory)。
@@ -1267,6 +1285,7 @@
            "expected_result_specified" (in "expected_result" p)
            "socket_path" config.socket-path
            "max_running" config.max-running
+           "allow_metered_billing" config.allow-metered-billing
            "repl_idle_max_wait_seconds" (env-positive-i64
                                           "DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS")
            "backend_kind" config.backend

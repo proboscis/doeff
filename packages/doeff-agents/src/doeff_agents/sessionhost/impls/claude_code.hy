@@ -38,6 +38,15 @@
   fs-make-dirs
   env-get
   tmux-send-keys])
+(import doeff_agents.sessionhost.policy [
+  BILLING-METERED
+  CLAUDE-SETTINGS-API-KEY-HELPER
+  CLAUDE-SETTINGS-VERTEX-ENV
+  CLAUDE-SETTINGS-VERTEX-PROJECT-ENV
+  HOME-READING-ABSENT
+  HOME-READING-MALFORMED
+  binding-billing-class
+  claude-home-metered-reading])
 (import doeff_agents.sessionhost.impls.channel [
   REPORT-RESULT-MCP-SERVER
   result-channel-spec])
@@ -175,23 +184,66 @@
   None)
 
 
+(setv CLAUDE-SETTINGS-FILE "settings.json")
+
+(deff claude-home-reading-label [config-dir status declarations]
+  {:pre [(: config-dir str) (: status str) (: declarations list)]
+   :post [(: % str)]}
+  "家の中の読みの顛末を人間可読の 1 句にする(admission の文言の共有語彙)。
+   宣言の**名**しか載せない — 値は決して文言に載らない。"
+  (setv path f"{config-dir}/{CLAUDE-SETTINGS-FILE}")
+  (cond
+    (= status HOME-READING-ABSENT) f"{path} does not exist"
+    (= status HOME-READING-MALFORMED) f"{path} is not a JSON object"
+    declarations
+      (+ f"{path} declares {(.join ", " declarations)}, which a metered kind "
+         "does not accept")
+    True f"{path} declares no metered credential"))
+
+
 (defk claude-pre-launch [params]
   {:pre [(: params dict)]
    :post [(: % dict)]}
   "PreLaunchSetup の claude 実体: 実効 identity の解決(S14 の Hy positive 化 —
-   launch program が session 行へ永続化する)+ trust pre-seed
-   (skip_trust_setup で trust だけを飛ばす。oracle: gate は launch 側で常時、
-   trust は skip 可能 — claude に hard gate は無い)+ ADR-006 R1 の会話
+   launch program が session 行へ永続化する)+ 家の中の従量課金の宣言と binding の
+   kind の一致の検め(2026-09・ADR-DOE-AGENTS-004 R9 改訂 — 全副作用より前)+
+   trust pre-seed(skip_trust_setup で trust だけを飛ばす。oracle: gate は launch
+   側で常時、trust は skip 可能 — claude に hard gate は無い)+ ADR-006 R1 の会話
    identity 鋳造(fresh launch では launch program がこの UUID を
    --session-id 注入と row.conversation の両方に使う — boot 前に identity が
-   stored fact になる。resume / fork では捨てられる)。"
+   stored fact になる。resume / fork では捨てられる)。
+
+   kind による分岐はこの 1 点だけ(並行実装を作らない — 本体は共有し、宣言の検めと
+   identity の印だけが課金の階級で変わる)。鍵の**値**は読まない: 判定は policy の
+   純関数が宣言の名だけを返し、host の memory にも log にも行にも残らない。"
   (<- resolved (resolve-claude-config-dir params))
   (setv [config-dir warnings] resolved)
+  (setv billing (binding-billing-class (.get params "binding")))
+  ;; 家の中の宣言の読み(全副作用より前)。`claude-code-metered` の受理形は
+  ;; {config_dir} なので、admission を通った metered の launch には必ず binding が
+  ;; 在り、config-dir は binding 由来(env / $HOME への fallback には届かない)。
+  (<- settings-text (fs-read-text f"{config-dir}/{CLAUDE-SETTINGS-FILE}"))
+  (setv [settings-status declarations usable] (claude-home-metered-reading settings-text))
+  (when (and (= billing BILLING-METERED) (is usable None))
+    (raise (RuntimeError
+             (+ "session.launch: binding kind 'claude-code-metered' declares metered "
+                f"billing, but {(claude-home-reading-label config-dir settings-status declarations)}. "
+                f"Write {{\"{CLAUDE-SETTINGS-API-KEY-HELPER}\": \"cat <path to a 0600 file "
+                f"holding the API key>\"}} into {config-dir}/{CLAUDE-SETTINGS-FILE}, or declare "
+                f"Vertex there with env {CLAUDE-SETTINGS-VERTEX-ENV}=1 and "
+                f"{CLAUDE-SETTINGS-VERTEX-PROJECT-ENV}=<project>. The host never reads the "
+                "credential value — it only checks that the home declares one "
+                "(ADR-DOE-AGENTS-004 R9)."))))
   (when (not (.get params "skip_trust_setup" False))
     (<- _ (preseed-claude-trust config-dir (get params "work_dir"))))
-  {"CLAUDE_CONFIG_DIR" config-dir
-   "warnings" warnings
-   "conversation" {"session_id" (str (uuid.uuid4))}})
+  (setv identity {"CLAUDE_CONFIG_DIR" config-dir
+                  "warnings" warnings
+                  "conversation" {"session_id" (str (uuid.uuid4))}})
+  ;; 課金の階級の印(行の effective_identity に残る — resume はこの印で kind を
+  ;; 選ぶ)。env には出ない: launch-spawn-env は binding 所有キーだけを拾う。
+  (when (= billing BILLING-METERED)
+    (setv (get identity "billing") BILLING-METERED))
+  identity)
 
 
 ;; ---------------------------------------------------------------------------

@@ -1042,6 +1042,196 @@
     (assert (= world.rows {}))))
 
 
+;; ---------------------------------------------------------------------------
+;; 課金の階級: kind で宣言し host の旗で許す(従量課金の便 lane A・
+;; ADR-DOE-AGENTS-004 R9 改訂 / law
+;; metered-billing-is-declared-by-kind-and-allowed-by-host-policy)
+;; ---------------------------------------------------------------------------
+
+(defn metered-claude-world []
+  "従量課金の宣言が揃った claude の家(settings.json に apiKeyHelper)。"
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["\u276f {composer}"])
+  (setv (get world.fs "/x/claude-metered/settings.json")
+        (json.dumps {"apiKeyHelper" "cat /secrets/anthropic-key"}))
+  world)
+
+
+(defn metered-codex-world []
+  "従量課金の宣言が揃った codex の家(合成 view の auth.json に非空の鍵の欄)。"
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["codex booting banner" "\u203a {composer}"])
+  (setv (get world.env "XDG_STATE_HOME") "/state")
+  (setv (get world.fs "/state/doeff/agent-homes/composed-view/auth.json")
+        (json.dumps {"OPENAI_API_KEY" "sk-test-not-a-real-key"
+                     "auth_mode" "apikey"}))
+  world)
+
+
+(defn metered-claude-params [#** overrides]
+  (setv params {"agent_type" "claude"
+                "binding" {"kind" "claude-code-metered"
+                           "config_dir" "/x/claude-metered"}})
+  (.update params overrides)
+  (launch-params #** params))
+
+
+(defn metered-codex-params [#** overrides]
+  (setv params {"agent_type" "codex"
+                "binding" {"kind" "codex-metered"
+                           "auth_file" "/auths/metered.json"
+                           "profile_dir" "/profiles/metered"}})
+  (.update params overrides)
+  (launch-params #** params))
+
+
+(deftest test-launch-rejects-metered-kind-when-host-forbids-metered-billing
+  ;; 既定 fail-closed: 旗を立てていない host では従量課金の kind は 1 件も
+  ;; 起動しない。断りは全副作用より前(行も tmux も生まれない)で、文言は
+  ;; (a) 何が断られたか(kind)(b) 直し方 2 択(旗つきで host を起こす〔費用が
+  ;; 生じる〕/ 定額の kind を使う)(c) 根拠(R9)を名指す。
+  ;; 旗の省略(key 自体が無い launch — 直接束縛の形)でも同じ。
+  (for [[world params] [#((metered-claude-world) (metered-claude-params))
+                        #((metered-codex-world) (metered-codex-params))]]
+    (setv raised None)
+    (try
+      (<- _ (run-launch world params))
+      (except [e RuntimeError] (setv raised e)))
+    (assert (is-not raised None) f"expected reject for {(get params "binding")}")
+    (setv message (str raised))
+    (assert (in "declares metered billing" message) message)
+    (assert (in (get (get params "binding") "kind") message) message)
+    (assert (in "--allow-metered-billing" message) message)
+    (assert (in "subscription binding kind" message) message)
+    (assert (in "ADR-DOE-AGENTS-004 R9" message) message)
+    ;; 副作用ゼロ: 行も tmux も trust の書きも無い
+    (assert (= world.trace []) (str world.trace))
+    (assert (= world.rows {}))
+    (assert (not world.tmux-sessions))))
+
+
+(deftest test-launch-admits-metered-kind-when-host-allows
+  ;; 旗のある host では、家の宣言が揃っていれば起動する。行に残るのは家の path と
+  ;; 課金の階級の印だけ(鍵の値は行にも env にも log にも出ない)。
+  ;; claude = settings.json の apiKeyHelper / codex = auth.json の非空の鍵の欄。
+  (setv world (metered-claude-world))
+  (<- row (run-launch world (metered-claude-params :allow_metered_billing True)))
+  (assert (= row.status "running"))
+  (assert (= (get row.effective-identity "CLAUDE_CONFIG_DIR") "/x/claude-metered"))
+  (assert (= (get row.effective-identity "billing") "metered"))
+  ;; 実効 env は binding 所有キーだけ — 課金の印は env に出ない
+  (setv tmux-env (get world.tmux-envs "doeff-s1"))
+  (assert (= (get tmux-env "CLAUDE_CONFIG_DIR") "/x/claude-metered"))
+  (assert (not-in "billing" tmux-env))
+  (assert (not-in "apiKeyHelper" (json.dumps tmux-env)))
+  ;; 鍵の値そのものが行に載っていないこと(家の path と印だけ)
+  (assert (not-in "secrets/anthropic-key" (json.dumps row.effective-identity)))
+
+  ;; codex の二軸形: 合成 view の auth.json を読んで通し、行には二軸の宣言も
+  ;; additive に残る(resume がこの受理形を組み直すため)。綴りは env の名では
+  ;; ないので spawn の env には出ない。
+  (setv world2 (metered-codex-world))
+  (<- row2 (run-launch world2 (metered-codex-params :allow_metered_billing True)))
+  (assert (= row2.status "running"))
+  (assert (= (get row2.effective-identity "CODEX_HOME")
+             "/state/doeff/agent-homes/composed-view"))
+  (assert (= (get row2.effective-identity "billing") "metered"))
+  (assert (= (get row2.effective-identity "codex_auth_file") "/auths/metered.json"))
+  (assert (= (get row2.effective-identity "codex_profile_dir") "/profiles/metered"))
+  (setv tmux-env2 (get world2.tmux-envs "doeff-s1"))
+  (assert (= (get tmux-env2 "CODEX_HOME") "/state/doeff/agent-homes/composed-view"))
+  (for [absent ["billing" "codex_auth_file" "codex_profile_dir"
+                "CODEX_AUTH_FILE" "CODEX_PROFILE_DIR" "OPENAI_API_KEY"]]
+    (assert (not-in absent tmux-env2) absent))
+  (assert (not-in "sk-test-not-a-real-key" (json.dumps tmux-env2))))
+
+
+(deftest test-launch-rejects-metered-kind-without-home-declaration
+  ;; 旗はあるが家に宣言が無い / 家が無い / 家が壊れている → 起動前(PreLaunchSetup)
+  ;; の typed reject。行は作らない。文言は「何が無いか」と「どう作るか」を名指す。
+  ;; claude: 定額の login の家(settings.json 不在)・env に鍵を置いた家(metered kind が
+  ;; 受けるのは apiKeyHelper か Vertex の対だけ)・Vertex の片割れだけの家。
+  (for [[settings fragment]
+        [#(None "does not exist")
+         #("{not json" "is not a JSON object")
+         #((json.dumps {}) "declares no metered credential")
+         #((json.dumps {"env" {"ANTHROPIC_API_KEY" "sk-x"}})
+           "which a metered kind does not accept")
+         #((json.dumps {"env" {"CLAUDE_CODE_USE_VERTEX" "1"}})
+           "which a metered kind does not accept")]]
+    (setv world (LaunchWorld))
+    (setv world.capture-script ["\u276f {composer}"])
+    (when (is-not settings None)
+      (setv (get world.fs "/x/claude-metered/settings.json") settings))
+    (setv raised None)
+    (try
+      (<- _ (run-launch world (metered-claude-params :allow_metered_billing True)))
+      (except [e RuntimeError] (setv raised e)))
+    (assert (is-not raised None) f"expected reject for settings {settings !r}")
+    (setv message (str raised))
+    (assert (in "claude-code-metered" message) message)
+    (assert (in fragment message) message)
+    (assert (in "apiKeyHelper" message) message)
+    (assert (in "CLAUDE_CODE_USE_VERTEX" message) message)
+    (assert (= world.rows {}))
+    (assert (not world.tmux-sessions)))
+
+  ;; codex: 定額の login の家は auth.json の OPENAI_API_KEY の欄を **null で持つ**
+  ;; (実測 2026-09-15 — 運用主の家 3 つとも)。欄の有無で判じると定額の家を
+  ;; 従量課金と誤るので、判定は「非空」。ここは「欄は在るが空」= 宣言なしの pin。
+  (for [[auth fragment]
+        [#(None "does not exist")
+         #("{not json" "is not a JSON object")
+         #((json.dumps {"OPENAI_API_KEY" None "auth_mode" "chatgpt"
+                        "tokens" {"access_token" "t"}})
+           "has no non-empty `OPENAI_API_KEY` field")
+         #((json.dumps {"OPENAI_API_KEY" "   "}) "has no non-empty")]]
+    (setv world (LaunchWorld))
+    (setv world.capture-script ["codex booting banner" "\u203a {composer}"])
+    (setv (get world.env "XDG_STATE_HOME") "/state")
+    (when (is-not auth None)
+      (setv (get world.fs "/state/doeff/agent-homes/composed-view/auth.json") auth))
+    (setv raised None)
+    (try
+      (<- _ (run-launch world (metered-codex-params :allow_metered_billing True)))
+      (except [e RuntimeError] (setv raised e)))
+    (assert (is-not raised None) f"expected reject for auth {auth !r}")
+    (setv message (str raised))
+    (assert (in "codex-metered" message) message)
+    (assert (in fragment message) message)
+    (assert (in "codex login --with-api-key" message) message)
+    (assert (= world.rows {}))
+    (assert (not world.tmux-sessions))))
+
+
+(deftest test-launch-still-rejects-metered-credential-in-overlay-with-allow-flag
+  ;; 旗は「binding の kind で宣言された従量課金の家を受ける」ことだけを許す。
+  ;; env に credential を積む経路は **旗があっても不変で拒否**(operator 裁定
+  ;; 2026-08-26 の env の締め出しは旗の有無に依らない — 鍵の値は host を通らない)。
+  ;; 定額の kind でも従量課金の kind でも同じ。
+  (for [[world params]
+        [#((metered-claude-world) (metered-claude-params :allow_metered_billing True))
+         #((metered-codex-world) (metered-codex-params :allow_metered_billing True))
+         #((LaunchWorld) (launch-params :allow_metered_billing True))]]
+    (for [bad-env [{"ANTHROPIC_API_KEY" "sk-ant-x"}
+                   {"OPENAI_API_KEY" "sk-x"}
+                   {"SOMETHING_NEW_API_KEY" "k"}
+                   {"ANTHROPIC_AUTH_TOKEN" "t"}]]
+      (setv fresh (LaunchWorld))
+      (setv fresh.fs (dict world.fs))
+      (setv fresh.env (dict world.env))
+      (setv fresh.capture-script (list world.capture-script))
+      (setv raised None)
+      (try
+        (<- _ (run-launch fresh (dict params #** {"session_env" bad-env})))
+        (except [e RuntimeError] (setv raised e)))
+      (assert (is-not raised None) f"expected reject for {bad-env}")
+      (assert (in "metered-billing credentials are forbidden" (str raised))
+              (str raised))
+      (assert (= fresh.trace []))
+      (assert (= fresh.rows {})))))
+
+
 (deftest test-launch-rejects-foreign-owned-key-in-overlay
   ;; 所有権は kind を跨いで効く: codex launch でも CLAUDE_CONFIG_DIR は
   ;; overlay に住めない(所有権ベース — キー列挙の腐敗を許さない)。

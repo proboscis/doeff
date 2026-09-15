@@ -34,6 +34,13 @@
   fs-make-dirs
   env-get
   tmux-send-keys])
+(import doeff_agents.sessionhost.policy [
+  BILLING-METERED
+  CODEX-AUTH-API-KEY-FIELD
+  HOME-READING-ABSENT
+  HOME-READING-MALFORMED
+  binding-billing-class
+  codex-home-metered-reading])
 (import doeff_agents.sessionhost.impls.channel [
   REPORT-RESULT-MCP-SERVER
   result-channel-spec])
@@ -206,6 +213,7 @@
    にも無い)なら trust は typed skip(書き先が無い)で identity は None。"
   (codex-auth-gate params)
   (setv binding (.get params "binding"))
+  (setv billing (binding-billing-class binding))
   (setv codex-home (when (is-not binding None) (.get binding "codex_home")))
   (when (and (is None codex-home) (is-not binding None))
     ;; admission(BINDING-KIND-SHAPES)通過済みの codex binding で codex_home
@@ -219,6 +227,33 @@
   (when (is None codex-home)
     (<- from-env (env-get "CODEX_HOME"))
     (setv codex-home from-env))
+  ;; 家の中の従量課金の宣言と binding の kind の一致(2026-09・ADR-DOE-AGENTS-004
+  ;; R9 改訂 — trust 書きより前)。読む先は解決した家の auth.json 1 点: 二軸形は
+  ;; view の auth.json が宣言の auth_file への symlink(compose-home-view)なので、
+  ;; native 形・二軸形・env fallback の 3 通りが同じ 1 つの読みで済む。
+  ;; ⚠ 判定は「欄 OPENAI_API_KEY が在り、かつ中身が非空」— 欄の有無では判じない
+  ;; (codex の CLI は定額の login でもこの欄を null で書き出す。実測 2026-09-15:
+  ;; 運用主の家 3 つとも欄は在る・中身は空)。鍵の値はここから外へ出ない。
+  (setv auth-status HOME-READING-ABSENT)
+  (setv auth-declares-api-key False)
+  (when (and (is-not codex-home None) (is-not billing None))
+    (<- auth-text (fs-read-text f"{codex-home}/auth.json"))
+    (setv [status declared] (codex-home-metered-reading auth-text))
+    (setv auth-status status)
+    (setv auth-declares-api-key declared))
+  (when (and (= billing BILLING-METERED) (not auth-declares-api-key))
+    (raise (RuntimeError
+             (+ "session.launch: binding kind 'codex-metered' declares metered billing, "
+                f"but {codex-home}/auth.json "
+                (cond
+                  (= auth-status HOME-READING-ABSENT) "does not exist"
+                  (= auth-status HOME-READING-MALFORMED) "is not a JSON object"
+                  True f"has no non-empty `{CODEX-AUTH-API-KEY-FIELD}` field")
+                ". Create the home once with "
+                f"`CODEX_HOME={codex-home} codex login --with-api-key < <path to a 0600 "
+                "file holding the API key>` (the CLI writes the key into its own "
+                "auth.json; the host never reads the value — it only checks that the "
+                "home declares one). ADR-DOE-AGENTS-004 R9."))))
   (when (and (is-not codex-home None)
              (not (.get params "skip_trust_setup" False)))
     (<- _ (fs-make-dirs codex-home))
@@ -232,7 +267,18 @@
     (<- raw (fs-read-text config-path))
     (setv updated (upsert-codex-trust-toml (or raw "") (get params "work_dir")))
     (<- _ (fs-write-text-atomic config-path updated ".agentd-tmp")))
-  {"CODEX_HOME" codex-home})
+  (setv identity {"CODEX_HOME" codex-home})
+  ;; 課金の階級の印 + 二軸の宣言(行の effective_identity に残る)。resume は
+  ;; 印で kind を選び、二軸の宣言からその受理形を組み直す(`codex-metered` の
+  ;; 受理形は {auth_file, profile_dir} で、合成 view の path へは合流できない)。
+  ;; 綴りは env の名ではなく小文字 — BINDING-OWNED-ENV-KEYS(env に出る名の
+  ;; 所有の語彙)へ混ざらないため。launch-spawn-env は所有キーだけを拾うので、
+  ;; この 3 つは spawn の env に出ない。
+  (when (= billing BILLING-METERED)
+    (setv (get identity "billing") BILLING-METERED)
+    (setv (get identity "codex_auth_file") (get binding "auth_file"))
+    (setv (get identity "codex_profile_dir") (get binding "profile_dir")))
+  identity)
 
 
 ;; ---------------------------------------------------------------------------
