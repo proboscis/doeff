@@ -22,6 +22,7 @@ from doeff_agents import (
     AgentdProtocolError,
     AgentdUnavailableError,
     AgentSessionLifecycle,
+    AgentSessionSnapshot,
     AgentType,
     AwaitStatus,
     DaemonAgentHandler,
@@ -35,6 +36,7 @@ from doeff_agents import (
 )
 from doeff_agents.agentd_client import (
     AGENTD_SOCKET_ENV,
+    DEFAULT_END_SESSION_BUDGET_SECONDS,
     AgentdSessionList,
     AgentdSessionParseWarning,
 )
@@ -338,6 +340,38 @@ def test_default_agentd_paths_take_the_socket_from_the_environment(
     assert default_agentd_paths().socket_path == Path("/tmp/doeff-agentd-ik57.sock")
 
 
+def test_snapshot_parses_the_warm_lifecycle() -> None:
+    """A warm (`multi_turn`) row parses — it is what the headless backend runs.
+
+    The host has spoken that word since ADR-DOE-AGENTS-012 R10 while the client's
+    lifecycle vocabulary had only `run_to_completion` and `interactive`, so every
+    warm row arrived "unparseable": `ps` skipped it with a warning and `stop`
+    could not name the session at all (mediagen #57, measured against a live
+    headless host).
+    """
+    snapshot = AgentSessionSnapshot.from_dict(
+        {
+            "session_id": "warm-1",
+            "session_name": "doeff-warm-1",
+            "pane_id": "headless:doeff-warm-1",
+            "agent_type": "claude",
+            "work_dir": "/tmp/work",
+            "lifecycle": "multi_turn",
+            "status": "running",
+            "backend_kind": "headless",
+            "backend_ref": {"argv": ["claude"], "events_path": "/tmp/e.jsonl"},
+            "started_at": "2026-09-15T00:00:00+00:00",
+            "last_observed_at": "2026-09-15T00:00:01+00:00",
+            "finished_at": None,
+            "cleaned_at": None,
+            "output_snippet": "running",
+        }
+    )
+
+    assert snapshot.lifecycle is AgentSessionLifecycle.MULTI_TURN
+    assert snapshot.backend_kind == "headless"
+
+
 def test_ensure_agentd_uses_a_named_socket_without_auditing_its_database(
     monkeypatch,
     tmp_path: Path,
@@ -395,6 +429,57 @@ def test_ensure_agentd_never_starts_a_host_against_a_named_socket(
     assert str(named) in str(raised.value)
     assert starts == [], starts
     assert not named.exists()
+
+
+def test_ending_a_session_waits_longer_than_the_status_probe(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """`session.cancel` / `session.cleanup` carry their own read budget.
+
+    The client is built with the 1s status-probe budget, but ending a session
+    brings the substrate's process down before the host answers.  Against a
+    live headless host the CLI printed "timed out" for a session it had in fact
+    stopped (mediagen #57), so the two end-of-session verbs name a budget of
+    their own — the client stays the single authority for it, as with await.
+    """
+    seen: list[tuple[str, float | None]] = []
+    client = AgentdClient(tmp_path / "agentd.sock", timeout=1.0)
+
+    def fake_request(
+        method: str,
+        params: Mapping[str, Any] | None = None,
+        *,
+        read_timeout: float | None = None,
+    ) -> Any:
+        seen.append((method, read_timeout))
+        return {
+            "session_id": "s-1",
+            "session_name": "doeff-s-1",
+            "pane_id": "%1",
+            "agent_type": "claude",
+            "work_dir": "/tmp/work",
+            "lifecycle": "multi_turn",
+            "status": "stopped",
+            "backend_kind": "headless",
+            "backend_ref": {},
+            "started_at": "2026-09-15T00:00:00+00:00",
+            "last_observed_at": "2026-09-15T00:00:01+00:00",
+            "finished_at": "2026-09-15T00:00:02+00:00",
+            "cleaned_at": None,
+            "output_snippet": "",
+        }
+
+    monkeypatch.setattr(client, "request", fake_request)
+
+    assert client.cancel_session("s-1").status is SessionStatus.STOPPED
+    assert client.cleanup_session("s-1").status is SessionStatus.STOPPED
+
+    assert seen == [
+        ("session.cancel", DEFAULT_END_SESSION_BUDGET_SECONDS),
+        ("session.cleanup", DEFAULT_END_SESSION_BUDGET_SECONDS),
+    ]
+    assert client.timeout < DEFAULT_END_SESSION_BUDGET_SECONDS
 
 
 def test_ensure_agentd_uses_reachable_canonical_socket(

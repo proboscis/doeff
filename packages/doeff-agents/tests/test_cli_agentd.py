@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +70,17 @@ class FakeAgentdClient:
     ) -> None:
         self.sent_messages.append((session_id, message))
 
+    def cancel_session(self, session_id: str) -> AgentSessionSnapshot:
+        self.calls.append(("cancel_session", session_id))
+        for snapshot in self.snapshots:
+            if snapshot.session_id == session_id:
+                return replace(snapshot, status=SessionStatus.STOPPED)
+        raise AssertionError(f"cancel_session for an unknown session: {session_id}")
+
+    def request(self, method: str, params: dict[str, Any]) -> Any:
+        self.calls.append((method, params))
+        return {"session_id": "agentd-s1"}
+
 
 @pytest.fixture
 def runner() -> CliRunner:
@@ -80,7 +92,7 @@ def test_ps_lists_agentd_sessions_not_tmux(
     runner: CliRunner,
 ) -> None:
     client = FakeAgentdClient([_snapshot(session_id="agentd-s1", session_name="agentd-tmux")])
-    monkeypatch.setattr(cli_module, "ensure_agentd", lambda: client)
+    monkeypatch.setattr(cli_module, "_observing_client", lambda _ensure: client)
 
     result = runner.invoke(cli, ["ps"])
 
@@ -108,7 +120,7 @@ def test_ps_warns_about_unparseable_agentd_rows(
         [_snapshot(session_id="agentd-s1", session_name="agentd-tmux")],
         warnings=(warning,),
     )
-    monkeypatch.setattr(cli_module, "ensure_agentd", lambda: client)
+    monkeypatch.setattr(cli_module, "_observing_client", lambda _ensure: client)
 
     result = runner.invoke(cli, ["ps"])
 
@@ -125,7 +137,7 @@ def test_output_captures_via_agentd(
     runner: CliRunner,
 ) -> None:
     client = FakeAgentdClient([_snapshot(session_id="agentd-s1")])
-    monkeypatch.setattr(cli_module, "ensure_agentd", lambda: client)
+    monkeypatch.setattr(cli_module, "_observing_client", lambda _ensure: client)
 
     result = runner.invoke(cli, ["output", "agentd-s1", "--lines", "12"])
 
@@ -161,7 +173,7 @@ def test_watch_polls_agentd_snapshot_until_terminal(
         return next(polls)
 
     client.get_session = get_session  # type: ignore[method-assign]
-    monkeypatch.setattr(cli_module, "ensure_agentd", lambda: client)
+    monkeypatch.setattr(cli_module, "_observing_client", lambda _ensure: client)
     monkeypatch.setattr(cli_module.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(
         cli_module,
@@ -184,7 +196,6 @@ def test_attach_resolves_session_in_agentd(
     attached: list[str] = []
     monkeypatch.setattr(cli_module, "ensure_agentd", lambda: client)
     monkeypatch.setattr(cli_module, "tmux_attach", attached.append)
-    monkeypatch.setattr(cli_module, "has_session", lambda *_args: False)
 
     result = runner.invoke(cli, ["attach", "agentd-s1"])
 
@@ -195,14 +206,12 @@ def test_attach_resolves_session_in_agentd(
 @pytest.mark.parametrize(
     "command",
     [
-        ["ps"],
-        ["watch", "agentd-s1"],
-        ["output", "agentd-s1"],
         ["send", "agentd-s1", "hello"],
         ["attach", "agentd-s1"],
+        ["stop", "agentd-s1"],
     ],
 )
-def test_monitoring_commands_fail_loudly_when_agentd_unreachable(
+def test_commands_that_change_a_session_fail_loudly_when_agentd_unreachable(
     monkeypatch: pytest.MonkeyPatch,
     runner: CliRunner,
     tmp_path: Path,
@@ -212,11 +221,10 @@ def test_monitoring_commands_fail_loudly_when_agentd_unreachable(
         raise AgentdUnavailableError(
             "not reachable",
             socket_path=tmp_path / "agentd.sock",
-            start_command=("doeff-agentd", "serve"),
+            start_command=("doeff-sessionhost", "serve"),
         )
 
     monkeypatch.setattr(cli_module, "ensure_agentd", unavailable)
-    monkeypatch.setattr(cli_module, "has_session", lambda *_args: pytest.fail("no tmux fallback"))
 
     result = runner.invoke(cli, command)
 
@@ -225,6 +233,110 @@ def test_monitoring_commands_fail_loudly_when_agentd_unreachable(
     # retirement (DOE-004 R7): the hint points at the ensure verb / the
     # canonical Hy host, never the retired Rust binary
     assert "doeff-sessionhost" in result.output
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["ps"],
+        ["watch", "agentd-s1"],
+        ["output", "agentd-s1"],
+        ["agentd", "by-conversation", "--conversation-id", "c-1"],
+        ["agentd", "kinds"],
+    ],
+)
+def test_observation_verbs_never_start_a_host(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    command: list[str],
+) -> None:
+    """Reading reports "no observation"; it does not bring a host up.
+
+    On a machine where launchd or systemd owns the host, an observation that
+    starts a competitor split-brains the store (ADR-DOE-AGENTS-004 R10 (d)).
+    The decision cannot hang off an interactive confirmation either, because
+    these commands run unattended — so the default is structural.
+    """
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("an observation verb tried to start a host")
+
+    monkeypatch.setattr(cli_module, "ensure_agentd", forbidden)
+
+    result = runner.invoke(cli, command)
+
+    assert result.exit_code == 1
+    assert "agentd が起動していません" in result.output
+    assert "doeff-sessionhost" in result.output
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["ps", "--ensure"],
+        ["watch", "agentd-s1", "--ensure"],
+        ["output", "agentd-s1", "--ensure"],
+        ["agentd", "by-conversation", "--conversation-id", "c-1", "--ensure"],
+    ],
+)
+def test_observation_verbs_start_a_host_only_with_the_explicit_flag(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    command: list[str],
+) -> None:
+    calls: list[str] = []
+    client = FakeAgentdClient([_snapshot(session_id="agentd-s1", status=SessionStatus.EXITED)])
+
+    def ensure() -> FakeAgentdClient:
+        calls.append("ensure")
+        return client
+
+    monkeypatch.setattr(cli_module, "ensure_agentd", ensure)
+    monkeypatch.setattr(cli_module.time, "sleep", lambda _seconds: None)
+
+    result = runner.invoke(cli, command)
+
+    assert result.exit_code == 0, result.output
+    assert calls == ["ensure"]
+
+
+@pytest.mark.parametrize("backend", ["tmux", "herdr", "headless"])
+def test_stop_ends_the_session_through_the_host_on_every_backend(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    backend: str,
+) -> None:
+    """`stop` asks the host to cancel, whatever substrate carries the session.
+
+    While it killed tmux directly, a herdr or headless session answered
+    "Session not found" and never said the backend was the reason (mediagen
+    #57).  The kill effect is backend-blind inside the host, so the CLI has no
+    reason to branch — and a branch here would be a second place that must
+    learn every new substrate.
+    """
+    # tmux 以外は本番と同じ温かい寿命(multi_turn)で撃つ — その寿命を client が
+    # 知らなかった間、行は「読めない行」として skip され CLI は session を
+    # 名指せなかった。
+    lifecycle = "run_to_completion" if backend == "tmux" else "multi_turn"
+    client = FakeAgentdClient(
+        [
+            _snapshot(
+                session_id="agentd-s1",
+                session_name="doeff-s1",
+                backend_kind=backend,
+                lifecycle=lifecycle,
+            )
+        ]
+    )
+    monkeypatch.setattr(cli_module, "ensure_agentd", lambda: client)
+
+    result = runner.invoke(cli, ["stop", "s1"])
+
+    assert result.exit_code == 0, result.output
+    assert ("cancel_session", "agentd-s1") in client.calls
+    assert "Stopped session" in result.output
+    assert backend in result.output
+    assert "stopped" in result.output
 
 
 def test_agentd_ensure_json_outputs_readiness_contract(
@@ -317,6 +429,8 @@ def _snapshot(
     session_id: str,
     session_name: str | None = None,
     status: SessionStatus = SessionStatus.RUNNING,
+    backend_kind: str = "tmux",
+    lifecycle: str = "run_to_completion",
 ) -> AgentSessionSnapshot:
     return AgentSessionSnapshot.from_dict(
         {
@@ -325,9 +439,9 @@ def _snapshot(
             "pane_id": "%1",
             "agent_type": AgentType.CODEX.value,
             "work_dir": "/tmp/work",
-            "lifecycle": "run_to_completion",
+            "lifecycle": lifecycle,
             "status": status.value,
-            "backend_kind": "tmux",
+            "backend_kind": backend_kind,
             "backend_ref": {"session_name": session_name or session_id, "pane_id": "%1"},
             "started_at": "2026-05-25T00:00:00+00:00",
             "last_observed_at": "2026-05-25T00:00:01+00:00",

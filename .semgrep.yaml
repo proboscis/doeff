@@ -719,9 +719,11 @@ rules:
     languages: [python]
     severity: ERROR
     message: >
-      agents-cli-query-agentd: doeff-agents ps/watch/output/send/attach must query
-      doeff-agentd as the single authority. Do not fall back to local tmux/session
-      reads for these monitoring commands.
+      agents-cli-query-agentd: doeff-agents ps/watch/output/send/attach/stop must
+      query doeff-agentd as the single authority. Do not fall back to local
+      tmux/session reads or kills for these commands. `stop` is in scope because a
+      backend-blind end-of-session belongs to the host: a tmux-only kill reported
+      "Session not found" for every herdr and headless session (mediagen #57).
     pattern-either:
       - patterns:
           - pattern-inside: |
@@ -760,6 +762,15 @@ rules:
               def attach(...):
                   ...
           - pattern-either:
+              - pattern: _resolve_session(...)
+              - pattern: _resolve_tmux_session(...)
+      - patterns:
+          - pattern-inside: |
+              def stop(...):
+                  ...
+          - pattern-either:
+              - pattern: kill_session(...)
+              - pattern: has_session(...)
               - pattern: _resolve_session(...)
               - pattern: _resolve_tmux_session(...)
     paths:

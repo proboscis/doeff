@@ -98,6 +98,18 @@
           (counterexample "launchd(KeepAlive)配備の socket に対し、bootout / throttle の停止窓で ensure が listener 不在を証明して非監督 host を直 spawn する(doeff#558 — 監督者 2 人。野良 host が bind に勝つと store が launchctl 不可視のプロセスに渡り split-brain)")
           (counterexample "supervisor 宣言を env var で運び、env を継承しない呼び手の self-spawn 経路が開いたままになる")
           (counterexample "壊れた宣言ファイルを警告だけで無視して self-spawn に fallback する(fail-open — typo が委譲を黙って無効化する)")])
+     (law reads-never-start-a-host
+       :statement "cli_observation_verb => client_bound_to_expected_socket_only AND never_ensure; unreachable_host => no_observation_and_nonzero_exit_naming_the_start_command; host_spawn_entry_points => ensure_verb_xor_explicit_ensure_flag; admission_is_structural_never_an_interactive_confirmation"
+       :facts
+         [(fact
+            "起源 = 2026-09-15(引き継ぎの受け手が最初に撃つ面の棚卸し): CLI の観測の動詞(`ps` / `watch` / `output` / `agentd by-conversation`)が `_agentd_client_or_exit` → `ensure_agentd` を通っていたため、常駐(launchd / systemd)が host を持つ機体で、期待する socket に listener が無い拍(bootout・crash throttle・plist 差し替え)に観測を撃つと競合する host を起こしうる構造だった。R10(d) は ensure 自身の self-spawn を supervisor 宣言で塞いだが、宣言が無い機体・宣言と違う socket を名指した観測(`DOEFF_AGENTD_SOCKET` で join の置き場を指した時)は self-spawn の枇へ落ちる。根治 = 観測の client を作る 1 点(cli.py `_observing_client`)を ensure から切り離し、起こす口を `agentd ensure` と明示の `--ensure` の 2 つに閉じた。`agentd kinds` が R5 の fact で既に持っていた性質(「host 不達 = 観測なし ≠ 違反」)を観測の動詞ぜんぶへ広げた形で、kinds も同じ 1 点を読む。"
+            :evidence "packages/doeff-agents/tests/test_cli_agentd.py test_observation_verbs_never_start_a_host・test_observation_verbs_start_a_host_only_with_the_explicit_flag / .semgrep.yaml doeff-agents-cli-monitoring-uses-agentd")]
+       :counterexamples
+         [(counterexample "観測の動詞が到達不能を「起動の合図」と読んで host を起こす(常駐の停止窓で野良 host が bind に勝ち、store が launchctl 不可視の process に渡る — R10(d) と同型)")
+          (counterexample "起こすかどうかを対話の確認(y/n)で決める(非対話の agent 運用では確認が出ず、既定の側へ黙って倒れる)")
+          (counterexample "読み取りの既定を「起こす」にして、起こさない方を旗にする(既定が危ない側 — 旗を忘れた呼び手が事故を起こす)")
+          (counterexample "観測の client を動詞ごとに組み立て、片方だけ ensure に戻る(第 2 定義点 — 新しい観測の動詞が黙って起こす側に生まれる)")
+          (counterexample "停止(`stop`)を観測と同じ扱いにして host を通さず substrate を直に殺す(台帳の外で session が終わり、host の行が running のまま残る)")])
      (law conformance-before-cutover
        :statement "rust_retirement => hy_impl_passes_oracle_conformance including_trust_and_hooks_scars"
        :facts
@@ -251,6 +263,55 @@
        (assert (is (get (claude-home-metered-reading
                           (json.dumps {"env" {"ANTHROPIC_API_KEY" "sk"}})) 2)
                    None)))
+     (deftest test-adr-doe-agents-004-reads-never-start-a-host
+       ;; law reads-never-start-a-host の機械面: 観測の動詞は ensure に触れず、
+       ;; 到達できない host は「観測なし + 起動の命令を案内」で終わる(socket に
+       ;; listener を作らない)。起こす口は明示の旗ちょうど。
+       ;; この機体の常駐 socket には触らない — DOEFF_AGENTD_SOCKET で tmp の
+       ;; 不在の path を名指してから撃つ。
+       (import os)
+       (import tempfile)
+       (import click.testing [CliRunner])
+       (import doeff_agents.cli :as cli-module)
+       (import doeff_agents.agentd_client [AGENTD-SOCKET-ENV])
+       (setv runner (CliRunner))
+       (setv saved-ensure cli-module.ensure-agentd)
+       (setv saved-env (.get os.environ AGENTD-SOCKET-ENV))
+       (defn forbidden [#* args #** kwargs]
+         (raise (AssertionError "an observation verb tried to start a host")))
+       (setv observation-argvs
+             [["ps"]
+              ["watch" "s-1"]
+              ["output" "s-1"]
+              ["agentd" "by-conversation" "--conversation-id" "c-1"]
+              ["agentd" "kinds"]])
+       (try
+         (with [tmp (tempfile.TemporaryDirectory)]
+           (setv socket-path (os.path.join tmp "absent.sock"))
+           (setv (get os.environ AGENTD-SOCKET-ENV) socket-path)
+           (setattr cli-module "ensure_agentd" forbidden)
+           (for [argv observation-argvs]
+             (setv result (.invoke runner cli-module.cli argv))
+             (assert (= result.exit-code 1) f"{argv}: exit code {result.exit-code}")
+             ;; 観測なし = 起動の命令を案内して終わる(黙って 0 を返さない)
+             (assert (in "doeff-sessionhost" result.output) f"{argv}: {result.output}")
+             ;; listener を作っていない(観測が host を生まない)
+             (assert (not (os.path.exists socket-path))
+                     f"{argv} left a socket behind"))
+           ;; 起こす口は明示の旗だけ — 旗を付けた時だけ ensure に届く
+           (setv calls [])
+           (defn fake-ensure []
+             (.append calls "ensure")
+             (raise (SystemExit 9)))
+           (setattr cli-module "ensure_agentd" fake-ensure)
+           (setv flagged (.invoke runner cli-module.cli ["ps" "--ensure"]))
+           (assert (= calls ["ensure"]) f"--ensure did not reach ensure: {calls}")
+           (assert (= flagged.exit-code 9) f"exit {flagged.exit-code}"))
+         (finally
+           (setattr cli-module "ensure_agentd" saved-ensure)
+           (if (is saved-env None)
+               (.pop os.environ AGENTD-SOCKET-ENV None)
+               (setv (get os.environ AGENTD-SOCKET-ENV) saved-env)))))
      (deftest test-adr-doe-agents-004-capacity-denominator-is-launch-owned
        ;; capacity-counts-only-launch-owned-rows の機械面: 母数の述語は
        ;; 所有(adopted)で絞り、寿命(lifecycle)では絞らない。
