@@ -20,6 +20,11 @@ from doeff_agents.sessionhost.acp.effects import (
 
 ACP_VALVE_FLAG = "--acp"
 ACP_VALVE_DEFAULT = False
+#: 弁の 1 行の説明(`--help` の usage が読む — 綴りと同じ 1 点に置く)。
+ACP_VALVE_HELP = (
+    "Also run the agentd thread that joins a control-plane cluster. Off by "
+    "default; the host itself is unchanged either way."
+)
 _VALVE_WORDS: dict[str, bool] = {"on": True, "off": False}
 
 

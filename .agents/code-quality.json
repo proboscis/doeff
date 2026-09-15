@@ -16,6 +16,8 @@
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/valve.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/runtime.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/entry.py",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/usage.py",
+    "packages/doeff-agents/tests/test_sessionhost_usage.py",
     "packages/doeff-agents/tests/test_sessionhost_acp.py",
     "packages/doeff-agents/tests/sessionhost_acp_profile_deftests.hy",
     "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy",
@@ -219,7 +221,7 @@
       "paths": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/acp/entry.py"
       ],
-      "responsibility": "console script doeff-sessionhost の入口: 弁(serve --acp / DOEFF_AGENTD_ACP)が on なら agentd の thread を起こし、host の停止の hook に agentd の close_for_stop を登録し(段 10 lane 10h 便 2)、残りは今日の hostmain.main へ渡す。join(段 6 lane 6f)は宣言から env の束と host の argv を導いて同じ経路へ",
+      "responsibility": "console script doeff-sessionhost の入口: 弁(serve --acp / DOEFF_AGENTD_ACP)が on なら agentd の thread を起こし、host の停止の hook に agentd の close_for_stop を登録し(段 10 lane 10h 便 2)、残りは今日の hostmain.main へ渡す。join(段 6 lane 6f)は宣言から env の束と host の argv を導いて同じ経路へ。`--help` / `join --help` は usage(sessionhost-usage)が実装の宣言から組んだ本文を stdout に出して exit 0 する",
       "layer": "runtime",
       "public": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/acp/entry.py"
@@ -230,7 +232,28 @@
         "agentd-runtime",
         "sessionhost-hostmain",
         "sessionhost-relaymain",
-        "sessionhost-host"
+        "sessionhost-host",
+        "sessionhost-usage"
+      ],
+      "typed": true
+    },
+    {
+      "name": "sessionhost-usage",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/usage.py",
+        "packages/doeff-agents/tests/test_sessionhost_usage.py"
+      ],
+      "responsibility": "`doeff-sessionhost --help` / `join --help` の usage: 題目の判定(help_topic_of — 純関数・Hy を import しない)と本文の組み立て(usage_text)。flag の一覧は実装の宣言から導く — serve は host.hy の SERVE-FLAG-SPECS / SERVE-ENV-ONLY-SPECS、join は join.hy の JOIN-FLAG-SPECS、弁の旗は valve.py。綴りも既定値も 1 つも持たない(手で写した一覧は実装が動いた時に黙って古くなる)。読み手は entry.py ちょうど。同 paths の検は usage の内容を実装の宣言と突き合わせ、 console script の実射(stdout に出て exit 0)まで撃つ",
+      "layer": "runtime",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/usage.py"
+      ],
+      "allow": [
+        "agentd-effects",
+        "agentd-valve",
+        "agentd-join",
+        "sessionhost-host",
+        "sessionhost-relaymain"
       ],
       "typed": true
     },

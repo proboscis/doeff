@@ -21,6 +21,9 @@
 
 (import doeff_agents.sessionhost.host [
   HostConfig
+  CMD-SERVE
+  SERVE-ENV-ONLY-SPECS
+  SERVE-FLAG-SPECS
   DEFAULT-PROMPT-JUDGE-CMD
   RPC-ERR-ALREADY-TERMINAL
   RPC-ERR-RESULT-REJECTED
@@ -163,6 +166,55 @@
   (with-env {"DOEFF_SESSIONHOST_ALLOW_METERED_BILLING" "1"
              "DOEFF_AGENTD_ALLOW_METERED_BILLING" "1"}
             check-env))
+
+
+(deftest test-serve-flag-specs-cover-parse-args
+  ;; #57: `--help` が出す flag の一覧は parse-args の語彙と同じ 1 点
+  ;; (SERVE-FLAG-SPECS)から出る。表と parse-args が乖離すると usage が嘘を言う
+  ;; (受け手が最初に撃つ面なので、乖離は文書の誤りより重い)ので、表の全 flag を
+  ;; 実際に食わせて受理を確かめ、表に無い綴りが断られることを同じ針で押さえる。
+  ;; 値の見本は test 側が持つ — 表は見出し(<path> 等)だけを持ち、妥当な値を
+  ;; 知らない。
+  (setv samples {"--db" "/tmp/ik57.sqlite"
+                 "--socket" "/tmp/ik57.sock"
+                 "--backend" "tmux"
+                 "--tmux" "tmux"
+                 "--herdr-socket" "/tmp/ik57-herdr.sock"
+                 "--max-running" "3"
+                 "--monitor-interval-ms" "250"
+                 "--result-solicitations" "1"
+                 "--prompt-stall-secs" "30"
+                 "--prompt-unblock-attempts" "2"
+                 "--prompt-judge-cmd" "true"})
+  (setv flags (lfor [flag placeholder env help-text] SERVE-FLAG-SPECS flag))
+  (assert (= (len flags) (len (set flags))) "表に同じ flag が 2 度載っている")
+  (for [[flag placeholder env help-text] SERVE-FLAG-SPECS]
+    (assert (.startswith flag "--") f"{flag} は flag の綴りでない")
+    (assert help-text f"{flag} の説明が空")
+    (when (is-not env None)
+      (assert (= env (.upper env)) f"{flag} の env の綴りが大文字でない"))
+    ;; 値を取らない旗は見出しが None(見本も要らない)。
+    (setv args (if (is placeholder None)
+                   [flag CMD-SERVE]
+                   [flag (get samples flag) CMD-SERVE]))
+    ;; 受理 = 例外が出ないこと(表に在って parse-args が知らない flag は赤)。
+    (parse-args args))
+  ;; 見本が表より広くない = 消えた flag の見本が残り続けない。
+  (assert (= (set (.keys samples))
+             (set (lfor [flag placeholder env help-text] SERVE-FLAG-SPECS
+                        :if (is-not placeholder None) flag)))
+          "見本の表と SERVE-FLAG-SPECS の値つき flag が食い違う")
+  ;; env だけの knob も説明つきで載っている(usage の別枠)。
+  (for [[env-name help-text] SERVE-ENV-ONLY-SPECS]
+    (assert (= env-name (.upper env-name)) f"{env-name} が大文字でない")
+    (assert help-text f"{env-name} の説明が空"))
+  ;; 表に無い綴りは断る — `--acp` は弁(entry.py)が食う host 外の旗。
+  (setv raised None)
+  (try
+    (parse-args ["--acp" CMD-SERVE])
+    (except [e ValueError] (setv raised e)))
+  (assert (is-not raised None) "--acp は host の flag ではない(弁が食う)")
+  (assert (in "unknown argument" (str raised))))
 
 
 (deftest test-parse-args-rejects

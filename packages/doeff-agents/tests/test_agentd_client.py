@@ -33,7 +33,11 @@ from doeff_agents import (
     default_agentd_paths,
     ensure_agentd,
 )
-from doeff_agents.agentd_client import AgentdSessionList, AgentdSessionParseWarning
+from doeff_agents.agentd_client import (
+    AGENTD_SOCKET_ENV,
+    AgentdSessionList,
+    AgentdSessionParseWarning,
+)
 from doeff_agents.io_fake import SpawnLedger, recorded_spawn_handler
 from doeff_agents.io_handlers import driver_io_handler
 from fake_io_support import FakeIoWorld, fake_io_root
@@ -43,7 +47,6 @@ from doeff_agents.io_root import IoRoot
 
 
 from doeff_agents.runtime import CodexRuntimePolicy
-
 
 
 def recording_io_root(starts: list) -> IoRoot:
@@ -296,6 +299,102 @@ def test_default_agentd_paths_use_xdg(monkeypatch, tmp_path: Path) -> None:
     assert paths.db_path == state_home / "doeff" / "agentd.sqlite"
     assert paths.socket_path == runtime_dir / "doeff" / "agentd.sock"
     assert paths.log_path == state_home / "doeff" / "agentd.log"
+
+
+def test_default_agentd_paths_take_the_socket_from_the_environment(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """`DOEFF_AGENTD_SOCKET` names the socket; the default order is untouched.
+
+    A host started by `doeff-sessionhost join` listens under its own state
+    directory, which the XDG defaults never name — so before this the CLI could
+    not observe a joined host at all.  The environment variable is the one place
+    that teaches it; there is no flag, because the socket is a property of the
+    machine's host rather than of a single command.
+    """
+    state_home = tmp_path / "state"
+    runtime_dir = tmp_path / "runtime"
+    joined_socket = tmp_path / "acp-agentd" / "agentd.sock"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
+    monkeypatch.setenv(AGENTD_SOCKET_ENV, str(joined_socket))
+
+    paths = default_agentd_paths()
+
+    assert paths.socket_path == joined_socket
+    # The rest of the convention does not move: only the socket is named.
+    assert paths.db_path == state_home / "doeff" / "agentd.sqlite"
+    assert paths.log_path == state_home / "doeff" / "agentd.log"
+
+    # An empty value declares nothing, so the default order applies again
+    # (never a silent Path("")).
+    monkeypatch.setenv(AGENTD_SOCKET_ENV, "")
+    assert default_agentd_paths().socket_path == runtime_dir / "doeff" / "agentd.sock"
+
+    # And the /tmp fallback is unchanged when neither is set.
+    monkeypatch.delenv(AGENTD_SOCKET_ENV)
+    monkeypatch.delenv("XDG_RUNTIME_DIR")
+    monkeypatch.setenv("USER", "ik57")
+    assert default_agentd_paths().socket_path == Path("/tmp/doeff-agentd-ik57.sock")
+
+
+def test_ensure_agentd_uses_a_named_socket_without_auditing_its_database(
+    monkeypatch,
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    """A socket named by the environment is used as it is, database and all.
+
+    A host started by `doeff-sessionhost join` keeps its own database under its
+    state directory, so auditing it against the canonical path would refuse
+    every joined host — the identity audit exists to catch a stale host on the
+    *default* socket, not to reject one the caller pointed at deliberately.
+    """
+
+    def handle(request: Mapping[str, Any]) -> Mapping[str, Any]:
+        return {
+            "id": request["id"],
+            "ok": True,
+            "result": {"state": "running", "db_path": "/joined/state/agentd.sqlite"},
+        }
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    named = short_runtime_dir / "joined.sock"
+    monkeypatch.setenv(AGENTD_SOCKET_ENV, str(named))
+
+    with OneShotAgentdServer(named, handle) as server:
+        client = ensure_agentd(client_timeout=2.0)
+
+    assert client.socket_path == named
+    assert server.requests[0]["method"] == "daemon.status"
+
+
+def test_ensure_agentd_never_starts_a_host_against_a_named_socket(
+    monkeypatch,
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    """Nothing listening on a named socket is a loud refusal, not a spawn.
+
+    That socket belongs to whoever declared it (a joined host, launchd,
+    systemd). Starting a host against someone else's socket is the split-brain
+    of ADR-DOE-AGENTS-004 R10 (d) with an extra step: the spawned host would
+    also carry the canonical database rather than the one that socket serves.
+    """
+    starts: list[tuple[str, ...]] = []
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+    named = short_runtime_dir / "absent.sock"
+    monkeypatch.setenv(AGENTD_SOCKET_ENV, str(named))
+
+    with pytest.raises(AgentdUnavailableError) as raised:
+        ensure_agentd(client_timeout=0.2, io_root=recording_io_root(starts))
+
+    assert AGENTD_SOCKET_ENV in str(raised.value)
+    assert str(named) in str(raised.value)
+    assert starts == [], starts
+    assert not named.exists()
 
 
 def test_ensure_agentd_uses_reachable_canonical_socket(

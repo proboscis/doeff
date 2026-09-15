@@ -12,6 +12,14 @@ from doeff_agents.sessionhost.acp.effects import (
     ProbeAnswer,
 )
 
+#: `join` が受け付ける flag の一覧 = `join --help` の生成元(usage.py が読む唯一の面)。
+#: 各項 = (flag, 値の見出し, 説明)。join の flag は全部値を取る。
+JOIN_FLAG_SPECS: list[tuple[str, str, str]]
+#: 宣言 file を名指す flag(composition root が先に読む)。
+FLAG_CONFIG: str
+#: 値を取る flag → (宣言 file の表, 鍵)。受け付ける flag はこれと FLAG_CONFIG で全部。
+FLAG_KEYS: dict[str, tuple[str, str]]
+
 def config_path_of(argv: JoinArgv) -> Program: ...
 def flag_values_of(argv: JoinArgv) -> Program: ...
 def declared_values_of(declaration: JoinDeclaration) -> Program: ...
