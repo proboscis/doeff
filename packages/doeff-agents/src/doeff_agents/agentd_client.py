@@ -221,6 +221,13 @@ def launch_rpc_timeout_program() -> IoGenerator[float]:
 # long heartbeat is free in the failure case because the daemon monitor
 # resolves the await early the moment a session turns terminal.
 DEFAULT_AWAIT_BUDGET_SECONDS: float = 3600.0
+#: How long ending a session waits for the host's answer.  `session.cancel` and
+#: `session.cleanup` bring the substrate's process down before they answer,
+#: which outlives the 1s status-probe budget the client is built with: against
+#: the headless backend the CLI printed "timed out" for a session it had in
+#: fact stopped (mediagen #57).  The client stays the single authority for the
+#: budget, as it is for the await budget above.
+DEFAULT_END_SESSION_BUDGET_SECONDS: float = 60.0
 AGENTD_START_POLL_SECONDS: float = 0.1
 # Status budget for a listener that answered connect() but not the 1s
 # default status probe.  The host serialises ALL store reads through one
@@ -403,11 +410,19 @@ class AgentdClient:
         )
 
     def cancel_session(self, session_id: str) -> AgentSessionSnapshot:
-        result = self.request("session.cancel", {"session_id": session_id})
+        result = self.request(
+            "session.cancel",
+            {"session_id": session_id},
+            read_timeout=DEFAULT_END_SESSION_BUDGET_SECONDS,
+        )
         return _snapshot_from_result(result)
 
     def cleanup_session(self, session_id: str) -> AgentSessionSnapshot:
-        result = self.request("session.cleanup", {"session_id": session_id})
+        result = self.request(
+            "session.cleanup",
+            {"session_id": session_id},
+            read_timeout=DEFAULT_END_SESSION_BUDGET_SECONDS,
+        )
         return _snapshot_from_result(result)
 
     def resume_session(
