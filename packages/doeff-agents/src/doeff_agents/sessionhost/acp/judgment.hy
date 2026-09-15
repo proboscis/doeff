@@ -23,7 +23,9 @@
 ;;;     導かない。cache(温かい send / --resume)を保つのは同じ機体 ∧ 同じ家(account・binding・model の組 —
 ;;;     段 9o lane 9o-3)の時だけで、家か機体が違えば
 ;;;     cache の失効を受け入れ、ACP の記録を最初の本文に畳んで新しい session を起こす(operator 決定 #54・
-;;;     rehydrate-history-of・上限は AgentdSettings の 1 点)。
+;;;     rehydrate-history-of・上限は AgentdSettings の 1 点)。上限で落とした古い手番は黙って捨てず、落とした区間を
+;;;     見出し 1 行(期間・kind ごとの件数・道具の名・全文の在処 — history-dropped-headline・綴りは turn-record の
+;;;     見出しと同じ history-counts-note)に畳む(段 11 lane 11v・agora-redesign #55・R34。model は呼ばない)。
 ;;;   * capture の是非(購読者の数 → continue | stop・issue #1 の決定)と待ちの長さ。
 ;;;   * profile の残量の観測 → status.observed の post-image(段 7 lane 7d-3・既知の形 = kubelet の
 ;;;     node status: 観測は runner が書き、判断〔枯渇〕は controller〔agora-budget〕): 窓の選び方
@@ -108,8 +110,11 @@
   ENTRY-KIND-TEXT
   ENTRY-KIND-TOOL-RESULT
   ENTRY-KIND-TOOL-USE
+  HISTORY-MAIL-KIND
+  HeadlineCounts
   HeadlineTurns
   HistoryFold
+  HistoryItem
   INTERRUPT-ARM-INTERRUPT
   INTERRUPT-ARM-NONE
   InFlightJob
@@ -1431,16 +1436,15 @@
     True None))
 
 
-(defk history-headline-line [record]
-  {:pre [(: record AcpRow)]
-   :post [(: % (| str None))]}
-  "ACP の turn-record の行 1 つ(見出しだけ・本文なし)→ 薄い再開の 1 項: 手番の出来事の数を kind ごとに数え、道具の名を
-   並べる(本文の無い行を本文として扱わない — 中身は名乗れないので数と在処だけ)。見出しが無い行は None。"
-  (setv status (if (isinstance record.status dict) record.status {}))
-  (<- entries tuple (entries-of-status status))
+(defk headline-counts-of-entries [entries at]
+  {:pre [(: entries tuple) (: at int)]
+   :post [(: % HeadlineCounts)]}
+  "turn-record の entries(見出しの列)→ 見出しの数: kind ごとの件数(初出の順)・道具の名(初出の順)・期間(entries の at の
+   最小と最大・時刻を持つ entry が無ければ at = 行の時刻)。落とした印(drop marker)は数えない。"
   (setv counts {})
   (setv tools [])
-  (setv newest 0)
+  (setv first-at None)
+  (setv last-at None)
   (for [entry entries]
     (<- marker bool (is-drop-marker entry))
     (when marker
@@ -1451,29 +1455,92 @@
     (setv tool (.get entry "toolName"))
     (when (and (isinstance tool str) (not-in tool tools))
       (.append tools tool))
-    (setv at (.get entry "at"))
-    (when (and (isinstance at int) (> at newest))
-      (setv newest at)))
-  (when (not counts)
+    (setv entry-at (.get entry "at"))
+    (when (isinstance entry-at int)
+      (when (or (is first-at None) (< entry-at first-at))
+        (setv first-at entry-at))
+      (when (or (is last-at None) (> entry-at last-at))
+        (setv last-at entry-at))))
+  (HeadlineCounts :counts (tuple (.items counts)) :tools (tuple tools)
+                  :first-at (if (is first-at None) at first-at)
+                  :last-at (if (is last-at None) at last-at)))
+
+
+(defk headline-counts-of-items [items]
+  {:pre [(: items tuple)]
+   :post [(: % HeadlineCounts)]}
+  "「これまでの会話」の項の列(空でない)→ 1 つの見出しの数: kind ごとの件数を足し合わせ(初出の順)・道具の名は初出の順・
+   期間 = 項の at の最小と until の最大。上限で落とした区間の見出し(history-dropped-headline)の材料。"
+  (setv counts {})
+  (setv tools [])
+  (for [item items]
+    (for [[kind count] item.counts.counts]
+      (setv (get counts kind) (+ (.get counts kind 0) count)))
+    (for [tool item.counts.tools]
+      (when (not-in tool tools)
+        (.append tools tool))))
+  (HeadlineCounts :counts (tuple (.items counts)) :tools (tuple tools)
+                  :first-at (min (gfor item items item.at))
+                  :last-at (max (gfor item items item.until))))
+
+
+(defk history-counts-note [counts]
+  {:pre [(: counts HeadlineCounts)]
+   :post [(: % str)]}
+  "見出しの数の綴り(1 点 — turn-record の 1 行の見出しも、落とした区間の見出しも、ここから同じ形で組む):
+   「text 2・tool_use 1・tool_result 1(道具: Read)」。件数が無ければ空。"
+  (setv parts (.join "・" (lfor [kind count] counts.counts f"{kind} {count}")))
+  (setv tool-names (.join ", " counts.tools))
+  (setv tool-note (if counts.tools f"(道具: {tool-names})" ""))
+  (+ parts tool-note))
+
+
+(defk history-headline-line [record counts]
+  {:pre [(: record AcpRow) (: counts HeadlineCounts)]
+   :post [(: % (| str None))]}
+  "ACP の turn-record の行 1 つ(見出しだけ・本文なし)→ 薄い再開の 1 項: 手番の出来事の数を kind ごとに数え、道具の名を
+   並べる(本文の無い行を本文として扱わない — 中身は名乗れないので数と在処だけ)。counts = headline-counts-of-entries の
+   答え・綴りは history-counts-note の 1 点。見出しが無い行(件数が空)は None。"
+  (when (not counts.counts)
     (return None))
-  (<- stamp str (history-time-of (if (> newest 0) newest record.created-at-ms)))
-  (setv parts (.join "・" (lfor [kind count] (.items counts) f"{kind} {count}")))
-  (setv tool-names (.join ", " tools))
-  (setv tool-note (if tools f"(道具: {tool-names})" ""))
-  f"[{stamp}] 手番 {record.resource-id}(見出しだけ・本文は記録の service): {parts}{tool-note}")
+  (<- note str (history-counts-note counts))
+  (<- stamp str (history-time-of counts.last-at))
+  f"[{stamp}] 手番 {record.resource-id}(見出しだけ・本文は記録の service): {note}")
+
+
+(defk history-dropped-headline [counts turns items budget where]
+  {:pre [(: counts HeadlineCounts) (: turns int) (: items int) (: budget int) (: where str)]
+   :post [(: % str)]}
+  "上限で落とした区間(古い手番の連なり)の見出し 1 行(段 11 lane 11v・agora-redesign #55・R34): 期間・落とした手番と項の数・
+   kind ごとの件数と道具の名(history-counts-note の 1 点)・全文の在処。本文は要約しない(model を呼ばない・決定的)。"
+  (<- note str (history-counts-note counts))
+  (<- first-stamp str (history-time-of counts.first-at))
+  (<- last-stamp str (history-time-of counts.last-at))
+  (+ f"[{first-stamp}〜{last-stamp}] 古い手番 {turns} 件(出来事と郵便 {items} 件)は上限 {budget} byte を超えるため"
+     f"本文を畳まず、見出しだけ残します: {note}。{where}"))
+
+
+(defk history-cut-notice [budget cut-bytes where]
+  {:pre [(: budget int) (: cut-bytes int) (: where str)]
+   :post [(: % str)]}
+  "最新の手番 1 つだけでも上限を超える時の断り(その先頭から切った byte を名乗る)。where = 全文の在処(落とした区間の見出しが
+   既に名乗っている時は空)。"
+  (+ f"(上限 {budget} byte を超えるため、最新の手番の先頭 {cut-bytes} byte を落としました。" where ")"))
 
 
 (defk rehydrate-history-of [conversation-id messages source exclude budget fetched]
   {:pre [(: conversation-id str) (: messages tuple) (: source (| RecordedTurns HeadlineTurns)) (: exclude tuple)
          (: budget int) (: fetched dict)]
    :post [(: % HistoryFold)]}
-  "会話の記録 → 履歴からの再開の手番の最初の本文に畳む「これまでの会話」(段 8q・R20・段 9f lane 9f-4)— 判断はここ 1 点:
-   郵便(ACP の行 — spec.to か spec.from がこの会話・exclude = この手番の inputs は除く — 本文として別に届く)と手番の
-   材料(source — 型で 2 つ: RecordedTurns = 会話の記録の service の本文〔設計 §2.4・before=latest から〕/ HeadlineTurns =
+  "会話の記録 → 履歴からの再開の手番の最初の本文に畳む「これまでの会話」(段 8q・R20・段 9f lane 9f-4・段 11 lane 11v R34)—
+   判断はここ 1 点: 郵便(ACP の行 — spec.to か spec.from がこの会話・exclude = この手番の inputs は除く — 本文として別に届く)と
+   手番の材料(source — 型で 2 つ: RecordedTurns = 会話の記録の service の本文〔設計 §2.4・before=latest から〕/ HeadlineTurns =
    ACP の見出しだけ〔service に届かない時の**薄い再開** — 本文は畳めないので手番ごとの数だけ・名乗る〕)を時刻順(同じ
    時刻は郵便が先)に並べ、会話へ届いた郵便(spec.to = この会話)ごとに手番に割る。UTF-8 で budget byte を超えたら
-   **古い手番から要約せず落とし**、落とした手番と項の数と全文の在処を末尾に名乗る。最新の手番 1 つだけでも超えるなら
-   その手番の先頭を落として末尾を残し、切った byte を名乗る。記録が無ければ text は空(薄い再開でも空)。"
+   **古い手番から要約せず落とし**、落とした区間(古い手番の連なり)を**見出し 1 行**(期間・落とした手番と項の数・kind ごとの
+   件数・道具の名・全文の在処 — history-dropped-headline)に畳んで残した手番の前に置く(黙って捨てない・model は呼ばない —
+   agora-redesign #55 便 1)。最新の手番 1 つだけでも超えるならその手番の先頭を落として末尾を残し、切った byte を名乗る。
+   記録が無ければ text は空(薄い再開でも空)。"
   (setv thin (isinstance source HeadlineTurns))
   (setv items [])
   (setv order 0)
@@ -1483,32 +1550,39 @@
     (setv inbound (= (.get spec "to") conversation-id))
     (when (and (or inbound (= (.get spec "from") conversation-id)) (not-in message-id exclude))
       (setv at (.get spec "at"))
-      (<- line str (history-message-line message (if (isinstance at int) at message.created-at-ms) fetched))
-      (.append items #((if (isinstance at int) at message.created-at-ms) order inbound line))
+      (setv mail-at (if (isinstance at int) at message.created-at-ms))
+      (<- line str (history-message-line message mail-at fetched))
+      (.append items (HistoryItem :at mail-at :until mail-at :order order :inbound inbound :line line
+                                  :counts (HeadlineCounts :counts #(#(HISTORY-MAIL-KIND 1)) :tools #()
+                                                          :first-at mail-at :last-at mail-at)))
       (setv order (+ order 1))))
   (if thin
       (for [record source.records]
         (when (= (.get record.spec "conversationId") conversation-id)
-          (<- line (| str None) (history-headline-line record))
+          (setv status (if (isinstance record.status dict) record.status {}))
+          (<- entries tuple (entries-of-status status))
+          (<- counts HeadlineCounts (headline-counts-of-entries entries record.created-at-ms))
+          (<- line (| str None) (history-headline-line record counts))
           (when (is-not line None)
-            (setv status (if (isinstance record.status dict) record.status {}))
-            (<- entries tuple (entries-of-status status))
-            (setv first-at (next (gfor entry entries :if (isinstance (.get entry "at") int) (get entry "at"))
-                                 record.created-at-ms))
-            (.append items #(first-at order False line))
+            (.append items (HistoryItem :at counts.first-at :until counts.last-at :order order :inbound False
+                                        :line line :counts counts))
             (setv order (+ order 1)))))
       (for [event source.events]
         (<- line (| str None) (history-event-line event))
         (when (is-not line None)
-          (.append items #(event.at order False line))
+          (.append items (HistoryItem :at event.at :until event.at :order order :inbound False :line line
+                                      :counts (HeadlineCounts :counts #(#(event.kind 1))
+                                                              :tools (if (isinstance event.tool-name str) #(event.tool-name) #())
+                                                              :first-at event.at :last-at event.at)))
           (setv order (+ order 1)))))
   (setv groups [])
-  (for [item (sorted items :key (fn [item] #((get item 0) (get item 1))))]
-    (if (or (not groups) (get item 2))
-        (.append groups [(get item 3)])
-        (.append (get groups -1) (get item 3))))
+  (for [item (sorted items :key (fn [item] #(item.at item.order)))]
+    (if (or (not groups) item.inbound)
+        (.append groups [item])
+        (.append (get groups -1) item)))
   (when (not groups)
-    (return (HistoryFold :text "" :kept-turns 0 :dropped-turns 0 :dropped-items 0 :size-bytes 0 :thin thin)))
+    (return (HistoryFold :text "" :kept-turns 0 :dropped-turns 0 :dropped-items 0 :dropped-headline None
+                         :cut-bytes 0 :size-bytes 0 :thin thin)))
   (setv header
         (if thin
             (+ f"これまでの会話(薄い再開・会話 {conversation-id}・古い順): 会話の記録の service に届かなかった"
@@ -1517,29 +1591,38 @@
                (if source.complete "" "・会話の最初までは読んでいない") "):")))
   (setv where (+ f"全文は会話 {conversation-id} の記録 — 郵便は ACP の kind message(spec.to / spec.from = {conversation-id})"
                  f"の行・手番の本文は会話の記録の service(GET /v1/conversations/{conversation-id}/events)— にあります"))
-  (setv blocks (lfor group groups (.join "\n" group)))
+  (setv blocks (lfor group groups (.join "\n" (lfor item group item.line))))
+  ;; 上限を超える間、古い手番から落とす。落とした区間は見出し 1 行に畳んで残した手番の前に置く(黙って捨てない — R34)。
   (setv dropped-turns 0)
   (setv dropped-items 0)
-  (setv footer "")
+  (setv headline None)
   (setv text (.join "\n\n" (+ [header] blocks)))
   (while (and (> (len (.encode text "utf-8")) budget) (> (- (len blocks) dropped-turns) 1))
-    (setv dropped-items (+ dropped-items (len (get groups dropped-turns))))
     (setv dropped-turns (+ dropped-turns 1))
-    (setv footer (+ f"(上限 {budget} byte を超えるため、古い手番 {dropped-turns} 件(出来事と郵便 {dropped-items} 件)を"
-                    f"要約せずに落としました。{where})"))
-    (setv text (.join "\n\n" (+ [header] (cut blocks dropped-turns None) [footer]))))
+    (setv dropped (tuple (gfor group (cut groups 0 dropped-turns) item group item)))
+    (setv dropped-items (len dropped))
+    (<- counts HeadlineCounts (headline-counts-of-items dropped))
+    (<- headline str (history-dropped-headline counts dropped-turns dropped-items budget where))
+    (setv text (.join "\n\n" (+ [header headline] (cut blocks dropped-turns None)))))
+  ;; 最新の手番 1 つ(と頭・見出し)だけでも超える: その手番の先頭を切って末尾を残し、切った byte を名乗る。
+  (setv cut-bytes 0)
   (when (> (len (.encode text "utf-8")) budget)
     (setv newest (.encode (get blocks -1) "utf-8"))
-    (setv notice (+ f"(上限 {budget} byte を超えるため、" (if (> dropped-turns 0) f"古い手番 {dropped-turns} 件(出来事と郵便 {dropped-items} 件)を落とし、" "")
-                    f"最新の手番の先頭を落としました。{where})"))
-    (setv fixed (+ (len (.encode header "utf-8")) (len (.encode notice "utf-8")) 4))
+    (setv lead (if (is headline None) [header] [header headline]))
+    (setv notice-where (if (is headline None) where ""))
+    (<- probe str (history-cut-notice budget (len newest) notice-where))
+    (setv fixed (len (.encode (.join "\n\n" (+ lead ["" probe])) "utf-8")))
     (setv room (max 0 (- budget fixed)))
     (setv tail (.decode (cut newest (max 0 (- (len newest) room)) None) "utf-8" :errors "ignore"))
-    (setv text (.join "\n\n" [header tail notice])))
+    (setv cut-bytes (- (len newest) (len (.encode tail "utf-8"))))
+    (<- notice str (history-cut-notice budget cut-bytes notice-where))
+    (setv text (.join "\n\n" (+ lead [tail notice]))))
   (HistoryFold :text text
                :kept-turns (- (len blocks) dropped-turns)
                :dropped-turns dropped-turns
                :dropped-items dropped-items
+               :dropped-headline headline
+               :cut-bytes cut-bytes
                :size-bytes (len (.encode text "utf-8"))
                :thin thin))
 

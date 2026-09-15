@@ -56,7 +56,8 @@
 ;;; binding・model の組 — 段 9o lane 9o-3)の時だけで、
 ;;; 家か機体が違えば cache の失効を受け入れ(operator 決定 #54)、家の違う温かい session は片付けて rehydrate(ACP の
 ;;; 会話の記録を最初の本文に畳む — judgment.rehydrate-history-of・上限は AgentdSettings.rehydrate_history_byte_budget・
-;;; 文脈の圧縮は別 issue #55)、resume が断られたら rehydrate(judgment.fallback-arm-of)。再開の材料の読みは名指しの順(段 9q・#77):
+;;; 上限で落とした古い手番は見出し 1 行に畳んで残す〔段 11 lane 11v・#55 便 1・R34〕・model による要約は #55 便 2 の設計)、
+;;; resume が断られたら rehydrate(judgment.fallback-arm-of)。再開の材料の読みは名指しの順(段 9q・#77):
 ;;; 段 10 lane 10o(agora-redesign #96・依頼者の追補): 郵便の添付(画像)は行が見出しだけを運び、中身は本文と同じ 1 回の
 ;;; stream の読み(mail-bodies-by-ref)で拾う。器へは**型つき**(TurnAttachment)のまま SessionSend / SessionInterject で
 ;;; 渡すだけで、CLI の綴り(claude の content の block・codex の input の項)はこの module に 1 語も無い — 組むのは
@@ -754,8 +755,13 @@
           (setv history fold.text)
           (<- (LogLine :text (+ f"agentd: job {job-id} rehydrates conversation {subject} "
                                      (if fold.thin "thinly from ACP headlines " "from the record service ")
-                                     f"({fold.kept-turns} turns kept, {fold.dropped-turns} dropped, "
-                                     f"{fold.size-bytes} bytes, history read {(- read-ended read-started)} ms)"))))
+                                     f"({fold.kept-turns} turns kept, {fold.dropped-turns} dropped"
+                                     (if (is fold.dropped-headline None) "" " into a headline")
+                                     (if (> fold.cut-bytes 0) f", newest turn cut by {fold.cut-bytes} bytes" "")
+                                     f", {fold.size-bytes} bytes, history read {(- read-ended read-started)} ms)")))
+          ;; 段 11 lane 11v(agora-redesign #55・R34): 落とした区間の見出しは log にも 1 行(受入の証拠 = 最初の本文に入った行)。
+          (when (is-not fold.dropped-headline None)
+            (<- (LogLine :text f"agentd: job {job-id} rehydrate headline: {fold.dropped-headline}"))))
         (<- attribution dict (session-attribution-of plan job-id subject choice.arm))
         (<- built tuple (incarnation-charter-of plan choice session-id bodies history attribution
                                                 settings.backend-kind lease settings.homes-root opener))

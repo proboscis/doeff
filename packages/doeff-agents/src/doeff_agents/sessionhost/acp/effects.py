@@ -686,7 +686,8 @@ class AgentdSettings:
     #: judgment の純関数、時計は effect、拍は agentd-tick の 1 つの腕。
     profile_observe_seconds: int = 300
     #: 履歴からの再開(段 8q)で最初の本文に畳む「これまでの会話」の上限(UTF-8 の byte)。超えたら古い手番から
-    #: 要約せずに落とし、落とした数と全文の在処(ACP の会話の記録)を名乗る(judgment.rehydrate-history-of)。
+    #: 要約せずに落とし、落とした区間を見出し 1 行(期間・kind ごとの件数・道具の名・全文の在処 = ACP の会話の記録)に
+    #: 畳んで残す(judgment.rehydrate-history-of — 段 11 lane 11v・agora-redesign #55・R34。model は呼ばない)。
     rehydrate_history_byte_budget: int = 65_536
     #: node の observations.transcripts に載せる件数の上限(段 8q — 終端の session のうち transcript が
     #: この機体に残るもの・会話ごとに最新の 1 つ・新しい順)。heartbeat ごとに node の行へ書くので小さく
@@ -946,16 +947,53 @@ class ArmChoice:
 
 
 @dataclass(frozen=True)
+class HeadlineCounts:
+    """見出しの数(段 8q・段 11 lane 11v・agora-redesign #55): 出来事と郵便の kind ごとの件数(初出の順)・道具の名(初出の順)・
+    期間(first_at / last_at = 材料の最初と最後の時刻・時刻を持つ材料が無ければ呼び手が渡した行の時刻)。turn-record の 1 行の見出し
+    (judgment.history-headline-line)も、上限で落とした手番の区間の見出し(judgment.history-dropped-headline)も、この 1 つの
+    形から judgment.history-counts-note が同じ綴りで組む。"""
+
+    counts: tuple[tuple[str, int], ...]
+    tools: tuple[str, ...]
+    first_at: int
+    last_at: int
+
+
+#: 「これまでの会話」の見出しの数で郵便を数える kind の綴り(記録の出来事の kind = text / tool_use / … と並ぶ・段 11 lane 11v)。
+HISTORY_MAIL_KIND = "郵便"
+
+
+@dataclass(frozen=True)
+class HistoryItem:
+    """「これまでの会話」の 1 項(judgment.rehydrate-history-of の材料の 1 つ = 郵便 1 通・記録の出来事 1 つ・薄い再開の
+    turn-record 1 行)。at / until = この項の最初と最後の時刻(郵便と出来事は同じ・turn-record の見出しは entries の範囲)・
+    order = 同じ時刻の安定な並び・inbound = 会話へ届いた郵便(手番の区切り)・line = 畳む 1 行・counts = 見出しの数
+    (落とした区間の見出しに畳む材料 — 本文を捨てても数と道具の名と期間は残る)。"""
+
+    at: int
+    until: int
+    order: int
+    inbound: bool
+    line: str
+    counts: HeadlineCounts
+
+
+@dataclass(frozen=True)
 class HistoryFold:
     """履歴からの再開の「これまでの会話」(judgment.rehydrate-history-of の答え)。text = 最初の本文に畳む
     文(記録が無ければ空)・kept_turns / dropped_turns = 残した / 上限で落とした手番の数・
-    dropped_items = 落とした出来事と郵便の数・size_bytes = text の UTF-8 の大きさ・thin = 本文が無い薄い再開
-    (材料が HeadlineTurns — 記録の service に届かず ACP の見出しだけで組んだ)。"""
+    dropped_items = 落とした出来事と郵便の数・dropped_headline = 落とした区間(古い手番の連なり)を畳んだ見出しの 1 行
+    (段 11 lane 11v・agora-redesign #55: 期間・kind ごとの件数・道具の名・全文の在処 — 落とした手番が無ければ None・
+    在れば text の中にちょうど 1 度)・cut_bytes = 最新の手番 1 つだけでも上限を超える時にその先頭から切った byte(切って
+    いなければ 0)・size_bytes = text の UTF-8 の大きさ・thin = 本文が無い薄い再開(材料が HeadlineTurns — 記録の service に
+    届かず ACP の見出しだけで組んだ)。"""
 
     text: str
     kept_turns: int
     dropped_turns: int
     dropped_items: int
+    dropped_headline: str | None
+    cut_bytes: int
     size_bytes: int
     thin: bool
 
