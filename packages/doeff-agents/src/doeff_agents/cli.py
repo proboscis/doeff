@@ -195,7 +195,9 @@ def cli() -> None:
 
 @cli.group()
 def agentd() -> None:
-    """Manage the doeff-agentd supervisor."""
+    """Manage the session host (the retired `doeff-agentd` binary is now
+    `doeff-sessionhost`; only the socket, database and protocol keep the
+    `agentd` name)."""
 
 
 @agentd.command("kinds")
@@ -229,7 +231,7 @@ def agentd_kinds(json_output: bool) -> None:
 @agentd.command("ensure")
 @click.option("--json", "json_output", is_flag=True, help="Print machine-readable status.")
 def agentd_ensure(json_output: bool) -> None:
-    """Ensure doeff-agentd is reachable, starting it if necessary."""
+    """Ensure doeff-sessionhost is reachable, starting it if necessary."""
     try:
         client = ensure_agentd()
     except AgentdUnavailableError as error:
@@ -258,7 +260,7 @@ def agentd_ensure(json_output: bool) -> None:
         click.echo(json.dumps(payload, sort_keys=True))
         return
 
-    console.print(f"doeff-agentd: {status.get('state', 'running')}")
+    console.print(f"doeff-sessionhost: {status.get('state', 'running')}")
     console.print(f"socket: {client.socket_path}")
     if isinstance(daemon_db, str):
         console.print(f"db: {daemon_db}")

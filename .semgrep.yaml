@@ -387,7 +387,7 @@ rules:
     languages: [python]
     severity: ERROR
     message: >
-      issue #558 / ACP ADR 0024 / ADR-DOE-AGENTS-004 R10: doeff-agentd
+      issue #558 / ACP ADR 0024 / ADR-DOE-AGENTS-004 R10: doeff-sessionhost
       (re)start authority is owned exclusively by the supervisor-aware
       ensure boundary in doeff_agents/agentd_client.py. Calling
       _start_agentd_process from anywhere else bypasses the supervisor
@@ -590,7 +590,7 @@ rules:
     languages: [python]
     severity: ERROR
     message: >
-      agents-fail-fast-protocol: successful doeff-agentd responses must validate
+      agents-fail-fast-protocol: successful doeff-sessionhost responses must validate
       that the result key exists. Do not use response.get("result"), which turns
       malformed ok=true payloads into None.
     patterns:
@@ -690,7 +690,8 @@ rules:
     message: >
       ADR 0001 D1 + Condemned class D: doeff-conductor handlers must not launch
       or discover worker binaries through subprocess, os.exec*, or shutil.which.
-      Workers may only launch through doeff_agents session APIs supervised by doeff-agentd.
+      Workers may only launch through doeff_agents session APIs supervised by
+      doeff-sessionhost.
     pattern-either:
       - pattern: import subprocess
       - pattern: from subprocess import $NAME
@@ -720,7 +721,7 @@ rules:
     severity: ERROR
     message: >
       agents-cli-query-agentd: doeff-agents ps/watch/output/send/attach/stop must
-      query doeff-agentd as the single authority. Do not fall back to local
+      query doeff-sessionhost as the single authority. Do not fall back to local
       tmux/session reads or kills for these commands. `stop` is in scope because a
       backend-blind end-of-session belongs to the host: a tmux-only kill reported
       "Session not found" for every herdr and headless session (mediagen #57).
