@@ -31,6 +31,7 @@
   CUSTODY-SA-TOKEN-PATH-ENV
   DECLARATION-SHA256-ENV
   WORK-ROOTS-ENV
+  WORK-ROOTS-MAX
   WORK-ROOTS-SEPARATOR
   WorkRoots
   AGENTD-PLACES
@@ -278,6 +279,9 @@
                             f"(宣言 {word !r})"))))
     (when (not-in root roots)
       (.append roots root)))
+  (when (> (len roots) WORK-ROOTS-MAX)
+    (raise (ValueError (+ f"[{TABLE-AGENTD}].{KEY-WORK-ROOTS} の根は {WORK-ROOTS-MAX} 本まで(契約 node.spec.workRoots.maxItems)"
+                          f": {(len roots)} 本"))))
   (WorkRoots :roots (tuple roots)))
 
 
