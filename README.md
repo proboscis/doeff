@@ -158,6 +158,10 @@ doeff run --program myapp.program --format json
 The CLI supports automatic interpreter/environment discovery via `doeff-indexer`.
 See `docs/14-cli-auto-discovery.md` for marker syntax and hierarchy rules.
 
+The agent session host that connects to an agent control plane (`doeff-sessionhost`)
+and the `doeff-agents` CLI are documented in
+[`packages/doeff-agents/README.md`](packages/doeff-agents/README.md).
+
 ## Performance Benchmarks
 
 Rust VM dispatch micro-benchmarks live in `packages/doeff-vm-core/benches/` and
@@ -209,14 +213,9 @@ uv run pytest        # run full test suite
 > **Warning**: `uv sync` alone does NOT rebuild the Rust VM extension. Always
 > use `make sync` after editing `.rs` files under `packages/doeff-vm/`.
 
+> Maintainers: the landing queue and the verification rigs live in
+> [`docs/maintainers.md`](docs/maintainers.md).
+
 ## License
 
 MIT License. See `LICENSE`.
-
-## main への着地(2026-08-09〜)
-
-公開(origin main への push)は land queue の窓が行う — 変更は branch を push して `ai land request` で列へ(直 push は guard が block)。
-
-upstream 規約(検証済みでしか main を進めない)は本日から窓の battery が機械強制する。
-
-窓を回す機体は `.agents/land-queue.toml` の `policy.runner` が決める — 2026-09-14 から `"pod"`(k3s の頭脳の pod の land-api・実行者 `land-runner@agora-1`・押す鍵 = Secret `land-key-doeff` の deploy key)。登記した Mac は「この repo の窓は pod が回す」と名乗って見送る。Mac の窓へ戻すには runner の行を消す(agora-redesign #71 便 2d)。
