@@ -9,7 +9,9 @@ EOF で降りる。DOEFF_HEADLESS_STUB_DELAY 秒だけ result の前で待つ(�
 出さずに降りる = 実物と同じ)。**待っている間に届いた user の行は走っている手番への割り込み**
 (実物: CLI が次の tool の境界で注入する)— その本文に反応した assistant の行を出してから
 result(num_turns が増える)。DOEFF_HEADLESS_STUB_TURNS_BEFORE_EXIT = N なら N 手番目の result の後に
-自分で降りる(SIGINT で止めた・idle で退いた器の再現 — 次の手番は --resume で起こし直される)。API は撃たない。
+自分で降りる(SIGINT で止めた・idle で退いた器の再現 — 次の手番は --resume で起こし直される)。
+DOEFF_HEADLESS_STUB_LIMIT_TEXT = <文> なら result を provider の限度の断り(is_error・その文)で出す
+(段 11 lane 11n 便 C・実弾 2026-09-15 の "You've reached your Fable limit." の再現)。API は撃たない。
 
 段 10 lane 10n(実測 2026-09-14): user の行に ``uuid`` が在れば ``command_lifecycle`` でその運命を名乗る
 (queued → started → completed / cancelled)。DOEFF_HEADLESS_STUB_TOOL_SECONDS = T > 0 は「T 秒の道具の途中」
@@ -127,6 +129,13 @@ def _assistant(sid, message_id, text):
 
 
 def _result(sid, text, turns):
+    # 段 11 lane 11n 便 C: DOEFF_HEADLESS_STUB_LIMIT_TEXT が在れば provider の限度の断りで終わる
+    # (実物の文言 — 族の表を通す材料。実弾 2026-09-15: "You've reached your Fable limit.")。
+    limit = os.environ.get("DOEFF_HEADLESS_STUB_LIMIT_TEXT")
+    if limit:
+        _emit({"type": "result", "subtype": "error_during_execution", "is_error": True,
+               "result": limit, "session_id": sid, "usage": USAGE, "num_turns": turns})
+        return
     _emit({"type": "result", "subtype": "success", "is_error": False, "result": text,
            "session_id": sid, "usage": USAGE, "num_turns": turns})
 
