@@ -31,11 +31,11 @@
      (rule R2 "kind 追加 = defhandler モジュール 1 個 + kind スキーマ + conformance green。同一モジュールが直接束縛(呼び手 process 内)と host 束縛(RPC 転送)の両方で動く — impl は substrate-clean(生 IO 禁止、substrate effect のみ yield)。")
      (rule R3 "agentd(Hy)は外部性の 4 点だけを所有する: socket・単一 writer actor(SQLite session 行)・毎 cycle の reconciler 起動・lease。RPC method は program に写像され、handler stack が解釈する。continuation は永続化しない — 真実は行のみ。")
      (rule R4 "conformance 先行: Rust agentd を oracle に black-box 契約 suite(mini_conformance 前例)+ 台本駆動の conformance-agent(偽 CLI、実クォータ非消費)を先に整備し、Hy 実装は parity 到達で交代。cargo 93 tests + 2026-07-05 の trust/hooks 傷跡を挙動として結晶化してから Rust を退役する。")
-     (rule R5 "host は kinds.list で {kind, apiVersion, スキーマ} を広告し、ACP は宣言時に照合して未知 kind/version を fail-loud 拒否する。wire は有限の versioned 語彙に限る(任意 effect のリモート転送は禁止)。【2026-07-08 縮小裁定(plan 裁定 9)で landed: 広告は {kind, agent_type, required_field, api_version} の有限表のみ — alias 解決や registry 転送は host に持たせない。表と広告関数(policy.hy BINDING-KIND-* 表 + binding-kind-advertisement)がスキーマの単一の家で、host.hy の kinds.list dispatch は純粋・store 非依存。『宣言時に照合』は精密化: ACP 自身の語彙への宣言時 fail-loud は ACP admission(0044 R3)が担い、host 広告とのクロスチェックは ACP daemon の level-triggered 周期照合(verifyBindingKindsOnce → BindingKindUnsupported condition)が担う — 登録と host liveness は結合せず、CLI `doeff-agents agentd kinds` は ensure/spawn しない純 read で host 不達 = 観測なし ≠ 違反。照合 law の家は ACP 0044 kind-verification-is-level-triggered。deftest: sessionhost_host_deftests.hy test-dispatch-kinds-list(表と広告の乖離を red 化)。】【同日 #15 で版が per-kind 化: api_version は BINDING-KIND-API-VERSION 表(claude-code = v1 / codex = v2)。codex v2 = 受理形の拡張({codex_home} XOR {auth_file, profile_dir}、BINDING-KIND-SHAPES)であり、required_field は人間可読ラベルへ(照合の機械面は kind+api_version のみ — shapes DSL は機械消費者不在の YAGNI 棄却)。スキーマを変えながら版を据え置くのは versioned 語彙の形骸化であり本 rule 違反。】")
+     (rule R5 "host は kinds.list で {kind, apiVersion, スキーマ} を広告し、ACP は宣言時に照合して未知 kind/version を fail-loud 拒否する。wire は有限の versioned 語彙に限る(任意 effect のリモート転送は禁止)。【2026-07-08 縮小裁定(plan 裁定 9)で landed: 広告は {kind, agent_type, required_field, api_version} の有限表のみ — alias 解決や registry 転送は host に持たせない。表と広告関数(policy.hy BINDING-KIND-* 表 + binding-kind-advertisement)がスキーマの単一の家で、host.hy の kinds.list dispatch は純粋・store 非依存。『宣言時に照合』は精密化: ACP 自身の語彙への宣言時 fail-loud は ACP admission(0044 R3)が担い、host 広告とのクロスチェックは ACP daemon の level-triggered 周期照合(verifyBindingKindsOnce → BindingKindUnsupported condition)が担う — 登録と host liveness は結合せず、CLI `doeff-agents agentd kinds` は ensure/spawn しない純 read で host 不達 = 観測なし ≠ 違反。照合 law の家は ACP 0044 kind-verification-is-level-triggered。deftest: sessionhost_host_deftests.hy test-dispatch-kinds-list(表と広告の乖離を red 化)。】【同日 #15 で版が per-kind 化: api_version は BINDING-KIND-API-VERSION 表(claude-code = v1 / codex = v2)。codex v2 = 受理形の拡張({codex_home} XOR {auth_file, profile_dir}、BINDING-KIND-SHAPES)であり、required_field は人間可読ラベルへ(照合の機械面は kind+api_version のみ — shapes DSL は機械消費者不在の YAGNI 棄却)。スキーマを変えながら版を据え置くのは versioned 語彙の形骸化であり本 rule 違反。】【2026-09(従量課金の便 lane A)で kind は 4 つ: 定額の codex(v2)/ claude-code(v1)と、従量課金の claude-code-metered {config_dir}(v1)/ codex-metered {auth_file, profile_dir}(v1)。従量課金の kind は新語彙なので初版 v1 で、既存 kind の形・版・required_field は 1 文字も動かない(受理形が変わっていない kind の版を進めると偽の BindingKindUnsupported を招く — 上の裁定どおり)。⚠ 課金の階級(billing class)は広告に載せない: 照合の機械面は (kind, api_version) のままで、階級は kind 名が運ぶ(表 policy.hy BINDING-KIND-BILLING)。codex-metered が native 形 {codex_home} を取らないのは意図で、env / 機体に転がる家から課金の階級を拾える形を作らないため。deftest: sessionhost_host_deftests.hy test-dispatch-kinds-list(4 kind の広告)。】")
      (rule R6 "デプロイは frozen 環境から(pin 済み専用 env)。dev venv / target-debug 依存の自己参照(子守りが子守られる開発環境に依存する)を禁止する。")
      (rule R7 "退役後の正典 executor は doeff-sessionhost: ensure_agentd の spawn 解決は DOEFF_AGENTD_BIN(明示 seam)→ 実行中 interpreter 隣接の console script → PATH の doeff-sessionhost で、退役 Rust binary は解決対象に含めない(silent rollback の根絶、ACP ADR 0045 R5)。rollback 可用性は git 履歴だけが担う: 退役 Rust の in-tree 凍結コピーは保持せず、削除直前 commit へ打つ tag agentd-rust-final を唯一の rollback 座標とする【2026-07-30 改訂(issue #575 M0): 旧条項『Rust binary/source の保存理由は rollback 可用性のみ』は in-tree 保存を含意し、(a) 素の pytest の退役 gate 束縛(27 件既知 red、#556)、(b) 欠陥修理の二重メンテ(#573/PR #574 — 同一欠陥を Rust/Hy 両実装へ出荷)、(c) 修理が届かず古い欠陥を抱えたままの rollback 先、を生んだため廃止】。正しさの基準として参照する禁止は不変(U1: それは一度も oracle ではなく partial-unreliable-impl だった)。移植出典表記(『oracle = main.rs:行番号』型 docstring)は tag 経由で git 解決可能な agentd-rust-final:src/main.rs:行番号 形式へ再アンカーし(issue #575 M3)、挙動契約の正本は conformance suite(README の F-* 表)に置く。")
      (rule R8 "result-contract 検証の意味論は JSON Schema 仕様が唯一の正(U1 裁定): 検証器は準拠参照実装(jsonschema)の輸入であり、subset を自前実装しない。仕様適合は公式 JSON-Schema-Test-Suite を repo 内に vendor して adapter に直接通すことで検証する(draft2020-12 required 全 1260 case green。skip 21 は全て裁定記録付き: remote レジストリ依存 = 契約は自己完結前提で unresolvable $ref は fail-loud / ECMA \\p regex = admission が launch 時 fail-closed で拒否 — 対 deftest あり)。schema 自体は launch 時に meta-schema で fail-closed 検証(壊れた契約で session を作らない)。旧 Rust 実装の fail-open 挙動を expected に固定するテストは歴史ピンとしても置かない。")
-     (rule R9 "公開 launch 面(effect 語彙と wire launch の両方)は auth-blind: auth/profile 物理(CODEX_HOME / CLAUDE_CONFIG_DIR / 生鍵)は typed `binding`(束縛時構成の serialize、kind 判別スキーマ: codex {codex_home} / claude-code {config_dir})でのみ運ぶ。session_env は非 auth overlay に縮む — binding 所有キーの混入は全副作用より前に typed reject(所有権ベース: 既知の悪いキーの列挙は腐るが所有権は腐らない。provider API キーの FORBIDDEN blocklist は substrate 境界の防御として併存)。非 auth の per-launch env(観測フラグ・result channel 配線値など)は overlay として正当であり、handler 構成へ押し込まない(2026-07-07 裁定: env には auth と run 意図の 2 住人が居て、家が違う)。kind 別 auth 材料スキーマは handler の束縛時構成 — ローカル束縛 = main、host 束縛 = binding registry を持つ control plane(ACP 0044 R2/R5 と同じ線)。binding admission は ADR 0044 R3 と同思想: 未知 kind / kind↔agent_type 不整合 / 必須 field 欠落 / 未知 field を typed reject。")
+     (rule R9 "公開 launch 面(effect 語彙と wire launch の両方)は auth-blind: auth/profile 物理(CODEX_HOME / CLAUDE_CONFIG_DIR / 生鍵)は typed `binding`(束縛時構成の serialize、kind 判別スキーマ: codex {codex_home} / claude-code {config_dir})でのみ運ぶ。session_env は非 auth overlay に縮む — binding 所有キーの混入は全副作用より前に typed reject(所有権ベース: 既知の悪いキーの列挙は腐るが所有権は腐らない。provider API キーの FORBIDDEN blocklist は substrate 境界の防御として併存)。非 auth の per-launch env(観測フラグ・result channel 配線値など)は overlay として正当であり、handler 構成へ押し込まない(2026-07-07 裁定: env には auth と run 意図の 2 住人が居て、家が違う)。kind 別 auth 材料スキーマは handler の束縛時構成 — ローカル束縛 = main、host 束縛 = binding registry を持つ control plane(ACP 0044 R2/R5 と同じ線)。binding admission は ADR 0044 R3 と同思想: 未知 kind / kind↔agent_type 不整合 / 必須 field 欠落 / 未知 field を typed reject。【2026-09 改訂(従量課金の便 lane A): 課金の階級も auth-blind の同じ線で運ぶ — (1) **宣言は kind(型)**: 従量課金の家は binding kind claude-code-metered / codex-metered が名乗り、階級の表は policy.hy BINDING-KIND-BILLING の 1 点(binding-billing-class)。(2) **許可は host の方針**: host の起動時の旗 --allow-metered-billing(既定 off・argv だけ・同名の env は作らない — R10(d) と同じ理由で env 宣言は課金の門にならない)。旗の無い host は metered の kind を全副作用より前に断り、resume / fork も同じ 1 点(admit-launch)を通る。(3) **一致は per-kind impl が起動前に検める**: 家の中の従量課金の宣言(claude = settings.json の apiKeyHelper か Vertex の env の対 / codex = auth.json の **非空の** OPENAI_API_KEY)が無ければ PreLaunchSetup で typed reject(行を作らない)。⚠ 判定は「欄が在り、かつ中身が非空」— 欄の有無では判じない(codex の CLI は定額の login でも OPENAI_API_KEY を null で書き出す。実測 2026-09-15: 運用主の家 3 つとも欄は在る・中身は空。欄の有無で判じると定額の家を全部従量課金と誤る)。鍵の**値**は host を通らない: 判断は policy の純関数が宣言の名だけを返し、行の effective_identity には家の path と印 billing = metered(+ codex は resume 用の二軸の宣言 codex_auth_file / codex_profile_dir — env の名ではない綴りで、BINDING-OWNED-ENV-KEYS には足さない)だけが載る。session_env の *_API_KEY の締め出しと substrate の hard reject は **旗の有無に関わらず不変**。】")
      (rule R10 "単一インスタンス排他の実体は socket bind であり、lease はその影(観測面)。この主従を順序と述語で守る: (a) host 起動順は bind → store open → lease 取得 → latch clear — bind に負けた競合者は store にも lease にも触れずに死ぬ。(b) ensure の spawn 述語は『socket に live listener が居ない』(path 不在 / ECONNREFUSED)のみ — 生きた listener が status probe に遅い場合は長い予算(AGENTD_BUSY_STATUS_TIMEOUT_SECONDS)で再試行し、それでも駄目なら spawn せず loud エラー(slow ≠ dead。証明されない死で競合 host を作らない)。(c) heartbeat は失効した他人名義 lease を再取得する(level-triggered 自己修復 — 盗んで死んだ競合者の残骸から bind 保持者が回復する)が、未失効の他人名義は loud エラーのまま(別 socket 同一 DB 誤構成 = 生きた二重 host の検出面)。判定と upsert は BEGIN IMMEDIATE で原子化。(d) 単一 supervisor 原則(2026-07-26、doeff#558 / ACP ADR 0024 改訂と一括): canonical socket が state dir の agentd.supervisor.json で supervisor 管理下と宣言されている場合、(b) の証明された死でも ensure は self-spawn しない — 起動・再起動の所有者は supervisor(launchd 等)であり、ensure は宣言された kick_command(構成注入 argv — doeff は launchd も label もハードコードしない)への委譲 + readiness 待ちのみを行い、kick_command 不在なら loud fail する。壊れた宣言は fail-closed(typed AgentdSupervisorConfigError)で self-spawn への silent fallback を持たない。宣言は呼び手 env ではなくマシン状態(state dir のファイル)に置く — env を継承しない任意の呼び手が supervisor 停止窓(bootout・crash throttle)に野良 host を bind してしまう穴を env 宣言は塞げない。")
      (rule R11 "store-of-record は wall-clock 稼働時間に比例して成長しない(2026-07-26/27 socket 応答不能 wedge の根治、oracle からの意図的乖離): (a) status 導出系の監査 event は status 遷移(cycle 開始時の行 status ≠ 導出 status)でのみ記録 — 静止 tick は upsert のみで journal に追記しない(oracle は毎 tick 記録: main.rs:4128)。(b) 監査履歴(agent_session_events / agent_session_commands — runtime に読者なし)は retention 境界(DOEFF_AGENTD_HISTORY_RETENTION_DAYS、既定 14 日)で bounded: 起動時 + 毎時に batched prune(batch 毎に別 actor op — client op が割り込める)、物理回収(VACUUM)は freelist が支配的なときの起動時(accept 開始前)のみで serve 中は禁止。(c) hot path の一覧(毎 tick の ListActive)は status filter を SQL 側(idx_agent_sessions_status)で適用し、terminal 履歴行を読まない。実測根拠: 実 incident DB 1.54GB(session_blocked 251k 行 / 1.16GB = 95%)で無 filter 一覧 165ms/回 → filter 化 0.7ms、単一 StoreActor の FIFO queue 遅延が client timeout(probe 1s)を超え agent 起動が全滅した。")]
   :laws
@@ -72,7 +72,10 @@
             :evidence "packages/doeff-agents: runtime.py CodexRuntimePolicy / shell.py assert_session_env_is_non_auth_overlay / handlers/{production,daemon}.py / handlers/{codex,claude,effectful}.hy / tests/test_agentd_client.py test_daemon_agent_handler_sends_codex_binding_from_policy・test_daemon_agent_handler_rejects_codex_home_in_session_env / tests/test_session_backend.py test_tmux_agent_handler_rejects_codex_home_in_session_env")
           (fact
             "codex binding の受理形は #15(2026-07-08、v2)で二形の XOR に拡張: {codex_home}(native home — daemon ローカル束縛 CodexRuntimePolicy・conformance harness・CODEX_HOME= escape hatch の恒久住人)か {auth_file, profile_dir}(control plane の二軸宣言 — host の per-kind impl が FsComposeHomeView で $XDG_STATE_HOME/doeff/agent-homes/ に view を合成して native 形へ合流)。混在・部分・未知 field はどの shape にも一致せず typed reject(BINDING-KIND-SHAPES への完全一致)。binding が在れば process env fallback には決して到達しない(deftest で decoy pin)。宣言パスの実在検証は合成の冒頭で typed fail — ACP 側 ensure-agent-home(登録時検証)の退役の受け皿(ACP 0040 R2 改訂)。"
-            :evidence "packages/doeff-agents: sessionhost/policy.hy BINDING-KIND-SHAPES/binding-admission-error / sessionhost/impls/codex.hy codex-view-root・codex-pre-launch / sessionhost/effects.hy FsComposeHomeView / sessionhost/substrate.hy compose-home-view / tests/sessionhost_launch_deftests.hy test-launch-composes-view-for-two-axis-codex-binding・test-launch-rejects-malformed-binding(XOR mutation → red)")]
+            :evidence "packages/doeff-agents: sessionhost/policy.hy BINDING-KIND-SHAPES/binding-admission-error / sessionhost/impls/codex.hy codex-view-root・codex-pre-launch / sessionhost/effects.hy FsComposeHomeView / sessionhost/substrate.hy compose-home-view / tests/sessionhost_launch_deftests.hy test-launch-composes-view-for-two-axis-codex-binding・test-launch-rejects-malformed-binding(XOR mutation → red)")
+          (fact
+            "課金の階級の追加(2026-09・従量課金の便 lane A)でも公開 launch 面は不変: kind が 2 つ増え、host の旗が 1 つ増えただけで、effect 語彙・wire launch の引数・session_env の意味は 1 つも変わらない(auth 材料は typed binding のまま・鍵の値はどの面にも現れない)。従量課金の家を使う呼び手は kind を言うだけで、認証の物理(鍵の置き場・読み方)を知らない。"
+            :evidence "packages/doeff-agents: sessionhost/policy.hy BINDING-KIND-BILLING / binding-billing-class / claude-home-metered-reading / codex-home-metered-reading・sessionhost/launch.hy admit-launch の階級の関所・sessionhost/host.hy --allow-metered-billing / tests/sessionhost_launch_deftests.hy test-launch-admits-metered-kind-when-host-allows(行と env に鍵が載らないことの pin)")]
        :counterexamples
          [(counterexample "session_env 経由で合成 CODEX_HOME を effect user が組んで渡す(旧形 — launch admission が typed reject する)")
           (counterexample "LaunchAgent / wire launch に authFile 引数を足し、user program がアカウント物理を知る")
@@ -137,7 +140,21 @@
           (counterexample "母数はそのままに max_running の値だけ引き上げて対症する(adopted 行は単調増加 — 必ず再発する)")
           (counterexample "容量を空けるために interactive / adopted 行の刈り取りを再導入する(ADR-007 interactive-rows-are-never-reaped 違反)")
           (counterexample "母数を lifecycle(run_to_completion のみ)で絞る(launch 起点の interactive 行は substrate を実際に消費する — 絞るのは所有であって寿命ではない)")
-          (counterexample "拒否文言から先頭逐語 'max running agent sessions reached' を落とす(ACP Scheduler の infix 照合が throttle 分類 — 席の解放と再試行 — に消費している凍結面)")])]
+          (counterexample "拒否文言から先頭逐語 'max running agent sessions reached' を落とす(ACP Scheduler の infix 照合が throttle 分類 — 席の解放と再試行 — に消費している凍結面)")])
+     (law metered-billing-is-declared-by-kind-and-allowed-by-host-policy
+       :statement "metered_kind_admitted <=> host.allow_metered_billing AND home_declares_metered; billing_class = f(binding.kind) never f(env) never f(host_flag_alone); credential_value not_in (host_memory + log + row + argv + spawn_env); resume_of_a_metered_row => metered_kind_or_typed_reject never_subscription_fallback"
+       :facts
+         [(fact
+            "起点(2026-09-15): 受け手が自分の従量課金の資格で内部エージェントを動かす経路が必要になったが、今日の契約は *_API_KEY 形の env をどの経路でも拒む(policy.hy metered-credential-env-offenders・substrate の hard reject)。拒否規則を緩める / env の例外を足す / 家の中に鍵を入れる運用を文書化だけする、の 3 案はいずれも不変条件(認証の家は binding の 1 点・既定の認証が無い・従量課金を系に入れない)を壊す。採った形 = 階級を kind で宣言し host の旗で許し、家の中身との一致を起動前に検める。運用主の配備は旗を立てないので挙動は不変。⚠ 家の中の宣言の判定は『欄が在り、かつ中身が非空』— 欄の有無で判じると codex の定額の login の家(OPENAI_API_KEY が null)を全部従量課金と誤る(実測: 運用主の家 3 つとも)。"
+            :evidence "packages/doeff-agents/tests/sessionhost_launch_deftests.hy test-launch-rejects-metered-kind-when-host-forbids-metered-billing・test-launch-admits-metered-kind-when-host-allows・test-launch-rejects-metered-kind-without-home-declaration・test-launch-still-rejects-metered-credential-in-overlay-with-allow-flag / sessionhost_resume_deftests.hy test-resume-reconstructs-metered-kind-from-identity・test-resume-rejects-metered-kind-when-host-forbids-metered-billing・test-resume-refuses-to-downgrade-metered-row-to-subscription-kind / sessionhost_impls_deftests.hy test-claude-metered-pre-launch-requires-declared-credential-in-settings・test-codex-metered-pre-launch-requires-api-key-field-in-auth-file / sessionhost_host_deftests.hy test-parse-args-allow-metered-billing・test-dispatch-kinds-list")]
+       :counterexamples
+         [(counterexample "host の旗だけで定額の kind が従量課金に変わる(旗は『宣言された従量課金の家を受ける』ことだけを許す — 階級は kind が運ぶ)")
+          (counterexample "kind だけで旗の無い host が metered の launch を通す(既定は fail-closed — 配備の方針を kind が上書きする形)")
+          (counterexample "env の 1 語(DOEFF_*_ALLOW_METERED_BILLING 等)で従量課金を許す(R10(d) と同じ穴 — env 宣言は監督の門にならない)")
+          (counterexample "旗があるからと session_env の *_API_KEY 拒否や substrate の hard reject を緩める(env の締め出しは旗の有無に依らない — 鍵の値は host を通らない)")
+          (counterexample "家の中の宣言を欄の有無で判じる(codex は定額の login でも OPENAI_API_KEY を null で書くので、運用主の家が全部『従量課金』になり配備が止まる)")
+          (counterexample "従量課金の行の resume で kind を再構成できないときに定額の kind へ降格させる(課金の階級が再開の拍で黙って変わり、旗の無い host の admission まで素通りする)")
+          (counterexample "鍵の値を identity / 行 / log / argv / spawn env のどれかに写す(通るのは家の path と階級の印だけ)")])]
   :enforcement
     ;; C1(effect 語彙 + policy program)と同一チェンジセットで substrate-clean
     ;; を実 enforcement 化。conformance suite ゲートは C0-2 で green 済み
@@ -196,6 +213,44 @@
          "source" "# 移植出典: agentd-rust-final:src/main.rs:2775(rollback 専用・正しさの基準ではない)\n"}
         {"relative-path" "docs/history-note.md"
          "source" "Rust 参照実装は packages/doeff-agentd に住んでいた(退役済み・tag agentd-rust-final)。\n"}])
+     (deftest test-adr-doe-agents-004-metered-billing-needs-kind-and-host-policy
+       ;; law metered-billing-is-declared-by-kind-and-allowed-by-host-policy の
+       ;; 機械面: 階級は kind の関数(env でも旗でもない)で、旗は許可の側だけを
+       ;; 動かす。家の中の宣言は「非空」で判じる(欄の有無ではない)。
+       (import json)
+       (import doeff_agents.sessionhost.policy [
+         BILLING-METERED
+         BILLING-SUBSCRIPTION
+         binding-billing-class
+         claude-home-metered-reading
+         codex-home-metered-reading])
+       ;; 階級は kind の関数
+       (assert (= (binding-billing-class {"kind" "claude-code" "config_dir" "/c"})
+                  BILLING-SUBSCRIPTION))
+       (assert (= (binding-billing-class {"kind" "codex" "codex_home" "/h"})
+                  BILLING-SUBSCRIPTION))
+       (assert (= (binding-billing-class {"kind" "claude-code-metered" "config_dir" "/c"})
+                  BILLING-METERED))
+       (assert (= (binding-billing-class {"kind" "codex-metered"
+                                          "auth_file" "/a" "profile_dir" "/p"})
+                  BILLING-METERED))
+       ;; 階級を名乗らないもの(binding 無し・未知 kind)は None
+       (assert (is (binding-billing-class None) None))
+       (assert (is (binding-billing-class {"kind" "gemini"}) None))
+       ;; 家の中の宣言: 非空だけが宣言(codex の定額の login は欄を null で持つ)
+       (assert (is (get (codex-home-metered-reading
+                          (json.dumps {"OPENAI_API_KEY" None "auth_mode" "chatgpt"})) 1)
+                   False))
+       (assert (is (get (codex-home-metered-reading
+                          (json.dumps {"OPENAI_API_KEY" "sk-x"})) 1)
+                   True))
+       ;; claude が metered kind で受けるのは apiKeyHelper か Vertex の対だけ
+       (assert (= (get (claude-home-metered-reading
+                         (json.dumps {"apiKeyHelper" "cat /k"})) 2)
+                  "apiKeyHelper"))
+       (assert (is (get (claude-home-metered-reading
+                          (json.dumps {"env" {"ANTHROPIC_API_KEY" "sk"}})) 2)
+                   None)))
      (deftest test-adr-doe-agents-004-capacity-denominator-is-launch-owned
        ;; capacity-counts-only-launch-owned-rows の機械面: 母数の述語は
        ;; 所有(adopted)で絞り、寿命(lifecycle)では絞らない。

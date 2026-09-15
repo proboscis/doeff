@@ -134,6 +134,37 @@
   (assert (in "--max-running none" (str raised))))
 
 
+(deftest test-parse-args-allow-metered-billing
+  ;; 従量課金の便 lane A(ADR-DOE-AGENTS-004 R9 改訂): 従量課金の binding kind を受けるかは
+  ;; host の起動時の旗 1 つで決まり、既定は off(fail-closed — 旗を立てていない
+  ;; 配備は今日どおり metered の kind を 1 件も起動しない)。値を取らない旗なので、
+  ;; 後ろに値を書いたら unknown argument で loud に落ちる(黙って飲まない)。
+  ;; env knob は **作らない**: 課金の方針を env の 1 語で変えられる形は R10(d) が
+  ;; 「env 宣言は監督の穴を塞げない」として退けた形と同じ。
+  (assert (is (. (parse-args []) allow-metered-billing) False))
+  (assert (is (. (parse-args ["serve"]) allow-metered-billing) False))
+  (setv config (parse-args ["--allow-metered-billing" "serve"]))
+  (assert (is config.allow-metered-billing True))
+  ;; 他の旗と混ざっても順序に依らない
+  (setv config2 (parse-args ["--max-running" "4" "--allow-metered-billing"
+                             "--backend" "headless" "serve"]))
+  (assert (is config2.allow-metered-billing True))
+  (assert (= config2.max-running 4))
+  ;; 値を取らない旗 — 後ろの値は unknown argument
+  (setv raised None)
+  (try
+    (parse-args ["--allow-metered-billing" "true" "serve"])
+    (except [e ValueError] (setv raised e)))
+  (assert (is-not raised None) "expected reject for a value after the flag")
+  (assert (in "unknown argument" (str raised)))
+  ;; env では立たない(同名の env knob を作っていないことの pin)
+  (defn check-env []
+    (assert (is (. (parse-args ["serve"]) allow-metered-billing) False)))
+  (with-env {"DOEFF_SESSIONHOST_ALLOW_METERED_BILLING" "1"
+             "DOEFF_AGENTD_ALLOW_METERED_BILLING" "1"}
+            check-env))
+
+
 (deftest test-parse-args-rejects
   (for [[args fragment]
         [[["--frobnicate"] "unknown argument"]
@@ -245,6 +276,9 @@
     (assert (= (get result "db_path") config.db-path))
     (assert (= (get result "socket_path") config.socket-path))
     (assert (= (get result "max_running") 10))
+    ;; 従量課金の便 lane A: host の課金の方針の読み口(既定 off)。argv を覗かずに
+    ;; 「この配備は従量課金を許しているか」を確かめられる additive field。
+    (assert (is (get result "allow_metered_billing") False))
     (assert (= (get result "active_sessions") 0))
     (setv lease (get result "lease"))
     (assert (= (get lease "lease_name") "doeff-agentd"))
@@ -267,8 +301,19 @@
     (setv kinds (get (get response "result") "kinds"))
     ;; ADR-006 R5: resumable / forkable は capability の additive field。
     ;; api_version は binding 受理形の契約版なので据え置き(受理形は不変)。
+    ;; 従量課金の便 lane A(2026-09): 従量課金の kind 2 つを additive に広告する。
+    ;; 既存 kind の形・版は 1 文字も動かない(受理形が変わっていない kind の版を
+    ;; 進めると ACP の verifyBindingKindsOnce が偽の BindingKindUnsupported を
+    ;; 報じる)。metered の版は新語彙の初版 v1。課金の階級は広告に載せない —
+    ;; 照合の機械面((kind, api_version))を増やさず、階級は kind 名が運ぶ。
     (assert (= kinds
                [{"kind" "claude-code"
+                 "agent_type" "claude"
+                 "required_field" "config_dir"
+                 "api_version" "acp.dev/agent-binding/v1"
+                 "resumable" True
+                 "forkable" True}
+                {"kind" "claude-code-metered"
                  "agent_type" "claude"
                  "required_field" "config_dir"
                  "api_version" "acp.dev/agent-binding/v1"
@@ -278,6 +323,12 @@
                  "agent_type" "codex"
                  "required_field" "codex_home | auth_file+profile_dir"
                  "api_version" "acp.dev/agent-binding/v2"
+                 "resumable" True
+                 "forkable" True}
+                {"kind" "codex-metered"
+                 "agent_type" "codex"
+                 "required_field" "auth_file+profile_dir"
+                 "api_version" "acp.dev/agent-binding/v1"
                  "resumable" True
                  "forkable" True}])))
   (with-skeleton check))
@@ -412,7 +463,19 @@
               "agent_type" "codex" "work_dir" "/w"})
   (setv params2 (build-launch-program-params bare config))
   (assert (is None (get params2 "binding")))
-  (assert (= (get params2 "session_env") {})))
+  (assert (= (get params2 "session_env") {}))
+  ;; 従量課金の便 lane A: host 所有値(課金の方針)は max_running と同じ経路で program へ
+  ;; 注入される — launch.hy の admission が読む 1 点。既定は off。
+  (assert (is (get params "allow_metered_billing") False))
+  (setv allowing (HostConfig :db-path "/tmp/x.db" :socket-path "/tmp/x.sock"
+                             :tmux-bin "tmux" :monitor-interval-seconds 1.0
+                             :max-running 4 :result-solicitation-limit 3
+                             :prompt-stall-seconds 90 :prompt-unblock-limit 3
+                             :prompt-judge-cmd DEFAULT-PROMPT-JUDGE-CMD
+                             :allow-metered-billing True))
+  (assert (is (get (build-launch-program-params wire allowing)
+                   "allow_metered_billing")
+              True)))
 
 
 (deftest test-launch-program-params-context-file-admission

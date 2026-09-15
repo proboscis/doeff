@@ -24,6 +24,7 @@
 (import doeff_agents.sessionhost.effects [
   PaneObservation
   BuildLaunch
+  FsComposeHomeView
   PreLaunchSetup
   ClassifyPane
   DeliverMessage
@@ -58,6 +59,7 @@
     (setv self.env {})             ;; EnvGet 台本(process env fallback)
     (setv self.canonical {})       ;; path -> canonical path 台本
     (setv self.tmux-calls [])      ;; あらゆる tmux effect の記録
+    (setv self.composed [])        ;; FsComposeHomeView の記録(二軸形の家)
     (setv self.sent-keys [])))     ;; TmuxSendKeys の記録
 
 
@@ -73,6 +75,12 @@
   (FsMakeDirs [path]
     (.append world.dirs path)
     (resume None))
+  (FsComposeHomeView [auth-file profile-dir view-root]
+    ;; 二軸形の家の合成(#15)。実体は substrate の compose-home-view —
+    ;; ここは決定的な view の path を返すだけ(従量課金の便 lane A の metered codex が
+    ;; 通る経路)。
+    (.append world.composed #(auth-file profile-dir view-root))
+    (resume f"{view-root}/composed-view"))
   (EnvGet [name]
     (resume (.get world.env name)))
   (TmuxNewSession [session-name work-dir env]
@@ -364,6 +372,141 @@
   (<- identity (run-claude world (pre-launch-setup "claude" params)))
   (assert (= (get identity "CLAUDE_CONFIG_DIR") "/home/u/.claude"))
   (assert (in "explicit" (get identity "warnings" 0))))
+
+
+;; ---------------------------------------------------------------------------
+;; PreLaunchSetup の課金の階級(従量課金の便 lane A・ADR-DOE-AGENTS-004 R9 改訂):
+;; 家の中の従量課金の宣言と binding の kind の一致を起動前に検める
+;; ---------------------------------------------------------------------------
+
+(deftest test-claude-metered-pre-launch-requires-declared-credential-in-settings
+  ;; kind `claude-code-metered` は「この家は従量課金」という宣言を型で運ぶので、
+  ;; 家の中身が本当にそう宣言しているかを起動前に検める。受けるのは公式文書の
+  ;; 2 形だけ: settings.json の apiKeyHelper か、Vertex の env の対
+  ;; (CLAUDE_CODE_USE_VERTEX=1 + ANTHROPIC_VERTEX_PROJECT_ID)。
+  ;; 断りは trust の書きより前(fs への書き込みゼロ・tmux 効果ゼロ)。
+  ;; **鍵の値は読まない**: 判定は policy の純関数が宣言の名だけを返す。
+  (setv metered-binding {"kind" "claude-code-metered" "config_dir" "/x/claude-metered"})
+
+  ;; (1) apiKeyHelper で通る + 課金の階級の印が identity に載る
+  (setv world (ImplWorld))
+  (setv (get world.fs "/x/claude-metered/settings.json")
+        (json.dumps {"apiKeyHelper" "cat /secrets/anthropic-key"}))
+  (setv params (base-params :agent_type "claude" :binding metered-binding))
+  (<- identity (run-claude world (pre-launch-setup "claude" params)))
+  (assert (= (get identity "CLAUDE_CONFIG_DIR") "/x/claude-metered"))
+  (assert (= (get identity "billing") "metered"))
+  ;; 鍵を読む道具の綴り(apiKeyHelper の値)は identity に載らない
+  (assert (not-in "secrets/anthropic-key" (json.dumps identity)))
+  ;; trust の pre-seed は従来どおり同じ本体を通る(並行実装を作っていない pin)
+  (assert (in "/x/claude-metered/.claude.json" world.fs))
+
+  ;; (2) Vertex の env の対でも通る(鍵の無い従量課金 — 課金は GCP)
+  (setv world2 (ImplWorld))
+  (setv (get world2.fs "/x/claude-metered/settings.json")
+        (json.dumps {"env" {"CLAUDE_CODE_USE_VERTEX" "1"
+                            "ANTHROPIC_VERTEX_PROJECT_ID" "proj-x"}}))
+  (<- identity2 (run-claude world2 (pre-launch-setup "claude" params)))
+  (assert (= (get identity2 "billing") "metered"))
+
+  ;; (3) 宣言が無い / 家が無い / 壊れている / 受けない形 → typed reject・副作用ゼロ
+  (for [settings [None
+                  "{not json"
+                  (json.dumps {})
+                  (json.dumps {"env" {"ANTHROPIC_API_KEY" "sk-x"}})
+                  (json.dumps {"env" {"CLAUDE_CODE_USE_VERTEX" "1"}})
+                  (json.dumps {"apiKeyHelper" "   "})]]
+    (setv w (ImplWorld))
+    (when (is-not settings None)
+      (setv (get w.fs "/x/claude-metered/settings.json") settings))
+    (setv raised None)
+    (try
+      (<- _ (run-claude w (pre-launch-setup "claude" params)))
+      (except [e RuntimeError] (setv raised e)))
+    (assert (is-not raised None) f"expected reject for {settings !r}")
+    (assert (in "claude-code-metered" (str raised)))
+    (assert (in "apiKeyHelper" (str raised)))
+    ;; trust の書きより前に断っている
+    (assert (= w.atomic-writes []))
+    (assert (not-in "/x/claude-metered/.claude.json" w.fs))
+    (assert (= w.tmux-calls [])))
+
+  ;; (4) 定額の kind の家は検めない(lane A は締め直しを含まない — 今日どおり)
+  (setv plain (ImplWorld))
+  (setv (get plain.fs "/x/claude/settings.json")
+        (json.dumps {"apiKeyHelper" "cat /secrets/anthropic-key"}))
+  (<- plain-identity
+      (run-claude plain (pre-launch-setup
+                          "claude"
+                          (base-params :agent_type "claude"
+                                       :binding {"kind" "claude-code"
+                                                 "config_dir" "/x/claude"}))))
+  (assert (= (get plain-identity "CLAUDE_CONFIG_DIR") "/x/claude"))
+  (assert (not-in "billing" plain-identity)))
+
+
+(deftest test-codex-metered-pre-launch-requires-api-key-field-in-auth-file
+  ;; kind `codex-metered` の受理形は制御面の二軸宣言 {auth_file, profile_dir}。
+  ;; host は宣言から家の view を合成し、その auth.json が **非空の**
+  ;; OPENAI_API_KEY を持つことだけを検める(値は読まない)。
+  ;; ⚠ 欄の有無では判じない: codex の CLI は定額(ChatGPT)の login でも
+  ;; auth.json にこの欄を null で書き出す(実測 2026-09-15 — 運用主の家 3 つとも
+  ;; 欄は在る・中身は空)。欄の有無で判じると定額の家を全部「従量課金」と誤る。
+  (setv metered-binding {"kind" "codex-metered"
+                         "auth_file" "/auths/metered.json"
+                         "profile_dir" "/profiles/metered"})
+  (setv params (base-params :binding metered-binding))
+  (setv view "/state/doeff/agent-homes/composed-view")
+
+  ;; (1) 非空の鍵の欄で通る + 印と二軸の宣言が identity に載る(resume 用)
+  (setv world (ImplWorld))
+  (setv (get world.env "XDG_STATE_HOME") "/state")
+  (setv (get world.fs f"{view}/auth.json")
+        (json.dumps {"OPENAI_API_KEY" "sk-test-not-a-real-key" "auth_mode" "apikey"}))
+  (<- identity (run-codex world (pre-launch-setup "codex" params)))
+  (assert (= (get identity "CODEX_HOME") view))
+  (assert (= (get identity "billing") "metered"))
+  (assert (= (get identity "codex_auth_file") "/auths/metered.json"))
+  (assert (= (get identity "codex_profile_dir") "/profiles/metered"))
+  ;; 鍵の値は identity に載らない
+  (assert (not-in "sk-test-not-a-real-key" (json.dumps identity)))
+  ;; 合成は宣言二軸 + 解決した view root で 1 回
+  (assert (= world.composed [#("/auths/metered.json" "/profiles/metered"
+                               "/state/doeff/agent-homes")]))
+  ;; trust は従来どおり同じ本体が view の config.toml へ書く
+  (assert (in "trust_level = \"trusted\"" (get world.fs f"{view}/config.toml")))
+
+  ;; (2) 欄が空 / null / 家が無い / 壊れている → typed reject・trust の書きゼロ
+  (for [auth [None
+              "{not json"
+              (json.dumps {"OPENAI_API_KEY" None "auth_mode" "chatgpt"
+                           "tokens" {"access_token" "t"}})
+              (json.dumps {"OPENAI_API_KEY" ""})
+              (json.dumps {"auth_mode" "chatgpt"})]]
+    (setv w (ImplWorld))
+    (setv (get w.env "XDG_STATE_HOME") "/state")
+    (when (is-not auth None)
+      (setv (get w.fs f"{view}/auth.json") auth))
+    (setv raised None)
+    (try
+      (<- _ (run-codex w (pre-launch-setup "codex" params)))
+      (except [e RuntimeError] (setv raised e)))
+    (assert (is-not raised None) f"expected reject for {auth !r}")
+    (assert (in "codex-metered" (str raised)))
+    (assert (in "codex login --with-api-key" (str raised)))
+    (assert (= w.atomic-writes []))
+    (assert (= w.tmux-calls [])))
+
+  ;; (3) 定額の kind の家は検めない(lane A は締め直しを含まない)
+  (setv plain (ImplWorld))
+  (setv (get plain.fs "/x/codex/auth.json") (json.dumps {"OPENAI_API_KEY" "sk-x"}))
+  (<- plain-identity
+      (run-codex plain (pre-launch-setup
+                         "codex"
+                         (base-params :binding {"kind" "codex"
+                                                "codex_home" "/x/codex"}))))
+  (assert (= (get plain-identity "CODEX_HOME") "/x/codex"))
+  (assert (not-in "billing" plain-identity)))
 
 
 ;; ---------------------------------------------------------------------------

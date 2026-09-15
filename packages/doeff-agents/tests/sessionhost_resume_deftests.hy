@@ -304,6 +304,160 @@
 
 
 ;; ---------------------------------------------------------------------------
+;; 課金の階級の再構成(従量課金の便 lane A・ADR-DOE-AGENTS-004 R9 改訂 / law
+;; metered-billing-is-declared-by-kind-and-allowed-by-host-policy)
+;; ---------------------------------------------------------------------------
+
+(defn seed-metered-claude [world]
+  "従量課金で起こした claude の行 + 家(settings.json の宣言)+ transcript。"
+  (setv row (seed-source world :agent_type "claude"
+                         :effective_identity {"CLAUDE_CONFIG_DIR" "/x/claude-metered"
+                                              "billing" "metered"}
+                         :conversation {"session_id" "conv-A"}))
+  (setv world.capture-script ["\u276f {composer}"])
+  (setv (get world.fs "/x/claude-metered/settings.json")
+        (json.dumps {"apiKeyHelper" "cat /secrets/anthropic-key"}))
+  (setv (get world.fs "/x/claude-metered/projects/-work-dir/conv-A.jsonl") "{}")
+  row)
+
+
+(defn seed-metered-codex [world]
+  "従量課金で起こした codex の行(二軸の宣言も行に在る)+ 家 + rollout。"
+  (setv view "/state/doeff/agent-homes/composed-view")
+  (setv rollout f"{view}/sessions/2026/09/15/rollout-t1-conv-1.jsonl")
+  (setv row (seed-source world
+                         :effective_identity {"CODEX_HOME" view
+                                              "billing" "metered"
+                                              "codex_auth_file" "/auths/metered.json"
+                                              "codex_profile_dir" "/profiles/metered"}
+                         :conversation {"session_id" "conv-1"
+                                        "rollout_path" rollout}))
+  (setv world.capture-script ["\u203a {composer}"])
+  (setv (get world.env "XDG_STATE_HOME") "/state")
+  (setv (get world.fs f"{view}/auth.json")
+        (json.dumps {"OPENAI_API_KEY" "sk-test-not-a-real-key" "auth_mode" "apikey"}))
+  (setv (get world.fs rollout) "{}")
+  row)
+
+
+(deftest test-resume-reconstructs-metered-kind-from-identity
+  ;; 行の effective_identity に在る課金の階級の印("billing" = "metered")から
+  ;; 従量課金の kind を選んで binding を組み直す。claude は受理形が同じ
+  ;; ({config_dir})なので kind 名だけが変わる。codex の従量課金の受理形は
+  ;; 二軸({auth_file, profile_dir})で、合成 view の path へは合流できないので、
+  ;; 行に additive で残した二軸の宣言から組み直す。
+  ;; 印は env に出ない(launch-spawn-env は binding 所有キーだけを拾う)。
+  (setv world (LaunchWorld))
+  (seed-metered-claude world)
+  (<- row (run-resume world (resume-params :allow_metered_billing True)))
+  (assert (= row.session-id "s1~g2"))
+  (assert (= (get row.conversation "session_id") "conv-A"))
+  (assert (= (get row.effective-identity "CLAUDE_CONFIG_DIR") "/x/claude-metered"))
+  ;; 新 incarnation も従量課金のまま(階級は再開で変わらない)
+  (assert (= (get row.effective-identity "billing") "metered"))
+  (setv tmux-env (get world.tmux-envs "doeff-s1~g2"))
+  (assert (= (get tmux-env "CLAUDE_CONFIG_DIR") "/x/claude-metered"))
+  (assert (not-in "billing" tmux-env))
+  ;; resume の argv は従来どおり(kind は認証の家の宣言であって argv ではない)
+  (setv [pane cmd literal submit] (get world.sent-keys 0))
+  (assert (.startswith cmd "claude --dangerously-skip-permissions"))
+  (assert (.endswith cmd "--resume conv-A"))
+
+  ;; codex: 二軸の宣言から組み直し、家の view を合成して auth.json を検める
+  (setv world2 (LaunchWorld))
+  (seed-metered-codex world2)
+  (<- row2 (run-resume world2 (resume-params :allow_metered_billing True)))
+  (assert (= (get row2.effective-identity "billing") "metered"))
+  (assert (= (get row2.effective-identity "codex_auth_file") "/auths/metered.json"))
+  (assert (= (get row2.effective-identity "codex_profile_dir") "/profiles/metered"))
+  ;; 合成は行に残った二軸の宣言で呼ばれる(合成 view の path を binding には使わない)
+  (assert (in #("compose-view" "/auths/metered.json" "/profiles/metered"
+                "/state/doeff/agent-homes")
+              world2.trace))
+  (setv tmux-env2 (get world2.tmux-envs "doeff-s1~g2"))
+  (for [absent ["billing" "codex_auth_file" "codex_profile_dir" "OPENAI_API_KEY"]]
+    (assert (not-in absent tmux-env2) absent)))
+
+
+(deftest test-resume-rejects-metered-kind-when-host-forbids-metered-billing
+  ;; fail-closed の対称(従量課金の便 lane A・依頼者の追加条件): resume / fork は
+  ;; launch-session を再利用するので admit-launch の 1 点を通る — 旗を立てて
+  ;; いない host は従量課金の**会話の再開**も断る。旗を運ばない host(旗の key
+  ;; 自体が無い直接束縛の形)でも同じ。副作用ゼロ(新しい行も tmux も無い)。
+  (for [[seed mode] [#(seed-metered-claude "resume")
+                     #(seed-metered-codex "resume")
+                     #(seed-metered-claude "fork")]]
+    (setv world (LaunchWorld))
+    (seed world)
+    (setv raised None)
+    (try
+      (<- _ (run-resume world (resume-params :mode mode)))
+      (except [e RuntimeError] (setv raised e)))
+    (assert (is-not raised None) f"expected reject for {mode}")
+    (assert (in "declares metered billing" (str raised)) (str raised))
+    (assert (in "--allow-metered-billing" (str raised)))
+    ;; 蘇生元行だけが残る(新 incarnation は作られない)
+    (assert (= (sorted (.keys world.rows)) ["s1"]))
+    (assert (not world.tmux-sessions))))
+
+
+(deftest test-resume-refuses-to-downgrade-metered-row-to-subscription-kind
+  ;; 従量課金の行を定額の kind へ **降格させない**: 印は metered なのに家の宣言が
+  ;; 行から導けないときは typed reject。降格を許すと課金の階級が再開の拍で黙って
+  ;; 変わり、旗の無い host の admission まで素通りしてしまう(law の反例そのもの)。
+  ;; codex の行に二軸の宣言が無い(= 旧い行・書き損じ)場合が実際の入口。
+  (setv world (LaunchWorld))
+  (seed-source world :effective_identity {"CODEX_HOME" "/x/codex" "billing" "metered"}
+               :conversation {"session_id" "conv-1"})
+  (setv raised None)
+  (try
+    (<- _ (run-resume world (resume-params :allow_metered_billing True)))
+    (except [e RuntimeError] (setv raised e)))
+  (assert (is-not raised None))
+  (assert (in "cannot be reconstructed as a metered kind" (str raised)) (str raised))
+  (assert (in "not silently changed" (str raised)))
+  (assert (= (sorted (.keys world.rows)) ["s1"]))
+  (assert (not world.tmux-sessions))
+
+  ;; 断るのは **再構成で導けない時だけ**(依頼者のレビュー 2026-09-15): 呼び手が
+  ;; binding を明示した階級の変更は黙っていない — 階級は kind が運ぶので、明示の
+  ;; cross-binding な fork / resume(ADR-006 R4「呼び手指定の binding が優先」)は
+  ;; 通り、新 incarnation の印は **明示した kind に従う**(定額なら印は付かない)。
+  (setv switching (LaunchWorld))
+  (seed-source switching :agent_type "claude"
+               :status "running"
+               :effective_identity {"CLAUDE_CONFIG_DIR" "/x/claude-metered"
+                                    "billing" "metered"}
+               :conversation {"session_id" "conv-A"})
+  (setv switching.capture-script ["\u276f {composer}"])
+  (setv (get switching.fs "/x/claude-metered/projects/-work-dir/conv-A.jsonl") "{}")
+  (<- forked (run-resume switching
+                         (resume-params
+                           :mode "fork"
+                           :binding {"kind" "claude-code" "config_dir" "/x/claude-plain"})))
+  (assert (= (get forked.effective-identity "CLAUDE_CONFIG_DIR") "/x/claude-plain"))
+  (assert (not-in "billing" forked.effective-identity))
+  ;; 旗を運んでいない params でも通った = 明示した定額の kind は階級の関所に当たらない
+  (assert (= forked.session-id "s1~fork1"))
+  (assert (= (get (get switching.tmux-envs "doeff-s1~fork1") "CLAUDE_CONFIG_DIR")
+             "/x/claude-plain"))
+  ;; 呼び手が従量課金の binding を明示すれば通る(降格ではなく宣言)
+  (setv world2 (LaunchWorld))
+  (seed-metered-codex world2)
+  (setv (get world2.rows "s1")
+        (seed-source world2 :effective_identity {"CODEX_HOME" "/state/doeff/agent-homes/composed-view"
+                                                 "billing" "metered"}
+                     :conversation {"session_id" "conv-1"
+                                    "rollout_path" "/state/doeff/agent-homes/composed-view/sessions/2026/09/15/rollout-t1-conv-1.jsonl"}))
+  (<- row (run-resume world2 (resume-params
+                               :allow_metered_billing True
+                               :binding {"kind" "codex-metered"
+                                         "auth_file" "/auths/metered.json"
+                                         "profile_dir" "/profiles/metered"})))
+  (assert (= (get row.effective-identity "billing") "metered")))
+
+
+;; ---------------------------------------------------------------------------
 ;; 命名と世代(衝突は前進で回避)
 ;; ---------------------------------------------------------------------------
 

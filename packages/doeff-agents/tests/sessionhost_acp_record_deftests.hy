@@ -507,6 +507,59 @@
       (assert (= (.read handle) "422: unstorable")))))
 
 
+(deftest test-join-allow-metered-billing-is-a-closed-word-and-only-true-raises-the-flag
+  ;; 従量課金の便 lane A(ADR-DOE-AGENTS-004 R9 改訂): 従量課金の binding kind を受けるかは
+  ;; 宣言 file の [agentd].allow_metered_billing / flag --allow-metered-billing の
+  ;; 1 点で、join は真のときだけ host の argv に値なしの旗を足す。
+  ;; 既定は false(旗を立てない = 今日どおりの起動の形ちょうど)。
+  ;; 綴りは閉語彙 true | false で、外は参加しない(黙って false にしない —
+  ;; 黙った false は「許したはずなのに全部断られる」を無音で作る)。
+  ;; ⚠ env は作らない: 課金の方針を env の 1 語で変えられる形は R10(d) が退けた形。
+  (defn #^ dict tables-with [#^ (| str None) value]
+    (setv agentd {"server" "http://acp:8868" "token_file" "/t/agentd.token"
+                  "state_dir" "/s" "capacity" "2" "place" "company"})
+    (when (is-not value None)
+      (setv (get agentd "allow_metered_billing") value))
+    {"schema" JOIN-SCHEMA "agentd" agentd
+     "record" {"url" "http://agora-record.example:8874"}})
+  (defn spec-of [tables #* items]
+    (run (join-spec-of (JoinArgv :items (tuple items)) (JoinDeclaration :tables tables) "/state")))
+  ;; 既定(宣言なし)= 受けない・argv に旗は無い
+  (setv bare (spec-of (tables-with None)))
+  (assert (is bare.allow-metered-billing False))
+  (setv bare-plan (run (join-plan-of bare)))
+  (assert (not (in "--allow-metered-billing" bare-plan.host-argv)))
+  ;; 宣言 true = 受ける・argv の末尾の serve の直前に値なしの旗が立つ
+  (setv allowed (spec-of (tables-with "true")))
+  (assert (is allowed.allow-metered-billing True))
+  (setv plan (run (join-plan-of allowed)))
+  (assert (in "--allow-metered-billing" plan.host-argv))
+  (assert (= (get plan.host-argv -1) "serve"))
+  (assert (= (get plan.host-argv -2) "--allow-metered-billing"))
+  ;; 旗は argv だけ — env の束には同名の名が 1 つも現れない
+  (for [[name _] plan.env]
+    (assert (not-in "METERED" (.upper name)) name))
+  ;; 宣言 false / 空 = 受けない
+  (assert (is (. (spec-of (tables-with "false")) allow-metered-billing) False))
+  (assert (is (. (spec-of (tables-with "")) allow-metered-billing) False))
+  ;; flag が宣言に勝つ(両向き)
+  (assert (is (. (spec-of (tables-with "false") "--allow-metered-billing" "true")
+                 allow-metered-billing)
+              True))
+  (assert (is (. (spec-of (tables-with "true") "--allow-metered-billing" "false")
+                 allow-metered-billing)
+              False))
+  ;; 語彙の外は参加しない(綴り違いを黙って false にしない)
+  (for [bad ["yes" "1" "True" "on"]]
+    (setv refused "")
+    (try
+      (spec-of (tables-with bad))
+      (except [error ValueError]
+        (setv refused (str error))))
+    (assert (in "allow_metered_billing" refused) f"{bad} を断らなかった")
+    (assert (in "true" refused))))
+
+
 (deftest test-join-record-table-derives-the-record-env-and-settings-read-the-valve
   (setv tables {"schema" JOIN-SCHEMA
                 "agentd" {"server" "http://acp:8868" "token_file" "/t/agentd.token" "state_dir" "/s"}
