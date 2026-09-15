@@ -56,7 +56,8 @@
 ;;; binding・model の組 — 段 9o lane 9o-3)の時だけで、
 ;;; 家か機体が違えば cache の失効を受け入れ(operator 決定 #54)、家の違う温かい session は片付けて rehydrate(ACP の
 ;;; 会話の記録を最初の本文に畳む — judgment.rehydrate-history-of・上限は AgentdSettings.rehydrate_history_byte_budget・
-;;; 上限で落とした古い手番は見出し 1 行に畳んで残す〔段 11 lane 11v・#55 便 1・R34〕・model による要約は #55 便 2 の設計)、
+;;; 落とす前に古い手番から道具の項を薄くし〔便 3・#225・R35〕・上限で落とした古い手番は見出し 1 行に畳んで残す〔#55 便 1・R34〕・
+;;; model による要約は #55 便 2 の設計 = operator の判断)、
 ;;; resume が断られたら rehydrate(judgment.fallback-arm-of)。再開の材料の読みは名指しの順(段 9q・#77):
 ;;; 段 10 lane 10o(agora-redesign #96・依頼者の追補): 郵便の添付(画像)は行が見出しだけを運び、中身は本文と同じ 1 回の
 ;;; stream の読み(mail-bodies-by-ref)で拾う。器へは**型つき**(TurnAttachment)のまま SessionSend / SessionInterject で
@@ -755,7 +756,7 @@
           (setv history fold.text)
           (<- (LogLine :text (+ f"agentd: job {job-id} rehydrates conversation {subject} "
                                      (if fold.thin "thinly from ACP headlines " "from the record service ")
-                                     f"({fold.kept-turns} turns kept, {fold.dropped-turns} dropped"
+                                     f"({fold.kept-turns} turns kept, {fold.thinned-turns} thinned, {fold.dropped-turns} dropped"
                                      (if (is fold.dropped-headline None) "" " into a headline")
                                      (if (> fold.cut-bytes 0) f", newest turn cut by {fold.cut-bytes} bytes" "")
                                      f", {fold.size-bytes} bytes, history read {(- read-ended read-started)} ms)")))

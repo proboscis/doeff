@@ -18,6 +18,9 @@
 ;;;   * 上限で落とした古い手番は黙って捨てない(段 11 lane 11v・agora-redesign #55 便 1・ADR-012 R34): 落とした区間を見出し 1 行
 ;;;     (期間・kind ごとの件数・道具の名・全文の在処 — 綴りは薄い再開の turn-record の見出しと同じ)に畳んで残した手番の前に置く・
 ;;;     落とさなければ見出しは無い・見出しも上限の中に数え最新の手番だけでも超えれば先頭を切って切った byte を名乗る・薄い再開でも同じ
+;;;   * 落とす前に薄くする(段 11 lane 11v 便 3・agora-redesign #225・ADR-012 R35): 上限を超えたらまず古い手番から道具の項(tool_use の
+;;;     入力・tool_result の本文)だけを先頭 budget / HISTORY_THIN_DIVISOR byte に薄くして元の byte を名乗る・郵便と agent の text・
+;;;     user / system / error は 1 byte も変えない・全部を薄くしても超える時だけ落とす(見出し)・薄い再開は薄くする本文が無い・決定的
 ;;; HTTP も subprocess も無い。
 
 (require doeff-hy.macros [deftest])
@@ -33,6 +36,7 @@
   AcpRow
   AgentdSettings
   HISTORY-MAIL-KIND
+  HISTORY-THIN-DIVISOR
   HeadlineTurns
   HistoryFold
   MESSAGE-KIND
@@ -450,6 +454,127 @@
   (assert (in "(見出しだけ・本文は記録の service): text 1・tool_use 1・tool_result 1(道具: " fold.text) fold.text)
   (assert (not-in "手番 j-0(" fold.text) "落とした手番の見出しは区間に畳まれる")
   (assert (in f"手番 j-{k}(" fold.text) fold.text))
+
+
+(defn #^ tuple tool-heavy-turns [#^ int turns]
+  "R35 の材料: 手番ごとに郵便(短い)+ agent の text(短い)+ 大きな tool_use の入力(≈ 2 KB)+ 大きな tool_result(≈ 3 KB)。
+   戻り = #(messages events)。最後の手番の郵便 m-{turns-1} はこの手番の inputs として exclude する前提(その出来事は 1 つ前の
+   手番の群に入る)。"
+  (setv messages (tuple (lfor n (range turns) (message-row f"m-{n}" CONVERSATION "operator" f"問い {n}" (+ AT (* n 10000))))))
+  (setv events (tuple (+ (lfor n (range turns) (event-of (+ 1 (* n 3)) f"j-{n}#a1" 0 (+ AT (* n 10000) 100) "text" {"text" f"答え {n}"}))
+                         (lfor n (range turns) (event-of (+ 2 (* n 3)) f"j-{n}#a1" 1 (+ AT (* n 10000) 200) "tool_use"
+                                                         {"toolName" "Bash" "toolUseId" f"t{n}" "input" {"cmd" (* f"x{n}" 1000)}}))
+                         (lfor n (range turns) (event-of (+ 3 (* n 3)) f"j-{n}#a1" 2 (+ AT (* n 10000) 300) "tool_result"
+                                                         {"toolUseId" f"t{n}" "output" (* f"y{n}" 1500)})))))
+  #(messages events))
+
+
+(deftest test-tool-items-are-thinned-oldest-first-before-any-turn-is-dropped
+  ;; R35(段 11 lane 11v 便 3・agora-redesign #225): 上限を超えたら、手番を丸ごと落とす前に古い手番から道具の項(tool_use の入力・
+  ;; tool_result の本文)を薄くする。agent の text は全手番残り、最新の手番は全文のまま。便 1 の形(落とすだけ)なら 5 手番が消えていた。
+  (setv made (tool-heavy-turns 8))
+  (setv records (RecordedTurns :events (get made 1) :complete True))
+  (setv whole (run (rehydrate-history-of CONVERSATION (get made 0) records #("m-7") 200000 {})))
+  (assert (= #(whole.thinned-turns whole.dropped-turns whole.kept-turns) #(0 0 7)) whole)
+  (setv budget 14000)
+  (setv k (// budget HISTORY-THIN-DIVISOR))
+  (setv fold (run (rehydrate-history-of CONVERSATION (get made 0) records #("m-7") budget {})))
+  (assert (<= fold.size-bytes budget) fold.size-bytes)
+  (assert (= #(fold.dropped-turns fold.cut-bytes fold.kept-turns) #(0 0 7)) fold)
+  (assert (>= fold.thinned-turns 1) fold)
+  (assert (< fold.thinned-turns 7) fold)
+  (for [n (range 8)]
+    (assert (in f"答え {n}" fold.text) f"agent の text は残る: 答え {n}"))
+  (for [n (range 7)]
+    (assert (in f"問い {n}" fold.text) f"郵便は残る: 問い {n}"))
+  ;; 古い手番の道具の項は薄い(先頭 k byte・元の byte を名乗る)。最新の手番の道具の結果は全文。
+  (assert (in f"(先頭 {k} byte だけ・元 " fold.text) fold.text)
+  (assert (not-in (* "y0" 1500) fold.text) "最も古い手番の道具の結果は薄い")
+  (assert (in (* "y6" 1500) fold.text) "最新の手番の道具の結果は全文")
+  (assert (in (* "y7" 1500) fold.text) "最新の手番の道具の結果は全文")
+  (assert (not-in "古い手番" fold.text) "落としていないので見出しは無い")
+  (assert (is fold.dropped-headline None))
+  ;; 薄くする順は古い方から: 薄い手番の番号は 0 から連続。
+  (for [n (range fold.thinned-turns)]
+    (assert (not-in (* f"y{n}" 1500) fold.text) f"手番 {n} は薄い"))
+  (for [n (range fold.thinned-turns 7)]
+    (assert (in (* f"y{n}" 1500) fold.text) f"手番 {n} は全文")))
+
+
+(deftest test-when-thinning-everything-is-not-enough-turns-are-dropped-behind-the-headline-in-thin-form
+  ;; R35 × R34: 全部を薄くしても超える時だけ落とす。残した手番は薄い形のまま、落とした区間は見出し 1 行。
+  (setv made (tool-heavy-turns 8))
+  (setv records (RecordedTurns :events (get made 1) :complete True))
+  (setv budget 1500)
+  (setv k (// budget HISTORY-THIN-DIVISOR))
+  (setv fold (run (rehydrate-history-of CONVERSATION (get made 0) records #("m-7") budget {})))
+  (assert (<= fold.size-bytes budget) fold.size-bytes)
+  (assert (= fold.thinned-turns 7) fold)
+  (assert (>= fold.dropped-turns 1) fold)
+  (assert (= (+ fold.kept-turns fold.dropped-turns) 7) fold)
+  (assert (isinstance fold.dropped-headline str) fold)
+  (assert (= (.count fold.text fold.dropped-headline) 1))
+  (assert (in f"(先頭 {k} byte だけ・元 " fold.text) "残した手番の道具の項は薄い形")
+  (assert (in "答え 7" fold.text) "最新の手番の text は残る")
+  (for [n (range 8)]
+    (assert (not-in (* f"y{n}" 1500) fold.text) f"全文の道具の結果は残らない: {n}")))
+
+
+(deftest test-a-thin-rehydrate-has-no-tool-bodies-to-thin-and-counts-none
+  ;; R35 × 薄い再開: ACP の見出しだけの材料には薄くする本文が無い — thinned_turns は 0 のまま、上限は便 1 の落とし(見出し)で守る。
+  (setv messages (tuple (lfor n (range 6) (message-row f"m-{n}" CONVERSATION "operator" (+ f"問い {n} " (* "う" 120)) (+ AT (* n 10000))))))
+  (setv records (tuple (lfor n (range 6)
+                             (record-row f"j-{n}" CONVERSATION
+                                         [{"seq" 0 "at" (+ AT (* n 10000) 100) "kind" "text" "bytes" 20 "sha256" "0"}
+                                          {"seq" 1 "at" (+ AT (* n 10000) 200) "kind" "tool_use" "toolName" "Read" "toolUseId" f"t{n}" "bytes" 3000 "sha256" "0"}
+                                          {"seq" 2 "at" (+ AT (* n 10000) 300) "kind" "tool_result" "toolUseId" f"t{n}" "bytes" 9000 "sha256" "0"}]
+                                         (+ AT (* n 10000))))))
+  (setv source (HeadlineTurns :records records :reason "record service read failed (0: unreachable)"))
+  (setv fold (run (rehydrate-history-of CONVERSATION messages source #("m-5") 1900 {})))
+  (assert fold.thin)
+  (assert (<= fold.size-bytes 1900) fold.size-bytes)
+  (assert (= fold.thinned-turns 0) fold)
+  (assert (>= fold.dropped-turns 1) fold)
+  (assert (isinstance fold.dropped-headline str) fold)
+  (assert (not-in "先頭" fold.text) "薄い再開に薄くした印は無い"))
+
+
+(deftest test-thinned-items-keep-the-head-and-name-the-original-bytes-while-text-and-mail-stay-byte-identical
+  ;; R35 の不変: 薄くしても郵便・agent の text・system / user の行は byte も変わらない。薄くなるのは道具の 2 行だけで、
+  ;; 同じ頭 + 本文の先頭 k byte + 元の byte の名乗り。同じ材料からは同じ答え(決定的)。
+  (setv big-input {"file_path" "a.txt" "content" (* "あ" 500)})
+  (setv big-output (+ "結果の頭" (* "い" 800)))
+  (setv messages #((message-row "m-1" CONVERSATION "operator" "合言葉は ひまわり" AT)
+                   (message-row "m-2" CONVERSATION "operator" "次の問い" (+ AT 9000))))
+  (setv events #((event-of 1 "j-1#a1" 0 (+ AT 1000) "text" {"text" "覚えました"})
+                 (event-of 2 "j-1#a1" 1 (+ AT 1100) "tool_use" {"toolName" "Write" "toolUseId" "t1" "input" big-input})
+                 (event-of 3 "j-1#a1" 2 (+ AT 1200) "tool_result" {"toolUseId" "t1" "output" big-output "isError" True})
+                 (event-of 4 "j-1#a1" 3 (+ AT 1300) "system" {"text" (* "system の本文 " 20)})
+                 (event-of 5 "j-1#a1" 4 (+ AT 1400) "user" {"text" (* "user の本文 " 20)})))
+  (setv records (RecordedTurns :events events :complete True))
+  (setv whole (run (rehydrate-history-of CONVERSATION messages records #("m-2") 65536 {})))
+  (assert (= whole.thinned-turns 0) whole)
+  (setv budget 2400)
+  (setv k (// budget HISTORY-THIN-DIVISOR))
+  (setv fold (run (rehydrate-history-of CONVERSATION messages records #("m-2") budget {})))
+  (assert (= #(fold.thinned-turns fold.dropped-turns fold.cut-bytes fold.kept-turns) #(1 0 0 1)) fold)
+  (assert (<= fold.size-bytes budget) fold.size-bytes)
+  (setv whole-lines (.splitlines whole.text))
+  (setv fold-lines (.splitlines fold.text))
+  (assert (= (len whole-lines) (len fold-lines)) #(whole-lines fold-lines))
+  (setv changed (lfor [a b] (zip whole-lines fold-lines) :if (!= a b) #(a b)))
+  (assert (= (len changed) 2) changed)
+  (for [[a b] changed]
+    (assert (or (in "agent の道具 Write:" a) (in "道具の結果(誤り):" a)) a)
+    (assert (.startswith b (get (.split a "] " 1) 0)) #(a b)))
+  (setv raw-output (.encode big-output "utf-8"))
+  (setv head (.decode (cut raw-output 0 k) "utf-8" :errors "ignore"))
+  (assert (in f"道具の結果(誤り): {head}(先頭 {k} byte だけ・元 {(len raw-output)} byte)" fold.text) fold.text)
+  (setv raw-input (.encode (json.dumps big-input :ensure-ascii False) "utf-8"))
+  (assert (in f"(先頭 {k} byte だけ・元 {(len raw-input)} byte)" fold.text) fold.text)
+  (assert (in "合言葉は ひまわり" fold.text))
+  (assert (in "覚えました" fold.text))
+  (assert (= (. (run (rehydrate-history-of CONVERSATION messages records #("m-2") budget {})) text) fold.text) "決定的"))
 
 
 ;; ---------------------------------------------------------------------------

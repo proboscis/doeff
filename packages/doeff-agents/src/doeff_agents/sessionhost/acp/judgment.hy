@@ -25,7 +25,9 @@
 ;;;     cache の失効を受け入れ、ACP の記録を最初の本文に畳んで新しい session を起こす(operator 決定 #54・
 ;;;     rehydrate-history-of・上限は AgentdSettings の 1 点)。上限で落とした古い手番は黙って捨てず、落とした区間を
 ;;;     見出し 1 行(期間・kind ごとの件数・道具の名・全文の在処 — history-dropped-headline・綴りは turn-record の
-;;;     見出しと同じ history-counts-note)に畳む(段 11 lane 11v・agora-redesign #55・R34。model は呼ばない)。
+;;;     見出しと同じ history-counts-note)に畳む(段 11 lane 11v・agora-redesign #55・R34。model は呼ばない)。落とす前に、
+;;;     古い手番から道具の項(tool_use の入力・tool_result の本文)だけを先頭 budget / HISTORY_THIN_DIVISOR byte に薄くして
+;;;     元の byte を名乗る(便 3・#225・R35 — 郵便・agent の text・user / system / error は 1 byte も変えない)。
 ;;;   * capture の是非(購読者の数 → continue | stop・issue #1 の決定)と待ちの長さ。
 ;;;   * profile の残量の観測 → status.observed の post-image(段 7 lane 7d-3・既知の形 = kubelet の
 ;;;     node status: 観測は runner が書き、判断〔枯渇〕は controller〔agora-budget〕): 窓の選び方
@@ -111,6 +113,7 @@
   ENTRY-KIND-TOOL-RESULT
   ENTRY-KIND-TOOL-USE
   HISTORY-MAIL-KIND
+  HISTORY-THIN-DIVISOR
   HeadlineCounts
   HeadlineTurns
   HistoryFold
@@ -1408,21 +1411,27 @@
   f"[{stamp}] {sender} → {to}({kind}): {text}")
 
 
-(defk history-event-line [event]
+(defk history-event-body [event]
   {:pre [(: event RecordEvent)]
+   :post [(: % str)]}
+  "会話の記録の service の出来事 1 つ → 畳む本文(text / summary / input / output の順に最初に在る欄・object は JSON・本文が無い行
+   〔tombstone〕は空)。"
+  (cond (isinstance event.text str) event.text
+        (isinstance event.summary str) event.summary
+        (isinstance event.input str) event.input
+        (is-not event.input None) (json.dumps event.input :ensure-ascii False)
+        (isinstance event.output str) event.output
+        (is-not event.output None) (json.dumps event.output :ensure-ascii False)
+        True ""))
+
+
+(defk history-event-line-of [event body]
+  {:pre [(: event RecordEvent) (: body str)]
    :post [(: % (| str None))]}
-  "会話の記録の service の出来事 1 つ → 「これまでの会話」の 1 項(kind ごとの畳み — 契約 record-service の
-   eventKinds: text / tool_use / tool_result / system / error / user。frame は画面の断面で会話ではない・message は
-   郵便で ACP の行から畳む〔service の mail の stream はまだ書き手が無い — 書き手が立つ便で郵便の畳みの座を移す〕
-   = None)。本文が無い行(tombstone)は空の本文として畳む。"
+  "出来事 1 つと畳む本文 → 「これまでの会話」の 1 項(kind ごとの畳み — 契約 record-service の eventKinds: text / tool_use /
+   tool_result / system / error / user。frame は画面の断面で会話ではない・message は郵便で ACP の行から畳む〔service の mail の
+   stream はまだ書き手が無い — 書き手が立つ便で郵便の畳みの座を移す〕= None)。"
   (<- stamp str (history-time-of event.at))
-  (setv body (cond (isinstance event.text str) event.text
-                   (isinstance event.summary str) event.summary
-                   (isinstance event.input str) event.input
-                   (is-not event.input None) (json.dumps event.input :ensure-ascii False)
-                   (isinstance event.output str) event.output
-                   (is-not event.output None) (json.dumps event.output :ensure-ascii False)
-                   True ""))
   (setv tool (if (isinstance event.tool-name str) event.tool-name ""))
   (setv failed (if event.is-error "(誤り)" ""))
   (setv cut (if event.truncated "(切り詰め)" ""))
@@ -1434,6 +1443,43 @@
     (= event.kind "error") f"[{stamp}] 誤り: {body}"
     (= event.kind "user") f"[{stamp}] user: {body}{cut}"
     True None))
+
+
+(defk history-event-line [event]
+  {:pre [(: event RecordEvent)]
+   :post [(: % (| str None))]}
+  "会話の記録の service の出来事 1 つ → 全文の 1 項(history-event-body + history-event-line-of)。本文が無い行(tombstone)は
+   空の本文として畳む。"
+  (<- body str (history-event-body event))
+  (<- line (| str None) (history-event-line-of event body))
+  line)
+
+
+(defk history-thin-body [body head-bytes]
+  {:pre [(: body str) (: head-bytes int)]
+   :post [(: % (| str None))]}
+  "本文を先頭 head-bytes byte(UTF-8 の境で切る)に薄くし、元の大きさを名乗る(段 11 lane 11v 便 3・agora-redesign #225・R35)。
+   head-bytes 以下の本文は薄くならない(None)。"
+  (setv raw (.encode body "utf-8"))
+  (when (<= (len raw) head-bytes)
+    (return None))
+  (setv head (.decode (cut raw 0 head-bytes) "utf-8" :errors "ignore"))
+  f"{head}(先頭 {head-bytes} byte だけ・元 {(len raw)} byte)")
+
+
+(defk history-event-thin-line [event head-bytes]
+  {:pre [(: event RecordEvent) (: head-bytes int)]
+   :post [(: % (| str None))]}
+  "薄くした 1 項(R35): 薄くするのは道具の項(tool_use の入力・tool_result の本文)だけ。他の kind(agent の text・user / system /
+   error = 会話の結論と文脈)と、head-bytes 以下で薄くならない本文は None(全文の項のまま)。綴りは全文の項と同じ history-event-line-of。"
+  (when (not-in event.kind #("tool_use" "tool_result"))
+    (return None))
+  (<- body str (history-event-body event))
+  (<- thin (| str None) (history-thin-body body head-bytes))
+  (when (is thin None)
+    (return None))
+  (<- line (| str None) (history-event-line-of event thin))
+  line)
 
 
 (defk headline-counts-of-entries [entries at]
@@ -1532,16 +1578,19 @@
   {:pre [(: conversation-id str) (: messages tuple) (: source (| RecordedTurns HeadlineTurns)) (: exclude tuple)
          (: budget int) (: fetched dict)]
    :post [(: % HistoryFold)]}
-  "会話の記録 → 履歴からの再開の手番の最初の本文に畳む「これまでの会話」(段 8q・R20・段 9f lane 9f-4・段 11 lane 11v R34)—
+  "会話の記録 → 履歴からの再開の手番の最初の本文に畳む「これまでの会話」(段 8q・R20・段 9f lane 9f-4・段 11 lane 11v R34 / R35)—
    判断はここ 1 点: 郵便(ACP の行 — spec.to か spec.from がこの会話・exclude = この手番の inputs は除く — 本文として別に届く)と
    手番の材料(source — 型で 2 つ: RecordedTurns = 会話の記録の service の本文〔設計 §2.4・before=latest から〕/ HeadlineTurns =
    ACP の見出しだけ〔service に届かない時の**薄い再開** — 本文は畳めないので手番ごとの数だけ・名乗る〕)を時刻順(同じ
-   時刻は郵便が先)に並べ、会話へ届いた郵便(spec.to = この会話)ごとに手番に割る。UTF-8 で budget byte を超えたら
-   **古い手番から要約せず落とし**、落とした区間(古い手番の連なり)を**見出し 1 行**(期間・落とした手番と項の数・kind ごとの
-   件数・道具の名・全文の在処 — history-dropped-headline)に畳んで残した手番の前に置く(黙って捨てない・model は呼ばない —
-   agora-redesign #55 便 1)。最新の手番 1 つだけでも超えるならその手番の先頭を落として末尾を残し、切った byte を名乗る。
-   記録が無ければ text は空(薄い再開でも空)。"
+   時刻は郵便が先)に並べ、会話へ届いた郵便(spec.to = この会話)ごとに手番に割る。UTF-8 で budget byte を超えたら 3 段:
+   段 1(R35)= 古い手番から新しい手番へ、道具の項(tool_use の入力・tool_result の本文)だけを先頭 budget / HISTORY_THIN_DIVISOR
+   byte に薄くして元の byte を名乗る(郵便・agent の text・user / system / error は 1 byte も変えない — 会話の意図と結論)。
+   段 2(R34)= 全部を薄くしても超える間、**古い手番から要約せず落とし**、落とした区間(古い手番の連なり)を**見出し 1 行**
+   (期間・落とした手番と項の数・kind ごとの件数・道具の名・全文の在処 — history-dropped-headline)に畳んで残した手番の前に置く
+   (黙って捨てない・model は呼ばない — agora-redesign #55 便 1)。段 3 = 最新の手番 1 つだけでも超えるならその手番の先頭を
+   落として末尾を残し、切った byte を名乗る。記録が無ければ text は空(薄い再開でも空)。"
   (setv thin (isinstance source HeadlineTurns))
+  (setv thin-k (// budget HISTORY-THIN-DIVISOR))
   (setv items [])
   (setv order 0)
   (for [message messages]
@@ -1554,7 +1603,8 @@
       (<- line str (history-message-line message mail-at fetched))
       (.append items (HistoryItem :at mail-at :until mail-at :order order :inbound inbound :line line
                                   :counts (HeadlineCounts :counts #(#(HISTORY-MAIL-KIND 1)) :tools #()
-                                                          :first-at mail-at :last-at mail-at)))
+                                                          :first-at mail-at :last-at mail-at)
+                                  :thin-line None))
       (setv order (+ order 1))))
   (if thin
       (for [record source.records]
@@ -1565,15 +1615,17 @@
           (<- line (| str None) (history-headline-line record counts))
           (when (is-not line None)
             (.append items (HistoryItem :at counts.first-at :until counts.last-at :order order :inbound False
-                                        :line line :counts counts))
+                                        :line line :counts counts :thin-line None))
             (setv order (+ order 1)))))
       (for [event source.events]
         (<- line (| str None) (history-event-line event))
         (when (is-not line None)
+          (<- thin-line (| str None) (history-event-thin-line event thin-k))
           (.append items (HistoryItem :at event.at :until event.at :order order :inbound False :line line
                                       :counts (HeadlineCounts :counts #(#(event.kind 1))
                                                               :tools (if (isinstance event.tool-name str) #(event.tool-name) #())
-                                                              :first-at event.at :last-at event.at)))
+                                                              :first-at event.at :last-at event.at)
+                                      :thin-line thin-line))
           (setv order (+ order 1)))))
   (setv groups [])
   (for [item (sorted items :key (fn [item] #(item.at item.order)))]
@@ -1581,7 +1633,7 @@
         (.append groups [item])
         (.append (get groups -1) item)))
   (when (not groups)
-    (return (HistoryFold :text "" :kept-turns 0 :dropped-turns 0 :dropped-items 0 :dropped-headline None
+    (return (HistoryFold :text "" :kept-turns 0 :dropped-turns 0 :dropped-items 0 :thinned-turns 0 :dropped-headline None
                          :cut-bytes 0 :size-bytes 0 :thin thin)))
   (setv header
         (if thin
@@ -1591,12 +1643,24 @@
                (if source.complete "" "・会話の最初までは読んでいない") "):")))
   (setv where (+ f"全文は会話 {conversation-id} の記録 — 郵便は ACP の kind message(spec.to / spec.from = {conversation-id})"
                  f"の行・手番の本文は会話の記録の service(GET /v1/conversations/{conversation-id}/events)— にあります"))
-  (setv blocks (lfor group groups (.join "\n" (lfor item group item.line))))
-  ;; 上限を超える間、古い手番から落とす。落とした区間は見出し 1 行に畳んで残した手番の前に置く(黙って捨てない — R34)。
+  (setv full-blocks (lfor group groups (.join "\n" (lfor item group item.line))))
+  (setv thin-blocks (lfor group groups (.join "\n" (lfor item group (if (is item.thin-line None) item.line item.thin-line)))))
+  (setv thinnable (lfor group groups (any (gfor item group (is-not item.thin-line None)))))
+  ;; 段 1(R35): 落とす前に薄くする — 古い手番から新しい手番へ、道具の項だけ。薄くなる項の無い手番は数えない。
+  (setv blocks (list full-blocks))
+  (setv thinned-turns 0)
+  (setv reach 0)
+  (setv text (.join "\n\n" (+ [header] blocks)))
+  (while (and (> (len (.encode text "utf-8")) budget) (< reach (len groups)))
+    (when (get thinnable reach)
+      (setv (get blocks reach) (get thin-blocks reach))
+      (setv thinned-turns (+ thinned-turns 1))
+      (setv text (.join "\n\n" (+ [header] blocks))))
+    (setv reach (+ reach 1)))
+  ;; 段 2(R34): 全部を薄くしても超える間、古い手番から落とす。落とした区間は見出し 1 行に畳んで残した手番の前に置く(黙って捨てない)。
   (setv dropped-turns 0)
   (setv dropped-items 0)
   (setv headline None)
-  (setv text (.join "\n\n" (+ [header] blocks)))
   (while (and (> (len (.encode text "utf-8")) budget) (> (- (len blocks) dropped-turns) 1))
     (setv dropped-turns (+ dropped-turns 1))
     (setv dropped (tuple (gfor group (cut groups 0 dropped-turns) item group item)))
@@ -1604,7 +1668,7 @@
     (<- counts HeadlineCounts (headline-counts-of-items dropped))
     (<- headline str (history-dropped-headline counts dropped-turns dropped-items budget where))
     (setv text (.join "\n\n" (+ [header headline] (cut blocks dropped-turns None)))))
-  ;; 最新の手番 1 つ(と頭・見出し)だけでも超える: その手番の先頭を切って末尾を残し、切った byte を名乗る。
+  ;; 段 3: 最新の手番 1 つ(と頭・見出し)だけでも超える: その手番の先頭を切って末尾を残し、切った byte を名乗る。
   (setv cut-bytes 0)
   (when (> (len (.encode text "utf-8")) budget)
     (setv newest (.encode (get blocks -1) "utf-8"))
@@ -1621,6 +1685,7 @@
                :kept-turns (- (len blocks) dropped-turns)
                :dropped-turns dropped-turns
                :dropped-items dropped-items
+               :thinned-turns thinned-turns
                :dropped-headline headline
                :cut-bytes cut-bytes
                :size-bytes (len (.encode text "utf-8"))

@@ -130,6 +130,10 @@
 ;;; 落とした区間を見出し 1 行(期間・kind ごとの件数・道具の名・全文の在処 — judgment.history-dropped-headline・綴りは薄い再開の
 ;;; turn-record の見出しと同じ history-counts-note)に畳んで残した手番の前に置く。決定的(model を呼ばない)。model による要約は
 ;;; 便 2 の設計だけ(費用 = one-way door・operator の判断)。上限の宣言は rehydrate_history_byte_budget の 1 点のまま。
+;;; 便 3(agora-redesign #225・依頼者の裁定 2026-09-16「案 B を便 3 として起票して L140 の後に実装してよい」)の改訂 = R35: 手番を
+;;; 丸ごと落とす前に、古い手番から道具の項(tool_use の入力・tool_result の本文)だけを先頭 budget / HISTORY_THIN_DIVISOR byte に
+;;; 薄くして元の byte を名乗る(judgment.history-event-thin-line / history-thin-body)。郵便・agent の text・user / system / error は
+;;; 1 byte も変えない。決定的・費用 0・値の宣言は増やさない(比の定数は effects の 1 点)。
 
 (require doeff-adr.macros [defadr rule law])
 (require doeff-hy.macros [deftest])
@@ -493,7 +497,8 @@
      (rule R32 "手番の作業場はその node の家で読み、無ければ起こさない(段 10 lane 10y・agora-redesign #110・依頼者の裁定 2026-09-15 案 A・既知の形 = k8s の volume の topology〔資材の在る node にだけ結ぶ〕): (1) charter.work_dir(綴りの定義点は契約 agora-kinds.json の delivery-policy.spec.charter)は絶対 path か家からの相対(`~` / `~/…`)で、agentd は claim の頭で judgment.plan-with-node-home の 1 点により `~` だけを AgentdSettings.home(composition root が env HOME から据える)で展開し、以降の判断と起こす params は展開した plan を読む。(2) 展開した work_dir を effect FsDirectoryExists で読み、段は judgment.work-dir-step-of の 1 点(閉語彙 effects.WorkDirStep = launch | create | missing): 在る(か宣言が無い)= 起こす / 無いが charter.work_dir_scratch が bool の true = FsMakeDirectories で作ってから起こす / 無い = 起こさず(claim も借りも launch もせず)条件 WorkDirMissing(reason に node の名と work_dir)で Ended に閉じる(agentd.work-dir-ready)。印の無い work_dir を作らない — repo を指す作業場を空の dir で偽装しない。(3) 配車の係はこの条件を会話 × node で読み、同じ会話の手番の候補からその node を外す(ACP 側・lane 10d)。sessionhost の launch の work_dir の検(ADR-DOE-AGENTS-006 R10)は最後の門として残る。実弾 2026-09-15 02:54: delivery-policy current の charter.work_dir = /Users/s22625/.cache/acp-stage2-e2e/work(会社 Mac の絶対 path)の手番が proboscis-mbp(user kento)に結ばれ、本物の会話の手番 2 本が LaunchFailed に落ちた。")
      (rule R10 "session は会話の資源・job は手番(温かい session・設計 17.4): 会話 → 生きている session の対応は行(自分が claim した同じ subject の agent-job の sessionHandle)と器の現況から導き、Bound の job の起こし方は judgment.hy の next-arm-for-job(閉語彙 effects.NextArm = launch | send | resume | rehydrate | defer — 家と機体の扱いは R20)の 1 点で決める — 同じ会話の生きて idle な session が在れば launch せず session.send(awaiting)だけ、sessionHandle はその session を指し、turn-record は手番ごと。手番の終わりは器の lifecycle multi_turn(launch.hy の閉語彙に足した語)で policy.hy の monitor が既存の turn-end の連言から行の turn_ended_at に刻み、agentd は job-step-of の turn-end(turn_ended_at > 手番の始まりの下限 ∧ 記録の進み)で読む — status は倒さず session は生かす。idle の寿命は AgentdSettings.session_idle_ttl_seconds の 1 点で、超過・Withdrawn・node の退役で session.cleanup。計器 agent-job-to-send は create → send のまま(温かい path で p99 < 2 秒)。")
      (rule R33 "provider の限度の断りは器の終端の cause で残し、制御面はその欄を読む(段 11 lane 11n 便 C・agora-redesign #179・依頼者の裁定 2026-09-15 案 c′・既知の形 = runner が結末を書き control plane が欄を読む): CLI が『限度に達した』と断った拍、器(session)は温かいまま status running で残り、agent-job は result も条件も無い Ended で終わっていた —— 実弾 2026-09-15 13:2x、会話 c-01M1XGMDHR35FBBC04W1JXM5KJ の手番が profile btc で Fable の限度に 5 回当たり、行には『どの model が枯れたか』が 1 bit も残らず、予算の判断へ戻る道が無かった。⇒ (1) **CLI が名乗った文を落とさない**: claude の Dialogue の result の行の手番の終わりの detail は result の本文ちょうど(subtype〔error_during_execution〕は文が無い時の名前)—— headless_protocol.ClaudeDialogue._on_result の 1 点。(2) **族の表を当てるのは器の側の 1 点**(headless.headless-turn-limit-cause): 手番の終わりの verdict(ok = False・detail = CLI の文)に impls/markers.hy の has-api-limit-marker を当てる。表の家は markers.hy のまま(ADR-DOE-AGENTS-008 R1・pane の路の policy.action-terminal-cause / failed-output-cause が PaneObservation 経由で引く**同じ表**)で、写しは作らない。(3) 当たった手番は **session ごと終える**: 行は status failed + cause {category: rate_limited(policy の TERMINAL-CAUSE-CATEGORIES の語)・reason: CLI の文}(make-cause / cause-if-absent の既存の口)。温かいまま残すと、限度は口座 × model のものなので同じ profile の次の手番も断られる(5 連敗の形)。配車は model 別の枯渇(段 11 lane 11m)で別の profile へ移り、profile が変われば器はどうせ作り直し(restartOn = model・profile)。(4) 制御面(agentd の ACP の腕)は **cause の欄だけ**を読み、CLI の文にも族の表にも触らない: judgment.provider-limit-condition-of の 1 点が SessionView.terminal-cause の category = rate_limited から agent-job の status.conditions の 1 項 {type: ProviderLimit, status: True, reason: rate-limited, model?, message} を作り、settle-record が Ended の書きに足す(SessionFailed 等の他の書き手の条件は置き換えない)。model は**手番が走らせようとした model**(InFlightJob.model = charter.model)ちょうど —— 限度の拍の usage.model は `<synthetic>` で材料が名乗らない(effects.MODEL_UNDECLARED の手番は欄を落とす)。until は書かない(窓を知るのは予算の controller)。**status.result には書かない** —— result が在ることは『手番が結果を報告した』の意味で、await の終端の別(Acp.App.Agent.AgentJob.awaitOutcomeOf)が反転する。(5) 綴りは effects の 1 点(CONDITION_PROVIDER_LIMIT / REASON_RATE_LIMITED / CAUSE_CATEGORY_RATE_LIMITED〔policy.hy の語の写し — SESSION_TERMINAL_STATUSES と同じ扱いで、投影できない Hy の語を agentd が読むために写す〕)で、ACP docs/contracts/scheduling.json はその写し。読み手は予算の controller(agora-budget)で、窓の観測より新しいこの印を『観測できない時の枯渇の証拠』として model 別の枯渇の判断に足す。")
-     (rule R34 "上限で落とした古い手番は黙って捨てず、落とした区間を見出し 1 行に畳む(段 11 lane 11v・agora-redesign #55 便 1・依頼者の裁定 2026-09-16・既知の形 = 有界の文脈の圧縮の決定的な段〔model の要約の前に置く〕): 履歴からの再開(R20)の畳み judgment.rehydrate-history-of が AgentdSettings.rehydrate_history_byte_budget を超えて古い手番を落とす時、落とした区間(古い手番の連なり)を**見出し 1 行**(judgment.history-dropped-headline の 1 点: 期間〔区間の最初の項の時刻〜最後の項の時刻〕・落とした手番と項の数・kind ごとの件数〔郵便は kind 郵便 = effects.HISTORY_MAIL_KIND で数える〕・道具の名〔初出の順〕・全文の在処)に畳み、残した手番の**前**(時刻順の位置)に置く。件数と道具の綴りは薄い再開の turn-record の見出しと同じ 1 点(judgment.history-counts-note — 形は effects.HeadlineCounts・材料の 1 項は effects.HistoryItem)。見出しは落とした手番ごとではなく区間に 1 行(見出しが上限を食わない)。見出しも上限の中に数え、最新の手番 1 つ(と頭・見出し)だけでも超える時はその先頭を切って切った byte を名乗る(judgment.history-cut-notice・HistoryFold.cut_bytes)。答え HistoryFold は見出しを欄 dropped_headline で運び(落とさなければ None)、agentd は起こす拍の log に見出しを 1 行(受入 = 本番の履歴からの再開で最初の本文に見出しの行が入り byte が上限の中)。model による要約は置かない(要約の作り手・上限・費用は one-way door — #55 便 2 で設計だけ・operator の判断)。方策の定義点は上限の 1 点のまま(見出しの上限を別に宣言しない)。")]
+     (rule R34 "上限で落とした古い手番は黙って捨てず、落とした区間を見出し 1 行に畳む(段 11 lane 11v・agora-redesign #55 便 1・依頼者の裁定 2026-09-16・既知の形 = 有界の文脈の圧縮の決定的な段〔model の要約の前に置く〕): 履歴からの再開(R20)の畳み judgment.rehydrate-history-of が AgentdSettings.rehydrate_history_byte_budget を超えて古い手番を落とす時、落とした区間(古い手番の連なり)を**見出し 1 行**(judgment.history-dropped-headline の 1 点: 期間〔区間の最初の項の時刻〜最後の項の時刻〕・落とした手番と項の数・kind ごとの件数〔郵便は kind 郵便 = effects.HISTORY_MAIL_KIND で数える〕・道具の名〔初出の順〕・全文の在処)に畳み、残した手番の**前**(時刻順の位置)に置く。件数と道具の綴りは薄い再開の turn-record の見出しと同じ 1 点(judgment.history-counts-note — 形は effects.HeadlineCounts・材料の 1 項は effects.HistoryItem)。見出しは落とした手番ごとではなく区間に 1 行(見出しが上限を食わない)。見出しも上限の中に数え、最新の手番 1 つ(と頭・見出し)だけでも超える時はその先頭を切って切った byte を名乗る(judgment.history-cut-notice・HistoryFold.cut_bytes)。答え HistoryFold は見出しを欄 dropped_headline で運び(落とさなければ None)、agentd は起こす拍の log に見出しを 1 行(受入 = 本番の履歴からの再開で最初の本文に見出しの行が入り byte が上限の中)。model による要約は置かない(要約の作り手・上限・費用は one-way door — #55 便 2 で設計だけ・operator の判断)。方策の定義点は上限の 1 点のまま(見出しの上限を別に宣言しない)。")
+     (rule R35 "上限を超えたら、手番を落とす前に古い手番から道具の項を薄くする(段 11 lane 11v 便 3・agora-redesign #225・依頼者の裁定 2026-09-16・既知の形 = 有界の文脈の段階的圧縮〔捨てる前に薄く・要約の前に決定的〕): judgment.rehydrate-history-of の畳みは 3 段 — 段 1 = 古い手番から新しい手番へ(最新の手番は最後)、道具の項(tool_use の入力・tool_result の本文)だけを先頭 k byte に薄くして「(先頭 k byte だけ・元 N byte)」と名乗る(judgment.history-event-thin-line → history-thin-body・綴りは全文の項と同じ history-event-line-of)。k = budget / effects.HISTORY_THIN_DIVISOR(65,536 なら 256)— 上限の宣言からの比で、AgentdSettings に 2 つ目の欄は置かない。郵便・agent の text・user / system / error(会話の意図と結論・文脈)は 1 byte も変えない。薄くなる項の無い手番(短い本文・薄い再開の見出し)は薄くした数に数えない。段 2 = 全部を薄くしても超える時だけ古い手番から落とし、落とした区間を見出し 1 行に畳む(R34)。段 3 = 最新の手番の先頭を切る(R34)。答え HistoryFold.thinned_turns・agentd の log に `M thinned`。決定的で model を呼ばない・費用 0。model による要約(#55 案 D)は one-way door で operator の判断のまま。")]
   :laws
     [(law interrupts-ride-the-running-turn-and-are-recorded-on-the-row
        :statement "for_all Running job j run by this agentd with status.interrupts = [m1..mn]: each mi not in status.interruptsDelivered ∪ memory.interrupts_sent is handed to the session by SessionInterject(body(mi)) in placement order, and every accepted mi is written back by one CAS that removes it from interrupts and appends it to interruptsDelivered; a refused mi stops the order and stays on the row; agentd never starts a turn for an interrupt and never removes an id it did not hand over"
@@ -788,9 +793,55 @@
                      "packages/doeff-agents/tests/test_sessionhost_acp_rehydrate.py::test_dropped_turns_fold_into_one_headline_with_period_counts_and_tools"
                      "packages/doeff-agents/tests/test_sessionhost_acp_rehydrate.py::test_a_fold_within_the_budget_carries_no_headline"
                      "packages/doeff-agents/tests/test_sessionhost_acp_rehydrate.py::test_the_newest_turn_is_cut_after_the_headline_and_the_cut_bytes_are_named"
-                     "packages/doeff-agents/tests/test_sessionhost_acp_rehydrate.py::test_a_thin_rehydrate_folds_dropped_record_headlines_into_the_range_headline"])]
+                     "packages/doeff-agents/tests/test_sessionhost_acp_rehydrate.py::test_a_thin_rehydrate_folds_dropped_record_headlines_into_the_range_headline"])
+     (law history-thins-tool-items-oldest-first-before-any-turn-is-dropped
+       :statement "for_all fold f = rehydrate-history-of(c, messages, source, exclude, budget, fetched) with turns t_1 … t_n (oldest first) whose full text exceeds budget: before any turn is dropped, f replaces the tool items (kind tool_use: the input; kind tool_result: the output) of t_1, then t_2, … with their first k = budget / HISTORY_THIN_DIVISOR bytes followed by a note naming k and the original byte count (history-event-thin-line → history-thin-body, spelled by the same history-event-line-of as the full line), stopping at the first prefix that fits; mail lines and items of kind text / user / system / error are byte-identical to the full fold; a turn without any thinnable item is not counted; f.thinned_turns = the number of turns actually thinned; only when every turn is thin and the text still exceeds budget does f drop turns (R34) and then cut the newest (R34); source = HeadlineTurns ⇒ thinned_turns = 0; the fold is deterministic, calls no model, performs no I/O, and the only declared value is AgentdSettings.rehydrate_history_byte_budget"
+       :counterexamples
+         [(counterexample "上限を超えたら手番を丸ごと落とす(便 1 の形)— 道具の結果 30 KB の手番 1 つが上限の半分を食い、残せる手番が数個(本番 2026-09-13〜16: 落とし 23 回・kept 1 の再開 87 回)。落とす前に薄くすれば会話の意図(郵便)と結論(agent の text)は全手番残る")
+          (counterexample "郵便や agent の text を切り詰める — 会話の意図と結論が消え、要約より悪い。薄くするのは道具の項だけ")
+          (counterexample "最新の手番から薄くする — いま続ける作業の材料(直近の道具の結果)が先に消える。古い手番から")
+          (counterexample "切り詰めの長さを AgentdSettings の 2 つ目の欄にする — 方策の定義点が 2 つになる。上限からの比(effects の定数 1 点)")
+          (counterexample "薄くしたことを名乗らない(黙って切る)— agent が全文と思って読む。先頭 k byte と元の byte を名乗る")
+          (counterexample "薄い再開(HeadlineTurns)でも薄くした数を数える — 本文の無い材料で『薄くした』と名乗る(嘘)。0")
+          (counterexample "落とした後に薄くする(順序を逆にする)— 落とした手番は戻らないので薄くする意味が無い。薄くする → 落とす → 切る の順")
+          (counterexample "model に要約させる — one-way door(費用・鍵の置き場)。operator の判断(#55 案 D)のまま")]
+       :enforcement ["docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test-adr-doe-agents-012-history-thins-tool-items-before-dropping-turns"
+                     "packages/doeff-agents/tests/test_sessionhost_acp_rehydrate.py::test_tool_items_are_thinned_oldest_first_before_any_turn_is_dropped"
+                     "packages/doeff-agents/tests/test_sessionhost_acp_rehydrate.py::test_when_thinning_everything_is_not_enough_turns_are_dropped_behind_the_headline_in_thin_form"
+                     "packages/doeff-agents/tests/test_sessionhost_acp_rehydrate.py::test_a_thin_rehydrate_has_no_tool_bodies_to_thin_and_counts_none"
+                     "packages/doeff-agents/tests/test_sessionhost_acp_rehydrate.py::test_thinned_items_keep_the_head_and_name_the_original_bytes_while_text_and_mail_stay_byte_identical"])]
   :enforcement
-    [(deftest test-adr-doe-agents-012-dropped-history-turns-leave-a-headline
+    [(deftest test-adr-doe-agents-012-history-thins-tool-items-before-dropping-turns
+       ;; R35 の針(構造): 薄くする点は judgment の 1 点ずつ(history-event-body / history-event-line-of / history-thin-body /
+       ;; history-event-thin-line)・薄くするのは道具の 2 kind だけ・畳みの中で薄くする段が落とす段より前・k は effects の比の 1 点・
+       ;; 上限の宣言は 1 点のまま・答えは thinned_turns を欄で運ぶ・agentd の log に thinned。反例(挙動)は rehydrate deftests の 4 本。
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (for [name ["history-event-body" "history-event-line-of" "history-event-line" "history-thin-body" "history-event-thin-line"]]
+         (assert (= (len (lfor line judgment-lines :if (.startswith line f"(defk {name} ") line)) 1) f"薄くする点は 1 つ(R35): {name}"))
+       (setv thin-body (defk-body judgment-lines "history-event-thin-line"))
+       (assert (any (gfor line thin-body (in "(not-in event.kind #(\"tool_use\" \"tool_result\"))" line))) "薄くするのは道具の項だけ(R35)")
+       (assert (any (gfor line thin-body (in "(history-event-line-of event thin)" line))) "薄い項の綴りは全文の項と同じ 1 点(R35)")
+       (setv fold-body (defk-body judgment-lines "rehydrate-history-of"))
+       (setv thin-at (next (gfor [idx line] (enumerate fold-body) :if (in "(setv (get blocks reach) (get thin-blocks reach))" line) idx) None))
+       (setv drop-at (next (gfor [idx line] (enumerate fold-body) :if (in "(history-dropped-headline counts dropped-turns dropped-items budget where)" line) idx) None))
+       (assert (and (is-not thin-at None) (is-not drop-at None) (< thin-at drop-at)) "薄くする段は落とす段より前(R35)")
+       (assert (any (gfor line fold-body (in "(// budget HISTORY-THIN-DIVISOR)" line))) "k は上限からの比(R35)")
+       (assert (any (gfor line fold-body (in "(history-event-thin-line event thin-k)" line))) "薄い項は出来事の畳みで 1 度組む(R35)")
+       (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
+       (assert (any (gfor line effects-lines (.startswith line "HISTORY_THIN_DIVISOR = "))) "比の定数は effects の 1 点(R35)")
+       (assert (any (gfor line effects-lines (.startswith line "    thinned_turns: int"))) "HistoryFold は薄くした数を欄で運ぶ(R35)")
+       (assert (any (gfor line effects-lines (.startswith line "    thin_line: str | None"))) "HistoryItem は薄い行を持つ(R35)")
+       (assert (= (len (lfor line effects-lines :if (.startswith line "    rehydrate_history_") line)) 1)
+               "履歴からの再開の値の宣言は上限の 1 点だけ(R35 — 切り詰めの長さの欄を足さない)")
+       (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
+       (assert (= (len (lfor line agentd-lines :if (in "{fold.thinned-turns} thinned" line) line)) 1) "agentd の log に thinned(R35)")
+       (setv tests (.read-text (/ (. (Path __file__) parent parent parent) "packages" "doeff-agents" "tests" "sessionhost_acp_rehydrate_deftests.hy") :encoding "utf-8"))
+       (for [name ["test-tool-items-are-thinned-oldest-first-before-any-turn-is-dropped"
+                   "test-when-thinning-everything-is-not-enough-turns-are-dropped-behind-the-headline-in-thin-form"
+                   "test-a-thin-rehydrate-has-no-tool-bodies-to-thin-and-counts-none"
+                   "test-thinned-items-keep-the-head-and-name-the-original-bytes-while-text-and-mail-stay-byte-identical"]]
+         (assert (in (+ "(deftest " name) tests) f"R35 の反例の検が無い: {name}")))
+     (deftest test-adr-doe-agents-012-dropped-history-turns-leave-a-headline
        ;; R34 の針(構造): 畳みは rehydrate-history-of の 1 点・落とした区間の見出しは history-dropped-headline の 1 点・数の綴りは
        ;; history-counts-note の 1 点(turn-record の見出しと同じ)・黙って落とす旧の断り(footer)が無い・答えは見出しと切った byte を
        ;; 欄で運ぶ・agentd は見出しを log に 1 行・上限の宣言は AgentdSettings の 1 点のまま(方策の定義点を増やさない)。
@@ -2234,4 +2285,4 @@
           "docs/impl-requests/stage9-lane-prompts/lane-9o3-agentd-warm-session-honors-model.md(agora-redesign #75・R20 の追補: 家の鍵に model)"
           "docs/impl-requests/stage10-lane-prompts/lane-10e-agent-settings-catalog-and-chip.md(agora-redesign #53・追補 R24: 能力の表・effort の腕・AgentSettingIgnored)"
           "docs/impl-requests/stage10-lane-prompts/lane-10h-agentd-dead-backend-recovery.md(agora-redesign #84・追補 R25 / R26: backend の生死は観測で・復帰・session-lost・resume の KeyError・停止で子を黙って道連れにしない・ACP の宛先は宣言ちょうど)"
-          "docs/impl-requests/stage11-lane-prompts/lane-11v-rehydrate-compaction.md(agora-redesign #55 便 1・追補 R34: 上限で落とした古い手番は区間の見出し 1 行に畳む・model の要約は便 2 の設計だけ)"])
+          "docs/impl-requests/stage11-lane-prompts/lane-11v-rehydrate-compaction.md(agora-redesign #55 便 1・追補 R34: 上限で落とした古い手番は区間の見出し 1 行に畳む・model の要約は便 2 の設計だけ / 便 3 = #225・追補 R35: 落とす前に古い手番から道具の項を薄くする)"])
