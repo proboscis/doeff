@@ -1773,3 +1773,55 @@ def test_real_claude_accepts_the_headless_flags_help_only() -> None:
     assert result.returncode == 0
     for flag in ("--output-format", "--include-partial-messages", "--session-id", "--resume"):
         assert flag in result.stdout
+
+
+def test_host_headless_monitor_stamps_the_turn_end_from_the_current_row_not_the_cycles_listing(
+    headless_host: Host,
+) -> None:
+    """段 11 lane 11y 便 3(agora-redesign #140・依頼者の裁定 2026-09-16): monitor の拍は最初に全行を
+    列挙してから 1 行ずつ器を観測する。列挙の写しの後に届いた session.send(awaiting True・
+    turn_ended_at None)は、写しで導出して書き戻すと失われ、旧形の `(or row.turn-ended-at observed-at)`
+    が前の手番の印を保つ —— agentd の job-step-of は turn_ended_at ≤ floor(送った時刻)で observe を
+    続け、手番が終わった job が Running のまま残る(実弾 2026-09-16 07:00 JST・aj-W9WT…: 6 分・割り込み
+    4 通が走っていない手番に置かれたまま)。反例 = 古い写しで観測した後、手番の終わりの印が前の
+    手番の値のまま(送った時刻より前)なら赤。直し = 導出は行の今の値から・印はこの観測の時刻。
+    """
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-stale", "claude"))
+    first = _wait_turn_end(headless_host, "h-stale")
+    assert _text(first, "status") == "running"
+    first_stamp = _text(first, "turn_ended_at")
+    # monitor の拍が拍の頭で列挙した写し(手番 1 の終わりの印・awaiting False)
+    listed = host.run_hosted(
+        headless_host.config, headless_host.actor, headless_hy.session_store_list_active()
+    )
+    assert isinstance(listed, list)
+    stale = next(row for row in listed if row.session_id == "h-stale")
+    assert stale.awaiting_response is False
+    assert stale.turn_ended_at == first_stamp
+    # 写しの後に次の手番が届く(awaiting True・turn_ended_at None・温かい同じ process へ)
+    headless_host.ok(
+        "session.send", {"session_id": "h-stale", "message": "second turn", "awaiting": True}
+    )
+    sent = headless_host.snap("h-stale")
+    assert sent["awaiting_response"] is True
+    assert not _has(sent, "turn_ended_at")
+    sent_at = _text(sent, "last_observed_at")  # send が刻む「送った拍」(host の同じ時計・同じ綴り)
+    # 替え玉が 2 手番目の result を出すまで待つ(器の観測は撃たない — ended は器に溜まったまま)
+    events_path = Path(_text(_obj(sent, "backend_ref"), "events_path"))
+
+    def _two_results() -> bool:
+        lines = events_path.read_text(encoding="utf-8").splitlines()
+        return sum(1 for line in lines if _record(line)["type"] == "result") >= 2
+
+    _wait_until(_two_results)
+    # 実弾の拍の形: 古い写しで観測する
+    host.run_hosted(headless_host.config, headless_host.actor, headless_hy.observe_headless_row(stale))
+    after = headless_host.snap("h-stale")
+    assert _text(after, "status") == "running"
+    assert after["awaiting_response"] is False
+    assert _has(after, "turn_ended_at")
+    stamped = _text(after, "turn_ended_at")
+    # 手番 2 の終わりの印は手番 2 の始まり(送った時刻)より後 — 前の手番の印(floor より前)のままなら赤
+    assert stamped > sent_at, (stamped, sent_at, first_stamp)
+    assert stamped > first_stamp
+    headless_host.ok("session.cleanup", {"session_id": "h-stale"})

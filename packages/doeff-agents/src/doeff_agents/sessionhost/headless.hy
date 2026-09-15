@@ -581,7 +581,15 @@
    下ろす(status は倒さない・session は残す)、run_to_completion は done(走行器が失敗と
    名乗れば failed)/ failed = 型付きの失敗・手番の途中の process の死 → failed + cause /
    gone = 器に process が無いのに手番の途中(host の再起動)→ failed + cause vanished /
-   idle = 温かい・何もしない。会話の id(codex の thread)は見つけた拍に行へ写す。"
+   idle = 温かい・何もしない。会話の id(codex の thread)は見つけた拍に行へ写す。
+   段 11 lane 11y 便 3(agora-redesign #140): 導出は**行の今の値**から — 引数の row は名指しで、
+   中身は読み直す。monitor の拍は最初に全行を列挙してから 1 行ずつ器を観測する(1 拍に数秒)ので、
+   列挙の写しは古く、その間に届いた session.send(awaiting True・turn_ended_at None)を写しで
+   上書きすると、次の手番の終わりの印が前の手番の値に戻り、agentd の job-step-of は
+   turn_ended_at ≤ floor で observe を続ける(実弾 2026-09-16 07:00 JST・job aj-W9WT…: 手番の終わりから
+   6 分 Running のまま・割り込み 4 通が走っていない手番に置かれたまま・session の idle の掃き取りで
+   ようやく Ended)。"
+  (<- row (require-headless-row row.session-id))
   (<- observed (headless-poll row.session-name))
   (setv verdict (turn-verdict observed row.awaiting-response))
   (<- now (clock-now))
@@ -603,7 +611,11 @@
       (cond
         (is-multi-turn row.lifecycle)
         (do
-          (setv row (replace row :turn-ended-at (or row.turn-ended-at observed-at)))
+          ;; 段 11 lane 11y 便 3: 手番の終わりの印は**この観測の時刻**。turn-ended の verdict は器が溜めた
+          ;; ended(観測が空にする)= 新しい 1 つの手番の終わりで、同じ終わりを 2 度観測することは無い。
+          ;; 旧形 `(or row.turn-ended-at observed-at)` は、send の reset が失われた行で前の手番の印を
+          ;; 永久に保ち、agentd に「まだ終わっていない」と読ませた(上の実弾)。
+          (setv row (replace row :turn-ended-at observed-at))
           ;; 段 11 lane 11n 便 C: provider が限度で断った手番は器ごと終える(判断は
           ;; headless-turn-limit-cause の 1 点)。温かいままにすると同じ profile の次の手番も
           ;; 断られ、行には何も残らない(実弾 2026-09-15 13:2x の 5 連敗)。
