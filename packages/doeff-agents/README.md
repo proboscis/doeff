@@ -119,11 +119,22 @@ doeff-agents agentd kinds
 doeff-agents agentd ensure --json
 ```
 
-Both resolve the socket from the environment alone (`XDG_RUNTIME_DIR`, else
-`/tmp/doeff-agentd-$USER.sock`); there is no flag to point them elsewhere. A host
-started by `join` listens under its state directory instead (below), so these
-commands do **not** observe a joined host unless it was started with `serve
---socket` at that same default path.
+All of these resolve the socket from the environment: `DOEFF_AGENTD_SOCKET` when it is
+set, else `$XDG_RUNTIME_DIR/doeff/agentd.sock`, else
+`/tmp/doeff-agentd-$USER.sock`. A host started by `join` listens under its state
+directory (below), which the defaults never name, so point the CLI at it:
+
+```bash
+export DOEFF_AGENTD_SOCKET="${XDG_STATE_HOME:-$HOME/.local/state}/doeff/acp-agentd/agentd.sock"
+doeff-agents agentd kinds
+doeff-agents ps
+```
+
+There is no flag for this: the socket is a property of the machine's host, not
+of a single command, and the variable is the same one that tells an agent
+process where its host is. Only the socket is named — the database and log stay
+at their XDG paths, so `agentd ensure` still refuses (loudly) to adopt a host
+whose database differs from the canonical one.
 
 ## Session host (`doeff-sessionhost`) and the agentd socket
 
@@ -151,22 +162,15 @@ fi
 doeff-sessionhost --db "$AGENTD_DB" --socket "$AGENTD_SOCKET" --max-running 10 serve
 ```
 
-`serve` is the only command. Its flags are `--db`, `--socket`, `--backend`,
-`--tmux`, `--herdr-socket`, `--max-running`, `--monitor-interval-ms`,
-`--result-solicitations`, `--prompt-stall-secs`, `--prompt-unblock-attempts`,
-`--prompt-judge-cmd`, and `--acp`; unknown arguments are rejected. Two of them
-are easy to get wrong: `--max-running none` (or `unlimited`) means no limit, and
-`--max-running 0` is refused at startup because it would reject every launch.
-`--acp` (or `DOEFF_AGENTD_ACP=on`, off by default) additionally runs the agentd
-thread that joins a control-plane cluster.
-
-> **The host has no `--help`.** Its argument parser accepts only the flags above,
-> so `doeff-sessionhost --help` is rejected as an unknown argument and exits 1
-> with a Python traceback rather than printing usage. `doeff-sessionhost join`
-> refuses cleanly (exit 2, one line naming what is missing) but also has no help
-> listing. The flag vocabulary of record is `parse-args` in
-> `src/doeff_agents/sessionhost/host.hy` for `serve`, and
-> `src/doeff_agents/sessionhost/acp/join.hy` for `join`.
+`serve` is the only command, and it may be omitted; unknown arguments are
+rejected. Run `doeff-sessionhost --help` for the flags, the environment
+variables that shadow them, and the two env-only knobs. That listing is
+generated from the flag vocabulary of record — `parse-args` in
+`src/doeff_agents/sessionhost/host.hy` — so it cannot drift from what the host
+accepts. Two flags are easy to get wrong: `--max-running none` (or `unlimited`)
+means no limit, and `--max-running 0` is refused at startup because it would
+reject every launch. `--acp` (or `DOEFF_AGENTD_ACP=on`, off by default)
+additionally runs the agentd thread that joins a control-plane cluster.
 
 `LazyAgentdClient` connects only to that expected socket. It does not probe
 per-run temporary sockets or fall back to direct worker execution; if no host is
@@ -189,9 +193,11 @@ The plan is derived at one point from the declaration — flags override the
 - Default state directory: `$XDG_STATE_HOME/doeff/acp-agentd`, holding
   `agentd.sqlite`, `agentd.sock`, `headless-events/`, and `record-spool/`.
 - Further flags name the node, its ownership and custody, capacity, place, work
-  roots, backend, session hooks, borrowed credentials, and the record sink: see
-  the flag table at the top of `src/doeff_agents/sessionhost/acp/join.hy`
-  (`join` has no help listing — see the note above).
+  roots, backend, session hooks, borrowed credentials, and the record sink: run
+  `doeff-sessionhost join --help`, which is generated from the flag table at the
+  top of `src/doeff_agents/sessionhost/acp/join.hy`. `--capacity`, `--place` and
+  `--record` are required alongside `--server` and `--token-file`; a node that
+  does not declare them refuses to join rather than guessing.
 
 ## What each backend supports
 

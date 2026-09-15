@@ -306,6 +306,79 @@
 ;; CLI(oracle parse_args :600-693)
 ;; ---------------------------------------------------------------------------
 
+;; flag・command・env knob の綴りの座(この 1 点)。parse-args の分岐も
+;; `--help` の usage の組み立て(sessionhost/usage.py)も同じ値を読む —
+;; 綴りを手で写した一覧をどこにも作らない(一覧が実装から静かに乖離する形を
+;; 作らない)。
+(setv CMD-SERVE "serve")
+(setv FLAG-DB "--db")
+(setv FLAG-SOCKET "--socket")
+(setv FLAG-TMUX "--tmux")
+(setv FLAG-MONITOR-INTERVAL-MS "--monitor-interval-ms")
+(setv FLAG-MAX-RUNNING "--max-running")
+(setv FLAG-ALLOW-METERED-BILLING "--allow-metered-billing")
+(setv FLAG-RESULT-SOLICITATIONS "--result-solicitations")
+(setv FLAG-PROMPT-STALL-SECS "--prompt-stall-secs")
+(setv FLAG-PROMPT-UNBLOCK-ATTEMPTS "--prompt-unblock-attempts")
+(setv FLAG-PROMPT-JUDGE-CMD "--prompt-judge-cmd")
+(setv FLAG-BACKEND "--backend")
+(setv FLAG-HERDR-SOCKET "--herdr-socket")
+(setv ENV-RESULT-SOLICITATIONS "DOEFF_AGENTD_RESULT_SOLICITATIONS")
+(setv ENV-PROMPT-STALL-SECS "DOEFF_AGENTD_PROMPT_STALL_SECS")
+(setv ENV-PROMPT-UNBLOCK-ATTEMPTS "DOEFF_AGENTD_PROMPT_UNBLOCK_ATTEMPTS")
+(setv ENV-PROMPT-JUDGE-CMD "DOEFF_AGENTD_PROMPT_JUDGE_CMD")
+(setv ENV-BACKEND "DOEFF_SESSIONHOST_BACKEND")
+(setv ENV-HERDR-SOCKET "DOEFF_SESSIONHOST_HERDR_SOCKET")
+(setv ENV-HEADLESS-DIR "DOEFF_SESSIONHOST_HEADLESS_DIR")
+(setv ENV-EXIT-WHEN-ORPHANED "DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED")
+
+;; serve の flag の一覧 = usage の生成元(並びがそのまま help の並び)。
+;;   #(flag 値の見出し env の名 説明)
+;; 値を取らない旗は見出しが None、env knob を持たない flag は env が None。
+;; parse-args に flag を足す時はこの表にも 1 行足す — 表と parse-args の
+;; 一致は deftest test-serve-flag-specs-cover-parse-args が守る。
+(setv SERVE-FLAG-SPECS
+  [#(FLAG-DB "<path>" None
+     "Session ledger (SQLite). Default: $XDG_STATE_HOME/doeff/agentd.sqlite")
+   #(FLAG-SOCKET "<path>" None
+     (+ "RPC socket to bind. Default: $XDG_RUNTIME_DIR/doeff/agentd.sock, "
+        "else /tmp/doeff-agentd-$USER.sock"))
+   #(FLAG-BACKEND "<tmux|herdr|headless>" ENV-BACKEND
+     "Substrate that carries sessions. Default: tmux")
+   #(FLAG-TMUX "<bin>" None
+     "tmux binary (tmux backend only). Default: tmux")
+   #(FLAG-HERDR-SOCKET "<path>" ENV-HERDR-SOCKET
+     f"herdr control socket (herdr backend only). Default: {DEFAULT-HERDR-SOCKET}")
+   #(FLAG-MAX-RUNNING "<n|none|unlimited>" None
+     (+ f"Launch admission ceiling. Default: {DEFAULT-MAX-RUNNING-SESSIONS}. "
+        "`none` / `unlimited` lift it; 0 is refused at startup because it "
+        "would reject every launch."))
+   #(FLAG-ALLOW-METERED-BILLING None None
+     (+ "Admit metered binding kinds (claude-code-metered / codex-metered). "
+        "Off by default; no environment variable turns it on."))
+   #(FLAG-MONITOR-INTERVAL-MS "<ms>" None
+     f"Reconciler interval in milliseconds. Default: {DEFAULT-MONITOR-INTERVAL-MS}")
+   #(FLAG-RESULT-SOLICITATIONS "<n>" ENV-RESULT-SOLICITATIONS
+     (+ "How many times a missing agent result is solicited. Default: "
+        f"{DEFAULT-RESULT-SOLICITATION-LIMIT}"))
+   #(FLAG-PROMPT-STALL-SECS "<n>" ENV-PROMPT-STALL-SECS
+     (+ "Seconds before an undelivered prompt counts as stalled. Default: "
+        f"{DEFAULT-PROMPT-STALL-SECONDS}"))
+   #(FLAG-PROMPT-UNBLOCK-ATTEMPTS "<n>" ENV-PROMPT-UNBLOCK-ATTEMPTS
+     (+ "How many unblock attempts a stalled prompt gets. Default: "
+        f"{DEFAULT-PROMPT-UNBLOCK-LIMIT}"))
+   #(FLAG-PROMPT-JUDGE-CMD "<cmd>" ENV-PROMPT-JUDGE-CMD
+     "Adjudicator subprocess consulted before an unblock attempt.")])
+
+;; flag を持たない env knob(usage は別枠で出す — 読みは parse-args の同じ 1 点)。
+(setv SERVE-ENV-ONLY-SPECS
+  [#(ENV-HEADLESS-DIR
+     (+ "Directory holding the headless backend's event files. Default: "
+        "$XDG_STATE_HOME/doeff/headless"))
+   #(ENV-EXIT-WHEN-ORPHANED
+     (+ "Set to 1 to make the host exit when its parent goes away "
+        "(opt-in lifetime boundary)."))])
+
 (deff arg-at [args index]
   {:pre [(: args list) (: index int)]
    :post [(: % (| str None))]}
@@ -336,55 +409,55 @@
   ;; 宣言は塞げない)。配備は argv(launchd / systemd の ExecStart)で名乗る。
   (setv allow-metered-billing False)
   (setv result-solicitation-limit
-        (or (env-u32 "DOEFF_AGENTD_RESULT_SOLICITATIONS")
+        (or (env-u32 ENV-RESULT-SOLICITATIONS)
             DEFAULT-RESULT-SOLICITATION-LIMIT))
   (setv prompt-stall-seconds
-        (or (env-positive-i64 "DOEFF_AGENTD_PROMPT_STALL_SECS")
+        (or (env-positive-i64 ENV-PROMPT-STALL-SECS)
             DEFAULT-PROMPT-STALL-SECONDS))
   (setv prompt-unblock-limit
-        (or (env-u32 "DOEFF_AGENTD_PROMPT_UNBLOCK_ATTEMPTS")
+        (or (env-u32 ENV-PROMPT-UNBLOCK-ATTEMPTS)
             DEFAULT-PROMPT-UNBLOCK-LIMIT))
   (setv prompt-judge-cmd
         (normalize-prompt-judge-cmd
-          (.get os.environ "DOEFF_AGENTD_PROMPT_JUDGE_CMD"
+          (.get os.environ ENV-PROMPT-JUDGE-CMD
                 DEFAULT-PROMPT-JUDGE-CMD)))
   ;; herdr トライアルの transfer gate: conformance harness は daemon の argv を
   ;; 組み替えないため、env knob(flag が優先)で backend を切り替えられるように
   ;; する(CONFORMANCE_AGENTD_BIN seam と組で使う)。
-  (setv backend (.get os.environ "DOEFF_SESSIONHOST_BACKEND" "tmux"))
-  (setv herdr-socket (.get os.environ "DOEFF_SESSIONHOST_HERDR_SOCKET"
+  (setv backend (.get os.environ ENV-BACKEND "tmux"))
+  (setv herdr-socket (.get os.environ ENV-HERDR-SOCKET
                            DEFAULT-HERDR-SOCKET))
   ;; headless backend(agora-redesign #37): events file の置き場も env knob。
-  (setv headless-events-root (.get os.environ "DOEFF_SESSIONHOST_HEADLESS_DIR"
+  (setv headless-events-root (.get os.environ ENV-HEADLESS-DIR
                                    (default-headless-events-root)))
   ;; out-of-band 寿命境界(opt-in、env-only — CLI 語彙は oracle parse_args の
   ;; 凍結物理なので足さない。backend knob と同じ搬送経路)。
   (setv exit-when-orphaned
-        (= (.get os.environ "DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED" "") "1"))
-  (setv command "serve")
+        (= (.get os.environ ENV-EXIT-WHEN-ORPHANED "") "1"))
+  (setv command CMD-SERVE)
   (setv index 0)
   (while (< index (len args))
     (setv arg (get args index))
     (cond
-      (= arg "--db")
+      (= arg FLAG-DB)
       (do (+= index 1)
           (setv db-path (arg-at args index)))
-      (= arg "--socket")
+      (= arg FLAG-SOCKET)
       (do (+= index 1)
           (setv socket-path (arg-at args index)))
-      (= arg "--tmux")
+      (= arg FLAG-TMUX)
       (do (+= index 1)
-          (setv tmux-bin (required-arg args index "--tmux")))
-      (= arg "--monitor-interval-ms")
+          (setv tmux-bin (required-arg args index FLAG-TMUX)))
+      (= arg FLAG-MONITOR-INTERVAL-MS)
       (do (+= index 1)
-          (setv raw (required-arg args index "--monitor-interval-ms"))
+          (setv raw (required-arg args index FLAG-MONITOR-INTERVAL-MS))
           (setv millis (int raw))
           (when (< millis 0)
-            (raise (ValueError "--monitor-interval-ms must be non-negative")))
+            (raise (ValueError f"{FLAG-MONITOR-INTERVAL-MS} must be non-negative")))
           (setv monitor-interval-seconds (/ millis 1000)))
-      (= arg "--max-running")
+      (= arg FLAG-MAX-RUNNING)
       (do (+= index 1)
-          (setv raw (required-arg args index "--max-running"))
+          (setv raw (required-arg args index FLAG-MAX-RUNNING))
           ;; 「上限なし」を言う口(2026-08-19 operator 裁定: 上限は ACP の
           ;; 都合であって sessionhost の性質ではない)。運用側は plist の
           ;; 1 語で無制限を選べる必要があり、旗の省略に無制限を割り当てると
@@ -395,51 +468,51 @@
               (do
                 (setv max-running (int raw))
                 (when (< max-running 0)
-                  (raise (ValueError "--max-running must be non-negative")))
+                  (raise (ValueError f"{FLAG-MAX-RUNNING} must be non-negative")))
                 ;; 0 は「上限なし」の綴りではない。素通しすると全 launch が
                 ;; 恒久 100% 拒否になる(`owned-count >= 0` は常に真)ので、
                 ;; 起動時に loud に落とす — 無音で全拒否する daemon を作らない。
                 (when (= max-running 0)
                   (raise (ValueError
-                           (+ "--max-running 0 rejects every launch "
+                           (+ f"{FLAG-MAX-RUNNING} 0 rejects every launch "
                               "(admission is `owned >= max`); use "
-                              "`--max-running none` for unlimited")))))))
-      (= arg "--allow-metered-billing")
+                              f"`{FLAG-MAX-RUNNING} none` for unlimited")))))))
+      (= arg FLAG-ALLOW-METERED-BILLING)
       (setv allow-metered-billing True)
-      (= arg "--result-solicitations")
+      (= arg FLAG-RESULT-SOLICITATIONS)
       (do (+= index 1)
-          (setv raw (required-arg args index "--result-solicitations"))
+          (setv raw (required-arg args index FLAG-RESULT-SOLICITATIONS))
           (setv result-solicitation-limit (int raw))
           (when (< result-solicitation-limit 0)
-            (raise (ValueError "--result-solicitations must be non-negative"))))
-      (= arg "--prompt-stall-secs")
+            (raise (ValueError f"{FLAG-RESULT-SOLICITATIONS} must be non-negative"))))
+      (= arg FLAG-PROMPT-STALL-SECS)
       (do (+= index 1)
-          (setv raw (required-arg args index "--prompt-stall-secs"))
+          (setv raw (required-arg args index FLAG-PROMPT-STALL-SECS))
           (setv prompt-stall-seconds (int raw))
           (when (<= prompt-stall-seconds 0)
-            (raise (ValueError "--prompt-stall-secs must be positive"))))
-      (= arg "--prompt-unblock-attempts")
+            (raise (ValueError f"{FLAG-PROMPT-STALL-SECS} must be positive"))))
+      (= arg FLAG-PROMPT-UNBLOCK-ATTEMPTS)
       (do (+= index 1)
-          (setv raw (required-arg args index "--prompt-unblock-attempts"))
+          (setv raw (required-arg args index FLAG-PROMPT-UNBLOCK-ATTEMPTS))
           (setv prompt-unblock-limit (int raw))
           (when (< prompt-unblock-limit 0)
-            (raise (ValueError "--prompt-unblock-attempts must be non-negative"))))
-      (= arg "--prompt-judge-cmd")
+            (raise (ValueError f"{FLAG-PROMPT-UNBLOCK-ATTEMPTS} must be non-negative"))))
+      (= arg FLAG-PROMPT-JUDGE-CMD)
       (do (+= index 1)
-          (setv raw (required-arg args index "--prompt-judge-cmd"))
+          (setv raw (required-arg args index FLAG-PROMPT-JUDGE-CMD))
           (setv prompt-judge-cmd (normalize-prompt-judge-cmd raw)))
-      (= arg "--backend")
+      (= arg FLAG-BACKEND)
       (do (+= index 1)
-          (setv backend (required-arg args index "--backend")))
-      (= arg "--herdr-socket")
+          (setv backend (required-arg args index FLAG-BACKEND)))
+      (= arg FLAG-HERDR-SOCKET)
       (do (+= index 1)
-          (setv herdr-socket (required-arg args index "--herdr-socket")))
-      (= arg "serve")
+          (setv herdr-socket (required-arg args index FLAG-HERDR-SOCKET)))
+      (= arg CMD-SERVE)
       (setv command arg)
       True
       (raise (ValueError f"unknown argument: {arg}")))
     (+= index 1))
-  (when (!= command "serve")
+  (when (!= command CMD-SERVE)
     (raise (ValueError f"unsupported command: {command}")))
   (when (not-in backend #{"tmux" "herdr" HEADLESS-BACKEND-KIND})
     (raise (ValueError f"unsupported backend: {backend} (expected tmux|herdr|headless)")))

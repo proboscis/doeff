@@ -12,6 +12,10 @@ thread(ACP の cluster への参加・agent-job の受け — ``doeff_agents.ses
 join.hy の 1 点・runtime.join_plan)、process の env に据えてから上と同じ経路(agentd の
 thread + host)を走る。Mac(launchd)・Linux(systemd)・GCP node・runner pod のどれでも同じ命令。
 
+``--help`` / ``join --help`` は usage を stdout に出して exit 0 する。flag の一覧は実装の
+宣言(host.hy の ``SERVE-FLAG-SPECS`` / join.hy の ``JOIN-FLAG-SPECS``)から
+``sessionhost/usage.py`` が組む — 手で写した一覧を作らない。
+
 report-result-mcp の路(agent が結果を報告する data channel)は Hy も agentd も import せずに
 hostmain へ直行する — relay の boot の遅れは report-vs-turn-end の race の凍結物理(S1)。
 """
@@ -24,12 +28,19 @@ from doeff_agents.sessionhost.acp.effects import JOIN_SUBCOMMAND
 from doeff_agents.sessionhost.acp.valve import acp_valve
 from doeff_agents.sessionhost.hostmain import main as host_main
 from doeff_agents.sessionhost.relaymain import REPORT_RESULT_MCP_SUBCOMMAND
+from doeff_agents.sessionhost.usage import help_topic_of, usage_text
 
 
 def main() -> None:
     argv = sys.argv[1:]
     if argv and argv[0] == REPORT_RESULT_MCP_SUBCOMMAND:
         host_main()
+        return
+    # `--help` は usage を stdout に出して exit 0(題目の判定 = usage.help_topic_of の
+    # 1 点)。一覧は実装の宣言から導くので、手で写した flag の表はどこにも無い。
+    topic = help_topic_of(argv)
+    if topic is not None:
+        sys.stdout.write(usage_text(topic))
         return
     if argv and argv[0] == JOIN_SUBCOMMAND:
         # 1 命令の参加: 宣言 → env の束 + host の argv(join_plan の 1 点)→ 下の弁の経路と同じ。

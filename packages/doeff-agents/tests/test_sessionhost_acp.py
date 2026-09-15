@@ -3518,6 +3518,24 @@ def test_join_spec_refuses_missing_server_or_token_unknown_flags_and_bad_words()
     assert blank.ownership is None
 
 
+def test_join_flag_specs_cover_the_accepted_flags() -> None:
+    """`join --help` の一覧は受け付ける flag と同じ 1 点から出る。
+
+    usage(sessionhost/usage.py)は JOIN_FLAG_SPECS から組むので、表が受付
+    (FLAG_KEYS + FLAG_CONFIG)と乖離すると help が嘘を言う — 受け手が最初に撃つ
+    面なので、集合の一致を針で押さえる。
+    """
+    accepted = set(join.FLAG_KEYS) | {join.FLAG_CONFIG}
+    listed = [flag for flag, _placeholder, _help in join.JOIN_FLAG_SPECS]
+    assert len(listed) == len(set(listed)), "表に同じ flag が 2 度載っている"
+    assert set(listed) == accepted
+    for flag, placeholder, help_text in join.JOIN_FLAG_SPECS:
+        assert flag.startswith("--"), flag
+        # join の flag は全部値を取る(宣言 file の鍵と対になる)。
+        assert placeholder, f"{flag} に値の見出しが無い"
+        assert help_text, f"{flag} の説明が空"
+
+
 def test_join_config_path_is_read_from_the_flag() -> None:
     from doeff_agents.sessionhost.acp import join
     from doeff_agents.sessionhost.acp.effects import JoinArgv

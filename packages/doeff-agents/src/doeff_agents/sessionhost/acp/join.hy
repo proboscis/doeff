@@ -152,6 +152,63 @@
                  FLAG-SERVICE-ACCOUNT-TOKEN-FILE #(TABLE-CUSTODY KEY-SERVICE-ACCOUNT-TOKEN-FILE)
                  FLAG-RECORD #(TABLE-RECORD KEY-RECORD-URL)})
 
+;; join の flag の一覧 = `doeff-sessionhost join --help` の usage の生成元(並びがそのまま
+;; help の並び)。#(flag 値の見出し 説明)— 綴りは上の FLAG-* の 1 点を読み、手で写した
+;; 一覧をどこにも作らない。表と受け付ける flag(FLAG-KEYS + FLAG-CONFIG)の集合が一致する
+;; ことは deftest test-join-flag-specs-cover-the-accepted-flags が守る。
+(setv JOIN-FLAG-SPECS
+  [#(FLAG-CONFIG "<path>"
+     (+ "Declaration file (TOML, schema " JOIN-SCHEMA "). A flag overrides the "
+        "file, the file overrides the defaults. Keys carry the flag's name "
+        "without the leading dashes, under [agentd] / [custody] / [record]."))
+   #(FLAG-SERVER "<URL>"
+     (+ "Control-plane engine this node joins. Required (flag or ["
+        TABLE-AGENTD "]." KEY-SERVER ")."))
+   #(FLAG-TOKEN-FILE "<path>"
+     (+ "File holding this node's cluster token. Required (flag or ["
+        TABLE-AGENTD "]." KEY-TOKEN-FILE ")."))
+   #(FLAG-CAPACITY "<n>"
+     "How many concurrent turns this node accepts. Required, a non-negative integer.")
+   #(FLAG-PLACE (+ "<" (.join "|" (sorted AGENTD-PLACES)) ">")
+     (+ "Where this machine sits. Required — company credentials never leave a "
+        "company machine, so an unnamed node is not a dispatch candidate."))
+   #(FLAG-RECORD "<URL>"
+     (+ "Conversation-record service that stores turn bodies. Required — a node "
+        "without a sink would leave headline-only turns in the control plane."))
+   #(FLAG-NODE-NAME "<name>"
+     "Name this node registers under. Defaults to the machine's host name.")
+   #(FLAG-STATE-DIR "<path>"
+     (+ "State directory holding " JOIN-DB-FILE ", " JOIN-SOCKET-FILE ", "
+        JOIN-HEADLESS-DIR "/ and " JOIN-RECORD-SPOOL-DIR "/. Default: "
+        "$XDG_STATE_HOME/" JOIN-STATE-DIR-DEFAULT "."))
+   #(FLAG-BACKEND (+ "<" (.join "|" (sorted HOST-BACKENDS)) ">")
+     (+ "Substrate the host carries sessions on. Default: " BACKEND-HEADLESS "."))
+   #(FLAG-SESSION-HOOKS "<disabled|inherit>"
+     (+ "Whether agent sessions inherit the config directory owner's hooks. "
+        "Default: " JOIN-SESSION-HOOKS-DEFAULT "."))
+   #(FLAG-OWNERSHIP (+ "<" (.join "|" (sorted OWNERSHIP-GRADES)) ">")
+     (+ "Declared ownership grade of this machine. Optional, but it must come "
+        "with " FLAG-OWNERSHIP-PROOF " and the proof is checked before joining."))
+   #(FLAG-OWNERSHIP-PROOF
+     (+ "<" OWNERSHIP-PROOF-GCE-PREFIX "<project-id>|" OWNERSHIP-PROOF-DECLARED ">")
+     (+ "How the ownership grade is verified: the GCE metadata project must match, "
+        "or " OWNERSHIP-PROOF-DECLARED " for a declaration this host does not verify."))
+   #(FLAG-WORK-ROOTS "<root,...>"
+     (+ "Work roots this node offers, up to " (str WORK-ROOTS-MAX) ", separated by "
+        "`" WORK-ROOTS-SEPARATOR "`. Each root starts with `/` or `~/` and ends "
+        "with `/`. Dispatch filters absolute work directories through them."))
+   #(FLAG-ALLOW-METERED-BILLING "<true|false>"
+     (+ "Whether this host admits metered binding kinds. Default: false. Unlike "
+        "the host's own flag this one takes a value, because a declaration file "
+        "carries strings."))
+   #(FLAG-CUSTODY "<URL>"
+     "Credential custody service that lends agent homes. Optional.")
+   #(FLAG-BORROWER-KEY-FILE "<path>"
+     "File holding this node's borrower key for the custody service.")
+   #(FLAG-SERVICE-ACCOUNT-TOKEN-FILE "<path>"
+     (+ "File holding the pod's ServiceAccount token, presented to the custody "
+        "service as a bearer token."))])
+
 
 ;; ---------------------------------------------------------------------------
 ;; argv と宣言 file の読み(純関数)
