@@ -43,6 +43,7 @@
   HOST-BACKEND-FLAG
   HOST-BACKENDS
   HOST-DB-FLAG
+  HOST-ALLOW-METERED-BILLING-FLAG
   HOST-MAX-RUNNING-FLAG
   HOST-MAX-RUNNING-UNLIMITED
   HOST-SERVE-COMMAND
@@ -98,6 +99,10 @@
 (setv KEY-PLACE "place")
 ;; node が持つ作業場の根(段 10 lane 10y 案 C・任意)。node の spec.workRoots に名乗る。
 (setv KEY-WORK-ROOTS "work_roots")
+;; 従量課金の binding kind を受けるか(従量課金の便 lane A・任意・既定 false)。
+;; 閉語彙 "true" | "false" の文字列 — 宣言 file の値は全部文字列(declared-values-of の
+;; 1 つの不変条件)なので、bool を 1 つだけ足して読み手に 2 つ目の型の分岐を作らない。
+(setv KEY-ALLOW-METERED-BILLING "allow_metered_billing")
 ;; `[custody]` の鍵。
 (setv KEY-CUSTODY-URL "url")
 (setv KEY-BORROWER-KEY-FILE "borrower_key_file")
@@ -107,7 +112,8 @@
 (setv KEY-RECORD-URL "url")
 ;; 表 → 許す鍵(宣言に無い鍵は誤りとして名指す — 黙って読み飛ばさない)。
 (setv AGENTD-KEYS #{KEY-SERVER KEY-TOKEN-FILE KEY-NODE-NAME KEY-STATE-DIR KEY-BACKEND
-                    KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY KEY-PLACE KEY-WORK-ROOTS})
+                    KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY KEY-PLACE KEY-WORK-ROOTS
+                    KEY-ALLOW-METERED-BILLING})
 (setv CUSTODY-KEYS #{KEY-CUSTODY-URL KEY-BORROWER-KEY-FILE KEY-SERVICE-ACCOUNT-TOKEN-FILE})
 (setv RECORD-KEYS #{KEY-RECORD-URL})
 ;; flag の綴り(`--config` は composition root が先に読む — config-path-of)。
@@ -123,6 +129,7 @@
 (setv FLAG-CAPACITY "--capacity")
 (setv FLAG-PLACE "--place")
 (setv FLAG-WORK-ROOTS "--work-roots")
+(setv FLAG-ALLOW-METERED-BILLING "--allow-metered-billing")
 (setv FLAG-CUSTODY "--custody")
 (setv FLAG-BORROWER-KEY-FILE "--borrower-key-file")
 (setv FLAG-SERVICE-ACCOUNT-TOKEN-FILE "--service-account-token-file")
@@ -139,6 +146,7 @@
                  FLAG-CAPACITY #(TABLE-AGENTD KEY-CAPACITY)
                  FLAG-PLACE #(TABLE-AGENTD KEY-PLACE)
                  FLAG-WORK-ROOTS #(TABLE-AGENTD KEY-WORK-ROOTS)
+                 FLAG-ALLOW-METERED-BILLING #(TABLE-AGENTD KEY-ALLOW-METERED-BILLING)
                  FLAG-CUSTODY #(TABLE-CUSTODY KEY-CUSTODY-URL)
                  FLAG-BORROWER-KEY-FILE #(TABLE-CUSTODY KEY-BORROWER-KEY-FILE)
                  FLAG-SERVICE-ACCOUNT-TOKEN-FILE #(TABLE-CUSTODY KEY-SERVICE-ACCOUNT-TOKEN-FILE)
@@ -317,6 +325,24 @@
   word)
 
 
+(defk allow-metered-billing-of [text]
+  {:pre [(: text (| str None))]
+   :post [(: % bool)]}
+  "従量課金の binding kind を受けるかの読み(従量課金の便 lane A): 宣言 file の
+   [agentd].allow_metered_billing / flag --allow-metered-billing の文字列 → bool。
+   無い・空 = False(受けない — 既定は fail-closed)。閉語彙 \"true\" | \"false\" の外は
+   ValueError(参加しない)。綴り違いを黙って False にしない — 黙った False は「許したはず
+   なのに全部断られる」を無音で作り、黙った True は課金を無音で開ける
+   (session-hooks-mode と同じ流儀: 語彙の外は fail-loud)。"
+  (setv word (if (is text None) "" (.strip text)))
+  (when (not word)
+    (return False))
+  (when (not-in word #{"true" "false"})
+    (raise (ValueError (+ f"[{TABLE-AGENTD}].{KEY-ALLOW-METERED-BILLING} は true か false "
+                          f"のどちらか(flag {FLAG-ALLOW-METERED-BILLING}): {word !r}"))))
+  (= word "true"))
+
+
 (defk join-spec-of [argv declaration state-home]
   {:pre [(: argv JoinArgv) (: declaration JoinDeclaration) (: state-home str)]
    :post [(: % JoinSpec)]}
@@ -347,6 +373,8 @@
   (<- place str (place-of (.get agentd KEY-PLACE)))
   ;; node が持つ作業場の根(段 10 lane 10y 案 C・任意)。
   (<- declared-roots (| WorkRoots None) (work-roots-of (.get agentd KEY-WORK-ROOTS)))
+  ;; 従量課金の binding kind を受けるか(従量課金の便 lane A・任意・既定 false)。
+  (<- allow-metered bool (allow-metered-billing-of (.get agentd KEY-ALLOW-METERED-BILLING)))
   (JoinSpec
     :server server
     :token-file token-file
@@ -366,6 +394,8 @@
     :capacity capacity
     :place place
     ;; 空文字は「名乗らない」= env に現れない(参加の門 record-sink-of が読みの 1 点で断る — 段 9f lane 9f-6)。
+    ;; 従量課金の binding kind を受けるか(従量課金の便 lane A)— 真のときだけ host の argv に旗が立つ。
+    :allow-metered-billing allow-metered
     :record-url (or (.get record KEY-RECORD-URL) None)))
 
 
@@ -427,12 +457,17 @@
   (when (is-not spec.record-url None)
     (.extend env [#(RECORD-URL-ENV spec.record-url)
                   #(RECORD-SPOOL-DIR-ENV (+ spec.state-dir "/" JOIN-RECORD-SPOOL-DIR))]))
+  ;; 課金の階級の方針は host の argv だけが運ぶ(env の束に同名の名を足さない —
+  ;; 方針の定義点は 1 つ = この旗)。false のときは旗を立てない(今日どおりの起動の形ちょうど)。
+  (setv metered-argv
+        (if spec.allow-metered-billing #(HOST-ALLOW-METERED-BILLING-FLAG) #()))
   (JoinPlan
-    :host-argv #(HOST-DB-FLAG (+ spec.state-dir "/" JOIN-DB-FILE)
-                 HOST-SOCKET-FLAG (+ spec.state-dir "/" JOIN-SOCKET-FILE)
-                 HOST-MAX-RUNNING-FLAG HOST-MAX-RUNNING-UNLIMITED
-                 HOST-BACKEND-FLAG spec.backend
-                 HOST-SERVE-COMMAND)
+    :host-argv (+ #(HOST-DB-FLAG (+ spec.state-dir "/" JOIN-DB-FILE)
+                    HOST-SOCKET-FLAG (+ spec.state-dir "/" JOIN-SOCKET-FILE)
+                    HOST-MAX-RUNNING-FLAG HOST-MAX-RUNNING-UNLIMITED
+                    HOST-BACKEND-FLAG spec.backend)
+                 metered-argv
+                 #(HOST-SERVE-COMMAND))
     :env (tuple env)))
 
 

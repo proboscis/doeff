@@ -68,8 +68,10 @@
 (import dataclasses [replace])
 
 (import doeff_agents.sessionhost.policy [
+  BILLING-METERED
   BINDING-OWNED-ENV-KEYS
   binding-admission-error
+  binding-billing-class
   counts-toward-launch-capacity
   format-evidence-frames
   iso-format
@@ -639,6 +641,23 @@
   (setv binding-error (binding-admission-error binding agent-type))
   (when (is-not binding-error None)
     (raise (RuntimeError f"session.launch: invalid binding — {binding-error}")))
+  ;; 課金の階級の関所(2026-09・ADR-DOE-AGENTS-004 R9 改訂 / law
+  ;; metered-billing-is-declared-by-kind-and-allowed-by-host-policy): 従量課金は
+  ;; binding の kind で宣言し、host の起動時の旗で許す。旗の無い配備(既定)では
+  ;; metered の kind は 1 件も起動しない — 全副作用より前に断り、行も作らない。
+  ;; 旗は host の argv だけが運ぶ(env の 1 語では許されない — R10(d) と同じ理由)。
+  ;; resume / fork も同じ 1 点を通る(resume-session は launch-session を再利用する)
+  ;; ので、旗の無い host は従量課金の会話の再開も断る(fail-closed の対称)。
+  (when (and (= (binding-billing-class binding) BILLING-METERED)
+             (not (.get params "allow_metered_billing" False)))
+    (raise (RuntimeError
+             (+ f"session.launch: binding kind '{(.get binding "kind")}' declares "
+                "metered billing, but this host does not allow it (default: off). "
+                "Either start the host with --allow-metered-billing (this permits "
+                "provider charges), or declare a subscription binding kind "
+                "(claude-code / codex). Metered billing is declared by the binding "
+                "kind and permitted by host policy — never by an env var "
+                "(ADR-DOE-AGENTS-004 R9)."))))
   ;; 従量課金 credential は binding 所有キーと違い「正しい家」が無い — どの
   ;; 経路でも受けない(operator 裁定 2026-08-26。resume も本関所を通る)。
   ;; 判定は policy の 1 点(session.send の手番ごとの env も同じ関所を通る)。
@@ -1159,18 +1178,57 @@
   ;; auth binding の再構成(行の effective_identity が auth の家)— 呼び手
   ;; 指定の binding が優先(ADR-006 改訂 R4)。
   (setv identity (or source.effective-identity {}))
+  ;; 課金の階級の印(2026-09): metered で起こした行の identity には
+  ;; "billing" = "metered" が在る(env には出ない — launch-spawn-env は binding
+  ;; 所有キーだけを拾う)。再構成はこの印で kind を選ぶ。codex の metered は
+  ;; 受理形が二軸({auth_file, profile_dir})なので、行に additive で残した
+  ;; "codex_auth_file" / "codex_profile_dir"(env 名ではない綴り = 所有キーの
+  ;; 語彙に混ざらない)から組み直す。
+  (setv source-billing (.get identity "billing"))
   (setv binding
         (cond
           (is-not requested-binding None) requested-binding
           (and (= source.agent-type "claude")
                (is-not (.get identity "CLAUDE_CONFIG_DIR") None))
-            {"kind" "claude-code"
+            {"kind" (if (= source-billing BILLING-METERED)
+                        "claude-code-metered"
+                        "claude-code")
              "config_dir" (get identity "CLAUDE_CONFIG_DIR")}
+          (and (= source.agent-type "codex")
+               (= source-billing BILLING-METERED)
+               (is-not (.get identity "codex_auth_file") None)
+               (is-not (.get identity "codex_profile_dir") None))
+            {"kind" "codex-metered"
+             "auth_file" (get identity "codex_auth_file")
+             "profile_dir" (get identity "codex_profile_dir")}
           (and (= source.agent-type "codex")
                (is-not (.get identity "CODEX_HOME") None))
             {"kind" "codex"
              "codex_home" (get identity "CODEX_HOME")}
           True None))
+  ;; 従量課金の行を定額の kind へ**黙って**降格させない: 行から組み直せない(印は
+  ;; metered なのに家の宣言が行に無い)ときは typed reject。黙った降格を許すと、課金の
+  ;; 階級が再開の拍で変わる — law
+  ;; metered-billing-is-declared-by-kind-and-allowed-by-host-policy が禁じる形そのもの
+  ;; (旗の無い host も、降格すれば admission を素通りしてしまう)。
+  ;; ⚠ 断るのは **再構成で導けない時だけ**(requested-binding が無い時)。呼び手が
+  ;; binding を明示した階級の変更は黙っていない — 階級は kind が運ぶ(法の statement
+  ;; どおり)ので、明示の cross-binding な resume / fork(ADR-006 R4「呼び手指定の
+  ;; binding が優先」)は通す。明示した定額の家に従量課金の宣言が在れば、それは
+  ;; per-kind impl の締め直し(ADR-DOE-AGENTS-003 R4)が別に断る。
+  (when (and (= source-billing BILLING-METERED)
+             (is requested-binding None)
+             (or (is binding None)
+                 (!= (binding-billing-class binding) BILLING-METERED)))
+    (raise (RuntimeError
+             (+ f"session.{mode}: the source incarnation was launched with metered "
+                "billing, but its binding cannot be reconstructed as a metered kind "
+                "from the row's effective_identity — refusing to silently fall back "
+                "to a subscription binding kind (the billing class would change "
+                "under the caller). Pass an explicit `binding`: a *-metered kind to "
+                "stay metered, or a subscription kind to switch — either way the "
+                "billing class is declared, not silently changed "
+                "(ADR-DOE-AGENTS-004 R9)."))))
 
   ;; transcript の解決可能性検査 + cross-binding transplant 前処理(ADR-006
   ;; R7/R10)。発火判定(同一 home は敷設 no-op・実在検査のみ)と transcript
@@ -1245,6 +1303,9 @@
          "expected_result" effective-expected
          "socket_path" (.get params "socket_path" "")
          "max_running" (.get params "max_running")
+         ;; host の方針(起動時の旗)は resume にも運ぶ — 運ばないと、旗のある host でも
+         ;; 従量課金の会話の再開が admit-launch で断られる(admission は 1 点)。
+         "allow_metered_billing" (.get params "allow_metered_billing" False)
          "repl_idle_max_wait_seconds" (.get params "repl_idle_max_wait_seconds")
          "backend_kind" (.get params "backend_kind" "tmux")
          ;; headless の実況の正本の置き場(host の config が program-params に運ぶ — 段 10 lane 10h・

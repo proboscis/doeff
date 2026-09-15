@@ -276,7 +276,8 @@
 (setv BINDING-OWNED-ENV-KEYS #{"CODEX_HOME" "CLAUDE_CONFIG_DIR"})
 
 ;; wire binding kind → agent_type(ACP bindingAgentType と同写像)。
-(setv BINDING-KIND-AGENT-TYPE {"codex" "codex" "claude-code" "claude"})
+(setv BINDING-KIND-AGENT-TYPE {"codex" "codex" "claude-code" "claude"
+                               "codex-metered" "codex" "claude-code-metered" "claude"})
 
 ;; kind ごとの受理形(shape = kind 以外の field 名集合。宣言順に列挙)。
 ;; codex v2(#15)は「受理形の拡張」: {codex_home}(native home — daemon
@@ -285,7 +286,13 @@
 ;; view を合成)。混在・部分・未知 field はどの shape にも一致せず reject。
 (setv BINDING-KIND-SHAPES
       {"codex" [#{"codex_home"} #{"auth_file" "profile_dir"}]
-       "claude-code" [#{"config_dir"}]})
+       "claude-code" [#{"config_dir"}]
+       ;; 従量課金の kind(2026-09)は既存 kind の形を 1 文字も変えず、受理形だけを
+       ;; 写す — claude は {config_dir}、codex は制御面の二軸宣言だけ
+       ;; ({codex_home} は取らない: native home の escape hatch は定額の住人で、
+       ;; 課金の階級を機体の env から拾える形にしない)。
+       "claude-code-metered" [#{"config_dir"}]
+       "codex-metered" [#{"auth_file" "profile_dir"}]})
 
 ;; per-kind の契約版。ACP 側の kind→期待版表(Definition.hs)と同写像 —
 ;; 二枚の表の drift は ACP の verifyBindingKindsOnce(kinds.list 照合)が
@@ -293,7 +300,12 @@
 ;; claude-code は v1 のまま。
 (setv BINDING-KIND-API-VERSION
       {"codex" "acp.dev/agent-binding/v2"
-       "claude-code" "acp.dev/agent-binding/v1"})
+       "claude-code" "acp.dev/agent-binding/v1"
+       ;; 新 kind は新語彙なので初版 v1(既存 kind の版は据え置き — 受理形が
+       ;; 変わっていない kind の版を進めると ACP の verifyBindingKindsOnce が
+       ;; 偽の BindingKindUnsupported を報じる)。
+       "claude-code-metered" "acp.dev/agent-binding/v1"
+       "codex-metered" "acp.dev/agent-binding/v1"})
 
 (deff binding-kind-shape-label [kind]
   {:pre [(: kind str)]
@@ -312,8 +324,10 @@
 ;; (BINDING-KIND-API-VERSION)は binding 受理形の契約版なので据え置き —
 ;; capability は別軸の additive field(受理形が変わらないのに版を進めると
 ;; ACP の verifyBindingKindsOnce が偽の BindingKindUnsupported を報じる)。
-(setv BINDING-KIND-RESUMABLE {"codex" True "claude-code" True})
-(setv BINDING-KIND-FORKABLE {"codex" True "claude-code" True})
+(setv BINDING-KIND-RESUMABLE {"codex" True "claude-code" True
+                              "codex-metered" True "claude-code-metered" True})
+(setv BINDING-KIND-FORKABLE {"codex" True "claude-code" True
+                             "codex-metered" True "claude-code-metered" True})
 
 (deff binding-kind-advertisement []
   {:pre []
@@ -399,6 +413,10 @@
 ;; (`*_API_KEY`)+ 少数の既知別名 — 新 provider の SOMETHING_API_KEY も
 ;; 語彙改訂なしで弾く(過剰包摂側へ倒す fail-closed: 課金でない `FOO_API_KEY`
 ;; が誤って弾かれたら loud に見えて直せるが、逆は黙って課金される)。
+;; ⚠ 2026-09 の追補(下の BINDING-KIND-BILLING): 2026-08-26 の裁定が縛るのは
+;; 「旗を立てていない host」ちょうどで、この env の締め出しは **旗の有無に関わらず
+;; 不変** — 従量課金は kind(型)で宣言し host の旗(起動時の方針)で許す経路だけを
+;; 通り、env の 1 語では決して許されない。
 (setv METERED-CREDENTIAL-ENV-ALIASES
       #{"ANTHROPIC_AUTH_TOKEN" "OPENAI_KEY" "GOOGLE_GENAI_KEY"})
 
@@ -411,6 +429,123 @@
                         (or (.endswith normalized "_API_KEY")
                             (in normalized METERED-CREDENTIAL-ENV-ALIASES)))
                 key)))
+
+;; ---------------------------------------------------------------------------
+;; billing class(2026-09: 従量課金の資格を「宣言して」受ける経路 —
+;; ADR-DOE-AGENTS-004 R9 改訂 / law
+;; metered-billing-is-declared-by-kind-and-allowed-by-host-policy)
+;; ---------------------------------------------------------------------------
+;;
+;; 原則: 鍵は CLI 自身の家に CLI 自身の道具で入れる(claude = settings.json の
+;; apiKeyHelper か Vertex の env・codex = `codex login --with-api-key` が書く
+;; auth.json)。host は鍵の値を読まず、(1) 課金の階級を binding の kind で型として
+;; 受け、(2) host の起動時の旗で許し、(3) 家の中身が宣言と一致するかを per-kind
+;; impl が起動前に検める。値の定義点はこの表 1 つ — 旗の綴りは acp/effects.py、
+;; 旗の読みは host.hy、拒否は launch.hy の admission(どれも判定を写さない)。
+(setv BILLING-SUBSCRIPTION "subscription")
+(setv BILLING-METERED "metered")
+
+(setv BINDING-KIND-BILLING
+      {"codex" BILLING-SUBSCRIPTION
+       "claude-code" BILLING-SUBSCRIPTION
+       "claude-code-metered" BILLING-METERED
+       "codex-metered" BILLING-METERED})
+
+(deff binding-billing-class [binding]
+  {:pre [(: binding (| dict None))]
+   :post [(: % (| str None))]}
+  "binding → 課金の階級(\"subscription\" | \"metered\")。binding 無し・object でない・
+   未知 kind は None(= 階級を名乗っていない。admission が kind 自体を先に断る)。
+   判定の 1 点 — host も impl も resume もこの関数だけを読む。"
+  (when (not (isinstance binding dict))
+    (return None))
+  (.get BINDING-KIND-BILLING (.get binding "kind")))
+
+;; 家の中の「従量課金の宣言」の綴り。metered kind の要求(受けられる宣言)と
+;; subscription kind の締め出し(在ってはならない宣言)が同じ表を読む。
+;; ⚠ 判定は「欄が在り、かつ中身が非空の文字列」— 欄の有無では判じない。
+;; codex の CLI は定額(ChatGPT)の login でも auth.json に OPENAI_API_KEY を
+;; null で書き出す(実測 2026-09-15: 運用主の家 3 つとも欄は在る・中身は空)ので、
+;; 欄の有無で判じると定額の家を全部「従量課金」と誤る。値は真偽の判定にだけ使い、
+;; 返り値には宣言の**名**しか載らない(値は変数にも log にも行にも残らない)。
+(setv CLAUDE-SETTINGS-API-KEY-HELPER "apiKeyHelper")
+(setv CLAUDE-SETTINGS-VERTEX-ENV "CLAUDE_CODE_USE_VERTEX")
+(setv CLAUDE-SETTINGS-VERTEX-PROJECT-ENV "ANTHROPIC_VERTEX_PROJECT_ID")
+;; settings.json の env block に居たら「この家は従量課金」の宣言になる名
+;; (Claude Code の認証の優先順位で apiKeyHelper より上に立つ 2 つ)。
+(setv CLAUDE-SETTINGS-METERED-ENV-KEYS #("ANTHROPIC_API_KEY" "ANTHROPIC_AUTH_TOKEN"))
+(setv CODEX-AUTH-API-KEY-FIELD "OPENAI_API_KEY")
+
+;; 家の中身の読みの顛末(閉語彙)。absent = 本文なし(file 不在)/
+;; malformed = JSON でない・object でない / read = 読めた。
+(setv HOME-READING-ABSENT "absent")
+(setv HOME-READING-MALFORMED "malformed")
+(setv HOME-READING-READ "read")
+
+(deff declared-nonempty? [obj key]
+  {:pre [(: obj (| dict None)) (: key str)]
+   :post [(: % bool)]}
+  "obj[key] が非空の文字列か(値は真偽の判定にだけ使い、返さない)。"
+  (when (not (isinstance obj dict))
+    (return False))
+  (setv value (.get obj key))
+  (and (isinstance value str) (bool (.strip value))))
+
+(deff claude-home-metered-reading [settings-text]
+  {:pre [(: settings-text (| str None))]
+   :post [(: % tuple)]}
+  "claude の家の settings.json の本文 → #(status declarations usable)(純粋の 1 点)。
+     status       = HOME-READING-{ABSENT,MALFORMED,READ}
+     declarations = 在る従量課金の宣言の名の列(昇順)— subscription kind の締め出しが読む広い方
+     usable       = metered kind が受けられる宣言の名(None = 無い)— 公式文書の 2 形だけ
+                    (apiKeyHelper / Vertex の env の対)。
+   鍵の値はここから外へ出ない(返るのは名だけ)。"
+  (when (is settings-text None)
+    (return #(HOME-READING-ABSENT [] None)))
+  (try
+    (setv settings (json.loads settings-text))
+    ;; json.JSONDecodeError / UnicodeDecodeError はどちらも ValueError の子。
+    (except [ValueError]
+      (return #(HOME-READING-MALFORMED [] None))))
+  (when (not (isinstance settings dict))
+    (return #(HOME-READING-MALFORMED [] None)))
+  (setv env-block (.get settings "env"))
+  (setv env (if (isinstance env-block dict) env-block {}))
+  (setv declarations [])
+  (setv usable None)
+  (when (declared-nonempty? settings CLAUDE-SETTINGS-API-KEY-HELPER)
+    (.append declarations CLAUDE-SETTINGS-API-KEY-HELPER)
+    (setv usable CLAUDE-SETTINGS-API-KEY-HELPER))
+  ;; Vertex 経由(鍵は無く課金は GCP)。宣言としては env の 1 語で立つが、
+  ;; metered kind が受けるのは project も揃った対だけ(片方だけの家は claude 自身が
+  ;; 落ちる — 起動前に「何が足りないか」を言う方が直せる)。
+  (when (declared-nonempty? env CLAUDE-SETTINGS-VERTEX-ENV)
+    (.append declarations f"env.{CLAUDE-SETTINGS-VERTEX-ENV}")
+    (when (and (= (.strip (get env CLAUDE-SETTINGS-VERTEX-ENV)) "1")
+               (declared-nonempty? env CLAUDE-SETTINGS-VERTEX-PROJECT-ENV)
+               (is usable None))
+      (setv usable f"env.{CLAUDE-SETTINGS-VERTEX-ENV}+env.{CLAUDE-SETTINGS-VERTEX-PROJECT-ENV}")))
+  (for [key CLAUDE-SETTINGS-METERED-ENV-KEYS]
+    (when (declared-nonempty? env key)
+      (.append declarations f"env.{key}")))
+  #(HOME-READING-READ (sorted declarations) usable))
+
+(deff codex-home-metered-reading [auth-text]
+  {:pre [(: auth-text (| str None))]
+   :post [(: % tuple)]}
+  "codex の家の auth.json の本文 → #(status declared)(純粋の 1 点)。
+   declared = 非空の OPENAI_API_KEY が在るか(bool)。欄の有無では判じない
+   (上の註 — 定額の login でも欄は null で書かれる)。鍵の値は返らない。"
+  (when (is auth-text None)
+    (return #(HOME-READING-ABSENT False)))
+  (try
+    (setv auth (json.loads auth-text))
+    (except [ValueError]
+      (return #(HOME-READING-MALFORMED False))))
+  (when (not (isinstance auth dict))
+    (return #(HOME-READING-MALFORMED False)))
+  #(HOME-READING-READ (declared-nonempty? auth CODEX-AUTH-API-KEY-FIELD)))
+
 
 (deff session-env-admission-error [session-env verb]
   {:pre [(: session-env dict) (: verb str)]
