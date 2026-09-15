@@ -36,9 +36,32 @@ Launching a real agent additionally needs an authenticated CLI on the machine.
 The credential state is Claude Code's or Codex's own, and it reaches the host as
 a *binding* built by the control plane; the host advertises the binding kinds it
 accepts (`agentd kinds`) and a declaration naming an unknown kind or version is
-refused. This package never accepts LLM provider API keys at the agent boundary
-— see `AGENTS.md` (Agent Authentication Boundary) in the repository root.
-Changing that refusal is a design question, tracked by the consuming
+refused. This package never accepts LLM provider API keys **via the env
+boundary** — not through `session_env`, `ClaudeRuntimePolicy.bootstrap_exports`,
+wrappers or shell exports — see `AGENTS.md` (Agent Authentication Boundary) in
+the repository root. That refusal is unconditional; the metered kinds below do
+not relax it, they are a different route.
+
+Pay-per-use (metered) billing is **declared by the binding kind and permitted by
+host policy**. The kinds `claude-code-metered` (`{config_dir}`) and
+`codex-metered` (`{auth_file, profile_dir}`) say "this home bills per use", and
+only a host started with `--allow-metered-billing` (off by default; no
+environment variable turns it on) admits them. The credential stays in the CLI's
+own home, written by the CLI's own tool — for Claude, a non-empty `apiKeyHelper`
+or the `CLAUDE_CODE_USE_VERTEX=1` + `ANTHROPIC_VERTEX_PROJECT_ID` pair in
+`settings.json`. (An `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` entry in
+`settings.json`'s `env` block counts as a metered declaration but is *not*
+accepted — put the key behind `apiKeyHelper` instead.) For Codex it is a
+non-empty `OPENAI_API_KEY` in `auth.json`, written by `codex login
+--with-api-key` (a `null` `OPENAI_API_KEY`, which `codex login` writes for
+ChatGPT accounts, does not count). Before launch the host only checks that the
+home *declares* one and records the home path(s) with a `"billing": "metered"`
+marker: the value never passes through the host (ADR-DOE-AGENTS-004 R9, law
+`metered-billing-is-declared-by-kind-and-allowed-by-host-policy`). Conversely,
+the subscription kinds (`claude-code` / `codex`) refuse a home that declares a
+metered credential: the billing class must be visible in the binding kind.
+
+Changing the env-boundary refusal is a design question, tracked by the consuming
 project's handover notes — not something to work around here.
 
 ## Using this from an agent control plane
