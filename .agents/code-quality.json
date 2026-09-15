@@ -2,6 +2,7 @@
   "version": 1,
   "_comment": "共通の品質検査(dotfiles agent/code_quality.py)の module 契約。初回の登録は段 2 の agentd(sessionhost/acp/・agora-redesign #19 / #20)だけ — 既存の sessionhost(deff / defhandler を持つ Hy)は投影の対象外なので include に入れず、依存先としてだけ宣言する。 段 2 lane 2d(agora-redesign #37)で headless backend の Python の module(headless_protocol / headless_process)と検を足す — headless.hy / substrate_headless.hy / impls/headless_argv.hy は deff / defhandler を持つ Hy なので、既存の sessionhost と同じく投影の対象外(依存先としてだけ宣言)。 段 6 lane 6f(agora-redesign #26)で 1 命令の参加 join の判断(join.hy・pure)を足す — env の綴りは effects.py の 1 点へ寄せたので valve / entry も effects を読む。 段 7 lane 7d-3(agora-redesign 7d の登記済み間隙 2)で profile の残量の観測(ReadProfileUsage → status.observed)の deftest(sessionhost_acp_profile_deftests.hy)を agentd-tests に足す(収集の wrapper .py は既存の wrapper 群と同じく契約の外)。 段 8 lane 4u(agora-redesign #49)で手番の出来事の耐久化(turn-record の entries への追記)の deftest(sessionhost_acp_turn_events_deftests.hy)を同じ agentd-tests に足す。 段 8q(agora-redesign #51)で会話の引き継ぎ(履歴からの再開・家と機体の cache の扱い)の deftest(sessionhost_acp_rehydrate_deftests.hy)を同じ agentd-tests に足す。 段 8 lane 4aa(agora-redesign #63)で実況の push の周期の deftest(sessionhost_acp_live_poll_deftests.hy)を同じ agentd-tests に足す。 段 10f 便 2(agora-redesign #82)で自己圧縮(compactAt)の deftest(sessionhost_acp_compact_deftests.hy)を同じ agentd-tests に足す。",
   "include": [
+    "scripts/sync_contracts.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/__init__.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy",
@@ -60,6 +61,19 @@
     ]
   },
   "modules": [
+    {
+      "name": "contracts-sync",
+      "paths": [
+        "scripts/sync_contracts.py"
+      ],
+      "responsibility": "ACP の契約の写しを作る 1 つの口(段 11 lane 11e・agora-redesign #126)— pin(contracts.lock の ACP の commit 1 つ)から取り寄せて生成し(--write / --pin)、生成物との差分 0 を撃つ(--check)。正本の repo は private・この repo は公開なので、写しの中で閉じる検(--check-copies: 写しが pin の sha256 ちょうど・契約の版と互換の規則・読む欄の実在・正本の名乗り)を分けて持ち、既定 pytest(packages/doeff-agents/tests/test_sessionhost_acp.py の写しの節)はその判断の 1 点を呼ぶ。判断は純関数・正本の取り寄せと file の読み書きだけが I/O。stdlib 単独(venv・依存不要)",
+      "layer": "io",
+      "public": [
+        "scripts/sync_contracts.py"
+      ],
+      "allow": [],
+      "typed": true
+    },
     {
       "name": "agentd-effects",
       "paths": [
