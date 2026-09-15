@@ -76,6 +76,19 @@ credential state; Codex agents must use Codex's own credential state. API-key-ba
 LLM calls are allowed only through memoized `LLMStructuredQuery` /
 `StructuredLLMQuery` handlers for a single structured call, never through agents.
 
+Metered (pay-per-use) credentials are not carried by the env boundary above —
+that prohibition is unconditional. When a deployment genuinely needs metered
+billing, it is **declared by the binding kind** and **permitted by host policy**:
+binding kinds `claude-code-metered` (`{config_dir}`) and `codex-metered`
+(`{auth_file, profile_dir}`) say "this home bills per use", and only a session
+host started with `--allow-metered-billing` (off by default) admits them. The
+credential itself lives in the CLI's own home, written by the CLI's own tool
+(`settings.json`'s `apiKeyHelper` or the Vertex `env` pair for Claude;
+`codex login --with-api-key` for Codex). The host never reads the credential
+value: before launch it only checks that the home declares one, and the session
+row keeps the home path plus a `"billing": "metered"` marker — never the value.
+No env var enables metered billing (ADR-DOE-AGENTS-004 R9).
+
 ## Linting & Architectural Enforcement
 Run `make lint` to execute all linters (ruff, pyright, semgrep, doeff-linter). Individual targets: `make lint-ruff`, `make lint-pyright`, `make lint-semgrep`, `make lint-doeff`. Format code with `make format`. Install semgrep via `uv tool install semgrep`. Build doeff-linter with `cd packages/doeff-linter && cargo install --path .`. The `.semgrep.yaml` rules enforce architectural patterns (layer boundaries, effect system conventions); the Rust-based doeff-linter enforces immutability and code quality patterns. Install pre-commit hooks with `make pre-commit-install`. Enforcement assets and their ledger move in the same commit: if you add or remove a `docs/adr/defadr_*.hy` file, a `law`/`deftest`/`defsemgrep` entry inside one, or a `.semgrep.yaml` rule, update `docs/adr/enforcement-ledger.json` in that same commit (ADR-DOE-ENFORCE-001 R5). Install the authoring-time guard once per machine with `make hooks-install` — it checks the staged snapshot at `git commit` (R7).
 
