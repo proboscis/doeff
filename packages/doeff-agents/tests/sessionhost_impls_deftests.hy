@@ -431,10 +431,11 @@
     (assert (not-in "/x/claude-metered/.claude.json" w.fs))
     (assert (= w.tmux-calls [])))
 
-  ;; (4) 定額の kind の家は検めない(lane A は締め直しを含まない — 今日どおり)
+  ;; (4) 定額の kind に metered の枝が漏れない: 宣言の無い定額の家は今日どおり通り、
+  ;; 課金の階級の印も付かない(宣言が **在る** 定額の家の締め直しは lane B の
+  ;; test-claude-pre-launch-rejects-metered-declaration-in-subscription-home が持つ)。
   (setv plain (ImplWorld))
-  (setv (get plain.fs "/x/claude/settings.json")
-        (json.dumps {"apiKeyHelper" "cat /secrets/anthropic-key"}))
+  (setv (get plain.fs "/x/claude/settings.json") (json.dumps {"model" "opus"}))
   (<- plain-identity
       (run-claude plain (pre-launch-setup
                           "claude"
@@ -497,9 +498,12 @@
     (assert (= w.atomic-writes []))
     (assert (= w.tmux-calls [])))
 
-  ;; (3) 定額の kind の家は検めない(lane A は締め直しを含まない)
+  ;; (3) 定額の kind に metered の枝が漏れない: 定額の login の家(欄は在るが空)は
+  ;; 今日どおり通り、課金の階級の印も付かない(非空の欄を持つ定額の家の締め直しは
+  ;; lane B の test-codex-pre-launch-rejects-api-key-in-subscription-auth-file が持つ)。
   (setv plain (ImplWorld))
-  (setv (get plain.fs "/x/codex/auth.json") (json.dumps {"OPENAI_API_KEY" "sk-x"}))
+  (setv (get plain.fs "/x/codex/auth.json")
+        (json.dumps {"OPENAI_API_KEY" None "auth_mode" "chatgpt"}))
   (<- plain-identity
       (run-codex plain (pre-launch-setup
                          "codex"
@@ -507,6 +511,126 @@
                                                 "codex_home" "/x/codex"}))))
   (assert (= (get plain-identity "CODEX_HOME") "/x/codex"))
   (assert (not-in "billing" plain-identity)))
+
+
+(deftest test-claude-pre-launch-rejects-metered-declaration-in-subscription-home
+  ;; lane B の締め直し(従量課金の便・ADR-DOE-AGENTS-003 R4 改訂): 定額の kind の家に従量課金の
+  ;; 宣言があれば拒否する。旧形は env の名しか見ないので、家の中に鍵を入れれば黙って
+  ;; 通る道が開いていた — 課金の階級が型に現れず、監査点も消える形。
+  ;; 直し方 2 択(kind を *-metered にする / 家から宣言を外す)を文言が名指す。
+  ;; account(どの人の login か)は今も検めない(R4 の不変部分)。
+  (setv subscription {"kind" "claude-code" "config_dir" "/x/claude"})
+  (setv params (base-params :agent_type "claude" :binding subscription))
+  (for [[settings declared]
+        [#((json.dumps {"apiKeyHelper" "cat /secrets/key"}) "apiKeyHelper")
+         #((json.dumps {"env" {"CLAUDE_CODE_USE_VERTEX" "1"}})
+           "env.CLAUDE_CODE_USE_VERTEX")
+         #((json.dumps {"env" {"ANTHROPIC_API_KEY" "sk-x"}}) "env.ANTHROPIC_API_KEY")
+         #((json.dumps {"env" {"ANTHROPIC_AUTH_TOKEN" "t"}}) "env.ANTHROPIC_AUTH_TOKEN")]]
+    (setv world (ImplWorld))
+    (setv (get world.fs "/x/claude/settings.json") settings)
+    (setv raised None)
+    (try
+      (<- _ (run-claude world (pre-launch-setup "claude" params)))
+      (except [e RuntimeError] (setv raised e)))
+    (assert (is-not raised None) f"expected reject for {settings}")
+    (setv message (str raised))
+    (assert (in "is a subscription kind" message) message)
+    (assert (in declared message) message)
+    (assert (in "claude-code-metered" message) message)
+    (assert (in "remove the metered declaration" message) message)
+    ;; 断りは trust の書きより前(副作用ゼロ)
+    (assert (= world.atomic-writes []))
+    (assert (not-in "/x/claude/.claude.json" world.fs))
+    (assert (= world.tmux-calls []))
+    ;; 鍵の値そのものは文言に出ない(名だけ)
+    (assert (not-in "secrets/key" message))
+    (assert (not-in "sk-x" message)))
+
+  ;; 宣言の無い家・不在の家は今日どおり通る(段階強制を巻き戻さない)
+  (for [settings [None (json.dumps {}) (json.dumps {"model" "opus"})]]
+    (setv ok-world (ImplWorld))
+    (when (is-not settings None)
+      (setv (get ok-world.fs "/x/claude/settings.json") settings))
+    (<- identity (run-claude ok-world (pre-launch-setup "claude" params)))
+    (assert (= (get identity "CLAUDE_CONFIG_DIR") "/x/claude"))
+    (assert (not-in "billing" identity))
+    (assert (in "/x/claude/.claude.json" ok-world.fs)))
+
+  ;; 破損した settings.json は **通す**(今日と同じ — 破損は claude 自身が loud に
+  ;; 落ちる)。ただし検められなかったことを warning に 1 行残す。
+  (setv broken (ImplWorld))
+  (setv (get broken.fs "/x/claude/settings.json") "{not json")
+  (<- broken-identity (run-claude broken (pre-launch-setup "claude" params)))
+  (assert (= (get broken-identity "CLAUDE_CONFIG_DIR") "/x/claude"))
+  (assert (in "/x/claude/.claude.json" broken.fs))
+  (assert (any (gfor w (get broken-identity "warnings") (in "not a JSON object" w)))
+          (str (get broken-identity "warnings"))))
+
+
+(deftest test-codex-pre-launch-rejects-api-key-in-subscription-auth-file
+  ;; lane B の codex 面: 定額の kind の家(native 形 {codex_home} も二軸形も同じ
+  ;; 1 点の読み)に **非空の** OPENAI_API_KEY が在れば拒否する。
+  ;; ⚠ 欄が null / 空の家は通る — codex の CLI は定額(ChatGPT)の login でも欄を
+  ;; null で書き出す(実測 2026-09-15: 運用主の家 3 つとも欄は在る・中身は空)。
+  ;; 欄の有無で判じると運用主の codex の起動を 100% 断る。
+  (setv native {"kind" "codex" "codex_home" "/x/codex"})
+  (setv two-axis {"kind" "codex" "auth_file" "/auths/sub.json"
+                  "profile_dir" "/profiles/sub"})
+  (setv view "/state/doeff/agent-homes/composed-view")
+
+  ;; (1) native 形: 非空の鍵の欄 → 拒否(trust の書きより前)
+  (setv world (ImplWorld))
+  (setv (get world.fs "/x/codex/auth.json")
+        (json.dumps {"OPENAI_API_KEY" "sk-x" "auth_mode" "apikey"}))
+  (setv raised None)
+  (try
+    (<- _ (run-codex world (pre-launch-setup "codex" (base-params :binding native))))
+    (except [e RuntimeError] (setv raised e)))
+  (assert (is-not raised None))
+  (setv message (str raised))
+  (assert (in "is a subscription kind" message) message)
+  (assert (in "codex-metered" message) message)
+  (assert (in "OPENAI_API_KEY" message) message)
+  (assert (not-in "sk-x" message) message)
+  (assert (= world.atomic-writes []))
+  (assert (= world.tmux-calls []))
+
+  ;; (2) 二軸形も同じ 1 点で検まる(合成 view の auth.json を読む)
+  (setv world2 (ImplWorld))
+  (setv (get world2.env "XDG_STATE_HOME") "/state")
+  (setv (get world2.fs f"{view}/auth.json") (json.dumps {"OPENAI_API_KEY" "sk-y"}))
+  (setv raised2 None)
+  (try
+    (<- _ (run-codex world2 (pre-launch-setup "codex" (base-params :binding two-axis))))
+    (except [e RuntimeError] (setv raised2 e)))
+  (assert (is-not raised2 None))
+  (assert (in "is a subscription kind" (str raised2)))
+  (assert (= world2.atomic-writes []))
+
+  ;; (3) 定額の login の家(欄は在るが null / 空 / 欄なし)は今日どおり通る —
+  ;; 運用主の配備が止まらないことの pin
+  (for [auth [(json.dumps {"OPENAI_API_KEY" None "auth_mode" "chatgpt"
+                           "last_refresh" "2026-09-15T00:00:00Z"
+                           "tokens" {"access_token" "t"}})
+              (json.dumps {"OPENAI_API_KEY" ""})
+              (json.dumps {"OPENAI_API_KEY" "   "})
+              (json.dumps {"auth_mode" "chatgpt"})
+              None]]
+    (setv ok-world (ImplWorld))
+    (when (is-not auth None)
+      (setv (get ok-world.fs "/x/codex/auth.json") auth))
+    (<- identity (run-codex ok-world (pre-launch-setup "codex" (base-params :binding native))))
+    (assert (= (get identity "CODEX_HOME") "/x/codex"))
+    (assert (not-in "billing" identity))
+    ;; trust は従来どおり書かれる
+    (assert (in "trust_level = \"trusted\"" (get ok-world.fs "/x/codex/config.toml"))))
+
+  ;; (4) 破損した auth.json は通す(今日と同じ — 破損は codex 自身が loud に落ちる)
+  (setv broken (ImplWorld))
+  (setv (get broken.fs "/x/codex/auth.json") "{not json")
+  (<- broken-identity (run-codex broken (pre-launch-setup "codex" (base-params :binding native))))
+  (assert (= (get broken-identity "CODEX_HOME") "/x/codex")))
 
 
 ;; ---------------------------------------------------------------------------
