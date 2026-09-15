@@ -15,6 +15,9 @@
 ;;;     model だけが違えば送らず(片付いた session も --resume せず)charter.model の新しい session を履歴から再開(本文は service から)
 ;;;   * 再開の材料は名指しの順(段 9q・agora-redesign #77): service が答えた拍は ACP の turn-record の全量(見出し)を読まない・
 ;;;     家が変わる手番の claim は温かい手番と同じ拍に着地する(器の準備は claim の後)・見出しを読むのは薄い再開の拍だけ
+;;;   * 上限で落とした古い手番は黙って捨てない(段 11 lane 11v・agora-redesign #55 便 1・ADR-012 R34): 落とした区間を見出し 1 行
+;;;     (期間・kind ごとの件数・道具の名・全文の在処 — 綴りは薄い再開の turn-record の見出しと同じ)に畳んで残した手番の前に置く・
+;;;     落とさなければ見出しは無い・見出しも上限の中に数え最新の手番だけでも超えれば先頭を切って切った byte を名乗る・薄い再開でも同じ
 ;;; HTTP も subprocess も無い。
 
 (require doeff-hy.macros [deftest])
@@ -29,6 +32,7 @@
   AGORA-KINDS-NAMESPACE
   AcpRow
   AgentdSettings
+  HISTORY-MAIL-KIND
   HeadlineTurns
   HistoryFold
   MESSAGE-KIND
@@ -58,6 +62,8 @@
   mail-text-of
   mail-turn-text-of
   first-turn-carries-inputs
+  history-message-line
+  history-time-of
   message-attachments-of
   message-bodies-of
   message-body-ref-of
@@ -318,7 +324,132 @@
   (assert (<= cut-fold.size-bytes 1500) cut-fold.size-bytes)
   (assert (in "しっぽ" cut-fold.text))
   (assert (not-in "はじまり" cut-fold.text))
-  (assert (in "最新の手番の先頭を落としました" cut-fold.text)))
+  ;; R34(段 11 lane 11v): 切った byte を名乗る(欄 cut_bytes と断りの文が同じ数)。
+  (assert (> cut-fold.cut-bytes 0) cut-fold)
+  (assert (in f"最新の手番の先頭 {cut-fold.cut-bytes} byte を落としました" cut-fold.text) cut-fold.text))
+
+
+(deftest test-dropped-turns-fold-into-one-headline-with-period-counts-and-tools
+  ;; R34(段 11 lane 11v・agora-redesign #55 便 1): 上限で落とした古い手番は黙って捨てず、落とした区間を見出し 1 行(期間・
+  ;; 件数・道具の名・在処)に畳んで残した手番の前に置く。見出しは区間に 1 行(手番ごとではない)。model は呼ばない(決定的)。
+  ;; 反例 = 見出しの無い落とし(旧の footer だけ)はここで赤。
+  (setv messages (tuple (lfor n (range 8)
+                              (message-row f"m-{n}" CONVERSATION "operator" (+ f"問い {n} " (* "あ" 300)) (+ AT (* n 10000))))))
+  (setv events (tuple (+ (lfor n (range 8) (event-of (+ 1 (* n 3)) f"j-{n}#a1" 0 (+ AT (* n 10000) 100) "text" {"text" f"答え {n}"}))
+                         (lfor n (range 8) (event-of (+ 2 (* n 3)) f"j-{n}#a1" 1 (+ AT (* n 10000) 200) "tool_use"
+                                                     {"toolName" (if (< n 4) "Bash" "Read") "toolUseId" f"t{n}" "input" {"cmd" "ls"}}))
+                         (lfor n (range 8) (event-of (+ 3 (* n 3)) f"j-{n}#a1" 2 (+ AT (* n 10000) 300) "tool_result"
+                                                     {"toolUseId" f"t{n}" "output" "ok"})))))
+  (setv records (RecordedTurns :events events :complete True))
+  (setv fold (run (rehydrate-history-of CONVERSATION messages records #("m-7") 4000 {})))
+  (assert (<= fold.size-bytes 4000) fold.size-bytes)
+  (assert (>= fold.dropped-turns 1) fold)
+  (assert (= (+ fold.kept-turns fold.dropped-turns) 7) fold)
+  (assert (= fold.cut-bytes 0) fold)
+  (setv k fold.dropped-turns)
+  (assert (= fold.dropped-items (* 4 k)) fold)
+  (setv headline fold.dropped-headline)
+  (assert (isinstance headline str) fold)
+  (assert (= (.count fold.text headline) 1) "見出しは text にちょうど 1 度")
+  ;; 位置: 頭の直後・残した手番の前。
+  (assert (= (get (.split fold.text "\n\n") 1) headline) fold.text)
+  (assert (< (.index fold.text headline) (.index fold.text f"答え {k}")) "見出しは残した手番の前")
+  ;; 期間 = 落とした区間の最初の郵便 〜 最後の出来事。件数は kind ごと(初出の順・郵便も数える)。道具の名は初出の順。
+  (setv first-stamp (run (history-time-of AT)))
+  (setv last-stamp (run (history-time-of (+ AT (* (- k 1) 10000) 300))))
+  (assert (.startswith headline f"[{first-stamp}〜{last-stamp}] 古い手番 {k} 件(出来事と郵便 {(* 4 k)} 件)は上限 4000 byte を超えるため") headline)
+  (setv tools (if (<= k 4) "Bash" "Bash, Read"))
+  (assert (in f": {HISTORY-MAIL-KIND} {k}・text {k}・tool_use {k}・tool_result {k}(道具: {tools})。" headline) headline)
+  (assert (in f"GET /v1/conversations/{CONVERSATION}/events" headline) "全文の在処は見出しが名乗る")
+  ;; 落とした本文は無く、残した手番の本文は在る。旧の黙った断りは無い。手番ごとの見出しも無い(区間に 1 行)。
+  (assert (not-in "問い 0" fold.text))
+  (assert (not-in "答え 0" fold.text))
+  (assert (in "答え 6" fold.text))
+  (assert (in "答え 7" fold.text))
+  (assert (not-in "要約せずに落としました" fold.text))
+  (assert (= (.count fold.text "古い手番") 1) fold.text)
+  ;; 決定的: 同じ材料からは同じ見出し。
+  (assert (= (. (run (rehydrate-history-of CONVERSATION messages records #("m-7") 4000 {})) dropped-headline) headline)))
+
+
+(deftest test-a-fold-within-the-budget-carries-no-headline
+  ;; R34: 落とさなければ見出しは無い(欄は None・text に「古い手番」の行が無い)— 見出しは落とした区間の印であって常設の飾りではない。
+  (setv messages #((message-row "m-1" CONVERSATION "operator" "合言葉は ひまわり" AT)
+                   (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (+ AT 9000))))
+  (setv events #((event-of 1 "j-1#a1" 0 (+ AT 1000) "text" {"text" "覚えました"})))
+  (setv fold (run (rehydrate-history-of CONVERSATION messages (RecordedTurns :events events :complete True) #("m-2") 65536 {})))
+  (assert (= #(fold.kept-turns fold.dropped-turns fold.dropped-items fold.cut-bytes) #(1 0 0 0)) fold)
+  (assert (is fold.dropped-headline None) fold)
+  (assert (not-in "古い手番" fold.text))
+  (assert (not-in "上限" fold.text))
+  ;; 記録の無い会話も同じ(空の答え)。
+  (setv empty (run (rehydrate-history-of THIRD messages (RecordedTurns :events #() :complete True) #() 65536 {})))
+  (assert (= #(empty.text empty.dropped-headline empty.cut-bytes) #("" None 0)) empty))
+
+
+(deftest test-the-newest-turn-is-cut-after-the-headline-and-the-cut-bytes-are-named
+  ;; R34: 見出しも上限の中に数える。古い手番を全部落としても最新の手番 1 つ(と頭・見出し)が超えるなら、その先頭を切って末尾を
+  ;; 残し、切った byte を名乗る。見出しは残る(切っても落とした区間の印は消えない)。
+  (setv messages #((message-row "m-0" CONVERSATION "operator" "最初の問い" AT)
+                   (message-row "m-1" CONVERSATION "operator" "二つ目の問い" (+ AT 1000))
+                   (message-row "m-2" CONVERSATION "operator" (+ "はじまり" (* "い" 3000) "しっぽ") (+ AT 2000))))
+  (setv events #((event-of 1 "j-0#a1" 0 (+ AT 100) "tool_use" {"toolName" "Edit" "toolUseId" "t0" "input" {"a" 1}})
+                 (event-of 2 "j-1#a1" 0 (+ AT 1100) "text" {"text" "二つ目の答え"})))
+  (setv fold (run (rehydrate-history-of CONVERSATION messages (RecordedTurns :events events :complete True) #() 1800 {})))
+  (assert (<= fold.size-bytes 1800) fold.size-bytes)
+  (assert (= #(fold.kept-turns fold.dropped-turns fold.dropped-items) #(1 2 4)) fold)
+  (assert (> fold.cut-bytes 0) fold)
+  (assert (isinstance fold.dropped-headline str) fold)
+  (assert (= (.count fold.text fold.dropped-headline) 1))
+  (assert (in f"{HISTORY-MAIL-KIND} 2・tool_use 1・text 1(道具: Edit)" fold.dropped-headline) fold.dropped-headline)
+  (assert (in "しっぽ" fold.text))
+  (assert (not-in "はじまり" fold.text))
+  (assert (in f"最新の手番の先頭 {fold.cut-bytes} byte を落としました" fold.text) fold.text)
+  ;; 切った byte の勘定 = 最新の手番の本文の大きさ − 残った末尾の大きさ。
+  (setv newest-line (run (history-message-line (get messages 2) (+ AT 2000) {})))
+  (setv tail (get (.split fold.text "\n\n") 2))
+  (assert (= fold.cut-bytes (- (len (.encode newest-line "utf-8")) (len (.encode tail "utf-8")))) fold.cut-bytes)
+  ;; 落とした区間が無い時の切りは、在処を断りの中で名乗る(見出しが無いので)。
+  (setv alone (run (rehydrate-history-of CONVERSATION #((get messages 2)) (RecordedTurns :events #() :complete True) #() 1500 {})))
+  (assert (<= alone.size-bytes 1500) alone.size-bytes)
+  (assert (is alone.dropped-headline None) alone)
+  (assert (> alone.cut-bytes 0) alone)
+  (assert (in f"GET /v1/conversations/{CONVERSATION}/events" alone.text) alone.text))
+
+
+(deftest test-a-thin-rehydrate-folds-dropped-record-headlines-into-the-range-headline
+  ;; R34 × 薄い再開: 材料が ACP の見出し(本文なし)でも、上限で落とした区間は同じ形の見出し 1 行に畳む — 手番ごとの見出しの
+  ;; 件数を足し合わせ、道具の名は初出の順、期間は区間の最初と最後。綴りは turn-record の見出し(history-counts-note)と同じ。
+  (setv messages (tuple (lfor n (range 6) (message-row f"m-{n}" CONVERSATION "operator" (+ f"問い {n} " (* "う" 120)) (+ AT (* n 10000))))))
+  (setv records (tuple (lfor n (range 6)
+                             (record-row f"j-{n}" CONVERSATION
+                                         [{"seq" 0 "at" (+ AT (* n 10000) 100) "kind" "text" "bytes" 20 "sha256" "0"}
+                                          {"seq" 1 "at" (+ AT (* n 10000) 200) "kind" "tool_use" "toolName" (if (= (% n 2) 0) "Read" "Grep")
+                                           "toolUseId" f"t{n}" "bytes" 30 "sha256" "0"}
+                                          {"seq" 2 "at" (+ AT (* n 10000) 300) "kind" "tool_result" "toolUseId" f"t{n}" "bytes" 9 "sha256" "0"}]
+                                         (+ AT (* n 10000))))))
+  (setv source (HeadlineTurns :records records :reason "record service read failed (0: unreachable)"))
+  (setv whole (run (rehydrate-history-of CONVERSATION messages source #("m-5") 65536 {})))
+  (assert (and whole.thin (= whole.dropped-turns 0) (is whole.dropped-headline None)) whole)
+  (setv fold (run (rehydrate-history-of CONVERSATION messages source #("m-5") 1900 {})))
+  (assert fold.thin)
+  (assert (<= fold.size-bytes 1900) fold.size-bytes)
+  (assert (>= fold.dropped-turns 1) fold)
+  (assert (= fold.cut-bytes 0) fold)
+  (setv k fold.dropped-turns)
+  (assert (= fold.dropped-items (* 2 k)) fold)
+  (setv headline fold.dropped-headline)
+  (assert (isinstance headline str) fold)
+  (assert (= (.count fold.text headline) 1))
+  (setv first-stamp (run (history-time-of AT)))
+  (setv last-stamp (run (history-time-of (+ AT (* (- k 1) 10000) 300))))
+  (assert (.startswith headline f"[{first-stamp}〜{last-stamp}] 古い手番 {k} 件(出来事と郵便 {(* 2 k)} 件)") headline)
+  (setv tools (if (= k 1) "Read" "Read, Grep"))
+  (assert (in f": {HISTORY-MAIL-KIND} {k}・text {k}・tool_use {k}・tool_result {k}(道具: {tools})。" headline) headline)
+  ;; 残した手番の見出し(手番ごと)は同じ綴りで在り、落とした手番の見出しは区間に畳まれて個別には無い。
+  (assert (in "(見出しだけ・本文は記録の service): text 1・tool_use 1・tool_result 1(道具: " fold.text) fold.text)
+  (assert (not-in "手番 j-0(" fold.text) "落とした手番の見出しは区間に畳まれる")
+  (assert (in f"手番 j-{k}(" fold.text) fold.text))
 
 
 ;; ---------------------------------------------------------------------------
