@@ -41,6 +41,13 @@
   SessionView
   TURN-RECORD-KIND])
 (import doeff_agents.sessionhost.attachment [TurnAttachment attachment-of-wire])
+;; 段 10 lane 10o: 腕の語と、器の種類と、添付の欄の綴り(effects の 1 点)。
+(import doeff_agents.sessionhost.acp.effects [
+  BACKEND-HEADLESS
+  MESSAGE-ATTACHMENTS-KEY
+  NEXT-ARM-LAUNCH
+  NEXT-ARM-REHYDRATE
+  NEXT-ARM-RESUME])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeRecord FakeSessions record-body-bytes record-body-sha256])
 (import doeff_agents.sessionhost.acp.judgment [
   record-history-satisfied
@@ -49,9 +56,11 @@
   first-turn-attachments-of
   launch-charter-with-attachments
   mail-text-of
+  first-turn-carries-inputs
   message-attachments-of
   message-bodies-of
   message-body-ref-of
+  resume-params-of
   rehydrate-history-of
   session-observations-of
   transcript-candidates-of])
@@ -795,6 +804,34 @@
   ;; 反例: base64 として解けない綴りも運ばない。
   (setv broken (event-of 9 "m-r" 1 AT "attachment" {"mime" "image/png" "data" "!!!not-base64!!!"}))
   (assert (is (run (attachment-of #(broken) (get headlines 0))) None) "解けない綴りは運ばない"))
+
+
+(deftest test-every-arm-that-folds-the-mail-carries-the-attachment
+  ;; 実弾 2026-09-15 09:5x(operator の会話 c-01M1XGMDHR35FBBC04W1JXM5KJ): 画像を添付して送ったのに
+  ;; agent が画像を読まない。誤りも条件も出ず、手番は条件なしで終わっていた。根 = **腕が resume の時だけ**
+  ;; 添付が落ちていた — resume-params-of が charter の欄を**名簿で**写すのに、attachments を名簿に入れ忘れ、
+  ;; host の session.resume も launch.hy の resume も運んでいなかった(3 か所で黙って落ちる)。
+  ;; 見落としの根は**検が launch の腕しか通していなかった**こと。⇒ 郵便を畳む腕を全部ここで固定する。
+  (setv raw (base64.b64decode PNG-B64))
+  (setv carried (TurnAttachment :mime "image/png" :data PNG-B64 :bytes (len raw)
+                                :sha256 (.hexdigest (hashlib.sha256 raw)) :name "red.png"))
+  (setv charter (run (launch-charter-with-attachments
+                       {"session_id" "s-new" "prompt" "start" "model" "claude-opus-5"} #(carried))))
+  (setv wire (get charter MESSAGE-ATTACHMENTS-KEY))
+  ;; 起こす腕は 3 つ(launch / resume / rehydrate)。launch と rehydrate は charter そのものを運ぶ。
+  (for [arm [NEXT-ARM-LAUNCH NEXT-ARM-RESUME NEXT-ARM-REHYDRATE]]
+    (assert (run (first-turn-carries-inputs BACKEND-HEADLESS arm)) arm))
+  ;; resume の params は名簿で写す — 添付が名簿から漏れると、この検が赤になる。
+  (setv params (run (resume-params-of "s-old" charter)))
+  (assert (in MESSAGE-ATTACHMENTS-KEY params)
+          #("resume の params が添付を運ばない(名簿の漏れ)" (sorted (.keys params))))
+  (assert (= (get params MESSAGE-ATTACHMENTS-KEY) wire) params)
+  ;; 運ぶ形は launch と同じ項の綴り(host が同じ 1 点で型つきに戻せる)。
+  (assert (= (attachment-of-wire (get (get params MESSAGE-ATTACHMENTS-KEY) 0)) carried))
+  (json.dumps params)
+  ;; 添付の無い手番の params は 1 byte も変わらない(欄を作らない)。
+  (setv plain (run (resume-params-of "s-old" {"session_id" "s-new" "prompt" "start"})))
+  (assert (not-in MESSAGE-ATTACHMENTS-KEY plain) plain))
 
 
 (deftest test-the-first-turn-carries-the-attachment-to-the-substrate-as-a-typed-value

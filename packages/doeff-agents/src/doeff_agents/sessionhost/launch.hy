@@ -1251,6 +1251,9 @@
          ;; agora-redesign #84: 運んでいなかったので headless の session.resume は headless-launch-session の
          ;; (get params "events_root") で KeyError になり、本番の --resume が全部 rehydrate に落ちていた)。
          "events_root" (.get params "events_root")
+         ;; 段 10 lane 10o(実弾 2026-09-15 09:5x): 1 手番目に畳む郵便の添付。運ばないと
+         ;; headless-launch-session が空の並びを読み、**腕が resume の手番だけ**画像が黙って落ちる。
+         "attachments" (.get params "attachments" #())
          "resume_context" {"mode" mode
                            "conversation" conv
                            "generation" gen

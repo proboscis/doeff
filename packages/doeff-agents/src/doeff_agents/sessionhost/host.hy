@@ -1244,9 +1244,16 @@
       ;; 帰属 metadata の resume 面(one law, both faces)— 形の admission は
       ;; launch と共有。fork は banned(帰属も invocation 簿記)。
       (run (admit-launch-attribution p "session.resume")))
+    ;; 段 10 lane 10o(実弾 2026-09-15 09:5x): 起こす腕は launch だけではない — resume も 1 手番目に
+    ;; 郵便を畳むので、添付は同じ 1 点で型つきに解いて運ぶ(添付の段を持たない器は断りを名乗る)。
+    (setv resume-attachments (turn-attachments-of p method))
+    (setv resume-ignored (if (and resume-attachments (not (headless-backend? config)))
+                             ATTACHMENTS-UNSUPPORTED-REASON
+                             ""))
     (setv program-params
           {"session_id" source-sid
            "mode" mode
+           "attachments" (if resume-ignored #() resume-attachments)
            "context_file" (.get p "context_file")
            "launch_attribution" (.get p "launch_attribution")
            "prompt" (.get p "prompt")
@@ -1273,6 +1280,8 @@
     (setv new-sid row.session-id)
     (setv wire (wire-snapshot actor new-sid))
     (record-command actor new-sid method wire)
+    (when resume-ignored
+      (setv wire (dict wire #** {"attachmentsIgnored" resume-ignored})))
     (return wire))
 
   (when (= method "session.get")

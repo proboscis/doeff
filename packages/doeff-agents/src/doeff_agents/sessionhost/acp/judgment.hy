@@ -1536,12 +1536,18 @@
    :post [(: % dict)]}
   "affinity.predecessor が在る job の session.resume の params: 前の incarnation の
    session_id を名指し、新しい session_id と launch の意図(charter)を運ぶ
-   (host.hy の session.resume の受理形 — resume 専用の欄はそのまま素通し)。lifecycle は
+   (host.hy の session.resume の受理形 — resume 専用の欄はそのまま素通し)。添付(段 10 lane 10o)は
+   起こす腕が 1 手番目に畳む郵便の物で、launch と同じ項の綴りで運ぶ。lifecycle は
    運ばない — 新しい incarnation は蘇生元の行の lifecycle を継ぐ(launch.hy resume-session)。"
   (setv params {"session_id" predecessor
                 "new_session_id" (.get charter "session_id")})
+  ;; ⚠ ここは charter の欄を**名簿で**写す(素通しではない)— 足した欄は名簿にも足す。
+  ;; 実弾 2026-09-15 09:5x(operator): 段 10 lane 10o の attachments を名簿に入れ忘れたので、
+  ;; **腕が resume の手番だけ**画像が黙って落ちていた(誤りも条件も出ないまま model が画像を見ない)。
+  ;; 起こす腕は launch / resume / rehydrate の 3 つ — 検が launch しか通っていなかったのが見落としの根。
   (for [key ["prompt" "model" "effort" "mcp_servers" "session_env" "binding"
-             "expected_result" "context_file" "launch_attribution"]]
+             "expected_result" "context_file" "launch_attribution"
+             MESSAGE-ATTACHMENTS-KEY]]
     (when (in key charter)
       (setv (get params key) (get charter key))))
   params)
