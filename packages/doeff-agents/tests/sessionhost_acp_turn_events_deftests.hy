@@ -36,12 +36,14 @@
   RECORD-CREATE-PENDING
   Refused
   TURN-RECORD-ENTRIES-BYTE-BUDGET
+  MODEL-UNDECLARED
   TURN-RECORD-KIND
   TurnEntryHeadline
   Written])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeSessions])
 (import doeff_agents.sessionhost.acp.judgment [
   claude-result-error
+  provider-limit-condition-of
   claude-system-note
   deltas-of
   entries-within-budget
@@ -214,7 +216,80 @@
   (assert (= batch.frames #()))
   ;; transcript(tui)の行は system / result を読まない(従来どおり)。
   (setv quiet (run (deltas-of "claude" "transcript" text "job" 0 AT)))
+  (assert (= quiet.entries #()))
   (assert (= quiet.entries #())))
+
+
+(deftest test-a-turn-refused-by-the-providers-limit-ends-with-the-typed-condition
+  ;; 段 11 lane 11n 便 C(agora-redesign #179・依頼者の裁定 2026-09-15 案 c′): 一周の後半 —— 器が
+  ;; 限度の断りで終端(status failed・cause rate_limited: 前半は host の検
+  ;; test_host_headless_turn_refused_by_the_provider_limit_fails_the_session_with_the_cause)。
+  ;; 制御面は cause を読み、agent-job の Ended に条件 ProviderLimit{model} を刻む —— これが
+  ;; 予算の判断へ戻る道(実弾 2026-09-15 13:2x では行に 1 bit も残らなかった)。
+  (setv world (World))
+  (.tick world 0)
+  (setv sid (.sid world))
+  (setv said "You've reached your Fable limit. /model to switch models.")
+  ;; 出来事は今日どおり(kind error の見出し)+ 器の終端の cause。
+  (setv events (+ (stream-line {"type" "system" "subtype" "init" "session_id" sid "model" "claude-opus-5"})
+                  (stream-line {"type" "result" "subtype" "error_during_execution" "is_error" True
+                                "result" said})))
+  (setv (get world.local.transcripts f"/events/{sid}.events.jsonl") events)
+  (.tick world 1000)
+  (.finish world.sessions sid "failed" None {"category" "rate_limited" "reason" said})
+  (.tick world 1000)
+  (setv conditions (job-conditions world))
+  (setv limits (lfor item conditions :if (= (.get item "type") "ProviderLimit") item))
+  (assert (= (len limits) 1) conditions)
+  (setv limit (get limits 0))
+  (assert (= (get limit "status") "True") limit)
+  (assert (= (get limit "reason") "rate-limited") limit)
+  ;; model = 手番が走らせようとした model(charter.model)ちょうど。
+  (assert (= (get limit "model") "claude-opus-5") limit)
+  (assert (= (get limit "message") said) limit)
+  ;; 器の終端の条件(SessionFailed)はそのまま在る — 足すだけで置き換えない。
+  (assert (in "SessionFailed" (lfor item conditions (.get item "type"))) conditions)
+  ;; 出来事の側も今日どおり(kind error の見出し 1 行に CLI の文が残る)。
+  (assert (in "error" (lfor entry (.record-entries world) (get entry "kind"))))
+  ;; log に 1 行(どの model が断られたか)。
+  (assert (any (gfor line world.local.logs (in "refused by the provider's limit" line))) world.local.logs)
+  ;; 限度でない終端(普通の失敗)には条件が乗らない(黙って枯渇を名乗らない)。
+  (setv plain (World))
+  (.tick plain 0)
+  (setv psid (.sid plain))
+  (.tick plain 1000)
+  (.finish plain.sessions psid "failed" None None)
+  (.tick plain 1000)
+  (assert (= (lfor item (job-conditions plain) :if (= (.get item "type") "ProviderLimit") item) [])
+          (job-conditions plain)))
+
+
+(deftest test-provider-limit-condition-reads-the-containers-terminal-cause-not-the-cli-text
+  ;; 段 11 lane 11n 便 C(agora-redesign #179・依頼者の裁定 2026-09-15 案 c′): 制御面の判断は
+  ;; **器が書いた終端の cause** を読む 1 点(族の表は器の側 = impls/markers.hy の 1 点で、
+  ;; ここには無い — ADR-DOE-AGENTS-008 R1)。category = rate_limited だけが条件になる。
+  (setv said "You've reached your Fable limit. /model to switch models.")
+  (setv condition (run (provider-limit-condition-of {"category" "rate_limited" "reason" said} "claude-fable-5-1")))
+  (assert (= condition {"type" "ProviderLimit" "status" "True" "reason" "rate-limited"
+                        "message" said "model" "claude-fable-5-1"}) condition)
+  (assert (not-in "until" condition) "until は書かない(窓を知るのは予算の controller)")
+  ;; 限度でない終端(器の壊れ・普通の失敗)・cause 無しは条件を作らない(黙って枯渇を名乗らない)。
+  (for [cause [{"category" "run_failed" "reason" said}
+               {"category" "timed_out" "reason" "deadline"}
+               {"category" "cancelled" "reason" "stop"}
+               {} None]]
+    (assert (is (run (provider-limit-condition-of cause "claude-opus-5")) None) f"限度でない cause が当たった: {cause}"))
+  ;; 理由の文が無い cause でも条件は作る(message は category の語 — 黙って落とさない)。
+  (setv bare (run (provider-limit-condition-of {"category" "rate_limited"} "claude-opus-5")))
+  (assert (= (get bare "message") "rate_limited") bare)
+  ;; model は「手番が走らせようとした model」ちょうど(charter.model)。宣言の無い手番
+  ;; (MODEL-UNDECLARED)は欄を落とす — 限度の拍の usage.model は `<synthetic>` で材料が名乗らない。
+  (setv undeclared (run (provider-limit-condition-of {"category" "rate_limited" "reason" said} MODEL-UNDECLARED)))
+  (assert (not-in "model" undeclared) undeclared)
+  (assert (not-in "model" (run (provider-limit-condition-of {"category" "rate_limited"} None))))
+  ;; 改行のある理由は 1 行目だけを message に(行は人が読む 1 行)。
+  (setv multi (run (provider-limit-condition-of {"category" "rate_limited" "reason" (+ said "\nTry later.")} "claude-fable-5-1")))
+  (assert (= (get multi "message") said) multi))
 
 
 (deftest test-tool-use-frame-carries-the-input-and-names-what-it-clipped

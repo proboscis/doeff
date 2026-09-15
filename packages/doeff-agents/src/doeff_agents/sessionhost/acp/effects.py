@@ -133,6 +133,7 @@ ConditionType = Literal[
     "InterruptEscalationUndeclared",
     "AttachmentIgnored",
     "WorkDirMissing",
+    "ProviderLimit",
 ]
 CONDITION_INTERRUPTED: ConditionType = "Interrupted"
 #: 段 10 lane 10n(agora-redesign #93・依頼者の追補 2026-09-14): 割り込みを注入したが、この job の charter に
@@ -170,6 +171,31 @@ CONDITION_AGENT_SETTING_IGNORED: ConditionType = "AgentSettingIgnored"
 #: (器が添付の段を持たない・読めなかった・見出しと中身が食い違った)。黙って落とさず手番の conditions に 1 行。
 #: 本文そのものは届いている — この条件は添付だけの話。判断は judgment.attachment-ignored-of の 1 点。
 CONDITION_ATTACHMENT_IGNORED: ConditionType = "AttachmentIgnored"
+#: 段 11 lane 11n 便 C(agora-redesign #179・依頼者の裁定 2026-09-15 問い 1 案 a): 手番が provider の
+#: 限度の断り(「You've reached your <model> limit」等)で終わった印。**閉語彙の座はここ 1 点**で、
+#: 契約 ACP docs/contracts/scheduling.json の profileExhaustion.providerRefusal はその写し。
+#: 行の形 = {type, status: "True", reason: REASON_RATE_LIMITED, model: <走った model>, message: <CLI の文>}。
+#: 読み手 = 予算の controller(agora-budget)で、窓の観測(profile.status.windows)より新しいこの印を
+#: 「観測できない時の枯渇の証拠」として model 別の枯渇の判断に足す。判断は judgment.provider-limit-condition-of の 1 点。
+#: 実弾 2026-09-15 13:2x: 会話 c-01M1XGMDHR35FBBC04W1JXM5KJ の手番が btc で Fable の限度に 5 回当たったが、
+#: 器の status は done・agent-job は result も cause も無しの Ended だったので、profile の行へ戻る道が無かった。
+#: ⚠ status.result には書かない(result が在ることは「手番が結果を報告した」の意味 —
+#: Acp.App.Agent.AgentJob.awaitOutcomeOf が result の有無で終端の意味を分ける)。
+CONDITION_PROVIDER_LIMIT: ConditionType = "ProviderLimit"
+#: CONDITION_PROVIDER_LIMIT の reason の閉語彙(今日は 1 語 — 族が増えたらここに足す)。
+REASON_RATE_LIMITED: str = "rate-limited"
+#: 段 11 lane 11n 便 C(agora-redesign #179・依頼者の裁定 2026-09-15 案 c′): 器の終端の cause の
+#: category のうち agentd の ACP の腕が読む 1 語 —— provider が限度で断った(sessionhost の
+#: policy.hy TERMINAL-CAUSE-CATEGORIES / launch-not-ready-category と headless.hy の手番の腕が
+#: 同じ語で書き、ACP の engine も同じ綴りを読む〔Acp.Core.Types.Observed の failureKindForCause〕)。
+#: policy.hy は deff / defhandler を持つ Hy で共通の品質検査が投影できないため、agentd が読む語を
+#: ここに写す(SESSION_TERMINAL_STATUSES と同じ扱い — 第 2 の定義点であることは
+#: ADR-DOE-AGENTS-012 R33 の報告に明記)。族の表そのものは markers.hy の 1 点のまま。
+CAUSE_CATEGORY_RATE_LIMITED: str = "rate_limited"
+#: charter が model を名乗らない手番の model の欄に置く語(走行器の既定で起こす事実の名 —
+#: judgment.launch-plan-of と turn-record の spec.model が同じ語を使う)。この語は「どの model が
+#: 走ったか分からない」の意味なので、provider の限度の条件では model の欄を落とす(発明しない)。
+MODEL_UNDECLARED: str = "default"
 #: 段 10 lane 10e: 会話の宣言の欄の閉語彙(ACP の契約 agora-kinds.json conventions.agentSettings.settings の写し)と、
 #: agent の種類(charter.agent_type の語)ごとの能力の表 = 受ける欄(settings)と変えたら session を作り直す欄(restartOn)。
 #: node の status.capabilities に名乗る(judgment.capabilities-of)。restartOn = session-affinity-key-of の鍵の欄ちょうど

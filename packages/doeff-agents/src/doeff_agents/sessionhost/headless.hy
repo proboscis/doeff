@@ -47,6 +47,7 @@
 
 (import doeff_agents.sessionhost.effects [
   SessionRow
+  TerminalCause
   build-headless-launch
   clock-now
   fs-read-text
@@ -66,6 +67,10 @@
   session-store-record-event
   session-store-upsert
   wire-result-channel])
+;; 段 11 lane 11n 便 C(agora-redesign #179): provider の限度の族の表は impls/markers.hy の
+;; 1 点(ADR-DOE-AGENTS-008 R1 の観測形式の家・pane の路と同じ表)。ここは表を写さず、
+;; 手番の終わりの文へ当てるだけ。
+(import doeff_agents.sessionhost.impls.markers [has-api-limit-marker])
 (import doeff_agents.sessionhost.headless_protocol [
   BackendLiveness
   HeadlessObservation
@@ -546,6 +551,27 @@
 ;; monitor(手番の終わり・process の死・会話の発見)
 ;; ---------------------------------------------------------------------------
 
+(deff headless-turn-limit-cause [verdict observed-at]
+  {:pre [(: verdict Verdict) (: observed-at str)]
+   :post [(: % (| TerminalCause None))]}
+  "段 11 lane 11n 便 C(agora-redesign #179・依頼者の裁定 2026-09-15 案 c′): 手番の終わりが
+   provider の限度の断りだったか —— **当てる 1 点**。None = 限度ではない(手番の普通の終わり)。
+
+   材料は verdict(turn-verdict が返す turn-ended の ok / detail = CLI が名乗った文)で、
+   族の表は impls/markers.hy の has-api-limit-marker ちょうど(pane の路の
+   policy.action-terminal-cause / failed-output-cause が PaneObservation 経由で引く**同じ表**・
+   ADR-DOE-AGENTS-008 R1 の家)。当たったら category は rate_limited(policy の
+   TERMINAL-CAUSE-CATEGORIES の 1 語・pane の路と同じ語彙)。
+
+   ⚠ 限度の断りは **session ごと終える**(この cause を持つ行は status failed)—— 限度は
+   口座 × model のもので、同じ profile の次の手番も断られる(実弾 2026-09-15 13:2x: operator の
+   会話が btc で 5 回続けて断られた)。配車は model 別の枯渇(段 11 lane 11m)で別の profile へ
+   移り、profile が変われば器はどうせ作り直しになる(restartOn = model・profile)。"
+  (if (and (not verdict.ok) (isinstance verdict.detail str) (has-api-limit-marker verdict.detail))
+      (make-cause "rate_limited" verdict.detail observed-at)
+      None))
+
+
 (defk observe-headless-row [row]
   {:pre [(: row SessionRow)]
    :post [(: % SessionRow)]}
@@ -578,8 +604,21 @@
         (is-multi-turn row.lifecycle)
         (do
           (setv row (replace row :turn-ended-at (or row.turn-ended-at observed-at)))
-          (<- _ (session-store-upsert row))
-          (<- _ (session-store-record-event row.session-id EVENT-SESSION-TURN-ENDED row)))
+          ;; 段 11 lane 11n 便 C: provider が限度で断った手番は器ごと終える(判断は
+          ;; headless-turn-limit-cause の 1 点)。温かいままにすると同じ profile の次の手番も
+          ;; 断られ、行には何も残らない(実弾 2026-09-15 13:2x の 5 連敗)。
+          (setv limit (headless-turn-limit-cause verdict observed-at))
+          (if (is-not limit None)
+              (do
+                (setv row (replace row :status "failed"
+                                       :finished-at (or row.finished-at observed-at)
+                                       :last-validation-error verdict.detail))
+                (setv row (cause-if-absent row limit))
+                (<- _ (session-store-upsert row))
+                (<- _ (session-store-record-event row.session-id "session_failed" row)))
+              (do
+                (<- _ (session-store-upsert row))
+                (<- _ (session-store-record-event row.session-id EVENT-SESSION-TURN-ENDED row)))))
         (is-run-to-completion row.lifecycle)
         (do
           (setv outcome-ok (and verdict.ok

@@ -348,11 +348,18 @@ class ClaudeDialogue:
 
     def _on_result(self, record: JSONObject) -> Step:
         """result の行: queued のままの注入(停止の合図の後は still_queued に名指されたもの)が在れば CLI が
-        次の手番として走らせるので手番は続く(飲む)。無ければ手番の終わり。"""
+        次の手番として走らせるので手番は続く(飲む)。無ければ手番の終わり。
+
+        段 11 lane 11n 便 C(agora-redesign #179): 誤りで終わった手番の detail は **CLI が名乗った文**
+        (result の本文)ちょうどで、subtype(error_during_execution)は文が無い時の名前でしかない。
+        文を落としていたので、上の層(host の手番の腕)は「何で断られたか」を読めなかった —— provider の
+        限度の断り(「You've reached your … limit」)も error_during_execution という 1 語に畳まれていた。"""
         self.cli_turn_open = False
         queued = self.queued_injections()
         is_error = record.get("is_error") is True
         subtype = _text_at(record, "subtype") or ("error" if is_error else "success")
+        said = _text_at(record, "result") if is_error else None
+        detail = said.strip() if isinstance(said, str) and said.strip() else subtype
         if self.escalation is not None:
             survivors = (
                 tuple(ref for ref in queued if ref in self.still_queued)
@@ -366,7 +373,7 @@ class ClaudeDialogue:
             return self._end(False, INTERRUPTED_DETAIL)
         if queued:
             return Step()
-        return self._end(not is_error, subtype)
+        return self._end(not is_error, detail)
 
     def interrupt(self) -> Interrupt:
         return Interrupt(signal=True)
