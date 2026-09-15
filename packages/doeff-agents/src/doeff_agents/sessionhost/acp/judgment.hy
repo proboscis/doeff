@@ -37,7 +37,7 @@
 
 (import copy)
 (import dataclasses [replace])
-(import datetime [datetime timezone])
+(import datetime [datetime timedelta timezone])
 (import base64)
 (import binascii)
 (import hashlib)
@@ -1728,6 +1728,39 @@
       charter))
 
 
+(defk mail-heading-of [message-id spec]
+  {:pre [(: message-id str) (: spec dict)]
+   :post [(: % str)]}
+  "郵便の見出し 1 行(段 10 lane 10r 追補・agora-redesign #99・依頼者の裁定 2026-09-15 案 A): 郵便の身元は配達の封筒の一部で、
+   CLI へ渡す係 = agentd が本文の前に付ける — 手番の agent は郵便を id で名指せる(受付の `ai forward <id> <担い手>` は
+   id が要る)。綴りはこの 1 点: `[郵便 <id>・kind=<kind>・class=<class か 無し>・from=<会話 id か operator>・
+   parent=<id か 無し>・at=<JST>]`。欠けた欄は「無し」(発明しない)。at は契約の時計(epoch ms)を JST で。"
+  (setv none "無し")
+  (setv words {})
+  (for [key ["kind" "class" "from" "parent"]]
+    (setv value (.get spec key))
+    (setv (get words key) (if (and (isinstance value str) (.strip value)) value none)))
+  (setv at (.get spec "at"))
+  (setv at-text (if (and (isinstance at int) (not (isinstance at bool)))
+                    (.strftime (datetime.fromtimestamp (/ at 1000) :tz (timezone (timedelta :hours 9) "JST")) "%Y-%m-%d %H:%M:%S JST")
+                    none))
+  (+ "[郵便 " message-id
+     "・kind=" (get words "kind")
+     "・class=" (get words "class")
+     "・from=" (get words "from")
+     "・parent=" (get words "parent")
+     "・at=" at-text "]"))
+
+
+(defk mail-turn-text-of [message-id spec body]
+  {:pre [(: message-id str) (: spec dict) (: body str)]
+   :post [(: % str)]}
+  "手番へ渡す郵便の文 = 見出し(mail-heading-of)1 行 + 本文。1 手番目に畳む腕(first-turn-prompt-of)・温かい session への
+   send・割り込みの注入の 3 つの路が同じ文を運ぶ(郵便の手番の文を組む点はここだけ — message-bodies-of と割り込みの腕が呼ぶ)。"
+  (<- heading str (mail-heading-of message-id spec))
+  (+ heading "\n" body))
+
+
 (defk message-bodies-of [rows inputs fetched carried]
   {:pre [(: rows tuple) (: inputs tuple) (: fetched dict) (: carried dict)]
    :post [(: % tuple)]}
@@ -1749,9 +1782,11 @@
     (setv body (cond (is row None) None
                      (isinstance (.get row.spec "body") str) (.get row.spec "body")
                      True (.get fetched input-id)))
-    (if (isinstance body str)
+    (if (and (is-not row None) (isinstance body str))
         (do
-          (.append bodies body)
+          ;; 段 10 lane 10r 追補: 本文の前に郵便の見出し(1 手番目の畳みと温かい send は同じ bodies を読む)。
+          (<- text str (mail-turn-text-of input-id row.spec body))
+          (.append bodies text)
           ;; 読めなかった添付は carried に載っていない = 空(呼び手が条件 AttachmentIgnored に写す)。
           (.append attachments (.get carried input-id #())))
         (.append missing input-id)))

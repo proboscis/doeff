@@ -49,6 +49,7 @@
   conversation-opener-of
   charter-with-conversation-env
   deltas-of
+  mail-turn-text-of
   with-context-percent])
 (import doeff_agents.sessionhost.acp.runtime [initial-state run-tick])
 
@@ -260,7 +261,8 @@
   (setv world (World {"model" "claude-opus-5" "compactAt" 60}))
   (setv warm (.run-first-turn world 60000))
   (assert (= (run (context-percent-for world.state warm)) 60) world.state.context-by-session)
-  (.put-row world.acp (message-row "m-2" "合言葉は何でしたか" (+ world.local.now-ms 100)))
+  (setv asked (message-row "m-2" "合言葉は何でしたか" (+ world.local.now-ms 100)))
+  (.put-row world.acp asked)
   (.put-row world.acp (bound-row "j-2" ["m-2"] warm))
   (.tick world 1000)
   (assert (= world.sessions.cleanups [warm]) world.local.logs)
@@ -271,7 +273,8 @@
   (assert (isinstance prompt str))
   (assert (.startswith prompt "start\n\nこれまでの会話(会話の記録の service と ACP の郵便から") prompt)
   (assert (in "agent: 覚えました" prompt) prompt)
-  (assert (.endswith prompt "\n\n合言葉は何でしたか") "郵便の本文は最後(headless の 1 手番目)")
+  ;; 段 10 lane 10r 追補: 郵便は見出し 1 行 + 本文(judgment.mail-turn-text-of の 1 点)。
+  (assert (.endswith prompt (+ "\n\n" (run (mail-turn-text-of "m-2" asked.spec "合言葉は何でしたか")))) "郵便の見出しと本文は最後(headless の 1 手番目)")
   (setv fresh (.sid world "j-2"))
   (assert (!= fresh warm))
   (assert (any (gfor line world.local.logs (in "starts compacted" line))) world.local.logs)

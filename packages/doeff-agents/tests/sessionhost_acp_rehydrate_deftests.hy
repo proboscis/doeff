@@ -56,6 +56,7 @@
   first-turn-attachments-of
   launch-charter-with-attachments
   mail-text-of
+  mail-turn-text-of
   first-turn-carries-inputs
   message-attachments-of
   message-bodies-of
@@ -82,6 +83,11 @@
           :spec {"id" message-id "to" to "from" sender "kind" "note" "items" [] "body" body "refs" []
                  "sha256" (* "0" 64) "at" at}
           :status {"state" "delivered"}))
+
+
+(defn #^ str mailed [#^ AcpRow row]
+  "段 10 lane 10r 追補: 手番へ渡る郵便の文(見出し 1 行 + 本文 — judgment.mail-turn-text-of の 1 点)。"
+  (run (mail-turn-text-of (str (get row.spec "id")) row.spec (str (get row.spec "body")))))
 
 
 (defn #^ RecordEvent event-of [#^ int record-seq #^ str stream #^ int seq #^ int at #^ str kind #^ dict fields]
@@ -342,7 +348,8 @@
   (setv warm (run-first-turn world))
   (assert (= (get (. (.record world "j-1") spec) "sessionId") warm) "turn-record の spec が session を名乗る")
   (assert (= (len (.events-of world.record-service CONVERSATION "j-1#a1")) 1) "1 手番目の本文が service に無い")
-  (.put-row world.acp (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (+ world.local.now-ms 100)))
+  (setv asked (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (+ world.local.now-ms 100)))
+  (.put-row world.acp asked)
   (.put-row world.acp (bound-row "j-2" ["m-2"] "other" warm))
   (.tick world 1000)
   (assert (= world.sessions.cleanups [warm]))
@@ -359,8 +366,8 @@
   (assert (not-in "合言葉は何でしたか" prompt) "この手番の本文は tui では send で届く")
   (setv fresh (.sid world "j-2"))
   (assert (!= fresh warm))
-  (assert (= (get world.sessions.sends -1) #(fresh "合言葉は何でしたか" True)))
-  (assert (not-in #(warm "合言葉は何でしたか" True) world.sessions.sends) "別の家の session に送らない")
+  (assert (= (get world.sessions.sends -1) #(fresh (mailed asked) True)))
+  (assert (not-in #(warm (mailed asked) True) world.sessions.sends) "別の家の session に送らない")
   (setv stamp (dict-at (dict-at launch "launch_attribution") "agentd"))
   (assert (= #((get stamp "arm") (get stamp "account") (get stamp "conversationId") (get stamp "agentJobId"))
              #("rehydrate" "other" CONVERSATION "j-2")))
@@ -374,14 +381,15 @@
   ;; ACP の記録も記録の service も読まない)。
   (setv world (World "tmux" True))
   (setv warm (run-first-turn world))
-  (.put-row world.acp (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (+ world.local.now-ms 100)))
+  (setv asked (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (+ world.local.now-ms 100)))
+  (.put-row world.acp asked)
   (.put-row world.acp (bound-row "j-2" ["m-2"] "acct" warm "claude-opus-5"))
   (.tick world 1000)
   (assert (= world.sessions.cleanups []) world.local.logs)
   (assert (= world.sessions.resumes []))
   (assert (= (len world.sessions.launches) 1) "同じ家の手番で session を起こした")
   (assert (= (.sid world "j-2") warm))
-  (assert (= (get world.sessions.sends -1) #(warm "合言葉は何でしたか" True)))
+  (assert (= (get world.sessions.sends -1) #(warm (mailed asked) True)))
   (assert (= world.acp.history-reads []) "温かい send は ACP の記録を読まない")
   (assert (= world.acp.headline-reads []) "温かい send は ACP の見出しを読まない")
   (assert (= world.record-service.reads []) "温かい send は記録の service を読まない")
@@ -396,7 +404,8 @@
   ;; 送られ「session started: model claude-sonnet-5」。
   (setv world (World "tmux" True))
   (setv warm (run-first-turn world))
-  (.put-row world.acp (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (+ world.local.now-ms 100)))
+  (setv asked (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (+ world.local.now-ms 100)))
+  (.put-row world.acp asked)
   (.put-row world.acp (bound-row "j-2" ["m-2"] "acct" warm "claude-sonnet-5"))
   (.tick world 1000)
   ;; (b) 送らない・片付ける・charter.model の新しい session
@@ -408,8 +417,8 @@
   (setv fresh (.sid world "j-2"))
   (assert (!= fresh warm))
   (assert (= (get launch "session_id") fresh))
-  (assert (= (get world.sessions.sends -1) #(fresh "合言葉は何でしたか" True)))
-  (assert (not-in #(warm "合言葉は何でしたか" True) world.sessions.sends) "model の違う温かい session に送った")
+  (assert (= (get world.sessions.sends -1) #(fresh (mailed asked) True)))
+  (assert (not-in #(warm (mailed asked) True) world.sessions.sends) "model の違う温かい session に送った")
   (setv stamp (dict-at (dict-at launch "launch_attribution") "agentd"))
   (assert (= (get stamp "arm") "rehydrate"))
   (assert (= (dict-at stamp "home") {"account" "acct" "binding" None "model" "claude-sonnet-5"}) stamp)
@@ -447,7 +456,8 @@
   (.put-row world.acp (message-row "m-1" CONVERSATION "operator" "合言葉は ひまわり" (- AT 9000)))
   (.put-row world.acp (record-row "j-0" CONVERSATION [{"seq" 0 "at" (- AT 8000) "kind" "text" "bytes" 20 "sha256" "0"}] (- AT 8500)))
   (setv (get world.record-service.stored #(CONVERSATION "j-0#a1" 0)) {"producerSeq" 0 "at" (- AT 8000) "kind" "text" "text" "覚えました"})
-  (.put-row world.acp (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (- AT 100)))
+  (setv asked (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (- AT 100)))
+  (.put-row world.acp asked)
   (.put-row world.acp (bound-row "j-2" ["m-2"] "acct" "sid-on-another-node"))
   (.tick world 0)
   (assert (= world.sessions.resumes []))
@@ -455,7 +465,7 @@
   (setv prompt (str-at (get world.sessions.launches 0) "prompt"))
   (assert (.startswith prompt "start\n\nこれまでの会話") prompt)
   (assert (in "agent: 覚えました" prompt) prompt)
-  (assert (.endswith prompt "\n\n合言葉は何でしたか") "郵便の本文は最後(headless の 1 手番目)")
+  (assert (.endswith prompt (+ "\n\n" (mailed asked))) "郵便の見出しと本文は最後(headless の 1 手番目)")
   (assert (= world.sessions.sends []))
   (assert (any (gfor line world.local.logs (in f"rehydrates conversation {CONVERSATION} from the record service" line))) world.local.logs))
 
@@ -466,7 +476,8 @@
   (setv world.record-service.unreachable True)
   (.put-row world.acp (message-row "m-1" CONVERSATION "operator" "合言葉は ひまわり" (- AT 9000)))
   (.put-row world.acp (record-row "j-0" CONVERSATION [{"seq" 0 "at" (- AT 8000) "kind" "text" "bytes" 20 "sha256" "0"}] (- AT 8500)))
-  (.put-row world.acp (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (- AT 100)))
+  (setv asked (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (- AT 100)))
+  (.put-row world.acp asked)
   (.put-row world.acp (bound-row "j-2" ["m-2"] "acct" "sid-on-another-node"))
   (.tick world 0)
   (assert (= (len world.sessions.launches) 1) world.local.logs)
@@ -500,7 +511,8 @@
   (setv world (World "tmux" True))
   (setv warm (run-first-turn world))
   (.put-row world.acp (record-row "j-old" CONVERSATION [{"seq" 0 "at" (- AT 8000) "kind" "text" "bytes" 20 "sha256" "0"}] (- AT 8500)))
-  (.put-row world.acp (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (+ world.local.now-ms 100)))
+  (setv asked (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (+ world.local.now-ms 100)))
+  (.put-row world.acp asked)
   (.put-row world.acp (bound-row "j-2" ["m-2"] "other" warm))
   (.tick world 1000)
   (assert (= world.sessions.cleanups [warm]) world.local.logs)
@@ -542,7 +554,8 @@
   (assert (= world.state.jobs #()) world.local.logs)
   (setv lists-before (len world.acp.lists))
   ;; 同じ拍に 2 つの Bound: 家が変わる手番(CONVERSATION・account other)と温かい手番(OTHER・同じ家)。
-  (.put-row world.acp (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (+ world.local.now-ms 100)))
+  (setv asked (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (+ world.local.now-ms 100)))
+  (.put-row world.acp asked)
   (.put-row world.acp (bound-row "j-2" ["m-2"] "other" warm))
   (.put-row world.acp (message-row "o-2" OTHER "operator" "続き" (+ world.local.now-ms 100)))
   (.put-row world.acp (AcpRow :namespace AGENT-JOB-NAMESPACE :key f"{AGENT-JOB-NAMESPACE}:{AGENT-JOB-KIND}:k-2"
@@ -677,10 +690,11 @@
   (assert (is (run (mail-text-of #((event-of 1 "m-b" 1 AT "text" {"text" "手番の本文"})))) None))
   (setv inline (message-row "m-1" CONVERSATION "operator" "短い本文" AT))
   ;; 段 10 lane 10o: 戻りは #(bodies attachments missing)— 本文と添付は同じ 1 つの述語で並ぶ。
+  ;; 段 10 lane 10r 追補: 本文の前に郵便の見出し(mail-turn-text-of の 1 点)。
   (assert (= (run (message-bodies-of #(inline ref-row) #("m-1" "m-b") {"m-b" "長い本文"} {}))
-             #(#("短い本文" "長い本文") #(#() #()) #())))
+             #(#((mailed inline) (run (mail-turn-text-of "m-b" ref-row.spec "長い本文"))) #(#() #()) #())))
   (assert (= (run (message-bodies-of #(inline ref-row) #("m-1" "m-b") {} {}))
-             #(#("短い本文") #(#()) #("m-b"))))
+             #(#((mailed inline)) #(#()) #("m-b"))))
   (setv fold (run (rehydrate-history-of CONVERSATION #(ref-row) (RecordedTurns :events #() :complete True) #() 65536 {"m-b" "長い本文"})))
   (assert (in "長い本文" fold.text) fold.text))
 

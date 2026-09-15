@@ -142,7 +142,7 @@
          ProfileHome ProfileUsage ProfileUsageUnavailable TURN-RECORD-KIND UsageWindow])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeSessions])
 (import doeff_agents.sessionhost.acp.join [join-plan-of join-spec-of ownership-preflight])
-(import doeff_agents.sessionhost.acp.judgment [capture-verdict job-step-of record-due stream-capability-of-backend
+(import doeff_agents.sessionhost.acp.judgment [capture-verdict job-step-of mail-turn-text-of record-due stream-capability-of-backend
                                                wait-seconds-for])
 (import doeff_agents.sessionhost.acp.runtime [AgentdPreflightError initial-state install run-heartbeat run-tick settings-from-env])
 (import doeff_agents.sessionhost.acp.valve [ACP-VALVE-DEFAULT ACP-VALVE-ENV acp-valve])
@@ -280,6 +280,12 @@
   (AcpRow :namespace base.namespace :key base.key :kind base.kind :resource-id base.resource-id
           :version base.version :generation base.generation :created-at-ms created-at-ms
           :labels base.labels :payload base.payload :spec spec :status base.status))
+
+
+(defn #^ str mailed [#^ str message-id #^ str body]
+  "段 10 lane 10r 追補(agora-redesign #99): 手番へ渡る郵便の文 = 見出し 1 行 + 本文(judgment.mail-turn-text-of の 1 点 —
+   検体の郵便 message-row は id と body だけなので見出しの他の欄は「無し」)。"
+  (run (mail-turn-text-of message-id {"id" message-id "body" body} body)))
 
 
 (defn #^ AcpRow message-row [#^ str message-id #^ str body]
@@ -464,7 +470,7 @@
      (rule R13 "withdraw は中断の合図: 自分の走っている job の行が Withdrawn(書き手 = 作った側)になったら、judgment.interrupt-arm-for の 1 点で手番の途中なら session.interrupt(headless = SIGINT / turn/interrupt・tmux = Escape・session は残す)を撃ち、turn-record を ended(ここまでの entries と usage)、agent-job の conditions に Interrupted(phase は書かない)。session.cleanup は撃たない(温かい session は残す — 寿命は sessions-to-retire)。")
      (rule R14 "watch の拍は差分の読み・計器の始点は生まれの着地: 行の読み直しの様式は judgment.list-mode-for の 1 点(full = 最初の拍・周期の保険・gap・接続の張り直し / window = watch で起きた拍 = GET /api/event-window の post-image で AgentdState.rows を差し替え・窓が読めなければ full に落ちる / none = idle)。郵便の本文は鍵で 1 行ずつ読む(全量 list しない)。計器 agent-job-to-send の createdAtMs は judgment.birth-ms-of の 1 点(生まれの表 → generation 1 の image の landed_at_ms → 今日の値 created_at_ms)。")
      (rule R15 "session の id は agentd が鋳造する: 起こす session の id(session_id と session_name・sessionHandle.sessionId・stream の name)は effect MintId(ULID・時刻と乱数は handler)の答えで、charter(Messaging が組む launch の params)の session_id / session_name は読まない(judgment.launch-plan-of が落とす・据えるのは charter-with-session-id の 1 点)。実弾 2026-09-12: 温かい session が idle TTL で片付いた後、charter の固定の id の launch が `session is already registered`(host は片付いた行を登記のまま残す)に落ちて LaunchFailed で Ended した。")
-     (rule R16 "headless の起こす手番は郵便を 1 手番目の本文に畳む: host の backend が headless(AgentdSettings.backend_kind — runtime.settings_from_env が valve.backend_of から導く 1 点・streamCapability と同じ源)なら、launch / resume の腕は charter の prompt(前置き)と inputs の郵便の本文を judgment.first-turn-prompt-of(空行区切り・郵便が無ければ charter だけ)で 1 つに畳んで起こし、after-start は session.send を撃たない。判定は judgment.first-turn-carries-inputs(backend ∧ 腕)の 1 点。send の腕(温かい session)は郵便の本文だけを send。tui(tmux / herdr)は今日どおり launch の後に send。turn-record の create・計器 agent-job-to-send・in-flight の登記は腕に依らず同じ。実弾 2026-09-12: launch の直後の send が `headless session already exists` で tick ごと落ち、turn-record が作られず job は拾い直しの腕へ。")
+     (rule R16 "headless の起こす手番は郵便を 1 手番目の本文に畳む: host の backend が headless(AgentdSettings.backend_kind — runtime.settings_from_env が valve.backend_of から導く 1 点・streamCapability と同じ源)なら、launch / resume の腕は charter の prompt(前置き)と inputs の郵便の本文を judgment.first-turn-prompt-of(空行区切り・郵便が無ければ charter だけ)で 1 つに畳んで起こし、after-start は session.send を撃たない。判定は judgment.first-turn-carries-inputs(backend ∧ 腕)の 1 点。send の腕(温かい session)は郵便の本文だけを send。tui(tmux / herdr)は今日どおり launch の後に send。郵便の文は見出し 1 行 + 本文(段 10 lane 10r 追補・agora-redesign #99・依頼者の裁定 2026-09-15 案 A — `[郵便 <id>・kind=・class=・from=・parent=・at=<JST>]`・綴りは judgment.mail-heading-of の 1 点・1 手番目の畳み・温かい send・割り込みの注入の 3 路が judgment.mail-turn-text-of を通る。手番の agent は郵便を id で名指せる — 受付の ai forward は id が要る)。turn-record の create・計器 agent-job-to-send・in-flight の登記は腕に依らず同じ。実弾 2026-09-12: launch の直後の send が `headless session already exists` で tick ごと落ち、turn-record が作られず job は拾い直しの腕へ。")
      (rule R17 "機体を足す手順は 1 命令 join: `doeff-sessionhost join --server <URL> --token-file <札> [--config <toml>] [--node-name] [--state-dir] [--backend] [--session-hooks] [--custody] [--borrower-key-file] [--service-account-token-file] [--ownership --ownership-proof]` の宣言は join.hy の join-spec-of(flag > toml(schema doeff.agentd-join.v1・flag と同名の鍵)> 既定)の 1 点で JoinSpec に組み、join-plan-of の 1 点で今日の起動が読む env の束(effects.py の *_ENV の綴り)と host の argv(--db / --socket / --max-running none / --backend / serve)に写す。entry.py は plan を process の env に据えて serve --acp と同じ経路を走る — env の名を entry / runtime が自分で組まない・読み手を増やさない。所有の等級 ownership(company | personal)は proof(gce-project:<project-id> | declared)と対でだけ宣言でき(片方だけは断る)、runtime.start_agentd_thread は thread を起こす前に join.ownership-preflight を撃ち(gce-project = OwnershipProbe の答え = metadata の project-id が一致する時だけ通す・declared = 撃たない)、不一致は AgentdPreflightError で参加しない。検めた等級は judgment.node-status-with-lease の 1 点で observations.ownership{grade, proof} に書く(宣言が無ければ欄ごと無い)。agentd.hy は ownership の語を比較しない。預かり所への身元(段 10 lane 10y・agora-redesign #110): 借り手札(X-Borrower-Key・Mac)に加え、宣言 file の [custody].service_account_token_file(flag --service-account-token-file → env AGORA_CUSTODY_SA_TOKEN_PATH)を持つ agentd(k8s の pod)は、貸与・引換券の redeem・返却の要求に Authorization: Bearer <その file の中身> で名乗る(預かり所の k3s の backend が TokenReview で解く・借り手名 = ns/sa)。file は要求ごとに読み、宣言したのに無い・空の拍は撃たずに宣言の置き場を名指して断る(handlers.CustodyHttp の 1 点)。本文の行き先(段 9f lane 9f-6・agora-redesign #59): 会話の記録の service の宛先(宣言 file の [record].url / flag --record → env RECORD_SERVICE_URL)を持たない agentd は参加を断る — 判断は join.record-sink-of の純関数 1 点(宣言 → 参加可否・宣言の検で届くかは検めない)、読みは runtime.settings_from_env の 1 点(join の経路も serve --acp の経路も同じ門)、断りは AgentdPreflightError(理由 = 宣言の置き場)で entry.py が stderr に書いて exit 2(宿が再起動する — process の中で再試行しない・宣言が直るまで参加しない)。宛先が在って届かないのは spool が受ける(参加は断らない)。本文の行き先を持たないまま見出しだけを書く agentd は存在しない。")
      (rule R18 "profile の残量の観測は agentd が書く(段 7 lane 7d-3): agentd-tick の 1 つの腕 observe-profiles が AgentdSettings.profile_observe_seconds(既定 300・値の宣言は 1 点・同じ値を読み口の cache の寿命に渡す)の周期で生きている profile の行(state ≠ retired)を読み、この機体の profile の家の在否を effect ListProfileHomes(段 8e lane 4j — 実 handler = handlers.list_profile_homes = 登録簿の 1 点 handlers.PROFILES_COMMAND = `agentcli profiles list --json` の subprocess + dir の実在)で読み、judgment.profile-rows-held の 1 点で観測する行を絞る(段 10 lane 10y・agora-redesign #110: 宣言の所有の等級〔join で検めた ownership〕が company でない機体〔personal・未宣言〕は spec.boundary = company の行を家が在っても持たない — 軸は機体の所有で置き場〔place〕ではない・provider を呼んでよいかの最後の判定は agentcli の葉のまま): 家の在る行が 1 つも無い機体(pool の pod — personal の資格は預かり所が観測し、会社 profile は会社機体だけ)は usage を撃たず、「観測する profile なし」を AgentdState.no_profile_homes_logged で 1 度だけ log し(家が現れたら戻る)、計器 profile-observed(homes 0)は出す。家の在る行が在れば、この機体が持つ資格の残量を effect ReadProfileUsage(kind = effects.PROFILE_USAGE_KIND = claude・契約の行は資格の種類を運ばない)で 1 度読む。実 handler = handlers.read_profile_usage = dotfiles agentcli の console script(handlers.USAGE_COMMAND = `ai usage --json`)の subprocess ちょうど — sessionhost は agentcli を import しない・会社境界(company_boundary)の判定を持たない(断りは record の error → ProfileUsageUnavailable)・読み口の落ち方(profiles.gen.json の不在)で器の profile の有無を判じない。書く観測は judgment.profile-observed-of の 1 点(閉語彙 effects.ProfileVerdict): 窓 = observed-window-of(spec.reset.everySeconds と一致する窓・無ければ 5h)、remaining = 100 - used(percent・budget.unit ≠ percent は書かない)、resetAt = 窓の戻る時刻(無ければ observedAt)、observedAt = 断面の時刻、node = 自分。post-image は profile-status-with-observed(committed の state・conditions を写す)、committed と同じ observed は書かず(profile-observed-changed)、Conflict は log して次の周期、Refused / 書かない理由は log に 1 行、この機体に無い profile(ProfileNotHeld)は書かず log もしない。agentd.hy は窓の名・単位・境界の語を比較しない。")
      (rule R19 "手番の出来事は拍ごとに turn-record へ追記する(段 8 lane 4u・agora-redesign #49): stream-records は実況の材料の追記を読むたびに、その拍の出来事(judgment.deltas-of の entries = 契約 agora-kinds.json の turn-record の status.entries の item — kind は effects.EntryKind の閉語彙 text / tool_use / tool_result / frame / system / error・at = 読んだ拍・seq = frame と共有の採番)を agentd.append-entries の 1 点で行の status.entries へ追記する(耐久化は手番の終わりを待たない)。書きは行の最後の image(InFlightJob.record — 無ければ鍵で読む)に対する CAS(AcpPutStatus の ifGeneration)で、Conflict は行を読み直して同じ出来事を 1 度だけ積み直し、Refused / 行の不在は出来事を InFlightJob.pending_entries に持ち越して次の拍か手番の終わりに乗せる(落とさない)。拾い直した job の採番(seq 0 から)が行の seq と衝突すれば judgment.next-seq-after / renumbered-entries で行の次から振り直す。entry の形は見出しの閉じた型 effects.TurnEntryHeadline(段 9f lane 9f-4・設計 §2.2: seq・at・kind・toolName・toolUseId・bytes・sha256・isError — 本文の欄 text / summary / input / output / model は型に無く、写さない・切らない〔切り詰めは会話の記録の service の責務〕)で、導く点は judgment.headline-of-body の 1 つ・JSON への写しは entry-json-of の 1 つ・bytes / sha256 は service の冪等の判断と同じ計算(record-body-bytes-of = text / summary / input / output の在る欄だけの compact・鍵 sort・UTF-8)。toolUseId は呼び出しと結果を結ぶ鍵。行の上限(TURN_RECORD_ENTRIES_BYTE_BUDGET = 262144 byte)は judgment.entries-within-budget が古い見出しから落とし先頭に印(TurnEntryDropMarker → kind system・truncated・dropped — 本文も bytes / sha256 も無い)を残す。service が本文を受理した答え(highestProducerSeq)は agentd.mark-recorded が status.recordRef(`record:<cid>/<streamId>`)/ recordedSeq(後ろへ戻さない)に写す。claude の system の行(init / API の retry / hook の失敗)は kind system に、result の誤りは kind error に、codex の turn/completed の誤りも kind error に写す(手番の終わりの判定は host のまま — ここは記録だけ)。手番の終わり(finalize-job / interrupt-job)は drain-stream で最後の材料を同じ拍で読んで追記し、turn-record-ended-status は残りの出来事を**追記**した上で ended・usage を据える(entries を置換しない — 旧の形は最後の本文 1 行だった)。usage は手番の全材料の読み直し(turn-batch-of)から数える(message ごとの重複を跨がない)。")
@@ -1040,7 +1046,7 @@
        (run-warm-turn world "t-2" "conv-a" "second")
        (assert (= (len world.sessions.launches) 1))
        (assert (= world.sessions.resumes []))
-       (assert (= (get world.sessions.sends -1) #(warm-sid "second" True)))
+       (assert (= (get world.sessions.sends -1) #(warm-sid (mailed "m-t-2" "second") True)))
        (setv second (status-of (get world.acp.rows "acp-system:agent-job:t-2")))
        (assert (= (get second "phase") PHASE-ENDED))
        (assert (= (get (object-at second "sessionHandle") "sessionId") warm-sid))
@@ -1200,7 +1206,7 @@
        (setv rehydrated-prompt (get (get world.sessions.launches -1) "prompt"))
        (assert (isinstance rehydrated-prompt str))
        (assert (in "これまでの会話" rehydrated-prompt))
-       (assert (not-in #(warm "second" True) world.sessions.sends) "別の家の session に送らない(R20)")
+       (assert (not-in #(warm (mailed "m-t-2" "second") True) world.sessions.sends) "別の家の session に送らない(R20)")
        ;; 同じ家の片付いた session は --resume(cache を保つ)。
        (setv same (World))
        (run-warm-turn same "s-1" "conv-b" "first")
@@ -1402,6 +1408,11 @@
        (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
        (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk first-turn-carries-inputs ") line)) 1))
        (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk first-turn-prompt-of ") line)) 1))
+       ;; 段 10 lane 10r 追補: 郵便の見出しの綴りは mail-heading-of の 1 点で、手番の文を組むのは mail-turn-text-of —
+       ;; 1 手番目の畳みと温かい send は message-bodies-of の同じ bodies を、割り込みの注入は agentd.hy の腕が同じ関数を呼ぶ。
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk mail-heading-of ") line)) 1))
+       (assert (= (len (lfor line judgment-lines :if (in "(<- text str (mail-turn-text-of input-id row.spec body))" line) line)) 1))
+       (assert (= (len (lfor line (code-lines (/ ACP-DIR "agentd.hy")) :if (in "(<- text str (mail-turn-text-of message-id message.spec body))" line) line)) 1))
        (for [line (code-lines (/ ACP-DIR "agentd.hy"))]
          (assert (not-in "BACKEND-HEADLESS" line) f"agentd.hy は backend の語を比較しない(R16): {line}")
          (assert (not-in "\"headless\"" line) f"agentd.hy は backend の語を比較しない(R16): {line}"))
@@ -1411,7 +1422,7 @@
        (.put-row headless.acp (message-row "m-f" "hello"))
        (.put-row headless.acp (turn-row "f-1" "conv-f" "m-f" 500))
        (.tick headless 0)
-       (assert (= (get (get headless.sessions.launches -1) "prompt") "go\n\nhello"))
+       (assert (= (get (get headless.sessions.launches -1) "prompt") (+ "go\n\n" (mailed "m-f" "hello"))))
        (assert (= headless.sessions.sends []))
        (assert (is-not (.get headless.acp.rows "default:turn-record:f-1") None))
        (assert (= (len headless.state.jobs) 1))
@@ -1420,7 +1431,7 @@
        (.put-row tui.acp (turn-row "t-1" "conv-t" "m-t" 500))
        (.tick tui 0)
        (assert (= (get (get tui.sessions.launches -1) "prompt") "go"))
-       (assert (= tui.sessions.sends [#((sid-of tui "t-1") "hello" True)])))
+       (assert (= tui.sessions.sends [#((sid-of tui "t-1") (mailed "m-t" "hello") True)])))
      (deftest test-adr-doe-agents-012-join-is-one-command-and-one-decision-point
        ;; R17 の針: 宣言 → env の束の写像点は join.hy の join-plan-of ちょうど。entry.py / runtime.py
        ;; は env の名の綴り(ACP_DAEMON_URL 等)を自分で組まない(綴りは effects.py の *_ENV)。
@@ -2103,7 +2114,7 @@
                                    :version running.version :generation (+ running.generation 1) :created-at-ms running.created-at-ms
                                    :labels running.labels :payload running.payload :spec running.spec :status placed))
        (.tick world 1000)
-       (assert (= world.sessions.interjections [#(sid "stop") #(sid "then continue")]) "載せた順に器へ(R21)")
+       (assert (= world.sessions.interjections [#(sid (mailed "m-i1" "stop")) #(sid (mailed "m-i2" "then continue"))]) "載せた順に器へ(R21)")
        (setv after (status-of (get world.acp.rows "acp-system:agent-job:t-2")))
        (assert (= (get after "interrupts") []) "渡した id は interrupts から消える(R21)")
        (assert (= (get after "interruptsDelivered") ["m-i1" "m-i2"]) "渡した id は interruptsDelivered に残る(R21)")

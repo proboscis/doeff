@@ -302,6 +302,7 @@
   launch-charter-with-attachments
   message-attachments-of
   message-bodies-of
+  mail-turn-text-of
   message-body-ref-of
   message-key-of
   ignored-settings-of
@@ -1906,14 +1907,16 @@
             (setv body (.get (get read 0) fetch-key)))
           ;; 段 10 lane 10o: 割り込みの郵便の添付も型つきで運ぶ(綴りは Dialogue)。
           (setv carried (.get (get read 1) fetch-key #()))))
-      (if (not (isinstance body str))
+      (if (or (is message None) (not (isinstance body str)))
           (do
             (<- (LogLine :text f"agentd: interrupt {message-id} for job {job.job-id} has no readable Message; not delivered"))
             (.append unreadable message-id))
           (do
             ;; 段 10 lane 10n: 注入の行の名 = Message の id(CLI の command_lifecycle がこの綴りで運命を名乗る)。
+            ;; 段 10 lane 10r 追補: 注入の文も郵便の見出し + 本文(judgment.mail-turn-text-of の 1 点)。
+            (<- text str (mail-turn-text-of message-id message.spec body))
             (<- outcome (| Interjected SessionRefused)
-                (SessionInterject :session-id job.session-id :text body :ref message-id
+                (SessionInterject :session-id job.session-id :text text :ref message-id
                                   :attachments carried))
             (if (isinstance outcome Interjected)
                 (do

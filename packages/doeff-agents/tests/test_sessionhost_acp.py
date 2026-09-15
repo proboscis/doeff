@@ -240,7 +240,7 @@ def _assert_launched_with_borrowed_token(world: World) -> None:
     assert launch["prompt"] == "start"
     assert launch["session_id"] == "sid-1"
     assert launch["session_name"] == "sid-1"
-    assert world.sessions.sends == [("sid-1", "hello agent", True)]
+    assert world.sessions.sends == [("sid-1", mailed("lt-1", "hello agent"), True)]
     assert world.local.metrics[0]["metric"] == "agent-job-to-send"
     assert world.local.metrics[0]["ms"] == 1_000 - 500
 
@@ -1335,6 +1335,12 @@ def test_running_on_me_needs_phase_node_and_stream_owner() -> None:
 # ---------------------------------------------------------------- 温かい session(段 2・設計 17.4・lane 2b-3)
 
 
+def mailed(message_id: str, body: str) -> str:
+    """段 10 lane 10r 追補(agora-redesign #99): 手番へ渡る郵便の文 = 見出し 1 行 + 本文。検体の郵便
+    (message)は kind / class / from / parent / at を持たないので、その欄は「無し」。"""
+    return f"[郵便 {message_id}・kind=無し・class=無し・from=無し・parent=無し・at=無し]\n{body}"
+
+
 def message(message_id: str, body: str) -> AcpRow:
     return row(
         AGORA_KINDS_NAMESPACE,
@@ -1355,7 +1361,7 @@ def _run_first_turn(world: World, job_id: str = "j-1") -> str:
     sid = world.sid(job_id)
     assert sid != job_id
     assert world.sessions.launches[-1]["session_id"] == sid
-    assert world.sessions.sends[-1] == (sid, "first", True)
+    assert world.sessions.sends[-1] == (sid, mailed("m-1", "first"), True)
     path = f"{HOMES}/claude/acct/projects/-work/{sid}.jsonl"
     world.local.transcripts[path] = transcript_line("assistant", [{"type": "text", "text": "one"}])
     world.tick(advance_ms=1_000)
@@ -1383,7 +1389,7 @@ def test_warm_send_carries_the_token_this_turn_borrowed() -> None:
     world.acp.put_row(message("m-2", "second"))
     world.acp.put_row(bound_job("j-2", inputs=["m-2"], created_at_ms=world.local.now_ms + 700))
     world.tick(advance_ms=1_000)
-    assert world.sessions.sends[-1] == (warm, "second", True)
+    assert world.sessions.sends[-1] == (warm, mailed("m-2", "second"), True)
     assert world.sessions.send_envs[-1] == (warm, {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-rotated"})
 
 
@@ -1412,7 +1418,7 @@ def test_second_turn_of_the_same_conversation_is_sent_to_the_warm_session() -> N
     assert len(world.sessions.launches) == 1
     assert world.sessions.resumes == []
     warm = world.sid("j-1")
-    assert world.sessions.sends[-1] == (warm, "second", True)
+    assert world.sessions.sends[-1] == (warm, mailed("m-2", "second"), True)
     job = world.job("j-2")
     assert job.status is not None
     assert job.status["phase"] == PHASE_RUNNING
@@ -1492,7 +1498,7 @@ def test_a_different_conversation_launches_its_own_session() -> None:
     other = world.sid("j-x")
     assert other != world.sid("j-1")
     assert world.sessions.launches[-1]["session_id"] == other
-    assert world.sessions.sends[-1] == (other, "other", True)
+    assert world.sessions.sends[-1] == (other, mailed("m-x", "other"), True)
 
 
 def test_idle_session_past_the_ttl_is_cleaned_up() -> None:
@@ -1643,7 +1649,7 @@ def test_second_turn_with_another_effort_resumes_the_same_session_with_the_new_f
     world.tick(advance_ms=1_000)
     assert world.sessions.cleanups == []
     assert world.sessions.resumes == []
-    assert world.sessions.sends[-1] == (first, "second", True)
+    assert world.sessions.sends[-1] == (first, mailed("m-2", "second"), True)
     world.local.transcripts[path] += transcript_line("assistant", [{"type": "text", "text": "two"}])
     world.tick(advance_ms=1_000)
     world.sessions.finish_turn(first, world.local.now_ms + 200)
@@ -1688,7 +1694,7 @@ def test_warm_send_with_another_work_dir_records_agent_setting_ignored() -> None
     )
     world.tick(advance_ms=1_000)
     warm = world.sid("j-1")
-    assert world.sessions.sends[-1] == (warm, "second", True)
+    assert world.sessions.sends[-1] == (warm, mailed("m-2", "second"), True)
     assert world.sessions.cleanups == []
     world.local.transcripts[path] += transcript_line("assistant", [{"type": "text", "text": "two"}])
     world.tick(advance_ms=1_000)
@@ -1715,7 +1721,7 @@ def test_predecessor_alive_is_sent_and_terminal_predecessor_is_resumed() -> None
     world.acp.put_row(bound_job("j-2", inputs=["m-2"], predecessor=first))
     world.tick(advance_ms=1_000)
     assert world.sessions.resumes == []
-    assert world.sessions.sends[-1] == (first, "second", True)
+    assert world.sessions.sends[-1] == (first, mailed("m-2", "second"), True)
     world.sessions.finish_turn(first, world.local.now_ms + 100)
     path = f"{HOMES}/claude/acct/projects/-work/{first}.jsonl"
     world.local.transcripts[path] += transcript_line("assistant", [{"type": "text", "text": "y"}])
@@ -1732,7 +1738,7 @@ def test_predecessor_alive_is_sent_and_terminal_predecessor_is_resumed() -> None
     assert world.sessions.resumes[0]["session_id"] == first
     assert world.sessions.resumes[0]["new_session_id"] == world.sid("j-3")
     assert world.sid("j-3") != first
-    assert world.sessions.sends[-1] == (world.sid("j-3"), "third", True)
+    assert world.sessions.sends[-1] == (world.sid("j-3"), mailed("m-3", "third"), True)
 
 
 def test_withdrawn_job_interrupts_the_turn_and_keeps_the_session_warm() -> None:
@@ -1846,9 +1852,9 @@ def test_interrupt_on_a_running_job_is_handed_to_the_session_and_recorded_on_the
     world.acp.put_row(message("m-i2", "then continue"))
     _place_interrupt(world, "j-1", ["m-i1", "m-i2"])
     world.tick(advance_ms=1_000)
-    assert world.sessions.interjections == [(sid, "stop and answer"), (sid, "then continue")]
+    assert world.sessions.interjections == [(sid, mailed("m-i1", "stop and answer")), (sid, mailed("m-i2", "then continue"))]
     # 通常の send(次の手番)は撃たれていない・手番は 1 つのまま
-    assert [text for _sid, text, _awaiting in world.sessions.sends] == ["first"]
+    assert [text for _sid, text, _awaiting in world.sessions.sends] == [mailed("m-1", "first")]
     job = world.job("j-1")
     assert job.status is not None
     assert job.status["phase"] == PHASE_RUNNING
@@ -1866,7 +1872,7 @@ def test_interrupt_on_a_running_job_is_handed_to_the_session_and_recorded_on_the
     world.acp.put_row(message("m-i3", "one more"))
     _place_interrupt(world, "j-1", ["m-i3"])
     world.tick(advance_ms=1_000)
-    assert world.sessions.interjections[-1] == (sid, "one more")
+    assert world.sessions.interjections[-1] == (sid, mailed("m-i3", "one more"))
     job = world.job("j-1")
     assert job.status is not None
     assert job.status["interruptsDelivered"] == ["m-i1", "m-i2", "m-i3"]
@@ -1894,7 +1900,7 @@ def test_interrupt_refused_by_the_session_stays_on_the_row_and_is_not_recorded_a
     # 器が受けるようになれば同じ id を渡す(level-triggered — 断りは memory に残らない)
     world.sessions.refuse_interject = None
     world.tick(advance_ms=1_000)
-    assert world.sessions.interjections == [(world.sid("j-1"), "too late")]
+    assert world.sessions.interjections == [(world.sid("j-1"), mailed("m-i1", "too late"))]
     job = world.job("j-1")
     assert job.status is not None
     assert job.status["interrupts"] == ["m-missing"]
@@ -1980,7 +1986,7 @@ def test_interrupt_is_injected_with_the_message_id_as_its_name_and_read_at_the_b
     world.acp.put_row(message("m-i1", "stop and answer"))
     _place_interrupt(world, "j-1", ["m-i1"])
     world.tick(advance_ms=1_000)
-    assert world.sessions.interjections == [(sid, "stop and answer")]
+    assert world.sessions.interjections == [(sid, mailed("m-i1", "stop and answer"))]
     assert world.sessions.interjection_refs == [(sid, "m-i1")]
     assert [j.interrupts_injected for j in world.state.jobs] == [(("m-i1", world.local.now_ms),)]
     assert [j.interrupt_escalation_seconds for j in world.state.jobs] == [20]
@@ -2320,7 +2326,7 @@ def test_busy_conversation_session_defers_the_claim() -> None:
     world.acp.put_row(bound_job("j-2", inputs=["m-2"]))
     world.tick(advance_ms=1_000)
     assert len(world.sessions.launches) == 1
-    assert world.sessions.sends == [(world.sid("j-1"), "first", True)]
+    assert world.sessions.sends == [(world.sid("j-1"), mailed("m-1", "first"), True)]
     job = world.job("j-2")
     assert job.status is not None
     assert job.status["phase"] == PHASE_BOUND
@@ -2836,7 +2842,7 @@ def test_headless_claude_turn_streams_text_deltas_and_records_entries() -> None:
     world.tick()
     sid = world.sid("j-1")
     # headless の 1 手番目: 郵便は launch の prompt に畳む(send は撃たない — 追補 2026-09-12)
-    assert world.sessions.launches[-1]["prompt"] == "start\n\nfirst"
+    assert world.sessions.launches[-1]["prompt"] == "start\n\n" + mailed("m-1", "first")
     assert world.sessions.sends == []
     node = world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"]
     assert node.status is not None
@@ -2946,6 +2952,61 @@ def test_headless_codex_turn_streams_deltas_and_records_command_execution() -> N
     assert record.status["usage"] == {"input": 11, "output": 5, "cacheWrite": 0, "cacheRead": 4}
 
 
+def test_mail_heading_names_the_message_id_kind_class_sender_parent_and_jst_time() -> None:
+    """段 10 lane 10r 追補(agora-redesign #99・依頼者の裁定 2026-09-15 案 A): 手番へ渡る郵便の文は見出し 1 行 + 本文。
+    実弾 2026-09-15 13:21: 受付の手番の入力に郵便の id が無く、`ai forward <id>` を撃てずに本文の指示に答えた。"""
+    spec: JSONObject = {
+        "id": "lt-K9864EF53HXFBYAV4SN5WWEV7W",
+        "kind": "ask",
+        "class": "operate",
+        "from": "c-01M2GAP7BAT2ARSAPFJBBTQ0DQ",
+        "parent": "lt-01M2GAP7BAT2ARSAPFJBBTQ0DP",
+        "at": 1789446082000,
+        "body": "b",
+    }
+    assert run(judgment.mail_heading_of("lt-K9864EF53HXFBYAV4SN5WWEV7W", spec)) == (
+        "[郵便 lt-K9864EF53HXFBYAV4SN5WWEV7W・kind=ask・class=operate・from=c-01M2GAP7BAT2ARSAPFJBBTQ0DQ"
+        "・parent=lt-01M2GAP7BAT2ARSAPFJBBTQ0DP・at=2026-09-15 13:21:22 JST]"
+    )
+    # 欠けた欄は「無し」(発明しない)・operator の郵便は from=operator
+    assert run(judgment.mail_heading_of("lt-1", {"kind": "note", "from": "operator"})) == (
+        "[郵便 lt-1・kind=note・class=無し・from=operator・parent=無し・at=無し]"
+    )
+    assert run(judgment.mail_turn_text_of("lt-1", {"kind": "note", "from": "operator"}, "本文")) == (
+        "[郵便 lt-1・kind=note・class=無し・from=operator・parent=無し・at=無し]\n本文"
+    )
+
+
+def test_the_first_turn_fold_and_the_warm_send_carry_the_same_mail_heading() -> None:
+    """同じ見出しが 1 手番目の畳み(headless の launch)と温かい session への send の両方に載る(綴りは mail-heading-of の 1 点)。"""
+    def asked(message_id: str, body: str) -> AcpRow:
+        return row(
+            AGORA_KINDS_NAMESPACE,
+            MESSAGE_KIND,
+            message_id,
+            {"id": message_id, "kind": "ask", "class": "operate", "from": "operator", "at": 1789446082000, "body": body},
+            {"state": "inbox"},
+        )
+
+    def heading(message_id: str) -> str:
+        return f"[郵便 {message_id}・kind=ask・class=operate・from=operator・parent=無し・at=2026-09-15 13:21:22 JST]"
+
+    world = HeadlessWorld()
+    world.acp.put_row(asked("lt-a1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["lt-a1"], created_at_ms=world.local.now_ms - 400))
+    world.tick()
+    sid = world.sid("j-1")
+    assert world.sessions.launches[-1]["prompt"] == "start\n\n" + heading("lt-a1") + "\nfirst"
+    world.local.transcripts[f"/events/{sid}.events.jsonl"] = _claude_events(sid, "hello")
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(sid, world.local.now_ms + 100)
+    world.tick(advance_ms=1_000)
+    world.acp.put_row(asked("lt-a2", "second"))
+    world.acp.put_row(bound_job("j-2", inputs=["lt-a2"], created_at_ms=world.local.now_ms + 700))
+    world.tick(advance_ms=1_000)
+    assert world.sessions.sends == [(sid, heading("lt-a2") + "\nsecond", True)]
+
+
 def test_first_turn_prompt_of_joins_the_charter_and_the_mail_with_blank_lines() -> None:
     """純関数: 1 手番目の本文 = charter の prompt(前置き)+ 空行 + 郵便の本文(inputs の順)。
     郵便が無ければ charter だけ・空の部分は入れない。畳むのは headless の器だけ(判定 1 点)。"""
@@ -2971,7 +3032,7 @@ def test_headless_launch_folds_the_mail_into_the_first_turn_and_does_not_send() 
     world.acp.put_row(bound_job("j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400))
     world.tick()
     sid = world.sid("j-1")
-    assert world.sessions.launches[-1]["prompt"] == "start\n\nfirst"
+    assert world.sessions.launches[-1]["prompt"] == "start\n\n" + mailed("m-1", "first")
     assert world.sessions.sends == []
     assert [m["metric"] for m in world.local.metrics] == ["agent-job-to-send"]
     assert world.local.metrics[-1]["arm"] == "launch"
@@ -2993,7 +3054,7 @@ def test_headless_launch_folds_the_mail_into_the_first_turn_and_does_not_send() 
     world.acp.put_row(bound_job("j-2", inputs=["m-2"], created_at_ms=world.local.now_ms + 700))
     world.tick(advance_ms=1_000)
     assert len(world.sessions.launches) == 1
-    assert world.sessions.sends == [(sid, "second", True)]
+    assert world.sessions.sends == [(sid, mailed("m-2", "second"), True)]
     world.local.transcripts[f"/events/{sid}.events.jsonl"] += _claude_events(sid, "again")
     world.tick(advance_ms=1_000)
     world.sessions.finish_turn(sid, world.local.now_ms + 100)
@@ -3005,8 +3066,8 @@ def test_headless_launch_folds_the_mail_into_the_first_turn_and_does_not_send() 
     world.acp.put_row(bound_job("j-3", inputs=["m-3"], predecessor=sid))
     world.tick(advance_ms=1_000)
     assert len(world.sessions.resumes) == 1
-    assert world.sessions.resumes[0]["prompt"] == "start\n\nthird"
-    assert world.sessions.sends == [(sid, "second", True)]
+    assert world.sessions.resumes[0]["prompt"] == "start\n\n" + mailed("m-3", "third")
+    assert world.sessions.sends == [(sid, mailed("m-2", "second"), True)]
     assert world.local.metrics[-1]["metric"] == "agent-job-to-send"
     assert world.local.metrics[-1]["arm"] == "resume"
 
@@ -3055,7 +3116,7 @@ def test_tui_launch_still_sends_the_mail_after_the_launch() -> None:
     world.tick()
     sid = world.sid("j-1")
     assert world.sessions.launches[-1]["prompt"] == "start"
-    assert world.sessions.sends == [(sid, "first", True)]
+    assert world.sessions.sends == [(sid, mailed("m-1", "first"), True)]
 
 
 def test_stream_capability_is_derived_from_the_host_backend() -> None:
@@ -3139,7 +3200,7 @@ def test_watch_wake_reads_the_event_window_not_the_full_list() -> None:
     world.tick(advance_ms=1_000)  # watch: changed → window
     assert world.acp.lists.count(AGENT_JOB_KIND) == 1
     assert MESSAGE_KIND not in world.acp.lists
-    assert world.sessions.sends[-1] == (world.sid("j-1"), "first", True)
+    assert world.sessions.sends[-1] == (world.sid("j-1"), mailed("m-1", "first"), True)
     assert [job.job_id for job in world.state.jobs] == ["j-1"]
     # 窓が読めない(retention の床の下)拍は全量 list に落ちる
     world.acp.window_incomplete = True
@@ -3244,7 +3305,7 @@ def test_after_the_idle_ttl_the_next_job_resumes_with_a_fresh_id_and_within_the_
     world.acp.put_row(bound_job("j-2", inputs=["m-2"]))
     world.tick(advance_ms=1_000)
     assert len(world.sessions.launches) == 1
-    assert world.sessions.sends[-1] == (first, "second", True)
+    assert world.sessions.sends[-1] == (first, mailed("m-2", "second"), True)
     world.sessions.finish_turn(first, world.local.now_ms + 100)
     path = f"{HOMES}/claude/acct/projects/-work/{first}.jsonl"
     world.local.transcripts[path] += transcript_line("assistant", [{"type": "text", "text": "two"}])
@@ -3267,7 +3328,7 @@ def test_after_the_idle_ttl_the_next_job_resumes_with_a_fresh_id_and_within_the_
     job = world.job("j-3")
     assert job.status is not None
     assert job.status["phase"] == PHASE_RUNNING
-    assert world.sessions.sends[-1] == (third, "third", True)
+    assert world.sessions.sends[-1] == (third, mailed("m-3", "third"), True)
     conditions = job.status["conditions"]
     assert conditions == []
 
