@@ -144,7 +144,7 @@
 (import doeff_agents.sessionhost.acp.join [join-plan-of join-spec-of ownership-preflight])
 (import doeff_agents.sessionhost.acp.judgment [capture-verdict job-step-of record-due stream-capability-of-backend
                                                wait-seconds-for])
-(import doeff_agents.sessionhost.acp.runtime [AgentdPreflightError initial-state install run-tick settings-from-env])
+(import doeff_agents.sessionhost.acp.runtime [AgentdPreflightError initial-state install run-heartbeat run-tick settings-from-env])
 (import doeff_agents.sessionhost.acp.valve [ACP-VALVE-DEFAULT ACP-VALVE-ENV acp-valve])
 
 
@@ -216,7 +216,14 @@
           (run-tick self.settings self.state
                     [self.acp.dispatch self.custody.dispatch
                      self.sessions.dispatch self.local.dispatch]))
-    None))
+    None)
+
+  ;; 段 10 lane 10ba(agora-redesign #115): lease の書き手は tick と独立した heartbeat の 1 点。
+  ;; 検も同じ入口(runtime.run_heartbeat)で撃つ — 器の中で thread を起こさない。
+  (defn #^ str heartbeat [self]
+    (run-heartbeat self.settings
+                   [self.acp.dispatch self.custody.dispatch
+                    self.sessions.dispatch self.local.dispatch])))
 
 
 (defn #^ AcpRow bound-row [#^ str job-id #^ str node #^ (| str None) account #^ str agent-type
@@ -979,6 +986,13 @@
        (setv (get shared.sessions.failures (sid-of shared "s-a")) (RuntimeError "socket reset"))
        (.finish shared.sessions (sid-of shared "s-b") "done" None)
        (.tick shared 30000)
+       ;; 段 10 lane 10ba(agora-redesign #115)の追随: lease の書き手は tick と**独立した heartbeat の 1 点**に
+       ;; なった(tick の I/O が TTL を超えて塞がっても lease が切れないため)。⇒ この針は「誰が書くか」を撃つ —
+       ;; tick は status.lease を書かず、heartbeat が書く。
+       (setv node (status-of (get shared.acp.rows "default:node:mac-1")))
+       (assert (not (in "lease" node))
+               "tick が status.lease を書いている(lease の書き手は heartbeat の 1 点・段 10 lane 10ba)")
+       (.heartbeat shared)
        (setv node (status-of (get shared.acp.rows "default:node:mac-1")))
        (assert (= (get (object-at node "lease") "heartbeatAt") 31000))
        (assert (= (get (status-of (get shared.acp.rows "acp-system:agent-job:s-b")) "phase") PHASE-ENDED))
