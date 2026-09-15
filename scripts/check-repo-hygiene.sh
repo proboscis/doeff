@@ -13,6 +13,7 @@ tracked_artifacts="$(
 		':(glob).playwright-mcp/**' \
 		':(glob).claude/skills/install-vscode-plugin/**' \
 		':(glob).agents/skills/install-vscode-plugin/**' \
+		':(glob)**/*.dSYM/**' \
 		'*.db' \
 		'*.db-journal' \
 		'*.db-shm' \
