@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+# macOS debug symbols for the compiled extension above: build output that
+# embeds the builder's absolute paths, so it must not be distributed either.
+*.dSYM/
 .Python
 env/
 venv/
