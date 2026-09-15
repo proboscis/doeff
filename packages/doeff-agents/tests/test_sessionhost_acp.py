@@ -3876,10 +3876,15 @@ def test_node_observations_carry_the_ownership_when_declared() -> None:
 
 # ------------------------------------------------------------------ 契約 agora-kinds.json の写しの自己整合(段 9f lane 9f-8)
 #
-# 正本は proboscis/agent-control-plane の docs/contracts/agora-kinds.json。写しと正本の byte 一致は正本側の
-# scripts/check_cross_repo_contracts.hy が撃つ(消費側は自分の checkout しか持たない)。ここが撃つのは写しの中で閉じる 3 点:
-# docs/contracts/reads.json の読む欄が写しに実在する(dot 区切り・* は辿らない)/ 写しが版と互換の規則を名乗り宣言 file が
-# 正本の在処を名乗る / effects.py が写しとして持つ値(principal・kind 名・entries の kind の語・行の上限・書き手の軸)が写しと一致する。
+# 正本は proboscis/agent-control-plane の docs/contracts/agora-kinds.json。
+# 段 11 lane 11e(agora-redesign #126)から**写しは生成物**で、pin(contracts.lock = ACP の commit 1 つ + 写しごとの
+# sha256)と生成の口 scripts/sync_contracts.py が正本との関係を持つ。正本の repo は private なのでこの既定 pytest が
+# 撃つのは写しの中で閉じる側だけ:
+#   写しが pin(contracts.lock)の sha256 ちょうど = pin の commit から生成し直したものと同じ(判断は生成の口の 1 点を呼ぶ)/
+#   docs/contracts/reads.json の読む欄が写しに実在する(dot 区切り・* は辿らない)/ 写しが版と互換の規則を名乗り宣言 file が
+#   正本の在処を名乗る / effects.py が写しとして持つ値(principal・kind 名・entries の kind の語・行の上限・書き手の軸)が写しと一致する。
+# 正本との byte 一致(生成物との差分 0)は checkout を持てる機体の `python3 scripts/sync_contracts.py` と、正本側の
+# scripts/check_cross_repo_contracts.hy が撃つ。
 
 #: packages/doeff-agents/tests/<this> → parents[3] = repo の root。
 _CONTRACTS_DIR = Path(__file__).resolve().parents[3] / "docs" / "contracts"
@@ -3991,6 +3996,39 @@ def test_agentd_values_copied_from_agora_kinds_match_the_copy() -> None:
         assert set(entry["settings"]) <= set(settings_words), kind
     efforts = _string_list(_lookup(copy, "conventions.agentSettings.efforts"))
     assert efforts == ["low", "medium", "high", "xhigh"]
+
+
+def _sync_contracts():
+    """生成の口(scripts/sync_contracts.py)を読み込む — 判断の定義点は 1 つで、ここは撃つ面。"""
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[3] / "scripts" / "sync_contracts.py"
+    spec = importlib.util.spec_from_file_location("sync_contracts", path)
+    assert spec is not None and spec.loader is not None, path
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_copy_is_what_the_pin_generates() -> None:
+    """写しが pin(contracts.lock)の sha256 ちょうど — 手で直した写しも手で直した pin もここで赤。
+
+    正本(private repo)との byte 一致はこの検の外 — `python3 scripts/sync_contracts.py` と ACP 側の
+    scripts/check_cross_repo_contracts.hy が撃つ。
+    """
+    sync = _sync_contracts()
+    root = Path(__file__).resolve().parents[3]
+    lock = sync.load_json(root / sync.LOCK_REL)
+    assert lock, "contracts.lock が無い(pin の file はこの repo の 1 点)"
+    problems = sync.copy_problems(
+        lock,
+        sync.read_copies(root, lock["files"]),
+        sync.load_json(root / sync.READS_REL),
+        sync.read_text_or_empty(root / sync.CONTRACTS_README_REL),
+    )
+    assert problems == [], problems
+    # 写しの節が読む契約は pin の宣言に載っている(第 2 の写しの置き場を作らない)。
+    assert str(_AGORA_KINDS_COPY.relative_to(root)) in {e["copyPath"] for e in lock["files"]}
 
 
 # ---------------------------------------------------------------------------
