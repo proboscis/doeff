@@ -38,6 +38,13 @@ class AgentSessionLifecycle(Enum):
 
     RUN_TO_COMPLETION = "run_to_completion"
     INTERACTIVE = "interactive"
+    #: A warm session (ADR-DOE-AGENTS-012 R10): the turn ends but the session
+    #: stays and takes the next one.  The host has spoken this word since that
+    #: revision (`policy.hy is-multi-turn`); the client did not, so every warm
+    #: row -- which is what the headless backend actually launches -- arrived as
+    #: "unparseable" and `ps` skipped it with a warning, leaving `stop`,
+    #: `watch` and `output` unable to name the session at all.
+    MULTI_TURN = "multi_turn"
 
 
 class InjectionMethod(Enum):

@@ -29,13 +29,15 @@ from .session import (
     monitor_session,
 )
 from .tmux import attach_session as tmux_attach
-from .tmux import has_session, kill_session
 
 console = Console()
 
 # All doeff-agents sessions are prefixed with this to distinguish from other tmux sessions
 SESSION_PREFIX = "doeff-"
 AGENTD_UNAVAILABLE_HINT = "agentd が起動していません。doeff-agents agentd ensure(または doeff-sessionhost ... serve)を実行してください。"
+#: How long an observation waits for the expected socket to answer.  It never
+#: starts a host, so this only bounds the round trip of a single request.
+AGENTD_OBSERVE_TIMEOUT_SECONDS = 5.0
 TERMINAL_STATUSES = {
     SessionStatus.DONE,
     SessionStatus.FAILED,
@@ -67,6 +69,33 @@ def _agentd_client_or_exit() -> AgentdClient:
     except AgentdSupervisorConfigError as error:
         _print_agentd_request_error(error)
         sys.exit(1)
+
+
+def _observing_client(ensure: bool) -> AgentdClient:
+    """Client for an observation verb — it does NOT start a host.
+
+    ADR-DOE-AGENTS-004 law `reads-never-start-a-host`: on a machine where a
+    supervisor (launchd, systemd) owns the host, an observation must never
+    bring up a competing one.  An unreachable host means "no observation"
+    (exit 1 carrying the start command), never "start a host", and the
+    decision cannot depend on an interactive confirmation because these
+    commands run unattended.  Exactly two entry points start a host: the
+    `agentd ensure` verb, and this explicit `--ensure` flag.
+    """
+    if ensure:
+        return _agentd_client_or_exit()
+    return AgentdClient(
+        default_agentd_paths().socket_path, timeout=AGENTD_OBSERVE_TIMEOUT_SECONDS
+    )
+
+
+#: The `--ensure` flag shared by the observation verbs (one declaration, so the
+#: opt-in reads the same on every one of them).
+_ensure_option = click.option(
+    "--ensure",
+    is_flag=True,
+    help="Start a host if none is reachable. Off by default: reading never starts one.",
+)
 
 
 def _print_agentd_unavailable(error: AgentdUnavailableError) -> None:
@@ -159,21 +188,6 @@ def _is_terminal_snapshot(snapshot: AgentSessionSnapshot) -> bool:
     return snapshot.status in TERMINAL_STATUSES
 
 
-def _resolve_tmux_session(user_name: str) -> str | None:
-    """Resolve user-provided name to actual tmux session name.
-
-    Tries prefixed name first, then exact name for backwards compatibility.
-    Returns None if session not found.
-    """
-    prefixed = _to_tmux_name(user_name)
-    if has_session(prefixed):
-        return prefixed
-    # Fallback: try exact name (for manually created sessions)
-    if has_session(user_name):
-        return user_name
-    return None
-
-
 @click.group()
 def cli() -> None:
     """doeff-agents: Agent session management for coding agents."""
@@ -193,15 +207,14 @@ def agentd_kinds(json_output: bool) -> None:
     read-only observation and must never couple to host liveness (an
     unreachable host means "no observation", not "start a host").
     """
-    paths = default_agentd_paths()
-    client = AgentdClient(paths.socket_path, timeout=5.0)
+    client = _observing_client(ensure=False)
     try:
         rows = client.kinds()
     except (AgentdClientError, OSError) as error:
         _print_agentd_request_error(error)
         sys.exit(1)
 
-    payload = {"socket_path": str(paths.socket_path), "kinds": [dict(r) for r in rows]}
+    payload = {"socket_path": str(client.socket_path), "kinds": [dict(r) for r in rows]}
     if json_output:
         click.echo(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     else:
@@ -353,11 +366,13 @@ def agentd_turn_open(
 
 @agentd.command("by-conversation")
 @click.option("--conversation-id", required=True, help="Conversation identity to resolve.")
-def agentd_by_conversation(conversation_id: str) -> None:
+@_ensure_option
+def agentd_by_conversation(conversation_id: str, ensure: bool) -> None:
     """Resolve conversation_id to its ledger row (波 1-S1 session.by_conversation
     — probe-free read: newest non-terminal row, else newest terminal row,
-    else null; substrate_present is intentionally absent)."""
-    client = _agentd_client_or_exit()
+    else null; substrate_present is intentionally absent).  Read-only: does not
+    start a host."""
+    client = _observing_client(ensure)
     result = _request_or_exit(
         client, "session.by_conversation", {"conversation_id": conversation_id}
     )
@@ -473,9 +488,10 @@ def run(
     is_flag=True,
     help="Show all agentd sessions (kept for CLI compatibility)",
 )
-def ps_command(show_all: bool) -> None:
-    """List doeff-agents sessions."""
-    client = _agentd_client_or_exit()
+@_ensure_option
+def ps_command(show_all: bool, ensure: bool) -> None:
+    """List doeff-agents sessions (read-only: does not start a host)."""
+    client = _observing_client(ensure)
     try:
         session_list = client.list_sessions_with_warnings()
     except (AgentdClientError, OSError) as error:
@@ -536,22 +552,37 @@ def attach(session_name: str) -> None:
 @cli.command()
 @click.argument("session_name")
 def stop(session_name: str) -> None:
-    """Stop (kill) a tmux session."""
-    tmux_name = _resolve_tmux_session(session_name)
-    if tmux_name is None:
-        console.print(f"[red]Error:[/red] Session '{session_name}' not found")
+    """End a session through the host, whatever backend carries it.
+
+    The host is the single authority over a session's life (ADR-DOE-AGENTS-004
+    law `daemon-owns-only-exteriority`), and `session.cancel` is backend-blind:
+    the substrate installed for tmux, herdr or headless answers the same kill
+    effect.  So this command does not branch on the backend — a branch here
+    would be a second place that has to learn every new substrate, and the
+    tmux-only version of it reported "Session not found" for every herdr and
+    headless session.
+    """
+    client = _agentd_client_or_exit()
+    snapshot = _agentd_session_or_exit(client, session_name)
+    try:
+        stopped = client.cancel_session(snapshot.session_id)
+    except (AgentdClientError, OSError) as error:
+        _print_agentd_request_error(error)
         sys.exit(1)
 
-    kill_session(tmux_name)
-    console.print(f"[green]✓[/green] Stopped session: {_to_display_name(tmux_name)}")
+    console.print(
+        f"[green]✓[/green] Stopped session: {_agentd_display_name(stopped)} "
+        f"(backend: {stopped.backend_kind}, status: {stopped.status.value})"
+    )
 
 
 @cli.command("watch")
 @click.argument("session_name")
 @click.option("--interval", "-i", type=float, default=1.0, help="Poll interval in seconds")
-def watch_command(session_name: str, interval: float) -> None:
-    """Monitor a running session."""
-    client = _agentd_client_or_exit()
+@_ensure_option
+def watch_command(session_name: str, interval: float, ensure: bool) -> None:
+    """Monitor a running session (read-only: does not start a host)."""
+    client = _observing_client(ensure)
     snapshot = _agentd_session_or_exit(client, session_name)
     display_name = _agentd_display_name(snapshot)
     console.print(f"Watching session: {display_name} (Ctrl+C to stop)")
@@ -639,9 +670,10 @@ def send(session_name: str, message: str) -> None:
 @cli.command()
 @click.argument("session_name")
 @click.option("--lines", "-n", type=int, default=50, help="Number of lines to capture")
-def output(session_name: str, lines: int) -> None:
-    """Capture output from a session."""
-    client = _agentd_client_or_exit()
+@_ensure_option
+def output(session_name: str, lines: int, ensure: bool) -> None:
+    """Capture output from a session (read-only: does not start a host)."""
+    client = _observing_client(ensure)
     snapshot = _agentd_session_or_exit(client, session_name)
     try:
         output_text = client.capture_session(snapshot.session_id, lines=lines)

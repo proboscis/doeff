@@ -26,10 +26,11 @@ command -v doeff-sessionhost   # the host has no --help; see the note below
 ```
 
 Those three need no host and no agent. To go further you need a running session
-host: `doeff-agents agentd kinds` reports the binding-kind vocabulary of one,
-and it is the only command that never starts a host of its own (see the table
-below). With no host reachable it exits 1 and names the start command — after a
-doeff effect traceback, which is noise, not a second failure.
+host: `doeff-agents agentd kinds` reports the binding-kind vocabulary of one and
+`doeff-agents ps` lists what it is carrying. Neither starts a host — no
+observation does (see the table below). With no host reachable they exit 1 and
+name the start command — after a doeff effect traceback, which is noise, not a
+second failure.
 
 Launching a real agent additionally needs an authenticated CLI on the machine.
 The credential state is Claude Code's or Codex's own, and it reaches the host as
@@ -92,31 +93,42 @@ for flags — they are not reproduced here.
 | Command | What it does | Backends | Starts a host if none is reachable? |
 |---|---|---|---|
 | `run` | Launch an agent session **directly in tmux**, bypassing the host | tmux only | no — never contacts the host |
-| `stop` | Kill the session's terminal | tmux only | no — talks to tmux directly |
-| `agentd kinds` | Print a running host's binding-kind vocabulary | all | **no — read-only by design** |
-| `ps` | List sessions | all | yes |
-| `watch` | Poll a session and print status changes | all | yes |
+| `agentd kinds` | Print a running host's binding-kind vocabulary | all | **no — observation** |
+| `ps` | List sessions | all | **no — observation** (`--ensure` opts in) |
+| `watch` | Poll a session and print status changes | all | **no — observation** (`--ensure` opts in) |
+| `output` | Capture recent output from a session | all | **no — observation** (`--ensure` opts in) |
+| `agentd by-conversation` | Resolve a conversation id to its ledger row | all | **no — observation** (`--ensure` opts in) |
+| `stop` | End the session through the host (`session.cancel`) | all | yes |
 | `send` | Send a message to a running session | all | yes |
-| `output` | Capture recent output from a session | all | yes |
 | `attach` | Attach the terminal to the session | tmux only | yes |
 | `agentd ensure` | Ensure a host is reachable | all | yes — that is the command's purpose |
 | `agentd adopt` | Register an already-running session as an observation | all | yes |
 | `agentd turn-open` / `turn-close` | Stamp a turn open / closed | all | yes |
-| `agentd by-conversation` | Resolve a conversation id to its ledger row | all | yes |
 
 The last column matters on a machine where a supervisor (launchd, systemd) owns
-the host: every command marked *yes* goes through `ensure_agentd`, which starts a
-host when the expected socket has no listener. `agentd kinds` is the only
-command that observes without that side effect — kind verification must never
-couple to host liveness, so an unreachable host means "no observation" (exit 1
-with the start command in the message) rather than "start a host".
+the host. **Reading never starts a host**: an unreachable host means "no
+observation" — exit 1 with the start command in the message — because starting a
+competitor during the supervisor's own restart window binds a rogue unsupervised
+host against the same socket and store (ADR-DOE-AGENTS-004 laws
+`reads-never-start-a-host` and `liveness-authority-is-the-socket`). That default
+is structural rather than a prompt, since these commands run unattended. Exactly
+two things start a host: the `agentd ensure` verb, and an explicit `--ensure` on
+an observation.
+
+Commands that change a session (`stop`, `send`, `attach`) do go through
+`ensure_agentd`, because the host is the authority that owns the change.
 
 ```bash
-# Read-only: what kinds does the already-running host advertise?
+# Observation: what kinds does the already-running host advertise, and what is
+# it carrying?  Neither starts a host.
 doeff-agents agentd kinds
+doeff-agents ps
 
 # Ensure a host is reachable — this one starts it if needed — and print status.
 doeff-agents agentd ensure --json
+
+# End a session, whatever backend carries it.
+doeff-agents stop <session>
 ```
 
 All of these resolve the socket from the environment: `DOEFF_AGENTD_SOCKET` when it is
@@ -208,18 +220,21 @@ The backend vocabulary is `{tmux, herdr, headless}`. The default is `tmux`;
 |---|---|---|---|
 | Start — host RPC `session.launch` | yes | yes | yes |
 | Resume — host RPC `session.resume` | yes | yes | yes |
+| Stop — `doeff-agents stop` | yes | yes | yes |
 | Start — `doeff-agents run` (direct, not via the host) | yes | **no** | **no** |
 | Attach — `doeff-agents attach` | yes | **no** | **no** |
-| Stop — `doeff-agents stop` | yes | **no** | **no** |
 
-Current limitations of the CLI, stated as they are rather than as they should be:
+`stop` is backend-blind because the host's `session.cancel` is: whichever
+substrate is installed answers the same kill effect, so the CLI does not branch
+on the backend. The row ends as `stopped` with cause `cancelled`, and a session
+already terminal stays as it was.
 
-- `attach` refuses a non-tmux session explicitly, naming the backend it found.
-- `stop` only knows tmux. Against a herdr or headless session it reports
-  `Session not found` — it does not say that the backend is the reason.
-- There is therefore **no CLI stop for a headless session**. End it through the
-  control plane (`session.cancel`, which is terminal) or by sending `SIGTERM` to
-  the host, which closes running turns before the socket stops accepting.
+The one CLI limitation left, stated as it is rather than as it should be:
+
+- `attach` is tmux-only. It refuses a non-tmux session explicitly, naming the
+  backend it found. A herdr session is reachable through herdr's own attach; a
+  headless session has no terminal to attach to by construction — follow it with
+  `doeff-agents watch` / `output` instead.
 
 ## Agent Launch Invariant
 
