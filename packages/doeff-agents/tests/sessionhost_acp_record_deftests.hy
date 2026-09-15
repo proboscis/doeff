@@ -55,6 +55,7 @@
 (import doeff_agents.sessionhost.acp.handlers [
   HttpReply RecordSpool decode-record-page decode-record-reply decode-spooled-batch record-append-body])
 (import doeff_agents.sessionhost.acp.join [join-plan-of join-spec-of record-sink-of])
+(import doeff_agents.sessionhost.acp.effects [JoinSpec])
 (import doeff_agents.sessionhost.acp.judgment [
   entry-json-of
   headline-of-body
@@ -517,20 +518,23 @@
   ;; ⚠ env は作らない: 課金の方針を env の 1 語で変えられる形は R10(d) が退けた形。
   (defn #^ dict tables-with [#^ (| str None) value]
     (setv agentd {"server" "http://acp:8868" "token_file" "/t/agentd.token"
-                  "state_dir" "/s" "capacity" "2" "place" "company"})
+                  ;; 段 11 lane 11u(#224): 置き場は集合の鍵 places(1 値の place は宣言に無い鍵として断られる)
+                  "state_dir" "/s" "capacity" "2" "places" "company"})
     (when (is-not value None)
       (setv (get agentd "allow_metered_billing") value))
     {"schema" JOIN-SCHEMA "agentd" agentd
      "record" {"url" "http://agora-record.example:8874"}})
-  (defn spec-of [tables #* items]
-    (run (join-spec-of (JoinArgv :items (tuple items)) (JoinDeclaration :tables tables) "/state")))
+  (defn #^ JoinSpec spec-of [#^ dict tables #^ list items]
+    (setv spec (run (join-spec-of (JoinArgv :items (tuple items)) (JoinDeclaration :tables tables) "/state")))
+    (assert (isinstance spec JoinSpec))
+    spec)
   ;; 既定(宣言なし)= 受けない・argv に旗は無い
-  (setv bare (spec-of (tables-with None)))
+  (setv bare (spec-of (tables-with None) []))
   (assert (is bare.allow-metered-billing False))
   (setv bare-plan (run (join-plan-of bare)))
   (assert (not (in "--allow-metered-billing" bare-plan.host-argv)))
   ;; 宣言 true = 受ける・argv の末尾の serve の直前に値なしの旗が立つ
-  (setv allowed (spec-of (tables-with "true")))
+  (setv allowed (spec-of (tables-with "true") []))
   (assert (is allowed.allow-metered-billing True))
   (setv plan (run (join-plan-of allowed)))
   (assert (in "--allow-metered-billing" plan.host-argv))
@@ -540,20 +544,20 @@
   (for [[name _] plan.env]
     (assert (not-in "METERED" (.upper name)) name))
   ;; 宣言 false / 空 = 受けない
-  (assert (is (. (spec-of (tables-with "false")) allow-metered-billing) False))
-  (assert (is (. (spec-of (tables-with "")) allow-metered-billing) False))
+  (assert (is (. (spec-of (tables-with "false") []) allow-metered-billing) False))
+  (assert (is (. (spec-of (tables-with "") []) allow-metered-billing) False))
   ;; flag が宣言に勝つ(両向き)
-  (assert (is (. (spec-of (tables-with "false") "--allow-metered-billing" "true")
+  (assert (is (. (spec-of (tables-with "false") ["--allow-metered-billing" "true"])
                  allow-metered-billing)
               True))
-  (assert (is (. (spec-of (tables-with "true") "--allow-metered-billing" "false")
+  (assert (is (. (spec-of (tables-with "true") ["--allow-metered-billing" "false"])
                  allow-metered-billing)
               False))
   ;; 語彙の外は参加しない(綴り違いを黙って false にしない)
   (for [bad ["yes" "1" "True" "on"]]
     (setv refused "")
     (try
-      (spec-of (tables-with bad))
+      (spec-of (tables-with bad) [])
       (except [error ValueError]
         (setv refused (str error))))
     (assert (in "allow_metered_billing" refused) f"{bad} を断らなかった")

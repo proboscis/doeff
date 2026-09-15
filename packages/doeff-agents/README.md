@@ -227,10 +227,12 @@ The plan is derived at one point from the declaration — flags override the
   refused.
 - Default state directory: `$XDG_STATE_HOME/doeff/acp-agentd`, holding
   `agentd.sqlite`, `agentd.sock`, `headless-events/`, and `record-spool/`.
-- Further flags name the node, its ownership and custody, capacity, place, work
+- Further flags name the node, its ownership and custody, capacity, places (the
+  comma-separated set of `company` / `personal` this machine serves — the
+  placement binds a profile only to a node whose set holds its boundary), work
   roots, backend, session hooks, borrowed credentials, and the record sink: run
   `doeff-sessionhost join --help`, which is generated from the flag table at the
-  top of `src/doeff_agents/sessionhost/acp/join.hy`. `--capacity`, `--place` and
+  top of `src/doeff_agents/sessionhost/acp/join.hy`. `--capacity`, `--places` and
   `--record` are required alongside `--server` and `--token-file`; a node that
   does not declare them refuses to join rather than guessing.
 

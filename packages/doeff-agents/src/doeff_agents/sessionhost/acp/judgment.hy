@@ -78,8 +78,11 @@
   CONDITION-AGENT-SETTING-IGNORED
   AGENTD-PLACES
   NODE-CAPABILITIES-KEY
-  NODE-LABEL-PLACE
-  NODE-SPEC-PLACE
+  NODE-LABEL-PLACES
+  NODE-LABEL-PLACE-RETIRED
+  NODE-SPEC-PLACES
+  NODE-SPEC-PLACE-RETIRED
+  PLACES-SEPARATOR
   NODE-SPEC-WORK-ROOTS
   PROFILE-KIND
   AGENTD-PRINCIPAL
@@ -663,12 +666,14 @@
       boundary)))
 
 
-(defk credential-place-mismatch [place boundary]
-  {:pre [(: place str) (: boundary (| str None))]
+(defk credential-place-mismatch [places boundary]
+  {:pre [(: places tuple) (: boundary (| str None))]
    :post [(: % bool)]}
-  "自分の置き場と口座の置き場の食い違い(I5)— 両方が名乗っていて違う時だけ真。名乗りの無い側が在る拍は偽
-   (前段の門は判らないもので止めない — 止めるのは預かり所の側の構造)。"
-  (and (bool place) (is-not boundary None) (!= place boundary)))
+  "自分が仕える置き場の集合と口座の置き場の食い違い(I5・段 11 lane 11u で集合へ)— 集合が名乗られていて、口座の
+   置き場が判っていて、その語が集合に無い時だけ真(会社 Mac = company と personal の両方を名乗るので両方の口座を
+   受ける・pool = personal だけなので会社の口座を断る)。名乗りの無い側が在る拍は偽(前段の門は判らないもので
+   止めない — 止めるのは預かり所の側の構造)。"
+  (and (bool places) (is-not boundary None) (not-in boundary places)))
 
 
 (defk compact-at-of [row]
@@ -1960,24 +1965,30 @@
 (defk node-labels-of [settings labels]
   {:pre [(: settings AgentdSettings) (: labels dict)]
    :post [(: % dict)]}
-  "行の labels に、宣言から名乗る置き場(labels.place)を重ねた形(段 10 lane 10d 便 2・agora-redesign #85)。
-   行の他の名乗り(会社境界の boundary 等・宣言の外のもの)は触らない。置き場の宣言が空の断面(検体の既定 —
-   本番は composition root が参加を断る)では足さない: 嘘の名乗りを書かない。"
+  "行の labels に、宣言から名乗る置き場の集合の写し(labels.places = , 区切りの 1 文字列・deprecated・読み手が残る間の面)
+   を重ねた形(段 10 lane 10d 便 2・agora-redesign #85・段 11 lane 11u・#224 で集合へ)。退役した 1 値の写し labels.place
+   は落とす(旧い agentd が書いた行を揃える時 — 配車は読まないが、2 つの綴りを並べない)。行の他の名乗り(会社境界の
+   boundary 等・宣言の外のもの)は触らない。集合の宣言が空の断面(検体の既定 — 本番は composition root が参加を断る)では
+   足さない: 嘘の名乗りを書かない。"
   (setv next (dict labels))
-  (when settings.place
-    (setv (get next NODE-LABEL-PLACE) settings.place))
+  (.pop next NODE-LABEL-PLACE-RETIRED None)
+  (when settings.places
+    (setv (get next NODE-LABEL-PLACES) (.join PLACES-SEPARATOR settings.places)))
   next)
 
 
-(defk node-place-of [settings spec]
+(defk node-places-of [settings spec]
   {:pre [(: settings AgentdSettings) (: spec dict)]
    :post [(: % dict)]}
-  "宣言から名乗る置き場を spec の欄 place に置いた写し(段 10 lane 10d 便 4・agora-redesign #85・依頼者の裁定
-   2026-09-15 問 3)。**名乗りの座はこの型つきの欄 1 つ** — 配車の絞り(ACP の nodeAcceptsProfile)はここだけを読む。
-   置き場の宣言が空の断面(検体の既定 — 本番は composition root が参加を断る)では足さない: 嘘の名乗りを書かない。"
+  "宣言から名乗る置き場の集合を spec の欄 places(語の list・宣言の順)に置いた写し(段 11 lane 11u・agora-redesign #224・
+   依頼者の裁定 2026-09-16)。**名乗りの座はこの型つきの欄 1 つ** — 配車の絞り(ACP の nodeAcceptsProfile)はここだけを
+   読み、profile の boundary が集合に含まれる node にだけ結ぶ。退役した 1 値の欄 place(契約 v3)は落とす — 配車は place を
+   持つ行を行の誤りとして断るので、旧い行を揃える写しに残さない。集合の宣言が空の断面(検体の既定 — 本番は composition
+   root が参加を断る)では足さない: 嘘の名乗りを書かない。"
   (setv next (dict spec))
-  (when settings.place
-    (setv (get next NODE-SPEC-PLACE) settings.place))
+  (.pop next NODE-SPEC-PLACE-RETIRED None)
+  (when settings.places
+    (setv (get next NODE-SPEC-PLACES) (list settings.places)))
   next)
 
 
@@ -1996,11 +2007,11 @@
   {:pre [(: settings AgentdSettings)]
    :post [(: % dict)]}
   "機体が名乗る自分の node の spec(R28・段 10 lane 10d・agora-redesign #85 — 既知の形 = kubelet の Node の自己登記):
-   name = 機体の名・place = 宣言 file の [agentd].place(**配車の絞りが読む 1 点**)・
+   name = 機体の名・places = 宣言 file の [agentd].places の集合(**配車の絞りが読む 1 点**・段 11 lane 11u)・
    capacity = 宣言 file の [agentd].capacity・streamCapability = backend から導いた語・
-   labels = 同じ置き場の写し(labels.place — 読み手が残る間の deprecated の面。配車は読まない)。"
+   labels = 同じ集合の写し(labels.places — 読み手が残る間の deprecated の面。配車は読まない)。"
   (<- labels dict (node-labels-of settings {}))
-  (<- placed dict (node-place-of settings {"name" settings.node-name
+  (<- placed dict (node-places-of settings {"name" settings.node-name
                                            "labels" labels
                                            "capacity" settings.node-capacity
                                            "streamCapability" settings.stream-capability}))
@@ -2011,12 +2022,13 @@
 (defk node-spec-declared [spec settings]
   {:pre [(: spec dict) (: settings AgentdSettings)]
    :post [(: % dict)]}
-  "既に在る自分の node の行の spec を宣言へ揃えた形(R28): name・place・capacity・streamCapability・labels.place は
+  "既に在る自分の node の行の spec を宣言へ揃えた形(R28): name・places・capacity・streamCapability・labels.places は
    宣言から、labels の他の名乗り(会社境界の boundary 等 — 宣言の外)は行のまま(agentd は触らない・欠落 / 型違いは空)。
+   退役した 1 値の place / labels.place(契約 v3)は落とす(段 11 lane 11u — 配車は place を持つ行を断る)。
    宣言と一致していれば行の spec と等しい dict(呼び手は等しくない時だけ書く)。"
   (setv labels (.get spec "labels"))
   (<- declared dict (node-labels-of settings (if (isinstance labels dict) labels {})))
-  (<- placed dict (node-place-of settings {"name" settings.node-name
+  (<- placed dict (node-places-of settings {"name" settings.node-name
                                            "labels" declared
                                            "capacity" settings.node-capacity
                                            "streamCapability" settings.stream-capability}))

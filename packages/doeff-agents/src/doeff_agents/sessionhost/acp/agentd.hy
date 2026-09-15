@@ -189,6 +189,7 @@
   RecordUnsent
   RecordedTurns
   CONDITION-CREDENTIAL-PLACE-MISMATCH
+  PLACES-SEPARATOR
   CONDITION-WORK-DIR-MISSING
   WORK-DIR-STEP-CREATE
   WORK-DIR-STEP-LAUNCH
@@ -889,7 +890,7 @@
                         f"{settings.node-name} declares the custody service — the turn's credential is the custody lease only")
                      #() now-ms))
     (return state))
-  ;; 段 10 lane 10d 便 2(agora-redesign #85・不変条件 I5): 自分の置き場と違う置き場の口座の job は起こさない。
+  ;; 段 10 lane 10d 便 2(agora-redesign #85・不変条件 I5・段 11 lane 11u で集合へ): 自分が仕える置き場の集合に無い置き場の口座の job は起こさない。
   ;; 置き場は結ばれた profile の行の名乗り(spec.boundary)を鍵で 1 行読む — 判らない拍は進む(封じた資格はその
   ;; 置き場の worker にしか無く、最後の門は預かり所の redeem)。走行係自身の知識による前段の門で、第 2 の方策点ではない。
   (<- from-custody bool (credential-from-custody source))
@@ -897,11 +898,11 @@
     (<- profile-key str (profile-key-of plan.profile))
     (<- profile-row (| AcpRow None) (AcpGetRow :key profile-key))
     (<- boundary (| str None) (credential-place-of profile-row))
-    (<- mismatched bool (credential-place-mismatch settings.place boundary))
+    (<- mismatched bool (credential-place-mismatch settings.places boundary))
     (when mismatched
       (<- (end-job-now settings row CONDITION-CREDENTIAL-PLACE-MISMATCH
                        (+ f"agent-job {row.resource-id} binds profile {plan.profile} (place {boundary}) but node "
-                          f"{settings.node-name} is place {settings.place} — 資格はその置き場の外へ出さない")
+                          f"{settings.node-name} serves places {(.join PLACES-SEPARATOR settings.places)} — 資格はその置き場の外へ出さない")
                        #() now-ms))
       (return state)))
   ;; 段 10 lane 10y(agora-redesign #110): 作業場がこの node に無い job は起こさない(scratch の印が在れば作る)。
