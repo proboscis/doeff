@@ -528,19 +528,19 @@ def request_line(request_id: int, method: str, params: Mapping[str, Any] | None)
 def parse_response_line(line: str, *, request_id: int, method: str) -> Any:
     """Pure judgment: the result carried by one response line, or a typed failure."""
     if not line:
-        raise AgentdProtocolError("doeff-agentd closed the connection without a response")
+        raise AgentdProtocolError("doeff-sessionhost closed the connection without a response")
     response = json.loads(line)
     if not isinstance(response, Mapping):
-        raise AgentdProtocolError("doeff-agentd returned a non-object response")
+        raise AgentdProtocolError("doeff-sessionhost returned a non-object response")
     if response.get("id") != request_id:
-        raise AgentdProtocolError("doeff-agentd response id did not match request id")
+        raise AgentdProtocolError("doeff-sessionhost response id did not match request id")
     if not response.get("ok"):
         error = response.get("error")
         if not isinstance(error, str) or not error:
-            error = "doeff-agentd request failed"
+            error = "doeff-sessionhost request failed"
         error_code = response.get("error_code")
         if error_code is not None and not isinstance(error_code, (int, str)):
-            raise AgentdProtocolError("doeff-agentd error_code was not an integer or string")
+            raise AgentdProtocolError("doeff-sessionhost error_code was not an integer or string")
         raise AgentdClientError(error, error_code=error_code)
     if "result" not in response:
         raise AgentdProtocolError(
@@ -877,7 +877,7 @@ def ensure_agentd(
     except OSError as error:
         command_text = shlex.join(command)
         raise AgentdUnavailableError(
-            "doeff-agentd is not reachable at the expected socket "
+            "doeff-sessionhost is not reachable at the expected socket "
             f"{active_socket_path}, and starting it failed: {error}. "
             "Start command:\n"
             f"  {command_text}\n"
@@ -899,7 +899,7 @@ def ensure_agentd(
 
     command_text = shlex.join(command)
     raise AgentdUnavailableError(
-        "doeff-agentd is not reachable at the expected socket "
+        "doeff-sessionhost is not reachable at the expected socket "
         f"{active_socket_path} after starting it. Start command:\n"
         f"  {command_text}\n"
         f"Expected socket path: {active_socket_path}\n"
@@ -927,7 +927,7 @@ def _client_from_live_listener(
         )
         return client
     raise AgentdUnavailableError(
-        "doeff-agentd has a live listener on "
+        "doeff-sessionhost has a live listener on "
         f"{active_socket_path} but did not answer daemon.status within "
         f"{AGENTD_BUSY_STATUS_TIMEOUT_SECONDS}s; refusing to start a "
         "competing daemon against a live socket. Inspect the running "
@@ -963,7 +963,7 @@ def _delegate_to_supervisor(
     identity = _supervisor_identity(declaration)
     if declaration.kick_command is None:
         raise AgentdUnavailableError(
-            f"doeff-agentd socket {active_socket_path} is declared "
+            f"doeff-sessionhost socket {active_socket_path} is declared "
             f"supervisor-managed ({identity}) and has no live listener; "
             "refusing to self-spawn a host the supervisor does not manage. "
             "Start or restart the daemon through its supervisor (the "
@@ -980,7 +980,7 @@ def _delegate_to_supervisor(
         )
     except OSError as error:
         raise AgentdUnavailableError(
-            f"doeff-agentd socket {active_socket_path} is supervisor-managed "
+            f"doeff-sessionhost socket {active_socket_path} is supervisor-managed "
             f"({identity}) and its kick command failed to run: {error}.\n"
             f"Kick command: {shlex.join(kick)}\n"
             f"Log path: {log_path}",
@@ -990,7 +990,7 @@ def _delegate_to_supervisor(
     if outcome.timed_out or outcome.exit_code != 0:
         detail = outcome.stderr.strip() or outcome.stdout.strip()
         raise AgentdUnavailableError(
-            f"doeff-agentd socket {active_socket_path} is supervisor-managed "
+            f"doeff-sessionhost socket {active_socket_path} is supervisor-managed "
             f"({identity}) and its kick command exited with "
             f"exit code {outcome.exit_code}: {detail}\n"
             f"Kick command: {shlex.join(kick)}\n"
@@ -1010,7 +1010,7 @@ def _delegate_to_supervisor(
         return client
 
     raise AgentdUnavailableError(
-        f"doeff-agentd socket {active_socket_path} is supervisor-managed "
+        f"doeff-sessionhost socket {active_socket_path} is supervisor-managed "
         f"({identity}); the kick command succeeded but the daemon did not "
         f"become ready within {timeout}s. Inspect the supervisor state and "
         "the daemon log.\n"
@@ -1041,7 +1041,7 @@ def _validate_agentd_identity(
         expected_db_path
     ):
         raise AgentdUnavailableError(
-            "doeff-agentd is reachable at the expected socket "
+            "doeff-sessionhost is reachable at the expected socket "
             f"{expected_socket_path}, but it is using a different database: "
             f"{daemon_db}. Expected database: {expected_db_path}. "
             "Stop the stale daemon bound to this socket and start the "
@@ -1213,7 +1213,7 @@ def _lifecycle_value(lifecycle: AgentSessionLifecycle | str) -> str:
 
 def _snapshot_from_result(result: Any) -> AgentSessionSnapshot:
     if not isinstance(result, Mapping):
-        raise AgentdProtocolError("doeff-agentd returned a non-object session snapshot")
+        raise AgentdProtocolError("doeff-sessionhost returned a non-object session snapshot")
     return AgentSessionSnapshot.from_dict(dict(result))
 
 

@@ -111,8 +111,6 @@ ORCH_PROMPT.md
 .worktrees/
 
 # Local workspace artifacts
-python/
-!tests/semgrep/fixtures/python/
-!tests/semgrep/fixtures/python/**
-tests/semgrep/fixtures/python/**/__pycache__/
-tests/semgrep/fixtures/python/**/*.py[cod]
+# Repo-root scratch directory only. A `python/` directory inside a package
+# (e.g. packages/doeff-indexer/python/) is NOT covered by this rule.
+/python/

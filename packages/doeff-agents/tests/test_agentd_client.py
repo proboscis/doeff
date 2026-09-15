@@ -375,6 +375,30 @@ def test_ensure_agentd_fails_loudly_when_canonical_socket_unreachable(
     assert "--max-running 7 serve" in message
 
 
+def test_ensure_agentd_error_prose_names_the_session_host_not_the_retired_daemon(
+    monkeypatch,
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    """The user-facing prose names the console script that actually runs.
+
+    The Rust ``doeff-agentd`` binary was retired (ADR-DOE-AGENTS-004
+    ``retired-impl-lives-only-in-git-history``); the host that ships with this
+    package is ``doeff-sessionhost``.  A reader of this error must not be handed
+    two different binary names for one daemon.
+    """
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(short_runtime_dir))
+
+    with pytest.raises(AgentdUnavailableError) as error:
+        ensure_agentd(daemon_bin=str(tmp_path / "doeff-sessionhost"), max_running=7)
+
+    message = str(error.value)
+    assert "doeff-sessionhost is not reachable" in message
+    assert "doeff-agentd" not in message
+
+
 def test_ensure_agentd_starts_daemon_when_canonical_socket_unreachable(
     monkeypatch,
     tmp_path: Path,

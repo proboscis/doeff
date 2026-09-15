@@ -43,6 +43,7 @@ Welcome to the comprehensive documentation for doeff - an algebraic effects syst
 - **[MARKERS.md](MARKERS.md)** - Marker-based Program manipulation
 - **[seedream.md](seedream.md)** - SeeDream integration
 - **[IDE Plugins](ide-plugins.md)** - PyCharm and VS Code extensions
+- **[doeff-agents / session host](../packages/doeff-agents/README.md)** - Agent session management, the `doeff-sessionhost` host, and joining an agent control plane
 - **[Program Architecture](program-architecture-overview.md)** - Runtime internals overview
 - **[Removed IO API](06-io-effects.md)** - Historical note for the removed `IO(...)` effect
 - **[Removed run_program API](16-run-program-api.md)** - Historical note for the removed Python `run_program()` entrypoint
