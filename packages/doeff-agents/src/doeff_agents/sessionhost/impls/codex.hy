@@ -36,6 +36,7 @@
   tmux-send-keys])
 (import doeff_agents.sessionhost.policy [
   BILLING-METERED
+  BILLING-SUBSCRIPTION
   CODEX-AUTH-API-KEY-FIELD
   HOME-READING-ABSENT
   HOME-READING-MALFORMED
@@ -241,6 +242,20 @@
     (setv [status declared] (codex-home-metered-reading auth-text))
     (setv auth-status status)
     (setv auth-declares-api-key declared))
+  ;; lane B の締め直し(ADR-DOE-AGENTS-003 R4 改訂): **定額**の kind の家(native 形
+  ;; <codex_home>/auth.json も二軸形の view も同じ 1 点の読み)に非空の
+  ;; OPENAI_API_KEY が在れば拒否する。黙って通る道を閉じ、課金の階級を kind に出す。
+  ;; account(どの口座の login か)は今も検めない。欄が null / 空の家(= 定額の login が
+  ;; 書く形)は通る — 判定は「非空」ちょうど。
+  (when (and (= billing BILLING-SUBSCRIPTION) auth-declares-api-key)
+    (raise (RuntimeError
+             (+ f"session.launch: binding kind '{(.get binding "kind")}' is a subscription "
+                f"kind, but {codex-home}/auth.json declares metered billing (a non-empty "
+                f"`{CODEX-AUTH-API-KEY-FIELD}` field). Either declare the home with the "
+                "metered kind 'codex-metered', or remove the API key from the home "
+                "(`codex login` with the subscription account rewrites auth.json). The "
+                "billing class must be visible in the binding kind "
+                "(ADR-DOE-AGENTS-003 R4 / -004 R9)."))))
   (when (and (= billing BILLING-METERED) (not auth-declares-api-key))
     (raise (RuntimeError
              (+ "session.launch: binding kind 'codex-metered' declares metered billing, "
