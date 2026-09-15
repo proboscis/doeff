@@ -155,8 +155,8 @@ CONDITION_RECORD_UNAVAILABLE: ConditionType = "RecordUnavailable"
 #: 手番の資格は預かり所の貸与ちょうどなので、起こさず(Running も sessionHandle も書かず)この条件で Ended に閉じる
 #: (判断は judgment.credential-source-of の 1 点)。
 CONDITION_CREDENTIAL_SOURCE_MISSING: ConditionType = "CredentialSourceMissing"
-#: 口座の置き場(profile の行の spec.boundary)が自分の置き場(labels.place)と違う job を起こさなかった印
-#: (段 10 lane 10d 便 2・agora-redesign #85 の I5 — 判断は judgment.credential-place-mismatch の 1 点)。
+#: 口座の置き場(profile の行の spec.boundary)が自分の置き場の集合(spec.places)に無い job を起こさなかった印
+#: (段 10 lane 10d 便 2・agora-redesign #85 の I5・段 11 lane 11u・#224 で集合へ — 判断は judgment.credential-place-mismatch の 1 点)。
 CONDITION_CREDENTIAL_PLACE_MISMATCH: ConditionType = "CredentialPlaceMismatch"
 #: 段 10 lane 10y(agora-redesign #110・依頼者の裁定 2026-09-15 案 A): 手番の work_dir(家からの相対 `~/…` は node の HOME で展開した後)が
 #: この node に無く、charter が scratch の印(CHARTER_WORK_DIR_SCRATCH_KEY = true)を持たない job を起こさなかった印。配車の係は
@@ -364,16 +364,25 @@ RECORD_URL_ENV = "RECORD_SERVICE_URL"
 #: 本文の batch の spool(送る前の outbox)の置き場。join は state_dir の下(JOIN_RECORD_SPOOL_DIR)を導く。
 RECORD_SPOOL_DIR_ENV = "DOEFF_AGENTD_RECORD_SPOOL_DIR"
 NODE_NAME_ENV = "DOEFF_AGENTD_NODE_NAME"
-#: 機体の置き場(段 10 lane 10d 便 2・agora-redesign #85)— 閉語彙は ACP の契約 agora-kinds.json の
-#: profile.spec.boundary / node.spec.labels.place と**同じ綴り**(新しい語を作らない)。
+#: 機体の置き場の語(段 10 lane 10d 便 2・agora-redesign #85)— 閉語彙は ACP の契約 agora-kinds.json の
+#: profile.spec.boundary / node.spec.places.items と**同じ綴り**(新しい語を作らない)。
 AgentdPlace = Literal["company", "personal"]
 #: 綴りの定義点は上の型 1 つ(実行時の照合はここから導く — 語彙を 2 度書かない)。
 AGENTD_PLACES: frozenset[str] = frozenset(get_args(AgentdPlace))
-#: node の spec のうち置き場を名乗る**型つきの欄**(契約 agora-kinds.json node.spec.place・
-#: 段 10 lane 10d 便 4・依頼者の裁定 2026-09-15 問 3)。配車の絞りはこの欄だけを読む。
-NODE_SPEC_PLACE = "place"
-#: 同じ置き場を写す labels の鍵(DEPRECATED — 読み手が残る間だけ書き続ける面。配車は読まない)。
-NODE_LABEL_PLACE = "place"
+#: node の spec のうち置き場の**集合**を名乗る型つきの欄(契約 agora-kinds.json v4 node.spec.places・段 11 lane 11u・
+#: agora-redesign #224・依頼者の裁定 2026-09-16 = two-way door)。機体が仕える置き場の部分集合(会社 Mac = company と
+#: personal の両方・pool と個人の MacBook = personal だけ)。配車(ACP の nodeAcceptsProfile)は「profile の boundary が
+#: この集合に含まれる node」にだけ結び、この欄だけを読む(両向き)。1 値の spec.place(v3)は退役 — 配車は place を持つ
+#: 行を行の誤りとして断るので、agentd は書かず、揃える時に落とす(NODE_SPEC_PLACE_RETIRED)。
+NODE_SPEC_PLACES = "places"
+#: 退役した 1 値の欄(契約 v3 node.spec.place・段 10 lane 10d 便 4)。agentd は書かない。行に残っていれば揃えの写しで落とす。
+NODE_SPEC_PLACE_RETIRED = "place"
+#: 同じ集合を写す labels の鍵(DEPRECATED — 読み手が残る間だけ書き続ける面・値は , 区切りの 1 文字列。配車は読まない)。
+NODE_LABEL_PLACES = "places"
+#: 退役した 1 値の写しの鍵(labels.place)。揃えの写しで落とす。
+NODE_LABEL_PLACE_RETIRED = "place"
+#: 宣言の綴り(1 つの文字列に , 区切り — 宣言 file の値は文字列ちょうど・work_roots と同じ形)と env・labels の区切り。
+PLACES_SEPARATOR = ","
 #: node が持つ作業場の根(段 10 lane 10y・agora-redesign #110・依頼者の裁定 2026-09-15 案 C・既知の形 = volume topology の先読み):
 #: 契約 agora-kinds.json node.spec.workRoots(文字列の list・欄の定義点は契約 — ACP 側 10d)。配車は絶対 path の work_dir をこの根で
 #: 篩う(`~/…` はどの node も通す)。agentd は宣言(join の [agentd].work_roots / --work-roots → DOEFF_AGENTD_WORK_ROOTS)が在る時だけ
@@ -391,8 +400,16 @@ class WorkRoots:
     """node が持つ作業場の根の宣言(join.work-roots-of の答え — 検を通った根を宣言の順・重複なしで運ぶ)。"""
 
     roots: tuple[str, ...]
-#: 置き場の env(join が宣言 file の [agentd].place / flag --place から据える)。無い agentd は参加しない。
-PLACE_ENV = "DOEFF_AGENTD_PLACE"
+
+
+@dataclass(frozen=True)
+class Places:
+    """機体が仕える置き場の集合の宣言(join.places-of の答え — 検を通った語を宣言の順・重複なしで運ぶ・段 11 lane 11u)。"""
+
+    words: tuple[str, ...]
+#: 置き場の集合の env(join が宣言 file の [agentd].places / flag --places から , 区切りで据える — 段 11 lane 11u)。
+#: 無い agentd は参加しない。1 値の DOEFF_AGENTD_PLACE(段 10 lane 10d 便 2)は退役。
+PLACES_ENV = "DOEFF_AGENTD_PLACES"
 #: node の spec.capacity(同時に走らせられる手番の数 — 段 10 lane 10d・agora-redesign #85)。join が宣言 file の
 #: [agentd].capacity / flag --capacity から据える。無い agentd は参加しない(runtime.settings_from_env)。
 CAPACITY_ENV = "DOEFF_AGENTD_CAPACITY"
@@ -504,11 +521,11 @@ class JoinSpec:
     ownership: Ownership | None
     #: node の spec.capacity(宣言 file の [agentd].capacity・flag --capacity・必須 — 段 10 lane 10d)。
     capacity: int
-    #: 機体の置き場(宣言 file の [agentd].place・flag --place・必須 — 段 10 lane 10d 便 2)。
-    #: node の spec.labels.place に名乗り、自分と違う置き場の口座の job は起こさない(I5)。
-    #: ⚠ 閉語彙(AGENTD_PLACES)の検は join.place-of の 1 点 — ここは検を通った値を運ぶ欄で、
-    #: 型は str(Hy の側は Literal へ絞れないので、2 つ目の検を型で偽装しない)。
-    place: str
+    #: 機体が仕える置き場の集合(宣言 file の [agentd].places・flag --places・, 区切り・必須で空でない — 段 11 lane 11u)。
+    #: node の spec.places に名乗り、集合に無い置き場の口座の job は起こさない(I5)。宣言の順・重複なし。
+    #: ⚠ 閉語彙(AGENTD_PLACES)と重複の検は join.places-of の 1 点 — ここは検を通った値を運ぶ欄で、
+    #: 型は tuple[str, ...](Hy の側は Literal へ絞れないので、2 つ目の検を型で偽装しない)。
+    places: tuple[str, ...]
     #: 会話の記録の service の URL(段 9f lane 9f-2 — 宣言 file の [record].url・flag --record)。None = 二重書きなし。
     record_url: str | None = None
     #: 預かり所へ名乗る ServiceAccount の token の file(段 10 lane 10y — 宣言 file の [custody].service_account_token_file・
@@ -618,10 +635,10 @@ class AgentdSettings:
     #: agentd は自分の node の行を宣言から名乗る(judgment.node-spec-of / node-spec-declared)。composition root
     #: (runtime.settings_from_env)は宣言が無ければ参加を断るので、この既定 0(手番を受けない)は検体の値。
     node_capacity: int = 0
-    #: 自分の置き場(段 10 lane 10d 便 2)— 宣言 file の [agentd].place の写し。node の spec.labels.place に名乗り、
-    #: 違う置き場の口座を持つ job は起こさない(judgment.credential-place-verdict)。composition root は宣言が
-    #: 無ければ参加を断るので、この空の既定は検体の値。
-    place: str = ""
+    #: 自分が仕える置き場の集合(段 11 lane 11u・#224)— 宣言 file の [agentd].places の写し(宣言の順・重複なし)。
+    #: node の spec.places に名乗り、集合に無い置き場の口座を持つ job は起こさない(judgment.credential-place-mismatch)。
+    #: composition root は宣言が無い・空なら参加を断るので、この空の既定は検体の値。
+    places: tuple[str, ...] = ()
     principal: str = AGENTD_PRINCIPAL
     #: 参加の lease: heartbeat ごとに expiresAt = now + TTL を書き、周期は TTL / 3。
     node_lease_ttl_seconds: int = 90
