@@ -43,6 +43,10 @@ from doeff_agents.sessionhost.acp.effects import (
     Places,
     CAPACITY_ENV,
     DRAIN_SECONDS_ENV,
+    AGENTD_BUILD_ENV,
+    AGENTD_BUILD_LOCAL,
+    AGENTD_REVISION_ENV,
+    AGENTD_REVISION_UNSTAMPED,
     PLACES_ENV,
     CUSTODY_CONTRACT_VERSION,
     CUSTODY_URL_ENV,
@@ -122,6 +126,9 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         node_capacity=node_capacity,
         # 段 12 lane 12j(agora-redesign #304 便 2): 停止の排水の上限(宣言 file の [agentd].drain_seconds — 無い = 0 = 排水しない)
         drain_seconds=_drain_seconds_of_env(env),
+        # 段 12 lane 12j(agora-redesign #367): 参加時に名乗る自分の版(読みの規則は join.revision-of / build-of の 1 点・無ければ unstamped / local)
+        agentd_revision=_revision_of_env(env),
+        agentd_build=_build_of_env(env),
         places=places,
         homes_root=homes_root,
         backend_kind=backend,
@@ -147,6 +154,26 @@ def _capacity_of_env(env: Mapping[str, str]) -> int:
     verdict: object = PyVM().run(join.capacity_of(env.get(CAPACITY_ENV)))
     if not isinstance(verdict, int):
         raise TypeError(f"capacity_of returned {type(verdict).__name__}")
+    return verdict
+
+
+def _revision_of_env(env: Mapping[str, str]) -> str:
+    """agentd の版の刻印 revision(段 12 lane 12j・agora-redesign #367)。読みの規則は join.revision-of の 1 点(無い = unstamped)。"""
+    verdict: object = PyVM().run(join.revision_of(env.get(AGENTD_REVISION_ENV)))
+    if verdict is None:
+        return AGENTD_REVISION_UNSTAMPED
+    if not isinstance(verdict, str):
+        raise TypeError(f"revision_of returned {type(verdict).__name__}")
+    return verdict
+
+
+def _build_of_env(env: Mapping[str, str]) -> str:
+    """agentd の版の刻印 build(段 12 lane 12j・agora-redesign #367)。読みの規則は join.build-of の 1 点(無い = local)。"""
+    verdict: object = PyVM().run(join.build_of(env.get(AGENTD_BUILD_ENV)))
+    if verdict is None:
+        return AGENTD_BUILD_LOCAL
+    if not isinstance(verdict, str):
+        raise TypeError(f"build_of returned {type(verdict).__name__}")
     return verdict
 
 

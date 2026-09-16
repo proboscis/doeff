@@ -196,7 +196,12 @@
   NEXT-ARM-REHYDRATE
   NEXT-ARM-RESUME
   NEXT-ARM-SEND
+  AGENTD-PROTOCOL
   NODE-GONE
+  NODE-SPEC-AGENTD-BUILD-KEY
+  NODE-SPEC-AGENTD-KEY
+  NODE-SPEC-AGENTD-PROTOCOL-KEY
+  NODE-SPEC-AGENTD-REVISION-KEY
   OWNERSHIP-GRADE-COMPANY
   PHASE-BOUND
   PHASE-ENDED
@@ -2245,6 +2250,17 @@
   (if settings.draining 0 settings.node-capacity))
 
 
+(defk agentd-version-of [settings]
+  {:pre [(: settings AgentdSettings)]
+   :post [(: % dict)]}
+  "参加時に node の spec.agentd へ名乗る自分の版(段 12 lane 12j・agora-redesign #367・既知の形 行 3 (h)): protocol = effects.AGENTD-PROTOCOL
+   の 1 点(ACP との wire の版・配置の床が比べる)・revision = 据え付けの刻印(無ければ unstamped — 嘘の sha を書かない)・build = image の
+   tag か local。node-spec-of と node-spec-declared の両方がこの 1 点を読む。"
+  {NODE-SPEC-AGENTD-PROTOCOL-KEY AGENTD-PROTOCOL
+   NODE-SPEC-AGENTD-REVISION-KEY settings.agentd-revision
+   NODE-SPEC-AGENTD-BUILD-KEY settings.agentd-build})
+
+
 (defk node-spec-of [settings]
   {:pre [(: settings AgentdSettings)]
    :post [(: % dict)]}
@@ -2254,10 +2270,12 @@
    labels = 同じ集合の写し(labels.places — 読み手が残る間の deprecated の面。配車は読まない)。"
   (<- labels dict (node-labels-of settings {}))
   (<- capacity int (declared-capacity-of settings))
+  (<- version dict (agentd-version-of settings))
   (<- placed dict (node-places-of settings {"name" settings.node-name
                                            "labels" labels
                                            "capacity" capacity
-                                           "streamCapability" settings.stream-capability}))
+                                           "streamCapability" settings.stream-capability
+                                           NODE-SPEC-AGENTD-KEY version}))
   (<- rooted dict (node-work-roots-of settings placed))
   rooted)
 
@@ -2272,10 +2290,12 @@
   (setv labels (.get spec "labels"))
   (<- declared dict (node-labels-of settings (if (isinstance labels dict) labels {})))
   (<- capacity int (declared-capacity-of settings))
+  (<- version dict (agentd-version-of settings))
   (<- placed dict (node-places-of settings {"name" settings.node-name
                                            "labels" declared
                                            "capacity" capacity
-                                           "streamCapability" settings.stream-capability}))
+                                           "streamCapability" settings.stream-capability
+                                           NODE-SPEC-AGENTD-KEY version}))
   (<- rooted dict (node-work-roots-of settings placed))
   rooted)
 

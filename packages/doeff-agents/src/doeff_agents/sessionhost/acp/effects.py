@@ -519,6 +519,21 @@ CAPACITY_ENV = "DOEFF_AGENTD_CAPACITY"
 #: 段 12 lane 12j(agora-redesign #304 便 2): 停止(SIGTERM)の排水の上限(秒)。宣言 file の [agentd].drain_seconds から join が運ぶ。
 #: 0 / 無し = 今日どおり即座に走っている手番を閉じる(AgentdRestart)。
 DRAIN_SECONDS_ENV = "DOEFF_AGENTD_DRAIN_SECONDS"
+#: 段 12 lane 12j(agora-redesign #367・既知の形 行 3 (h) = kubelet の最小版 / Buildkite の agent version floor): agentd が参加時に名乗る
+#: 自分の版(契約 agora-kinds.json kinds.node.spec.agentd {protocol, revision, build})。protocol = ACP との wire の版(整数・
+#: **doeff-agents が wire を変える時にここを 1 進める** — 配置の床 scheduling.json ladder.fields.agentdProtocolFloor が比べる)。
+#: revision = doeff-agents の git sha(人が読む・据え付けの側が宣言 file の [agentd].revision か env で刻む — 刻まれていなければ
+#: AGENTD_REVISION_UNSTAMPED を名乗る〔嘘の sha を書かない・契約の minLength 7 を満たす語〕)/ build = image の tag か local。
+AGENTD_PROTOCOL = 1
+AGENTD_REVISION_ENV = "DOEFF_AGENTD_REVISION"
+AGENTD_BUILD_ENV = "DOEFF_AGENTD_BUILD"
+AGENTD_REVISION_UNSTAMPED = "unstamped"
+AGENTD_BUILD_LOCAL = "local"
+#: node の spec の欄の綴り(契約 kinds.node.spec.agentd とその中の 3 欄)。
+NODE_SPEC_AGENTD_KEY = "agentd"
+NODE_SPEC_AGENTD_PROTOCOL_KEY = "protocol"
+NODE_SPEC_AGENTD_REVISION_KEY = "revision"
+NODE_SPEC_AGENTD_BUILD_KEY = "build"
 HOMES_ROOT_ENV = "DOEFF_AGENTD_HOMES_ROOT"
 CUSTODY_URL_ENV = "AGORA_CUSTODY_URL"
 BORROWER_KEY_PATH_ENV = "AGORA_BORROWER_KEY_PATH"
@@ -647,6 +662,10 @@ class JoinSpec:
     allow_metered_billing: bool = False
     #: 停止(SIGTERM)の排水の上限(秒 — 宣言 file の [agentd].drain_seconds・段 12 lane 12j・agora-redesign #304 便 2)。0 = 排水しない(既定)。
     drain_seconds: int = 0
+    #: agentd の版の刻印(段 12 lane 12j・agora-redesign #367 — 宣言 file の [agentd].revision / build・任意)。None = 名乗らない(env に現れず、
+    #: agentd は AGENTD_REVISION_UNSTAMPED / AGENTD_BUILD_LOCAL を名乗る)。
+    revision: str | None = None
+    build: str | None = None
 
 
 @dataclass(frozen=True)
@@ -823,6 +842,10 @@ class AgentdSettings:
     #: 0 = 排水しない(今日どおり走っている手番を AgentdRestart で閉じる)。> 0 = 新しい claim を止め・node の capacity を 0 に名乗り、
     #: 走っている手番の終わりまで(上限まで)待ってから残りを閉じる。pod の terminationGracePeriodSeconds はこの値より長く取る。
     drain_seconds: int = 0
+    #: 段 12 lane 12j(agora-redesign #367): 参加時に node の spec.agentd に名乗る自分の版 — revision(git sha・AGENTD_REVISION_ENV・
+    #: 無ければ AGENTD_REVISION_UNSTAMPED)と build(image の tag か local・AGENTD_BUILD_ENV)。protocol は AGENTD_PROTOCOL の 1 点。
+    agentd_revision: str = AGENTD_REVISION_UNSTAMPED
+    agentd_build: str = AGENTD_BUILD_LOCAL
     #: 排水の最中か(停止の腕が立て、拍が読む — 判断は judgment.declared-capacity-of と agentd.receive-bound-jobs の 1 点ずつ)。
     #: 宣言ではなく拍ごとの状態(run_loop が settings を写して立てる)。
     draining: bool = False
