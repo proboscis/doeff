@@ -1390,3 +1390,25 @@
   (assert (is (run (summary-floor-at-of page 599)) None) "recordSeq が floor でない出来事を時刻に読んだ")
   (assert (is (run (summary-floor-at-of (RecordPage :events #() :next None) 600)) None))
   (assert (is (run (summary-floor-at-of (RecordUnread 0 "unreachable") 600)) None)))
+
+
+(deftest test-the-record-probe-and-its-log-wait-for-the-claim-to-land
+  ;; 追補 7(#233 の残債 a): claim が Conflict で流れた拍は、記録の 1 読み(RecordReadSince)も「has no session …」の判断の log も出さない —
+  ;; 問いと解きは claim が着いた後(start-claimed)。次の拍で claim が着けば 1 読み・log 1 行・履歴からの再開(冪等)。
+  (setv world (World "headless" True))
+  (.put-row world.acp (message-row "m-1" CONVERSATION "operator" "合言葉は ひまわり" (- AT 9000)))
+  (setv (get world.record-service.stored #(CONVERSATION "j-0#a1" 0)) {"producerSeq" 0 "at" (- AT 8000) "kind" "text" "text" "覚えました"})
+  (.put-row world.acp (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (- AT 100)))
+  (.put-row world.acp (bound-row "j-2" ["m-2"] "acct" None))
+  (setv (get world.acp.conflict-once f"{AGENT-JOB-NAMESPACE}:{AGENT-JOB-KIND}:j-2") 7)
+  (.tick world 0)
+  (assert (any (gfor line world.local.logs (in "claim of job j-2 did not land" line))) world.local.logs)
+  (assert (= world.record-service.since-reads []) world.record-service.since-reads)
+  (assert (not (any (gfor line world.local.logs (in "has no session to continue" line)))) world.local.logs)
+  (assert (= world.sessions.launches []))
+  (.tick world 1000)
+  (assert (= (len world.sessions.launches) 1) world.local.logs)
+  (assert (= world.record-service.since-reads [#(CONVERSATION 0 1 RECORD-RAW-EVENT-KINDS)]) world.record-service.since-reads)
+  (assert (= (len (lfor line world.local.logs :if (in "has no session to continue" line) line)) 1) world.local.logs)
+  (setv prompt (str-at (get world.sessions.launches 0) "prompt"))
+  (assert (in "agent: 覚えました" prompt) prompt))
