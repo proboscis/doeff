@@ -7,6 +7,7 @@
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.pyi",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/live_row.hy",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.pyi",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.pyi",
@@ -112,8 +113,22 @@
       ],
       "allow": [
         "agentd-effects",
-        "sessionhost-attachment"
+        "sessionhost-attachment",
+        "acp-live-row"
       ],
+      "typed": true
+    },
+    {
+      "name": "acp-live-row",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/live_row.hy"
+      ],
+      "responsibility": "ACP の client library(clients/hy/acp_client/shared/live_row.hy)の**写し**(段 12 lane 12j・agora-redesign #320・contracts.lock の kind = code・口は scripts/sync_contracts.py ちょうど — ここで直さない): 名前が指す『生きている行』を解く 3 値の純関数(none / one / many・終端の行は候補にしない・生きている行は lease の新しい順)。agentd の自分の node の行の読み(judgment.node-row-named)がこれを読み、自前の名前の索引を持たない。判断も I/O も持たない(deftest は同梱)",
+      "layer": "pure",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/live_row.hy"
+      ],
+      "allow": [],
       "typed": true
     },
     {

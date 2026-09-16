@@ -146,7 +146,9 @@ class World:
     def __init__(self) -> None:
         # 段 10 lane 10d(R28): 宣言の capacity は種の node の行と同じ値 — 揃えの書きを検体の拍に混ぜない。
         self.settings = AgentdSettings(node_name=NODE, homes_root=HOMES, node_capacity=1)
-        self.acp = FakeAcp(births={TURN_RECORD_KIND: Birth("state", "running")})
+        # 生まれの状態は engine の宣言の写し(agora-kinds.json の declaration.initial): turn-record = running・node = joined
+        # (段 12 lane 12j・#320: agentd は生きている行を status.state == joined で判じるので、engine が刻む生まれの状態が要る)。
+        self.acp = FakeAcp(births={TURN_RECORD_KIND: Birth("state", "running"), NODE_KIND: Birth("state", "joined")})
         self.custody = FakeCustody(tokens={"acct": TOKEN})
         self.sessions = FakeSessions()
         self.local = FakeLocal(now_ms=1_000)
@@ -674,6 +676,43 @@ def test_a_withdrawn_node_re_joins_as_a_new_incarnation_of_the_same_identity() -
     # 拍を重ねても鍵は増えない(同じ incarnation の上に lease を書く)
     world.tick(advance_ms=30_000)
     assert [k for k in world.acp.rows if k.startswith(f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:")] == [key, fresh_key]
+
+
+def test_the_agentd_joins_the_live_row_with_the_freshest_lease_when_its_name_has_two() -> None:
+    """段 12 lane 12j(agora-redesign #320・#317 規則 1): 自分の名が指す行は ACP の client library の写し(live_row)の判断で解く —
+    終端(gone)の行は候補にしない・生きている行が 2 本(再起動の直後、旧い化身が lease を残している拍)なら lease の最も新しい行
+    (preferred-live-row の規則)。旧形は一覧の順で最初の gone でない行に当たり、観測と lease を旧い化身へ書いた。"""
+    world = World()
+    key = f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"
+    stale = world.acp.rows[key]
+    # 旧い化身 = 基底の鍵の行(lease は古い)・新しい化身 = <name>-2(lease が新しい)・gone の行 = <name>-3(候補ではない)
+    world.acp.put_row(replace(stale, status={"state": "joined", "lease": {"owner": NODE, "heartbeatAt": 100, "expiresAt": 900}}))
+    world.acp.put_row(
+        row(AGORA_KINDS_NAMESPACE, NODE_KIND, f"{NODE}-2", dict(stale.spec),
+            {"state": "joined", "lease": {"owner": NODE, "heartbeatAt": 200, "expiresAt": 1_900}})
+    )
+    world.acp.put_row(
+        row(AGORA_KINDS_NAMESPACE, NODE_KIND, f"{NODE}-3", dict(stale.spec),
+            {"state": "gone", "lease": {"owner": NODE, "heartbeatAt": 300, "expiresAt": 9_900}})
+    )
+    world.tick()
+    fresh = world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}-2"]
+    assert fresh.status is not None and "observations" in fresh.status, "lease の最も新しい生きている行に観測を書いていない(#320)"
+    old = world.acp.rows[key]
+    assert old.status is not None and "observations" not in old.status, "旧い化身(一覧の順で先の行)に観測を書いた(旧形の名前の索引)"
+    gone = world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}-3"]
+    assert gone.status is not None and "observations" not in gone.status, "gone の行を候補にした"
+    # 3 本のまま(新しい化身を作らない)
+    assert sorted(k for k in world.acp.rows if k.startswith(f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:")) == sorted(
+        [key, f"{key}-2", f"{key}-3"]
+    )
+    # 判断の純関数: gone だけなら None(join が新しい化身を作る)・joined 1 本ならその行
+    only_gone = (replace(stale, status={"state": "gone"}),)
+    assert run(judgment.node_row_named(only_gone, NODE)) is None
+    one = (replace(stale, status={"state": "joined"}),)
+    assert run(judgment.node_row_named(one, NODE)) == one[0]
+    entry = run(judgment.node_row_entry_of(fresh))
+    assert (entry["name"], entry["alive"], entry["lease"]) == (NODE, True, 1_900)
 
 
 def test_node_row_names_its_work_roots_only_when_declared() -> None:

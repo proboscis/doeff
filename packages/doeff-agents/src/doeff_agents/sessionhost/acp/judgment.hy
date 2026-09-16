@@ -49,6 +49,9 @@
 (import re)
 
 (import doeff_agents.sessionhost.attachment [TurnAttachment attachment-wire])
+;; 段 12 lane 12j(agora-redesign #320): 名前が指す「生きている行」を解く 3 値の判断は ACP の client library の写し
+;; (live_row.hy・contracts.lock の kind = code)の 1 点 — ここに名前の索引を持たない。
+(import doeff_agents.sessionhost.acp.live_row [resolve-live-row])
 (import doeff_agents.sessionhost.acp.effects [
   CHARTER-KIND-KEY
   CHARTER-KIND-TURN
@@ -213,7 +216,7 @@
   NEXT-ARM-RESUME
   NEXT-ARM-SEND
   AGENTD-PROTOCOL
-  NODE-GONE
+  NODE-JOINED
   NODE-SPEC-AGENTD-BUILD-KEY
   NODE-SPEC-AGENTD-KEY
   NODE-SPEC-AGENTD-PROTOCOL-KEY
@@ -2284,18 +2287,35 @@
 ;; 行の欄の写し(node の lease と観測)
 ;; ---------------------------------------------------------------------------
 
+(defk node-row-entry-of [row]
+  {:pre [(: row AcpRow)]
+   :post [(: % dict)]}
+  "AcpRow → library の項(契約 scheduling.json liveRow.nodeRow の綴り — name = spec.name・alive = status.state == joined・
+   lease = status.lease.expiresAt〔epoch ms〕・row = この行)。綴りを知るのはここ 1 点で、判断(resolve-live-row)は綴りを知らない。"
+  (setv status (if (isinstance row.status dict) row.status {}))
+  (setv lease (.get status "lease"))
+  (setv expires (if (isinstance lease dict) (.get lease "expiresAt") None))
+  {"name" (str (.get row.spec "name" ""))
+   "alive" (= (.get status "state") NODE-JOINED)
+   "lease" (if (and (isinstance expires int) (not (isinstance expires bool))) expires None)
+   "row" row})
+
+
 (defk node-row-named [rows name]
   {:pre [(: rows tuple) (: name str)]
    :post [(: % (| AcpRow None))]}
-  "自分の名の生きた Node の行(gone は同じ名の生きた行ではない)。無ければ None。"
-  (setv found None)
+  "自分の名が指す**生きている** Node の行(段 12 lane 12j・agora-redesign #320・#317 規則 1): 判断は ACP の client library の
+   写し live_row.resolve-live-row の 1 点(終端 = gone の行は候補にしない・生きている行は lease の新しい順)。one = その行・
+   many = 先頭(lease の最も新しい行 — 動き続けねばならない呼び手の規則 preferred-live-row と同じ・同じ名の 2 本は再起動の
+   直後の旧い化身が lease を残している拍)・none = None(join が新しい化身を作る)。名前の索引をここに持たない。"
+  (setv entries [])
   (for [row rows]
-    (setv state (if (isinstance row.status dict) (.get row.status "state") None))
-    (when (and (is found None)
-               (= (.get row.spec "name") name)
-               (!= state NODE-GONE))
-      (setv found row)))
-  found)
+    (<- entry dict (node-row-entry-of row))
+    (when (= (get entry "name") name)
+      (.append entries entry)))
+  (<- resolved dict (resolve-live-row entries))
+  (setv live (get resolved "live"))
+  (if (= (len live) 0) None (get live 0)))
 
 
 (defk node-resource-id-of [rows name]
