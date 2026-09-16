@@ -299,6 +299,9 @@ def decode_event_window(after: int, body: JSONObject) -> EventWindow:
     """``GET /api/event-window`` の応答 → EventWindow(post-image は鍵ごとの最後・delete は retired)。"""
     through = _int_field(body, "through")
     latest = _int_field(body, "latestSequence")
+    epoch = body.get("storeEpoch")
+    if "storeEpoch" in body and (not isinstance(epoch, str) or not epoch):
+        raise RuntimeError(f"agentd: ACP event-window storeEpoch is not a non-empty string: {epoch!r}")
     events = body.get("events")
     rows: dict[str, AcpRow] = {}
     retired: dict[str, None] = {}
@@ -327,6 +330,7 @@ def decode_event_window(after: int, body: JSONObject) -> EventWindow:
         rows=tuple(rows.values()),
         retired=tuple(retired),
         births=tuple(sorted(births.items())),
+        store_epoch=epoch if isinstance(epoch, str) else None,
     )
 
 

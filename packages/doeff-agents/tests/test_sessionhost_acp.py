@@ -3247,6 +3247,40 @@ def test_watch_wake_reads_the_event_window_not_the_full_list() -> None:
     assert world.acp.lists.count(AGENT_JOB_KIND) == 3
 
 
+def test_a_window_from_another_store_incarnation_falls_back_to_the_full_list_and_adopts_the_epoch() -> None:
+    """read-freshness.json(段 12 lane 12d・agora-redesign #204 / #250): 窓の答えが別の store の版(storeEpoch)を
+    名乗った拍は、cursor が別の出来事を指し得るので全量 list に落ち、新しい版を覚える。同じ版のまま進む拍は窓だけ。
+    初めて名乗られた版は「変わった」ではなく採る。"""
+    world = World()
+    world.tick()  # 最初の拍: 全量 list(版はまだ知らない)
+    assert world.state.store_epoch is None
+    world.acp.store_epoch = "epoch-a"
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400))
+    world.tick(advance_ms=1_000)  # watch: changed → window — 初めて名乗られた版を採る(全量 list は増えない)
+    assert world.acp.lists.count(AGENT_JOB_KIND) == 1
+    assert world.state.store_epoch == "epoch-a"
+    world.acp.store_epoch = "epoch-b"  # store が同じ URL の下で作り直された
+    world.acp.put_row(message("m-2", "second"))
+    world.tick(advance_ms=1_000)
+    assert world.acp.lists.count(AGENT_JOB_KIND) == 2, "別の版の窓を畳んだ(全量 list に落ちていない)"
+    assert world.state.store_epoch == "epoch-b"
+    world.acp.put_row(message("m-3", "third"))
+    world.tick(advance_ms=1_000)
+    assert world.acp.lists.count(AGENT_JOB_KIND) == 2, "同じ版なのに全量 list に落ちた"
+    assert world.state.store_epoch == "epoch-b"
+
+
+def test_window_epoch_verdict_is_one_closed_vocabulary() -> None:
+    """判断の純関数(judgment.window_epoch_verdict)— 版を名乗らない engine は continue・初めての版は adopt・同じは
+    continue・違えば relist(閉語彙 effects.EpochVerdict)。"""
+    assert run(judgment.window_epoch_verdict(None, None)) == "continue"
+    assert run(judgment.window_epoch_verdict("a", None)) == "continue"
+    assert run(judgment.window_epoch_verdict(None, "a")) == "adopt"
+    assert run(judgment.window_epoch_verdict("a", "a")) == "continue"
+    assert run(judgment.window_epoch_verdict("a", "b")) == "relist"
+
+
 def test_agent_job_to_send_starts_from_the_birth_landing_not_the_second_granular_created_at() -> (
     None
 ):

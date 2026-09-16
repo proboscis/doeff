@@ -20,6 +20,7 @@ checkout を持てる機体の `python3 scripts/sync_contracts.py` と ACP 側�
 写しと正本の名乗り(正本側の検 `scripts/check_cross_repo_contracts.hy` がこの行を読む):
 
 - `agora-kinds.json` — acp-contract-canon: proboscis/agent-control-plane:docs/contracts/agora-kinds.json
+- `read-freshness.json` — acp-contract-canon: proboscis/agent-control-plane:docs/contracts/read-freshness.json
 
 読む欄の宣言 = `reads.json`(schema `acp.contract-reads.v1` — 正本側の検が「読む欄が正本に実在し deprecated を読まない」を撃つ)。
 写しの中で閉じる自己整合(読む欄が写しに実在する・版と互換の規則・agentd の `effects.py` が写しとして持つ値との一致)は

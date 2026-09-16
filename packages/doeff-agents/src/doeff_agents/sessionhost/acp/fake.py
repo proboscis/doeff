@@ -154,6 +154,8 @@ class FakeAcp:
         self.journal: list[tuple[int, str, AcpRow | None]] = []
         #: event-window を断る(cursor が retention の床の下の再現)。
         self.window_incomplete: bool = False
+        #: read-freshness.json: 窓の答えに載せる store の版(None = 欄を載せない = この契約より前の engine)。
+        self.store_epoch: str | None = None
         #: 会話の郵便(AcpConversationMail)を読んだ会話の id の順(履歴からの再開の読みは手番を起こし直す時だけ — 段 8q)。
         self.history_reads: list[str] = []
         #: 手番の見出し(AcpTurnHeadlines = kind turn-record の全量)を読んだ会話の id の順 — 薄い再開の拍だけ(段 9q・#77)。
@@ -269,6 +271,7 @@ class FakeAcp:
             rows=tuple(rows.values()),
             retired=tuple(retired),
             births=tuple(sorted(births.items())),
+            store_epoch=self.store_epoch,
         )
 
     def _put_status(self, row: AcpRow, status: JSONObject) -> Written | Conflict | Refused:

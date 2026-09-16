@@ -183,6 +183,8 @@
   LIFECYCLE-MULTI-TURN
   LIST-MODE-FULL
   LIST-MODE-NONE
+  EPOCH-VERDICT-ADOPT
+  EPOCH-VERDICT-RELIST
   LIST-MODE-WINDOW
   LaunchPlan
   LeaseGrant
@@ -338,6 +340,7 @@
   lease-renew-due
   list-mode-for
   merge-rows
+  window-epoch-verdict
   mail-text-of
   attachment-of
   first-turn-attachments-of
@@ -2049,9 +2052,19 @@
         (setv born [])
         (setv complete True)
         (setv exhausted False)
+        (setv epoch state.store-epoch)
         (while (and complete (not exhausted))
           (<- window EventWindow (AcpEventWindow :after after :limit EVENT-WINDOW-LIMIT))
           (setv complete window.complete)
+          (when complete
+            ;; read-freshness.json: 窓の答えが別の store の版を名乗れば、この cursor の続きではない → 全量 list へ
+            ;; (新しい版を覚える)。初めて名乗られた版は採る。判断は judgment の 1 点。
+            (<- verdict str (window-epoch-verdict epoch window.store-epoch))
+            (when (= verdict EPOCH-VERDICT-RELIST)
+              (setv epoch window.store-epoch)
+              (setv complete False))
+            (when (= verdict EPOCH-VERDICT-ADOPT)
+              (setv epoch window.store-epoch)))
           (when complete
             (.extend changed window.rows)
             (.extend retired window.retired)
@@ -2063,12 +2076,12 @@
               (<- job-rows tuple (rows-of-kind (tuple changed) AGENT-JOB-KIND))
               (<- merged tuple (merge-rows state.rows job-rows (tuple retired)))
               (<- births tuple (births-with state.births (tuple born)))
-              (replace state :rows merged :births births :last-window-seq after))
+              (replace state :rows merged :births births :last-window-seq after :store-epoch epoch))
             (do
               (<- listed tuple (AcpGet :kind AGENT-JOB-KIND))
               (<- pairs tuple (births-of-rows listed))
               (<- births tuple (births-with state.births pairs))
-              (replace state :rows listed :births births :last-window-seq state.since))))
+              (replace state :rows listed :births births :last-window-seq state.since :store-epoch epoch))))
       (do
         (<- listed tuple (AcpGet :kind AGENT-JOB-KIND))
         (<- pairs tuple (births-of-rows listed))
