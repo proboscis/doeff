@@ -195,6 +195,7 @@
   METRIC-COMPACTIONS-TOTAL
   METRIC-RECORD-APPEND-TOTAL
   METRIC-RECORD-LAG-SEQ
+  METRIC-STORE-EPOCH-RELISTS
   METRIC-RECORD-SPOOL-DEPTH
   MetricLine
   MintId
@@ -2061,9 +2062,13 @@
             ;; (新しい版を覚える)。初めて名乗られた版は採る。判断は judgment の 1 点。
             (<- verdict str (window-epoch-verdict epoch window.store-epoch))
             (when (= verdict EPOCH-VERDICT-RELIST)
+              ;; 本番で測れる形(#250 の追補): 落ちた拍に log 1 行 + 計器 1 行(agentd_store_epoch_relists)。
+              (<- (LogLine :text f"agentd: store epoch changed {epoch} -> {window.store-epoch}; the window cursor {after} belongs to another store — falling back to the full list"))
+              (<- (MetricLine :fields {"metric" METRIC-STORE-EPOCH-RELISTS "from" epoch "to" window.store-epoch "after" after}))
               (setv epoch window.store-epoch)
               (setv complete False))
             (when (= verdict EPOCH-VERDICT-ADOPT)
+              (<- (LogLine :text f"agentd: store epoch adopted {window.store-epoch} (first answer that names one)"))
               (setv epoch window.store-epoch)))
           (when complete
             (.extend changed window.rows)

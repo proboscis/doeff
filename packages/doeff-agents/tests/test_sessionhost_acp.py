@@ -3260,11 +3260,18 @@ def test_a_window_from_another_store_incarnation_falls_back_to_the_full_list_and
     world.tick(advance_ms=1_000)  # watch: changed → window — 初めて名乗られた版を採る(全量 list は増えない)
     assert world.acp.lists.count(AGENT_JOB_KIND) == 1
     assert world.state.store_epoch == "epoch-a"
+    assert any("store epoch adopted epoch-a" in line for line in world.local.logs), world.local.logs[-3:]
+    relists_before = [m for m in world.local.metrics if m.get("metric") == "agentd_store_epoch_relists"]
+    assert relists_before == [], "採った拍を relist と数えた"
     world.acp.store_epoch = "epoch-b"  # store が同じ URL の下で作り直された
     world.acp.put_row(message("m-2", "second"))
     world.tick(advance_ms=1_000)
     assert world.acp.lists.count(AGENT_JOB_KIND) == 2, "別の版の窓を畳んだ(全量 list に落ちていない)"
     assert world.state.store_epoch == "epoch-b"
+    # 本番で測れる形(#250 の追補): 落ちた拍に計器 1 行 + log 1 行
+    relists = [m for m in world.local.metrics if m.get("metric") == "agentd_store_epoch_relists"]
+    assert [(m["from"], m["to"]) for m in relists] == [("epoch-a", "epoch-b")], relists
+    assert any("store epoch changed epoch-a -> epoch-b" in line for line in world.local.logs), world.local.logs[-3:]
     world.acp.put_row(message("m-3", "third"))
     world.tick(advance_ms=1_000)
     assert world.acp.lists.count(AGENT_JOB_KIND) == 2, "同じ版なのに全量 list に落ちた"
