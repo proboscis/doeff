@@ -279,6 +279,10 @@
   CANCEL-STAGE-GRACEFUL
   JOB-STEP-CANCEL-FORCED
   JobCancel
+  END-RETRY-DROP
+  END-RETRY-WRITE
+  UNRECORDED-END-TTL-MS
+  UnrecordedEnd
   STREAM-SOURCE-EVENTS
   Escalated
   SessionCapture
@@ -404,6 +408,12 @@
   job-cancel-of
   outcome-with-cancel
   recovered-cancel-of
+  end-retry-verdict
+  rebound-rows-of
+  unrecorded-end-ids
+  unrecorded-end-of
+  with-unrecorded-end
+  without-unrecorded-end
   interrupts-delivered-status-of
   interrupts-due-for-escalation
   recovered-interrupts-of
@@ -1855,19 +1865,34 @@
   (when (is-not limit None)
     (<- (LogLine :text (+ f"agentd: job {job.job-id} was refused by the provider's limit "
                                f"(model {job.model}): {(get limit "message")}"))))
-  ;; agent-job → Ended
+  ;; agent-job → Ended(段 12 lane 12j・agora-redesign #402: 着かなければ行を 1 度読み直して書き直し〔監督が Pending へ戻した /
+  ;; Bound attempt N に置き直した行にも Ended を書く — 手番は終わっている〕、それでも着かなければ持ち越す〔毎拍の
+  ;; record-unrecorded-ends が書き直す・その id の Bound は claim しない〕。判断は judgment.end-retry-verdict の 1 点。)
+  (setv carried measured)
+  ;; conditions は最新の写し(drained — 段 9p の given-up の RecordUnavailable を含む)から。
+  (setv ended-conditions (+ drained.pending-conditions outcome.conditions (if (is limit None) #() #(limit))))
   (<- fresh (| AcpRow None) (AcpGetRow :key job.job-key))
   (if (is fresh None)
       (<- (LogLine :text f"agentd: agent-job {job.job-id} vanished before Ended"))
       (do
         (<- job-status dict (status-object-of fresh))
-        ;; conditions は最新の写し(drained — 段 9p の given-up の RecordUnavailable を含む)から。
-        (<- ended dict (ended-status-of job-status outcome.result
-                                        (+ drained.pending-conditions outcome.conditions
-                                           (if (is limit None) #() #(limit)))))
+        (<- ended dict (ended-status-of job-status outcome.result ended-conditions))
         (<- wrote-job (| Written Conflict Refused) (AcpPutStatus :row fresh :status ended))
         (when (not (isinstance wrote-job Written))
-          (<- (LogLine :text f"agentd: agent-job {job.job-id} not ended ({wrote-job})")))))
+          (setv landed False)
+          (<- again (| AcpRow None) (AcpGetRow :key job.job-key))
+          (<- verdict str (end-retry-verdict again job.session-id settings.principal now-ms now-ms UNRECORDED-END-TTL-MS))
+          (when (and (= verdict END-RETRY-WRITE) (isinstance again AcpRow))
+            (<- again-status dict (status-object-of again))
+            (<- ended-again dict (ended-status-of again-status outcome.result ended-conditions))
+            (<- wrote-again (| Written Conflict Refused) (AcpPutStatus :row again :status ended-again))
+            (setv landed (isinstance wrote-again Written))
+            (<- (LogLine :text (+ f"agentd: agent-job {job.job-id} Ended re-written on the fresh row (phase was {(.get again-status "phase")}) "
+                                  f"after {wrote-job}: " (if landed "landed" (str wrote-again)) " (#402)"))))
+          (when (not landed)
+            (<- end UnrecordedEnd (unrecorded-end-of job outcome.result ended-conditions now-ms))
+            (<- carried AgentdState (with-unrecorded-end carried end))
+            (<- (LogLine :text f"agentd: agent-job {job.job-id} not ended ({wrote-job}; verdict {verdict}); carrying the Ended to the next ticks (#402)"))))))
   ;; 実況の終わりの印(seq は最後の材料の読みの続き)
   (<- frame dict (status-frame job.job-id drained.delta-seq now-ms "ended"))
   (<- (push-frames settings job #(frame)))
@@ -1884,7 +1909,7 @@
     (<- retire bool (cleanup-after-end view))
     (when retire
       (<- (retire-sessions #(job.session-id) f"session {view.status} at the end of job {job.job-id}"))))
-  (<- next AgentdState (without-job measured job.job-id))
+  (<- next AgentdState (without-job carried job.job-id))
   next)
 
 
@@ -2165,6 +2190,36 @@
                                               cancel CANCEL-STAGE-FORCED))
   (<- settled AgentdState (settle-record settings state job view source path outcome JOB-STEP-CANCEL-FORCED now-ms))
   settled)
+
+
+(defk record-unrecorded-ends [settings state now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "着かなかった Ended の書き直し(段 12 lane 12j・agora-redesign #402・毎拍): 持ち越しごとに行を鍵で読み直し、判断
+   end-retry-verdict が write なら Ended(持ち越した結末と条件)を書く — 着けば忘れる・Conflict は次の拍。drop(行が無い・終端・
+   別の session の Running・上限を過ぎた)は忘れる。黙って残さない: 1 件ごとに log 1 行。"
+  (setv current state)
+  (for [end (list state.unrecorded-ends)]
+    (<- row (| AcpRow None) (AcpGetRow :key end.job-key))
+    (<- verdict str (end-retry-verdict row end.session-id settings.principal end.at-ms now-ms UNRECORDED-END-TTL-MS))
+    (if (or (= verdict END-RETRY-DROP) (not (isinstance row AcpRow)))
+        (do
+          (<- (LogLine :text (+ f"agentd: carried Ended of job {end.job-id} dropped ("
+                                (if (isinstance row AcpRow) f"row phase {(.get (status-object-of-row row) "phase")}" "row gone") "; #402)")))
+          (<- dropped AgentdState (without-unrecorded-end current end.job-id))
+          (setv current dropped))
+        (do
+          (<- status dict (status-object-of row))
+          (<- ended dict (ended-status-of status end.result end.conditions))
+          (<- wrote (| Written Conflict Refused) (AcpPutStatus :row row :status ended))
+          (if (isinstance wrote Written)
+              (do
+                (<- (LogLine :text (+ f"agentd: carried Ended of job {end.job-id} landed on the row (phase was {(.get status "phase")}) — "
+                                      "the re-placed attempt is closed by the finished turn (#402)")))
+                (<- landed AgentdState (without-unrecorded-end current end.job-id))
+                (setv current landed))
+              (<- (LogLine :text f"agentd: carried Ended of job {end.job-id} not landed ({wrote}); next tick (#402)"))))))
+  current)
 
 
 (defk cancel-jobs [settings state rows now-ms]
@@ -2947,9 +3002,23 @@
   (<- known-jobs set (in-flight-ids withdrawn-handled))
   (<- known-commands set (in-flight-command-ids withdrawn-handled))
   (<- known-summaries set (in-flight-summarize-ids withdrawn-handled))
-  (setv known (| known-jobs known-commands known-summaries))
+  ;; 段 12 lane 12j(agora-redesign #402): 着かなかった Ended を持ち越している job の Bound(監督の置き直し)は claim しない —
+  ;; 手番は終わっている(record-unrecorded-ends が Ended を書いて試みを閉じる)。
+  (<- carried-ids set (unrecorded-end-ids withdrawn-handled))
+  (setv known (| known-jobs known-commands known-summaries carried-ids))
   (setv previously-deferred withdrawn-handled.deferred)
   (setv current (replace withdrawn-handled :deferred #()))
+  ;; 段 12 lane 12j(agora-redesign #402): 監督が置き直した(Bound attempt N)行を自分が**いま走らせている** job = 新しい session を
+  ;; 起こさず、走っている session を名乗って Running に戻す(引き継ぐ)。判断は rebound-rows-of の 1 点。
+  (<- rebound tuple (rebound-rows-of bound current.jobs))
+  (for [row rebound]
+    (for [job (list current.jobs)]
+      (when (= job.job-id row.resource-id)
+        (<- running-again dict (running-status-of row job.session-id settings.principal))
+        (<- adopted (| Written Conflict Refused) (AcpPutStatus :row row :status running-again))
+        (<- (LogLine :text (+ f"agentd: job {job.job-id} was re-placed (Bound again) while its session {job.session-id} is still "
+                              "running here — adopted as the running session, no new session ("
+                              (if (isinstance adopted Written) "Running written" (str adopted)) "; #402)"))))))
   ;; 段 12 lane 12j(agora-redesign #304 便 2): 排水の最中は新しい claim を受けない — 行は Bound のまま残し、node の capacity 0 を
   ;; 読んだ配車が別の node へ結び直す(黙って残さない: 行ごとに log 1 行)。
   (if settings.draining
@@ -3024,6 +3093,14 @@
     (setv current cancelled)
     (except [e IO-FAILURES]
       (<- (LogLine :text f"agentd: cancel handling failed: {(. (type e) __name__)}: {e}"))))
+  ;; 段 12 lane 12j(agora-redesign #402): 着かなかった Ended の書き直し — 毎拍・行を読み直して(監督が Pending / Bound に置き直した
+  ;; 行にも)書く。着けば忘れる・別の session が走らせていれば忘れる。
+  (when current.unrecorded-ends
+    (try
+      (<- recorded-ends AgentdState (record-unrecorded-ends settings current now-ms))
+      (setv current recorded-ends)
+      (except [e IO-FAILURES]
+        (<- (LogLine :text f"agentd: carried Ended re-write failed: {(. (type e) __name__)}: {e}")))))
   (for [job (list current.jobs)]
     (try
       (<- observed AgentdState (observe-job settings current job now-ms))

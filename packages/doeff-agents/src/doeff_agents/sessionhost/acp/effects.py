@@ -430,6 +430,15 @@ CANCEL_ARM_FORCE: CancelArm = "force"
 CANCEL_ARM_NONE: CancelArm = "none"
 #: 強制の段の記録の腕(settle-record)の step の語(計器 agent-job-turn の step — JobStep の外の終端の 1 語)。
 JOB_STEP_CANCEL_FORCED: str = "cancel-forced"
+#: 段 12 lane 12j(agora-redesign #402): 手番は終わったが agent-job の Ended の書きが着かなかった(頭の不通・監督の置き直しとの競合)job を
+#: 書き直すかの答え(judgment.end-retry-verdict の閉語彙): write = 行に Ended を書く(Pending〔監督が解いた〕/ Bound〔置き直しの試み
+#: attempt N〕/ 自分の session の Running)— 手番は終わっているので同じ手番を別の session で走らせない / drop = 書かず忘れる(行が
+#: 無い・終端・別の session が走らせている Running・持ち越しの上限を過ぎた)。
+EndRetryVerdict = Literal["write", "drop"]
+END_RETRY_WRITE: EndRetryVerdict = "write"
+END_RETRY_DROP: EndRetryVerdict = "drop"
+#: 着かなかった Ended を持ち越す上限(ms)。頭の不通が 1 時間を越えたら忘れる(行は監督の置き直しに任せ、記録は turn-record に在る)。
+UNRECORDED_END_TTL_MS: int = 3_600_000
 #: custody の貸出の口の種類(POST /lease/claude | /lease/codex)。
 LeaseKind = Literal["claude", "codex"]
 #: profile の残量を読む資格の種類(段 7 lane 7d-3)。契約 profile の行は資格の種類を運ばず、本番の
@@ -1422,6 +1431,22 @@ class JobCancel:
 
 
 @dataclass(frozen=True)
+class UnrecordedEnd:
+    """手番は終わったが agent-job の Ended の書きが着かなかった job(段 12 lane 12j・agora-redesign #402)— 次の拍から行を読み直して
+    書き直す材料(memory の持ち越し・上限 UNRECORDED_END_TTL_MS)。実弾 2026-09-17 03:52: 頭の不通の後、監督が走っていた手番を
+    lease-expired で Pending へ戻して attempt 2 を同じ行に結び、attempt 1 の Ended は Conflict で落ち、agentd は attempt 2 を新しい
+    session で走らせた(同じ手番が 2 本)。持ち越した Ended を置き直しの行に書けば試みは閉じ、claim の門(known に持ち越しの id)が
+    2 本目を起こさない。"""
+
+    job_key: str
+    job_id: str
+    session_id: str
+    result: JSON
+    conditions: tuple[JSONObject, ...]
+    at_ms: int
+
+
+@dataclass(frozen=True)
 class DeltaBatch:
     """transcript の行の列から組んだ TurnDelta の frame と turn-record の entries(見出し)。"""
 
@@ -1780,6 +1805,9 @@ class AgentdState:
     #: 段 12 lane 12j(agora-redesign #321): 自分の**生きている** node の行の id(join の拍が live_row の判断で解いた行・作った行の
     #: resource id)。None = まだ参加していない(結びの nodeRow は照合できない = その結びは受けない)。再起動で消えても次の参加で戻る。
     node_row_id: str | None = None
+    #: 段 12 lane 12j(agora-redesign #402): 着かなかった Ended の持ち越し(job ごとに 1 つ)。毎拍 agentd.record-unrecorded-ends が行を
+    #: 読み直して書き直す。この id の Bound の行は claim しない(同じ手番を別の session で走らせない)。
+    unrecorded_ends: tuple[UnrecordedEnd, ...] = ()
 
 
 # ------------------------------------------------------------------ 要求(ACP)
