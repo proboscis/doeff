@@ -57,6 +57,13 @@
   ],
   "exclude": [],
   "baseline": ".agents/code-quality-baseline.json",
+  "untyped_dependencies": [
+    {
+      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
+      "reason": "deff macro の Hy(typed:false の legacy)で検査器が型を投影できない。読み手(hostmain.py の入口 / usage.py / entry.py / 検)は隣の host.pyi の宣言で型を読む(段 12 lane 12b・agora-redesign #207 / #229・検査器の直し = code-quality #1)。",
+      "moved_from": ""
+    }
+  ],
   "source_roots": {
     "python": [
       "packages/doeff-agents/src"

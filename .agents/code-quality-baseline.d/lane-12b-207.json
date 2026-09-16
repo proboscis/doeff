@@ -1,0 +1,26 @@
+{
+  "entries": [
+    {
+      "count": 1,
+      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/hostmain.py",
+      "reason": "legacy: 入口 module hostmain.py の契約 sessionhost-hostmain の allow が空のまま relaymain / host を呼び分けている(dependency-not-allowed 3 件)と、その閉包で初めて測られる relaymain.py の Any / cast(unsafe-type-escape)— いずれも基底 fe5c3c7b から在る既存の違反で、host.hy に触る便が閉包で踏む。変更していない code を先払いで直させないために断片に載せる(段 12 lane 12b・agora-redesign #207 根 1 の便 1 が最初に踏んだ・負債の追跡 #229・検査器の直し = code-quality #1 / 12h)",
+      "rule": "dependency-not-allowed",
+      "subject": "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/hostmain.py",
+      "reason": "legacy: 入口 module hostmain.py の契約 sessionhost-hostmain の allow が空のまま relaymain / host を呼び分けている(dependency-not-allowed 3 件)と、その閉包で初めて測られる relaymain.py の Any / cast(unsafe-type-escape)— いずれも基底 fe5c3c7b から在る既存の違反で、host.hy に触る便が閉包で踏む。変更していない code を先払いで直させないために断片に載せる(段 12 lane 12b・agora-redesign #207 根 1 の便 1 が最初に踏んだ・負債の追跡 #229・検査器の直し = code-quality #1 / 12h)",
+      "rule": "dependency-not-allowed",
+      "subject": "packages/doeff-agents/src/doeff_agents/sessionhost/relaymain.py"
+    },
+    {
+      "count": 7,
+      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/relaymain.py",
+      "reason": "legacy: 入口 module hostmain.py の契約 sessionhost-hostmain の allow が空のまま relaymain / host を呼び分けている(dependency-not-allowed 3 件)と、その閉包で初めて測られる relaymain.py の Any / cast(unsafe-type-escape)— いずれも基底 fe5c3c7b から在る既存の違反で、host.hy に触る便が閉包で踏む。変更していない code を先払いで直させないために断片に載せる(段 12 lane 12b・agora-redesign #207 根 1 の便 1 が最初に踏んだ・負債の追跡 #229・検査器の直し = code-quality #1 / 12h)",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    }
+  ],
+  "version": 1
+}
