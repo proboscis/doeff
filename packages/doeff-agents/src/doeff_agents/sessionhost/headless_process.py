@@ -23,7 +23,7 @@ import signal
 import subprocess
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import IO
 
 from doeff_agents.sessionhost.attachment import TurnAttachment, TurnContent
@@ -91,11 +91,16 @@ class HeadlessProcess:
         env: Mapping[str, str],
         events_path: str,
         dialogue: Dialogue,
+        on_turn_ended: Callable[[str], None] | None = None,
     ) -> None:
         self.name = name
         self.argv = tuple(argv)
         self.events_path = events_path
         self.dialogue = dialogue
+        #: 手番の終わりの合図(段 12 lane 12b・agora-redesign #207 根 1): 読み手の thread が Dialogue.on_line で
+        #: 手番の終わりを読んだ拍に、この名で呼ぶ(登記簿の待ち手 = host の monitor を起こす)。判断は増えない —
+        #: 境界を決めるのは今日どおり Dialogue の 1 点で、ここはその答えを合図にするだけ。None = 合図なし。
+        self._on_turn_ended = on_turn_ended
         directory = os.path.dirname(events_path)
         if directory:
             os.makedirs(directory, mode=0o700, exist_ok=True)
@@ -304,6 +309,9 @@ class HeadlessProcess:
                         self._conversation = dict(step.conversation)
                     if step.failure is not None and self._failure is None:
                         self._failure = step.failure
+                # 手番の終わりは lock の外で合図する(待ち手は observe() で束を取りに来る — 束は先に置いてある)。
+                if step.ended is not None and self._on_turn_ended is not None:
+                    self._on_turn_ended(self.name)
         finally:
             with contextlib.suppress(OSError):
                 self._events.close()
@@ -330,6 +338,25 @@ class HeadlessRegistry:
     def __init__(self) -> None:
         self._processes: dict[str, HeadlessProcess] = {}
         self._lock = threading.Lock()
+        #: 手番の終わりの合図(段 12 lane 12b・agora-redesign #207 根 1): 登記した process の読み手が手番の終わりを
+        #: 読むたびに 1 つ進む数と、それを待つ条件変数。host の monitor は拍の合間をこの待ちで過ごし(上限 =
+        #: monitor の周期 — 周期は保険に退く)、手番が終わった拍に即座に観測して turn_ended_at を刻む。
+        self._turn_ends = threading.Condition()
+        self._turn_end_count = 0
+
+    def _turn_ended(self, name: str) -> None:
+        """process の読み手からの合図(名は診断のため — 待ち手は名を選ばず、拍を 1 回起こす)。"""
+        with self._turn_ends:
+            self._turn_end_count += 1
+            self._turn_ends.notify_all()
+
+    def wait_turn_end(self, seen: int, timeout: float) -> int:
+        """手番の終わりの数が ``seen`` を越えるまで待つ(上限 ``timeout`` 秒・0 = 待たずに今の数)。戻り = 今の数
+        (呼び手が次の ``seen`` にする)。待っている間に終わった手番は数に残るので、拍の途中で終わった手番の合図が
+        落ちることは無い(次の待ちが即座に返る)。"""
+        with self._turn_ends:
+            self._turn_ends.wait_for(lambda: self._turn_end_count > seen, timeout=max(0.0, timeout))
+            return self._turn_end_count
 
     def spawn(
         self,
@@ -346,7 +373,7 @@ class HeadlessRegistry:
             existing = self._processes.get(name)
             if existing is not None and existing.alive():
                 raise RuntimeError(f"headless session already exists: {name}")
-            process = HeadlessProcess(name, argv, cwd, env, events_path, dialogue)
+            process = HeadlessProcess(name, argv, cwd, env, events_path, dialogue, self._turn_ended)
             self._processes[name] = process
             return process
 

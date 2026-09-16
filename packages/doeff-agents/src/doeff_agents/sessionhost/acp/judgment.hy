@@ -3512,7 +3512,8 @@
    :post [(: % str)]}
   "行をどう読み直すか(閉語彙 effects.ListMode)— 判断はここ 1 点: 周期の保険が来た・gap・
    接続の張り直し・まだ 1 度も読んでいない → full(全量 list)/ watch で起きた(changed)→
-   window(変わった行だけ: event-window の post-image)/ idle → none。"
+   window(変わった行だけ: event-window の post-image)/ idle・session(器の出来事で起きた拍 —
+   ACP の sequence は進んでいない・段 12 lane 12b)→ none。"
   (<- periodic bool (due state.last-resync-ms now-ms settings.watch-resync-seconds))
   (cond
     (or periodic (in signal.kind #{"gap" "closed"})) LIST-MODE-FULL

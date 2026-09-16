@@ -9,6 +9,8 @@ HTTP も socket も tmux も無い。
 from __future__ import annotations
 
 import json
+import threading
+import time
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -22,12 +24,12 @@ from doeff_agents.sessionhost.acp.effects import (
     AGENT_JOB_KIND,
     AGENT_JOB_NAMESPACE,
     AGORA_KINDS_NAMESPACE,
-    CUSTODY_CONTRACT_VERSION,
     AcpRow,
     AgentdSettings,
     CLAUDE_OAUTH_TOKEN_ENV,
     CONDITION_CREDENTIAL_PLACE_MISMATCH,
     CONDITION_CREDENTIAL_SOURCE_MISSING,
+    CUSTODY_CONTRACT_VERSION,
     CustodyLeaseBorrow,
     EntryKind,
     InFlightJob,
@@ -45,6 +47,7 @@ from doeff_agents.sessionhost.acp.effects import (
     SessionView,
     TURN_RECORD_ENTRIES_BYTE_BUDGET,
     TURN_RECORD_KIND,
+    WatchAdvance,
 )
 from doeff_agents.sessionhost.acp.fake import Birth, FakeAcp, FakeCustody, FakeLocal, FakeSessions
 from doeff_agents.sessionhost.acp.runtime import (
@@ -4297,3 +4300,60 @@ def _epoch_ms(iso: str) -> int:
     from datetime import datetime
 
     return int(datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp() * 1000)
+
+
+# ---------------------------------------------------------------- 器の出来事の合図(段 12 lane 12b・agora-redesign #207 根 1)
+
+
+def test_watch_take_answers_a_session_wake_without_moving_the_acp_sequence() -> None:
+    """WakeQueue に載った器の合図(kind session)は AcpWatchSse の 1 回の待ちを起こし、答えは kind session・sequence は
+    since のまま(ACP の sequence は進んでいない)。ACP の frame(changed / gap / closed)が同じ待ちに在れば ACP の語が
+    勝つ(行の読み直しが要る)。何も来なければ上限で idle。拍の待ちの定義点は take の 1 つ。"""
+    wakes = handlers.WakeQueue()
+    reader = handlers.WatchReader("http://acp.test", {}, 5, wakes.frames)
+    wakes.wake("session", 12)
+    assert reader.take(5, 0.5) == WatchAdvance(kind="session", sequence=5)
+    wakes.wake("session", 13)
+    wakes.wake("changed", 9)
+    assert reader.take(5, 0.5) == WatchAdvance(kind="changed", sequence=9)
+    wakes.wake("closed", 9)
+    wakes.wake("session", 14)
+    assert reader.take(9, 0.5) == WatchAdvance(kind="closed", sequence=9)
+    started = time.monotonic()
+    assert reader.take(9, 0.05) == WatchAdvance(kind="idle", sequence=9)
+    assert time.monotonic() - started < 1.0
+
+
+def test_session_event_waker_turns_journal_advances_into_session_wakes_and_survives_a_failing_poll() -> None:
+    """SessionEventWaker: 最初の往復は今の先端を知るだけ(過去の出来事で起こさない)、以後は先端が進んだ拍ごとに
+    kind session の合図を 1 つ積む(進まない答えは積まない)。届かない拍は log して張り直し、合図の列は途切れない。"""
+    answers: list[int | Exception] = [3, 3, 5, RuntimeError("socket gone"), 5, 8]
+    calls: list[tuple[int, float]] = []
+    drained = threading.Event()
+
+    def poll(after: int, wait_seconds: float) -> int:
+        calls.append((after, wait_seconds))
+        if not answers:
+            drained.set()
+            time.sleep(wait_seconds)
+            return after
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    wakes = handlers.WakeQueue()
+    logs: list[str] = []
+    waker = handlers.SessionEventWaker(poll, wakes, logs.append, wait_seconds=0.02, retry_seconds=0.01)
+    waker.start()
+    assert drained.wait(5.0), calls
+    waker.stop()
+    frames: list[tuple[str, int]] = []
+    while not wakes.frames.empty():
+        frame = wakes.frames.get_nowait()
+        frames.append((frame.kind, frame.sequence))
+    assert frames == [("session", 5), ("session", 8)]
+    assert calls[0] == (0, 0.0), calls
+    assert calls[1] == (3, 0.02), calls
+    assert [after for after, _ in calls[1:]] == [3, 3, 5, 5, 5, 8], calls
+    assert len(logs) == 1 and "session wake poll failed: RuntimeError: socket gone" in logs[0], logs

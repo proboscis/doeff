@@ -123,6 +123,9 @@
 ;; ---------------------------------------------------------------------------
 
 (setv DEFAULT-MONITOR-INTERVAL-MS 1000)
+;; session.wait_events(出来事の journal の long-poll・段 12 lane 12b・agora-redesign #207 根 1)の
+;; 1 回の待ちの上限(秒)。呼び手(agentd)はこれより短い上限を名乗って張り直す。
+(setv WAIT-EVENTS-MAX-SECONDS 60.0)
 (setv DEFAULT-MAX-RUNNING-SESSIONS 10)
 (setv LAUNCH-TIMEOUT-SECONDS 60)
 (setv STALE-OBSERVATION-THRESHOLD-SECONDS 300)
@@ -1384,6 +1387,24 @@
                 None
                 (augment-wire-snapshot config actor (snapshot-to-wire-dict snap)))))
 
+  ;; 段 12 lane 12b(agora-redesign #207 根 1): 出来事の journal(agent_session_events)の long-poll。
+  ;; after = 呼び手が最後に知った先端(int ≥ 0)・wait_seconds = 待ちの上限(0 = 今の先端を返す・
+  ;; 上限は WAIT-EVENTS-MAX-SECONDS に畳む)。答え = {"seq": 先端}。進んだ出来事の中身は運ばない —
+  ;; 呼び手(agentd)は自分の眺め(session.get)を読み直して判じる(level-triggered の観測の合図)。
+  ;; 待ちは actor の条件変数(接続ごとの thread が眠る — actor thread も他の RPC も塞がない)。
+  (when (= method "session.wait_events")
+    (setv p (params-object params "session.wait_events"))
+    (setv after (.get p "after" 0))
+    (when (or (isinstance after bool) (not (isinstance after int)) (< after 0))
+      (raise (RuntimeError
+               f"invalid params for session.wait_events: `after` must be a non-negative integer (got: {after !r})")))
+    (setv wait-raw (.get p "wait_seconds" 0))
+    (when (or (isinstance wait-raw bool) (not (isinstance wait-raw #(int float))) (< wait-raw 0))
+      (raise (RuntimeError
+               f"invalid params for session.wait_events: `wait_seconds` must be a non-negative number (got: {wait-raw !r})")))
+    (setv wait (min (float wait-raw) WAIT-EVENTS-MAX-SECONDS))
+    (return {"seq" (.wait-journal actor after wait)}))
+
   ;; 波 1-S1(ADR-007 R7): 会話 ID → 行の probe なし行引き口。応答 = wire
   ;; snapshot + stalled 導出のみ(substrate_present は意図的に不在 — law
   ;; conversation-lookup-never-probes。読み手は自分の substrate 観測と合成
@@ -1873,6 +1894,11 @@
    tick 隔離より強い)。run-worker-tick は backstop。監査履歴の毎時 prune も
    ここが持つ(retention 反故 = 無限成長は 2026-07-27 wedge の根)。"
   (setv next-prune (+ (time.monotonic) HISTORY-PRUNE-INTERVAL-SECONDS))
+  ;; 段 12 lane 12b(agora-redesign #207 根 1): headless の器は手番の終わりを読み手が読んだ拍に
+  ;; 登記簿へ合図する(HeadlessRegistry.wait-turn-end)。拍の合間はその合図を待つ — 上限が
+  ;; monitor の周期(周期は保険に退く)。合図が来れば即座に次の拍が観測して turn_ended_at を刻む。
+  ;; tui の器(tmux / herdr)に合図は無く、今日どおり周期で眠る。
+  (setv seen-turn-ends 0)
   (while True
     (run-worker-tick
       "monitor"
@@ -1883,7 +1909,10 @@
     (when (>= (time.monotonic) next-prune)
       (run-worker-tick "history-prune" (fn [] (prune-history-tick actor)))
       (setv next-prune (+ (time.monotonic) HISTORY-PRUNE-INTERVAL-SECONDS)))
-    (time.sleep config.monitor-interval-seconds)))
+    (if (headless-backend? config)
+        (setv seen-turn-ends (.wait-turn-end HEADLESS-REGISTRY seen-turn-ends
+                                             config.monitor-interval-seconds))
+        (time.sleep config.monitor-interval-seconds))))
 
 
 (deff bind-listener [socket-path]

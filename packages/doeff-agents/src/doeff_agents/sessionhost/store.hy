@@ -1029,15 +1029,32 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
 ;; writer actor(単一 write connection の直列化点)
 ;; ---------------------------------------------------------------------------
 
+(deff db-journal-seq [conn]
+  {:pre [(: conn sqlite3.Connection)]
+   :post [(: % int)]}
+  "出来事の journal(agent_session_events)の先端 = 最大の id(空なら 0)。session.wait_events の
+   答えと待ちの座はこの値(段 12 lane 12b・agora-redesign #207 根 1)。"
+  (setv row (.fetchone (.execute conn "SELECT COALESCE(MAX(id), 0) FROM agent_session_events")))
+  (int (get row 0)))
+
+
 (defclass StoreActor []
   "SQLite store-of-record への唯一の玄関。connection はコンストラクタ thread で
    開いて migrate まで済ませ(起動失敗を呼び手へ loud に伝播)、以後の実行は
    actor thread に一本化される — 読みも書きも queue を通るので、すべての op
-   (read-modify-write 含む)が原子的に直列化される。"
+   (read-modify-write 含む)が原子的に直列化される。
+
+   出来事の journal の合図(段 12 lane 12b・agora-redesign #207 根 1): op が store を変えた
+   (conn.total_changes が進んだ)拍に journal の先端(db-journal-seq)を読み直し、進んでいれば
+   journal-seq に写して待ち手(wait-journal = RPC session.wait_events の long-poll)を起こす。
+   出来事の insert がどの路(SessionStoreRecordEvent・host の結果の受理の直の db-record-event)を
+   通っても、合図の定義点はこの actor の 1 点 — 呼び手が合図を覚える必要は無い。"
   (defn __init__ [self db-path]
     (setv self.db-path db-path)
     (setv self.conn (open-conn db-path))
     (db-migrate self.conn)
+    (setv self._journal (threading.Condition))
+    (setv self.journal-seq (db-journal-seq self.conn))
     (setv self._queue (queue.Queue))
     (setv self._thread (threading.Thread :target self._run :daemon True
                                          :name "sessionhost-store"))
@@ -1049,11 +1066,33 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
       (when (is item None)
         (break))
       (setv #(op box event) item)
+      (setv before self.conn.total-changes)
       (try
         (setv (get box "value") (op self.conn))
         (except [e Exception]
           (setv (get box "error") e)))
-      (.set event)))
+      (.set event)
+      (when (!= self.conn.total-changes before)
+        (self._advance-journal)))
+    ;; 降りる時は待ち手を全部起こす(上限まで待たせない — 答えは今の先端)。
+    (with [self._journal]
+      (.notify-all self._journal)))
+
+  (defn _advance-journal [self]
+    "actor thread だけが呼ぶ: journal の先端を読み直し、進んでいれば待ち手を起こす。"
+    (setv seq (db-journal-seq self.conn))
+    (with [self._journal]
+      (when (> seq self.journal-seq)
+        (setv self.journal-seq seq)
+        (.notify-all self._journal))))
+
+  (defn wait-journal [self after timeout]
+    "出来事の journal の先端が ``after`` を越えるまで待つ(上限 ``timeout`` 秒・0 = 待たずに今の先端)。
+     戻り = 今の先端(呼び手が次の ``after`` にする)。どの thread からも呼べる(条件変数と int だけに触る —
+     connection には触らない)。"
+    (with [self._journal]
+      (.wait-for self._journal (fn [] (> self.journal-seq after)) :timeout (max 0.0 timeout))
+      self.journal-seq))
 
   (defn submit [self op]
     "op(conn を取る callable)を actor thread で実行し、結果を返す /

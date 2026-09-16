@@ -148,6 +148,7 @@ from doeff_agents.sessionhost.acp.effects import (
     UsageWindow,
     UsageWindowName,
     WatchAdvance,
+    WatchKind,
     WriteOutcome,
     Written,
 )
@@ -164,6 +165,12 @@ ACP_WRITE_SOURCE = "agentd"
 HTTP_TIMEOUT_SECONDS = 30.0
 WATCH_READ_TIMEOUT_SECONDS = 60.0
 WATCH_RECONNECT_SECONDS = 2.0
+#: 器(host)の出来事の journal の long-poll(段 12 lane 12b・agora-redesign #207 根 1): 1 回の待ちの上限(host の
+#: WAIT-EVENTS-MAX-SECONDS = 60 の内)、socket の読みの余白、届かない / 断られた拍の張り直しの有界の backoff。
+SESSION_WAKE_WAIT_SECONDS = 30.0
+SESSION_WAKE_READ_MARGIN_SECONDS = 5.0
+SESSION_WAKE_RETRY_SECONDS = 1.0
+SESSION_WAKE_RETRY_MAX_SECONDS = 30.0
 #: profile の残量の読み口(段 7 lane 7d-3)= dotfiles agentcli の console script の 1 点。PATH で解く
 #: (launchd の job_env.sh は ~/.local/bin を載せる)。会社境界の判定はこの葉の中。
 USAGE_COMMAND: tuple[str, ...] = ("ai", "usage", "--json")
@@ -355,21 +362,43 @@ def _error_text(reply: HttpReply) -> str:
 
 @dataclass(frozen=True)
 class _Frame:
-    kind: str
+    kind: WatchKind
     sequence: int
+
+
+class WakeQueue:
+    """拍を起こす合図の 1 本の列(段 12 lane 12b・agora-redesign #207 根 1)。
+
+    ACP の watch(SSE)の frame と、器(host)の出来事の journal の進み(SessionEventWaker)が同じ列に載り、
+    ``WatchReader.take`` がそれを 1 回の待ちの答え(WatchAdvance)にする — 拍の待ちの定義点は AcpWatchSse
+    の 1 つのまま、起こす源だけが 2 つになる。
+    """
+
+    def __init__(self) -> None:
+        self.frames: queue.Queue[_Frame] = queue.Queue()
+
+    def wake(self, kind: WatchKind, sequence: int) -> None:
+        self.frames.put(_Frame(kind, sequence))
 
 
 class WatchReader:
     """``GET /api/watch/stream`` を張り続ける thread。切れたら since から張り直す。
 
-    frame は queue に積み、``take(wait)`` が 1 回の待ちの答え(WatchAdvance)を返す。
+    frame は queue に積み、``take(wait)`` が 1 回の待ちの答え(WatchAdvance)を返す。queue は
+    composition root が WakeQueue で渡す(器の出来事の合図と共有)か、無ければ自前。
     """
 
-    def __init__(self, base_url: str, headers: Mapping[str, str], since: int) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        headers: Mapping[str, str],
+        since: int,
+        frames: "queue.Queue[_Frame] | None" = None,
+    ) -> None:
         self._base_url = base_url
         self._headers = dict(headers)
         self._since = since
-        self._frames: queue.Queue[_Frame] = queue.Queue()
+        self._frames: queue.Queue[_Frame] = frames if frames is not None else queue.Queue()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, name="agentd-watch", daemon=True)
 
@@ -384,6 +413,7 @@ class WatchReader:
         latest: int | None = None
         gap: int | None = None
         closed = False
+        session = False
         deadline = time.monotonic() + max(0.0, wait_seconds)
         while True:
             remaining = deadline - time.monotonic()
@@ -397,14 +427,20 @@ class WatchReader:
                 gap = frame.sequence
             elif frame.kind == "closed":
                 closed = True
+            elif frame.kind == "session":
+                session = True
             # 溜まっている frame は空になるまで読む(待たずに)
             deadline = min(deadline, time.monotonic())
+        # 答えは 1 語: ACP の側(gap > changed > closed)が器の合図(session)に勝つ — どの語でも拍は走っている job を
+        # 観測するので、器の合図は「観測を今する」以上を求めない。session は ACP の sequence を進めない。
         if gap is not None:
             return WatchAdvance(kind="gap", sequence=max(since, gap))
         if latest is not None:
             return WatchAdvance(kind="changed", sequence=max(since, latest))
         if closed:
             return WatchAdvance(kind="closed", sequence=since)
+        if session:
+            return WatchAdvance(kind="session", sequence=since)
         return WatchAdvance(kind="idle", sequence=since)
 
     def _loop(self) -> None:
@@ -464,18 +500,96 @@ class WatchReader:
         self._frames.put(_Frame("changed", latest))
 
 
+# ------------------------------------------------------------------ 器の出来事の合図(host の journal の long-poll)
+
+#: 器の出来事の journal を 1 回待つ口: (after, wait_seconds) → 先端の seq(RPC session.wait_events の 1 往復)。
+SessionJournalPoll = Callable[[int, float], int]
+
+
+def session_journal_poll(socket_path: str) -> SessionJournalPoll:
+    """sessionhost の socket(公開の境界)で ``session.wait_events`` を 1 往復する口。"""
+    client = AgentdClient(socket_path)
+
+    def poll(after: int, wait_seconds: float) -> int:
+        answer: JSON = client.request(
+            "session.wait_events",
+            {"after": after, "wait_seconds": wait_seconds},
+            read_timeout=wait_seconds + SESSION_WAKE_READ_MARGIN_SECONDS,
+        )
+        seq = _int_field(_as_object(answer), "seq")
+        if seq is None:
+            raise AgentdClientError(f"session.wait_events answered without an integer seq: {answer!r}")
+        return seq
+
+    return poll
+
+
+class SessionEventWaker:
+    """器(host)の出来事の journal(agent_session_events)の進みを long-poll で待ち、進むたびに拍を起こす合図
+    (kind session)を WakeQueue に積む thread(段 12 lane 12b・agora-redesign #207 根 1)。
+
+    手番の終わりを host の monitor が刻んだ(session_turn_ended)拍に agentd が即座に観測し、同じ拍で
+    turn-record を ended・job を Ended にする — 拍の周期(transcript_poll_seconds)は保険に退く。届かない・
+    断られた拍は log して有界の backoff で張り直す(合図が無い間も拍の周期が観測を運ぶ)。
+    """
+
+    def __init__(
+        self,
+        poll: SessionJournalPoll,
+        wakes: WakeQueue,
+        log: Callable[[str], None],
+        wait_seconds: float = SESSION_WAKE_WAIT_SECONDS,
+        retry_seconds: float = SESSION_WAKE_RETRY_SECONDS,
+    ) -> None:
+        self._poll = poll
+        self._wakes = wakes
+        self._log = log
+        self._wait_seconds = wait_seconds
+        self._retry_seconds = retry_seconds
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, name="agentd-session-wake", daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _loop(self) -> None:
+        after: int | None = None
+        backoff = self._retry_seconds
+        while not self._stop.is_set():
+            try:
+                if after is None:
+                    # 最初は今の先端を知るだけ(過去の出来事で起こさない)。
+                    after = self._poll(0, 0.0)
+                    continue
+                seq = self._poll(after, self._wait_seconds)
+            except Exception as error:  # loop の縁: 落とさず log して有界の backoff で張り直す
+                self._log(f"agentd: session wake poll failed: {type(error).__name__}: {error}")
+                self._stop.wait(backoff)
+                backoff = min(SESSION_WAKE_RETRY_MAX_SECONDS, backoff * 2)
+                continue
+            backoff = self._retry_seconds
+            if seq > after:
+                after = seq
+                self._wakes.wake("session", seq)
+
+
 # ------------------------------------------------------------------ ACP の handler
 
 
 class AcpHttp:
-    """ACP の資源の読み書き・watch・中継の push。bearer は名簿の agentd の札。"""
+    """ACP の資源の読み書き・watch・中継の push。bearer は名簿の agentd の札。``wakes`` が在れば watch の frame を
+    その列に載せる(器の出来事の合図と共有 — 段 12 lane 12b)。"""
 
-    def __init__(self, base_url: str, token: str | None) -> None:
+    def __init__(self, base_url: str, token: str | None, wakes: WakeQueue | None = None) -> None:
         self._base_url = base_url.rstrip("/")
         self._headers: dict[str, str] = {}
         if token:
             self._headers["Authorization"] = f"Bearer {token}"
         self._watch: WatchReader | None = None
+        self._wakes = wakes
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(
@@ -698,7 +812,8 @@ class AcpHttp:
 
     def _watch_take(self, since: int, wait_seconds: float) -> WatchAdvance:
         if self._watch is None:
-            self._watch = WatchReader(self._base_url, self._headers, since)
+            frames = self._wakes.frames if self._wakes is not None else None
+            self._watch = WatchReader(self._base_url, self._headers, since, frames)
             self._watch.start()
         return self._watch.take(since, wait_seconds)
 

@@ -69,8 +69,11 @@ from doeff_agents.sessionhost.acp.handlers import (
     LocalIo,
     RecordHttp,
     RecordSpool,
+    SessionEventWaker,
     SessionRpc,
+    WakeQueue,
     read_secret_file,
+    session_journal_poll,
     socket_is_listening,
 )
 from doeff_agents.sessionhost.acp.judgment import stream_capability_of_backend
@@ -424,11 +427,12 @@ def heartbeat_dispatchers(env: Mapping[str, str]) -> tuple[list[Dispatcher], Cal
 
 
 def real_dispatchers(
-    env: Mapping[str, str], socket_path: str
+    env: Mapping[str, str], socket_path: str, wakes: WakeQueue | None = None
 ) -> tuple[list[Dispatcher], Callable[[], None]]:
-    """実 I/O の handler の列と、その後始末。"""
+    """実 I/O の handler の列と、その後始末。``wakes`` = 拍を起こす合図の列(段 12 lane 12b): ACP の watch の frame と
+    器の出来事の合図(SessionEventWaker — 起こすのは start_agentd_thread)が同じ列に載る。無ければ watch だけ。"""
     token = _acp_token_of_env(env)
-    acp = AcpHttp(_acp_url_of_env(env), token)
+    acp = AcpHttp(_acp_url_of_env(env), token, wakes)
     custody = CustodyHttp(
         # 宣言ちょうど(既定の宿は無い — 段 10 lane 10d 便 2)。空 = 借りない機体で、借りの要求はそこで断られる
         (env.get(CUSTODY_URL_ENV) or "").strip(),
@@ -471,7 +475,11 @@ def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> Age
     戻り = thread と停止の腕(entry.py が host の停止の hook に登録する)。"""
     settings = settings_from_env(env, host_argv)
     socket_path = host_socket_path(host_argv)
-    dispatchers, close = real_dispatchers(env, socket_path)
+    # 段 12 lane 12b(agora-redesign #207 根 1): 拍を起こす合図の列は 1 本 — ACP の watch(SSE)と器の出来事の
+    # journal(host の session.wait_events の long-poll)が同じ列に載り、tick の待ち(AcpWatchSse)の定義点は 1 つのまま。
+    wakes = WakeQueue()
+    dispatchers, close = real_dispatchers(env, socket_path, wakes)
+    waker = SessionEventWaker(session_journal_poll(socket_path), wakes, _stderr)
     if settings.ownership is not None:
         try:
             verified: object = PyVM().run(
@@ -502,6 +510,7 @@ def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> Age
     beat_dispatchers, beat_close = heartbeat_dispatchers(env)
 
     def close_all() -> None:
+        waker.stop()
         close()
         beat_close()
 
@@ -527,6 +536,8 @@ def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> Age
         # 段 10 lane 10ba(agora-redesign #115): lease の heartbeat は tick と独立した thread で先に起こす — tick の I/O が
         # TTL を超えて塞がっても lease は切れない。停止は同じ stop の合図 1 つ。
         heartbeat.start()
+        # 段 12 lane 12b: 器の出来事の合図の thread は host の socket が出てから起こす(long-poll の相手が居る)。
+        waker.start()
         # 後始末(watch の thread を閉じる)は停止の腕 AgentdRun.close_for_stop が最後に行う — loop は stop が
         # 立った時にだけ抜けるので、ここで閉じると停止の腕が器と ACP を読めない。
         run_loop(settings, dispatchers, stop, _stderr, holder)
