@@ -784,7 +784,9 @@ class Pushed:
 
 PushOutcome: TypeAlias = "Pushed | Refused"
 
-WatchKind = Literal["changed", "gap", "idle", "closed"]
+#: session = 器の出来事の journal が進んだ(host の session.wait_events — 段 12 lane 12b): ACP の sequence は
+#: 進んでいないので行は読み直さず(judgment.list-mode-for → none)、走っている job の観測だけを即座に行う。
+WatchKind = Literal["changed", "gap", "idle", "closed", "session"]
 
 #: watch の拍にどう行を読み直すか(judgment.list-mode-for の閉語彙): full = 全量 list
 #: (周期の保険・gap・接続の張り直し)/ window = 変わった行だけ(``GET /api/event-window`` の
@@ -823,7 +825,9 @@ class WatchAdvance:
     """watch(0c の SSE)の 1 回の待ちの答え。
 
     changed = sequence が進んだ / gap = 中継が続きを保証できない(list で再同期する合図)/
-    idle = 待ちの上限まで何も来なかった / closed = 接続が切れた(handler が張り直す)。
+    idle = 待ちの上限まで何も来なかった / closed = 接続が切れた(handler が張り直す)/
+    session = 器(host)の出来事の journal が進んだ — 手番の終わりを monitor が刻んだ拍など(段 12 lane 12b:
+    拍の待ちの定義点は AcpWatchSse の 1 つのまま、host の合図も同じ列に載る)。ACP の sequence は進まない。
     ``sequence`` は読み手が次に名乗る since。
     """
 

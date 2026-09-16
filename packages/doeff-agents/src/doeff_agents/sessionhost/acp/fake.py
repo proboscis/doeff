@@ -120,6 +120,9 @@ class FakeAcp:
         self.subscribers: dict[str, int] = {}
         #: watch を待った上限(AcpWatchSse.wait_seconds の列 — 拍の周期の検が読む)。
         self.waits: list[float] = []
+        #: 器(host)の出来事の合図(段 12 lane 12b): test が積んだ WatchAdvance(kind session)を、ACP の sequence が
+        #: 進んでいない拍に先頭から 1 つ返す(実の WakeQueue に SessionEventWaker が積む形の代わり)。
+        self.wakes: list[WatchAdvance] = []
         self.push_seq: int = 0
         #: kind → list(AcpGet)で投げる例外(実弾 002 の Connection reset の再現)。
         self.list_failures: dict[str, Exception] = {}
@@ -194,6 +197,8 @@ class FakeAcp:
         self.waits.append(effect.wait_seconds)
         if self.sequence > effect.since:
             return WatchAdvance(kind="changed", sequence=self.sequence)
+        if self.wakes:
+            return self.wakes.pop(0)
         return WatchAdvance(kind="idle", sequence=effect.since)
 
     def _history(self, effect: AcpConversationMail | AcpTurnHeadlines) -> tuple[AcpRow, ...]:

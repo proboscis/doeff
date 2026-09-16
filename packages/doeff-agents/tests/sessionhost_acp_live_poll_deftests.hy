@@ -17,12 +17,15 @@
   AcpRow
   AgentdSettings
   InFlightJob
+  LIST-MODE-NONE
   MESSAGE-KIND
   NODE-KIND
   PHASE-BOUND
-  TURN-RECORD-KIND])
+  PHASE-ENDED
+  TURN-RECORD-KIND
+  WatchAdvance])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeSessions])
-(import doeff_agents.sessionhost.acp.judgment [wait-seconds-for])
+(import doeff_agents.sessionhost.acp.judgment [list-mode-for wait-seconds-for])
 (import doeff_agents.sessionhost.acp.runtime [initial-state run-tick])
 (import dataclasses [replace])
 
@@ -87,6 +90,13 @@
     (setv status (. (get self.acp.rows f"{AGORA-KINDS-NAMESPACE}:{TURN-RECORD-KIND}:j-1") status))
     (assert (isinstance status dict))
     status)
+
+  (defn #^ str job-phase [self]
+    (setv status (. (get self.acp.rows f"{AGENT-JOB-NAMESPACE}:{AGENT-JOB-KIND}:j-1") status))
+    (assert (isinstance status dict))
+    (setv phase (get status "phase"))
+    (assert (isinstance phase str))
+    phase)
 
   (defn #^ list record-entries [self]
     (setv entries (.get (.record-status self) "entries" []))
@@ -188,3 +198,45 @@
   (assert (= (len (.record-writes world)) (+ writes-before 1)) "周期が経てば 1 回で書く")
   (assert (= (len (. (get world.state.jobs 0) pending-entries)) 0))
   (assert (= (len (lfor e (.record-entries world) :if (= (get e "kind") "text") e)) 11) "持ち越した出来事は落ちない"))
+
+
+(deftest test-a-session-wake-settles-the-turn-end-in-that-tick-without-relisting
+  ;; 段 12 lane 12b(agora-redesign #207 根 1): host の monitor が手番の終わり(turn_ended_at)を刻んだ拍に、器の出来事の
+  ;; 合図(WatchAdvance kind session)が拍を起こす。その拍は ACP の行を読み直さず(list-mode none — ACP の sequence は
+  ;; 進んでいない)、走っている job の観測だけで turn-record を ended・job を Ended にする。拍の周期(transcript_poll_seconds)
+  ;; を待たない — 周期は保険。
+  (setv world (World))
+  (.tick world 0)
+  (setv sid (.sid world))
+  ;; 手番の材料(記録が進んだ証拠 = 送った本文が届いて手番が始まった)。
+  (setv (get world.local.transcripts f"/events/{sid}.events.jsonl")
+        (+ (stream-line {"type" "system" "subtype" "init" "session_id" sid "model" "claude-opus-5"})
+           (stream-line {"type" "assistant"
+                         "message" {"id" "msg-1" "role" "assistant" "model" "claude-opus-5"
+                                    "content" [{"type" "text" "text" "done"}]
+                                    "usage" {"input_tokens" 1 "output_tokens" 1 "cache_creation_input_tokens" 0
+                                             "cache_read_input_tokens" 0}}})))
+  (.tick world 1000)
+  (assert (= (.job-phase world) "Running"))
+  ;; ACP を静める(前の拍の書きで進んだ sequence に since を追いつかせる)— 次の拍を起こすのは器の合図だけ。
+  (.tick world 100)
+  (assert (= world.state.since world.acp.sequence))
+  ;; host が手番の終わりを刻む → 器の合図だけが届く(ACP の sequence は進めない)。
+  (.finish-turn world.sessions sid (+ world.local.now-ms 200))
+  (setv since world.state.since)
+  (setv lists-before (len world.acp.lists))
+  (.append world.acp.wakes (WatchAdvance :kind "session" :sequence since))
+  (.tick world 100)
+  (assert (= (len world.acp.lists) lists-before) "器の合図の拍は一覧(AcpGet)を撃たない")
+  (assert (= (.job-phase world) PHASE-ENDED) "合図の拍で job は Ended")
+  (assert (= (get (.record-status world) "state") "ended") "合図の拍で turn-record は ended")
+  (assert (= world.state.jobs #()))
+  (assert (= world.state.since since) "器の合図は ACP の since を進めない"))
+
+
+(deftest test-list-mode-for-reads-a-session-wake-as-none
+  ;; 判断の 1 点: 器の合図(kind session)は行の読み直しを求めない(ACP の sequence が進んでいない)— 周期の保険が来て
+  ;; いなければ none。
+  (setv settings (AgentdSettings :node-name NODE :backend-kind "headless" :stream-capability "events"))
+  (setv state (replace (initial-state) :last-resync-ms 1000 :since 7))
+  (assert (= (run (list-mode-for (WatchAdvance :kind "session" :sequence 7) state 1500 settings)) LIST-MODE-NONE)))

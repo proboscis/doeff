@@ -1825,3 +1825,81 @@ def test_host_headless_monitor_stamps_the_turn_end_from_the_current_row_not_the_
     assert stamped > sent_at, (stamped, sent_at, first_stamp)
     assert stamped > first_stamp
     headless_host.ok("session.cleanup", {"session_id": "h-stale"})
+
+
+# ---------------------------------------------------------------- 4. 手番の終わりの合図(段 12 lane 12b・agora-redesign #207 根 1)
+
+
+def test_headless_registry_wakes_the_waiter_the_moment_a_turn_ends(tmp_path: Path) -> None:
+    """登記簿の待ち手(host の monitor)は、読み手が Dialogue で手番の終わりを読んだ拍に起きる — monitor の周期
+    (1 s)を待たない。合図の数は待っている間も進み(取りこぼさない)、終わりが無ければ上限で返る。"""
+    registry = HeadlessRegistry()
+    events = str(tmp_path / "s-wake.events.jsonl")
+    process = registry.spawn(
+        "s-wake",
+        ["claude", "-p", "--input-format", "stream-json", "--session-id", "sid-wake"],
+        str(tmp_path),
+        _stub_env(),
+        events,
+        ClaudeDialogue(),
+    )
+    # 終わりが無い間は上限で返り、数は 0 のまま。
+    started = time.monotonic()
+    assert registry.wait_turn_end(0, 0.1) == 0
+    assert time.monotonic() - started < 1.0
+    assert process.deliver("hello there") is True
+    started = time.monotonic()
+    count = registry.wait_turn_end(0, 5.0)
+    waited = time.monotonic() - started
+    assert count == 1
+    assert waited < 1.0, waited
+    # 合図の後に観測すると、束に終わりが在る(合図は束より後に出る — 待ち手が空の束を見ることは無い)。
+    observed = process.observe()
+    assert observed.ended == (TurnEnded(ok=True, detail="success"),)
+    # 見た数を名乗って待つと、次の終わりまで返らない(上限)。
+    assert registry.wait_turn_end(count, 0.1) == 1
+    # 次の手番の終わりで 2 へ。
+    assert process.deliver("again") is True
+    assert registry.wait_turn_end(1, 5.0) == 2
+    registry.kill("s-wake")
+
+
+def test_host_wait_events_returns_when_the_journal_advances_and_at_the_bound_otherwise(headless_host: Host) -> None:
+    """RPC session.wait_events(出来事の journal の long-poll): after より先端が進めば即座に返り、進まなければ
+    wait_seconds の上限で今の先端を返す。答えは先端の seq だけ(中身は運ばない — 呼び手は眺めを読み直す)。
+    引数の形が違えば断る。"""
+    seq0 = headless_host.ok("session.wait_events", {"after": 0, "wait_seconds": 0})
+    assert isinstance(seq0, dict) and isinstance(seq0["seq"], int)
+    head = seq0["seq"]
+    # 進まない間は上限で返る(先端は同じ)。
+    started = time.monotonic()
+    bound = headless_host.ok("session.wait_events", {"after": head, "wait_seconds": 0.2})
+    assert isinstance(bound, dict) and bound["seq"] == head
+    assert 0.15 <= time.monotonic() - started < 1.5
+    # 待っている間に出来事が記帳されると、上限を待たずに返る。
+    answer: dict[str, JSON] = {}
+
+    def waiter() -> None:
+        answer["seq"] = headless_host.ok("session.wait_events", {"after": head, "wait_seconds": 5})
+        answer["at"] = time.monotonic()
+
+    thread = threading.Thread(target=waiter, daemon=True)
+    thread.start()
+    _pause(0.1)
+    fired = time.monotonic()
+    sid = "s-journal"
+    launched = headless_host.ok("session.launch", _launch_params(headless_host.root, sid, "claude"))
+    assert isinstance(launched, dict)
+    thread.join(5.0)
+    assert not thread.is_alive(), "wait_events did not return after the launch was journaled"
+    got = answer["seq"]
+    assert isinstance(got, dict) and isinstance(got["seq"], int) and got["seq"] > head
+    at = answer["at"]
+    assert isinstance(at, float) and at - fired < 1.0
+    # 形の違う引数は断る(黙って 0 に倒さない)。
+    for bad in ({"after": -1}, {"after": "0"}, {"after": True}, {"wait_seconds": -1}, {"wait_seconds": "1"}):
+        response = headless_host.call("session.wait_events", dict(bad))
+        assert response["ok"] is False, response
+        assert "invalid params for session.wait_events" in str(response["error"])
+    _wait_turn_end(headless_host, sid)
+    headless_host.ok("session.cleanup", {"session_id": sid})
