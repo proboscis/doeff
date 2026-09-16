@@ -122,6 +122,7 @@ from doeff_agents.sessionhost.acp.effects import (
     ProfileUsage,
     ProfileUsageOutcome,
     ProfileUsageUnavailable,
+    PublishWorker,
     Pushed,
     PushOutcome,
     ReadProfileUsage,
@@ -165,6 +166,7 @@ from doeff_agents.sessionhost.acp.effects import (
     UsageWindow,
     UsageWindowName,
     WatchAdvance,
+    WorkerPublished,
     WatchKind,
     WriteOutcome,
     Written,
@@ -197,6 +199,13 @@ USAGE_CACHE_TTL_FLAG = "--cache-ttl"
 PROFILES_COMMAND: tuple[str, ...] = ("agentcli", "profiles", "list", "--json")
 PROFILES_KIND_FLAG = "--kind"
 PROFILES_TIMEOUT_SECONDS = 30.0
+#: worker の面と残量行の公開の口(段 12 lane 12j・agora-redesign #445)= dotfiles agentcli の console script の
+#: 1 点(`ai route publish-worker` — 欄・簿・組み立てはその葉。旧 headless-worker の常駐の拍が呼んでいた口と同じ)。
+PUBLISH_COMMAND: tuple[str, ...] = ("ai", "route", "publish-worker", "--json")
+PUBLISH_CADENCE_FLAG = "--cadence"
+PUBLISH_RUNNING_TURNS_FLAG = "--running-turns"
+PUBLISH_POLL_TICK_FLAG = "--poll-tick-at"
+PUBLISH_TIMEOUT_SECONDS = 120.0
 #: 35 profile の live の照会(cache が古い時)を含めた上限。
 USAGE_TIMEOUT_SECONDS = 180.0
 #: agentcli の record の窓の綴り(`<key>_used_percentage` / `<key>_resets_at`)→ 契約の窓の名。
@@ -1236,6 +1245,8 @@ class LocalIo:
             return Resume(k, list_profile_homes(effect.kind))
         if isinstance(effect, ReadProfileUsage):
             return Resume(k, read_profile_usage(effect.kind, effect.cache_ttl_seconds))
+        if isinstance(effect, PublishWorker):
+            return Resume(k, publish_worker(effect))
         if isinstance(effect, (ClockNowMs, MetricLine, LogLine)):
             return Resume(k, self._observe(effect))
         if isinstance(
@@ -1551,6 +1562,34 @@ def read_profile_usage(kind: LeaseKind, cache_ttl_seconds: int) -> tuple[Profile
     if not isinstance(doc, dict) or kind not in doc:
         raise RuntimeError(f"agentd: usage read `{' '.join(argv)}` answered no {kind!r} records")
     return decode_profile_usage(doc, kind)
+
+
+def publish_worker(effect: PublishWorker) -> WorkerPublished:
+    """agentcli の公開の 1 点(`ai route publish-worker --json`)を subprocess で撃つ(#445)。起動できない・期限・
+    非 0 の終了・JSON でない答えは**値**(ok False・理由)で返す — 公開の失敗で観測の腕(tick の縁)を落とさない。
+    旗は測った時だけ立てる作法(headless_worker.publish_worker と同じ): running_turns は常に測った値(空 = 0 本)。"""
+    argv = [
+        *PUBLISH_COMMAND,
+        PUBLISH_CADENCE_FLAG, str(int(effect.cadence_seconds)),
+        PUBLISH_RUNNING_TURNS_FLAG, ",".join(effect.running_turns),
+        PUBLISH_POLL_TICK_FLAG, repr(effect.poll_tick_at_ms / 1000.0),
+    ]
+    try:
+        completed = subprocess.run(
+            argv, capture_output=True, timeout=PUBLISH_TIMEOUT_SECONDS, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return WorkerPublished(ok=False, worker="", detail=f"`{' '.join(argv)}` failed: {error}")
+    if completed.returncode != 0:
+        tail = completed.stderr.decode("utf-8", errors="replace").strip()[-500:]
+        return WorkerPublished(ok=False, worker="", detail=f"`{' '.join(argv)}` exited {completed.returncode}: {tail}")
+    lines = completed.stdout.decode("utf-8", errors="replace").strip().splitlines()
+    try:
+        doc = json.loads(lines[-1]) if lines else {}
+    except ValueError:
+        doc = {}
+    worker = str(doc.get("worker") or "") if isinstance(doc, dict) else ""
+    return WorkerPublished(ok=True, worker=worker, detail="")
 
 
 # ------------------------------------------------------------------ 札の読み

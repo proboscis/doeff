@@ -793,6 +793,31 @@ class ProfileUnobserved:
 
 
 @dataclass(frozen=True)
+class PublishWorker(EffectBase):
+    """この機体の worker の面(階級・空き・借りられる profile)と残量行を cluster の艦隊の断面へ公開する
+    (段 12 lane 12j・agora-redesign #445 — 既知の形 = kubelet の NodeStatus: 容量の報告は worker の義務で
+    controller は置かない)。口は dotfiles agentcli の 1 点(handlers.py の PUBLISH_COMMAND =
+    `ai route publish-worker --json` — 何を公開するかはその葉が組み、ここに写しを作らない)。
+    ``cadence_seconds`` = 公開の拍の申告(読み手は拍から古さの閾を導く — 秒の定数を発明しない)・
+    ``running_turns`` = いま走らせている手番の id(測った事実・空 = 測って 0 本)・``poll_tick_at_ms`` = この拍の壁時計。
+    家の在る profile を持つ機体(Mac)だけが撃つ(判断は observe-profiles の held の有無の 1 点・pool の pod は撃たない)。
+    結果 = WorkerPublished(失敗は値で返り、agentd は log 1 行 + 計器 — 配車は止めない)。"""
+
+    cadence_seconds: int
+    running_turns: tuple[str, ...]
+    poll_tick_at_ms: int
+
+
+@dataclass(frozen=True)
+class WorkerPublished:
+    """PublishWorker の結末: ok = 公開が着いた・worker = 名乗った worker の名(読めなければ空)・detail = 失敗の理由(ok なら空)。"""
+
+    ok: bool
+    worker: str
+    detail: str
+
+
+@dataclass(frozen=True)
 class ProfileNotHeld:
     """この機体が資格を持たない profile(usage の列に無い)— 書かず、log もしない。"""
 

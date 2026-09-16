@@ -71,8 +71,10 @@ from doeff_agents.sessionhost.acp.effects import (
     ProbeAnswer,
     ProfileHome,
     ProfileUsageOutcome,
+    PublishWorker,
     Pushed,
     ReadProfileUsage,
+    WorkerPublished,
     RecordAppend,
     RecordAppended,
     RecordAppendOutcome,
@@ -666,6 +668,9 @@ class FakeLocal:
         #: この機体の資格の残量(kind → 答えの列)と、読んだ (kind, cache_ttl_seconds) の列。
         self.usage: dict[str, tuple[ProfileUsageOutcome, ...]] = {}
         self.usage_reads: list[tuple[str, int]] = []
+        #: worker の公開(#445): 撃たれた効果の列と、答えの台本(ok / 断り)
+        self.publishes: list[PublishWorker] = []
+        self.publish_ok: bool = True
         #: この機体の profile の家の在否(kind → 登録簿の列)と、読んだ kind の列。据えていない kind は
         #: usage に答えのある profile の家が在る(usage を据えた検が家も据える手間を省く既定)。
         self.homes: dict[str, tuple[ProfileHome, ...]] = {}
@@ -732,6 +737,11 @@ class FakeLocal:
         if isinstance(effect, ReadProfileUsage):
             self.usage_reads.append((effect.kind, effect.cache_ttl_seconds))
             return Resume(k, self.usage.get(effect.kind, ()))
+        if isinstance(effect, PublishWorker):
+            self.publishes.append(effect)
+            if self.publish_ok:
+                return Resume(k, WorkerPublished(ok=True, worker="fake-mac", detail=""))
+            return Resume(k, WorkerPublished(ok=False, worker="", detail="publish refused (fake)"))
         if isinstance(effect, (ClockNowMs, MetricLine, LogLine)):
             return Resume(k, self._observe(effect))
         if isinstance(
