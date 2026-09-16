@@ -1172,15 +1172,20 @@
 ;; 段 12 lane 12j 便 3(agora-redesign #233・ADR-012 R38): 要約(kind summary)は原文の前に区間の順で畳まれ、原文は要約の区間の後だけ
 ;; ---------------------------------------------------------------------------
 
-(deftest test-summaries-fold-first-in-region-order-and-drop-before-raw-under-the-budget
-  ;; 純関数: 要約 2 区間(渡す順は逆)→ recordSeq の区間の順で原文と郵便より前・頭が「古い区間 2 つは要約」を名乗る・
-  ;; summary_regions = 2。上限が小さければ古い要約から落ち、見出しは kind 要約 で数える。要約なしは今日どおり(頭に要約の語なし・0)。
-  (setv messages #((message-row "m-1" CONVERSATION "operator" "問い" AT)))
-  (setv events (tuple [(event-of 5 "j-2#a1" 0 (+ AT 100) "text" {"text" "原文の答え"})]))
-  (setv summaries (tuple [(HistorySummary :from-seq 3 :to-seq 4 :at AT :model "m" :text "後の要約")
-                          (HistorySummary :from-seq 0 :to-seq 2 :at AT :model "m" :text "先の要約")]))
-  (setv fold (run (rehydrate-history-of CONVERSATION messages (RecordedTurns :events events :complete True) #() 65536 {} summaries)))
+(deftest test-summaries-fold-first-in-region-order-and-drop-only-after-raw-under-the-budget
+  ;; 純関数(便 3 → 追補 5): 要約 2 区間(渡す順は逆)→ recordSeq の区間の順で原文と郵便より前・頭が「古い区間 2 つは要約」を名乗る・
+  ;; summary_regions = 2。上限は原文の古い手番から落とし、要約は原文を最新の 1 手番まで落としても超える時だけ古い要約から落ちて
+  ;; 見出しが kind 要約 を数え、頭の数も減る。見出しの期間は原文の時刻(要約の区間の番号を時刻に読まない)。要約なしは今日どおり。
+  (setv messages #((message-row "m-1" CONVERSATION "operator" "問い" AT)
+                   (message-row "m-2" CONVERSATION "operator" "続きの問い" (+ AT 200))))
+  (setv events (tuple [(event-of 5 "j-2#a1" 0 (+ AT 100) "text" {"text" (+ "原文の答え " (* "あ" 1000))})
+                       (event-of 6 "j-3#a1" 0 (+ AT 300) "text" {"text" (+ "新しい答え " (* "い" 1000))})]))
+  (setv summaries (tuple [(HistorySummary :from-seq 3 :to-seq 4 :at (+ AT 50) :model "m" :text (+ "後の要約 " (* "う" 100)))
+                          (HistorySummary :from-seq 0 :to-seq 2 :at (+ AT 40) :model "m" :text (+ "先の要約 " (* "え" 100)))]))
+  (setv records (RecordedTurns :events events :complete True))
+  (setv fold (run (rehydrate-history-of CONVERSATION messages records #() 65536 {} summaries)))
   (assert (= fold.summary-regions 2))
+  (assert (= fold.dropped-summaries 0))
   (assert (in "古い区間 2 つは要約" fold.text) fold.text)
   (setv first-at (.index fold.text "[要約 recordSeq 0〜2・m] 先の要約"))
   (setv second-at (.index fold.text "[要約 recordSeq 3〜4・m] 後の要約"))
@@ -1188,16 +1193,70 @@
   (assert (< second-at (.index fold.text "問い")) "要約が郵便より後に並んだ")
   (assert (< second-at (.index fold.text "原文の答え")) "要約が原文より後に並んだ")
   (assert (= fold.thinned-turns 0) "要約は薄くならない")
-  ;; 上限が小さい: 古い要約から落ちて見出しに畳まれ、見出しは kind 要約 を数える
-  (setv small (run (rehydrate-history-of CONVERSATION messages (RecordedTurns :events events :complete True) #() 420 {} summaries)))
-  (assert (>= small.dropped-turns 1) small.text)
-  (assert (isinstance small.dropped-headline str))
-  (assert (in HISTORY-SUMMARY-KIND small.dropped-headline) small.dropped-headline)
-  (assert (not-in "先の要約" small.text) "古い要約が上限で落ちていない")
+  ;; 上限を 1 byte 下回る: 落ちるのは原文の古い手番(問い + 原文の答え)で、要約 2 本は残る。見出しの期間は原文の時刻。
+  (setv raw-dropped (run (rehydrate-history-of CONVERSATION messages records #() (- fold.size-bytes 1) {} summaries)))
+  (assert (= raw-dropped.dropped-turns 1) raw-dropped.text)
+  (assert (= raw-dropped.dropped-summaries 0))
+  (assert (= raw-dropped.summary-regions 2))
+  (assert (in "先の要約" raw-dropped.text))
+  (assert (in "後の要約" raw-dropped.text))
+  (assert (not-in "原文の答え" raw-dropped.text) "原文の古い手番が先に落ちていない")
+  (assert (in "新しい答え" raw-dropped.text))
+  (assert (isinstance raw-dropped.dropped-headline str))
+  (assert (not-in HISTORY-SUMMARY-KIND raw-dropped.dropped-headline) raw-dropped.dropped-headline)
+  (setv first-stamp (run (history-time-of AT)))
+  (setv last-stamp (run (history-time-of (+ AT 100))))
+  (assert (.startswith raw-dropped.dropped-headline f"[{first-stamp}〜{last-stamp}] 古い手番 1 件(出来事と郵便 2 件)") raw-dropped.dropped-headline)
+  (assert (not-in "1970" raw-dropped.dropped-headline))
+  ;; 見出しは頭の直後・要約と残した手番の前。
+  (assert (= (get (.split raw-dropped.text "\n\n") 1) raw-dropped.dropped-headline) raw-dropped.text)
+  (assert (< (.index raw-dropped.text raw-dropped.dropped-headline) (.index raw-dropped.text "先の要約")))
+  ;; さらに下回る: 原文は最新の 1 手番だけなので、古い要約から落ちて見出しが kind 要約 を数え、頭の数も減る。
+  (setv one-summary (run (rehydrate-history-of CONVERSATION messages records #() (- raw-dropped.size-bytes 1) {} summaries)))
+  (assert (= one-summary.dropped-summaries 1) one-summary.text)
+  (assert (= one-summary.summary-regions 1))
+  (assert (= one-summary.dropped-turns 1))
+  (assert (not-in "先の要約" one-summary.text) "古い要約が先に落ちていない")
+  (assert (in "後の要約" one-summary.text))
+  (assert (in "古い区間 1 つは要約" one-summary.text) one-summary.text)
+  (assert (in f": {HISTORY-SUMMARY-KIND} 1・" one-summary.dropped-headline) one-summary.dropped-headline)
+  (assert (in "新しい答え" one-summary.text))
+  (setv no-summary (run (rehydrate-history-of CONVERSATION messages records #() (- one-summary.size-bytes 1) {} summaries)))
+  (assert (= no-summary.dropped-summaries 2) no-summary.text)
+  (assert (= no-summary.summary-regions 0))
+  (assert (not-in "は要約" no-summary.text) no-summary.text)
+  (assert (in f": {HISTORY-SUMMARY-KIND} 2・" no-summary.dropped-headline) no-summary.dropped-headline)
+  (assert (in "新しい答え" no-summary.text))
   ;; 要約なし = 今日どおり
-  (setv plain (run (rehydrate-history-of CONVERSATION messages (RecordedTurns :events events :complete True) #() 65536 {} #())))
+  (setv plain (run (rehydrate-history-of CONVERSATION messages records #() 65536 {} #())))
   (assert (= plain.summary-regions 0))
   (assert (not-in "要約" plain.text)))
+
+
+(deftest test-the-production-shape-keeps-all-summaries-and-drops-raw-turns-with-a-real-period
+  ;; 便 4 の実射 2026-09-16 18:08(aj-88JXQX…・operator の会話): 上限 65,536 byte・原文 1,500 出来事・要約 4 本(6〜8 KB)。旧の順では
+  ;; 要約 4 本が最も古い項として最初に落ち(本文に 1 本も残らない)、見出しの期間は recordSeq 0 を時刻に読んで 1970-01-01 から始まった。
+  ;; 新: 要約 4 本は残り、落ちるのは原文の古い手番で、見出しの期間は原文の時刻。
+  (setv regions [[0 171] [172 390] [391 591] [592 600]])
+  (setv summaries (tuple (lfor i (range 4)
+                               (HistorySummary :from-seq (get (get regions i) 0) :to-seq (get (get regions i) 1) :at (+ AT (* i 1000))
+                                               :model "claude-opus-5" :text (+ f"要約 {i} " (* "要" 2000))))))
+  (setv messages (tuple (lfor n (range 30) (message-row f"m-{n}" CONVERSATION "operator" f"問い {n}" (+ AT 100000 (* n 10000))))))
+  (setv events (tuple (lfor n (range 30) (event-of (+ 601 n) f"j-{n}#a1" 0 (+ AT 100000 (* n 10000) 500) "text" {"text" (+ f"答え {n} " (* "本" 2000))}))))
+  (setv fold (run (rehydrate-history-of CONVERSATION messages (RecordedTurns :events events :complete True) #() 65536 {} summaries)))
+  (assert (<= fold.size-bytes 65536) fold.size-bytes)
+  (assert (= fold.summary-regions 4) fold.text)
+  (assert (= fold.dropped-summaries 0))
+  (for [region regions]
+    (assert (in f"[要約 recordSeq {(get region 0)}〜{(get region 1)}・claude-opus-5]" fold.text) f"要約 {region} が本文に残っていない"))
+  (assert (>= fold.dropped-turns 1) fold.text)
+  (assert (isinstance fold.dropped-headline str))
+  (assert (not-in "1970" fold.dropped-headline) fold.dropped-headline)
+  (assert (not-in HISTORY-SUMMARY-KIND fold.dropped-headline) fold.dropped-headline)
+  (setv first-stamp (run (history-time-of (+ AT 100000))))
+  (assert (.startswith fold.dropped-headline f"[{first-stamp}〜") fold.dropped-headline)
+  (assert (< (.index fold.text "[要約 recordSeq 592〜600") (.index fold.text "問い 29")) "要約が原文より後に並んだ")
+  (assert (in "答え 29" fold.text)))
 
 
 (deftest test-rehydrate-folds-existing-summaries-first-and-reads-raw-only-after-their-floor

@@ -1278,6 +1278,8 @@ class HistoryFold:
     thin: bool
     #: 段 12 lane 12j 便 3: 畳みに載せた要約(kind summary)の区間の数(古い順・原文の前に置く)。0 = 要約なし(今日どおりの畳み)。
     summary_regions: int = 0
+    #: 段 12 lane 12j 追補 5: 上限で落とした要約(kind summary)の区間の数 — 原文の手番を最新の 1 つまで落としても超えた時だけ、古い要約から。
+    dropped_summaries: int = 0
 
 
 # ------------------------------------------------------------------ turn-record の entry(見出し・段 9f lane 9f-4)
