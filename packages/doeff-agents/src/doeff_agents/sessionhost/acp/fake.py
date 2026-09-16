@@ -981,6 +981,9 @@ class FakeRecord:
             model=model if isinstance(model, str) else None,
             is_error=stored.get("isError") is True,
             truncated=False,
+            tombstoned_at=(stored.get("tombstonedAt")
+                           if isinstance(stored.get("tombstonedAt"), int) and not isinstance(stored.get("tombstonedAt"), bool)
+                           else None),
         )
 
     def events_of(self, conversation_id: str, stream_id: str) -> list[JSONObject]:

@@ -1685,6 +1685,10 @@
         True ""))
 
 
+;; 消えた本文の印(段 12 lane 12l・agora-redesign #383 粒 2)— 綴りは 1 点。
+(setv HISTORY-ERASED-MARK "(本文は消去済み)")
+
+
 (defk history-event-line-of [event body]
   {:pre [(: event RecordEvent) (: body str)]
    :post [(: % (| str None))]}
@@ -1695,13 +1699,16 @@
   (setv tool (if (isinstance event.tool-name str) event.tool-name ""))
   (setv failed (if event.is-error "(誤り)" ""))
   (setv cut (if event.truncated "(切り詰め)" ""))
+  ;; 段 12 lane 12l(agora-redesign #383 粒 2): 本文が消された行(保存期間の係 retention か手の tombstone)は空の本文に印を
+  ;; 付ける — 「何も言わなかった」と「言ったが消えた」を agent が見分ける(本文は発明しない)。
+  (setv gone (if (isinstance event.tombstoned-at int) HISTORY-ERASED-MARK ""))
   (cond
-    (= event.kind "text") f"[{stamp}] agent: {body}{cut}"
-    (= event.kind "tool_use") f"[{stamp}] agent の道具 {tool}: {body}{cut}"
-    (= event.kind "tool_result") f"[{stamp}] 道具の結果{failed}: {body}{cut}"
-    (= event.kind "system") f"[{stamp}] system: {body}"
-    (= event.kind "error") f"[{stamp}] 誤り: {body}"
-    (= event.kind "user") f"[{stamp}] user: {body}{cut}"
+    (= event.kind "text") f"[{stamp}] agent: {body}{cut}{gone}"
+    (= event.kind "tool_use") f"[{stamp}] agent の道具 {tool}: {body}{cut}{gone}"
+    (= event.kind "tool_result") f"[{stamp}] 道具の結果{failed}: {body}{cut}{gone}"
+    (= event.kind "system") f"[{stamp}] system: {body}{gone}"
+    (= event.kind "error") f"[{stamp}] 誤り: {body}{gone}"
+    (= event.kind "user") f"[{stamp}] user: {body}{cut}{gone}"
     True None))
 
 
