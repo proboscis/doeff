@@ -37,6 +37,7 @@
   Places
   AGENTD-PLACES
   CAPACITY-ENV
+  DRAIN-SECONDS-ENV
   CUSTODY-URL-ENV
   CustodyHealth
   HEADLESS-DIR-ENV
@@ -102,6 +103,8 @@
 (setv KEY-PLACES "places")
 ;; node が持つ作業場の根(段 10 lane 10y 案 C・任意)。node の spec.workRoots に名乗る。
 (setv KEY-WORK-ROOTS "work_roots")
+;; 停止(SIGTERM)の排水の上限(秒・任意・段 12 lane 12j・agora-redesign #304 便 2)。0 / 無し = 排水しない(今日どおり)。
+(setv KEY-DRAIN-SECONDS "drain_seconds")
 ;; 従量課金の binding kind を受けるか(従量課金の便 lane A・任意・既定 false)。
 ;; 閉語彙 "true" | "false" の文字列 — 宣言 file の値は全部文字列(declared-values-of の
 ;; 1 つの不変条件)なので、bool を 1 つだけ足して読み手に 2 つ目の型の分岐を作らない。
@@ -115,7 +118,7 @@
 (setv KEY-RECORD-URL "url")
 ;; 表 → 許す鍵(宣言に無い鍵は誤りとして名指す — 黙って読み飛ばさない)。
 (setv AGENTD-KEYS #{KEY-SERVER KEY-TOKEN-FILE KEY-NODE-NAME KEY-STATE-DIR KEY-BACKEND
-                    KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY KEY-PLACES KEY-WORK-ROOTS
+                    KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY KEY-PLACES KEY-WORK-ROOTS KEY-DRAIN-SECONDS
                     KEY-ALLOW-METERED-BILLING})
 (setv CUSTODY-KEYS #{KEY-CUSTODY-URL KEY-BORROWER-KEY-FILE KEY-SERVICE-ACCOUNT-TOKEN-FILE})
 (setv RECORD-KEYS #{KEY-RECORD-URL})
@@ -331,6 +334,20 @@
   (int word))
 
 
+(defk drain-seconds-of [text]
+  {:pre [(: text (| str None))]
+   :post [(: % int)]}
+  "停止(SIGTERM)の排水の上限の読み(段 12 lane 12j・agora-redesign #304 便 2): 宣言 file の [agentd].drain_seconds の文字列
+   (10 進の非負の整数)→ int。無い・空 = 0(排水しない — 今日どおり即座に閉じる)。読めない値は ValueError(参加しない —
+   黙って 0 に倒さない)。値は pod の terminationGracePeriodSeconds より小さく取る(超えると SIGKILL が先に来る)。"
+  (setv word (if (is text None) "" (.strip text)))
+  (when (not word)
+    (return 0))
+  (when (not (and (.isascii word) (.isdigit word)))
+    (raise (ValueError f"[{TABLE-AGENTD}].{KEY-DRAIN-SECONDS} は 0 以上の整数(10 進の数字)であること: {word !r}")))
+  (int word))
+
+
 (defk work-roots-of [text]
   {:pre [(: text (| str None))]
    :post [(: % (| WorkRoots None))]}
@@ -438,6 +455,8 @@
       (ownership-of (or (.get agentd KEY-OWNERSHIP) None) (or (.get agentd KEY-OWNERSHIP-PROOF) None)))
   ;; node の capacity(段 10 lane 10d)— 他の宣言の誤りを先に名指してから読む。
   (<- capacity int (capacity-of (.get agentd KEY-CAPACITY)))
+  ;; 停止の排水の上限(段 12 lane 12j・#304 便 2・任意)。
+  (<- drain-seconds int (drain-seconds-of (.get agentd KEY-DRAIN-SECONDS)))
   ;; 機体が仕える置き場の集合(段 11 lane 11u — 1 値の place は退役)。
   (<- declared-places Places (places-of (.get agentd KEY-PLACES)))
   ;; node が持つ作業場の根(段 10 lane 10y 案 C・任意)。
@@ -461,6 +480,7 @@
     :work-roots (if (is declared-roots None) None declared-roots.roots)
     :ownership ownership
     :capacity capacity
+    :drain-seconds drain-seconds
     :places declared-places.words
     ;; 空文字は「名乗らない」= env に現れない(参加の門 record-sink-of が読みの 1 点で断る — 段 9f lane 9f-6)。
     ;; 従量課金の binding kind を受けるか(従量課金の便 lane A)— 真のときだけ host の argv に旗が立つ。
@@ -506,6 +526,9 @@
   (when (is-not spec.node-name None)
     (.append env #(NODE-NAME-ENV spec.node-name)))
   (.append env #(CAPACITY-ENV (str spec.capacity)))
+  ;; 段 12 lane 12j(#304 便 2): 排水の上限は名乗った時だけ env に現れる(0 = 既定 = 排水しない)。
+  (when (> spec.drain-seconds 0)
+    (.append env #(DRAIN-SECONDS-ENV (str spec.drain-seconds))))
   ;; 段 11 lane 11u: 置き場の集合は , 区切りの 1 文字列で運ぶ(読みは runtime の places-of の 1 点)。
   (.append env #(PLACES-ENV (.join PLACES-SEPARATOR spec.places)))
   (.extend env [#(HOST-BACKEND-ENV spec.backend)

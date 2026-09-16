@@ -2832,9 +2832,16 @@
   (setv known (| known-jobs known-commands known-summaries))
   (setv previously-deferred withdrawn-handled.deferred)
   (setv current (replace withdrawn-handled :deferred #()))
-  (for [row bound]
-    (when (not-in row.resource-id known)
-      (<- current AgentdState (claim-job settings current rows row previously-deferred now-ms))))
+  ;; 段 12 lane 12j(agora-redesign #304 便 2): 排水の最中は新しい claim を受けない — 行は Bound のまま残し、node の capacity 0 を
+  ;; 読んだ配車が別の node へ結び直す(黙って残さない: 行ごとに log 1 行)。
+  (if settings.draining
+      (for [row bound]
+        (when (not-in row.resource-id known)
+          (<- (LogLine :text (+ f"agentd: draining for the stop of agentd — leaving Bound job {row.resource-id} unclaimed "
+                                "(capacity 0; the scheduler places it on another node)")))))
+      (for [row bound]
+        (when (not-in row.resource-id known)
+          (<- current AgentdState (claim-job settings current rows row previously-deferred now-ms)))))
   (for [row running]
     (when (not-in row.resource-id known)
       ;; 段 12 lane 12a: verify の Running は行と file から組み直す(session は無い)。

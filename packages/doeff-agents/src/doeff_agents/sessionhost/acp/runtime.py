@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
+from dataclasses import replace
 
 import tomllib
 from doeff_vm import PyVM, WithHandler
@@ -41,6 +42,7 @@ from doeff_agents.sessionhost.acp.effects import (
     WorkRoots,
     Places,
     CAPACITY_ENV,
+    DRAIN_SECONDS_ENV,
     PLACES_ENV,
     CUSTODY_CONTRACT_VERSION,
     CUSTODY_URL_ENV,
@@ -90,6 +92,8 @@ TICK_BACKOFF_MAX_SECONDS = 30.0
 #: 停止(段 10 lane 10h 便 2): loop の thread が今の拍を終えるのを待つ上限。launchd の ExitTimeOut(既定 20 s)の
 #: 内側で、host の子 process の片付け(EOF → TERM → KILL の猶予 ≤ 10 s)と合わせて収める。
 STOP_JOIN_SECONDS = 5.0
+#: 排水(段 12 lane 12j・#304 便 2)の間、走っている手番の数を読み直す間隔(秒)。
+DRAIN_POLL_SECONDS = 1.0
 
 
 def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> AgentdSettings:
@@ -116,6 +120,8 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
     return AgentdSettings(
         node_name=node_name,
         node_capacity=node_capacity,
+        # 段 12 lane 12j(agora-redesign #304 便 2): 停止の排水の上限(宣言 file の [agentd].drain_seconds — 無い = 0 = 排水しない)
+        drain_seconds=_drain_seconds_of_env(env),
         places=places,
         homes_root=homes_root,
         backend_kind=backend,
@@ -141,6 +147,14 @@ def _capacity_of_env(env: Mapping[str, str]) -> int:
     verdict: object = PyVM().run(join.capacity_of(env.get(CAPACITY_ENV)))
     if not isinstance(verdict, int):
         raise TypeError(f"capacity_of returned {type(verdict).__name__}")
+    return verdict
+
+
+def _drain_seconds_of_env(env: Mapping[str, str]) -> int:
+    """停止(SIGTERM)の排水の上限(段 12 lane 12j・agora-redesign #304 便 2)。読みの規則は join.drain-seconds-of の 1 点(無い = 0)。"""
+    verdict: object = PyVM().run(join.drain_seconds_of(env.get(DRAIN_SECONDS_ENV)))
+    if not isinstance(verdict, int):
+        raise TypeError(f"drain_seconds_of returned {type(verdict).__name__}")
     return verdict
 
 
@@ -290,14 +304,22 @@ def run_loop(
     stop: threading.Event,
     log: Callable[[str], None],
     holder: StateHolder | None = None,
+    drain: threading.Event | None = None,
 ) -> None:
     """tick を回し続ける。例外は log して有界の backoff で続ける(1 拍の失敗で腕を落とさない)。
-    holder が在れば拍ごとの状態を置く(停止の腕が読む)。"""
+    holder が在れば拍ごとの状態を置く(停止の腕が読む)。drain(段 12 lane 12j・#304 便 2)が立った拍からは
+    settings.draining = True で回す — 新しい claim を止め・node の capacity を 0 に名乗り、走っている手番の終わりまで観測を続ける
+    (判断は judgment.declared-capacity-of / agentd.receive-bound-jobs の 1 点ずつ・この loop は写すだけ)。"""
     state = initial_state()
     backoff = TICK_BACKOFF_SECONDS
+    announced = False
     while not stop.is_set():
         try:
-            state = run_tick(settings, state, dispatchers)
+            draining = drain is not None and drain.is_set()
+            if draining and not announced:
+                log("agentd: draining — capacity 0 and no new claims; running turns are observed to their end")
+                announced = True
+            state = run_tick(replace(settings, draining=True) if draining else settings, state, dispatchers)
             if holder is not None:
                 holder.state = state
             backoff = TICK_BACKOFF_SECONDS
@@ -358,14 +380,34 @@ def run_close_for_stop(
     return result
 
 
+def drain_until(
+    running: Callable[[], int],
+    deadline: float,
+    now: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+    poll: float = DRAIN_POLL_SECONDS,
+) -> tuple[int, float]:
+    """排水の待ち(段 12 lane 12j・agora-redesign #304 便 2): 走っている手番の数が 0 になるか、期限(monotonic)に届くまで
+    poll ごとに読み直す。戻り = (残った手番の数, 待った秒)。判断はこの 1 点(停止の腕はこれを呼ぶだけ)。"""
+    started = now()
+    while True:
+        left = running()
+        current = now()
+        if left == 0 or current >= deadline:
+            return left, current - started
+        sleep(min(poll, max(0.0, deadline - current)))
+
+
 class AgentdRun:
-    """起こした agentd の thread(tick の loop と lease の heartbeat — 段 10 lane 10ba)と、その停止の腕(段 10 lane 10h 便 2)。"""
+    """起こした agentd の thread(tick の loop と lease の heartbeat — 段 10 lane 10ba)と、その停止の腕(段 10 lane 10h 便 2・
+    排水は段 12 lane 12j #304 便 2)。"""
 
     def __init__(
         self,
         settings: AgentdSettings,
         dispatchers: Sequence[Dispatcher],
         stop: threading.Event,
+        drain: threading.Event,
         holder: StateHolder,
         thread: threading.Thread,
         close: Callable[[], None],
@@ -374,15 +416,41 @@ class AgentdRun:
         self.settings = settings
         self.dispatchers = dispatchers
         self.stop = stop
+        self.drain = drain
         self.holder = holder
         self.thread = thread
         self._close = close
         self.heartbeat = heartbeat
 
+    def drain_for_stop(self, reason: str) -> int:
+        """停止の前の排水(段 12 lane 12j・agora-redesign #304 便 2): 宣言 drain_seconds > 0 で走っている job が在れば、
+        drain の合図を立て(次の拍から claim を止め・capacity 0 を名乗る — loop は回り続けて手番を観測する)、job が全部
+        終わるか上限に届くまで待つ。戻り = 残った job の数(0 = 全部終わった)。宣言 0 / job なしは待たない。
+        host の accept loop は生きたまま(hook は 1 度目の TERM の別 thread で走る — R26)なので手番の器は降りていない。"""
+        limit = self.settings.drain_seconds
+        running = len(self.holder.state.jobs)
+        if limit <= 0 or running == 0:
+            return running
+        self.drain.set()
+        _stderr(
+            f"agentd: stop ({reason}) — draining {running} running job(s): no new claims, capacity 0, "
+            f"waiting up to {limit}s for the turns to end"
+        )
+        left, waited = drain_until(lambda: len(self.holder.state.jobs), time.monotonic() + limit)
+        if left == 0:
+            _stderr(f"agentd: stop ({reason}) — drained: every running turn ended in {waited:.0f}s")
+        else:
+            _stderr(
+                f"agentd: stop ({reason}) — drain deadline of {limit}s reached with {left} running job(s) left; "
+                "closing them with AgentdRestart"
+            )
+        return left
+
     def close_for_stop(self, reason: str) -> int:
-        """host の停止の前に呼ぶ(host の accept loop が生きている間 — 器の眺めは RPC で読む): loop を止め、
+        """host の停止の前に呼ぶ(host の accept loop が生きている間 — 器の眺めは RPC で読む): 排水(宣言が在れば)→ loop を止め、
         今の拍が終わるのを有界に待ち、走っている job を閉じる。戻り = 閉じた job の数。loop が拍を終えない
         (I/O で塞がっている)時も待たずに進む — 同じ job を二度閉じる書きは CAS で負けるだけで害は無い。"""
+        self.drain_for_stop(reason)
         self.stop.set()
         self.thread.join(STOP_JOIN_SECONDS)
         # 段 10 lane 10ba: heartbeat の thread も同じ stop の合図で降りる(周期の待ちの途中でも起きる)。起こす前に止まった
@@ -523,6 +591,7 @@ def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> Age
             raise AgentdPreflightError(f"agentd custody contract check refused: {refusal}")
         _stderr(f"agentd: custody contract {CUSTODY_CONTRACT_VERSION} verified")
     stop = threading.Event()
+    drain = threading.Event()
     holder = StateHolder()
     beat_dispatchers, beat_close = heartbeat_dispatchers(env)
 
@@ -557,11 +626,11 @@ def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> Age
         waker.start()
         # 後始末(watch の thread を閉じる)は停止の腕 AgentdRun.close_for_stop が最後に行う — loop は stop が
         # 立った時にだけ抜けるので、ここで閉じると停止の腕が器と ACP を読めない。
-        run_loop(settings, dispatchers, stop, _stderr, holder)
+        run_loop(settings, dispatchers, stop, _stderr, holder, drain)
 
     thread = threading.Thread(target=body, name="sessionhost-agentd", daemon=True)
     thread.start()
-    return AgentdRun(settings, dispatchers, stop, holder, thread, close_all, heartbeat)
+    return AgentdRun(settings, dispatchers, stop, drain, holder, thread, close_all, heartbeat)
 
 
 # ------------------------------------------------------------------ 1 命令の参加(join・段 6 lane 6f)
