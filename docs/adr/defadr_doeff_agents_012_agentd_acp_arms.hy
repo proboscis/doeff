@@ -1030,6 +1030,8 @@
        (assert (in "(CommandStart :argv argv :cwd settings.summarize-runs-dir :env env)" sum-body) "summarize の腕が CommandStart(env つき)で起こしていない(R37)")
        (assert (in "(RecordReadSince :conversation-id conversation-id :since since :limit RECORD-PAGE-MAX-LIMIT :kinds RECORD-RAW-EVENT-KINDS)" sum-body)
                "区間の原文を前向きに原文の kind だけで読んでいない(R37)")
+       ;; 実弾 2026-09-16 16:04(便 4): 答えの JSON(数 KB)を rc / pid 用の既定 256 字で読むと切れて non-JSON になる — 答えは大きな器で読む。
+       (assert (in "(FsReadText :path command.out-path :max-chars SUMMARY-ANSWER-MAX-CHARS)" sum-body) "summarize の答えを小さな file の既定の上限で読んでいる(R37)")
        (assert (not-in "row.spec" sum-body) "summarize の腕が行の spec(charter)を直に読む(R37)")
        ;; 起こし方: claude -p・道具なし・session を残さない・位置引数。
        (setv argv-start (next (gfor [i line] (enumerate judgment-lines) :if (.startswith line "(defk summarize-argv-of ") i)))
@@ -1049,7 +1051,7 @@
                      "RECORD_RAW_EVENT_KINDS: tuple[str, ...] = (\"text\", \"tool_use\", \"tool_result\", \"system\", \"error\", \"user\")"
                      "    summarize_trigger_tokens: int = 500_000" "    summarize_model: str = \"claude-opus-5\""
                      "CONDITION_SUMMARIZE_OUTPUT_UNREADABLE: ConditionType = \"SummarizeOutputUnreadable\""
-                     "CONDITION_SUMMARY_UNWRITABLE: ConditionType = \"SummaryUnwritable\""]]
+                     "CONDITION_SUMMARY_UNWRITABLE: ConditionType = \"SummaryUnwritable\"" "SUMMARY_ANSWER_MAX_CHARS: int = 4_194_304"]]
          (assert (any (gfor line effects-lines (.startswith line needle))) f"綴りは effects の 1 点(R37): {needle}"))
        ;; 反例の検が在る。
        (setv tests (.read-text (/ (. (Path __file__) parent parent parent) "packages" "doeff-agents" "tests" "sessionhost_acp_summarize_deftests.hy") :encoding "utf-8"))

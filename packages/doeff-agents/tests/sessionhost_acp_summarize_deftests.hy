@@ -92,10 +92,15 @@
 
 
 (defn #^ str claude-answer [#^ str text]
-  "claude -p --output-format json の答え(result の object)。"
+  "claude -p --output-format json の答え(result の object)。本番の答えは本文 + usage + modelUsage で数千 byte(実弾 2026-09-16 16:04:
+   9,207 byte)— 小さな file の読みの既定(256 字)では切れるので、検の答えも既定より長い形にする(usage の内訳を本番の欄で運ぶ)。"
   (json.dumps {"type" "result" "subtype" "success" "is_error" False "result" text
-               "usage" {"input_tokens" 1200 "output_tokens" 80 "cache_creation_input_tokens" 0 "cache_read_input_tokens" 0}
-               "modelUsage" {MODEL {"inputTokens" 1200 "outputTokens" 80 "contextWindow" 1000000}}}
+               "duration_ms" 59068 "duration_api_ms" 62784 "num_turns" 1 "total_cost_usd" 1.547655 "session_id" "7b48491f-599a-4611-871e-ef0000000000"
+               "usage" {"input_tokens" 1200 "output_tokens" 80 "cache_creation_input_tokens" 0 "cache_read_input_tokens" 0
+                        "output_tokens_details" {"thinking_tokens" 0} "server_tool_use" {"web_search_requests" 0 "web_fetch_requests" 0}
+                        "service_tier" "standard" "cache_creation" {"ephemeral_1h_input_tokens" 0 "ephemeral_5m_input_tokens" 0}}
+               "modelUsage" {MODEL {"inputTokens" 1200 "outputTokens" 80 "cacheReadInputTokens" 0 "cacheCreationInputTokens" 0
+                                    "contextWindow" 1000000 "maxOutputTokens" 64000 "costUSD" 1.44 "provider" "firstParty"}}}
               :ensure-ascii False))
 
 
@@ -291,6 +296,26 @@
   (assert (= world.custody.revoked ["lease-1"]) "札を返していない")
   (assert (= world.state.summaries #()))
   (assert (= world.sessions.launches [])))
+
+
+(deftest test-a-long-summary-answer-is-read-whole-not-cut-at-the-small-file-default
+  ;; 実弾 2026-09-16 16:04(便 4 の 1 発目): claude -p の答え 9,207 byte を rc / pid 用の既定 256 字で読んで「non-JSON」と断り、要約が 1 つも
+  ;; 書かれなかった。答えの読みは SUMMARY_ANSWER_MAX_CHARS の器で、本文が数 KB でも丸ごと行に載る。
+  (setv world (World))
+  (.seed world 5)
+  (.put-row world.acp (summarize-row "sj-1" 5 PHASE-BOUND None))
+  (.tick world 0)
+  (setv long-text (* "決定と進みと未解決の問いを 1 段落に。" 300))
+  (assert (> (len (claude-answer long-text)) 256))
+  (.finish world "sj-1" 0 (claude-answer long-text))
+  (.tick world 2000)
+  (assert (= (get (.status world "sj-1") "phase") PHASE-ENDED))
+  (assert (= (.conditions world "sj-1") []) (.conditions world "sj-1"))
+  (setv rows (.summary-rows world))
+  (assert (= (len rows) 1))
+  (setv body (get (.events-of world.record CID "summary#0-5") 0))
+  (assert (= (get body "text") long-text) "要約の本文が切れた")
+  (assert (> (get (. (get rows 0) spec) "bytes") (len (.encode long-text "utf-8"))) "行の bytes が本文の欄の JSON の大きさでない"))
 
 
 ;; ---------------------------------------------------------------------------

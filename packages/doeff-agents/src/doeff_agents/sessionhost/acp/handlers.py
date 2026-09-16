@@ -102,6 +102,7 @@ from doeff_agents.sessionhost.acp.effects import (
     FsDirectoryExists,
     FsFileExists,
     FsMakeDirectories,
+    FS_READ_TEXT_DEFAULT_MAX_CHARS,
     FsReadText,
     FsFileSize,
     FsWritePrivateText,
@@ -1228,7 +1229,7 @@ class LocalIo:
         if isinstance(effect, FsFileExists):
             return Resume(k, os.path.isfile(effect.path))
         if isinstance(effect, FsReadText):
-            return Resume(k, read_small_text(effect.path))
+            return Resume(k, read_small_text(effect.path, effect.max_chars))
         if isinstance(effect, OwnershipProbe):
             return Resume(k, probe_ownership(effect.proof))
         if isinstance(effect, ListProfileHomes):
@@ -1363,11 +1364,12 @@ def stop_command(pid: int) -> bool:
     return True
 
 
-def read_small_text(path: str) -> str | None:
-    """小さな text の file(rc / pid)を読む。不在・読めない = None。"""
+def read_small_text(path: str, max_chars: int = FS_READ_TEXT_DEFAULT_MAX_CHARS) -> str | None:
+    """text の file を先頭から max_chars 字まで読む(rc / pid は既定 256・summarize の答えは SUMMARY_ANSWER_MAX_CHARS)。
+    不在・読めない = None。"""
     try:
         with open(path, encoding="utf-8") as handle:
-            return handle.read(256)
+            return handle.read(max_chars)
     except OSError:
         return None
 
