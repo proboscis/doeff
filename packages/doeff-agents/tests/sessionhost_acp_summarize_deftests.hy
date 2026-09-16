@@ -99,7 +99,9 @@
                "usage" {"input_tokens" 1200 "output_tokens" 80 "cache_creation_input_tokens" 0 "cache_read_input_tokens" 0
                         "output_tokens_details" {"thinking_tokens" 0} "server_tool_use" {"web_search_requests" 0 "web_fetch_requests" 0}
                         "service_tier" "standard" "cache_creation" {"ephemeral_1h_input_tokens" 0 "ephemeral_5m_input_tokens" 0}}
-               "modelUsage" {MODEL {"inputTokens" 1200 "outputTokens" 80 "cacheReadInputTokens" 0 "cacheCreationInputTokens" 0
+               ;; CLI の下読み(haiku・出力 数十 token)が先に並ぶ — 要約を書いた model は出力 token の最も多い方(実弾 2026-09-16 16:36)。
+               "modelUsage" {"claude-haiku-4-5-20251001" {"inputTokens" 101075 "outputTokens" 17 "contextWindow" 200000}
+                             MODEL {"inputTokens" 1200 "outputTokens" 80 "cacheReadInputTokens" 0 "cacheCreationInputTokens" 0
                                     "contextWindow" 1000000 "maxOutputTokens" 64000 "costUSD" 1.44 "provider" "firstParty"}}}
               :ensure-ascii False))
 
@@ -579,7 +581,7 @@
   (setv good (run (summarize-output-of (claude-answer "要約。"))))
   (assert (isinstance good SummaryOutcome))
   (assert (= good.text "要約。"))
-  (assert (= good.model MODEL))
+  (assert (= good.model MODEL) "要約を書いた model は出力 token の最も多い model(下読みの haiku ではない)")
   (assert (= good.usage {"input" 1200 "output" 80 "cacheWrite" 0 "cacheRead" 0}))
   (assert (isinstance (run (summarize-output-of None)) str))
   (assert (isinstance (run (summarize-output-of "")) str))
