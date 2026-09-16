@@ -1280,6 +1280,8 @@ class HistoryFold:
     summary_regions: int = 0
     #: 段 12 lane 12j 追補 5: 上限で落とした要約(kind summary)の区間の数 — 原文の手番を最新の 1 つまで落としても超えた時だけ、古い要約から。
     dropped_summaries: int = 0
+    #: 段 12 lane 12j 追補 6: 要約が覆う記録の終わり(floor の出来事の at)より古い郵便の数 — 要約が担うので畳まない(上限を食わせない)。
+    summarized_mails: int = 0
 
 
 # ------------------------------------------------------------------ turn-record の entry(見出し・段 9f lane 9f-4)
