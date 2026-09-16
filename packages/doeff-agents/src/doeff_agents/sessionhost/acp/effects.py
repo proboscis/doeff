@@ -100,6 +100,13 @@ PROFILE_RETIRED = "retired"
 #: profile の spec.budget.unit のうち agentd が残量を写せる単位(契約: status.observed.remaining は
 #: budget と同じ単位で unit の欄は無い — provider の窓は percent なので percent の budget だけ)。
 PROFILE_BUDGET_UNIT_PERCENT = "percent"
+#: profile の status の欄の綴り(契約 agora-kinds.json kinds.profile.schema … status): observed = 残量の観測の**最新の 1 枡**
+#: (node をまたぐ)・observedBy = **node ごとの枡**(鍵 = 観測した node の名・値は observed と同じ形)。段 12 lane 12j
+#: (agora-redesign #351・依頼者の裁定 2026-09-16 (B)): 同じ口座の家を持つ機体が 2 台(会社 Mac と mbp)在ると observed の 1 枡を
+#: 毎周期書き合い、node の名は数秒で消え generation だけが進んだ。以後 agentd は自分の枡を毎周期書き、最新の 1 枡は値が
+#: 変わった時か古い時だけ置き換える(judgment.profile-latest-should-replace の 1 点)。
+PROFILE_STATUS_OBSERVED_KEY = "observed"
+PROFILE_STATUS_OBSERVED_BY_KEY = "observedBy"
 #: provider の窓の名(契約 profile.status.observed.window の綴り)と周期(秒)。窓の選び方は
 #: judgment.observed-window-of の 1 点: spec.reset.everySeconds と一致する窓、無ければ既定 = 5h。
 UsageWindowName = Literal["5h", "7d"]

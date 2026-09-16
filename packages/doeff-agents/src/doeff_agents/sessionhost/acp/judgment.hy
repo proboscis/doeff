@@ -205,6 +205,8 @@
   PROFILE-BUDGET-UNIT-PERCENT
   PROFILE-OBSERVED-WINDOW-DEFAULT
   PROFILE-RETIRED
+  PROFILE-STATUS-OBSERVED-BY-KEY
+  PROFILE-STATUS-OBSERVED-KEY
   ProfileNotHeld
   ProfileObservation
   ProfileUnobserved
@@ -2415,21 +2417,52 @@
                        "node" node-name})))))
 
 
-(defk profile-observed-changed [row observed]
-  {:pre [(: row AcpRow) (: observed dict)]
+(defk profile-observed-changed [row observed node-name]
+  {:pre [(: row AcpRow) (: observed dict) (: node-name str)]
    :post [(: % bool)]}
-  "committed の status.observed と違うか(同じなら書かない — 断面が同じ拍は書きを起こさない)。"
+  "自分の枡(committed の status.observedBy[node])と違うか(同じなら書かない — 断面が同じ拍は書きを
+   起こさない)。段 12 lane 12j(agora-redesign #351・依頼者の裁定 (B)): 比べるのは自分の枡で、最新の
+   1 枡(observed)は比べない — 他の機体が書き換える枡を比べると、2 台が互いの拍を『変化』と読んで
+   毎周期書き合う(実測 2026-09-16: personal の generation 1436・btc 1568・observed.node は数秒で入れ替わる)。"
   (<- status dict (status-object-of row))
-  (!= (.get status "observed") observed))
+  (setv slots (.get status PROFILE-STATUS-OBSERVED-BY-KEY))
+  (setv mine (if (isinstance slots dict) (.get slots node-name) None))
+  (!= mine observed))
 
 
-(defk profile-status-with-observed [row observed]
-  {:pre [(: row AcpRow) (: observed dict)]
+(defk profile-latest-should-replace [current observed period-ms]
+  {:pre [(: current (| dict None)) (: observed dict) (: period-ms int)]
+   :post [(: % bool)]}
+  "最新の 1 枡(status.observed)を自分の観測で置き換えるか — 枡が無い / 値(window・remaining・resetAt)が
+   違う / 載っている観測が自分の周期より古い(observedAt の差 ≥ period)時だけ。同じ値の新しい拍では
+   置き換えない(2 台の書き合いを止める — #351)。observedAt を読めない枡は古いと読む。"
+  (cond
+    (is current None) True
+    (any (gfor key ["window" "remaining" "resetAt"] (!= (.get current key) (.get observed key)))) True
+    True
+    (do
+      (setv current-at (.get current "observedAt"))
+      (setv mine-at (.get observed "observedAt"))
+      (or (not (isinstance current-at int))
+          (not (isinstance mine-at int))
+          (>= (- mine-at current-at) period-ms)))))
+
+
+(defk profile-status-with-observed [row observed node-name period-ms]
+  {:pre [(: row AcpRow) (: observed dict) (: node-name str) (: period-ms int)]
    :post [(: % dict)]}
   "agentd が書く欄だけを更新した profile の status: committed の status(state・conditions は
-   他の書き手の欄 — 落とすと engine が断る)を写し、observed を据える。"
+   他の書き手の欄 — 落とすと engine が断る)を写し、自分の枡 observedBy[node] に観測を据え、最新の
+   1 枡 observed は profile-latest-should-replace が真の時だけ置き換える(他の node の枡は行のまま写す)。"
   (<- next dict (status-object-of row))
-  (setv (get next "observed") observed)
+  (setv slots (.get next PROFILE-STATUS-OBSERVED-BY-KEY))
+  (setv slots (if (isinstance slots dict) (dict slots) {}))
+  (setv (get slots node-name) observed)
+  (setv (get next PROFILE-STATUS-OBSERVED-BY-KEY) slots)
+  (setv current (.get next PROFILE-STATUS-OBSERVED-KEY))
+  (<- replace-latest bool (profile-latest-should-replace (if (isinstance current dict) current None) observed period-ms))
+  (when replace-latest
+    (setv (get next PROFILE-STATUS-OBSERVED-KEY) observed))
   next)
 
 
