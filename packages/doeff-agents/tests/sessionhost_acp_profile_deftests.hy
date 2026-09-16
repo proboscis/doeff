@@ -32,6 +32,7 @@
 (import doeff_agents.sessionhost.acp.fake [FakeAcp FakeCustody FakeLocal FakeSessions])
 (import doeff_agents.sessionhost.acp.judgment [
   observed-window-of
+  profile-latest-should-replace
   profile-observed-changed
   profile-observed-of
   profile-rows-active
@@ -117,19 +118,24 @@
   (assert (= verdict.observed {"window" "5h" "remaining" 60.0 "resetAt" RESETS-MS
                                "observedAt" CAPTURED-MS "node" NODE}))
   ;; post-image は committed の status(state・conditions = 他の書き手の欄)を写して observed を据える。
-  (setv status (run (profile-status-with-observed row verdict.observed)))
+  (setv status (run (profile-status-with-observed row verdict.observed NODE 300000)))
   (assert (= (get status "state") "active"))
   (assert (= (get status "conditions") CONDITIONS))
   (assert (= (get status "observed") verdict.observed))
+  ;; 段 12 lane 12j(#351): 自分の枡 observedBy[node] にも同じ観測が立つ。
+  (assert (= (get (get status "observedBy") NODE) verdict.observed))
   ;; 使い切り(used > 100)は 0 に留め、窓が空(resets_at 無し)なら resetAt = 観測の時刻(待つ窓が無い)。
   (setv spent (run (profile-observed-of row (usage-of "personal" 120.0 None) NODE)))
   (assert (isinstance spent ProfileObservation))
   (assert (= (get spent.observed "remaining") 0.0))
   (assert (= (get spent.observed "resetAt") CAPTURED-MS))
-  ;; 変わった時だけ: committed と同じ observed は changed = False。
+  ;; 変わった時だけ: committed の**自分の枡**(observedBy[node])と同じ観測は changed = False(段 12 lane 12j・#351:
+  ;; 最新の 1 枡 observed だけが同じで自分の枡が無い行は、自分の枡を書くので changed = True)。
   (setv same (profile-row "personal" "percent" 18000 "active" verdict.observed))
-  (assert (is (run (profile-observed-changed same verdict.observed)) False))
-  (assert (is (run (profile-observed-changed row verdict.observed)) True)))
+  (assert (is (run (profile-observed-changed same verdict.observed NODE)) True))
+  (setv (get same.status "observedBy") {NODE verdict.observed})
+  (assert (is (run (profile-observed-changed same verdict.observed NODE)) False))
+  (assert (is (run (profile-observed-changed row verdict.observed NODE)) True)))
 
 
 (deftest test-profile-window-follows-the-reset-period
@@ -373,3 +379,56 @@
   (setv last (get (lfor m world.local.metrics :if (= (get m "metric") "profile-observed") m) -1))
   (assert (= (get last "homes") 1))
   (assert (= (get last "held") 1)))
+
+
+;; ---------------------------------------------------------------------------
+;; 段 12 lane 12j(agora-redesign #351・依頼者の裁定 2026-09-16 (B)): node ごとの枡と最新の 1 枡
+;; ---------------------------------------------------------------------------
+
+(deftest test-profile-observation-has-a-slot-per-node-and-replaces-the-latest-only-when-changed-or-stale
+  ;; 実弾 2026-09-16: 会社 Mac と mbp が同じ profile の observed(1 枡)を毎周期書き合い、node の名は数秒で消え
+  ;; generation だけが進んだ(personal 1436 / btc 1568)。以後 = 自分の枡 observedBy[node] を毎周期・最新の 1 枡は
+  ;; 値が変わった時か古い時だけ。
+  (setv period 300000)
+  (setv other-at (- CAPTURED-MS 60000))
+  (setv theirs {"window" "5h" "remaining" 60.0 "resetAt" RESETS-MS "observedAt" other-at "node" "mac-2"})
+  (setv mine {"window" "5h" "remaining" 60.0 "resetAt" RESETS-MS "observedAt" CAPTURED-MS "node" NODE})
+  (setv row (profile-row "personal" "percent" 18000 "active" theirs))
+  (setv (get row.status "observedBy") {"mac-2" theirs})
+  ;; 自分の枡が無い = 変化(書く)。最新の 1 枡が他の機体の新しい同じ値でも、比べるのは自分の枡。
+  (assert (is (run (profile-observed-changed row mine NODE)) True))
+  (setv status (run (profile-status-with-observed row mine NODE period)))
+  (assert (= (get status "observedBy") {"mac-2" theirs NODE mine}) "自分の枡だけを据え、他の node の枡は行のまま写す")
+  (assert (= (get status "observed") theirs) "同じ値の新しい拍では最新の 1 枡を置き換えない(書き合いの根)")
+  (assert (= (get status "state") "active"))
+  (assert (= (get status "conditions") CONDITIONS))
+  ;; 自分の枡が同じ = 変化なし(最新の 1 枡が誰のものでも)。
+  (setv same (profile-row "personal" "percent" 18000 "active" theirs))
+  (setv (get same.status "observedBy") {"mac-2" theirs NODE mine})
+  (assert (is (run (profile-observed-changed same mine NODE)) False))
+  ;; 値が変わった = 最新の 1 枡を置き換える。
+  (setv spent (dict mine))
+  (setv (get spent "remaining") 30.0)
+  (assert (= (get (run (profile-status-with-observed row spent NODE period)) "observed") spent))
+  ;; 載っている観測が自分の周期より古い = 置き換える(同じ値でも鮮度で勝つ)。
+  (setv stale (dict theirs))
+  (setv (get stale "observedAt") (- CAPTURED-MS period))
+  (setv old-row (profile-row "personal" "percent" 18000 "active" stale))
+  (assert (= (get (run (profile-status-with-observed old-row mine NODE period)) "observed") mine))
+  ;; 枡が無い = 置き換える。observedAt を読めない枡は古いと読む。
+  (assert (is (run (profile-latest-should-replace None mine period)) True))
+  (assert (is (run (profile-latest-should-replace {"window" "5h" "remaining" 60.0 "resetAt" RESETS-MS} mine period)) True))
+  (assert (is (run (profile-latest-should-replace theirs mine period)) False))
+  ;; tick の一周: 他の機体の最新の 1 枡が載った行に、自分の枡だけが足されて書かれる(1 回)。
+  (setv world (World))
+  (setv seeded (profile-row "personal" "percent" 18000 "active" theirs))
+  (setv (get seeded.status "observedBy") {"mac-2" theirs})
+  (.put-row world.acp seeded)
+  (setv (get world.local.usage PROFILE-USAGE-KIND) #((usage-of "personal" 40.0 RESETS-MS)))
+  (.tick world 0)
+  (setv written (.status-of world "personal"))
+  (assert (= (get (get written "observedBy") NODE) mine))
+  (assert (= (get (get written "observedBy") "mac-2") theirs))
+  (assert (= (get written "observed") theirs))
+  (assert (= (len (.profile-writes world)) 1)))
+

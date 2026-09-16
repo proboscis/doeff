@@ -713,11 +713,11 @@
       True
       (do
         (setv (get counts "held") (+ (get counts "held") 1))
-        (<- changed bool (profile-observed-changed row verdict.observed))
+        (<- changed bool (profile-observed-changed row verdict.observed settings.node-name))
         (if (not changed)
             (setv (get counts "unchanged") (+ (get counts "unchanged") 1))
             (do
-              (<- status dict (profile-status-with-observed row verdict.observed))
+              (<- status dict (profile-status-with-observed row verdict.observed settings.node-name (* 1000 settings.profile-observe-seconds)))
               (<- outcome (| Written Conflict Refused) (AcpPutStatus :row row :status status))
               (cond
                 (isinstance outcome Written)

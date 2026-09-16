@@ -55,6 +55,7 @@
       "kinds.profile.schema.properties.status.properties.observed.properties.resetAt",
       "kinds.profile.schema.properties.status.properties.observed.properties.observedAt",
       "kinds.profile.schema.properties.status.properties.observed.properties.node",
+      "kinds.profile.schema.properties.status.properties.observedBy",
       "kinds.message.schema.properties.spec.properties.id",
       "kinds.message.schema.properties.spec.properties.to",
       "kinds.message.schema.properties.spec.properties.from",

@@ -2,13 +2,13 @@
   "schema": "acp.contracts.lock.v1",
   "comment": "ACP(proboscis/agent-control-plane)の契約の写しの pin — この repo の 1 点。commit = 正本の commit 1 つ・sha256 = その commit の中身。写しは生成物で、口は scripts/sync_contracts.py ちょうど(--check = 正本との差分 0〔ACP の checkout が要る〕・--check-copies = 写しの中で閉じる検〔要らない〕・--write = 生成・--pin = pin を進めて写し直す)。ここを手で直さない・写しも手で直さない(正本を直して pin を進める)。消費者 = agentd(packages/doeff-agents/src/doeff_agents/sessionhost/acp/)。正本の repo は private で、この repo は公開 — だから既定 pytest は写しの中で閉じる検(packages/doeff-agents/tests/test_sessionhost_acp.py の写しの節)を撃ち、正本との突合は checkout を持てる機体と ACP 側の検 scripts/check_cross_repo_contracts.hy が撃つ。契約を変える便の順 = ACP に 1 commit → この repo で pin を進める 1 commit(生成物の更新を含む)。",
   "canonRepo": "proboscis/agent-control-plane",
-  "commit": "5e2f57b7b19b8df866061c886a8192319752321a",
+  "commit": "7cbc62361697ead7a611e7f728640b5c8964c8df",
   "files": [
     {
       "kind": "contract",
       "canonPath": "docs/contracts/agora-kinds.json",
       "copyPath": "docs/contracts/agora-kinds.json",
-      "sha256": "838da5227e42997c64162854b933296c3c7ceb4968f5d39f20538fdea011f7b7"
+      "sha256": "c94a673e41f227b6850759f19f469b92002ed473ba219b59108829f26b08b34c"
     },
     {
       "kind": "contract",
