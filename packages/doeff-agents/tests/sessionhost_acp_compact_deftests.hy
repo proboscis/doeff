@@ -22,6 +22,7 @@
 (require doeff-hy.macros [deftest])
 
 (import json)
+(import dataclasses [replace])
 (import doeff [run])
 (import doeff_agents.sessionhost.acp.effects [
   AGENT-JOB-KIND
@@ -35,6 +36,9 @@
   DeltaBatch
   MESSAGE-KIND
   METRIC-COMPACTIONS-TOTAL
+  METRIC-SUMMARIZE-TRIGGERS-TOTAL
+  CHARTER-KIND-SUMMARIZE
+  SUMMARY-KIND
   NODE-KIND
   PHASE-BOUND
   SEAT-OPENER-ENV
@@ -349,3 +353,79 @@
   (setv env (env-of (get orphan.sessions.launches 0)))
   (assert (= (get env CONVERSATION-ID-ENV) CONVERSATION) env)
   (assert (not-in SEAT-OPENER-ENV env) env))
+
+
+;; ---------------------------------------------------------------------------
+;; 段 12 lane 12j 便 3(agora-redesign #233・ADR-012 R38): 文脈が閾値を超えた手番の終わりに、古い区間の要約の job を 1 つ書く
+;; ---------------------------------------------------------------------------
+
+(defn #^ dict summarize-jobs [#^ World world]
+  "FakeAcp に在る summarize の agent-job(id の頭 aj-summary-)。"
+  (dfor [key row] (.items world.acp.rows) :if (in ":agent-job:aj-summary-" key) key row))
+
+
+(defn #^ str run-turn [#^ World world #^ str job-id #^ str message-id #^ str predecessor #^ int cache-read]
+  "温かい session への 2 手番目以降を末尾の実測 cache-read + 125 / 1,000,000 で終える。戻り = session の id。"
+  (.put-row world.acp (message-row message-id "続き" (+ world.local.now-ms 100)))
+  (.put-row world.acp (bound-row job-id [message-id] predecessor))
+  (.tick world 1000)
+  (setv sid (.sid world job-id))
+  ;; 温かい session への手番は events の file に**追記**(読みの offset は前の手番の終わり)。
+  (setv path f"/events/{sid}.events.jsonl")
+  (setv (get world.local.transcripts path) (+ (.get world.local.transcripts path "") (claude-turn "長い答え" 100 cache-read 1000000)))
+  (.tick world 1000)
+  (.finish-turn world.sessions sid (+ world.local.now-ms 200))
+  (.tick world 1000)
+  (assert (= world.state.jobs #()) world.local.logs)
+  sid)
+
+
+(deftest test-a-turn-end-over-the-summarize-trigger-writes-one-summarize-job-for-the-record-before-the-turn
+  ;; 1 手番目(225 token)は契機を越えない → job なし。2 手番目の末尾が 600,125 token(> 500,000)→ 手番の終わりに summarize の
+  ;; agent-job を 1 つ(subject = 会話・inputs = []・charter{kind summarize, model claude-opus-5, until = この手番の最初の出来事の
+  ;; recordSeq − 1 = 1 手番目の最後})・計器 agentd_summarize_triggers_total 1 行。要約が until まで在る 3 手番目は書かない。
+  (setv world (World {"model" "claude-opus-5"}))
+  (setv warm (.run-first-turn world 100))
+  (assert (= (summarize-jobs world) {}) "閾値の下で summarize の job を書いた")
+  (setv sid (run-turn world "j-2" "m-2" warm 600000))
+  (setv jobs (summarize-jobs world))
+  (assert (= (len jobs) 1) world.local.logs)
+  (setv row (get (list (.values jobs)) 0))
+  (assert (= row.kind AGENT-JOB-KIND))
+  (assert (= row.namespace AGENT-JOB-NAMESPACE))
+  (assert (= (get row.spec "subject") CONVERSATION))
+  (assert (= (get row.spec "inputs") []))
+  (assert (= (get row.spec "reason") CHARTER-KIND-SUMMARIZE))
+  (setv charter (get row.spec "charter"))
+  (assert (isinstance charter dict))
+  (assert (= (get charter "kind") CHARTER-KIND-SUMMARIZE))
+  (assert (= (get charter "agent_type") "claude"))
+  (assert (= (get charter "model") "claude-opus-5"))
+  ;; until = 2 手番目の stream の最初の出来事の recordSeq − 1(= 1 手番目の本文の最後の recordSeq)
+  (setv second-seqs (lfor [key seq] (.items world.record-service.record-seqs) :if (= (get key 1) "j-2#a1") seq))
+  (setv first-seqs (lfor [key seq] (.items world.record-service.record-seqs) :if (= (get key 1) "j-1#a1") seq))
+  (assert (and second-seqs first-seqs) world.record-service.record-seqs)
+  (setv until (- (min second-seqs) 1))
+  (assert (= until (max first-seqs)))
+  (assert (= (get charter "until") until) charter)
+  (assert (= row.resource-id f"aj-summary-{CONVERSATION}-{until}"))
+  (setv triggers (lfor m world.local.metrics :if (= (get m "metric") METRIC-SUMMARIZE-TRIGGERS-TOTAL) m))
+  (assert (= (len triggers) 1) world.local.metrics)
+  (assert (= (get (get triggers 0) "until") until))
+  (assert (any (gfor line world.local.logs (in "passed the summarize trigger" line))) world.local.logs)
+  ;; 3 手番目: 要約が「この手番より前」を全部覆っていれば書かない(冪等・作り手の側の判断)
+  (setv covered (max (lfor [key seq] (.items world.record-service.record-seqs) :if (= (get key 1) "j-2#a1") seq)))
+  (.put-row world.acp (row-of AGORA-KINDS-NAMESPACE SUMMARY-KIND f"sum-{CONVERSATION}-{covered}"
+                              {"conversationId" CONVERSATION "from" 0 "to" covered
+                               "recordRef" f"record:{CONVERSATION}/summary#0-{covered}" "bytes" 10 "sha256" (* "0" 64)}
+                              {"state" "current" "model" "claude-opus-5" "at" AT}))
+  (run-turn world "j-3" "m-3" sid 700000)
+  (assert (= (len (summarize-jobs world)) 1) "要約済みの区間に 2 本目の summarize を書いた")
+  (assert (any (gfor line world.local.logs (in "already summarized" line))) world.local.logs)
+  ;; 契機を 0 に宣言した node は書かない
+  (setv quiet (World {"model" "claude-opus-5"}))
+  (setv quiet.settings (replace quiet.settings :summarize-trigger-tokens 0))
+  (setv warm-q (.run-first-turn quiet 100))
+  (run-turn quiet "j-2" "m-2" warm-q 600000)
+  (assert (= (summarize-jobs quiet) {}) "契機 0 の node が summarize の job を書いた"))
+

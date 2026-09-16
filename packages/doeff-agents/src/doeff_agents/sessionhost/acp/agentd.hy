@@ -141,6 +141,13 @@
   VerifyPlan
   AcpConversationSummaries
   RecordBatch
+  AGENT-JOB-NAMESPACE
+  HistorySummary
+  METRIC-SUMMARIZE-TRIGGERS-TOTAL
+  SUMMARY-SPEC-FROM-KEY
+  SUMMARY-SPEC-RECORD-REF-KEY
+  RecordReadStream
+  SUMMARY-EVENT-KIND
   CHARTER-KIND-SUMMARIZE
   CONDITION-SUMMARIZE-COMMAND-LOST
   CONDITION-SUMMARIZE-DEADLINE-EXCEEDED
@@ -331,6 +338,14 @@
   with-summarize
   withdrawn-summarize-rows-of
   without-summarize
+  history-summary-of
+  record-stream-id-of
+  summarize-due
+  summarize-job-id-of
+  summarize-job-spec-of
+  summary-floor-of
+  summary-stream-id-of-ref
+  turn-floor-of
   birth-ms-of
   births-of-rows
   births-with
@@ -771,14 +786,16 @@
   (HeadlineTurns :records records :reason reason))
 
 
-(defk record-turns-for [settings subject]
-  {:pre [(: settings AgentdSettings) (: subject str)]
+(defk record-turns-for [settings subject floor]
+  {:pre [(: settings AgentdSettings) (: subject str) (: floor (| int None))]
    :post [(: % (| RecordedTurns HeadlineTurns))]}
   "履歴からの再開の手番の材料(段 9f lane 9f-4・設計 §2.4): 会話の記録の service を before=latest から後向きに読み
    (RecordRead — 1 頁 = RECORD-PAGE-MAX-LIMIT)、畳みの上限に届くか会話の最初まで読めたら止める(判断 =
    judgment.record-history-satisfied)。service が配線されていない(弁 off)・届かない・頁の途中で読めなくなった時は
    ACP の見出し(turn-record の行)で**薄く再開する**と名乗る(HeadlineTurns — 本文の無い行を本文として扱わない・型で
-   分ける)。見出しを読むのは headline-turns-for の 1 点で、service が答えた拍には読まない(段 9q)。"
+   分ける)。見出しを読むのは headline-turns-for の 1 点で、service が答えた拍には読まない(段 9q)。
+   段 12 lane 12j 便 3: floor = 要約(kind summary)が覆う区間の終わり(recordSeq)。原文はそれより新しい出来事だけ — 頁が floor に
+   届いたら読みを止め(その先は要約が担う = complete と読む)、floor 以下の出来事は落とす。None = 今日どおり会話の最初まで。"
   (when (not settings.record-enabled)
     (<- unconfigured HeadlineTurns
         (headline-turns-for subject "record service is not configured (RECORD_SERVICE_URL is unset)"))
@@ -792,7 +809,12 @@
       (<- unread HeadlineTurns
           (headline-turns-for subject f"record service read failed ({page.status}: {page.error})"))
       (return unread))
-    (setv events (+ (list page.events) events))
+    (setv fresh (if (is floor None) (list page.events) (lfor event page.events :if (> event.record-seq floor) event)))
+    (setv events (+ fresh events))
+    (when (and (is-not floor None) page.events (<= (. (get page.events 0) record-seq) floor))
+      ;; この頁が要約の区間に届いた — それより古い原文は要約が担う(読まない)。
+      (setv complete True)
+      (break))
     (when (is page.next None)
       (setv complete True)
       (break))
@@ -815,7 +837,10 @@
    この会話を名指す行を 1 度読み(AcpConversationMail — 手番を起こし直す時だけ・段 10 lane 10ba の field selector)、
    読みの所要を計器 rehydrate-mail-read に 1 行(行数と ms)、畳みは judgment.rehydrate-history-of の 1 点(上限
    AgentdSettings.rehydrate_history_byte_budget)。"
-  (<- source (| RecordedTurns HeadlineTurns) (record-turns-for settings subject))
+  ;; 段 12 lane 12j 便 3(agora-redesign #233): 要約(kind summary の行 + 記録の service の本文)を先に読み、原文はその後の区間だけ。
+  (<- summaries tuple (summaries-for settings subject))
+  (<- floor (| int None) (summary-floor-of summaries))
+  (<- source (| RecordedTurns HeadlineTurns) (record-turns-for settings subject floor))
   (<- mail-started int (ClockNowMs))
   (<- messages tuple (AcpConversationMail :conversation-id subject))
   (<- mail-ended int (ClockNowMs))
@@ -825,8 +850,85 @@
                                   "ms" (- mail-ended mail-started)}))
   (<- read tuple (mail-bodies-by-ref settings messages))
   (<- fold HistoryFold (rehydrate-history-of subject messages source exclude
-                                             settings.rehydrate-history-byte-budget (get read 0)))
+                                             settings.rehydrate-history-byte-budget (get read 0) summaries))
   fold)
+
+
+(defk summaries-for [settings subject]
+  {:pre [(: settings AgentdSettings) (: subject str)]
+   :post [(: % tuple)]}
+  "履歴からの再開に畳む要約(段 12 lane 12j 便 3): この会話の kind summary の行(AcpConversationSummaries — 1 回)を from の順に、
+   本文は記録の service の stream(spec.recordRef の streamId・RecordReadStream・kind summary の出来事の text)から。読めない行・
+   形の合わない行は名乗って飛ばす(その区間は原文で読まれる — 黙って空の要約にしない)。record service が無い node は空。"
+  (when (not settings.record-enabled)
+    (return #()))
+  (<- rows tuple (AcpConversationSummaries :conversation-id subject))
+  (setv out [])
+  (for [row (sorted rows :key (fn [row] (.get row.spec SUMMARY-SPEC-FROM-KEY 0)))]
+    (<- stream-id (| str None) (summary-stream-id-of-ref (.get row.spec SUMMARY-SPEC-RECORD-REF-KEY)))
+    (when (is stream-id None)
+      (<- (LogLine :text f"agentd: summary row {row.resource-id} of conversation {subject} carries no readable recordRef; folding its region from the raw record"))
+      (continue))
+    (<- page (| RecordPage RecordUnread) (RecordReadStream :conversation-id subject :stream-id stream-id))
+    (when (isinstance page RecordUnread)
+      (<- (LogLine :text f"agentd: summary body {stream-id} of conversation {subject} could not be read ({page.status}: {page.error}); folding its region from the raw record"))
+      (continue))
+    (setv text None)
+    (for [event page.events]
+      (when (and (= event.kind SUMMARY-EVENT-KIND) (isinstance event.text str))
+        (setv text event.text)))
+    (when (is text None)
+      (<- (LogLine :text f"agentd: summary body {stream-id} of conversation {subject} holds no summary event; folding its region from the raw record"))
+      (continue))
+    (<- summary (| HistorySummary None) (history-summary-of row text))
+    (when (is-not summary None)
+      (.append out summary)))
+  (tuple out))
+
+
+(defk trigger-summarize [settings job batch now-ms]
+  {:pre [(: settings AgentdSettings) (: job InFlightJob) (: batch DeltaBatch) (: now-ms int)]
+   :post [(: % bool)]}
+  "手番の終わりの契機(段 12 lane 12j 便 3・agora-redesign #233・operator「50 % を超えていたら(0.5M)」): 材料の末尾で測った文脈の大きさが
+   宣言 summarize_trigger_tokens を超えたら、この会話の『今の手番より前』(この手番の stream の最初の出来事の recordSeq − 1 = until)を
+   要約する agent-job(charter.kind = summarize・subject = 会話・inputs = []・create-only)を 1 つ書く。既に要約が until まで在れば書かない・
+   engine の identity(生きた summarize は会話に 1 つ)が 2 本目を断れば log。戻り = 書いたか。判断は judgment.summarize-due の 1 点。"
+  (<- due bool (summarize-due batch.context settings.summarize-trigger-tokens))
+  (when (or (not due) (not settings.record-enabled))
+    (return False))
+  (<- stream-id str (record-stream-id-of job.job-id job.record-attempt))
+  (<- page (| RecordPage RecordUnread) (RecordReadStream :conversation-id job.subject :stream-id stream-id))
+  (when (isinstance page RecordUnread)
+    (<- (LogLine :text f"agentd: conversation {job.subject} passed the summarize trigger but its turn stream {stream-id} could not be read ({page.status}: {page.error}); trying again at the next turn end"))
+    (return False))
+  (<- until (| int None) (turn-floor-of page.events))
+  (when (or (is until None) (< until 1))
+    (<- (LogLine :text f"agentd: conversation {job.subject} passed the summarize trigger but nothing precedes this turn in the record yet (stream {stream-id}); trying again at the next turn end"))
+    (return False))
+  (<- rows tuple (AcpConversationSummaries :conversation-id job.subject))
+  (<- covered (| int None) (summary-rows-covered-to rows job.subject))
+  (when (and (is-not covered None) (>= covered until))
+    (<- (LogLine :text f"agentd: conversation {job.subject} passed the summarize trigger; the record up to {until} is already summarized (to {covered})"))
+    (return False))
+  (<- spec dict (summarize-job-spec-of job.subject until settings.summarize-model))
+  (<- summarize-id str (summarize-job-id-of job.subject until))
+  (<- created (| Written Conflict Refused) (AcpCreate :namespace AGENT-JOB-NAMESPACE :kind AGENT-JOB-KIND :resource-id summarize-id :spec spec))
+  (setv tokens (if (isinstance batch.context dict) (.get batch.context "tokens") None))
+  (cond
+    (isinstance created Written)
+    (do
+      (<- (LogLine :text (+ f"agentd: conversation {job.subject} passed the summarize trigger ({tokens} tokens > {settings.summarize-trigger-tokens}); "
+                            f"wrote summarize job {summarize-id} (until recordSeq {until}, model {settings.summarize-model})")))
+      (<- (MetricLine :fields {"metric" METRIC-SUMMARIZE-TRIGGERS-TOTAL "conversationId" job.subject "until" until "agentJobId" summarize-id}))
+      True)
+    (isinstance created Refused)
+    (do
+      (<- (LogLine :text f"agentd: summarize job {summarize-id} for conversation {job.subject} was not created ({created.status}: {created.error}) — a summarize is already live or the row exists"))
+      False)
+    True
+    (do
+      (<- (LogLine :text f"agentd: summarize job {summarize-id} for conversation {job.subject} create answered {created}"))
+      False)))
 
 
 (defk incarnate [settings plan choice view session-id lease bodies carried job-id subject exclude opener]
@@ -851,7 +953,7 @@
           (setv history fold.text)
           (<- (LogLine :text (+ f"agentd: job {job-id} rehydrates conversation {subject} "
                                      (if fold.thin "thinly from ACP headlines " "from the record service ")
-                                     f"({fold.kept-turns} turns kept, {fold.thinned-turns} thinned, {fold.dropped-turns} dropped"
+                                     f"({fold.summary-regions} summaries, {fold.kept-turns} turns kept, {fold.thinned-turns} thinned, {fold.dropped-turns} dropped"
                                      (if (is fold.dropped-headline None) "" " into a headline")
                                      (if (> fold.cut-bytes 0) f", newest turn cut by {fold.cut-bytes} bytes" "")
                                      f", {fold.size-bytes} bytes, history read {(- read-ended read-started)} ms)")))
@@ -1679,6 +1781,8 @@
   ;; 会話の宣言 compactAt と比べる材料。測れなかった手番(window が無い)は消す(古い値で圧縮しない)。
   (<- percent (| int None) (context-percent-of batch.context))
   (<- measured AgentdState (with-context-percent state job.session-id percent))
+  ;; 段 12 lane 12j 便 3: 文脈の大きさが宣言の閾値を超えた手番の終わりに、古い区間の要約の job を 1 つ書く(判断は judgment.summarize-due)。
+  (<- (trigger-summarize settings job batch now-ms))
   ;; turn-record → ended(追記できずに持ち越した出来事があれば最後の書きに乗せる)
   (<- recorded bool (end-turn-record drained.job-id batch.usage drained.pending-entries))
   (when (not recorded)

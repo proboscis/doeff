@@ -91,6 +91,9 @@
   SummarizePlan
   SummaryOutcome
   SummaryRegion
+  HISTORY-SUMMARY-KIND
+  HistorySummary
+  SUMMARIZE-JOB-ID-PREFIX
   AGENT-ATTACHMENT-CAPABILITY
   AGENT-CAPABILITIES
   AGENT-INTERRUPT-CAPABILITY
@@ -1623,9 +1626,9 @@
   (+ f"(上限 {budget} byte を超えるため、最新の手番の先頭 {cut-bytes} byte を落としました。" where ")"))
 
 
-(defk rehydrate-history-of [conversation-id messages source exclude budget fetched]
+(defk rehydrate-history-of [conversation-id messages source exclude budget fetched summaries]
   {:pre [(: conversation-id str) (: messages tuple) (: source (| RecordedTurns HeadlineTurns)) (: exclude tuple)
-         (: budget int) (: fetched dict)]
+         (: budget int) (: fetched dict) (: summaries tuple)]
    :post [(: % HistoryFold)]}
   "会話の記録 → 履歴からの再開の手番の最初の本文に畳む「これまでの会話」(段 8q・R20・段 9f lane 9f-4・段 11 lane 11v R34 / R35)—
    判断はここ 1 点: 郵便(ACP の行 — spec.to か spec.from がこの会話・exclude = この手番の inputs は除く — 本文として別に届く)と
@@ -1637,11 +1640,22 @@
    段 2(R34)= 全部を薄くしても超える間、**古い手番から要約せず落とし**、落とした区間(古い手番の連なり)を**見出し 1 行**
    (期間・落とした手番と項の数・kind ごとの件数・道具の名・全文の在処 — history-dropped-headline)に畳んで残した手番の前に置く
    (黙って捨てない・model は呼ばない — agora-redesign #55 便 1)。段 3 = 最新の手番 1 つだけでも超えるならその手番の先頭を
-   落として末尾を残し、切った byte を名乗る。記録が無ければ text は空(薄い再開でも空)。"
+   落として末尾を残し、切った byte を名乗る。記録が無ければ text は空(薄い再開でも空)。
+   段 12 lane 12j 便 3(agora-redesign #233・#55 案 D): summaries = kind summary の行の要約(古い順・recordSeq の閉区間)を**原文の前**に
+   1 区間 1 段として置く(history-summary-line・道具の項ではないので薄くならない・上限では古い要約から落ちて見出し〔kind 要約〕に数える)。
+   原文は呼び手が最大の to より新しい出来事だけを渡す(agentd.record-turns-for の floor)。summaries が空なら今日どおり。"
   (setv thin (isinstance source HeadlineTurns))
   (setv thin-k (// budget HISTORY-THIN-DIVISOR))
   (setv items [])
   (setv order 0)
+  (for [summary (sorted summaries :key (fn [summary] summary.from-seq))]
+    (<- summary-line str (history-summary-line summary))
+    ;; 要約は recordSeq の区間の順で原文(epoch ms の時刻)より前に並ぶ(at = 区間の始まり — 小さな整数)。
+    (.append items (HistoryItem :at summary.from-seq :until summary.to-seq :order order :inbound True :line summary-line
+                                :counts (HeadlineCounts :counts #(#(HISTORY-SUMMARY-KIND 1)) :tools #()
+                                                        :first-at summary.at :last-at summary.at)
+                                :thin-line None))
+    (setv order (+ order 1)))
   (for [message messages]
     (setv spec message.spec)
     (setv message-id (.get spec "id" message.resource-id))
@@ -1683,12 +1697,13 @@
         (.append (get groups -1) item)))
   (when (not groups)
     (return (HistoryFold :text "" :kept-turns 0 :dropped-turns 0 :dropped-items 0 :thinned-turns 0 :dropped-headline None
-                         :cut-bytes 0 :size-bytes 0 :thin thin)))
+                         :cut-bytes 0 :size-bytes 0 :thin thin :summary-regions (len summaries))))
+  (setv summarized (if summaries f"・古い区間 {(len summaries)} つは要約(記録の service の recordSeq の区間を名乗る)で、原文はその後" ""))
   (setv header
         (if thin
-            (+ f"これまでの会話(薄い再開・会話 {conversation-id}・古い順): 会話の記録の service に届かなかった"
+            (+ f"これまでの会話(薄い再開・会話 {conversation-id}・古い順{summarized}): 会話の記録の service に届かなかった"
                f"({source.reason})ため、手番の本文は無く ACP の見出し(出来事の数)だけです。郵便の本文は在ります。")
-            (+ f"これまでの会話(会話の記録の service と ACP の郵便から組んだ写し・会話 {conversation-id}・古い順"
+            (+ f"これまでの会話(会話の記録の service と ACP の郵便から組んだ写し・会話 {conversation-id}・古い順{summarized}"
                (if source.complete "" "・会話の最初までは読んでいない") "):")))
   (setv where (+ f"全文は会話 {conversation-id} の記録 — 郵便は ACP の kind message(spec.to / spec.from = {conversation-id})"
                  f"の行・手番の本文は会話の記録の service(GET /v1/conversations/{conversation-id}/events)— にあります"))
@@ -1738,7 +1753,15 @@
                :dropped-headline headline
                :cut-bytes cut-bytes
                :size-bytes (len (.encode text "utf-8"))
-               :thin thin))
+               :thin thin
+               :summary-regions (len summaries)))
+
+
+(defk history-summary-line [summary]
+  {:pre [(: summary HistorySummary)]
+   :post [(: % str)]}
+  "要約 1 区間 → 「これまでの会話」の 1 段(区間の recordSeq と model を名乗り、本文はそのまま — 段 12 lane 12j 便 3)。"
+  f"[要約 recordSeq {summary.from-seq}〜{summary.to-seq}・{summary.model}] {summary.text}")
 
 
 (defk record-history-satisfied [events budget]
@@ -4340,4 +4363,84 @@
   {:pre [(: state AgentdState)]
    :post [(: % set)]}
   (set (lfor command state.summaries command.job-id)))
+
+
+;; ---------------------------------------------------------------------------
+;; 段 12 lane 12j 便 3(agora-redesign #233): 要約の契機と、再開が読む要約の判断
+;; ---------------------------------------------------------------------------
+
+(defk summarize-due [context trigger-tokens]
+  {:pre [(: context (| dict None)) (: trigger-tokens int)]
+   :post [(: % bool)]}
+  "手番の終わりに要約の job を書くか: 材料の末尾で測った文脈の大きさ(DeltaBatch.context.tokens — 窓は見ない・operator の言葉は
+   『0.5M token』)が宣言 summarize_trigger_tokens を**超えた**時だけ。宣言 0 = 契機を置かない・測れない手番 = 書かない。"
+  (when (or (<= trigger-tokens 0) (is context None))
+    (return False))
+  (setv tokens (.get context "tokens"))
+  (and (isinstance tokens int) (not (isinstance tokens bool)) (> tokens trigger-tokens)))
+
+
+(defk turn-floor-of [events]
+  {:pre [(: events tuple)]
+   :post [(: % (| int None))]}
+  "『今の手番より前』の区間の上端 = この手番の stream の最初の出来事の recordSeq − 1。stream にまだ出来事が無い(spool が届いていない)
+   = None(この拍は契機を見送る — 次の手番の終わりに測り直す)。"
+  (setv seqs (lfor event events event.record-seq))
+  (if seqs (- (min seqs) 1) None))
+
+
+(defk summarize-job-id-of [conversation-id until]
+  {:pre [(: conversation-id str) (: until int)]
+   :post [(: % str)]}
+  "契機が書く summarize の agent-job の id(記録の綴り — 冪等の鍵は engine の identity (subject, inputs=[]))。"
+  f"{SUMMARIZE-JOB-ID-PREFIX}{conversation-id}-{until}")
+
+
+(defk summarize-job-spec-of [conversation-id until model]
+  {:pre [(: conversation-id str) (: until int) (: model str)]
+   :post [(: % dict)]}
+  "summarize の agent-job の spec(ACP scheduling.json charterKind.summarize の runnerCharter): subject = 会話・inputs = []・
+   charter = {kind summarize・agent_type claude・model・until}・reason = summarize。regionByteBudget は書かない(走行係の宣言の値)。"
+  {"subject" conversation-id
+   "inputs" []
+   "charter" {CHARTER-KIND-KEY CHARTER-KIND-SUMMARIZE "agent_type" "claude" "model" model CHARTER-SUMMARIZE-UNTIL-KEY until}
+   "reason" CHARTER-KIND-SUMMARIZE})
+
+
+(defk summary-stream-id-of-ref [record-ref]
+  {:pre [(: record-ref (| str None))]
+   :post [(: % (| str None))]}
+  "kind summary の行の spec.recordRef(record:<cid>/<streamId>)→ stream の id。形が違えば None。"
+  (when (not (and (isinstance record-ref str) (.startswith record-ref RECORD-REF-PREFIX) (in "/" record-ref)))
+    (return None))
+  (setv stream-id (get (.split record-ref "/" 1) 1))
+  (if stream-id stream-id None))
+
+
+(defk history-summary-of [row text]
+  {:pre [(: row AcpRow) (: text str)]
+   :post [(: % (| HistorySummary None))]}
+  "kind summary の行 + 記録の service から読んだ本文 → 再開に畳む要約。spec.from / to が整数でない・state が superseded・本文が空 = None。"
+  (setv status (if (isinstance row.status dict) row.status {}))
+  (when (= (.get status "state") SUMMARY-STATE-SUPERSEDED)
+    (return None))
+  (setv from-seq (.get row.spec SUMMARY-SPEC-FROM-KEY))
+  (setv to-seq (.get row.spec SUMMARY-SPEC-TO-KEY))
+  (when (not (and (isinstance from-seq int) (not (isinstance from-seq bool)) (isinstance to-seq int) (not (isinstance to-seq bool))
+                  (!= (.strip text) "")))
+    (return None))
+  (setv model (.get status "model"))
+  (setv at (.get status "at"))
+  (HistorySummary :from-seq from-seq :to-seq to-seq
+                  :at (if (and (isinstance at int) (not (isinstance at bool))) at row.created-at-ms)
+                  :model (if (and (isinstance model str) model) model "?")
+                  :text (.strip text)))
+
+
+(defk summary-floor-of [summaries]
+  {:pre [(: summaries tuple)]
+   :post [(: % (| int None))]}
+  "要約が覆う区間の終わり(to の最大)= 原文を読む下限。要約が無ければ None(今日どおり全部を原文で)。"
+  (setv tos (lfor summary summaries summary.to-seq))
+  (if tos (max tos) None))
 
