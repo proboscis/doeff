@@ -1220,6 +1220,9 @@ RECORD_APPEND_ERROR: RecordAppendWord = "error"
 METRIC_RECORD_APPEND_TOTAL = "agentd_record_append_total"
 METRIC_RECORD_SPOOL_DEPTH = "agentd_record_spool_depth"
 METRIC_RECORD_LAG_SEQ = "agentd_record_lag_seq"
+#: 段 12 lane 12d(agora-redesign #250 の追補・契約 read-freshness.json): 窓の答えが別の store の版を名乗り全量 list へ落ちた回数
+#: (1 回 = 1 行・label = from / to の版)。本番で「agentd が storeEpoch を読んで判断した」を測る計器。
+METRIC_STORE_EPOCH_RELISTS = "agentd_store_epoch_relists"
 #: 段 10f 便 2(agora-redesign #82): 会話の宣言 compactAt を超えたので履歴からの再開で文脈を縮めた回数(label = conversation)。
 METRIC_COMPACTIONS_TOTAL = "agentd_compactions_total"
 #: この batch だけの決まった断り(契約 record-service.json: 400 malformed・422 unstorable — 撃ち直しても通らない)。札(401 / 403)・
