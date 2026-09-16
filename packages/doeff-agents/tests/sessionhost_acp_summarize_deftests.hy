@@ -209,19 +209,23 @@
   (assert (in "-p --model" (get argv 2)))
   (assert (in "--output-format json" (get argv 2)))
   (assert (in "--tools \"\"" (get argv 2)))
-  (assert (= (get argv 3) f"{RUNS}/sj-1-0-5.pid"))
+  ;; file の名は job・区間・起こした時刻で一意(便 4 の実弾: 同じ job の id が GC の後に再び走ると前の走の rc を読んだ)。
+  (setv started (get handle "startedAtMs"))
+  (setv stem f"{RUNS}/sj-1-0-5-{started}")
+  (assert (= (get argv 3) f"{stem}.pid"))
   (assert (= (get argv 4) "claude"))
   (assert (= (get argv 5) MODEL))
-  (assert (= (get argv 6) f"{RUNS}/sj-1-0-5.prompt.txt"))
-  (assert (= (get argv 7) f"{RUNS}/sj-1-0-5.out.json"))
-  (assert (= (get argv 9) f"{RUNS}/sj-1-0-5.rc"))
+  (assert (= (get argv 6) f"{stem}.prompt.txt"))
+  (assert (= (get argv 7) f"{stem}.out.json"))
+  (assert (= (get argv 9) f"{stem}.rc"))
+  (assert (= (get handle "rcPath") f"{stem}.rc"))
   (assert (= (get world.local.command-cwds 0) RUNS))
   (assert (in RUNS world.local.made-dirs) "結末の置き場を作っていない")
   (assert (= (get world.local.command-env-names 0) #(CLAUDE-OAUTH-TOKEN-ENV "CLAUDE_CONFIG_DIR")))
   (assert (= (get (get world.local.command-envs 0) CLAUDE-OAUTH-TOKEN-ENV) "tok"))
   (assert (= (get (get world.local.command-envs 0) "CLAUDE_CONFIG_DIR") "/homes/claude/acct"))
   ;; prompt: 原文(5 件・履歴からの再開と同じ綴り)と残す / 落とすの規則。
-  (setv prompt (get world.local.files f"{RUNS}/sj-1-0-5.prompt.txt"))
+  (setv prompt (get world.local.files f"{stem}.prompt.txt"))
   (for [i (range 5)]
     (assert (in f"raw-{i}" prompt) f"prompt に原文 {i} が無い"))
   (assert (in "agent: raw-0" prompt) "原文の綴りが history-event-line と違う")
@@ -316,6 +320,41 @@
   (setv body (get (.events-of world.record CID "summary#0-5") 0))
   (assert (= (get body "text") long-text) "要約の本文が切れた")
   (assert (> (get (. (get rows 0) spec) "bytes") (len (.encode long-text "utf-8"))) "行の bytes が本文の欄の JSON の大きさでない"))
+
+
+(deftest test-a-rerun-of-the-same-job-id-never-reads-the-previous-runs-result-files
+  ;; 実弾 2026-09-16 16:23(便 4 の 2 発目): 同じ id の job(GC の後に create-only で再び書いた)が前の走の rc の file(0)を読んで即 Exited と
+  ;; 判じ、まだ空の out を「答えが無い」と断った。file の名に起こした時刻が入るので、前の走の file は読まれない。
+  (setv world (World))
+  (.seed world 5)
+  (.put-row world.acp (summarize-row "sj-1" 5 PHASE-BOUND None))
+  (.tick world 0)
+  (.finish world "sj-1" 0 (claude-answer "1 回目の要約"))
+  (.tick world 2000)
+  (assert (= (get (.status world "sj-1") "phase") PHASE-ENDED))
+  (assert (= (len (.summary-rows world)) 1))
+  ;; 前の走の file(rc = 0・out = 答え)が残ったまま、同じ id の job が再び Bound(行は GC で消えて作り直された = 同じ id の新しい行)。
+  (setv stale (lfor [path text] (.items world.local.files) :if (.endswith path ".rc") path))
+  (assert (= (len stale) 1) stale)
+  (del (get world.acp.rows f"{AGENT-JOB-NAMESPACE}:{AGENT-JOB-KIND}:sj-1"))
+  (for [row (.summary-rows world)]
+    (del (get world.acp.rows row.key)))
+  (.tick world 60000)
+  (.put-row world.acp (summarize-row "sj-1" 5 PHASE-BOUND None))
+  (.tick world 0)
+  (assert (= (get (.status world "sj-1") "phase") PHASE-RUNNING) (.status world "sj-1"))
+  (assert (= (.conditions world "sj-1") []) "前の走の file を読んで閉じた")
+  (setv command (.current world "sj-1"))
+  (assert (is-not command None))
+  (assert (not-in command.rc-path stale) "2 回目の走が前の走の rc の file を名指した")
+  ;; 2 回目の答えが書かれてから終わる
+  (.tick world 1000)
+  (assert (= (get (.status world "sj-1") "phase") PHASE-RUNNING))
+  (.finish world "sj-1" 0 (claude-answer "2 回目の要約"))
+  (.tick world 1000)
+  (assert (= (get (.status world "sj-1") "phase") PHASE-ENDED))
+  (assert (= (.conditions world "sj-1") []))
+  (assert (= (get (get (.events-of world.record CID "summary#0-5") 0) "text") "1 回目の要約") "冪等: 同じ区間の本文は最初の走のものが正"))
 
 
 ;; ---------------------------------------------------------------------------

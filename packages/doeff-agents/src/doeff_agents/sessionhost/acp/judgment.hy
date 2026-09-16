@@ -4059,11 +4059,13 @@
      "\n--- 記録の終わり ---\n"))
 
 
-(defk summarize-paths-of [runs-dir job-id region]
-  {:pre [(: runs-dir str) (: job-id str) (: region SummaryRegion)]
+(defk summarize-paths-of [runs-dir job-id region started-ms]
+  {:pre [(: runs-dir str) (: job-id str) (: region SummaryRegion) (: started-ms int)]
    :post [(: % dict)]}
-  "1 区間の結末の 5 file(区間ごとに別の名 — 前の区間の rc の file を次の区間の probe が読まないため): prompt・答え(JSON)・log・rc・pid。"
-  (setv stem f"{runs-dir}/{job-id}-{region.from-seq}-{region.to-seq}")
+  "1 区間の結末の 5 file: prompt・答え(JSON)・log・rc・pid。名は job・区間・**起こした時刻**で一意 — 区間ごとに別(前の区間の rc を次の区間の
+   probe が読まない)で、同じ job の id が GC の後に再び走る時(便 4 の実弾 2026-09-16 16:23: 前の走の rc の file が残っていて probe が即 Exited と読み、
+   まだ空の out を『答えが無い』と断った)も前の走の file を読まない。"
+  (setv stem f"{runs-dir}/{job-id}-{region.from-seq}-{region.to-seq}-{started-ms}")
   {"prompt" f"{stem}.prompt.txt" "out" f"{stem}.out.json" "log" f"{stem}.log" "rc" f"{stem}.rc" "pid" f"{stem}.pid"})
 
 
