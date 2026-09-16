@@ -226,7 +226,9 @@
   RecordConflicted
   RECORD-MAIL-EVENT-KIND
   RecordEvent
+  RecordPage
   RecordStream
+  RecordUnread
   RecordUnsent
   RecordedTurns
   Refused
@@ -781,8 +783,22 @@
   (replace state :context-by-session (if (is percent None) rest (+ rest #(#(session-id percent))))))
 
 
-(defk next-arm-for-job [candidate view home effort compact]
-  {:pre [(: candidate (| str None)) (: view (| SessionView None)) (: home dict) (: effort (| str None)) (: compact bool)]
+(defk conversation-recorded-of [probe]
+  {:pre [(: probe (| RecordPage RecordUnread None))]
+   :post [(: % bool)]}
+  "候補の無い job の会話に、記録された手番が在るか(段 12 lane 12j 追補 4・agora-redesign #233 / #176)。probe = 記録の service への
+   1 読み(RecordReadSince since 0・limit 1・原文の kind)の答え: 原文の出来事が 1 つでも在れば真(履歴から再開する)/ 空の頁 = 偽
+   (記録の無い会話 = 最初の手番 → launch)/ 読めなかった(RecordUnread)= 真(記録の在る会話の履歴を一過性の不達で失わない —
+   再開の腕は届かない拍を薄い再開と名乗って ACP の見出しへ落ちる)/ None = 記録の service が配線されていない(問わない)= 偽(今日どおり
+   launch — 見出しを読むのは headline-turns-for の 1 点で、第 2 の読み手を置かない〔段 9q〕)。"
+  (cond
+    (is probe None) False
+    (isinstance probe RecordUnread) True
+    True (bool probe.events)))
+
+
+(defk next-arm-for-job [candidate view home effort compact recorded]
+  {:pre [(: candidate (| str None)) (: view (| SessionView None)) (: home dict) (: effort (| str None)) (: compact bool) (: recorded bool)]
    :post [(: % ArmChoice)]}
   "Bound の job の起こし方(閉語彙 effects.NextArm)— 判断はここ 1 点(R10 / R20)。candidate = 会話の前の
    session(affinity.predecessor か会話の最後の手番の session — warm-candidate-of)、view = その器の眺め、
@@ -792,7 +808,11 @@
    保つのは同じ機体 ∧ 同じ家の時だけで、機体か家(profile の家)が変わる時は cache の失効を受け入れて 履歴から再開する
    (ACP の全史から)(operator 決定 2026-09-13 #54 逐語 \"i want cache kept when both machine and a profile is not changed. in
    other cases, i think i need to accept the fact that cache gets invalidated\"):
-   候補が無い → launch /
+   候補が無い ∧ 会話に記録された手番が在る(recorded = conversation-recorded-of)→ rehydrate(段 12 lane 12j 追補 4・agora-redesign #233 / #176:
+   候補の無さは『新しい会話』の証拠ではない — 宣言を変えた手番は Messaging の lineageFor〔段 12 lane 12k〕が predecessor を空にし、
+   前の手番の agent-job の行は終了 300 s で回収される。実弾 2026-09-16 17:29 aj-545JP9E9ZMZHPM11ZW99KM51AC: operator の会話が launch で
+   2,100 出来事の記録も 4 本の要約も読まずに始まった)/
+   候補が無い ∧ 記録に手番が無い → launch(記録の無い会話 = 最初の手番)/
    候補が生きていて idle でない ∧ backend が生きている → defer(手番の途中 — 圧縮も待つ)/
    compact ∧ 候補が在る → rehydrate(compacts — 温かい cache を捨てて記録の service の履歴から縮めて始めるのが圧縮の意味・
    生きている候補は片付ける。operator 2026-09-14 逐語 \"that routing agent should compact itself with some threshold\")/
@@ -822,7 +842,7 @@
     (<- launched-effort (| str None) (session-effort-of view))
     (setv same-effort (= launched-effort effort)))
   (cond
-    (is candidate None) (ArmChoice :arm NEXT-ARM-LAUNCH :source None :retire None)
+    (is candidate None) (ArmChoice :arm (if recorded NEXT-ARM-REHYDRATE NEXT-ARM-LAUNCH) :source None :retire None)
     (and alive (not idle) live-backend) (ArmChoice :arm NEXT-ARM-DEFER :source candidate :retire None)
     compact (ArmChoice :arm NEXT-ARM-REHYDRATE :source None :retire (if alive candidate None) :compacts True)
     (and idle same same-effort) (ArmChoice :arm NEXT-ARM-SEND :source candidate :retire None)

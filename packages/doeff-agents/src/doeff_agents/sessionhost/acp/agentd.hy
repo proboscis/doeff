@@ -421,6 +421,7 @@
   message-key-of
   ignored-settings-of
   next-arm-for-job
+  conversation-recorded-of
   compact-at-of
   compaction-due
   conversation-opener-of
@@ -1140,7 +1141,19 @@
     (<- percent (| int None) (context-percent-for state candidate))
     (<- due bool (compaction-due compact-at percent))
     (setv compact due))
-  (<- choice ArmChoice (next-arm-for-job candidate view home effort compact))
+  ;; 段 12 lane 12j 追補 4(agora-redesign #233 / #176・実弾 2026-09-16 17:29 aj-545JP9E9ZMZHPM11ZW99KM51AC): 候補が無い = 新しい会話、ではない。
+  ;; 宣言を変えた手番は Messaging の lineageFor(段 12 lane 12k)が predecessor を空にし、前の手番の agent-job の行は終了 300 s で回収されるので、
+  ;; 記録の在る会話が「候補なし → launch」で全履歴を失って始まった。候補が無く記録の service が配線されている拍だけ、
+  ;; 「原文の出来事が 1 つでも在るか」を 1 読み(limit 1)で問い、判断は judgment.conversation-recorded-of / next-arm-for-job の 1 点。
+  (setv probe None)
+  (when (and (is candidate None) settings.record-enabled)
+    (<- asked (| RecordPage RecordUnread) (RecordReadSince :conversation-id subject :since 0 :limit 1 :kinds RECORD-RAW-EVENT-KINDS))
+    (setv probe asked))
+  (<- recorded bool (conversation-recorded-of probe))
+  (when (and (is candidate None) recorded)
+    (<- (LogLine :text (+ f"agentd: job {job-id} of conversation {subject} has no session to continue, but the record service "
+                          "holds the conversation's turns — rehydrating from the record instead of launching without history"))))
+  (<- choice ArmChoice (next-arm-for-job candidate view home effort compact recorded))
   (when choice.compacts
     (<- (LogLine :text (+ f"agentd: job {job-id} of conversation {subject} starts compacted — the last turn of session "
                           f"{candidate} used {(context-percent-for state candidate)}% of the context window, "
