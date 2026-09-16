@@ -46,6 +46,7 @@
   NODE-KIND
   PHASE-BOUND
   RECORD-PAGE-MAX-LIMIT
+  RECORD-RAW-EVENT-KINDS
   RecordEvent
   RecordedTurns
   SessionRefused
@@ -1235,3 +1236,52 @@
   (assert (= plain.acp.summary-reads [CONVERSATION]))
   (assert (= plain.record-service.stream-reads [])))
 
+
+(deftest test-a-recorded-conversation-without-a-candidate-rehydrates-instead-of-launching
+  ;; 段 12 lane 12j 追補 4(agora-redesign #233 / #176)— 実弾 2026-09-16 17:29(aj-545JP9E9ZMZHPM11ZW99KM51AC・operator の会話):
+  ;; 宣言を変えた手番は Messaging の lineageFor(段 12 lane 12k)が predecessor を空にし、前の手番の agent-job の行は終了 300 s で
+  ;; 回収済み — 候補なし。記録の service には会話の手番が在る。旧: 「候補なし → launch」で 2,100 出来事の記録も 4 本の要約も読まずに
+  ;; 起きた。新: 記録の service へ 1 読み(since 0・limit 1・原文の kind)で在否を問い、在れば履歴から再開する。
+  (setv world (World "headless" True))
+  (.put-row world.acp (message-row "m-1" CONVERSATION "operator" "合言葉は ひまわり" (- AT 9000)))
+  (setv (get world.record-service.stored #(CONVERSATION "j-0#a1" 0)) {"producerSeq" 0 "at" (- AT 8000) "kind" "text" "text" "覚えました"})
+  (setv asked (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (- AT 100)))
+  (.put-row world.acp asked)
+  ;; predecessor なし・同じ会話の agent-job の行も無い(回収済み)。
+  (.put-row world.acp (bound-row "j-2" ["m-2"] "acct" None))
+  (.tick world 0)
+  (assert (= world.sessions.resumes []))
+  (assert (= (len world.sessions.launches) 1) world.local.logs)
+  (setv launch (get world.sessions.launches 0))
+  (setv prompt (str-at launch "prompt"))
+  (assert (.startswith prompt "start\n\nこれまでの会話") prompt)
+  (assert (in "agent: 覚えました" prompt) prompt)
+  (assert (.endswith prompt (+ "\n\n" (mailed asked))) "郵便の見出しと本文は最後(headless の 1 手番目)")
+  (assert (= world.record-service.since-reads [#(CONVERSATION 0 1 RECORD-RAW-EVENT-KINDS)]) world.record-service.since-reads)
+  (assert (= world.record-service.reads [#(CONVERSATION None RECORD-PAGE-MAX-LIMIT)]) world.record-service.reads)
+  (setv stamp (dict-at (dict-at launch "launch_attribution") "agentd"))
+  (assert (= (get stamp "arm") "rehydrate") stamp)
+  (assert (any (gfor line world.local.logs (in "has no session to continue, but the record service holds the conversation's turns" line))) world.local.logs)
+  (assert (any (gfor line world.local.logs (in f"rehydrates conversation {CONVERSATION} from the record service" line))) world.local.logs)
+  (setv metric (get (lfor m world.local.metrics :if (= (get m "metric") "agent-job-to-send") m) -1))
+  (assert (= (get metric "arm") "rehydrate"))
+  ;; 記録の無い会話(最初の手番)は今日どおり launch — 問いは 1 読みで、答えは空の頁。
+  (setv fresh (World "tmux" True))
+  (run-first-turn fresh)
+  (assert (= fresh.record-service.since-reads [#(CONVERSATION 0 1 RECORD-RAW-EVENT-KINDS)]) fresh.record-service.since-reads)
+  (assert (= (len fresh.sessions.launches) 1))
+  (setv first-stamp (dict-at (dict-at (get fresh.sessions.launches 0) "launch_attribution") "agentd"))
+  (assert (= (get first-stamp "arm") "launch") first-stamp)
+  (assert (not (any (gfor line fresh.local.logs (in "rehydrates conversation" line)))) fresh.local.logs)
+  ;; 記録の service が答えない拍は「在る」と読む(一過性の不達で履歴を失わない)— 再開の腕が薄い再開と名乗って見出しへ落ちる。
+  (setv down (World "headless" True))
+  (setv down.record-service.unreachable True)
+  (.put-row down.acp (message-row "m-1" CONVERSATION "operator" "合言葉は ひまわり" (- AT 9000)))
+  (.put-row down.acp (record-row "j-0" CONVERSATION [{"seq" 0 "at" (- AT 8000) "kind" "text" "bytes" 20 "sha256" "0"}] (- AT 8500)))
+  (.put-row down.acp (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (- AT 100)))
+  (.put-row down.acp (bound-row "j-2" ["m-2"] "acct" None))
+  (.tick down 0)
+  (assert (= (len down.sessions.launches) 1) down.local.logs)
+  (setv down-stamp (dict-at (dict-at (get down.sessions.launches 0) "launch_attribution") "agentd"))
+  (assert (= (get down-stamp "arm") "rehydrate") down-stamp)
+  (assert (any (gfor line down.local.logs (in "rehydrates thinly from ACP headlines" line))) down.local.logs))

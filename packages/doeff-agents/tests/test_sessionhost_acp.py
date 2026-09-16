@@ -2483,11 +2483,11 @@ def test_backend_liveness_is_read_from_the_observation_not_the_status_word() -> 
     assert run(judgment.job_step_of(replace(busy_dead, status="exited"), 0, True)) == "record-end"
     assert run(judgment.job_step_of(idle_dead, 0, True)) == "turn-end"
     assert run(judgment.job_step_of(idle_dead, 20, True)) == "session-lost"
-    assert run(judgment.next_arm_for_job("p", busy_alive, home, None, False)) == ArmChoice("defer", "p", None)
-    assert run(judgment.next_arm_for_job("p", busy_unobserved, home, None, False)) == ArmChoice("defer", "p", None)
-    assert run(judgment.next_arm_for_job("p", busy_dead, home, None, False)) == ArmChoice("resume", "p", "p")
-    assert run(judgment.next_arm_for_job("p", busy_dead, other, None, False)) == ArmChoice("rehydrate", None, "p")
-    assert run(judgment.next_arm_for_job("p", idle_dead, home, None, False)) == ArmChoice("send", "p", None)
+    assert run(judgment.next_arm_for_job("p", busy_alive, home, None, False, False)) == ArmChoice("defer", "p", None)
+    assert run(judgment.next_arm_for_job("p", busy_unobserved, home, None, False, False)) == ArmChoice("defer", "p", None)
+    assert run(judgment.next_arm_for_job("p", busy_dead, home, None, False, False)) == ArmChoice("resume", "p", "p")
+    assert run(judgment.next_arm_for_job("p", busy_dead, other, None, False, False)) == ArmChoice("rehydrate", None, "p")
+    assert run(judgment.next_arm_for_job("p", idle_dead, home, None, False, False)) == ArmChoice("send", "p", None)
     condition = run(judgment.session_lost_condition_of(replace(busy_dead, backend_kind="headless", backend_ref={"pid": 22663}), 1_789_365_000_000))
     assert condition["type"] == "SessionLost"
     assert "pid 22663" in condition["reason"]
@@ -2627,12 +2627,28 @@ def test_next_arm_for_job_is_the_one_decision() -> None:
         at: JSONObject,
         effort: str | None = None,
         compact: bool = False,
+        recorded: bool = False,
     ) -> ArmChoice:
-        choice = run(judgment.next_arm_for_job(candidate, view, at, effort, compact))
+        choice = run(judgment.next_arm_for_job(candidate, view, at, effort, compact, recorded))
         assert isinstance(choice, ArmChoice)
         return choice
 
     assert arm(None, None, home) == ArmChoice("launch", None, None)
+    # 段 12 lane 12j 追補 4(agora-redesign #233 / #176): 候補の無さは新しい会話の証拠ではない — 記録の service に会話の原文が
+    # 在れば履歴からの再開(launch は記録の無い会話だけ)。在否の判断は conversation-recorded-of の 1 点: 空の頁 = 無い /
+    # 出来事 1 つ = 在る / 読めない = 在る(一過性の不達で履歴を失わない)/ None(service が無い)= 問わない = 無い。
+    from doeff_agents.sessionhost.acp.effects import RecordEvent, RecordPage, RecordUnread
+
+    assert arm(None, None, home, recorded=True) == ArmChoice("rehydrate", None, None)
+    assert arm(None, None, other, recorded=True) == ArmChoice("rehydrate", None, None)
+    recorded_event = RecordEvent(
+        record_seq=1, stream_id="j-0#a1", stream_kind="turn", producer_seq=0, at=0,
+        kind="text", bytes=15, sha256="0", text="覚えました",
+    )
+    assert run(judgment.conversation_recorded_of(None)) is False
+    assert run(judgment.conversation_recorded_of(RecordPage(events=(), next=None))) is False
+    assert run(judgment.conversation_recorded_of(RecordPage(events=(recorded_event,), next=None))) is True
+    assert run(judgment.conversation_recorded_of(RecordUnread(0, "unreachable: timed out"))) is True
     # 段 10 lane 10e: effort は鍵に入れない — 同じ家で effort だけ違う温かい session は片付けて同じ session を
     # 新しい旗で --resume(cache は保つ)。帰属に effort の欄が無い(前の agentd が起こした)session は「既定で起きた」と読む。
     stamped_agentd = stamp["agentd"]
