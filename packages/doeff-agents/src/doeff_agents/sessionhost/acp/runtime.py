@@ -47,6 +47,7 @@ from doeff_agents.sessionhost.acp.effects import (
     HOMES_ROOT_ENV,
     JOIN_RECORD_SPOOL_DIR,
     JOIN_STATE_DIR_DEFAULT,
+    SUMMARY_RUNS_RELDIR,
     VERIFY_RUNS_RELDIR,
     NODE_NAME_ENV,
     OWNERSHIP_ENV,
@@ -130,6 +131,8 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         home=(env.get("HOME") or os.path.expanduser("~")).strip(),
         # 段 12 lane 12a(agora-redesign #230): verify の命令の結末の置き場 = join が導いた state_dir(spool の親)の下
         verify_runs_dir=verify_runs_dir(env),
+        # 段 12 lane 12j(agora-redesign #233): summarize(会話の履歴の段階つき要約)の結末の置き場 = 同じ state_dir の下
+        summarize_runs_dir=summarize_runs_dir(env),
     )
 
 
@@ -224,6 +227,11 @@ def verify_runs_dir(env: Mapping[str, str]) -> str:
     """verify の命令の結末(log / rc / pid)の置き場(段 12 lane 12a): record spool の親 = join の宣言 [agentd].state_dir の下の
     VERIFY_RUNS_RELDIR。置き場の定義点を増やさない(state_dir は spool と同じ 1 点から導く)。"""
     return os.path.join(os.path.dirname(record_spool_dir(env)), VERIFY_RUNS_RELDIR)
+
+
+def summarize_runs_dir(env: Mapping[str, str]) -> str:
+    """summarize の結末(prompt / 答え / log / rc / pid)の置き場(段 12 lane 12j): verify と同じく state_dir の下の SUMMARY_RUNS_RELDIR。"""
+    return os.path.join(os.path.dirname(record_spool_dir(env)), SUMMARY_RUNS_RELDIR)
 
 
 def record_spool_dir(env: Mapping[str, str]) -> str:

@@ -63,8 +63,11 @@ from doeff_agents.sessionhost.acp.effects import (
     RECORD_PAGE_MAX_LIMIT,
     RECORD_SPOOL_GIVEN_UP_DIR,
     TURN_RECORD_CONVERSATION_FIELD,
+    SUMMARY_KIND,
+    SUMMARY_SPEC_CONVERSATION_KEY,
     TURN_RECORD_KIND,
     AcpConversationMail,
+    AcpConversationSummaries,
     AcpCreate,
     AcpEventWindow,
     AcpGet,
@@ -130,6 +133,7 @@ from doeff_agents.sessionhost.acp.effects import (
     RecordPage,
     RecordRead,
     RecordReadOutcome,
+    RecordReadSince,
     RecordReadStream,
     RecordSpoolGiveUp,
     RecordSpoolList,
@@ -610,7 +614,7 @@ class AcpHttp:
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(
             effect,
-            (AcpGet, AcpGetRow, AcpEventWindow, AcpWatchSse, AcpConversationMail, AcpTurnHeadlines),
+            (AcpGet, AcpGetRow, AcpEventWindow, AcpWatchSse, AcpConversationMail, AcpTurnHeadlines, AcpConversationSummaries),
         ):
             return Resume(k, self._read(effect))
         if isinstance(effect, (AcpPutStatus, AcpPutSpec, AcpCreate, AcpStreamPush)):
@@ -624,10 +628,14 @@ class AcpHttp:
         | AcpEventWindow
         | AcpWatchSse
         | AcpConversationMail
-        | AcpTurnHeadlines,
+        | AcpTurnHeadlines
+        | AcpConversationSummaries,
     ) -> object:
         if isinstance(effect, AcpGet):
             return self._list(effect.kind)
+        if isinstance(effect, AcpConversationSummaries):
+            # 段 12 lane 12j(agora-redesign #233): この会話の kind summary の行だけ(field selector・宣言の indexes が引く)。
+            return self._list(SUMMARY_KIND, f"spec.{SUMMARY_SPEC_CONVERSATION_KEY}={effect.conversation_id}")
         if isinstance(effect, AcpConversationMail):
             # 段 10 lane 10ba(#115): この会話を名指す郵便だけ(欄ごとの field selector・履歴に入れる判断は judgment)。
             return self._conversation_mail(effect.conversation_id)
@@ -1274,8 +1282,13 @@ class LocalIo:
     def _start_command(self, effect: CommandStart) -> CommandStartOutcome:
         """verify の命令を自分の session で起こし、待たずに戻る(段 12 lane 12a)。stdin は閉じる・stdout / stderr は
         argv の中の sh が log の file へ向ける(ここは何も繋がない — agentd の stdout を汚さない)。"""
+        # 段 12 lane 12j: 足す env(借りた札・家)は親の env に重ねる — 秘密なので log にも argv にも出さない。空 = 親のまま。
+        env: dict[str, str] | None = None
+        if effect.env:
+            env = dict(os.environ)
+            env.update(dict(effect.env))
         try:
-            proc = subprocess.Popen(  # noqa: S603 — argv は judgment.verify-argv-of の 1 点が組んだ列(文字列の shell 化はしない)
+            proc = subprocess.Popen(  # noqa: S603 — argv は judgment.verify-argv-of / summarize-argv-of の 1 点が組んだ列(文字列の shell 化はしない)
                 list(effect.argv),
                 cwd=effect.cwd or None,
                 stdin=subprocess.DEVNULL,
@@ -1283,6 +1296,7 @@ class LocalIo:
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
                 close_fds=True,
+                env=env,
             )
         except (OSError, ValueError) as exc:
             return CommandRefused(error=f"{type(exc).__name__}: {exc}")
@@ -1729,6 +1743,8 @@ class RecordHttp:
             return Resume(k, self._append(effect.batch))
         if isinstance(effect, RecordRead):
             return Resume(k, self._read(effect.conversation_id, effect.before, effect.limit))
+        if isinstance(effect, RecordReadSince):
+            return Resume(k, self._read_since(effect.conversation_id, effect.since, effect.limit, effect.kinds))
         if isinstance(effect, RecordReadStream):
             return Resume(k, self._read_stream(effect.conversation_id, effect.stream_id))
         return Pass(effect, k)
@@ -1747,6 +1763,17 @@ class RecordHttp:
         query = urllib.parse.urlencode(
             {"before": "latest" if before is None else str(before), "limit": str(limit)}
         )
+        url = f"{self._base_url}/v1/conversations/{cid}/events?{query}"
+        reply = _http_json("GET", url, self._headers, None, RECORD_HTTP_TIMEOUT_SECONDS)
+        return decode_record_page(reply)
+
+    def _read_since(self, conversation_id: str, since: int, limit: int, kinds: tuple[str, ...]) -> RecordReadOutcome:
+        """段 12 lane 12j(agora-redesign #233): 会話の出来事を前向きに 1 頁(readEvents?since=&limit=&kinds= — 要約の区間の原文)。"""
+        cid = urllib.parse.quote(conversation_id, safe="")
+        fields: dict[str, str] = {"since": str(since), "limit": str(limit)}
+        if kinds:
+            fields["kinds"] = ",".join(kinds)
+        query = urllib.parse.urlencode(fields)
         url = f"{self._base_url}/v1/conversations/{cid}/events?{query}"
         reply = _http_json("GET", url, self._headers, None, RECORD_HTTP_TIMEOUT_SECONDS)
         return decode_record_page(reply)
@@ -1776,6 +1803,9 @@ def _stream_kind_of(value: JSON) -> RecordStreamKind | None:
         return "turn"
     if value == "mail":
         return "mail"
+    if value == "summary":
+        # 段 12 lane 12j(agora-redesign #233): 会話の履歴の段階つき要約の本文の stream。
+        return "summary"
     return None
 
 

@@ -10,6 +10,9 @@ from doeff_agents.sessionhost.acp.effects import (
     AgentdState,
     ArmChoice,
     InFlightCommand,
+    InFlightSummarize,
+    SummarizePlan,
+    SummaryRegion,
     InFlightJob,
     JobOutcome,
     LaunchPlan,
@@ -202,4 +205,46 @@ def recover_command(
 ) -> Program: ...
 def withdraw_command(
     settings: AgentdSettings, state: AgentdState, command: InFlightCommand, row: AcpRow, now_ms: int
+) -> Program: ...
+
+# 段 12 lane 12j(agora-redesign #233): 会話の履歴の段階つき要約(charter.kind = summarize)の腕
+def read_summary_region(conversation_id: str, from_seq: int, until: int, budget: int) -> Program: ...
+def end_summarize_job(
+    settings: AgentdSettings, job_key: str, job_id: str, result: dict | None, conditions: tuple, now_ms: int
+) -> Program: ...
+def start_summary_region(
+    settings: AgentdSettings,
+    plan: SummarizePlan,
+    region: SummaryRegion,
+    paths: dict,
+    started_ms: int,
+    job_key: str,
+    job_namespace: str,
+    regions_done: int,
+) -> Program: ...
+def claim_summarize_job(
+    settings: AgentdSettings, state: AgentdState, row: AcpRow, now_ms: int
+) -> Program: ...
+def finish_summarize(
+    settings: AgentdSettings,
+    state: AgentdState,
+    command: InFlightSummarize,
+    result: dict | None,
+    conditions: tuple,
+    now_ms: int,
+) -> Program: ...
+def advance_summary_region(
+    settings: AgentdSettings, state: AgentdState, command: InFlightSummarize, now_ms: int
+) -> Program: ...
+def settle_summary_region(
+    settings: AgentdSettings, state: AgentdState, command: InFlightSummarize, rc: int, now_ms: int
+) -> Program: ...
+def observe_summarize(
+    settings: AgentdSettings, state: AgentdState, command: InFlightSummarize, now_ms: int
+) -> Program: ...
+def recover_summarize(
+    settings: AgentdSettings, state: AgentdState, row: AcpRow, now_ms: int
+) -> Program: ...
+def withdraw_summarize(
+    settings: AgentdSettings, state: AgentdState, command: InFlightSummarize, row: AcpRow, now_ms: int
 ) -> Program: ...

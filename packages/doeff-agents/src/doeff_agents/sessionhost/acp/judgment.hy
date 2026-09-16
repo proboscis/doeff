@@ -69,6 +69,28 @@
   VERIFY-STEP-OBSERVE
   VERIFY-STEP-TIMED-OUT
   VerifyPlan
+  CHARTER-KIND-SUMMARIZE
+  CHARTER-SUMMARIZE-REGION-BYTES-KEY
+  CHARTER-SUMMARIZE-UNTIL-KEY
+  InFlightSummarize
+  JOB-HANDLE-SUMMARIZE-KEY
+  RECORD-RAW-EVENT-KINDS
+  RECORD-STREAM-SUMMARY
+  RecordBatch
+  RecordStream
+  SUMMARY-EVENT-KIND
+  SUMMARY-KIND
+  SUMMARY-SPEC-CONVERSATION-KEY
+  SUMMARY-SPEC-FROM-KEY
+  SUMMARY-SPEC-RECORD-REF-KEY
+  SUMMARY-SPEC-TO-KEY
+  SUMMARY-STATE-CURRENT
+  SUMMARY-STATE-SUPERSEDED
+  SUMMARY-STREAM-KIND
+  SUMMARY-STREAM-PREFIX
+  SummarizePlan
+  SummaryOutcome
+  SummaryRegion
   AGENT-ATTACHMENT-CAPABILITY
   AGENT-CAPABILITIES
   AGENT-INTERRUPT-CAPABILITY
@@ -3905,3 +3927,417 @@
   {:pre [(: state AgentdState)]
    :post [(: % set)]}
   (set (gfor command state.commands command.job-id)))
+
+
+;; ---------------------------------------------------------------------------
+;; 会話の履歴の段階つき要約(段 12 lane 12j・agora-redesign #233・#55 案 D)— charter.kind = summarize の判断
+;; ---------------------------------------------------------------------------
+;;
+;; operator 2026-09-16 "lets see if 1 will work" = 方法 1(段階つきの要約): 文脈が閾値を超えた会話の古い区間を、会話と同じ profile の
+;; Claude Code(Opus 5)で 1 段落に縮め、区間ごとに agora の kind summary の行(本文は記録の service の claim check)を書く。
+;; ここに在るのは判断の純関数だけ: 行の欄の写し(summarize-plan-of)・区間の切り方(summary-region-of)・prompt の 1 点
+;; (summarize-prompt-of — 残す情報と落とす情報の定義点)・起こし方の 1 点(summarize-argv-of)・答えの読み(summarize-output-of)・
+;; 行と出来事の綴り(summary-spec-of / summary-status-of / summary-body-of)。I/O は agentd.hy の腕。
+
+(defk summarize-plan-of [row default-region-bytes default-deadline-seconds]
+  {:pre [(: row AcpRow) (: default-region-bytes int) (: default-deadline-seconds int)]
+   :post [(: % (| SummarizePlan str))]}
+  "Bound の summarize の行から何を要約するかを写す(判断ではなく欄の写し): 会話 = spec.subject・区間の上端 = charter.until
+   (0 以上の整数・recordSeq・含む)・1 区間の上限 = charter.regionByteBudget(正の整数・無ければ宣言の値)・model = charter.model・
+   資格 = status.binding.profile / account(配置が結んだ会話の profile — 無い行は起こさない)・期限 = 宣言の値。読めない行は理由の文。"
+  (setv charter (.get row.spec "charter"))
+  (when (not (isinstance charter dict))
+    (return f"agent-job {row.resource-id}: spec.charter is not an object"))
+  (setv subject (.get row.spec "subject"))
+  (when (not (and (isinstance subject str) subject))
+    (return f"agent-job {row.resource-id}: spec.subject (the conversation) is missing"))
+  (setv until (.get charter CHARTER-SUMMARIZE-UNTIL-KEY))
+  (when (not (and (isinstance until int) (not (isinstance until bool)) (>= until 0)))
+    (return f"agent-job {row.resource-id}: charter.{CHARTER-SUMMARIZE-UNTIL-KEY} {until !r} is not a recordSeq (a non-negative integer)"))
+  (setv region (.get charter CHARTER-SUMMARIZE-REGION-BYTES-KEY))
+  (setv region-bytes (if (and (isinstance region int) (not (isinstance region bool)) (> region 0)) region default-region-bytes))
+  (setv model (.get charter "model"))
+  (when (not (and (isinstance model str) model))
+    (return f"agent-job {row.resource-id}: charter.model is missing — a summarize names the model it runs"))
+  (setv status (if (isinstance row.status dict) row.status {}))
+  (setv binding (.get status "binding"))
+  (setv profile (if (isinstance binding dict) (.get binding "profile") None))
+  (setv account (if (isinstance binding dict) (.get binding "account") None))
+  (when (not (and (isinstance profile str) profile (isinstance account str) account))
+    (return f"agent-job {row.resource-id}: status.binding carries no profile / account — a summarize runs under the conversation's custody lease"))
+  (SummarizePlan :job-id row.resource-id :conversation-id subject :until until :region-byte-budget region-bytes
+                 :model model :profile profile :account account :deadline-seconds default-deadline-seconds))
+
+
+(defk summary-rows-covered-to [rows conversation-id]
+  {:pre [(: rows tuple) (: conversation-id str)]
+   :post [(: % (| int None))]}
+  "この会話の生きた summary の行(state が superseded でない)の spec.to の最大 = 要約済みの区間の終わり。無ければ None。
+   要約済みの区間は 2 度要約しない(次の区間はこの値 + 1 から)。"
+  (setv best None)
+  (for [row rows]
+    (when (!= (.get row.spec SUMMARY-SPEC-CONVERSATION-KEY) conversation-id)
+      (continue))
+    (setv status (if (isinstance row.status dict) row.status {}))
+    (when (= (.get status "state") SUMMARY-STATE-SUPERSEDED)
+      (continue))
+    (setv to (.get row.spec SUMMARY-SPEC-TO-KEY))
+    (when (and (isinstance to int) (not (isinstance to bool)) (or (is best None) (> to best)))
+      (setv best to)))
+  best)
+
+
+(defk summary-region-of [events from-seq until budget]
+  {:pre [(: events tuple) (: from-seq int) (: until int) (: budget int)]
+   :post [(: % (| SummaryRegion None))]}
+  "次に要約する 1 区間: recordSeq が [from-seq, until] の原文の出来事(RECORD-RAW-EVENT-KINDS)を昇順に取り、bytes の和が budget に
+   届いた出来事で区間を閉じる(少なくとも 1 つは入れる — 1 つで budget を超える出来事も 1 区間)。区間の to = 最後に入れた出来事の
+   recordSeq。原文が 1 つも無ければ None(要約するものが無い)。"
+  (setv taken [])
+  (setv total 0)
+  (for [event (sorted events :key (fn [event] event.record-seq))]
+    (when (or (< event.record-seq from-seq) (> event.record-seq until) (not-in event.kind RECORD-RAW-EVENT-KINDS))
+      (continue))
+    (.append taken event)
+    (setv total (+ total event.bytes))
+    (when (>= total budget)
+      (break)))
+  (if taken
+      (SummaryRegion :from-seq from-seq :to-seq (. (get taken -1) record-seq) :events (tuple taken) :source-bytes total)
+      None))
+
+
+(defk summary-region-text [region]
+  {:pre [(: region SummaryRegion)]
+   :post [(: % str)]}
+  "区間の原文 — 履歴からの再開の畳みと同じ綴り(history-event-line・時刻の印つき・recordSeq の順)。"
+  (setv lines [])
+  (for [event region.events]
+    (<- line (| str None) (history-event-line event))
+    (when (is-not line None)
+      (.append lines line)))
+  (.join "\n" lines))
+
+
+(defk summarize-prompt-of [conversation-id region text]
+  {:pre [(: conversation-id str) (: region SummaryRegion) (: text str)]
+   :post [(: % str)]}
+  "要約の指示 — **何を残し何を落とすかの定義点はここ 1 つ**(ACP agora-kinds.json conventions.stagedSummaries.keep はこの写し)。
+   答えは日本語の散文 1 段落で、前置き・見出し・箇条書き・code block を含めない。長さの上限は置かない(要点が尽きたら終える)。"
+  (+ f"あなたは会話 {conversation-id} の記録の一部(記録の service の recordSeq {region.from-seq}〜{region.to-seq}・出来事 {(len region.events)} 件)を、"
+     "後の手番の agent が文脈として読む 1 段落の要約に縮める係です。\n\n"
+     "残す情報: 決定(何を決めたか・理由)・進行中の仕事(何をどこまで進めたか・次の一手)・未解決の問い・道具の結果の要点"
+     "(数値・file の path・commit の sha・id)・作った成果物の在処・失敗と回避。\n"
+     "落とす情報: 道具の生の出力・繰り返しの経過・挨拶・推論の途中の言い直し。\n\n"
+     "書式: 日本語の散文 1 段落。見出し・箇条書き・code block・前置き・後書きを付けない。固有の識別子(path・sha・id・URL)は逐語で残す。"
+     "長さの上限は無いが、要点が尽きたら終える。\n\n"
+     "--- 記録(古い順) ---\n"
+     text
+     "\n--- 記録の終わり ---\n"))
+
+
+(defk summarize-paths-of [runs-dir job-id region]
+  {:pre [(: runs-dir str) (: job-id str) (: region SummaryRegion)]
+   :post [(: % dict)]}
+  "1 区間の結末の 5 file(区間ごとに別の名 — 前の区間の rc の file を次の区間の probe が読まないため): prompt・答え(JSON)・log・rc・pid。"
+  (setv stem f"{runs-dir}/{job-id}-{region.from-seq}-{region.to-seq}")
+  {"prompt" f"{stem}.prompt.txt" "out" f"{stem}.out.json" "log" f"{stem}.log" "rc" f"{stem}.rc" "pid" f"{stem}.pid"})
+
+
+(defk summarize-argv-of [claude-binary model paths]
+  {:pre [(: claude-binary str) (: model str) (: paths dict)]
+   :post [(: % tuple)]}
+  "要約の起こし方の 1 点: sh の 1 行が自分の pid を書き、Claude Code を print mode(-p・答えは JSON 1 つ・session を残さない・
+   道具なし・skill なし)で prompt の file から起こし、答えを out の file へ、stderr を log へ、終了コードを rc の file へ書く。
+   binary・model・path は位置引数($0〜$6)で運び文字列に埋めない。agentd はこの process を待たない(verify と同じ形)。"
+  #("/bin/sh" "-c"
+    "echo $$ > \"$0\" && \"$1\" -p --model \"$2\" --output-format json --no-session-persistence --tools \"\" --disable-slash-commands < \"$3\" > \"$4\" 2>> \"$5\"; echo $? > \"$6\""
+    (get paths "pid") claude-binary model (get paths "prompt") (get paths "out") (get paths "log") (get paths "rc")))
+
+
+(defk claude-home-of [homes-root account]
+  {:pre [(: homes-root str) (: account str)]
+   :post [(: % str)]}
+  "借りた札の claude の家 = <homes-root>/claude/<account の安全な綴り>(charter-with-grant が binding.config_dir に書く綴りと同じ)。"
+  (setv safe-account (re.sub r"[^A-Za-z0-9._-]" "_" account))
+  f"{homes-root}/claude/{safe-account}")
+
+
+(defk summarize-env-of [token config-dir]
+  {:pre [(: token str) (: config-dir str)]
+   :post [(: % tuple)]}
+  "要約の process に足す env: 借りた札(CLAUDE_CODE_OAUTH_TOKEN — charter-with-grant と同じ綴り)と家(CLAUDE_CONFIG_DIR)。"
+  #(#(CLAUDE-OAUTH-TOKEN-ENV token) #("CLAUDE_CONFIG_DIR" config-dir)))
+
+
+(defk summarize-handle-of [plan region paths principal started-ms regions-done]
+  {:pre [(: plan SummarizePlan) (: region SummaryRegion) (: paths dict) (: principal str) (: started-ms int) (: regions-done int)]
+   :post [(: % dict)]}
+  "summarize の job の sessionHandle: stream{owner, name} は手番と同じ形(running-on-me の鍵)、summarize{…} は拾い直しの材料
+   (R7: 正本は行 — 走っている区間・上端・model・資格・結末の file・済んだ区間の数)。札は載せない(秘密・再起動は借り直す)。"
+  {"stream" {"owner" principal "name" plan.job-id}
+   JOB-HANDLE-SUMMARIZE-KEY {"conversationId" plan.conversation-id
+                             "until" plan.until
+                             "from" region.from-seq
+                             "to" region.to-seq
+                             "sourceEvents" (len region.events)
+                             "sourceBytes" region.source-bytes
+                             "startedAtMs" started-ms
+                             "deadlineSeconds" plan.deadline-seconds
+                             "model" plan.model
+                             "profile" plan.profile
+                             "account" plan.account
+                             "regionByteBudget" plan.region-byte-budget
+                             "promptPath" (get paths "prompt")
+                             "outPath" (get paths "out")
+                             "logPath" (get paths "log")
+                             "rcPath" (get paths "rc")
+                             "pidPath" (get paths "pid")
+                             "regionsDone" regions-done}})
+
+
+(defk summarize-running-status-of [row handle]
+  {:pre [(: row AcpRow) (: handle dict)]
+   :post [(: % dict)]}
+  "受けた summarize の status: committed の欄を写し、phase = Running と sessionHandle だけ書く(binding は触らない)。"
+  (<- next dict (status-object-of row))
+  (setv (get next "phase") PHASE-RUNNING)
+  (setv (get next "sessionHandle") handle)
+  next)
+
+
+(defk in-flight-summarize-of [job-key job-namespace plan region paths pid lease-id started-ms regions-done]
+  {:pre [(: job-key str) (: job-namespace str) (: plan SummarizePlan) (: region SummaryRegion) (: paths dict)
+         (: pid (| int None)) (: lease-id (| str None)) (: started-ms int) (: regions-done int)]
+   :post [(: % InFlightSummarize)]}
+  "走らせている summarize の memory の状態を組む 1 点(受けた直後・次の区間・拾い直しも同じ形)。"
+  (InFlightSummarize
+    :job-key job-key :job-namespace job-namespace :job-id plan.job-id
+    :conversation-id plan.conversation-id :until plan.until
+    :from-seq region.from-seq :to-seq region.to-seq
+    :source-events (len region.events) :source-bytes region.source-bytes
+    :model plan.model :profile plan.profile :account plan.account :region-byte-budget plan.region-byte-budget
+    :started-ms started-ms :deadline-seconds plan.deadline-seconds
+    :pid pid :lease-id lease-id
+    :prompt-path (get paths "prompt") :out-path (get paths "out") :log-path (get paths "log")
+    :rc-path (get paths "rc") :pid-path (get paths "pid")
+    :regions-done regions-done))
+
+
+(defk summarize-plan-of-command [command]
+  {:pre [(: command InFlightSummarize)]
+   :post [(: % SummarizePlan)]}
+  "走っている summarize から次の区間の plan(同じ会話・上端・上限・model・資格・期限)。"
+  (SummarizePlan :job-id command.job-id :conversation-id command.conversation-id :until command.until
+                 :region-byte-budget command.region-byte-budget :model command.model
+                 :profile command.profile :account command.account :deadline-seconds command.deadline-seconds))
+
+
+(defk summarize-of-handle [row default-deadline-seconds]
+  {:pre [(: row AcpRow) (: default-deadline-seconds int)]
+   :post [(: % (| InFlightSummarize None))]}
+  "自分の Running の summarize の行から memory の状態を組み直す(再起動後の拾い直し — R7): sessionHandle.summarize の欄ちょうど。
+   pid は file から(呼び手)・札は None(次の区間で借り直す)。欄が無い・形が違う = None(拾い直せない — 呼び手が結末なしで閉じる)。"
+  (setv status row.status)
+  (setv handle (if (isinstance status dict) (.get status "sessionHandle") None))
+  (setv summarize (if (isinstance handle dict) (.get handle JOB-HANDLE-SUMMARIZE-KEY) None))
+  (when (not (isinstance summarize dict))
+    (return None))
+  (setv conversation-id (.get summarize "conversationId"))
+  (setv until (.get summarize "until"))
+  (setv from-seq (.get summarize "from"))
+  (setv to-seq (.get summarize "to"))
+  (setv model (.get summarize "model"))
+  (setv profile (.get summarize "profile"))
+  (setv account (.get summarize "account"))
+  (setv budget (.get summarize "regionByteBudget"))
+  (setv prompt-path (.get summarize "promptPath"))
+  (setv out-path (.get summarize "outPath"))
+  (setv log-path (.get summarize "logPath"))
+  (setv rc-path (.get summarize "rcPath"))
+  (setv pid-path (.get summarize "pidPath"))
+  (when (not (and (isinstance conversation-id str) (isinstance until int) (isinstance from-seq int) (isinstance to-seq int)
+                  (isinstance model str) (isinstance profile str) (isinstance account str) (isinstance budget int)
+                  (isinstance prompt-path str) (isinstance out-path str) (isinstance log-path str)
+                  (isinstance rc-path str) (isinstance pid-path str)))
+    (return None))
+  (setv started (.get summarize "startedAtMs"))
+  (setv deadline (.get summarize "deadlineSeconds"))
+  (setv done (.get summarize "regionsDone"))
+  (setv source-events (.get summarize "sourceEvents"))
+  (setv source-bytes (.get summarize "sourceBytes"))
+  (InFlightSummarize
+    :job-key row.key :job-namespace row.namespace :job-id row.resource-id
+    :conversation-id conversation-id :until until :from-seq from-seq :to-seq to-seq
+    :source-events (if (and (isinstance source-events int) (not (isinstance source-events bool))) source-events 0)
+    :source-bytes (if (and (isinstance source-bytes int) (not (isinstance source-bytes bool))) source-bytes 0)
+    :model model :profile profile :account account :region-byte-budget budget
+    :started-ms (if (and (isinstance started int) (not (isinstance started bool))) started row.created-at-ms)
+    :deadline-seconds (if (and (isinstance deadline int) (not (isinstance deadline bool)) (> deadline 0)) deadline default-deadline-seconds)
+    :pid None :lease-id None
+    :prompt-path prompt-path :out-path out-path :log-path log-path :rc-path rc-path :pid-path pid-path
+    :regions-done (if (and (isinstance done int) (not (isinstance done bool))) done 0)))
+
+
+(defk summarize-output-of [text]
+  {:pre [(: text (| str None))]
+   :post [(: % (| SummaryOutcome str))]}
+  "claude -p --output-format json の答え(result の 1 object)を読む: subtype が success で result が空でない文字列なら要約の本文・
+   usage(input_tokens / output_tokens / cache_creation_input_tokens / cache_read_input_tokens → 契約 turn-record の usage の 4 欄)・
+   modelUsage の鍵の model。JSON でない・object でない・誤り(is_error / subtype != success)・本文が空 = 理由の文。"
+  (when (or (is text None) (= (.strip text) ""))
+    (return "claude -p wrote no answer (the out file is empty)"))
+  (setv document None)
+  (try
+    (setv document (json.loads text))
+    (except [ValueError]
+      (return f"claude -p answered non-JSON: {(cut (.strip text) 0 200) !r}")))
+  (when (not (isinstance document dict))
+    (return f"claude -p answered a JSON {(. (type document) __name__)}, not the result object"))
+  (setv result (.get document "result"))
+  (when (or (is (.get document "is_error") True) (and (in "subtype" document) (!= (.get document "subtype") "success")))
+    (return f"claude -p answered an error ({(.get document "subtype")}): {(if (isinstance result str) (cut result 0 400) result) !r}"))
+  (when (not (and (isinstance result str) (!= (.strip result) "")))
+    (return "claude -p answered success without a result text"))
+  (setv usage-raw (.get document "usage"))
+  (setv usage None)
+  (when (isinstance usage-raw dict)
+    (setv pairs [#("input" "input_tokens") #("output" "output_tokens") #("cacheWrite" "cache_creation_input_tokens") #("cacheRead" "cache_read_input_tokens")])
+    (setv built {})
+    (for [[ours theirs] pairs]
+      (setv value (.get usage-raw theirs))
+      (when (and (isinstance value int) (not (isinstance value bool)) (>= value 0))
+        (setv (get built ours) value)))
+    (when (= (len built) 4)
+      (setv usage built)))
+  (setv model-usage (.get document "modelUsage"))
+  (setv model None)
+  (when (and (isinstance model-usage dict) model-usage)
+    (setv first-key (get (list (.keys model-usage)) 0))
+    (when (isinstance first-key str)
+      (setv model first-key)))
+  (SummaryOutcome :text (.strip result) :usage usage :model model))
+
+
+(defk summary-stream-id-of [from-seq to-seq]
+  {:pre [(: from-seq int) (: to-seq int)]
+   :post [(: % str)]}
+  "要約の本文の stream の id(記録の service・streamKind summary)= summary#<from>-<to>(ACP agora-kinds.json kinds.summary の recordRef の綴り)。"
+  f"{SUMMARY-STREAM-PREFIX}{from-seq}-{to-seq}")
+
+
+(defk summary-body-of [text at model]
+  {:pre [(: text str) (: at int) (: model str)]
+   :post [(: % dict)]}
+  "要約の本文の出来事(契約 record-service eventIn・kind summary・producerSeq 0・本文は text・model は見出しの欄)。"
+  {"producerSeq" 0 "at" at "kind" SUMMARY-EVENT-KIND "text" text "model" model})
+
+
+(defk summary-batch-of [conversation-id stream-id body started-at-ms node profile]
+  {:pre [(: conversation-id str) (: stream-id str) (: body dict) (: started-at-ms int) (: node str) (: profile str)]
+   :post [(: % RecordBatch)]}
+  "要約の本文 1 つの appendEvents の要求(stream = streamKind summary・出来事は 1 つ・spool の鍵 = summary-<会話>-<stream>)。"
+  (RecordBatch :spool-key f"summary-{conversation-id}-{stream-id}"
+               :conversation-id conversation-id
+               :stream (RecordStream :kind RECORD-STREAM-SUMMARY :stream-id stream-id :started-at-ms started-at-ms :node node :profile profile :attempt 1)
+               :events #(body)))
+
+
+(defk summary-row-id-of [conversation-id to-seq]
+  {:pre [(: conversation-id str) (: to-seq int)]
+   :post [(: % str)]}
+  "kind summary の行の id(identityKey は [conversationId, to] — id はその写し・1 区間 1 行)。"
+  f"sum-{conversation-id}-{to-seq}")
+
+
+(defk summary-spec-of [command record-ref body-bytes sha256]
+  {:pre [(: command InFlightSummarize) (: record-ref str) (: body-bytes int) (: sha256 str)]
+   :post [(: % dict)]}
+  "kind summary の spec(ACP agora-kinds.json kinds.summary の schema の写し): 会話・区間・本文の claim check・原文の数と byte・書いた job。"
+  {SUMMARY-SPEC-CONVERSATION-KEY command.conversation-id
+   SUMMARY-SPEC-FROM-KEY command.from-seq
+   SUMMARY-SPEC-TO-KEY command.to-seq
+   SUMMARY-SPEC-RECORD-REF-KEY record-ref
+   "bytes" body-bytes
+   "sha256" sha256
+   "sourceEvents" command.source-events
+   "sourceBytes" command.source-bytes
+   "agentJobId" command.job-id})
+
+
+(defk summary-status-of [model at usage]
+  {:pre [(: model str) (: at int) (: usage (| dict None))]
+   :post [(: % dict)]}
+  "kind summary の status(state = current・書いた model・時刻・消費があれば usage)。"
+  (setv status {"state" SUMMARY-STATE-CURRENT "model" model "at" at})
+  (when (is-not usage None)
+    (setv (get status "usage") usage))
+  status)
+
+
+(defk summarize-result-of [command regions-done ended-ms]
+  {:pre [(: command InFlightSummarize) (: regions-done int) (: ended-ms int)]
+   :post [(: % dict)]}
+  "summarize の結末(agent-job の status.result): kind・会話・上端・書いた区間の数・最後の区間の to・始まり / 終わり。"
+  {"kind" CHARTER-KIND-SUMMARIZE
+   "conversationId" command.conversation-id
+   "until" command.until
+   "regions" regions-done
+   "lastTo" command.to-seq
+   "startedAtMs" command.started-ms
+   "endedAtMs" ended-ms})
+
+
+(defk summarize-empty-result-of [plan from-seq ended-ms]
+  {:pre [(: plan SummarizePlan) (: from-seq int) (: ended-ms int)]
+   :post [(: % dict)]}
+  "要約する原文が無かった summarize の結末(regions 0 — 全部が要約済み・作り手の冪等の答え・条件ではない)。"
+  {"kind" CHARTER-KIND-SUMMARIZE
+   "conversationId" plan.conversation-id
+   "until" plan.until
+   "regions" 0
+   "from" from-seq
+   "endedAtMs" ended-ms})
+
+
+(defk withdrawn-summarize-rows-of [rows node-name principal]
+  {:pre [(: rows tuple) (: node-name str) (: principal str)]
+   :post [(: % tuple)]}
+  "Withdrawn の行のうち自分が受けた summarize の行(行の順のまま): binding.node == 自分 ∧ sessionHandle.stream.owner == 自分 ∧
+   sessionHandle.summarize が在る。手番の行(sessionId)は withdrawn-rows-of・verify は withdrawn-command-rows-of の持ち分。"
+  (setv out [])
+  (for [row rows]
+    (setv status row.status)
+    (when (and (isinstance status dict) (= (.get status "phase") PHASE-WITHDRAWN))
+      (setv binding (.get status "binding"))
+      (setv handle (.get status "sessionHandle"))
+      (setv stream (if (isinstance handle dict) (.get handle "stream") None))
+      (when (and (isinstance binding dict)
+                 (= (.get binding "node") node-name)
+                 (isinstance stream dict)
+                 (= (.get stream "owner") principal)
+                 (isinstance handle dict)
+                 (isinstance (.get handle JOB-HANDLE-SUMMARIZE-KEY) dict))
+        (.append out row))))
+  (tuple out))
+
+
+(defk without-summarize [state job-id]
+  {:pre [(: state AgentdState) (: job-id str)]
+   :post [(: % AgentdState)]}
+  (replace state :summaries (tuple (lfor command state.summaries :if (!= command.job-id job-id) command))))
+
+
+(defk with-summarize [state command]
+  {:pre [(: state AgentdState) (: command InFlightSummarize)]
+   :post [(: % AgentdState)]}
+  "同じ job_id の summarize を置き換える(無ければ足す)。"
+  (setv kept (lfor existing state.summaries :if (!= existing.job-id command.job-id) existing))
+  (replace state :summaries (tuple (+ kept [command]))))
+
+
+(defk in-flight-summarize-ids [state]
+  {:pre [(: state AgentdState)]
+   :post [(: % set)]}
+  (set (lfor command state.summaries command.job-id)))
+

@@ -17,8 +17,12 @@ from doeff_agents.sessionhost.acp.effects import (
     MESSAGE_CONVERSATION_FIELDS,
     MESSAGE_KIND,
     TURN_RECORD_CONVERSATION_FIELD,
+    SUMMARY_KIND,
+    SUMMARY_SPEC_CONVERSATION_KEY,
+    SUMMARY_STREAM_PREFIX,
     TURN_RECORD_KIND,
     AcpConversationMail,
+    AcpConversationSummaries,
     AcpCreate,
     AcpEventWindow,
     AcpGet,
@@ -77,6 +81,7 @@ from doeff_agents.sessionhost.acp.effects import (
     RecordEvent,
     RecordPage,
     RecordRead,
+    RecordReadSince,
     RecordReadStream,
     RecordReadOutcome,
     RecordSpoolGiveUp,
@@ -158,6 +163,8 @@ class FakeAcp:
         self.store_epoch: str | None = None
         #: 会話の郵便(AcpConversationMail)を読んだ会話の id の順(履歴からの再開の読みは手番を起こし直す時だけ — 段 8q)。
         self.history_reads: list[str] = []
+        #: 段 12 lane 12j: 会話の summary の行(AcpConversationSummaries)を読んだ会話の id の順。
+        self.summary_reads: list[str] = []
         #: 手番の見出し(AcpTurnHeadlines = kind turn-record の全量)を読んだ会話の id の順 — 薄い再開の拍だけ(段 9q・#77)。
         self.headline_reads: list[str] = []
 
@@ -178,7 +185,7 @@ class FakeAcp:
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(
             effect,
-            (AcpGet, AcpGetRow, AcpEventWindow, AcpWatchSse, AcpConversationMail, AcpTurnHeadlines),
+            (AcpGet, AcpGetRow, AcpEventWindow, AcpWatchSse, AcpConversationMail, AcpTurnHeadlines, AcpConversationSummaries),
         ):
             return Resume(k, self._read(effect))
         if isinstance(effect, (AcpPutStatus, AcpPutSpec, AcpCreate, AcpStreamPush)):
@@ -192,10 +199,19 @@ class FakeAcp:
         | AcpEventWindow
         | AcpWatchSse
         | AcpConversationMail
-        | AcpTurnHeadlines,
+        | AcpTurnHeadlines
+        | AcpConversationSummaries,
     ) -> object:
         if isinstance(effect, (AcpConversationMail, AcpTurnHeadlines)):
             return self._history(effect)
+        if isinstance(effect, AcpConversationSummaries):
+            # 段 12 lane 12j: この会話の kind summary の行(engine の field selector spec.conversationId と同じ絞り)。
+            self.summary_reads.append(effect.conversation_id)
+            return tuple(
+                row
+                for row in self.rows.values()
+                if row.kind == SUMMARY_KIND and row.spec.get(SUMMARY_SPEC_CONVERSATION_KEY) == effect.conversation_id
+            )
         if isinstance(effect, AcpGet):
             failure = self.list_failures.get(effect.kind)
             if failure is not None:
@@ -659,6 +675,10 @@ class FakeLocal:
         #: 在れば Exited)。起こせない拍は refuse_commands に理由を置く。
         self.commands: list[tuple[str, ...]] = []
         self.command_cwds: list[str] = []
+        #: 段 12 lane 12j: 起こした process に足した env の**名**の列(値は秘密 — 偽の handler も持たない)。
+        self.command_env_names: list[tuple[str, ...]] = []
+        #: 段 12 lane 12j: 足した env の値の写し(検が札と家の綴りを読む — 本物の handler の log には無い)。
+        self.command_envs: list[dict[str, str]] = []
         self.alive_pids: set[int] = set()
         self.stopped_pids: list[int] = []
         self.existing_files: set[str] = set()
@@ -672,6 +692,8 @@ class FakeLocal:
         if isinstance(effect, CommandStart):
             self.commands.append(tuple(effect.argv))
             self.command_cwds.append(effect.cwd)
+            self.command_env_names.append(tuple(name for name, _ in effect.env))
+            self.command_envs.append(dict(effect.env))
             if self.refuse_commands is not None:
                 return Resume(k, CommandRefused(error=self.refuse_commands))
             pid = self.next_pid
@@ -791,6 +813,8 @@ class FakeRecord:
         self.reads: list[tuple[str, int | None, int]] = []
         #: 段 10f 便 1b: RecordReadStream を受けた (会話, stream) の順。
         self.stream_reads: list[tuple[str, str]] = []
+        #: 段 12 lane 12j: RecordReadSince を受けた (会話, since, limit, kinds) の順。
+        self.since_reads: list[tuple[str, int, int, tuple[str, ...]]] = []
         self.unreachable: bool = False
         #: 届いた要求への断り(先頭から 1 つずつ使う)。
         self.refusals: list[RecordUnsent] = []
@@ -806,6 +830,8 @@ class FakeRecord:
             return Resume(k, self._append(effect.batch))
         if isinstance(effect, RecordRead):
             return Resume(k, self._read(effect.conversation_id, effect.before, effect.limit))
+        if isinstance(effect, RecordReadSince):
+            return Resume(k, self._read_since(effect.conversation_id, effect.since, effect.limit, effect.kinds))
         if isinstance(effect, RecordReadStream):
             return Resume(k, self._read_stream(effect.conversation_id, effect.stream_id))
         return Pass(effect, k)
@@ -887,6 +913,28 @@ class FakeRecord:
         remaining = len(rows) - len(page)
         return RecordPage(events=events, next=page[0][0] if page and remaining > 0 else None)
 
+    def _read_since(self, conversation_id: str, since: int, limit: int, kinds: tuple[str, ...]) -> RecordReadOutcome:
+        """段 12 lane 12j: 前向きの読み(recordSeq > since・kinds の絞り・limit 件・cursor.next = 頁の最後の recordSeq / 尽きれば None)。"""
+        self.since_reads.append((conversation_id, since, limit, kinds))
+        if self.unreachable:
+            return RecordUnread(0, "unreachable: fake record service")
+        rows: list[tuple[int, tuple[str, str, int]]] = []
+        for key in sorted(self.stored):
+            if key[0] != conversation_id:
+                continue
+            record_seq = self._number(key)
+            if record_seq <= since:
+                continue
+            kind = self.stored[key].get("kind")
+            if kinds and kind not in kinds:
+                continue
+            rows.append((record_seq, key))
+        rows.sort()
+        page = rows[:limit] if limit > 0 else []
+        events = tuple(self._event_of(record_seq, key) for record_seq, key in page)
+        remaining = len(rows) - len(page)
+        return RecordPage(events=events, next=page[-1][0] if page and remaining > 0 else None)
+
     def _read_stream(self, conversation_id: str, stream_id: str) -> RecordReadOutcome:
         """段 10f 便 1b: 郵便 1 通の stream の出来事(producerSeq の順・1 頁)。"""
         self.stream_reads.append((conversation_id, stream_id))
@@ -911,7 +959,8 @@ class FakeRecord:
         return RecordEvent(
             record_seq=record_seq,
             stream_id=key[1],
-            stream_kind="turn",
+            # 段 12 lane 12j: 要約の stream(summary#…)は summary・それ以外は turn(郵便の stream は本物の service だけが mail と名乗る)。
+            stream_kind="summary" if key[1].startswith(SUMMARY_STREAM_PREFIX) else "turn",
             producer_seq=key[2],
             at=at if isinstance(at, int) and not isinstance(at, bool) else 0,
             kind=kind if isinstance(kind, str) else "text",

@@ -138,6 +138,13 @@ ConditionType = Literal[
     "VerifyStartFailed",
     "VerifyCommandLost",
     "VerifyDeadlineExceeded",
+    "SummarizePlanInvalid",
+    "SummarizeRegionUnreadable",
+    "SummarizeStartFailed",
+    "SummarizeCommandLost",
+    "SummarizeDeadlineExceeded",
+    "SummarizeOutputUnreadable",
+    "SummaryUnwritable",
 ]
 CONDITION_INTERRUPTED: ConditionType = "Interrupted"
 #: 段 10 lane 10n(agora-redesign #93・依頼者の追補 2026-09-14): 割り込みを注入したが、この job の charter に
@@ -231,6 +238,48 @@ VERIFY_STEP_OBSERVE: VerifyStep = "observe"
 VERIFY_STEP_ENDED: VerifyStep = "ended"
 VERIFY_STEP_LOST: VerifyStep = "lost"
 VERIFY_STEP_TIMED_OUT: VerifyStep = "timed-out"
+#: 段 12 lane 12j(agora-redesign #233・operator 2026-09-16 逐語 "lets see if 1 will work"・依頼者の裁定 = two-way door):
+#: charter.kind = summarize の job = 会話の履歴の段階つき要約 1 つ(#55 案 D)。契機はこの agentd(手番の終わりに測った文脈の
+#: 大きさが summarize_trigger_tokens を超えた拍 — judgment.summarize-due)・配置は手番と同じ資格の路(ACP scheduling.json
+#: charterKind.summarize)・実行は結ばれた node の agentd が会話と同じ profile の Claude Code(charter.model・預かり所の札)を
+#: 区間ごとに 1 回起こし(claude -p・道具なし)、記録の service の古い区間 [from, to] を 1 段落に縮め、本文を記録の service の
+#: stream(streamKind summary)へ積み、agora の kind summary の行(claim check = recordRef / bytes / sha256)を書く。
+#: 会話の手番ではない(turn-record は書かない・郵便を読まない・中継へ押さない)。ACP scheduling.json charterKind の写し。
+CHARTER_KIND_SUMMARIZE: str = "summarize"
+#: summarize の charter の欄(契約 scheduling.json charterKind.summarize.runnerCharter の写し): 区間の上端(記録の service の
+#: recordSeq・含む)と 1 区間の原文の上限 byte(任意・無ければ AgentdSettings.summarize_region_byte_budget)。
+CHARTER_SUMMARIZE_UNTIL_KEY: str = "until"
+CHARTER_SUMMARIZE_REGION_BYTES_KEY: str = "regionByteBudget"
+#: agora の kind summary(ACP agora-kinds.json kinds.summary — 書き手 agentd・identityKey [conversationId, to])の綴り。
+SUMMARY_KIND: str = "summary"
+SUMMARY_SPEC_CONVERSATION_KEY: str = "conversationId"
+SUMMARY_SPEC_FROM_KEY: str = "from"
+SUMMARY_SPEC_TO_KEY: str = "to"
+SUMMARY_SPEC_RECORD_REF_KEY: str = "recordRef"
+SUMMARY_STATE_CURRENT: str = "current"
+SUMMARY_STATE_SUPERSEDED: str = "superseded"
+#: 記録の service の stream(streamKind summary・id = summary#<from>-<to>)と出来事(kind summary・producerSeq 0・本文は text)の
+#: 綴り(agora-controllers docs/contracts/record-service.json の写し)。
+SUMMARY_STREAM_KIND: str = "summary"
+SUMMARY_EVENT_KIND: str = "summary"
+SUMMARY_STREAM_PREFIX: str = "summary#"
+#: 原文として畳む出来事の kind(記録の service の eventKinds のうち会話の中身 — frame は画面の断面・message は郵便で ACP の行から
+#: 畳む・attachment は画像・summary は要約そのもの)。要約の区間の読みと履歴からの再開の読みが kinds= に渡す **1 点**。
+RECORD_RAW_EVENT_KINDS: tuple[str, ...] = ("text", "tool_use", "tool_result", "system", "error", "user")
+#: summarize の結末の置き場(state_dir の下・区間ごと): prompt・claude -p の答え(JSON)・log・rc・pid の 5 file。
+SUMMARY_RUNS_RELDIR: str = "summary-runs"
+#: summarize の job の sessionHandle の欄(拾い直しの材料 — R7: 正本は行)。
+JOB_HANDLE_SUMMARIZE_KEY: str = "summarize"
+#: summarize の条件: 行の欄が読めない(charter の until / model・binding の profile / account)/ 区間の原文を記録の service から
+#: 読めない / process を起こせない / 結末を残さず消えた / 期限超過 / claude -p の答えが読めない(JSON でない・誤り・空)/
+#: 要約の本文か行を書けなかった。
+CONDITION_SUMMARIZE_PLAN_INVALID: ConditionType = "SummarizePlanInvalid"
+CONDITION_SUMMARIZE_REGION_UNREADABLE: ConditionType = "SummarizeRegionUnreadable"
+CONDITION_SUMMARIZE_START_FAILED: ConditionType = "SummarizeStartFailed"
+CONDITION_SUMMARIZE_COMMAND_LOST: ConditionType = "SummarizeCommandLost"
+CONDITION_SUMMARIZE_DEADLINE_EXCEEDED: ConditionType = "SummarizeDeadlineExceeded"
+CONDITION_SUMMARIZE_OUTPUT_UNREADABLE: ConditionType = "SummarizeOutputUnreadable"
+CONDITION_SUMMARY_UNWRITABLE: ConditionType = "SummaryUnwritable"
 #: 段 11 lane 11n 便 C(agora-redesign #179・依頼者の裁定 2026-09-15 案 c′): 器の終端の cause の
 #: category のうち agentd の ACP の腕が読む 1 語 —— provider が限度で断った(sessionhost の
 #: policy.hy TERMINAL-CAUSE-CATEGORIES / launch-not-ready-category と headless.hy の手番の腕が
@@ -720,6 +769,20 @@ class AgentdSettings:
     #: state_dir(record spool の親 = join の宣言 [agentd].state_dir)の下の VERIFY_RUNS_RELDIR に据える。verify の script の
     #: 置き場は home/VERIFY_SCRIPTS_RELDIR(judgment.verify-plan-of の 1 点)。
     verify_runs_dir: str = ""
+    #: 段 12 lane 12j(agora-redesign #233): 会話の履歴の段階つき要約の契機 = 手番の終わりに測った文脈の大きさ(token —
+    #: DeltaBatch.context.tokens)がこの値を超えた(operator 2026-09-16「50 % を超えていたら(0.5M)」= 上限 1M の 50 %)。
+    #: ACP agora-kinds.json conventions.stagedSummaries.triggerTokens はこの写し。0 = 契機を置かない(検体の値)。
+    summarize_trigger_tokens: int = 500_000
+    #: 1 区間の原文の上限 byte(区間ごとに Claude Code を 1 回起こす)。charter.regionByteBudget が在ればそちらが勝つ。
+    summarize_region_byte_budget: int = 262_144
+    #: 要約の 1 区間の上限(秒)— 越えたら止めて条件 SummarizeDeadlineExceeded。
+    summarize_deadline_seconds: int = 900
+    #: 要約の model(operator の決定 2026-09-16 = Opus 5)。契機が書く agent-job の charter.model はこの値。
+    summarize_model: str = "claude-opus-5"
+    #: 要約の結末の置き場(runtime.summarize_runs_dir の 1 点 — state_dir の下の SUMMARY_RUNS_RELDIR)。
+    summarize_runs_dir: str = ""
+    #: Claude Code の binary(argv の先頭 — PATH で解く)。
+    claude_binary: str = "claude"
     #: この node が預かり所(custody)を宣言しているか(段 10c・agora-redesign #80)。composition root
     #: (runtime.settings_from_env)が CUSTODY_URL_ENV(join の [custody].url / --custody)の在否から導く 1 点。True の node は
     #: status.binding.account の無い agent-job を起こさない(judgment.credential-source-of)— charter の binding
@@ -1053,6 +1116,77 @@ class InFlightCommand:
 
 
 @dataclass(frozen=True)
+class SummarizePlan:
+    """Bound の summarize の行から読み解いた「何を要約するか」(段 12 lane 12j)— 判断ではなく行の欄の写し: 会話(subject)・
+    区間の上端(charter.until)・1 区間の上限 byte(charter.regionByteBudget か宣言の値)・model(charter.model)・資格(binding の
+    profile / account — 配置が結んだ会話の profile)・期限(宣言の値)。"""
+
+    job_id: str
+    conversation_id: str
+    until: int
+    region_byte_budget: int
+    model: str
+    profile: str
+    account: str
+    deadline_seconds: int
+
+
+@dataclass(frozen=True)
+class SummaryRegion:
+    """次に要約する 1 区間(judgment.summary-region-of の答え): recordSeq の閉区間 [from_seq, to_seq] とその原文の出来事
+    (RECORD_RAW_EVENT_KINDS の kind だけ・recordSeq 昇順)、原文の bytes の合計(storedEvent.bytes の和)。"""
+
+    from_seq: int
+    to_seq: int
+    events: tuple[RecordEvent, ...]
+    source_bytes: int
+
+
+@dataclass(frozen=True)
+class SummaryOutcome:
+    """claude -p --output-format json の答えの読み(judgment.summarize-output-of): 要約の本文・消費(契約 turn-record の usage と
+    同じ 4 欄 + 任意の内訳・無ければ None)・答えが名乗った model(無ければ None)。"""
+
+    text: str
+    usage: JSONObject | None
+    model: str | None
+
+
+@dataclass(frozen=True)
+class InFlightSummarize:
+    """走らせている 1 つの summarize(agentd の memory・正本は行の sessionHandle.summarize と結末の file — R7)。1 job は区間を
+    古い順に 1 つずつ進み、区間ごとに Claude Code を 1 回起こす。from_seq / to_seq = いま走っている区間。"""
+
+    job_key: str
+    job_namespace: str
+    job_id: str
+    conversation_id: str
+    until: int
+    from_seq: int
+    to_seq: int
+    source_events: int
+    source_bytes: int
+    model: str
+    profile: str
+    account: str
+    region_byte_budget: int
+    #: この区間の process を起こした時刻(ms)— 期限の起点。
+    started_ms: int
+    deadline_seconds: int
+    #: sh の pid(pid の file の値・拾い直しは file から読む)。None = まだ読めていない。
+    pid: int | None
+    #: 借りている札(返す時の鍵)。再起動の拾い直しは None(次の区間で借り直す)。
+    lease_id: str | None
+    prompt_path: str
+    out_path: str
+    log_path: str
+    rc_path: str
+    pid_path: str
+    #: この job で書いた summary の行の数(結末の result に写す)。
+    regions_done: int = 0
+
+
+@dataclass(frozen=True)
 class ArmChoice:
     """Bound の job の起こし方(judgment.next-arm-for-job の答え — 判断はその 1 点)。"""
 
@@ -1204,8 +1338,10 @@ class JobOutcome:
 # ------------------------------------------------------------------ 会話の記録の service(段 9f lane 9f-2)
 
 #: stream の種類(契約 record-service.json streamKinds の写し)。agentd が書くのは手番(turn)だけ。
-RecordStreamKind = Literal["turn", "mail"]
+RecordStreamKind = Literal["turn", "mail", "summary"]
 RECORD_STREAM_TURN: RecordStreamKind = "turn"
+#: 段 12 lane 12j(agora-redesign #233): 会話の履歴の段階つき要約の本文の stream の種類(型つきの綴り — SUMMARY_STREAM_KIND と同じ語)。
+RECORD_STREAM_SUMMARY: RecordStreamKind = "summary"
 #: 1 要求の出来事の上限(契約 limits.batchMaxEvents の写し)— 超える拍は batch を分ける(judgment.record-batches-of)。
 RECORD_BATCH_MAX_EVENTS = 1_000
 #: 追記の結末の語(計器 agentd_record_append_total の outcome)= spool の扱いの閉語彙 — 決めるのは judgment.record-append-word-of の
@@ -1509,6 +1645,9 @@ class AgentdState:
     #: 段 12 lane 12a(agora-redesign #230): 走らせている verify の命令(memory の写し — 正本は行の
     #: sessionHandle.verify と結末の file。再起動で消えても Running の行から組み直す: agentd.recover-command)。
     commands: tuple[InFlightCommand, ...] = ()
+    #: 段 12 lane 12j(agora-redesign #233): 走らせている summarize(memory の写し — 正本は行の sessionHandle.summarize と
+    #: 結末の file。再起動で消えても Running の行から組み直す: agentd.recover-summarize)。
+    summaries: tuple[InFlightSummarize, ...] = ()
 
 
 # ------------------------------------------------------------------ 要求(ACP)
@@ -1557,6 +1696,14 @@ class AcpTurnHeadlines(EffectBase):
     全量(実測 2026-09-14: 29,913 行・172 MB・頭の応答 59 秒)は、claim の後の手番の準備を 2 分超えさせ、node の
     lease(TTL 90 秒)が切れて Scheduling が Running の行を Pending に戻した。service が答えた拍には撃たない。
     結果 = tuple[AcpRow, ...](畳みの判断は judgment.rehydrate-history-of)。"""
+
+    conversation_id: str
+
+
+@dataclass(frozen=True)
+class AcpConversationSummaries(EffectBase):
+    """この会話の kind summary の行(段 12 lane 12j — ``GET /api/resources?kind=summary&fieldSelector=spec.conversationId=<cid>``)。
+    結果 = tuple[AcpRow, ...]。要約の区間の下端(既に在る summary の to の最大 + 1)と履歴からの再開の材料。"""
 
     conversation_id: str
 
@@ -1677,6 +1824,18 @@ class RecordRead(EffectBase):
     conversation_id: str
     before: int | None
     limit: int
+
+
+@dataclass(frozen=True)
+class RecordReadSince(EffectBase):
+    """会話の出来事を**前向きに** 1 頁読む(契約 readEvents: ``GET /v1/conversations/{cid}/events?since=&limit=&kinds=``・
+    読み手 = 名簿の agentd)— 段 12 lane 12j の要約の区間の読み(since = 区間の始まりの 1 つ前・kinds = 原文の kind だけ)。
+    結果 = RecordReadOutcome(読めなさも値で返す)。"""
+
+    conversation_id: str
+    since: int
+    limit: int
+    kinds: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -1970,6 +2129,9 @@ class CommandStart(EffectBase):
 
     argv: tuple[str, ...]
     cwd: str
+    #: 段 12 lane 12j: process に足す env(親の env に重ねる — 借りた札 CLAUDE_CODE_OAUTH_TOKEN と家 CLAUDE_CONFIG_DIR)。
+    #: 値は秘密を含み得る — log・簿・argv に出さない(偽の handler は名だけ数える)。空 = 足さない(verify)。
+    env: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)

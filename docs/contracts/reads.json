@@ -1,6 +1,6 @@
 {
   "schema": "acp.contract-reads.v1",
-  "comment": "doeff の agentd(packages/doeff-agents/src/doeff_agents/sessionhost/acp)の code が読み書きする契約の欄(dot 区切りの path)。書く欄も載せる — 正本が欄を deprecated にした時に書き手の追随の忘れを正本側の検が赤にするため(Pact の形・採用 9)。段 9f lane 9f-8(agora-redesign #59)。追いつきの計器 agentd_record_lag_seq(judgment.record-lag-of = 見出しの最大 seq − 受理済みの最大 producerSeq)が依る欄は turn-record の entries の seq と recordedSeq。段 10 lane 10e(agora-redesign #53): node の status.capabilities(agentd が書く能力の表)と conventions.agentSettings の閉語彙(settings / efforts — effects.py の AGENT_SETTINGS が写し)。 段 10f 便 2(agora-redesign #82): 会話の status.agent.compactAt(自己圧縮の閾値 — agentd は会話の行を鍵で読むだけ・書かない)。 段 10 lane 10n(agora-redesign #93): node の status.capabilities[kind].interrupt(割り込みの能力 steer-then-stop / stop — agentd が書く)。期限 interruptEscalationSeconds は agent-job の charter(engine の kind — この契約の外)だけを読む。 段 10 lane 10o(agora-redesign #96): 郵便の message.spec.attachments(添付の見出しの列 — agentd は読んで記録の service から中身を取り寄せる)と node の status.capabilities[kind].attachments(受ける添付の種類 — agentd が書く)。CLI の綴り(image の block / input の項)は契約の外 = sessionhost の Dialogue が持つ。",
+  "comment": "doeff の agentd(packages/doeff-agents/src/doeff_agents/sessionhost/acp)の code が読み書きする契約の欄(dot 区切りの path)。書く欄も載せる — 正本が欄を deprecated にした時に書き手の追随の忘れを正本側の検が赤にするため(Pact の形・採用 9)。段 9f lane 9f-8(agora-redesign #59)。追いつきの計器 agentd_record_lag_seq(judgment.record-lag-of = 見出しの最大 seq − 受理済みの最大 producerSeq)が依る欄は turn-record の entries の seq と recordedSeq。段 10 lane 10e(agora-redesign #53): node の status.capabilities(agentd が書く能力の表)と conventions.agentSettings の閉語彙(settings / efforts — effects.py の AGENT_SETTINGS が写し)。 段 10f 便 2(agora-redesign #82): 会話の status.agent.compactAt(自己圧縮の閾値 — agentd は会話の行を鍵で読むだけ・書かない)。 段 10 lane 10n(agora-redesign #93): node の status.capabilities[kind].interrupt(割り込みの能力 steer-then-stop / stop — agentd が書く)。期限 interruptEscalationSeconds は agent-job の charter(engine の kind — この契約の外)だけを読む。 段 10 lane 10o(agora-redesign #96): 郵便の message.spec.attachments(添付の見出しの列 — agentd は読んで記録の service から中身を取り寄せる)と node の status.capabilities[kind].attachments(受ける添付の種類 — agentd が書く)。CLI の綴り(image の block / input の項)は契約の外 = sessionhost の Dialogue が持つ。 段 12 lane 12j(agora-redesign #233): kind summary(会話の履歴の段階つき要約 — agentd が書く spec の claim check と status の model / at / usage・読むのは spec.to〔要約済みの区間の終わり〕)と conventions.stagedSummaries.triggerTokens(契機の値の写し — 定義点は AgentdSettings.summarize_trigger_tokens)。",
   "reads": {
     "agora-kinds": [
       "principals",
@@ -64,7 +64,24 @@
       "kinds.conversation.schema.properties.status.properties.agent.properties.compactAt",
       "kinds.node.schema.properties.status.properties.capabilities.additionalProperties.properties.interrupt",
       "kinds.node.schema.properties.status.properties.capabilities.additionalProperties.properties.attachments",
-      "kinds.message.schema.properties.spec.properties.attachments"
+      "kinds.message.schema.properties.spec.properties.attachments",
+      "kinds.summary.declaration.writers.create",
+      "kinds.summary.declaration.writers.status",
+      "kinds.summary.declaration.identityKey",
+      "kinds.summary.schema.properties.spec.properties.conversationId",
+      "kinds.summary.schema.properties.spec.properties.from",
+      "kinds.summary.schema.properties.spec.properties.to",
+      "kinds.summary.schema.properties.spec.properties.recordRef",
+      "kinds.summary.schema.properties.spec.properties.bytes",
+      "kinds.summary.schema.properties.spec.properties.sha256",
+      "kinds.summary.schema.properties.spec.properties.sourceEvents",
+      "kinds.summary.schema.properties.spec.properties.sourceBytes",
+      "kinds.summary.schema.properties.spec.properties.agentJobId",
+      "kinds.summary.schema.properties.status.properties.state",
+      "kinds.summary.schema.properties.status.properties.model",
+      "kinds.summary.schema.properties.status.properties.at",
+      "kinds.summary.schema.properties.status.properties.usage",
+      "conventions.stagedSummaries.triggerTokens"
     ],
     "read-freshness": [
       "storeEpoch.field",
