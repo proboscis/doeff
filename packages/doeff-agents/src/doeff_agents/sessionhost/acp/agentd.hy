@@ -263,6 +263,7 @@
   ProfileNotHeld
   ProfileObservation
   ProfileUnobserved
+  PublishWorker
   Pushed
   ReadProfileUsage
   RECORD-APPEND-CONFLICT
@@ -302,6 +303,7 @@
   TURN-RECORD-KIND
   TranscriptChunk
   WatchAdvance
+  WorkerPublished
   Written])
 (import doeff_agents.sessionhost.acp.judgment [
   in-flight-command-ids
@@ -704,7 +706,18 @@
                                                :cache-ttl-seconds settings.profile-observe-seconds))
           (<- by-name dict (usage-by-profile outcomes))
           (<- observed-counts dict (observe-held-profiles settings held-rows by-name counts))
-          (setv counts observed-counts)))
+          (setv counts observed-counts)
+          ;; worker の公開(段 12 lane 12j・agora-redesign #445): 家の在る profile を持つ機体(Mac)は、観測の拍に自分の
+          ;; 面と残量行を cluster の艦隊の断面へ公開する(既知の形 = kubelet の NodeStatus — 容量の報告は worker の義務)。
+          ;; 何を公開するかは agentcli の 1 点(PublishWorker の口)。拍の申告 = 観測の周期・走らせている手番 = memory の job。
+          (<- published WorkerPublished (PublishWorker :cadence-seconds settings.profile-observe-seconds
+                                                       :running-turns (tuple (lfor job state.jobs job.job-id))
+                                                       :poll-tick-at-ms now-ms))
+          (when (not published.ok)
+            (<- (LogLine :text f"agentd: worker publish failed on node {settings.node-name}: {published.detail}")))
+          (<- (MetricLine :fields {"metric" "worker-published" "node" settings.node-name "ok" published.ok
+                                          "worker" published.worker "cadenceSeconds" settings.profile-observe-seconds
+                                          "runningTurns" (len state.jobs) "atMs" now-ms}))))
     (<- (MetricLine :fields {"metric" "profile-observed"
                                     "node" settings.node-name
                                     "rows" (len active)

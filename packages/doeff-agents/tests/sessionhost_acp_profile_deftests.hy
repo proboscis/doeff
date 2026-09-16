@@ -198,6 +198,45 @@
 ;; 一周: 書く・変わった時だけ・世代の競合は 1 拍見送る・周期
 ;; ---------------------------------------------------------------------------
 
+(deftest test-the-worker-publishes-its-face-and-headroom-on-the-observation-tick
+  ;; agora-redesign #445: 会社 profile の残量の公開(dotfiles の艦隊の断面)は退役した headless-worker の拍にしか無く、
+  ;; 09-13 から凍っていた。worker 役の常駐 = agentd の観測の拍(家の在る profile を持つ機体)が公開を撃つ。
+  (setv world (World))
+  (.put-row world.acp (profile-row "personal" "percent" 18000 "active" None))
+  (setv (get world.local.usage PROFILE-USAGE-KIND) #((usage-of "personal" 40.0 RESETS-MS)))
+  (.tick world 0)
+  (assert (= (len world.local.publishes) 1) world.local.publishes)
+  (setv published (get world.local.publishes 0))
+  (assert (= published.cadence-seconds world.settings.profile-observe-seconds) "公開の拍の申告 = 観測の周期")
+  (assert (= published.running-turns #()) "走らせている手番は測った値(0 本)")
+  (assert (= published.poll-tick-at-ms 1000) "poll の刻 = この拍の壁時計")
+  (setv metrics (lfor m world.local.metrics :if (= (get m "metric") "worker-published") m))
+  (assert (= (len metrics) 1))
+  (assert (is (get (get metrics 0) "ok") True))
+  (assert (= (get (get metrics 0) "worker") "fake-mac"))
+  ;; 周期の内は撃ち直さない(観測と同じ拍)
+  (.tick world 10000)
+  (assert (= (len world.local.publishes) 1))
+  ;; 公開が断られても観測の腕は落ちず、log 1 行 + 計器 ok False
+  (setv world.local.publish-ok False)
+  (.tick world (* 1000 world.settings.profile-observe-seconds))
+  (assert (= (len world.local.publishes) 2))
+  (assert (any (gfor line world.local.logs (in "worker publish failed" line))) world.local.logs)
+  (setv metrics (lfor m world.local.metrics :if (= (get m "metric") "worker-published") m))
+  (assert (is (get (get metrics -1) "ok") False))
+  (assert (= (len world.local.usage-reads) 2) "観測は続く"))
+
+
+(deftest test-a-node-without-profile-homes-does-not-publish
+  ;; pool の pod(家の在る profile が無い)は usage も公開も撃たない(pod 自身の公開は pod の口)。
+  (setv world (World))
+  (.put-row world.acp (profile-row "personal" "percent" 18000 "active" None))
+  (setv (get world.local.homes PROFILE-USAGE-KIND) #((ProfileHome :name "personal" :home "/homes/personal" :present False)))
+  (.tick world 0)
+  (assert (= world.local.usage-reads []))
+  (assert (= world.local.publishes [])))
+
+
 (deftest test-profile-tick-writes-observed-only-when-changed
   (setv world (World))
   (.put-row world.acp (profile-row "personal" "percent" 18000 "active" None))
