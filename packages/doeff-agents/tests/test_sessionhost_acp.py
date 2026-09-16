@@ -1925,6 +1925,45 @@ def test_withdrawn_job_whose_turn_already_ended_is_not_interrupted() -> None:
     assert world.state.jobs == ()
 
 
+# ---------------------------------------------------------------- 段 12 lane 12j: 1 会話 1 温かい session(agora-redesign #379)
+
+
+def test_a_turn_in_another_home_retires_the_conversations_warm_sessions_in_other_homes_even_without_a_row() -> None:
+    """#379 受入 2(#352 受入 1 の実弾の根): 会話の手番が別の家(口座)で起きた拍に、その会話の**他の家**の温かい session を全部片付ける
+    (1 会話 1 温かい session)。前の手番の agent-job の行は終了 300 s で回収されるので候補(行から)は無い — 器の帰属で読む。
+    今日までは候補(choice.retire)だけを片付け、行の無い古い家の session が温かいまま残って node の observations.sessions に 2 本載り、
+    配置の親和が古い家(方策の既定)を採っていた。同じ家の次の手番は何も片付けない。"""
+    world = World()
+    world.custody.tokens["acct2"] = "token-2"
+    _run_first_turn(world)
+    warm_a = world.sid("j-1")
+    # 前の手番の行は回収済み(候補は行から引けない)— engine の回収は窓に retired として届き、agentd の cache からも消える
+    world.acp.delete_row(f"{AGENT_JOB_NAMESPACE}:{AGENT_JOB_KIND}:j-1")
+    world.acp.put_row(message("m-2", "second"))
+    world.acp.put_row(bound_job("j-2", inputs=["m-2"], account="acct2", created_at_ms=world.local.now_ms))
+    world.tick(advance_ms=1_000)
+    assert len(world.state.jobs) == 1
+    warm_b = world.sid("j-2")
+    assert warm_b != warm_a
+    assert world.sessions.cleanups == [warm_a], "別の家の手番が古い家の温かい session を片付けていない(#379)"
+    assert world.sessions.views[warm_a].status == "stopped"
+    assert world.sessions.views[warm_b].status == "running"
+    assert any("keeps one warm session" in line for line in world.local.logs)
+    # 同じ家の次の手番(j-3・acct2)は温かい B へ send し、何も片付けない(B の手番の終わり = 記録が進み host が turn_ended_at を刻む)
+    world.local.transcripts[f"{HOMES}/claude/acct2/projects/-work/{warm_b}.jsonl"] = transcript_line(
+        "assistant", [{"type": "text", "text": "two"}]
+    )
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(warm_b, world.local.now_ms + 100)
+    world.tick(advance_ms=1_000)
+    assert world.state.jobs == ()
+    world.acp.put_row(message("m-3", "third"))
+    world.acp.put_row(bound_job("j-3", inputs=["m-3"], account="acct2", created_at_ms=world.local.now_ms))
+    world.tick(advance_ms=1_000)
+    assert world.sessions.cleanups == [warm_a]
+    assert world.sid("j-3") == warm_b
+
+
 # ---------------------------------------------------------------- 段 12 lane 12j: 取り消しの 3 段(agora-redesign #367)
 
 

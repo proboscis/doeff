@@ -483,6 +483,7 @@
   turn-session-env-of
   usage-by-profile
   wait-seconds-for
+  stale-conversation-sessions-of
   warm-candidate-of
   with-job
   withdrawn-rows-of
@@ -1051,6 +1052,16 @@
         (when (is-not choice.retire None)
           (<- why str (retire-reason-of choice view job-id))
           (<- (retire-sessions #(choice.retire) why)))
+        ;; 段 12 lane 12j(agora-redesign #379 受入 2): 1 会話 1 温かい session — この手番の家と違う家に残る会話の温かい session を
+        ;; 全部片付ける(候補 choice.retire だけでなく、行が回収された後も器に残る session を帰属で読む — 判断は
+        ;; judgment.stale-conversation-sessions-of の 1 点)。残すと node の observations.sessions に 2 本載り、配置の親和が古い家を採る。
+        (<- warm tuple (SessionList :lifecycle LIFECYCLE-MULTI-TURN))
+        (<- job-home dict (session-affinity-key-of plan))
+        (<- stale tuple (stale-conversation-sessions-of warm subject job-home session-id))
+        (setv stale-others (tuple (lfor sid stale :if (!= sid choice.retire) sid)))
+        (when stale-others
+          (<- (retire-sessions stale-others
+                               f"job {job-id} runs in another home — the conversation keeps one warm session (#379)")))
         (<- attempted (| SessionView SessionRefused)
             (incarnate settings plan choice view session-id lease bodies carried job-id subject exclude opener))
         (setv outcome attempted)
