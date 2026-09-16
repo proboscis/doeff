@@ -976,6 +976,25 @@
   (= view.lifecycle LIFECYCLE-MULTI-TURN))
 
 
+(defk retire-reason-after-job [job view step]
+  {:pre [(: job InFlightJob) (: view SessionView) (: step str)]
+   :post [(: % (| str None))]}
+  "手番の終わりに agentd がその session を片付ける理由(None = 片付けない・温かいまま残す)。
+   record-end で器が multi_turn(cleanup-after-end)= 終端の器の資源を agentd が片付ける。
+   turn-end で取り消しの割り込みを実際に撃った job(cancel-interrupted・段 12 lane 12j・agora-redesign #422)= 割り込み(SIGINT)は器の
+   transcript に『利用者が tool を拒んだ』印(Request interrupted by user for tool use)として残り、温かいまま次の手番が
+   resume すると agent が再実行を断って確認待ちにする。取り消しは手番を捨てる決定で、文脈の値打ちは記録(turn-record の
+   rehydrate)が持つ — session は片付け、次の手番は記録から新しい session を起こす。cancel-forced は force-cancel が
+   既に片付けている(None)。session-lost は host の monitor が終端に倒す(None)。手番が既に終わっていて割り込まなかった取り消しは
+   印が無いので温かいまま(None)。"
+  (when (and (= step JOB-STEP-RECORD-END) (cleanup-after-end view))
+    (return f"session {view.status} at the end of job {job.job-id}"))
+  (when (and (= step JOB-STEP-TURN-END) job.cancel-interrupted)
+    (return (+ f"cancelled turn of job {job.job-id} leaves the interrupt in the transcript — "
+               "the next turn rehydrates from the record (#422)")))
+  None)
+
+
 (defk sessions-to-retire [views now-ms ttl-seconds]
   {:pre [(: views tuple) (: now-ms int) (: ttl-seconds int)]
    :post [(: % tuple)]}
@@ -1152,10 +1171,11 @@
   (<- status dict (status-object-of row))
   (setv existing (.get status JOB-STATUS-CANCEL-KEY))
   (setv acknowledged (if (isinstance existing dict) (.get existing CANCEL-ACKNOWLEDGED-AT-KEY) None))
+  (setv acknowledged-ms (if (and (isinstance acknowledged int) (not (isinstance acknowledged bool))) acknowledged None))
+  ;; #422: 行に見届けが在れば割り込みは撃たれたとみなす(印の有無は読めない — 片付ける側に倒す)
   (replace job :cancel cancel
-               :cancel-acknowledged-at-ms (if (and (isinstance acknowledged int) (not (isinstance acknowledged bool)))
-                                              acknowledged
-                                              None)))
+               :cancel-acknowledged-at-ms acknowledged-ms
+               :cancel-interrupted (is-not acknowledged-ms None)))
 
 
 ;; ---------------------------------------------------------------------------

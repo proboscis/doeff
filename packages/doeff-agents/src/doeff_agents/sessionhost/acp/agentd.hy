@@ -362,7 +362,7 @@
   births-of-rows
   births-with
   capture-verdict
-  cleanup-after-end
+  retire-reason-after-job
   condition-of
   credential-place-mismatch
   credential-place-of
@@ -1905,10 +1905,12 @@
                                   "status" (if (isinstance view SessionView) view.status "missing")
                                   "step" step
                                   "ms" (- now-ms job.started-ms)}))
-  (when (and (= step JOB-STEP-RECORD-END) (isinstance view SessionView))
-    (<- retire bool (cleanup-after-end view))
-    (when retire
-      (<- (retire-sessions #(job.session-id) f"session {view.status} at the end of job {job.job-id}"))))
+  ;; 手番の終わりの session の片付け(判断は judgment.retire-reason-after-job の 1 点): 終端の器(record-end・multi_turn)と、
+  ;; 取り消された手番の温かい session(turn-end・段 12 lane 12j・agora-redesign #422 — 割り込みの印を次の手番へ持ち越さない)。
+  (when (isinstance view SessionView)
+    (<- why (| str None) (retire-reason-after-job job view step))
+    (when (isinstance why str)
+      (<- (retire-sessions #(job.session-id) why))))
   (<- next AgentdState (without-job carried job.job-id))
   next)
 
@@ -2175,7 +2177,8 @@
                         f"grace {cancel.grace-seconds} s")))
   (<- (MetricLine :fields {"metric" "agent-job-cancel" "agentJobId" job.job-id
                                   "stage" CANCEL-STAGE-GRACEFUL "reason" cancel.reason}))
-  (<- kept AgentdState (with-job state (replace job :cancel cancel :cancel-acknowledged-at-ms now-ms)))
+  (<- kept AgentdState (with-job state (replace job :cancel cancel :cancel-acknowledged-at-ms now-ms
+                                                :cancel-interrupted (= arm INTERRUPT-ARM-INTERRUPT))))
   kept)
 
 
