@@ -50,6 +50,25 @@
 
 (import doeff_agents.sessionhost.attachment [TurnAttachment attachment-wire])
 (import doeff_agents.sessionhost.acp.effects [
+  CHARTER-KIND-KEY
+  CHARTER-KIND-TURN
+  CHARTER-KIND-VERIFY
+  CHARTER-VERIFY-DEADLINE-KEY
+  CHARTER-VERIFY-JOB-ID-KEY
+  CHARTER-VERIFY-JOB-ID-PATTERN
+  CHARTER-VERIFY-RUN-KEY-KEY
+  CommandExited
+  CommandGone
+  CommandRunning
+  InFlightCommand
+  JOB-HANDLE-VERIFY-KEY
+  VERIFY-RUNS-RELDIR
+  VERIFY-SCRIPTS-RELDIR
+  VERIFY-STEP-ENDED
+  VERIFY-STEP-LOST
+  VERIFY-STEP-OBSERVE
+  VERIFY-STEP-TIMED-OUT
+  VerifyPlan
   AGENT-ATTACHMENT-CAPABILITY
   AGENT-CAPABILITIES
   AGENT-INTERRUPT-CAPABILITY
@@ -3632,3 +3651,240 @@
   {:pre [(: state AgentdState)]
    :post [(: % set)]}
   (set (gfor job state.jobs job.job-id)))
+
+
+;; ---------------------------------------------------------------------------
+;; verify の命令(段 12 lane 12a・agora-redesign #230)— 会話の手番ではない job の判断
+;; ---------------------------------------------------------------------------
+;;
+;; charter.kind = verify の job は定期便の検証の命令 1 つ(会社 repo の日次の全体検証)。契機は k3s の
+;; CronJob、配置は charter.place を spec.places に名乗る node(この agentd の機体)、実行はこの agentd が
+;; 機体自身の資格で **script を 1 つ走らせる**こと — claude / codex を起こさず、預かり所から札も借りない。
+;; 命令の文字列は行から運ばない(herdr-hud D0626 決定 2): 走らせるのは機体の家の
+;; VERIFY-SCRIPTS-RELDIR/<jobId>.sh ちょうどで、知らない id・綴りの外・無い script は条件で loud に落とす。
+;; 結末は file(log / rc / pid)に残し、agentd が再起動しても行(sessionHandle.verify)と file から組み直す(R7)。
+
+(defk job-kind-of [row]
+  {:pre [(: row AcpRow)]
+   :post [(: % str)]}
+  "job の種類(charter.kind の語・無い = turn)。agentd が読むのはこの 1 語で、語彙の検は配置(ACP Inputs.jobViewOf)が
+   結ぶ前に済ませている — ここは結ばれた行の綴りを写すだけ(判断の第 2 の点を作らない)。文字列でない・空は turn。"
+  (setv charter (.get row.spec "charter"))
+  (setv kind (if (isinstance charter dict) (.get charter CHARTER-KIND-KEY) None))
+  (if (and (isinstance kind str) kind) kind CHARTER-KIND-TURN))
+
+
+(defk verify-plan-of [row home runs-dir]
+  {:pre [(: row AcpRow) (: home str) (: runs-dir str)]
+   :post [(: % (| VerifyPlan str))]}
+  "Bound の verify の行から走らせ方を写す(判断ではなく欄の写しと置き場の導出): charter.jobId(綴りは
+   CHARTER-VERIFY-JOB-ID-PATTERN ちょうど — path の要素にそのまま使う)・runKey(無ければ空)・deadlineSeconds
+   (正の整数・無ければ 0 = 期限なし)。script = home/VERIFY-SCRIPTS-RELDIR/<jobId>.sh、結末の 3 file = runs-dir の
+   下の <job id>.{log,rc,pid}。読めない行は理由の文(呼び手が条件 VerifyScriptMissing で閉じる)。"
+  (setv charter (.get row.spec "charter"))
+  (when (not (isinstance charter dict))
+    (return f"agent-job {row.resource-id}: spec.charter is not an object"))
+  (setv verify-id (.get charter CHARTER-VERIFY-JOB-ID-KEY))
+  (when (not (and (isinstance verify-id str) (re.match CHARTER-VERIFY-JOB-ID-PATTERN verify-id)))
+    (return (+ f"agent-job {row.resource-id}: charter.{CHARTER-VERIFY-JOB-ID-KEY} {verify-id !r} is not a verify id "
+               f"(pattern {CHARTER-VERIFY-JOB-ID-PATTERN})")))
+  (setv run-key (.get charter CHARTER-VERIFY-RUN-KEY-KEY))
+  (setv deadline (.get charter CHARTER-VERIFY-DEADLINE-KEY))
+  (setv deadline-seconds (if (and (isinstance deadline int) (not (isinstance deadline bool)) (> deadline 0)) deadline 0))
+  (when (not home)
+    (return f"agent-job {row.resource-id}: this node declares no home (AgentdSettings.home) to find {VERIFY-SCRIPTS-RELDIR} under"))
+  (VerifyPlan
+    :job-id row.resource-id
+    :verify-id verify-id
+    :run-key (if (isinstance run-key str) run-key "")
+    :deadline-seconds deadline-seconds
+    :script-path f"{home}/{VERIFY-SCRIPTS-RELDIR}/{verify-id}.sh"
+    :log-path f"{runs-dir}/{row.resource-id}.log"
+    :rc-path f"{runs-dir}/{row.resource-id}.rc"
+    :pid-path f"{runs-dir}/{row.resource-id}.pid"))
+
+
+(defk verify-argv-of [plan]
+  {:pre [(: plan VerifyPlan)]
+   :post [(: % tuple)]}
+  "verify の命令の起こし方の 1 点: sh の 1 行が自分の pid を書き、script を走らせ(stdout / stderr は log の file へ追記)、
+   終了コードを rc の file に書く。agentd はこの process を待たない(自分の session で起き、再起動しても残る)。
+   引用は sh の位置引数($0〜$3)で運ぶ — path を文字列に埋めない。"
+  #("/bin/sh" "-c"
+    "echo $$ > \"$0\" && \"$1\" >> \"$2\" 2>&1; echo $? > \"$3\""
+    plan.pid-path plan.script-path plan.log-path plan.rc-path))
+
+
+(defk verify-handle-of [plan principal started-ms]
+  {:pre [(: plan VerifyPlan) (: principal str) (: started-ms int)]
+   :post [(: % dict)]}
+  "verify の job の sessionHandle: stream{owner, name} は手番と同じ形(running-on-me の判定が自分の Running を
+   見つける鍵 — 中継へ frame は押さない)、verify{jobId, runKey, startedAtMs, scriptPath, logPath, rcPath, pidPath} は
+   拾い直しの材料(R7: 正本は行)。"
+  {"stream" {"owner" principal "name" plan.job-id}
+   JOB-HANDLE-VERIFY-KEY {"jobId" plan.verify-id
+                          "runKey" plan.run-key
+                          "startedAtMs" started-ms
+                          "deadlineSeconds" plan.deadline-seconds
+                          "scriptPath" plan.script-path
+                          "logPath" plan.log-path
+                          "rcPath" plan.rc-path
+                          "pidPath" plan.pid-path}})
+
+
+(defk verify-running-status-of [row handle]
+  {:pre [(: row AcpRow) (: handle dict)]
+   :post [(: % dict)]}
+  "受けた verify の status: committed の欄を写し、phase = Running と sessionHandle だけ書く(binding は触らない)。"
+  (<- next dict (status-object-of row))
+  (setv (get next "phase") PHASE-RUNNING)
+  (setv (get next "sessionHandle") handle)
+  next)
+
+
+(defk verify-plan-of-handle [row]
+  {:pre [(: row AcpRow)]
+   :post [(: % (| VerifyPlan None))]}
+  "自分の Running の verify の行から走らせ方を組み直す(再起動後の拾い直し — R7): sessionHandle.verify の欄ちょうど。
+   欄が無い・形が違う = None(拾い直せない — 呼び手が結末なしで閉じる)。"
+  (setv status row.status)
+  (setv handle (if (isinstance status dict) (.get status "sessionHandle") None))
+  (setv verify (if (isinstance handle dict) (.get handle JOB-HANDLE-VERIFY-KEY) None))
+  (when (not (isinstance verify dict))
+    (return None))
+  (setv verify-id (.get verify "jobId"))
+  (setv run-key (.get verify "runKey"))
+  (setv deadline (.get verify "deadlineSeconds"))
+  (setv script-path (.get verify "scriptPath"))
+  (setv log-path (.get verify "logPath"))
+  (setv rc-path (.get verify "rcPath"))
+  (setv pid-path (.get verify "pidPath"))
+  (when (not (and (isinstance verify-id str) (isinstance script-path str) (isinstance log-path str)
+                  (isinstance rc-path str) (isinstance pid-path str)))
+    (return None))
+  (VerifyPlan
+    :job-id row.resource-id
+    :verify-id verify-id
+    :run-key (if (isinstance run-key str) run-key "")
+    :deadline-seconds (if (and (isinstance deadline int) (not (isinstance deadline bool)) (> deadline 0)) deadline 0)
+    :script-path script-path
+    :log-path log-path
+    :rc-path rc-path
+    :pid-path pid-path))
+
+
+(defk verify-started-ms-of-handle [row fallback-ms]
+  {:pre [(: row AcpRow) (: fallback-ms int)]
+   :post [(: % int)]}
+  "拾い直した verify の起こした時刻(sessionHandle.verify.startedAtMs・無ければ fallback = 行の createdAt)— 期限の起点。"
+  (setv status row.status)
+  (setv handle (if (isinstance status dict) (.get status "sessionHandle") None))
+  (setv verify (if (isinstance handle dict) (.get handle JOB-HANDLE-VERIFY-KEY) None))
+  (setv started (if (isinstance verify dict) (.get verify "startedAtMs") None))
+  (if (and (isinstance started int) (not (isinstance started bool))) started fallback-ms))
+
+
+(defk in-flight-command-of [row plan pid started-ms]
+  {:pre [(: row AcpRow) (: plan VerifyPlan) (: pid (| int None)) (: started-ms int)]
+   :post [(: % InFlightCommand)]}
+  "走らせている verify の命令の memory の状態を組む 1 点(受けた直後も拾い直しも同じ形)。"
+  (InFlightCommand
+    :job-key row.key
+    :job-namespace row.namespace
+    :job-id row.resource-id
+    :verify-id plan.verify-id
+    :run-key plan.run-key
+    :started-ms started-ms
+    :deadline-seconds plan.deadline-seconds
+    :pid pid
+    :script-path plan.script-path
+    :log-path plan.log-path
+    :rc-path plan.rc-path
+    :pid-path plan.pid-path))
+
+
+(defk pid-of-text [text]
+  {:pre [(: text (| str None))]
+   :post [(: % (| int None))]}
+  "pid の file の中身 → pid(数字の行 1 つ・それ以外は None)。"
+  (if (and (isinstance text str) (re.match r"^\s*\d+\s*$" text))
+      (int (.strip text))
+      None))
+
+
+(defk rc-of-text [text]
+  {:pre [(: text (| str None))]
+   :post [(: % (| int None))]}
+  "rc の file の中身 → 終了コード(数字の行 1 つ・それ以外は None = まだ書かれていない / 壊れている)。"
+  (if (and (isinstance text str) (re.match r"^\s*\d+\s*$" text))
+      (int (.strip text))
+      None))
+
+
+(defk verify-step-of [probe started-ms now-ms deadline-seconds]
+  {:pre [(: probe (| CommandRunning CommandExited CommandGone)) (: started-ms int) (: now-ms int) (: deadline-seconds int)]
+   :post [(: % str)]}
+  "verify の命令の次の 1 手(閉語彙 effects.VerifyStep): rc の file が在る → ended / 消えた → lost / 走っていて期限
+   (deadlineSeconds > 0)を越えた → timed-out(止める)/ それ以外 → observe。"
+  (cond
+    (isinstance probe CommandExited) VERIFY-STEP-ENDED
+    (isinstance probe CommandGone) VERIFY-STEP-LOST
+    (and (> deadline-seconds 0) (>= (- now-ms started-ms) (* deadline-seconds 1000))) VERIFY-STEP-TIMED-OUT
+    True VERIFY-STEP-OBSERVE))
+
+
+(defk verify-result-of [command rc ended-ms]
+  {:pre [(: command InFlightCommand) (: rc int) (: ended-ms int)]
+   :post [(: % dict)]}
+  "verify の結末(agent-job の status.result): kind・便の id・発火の鍵・rc・始まり / 終わり / 所要・log の path。
+   赤(rc != 0)も結末であって条件ではない — 日次の検証の赤は台帳(ai land verify が land-partition に記帳)の側の事実。"
+  {"kind" CHARTER-KIND-VERIFY
+   "jobId" command.verify-id
+   "runKey" command.run-key
+   "rc" rc
+   "startedAtMs" command.started-ms
+   "endedAtMs" ended-ms
+   "durationMs" (- ended-ms command.started-ms)
+   "log" command.log-path})
+
+
+(defk withdrawn-command-rows-of [rows node-name principal]
+  {:pre [(: rows tuple) (: node-name str) (: principal str)]
+   :post [(: % tuple)]}
+  "Withdrawn の行のうち自分が受けた verify の命令の行(行の順のまま): binding.node == 自分 ∧ sessionHandle.stream.owner ==
+   自分 ∧ sessionHandle.verify が在る。手番の行(sessionId を持つ)は withdrawn-rows-of の持ち分で、ここには来ない。"
+  (setv out [])
+  (for [row rows]
+    (setv status row.status)
+    (when (and (isinstance status dict) (= (.get status "phase") PHASE-WITHDRAWN))
+      (setv binding (.get status "binding"))
+      (setv handle (.get status "sessionHandle"))
+      (setv stream (if (isinstance handle dict) (.get handle "stream") None))
+      (when (and (isinstance binding dict)
+                 (= (.get binding "node") node-name)
+                 (isinstance stream dict)
+                 (= (.get stream "owner") principal)
+                 (isinstance handle dict)
+                 (isinstance (.get handle JOB-HANDLE-VERIFY-KEY) dict))
+        (.append out row))))
+  (tuple out))
+
+
+(defk without-command [state job-id]
+  {:pre [(: state AgentdState) (: job-id str)]
+   :post [(: % AgentdState)]}
+  (replace state :commands (tuple (lfor command state.commands :if (!= command.job-id job-id) command))))
+
+
+(defk with-command [state command]
+  {:pre [(: state AgentdState) (: command InFlightCommand)]
+   :post [(: % AgentdState)]}
+  "同じ job_id の命令を置き換える(無ければ足す)。"
+  (setv kept (lfor existing state.commands :if (!= existing.job-id command.job-id) existing))
+  (replace state :commands (tuple (+ kept [command]))))
+
+
+(defk in-flight-command-ids [state]
+  {:pre [(: state AgentdState)]
+   :post [(: % set)]}
+  (set (gfor command state.commands command.job-id)))

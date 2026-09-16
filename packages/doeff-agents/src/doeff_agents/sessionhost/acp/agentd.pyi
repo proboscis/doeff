@@ -9,6 +9,7 @@ from doeff_agents.sessionhost.acp.effects import (
     AgentdSettings,
     AgentdState,
     ArmChoice,
+    InFlightCommand,
     InFlightJob,
     JobOutcome,
     LaunchPlan,
@@ -180,4 +181,25 @@ def mark_recorded(
 def agentd_tick(settings: AgentdSettings, state: AgentdState) -> Program: ...
 def close_jobs_for_stop(
     settings: AgentdSettings, state: AgentdState, now_ms: int, reason: str
+) -> Program: ...
+
+# 段 12 lane 12a(agora-redesign #230): verify の命令の腕
+def claim_verify_job(
+    settings: AgentdSettings, state: AgentdState, row: AcpRow, now_ms: int
+) -> Program: ...
+def end_command(
+    settings: AgentdSettings,
+    command: InFlightCommand,
+    result: dict | None,
+    conditions: tuple,
+    now_ms: int,
+) -> Program: ...
+def observe_command(
+    settings: AgentdSettings, state: AgentdState, command: InFlightCommand, now_ms: int
+) -> Program: ...
+def recover_command(
+    settings: AgentdSettings, state: AgentdState, row: AcpRow, now_ms: int
+) -> Program: ...
+def withdraw_command(
+    settings: AgentdSettings, state: AgentdState, command: InFlightCommand, row: AcpRow, now_ms: int
 ) -> Program: ...

@@ -47,6 +47,7 @@ from doeff_agents.sessionhost.acp.effects import (
     HOMES_ROOT_ENV,
     JOIN_RECORD_SPOOL_DIR,
     JOIN_STATE_DIR_DEFAULT,
+    VERIFY_RUNS_RELDIR,
     NODE_NAME_ENV,
     OWNERSHIP_ENV,
     OWNERSHIP_GRADES,
@@ -127,6 +128,8 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         work_roots=work_roots,
         # 段 10 lane 10y: charter の work_dir の `~` を展開する node の家(env HOME ちょうど・無ければ process の家)
         home=(env.get("HOME") or os.path.expanduser("~")).strip(),
+        # 段 12 lane 12a(agora-redesign #230): verify の命令の結末の置き場 = join が導いた state_dir(spool の親)の下
+        verify_runs_dir=verify_runs_dir(env),
     )
 
 
@@ -215,6 +218,12 @@ def _record_sink_of_env(env: Mapping[str, str]) -> str:
     if not isinstance(sink, str):
         raise TypeError(f"record_sink_of returned {type(sink).__name__}")
     return sink
+
+
+def verify_runs_dir(env: Mapping[str, str]) -> str:
+    """verify の命令の結末(log / rc / pid)の置き場(段 12 lane 12a): record spool の親 = join の宣言 [agentd].state_dir の下の
+    VERIFY_RUNS_RELDIR。置き場の定義点を増やさない(state_dir は spool と同じ 1 点から導く)。"""
+    return os.path.join(os.path.dirname(record_spool_dir(env)), VERIFY_RUNS_RELDIR)
 
 
 def record_spool_dir(env: Mapping[str, str]) -> str:
