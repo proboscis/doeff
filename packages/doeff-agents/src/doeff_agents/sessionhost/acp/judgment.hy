@@ -188,6 +188,8 @@
   RESULT-CAUSE-KEY
   InFlightJob
   InterruptRead
+  BINDING-NODE-KEY
+  BINDING-NODE-ROW-KEY
   JOB-INTERRUPTS-DELIVERED-KEY
   JOB-INTERRUPTS-ESCALATED-KEY
   JOB-INTERRUPTS-KEY
@@ -282,26 +284,41 @@
 ;; 自分に結ばれた job か — agentd が持つ唯一の判定
 ;; ---------------------------------------------------------------------------
 
-(defk bound-to-me [row node-name]
-  {:pre [(: row AcpRow) (: node-name str)]
+(defk binding-names-me [binding node-name node-row-id]
+  {:pre [(: binding (| dict None)) (: node-name str) (: node-row-id (| str None))]
    :post [(: % bool)]}
-  "phase == Bound かつ status.binding.node == 自分。これ以外の条件で job を選ばない
+  "結び(status.binding)が自分を指すか(段 12 lane 12j・agora-redesign #321 = #317 の k8s 規則 1 後半・契約 scheduling.json
+   binding.fields.nodeRow)— 判断はここ 1 点: 結びに nodeRow(結んだ node の行の id)が在れば、自分の生きている行の id
+   (node-row-id・None = まだ参加していない → 受けない)と一致する時だけ。無い結び(この欄が生まれる前の書き)だけ node
+   (機体の名前)に落ちる。同じ名の別の化身(退役した行・旧い agentd)に結ばれた手番は名前が同じでも自分ではない。"
+  (when (not (isinstance binding dict))
+    (return False))
+  (setv node-row (.get binding BINDING-NODE-ROW-KEY))
+  (if (and (isinstance node-row str) node-row)
+      (and (is-not node-row-id None) (= node-row node-row-id))
+      (= (.get binding BINDING-NODE-KEY) node-name)))
+
+
+(defk bound-to-me [row node-name node-row-id]
+  {:pre [(: row AcpRow) (: node-name str) (: node-row-id (| str None))]
+   :post [(: % bool)]}
+  "phase == Bound かつ結びが自分を指す(binding-names-me)。これ以外の条件で job を選ばない
    (法 agentd-holds-no-placement-judgment)。"
   (setv status row.status)
   (setv binding (if (isinstance status dict) (.get status "binding") None))
+  (<- mine bool (binding-names-me binding node-name node-row-id))
   (and (isinstance status dict)
        (= (.get status "phase") PHASE-BOUND)
-       (isinstance binding dict)
-       (= (.get binding "node") node-name)))
+       mine))
 
 
-(defk job-rows-bound-to [rows node-name]
-  {:pre [(: rows tuple) (: node-name str)]
+(defk job-rows-bound-to [rows node-name node-row-id]
+  {:pre [(: rows tuple) (: node-name str) (: node-row-id (| str None))]
    :post [(: % tuple)]}
   "list の行のうち自分に結ばれた行を、行の順のまま(優先も選択も無し)。"
   (setv out [])
   (for [row rows]
-    (<- mine bool (bound-to-me row node-name))
+    (<- mine bool (bound-to-me row node-name node-row-id))
     (when mine
       (.append out row)))
   (tuple out))
@@ -321,31 +338,31 @@
   (if (isinstance session-id str) session-id None))
 
 
-(defk running-on-me [row node-name principal]
-  {:pre [(: row AcpRow) (: node-name str) (: principal str)]
+(defk running-on-me [row node-name node-row-id principal]
+  {:pre [(: row AcpRow) (: node-name str) (: node-row-id (| str None)) (: principal str)]
    :post [(: % bool)]}
-  "phase == Running かつ status.binding.node == 自分かつ sessionHandle.stream.owner == 自分の
+  "phase == Running かつ結びが自分を指す(binding-names-me)かつ sessionHandle.stream.owner == 自分の
    principal — 自分が claim した job(再起動で memory を失っても行が覚えている)。job を選ぶ
-   判定はこれと bound-to-me の 2 つだけで、どちらも binding.node == 自分の行に閉じる。"
+   判定はこれと bound-to-me の 2 つだけで、どちらも結びが自分を指す行に閉じる。"
   (setv status row.status)
   (setv binding (if (isinstance status dict) (.get status "binding") None))
   (setv handle (if (isinstance status dict) (.get status "sessionHandle") None))
   (setv stream (if (isinstance handle dict) (.get handle "stream") None))
+  (<- mine bool (binding-names-me binding node-name node-row-id))
   (and (isinstance status dict)
        (= (.get status "phase") PHASE-RUNNING)
-       (isinstance binding dict)
-       (= (.get binding "node") node-name)
+       mine
        (isinstance stream dict)
        (= (.get stream "owner") principal)))
 
 
-(defk job-rows-running-on [rows node-name principal]
-  {:pre [(: rows tuple) (: node-name str) (: principal str)]
+(defk job-rows-running-on [rows node-name node-row-id principal]
+  {:pre [(: rows tuple) (: node-name str) (: node-row-id (| str None)) (: principal str)]
    :post [(: % tuple)]}
   "list の行のうち自分が持つ Running の行を、行の順のまま。"
   (setv out [])
   (for [row rows]
-    (<- mine bool (running-on-me row node-name principal))
+    (<- mine bool (running-on-me row node-name node-row-id principal))
     (when mine
       (.append out row)))
   (tuple out))
@@ -494,18 +511,18 @@
        (is view.turn-ended-at-ms None)))
 
 
-(defk handle-owned-by [row node-name principal]
-  {:pre [(: row AcpRow) (: node-name str) (: principal str)]
+(defk handle-owned-by [row node-name node-row-id principal]
+  {:pre [(: row AcpRow) (: node-name str) (: node-row-id (| str None)) (: principal str)]
    :post [(: % (| str None))]}
-  "自分が claim した行(binding.node == 自分 ∧ sessionHandle.stream.owner == 自分)の
+  "自分が claim した行(結びが自分を指す〔binding-names-me〕∧ sessionHandle.stream.owner == 自分)の
    sessionHandle.sessionId。phase は問わない(Running でも Ended でも会話の session の記録)。
    自分の行でなければ None。"
   (setv status row.status)
   (setv binding (if (isinstance status dict) (.get status "binding") None))
   (setv handle (if (isinstance status dict) (.get status "sessionHandle") None))
   (setv stream (if (isinstance handle dict) (.get handle "stream") None))
-  (if (and (isinstance binding dict)
-           (= (.get binding "node") node-name)
+  (<- mine bool (binding-names-me binding node-name node-row-id))
+  (if (and mine
            (isinstance stream dict)
            (= (.get stream "owner") principal))
       (do (<- sid (| str None) (session-id-of-handle row))
@@ -513,8 +530,8 @@
       None))
 
 
-(defk conversation-session-of [rows subject node-name principal]
-  {:pre [(: rows tuple) (: subject str) (: node-name str) (: principal str)]
+(defk conversation-session-of [rows subject node-name node-row-id principal]
+  {:pre [(: rows tuple) (: subject str) (: node-name str) (: node-row-id (| str None)) (: principal str)]
    :post [(: % (| str None))]}
   "会話(agent-job の spec.subject)→ その会話の最後の手番が使った session の id — 行から
    導く(memory を要らない): 自分が claim した同じ subject の行のうち createdAt が最新の
@@ -523,21 +540,21 @@
   (setv found-at -1)
   (for [row rows]
     (when (= (.get row.spec "subject") subject)
-      (<- sid (| str None) (handle-owned-by row node-name principal))
+      (<- sid (| str None) (handle-owned-by row node-name node-row-id principal))
       (when (and (is-not sid None) (> row.created-at-ms found-at))
         (setv found sid)
         (setv found-at row.created-at-ms))))
   found)
 
 
-(defk warm-candidate-of [plan rows subject node-name principal]
-  {:pre [(: plan LaunchPlan) (: rows tuple) (: subject str) (: node-name str) (: principal str)]
+(defk warm-candidate-of [plan rows subject node-name node-row-id principal]
+  {:pre [(: plan LaunchPlan) (: rows tuple) (: subject str) (: node-name str) (: node-row-id (| str None)) (: principal str)]
    :post [(: % (| str None))]}
   "次の手番を送れるかもしれない session の id: affinity.predecessor(scheduler の名指し)が
    在ればそれ、無ければ会話の最後の手番の session(行から)。None = 候補なし(launch)。"
   (if (is-not plan.predecessor None)
       plan.predecessor
-      (do (<- sid (| str None) (conversation-session-of rows subject node-name principal))
+      (do (<- sid (| str None) (conversation-session-of rows subject node-name node-row-id principal))
           sid)))
 
 
@@ -969,8 +986,8 @@
   (tuple out))
 
 
-(defk withdrawn-session-ids-of [rows node-name principal]
-  {:pre [(: rows tuple) (: node-name str) (: principal str)]
+(defk withdrawn-session-ids-of [rows node-name node-row-id principal]
+  {:pre [(: rows tuple) (: node-name str) (: node-row-id (| str None)) (: principal str)]
    :post [(: % tuple)]}
   "Withdrawn の行のうち自分が claim していた行の session の id(手番の取り下げ — 走っている
    session を片付ける対象)。"
@@ -978,14 +995,14 @@
   (for [row rows]
     (setv status row.status)
     (when (and (isinstance status dict) (= (.get status "phase") PHASE-WITHDRAWN))
-      (<- sid (| str None) (handle-owned-by row node-name principal))
+      (<- sid (| str None) (handle-owned-by row node-name node-row-id principal))
       (when (and (is-not sid None) (not-in sid out))
         (.append out sid))))
   (tuple out))
 
 
-(defk withdrawn-rows-of [rows node-name principal]
-  {:pre [(: rows tuple) (: node-name str) (: principal str)]
+(defk withdrawn-rows-of [rows node-name node-row-id principal]
+  {:pre [(: rows tuple) (: node-name str) (: node-row-id (| str None)) (: principal str)]
    :post [(: % tuple)]}
   "Withdrawn の行のうち自分が claim していた行(行の順のまま)— 取り下げ = 走っている手番を
    止める合図(session は片付けない・idle の寿命は sessions-to-retire)。"
@@ -993,7 +1010,7 @@
   (for [row rows]
     (setv status row.status)
     (when (and (isinstance status dict) (= (.get status "phase") PHASE-WITHDRAWN))
-      (<- sid (| str None) (handle-owned-by row node-name principal))
+      (<- sid (| str None) (handle-owned-by row node-name node-row-id principal))
       (when (is-not sid None)
         (.append out row))))
   (tuple out))
@@ -4215,10 +4232,10 @@
    "log" command.log-path})
 
 
-(defk withdrawn-command-rows-of [rows node-name principal]
-  {:pre [(: rows tuple) (: node-name str) (: principal str)]
+(defk withdrawn-command-rows-of [rows node-name node-row-id principal]
+  {:pre [(: rows tuple) (: node-name str) (: node-row-id (| str None)) (: principal str)]
    :post [(: % tuple)]}
-  "Withdrawn の行のうち自分が受けた verify の命令の行(行の順のまま): binding.node == 自分 ∧ sessionHandle.stream.owner ==
+  "Withdrawn の行のうち自分が受けた verify の命令の行(行の順のまま): 結びが自分を指す(binding-names-me)∧ sessionHandle.stream.owner ==
    自分 ∧ sessionHandle.verify が在る。手番の行(sessionId を持つ)は withdrawn-rows-of の持ち分で、ここには来ない。"
   (setv out [])
   (for [row rows]
@@ -4227,8 +4244,8 @@
       (setv binding (.get status "binding"))
       (setv handle (.get status "sessionHandle"))
       (setv stream (if (isinstance handle dict) (.get handle "stream") None))
-      (when (and (isinstance binding dict)
-                 (= (.get binding "node") node-name)
+      (<- mine bool (binding-names-me binding node-name node-row-id))
+      (when (and mine
                  (isinstance stream dict)
                  (= (.get stream "owner") principal)
                  (isinstance handle dict)
@@ -4635,10 +4652,10 @@
    "endedAtMs" ended-ms})
 
 
-(defk withdrawn-summarize-rows-of [rows node-name principal]
-  {:pre [(: rows tuple) (: node-name str) (: principal str)]
+(defk withdrawn-summarize-rows-of [rows node-name node-row-id principal]
+  {:pre [(: rows tuple) (: node-name str) (: node-row-id (| str None)) (: principal str)]
    :post [(: % tuple)]}
-  "Withdrawn の行のうち自分が受けた summarize の行(行の順のまま): binding.node == 自分 ∧ sessionHandle.stream.owner == 自分 ∧
+  "Withdrawn の行のうち自分が受けた summarize の行(行の順のまま): 結びが自分を指す(binding-names-me)∧ sessionHandle.stream.owner == 自分 ∧
    sessionHandle.summarize が在る。手番の行(sessionId)は withdrawn-rows-of・verify は withdrawn-command-rows-of の持ち分。"
   (setv out [])
   (for [row rows]
@@ -4647,8 +4664,8 @@
       (setv binding (.get status "binding"))
       (setv handle (.get status "sessionHandle"))
       (setv stream (if (isinstance handle dict) (.get handle "stream") None))
-      (when (and (isinstance binding dict)
-                 (= (.get binding "node") node-name)
+      (<- mine bool (binding-names-me binding node-name node-row-id))
+      (when (and mine
                  (isinstance stream dict)
                  (= (.get stream "owner") principal)
                  (isinstance handle dict)
