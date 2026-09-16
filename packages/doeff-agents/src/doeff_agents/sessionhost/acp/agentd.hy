@@ -113,6 +113,7 @@
 (require doeff-hy.macros [defk <-])
 
 (import dataclasses [replace])
+(import hashlib)
 
 (import doeff_agents.sessionhost.attachment [TurnAttachment])
 (import doeff_agents.sessionhost.acp.effects [
@@ -138,6 +139,28 @@
   VERIFY-STEP-OBSERVE
   VERIFY-STEP-TIMED-OUT
   VerifyPlan
+  AcpConversationSummaries
+  RecordBatch
+  CHARTER-KIND-SUMMARIZE
+  CONDITION-SUMMARIZE-COMMAND-LOST
+  CONDITION-SUMMARIZE-DEADLINE-EXCEEDED
+  CONDITION-SUMMARIZE-OUTPUT-UNREADABLE
+  CONDITION-SUMMARIZE-PLAN-INVALID
+  CONDITION-SUMMARIZE-REGION-UNREADABLE
+  CONDITION-SUMMARIZE-START-FAILED
+  CONDITION-SUMMARY-UNWRITABLE
+  InFlightSummarize
+  RECORD-PAGE-MAX-LIMIT
+  RECORD-RAW-EVENT-KINDS
+  RecordAppended
+  RecordConflicted
+  RecordPage
+  RecordReadSince
+  RecordUnsent
+  SUMMARY-KIND
+  SummarizePlan
+  SummaryOutcome
+  SummaryRegion
   CONDITION-ATTACHMENT-IGNORED
   AGENT-JOB-KIND
   AGORA-KINDS-NAMESPACE
@@ -279,6 +302,35 @@
   with-command
   withdrawn-command-rows-of
   without-command
+  claude-home-of
+  in-flight-summarize-ids
+  in-flight-summarize-of
+  record-body-bytes-of
+  record-ref-of
+  summarize-argv-of
+  summarize-empty-result-of
+  summarize-env-of
+  summarize-handle-of
+  summarize-of-handle
+  summarize-output-of
+  summarize-paths-of
+  summarize-plan-of
+  summarize-plan-of-command
+  summarize-prompt-of
+  summarize-result-of
+  summarize-running-status-of
+  summary-batch-of
+  summary-body-of
+  summary-region-of
+  summary-region-text
+  summary-row-id-of
+  summary-rows-covered-to
+  summary-spec-of
+  summary-status-of
+  summary-stream-id-of
+  with-summarize
+  withdrawn-summarize-rows-of
+  without-summarize
   birth-ms-of
   births-of-rows
   births-with
@@ -927,6 +979,11 @@
   (when (= kind CHARTER-KIND-VERIFY)
     (<- claimed-verify AgentdState (claim-verify-job settings state row now-ms))
     (return claimed-verify))
+  ;; 段 12 lane 12j(agora-redesign #233): charter.kind = summarize の job は会話の履歴の段階つき要約 — 会話の profile の札を借りて
+  ;; claude -p を区間ごとに 1 回起こす腕へ(session は起こさず・作業場の門も歩かない・turn-record も書かない)。
+  (when (= kind CHARTER-KIND-SUMMARIZE)
+    (<- claimed-summarize AgentdState (claim-summarize-job settings state row now-ms))
+    (return claimed-summarize))
   ;; 段 10 lane 10y: charter の work_dir の `~` はこの node の家で展開する(以降の判断と起こす params は展開した plan を読む)。
   (<- declared-plan LaunchPlan (launch-plan-of row))
   (<- plan LaunchPlan (plan-with-node-home declared-plan settings.home))
@@ -1704,6 +1761,10 @@
   (for [command (list current.commands)]
     (<- (LogLine :text (+ f"agentd: verify job {command.job-id} (pid {command.pid}) keeps running through the stop of agentd; "
                           "its row stays Running and the next agentd recovers the outcome from the row and the rc file"))))
+  ;; 段 12 lane 12j: summarize の claude -p も自分の session で走っていて降りない — 行は Running のまま・次の agentd が拾い直す。
+  (for [command (list current.summaries)]
+    (<- (LogLine :text (+ f"agentd: summarize job {command.job-id} (pid {command.pid}) keeps running through the stop of agentd; "
+                          "its row stays Running and the next agentd recovers the outcome from the row and the out / rc files"))))
   current)
 
 
@@ -1916,6 +1977,16 @@
           (<- stopped AgentdState (withdraw-command settings current command row now-ms))
           (setv current stopped)))
       (setv current (replace current :retired (+ current.retired #(job-id))))))
+  ;; 段 12 lane 12j: summarize の取り下げ — process を止め、札を返し、Interrupted。
+  (<- withdrawn-summaries tuple (withdrawn-summarize-rows-of rows settings.node-name settings.principal))
+  (for [row withdrawn-summaries]
+    (setv job-id row.resource-id)
+    (when (not-in job-id current.retired)
+      (for [command (list current.summaries)]
+        (when (= command.job-id job-id)
+          (<- stopped-summary AgentdState (withdraw-summarize settings current command row now-ms))
+          (setv current stopped-summary)))
+      (setv current (replace current :retired (+ current.retired #(job-id))))))
   current)
 
 
@@ -2095,6 +2166,365 @@
 
 
 ;; ---------------------------------------------------------------------------
+;; 会話の履歴の段階つき要約(段 12 lane 12j・agora-redesign #233・#55 案 D)— charter.kind = summarize の腕
+;; ---------------------------------------------------------------------------
+;;
+;; operator 2026-09-16 "lets see if 1 will work"(方法 1)。charter.kind = summarize の job は会話の履歴の段階つき要約 1 つ。この agentd は
+;; **会話の profile の札を預かり所から借り**(配置が結んだ binding.account — 手番と同じ資格・API 鍵は置かない)、記録の service の
+;; 古い区間 [from, to](原文の kind だけ・1 区間 ≤ regionByteBudget)を prompt(judgment.summarize-prompt-of の 1 点)に畳み、
+;; Claude Code(claude -p・道具なし・session を残さない)を自分の session で 1 回起こす(CommandStart — verify と同じ process の形・
+;; env に札と家)。答え(JSON)の本文を記録の service の stream(streamKind summary)へ積み、agora の kind summary の行(claim check)を
+;; 書き、次の区間へ進む。全区間(until まで)が済んだら札を返し Ended(result に区間の数)。
+;; 会話の手番ではない: session を起こさない(SessionLaunch を撃たない)・turn-record を作らない・中継へ押さない・郵便を読まない。
+;; 走っている間の観測は行と file から毎拍(R7): 再起動しても process は残り、Running の行の sessionHandle.summarize から組み直す。
+
+(defk read-summary-region [conversation-id from-seq until budget]
+  {:pre [(: conversation-id str) (: from-seq int) (: until int) (: budget int)]
+   :post [(: % (| SummaryRegion RecordUnread None))]}
+  "次の区間の原文を記録の service から前向きに読む(RecordReadSince — since = from の 1 つ前・kinds = 原文の kind・上限 budget に
+   届くか until を越えるか尽きるまで)。区間の切り方は judgment.summary-region-of の 1 点。読めなければ RecordUnread・原文が無ければ None。"
+  (setv events [])
+  (setv since (max 0 (- from-seq 1)))
+  (setv total 0)
+  (setv passed-until False)
+  (while True
+    (<- page (| RecordPage RecordUnread)
+        (RecordReadSince :conversation-id conversation-id :since since :limit RECORD-PAGE-MAX-LIMIT :kinds RECORD-RAW-EVENT-KINDS))
+    (when (isinstance page RecordUnread)
+      (return page))
+    (for [event page.events]
+      (if (<= event.record-seq until)
+          (do
+            (.append events event)
+            (setv total (+ total event.bytes)))
+          (setv passed-until True)))
+    (when (or (is page.next None) passed-until (>= total budget) (not page.events) (<= page.next since))
+      (break))
+    (setv since page.next))
+  (<- region (| SummaryRegion None) (summary-region-of (tuple events) from-seq until budget))
+  region)
+
+
+(defk end-summarize-job [settings job-key job-id result conditions now-ms]
+  {:pre [(: settings AgentdSettings) (: job-key str) (: job-id str) (: result (| dict None)) (: conditions tuple) (: now-ms int)]
+   :post [(: % bool)]}
+  "summarize の終わりの書き: 鍵で読み直した行を Ended(result / conditions)にする。戻り = 着地したか。"
+  (<- fresh (| AcpRow None) (AcpGetRow :key job-key))
+  (when (is fresh None)
+    (<- (LogLine :text f"agentd: agent-job {job-id} (summarize) vanished before Ended"))
+    (return False))
+  (<- status dict (status-object-of fresh))
+  (<- ended dict (ended-status-of status result conditions))
+  (<- wrote (| Written Conflict Refused) (AcpPutStatus :row fresh :status ended))
+  (when (not (isinstance wrote Written))
+    (<- (LogLine :text f"agentd: summarize job {job-id} not ended ({wrote}); retrying next tick")))
+  (isinstance wrote Written))
+
+
+(defk start-summary-region [settings plan region paths started-ms job-key job-namespace regions-done]
+  {:pre [(: settings AgentdSettings) (: plan SummarizePlan) (: region SummaryRegion) (: paths dict) (: started-ms int)
+         (: job-key str) (: job-namespace str) (: regions-done int)]
+   :post [(: % (| InFlightSummarize str))]}
+  "1 区間の要約を起こす: 会話の profile の札を借り(区間ごとに借り直す — 期限を越えない)、原文を prompt に畳んで file に書き、
+   claude -p を自分の session で起こす(env に札と家・待たない)。戻り = memory の状態か、起こせなかった理由の文(札は返してある)。"
+  (<- lease (| LeaseGrant LeaseRefused) (CustodyLeaseBorrow :kind "claude" :account plan.account :purpose f"summarize {plan.job-id}"))
+  (when (isinstance lease LeaseRefused)
+    (return f"custody refused the lease of account {plan.account} for the summarize ({lease.status}: {lease.error})"))
+  (when (is lease.access-token None)
+    (<- (CustodyLeaseRevoke :lease-id lease.lease-id))
+    (return f"custody lent account {plan.account} without an access token"))
+  (<- made bool (FsMakeDirectories :path settings.summarize-runs-dir))
+  (<- text str (summary-region-text region))
+  (<- prompt str (summarize-prompt-of plan.conversation-id region text))
+  (<- (FsWritePrivateText :path (get paths "prompt") :text prompt))
+  (<- argv tuple (summarize-argv-of settings.claude-binary plan.model paths))
+  (<- home str (claude-home-of settings.homes-root plan.account))
+  (<- env tuple (summarize-env-of lease.access-token home))
+  (<- launched (| CommandStarted CommandRefused) (CommandStart :argv argv :cwd settings.summarize-runs-dir :env env))
+  (when (isinstance launched CommandRefused)
+    (<- (CustodyLeaseRevoke :lease-id lease.lease-id))
+    (return (+ f"claude -p could not be started for the summary of {plan.conversation-id} [{region.from-seq}, {region.to-seq}] "
+               f"on node {settings.node-name}: {launched.error}")))
+  (<- (LogLine :text (+ f"agentd: summarize job {plan.job-id} summarizes conversation {plan.conversation-id} "
+                        f"[{region.from-seq}, {region.to-seq}] ({(len region.events)} events, {region.source-bytes} bytes) "
+                        f"with {plan.model} as pid {launched.pid}; out {(get paths "out")}")))
+  (<- (MetricLine :fields {"metric" "summarize-region-started" "agentJobId" plan.job-id "conversationId" plan.conversation-id
+                           "from" region.from-seq "to" region.to-seq "sourceEvents" (len region.events)
+                           "sourceBytes" region.source-bytes "pid" launched.pid}))
+  (<- command InFlightSummarize
+      (in-flight-summarize-of job-key job-namespace plan region paths launched.pid lease.lease-id started-ms regions-done))
+  command)
+
+
+(defk claim-summarize-job [settings state row now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: row AcpRow) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "1 つの Bound の summarize の行を受ける: 欄を summarize-plan-of の 1 点で写し(読めない = 条件 SummarizePlanInvalid で Ended)、
+   要約済みの区間(kind summary の行 — summary-rows-covered-to)の続きから次の区間を記録の service で読み(読めない = 条件
+   SummarizeRegionUnreadable・原文が無い = 結末 regions 0 で Ended・条件なし)、Running + sessionHandle{stream, summarize} を CAS で
+   書き(負けたら次の list へ)、札を借りて claude -p を起こす(起こせない = 条件 SummarizeStartFailed)。memory には
+   InFlightSummarize を置き、観測は observe-summarize。"
+  (setv job-id row.resource-id)
+  (<- planned (| SummarizePlan str) (summarize-plan-of row settings.summarize-region-byte-budget settings.summarize-deadline-seconds))
+  (when (isinstance planned str)
+    (<- (end-job-now settings row CONDITION-SUMMARIZE-PLAN-INVALID planned #() now-ms))
+    (return state))
+  (when (not settings.record-enabled)
+    ;; 原文の正本は記録の service — 配線の無い node は要約を担えない(黙って空の要約を書かない)。
+    (<- (end-job-now settings row CONDITION-SUMMARIZE-REGION-UNREADABLE
+                     f"agent-job {job-id}: node {settings.node-name} has no record service configured (RECORD_SERVICE_URL is unset) — a summarize reads the conversation's record"
+                     #() now-ms))
+    (return state))
+  (<- summaries tuple (AcpConversationSummaries :conversation-id planned.conversation-id))
+  (<- covered (| int None) (summary-rows-covered-to summaries planned.conversation-id))
+  (setv from-seq (if (is covered None) 0 (+ covered 1)))
+  (<- region (| SummaryRegion RecordUnread None) (read-summary-region planned.conversation-id from-seq planned.until planned.region-byte-budget))
+  (when (isinstance region RecordUnread)
+    (<- (end-job-now settings row CONDITION-SUMMARIZE-REGION-UNREADABLE
+                     (+ f"agent-job {job-id}: the record service did not answer the region [{from-seq}, {planned.until}] of "
+                        f"conversation {planned.conversation-id} ({region.status}: {region.error})")
+                     #() now-ms))
+    (return state))
+  (when (is region None)
+    ;; 要約する原文が無い(全部が要約済み・上端が要約済みの区間の中)— 結末 regions 0 で Ended(条件ではない・作り手の冪等の答え)。
+    (<- empty dict (summarize-empty-result-of planned from-seq now-ms))
+    (<- (LogLine :text (+ f"agentd: summarize job {job-id} has nothing to summarize for conversation {planned.conversation-id}: "
+                          f"regions up to {covered} are already summarized and the charter's until is {planned.until}")))
+    (<- (end-summarize-job settings row.key job-id empty #() now-ms))
+    (return state))
+  (<- paths dict (summarize-paths-of settings.summarize-runs-dir job-id region))
+  (<- started-ms int (ClockNowMs))
+  (<- handle dict (summarize-handle-of planned region paths settings.principal started-ms 0))
+  (<- running dict (summarize-running-status-of row handle))
+  (<- claimed (| Written Conflict Refused) (AcpPutStatus :row row :status running))
+  (when (not (isinstance claimed Written))
+    (<- (LogLine :text f"agentd: claim of summarize job {job-id} did not land ({claimed}); will re-list"))
+    (return state))
+  (<- started (| InFlightSummarize str) (start-summary-region settings planned region paths started-ms row.key row.namespace 0))
+  (when (isinstance started str)
+    (<- (end-job-now settings row CONDITION-SUMMARIZE-START-FAILED started #() now-ms))
+    (return state))
+  (<- next AgentdState (with-summarize state started))
+  next)
+
+
+(defk finish-summarize [settings state command result conditions now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: command InFlightSummarize) (: result (| dict None))
+         (: conditions tuple) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "summarize を終える: 借りている札を返し、行を Ended(result / conditions)にし、memory から外す(書けなければ次の拍に撃ち直す)。"
+  (when (is-not command.lease-id None)
+    (<- (CustodyLeaseRevoke :lease-id command.lease-id)))
+  (<- landed bool (end-summarize-job settings command.job-key command.job-id result conditions now-ms))
+  (if landed
+      (do (<- dropped AgentdState (without-summarize state command.job-id)) dropped)
+      (do (<- kept AgentdState (with-summarize state (replace command :lease-id None))) kept)))
+
+
+(defk advance-summary-region [settings state command now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: command InFlightSummarize) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "1 区間の要約の行が書けた後の次の 1 手: 上端まで済んだ → Ended(result に区間の数)/ 次の区間の原文が在る → 札を借り直して
+   起こし、行の sessionHandle をその区間に更新 / 原文が無い → Ended。"
+  (setv done (+ command.regions-done 1))
+  (setv next-from (+ command.to-seq 1))
+  (when (> next-from command.until)
+    (<- result dict (summarize-result-of command done now-ms))
+    (<- finished AgentdState (finish-summarize settings state command result #() now-ms))
+    (return finished))
+  (<- region (| SummaryRegion RecordUnread None) (read-summary-region command.conversation-id next-from command.until command.region-byte-budget))
+  (when (isinstance region RecordUnread)
+    (<- partial dict (summarize-result-of command done now-ms))
+    (<- condition dict (condition-of CONDITION-SUMMARIZE-REGION-UNREADABLE
+                                     (+ f"the record service did not answer the region [{next-from}, {command.until}] of conversation "
+                                        f"{command.conversation-id} ({region.status}: {region.error}); {done} region(s) were written")))
+    (<- finished-unread AgentdState (finish-summarize settings state command partial #(condition) now-ms))
+    (return finished-unread))
+  (when (is region None)
+    (<- result-done dict (summarize-result-of command done now-ms))
+    (<- finished-done AgentdState (finish-summarize settings state command result-done #() now-ms))
+    (return finished-done))
+  ;; 前の区間の札を返してから次の区間の札を借りる(1 認証 1 宿の錠を 2 つ持たない)。
+  (when (is-not command.lease-id None)
+    (<- (CustodyLeaseRevoke :lease-id command.lease-id)))
+  (<- plan SummarizePlan (summarize-plan-of-command command))
+  (<- paths dict (summarize-paths-of settings.summarize-runs-dir command.job-id region))
+  (<- started-ms int (ClockNowMs))
+  (<- started (| InFlightSummarize str) (start-summary-region settings plan region paths started-ms command.job-key command.job-namespace done))
+  (when (isinstance started str)
+    (<- partial-start dict (summarize-result-of command done now-ms))
+    (<- condition-start dict (condition-of CONDITION-SUMMARIZE-START-FAILED started))
+    (<- finished-start AgentdState (finish-summarize settings state (replace command :lease-id None) partial-start #(condition-start) now-ms))
+    (return finished-start))
+  ;; 行の sessionHandle を走っている区間に更新する(拾い直しの材料 — R7)。負けても memory は進む(次の拍の観測は行を読み直す)。
+  (<- fresh (| AcpRow None) (AcpGetRow :key command.job-key))
+  (when (is-not fresh None)
+    (<- handle dict (summarize-handle-of plan region paths settings.principal started-ms done))
+    (<- updated dict (summarize-running-status-of fresh handle))
+    (<- wrote (| Written Conflict Refused) (AcpPutStatus :row fresh :status updated))
+    (when (not (isinstance wrote Written))
+      (<- (LogLine :text f"agentd: summarize job {command.job-id} could not record its next region on the row ({wrote}); memory goes on"))))
+  (<- next AgentdState (with-summarize state started))
+  next)
+
+
+(defk settle-summary-region [settings state command rc now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: command InFlightSummarize) (: rc int) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "区間の claude -p が終わった: rc != 0 か答えが読めない → 条件 SummarizeOutputUnreadable(log の path を理由に)で Ended /
+   答えの本文を記録の service の stream(streamKind summary)へ積み、kind summary の行(claim check)を書き、次の区間へ。"
+  (setv done command.regions-done)
+  (when (!= rc 0)
+    (<- result-rc dict (summarize-result-of command done now-ms))
+    (<- condition-rc dict (condition-of CONDITION-SUMMARIZE-OUTPUT-UNREADABLE
+                                        f"claude -p exited rc={rc} for [{command.from-seq}, {command.to-seq}] of conversation {command.conversation-id}; log {command.log-path}"))
+    (<- finished-rc AgentdState (finish-summarize settings state command result-rc #(condition-rc) now-ms))
+    (return finished-rc))
+  (<- out (| str None) (FsReadText :path command.out-path))
+  (<- parsed (| SummaryOutcome str) (summarize-output-of out))
+  (when (isinstance parsed str)
+    (<- result-out dict (summarize-result-of command done now-ms))
+    (<- condition-out dict (condition-of CONDITION-SUMMARIZE-OUTPUT-UNREADABLE
+                                         f"{parsed} — [{command.from-seq}, {command.to-seq}] of conversation {command.conversation-id}; out {command.out-path}; log {command.log-path}"))
+    (<- finished-out AgentdState (finish-summarize settings state command result-out #(condition-out) now-ms))
+    (return finished-out))
+  (<- at int (ClockNowMs))
+  (setv model (if (is parsed.model None) command.model parsed.model))
+  (<- body dict (summary-body-of parsed.text at model))
+  (<- stream-id str (summary-stream-id-of command.from-seq command.to-seq))
+  (<- batch RecordBatch (summary-batch-of command.conversation-id stream-id body command.started-ms settings.node-name command.profile))
+  (<- appended (| RecordAppended RecordConflicted RecordUnsent) (RecordAppend :batch batch))
+  (when (isinstance appended RecordUnsent)
+    (<- result-unsent dict (summarize-result-of command done now-ms))
+    (<- condition-unsent dict (condition-of CONDITION-SUMMARY-UNWRITABLE
+                                            f"the record service did not accept the summary of [{command.from-seq}, {command.to-seq}] of conversation {command.conversation-id} ({appended.status}: {appended.error})"))
+    (<- finished-unsent AgentdState (finish-summarize settings state command result-unsent #(condition-unsent) now-ms))
+    (return finished-unsent))
+  (when (isinstance appended RecordConflicted)
+    ;; 同じ鍵(会話・stream・producerSeq 0)で違う本文 = 前の走が同じ区間に別の要約を積んでいる。その本文が正(冪等の規則)—
+    ;; 行が在れば済んでいる扱いで進む(下の create が既在を名乗る)。
+    (<- (LogLine :text f"agentd: summarize job {command.job-id}: the record service already holds another summary body for {stream-id}; keeping the stored one")))
+  (<- material bytes (record-body-bytes-of body))
+  (<- record-ref str (record-ref-of command.conversation-id stream-id))
+  (<- spec dict (summary-spec-of command record-ref (len material) (.hexdigest (hashlib.sha256 material))))
+  (<- row-id str (summary-row-id-of command.conversation-id command.to-seq))
+  (<- created (| Written Conflict Refused) (AcpCreate :namespace AGORA-KINDS-NAMESPACE :kind SUMMARY-KIND :resource-id row-id :spec spec))
+  (cond
+    (isinstance created Written)
+    (do
+      (<- fresh (| AcpRow None) (AcpGetRow :key f"{AGORA-KINDS-NAMESPACE}:{SUMMARY-KIND}:{row-id}"))
+      (when (is-not fresh None)
+        (<- status dict (summary-status-of model at parsed.usage))
+        (<- wrote (| Written Conflict Refused) (AcpPutStatus :row fresh :status status))
+        (when (not (isinstance wrote Written))
+          (<- (LogLine :text f"agentd: summary row {row-id} created but its status (model / at / usage) was not written ({wrote})"))))
+      (<- (LogLine :text (+ f"agentd: summarize job {command.job-id} wrote summary {row-id} for conversation {command.conversation-id} "
+                            f"[{command.from-seq}, {command.to-seq}]: {(len material)} bytes from {command.source-events} events / {command.source-bytes} bytes")))
+      (<- (MetricLine :fields {"metric" "summary-written" "agentJobId" command.job-id "conversationId" command.conversation-id
+                               "from" command.from-seq "to" command.to-seq "bytes" (len material)
+                               "sourceEvents" command.source-events "sourceBytes" command.source-bytes "model" model})))
+    (isinstance created Refused)
+    ;; 既在(identity = 会話 × to)は済んでいる扱い(作り手の冪等)— それ以外の断りは条件で閉じる。
+    (if (in "already exists" created.error)
+        (<- (LogLine :text f"agentd: summary row {row-id} already exists; the region [{command.from-seq}, {command.to-seq}] counts as written"))
+        (do
+          (<- result-refused dict (summarize-result-of command done now-ms))
+          (<- condition-refused dict (condition-of CONDITION-SUMMARY-UNWRITABLE
+                                                   f"ACP refused the summary row {row-id} ({created.status}: {created.error})"))
+          (<- finished-refused AgentdState (finish-summarize settings state command result-refused #(condition-refused) now-ms))
+          (return finished-refused)))
+    True
+    (<- (LogLine :text f"agentd: summary row {row-id} create answered {created}; the region counts as written")))
+  (<- advanced AgentdState (advance-summary-region settings state command now-ms))
+  advanced)
+
+
+(defk observe-summarize [settings state command now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: command InFlightSummarize) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "走らせている 1 つの summarize の拍: 現況(CommandProbe — rc の file / pid の生死)→ 次の 1 手(judgment.verify-step-of の 1 点 —
+   verify の命令と同じ閉語彙)。ended = 答えを読んで要約の行を書き次の区間へ(settle-summary-region)/ lost = 条件
+   SummarizeCommandLost / timed-out = 止めて(CommandStop)条件 SummarizeDeadlineExceeded / observe = memory に置く。"
+  (setv current command)
+  (when (is current.pid None)
+    (<- pid-text (| str None) (FsReadText :path current.pid-path))
+    (<- pid (| int None) (pid-of-text pid-text))
+    (setv current (replace current :pid pid)))
+  (<- probe (| CommandRunning CommandExited CommandGone)
+      (CommandProbe :pid current.pid :pid-path current.pid-path :rc-path current.rc-path))
+  (<- step str (verify-step-of probe current.started-ms now-ms current.deadline-seconds))
+  (cond
+    (and (= step VERIFY-STEP-ENDED) (isinstance probe CommandExited))
+    (do
+      (<- settled AgentdState (settle-summary-region settings state current probe.rc now-ms))
+      settled)
+    (= step VERIFY-STEP-LOST)
+    (do
+      (<- result-lost dict (summarize-result-of current current.regions-done now-ms))
+      (<- condition-lost dict (condition-of CONDITION-SUMMARIZE-COMMAND-LOST
+                                            (+ f"claude -p (pid {current.pid}) for [{current.from-seq}, {current.to-seq}] of conversation {current.conversation-id} "
+                                               f"left no exit code in {current.rc-path} and is not running on node {settings.node-name}")))
+      (<- (LogLine :text f"agentd: summarize job {current.job-id} lost its process — {(get condition-lost "reason")}"))
+      (<- finished-lost AgentdState (finish-summarize settings state current result-lost #(condition-lost) now-ms))
+      finished-lost)
+    (= step VERIFY-STEP-TIMED-OUT)
+    (do
+      (when (is-not current.pid None)
+        (<- (CommandStop :pid current.pid)))
+      (<- result-timed dict (summarize-result-of current current.regions-done now-ms))
+      (<- condition-timed dict (condition-of CONDITION-SUMMARIZE-DEADLINE-EXCEEDED
+                                             (+ f"claude -p for [{current.from-seq}, {current.to-seq}] of conversation {current.conversation-id} ran past its deadline "
+                                                f"of {current.deadline-seconds} s on node {settings.node-name}; stopped (SIGTERM)")))
+      (<- (LogLine :text f"agentd: summarize job {current.job-id} stopped — {(get condition-timed "reason")}"))
+      (<- finished-timed AgentdState (finish-summarize settings state current result-timed #(condition-timed) now-ms))
+      finished-timed)
+    True
+    (do (<- kept AgentdState (with-summarize state current)) kept)))
+
+
+(defk recover-summarize [settings state row now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: row AcpRow) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "自分が持つ Running の summarize の行(memory に無い — 再起動後)の続きを行と file から決める(R7): sessionHandle.summarize から
+   組み直し(組めない = 条件 SummarizeCommandLost で Ended)、pid の file を読み、その拍の観測(observe-summarize)へ。process は
+   起こし直さない・札は次の区間で借り直す。"
+  (<- recovered (| InFlightSummarize None) (summarize-of-handle row settings.summarize-deadline-seconds))
+  (when (is recovered None)
+    (<- (end-job-now settings row CONDITION-SUMMARIZE-COMMAND-LOST
+                     f"agent-job {row.resource-id} is Running as a summarize but its sessionHandle carries no summarize plan to recover from"
+                     #() now-ms))
+    (return state))
+  (<- pid-text (| str None) (FsReadText :path recovered.pid-path))
+  (<- pid (| int None) (pid-of-text pid-text))
+  (setv command (replace recovered :pid pid))
+  (<- (LogLine :text (+ f"agentd: recovered running summarize job {row.resource-id} of conversation {command.conversation-id} "
+                        f"[{command.from-seq}, {command.to-seq}] from its row (pid {pid})")))
+  (<- observed AgentdState (observe-summarize settings state command now-ms))
+  observed)
+
+
+(defk withdraw-summarize [settings state command row now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: command InFlightSummarize) (: row AcpRow) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "取り下げられた自分の summarize の腕: process を止め(CommandStop)、札を返し、agent-job に condition Interrupted(phase は書かない —
+   Withdrawn のまま・書き手は作った側)、観測をやめる。"
+  (when (is-not command.pid None)
+    (<- (CommandStop :pid command.pid)))
+  (when (is-not command.lease-id None)
+    (<- (CustodyLeaseRevoke :lease-id command.lease-id)))
+  (<- fresh (| AcpRow None) (AcpGetRow :key row.key))
+  (setv target (if (is fresh None) row fresh))
+  (<- status dict (status-object-of target))
+  (<- interrupted dict (interrupted-status-of status))
+  (<- wrote (| Written Conflict Refused) (AcpPutStatus :row target :status interrupted))
+  (when (not (isinstance wrote Written))
+    (<- (LogLine :text f"agentd: Interrupted condition of summarize job {command.job-id} not written ({wrote})")))
+  (<- (LogLine :text f"agentd: summarize job {command.job-id} withdrawn; claude -p (pid {command.pid}) stopped"))
+  (<- dropped AgentdState (without-summarize state command.job-id))
+  dropped)
+
+
+;; ---------------------------------------------------------------------------
 ;; verify の命令(段 12 lane 12a・agora-redesign #230)— 会話の手番ではない job の腕
 ;; ---------------------------------------------------------------------------
 ;;
@@ -2270,7 +2700,8 @@
   (<- running tuple (job-rows-running-on rows settings.node-name settings.principal))
   (<- known-jobs set (in-flight-ids withdrawn-handled))
   (<- known-commands set (in-flight-command-ids withdrawn-handled))
-  (setv known (| known-jobs known-commands))
+  (<- known-summaries set (in-flight-summarize-ids withdrawn-handled))
+  (setv known (| known-jobs known-commands known-summaries))
   (setv previously-deferred withdrawn-handled.deferred)
   (setv current (replace withdrawn-handled :deferred #()))
   (for [row bound]
@@ -2280,9 +2711,14 @@
     (when (not-in row.resource-id known)
       ;; 段 12 lane 12a: verify の Running は行と file から組み直す(session は無い)。
       (<- kind str (job-kind-of row))
-      (if (= kind CHARTER-KIND-VERIFY)
-          (<- current AgentdState (recover-command settings current row now-ms))
-          (<- current AgentdState (recover-job settings current row now-ms)))))
+      (cond
+        (= kind CHARTER-KIND-VERIFY)
+        (<- current AgentdState (recover-command settings current row now-ms))
+        ;; 段 12 lane 12j: summarize の Running も行と file から組み直す(session は無い・札は次の区間で借り直す)。
+        (= kind CHARTER-KIND-SUMMARIZE)
+        (<- current AgentdState (recover-summarize settings current row now-ms))
+        True
+        (<- current AgentdState (recover-job settings current row now-ms)))))
   (replace current :last-resync-ms now-ms))
 
 
@@ -2341,6 +2777,13 @@
       (setv current observed-command)
       (except [e IO-FAILURES]
         (<- (LogLine :text f"agentd: verify job {command.job-id} tick failed: {(. (type e) __name__)}: {e}")))))
+  ;; 段 12 lane 12j: 走らせている summarize(会話の履歴の段階つき要約)の観測 — 区間ごとの process を行と file から毎拍。
+  (for [command (list current.summaries)]
+    (try
+      (<- observed-summary AgentdState (observe-summarize settings current command now-ms))
+      (setv current observed-summary)
+      (except [e IO-FAILURES]
+        (<- (LogLine :text f"agentd: summarize job {command.job-id} tick failed: {(. (type e) __name__)}: {e}")))))
   ;; 段 9f lane 9f-2: この拍で spool に置いた本文(と前の拍に送れなかった残り)を会話の記録の service へ — 拍の終わりの 1 点。
   (when settings.record-enabled
     (<- flush bool (record-flush-due current now-ms settings))
