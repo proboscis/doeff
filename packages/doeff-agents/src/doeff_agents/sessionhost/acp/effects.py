@@ -348,6 +348,12 @@ RECORD_CREATE_GIVEN_UP: RecordCreateState = "given-up"
 #: docs/contracts/messaging.json interrupts — ACP Acp.App.Agent.AgentJob の綴りの写し)。
 #: interrupts = Messaging が載せた、まだ渡していない Message の id の並び / interruptsDelivered =
 #: この手番で agentd が CLI へ渡した id(append-only)。渡したら同じ 1 回の書きで前から消し後ろへ足す。
+#: 段 12 lane 12j(agora-redesign #321 = #317 の k8s 規則 1 後半・契約 scheduling.json binding.fields): 結びの node の欄 —
+#: node = 機体の名前(kind node の spec.name・表示と旧い結びの読み手のため)/ nodeRow = 結んだ node の**行の id**(kind node の
+#: resource id・12k の L1042 便 1 から配置が書く)。agentd の claim と取り下げの照合は nodeRow が在ればそれと自分の生きている行の id
+#: (AgentdState.node_row_id)を比べ、無い結び(この欄が生まれる前の書き)だけ名前に落ちる — 判断は judgment.binding-names-me の 1 点。
+BINDING_NODE_KEY: str = "node"
+BINDING_NODE_ROW_KEY: str = "nodeRow"
 JOB_INTERRUPTS_KEY: str = "interrupts"
 JOB_INTERRUPTS_DELIVERED_KEY: str = "interruptsDelivered"
 #: 段 10 lane 10n(agora-redesign #93): 割り込みの観測の 2 欄(書き手 agentd・additive・append-only の map)。
@@ -1768,6 +1774,9 @@ class AgentdState:
     #: 段 12 lane 12j(agora-redesign #233): 走らせている summarize(memory の写し — 正本は行の sessionHandle.summarize と
     #: 結末の file。再起動で消えても Running の行から組み直す: agentd.recover-summarize)。
     summaries: tuple[InFlightSummarize, ...] = ()
+    #: 段 12 lane 12j(agora-redesign #321): 自分の**生きている** node の行の id(join の拍が live_row の判断で解いた行・作った行の
+    #: resource id)。None = まだ参加していない(結びの nodeRow は照合できない = その結びは受けない)。再起動で消えても次の参加で戻る。
+    node_row_id: str | None = None
 
 
 # ------------------------------------------------------------------ 要求(ACP)

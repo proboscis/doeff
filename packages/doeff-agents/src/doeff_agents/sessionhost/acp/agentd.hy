@@ -543,7 +543,8 @@
               (<- (LogLine :text (+ f"agentd: registered node row {settings.node-name !r} from the declaration "
                                     f"(capacity {settings.node-capacity}, streamCapability {settings.stream-capability}"
                                     (if (= resource-id settings.node-name) "" f", re-joined as {resource-id !r}") ")")))
-              (replace next :node-missing-logged False))
+              ;; 段 12 lane 12j(#321): 作った行の id = 自分の生きている行の id(結びの nodeRow の照合の相手)。
+              (replace next :node-missing-logged False :node-row-id resource-id))
             (do
               (setv why (if (isinstance created Refused)
                             f"{created.status}: {created.error}"
@@ -551,7 +552,8 @@
               (when (not state.node-missing-logged)
                 (<- (LogLine :text (+ f"agentd: node row {settings.node-name !r} is not in ACP and could not be "
                                       f"registered ({why}); re-trying each heartbeat"))))
-              (replace next :node-missing-logged True))))
+              ;; 行が無く作れてもいない拍は生きている行の id を持たない(nodeRow の結びは照合できない = 受けない)。
+              (replace next :node-missing-logged True :node-row-id None))))
       (do
         (<- declared dict (node-spec-declared node.spec settings))
         (setv row node)
@@ -582,7 +584,8 @@
         (<- observations list (session-observations-of kept))
         (<- transcripts list (observe-transcripts settings views observations))
         (<- (write-node-observations settings row.key observations transcripts))
-        (replace next :node-missing-logged False :node-spec-refusal-logged spec-refusal-logged))))
+        ;; 段 12 lane 12j(#321): 在った行(R43 の判断で解いた生きている行)の id = 自分の生きている行の id。
+        (replace next :node-missing-logged False :node-spec-refusal-logged spec-refusal-logged :node-row-id node.resource-id))))
 
 
 (defk write-node-observations [settings key sessions transcripts]
@@ -1159,7 +1162,7 @@
   (setv job-id row.resource-id)
   (setv subject (str (.get row.spec "subject" job-id)))
   (<- candidate (| str None)
-      (warm-candidate-of plan rows subject settings.node-name settings.principal))
+      (warm-candidate-of plan rows subject settings.node-name state.node-row-id settings.principal))
   (setv view None)
   (when (is-not candidate None)
     (<- looked (| SessionView None) (SessionGet :session-id candidate))
@@ -2186,7 +2189,7 @@
    interrupt-job の腕へ。処理した job の id を memory に置いて同じ行に撃ち直さない。
    session は片付けない(取り下げは中断の合図 — 温かい session の寿命は sessions-to-retire)。
    agent-job の phase は書かない。"
-  (<- withdrawn tuple (withdrawn-rows-of rows settings.node-name settings.principal))
+  (<- withdrawn tuple (withdrawn-rows-of rows settings.node-name state.node-row-id settings.principal))
   (setv current state)
   (for [row withdrawn]
     (setv job-id row.resource-id)
@@ -2197,7 +2200,7 @@
           (setv current interrupted)))
       (setv current (replace current :retired (+ current.retired #(job-id))))))
   ;; 段 12 lane 12a: verify の命令の取り下げ(行は sessionId を持たないので withdrawn-rows-of の外)— process を止める。
-  (<- withdrawn-commands tuple (withdrawn-command-rows-of rows settings.node-name settings.principal))
+  (<- withdrawn-commands tuple (withdrawn-command-rows-of rows settings.node-name state.node-row-id settings.principal))
   (for [row withdrawn-commands]
     (setv job-id row.resource-id)
     (when (not-in job-id current.retired)
@@ -2207,7 +2210,7 @@
           (setv current stopped)))
       (setv current (replace current :retired (+ current.retired #(job-id))))))
   ;; 段 12 lane 12j: summarize の取り下げ — process を止め、札を返し、Interrupted。
-  (<- withdrawn-summaries tuple (withdrawn-summarize-rows-of rows settings.node-name settings.principal))
+  (<- withdrawn-summaries tuple (withdrawn-summarize-rows-of rows settings.node-name state.node-row-id settings.principal))
   (for [row withdrawn-summaries]
     (setv job-id row.resource-id)
     (when (not-in job-id current.retired)
@@ -2926,8 +2929,10 @@
   (<- refreshed AgentdState (refresh-rows state mode))
   (setv rows refreshed.rows)
   (<- withdrawn-handled AgentdState (withdraw-jobs settings refreshed rows now-ms))
-  (<- bound tuple (job-rows-bound-to rows settings.node-name))
-  (<- running tuple (job-rows-running-on rows settings.node-name settings.principal))
+  ;; 段 12 lane 12j(agora-redesign #321): 結びは自分の生きている行の id(join の拍が置く refreshed.node-row-id)で照合する —
+  ;; nodeRow を持つ結びは名前が同じでも別の化身の行なら受けない(判断は judgment.binding-names-me の 1 点)。
+  (<- bound tuple (job-rows-bound-to rows settings.node-name refreshed.node-row-id))
+  (<- running tuple (job-rows-running-on rows settings.node-name refreshed.node-row-id settings.principal))
   (<- known-jobs set (in-flight-ids withdrawn-handled))
   (<- known-commands set (in-flight-command-ids withdrawn-handled))
   (<- known-summaries set (in-flight-summarize-ids withdrawn-handled))

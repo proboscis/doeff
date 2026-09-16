@@ -106,10 +106,14 @@ def bound_job(
     work_dir: str = "/work",
     agent_type: str = "claude",
     escalation_seconds: int | None = None,
+    node_row: str | None = None,
 ) -> AcpRow:
     binding: JSONObject = {"node": NODE, "profile": "personal"}
     if account is not None:
         binding["account"] = account
+    if node_row is not None:
+        # 段 12 lane 12j(agora-redesign #321): 結んだ node の行の id(配置が 12k の便 1 から書く)。
+        binding["nodeRow"] = node_row
     charter: JSONObject = {
         # charter の id は agentd が読まない(session の id は agentd が鋳造する — 2026-09-12 追補 2)。
         # 読んだら検が割れるよう、job の id とも鋳造の綴り(sid-<n>)とも違う綴りにする。
@@ -987,12 +991,12 @@ def test_node_spec_of_and_node_spec_declared_are_one_judgment() -> None:
 
 def test_bound_to_me_is_phase_bound_and_binding_node() -> None:
     mine = bound_job("a", inputs=[])
-    assert run(judgment.bound_to_me(mine, NODE)) is True
-    assert run(judgment.bound_to_me(mine, "other")) is False
+    assert run(judgment.bound_to_me(mine, NODE, NODE)) is True
+    assert run(judgment.bound_to_me(mine, "other", "other")) is False
     running = bound_job("b", inputs=[])
     assert running.status is not None
     running.status["phase"] = PHASE_RUNNING
-    assert run(judgment.bound_to_me(running, NODE)) is False
+    assert run(judgment.bound_to_me(running, NODE, NODE)) is False
     unbound = row(
         AGENT_JOB_NAMESPACE,
         AGENT_JOB_KIND,
@@ -1000,7 +1004,37 @@ def test_bound_to_me_is_phase_bound_and_binding_node() -> None:
         {"subject": "c", "inputs": []},
         {"phase": PHASE_BOUND},
     )
-    assert run(judgment.bound_to_me(unbound, NODE)) is False
+    assert run(judgment.bound_to_me(unbound, NODE, NODE)) is False
+
+
+def test_a_binding_that_names_another_incarnation_by_row_id_is_not_mine_even_with_my_name() -> None:
+    """段 12 lane 12j(agora-redesign #321 = #317 の k8s 規則 1 後半): 結びは行の id(binding.nodeRow・12k の便 1 から配置が
+    書く)で照合する — 名前が同じでも別の化身の行(退役した行・旧い agentd)に結ばれた手番は自分ではない(claim も取り下げも)。
+    nodeRow の無い結び(この欄が生まれる前の書き)だけ名前に落ちる。まだ参加していない(id が None)拍は nodeRow の結びを受けない。"""
+    # 判断の純関数(binding-names-me の 1 点)
+    assert run(judgment.binding_names_me({"node": NODE, "nodeRow": f"{NODE}-2"}, NODE, f"{NODE}-2")) is True
+    assert run(judgment.binding_names_me({"node": NODE, "nodeRow": f"{NODE}-9"}, NODE, f"{NODE}-2")) is False
+    assert run(judgment.binding_names_me({"node": NODE, "nodeRow": f"{NODE}-2"}, NODE, None)) is False
+    assert run(judgment.binding_names_me({"node": NODE}, NODE, f"{NODE}-2")) is True
+    assert run(judgment.binding_names_me({"node": "other"}, NODE, f"{NODE}-2")) is False
+    assert run(judgment.binding_names_me(None, NODE, NODE)) is False
+    other = bound_job("x", inputs=[], node_row=f"{NODE}-9")
+    assert run(judgment.bound_to_me(other, NODE, NODE)) is False
+    assert run(judgment.running_on_me(replace(other, status={**(other.status or {}), "phase": PHASE_RUNNING, "sessionHandle": {"sessionId": "s", "stream": {"owner": "agentd"}}}), NODE, NODE, "agentd")) is False
+    assert run(judgment.handle_owned_by(replace(other, status={**(other.status or {}), "sessionHandle": {"sessionId": "s", "stream": {"owner": "agentd"}}}), NODE, NODE, "agentd")) is None
+    # 世界: 参加の拍が自分の行の id(= NODE・World の行の resource id)を state に置き、別の化身に結ばれた job は claim しない
+    world = World()
+    world.tick()
+    assert world.state.node_row_id == NODE
+    world.acp.put_row(message("m-o", "for another incarnation"))
+    world.acp.put_row(bound_job("j-other", inputs=["m-o"], node_row=f"{NODE}-9"))
+    world.acp.put_row(message("m-m", "for me"))
+    world.acp.put_row(bound_job("j-mine", inputs=["m-m"], node_row=NODE))
+    world.tick(advance_ms=1_000)
+    assert [job.job_id for job in world.state.jobs] == ["j-mine"]
+    assert world.job("j-other").status is not None and world.job("j-other").status["phase"] == PHASE_BOUND
+    assert world.job("j-mine").status is not None and world.job("j-mine").status["phase"] == PHASE_RUNNING
+    assert len(world.sessions.launches) == 1
 
 
 @pytest.mark.parametrize(
@@ -1402,10 +1436,10 @@ def _view(
 
 def test_running_on_me_needs_phase_node_and_stream_owner() -> None:
     mine = running_job("a")
-    assert run(judgment.running_on_me(mine, NODE, "agentd")) is True
-    assert run(judgment.running_on_me(mine, "other", "agentd")) is False
-    assert run(judgment.running_on_me(mine, NODE, "someone")) is False
-    assert run(judgment.running_on_me(bound_job("b", inputs=[]), NODE, "agentd")) is False
+    assert run(judgment.running_on_me(mine, NODE, NODE, "agentd")) is True
+    assert run(judgment.running_on_me(mine, "other", "other", "agentd")) is False
+    assert run(judgment.running_on_me(mine, NODE, NODE, "someone")) is False
+    assert run(judgment.running_on_me(bound_job("b", inputs=[]), NODE, NODE, "agentd")) is False
 
 
 # ---------------------------------------------------------------- 温かい session(段 2・設計 17.4・lane 2b-3)
