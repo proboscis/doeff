@@ -423,6 +423,8 @@
   ignored-settings-of
   next-arm-for-job
   conversation-recorded-of
+  fresh-start-asks-record
+  fresh-start-arm-of
   compact-at-of
   compaction-due
   conversation-opener-of
@@ -963,9 +965,9 @@
           (<- (LogLine :text (+ f"agentd: job {job-id} rehydrates conversation {subject} "
                                      (if fold.thin "thinly from ACP headlines " "from the record service ")
                                      f"({fold.summary-regions} summaries, {fold.kept-turns} turns kept, {fold.thinned-turns} thinned, {fold.dropped-turns} dropped"
+                                     (if (is fold.dropped-headline None) "" " into a headline")
                                      (if (> fold.dropped-summaries 0) f", {fold.dropped-summaries} summaries dropped" "")
                                      (if (> fold.summarized-mails 0) f", {fold.summarized-mails} mails left to the summaries" "")
-                                     (if (is fold.dropped-headline None) "" " into a headline")
                                      (if (> fold.cut-bytes 0) f", newest turn cut by {fold.cut-bytes} bytes" "")
                                      f", {fold.size-bytes} bytes, history read {(- read-ended read-started)} ms)")))
           ;; 段 11 lane 11v(agora-redesign #55・R34): 落とした区間の見出しは log にも 1 行(受入の証拠 = 最初の本文に入った行)。
@@ -1002,6 +1004,21 @@
    畳み(first-turn-carries-inputs)、それ以外は after-start が send する。"
   (setv job-id row.resource-id)
   (setv subject (str (.get row.spec "subject" job-id)))
+  ;; 段 12 lane 12j 追補 4 / 7(agora-redesign #233 / #176・実弾 2026-09-16 17:29 aj-545JP9E9ZMZHPM11ZW99KM51AC): 候補が無い = 新しい会話、ではない。
+  ;; 宣言を変えた手番は Messaging の lineageFor(段 12 lane 12k)が predecessor を空にし、前の手番の agent-job の行は終了 300 s で回収されるので、
+  ;; 記録の在る会話が「候補なし → launch」で全履歴を失って始まった。launch で claim が着いた job だけ、記録の service に「原文の出来事が
+  ;; 1 つでも在るか」を 1 読み(limit 1)で問い、在れば rehydrate に解く(判断は judgment.conversation-recorded-of / fresh-start-arm-of の 1 点ずつ)。
+  (setv probe None)
+  (<- asks bool (fresh-start-asks-record choice settings))
+  (when asks
+    (<- asked (| RecordPage RecordUnread) (RecordReadSince :conversation-id subject :since 0 :limit 1 :kinds RECORD-RAW-EVENT-KINDS))
+    (setv probe asked))
+  (<- recorded bool (conversation-recorded-of probe))
+  (<- resolved ArmChoice (fresh-start-arm-of choice recorded))
+  (when (!= resolved.arm choice.arm)
+    (<- (LogLine :text (+ f"agentd: job {job-id} of conversation {subject} has no session to continue, but the record service "
+                          "holds the conversation's turns — rehydrating from the record instead of launching without history"))))
+  (setv choice resolved)
   (<- mail tuple (mail-of settings row))
   (setv bodies (get mail 0))
   ;; 段 10 lane 10o: 郵便の添付(bodies と同じ並び)。畳む腕は 1 手番目に、送る腕は SessionSend に載る。
@@ -1150,19 +1167,9 @@
     (<- percent (| int None) (context-percent-for state candidate))
     (<- due bool (compaction-due compact-at percent))
     (setv compact due))
-  ;; 段 12 lane 12j 追補 4(agora-redesign #233 / #176・実弾 2026-09-16 17:29 aj-545JP9E9ZMZHPM11ZW99KM51AC): 候補が無い = 新しい会話、ではない。
-  ;; 宣言を変えた手番は Messaging の lineageFor(段 12 lane 12k)が predecessor を空にし、前の手番の agent-job の行は終了 300 s で回収されるので、
-  ;; 記録の在る会話が「候補なし → launch」で全履歴を失って始まった。候補が無く記録の service が配線されている拍だけ、
-  ;; 「原文の出来事が 1 つでも在るか」を 1 読み(limit 1)で問い、判断は judgment.conversation-recorded-of / next-arm-for-job の 1 点。
-  (setv probe None)
-  (when (and (is candidate None) settings.record-enabled)
-    (<- asked (| RecordPage RecordUnread) (RecordReadSince :conversation-id subject :since 0 :limit 1 :kinds RECORD-RAW-EVENT-KINDS))
-    (setv probe asked))
-  (<- recorded bool (conversation-recorded-of probe))
-  (when (and (is candidate None) recorded)
-    (<- (LogLine :text (+ f"agentd: job {job-id} of conversation {subject} has no session to continue, but the record service "
-                          "holds the conversation's turns — rehydrating from the record instead of launching without history"))))
-  (<- choice ArmChoice (next-arm-for-job candidate view home effort compact recorded))
+  ;; 段 12 lane 12j 追補 4 / 7(agora-redesign #233 / #176): 候補が無い job は launch(新しい始まり)で claim し、記録の在否の問い
+  ;; (launch → rehydrate の解き)は claim が着いた後の start-claimed で 1 度だけ(Conflict のたびに読みと log を繰り返さない)。
+  (<- choice ArmChoice (next-arm-for-job candidate view home effort compact))
   (when choice.compacts
     (<- (LogLine :text (+ f"agentd: job {job-id} of conversation {subject} starts compacted — the last turn of session "
                           f"{candidate} used {(context-percent-for state candidate)}% of the context window, "
