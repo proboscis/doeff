@@ -86,8 +86,20 @@ from doeff_agents.sessionhost.acp.effects import (
     Escalated,
     EventWindow,
     FsCanonicalPath,
+    CommandExited,
+    CommandGone,
+    CommandProbe,
+    CommandProbeOutcome,
+    CommandRefused,
+    CommandRunning,
+    CommandStart,
+    CommandStartOutcome,
+    CommandStarted,
+    CommandStop,
     FsDirectoryExists,
+    FsFileExists,
     FsMakeDirectories,
+    FsReadText,
     FsFileSize,
     FsWritePrivateText,
     Interjected,
@@ -1070,11 +1082,26 @@ def mint_ulid(now_ms: int, entropy: bytes) -> str:
 
 class LocalIo:
     """時計・計器(stdout の JSON 行)・log(stderr)・file の読み書き・id の鋳造・この機体の
-    資格の残量(agentcli の usage の subprocess)。"""
+    資格の残量(agentcli の usage の subprocess)・verify の命令の process(段 12 lane 12a)。"""
+
+    def __init__(self) -> None:
+        #: 自分が起こした verify の命令の process(pid → Popen)— probe で poll()(reap)する。再起動で消えた分は
+        #: pid の file から読んだ pid を kill -0 で問う(zombie にはならない — 親は init)。
+        self._commands: dict[int, subprocess.Popen[bytes]] = {}
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(effect, MintId):
             return Resume(k, mint_ulid(int(time.time() * 1000), os.urandom(10)))
+        if isinstance(effect, CommandStart):
+            return Resume(k, self._start_command(effect))
+        if isinstance(effect, CommandProbe):
+            return Resume(k, self._probe_command(effect))
+        if isinstance(effect, CommandStop):
+            return Resume(k, stop_command(effect.pid))
+        if isinstance(effect, FsFileExists):
+            return Resume(k, os.path.isfile(effect.path))
+        if isinstance(effect, FsReadText):
+            return Resume(k, read_small_text(effect.path))
         if isinstance(effect, OwnershipProbe):
             return Resume(k, probe_ownership(effect.proof))
         if isinstance(effect, ListProfileHomes):
@@ -1123,6 +1150,108 @@ class LocalIo:
             _write_private(effect.path, effect.text)
             return None
         return read_transcript(effect.path, effect.offset)
+
+
+    def _start_command(self, effect: CommandStart) -> CommandStartOutcome:
+        """verify の命令を自分の session で起こし、待たずに戻る(段 12 lane 12a)。stdin は閉じる・stdout / stderr は
+        argv の中の sh が log の file へ向ける(ここは何も繋がない — agentd の stdout を汚さない)。"""
+        try:
+            proc = subprocess.Popen(  # noqa: S603 — argv は judgment.verify-argv-of の 1 点が組んだ列(文字列の shell 化はしない)
+                list(effect.argv),
+                cwd=effect.cwd or None,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+                close_fds=True,
+            )
+        except (OSError, ValueError) as exc:
+            return CommandRefused(error=f"{type(exc).__name__}: {exc}")
+        self._commands[proc.pid] = proc
+        return CommandStarted(pid=proc.pid)
+
+    def _probe_command(self, effect: CommandProbe) -> CommandProbeOutcome:
+        """rc の file が在れば Exited、無ければ pid の生死(自分の子は poll() で reap・拾い直した pid は kill -0)。
+        pid が読めない(None)間は pid の file を読み直し、それでも無ければ Running とも Gone とも言えないので
+        Running(pid 0)を返す — 結末は rc の file が決める(期限は agentd の側が数える)。"""
+        rc = rc_of_file(effect.rc_path)
+        if rc is not None:
+            if effect.pid is not None:
+                proc = self._commands.pop(effect.pid, None)
+                if proc is not None:
+                    with contextlib.suppress(OSError):
+                        proc.wait(timeout=0.5)
+            return CommandExited(rc=rc)
+        pid = effect.pid
+        if pid is None:
+            pid = pid_of_file(effect.pid_path)
+        if pid is None:
+            return CommandRunning(pid=0)
+        proc = self._commands.get(pid)
+        if proc is not None:
+            if proc.poll() is None:
+                return CommandRunning(pid=pid)
+            # 子は終わったが rc の file が無い(sh が書く前に死んだ)— 結末を残さずに消えた
+            self._commands.pop(pid, None)
+            return CommandGone()
+        return CommandRunning(pid=pid) if pid_alive(pid) else CommandGone()
+
+
+def pid_alive(pid: int) -> bool:
+    """pid が生きているか(kill -0・EPERM = 生きている・ESRCH = 居ない)。"""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def stop_command(pid: int) -> bool:
+    """verify の命令の process group へ SIGTERM(段 12 lane 12a — 期限超過・取り下げ)。合図を送れたか。"""
+    import signal
+
+    if pid <= 0:
+        return False
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            return False
+    return True
+
+
+def read_small_text(path: str) -> str | None:
+    """小さな text の file(rc / pid)を読む。不在・読めない = None。"""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return handle.read(256)
+    except OSError:
+        return None
+
+
+def _int_of_text(text: str | None) -> int | None:
+    if text is None:
+        return None
+    stripped = text.strip()
+    return int(stripped) if stripped.isdigit() else None
+
+
+def rc_of_file(path: str) -> int | None:
+    return _int_of_text(read_small_text(path))
+
+
+def pid_of_file(path: str) -> int | None:
+    return _int_of_text(read_small_text(path))
 
 
 def _file_size(path: str) -> int:

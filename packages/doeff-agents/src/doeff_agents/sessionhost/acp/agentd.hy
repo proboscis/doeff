@@ -116,6 +116,28 @@
 
 (import doeff_agents.sessionhost.attachment [TurnAttachment])
 (import doeff_agents.sessionhost.acp.effects [
+  CHARTER-KIND-VERIFY
+  CONDITION-INTERRUPTED
+  CONDITION-VERIFY-COMMAND-LOST
+  CONDITION-VERIFY-DEADLINE-EXCEEDED
+  CONDITION-VERIFY-SCRIPT-MISSING
+  CONDITION-VERIFY-START-FAILED
+  CommandExited
+  CommandGone
+  CommandProbe
+  CommandRefused
+  CommandRunning
+  CommandStart
+  CommandStarted
+  CommandStop
+  FsFileExists
+  FsReadText
+  InFlightCommand
+  VERIFY-STEP-ENDED
+  VERIFY-STEP-LOST
+  VERIFY-STEP-OBSERVE
+  VERIFY-STEP-TIMED-OUT
+  VerifyPlan
   CONDITION-ATTACHMENT-IGNORED
   AGENT-JOB-KIND
   AGORA-KINDS-NAMESPACE
@@ -238,6 +260,22 @@
   WatchAdvance
   Written])
 (import doeff_agents.sessionhost.acp.judgment [
+  in-flight-command-ids
+  in-flight-command-of
+  job-kind-of
+  pid-of-text
+  rc-of-text
+  verify-argv-of
+  verify-handle-of
+  verify-plan-of
+  verify-plan-of-handle
+  verify-result-of
+  verify-running-status-of
+  verify-started-ms-of-handle
+  verify-step-of
+  with-command
+  withdrawn-command-rows-of
+  without-command
   birth-ms-of
   births-of-rows
   births-with
@@ -879,6 +917,12 @@
    defer(会話の session が手番の途中)なら claim せず次の list へ。それ以外は Running + sessionHandle を
    CAS で書き(負けたら次の list へ)、start-claimed で起こす — 所要を計器に 1 行、turn-record を作り、
    status frame を 1 つ押す。起こす session の id は agentd が鋳造する(MintId — charter の id は読まない)。"
+  ;; 段 12 lane 12a(agora-redesign #230): charter.kind = verify の job は会話の手番ではない — script を 1 つ走らせる腕へ
+  ;; (claude / codex を起こさず、札も借りず、作業場の門も歩かない)。種類の読みは judgment.job-kind-of の 1 点。
+  (<- kind str (job-kind-of row))
+  (when (= kind CHARTER-KIND-VERIFY)
+    (<- claimed-verify AgentdState (claim-verify-job settings state row now-ms))
+    (return claimed-verify))
   ;; 段 10 lane 10y: charter の work_dir の `~` はこの node の家で展開する(以降の判断と起こす params は展開した plan を読む)。
   (<- declared-plan LaunchPlan (launch-plan-of row))
   (<- plan LaunchPlan (plan-with-node-home declared-plan settings.home))
@@ -1651,6 +1695,11 @@
                        (JobOutcome :ended True :result None :conditions #(condition))
                        "agentd-stop" now-ms))
     (setv current settled))
+  ;; 段 12 lane 12a: verify の命令は自分の session で走っていて agentd の停止では降りない — 行は Running のまま残し、
+  ;; 次の agentd が recover-command で結末を拾う(黙って残さない: 1 行 log)。
+  (for [command (list current.commands)]
+    (<- (LogLine :text (+ f"agentd: verify job {command.job-id} (pid {command.pid}) keeps running through the stop of agentd; "
+                          "its row stays Running and the next agentd recovers the outcome from the row and the rc file"))))
   current)
 
 
@@ -1853,6 +1902,16 @@
           (<- interrupted AgentdState (interrupt-job settings current job row now-ms))
           (setv current interrupted)))
       (setv current (replace current :retired (+ current.retired #(job-id))))))
+  ;; 段 12 lane 12a: verify の命令の取り下げ(行は sessionId を持たないので withdrawn-rows-of の外)— process を止める。
+  (<- withdrawn-commands tuple (withdrawn-command-rows-of rows settings.node-name settings.principal))
+  (for [row withdrawn-commands]
+    (setv job-id row.resource-id)
+    (when (not-in job-id current.retired)
+      (for [command (list current.commands)]
+        (when (= command.job-id job-id)
+          (<- stopped AgentdState (withdraw-command settings current command row now-ms))
+          (setv current stopped)))
+      (setv current (replace current :retired (+ current.retired #(job-id))))))
   current)
 
 
@@ -2017,6 +2076,168 @@
         (replace state :rows listed :births births :last-window-seq state.since))))
 
 
+;; ---------------------------------------------------------------------------
+;; verify の命令(段 12 lane 12a・agora-redesign #230)— 会話の手番ではない job の腕
+;; ---------------------------------------------------------------------------
+;;
+;; charter.kind = verify の job は定期便の検証の命令 1 つ(会社 repo の日次の全体検証)。この agentd は
+;; **claude / codex を起こさず、預かり所から札も借りず**、機体の家の dotfiles の script(judgment.verify-plan-of
+;; の 1 点 — VERIFY-SCRIPTS-RELDIR/<jobId>.sh ちょうど・命令の文字列は行から運ばない)を自分の session で起こし、
+;; 結末(rc の file)を agent-job の Ended の result に写す。走っている間の観測は行と file から毎拍導く(R7):
+;; 再起動しても process は残り、Running の行の sessionHandle.verify から組み直す(recover-command)。
+
+(defk claim-verify-job [settings state row now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: row AcpRow) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "1 つの Bound の verify の行を受ける: 走らせ方を verify-plan-of の 1 点で写し(読めない・綴りの外 = 起こさず条件
+   VerifyScriptMissing で Ended)、script がこの機体に在るか(FsFileExists — 無い = 同じ条件で Ended・知らない id は loud に
+   落とす)、Running + sessionHandle{stream, verify} を CAS で書き(負けたら次の list へ)、process を起こす(CommandStart —
+   起こせなければ条件 VerifyStartFailed で Ended)。memory には InFlightCommand を置き、観測は observe-command。"
+  (setv job-id row.resource-id)
+  (<- planned (| VerifyPlan str) (verify-plan-of row settings.home settings.verify-runs-dir))
+  (when (isinstance planned str)
+    (<- (end-job-now settings row CONDITION-VERIFY-SCRIPT-MISSING planned #() now-ms))
+    (return state))
+  (<- present bool (FsFileExists :path planned.script-path))
+  (when (not present)
+    (<- (end-job-now settings row CONDITION-VERIFY-SCRIPT-MISSING
+                     (+ f"agent-job {job-id} names verify {planned.verify-id} but node {settings.node-name} has no "
+                        f"{planned.script-path} — an unknown verify id is refused, never guessed")
+                     #() now-ms))
+    (return state))
+  (<- started-ms int (ClockNowMs))
+  (<- handle dict (verify-handle-of planned settings.principal started-ms))
+  (<- running dict (verify-running-status-of row handle))
+  (<- claimed (| Written Conflict Refused) (AcpPutStatus :row row :status running))
+  (when (not (isinstance claimed Written))
+    (<- (LogLine :text f"agentd: claim of verify job {job-id} did not land ({claimed}); will re-list"))
+    (return state))
+  (<- made bool (FsMakeDirectories :path settings.verify-runs-dir))
+  (<- argv tuple (verify-argv-of planned))
+  (<- launched (| CommandStarted CommandRefused) (CommandStart :argv argv :cwd settings.home))
+  (when (isinstance launched CommandRefused)
+    (<- (end-job-now settings row CONDITION-VERIFY-START-FAILED
+                     f"agent-job {job-id}: verify {planned.verify-id} could not be started on node {settings.node-name}: {launched.error}"
+                     #() now-ms))
+    (return state))
+  (<- (LogLine :text (+ f"agentd: verify job {job-id} runs {planned.script-path} (jobId {planned.verify-id}・runKey {planned.run-key}) "
+                        f"as pid {launched.pid}; log {planned.log-path}")))
+  (<- (MetricLine :fields {"metric" "verify-command-started" "agentJobId" job-id "jobId" planned.verify-id
+                           "runKey" planned.run-key "pid" launched.pid "startedAtMs" started-ms}))
+  (<- command InFlightCommand (in-flight-command-of row planned launched.pid started-ms))
+  (<- next AgentdState (with-command state command))
+  next)
+
+
+(defk end-command [settings command result conditions now-ms]
+  {:pre [(: settings AgentdSettings) (: command InFlightCommand) (: result (| dict None)) (: conditions tuple) (: now-ms int)]
+   :post [(: % bool)]}
+  "verify の命令の終わりの書き: 鍵で読み直した行を Ended(result / conditions)にする。戻り = 着地したか。"
+  (<- fresh (| AcpRow None) (AcpGetRow :key command.job-key))
+  (when (is fresh None)
+    (<- (LogLine :text f"agentd: agent-job {command.job-id} (verify) vanished before Ended"))
+    (return False))
+  (<- status dict (status-object-of fresh))
+  (<- ended dict (ended-status-of status result conditions))
+  (<- wrote (| Written Conflict Refused) (AcpPutStatus :row fresh :status ended))
+  (when (not (isinstance wrote Written))
+    (<- (LogLine :text f"agentd: verify job {command.job-id} not ended ({wrote}); retrying next tick")))
+  (isinstance wrote Written))
+
+
+(defk observe-command [settings state command now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: command InFlightCommand) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "走らせている 1 つの verify の命令の拍: 現況(CommandProbe — rc の file / pid の生死)→ 次の 1 手(judgment.verify-step-of の
+   1 点)。ended = rc を result に写して Ended / lost = 条件 VerifyCommandLost で Ended(result なし)/ timed-out = 止めて
+   (CommandStop)条件 VerifyDeadlineExceeded で Ended / observe = memory に置く。pid をまだ知らない命令は pid の file を読む。"
+  (setv current command)
+  (when (is current.pid None)
+    (<- pid-text (| str None) (FsReadText :path current.pid-path))
+    (<- pid (| int None) (pid-of-text pid-text))
+    (setv current (replace current :pid pid)))
+  (<- probe (| CommandRunning CommandExited CommandGone)
+      (CommandProbe :pid current.pid :pid-path current.pid-path :rc-path current.rc-path))
+  (<- step str (verify-step-of probe current.started-ms now-ms current.deadline-seconds))
+  (cond
+    ;; ended = rc の file が在る(verify-step-of の判断)— 型の絞りのために probe の形も見る(同じ事実の 2 面)。
+    (and (= step VERIFY-STEP-ENDED) (isinstance probe CommandExited))
+    (do
+      (setv rc probe.rc)
+      (<- result dict (verify-result-of current rc now-ms))
+      (<- (LogLine :text f"agentd: verify job {current.job-id} ({current.verify-id}) ended rc={rc} after {(- now-ms current.started-ms)} ms"))
+      (<- (MetricLine :fields {"metric" "verify-command-ended" "agentJobId" current.job-id "jobId" current.verify-id
+                               "runKey" current.run-key "rc" rc "ms" (- now-ms current.started-ms)}))
+      (<- landed bool (end-command settings current result #() now-ms))
+      (if landed
+          (do (<- dropped AgentdState (without-command state current.job-id)) dropped)
+          (do (<- kept AgentdState (with-command state current)) kept)))
+    (= step VERIFY-STEP-LOST)
+    (do
+      (<- condition dict (condition-of CONDITION-VERIFY-COMMAND-LOST
+                                       (+ f"verify {current.verify-id} (pid {current.pid}) left no exit code in {current.rc-path} "
+                                          f"and is not running on node {settings.node-name}")))
+      (<- (LogLine :text f"agentd: verify job {current.job-id} lost its command — {(get condition "reason")}"))
+      (<- landed bool (end-command settings current None #(condition) now-ms))
+      (if landed
+          (do (<- dropped AgentdState (without-command state current.job-id)) dropped)
+          (do (<- kept AgentdState (with-command state current)) kept)))
+    (= step VERIFY-STEP-TIMED-OUT)
+    (do
+      (when (is-not current.pid None)
+        (<- (CommandStop :pid current.pid)))
+      (<- condition dict (condition-of CONDITION-VERIFY-DEADLINE-EXCEEDED
+                                       (+ f"verify {current.verify-id} ran past its deadline of {current.deadline-seconds} s "
+                                          f"on node {settings.node-name}; stopped (SIGTERM)")))
+      (<- (LogLine :text f"agentd: verify job {current.job-id} stopped — {(get condition "reason")}"))
+      (<- landed bool (end-command settings current None #(condition) now-ms))
+      (if landed
+          (do (<- dropped AgentdState (without-command state current.job-id)) dropped)
+          (do (<- kept AgentdState (with-command state current)) kept)))
+    True
+    (do (<- kept AgentdState (with-command state current)) kept)))
+
+
+(defk recover-command [settings state row now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: row AcpRow) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "自分が持つ Running の verify の行(memory に無い — 再起動後)の続きを行と file から決める(R7): sessionHandle.verify から
+   走らせ方を組み直し(組めない = 条件 VerifyCommandLost で Ended)、pid の file を読んで InFlightCommand を組み、その拍の
+   観測(observe-command)へ。process は起こし直さない。"
+  (<- planned (| VerifyPlan None) (verify-plan-of-handle row))
+  (when (is planned None)
+    (<- (end-job-now settings row CONDITION-VERIFY-COMMAND-LOST
+                     f"agent-job {row.resource-id} is Running as a verify but its sessionHandle carries no verify plan to recover from"
+                     #() now-ms))
+    (return state))
+  (<- started-ms int (verify-started-ms-of-handle row row.created-at-ms))
+  (<- pid-text (| str None) (FsReadText :path planned.pid-path))
+  (<- pid (| int None) (pid-of-text pid-text))
+  (<- command InFlightCommand (in-flight-command-of row planned pid started-ms))
+  (<- (LogLine :text f"agentd: recovered running verify job {row.resource-id} ({planned.verify-id}) from its row (pid {pid})"))
+  (<- observed AgentdState (observe-command settings state command now-ms))
+  observed)
+
+
+(defk withdraw-command [settings state command row now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: command InFlightCommand) (: row AcpRow) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "取り下げられた自分の verify の命令の腕: process を止め(CommandStop)、agent-job に condition Interrupted(phase は書かない —
+   Withdrawn のまま・書き手は作った側)、観測をやめる。"
+  (when (is-not command.pid None)
+    (<- (CommandStop :pid command.pid)))
+  (<- fresh (| AcpRow None) (AcpGetRow :key row.key))
+  (setv target (if (is fresh None) row fresh))
+  (<- status dict (status-object-of target))
+  (<- interrupted dict (interrupted-status-of status))
+  (<- wrote (| Written Conflict Refused) (AcpPutStatus :row target :status interrupted))
+  (when (not (isinstance wrote Written))
+    (<- (LogLine :text f"agentd: Interrupted condition of verify job {command.job-id} not written ({wrote})")))
+  (<- (LogLine :text f"agentd: verify job {command.job-id} withdrawn; command (pid {command.pid}) stopped"))
+  (<- dropped AgentdState (without-command state command.job-id))
+  dropped)
+
+
 (defk receive-bound-jobs [settings state mode now-ms]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: mode str) (: now-ms int)]
    :post [(: % AgentdState)]}
@@ -2029,7 +2250,9 @@
   (<- withdrawn-handled AgentdState (withdraw-jobs settings refreshed rows now-ms))
   (<- bound tuple (job-rows-bound-to rows settings.node-name))
   (<- running tuple (job-rows-running-on rows settings.node-name settings.principal))
-  (<- known set (in-flight-ids withdrawn-handled))
+  (<- known-jobs set (in-flight-ids withdrawn-handled))
+  (<- known-commands set (in-flight-command-ids withdrawn-handled))
+  (setv known (| known-jobs known-commands))
   (setv previously-deferred withdrawn-handled.deferred)
   (setv current (replace withdrawn-handled :deferred #()))
   (for [row bound]
@@ -2037,7 +2260,11 @@
       (<- current AgentdState (claim-job settings current rows row previously-deferred now-ms))))
   (for [row running]
     (when (not-in row.resource-id known)
-      (<- current AgentdState (recover-job settings current row now-ms))))
+      ;; 段 12 lane 12a: verify の Running は行と file から組み直す(session は無い)。
+      (<- kind str (job-kind-of row))
+      (if (= kind CHARTER-KIND-VERIFY)
+          (<- current AgentdState (recover-command settings current row now-ms))
+          (<- current AgentdState (recover-job settings current row now-ms)))))
   (replace current :last-resync-ms now-ms))
 
 
@@ -2089,6 +2316,13 @@
       (setv current observed)
       (except [e IO-FAILURES]
         (<- (LogLine :text f"agentd: job {job.job-id} tick failed: {(. (type e) __name__)}: {e}")))))
+  ;; 段 12 lane 12a: 走らせている verify の命令の観測(行と file から毎拍 — 器の眺めは無い)。
+  (for [command (list current.commands)]
+    (try
+      (<- observed-command AgentdState (observe-command settings current command now-ms))
+      (setv current observed-command)
+      (except [e IO-FAILURES]
+        (<- (LogLine :text f"agentd: verify job {command.job-id} tick failed: {(. (type e) __name__)}: {e}")))))
   ;; 段 9f lane 9f-2: この拍で spool に置いた本文(と前の拍に送れなかった残り)を会話の記録の service へ — 拍の終わりの 1 点。
   (when settings.record-enabled
     (<- flush bool (record-flush-due current now-ms settings))
