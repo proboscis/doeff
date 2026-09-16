@@ -1752,6 +1752,11 @@ class InFlightJob:
     #: 見届けた拍(ms・None = まだ)= 行の status.cancel.acknowledgedAt の写し。行への書きが断られても memory に置く
     #: (割り込みを毎拍撃ち直さない)— 再起動で消えれば行から戻り、行にも無ければ改めて見届ける(割り込みは新しい器へ)。
     cancel_acknowledged_at_ms: int | None = None
+    #: 段 12 lane 12j(agora-redesign #422): 見届けの拍に器へ割り込み(session.interrupt = SIGINT)を実際に撃ったか。撃った
+    #: 取り消しは器の transcript に「利用者が tool を拒んだ」印を残すので、手番の終わりに温かい session を片付ける(判断は
+    #: judgment.retire-reason-after-job)。手番が既に終わっていて割り込まなかった取り消しは片付けない。拾い直し(再起動後)は
+    #: 行の見届けが在れば「撃った」とみなす(印の有無は読めない — 片付ける側に倒す)。
+    cancel_interrupted: bool = False
 
 
 @dataclass(frozen=True)

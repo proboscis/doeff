@@ -2139,7 +2139,7 @@ def test_cancel_signal_interrupts_once_is_acknowledged_on_the_row_and_the_turn_e
     """取り消しの 3 段(agora-redesign #367・契約 scheduling.json の cancel の節)— 段 2 猶予: spec.cancel を見た拍に
     手番の途中なら session.interrupt を 1 回撃ち、行の status.cancel に {acknowledgedAt, stage: graceful} を書く(phase は
     Running のまま・job は memory に残る)。次の拍は撃ち直さない。猶予の内に手番が終われば Ended + result.cause
-    {category: cancelled, stage: graceful, reason}・温かい session は残る。"""
+    {category: cancelled, stage: graceful, reason}・温かい session は片付ける(#422 — 割り込みの印を次の手番へ持ち越さない)。"""
     world = World()
     warm, path = _start_warm_second_turn(world)
     _place_cancel(world, "j-2", grace_seconds=60)
@@ -2172,10 +2172,41 @@ def test_cancel_signal_interrupts_once_is_acknowledged_on_the_row_and_the_turn_e
     record = world.turn_record("j-2")
     assert record is not None and record.status is not None
     assert record.status["state"] == "ended"
-    assert world.sessions.cleanups == []
-    assert world.sessions.views[warm].status == "running"
+    # #422: 取り消しの割り込みは器の transcript に「利用者が tool を拒んだ」印を残すので、温かい session は片付ける
+    assert world.sessions.cleanups == [warm]
+    assert world.sessions.views[warm].status == "stopped"
+    assert any("leaves the interrupt in the transcript" in line and "(#422)" in line for line in world.local.logs), world.local.logs[-6:]
     cancels = [m for m in world.local.metrics if m["metric"] == "agent-job-cancel"]
     assert [m["stage"] for m in cancels] == ["graceful"]
+
+
+def test_a_cancelled_turn_retires_the_warm_session_so_the_next_turn_starts_a_fresh_one() -> None:
+    """agora-redesign #422(#367 受入 2 の実射の観測): grace 30 の SIGINT が温かい session に「Request interrupted by user for tool use」
+    と残り、次の手番が同じ session を resume すると agent が再実行を断って確認待ちにした。根 = 取り消しと tool の拒否が器の transcript
+    で同じ印。直し = 取り消された手番(cause cancelled・graceful)の終わりに session を片付け、次の手番は新しい session を起こす
+    (文脈は記録の rehydrate が持つ)。取り消されていない手番の終わりは今日どおり温かいまま。"""
+    world = World()
+    warm, path = _start_warm_second_turn(world)
+    _place_cancel(world, "j-2", grace_seconds=60)
+    world.tick(advance_ms=1_000)
+    assert world.sessions.interrupts == [warm]
+    world.local.transcripts[path] += transcript_line("assistant", [{"type": "text", "text": "two"}])
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(warm, world.local.now_ms + 200)
+    world.tick(advance_ms=1_000)
+    assert world.state.jobs == ()
+    assert world.job("j-2").status["result"]["cause"]["stage"] == "graceful"
+    assert world.sessions.cleanups == [warm]
+    # 次の手番(j-3・同じ会話・同じ家)は温かい session へ send ではなく新しい session を起こす
+    world.acp.put_row(message("m-3", "third"))
+    world.acp.put_row(bound_job("j-3", inputs=["m-3"], created_at_ms=world.local.now_ms))
+    world.tick(advance_ms=1_000)
+    assert len(world.state.jobs) == 1
+    fresh = world.sid("j-3")
+    assert fresh != warm
+    assert world.sessions.views[fresh].status == "running"
+    assert world.sessions.views[warm].status == "stopped"
+    assert world.sessions.cleanups == [warm]
 
 
 def test_a_cancel_acknowledgement_that_conflicts_is_rewritten_on_the_fresh_row() -> None:
@@ -2254,7 +2285,8 @@ def test_cancel_past_the_grace_kills_the_session_and_ends_the_job_forced() -> No
 
 def test_cancel_of_a_turn_that_already_ended_is_acknowledged_without_an_interrupt_and_ends_gracefully() -> None:
     """手番が既に終わっている(turn_ended_at がこの手番の始まりより後)job の取り消しは割り込まない(判断は取り下げと同じ
-    interrupt-arm-for の 1 点)— 見届けは書き、同じ拍の観測の腕が Ended + cause graceful で閉じる。"""
+    interrupt-arm-for の 1 点)— 見届けは書き、同じ拍の観測の腕が Ended + cause graceful で閉じる。割り込んでいないので
+    温かい session は片付けない(#422 の片付けは割り込みを撃った取り消しだけ)。"""
     world = World()
     warm, path = _start_warm_second_turn(world)
     world.local.transcripts[path] += transcript_line("assistant", [{"type": "text", "text": "two"}])
