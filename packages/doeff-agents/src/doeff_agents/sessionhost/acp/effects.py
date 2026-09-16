@@ -93,7 +93,9 @@ DELTA_FRAME_MAX_BYTES = 1_048_576
 DELTA_CLIPPED_INPUT_ROOT = "input"
 #: turn-record の status.recordRef の綴り(`record:<cid>/<streamId>`)の頭。
 RECORD_REF_PREFIX = "record:"
-#: node の terminal state(gone の行は同じ名の生きた行ではない)。
+#: node の state(契約 agora-kinds.json node.declaration.states = joined / gone): joined = 生きている行(契約 scheduling.json
+#: liveRow.nodeRow の alive)・gone = terminal(同じ名の生きた行ではない)。
+NODE_JOINED = "joined"
 NODE_GONE = "gone"
 #: profile の terminal state(契約 agora-kinds.json profile.declaration.states — retired は観測しない)。
 PROFILE_RETIRED = "retired"

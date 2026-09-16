@@ -15,6 +15,12 @@
       "canonPath": "docs/contracts/read-freshness.json",
       "copyPath": "docs/contracts/read-freshness.json",
       "sha256": "8a680b91d0eb24da52c3c1b9b16fd5ce07a1fd9116fff8f3d638362aab3f239b"
+    },
+    {
+      "kind": "code",
+      "canonPath": "clients/hy/acp_client/shared/live_row.hy",
+      "copyPath": "packages/doeff-agents/src/doeff_agents/sessionhost/acp/live_row.hy",
+      "sha256": "f329f7c7510b4164bbdb26347d620701007ebee30517abd8c553a6e4ac6ecc31"
     }
   ]
 }
