@@ -30,6 +30,7 @@ from doeff_agents.sessionhost.acp.effects import (
     CONDITION_CREDENTIAL_PLACE_MISMATCH,
     CONDITION_CREDENTIAL_SOURCE_MISSING,
     CUSTODY_CONTRACT_VERSION,
+    Conflict,
     CustodyLeaseBorrow,
     EntryKind,
     InFlightJob,
@@ -2175,6 +2176,44 @@ def test_cancel_signal_interrupts_once_is_acknowledged_on_the_row_and_the_turn_e
     assert world.sessions.views[warm].status == "running"
     cancels = [m for m in world.local.metrics if m["metric"] == "agent-job-cancel"]
     assert [m["stage"] for m in cancels] == ["graceful"]
+
+
+def test_a_cancel_acknowledgement_that_conflicts_is_rewritten_on_the_fresh_row() -> None:
+    """#367 の実射(2026-09-17・grace 0): 見届けの status.cancel の CAS が同じ秒の配置の書き(CancelOverdue)に負けて行に残らなかった。
+    直し = Ended(#402)と同じく行を 1 度読み直して今の generation で書き直す。割り込みは 1 回のまま・memory の見届けも 1 つ。"""
+    world = World()
+    warm, _path = _start_warm_second_turn(world)
+    _place_cancel(world, "j-2", grace_seconds=0)
+    world.acp.conflict_once[f"{AGENT_JOB_NAMESPACE}:{AGENT_JOB_KIND}:j-2"] = 99
+    world.tick(advance_ms=1_000)
+    acknowledged_at = world.local.now_ms
+    assert world.sessions.interrupts == [warm]
+    assert world.job("j-2").status["cancel"] == {"acknowledgedAt": acknowledged_at, "stage": "graceful"}
+    assert world.state.jobs[0].cancel_acknowledged_at_ms == acknowledged_at
+    assert any("acknowledgement re-written on the fresh row" in line and "landed" in line for line in world.local.logs), world.local.logs[-6:]
+    assert not any("acknowledged in memory but not on the row" in line for line in world.local.logs)
+    # 2 度目も負ける形: memory の見届けだけ残り、次の拍は撃ち直さない
+    world2 = World()
+    warm2, _ = _start_warm_second_turn(world2)
+    _place_cancel(world2, "j-2", grace_seconds=60)
+    key = f"{AGENT_JOB_NAMESPACE}:{AGENT_JOB_KIND}:j-2"
+    world2.acp.conflict_once[key] = 99
+    original_put = world2.acp._put_status
+
+    def _lose_twice(row, status, _n=[0]):  # noqa: ANN001
+        if row.key == key and _n[0] < 2:
+            _n[0] += 1
+            return Conflict(99)
+        return original_put(row, status)
+
+    world2.acp._put_status = _lose_twice  # type: ignore[method-assign]
+    world2.tick(advance_ms=1_000)
+    assert world2.sessions.interrupts == [warm2]
+    assert "cancel" not in world2.job("j-2").status
+    assert world2.state.jobs[0].cancel_acknowledged_at_ms == world2.local.now_ms
+    assert any("acknowledged in memory but not on the row" in line for line in world2.local.logs)
+    world2.tick(advance_ms=1_000)
+    assert world2.sessions.interrupts == [warm2]
 
 
 def test_cancel_past_the_grace_kills_the_session_and_ends_the_job_forced() -> None:

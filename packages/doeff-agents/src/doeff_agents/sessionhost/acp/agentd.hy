@@ -2146,7 +2146,8 @@
   "段 2 見届け(段 12 lane 12j・agora-redesign #367): 手番の途中なら session.interrupt(判断は interrupt-arm-for の 1 点 —
    取り下げと同じ腕・headless = SIGINT / turn/interrupt)、鍵で読み直した行に CAS で status.cancel {acknowledgedAt, stage:
    graceful} を 1 度書く(判断は cancel-acknowledged-status-of)。書きが断られても memory に見届けを置く(割り込みを毎拍
-   撃ち直さない・log 1 行 — 再起動で行に無ければ改めて見届ける)。job は memory に残り、手番の終わりは observe-job の腕が
+   撃ち直さない・log 1 行 — 再起動で行に無ければ改めて見届ける)。CAS が Conflict なら行を 1 度読み直して書き直す(#367 の実射:
+   grace 0 は配置の CancelOverdue が同じ秒に立ち、見届けの行が残らなかった)。job は memory に残り、手番の終わりは observe-job の腕が
    finalize して result.cause {graceful} を書く(段 3 は cancel-arm-for が猶予の期限で決める)。"
   (<- arm str (interrupt-arm-for job view))
   (when (= arm INTERRUPT-ARM-INTERRUPT)
@@ -2156,7 +2157,19 @@
   (<- status dict (status-object-of target))
   (<- acknowledged dict (cancel-acknowledged-status-of status now-ms))
   (<- wrote (| Written Conflict Refused) (AcpPutStatus :row target :status acknowledged))
-  (when (not (isinstance wrote Written))
+  ;; 見届けの CAS が負けたら(grace 0 は合図の拍に配置の CancelOverdue が同じ秒に立つ — 実射 2026-09-17 #367)、Ended と同じく
+  ;; 行を 1 度読み直して今の generation で書き直す。それでも着かなければ memory の見届けだけ(割り込みは撃ち直さない)。
+  (setv landed (isinstance wrote Written))
+  (when (isinstance wrote Conflict)
+    (<- again (| AcpRow None) (AcpGetRow :key row.key))
+    (when (isinstance again AcpRow)
+      (<- again-status dict (status-object-of again))
+      (<- acknowledged-again dict (cancel-acknowledged-status-of again-status now-ms))
+      (<- wrote-again (| Written Conflict Refused) (AcpPutStatus :row again :status acknowledged-again))
+      (setv landed (isinstance wrote-again Written))
+      (<- (LogLine :text (+ f"agentd: cancel of job {job.job-id} acknowledgement re-written on the fresh row after {wrote}: "
+                            (if landed "landed" (str wrote-again)) " (#367)")))))
+  (when (not landed)
     (<- (LogLine :text f"agentd: cancel of job {job.job-id} acknowledged in memory but not on the row ({wrote})")))
   (<- (LogLine :text (+ f"agentd: job {job.job-id} cancel acknowledged ({cancel.reason}; turn {arm}); "
                         f"grace {cancel.grace-seconds} s")))
