@@ -39,8 +39,18 @@ from doeff_agents.sessionhost.acp.effects import (
     CustodyLeaseRevoke,
     EventWindow,
     FsCanonicalPath,
+    CommandExited,
+    CommandGone,
+    CommandProbe,
+    CommandRefused,
+    CommandRunning,
+    CommandStart,
+    CommandStarted,
+    CommandStop,
     FsDirectoryExists,
+    FsFileExists,
     FsMakeDirectories,
+    FsReadText,
     FsFileSize,
     FsWritePrivateText,
     Escalated,
@@ -636,11 +646,51 @@ class FakeLocal:
         #: usage に答えのある profile の家が在る(usage を据えた検が家も据える手間を省く既定)。
         self.homes: dict[str, tuple[ProfileHome, ...]] = {}
         self.home_reads: list[str] = []
+        #: 段 12 lane 12a: verify の命令の代わり — 起こした argv の列(pid は 4242 から採番)、生きている pid、
+        #: 止めた pid、file として在る path(script の検 — 既定 = 無い)。結末は files に rc の path で置く(rc の file が
+        #: 在れば Exited)。起こせない拍は refuse_commands に理由を置く。
+        self.commands: list[tuple[str, ...]] = []
+        self.command_cwds: list[str] = []
+        self.alive_pids: set[int] = set()
+        self.stopped_pids: list[int] = []
+        self.existing_files: set[str] = set()
+        self.refuse_commands: str | None = None
+        self.next_pid: int = 4242
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(effect, MintId):
             self.minted += 1
             return Resume(k, f"sid-{self.minted}")
+        if isinstance(effect, CommandStart):
+            self.commands.append(tuple(effect.argv))
+            self.command_cwds.append(effect.cwd)
+            if self.refuse_commands is not None:
+                return Resume(k, CommandRefused(error=self.refuse_commands))
+            pid = self.next_pid
+            self.next_pid += 1
+            self.alive_pids.add(pid)
+            # sh の 1 行が書く pid の file(argv の $0)
+            self.files[effect.argv[3]] = f"{pid}\n"
+            return Resume(k, CommandStarted(pid=pid))
+        if isinstance(effect, CommandProbe):
+            rc_text = self.files.get(effect.rc_path)
+            if rc_text is not None and rc_text.strip().isdigit():
+                return Resume(k, CommandExited(rc=int(rc_text.strip())))
+            pid = effect.pid
+            if pid is None:
+                pid_text = self.files.get(effect.pid_path)
+                pid = int(pid_text.strip()) if pid_text is not None and pid_text.strip().isdigit() else None
+            if pid is None:
+                return Resume(k, CommandRunning(pid=0))
+            return Resume(k, CommandRunning(pid=pid) if pid in self.alive_pids else CommandGone())
+        if isinstance(effect, CommandStop):
+            self.stopped_pids.append(effect.pid)
+            self.alive_pids.discard(effect.pid)
+            return Resume(k, True)
+        if isinstance(effect, FsFileExists):
+            return Resume(k, effect.path in self.existing_files)
+        if isinstance(effect, FsReadText):
+            return Resume(k, self.files.get(effect.path))
         if isinstance(effect, OwnershipProbe):
             self.probes.append(effect.proof)
             return Resume(k, ProbeAnswer(value=self.probe_answers.get(effect.proof)))

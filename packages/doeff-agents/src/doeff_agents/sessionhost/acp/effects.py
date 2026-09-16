@@ -134,6 +134,10 @@ ConditionType = Literal[
     "AttachmentIgnored",
     "WorkDirMissing",
     "ProviderLimit",
+    "VerifyScriptMissing",
+    "VerifyStartFailed",
+    "VerifyCommandLost",
+    "VerifyDeadlineExceeded",
 ]
 CONDITION_INTERRUPTED: ConditionType = "Interrupted"
 #: 段 10 lane 10n(agora-redesign #93・依頼者の追補 2026-09-14): 割り込みを注入したが、この job の charter に
@@ -184,6 +188,49 @@ CONDITION_ATTACHMENT_IGNORED: ConditionType = "AttachmentIgnored"
 CONDITION_PROVIDER_LIMIT: ConditionType = "ProviderLimit"
 #: CONDITION_PROVIDER_LIMIT の reason の閉語彙(今日は 1 語 — 族が増えたらここに足す)。
 REASON_RATE_LIMITED: str = "rate-limited"
+#: 段 12 lane 12a(agora-redesign #230・依頼者の裁定 2026-09-16): charter.kind = verify の job(定期便の検証の命令 1 つ —
+#: 会社 repo の日次の全体検証。契機は k3s の CronJob・配置は charter.place を spec.places に名乗る node・実行はこの
+#: agentd が機体自身の資格で)を起こさず・起こせず・失って閉じた印。**claude / codex を起こさない**: 命令は
+#: 機体の dotfiles の script(VERIFY_SCRIPTS_RELDIR/<jobId>.sh)ちょうどで、命令の文字列は行から運ばない(herdr-hud
+#: D0626 決定 2 — cluster 側から機体へ任意の命令を流せる口を新設しない)。
+#: VerifyScriptMissing = charter の jobId が綴りの外・script がこの機体に無い(知らない id は loud に落とす)。
+CONDITION_VERIFY_SCRIPT_MISSING: ConditionType = "VerifyScriptMissing"
+#: VerifyStartFailed = process を起こせなかった(handler の断り — exec の失敗等)。
+CONDITION_VERIFY_START_FAILED: ConditionType = "VerifyStartFailed"
+#: VerifyCommandLost = 走っていた process が結末(rc の file)を残さずに消えた(機体の再起動・kill -9)。
+CONDITION_VERIFY_COMMAND_LOST: ConditionType = "VerifyCommandLost"
+#: VerifyDeadlineExceeded = charter.deadlineSeconds を越えて走っていたので agentd が止めた。
+CONDITION_VERIFY_DEADLINE_EXCEEDED: ConditionType = "VerifyDeadlineExceeded"
+#: charter の種類の欄と閉語彙(ACP docs/contracts/scheduling.json charterKind の写し — 綴りの定義点は ACP の
+#: Acp.App.Scheduling.Contract)。無い = turn(会話の手番・従来どおり)。agentd が読むのは kind の 1 語で、配置が
+#: 読む place は読まない(配置が結んだ node = 自分・置き場は配置が判じ終えている)。
+CHARTER_KIND_KEY: str = "kind"
+CHARTER_KIND_TURN: str = "turn"
+CHARTER_KIND_VERIFY: str = "verify"
+#: verify の charter の欄(契約 scheduling.json charterKind.verify.runnerCharter の写し): 便の id(= script の名・
+#: ai land verify の --loop-id)・発火の鍵(k8s の Job 名・記録の材料)・命令の上限(秒)。
+CHARTER_VERIFY_JOB_ID_KEY: str = "jobId"
+CHARTER_VERIFY_RUN_KEY_KEY: str = "runKey"
+CHARTER_VERIFY_DEADLINE_KEY: str = "deadlineSeconds"
+#: 便の id の綴り(小文字の英数字と - ・64 字まで — path の要素にそのまま使うので / と . を持たない形を型で塞ぐ)。
+CHARTER_VERIFY_JOB_ID_PATTERN: str = r"^[a-z0-9][a-z0-9-]{0,63}$"
+#: 機体の家(AgentdSettings.home)からの verify の script の置き場(dotfiles の定期便の入口 script の dir — herdr-hud
+#: deploy/periodic/jobs.json の script の欄 `dotfiles/cron_management/<id>.sh` と同じ形。D0626 の受け取り係と同じく
+#: 「本体 = ~/<script> はそちらで走る」)。定義点はここ 1 つ。
+VERIFY_SCRIPTS_RELDIR: str = "dotfiles/cron_management"
+#: verify の命令の結末の置き場(AgentdSettings の state_dir の下・job の id ごと): stdout+stderr の log・rc・pid の 3 file。
+#: 走らせ方 = sh の 1 行(judgment.verify-argv-of の 1 点)が pid を書き、script を走らせ、rc を書く — agentd が
+#: 再起動しても process は残り(自分の session)、結末は file から読める(R7: 正本は行と file)。
+VERIFY_RUNS_RELDIR: str = "verify-runs"
+#: verify の job の sessionHandle の欄(agentd が Running の書きで置く — 契約は opaque・stream{owner, name} だけ共有の形)。
+JOB_HANDLE_VERIFY_KEY: str = "verify"
+#: verify の命令の次の 1 手(judgment.verify-step-of の閉語彙): observe = 走っている / ended = rc の file が在る /
+#: lost = rc が無く pid も生きていない / timed-out = 期限を越えて走っている(止める)。
+VerifyStep = Literal["observe", "ended", "lost", "timed-out"]
+VERIFY_STEP_OBSERVE: VerifyStep = "observe"
+VERIFY_STEP_ENDED: VerifyStep = "ended"
+VERIFY_STEP_LOST: VerifyStep = "lost"
+VERIFY_STEP_TIMED_OUT: VerifyStep = "timed-out"
 #: 段 11 lane 11n 便 C(agora-redesign #179・依頼者の裁定 2026-09-15 案 c′): 器の終端の cause の
 #: category のうち agentd の ACP の腕が読む 1 語 —— provider が限度で断った(sessionhost の
 #: policy.hy TERMINAL-CAUSE-CATEGORIES / launch-not-ready-category と headless.hy の手番の腕が
@@ -669,6 +716,10 @@ class AgentdSettings:
     #: この node の家(段 10 lane 10y — composition root が env HOME から据える)。charter の work_dir の `~` はこの値で展開する
     #: (judgment.plan-with-node-home)。空 = 展開しない(`~` のままの path は無い dir として WorkDirMissing に落ちる)。
     home: str = ""
+    #: 段 12 lane 12a(agora-redesign #230): verify の命令の結末(log / rc / pid の 3 file)の置き場 — composition root が
+    #: state_dir(record spool の親 = join の宣言 [agentd].state_dir)の下の VERIFY_RUNS_RELDIR に据える。verify の script の
+    #: 置き場は home/VERIFY_SCRIPTS_RELDIR(judgment.verify-plan-of の 1 点)。
+    verify_runs_dir: str = ""
     #: この node が預かり所(custody)を宣言しているか(段 10c・agora-redesign #80)。composition root
     #: (runtime.settings_from_env)が CUSTODY_URL_ENV(join の [custody].url / --custody)の在否から導く 1 点。True の node は
     #: status.binding.account の無い agent-job を起こさない(judgment.credential-source-of)— charter の binding
@@ -947,6 +998,47 @@ class LaunchPlan:
     account: str | None
     profile: str
     model: str
+
+
+@dataclass(frozen=True)
+class VerifyPlan:
+    """Bound の verify の行から読み解いた「何を走らせるか」(段 12 lane 12a)— 判断ではなく行の欄の写しと、
+    機体の家から導いた置き場。command は運ばない: script は VERIFY_SCRIPTS_RELDIR/<verify_id>.sh ちょうど。"""
+
+    #: agent-job の id(行の resource_id)。
+    job_id: str
+    #: 便の id(charter.jobId = script の名 = ai land verify の --loop-id)。
+    verify_id: str
+    #: 発火の鍵(charter.runKey・記録の材料)。
+    run_key: str
+    #: 命令の上限(秒・charter.deadlineSeconds)。
+    deadline_seconds: int
+    #: 機体の script の絶対 path(home/VERIFY_SCRIPTS_RELDIR/<verify_id>.sh)。
+    script_path: str
+    #: 結末の 3 file(state_dir/VERIFY_RUNS_RELDIR/<job_id>.{log,rc,pid})。
+    log_path: str
+    rc_path: str
+    pid_path: str
+
+
+@dataclass(frozen=True)
+class InFlightCommand:
+    """走らせている 1 つの verify の命令(agentd の memory・正本は行の sessionHandle.verify と結末の file — R7)。"""
+
+    job_key: str
+    job_namespace: str
+    job_id: str
+    verify_id: str
+    run_key: str
+    #: 起こした時刻(ms)— 期限の起点。
+    started_ms: int
+    deadline_seconds: int
+    #: sh の pid(pid の file の値・拾い直しは file から読む)。None = まだ読めていない。
+    pid: int | None
+    script_path: str
+    log_path: str
+    rc_path: str
+    pid_path: str
 
 
 @dataclass(frozen=True)
@@ -1398,6 +1490,9 @@ class AgentdState:
     #: judgment.context-percent-of)。次の手番の claim が会話の宣言 compactAt と比べる材料(judgment.compaction-due)。
     #: memory の cache — agentd の再起動で消え、次の手番の終わりに測り直す(turn-record に同等の欄が無い間の実測)。
     context_by_session: tuple[tuple[str, int], ...] = ()
+    #: 段 12 lane 12a(agora-redesign #230): 走らせている verify の命令(memory の写し — 正本は行の
+    #: sessionHandle.verify と結末の file。再起動で消えても Running の行から組み直す: agentd.recover-command)。
+    commands: tuple[InFlightCommand, ...] = ()
 
 
 # ------------------------------------------------------------------ 要求(ACP)
@@ -1817,6 +1912,89 @@ class FsMakeDirectories(EffectBase):
     """dir を親ごと作る(段 10 lane 10y — scratch の印の在る work_dir だけ)。結果 = bool(作れた / 既に在る = True)。"""
 
     path: str
+
+
+@dataclass(frozen=True)
+class FsFileExists(EffectBase):
+    """path がこの機体に file として在るか(段 12 lane 12a — verify の script の検)。結果 = bool。"""
+
+    path: str
+
+
+@dataclass(frozen=True)
+class FsReadText(EffectBase):
+    """小さな text の file を読む(段 12 lane 12a — verify の結末の rc / pid の file)。結果 = str | None(不在・読めない = None)。"""
+
+    path: str
+
+
+@dataclass(frozen=True)
+class CommandStarted:
+    """命令の process を起こした(段 12 lane 12a)— sh の pid。"""
+
+    pid: int
+
+
+@dataclass(frozen=True)
+class CommandRefused:
+    """命令の process を起こせなかった(exec の失敗等)。"""
+
+    error: str
+
+
+CommandStartOutcome: TypeAlias = "CommandStarted | CommandRefused"
+
+
+@dataclass(frozen=True)
+class CommandStart(EffectBase):
+    """verify の命令を機体で起こす(段 12 lane 12a・agora-redesign #230): argv(judgment.verify-argv-of の 1 点が組む
+    sh の 1 行 — pid を書き、script を走らせ、rc を書く)を**自分の session で**(start_new_session)起こし、待たずに戻る。
+    stdin は閉じ、stdout / stderr は argv の中の sh が log の file へ向ける。agentd が再起動しても process は残る。
+    結果 = CommandStarted(pid) | CommandRefused(error)。"""
+
+    argv: tuple[str, ...]
+    cwd: str
+
+
+@dataclass(frozen=True)
+class CommandRunning:
+    """probe: まだ走っている(pid が生きている・rc の file が無い)。"""
+
+    pid: int
+
+
+@dataclass(frozen=True)
+class CommandExited:
+    """probe: 終わった(rc の file が在る)。"""
+
+    rc: int
+
+
+@dataclass(frozen=True)
+class CommandGone:
+    """probe: rc の file が無く pid も生きていない(結末を残さずに消えた)。"""
+
+
+CommandProbeOutcome: TypeAlias = "CommandRunning | CommandExited | CommandGone"
+
+
+@dataclass(frozen=True)
+class CommandProbe(EffectBase):
+    """verify の命令の現況(段 12 lane 12a): rc の file が在れば Exited(rc)・無ければ pid の生死で Running / Gone。
+    pid = None(pid の file がまだ無い・読めない)は Gone ではなく Running と読まない — handler は pid の file を読み直す。
+    handler が自分で起こした process なら poll()(reap)、拾い直した pid は kill -0 で生死を問う。
+    結果 = CommandRunning(pid) | CommandExited(rc) | CommandGone。"""
+
+    pid: int | None
+    pid_path: str
+    rc_path: str
+
+
+@dataclass(frozen=True)
+class CommandStop(EffectBase):
+    """verify の命令を止める(SIGTERM を process group へ — 期限超過・取り下げ)。結果 = bool(合図を送れたか)。"""
+
+    pid: int
 
 
 @dataclass(frozen=True)
