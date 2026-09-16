@@ -1372,6 +1372,26 @@
   out)
 
 
+(defk stale-conversation-sessions-of [views subject home keep-session-id]
+  {:pre [(: views tuple) (: subject str) (: home dict) (: keep-session-id str)]
+   :post [(: % tuple)]}
+  "会話の**他の家**に残る温かい session(段 12 lane 12j・agora-redesign #379 受入 2 = 1 会話 1 温かい session): 生きている
+   multi_turn の session のうち、帰属の conversationId == subject ∧ 家がこの手番の家(home = session-affinity-key-of)と違う ∧
+   この手番が使う session(keep-session-id)ではないものの id(views の順)。同じ家の session は触らない(候補 = send / resume の
+   相手)。行(agent-job)ではなく器の帰属から読む — 前の手番の行は終了 300 s で回収され、候補の無い手番が別の家で起きた拍に
+   古い家の session が残って配置の親和の材料(node の observations.sessions)に化けた(#352 受入 1 の実弾・#379)。"
+  (setv out [])
+  (for [view views]
+    (<- alive bool (session-alive view))
+    (when (and alive (= view.lifecycle LIFECYCLE-MULTI-TURN) (!= view.session-id keep-session-id))
+      (<- mine (| dict None) (attribution-of-view view))
+      (when (and (is-not mine None) (= (.get mine "conversationId") subject))
+        (<- in-home bool (session-in-home view home))
+        (when (not in-home)
+          (.append out view.session-id)))))
+  (tuple out))
+
+
 (defk transcript-candidates-of [views sessions limit]
   {:pre [(: views tuple) (: sessions list) (: limit int)]
    :post [(: % tuple)]}
