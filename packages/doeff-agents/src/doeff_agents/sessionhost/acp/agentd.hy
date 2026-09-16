@@ -345,6 +345,7 @@
   summarize-job-id-of
   summarize-job-spec-of
   summary-floor-of
+  summary-floor-at-of
   summary-stream-id-of-ref
   turn-floor-of
   birth-ms-of
@@ -851,8 +852,14 @@
                                   "rows" (len messages)
                                   "ms" (- mail-ended mail-started)}))
   (<- read tuple (mail-bodies-by-ref settings messages))
+  ;; 追補 6(実射 2026-09-16 18:45): 要約が覆う記録の終わりの時刻(recordSeq = floor の出来事の at)を 1 読みし、それ以前の郵便は畳まない。
+  (setv floor-at None)
+  (when (is-not floor None)
+    (<- edge (| RecordPage RecordUnread) (RecordReadSince :conversation-id subject :since (max 0 (- floor 1)) :limit 1 :kinds #()))
+    (<- edge-at (| int None) (summary-floor-at-of edge floor))
+    (setv floor-at edge-at))
   (<- fold HistoryFold (rehydrate-history-of subject messages source exclude
-                                             settings.rehydrate-history-byte-budget (get read 0) summaries))
+                                             settings.rehydrate-history-byte-budget (get read 0) summaries floor-at))
   fold)
 
 
@@ -957,6 +964,7 @@
                                      (if fold.thin "thinly from ACP headlines " "from the record service ")
                                      f"({fold.summary-regions} summaries, {fold.kept-turns} turns kept, {fold.thinned-turns} thinned, {fold.dropped-turns} dropped"
                                      (if (> fold.dropped-summaries 0) f", {fold.dropped-summaries} summaries dropped" "")
+                                     (if (> fold.summarized-mails 0) f", {fold.summarized-mails} mails left to the summaries" "")
                                      (if (is fold.dropped-headline None) "" " into a headline")
                                      (if (> fold.cut-bytes 0) f", newest turn cut by {fold.cut-bytes} bytes" "")
                                      f", {fold.size-bytes} bytes, history read {(- read-ended read-started)} ms)")))

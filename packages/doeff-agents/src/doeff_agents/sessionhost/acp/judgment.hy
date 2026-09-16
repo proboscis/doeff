@@ -1676,9 +1676,22 @@
       (replace base :counts (tuple (+ [#(HISTORY-SUMMARY-KIND summary-count)] (list base.counts))))))
 
 
-(defk rehydrate-history-of [conversation-id messages source exclude budget fetched summaries]
+(defk summary-floor-at-of [page floor]
+  {:pre [(: page (| RecordPage RecordUnread)) (: floor int)]
+   :post [(: % (| int None))]}
+  "要約が覆う記録の終わりの時刻(段 12 lane 12j 追補 6): recordSeq = floor の出来事(agentd.history-for が RecordReadSince since floor−1・
+   limit 1 で 1 読み)の at。読めない・空・recordSeq が floor でない(欠番)= None(郵便を絞らない — 発明しない)。"
+  (when (isinstance page RecordUnread)
+    (return None))
+  (when (not page.events)
+    (return None))
+  (setv edge (get page.events 0))
+  (if (= edge.record-seq floor) edge.at None))
+
+
+(defk rehydrate-history-of [conversation-id messages source exclude budget fetched summaries floor-at]
   {:pre [(: conversation-id str) (: messages tuple) (: source (| RecordedTurns HeadlineTurns)) (: exclude tuple)
-         (: budget int) (: fetched dict) (: summaries tuple)]
+         (: budget int) (: fetched dict) (: summaries tuple) (: floor-at (| int None))]
    :post [(: % HistoryFold)]}
   "会話の記録 → 履歴からの再開の手番の最初の本文に畳む「これまでの会話」(段 8q・R20・段 9f lane 9f-4・段 11 lane 11v R34 / R35)—
    判断はここ 1 点: 郵便(ACP の行 — spec.to か spec.from がこの会話・exclude = この手番の inputs は除く — 本文として別に届く)と
@@ -1697,7 +1710,10 @@
    それでも超える時だけ古い要約から落として見出し〔kind 要約〕に数える — 要約は既に圧縮された履歴で byte あたりの価値が原文より高い。
    旧の順(要約が最も古い項として先に落ちる)では上限 65,536 byte・原文 1,500 出来事・要約 4 本のとき本文に要約が 1 本も残らず、見出しの
    期間は recordSeq 0 を時刻に読んで 1970 年から始まった。見出しの期間は落とした原文の時刻だけで数える(要約は件数)。
-   原文は呼び手が最大の to より新しい出来事だけを渡す(agentd.record-turns-for の floor)。summaries が空なら今日どおり。"
+   原文は呼び手が最大の to より新しい出来事だけを渡す(agentd.record-turns-for の floor)。summaries が空なら今日どおり。
+   追補 6(実射 2026-09-16 18:45: 落ちた 77 手番の大半が郵便 105 通で上限を食っていた): floor-at = 要約が覆う記録の終わり(recordSeq = floor
+   の出来事の at・summary-floor-at-of・None = 要約なし / 読めない)。それ以前の郵便は要約が担う(要約はその期間の郵便も読んで書いている)ので
+   畳まず、HistoryFold.summarized_mails に数える。"
   (setv thin (isinstance source HeadlineTurns))
   (setv thin-k (// budget HISTORY-THIN-DIVISOR))
   ;; 追補 5(便 4 の実射 2026-09-16 18:08): 要約は原文と別の前置き — recordSeq の区間の順に 1 区間 1 段で、時刻の並びには入れない
@@ -1709,6 +1725,7 @@
     (.append summary-lines summary-line))
   (setv items [])
   (setv order 0)
+  (setv summarized-mails 0)
   (for [message messages]
     (setv spec message.spec)
     (setv message-id (.get spec "id" message.resource-id))
@@ -1716,12 +1733,17 @@
     (when (and (or inbound (= (.get spec "from") conversation-id)) (not-in message-id exclude))
       (setv at (.get spec "at"))
       (setv mail-at (if (isinstance at int) at message.created-at-ms))
-      (<- line str (history-message-line message mail-at fetched))
-      (.append items (HistoryItem :at mail-at :until mail-at :order order :inbound inbound :line line
-                                  :counts (HeadlineCounts :counts #(#(HISTORY-MAIL-KIND 1)) :tools #()
-                                                          :first-at mail-at :last-at mail-at)
-                                  :thin-line None))
-      (setv order (+ order 1))))
+      ;; 追補 6: 要約が覆う記録の終わり以前の郵便は要約が担う — 畳まず数えるだけ(上限を食わせない)。
+      (setv covered (and (is-not floor-at None) (<= mail-at floor-at)))
+      (when covered
+        (setv summarized-mails (+ summarized-mails 1)))
+      (when (not covered)
+        (<- line str (history-message-line message mail-at fetched))
+        (.append items (HistoryItem :at mail-at :until mail-at :order order :inbound inbound :line line
+                                    :counts (HeadlineCounts :counts #(#(HISTORY-MAIL-KIND 1)) :tools #()
+                                                            :first-at mail-at :last-at mail-at)
+                                    :thin-line None))
+        (setv order (+ order 1)))))
   (if thin
       (for [record source.records]
         (when (= (.get record.spec "conversationId") conversation-id)
@@ -1750,7 +1772,8 @@
         (.append (get groups -1) item)))
   (when (and (not groups) (not summary-lines))
     (return (HistoryFold :text "" :kept-turns 0 :dropped-turns 0 :dropped-items 0 :thinned-turns 0 :dropped-headline None
-                         :cut-bytes 0 :size-bytes 0 :thin thin :summary-regions 0 :dropped-summaries 0)))
+                         :cut-bytes 0 :size-bytes 0 :thin thin :summary-regions 0 :dropped-summaries 0
+                         :summarized-mails summarized-mails)))
   (setv where (+ f"全文は会話 {conversation-id} の記録 — 郵便は ACP の kind message(spec.to / spec.from = {conversation-id})"
                  f"の行・手番の本文は会話の記録の service(GET /v1/conversations/{conversation-id}/events)— にあります"))
   (setv full-blocks (lfor group groups (.join "\n" (lfor item group item.line))))
@@ -1811,7 +1834,8 @@
                :size-bytes (len (.encode text "utf-8"))
                :thin thin
                :summary-regions (- (len summary-lines) dropped-summaries)
-               :dropped-summaries dropped-summaries))
+               :dropped-summaries dropped-summaries
+               :summarized-mails summarized-mails))
 
 
 (defk history-summary-line [summary]

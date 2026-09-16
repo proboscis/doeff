@@ -48,6 +48,8 @@
   RECORD-PAGE-MAX-LIMIT
   RECORD-RAW-EVENT-KINDS
   RecordEvent
+  RecordPage
+  RecordUnread
   RecordedTurns
   SessionRefused
   SessionView
@@ -77,6 +79,7 @@
   message-body-ref-of
   resume-params-of
   rehydrate-history-of
+  summary-floor-at-of
   session-observations-of
   transcript-candidates-of])
 (import doeff_agents.sessionhost.acp.runtime [initial-state run-tick])
@@ -261,7 +264,7 @@
                  (event-of 6 "j-1#a1" 5 (+ AT 1500) "frame" {"text" "❯ pane"})
                  (event-of 7 "m-1#mail" 0 (+ AT 1600) "message" {"text" "郵便の写し"})
                  (event-of 8 "old#a1" 0 (+ AT 1700) "user" {"text" "旧の手番の送信" "truncated" True})))
-  (setv fold (run (rehydrate-history-of CONVERSATION messages (RecordedTurns :events events :complete True) #("m-2") 65536 {} #())))
+  (setv fold (run (rehydrate-history-of CONVERSATION messages (RecordedTurns :events events :complete True) #("m-2") 65536 {} #() None)))
   (assert (isinstance fold HistoryFold))
   (assert (not fold.thin))
   (assert (= #(fold.kept-turns fold.dropped-turns fold.dropped-items) #(1 0 0)) fold)
@@ -280,10 +283,10 @@
   (assert (.startswith (get lines 0) "[2026-09-") (get lines 0))
   (assert (= fold.size-bytes (len (.encode fold.text "utf-8"))))
   ;; 会話の最初まで読めていない時はそれを名乗る。
-  (setv partial (run (rehydrate-history-of CONVERSATION messages (RecordedTurns :events events :complete False) #("m-2") 65536 {} #())))
+  (setv partial (run (rehydrate-history-of CONVERSATION messages (RecordedTurns :events events :complete False) #("m-2") 65536 {} #() None)))
   (assert (in "会話の最初までは読んでいない" partial.text))
   ;; 記録の無い会話は空(最初の本文を変えない)。
-  (assert (= (. (run (rehydrate-history-of THIRD messages (RecordedTurns :events #() :complete True) #() 65536 {} #())) text) "")))
+  (assert (= (. (run (rehydrate-history-of THIRD messages (RecordedTurns :events #() :complete True) #() 65536 {} #() None)) text) "")))
 
 
 (deftest test-history-fold-from-headlines-is-thin-and-says-so
@@ -300,7 +303,7 @@
                   (record-row "j-x" OTHER [{"seq" 0 "at" (+ AT 1000) "kind" "text" "bytes" 5 "sha256" "0"}] AT)
                   (record-row "j-empty" CONVERSATION [] (+ AT 2000))))
   (setv source (HeadlineTurns :records records :reason "record service read failed (0: unreachable)"))
-  (setv fold (run (rehydrate-history-of CONVERSATION messages source #("m-2") 65536 {} #())))
+  (setv fold (run (rehydrate-history-of CONVERSATION messages source #("m-2") 65536 {} #() None)))
   (assert fold.thin)
   (assert (= #(fold.kept-turns fold.dropped-turns) #(1 0)) fold)
   (assert (.startswith fold.text f"これまでの会話(薄い再開・会話 {CONVERSATION}・古い順): 会話の記録の service に届かなかった(record service read failed (0: unreachable))ため") fold.text)
@@ -313,7 +316,7 @@
   (assert (not-in "j-x" fold.text) "別の会話の手番を畳んだ")
   (assert (not-in "j-empty" fold.text) "見出しの無い行を畳んだ")
   ;; 見出しが無い会話は空。
-  (assert (= (. (run (rehydrate-history-of THIRD messages source #() 65536 {} #())) text) "")))
+  (assert (= (. (run (rehydrate-history-of THIRD messages source #() 65536 {} #() None)) text) "")))
 
 
 (deftest test-history-fold-drops-the-oldest-turns-and-names-where-the-rest-is
@@ -323,11 +326,11 @@
                                            (+ AT (* n 1000))))))
   (setv records (RecordedTurns :events (tuple (lfor n (range 6) (event-of (+ n 1) "j-a#a1" n (+ AT (* n 1000) 10) "text" {"text" f"答え {n}"})))
                                :complete True))
-  (setv whole (run (rehydrate-history-of CONVERSATION messages records #("m-5") 65536 {} #())))
+  (setv whole (run (rehydrate-history-of CONVERSATION messages records #("m-5") 65536 {} #() None)))
   (assert (= #(whole.kept-turns whole.dropped-turns) #(5 0)) whole)
   (assert (not-in "問い 5" whole.text) "この手番の inputs は畳まない")
   (assert (in "答え 5" whole.text))
-  (setv small (run (rehydrate-history-of CONVERSATION messages records #("m-5") 2000 {} #())))
+  (setv small (run (rehydrate-history-of CONVERSATION messages records #("m-5") 2000 {} #() None)))
   (assert (<= small.size-bytes 2000) small.size-bytes)
   (assert (>= small.dropped-turns 1) small)
   (assert (= (+ small.kept-turns small.dropped-turns) 5))
@@ -338,7 +341,7 @@
   (assert (in f"GET /v1/conversations/{CONVERSATION}/events" small.text) small.text)
   ;; 最新の手番 1 つだけで超える: その手番の先頭を落として末尾を残し、切ったことを名乗る。
   (setv huge #((message-row "m-h" CONVERSATION "operator" (+ "はじまり" (* "い" 3000) "しっぽ") AT)))
-  (setv cut-fold (run (rehydrate-history-of CONVERSATION huge (RecordedTurns :events #() :complete True) #() 1500 {} #())))
+  (setv cut-fold (run (rehydrate-history-of CONVERSATION huge (RecordedTurns :events #() :complete True) #() 1500 {} #() None)))
   (assert (<= cut-fold.size-bytes 1500) cut-fold.size-bytes)
   (assert (in "しっぽ" cut-fold.text))
   (assert (not-in "はじまり" cut-fold.text))
@@ -359,7 +362,7 @@
                          (lfor n (range 8) (event-of (+ 3 (* n 3)) f"j-{n}#a1" 2 (+ AT (* n 10000) 300) "tool_result"
                                                      {"toolUseId" f"t{n}" "output" "ok"})))))
   (setv records (RecordedTurns :events events :complete True))
-  (setv fold (run (rehydrate-history-of CONVERSATION messages records #("m-7") 4000 {} #())))
+  (setv fold (run (rehydrate-history-of CONVERSATION messages records #("m-7") 4000 {} #() None)))
   (assert (<= fold.size-bytes 4000) fold.size-bytes)
   (assert (>= fold.dropped-turns 1) fold)
   (assert (= (+ fold.kept-turns fold.dropped-turns) 7) fold)
@@ -387,7 +390,7 @@
   (assert (not-in "要約せずに落としました" fold.text))
   (assert (= (.count fold.text "古い手番") 1) fold.text)
   ;; 決定的: 同じ材料からは同じ見出し。
-  (assert (= (. (run (rehydrate-history-of CONVERSATION messages records #("m-7") 4000 {} #())) dropped-headline) headline)))
+  (assert (= (. (run (rehydrate-history-of CONVERSATION messages records #("m-7") 4000 {} #() None)) dropped-headline) headline)))
 
 
 (deftest test-a-fold-within-the-budget-carries-no-headline
@@ -395,13 +398,13 @@
   (setv messages #((message-row "m-1" CONVERSATION "operator" "合言葉は ひまわり" AT)
                    (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (+ AT 9000))))
   (setv events #((event-of 1 "j-1#a1" 0 (+ AT 1000) "text" {"text" "覚えました"})))
-  (setv fold (run (rehydrate-history-of CONVERSATION messages (RecordedTurns :events events :complete True) #("m-2") 65536 {} #())))
+  (setv fold (run (rehydrate-history-of CONVERSATION messages (RecordedTurns :events events :complete True) #("m-2") 65536 {} #() None)))
   (assert (= #(fold.kept-turns fold.dropped-turns fold.dropped-items fold.cut-bytes) #(1 0 0 0)) fold)
   (assert (is fold.dropped-headline None) fold)
   (assert (not-in "古い手番" fold.text))
   (assert (not-in "上限" fold.text))
   ;; 記録の無い会話も同じ(空の答え)。
-  (setv empty (run (rehydrate-history-of THIRD messages (RecordedTurns :events #() :complete True) #() 65536 {} #())))
+  (setv empty (run (rehydrate-history-of THIRD messages (RecordedTurns :events #() :complete True) #() 65536 {} #() None)))
   (assert (= #(empty.text empty.dropped-headline empty.cut-bytes) #("" None 0)) empty))
 
 
@@ -413,7 +416,7 @@
                    (message-row "m-2" CONVERSATION "operator" (+ "はじまり" (* "い" 3000) "しっぽ") (+ AT 2000))))
   (setv events #((event-of 1 "j-0#a1" 0 (+ AT 100) "tool_use" {"toolName" "Edit" "toolUseId" "t0" "input" {"a" 1}})
                  (event-of 2 "j-1#a1" 0 (+ AT 1100) "text" {"text" "二つ目の答え"})))
-  (setv fold (run (rehydrate-history-of CONVERSATION messages (RecordedTurns :events events :complete True) #() 1800 {} #())))
+  (setv fold (run (rehydrate-history-of CONVERSATION messages (RecordedTurns :events events :complete True) #() 1800 {} #() None)))
   (assert (<= fold.size-bytes 1800) fold.size-bytes)
   (assert (= #(fold.kept-turns fold.dropped-turns fold.dropped-items) #(1 2 4)) fold)
   (assert (> fold.cut-bytes 0) fold)
@@ -428,7 +431,7 @@
   (setv tail (get (.split fold.text "\n\n") 2))
   (assert (= fold.cut-bytes (- (len (.encode newest-line "utf-8")) (len (.encode tail "utf-8")))) fold.cut-bytes)
   ;; 落とした区間が無い時の切りは、在処を断りの中で名乗る(見出しが無いので)。
-  (setv alone (run (rehydrate-history-of CONVERSATION #((get messages 2)) (RecordedTurns :events #() :complete True) #() 1500 {} #())))
+  (setv alone (run (rehydrate-history-of CONVERSATION #((get messages 2)) (RecordedTurns :events #() :complete True) #() 1500 {} #() None)))
   (assert (<= alone.size-bytes 1500) alone.size-bytes)
   (assert (is alone.dropped-headline None) alone)
   (assert (> alone.cut-bytes 0) alone)
@@ -447,9 +450,9 @@
                                           {"seq" 2 "at" (+ AT (* n 10000) 300) "kind" "tool_result" "toolUseId" f"t{n}" "bytes" 9 "sha256" "0"}]
                                          (+ AT (* n 10000))))))
   (setv source (HeadlineTurns :records records :reason "record service read failed (0: unreachable)"))
-  (setv whole (run (rehydrate-history-of CONVERSATION messages source #("m-5") 65536 {} #())))
+  (setv whole (run (rehydrate-history-of CONVERSATION messages source #("m-5") 65536 {} #() None)))
   (assert (and whole.thin (= whole.dropped-turns 0) (is whole.dropped-headline None)) whole)
-  (setv fold (run (rehydrate-history-of CONVERSATION messages source #("m-5") 1900 {} #())))
+  (setv fold (run (rehydrate-history-of CONVERSATION messages source #("m-5") 1900 {} #() None)))
   (assert fold.thin)
   (assert (<= fold.size-bytes 1900) fold.size-bytes)
   (assert (>= fold.dropped-turns 1) fold)
@@ -488,11 +491,11 @@
   ;; tool_result の本文)を薄くする。agent の text は全手番残り、最新の手番は全文のまま。便 1 の形(落とすだけ)なら 5 手番が消えていた。
   (setv made (tool-heavy-turns 8))
   (setv records (RecordedTurns :events (get made 1) :complete True))
-  (setv whole (run (rehydrate-history-of CONVERSATION (get made 0) records #("m-7") 200000 {} #())))
+  (setv whole (run (rehydrate-history-of CONVERSATION (get made 0) records #("m-7") 200000 {} #() None)))
   (assert (= #(whole.thinned-turns whole.dropped-turns whole.kept-turns) #(0 0 7)) whole)
   (setv budget 14000)
   (setv k (// budget HISTORY-THIN-DIVISOR))
-  (setv fold (run (rehydrate-history-of CONVERSATION (get made 0) records #("m-7") budget {} #())))
+  (setv fold (run (rehydrate-history-of CONVERSATION (get made 0) records #("m-7") budget {} #() None)))
   (assert (<= fold.size-bytes budget) fold.size-bytes)
   (assert (= #(fold.dropped-turns fold.cut-bytes fold.kept-turns) #(0 0 7)) fold)
   (assert (>= fold.thinned-turns 1) fold)
@@ -521,7 +524,7 @@
   (setv records (RecordedTurns :events (get made 1) :complete True))
   (setv budget 1500)
   (setv k (// budget HISTORY-THIN-DIVISOR))
-  (setv fold (run (rehydrate-history-of CONVERSATION (get made 0) records #("m-7") budget {} #())))
+  (setv fold (run (rehydrate-history-of CONVERSATION (get made 0) records #("m-7") budget {} #() None)))
   (assert (<= fold.size-bytes budget) fold.size-bytes)
   (assert (= fold.thinned-turns 7) fold)
   (assert (>= fold.dropped-turns 1) fold)
@@ -544,7 +547,7 @@
                                           {"seq" 2 "at" (+ AT (* n 10000) 300) "kind" "tool_result" "toolUseId" f"t{n}" "bytes" 9000 "sha256" "0"}]
                                          (+ AT (* n 10000))))))
   (setv source (HeadlineTurns :records records :reason "record service read failed (0: unreachable)"))
-  (setv fold (run (rehydrate-history-of CONVERSATION messages source #("m-5") 1900 {} #())))
+  (setv fold (run (rehydrate-history-of CONVERSATION messages source #("m-5") 1900 {} #() None)))
   (assert fold.thin)
   (assert (<= fold.size-bytes 1900) fold.size-bytes)
   (assert (= fold.thinned-turns 0) fold)
@@ -566,11 +569,11 @@
                  (event-of 4 "j-1#a1" 3 (+ AT 1300) "system" {"text" (* "system の本文 " 20)})
                  (event-of 5 "j-1#a1" 4 (+ AT 1400) "user" {"text" (* "user の本文 " 20)})))
   (setv records (RecordedTurns :events events :complete True))
-  (setv whole (run (rehydrate-history-of CONVERSATION messages records #("m-2") 65536 {} #())))
+  (setv whole (run (rehydrate-history-of CONVERSATION messages records #("m-2") 65536 {} #() None)))
   (assert (= whole.thinned-turns 0) whole)
   (setv budget 2400)
   (setv k (// budget HISTORY-THIN-DIVISOR))
-  (setv fold (run (rehydrate-history-of CONVERSATION messages records #("m-2") budget {} #())))
+  (setv fold (run (rehydrate-history-of CONVERSATION messages records #("m-2") budget {} #() None)))
   (assert (= #(fold.thinned-turns fold.dropped-turns fold.cut-bytes fold.kept-turns) #(1 0 0 1)) fold)
   (assert (<= fold.size-bytes budget) fold.size-bytes)
   (setv whole-lines (.splitlines whole.text))
@@ -588,7 +591,7 @@
   (assert (in f"(先頭 {k} byte だけ・元 {(len raw-input)} byte)" fold.text) fold.text)
   (assert (in "合言葉は ひまわり" fold.text))
   (assert (in "覚えました" fold.text))
-  (assert (= (. (run (rehydrate-history-of CONVERSATION messages records #("m-2") budget {} #())) text) fold.text) "決定的"))
+  (assert (= (. (run (rehydrate-history-of CONVERSATION messages records #("m-2") budget {} #() None)) text) fold.text) "決定的"))
 
 
 ;; ---------------------------------------------------------------------------
@@ -965,7 +968,7 @@
              #(#((mailed inline) (run (mail-turn-text-of "m-b" ref-row.spec "長い本文"))) #(#() #()) #())))
   (assert (= (run (message-bodies-of #(inline ref-row) #("m-1" "m-b") {} {}))
              #(#((mailed inline)) #(#()) #("m-b"))))
-  (setv fold (run (rehydrate-history-of CONVERSATION #(ref-row) (RecordedTurns :events #() :complete True) #() 65536 {"m-b" "長い本文"} #())))
+  (setv fold (run (rehydrate-history-of CONVERSATION #(ref-row) (RecordedTurns :events #() :complete True) #() 65536 {"m-b" "長い本文"} #() None)))
   (assert (in "長い本文" fold.text) fold.text))
 
 
@@ -1183,7 +1186,7 @@
   (setv summaries (tuple [(HistorySummary :from-seq 3 :to-seq 4 :at (+ AT 50) :model "m" :text (+ "後の要約 " (* "う" 100)))
                           (HistorySummary :from-seq 0 :to-seq 2 :at (+ AT 40) :model "m" :text (+ "先の要約 " (* "え" 100)))]))
   (setv records (RecordedTurns :events events :complete True))
-  (setv fold (run (rehydrate-history-of CONVERSATION messages records #() 65536 {} summaries)))
+  (setv fold (run (rehydrate-history-of CONVERSATION messages records #() 65536 {} summaries None)))
   (assert (= fold.summary-regions 2))
   (assert (= fold.dropped-summaries 0))
   (assert (in "古い区間 2 つは要約" fold.text) fold.text)
@@ -1194,7 +1197,7 @@
   (assert (< second-at (.index fold.text "原文の答え")) "要約が原文より後に並んだ")
   (assert (= fold.thinned-turns 0) "要約は薄くならない")
   ;; 上限を 1 byte 下回る: 落ちるのは原文の古い手番(問い + 原文の答え)で、要約 2 本は残る。見出しの期間は原文の時刻。
-  (setv raw-dropped (run (rehydrate-history-of CONVERSATION messages records #() (- fold.size-bytes 1) {} summaries)))
+  (setv raw-dropped (run (rehydrate-history-of CONVERSATION messages records #() (- fold.size-bytes 1) {} summaries None)))
   (assert (= raw-dropped.dropped-turns 1) raw-dropped.text)
   (assert (= raw-dropped.dropped-summaries 0))
   (assert (= raw-dropped.summary-regions 2))
@@ -1212,7 +1215,7 @@
   (assert (= (get (.split raw-dropped.text "\n\n") 1) raw-dropped.dropped-headline) raw-dropped.text)
   (assert (< (.index raw-dropped.text raw-dropped.dropped-headline) (.index raw-dropped.text "先の要約")))
   ;; さらに下回る: 原文は最新の 1 手番だけなので、古い要約から落ちて見出しが kind 要約 を数え、頭の数も減る。
-  (setv one-summary (run (rehydrate-history-of CONVERSATION messages records #() (- raw-dropped.size-bytes 1) {} summaries)))
+  (setv one-summary (run (rehydrate-history-of CONVERSATION messages records #() (- raw-dropped.size-bytes 1) {} summaries None)))
   (assert (= one-summary.dropped-summaries 1) one-summary.text)
   (assert (= one-summary.summary-regions 1))
   (assert (= one-summary.dropped-turns 1))
@@ -1221,14 +1224,14 @@
   (assert (in "古い区間 1 つは要約" one-summary.text) one-summary.text)
   (assert (in f": {HISTORY-SUMMARY-KIND} 1・" one-summary.dropped-headline) one-summary.dropped-headline)
   (assert (in "新しい答え" one-summary.text))
-  (setv no-summary (run (rehydrate-history-of CONVERSATION messages records #() (- one-summary.size-bytes 1) {} summaries)))
+  (setv no-summary (run (rehydrate-history-of CONVERSATION messages records #() (- one-summary.size-bytes 1) {} summaries None)))
   (assert (= no-summary.dropped-summaries 2) no-summary.text)
   (assert (= no-summary.summary-regions 0))
   (assert (not-in "は要約" no-summary.text) no-summary.text)
   (assert (in f": {HISTORY-SUMMARY-KIND} 2・" no-summary.dropped-headline) no-summary.dropped-headline)
   (assert (in "新しい答え" no-summary.text))
   ;; 要約なし = 今日どおり
-  (setv plain (run (rehydrate-history-of CONVERSATION messages records #() 65536 {} #())))
+  (setv plain (run (rehydrate-history-of CONVERSATION messages records #() 65536 {} #() None)))
   (assert (= plain.summary-regions 0))
   (assert (not-in "要約" plain.text)))
 
@@ -1243,7 +1246,7 @@
                                                :model "claude-opus-5" :text (+ f"要約 {i} " (* "要" 2000))))))
   (setv messages (tuple (lfor n (range 30) (message-row f"m-{n}" CONVERSATION "operator" f"問い {n}" (+ AT 100000 (* n 10000))))))
   (setv events (tuple (lfor n (range 30) (event-of (+ 601 n) f"j-{n}#a1" 0 (+ AT 100000 (* n 10000) 500) "text" {"text" (+ f"答え {n} " (* "本" 2000))}))))
-  (setv fold (run (rehydrate-history-of CONVERSATION messages (RecordedTurns :events events :complete True) #() 65536 {} summaries)))
+  (setv fold (run (rehydrate-history-of CONVERSATION messages (RecordedTurns :events events :complete True) #() 65536 {} summaries None)))
   (assert (<= fold.size-bytes 65536) fold.size-bytes)
   (assert (= fold.summary-regions 4) fold.text)
   (assert (= fold.dropped-summaries 0))
@@ -1279,10 +1282,13 @@
   (assert (in f"[要約 recordSeq 0〜{covered}・claude-opus-5] 要約: 合言葉は ひまわり と覚えた。" prompt) prompt)
   (assert (in "古い区間 1 つは要約" prompt) prompt)
   (assert (not-in "agent: 覚えました" prompt) "要約が覆う区間の原文が畳みに残った")
-  (assert (< (.index prompt "[要約 recordSeq") (.index prompt "合言葉は ひまわり")) "要約が郵便より後に並んだ")
+  ;; 追補 6: 要約が覆う記録の終わり(recordSeq = covered の出来事の at)より古い郵便(m-1)は要約が担う — 畳みに並ばず、数だけ log に。
+  (assert (not-in f"operator → {CONVERSATION}(note): 合言葉は ひまわり" prompt) "要約が覆う期間の郵便が畳みに残った")
+  (assert (in #(CONVERSATION (- covered 1) 1 #()) world.record-service.since-reads) world.record-service.since-reads)
   (assert (= world.acp.summary-reads [CONVERSATION]))
   (assert (in #(CONVERSATION f"summary#0-{covered}") world.record-service.stream-reads))
   (assert (any (gfor line world.local.logs (in "(1 summaries," line))) world.local.logs)
+  (assert (any (gfor line world.local.logs (in ", 1 mails left to the summaries" line))) world.local.logs)
   ;; 要約の無い会話は今日どおり(行の読みは 1 回・本文の stream は読まない)
   (setv plain (World "tmux" True))
   (setv warm2 (run-first-turn plain))
@@ -1344,3 +1350,43 @@
   (setv down-stamp (dict-at (dict-at (get down.sessions.launches 0) "launch_attribution") "agentd"))
   (assert (= (get down-stamp "arm") "rehydrate") down-stamp)
   (assert (any (gfor line down.local.logs (in "rehydrates thinly from ACP headlines" line))) down.local.logs))
+
+
+(deftest test-mail-covered-by-the-summaries-is-left-to-them-and-does-not-eat-the-budget
+  ;; 追補 6(実射 2026-09-16 18:45 aj-X92PW3ZHGW36ZCQWR2ZZPJNACS): 落ちた 77 手番の大半は郵便 105 通 — ACP の郵便は recordSeq を持たないので
+  ;; 要約が覆う期間の郵便も原文として畳みの候補に入り、上限を食っていた。新: floor-at(要約が覆う記録の終わりの出来事の at)以前の郵便は
+  ;; 畳まず summarized_mails に数える。floor-at = None(要約なし・読めない)は今日どおり全通。
+  (setv summaries (tuple [(HistorySummary :from-seq 0 :to-seq 600 :at (+ AT 900000) :model "m" :text (+ "要約 " (* "要" 200)))]))
+  (setv old-mails (lfor n (range 105) (message-row f"m-{n}" CONVERSATION "operator" f"古い問い {n}" (+ AT (* n 1000)))))
+  (setv new-mails [(message-row "m-new-1" CONVERSATION "operator" "新しい問い 1" (+ AT 300000))
+                   (message-row "m-new-2" CONVERSATION "operator" "新しい問い 2" (+ AT 400000))])
+  (setv messages (tuple (+ old-mails new-mails)))
+  (setv events (tuple [(event-of 601 "j-9#a1" 0 (+ AT 300500) "text" {"text" "新しい答え 1"})
+                       (event-of 602 "j-10#a1" 0 (+ AT 400500) "text" {"text" "新しい答え 2"})]))
+  (setv records (RecordedTurns :events events :complete True))
+  ;; floor-at = 105 通目の郵便の直後(recordSeq 600 の出来事の at)。
+  (setv fold (run (rehydrate-history-of CONVERSATION messages records #() 65536 {} summaries (+ AT 104000))))
+  (assert (= fold.summarized-mails 105) fold.summarized-mails)
+  (assert (= fold.dropped-turns 0) fold.text)
+  (assert (is fold.dropped-headline None) fold.dropped-headline)
+  (assert (not-in "古い問い" fold.text) "要約が覆う期間の郵便が畳みに残った")
+  (assert (in "新しい問い 1" fold.text))
+  (assert (in "新しい問い 2" fold.text))
+  (assert (in "新しい答え 2" fold.text))
+  (assert (= fold.kept-turns 2) fold)
+  (assert (< (.index fold.text "[要約 recordSeq 0〜600") (.index fold.text "新しい問い 1")))
+  ;; 境界: at = floor-at の郵便は要約の側(<=)。
+  (setv edge (run (rehydrate-history-of CONVERSATION messages records #() 65536 {} summaries (+ AT 300000))))
+  (assert (= edge.summarized-mails 106) edge.summarized-mails)
+  (assert (not-in "新しい問い 1" edge.text))
+  (assert (in "新しい問い 2" edge.text))
+  ;; floor-at = None: 今日どおり全通が候補(古い郵便が上限を食い、落とした側に数えられる)。
+  (setv plain (run (rehydrate-history-of CONVERSATION messages records #() 65536 {} summaries None)))
+  (assert (= plain.summarized-mails 0))
+  (assert (in "古い問い 0" plain.text) plain.text)
+  ;; 純関数: floor の出来事の at の読み。
+  (setv page (RecordPage :events #((event-of 600 "j-8#a1" 0 (+ AT 104000) "text" {"text" "x"})) :next None))
+  (assert (= (run (summary-floor-at-of page 600)) (+ AT 104000)))
+  (assert (is (run (summary-floor-at-of page 599)) None) "recordSeq が floor でない出来事を時刻に読んだ")
+  (assert (is (run (summary-floor-at-of (RecordPage :events #() :next None) 600)) None))
+  (assert (is (run (summary-floor-at-of (RecordUnread 0 "unreachable") 600)) None)))
