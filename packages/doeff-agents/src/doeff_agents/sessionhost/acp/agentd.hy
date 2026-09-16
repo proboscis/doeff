@@ -956,6 +956,7 @@
           (<- (LogLine :text (+ f"agentd: job {job-id} rehydrates conversation {subject} "
                                      (if fold.thin "thinly from ACP headlines " "from the record service ")
                                      f"({fold.summary-regions} summaries, {fold.kept-turns} turns kept, {fold.thinned-turns} thinned, {fold.dropped-turns} dropped"
+                                     (if (> fold.dropped-summaries 0) f", {fold.dropped-summaries} summaries dropped" "")
                                      (if (is fold.dropped-headline None) "" " into a headline")
                                      (if (> fold.cut-bytes 0) f", newest turn cut by {fold.cut-bytes} bytes" "")
                                      f", {fold.size-bytes} bytes, history read {(- read-ended read-started)} ms)")))

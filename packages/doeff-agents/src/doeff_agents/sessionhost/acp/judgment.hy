@@ -1646,6 +1646,36 @@
   (+ f"(上限 {budget} byte を超えるため、最新の手番の先頭 {cut-bytes} byte を落としました。" where ")"))
 
 
+(defk history-header-of [conversation-id source kept-summaries]
+  {:pre [(: conversation-id str) (: source (| RecordedTurns HeadlineTurns)) (: kept-summaries int)]
+   :post [(: % str)]}
+  "「これまでの会話」の頭の 1 行(段 12 lane 12j 追補 5 で 1 点に): 薄い再開は届かなかった理由を名乗り、要約が残っていればその数
+   (上限で落とした要約は数えない)を名乗る。"
+  (setv summarized (if (> kept-summaries 0) f"・古い区間 {kept-summaries} つは要約(記録の service の recordSeq の区間を名乗る)で、原文はその後" ""))
+  (if (isinstance source HeadlineTurns)
+      (+ f"これまでの会話(薄い再開・会話 {conversation-id}・古い順{summarized}): 会話の記録の service に届かなかった"
+         f"({source.reason})ため、手番の本文は無く ACP の見出し(出来事の数)だけです。郵便の本文は在ります。")
+      (+ f"これまでの会話(会話の記録の service と ACP の郵便から組んだ写し・会話 {conversation-id}・古い順{summarized}"
+         (if source.complete "" "・会話の最初までは読んでいない") "):")))
+
+
+(defk dropped-headline-counts [items summaries]
+  {:pre [(: items tuple) (: summaries tuple)]
+   :post [(: % HeadlineCounts)]}
+  "上限で落とした区間の見出しの数(段 12 lane 12j 追補 5): 原文の項(郵便と出来事)の件数・道具・期間は headline-counts-of-items の
+   1 点から、落とした要約(HistorySummary)は kind 要約 の件数として先頭に足す。期間は原文の項だけで数える(要約の区間の recordSeq を
+   時刻に読まない)— 原文を 1 つも落としていない(要約だけ落ちた)拍だけ、要約を書いた時刻を期間にする。どちらかは空でない。"
+  (setv summary-count (len summaries))
+  (when (not items)
+    (setv ats (lfor summary summaries summary.at))
+    (return (HeadlineCounts :counts #(#(HISTORY-SUMMARY-KIND summary-count)) :tools #()
+                            :first-at (min ats) :last-at (max ats))))
+  (<- base HeadlineCounts (headline-counts-of-items items))
+  (if (= summary-count 0)
+      base
+      (replace base :counts (tuple (+ [#(HISTORY-SUMMARY-KIND summary-count)] (list base.counts))))))
+
+
 (defk rehydrate-history-of [conversation-id messages source exclude budget fetched summaries]
   {:pre [(: conversation-id str) (: messages tuple) (: source (| RecordedTurns HeadlineTurns)) (: exclude tuple)
          (: budget int) (: fetched dict) (: summaries tuple)]
@@ -1662,20 +1692,23 @@
    (黙って捨てない・model は呼ばない — agora-redesign #55 便 1)。段 3 = 最新の手番 1 つだけでも超えるならその手番の先頭を
    落として末尾を残し、切った byte を名乗る。記録が無ければ text は空(薄い再開でも空)。
    段 12 lane 12j 便 3(agora-redesign #233・#55 案 D): summaries = kind summary の行の要約(古い順・recordSeq の閉区間)を**原文の前**に
-   1 区間 1 段として置く(history-summary-line・道具の項ではないので薄くならない・上限では古い要約から落ちて見出し〔kind 要約〕に数える)。
+   1 区間 1 段として置く(history-summary-line・道具の項ではないので薄くならない)。追補 5(便 4 の実射 2026-09-16 18:08・aj-88JXQX…): 要約は
+   原文と**別の前置き**で、時刻の並びには入れない(recordSeq を時刻に読まない)。上限では原文の手番を先に落とし(最新の 1 手番は残す)、
+   それでも超える時だけ古い要約から落として見出し〔kind 要約〕に数える — 要約は既に圧縮された履歴で byte あたりの価値が原文より高い。
+   旧の順(要約が最も古い項として先に落ちる)では上限 65,536 byte・原文 1,500 出来事・要約 4 本のとき本文に要約が 1 本も残らず、見出しの
+   期間は recordSeq 0 を時刻に読んで 1970 年から始まった。見出しの期間は落とした原文の時刻だけで数える(要約は件数)。
    原文は呼び手が最大の to より新しい出来事だけを渡す(agentd.record-turns-for の floor)。summaries が空なら今日どおり。"
   (setv thin (isinstance source HeadlineTurns))
   (setv thin-k (// budget HISTORY-THIN-DIVISOR))
+  ;; 追補 5(便 4 の実射 2026-09-16 18:08): 要約は原文と別の前置き — recordSeq の区間の順に 1 区間 1 段で、時刻の並びには入れない
+  ;; (recordSeq を時刻に読まない)。落とすのは原文の手番(最新の 1 つを除く)を全部落としても超える時だけ・古い要約から(段 2b)。
+  (setv ordered-summaries (list (sorted summaries :key (fn [summary] summary.from-seq))))
+  (setv summary-lines [])
+  (for [summary ordered-summaries]
+    (<- summary-line str (history-summary-line summary))
+    (.append summary-lines summary-line))
   (setv items [])
   (setv order 0)
-  (for [summary (sorted summaries :key (fn [summary] summary.from-seq))]
-    (<- summary-line str (history-summary-line summary))
-    ;; 要約は recordSeq の区間の順で原文(epoch ms の時刻)より前に並ぶ(at = 区間の始まり — 小さな整数)。
-    (.append items (HistoryItem :at summary.from-seq :until summary.to-seq :order order :inbound True :line summary-line
-                                :counts (HeadlineCounts :counts #(#(HISTORY-SUMMARY-KIND 1)) :tools #()
-                                                        :first-at summary.at :last-at summary.at)
-                                :thin-line None))
-    (setv order (+ order 1)))
   (for [message messages]
     (setv spec message.spec)
     (setv message-id (.get spec "id" message.resource-id))
@@ -1715,48 +1748,51 @@
     (if (or (not groups) item.inbound)
         (.append groups [item])
         (.append (get groups -1) item)))
-  (when (not groups)
+  (when (and (not groups) (not summary-lines))
     (return (HistoryFold :text "" :kept-turns 0 :dropped-turns 0 :dropped-items 0 :thinned-turns 0 :dropped-headline None
-                         :cut-bytes 0 :size-bytes 0 :thin thin :summary-regions (len summaries))))
-  (setv summarized (if summaries f"・古い区間 {(len summaries)} つは要約(記録の service の recordSeq の区間を名乗る)で、原文はその後" ""))
-  (setv header
-        (if thin
-            (+ f"これまでの会話(薄い再開・会話 {conversation-id}・古い順{summarized}): 会話の記録の service に届かなかった"
-               f"({source.reason})ため、手番の本文は無く ACP の見出し(出来事の数)だけです。郵便の本文は在ります。")
-            (+ f"これまでの会話(会話の記録の service と ACP の郵便から組んだ写し・会話 {conversation-id}・古い順{summarized}"
-               (if source.complete "" "・会話の最初までは読んでいない") "):")))
+                         :cut-bytes 0 :size-bytes 0 :thin thin :summary-regions 0 :dropped-summaries 0)))
   (setv where (+ f"全文は会話 {conversation-id} の記録 — 郵便は ACP の kind message(spec.to / spec.from = {conversation-id})"
                  f"の行・手番の本文は会話の記録の service(GET /v1/conversations/{conversation-id}/events)— にあります"))
   (setv full-blocks (lfor group groups (.join "\n" (lfor item group item.line))))
   (setv thin-blocks (lfor group groups (.join "\n" (lfor item group (if (is item.thin-line None) item.line item.thin-line)))))
   (setv thinnable (lfor group groups (any (gfor item group (is-not item.thin-line None)))))
-  ;; 段 1(R35): 落とす前に薄くする — 古い手番から新しい手番へ、道具の項だけ。薄くなる項の無い手番は数えない。
   (setv blocks (list full-blocks))
+  (setv kept-summaries (list summary-lines))
   (setv thinned-turns 0)
+  (setv dropped-turns 0)
+  (setv dropped-items 0)
+  (setv dropped-summaries 0)
+  (setv headline None)
+  (<- header str (history-header-of conversation-id source (len kept-summaries)))
+  (setv text (.join "\n\n" (+ [header] kept-summaries blocks)))
+  ;; 段 1(R35): 落とす前に薄くする — 古い手番から新しい手番へ、道具の項だけ。薄くなる項の無い手番は数えない。
   (setv reach 0)
-  (setv text (.join "\n\n" (+ [header] blocks)))
   (while (and (> (len (.encode text "utf-8")) budget) (< reach (len groups)))
     (when (get thinnable reach)
       (setv (get blocks reach) (get thin-blocks reach))
       (setv thinned-turns (+ thinned-turns 1))
-      (setv text (.join "\n\n" (+ [header] blocks))))
+      (setv text (.join "\n\n" (+ [header] kept-summaries blocks))))
     (setv reach (+ reach 1)))
-  ;; 段 2(R34): 全部を薄くしても超える間、古い手番から落とす。落とした区間は見出し 1 行に畳んで残した手番の前に置く(黙って捨てない)。
-  (setv dropped-turns 0)
-  (setv dropped-items 0)
-  (setv headline None)
-  (while (and (> (len (.encode text "utf-8")) budget) (> (- (len blocks) dropped-turns) 1))
-    (setv dropped-turns (+ dropped-turns 1))
+  ;; 段 2(R34)+ 段 2b(追補 5): 全部を薄くしても超える間、まず**原文の**古い手番から落とし(最新の 1 手番は残す)、それでも超える時だけ
+  ;; 古い要約から落とす(頭の要約の数も減る)。落とした区間(原文の手番と要約)は見出し 1 行に畳んで頭の直後(残した要約と手番の前)に
+  ;; 置く(黙って捨てない)。見出しの点は 1 つ(history-dropped-headline)。
+  (while (and (> (len (.encode text "utf-8")) budget)
+              (or (> (- (len blocks) dropped-turns) 1) (< dropped-summaries (len summary-lines))))
+    (if (> (- (len blocks) dropped-turns) 1)
+        (setv dropped-turns (+ dropped-turns 1))
+        (setv dropped-summaries (+ dropped-summaries 1)))
+    (setv kept-summaries (cut summary-lines dropped-summaries None))
+    (<- header str (history-header-of conversation-id source (len kept-summaries)))
     (setv dropped (tuple (gfor group (cut groups 0 dropped-turns) item group item)))
     (setv dropped-items (len dropped))
-    (<- counts HeadlineCounts (headline-counts-of-items dropped))
+    (<- counts HeadlineCounts (dropped-headline-counts dropped (tuple (cut ordered-summaries 0 dropped-summaries))))
     (<- headline str (history-dropped-headline counts dropped-turns dropped-items budget where))
-    (setv text (.join "\n\n" (+ [header headline] (cut blocks dropped-turns None)))))
-  ;; 段 3: 最新の手番 1 つ(と頭・見出し)だけでも超える: その手番の先頭を切って末尾を残し、切った byte を名乗る。
+    (setv text (.join "\n\n" (+ [header headline] kept-summaries (cut blocks dropped-turns None)))))
+  ;; 段 3: 最新の手番 1 つ(と頭・見出し・残した要約)だけでも超える: その手番の先頭を切って末尾を残し、切った byte を名乗る。
   (setv cut-bytes 0)
-  (when (> (len (.encode text "utf-8")) budget)
+  (when (and blocks (> (len (.encode text "utf-8")) budget))
     (setv newest (.encode (get blocks -1) "utf-8"))
-    (setv lead (if (is headline None) [header] [header headline]))
+    (setv lead (+ [header] (if (is headline None) [] [headline]) kept-summaries))
     (setv notice-where (if (is headline None) where ""))
     (<- probe str (history-cut-notice budget (len newest) notice-where))
     (setv fixed (len (.encode (.join "\n\n" (+ lead ["" probe])) "utf-8")))
@@ -1774,7 +1810,8 @@
                :cut-bytes cut-bytes
                :size-bytes (len (.encode text "utf-8"))
                :thin thin
-               :summary-regions (len summaries)))
+               :summary-regions (- (len summary-lines) dropped-summaries)
+               :dropped-summaries dropped-summaries))
 
 
 (defk history-summary-line [summary]
