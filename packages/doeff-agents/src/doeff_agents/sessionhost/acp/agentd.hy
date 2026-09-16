@@ -273,6 +273,12 @@
   RECORD-CREATE-PENDING
   Refused
   INTERRUPT-ARM-INTERRUPT
+  CANCEL-ARM-ACKNOWLEDGE
+  CANCEL-ARM-FORCE
+  CANCEL-STAGE-FORCED
+  CANCEL-STAGE-GRACEFUL
+  JOB-STEP-CANCEL-FORCED
+  JobCancel
   STREAM-SOURCE-EVENTS
   Escalated
   SessionCapture
@@ -393,6 +399,11 @@
   interrupt-marks-status-of
   interrupt-reads-of
   interrupted-status-of
+  cancel-acknowledged-status-of
+  cancel-arm-for
+  job-cancel-of
+  outcome-with-cancel
+  recovered-cancel-of
   interrupts-delivered-status-of
   interrupts-due-for-escalation
   recovered-interrupts-of
@@ -1789,7 +1800,10 @@
       (do
         (<- read JobOutcome (job-outcome-of view))
         (setv outcome read)))
-  (<- settled AgentdState (settle-record settings state job view source path outcome step now-ms))
+  ;; 段 12 lane 12j(agora-redesign #367): 取り消しの合図を見届けた job が猶予の内に終わった = 段 2 の終端 —
+  ;; result.cause {category: cancelled, stage: graceful, reason}(判断は judgment.outcome-with-cancel の 1 点・cancel が無ければ不変)。
+  (<- with-cause JobOutcome (outcome-with-cancel outcome job.cancel CANCEL-STAGE-GRACEFUL))
+  (<- settled AgentdState (settle-record settings state job view source path with-cause step now-ms))
   settled)
 
 
@@ -2032,6 +2046,8 @@
               (setv job (replace job :record-attempt (get resumed 0) :delta-seq (get resumed 1)))
               ;; 段 10 lane 10n: 渡したが読まれていない割り込みは拾い直した時刻から期限を数える(行の印は写す)。
               (<- job InFlightJob (recovered-interrupts-of job row now-ms))
+              ;; 段 12 lane 12j(#367): 行の取り消し(spec.cancel と見届け status.cancel)を写す — 見届けが無ければ次の拍に見届け直す。
+              (<- job InFlightJob (recovered-cancel-of job row))
               (<- (LogLine :text f"agentd: recovered running job {row.resource-id} from its row ({step})"))
               (<- settled AgentdState (settle-known settings state job view step now-ms))
               settled)))))
@@ -2082,6 +2098,85 @@
                              f"session {job.session-id} kept")))
   (<- dropped AgentdState (without-job measured job.job-id))
   dropped)
+
+
+(defk acknowledge-cancel [settings state job row view cancel now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: job InFlightJob) (: row AcpRow)
+         (: view (| SessionView None)) (: cancel JobCancel) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "段 2 見届け(段 12 lane 12j・agora-redesign #367): 手番の途中なら session.interrupt(判断は interrupt-arm-for の 1 点 —
+   取り下げと同じ腕・headless = SIGINT / turn/interrupt)、鍵で読み直した行に CAS で status.cancel {acknowledgedAt, stage:
+   graceful} を 1 度書く(判断は cancel-acknowledged-status-of)。書きが断られても memory に見届けを置く(割り込みを毎拍
+   撃ち直さない・log 1 行 — 再起動で行に無ければ改めて見届ける)。job は memory に残り、手番の終わりは observe-job の腕が
+   finalize して result.cause {graceful} を書く(段 3 は cancel-arm-for が猶予の期限で決める)。"
+  (<- arm str (interrupt-arm-for job view))
+  (when (= arm INTERRUPT-ARM-INTERRUPT)
+    (<- (SessionInterrupt :session-id job.session-id)))
+  (<- fresh (| AcpRow None) (AcpGetRow :key row.key))
+  (setv target (if (is fresh None) row fresh))
+  (<- status dict (status-object-of target))
+  (<- acknowledged dict (cancel-acknowledged-status-of status now-ms))
+  (<- wrote (| Written Conflict Refused) (AcpPutStatus :row target :status acknowledged))
+  (when (not (isinstance wrote Written))
+    (<- (LogLine :text f"agentd: cancel of job {job.job-id} acknowledged in memory but not on the row ({wrote})")))
+  (<- (LogLine :text (+ f"agentd: job {job.job-id} cancel acknowledged ({cancel.reason}; turn {arm}); "
+                        f"grace {cancel.grace-seconds} s")))
+  (<- (MetricLine :fields {"metric" "agent-job-cancel" "agentJobId" job.job-id
+                                  "stage" CANCEL-STAGE-GRACEFUL "reason" cancel.reason}))
+  (<- kept AgentdState (with-job state (replace job :cancel cancel :cancel-acknowledged-at-ms now-ms)))
+  kept)
+
+
+(defk force-cancel [settings state job view cancel now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: job InFlightJob)
+         (: view (| SessionView None)) (: cancel JobCancel) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "段 3 強制(段 12 lane 12j・agora-redesign #367): 猶予を過ぎても走っている手番の器を片付け(session.cleanup = process を
+   殺す — 温かい session は残らない)、記録の腕(settle-record — finalize と同じ本体)で turn-record を ended・agent-job を
+   Ended + result.cause {category: cancelled, stage: forced, reason}・status frame ended・札を返し、memory から外す。
+   最後の材料は片付ける前の眺めから読む。"
+  (setv source None)
+  (setv path None)
+  (when (isinstance view SessionView)
+    (<- canon str (FsCanonicalPath :path view.work-dir))
+    (<- found tuple (stream-source-of view canon))
+    (setv source (get found 0))
+    (setv path (get found 1)))
+  (<- accepted bool (SessionCleanup :session-id job.session-id))
+  (<- (LogLine :text (+ f"agentd: job {job.job-id} cancel forced after the grace of {cancel.grace-seconds} s "
+                        f"({cancel.reason}); session {job.session-id} cleaned up (accepted={accepted})")))
+  (<- (MetricLine :fields {"metric" "agent-job-cancel" "agentJobId" job.job-id
+                                  "stage" CANCEL-STAGE-FORCED "reason" cancel.reason}))
+  (<- outcome JobOutcome (outcome-with-cancel (JobOutcome :ended True :result None :conditions #())
+                                              cancel CANCEL-STAGE-FORCED))
+  (<- settled AgentdState (settle-record settings state job view source path outcome JOB-STEP-CANCEL-FORCED now-ms))
+  settled)
+
+
+(defk cancel-jobs [settings state rows now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: rows tuple) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "取り消しの合図(spec.cancel)を持つ自分の走っている job の腕(段 12 lane 12j・agora-redesign #367・毎拍・行の cache から):
+   判断は cancel-arm-for の 1 点 — acknowledge → 段 2 / force → 段 3 / none → 何もしない(手番の終わりを待つ)。
+   壊れた合図(job-cancel-of が None)は無視する。"
+  (setv current state)
+  (for [job (list state.jobs)]
+    (<- row (| AcpRow None) (job-row-keyed rows job.job-key))
+    (when (is-not row None)
+      (<- cancel (| JobCancel None) (job-cancel-of row))
+      (when (is-not cancel None)
+        (<- view (| SessionView None) (SessionGet :session-id job.session-id))
+        (<- arm str (cancel-arm-for job view cancel now-ms))
+        (cond
+          (= arm CANCEL-ARM-ACKNOWLEDGE)
+          (do
+            (<- acknowledged AgentdState (acknowledge-cancel settings current job row view cancel now-ms))
+            (setv current acknowledged))
+          (= arm CANCEL-ARM-FORCE)
+          (do
+            (<- forced AgentdState (force-cancel settings current job view cancel now-ms))
+            (setv current forced))))))
+  current)
 
 
 (defk withdraw-jobs [settings state rows now-ms]
@@ -2906,6 +3001,13 @@
     (setv current interrupted)
     (except [e IO-FAILURES]
       (<- (LogLine :text f"agentd: interrupt delivery failed: {(. (type e) __name__)}: {e}"))))
+  ;; 段 12 lane 12j(agora-redesign #367): 取り消しの合図(spec.cancel)の 3 段 — 毎拍・行の cache から(猶予の期限は行が
+  ;; 変わらなくても来る)。強制で閉じた job はこの拍の観測に乗らない。
+  (try
+    (<- cancelled AgentdState (cancel-jobs settings current current.rows now-ms))
+    (setv current cancelled)
+    (except [e IO-FAILURES]
+      (<- (LogLine :text f"agentd: cancel handling failed: {(. (type e) __name__)}: {e}"))))
   (for [job (list current.jobs)]
     (try
       (<- observed AgentdState (observe-job settings current job now-ms))

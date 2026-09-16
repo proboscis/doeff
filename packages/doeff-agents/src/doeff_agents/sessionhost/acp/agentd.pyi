@@ -15,6 +15,7 @@ from doeff_agents.sessionhost.acp.effects import (
     InFlightSummarize,
     SummarizePlan,
     SummaryRegion,
+    JobCancel,
     JobOutcome,
     LaunchPlan,
     LeaseGrant,
@@ -171,6 +172,27 @@ def deliver_interrupts(
     settings: AgentdSettings, state: AgentdState, rows: tuple, now_ms: int
 ) -> Program: ...
 def refresh_rows(state: AgentdState, mode: str) -> Program: ...
+# 段 12 lane 12j(agora-redesign #367): 取り消しの 3 段の腕
+def acknowledge_cancel(
+    settings: AgentdSettings,
+    state: AgentdState,
+    job: InFlightJob,
+    row: AcpRow,
+    view: SessionView | None,
+    cancel: JobCancel,
+    now_ms: int,
+) -> Program: ...
+def force_cancel(
+    settings: AgentdSettings,
+    state: AgentdState,
+    job: InFlightJob,
+    view: SessionView | None,
+    cancel: JobCancel,
+    now_ms: int,
+) -> Program: ...
+def cancel_jobs(
+    settings: AgentdSettings, state: AgentdState, rows: tuple, now_ms: int
+) -> Program: ...
 def withdraw_jobs(
     settings: AgentdSettings, state: AgentdState, rows: tuple, now_ms: int
 ) -> Program: ...
