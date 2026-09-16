@@ -4235,12 +4235,17 @@
         (setv (get built ours) value)))
     (when (= (len built) 4)
       (setv usage built)))
+  ;; 答えの modelUsage には要約を書いた model の他に CLI の下読み(haiku・出力 数十 token)も並ぶ(実弾 2026-09-16 16:36: 最初の鍵を採って
+  ;; 行の model が claude-haiku-4-5 になった)— 要約を書いた model = **出力 token が最も多い model**。
   (setv model-usage (.get document "modelUsage"))
   (setv model None)
-  (when (and (isinstance model-usage dict) model-usage)
-    (setv first-key (get (list (.keys model-usage)) 0))
-    (when (isinstance first-key str)
-      (setv model first-key)))
+  (setv most -1)
+  (when (isinstance model-usage dict)
+    (for [[name entry] (.items model-usage)]
+      (setv out-tokens (if (isinstance entry dict) (.get entry "outputTokens") None))
+      (when (and (isinstance name str) (isinstance out-tokens int) (not (isinstance out-tokens bool)) (> out-tokens most))
+        (setv most out-tokens)
+        (setv model name))))
   (SummaryOutcome :text (.strip result) :usage usage :model model))
 
 
