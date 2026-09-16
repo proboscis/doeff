@@ -720,7 +720,9 @@ class FakeLocal:
         if isinstance(effect, FsFileExists):
             return Resume(k, effect.path in self.existing_files)
         if isinstance(effect, FsReadText):
-            return Resume(k, self.files.get(effect.path))
+            # 本物の handler と同じく先頭 max_chars 字まで(段 12 lane 12j 便 4 の実弾: 既定 256 で答えの JSON が切れた)。
+            text = self.files.get(effect.path)
+            return Resume(k, None if text is None else text[: effect.max_chars])
         if isinstance(effect, OwnershipProbe):
             self.probes.append(effect.proof)
             return Resume(k, ProbeAnswer(value=self.probe_answers.get(effect.proof)))

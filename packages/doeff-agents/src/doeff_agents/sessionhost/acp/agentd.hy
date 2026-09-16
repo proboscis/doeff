@@ -146,6 +146,7 @@
   METRIC-SUMMARIZE-TRIGGERS-TOTAL
   SUMMARY-SPEC-FROM-KEY
   SUMMARY-SPEC-RECORD-REF-KEY
+  SUMMARY-ANSWER-MAX-CHARS
   RecordReadStream
   SUMMARY-EVENT-KIND
   CHARTER-KIND-SUMMARIZE
@@ -2484,7 +2485,8 @@
                                         f"claude -p exited rc={rc} for [{command.from-seq}, {command.to-seq}] of conversation {command.conversation-id}; log {command.log-path}"))
     (<- finished-rc AgentdState (finish-summarize settings state command result-rc #(condition-rc) now-ms))
     (return finished-rc))
-  (<- out (| str None) (FsReadText :path command.out-path))
+  ;; 答えは本文 + usage + modelUsage の JSON(実弾 2026-09-16 16:04: 9,207 byte)— 小さな file の既定(256 字)では切れて non-JSON になる。
+  (<- out (| str None) (FsReadText :path command.out-path :max-chars SUMMARY-ANSWER-MAX-CHARS))
   (<- parsed (| SummaryOutcome str) (summarize-output-of out))
   (when (isinstance parsed str)
     (<- result-out dict (summarize-result-of command done now-ms))

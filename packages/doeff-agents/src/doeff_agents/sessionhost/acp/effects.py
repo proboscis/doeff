@@ -2117,11 +2117,21 @@ class FsFileExists(EffectBase):
     path: str
 
 
+#: 小さな text の file の読みの既定の上限(rc / pid の file — 数字 1 行)。
+FS_READ_TEXT_DEFAULT_MAX_CHARS: int = 256
+#: summarize の claude -p の答え(result の JSON・本文 + usage + modelUsage)の読みの上限(段 12 lane 12j 便 4 の実弾 2026-09-16 16:04:
+#: 9,207 byte の答えを既定 256 字で読んで「non-JSON」と断った)。要約の本文に上限は置かないので、答えの器は大きく(4 MiB)。
+SUMMARY_ANSWER_MAX_CHARS: int = 4_194_304
+
+
 @dataclass(frozen=True)
 class FsReadText(EffectBase):
-    """小さな text の file を読む(段 12 lane 12a — verify の結末の rc / pid の file)。結果 = str | None(不在・読めない = None)。"""
+    """text の file を先頭から max_chars 字まで読む(段 12 lane 12a — verify の結末の rc / pid の file は既定 256・
+    段 12 lane 12j — summarize の答えの JSON は SUMMARY_ANSWER_MAX_CHARS)。結果 = str | None(不在・読めない = None)。
+    ⚠ 上限で切れた text は呼び手の読み(json.loads 等)が断る — 黙って短くならない。"""
 
     path: str
+    max_chars: int = FS_READ_TEXT_DEFAULT_MAX_CHARS
 
 
 @dataclass(frozen=True)
