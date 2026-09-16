@@ -1216,6 +1216,10 @@ class HeadlineCounts:
 
 #: 「これまでの会話」の見出しの数で郵便を数える kind の綴り(記録の出来事の kind = text / tool_use / … と並ぶ・段 11 lane 11v)。
 HISTORY_MAIL_KIND = "郵便"
+#: 「これまでの会話」の見出しの数で要約(kind summary の行 — 段 12 lane 12j 便 3)を数える kind の綴り。
+HISTORY_SUMMARY_KIND = "要約"
+#: 契機が書く summarize の agent-job の id の頭(id = <頭><会話 id>-<until> — identity は engine の (subject, inputs=[]) で、id は記録の綴り)。
+SUMMARIZE_JOB_ID_PREFIX = "aj-summary-"
 #: 履歴からの再開の段階的圧縮(段 11 lane 11v 便 3・agora-redesign #225・R35): 手番を丸ごと落とす前に道具の項(tool_use の入力・
 #: tool_result の本文)を薄くする時に残す先頭の byte = 上限 / この値(65,536 なら 256)。上限の宣言(AgentdSettings.
 #: rehydrate_history_byte_budget)からの比で導き、2 つ目の値の宣言は置かない。
@@ -1241,6 +1245,18 @@ class HistoryItem:
 
 
 @dataclass(frozen=True)
+class HistorySummary:
+    """履歴からの再開に畳む要約 1 区間(段 12 lane 12j 便 3 — agora の kind summary の行 + 記録の service の本文): recordSeq の閉区間
+    [from_seq, to_seq]・書いた時刻と model・本文。原文は to_seq より新しい出来事だけを読む(agentd.record-turns-for の floor)。"""
+
+    from_seq: int
+    to_seq: int
+    at: int
+    model: str
+    text: str
+
+
+@dataclass(frozen=True)
 class HistoryFold:
     """履歴からの再開の「これまでの会話」(judgment.rehydrate-history-of の答え)。text = 最初の本文に畳む
     文(記録が無ければ空)・kept_turns / dropped_turns = 残した / 上限で落とした手番の数・
@@ -1260,6 +1276,8 @@ class HistoryFold:
     cut_bytes: int
     size_bytes: int
     thin: bool
+    #: 段 12 lane 12j 便 3: 畳みに載せた要約(kind summary)の区間の数(古い順・原文の前に置く)。0 = 要約なし(今日どおりの畳み)。
+    summary_regions: int = 0
 
 
 # ------------------------------------------------------------------ turn-record の entry(見出し・段 9f lane 9f-4)
@@ -1361,6 +1379,9 @@ METRIC_RECORD_LAG_SEQ = "agentd_record_lag_seq"
 METRIC_STORE_EPOCH_RELISTS = "agentd_store_epoch_relists"
 #: 段 10f 便 2(agora-redesign #82): 会話の宣言 compactAt を超えたので履歴からの再開で文脈を縮めた回数(label = conversation)。
 METRIC_COMPACTIONS_TOTAL = "agentd_compactions_total"
+#: 段 12 lane 12j 便 3(agora-redesign #233): 手番の終わりの文脈の大きさが summarize_trigger_tokens を超え、要約の job を書いた回数
+#: (欄 conversationId・until・agentJobId)。書けなかった拍(既在・断り)は数えない(log の 1 行)。
+METRIC_SUMMARIZE_TRIGGERS_TOTAL = "agentd_summarize_triggers_total"
 #: この batch だけの決まった断り(契約 record-service.json: 400 malformed・422 unstorable — 撃ち直しても通らない)。札(401 / 403)・
 #: 窓(429)・届かない・5xx は batch ではなく系の側(機体の設定か一時的)なので含めない — 残しておけば、設定を直した後に
 #: 自動で送れる(judgment.record-append-word-of)。

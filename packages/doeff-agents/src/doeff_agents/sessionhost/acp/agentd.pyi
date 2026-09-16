@@ -10,10 +10,11 @@ from doeff_agents.sessionhost.acp.effects import (
     AgentdState,
     ArmChoice,
     InFlightCommand,
+    DeltaBatch,
+    InFlightJob,
     InFlightSummarize,
     SummarizePlan,
     SummaryRegion,
-    InFlightJob,
     JobOutcome,
     LaunchPlan,
     LeaseGrant,
@@ -39,7 +40,7 @@ def end_job_now(
 ) -> Program: ...
 def borrow_lease(plan: LaunchPlan, purpose: str) -> Program: ...
 def headline_turns_for(subject: str, reason: str) -> Program: ...
-def record_turns_for(settings: AgentdSettings, subject: str) -> Program: ...
+def record_turns_for(settings: AgentdSettings, subject: str, floor: int | None) -> Program: ...
 def history_for(settings: AgentdSettings, subject: str, exclude: tuple) -> Program: ...
 def incarnate(
     settings: AgentdSettings,
@@ -248,3 +249,7 @@ def recover_summarize(
 def withdraw_summarize(
     settings: AgentdSettings, state: AgentdState, command: InFlightSummarize, row: AcpRow, now_ms: int
 ) -> Program: ...
+
+# 段 12 lane 12j 便 3(agora-redesign #233): 要約の契機と、再開が読む要約
+def summaries_for(settings: AgentdSettings, subject: str) -> Program: ...
+def trigger_summarize(settings: AgentdSettings, job: InFlightJob, batch: DeltaBatch, now_ms: int) -> Program: ...
