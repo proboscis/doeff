@@ -156,7 +156,7 @@ class World:
                 AGORA_KINDS_NAMESPACE,
                 NODE_KIND,
                 NODE,
-                {"name": NODE, "labels": {}, "capacity": 1, "streamCapability": "frames"},
+                {"name": NODE, "labels": {}, "capacity": 1, "streamCapability": "frames", "agentd": {"protocol": 1, "revision": "unstamped", "build": "local"}},
                 {"state": "joined"},
             )
         )
@@ -589,7 +589,7 @@ def test_missing_node_row_is_registered_from_the_declaration_and_joined_on_the_n
     # 行が無い拍の heartbeat は書かない(行を作るのは tick の参加の腕)
     assert world.heartbeat() == "no-node-row"
     world.tick()
-    assert world.acp.rows[key].spec == {"name": NODE, "labels": {}, "capacity": 1, "streamCapability": "frames"}
+    assert world.acp.rows[key].spec == {"name": NODE, "labels": {}, "capacity": 1, "streamCapability": "frames", "agentd": {"protocol": 1, "revision": "unstamped", "build": "local"}}
     assert [line for line in world.local.logs if "node row" in line] == [
         f"agentd: registered node row {NODE!r} from the declaration (capacity 1, streamCapability frames)"
     ]
@@ -731,10 +731,10 @@ def test_node_spec_is_aligned_to_the_declaration_keeping_labels_and_the_lease_is
     labels = {"boundary": "personal", "pool": "agentd-pool"}
     seeded = world.acp.rows[key]
     world.acp.put_row(
-        replace(seeded, spec={"name": NODE, "labels": labels, "capacity": 0, "streamCapability": "frames"})
+        replace(seeded, spec={"name": NODE, "labels": labels, "capacity": 0, "streamCapability": "frames"})  # 旧い agentd の行(版の欄なし)
     )
     world.tick()
-    aligned = {"name": NODE, "labels": labels, "capacity": 2, "streamCapability": "frames"}
+    aligned = {"name": NODE, "labels": labels, "capacity": 2, "streamCapability": "frames", "agentd": {"protocol": 1, "revision": "unstamped", "build": "local"}}
     assert world.acp.spec_writes == [(key, aligned)]
     now_row = world.acp.rows[key]
     assert now_row.spec == aligned
@@ -905,6 +905,8 @@ def test_node_spec_of_and_node_spec_declared_are_one_judgment() -> None:
         "labels": {},
         "capacity": 2,
         "streamCapability": "events",
+        # 段 12 lane 12j(agora-redesign #367): 参加時に名乗る自分の版(protocol は effects.AGENTD_PROTOCOL の 1 点・刻印が無ければ unstamped / local)
+        "agentd": {"protocol": 1, "revision": "unstamped", "build": "local"},
     }
     # 段 11 lane 11u(agora-redesign #224・依頼者の裁定 2026-09-16): 宣言した置き場の**集合**は型つきの欄 spec.places
     # (語の list・宣言の順)に名乗る(配車の絞りが読む 1 点・契約 v4)。labels.places は読み手が残る間の写し(deprecated・
@@ -929,14 +931,15 @@ def test_node_spec_of_and_node_spec_declared_are_one_judgment() -> None:
     assert kept["places"] == ["company", "personal"], "揃える時に型つきの欄を名乗っていない"
     assert "place" not in kept, "旧い agentd が書いた 1 値の place を揃えの写しに残している(配車が行を断る)"
     hand = {"name": "pool-1", "labels": {"boundary": "company"}, "capacity": 0, "streamCapability": "events"}
-    assert run(judgment.node_spec_declared(hand, settings)) == {**hand, "capacity": 2}
-    assert run(judgment.node_spec_declared({**hand, "capacity": 2}, settings)) == {**hand, "capacity": 2}
+    assert run(judgment.node_spec_declared(hand, settings)) == {**hand, "capacity": 2, "agentd": {"protocol": 1, "revision": "unstamped", "build": "local"}}
+    assert run(judgment.node_spec_declared({**hand, "capacity": 2}, settings)) == {**hand, "capacity": 2, "agentd": {"protocol": 1, "revision": "unstamped", "build": "local"}}
     bare = {"name": "pool-1", "capacity": 2, "streamCapability": "frames"}
     assert run(judgment.node_spec_declared(bare, settings)) == {
         "name": "pool-1",
         "labels": {},
         "capacity": 2,
         "streamCapability": "events",
+        "agentd": {"protocol": 1, "revision": "unstamped", "build": "local"},
     }
 
 
@@ -4582,3 +4585,36 @@ def test_join_spec_reads_drain_seconds_and_settings_carry_it() -> None:
     assert settings_from_env(env, ()).drain_seconds == 0
     assert settings_from_env({**env, DRAIN_SECONDS_ENV: "1500"}, ()).drain_seconds == 1500
     assert settings_from_env(env, ()).draining is False
+
+
+def test_join_spec_reads_revision_and_build_and_the_node_names_its_agentd_version() -> None:
+    """段 12 lane 12j(agora-redesign #367・既知の形 行 3 (h)): 宣言 file の [agentd].revision / build(任意)→ JoinSpec → env
+    DOEFF_AGENTD_REVISION / DOEFF_AGENTD_BUILD → AgentdSettings.agentd_revision / agentd_build → node の spec.agentd
+    {protocol, revision, build}。protocol は effects.AGENTD_PROTOCOL の 1 点。刻印が無ければ unstamped / local を名乗る(嘘の sha を書かない)。
+    長さの外の revision は参加しない(ValueError)。"""
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import AGENTD_BUILD_ENV, AGENTD_PROTOCOL, AGENTD_REVISION_ENV, JoinSpec
+    from doeff_agents.sessionhost.acp.runtime import settings_from_env
+
+    flags = ["--server", "http://acp:8868", "--token-file", "/t/agentd.token", "--capacity", "1", "--places", "personal"]
+    bare = _join_spec(flags)
+    assert isinstance(bare, JoinSpec) and bare.revision is None and bare.build is None
+    bare_env = dict(run(join.join_plan_of(bare)).env)
+    assert AGENTD_REVISION_ENV not in bare_env and AGENTD_BUILD_ENV not in bare_env
+    stamped = _join_spec(flags, {"schema": "doeff.agentd-join.v1", "agentd": {"revision": "11a8ff78993de705b621adba9465cb2c85eea3f6", "build": "20260917-11a8ff7"}})
+    assert isinstance(stamped, JoinSpec) and stamped.revision == "11a8ff78993de705b621adba9465cb2c85eea3f6" and stamped.build == "20260917-11a8ff7"
+    stamped_env = dict(run(join.join_plan_of(stamped)).env)
+    assert stamped_env[AGENTD_REVISION_ENV] == "11a8ff78993de705b621adba9465cb2c85eea3f6"
+    assert stamped_env[AGENTD_BUILD_ENV] == "20260917-11a8ff7"
+    with pytest.raises(ValueError, match="7〜64 字"):
+        _join_spec(flags, {"schema": "doeff.agentd-join.v1", "agentd": {"revision": "abc"}})
+    env = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACES": "personal"}
+    unstamped = settings_from_env(env, ())
+    assert (unstamped.agentd_revision, unstamped.agentd_build) == ("unstamped", "local")
+    named = settings_from_env({**env, AGENTD_REVISION_ENV: "11a8ff78993de705b621adba9465cb2c85eea3f6", AGENTD_BUILD_ENV: "20260917-11a8ff7"}, ())
+    assert run(judgment.agentd_version_of(named)) == {"protocol": AGENTD_PROTOCOL, "revision": "11a8ff78993de705b621adba9465cb2c85eea3f6", "build": "20260917-11a8ff7"}
+    assert AGENTD_PROTOCOL >= 1
+    # 作る時も揃える時も同じ 1 点を読む(旧い agentd の行に版の欄が無ければ足す)
+    assert run(judgment.node_spec_of(named))["agentd"] == run(judgment.agentd_version_of(named))
+    old_row = {"name": NODE, "labels": {}, "capacity": 1, "streamCapability": "frames"}
+    assert run(judgment.node_spec_declared(old_row, named))["agentd"] == run(judgment.agentd_version_of(named))

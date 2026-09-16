@@ -38,6 +38,8 @@
   AGENTD-PLACES
   CAPACITY-ENV
   DRAIN-SECONDS-ENV
+  AGENTD-REVISION-ENV
+  AGENTD-BUILD-ENV
   CUSTODY-URL-ENV
   CustodyHealth
   HEADLESS-DIR-ENV
@@ -105,6 +107,9 @@
 (setv KEY-WORK-ROOTS "work_roots")
 ;; 停止(SIGTERM)の排水の上限(秒・任意・段 12 lane 12j・agora-redesign #304 便 2)。0 / 無し = 排水しない(今日どおり)。
 (setv KEY-DRAIN-SECONDS "drain_seconds")
+;; 段 12 lane 12j(agora-redesign #367): agentd の版の刻印(任意)— 据え付けの側が書く(git sha と image の tag か local)。
+(setv KEY-REVISION "revision")
+(setv KEY-BUILD "build")
 ;; 従量課金の binding kind を受けるか(従量課金の便 lane A・任意・既定 false)。
 ;; 閉語彙 "true" | "false" の文字列 — 宣言 file の値は全部文字列(declared-values-of の
 ;; 1 つの不変条件)なので、bool を 1 つだけ足して読み手に 2 つ目の型の分岐を作らない。
@@ -119,7 +124,7 @@
 ;; 表 → 許す鍵(宣言に無い鍵は誤りとして名指す — 黙って読み飛ばさない)。
 (setv AGENTD-KEYS #{KEY-SERVER KEY-TOKEN-FILE KEY-NODE-NAME KEY-STATE-DIR KEY-BACKEND
                     KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY KEY-PLACES KEY-WORK-ROOTS KEY-DRAIN-SECONDS
-                    KEY-ALLOW-METERED-BILLING})
+                    KEY-ALLOW-METERED-BILLING KEY-REVISION KEY-BUILD})
 (setv CUSTODY-KEYS #{KEY-CUSTODY-URL KEY-BORROWER-KEY-FILE KEY-SERVICE-ACCOUNT-TOKEN-FILE})
 (setv RECORD-KEYS #{KEY-RECORD-URL})
 ;; flag の綴り(`--config` は composition root が先に読む — config-path-of)。
@@ -334,6 +339,33 @@
   (int word))
 
 
+(defk revision-of [text]
+  {:pre [(: text (| str None))]
+   :post [(: % (| str None))]}
+  "agentd の版の刻印 revision の読み(段 12 lane 12j・agora-redesign #367): 宣言 file の [agentd].revision(doeff-agents の git sha —
+   契約 node.spec.agentd.revision は 7〜64 字)。無い・空 = None(名乗らない — agentd は unstamped を名乗る)。長さの外は
+   ValueError(参加しない — 黙って捨てない)。"
+  (setv word (if (is text None) "" (.strip text)))
+  (when (not word)
+    (return None))
+  (when (or (< (len word) 7) (> (len word) 64))
+    (raise (ValueError f"[{TABLE-AGENTD}].{KEY-REVISION} は 7〜64 字(git sha)であること: {word !r}")))
+  word)
+
+
+(defk build-of [text]
+  {:pre [(: text (| str None))]
+   :post [(: % (| str None))]}
+  "agentd の版の刻印 build の読み(段 12 lane 12j・agora-redesign #367): 宣言 file の [agentd].build(image の tag か local・
+   契約は 128 字まで)。無い・空 = None(agentd は local を名乗る)。長すぎれば ValueError。"
+  (setv word (if (is text None) "" (.strip text)))
+  (when (not word)
+    (return None))
+  (when (> (len word) 128)
+    (raise (ValueError f"[{TABLE-AGENTD}].{KEY-BUILD} は 128 字まで: {(cut word 0 40) !r}…")))
+  word)
+
+
 (defk drain-seconds-of [text]
   {:pre [(: text (| str None))]
    :post [(: % int)]}
@@ -461,6 +493,9 @@
   (<- declared-places Places (places-of (.get agentd KEY-PLACES)))
   ;; node が持つ作業場の根(段 10 lane 10y 案 C・任意)。
   (<- declared-roots (| WorkRoots None) (work-roots-of (.get agentd KEY-WORK-ROOTS)))
+  ;; agentd の版の刻印(段 12 lane 12j・#367・任意)。
+  (<- revision (| str None) (revision-of (.get agentd KEY-REVISION)))
+  (<- build (| str None) (build-of (.get agentd KEY-BUILD)))
   ;; 従量課金の binding kind を受けるか(従量課金の便 lane A・任意・既定 false)。
   (<- allow-metered bool (allow-metered-billing-of (.get agentd KEY-ALLOW-METERED-BILLING)))
   (JoinSpec
@@ -478,6 +513,8 @@
     :declaration-sha256 declaration.sha256
     ;; node が持つ作業場の根(段 10 lane 10y 案 C)— 形の検は work-roots-of の 1 点(形違いは参加しない)。
     :work-roots (if (is declared-roots None) None declared-roots.roots)
+    :revision revision
+    :build build
     :ownership ownership
     :capacity capacity
     :drain-seconds drain-seconds
@@ -544,6 +581,11 @@
     (.append env #(DECLARATION-SHA256-ENV spec.declaration-sha256)))
   (when (is-not spec.work-roots None)
     (.append env #(WORK-ROOTS-ENV (.join WORK-ROOTS-SEPARATOR spec.work-roots))))
+  ;; 段 12 lane 12j(#367): 版の刻印は名乗った時だけ env に現れる(無ければ agentd は unstamped / local を名乗る)。
+  (when (is-not spec.revision None)
+    (.append env #(AGENTD-REVISION-ENV spec.revision)))
+  (when (is-not spec.build None)
+    (.append env #(AGENTD-BUILD-ENV spec.build)))
   (when (is-not spec.ownership None)
     (.extend env [#(OWNERSHIP-ENV spec.ownership.grade)
                   #(OWNERSHIP-PROOF-ENV spec.ownership.proof)]))

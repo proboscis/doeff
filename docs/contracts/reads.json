@@ -32,7 +32,7 @@
       "kinds.turn-record.schema.properties.status.properties.entries.items.properties.bytes",
       "kinds.turn-record.schema.properties.status.properties.entries.items.properties.sha256",
       "kinds.node.declaration.writers.status",
-      "kinds.node.schema.properties.spec.properties.name",
+      "kinds.node.schema.properties.spec.properties.name", "kinds.node.schema.properties.spec.properties.agentd", "kinds.node.schema.properties.spec.properties.agentd.properties.protocol", "kinds.node.schema.properties.spec.properties.agentd.properties.revision", "kinds.node.schema.properties.spec.properties.agentd.properties.build",
       "kinds.node.schema.properties.status.properties.state",
       "kinds.node.schema.properties.status.properties.lease.properties.owner",
       "kinds.node.schema.properties.status.properties.lease.properties.heartbeatAt",
