@@ -1715,6 +1715,8 @@ def decode_record_event(doc: JSON) -> RecordEvent | None:
         mime=_str_field(doc, "mime"),
         name=_str_field(doc, "name"),
         data=_str_field(doc, "data"),
+        # 段 12 lane 12l(agora-redesign #383 粒 2): 本文が消された刻(無ければ None・bool は刻ではない)。
+        tombstoned_at=_int_field(doc, "tombstonedAt"),
     )
 
 

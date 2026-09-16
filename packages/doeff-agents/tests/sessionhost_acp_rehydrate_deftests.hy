@@ -64,6 +64,8 @@
   NEXT-ARM-RESUME])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeRecord FakeSessions record-body-bytes record-body-sha256])
 (import doeff_agents.sessionhost.acp.judgment [
+  HISTORY-ERASED-MARK
+  history-event-line
   record-history-satisfied
   record-page-advances
   attachment-of
@@ -115,6 +117,8 @@
                :output (.get fields "output") :tool-name (.get fields "toolName") :tool-use-id (.get fields "toolUseId")
                :model (.get fields "model") :is-error (= (.get fields "isError") True)
                :truncated (= (.get fields "truncated") True)
+               ;; 段 12 lane 12l(agora-redesign #383 粒 2): 本文が消された刻。
+               :tombstoned-at (.get fields "tombstonedAt")
                ;; 段 10 lane 10o(agora-redesign #96): 添付の出来事(kind attachment)の 3 欄。
                :mime (.get fields "mime") :name (.get fields "name") :data (.get fields "data")))
 
@@ -1412,3 +1416,21 @@
   (assert (= (len (lfor line world.local.logs :if (in "has no session to continue" line) line)) 1) world.local.logs)
   (setv prompt (str-at (get world.sessions.launches 0) "prompt"))
   (assert (in "agent: 覚えました" prompt) prompt))
+
+
+(deftest test-history-marks-erased-bodies-instead-of-inventing-them
+  ;; 段 12 lane 12l(agora-redesign #383 粒 2): 本文が消された出来事(保存期間の係 retention か手の tombstone = storedEvent の
+  ;; tombstonedAt)は空の本文に印 HISTORY-ERASED-MARK を付けて畳む — 「何も言わなかった」と「言ったが消えた」を agent が見分ける。
+  ;; 消えていない出来事の綴りは変わらない(印なし)。
+  (setv gone (event-of 1 "j-1#a1" 0 (+ AT 1000) "text" {"tombstonedAt" (+ AT 9000)}))
+  (setv kept (event-of 2 "j-1#a1" 1 (+ AT 1100) "text" {"text" "残る"}))
+  (setv gone-result (event-of 3 "j-1#a1" 2 (+ AT 1200) "tool_result" {"toolUseId" "t1" "tombstonedAt" (+ AT 9000)}))
+  (assert (= gone.tombstoned-at (+ AT 9000)))
+  (assert (is kept.tombstoned-at None))
+  (setv gone-line (run (history-event-line gone)))
+  (setv kept-line (run (history-event-line kept)))
+  (setv result-line (run (history-event-line gone-result)))
+  (assert (.endswith gone-line (+ "agent: " HISTORY-ERASED-MARK)) gone-line)
+  (assert (.endswith kept-line "agent: 残る") kept-line)
+  (assert (not-in HISTORY-ERASED-MARK kept-line) kept-line)
+  (assert (.endswith result-line (+ "道具の結果: " HISTORY-ERASED-MARK)) result-line))

@@ -1595,6 +1595,9 @@ class RecordEvent:
     mime: str | None = None
     name: str | None = None
     data: str | None = None
+    #: 段 12 lane 12l(agora-redesign #383 粒 2): 本文が消された刻(storedEvent の tombstonedAt・epoch ms)。保存期間の係
+    #: (retention)か手の tombstone で本文の欄が消えた行だけが持つ — 履歴の畳みは「空の本文」と「消えた本文」を見分けて印を付ける。
+    tombstoned_at: int | None = None
 
 
 @dataclass(frozen=True)
