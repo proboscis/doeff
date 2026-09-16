@@ -41,6 +41,7 @@ from doeff_agents.sessionhost.acp.effects import (
     NODE_KIND,
     PHASE_BOUND,
     PHASE_ENDED,
+    UnrecordedEnd,
     PHASE_RUNNING,
     PROFILE_KIND,
     SessionRefused,
@@ -1923,6 +1924,129 @@ def test_withdrawn_job_whose_turn_already_ended_is_not_interrupted() -> None:
     assert world.sessions.interrupts == []
     assert world.sessions.cleanups == []
     assert world.state.jobs == ()
+
+
+# ---------------------------------------------------------------- 段 12 lane 12j: 置き直された試みと着かなかった Ended(agora-redesign #402)
+
+
+def _re_place(world: World, job_id: str, attempt: int) -> AcpRow:
+    """監督の代わりに、走っている(か走っていた)job の行を Bound の置き直し(attempt N・同じ nodeRow)に戻す(spec は写す・
+    sessionHandle は残す — release は phase だけ書き binding は試みの記録として残る)。"""
+    running = world.job(job_id)
+    status: JSONObject = dict(running.status or {})
+    binding = dict(status.get("binding") or {})
+    binding["attempt"] = attempt
+    binding["nodeRow"] = NODE
+    status["phase"] = PHASE_BOUND
+    status["binding"] = binding
+    placed = row(AGENT_JOB_NAMESPACE, AGENT_JOB_KIND, job_id, running.spec, status, created_at_ms=running.created_at_ms)
+    world.acp.put_row(placed)
+    return placed
+
+
+def test_a_job_re_placed_while_its_session_still_runs_here_is_adopted_not_relaunched() -> None:
+    """#402 受け皿 1(12k の契約の語: binding.attempt が進んだ同じ job・同じ nodeRow の結び): 頭の不通の後に監督が走っていた手番を
+    lease-expired で解いて attempt 2 を同じ行に結んでも、agentd が同じ job の session を走らせていれば新しい session を起こさず、
+    走っている session を名乗って Running に戻す(引き継ぐ)。実弾 2026-09-17 03:52: 旧形は attempt 2 を新しい session で走らせ、同じ手番が 2 本。"""
+    world = World()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400))
+    world.tick()
+    sid = world.sid("j-1")
+    assert len(world.sessions.launches) == 1
+    _re_place(world, "j-1", 2)
+    world.tick(advance_ms=1_000)
+    assert len(world.sessions.launches) == 1, "置き直しを新しい session で走らせた(#402)"
+    assert [job.job_id for job in world.state.jobs] == ["j-1"]
+    adopted = world.job("j-1")
+    assert adopted.status is not None
+    assert adopted.status["phase"] == PHASE_RUNNING
+    assert adopted.status["sessionHandle"]["sessionId"] == sid
+    assert adopted.status["binding"]["attempt"] == 2, "結び(試みの記録)は触らない"
+    assert any("adopted as the running session" in line for line in world.local.logs)
+    # 手番の終わりは今日どおり 1 度だけ Ended(記録も 1 本)
+    path = f"{HOMES}/claude/acct/projects/-work/{sid}.jsonl"
+    world.local.transcripts[path] = transcript_line("assistant", [{"type": "text", "text": "one"}])
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(sid, world.local.now_ms + 500)
+    world.tick(advance_ms=1_000)
+    assert world.job("j-1").status["phase"] == PHASE_ENDED
+    assert world.state.jobs == () and world.state.unrecorded_ends == ()
+    assert len(world.sessions.launches) == 1
+
+
+def test_an_ended_write_that_conflicts_is_rewritten_on_the_fresh_row() -> None:
+    """#402 受け皿 2: Ended の書きが Conflict(ifGeneration)なら行を読み直して今の generation で書く — 置き直された(Bound attempt 2)行にも
+    Ended を書く(手番は終わっている)。新しい session は起きず、持ち越しも残らない。"""
+    world = World()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400))
+    world.tick()
+    sid = world.sid("j-1")
+    path = f"{HOMES}/claude/acct/projects/-work/{sid}.jsonl"
+    world.local.transcripts[path] = transcript_line("assistant", [{"type": "text", "text": "one"}])
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(sid, world.local.now_ms + 500)
+    # 最初の Ended の CAS が 1 度だけ負ける(監督の解きと同じ拍の競合の形)→ 読み直して今の generation で書く
+    world.acp.conflict_once[f"{AGENT_JOB_NAMESPACE}:{AGENT_JOB_KIND}:j-1"] = 99
+    world.tick(advance_ms=1_000)
+    ended = world.job("j-1")
+    assert ended.status is not None
+    assert ended.status["phase"] == PHASE_ENDED, ended.status
+    assert any("Ended re-written on the fresh row" in line and "landed" in line for line in world.local.logs), world.local.logs[-6:]
+    assert world.state.jobs == () and world.state.unrecorded_ends == ()
+    assert len(world.sessions.launches) == 1
+    # 監督が置き直した(Bound attempt 2)行に手番の終わりが当たる形: 置き直しは受けの拍に走っている session が引き継ぎ(受け皿 1)、
+    # その後の Ended は置き直しの行にそのまま書かれる(次の拍も claim しない)
+    world.acp.put_row(message("m-2", "second"))
+    world.acp.put_row(bound_job("j-2", inputs=["m-2"], created_at_ms=world.local.now_ms))
+    world.tick(advance_ms=1_000)
+    assert len(world.sessions.launches) == 1  # 温かい session へ send
+    _re_place(world, "j-2", 2)
+    world.tick(advance_ms=1_000)
+    assert world.job("j-2").status["phase"] == PHASE_RUNNING
+    world.local.transcripts[path] += transcript_line("assistant", [{"type": "text", "text": "two"}])
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(sid, world.local.now_ms + 200)
+    world.tick(advance_ms=1_000)
+    assert world.job("j-2").status["phase"] == PHASE_ENDED
+    assert world.job("j-2").status["binding"]["attempt"] == 2
+    assert len(world.sessions.launches) == 1 and world.state.unrecorded_ends == ()
+    world.tick(advance_ms=1_000)
+    assert len(world.sessions.launches) == 1
+
+
+def test_a_carried_ended_lands_on_the_re_placed_row_instead_of_claiming_it() -> None:
+    """#402 受け皿 3: 読み直しても着かなかった Ended は持ち越し(state.unrecorded_ends)、毎拍の腕が行を読み直して書く。その間、同じ id の
+    Bound(置き直し)は claim しない。行が別の session の Running なら忘れる。"""
+    world = World()
+    key = f"{AGENT_JOB_NAMESPACE}:{AGENT_JOB_KIND}:j-9"
+    world.acp.put_row(message("m-9", "ninth"))
+    placed = bound_job("j-9", inputs=["m-9"], node_row=NODE)
+    placed.status["binding"]["attempt"] = 2
+    world.acp.put_row(placed)
+    carried = UnrecordedEnd(job_key=key, job_id="j-9", session_id="sid-lost", result={"ok": True},
+                            conditions=({"type": "SessionFailed", "status": "True", "reason": "x"},), at_ms=world.local.now_ms)
+    world.state = replace(world.state, unrecorded_ends=(carried,))
+    world.tick(advance_ms=1_000)
+    assert len(world.sessions.launches) == 0, "持ち越し中の job の Bound を claim した(#402)"
+    ended = world.job("j-9")
+    assert ended.status is not None
+    assert ended.status["phase"] == PHASE_ENDED
+    assert ended.status["result"] == {"ok": True}
+    assert [c["type"] for c in ended.status["conditions"] if isinstance(c, dict)][-1] == "SessionFailed"
+    assert world.state.unrecorded_ends == ()
+    assert any("carried Ended of job j-9 landed" in line for line in world.local.logs)
+    # 判断の純関数: 別の session の Running / 終端 / 行なし / 上限超え → drop・Pending / Bound / 自分の Running → write
+    other = row(AGENT_JOB_NAMESPACE, AGENT_JOB_KIND, "j-o", {}, {"phase": PHASE_RUNNING, "sessionHandle": {"sessionId": "other", "stream": {"owner": "agentd"}}})
+    assert run(judgment.end_retry_verdict(other, "sid-lost", "agentd", 0, 1_000, 60_000)) == "drop"
+    mine = row(AGENT_JOB_NAMESPACE, AGENT_JOB_KIND, "j-m", {}, {"phase": PHASE_RUNNING, "sessionHandle": {"sessionId": "sid-lost", "stream": {"owner": "agentd"}}})
+    assert run(judgment.end_retry_verdict(mine, "sid-lost", "agentd", 0, 1_000, 60_000)) == "write"
+    for phase in (PHASE_BOUND, "Pending"):
+        assert run(judgment.end_retry_verdict(row(AGENT_JOB_NAMESPACE, AGENT_JOB_KIND, "j-p", {}, {"phase": phase}), "sid-lost", "agentd", 0, 1_000, 60_000)) == "write"
+    assert run(judgment.end_retry_verdict(row(AGENT_JOB_NAMESPACE, AGENT_JOB_KIND, "j-e", {}, {"phase": PHASE_ENDED}), "sid-lost", "agentd", 0, 1_000, 60_000)) == "drop"
+    assert run(judgment.end_retry_verdict(None, "sid-lost", "agentd", 0, 1_000, 60_000)) == "drop"
+    assert run(judgment.end_retry_verdict(mine, "sid-lost", "agentd", 0, 61_001, 60_000)) == "drop"
 
 
 # ---------------------------------------------------------------- 段 12 lane 12j: 1 会話 1 温かい session(agora-redesign #379)

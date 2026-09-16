@@ -185,6 +185,10 @@
   JOB-SPEC-CANCEL-KEY
   JOB-STATUS-CANCEL-KEY
   JobCancel
+  END-RETRY-DROP
+  END-RETRY-WRITE
+  PHASE-PENDING
+  UnrecordedEnd
   RESULT-CAUSE-KEY
   InFlightJob
   InterruptRead
@@ -1152,6 +1156,76 @@
                :cancel-acknowledged-at-ms (if (and (isinstance acknowledged int) (not (isinstance acknowledged bool)))
                                               acknowledged
                                               None)))
+
+
+;; ---------------------------------------------------------------------------
+;; 着かなかった Ended と置き直された試み(段 12 lane 12j・agora-redesign #402): 同じ手番を別の session で走らせない
+;; ---------------------------------------------------------------------------
+
+(defk unrecorded-end-of [job result conditions now-ms]
+  {:pre [(: job InFlightJob) (: result (| dict list str int float bool None)) (: conditions tuple) (: now-ms int)]
+   :post [(: % UnrecordedEnd)]}
+  "着かなかった Ended の持ち越しの材料(結末と条件はそのまま・at = 手番の終わりの拍)。"
+  (UnrecordedEnd :job-key job.job-key :job-id job.job-id :session-id job.session-id
+                 :result result :conditions conditions :at-ms now-ms))
+
+
+(defk end-retry-verdict [row session-id principal at-ms now-ms ttl-ms]
+  {:pre [(: row (| AcpRow None)) (: session-id str) (: principal str) (: at-ms int) (: now-ms int) (: ttl-ms int)]
+   :post [(: % str)]}
+  "着かなかった Ended を行に書き直すか(閉語彙 effects.EndRetryVerdict)— 判断はここ 1 点: 行が無い・終端(Ended / Withdrawn)・
+   別の session が走らせている Running(sessionHandle が自分の session でない)・持ち越しの上限を過ぎた → drop。
+   Pending(監督が解いた)・Bound(置き直しの試み attempt N)・自分の session の Running → write(手番は終わっている —
+   同じ手番を別の session で走らせない・監督の置き直しはこの Ended で閉じる)。"
+  (when (or (is row None) (> (- now-ms at-ms) ttl-ms))
+    (return END-RETRY-DROP))
+  (setv status (if (isinstance row.status dict) row.status {}))
+  (setv phase (.get status "phase"))
+  (setv handle (.get status "sessionHandle"))
+  (setv stream (if (isinstance handle dict) (.get handle "stream") None))
+  (setv mine (and (isinstance handle dict)
+                  (= (.get handle "sessionId") session-id)
+                  (isinstance stream dict)
+                  (= (.get stream "owner") principal)))
+  (cond
+    (in phase #{PHASE-PENDING PHASE-BOUND}) END-RETRY-WRITE
+    (and (= phase PHASE-RUNNING) mine) END-RETRY-WRITE
+    True END-RETRY-DROP))
+
+
+(defk with-unrecorded-end [state end]
+  {:pre [(: state AgentdState) (: end UnrecordedEnd)]
+   :post [(: % AgentdState)]}
+  "持ち越しを置く(同じ job は 1 つ — 後の方で置き換える)。"
+  (setv kept (lfor existing state.unrecorded-ends :if (!= existing.job-id end.job-id) existing))
+  (replace state :unrecorded-ends (tuple (+ kept [end]))))
+
+
+(defk without-unrecorded-end [state job-id]
+  {:pre [(: state AgentdState) (: job-id str)]
+   :post [(: % AgentdState)]}
+  (replace state :unrecorded-ends (tuple (lfor existing state.unrecorded-ends :if (!= existing.job-id job-id) existing))))
+
+
+(defk unrecorded-end-ids [state]
+  {:pre [(: state AgentdState)]
+   :post [(: % set)]}
+  "持ち越している job の id(claim の門の材料 — この id の Bound の行は受けない)。"
+  (set (gfor end state.unrecorded-ends end.job-id)))
+
+
+(defk rebound-rows-of [rows jobs]
+  {:pre [(: rows tuple) (: jobs tuple)]
+   :post [(: % tuple)]}
+  "自分に結ばれた Bound の行のうち、自分がいま走らせている job(memory の InFlightJob)と同じ id のもの = 監督が置き直した試み
+   (attempt N)。新しい session を起こさず、走っている session を名乗って Running に戻す(引き継ぐ)相手。"
+  (setv mine (sfor job jobs job.job-id))
+  (setv out [])
+  (for [row rows]
+    (setv status row.status)
+    (when (and (isinstance status dict) (= (.get status "phase") PHASE-BOUND) (in row.resource-id mine))
+      (.append out row)))
+  (tuple out))
 
 
 ;; ---------------------------------------------------------------------------
