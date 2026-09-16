@@ -2216,6 +2216,14 @@
   next)
 
 
+(defk declared-capacity-of [settings]
+  {:pre [(: settings AgentdSettings)]
+   :post [(: % int)]}
+  "node が名乗る capacity(段 12 lane 12j・agora-redesign #304 便 2): 排水の最中(settings.draining)は 0 — 配車は新しい手番を
+   この node に結ばず、走っている手番は最後まで観測される。それ以外は宣言 file の [agentd].capacity。判断はここ 1 点。"
+  (if settings.draining 0 settings.node-capacity))
+
+
 (defk node-spec-of [settings]
   {:pre [(: settings AgentdSettings)]
    :post [(: % dict)]}
@@ -2224,9 +2232,10 @@
    capacity = 宣言 file の [agentd].capacity・streamCapability = backend から導いた語・
    labels = 同じ集合の写し(labels.places — 読み手が残る間の deprecated の面。配車は読まない)。"
   (<- labels dict (node-labels-of settings {}))
+  (<- capacity int (declared-capacity-of settings))
   (<- placed dict (node-places-of settings {"name" settings.node-name
                                            "labels" labels
-                                           "capacity" settings.node-capacity
+                                           "capacity" capacity
                                            "streamCapability" settings.stream-capability}))
   (<- rooted dict (node-work-roots-of settings placed))
   rooted)
@@ -2241,9 +2250,10 @@
    宣言と一致していれば行の spec と等しい dict(呼び手は等しくない時だけ書く)。"
   (setv labels (.get spec "labels"))
   (<- declared dict (node-labels-of settings (if (isinstance labels dict) labels {})))
+  (<- capacity int (declared-capacity-of settings))
   (<- placed dict (node-places-of settings {"name" settings.node-name
                                            "labels" declared
-                                           "capacity" settings.node-capacity
+                                           "capacity" capacity
                                            "streamCapability" settings.stream-capability}))
   (<- rooted dict (node-work-roots-of settings placed))
   rooted)

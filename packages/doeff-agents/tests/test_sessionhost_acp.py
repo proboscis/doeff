@@ -4414,3 +4414,169 @@ def test_session_event_waker_turns_journal_advances_into_session_wakes_and_survi
     assert calls[1] == (3, 0.02), calls
     assert [after for after, _ in calls[1:]] == [3, 3, 5, 5, 5, 8], calls
     assert len(logs) == 1 and "session wake poll failed: RuntimeError: socket gone" in logs[0], logs
+
+
+# ---------------------------------------------------------------- 段 12 lane 12j(agora-redesign #304 便 2): 停止の前の排水
+
+
+def test_declared_capacity_is_zero_while_draining_and_the_declaration_otherwise() -> None:
+    """判断は judgment.declared-capacity-of の 1 点: 排水の最中は node の spec.capacity を 0 に名乗り(配車が新しい手番を結ばない)、
+    それ以外は宣言 file の capacity。node-spec-of / node-spec-declared の両方が同じ 1 点を読む。"""
+    from dataclasses import replace
+
+    settings = AgentdSettings(node_name=NODE, homes_root=HOMES, node_capacity=2, places=("personal",))
+    draining = replace(settings, draining=True)
+    assert run(judgment.declared_capacity_of(settings)) == 2
+    assert run(judgment.declared_capacity_of(draining)) == 0
+    assert run(judgment.node_spec_of(settings))["capacity"] == 2
+    assert run(judgment.node_spec_of(draining))["capacity"] == 0
+    live_spec = {"name": NODE, "capacity": 2, "places": ["personal"], "labels": {"places": "personal", "boundary": "personal"}}
+    assert run(judgment.node_spec_declared(live_spec, draining))["capacity"] == 0
+    assert run(judgment.node_spec_declared(live_spec, settings))["capacity"] == 2
+
+
+def test_a_draining_agentd_leaves_bound_jobs_unclaimed_and_names_it() -> None:
+    """排水の最中に結ばれた Bound の行は claim しない(行は Bound のまま — capacity 0 を読んだ配車が別の node へ結び直す)。
+    黙って残さない: 行ごとに log 1 行。走っている job の観測は続く(拍は回る)。"""
+    from dataclasses import replace
+
+    world = World()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"]))
+    world.settings = replace(world.settings, draining=True)
+    world.tick()
+    assert world.sessions.launches == []
+    assert world.state.jobs == ()
+    assert any("draining for the stop of agentd — leaving Bound job j-1 unclaimed" in line for line in world.local.logs), world.local.logs
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_BOUND
+    # 排水でなければ今日どおり claim する
+    world.settings = replace(world.settings, draining=False)
+    world.tick(advance_ms=1_000)
+    assert len(world.sessions.launches) == 1
+    assert len(world.state.jobs) == 1
+
+
+def test_drain_until_returns_when_the_turns_end_or_the_deadline_passes() -> None:
+    """排水の待ちは judgment ではなく runtime の純関数 1 点(drain_until): 走っている数が 0 になるか期限に届くまで poll ごとに読み直す。"""
+    from doeff_agents.sessionhost.acp.runtime import drain_until
+
+    clock = {"now": 100.0}
+    counts = iter([2, 1, 0])
+    slept: list[float] = []
+
+    def now() -> float:
+        return clock["now"]
+
+    def sleep(seconds: float) -> None:
+        slept.append(seconds)
+        clock["now"] += seconds
+
+    left, waited = drain_until(lambda: next(counts), deadline=100.0 + 30.0, now=now, sleep=sleep, poll=1.0)
+    assert (left, waited) == (0, 2.0)
+    assert slept == [1.0, 1.0]
+    # 期限: 手番が終わらなければ期限で残りを返す(待ちは期限を越えない)
+    clock["now"] = 200.0
+    slept.clear()
+    left, waited = drain_until(lambda: 3, deadline=200.0 + 2.5, now=now, sleep=sleep, poll=1.0)
+    assert left == 3
+    assert waited == 2.5
+    assert slept == [1.0, 1.0, 0.5]
+
+
+def test_close_for_stop_drains_before_closing_when_the_node_declares_drain_seconds() -> None:
+    """停止の腕(段 12 lane 12j・#304 便 2): drain_seconds > 0 で走っている job が在れば、drain の合図を立てて手番の終わりを待ち、
+    全部終われば何も閉じずに降りる。期限に届けば残りを今日どおり AgentdRestart で閉じる。宣言 0 は今日どおり即座に閉じる。"""
+    import threading
+    import time
+    from dataclasses import replace
+
+    from doeff_agents.sessionhost.acp.runtime import AgentdRun, StateHolder
+
+    def started(name: str) -> threading.Thread:
+        thread = threading.Thread(target=lambda: None, name=name)
+        thread.start()
+        thread.join()
+        return thread
+
+    def make_run(world: World, drain_seconds: int) -> tuple[AgentdRun, StateHolder, threading.Event, list[str]]:
+        holder = StateHolder()
+        holder.state = world.state
+        stop = threading.Event()
+        drain = threading.Event()
+        closed: list[str] = []
+        dispatchers = [world.acp.dispatch, world.custody.dispatch, world.sessions.dispatch, world.local.dispatch]
+        run_obj = AgentdRun(
+            replace(world.settings, drain_seconds=drain_seconds), dispatchers, stop, drain, holder,
+            started("loop"), lambda: closed.append("closed"), started("heartbeat"),
+        )
+        return run_obj, holder, drain, closed
+
+    # (1) 手番が排水の間に終わる → 閉じる job は 0・drain の合図が立ち・後始末は 1 度
+    world = World()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"]))
+    world.tick()
+    assert len(world.state.jobs) == 1
+    run_obj, holder, drain, closed = make_run(world, drain_seconds=10)
+
+    def turn_ends() -> None:
+        time.sleep(0.3)
+        holder.state = replace(holder.state, jobs=())
+
+    threading.Thread(target=turn_ends).start()
+    assert run_obj.close_for_stop("SIGTERM") == 0
+    assert drain.is_set()
+    assert run_obj.stop.is_set()
+    assert closed == ["closed"]
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_RUNNING  # 排水で終わった手番は停止の腕が閉じていない(拍が settle する)
+    # (2) 期限に届く → 残りを AgentdRestart で閉じる
+    world2 = World()
+    world2.acp.put_row(message("m-1", "first"))
+    world2.acp.put_row(bound_job("j-1", inputs=["m-1"]))
+    world2.tick()
+    run2, _holder2, drain2, closed2 = make_run(world2, drain_seconds=1)
+    began = time.monotonic()
+    assert run2.close_for_stop("SIGTERM") == 1
+    assert time.monotonic() - began >= 0.9
+    assert drain2.is_set()
+    assert closed2 == ["closed"]
+    ended = world2.job("j-1")
+    assert ended.status is not None
+    assert ended.status["phase"] == PHASE_ENDED
+    conditions = ended.status["conditions"]
+    assert isinstance(conditions, list) and conditions[-1]["type"] == "AgentdRestart"
+    # (3) 宣言 0 = 今日どおり即座に閉じる(drain の合図は立たない)
+    world3 = World()
+    world3.acp.put_row(message("m-1", "first"))
+    world3.acp.put_row(bound_job("j-1", inputs=["m-1"]))
+    world3.tick()
+    run3, _holder3, drain3, _closed3 = make_run(world3, drain_seconds=0)
+    assert run3.close_for_stop("SIGTERM") == 1
+    assert not drain3.is_set()
+
+
+def test_join_spec_reads_drain_seconds_and_settings_carry_it() -> None:
+    """宣言 file の [agentd].drain_seconds(任意)→ JoinSpec.drain_seconds → env DOEFF_AGENTD_DRAIN_SECONDS → AgentdSettings.drain_seconds。
+    無し = 0(env に現れない)・読めない値は参加しない(ValueError)。"""
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import DRAIN_SECONDS_ENV, JoinSpec
+    from doeff_agents.sessionhost.acp.runtime import settings_from_env
+
+    flags = ["--server", "http://acp:8868", "--token-file", "/t/agentd.token", "--capacity", "1", "--places", "personal"]
+    bare = _join_spec(flags)
+    assert isinstance(bare, JoinSpec) and bare.drain_seconds == 0
+    bare_env = dict(run(join.join_plan_of(bare)).env)
+    assert DRAIN_SECONDS_ENV not in bare_env
+    declared = _join_spec(flags, {"schema": "doeff.agentd-join.v1", "agentd": {"drain_seconds": "1500"}})
+    assert isinstance(declared, JoinSpec) and declared.drain_seconds == 1500
+    assert dict(run(join.join_plan_of(declared)).env)[DRAIN_SECONDS_ENV] == "1500"
+    with pytest.raises(ValueError, match="drain_seconds は 0 以上の整数"):
+        _join_spec(flags, {"schema": "doeff.agentd-join.v1", "agentd": {"drain_seconds": "soon"}})
+    env = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACES": "personal"}
+    assert settings_from_env(env, ()).drain_seconds == 0
+    assert settings_from_env({**env, DRAIN_SECONDS_ENV: "1500"}, ()).drain_seconds == 1500
+    assert settings_from_env(env, ()).draining is False

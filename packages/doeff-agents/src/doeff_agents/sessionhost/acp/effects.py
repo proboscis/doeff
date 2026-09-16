@@ -509,6 +509,9 @@ PLACES_ENV = "DOEFF_AGENTD_PLACES"
 #: node の spec.capacity(同時に走らせられる手番の数 — 段 10 lane 10d・agora-redesign #85)。join が宣言 file の
 #: [agentd].capacity / flag --capacity から据える。無い agentd は参加しない(runtime.settings_from_env)。
 CAPACITY_ENV = "DOEFF_AGENTD_CAPACITY"
+#: 段 12 lane 12j(agora-redesign #304 便 2): 停止(SIGTERM)の排水の上限(秒)。宣言 file の [agentd].drain_seconds から join が運ぶ。
+#: 0 / 無し = 今日どおり即座に走っている手番を閉じる(AgentdRestart)。
+DRAIN_SECONDS_ENV = "DOEFF_AGENTD_DRAIN_SECONDS"
 HOMES_ROOT_ENV = "DOEFF_AGENTD_HOMES_ROOT"
 CUSTODY_URL_ENV = "AGORA_CUSTODY_URL"
 BORROWER_KEY_PATH_ENV = "AGORA_BORROWER_KEY_PATH"
@@ -635,6 +638,8 @@ class JoinSpec:
     #: [agentd].allow_metered_billing・flag --allow-metered-billing)。False = 受けない(既定)。
     #: 真のときだけ join が host の argv へ値なしの旗を足す。env は作らない(方針は argv の 1 点)。
     allow_metered_billing: bool = False
+    #: 停止(SIGTERM)の排水の上限(秒 — 宣言 file の [agentd].drain_seconds・段 12 lane 12j・agora-redesign #304 便 2)。0 = 排水しない(既定)。
+    drain_seconds: int = 0
 
 
 @dataclass(frozen=True)
@@ -807,6 +812,13 @@ class AgentdSettings:
     #: 過ぎた session は agentd が session.cleanup で片付ける(判断は judgment の純関数・時計は
     #: effect・掃きは heartbeat の拍)。値の宣言はここ 1 点。
     session_idle_ttl_seconds: int = 600
+    #: 段 12 lane 12j(agora-redesign #304 便 2): 停止(SIGTERM)の排水の上限(秒・宣言 file の [agentd].drain_seconds・DRAIN_SECONDS_ENV)。
+    #: 0 = 排水しない(今日どおり走っている手番を AgentdRestart で閉じる)。> 0 = 新しい claim を止め・node の capacity を 0 に名乗り、
+    #: 走っている手番の終わりまで(上限まで)待ってから残りを閉じる。pod の terminationGracePeriodSeconds はこの値より長く取る。
+    drain_seconds: int = 0
+    #: 排水の最中か(停止の腕が立て、拍が読む — 判断は judgment.declared-capacity-of と agentd.receive-bound-jobs の 1 点ずつ)。
+    #: 宣言ではなく拍ごとの状態(run_loop が settings を写して立てる)。
+    draining: bool = False
     #: 機体の所有の等級と検の方法(段 6 lane 6f)。None = 名乗らない(observations に欄を書かない =
     #: 未観測)。composition root(runtime.settings_from_env)が env から読み、起動の前に
     #: join.ownership-preflight で検めた値だけがここに据わる(不一致 = 参加しない)。
