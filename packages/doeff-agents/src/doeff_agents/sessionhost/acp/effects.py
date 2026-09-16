@@ -843,6 +843,11 @@ WatchKind = Literal["changed", "gap", "idle", "closed", "session"]
 #: (周期の保険・gap・接続の張り直し)/ window = 変わった行だけ(``GET /api/event-window`` の
 #: post-image — watch で起きた拍)/ none = 読み直さない(idle)。
 ListMode = Literal["full", "window", "none"]
+#: 窓の答えが名乗る store の版(read-freshness.json・段 12 lane 12d)をどう扱うかの閉語彙 — 判断は judgment.window_epoch_verdict の 1 点。
+EpochVerdict = Literal["continue", "adopt", "relist"]
+EPOCH_VERDICT_CONTINUE: EpochVerdict = "continue"
+EPOCH_VERDICT_ADOPT: EpochVerdict = "adopt"
+EPOCH_VERDICT_RELIST: EpochVerdict = "relist"
 LIST_MODE_FULL: ListMode = "full"
 LIST_MODE_WINDOW: ListMode = "window"
 LIST_MODE_NONE: ListMode = "none"
@@ -865,6 +870,8 @@ class EventWindow:
     #: 窓の中で生まれた行(generation 1 の image)の id → 着地の時刻(ms)。同じ鍵の後の image で
     #: rows から消えても生まれは残す(計器 agent-job-to-send の始点)。
     births: tuple[tuple[str, int], ...] = ()
+    #: 答えが来た store の版(契約 read-freshness.json の storeEpoch)。None = この契約より前の engine(欄が無い)。
+    store_epoch: str | None = None
 
     @property
     def exhausted(self) -> bool:
@@ -1494,6 +1501,8 @@ class AgentdState:
     #: judgment.context-percent-of)。次の手番の claim が会話の宣言 compactAt と比べる材料(judgment.compaction-due)。
     #: memory の cache — agentd の再起動で消え、次の手番の終わりに測り直す(turn-record に同等の欄が無い間の実測)。
     context_by_session: tuple[tuple[str, int], ...] = ()
+    #: 行の cache を読んだ store の版(read-freshness.json)。窓の答えが別の版を名乗れば全量 list へ(judgment の 1 点)。
+    store_epoch: str | None = None
     #: 段 12 lane 12a(agora-redesign #230): 走らせている verify の命令(memory の写し — 正本は行の
     #: sessionHandle.verify と結末の file。再起動で消えても Running の行から組み直す: agentd.recover-command)。
     commands: tuple[InFlightCommand, ...] = ()

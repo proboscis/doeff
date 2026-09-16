@@ -65,6 +65,12 @@
       "kinds.node.schema.properties.status.properties.capabilities.additionalProperties.properties.interrupt",
       "kinds.node.schema.properties.status.properties.capabilities.additionalProperties.properties.attachments",
       "kinds.message.schema.properties.spec.properties.attachments"
+    ],
+    "read-freshness": [
+      "storeEpoch.field",
+      "readerRule.seed",
+      "readerRule.relistWhen",
+      "readerRule.absentField"
     ]
   }
 }

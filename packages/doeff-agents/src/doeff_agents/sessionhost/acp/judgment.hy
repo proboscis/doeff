@@ -157,6 +157,9 @@
   JSONObject
   JobOutcome
   LIFECYCLE-MULTI-TURN
+  EPOCH-VERDICT-ADOPT
+  EPOCH-VERDICT-CONTINUE
+  EPOCH-VERDICT-RELIST
   LIST-MODE-FULL
   LIST-MODE-NONE
   LIST-MODE-WINDOW
@@ -3538,6 +3541,20 @@
     (or periodic (in signal.kind #{"gap" "closed"})) LIST-MODE-FULL
     (= signal.kind "changed") LIST-MODE-WINDOW
     True LIST-MODE-NONE))
+
+
+(defk window-epoch-verdict [known announced]
+  {:pre [(: known (| str None)) (: announced (| str None))]
+   :post [(: % str)]}
+  "窓の答えが名乗る store の版(契約 read-freshness.json の storeEpoch)をどう扱うか(閉語彙 effects.EpochVerdict)—
+   判断はここ 1 点(SDK python / Hy runtime の informer と同じ 1 つの規則): announced が無い → continue(この契約より前の
+   engine・版の判断を持たない)/ 覚えた版が無い → adopt(初めて名乗られた版を採る — 変わったではない)/ 同じ → continue /
+   違う → relist(cursor は別の出来事を指し得るので全量 list へ・新しい版を覚える)。"
+  (cond
+    (is announced None) EPOCH-VERDICT-CONTINUE
+    (is known None) EPOCH-VERDICT-ADOPT
+    (= known announced) EPOCH-VERDICT-CONTINUE
+    True EPOCH-VERDICT-RELIST))
 
 
 (defk rows-of-kind [rows kind]
