@@ -389,6 +389,39 @@ STREAM_SOURCE_TRANSCRIPT: StreamSource = "transcript"
 InterruptArm = Literal["interrupt", "none"]
 INTERRUPT_ARM_INTERRUPT: InterruptArm = "interrupt"
 INTERRUPT_ARM_NONE: InterruptArm = "none"
+#: 取り消しの 3 段(段 12 lane 12k / 12j・agora-redesign #367・既知の形 行 3 (g) = 合図 → 猶予 → 強制。契約 = ACP
+#: docs/contracts/scheduling.json の cancel の節・綴りの正本 = Acp.App.Agent.AgentJob の spec.cancel と status.cancel):
+#: 段 1 合図 = 持ち主(Messaging の intent cancel-job)が agent-job の spec.cancel {requestedAt(epoch ms), graceSeconds
+#: (欠落 = 60), reason(閉語彙 operator / superseded / conversation-withdrawn / drained), by} を書く / 段 2 猶予 = agentd が
+#: 手番の途中なら割り込み(session.interrupt — 取り下げと同じ腕)を撃ち、status.cancel {acknowledgedAt, stage: graceful}
+#: を書く(見届け・1 度)/ 段 3 強制 = requestedAt + graceSeconds を過ぎても手番が終わらなければ agentd が器を片付け
+#: (session.cleanup = process を殺す)Ended + result.cause {category: cancelled, stage: forced, reason}。猶予の内に手番が
+#: 終われば Ended + result.cause {…, stage: graceful}。withdraw-job(phase Withdrawn)は「いま強制」(猶予 0)として残る。
+JOB_SPEC_CANCEL_KEY: str = "cancel"
+CANCEL_REQUESTED_AT_KEY: str = "requestedAt"
+CANCEL_GRACE_SECONDS_KEY: str = "graceSeconds"
+CANCEL_REASON_KEY: str = "reason"
+CANCEL_BY_KEY: str = "by"
+#: 契約 scheduling.json cancel.defaultGraceSeconds の写し(合図に graceSeconds が無い時の猶予)。
+DEFAULT_CANCEL_GRACE_SECONDS: int = 60
+JOB_STATUS_CANCEL_KEY: str = "cancel"
+CANCEL_ACKNOWLEDGED_AT_KEY: str = "acknowledgedAt"
+CANCEL_STAGE_KEY: str = "stage"
+CancelStage = Literal["graceful", "forced"]
+CANCEL_STAGE_GRACEFUL: CancelStage = "graceful"
+CANCEL_STAGE_FORCED: CancelStage = "forced"
+#: result.cause の category(ACP の engine が failureKindForCause で読む表の 1 語 — CAUSE_CATEGORY_RATE_LIMITED と同じ表)。
+CAUSE_CATEGORY_CANCELLED: str = "cancelled"
+RESULT_CAUSE_KEY: str = "cause"
+#: 取り消しの合図を持つ job の腕(judgment.cancel-arm-for の閉語彙): acknowledge = まだ見届けていない(割り込み +
+#: status.cancel)/ force = 見届け済みで猶予を過ぎても手番が走っている(殺して Ended)/ none = 見届け済みで猶予の内
+#: (手番の終わりを待つ — 終われば finalize が result.cause {graceful} を書く)。
+CancelArm = Literal["acknowledge", "force", "none"]
+CANCEL_ARM_ACKNOWLEDGE: CancelArm = "acknowledge"
+CANCEL_ARM_FORCE: CancelArm = "force"
+CANCEL_ARM_NONE: CancelArm = "none"
+#: 強制の段の記録の腕(settle-record)の step の語(計器 agent-job-turn の step — JobStep の外の終端の 1 語)。
+JOB_STEP_CANCEL_FORCED: str = "cancel-forced"
 #: custody の貸出の口の種類(POST /lease/claude | /lease/codex)。
 LeaseKind = Literal["claude", "codex"]
 #: profile の残量を読む資格の種類(段 7 lane 7d-3)。契約 profile の行は資格の種類を運ばず、本番の
@@ -1370,6 +1403,17 @@ class InterruptRead:
 
 
 @dataclass(frozen=True)
+class JobCancel:
+    """agent-job の spec.cancel(段 1 の合図・段 12 lane 12j・agora-redesign #367)の読み — judgment.job-cancel-of の 1 点。
+    requested_at_ms = 合図の拍(epoch ms)/ grace_seconds = 猶予(欠落は契約の既定 60)/ reason = 閉語彙の 1 語 / by = 合図の主。"""
+
+    requested_at_ms: int
+    grace_seconds: int
+    reason: str
+    by: str
+
+
+@dataclass(frozen=True)
 class DeltaBatch:
     """transcript の行の列から組んだ TurnDelta の frame と turn-record の entries(見出し)。"""
 
@@ -1665,6 +1709,13 @@ class InFlightJob:
     record_create_last_ms: int = 0
     #: 最後の断りの文(given-up の condition の理由に写す)。
     record_create_refusal: str = ""
+    #: 段 12 lane 12j(agora-redesign #367): 行の spec.cancel(段 1 の合図)の写し(None = 取り消されていない)。見届けの拍
+    #: (acknowledge-cancel)に据え、手番の終わりの result.cause と強制の段の判断(judgment.cancel-arm-for)の材料。拾い直し
+    #: (recover-job)は行から写す(judgment.recovered-cancel-of)。
+    cancel: JobCancel | None = None
+    #: 見届けた拍(ms・None = まだ)= 行の status.cancel.acknowledgedAt の写し。行への書きが断られても memory に置く
+    #: (割り込みを毎拍撃ち直さない)— 再起動で消えれば行から戻り、行にも無ければ改めて見届ける(割り込みは新しい器へ)。
+    cancel_acknowledged_at_ms: int | None = None
 
 
 @dataclass(frozen=True)

@@ -167,6 +167,22 @@
   HistoryItem
   INTERRUPT-ARM-INTERRUPT
   INTERRUPT-ARM-NONE
+  CANCEL-ACKNOWLEDGED-AT-KEY
+  CANCEL-ARM-ACKNOWLEDGE
+  CANCEL-ARM-FORCE
+  CANCEL-ARM-NONE
+  CANCEL-BY-KEY
+  CANCEL-GRACE-SECONDS-KEY
+  CANCEL-REASON-KEY
+  CANCEL-REQUESTED-AT-KEY
+  CANCEL-STAGE-GRACEFUL
+  CANCEL-STAGE-KEY
+  CAUSE-CATEGORY-CANCELLED
+  DEFAULT-CANCEL-GRACE-SECONDS
+  JOB-SPEC-CANCEL-KEY
+  JOB-STATUS-CANCEL-KEY
+  JobCancel
+  RESULT-CAUSE-KEY
   InFlightJob
   InterruptRead
   JOB-INTERRUPTS-DELIVERED-KEY
@@ -1010,6 +1026,112 @@
     (.append conditions condition))
   (setv (get next "conditions") conditions)
   next)
+
+
+;; ---------------------------------------------------------------------------
+;; 取り消しの 3 段(段 12 lane 12j・agora-redesign #367・契約 scheduling.json の cancel の節): 合図 → 猶予 → 強制
+;; ---------------------------------------------------------------------------
+
+(defk job-cancel-of [row]
+  {:pre [(: row AcpRow)]
+   :post [(: % (| JobCancel None))]}
+  "行の spec.cancel(段 1 の合図)→ JobCancel。無い・壊れた形(requestedAt が整数でない・reason が空か文字列でない・
+   graceSeconds が整数でないか負・by が文字列でない)= None — 壊れた合図で手番を止めない(engine の intent cancel-job
+   が形を検めるので、壊れた形は写しの欠陥の印)。graceSeconds の欠落 = 契約の既定(DEFAULT-CANCEL-GRACE-SECONDS)。"
+  (setv raw (.get row.spec JOB-SPEC-CANCEL-KEY))
+  (when (not (isinstance raw dict))
+    (return None))
+  (setv requested (.get raw CANCEL-REQUESTED-AT-KEY))
+  (setv reason (.get raw CANCEL-REASON-KEY))
+  (setv grace (.get raw CANCEL-GRACE-SECONDS-KEY DEFAULT-CANCEL-GRACE-SECONDS))
+  (setv by (.get raw CANCEL-BY-KEY ""))
+  (when (or (not (isinstance requested int)) (isinstance requested bool)
+            (not (isinstance reason str)) (= reason "")
+            (not (isinstance grace int)) (isinstance grace bool) (< grace 0)
+            (not (isinstance by str)))
+    (return None))
+  (JobCancel :requested-at-ms requested :grace-seconds grace :reason reason :by by))
+
+
+(defk cancel-deadline-ms [cancel]
+  {:pre [(: cancel JobCancel)]
+   :post [(: % int)]}
+  "猶予の期限(ms)= requestedAt + graceSeconds × 1000(ACP の Acp.App.Agent.AgentJob.cancelDeadline と同じ算)。"
+  (+ cancel.requested-at-ms (* 1000 cancel.grace-seconds)))
+
+
+(defk cancel-arm-for [job view cancel now-ms]
+  {:pre [(: job InFlightJob) (: view (| SessionView None)) (: cancel JobCancel) (: now-ms int)]
+   :post [(: % str)]}
+  "取り消しの合図を受けた自分の job の腕(閉語彙 effects.CancelArm)— 判断はここ 1 点: まだ見届けていなければ
+   acknowledge(手番の途中なら割り込み・status.cancel を書く — 手番が既に終わっていても見届けは書く)/ 見届け済みで
+   猶予の期限を過ぎ、器が生きていてこの手番がまだ終わっていなければ force / それ以外は none(手番の終わりを待つ —
+   終われば finalize が result.cause {graceful} を書く)。手番が走っているかは取り下げと同じ 1 点 interrupt-arm-for。"
+  (<- running str (interrupt-arm-for job view))
+  (<- deadline int (cancel-deadline-ms cancel))
+  (cond
+    (is job.cancel-acknowledged-at-ms None) CANCEL-ARM-ACKNOWLEDGE
+    (and (>= now-ms deadline) (= running INTERRUPT-ARM-INTERRUPT)) CANCEL-ARM-FORCE
+    True CANCEL-ARM-NONE))
+
+
+(defk cancel-acknowledged-status-of [status now-ms]
+  {:pre [(: status dict) (: now-ms int)]
+   :post [(: % dict)]}
+  "見届けの status(段 2): status.cancel = {acknowledgedAt: now, stage: graceful}(既に在れば変えない — 見届けは 1 度)。
+   phase は書かない(Running のまま — 終端の書きは最後)。"
+  (setv next (dict status))
+  (setv existing (.get status JOB-STATUS-CANCEL-KEY))
+  (when (not (isinstance existing dict))
+    (setv (get next JOB-STATUS-CANCEL-KEY)
+          {CANCEL-ACKNOWLEDGED-AT-KEY now-ms CANCEL-STAGE-KEY CANCEL-STAGE-GRACEFUL}))
+  next)
+
+
+(defk cancelled-cause-of [cancel stage]
+  {:pre [(: cancel JobCancel) (: stage str)]
+   :post [(: % dict)]}
+  "Ended の result.cause(契約 scheduling.json cancel.result.cause): {category: cancelled, stage, reason}。"
+  {"category" CAUSE-CATEGORY-CANCELLED CANCEL-STAGE-KEY stage CANCEL-REASON-KEY cancel.reason})
+
+
+(defk result-with-cause [result cause]
+  {:pre [(: result (| dict list str int float bool None)) (: cause dict)]
+   :post [(: % dict)]}
+  "手番の結末に取り消しの cause を載せる: dict の結末はその欄 cause に(器の cause より取り消しが正 — 合図が先に在った)、
+   None は cause だけ、dict でない結末は {value, cause} に包む(器の答えを落とさない)。"
+  (cond
+    (isinstance result dict) (do (setv next (dict result))
+                                 (setv (get next RESULT-CAUSE-KEY) cause)
+                                 next)
+    (is result None) {RESULT-CAUSE-KEY cause}
+    True {"value" result RESULT-CAUSE-KEY cause}))
+
+
+(defk outcome-with-cancel [outcome cancel stage]
+  {:pre [(: outcome JobOutcome) (: cancel (| JobCancel None)) (: stage str)]
+   :post [(: % JobOutcome)]}
+  "取り消された job の結末に cause を載せる(cancel が None = 取り消されていない → 不変)。"
+  (when (is cancel None)
+    (return outcome))
+  (<- cause dict (cancelled-cause-of cancel stage))
+  (<- result dict (result-with-cause outcome.result cause))
+  (replace outcome :result result))
+
+
+(defk recovered-cancel-of [job row]
+  {:pre [(: job InFlightJob) (: row AcpRow)]
+   :post [(: % InFlightJob)]}
+  "拾い直し(再起動後)の job に行の取り消しを写す: spec.cancel → cancel、status.cancel.acknowledgedAt → 見届けの拍
+   (無ければ None = 次の拍に見届け直す — 割り込みは改めて撃つ・見届けの書きは既に在れば変えない)。"
+  (<- cancel (| JobCancel None) (job-cancel-of row))
+  (<- status dict (status-object-of row))
+  (setv existing (.get status JOB-STATUS-CANCEL-KEY))
+  (setv acknowledged (if (isinstance existing dict) (.get existing CANCEL-ACKNOWLEDGED-AT-KEY) None))
+  (replace job :cancel cancel
+               :cancel-acknowledged-at-ms (if (and (isinstance acknowledged int) (not (isinstance acknowledged bool)))
+                                              acknowledged
+                                              None)))
 
 
 ;; ---------------------------------------------------------------------------

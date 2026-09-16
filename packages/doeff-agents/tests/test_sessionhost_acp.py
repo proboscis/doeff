@@ -1852,6 +1852,224 @@ def test_withdrawn_job_whose_turn_already_ended_is_not_interrupted() -> None:
     assert world.state.jobs == ()
 
 
+# ---------------------------------------------------------------- 段 12 lane 12j: 取り消しの 3 段(agora-redesign #367)
+
+
+def _place_cancel(
+    world: World,
+    job_id: str,
+    *,
+    grace_seconds: int | None = 60,
+    reason: object = "operator",
+    requested_at_ms: int | None = None,
+) -> None:
+    """Messaging の intent cancel-job の代わりに走っている job の spec に cancel(段 1 の合図)を書く(status は写す)。"""
+    running = world.job(job_id)
+    spec: JSONObject = dict(running.spec)
+    cancel: JSONObject = {
+        "requestedAt": world.local.now_ms if requested_at_ms is None else requested_at_ms,
+        "reason": reason,
+        "by": "test",
+    }
+    if grace_seconds is not None:
+        cancel["graceSeconds"] = grace_seconds
+    spec["cancel"] = cancel
+    world.acp.put_row(
+        row(
+            AGENT_JOB_NAMESPACE,
+            AGENT_JOB_KIND,
+            job_id,
+            spec,
+            running.status,
+            created_at_ms=running.created_at_ms,
+        )
+    )
+
+
+def _start_warm_second_turn(world: World) -> tuple[str, str]:
+    """1 手番目を終えた温かい session へ 2 手番目(j-2)を送る。戻り = (session の id, transcript の path)。"""
+    path = _run_first_turn(world)
+    world.acp.put_row(message("m-2", "second"))
+    # 生まれの刻は今(拾い直しの手番の始まりの下限 = 行の createdAt — 1 手番目の終わりの刻より後でないと、再起動後の
+    # 拾い直しが前の手番の turn_ended_at を「この手番の終わり」と読む)。
+    world.acp.put_row(bound_job("j-2", inputs=["m-2"], created_at_ms=world.local.now_ms))
+    world.tick(advance_ms=1_000)
+    assert len(world.state.jobs) == 1
+    return world.sid("j-1"), path
+
+
+def test_cancel_signal_interrupts_once_is_acknowledged_on_the_row_and_the_turn_ends_cancelled_gracefully() -> None:
+    """取り消しの 3 段(agora-redesign #367・契約 scheduling.json の cancel の節)— 段 2 猶予: spec.cancel を見た拍に
+    手番の途中なら session.interrupt を 1 回撃ち、行の status.cancel に {acknowledgedAt, stage: graceful} を書く(phase は
+    Running のまま・job は memory に残る)。次の拍は撃ち直さない。猶予の内に手番が終われば Ended + result.cause
+    {category: cancelled, stage: graceful, reason}・温かい session は残る。"""
+    world = World()
+    warm, path = _start_warm_second_turn(world)
+    _place_cancel(world, "j-2", grace_seconds=60)
+    world.tick(advance_ms=1_000)
+    acknowledged_at = world.local.now_ms
+    assert world.sessions.interrupts == [warm]
+    assert world.sessions.cleanups == []
+    assert len(world.state.jobs) == 1
+    assert world.state.jobs[0].cancel is not None
+    assert world.state.jobs[0].cancel.reason == "operator"
+    assert world.state.jobs[0].cancel_acknowledged_at_ms == acknowledged_at
+    running = world.job("j-2")
+    assert running.status is not None
+    assert running.status["phase"] == PHASE_RUNNING
+    assert running.status["cancel"] == {"acknowledgedAt": acknowledged_at, "stage": "graceful"}
+    # 次の拍(猶予の内): 割り込みを撃ち直さない・見届けも書き直さない
+    world.tick(advance_ms=1_000)
+    assert world.sessions.interrupts == [warm]
+    assert world.job("j-2").status["cancel"] == {"acknowledgedAt": acknowledged_at, "stage": "graceful"}
+    # 手番が猶予の内に終わる(記録が進み host が turn_ended_at を刻む)→ Ended + cause graceful
+    world.local.transcripts[path] += transcript_line("assistant", [{"type": "text", "text": "two"}])
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(warm, world.local.now_ms + 200)
+    world.tick(advance_ms=1_000)
+    assert world.state.jobs == ()
+    ended = world.job("j-2")
+    assert ended.status is not None
+    assert ended.status["phase"] == PHASE_ENDED
+    assert ended.status["result"] == {"cause": {"category": "cancelled", "stage": "graceful", "reason": "operator"}}
+    record = world.turn_record("j-2")
+    assert record is not None and record.status is not None
+    assert record.status["state"] == "ended"
+    assert world.sessions.cleanups == []
+    assert world.sessions.views[warm].status == "running"
+    cancels = [m for m in world.local.metrics if m["metric"] == "agent-job-cancel"]
+    assert [m["stage"] for m in cancels] == ["graceful"]
+
+
+def test_cancel_past_the_grace_kills_the_session_and_ends_the_job_forced() -> None:
+    """段 3 強制: 見届けの後、requestedAt + graceSeconds を過ぎても手番が終わらなければ session.cleanup(process を殺す)を
+    1 回撃ち、turn-record を ended・agent-job を Ended + result.cause {category: cancelled, stage: forced, reason}・
+    memory から外す。猶予の内の拍は触らない(期限ちょうどで強制)。"""
+    world = World()
+    warm, _path = _start_warm_second_turn(world)
+    requested = world.local.now_ms
+    _place_cancel(world, "j-2", grace_seconds=3, reason="superseded")
+    world.tick(advance_ms=1_000)  # requested + 1 s: 見届け
+    assert world.sessions.interrupts == [warm]
+    assert world.sessions.cleanups == []
+    world.tick(advance_ms=1_000)  # requested + 2 s: 猶予の内 — 触らない
+    assert world.sessions.cleanups == []
+    assert len(world.state.jobs) == 1
+    assert world.job("j-2").status["phase"] == PHASE_RUNNING
+    world.tick(advance_ms=1_000)  # requested + 3 s = 期限: 強制
+    assert world.local.now_ms == requested + 3_000
+    assert world.sessions.cleanups == [warm]
+    assert world.sessions.interrupts == [warm]
+    assert world.state.jobs == ()
+    ended = world.job("j-2")
+    assert ended.status is not None
+    assert ended.status["phase"] == PHASE_ENDED
+    assert ended.status["result"] == {"cause": {"category": "cancelled", "stage": "forced", "reason": "superseded"}}
+    assert ended.status["cancel"] == {"acknowledgedAt": requested + 1_000, "stage": "graceful"}
+    record = world.turn_record("j-2")
+    assert record is not None and record.status is not None
+    assert record.status["state"] == "ended"
+    assert world.sessions.views[warm].status == "stopped"
+    assert world.pushed_kinds()[-1] == "status"
+    cancels = [m for m in world.local.metrics if m["metric"] == "agent-job-cancel"]
+    assert [m["stage"] for m in cancels] == ["graceful", "forced"]
+    turn = [m for m in world.local.metrics if m["metric"] == "agent-job-turn"][-1]
+    assert turn["step"] == "cancel-forced"
+
+
+def test_cancel_of_a_turn_that_already_ended_is_acknowledged_without_an_interrupt_and_ends_gracefully() -> None:
+    """手番が既に終わっている(turn_ended_at がこの手番の始まりより後)job の取り消しは割り込まない(判断は取り下げと同じ
+    interrupt-arm-for の 1 点)— 見届けは書き、同じ拍の観測の腕が Ended + cause graceful で閉じる。"""
+    world = World()
+    warm, path = _start_warm_second_turn(world)
+    world.local.transcripts[path] += transcript_line("assistant", [{"type": "text", "text": "two"}])
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(warm, world.local.now_ms + 100)
+    _place_cancel(world, "j-2", grace_seconds=60, reason="conversation-withdrawn")
+    world.tick(advance_ms=1_000)
+    assert world.sessions.interrupts == []
+    assert world.sessions.cleanups == []
+    assert world.state.jobs == ()
+    ended = world.job("j-2")
+    assert ended.status is not None
+    assert ended.status["phase"] == PHASE_ENDED
+    assert ended.status["cancel"] == {"acknowledgedAt": world.local.now_ms, "stage": "graceful"}
+    assert ended.status["result"] == {
+        "cause": {"category": "cancelled", "stage": "graceful", "reason": "conversation-withdrawn"}
+    }
+
+
+def test_a_broken_cancel_signal_is_ignored() -> None:
+    """壊れた合図(reason が無い・graceSeconds が負)は合図ではない(judgment.job-cancel-of = None): 割り込まず・見届けも
+    書かず・job は走り続ける(engine の intent cancel-job が形を検めるので、壊れた形は写しの欠陥の印)。"""
+    world = World()
+    warm, _path = _start_warm_second_turn(world)
+    running = world.job("j-2")
+    spec: JSONObject = dict(running.spec)
+    spec["cancel"] = {"requestedAt": world.local.now_ms, "graceSeconds": -1, "reason": "operator", "by": "test"}
+    world.acp.put_row(row(AGENT_JOB_NAMESPACE, AGENT_JOB_KIND, "j-2", spec, running.status, created_at_ms=running.created_at_ms))
+    world.tick(advance_ms=1_000)
+    _place_cancel(world, "j-2", reason=None)
+    world.tick(advance_ms=1_000)
+    assert world.sessions.interrupts == []
+    assert world.sessions.cleanups == []
+    assert len(world.state.jobs) == 1
+    assert world.state.jobs[0].cancel is None
+    assert "cancel" not in (world.job("j-2").status or {})
+    assert world.sessions.views[warm].status == "running"
+
+
+def test_a_recovered_job_carries_the_cancel_and_its_acknowledgement_from_the_row() -> None:
+    """再起動(memory を捨てる)後の拾い直しは行の spec.cancel と status.cancel.acknowledgedAt を写す(judgment.recovered-cancel-of):
+    見届け済みなら割り込みを撃ち直さず、猶予の期限が来れば強制で閉じる。"""
+    world = World()
+    warm, _path = _start_warm_second_turn(world)
+    requested = world.local.now_ms
+    _place_cancel(world, "j-2", grace_seconds=5, reason="drained")
+    world.tick(advance_ms=1_000)
+    assert world.sessions.interrupts == [warm]
+    world.state = initial_state()
+    world.tick(advance_ms=1_000)
+    assert len(world.state.jobs) == 1
+    recovered = world.state.jobs[0]
+    assert recovered.cancel is not None and recovered.cancel.reason == "drained"
+    assert recovered.cancel_acknowledged_at_ms == requested + 1_000
+    assert world.sessions.interrupts == [warm]
+    world.tick(advance_ms=3_000)  # requested + 5 s = 期限
+    assert world.sessions.cleanups == [warm]
+    assert world.state.jobs == ()
+    ended = world.job("j-2")
+    assert ended.status is not None
+    assert ended.status["result"] == {"cause": {"category": "cancelled", "stage": "forced", "reason": "drained"}}
+
+
+def test_cancel_judgments_read_the_signal_and_the_default_grace() -> None:
+    """判断の純関数: graceSeconds の欠落 = 契約の既定 60・期限 = requestedAt + grace × 1000・壊れた形は None・
+    見届けの status は 1 度だけ・cause の形は契約 scheduling.json cancel.result.cause。"""
+    signalled = row(AGENT_JOB_NAMESPACE, AGENT_JOB_KIND, "j-c", {"cancel": {"requestedAt": 10_000, "reason": "operator", "by": "op"}}, None)
+    cancel = run(judgment.job_cancel_of(signalled))
+    assert cancel is not None
+    assert (cancel.requested_at_ms, cancel.grace_seconds, cancel.reason, cancel.by) == (10_000, 60, "operator", "op")
+    assert run(judgment.cancel_deadline_ms(cancel)) == 70_000
+    for broken in (
+        {"requestedAt": "10000", "reason": "operator"},
+        {"requestedAt": 10_000, "reason": ""},
+        {"requestedAt": 10_000, "reason": "operator", "graceSeconds": -1},
+        {"requestedAt": 10_000, "reason": "operator", "graceSeconds": True},
+        "operator",
+    ):
+        assert run(judgment.job_cancel_of(row(AGENT_JOB_NAMESPACE, AGENT_JOB_KIND, "j-b", {"cancel": broken}, None))) is None
+    assert run(judgment.job_cancel_of(row(AGENT_JOB_NAMESPACE, AGENT_JOB_KIND, "j-n", {}, None))) is None
+    once = run(judgment.cancel_acknowledged_status_of({"phase": "Running"}, 5_000))
+    assert once == {"phase": "Running", "cancel": {"acknowledgedAt": 5_000, "stage": "graceful"}}
+    assert run(judgment.cancel_acknowledged_status_of(once, 9_000)) == once
+    assert run(judgment.cancelled_cause_of(cancel, "forced")) == {"category": "cancelled", "stage": "forced", "reason": "operator"}
+    cause = {"category": "cancelled", "stage": "graceful", "reason": "operator"}
+    assert run(judgment.result_with_cause({"ok": True, "cause": {"category": "x"}}, cause)) == {"ok": True, "cause": cause}
+    assert run(judgment.result_with_cause(None, cause)) == {"cause": cause}
+    assert run(judgment.result_with_cause("text", cause)) == {"value": "text", "cause": cause}
+
+
 # ---------------------------------------------------------------- 段 8 lane 4x: 割り込みの本文(agora-redesign #56)
 
 
