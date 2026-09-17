@@ -1,0 +1,243 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/target-2026-09-18/evidence.md",
+      "sha256": "e9664901075d569d1a22d409c53c96fa047dd37662cc3f7a5e5d6784c9d5b028"
+    },
+    {
+      "path": "artifacts/target-2026-09-18/evidence/e1-cli-autocompact-range.log",
+      "sha256": "9ae69950e665c080072340e0c8c4e7702933f84726d42aa3d7c83fd81e88a039"
+    },
+    {
+      "path": "artifacts/target-2026-09-18/evidence/e2-running-seats-declare-nothing.log",
+      "sha256": "2cc835ae578fde6c78d4beca60c82670de74f363fd6ded5ffdbdcbf33ca98613"
+    },
+    {
+      "path": "artifacts/target-2026-09-18/evidence/e3-fable-cost-by-model-and-profile.log",
+      "sha256": "6761d00948831b43cc9674d481de7776fd94ab8d876db540019f69ac10a01c01"
+    },
+    {
+      "path": "artifacts/target-2026-09-18/evidence/e3-context-length-distribution.log",
+      "sha256": "32f1e24f83665dbf9e527c6ad114d53dbbaeeb28e1c43fa3b11fcac414a027ba"
+    },
+    {
+      "path": "artifacts/target-2026-09-18/evidence/e3-daily-by-model.log",
+      "sha256": "0d32dec6bc956057a95feb9e2be07bff7554cc8d53dab53954127e8bbe1b0e55"
+    },
+    {
+      "path": "artifacts/target-2026-09-18/evidence/e4-autocompact-derivation.log",
+      "sha256": "0c76329dc8e20404649add57f379a4c2fcad41d56c8939cc9d863e4f9e0ccaf1"
+    }
+  ],
+  "body": {
+    "claims": [
+      {
+        "evidence": [
+          "artifacts/target-2026-09-18/evidence/e2-running-seats-declare-nothing.log"
+        ],
+        "expected": "目標設計では全席に --autocompact が載る。",
+        "id": "C1",
+        "mode": "execution",
+        "observed": "49 本中 0 本。起動元は doeff-sessionhost join(ACP の agentd)。",
+        "procedure": "会社 Mac で稼働中の claude process を ps で数え、--autocompact を持つ本数を数える。1 本の親を辿って起動元を特定する。",
+        "result": "refuted",
+        "scenario_ids": [],
+        "statement": "本線の agentd が起こす claude 席の argv には圧縮の閾値が載っていない。"
+      },
+      {
+        "evidence": [
+          "artifacts/target-2026-09-18/evidence/e3-context-length-distribution.log",
+          "artifacts/target-2026-09-18/evidence/e3-fable-cost-by-model-and-profile.log",
+          "artifacts/target-2026-09-18/evidence/e3-daily-by-model.log"
+        ],
+        "expected": "目標設計では実効の窓が床(400k)に抑えられる。",
+        "id": "C2",
+        "mode": "execution",
+        "observed": "平均 550k・最大 967k・800k 超が 3,005 手番。600k 超の手番が費用の 59% を占める。",
+        "procedure": "全 profile の会話記録 3.68GB を走査し、手番ごとの文脈(input + cache_write + cache_read)の分布を出す。",
+        "result": "refuted",
+        "scenario_ids": [],
+        "statement": "閾値が無宣言だと CLI はモデルの窓(1M)いっぱいまで伸び、実際にそうなっている。"
+      },
+      {
+        "evidence": [
+          "artifacts/target-2026-09-18/evidence/e2-running-seats-declare-nothing.log"
+        ],
+        "expected": "目標設計では起こす側は必ず名乗る(系として 1 つの判断)。",
+        "id": "C3",
+        "mode": "execution",
+        "observed": "dotfiles は AUTOCOMPACT_DEFAULT_TOKENS = 600_000 を必ず載せる。doeff-agents の build-claude-argv は旗そのものが無い。",
+        "procedure": "dotfiles の agentcli/headless.py と doeff-agents の起動 argv を突き合わせる。",
+        "result": "refuted",
+        "scenario_ids": [],
+        "statement": "同じ系の中で、閾値を名乗る走行係と名乗らない走行係が併存している(判断が 2 か所に割れている)。"
+      },
+      {
+        "evidence": [
+          "artifacts/target-2026-09-18/evidence/e1-cli-autocompact-range.log"
+        ],
+        "expected": "argv 解釈の段で異常終了し、stream-json を 1 行も吐かない。",
+        "id": "C4",
+        "mode": "execution",
+        "observed": "逐語 \"It must be 'auto', or between 100k and 1M\" で終了。本体は走らない。",
+        "procedure": "claude 2.1.274 に --autocompact bogus / 50k を渡して実射する。",
+        "result": "supported",
+        "scenario_ids": [
+          "CC3"
+        ],
+        "statement": "幅の外の値を argv に載せると手番が丸ごと消える(だから幅の関門が要る)。"
+      },
+      {
+        "evidence": [
+          "artifacts/target-2026-09-18/evidence.md"
+        ],
+        "expected": "閾値の欄も名簿に入れないと、蘇生の手番だけ窓の上限任せへ戻る。",
+        "id": "C5",
+        "mode": "analysis",
+        "observed": "名簿は prompt / model / effort / mcp_servers / session_env / binding / expected_result / context_file / launch_attribution / attachments の 10 欄。註に「足した欄は名簿にも足す」とある。",
+        "procedure": "judgment.hy resume-params-of の名簿と、その註に残る 2026-09-15 の実弾(添付が resume の腕だけ落ちた)を読む。",
+        "result": "supported",
+        "scenario_ids": [
+          "CC4"
+        ],
+        "statement": "resume の腕は charter の欄を名簿で写すので、名簿に無い欄は落ちる。"
+      }
+    ],
+    "findings": [
+      {
+        "category": "implementation_violation",
+        "claim_ids": [
+          "C1",
+          "C2"
+        ],
+        "evidence": [
+          "artifacts/target-2026-09-18/evidence/e2-running-seats-declare-nothing.log",
+          "artifacts/target-2026-09-18/evidence/e3-context-length-distribution.log"
+        ],
+        "id": "F1",
+        "owner": "agentd-argv-builder",
+        "remedy": "build-claude-argv に導出点を足し、--autocompact を必ず載せる(段 1)。",
+        "severity": "blocking",
+        "statement": "ACP の agentd が起こす claude 席は圧縮の閾値を宣言せず、CLI の窓いっぱいまで文脈が伸びている。目標設計の中心の不変条件(--autocompact は常に載る)を満たしていない。",
+        "status": "open"
+      },
+      {
+        "category": "implementation_violation",
+        "claim_ids": [
+          "C5"
+        ],
+        "evidence": [
+          "artifacts/target-2026-09-18/evidence.md"
+        ],
+        "id": "F2",
+        "owner": "agentd-arms",
+        "remedy": "judgment.resume-params-of の名簿に auto_compact_window を足し、腕ごとの検で固定する。",
+        "severity": "blocking",
+        "statement": "resume の腕の名簿に閾値の欄が無いので、実装しても蘇生の手番だけ落ちる。長く続いている会話ほど resume を通るため、いちばん太い席から先に漏れる。",
+        "status": "open"
+      },
+      {
+        "category": "design_change",
+        "claim_ids": [
+          "C3"
+        ],
+        "evidence": [
+          "artifacts/target-2026-09-18/evidence/e2-running-seats-declare-nothing.log"
+        ],
+        "id": "F3",
+        "owner": "route-dispatcher",
+        "remedy": "段 2 で役ごとの値を宣言側へ集め、走行係の床は「charter が沈黙した時の安全な既定」に限定する。dotfiles 側の 600k もその時に見直す。",
+        "severity": "nonblocking",
+        "statement": "系の中に閾値を名乗る走行係(dotfiles・600k)と名乗らない走行係(doeff-agents)が併存している。値の方策の定義点が 2 つあり、片方だけ動かすと系の振る舞いが割れる。",
+        "status": "open"
+      },
+      {
+        "category": "evidence_gap",
+        "claim_ids": [],
+        "evidence": [
+          "artifacts/target-2026-09-18/evidence.md"
+        ],
+        "id": "F4",
+        "owner": "route-dispatcher",
+        "remedy": "段 1 の配備後に同じ集計器で 24 時間の文脈分布と費用を測り直し、値を調整する。",
+        "severity": "nonblocking",
+        "statement": "閾値を下げたことで畳む回数と要約のコストがどれだけ増えるかを測っていない。床 400k と役ごとの値 400k / 200k は実測前の初期値。",
+        "status": "open"
+      }
+    ],
+    "focus": "implementation",
+    "methods": [
+      {
+        "evidence": [],
+        "name": "saam",
+        "profile": "saam-1996-local-v1",
+        "reason": "この評価は現状実装が目標設計に適合するかで、構造の適合性の評価(SAAM)は design_validation 側で行う。",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [
+          "design-cfb90f68398d の change_cases"
+        ],
+        "name": "change-cases",
+        "profile": "change-cases-1996-local-v1",
+        "reason": "目標設計 design-cfb90f68398d の CC1〜CC4 をそのまま評価軸に使う。今回の対象版は同じ本線(14f1a783)で、シナリオの前提(CLI の幅・起こす腕の数・役の語彙)は変わっていない。",
+        "status": "reused",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "ddd",
+        "profile": "ddd-evans-2015-local-v1",
+        "reason": "実行基盤の起動物理で業務モデルの対象がない。",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "volatility",
+        "profile": "volatility-righting-software-local-v1",
+        "reason": "分割の決定は目標設計側。ここは現状との差の評価。",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "add",
+        "profile": "add-2.0-local-v1",
+        "reason": "責務の割当ては目標設計側。",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [
+          "artifacts/target-2026-09-18/design.md"
+        ],
+        "name": "c4",
+        "profile": "c4-web-2026-09-14-local-v1",
+        "reason": "observed / target の 2 枚で差が示せており、この評価で新しい図は要らない。",
+        "status": "reused",
+        "steps": []
+      }
+    ],
+    "subject": "design-cfb90f68398d",
+    "verdict": "refuted"
+  },
+  "created_at": "2026-09-17T16:30:11.462121+00:00",
+  "id": "assessment-0eb2cf387b0d",
+  "inputs": [
+    {
+      "id": "design-cfb90f68398d",
+      "role": "subject",
+      "sha256": "72465d60a228208d6153883d171ccd05d6f8a40cdeb3b2e4105355bd53e776a5"
+    },
+    {
+      "id": "snapshot-cfe2da070c4f",
+      "role": "evidence",
+      "sha256": "8287c2b94354feb16cba34351e4059173d786da335457f359ab800f43646b067"
+    }
+  ],
+  "kind": "assessment",
+  "schema_version": 1,
+  "scope": "agentd が起こす claude 席の会話圧縮の閾値(auto-compact window)の宣言 — charter から起動 argv までの契約と、役(計画席 lead / 実装席 worker)ごとの値の所在。対象 = doeff-agents の起動物理・ACP の charter 組み立て・dotfiles の起票側の宣言。"
+}

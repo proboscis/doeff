@@ -1,0 +1,28 @@
+{
+  "artifacts": [],
+  "body": {
+    "actor": "agent",
+    "authority": "internal",
+    "decision": "design",
+    "outcome": "accepted",
+    "scope_of_agreement": "doeff-agents の起動物理の内側の設計判断。値そのもの(床 400k・役ごとの 400k / 200k)は初期値で、実測で動かしてよい。配備の可否と、既存の compactAt の効き方が変わることは含まない(operator へ戻す)。",
+    "source": "本設計の alternatives 3 件(design-cfb90f68398d)。戻せる決定(two-way door)なので席が選んで記録する — CLAUDE.md「戻せる決定は席が推奨を 1 つ選んで決め、operator を待たない。two way door で決定した項目は必ず文書で記録する」。",
+    "statement": "(1) 閾値の宣言は起票側が持ち、agentd は charter の欄を読むだけにする。段を 2 つに分け、段 1 は agentd が必ず名乗る(床 400k)、段 2 で役ごとの値を宣言する。(2) 会話が名乗らない拍も旗を必ず載せる(effort とは逆向き)。(3) 幅の外・読めない値は auto へ縮退し、縮退したことを argv 自身に名乗らせる。",
+    "subjects": [
+      "design-cfb90f68398d"
+    ],
+    "supersedes": []
+  },
+  "created_at": "2026-09-17T16:39:06.046849+00:00",
+  "id": "decision-05108c1ea5b3",
+  "inputs": [
+    {
+      "id": "design-cfb90f68398d",
+      "role": "subject",
+      "sha256": "72465d60a228208d6153883d171ccd05d6f8a40cdeb3b2e4105355bd53e776a5"
+    }
+  ],
+  "kind": "decision",
+  "schema_version": 1,
+  "scope": "agentd が起こす claude 席の会話圧縮の閾値(auto-compact window)の宣言 — charter から起動 argv までの契約と、役(計画席 lead / 実装席 worker)ごとの値の所在。対象 = doeff-agents の起動物理・ACP の charter 組み立て・dotfiles の起票側の宣言。"
+}

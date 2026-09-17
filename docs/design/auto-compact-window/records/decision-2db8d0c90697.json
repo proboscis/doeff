@@ -1,0 +1,28 @@
+{
+  "artifacts": [],
+  "body": {
+    "actor": "user",
+    "authority": "direct",
+    "decision": "design",
+    "outcome": "accepted",
+    "scope_of_agreement": "会話の圧縮の閾値を役ごとに分ける、という方向への合意。具体の数値(lead 400k / worker 200k)と、閾値をどこで宣言するかの構造は合意の対象に含まれない(推奨として示しただけで、逐語は「役で分ける」ことへの同意)。配備(走っている艦隊の入れ替え)と、既存の compactAt の効き方が変わることへの合意は含まれない。",
+    "source": "operator の chat での返答 2026-09-18(この会話)。直前に私が出した選択肢は「1M context をやめる / 長寿命 lead の分割 / 並列席数 / 実装を Opus に戻す」の 4 つと、その後の「lead は 400k、実装 lane は 200k のように役で分けるのが現実的」という推奨。",
+    "statement": "逐語: \"i agree with you, separate size for lead and worker\"",
+    "subjects": [
+      "design-cfb90f68398d"
+    ],
+    "supersedes": []
+  },
+  "created_at": "2026-09-17T16:39:05.972115+00:00",
+  "id": "decision-2db8d0c90697",
+  "inputs": [
+    {
+      "id": "design-cfb90f68398d",
+      "role": "subject",
+      "sha256": "72465d60a228208d6153883d171ccd05d6f8a40cdeb3b2e4105355bd53e776a5"
+    }
+  ],
+  "kind": "decision",
+  "schema_version": 1,
+  "scope": "agentd が起こす claude 席の会話圧縮の閾値(auto-compact window)の宣言 — charter から起動 argv までの契約と、役(計画席 lead / 実装席 worker)ごとの値の所在。対象 = doeff-agents の起動物理・ACP の charter 組み立て・dotfiles の起票側の宣言。"
+}

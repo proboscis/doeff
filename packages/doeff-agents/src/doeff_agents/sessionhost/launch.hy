@@ -70,6 +70,7 @@
 (import doeff_agents.sessionhost.policy [
   BILLING-METERED
   BINDING-OWNED-ENV-KEYS
+  carry-launch-flags
   binding-admission-error
   binding-billing-class
   counts-toward-launch-capacity
@@ -1274,6 +1275,10 @@
   (.update overlay-env (or (.get params "session_env") {}))
 
   (setv launch-params
+        (carry-launch-flags
+          ;; 会話の圧縮の閾値(設計記録 docs/design/auto-compact-window): 起こす旗は蘇生の名簿でも運ぶ。呼び手の params が
+          ;; 名乗っていれば呼び手優先、無ければ蘇生元の行の意図(overlay)から復元する。
+          (if (in "auto_compact_window" params) params overlay)
         {"session_id" new-sid
          "session_name" new-name
          "agent_type" source.agent-type
@@ -1321,7 +1326,7 @@
                            "resumed_from_session_id"
                              (when (= mode "resume") source-sid)
                            "forked_from_session_id"
-                             (when (= mode "fork") source-sid)}})
+                             (when (= mode "fork") source-sid)}}))
   ;; 宿しは backend ごと(host の config が params に運ぶ backend_kind の 1 点):
   ;; headless は tui の ready gate / paste を持たない別の program(headless.hy —
   ;; admission と identity の準備は上の 2 つの defk を共有する)。

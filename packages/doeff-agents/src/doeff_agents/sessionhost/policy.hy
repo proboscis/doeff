@@ -273,6 +273,45 @@
 ;; env。真実の家: impls/codex.hy(CODEX_HOME)/ impls/claude_code.hy
 ;; (CLAUDE_CONFIG_DIR)。kind を問わず overlay から全キーを締め出す
 ;; (所有権ベース — 既知の悪いキーの列挙は腐るが所有権は腐らない)。
+;; ---------------------------------------------------------------------------
+;; 起こす process の旗になる、会話の宣言の欄(設計記録 docs/design/auto-compact-window)
+;; ---------------------------------------------------------------------------
+;;
+;; 旗は **process を起こす瞬間にしか効かない**。だから起こす腕へ向かう名簿
+;; (wire の受理形 host.build-launch-program-params / session.resume の
+;;  program-params / launch.resume-session の launch-params / 行に残す
+;;  launch-overlay / 降りた process の続き continue-headless-process)を 1 つでも
+;; 通り抜けられないと、**その腕だけ**黙って走行係の既定へ戻る。
+;;
+;; 実弾(盲検の反例 A・2026-09-18): 閾値の欄を charter と蘇生の名簿へ足したのに、
+;; wire の受理形が 23 欄の閉じた名簿で params を作り直していたので、会話が名乗った
+;; 値は argv の導出点に **1 度も届かなかった**(どの腕でも code の床が出る)。
+;; 同じ形の傷跡が添付にもある(実弾 2026-09-15 09:5x — resume の腕だけ落ちた)。
+;;
+;; ⇒ 旗になる欄の集合はここで 1 度だけ宣言し、名簿は carry-launch-flags で写す。
+;;   **旗を 1 つ足す時に数え直すのはこの集合だけ**(名簿を 5 つ数えない)。
+(setv LAUNCH-FLAG-KEYS #("auto_compact_window"))
+
+;: 会話の圧縮の閾値を運ぶ欄の綴り(params・charter で同じ語)。argv の導出は
+;: impls.claude_code.claude-autocompact-value の 1 点。wire(ACP の charter)側の
+;: 綴りの定義点は acp/effects.py CHARTER_AUTO_COMPACT_WINDOW_KEY で、同じ語である
+;: ことは検が pin する(綴りが割れると黙って落ちる)。
+(setv AUTOCOMPACT-PARAM-KEY "auto_compact_window")
+
+
+(defn carry-launch-flags [src dst]
+  "src(charter / params / 行の overlay)が持つ旗の欄を dst へ写して返す。
+
+   無い欄は**作らない**(欄の有無が「会話が名乗ったか」の唯一の印なので、
+   None を置くと『名乗った』と区別できなくなる)。dst は書き換えず、新しい
+   dict を返す — 名簿を組む式の中でそのまま使えるように。"
+  (setv out (dict dst))
+  (for [key LAUNCH-FLAG-KEYS]
+    (when (in key src)
+      (setv (get out key) (get src key))))
+  out)
+
+
 (setv BINDING-OWNED-ENV-KEYS #{"CODEX_HOME" "CLAUDE_CONFIG_DIR"})
 
 ;; wire binding kind → agent_type(ACP bindingAgentType と同写像)。

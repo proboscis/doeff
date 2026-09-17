@@ -39,6 +39,7 @@
   env-get
   tmux-send-keys])
 (import doeff_agents.sessionhost.policy [
+  AUTOCOMPACT-PARAM-KEY
   BILLING-METERED
   BILLING-SUBSCRIPTION
   CLAUDE-SETTINGS-API-KEY-HELPER
@@ -58,6 +59,96 @@
 ;; argv 物理(oracle build_claude_argv — S13 で oracle green 済みの凍結配線)
 ;; ---------------------------------------------------------------------------
 
+;; ---------------------------------------------------------------------------
+;; 会話の圧縮の閾値(設計記録 docs/design/auto-compact-window — operator 指示 2026-09-18)
+;; ---------------------------------------------------------------------------
+;;
+;; 根: 起こす argv が閾値を**何も名乗っていなかった**ので、claude は自分の窓
+;; (Fable / Opus は 1M)いっぱいまで畳まずに伸びる。実測 2026-09-18(会社 Mac・
+;; 直近 24 時間の全 profile の会話記録 15,783 手番): 1 手番の平均の文脈が 550k・
+;; 最大 967k・600k を超える手番が費用の 59% を占めた。畳まないまま伸びる会話は
+;; 1 手番の値段が普通(100〜150k)の 4〜5 倍になり、20 席が 24 時間刻むと週の枠を
+;; 2 日で焼く(09-15 の 4,697u → 09-17 の 16,976u)。
+;;
+;; 方針は dotfiles agentcli(headless.py autocompact_value・ADR-DOTFILES-012
+;; R-4484fd43 law headless-compaction-threshold-declared-by-the-runner)と同じ側へ
+;; 倒す ── **起こす側が必ず名乗る**。「誰も選ばない」は effort と違って「系が
+;; 選ばない」ではなく「窓の上限任せ」に落ちるからで、上限任せが直そうとしている
+;; 欠陥そのもの。会話が charter で名乗った値が第一で、名乗らない拍だけこの定数。
+;;
+;; ⚠ 縮退の向きは常に `auto`(= CLI 自身の窓に合わせた調整)。読めない値・幅の外の
+;;   値を argv に載せることは**手番を殺す**(claude 2.1.274 実測: argv 解釈の段で
+;;   死に、stream-json の行を 1 つも吐かない ── 逐語 "It must be 'auto', or between
+;;   100k and 1M")。縮退したことは argv 自身が名乗る(`ps` に `--autocompact auto`)。
+
+;: 綴り(claude 2.1.274 実測 — `--autocompact <auto|tokens>`)。
+(setv AUTOCOMPACT-ARG "--autocompact")
+;: CLI 自身の窓に合わせた調整を頼む値。閾値を名乗れない拍の縮退先でもある。
+(setv AUTOCOMPACT-AUTO "auto")
+;: CLI が受理する幅(実測 2.1.274)。外れる値は載せない。
+(setv AUTOCOMPACT-MIN-TOKENS 100000)
+(setv AUTOCOMPACT-MAX-TOKENS 1000000)
+;: 会話が名乗らない拍の閾値(token)。1M の窓に対して 40% ≒ 実装の途中で畳んで、
+;: 最終盤(最も文脈が要る時)に畳まれない位置。役ごとの値は会話の宣言が運ぶ
+;: (方策の行の charter → charter.auto_compact_window)ので、ここは床ちょうど。
+(setv AUTOCOMPACT-DEFAULT-TOKENS 400000)
+;: ⚠ 欄の綴り AUTOCOMPACT-PARAM-KEY は policy が正本(起こす腕の名簿が同じ語を写す
+;: ── policy.LAUNCH-FLAG-KEYS)。ここでは import するだけで、第 2 の綴りを置かない。
+
+
+(deff claude-autocompact-value [params]
+  {:pre [(: params dict)]
+   :post [(: % str)]}
+  "argv に載せる圧縮の閾値の**唯一の導出点**(純粋 — params を読むだけ)。
+
+   既定も会話の宣言も**同じ関門**を通す(既定を素通しさせない)— 定数を誰かが幅の
+   外へ動かした日に、その値がそのまま argv へ乗って手番が死ぬ形を作らないため。
+   JSON の数は int でも float でも来る(Haskell 側 declareNumber)ので、整数に
+   なる float は受ける。bool は数として読まない(True は 1 ではない)。"
+  (setv raw (.get params AUTOCOMPACT-PARAM-KEY))
+  (when (or (is raw None) (and (isinstance raw str) (not (.strip raw))))
+    (setv raw AUTOCOMPACT-DEFAULT-TOKENS))
+  (setv tokens
+        (cond
+          (isinstance raw bool) None
+          (isinstance raw int) raw
+          (and (isinstance raw float) (.is-integer raw)) (int raw)
+          (isinstance raw str) (try (int (.strip raw) 10) (except [ValueError] None))
+          True None))
+  (cond
+    (and (isinstance raw str) (= (.lower (.strip raw)) AUTOCOMPACT-AUTO)) AUTOCOMPACT-AUTO
+    (and (is-not tokens None)
+         (<= AUTOCOMPACT-MIN-TOKENS tokens AUTOCOMPACT-MAX-TOKENS)) (str tokens)
+    True AUTOCOMPACT-AUTO))
+
+
+(defn autocompact-arg-pair-ok [pair]
+  "argv に載せてよい並びか(幅の関門を**出口で**もう一度見る検査)。
+
+   ⚠ これは重複ではない。盲検の反例 B(2026-09-18)が示したのは、関門を通した**後**に
+   値を加工する変更(「モデルの窓の 40% で頭打ちにする」)が、関門の関数に 1 文字も
+   触らずに幅の外の値(200000 × 0.4 = 80000)を argv へ載せ、単体の検も静的検査も
+   素通しする形。契約の不変量は『導出点の戻り』ではなく『**argv に出る値**』に
+   掛かっていないと守れない。"
+  (and (isinstance pair list)
+       (= (len pair) 2)
+       (= (get pair 0) AUTOCOMPACT-ARG)
+       (isinstance (get pair 1) str)
+       (or (= (get pair 1) AUTOCOMPACT-AUTO)
+           (and (.isdigit (get pair 1))
+                (<= AUTOCOMPACT-MIN-TOKENS (int (get pair 1)) AUTOCOMPACT-MAX-TOKENS)))))
+
+
+(deff claude-autocompact-args [params]
+  {:pre [(: params dict)]
+   :post [(: % list) (autocompact-arg-pair-ok %)]}
+  "発射に載る圧縮の閾値の並び。**常に載る**(空の並びを返さない)。
+
+   ⚠ effort(名乗らない席は旗そのものを出さない)とは向きが逆で、それが要点 —
+   上の節の理由。後置条件が argv に出る値そのものを見る(上の述語の註)。"
+  [AUTOCOMPACT-ARG (claude-autocompact-value params)])
+
+
 (deff build-claude-argv [params]
   {:pre [(: params dict)]
    :post [(: % list)]}
@@ -73,6 +164,10 @@
      AGENT_SESSION_CLASS=unattended(spawn env — launch.hy)で会話種別
      self-gate することを契約前提にする。
    - effort → model の順(oracle 順序、無指定はフラグ自体を出さない)
+   - model の後ろに `--autocompact <auto|tokens>` を**必ず**載せる(上の節の理由。
+     値は charter.auto_compact_window、無ければ床)。⚠ 旧 Rust 実装はこの旗を持たない
+     が、parity の基準ではない — 2026-07-06 の裁定で「Rust = oracle」は破棄され、
+     canonical gate は Hy の session host(conformance/README.md 冒頭)
    - caller mcp_servers(sse)+ result channel(stdio)を単一 --mcp-config に
      まとめ、非空なら --strict-mcp-config を付ける
    - prompt は決して argv に載せない(live terminal transport のみ)・
@@ -86,6 +181,8 @@
   (setv model (.get params "model"))
   (when model
     (.extend args ["--model" model]))
+  ;; 圧縮の閾値は model の後ろ・mcp の前(凍結接頭と `--effort` の位置を動かさない)。
+  (.extend args (claude-autocompact-args params))
   (setv servers {})
   (for [[name url] (.items (.get params "mcp_servers" {}))]
     (setv (get servers name) {"type" "sse" "url" url}))
