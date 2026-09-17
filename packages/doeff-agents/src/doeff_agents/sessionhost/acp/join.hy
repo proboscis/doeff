@@ -34,6 +34,10 @@
   WORK-ROOTS-MAX
   WORK-ROOTS-SEPARATOR
   WorkRoots
+  WORK-DIRS-ENV
+  WORK-DIRS-MAX
+  WORK-DIRS-SEPARATOR
+  WorkDirs
   Places
   AGENTD-PLACES
   CAPACITY-ENV
@@ -339,6 +343,45 @@
   (int word))
 
 
+(defk work-dirs-of [text]
+  {:pre [(: text (| str None))]
+   :post [(: % (| WorkDirs None))]}
+  "node が持つ作業場の読み(段 12 lane 12j・agora-redesign #575 便 2): env DOEFF_AGENTD_WORK_DIRS の , 区切りの 1 つの文字列 → 家からの
+   相対の作業場の tuple(綴りの順・重複は 1 つ)。None(env 無し)= 導いていない(欄を書かない — 配車は篩わない)。空文字 = 「何も
+   持たない」の宣言(空の tuple — checkout の無い pod)。各作業場は `~` か `~/…` の形ちょうど(契約 node.spec.workDirs)— 形の外・
+   上限超えは ValueError(参加しない — 篩う材料を嘘で名乗らない)。"
+  (when (is text None)
+    (return None))
+  (setv dirs [])
+  (for [part (.split (.strip text) WORK-DIRS-SEPARATOR)]
+    (setv held (.strip part))
+    (when (not held)
+      (continue))
+    (when (not (or (= held "~") (.startswith held "~/")))
+      (raise (ValueError f"{WORK-DIRS-ENV} の各作業場は ~ か ~/… の形(家からの相対)であること: {held !r}")))
+    (when (not-in held dirs)
+      (.append dirs held)))
+  (when (> (len dirs) WORK-DIRS-MAX)
+    (raise (ValueError f"{WORK-DIRS-ENV} の作業場は {WORK-DIRS-MAX} までであること(契約 node.spec.workDirs.maxItems): {(len dirs)}")))
+  (WorkDirs :dirs (tuple dirs)))
+
+
+(defk held-work-dirs-of [entries]
+  {:pre [(: entries tuple)]
+   :post [(: % WorkDirs)]}
+  "家の一覧 → 持つ作業場(段 12 lane 12j・agora-redesign #575 便 2)。entries = composition root(runtime.join_plan)が読んだ
+   #(親 名 .git の有無) の列(親 = \"\" が ~ の直下・\"repos\" が ~/repos の直下 — effects.WORK-DIRS-SCAN-PARENTS)。.git を持つ
+   dir だけを `~/<名>` / `~/repos/<名>` で名乗り、隠し dir(.worktrees 等)は数えない。判断はここ 1 点で I/O は無い。"
+  (setv found [])
+  (for [[parent name has-git] entries]
+    (when (or (not has-git) (.startswith name "."))
+      (continue))
+    (setv held (if parent (+ "~/" parent "/" name) (+ "~/" name)))
+    (when (not-in held found)
+      (.append found held)))
+  (WorkDirs :dirs (tuple (sorted found))))
+
+
 (defk revision-of [text]
   {:pre [(: text (| str None))]
    :post [(: % (| str None))]}
@@ -581,6 +624,9 @@
     (.append env #(DECLARATION-SHA256-ENV spec.declaration-sha256)))
   (when (is-not spec.work-roots None)
     (.append env #(WORK-ROOTS-ENV (.join WORK-ROOTS-SEPARATOR spec.work-roots))))
+  ;; 段 12 lane 12j(#575 便 2): 持つ作業場は導いた時だけ env に現れる — 空の tuple も ""(何も持たない)として運ぶ。
+  (when (is-not spec.work-dirs None)
+    (.append env #(WORK-DIRS-ENV (.join WORK-DIRS-SEPARATOR spec.work-dirs))))
   ;; 段 12 lane 12j(#367): 版の刻印は名乗った時だけ env に現れる(無ければ agentd は unstamped / local を名乗る)。
   (when (is-not spec.revision None)
     (.append env #(AGENTD-REVISION-ENV spec.revision)))

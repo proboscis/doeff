@@ -138,6 +138,7 @@
   NODE-SPEC-PLACE-RETIRED
   PLACES-SEPARATOR
   NODE-SPEC-WORK-ROOTS
+  NODE-SPEC-WORK-DIRS
   PROFILE-KIND
   AGENTD-PRINCIPAL
   AGORA-KINDS-NAMESPACE
@@ -2677,6 +2678,18 @@
   next)
 
 
+(defk node-work-dirs-of [settings spec]
+  {:pre [(: settings AgentdSettings) (: spec dict)]
+   :post [(: % dict)]}
+  "join が家から導いた「持つ作業場」を spec の欄 workDirs(文字列の list・綴りの順)に置いた写し(段 12 lane 12j・agora-redesign #575
+   便 2・#557 案 A の後半)。None(導いていない)なら足さない — 欄の無い node は配車が篩わない。空の list は「何も持たない」の宣言
+   (checkout の無い pod — 配車はその node に区画の手番を結ばない)。"
+  (setv next (dict spec))
+  (when (is-not settings.work-dirs None)
+    (setv (get next NODE-SPEC-WORK-DIRS) (list settings.work-dirs)))
+  next)
+
+
 (defk declared-capacity-of [settings]
   {:pre [(: settings AgentdSettings)]
    :post [(: % int)]}
@@ -2712,7 +2725,8 @@
                                            "streamCapability" settings.stream-capability
                                            NODE-SPEC-AGENTD-KEY version}))
   (<- rooted dict (node-work-roots-of settings placed))
-  rooted)
+  (<- held dict (node-work-dirs-of settings rooted))
+  held)
 
 
 (defk node-spec-declared [spec settings]
@@ -2732,7 +2746,8 @@
                                            "streamCapability" settings.stream-capability
                                            NODE-SPEC-AGENTD-KEY version}))
   (<- rooted dict (node-work-roots-of settings placed))
-  rooted)
+  (<- held dict (node-work-dirs-of settings rooted))
+  held)
 
 
 (defk node-lease-of [settings now-ms]

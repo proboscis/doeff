@@ -740,6 +740,29 @@ def test_node_row_names_its_work_roots_only_when_declared() -> None:
     assert "workRoots" not in bare.acp.rows[key].spec
 
 
+def test_node_row_names_the_work_dirs_it_holds_only_when_derived() -> None:
+    """段 12 lane 12j(agora-redesign #575 便 2・#557 案 A の後半): 配車が `~/…` の work_dir を結ぶ前に篩う材料 = node の spec.workDirs
+    (家からの相対の持つ作業場)。実弾 = repo:pr-review の手番が checkout の無い pool の pod に結ばれ WorkDirMissing で落ちて依頼が failed。
+    agentd は join が家から導いた列を誕生と揃えの両方に書き、空の列(何も持たない pod)もそのまま書き、導いていない(None)行には欄を書かない。"""
+    from dataclasses import replace
+
+    world = World()
+    world.settings = replace(world.settings, work_dirs=("~/dotfiles", "~/repos/doeff"))
+    key = f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"
+    del world.acp.rows[key]
+    world.tick()
+    assert world.acp.rows[key].spec["workDirs"] == ["~/dotfiles", "~/repos/doeff"]
+    # 導き直した agentd は揃えの書きで名乗り直す — 空の列は「何も持たない」の宣言として残る
+    world.settings = replace(world.settings, work_dirs=())
+    world.tick(advance_ms=30_000)
+    assert world.acp.rows[key].spec["workDirs"] == []
+    # 導いていない agentd の誕生には欄が無い
+    bare = World()
+    del bare.acp.rows[key]
+    bare.tick()
+    assert "workDirs" not in bare.acp.rows[key].spec
+
+
 def test_node_registration_refused_is_logged_once_and_retried_each_heartbeat() -> None:
     """R28: 作れない拍(契約の書き手の登録し直しの前など)は 1 度だけ log し、heartbeat ごとに撃ち直す。"""
     from doeff_agents.sessionhost.acp.effects import Refused
@@ -5191,3 +5214,53 @@ def test_join_spec_reads_revision_and_build_and_the_node_names_its_agentd_versio
     assert run(judgment.node_spec_of(named))["agentd"] == run(judgment.agentd_version_of(named))
     old_row = {"name": NODE, "labels": {}, "capacity": 1, "streamCapability": "frames"}
     assert run(judgment.node_spec_declared(old_row, named))["agentd"] == run(judgment.agentd_version_of(named))
+
+
+def test_join_derives_the_held_work_dirs_from_the_home_listing_and_carries_them_in_the_env(tmp_path) -> None:
+    """段 12 lane 12j(agora-redesign #575 便 2): 持つ作業場は宣言 file でなく家の一覧から導く — ~ の直下と ~/repos の直下のうち .git を
+    持つ dir だけ(隠し dir は数えない)を `~/<名>` / `~/repos/<名>` で名乗る(判断 = join.held-work-dirs-of・I/O = runtime.home_entries)。
+    env DOEFF_AGENTD_WORK_DIRS(, 区切り・空 = 何も持たない)→ AgentdSettings.work_dirs。env 無し = None。形の外は参加しない。"""
+    import os
+
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import JoinSpec, WorkDirs
+    from doeff_agents.sessionhost.acp.runtime import home_entries, join_plan, settings_from_env
+
+    entries = (("", "Desktop", False), ("", ".worktrees", True), ("", "dotfiles", True), ("repos", "doeff", True), ("repos", "notes", False))
+    assert run(join.held_work_dirs_of(entries)) == WorkDirs(dirs=("~/dotfiles", "~/repos/doeff"))
+    assert run(join.held_work_dirs_of(())) == WorkDirs(dirs=())
+    # 家の一覧の読み(I/O の 1 点)— 名の順・.git は dir でも file(worktree)でもよい
+    home = tmp_path / "home"
+    for rel, git in (("dotfiles", "dir"), ("Desktop", None), (".worktrees", "dir"), ("repos/doeff", "dir"), ("repos/agora", "file"), ("repos/notes", None)):
+        d = home / rel
+        d.mkdir(parents=True)
+        if git == "dir":
+            (d / ".git").mkdir()
+        elif git == "file":
+            (d / ".git").write_text("gitdir: /elsewhere\n")
+    listed = home_entries(str(home))
+    assert listed == (("", ".worktrees", True), ("", "Desktop", False), ("", "dotfiles", True), ("", "repos", False), ("repos", "agora", True), ("repos", "doeff", True), ("repos", "notes", False))
+    assert run(join.held_work_dirs_of(listed)) == WorkDirs(dirs=("~/dotfiles", "~/repos/agora", "~/repos/doeff"))
+    assert home_entries(str(tmp_path / "nowhere")) == ()
+    # join の計画: 導いた列が env に載る(空の tuple は "" で運ぶ・None は載らない)
+    base = ["--server", "http://acp:8868", "--token-file", "/t", "--capacity", "2", "--places", "personal"]
+    spec = _join_spec(base)
+    assert isinstance(spec, JoinSpec) and spec.work_dirs is None
+    assert "DOEFF_AGENTD_WORK_DIRS" not in dict(run(join.join_plan_of(spec)).env)
+    from dataclasses import replace
+
+    assert dict(run(join.join_plan_of(replace(spec, work_dirs=("~/dotfiles", "~/repos/doeff")))).env)["DOEFF_AGENTD_WORK_DIRS"] == "~/dotfiles,~/repos/doeff"
+    assert dict(run(join.join_plan_of(replace(spec, work_dirs=()))).env)["DOEFF_AGENTD_WORK_DIRS"] == ""
+    plan = join_plan(base, {"HOME": str(home), "XDG_STATE_HOME": str(tmp_path / "state")})
+    assert dict(plan.env)["DOEFF_AGENTD_WORK_DIRS"] == "~/dotfiles,~/repos/agora,~/repos/doeff"
+    # settings の読み: env の写し・"" = 空・無し = None・形の外は断る
+    recorded = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACES": "personal"}
+    assert settings_from_env({**recorded, "DOEFF_AGENTD_WORK_DIRS": "~/dotfiles,~/repos/doeff"}, ()).work_dirs == ("~/dotfiles", "~/repos/doeff")
+    assert settings_from_env({**recorded, "DOEFF_AGENTD_WORK_DIRS": ""}, ()).work_dirs == ()
+    assert settings_from_env(recorded, ()).work_dirs is None
+    for wrong in ("repos/doeff", "/Users/u/repos/x", "~kento/x"):
+        with pytest.raises(ValueError, match="DOEFF_AGENTD_WORK_DIRS"):
+            run(join.work_dirs_of(wrong))
+    with pytest.raises(ValueError, match="64"):
+        run(join.work_dirs_of(",".join(f"~/r{i}" for i in range(65))))
+    del os
