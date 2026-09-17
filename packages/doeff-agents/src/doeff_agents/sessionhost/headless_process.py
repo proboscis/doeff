@@ -41,6 +41,21 @@ TERM_GRACE_SECONDS = 5.0
 STDERR_SUFFIX = ".stderr"
 
 
+class HeadlessProcessStillAliveError(RuntimeError):
+    """降ろす段(EOF → SIGTERM → SIGKILL)を全部踏んでも、猶予の中で process が降りなかった
+    (agora-redesign #547)。呼び手(cleanup)は片付いたと記帳せず、登記簿は所有を保つ — 次の cleanup が
+    同じ process を降ろし直す。"""
+
+    def __init__(self, name: str, pid: int) -> None:
+        super().__init__(
+            f"headless process pid {pid} of session {name} is still alive after "
+            "stdin EOF, SIGTERM and SIGKILL — the registry keeps owning it so the next "
+            "cleanup retries (it is not recorded as cleaned)"
+        )
+        self.name = name
+        self.pid = pid
+
+
 class _StdinWriter:
     """stdin へ書く thread 1 本。close() は積んだ行の後に EOF を出す(冪等)。"""
 
@@ -250,19 +265,25 @@ class HeadlessProcess:
         )
 
     def kill(self) -> None:
-        """stdin を閉じ、猶予の後に SIGTERM → SIGKILL。thread は最後に合流する。"""
+        """stdin を閉じ、猶予の後に SIGTERM → SIGKILL。thread は最後に合流する。全部の段を踏んでも猶予の中で
+        降りなかった process は HeadlessProcessStillAliveError で型付きに断る(降りたと偽らない —
+        agora-redesign #547)。"""
         self.close_stdin()
-        if self.alive():
-            try:
-                self._process.wait(timeout=EOF_GRACE_SECONDS)
-            except subprocess.TimeoutExpired:
-                self.terminate()
-                try:
-                    self._process.wait(timeout=TERM_GRACE_SECONDS)
-                except subprocess.TimeoutExpired:
-                    self.force_kill()
-                    self._process.wait(timeout=TERM_GRACE_SECONDS)
+        if not self._went_down(EOF_GRACE_SECONDS):
+            self.terminate()
+            if not self._went_down(TERM_GRACE_SECONDS):
+                self.force_kill()
+                if not self._went_down(TERM_GRACE_SECONDS):
+                    raise HeadlessProcessStillAliveError(self.name, self.pid)
         self.join_io(2.0)
+
+    def _went_down(self, grace: float) -> bool:
+        """猶予の中で process が降りたか(既に降りていれば待たずに真)。"""
+        try:
+            self._process.wait(timeout=grace)
+        except subprocess.TimeoutExpired:
+            return False
+        return True
 
     # -- 降ろす段(kill と kill_all が共有する 1 段ずつの動詞) ---------------------------
 
@@ -386,12 +407,21 @@ class HeadlessRegistry:
         return process is not None and process.alive()
 
     def kill(self, name: str) -> bool:
-        """名の process を降ろして忘れる。戻り = 登記が在ったか。"""
+        """名の process を降ろして忘れる。戻り = 登記が在ったか。
+
+        忘れるのは**降りたのを確かめた後**(agora-redesign #547): 登記簿は process の唯一の持ち主で、降ろす前に
+        外すと、猶予の中で降りなかった process(HeadlessProcessStillAliveError)の持ち主が居なくなる — 次の cleanup は
+        「登記なし」と読んで片付いたと記帳し、生きた process が残る。断りは素通しで、登記は残る(次の cleanup が
+        同じ process を降ろし直す)。降ろしている間に同じ名で起こし直された登記(spawn は降りた process を
+        置き換える)は外さない。"""
         with self._lock:
-            process = self._processes.pop(name, None)
+            process = self._processes.get(name)
         if process is None:
             return False
         process.kill()
+        with self._lock:
+            if self._processes.get(name) is process:
+                del self._processes[name]
         return True
 
     def names(self) -> tuple[str, ...]:
