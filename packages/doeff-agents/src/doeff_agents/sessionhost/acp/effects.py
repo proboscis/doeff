@@ -607,8 +607,9 @@ class WorkRoots:
 NODE_SPEC_WORK_DIRS = "workDirs"
 WORK_DIRS_ENV = "DOEFF_AGENTD_WORK_DIRS"
 WORK_DIRS_SEPARATOR = ","
-#: 上限(契約 node.spec.workDirs.maxItems の写し)。
-WORK_DIRS_MAX = 64
+#: 上限(契約 node.spec.workDirs.maxItems の写し)。64 → 512(2026-09-18 02:32 実弾: 会社 Mac の家は ~ に 17・~/repos に 175 = 192 の
+#: checkout を持ち、64 では work-dirs-of が断って agentd が crash loop に落ちた — 上限は機体の事実に合わせる・ACP agora-kinds.json と同じ値)。
+WORK_DIRS_MAX = 512
 #: 家のどの直下を読むか("" = ~ の直下・"repos" = ~/repos の直下)— 区画の置き場の作法(~/<名> か ~/repos/<名>)の写し。
 WORK_DIRS_SCAN_PARENTS: tuple[str, ...] = ("", "repos")
 
