@@ -261,6 +261,7 @@
   NODE-KIND
   PROFILE-KIND
   PROFILE-USAGE-KIND
+  PROFILE-USAGE-KINDS
   ProfileNotHeld
   ProfileObservation
   ProfileUnobserved
@@ -473,6 +474,7 @@
   pending-interrupts-of
   profile-observed-changed
   profile-observed-of
+  profile-rows-of-kind
   profile-key-of
   profile-rows-active
   profile-rows-held
@@ -502,6 +504,8 @@
   turn-record-spec-of
   turn-session-env-of
   usage-by-profile
+  observed-window-of
+  usage-by-row-name
   wait-seconds-for
   stale-conversation-sessions-of
   warm-candidate-of
@@ -699,22 +703,35 @@
   (<- active tuple (profile-rows-active rows))
   (setv next (replace state :last-profile-observed-ms now-ms))
   (when active
-    (<- homes tuple (ListProfileHomes :kind PROFILE-USAGE-KIND))
-    (<- held-rows tuple (profile-rows-held active homes settings))
     (setv counts {"held" 0 "written" 0 "unchanged" 0 "conflicts" 0 "refused" 0 "unobserved" 0})
-    (if (not held-rows)
+    ;; 名簿の種類ごと(claude・codex — effects.PROFILE-USAGE-KINDS)に家と残量を読む(段 12 lane 12c・
+    ;; agora-redesign #479): その種類の行が 1 つも無ければ家も usage も読まず、家の無い種類は usage を読まない。
+    ;; 行と家の結び(名か別名)と行ごとの判断は judgment の同じ 3 点(profile-rows-held / usage-by-row-name /
+    ;; profile-observed-of)— 種類ごとに回すだけで判断の点は増やさない。
+    (setv held-total 0)
+    (setv homes-total 0)
+    (for [kind PROFILE-USAGE-KINDS]
+      (<- kind-rows tuple (profile-rows-of-kind active kind))
+      (when kind-rows
+        (<- homes tuple (ListProfileHomes :kind kind))
+        (setv homes-total (+ homes-total (len homes)))
+        (<- held-rows tuple (profile-rows-held kind-rows homes settings))
+        (setv held-total (+ held-total (len held-rows)))
+        (when held-rows
+          (<- outcomes tuple (ReadProfileUsage :kind kind
+                                               :cache-ttl-seconds settings.profile-observe-seconds))
+          (<- by-name dict (usage-by-profile outcomes))
+          (<- by-row dict (usage-by-row-name held-rows homes by-name))
+          (<- observed-counts dict (observe-held-profiles settings held-rows by-row counts))
+          (setv counts observed-counts))))
+    (if (= held-total 0)
         (do
           (when (not state.no-profile-homes-logged)
             (<- (LogLine :text (+ f"agentd: no profile has a home on node {settings.node-name} — usage not read "
-                                       f"(registry {(len homes)} profiles, {(len active)} live rows)"))))
+                                       f"(registry {homes-total} profiles, {(len active)} live rows)"))))
           (setv next (replace next :no-profile-homes-logged True)))
         (do
           (setv next (replace next :no-profile-homes-logged False))
-          (<- outcomes tuple (ReadProfileUsage :kind PROFILE-USAGE-KIND
-                                               :cache-ttl-seconds settings.profile-observe-seconds))
-          (<- by-name dict (usage-by-profile outcomes))
-          (<- observed-counts dict (observe-held-profiles settings held-rows by-name counts))
-          (setv counts observed-counts)
           ;; worker の公開(段 12 lane 12j・agora-redesign #445): 家の在る profile を持つ機体(Mac)は、観測の拍に自分の
           ;; 面と残量行を cluster の艦隊の断面へ公開する(既知の形 = kubelet の NodeStatus — 容量の報告は worker の義務)。
           ;; 何を公開するかは agentcli の 1 点(PublishWorker の口)。拍の申告 = 観測の周期・走らせている手番 = memory の job。
@@ -729,7 +746,7 @@
     (<- (MetricLine :fields {"metric" "profile-observed"
                                     "node" settings.node-name
                                     "rows" (len active)
-                                    "homes" (len held-rows)
+                                    "homes" held-total
                                     "held" (get counts "held")
                                     "written" (get counts "written")
                                     "unchanged" (get counts "unchanged")
@@ -759,6 +776,10 @@
       True
       (do
         (setv (get counts "held") (+ (get counts "held") 1))
+        (<- declared str (observed-window-of row #()))
+        (when (!= (get verdict.observed "window") declared)
+          (<- (LogLine :text (+ f"agentd: profile {name} observed on window {(get verdict.observed "window")} "
+                                     f"(declared {declared} is not in the usage — #479)"))))
         (<- changed bool (profile-observed-changed row verdict.observed settings.node-name))
         (if (not changed)
             (setv (get counts "unchanged") (+ (get counts "unchanged") 1))
