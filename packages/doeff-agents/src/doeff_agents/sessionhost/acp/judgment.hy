@@ -116,6 +116,7 @@
   PROVIDER-LIMIT-AT-KEY
   PROVIDER-LIMIT-ATTEMPT-KEY
   PROVIDER-LIMIT-PROFILE-KEY
+  CHARTER-AUTO-COMPACT-WINDOW-KEY
   MESSAGE-ATTACHMENTS-KEY
   NODE-CAPABILITY-ATTACHMENTS-KEY
   RECORD-ATTACHMENT-EVENT-KIND
@@ -2332,6 +2333,10 @@
   ;; 起こす腕は launch / resume / rehydrate の 3 つ — 検が launch しか通っていなかったのが見落としの根。
   (for [key ["prompt" "model" "effort" "mcp_servers" "session_env" "binding"
              "expected_result" "context_file" "launch_attribution"
+             ;; 圧縮の閾値(設計記録 docs/design/auto-compact-window): launch は charter を丸ごと
+             ;; params にするので素通しだが、resume は名簿の写し — ここに無いと
+             ;; **蘇生の手番だけ**閾値が落ちて窓の上限任せに戻る(上の傷跡と同じ形)。
+             CHARTER-AUTO-COMPACT-WINDOW-KEY
              MESSAGE-ATTACHMENTS-KEY]]
     (when (in key charter)
       (setv (get params key) (get charter key))))

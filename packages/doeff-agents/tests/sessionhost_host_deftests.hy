@@ -19,6 +19,8 @@
 (import tempfile)
 (import time)
 
+(import doeff_agents.sessionhost.policy [AUTOCOMPACT-PARAM-KEY LAUNCH-FLAG-KEYS])
+(import doeff_agents.sessionhost.acp.effects [CHARTER-AUTO-COMPACT-WINDOW-KEY])
 (import doeff_agents.sessionhost.host [
   HostConfig
   CMD-SERVE
@@ -972,3 +974,33 @@
     (assert (= (get response "ok") False))
     (assert (in "launch_attribution must be an object" (get response "error"))))
   (with-skeleton check))
+
+;; ---------------------------------------------------------------------------
+;; 起こす旗は wire の受理形を通り抜ける(設計記録 docs/design/auto-compact-window)
+;; ---------------------------------------------------------------------------
+
+(deftest test-launch-params-carry-the-declared-launch-flags
+  ;; 盲検の反例 A(2026-09-18)の再現そのもの。閾値の欄を charter と蘇生の名簿へ足したのに、
+  ;; wire の受理形が **閉じた名簿**で params を作り直していたので、会話が名乗った値は argv の
+  ;; 導出点に 1 度も届かず、どの腕でも走行係の床が出ていた。⇒ 旗の集合(policy.LAUNCH-FLAG-KEYS)
+  ;; を写す形に直し、ここで固定する。**旗を足す時に数え直すのはその集合 1 つだけ**。
+  (setv config (HostConfig :db-path "/tmp/x.db" :socket-path "/tmp/x.sock"
+                           :tmux-bin "tmux" :monitor-interval-seconds 1.0
+                           :max-running 4 :result-solicitation-limit 3
+                           :prompt-stall-seconds 90 :prompt-unblock-limit 3
+                           :prompt-judge-cmd DEFAULT-PROMPT-JUDGE-CMD))
+  (setv wire {"session_id" "s1" "session_name" "doeff-s1"
+              "agent_type" "claude" "work_dir" "/w"
+              "model" "claude-fable-5-1" "effort" "xhigh"
+              "auto_compact_window" 800000})
+  (setv params (build-launch-program-params wire config))
+  (assert (in "auto_compact_window" params)
+          #("wire の受理形が起こす旗を落とした(名簿の漏れ)" (sorted (.keys params))))
+  (assert (= (get params "auto_compact_window") 800000) params)
+  ;; 名乗らない会話では欄を作らない(欄の有無が「名乗ったか」の唯一の印)。
+  (setv bare {"session_id" "s1" "session_name" "doeff-s1"
+              "agent_type" "claude" "work_dir" "/w"})
+  (assert (not-in "auto_compact_window" (build-launch-program-params bare config)))
+  ;; 集合の宣言は 1 点で、wire(ACP の charter)の綴りと同じ語であること。
+  (assert (in AUTOCOMPACT-PARAM-KEY LAUNCH-FLAG-KEYS))
+  (assert (= AUTOCOMPACT-PARAM-KEY CHARTER-AUTO-COMPACT-WINDOW-KEY)))
