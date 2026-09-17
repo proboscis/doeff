@@ -58,6 +58,7 @@
 ;; 段 10 lane 10o: 腕の語と、器の種類と、添付の欄の綴り(effects の 1 点)。
 (import doeff_agents.sessionhost.acp.effects [
   BACKEND-HEADLESS
+  CHARTER-AUTO-COMPACT-WINDOW-KEY
   MESSAGE-ATTACHMENTS-KEY
   NEXT-ARM-LAUNCH
   NEXT-ARM-REHYDRATE
@@ -1123,6 +1124,23 @@
   ;; 添付の無い手番の params は 1 byte も変わらない(欄を作らない)。
   (setv plain (run (resume-params-of "s-old" {"session_id" "s-new" "prompt" "start"})))
   (assert (not-in MESSAGE-ATTACHMENTS-KEY plain) plain))
+
+
+(deftest test-every-arm-that-wakes-the-seat-carries-the-compaction-threshold
+  ;; 会話の圧縮の閾値(設計記録 docs/design/auto-compact-window)。会話の圧縮の閾値は charter の欄で運ぶ。launch / rehydrate の腕は
+  ;; charter を丸ごと params にするので素通しだが、**resume の腕だけ名簿で写す** — 名簿に無い欄は
+  ;; 黙って落ちる。長く続いている会話ほど resume を通るので、漏れるといちばん太い席から先に
+  ;; 窓の上限任せへ戻る。添付で同じ形の実弾を踏んでいる(上の検)ので、腕をここで固定する。
+  (setv charter {"session_id" "s-new" "prompt" "start" "model" "claude-fable-5-1"
+                 CHARTER-AUTO-COMPACT-WINDOW-KEY 200000})
+  (setv params (run (resume-params-of "s-old" charter)))
+  (assert (in CHARTER-AUTO-COMPACT-WINDOW-KEY params)
+          #("resume の params が閾値を運ばない(名簿の漏れ)" (sorted (.keys params))))
+  (assert (= (get params CHARTER-AUTO-COMPACT-WINDOW-KEY) 200000) params)
+  (json.dumps params)
+  ;; 宣言の無い手番の params は 1 byte も変わらない(欄を作らない — 走行係の床が効く)。
+  (setv plain (run (resume-params-of "s-old" {"session_id" "s-new" "prompt" "start"})))
+  (assert (not-in CHARTER-AUTO-COMPACT-WINDOW-KEY plain) plain))
 
 
 (deftest test-the-first-turn-carries-the-attachment-to-the-substrate-as-a-typed-value

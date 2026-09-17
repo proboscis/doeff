@@ -1,0 +1,41 @@
+{
+  "artifacts": [],
+  "body": {
+    "files": {
+      "packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py": "02e4bf90925e377118cebf12395e0a6b305c7c893d809be4187757ca195c6d05",
+      "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy": "2ae97481fd480889c79a187a89381cf78e84a1d31fa357cdad29541b5887f53a",
+      "packages/doeff-agents/src/doeff_agents/sessionhost/headless.hy": "99369ee45b9b94d0d9fed7130304b36b36d370e3e6a79bd6bf26dde747258a5c",
+      "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy": "836fa12141a951bb766f56c268653320f03053fb569de6cfccb4f1322c2b1ad1",
+      "packages/doeff-agents/src/doeff_agents/sessionhost/impls/claude_code.hy": "f9cd8ee85ddf3ee8f940a5cd062e4634cc5b99195f2e79f1bf3e45814e7243a5",
+      "packages/doeff-agents/src/doeff_agents/sessionhost/impls/headless_argv.hy": "5ec7566e9a34c4fc08b373c3186748675924131fa97cb0419840e2bfeabd2cb2",
+      "packages/doeff-agents/src/doeff_agents/sessionhost/launch.hy": "87e615088d1b28cf9d0e71c3f824759d3c5b585a0474f1fd1cb688a6a2753886",
+      "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy": "1bf346eb528347ddc155a89f8e5197a73ecc8d94319928d923659f6504dfee3f",
+      "packages/doeff-agents/tests/sessionhost_acp_rehydrate_deftests.hy": "f634f9e341f3ad60a8ceb2eacc7bee48696f55bc1b404541e6905fb1222a0710",
+      "packages/doeff-agents/tests/sessionhost_host_deftests.hy": "314994632686ab7e86116490bad4a6e9f62f4a8f0c52d6edadf0b913de351c5c",
+      "packages/doeff-agents/tests/sessionhost_impls_deftests.hy": "d1d972b46a05e0ead2881b5f5858260360e980b7ef0eed587a612a55e617f299",
+      "packages/doeff-agents/tests/test_sessionhost_headless.py": "0867c11fddeb1cace02f5975ab8427a25cbc66f1ca7fa90bfbef3de6de4143b9"
+    },
+    "include": [
+      "packages/doeff-agents/src/doeff_agents/sessionhost/impls/claude_code.hy",
+      "packages/doeff-agents/src/doeff_agents/sessionhost/impls/headless_argv.hy",
+      "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy",
+      "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
+      "packages/doeff-agents/src/doeff_agents/sessionhost/launch.hy",
+      "packages/doeff-agents/src/doeff_agents/sessionhost/headless.hy",
+      "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy",
+      "packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py",
+      "packages/doeff-agents/tests/sessionhost_impls_deftests.hy",
+      "packages/doeff-agents/tests/sessionhost_host_deftests.hy",
+      "packages/doeff-agents/tests/sessionhost_acp_rehydrate_deftests.hy",
+      "packages/doeff-agents/tests/test_sessionhost_headless.py"
+    ],
+    "label": "修理後の版 2026-09-18 — 盲検の反例 A / B の修理込み(worktree doeff-wt-autocompact-window)",
+    "root": "/Users/s22625/.worktrees/doeff-wt-autocompact-window"
+  },
+  "created_at": "2026-09-17T17:03:07.591837+00:00",
+  "id": "snapshot-9ed1357abe8b",
+  "inputs": [],
+  "kind": "snapshot",
+  "schema_version": 1,
+  "scope": "agentd が起こす claude 席の会話圧縮の閾値(auto-compact window)の宣言 — charter から起動 argv までの契約と、役(計画席 lead / 実装席 worker)ごとの値の所在。対象 = doeff-agents の起動物理・ACP の charter 組み立て・dotfiles の起票側の宣言。"
+}

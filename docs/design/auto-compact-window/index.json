@@ -1,0 +1,27 @@
+{
+  "heads": {
+    "assessment": "assessment-4bf18a61f47e",
+    "design_validation": "assessment-9f3f4e627bb0",
+    "observed": "design-b5097cf95c10",
+    "plan": "plan-3afdf74bfe5c",
+    "snapshot": "snapshot-9ed1357abe8b",
+    "target": "design-3c927e1b645c"
+  },
+  "records": {
+    "assessment-0eb2cf387b0d": "ac4f4a5e2b6baba1aca12130621be10bb32a0692c90819d5087720035373019f",
+    "assessment-4bf18a61f47e": "b604db888011fa2827478732aa008a09a7927a8c443af33ba110cd43346595d4",
+    "assessment-9f3f4e627bb0": "39045414ce81a578ce52ab50d544c0436fffe3cfcbab95424d43b6317ea9f226",
+    "decision-05108c1ea5b3": "c1f559b122f5fec845150ef93310145d7993d4c0c61b053e8825578b205ff20d",
+    "decision-2db8d0c90697": "cf0be65bf7cbf2297d1d14f41aebb3eaa563949480b9a572613dd56516e109fc",
+    "decision-60d1d5e005c5": "e9d0c21e8220db440627547d95c6767aedf80491408d8f20c53a4392b5184dad",
+    "design-3c927e1b645c": "1d708c178111fb885a8e0d46c7ef99996cc734bfe221cc98b9795194701a9ec8",
+    "design-b5097cf95c10": "bcd11e9a2b6af743b31f02026b31912c4ac662e221e7ba0b02e365a1537650a9",
+    "design-bb65cdf3dcd2": "91c18598c2d43f3981a0b2a686b67d94def6f6bead130ea1f306a7e1b085477d",
+    "design-cfb90f68398d": "72465d60a228208d6153883d171ccd05d6f8a40cdeb3b2e4105355bd53e776a5",
+    "plan-3afdf74bfe5c": "47a2819e3b39baea45284240ec4b7f111d5e8f600d7a9c25536a3b41d33ca207",
+    "snapshot-9ed1357abe8b": "cad7edd207d6bc2c3db2cac3b324729495427482b1fd4e8a58f1cdb6261ea9ab",
+    "snapshot-cfe2da070c4f": "8287c2b94354feb16cba34351e4059173d786da335457f359ab800f43646b067"
+  },
+  "schema_version": 1,
+  "scope": "agentd が起こす claude 席の会話圧縮の閾値(auto-compact window)の宣言 — charter から起動 argv までの契約と、役(計画席 lead / 実装席 worker)ごとの値の所在。対象 = doeff-agents の起動物理・ACP の charter 組み立て・dotfiles の起票側の宣言。"
+}

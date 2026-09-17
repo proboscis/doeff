@@ -1,0 +1,33 @@
+{
+  "artifacts": [],
+  "body": {
+    "files": {
+      "dotfiles/agentcli/src/agentcli/headless.py": "4437d60bd1478a6dce1398d9e75b8668c85f219979898a85938332b2922a5918",
+      "repos/agent-control-plane/src/Acp/App/Messaging/Plan.hs": "c60af538859a901e469c9cf33424f1f139c8e2e3cc0160c14b3e21150f403a31",
+      "repos/doeff/packages/doeff-agents/conformance/test_s13_argv_wiring.py": "c5b5261872a56ce82a90dec43d47a285fb39c15d4e9a0bc47fbe88c762cf4093",
+      "repos/doeff/packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py": "0896c1ed5d327407ed1581c33225c505b20c15bee680555be31cc2ef98a6659a",
+      "repos/doeff/packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy": "ed9ad637ffe3af0d09b5cb3f4fa1429e691014972fe029fd20885bb0bf45a5c7",
+      "repos/doeff/packages/doeff-agents/src/doeff_agents/sessionhost/impls/claude_code.hy": "f3ccb82c6c76f3e6ca16c43a33eefe2d5b09fd5d1b0b21a56648a8f2ca05dd9e",
+      "repos/doeff/packages/doeff-agents/src/doeff_agents/sessionhost/impls/headless_argv.hy": "5ec7566e9a34c4fc08b373c3186748675924131fa97cb0419840e2bfeabd2cb2",
+      "repos/doeff/packages/doeff-agents/tests/sessionhost_impls_deftests.hy": "41b2f2e051830bb91816a4f2d1a0dc24c88747f81f47a2f7b9c1fee02b4c63a4"
+    },
+    "include": [
+      "repos/doeff/packages/doeff-agents/src/doeff_agents/sessionhost/impls/claude_code.hy",
+      "repos/doeff/packages/doeff-agents/src/doeff_agents/sessionhost/impls/headless_argv.hy",
+      "repos/doeff/packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy",
+      "repos/doeff/packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py",
+      "repos/doeff/packages/doeff-agents/tests/sessionhost_impls_deftests.hy",
+      "repos/doeff/packages/doeff-agents/conformance/test_s13_argv_wiring.py",
+      "repos/agent-control-plane/src/Acp/App/Messaging/Plan.hs",
+      "dotfiles/agentcli/src/agentcli/headless.py"
+    ],
+    "label": "観測した版 2026-09-18 — 本線(doeff origin/main 14f1a783)・ACP / dotfiles の作業 checkout",
+    "root": "/Users/s22625"
+  },
+  "created_at": "2026-09-17T16:21:18.705403+00:00",
+  "id": "snapshot-cfe2da070c4f",
+  "inputs": [],
+  "kind": "snapshot",
+  "schema_version": 1,
+  "scope": "agentd が起こす claude 席の会話圧縮の閾値(auto-compact window)の宣言 — charter から起動 argv までの契約と、役(計画席 lead / 実装席 worker)ごとの値の所在。対象 = doeff-agents の起動物理・ACP の charter 組み立て・dotfiles の起票側の宣言。"
+}

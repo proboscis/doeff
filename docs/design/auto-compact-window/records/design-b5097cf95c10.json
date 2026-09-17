@@ -1,0 +1,442 @@
+{
+  "artifacts": [],
+  "body": {
+    "alternatives": [],
+    "change_cases": [
+      {
+        "change": "役ごとに別の閾値を配りたい(lead は広く・worker は狭く)",
+        "expected_elements": [
+          "acp-charter",
+          "route-dispatcher"
+        ],
+        "id": "CC1",
+        "preserve": [
+          "起動 argv の凍結接頭",
+          "charter を読むだけという agentd の立場"
+        ],
+        "priority": "required",
+        "protected_contracts": [
+          "launch-argv"
+        ],
+        "provenance": {
+          "kind": "user",
+          "source": "operator 逐語 2026-09-18"
+        },
+        "rationale": "operator の指示 R4。長い設計を持ち歩く席と、1 件を直す席では要る文脈が違う。",
+        "verification": "同じ agentd に別の charter を渡し、argv の --autocompact の値だけが変わることを実射で見る。"
+      },
+      {
+        "change": "閾値の値そのものを後から変えたい(400k → 250k など)",
+        "expected_elements": [
+          "delivery-policy-row"
+        ],
+        "id": "CC2",
+        "preserve": [
+          "幅の外の値を argv に載せない"
+        ],
+        "priority": "required",
+        "protected_contracts": [
+          "charter-object"
+        ],
+        "provenance": {
+          "kind": "observed",
+          "source": "dotfiles の先例 — AI_HEADLESS_AUTOCOMPACT_TOKENS で機体ごとに上書きできる形にしてある。"
+        },
+        "rationale": "実測してみないと適正値は分からない。値の変更で code を変えたくない。",
+        "verification": "台帳の行の値だけを変えて席を起こし直し、argv が追随することを見る。"
+      },
+      {
+        "change": "claude CLI が受ける幅や綴りが変わる(2.x の更新)",
+        "expected_elements": [
+          "agentd-argv-builder"
+        ],
+        "id": "CC3",
+        "preserve": [
+          "幅の外の値を argv に載せない(縮退は auto)"
+        ],
+        "priority": "prepare",
+        "protected_contracts": [
+          "cli-autocompact-flag"
+        ],
+        "provenance": {
+          "kind": "assumption",
+          "source": "2.1.261 → 2.1.274 で綴りは同じだった(dotfiles の註)。将来も同じとは限らない。"
+        },
+        "rationale": "綴りは CLI 実測で分かった値で、契約として公開されていない。",
+        "verification": "幅の定数を 1 点にしておき、そこだけ変えて検が赤にならないことを見る。"
+      }
+    ],
+    "contracts": [
+      {
+        "canonical_source": "packages/doeff-agents/src/doeff_agents/sessionhost/impls/claude_code.hy",
+        "effects": [
+          "無し(純粋な組み立て)"
+        ],
+        "failures": [
+          "幅の外の閾値を載せると CLI が argv 解釈で死ぬ(手番が 1 行も吐かずに消える)"
+        ],
+        "id": "launch-argv",
+        "invariants": [
+          "凍結接頭 4 語",
+          "--effort は index 4",
+          "prompt を argv に載せない",
+          "print mode は headless の家だけ"
+        ],
+        "operations": [
+          "build-claude-argv(params) -> argv",
+          "build-claude-resume-argv(params) -> argv"
+        ],
+        "owner": "agentd-argv-builder"
+      },
+      {
+        "canonical_source": "agent-control-plane/src/Acp/App/Messaging/Plan.hs",
+        "effects": [
+          "無し"
+        ],
+        "failures": [
+          "欄の綴りが agentd と食い違うと黙って無視される"
+        ],
+        "id": "charter-object",
+        "invariants": [
+          "会話の宣言が方策の既定を置き換える",
+          "agentd は charter の欄しか読まない"
+        ],
+        "operations": [
+          "charterFor(policy, availability, declared) -> charter"
+        ],
+        "owner": "acp-charter"
+      },
+      {
+        "canonical_source": "claude 2.1.274 の実測(本設計の evidence.md)",
+        "effects": [
+          "実効の窓 = min(指定値, モデルの窓)、閾値 = 実効の窓 − 要約バッファ"
+        ],
+        "failures": [
+          "幅の外 / 読めない値は argv 解釈の段で異常終了"
+        ],
+        "id": "cli-autocompact-flag",
+        "invariants": [
+          "env は設定より強い",
+          "宣言が無いとモデルの窓いっぱい"
+        ],
+        "operations": [
+          "--autocompact <auto|100k..1M>",
+          "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+          "settings.json autoCompactWindow",
+          "/autocompact"
+        ],
+        "owner": "claude-cli"
+      }
+    ],
+    "elements": [
+      {
+        "depends_on": [],
+        "hidden_decisions": [
+          "要約用のバッファの大きさ",
+          "モデルごとの窓の長さ"
+        ],
+        "id": "claude-cli",
+        "kind": "external",
+        "requirement_ids": [
+          "R2"
+        ],
+        "responsibility": "会話を保持し、文脈が閾値に近づいたら畳む。閾値は argv / env / profile の設定の順で解決する。",
+        "state": [
+          "会話の文脈",
+          "解決した実効の窓"
+        ]
+      },
+      {
+        "depends_on": [
+          "claude-cli"
+        ],
+        "hidden_decisions": [
+          "旗の綴りと並び"
+        ],
+        "id": "agentd-argv-builder",
+        "kind": "internal",
+        "requirement_ids": [
+          "R2",
+          "R6"
+        ],
+        "responsibility": "起こす params から claude の起動 argv を組む(build-claude-argv / build-claude-resume-argv)。凍結物理の家。",
+        "state": []
+      },
+      {
+        "depends_on": [
+          "agentd-argv-builder"
+        ],
+        "hidden_decisions": [
+          "print mode の旗の並び"
+        ],
+        "id": "headless-argv",
+        "kind": "internal",
+        "requirement_ids": [
+          "R6"
+        ],
+        "responsibility": "print mode の旗を足して headless の起動 argv にする。基礎の旗は agentd-argv-builder と共有する。",
+        "state": []
+      },
+      {
+        "depends_on": [
+          "delivery-policy-row"
+        ],
+        "hidden_decisions": [
+          "重ね方(会話の宣言が方策を置き換える)"
+        ],
+        "id": "acp-charter",
+        "kind": "internal",
+        "requirement_ids": [
+          "R3",
+          "R4"
+        ],
+        "responsibility": "方策の行の既定 charter に、会話が宣言した欄(model / effort / work_dir / agent_type)を重ねて、この手番の charter を作る(Plan.charterFor)。",
+        "state": []
+      },
+      {
+        "depends_on": [],
+        "hidden_decisions": [],
+        "id": "delivery-policy-row",
+        "kind": "external",
+        "requirement_ids": [
+          "R3"
+        ],
+        "responsibility": "配達の方策の行 current。既定の charter を JSON の物として持つ(台帳)。",
+        "state": [
+          "既定 charter"
+        ]
+      },
+      {
+        "depends_on": [
+          "agentd-argv-builder",
+          "acp-charter"
+        ],
+        "hidden_decisions": [
+          "腕の選び方"
+        ],
+        "id": "agentd-arms",
+        "kind": "internal",
+        "requirement_ids": [
+          "R5"
+        ],
+        "responsibility": "起こす腕(launch / resume / rehydrate)。launch は charter を丸ごと params にし、resume は名簿で欄を写す(judgment.resume-params-of)。",
+        "state": []
+      },
+      {
+        "depends_on": [],
+        "hidden_decisions": [
+          "役ごとの model / effort の表"
+        ],
+        "id": "route-dispatcher",
+        "kind": "external",
+        "requirement_ids": [
+          "R4"
+        ],
+        "responsibility": "依頼を起票し、役(class investigate / dev)と tier(計画段 / 実装段)を決める。model と effort を宣言する側。",
+        "state": [
+          "依頼の行"
+        ]
+      },
+      {
+        "depends_on": [
+          "claude-cli"
+        ],
+        "hidden_decisions": [
+          "既定の閾値の値"
+        ],
+        "id": "agentcli-headless-runner",
+        "kind": "external",
+        "requirement_ids": [
+          "R1"
+        ],
+        "responsibility": "dotfiles 側の別の走行係。閾値を 600k(env で上書き可)で**必ず**名乗る先例。",
+        "state": []
+      }
+    ],
+    "handoff": {
+      "fixed": [
+        "現状 = ACP が起こす claude 席は閾値を 1 つも名乗らず、CLI の窓(1M)任せ",
+        "dotfiles の別の走行係は 600k を必ず名乗る(先例と、判断が 2 か所に割れている事実)"
+      ],
+      "free": [],
+      "next": [
+        "目標設計(proposed)で、閾値の宣言者と受け口を決める"
+      ]
+    },
+    "level": "実行基盤 — agentd の起動物理(charter → 起動 argv)と、その上流の宣言者",
+    "methods": [
+      {
+        "evidence": [
+          "artifacts/observed-2026-09-18/design.md"
+        ],
+        "name": "c4",
+        "profile": "c4-web-2026-09-14-local-v1",
+        "reason": "宣言の道(誰が値を持ち、どこで落ちるか)を一枚で見せないと、欠陥の位置が言葉で伝わらない。",
+        "status": "performed",
+        "steps": [
+          {
+            "result": "読み手 = operator と次の担当。階層 = component(agentd の起動物理とその上流)1 つだけ。context / code 階層は描かない。",
+            "step": "1"
+          },
+          {
+            "result": "対象 = agentd の起動の道。外部 = claude CLI・配達方策の台帳・起票側(ai route)・dotfiles の走行係。",
+            "step": "2"
+          },
+          {
+            "result": "矢印 = 値の宣言の向き(台帳 → charter → params → argv → CLI)。現状は argv → CLI の辺に閾値が乗っていない。",
+            "step": "3"
+          },
+          {
+            "result": "題・範囲・要素の種類・欠落の印(破線)を図に入れた。",
+            "step": "4"
+          },
+          {
+            "result": "腕 3 つ(launch / resume / rehydrate)で欄がどう運ばれるかの補助図を足した。",
+            "step": "5"
+          },
+          {
+            "result": "Mermaid を design.md に残し、design.html に描画して確認。",
+            "step": "6"
+          }
+        ]
+      },
+      {
+        "evidence": [
+          "本記録の change_cases"
+        ],
+        "name": "change-cases",
+        "profile": "change-cases-1996-local-v1",
+        "reason": "役ごとに値を分けるという要求が、どの責務を変えるかを先に固定しないと、宣言の置き場を選べない。",
+        "status": "performed",
+        "steps": [
+          {
+            "result": "候補 = 役ごとの値(operator の指示)・値の調整(dotfiles の先例)・CLI の綴りの変化(版の更新)。",
+            "step": "1"
+          },
+          {
+            "result": "CC1 は起票側が役を宣言できるようになること、CC2 は台帳の 1 行で値が変わること、CC3 は幅の定数 1 点の差し替え。",
+            "step": "2"
+          },
+          {
+            "result": "CC1 / CC2 を必須、CC3 は備える仮説(CLI の綴りは公開契約ではない)。",
+            "step": "3"
+          },
+          {
+            "result": "維持する契約 = launch-argv の凍結接頭と、agentd が charter しか読まない立場。",
+            "step": "4"
+          },
+          {
+            "result": "検証は実射(同じ agentd に別 charter)と、幅の外の値が argv に出ないことの反例検。",
+            "step": "5"
+          }
+        ]
+      },
+      {
+        "evidence": [],
+        "name": "ddd",
+        "profile": "ddd-evans-2015-local-v1",
+        "reason": "対象は実行基盤の起動物理で、業務ドメインのモデルを持ち込む余地がない。語の一貫性(閾値の綴り)は contracts で扱う。",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "volatility",
+        "profile": "volatility-righting-software-local-v1",
+        "reason": "観測の記録。分割の見直しは目標設計(proposed)で行う。",
+        "status": "pending",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "add",
+        "profile": "add-2.0-local-v1",
+        "reason": "観測の記録。責務の割当ては目標設計で行う。",
+        "status": "pending",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "saam",
+        "profile": "saam-1996-local-v1",
+        "reason": "観測の記録。構造の適合性の評価は目標設計の検証で行う。",
+        "status": "pending",
+        "steps": []
+      }
+    ],
+    "open_questions": [
+      "役(lead / worker)は会話の宣言の閉語彙(model / effort / workDir)に無い。閾値をその語彙に足すか、値そのものを起票側が宣言するかは目標設計で決める。",
+      "配達の方策の行は current の 1 つだけで、方策の既定 charter は全会話で共通。役ごとの値を方策の行だけで表すことはできない。"
+    ],
+    "perspective": "observed",
+    "purpose": "agentd が起こす claude 席で、会話の圧縮の閾値(auto-compact window)が現に誰の宣言で決まっているかを観測する。実測 2026-09-18: 席は閾値を 1 つも名乗っておらず、CLI は自分の窓(1M)いっぱいまで畳まずに伸びる。",
+    "requirements": [
+      {
+        "id": "R1",
+        "kind": "quality",
+        "provenance": {
+          "kind": "observed",
+          "source": "全 profile の会話記録 3.68GB / 119,085 手番の集計(/tmp/fable-audit/)。直近 24h の Fable は cache_read が費用の 77%・平均文脈 550k・600k 超の手番が費用の 59%。"
+        },
+        "statement": "1 手番の枠の消費は出力量ではなく、毎手番読み直す文脈の大きさで決まる。閾値を下げれば 1 手番の値段が下がる。"
+      },
+      {
+        "id": "R2",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "observed",
+          "source": "claude 2.1.274 実射 — `--autocompact bogus` / `--autocompact 50k` の逐語 \"It must be 'auto', or between 100k and 1M\"。"
+        },
+        "statement": "claude CLI が受ける閾値は 'auto' か 100k〜1M の整数ちょうど。幅の外の値を argv に載せると argv 解釈の段で死に、stream-json の行を 1 つも吐かない(手番が丸ごと消える)。"
+      },
+      {
+        "id": "R3",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "inherited",
+          "source": "doeff-agents acp/effects.py の条文(段 10 lane 10n 註)と judgment.hy の設計。"
+        },
+        "statement": "agentd は charter の値だけを読み、方策の既定を code に置かない。"
+      },
+      {
+        "id": "R4",
+        "kind": "functional",
+        "provenance": {
+          "kind": "user",
+          "source": "operator 逐語 2026-09-18 \"i agree with you, separate size for lead and worker\"。"
+        },
+        "statement": "計画席(lead)と実装席(worker)で別の閾値を持てること。"
+      },
+      {
+        "id": "R5",
+        "kind": "quality",
+        "provenance": {
+          "kind": "observed",
+          "source": "同じ形の傷跡 — 添付が resume の腕だけ落ちた実弾 2026-09-15 09:5x(judgment.hy resume-params-of の名簿の漏れ)。"
+        },
+        "statement": "起こす腕(launch / resume / rehydrate)のどれを通っても同じ閾値が効くこと。腕によって黙って落ちないこと。"
+      },
+      {
+        "id": "R6",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "observed",
+          "source": "conformance S13 と tests/sessionhost_impls_deftests.hy test-claude-argv-golden-wiring の位置 pin。"
+        },
+        "statement": "起動 argv の凍結接頭(claude / --dangerously-skip-permissions / --settings)と `--effort` の位置は動かさない。"
+      }
+    ]
+  },
+  "created_at": "2026-09-17T16:23:33.252435+00:00",
+  "id": "design-b5097cf95c10",
+  "inputs": [
+    {
+      "id": "snapshot-cfe2da070c4f",
+      "role": "evidence",
+      "sha256": "8287c2b94354feb16cba34351e4059173d786da335457f359ab800f43646b067"
+    }
+  ],
+  "kind": "design",
+  "schema_version": 1,
+  "scope": "agentd が起こす claude 席の会話圧縮の閾値(auto-compact window)の宣言 — charter から起動 argv までの契約と、役(計画席 lead / 実装席 worker)ごとの値の所在。対象 = doeff-agents の起動物理・ACP の charter 組み立て・dotfiles の起票側の宣言。"
+}

@@ -587,6 +587,41 @@ def test_headless_argv_is_print_mode_with_partial_messages() -> None:
     assert codex_dialogue.plan.model == "gpt-5"
 
 
+def test_headless_claude_declares_the_compaction_threshold_on_both_arms() -> None:
+    """会話の圧縮の閾値(設計記録 docs/design/auto-compact-window): ACP の本番の腕は headless backend なので、閾値が
+    **この経路で**載ることを固定する。実弾 2026-09-18: 稼働中の claude 席 43 本のうち
+    --autocompact を持つものが 0 本で、CLI が自分の窓(1M)いっぱいまで畳まずに伸びていた
+    (1 手番の平均の文脈 550k・最大 967k)。値は charter.auto_compact_window、
+    無ければ走行係の床。"""
+    fresh = headless_argv.build_claude_headless(
+        {"work_dir": "/w", "conversation": {"session_id": "sid-1"}}
+    )["argv"]
+    assert "--autocompact" in fresh, fresh
+    assert fresh[fresh.index("--autocompact") + 1] == "400000", fresh
+
+    declared = headless_argv.build_claude_headless(
+        {"work_dir": "/w", "auto_compact_window": 200000, "conversation": {"session_id": "sid-1"}}
+    )["argv"]
+    assert declared[declared.index("--autocompact") + 1] == "200000", declared
+
+    resumed = headless_argv.build_claude_headless(
+        {
+            "work_dir": "/w",
+            "auto_compact_window": 200000,
+            "resume_mode": "resume",
+            "conversation": {"session_id": "sid-1"},
+        }
+    )["argv"]
+    assert resumed[resumed.index("--autocompact") + 1] == "200000", resumed
+    assert resumed[-2:] == ["--resume", "sid-1"], resumed
+
+    # 幅の外の値は argv に出さない(出すと CLI が argv 解釈の段で死に、手番が 1 行も吐かない)
+    degraded = headless_argv.build_claude_headless(
+        {"work_dir": "/w", "auto_compact_window": 2_000_000, "conversation": {"session_id": "sid-1"}}
+    )["argv"]
+    assert degraded[degraded.index("--autocompact") + 1] == "auto", degraded
+
+
 #: dotfiles の router shim(agentcli/codex_shim.py _is_forbidden_override)が政策違反として
 #: 拒む綴り(2026-09-12 の実弾: PATH の codex が shim で `--yolo` が exit 2)。shim の module は
 #: import しない — 検は綴りの写しを持ち、shim と同じ語彙であることを註で結ぶ。

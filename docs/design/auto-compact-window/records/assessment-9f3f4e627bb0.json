@@ -1,0 +1,320 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/target-2026-09-18c/evidence/e9-blind-counterexamples.log",
+      "sha256": "6d5728d851dff788dd266cdd0d68dd6ebc945e3caa6c118f64c3b52ccbd01b7f"
+    },
+    {
+      "path": "artifacts/target-2026-09-18c/evidence/e7-compactat-is-shadowed.log",
+      "sha256": "cb993864a9ab2c1ea89785d1bb0741a76977532a4cca987ea409aea35fd8ccb4"
+    },
+    {
+      "path": "artifacts/target-2026-09-18c/evidence/e5-focused-tests.log",
+      "sha256": "7111b2145e0e94bc828090eeefbf97a89c264cde2f6b7db0d6ccffef56c7241b"
+    },
+    {
+      "path": "artifacts/target-2026-09-18c/blind/input.md",
+      "sha256": "ba3823ae95e1aef7718591176144461dea7699b6e1f6de8f9ee857d92e3ca1ca"
+    },
+    {
+      "path": "artifacts/target-2026-09-18c/blind/reply-A.md",
+      "sha256": "1d40371fdcdde0bb38ddb71b266e0565878f24d18893e9a546a027ea21f24c25"
+    },
+    {
+      "path": "artifacts/target-2026-09-18c/blind/reply-B.md",
+      "sha256": "71c9852e5770ecbdb5db2876997ea4592fd831874736e3380ecca0986ba1aa9b"
+    }
+  ],
+  "body": {
+    "claims": [
+      {
+        "evidence": [
+          "artifacts/target-2026-09-18c/blind/reply-A.md",
+          "artifacts/target-2026-09-18c/evidence/e9-blind-counterexamples.log"
+        ],
+        "expected": "版 b の契約どおりなら launch の腕は charter を丸ごと params にするので欄が在る。",
+        "id": "V1",
+        "mode": "execution",
+        "observed": "修理前は False(欄が落ちる)。wire の受理形が閉じた 23 欄の名簿で params を作り直していた。⇒ 会話が何を名乗っても argv に出るのは走行係の床ちょうど。",
+        "procedure": "盲検 A が挙げた再現手順を自分で撃つ — host.build-launch-program-params に auto_compact_window を入れた charter を渡し、戻りに欄が在るかを見る。",
+        "result": "refuted",
+        "scenario_ids": [
+          "CC1"
+        ],
+        "statement": "CC1 の主張『役ごとの値を配る変更は route-dispatcher と acp-charter だけを変える』は、版 b の構造では成り立たない。"
+      },
+      {
+        "evidence": [
+          "artifacts/target-2026-09-18c/blind/reply-A.md"
+        ],
+        "expected": "版 b の R5 は腕を 3 つとしていた。",
+        "id": "V2",
+        "mode": "analysis",
+        "observed": "4 つ目が在り、overlay から agent_type / work_dir / model / effort / mcp_servers / expected_result だけを取る。claude は割り込みの SIGINT で降りるので、設計された割り込みのたびにこの路を通る。",
+        "procedure": "盲検 A が名指しした headless.hy の continue-headless-process と、それを呼ぶ session.send の枝を読む。",
+        "result": "refuted",
+        "scenario_ids": [
+          "CC4"
+        ],
+        "statement": "起こす腕は 3 つ(launch / resume / rehydrate)ではなく 4 つで、4 つ目(降りた process の続き)は行の overlay だけを読んで argv を組み直す。"
+      },
+      {
+        "evidence": [
+          "artifacts/target-2026-09-18c/blind/reply-B.md",
+          "artifacts/target-2026-09-18c/evidence/e9-blind-counterexamples.log"
+        ],
+        "expected": "版 b の契約『戻りは auto か 100k〜1M のみ』が守れば argv も守られる。",
+        "id": "V3",
+        "mode": "execution",
+        "observed": "B の実測 — 単体 deftest 8 passed(修正前後とも)・semgrep 0 findings(修正前後とも)。argv には 80000(幅の下)が載る。検の model が Fable 固定で天井 = 床になり差が出ない。",
+        "procedure": "盲検 B が書いた差分(モデルの窓の 40% で頭打ち)を隔離の複製へ当て、単体の検と semgrep を走らせる。",
+        "result": "refuted",
+        "scenario_ids": [
+          "CC3"
+        ],
+        "statement": "幅の不変量を導出点の戻りに掛けても、argv に幅の外の値が出るのを止められない。"
+      },
+      {
+        "evidence": [
+          "artifacts/target-2026-09-18c/evidence/e9-blind-counterexamples.log",
+          "artifacts/target-2026-09-18c/evidence/e5-focused-tests.log"
+        ],
+        "expected": "欄が在り値が 800000、宣言なしでは欄が無い。",
+        "id": "V4",
+        "mode": "execution",
+        "observed": "True / 800000 / 欄なし。焦点の検も緑。",
+        "procedure": "V1 と同じ再現手順を修理後の版で撃つ。加えて deftest test-launch-params-carry-the-declared-launch-flags を走らせる。",
+        "result": "supported",
+        "scenario_ids": [
+          "CC1",
+          "CC6"
+        ],
+        "statement": "修理後、宣言した値は wire の受理形を通り抜け、名乗らない会話では欄を作らない。"
+      },
+      {
+        "evidence": [
+          "artifacts/target-2026-09-18c/evidence/e9-blind-counterexamples.log"
+        ],
+        "expected": "検の assert ではなく claude-autocompact-args の後置条件が赤になる。",
+        "id": "V5",
+        "mode": "execution",
+        "observed": "AssertionError: claude-autocompact-args: post-condition failed(autocompact-arg-pair-ok)。正常例(修理後の版)は緑。",
+        "procedure": "反例 B の差分を隔離の複製へ当て、band の検を走らせる。",
+        "result": "supported",
+        "scenario_ids": [
+          "CC3"
+        ],
+        "statement": "修理後、反例 B の差分を当てると契約(後置条件)が止める。"
+      },
+      {
+        "evidence": [
+          "artifacts/target-2026-09-18c/evidence/e7-compactat-is-shadowed.log"
+        ],
+        "expected": "使用率が約 40% で頭打ちになり、compactAt=70 / 80 が due=False になる。",
+        "id": "V6",
+        "mode": "execution",
+        "observed": "tokens 400,000 / 窓 1,000,000 → 40%。compactAt=70 / 80 は due=False、compactAt=35 は due=True。ACP の検が使っている宣言値は 70 と 80。",
+        "procedure": "実コード judgment.context-percent-of と compaction-due を、床 400k / 窓 1M の想定 token 量で呼ぶ。",
+        "result": "supported",
+        "scenario_ids": [
+          "CC5"
+        ],
+        "statement": "内側の輪(CLI 側の絶対値)を入れると、compactAt を 40 より上で宣言した会話では外側の輪(agentd が記録から再開する腕)が撃たなくなる。"
+      },
+      {
+        "evidence": [],
+        "expected": "6 つ目の名簿が carry-launch-flags を通していなければ赤。",
+        "id": "V7",
+        "mode": "unrun",
+        "observed": "そのような検査は書いていない。いまは構造の規律と、名簿 2 つを固定する検だけ。",
+        "procedure": "集合を使っていない名簿を見つける静的検査を書いて当てる(未実施)。",
+        "result": "unknown",
+        "scenario_ids": [
+          "CC6"
+        ],
+        "statement": "CC6(旗をもう 1 つ足す変更が集合の宣言 1 点に収まる)は、機械では強制されていない。"
+      }
+    ],
+    "findings": [
+      {
+        "category": "design_change",
+        "claim_ids": [
+          "V1",
+          "V2"
+        ],
+        "evidence": [
+          "artifacts/target-2026-09-18c/evidence/e9-blind-counterexamples.log"
+        ],
+        "id": "D1",
+        "owner": "launch-flag-set",
+        "remedy": "旗になる欄の集合を policy で 1 度だけ宣言し(LAUNCH-FLAG-KEYS)、5 つの名簿は carry-launch-flags で写す形へ直した。版 c に反映済み。",
+        "severity": "blocking",
+        "statement": "版 b の契約『launch / rehydrate の腕は charter を丸ごと params にする(素通し)』は偽で、名簿は直列に 5 つ・起こす腕は 4 つあった。設計の集中点は charter ではなく『起動の旗の全集合』という暗黙の知識だった。",
+        "status": "resolved"
+      },
+      {
+        "category": "design_change",
+        "claim_ids": [
+          "V3"
+        ],
+        "evidence": [
+          "artifacts/target-2026-09-18c/evidence/e9-blind-counterexamples.log"
+        ],
+        "id": "D2",
+        "owner": "autocompact-derivation",
+        "remedy": "不変量を argv に出る値へ移した(claude-autocompact-args の後置条件 autocompact-arg-pair-ok)。検も model を振って出た値そのものを見る。版 c に反映済み。",
+        "severity": "blocking",
+        "statement": "幅の不変量が『導出点の戻り』に掛かっていたので、関門の後で値を加工する変更が argv へ幅の外の値を載せられた(手番が丸ごと死ぬ)。",
+        "status": "resolved"
+      },
+      {
+        "category": "design_change",
+        "claim_ids": [
+          "V6"
+        ],
+        "evidence": [
+          "artifacts/target-2026-09-18c/evidence/e7-compactat-is-shadowed.log"
+        ],
+        "id": "D3",
+        "owner": "acp-charter",
+        "remedy": "設計の選択 4 として 3 案を並べ、席の推奨(案 a = 内側を優先)を書いた。**出荷済みで operator が要求した機能の効き方が変わるので、配備の前に operator の裁定が要る**。合意の記録は無い。",
+        "severity": "blocking",
+        "statement": "既にある外側の輪(会話の宣言 compactAt → agentd が記録から再開する腕)の効き方が、内側の輪を入れると変わる。40 より上の compactAt を宣言した会話では二度と撃たない。",
+        "status": "open"
+      },
+      {
+        "category": "evidence_gap",
+        "claim_ids": [
+          "V7"
+        ],
+        "evidence": [
+          "artifacts/target-2026-09-18c/blind/reply-A.md"
+        ],
+        "id": "D4",
+        "owner": "launch-flag-set",
+        "remedy": "名簿の形を見つける静的検査(semgrep 等)を書くか、落ちた時に条件を名乗る形にする。今回の範囲外として登記する。",
+        "severity": "nonblocking",
+        "statement": "集合を使っていない名簿が将来足された時に止める機械が無い。欄が落ちても縮退の印が出ず、床の値と区別できないので、同じ形が無音で再発しうる。",
+        "status": "open"
+      },
+      {
+        "category": "evidence_gap",
+        "claim_ids": [],
+        "evidence": [
+          "artifacts/target-2026-09-18c/blind/reply-B.md"
+        ],
+        "id": "D5",
+        "owner": "route-dispatcher",
+        "remedy": "配備後に同じ集計器で 24 時間の文脈分布と費用を測り直し、床と役ごとの値を決める。",
+        "severity": "nonblocking",
+        "statement": "床 400,000 は 1M の窓を仮定した値で、窓 200k のモデル(Sonnet / Haiku)では CLI が min(指定, モデルの窓)で丸めるため早く畳む効果が出ない。値の妥当性は未測定。",
+        "status": "open"
+      }
+    ],
+    "focus": "design",
+    "methods": [
+      {
+        "evidence": [
+          "artifacts/target-2026-09-18c/blind/reply-A.md",
+          "artifacts/target-2026-09-18c/evidence/e9-blind-counterexamples.log"
+        ],
+        "name": "saam",
+        "profile": "saam-1996-local-v1",
+        "reason": "新しい公開境界(charter の欄・旗の集合)と独立変更の主張(CC1 / CC2)を、変更シナリオごとに構造へ当てて評価する必要があった。",
+        "status": "performed",
+        "steps": [
+          {
+            "result": "候補構造 = 版 b の目標設計(宣言する側 / 重ねる側 / 起こす側 / CLI の 4 群・charter で値を運ぶ)。要素と接続は design.md の図 1。",
+            "step": "1"
+          },
+          {
+            "result": "立場 = 起票する側(役ごとの値を配りたい)・運用する側(値を調整したい)・agentd を直す担い手(旗を足す)・CLI の版を追う担い手。これに対応するのが CC1 / CC2 / CC6 / CC3。",
+            "step": "2"
+          },
+          {
+            "result": "CC1 / CC2 は『構造のまま実現できる』と主張していたが、**反例 A で偽と判明**した(値が名簿で落ちるので、宣言側だけを変えても届かない)。CC4 は『腕は 3 つ』を前提にしていたが、**起こす腕は 4 つ**だった。CC3 は構造のまま実現できる。",
+            "step": "3"
+          },
+          {
+            "result": "相互作用: CC1(役ごとの値)と CC6(旗を足す)は同じ要素 = 名簿の直列へ変更を要求する。ここが集中点で、5 つの名簿と 4 つの起こす腕が同じ暗黙の知識(『起動の旗の全集合』)を持っていた。CC5(圧縮の輪)は別の集中点で、acp-charter が輪の関係を持つ。",
+            "step": "4"
+          },
+          {
+            "result": "総合: 集中点を 1 点の宣言(policy.LAUNCH-FLAG-KEYS)へ畳み、名簿は写すだけにした。CC1 / CC2 / CC6 は宣言側 + 集合の変更に収まる。⚠ 集合を使っていない名簿が将来足された時に止める機械は無く、CC6 の主張は**構造の規律**であって強制ではない。CC5 は未決(operator の裁定待ち)。",
+            "step": "5"
+          }
+        ]
+      },
+      {
+        "evidence": [
+          "design-3c927e1b645c の change_cases"
+        ],
+        "name": "change-cases",
+        "profile": "change-cases-1996-local-v1",
+        "reason": "目標設計 design-3c927e1b645c の CC1〜CC6 をそのまま評価軸に使う。対象版は同じ worktree で、シナリオの前提(CLI の幅・起こす腕の数・役の語彙)はこの検証の中で更新済み(腕は 3 → 4)。",
+        "status": "reused",
+        "steps": []
+      },
+      {
+        "evidence": [
+          "design-3c927e1b645c の methods.volatility"
+        ],
+        "name": "volatility",
+        "profile": "volatility-righting-software-local-v1",
+        "reason": "分割の決定は目標設計側で行い、その独立変更の主張をここで反証した。境界の修正(集合の 1 点宣言)は目標設計の版 c に反映済み。",
+        "status": "reused",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "add",
+        "profile": "add-2.0-local-v1",
+        "reason": "責務の割当ては目標設計側。ここは構造の適合性の評価。",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "ddd",
+        "profile": "ddd-evans-2015-local-v1",
+        "reason": "実行基盤の起動物理で業務モデルの対象がない。",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [
+          "artifacts/target-2026-09-18c/diagrams/fig3.svg"
+        ],
+        "name": "c4",
+        "profile": "c4-web-2026-09-14-local-v1",
+        "reason": "評価の結果(名簿の直列)は目標設計の図 3 として描き直した。この評価で別の図は要らない。",
+        "status": "reused",
+        "steps": []
+      }
+    ],
+    "subject": "design-3c927e1b645c",
+    "verdict": "incomplete"
+  },
+  "created_at": "2026-09-17T17:04:32.870048+00:00",
+  "id": "assessment-9f3f4e627bb0",
+  "inputs": [
+    {
+      "id": "design-3c927e1b645c",
+      "role": "subject",
+      "sha256": "1d708c178111fb885a8e0d46c7ef99996cc734bfe221cc98b9795194701a9ec8"
+    },
+    {
+      "id": "snapshot-9ed1357abe8b",
+      "role": "evidence",
+      "sha256": "cad7edd207d6bc2c3db2cac3b324729495427482b1fd4e8a58f1cdb6261ea9ab"
+    },
+    {
+      "id": "design-bb65cdf3dcd2",
+      "role": "basis",
+      "sha256": "91c18598c2d43f3981a0b2a686b67d94def6f6bead130ea1f306a7e1b085477d"
+    }
+  ],
+  "kind": "assessment",
+  "schema_version": 1,
+  "scope": "agentd が起こす claude 席の会話圧縮の閾値(auto-compact window)の宣言 — charter から起動 argv までの契約と、役(計画席 lead / 実装席 worker)ごとの値の所在。対象 = doeff-agents の起動物理・ACP の charter 組み立て・dotfiles の起票側の宣言。"
+}
