@@ -181,6 +181,14 @@
   CANCEL-STAGE-GRACEFUL
   CANCEL-STAGE-KEY
   CAUSE-CATEGORY-CANCELLED
+  CAUSE-CATEGORIES
+  CAUSE-CATEGORY-KEY
+  CAUSE-REASON-KEY
+  CAUSE-CATEGORY-COMPLETED
+  CAUSE-CATEGORY-FAILED
+  CAUSE-CATEGORY-INTERRUPTED
+  CAUSE-CATEGORY-AGENTD-STOPPED
+  CAUSE-REASON-WITHDRAWN
   DEFAULT-CANCEL-GRACE-SECONDS
   JOB-SPEC-CANCEL-KEY
   JOB-STATUS-CANCEL-KEY
@@ -1059,7 +1067,9 @@
   {:pre [(: status dict)]
    :post [(: % dict)]}
   "取り下げで止めた手番の agent-job の status: phase は書かない(Withdrawn のまま — 書き手は
-   作った側)、conditions に Interrupted を 1 つ足す(既に在れば足さない)。"
+   作った側)、conditions に Interrupted を 1 つ足す(既に在れば足さない)。段 12 lane 12k(agora-redesign #349 行 3 粒 3a):
+   終端の理由も result.cause {category: interrupted, reason: withdrawn} に載せる(Withdrawn の行の result は agentd の欄 — 既に
+   在る結末は保つ・cause は同じ値なので書き直しは冪等)。"
   (setv next (dict status))
   (setv existing (.get status "conditions"))
   (setv conditions (if (isinstance existing list) (list existing) []))
@@ -1068,6 +1078,9 @@
     (<- condition dict (condition-of CONDITION-INTERRUPTED "agent-job withdrawn while the turn was running"))
     (.append conditions condition))
   (setv (get next "conditions") conditions)
+  (<- cause dict (terminal-cause-of CAUSE-CATEGORY-INTERRUPTED CAUSE-REASON-WITHDRAWN))
+  (<- carried dict (result-with-cause (.get status "result") cause))
+  (setv (get next "result") carried)
   next)
 
 
@@ -1138,6 +1151,35 @@
   {"category" CAUSE-CATEGORY-CANCELLED CANCEL-STAGE-KEY stage CANCEL-REASON-KEY cancel.reason})
 
 
+(defk terminal-cause-of [category reason]
+  {:pre [(: category str) (: reason (| str None))]
+   :post [(: % dict)]}
+  "終端の result.cause(契約 scheduling.json resultCause・段 12 lane 12k・agora-redesign #349 行 3 粒 3a): {category, reason?}。
+   category は effects.CauseCategory の閉語彙ちょうど — 表の外は断る(契約に無い語を agentd が書かない)。
+   取り消しの cause(stage つき)は cancelled-cause-of。"
+  (when (not-in category CAUSE-CATEGORIES)
+    (raise (ValueError f"result.cause.category {(repr category)} is outside {CAUSE-CATEGORIES}")))
+  (setv cause {CAUSE-CATEGORY-KEY category})
+  (when (isinstance reason str)
+    (setv (get cause CAUSE-REASON-KEY) reason))
+  cause)
+
+
+(defk command-cause-of [conditions]
+  {:pre [(: conditions tuple)]
+   :post [(: % dict)]}
+  "命令の job(verify / summarize — agent を起こさない)の終端の cause: 条件が 1 つも無ければ completed(赤の rc も結末であって
+   条件ではない)、在れば failed で reason = 先頭の条件の型(この族の条件は全部が失敗の印 — Verify* / Summarize*)。"
+  (if conditions
+      (do
+        (setv first (get conditions 0))
+        (<- failed dict (terminal-cause-of CAUSE-CATEGORY-FAILED (str (.get first "type"))))
+        failed)
+      (do
+        (<- completed dict (terminal-cause-of CAUSE-CATEGORY-COMPLETED None))
+        completed)))
+
+
 (defk result-with-cause [result cause]
   {:pre [(: result (| dict list str int float bool None)) (: cause dict)]
    :post [(: % dict)]}
@@ -1154,12 +1196,27 @@
 (defk outcome-with-cancel [outcome cancel stage]
   {:pre [(: outcome JobOutcome) (: cancel (| JobCancel None)) (: stage str)]
    :post [(: % JobOutcome)]}
-  "取り消された job の結末に cause を載せる(cancel が None = 取り消されていない → 不変)。"
+  "取り消された job の結末に cause を載せる(cancel が None = 取り消されていない → 不変)。取り消しの cause は器の結末の cause より正
+   (合図が先に在った)。result は触らない — cause を result に載せるのは ended-status-of の 1 点(#349 行 3 粒 3a)。"
   (when (is cancel None)
     (return outcome))
   (<- cause dict (cancelled-cause-of cancel stage))
-  (<- result dict (result-with-cause outcome.result cause))
-  (replace outcome :result result))
+  (replace outcome :cause cause))
+
+
+(defk outcome-with-limit [outcome limit]
+  {:pre [(: outcome JobOutcome) (: limit (| dict None))]
+   :post [(: % JobOutcome)]}
+  "provider の限度の条件(provider-limit-condition-of・None = 断りではない)を結末の cause に写す(段 12 lane 12k・agora-redesign
+   #349 行 3 粒 3a): cause が completed / failed の時だけ {category: failed, reason: ProviderLimit} に置き換える(取り消し・停止の
+   cause は上書きしない — 合図が先に在った)。value は書かない(value は手番が報告した結果)。"
+  (when (is limit None)
+    (return outcome))
+  (setv category (if (isinstance outcome.cause dict) (.get outcome.cause CAUSE-CATEGORY-KEY) None))
+  (when (not-in category #(CAUSE-CATEGORY-COMPLETED CAUSE-CATEGORY-FAILED None))
+    (return outcome))
+  (<- refused dict (terminal-cause-of CAUSE-CATEGORY-FAILED CONDITION-PROVIDER-LIMIT))
+  (replace outcome :cause refused))
 
 
 (defk recovered-cancel-of [job row]
@@ -1182,12 +1239,12 @@
 ;; 着かなかった Ended と置き直された試み(段 12 lane 12j・agora-redesign #402): 同じ手番を別の session で走らせない
 ;; ---------------------------------------------------------------------------
 
-(defk unrecorded-end-of [job result conditions now-ms]
-  {:pre [(: job InFlightJob) (: result (| dict list str int float bool None)) (: conditions tuple) (: now-ms int)]
+(defk unrecorded-end-of [job result cause conditions now-ms]
+  {:pre [(: job InFlightJob) (: result (| dict list str int float bool None)) (: cause dict) (: conditions tuple) (: now-ms int)]
    :post [(: % UnrecordedEnd)]}
-  "着かなかった Ended の持ち越しの材料(結末と条件はそのまま・at = 手番の終わりの拍)。"
+  "着かなかった Ended の持ち越しの材料(結末・cause・条件はそのまま・at = 手番の終わりの拍)。"
   (UnrecordedEnd :job-key job.job-key :job-id job.job-id :session-id job.session-id
-                 :result result :conditions conditions :at-ms now-ms))
+                 :result result :cause cause :conditions conditions :at-ms now-ms))
 
 
 (defk end-retry-verdict [row session-id principal at-ms now-ms ttl-ms]
@@ -1550,14 +1607,19 @@
   {"type" condition-type "status" "True" "reason" reason})
 
 
-(defk ended-status-of [status result conditions]
-  {:pre [(: status dict) (: result (| dict list str int float bool None)) (: conditions tuple)]
+(defk ended-status-of [status result cause conditions]
+  {:pre [(: status dict) (: result (| dict list str int float bool None)) (: cause dict) (: conditions tuple)]
    :post [(: % dict)]}
-  "手番の終わりの status: phase = Ended、result(あれば)、conditions は既存に足す。"
+  "手番の終わりの status(Ended の書きの 1 点 — 段 12 lane 12k・agora-redesign #349 行 3 粒 3a): phase = Ended、result は**必ず**
+   cause を運ぶ(result-with-cause: dict の結末はその欄 cause に・None は cause だけ・dict でない結末は {value, cause})、conditions は
+   既存に足す。cause の無い Ended は書けない(引数で強いる・category は閉語彙の外を断る)— 読み手 ACP awaitOutcomeOf は cause で
+   終端の意味を読み、result の有無や conditions 頼みにしない。"
+  (when (not-in (.get cause CAUSE-CATEGORY-KEY) CAUSE-CATEGORIES)
+    (raise (ValueError f"Ended without a contract cause: {(repr cause)} (category must be one of {CAUSE-CATEGORIES})")))
   (setv next (dict status))
   (setv (get next "phase") PHASE-ENDED)
-  (when (is-not result None)
-    (setv (get next "result") result))
+  (<- carried dict (result-with-cause result cause))
+  (setv (get next "result") carried)
   (when conditions
     (setv existing (.get status "conditions"))
     (setv (get next "conditions")
@@ -4123,19 +4185,23 @@
    policy.hy の monitor が turn-end で done へ倒す。語彙は effects.SESSION-TERMINAL-STATUSES)。done 以外の終端は SessionFailed の
    condition(理由 = terminal_cause の category と reason)。"
   (if (not-in view.status SESSION-TERMINAL-STATUSES)
-      (JobOutcome :ended False :result None :conditions #())
+      (JobOutcome :ended False :result None :cause None :conditions #())
       (do
         (setv conditions [])
         (when (!= view.status "done")
-          (setv cause (or view.terminal-cause {}))
-          (setv category (.get cause "category"))
-          (setv reason (.get cause "reason"))
+          (setv session-cause (or view.terminal-cause {}))
+          (setv category (.get session-cause "category"))
+          (setv reason (.get session-cause "reason"))
           (<- failed dict (condition-of "SessionFailed"
                                         (+ f"session {view.status}"
                                            (if (isinstance category str) f": {category}" "")
                                            (if (isinstance reason str) f" ({reason})" ""))))
           (.append conditions failed))
-        (JobOutcome :ended True :result view.result-payload :conditions (tuple conditions)))))
+        ;; #349 行 3 粒 3a: 自然に終わった手番 = completed(value は result に)・done 以外の終端 = failed / SessionFailed
+        (setv done (= view.status "done"))
+        (<- cause dict (terminal-cause-of (if done CAUSE-CATEGORY-COMPLETED CAUSE-CATEGORY-FAILED)
+                                          (if done None "SessionFailed")))
+        (JobOutcome :ended True :result view.result-payload :cause cause :conditions (tuple conditions)))))
 
 
 (defk without-job [state job-id]
