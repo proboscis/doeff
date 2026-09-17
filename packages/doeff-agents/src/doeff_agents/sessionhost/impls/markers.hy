@@ -47,6 +47,24 @@
        "(?: [a-z0-9][a-z0-9+&-]*(?:\\.[a-z0-9]+)*){0,4} limit\\b")))
 
 
+;; 組織の側の上限の族(agora-redesign #513・実弾 2026-09-17): 「Your group's usage limit is
+;; set to $0 · ask your admin for a higher limit」。所有格族(you've hit/reached your …
+;; limit)の外の実物文言で、会社の口座 p10174 の 18 手番が普通の終わりとして流れた(族の表が
+;; 破れた 4 度目)。可変なのは主語(group / organization / team …)と金額なので、固定するのは
+;; 述部「usage limit is set to $<数字>」だけ —— 同一物理行の内側・金額の先頭 1 桁まで。
+(setv API-LIMIT-ORG-CAP-FAMILY-RE
+  (re.compile "\\busage limit is set to \\$[0-9]"))
+
+;; CLI が**構造で**名乗る限度の断り(agora-redesign #513): claude の stream-json の result は、
+;; API の誤りで終わった手番に api_error_status(HTTP の status)を載せる。429 = provider が
+;; 利用の上限で断った、の CLI 自身の分類で、文の言い回しに依らない。実測 2026-09-17(会社 Mac の
+;; agentd の headless-events 900 本): 限度の断り 39 本(group の上限 $0 ×18・Fable の週 ×13・
+;; session ×4・individual spend ×4)は文が 4 種でも全部 429、限度でない断り(401 失効・403 組織の
+;; 剥奪・404 model 不明)に 429 は 1 本も無い。文の族の表は、構造を名乗らない面(pane の画面・
+;; 旧い CLI・codex)のために残す —— 構造が在れば構造が正。
+(setv API-LIMIT-ERROR-STATUS 429)
+
+
 ;; composer 領域の走査窓(oracle 移植の tail-20 — ADR-DOE-AGENTS-010 R1)。
 (setv COMPOSER-TAIL-LINES 20)
 
@@ -117,7 +135,21 @@
             (is-not (.search API-LIMIT-EXHAUSTED-FAMILY-RE text) None)
             ;; credits 枯渇(2026-07-26 実 incident)は所有格族の外の実物
             ;; 文言 — exhausted 側 = blocked_api が正。
-            (in "out of usage credits" text))))
+            (in "out of usage credits" text)
+            ;; 組織の側の上限(agora-redesign #513・2026-09-17 実 incident)—
+            ;; 所有格族の外の述部の族。
+            (is-not (.search API-LIMIT-ORG-CAP-FAMILY-RE text) None))))
+
+
+(deff is-api-limit-refusal [detail api-error-status]
+  {:pre [(: detail str) (: api-error-status (| int None))] :post [(: % bool)]}
+  "手番を終わらせた断りは provider の限度か(agora-redesign #513)—— 構造が先・文が後。
+   CLI が status を名乗っていれば 429 ちょうどが限度(文は読まない: 429 でない status を
+   名乗る断り〔401 / 403 / 404〕は、文に limit の語が在っても限度ではない)。名乗らない面
+   (pane の画面・旧い CLI・codex)は文の族の表 has-api-limit-marker に落ちる。"
+  (if (is api-error-status None)
+      (has-api-limit-marker detail)
+      (= api-error-status API-LIMIT-ERROR-STATUS)))
 
 
 ;; ---------------------------------------------------------------------------

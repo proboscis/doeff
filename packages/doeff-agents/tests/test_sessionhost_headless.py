@@ -141,6 +141,35 @@ def test_claude_dialogue_reads_init_and_result() -> None:
     failed = dialogue.on_line({"type": "result", "subtype": "error_max_turns", "is_error": True})
     assert failed.ended == TurnEnded(ok=False, detail="error_max_turns")
     assert dialogue.interrupt().signal is True
+    # agora-redesign #513: API の誤りで終わった手番は CLI が構造で名乗った status を運ぶ
+    # (実物 2.1.27x の形 — subtype success・is_error・terminal_reason api_error・api_error_status)
+    assert dialogue.turn(_content("once more")).close_stdin is False
+    refused = dialogue.on_line(
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": True,
+            "terminal_reason": "api_error",
+            "api_error_status": 429,
+            "result": "Your group's usage limit is set to $0 · ask your admin for a higher limit",
+        }
+    )
+    assert refused.ended == TurnEnded(
+        ok=False,
+        detail="Your group's usage limit is set to $0 · ask your admin for a higher limit",
+        api_error_status=429,
+    )
+    # status は整数ちょうど(bool・文字列は status ではない)・成功の終わりは運ばない
+    assert dialogue.turn(_content("and again")).close_stdin is False
+    odd = dialogue.on_line(
+        {"type": "result", "subtype": "success", "is_error": True, "api_error_status": "429", "result": "x"}
+    )
+    assert odd.ended == TurnEnded(ok=False, detail="x", api_error_status=None)
+    assert dialogue.turn(_content("fine")).close_stdin is False
+    fine = dialogue.on_line(
+        {"type": "result", "subtype": "success", "is_error": False, "api_error_status": 429}
+    )
+    assert fine.ended == TurnEnded(ok=True, detail="success", api_error_status=None)
 
 
 def _lifecycle(ref: str, state: str) -> JSONObject:
@@ -1071,6 +1100,43 @@ def test_host_headless_turn_refused_by_the_provider_limit_fails_the_session_with
     assert not _has(warm, "terminal_cause")
     # 器を片付ける(登記簿は module をまたぐので、残した process は他の検の数を狂わせる)
     for sid in ("h-limit", "h-warm"):
+        headless_host.ok("session.cleanup", {"session_id": sid})
+
+
+def test_host_headless_turn_refused_with_api_status_429_is_a_limit_whatever_the_wording(
+    headless_host: Host,
+) -> None:
+    """agora-redesign #513(operator 指示 2026-09-17 "hitting that limit message must automatically
+    switch profile"): 限度の断りは **CLI が構造で名乗る status(429)** で当てる —— 文の言い回しに依らない。
+
+    実弾 2026-09-17: 会社の口座 p10174 の 18 手番が「Your group's usage limit is set to $0 · ask your
+    admin for a higher limit」で断られたが、文が所有格族に当たらず、器は温かいまま・agent-job は
+    completed で終わり、予算の係へ 1 bit も届かず、配置は同じ口座に結び続けた。どの文も result の行は
+    subtype success・is_error・terminal_reason api_error・api_error_status 429 だった。
+    429 でない status(403 = 組織の剥奪 など)は限度ではない —— 器は今日どおり温かい。
+    """
+    # 族の表に無い言い回し + 429 → 限度(器ごと終端・cause rate_limited・理由は CLI の文そのまま)
+    unknown_wording = "Usage is paused for this workspace · ask your admin"
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_LIMIT_TEXT"] = unknown_wording
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_API_ERROR_STATUS"] = "429"
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-429", "claude"))
+    ended = _wait_turn_end(headless_host, "h-429")
+    assert _text(ended, "status") == "failed", ended
+    cause = _obj(ended, "terminal_cause")
+    assert _text(cause, "category") == "rate_limited", cause
+    assert unknown_wording in _text(cause, "reason"), cause
+    # limit の語を含む文でも 403 は限度ではない(構造が先 — 文は読まない)
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_LIMIT_TEXT"] = (
+        "Your organization has disabled Claude subscription access · usage limit reached"
+    )
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_API_ERROR_STATUS"] = "403"
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-403", "claude"))
+    other = _wait_turn_end(headless_host, "h-403")
+    assert _text(other, "status") == "running", other
+    assert not _has(other, "terminal_cause")
+    headless_host.stub_env.pop("DOEFF_HEADLESS_STUB_LIMIT_TEXT")
+    headless_host.stub_env.pop("DOEFF_HEADLESS_STUB_API_ERROR_STATUS")
+    for sid in ("h-429", "h-403"):
         headless_host.ok("session.cleanup", {"session_id": sid})
 
 

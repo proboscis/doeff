@@ -43,6 +43,7 @@
   wire-result-channel])
 (import doeff_agents.sessionhost.impls.claude_code [claude-code-impl])
 (import doeff_agents.sessionhost.impls.codex [codex-impl])
+(import doeff_agents.sessionhost.impls.markers [is-api-limit-refusal])
 
 
 ;; ---------------------------------------------------------------------------
@@ -838,6 +839,39 @@
     (<- obs (classify-claude frame))
     (assert (not obs.has-api-limit-marker)
             f"unexpected api-limit marker: {frame !r}")))
+
+
+(deftest test-api-limit-marker-org-cap-family
+  ;; agora-redesign #513(2026-09-17 実 incident): 組織の側の上限「Your group's usage limit is
+  ;; set to $0 · ask your admin for a higher limit」は所有格族の外の述部で、会社の口座 p10174 の
+  ;; 18 手番が普通の終わりとして流れた(族の表が破れた 4 度目)。固定するのは述部と金額の先頭だけ。
+  (for [frame ["Your group's usage limit is set to $0 · ask your admin for a higher limit"
+               "Your organization’s usage limit is set to $25 · ask your admin for a higher limit"]]
+    (<- obs (classify-claude frame))
+    (assert obs.has-api-limit-marker f"expected api-limit marker: {frame !r}"))
+  ;; 陰性対照: 設定の説明(金額なし)は上限の断りではない
+  (<- prose (classify-claude "Your usage limit is set to the plan default. See /usage."))
+  (assert (not prose.has-api-limit-marker)))
+
+
+(deftest test-is-api-limit-refusal-structure-first-then-wording
+  ;; agora-redesign #513: CLI が構造で名乗る status が在れば 429 ちょうどが限度(文は読まない)。
+  ;; 実測 2026-09-17 の 4 種の文は全部 429 —— 未知の言い回しでも 429 なら限度。
+  (setv unknown-wording (is-api-limit-refusal "Usage is paused for this workspace · ask your admin" 429))
+  (assert unknown-wording)
+  (setv group-cap (is-api-limit-refusal "Your group's usage limit is set to $0 · ask your admin for a higher limit" 429))
+  (assert group-cap)
+  ;; 429 でない status を名乗る断りは、文に limit の語が在っても限度ではない
+  ;; (403 組織の剥奪・401 失効 —— 別の族・別の手当て)
+  (setv revoked (is-api-limit-refusal "Your organization has disabled Claude subscription access · usage limit reached" 403))
+  (assert (not revoked))
+  (setv expired (is-api-limit-refusal "Failed to authenticate. API Error: 401 OAuth access token has been revoked." 401))
+  (assert (not expired))
+  ;; status を名乗らない面(pane の画面・旧い CLI・codex)は文の族の表に落ちる
+  (setv worded (is-api-limit-refusal "You've reached your Fable limit. /model to switch models." None))
+  (assert worded)
+  (setv plain (is-api-limit-refusal "error_max_turns" None))
+  (assert (not plain)))
 
 
 (deftest test-classify-codex-update-dialog-down-steps
