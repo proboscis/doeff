@@ -139,10 +139,16 @@
 
 
 (deftest test-profile-window-follows-the-reset-period
-  ;; 窓の選び方は observed-window-of の 1 点: reset と周期が一致する窓、無ければ既定 5h。
-  (assert (= (run (observed-window-of (profile-row "p" "percent" 18000 "active" None))) "5h"))
-  (assert (= (run (observed-window-of (profile-row "p" "percent" 604800 "active" None))) "7d"))
-  (assert (= (run (observed-window-of (profile-row "p" "percent" 3600 "active" None))) "5h"))
+  ;; 窓の選び方は observed-window-of の 1 点: reset と周期が一致する窓、無ければ既定 5h(答えが空なら宣言の窓)。
+  (assert (= (run (observed-window-of (profile-row "p" "percent" 18000 "active" None) #())) "5h"))
+  (assert (= (run (observed-window-of (profile-row "p" "percent" 604800 "active" None) #())) "7d"))
+  (assert (= (run (observed-window-of (profile-row "p" "percent" 3600 "active" None) #())) "5h"))
+  ;; 宣言の窓が答えに在ればそれ(答えに 7d が在っても 5h の宣言は 5h)。
+  (setv both (. (usage-of "p" 40.0 RESETS-MS) windows))
+  (assert (= (run (observed-window-of (profile-row "p" "percent" 18000 "active" None) both)) "5h"))
+  ;; 宣言の窓が答えに無く、答えに別の窓が在れば周期の最も長い窓(#479 D-479-3: codex の pro plan は 7d だけ)。
+  (setv weekly-only #((UsageWindow :name "7d" :used-percent 100.0 :resets-at-ms RESETS-MS)))
+  (assert (= (run (observed-window-of (profile-row "p" "percent" 18000 "active" None) weekly-only)) "7d"))
   (setv weekly (run (profile-observed-of (profile-row "p" "percent" 604800 "active" None)
                                          (usage-of "p" 40.0 RESETS-MS) NODE)))
   (assert (isinstance weekly ProfileObservation))
@@ -471,3 +477,68 @@
   (assert (= (get written "observed") theirs))
   (assert (= (len (.profile-writes world)) 1)))
 
+
+;; ---------------------------------------------------------------------------
+;; 段 12 lane 12c(agora-redesign #479): codex の行も所有する worker が観測する
+;; ---------------------------------------------------------------------------
+
+(defn #^ AcpRow codex-row [#^ str name #^ int every]
+  "codex の口座の行(spec.kind = codex — 配置の観測の腕が預かり所の在庫から写す欄)。"
+  (setv row (profile-row name "percent" every "active" None))
+  (setv (get row.spec "kind") "codex")
+  row)
+
+
+(deftest test-codex-rows-are-observed-through-the-registry-alias-and-the-window-the-usage-carries
+  ;; 実弾 2026-09-17(#479): ACP の行 codex-personal(spec.kind codex・reset 5h)は名簿の家 personal(別名 codex-personal)を
+  ;; 持ち、`ai usage` の codex の記録 personal は 7d の窓だけ(5h は null)。観測の腕は種類ごとに家と残量を読み、
+  ;; 行を別名で家に結び、答えに在る 7d の窓で observed を書く。claude の行(kento)は今日どおり 5h。
+  (setv world (World))
+  (.put-row world.acp (profile-row "kento" "percent" 18000 "active" None))
+  (.put-row world.acp (codex-row "codex-personal" 18000))
+  (setv (get world.local.homes "claude") #((ProfileHome :name "kento" :home "/homes/kento" :present True)))
+  (setv (get world.local.homes "codex")
+        #((ProfileHome :name "personal" :home "/homes/codex/personal" :present True :aliases #("private" "codex-personal"))))
+  (setv (get world.local.usage "claude") #((usage-of "kento" 40.0 RESETS-MS)))
+  (setv (get world.local.usage "codex")
+        #((ProfileUsage :profile "personal" :captured-at-ms CAPTURED-MS
+                        :windows #((UsageWindow :name "7d" :used-percent 100.0 :resets-at-ms RESETS-MS)))))
+  (.tick world 0)
+  ;; 家と残量は種類ごとに 1 度ずつ読む(claude → codex の順・effects.PROFILE-USAGE-KINDS)。
+  (assert (= world.local.home-reads ["claude" "codex"]) world.local.home-reads)
+  (assert (= world.local.usage-reads [#("claude" world.settings.profile-observe-seconds)
+                                      #("codex" world.settings.profile-observe-seconds)]) world.local.usage-reads)
+  (setv codex (.status-of world "codex-personal"))
+  (assert (= (get codex "observed") {"window" "7d" "remaining" 0.0 "resetAt" RESETS-MS "observedAt" CAPTURED-MS "node" NODE})
+          (get codex "observed"))
+  (assert (= (get (get codex "observedBy") NODE) (get codex "observed")))
+  (setv claude (.status-of world "kento"))
+  (assert (= (get (get claude "observed") "window") "5h"))
+  (assert (= (get (get claude "observed") "remaining") 60.0))
+  ;; 宣言の窓(5h)と違う窓で観測した拍は log に 1 行(codex だけ・claude は宣言どおり)。
+  (setv substituted (lfor line (.profile-logs world) :if (in "observed on window 7d" line) line))
+  (assert (= (len substituted) 1) (.profile-logs world))
+  (assert (in "codex-personal" (get substituted 0)))
+  ;; 計器: 家の在る行は 2(claude 1 + codex 1)・unobserved 0。
+  (setv metrics (lfor m world.local.metrics :if (= (.get m "metric") "profile-observed") m))
+  (assert (= (get (get metrics -1) "homes") 2) (get metrics -1))
+  (assert (= (get (get metrics -1) "unobserved") 0) (get metrics -1)))
+
+
+(deftest test-a-kind-without-live-rows-reads-neither-homes-nor-usage
+  ;; 種類ごとに回すが、その種類の行が 1 つも無ければ家も usage も読まない(pod の器に codex の行だけ無い日も
+  ;; claude の観測は今日どおり・codex の読みは起きない)。行の名を名簿の別名で結ぶのも種類の中だけ —
+  ;; claude の行 personal は codex の家 personal(別名 codex-personal)に結ばれない。
+  (setv world (World))
+  (.put-row world.acp (profile-row "personal" "percent" 18000 "active" None))
+  (setv (get world.local.homes "claude") #((ProfileHome :name "personal" :home "/homes/personal" :present True)))
+  (setv (get world.local.homes "codex")
+        #((ProfileHome :name "personal" :home "/homes/codex/personal" :present True :aliases #("codex-personal"))))
+  (setv (get world.local.usage "claude") #((usage-of "personal" 40.0 RESETS-MS)))
+  (setv (get world.local.usage "codex")
+        #((ProfileUsage :profile "personal" :captured-at-ms CAPTURED-MS
+                        :windows #((UsageWindow :name "7d" :used-percent 100.0 :resets-at-ms RESETS-MS)))))
+  (.tick world 0)
+  (assert (= world.local.home-reads ["claude"]) world.local.home-reads)
+  (assert (= world.local.usage-reads [#("claude" world.settings.profile-observe-seconds)]) world.local.usage-reads)
+  (assert (= (get (get (.status-of world "personal") "observed") "window") "5h")))

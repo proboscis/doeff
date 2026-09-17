@@ -464,10 +464,14 @@ END_RETRY_DROP: EndRetryVerdict = "drop"
 UNRECORDED_END_TTL_MS: int = 3_600_000
 #: custody の貸出の口の種類(POST /lease/claude | /lease/codex)。
 LeaseKind = Literal["claude", "codex"]
-#: profile の残量を読む資格の種類(段 7 lane 7d-3)。契約 profile の行は資格の種類を運ばず、本番の
-#: 行(区画 default・35 行)はこの Mac の claude の profile なので、観測は claude の 1 種に閉じる
-#: (codex の profile の行が立つ日に spec の欄と対で広げる)。値の宣言はここ 1 点。
+#: profile の残量を読む資格の種類(段 7 lane 7d-3)。契約 profile の行は spec.kind(claude / codex —
+#: 配置の観測の腕が預かり所の在庫から写す)で資格の種類を名乗る。観測の腕は名簿の種類ごと
+#: (PROFILE_USAGE_KINDS)に家と残量を読み、行は spec.kind と名(名簿の名か別名)で結ぶ(段 12 lane 12c・
+#: agora-redesign #479: claude の 1 種に閉じていた間、codex の行は観測の列に一度も入らず、予算の判定が
+#: 永久に unobserved だった)。spec.kind を持たない行は PROFILE_USAGE_KIND(claude)と読む(#479 より前の
+#: 行は全部 claude)。値の宣言はここ 1 点。
 PROFILE_USAGE_KIND: LeaseKind = "claude"
+PROFILE_USAGE_KINDS: tuple[LeaseKind, ...] = ("claude", "codex")
 #: sessionhost の wire の agent_type とその貸出の種類の対応(policy.hy BINDING-KIND-AGENT-TYPE の逆)。
 AGENT_TYPE_LEASE_KIND: dict[str, LeaseKind] = {"claude": "claude", "codex": "codex"}
 #: 貸した Claude の札を載せる env(custodian /lease/claude の note どおり — 資格 file は書かない)。
@@ -797,11 +801,14 @@ ProfileUsageOutcome: TypeAlias = "ProfileUsage | ProfileUsageUnavailable"
 class ProfileHome:
     """登録簿の 1 つの profile と、この機体にその家(config dir)が在るか(段 8e lane 4j)。
     観測の材料で、判断(どの行を観測するか・usage を読むか)は judgment.profile-rows-held。
-    ``present`` = 家の dir が実在する(中身は検めない — 残量の読みの葉が答える)。"""
+    ``present`` = 家の dir が実在する(中身は検めない — 残量の読みの葉が答える)。
+    ``aliases`` = 登録簿の別名(段 12 lane 12c・agora-redesign #479: ACP の行の名が預かり所の別名
+    〔codex-personal〕で名簿の名〔personal〕と違う口座を、行の名 → 家に結ぶ材料。既定は無し)。"""
 
     name: str
     home: str
     present: bool
+    aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

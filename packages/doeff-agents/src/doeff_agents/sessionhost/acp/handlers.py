@@ -1504,7 +1504,8 @@ def decode_profile_usage(doc: JSON, kind: str) -> tuple[ProfileUsageOutcome, ...
 def decode_profile_homes(doc: JSON, present: Callable[[str], bool]) -> tuple[ProfileHome, ...]:
     """``agentcli profiles list --json`` の答え(登録簿の record の列)→ profile ごとの家の在否。
     ``name`` か ``dir`` の無い record は読まない(発明しない)。``present`` = 家の実在の検
-    (実 = os.path.isdir・検では表)。"""
+    (実 = os.path.isdir・検では表)。``aliases`` = 登録簿の別名の列(文字列だけ・無ければ空 — #479:
+    ACP の行の名が別名の口座を家に結ぶ材料)。"""
     out: list[ProfileHome] = []
     for record in doc if isinstance(doc, list) else []:
         if not isinstance(record, dict):
@@ -1513,7 +1514,9 @@ def decode_profile_homes(doc: JSON, present: Callable[[str], bool]) -> tuple[Pro
         home = _str_field(record, "dir")
         if name is None or home is None:
             continue
-        out.append(ProfileHome(name, home, present(home)))
+        raw_aliases = record.get("aliases")
+        aliases = tuple(a for a in raw_aliases if isinstance(a, str) and a) if isinstance(raw_aliases, list) else ()
+        out.append(ProfileHome(name, home, present(home), aliases))
     return tuple(out)
 
 

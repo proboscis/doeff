@@ -243,6 +243,8 @@
   PROFILE-BUDGET-UNIT-PERCENT
   PROFILE-OBSERVED-WINDOW-DEFAULT
   PROFILE-RETIRED
+  ProfileHome
+  PROFILE-USAGE-KIND
   PROFILE-STATUS-OBSERVED-BY-KEY
   PROFILE-STATUS-OBSERVED-KEY
   ProfileNotHeld
@@ -2702,22 +2704,56 @@
   (tuple out))
 
 
+(defk profile-kind-of [row]
+  {:pre [(: row AcpRow)]
+   :post [(: % str)]}
+  "行の口座の種類 = spec.kind(claude / codex — 配置の観測の腕が預かり所の在庫から写す)。欄の無い行は
+   PROFILE-USAGE-KIND(claude)と読む(段 12 lane 12c・agora-redesign #479 より前の行は全部 claude)。"
+  (setv kind (.get row.spec "kind"))
+  (if (and (isinstance kind str) kind) kind PROFILE-USAGE-KIND))
+
+
+(defk profile-rows-of-kind [active kind]
+  {:pre [(: active tuple) (: kind str)]
+   :post [(: % tuple)]}
+  "生きている行のうち口座の種類が kind の行 — 行の順のまま。観測の腕は名簿の種類ごと(PROFILE-USAGE-KINDS)に
+   家と残量を読むので、その種類の行が 1 つも無ければ家も usage も読まない(#479)。"
+  (setv out [])
+  (for [row active]
+    (when (= (profile-kind-of-plain row) kind)
+      (.append out row)))
+  (tuple out))
+
+
+(defn #^ str profile-kind-of-plain [#^ AcpRow row]
+  "profile-kind-of と同じ答えの純関数(lfor / for の中から呼ぶ形 — 判断は 1 つ・綴りは同じ既定)。"
+  (setv kind (.get row.spec "kind"))
+  (if (and (isinstance kind str) kind) kind PROFILE-USAGE-KIND))
+
+
+(defn #^ bool home-carries-name [#^ ProfileHome home #^ str name]
+  "家が行の名を名乗るか = 名簿の名か別名に一致(#479 D-479-2: ACP の行の名 codex-personal ↔ 名簿の家 personal)。"
+  (or (= home.name name) (in name home.aliases)))
+
+
 (defk profile-rows-held [active homes settings]
   {:pre [(: active tuple) (: homes tuple) (: settings AgentdSettings)]
    :post [(: % tuple)]}
   "生きている profile の行のうち、この機体に家(config dir)の在る profile の行 — 行の順のまま。
    判断はここ 1 点(段 8e lane 4j): 空なら観測の腕は usage を読まない(pool の pod は profile を
    1 つも持たない — 読み口が落ちる形で知るのではなく、家の在否で先に決める)。家は spec.name で
-   引く(登録簿の名と契約の行の名は同じ綴り)。
+   引く — 登録簿の名か**別名**に一致する家(段 12 lane 12c・agora-redesign #479: codex の行の名は預かり所の
+   別名 codex-personal で名簿の名 personal と違う。claude は両者が同じ綴り)。呼び手は種類ごとの行と
+   その種類の家を渡す(profile-rows-of-kind)— 種類をまたいで同じ名の家に結ばない。
    段 10 lane 10y(agora-redesign #110・operator 指示 2026-09-09「会社 profile の API 呼び出しは会社所有の機体だけ」):
    宣言の所有の等級(join で検めた settings.ownership)が company でない機体(personal・未宣言)は、spec.boundary = company の
    行を家が在っても持たない — usage を読む列にも log にも会社の口座が現れない。軸は機体の所有で、置き場(place)では
    ない(会社 Mac は place personal でも所有は company で、会社の口座を今日どおり観測する)。provider を呼んでよいかの
    最後の判定は今日どおり agentcli の葉(ReadProfileUsage の断り)が持つ。"
-  (setv present (sfor home homes :if home.present home.name))
+  (setv present (tuple (gfor home homes :if home.present home)))
   (setv company-owned (and (is-not settings.ownership None) (= settings.ownership.grade OWNERSHIP-GRADE-COMPANY)))
   (tuple (lfor row active
-               :if (and (in (str (.get row.spec "name" row.resource-id)) present)
+               :if (and (any (gfor home present (home-carries-name home (str (.get row.spec "name" row.resource-id)))))
                         (or company-owned (!= (.get row.spec "boundary") OWNERSHIP-GRADE-COMPANY)))
                row)))
 
@@ -2732,18 +2768,49 @@
   table)
 
 
-(defk observed-window-of [row]
-  {:pre [(: row AcpRow)]
+(defk usage-by-row-name [rows homes by-name]
+  {:pre [(: rows tuple) (: homes tuple) (: by-name dict)]
+   :post [(: % dict)]}
+  "行の名 → その行の家の**正名**で引いた usage の答え(#479 D-479-2)。usage の記録は名簿の名(personal)で
+   立つが、行の名は別名(codex-personal)でもよいので、家(名か別名が一致・profile-rows-held と同じ規則)を
+   経て引く。家が無い・答えが無い行は載せない(profile-observed-of が『持たない』と読む)。"
+  (setv table {})
+  (for [row rows]
+    (setv name (str (.get row.spec "name" row.resource-id)))
+    (for [home homes]
+      (when (and (not-in name table) (home-carries-name home name))
+        (setv outcome (.get by-name home.name))
+        (when (is-not outcome None)
+          (setv (get table name) outcome)))))
+  table)
+
+
+(defk observed-window-of [row windows]
+  {:pre [(: row AcpRow) (: windows tuple)]
    :post [(: % str)]}
   "どの窓を観測するか — 判断はここ 1 点: spec.reset.everySeconds と周期が一致する provider の窓
-   (effects.USAGE-WINDOW-SECONDS)、一致する窓が無ければ既定(5h)。"
+   (effects.USAGE-WINDOW-SECONDS)、一致する窓が無ければ既定(5h)= 宣言の窓。
+   宣言の窓が答え(windows)に無く、答えに別の窓が在れば、答えの窓のうち周期の最も長いものを観測する
+   (段 12 lane 12c・agora-redesign #479 D-479-3: codex の pro plan は 7d の窓しか返さず 5h は null —
+   宣言の窓を待つと永久に未観測)。値は発明しない(答えに在る窓の名を observed.window に名乗る)。
+   答えが空なら宣言の窓(呼び手が『答えに無い』と名乗る)。"
   (setv reset (.get row.spec "reset"))
   (setv every (if (isinstance reset dict) (.get reset "everySeconds") None))
   (setv found None)
   (for [[name seconds] (.items USAGE-WINDOW-SECONDS)]
     (when (and (is found None) (isinstance every int) (= seconds every))
       (setv found name)))
-  (if (is found None) PROFILE-OBSERVED-WINDOW-DEFAULT found))
+  (setv declared (if (is found None) PROFILE-OBSERVED-WINDOW-DEFAULT found))
+  (setv names (sfor window windows window.name))
+  (if (or (in declared names) (not names))
+      declared
+      (do
+        (setv longest None)
+        (for [window windows]
+          (when (or (is longest None)
+                    (> (.get USAGE-WINDOW-SECONDS window.name 0) (.get USAGE-WINDOW-SECONDS longest 0)))
+            (setv longest window.name)))
+        longest)))
 
 
 (defk profile-observed-of [row usage node-name]
@@ -2764,7 +2831,7 @@
     (ProfileUnobserved :reason f"budget.unit {unit !r} is not {PROFILE-BUDGET-UNIT-PERCENT} — remaining has no unit to report")
     True
     (do
-      (<- window-name str (observed-window-of row))
+      (<- window-name str (observed-window-of row usage.windows))
       (setv window None)
       (for [candidate usage.windows]
         (when (and (is window None) (= candidate.name window-name))
