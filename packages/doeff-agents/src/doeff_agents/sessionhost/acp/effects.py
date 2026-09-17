@@ -600,6 +600,26 @@ class WorkRoots:
     roots: tuple[str, ...]
 
 
+#: node が持つ作業場(段 12 lane 12j・agora-redesign #575 便 2・#557 案 A の後半): 契約 agora-kinds.json node.spec.workDirs(家からの相対
+#: `~/repos/<名>` / `~/<名>` の list・欄の定義点は契約 — ACP 側 #575 便 1)。配車は `~/…` の work_dir をこの列で篩う(持つ node だけ候補・
+#: 欄の無い node は篩わない・空の list = 「何も持たない」の宣言)。agentd は join で自分の家(~ の直下と ~/repos の直下の .git を持つ dir)
+#: から導いて名乗る(runtime.join_plan が一覧を読み、判断は join.held-work-dirs-of の 1 点)。env は join が据える。
+NODE_SPEC_WORK_DIRS = "workDirs"
+WORK_DIRS_ENV = "DOEFF_AGENTD_WORK_DIRS"
+WORK_DIRS_SEPARATOR = ","
+#: 上限(契約 node.spec.workDirs.maxItems の写し)。
+WORK_DIRS_MAX = 64
+#: 家のどの直下を読むか("" = ~ の直下・"repos" = ~/repos の直下)— 区画の置き場の作法(~/<名> か ~/repos/<名>)の写し。
+WORK_DIRS_SCAN_PARENTS: tuple[str, ...] = ("", "repos")
+
+
+@dataclass(frozen=True)
+class WorkDirs:
+    """node が持つ作業場の宣言(join.work-dirs-of / held-work-dirs-of の答え — 検を通った作業場を綴りの順・重複なしで運ぶ)。"""
+
+    dirs: tuple[str, ...]
+
+
 @dataclass(frozen=True)
 class Places:
     """機体が仕える置き場の集合の宣言(join.places-of の答え — 検を通った語を宣言の順・重複なしで運ぶ・段 11 lane 11u)。"""
@@ -754,6 +774,8 @@ class JoinSpec:
     declaration_sha256: str | None = None
     #: node が持つ作業場の根(段 10 lane 10y 案 C — 宣言 file の [agentd].work_roots)。None = 名乗らない(spec に欄を書かない)。
     work_roots: tuple[str, ...] | None = None
+    #: node が持つ作業場(段 12 lane 12j・#575 便 2 — composition root が家の一覧から導く)。None = 導いていない(欄を書かない)。
+    work_dirs: tuple[str, ...] | None = None
     #: 従量課金の binding kind を受けるか(従量課金の便 lane A — 宣言 file の
     #: [agentd].allow_metered_billing・flag --allow-metered-billing)。False = 受けない(既定)。
     #: 真のときだけ join が host の argv へ値なしの旗を足す。env は作らない(方針は argv の 1 点)。
@@ -952,6 +974,9 @@ class AgentdSettings:
     #: node が持つ作業場の根(段 10 lane 10y 案 C — join が据えた WORK_ROOTS_ENV の写し・検は join.work-roots-of の 1 点)。
     #: None = 宣言なし(node の spec に workRoots を書かない — 欄の無い node の読み方は配車の側が決める)。
     work_roots: tuple[str, ...] | None = None
+    #: node が持つ作業場(段 12 lane 12j・#575 便 2 — join が据えた WORK_DIRS_ENV の写し・検は join.work-dirs-of の 1 点)。
+    #: None = 導いていない(spec に workDirs を書かない)・空の tuple = 何も持たない。
+    work_dirs: tuple[str, ...] | None = None
     #: host の backend(wire の閉語彙 tmux | herdr | headless の写し — agentd が読む語は
     #: BACKEND_HEADLESS だけ)。composition root(runtime.settings_from_env)が host の argv / env
     #: (valve.backend_of)から導く 1 点で、stream_capability も同じ源から導く。headless の器は
