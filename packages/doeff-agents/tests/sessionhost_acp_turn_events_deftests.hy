@@ -31,6 +31,9 @@
   MESSAGE-KIND
   NODE-KIND
   PHASE-BOUND
+  PHASE-ENDED
+  PHASE-RUNNING
+  PHASE-WITHDRAWN
   RECORD-CREATE-CREATED
   RECORD-CREATE-GIVEN-UP
   RECORD-CREATE-PENDING
@@ -44,6 +47,11 @@
 (import doeff_agents.sessionhost.acp.judgment [
   claude-result-error
   provider-limit-condition-of
+  attempt-refused?
+  binding-attempt-of
+  job-rows-running-on
+  refused-attempt-status-of
+  retired-rows-of
   claude-system-note
   deltas-of
   entries-within-budget
@@ -220,24 +228,18 @@
   (assert (= quiet.entries #())))
 
 
-(deftest test-a-turn-refused-by-the-providers-limit-ends-with-the-typed-condition
-  ;; 段 11 lane 11n 便 C(agora-redesign #179・依頼者の裁定 2026-09-15 案 c′): 一周の後半 —— 器が
-  ;; 限度の断りで終端(status failed・cause rate_limited: 前半は host の検
-  ;; test_host_headless_turn_refused_by_the_provider_limit_fails_the_session_with_the_cause)。
-  ;; 制御面は cause を読み、agent-job の Ended に条件 ProviderLimit{model} を刻む —— これが
-  ;; 予算の判断へ戻る道(実弾 2026-09-15 13:2x では行に 1 bit も残らなかった)。
-  (setv world (World))
-  (.tick world 0)
-  (setv sid (.sid world))
-  (setv said "You've reached your Fable limit. /model to switch models.")
-  ;; 出来事は今日どおり(kind error の見出し)+ 器の終端の cause。
-  (setv events (+ (stream-line {"type" "system" "subtype" "init" "session_id" sid "model" "claude-opus-5"})
-                  (stream-line {"type" "result" "subtype" "error_during_execution" "is_error" True
-                                "result" said})))
-  (setv (get world.local.transcripts f"/events/{sid}.events.jsonl") events)
-  (.tick world 1000)
-  (.finish world.sessions sid "failed" None {"category" "rate_limited" "reason" said})
-  (.tick world 1000)
+(deftest test-a-turn-refused-by-the-providers-limit-keeps-the-row-running-and-names-the-attempt
+  ;; 段 11 lane 11n 便 C(agora-redesign #179)→ agora-redesign #519(段 12・D-519-3): 一周の後半 —— 器が限度の断りで
+  ;; 終端(status failed・cause rate_limited)。制御面は cause を読み、agent-job に条件 ProviderLimit{model, profile, attempt, at}
+  ;; を刻み、**phase は Ended にしない**(終端の巻き戻しは engine が断る — 置き直しは配置の supervision provider-refused)。
+  ;; turn-record も ended にしない(1 手番 1 行・次の試みが続ける)。札は返し、memory から外し、置き直し待ちの行は拾い直さない。
+  ;; 実弾 2026-09-17 20:29〜21:15: Ended に書いた手番の郵便が delivered のまま 46 分止まった。
+  (setv world (refused-world))
+  (setv said "You've hit your individual spend limit · ask your admin to raise it")
+  (setv status (job-status world))
+  (assert (= (get status "phase") PHASE-RUNNING) status)
+  (assert (isinstance (.get status "sessionHandle") dict) "sessionHandle は行のまま")
+  (assert (= (get (get status "binding") "profile") "personal") status)
   (setv conditions (job-conditions world))
   (setv limits (lfor item conditions :if (= (.get item "type") "ProviderLimit") item))
   (assert (= (len limits) 1) conditions)
@@ -247,21 +249,157 @@
   ;; model = 手番が走らせようとした model(charter.model)ちょうど。
   (assert (= (get limit "model") "claude-opus-5") limit)
   (assert (= (get limit "message") said) limit)
-  ;; 器の終端の条件(SessionFailed)はそのまま在る — 足すだけで置き換えない。
-  (assert (in "SessionFailed" (lfor item conditions (.get item "type"))) conditions)
-  ;; 出来事の側も今日どおり(kind error の見出し 1 行に CLI の文が残る)。
+  ;; #519: 記録は口座(この手番の binding.profile)・試み(binding.attempt — 欄の無い結びは 1)・時刻(記録を書いた拍)を名乗る。
+  (assert (= (get limit "profile") "personal") limit)
+  (assert (= (get limit "attempt") 1) limit)
+  (assert (= (get limit "at") world.local.now-ms) limit)
+  (assert (not-in "until" limit) "until は書かない(窓を知るのは予算の controller)")
+  ;; 器の終端の条件(SessionFailed)は足さない — この試みの結末は ProviderLimit の記録が名乗る(Ended の語彙は Ended の時だけ)。
+  (assert (not-in "SessionFailed" (lfor item conditions (.get item "type"))) conditions)
+  ;; turn-record は running のまま(次の試みが同じ行を続ける)。
+  (assert (= (get (.record-status world) "state") "running") (.record-status world))
+  ;; 出来事の側は今日どおり(kind error の見出し 1 行に CLI の文が残る)。
   (assert (in "error" (lfor entry (.record-entries world) (get entry "kind"))))
-  ;; log に 1 行(どの model が断られたか)。
-  (assert (any (gfor line world.local.logs (in "refused by the provider's limit" line))) world.local.logs)
-  ;; 限度でない終端(普通の失敗)には条件が乗らない(黙って枯渇を名乗らない)。
+  ;; 札は返し、memory からは外す。
+  (assert (= (len world.custody.revoked) 1) world.custody.revoked)
+  (assert (= world.state.jobs #()) world.state.jobs)
+  ;; log に 1 行(どの試み・どの口座・どの model が断られたか)。
+  (assert (any (gfor line world.local.logs (and (in "refused by the provider's limit" line) (in "attempt 1" line) (in "profile personal" line)))) world.local.logs)
+  ;; 次の拍: 置き直し待ちの Running の行(自分の記録がいまの試みを名乗る)は拾い直さない — fail-missing で Ended にしない。
+  (.tick world 1000)
+  (.tick world 1000)
+  (assert (= world.state.jobs #()) world.state.jobs)
+  (assert (= (get (job-status world) "phase") PHASE-RUNNING) (job-status world))
+  (assert (= (lfor item (job-conditions world) :if (in (.get item "type") ["SessionFailed" "SessionLost"]) item) []) (job-conditions world))
+  (assert (= (get (.record-status world) "state") "running"))
+  ;; 限度でない終端(普通の失敗)は今日どおり Ended(条件 ProviderLimit は乗らない・記録は ended)。
   (setv plain (World))
   (.tick plain 0)
   (setv psid (.sid plain))
   (.tick plain 1000)
   (.finish plain.sessions psid "failed" None None)
   (.tick plain 1000)
+  (assert (= (get (job-status plain) "phase") PHASE-ENDED) (job-status plain))
   (assert (= (lfor item (job-conditions plain) :if (= (.get item "type") "ProviderLimit") item) [])
-          (job-conditions plain)))
+          (job-conditions plain))
+  (assert (= (get (.record-status plain) "state") "ended")))
+
+
+(deftest test-the-next-attempt-of-a-refused-turn-continues-the-same-turn-record
+  ;; agora-redesign #519(段 12・D-519-3): 配置が断られた試みを置き直し(Pending → Bound attempt 2・別の口座)、同じ node が
+  ;; 受けた時 — 新しい session を起こし、turn-record の create は Conflict(既に在る・running)で、拾い直しと同じ採番
+  ;; (recovered-record-of = 行の generation + 1・seq は続き)で**同じ記録を続ける**。attempt 1 の記録(ProviderLimit)は行に残る。
+  (setv world (refused-world))
+  (setv first-sid (.sid world))
+  (setv record-generation (. (.record world) generation))
+  (setv creates-before (.get world.acp.creates f"{AGORA-KINDS-NAMESPACE}:{TURN-RECORD-KIND}:j-1" 0))
+  (assert (= creates-before 1))
+  ;; 配置の書き(替え玉): Pending へ戻し(binding は試みの記録として残る)、attempt 2 を別の口座 second で同じ node に結ぶ。
+  (place-job-again world PHASE-BOUND {"node" NODE "profile" "second" "account" "acct" "attempt" 2 "at" 7000} [])
+  (.tick world 1000)
+  (setv job (in-flight world))
+  (setv second-sid (.sid world))
+  (assert (!= second-sid first-sid) "attempt 2 は新しい session")
+  (assert (= job.profile "second") job)
+  ;; create は撃った(2 度目)が Conflict → 同じ記録を続ける: stream の番は行の generation + 1・seq は行の続き。
+  (assert (= (.get world.acp.creates f"{AGORA-KINDS-NAMESPACE}:{TURN-RECORD-KIND}:j-1") (+ creates-before 1)))
+  (assert (= job.record-create "created") job.record-create)
+  (assert (> job.record-attempt 1) job.record-attempt)
+  (assert (= job.record-attempt (+ record-generation 1)) #(job.record-attempt record-generation))
+  (assert (>= job.delta-seq (len (.record-entries world))) #(job.delta-seq (len (.record-entries world))))
+  ;; 記録の行は作り直されていない(spec は attempt 1 の sessionId のまま・state running)。
+  (assert (= (get (. (.record world) spec) "sessionId") first-sid))
+  (assert (= (get (.record-status world) "state") "running"))
+  (assert (any (gfor line world.local.logs (in "continues the existing turn-record" line))) world.local.logs)
+  ;; attempt 1 の記録は行に残る(予算の係の材料)。
+  (setv limits (lfor item (job-conditions world) :if (= (.get item "type") "ProviderLimit") item))
+  (assert (= (lfor item limits (get item "attempt")) [1]) limits)
+  ;; attempt 2 が普通に終わる: 記録は ended・agent-job は Ended・attempt 1 の記録はそのまま・新しい断りは無い。
+  (setv (get world.local.transcripts f"/events/{second-sid}.events.jsonl") (claude-events second-sid "hello again"))
+  (.tick world 1000)
+  (.finish world.sessions second-sid "done" {"ok" True} None)
+  (.tick world 1000)
+  (assert (= (get (job-status world) "phase") PHASE-ENDED) (job-status world))
+  (assert (= (get (.record-status world) "state") "ended"))
+  (assert (= (lfor item (job-conditions world) :if (= (.get item "type") "ProviderLimit") (get item "attempt")) [1]))
+  (assert (= world.state.jobs #())))
+
+
+(deftest test-a-retired-turn-of-mine-ends-its-turn-record-once
+  ;; agora-redesign #519(段 12・D-519-3): 配置が試みの上限で退役させた行(Withdrawn + Unschedulable{retry-budget-exhausted})
+  ;; の turn-record は最後の runner(自分)が ended にする — level-triggered・冪等(2 度目の拍は書かない)。
+  (setv world (refused-world))
+  (assert (= (get (.record-status world) "state") "running"))
+  (place-job-again world PHASE-WITHDRAWN {"node" NODE "profile" "personal" "account" "acct" "attempt" 3 "at" 9000}
+                   [{"type" "Unschedulable" "status" "True" "reason" "retry-budget-exhausted" "rescues" []}])
+  (.tick world 1000)
+  (assert (= (get (.record-status world) "state") "ended") (.record-status world))
+  (assert (not-in "usage" (.record-status world)) "退役の記録は usage を書かない(消費の和は手番の終わりだけ)")
+  (setv ended-writes (lfor status (.record-writes world) :if (= (.get status "state") "ended") status))
+  (assert (= (len ended-writes) 1) ended-writes)
+  (assert (any (gfor line world.local.logs (in "turn-record of retired job j-1 ended" line))) world.local.logs)
+  ;; 冪等: 次の拍は書かない。
+  (.tick world 1000)
+  (assert (= (len (lfor status (.record-writes world) :if (= (.get status "state") "ended") status)) 1))
+  ;; agent-job の phase は触らない(Withdrawn のまま — 書き手は配置)。
+  (assert (= (get (job-status world) "phase") PHASE-WITHDRAWN))
+  ;; 退役でない Withdrawn(operator の取り下げ — Cancelled)の記録は触らない(今日どおり interrupt-job の腕の座)。
+  (setv other (refused-world))
+  (place-job-again other PHASE-WITHDRAWN {"node" NODE "profile" "personal" "account" "acct" "attempt" 1}
+                   [{"type" "Cancelled" "status" "True" "reason" "operator"}])
+  (.tick other 1000)
+  (assert (= (get (.record-status other) "state") "running") (.record-status other)))
+
+
+(deftest test-refused-attempt-judgements-read-the-binding-attempt-and-the-record
+  ;; agora-redesign #519 の純関数: binding.attempt の読み(欄なし = 1・bool は数でない)/ attempt-refused?(いまの試みを名乗る
+  ;; ProviderLimit True だけ)/ refused-attempt-status-of(phase・sessionHandle はそのまま・条件を足すだけ)/
+  ;; job-rows-running-on(置き直し待ちの行は拾い直さない)/ retired-rows-of(退役 + 自分の行だけ)。
+  (assert (= (run (binding-attempt-of {"binding" {"attempt" 3}})) 3))
+  (assert (= (run (binding-attempt-of {"binding" {"node" NODE}})) 1))
+  (assert (= (run (binding-attempt-of {})) 1))
+  (assert (= (run (binding-attempt-of {"binding" {"attempt" True}})) 1))
+  (assert (= (run (binding-attempt-of {"binding" {"attempt" 0}})) 1))
+  (setv record-1 {"type" "ProviderLimit" "status" "True" "attempt" 1 "at" AT "profile" "personal"})
+  (setv record-2 {"type" "ProviderLimit" "status" "True" "attempt" 2 "at" AT "profile" "second"})
+  (assert (is (run (attempt-refused? {"phase" "Running" "binding" {"attempt" 1} "conditions" [record-1]})) True))
+  (assert (is (run (attempt-refused? {"phase" "Running" "binding" {"attempt" 2} "conditions" [record-1]})) False) "古い attempt の記録")
+  (assert (is (run (attempt-refused? {"phase" "Running" "binding" {"attempt" 2} "conditions" [record-1 record-2]})) True))
+  (assert (is (run (attempt-refused? {"phase" "Running" "binding" {"node" NODE} "conditions" [record-1]})) True) "欄の無い結びは attempt 1")
+  (assert (is (run (attempt-refused? {"phase" "Running" "binding" {"attempt" 1} "conditions" [{"type" "ProviderLimit" "status" "True"}]})) False) "attempt を名乗らない旧 agentd の記録")
+  (assert (is (run (attempt-refused? {"phase" "Running" "binding" {"attempt" 1} "conditions" [{#** record-1 "status" "False"}]})) False))
+  (assert (is (run (attempt-refused? {"phase" "Running" "binding" {"attempt" 1}})) False))
+  ;; refused-attempt-status-of: phase / sessionHandle / binding / result はそのまま、条件は末尾に足す。
+  (setv before {"phase" "Running" "binding" {"attempt" 1 "profile" "personal"} "sessionHandle" {"sessionId" "s-1"}
+                "conditions" [{"type" "InputUnavailable" "status" "True"}]})
+  (setv after (run (refused-attempt-status-of before #(record-1))))
+  (assert (= (get after "phase") "Running"))
+  (assert (= (get after "sessionHandle") {"sessionId" "s-1"}))
+  (assert (= (get after "binding") {"attempt" 1 "profile" "personal"}))
+  (assert (= (lfor item (get after "conditions") (get item "type")) ["InputUnavailable" "ProviderLimit"]))
+  (assert (= (get before "conditions") [{"type" "InputUnavailable" "status" "True"}]) "元の status は触らない")
+  ;; job-rows-running-on: 自分の Running の行のうち、いまの試みを名乗る記録を持つ行は外す。
+  (setv handle {"sessionId" "s-1" "stream" {"owner" "agentd"}})
+  (setv waiting (row-of AGENT-JOB-NAMESPACE AGENT-JOB-KIND "j-w" {"subject" CONVERSATION "inputs" [] "charter" {}}
+                        {"phase" PHASE-RUNNING "binding" {"node" NODE "attempt" 1} "sessionHandle" handle "conditions" [record-1]}))
+  (setv moved-on (row-of AGENT-JOB-NAMESPACE AGENT-JOB-KIND "j-m" {"subject" CONVERSATION "inputs" [] "charter" {}}
+                         {"phase" PHASE-RUNNING "binding" {"node" NODE "attempt" 2} "sessionHandle" handle "conditions" [record-1]}))
+  (setv plain (row-of AGENT-JOB-NAMESPACE AGENT-JOB-KIND "j-p" {"subject" CONVERSATION "inputs" [] "charter" {}}
+                      {"phase" PHASE-RUNNING "binding" {"node" NODE} "sessionHandle" handle "conditions" []}))
+  (setv mine (run (job-rows-running-on #(waiting moved-on plain) NODE None "agentd")))
+  (assert (= (lfor row mine row.resource-id) ["j-m" "j-p"]) (lfor row mine row.resource-id))
+  ;; retired-rows-of: Withdrawn + Unschedulable{retry-budget-exhausted} + 自分の handle の行だけ。
+  (setv retired-condition {"type" "Unschedulable" "status" "True" "reason" "retry-budget-exhausted" "rescues" []})
+  (setv retired (row-of AGENT-JOB-NAMESPACE AGENT-JOB-KIND "j-r" {"subject" CONVERSATION "inputs" [] "charter" {}}
+                        {"phase" PHASE-WITHDRAWN "binding" {"node" NODE "attempt" 3} "sessionHandle" handle "conditions" [record-1 retired-condition]}))
+  (setv cancelled (row-of AGENT-JOB-NAMESPACE AGENT-JOB-KIND "j-c" {"subject" CONVERSATION "inputs" [] "charter" {}}
+                          {"phase" PHASE-WITHDRAWN "binding" {"node" NODE "attempt" 1} "sessionHandle" handle "conditions" [{"type" "Cancelled" "status" "True" "reason" "operator"}]}))
+  (setv elsewhere (row-of AGENT-JOB-NAMESPACE AGENT-JOB-KIND "j-e" {"subject" CONVERSATION "inputs" [] "charter" {}}
+                          {"phase" PHASE-WITHDRAWN "binding" {"node" "other-node" "attempt" 3} "sessionHandle" {"sessionId" "s-9" "stream" {"owner" "agentd"}} "conditions" [retired-condition]}))
+  (setv still-running (row-of AGENT-JOB-NAMESPACE AGENT-JOB-KIND "j-s" {"subject" CONVERSATION "inputs" [] "charter" {}}
+                              {"phase" PHASE-RUNNING "binding" {"node" NODE "attempt" 3} "sessionHandle" handle "conditions" [retired-condition]}))
+  (setv found (run (retired-rows-of #(retired cancelled elsewhere still-running) NODE None "agentd")))
+  (assert (= (lfor row found row.resource-id) ["j-r"]) (lfor row found row.resource-id)))
 
 
 (deftest test-provider-limit-condition-reads-the-containers-terminal-cause-not-the-cli-text
@@ -269,26 +407,33 @@
   ;; **器が書いた終端の cause** を読む 1 点(族の表は器の側 = impls/markers.hy の 1 点で、
   ;; ここには無い — ADR-DOE-AGENTS-008 R1)。category = rate_limited だけが条件になる。
   (setv said "You've reached your Fable limit. /model to switch models.")
-  (setv condition (run (provider-limit-condition-of {"category" "rate_limited" "reason" said} "claude-fable-5-1")))
+  (setv condition (run (provider-limit-condition-of {"category" "rate_limited" "reason" said} "claude-fable-5-1" "personal" 2 AT)))
+  ;; agora-redesign #519: 記録は口座・試み・時刻を自分で名乗る(契約 scheduling.json providerRefusal.fields)。
   (assert (= condition {"type" "ProviderLimit" "status" "True" "reason" "rate-limited"
-                        "message" said "model" "claude-fable-5-1"}) condition)
+                        "message" said "model" "claude-fable-5-1"
+                        "profile" "personal" "attempt" 2 "at" AT}) condition)
   (assert (not-in "until" condition) "until は書かない(窓を知るのは予算の controller)")
+  ;; 口座の名が無い手番(結ばれていない・空)は profile の欄を落とす(発明しない)。attempt / at は常に名乗る。
+  (setv unbound (run (provider-limit-condition-of {"category" "rate_limited" "reason" said} "claude-fable-5-1" None 1 AT)))
+  (assert (not-in "profile" unbound) unbound)
+  (assert (= #((get unbound "attempt") (get unbound "at")) #(1 AT)) unbound)
+  (assert (not-in "profile" (run (provider-limit-condition-of {"category" "rate_limited" "reason" said} "claude-fable-5-1" "  " 1 AT))))
   ;; 限度でない終端(器の壊れ・普通の失敗)・cause 無しは条件を作らない(黙って枯渇を名乗らない)。
   (for [cause [{"category" "run_failed" "reason" said}
                {"category" "timed_out" "reason" "deadline"}
                {"category" "cancelled" "reason" "stop"}
                {} None]]
-    (assert (is (run (provider-limit-condition-of cause "claude-opus-5")) None) f"限度でない cause が当たった: {cause}"))
+    (assert (is (run (provider-limit-condition-of cause "claude-opus-5" "personal" 1 AT)) None) f"限度でない cause が当たった: {cause}"))
   ;; 理由の文が無い cause でも条件は作る(message は category の語 — 黙って落とさない)。
-  (setv bare (run (provider-limit-condition-of {"category" "rate_limited"} "claude-opus-5")))
+  (setv bare (run (provider-limit-condition-of {"category" "rate_limited"} "claude-opus-5" "personal" 1 AT)))
   (assert (= (get bare "message") "rate_limited") bare)
   ;; model は「手番が走らせようとした model」ちょうど(charter.model)。宣言の無い手番
   ;; (MODEL-UNDECLARED)は欄を落とす — 限度の拍の usage.model は `<synthetic>` で材料が名乗らない。
-  (setv undeclared (run (provider-limit-condition-of {"category" "rate_limited" "reason" said} MODEL-UNDECLARED)))
+  (setv undeclared (run (provider-limit-condition-of {"category" "rate_limited" "reason" said} MODEL-UNDECLARED "personal" 1 AT)))
   (assert (not-in "model" undeclared) undeclared)
-  (assert (not-in "model" (run (provider-limit-condition-of {"category" "rate_limited"} None))))
+  (assert (not-in "model" (run (provider-limit-condition-of {"category" "rate_limited"} None "personal" 1 AT))))
   ;; 改行のある理由は 1 行目だけを message に(行は人が読む 1 行)。
-  (setv multi (run (provider-limit-condition-of {"category" "rate_limited" "reason" (+ said "\nTry later.")} "claude-fable-5-1")))
+  (setv multi (run (provider-limit-condition-of {"category" "rate_limited" "reason" (+ said "\nTry later.")} "claude-fable-5-1" "personal" 1 AT)))
   (assert (= (get multi "message") said) multi))
 
 
@@ -532,6 +677,41 @@
   (setv conditions (.get status "conditions" []))
   (assert (isinstance conditions list))
   (list conditions))
+
+
+(defn #^ dict job-status [#^ World world]
+  (setv status (. (get world.acp.rows f"{AGENT-JOB-NAMESPACE}:{AGENT-JOB-KIND}:j-1") status))
+  (assert (isinstance status dict))
+  status)
+
+
+(defn #^ None place-job-again [#^ World world #^ str phase #^ dict binding #^ list extra-conditions]
+  "agora-redesign #519: 配置の書きの替え玉 — 行の phase と binding を書き替え(sessionHandle と既存の条件は行のまま)、
+   条件を足す(退役の Unschedulable 等)。generation は 1 進む(engine の CAS と同じ)。"
+  (setv key f"{AGENT-JOB-NAMESPACE}:{AGENT-JOB-KIND}:j-1")
+  (setv row (get world.acp.rows key))
+  (setv status (dict row.status))
+  (setv (get status "phase") phase)
+  (setv (get status "binding") binding)
+  (setv (get status "conditions") (+ (list (.get status "conditions" [])) extra-conditions))
+  (.put-row world.acp (dataclasses.replace row :generation (+ row.generation 1) :status status))
+  None)
+
+
+(defn #^ World refused-world []
+  "agora-redesign #519: 1 手番が口座の限度で断られた直後の世界(行は Running のまま・記録は running・memory は空)。"
+  (setv world (World))
+  (.tick world 0)
+  (setv sid (.sid world))
+  (setv said "You've hit your individual spend limit · ask your admin to raise it")
+  (setv events (+ (stream-line {"type" "system" "subtype" "init" "session_id" sid "model" "claude-opus-5"})
+                  (stream-line {"type" "result" "subtype" "error_during_execution" "is_error" True
+                                "result" said})))
+  (setv (get world.local.transcripts f"/events/{sid}.events.jsonl") events)
+  (.tick world 1000)
+  (.finish world.sessions sid "failed" None {"category" "rate_limited" "reason" said})
+  (.tick world 1000)
+  world)
 
 
 (defn #^ InFlightJob in-flight [#^ World world]

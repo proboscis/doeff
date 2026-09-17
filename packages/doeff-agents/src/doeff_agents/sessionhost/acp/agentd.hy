@@ -306,6 +306,7 @@
   SessionSend
   SessionTranscript
   SessionView
+  TURN-RECORD-ENDED
   TURN-RECORD-KIND
   TranscriptChunk
   WatchAdvance
@@ -391,6 +392,8 @@
   record-ref-of
   record-stream-job-of
   recovered-record-of
+  refused-attempt-status-of
+  retired-rows-of
   ended-status-of
   entries-of-status
   next-seq-after
@@ -401,6 +404,7 @@
   frame-lines-of
   session-affinity-key-of
   provider-limit-condition-of
+  binding-attempt-of
   session-lost-condition-of
   in-flight-ids
   in-flight-job-of
@@ -1422,6 +1426,16 @@
   (<- job InFlightJob (record-create-applied job created sent-ms settings.turn-record-create-deadline-seconds))
   (when (not (isinstance created Written))
     (<- (LogLine :text f"agentd: turn-record for job {job-id} was not created ({created}); record-create = {job.record-create}")))
+  ;; agora-redesign #519(段 12・D-519-3): 既に在る記録(Conflict = 置き直された試み attempt ≥ 2 — 前の試みが断られて記録は
+  ;; running のまま)は同じ行を続ける: 本文の stream の番と採番の下限を拾い直しと同じ 1 点(judgment.recovered-record-of =
+  ;; 行の generation + 1・entries の seq の次)から取る — stream は `<jobId>#a<n>`・seq は続き(service の producerSeq と
+  ;; 見出しの seq を同じ値に保つ)。
+  (when (isinstance created Conflict)
+    (<- record-key str (turn-record-key-of job-id))
+    (<- record-row (| AcpRow None) (AcpGetRow :key record-key))
+    (<- resumed tuple (recovered-record-of record-row))
+    (setv job (replace job :record-attempt (get resumed 0) :delta-seq (max job.delta-seq (get resumed 1))))
+    (<- (LogLine :text f"agentd: job {job-id} continues the existing turn-record (stream attempt {job.record-attempt}, seq from {(get resumed 1)}) (#519)")))
   (<- next AgentdState (with-job state job))
   next)
 
@@ -1905,50 +1919,76 @@
   (<- measured AgentdState (with-context-percent state job.session-id percent))
   ;; 段 12 lane 12j 便 3: 文脈の大きさが宣言の閾値を超えた手番の終わりに、古い区間の要約の job を 1 つ書く(判断は judgment.summarize-due)。
   (<- (trigger-summarize settings job batch now-ms))
-  ;; turn-record → ended(追記できずに持ち越した出来事があれば最後の書きに乗せる)
-  (<- recorded bool (end-turn-record drained.job-id batch.usage drained.pending-entries))
-  (when (not recorded)
-    (<- (LogLine :text f"agentd: turn-record for job {job.job-id} is missing at turn end")))
   ;; 段 11 lane 11n 便 C(agora-redesign #179・依頼者の裁定 2026-09-15 案 c′): 器が provider の限度で
   ;; 終わった手番は、その事実を型で残す(判断は judgment.provider-limit-condition-of の 1 点で、読むのは
   ;; 器が書いた終端の cause ちょうど・None = 限度の断りではない)。この条件が無いと「どの model が
   ;; 枯れたか」が行に 1 bit も残らず、予算の判断へ戻る道が無い(実弾 2026-09-15 13:2x)。
+  ;; agora-redesign #519(段 12): 記録は試み(行の binding.attempt)・口座(この手番の profile)・時刻(この拍)を名乗る —
+  ;; 行を先に読む(試みの回数は行の欄)。
+  (<- fresh (| AcpRow None) (AcpGetRow :key job.job-key))
+  (<- fresh-status dict (if (is fresh None) {} (status-object-of fresh)))
+  (<- attempt int (binding-attempt-of fresh-status))
   (<- limit (| dict None) (provider-limit-condition-of
                             (if (isinstance view SessionView) view.terminal-cause None)
-                            job.model))
-  (when (is-not limit None)
-    (<- (LogLine :text (+ f"agentd: job {job.job-id} was refused by the provider's limit "
-                               f"(model {job.model}): {(get limit "message")}"))))
-  ;; #349 行 3 粒 3a: 限度の断りは cause にも写す(failed / ProviderLimit・取り消しの cause は上書きしない — judgment.outcome-with-limit の 1 点)
-  (<- limited JobOutcome (outcome-with-limit outcome limit))
-  ;; agent-job → Ended(段 12 lane 12j・agora-redesign #402: 着かなければ行を 1 度読み直して書き直し〔監督が Pending へ戻した /
-  ;; Bound attempt N に置き直した行にも Ended を書く — 手番は終わっている〕、それでも着かなければ持ち越す〔毎拍の
-  ;; record-unrecorded-ends が書き直す・その id の Bound は claim しない〕。判断は judgment.end-retry-verdict の 1 点。)
+                            job.model job.profile attempt now-ms))
   (setv carried measured)
-  ;; conditions は最新の写し(drained — 段 9p の given-up の RecordUnavailable を含む)から。
-  (setv ended-conditions (+ drained.pending-conditions outcome.conditions (if (is limit None) #() #(limit))))
-  (<- fresh (| AcpRow None) (AcpGetRow :key job.job-key))
-  (if (is fresh None)
-      (<- (LogLine :text f"agentd: agent-job {job.job-id} vanished before Ended"))
+  (if (is limit None)
       (do
-        (<- job-status dict (status-object-of fresh))
-        (<- ended dict (ended-status-of job-status outcome.result limited.cause ended-conditions))
-        (<- wrote-job (| Written Conflict Refused) (AcpPutStatus :row fresh :status ended))
-        (when (not (isinstance wrote-job Written))
-          (setv landed False)
-          (<- again (| AcpRow None) (AcpGetRow :key job.job-key))
-          (<- verdict str (end-retry-verdict again job.session-id settings.principal now-ms now-ms UNRECORDED-END-TTL-MS))
-          (when (and (= verdict END-RETRY-WRITE) (isinstance again AcpRow))
-            (<- again-status dict (status-object-of again))
-            (<- ended-again dict (ended-status-of again-status outcome.result limited.cause ended-conditions))
-            (<- wrote-again (| Written Conflict Refused) (AcpPutStatus :row again :status ended-again))
-            (setv landed (isinstance wrote-again Written))
-            (<- (LogLine :text (+ f"agentd: agent-job {job.job-id} Ended re-written on the fresh row (phase was {(.get again-status "phase")}) "
-                                  f"after {wrote-job}: " (if landed "landed" (str wrote-again)) " (#402)"))))
-          (when (not landed)
-            (<- end UnrecordedEnd (unrecorded-end-of job outcome.result limited.cause ended-conditions now-ms))
-            (<- carried AgentdState (with-unrecorded-end carried end))
-            (<- (LogLine :text f"agentd: agent-job {job.job-id} not ended ({wrote-job}; verdict {verdict}); carrying the Ended to the next ticks (#402)"))))))
+        ;; turn-record → ended(追記できずに持ち越した出来事があれば最後の書きに乗せる)
+        (<- recorded bool (end-turn-record drained.job-id batch.usage drained.pending-entries))
+        (when (not recorded)
+          (<- (LogLine :text f"agentd: turn-record for job {job.job-id} is missing at turn end")))
+        ;; #349 行 3 粒 3a: 限度の断りは cause にも写す(failed / ProviderLimit・取り消しの cause は上書きしない — judgment.outcome-with-limit の 1 点)
+        (<- limited JobOutcome (outcome-with-limit outcome limit))
+        ;; agent-job → Ended(段 12 lane 12j・agora-redesign #402: 着かなければ行を 1 度読み直して書き直し〔監督が Pending へ戻した /
+        ;; Bound attempt N に置き直した行にも Ended を書く — 手番は終わっている〕、それでも着かなければ持ち越す〔毎拍の
+        ;; record-unrecorded-ends が書き直す・その id の Bound は claim しない〕。判断は judgment.end-retry-verdict の 1 点。)
+        ;; conditions は最新の写し(drained — 段 9p の given-up の RecordUnavailable を含む)から。
+        (setv ended-conditions (+ drained.pending-conditions outcome.conditions))
+        (if (is fresh None)
+            (<- (LogLine :text f"agentd: agent-job {job.job-id} vanished before Ended"))
+            (do
+              (<- ended dict (ended-status-of fresh-status outcome.result limited.cause ended-conditions))
+              (<- wrote-job (| Written Conflict Refused) (AcpPutStatus :row fresh :status ended))
+              (when (not (isinstance wrote-job Written))
+                (setv landed False)
+                (<- again (| AcpRow None) (AcpGetRow :key job.job-key))
+                (<- verdict str (end-retry-verdict again job.session-id settings.principal now-ms now-ms UNRECORDED-END-TTL-MS))
+                (when (and (= verdict END-RETRY-WRITE) (isinstance again AcpRow))
+                  (<- again-status dict (status-object-of again))
+                  (<- ended-again dict (ended-status-of again-status outcome.result limited.cause ended-conditions))
+                  (<- wrote-again (| Written Conflict Refused) (AcpPutStatus :row again :status ended-again))
+                  (setv landed (isinstance wrote-again Written))
+                  (<- (LogLine :text (+ f"agentd: agent-job {job.job-id} Ended re-written on the fresh row (phase was {(.get again-status "phase")}) "
+                                        f"after {wrote-job}: " (if landed "landed" (str wrote-again)) " (#402)"))))
+                (when (not landed)
+                  (<- end UnrecordedEnd (unrecorded-end-of job outcome.result limited.cause ended-conditions now-ms))
+                  (<- carried AgentdState (with-unrecorded-end carried end))
+                  (<- (LogLine :text f"agentd: agent-job {job.job-id} not ended ({wrote-job}; verdict {verdict}); carrying the Ended to the next ticks (#402)")))))))
+      (do
+        ;; agora-redesign #519(段 12・D-519-3): 口座に断られた試みは **Ended にしない** —— 終端の巻き戻しは engine が断り
+        ;; (契約 scheduling.json supervision)、置き直しの対象は runner を失った試みだけ(実弾 2026-09-17 20:29〜21:15: Ended に
+        ;; 書いた手番の郵便が delivered のまま 46 分止まった)。書くのは条件 ProviderLimit{profile, attempt, at} の追加ちょうど
+        ;; (judgment.refused-attempt-status-of — phase / sessionHandle / binding / result はそのまま)。配置の supervision が
+        ;; attempt = binding.attempt の記録を provider-refused と読んで Pending へ戻し、backoff の後に別の口座へ結び直す(予算の係が
+        ;; 同じ記録で断られた profile を ProfileExhausted に書く)。turn-record は ended にしない(1 手番 1 行 — 次の試みが同じ行を
+        ;; 続ける〔after-start の Conflict の腕〕・退役なら最後の runner が end-retired-records で ended)。持ち越した出来事は行へ追記する
+        ;; (usage は書かない — 消費の和は手番の終わりの 1 回)。器の終端の条件(SessionFailed 等)と cause は足さない — この試みの
+        ;; 結末は ProviderLimit の記録が名乗る(Ended の書きの語彙は Ended の時だけ)。memory からは外す(置き直し待ちの Running の
+        ;; 行は拾い直さない — judgment.job-rows-running-on)。
+        (<- (LogLine :text (+ f"agentd: job {job.job-id} attempt {attempt} on profile {job.profile} was refused by the "
+                                   f"provider's limit (model {job.model}): {(get limit "message")}; leaving the row "
+                                   f"{(.get fresh-status "phase")} for the placement to place it again (#519)")))
+        (when drained.pending-entries
+          (<- drained InFlightJob (append-entries drained drained.pending-entries)))
+        (if (is fresh None)
+            (<- (LogLine :text f"agentd: agent-job {job.job-id} vanished before its refusal could be recorded"))
+            (do
+              (<- refused dict (refused-attempt-status-of fresh-status
+                                                          (+ drained.pending-conditions #(limit))))
+              (<- wrote-job (| Written Conflict Refused) (AcpPutStatus :row fresh :status refused))
+              (when (not (isinstance wrote-job Written))
+                (<- (LogLine :text f"agentd: refusal of job {job.job-id} attempt {attempt} not recorded ({wrote-job})")))))))
   ;; 実況の終わりの印(seq は最後の材料の読みの続き)
   (<- frame dict (status-frame job.job-id drained.delta-seq now-ms "ended"))
   (<- (push-frames settings job #(frame)))
@@ -3063,6 +3103,30 @@
   dropped)
 
 
+(defk end-retired-records [settings rows node-row-id]
+  {:pre [(: settings AgentdSettings) (: rows tuple) (: node-row-id (| str None))]
+   :post [(: % int)]}
+  "agora-redesign #519(段 12・D-519-3): 配置が退役させた行(Withdrawn + Unschedulable{retry-budget-exhausted} — 置き直しの
+   上限)のうち最後の runner が自分の行(judgment.retired-rows-of)の turn-record が running なら ended にする(usage なし・
+   残りの見出しなし)。記録は手番が本当に終わる時に ended(1 手番 1 行)— 断られた試みは記録を running のまま残す
+   (settle-record)ので、退役した手番の記録を閉じるのはこの腕だけ。level-triggered・冪等: 行の cache に退役の行が在る拍ごとに
+   記録を読み、ended でなければ書く(memory を持たない — 断られた書きは次の拍が撃ち直す)。戻り = この拍に ended にした数。"
+  (<- retired tuple (retired-rows-of rows settings.node-name node-row-id settings.principal))
+  (setv ended-count 0)
+  (for [row retired]
+    (<- key str (turn-record-key-of row.resource-id))
+    (<- record (| AcpRow None) (AcpGetRow :key key))
+    (when (is-not record None)
+      (<- record-status dict (status-object-of record))
+      (when (!= (.get record-status "state") TURN-RECORD-ENDED)
+        (<- ended dict (turn-record-ended-status record-status None #()))
+        (<- wrote (| Written Conflict Refused) (AcpPutStatus :row record :status ended))
+        (when (isinstance wrote Written)
+          (setv ended-count (+ ended-count 1)))
+        (<- (LogLine :text f"agentd: turn-record of retired job {row.resource-id} ended (retry-budget-exhausted) -> {wrote} (#519)")))))
+  ended-count)
+
+
 (defk receive-bound-jobs [settings state mode now-ms]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: mode str) (: now-ms int)]
    :post [(: % AgentdState)]}
@@ -3073,6 +3137,8 @@
   (<- refreshed AgentdState (refresh-rows state mode))
   (setv rows refreshed.rows)
   (<- withdrawn-handled AgentdState (withdraw-jobs settings refreshed rows now-ms))
+  ;; agora-redesign #519: 配置が退役させた自分の行の turn-record を ended に(level-triggered・memory なし)。
+  (<- (end-retired-records settings rows refreshed.node-row-id))
   ;; 段 12 lane 12j(agora-redesign #321): 結びは自分の生きている行の id(join の拍が置く refreshed.node-row-id)で照合する —
   ;; nodeRow を持つ結びは名前が同じでも別の化身の行なら受けない(判断は judgment.binding-names-me の 1 点)。
   (<- bound tuple (job-rows-bound-to rows settings.node-name refreshed.node-row-id))
