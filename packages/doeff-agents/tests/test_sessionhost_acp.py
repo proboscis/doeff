@@ -279,13 +279,9 @@ def _assert_ended(world: World) -> None:
     entries = record.status["entries"]
     assert isinstance(entries, list)
     assert [entry["kind"] for entry in entries if isinstance(entry, dict)] == ["text"]
-    assert record.status["usage"] == {
-        "input": 3,
-        "output": 7,
-        "cacheWrite": 1,
-        "cacheRead": 2,
-        "model": "claude-opus-5",
-    }
+    # agora-redesign #526: 行の usage は token の欄ちょうど(model は行の spec.model と実況の usage frame が運ぶ)。
+    assert record.status["usage"] == {"input": 3, "output": 7, "cacheWrite": 1, "cacheRead": 2}
+    _assert_turn_record_obeys_the_contract(record)
     job = world.job("s-1")
     assert job.status is not None
     assert job.status["phase"] == PHASE_ENDED
@@ -1120,13 +1116,17 @@ def test_deltas_of_claude_folds_blocks_and_counts_usage_once_per_message() -> No
     assert [frame["kind"] for frame in batch.frames] == ["usage", "tool_use", "text", "tool_result"]
     assert [entry.kind for entry in batch.entries] == ["tool_use", "text", "tool_result"]
     assert [body["kind"] for body in batch.bodies] == ["tool_use", "text", "tool_result"]
-    assert batch.usage == {
+    # agora-redesign #526: 手番の和(行の status.usage へ行く)は token だけ。message ごとの usage frame は
+    # model を名乗る(契約 turn-delta.json の frame の usage は model を宣言している — 行の usage は宣言していない)。
+    assert batch.usage == {"input": 1, "output": 2, "cacheWrite": 0, "cacheRead": 0}
+    assert batch.frames[0]["payload"] == {
         "input": 1,
         "output": 2,
         "cacheWrite": 0,
         "cacheRead": 0,
         "model": "claude-opus-5",
     }
+    assert batch.model == "claude-opus-5"
     assert batch.next_seq == 14
     # 段 10 lane 10j(agora-redesign #87 の裁定 問 7): 実況の道具の呼び出しは入力の object をそのまま運ぶ(契約 turn-delta.json)
     assert batch.frames[1]["payload"] == {
@@ -3479,13 +3479,8 @@ def test_headless_claude_turn_streams_text_deltas_and_records_entries() -> None:
     ]
     assert entries == mid_turn
     _assert_claude_headless_entries(entries)
-    assert record.status["usage"] == {
-        "input": 3,
-        "output": 7,
-        "cacheWrite": 1,
-        "cacheRead": 2,
-        "model": "claude-opus-5",
-    }
+    assert record.status["usage"] == {"input": 3, "output": 7, "cacheWrite": 1, "cacheRead": 2}
+    _assert_turn_record_obeys_the_contract(record)
     job = world.job("j-1")
     assert job.status is not None
     assert job.status["phase"] == PHASE_ENDED
@@ -3530,6 +3525,7 @@ def test_headless_codex_turn_streams_deltas_and_records_command_execution() -> N
         "tool_result",
     ]
     assert record.status["usage"] == {"input": 11, "output": 5, "cacheWrite": 0, "cacheRead": 4}
+    _assert_turn_record_obeys_the_contract(record)
 
 
 def test_mail_heading_names_the_message_id_kind_class_sender_parent_and_jst_time() -> None:
@@ -4705,6 +4701,58 @@ def test_agentd_values_copied_from_agora_kinds_match_the_copy() -> None:
         assert set(entry["settings"]) <= set(settings_words), kind
     efforts = _string_list(_lookup(copy, "conventions.agentSettings.efforts"))
     assert efforts == ["low", "medium", "high", "xhigh"]
+
+
+# agora-redesign #526: ACP は書きを登録した schema に照らして断る(#493)。fake の ACP は照らさないので、agentd が
+# 手番の終わりに書いた行を**写しの schema そのもの**に照らす口をここに 1 つ置く(欄の名前を test に写さない)。
+# 実弾 2026-09-17: 手番の和の usage が契約に無い欄 model を運び、終わりの書きが 400 で断られ続けて行が running のまま
+# 残った。検は欄を literal で pin していて、drift ごと緑だった。
+
+
+def _turn_record_schema() -> dict[str, object]:
+    schema = _lookup(_load_json(_AGORA_KINDS_COPY), f"kinds.{TURN_RECORD_KIND}.schema")
+    assert isinstance(schema, dict), repr(schema)
+    return schema
+
+
+def _assert_turn_record_obeys_the_contract(record: AcpRow) -> None:
+    """agentd が書いた turn-record の行(spec + status)が、契約の写しの schema に通る。"""
+    from jsonschema import Draft202012Validator
+
+    validator = Draft202012Validator(_turn_record_schema())
+    broken = [
+        f"/{'/'.join(str(part) for part in error.absolute_path)}: {error.message}"
+        for error in validator.iter_errors({"spec": record.spec, "status": record.status})
+    ]
+    assert broken == [], f"turn-record の行が契約の schema を破る: {broken}"
+
+
+def test_turn_usage_sum_carries_only_the_fields_the_turn_record_contract_declares() -> None:
+    """手番の和(judgment.add-usage — 行の status.usage へ行く値)の欄は、契約の usage の宣言の部分集合。
+
+    message ごとの usage(usage-of-claude-message)は model を名乗ってよい(実況の frame の契約が宣言している)が、
+    和は運ばない — 行の usage の契約は additionalProperties: false で token の欄だけ。
+    """
+    declared = _lookup(_turn_record_schema(), "properties.status.properties.usage.properties")
+    assert isinstance(declared, dict), repr(declared)
+    raw: JSONObject = {
+        "input_tokens": 3,
+        "output_tokens": 7,
+        "cache_creation_input_tokens": 1,
+        "cache_read_input_tokens": 2,
+        "cache_creation": {"ephemeral_5m_input_tokens": 1, "ephemeral_1h_input_tokens": 0},
+    }
+    part = run(judgment.usage_of_claude_message(raw, "claude-opus-5"))
+    total = run(judgment.add_usage(run(judgment.add_usage(None, part)), part))
+    assert set(total) <= set(declared), sorted(set(total) - set(declared))
+    assert total == {
+        "input": 6,
+        "output": 14,
+        "cacheWrite": 2,
+        "cacheRead": 4,
+        "cacheWrite5m": 2,
+        "cacheWrite1h": 0,
+    }
 
 
 def _sync_contracts():

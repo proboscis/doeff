@@ -3380,7 +3380,9 @@
   {:pre [(: usage dict) (: model (| str None))]
    :post [(: % dict)]}
   "claude の message.usage → 契約 usage(token の 4 欄 + 内訳)。欄の欠落は 0 を発明せず
-   落とす … ただし必須 4 欄は素材が無ければ 0(素材の無い message は呼び手が渡さない)。"
+   落とす … ただし必須 4 欄は素材が無ければ 0(素材の無い message は呼び手が渡さない)。
+   model を名乗るのは **message 1 つの usage**(実況の usage frame — 契約 turn-delta.json の frame の usage が model を
+   宣言している)ちょうどで、手番の和(add-usage — 行の status.usage)は運ばない。"
   (setv cache (or (.get usage "cache_creation") {}))
   (setv #^ JSONObject out {"input" (int (.get usage "input_tokens" 0))
                            "output" (int (.get usage "output_tokens" 0))
@@ -3399,13 +3401,15 @@
 (defk add-usage [total part]
   {:pre [(: total (| dict None)) (: part dict)]
    :post [(: % dict)]}
-  "usage の和(model は最後に見た綴り)。"
+  "usage の和 = 手番の消費(turn-record の status.usage へ行く値)。欄は token の 6 つちょうどで、model は運ばない —
+   契約 agora-kinds.json の turn-record.status.usage は additionalProperties: false で model を宣言していない(手番の model の
+   正本は行の spec.model・message ごとの model は実況の usage frame・最後に見た綴りは DeltaBatch.model)。和が model を
+   運んでいた間、ACP が書きを登録した schema に照らし始めた拍(#493)から手番の終わりの書きが 400 で断られ、終わった手番の
+   行が running のまま残った(agora-redesign #526・実弾 2026-09-17)。"
   (setv out (if (is total None) {} (dict total)))
   (for [key ["input" "output" "cacheWrite" "cacheRead" "cacheWrite5m" "cacheWrite1h"]]
     (when (in key part)
       (setv (get out key) (+ (int (.get out key 0)) (int (get part key))))))
-  (when (in "model" part)
-    (setv (get out "model") (get part "model")))
   out)
 
 
