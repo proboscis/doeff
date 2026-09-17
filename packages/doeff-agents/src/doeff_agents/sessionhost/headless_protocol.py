@@ -65,10 +65,17 @@ AgentKind = Literal["claude", "codex"]
 
 @dataclass(frozen=True)
 class TurnEnded:
-    """1 手番の終わり(kind の終端の行を読んだ)。ok = 走行器が成功と名乗った。"""
+    """1 手番の終わり(kind の終端の行を読んだ)。ok = 走行器が成功と名乗った。
+
+    api_error_status = 手番を終わらせた API の誤りの HTTP status(claude の result の
+    ``api_error_status`` — CLI が**構造で**名乗る欄・agora-redesign #513)。名乗らない終わり
+    (成功・CLI 自身の誤り・codex)は None。文(detail)の言い回しに依らずに「provider が何で
+    断ったか」を運ぶ: 実測 2026-09-17 の限度の断り 39 本(group の上限 $0 ×18・Fable の週 ×13・
+    session ×4・individual spend ×4)は文が 4 種でも status は全部 429 だった。"""
 
     ok: bool
     detail: str
+    api_error_status: int | None = None
 
 
 @dataclass(frozen=True)
@@ -140,6 +147,16 @@ def _object_at(value: JSON, key: str) -> JSONObject:
 def _text_at(value: JSON, key: str) -> str:
     inner = value.get(key) if isinstance(value, dict) else None
     return inner if isinstance(inner, str) else ""
+
+
+def _status_at(value: JSON, key: str) -> int | None:
+    """行の欄の HTTP status(整数ちょうど — bool・文字列・小数は status ではない)。"""
+    if not isinstance(value, dict):
+        return None
+    status = value.get(key)
+    if isinstance(status, bool) or not isinstance(status, int):
+        return None
+    return status
 
 
 # ------------------------------------------------------------------ claude(stream-json の入出力・温かい process)
@@ -283,13 +300,13 @@ class ClaudeDialogue:
             accepted=True, sends=(claude_interrupt_request_line(request_id),), request_id=request_id
         )
 
-    def _end(self, ok: bool, detail: str) -> Step:
+    def _end(self, ok: bool, detail: str, api_error_status: int | None = None) -> Step:
         self.in_flight = False
         self.cli_turn_open = False
         self.injections = {}
         self.escalation = None
         self.still_queued = None
-        return Step(ended=TurnEnded(ok=ok, detail=detail))
+        return Step(ended=TurnEnded(ok=ok, detail=detail, api_error_status=api_error_status))
 
     def on_line(self, record: JSONObject) -> Step:
         kind = record.get("type")
@@ -353,13 +370,19 @@ class ClaudeDialogue:
         段 11 lane 11n 便 C(agora-redesign #179): 誤りで終わった手番の detail は **CLI が名乗った文**
         (result の本文)ちょうどで、subtype(error_during_execution)は文が無い時の名前でしかない。
         文を落としていたので、上の層(host の手番の腕)は「何で断られたか」を読めなかった —— provider の
-        限度の断り(「You've reached your … limit」)も error_during_execution という 1 語に畳まれていた。"""
+        限度の断り(「You've reached your … limit」)も error_during_execution という 1 語に畳まれていた。
+
+        agora-redesign #513: 誤りで終わった手番は **CLI が構造で名乗った status**(``api_error_status``)も
+        運ぶ。文は provider が言い回しを変えるたびに族の表を破った(2026-07-20 / 07-26 / 08-06 /
+        09-17 の 4 度 — 「Your group's usage limit is set to $0」は所有格族に当たらず 18 手番が
+        普通の終わりとして流れた)が、status は CLI 自身の分類で言い回しに依らない。"""
         self.cli_turn_open = False
         queued = self.queued_injections()
         is_error = record.get("is_error") is True
         subtype = _text_at(record, "subtype") or ("error" if is_error else "success")
         said = _text_at(record, "result") if is_error else None
         detail = said.strip() if isinstance(said, str) and said.strip() else subtype
+        api_error_status = _status_at(record, "api_error_status") if is_error else None
         if self.escalation is not None:
             survivors = (
                 tuple(ref for ref in queued if ref in self.still_queued)
@@ -373,7 +396,7 @@ class ClaudeDialogue:
             return self._end(False, INTERRUPTED_DETAIL)
         if queued:
             return Step()
-        return self._end(not is_error, detail)
+        return self._end(not is_error, detail, api_error_status)
 
     def interrupt(self) -> Interrupt:
         return Interrupt(signal=True)
@@ -710,6 +733,8 @@ class Verdict:
     kind: VerdictKind
     ok: bool = True
     detail: str = ""
+    #: turn-ended の時だけ: 手番を終わらせた API の誤りの HTTP status(TurnEnded の同じ欄の素通し)。
+    api_error_status: int | None = None
 
 
 def turn_verdict(observation: HeadlessObservation | None, in_flight: bool) -> Verdict:
@@ -727,7 +752,9 @@ def turn_verdict(observation: HeadlessObservation | None, in_flight: bool) -> Ve
         )
     if observation.ended:
         last = observation.ended[-1]
-        return Verdict("turn-ended", ok=last.ok, detail=last.detail)
+        return Verdict(
+            "turn-ended", ok=last.ok, detail=last.detail, api_error_status=last.api_error_status
+        )
     if observation.failure:
         return Verdict("failed", ok=False, detail=observation.failure)
     if not in_flight:

@@ -70,7 +70,7 @@
 ;; 段 11 lane 11n 便 C(agora-redesign #179): provider の限度の族の表は impls/markers.hy の
 ;; 1 点(ADR-DOE-AGENTS-008 R1 の観測形式の家・pane の路と同じ表)。ここは表を写さず、
 ;; 手番の終わりの文へ当てるだけ。
-(import doeff_agents.sessionhost.impls.markers [has-api-limit-marker])
+(import doeff_agents.sessionhost.impls.markers [is-api-limit-refusal])
 (import doeff_agents.sessionhost.headless_protocol [
   BackendLiveness
   HeadlessObservation
@@ -557,17 +557,22 @@
   "段 11 lane 11n 便 C(agora-redesign #179・依頼者の裁定 2026-09-15 案 c′): 手番の終わりが
    provider の限度の断りだったか —— **当てる 1 点**。None = 限度ではない(手番の普通の終わり)。
 
-   材料は verdict(turn-verdict が返す turn-ended の ok / detail = CLI が名乗った文)で、
-   族の表は impls/markers.hy の has-api-limit-marker ちょうど(pane の路の
+   材料は verdict(turn-verdict が返す turn-ended の ok / detail = CLI が名乗った文 /
+   api-error-status = CLI が構造で名乗った HTTP の status)で、判定は impls/markers.hy の
+   is-api-limit-refusal ちょうど —— **構造が先・文が後**(agora-redesign #513): status を
+   名乗る終わりは 429 が限度、名乗らない終わりは文の族の表 has-api-limit-marker(pane の路の
    policy.action-terminal-cause / failed-output-cause が PaneObservation 経由で引く**同じ表**・
    ADR-DOE-AGENTS-008 R1 の家)。当たったら category は rate_limited(policy の
-   TERMINAL-CAUSE-CATEGORIES の 1 語・pane の路と同じ語彙)。
+   TERMINAL-CAUSE-CATEGORIES の 1 語・pane の路と同じ語彙)。限度の種類(5 時間 / 週の窓・
+   individual spend・group の上限・credit 切れ)では枝を分けない —— どれも「その口座が枯れた」の
+   1 事実で、解く手は配置の付け替えちょうど(operator 指示 2026-09-17)。
 
    ⚠ 限度の断りは **session ごと終える**(この cause を持つ行は status failed)—— 限度は
    口座 × model のもので、同じ profile の次の手番も断られる(実弾 2026-09-15 13:2x: operator の
    会話が btc で 5 回続けて断られた)。配車は model 別の枯渇(段 11 lane 11m)で別の profile へ
    移り、profile が変われば器はどうせ作り直しになる(restartOn = model・profile)。"
-  (if (and (not verdict.ok) (isinstance verdict.detail str) (has-api-limit-marker verdict.detail))
+  (if (and (not verdict.ok) (isinstance verdict.detail str)
+           (is-api-limit-refusal verdict.detail verdict.api-error-status))
       (make-cause "rate_limited" verdict.detail observed-at)
       None))
 
