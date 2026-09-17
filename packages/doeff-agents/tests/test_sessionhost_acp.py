@@ -164,7 +164,7 @@ class World:
                 AGORA_KINDS_NAMESPACE,
                 NODE_KIND,
                 NODE,
-                {"name": NODE, "labels": {}, "capacity": 1, "streamCapability": "frames", "agentd": {"protocol": 1, "revision": "unstamped", "build": "local"}},
+                {"name": NODE, "labels": {}, "capacity": 1, "streamCapability": "frames", "agentd": {"protocol": 2, "revision": "unstamped", "build": "local"}},
                 {"state": "joined"},
             )
         )
@@ -289,7 +289,7 @@ def _assert_ended(world: World) -> None:
     job = world.job("s-1")
     assert job.status is not None
     assert job.status["phase"] == PHASE_ENDED
-    assert job.status["result"] == {"ok": True}
+    assert job.status["result"] == {"ok": True, "cause": {"category": "completed"}}
     assert job.status["binding"] == {"node": NODE, "profile": "personal", "account": "acct"}
     assert world.custody.revoked == ["lease-1"]
     assert world.pushed_kinds()[-1] == "status"
@@ -364,7 +364,7 @@ def test_agentd_does_not_take_jobs_bound_to_another_node_or_not_bound() -> None:
     assert world.job("s-pending").status == pending.status
 
 
-def test_failed_session_ends_the_job_with_a_condition_and_no_result() -> None:
+def test_failed_session_ends_the_job_with_a_condition_and_a_failed_cause() -> None:
     world = World()
     world.acp.put_row(bound_job("s-2", inputs=[], account=None))
     world.tick()
@@ -374,7 +374,7 @@ def test_failed_session_ends_the_job_with_a_condition_and_no_result() -> None:
     job = world.job("s-2")
     assert job.status is not None
     assert job.status["phase"] == PHASE_ENDED
-    assert "result" not in job.status
+    assert job.status["result"] == {"cause": {"category": "failed", "reason": "SessionFailed"}}  # #349 行 3 粒 3a
     conditions = job.status["conditions"]
     assert isinstance(conditions, list)
     assert conditions[-1] == {
@@ -597,7 +597,7 @@ def test_missing_node_row_is_registered_from_the_declaration_and_joined_on_the_n
     # 行が無い拍の heartbeat は書かない(行を作るのは tick の参加の腕)
     assert world.heartbeat() == "no-node-row"
     world.tick()
-    assert world.acp.rows[key].spec == {"name": NODE, "labels": {}, "capacity": 1, "streamCapability": "frames", "agentd": {"protocol": 1, "revision": "unstamped", "build": "local"}}
+    assert world.acp.rows[key].spec == {"name": NODE, "labels": {}, "capacity": 1, "streamCapability": "frames", "agentd": {"protocol": 2, "revision": "unstamped", "build": "local"}}
     assert [line for line in world.local.logs if "node row" in line] == [
         f"agentd: registered node row {NODE!r} from the declaration (capacity 1, streamCapability frames)"
     ]
@@ -779,7 +779,7 @@ def test_node_spec_is_aligned_to_the_declaration_keeping_labels_and_the_lease_is
         replace(seeded, spec={"name": NODE, "labels": labels, "capacity": 0, "streamCapability": "frames"})  # 旧い agentd の行(版の欄なし)
     )
     world.tick()
-    aligned = {"name": NODE, "labels": labels, "capacity": 2, "streamCapability": "frames", "agentd": {"protocol": 1, "revision": "unstamped", "build": "local"}}
+    aligned = {"name": NODE, "labels": labels, "capacity": 2, "streamCapability": "frames", "agentd": {"protocol": 2, "revision": "unstamped", "build": "local"}}
     assert world.acp.spec_writes == [(key, aligned)]
     now_row = world.acp.rows[key]
     assert now_row.spec == aligned
@@ -951,7 +951,7 @@ def test_node_spec_of_and_node_spec_declared_are_one_judgment() -> None:
         "capacity": 2,
         "streamCapability": "events",
         # 段 12 lane 12j(agora-redesign #367): 参加時に名乗る自分の版(protocol は effects.AGENTD_PROTOCOL の 1 点・刻印が無ければ unstamped / local)
-        "agentd": {"protocol": 1, "revision": "unstamped", "build": "local"},
+        "agentd": {"protocol": 2, "revision": "unstamped", "build": "local"},
     }
     # 段 11 lane 11u(agora-redesign #224・依頼者の裁定 2026-09-16): 宣言した置き場の**集合**は型つきの欄 spec.places
     # (語の list・宣言の順)に名乗る(配車の絞りが読む 1 点・契約 v4)。labels.places は読み手が残る間の写し(deprecated・
@@ -976,15 +976,15 @@ def test_node_spec_of_and_node_spec_declared_are_one_judgment() -> None:
     assert kept["places"] == ["company", "personal"], "揃える時に型つきの欄を名乗っていない"
     assert "place" not in kept, "旧い agentd が書いた 1 値の place を揃えの写しに残している(配車が行を断る)"
     hand = {"name": "pool-1", "labels": {"boundary": "company"}, "capacity": 0, "streamCapability": "events"}
-    assert run(judgment.node_spec_declared(hand, settings)) == {**hand, "capacity": 2, "agentd": {"protocol": 1, "revision": "unstamped", "build": "local"}}
-    assert run(judgment.node_spec_declared({**hand, "capacity": 2}, settings)) == {**hand, "capacity": 2, "agentd": {"protocol": 1, "revision": "unstamped", "build": "local"}}
+    assert run(judgment.node_spec_declared(hand, settings)) == {**hand, "capacity": 2, "agentd": {"protocol": 2, "revision": "unstamped", "build": "local"}}
+    assert run(judgment.node_spec_declared({**hand, "capacity": 2}, settings)) == {**hand, "capacity": 2, "agentd": {"protocol": 2, "revision": "unstamped", "build": "local"}}
     bare = {"name": "pool-1", "capacity": 2, "streamCapability": "frames"}
     assert run(judgment.node_spec_declared(bare, settings)) == {
         "name": "pool-1",
         "labels": {},
         "capacity": 2,
         "streamCapability": "events",
-        "agentd": {"protocol": 1, "revision": "unstamped", "build": "local"},
+        "agentd": {"protocol": 2, "revision": "unstamped", "build": "local"},
     }
 
 
@@ -1219,7 +1219,7 @@ def test_capture_gone_is_the_end_of_the_stream_not_an_error() -> None:
     job = world.job("s-g")
     assert job.status is not None
     assert job.status["phase"] == PHASE_ENDED
-    assert job.status["result"] == {"ok": True}
+    assert job.status["result"] == {"ok": True, "cause": {"category": "completed"}}
     record = world.turn_record("s-g")
     assert record is not None
     assert record.status is not None
@@ -1239,7 +1239,7 @@ def test_capture_gone_with_a_terminal_session_ends_in_the_same_tick() -> None:
     job = world.job("s-gr")
     assert job.status is not None
     assert job.status["phase"] == PHASE_ENDED
-    assert job.status["result"] == {"ok": 1}
+    assert job.status["result"] == {"ok": 1, "cause": {"category": "completed"}}
     record = world.turn_record("s-gr")
     assert record is not None
     assert record.status is not None
@@ -1274,7 +1274,7 @@ def test_running_job_of_mine_is_recovered_on_the_first_tick_after_restart() -> N
     job = world.job("s-r")
     assert job.status is not None
     assert job.status["phase"] == PHASE_ENDED
-    assert job.status["result"] == {"ok": True}
+    assert job.status["result"] == {"ok": True, "cause": {"category": "completed"}}
     record = world.turn_record("s-r")
     assert record is not None
     assert record.status is not None
@@ -1293,7 +1293,7 @@ def test_running_job_without_a_session_is_ended_with_session_failed() -> None:
     job = world.job("s-orphan")
     assert job.status is not None
     assert job.status["phase"] == PHASE_ENDED
-    assert "result" not in job.status
+    assert job.status["result"] == {"cause": {"category": "failed", "reason": "SessionFailed"}}  # #349 行 3 粒 3a
     conditions = job.status["conditions"]
     assert isinstance(conditions, list)
     last = conditions[-1]
@@ -2026,7 +2026,7 @@ def test_a_carried_ended_lands_on_the_re_placed_row_instead_of_claiming_it() -> 
     placed = bound_job("j-9", inputs=["m-9"], node_row=NODE)
     placed.status["binding"]["attempt"] = 2
     world.acp.put_row(placed)
-    carried = UnrecordedEnd(job_key=key, job_id="j-9", session_id="sid-lost", result={"ok": True},
+    carried = UnrecordedEnd(job_key=key, job_id="j-9", session_id="sid-lost", result={"ok": True}, cause={"category": "failed", "reason": "SessionFailed"},
                             conditions=({"type": "SessionFailed", "status": "True", "reason": "x"},), at_ms=world.local.now_ms)
     world.state = replace(world.state, unrecorded_ends=(carried,))
     world.tick(advance_ms=1_000)
@@ -2034,7 +2034,7 @@ def test_a_carried_ended_lands_on_the_re_placed_row_instead_of_claiming_it() -> 
     ended = world.job("j-9")
     assert ended.status is not None
     assert ended.status["phase"] == PHASE_ENDED
-    assert ended.status["result"] == {"ok": True}
+    assert ended.status["result"] == {"ok": True, "cause": {"category": "failed", "reason": "SessionFailed"}}
     assert [c["type"] for c in ended.status["conditions"] if isinstance(c, dict)][-1] == "SessionFailed"
     assert world.state.unrecorded_ends == ()
     assert any("carried Ended of job j-9 landed" in line for line in world.local.logs)
@@ -2915,7 +2915,7 @@ def test_dead_backend_of_a_running_job_ends_it_with_session_lost_and_the_next_tu
     job = world.job("j-1")
     assert job.status is not None
     assert job.status["phase"] == PHASE_ENDED
-    assert "result" not in job.status
+    assert job.status["result"] == {"cause": {"category": "failed", "reason": "SessionLost"}}  # #349 行 3 粒 3a
     conditions = job.status["conditions"]
     assert isinstance(conditions, list)
     last = conditions[-1]
@@ -3045,7 +3045,7 @@ def test_stop_closes_running_jobs_with_agentd_restart_and_leaves_the_session_to_
     job = world.job("j-1")
     assert job.status is not None
     assert job.status["phase"] == PHASE_ENDED
-    assert "result" not in job.status
+    assert job.status["result"] == {"cause": {"category": "agentd-stopped", "reason": "drain-deadline"}}  # #349 行 3 粒 3a
     conditions = job.status["conditions"]
     assert isinstance(conditions, list)
     last = conditions[-1]

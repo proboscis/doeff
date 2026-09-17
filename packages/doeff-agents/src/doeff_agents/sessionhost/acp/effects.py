@@ -199,8 +199,10 @@ CONDITION_ATTACHMENT_IGNORED: ConditionType = "AttachmentIgnored"
 #: 「観測できない時の枯渇の証拠」として model 別の枯渇の判断に足す。判断は judgment.provider-limit-condition-of の 1 点。
 #: 実弾 2026-09-15 13:2x: 会話 c-01M1XGMDHR35FBBC04W1JXM5KJ の手番が btc で Fable の限度に 5 回当たったが、
 #: 器の status は done・agent-job は result も cause も無しの Ended だったので、profile の行へ戻る道が無かった。
-#: ⚠ status.result には書かない(result が在ることは「手番が結果を報告した」の意味 —
-#: Acp.App.Agent.AgentJob.awaitOutcomeOf が result の有無で終端の意味を分ける)。
+#: ⚠ status.result の **value には書かない**(value は「手番が報告した結果」)— **cause には書く**: この条件で閉じる手番の
+#: result.cause は {category: failed, reason: ProviderLimit}(段 12 lane 12k・agora-redesign #349 行 3 粒 3a・判断は
+#: judgment.outcome-with-limit の 1 点 — 取り消し・停止の cause は上書きしない(合図が先に在った))。ACP の
+#: awaitOutcomeOf は result の有無ではなく cause の category で終端の意味を読む。
 CONDITION_PROVIDER_LIMIT: ConditionType = "ProviderLimit"
 #: CONDITION_PROVIDER_LIMIT の reason の閉語彙(今日は 1 語 — 族が増えたらここに足す)。
 REASON_RATE_LIMITED: str = "rate-limited"
@@ -418,9 +420,30 @@ CANCEL_STAGE_KEY: str = "stage"
 CancelStage = Literal["graceful", "forced"]
 CANCEL_STAGE_GRACEFUL: CancelStage = "graceful"
 CANCEL_STAGE_FORCED: CancelStage = "forced"
-#: result.cause の category(ACP の engine が failureKindForCause で読む表の 1 語 — CAUSE_CATEGORY_RATE_LIMITED と同じ表)。
-CAUSE_CATEGORY_CANCELLED: str = "cancelled"
+#: 段 12 lane 12k(agora-redesign #349 行 3 粒 3a・既知の形 CI runner (i)「手番の終わりに終端の状態を必ず返す」): agent-job の
+#: 終端の result.cause {category, reason?, stage?} の category の閉語彙 — **定義点はここ 1 点**(契約 ACP docs/contracts/scheduling.json
+#: resultCause.categories の写し・ACP の正本は Acp.App.Agent.AgentJob.resultCauseCategoryWords で hspec が JSON との一致を撃つ・
+#: この repo は契約の写しを持たないので ADR-DOE-AGENTS-012 R47 の針がこの表を pin する)。agentd は Ended の行に**必ず** cause を書く
+#: (judgment.ended-status-of の 1 点が result に載せる — cause の無い Ended は書けない)。5 語で condition の型と 1:1 にしない
+#: (D-349r3a-1: reason が語を運ぶ)。completed = 自然に終わった手番(value があれば同じ result に)/ cancelled = 取り消し(#367・
+#: stage graceful | forced・reason = cancel.reason)/ failed = 失敗の condition で閉じた(reason = その condition の型)/ interrupted =
+#: 取り下げ(phase Withdrawn — 書き手は作った側)で走っている手番を止めた(reason = withdrawn・Withdrawn の行に足す)/ agentd-stopped =
+#: agentd の停止の排水の期限で閉じた(reason = drain-deadline・条件 AgentdRestart と同じ拍)。
+CauseCategory = Literal["completed", "cancelled", "failed", "interrupted", "agentd-stopped"]
+CAUSE_CATEGORY_COMPLETED: CauseCategory = "completed"
+CAUSE_CATEGORY_CANCELLED: CauseCategory = "cancelled"
+CAUSE_CATEGORY_FAILED: CauseCategory = "failed"
+CAUSE_CATEGORY_INTERRUPTED: CauseCategory = "interrupted"
+CAUSE_CATEGORY_AGENTD_STOPPED: CauseCategory = "agentd-stopped"
+#: 閉語彙の表(judgment.terminal-cause-of / ended-status-of が検める・契約との突合の検が読む)— Literal から導く(第 2 の並びを書かない)。
+CAUSE_CATEGORIES: tuple[str, ...] = get_args(CauseCategory)
 RESULT_CAUSE_KEY: str = "cause"
+CAUSE_CATEGORY_KEY: str = "category"
+CAUSE_REASON_KEY: str = "reason"
+#: object でない結果に cause を載せる時の包み {value, cause}(ACP の resultPayloadOf が value に解く)。
+RESULT_VALUE_KEY: str = "value"
+CAUSE_REASON_WITHDRAWN: str = "withdrawn"
+CAUSE_REASON_DRAIN_DEADLINE: str = "drain-deadline"
 #: 取り消しの合図を持つ job の腕(judgment.cancel-arm-for の閉語彙): acknowledge = まだ見届けていない(割り込み +
 #: status.cancel)/ force = 見届け済みで猶予を過ぎても手番が走っている(殺して Ended)/ none = 見届け済みで猶予の内
 #: (手番の終わりを待つ — 終われば finalize が result.cause {graceful} を書く)。
@@ -574,7 +597,10 @@ DRAIN_SECONDS_ENV = "DOEFF_AGENTD_DRAIN_SECONDS"
 #: **doeff-agents が wire を変える時にここを 1 進める** — 配置の床 scheduling.json ladder.fields.agentdProtocolFloor が比べる)。
 #: revision = doeff-agents の git sha(人が読む・据え付けの側が宣言 file の [agentd].revision か env で刻む — 刻まれていなければ
 #: AGENTD_REVISION_UNSTAMPED を名乗る〔嘘の sha を書かない・契約の minLength 7 を満たす語〕)/ build = image の tag か local。
-AGENTD_PROTOCOL = 1
+#: 2 = 段 12 lane 12k(agora-redesign #349 行 3 粒 3a): Ended の行は必ず status.result.cause を運ぶ(契約 scheduling.json resultCause)。
+#: 読み手(kanban-health の不変条件 ended-jobs-carry-a-cause)は protocol >= 2 の node に結ばれた Ended だけを数える —
+#: 「版が新しい agentd」を sha の順ではなく wire の整数で言う(依頼者の裁定 2026-09-17 00:5x「protocol の整数で比べる」)。
+AGENTD_PROTOCOL = 2
 AGENTD_REVISION_ENV = "DOEFF_AGENTD_REVISION"
 AGENTD_BUILD_ENV = "DOEFF_AGENTD_BUILD"
 AGENTD_REVISION_UNSTAMPED = "unstamped"
@@ -1467,6 +1493,8 @@ class UnrecordedEnd:
     job_id: str
     session_id: str
     result: JSON
+    #: 終端の cause(#349 行 3 粒 3a — 持ち越した Ended も cause を運ぶ)。
+    cause: JSONObject
     conditions: tuple[JSONObject, ...]
     at_ms: int
 
@@ -1494,10 +1522,13 @@ class DeltaBatch:
 
 @dataclass(frozen=True)
 class JobOutcome:
-    """器の眺め(SessionView)から読んだ手番の結末。ended = False なら残りの欄は空。"""
+    """器の眺め(SessionView)から読んだ手番の結末。ended = False なら残りの欄は空(cause も None)。
+    ended = True なら cause は必ず在る(段 12 lane 12k・agora-redesign #349 行 3 粒 3a: 終端は必ず result.cause を運ぶ —
+    {category: CauseCategory, reason?, stage?}・judgment.ended-status-of が result に載せる 1 点で、None は書けない)。"""
 
     ended: bool
     result: JSON
+    cause: JSONObject | None
     conditions: tuple[JSONObject, ...]
 
 

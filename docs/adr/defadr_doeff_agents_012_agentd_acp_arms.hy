@@ -516,7 +516,8 @@
      (rule R43 "agentd は自分の node の行を、名前が指す『生きている行』として ACP の client library の判断で解く(段 12 lane 12j・agora-redesign #320 = #317 規則 1「名前は生きている行の中で一意」の消費側・ACP L999 / L1000 / L1031 の Hy と Haskell の同形の規則): 判断は clients/hy/acp_client/shared/live_row.hy の**写し**(packages/doeff-agents/src/doeff_agents/sessionhost/acp/live_row.hy・contracts.lock の kind = code・口は scripts/sync_contracts.py — 手で直さない)の resolve-live-row の 1 点で、終端(gone)の行は候補にしない・生きている(joined)行は lease の新しい順・one = その行・many = 先頭(lease の最も新しい行 = 動き続けねばならない呼び手の規則 — 同じ名の 2 本は再起動の直後の旧い化身が lease を残している拍)・none = 無い(join が新しい化身 <name>-<n> を作る)。行の綴り(spec.name・status.state・status.lease.expiresAt)を知るのは judgment.node-row-entry-of の 1 点で、判断は綴りを知らない。judgment.node-row-named(join の拍と lease の heartbeat の両方が読む)はこれを読み、自前の名前の索引(『最初に当たった gone でない行』)を持たない — 旧形は同じ名の生きている行が 2 本並ぶ拍に一覧の順で旧い化身に当たり、観測と lease を旧い行へ書いた。")
      (rule R44 "agentd は結び(binding)が自分を指すかを、結びの node の行の id で照合する(段 12 lane 12j・agora-redesign #321 = #317 の k8s 規則 1 後半・契約 scheduling.json binding.fields.nodeRow・ACP 側 = 12k の 050b2154〔配置が結びに nodeRow を書く〕と 75ff6c46〔監督の照合〕): 判断は judgment.binding-names-me の 1 点 — 結びに nodeRow(結んだ node の行の id)が在れば、それが自分の生きている行の id(AgentdState.node_row_id・join の拍が R43 の判断で解いた行か作った行の resource id)と一致する時だけ自分を指す(名前が同じでも、別の化身の行に結ばれた手番は受けない・止めない)。nodeRow の無い結び(この欄が生まれる前の書き)だけ node(機体の名前)に落ちる。まだ参加していない(node_row_id が None)拍は nodeRow の結びを受けない(照合できない結びを名前で拾わない)。claim(bound-to-me)・拾い直し(running-on-me)・自分の claim の行(handle-owned-by → 会話の session・取り下げ)・verify / summarize の取り下げ(withdrawn-command-rows-of / withdrawn-summarize-rows-of)のすべてがこの 1 点を読み、binding.node を直に比べる第 2 の判定を持たない。綴りは effects の BINDING_NODE_KEY / BINDING_NODE_ROW_KEY。")
      (rule R45 "1 会話 1 温かい session — 会話の手番が別の家で起きた拍に、その会話の他の家の温かい session を全部片付ける(段 12 lane 12j・agora-redesign #379 受入 2・#352 受入 1 の実弾 2026-09-17 01:10 の根・既知の形 = virtual actor の器の再利用の鍵: 同じ actor の器は 1 つ): claim が着いた手番を起こす腕(agentd.start-claimed)は、候補の片付け(choice.retire = next-arm-for-job が名指した 1 本)に加えて、器の温かい session の一覧(SessionList multi_turn)から judgment.stale-conversation-sessions-of の 1 点で『帰属の conversationId がこの会話 ∧ 家(session-affinity-key-of)がこの手番の家と違う ∧ この手番が使う session ではない』ものを解き、全部片付ける(retire-sessions)。行(agent-job)からは読まない — 前の手番の行は終了 300 s で回収され、候補の無い手番が別の家で起きた拍に古い家の session が温かいまま残り、node の observations.sessions に 2 本載って配置の親和が古い家(方策の既定)を採った。同じ家の session は触らない(候補 = send / resume の相手)。")
-     (rule R46 "同じ手番を別の session で走らせない — 置き直された試みは走っている session が引き継ぎ、着かなかった Ended は行を読み直して書く(段 12 lane 12j・agora-redesign #402・実弾 2026-09-17 03:52 = 頭の不通の後に監督が走っていた手番を lease-expired で Pending へ戻して attempt 2 を同じ行に結び、attempt 1 の Ended は Conflict で落ち、agentd は attempt 2 を新しい session で走らせて同じ手番が 2 本になった・ACP 側 = 12k の B'〔監督は nodeLifecycle の猶予を待つ〕と両輪・契約の語 = binding.attempt / binding.nodeRow / supervision.lostReasons): (1) 受けの拍に、自分に結ばれた Bound の行のうち自分が**いま走らせている** job と同じ id のもの(judgment.rebound-rows-of の 1 点)は claim せず、走っている session を名乗って Running に戻す(running-status-of で sessionHandle = その session・binding は触らない)。(2) 手番の終わりの Ended の書きが着かなければ(Conflict / Refused)行を 1 度読み直し、judgment.end-retry-verdict が write(Pending / Bound / 自分の session の Running)なら今の generation で書き直す。(3) それでも着かなければ UnrecordedEnd として state.unrecorded_ends に持ち越し、毎拍 agentd.record-unrecorded-ends が行を読み直して書く(着けば忘れる・drop〔行が無い・終端・別の session の Running・上限 UNRECORDED_END_TTL_MS〕なら忘れる)。持ち越している id の Bound は claim の門(known)が受けない。綴りと上限は effects の 1 点(EndRetryVerdict / UNRECORDED_END_TTL_MS / UnrecordedEnd)。")]
+     (rule R46 "同じ手番を別の session で走らせない — 置き直された試みは走っている session が引き継ぎ、着かなかった Ended は行を読み直して書く(段 12 lane 12j・agora-redesign #402・実弾 2026-09-17 03:52 = 頭の不通の後に監督が走っていた手番を lease-expired で Pending へ戻して attempt 2 を同じ行に結び、attempt 1 の Ended は Conflict で落ち、agentd は attempt 2 を新しい session で走らせて同じ手番が 2 本になった・ACP 側 = 12k の B'〔監督は nodeLifecycle の猶予を待つ〕と両輪・契約の語 = binding.attempt / binding.nodeRow / supervision.lostReasons): (1) 受けの拍に、自分に結ばれた Bound の行のうち自分が**いま走らせている** job と同じ id のもの(judgment.rebound-rows-of の 1 点)は claim せず、走っている session を名乗って Running に戻す(running-status-of で sessionHandle = その session・binding は触らない)。(2) 手番の終わりの Ended の書きが着かなければ(Conflict / Refused)行を 1 度読み直し、judgment.end-retry-verdict が write(Pending / Bound / 自分の session の Running)なら今の generation で書き直す。(3) それでも着かなければ UnrecordedEnd として state.unrecorded_ends に持ち越し、毎拍 agentd.record-unrecorded-ends が行を読み直して書く(着けば忘れる・drop〔行が無い・終端・別の session の Running・上限 UNRECORDED_END_TTL_MS〕なら忘れる)。持ち越している id の Bound は claim の門(known)が受けない。綴りと上限は effects の 1 点(EndRetryVerdict / UNRECORDED_END_TTL_MS / UnrecordedEnd)。")
+     (rule R47 "終端は必ず result.cause を運ぶ — Ended の書きの 1 点が cause を result に載せ、読み手は conditions 頼みにしない(段 12 lane 12k・agora-redesign #349 行 3 粒 3a・既知の形 CI runner (i)「手番の終わりに終端の状態を必ず返す」・#367 便 2 の result.cause {category: cancelled, stage, reason} を全部の終端へ広げる・契約 = ACP docs/contracts/scheduling.json の resultCause の節・ACP 側 = awaitOutcomeOf が cause の category で答えを組む): (1) category の閉語彙は effects.CauseCategory の 1 点(completed / cancelled / failed / interrupted / agentd-stopped — D-349r3a-1: condition の 26 語と 1:1 にしない・reason が語を運ぶ)で、表 CAUSE_CATEGORIES は Literal から導く(第 2 の並びを書かない)。この repo は scheduling.json の写しを持たないので、契約との一致は この針(定数の表の pin)と ACP の hspec(JSON と Haskell の parity)の 2 点で守る。(2) 書きの 1 点 = judgment.ended-status-of [status result cause conditions] — cause は引数で強い(None は書けない)、閉語彙の外は断り、result-with-cause で result に載せる(dict の結末 → 欄 cause・None → cause だけ・dict でない結末 → {value, cause})。全部の Ended の書き手(end-job-now・settle-record〔finalize / force-cancel / close-jobs-for-stop の共有〕・record-unrecorded-ends・end-summarize-job・end-command)がこれを通る。(3) cause の組み立て: 自然に終わった手番 = {completed}(value があれば同じ result に・judgment.job-outcome-of)/ 取り消し = {cancelled, stage, reason}(R42・outcome-with-cancel が結末の cause を置き換える — 合図が先に在った)/ 失敗の condition で閉じる = {failed, reason: <condition の型>}(end-job-now = 閉じた条件の型・session-lost = SessionLost・done 以外の器の終端 = SessionFailed・命令の族 = command-cause-of〔条件なし = completed・あり = 先頭の条件の型〕)/ provider の限度 = judgment.outcome-with-limit の 1 点が completed / failed だけを {failed, ProviderLimit} に置き換える(「result に書かない」の旧規則は「value は書かない・cause は書く」へ)/ 取り下げ(interrupt-job・phase Withdrawn は作った側の書き)= interrupted-status-of が Withdrawn の行に {interrupted, withdrawn} を足す / 排水の期限(close-jobs-for-stop)= {agentd-stopped, drain-deadline}。(4) 持ち越し(UnrecordedEnd・R46)も cause を運ぶ。(5) 旧 agentd の行(cause の無い Ended)は読み手が寛容(D-349r3a-2: result を schema で必須にしない)— 日次の針は新しい agentd の行だけを数える。")]
   :laws
     [(law interrupts-ride-the-running-turn-and-are-recorded-on-the-row
        :statement "for_all Running job j run by this agentd with status.interrupts = [m1..mn]: each mi not in status.interruptsDelivered ∪ memory.interrupts_sent is handed to the session by SessionInterject(body(mi)) in placement order, and every accepted mi is written back by one CAS that removes it from interrupts and appends it to interruptsDelivered; a refused mi stops the order and stays on the row; agentd never starts a turn for an interrupt and never removes an id it did not hand over"
@@ -1266,7 +1267,8 @@
        (assert (= (len world.sessions.launches) 1))
        (setv mine (status-of (get world.acp.rows "acp-system:agent-job:s-mine")))
        (assert (= (get mine "phase") PHASE-ENDED))
-       (assert (= (get mine "result") {"ok" True}))
+       ;; #349 行 3 粒 3a(R47): 終端は必ず result.cause を運ぶ — 自然に終わった手番の value は同じ result に。
+       (assert (= (get mine "result") {"ok" True "cause" {"category" "completed"}}))
        (setv record (status-of (get world.acp.rows "default:turn-record:s-mine")))
        (assert (= (get record "state") "ended"))
        (for [job-id ["s-theirs" "s-not-mine"]]
@@ -2128,7 +2130,7 @@
        ;; R41 の針(構造): protocol の定義点は effects の 1 点・版の判断は judgment.agentd-version-of の 1 点で node-spec-of と
        ;; node-spec-declared が読む・読みの規則は join の 1 点ずつ・env の綴りは effects・契約の読む欄・反例の検が在る。
        (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
-       (for [needle ["AGENTD_PROTOCOL = 1" "AGENTD_REVISION_ENV = \"DOEFF_AGENTD_REVISION\"" "AGENTD_BUILD_ENV = \"DOEFF_AGENTD_BUILD\"" "AGENTD_REVISION_UNSTAMPED = \"unstamped\"" "NODE_SPEC_AGENTD_KEY = \"agentd\""]]
+       (for [needle ["AGENTD_PROTOCOL = 2" "AGENTD_REVISION_ENV = \"DOEFF_AGENTD_REVISION\"" "AGENTD_BUILD_ENV = \"DOEFF_AGENTD_BUILD\"" "AGENTD_REVISION_UNSTAMPED = \"unstamped\"" "NODE_SPEC_AGENTD_KEY = \"agentd\""]]
          (assert (= (len (lfor line effects-lines :if (.startswith line needle) line)) 1) f"版の定義点と綴りは effects の 1 点(R41): {needle}"))
        (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
        (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk agentd-version-of [settings]") line)) 1) "版の判断は 1 点(R41)")
@@ -2148,7 +2150,7 @@
        ;; cause を載せ、強制は session.cleanup 1 点・recover-job が行の取り消しを写す・反例の検が在る。
        (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
        (for [needle ["JOB_SPEC_CANCEL_KEY: str = \"cancel\"" "JOB_STATUS_CANCEL_KEY: str = \"cancel\"" "DEFAULT_CANCEL_GRACE_SECONDS: int = 60"
-                     "CAUSE_CATEGORY_CANCELLED: str = \"cancelled\"" "CANCEL_STAGE_GRACEFUL: CancelStage = \"graceful\"" "CANCEL_STAGE_FORCED: CancelStage = \"forced\""]]
+                     "CAUSE_CATEGORY_CANCELLED: CauseCategory = \"cancelled\"" "CANCEL_STAGE_GRACEFUL: CancelStage = \"graceful\"" "CANCEL_STAGE_FORCED: CancelStage = \"forced\""]]
          (assert (= (len (lfor line effects-lines :if (.startswith line needle) line)) 1) f"取り消しの綴りと既定は effects の 1 点(R42): {needle}"))
        (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
        (for [needle ["(defk job-cancel-of [row]" "(defk cancel-deadline-ms [cancel]" "(defk cancel-arm-for [job view cancel now-ms]"
@@ -2169,6 +2171,53 @@
                      "def test_cancel_past_the_grace_kills_the_session_and_ends_the_job_forced"
                      "def test_a_recovered_job_carries_the_cancel_and_its_acknowledgement_from_the_row"]]
          (assert (in needle tests) f"R42 の反例の検が無い: {needle}")))
+     (deftest test-adr-doe-agents-012-every-terminal-write-carries-a-cause
+       ;; R47 の針(構造): 閉語彙は effects の Literal 1 点で表はそれから導く・書きの 1 点 ended-status-of は cause を引数で強いる・
+       ;; cause の組み立ては judgment の 1 点ずつ(terminal-cause-of / command-cause-of / outcome-with-limit / job-outcome-of)・
+       ;; agentd の全部の Ended の書き手が cause を渡す(旧形の 3 引数の呼びが残らない)・持ち越しも cause を運ぶ・反例の検が在る。
+       (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
+       (for [needle ["CauseCategory = Literal[\"completed\", \"cancelled\", \"failed\", \"interrupted\", \"agentd-stopped\"]"
+                     "CAUSE_CATEGORY_COMPLETED: CauseCategory = \"completed\"" "CAUSE_CATEGORY_CANCELLED: CauseCategory = \"cancelled\""
+                     "CAUSE_CATEGORY_FAILED: CauseCategory = \"failed\"" "CAUSE_CATEGORY_INTERRUPTED: CauseCategory = \"interrupted\""
+                     "CAUSE_CATEGORY_AGENTD_STOPPED: CauseCategory = \"agentd-stopped\"" "CAUSE_CATEGORIES: tuple[str, ...] = get_args(CauseCategory)"
+                     "CAUSE_REASON_WITHDRAWN: str = \"withdrawn\"" "CAUSE_REASON_DRAIN_DEADLINE: str = \"drain-deadline\""
+                     "    cause: JSONObject | None"]]
+         (assert (= (len (lfor line effects-lines :if (.startswith line needle) line)) 1) f"終端の cause の綴りは effects の 1 点(R47): {needle}"))
+       (assert (= (len (lfor line effects-lines :if (= (.rstrip line) "    cause: JSONObject") line)) 1) "持ち越し(UnrecordedEnd)の cause の欄が effects の 1 点でない(R47)")
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (for [needle ["(defk ended-status-of [status result cause conditions]" "(defk terminal-cause-of [category reason]"
+                     "(defk command-cause-of [conditions]" "(defk outcome-with-limit [outcome limit]"
+                     "(defk unrecorded-end-of [job result cause conditions now-ms]"]]
+         (assert (= (len (lfor line judgment-lines :if (.startswith line needle) line)) 1) f"終端の cause の判断は judgment の 1 点(R47): {needle}"))
+       (assert (any (gfor line judgment-lines (in "(when (not-in category CAUSE-CATEGORIES)" line))) "terminal-cause-of が閉語彙の外を断っていない(R47)")
+       (assert (any (gfor line judgment-lines (in "(when (not-in (.get cause CAUSE-CATEGORY-KEY) CAUSE-CATEGORIES)" line))) "ended-status-of が cause の語彙を検めていない(R47)")
+       (assert (= (len (lfor line judgment-lines :if (in "(<- carried dict (result-with-cause result cause))" line) line)) 1) "ended-status-of が result-with-cause で cause を result に載せていない(R47)")
+       (assert (any (gfor line judgment-lines (in "(<- cause dict (terminal-cause-of CAUSE-CATEGORY-INTERRUPTED CAUSE-REASON-WITHDRAWN))" line))) "取り下げの行に interrupted の cause を足していない(R47)")
+       (assert (any (gfor line judgment-lines (in "(replace outcome :cause cause))" line))) "outcome-with-cancel が結末の cause を置き換えていない(R47)")
+       (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
+       (setv ended-calls (lfor line agentd-lines :if (in "(ended-status-of " line) line))
+       (assert (= (len ended-calls) 6) f"Ended の書き手は 6 点(end-job-now / settle-record × 2 / record-unrecorded-ends / end-summarize-job / end-command)(R47): {(len ended-calls)}")
+       (for [needle ["(<- ended dict (ended-status-of status None cause (+ pending #(condition))))"
+                     "(<- ended dict (ended-status-of job-status outcome.result limited.cause ended-conditions))"
+                     "(<- ended-again dict (ended-status-of again-status outcome.result limited.cause ended-conditions))"
+                     "(<- ended dict (ended-status-of status end.result end.cause end.conditions))"
+                     "(<- cause dict (command-cause-of conditions))"
+                     "(<- limited JobOutcome (outcome-with-limit outcome limit))"
+                     "(<- lost-cause dict (terminal-cause-of CAUSE-CATEGORY-FAILED CONDITION-SESSION-LOST))"
+                     "(<- stop-cause dict (terminal-cause-of CAUSE-CATEGORY-AGENTD-STOPPED CAUSE-REASON-DRAIN-DEADLINE))"
+                     "(<- end UnrecordedEnd (unrecorded-end-of job outcome.result limited.cause ended-conditions now-ms))"]]
+         (assert (any (gfor line agentd-lines (in needle line))) f"agentd の Ended の書き手が cause を渡していない(R47): {needle}"))
+       (assert (= (len (lfor line agentd-lines :if (in "(<- cause dict (command-cause-of conditions))" line) line)) 2) "命令の族の 2 つの書き手(summarize / verify)が command-cause-of を読む(R47)")
+       (setv tests (.read-text (/ (. (Path __file__) parent parent parent) "packages" "doeff-agents" "tests" "test_sessionhost_acp_ended_cause.py") :encoding "utf-8"))
+       (for [needle ["def test_the_closed_categories_are_the_contracts_five_words"
+                     "def test_a_naturally_ended_turn_carries_completed_with_or_without_a_value"
+                     "def test_a_failed_session_carries_failed_with_the_condition_type"
+                     "def test_a_provider_limit_refusal_carries_failed_with_provider_limit_and_no_value"
+                     "def test_a_turn_closed_without_a_session_carries_failed_with_the_closing_condition"
+                     "def test_a_withdrawn_running_turn_carries_interrupted_withdrawn_on_the_withdrawn_row"
+                     "def test_the_stop_of_agentd_carries_agentd_stopped_drain_deadline"
+                     "def test_the_terminal_write_refuses_a_missing_or_foreign_cause_and_composes_the_result"]]
+         (assert (in needle tests) f"R47 の反例の検が無い: {needle}")))
      (deftest test-adr-doe-agents-012-own-node-row-is-the-live-row-of-the-library
        ;; R43 の針(構造): 写しは contracts.lock の kind = code で pin され sha が正本と一致・judgment は library の resolve-live-row を
        ;; import し node-row-named がそれを読む・綴りは node-row-entry-of の 1 点・旧形の名前の索引(gone でない最初の行)が無い・
@@ -2221,7 +2270,7 @@
        (for [needle ["END_RETRY_WRITE: EndRetryVerdict = \"write\"" "END_RETRY_DROP: EndRetryVerdict = \"drop\"" "UNRECORDED_END_TTL_MS: int = 3_600_000" "class UnrecordedEnd:" "    unrecorded_ends: tuple[UnrecordedEnd, ...] = ()"]]
          (assert (= (len (lfor line effects-lines :if (.startswith line needle) line)) 1) f"綴りと上限は effects の 1 点(R46): {needle}"))
        (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
-       (for [needle ["(defk end-retry-verdict [row session-id principal at-ms now-ms ttl-ms]" "(defk rebound-rows-of [rows jobs]" "(defk unrecorded-end-of [job result conditions now-ms]"]]
+       (for [needle ["(defk end-retry-verdict [row session-id principal at-ms now-ms ttl-ms]" "(defk rebound-rows-of [rows jobs]" "(defk unrecorded-end-of [job result cause conditions now-ms]"]]
          (assert (= (len (lfor line judgment-lines :if (.startswith line needle) line)) 1) f"判断は judgment の 1 点(R46): {needle}"))
        (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
        (assert (= (len (lfor line agentd-lines :if (in "(<- rebound tuple (rebound-rows-of bound current.jobs))" line) line)) 1) "受けの拍が置き直しを引き継いでいない(R46)")
