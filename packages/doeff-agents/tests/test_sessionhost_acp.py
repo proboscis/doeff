@@ -5261,6 +5261,8 @@ def test_join_derives_the_held_work_dirs_from_the_home_listing_and_carries_them_
     for wrong in ("repos/doeff", "/Users/u/repos/x", "~kento/x"):
         with pytest.raises(ValueError, match="DOEFF_AGENTD_WORK_DIRS"):
             run(join.work_dirs_of(wrong))
-    with pytest.raises(ValueError, match="64"):
-        run(join.work_dirs_of(",".join(f"~/r{i}" for i in range(65))))
+    # 上限は機体の事実に合わせる(2026-09-18 実弾: 会社 Mac = 192 の checkout・旧上限 64 で起動できず crash loop): 192 は通り、513 は断る
+    assert len(run(join.work_dirs_of(",".join(f"~/repos/r{i}" for i in range(192)))).dirs) == 192
+    with pytest.raises(ValueError, match="512"):
+        run(join.work_dirs_of(",".join(f"~/r{i}" for i in range(513))))
     del os
