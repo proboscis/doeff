@@ -21,6 +21,7 @@ import shutil
 import signal
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -30,9 +31,13 @@ from pathlib import Path
 import hy  # noqa: F401  # registers the .hy importer
 import pytest
 from doeff_agents.sessionhost import headless as headless_hy
-from doeff_agents.sessionhost import host
-from doeff_agents.sessionhost.headless_process import HeadlessRegistry
+from doeff_agents.sessionhost import headless_process, host
 from doeff_agents.sessionhost.attachment import TurnAttachment, TurnContent
+from doeff_agents.sessionhost.headless_process import (
+    HeadlessProcess,
+    HeadlessProcessStillAliveError,
+    HeadlessRegistry,
+)
 from doeff_agents.sessionhost.headless_protocol import (
     JSON,
     BackendLiveness,
@@ -950,6 +955,83 @@ def test_headless_process_codex_interrupt_completes_as_interrupted(tmp_path: Pat
     assert ended == (TurnEnded(ok=False, detail="turn-interrupted"),)
     assert process.alive() is True
     registry.kill("c2")
+
+
+#: 降りない替え玉(agora-redesign #547): stdin の EOF で降りず SIGTERM も無視する — 降ろせるのは SIGKILL だけ。
+#: 無視の構えが済んでから 1 行名乗る(検はその行を待ち、構えより先に SIGTERM が届く競りを消す)。
+_STUBBORN_STUB = """
+import json, signal, sys, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+sys.stdout.write(json.dumps({"type": "stubborn-ready"}) + "\\n")
+sys.stdout.flush()
+while True:
+    time.sleep(0.05)
+"""
+
+
+def _no_force_kill(_process: HeadlessProcess) -> None:
+    """SIGKILL が効くまでの窓の再現 — 何も送らない。"""
+
+
+@pytest.fixture
+def spawn_stubborn(tmp_path: Path) -> Iterator[Callable[[HeadlessRegistry, str], HeadlessProcess]]:
+    """降りない替え玉を起こす口。検が赤で抜けても替え玉を残さない(自分が起こした pid だけを SIGKILL)。"""
+    spawned: list[HeadlessProcess] = []
+
+    def spawn(registry: HeadlessRegistry, name: str) -> HeadlessProcess:
+        process = registry.spawn(
+            name,
+            [sys.executable, "-c", _STUBBORN_STUB],
+            str(tmp_path),
+            dict(os.environ),
+            str(tmp_path / f"{name}.events.jsonl"),
+            ClaudeDialogue(),
+        )
+        spawned.append(process)
+        _wait_until(lambda: len(process.peek_records()) >= 1)
+        return process
+
+    yield spawn
+    for process in spawned:
+        process.force_kill()
+
+
+def test_headless_registry_kill_leaves_no_process_and_forgets_only_what_went_down(
+    spawn_stubborn: Callable[[HeadlessRegistry, str], HeadlessProcess],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """agora-redesign #547: cleanup の後に同じ session の process が残らない。
+
+    1. EOF も SIGTERM も効かない process は SIGKILL まで段を上げて降ろす(kill の戻りの時点で pid が無い)。
+    2. 登記を忘れるのは**降りたのを確かめた後**: 猶予の中で降りなかった process(SIGKILL が効くまでの窓の
+       再現 — force_kill を 1 度だけ空振りにする)は型付きに断り、登記に残す。旧形は降ろす前に登記から
+       外したので、次の cleanup が「登記なし」と読んで cleaned_at を刻み、生きた process の持ち主が
+       居なくなった(漏れ)。残した登記は次の cleanup が同じ process を降ろし直す。"""
+    monkeypatch.setattr(headless_process, "EOF_GRACE_SECONDS", 0.2)
+    monkeypatch.setattr(headless_process, "TERM_GRACE_SECONDS", 0.2)
+    registry = HeadlessRegistry()
+
+    stubborn = spawn_stubborn(registry, "s-stubborn")
+    assert registry.kill("s-stubborn") is True
+    assert stubborn.exit_code() == -signal.SIGKILL
+    assert headless_process.pid_exists(stubborn.pid) is False
+    assert registry.get("s-stubborn") is None
+    assert registry.kill("s-stubborn") is False  # 冪等: 降ろした登記はもう無い
+
+    survivor = spawn_stubborn(registry, "s-survivor")
+    with monkeypatch.context() as window:
+        window.setattr(HeadlessProcess, "force_kill", _no_force_kill)
+        with pytest.raises(HeadlessProcessStillAliveError) as refused:
+            registry.kill("s-survivor")
+    assert str(survivor.pid) in str(refused.value)
+    assert headless_process.pid_exists(survivor.pid) is True
+    # 所有を失わない: 同じ名の生きた登記のまま(同名の起こし直しも今日どおり拒む)
+    assert registry.get("s-survivor") is survivor
+    assert registry.has_alive("s-survivor") is True
+    # 次の cleanup が同じ process を降ろし直す
+    assert registry.kill("s-survivor") is True
+    assert headless_process.pid_exists(survivor.pid) is False
+    assert registry.get("s-survivor") is None
 
 
 # ---------------------------------------------------------------- 3. host の RPC(backend=headless)
