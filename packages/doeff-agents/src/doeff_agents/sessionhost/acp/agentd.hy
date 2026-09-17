@@ -119,6 +119,7 @@
 (import doeff_agents.sessionhost.acp.effects [
   CHARTER-KIND-VERIFY
   CONDITION-INTERRUPTED
+  CONDITION-SESSION-LOST
   CONDITION-VERIFY-COMMAND-LOST
   CONDITION-VERIFY-DEADLINE-EXCEEDED
   CONDITION-VERIFY-SCRIPT-MISSING
@@ -278,6 +279,10 @@
   CANCEL-ARM-FORCE
   CANCEL-STAGE-FORCED
   CANCEL-STAGE-GRACEFUL
+  CAUSE-CATEGORY-COMPLETED
+  CAUSE-CATEGORY-FAILED
+  CAUSE-CATEGORY-AGENTD-STOPPED
+  CAUSE-REASON-DRAIN-DEADLINE
   JOB-STEP-CANCEL-FORCED
   JobCancel
   END-RETRY-DROP
@@ -409,6 +414,9 @@
   cancel-arm-for
   job-cancel-of
   outcome-with-cancel
+  outcome-with-limit
+  terminal-cause-of
+  command-cause-of
   recovered-cancel-of
   end-retry-verdict
   rebound-rows-of
@@ -787,7 +795,9 @@
   (setv target (if (is fresh None) row fresh))
   (<- status dict (status-object-of target))
   (<- condition dict (condition-of reason-type reason))
-  (<- ended dict (ended-status-of status None (+ pending #(condition))))
+  ;; #349 行 3 粒 3a: session なしで閉じる終端の cause = failed / <条件の型>
+  (<- cause dict (terminal-cause-of CAUSE-CATEGORY-FAILED reason-type))
+  (<- ended dict (ended-status-of status None cause (+ pending #(condition))))
   (<- outcome (| Written Conflict Refused) (AcpPutStatus :row target :status ended))
   (when (not (isinstance outcome Written))
     (<- (LogLine :text f"agentd: could not end job {row.resource-id}: {outcome}")))
@@ -1828,15 +1838,25 @@
    Ended・result なし。session は片付けない(host の monitor が終端に倒す — 終端の cause は
    host の観測の方が詳しい)。"
   (setv outcome None)
-  (if (= step JOB-STEP-SESSION-LOST)
-      (do
-        (<- lost dict (session-lost-condition-of view now-ms))
-        (setv lost-reason (get lost "reason"))
-        (<- (LogLine :text f"agentd: job {job.job-id} lost its session — {lost-reason}"))
-        (setv outcome (JobOutcome :ended True :result None :conditions #(lost))))
-      (do
-        (<- read JobOutcome (job-outcome-of view))
-        (setv outcome read)))
+  (cond
+    (= step JOB-STEP-SESSION-LOST)
+    (do
+      (<- lost dict (session-lost-condition-of view now-ms))
+      (setv lost-reason (get lost "reason"))
+      (<- (LogLine :text f"agentd: job {job.job-id} lost its session — {lost-reason}"))
+      (<- lost-cause dict (terminal-cause-of CAUSE-CATEGORY-FAILED CONDITION-SESSION-LOST))
+      (setv outcome (JobOutcome :ended True :result None :cause lost-cause :conditions #(lost))))
+    ;; turn-end(温かい session の手番の終わり — 器は終端ではないので job-outcome-of は結末を読まない)= 自然に終わった手番 =
+    ;; completed(#349 行 3 粒 3a・result は今日どおり無し → {cause} だけ)
+    (= step JOB-STEP-TURN-END)
+    (do
+      (<- read JobOutcome (job-outcome-of view))
+      (<- warm-cause dict (terminal-cause-of CAUSE-CATEGORY-COMPLETED None))
+      (setv outcome (replace read :ended True :cause warm-cause)))
+    True
+    (do
+      (<- read JobOutcome (job-outcome-of view))
+      (setv outcome read)))
   ;; 段 12 lane 12j(agora-redesign #367): 取り消しの合図を見届けた job が猶予の内に終わった = 段 2 の終端 —
   ;; result.cause {category: cancelled, stage: graceful, reason}(判断は judgment.outcome-with-cancel の 1 点・cancel が無ければ不変)。
   (<- with-cause JobOutcome (outcome-with-cancel outcome job.cancel CANCEL-STAGE-GRACEFUL))
@@ -1878,6 +1898,8 @@
   (when (is-not limit None)
     (<- (LogLine :text (+ f"agentd: job {job.job-id} was refused by the provider's limit "
                                f"(model {job.model}): {(get limit "message")}"))))
+  ;; #349 行 3 粒 3a: 限度の断りは cause にも写す(failed / ProviderLimit・取り消しの cause は上書きしない — judgment.outcome-with-limit の 1 点)
+  (<- limited JobOutcome (outcome-with-limit outcome limit))
   ;; agent-job → Ended(段 12 lane 12j・agora-redesign #402: 着かなければ行を 1 度読み直して書き直し〔監督が Pending へ戻した /
   ;; Bound attempt N に置き直した行にも Ended を書く — 手番は終わっている〕、それでも着かなければ持ち越す〔毎拍の
   ;; record-unrecorded-ends が書き直す・その id の Bound は claim しない〕。判断は judgment.end-retry-verdict の 1 点。)
@@ -1889,7 +1911,7 @@
       (<- (LogLine :text f"agentd: agent-job {job.job-id} vanished before Ended"))
       (do
         (<- job-status dict (status-object-of fresh))
-        (<- ended dict (ended-status-of job-status outcome.result ended-conditions))
+        (<- ended dict (ended-status-of job-status outcome.result limited.cause ended-conditions))
         (<- wrote-job (| Written Conflict Refused) (AcpPutStatus :row fresh :status ended))
         (when (not (isinstance wrote-job Written))
           (setv landed False)
@@ -1897,13 +1919,13 @@
           (<- verdict str (end-retry-verdict again job.session-id settings.principal now-ms now-ms UNRECORDED-END-TTL-MS))
           (when (and (= verdict END-RETRY-WRITE) (isinstance again AcpRow))
             (<- again-status dict (status-object-of again))
-            (<- ended-again dict (ended-status-of again-status outcome.result ended-conditions))
+            (<- ended-again dict (ended-status-of again-status outcome.result limited.cause ended-conditions))
             (<- wrote-again (| Written Conflict Refused) (AcpPutStatus :row again :status ended-again))
             (setv landed (isinstance wrote-again Written))
             (<- (LogLine :text (+ f"agentd: agent-job {job.job-id} Ended re-written on the fresh row (phase was {(.get again-status "phase")}) "
                                   f"after {wrote-job}: " (if landed "landed" (str wrote-again)) " (#402)"))))
           (when (not landed)
-            (<- end UnrecordedEnd (unrecorded-end-of job outcome.result ended-conditions now-ms))
+            (<- end UnrecordedEnd (unrecorded-end-of job outcome.result limited.cause ended-conditions now-ms))
             (<- carried AgentdState (with-unrecorded-end carried end))
             (<- (LogLine :text f"agentd: agent-job {job.job-id} not ended ({wrote-job}; verdict {verdict}); carrying the Ended to the next ticks (#402)"))))))
   ;; 実況の終わりの印(seq は最後の材料の読みの続き)
@@ -1953,9 +1975,11 @@
     (<- condition dict (restart-condition-of job settings.node-name reason now-ms))
     (setv condition-reason (get condition "reason"))
     (<- (LogLine :text f"agentd: job {job.job-id} closed for the stop of agentd — {condition-reason}"))
+    ;; #349 行 3 粒 3a: 排水の期限で閉じる終端の cause = agentd-stopped / drain-deadline
+    (<- stop-cause dict (terminal-cause-of CAUSE-CATEGORY-AGENTD-STOPPED CAUSE-REASON-DRAIN-DEADLINE))
     (<- settled AgentdState
         (settle-record settings current job view source path
-                       (JobOutcome :ended True :result None :conditions #(condition))
+                       (JobOutcome :ended True :result None :cause stop-cause :conditions #(condition))
                        "agentd-stop" now-ms))
     (setv current settled))
   ;; 段 12 lane 12a: verify の命令は自分の session で走っていて agentd の停止では降りない — 行は Running のまま残し、
@@ -2215,7 +2239,7 @@
                         f"({cancel.reason}); session {job.session-id} cleaned up (accepted={accepted})")))
   (<- (MetricLine :fields {"metric" "agent-job-cancel" "agentJobId" job.job-id
                                   "stage" CANCEL-STAGE-FORCED "reason" cancel.reason}))
-  (<- outcome JobOutcome (outcome-with-cancel (JobOutcome :ended True :result None :conditions #())
+  (<- outcome JobOutcome (outcome-with-cancel (JobOutcome :ended True :result None :cause None :conditions #())
                                               cancel CANCEL-STAGE-FORCED))
   (<- settled AgentdState (settle-record settings state job view source path outcome JOB-STEP-CANCEL-FORCED now-ms))
   settled)
@@ -2239,7 +2263,7 @@
           (setv current dropped))
         (do
           (<- status dict (status-object-of row))
-          (<- ended dict (ended-status-of status end.result end.conditions))
+          (<- ended dict (ended-status-of status end.result end.cause end.conditions))
           (<- wrote (| Written Conflict Refused) (AcpPutStatus :row row :status ended))
           (if (isinstance wrote Written)
               (do
@@ -2535,13 +2559,15 @@
 (defk end-summarize-job [settings job-key job-id result conditions now-ms]
   {:pre [(: settings AgentdSettings) (: job-key str) (: job-id str) (: result (| dict None)) (: conditions tuple) (: now-ms int)]
    :post [(: % bool)]}
-  "summarize の終わりの書き: 鍵で読み直した行を Ended(result / conditions)にする。戻り = 着地したか。"
+  "summarize の終わりの書き: 鍵で読み直した行を Ended(result / cause / conditions)にする。戻り = 着地したか。
+   cause は命令の族の判断 command-cause-of の 1 点(条件なし = completed・あり = failed / 先頭の条件の型)。"
   (<- fresh (| AcpRow None) (AcpGetRow :key job-key))
   (when (is fresh None)
     (<- (LogLine :text f"agentd: agent-job {job-id} (summarize) vanished before Ended"))
     (return False))
   (<- status dict (status-object-of fresh))
-  (<- ended dict (ended-status-of status result conditions))
+  (<- cause dict (command-cause-of conditions))
+  (<- ended dict (ended-status-of status result cause conditions))
   (<- wrote (| Written Conflict Refused) (AcpPutStatus :row fresh :status ended))
   (when (not (isinstance wrote Written))
     (<- (LogLine :text f"agentd: summarize job {job-id} not ended ({wrote}); retrying next tick")))
@@ -2908,13 +2934,15 @@
 (defk end-command [settings command result conditions now-ms]
   {:pre [(: settings AgentdSettings) (: command InFlightCommand) (: result (| dict None)) (: conditions tuple) (: now-ms int)]
    :post [(: % bool)]}
-  "verify の命令の終わりの書き: 鍵で読み直した行を Ended(result / conditions)にする。戻り = 着地したか。"
+  "verify の命令の終わりの書き: 鍵で読み直した行を Ended(result / cause / conditions)にする。戻り = 着地したか。
+   cause は命令の族の判断 command-cause-of の 1 点(条件なし = completed〔赤の rc も結末〕・あり = failed / 先頭の条件の型)。"
   (<- fresh (| AcpRow None) (AcpGetRow :key command.job-key))
   (when (is fresh None)
     (<- (LogLine :text f"agentd: agent-job {command.job-id} (verify) vanished before Ended"))
     (return False))
   (<- status dict (status-object-of fresh))
-  (<- ended dict (ended-status-of status result conditions))
+  (<- cause dict (command-cause-of conditions))
+  (<- ended dict (ended-status-of status result cause conditions))
   (<- wrote (| Written Conflict Refused) (AcpPutStatus :row fresh :status ended))
   (when (not (isinstance wrote Written))
     (<- (LogLine :text f"agentd: verify job {command.job-id} not ended ({wrote}); retrying next tick")))
