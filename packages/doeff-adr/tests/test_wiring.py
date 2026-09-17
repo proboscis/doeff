@@ -205,6 +205,117 @@ def test_wiring_walk_budget_rejects_non_positive_or_garbage_values(
     assert "doeff_adr_wiring_max_dirs" in _combined_output(result)
 
 
+_GATE_TEST_HEAD = """\
+from doeff_adr.pytest_plugin import (
+    NotDefaultScope,
+    WiringUncollected,
+    WiringVerified,
+    default_scope_wiring,
+)
+
+
+def test_gate(request):
+    verdict = default_scope_wiring(request.session)
+"""
+
+
+def _make_gate_test(pytester: pytest.Pytester, *expectations: str) -> None:
+    # An in-session gate test: it reads the running session's own collection
+    # through the plugin's mouth instead of spawning a second collection.
+    body: str = "".join(f"    {line}\n" for line in expectations)
+    pytester.makefile(".py", **{"tests/test_gate": _GATE_TEST_HEAD + body})
+
+
+def test_default_scope_wiring_reports_adr_outside_testpaths(
+    pytester: pytest.Pytester,
+) -> None:
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+        """
+    )
+    pytester.mkdir("tests")
+    _make_executable_adr(pytester, "GATE-RED")
+    _make_gate_test(
+        pytester,
+        "assert isinstance(verdict, WiringUncollected), verdict",
+        "assert [path.name for path in verdict.uncollected] == ['defadr_gate_red.hy']",
+    )
+
+    result: pytest.RunResult = pytester.runpytest("-q")
+
+    result.assert_outcomes(passed=1, warnings=1)
+
+
+def test_default_scope_wiring_verifies_from_the_sessions_own_collection(
+    pytester: pytest.Pytester,
+) -> None:
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        testpaths = ["tests", "docs/adr"]
+        """
+    )
+    pytester.mkdir("tests")
+    _make_executable_adr(pytester, "GATE-GREEN")
+    _make_gate_test(
+        pytester,
+        "assert isinstance(verdict, WiringVerified), verdict",
+        "assert [path.name for path in verdict.executable_adrs] == ['defadr_gate_green.hy']",
+    )
+
+    result: pytest.RunResult = pytester.runpytest("-q")
+
+    result.assert_outcomes(passed=2)
+
+
+def test_default_scope_wiring_refuses_to_speak_for_explicit_paths(
+    pytester: pytest.Pytester,
+) -> None:
+    # The explicit paths reach every ADR while testpaths does not: reading this
+    # session's collection as the default scope's would be a false green.
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+        """
+    )
+    pytester.mkdir("tests")
+    _make_executable_adr(pytester, "GATE-EXPLICIT")
+    _make_gate_test(
+        pytester,
+        "assert verdict == NotDefaultScope(('tests', 'docs/adr')), verdict",
+    )
+
+    result: pytest.RunResult = pytester.runpytest("-q", "tests", "docs/adr")
+
+    result.assert_outcomes(passed=2)
+
+
+def test_wiring_measures_the_collection_scope_not_the_selection(
+    pytester: pytest.Pytester,
+) -> None:
+    # The canonical doeff gate runs with -m 'not e2e': deselection happens after
+    # collection, and an ADR it drops was still reached by the scope — neither
+    # the strict report nor the in-session gate may call it mis-wired.
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        testpaths = ["tests", "docs/adr"]
+        """
+    )
+    pytester.mkdir("tests")
+    _make_executable_adr(pytester, "GATE-DESELECTED")
+    _make_gate_test(pytester, "assert isinstance(verdict, WiringVerified), verdict")
+
+    result: pytest.RunResult = pytester.runpytest(
+        "-q", "-k", "test_gate", "--doeff-adr-wiring=strict"
+    )
+
+    result.assert_outcomes(passed=1, deselected=1)
+
+
 def test_verify_wiring_cli_runs_strict_collection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

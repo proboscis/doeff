@@ -6,6 +6,7 @@ import importlib.util
 import os
 import sys
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -54,6 +55,53 @@ class WiringWalkBudgetError(Exception):
         self.dirs_walked = dirs_walked
 
 
+@dataclass(frozen=True)
+class WiringVerified:
+    """Every executable ADR under rootdir was reached by the session's collection."""
+
+    executable_adrs: frozenset[Path]
+
+
+@dataclass(frozen=True)
+class WiringUncollected:
+    """Executable ADRs exist that the session's collection did not reach."""
+
+    uncollected: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
+class WiringWalkAborted:
+    """Discovery exceeded its directory budget, so nothing could be verified."""
+
+    dirs_walked: int
+    max_dirs: int
+
+
+@dataclass(frozen=True)
+class NotDefaultScope:
+    """The session collected caller-chosen paths, not the configured default scope.
+
+    Such a collection cannot speak for the default invocation in either
+    direction: a narrower one misses ADRs the default scope reaches, and a wider
+    one (``pytest tests docs/adr`` while testpaths lacks docs/adr) reaches ADRs
+    the default scope would leave silent.
+    """
+
+    args: tuple[str, ...]
+
+
+WiringVerdict = WiringVerified | WiringUncollected | WiringWalkAborted
+
+# Wiring is a property of the collection *scope*, not of the selection: -k / -m /
+# --deselect drop items after collection, and an ADR they deselect was still
+# reached (the canonical doeff gate itself runs with ``-m 'not e2e'``). The files
+# are therefore snapshotted before any deselection hook runs.
+_COLLECTED_FILES_KEY = pytest.StashKey[frozenset[Path]]()
+# One measurement per session: the collection-finish report and an in-session
+# gate test read the same verdict instead of walking rootdir twice.
+_WIRING_VERDICT_KEY = pytest.StashKey[WiringVerdict]()
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addini(
         "doeff_adr_hy_files",
@@ -89,31 +137,58 @@ def pytest_collect_file(file_path: Any, parent: pytest.Collector) -> pytest.Coll
     return DoeffAdrHyFile.from_parent(parent, path=path)
 
 
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    config.stash[_COLLECTED_FILES_KEY] = frozenset(Path(item.path).resolve() for item in items)
+
+
 def pytest_collection_finish(session: pytest.Session) -> None:
     mode = _wiring_mode(session.config)
     if mode == "off":
         return
-    root = Path(session.config.rootpath)
-    patterns = _file_patterns(session.config)
-    max_dirs = _wiring_max_dirs(session.config)
-    try:
-        executable_adrs = _discover_executable_adrs(
-            root, patterns, _norecurse_dir_patterns(session.config), max_dirs=max_dirs
-        )
-    except WiringWalkBudgetError as exc:
-        message = _walk_budget_message(root, exc.dirs_walked, max_dirs, mode)
-        if mode == "strict":
-            raise pytest.UsageError(message) from exc
-        warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+    verdict = session_wiring(session)
+    if isinstance(verdict, WiringVerified):
         return
-    collected_files = {Path(item.path).resolve() for item in session.items}
-    uncollected_adrs = sorted(executable_adrs - collected_files)
-    if not uncollected_adrs:
-        return
-    message = _wiring_message(root, uncollected_adrs, mode)
+    message = wiring_failure_message(verdict, Path(session.config.rootpath), mode)
     if mode == "strict":
         raise pytest.UsageError(message)
     warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+
+def session_wiring(session: pytest.Session) -> WiringVerdict:
+    """Wiring of the collection this session actually performed (measured once)."""
+    config = session.config
+    cached = config.stash.get(_WIRING_VERDICT_KEY, None)
+    if cached is not None:
+        return cached
+    verdict = _measure_wiring(session)
+    config.stash[_WIRING_VERDICT_KEY] = verdict
+    return verdict
+
+
+def default_scope_wiring(session: pytest.Session) -> WiringVerdict | NotDefaultScope:
+    """Wiring of the configured default scope, read from the running session.
+
+    The mouth for an in-session gate test: a default invocation (no path
+    arguments) has already collected the default scope, so its own collection
+    *is* the measurement — spawning a second ``pytest --collect-only`` from
+    inside a test repeats O(suite) work under a per-test deadline. A session
+    that collected anything else answers ``NotDefaultScope``.
+    """
+    config = session.config
+    if not _collects_default_scope(config):
+        return NotDefaultScope(tuple(str(arg) for arg in config.args))
+    return session_wiring(session)
+
+
+def wiring_failure_message(
+    verdict: WiringUncollected | WiringWalkAborted,
+    root: Path,
+    mode: WiringMode = "strict",
+) -> str:
+    if isinstance(verdict, WiringUncollected):
+        return _wiring_message(root, list(verdict.uncollected), mode)
+    return _walk_budget_message(root, verdict.dirs_walked, verdict.max_dirs, mode)
 
 
 class DoeffAdrHyFile(pytest.File):
@@ -186,6 +261,48 @@ def _wiring_max_dirs(config: pytest.Config) -> int:
             "(use doeff_adr_wiring=off for an intentional opt-out)"
         )
     return value
+
+
+def _collects_default_scope(config: pytest.Config) -> bool:
+    source = config.args_source
+    if source is pytest.Config.ArgsSource.TESTPATHS:
+        return True
+    if source is pytest.Config.ArgsSource.INVOCATION_DIR:
+        # No testpaths configured: the default scope is rootdir itself, and only
+        # an invocation from rootdir collects all of it.
+        return Path(config.invocation_params.dir) == Path(config.rootpath)
+    return False
+
+
+def _measure_wiring(session: pytest.Session) -> WiringVerdict:
+    config = session.config
+    max_dirs = _wiring_max_dirs(config)
+    try:
+        executable_adrs = _discover_executable_adrs(
+            Path(config.rootpath),
+            _file_patterns(config),
+            _norecurse_dir_patterns(config),
+            max_dirs=max_dirs,
+        )
+    except WiringWalkBudgetError as exc:
+        return WiringWalkAborted(dirs_walked=exc.dirs_walked, max_dirs=max_dirs)
+    return _wiring_verdict(executable_adrs, _collected_files(session))
+
+
+def _collected_files(session: pytest.Session) -> frozenset[Path]:
+    snapshot = session.config.stash.get(_COLLECTED_FILES_KEY, None)
+    if snapshot is not None:
+        return snapshot
+    return frozenset(Path(item.path).resolve() for item in session.items)
+
+
+def _wiring_verdict(
+    executable_adrs: set[Path], collected_files: frozenset[Path]
+) -> WiringVerified | WiringUncollected:
+    uncollected = tuple(sorted(executable_adrs - collected_files))
+    if uncollected:
+        return WiringUncollected(uncollected)
+    return WiringVerified(frozenset(executable_adrs))
 
 
 def _norecurse_dir_patterns(config: pytest.Config) -> tuple[str, ...]:
