@@ -120,3 +120,6 @@ ORCH_PROMPT.md
 # Repo-root scratch directory only. A `python/` directory inside a package
 # (e.g. packages/doeff-indexer/python/) is NOT covered by this rule.
 /python/
+
+# 設計記録の書き込みロック(道具が作る・repo に入れない)
+docs/design/*/.records.lock
