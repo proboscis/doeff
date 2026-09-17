@@ -1,0 +1,103 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/target-2026-09-18c/design.html",
+      "sha256": "a2666d79b86d3a09182a6d6934c6048f513255bc82cb5d87cff7eb6337a98d74"
+    },
+    {
+      "path": "artifacts/target-2026-09-18c/design.md",
+      "sha256": "deea462422ae26b6fdfb87a829dfc5b7512bce08a09dbf94c12959591fc41444"
+    },
+    {
+      "path": "artifacts/target-2026-09-18c/evidence.md",
+      "sha256": "90f67e2f746de9444c88ebab2bd4b259a7c8d4e9bebcbf829fe85e6ee3127434"
+    }
+  ],
+  "body": {
+    "publication": {
+      "reference": "docs/design/auto-compact-window/artifacts/target-2026-09-18c/design.html(agora の artifact 経路はこの席から使えない — 会話 id を持たないため)",
+      "status": "local"
+    },
+    "purpose": "completion",
+    "summary": "段 1(agentd の起動 argv が会話の圧縮の閾値を必ず名乗る)を実装し、焦点の検で緑にして branch へ着地させた(doeff wt/autocompact-window・88e78e09)。設計・検証・証拠は docs/design/auto-compact-window/ に記録した。盲検の反例 2 本が両方成立したので構造を 2 か所直した(起こす旗の集合を 1 点で宣言・不変量を argv に出る値へ移す)。残るのは operator の裁定 1 件(既にある compactAt との関係)で、それが済むまで本線への merge と艦隊への配備はしない。納品は agora の artifact 経路が使えない(この席が agora の会話として登記されていない)ので、file の path で示した。",
+    "topics": [
+      {
+        "alternatives": [
+          "案 b — compactAt を宣言した会話には床を当てず auto を名乗る(既存の振る舞いは 1 bit も変わらないが、いちばん直したい席がそのまま 700k まで伸びる)",
+          "案 c — compactAt を退役させ輪を 1 つにする(出荷済み機能の削除で、今回の範囲を超える)"
+        ],
+        "impacts": [
+          "配備した瞬間に効く(着地だけでは効かない)",
+          "案 a では、記録の service から作り直す要約が出なくなる会話が生じる",
+          "ACP の検が使っている宣言値は 70 と 80。現に宣言している会話の本数は数えていない"
+        ],
+        "needed_from": "user",
+        "question": "既にある compactAt(会話の宣言・文脈使用率の %)との関係をどうするか。内側の輪(CLI 側の絶対値)を入れると、40 より上の compactAt を宣言した会話では外側の輪(agentd が温かい session を片付けて記録から再開する腕)が二度と撃たなくなる。",
+        "recommendation": "案 a — 内側の輪を優先し、compactAt は宣言が低い時だけ撃つ backstop にする。外側の輪が撃つ 700k 付近は実測で費用の 59% を占める帯そのもので、内側の輪はそこへ届く前に安く(その場で要約・session を残して)畳む。2026-09-14 の逐語『that routing agent should compact itself with some threshold』の目的は満たし、変わるのは手段。"
+      },
+      {
+        "alternatives": [
+          "配備の前に窓の小さいモデル(Sonnet / Haiku)の扱いを決める(CLI が min(指定, モデルの窓)で丸めるため、床 400k では早く畳む効果が出ない)"
+        ],
+        "impacts": [
+          "畳む回数が増えると要約のコストが乗る(未測定)",
+          "窓 200k のモデルの席は実質いまと変わらない"
+        ],
+        "needed_from": "user",
+        "question": "床 400,000 と役ごとの値(lead 400,000 / worker 200,000)をこの初期値で配備してよいか。",
+        "recommendation": "この値で配備し、24 時間の実測で決め直す。畳む回数が増える代償は測っていないので、値は仮置きと扱う。"
+      },
+      {
+        "alternatives": [
+          "段 1 の配備を待たずに段 2 を並行で書く(契約は確定しているので書ける)"
+        ],
+        "impacts": [
+          "いまの実装は全席が同じ床を名乗る",
+          "ACP の会話の宣言の閉語彙(model / profile / effort / compactAt)に 5 欄目を足す"
+        ],
+        "needed_from": "user",
+        "question": "段 2(起票側が役ごとの値を宣言する)にいつ着手するか。",
+        "recommendation": "段 1 の着地と選択 4 の裁定の後。operator が合意した『役で分ける』は段 2 で初めて実現する。"
+      },
+      {
+        "alternatives": [
+          "今回のうちに semgrep の規則を書く"
+        ],
+        "impacts": [
+          "6 つ目の名簿が将来足された時に、同じ形(欄が無音で落ちる)が再発しうる",
+          "欄が落ちても縮退の印が出ず、床の値と区別できない"
+        ],
+        "needed_from": "user",
+        "question": "旗の集合を使っていない名簿を見つける静的検査を今回の範囲に含めるか。",
+        "recommendation": "含めない。今回は集合の 1 点宣言と検 2 本で止め、検査は計画の T7 として次の担当へ渡す。"
+      }
+    ]
+  },
+  "created_at": "2026-09-17T17:09:18.632791+00:00",
+  "id": "report-bd8223dbe64c",
+  "inputs": [
+    {
+      "id": "design-3c927e1b645c",
+      "role": "subject",
+      "sha256": "1d708c178111fb885a8e0d46c7ef99996cc734bfe221cc98b9795194701a9ec8"
+    },
+    {
+      "id": "assessment-4bf18a61f47e",
+      "role": "evidence",
+      "sha256": "b604db888011fa2827478732aa008a09a7927a8c443af33ba110cd43346595d4"
+    },
+    {
+      "id": "assessment-9f3f4e627bb0",
+      "role": "evidence",
+      "sha256": "39045414ce81a578ce52ab50d544c0436fffe3cfcbab95424d43b6317ea9f226"
+    },
+    {
+      "id": "plan-3afdf74bfe5c",
+      "role": "evidence",
+      "sha256": "47a2819e3b39baea45284240ec4b7f111d5e8f600d7a9c25536a3b41d33ca207"
+    }
+  ],
+  "kind": "report",
+  "schema_version": 1,
+  "scope": "agentd が起こす claude 席の会話圧縮の閾値(auto-compact window)の宣言 — charter から起動 argv までの契約と、役(計画席 lead / 実装席 worker)ごとの値の所在。対象 = doeff-agents の起動物理・ACP の charter 組み立て・dotfiles の起票側の宣言。"
+}
