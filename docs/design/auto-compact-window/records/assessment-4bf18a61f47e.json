@@ -1,0 +1,248 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/target-2026-09-18c/evidence.md",
+      "sha256": "90f67e2f746de9444c88ebab2bd4b259a7c8d4e9bebcbf829fe85e6ee3127434"
+    },
+    {
+      "path": "artifacts/target-2026-09-18c/evidence/e5-focused-tests.log",
+      "sha256": "7111b2145e0e94bc828090eeefbf97a89c264cde2f6b7db0d6ccffef56c7241b"
+    },
+    {
+      "path": "artifacts/target-2026-09-18c/evidence/e6-conformance-baseline.log",
+      "sha256": "a80c1968b46680c2e530d6b0edb6c011497da10ea68913e4d97fa43808d758a9"
+    },
+    {
+      "path": "artifacts/target-2026-09-18c/evidence/e8-lint-no-new-findings.log",
+      "sha256": "10f01c4db3ef770478a7aa17982c6cd0f8ea93f163d8cd93030f2e31651ee9a3"
+    },
+    {
+      "path": "artifacts/target-2026-09-18c/evidence/e9-blind-counterexamples.log",
+      "sha256": "6d5728d851dff788dd266cdd0d68dd6ebc945e3caa6c118f64c3b52ccbd01b7f"
+    }
+  ],
+  "body": {
+    "claims": [
+      {
+        "evidence": [
+          "artifacts/target-2026-09-18c/evidence/e5-focused-tests.log"
+        ],
+        "expected": "旗が常に載り、既定 400000・宣言 200000・幅の外は auto。",
+        "id": "I1",
+        "mode": "execution",
+        "observed": "緑。凍結接頭 4 語と --effort の index 4 も不変。",
+        "procedure": "焦点の検を走らせる(tests/test_sessionhost_impls.py の argv 群 + 反例の 6 通り + band の検)。",
+        "result": "supported",
+        "scenario_ids": [
+          "CC3"
+        ],
+        "statement": "起動 argv は閾値を必ず載せ、値は charter の欄・無ければ床。幅の外は auto へ縮退する。"
+      },
+      {
+        "evidence": [
+          "artifacts/target-2026-09-18c/evidence/e9-blind-counterexamples.log",
+          "artifacts/target-2026-09-18c/evidence/e5-focused-tests.log"
+        ],
+        "expected": "欄が在り値が保たれ、名乗らない会話では欄を作らない。既存の検が 1 本も赤にならない。",
+        "id": "I2",
+        "mode": "execution",
+        "observed": "True / 800000 / 欄なし。焦点の検は impls+host 72 本・腕まわり 189 本・acp+policy 103 本がすべて緑。",
+        "procedure": "host.build-launch-program-params を直接呼ぶ再現(盲検 A の手順)+ 触った層の焦点の検 169 本。",
+        "result": "supported",
+        "scenario_ids": [
+          "CC1",
+          "CC4",
+          "CC6"
+        ],
+        "statement": "宣言した値は wire の受理形と蘇生の名簿を通り抜け、行に残す意図と降りた process の続きにも運ばれる。"
+      },
+      {
+        "evidence": [
+          "artifacts/target-2026-09-18c/evidence/e5-focused-tests.log"
+        ],
+        "expected": "どれも旗が載り、resume の末尾は --resume のまま。",
+        "id": "I3",
+        "mode": "execution",
+        "observed": "緑。ACP の agentd は backend = headless(agentd.toml)なのでこれが本番の経路。",
+        "procedure": "headless_argv.build_claude_headless を fresh / 宣言つき / resume / 幅の外の 4 通りで呼ぶ検。",
+        "result": "supported",
+        "scenario_ids": [
+          "CC4"
+        ],
+        "statement": "本番の経路(headless backend)でも閾値が載る。"
+      },
+      {
+        "evidence": [
+          "artifacts/target-2026-09-18c/evidence/e8-lint-no-new-findings.log"
+        ],
+        "expected": "増分 0。",
+        "id": "I4",
+        "mode": "execution",
+        "observed": "ruff 24 件(本線と同一)・semgrep 6 件(本線と同数・同 rule・当たる行は本変更が触っていない節)。claude_code.hy は両方 0 件。",
+        "procedure": "ruff と semgrep を、変更後の file と origin/main の同 file の両方に当てて数を比べる。",
+        "result": "supported",
+        "scenario_ids": [],
+        "statement": "変更した file は品質検査の指摘を 1 件も増やしていない。"
+      },
+      {
+        "evidence": [
+          "artifacts/target-2026-09-18c/evidence/e6-conformance-baseline.log"
+        ],
+        "expected": "本変更が argv の凍結物理を壊していないことを、実際に起こした process の argv で確かめる。",
+        "id": "I5",
+        "mode": "execution",
+        "observed": "worktree で 3 本とも赤。ただし**本変更が 1 byte も触っていない codex の検も同じ理由で赤**で、本線の checkout でも同じ 1 本が同じ理由で赤(harness が agentd の unix socket に繋げない)。⇒ 本変更による退行ではないが、R6 の適合を実プロセスの argv では確かめられていない。",
+        "procedure": "conformance/test_s13_argv_wiring.py を worktree と本線の両方で走らせる。",
+        "result": "unknown",
+        "scenario_ids": [],
+        "statement": "S13 適合検査は緑である。"
+      },
+      {
+        "evidence": [],
+        "expected": "--autocompact が稼働中の席に出る。",
+        "id": "I6",
+        "mode": "unrun",
+        "observed": "未実行。配備していない(配備は選択 4 の裁定待ち)。",
+        "procedure": "uv tool を再導入して常駐を入れ替え、ps と session の backend_ref.argv を見る。",
+        "result": "unknown",
+        "scenario_ids": [],
+        "statement": "本番の席が実際に閾値を名乗るようになった。"
+      },
+      {
+        "evidence": [],
+        "expected": "lead と worker で argv の値が変わる。",
+        "id": "I7",
+        "mode": "unrun",
+        "observed": "未実装。段 1 の着地と選択 4 の裁定が先。",
+        "procedure": "ACP の charterFor に欄を通し、ai conv open --agent の閉語彙へ 5 欄目を足して実射する。",
+        "result": "unknown",
+        "scenario_ids": [
+          "CC1"
+        ],
+        "statement": "段 2(起票側が役ごとの値を宣言する)が動く。"
+      }
+    ],
+    "findings": [
+      {
+        "category": "evidence_gap",
+        "claim_ids": [
+          "I6"
+        ],
+        "evidence": [],
+        "id": "J1",
+        "owner": "agentd-arms",
+        "remedy": "選択 4 の裁定の後に uv tool を再導入して常駐を入れ替え、ps と backend_ref.argv で実測する。",
+        "severity": "blocking",
+        "statement": "配備していないので、本番の席が閾値を名乗ることを 1 度も観測していない。いま本番で走っている席は依然として窓いっぱいまで伸びる。",
+        "status": "open"
+      },
+      {
+        "category": "evidence_gap",
+        "claim_ids": [
+          "I5"
+        ],
+        "evidence": [
+          "artifacts/target-2026-09-18c/evidence/e6-conformance-baseline.log"
+        ],
+        "id": "J2",
+        "owner": "agentd-argv-builder",
+        "remedy": "conformance の harness が動く環境で走らせる。単体側の位置 pin は緑なので、段 1 の着地は止めない。",
+        "severity": "nonblocking",
+        "statement": "S13 適合検査が環境側の不足(agentd の socket に繋げない)で走らず、R6 の適合を実プロセスの argv で確かめていない。",
+        "status": "open"
+      },
+      {
+        "category": "intentional_migration",
+        "claim_ids": [
+          "I7"
+        ],
+        "evidence": [],
+        "id": "J3",
+        "owner": "route-dispatcher",
+        "remedy": "段 1 の着地と選択 4 の裁定の後に段 2 を実装する。",
+        "severity": "nonblocking",
+        "statement": "段 2(役ごとの値の宣言)が未実装なので、いまの実装は全席が同じ床を名乗る。operator が合意した『役で分ける』は段 2 で初めて実現する。",
+        "status": "open"
+      }
+    ],
+    "focus": "implementation",
+    "methods": [
+      {
+        "evidence": [
+          "design-3c927e1b645c の change_cases"
+        ],
+        "name": "change-cases",
+        "profile": "change-cases-1996-local-v1",
+        "reason": "目標設計 design-3c927e1b645c の CC1〜CC6 を評価軸に使う。対象版は同じ worktree(snapshot-9ed1357abe8b)。",
+        "status": "reused",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "saam",
+        "profile": "saam-1996-local-v1",
+        "reason": "構造の適合性は design_validation(assessment-9f3f4e627bb0)で評価した。ここは現状のコードが目標設計に適合するかの評価。",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "volatility",
+        "profile": "volatility-righting-software-local-v1",
+        "reason": "分割の決定は目標設計側。",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "add",
+        "profile": "add-2.0-local-v1",
+        "reason": "責務の割当ては目標設計側。",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "ddd",
+        "profile": "ddd-evans-2015-local-v1",
+        "reason": "実行基盤の起動物理で業務モデルの対象がない。",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [
+          "artifacts/target-2026-09-18c/diagrams/fig3.svg"
+        ],
+        "name": "c4",
+        "profile": "c4-web-2026-09-14-local-v1",
+        "reason": "目標設計の図 1〜3 が同じ版の構造を説明している。",
+        "status": "reused",
+        "steps": []
+      }
+    ],
+    "subject": "design-3c927e1b645c",
+    "verdict": "incomplete"
+  },
+  "created_at": "2026-09-17T17:05:24.625375+00:00",
+  "id": "assessment-4bf18a61f47e",
+  "inputs": [
+    {
+      "id": "design-3c927e1b645c",
+      "role": "subject",
+      "sha256": "1d708c178111fb885a8e0d46c7ef99996cc734bfe221cc98b9795194701a9ec8"
+    },
+    {
+      "id": "snapshot-9ed1357abe8b",
+      "role": "evidence",
+      "sha256": "cad7edd207d6bc2c3db2cac3b324729495427482b1fd4e8a58f1cdb6261ea9ab"
+    },
+    {
+      "id": "assessment-0eb2cf387b0d",
+      "role": "basis",
+      "sha256": "ac4f4a5e2b6baba1aca12130621be10bb32a0692c90819d5087720035373019f"
+    }
+  ],
+  "kind": "assessment",
+  "schema_version": 1,
+  "scope": "agentd が起こす claude 席の会話圧縮の閾値(auto-compact window)の宣言 — charter から起動 argv までの契約と、役(計画席 lead / 実装席 worker)ごとの値の所在。対象 = doeff-agents の起動物理・ACP の charter 組み立て・dotfiles の起票側の宣言。"
+}

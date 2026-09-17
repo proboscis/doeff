@@ -91,6 +91,7 @@
   prepare-launch-workspace
   session-hooks-mode])
 (import doeff_agents.sessionhost.policy [
+  carry-launch-flags
   cause-if-absent
   overlay-without-turn-auth
   event-type-for-status
@@ -288,10 +289,15 @@
               :backend-ref (headless-backend-ref session-name pid events-path argv
                                                  (str (.get params "socket_path" "")))
               ;; 追補 2(実弾 #92): 手番ごとの資格の札は行に残さない — 再開はその手番の送りが運ぶ env で起こす
-              :launch-overlay {"session_env" (overlay-without-turn-auth session-env)
-                               "model" (.get params "model")
-                               "effort" (.get params "effort")
-                               "mcp_servers" (or (.get params "mcp_servers") {})}
+              ;; 会話の圧縮の閾値(設計記録 docs/design/auto-compact-window): 起こす旗も行の意図に残す — 残さないと、
+              ;; 降りた process の続き(continue-headless-process)が行だけを読んで
+              ;; argv を組み直すので、**その腕だけ**走行係の床へ戻る。
+              :launch-overlay (carry-launch-flags
+                                params
+                                {"session_env" (overlay-without-turn-auth session-env)
+                                 "model" (.get params "model")
+                                 "effort" (.get params "effort")
+                                 "mcp_servers" (or (.get params "mcp_servers") {})})
               :launch-attribution (.get params "launch_attribution")
               :conversation row-conversation
               :generation (if (is resume-context None)
@@ -352,12 +358,15 @@
              (+ f"session.send: session {row.session-id} has no conversation identity — "
                 "the next headless turn cannot be resumed"))))
   (setv overlay (or row.launch-overlay {}))
-  (setv params {"agent_type" row.agent-type
-                "work_dir" row.work-dir
-                "model" (.get overlay "model")
-                "effort" (.get overlay "effort")
-                "mcp_servers" (or (.get overlay "mcp_servers") {})
-                "expected_result" row.expected-result})
+  ;; 会話の圧縮の閾値(設計記録 docs/design/auto-compact-window): 行に残した起こす旗を続きの手番へも運ぶ(policy.LAUNCH-FLAG-KEYS)。
+  (setv params (carry-launch-flags
+                 overlay
+                 {"agent_type" row.agent-type
+                  "work_dir" row.work-dir
+                  "model" (.get overlay "model")
+                  "effort" (.get overlay "effort")
+                  "mcp_servers" (or (.get overlay "mcp_servers") {})
+                  "expected_result" row.expected-result}))
   (setv ref (or row.backend-ref {}))
   (<- built (headless-launch-args params row.effective-identity row.conversation "resume"
                                   (str (.get ref "socket_path" "")) row.session-id))

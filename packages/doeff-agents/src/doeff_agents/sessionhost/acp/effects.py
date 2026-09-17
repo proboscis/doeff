@@ -345,6 +345,11 @@ CHARTER_SETTING_KEYS: dict[str, AgentSetting] = {"model": "model", "effort": "ef
 #: 無い work_dir を agentd が作ってよい(既定 = 無し = 作らない — repo を指す work_dir を空の dir で偽装しない)。
 CHARTER_WORK_DIR_KEY = "work_dir"
 CHARTER_WORK_DIR_SCRATCH_KEY = "work_dir_scratch"
+#: 会話の圧縮の閾値(設計記録 docs/design/auto-compact-window): 会話の圧縮の閾値(token の整数、または "auto" = CLI の窓任せ)。
+#: 起こす params と同じ綴りで、launch は charter を丸ごと params にするので素通し、resume は
+#: judgment.resume-params-of の名簿が写す。argv の導出は impls.claude_code.claude-autocompact-value
+#: の 1 点(幅 100k〜1M・外れる値は "auto" へ縮退 — 幅の外を argv に載せると手番が死ぬ)。
+CHARTER_AUTO_COMPACT_WINDOW_KEY = "auto_compact_window"
 #: 作業場の段(judgment.work-dir-step-of の閉語彙): launch = 在る / 宣言なし・create = 無いが scratch の印・missing = 無い。
 WorkDirStep = Literal["launch", "create", "missing"]
 WORK_DIR_STEP_LAUNCH: WorkDirStep = "launch"

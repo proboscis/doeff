@@ -61,6 +61,7 @@
 (import doeff_agents.sessionhost.policy [
   ACTIVE-STATUSES
   binding-kind-advertisement
+  carry-launch-flags
   cause-if-absent
   is-run-to-completion
   is-terminal-status
@@ -939,7 +940,9 @@
   (admit-context-file params "session.launch")
   (admit-workspace-seed params "session.launch")
   (run (admit-launch-attribution params "session.launch"))
-  {"session_id" (get params "session_id")
+  (carry-launch-flags
+    params
+    {"session_id" (get params "session_id")
    "session_name" (get params "session_name")
    "agent_type" (get params "agent_type")
    "work_dir" (get params "work_dir")
@@ -972,7 +975,12 @@
                                   "DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS")
    "backend_kind" config.backend
    ;; headless backend の実況の正本の置き場(headless.hy が events file を作る)。
-   "events_root" config.headless-events-root})
+   "events_root" config.headless-events-root}
+  ;; 会話の圧縮の閾値(設計記録 docs/design/auto-compact-window): 起こす旗になる欄(policy.LAUNCH-FLAG-KEYS)を素通しする。
+  ;; ⚠ ここは wire の受理形 = **閉じた名簿**なので、旗を名簿に書き忘れると会話が名乗った
+  ;; 値が argv の導出点に 1 度も届かず、どの腕でも走行係の床が出る(盲検の反例 A で実測)。
+  ;; 数え直すのは policy の集合 1 つだけ。
+  ))
 
 
 (deff wire-snapshot [actor session-id]
@@ -1366,6 +1374,8 @@
                                           "DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS")
            "backend_kind" config.backend
            "events_root" config.headless-events-root})
+    ;; 会話の圧縮の閾値(設計記録 docs/design/auto-compact-window): 起こす旗は resume の腕でも運ぶ(policy.LAUNCH-FLAG-KEYS)。
+    (setv program-params (carry-launch-flags p program-params))
     (setv row None)
     (try
       (setv row (run-hosted config actor (resume-session program-params)))

@@ -1,0 +1,225 @@
+{
+  "artifacts": [],
+  "body": {
+    "assessment": "assessment-4bf18a61f47e",
+    "blocked_by": [
+      "選択 4(既にある compactAt との関係)の operator 裁定 — 配備の前に要る。設計の推奨は案 a(内側の輪を優先)。出荷済みで operator が要求した機能の効き方が変わるので、席では決めない。"
+    ],
+    "design_validation": "assessment-9f3f4e627bb0",
+    "readiness": "draft",
+    "target": "design-3c927e1b645c",
+    "tasks": [
+      {
+        "acceptance": [
+          "旗が常に載り、値は charter の欄・無ければ床",
+          "幅の外・読めない値は auto へ縮退し、不変量は argv に出る値に掛かる",
+          "宣言が 5 つの名簿と 4 つの起こす腕を通り抜ける",
+          "触った層と依存先の焦点の検が緑(169 本)",
+          "変更した file の ruff / semgrep の増分が 0"
+        ],
+        "depends_on": [],
+        "evidence": [
+          "artifacts/target-2026-09-18c/evidence/e5-focused-tests.log",
+          "artifacts/target-2026-09-18c/evidence/e8-lint-no-new-findings.log",
+          "artifacts/target-2026-09-18c/evidence/e9-blind-counterexamples.log"
+        ],
+        "external_ref": null,
+        "id": "T1",
+        "owner": "この会話(席)",
+        "phase": "implementation",
+        "priority": "high",
+        "reason": "本番の席が閾値を 1 つも名乗っておらず、CLI が窓いっぱいまで畳まない(assessment-0eb2cf387b0d F1)。盲検の反例 A / B の修理込み。",
+        "scope": [
+          "packages/doeff-agents/src/doeff_agents/sessionhost/impls/claude_code.hy",
+          "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy",
+          "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
+          "packages/doeff-agents/src/doeff_agents/sessionhost/launch.hy",
+          "packages/doeff-agents/src/doeff_agents/sessionhost/headless.hy",
+          "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy",
+          "packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py",
+          "packages/doeff-agents/tests/(検 4 file)"
+        ],
+        "status": "done",
+        "title": "段 1 — agentd の起動 argv が閾値を必ず名乗る(実装と焦点の検)"
+      },
+      {
+        "acceptance": [
+          "採った案と理由が decision として記録に残る",
+          "案 b を採る場合は判断の置き場が ACP の charterFor であることを確認する"
+        ],
+        "depends_on": [],
+        "evidence": [
+          "artifacts/target-2026-09-18c/evidence/e7-compactat-is-shadowed.log"
+        ],
+        "external_ref": null,
+        "id": "T2",
+        "owner": "operator",
+        "phase": "design",
+        "priority": "high",
+        "reason": "内側の輪を入れると、40 より上の compactAt を宣言した会話では外側の輪が二度と撃たない(design_validation D3・実測 E7)。出荷済みで operator が要求した機能(#82)の効き方が変わる。",
+        "scope": [
+          "設計の選択 4(案 a / b / c)"
+        ],
+        "status": "planned",
+        "title": "選択 4 の裁定を operator に求める(compactAt との関係)"
+      },
+      {
+        "acceptance": [
+          "焦点の検が緑であることを着地の前に実測している(upstream repo の規律)",
+          "設計記録 docs/design/auto-compact-window/ も一緒に入る"
+        ],
+        "depends_on": [
+          "T1"
+        ],
+        "evidence": [],
+        "external_ref": null,
+        "id": "T3",
+        "owner": "この会話(席)",
+        "phase": "implementation",
+        "priority": "high",
+        "reason": "実装と検が済んでおり、配備しなくても着地は戻せる(コードは入るが、常駐を入れ替えるまで本番の振る舞いは変わらない)。",
+        "scope": [
+          "doeff の本線(upstream)"
+        ],
+        "status": "planned",
+        "title": "段 1 を本線へ着地させる"
+      },
+      {
+        "acceptance": [
+          "稼働中の claude 席の ps に --autocompact が出る",
+          "session の backend_ref.argv に値が出る",
+          "入れ替えの前後で席が落ちていない"
+        ],
+        "depends_on": [
+          "T2",
+          "T3"
+        ],
+        "evidence": [],
+        "external_ref": null,
+        "id": "T4",
+        "owner": "この会話(席)",
+        "phase": "verification",
+        "priority": "high",
+        "reason": "agentd は uv tool として導入済みなので、着地しても入れ替えるまで本番に効かない(assessment J1)。",
+        "scope": [
+          "~/.local/share/uv/tools/doeff-agents",
+          "com.masui.acp-agentd(常駐)"
+        ],
+        "status": "planned",
+        "title": "配備 — uv tool の再導入と常駐の入れ替え、本番での実測"
+      },
+      {
+        "acceptance": [
+          "配備後 24 時間の文脈分布と費用を同じ物差しで測り直した",
+          "床と役ごとの値(lead / worker)を実測から決めて記録した"
+        ],
+        "depends_on": [
+          "T4"
+        ],
+        "evidence": [],
+        "external_ref": null,
+        "id": "T5",
+        "owner": "この会話(席)",
+        "phase": "verification",
+        "priority": "medium",
+        "reason": "床 400,000 は 1M の窓を仮定した初期値で、畳む回数が増える代償も未測定(design_validation D5)。窓 200k のモデルでは早く畳む効果が出ない。",
+        "scope": [
+          "会話記録の集計器(/tmp/fable-audit の scan / agg / deep)"
+        ],
+        "status": "planned",
+        "title": "配備後の実測で床と役ごとの値を決める"
+      },
+      {
+        "acceptance": [
+          "lead と worker で argv の閾値が変わることを実射で見る",
+          "agentd の code に役の語が 1 つも現れない",
+          "選択 4 で案 b を採った場合はその判断も charterFor に在る"
+        ],
+        "depends_on": [
+          "T2",
+          "T3"
+        ],
+        "evidence": [],
+        "external_ref": null,
+        "id": "T6",
+        "owner": "次の担当",
+        "phase": "implementation",
+        "priority": "high",
+        "reason": "operator が合意した『役で分ける』は段 2 で初めて実現する(assessment J3)。",
+        "scope": [
+          "agent-control-plane の Plan.charterFor",
+          "会話の宣言の閉語彙(ai conv open --agent の model / profile / effort / compactAt に 5 欄目)",
+          "dotfiles の route 設定(tier ごとの値)"
+        ],
+        "status": "planned",
+        "title": "段 2 — 起票側が役ごとの値を宣言する"
+      },
+      {
+        "acceptance": [
+          "carry-launch-flags を通していない名簿を作ると赤になる",
+          "既存の名簿 5 つで偽陽性が出ない"
+        ],
+        "depends_on": [
+          "T3"
+        ],
+        "evidence": [],
+        "external_ref": null,
+        "id": "T7",
+        "owner": "次の担当",
+        "phase": "verification",
+        "priority": "medium",
+        "reason": "6 つ目の名簿が将来足された時に無音で再発する(design_validation D4)。今は構造の規律と検 2 本だけ。",
+        "scope": [
+          ".semgrep.yaml あるいは同等の静的検査"
+        ],
+        "status": "planned",
+        "title": "旗の集合を使っていない名簿を見つける検査を足す"
+      },
+      {
+        "acceptance": [
+          "harness が agentd の socket に繋がる環境で 3 本とも緑",
+          "argv に --autocompact が載ったうえで凍結物理が保たれている"
+        ],
+        "depends_on": [
+          "T3"
+        ],
+        "evidence": [
+          "artifacts/target-2026-09-18c/evidence/e6-conformance-baseline.log"
+        ],
+        "external_ref": null,
+        "id": "T8",
+        "owner": "次の担当",
+        "phase": "verification",
+        "priority": "low",
+        "reason": "R6(凍結接頭と --effort の位置)の適合を実プロセスの argv で確かめていない(assessment J2)。本線でも同じ理由で赤なので本変更の退行ではない。",
+        "scope": [
+          "packages/doeff-agents/conformance/test_s13_argv_wiring.py"
+        ],
+        "status": "planned",
+        "title": "S13 適合検査を走る環境で撃つ"
+      }
+    ]
+  },
+  "created_at": "2026-09-17T17:06:27.614242+00:00",
+  "id": "plan-3afdf74bfe5c",
+  "inputs": [
+    {
+      "id": "design-3c927e1b645c",
+      "role": "subject",
+      "sha256": "1d708c178111fb885a8e0d46c7ef99996cc734bfe221cc98b9795194701a9ec8"
+    },
+    {
+      "id": "assessment-4bf18a61f47e",
+      "role": "evidence",
+      "sha256": "b604db888011fa2827478732aa008a09a7927a8c443af33ba110cd43346595d4"
+    },
+    {
+      "id": "assessment-9f3f4e627bb0",
+      "role": "evidence",
+      "sha256": "39045414ce81a578ce52ab50d544c0436fffe3cfcbab95424d43b6317ea9f226"
+    }
+  ],
+  "kind": "plan",
+  "schema_version": 1,
+  "scope": "agentd が起こす claude 席の会話圧縮の閾値(auto-compact window)の宣言 — charter から起動 argv までの契約と、役(計画席 lead / 実装席 worker)ごとの値の所在。対象 = doeff-agents の起動物理・ACP の charter 組み立て・dotfiles の起票側の宣言。"
+}

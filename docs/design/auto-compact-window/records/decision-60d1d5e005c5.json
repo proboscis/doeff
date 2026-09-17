@@ -1,0 +1,33 @@
+{
+  "artifacts": [],
+  "body": {
+    "actor": "user",
+    "authority": "direct",
+    "decision": "execution",
+    "outcome": "accepted",
+    "scope_of_agreement": "認められている範囲 = 隔離 worktree での実装・焦点の検・設計記録の作成・branch への commit と push。**含まない** = doeff 本線への merge と、走っている艦隊への配備。配備は既にある compactAt の効き方を変えるので、選択 4 の裁定(計画の T2)を先に取る。値(床 400k・lead 400k / worker 200k)は初期値で、配備後の実測で決め直す。",
+    "source": "この会話 2026-09-18。私が「指示があればこちらで実装まで持っていく。閾値の値だけ決めてくれれば、あとは一括で出す」と書いた直後の operator の返答が \"i agree with you, separate size for lead and worker\"。続けて operator が /system-design を起動した(到達点 = 設計して実装・修正まで)。",
+    "statement": "段 1(doeff-agents の実装・検・設計記録)の実行を認める。",
+    "subjects": [
+      "plan-3afdf74bfe5c"
+    ],
+    "supersedes": []
+  },
+  "created_at": "2026-09-17T17:06:52.649121+00:00",
+  "id": "decision-60d1d5e005c5",
+  "inputs": [
+    {
+      "id": "plan-3afdf74bfe5c",
+      "role": "subject",
+      "sha256": "47a2819e3b39baea45284240ec4b7f111d5e8f600d7a9c25536a3b41d33ca207"
+    },
+    {
+      "id": "design-3c927e1b645c",
+      "role": "basis",
+      "sha256": "1d708c178111fb885a8e0d46c7ef99996cc734bfe221cc98b9795194701a9ec8"
+    }
+  ],
+  "kind": "decision",
+  "schema_version": 1,
+  "scope": "agentd が起こす claude 席の会話圧縮の閾値(auto-compact window)の宣言 — charter から起動 argv までの契約と、役(計画席 lead / 実装席 worker)ごとの値の所在。対象 = doeff-agents の起動物理・ACP の charter 組み立て・dotfiles の起票側の宣言。"
+}

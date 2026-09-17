@@ -37,11 +37,12 @@
   FsMakeDirs
   EnvGet
   build-launch
+  build-resume
   pre-launch-setup
   classify-pane
   deliver-message
   wire-result-channel])
-(import doeff_agents.sessionhost.impls.claude_code [claude-code-impl])
+(import doeff_agents.sessionhost.impls.claude_code [claude-code-impl autocompact-arg-pair-ok])
 (import doeff_agents.sessionhost.impls.codex [codex-impl])
 (import doeff_agents.sessionhost.impls.markers [is-api-limit-refusal])
 
@@ -171,6 +172,126 @@
   (assert (not-in "do the task" argv))
   (assert (not-in "-p" argv))
   (assert (not-in "--print" argv)))
+
+
+(deftest test-claude-argv-always-declares-the-compaction-threshold
+  ;; 会話の圧縮の閾値(設計記録 docs/design/auto-compact-window・operator 指示 2026-09-18)。根 = 起こす argv が閾値を
+  ;; 何も名乗らず、claude が自分の窓(1M)いっぱいまで畳まずに伸びていた。実測 2026-09-18:
+  ;; 1 手番の平均の文脈 550k・最大 967k・600k 超の手番が費用の 59%。
+  ;; ⇒ effort(名乗らない席は旗を出さない)と**逆に**、閾値は常に載せる。
+  (setv world (ImplWorld))
+  (setv params (base-params :agent_type "claude"
+                            :model "claude-fable-5-1"
+                            :effort "xhigh"
+                            :result_channel (channel-spec)))
+  (<- argv (run-claude world (build-launch "claude" params)))
+  (assert (in "--autocompact" argv) argv)
+  ;; 会話が名乗らない拍は床(400k)。
+  (assert (= (get argv (+ (.index argv "--autocompact") 1)) "400000") argv)
+  ;; 位置 = model の後ろ・mcp の前(凍結接頭と `--effort` の位置を動かさない)。
+  (assert (= (cut argv 0 4)
+             ["claude" "--dangerously-skip-permissions"
+              "--settings" "{\"disableAllHooks\":true}"]))
+  (assert (= (.index argv "--effort") 4) argv)
+  (assert (< (.index argv "--model") (.index argv "--autocompact")) argv)
+  (assert (< (.index argv "--autocompact") (.index argv "--mcp-config")) argv))
+
+
+(deftest test-claude-argv-carries-the-threshold-the-conversation-declared
+  ;; 役ごとの値(lead は広く・worker は狭く)は**会話の宣言**が運ぶ。agentd は
+  ;; charter.auto_compact_window を読むだけで、役の表を code に持たない。
+  (setv world (ImplWorld))
+  (setv params (base-params :agent_type "claude"
+                            :model "claude-fable-5-1"
+                            :auto_compact_window 200000
+                            :result_channel (channel-spec)))
+  (<- argv (run-claude world (build-launch "claude" params)))
+  (assert (= (get argv (+ (.index argv "--autocompact") 1)) "200000") argv))
+
+
+(defn bad-threshold-params [bad]
+  ;; 幅の外・読めない値を宣言した席の params(反例の入力を 1 点で作る)。
+  (base-params :agent_type "claude"
+               :model "claude-fable-5-1"
+               :auto_compact_window bad
+               :result_channel (channel-spec)))
+
+
+(defn assert-degraded-to-auto [argv bad]
+  (setv value (get argv (+ (.index argv "--autocompact") 1)))
+  (assert (= value "auto") #(bad value)))
+
+
+(deftest test-claude-argv-never-carries-a-threshold-that-kills-the-turn
+  ;; 反例(claude 2.1.274 実測): 幅(100k〜1M)の外・読めない値を argv に載せると
+  ;; argv 解釈の段で死に、stream-json の行を 1 つも吐かない ── 手番が丸ごと消える。
+  ;; ⇒ 縮退の向きは常に `auto`(CLI 自身の窓に合わせた調整)で、縮退したことは
+  ;; argv 自身が名乗る(`ps` に `--autocompact auto` と出る = 外から読める)。
+  ;; ⚠ 反例は 1 つずつ束縛する(手番を起こす効果は for の本体では走らない)。
+  (<- low (run-claude (ImplWorld) (build-launch "claude" (bad-threshold-params 50000))))
+  (assert-degraded-to-auto low 50000)
+  (<- high (run-claude (ImplWorld) (build-launch "claude" (bad-threshold-params 2000000))))
+  (assert-degraded-to-auto high 2000000)
+  (<- word (run-claude (ImplWorld) (build-launch "claude" (bad-threshold-params "nope"))))
+  (assert-degraded-to-auto word "nope")
+  (<- flag (run-claude (ImplWorld) (build-launch "claude" (bad-threshold-params True))))
+  (assert-degraded-to-auto flag True)
+  (<- shape (run-claude (ImplWorld) (build-launch "claude" (bad-threshold-params {}))))
+  (assert-degraded-to-auto shape {})
+  (<- negative (run-claude (ImplWorld) (build-launch "claude" (bad-threshold-params -1))))
+  (assert-degraded-to-auto negative -1))
+
+
+(defn threshold-of [argv]
+  (get argv (+ (.index argv "--autocompact") 1)))
+
+
+(deftest test-the-threshold-on-the-argv-is-always-inside-the-band
+  ;; 盲検の反例 B(2026-09-18)。「Sonnet / Haiku は窓が 200k しかないので、モデルの窓の
+  ;; 40% で頭打ちにしてほしい」という**もっともらしい**要求を素直に実装すると、
+  ;; 200000 × 0.4 = 80000 が argv に載る ── 幅(100k〜1M)の下なので、その席の手番は
+  ;; argv 解釈の段で死に、stream-json を 1 行も吐かない。反例は関門の関数に 1 文字も触らず、
+  ;; 単体の検(model が Fable 固定で天井 = 床)も semgrep も素通しした。
+  ;; ⇒ 不変量は「導出点の戻り」ではなく「**argv に出る値**」に掛ける。
+  ;;    検も model を振って、出た値そのものを見る。
+  (setv world (ImplWorld))
+  (<- fable (run-claude world (build-launch "claude"
+              (base-params :agent_type "claude" :model "claude-fable-5-1"
+                           :result_channel (channel-spec)))))
+  (assert (autocompact-arg-pair-ok ["--autocompact" (threshold-of fable)]) fable)
+  (<- sonnet (run-claude (ImplWorld) (build-launch "claude"
+               (base-params :agent_type "claude" :model "claude-sonnet-5"
+                            :auto_compact_window 200000
+                            :result_channel (channel-spec)))))
+  (assert (autocompact-arg-pair-ok ["--autocompact" (threshold-of sonnet)]) sonnet)
+  (<- haiku (run-claude (ImplWorld) (build-launch "claude"
+              (base-params :agent_type "claude" :model "claude-haiku-4-5-20251001"
+                           :result_channel (channel-spec)))))
+  (assert (autocompact-arg-pair-ok ["--autocompact" (threshold-of haiku)]) haiku)
+  (<- unknown (run-claude (ImplWorld) (build-launch "claude"
+                (base-params :agent_type "claude" :model "some-unknown-model"
+                             :auto_compact_window 150000
+                             :result_channel (channel-spec)))))
+  (assert (autocompact-arg-pair-ok ["--autocompact" (threshold-of unknown)]) unknown)
+  ;; 出口の関門そのもの: 幅の外の値は「並びとして不正」と判じる。
+  (assert (not (autocompact-arg-pair-ok ["--autocompact" "80000"])))
+  (assert (not (autocompact-arg-pair-ok ["--autocompact" "2000000"])))
+  (assert (autocompact-arg-pair-ok ["--autocompact" "auto"])))
+
+
+(deftest test-claude-resume-argv-declares-the-threshold-too
+  ;; 起こす腕は launch だけではない — 蘇生の手番で閾値が落ちると、**長く続いている
+  ;; 会話ほど**窓の上限任せに戻る(いちばん太い席から先に漏れる形)。
+  (setv world (ImplWorld))
+  (setv params (base-params :agent_type "claude"
+                            :model "claude-fable-5-1"
+                            :auto_compact_window 200000
+                            :resume_mode "resume"
+                            :conversation {"session_id" "c-old"}
+                            :result_channel (channel-spec)))
+  (<- argv (run-claude world (build-resume "claude" params)))
+  (assert (= (get argv (+ (.index argv "--autocompact") 1)) "200000") argv)
+  (assert (= (cut argv -2 None) ["--resume" "c-old"]) argv))
 
 
 (deftest test-claude-argv-session-hooks-inherit
