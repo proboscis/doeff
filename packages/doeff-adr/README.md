@@ -45,6 +45,44 @@ should fail closed, or pass `--doeff-adr-wiring=off` only for an intentional
 local opt-out. `defsemgrep` enforcement separately fails, rather than skips,
 when the `semgrep` executable is unavailable.
 
+Wiring is a property of the collection scope, not of the selection: the
+collected files are measured before `-k` / `-m` / `--deselect` drop items, so a
+default-scope run narrowed with `-m 'not e2e'` still verifies.
+
+### In-session gate test
+
+A repository whose canonical gate is the default pytest run itself can read the
+verdict from inside that run instead of spawning a second collection (a nested
+`pytest --collect-only` is O(suite) work under a per-test deadline):
+
+```python
+from pathlib import Path
+
+import pytest
+from doeff_adr.pytest_plugin import (
+    NotDefaultScope,
+    WiringVerified,
+    default_scope_wiring,
+    wiring_failure_message,
+)
+
+
+def test_all_executable_adrs_are_collected(request: pytest.FixtureRequest) -> None:
+    verdict = default_scope_wiring(request.session)
+    if isinstance(verdict, NotDefaultScope):
+        pytest.skip(f"session collected {list(verdict.args)}, not the default scope")
+    if not isinstance(verdict, WiringVerified):
+        pytest.fail(wiring_failure_message(verdict, Path(request.config.rootpath)))
+```
+
+`default_scope_wiring` answers `WiringVerified`, `WiringUncollected`, or
+`WiringWalkAborted` for a default invocation (no path arguments), reusing the
+one measurement the plugin already took at collection finish. A session aimed
+at explicit paths answers `NotDefaultScope`: it cannot speak for the default
+scope in either direction (narrower paths miss ADRs the default scope reaches;
+wider paths reach ADRs the default scope leaves silent), so the test must not
+report it as a pass.
+
 For proboscis-ema and agent-control-plane follow-ups, add their existing
 `docs/adr` directory to the pytest roots used by the real CI test command,
 install `semgrep` when those ADRs contain `defsemgrep`, and run
