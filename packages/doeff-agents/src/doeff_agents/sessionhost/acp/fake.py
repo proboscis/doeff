@@ -339,7 +339,11 @@ class FakeAcp:
         if queued:
             return queued.pop(0)
         if key in self.rows:
-            return Refused(400, f"row {key} already exists")
+            # agora-redesign #519: the engine answers a create of an existing identity with 409 (the wire maps it to
+            # Conflict{currentGeneration} — handlers._post_event), and record-create-verdict reads Conflict as "already
+            # there" (a re-adopted turn-record).  The fake used to answer 400, which the verdict reads as a deterministic
+            # refusal (given-up) — a second attempt of the same job could never be exercised against it.
+            return Conflict(self.rows[key].generation)
         birth = self.births.get(effect.kind)
         status: JSONObject | None = None if birth is None else {birth.state_key: birth.initial}
         self.rows[key] = AcpRow(

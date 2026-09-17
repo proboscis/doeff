@@ -206,6 +206,24 @@ CONDITION_ATTACHMENT_IGNORED: ConditionType = "AttachmentIgnored"
 CONDITION_PROVIDER_LIMIT: ConditionType = "ProviderLimit"
 #: CONDITION_PROVIDER_LIMIT の reason の閉語彙(今日は 1 語 — 族が増えたらここに足す)。
 REASON_RATE_LIMITED: str = "rate-limited"
+#: agora-redesign #519(段 12): CONDITION_PROVIDER_LIMIT の記録が**自分で名乗る欄**(契約 ACP docs/contracts/scheduling.json
+#: profileExhaustion.providerRefusal.fields の写し・additive)。profile = 断られた口座(記録を書いた拍の行の binding.profile)・
+#: attempt = 断られた試み(行の binding.attempt・無ければ 1)・at = 断りの時刻(epoch ms)。読み手は 2 つ: 配置(ACP Scheduling)は
+#: attempt = binding.attempt の記録を「この試みは口座に断られた」(supervision provider-refused)と読んで置き直し(release →
+#: backoff → 別の口座で attempt + 1 → 上限で退役)、予算の係(agora-budget)は profile / at を優先して読む(置き直しの後は行の
+#: binding.profile が次の口座に、observedAt は書きのたびに進む)。⚠ 断られた試みの手番は **Ended にしない**(終端の巻き戻しは
+#: engine が断る・turn-record は 1 手番 1 行)— phase はそのまま、この条件を足す(judgment.refused-attempt-status-of の 1 点)。
+#: 置き直し待ちの Running の行(judgment.attempt-refused?)は再起動後も拾い直さない。実弾 2026-09-17 20:29〜21:15: 計画段の会話の
+#: 手番が individual spend limit で断られて Ended になり、郵便が delivered のまま 46 分止まった(撃ち直す主体が無かった)。
+PROVIDER_LIMIT_PROFILE_KEY: str = "profile"
+PROVIDER_LIMIT_ATTEMPT_KEY: str = "attempt"
+PROVIDER_LIMIT_AT_KEY: str = "at"
+#: agora-redesign #519: 配置が退役させた手番(scheduling.json retirement)の印 — Withdrawn の行の条件 Unschedulable{status True,
+#: reason: retry-budget-exhausted}(書き手 acp-scheduling)。最後の runner(sessionHandle の owner)がその turn-record を ended に
+#: する(judgment.retired-rows-of / agentd.end-retired-records)— 記録は手番が本当に終わる時に ended(1 手番 1 行)。
+#: 配置(acp-scheduling)の型 — agentd は読むだけで書かない(ConditionType の閉語彙〔agentd が書く型〕には入れない)。
+CONDITION_UNSCHEDULABLE: str = "Unschedulable"
+REASON_RETRY_BUDGET_EXHAUSTED: str = "retry-budget-exhausted"
 #: 段 12 lane 12a(agora-redesign #230・依頼者の裁定 2026-09-16): charter.kind = verify の job(定期便の検証の命令 1 つ —
 #: 会社 repo の日次の全体検証。契機は k3s の CronJob・配置は charter.place を spec.places に名乗る node・実行はこの
 #: agentd が機体自身の資格で)を起こさず・起こせず・失って閉じた印。**claude / codex を起こさない**: 命令は

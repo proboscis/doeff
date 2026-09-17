@@ -109,8 +109,13 @@
   CONDITION-ATTACHMENT-IGNORED
   CAUSE-CATEGORY-RATE-LIMITED
   CONDITION-PROVIDER-LIMIT
+  CONDITION-UNSCHEDULABLE
   MODEL-UNDECLARED
   REASON-RATE-LIMITED
+  REASON-RETRY-BUDGET-EXHAUSTED
+  PROVIDER-LIMIT-AT-KEY
+  PROVIDER-LIMIT-ATTEMPT-KEY
+  PROVIDER-LIMIT-PROFILE-KEY
   MESSAGE-ATTACHMENTS-KEY
   NODE-CAPABILITY-ATTACHMENTS-KEY
   RECORD-ATTACHMENT-EVENT-KIND
@@ -373,12 +378,89 @@
 (defk job-rows-running-on [rows node-name node-row-id principal]
   {:pre [(: rows tuple) (: node-name str) (: node-row-id (| str None)) (: principal str)]
    :post [(: % tuple)]}
-  "list の行のうち自分が持つ Running の行を、行の順のまま。"
+  "list の行のうち自分が持つ Running の行を、行の順のまま。
+   agora-redesign #519(段 12): **断られて置き直し待ちの行は拾い直さない** — 自分が書いた ProviderLimit の記録が
+   いまの試み(binding.attempt)を名乗る Running の行は、器の session を片付けた後に配置(ACP Scheduling の
+   supervision provider-refused)が Pending へ戻すのを待っている行。拾い直すと器に session が無いので
+   fail-missing の腕が SessionFailed で Ended に書き、置き直しが撃たれなくなる(判断は attempt-refused? の 1 点)。
+   古い attempt を名乗る記録だけの行(置き直しの後の次の試み)は今日どおり拾い直す。"
   (setv out [])
   (for [row rows]
     (<- mine bool (running-on-me row node-name node-row-id principal))
     (when mine
-      (.append out row)))
+      (<- status dict (status-object-of row))
+      (<- refused bool (attempt-refused? status))
+      (when (not refused)
+        (.append out row))))
+  (tuple out))
+
+
+(defk binding-attempt-of [status]
+  {:pre [(: status dict)]
+   :post [(: % int)]}
+  "行の status.binding.attempt(配置が書く試みの回数・契約 scheduling.json binding.attempt)。欄の無い結び(段 6 より前の
+   書き)は最初の試み = 1(配置の attemptsMadeOn と同じ読み)。bool は数でない・0 以下は無い。"
+  (setv binding (.get status "binding"))
+  (setv attempt (if (isinstance binding dict) (.get binding "attempt") None))
+  (if (and (isinstance attempt int) (not (isinstance attempt bool)) (>= attempt 1))
+      attempt
+      1))
+
+
+(defk attempt-refused? [status]
+  {:pre [(: status dict)]
+   :post [(: % bool)]}
+  "agora-redesign #519: 行のいまの試み(binding.attempt)を名乗る ProviderLimit{status True} の記録が在るか =
+   この試みは口座に断られ、配置の置き直しを待っている(契約 scheduling.json supervision provider-refused と同じ判定)。
+   attempt を名乗らない記録(旧 agentd の書き — その手番は Ended)は当たらない。"
+  (<- attempt int (binding-attempt-of status))
+  (setv conditions (.get status "conditions"))
+  (when (not (isinstance conditions list))
+    (return False))
+  (for [condition conditions]
+    (when (and (isinstance condition dict)
+               (= (.get condition "type") CONDITION-PROVIDER-LIMIT)
+               (= (.get condition "status") "True")
+               (= (.get condition PROVIDER-LIMIT-ATTEMPT-KEY) attempt))
+      (return True)))
+  False)
+
+
+(defk refused-attempt-status-of [status conditions]
+  {:pre [(: status dict) (: conditions tuple)]
+   :post [(: % dict)]}
+  "agora-redesign #519: 口座に断られた試みの手番の status — **phase はそのまま**(Ended にしない: 終端の巻き戻しは engine が
+   断り、turn-record は 1 手番 1 行 — 置き直しは配置の supervision が Pending へ戻す)、sessionHandle・binding・result も
+   そのまま、条件(手番の途中で判った事実 + ProviderLimit の記録〔profile / attempt / at を名乗る〕)を末尾に足すだけ。
+   古い試みの記録は残る(予算の係の材料)。元の status は触らない。"
+  (setv next (dict status))
+  (setv existing (.get status "conditions"))
+  (setv (get next "conditions") (+ (if (isinstance existing list) (list existing) []) (list conditions)))
+  next)
+
+
+(defk retired-rows-of [rows node-name node-row-id principal]
+  {:pre [(: rows tuple) (: node-name str) (: node-row-id (| str None)) (: principal str)]
+   :post [(: % tuple)]}
+  "agora-redesign #519: 配置が退役させた行(Withdrawn + Unschedulable{status True, reason retry-budget-exhausted} —
+   契約 scheduling.json retirement)のうち、最後の runner が自分(結びが自分を指し sessionHandle の owner が自分)の行。
+   その turn-record を ended にするのは最後の runner(agentd.end-retired-records)— 記録は手番が本当に終わる時に ended
+   (1 手番 1 行)。"
+  (setv out [])
+  (for [row rows]
+    (setv status row.status)
+    (when (and (isinstance status dict) (= (.get status "phase") PHASE-WITHDRAWN))
+      (<- sid (| str None) (handle-owned-by row node-name node-row-id principal))
+      (when (is-not sid None)
+        (setv conditions (.get status "conditions"))
+        (when (isinstance conditions list)
+          (for [condition conditions]
+            (when (and (isinstance condition dict)
+                       (= (.get condition "type") CONDITION-UNSCHEDULABLE)
+                       (= (.get condition "status") "True")
+                       (= (.get condition "reason") REASON-RETRY-BUDGET-EXHAUSTED))
+              (.append out row)
+              (break)))))))
   (tuple out))
 
 
@@ -422,11 +504,16 @@
   condition)
 
 
-(defk provider-limit-condition-of [cause model]
-  {:pre [(: cause (| dict None)) (: model (| str None))]
+(defk provider-limit-condition-of [cause model profile attempt at-ms]
+  {:pre [(: cause (| dict None)) (: model (| str None)) (: profile (| str None)) (: attempt int) (: at-ms int)]
    :post [(: % (| dict None))]}
   "段 11 lane 11n 便 C(agora-redesign #179・依頼者の裁定 2026-09-15 案 c′): 器の終端の cause
    (SessionView.terminal-cause)→ provider の限度の条件 1 項(None = 限度の断りではない)。
+
+   agora-redesign #519(段 12): 記録は**どの試みがいつどの口座で断られたか**を自分で名乗る —— profile(断られた口座 =
+   この手番の binding.profile・空なら欄を落とす)・attempt(行の binding.attempt・binding-attempt-of)・at(断りの時刻 =
+   記録を書く拍の時計・epoch ms)。契約 ACP scheduling.json profileExhaustion.providerRefusal.fields(additive)。配置は
+   attempt = binding.attempt の記録を『この試みは断られた』と読んで置き直し、予算の係は profile / at を優先して読む。
 
    **族の表はここに無い**(ADR-DOE-AGENTS-008 R1: 観測形式のテキスト物理の家は impls/markers.hy
    ちょうど)。CLI の文に表を当てるのは器の側の 1 点 —— headless.hy の手番の腕が verdict の
@@ -450,9 +537,13 @@
                  (get (.splitlines (.strip reason)) 0)
                  CAUSE-CATEGORY-RATE-LIMITED))
   (setv condition {"type" CONDITION-PROVIDER-LIMIT "status" "True" "reason" REASON-RATE-LIMITED
-                   "message" line})
+                   "message" line
+                   PROVIDER-LIMIT-ATTEMPT-KEY attempt
+                   PROVIDER-LIMIT-AT-KEY at-ms})
   (when (and (isinstance model str) (.strip model) (!= model MODEL-UNDECLARED))
     (setv (get condition "model") model))
+  (when (and (isinstance profile str) (.strip profile))
+    (setv (get condition PROVIDER-LIMIT-PROFILE-KEY) profile))
   condition)
 
 
