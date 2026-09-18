@@ -16,6 +16,13 @@ DOEFF_HEADLESS_STUB_API_ERROR_STATUS = <整数> を併せて置くと、その�
 (subtype success・is_error・terminal_reason api_error・api_error_status = その整数 — 実測 2026-09-17 の
 headless-events)で出す(agora-redesign #513: CLI が構造で名乗る status の再現)。API は撃たない。
 
+段 12 lane 12e(agora-redesign #517・card ki-ec55c1318483 — 実弾 2026-09-17 19:4x): 実物の CLI は result の
+後も stdin が開いている限り生きて、自分の background task / Monitor の完了(``<task-notification>``)で model を
+**手番の外で**起こし直し tool を撃つ。DOEFF_HEADLESS_STUB_REENTER_AFTER = T > 0 はその再現: result の後 T 秒の
+内に stdin の EOF が来なければ、手番の外の assistant(tool_use)と 2 つ目の result を出す(host はこれを
+読まない — 器が result の行で EOF を出して降ろす、が直し)。EOF が来れば降りる(実物と同じ)。
+DOEFF_HEADLESS_STUB_IGNORE_EOF = 1 は EOF で降りない CLI の再現(器の梯子 = SIGTERM で降ろす検の材料)。
+
 段 10 lane 10n(実測 2026-09-14): user の行に ``uuid`` が在れば ``command_lifecycle`` でその運命を名乗る
 (queued → started → completed / cancelled)。DOEFF_HEADLESS_STUB_TOOL_SECONDS = T > 0 は「T 秒の道具の途中」
 = その間は境界が来ないので注入の行は queued のまま(started を出さない)。その間の
@@ -225,16 +232,21 @@ def main():
         _turn(sid, sys.stdin.read(), None, resumed)
         return 0
     exit_after = int(os.environ.get("DOEFF_HEADLESS_STUB_TURNS_BEFORE_EXIT", "0") or "0")
+    reenter = float(os.environ.get("DOEFF_HEADLESS_STUB_REENTER_AFTER", "0") or "0")
     turns = 0
     carried = None
+    pending = None  # 再入の待ちの間に届いた次の手番の user の行
     while True:
         was_carried = carried is not None
         if carried is not None:
             prompt, uuid = carried
             carried = None
         else:
-            record = _read_record(None)
+            record = pending if pending is not None else _read_record(None)
+            pending = None
             if record == "" or record is None:
+                if os.environ.get("DOEFF_HEADLESS_STUB_IGNORE_EOF"):
+                    _ignore_eof()
                 return 0
             if record.get("type") != "user":
                 continue
@@ -249,6 +261,36 @@ def main():
         turns += 1
         if exit_after and turns >= exit_after:
             return 0
+        if reenter > 0 and carried is None:
+            # 実物の隙間: result の後・EOF の前に background task の完了が来ると model が手番の外で起きる。
+            record = _read_record(reenter)
+            if record == "":
+                if os.environ.get("DOEFF_HEADLESS_STUB_IGNORE_EOF"):
+                    _ignore_eof()
+                return 0
+            if record is None:
+                _reenter(sid, turns)
+            else:
+                pending = record
+
+
+def _reenter(sid, turns):
+    """手番の外の行動(実物: <task-notification> で起きた model の tool_use と 2 つ目の result)。"""
+    _emit({"type": "assistant", "session_id": sid,
+           "message": {"id": "msg_stub_reenter", "role": "assistant", "model": "stub-model",
+                       "content": [{"type": "text", "text": "<task-notification> background task finished"},
+                                   {"type": "tool_use", "id": "toolu_stub_reenter", "name": "Bash",
+                                    "input": {"command": "echo outside-the-turn"}}],
+                       "usage": USAGE}})
+    _emit({"type": "result", "subtype": "success", "is_error": False, "result": "outside-the-turn",
+           "session_id": sid, "usage": USAGE, "num_turns": turns + 1, "reentered": True})
+
+
+def _ignore_eof():
+    """EOF で降りない CLI の再現: 信号で降ろされるまで居座る(SIGTERM の既定の作法で降りる)。"""
+    import time
+    while True:
+        time.sleep(0.2)
 
 
 if __name__ == "__main__":

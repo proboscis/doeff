@@ -34,6 +34,8 @@ from doeff_agents.sessionhost import headless as headless_hy
 from doeff_agents.sessionhost import headless_process, host
 from doeff_agents.sessionhost.attachment import TurnAttachment, TurnContent
 from doeff_agents.sessionhost.headless_process import (
+    EOF_GRACE_SECONDS,
+    TERM_GRACE_SECONDS,
     HeadlessProcess,
     HeadlessProcessStillAliveError,
     HeadlessRegistry,
@@ -113,7 +115,7 @@ def _pause(seconds: float) -> None:
 def test_claude_dialogue_reads_init_and_result() -> None:
     dialogue = ClaudeDialogue()
     assert dialogue.opening() == ()
-    assert dialogue.one_process_per_turn is False  # 段 8 lane 4x: 温かい process
+    assert dialogue.one_process_per_turn is True  # 段 12 lane 12e(#517): 1 手番 1 process(温かい process は退役)
     # 手番が走る前の割り込みは引き受けない(新しい手番を起こさない)
     assert dialogue.inject(_content("early")).accepted is False
     turn = dialogue.turn(_content("hello"))
@@ -138,13 +140,17 @@ def test_claude_dialogue_reads_init_and_result() -> None:
     assert dialogue.on_line({"type": "command_lifecycle", "command_uuid": injected.ref, "state": "completed"}).ended is None
     ended = dialogue.on_line({"type": "result", "subtype": "success", "is_error": False})
     assert ended.ended == TurnEnded(ok=True, detail="success")
+    # 段 12 lane 12e(#517): 手番の終わり = 対話の終わり — 器はこの行で stdin に EOF を出して process を降ろす
+    assert ended.close is True
+    assert dialogue.on_line({"type": "assistant", "message": {}}).close is False
     assert dialogue.in_flight is False
     assert dialogue.injections == {}
     assert dialogue.inject(_content("late")).accepted is False
-    # 次の手番は同じ process へ次の user の行
+    # 手番の本文は stdin を閉じない(手番の途中の注入のため)— 閉じるのは result の行の器
     assert dialogue.turn(_content("again")).close_stdin is False
     failed = dialogue.on_line({"type": "result", "subtype": "error_max_turns", "is_error": True})
     assert failed.ended == TurnEnded(ok=False, detail="error_max_turns")
+    assert failed.close is True
     assert dialogue.interrupt().signal is True
     # agora-redesign #513: API の誤りで終わった手番は CLI が構造で名乗った status を運ぶ
     # (実物 2.1.27x の形 — subtype success・is_error・terminal_reason api_error・api_error_status)
@@ -742,7 +748,9 @@ def test_headless_process_codex_carries_the_image_to_the_stub_app_server(tmp_pat
     registry.kill("s-cimg")
 
 
-def test_headless_process_claude_turn_writes_events_and_stays_warm(tmp_path: Path) -> None:
+def test_headless_process_claude_turn_writes_events_and_retires_at_the_result(tmp_path: Path) -> None:
+    """段 12 lane 12e(agora-redesign #517): 手番の終わり = process の終わり。器は result の行で stdin に EOF を
+    出し(retire)、process は降りる — 次の手番は同じ process へは書けない(--resume の新しい process)。"""
     registry = HeadlessRegistry()
     events = str(tmp_path / "s1.events.jsonl")
     process = registry.spawn(
@@ -753,33 +761,99 @@ def test_headless_process_claude_turn_writes_events_and_stays_warm(tmp_path: Pat
         events,
         ClaudeDialogue(),
     )
+    assert process.retired is False
     assert process.deliver("hello there") is True
     _wait_until(lambda: len(process.peek_records()) >= 5)
+    assert process.retired is True  # result の行で降ろし始めた(拍を待たない)
+    _wait_until(lambda: not process.alive())
     observed = process.observe()
-    # 段 8 lane 4x: result の後も process は生きて次の手番を受ける(温かい)
-    assert observed.alive is True
+    assert observed.alive is False
+    assert observed.exit_code == 0  # EOF で自分で降りた(梯子の SIGTERM は要らなかった)
     assert observed.ended == (TurnEnded(ok=True, detail="success"),)
     assert observed.conversation == {"session_id": "sid-1"}
-    assert observed.accepts_turn is True
+    assert observed.accepts_turn is False
     kinds = [str(record.get("type")) for record in observed.records]
     assert kinds == ["system", "stream_event", "stream_event", "assistant", "result"]
     lines = Path(events).read_text(encoding="utf-8").splitlines()
     assert len(lines) == 5
     assert json.loads(lines[-1])["type"] == "result"
     assert turn_verdict(observed, True).kind == "turn-ended"
-    # 手番の外の割り込みは引き受けない(新しい手番を起こさない)
+    # 降りた process は手番の外の割り込みも次の手番も引き受けない(次は --resume の起こし直し)
     assert process.inject("nothing runs") is False
-    # 次の手番は同じ process へ次の user の行
-    assert process.deliver("again") is True
+    assert process.deliver("again") is False
+    assert turn_verdict(process.observe(), False).kind == "idle"
+    # 降りた process の登記は同じ名で置き換えられる(--resume の起こし直しの器の物理)
+    resumed = registry.spawn(
+        "s1",
+        ["claude", "-p", "--input-format", "stream-json", "--resume", "sid-1"],
+        str(tmp_path),
+        _stub_env(),
+        events,
+        ClaudeDialogue(),
+    )
+    assert resumed.pid != process.pid
+    assert resumed.deliver("again") is True
     _wait_until(lambda: len(Path(events).read_text(encoding="utf-8").splitlines()) >= 10)
-    again = process.observe()
-    assert again.ended == (TurnEnded(ok=True, detail="success"),)
-    assert again.alive is True
+    _wait_until(lambda: not resumed.alive())
     assert len(Path(events).read_text(encoding="utf-8").splitlines()) == 10
-    # 降ろす = stdin の EOF で自分で降りる
-    registry.kill("s1")
-    assert process.alive() is False
-    assert process.exit_code() == 0
+    assert json.loads(Path(events).read_text(encoding="utf-8").splitlines()[5])["resumed"] is True
+    assert registry.kill("s1") is True
+
+
+def test_headless_process_claude_result_closes_the_dialogue_before_the_cli_can_reenter(tmp_path: Path) -> None:
+    """反例(agora-redesign #517・実弾 2026-09-17 19:4x): 実物の CLI は result の後も stdin が開いている限り
+    生きて、background task / Monitor の完了で model を手番の外で起こし直し tool を撃つ(同じ会話の 2 つの
+    process が本番に作用・記録に載らない行動)。替え玉は DOEFF_HEADLESS_STUB_REENTER_AFTER 秒の内に EOF が
+    来なければその再入(assistant の tool_use + 2 つ目の result)を出す。直し = 器が result の行で EOF を出す
+    ので、再入は 1 行も出ず process は降りる。"""
+    registry = HeadlessRegistry()
+    events = str(tmp_path / "s-re.events.jsonl")
+    process = registry.spawn(
+        "s-re",
+        ["claude", "-p", "--input-format", "stream-json", "--session-id", "sid-re"],
+        str(tmp_path),
+        _stub_env({"DOEFF_HEADLESS_STUB_REENTER_AFTER": "0.5"}),
+        events,
+        ClaudeDialogue(),
+    )
+    assert process.deliver("run a build in the background and end the turn") is True
+    _wait_until(lambda: not process.alive(), timeout=5.0)
+    _pause(0.8)  # 再入の期限(0.5 秒)を過ぎても、降りた process は何も出せない
+    records = [json.loads(line) for line in Path(events).read_text(encoding="utf-8").splitlines()]
+    assert [str(r.get("type")) for r in records] == ["system", "stream_event", "stream_event", "assistant", "result"]
+    assert not any(r.get("reentered") for r in records)
+    assert not any(
+        block.get("type") == "tool_use"
+        for r in records if r.get("type") == "assistant"
+        for block in (r.get("message") or {}).get("content", []) if isinstance(block, dict)
+    )
+    observed = process.observe()
+    assert observed.ended == (TurnEnded(ok=True, detail="success"),)
+    assert observed.exit_code == 0
+
+
+def test_headless_process_claude_retire_ladder_terminates_a_cli_that_ignores_eof(tmp_path: Path) -> None:
+    """「手番の終わり = process の終わり」は EOF の作法に依らない: EOF で降りない CLI(替え玉の
+    DOEFF_HEADLESS_STUB_IGNORE_EOF)は器の梯子(EOF の猶予 → SIGTERM)が降ろす。呼び手(読み手の thread・
+    monitor の拍)は止まらない。"""
+    registry = HeadlessRegistry()
+    events = str(tmp_path / "s-eof.events.jsonl")
+    process = registry.spawn(
+        "s-eof",
+        ["claude", "-p", "--input-format", "stream-json", "--session-id", "sid-eof"],
+        str(tmp_path),
+        _stub_env({"DOEFF_HEADLESS_STUB_IGNORE_EOF": "1"}),
+        events,
+        ClaudeDialogue(),
+    )
+    assert process.deliver("hello") is True
+    _wait_until(lambda: process.retired)
+    assert process.alive() is True  # EOF を無視して居座っている(梯子の猶予の中)
+    assert process.observe().accepts_turn is False
+    _wait_until(lambda: not process.alive(), timeout=EOF_GRACE_SECONDS + TERM_GRACE_SECONDS + 2.0)
+    assert process.exit_code() != 0  # SIGTERM で降ろされた
+    # 梯子の途中に次の手番が来ても、同じ名の登記は付き添い終えてから置き換わる(生きた process は 1 つ)
+    assert registry.kill("s-eof") is True
 
 
 def assistant_texts(records: list[JSONObject]) -> list[str]:
@@ -816,8 +890,9 @@ def test_headless_process_claude_inject_reaches_the_running_turn(tmp_path: Path)
     _wait_until(lambda: len(process.peek_records()) >= 4)
     assert process.inject("stop and answer") is True
     _wait_until(lambda: any(r.get("type") == "result" for r in process.peek_records()), timeout=10.0)
+    _wait_until(lambda: not process.alive())  # 段 12 lane 12e(#517): 手番の終わり = process の終わり
     observed = process.observe()
-    assert observed.alive is True
+    assert observed.alive is False
     assert observed.ended == (TurnEnded(ok=True, detail="success"),)
     assert assistant_texts(list(observed.records)) == ["echo: slow work", "interrupted: stop and answer"]
     result = [r for r in observed.records if r.get("type") == "result"][-1]
@@ -853,8 +928,9 @@ def test_headless_process_claude_escalate_stops_the_tool_and_the_injection_runs_
         lambda: sum(1 for r in process.peek_records() if r.get("type") == "result") >= 2, timeout=10.0
     )
     _wait_until(lambda: any(r.get("type") == "command_lifecycle" and r.get("state") == "completed" and r.get("command_uuid") == "msg-1" for r in process.peek_records()), timeout=5.0)
+    _wait_until(lambda: not process.alive())  # 段 12 lane 12e(#517): 手番の終わり = process の終わり
     observed = process.observe()
-    assert observed.alive is True
+    assert observed.alive is False
     assert observed.ended == (TurnEnded(ok=True, detail="success"),)
     kinds = [r["type"] for r in observed.records]
     assert kinds.count("result") == 2
@@ -1225,8 +1301,8 @@ def test_host_headless_turn_refused_with_api_status_429_is_a_limit_whatever_the_
 def test_host_headless_claude_round_trip_launch_turn_end_send_resume_cleanup(
     headless_host: Host,
 ) -> None:
-    # 替え玉は 2 手番目の result の後に自分で降りる(3 手番目が --resume の起こし直しになる材料)
-    headless_host.stub_env["DOEFF_HEADLESS_STUB_TURNS_BEFORE_EXIT"] = "2"
+    # 段 12 lane 12e(agora-redesign #517): 手番の終わり = process の終わり。器は result の行で stdin に EOF を出し、
+    # 2 手番目からは毎回 --resume の新しい process(温かい同じ process への send は退役)。
     launched = headless_host.ok(
         "session.launch", _launch_params(headless_host.root, "h-1", "claude")
     )
@@ -1248,21 +1324,26 @@ def test_host_headless_claude_round_trip_launch_turn_end_send_resume_cleanup(
     # capture = events file の末尾
     captured = headless_host.ok("session.capture", {"session_id": "h-1", "lines": 2})
     assert _record(_text(captured, "text").splitlines()[-1])["type"] == "result"
-    # 次の手番: 温かい同じ process へ(段 8 lane 4x)— awaiting が立って turn_ended_at が消える
+    # 手番の終わりで process は降りている(retire)— monitor は降りた process を idle と読む(failed にしない)
     pid_before = _obj(ended, "backend_ref")["pid"]
+    _pause(0.3)
+    headless_host.monitor()
+    assert headless_host.snap("h-1")["status"] == "running"
+    # 次の手番: --resume の新しい process(同じ session の名・events file は同じ path に追記)— awaiting が立って
+    # turn_ended_at が消える
     headless_host.ok(
         "session.send", {"session_id": "h-1", "message": "second turn", "awaiting": True}
     )
     after_send = headless_host.snap("h-1")
     assert after_send["awaiting_response"] is True
     assert not _has(after_send, "turn_ended_at")
-    assert _obj(after_send, "backend_ref")["pid"] == pid_before
-    assert "--resume" not in _texts(_obj(after_send, "backend_ref"), "argv")
+    assert _obj(after_send, "backend_ref")["pid"] != pid_before
+    assert "--resume" in _texts(_obj(after_send, "backend_ref"), "argv")
     ended_again = _wait_turn_end(headless_host, "h-1")
     assert _text(ended_again, "status") == "running"
     lines = events_path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 10
-    assert _record(lines[5])["resumed"] is True  # 替え玉は 2 手番目から resumed を名乗る
+    assert _record(lines[5])["resumed"] is True  # 替え玉は --resume の process で resumed を名乗る
     # 手番の外の割り込みは型付きに断る(新しい手番を起こさない)
     refused = headless_host.call(
         "session.send", {"session_id": "h-1", "message": "nothing runs", "mode": "interrupt"}
@@ -1274,9 +1355,8 @@ def test_host_headless_claude_round_trip_launch_turn_end_send_resume_cleanup(
         "session.send", {"session_id": "h-1", "message": "x", "mode": "shout"}
     )
     assert bad_mode["ok"] is False, bad_mode
-    # process が降りた後(替え玉は 2 手番目の result の後に自分で降りた — SIGINT で止めた・idle で退いた器の
-    # 再現)の次の手番は --resume の process を起こし直す。monitor は降りた process を idle と読む(failed にしない)。
-    headless_host.stub_env.pop("DOEFF_HEADLESS_STUB_TURNS_BEFORE_EXIT")
+    # 3 手番目も同じ: 降りた process の次の手番は --resume の process を起こし直す(毎手番)。
+    pid_second = _obj(after_send, "backend_ref")["pid"]
     _pause(0.3)
     headless_host.monitor()
     assert headless_host.snap("h-1")["status"] == "running"
@@ -1285,7 +1365,7 @@ def test_host_headless_claude_round_trip_launch_turn_end_send_resume_cleanup(
     )
     after_resume = headless_host.snap("h-1")
     assert "--resume" in _texts(_obj(after_resume, "backend_ref"), "argv")
-    assert _obj(after_resume, "backend_ref")["pid"] != pid_before
+    assert _obj(after_resume, "backend_ref")["pid"] not in (pid_before, pid_second)
     ended_third = _wait_turn_end(headless_host, "h-1")
     assert _text(ended_third, "status") == "running"
     assert len(events_path.read_text(encoding="utf-8").splitlines()) == 15
@@ -1546,7 +1626,8 @@ def test_host_headless_startup_recovery_ends_the_dead_mid_turn_row_and_keeps_the
     launchd の kickstart が子 process を道連れにする)の後、手番の途中のまま残った行は起動時の復帰が
     backend を観測して exited + vanished に倒す(session_exited・reason に pid)。idle の温かい行は
     触らない(次の send が --resume で同じ session を起こし直す)。wire の backend_alive は観測から。"""
-    # h-busy: 手番の途中(替え玉は result の前で 30 秒待つ)/ h-idle: 手番が終わって温かい
+    # h-busy: 手番の途中(替え玉は result の前で 30 秒待つ)/ h-idle: 手番が終わった行(段 12 lane 12e・#517:
+    # 手番の終わり = process の終わり — process は降りていて行だけが温かい)
     headless_host.stub_env["DOEFF_HEADLESS_STUB_DELAY"] = "30"
     busy = headless_host.ok("session.launch", _launch_params(headless_host.root, "h-busy", "claude"))
     assert isinstance(busy, dict)
@@ -1555,17 +1636,14 @@ def test_host_headless_startup_recovery_ends_the_dead_mid_turn_row_and_keeps_the
     headless_host.ok("session.launch", _launch_params(headless_host.root, "h-idle", "claude"))
     idle = _wait_turn_end(headless_host, "h-idle")
     assert _has(idle, "turn_ended_at")
-    # 生きている間の観測: どちらも backend_alive
+    # 生きている間の観測: 手番の途中の行だけ backend_alive(idle の行の process は手番の終わりで降りている)
     assert headless_host.snap("h-busy")["backend_alive"] is True
-    assert headless_host.snap("h-idle")["backend_alive"] is True
+    _wait_until(lambda: headless_host.snap("h-idle")["backend_alive"] is False)
     busy_pid = _obj(headless_host.snap("h-busy"), "backend_ref")["pid"]
-    idle_pid = _obj(headless_host.snap("h-idle"), "backend_ref")["pid"]
     assert isinstance(busy_pid, int)
-    assert isinstance(idle_pid, int)
     # 再起動の再現: launchd の kickstart -k は process group ごと殺す(子も死ぬ)→ 新しい host の registry は空
     old_registry = host.HEADLESS_REGISTRY
-    for pid in (busy_pid, idle_pid):
-        os.kill(pid, 9)
+    os.kill(busy_pid, 9)
     _wait_until(lambda: not old_registry.has_alive("h-busy") and not old_registry.has_alive("h-idle"))
     monkeypatch.setattr(host, "HEADLESS_REGISTRY", HeadlessRegistry())
     # 復帰の前: 手番の途中の行は running のまま(誰も倒していない = 実弾の形)、backend_alive は観測で false
@@ -2006,8 +2084,18 @@ def test_headless_registry_wakes_the_waiter_the_moment_a_turn_ends(tmp_path: Pat
     assert observed.ended == (TurnEnded(ok=True, detail="success"),)
     # 見た数を名乗って待つと、次の終わりまで返らない(上限)。
     assert registry.wait_turn_end(count, 0.1) == 1
-    # 次の手番の終わりで 2 へ。
-    assert process.deliver("again") is True
+    # 次の手番の終わりで 2 へ(段 12 lane 12e・#517: 手番の終わりで process は降りるので、次の手番は同じ名の
+    # --resume の process — 合図の数は登記簿のもので process をまたいで進む)。
+    _wait_until(lambda: not process.alive())
+    resumed = registry.spawn(
+        "s-wake",
+        ["claude", "-p", "--input-format", "stream-json", "--resume", "sid-wake"],
+        str(tmp_path),
+        _stub_env(),
+        events,
+        ClaudeDialogue(),
+    )
+    assert resumed.deliver("again") is True
     assert registry.wait_turn_end(1, 5.0) == 2
     registry.kill("s-wake")
 

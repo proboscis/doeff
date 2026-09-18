@@ -18,10 +18,14 @@
 ;;; 手番の途中か)。この program は effect を並べ、行の欄に写すだけ(substrate-clean)。
 ;;; 温かい session(ADR-DOE-AGENTS-012 R10): multi_turn の行は手番の終わりで status を
 ;;; 倒さず turn_ended_at を刻む(policy.hy の monitor と同じ level-triggered の欄)。
-;;; claude も codex も process は手番の間も生きる(段 8 lane 4x から claude は
-;;; `--input-format stream-json` の温かい process)。process が降りていれば(SIGINT で
-;;; 止めた・idle で退いた)次の手番の send は `--resume <sid>` の process を同じ session の
-;;; 名で起こし直してから stdin へ書く(温かい = 会話の資源としての行と events file が続く)。
+;;; codex の process は手番の間も生きる(温かい)。claude は **1 手番 1 process**(段 12 lane 12e・
+;;; agora-redesign #517・card ki-ec55c1318483): 手番の終わり(result の行)= 対話の終わり = process の
+;;; 終わりで、器(headless_process の retire)が result の行で stdin に EOF を出して降ろす — CLI は
+;;; result の後も生きていると自分の background task / Monitor の完了で model を手番の外で起こし直し
+;;; tool を撃つ(実弾 2026-09-17 19:4x・同じ会話の 2 つの process が本番に作用・記録に載らない行動)ので、
+;;; 手番の境界の所有者は host ちょうどにする(段 8 lane 4x の温かい claude は退役)。process が降りて
+;;; いれば(手番の終わり・SIGINT で止めた・idle で退いた)次の手番の send は `--resume <sid>` の process を
+;;; 同じ session の名で起こし直してから stdin へ書く(温かい = 会話の資源としての行と events file が続く)。
 ;;;
 ;;; host の再起動の後の復帰(段 10 lane 10h・agora-redesign #84・既知の形 = kubelet の node 再起動後の
 ;;; container の生死の観測): registry は host の process と共に消え、launchd の kickstart は子 process も
@@ -404,8 +408,8 @@
          (: attachments tuple)]
    :post [(: % SessionRow)]}
   "session.send(headless・mode = turn): 次の手番の本文を stdin へ。process が次の手番を
-   受けられる(生きた温かい process)ならそのまま、受けられない(降りた process)なら
-   `--resume` で起こし直してから書く。awaiting(agentd の温かい手番)は latch を立て、
+   受けられる(生きた温かい process — codex)ならそのまま、受けられない(降りた process —
+   claude は手番の終わりで必ず降りている・段 12 lane 12e #517)なら `--resume` で起こし直してから書く。awaiting(agentd の温かい手番)は latch を立て、
    turn_ended_at を None に戻す(次の手番が走り出した — level-triggered の欄)。
    turn-env = **この手番の** env(段 10 lane 10d 便 2 追補 2・実弾 #92): 起こし直す時に重ねる
    (預かり所の貸与の札はここで来る — 行に残った誕生の札では起こさない)。"

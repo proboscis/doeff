@@ -8,16 +8,21 @@ headless の session は tui の pane を持たない: agent は子 process で�
 検は同じ Dialogue を替え玉の書き手で回す(効果の値 = ``Step`` / ``TurnInput`` / ``Interrupt``)。
 
 kind ごとの物理(argv は impls/headless_argv.hy・stdin の綴りはここ):
-- claude: ``--input-format stream-json`` の温かい process(段 8 lane 4x・agora-redesign #56 —
+- claude: ``--input-format stream-json`` の process(段 8 lane 4x・agora-redesign #56 —
   実測 2026-09-13 = conformance/interrupt-physics.md)。prompt は stdin の user の行
-  ``{"type":"user","message":{"role":"user","content":<本文>}}`` で、stdin は閉じない: 手番の
-  終わり(``{"type":"result"}`` の行)の後も process は生き、次の user の行が次の手番になる
-  (同じ session_id・init の行がもう 1 度出る)。**手番の途中に書いた user の行は、CLI が次の
-  tool の境界で走っている手番に注入する**(assistant がその本文に反応してから result が出る・
-  num_turns が増える)= 割り込みの本文(``inject``)。会話の id は
-  ``{"type":"system","subtype":"init","session_id"}``。止める合図(withdraw)= process へ SIGINT
-  (result を出さずに降りる)。process が降りた後の次の手番は ``--resume <sid>`` の新しい process
-  (argv は impls 側・器は同じ名で起こし直す)。
+  ``{"type":"user","message":{"role":"user","content":<本文>}}`` で、**手番の間は stdin を閉じない**:
+  手番の途中に書いた user の行は、CLI が次の tool の境界で走っている手番に注入する(assistant が
+  その本文に反応してから result が出る・num_turns が増える)= 割り込みの本文(``inject``)。
+  **手番の終わり(``{"type":"result"}`` の行)= 対話の終わり = process の終わり**(段 12 lane 12e・
+  agora-redesign #517・card ki-ec55c1318483): Dialogue が手番の終わりを名乗る ``Step`` は ``close``
+  を立て、器はその行で stdin に EOF を出して process を降ろす(EOF で降りない CLI は猶予の後に
+  SIGTERM → SIGKILL — 器の retire の梯子)。理由 = 手番の境界の所有者は host ちょうど: CLI は
+  result の後も自分の background task / Monitor の完了(``<task-notification>``)で model を**手番の
+  外で**起こし直し tool を撃つ(実弾 2026-09-17 19:4x・同じ会話の 2 つの process が本番に作用・
+  記録に載らない行動)。温かい process(result の後も生かして次の user の行を待つ・段 8 lane 4x)は
+  この隙間を構造で持つので退役 — 次の手番は ``--resume <sid>`` の新しい process(argv は impls 側・
+  器は同じ名で起こし直す・会話の id は ``{"type":"system","subtype":"init","session_id"}``)。
+  止める合図(withdraw)= process へ SIGINT(result を出さずに降りる)。
   段 10 lane 10n(agora-redesign #93・実測 2026-09-14 = 同 md の追記): 注入の行に ``uuid``(呼び手の
   ref = ACP の Message の id・UUID の形でなくてよい)を付けると CLI が
   ``{"type":"command_lifecycle","command_uuid":…,"state":queued|started|completed|cancelled|discarded|refused}``
@@ -80,12 +85,14 @@ class TurnEnded:
 
 @dataclass(frozen=True)
 class Step:
-    """stdout の 1 行を読んだ答え: stdin へ書く行・手番の終わり・見つけた会話の id・型付きの失敗。"""
+    """stdout の 1 行を読んだ答え: stdin へ書く行・手番の終わり・見つけた会話の id・型付きの失敗・
+    対話の終わり(``close`` = この行で stdin に EOF を出し process を降ろす — claude の手番の終わり)。"""
 
     sends: tuple[str, ...] = ()
     ended: TurnEnded | None = None
     conversation: dict[str, str] | None = None
     failure: str | None = None
+    close: bool = False
 
 
 @dataclass(frozen=True)
@@ -234,8 +241,11 @@ class ClaudeDialogue:
     (ref → InjectionState・段 10 lane 10n)と出した停止の合図(request_id と答えの still_queued)。"""
 
     kind: AgentKind = "claude"
-    #: 温かい process(段 8 lane 4x): result の後も process は生きて次の user の行を待つ。
-    one_process_per_turn: bool = False
+    #: 1 手番 1 process(段 12 lane 12e・agora-redesign #517): 手番の終わり(result)で対話を閉じ(``Step.close``)
+    #: process は降りる — result の後の process は次の手番を受けない(次は ``--resume`` の新しい process)。
+    #: 段 8 lane 4x の温かい process(False)は、CLI が background task の完了で手番の外に model を起こす
+    #: 隙間を持っていたので退役。
+    one_process_per_turn: bool = True
 
     def __init__(self) -> None:
         self.conversation: dict[str, str] | None = None
@@ -301,12 +311,15 @@ class ClaudeDialogue:
         )
 
     def _end(self, ok: bool, detail: str, api_error_status: int | None = None) -> Step:
+        """手番の終わり = 対話の終わり(``close``): 器はこの行で stdin に EOF を出して process を降ろす。
+        手番の境界の所有者は host — CLI に result の後の手番(background task の完了で起きる model)を
+        持たせない(段 12 lane 12e・agora-redesign #517)。"""
         self.in_flight = False
         self.cli_turn_open = False
         self.injections = {}
         self.escalation = None
         self.still_queued = None
-        return Step(ended=TurnEnded(ok=ok, detail=detail, api_error_status=api_error_status))
+        return Step(ended=TurnEnded(ok=ok, detail=detail, api_error_status=api_error_status), close=True)
 
     def on_line(self, record: JSONObject) -> Step:
         kind = record.get("type")
