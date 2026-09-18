@@ -41,6 +41,10 @@
   WORK-DIRS-MAX
   WORK-DIRS-SEPARATOR
   WorkDirs
+  WORK-DIR-ROOTS-ENV
+  WORK-DIR-ROOTS-MAX
+  WORK-DIR-ROOTS-SEPARATOR
+  WorkDirRoots
   Places
   AGENTD-PLACES
   CAPACITY-ENV
@@ -392,6 +396,63 @@
   (WorkDirs :dirs (tuple (sorted found))))
 
 
+(defk work-dir-root-shaped [root]
+  {:pre [(: root str)]
+   :post [(: % bool)]}
+  "根の形の検の**1 点**(段 12 lane 12j 追補・card acp:kanban-issue:ki-3bfe48a9d5dc): `~/<名>/` ちょうど —— 家からの相対で、
+   `/` で終わり(境界の曖昧さを綴りで塞ぐ: 根 `~/.worktrees/` は `~/.worktreesX/y` を持たない)、**家そのもの `~/` は根に
+   しない**(『家を持つ = 家の下の何でも持つ』は checkout を持たない機体へ手番を飛ばす — この軸が避けている誤配)。
+   読む口(env)と導く口(実勢)の両方がこの 1 点を読む(第 2 の判定点を作らない)。"
+  (and (.startswith root "~/") (.endswith root "/") (!= root "~/")))
+
+
+(defk work-dir-roots-of [text]
+  {:pre [(: text (| str None))]
+   :post [(: % (| WorkDirRoots None))]}
+  "node が持つ作業場の**根**の読み(段 12 lane 12j 追補・card acp:kanban-issue:ki-3bfe48a9d5dc): env DOEFF_AGENTD_WORK_DIR_ROOTS の
+   , 区切りの 1 つの文字列 → 根の tuple(綴りの順・重複は 1 つ)。None(env 無し)= 導いていない(欄を書かない — 配車は今日どおり
+   名簿だけで篩う)。空文字 = 根が 1 つも無い(空の tuple)。各根は `~/<名>/` の形ちょうど(契約 node.spec.workDirRoots — `/` で
+   終わる〔境界の曖昧さを塞ぐ〕・**家そのもの `~/` は根にしない**〔家を持つ = 家の下の何でも持つ、は checkout の無い機体へ
+   手番を飛ばす〕)。形の外・上限超えは ValueError(参加しない — 篩う材料を嘘で名乗らない)。"
+  (when (is text None)
+    (return None))
+  (setv roots [])
+  (for [part (.split (.strip text) WORK-DIR-ROOTS-SEPARATOR)]
+    (setv root (.strip part))
+    (when (not root)
+      (continue))
+    (<- shaped bool (work-dir-root-shaped root))
+    (when (not shaped)
+      (raise (ValueError f"{WORK-DIR-ROOTS-ENV} の各根は ~/<名>/ の形(家からの相対・`/` で終わる・家そのものは根にしない)であること: {root !r}")))
+    (when (not-in root roots)
+      (.append roots root)))
+  (when (> (len roots) WORK-DIR-ROOTS-MAX)
+    (raise (ValueError f"{WORK-DIR-ROOTS-ENV} の根は {WORK-DIR-ROOTS-MAX} までであること(契約 node.spec.workDirRoots.maxItems): {(len roots)}")))
+  (WorkDirRoots :roots (tuple roots)))
+
+
+(defk held-work-dir-roots-of [entries]
+  {:pre [(: entries tuple)]
+   :post [(: % WorkDirRoots)]}
+  "候補の根の在否 → 持っている根(段 12 lane 12j 追補・card acp:kanban-issue:ki-3bfe48a9d5dc)。entries = composition root
+   (runtime.join_plan)が読んだ #(候補の根 その dir が在るか) の列(候補 = effects.WORK-DIR-ROOT-CANDIDATES)。⚠ 根は**実勢から
+   導く** —— **現に在る dir だけ**を名乗り、宣言 file の値は 1 つも混ぜない。名簿(held-work-dirs-of)と違って根の下は
+   1 つも列挙しない(会社 Mac の ~/.worktrees/ は 3,105 で、契約の名簿の上限 512 を遥かに越える)。形と上限の検は
+   work-dir-roots-of と同じ規則で、外れは ValueError(参加しない)。判断はここ 1 点で I/O は無い。"
+  (setv found [])
+  (for [[root exists] entries]
+    (when (not exists)
+      (continue))
+    (<- shaped bool (work-dir-root-shaped root))
+    (when (not shaped)
+      (raise (ValueError f"候補の根は ~/<名>/ の形(家からの相対・`/` で終わる・家そのものは根にしない)であること: {root !r}")))
+    (when (not-in root found)
+      (.append found root)))
+  (when (> (len found) WORK-DIR-ROOTS-MAX)
+    (raise (ValueError f"持つ根は {WORK-DIR-ROOTS-MAX} までであること(契約 node.spec.workDirRoots.maxItems): {(len found)}")))
+  (WorkDirRoots :roots (tuple found)))
+
+
 (defk revision-of [text]
   {:pre [(: text (| str None))]
    :post [(: % (| str None))]}
@@ -637,6 +698,8 @@
   ;; 段 12 lane 12j(#575 便 2): 持つ作業場は導いた時だけ env に現れる — 空の tuple も ""(何も持たない)として運ぶ。
   (when (is-not spec.work-dirs None)
     (.append env #(WORK-DIRS-ENV (.join WORK-DIRS-SEPARATOR spec.work-dirs))))
+  (when (is-not spec.work-dir-roots None)
+    (.append env #(WORK-DIR-ROOTS-ENV (.join WORK-DIR-ROOTS-SEPARATOR spec.work-dir-roots))))
   ;; 段 12 lane 12j(#367): 版の刻印は名乗った時だけ env に現れる(無ければ agentd は unstamped / local を名乗る)。
   (when (is-not spec.revision None)
     (.append env #(AGENTD-REVISION-ENV spec.revision)))
