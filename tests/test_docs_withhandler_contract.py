@@ -10,12 +10,17 @@ from doeff import Get, Put, Tell, do, run
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+# Closed vocabulary: every tree under docs/ that holds records rather than
+# reader-facing prose belongs here — add the entry when a new record tree lands.
 ARCHIVAL_DOC_DIRS = {
     Path("docs/proposals"),
     Path("docs/specs"),
     # Forensic/design records that quote code verbatim (postmortems,
     # constraint graphs, algebra drafts) — not reader-facing tutorials.
     Path("docs/crystallization"),
+    # Completed-migration records kept verbatim (baselines, final-verification
+    # logs) — same category as docs/crystallization: what happened, not what to do.
+    Path("docs/history"),
 }
 ARCHIVAL_DOC_FILES = {
     Path("docs/MILESTONES.md"),
