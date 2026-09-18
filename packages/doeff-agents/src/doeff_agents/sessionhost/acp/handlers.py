@@ -66,12 +66,14 @@ from doeff_agents.sessionhost.acp.effects import (
     SUMMARY_KIND,
     SUMMARY_SPEC_CONVERSATION_KEY,
     TURN_RECORD_KIND,
+    TURN_RECORD_RUNNING_SELECTOR,
     AcpConversationMail,
     AcpConversationSummaries,
     AcpCreate,
     AcpEventWindow,
     AcpGet,
     AcpGetRow,
+    AcpRunningTurnRecords,
     AcpPutSpec,
     AcpPutStatus,
     AcpRow,
@@ -635,6 +637,10 @@ class AcpHttp:
         self._wakes = wakes
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
+        if isinstance(effect, AcpRunningTurnRecords):
+            # 段 12(agora-redesign #537 便 1): 走っている記録だけ(engine の status 軸の field selector —
+            # 綴りは effects の 1 点)。kind の全量は読まない。
+            return Resume(k, self._list(TURN_RECORD_KIND, TURN_RECORD_RUNNING_SELECTOR))
         if isinstance(
             effect,
             (AcpGet, AcpGetRow, AcpEventWindow, AcpWatchSse, AcpConversationMail, AcpTurnHeadlines, AcpConversationSummaries),

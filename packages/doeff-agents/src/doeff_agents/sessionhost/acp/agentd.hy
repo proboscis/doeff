@@ -181,6 +181,7 @@
   AcpPutSpec
   AcpPutStatus
   AcpRow
+  AcpRunningTurnRecords
   AcpStreamPush
   AcpTurnHeadlines
   AcpWatchSse
@@ -290,6 +291,8 @@
   JobCancel
   END-RETRY-DROP
   END-RETRY-WRITE
+  METRIC-TURN-RECORD-SWEEP-ENDED
+  METRIC-TURN-RECORD-SWEEP-SKIPPED
   UNRECORDED-END-TTL-MS
   UnrecordedEnd
   STREAM-SOURCE-EVENTS
@@ -310,6 +313,7 @@
   SessionView
   TURN-RECORD-ENDED
   TURN-RECORD-KIND
+  TURN-RECORD-SWEEP-END
   TranscriptChunk
   WatchAdvance
   WorkerPublished
@@ -471,6 +475,7 @@
   conversation-key-of
   with-context-percent
   node-resource-id-of
+  live-node-names-of
   node-row-named
   node-spec-declared
   node-spec-of
@@ -487,6 +492,7 @@
   profile-rows-active
   profile-rows-held
   profile-status-with-observed
+  record-unavailable-noted
   recovered-arm-of
   rehydrate-history-of
   restart-condition-of
@@ -507,6 +513,7 @@
   transcript-observation-of
   transcript-path-of
   turn-record-ended-status
+  turn-record-sweep-verdict
   turn-record-key-of
   turn-record-recorded-status
   turn-record-spec-of
@@ -1458,7 +1465,8 @@
       (AcpCreate :namespace AGORA-KINDS-NAMESPACE :kind TURN-RECORD-KIND :resource-id job-id :spec spec))
   ;; 段 9p(agora-redesign #76): 作れなかった結末は腕の状態に写す(pending = 頭が答えない → observe の拍が作り直す /
   ;; given-up = 決定論的 → condition)。log の 1 行は結末の語で(記録なしで黙って進まない)。
-  (<- job InFlightJob (record-create-applied job created sent-ms settings.turn-record-create-deadline-seconds))
+  ;; 受けの拍の create は最後の 1 度ではない(final = False — 断られても期限までは pending で撃ち直す: 段 9p)。
+  (<- job InFlightJob (record-create-applied job created sent-ms settings.turn-record-create-deadline-seconds False))
   (when (not (isinstance created Written))
     (<- (LogLine :text f"agentd: turn-record for job {job-id} was not created ({created}); record-create = {job.record-create}")))
   ;; agora-redesign #519(段 12・D-519-3): 既に在る記録(Conflict = 置き直された試み attempt ≥ 2 — 前の試みが断られて記録は
@@ -1744,8 +1752,10 @@
               (<- spec dict (turn-record-spec-of job))
               (<- created (| Written Conflict Refused)
                   (AcpCreate :namespace AGORA-KINDS-NAMESPACE :kind TURN-RECORD-KIND :resource-id job.job-id :spec spec))
+              ;; agora-redesign #537 H3: 終わりの拍(force)の create は**最後の 1 度** — 期限の内でも pending にしない
+              ;; (次の拍が無いので pending のままだと『Ended・記録なし・理由なし』になる)。判断は record-create-verdict の 1 点。
               (<- applied InFlightJob
-                  (record-create-applied job created now-ms settings.turn-record-create-deadline-seconds))
+                  (record-create-applied job created now-ms settings.turn-record-create-deadline-seconds force))
               (cond
                 (= applied.record-create RECORD-CREATE-PENDING)
                 (<- (LogLine :text f"agentd: turn-record for job {job.job-id} still not created ({created}); will retry"))
@@ -1971,6 +1981,33 @@
       (do
         ;; turn-record → ended(追記できずに持ち越した出来事があれば最後の書きに乗せる)
         (<- recorded bool (end-turn-record drained.job-id batch.usage drained.pending-entries))
+        ;; agora-redesign #537 H2: 終わりの書きが着かなかった拍は、鍵で行の在否を確かめる(正本は行 — 戻りの False は
+        ;; 「行が無い」と「書きが断られた」の両方を含む)。行が**無い**なら、その拍に 1 度だけ作り直して ended まで書く —
+        ;; 記録なしで Ended にしない(ACP Messaging の turnlessOf は turn-record の行の在否で読み、無ければ
+        ;; agent-job-ended-without-a-turn で郵便を failed にする)。given-up の手番は作らない(段 9p の決定: 決定論的な
+        ;; 断りは撃ち直さない — 条件 RecordUnavailable が理由を運ぶ)。行が**在って**書きが断られただけの拍は、終状態を
+        ;; 読む巡回(sweep-turn-records)が次の周期に閉じる(ここで撃ち直しを重ねない)。
+        (when (not recorded)
+          (<- missing-key str (turn-record-key-of drained.job-id))
+          (<- existing (| AcpRow None) (AcpGetRow :key missing-key))
+          (if (is-not existing None)
+              (<- (LogLine :text (+ f"agentd: turn-record of job {job.job-id} is there but could not be ended at turn end; "
+                                    "the sweep closes it on its next period (#537)")))
+              (when (!= drained.record-create RECORD-CREATE-GIVEN-UP)
+                (<- spec dict (turn-record-spec-of drained))
+                (<- remade (| Written Conflict Refused)
+                    (AcpCreate :namespace AGORA-KINDS-NAMESPACE :kind TURN-RECORD-KIND :resource-id drained.job-id :spec spec))
+                (if (isinstance remade Refused)
+                    (do
+                      (<- noted InFlightJob
+                          (record-unavailable-noted drained (+ "turn-record was missing at the end of the turn and could not be "
+                                                               f"re-created ({remade.status}: {remade.error})")))
+                      (setv drained noted))
+                    (do
+                      (<- again bool (end-turn-record drained.job-id batch.usage drained.pending-entries))
+                      (setv recorded again)))
+                (<- (LogLine :text (+ f"agentd: turn-record for job {job.job-id} was missing at turn end; re-created -> "
+                                      f"{remade} (ended: {recorded}) (#537)"))))))
         (when (not recorded)
           (<- (LogLine :text f"agentd: turn-record for job {job.job-id} is missing at turn end")))
         ;; #349 行 3 粒 3a: 限度の断りは cause にも写す(failed / ProviderLimit・取り消しの cause は上書きしない — judgment.outcome-with-limit の 1 点)
@@ -2218,6 +2255,14 @@
               (<- record-row (| AcpRow None) (AcpGetRow :key record-key))
               (<- resumed tuple (recovered-record-of record-row))
               (setv job (replace job :record-attempt (get resumed 0) :delta-seq (get resumed 1)))
+              ;; agora-redesign #537 H1: 行が無いまま拾い直した手番は記録の腕を pending に戻す(段 9p の既存の網に乗せるだけ)。
+              ;; in-flight-job-of の既定は created(行が在る前提の adopt)なので、そのままだと ensure-turn-record は 1 bit も
+              ;; 触らず、手番の終わりに『Ended・turn-record なし・条件なし』になる — 郵便は failed と記帳される
+              ;; (pool の pod は配備のたびに再起動するので、これが最も当たる穴だった)。
+              (when (is record-row None)
+                (setv job (replace job :record-create RECORD-CREATE-PENDING :record-create-last-ms 0))
+                (<- (LogLine :text (+ f"agentd: recovered job {row.resource-id} has no turn-record row; "
+                                      "record-create = pending (it is re-created before the turn ends; #537)"))))
               ;; 段 10 lane 10n: 渡したが読まれていない割り込みは拾い直した時刻から期限を数える(行の印は写す)。
               (<- job InFlightJob (recovered-interrupts-of job row now-ms))
               ;; 段 12 lane 12j(#367): 行の取り消し(spec.cancel と見届け status.cancel)を写す — 見届けが無ければ次の拍に見届け直す。
@@ -3223,6 +3268,68 @@
   (replace current :last-resync-ms now-ms))
 
 
+(defk sweep-turn-records [settings state now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: now-ms int)]
+   :post [(: % int)]}
+  "終状態を読む巡回(段 12・agora-redesign #537 便 1・既知の形 = k3s の controller の reconcile): 走っている turn-record を
+   field selector で引き、対の agent-job が終端(Ended / Withdrawn)か行ごと無い記録を ended にする。判断は
+   judgment.turn-record-sweep-verdict の 1 点で、この腕は読み・書き・名乗りだけを持つ。
+
+   なぜ要るか: 手番の終わりの 1 度の書き(end-turn-record)が断られた拍、記録は永久に running のまま残り、会話は
+   Dormant=False{turn-record-running} で止まる(実弾 38 本)。その枝は**残したまま**、この腕がその上に載る
+   (per-path の再送は足さない — level-triggered に終状態へ寄せる)。
+
+   起動・停止・排水・同時性:
+     * 起動の拍(memory が空・AgentdState.last-turn-record-sweep-ms = None)から走り、以後は
+       AgentdSettings.turn-record-sweep-seconds の周期。
+     * 排水(settings.draining)の最中も走る — 閉じるのは害ではなく望み。
+     * 停止(close-jobs-for-stop)は今日どおり 1 度書き、着かなければ次の incarnation の巡回が拾う。
+     * 複数の agentd が同じ行を読んでも、書きは ifGeneration の CAS なので先に着いた 1 本が勝ち、負けた側は
+       Conflict を log して次の周期に読み直す(その時は ended なので skip)— 二重の書きは無い。
+   memory は持たない(正本は行)。戻り = この拍に ended にした数。"
+  (<- listed tuple (AcpRunningTurnRecords))
+  (<- known set (in-flight-ids state))
+  (<- carried set (unrecorded-end-ids state))
+  (setv mine (| known carried))
+  ;; 自分が**いま書いている**手番の記録は読み直さない(判断でも必ず skip になる — ここは腕の I/O の絞りちょうど)。
+  (setv candidates [])
+  (for [row listed]
+    (setv listed-id (.get row.spec "agentJobId"))
+    (when (and (isinstance listed-id str) (not-in listed-id mine))
+      (.append candidates listed-id)))
+  (setv ended-count 0)
+  (when candidates
+    (<- node-rows tuple (AcpGet :kind NODE-KIND))
+    (<- live-nodes frozenset (live-node-names-of node-rows))
+    (for [job-id candidates]
+      ;; 正本は行(R7): 一覧の image では書かない — 鍵で読み直してから判じ、読んだ image で CAS する。
+      (<- key str (turn-record-key-of job-id))
+      (<- record (| AcpRow None) (AcpGetRow :key key))
+      (<- pair (| AcpRow None) (AcpGetRow :key f"{AGENT-JOB-NAMESPACE}:{AGENT-JOB-KIND}:{job-id}"))
+      (when (isinstance record AcpRow)
+        (<- verdict str (turn-record-sweep-verdict record pair settings.node-name live-nodes mine))
+        (setv record-node (.get record.spec "node"))
+        (if (= verdict TURN-RECORD-SWEEP-END)
+            (do
+              (setv pair-phase "gone")
+              (when (isinstance pair AcpRow)
+                (<- pair-status dict (status-object-of pair))
+                (setv pair-phase (str (.get pair-status "phase"))))
+              (<- record-status dict (status-object-of record))
+              ;; usage は書かない(開始 offset は memory にしか無く、0 から数え直すと温かい session の前の手番を足す発明になる)。
+              (<- ended dict (turn-record-ended-status record-status None #()))
+              (<- wrote (| Written Conflict Refused) (AcpPutStatus :row record :status ended))
+              (when (isinstance wrote Written)
+                (setv ended-count (+ ended-count 1)))
+              (<- (LogLine :text (+ f"agentd: turn-record of job {job-id} (node {record-node}) was left running while its "
+                                    f"agent-job is {pair-phase} — ended by the sweep -> {wrote} (#537)")))
+              (<- (MetricLine :fields {"metric" METRIC-TURN-RECORD-SWEEP-ENDED "agentJobId" job-id
+                                       "node" record-node "phase" pair-phase "atMs" now-ms})))
+            (<- (MetricLine :fields {"metric" METRIC-TURN-RECORD-SWEEP-SKIPPED "agentJobId" job-id
+                                     "node" record-node "atMs" now-ms}))))))
+  ended-count)
+
+
 (defk agentd-tick [settings state]
   {:pre [(: settings AgentdSettings) (: state AgentdState)]
    :post [(: % AgentdState)]}
@@ -3258,6 +3365,16 @@
       (except [e IO-FAILURES]
         (<- (LogLine :text f"agentd: receive failed: {(. (type e) __name__)}: {e}"))
         (setv current (replace current :last-resync-ms now-ms)))))
+  ;; 段 12(agora-redesign #537 便 1): 走っている turn-record の終状態の巡回(遅い周期・memory なし)。受けの後に撃つので、
+  ;; この拍に claim / 拾い直した手番は memory に居る = 巡回の相手にならない。I/O の失敗でも刻印は進める(洪水を避ける)。
+  (<- sweep-due bool (due current.last-turn-record-sweep-ms now-ms settings.turn-record-sweep-seconds))
+  (when sweep-due
+    (try
+      (<- swept int (sweep-turn-records settings current now-ms))
+      (setv current (replace current :last-turn-record-sweep-ms now-ms))
+      (except [e IO-FAILURES]
+        (<- (LogLine :text f"agentd: turn-record sweep failed: {(. (type e) __name__)}: {e}"))
+        (setv current (replace current :last-turn-record-sweep-ms now-ms)))))
   ;; 段 8 lane 4x: 走っている自分の job に載った割り込みを器へ — 毎拍・行の cache から(level-
   ;; triggered: 器が断った id は cache に残り、次の拍が同じ id で撃ち直す。受けの拍でなくてもよい)。
   (try

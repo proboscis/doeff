@@ -291,6 +291,9 @@
   STREAM-SOURCE-TRANSCRIPT
   SessionView
   TURN-RECORD-ENDED
+  TURN-RECORD-RUNNING
+  TURN-RECORD-SWEEP-END
+  TURN-RECORD-SWEEP-SKIP
   TURN-RECORD-ENTRIES-BYTE-BUDGET
   TURN-RECORD-KIND
   TurnEntryDropMarker
@@ -1089,8 +1092,13 @@
    resume すると agent が再実行を断って確認待ちにする。取り消しは手番を捨てる決定で、文脈の値打ちは記録(turn-record の
    rehydrate)が持つ — session は片付け、次の手番は記録から新しい session を起こす。cancel-forced は force-cancel が
    既に片付けている(None)。session-lost は host の monitor が終端に倒す(None)。手番が既に終わっていて割り込まなかった取り消しは
-   印が無いので温かいまま(None)。"
-  (when (and (= step JOB-STEP-RECORD-END) (cleanup-after-end view))
+   印が無いので温かいまま(None)。
+
+   ⚠ cleanup-after-end は defk(Program を返す)なので、`and` に渡す前に `<-` で値へ解く — 直に置くと Program は常に
+   truthy で、run_to_completion の器まで record-end で片付けてしまう(実弾 = 277ae0f6 で赤くなった
+   test-charter-lifecycle-is-respected-when-declared)。"
+  (<- retire bool (cleanup-after-end view))
+  (when (and (= step JOB-STEP-RECORD-END) retire)
     (return f"session {view.status} at the end of job {job.job-id}"))
   (when (and (= step JOB-STEP-TURN-END) job.cancel-interrupted)
     (return (+ f"cancelled turn of job {job.job-id} leaves the interrupt in the transcript — "
@@ -2663,6 +2671,21 @@
   (if (= (len live) 0) None (get live 0)))
 
 
+(defk live-node-names-of [rows]
+  {:pre [(: rows tuple)]
+   :post [(: % frozenset)]}
+  "kind node の行のうち**生きている**(status.state == joined)行の spec.name の集合(段 12・agora-redesign #537 便 1)。
+   綴りを知るのは node-row-entry-of の 1 点のままで、ここはその alive を集めるだけ。走っている turn-record の巡回が
+   『この記録を名乗る機体はまだ居るか』を引く材料 — 居ない機体(再配備で名前ごと消えた pool の pod)の記録は誰が
+   閉じてもよい。"
+  (setv names [])
+  (for [row rows]
+    (<- entry dict (node-row-entry-of row))
+    (when (get entry "alive")
+      (.append names (get entry "name"))))
+  (frozenset names))
+
+
 (defk node-resource-id-of [rows name]
   {:pre [(: rows tuple) (: name str)]
    :post [(: % str)]}
@@ -3268,6 +3291,42 @@
   next)
 
 
+(defk turn-record-sweep-verdict [record pair node-name live-nodes in-flight-ids]
+  {:pre [(: record AcpRow) (: pair (| AcpRow None)) (: node-name str)
+         (: live-nodes frozenset) (: in-flight-ids set)]
+   :post [(: % str)]}
+  "走っている turn-record を閉じるか(段 12・agora-redesign #537 便 1・閉語彙 TurnRecordSweepVerdict)。
+
+   既知の形 = k8s の controller の reconcile: 手番の終わりの**出来事**(1 度の書き)に記録の終わりを預けず、
+   行の**終状態**を読んで取り残しを level-triggered に閉じる。根 = end-turn-record の書きが断られた拍に log 1 行で
+   終わり、settle-record はその戻りを見ずに agent-job を Ended にして memory から外していたので、記録は永久に
+   running のまま残った(会話は Dormant=False{turn-record-running}・実弾 38 本)。
+
+   end = 4 つが揃った時ちょうど:
+     1. 記録が running(ended の行は触らない — 冪等)
+     2. その手番が自分の memory に無い(走らせている手番・持ち越しの Ended〔#402〕を切らない)
+     3. 対の agent-job が終端(Ended / Withdrawn)か、行ごと無い
+        (Pending / Bound / Running は走っている手番か置き直し待ち〔#519〕— 切ると次の試みの記録を失う)
+     4. 記録の名乗る node が自分か、生きている node の集合に無い
+        (pool の pod は再配備のたびに名前が変わるので『自分の行だけ』では死んだ pod の記録を誰も閉じない。
+         生きている別の機体の手番はその機体に任せる — 書き手を 1 つに保つ)
+   どれか 1 つでも欠ければ skip。判断はこの 1 点で、腕(agentd.sweep-turn-records)は語で分岐する以上のことをしない。"
+  (<- status dict (status-object-of record))
+  (when (!= (.get status "state") TURN-RECORD-RUNNING)
+    (return TURN-RECORD-SWEEP-SKIP))
+  (setv job-id (.get record.spec "agentJobId"))
+  (when (in job-id in-flight-ids)
+    (return TURN-RECORD-SWEEP-SKIP))
+  (when (isinstance pair AcpRow)
+    (<- pair-status dict (status-object-of pair))
+    (when (not-in (.get pair-status "phase") #(PHASE-ENDED PHASE-WITHDRAWN))
+      (return TURN-RECORD-SWEEP-SKIP)))
+  (setv node (.get record.spec "node"))
+  (if (or (= node node-name) (not-in node live-nodes))
+      TURN-RECORD-SWEEP-END
+      TURN-RECORD-SWEEP-SKIP))
+
+
 ;; ---------------------------------------------------------------------------
 ;; 会話の記録の service への二重書き(段 9f lane 9f-2・agora-redesign #59・設計 §2.4)
 ;; ---------------------------------------------------------------------------
@@ -3410,14 +3469,19 @@
   (and (>= status 400) (< status 500) (not-in status #{408 429})))
 
 
-(defk record-create-verdict [outcome started-ms now-ms deadline-seconds]
+(defk record-create-verdict [outcome started-ms now-ms deadline-seconds final]
   {:pre [(: outcome (| Written Conflict Refused)) (: started-ms int) (: now-ms int)
-         (: deadline-seconds (| int float))]
+         (: deadline-seconds (| int float)) (: final bool)]
    :post [(: % str)]}
   "turn-record の create の結末 → 腕の状態(閉語彙 RecordCreateState・段 9p・agora-redesign #76)。
    Written = 作れた / Conflict = 既に在る(同じ鍵は冪等 — 拾い直し)→ created。Refused は 2 種:
    決定論的(record-refusal-deterministic)→ given-up / 頭が答えない → 期限(手番の始まり started-ms から
-   deadline-seconds)の内なら pending・越えたら given-up。判断はこの 1 点(呼び手は結果の語で分岐しない)。"
+   deadline-seconds)の内なら pending・越えたら given-up。判断はこの 1 点(呼び手は結果の語で分岐しない)。
+
+   final(agora-redesign #537 H3)= この create が手番の**最後の 1 度**(終わりの拍の force)か。真なら期限の内でも
+   pending にしない — 次の拍はもう来ないので、pending のままだと条件が 1 つも乗らず『Ended・turn-record なし・
+   理由なし』の行になり、郵便の側(ACP Messaging の turnlessOf)は『手番が 1 度も始まらなかった』と読んで
+   agent-job-ended-without-a-turn で failed にする(実弾 2026-09-18: 20 秒の手番が頭の答えない拍に当たった)。"
   (if (or (isinstance outcome Written) (isinstance outcome Conflict))
       RECORD-CREATE-CREATED
       (do
@@ -3425,17 +3489,19 @@
         (cond
           deterministic RECORD-CREATE-GIVEN-UP
           (>= (- now-ms started-ms) (* 1000 deadline-seconds)) RECORD-CREATE-GIVEN-UP
+          final RECORD-CREATE-GIVEN-UP
           True RECORD-CREATE-PENDING))))
 
 
-(defk record-create-applied [job outcome now-ms deadline-seconds]
+(defk record-create-applied [job outcome now-ms deadline-seconds final]
   {:pre [(: job InFlightJob) (: outcome (| Written Conflict Refused)) (: now-ms int)
-         (: deadline-seconds (| int float))]
+         (: deadline-seconds (| int float)) (: final bool)]
    :post [(: % InFlightJob)]}
   "create の結末を job に写す(段 9p): 腕の状態(record-create-verdict)・最後に撃った拍・最後の断りの文。
    given-up になった拍は condition RecordUnavailable(理由 = 最後の断りと経過)を pending-conditions に足す
-   (Ended の書きに乗る — 同じ型を二度足さない)。created は行の image を持たない(次の追記が鍵から読む)。"
-  (<- verdict str (record-create-verdict outcome job.started-ms now-ms deadline-seconds))
+   (Ended の書きに乗る — 同じ型を二度足さない)。created は行の image を持たない(次の追記が鍵から読む)。
+   final = 手番の終わりの最後の 1 度(#537 H3 — 期限の内でも pending にしない)。"
+  (<- verdict str (record-create-verdict outcome job.started-ms now-ms deadline-seconds final))
   (setv refusal (if (isinstance outcome Refused) f"{outcome.status}: {outcome.error}" ""))
   (setv next (replace job :record-create verdict :record-create-last-ms now-ms :record-create-refusal refusal))
   (when (= verdict RECORD-CREATE-GIVEN-UP)

@@ -518,7 +518,8 @@
      (rule R45 "1 会話 1 温かい session — 会話の手番が別の家で起きた拍に、その会話の他の家の温かい session を全部片付ける(段 12 lane 12j・agora-redesign #379 受入 2・#352 受入 1 の実弾 2026-09-17 01:10 の根・既知の形 = virtual actor の器の再利用の鍵: 同じ actor の器は 1 つ): claim が着いた手番を起こす腕(agentd.start-claimed)は、候補の片付け(choice.retire = next-arm-for-job が名指した 1 本)に加えて、器の温かい session の一覧(SessionList multi_turn)から judgment.stale-conversation-sessions-of の 1 点で『帰属の conversationId がこの会話 ∧ 家(session-affinity-key-of)がこの手番の家と違う ∧ この手番が使う session ではない』ものを解き、全部片付ける(retire-sessions)。行(agent-job)からは読まない — 前の手番の行は終了 300 s で回収され、候補の無い手番が別の家で起きた拍に古い家の session が温かいまま残り、node の observations.sessions に 2 本載って配置の親和が古い家(方策の既定)を採った。同じ家の session は触らない(候補 = send / resume の相手)。")
      (rule R46 "同じ手番を別の session で走らせない — 置き直された試みは走っている session が引き継ぎ、着かなかった Ended は行を読み直して書く(段 12 lane 12j・agora-redesign #402・実弾 2026-09-17 03:52 = 頭の不通の後に監督が走っていた手番を lease-expired で Pending へ戻して attempt 2 を同じ行に結び、attempt 1 の Ended は Conflict で落ち、agentd は attempt 2 を新しい session で走らせて同じ手番が 2 本になった・ACP 側 = 12k の B'〔監督は nodeLifecycle の猶予を待つ〕と両輪・契約の語 = binding.attempt / binding.nodeRow / supervision.lostReasons): (1) 受けの拍に、自分に結ばれた Bound の行のうち自分が**いま走らせている** job と同じ id のもの(judgment.rebound-rows-of の 1 点)は claim せず、走っている session を名乗って Running に戻す(running-status-of で sessionHandle = その session・binding は触らない)。(2) 手番の終わりの Ended の書きが着かなければ(Conflict / Refused)行を 1 度読み直し、judgment.end-retry-verdict が write(Pending / Bound / 自分の session の Running)なら今の generation で書き直す。(3) それでも着かなければ UnrecordedEnd として state.unrecorded_ends に持ち越し、毎拍 agentd.record-unrecorded-ends が行を読み直して書く(着けば忘れる・drop〔行が無い・終端・別の session の Running・上限 UNRECORDED_END_TTL_MS〕なら忘れる)。持ち越している id の Bound は claim の門(known)が受けない。綴りと上限は effects の 1 点(EndRetryVerdict / UNRECORDED_END_TTL_MS / UnrecordedEnd)。")
      (rule R47 "終端は必ず result.cause を運ぶ — Ended の書きの 1 点が cause を result に載せ、読み手は conditions 頼みにしない(段 12 lane 12k・agora-redesign #349 行 3 粒 3a・既知の形 CI runner (i)「手番の終わりに終端の状態を必ず返す」・#367 便 2 の result.cause {category: cancelled, stage, reason} を全部の終端へ広げる・契約 = ACP docs/contracts/scheduling.json の resultCause の節・ACP 側 = awaitOutcomeOf が cause の category で答えを組む): (1) category の閉語彙は effects.CauseCategory の 1 点(completed / cancelled / failed / interrupted / agentd-stopped — D-349r3a-1: condition の 26 語と 1:1 にしない・reason が語を運ぶ)で、表 CAUSE_CATEGORIES は Literal から導く(第 2 の並びを書かない)。この repo は scheduling.json の写しを持たないので、契約との一致は この針(定数の表の pin)と ACP の hspec(JSON と Haskell の parity)の 2 点で守る。(2) 書きの 1 点 = judgment.ended-status-of [status result cause conditions] — cause は引数で強い(None は書けない)、閉語彙の外は断り、result-with-cause で result に載せる(dict の結末 → 欄 cause・None → cause だけ・dict でない結末 → {value, cause})。全部の Ended の書き手(end-job-now・settle-record〔finalize / force-cancel / close-jobs-for-stop の共有〕・record-unrecorded-ends・end-summarize-job・end-command)がこれを通る。(3) cause の組み立て: 自然に終わった手番 = {completed}(value があれば同じ result に・judgment.job-outcome-of)/ 取り消し = {cancelled, stage, reason}(R42・outcome-with-cancel が結末の cause を置き換える — 合図が先に在った)/ 失敗の condition で閉じる = {failed, reason: <condition の型>}(end-job-now = 閉じた条件の型・session-lost = SessionLost・done 以外の器の終端 = SessionFailed・命令の族 = command-cause-of〔条件なし = completed・あり = 先頭の条件の型〕)/ provider の限度 = judgment.outcome-with-limit の 1 点が completed / failed だけを {failed, ProviderLimit} に置き換える(「result に書かない」の旧規則は「value は書かない・cause は書く」へ)/ 取り下げ(interrupt-job・phase Withdrawn は作った側の書き)= interrupted-status-of が Withdrawn の行に {interrupted, withdrawn} を足す / 排水の期限(close-jobs-for-stop)= {agentd-stopped, drain-deadline}。(4) 持ち越し(UnrecordedEnd・R46)も cause を運ぶ。(5) 旧 agentd の行(cause の無い Ended)は読み手が寛容(D-349r3a-2: result を schema で必須にしない)— 日次の針は新しい agentd の行だけを数える。")
-     (rule R48 "claude の手番の終わり = process の終わり — 器は result の行で対話を閉じ(stdin の EOF)process を降ろし、次の手番は --resume の新しい process で起こす。手番の境界の所有者は host ちょうどで、CLI に result の後の手番(background task / Monitor の完了で起きる model)を持たせない(段 12 lane 12e・agora-redesign #517・card ki-ec55c1318483・実弾 2026-09-17 19:4x: 前の手番の process が WAIT の後に Monitor の合図で起き直り、次の手番の job と同じ会話で並走して本番に作用・記録に載らない行動)。段 8 lane 4x の温かい claude(result の後も同じ process へ次の user の行)は退役 — 手番の途中の注入(R21)は残る(stdin は手番の間だけ開いている)。codex(turn/start の無い手番は起きない)は温かいまま")]
+     (rule R48 "claude の手番の終わり = process の終わり — 器は result の行で対話を閉じ(stdin の EOF)process を降ろし、次の手番は --resume の新しい process で起こす。手番の境界の所有者は host ちょうどで、CLI に result の後の手番(background task / Monitor の完了で起きる model)を持たせない(段 12 lane 12e・agora-redesign #517・card ki-ec55c1318483・実弾 2026-09-17 19:4x: 前の手番の process が WAIT の後に Monitor の合図で起き直り、次の手番の job と同じ会話で並走して本番に作用・記録に載らない行動)。段 8 lane 4x の温かい claude(result の後も同じ process へ次の user の行)は退役 — 手番の途中の注入(R21)は残る(stdin は手番の間だけ開いている)。codex(turn/start の無い手番は起きない)は温かいまま")
+     (rule R49 "手番の記録(turn-record)を『1 度の書き』に預けない — 終状態を読む巡回が running の取り残しを閉じ、記録なしで Ended にしない(段 12・agora-redesign #537・既知の形 = k8s の controller の reconcile〔出来事ではなく終状態へ寄せる〕・実弾 3 本 = 依頼が死ぬ / 担い手の報告が届かない / 検収 accept が偽の failed になる): 郵便の側(ACP Messaging の turnlessOf)は『その job の turn-record の行が在るか』で手番の在否を読み、無ければ agent-job-ended-without-a-turn で郵便を failed にする。ゆえに agentd の側の不変条件は 2 つ。(A) **running の記録は取り残さない**: 手番の終わりの 1 度の書き(end-turn-record)は残したまま、その上に周期の巡回(agentd.sweep-turn-records)を載せる — 走っている turn-record を field selector(effects.TURN_RECORD_RUNNING_SELECTOR の 1 点)で引き、鍵で読み直した記録と対の agent-job から judgment.turn-record-sweep-verdict(閉語彙 TurnRecordSweepVerdict = end | skip)が判じ、end なら turn-record-ended-status で ended(usage は書かない — 消費の和は手番の終わりの 1 回)。end = 記録が running ∧ その手番が自分の memory に無い ∧ 対が終端(Ended / Withdrawn)か行ごと無い ∧ 記録の名乗る node が自分か生きていない(judgment.live-node-names-of)— pool の pod は再配備で名前が変わるので『自分の行だけ』では死んだ pod の記録を誰も閉じない。腕は memory を持たず(level-triggered・冪等)、書きは ifGeneration の CAS なので複数の agentd が読んでも先に着いた 1 本が勝つ。周期の宣言は AgentdSettings.turn_record_sweep_seconds の 1 点・刻印は AgentdState.last_turn_record_sweep_ms(None = 起動の拍に即)・排水の最中も走る。(B) **記録なしで Ended にしない**: 拾い直した手番の turn-record が 404 なら記録の腕を pending に戻して段 9p の網に乗せる(agentd.recover-job)/ 手番の終わりに行が無ければその拍に 1 度だけ作り直して ended まで書く(agentd.settle-record — 行が在って書きだけ断られた拍は作り直さず、巡回に任せる)/ 手番の終わりの最後の create(force)は期限の内でも pending にせず given-up へ倒し、条件 RecordUnavailable が理由を運ぶ(judgment.record-create-verdict の引数 final — 判断の点は増やさない)。ACP の側(turnlessOf・契約の lifecycle の宣言)は 1 bit も変えない(語の側は #589 が持つ)。")]
   :laws
     [(law interrupts-ride-the-running-turn-and-are-recorded-on-the-row
        :statement "for_all Running job j run by this agentd with status.interrupts = [m1..mn]: each mi not in status.interruptsDelivered ∪ memory.interrupts_sent is handed to the session by SessionInterject(body(mi)) in placement order, and every accepted mi is written back by one CAS that removes it from interrupts and appends it to interruptsDelivered; a refused mi stops the order and stays on the row; agentd never starts a turn for an interrupt and never removes an id it did not hand over"
@@ -572,6 +573,25 @@
                      "packages/doeff-agents/tests/test_sessionhost_headless.py::test_codex_dialogue_does_not_escalate"
                      "packages/doeff-agents/tests/test_sessionhost_headless.py::test_headless_process_claude_escalate_stops_the_tool_and_the_injection_runs_next"
                      "packages/doeff-agents/tests/test_sessionhost_headless.py::test_host_headless_escalate_stops_the_turn_and_keeps_awaiting"])
+     (law turn-records-are-closed-by-the-end-state-not-by-one-write
+       :statement "for_all turn j run by this agentd: (a) when j's agent-job reaches a terminal phase (Ended | Withdrawn) or its row is gone, and j is not in this agentd's memory, and j's turn-record names this node or a node that is not joined, then within one sweep period the turn-record's status.state is ended -- the arm is level-triggered, keeps no memory, reads the row by key before writing, and writes with ifGeneration so two agentd never write twice; and (b) the agent-job of j is never written Ended unless j's turn-record row exists at that moment or the Ended carries condition RecordUnavailable naming why the record is missing."
+       :counterexamples
+         [(counterexample "手番の終わりの 1 度の書き(end-turn-record)が断られた拍に log 1 行で終え、agent-job を Ended にして memory から外す形(2026-09-18 までの agentd): 記録は永久に running のまま残り、会話は Dormant=False{turn-record-running} で止まる(本番の実弾 38 本・うち pool の pod 12)。終状態を読む巡回が要る")
+          (counterexample "巡回の対象を『自分の node の行』に閉じる形: pool の pod は再配備のたびに node の名前が変わるので、死んだ pod の名を名乗る記録は誰の『自分の行』でもなく永久に残る。生きていない node の記録は誰が閉じてもよい(判断は live-node-names-of)")
+          (counterexample "対の agent-job が Pending / Bound / Running の記録まで閉じる形: 走っている手番と、口座に断られて置き直しを待っている試み(#519)の記録を切る — 次の試みが同じ行を続けられない(1 手番 1 行)。終端と不在だけ閉じる")
+          (counterexample "巡回が一覧の image で PutStatus を撃つ形(投影した行・cache の行): 他の書き手の欄を落として engine に断られるか、古い generation で CAS に負け続ける。書く前に鍵で読み直す(正本は行)")
+          (counterexample "巡回が閉じた記録に usage を書く形: 手番の開始 offset は memory にしか無く、0 から数え直すと温かい session の前の手番の消費まで足す発明になる。消費の和は手番の終わりの 1 回だけ")
+          (counterexample "拾い直した手番の記録の腕を created のまま組む形(recovered-record-of が #(1 0) を返しても既定の created): 行が無いことに誰も気づかず、手番の終わりの ensure-turn-record は 1 bit も触らず、agent-job は条件なしで Ended になる — 郵便は『手番が 1 度も始まらなかった』と読んで failed にする(pool の pod は配備のたびに再起動するので最も当たる穴)")
+          (counterexample "手番の終わりの最後の create が断られた時に期限(turn_record_create_deadline_seconds)の内なら pending のままにする形: 次の拍が来ないので条件が 1 つも乗らず『Ended・記録なし・理由なし』になる。短い手番(20 秒)が頭の答えない拍に当たると必ずこれ")
+          (counterexample "行が在って書きだけ断られた拍に create を撃ち直す形: 409 が返るだけで記録は閉じず、断りが続く間ずっと撃ち続ける。行の在否を鍵で確かめ、在れば巡回に任せる")
+          (counterexample "ACP の turnlessOf や契約の lifecycle の宣言を変えて『記録の無い Ended』を通す形: 郵便の側の語の問題(#589)と agentd の側の取り残し(#537)を混ぜ、どちらも直らない。agentd の側の不変条件で閉じる")]
+       :enforcement ["docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test-adr-doe-agents-012-turn-records-are-not-left-to-one-write"
+                     "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-a-turn-record-left-running-by-a-refused-write-is-ended-by-the-sweep"
+                     "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-the-sweep-closes-the-leftovers-of-a-restart-and-leaves-the-live-ones-alone"
+                     "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-turn-record-sweep-verdict-reads-the-end-state-of-the-pair-and-the-node"
+                     "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-a-recovered-turn-without-a-record-row-re-creates-it-before-the-end"
+                     "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-a-turn-that-ends-inside-the-deadline-still-names-the-missing-record"
+                     "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-a-turn-record-that-vanished-before-the-end-is-re-created-and-ended"])
      (law agentd-exits-only-to-acp-and-custody
        :statement "for_all source_file f in sessionhost/: agora_ledger_words(code_lines(f)) = ∅ — agentd(sessionhost)が話す相手は ACP と custody だけ"
        :counterexamples
@@ -883,6 +903,57 @@
                    "test-a-thin-rehydrate-has-no-tool-bodies-to-thin-and-counts-none"
                    "test-thinned-items-keep-the-head-and-name-the-original-bytes-while-text-and-mail-stay-byte-identical"]]
          (assert (in (+ "(deftest " name) tests) f"R35 の反例の検が無い: {name}")))
+     (deftest test-adr-doe-agents-012-turn-records-are-not-left-to-one-write
+       ;; R49 の針(構造): field selector の綴りと閉語彙と周期の宣言は effects の 1 点ずつ・判断(閉じるか / 生きている node)は
+       ;; judgment の 1 点ずつ・巡回の腕は agentd の 1 点で拍が 1 度撃つ・記録なしで Ended にしない 3 つの腕(H1 / H2 / H3)が
+       ;; 1 行ずつ在る・反例の検が在る。
+       (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
+       (for [needle ["TURN_RECORD_RUNNING_SELECTOR = f\"status.state={TURN_RECORD_RUNNING}\""
+                     "TURN_RECORD_SWEEP_END: TurnRecordSweepVerdict = \"end\""
+                     "TURN_RECORD_SWEEP_SKIP: TurnRecordSweepVerdict = \"skip\""
+                     "METRIC_TURN_RECORD_SWEEP_ENDED = \"agentd_turn_record_sweep_ended\""
+                     "    turn_record_sweep_seconds: int = 300"
+                     "    last_turn_record_sweep_ms: int | None = None"
+                     "class AcpRunningTurnRecords(EffectBase):"]]
+         (assert (= (len (lfor line effects-lines :if (.startswith line needle) line)) 1)
+                 f"綴り・閉語彙・周期の宣言は effects の 1 点(R49): {needle}"))
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (for [needle ["(defk turn-record-sweep-verdict [record pair node-name live-nodes in-flight-ids]"
+                     "(defk live-node-names-of [rows]"
+                     "(defk record-create-verdict [outcome started-ms now-ms deadline-seconds final]"]]
+         (assert (= (len (lfor line judgment-lines :if (.startswith line needle) line)) 1)
+                 f"判断は judgment の 1 点(R49): {needle}"))
+       (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
+       (assert (= (len (lfor line agentd-lines :if (.startswith line "(defk sweep-turn-records [settings state now-ms]") line)) 1)
+               "巡回の腕が無い(R49)")
+       (assert (= (len (lfor line agentd-lines :if (in "(<- swept int (sweep-turn-records settings current now-ms))" line) line)) 1)
+               "拍が巡回を撃っていない(R49)")
+       (assert (= (len (lfor line agentd-lines :if (in "(<- listed tuple (AcpRunningTurnRecords))" line) line)) 1)
+               "巡回の入口は走っている記録の一覧の 1 点(R49)")
+       ;; 巡回は書く前に鍵で読み直す(一覧の image で PutStatus を撃たない)。
+       (setv sweep-body (defk-body agentd-lines "sweep-turn-records"))
+       (assert (any (gfor line sweep-body (in "(<- record (| AcpRow None) (AcpGetRow :key key))" line)))
+               "巡回が鍵で読み直していない(R49)")
+       (assert (any (gfor line sweep-body (in "(AcpPutStatus :row record :status ended)" line)))
+               "巡回が読み直した image で書いていない(R49)")
+       (assert (any (gfor line sweep-body (in "(turn-record-ended-status record-status None #())" line)))
+               "巡回が usage を書いている(R49 — 消費の和は手番の終わりの 1 回)")
+       ;; H1 / H2 / H3: 記録なしで Ended にしない 3 つの腕。
+       (assert (= (len (lfor line agentd-lines :if (in ":record-create RECORD-CREATE-PENDING :record-create-last-ms 0" line) line)) 1)
+               "拾い直しが行の無い記録を段 9p の網へ戻していない(R49 H1)")
+       (setv settle-body (defk-body agentd-lines "settle-record"))
+       (assert (any (gfor line settle-body (in "(<- existing (| AcpRow None) (AcpGetRow :key missing-key))" line)))
+               "終わりの拍が行の在否を鍵で確かめていない(R49 H2)")
+       (assert (= (len (lfor line agentd-lines :if (in "(record-create-applied job created now-ms settings.turn-record-create-deadline-seconds force))" line) line)) 1)
+               "終わりの最後の create が final を名乗っていない(R49 H3)")
+       (setv tests (.read-text (/ (. (Path __file__) parent parent parent) "packages" "doeff-agents" "tests" "sessionhost_acp_turn_events_deftests.hy") :encoding "utf-8"))
+       (for [name ["test-a-turn-record-left-running-by-a-refused-write-is-ended-by-the-sweep"
+                   "test-the-sweep-closes-the-leftovers-of-a-restart-and-leaves-the-live-ones-alone"
+                   "test-turn-record-sweep-verdict-reads-the-end-state-of-the-pair-and-the-node"
+                   "test-a-recovered-turn-without-a-record-row-re-creates-it-before-the-end"
+                   "test-a-turn-that-ends-inside-the-deadline-still-names-the-missing-record"
+                   "test-a-turn-record-that-vanished-before-the-end-is-re-created-and-ended"]]
+         (assert (in (+ "(deftest " name) tests) f"R49 の反例の検が無い: {name}")))
      (deftest test-adr-doe-agents-012-dropped-history-turns-leave-a-headline
        ;; R34 の針(構造): 畳みは rehydrate-history-of の 1 点・落とした区間の見出しは history-dropped-headline の 1 点・数の綴りは
        ;; history-counts-note の 1 点(turn-record の見出しと同じ)・黙って落とす旧の断り(footer)が無い・答えは見出しと切った byte を

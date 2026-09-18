@@ -59,6 +59,9 @@ PHASE_WITHDRAWN = "Withdrawn"
 #: turn-record の state(契約 agora-kinds.json turn-record.declaration.states)。
 TURN_RECORD_RUNNING = "running"
 TURN_RECORD_ENDED = "ended"
+#: 段 12(agora-redesign #537 便 1): 走っている手番の記録だけを引く field selector(engine の status 軸の絞り — 1 回の
+#: 読みに条件 1 つ)。綴りはここ 1 点で、実 I/O(handlers)と検の器(fake)が同じ語を読む。
+TURN_RECORD_RUNNING_SELECTOR = f"status.state={TURN_RECORD_RUNNING}"
 
 #: turn-record の status.entries(手番の出来事の列・append-only の event log — 段 8 lane 4u・agora-redesign #49)の
 #: kind の閉語彙(契約 agora-kinds.json の kinds.turn-record … entries.items.kind の写し)。text = assistant の本文の
@@ -483,6 +486,14 @@ JOB_STEP_CANCEL_FORCED: str = "cancel-forced"
 EndRetryVerdict = Literal["write", "drop"]
 END_RETRY_WRITE: EndRetryVerdict = "write"
 END_RETRY_DROP: EndRetryVerdict = "drop"
+#: 段 12(agora-redesign #537 便 1): 走っている turn-record を終状態から閉じる巡回の答え
+#: (judgment.turn-record-sweep-verdict の閉語彙・既知の形 = k8s の controller の reconcile)。
+#: end = 記録を ended にする(手番はもう走っていない — 対の agent-job が終端「Ended / Withdrawn」か行ごと無く、
+#: 記録の名乗る node が自分か、生きている node の集合に無い)/ skip = 触らない(走っている手番・置き直し待ち「#519」・
+#: 生きている別の機体が持つ手番・既に ended の記録)。
+TurnRecordSweepVerdict = Literal["end", "skip"]
+TURN_RECORD_SWEEP_END: TurnRecordSweepVerdict = "end"
+TURN_RECORD_SWEEP_SKIP: TurnRecordSweepVerdict = "skip"
 #: 着かなかった Ended を持ち越す上限(ms)。頭の不通が 1 時間を越えたら忘れる(行は監督の置き直しに任せ、記録は turn-record に在る)。
 UNRECORDED_END_TTL_MS: int = 3_600_000
 #: custody の貸出の口の種類(POST /lease/claude | /lease/codex)。
@@ -1066,6 +1077,10 @@ class AgentdSettings:
     #: condition RecordUnavailable(judgment.record-create-verdict の 1 点)。頭の入れ替え(image beat の再起動)の実測は
     #: 数十秒〜2 分なので、その数倍。
     turn_record_create_deadline_seconds: float = 300.0
+    #: 段 12(agora-redesign #537 便 1): 走っている turn-record の終状態を読む巡回の周期(秒・値の宣言はここ 1 点)。
+    #: 1 度の書き(手番の終わりの end-turn-record)が着かなかった記録を level-triggered に閉じる腕の拍 —
+    #: profile の観測と同じ「遅い周期」の族。起動の拍(AgentdState.last_turn_record_sweep_ms = None)は即。
+    turn_record_sweep_seconds: int = 300
 
 
 # ------------------------------------------------------------------ ACP の値
@@ -1646,6 +1661,10 @@ METRIC_COMPACTIONS_TOTAL = "agentd_compactions_total"
 #: 段 12 lane 12j 便 3(agora-redesign #233): 手番の終わりの文脈の大きさが summarize_trigger_tokens を超え、要約の job を書いた回数
 #: (欄 conversationId・until・agentJobId)。書けなかった拍(既在・断り)は数えない(log の 1 行)。
 METRIC_SUMMARIZE_TRIGGERS_TOTAL = "agentd_summarize_triggers_total"
+#: 段 12(agora-redesign #537 便 1): 終状態を読む巡回が閉じた / 触らなかった走っている turn-record(1 行 = 1 記録・
+#: 欄 agentJobId / node)。本番の針「running のまま取り残された記録 = 0」を測る材料。
+METRIC_TURN_RECORD_SWEEP_ENDED = "agentd_turn_record_sweep_ended"
+METRIC_TURN_RECORD_SWEEP_SKIPPED = "agentd_turn_record_sweep_skipped"
 #: この batch だけの決まった断り(契約 record-service.json: 400 malformed・422 unstorable — 撃ち直しても通らない)。札(401 / 403)・
 #: 窓(429)・届かない・5xx は batch ではなく系の側(機体の設定か一時的)なので含めない — 残しておけば、設定を直した後に
 #: 自動で送れる(judgment.record-append-word-of)。
@@ -1957,6 +1976,9 @@ class AgentdState:
     #: 段 12 lane 12j(agora-redesign #402): 着かなかった Ended の持ち越し(job ごとに 1 つ)。毎拍 agentd.record-unrecorded-ends が行を
     #: 読み直して書き直す。この id の Bound の行は claim しない(同じ手番を別の session で走らせない)。
     unrecorded_ends: tuple[UnrecordedEnd, ...] = ()
+    #: 段 12(agora-redesign #537 便 1): 走っている turn-record の巡回の最後の拍。None = まだ 1 度も(起動直後は即・
+    #: その後は AgentdSettings.turn_record_sweep_seconds の周期)。巡回は memory を持たない(正本は行)。
+    last_turn_record_sweep_ms: int | None = None
 
 
 # ------------------------------------------------------------------ 要求(ACP)
@@ -2007,6 +2029,16 @@ class AcpTurnHeadlines(EffectBase):
     結果 = tuple[AcpRow, ...](畳みの判断は judgment.rehydrate-history-of)。"""
 
     conversation_id: str
+
+
+@dataclass(frozen=True)
+class AcpRunningTurnRecords(EffectBase):
+    """走っている手番の記録の行(段 12・agora-redesign #537 便 1:
+    ``GET /api/resources?kind=turn-record&fieldSelector=status.state=running``)。結果 = tuple[AcpRow, ...]。
+
+    終状態を読む巡回(agentd.sweep-turn-records)の入口 — kind の全量(実測 29,913 行 / 172 MB)ではなく、engine の
+    status 軸の field selector で走っている記録だけを引く。読んだ行は判断の材料で、**書く相手ではない**(書く前に
+    鍵で読み直す — 正本は行)。"""
 
 
 @dataclass(frozen=True)
