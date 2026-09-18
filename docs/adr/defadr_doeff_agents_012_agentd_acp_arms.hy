@@ -775,7 +775,7 @@
           (counterexample "worker の断りを握って master の答えだけで LeaseGrant を組む(access_token = None のまま起こす)— 資格の無い process が起き、CLI が 401 で落ちるまで誰も気づかない")
           (counterexample "hold の期限を worker の redeem の答えから導く — 期限の定義点が master の引換券の行と worker の 2 つになり、更新の見回りと貸与が別の期限を見る")])
      (law the-machine-names-its-place-and-refuses-another-place-s-account
-       :statement "for_all agentd a: a.settings.places = join.places-of([agentd].places / --places / DOEFF_AGENTD_PLACES) is a non-empty duplicate-free tuple over {company, personal} (else a does not join), node-spec-of(a) puts it in the typed field spec.places and its comma-joined copy in spec.labels.places, and writes neither the retired one-word spec.place nor labels.place (aligning an existing row drops them); for_all Bound job j claimed by a with credential source = lease and profile row p of j's account: places(a) non-empty and boundary(p) known and boundary(p) not in places(a) => j is Ended with condition CredentialPlaceMismatch and no session is launched (both directions — a company-only node refuses a personal account as a personal-only node refuses a company one; a node naming both takes both); boundary(p) unknown (row absent, field absent, outside the closed vocabulary) => the turn proceeds; the comparison is judgment.credential-place-mismatch alone; no reader translates a one-word declaration into a set"
+       :statement "for_all agentd a: a.settings.places = join.places-of([agentd].places / --places / DOEFF_AGENTD_PLACES) is a non-empty duplicate-free tuple over {company, personal, cluster} (else a does not join), node-spec-of(a) puts it in the typed field spec.places and its comma-joined copy in spec.labels.places, and writes neither the retired one-word spec.place nor labels.place (aligning an existing row drops them); for_all Bound job j claimed by a with credential source = lease and profile row p of j's account: places(a) non-empty and boundary(p) known and boundary(p) not in places(a) => j is Ended with condition CredentialPlaceMismatch and no session is launched (both directions — a company-only node refuses a personal account as a personal-only node refuses a company one; a node naming both takes both); boundary(p) unknown (row absent, field absent, outside the closed vocabulary) => the turn proceeds; the comparison is judgment.credential-place-mismatch alone; no reader translates a one-word declaration into a set. for_all Bound job j claimed by a of ANY charter kind (turn, verify, summarize — the gate sits before the kind branch): q = judgment.charter-place-of(j) = spec.charter.place (absent, non-string or empty => None) and places(a) non-empty and q not None and q not in places(a) => j is Ended with condition PlaceMismatch naming both places(a) and q, and no session is launched, no credential is borrowed and no work dir is touched; q = None => the turn proceeds unchanged (a charter without the field is byte-identical to today); the comparison is judgment.place-mismatch alone and is a SEPARATE axis from the account gate (the credential axis asks whether a secret may leave a place, this axis asks whether the machine supplies the tools the turn needs), so cluster is a places word and never a profile.spec.boundary word"
        :counterexamples
          [(counterexample "置き場を宣言しない機体を参加させ、口座の置き場だけで配車する — 会社の口座の手番が個人の機体で起き、会社 profile の API 呼び出しが非会社機体から飛ぶ(operator 指示 2026-09-09 の禁止そのもの)")
           (counterexample "判らない置き場(profile の行が読めない・欄が無い)を食い違いと読んで閉じる — 預かり所へ移る途中の口座の手番が全部落ちる。前段の門は判らないもので止めない")
@@ -783,7 +783,14 @@
           (counterexample "食い違いの判定を claim の腕と配車の両方に書く — 判定点が 2 つになり、片方だけ直る。比べる点は judgment の 1 つ")
           (counterexample "機体の置き場を 1 値(place)で持たせる(段 10 lane 10d 便 2〜4)— 会社 Mac が会社と個人の両方の worker として寄与できない: company と名乗れば個人の口座の手番が全部 CredentialPlaceMismatch で落ち(実弾 2026-09-15 01:3x・4 本)、personal と名乗れば会社の profile を配れる node が 0(agora-redesign #224)。置き場は集合で名乗る(段 11 lane 11u)")
           (counterexample "1 値の宣言([agentd].place / DOEFF_AGENTD_PLACE)を 1 要素の集合と読み替える互換を join に置く — 宣言の定義点が 2 つになり、機体ごとにどちらが正か違う。鍵を places へ移し、旧い鍵は宣言に無い鍵として断る(依頼者の裁定 2026-09-16)")
-          (counterexample "旧い行の 1 値の spec.place / labels.place を揃えの写しに残す — 契約 v4 の配車は place を持つ行を行の誤りとして断るので、agentd を入れ替えても node が配車から消えたまま(誰も言わない)。揃えの写しで落とす")])
+          (counterexample "旧い行の 1 値の spec.place / labels.place を揃えの写しに残す — 契約 v4 の配車は place を持つ行を行の誤りとして断るので、agentd を入れ替えても node が配車から消えたまま(誰も言わない)。揃えの写しで落とす")
+          ;; 段 12(card acp:kanban-issue:ki-d13566f4d5eb・決定 案 A・2026-09-19)の反例。
+          (counterexample "charter の要求する置き場を走行係が読まない(『配置が判じ終えているから自分は読まない』— 2026-09-18 までの形)— 配置の版が古い拍・手で結んだ拍・方策を当てる前の拍に、道具の無い宿が黙って手番を取る。実弾 2026-09-18: 運用の 5 手番が kubectl も kubeconfig も無い k3s の pod に落ち、担い手が『kubectl: command not found』で 1 手も進めず、行にはその理由が 1 文字も残らなかった。実際の宿が名乗る")
+          (counterexample "門を種類の分岐の後(turn の腕の中)に置く — verify / summarize の job は門を素通りし、置き場を要求する定期便が道具の無い宿で走る。門は種類を問わない 1 点(分岐より前)")
+          (counterexample "要求の無い手番(charter.place の欄が無い)を『どこでもよい』ではなく『既定の置き場』と読んで止める — 今日走っている全部の手番が落ちる。欄の無い charter は byte 不変で通す")
+          (counterexample "cluster を profile.spec.boundary の語彙にも足す — 口座の境界(会社の資格が出られる範囲)と道具の供給が同じ軸になり、『会社口座で家の cluster を触る』が宣言として表せてしまう。cluster は places の語ちょうど")
+          (counterexample "道具の在否を走行係が実測して判じる(kubectl を which で探して自分で決める)— 宣言と実体の突合が手番ごとに走り、判定点が宿の数だけ増える。名乗りは宣言の 1 語で、実体との突合は据え付けの検(dotfiles `ai provision check`)の仕事")
+          (counterexample "kubeconfig の path を置き場の宣言に入れる(places = \"cluster:~/.config/agora/kubeconfig\")— 語彙が機体ごとに割れ、ACP の契約の閉語彙と突合できない。宣言は語 1 つ・在処は agentd の環境")])
      (law the-turn-s-credential-rides-the-turn-and-the-cli-inherits-no-agentd-env
        :statement "for_all warm send of agentd a for job j with lease l: SessionSend(j).session_env = judgment.turn-session-env-of(l) (claude: {CLAUDE_CODE_OAUTH_TOKEN: l.access_token}; codex or no lease: {}); for_all session.send received by the host with session_env e: e passes policy.session-env-admission-error (binding-owned keys and metered credentials refused) and backend = headless and mode = turn, otherwise the call is refused; for_all resume of a headless row r for that send: the spawned process env = launch-spawn-env(identity(r), overlay(r) merged with e) and overlay(r) carries no key of policy.TURN-AUTH-ENV-KEYS (the row never stores the turn credential); for_all headless spawn: the machine env reaching the child = policy.inheritable-spawn-env(os.environ) alone, so no ACP_* / DOEFF_* key and no custody / record / borrower address is inherited"
        :counterexamples
@@ -2651,7 +2658,7 @@
        (assert (= (len (lfor line join-lines :if (.startswith line "(defk place-of ") line)) 0)
                "1 値の読み join.place-of が残っている(互換の読み替え — 段 11 lane 11u)")
        (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
-       (for [name ["credential-place-of" "credential-place-mismatch" "turn-session-env-of" "node-labels-of" "node-places-of"]]
+       (for [name ["credential-place-of" "credential-place-mismatch" "charter-place-of" "place-mismatch" "turn-session-env-of" "node-labels-of" "node-places-of"]]
          (assert (= (len (lfor line judgment-lines :if (.startswith line f"(defk {name} ") line)) 1) name))
        (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
        (assert (= (len (lfor line agentd-lines :if (in "(credential-place-mismatch settings.places boundary)" line) line)) 1)
@@ -2659,6 +2666,25 @@
        ;; 段 11 lane 11u: 判定は集合の含有(両向き)— 1 値の不一致(!=)に戻さない。
        (assert (any (gfor line judgment-lines (in "(and (bool places) (is-not boundary None) (not-in boundary places))" line)))
                "置き場の突合が『boundary が集合に無い』の形でない(段 11 lane 11u)")
+       ;; 段 12(card acp:kanban-issue:ki-d13566f4d5eb・決定 案 A): charter の要求の門は走行係の 1 点で、種類の分岐より前に立つ。
+       (assert (any (gfor line effects-lines (.startswith line "CHARTER_PLACE_KEY: str = \"place\"")))
+               "charter の置き場の欄の綴りは effects の 1 点(card ki-d13566f4d5eb)")
+       (assert (any (gfor line effects-lines (in "CONDITION_PLACE_MISMATCH: ConditionType = \"PlaceMismatch\"" line)))
+               "要求の食い違いの条件の名は effects の 1 点(card ki-d13566f4d5eb)")
+       (assert (any (gfor line effects-lines (.startswith line "AgentdPlace = Literal[\"company\", \"personal\", \"cluster\"]")))
+               "置き場の閉語彙に cluster が無い(card ki-d13566f4d5eb の供給の 1 語)")
+       (assert (any (gfor line judgment-lines (in "(and (bool places) (is-not place None) (not-in place places))" line)))
+               "要求の突合が『charter.place が集合に無い』の形でない(card ki-d13566f4d5eb)")
+       (assert (= (len (lfor line agentd-lines :if (in "(place-mismatch settings.places charter-place)" line) line)) 1)
+               "charter の要求の突合は claim の腕で 1 度(card ki-d13566f4d5eb)")
+       ;; 門が種類の分岐より**前**に在る(verify / summarize が素通りしない)— 行の順で撃つ。
+       (setv claim-at (.index agentd-lines "(defk claim-job [settings state rows row previously-deferred now-ms]"))
+       (setv gate-at (next (gfor [i line] (enumerate agentd-lines)
+                                 :if (and (> i claim-at) (in "(place-mismatch settings.places charter-place)" line)) i)))
+       (setv kind-at (next (gfor [i line] (enumerate agentd-lines)
+                                 :if (and (> i claim-at) (in "(<- kind str (job-kind-of row))" line)) i)))
+       (assert (< gate-at kind-at)
+               "要求の門が種類の分岐より後に在る — verify / summarize が門を素通りする(card ki-d13566f4d5eb)")
        (assert (= (len (lfor line agentd-lines :if (in "(turn-session-env-of lease)" line) line)) 1)
                "手番ごとの env を組む点は 1 つ(R30)")
        (for [line agentd-lines]

@@ -28,6 +28,7 @@ from doeff_agents.sessionhost.acp.effects import (
     AgentdSettings,
     CLAUDE_OAUTH_TOKEN_ENV,
     CONDITION_CREDENTIAL_PLACE_MISMATCH,
+    CONDITION_PLACE_MISMATCH,
     CONDITION_CREDENTIAL_SOURCE_MISSING,
     CUSTODY_CONTRACT_VERSION,
     Conflict,
@@ -111,6 +112,7 @@ def bound_job(
     agent_type: str = "claude",
     escalation_seconds: int | None = None,
     node_row: str | None = None,
+    charter_place: str | None = None,
 ) -> AcpRow:
     binding: JSONObject = {"node": NODE, "profile": "personal"}
     if account is not None:
@@ -135,6 +137,10 @@ def bound_job(
     if escalation_seconds is not None:
         # 段 10 lane 10n: 期限は charter の値ちょうど(Messaging が方策の行の値を会話の宣言で重ねて写す)。
         charter["interruptEscalationSeconds"] = escalation_seconds
+    if charter_place is not None:
+        # 段 12(card acp:kanban-issue:ki-d13566f4d5eb): 手番が要求する置き場(Messaging が方策の rule の
+        # open.place を charter に写す)。欄が無い charter は今日どおり byte 不変。
+        charter["place"] = charter_place
     spec: JSONObject = {
         "subject": subject,
         "inputs": list(inputs),
@@ -475,6 +481,54 @@ def test_a_node_serving_both_places_takes_company_and_personal_accounts_and_a_co
     assert run(judgment.credential_place_mismatch(("personal",), "company")) is True
     assert run(judgment.credential_place_mismatch((), "company")) is False, "名乗りの無い断面は止めない(検体の既定)"
     assert run(judgment.credential_place_mismatch(("personal",), None)) is False, "判らない口座は止めない"
+
+
+def test_a_job_requiring_a_place_the_node_does_not_serve_is_not_launched() -> None:
+    """段 12(card acp:kanban-issue:ki-d13566f4d5eb・決定 案 A・2026-09-19)の走行側の検: charter が要求する置き場
+    (spec.charter.place)を自分の集合に持たない node は、その job を起こさず(claim も借りも書かず)条件 PlaceMismatch で
+    閉じる — 理由に自分の places と charter.place を名乗る。配置の版が古い・手で結んだ拍でも、道具の無い宿が黙って
+    手番を取らない(実弾 2026-09-18: 運用の 5 手番が kubectl の無い pod に落ち、担い手が『kubectl: command not found』で
+    1 手も進めなかった)。"""
+    world = World()
+    world.settings = replace(world.settings, custody_declared=True, places=("personal",))
+    world.acp.put_row(bound_job("s-cluster", inputs=[], charter_place="cluster"))
+    world.tick()
+    assert world.sessions.launches == [], "道具の無い宿が手番を起こした"
+    assert world.custody.borrowed == [], "起こさない手番の札を借りに行った"
+    job = world.job("s-cluster")
+    assert job.status is not None and job.status["phase"] == PHASE_ENDED
+    assert "sessionHandle" not in job.status
+    conditions = job.status["conditions"]
+    assert isinstance(conditions, list)
+    last = conditions[-1]
+    assert isinstance(last, dict) and last["type"] == CONDITION_PLACE_MISMATCH
+    reason = str(last["reason"])
+    assert "cluster" in reason, "要求された置き場が理由に無い"
+    assert "personal" in reason, "自分の名乗りが理由に無い"
+    assert world.state.jobs == ()
+
+
+def test_a_node_serving_the_required_place_launches_and_a_job_requiring_nothing_is_untouched() -> None:
+    """同じ決定の裏面: cluster を名乗る宿はその手番を起こし、置き場を要求しない手番(欄の無い charter — 今日の形)は
+    どの宿でも今日どおり起きる(overlay の identity)。判定は judgment.place-mismatch の 1 点で、口座の置き場の軸
+    (credential-place-mismatch)とは別 — cluster は口座の境界の語ではない。"""
+    served = World()
+    served.settings = replace(served.settings, custody_declared=True, places=("personal", "cluster"))
+    served.acp.put_row(bound_job("s-served", inputs=[], charter_place="cluster"))
+    served.tick()
+    assert served.custody.borrowed == [("claude", "acct", "agent-job s-served")], "名乗った宿が要求を断った"
+    assert len(served.sessions.launches) == 1
+    unasked = World()
+    unasked.settings = replace(unasked.settings, custody_declared=True, places=("personal",))
+    unasked.acp.put_row(bound_job("s-unasked", inputs=[]))
+    unasked.tick()
+    assert unasked.custody.borrowed == [("claude", "acct", "agent-job s-unasked")], "要求の無い手番を門が止めた"
+    assert run(judgment.place_mismatch(("personal",), "cluster")) is True
+    assert run(judgment.place_mismatch(("personal", "cluster"), "cluster")) is False
+    assert run(judgment.place_mismatch(("personal",), None)) is False, "要求の無い手番は止めない"
+    assert run(judgment.place_mismatch((), "cluster")) is False, "名乗りの無い断面は止めない(検体の既定)"
+    assert run(judgment.charter_place_of(bound_job("s-q", inputs=[], charter_place="cluster"))) == "cluster"
+    assert run(judgment.charter_place_of(bound_job("s-q", inputs=[]))) is None
 
 
 def test_custody_declared_node_borrows_the_account_and_launches_in_the_borrowed_home() -> None:
@@ -2400,16 +2454,10 @@ def test_a_cancel_acknowledgement_that_conflicts_is_rewritten_on_the_fresh_row()
     warm2, _ = _start_warm_second_turn(world2)
     _place_cancel(world2, "j-2", grace_seconds=60)
     key = f"{AGENT_JOB_NAMESPACE}:{AGENT_JOB_KIND}:j-2"
+    # 3 度続けて負ける拍は fake の宣言の欄で組む(private な腕の差し替えはしない): 最初の 2 回は
+    # conflict_times・3 回目は conflict_once が断る。
+    world2.acp.conflict_times[key] = (99, 2)
     world2.acp.conflict_once[key] = 99
-    original_put = world2.acp._put_status
-
-    def _lose_twice(row, status, _n=[0]):  # noqa: ANN001
-        if row.key == key and _n[0] < 2:
-            _n[0] += 1
-            return Conflict(99)
-        return original_put(row, status)
-
-    world2.acp._put_status = _lose_twice  # type: ignore[method-assign]
     world2.tick(advance_ms=1_000)
     assert world2.sessions.interrupts == [warm2]
     assert "cancel" not in world2.job("j-2").status
@@ -5438,7 +5486,7 @@ def test_join_spec_reads_revision_and_build_and_the_node_names_its_agentd_versio
     assert run(judgment.node_spec_declared(old_row, named))["agentd"] == run(judgment.agentd_version_of(named))
 
 
-def test_join_derives_the_held_work_dirs_from_the_home_listing_and_carries_them_in_the_env(tmp_path) -> None:
+def test_join_derives_the_held_work_dirs_from_the_home_listing_and_carries_them_in_the_env(tmp_path: Path) -> None:
     """段 12 lane 12j(agora-redesign #575 便 2): 持つ作業場は宣言 file でなく家の一覧から導く — ~ の直下と ~/repos の直下のうち .git を
     持つ dir だけ(隠し dir は数えない)を `~/<名>` / `~/repos/<名>` で名乗る(判断 = join.held-work-dirs-of・I/O = runtime.home_entries)。
     env DOEFF_AGENTD_WORK_DIRS(, 区切り・空 = 何も持たない)→ AgentdSettings.work_dirs。env 無し = None。形の外は参加しない。"""
