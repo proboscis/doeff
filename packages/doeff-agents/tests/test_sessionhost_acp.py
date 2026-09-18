@@ -3903,6 +3903,119 @@ def test_headless_launch_without_mail_or_with_missing_mail_uses_the_charter_alon
     assert [c["type"] for c in in_flight[0].pending_conditions] == ["InputUnavailable"]
 
 
+def test_headless_warm_send_folds_every_input_into_one_prompt() -> None:
+    """段 10 lane 10o(card acp:kanban-issue:ki-3149aebbf675 B): 相乗りした郵便は send の腕でも
+    **1 手番 = 1 prompt** に畳む。headless の器は走っている手番の途中に次の本文を積めないので、
+    N 通を N 回 session.send すると先頭 1 通しか agent に届かない(実測 2026-09-18: log 全体 168 job)。
+    台帳は全通 handedAt を書くので、落ちた郵便は誰からも見えない。"""
+    world = HeadlessWorld()
+    # 手番 1(launch): 温かい session を作る — 郵便は charter に畳まれるので send は撃たれない
+    world.acp.put_row(message("m-0", "zero"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-0"], created_at_ms=world.local.now_ms - 400))
+    world.tick()
+    sid = world.sid("j-1")
+    assert world.sessions.sends == []
+    world.local.transcripts[f"/events/{sid}.events.jsonl"] = _claude_events(sid, "hello")
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(sid, world.local.now_ms + 100)
+    world.tick(advance_ms=1_000)
+    assert world.state.jobs == ()
+    # 手番 2(send): 3 通が相乗り → 送りは 1 回・本文は空行で継いだ 1 本(見出しは 3 行とも在る)
+    for message_id, body in (("m-1", "first"), ("m-2", "second"), ("m-3", "third")):
+        world.acp.put_row(message(message_id, body))
+    world.acp.put_row(
+        bound_job("j-2", inputs=["m-1", "m-2", "m-3"], created_at_ms=world.local.now_ms + 700)
+    )
+    world.tick(advance_ms=1_000)
+    assert len(world.sessions.sends) == 1, world.sessions.sends
+    assert world.sessions.sends[0] == (
+        sid,
+        "\n\n".join(
+            [mailed("m-1", "first"), mailed("m-2", "second"), mailed("m-3", "third")]
+        ),
+        True,
+    )
+    assert world.local.metrics[-1]["metric"] == "agent-job-to-send"
+    assert world.local.metrics[-1]["arm"] == "send"
+    record = world.turn_record("j-2")
+    assert record is not None
+    assert record.status == {"state": "running"}
+
+
+def test_headless_warm_send_of_one_input_keeps_the_same_spelling() -> None:
+    """1 通の job の綴りは畳みで変わらない(1 本の畳み = その本文そのもの)。"""
+    world = HeadlessWorld()
+    world.acp.put_row(message("m-0", "zero"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-0"], created_at_ms=world.local.now_ms - 400))
+    world.tick()
+    sid = world.sid("j-1")
+    world.local.transcripts[f"/events/{sid}.events.jsonl"] = _claude_events(sid, "hello")
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(sid, world.local.now_ms + 100)
+    world.tick(advance_ms=1_000)
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-2", inputs=["m-1"], created_at_ms=world.local.now_ms + 700))
+    world.tick(advance_ms=1_000)
+    assert world.sessions.sends == [(sid, mailed("m-1", "first"), True)]
+
+
+def test_send_folds_bodies_is_decided_by_the_backend_alone() -> None:
+    """純関数(card B): 畳むかは backend が headless かどうか 1 点で決まる — 腕では分岐しない。
+    ⚠ first-turn-carries-inputs(charter に畳むか)は send の腕で False のまま: send は charter を
+    組まないので、そこで True にすると after-start にも空の bodies が渡り郵便が 1 通も届かない。"""
+    assert run(judgment.send_folds_bodies("headless")) is True
+    assert run(judgment.send_folds_bodies("tmux")) is False
+    assert run(judgment.send_folds_bodies("herdr")) is False
+    assert run(judgment.first_turn_carries_inputs("headless", "send")) is False
+
+
+def test_a_refused_send_lands_as_a_condition_and_does_not_escape_the_turn() -> None:
+    """段 10 lane 10o(card acp:kanban-issue:ki-3149aebbf675 C): 器が送りを断った拍は、今まで
+    AgentdClientError が receive-bound-jobs の外まで抜け、計器も turn-record も走らなかった
+    (失敗が最も見えない形)。断りは SessionRefused で受け、条件 InputUndelivered 1 件に写して
+    手番は続ける — 郵便の再配達はしない(落ちたことを見えるようにするだけ)。"""
+    world = HeadlessWorld()
+    world.acp.put_row(message("m-0", "zero"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-0"], created_at_ms=world.local.now_ms - 400))
+    world.tick()
+    sid = world.sid("j-1")
+    world.local.transcripts[f"/events/{sid}.events.jsonl"] = _claude_events(sid, "hello")
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(sid, world.local.now_ms + 100)
+    world.tick(advance_ms=1_000)
+    world.sessions.refuse_send = SessionRefused("headless session already exists", "-32002")
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(message("m-2", "second"))
+    world.acp.put_row(
+        bound_job("j-2", inputs=["m-1", "m-2", "m-missing"], created_at_ms=world.local.now_ms + 700)
+    )
+    world.tick(advance_ms=1_000)
+    in_flight = [job for job in world.state.jobs if job.job_id == "j-2"]
+    assert len(in_flight) == 1
+    kinds = [condition["type"] for condition in in_flight[0].pending_conditions]
+    assert kinds == ["InputUndelivered", "InputUnavailable"], kinds
+    reason = in_flight[0].pending_conditions[0]["reason"]
+    assert isinstance(reason, str)
+    assert "headless session already exists" in reason
+    assert "m-1" in reason
+    assert "m-2" in reason
+    # 断られても以後の計器・turn-record・status frame は今までどおり撃つ
+    assert world.local.metrics[-1]["metric"] == "agent-job-to-send"
+    record = world.turn_record("j-2")
+    assert record is not None
+    assert record.status == {"state": "running"}
+    assert sid in [pushed[1] for pushed in world.acp.pushes]
+    # 断られた手番のその後(依頼者への 1 行): 器は手番を始めていないので turn_ended_at は前の手番の
+    # ままで、手番の終わりの判定(turn-ended-at-ms > turn-floor-ms)は立たない — job は Running の
+    # まま居座る(見かけの turn-end で Ended にはならない)。条件は載るが、終わらせる者は居ない。
+    for _ in range(5):
+        world.tick(advance_ms=1_000)
+    assert [job.job_id for job in world.state.jobs] == ["j-2"]
+    status = world.job("j-2").status
+    assert status is not None
+    assert status["phase"] == PHASE_RUNNING
+
+
 def test_tui_launch_still_sends_the_mail_after_the_launch() -> None:
     """tmux / herdr の器は今日どおり: launch(charter の prompt)の後に郵便を send(pane の paste は
     手番の途中でも積める)。畳むのは headless だけ(judgment.first-turn-carries-inputs の 1 点)。"""

@@ -134,6 +134,7 @@ ConditionType = Literal[
     "LaunchFailed",
     "CredentialUnavailable",
     "InputUnavailable",
+    "InputUndelivered",
     "SessionFailed",
     "Interrupted",
     "RecordUnavailable",
@@ -201,6 +202,13 @@ CONDITION_AGENT_SETTING_IGNORED: ConditionType = "AgentSettingIgnored"
 #: (器が添付の段を持たない・読めなかった・見出しと中身が食い違った)。黙って落とさず手番の conditions に 1 行。
 #: 本文そのものは届いている — この条件は添付だけの話。判断は judgment.attachment-ignored-of の 1 点。
 CONDITION_ATTACHMENT_IGNORED: ConditionType = "AttachmentIgnored"
+#: 段 10 lane 10o(card acp:kanban-issue:ki-3149aebbf675 C): この手番の郵便を器へ渡せなかった
+#: (session.send を host が断った — 走っている手番が無い・行が無い・同じ名の process が既に在る)。
+#: 本文そのものが届いていない印で、添付だけの AttachmentIgnored とは別の軸。再配達はしない(落ちたことを
+#: 見えるようにするだけ)— 理由の文は器の断りの逐語 + 届かなかった郵便の id。
+#: 実測 2026-09-18: 断りは AgentdClientError のまま receive-bound-jobs の外まで抜けており、計器
+#: agent-job-to-send も turn-record の作成も走らなかった(失敗が最も見えない形)。
+CONDITION_INPUT_UNDELIVERED: ConditionType = "InputUndelivered"
 #: 段 11 lane 11n 便 C(agora-redesign #179・依頼者の裁定 2026-09-15 問い 1 案 a): 手番が provider の
 #: 限度の断り(「You've reached your <model> limit」等)で終わった印。**閉語彙の座はここ 1 点**で、
 #: 契約 ACP docs/contracts/scheduling.json の profileExhaustion.providerRefusal はその写し。
@@ -2291,7 +2299,11 @@ def _empty_json_object() -> JSONObject:
 
 @dataclass(frozen=True)
 class SessionSend(EffectBase):
-    """``session.send``(本文を live の composer へ paste + Enter)。結果 = None。
+    """``session.send``(本文を live の composer へ paste + Enter)。結果 = ``str | None |
+    SessionRefused``: str = 器が添付を落とした理由(呼び手が条件 AttachmentIgnored に写す)・
+    None = 全部渡った・SessionRefused = host が送りを断った(RPC の error 封筒 — 走っている手番が
+    無い・行が無い・同じ名の process が既に在る。**本文は届いていない**ので呼び手が条件
+    InputUndelivered に写す)。socket の失敗(OSError)は素通し(tick の縁が持ち越す)。
 
     ``awaiting`` = 送った本文は agent への prompt で owed(host が awaiting latch を立て、正の
     作業証拠が出るまで見かけの turn-end を評価しない — 温かい手番の始まりの印)。

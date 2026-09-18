@@ -1099,23 +1099,36 @@ class SessionRpc:
         if isinstance(effect, (SessionInterject, SessionEscalate)):
             return self._interrupt_arm(effect)
         if isinstance(effect, SessionSend):
-            params: JSONObject = {
-                "session_id": effect.session_id,
-                "message": effect.text,
-                "literal": True,
-                "enter": True,
-                "awaiting": effect.awaiting,
-            }
-            # 追補 2(実弾 #92): この手番の env は空でない時だけ載せる(器が起こし直す時に重ねる)。
-            # 値は秘密 — ここでも log に出さない。
-            if effect.session_env:
-                params["session_env"] = dict(effect.session_env)
-            # 段 10 lane 10o(agora-redesign #96): 添付は型つきのまま wire の項にする(綴りは器の Dialogue)。
-            if effect.attachments:
-                params["attachments"] = attachment_params(effect.attachments)
-            answer = self._client.request("session.send", params)
-            return attachments_ignored_of(answer)
+            return self._send(effect)
         return self._cleanup(effect.session_id)
+
+    def _send(self, effect: SessionSend) -> str | None | SessionRefused:
+        """``session.send`` の mode = turn(手番の本文を器へ)→ 器が落とした添付の理由 | None。
+        host の断り(RPC の error 封筒 — 走っている手番が無い・行が無い・同じ名の process が既に在る)は
+        _interject と同じ形で SessionRefused に写す(本文は届いていない)。裸で投げると
+        receive-bound-jobs の外まで抜け、計器 agent-job-to-send も turn-record も走らない
+        (失敗が最も見えない形 — card acp:kanban-issue:ki-3149aebbf675 C)。
+        socket の失敗(OSError)は素通し(tick の縁が持ち越す)。"""
+        params: JSONObject = {
+            "session_id": effect.session_id,
+            "message": effect.text,
+            "literal": True,
+            "enter": True,
+            "awaiting": effect.awaiting,
+        }
+        # 追補 2(実弾 #92): この手番の env は空でない時だけ載せる(器が起こし直す時に重ねる)。
+        # 値は秘密 — ここでも log に出さない。
+        if effect.session_env:
+            params["session_env"] = dict(effect.session_env)
+        # 段 10 lane 10o(agora-redesign #96): 添付は型つきのまま wire の項にする(綴りは器の Dialogue)。
+        if effect.attachments:
+            params["attachments"] = attachment_params(effect.attachments)
+        try:
+            answer = self._client.request("session.send", params)
+        except AgentdClientError as error:
+            code = error.error_code
+            return SessionRefused(str(error), str(code) if code is not None else None)
+        return attachments_ignored_of(answer)
 
     def _look(self, effect: SessionGet | SessionList | SessionCapture) -> object:
         """器を眺める要求(1 つ・一覧・pane の断面)。"""

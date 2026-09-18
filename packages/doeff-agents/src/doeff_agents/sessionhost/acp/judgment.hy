@@ -1887,6 +1887,21 @@
   (and (= backend-kind BACKEND-HEADLESS) (in arm #{NEXT-ARM-LAUNCH NEXT-ARM-RESUME NEXT-ARM-REHYDRATE})))
 
 
+(defk send-folds-bodies [backend-kind]
+  {:pre [(: backend-kind str)]
+   :post [(: % bool)]}
+  "送る腕(温かい session)でも郵便の本文を 1 本に畳むか — 判定はここ 1 点(R16): host の backend が
+   headless なら畳む。headless の器は 1 手番 = 1 prompt(claude は 1 手番 1 process・codex は turn/start が
+   手番)で、走っている手番の途中に次の本文を積めない — 相乗りした N 通を N 回 session.send すると
+   先頭 1 通しか agent に届かない(実測 2026-09-18: log 全体 168 job)。**腕では分岐しない**: headless なら
+   after-start に来た bodies は腕を問わず畳む。tui(tmux / herdr)は pane の paste が手番の途中でも積めるので
+   1 通 1 送りのまま。
+   ⚠ first-turn-carries-inputs(charter に畳むか)とは別の述語: send の腕は incarnate が早戻りして charter を
+   組まないので、あちらを send で True にすると charter にも畳まれず after-start にも空の bodies が渡り、
+   郵便が 1 通も届かなくなる。畳む場所は charter ではなく after-start。"
+  (= backend-kind BACKEND-HEADLESS))
+
+
 (defk first-turn-prompt-of [charter-prompt bodies]
   {:pre [(: charter-prompt str) (: bodies tuple)]
    :post [(: % str)]}
