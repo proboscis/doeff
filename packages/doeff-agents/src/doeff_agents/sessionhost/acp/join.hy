@@ -12,6 +12,9 @@
 ;;;   * ownership-verdict / ownership-preflight  所有の等級の検: 宣言(grade + proof)と機体の証拠
 ;;;                    (OwnershipProbe の答え)の突合。不一致は ValueError(runtime が fail-closed に
 ;;;                    写す — 会社 profile の API 呼び出しは会社所有の機体だけ・CLAUDE.md の境界)。
+;;;                    証拠は機体の外か機体の耐久の物ちょうど(gce-project = GCE の metadata /
+;;;                    file:<path>=<値> = 据え付けの側が描いた file の中身)— 所有の判定の台帳は
+;;;                    doeff に無い(card ki-d6cc49cbf33f 決定 D4)。
 ;;;   * capacity-of    node の capacity の読み(段 10 lane 10d・agora-redesign #85): 宣言 file の [agentd].capacity /
 ;;;                    flag --capacity(10 進の非負の整数)。無い・読めない agentd は参加しない(ValueError)— agentd は
 ;;;                    自分の node の行をこの値から名乗る(既知の形 = kubelet の Node の自己登記)。
@@ -75,7 +78,9 @@
   OWNERSHIP-GRADES
   OWNERSHIP-PROOF-DECLARED
   OWNERSHIP-PROOF-ENV
+  OWNERSHIP-PROOF-FILE-PREFIX
   OWNERSHIP-PROOF-GCE-PREFIX
+  ownership-proof-file-parts
   Ownership
   OwnershipProbe
   ProbeAnswer
@@ -307,7 +312,8 @@
   {:pre [(: grade (| str None)) (: proof (| str None))]
    :post [(: % (| Ownership None))]}
   "等級と検の方法 → Ownership(どちらも無ければ None)。等級を名乗るなら検の方法も要り(検なしは
-   declared と明示)、語彙の外は断る。"
+   declared と明示)、語彙の外は断る。検の方法は 3 つ: gce-project:<project-id>(GCE の metadata)/
+   file:<path>=<値>(据え付けの側が描いた機体の耐久の file の中身)/ declared(検なし)。"
   (cond
     (and (is grade None) (is proof None)) None
     (is grade None)
@@ -317,11 +323,15 @@
                           f" のどれか: {grade !r}")))
     (is proof None)
     (raise (ValueError (+ f"{FLAG-OWNERSHIP} {grade} には {FLAG-OWNERSHIP-PROOF} が要る "
-                          f"({OWNERSHIP-PROOF-GCE-PREFIX}<project-id> か {OWNERSHIP-PROOF-DECLARED})")))
+                          f"({OWNERSHIP-PROOF-GCE-PREFIX}<project-id> か "
+                          f"{OWNERSHIP-PROOF-FILE-PREFIX}<path>=<value> か "
+                          f"{OWNERSHIP-PROOF-DECLARED})")))
     (not (or (= proof OWNERSHIP-PROOF-DECLARED)
              (and (.startswith proof OWNERSHIP-PROOF-GCE-PREFIX)
-                  (> (len proof) (len OWNERSHIP-PROOF-GCE-PREFIX)))))
+                  (> (len proof) (len OWNERSHIP-PROOF-GCE-PREFIX)))
+             (is-not (ownership-proof-file-parts proof) None)))
     (raise (ValueError (+ f"{FLAG-OWNERSHIP-PROOF} は {OWNERSHIP-PROOF-GCE-PREFIX}<project-id> か "
+                          f"{OWNERSHIP-PROOF-FILE-PREFIX}<path>=<value> か "
                           f"{OWNERSHIP-PROOF-DECLARED}: {proof !r}")))
     True (Ownership :grade grade :proof proof)))
 
@@ -686,7 +696,11 @@
   {:pre [(: ownership Ownership) (: answer ProbeAnswer)]
    :post [(: % Ownership)]}
   "宣言と証拠の突合の 1 点。declared = 宣言をそのまま(検なし)。gce-project:<id> = metadata の
-   project-id が id と一致する時だけ通す(読めない・違う = ValueError — 参加しない)。"
+   project-id が id と一致する時だけ通す(読めない・違う = ValueError — 参加しない)。
+   file:<path>=<値> = その file の中身が値と一致する時だけ通す(読めない・違う = ValueError)—
+   証拠を描いたのは据え付けの側で、ここは台帳を持たず(hostname も置き場も見ない)証拠が
+   動いていないことだけを検める。"
+  (setv parts (ownership-proof-file-parts ownership.proof))
   (cond
     (= ownership.proof OWNERSHIP-PROOF-DECLARED) ownership
     (.startswith ownership.proof OWNERSHIP-PROOF-GCE-PREFIX)
@@ -699,6 +713,17 @@
         (!= answer.value expected)
         (raise (ValueError (+ f"ownership {ownership.grade} claims {ownership.proof} but the GCE metadata "
                               f"project-id is {answer.value !r} (expected {expected !r})")))
+        True ownership))
+    (is-not parts None)
+    (do
+      (setv [path expected] parts)
+      (cond
+        (is answer.value None)
+        (raise (ValueError (+ f"ownership {ownership.grade} claims {ownership.proof} but the file "
+                              f"{path} could not be read (absent, unreadable or empty)")))
+        (!= answer.value expected)
+        (raise (ValueError (+ f"ownership {ownership.grade} claims {ownership.proof} but the file "
+                              f"{path} holds {answer.value !r} (expected {expected !r})")))
         True ownership))
     True
     (raise (ValueError f"ownership proof {ownership.proof !r} is not a known method"))))
@@ -721,8 +746,8 @@
 (defk ownership-preflight [ownership]
   {:pre [(: ownership Ownership)]
    :post [(: % Ownership)]}
-  "起動の前に 1 回撃つ検: 検の方法が証拠を要るなら OwnershipProbe を撃ち(declared は撃たない)、
-   ownership-verdict で突合する。"
+  "起動の前に 1 回撃つ検: 検の方法が証拠を要るなら OwnershipProbe を撃ち(gce-project も
+   file: も撃つ・declared だけが撃たない)、ownership-verdict で突合する。"
   (if (= ownership.proof OWNERSHIP-PROOF-DECLARED)
       (<- verdict Ownership (ownership-verdict ownership (ProbeAnswer :value None)))
       (do
