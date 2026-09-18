@@ -40,7 +40,10 @@ from doeff_agents.sessionhost.acp.effects import (
     DECLARATION_SHA256_ENV,
     WORK_DIRS_ENV,
     WORK_DIRS_SCAN_PARENTS,
+    WORK_DIR_ROOTS_ENV,
+    WORK_DIR_ROOT_CANDIDATES,
     WORK_ROOTS_ENV,
+    WorkDirRoots,
     WorkDirs,
     WorkRoots,
     Places,
@@ -126,6 +129,8 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
     work_roots = _work_roots_of_env(env)
     # 段 12 lane 12j(#575 便 2): join が家から導いた持つ作業場(env に在る時だけ・"" = 何も持たない)
     work_dirs = _work_dirs_of_env(env)
+    # 段 12 lane 12j 追補(card acp:kanban-issue:ki-3bfe48a9d5dc): join が実勢から導いた持つ根(env に在る時だけ)
+    work_dir_roots = _work_dir_roots_of_env(env)
     return AgentdSettings(
         node_name=node_name,
         node_capacity=node_capacity,
@@ -146,6 +151,7 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         declaration_sha256=declaration_sha256,
         work_roots=work_roots,
         work_dirs=work_dirs,
+        work_dir_roots=work_dir_roots,
         # 段 10 lane 10y: charter の work_dir の `~` を展開する node の家(env HOME ちょうど・無ければ process の家)
         home=(env.get("HOME") or os.path.expanduser("~")).strip(),
         # 段 12 lane 12a(agora-redesign #230): verify の命令の結末の置き場 = join が導いた state_dir(spool の親)の下
@@ -234,6 +240,36 @@ def _held_work_dirs(home: str) -> tuple[str, ...]:
     if not isinstance(verdict, WorkDirs):
         raise TypeError(f"held_work_dirs_of returned {type(verdict).__name__}")
     return verdict.dirs
+
+
+def _work_dir_roots_of_env(env: Mapping[str, str]) -> tuple[str, ...] | None:
+    """node が持つ作業場の根(段 12 lane 12j 追補)。読みの規則は join.work-dir-roots-of の 1 点(env 無し = None・"" = 根なし・形違い = ValueError)。"""
+    verdict: object = PyVM().run(join.work_dir_roots_of(env.get(WORK_DIR_ROOTS_ENV)))
+    if verdict is None:
+        return None
+    if not isinstance(verdict, WorkDirRoots):
+        raise TypeError(f"work_dir_roots_of returned {type(verdict).__name__}")
+    return verdict.roots
+
+
+def home_root_entries(home: str) -> tuple[tuple[str, bool], ...]:
+    """候補の根の**在否**の読み(段 12 lane 12j 追補・card acp:kanban-issue:ki-3bfe48a9d5dc — この軸の I/O はここ 1 点):
+    effects.WORK_DIR_ROOT_CANDIDATES の各根を家で展開し、#(根の綴り, その dir が在るか)で返す(宣言の順)。
+    根の下は 1 つも列挙しない(会社 Mac の ~/.worktrees/ は 3,105)。判断(どれを名乗るか)は join.held-work-dir-roots-of。"""
+    found: list[tuple[str, bool]] = []
+    for root in WORK_DIR_ROOT_CANDIDATES:
+        relative = root[2:].rstrip("/")
+        path = os.path.join(home, relative) if relative else home
+        found.append((root, os.path.isdir(path)))
+    return tuple(found)
+
+
+def _held_work_dir_roots(home: str) -> tuple[str, ...]:
+    """候補の根の在否 → 持っている根(判断は join.held-work-dir-roots-of の 1 点)。"""
+    verdict: object = PyVM().run(join.held_work_dir_roots_of(home_root_entries(home)))
+    if not isinstance(verdict, WorkDirRoots):
+        raise TypeError(f"held_work_dir_roots_of returned {type(verdict).__name__}")
+    return verdict.roots
 
 
 def _declaration_sha256_of_env(env: Mapping[str, str]) -> str | None:
@@ -745,7 +781,9 @@ def join_plan(argv: Sequence[str], env: Mapping[str, str]) -> JoinPlan:
     if not isinstance(spec, JoinSpec):
         raise TypeError(f"join_spec_of returned {type(spec).__name__}")
     # 段 12 lane 12j(agora-redesign #575 便 2): 持つ作業場は宣言 file でなく家の一覧から導く(読みはここ・判断は join.held-work-dirs-of)。
-    spec = replace(spec, work_dirs=_held_work_dirs((env.get("HOME") or os.path.expanduser("~")).strip()))
+    # 追補(card acp:kanban-issue:ki-3bfe48a9d5dc): 名簿に綴れない根(~/.worktrees/)も同じく**実勢**から導く(在る dir だけ)。
+    home = (env.get("HOME") or os.path.expanduser("~")).strip()
+    spec = replace(spec, work_dirs=_held_work_dirs(home), work_dir_roots=_held_work_dir_roots(home))
     plan: object = PyVM().run(join.join_plan_of(spec))
     if not isinstance(plan, JoinPlan):
         raise TypeError(f"join_plan_of returned {type(plan).__name__}")
