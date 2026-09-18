@@ -6,34 +6,67 @@ that would otherwise require manual code review.
 
 The principle: "the fiber chain IS the state."
 No accumulated state, no identity tracking, no stored fiber ID lists.
+
+Contract: this check depends on nothing installed on the host that runs it — the
+answer is the same on a laptop, on the company Mac, on zeus and inside a k3s pod.
+The scan is in-process (pathlib + re): no external command, and no git metadata
+either, because `gate.full` ships the tree to the runner without its `.git`.
+
+Why the contract is written down (measured 2026-09-19 on cross-section 97e8c3a8):
+the scan used to shell out to `rg`, which made the answer depend on the host in
+two opposite ways. With `rg` off PATH, all 13 tests raised
+`FileNotFoundError: 'rg'` — that is the 13/13 red the daily verification of
+2026-09-19 reported. With `rg` on PATH, `--type rs` is not a ripgrep file type
+(the Rust type is spelled `rust`), so rg exited 2 with empty stdout and all 13
+tests passed vacuously, scanning nothing. Both modes are gone once the scan runs
+in-process, and a violation now names the repo-relative path and line, so a red
+run says which file is at fault instead of which host it ran on.
 """
 
-import os
-import subprocess
+import re
+from pathlib import Path
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VM_CORE_SRC = os.path.join(REPO_ROOT, "packages", "doeff-vm-core", "src")
-CORE_EFFECTS_SRC = os.path.join(REPO_ROOT, "packages", "doeff-core-effects", "src")
-VM_SRC = os.path.join(REPO_ROOT, "packages", "doeff-vm", "src")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+VM_CORE_SRC = REPO_ROOT / "packages" / "doeff-vm-core" / "src"
+CORE_EFFECTS_SRC = REPO_ROOT / "packages" / "doeff-core-effects" / "src"
+VM_SRC = REPO_ROOT / "packages" / "doeff-vm" / "src"
 ALL_SRC_DIRS = [VM_CORE_SRC, CORE_EFFECTS_SRC, VM_SRC]
 
 
-def _grep_rust(pattern: str, dirs: list[str] | None = None) -> list[str]:
-    """Search Rust files for a pattern using ripgrep."""
+def _grep_rust(pattern: str, dirs: list[Path] | None = None) -> list[str]:
+    """Search `*.rs` under `dirs` for `pattern`; return "<rel path>:<line no>:<line>".
+
+    Pure Python on purpose — see the module docstring. A directory that does not
+    exist is skipped (CORE_EFFECTS_SRC carries no Rust tree today), but a call
+    where *none* of the requested directories exist is a hard failure: an empty
+    scan must never read as "no violations".
+    """
     dirs = dirs or ALL_SRC_DIRS
-    existing = [d for d in dirs if os.path.isdir(d)]
-    if not existing:
-        return []
-    result = subprocess.run(
-        ["rg", "--no-heading", "-n", "--type", "rs", pattern] + existing,
-        capture_output=True, text=True,
-        check=False,
+    existing = [d for d in dirs if d.is_dir()]
+    assert existing, (
+        "no source directory to scan — refusing to report 'no violations' from an "
+        "empty scan. Requested: " + ", ".join(d.relative_to(REPO_ROOT).as_posix() for d in dirs)
     )
-    return [line for line in result.stdout.strip().split("\n") if line]
+    regex = re.compile(pattern)
+    matches: list[str] = []
+    for directory in existing:
+        for path in sorted(directory.rglob("*.rs")):
+            rel = path.relative_to(REPO_ROOT).as_posix()
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for line_no, line in enumerate(text.splitlines(), start=1):
+                if regex.search(line):
+                    matches.append(f"{rel}:{line_no}:{line}")
+    return matches
 
 
 def _filter_non_test_non_comment(lines: list[str]) -> list[str]:
-    """Filter out test files and comment-only matches."""
+    """Filter out test files and comment-only matches.
+
+    The path field is repo-relative (see `_grep_rust`). It used to be the
+    absolute path handed to `rg`, so any checkout whose own path contained
+    "test" — a worktree named `doeff-wt-hostdep-tests`, say — silently dropped
+    every real violation along with the test files.
+    """
     filtered = []
     for line in lines:
         # Skip test files
