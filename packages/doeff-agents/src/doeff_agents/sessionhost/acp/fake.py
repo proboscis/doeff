@@ -63,12 +63,14 @@ from doeff_agents.sessionhost.acp.effects import (
     LeaseGrant,
     LeaseKind,
     LeaseRefused,
+    ListPaneSeats,
     ListProfileHomes,
     LogLine,
     MetricLine,
     MintId,
     OwnershipProbe,
     ProbeAnswer,
+    PaneSeatsOutcome,
     ProfileHome,
     ProfileUsageOutcome,
     PublishWorker,
@@ -675,6 +677,10 @@ class FakeLocal:
         #: worker の公開(#445): 撃たれた効果の列と、答えの台本(ok / 断り)
         self.publishes: list[PublishWorker] = []
         self.publish_ok: bool = True
+        #: 段 12(agora-redesign #577): この機体の pane の席(既定 = 席なし = pane を持たない機体)と読みの数。
+        #: 読めない機体を写すには PaneSeatsUnavailable を据える。
+        self.pane_seats: PaneSeatsOutcome = ()
+        self.pane_seat_reads: int = 0
         #: この機体の profile の家の在否(kind → 登録簿の列)と、読んだ kind の列。据えていない kind は
         #: usage に答えのある profile の家が在る(usage を据えた検が家も据える手間を省く既定)。
         self.homes: dict[str, tuple[ProfileHome, ...]] = {}
@@ -738,6 +744,9 @@ class FakeLocal:
         if isinstance(effect, ListProfileHomes):
             self.home_reads.append(effect.kind)
             return Resume(k, self._homes_of(effect.kind))
+        if isinstance(effect, ListPaneSeats):
+            self.pane_seat_reads += 1
+            return Resume(k, self.pane_seats)
         if isinstance(effect, ReadProfileUsage):
             self.usage_reads.append((effect.kind, effect.cache_ttl_seconds))
             return Resume(k, self.usage.get(effect.kind, ()))

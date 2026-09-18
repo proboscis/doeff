@@ -112,13 +112,19 @@ from doeff_agents.sessionhost.acp.effects import (
     LeaseKind,
     LeaseOutcome,
     LeaseRefused,
+    ListPaneSeats,
     ListProfileHomes,
     LogLine,
     MetricLine,
     MintId,
     OwnershipProbe,
     ProbeAnswer,
+    PaneSeat,
+    PaneSeatsOutcome,
+    PaneSeatsUnavailable,
     ProfileHome,
+    SESSION_OBSERVED_BUSY,
+    SESSION_OBSERVED_IDLE,
     ProfileUsage,
     ProfileUsageOutcome,
     ProfileUsageUnavailable,
@@ -199,6 +205,13 @@ USAGE_CACHE_TTL_FLAG = "--cache-ttl"
 PROFILES_COMMAND: tuple[str, ...] = ("agentcli", "profiles", "list", "--json")
 PROFILES_KIND_FLAG = "--kind"
 PROFILES_TIMEOUT_SECONDS = 30.0
+#: pane の席の読み口(段 12・agora-redesign #577)= dotfiles agentcli の console script の 1 点
+#: (`ai pane-sessions --json` — 席の一覧・席の会話 id・席の家の解きはその葉が単一所有する)。
+#: 読み口を持たない機体(pool の pod)では起動できず PaneSeatsUnavailable に落ちる(観測の pane の
+#: 半分が空 = pane の席 0 と同じ答えで、自分の session の観測は書く)。
+PANE_SESSIONS_COMMAND: tuple[str, ...] = ("ai", "pane-sessions", "--json")
+#: 席の一覧(下地への 1 往復)と艦隊一括の走査の実測 1.2 秒に対する上限。
+PANE_SESSIONS_TIMEOUT_SECONDS = 30.0
 #: worker の面と残量行の公開の口(段 12 lane 12j・agora-redesign #445)= dotfiles agentcli の console script の
 #: 1 点(`ai route publish-worker` — 欄・簿・組み立てはその葉。旧 headless-worker の常駐の拍が呼んでいた口と同じ)。
 PUBLISH_COMMAND: tuple[str, ...] = ("ai", "route", "publish-worker", "--json")
@@ -1243,6 +1256,8 @@ class LocalIo:
             return Resume(k, probe_ownership(effect.proof))
         if isinstance(effect, ListProfileHomes):
             return Resume(k, list_profile_homes(effect.kind))
+        if isinstance(effect, ListPaneSeats):
+            return Resume(k, list_pane_seats())
         if isinstance(effect, ReadProfileUsage):
             return Resume(k, read_profile_usage(effect.kind, effect.cache_ttl_seconds))
         if isinstance(effect, PublishWorker):
@@ -1518,6 +1533,46 @@ def decode_profile_homes(doc: JSON, present: Callable[[str], bool]) -> tuple[Pro
         aliases = tuple(a for a in raw_aliases if isinstance(a, str) and a) if isinstance(raw_aliases, list) else ()
         out.append(ProfileHome(name, home, present(home), aliases))
     return tuple(out)
+
+
+def decode_pane_seats(doc: JSON) -> tuple[PaneSeat, ...]:
+    """``ai pane-sessions --json`` の答え(席の列)→ PaneSeat の列(純関数)。
+
+    必須の 3 欄(conversationId / sessionId / state)を持たない要素と、state が契約の 2 語でない要素は
+    読まない(発明しない)。``profile`` は無ければ ""(実測できなかった = 口座を解かない材料)。"""
+    out: list[PaneSeat] = []
+    for record in doc if isinstance(doc, list) else []:
+        if not isinstance(record, dict):
+            continue
+        conversation = _str_field(record, "conversationId")
+        session = _str_field(record, "sessionId")
+        state = _str_field(record, "state")
+        if not conversation or not session or state not in (SESSION_OBSERVED_IDLE, SESSION_OBSERVED_BUSY):
+            continue
+        out.append(PaneSeat(conversation, session, state, _str_field(record, "profile") or ""))
+    return tuple(out)
+
+
+def list_pane_seats() -> PaneSeatsOutcome:
+    """dotfiles の 1 点を subprocess で撃つ。起動できない・期限・非 0 の終了・JSON でない答えは
+    **値**(PaneSeatsUnavailable)で返る — 例外にしない(参加の腕は自分の session の観測を必ず書く)。"""
+    argv = list(PANE_SESSIONS_COMMAND)
+    try:
+        completed = subprocess.run(
+            argv, capture_output=True, timeout=PANE_SESSIONS_TIMEOUT_SECONDS, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return PaneSeatsUnavailable(f"`{' '.join(argv)}` failed: {error}")
+    if completed.returncode != 0:
+        tail = completed.stderr.decode("utf-8", errors="replace").strip()[-500:]
+        return PaneSeatsUnavailable(f"`{' '.join(argv)}` exited {completed.returncode}: {tail}")
+    try:
+        doc = _loads(completed.stdout)
+    except (ValueError, UnicodeDecodeError) as error:
+        return PaneSeatsUnavailable(f"`{' '.join(argv)}` did not answer JSON: {error}")
+    if not isinstance(doc, list):
+        return PaneSeatsUnavailable(f"`{' '.join(argv)}` did not answer a list")
+    return decode_pane_seats(doc)
 
 
 def list_profile_homes(kind: LeaseKind) -> tuple[ProfileHome, ...]:

@@ -853,6 +853,35 @@ class ProfileHome:
 
 
 @dataclass(frozen=True)
+class PaneSeat:
+    """この機体の pane の席が担っている 1 つの会話の席(段 12・agora-redesign #577)。
+
+    読み口は dotfiles の 1 点(handlers.py の PANE_SESSIONS_COMMAND = `ai pane-sessions --json`)で、
+    agentd は pane や herdr の語彙を持たない — 受けるのは会話の id・断面の id・状態の 2 語・profile の名
+    ちょうど。``profile`` = "" は「機体が実測できなかった」(口座を推し量らない材料)。"""
+
+    conversation_id: str
+    session_id: str
+    #: idle | busy(SESSION_OBSERVED_IDLE / SESSION_OBSERVED_BUSY と同じ綴り)。
+    state: SessionObservationState
+    profile: str
+
+
+@dataclass(frozen=True)
+class PaneSeatsUnavailable:
+    """pane の席を読めなかった(読み口が無い機体・期限・非 0 の終了・JSON でない答え)。
+
+    ⚠ 例外にしない: 参加の腕は自分の session の観測を**必ず**書く(pane の読みの失敗が node の
+    観測そのものを止めると、機体が持つ温かい session が ACP から見えなくなる)。理由は人が読む 1 文で、
+    同じ理由は 1 度だけ log する(pool の pod は読み口を持たないので周期ごとに同じ行を吐かない)。"""
+
+    reason: str
+
+
+PaneSeatsOutcome: TypeAlias = "tuple[PaneSeat, ...] | PaneSeatsUnavailable"
+
+
+@dataclass(frozen=True)
 class ProfileObservation:
     """profile の行に書く status.observed(契約 {window, remaining, resetAt, observedAt, node})。"""
 
@@ -1902,6 +1931,9 @@ class AgentdState:
     record_backoff_ms: int | None = None
     #: 最後に計器へ出した spool の深さ(None = まだ — 変わった時だけ agentd_record_spool_depth を出す)。
     record_spool_depth: int | None = None
+    #: 段 12(agora-redesign #577): pane の席を読めなかった最後の理由(同じ理由は 1 度だけ log する印 —
+    #: 読み口を持たない機体〔pool の pod〕が周期ごとに同じ行を吐かない)。読めた拍に "" へ戻る。
+    pane_seats_note: str = ""
     #: 段 10f 便 2(agora-redesign #82): session ごとの直前の手番の文脈の使用率(%・手番の終わりに材料の末尾から測る —
     #: judgment.context-percent-of)。次の手番の claim が会話の宣言 compactAt と比べる材料(judgment.compaction-due)。
     #: memory の cache — agentd の再起動で消え、次の手番の終わりに測り直す(turn-record に同等の欄が無い間の実測)。
@@ -2475,6 +2507,15 @@ class ListProfileHomes(EffectBase):
     (判断は judgment.profile-rows-held・agentd は usage の読み口の落ち方で判じない)。"""
 
     kind: LeaseKind
+
+
+@dataclass(frozen=True)
+class ListPaneSeats(EffectBase):
+    """この機体の pane の席が担っている会話の席を読む(段 12・agora-redesign #577)。読み口は dotfiles の
+    1 点(handlers.py の PANE_SESSIONS_COMMAND = `ai pane-sessions --json`)で、席の一覧・席の会話 id・
+    席の家の解きはすべて向こうが単一所有する — agentd は答えの 4 欄を受けるだけ(第 2 の観測点を持たない)。
+    結果 = PaneSeatsOutcome(席の列 / 読めなかった理由)。読めない拍は観測の pane の半分が空になるだけで、
+    自分の session の観測は書く(判断は judgment.pane-observations-of・log は 1 度)。"""
 
 
 @dataclass(frozen=True)

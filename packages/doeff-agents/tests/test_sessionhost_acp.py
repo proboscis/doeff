@@ -45,6 +45,8 @@ from doeff_agents.sessionhost.acp.effects import (
     UnrecordedEnd,
     PHASE_RUNNING,
     PROFILE_KIND,
+    PaneSeat,
+    PaneSeatsUnavailable,
     SessionRefused,
     SessionView,
     TURN_RECORD_ENTRIES_BYTE_BUDGET,
@@ -1682,6 +1684,153 @@ def test_node_observations_carry_the_conversation_sessions() -> None:
             "account": "acct",
         }
     ]
+
+
+#: 段 12(agora-redesign #577): pane の席が担う会話(この機体の agent-job の会話とは別)。
+PANE_CONVERSATION = "c-01M2KZ4D3ZNPVMJTDVMANZS96A"
+PANE_PROFILE = "cryptic-3"
+PANE_ACCOUNT = "acct-pane"
+
+
+def _pane_profile_row(world: World, *, name: str = PANE_PROFILE, account: str | None = PANE_ACCOUNT,
+                      state: str = "active") -> None:
+    """pane の席の profile の行(口座の目録 — 手番の資格と同じ 1 点)。"""
+    spec: JSONObject = {"name": name}
+    if account is not None:
+        spec["account"] = account
+    world.acp.put_row(row("default", PROFILE_KIND, name, spec, {"state": state}))
+
+
+def _node_sessions(world: World) -> list[JSON]:
+    node = world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"]
+    assert node.status is not None
+    observations = node.status["observations"]
+    assert isinstance(observations, dict)
+    sessions = observations["sessions"]
+    assert isinstance(sessions, list)
+    return sessions
+
+
+def test_node_observations_carry_the_pane_seats_with_their_custody_account() -> None:
+    """段 12(agora-redesign #577・card ki-fa50f405bda9 案 (a)): 観測の pane の半分 — この機体の pane の席が
+    担っている会話の手番も status.observations.sessions に載り、口座は生きている profile の行の spec.account
+    (手番の資格と同じ目録)で解く。読み口は 1 点(ListPaneSeats)で、拍ごとに 1 度だけ撃つ。"""
+    world = World()
+    _pane_profile_row(world)
+    world.local.pane_seats = (PaneSeat(PANE_CONVERSATION, "pane-sid-1", "busy", PANE_PROFILE),)
+    world.tick()
+    assert _node_sessions(world) == [
+        {
+            "conversationId": PANE_CONVERSATION,
+            "sessionId": "pane-sid-1",
+            "state": "busy",
+            "account": PANE_ACCOUNT,
+        }
+    ]
+    assert world.local.pane_seat_reads == 1
+
+
+def test_a_pane_seat_state_is_measured_every_observation_and_an_unnamed_home_carries_no_account() -> None:
+    """反例(依頼者の裁定 2026-09-18 00:2x): 入力待ちの席は載るが占有ではない(state idle — 数える側は busy だけを
+    数える)。手番が終われば次の観測で idle に落ちる(宣言ではなく毎観測の実測)。
+    口座を解けない席(profile を実測できない・行が account を持たない・行が無い)は **account の欄ごと載せない**
+    (契約の『欠落 = 不明』— 数える側は不明な家を占有に数えない)。"""
+    world = World()
+    _pane_profile_row(world)
+    _pane_profile_row(world, name="cryptic-x", account=None)
+    world.local.pane_seats = (
+        PaneSeat(PANE_CONVERSATION, "pane-sid-1", "busy", PANE_PROFILE),
+        PaneSeat("c-01M2KYJKQ33JA6GJVKHFTKDZB1", "pane-sid-2", "idle", PANE_PROFILE),
+        PaneSeat("c-01M2KZ1TB18W6EMDPR4DJ1RXX1", "pane-sid-3", "busy", ""),
+        PaneSeat("c-01M2M8WTZVW8PPNTXTQJ4QRV32", "pane-sid-4", "busy", "cryptic-x"),
+        PaneSeat("c-01M2M9T594P43B33Z7V2M5PY4Z", "pane-sid-5", "busy", "not-a-row"),
+    )
+    world.tick()
+    sessions = _node_sessions(world)
+    assert [(item["sessionId"], item["state"], item.get("account")) for item in sessions
+            if isinstance(item, dict)] == [
+        ("pane-sid-1", "busy", PANE_ACCOUNT),
+        ("pane-sid-2", "idle", PANE_ACCOUNT),
+        ("pane-sid-3", "busy", None),
+        ("pane-sid-4", "busy", None),
+        ("pane-sid-5", "busy", None),
+    ]
+    for item in sessions:
+        assert isinstance(item, dict)
+        if item["sessionId"] in ("pane-sid-3", "pane-sid-4", "pane-sid-5"):
+            assert "account" not in item, "口座を解けない席に家を発明した"
+    # 同じ席が手番を終えた次の観測 = idle(席を解放する通知は要らない — level-trigger)
+    world.local.pane_seats = (PaneSeat(PANE_CONVERSATION, "pane-sid-1", "idle", PANE_PROFILE),)
+    world.tick(advance_ms=30_000)
+    assert _node_sessions(world) == [
+        {"conversationId": PANE_CONVERSATION, "sessionId": "pane-sid-1", "state": "idle",
+         "account": PANE_ACCOUNT}
+    ]
+
+
+def test_a_pane_seat_of_a_conversation_this_node_runs_is_not_listed_twice() -> None:
+    """段 12(#577): 自分が起こした session の会話は 1 度だけ載せる — agent-job の半分と二重に数えない
+    (数える側は担い手の路で半分を分けるが、機体でも同じ会話を 2 度載せない)。"""
+    world = World()
+    _pane_profile_row(world)
+    _run_first_turn(world)
+    world.local.pane_seats = (PaneSeat(CONVERSATION, "pane-sid-1", "busy", PANE_PROFILE),)
+    world.tick(advance_ms=30_000)
+    assert _node_sessions(world) == [
+        {"conversationId": CONVERSATION, "sessionId": world.sid("j-1"), "state": "idle", "account": "acct"}
+    ]
+
+
+def test_a_machine_that_cannot_read_pane_seats_still_publishes_its_own_sessions() -> None:
+    """読み口を持たない機体(pool の pod)は pane の半分が空のまま観測を書く — 読みの失敗が node の観測
+    そのものを止めない。同じ理由は 1 度だけ log する(周期ごとに同じ行を吐かない)。"""
+    world = World()
+    world.local.pane_seats = PaneSeatsUnavailable("`ai pane-sessions --json` failed: [Errno 2] ai")
+    world.tick()
+    assert _node_sessions(world) == []
+    said = [line for line in world.local.logs if "pane seats not read" in line]
+    assert len(said) == 1, said
+    world.tick(advance_ms=30_000)
+    assert len([line for line in world.local.logs if "pane seats not read" in line]) == 1, "同じ理由を周期ごとに吐いた"
+    # 読めるようになった拍は印が戻り、次に落ちた時また 1 度だけ言う
+    world.local.pane_seats = ()
+    world.tick(advance_ms=30_000)
+    world.local.pane_seats = PaneSeatsUnavailable("`ai pane-sessions --json` failed: [Errno 2] ai")
+    world.tick(advance_ms=30_000)
+    assert len([line for line in world.local.logs if "pane seats not read" in line]) == 2
+
+
+def test_no_pane_seat_costs_no_extra_profile_row_read() -> None:
+    """席が 0 件の拍は口座の目録を読まない(要らない往復を払わない)。同じ拍に残量の観測の腕も
+    profile の行を読むので、数えるのは pane の半分が**足した** 1 回。"""
+    empty = World()
+    empty.local.pane_seats = ()
+    empty.tick()
+    assert empty.local.pane_seat_reads == 1
+    seated = World()
+    _pane_profile_row(seated)
+    seated.local.pane_seats = (PaneSeat(PANE_CONVERSATION, "pane-sid-1", "busy", PANE_PROFILE),)
+    seated.tick()
+    assert seated.acp.lists.count(PROFILE_KIND) == empty.acp.lists.count(PROFILE_KIND) + 1
+
+
+def test_the_pane_seat_reading_ignores_records_that_do_not_name_the_three_required_fields() -> None:
+    """読み口の答えの復号(handlers.decode_pane_seats): 必須の 3 欄を持たない要素と、state が契約の 2 語でない
+    要素は読まない(発明しない)。profile は無ければ ""(口座を解かない材料)。"""
+    from doeff_agents.sessionhost.acp.handlers import decode_pane_seats
+
+    assert decode_pane_seats([
+        {"conversationId": PANE_CONVERSATION, "sessionId": "s-1", "state": "busy", "profile": PANE_PROFILE},
+        {"conversationId": PANE_CONVERSATION, "sessionId": "s-2", "state": "idle", "profile": None},
+        {"conversationId": PANE_CONVERSATION, "sessionId": "s-3", "state": "working"},
+        {"conversationId": "", "sessionId": "s-4", "state": "busy"},
+        {"conversationId": PANE_CONVERSATION, "state": "busy"},
+        "not a record",
+    ]) == (
+        PaneSeat(PANE_CONVERSATION, "s-1", "busy", PANE_PROFILE),
+        PaneSeat(PANE_CONVERSATION, "s-2", "idle", ""),
+    )
+    assert decode_pane_seats({"not": "a list"}) == ()
 
 
 def test_node_status_names_the_capability_table() -> None:

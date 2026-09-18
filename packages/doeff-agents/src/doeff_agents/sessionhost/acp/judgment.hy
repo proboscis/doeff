@@ -1637,6 +1637,52 @@
   (tuple out))
 
 
+(defk profile-accounts-of [rows]
+  {:pre [(: rows tuple)]
+   :post [(: % dict)]}
+  "生きている profile の行 → {profile の名: 預かり所の account}(段 12・agora-redesign #577)。
+
+   pane の席の口座を解く目録は**手番の資格と同じ 1 点**(profile の行の spec.account)で、第 2 の
+   対応表を作らない。account を持たない行・退いた行(state retired)は載せない — 名の無い家を推し量らないのは
+   配置の係と同じ作法(ACP の seatOccupancy も『account を宣言しない profile に pane の半分は無い』)。"
+  (setv out {})
+  (<- active tuple (profile-rows-active rows))
+  (for [row active]
+    (setv name (str (.get row.spec "name" row.resource-id)))
+    (setv account (.get row.spec "account"))
+    (when (and name (isinstance account str) account)
+      (setv (get out name) account)))
+  out)
+
+
+(defk pane-observations-of [seats accounts sessions]
+  {:pre [(: seats tuple) (: accounts dict) (: sessions list)]
+   :post [(: % list)]}
+  "pane の席 → node の status.observations.sessions に足す要素の列(段 12・agora-redesign #577)。
+
+   数える側(ACP の paneSeatsByAccount)が読むのは『生きた lease の node の busy な session で、家が名の在る
+   account で、会話の担い手が pane の行』ちょうど。ここが供給するのはその材料で、判断は 3 つだけ:
+     * **自分の session と二重に載せない** — 同じ会話の agent-job の session が既に列に在る席は落とす
+       (担い手の路で半分は分かれるが、1 つの会話を 2 度載せない side を機体でも閉じる)。
+     * **口座は目録で解く**(profile-accounts-of)。解けない席(profile を実測できない・行が account を
+       持たない)は **account の欄ごと載せない** = 契約の『欠落 = 不明』で、数える側は不明な家を占有に
+       数えない(推し量らない)。
+     * **state は席が測った語をそのまま運ぶ**(busy = 手番を走らせている / idle = 入力待ち)。毎観測で
+       測り直すので、終わった手番は次の観測で idle に落ちる(席を解放する通知は要らない)。"
+  (setv mine (set (gfor item sessions (.get item "conversationId"))))
+  (setv out [])
+  (for [seat seats]
+    (when (not-in seat.conversation-id mine)
+      (setv item {"conversationId" seat.conversation-id
+                  "sessionId" seat.session-id
+                  "state" seat.state})
+      (setv account (.get accounts seat.profile))
+      (when (isinstance account str)
+        (setv (get item "account") account))
+      (.append out item)))
+  out)
+
+
 (defk transcript-candidates-of [views sessions limit]
   {:pre [(: views tuple) (: sessions list) (: limit int)]
    :post [(: % tuple)]}

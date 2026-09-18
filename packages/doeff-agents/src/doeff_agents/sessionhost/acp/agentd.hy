@@ -221,6 +221,7 @@
   LaunchPlan
   LeaseGrant
   LeaseRefused
+  ListPaneSeats
   ListProfileHomes
   LogLine
   MESSAGE-KIND
@@ -259,6 +260,7 @@
   NEXT-ARM-RESUME
   NEXT-ARM-SEND
   NODE-KIND
+  PaneSeatsUnavailable
   PROFILE-KIND
   PROFILE-USAGE-KIND
   PROFILE-USAGE-KINDS
@@ -475,10 +477,12 @@
   node-status-with-observations
   node-status-with-renewed-lease
   pane-frame
+  pane-observations-of
   pending-interrupts-of
   profile-observed-changed
   profile-observed-of
   profile-rows-of-kind
+  profile-accounts-of
   profile-key-of
   profile-rows-active
   profile-rows-held
@@ -542,6 +546,7 @@
    :post [(: % AgentdState)]}
   "参加の腕(tick の中・周期 = AgentdSettings.node-heartbeat-seconds): 自分の Node の行を読み、無ければ機体の宣言から作り、
    在れば spec を宣言へ揃えてから status.observations(器の眺めと session に刻んだ帰属から導いた会話の session の一覧と、
+   段 12(agora-redesign #577)でそこへ足す pane の席の会話の一覧(observe-pane-seats)と、
    transcript が残る会話の一覧 — R20)と capabilities を書き(write-node-observations)、idle が TTL を過ぎた温かい session を
    片付ける。status.lease はここでは書かない — lease の書き手は tick と独立した heartbeat の thread(lease-heartbeat・
    段 10 lane 10ba・agora-redesign #115)の 1 つ。R28(段 10 lane 10d・agora-redesign #85): node の spec の
@@ -612,9 +617,39 @@
         (setv kept (tuple (lfor view views :if (not-in view.session-id expired) view)))
         (<- observations list (session-observations-of kept))
         (<- transcripts list (observe-transcripts settings views observations))
-        (<- (write-node-observations settings row.key observations transcripts))
+        ;; 段 12(agora-redesign #577): 観測の pane の半分 — この機体の pane の席が担っている会話の手番も
+        ;; 同じ列に載せる(数える側は会話の担い手の路で 2 つの半分を分ける)。読めない拍は空で続ける。
+        (<- panes tuple (observe-pane-seats observations state.pane-seats-note))
+        (setv #(pane-sessions pane-note) panes)
+        (<- (write-node-observations settings row.key (+ observations pane-sessions) transcripts))
         ;; 段 12 lane 12j(#321): 在った行(R43 の判断で解いた生きている行)の id = 自分の生きている行の id。
-        (replace next :node-missing-logged False :node-spec-refusal-logged spec-refusal-logged :node-row-id node.resource-id))))
+        (replace next :node-missing-logged False :node-spec-refusal-logged spec-refusal-logged
+                 :node-row-id node.resource-id :pane-seats-note pane-note))))
+
+
+(defk observe-pane-seats [sessions note]
+  {:pre [(: sessions list) (: note str)]
+   :post [(: % tuple)]}
+  "観測の pane の半分(段 12・agora-redesign #577・card ki-fa50f405bda9 案 (a)): この機体の pane の席が
+   担っている会話の席を読み口の 1 点(ListPaneSeats = dotfiles の `ai pane-sessions --json`)で読み、
+   口座を生きている profile の行の spec.account(手番の資格と同じ目録)で解いて、node の
+   status.observations.sessions に足す要素の列にする。
+
+   戻り = #(足す要素の列 読めなかった理由〔読めた拍は空〕)。読めない機体(pool の pod は読み口を持たない)は
+   空の列で続け、**同じ理由は 1 度だけ** log する(周期ごとに同じ行を吐かない)。席が 0 件の拍は profile の
+   行も読まない(要らない往復を払わない)。
+   ⚠ 判断は judgment の 2 点(profile-accounts-of / pane-observations-of)— ここは読みと log だけ。"
+  (<- outcome (| tuple PaneSeatsUnavailable) (ListPaneSeats))
+  (when (isinstance outcome PaneSeatsUnavailable)
+    (when (!= note outcome.reason)
+      (<- (LogLine :text f"agentd: pane seats not read: {outcome.reason}")))
+    (return #([] outcome.reason)))
+  (when (not outcome)
+    (return #([] "")))
+  (<- rows tuple (AcpGet :kind PROFILE-KIND))
+  (<- accounts dict (profile-accounts-of rows))
+  (<- items list (pane-observations-of outcome accounts sessions))
+  #(items ""))
 
 
 (defk write-node-observations [settings key sessions transcripts]
