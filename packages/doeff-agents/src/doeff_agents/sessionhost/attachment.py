@@ -10,8 +10,6 @@
 ``AttachmentRefused`` を返し、agentd がそれを条件 ``AttachmentIgnored`` に写す(黙って落とさない)。
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 
 

@@ -215,8 +215,16 @@ def start_transcript_pipe_program(executable: str, pane_id: str, session_name: s
 
 
 @do
-def new_session_program(executable: str, cfg: SessionConfig) -> IoGenerator[tuple[SessionInfo, str]]:
-    """Program creating a detached session; returns (SessionInfo, transcript path)."""
+def new_session_program(
+    executable: str, cfg: SessionConfig, created_at: datetime
+) -> IoGenerator[tuple[SessionInfo, str]]:
+    """Program creating a detached session; returns (SessionInfo, transcript path).
+
+    ``created_at`` は composition root(``TmuxSessionBackend``)が読んだ壁時計を受け取るだけ
+    — program は時計に触らない(module 上端の規律「時計に触る 1 行は composition root か
+    io_effects の要求」・rule ``doeff-no-datetime-now-in-do``)。同じ cfg と同じ時刻なら
+    同じ ``SessionInfo`` が出る。
+    """
     assert_no_forbidden_agent_env(cfg.env, context="tmux session environment")
     outcome = as_process_outcome((yield run_process(new_session_argv(executable, cfg))))
     require_success(outcome, "new-session")
@@ -228,7 +236,7 @@ def new_session_program(executable: str, cfg: SessionConfig) -> IoGenerator[tupl
         SessionInfo(
             session_name=cfg.session_name,
             pane_id=pane_id,
-            created_at=datetime.now(timezone.utc),
+            created_at=created_at,
         ),
         transcript_path,
     )
@@ -428,7 +436,8 @@ class TmuxSessionBackend(SessionBackend):
         self._ensure_tmux_available()
         if self.has_session(cfg.session_name):
             raise SessionAlreadyExistsError(f"Session '{cfg.session_name}' already exists")
-        created = self._io(new_session_program(self.executable, cfg))
+        # 壁時計を読むのは composition root のこの 1 点 — program は受け取るだけ。
+        created = self._io(new_session_program(self.executable, cfg, datetime.now(timezone.utc)))
         if not isinstance(created, tuple) or len(created) != 2:
             raise TmuxError(f"new-session の答えの形が違う: {created!r}")
         info, transcript_path = created

@@ -5258,12 +5258,16 @@ def test_session_event_waker_turns_journal_advances_into_session_wakes_and_survi
     answers: list[int | Exception] = [3, 3, 5, RuntimeError("socket gone"), 5, 8]
     calls: list[tuple[int, float]] = []
     drained = threading.Event()
+    # 台本が尽きた後の 1 回は「先端が動かない long-poll が塞がっている」— 実物は wait_seconds だけ
+    # 塞がる。検はその塞がりを**時間ではなく合図**で解く(release): 止めの合図を立ててから解くので、
+    # 待ち手の loop は必ず停止を見て降り、poll をもう 1 度呼ばない(呼べば calls の並びが loud に落ちる)。
+    release = threading.Event()
 
     def poll(after: int, wait_seconds: float) -> int:
         calls.append((after, wait_seconds))
         if not answers:
             drained.set()
-            time.sleep(wait_seconds)
+            assert release.wait(5.0), "検が塞がりを解かなかった"
             return after
         answer = answers.pop(0)
         if isinstance(answer, Exception):
@@ -5275,7 +5279,8 @@ def test_session_event_waker_turns_journal_advances_into_session_wakes_and_survi
     waker = handlers.SessionEventWaker(poll, wakes, logs.append, wait_seconds=0.02, retry_seconds=0.01)
     waker.start()
     assert drained.wait(5.0), calls
-    waker.stop()
+    waker.stop()  # 先に止めの合図 → その後で塞がりを解く(順序が「もう 1 回撃たない」を決める)
+    release.set()
     frames: list[tuple[str, int]] = []
     while not wakes.frames.empty():
         frame = wakes.frames.get_nowait()
@@ -5392,12 +5397,20 @@ def test_close_for_stop_drains_before_closing_when_the_node_declares_drain_secon
     assert len(world.state.jobs) == 1
     run_obj, holder, drain, closed = make_run(world, drain_seconds=10)
 
+    # 手番は「排水が始まってから」終わる。待つのは経過時間ではなく drain の合図ちょうど
+    # (drain_for_stop は待ちに入る前に合図を立てる)— これで「排水の待ちを本当に通った」が
+    # 機体の速さに依らず決まる。
+    drain_seen: list[bool] = []
+
     def turn_ends() -> None:
-        time.sleep(0.3)
+        drain_seen.append(drain.wait(5.0))
         holder.state = replace(holder.state, jobs=())
 
-    threading.Thread(target=turn_ends).start()
+    ender = threading.Thread(target=turn_ends)
+    ender.start()
     assert run_obj.close_for_stop("SIGTERM") == 0
+    ender.join(5.0)
+    assert drain_seen == [True], drain_seen
     assert drain.is_set()
     assert run_obj.stop.is_set()
     assert closed == ["closed"]
