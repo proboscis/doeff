@@ -121,10 +121,10 @@ ORCH_PROMPT.md
 # (e.g. packages/doeff-indexer/python/) is NOT covered by this rule.
 /python/
 
-# 設計記録の書き込みロック(道具が作る・repo に入れない)
-docs/design/*/.records.lock
 
-# 設計記録の成果物は repo に入れる — global の `artifacts` 除外を打ち消す
+# 設計記録は repo に入れる — global の除外(`artifacts` の dir・`*.html`・`*.svg`)を打ち消す
 # (打ち消しは dir を先に戻さないと中身に効かない)
 !docs/design/*/artifacts/
-!docs/design/*/artifacts/**
+!docs/design/**
+# 書き込みロックだけは入れない(道具が作る一時 file — 打ち消しの後に置く)
+docs/design/*/.records.lock

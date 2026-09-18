@@ -1,0 +1,9 @@
+flowchart TB
+  A["ACP<br/>Agent の effect を yield"] --> B["handler AgentJob<br/>agent-job の行を書く"]
+  B --> C["配置の係<br/>status.binding で node を結ぶ"]
+  C --> D["node の controller<br/>informer が行の変化を受ける"]
+  D --> E["翻訳<br/>ACP の spec → AgentSpec"]
+  E --> F["doeff-agents の client<br/>型を直列化して socket へ"]
+  F --> G["sessionhost<br/>process を起こす・見張る"]
+  G --> H["結末と観測を<br/>ACP の行へ書き戻す"]
+  H --> A
