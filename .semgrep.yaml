@@ -2606,6 +2606,15 @@ rules:
     paths:
       include:
         - tests/
+      exclude:
+        # The headless stubs are not tests — they are MODELS OF THE EXTERNAL
+        # PROCESS a test launches (fake `claude` / `codex` executables on the
+        # test PATH). Their job is to reproduce the real CLI's behaviour,
+        # including the one that only a wait can express: a CLI that does not
+        # exit on EOF and must be taken down by a signal. Loitering is the
+        # spec there, not a slow test. Same tree, same reason as
+        # doeff-agents-no-claude-print-mode's exclude above.
+        - '**/tests/headless_stubs/**'
     message: |
       Avoid time.sleep() or asyncio.sleep() in tests. Use SimulationRuntime
       with controlled time for deterministic testing.
