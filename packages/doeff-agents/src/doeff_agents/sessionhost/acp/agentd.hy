@@ -432,6 +432,8 @@
   job-cancel-of
   outcome-with-cancel
   outcome-with-limit
+  outcome-with-nothing
+  turn-produced-nothing-condition-of
   terminal-cause-of
   command-cause-of
   recovered-cancel-of
@@ -1974,7 +1976,9 @@
       (<- lost-cause dict (terminal-cause-of CAUSE-CATEGORY-FAILED CONDITION-SESSION-LOST))
       (setv outcome (JobOutcome :ended True :result None :cause lost-cause :conditions #(lost))))
     ;; turn-end(温かい session の手番の終わり — 器は終端ではないので job-outcome-of は結末を読まない)= 自然に終わった手番 =
-    ;; completed(#349 行 3 粒 3a・result は今日どおり無し → {cause} だけ)
+    ;; completed(#349 行 3 粒 3a・result は今日どおり無し → {cause} だけ)。⚠ これは仮置き: settle-record が手番の材料を
+    ;; 読み直した batch から「何か出したか」を判じ、出力 0 件なら failed / TurnProducedNothing に導き直す
+    ;; (依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB・D1 — judgment.outcome-with-nothing の 1 点)。
     (= step JOB-STEP-TURN-END)
     (do
       (<- read JobOutcome (job-outcome-of view))
@@ -2059,15 +2063,23 @@
           (<- (LogLine :text f"agentd: turn-record for job {job.job-id} is missing at turn end")))
         ;; #349 行 3 粒 3a: 限度の断りは cause にも写す(failed / ProviderLimit・取り消しの cause は上書きしない — judgment.outcome-with-limit の 1 点)
         (<- limited JobOutcome (outcome-with-limit outcome limit))
+        ;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D1): 温かい手番の終わりで本文のための model の出力が 1 本も無ければ completed を
+        ;; 名乗らない — failed / TurnProducedNothing + 根拠の条件(判断は judgment.turn-produced-nothing-condition-of /
+        ;; outcome-with-nothing の 1 点・材料は上で読み直した batch と器が名乗った手番の失敗の文 turn-error〔D2〕)。ACP の
+        ;; Messaging はこの reason を一過性として有界に組み直す(郵便を黙って消費しない)。
+        (<- nothing (| dict None) (turn-produced-nothing-condition-of
+                                    step source path batch
+                                    (if (isinstance view SessionView) view.turn-error None)))
+        (<- evidenced JobOutcome (outcome-with-nothing limited nothing))
         ;; agent-job → Ended(段 12 lane 12j・agora-redesign #402: 着かなければ行を 1 度読み直して書き直し〔監督が Pending へ戻した /
         ;; Bound attempt N に置き直した行にも Ended を書く — 手番は終わっている〕、それでも着かなければ持ち越す〔毎拍の
         ;; record-unrecorded-ends が書き直す・その id の Bound は claim しない〕。判断は judgment.end-retry-verdict の 1 点。)
         ;; conditions は最新の写し(drained — 段 9p の given-up の RecordUnavailable を含む)から。
-        (setv ended-conditions (+ drained.pending-conditions outcome.conditions))
+        (setv ended-conditions (+ drained.pending-conditions evidenced.conditions))
         (if (is fresh None)
             (<- (LogLine :text f"agentd: agent-job {job.job-id} vanished before Ended"))
             (do
-              (<- ended dict (ended-status-of fresh-status outcome.result limited.cause ended-conditions))
+              (<- ended dict (ended-status-of fresh-status outcome.result evidenced.cause ended-conditions))
               (<- wrote-job (| Written Conflict Refused) (AcpPutStatus :row fresh :status ended))
               (when (not (isinstance wrote-job Written))
                 (setv landed False)
@@ -2075,13 +2087,13 @@
                 (<- verdict str (end-retry-verdict again job.session-id settings.principal now-ms now-ms UNRECORDED-END-TTL-MS))
                 (when (and (= verdict END-RETRY-WRITE) (isinstance again AcpRow))
                   (<- again-status dict (status-object-of again))
-                  (<- ended-again dict (ended-status-of again-status outcome.result limited.cause ended-conditions))
+                  (<- ended-again dict (ended-status-of again-status outcome.result evidenced.cause ended-conditions))
                   (<- wrote-again (| Written Conflict Refused) (AcpPutStatus :row again :status ended-again))
                   (setv landed (isinstance wrote-again Written))
                   (<- (LogLine :text (+ f"agentd: agent-job {job.job-id} Ended re-written on the fresh row (phase was {(.get again-status "phase")}) "
                                         f"after {wrote-job}: " (if landed "landed" (str wrote-again)) " (#402)"))))
                 (when (not landed)
-                  (<- end UnrecordedEnd (unrecorded-end-of job outcome.result limited.cause ended-conditions now-ms))
+                  (<- end UnrecordedEnd (unrecorded-end-of job outcome.result evidenced.cause ended-conditions now-ms))
                   (<- carried AgentdState (with-unrecorded-end carried end))
                   (<- (LogLine :text f"agentd: agent-job {job.job-id} not ended ({wrote-job}; verdict {verdict}); carrying the Ended to the next ticks (#402)")))))))
       (do

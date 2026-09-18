@@ -1045,6 +1045,7 @@ def session_view_of(result: JSON) -> SessionView | None:
         launch_attribution=attribution if isinstance(attribution, dict) else None,
         started_at_ms=None if started is None else _epoch_ms_of_iso(started),
         backend_alive=alive if isinstance(alive, bool) else None,
+        turn_error=_str_field(snapshot, "turn_error"),
     )
 
 

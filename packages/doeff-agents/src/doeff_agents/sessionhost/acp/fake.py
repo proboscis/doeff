@@ -686,11 +686,12 @@ class FakeSessions:
         view = self.views[session_id]
         self.views[session_id] = replace(view, backend_alive=False)
 
-    def finish_turn(self, session_id: str, at_ms: int | None) -> None:
+    def finish_turn(self, session_id: str, at_ms: int | None, turn_error: str | None = None) -> None:
         """test が温かい session の手番の終わりを起こす(host の monitor が turn_ended_at を
-        刻むのと同じ意味・None = 次の手番が走り出した)。status は running のまま。"""
+        刻むのと同じ意味・None = 次の手番が走り出した)。status は running のまま。turn_error = 走行器が手番の
+        失敗を名乗った文(host の monitor が turn_error に写すのと同じ意味・None = 成功の終わり)。"""
         view = self.views[session_id]
-        self.views[session_id] = replace(view, turn_ended_at_ms=at_ms)
+        self.views[session_id] = replace(view, turn_ended_at_ms=at_ms, turn_error=turn_error)
 
 
 class FakeLocal:

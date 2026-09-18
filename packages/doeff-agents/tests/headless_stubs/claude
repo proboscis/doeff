@@ -23,6 +23,13 @@ headless-events)で出す(agora-redesign #513: CLI が構造で名乗る status 
 読まない — 器が result の行で EOF を出して降ろす、が直し)。EOF が来れば降りる(実物と同じ)。
 DOEFF_HEADLESS_STUB_IGNORE_EOF = 1 は EOF で降りない CLI の再現(器の梯子 = SIGTERM で降ろす検の材料)。
 
+依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(実測 2026-09-19 07:28 JST・pod j4bz4 の events・CLI 2.1.263): 前の process が
+background task を残したまま降りると、``--resume`` で起きた CLI は本文を読む前に、孤児の task の報せ
+(task_notification の "Orphaned by a previous Claude Code process exit …")を**自分の手番**として 1 つ走らせる —
+system/init → result(subtype success・num_turns 0・usage 0・``origin: {"kind": "task-notification"}``・result "")。
+その後に本文の手番(2 つ目の init …)が続く。DOEFF_HEADLESS_STUB_ORPHAN_NOTICES = N > 0 はその再現: ``--resume`` で
+起きた時だけ、stdin を読む前に N 本の報せと CLI 自身の手番を出す。
+
 段 10 lane 10n(実測 2026-09-14): user の行に ``uuid`` が在れば ``command_lifecycle`` でその運命を名乗る
 (queued → started → completed / cancelled)。DOEFF_HEADLESS_STUB_TOOL_SECONDS = T > 0 は「T 秒の道具の途中」
 = その間は境界が来ないので注入の行は queued のまま(started を出さない)。その間の
@@ -231,6 +238,9 @@ def main():
         # 旧の作法(本文 + EOF)— 段 8 lane 4x より前の呼び手の互換
         _turn(sid, sys.stdin.read(), None, resumed)
         return 0
+    orphans = int(os.environ.get("DOEFF_HEADLESS_STUB_ORPHAN_NOTICES", "0") or "0")
+    if resumed and orphans > 0:
+        _cli_own_turn(sid, orphans)
     exit_after = int(os.environ.get("DOEFF_HEADLESS_STUB_TURNS_BEFORE_EXIT", "0") or "0")
     reenter = float(os.environ.get("DOEFF_HEADLESS_STUB_REENTER_AFTER", "0") or "0")
     turns = 0
@@ -272,6 +282,26 @@ def main():
                 _reenter(sid, turns)
             else:
                 pending = record
+
+
+def _cli_own_turn(sid, orphans):
+    """CLI 自身の手番(実物 2.1.263 の綴り): 孤児の task の報せ N 本 → init → model を呼ばない result(origin
+    task-notification)。本文の手番ではない — 器がこの result で手番を閉じると、続く本文の手番が切られる。"""
+    for index in range(orphans):
+        _emit({"type": "system", "subtype": "task_notification", "task_id": f"bstub{index}",
+               "tool_use_id": f"toolu_stub_orphan_{index}", "status": "stopped", "output_file": "",
+               "summary": "Orphaned by a previous Claude Code process exit and reported in an aggregate summary.",
+               "session_id": sid})
+    _emit({"type": "system", "subtype": "init", "session_id": sid, "model": "stub-model",
+           "cwd": os.getcwd(), "resumed": True, "auth_digest": _auth_digest(),
+           "system_env_names": _system_env_names(),
+           "capabilities": [] if os.environ.get("DOEFF_HEADLESS_STUB_NO_LIFECYCLE") else
+           ["interrupt_receipt_v1", "interrupt_cancel_queued_v1", "msg_lifecycle_v1"]})
+    zero = {"input_tokens": 0, "output_tokens": 0, "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0}
+    _emit({"type": "result", "subtype": "success", "is_error": False, "result": "", "session_id": sid,
+           "usage": zero, "modelUsage": {}, "num_turns": 0, "duration_api_ms": 0,
+           "origin": {"kind": "task-notification"}, "queued_turn_count": 0})
 
 
 def _reenter(sid, turns):

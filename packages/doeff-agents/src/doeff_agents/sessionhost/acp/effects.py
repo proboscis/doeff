@@ -74,6 +74,14 @@ ENTRY_KIND_TOOL_RESULT: EntryKind = "tool_result"
 ENTRY_KIND_FRAME: EntryKind = "frame"
 ENTRY_KIND_SYSTEM: EntryKind = "system"
 ENTRY_KIND_ERROR: EntryKind = "error"
+#: 手番の**出力**の見出し(model が本文のために書いた・撃った・受けた)— 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D1): これが 0 本で
+#: usage も無い温かい手番は completed を名乗らない(判断は judgment.turn-produced-nothing-condition-of の 1 点)。system / error /
+#: frame は器・走行器の見出しで、model の出力ではない。
+TURN_OUTPUT_ENTRY_KINDS: tuple[EntryKind, ...] = (
+    ENTRY_KIND_TEXT,
+    ENTRY_KIND_TOOL_USE,
+    ENTRY_KIND_TOOL_RESULT,
+)
 #: 行の上限(契約 conventions.turnRecordEntries.byteBudget の写し — 書き手の側の宣言点はここ)。1 行の entries の JSON
 #: (UTF-8・compact)の上限 byte。超えたら古い見出しから落とし、先頭に印(TurnEntryDropMarker)を残す。段 9f lane 9f-4 で
 #: entry は見出しだけになった(本文は会話の記録の service)— 切り詰めの規則(summary / text の上限)は agentd から消えた。
@@ -148,6 +156,7 @@ ConditionType = Literal[
     "AttachmentIgnored",
     "WorkDirMissing",
     "ProviderLimit",
+    "TurnProducedNothing",
     "VerifyScriptMissing",
     "VerifyStartFailed",
     "VerifyCommandLost",
@@ -236,6 +245,16 @@ REASON_RATE_LIMITED: str = "rate-limited"
 PROVIDER_LIMIT_PROFILE_KEY: str = "profile"
 PROVIDER_LIMIT_ATTEMPT_KEY: str = "attempt"
 PROVIDER_LIMIT_AT_KEY: str = "at"
+#: 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D1・D3): 温かい session の手番が終わったのに、本文のための model の出力が 1 本も
+#: 無かった(材料は読めたのに assistant の見出し text / tool_use / tool_result が 0 本・usage も無い)印。= model が 1 度も
+#: 呼ばれていない = **手番が走らなかった**事実で、手番自身の結末ではない — result.cause は {category: failed, reason:
+#: TurnProducedNothing}(判断は judgment.turn-produced-nothing-condition-of / outcome-with-nothing の 1 点・completed の時だけ
+#: 置き換える — 取り消し・停止・限度・器の失敗の cause は上書きしない)。ACP の Messaging はこの reason を一過性の側
+#: (carrierEndedFailureReasons)として有界に組み直す — 決定的な理由(WorkDirMissing・PlaceMismatch 等)は起こす前に
+#: 決まって TURN-END に来ないので、この語に畳まれない。実弾 2026-09-19 07:28 JST aj-9AHT1RWPYNTTWEZBWRNN0R34T6: --resume の
+#: CLI が孤児の task の報せを自分の手番として走らせ、器がその result で本文の手番を切った(根は headless_protocol の
+#: CLI_OWN_TURN_ORIGINS で直した — この語は同じ形の取り違えが別の経路で起きた時に黙って completed を名乗らないための網)。
+CONDITION_TURN_PRODUCED_NOTHING: ConditionType = "TurnProducedNothing"
 #: agora-redesign #519: 配置が退役させた手番(scheduling.json retirement)の印 — Withdrawn の行の条件 Unschedulable{status True,
 #: reason: retry-budget-exhausted}(書き手 acp-scheduling)。最後の runner(sessionHandle の owner)がその turn-record を ended に
 #: する(judgment.retired-rows-of / agentd.end-retired-records)— 記録は手番が本当に終わる時に ended(1 手番 1 行)。
@@ -1308,6 +1327,10 @@ class SessionView:
     #: 無い(launch / resume の応答)— 観測の無さは死亡の証拠ではない(ADR-DOE-AGENTS-009: 観測断 ≠ 死亡)ので、判断
     #: (judgment.backend-alive)は明示の False だけを死と読む。
     backend_alive: bool | None = None
+    #: 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D2): 温かい session の手番が**失敗で**終わった時に走行器が名乗った文(wire の
+    #: turn_error — turn_ended_at と対の level-triggered の欄・成功の終わりと次の手番の送りで欄ごと無い)。None = 成功で
+    #: 終わった / 終わっていない / 走行器が名乗らない器(tmux)。読み手は手番の終わりの判断(judgment.turn-produced-nothing-condition-of)。
+    turn_error: str | None = None
 
 
 @dataclass(frozen=True)

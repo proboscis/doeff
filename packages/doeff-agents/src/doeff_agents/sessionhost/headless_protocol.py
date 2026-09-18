@@ -218,6 +218,18 @@ INTERRUPTED_DETAIL = "interrupted"
 #: CLI が system/init の capabilities で名乗る、注入の行の運命(command_lifecycle)を出す能力(実測 2.1.270)。名乗らない
 #: CLI(旧い版)では運命が来ないので、注入は追わず(result で手番が終わる・停止の合図は出さない = 今日どおりの注入だけ)。
 LIFECYCLE_CAPABILITY = "msg_lifecycle_v1"
+#: CLI が**自分で起こした手番**の result が名乗る ``origin.kind`` の閉語彙(実測 2.1.263・依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB)。
+#: 本文(user の行)の手番の result は ``origin`` を持たない(実測: pod 58 + Mac 780 の result はすべて null)。
+#: task-notification = 前の process が残した background task の報せ(孤児の「Orphaned by a previous Claude Code
+#: process exit」・完了の報せ)を CLI が本文より先に 1 手番として走らせたもの — ``--resume`` の起こし直しの直後に
+#: 立ち、model を呼ばずに num_turns 0 で終わることもある。この result で手番を閉じると、続いて始まる本文の手番が
+#: 切られ、郵便は 1 度も読まれない(実弾 2026-09-19 07:28 JST aj-9AHT1RWPYNTTWEZBWRNN0R34T6)。
+CLI_OWN_TURN_ORIGINS: frozenset[str] = frozenset({"task-notification"})
+
+
+def cli_own_turn_result(record: JSONObject) -> bool:
+    """result の行が CLI 自身の手番のもの(本文の手番の終わりではない)か — ``origin.kind`` が閉語彙に在る時だけ真。"""
+    return _text_at(_object_at(record, "origin"), "kind") in CLI_OWN_TURN_ORIGINS
 
 
 _INJECTION_STATES: dict[str, InjectionState] = {
@@ -388,7 +400,13 @@ class ClaudeDialogue:
         agora-redesign #513: 誤りで終わった手番は **CLI が構造で名乗った status**(``api_error_status``)も
         運ぶ。文は provider が言い回しを変えるたびに族の表を破った(2026-07-20 / 07-26 / 08-06 /
         09-17 の 4 度 — 「Your group's usage limit is set to $0」は所有格族に当たらず 18 手番が
-        普通の終わりとして流れた)が、status は CLI 自身の分類で言い回しに依らない。"""
+        普通の終わりとして流れた)が、status は CLI 自身の分類で言い回しに依らない。
+
+        依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB: CLI 自身の手番の result(``cli_own_turn_result`` — origin が
+        task-notification 等)は本文の手番の終わりではない — 状態を 1 つも動かさず読み流す(手番は閉じない・
+        process も降ろさない)。本文の手番はこの後に始まり、自分の result(origin 無し)で終わる。"""
+        if cli_own_turn_result(record):
+            return Step()
         self.cli_turn_open = False
         queued = self.queued_injections()
         is_error = record.get("is_error") is True

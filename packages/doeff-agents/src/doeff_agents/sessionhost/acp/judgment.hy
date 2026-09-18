@@ -110,6 +110,7 @@
   CONDITION-ATTACHMENT-IGNORED
   CAUSE-CATEGORY-RATE-LIMITED
   CONDITION-PROVIDER-LIMIT
+  CONDITION-TURN-PRODUCED-NOTHING
   CONDITION-UNSCHEDULABLE
   MODEL-UNDECLARED
   REASON-RATE-LIMITED
@@ -170,6 +171,7 @@
   ENTRY-KIND-TEXT
   ENTRY-KIND-TOOL-RESULT
   ENTRY-KIND-TOOL-USE
+  TURN-OUTPUT-ENTRY-KINDS
   HISTORY-MAIL-KIND
   HISTORY-THIN-DIVISOR
   HeadlineCounts
@@ -1344,6 +1346,57 @@
     (return outcome))
   (<- refused dict (terminal-cause-of CAUSE-CATEGORY-FAILED CONDITION-PROVIDER-LIMIT))
   (replace outcome :cause refused))
+
+
+;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D1): 手番の終わりの結末は、その手番が**何か出したか**から導く — 温かい手番の終わりを
+;; 無条件に completed と名乗らない(旧形: finalize-job の turn-end の腕が completed を貼り直し、出力 0 件の手番と働いた手番が
+;; 結末の型で区別できなかった)。
+
+
+(defk turn-produced-nothing-condition-of [step source path batch turn-error]
+  {:pre [(: step str) (: source (| str None)) (: path (| str None)) (: batch DeltaBatch) (: turn-error (| str None))]
+   :post [(: % (| dict None))]}
+  "温かい手番の終わり(turn-end)で本文のための model の出力が 1 本も無かったか —— **判断の 1 点**。None = 何か出した /
+   温かい手番の終わりではない / 材料が読めない器(stream の path が無い — 読めないことは「何も出していない」の証拠ではない)。
+
+   材料 = 手番の始まりから読み直した batch(turn-batch-of): assistant の見出し(text / tool_use / tool_result)が 0 本で、
+   usage も無い(usage は assistant の message からだけ組む — result の行の usage は数えない。thinking だけの手番も usage は
+   在るので当たらない)。= model が本文のために 1 度も呼ばれていない = 手番が走らなかった事実。条件の文には根拠を残す
+   (system の見出しの数・usage の無さ・器が名乗った手番の失敗の文 turn-error — D2)。"
+  (when (!= step JOB-STEP-TURN-END)
+    (return None))
+  (when (or (is source None) (is path None))
+    (return None))
+  (when (is-not batch.usage None)
+    (return None))
+  (setv kinds (lfor entry batch.entries :if (isinstance entry TurnEntryHeadline) entry.kind))
+  (when (any (gfor kind kinds (in kind TURN-OUTPUT-ENTRY-KINDS)))
+    (return None))
+  (setv system-count (len (lfor kind kinds :if (= kind ENTRY-KIND-SYSTEM) kind)))
+  (setv said (if (and (isinstance turn-error str) (.strip turn-error))
+                 f"; the runner said the turn failed: {(.strip turn-error)}"
+                 "; the runner reported the turn as ended without an error"))
+  (<- condition dict
+      (condition-of CONDITION-TURN-PRODUCED-NOTHING
+                    (+ f"the turn ended with no model output for its input ({(len kinds)} headlines, "
+                       f"{system-count} system, 0 text / tool_use / tool_result, no usage){said} — "
+                       "the model was never called, so the turn did not run")))
+  condition)
+
+
+(defk outcome-with-nothing [outcome nothing]
+  {:pre [(: outcome JobOutcome) (: nothing (| dict None))]
+   :post [(: % JobOutcome)]}
+  "出力 0 件の条件(turn-produced-nothing-condition-of・None = 何か出した)を結末に写す(依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB・D1):
+   cause が completed の時だけ {category: failed, reason: TurnProducedNothing} に置き換え、条件を 1 項足す。取り消し・停止・
+   限度・器の失敗の cause は上書きしない(合図・決定的な理由が先に在った — 手番が走らなかった側へ畳まない・D3)。"
+  (when (is nothing None)
+    (return outcome))
+  (setv category (if (isinstance outcome.cause dict) (.get outcome.cause CAUSE-CATEGORY-KEY) None))
+  (when (!= category CAUSE-CATEGORY-COMPLETED)
+    (return outcome))
+  (<- failed dict (terminal-cause-of CAUSE-CATEGORY-FAILED CONDITION-TURN-PRODUCED-NOTHING))
+  (replace outcome :cause failed :conditions (+ outcome.conditions #(nothing))))
 
 
 (defk recovered-cancel-of [job row]

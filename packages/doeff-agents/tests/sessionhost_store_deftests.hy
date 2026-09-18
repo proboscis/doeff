@@ -97,7 +97,10 @@
        ;; 温かい session(lifecycle multi_turn — agentd 段 2 lane 2b-3): monitor が
        ;; 手番の終わり(turn-end の連言)を最初に観測した時刻。level-triggered
        ;; (次の手番が走ると None)・単一 writer = monitor・素の last-write-wins。
-       "turn_ended_at"])
+       "turn_ended_at"
+       ;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D2): 温かい session の手番が失敗で終わった時に走行器が
+       ;; 名乗った文。turn_ended_at と対の level-triggered の欄。
+       "turn_error"])
 
 
 (defn make-snap [session-id #** overrides]
@@ -343,6 +346,25 @@
                "2026-09-12T03:00:00+00:00"))
     (db-upsert-snapshot conn (make-snap "s1" :lifecycle "multi_turn" :turn_ended_at None))
     (assert (is (get (db-session-get conn "s1") "turn_ended_at") None)))
+  (with-tmp-conn check))
+
+
+(deftest test-turn-error-roundtrip-last-write-wins
+  ;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D2): 手番の失敗の文は turn_ended_at と対の level-triggered — 刻む・wire に載る・
+  ;; None で消え wire から欄ごと落ちる(成功の終わり・次の手番の送り)。旧形は multi_turn の失敗の旗を行へ運ばなかった。
+  (defn check [conn]
+    (db-upsert-snapshot conn (make-snap "s1" :lifecycle "multi_turn"))
+    (assert (is (get (db-session-get conn "s1") "turn_error") None))
+    (assert (not-in "turn_error" (snapshot-to-wire-dict (db-session-get conn "s1"))))
+    (db-upsert-snapshot conn (make-snap "s1" :lifecycle "multi_turn"
+                                        :turn_ended_at "2026-09-19T07:28:04+00:00"
+                                        :turn_error "error_during_execution"))
+    (setv snap (db-session-get conn "s1"))
+    (assert (= (get snap "turn_error") "error_during_execution"))
+    (assert (= (get (snapshot-to-wire-dict snap) "turn_error") "error_during_execution"))
+    (db-upsert-snapshot conn (make-snap "s1" :lifecycle "multi_turn" :turn_ended_at None :turn_error None))
+    (assert (is (get (db-session-get conn "s1") "turn_error") None))
+    (assert (not-in "turn_error" (snapshot-to-wire-dict (db-session-get conn "s1")))))
   (with-tmp-conn check))
 
 
