@@ -424,6 +424,15 @@ BINDING_NODE_KEY: str = "node"
 BINDING_NODE_ROW_KEY: str = "nodeRow"
 JOB_INTERRUPTS_KEY: str = "interrupts"
 JOB_INTERRUPTS_DELIVERED_KEY: str = "interruptsDelivered"
+#: card acp:kanban-issue:ki-3149aebbf675 A: agent-job の status.inputsDelivered = この手番で agentd が
+#: **器へ渡せた** inputs の郵便の id の並び(行の順・行の寿命の間 append-only・書き手 = agentd だけ)。
+#: claim の拍に空で宣言し(「この agentd は配達を記帳する」の名乗り)、送りが着地した拍に id を足す —
+#: 断られた拍は 1 つも足さない。読み手 = ACP の配達の 1 点(Acp.App.Messaging.Decide.handedEvidenceOf)で、
+#: 欄が在る行は**この欄ちょうど**で「郵便が届いたか」を判じ、欄が無い行(この欄より前の agentd が走らせた行)は
+#: 今までどおり turn-record / phase = Running の推定に落ちる(版が混ざる艦隊で旧い行が全部未配達に見えないため)。
+#: 実測 2026-09-18: 相乗り 10 通のうち agent に届いたのは 1 通なのに、台帳は 10 通とも handedAt だった —
+#: 手番が始まったこと(phase)を「郵便が届いた」の証拠に使っていたため。
+JOB_INPUTS_DELIVERED_KEY: str = "inputsDelivered"
 #: 段 10 lane 10n(agora-redesign #93): 割り込みの観測の 2 欄(書き手 agentd・additive・append-only の map)。
 #: interruptsRead = {Message の id: model がその本文を読んだ証拠の出来事の seq}(claude = 注入の行の
 #: command_lifecycle started・codex = 止めた後の turn/started)/ interruptsEscalated = {Message の id: 停止の合図を
