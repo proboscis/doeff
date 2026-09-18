@@ -37,6 +37,7 @@ from doeff_agents.sessionhost.acp.effects import (
     EntryKind,
     InFlightJob,
     JSON,
+    JOB_INPUTS_DELIVERED_KEY,
     JSONObject,
     LeaseGrant,
     LeaseRefused,
@@ -3975,11 +3976,14 @@ def test_send_folds_bodies_is_decided_by_the_backend_alone() -> None:
     assert run(judgment.first_turn_carries_inputs("headless", "send")) is False
 
 
-def test_a_refused_send_lands_as_a_condition_and_does_not_escape_the_turn() -> None:
-    """段 10 lane 10o(card acp:kanban-issue:ki-3149aebbf675 C): 器が送りを断った拍は、今まで
-    AgentdClientError が receive-bound-jobs の外まで抜け、計器も turn-record も走らなかった
-    (失敗が最も見えない形)。断りは SessionRefused で受け、条件 InputUndelivered 1 件に写して
-    手番は続ける — 郵便の再配達はしない(落ちたことを見えるようにするだけ)。"""
+def test_a_refused_send_lands_as_a_condition_and_ends_the_turn_delivering_nothing() -> None:
+    """段 10 lane 10o(card acp:kanban-issue:ki-3149aebbf675 C / A): 器が送りを断った拍は、まず
+    AgentdClientError が receive-bound-jobs の外まで抜けていた(C で SessionRefused に直した)。
+    C の版は条件 InputUndelivered 1 件を載せて **手番を続けた** — が、器は手番を始めていないので
+    turn_ended_at は前の手番のままで、手番の終わりの判定は永久に立たず job は Running のまま居座り、
+    その会話は次の手番を 1 つも受けられなかった(1 会話 1 手番の門・解けるのは 4 時間の期限だけ)。
+    A: 1 通も渡せなかった手番はその場で Ended(cause = failed / InputUndelivered)。行の
+    inputsDelivered は claim が宣言した空のまま = ACP はこの郵便を『届いていない』と読める。"""
     world = HeadlessWorld()
     world.acp.put_row(message("m-0", "zero"))
     world.acp.put_row(bound_job("j-1", inputs=["m-0"], created_at_ms=world.local.now_ms - 400))
@@ -3989,6 +3993,7 @@ def test_a_refused_send_lands_as_a_condition_and_does_not_escape_the_turn() -> N
     world.tick(advance_ms=1_000)
     world.sessions.finish_turn(sid, world.local.now_ms + 100)
     world.tick(advance_ms=1_000)
+    revoked_before = list(world.custody.revoked)
     world.sessions.refuse_send = SessionRefused("headless session already exists", "-32002")
     world.acp.put_row(message("m-1", "first"))
     world.acp.put_row(message("m-2", "second"))
@@ -3996,50 +4001,75 @@ def test_a_refused_send_lands_as_a_condition_and_does_not_escape_the_turn() -> N
         bound_job("j-2", inputs=["m-1", "m-2", "m-missing"], created_at_ms=world.local.now_ms + 700)
     )
     world.tick(advance_ms=1_000)
-    in_flight = [job for job in world.state.jobs if job.job_id == "j-2"]
-    assert len(in_flight) == 1
-    kinds = [condition["type"] for condition in in_flight[0].pending_conditions]
-    assert kinds == ["InputUndelivered", "InputUnavailable"], kinds
-    reason = in_flight[0].pending_conditions[0]["reason"]
+    # 手番は続かない: in-flight にも残らず、行は Ended
+    assert world.state.jobs == ()
+    status = world.job("j-2").status
+    assert status is not None
+    assert status["phase"] == PHASE_ENDED
+    # 郵便は 1 通も渡っていない — claim が宣言した空のままで、ACP はこの欄ちょうどで判じる
+    assert status[JOB_INPUTS_DELIVERED_KEY] == []
+    result = status["result"]
+    assert isinstance(result, dict)
+    assert result["cause"] == {"category": "failed", "reason": "InputUndelivered"}
+    landed = status["conditions"]
+    assert isinstance(landed, list)
+    riding = [item for item in landed if isinstance(item, dict)]
+    # 見つからなかった id は今までどおり InputUnavailable・断りは end-job-now が終端の cause と一緒に書く
+    assert [item["type"] for item in riding] == ["InputUnavailable", "InputUndelivered"]
+    reason = riding[1]["reason"]
     assert isinstance(reason, str)
     assert "headless session already exists" in reason
     assert "m-1" in reason
     assert "m-2" in reason
-    # 断られても以後の計器・turn-record・status frame は今までどおり撃つ
-    assert world.local.metrics[-1]["metric"] == "agent-job-to-send"
-    record = world.turn_record("j-2")
-    assert record is not None
-    assert record.status == {"state": "running"}
-    assert sid in [pushed[1] for pushed in world.acp.pushes]
-    # 断られた手番のその後(依頼者への 1 行): 器は手番を始めていないので turn_ended_at は前の手番の
-    # ままで、手番の終わりの判定(turn-ended-at-ms > turn-floor-ms)は立たない — job は Running の
-    # まま居座る(見かけの turn-end で Ended にはならない)。条件は載るが、終わらせる者は居ない。
+    assert "m-missing" not in reason
+    # 借りた札は返す(手番は起きていない)・session は片付けない(温かいまま次の手番が使う)
+    assert world.custody.revoked != revoked_before
+    assert world.sessions.cleanups == []
+    # 手番は 1 度も始まっていないので turn-record も計器も無い(始まりの証拠を偽らない)
+    assert world.turn_record("j-2") is None
+    assert [m["metric"] for m in world.local.metrics if m.get("agentJobId") == "j-2"] == []
+    # 沈んだまま居座らない: 以後の拍で Running へ戻ることも、会話の次の手番を塞ぐこともない
     for _ in range(5):
         world.tick(advance_ms=1_000)
-    assert [job.job_id for job in world.state.jobs] == ["j-2"]
-    status = world.job("j-2").status
-    assert status is not None
-    assert status["phase"] == PHASE_RUNNING
-    assert [c["type"] for c in world.state.jobs[0].pending_conditions] == [
-        "InputUndelivered",
-        "InputUnavailable",
-    ]
-    # 永久には沈まない: 器が実況を進めて新しい turn_ended_at を刻んだ拍(host の policy の
-    # turn-end の連言は level-trigger)に手番は閉じ、**条件は Ended の行へ乗る** — 郵便が
-    # 届かなかった事実は手番の終わりまで残る(配り直しはしない)。
-    world.local.transcripts[f"/events/{sid}.events.jsonl"] += _claude_events(sid, "again")
+    assert world.state.jobs == ()
+    again = world.job("j-2").status
+    assert again is not None
+    assert again["phase"] == PHASE_ENDED
+
+
+def test_a_delivered_send_records_the_inputs_it_handed_on_the_job_row() -> None:
+    """card acp:kanban-issue:ki-3149aebbf675 A: 「郵便が届いたか」の証拠は器の報告 —
+    行の status.inputsDelivered(書き手 = agentd・append-only)。受けた拍に空で宣言し
+    (claim から送りまでの数秒に配達の拍が phase = Running を証拠に使わないため)、
+    畳んだ 1 回の送りが着地したら **その送りが運んだ id を全部** 行の順で足す。"""
+    world = HeadlessWorld()
+    world.acp.put_row(message("m-0", "zero"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-0"], created_at_ms=world.local.now_ms - 400))
+    world.tick()
+    sid = world.sid("j-1")
+    # 起こす腕(headless の launch)は郵便を 1 手番目の prompt に畳む = その拍で届いている
+    claimed = world.job("j-1").status
+    assert claimed is not None
+    assert claimed[JOB_INPUTS_DELIVERED_KEY] == ["m-0"]
+    world.local.transcripts[f"/events/{sid}.events.jsonl"] = _claude_events(sid, "hello")
     world.tick(advance_ms=1_000)
     world.sessions.finish_turn(sid, world.local.now_ms + 100)
     world.tick(advance_ms=1_000)
-    assert world.state.jobs == ()
-    ended = world.job("j-2").status
-    assert ended is not None
-    assert ended["phase"] == PHASE_ENDED
-    landed = ended["conditions"]
-    assert isinstance(landed, list)
-    riding = [item for item in landed if isinstance(item, dict)]
-    assert [item["type"] for item in riding] == ["InputUndelivered", "InputUnavailable"]
-    assert "headless session already exists" in str(riding[0]["reason"])
+    for mid, body in [("m-1", "first"), ("m-2", "second"), ("m-3", "third")]:
+        world.acp.put_row(message(mid, body))
+    world.acp.put_row(
+        bound_job(
+            "j-2", inputs=["m-1", "m-2", "m-3", "m-missing"], created_at_ms=world.local.now_ms + 700
+        )
+    )
+    world.tick(advance_ms=1_000)
+    # 相乗り 3 通は 1 回の send に畳まれ、その 1 回の成否が 3 通ぜんぶの成否
+    assert len(world.sessions.sends) == 1, world.sessions.sends
+    status = world.job("j-2").status
+    assert status is not None
+    assert status["phase"] == PHASE_RUNNING
+    # 本文を読めなかった id(missing)は運んでいないので載らない
+    assert status[JOB_INPUTS_DELIVERED_KEY] == ["m-1", "m-2", "m-3"]
 
 
 def test_the_session_handler_turns_a_refused_send_into_a_typed_refusal() -> None:
