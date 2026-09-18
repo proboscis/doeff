@@ -439,7 +439,8 @@
   (when awaiting
     (setv row (replace row :awaiting-response True
                            :awaiting-response-since (iso-format now)
-                           :turn-ended-at None)))
+                           :turn-ended-at None
+                           :turn-error None)))
   (<- _ (session-store-upsert row))
   (<- _ (session-store-record-event session-id "session_sent" row))
   row)
@@ -564,6 +565,17 @@
 ;; monitor(手番の終わり・process の死・会話の発見)
 ;; ---------------------------------------------------------------------------
 
+(deff headless-turn-error-of [verdict]
+  {:pre [(: verdict Verdict)]
+   :post [(: % (| str None))]}
+  "手番の終わりの verdict → 行の turn-error(依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB・D2): ok なら None、失敗なら走行器が
+   名乗った文(空なら閉じた既定の文 — 失敗の旗を空文字で消さない)。"
+  (cond
+    verdict.ok None
+    (and (isinstance verdict.detail str) (.strip verdict.detail)) (.strip verdict.detail)
+    True "turn ended with an error"))
+
+
 (deff headless-turn-limit-cause [verdict observed-at]
   {:pre [(: verdict Verdict) (: observed-at str)]
    :post [(: % (| TerminalCause None))]}
@@ -634,6 +646,10 @@
           ;; 旧形 `(or row.turn-ended-at observed-at)` は、send の reset が失われた行で前の手番の印を
           ;; 永久に保ち、agentd に「まだ終わっていない」と読ませた(上の実弾)。
           (setv row (replace row :turn-ended-at observed-at))
+          ;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D2): 手番の終わりの ok / detail を捨てない — 失敗で終わった手番は
+          ;; 走行器が名乗った文を turn-error に写す(成功なら None)。session は今日どおり生かす(温かい席を殺さない)。
+          ;; 読み手 = agentd の手番の終わりの判断(judgment.turn-produced-nothing-condition-of が条件の文に運ぶ)。
+          (setv row (replace row :turn-error (headless-turn-error-of verdict)))
           ;; 段 11 lane 11n 便 C: provider が限度で断った手番は器ごと終える(判断は
           ;; headless-turn-limit-cause の 1 点)。温かいままにすると同じ profile の次の手番も
           ;; 断られ、行には何も残らない(実弾 2026-09-15 13:2x の 5 連敗)。

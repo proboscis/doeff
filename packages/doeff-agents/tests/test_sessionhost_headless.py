@@ -183,6 +183,69 @@ def test_claude_dialogue_reads_init_and_result() -> None:
     assert fine.ended == TurnEnded(ok=True, detail="success", api_error_status=None)
 
 
+def _cli_own_result() -> JSONObject:
+    """実物 2.1.263 の CLI 自身の手番の result(実測 2026-09-19 07:28 JST・pod j4bz4 の events)。"""
+    return {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "result": "",
+        "num_turns": 0,
+        "duration_api_ms": 0,
+        "usage": {"input_tokens": 0, "output_tokens": 0},
+        "modelUsage": {},
+        "origin": {"kind": "task-notification"},
+        "queued_turn_count": 0,
+    }
+
+
+def test_claude_dialogue_reads_past_the_cli_own_turn_to_the_prompts_result() -> None:
+    """依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(実弾 aj-9AHT1RWPYNTTWEZBWRNN0R34T6): ``--resume`` で起きた CLI は本文より先に
+    孤児の task の報せを自分の手番として走らせ、origin task-notification の result を返す。それは本文の手番の
+    終わりではない — 手番は閉じず(close しない = process を降ろさない)、続く本文の手番の result で終わる。
+    旧形はこの result で閉じて本文の手番を切り、出力 0 件の手番が completed を名乗った(郵便が黙って消費された)。"""
+    dialogue = ClaudeDialogue()
+    dialogue.turn(_content("the mail"))
+    assert dialogue.on_line(_init()).ended is None
+    own = dialogue.on_line(_cli_own_result())
+    assert own.ended is None
+    assert own.close is False
+    assert dialogue.in_flight is True
+    assert dialogue.cli_turn_open is True
+    # 本文の手番: 2 つ目の init → 応答 → origin の無い result = 手番の終わり
+    assert dialogue.on_line(_init()).ended is None
+    assert dialogue.on_line({"type": "assistant", "message": {}}).ended is None
+    ended = dialogue.on_line({"type": "result", "subtype": "success", "is_error": False})
+    assert ended.ended == TurnEnded(ok=True, detail="success")
+    assert ended.close is True
+    # 手番の外に来た CLI 自身の result も手番の終わりを作らない(誰の手番でもない)
+    assert dialogue.on_line(_cli_own_result()).ended is None
+    # 閉語彙の外の origin(未知の種類)は今日どおり手番の終わり(発明しない — 読み流すのは名乗った種類だけ)
+    dialogue.turn(_content("next"))
+    unknown = dialogue.on_line(
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "origin": {"kind": "something-else"},
+        }
+    )
+    assert unknown.ended == TurnEnded(ok=True, detail="success")
+
+
+def test_claude_dialogue_cli_own_result_does_not_answer_the_stop_signal() -> None:
+    """停止の合図を出して答えを待つ間に CLI 自身の result が来ても、合図は消費されない(本文の手番の result を待つ)。"""
+    dialogue = ClaudeDialogue()
+    dialogue.turn(_content("run a long tool"))
+    dialogue.on_line(_init())
+    injected = dialogue.inject(_content("stop"))
+    escalation = dialogue.escalate()
+    assert escalation.accepted is True
+    assert dialogue.on_line(_cli_own_result()).ended is None
+    assert dialogue.escalation == escalation.request_id
+    assert dialogue.injections == {injected.ref: "queued"}
+
+
 def _lifecycle(ref: str, state: str) -> JSONObject:
     return {"type": "command_lifecycle", "command_uuid": ref, "state": state}
 
@@ -867,6 +930,55 @@ def test_headless_process_claude_result_closes_the_dialogue_before_the_cli_can_r
     assert observed.exit_code == 0
 
 
+def test_headless_process_claude_resume_runs_the_prompt_past_the_cli_own_turn(
+    tmp_path: Path,
+) -> None:
+    """依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(実弾 2026-09-19 07:28 JST・pod j4bz4): ``--resume`` で起きた CLI は本文より
+    先に孤児の task の報せを自分の手番として走らせる(替え玉 DOEFF_HEADLESS_STUB_ORPHAN_NOTICES)。器はその result で
+    降ろさず、本文の手番を最後まで走らせる — 手番の終わりは 1 つだけで、本文への応答(assistant)が記録に在る。
+    旧形は CLI 自身の result で stdin を閉じ、本文の手番(2 つ目の init)が切られて出力 0 件の手番になった。"""
+    registry = HeadlessRegistry()
+    events = str(tmp_path / "s-orphan.events.jsonl")
+    process = registry.spawn(
+        "s-orphan",
+        ["claude", "-p", "--input-format", "stream-json", "--resume", "sid-orphan"],
+        str(tmp_path),
+        _stub_env({"DOEFF_HEADLESS_STUB_ORPHAN_NOTICES": "3"}),
+        events,
+        ClaudeDialogue(),
+    )
+    assert process.deliver("the mail the turn carries") is True
+    _wait_until(lambda: not process.alive(), timeout=5.0)
+    observed = process.observe()
+    assert observed.ended == (TurnEnded(ok=True, detail="success"),)
+    assert observed.exit_code == 0
+    records = [json.loads(line) for line in Path(events).read_text(encoding="utf-8").splitlines()]
+    shape = [
+        f"{r.get('type')}/{r.get('subtype')}" if r.get("type") == "system" else str(r.get("type"))
+        for r in records
+    ]
+    assert shape == [
+        "system/task_notification",
+        "system/task_notification",
+        "system/task_notification",
+        "system/init",
+        "result",
+        "system/init",
+        "stream_event",
+        "stream_event",
+        "assistant",
+        "result",
+    ]
+    assert records[4]["origin"] == {"kind": "task-notification"}
+    said = [
+        str(_obj(record, "message").get("content"))
+        for record in records
+        if record.get("type") == "assistant"
+    ]
+    assert any("echo: the mail the turn carries" in text for text in said), said
+    assert registry.kill("s-orphan") is True
+
+
 def test_headless_process_claude_retire_ladder_terminates_a_cli_that_ignores_eof(tmp_path: Path) -> None:
     """「手番の終わり = process の終わり」は EOF の作法に依らない: EOF で降りない CLI(替え玉の
     DOEFF_HEADLESS_STUB_IGNORE_EOF)は器の梯子(EOF の猶予 → SIGTERM)が降ろす。呼び手(読み手の thread・
@@ -1331,6 +1443,71 @@ def test_host_headless_turn_refused_with_api_status_429_is_a_limit_whatever_the_
     headless_host.stub_env.pop("DOEFF_HEADLESS_STUB_API_ERROR_STATUS")
     for sid in ("h-429", "h-403"):
         headless_host.ok("session.cleanup", {"session_id": sid})
+
+
+def test_host_headless_warm_turn_that_failed_keeps_the_runners_words_on_the_row(
+    headless_host: Host,
+) -> None:
+    """依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D2): 温かい session(multi_turn)の手番が限度でない失敗で終わった → 器は今日どおり
+    温かいまま(status running・terminal_cause 無し)、行の turn_error に走行器が名乗った文(旧形は ok = False を provider の
+    限度以外すべて捨て、行に 1 bit も残らなかった)。次の手番の送りで欄ごと消え(turn_ended_at と対の level-triggered)、
+    成功で終わった手番は欄を持たない。"""
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-fine", "claude"))
+    fine = _wait_turn_end(headless_host, "h-fine")
+    assert _has(fine, "turn_ended_at")
+    assert not _has(fine, "turn_error")
+    said = "the CLI gave up before calling the model"
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_LIMIT_TEXT"] = said
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-err", "claude"))
+    ended = _wait_turn_end(headless_host, "h-err")
+    headless_host.stub_env.pop("DOEFF_HEADLESS_STUB_LIMIT_TEXT")
+    assert _text(ended, "status") == "running", ended
+    assert not _has(ended, "terminal_cause")
+    assert _text(ended, "turn_error") == said
+    headless_host.ok("session.send", {"session_id": "h-err", "message": "again", "awaiting": True})
+    assert not _has(headless_host.snap("h-err"), "turn_error")
+    _wait_turn_end(headless_host, "h-err")
+    for sid in ("h-fine", "h-err"):
+        headless_host.ok("session.cleanup", {"session_id": sid})
+
+
+def test_host_headless_resumed_turn_runs_the_mail_past_the_clis_own_turn(
+    headless_host: Host,
+) -> None:
+    """依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(実弾 2026-09-19 07:28 JST・pod j4bz4): 2 手番目の ``--resume`` で起きた CLI が本文より
+    先に孤児の task の報せを自分の手番として走らせても(替え玉 DOEFF_HEADLESS_STUB_ORPHAN_NOTICES)、器の手番の終わりは本文の
+    手番の result ちょうど — 本文への応答が events に在り、失敗の文は無い。旧形は CLI 自身の result で手番を閉じ、本文の手番を
+    切った(出力 0 件の手番が completed を名乗り、郵便が黙って消費された)。"""
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_ORPHAN_NOTICES"] = "2"
+    launched = headless_host.ok(
+        "session.launch", _launch_params(headless_host.root, "h-orphan", "claude")
+    )
+    assert isinstance(launched, dict)
+    events_path = Path(_text(_obj(launched, "backend_ref"), "events_path"))
+    _wait_turn_end(headless_host, "h-orphan")
+    first_turn = len(events_path.read_text(encoding="utf-8").splitlines())
+    _pause(0.3)
+    headless_host.ok(
+        "session.send", {"session_id": "h-orphan", "message": "the second mail", "awaiting": True}
+    )
+    ended = _wait_turn_end(headless_host, "h-orphan")
+    headless_host.stub_env.pop("DOEFF_HEADLESS_STUB_ORPHAN_NOTICES")
+    assert _text(ended, "status") == "running", ended
+    assert not _has(ended, "turn_error")
+    _wait_until(
+        lambda: not headless_process.pid_exists(int(str(_obj(ended, "backend_ref")["pid"]))),
+        timeout=5.0,
+    )
+    second = [
+        _record(line) for line in events_path.read_text(encoding="utf-8").splitlines()[first_turn:]
+    ]
+    results = [record for record in second if record.get("type") == "result"]
+    assert [record.get("origin") for record in results] == [{"kind": "task-notification"}, None]
+    said = [
+        json.dumps(record.get("message")) for record in second if record.get("type") == "assistant"
+    ]
+    assert any("echo: the second mail" in text for text in said), said
+    headless_host.ok("session.cleanup", {"session_id": "h-orphan"})
 
 
 def test_host_headless_claude_round_trip_launch_turn_end_send_resume_cleanup(

@@ -132,6 +132,12 @@
   ;; wire には None のとき欄ごと省略。run_to_completion / interactive では常に None。
   #^ (| str None) turn-ended-at
   (setv turn-ended-at None)
+  ;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D2): 温かい session の手番が**失敗で**終わった時に走行器が名乗った文
+  ;; (headless の turn_verdict の detail — ok = False の時だけ)。turn-ended-at と対の level-triggered の欄:
+  ;; 成功の終わりと次の手番の送りで None。旧形は multi_turn の手番の失敗の旗を provider の限度以外すべて捨て、
+  ;; 走行器が「失敗した」と言っても行に 1 bit も残らなかった。wire には None のとき欄ごと省略。
+  #^ (| str None) turn-error
+  (setv turn-error None)
   ;; issue #557: attempt 中に一度でも blocked_api(api-limit marker)を観測した
   ;; 事実の durable latch(初回観測時刻)。終端時の tail-30 snapshot は本質的に
   ;; racy(上限文言は terminal 前に scroll out する)— turn-end-without-result /
