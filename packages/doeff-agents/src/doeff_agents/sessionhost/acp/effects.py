@@ -684,6 +684,32 @@ class WorkDirs:
     dirs: tuple[str, ...]
 
 
+#: node が持つ作業場の**根**(段 12 lane 12j 追補・card acp:kanban-issue:ki-3bfe48a9d5dc・2026-09-19): 契約 agora-kinds.json
+#: node.spec.workDirRoots(家からの相対の根 `~/.worktrees/` の list・欄の定義点は契約)。名簿(workDirs)は根の下の中身を
+#: 綴れない — 作法どおり worktree は全部 `~/.worktrees/` の下に在り(実測 2026-09-19 で会社 Mac に 3,105・名簿の上限は 512)、
+#: 名簿の導出(held-work-dirs-of)は隠し dir を 1 つも数えない。⇒ `~/.worktrees/…` を作業場にした手番はどの機体も持たず
+#: no-node-for-partition で座り続けた(実測 aj-FADYB38ND05SQWWJCGJHHTSPMT)。配車は `~/…` の work_dir を workDirs と
+#: この根の両方で篩う(ACP Decide.nodeHoldsWorkDir の 1 点)。
+NODE_SPEC_WORK_DIR_ROOTS = "workDirRoots"
+WORK_DIR_ROOTS_ENV = "DOEFF_AGENTD_WORK_DIR_ROOTS"
+WORK_DIR_ROOTS_SEPARATOR = ","
+#: 根の本数の上限(契約 node.spec.workDirRoots.maxItems の写し)。
+WORK_DIR_ROOTS_MAX = 16
+#: 候補の根(この機体で名乗りうる根の**宣言**)。実勢で篩う前の一覧で、agentd は **その dir が現に在る機体でだけ**
+#: 名乗る(runtime.home_root_entries が在否を読み、判断は join.held-work-dir-roots-of の 1 点)。既定の 1 本は作業場の
+#: 置き場の作法(dotfiles agentcli/worktree_provision.worktrees_root — worktree は全部 ~/.worktrees/ の下)の写し。
+#: ⚠ 宣言 file 由来の根(work_roots・pod は `~/` を名乗る)はここに入れない — 家からの相対の根として名乗ると
+#: 「家を持つ = 家の下の何でも持つ」と読まれ、checkout を持たない pod へ手番が飛ぶ。
+WORK_DIR_ROOT_CANDIDATES: tuple[str, ...] = ("~/.worktrees/",)
+
+
+@dataclass(frozen=True)
+class WorkDirRoots:
+    """node が持つ作業場の根の宣言(join.work-dir-roots-of / held-work-dir-roots-of の答え — 検を通った根を綴りの順・重複なしで運ぶ)。"""
+
+    roots: tuple[str, ...]
+
+
 @dataclass(frozen=True)
 class Places:
     """機体が仕える置き場の集合の宣言(join.places-of の答え — 検を通った語を宣言の順・重複なしで運ぶ・段 11 lane 11u)。"""
@@ -860,6 +886,9 @@ class JoinSpec:
     work_roots: tuple[str, ...] | None = None
     #: node が持つ作業場(段 12 lane 12j・#575 便 2 — composition root が家の一覧から導く)。None = 導いていない(欄を書かない)。
     work_dirs: tuple[str, ...] | None = None
+    #: node が持つ作業場の**根**(段 12 lane 12j 追補・card acp:kanban-issue:ki-3bfe48a9d5dc — composition root が
+    #: 候補の根の**在否**から導く)。None = 導いていない(欄を書かない)・空の tuple = どの候補の根も無い。
+    work_dir_roots: tuple[str, ...] | None = None
     #: 従量課金の binding kind を受けるか(従量課金の便 lane A — 宣言 file の
     #: [agentd].allow_metered_billing・flag --allow-metered-billing)。False = 受けない(既定)。
     #: 真のときだけ join が host の argv へ値なしの旗を足す。env は作らない(方針は argv の 1 点)。
@@ -1091,6 +1120,9 @@ class AgentdSettings:
     #: node が持つ作業場(段 12 lane 12j・#575 便 2 — join が据えた WORK_DIRS_ENV の写し・検は join.work-dirs-of の 1 点)。
     #: None = 導いていない(spec に workDirs を書かない)・空の tuple = 何も持たない。
     work_dirs: tuple[str, ...] | None = None
+    #: node が持つ作業場の**根**(段 12 lane 12j 追補 — join が据えた WORK_DIR_ROOTS_ENV の写し・検は
+    #: join.work-dir-roots-of の 1 点)。None = 導いていない(spec に workDirRoots を書かない)・空の tuple = 根が 1 つも無い。
+    work_dir_roots: tuple[str, ...] | None = None
     #: host の backend(wire の閉語彙 tmux | herdr | headless の写し — agentd が読む語は
     #: BACKEND_HEADLESS だけ)。composition root(runtime.settings_from_env)が host の argv / env
     #: (valve.backend_of)から導く 1 点で、stream_capability も同じ源から導く。headless の器は

@@ -5732,3 +5732,63 @@ def test_join_derives_the_held_work_dirs_from_the_home_listing_and_carries_them_
     with pytest.raises(ValueError, match="512"):
         run(join.work_dirs_of(",".join(f"~/r{i}" for i in range(513))))
     del os
+
+
+def test_join_derives_the_held_work_dir_roots_from_actuality_and_carries_them_in_the_env(tmp_path: Path) -> None:
+    """段 12 lane 12j 追補(card acp:kanban-issue:ki-3bfe48a9d5dc): 名簿(workDirs)に綴れない作業場の**根**を名乗る —
+    候補の根(effects.WORK_DIR_ROOT_CANDIDATES = ~/.worktrees/)のうち **その機体に現に在る dir だけ**(判断 =
+    join.held-work-dir-roots-of・I/O = runtime.home_root_entries)。根の下は 1 つも列挙しない(会社 Mac は 3,105)。
+    env DOEFF_AGENTD_WORK_DIR_ROOTS(, 区切り)→ AgentdSettings.work_dir_roots → node の spec.workDirRoots。"""
+    from dataclasses import replace
+
+    from doeff_agents.sessionhost.acp import join, judgment
+    from doeff_agents.sessionhost.acp.effects import (
+        WORK_DIR_ROOT_CANDIDATES,
+        AgentdSettings,
+        JoinSpec,
+        WorkDirRoots,
+    )
+    from doeff_agents.sessionhost.acp.runtime import home_root_entries, join_plan, settings_from_env
+
+    # 判断(純関数): 在る根だけが名乗られる・在否は呼び手が読む・重複は 1 つ
+    assert run(join.held_work_dir_roots_of((("~/.worktrees/", True),))) == WorkDirRoots(roots=("~/.worktrees/",))
+    assert run(join.held_work_dir_roots_of((("~/.worktrees/", False),))) == WorkDirRoots(roots=())
+    assert run(join.held_work_dir_roots_of(())) == WorkDirRoots(roots=())
+    # 形の検は 1 点(env の読みと実勢の導きが同じ規則)— `/` で終わらない・家そのもの・絶対 path は参加しない
+    assert run(join.work_dir_root_shaped("~/.worktrees/")) is True
+    for wrong in ("~/.worktrees", "~/", "/Users/u/.worktrees/", ".worktrees/"):
+        assert run(join.work_dir_root_shaped(wrong)) is False
+        with pytest.raises(ValueError, match="候補の根"):
+            run(join.held_work_dir_roots_of(((wrong, True),)))
+        with pytest.raises(ValueError, match="DOEFF_AGENTD_WORK_DIR_ROOTS"):
+            run(join.work_dir_roots_of(wrong))
+    with pytest.raises(ValueError, match="16"):
+        run(join.work_dir_roots_of(",".join(f"~/r{i}/" for i in range(17))))
+    # I/O の 1 点: 候補の根の在否ちょうど(下は読まない)
+    home = tmp_path / "home"
+    (home / "dotfiles").mkdir(parents=True)
+    assert home_root_entries(str(home)) == tuple((root, False) for root in WORK_DIR_ROOT_CANDIDATES)
+    (home / ".worktrees" / "mediagen-wt-467").mkdir(parents=True)
+    assert home_root_entries(str(home)) == (("~/.worktrees/", True),)
+    assert home_root_entries(str(tmp_path / "nowhere")) == (("~/.worktrees/", False),)
+    # join の計画: 導いた根が env に載る(None は載らない)
+    base = ["--server", "http://acp:8868", "--token-file", "/t", "--capacity", "2", "--places", "personal"]
+    spec = _join_spec(base)
+    assert isinstance(spec, JoinSpec)
+    assert spec.work_dir_roots is None
+    assert "DOEFF_AGENTD_WORK_DIR_ROOTS" not in dict(run(join.join_plan_of(spec)).env)
+    assert dict(run(join.join_plan_of(replace(spec, work_dir_roots=("~/.worktrees/",)))).env)["DOEFF_AGENTD_WORK_DIR_ROOTS"] == "~/.worktrees/"
+    plan = join_plan(base, {"HOME": str(home), "XDG_STATE_HOME": str(tmp_path / "state")})
+    assert dict(plan.env)["DOEFF_AGENTD_WORK_DIR_ROOTS"] == "~/.worktrees/"
+    # settings の読み → node の spec の欄(名乗らない機体の spec は 1 bit も変わらない)
+    recorded = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACES": "personal"}
+    assert settings_from_env({**recorded, "DOEFF_AGENTD_WORK_DIR_ROOTS": "~/.worktrees/"}, ()).work_dir_roots == ("~/.worktrees/",)
+    assert settings_from_env({**recorded, "DOEFF_AGENTD_WORK_DIR_ROOTS": ""}, ()).work_dir_roots == ()
+    assert settings_from_env(recorded, ()).work_dir_roots is None
+    settings = AgentdSettings(node_name="pool-1", node_capacity=2, stream_capability="events")
+    assert "workDirRoots" not in run(judgment.node_spec_of(settings))
+    holder = replace(settings, work_dir_roots=("~/.worktrees/",))
+    assert run(judgment.node_spec_of(holder))["workDirRoots"] == ["~/.worktrees/"]
+    old_row = {"name": "pool-1", "labels": {}, "capacity": 2, "streamCapability": "events"}
+    assert run(judgment.node_spec_declared(old_row, holder))["workDirRoots"] == ["~/.worktrees/"]
+    assert "workDirRoots" not in run(judgment.node_spec_declared(old_row, settings))

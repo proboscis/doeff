@@ -142,6 +142,7 @@
   PLACES-SEPARATOR
   NODE-SPEC-WORK-ROOTS
   NODE-SPEC-WORK-DIRS
+  NODE-SPEC-WORK-DIR-ROOTS
   PROFILE-KIND
   AGENTD-PRINCIPAL
   AGORA-KINDS-NAMESPACE
@@ -2857,6 +2858,18 @@
   next)
 
 
+(defk node-work-dir-roots-of [settings spec]
+  {:pre [(: settings AgentdSettings) (: spec dict)]
+   :post [(: % dict)]}
+  "join が実勢から導いた「持っている根」を spec の欄 workDirRoots(文字列の list・宣言の順)に置いた写し(段 12 lane 12j 追補・
+   card acp:kanban-issue:ki-3bfe48a9d5dc)。None(導いていない)なら足さない — 欄の無い node の判定は今日どおり(名簿だけ)。
+   空の list は「候補の根がどれも無い」の宣言。名簿(workDirs)と違って根の下は列挙しない。"
+  (setv next (dict spec))
+  (when (is-not settings.work-dir-roots None)
+    (setv (get next NODE-SPEC-WORK-DIR-ROOTS) (list settings.work-dir-roots)))
+  next)
+
+
 (defk declared-capacity-of [settings]
   {:pre [(: settings AgentdSettings)]
    :post [(: % int)]}
@@ -2893,7 +2906,8 @@
                                            NODE-SPEC-AGENTD-KEY version}))
   (<- rooted dict (node-work-roots-of settings placed))
   (<- held dict (node-work-dirs-of settings rooted))
-  held)
+  (<- under dict (node-work-dir-roots-of settings held))
+  under)
 
 
 (defk node-spec-declared [spec settings]
@@ -2914,7 +2928,8 @@
                                            NODE-SPEC-AGENTD-KEY version}))
   (<- rooted dict (node-work-roots-of settings placed))
   (<- held dict (node-work-dirs-of settings rooted))
-  held)
+  (<- under dict (node-work-dir-roots-of settings held))
+  under)
 
 
 (defk node-lease-of [settings now-ms]
