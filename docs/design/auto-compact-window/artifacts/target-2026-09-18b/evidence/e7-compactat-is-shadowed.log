@@ -1,0 +1,19 @@
+# E7 — CLI 側の閾値を入れると、既存の compactAt(会話の宣言・%)が撃たなくなる
+
+## 測り方(実コード judgment.context-percent-of)
+  使用率 % = tokens / window * 100   window = CLI が名乗る modelUsage[model].contextWindow
+  ⇒ window は **モデルの窓**(Fable / Opus は 1,000,000)であって、畳む閾値ではない。
+
+## いま(閾値の宣言なし・観測した実測)
+  tokens=  550000 window=1000000 -> 55%   compactAt=70 なら due=False / compactAt=80 なら due=False
+  tokens=  967000 window=1000000 -> 96%   compactAt=70 なら due=True / compactAt=80 なら due=True
+
+## 段 1 の床(400,000)を入れた後 — CLI が 400k 付近で畳むので tokens はそこで頭打ち
+  tokens=  380000 window=1000000 -> 38%   compactAt=70 なら due=False / compactAt=80 なら due=False / compactAt=35 なら due=True
+  tokens=  400000 window=1000000 -> 40%   compactAt=70 なら due=False / compactAt=80 なら due=False / compactAt=35 なら due=True
+  tokens=  420000 window=1000000 -> 42%   compactAt=70 なら due=False / compactAt=80 なら due=False / compactAt=35 なら due=True
+
+## 結論
+  床 400k / 窓 1M では使用率が約 40% で頭打ちになるので、40 より上の compactAt を宣言した
+  会話では agentd 側の圧縮(温かい session を片付けて記録から再開する腕)が**二度と撃たない**。
+  ACP の検が使っている宣言値は 70 と 80(test/Acp/App/MessagingSpec.hs)。

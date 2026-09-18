@@ -1,0 +1,81 @@
+== 直近24h Fable 15984u / 15783 ターン ==
+
+-- cwd(作業ディレクトリ)別 --
+    4521.3u  28.3%  turns= 4207  ~/dotfiles
+    4512.5u  28.2%  turns= 4295  ~/repos/agent-control-plane
+    2316.0u  14.5%  turns= 2868  ~/repos
+    1330.8u   8.3%  turns= 1343  ~/repos/herdr-hud
+     630.1u   3.9%  turns=  522  ~/repos/code-quality
+     500.4u   3.1%  turns=  474  ~/.worktrees/mediagen-wt-handover-control-0915
+     443.9u   2.8%  turns=  497  ~/repos/mediagen
+     371.3u   2.3%  turns=  278  ~/.worktrees/mediagen-wt-ikukyuu-36-0916
+     273.7u   1.7%  turns=  202  ~/.worktrees/mediagen-wt-ikukyuu-37-0915
+     128.9u   0.8%  turns=   91  ~/.worktrees/agent-control-plane-wt-stage10-steward
+     125.2u   0.8%  turns=  189  ~/.worktrees/mediagen-wt-ikukyuu-31-0915
+     118.3u   0.7%  turns=   64  ~/.worktrees/mediagen-wt-ikukyuu-35-0915
+      80.3u   0.5%  turns=  153  ~/.worktrees/mediagen-wt-ikukyuu-121-0917
+      76.8u   0.5%  turns=   45  ~/.worktrees/mediagen-wt-ikukyuu-28-review-0915
+      67.3u   0.4%  turns=   39  ~/.worktrees/mediagen-wt-ikukyuu-56-0916
+      64.3u   0.4%  turns=   24  ~/.worktrees/mediagen-wt-ikukyuu-69-0915
+      60.8u   0.4%  turns=   53  ~/.worktrees/mediagen-wt-ikukyuu-118-0917
+      58.4u   0.4%  turns=   53  ~/.worktrees/mediagen-wt-ikukyuu-119-0917
+      58.2u   0.4%  turns=   38  ~/.worktrees/mediagen-wt-ikukyuu-33-0915
+      53.4u   0.3%  turns=   61  ~/.worktrees/mediagen-wt-ikukyuu-114-0917
+
+-- セッション別 上位20 --
+    2146.9u  13.4%  turns= 2361 avgctx=   550k  btc          ~/repos
+        c41265de-6e87-40d2-8c6d-4136ed74edc8.jsonl
+    1162.1u   7.3%  turns= 1060 avgctx=   602k  p10169       ~/repos/agent-control-plane
+        d83debff-2db5-4165-88ba-19b6a9b3b41a.jsonl
+    1046.2u   6.5%  turns= 1012 avgctx=   581k  p10200       ~/dotfiles
+        a17b7bcd-4ed5-4042-a733-75b2fb556929.jsonl
+    1034.7u   6.5%  turns= 1036 avgctx=   529k  p10172       ~/repos/agent-control-plane
+        1b14d891-191a-4597-8aa2-25b5939342d1.jsonl
+     965.1u   6.0%  turns=  915 avgctx=   551k  p10177       ~/repos/herdr-hud
+        345bcd2b-6efd-421f-b990-41e99e9241c0.jsonl
+     922.2u   5.8%  turns=  785 avgctx=   585k  p10171       ~/dotfiles
+        197619f7-6b93-43c7-a7e4-44961ec6b8ad.jsonl
+     910.7u   5.7%  turns=  803 avgctx=   564k  p10170       ~/repos/agent-control-plane
+        7da29810-84eb-4c25-88b6-a982fd534c22.jsonl
+     890.6u   5.6%  turns=  938 avgctx=   512k  p10183       ~/dotfiles
+        11c97437-3be5-4175-ba77-c23ffa4f473b.jsonl
+     758.0u   4.7%  turns=  777 avgctx=   544k  p10185       ~/repos/agent-control-plane
+        34bd7de6-7381-4161-b1e7-8fea86e02558.jsonl
+     647.0u   4.0%  turns=  619 avgctx=   513k  p10184       ~/repos/agent-control-plane
+        98ec924d-ce6d-4f34-89b1-bd390ee02968.jsonl
+     630.1u   3.9%  turns=  522 avgctx=   619k  p10182       ~/repos/code-quality
+        c9ba79f3-2aa7-429b-8a1a-9e59960a6c8b.jsonl
+     588.5u   3.7%  turns=  466 avgctx=   584k  p10176       ~/dotfiles
+        a73d1a91-6692-4131-a3b2-e6846c88aa96.jsonl
+     548.7u   3.4%  turns=  472 avgctx=   556k  p10178       ~/dotfiles
+        2c071d82-ccd4-46da-a47d-c8ebcac72e24.jsonl
+     525.2u   3.3%  turns=  534 avgctx=   522k  p10181       ~/dotfiles
+        caab6ab8-3ec7-4172-af78-84f02772831a.jsonl
+     413.1u   2.6%  turns=  448 avgctx=   447k  p10172       ~/repos/mediagen
+        30ac5550-cf9b-452c-b1df-82eba50ec4bd.jsonl
+     371.3u   2.3%  turns=  278 avgctx=   638k  p10175       ~/.worktrees/mediagen-wt-ikukyuu-36-0916
+        d1c34d1d-a8e5-4289-81fd-2fef6635d4c3.jsonl
+     338.0u   2.1%  turns=  375 avgctx=   461k  cryptic-x    ~/repos/herdr-hud
+        ea36a066-2e11-4367-bbf7-c965fd815e8e.jsonl
+     318.0u   2.0%  turns=  289 avgctx=   576k  p10174       ~/.worktrees/mediagen-wt-handover-control-0915
+        934691a8-c083-4db1-b7ee-f077fc2fa59e.jsonl
+     191.5u   1.2%  turns=  153 avgctx=   536k  p10186       ~/.worktrees/mediagen-wt-ikukyuu-37-0915
+        104e279e-5ad7-41a5-8ccc-f317f18413fa.jsonl
+     174.9u   1.1%  turns=  163 avgctx=   504k  ca-pro       ~/.worktrees/mediagen-wt-handover-control-0915
+        934691a8-c083-4db1-b7ee-f077fc2fa59e.jsonl
+
+-- 1ターンのコンテキスト長 分布 --
+    <50k  turns=    25 ( 0.2%)  cost=    21.0u ( 0.1%)
+   50-100k  turns=   552 ( 3.5%)  cost=   192.2u ( 1.2%)
+  100-200k  turns=  1758 (11.1%)  cost=   721.7u ( 4.5%)
+  200-400k  turns=  3297 (20.9%)  cost=  2141.5u (13.4%)
+  400-600k  turns=  3487 (22.1%)  cost=  3403.6u (21.3%)
+  600-800k  turns=  3588 (22.7%)  cost=  4669.7u (29.2%)
+  800k-1M  turns=  3076 (19.5%)  cost=  4834.7u (30.2%)
+
+-- output token の大きさ別(小さい=ツール駆動の刻み) --
+     <100  turns=   634 ( 4.0%)  cost=   255.1u ( 1.6%)
+   100-300  turns=  1772 (11.2%)  cost=  1596.5u (10.0%)
+   300-1000  turns=  6218 (39.4%)  cost=  5829.6u (36.5%)
+  1000-3000  turns=  5547 (35.1%)  cost=  6163.2u (38.6%)
+     >3000  turns=  1612 (10.2%)  cost=  2140.0u (13.4%)

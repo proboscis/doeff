@@ -1,0 +1,27 @@
+flowchart LR
+  subgraph declare["宣言する側(値を持つ)"]
+    ROUTE["route-dispatcher<br/>ai route / 起票<br/>役 = class investigate / dev"]
+    POLICY["delivery-policy-row<br/>台帳の行 current<br/>既定 charter"]
+  end
+  subgraph brain["重ねる側"]
+    CHARTER["acp-charter<br/>Plan.charterFor<br/>方策の既定 + 会話の宣言"]
+  end
+  subgraph agentd["起こす側(読むだけ)"]
+    ARMS["agentd-arms<br/>launch / resume / rehydrate"]
+    DERIVE["autocompact-derivation<br/>claude-autocompact-value<br/>幅の関門・auto への縮退"]
+    ARGV["agentd-argv-builder<br/>build-claude-argv"]
+    HEADLESS["headless-argv<br/>print mode の旗"]
+  end
+  CLI["claude-cli<br/>実効の窓 = min(指定, モデルの窓)"]
+
+  ROUTE -->|"auto_compact_window を宣言"| CHARTER
+  POLICY -->|"既定 charter"| CHARTER
+  CHARTER -->|"charter"| ARMS
+  ARMS -->|"params"| ARGV
+  ARGV --> DERIVE
+  DERIVE -->|"--autocompact &lt;値&gt;"| ARGV
+  ARGV --> HEADLESS
+  HEADLESS --> CLI
+
+  classDef added stroke-dasharray: 4 3
+  class DERIVE added
