@@ -133,8 +133,9 @@ USAGE_WINDOW_FULL_PERCENT = 100.0
 StreamCapability = Literal["events", "frames", "none"]
 STREAM_CAPABILITY_EVENTS: StreamCapability = "events"
 STREAM_CAPABILITY_FRAMES: StreamCapability = "frames"
-#: TurnDelta の種類(docs/contracts/turn-delta.json kinds)。
-DeltaKind = Literal["text", "tool_use", "tool_result", "usage", "status", "frame"]
+#: TurnDelta の種類(docs/contracts/turn-delta.json kinds)。tool_input_delta = 道具の呼び出しの書きかけの引数の続き
+#: (2026-09-19・card acp:kanban-issue:ki-0d0bcd1e81d9 — 完成した呼び出しは tool_use のまま)。
+DeltaKind = Literal["text", "tool_use", "tool_input_delta", "tool_result", "usage", "status", "frame"]
 #: agent-job の conditions に agentd が書く type の語彙(AgentJob.hs は type を opaque に運ぶ —
 #: 閉語彙は phase だけなので、agentd 側の語をここ 1 点で閉じる)。Interrupted = 取り下げ
 #: (Withdrawn)で走っている手番を止めた(phase は書き手 = 作った側のまま)。
@@ -1671,6 +1672,23 @@ class UnrecordedEnd:
 
 
 @dataclass(frozen=True)
+class OpenToolBlock:
+    """走行器が開いた(content_block_start の tool_use を見た)道具の呼び出しの block 1 つ — 書きかけの引数
+    (input_json_delta の partial_json)を完成の呼び出しと同じ id・同じ名で名乗るための表の 1 行。
+
+    走行器の差分は block を ``index`` でしか名指さないので、開始の拍に見た id と名を読みをまたいで持つ
+    (InFlightJob.open_tool_blocks — 判断は judgment.claude-deltas-of の入力と出力で、純関数のまま)。
+    ``parent`` = 行の parent_tool_use_id(無ければ空)— index は message ごとの番号なので、下請けの agent の
+    message と番号が重なっても別の道具へ誤って結ばない。開始を見ていない差分は frame にしない(id も名も発明しない)。
+    """
+
+    parent: str
+    index: int
+    tool_use_id: str
+    name: str
+
+
+@dataclass(frozen=True)
 class DeltaBatch:
     """transcript の行の列から組んだ TurnDelta の frame と turn-record の entries(見出し)。"""
 
@@ -1689,6 +1707,10 @@ class DeltaBatch:
     context: JSONObject | None = None
     #: 段 10 lane 10n(agora-redesign #93): この材料で読めた「model が割り込みを読んだ」証拠(順は出来事の順)。
     interrupt_reads: tuple[InterruptRead, ...] = ()
+    #: この材料を読み終えた時点でまだ開いている道具の block(次の読みの入力 — OpenToolBlock)。
+    open_tool_blocks: tuple[OpenToolBlock, ...] = ()
+    #: 開始(content_block_start)を見ていない引数の差分の数 — frame にせず数える(黙って捨てない・名前を発明しない)。
+    orphan_input_deltas: int = 0
 
 
 @dataclass(frozen=True)
@@ -1980,6 +2002,9 @@ class InFlightJob:
     #: (acknowledge-cancel)に据え、手番の終わりの result.cause と強制の段の判断(judgment.cancel-arm-for)の材料。拾い直し
     #: (recover-job)は行から写す(judgment.recovered-cancel-of)。
     cancel: JobCancel | None = None
+    #: 走行器が開いたままの道具の block(書きかけの引数の差分を id と名に結ぶ表 — OpenToolBlock)。実況のための memory の
+    #: 写しで、行にも記録にも書かない。再起動で消えたら、以後に開く道具から書きかけが出る(完成の呼び出しは変わらない)。
+    open_tool_blocks: tuple[OpenToolBlock, ...] = ()
     #: 見届けた拍(ms・None = まだ)= 行の status.cancel.acknowledgedAt の写し。行への書きが断られても memory に置く
     #: (割り込みを毎拍撃ち直さない)— 再起動で消えれば行から戻り、行にも無ければ改めて見届ける(割り込みは新しい器へ)。
     cancel_acknowledged_at_ms: int | None = None

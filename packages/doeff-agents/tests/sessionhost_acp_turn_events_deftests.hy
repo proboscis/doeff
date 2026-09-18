@@ -27,8 +27,10 @@
   AgentdSettings
   Conflict
   DELTA-INPUT-STRING-LIMIT
+  DeltaBatch
   InFlightJob
   MESSAGE-KIND
+  OpenToolBlock
   NODE-KIND
   PHASE-BOUND
   PHASE-ENDED
@@ -59,6 +61,7 @@
   retired-rows-of
   claude-system-note
   deltas-of
+  tool-input-chunks
   entries-within-budget
   entry-json-of
   headline-of-body
@@ -222,13 +225,13 @@
   ;; streamed の deltas-of は system / error を entries に写す(frame には出さない)。
   (setv text (+ (stream-line {"type" "system" "subtype" "init" "model" "m"})
                 (stream-line {"type" "result" "subtype" "error_during_execution" "is_error" True "result" "boom"})))
-  (setv batch (run (deltas-of "claude" "events" text "job" 0 AT)))
+  (setv batch (run (deltas-of "claude" "events" text "job" 0 AT #())))
   (assert (= (lfor entry batch.entries entry.kind) ["system" "error"]))
   (assert (= (lfor entry batch.entries entry.seq) [0 1]))
   (assert (= (get (get batch.bodies 1) "text") "boom") "本文は bodies に(見出しには無い)")
   (assert (= batch.frames #()))
   ;; transcript(tui)の行は system / result を読まない(従来どおり)。
-  (setv quiet (run (deltas-of "claude" "transcript" text "job" 0 AT)))
+  (setv quiet (run (deltas-of "claude" "transcript" text "job" 0 AT #())))
   (assert (= quiet.entries #()))
   (assert (= quiet.entries #())))
 
@@ -472,10 +475,169 @@
   (assert (not-in "input" (get codex "payload")) codex)
   (assert (not-in "clipped" (get codex "payload")) codex)
   ;; 走行器の行から組んだ実況にも input が載る(claude の stream-json の 1 手番)。
-  (setv batch (run (deltas-of "claude" "events" (claude-events "s-1" "本文") "job" 0 AT)))
+  (setv batch (run (deltas-of "claude" "events" (claude-events "s-1" "本文") "job" 0 AT #())))
   (setv uses (lfor item batch.frames :if (= (get item "kind") "tool_use") item))
   (assert (= (len uses) 1) uses)
   (assert (= (get (get (get uses 0) "payload") "input") {"file_path" "/work/a.txt"}) uses))
+
+
+;; ---------------------------------------------------------------------------
+;; 道具の呼び出しの書きかけの引数(tool_input_delta — 2026-09-19・card acp:kanban-issue:ki-0d0bcd1e81d9)
+;; ---------------------------------------------------------------------------
+
+(defn #^ str block-event [#^ dict event #^ (| str None) parent]
+  "走行器の stream_event の 1 行(parent = 行の parent_tool_use_id)。"
+  (stream-line {"type" "stream_event" "event" event "parent_tool_use_id" parent}))
+
+
+(defn #^ str tool-start [#^ int index #^ str tool-id #^ str name]
+  (block-event {"type" "content_block_start" "index" index
+                "content_block" {"type" "tool_use" "id" tool-id "name" name "input" {}}} None))
+
+
+(defn #^ str input-delta [#^ int index #^ str piece]
+  (block-event {"type" "content_block_delta" "index" index
+                "delta" {"type" "input_json_delta" "partial_json" piece}} None))
+
+
+(defn #^ list drafts-of [#^ DeltaBatch batch]
+  (lfor item batch.frames :if (= (get item "kind") "tool_input_delta") item))
+
+
+(deftest test-tool-input-deltas-of-one-read-join-into-one-frame-per-tool
+  ;; 1 回の読みの中の同じ道具の差分は連結して 1 frame(束ねる粒 = 読みの周期 — 時間の定数を足さない)。chunk は
+  ;; partial_json の続きの文字列ちょうどで、JSON として解釈しない(閉じていない断面のまま運ぶ)。
+  (setv text (+ (tool-start 1 "toolu_1" "Bash")
+                (input-delta 1 "")
+                (input-delta 1 "{\"comm")
+                (input-delta 1 "and\": \"ec")))
+  (setv batch (run (deltas-of "claude" "events" text "job" 5 AT #())))
+  (setv drafts (drafts-of batch))
+  (assert (= (len drafts) 1) drafts)
+  (assert (= (get (get drafts 0) "payload") {"toolUseId" "toolu_1" "name" "Bash" "chunk" "{\"command\": \"ec"}) drafts)
+  (assert (= (get (get drafts 0) "seq") 5))
+  (assert (= batch.next-seq 6))
+  ;; 書きかけは実況だけ: 記録(bodies / entries)には 1 字も入らない。
+  (assert (= batch.bodies #()) batch.bodies)
+  (assert (= batch.entries #()) batch.entries)
+  ;; block はまだ開いている(次の読みの入力)。
+  (assert (= batch.open-tool-blocks #((OpenToolBlock :parent "" :index 1 :tool-use-id "toolu_1" :name "Bash"))))
+  (assert (= batch.orphan-input-deltas 0))
+  ;; 次の読み: 開いた block の表を入力に、続きが同じ id と名で出る(開始の行はもう材料に無い)。
+  (setv later (run (deltas-of "claude" "events" (+ (input-delta 1 "ho hi\"") (input-delta 1 "}"))
+                              "job" batch.next-seq AT batch.open-tool-blocks)))
+  (assert (= (lfor item (drafts-of later) (get item "payload"))
+             [{"toolUseId" "toolu_1" "name" "Bash" "chunk" "ho hi\"}"}]))
+  ;; 道具の開始の拍に走行器が送る空の差分だけの読みは、空の chunk の frame 1 つ(名前だけのカードが開始の拍に出る)。
+  (setv opening (run (deltas-of "claude" "events" (+ (tool-start 0 "toolu_9" "Write") (input-delta 0 "")) "job" 0 AT #())))
+  (assert (= (lfor item (drafts-of opening) (get item "payload")) [{"toolUseId" "toolu_9" "name" "Write" "chunk" ""}])))
+
+
+(deftest test-tool-input-deltas-without-a-seen-start-are-counted-not-framed
+  ;; 開始(content_block_start)を見ていない差分は frame にしない — id も名前も発明しない。黙って捨てず数える。
+  (setv batch (run (deltas-of "claude" "events" (+ (input-delta 1 "{\"a\"") (input-delta 1 ": 1}")) "job" 0 AT #())))
+  (assert (= (drafts-of batch) []))
+  (assert (= batch.frames #()))
+  (assert (= batch.orphan-input-deltas 2))
+  (assert (= batch.next-seq 0) "frame にしない差分が seq を使っている")
+  ;; id か名前を名乗らない開始は block を開かない(その差分も数えるだけ)。
+  (setv nameless (+ (block-event {"type" "content_block_start" "index" 2
+                                  "content_block" {"type" "tool_use" "id" "toolu_2" "name" ""}} None)
+                    (input-delta 2 "{}")))
+  (setv quiet (run (deltas-of "claude" "events" nameless "job" 0 AT #())))
+  (assert (= (drafts-of quiet) []))
+  (assert (= quiet.orphan-input-deltas 1))
+  (assert (= quiet.open-tool-blocks #())))
+
+
+(deftest test-open-tool-blocks-close-at-stop-and-reset-at-message-start
+  (setv opened #((OpenToolBlock :parent "" :index 1 :tool-use-id "toolu_1" :name "Bash")))
+  ;; content_block_stop で閉じる。
+  (setv stopped (run (deltas-of "claude" "events" (block-event {"type" "content_block_stop" "index" 1} None) "job" 0 AT opened)))
+  (assert (= stopped.open-tool-blocks #()))
+  ;; message_start でその message の表を空に戻す(index は message ごとの番号 — 前の message の道具へ結ばない)。
+  (setv restarted (run (deltas-of "claude" "events"
+                                  (+ (block-event {"type" "message_start" "message" {"id" "msg_2"}} None) (input-delta 1 "{"))
+                                  "job" 0 AT opened)))
+  (assert (= (drafts-of restarted) []))
+  (assert (= restarted.orphan-input-deltas 1))
+  ;; 同じ番号の本文の block が始まれば、前の道具の block は終わっている(番号の使い回し)。
+  (setv reused (run (deltas-of "claude" "events"
+                               (+ (block-event {"type" "content_block_start" "index" 1
+                                                "content_block" {"type" "text" "text" ""}} None)
+                                  (input-delta 1 "{"))
+                               "job" 0 AT opened)))
+  (assert (= (drafts-of reused) []))
+  ;; 下請けの agent の message(parent_tool_use_id つき)は別の表: 同じ番号でも親の道具へ結ばない・親の表を消さない。
+  (setv child (+ (block-event {"type" "message_start" "message" {"id" "msg_c"}} "toolu_task")
+                 (block-event {"type" "content_block_delta" "index" 1
+                               "delta" {"type" "input_json_delta" "partial_json" "{\"x"}} "toolu_task")))
+  (setv nested (run (deltas-of "claude" "events" child "job" 0 AT opened)))
+  (assert (= (drafts-of nested) []))
+  (assert (= nested.orphan-input-deltas 1))
+  (assert (= nested.open-tool-blocks opened))
+  ;; transcript(tui)と codex は引数の差分を運ばない — 書きかけを発明しない。
+  (setv tui (run (deltas-of "claude" "transcript" (+ (tool-start 1 "toolu_1" "Bash") (input-delta 1 "{")) "job" 0 AT #())))
+  (assert (= (drafts-of tui) []))
+  (setv codex (run (deltas-of "codex" "events" (+ (tool-start 1 "toolu_1" "Bash") (input-delta 1 "{")) "job" 0 AT #())))
+  (assert (= (drafts-of codex) [])))
+
+
+(deftest test-the-draft-frame-precedes-the-completed-tool-use-and-splits-an-oversized-join
+  ;; 同じ読みに完成の呼び出しが在っても、書きかけの frame はその前(最初の差分の位置)に並ぶ — 読み手は完成で置き換える。
+  (setv usage {"input_tokens" 1 "output_tokens" 1 "cache_creation_input_tokens" 0 "cache_read_input_tokens" 0})
+  (setv done (stream-line {"type" "assistant"
+                           "message" {"id" "msg_1" "role" "assistant" "model" "claude-opus-5"
+                                      "content" [{"type" "tool_use" "id" "toolu_1" "name" "Bash"
+                                                  "input" {"command" "ls"}}]
+                                      "usage" usage}}))
+  (setv text (+ (tool-start 1 "toolu_1" "Bash") (input-delta 1 "{\"command\"") (input-delta 1 ": \"ls\"}") done))
+  (setv batch (run (deltas-of "claude" "events" text "job" 0 AT #())))
+  (setv kinds (lfor item batch.frames :if (in (get item "kind") #{"tool_input_delta" "tool_use"}) (get item "kind")))
+  (assert (= kinds ["tool_input_delta" "tool_use"]) kinds)
+  ;; 完成の呼び出しの frame と記録は今までどおり(input は object・記録は完成した tool_use だけ)。
+  (setv use (get (lfor item batch.frames :if (= (get item "kind") "tool_use") item) 0))
+  (assert (= (get (get use "payload") "input") {"command" "ls"}))
+  (assert (= (lfor entry batch.entries entry.kind) ["tool_use"]))
+  ;; 上限(tool_use.input の文字列を切るのと同じ DELTA-INPUT-STRING-LIMIT 字)を超える連結は続きの frame に分ける —
+  ;; 字は落とさない(読み手は総字数を chunk の長さの和で数える)・順は保つ・第 2 の上限を置かない。
+  (setv long (* "x" (+ DELTA-INPUT-STRING-LIMIT 10)))
+  (setv pieces (run (tool-input-chunks long DELTA-INPUT-STRING-LIMIT)))
+  (assert (= (lfor piece pieces (len piece)) [DELTA-INPUT-STRING-LIMIT 10]))
+  (assert (= (run (tool-input-chunks "" DELTA-INPUT-STRING-LIMIT)) #("")))
+  (setv heavy (run (deltas-of "claude" "events" (+ (tool-start 1 "toolu_1" "Write") (input-delta 1 long) done) "job" 0 AT #())))
+  (setv order (lfor item heavy.frames :if (in (get item "kind") #{"tool_input_delta" "tool_use"}) (get item "kind")))
+  (assert (= order ["tool_input_delta" "tool_input_delta" "tool_use"]) order)
+  (assert (= (.join "" (lfor item (drafts-of heavy) (get (get item "payload") "chunk"))) long))
+  (setv seqs (lfor item heavy.frames (get item "seq")))
+  (assert (= (len (set seqs)) (len seqs)) "frame の seq が重なっている"))
+
+
+(deftest test-agentd-carries-open-tool-blocks-across-ticks-and-keeps-drafts-out-of-the-record
+  ;; agentd を一周: 開いた block の表は拍をまたいで InFlightJob が持ち、書きかけは中継へだけ出る(行の entries にも
+  ;; 記録の本文にも入らない)。
+  (setv world (World))
+  (.tick world 0)
+  (setv sid (.sid world))
+  (setv path f"/events/{sid}.events.jsonl")
+  (setv part-1 (+ (stream-line {"type" "system" "subtype" "init" "session_id" sid "model" "claude-opus-5"})
+                  (tool-start 1 "toolu_1" "Bash")
+                  (input-delta 1 "{\"command\": \"echo ")))
+  (setv (get world.local.transcripts path) part-1)
+  (.tick world 1000)
+  ;; 拍 2 の材料に開始の行は無い — 表が拍をまたいでいなければ、この続きは id も名も持てない。
+  (setv part-2 (+ (input-delta 1 "PROBE") (input-delta 1 "\"}")))
+  (setv (get world.local.transcripts path) (+ part-1 part-2))
+  (.tick world 1000)
+  (setv pushed (lfor [_owner _name frames] world.acp.pushes frame frames :if (= (get frame "kind") "tool_input_delta") frame))
+  (assert (= (lfor frame pushed (get frame "payload"))
+             [{"toolUseId" "toolu_1" "name" "Bash" "chunk" "{\"command\": \"echo "}
+              {"toolUseId" "toolu_1" "name" "Bash" "chunk" "PROBE\"}"}])
+          pushed)
+  ;; 行の entries は init だけ(書きかけは記録に無い)。
+  (assert (= (lfor entry (.record-entries world) (get entry "kind")) ["system"]))
+  (assert (not-in "PROBE" (json.dumps (.record-status world))))
+  (assert (not-in "PROBE" (json.dumps (lfor [_key status] world.acp.writes status)))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -851,8 +1013,11 @@
   (.tick world 1000)
   (assert (= (get world.acp.creates (record-key)) 4))
   (setv conditions (job-conditions world))
-  (assert (= (lfor c conditions (get c "type")) ["RecordUnavailable"]) conditions)
-  (assert (in "after 3 s" (get (get conditions 0) "reason")) conditions))
+  ;; この手番は本文を 1 つも出していない(init の system 行だけ)ので、7b81b077(L195・TurnProducedNothing)以降は出力 0 件の
+  ;; 条件も並ぶ。ここで見るのは記録の腕の条件ちょうど — 列の全体を pin しない(別の条件が増えるたびに赤にならない)。
+  (setv unavailable (lfor c conditions :if (= (get c "type") "RecordUnavailable") c))
+  (assert (= (len unavailable) 1) conditions)
+  (assert (in "after 3 s" (get (get unavailable 0) "reason")) conditions))
 
 
 (deftest test-turn-end-retries-the-create-once-even-before-the-period

@@ -1193,7 +1193,7 @@ def test_deltas_of_claude_folds_blocks_and_counts_usage_once_per_message() -> No
         )
         + transcript_line("user", [{"type": "tool_result", "tool_use_id": "t1", "content": "a\nb"}])
     )
-    batch = run(judgment.deltas_of("claude", "transcript", text, "job", 10, 777))
+    batch = run(judgment.deltas_of("claude", "transcript", text, "job", 10, 777, ()))
     assert [frame["kind"] for frame in batch.frames] == ["usage", "tool_use", "text", "tool_result"]
     assert [entry.kind for entry in batch.entries] == ["tool_use", "text", "tool_result"]
     assert [body["kind"] for body in batch.bodies] == ["tool_use", "text", "tool_result"]
