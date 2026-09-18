@@ -1,0 +1,7 @@
+flowchart LR
+  T["1 つの手番が<br/>終わった時点"]
+  T --> IN["内側の輪<br/>CLI がその場で要約<br/>--autocompact 400,000"]
+  T --> OUT["外側の輪<br/>agentd が session を捨てて<br/>記録から組み直す<br/>宣言 = 使用率の %"]
+  IN --> K["温かい session は残る<br/>安い"]
+  OUT --> DR["session を捨てる<br/>高い"]
+  K -.->|"使用率が約 40% で頭打ちになる"| N["70 / 80 と宣言した会話では<br/>外側は二度と撃たない"]

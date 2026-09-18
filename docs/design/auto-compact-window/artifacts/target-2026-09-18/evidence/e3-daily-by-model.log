@@ -1,0 +1,9 @@
+== 日次(JST)== model 別 u / ターン数 / 稼働セッション数
+  09-11  fable     1462u (  2108t,  33sess)   opus     3665u (  6984t, 121sess)
+  09-12  fable      121u (   158t,  16sess)   opus     7379u ( 10660t,  58sess)
+  09-13  fable       47u (   100t,   3sess)   opus     5235u (  7666t,  53sess)
+  09-14  fable     1338u (  1709t,  14sess)   opus    10662u ( 13064t,  91sess)
+  09-15  fable     4697u (  4721t,  32sess)   opus    13359u ( 16598t,  72sess)
+  09-16  fable    13913u ( 14171t,  53sess)   opus     8412u ( 12687t, 191sess)
+  09-17  fable    16976u ( 16819t,  92sess)   opus     1608u (  6130t, 634sess)
+  09-18  fable      257u (   255t,   9sess)   opus       22u (    86t,   6sess)

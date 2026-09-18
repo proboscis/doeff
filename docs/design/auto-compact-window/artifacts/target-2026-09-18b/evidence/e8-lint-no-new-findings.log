@@ -1,0 +1,36 @@
+# E8 — 変更した file の品質検査(2026-09-18 01:41:19 JST)
+
+変更した file: effects.py(Python)/ claude_code.hy・judgment.hy・検 2 本(Hy)。
+repo の ruff の対象は Python だけ(pyproject の [tool.ruff])なので、Hy は対象外。
+
+## ruff — 本線の同 file と比べて増分 0
+本線(git show origin/main:…/acp/effects.py を同じ dir に置いて lint):
+   1 F821 Undefined name `RecordEvent`
+   1 Found 24 errors.
+   2 RUF002 Docstring contains ambiguous `〔` (LEFT TORTOISE SHELL BRACKET). Did you mean `(` (LEFT PARENTHESIS)?
+   2 RUF002 Docstring contains ambiguous `〕` (RIGHT TORTOISE SHELL BRACKET). Did you mean `)` (RIGHT PARENTHESIS)?
+   1 RUF003 Comment contains ambiguous `′` (PRIME). Did you mean ``` (GRAVE ACCENT)?
+   9 RUF003 Comment contains ambiguous `〔` (LEFT TORTOISE SHELL BRACKET). Did you mean `(` (LEFT PARENTHESIS)?
+   9 RUF003 Comment contains ambiguous `〕` (RIGHT TORTOISE SHELL BRACKET). Did you mean `)` (RIGHT PARENTHESIS)?
+変更後:
+   1 F821 Undefined name `RecordEvent`
+   1 Found 24 errors.
+   2 RUF002 Docstring contains ambiguous `〔` (LEFT TORTOISE SHELL BRACKET). Did you mean `(` (LEFT PARENTHESIS)?
+   2 RUF002 Docstring contains ambiguous `〕` (RIGHT TORTOISE SHELL BRACKET). Did you mean `)` (RIGHT PARENTHESIS)?
+   1 RUF003 Comment contains ambiguous `′` (PRIME). Did you mean ``` (GRAVE ACCENT)?
+   9 RUF003 Comment contains ambiguous `〔` (LEFT TORTOISE SHELL BRACKET). Did you mean `(` (LEFT PARENTHESIS)?
+   9 RUF003 Comment contains ambiguous `〕` (RIGHT TORTOISE SHELL BRACKET). Did you mean `)` (RIGHT PARENTHESIS)?
+
+⇒ 24 件はすべて origin/main に既に在るもの(全角の括弧の注意と、型の前方参照 1 件)。
+   本変更が増やした指摘は 0 件。
+
+## semgrep(repo の .semgrep.yaml)— 増分 0
+
+変更した 2 file と、その origin/main 版を同じ dir に置いて同時に当てた結果:
+
+    6  _base_judgment_tmp.hy   doeff-agents-no-claude-print-mode
+    6  judgment.hy             doeff-agents-no-claude-print-mode
+
+claude_code.hy は本線・変更後とも 0 件。judgment.hy の 6 件は本線と同数・同 rule で、
+当たっている行(4901〜4917)は `claude -p` の答えを読む既存の節であり、本変更が
+触っていない。⇒ 本変更が増やした指摘は 0 件。

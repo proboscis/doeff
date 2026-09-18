@@ -1,0 +1,21 @@
+# E6 — S13 適合検査は本線でも落ちる(この変更の所為ではない・2026-09-18 01:35:39 JST)
+
+## worktree(この変更あり)
+$ pytest conformance/test_s13_argv_wiring.py -q
+=========================== short test summary info ============================
+FAILED conformance/test_s13_argv_wiring.py::test_s13_claude_argv_wiring_and_m1_golden_path
+FAILED conformance/test_s13_argv_wiring.py::test_s13_claude_argv_session_hooks_inherit
+FAILED conformance/test_s13_argv_wiring.py::test_s13_codex_argv_wiring - doef...
+3 failed, 1 warning in 10.30s
+
+## 本線(この変更なし・origin/main の checkout)— codex の検も同じ理由で落ちる
+$ pytest conformance/test_s13_argv_wiring.py::test_s13_codex_argv_wiring -q
+=========================== short test summary info ============================
+FAILED conformance/test_s13_argv_wiring.py::test_s13_codex_argv_wiring - doef...
+1 failed, 1 warning in 3.44s
+
+落ちる理由: harness が agentd の unix socket に繋げない
+  FileNotFoundError: [Errno 2] No such file or directory (io_handlers.hy:108 .connect sock socket-path)
+codex の argv の検は本変更が 1 byte も触っていない経路なので、環境側の不足であって
+本変更による退行ではない。⇒ R6(凍結接頭と --effort の位置)の適合は E5 の単体側の
+位置 pin(cut argv 0 4 と .index argv --effort = 4)でのみ確認済み。

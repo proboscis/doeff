@@ -1,0 +1,14 @@
+# E2 — 稼働中の claude 席が閾値を名乗っているか(2026-09-18 01:29:46 JST)
+稼働本数:       43
+--autocompact を持つ本数: 0
+
+## 起動元の親子(代表 1 本)
+  PID  PPID COMMAND
+ 5421 14230 claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --dangerously-skip-permissions --effort xhigh --model claude-opus-5 --session-id 774ec
+  PID  PPID COMMAND
+14230     1 /Users/s22625/.local/share/uv/tools/doeff-agents/bin/python /Users/s22625/.local/bin/doeff-sessionhost join --config /Users/s22625/.local/state/doeff/acp-agentd/agentd.toml
+
+## dotfiles 側の走行係は名乗る(対比)
+3420:AUTOCOMPACT_DEFAULT_TOKENS = 600_000
+3427:AUTOCOMPACT_ENV = "AI_HEADLESS_AUTOCOMPACT_TOKENS"
+3442:    raw = str(env.get(AUTOCOMPACT_ENV) or "").strip() or str(AUTOCOMPACT_DEFAULT_TOKENS)

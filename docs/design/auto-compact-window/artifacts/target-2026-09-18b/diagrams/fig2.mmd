@@ -1,0 +1,11 @@
+flowchart TB
+  C["charter<br/>auto_compact_window: 200000"]
+  C --> L["launch の腕<br/>charter を丸ごと params に<br/>(素通し)"]
+  C --> R["resume の腕<br/>resume-params-of の名簿で写す<br/>(名簿に無い欄は黙って落ちる)"]
+  C --> H["rehydrate の腕<br/>charter そのもの"]
+  L --> V["claude-autocompact-value"]
+  R --> V
+  H --> V
+  V -->|"100k〜1M の整数"| OK["--autocompact 200000"]
+  V -->|"幅の外 / 読めない / bool"| AUTO["--autocompact auto<br/>(縮退したことを argv 自身が名乗る)"]
+  V -->|"欄が無い"| FLOOR["--autocompact 400000<br/>(agentd の床)"]
