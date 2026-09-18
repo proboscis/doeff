@@ -4719,6 +4719,79 @@ def test_ownership_preflight_probes_gce_only_for_a_gce_proof_and_refuses_a_misma
     assert local.probes == before
 
 
+def test_ownership_of_takes_a_file_proof_and_refuses_a_broken_spelling() -> None:
+    """検の方法の第 3 の形 file:<path>=<値>(card ki-d6cc49cbf33f 決定 D4 ①): path と値の両方が要り、
+    割りは最初の `=` 1 つ(値に `=` が在ってよい)。片方が空・`=` が無い綴りは断る(語彙の外)。"""
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import Ownership
+
+    proof = "file:/Users/x/.local/state/agora/host-id=mac"
+    assert run(join.ownership_of("company", proof)) == Ownership(grade="company", proof=proof)
+    with_equals = "file:/var/lib/agora/host-id=mac=1"
+    assert run(join.ownership_of("company", with_equals)) == Ownership(
+        grade="company", proof=with_equals
+    )
+    for broken in (
+        "file:=mac",
+        "file:/var/lib/agora/host-id=",
+        "file:/var/lib/agora/host-id",
+        "file:",
+    ):
+        with pytest.raises(ValueError, match="file:"):
+            run(join.ownership_of("company", broken))
+
+
+def test_ownership_verdict_file_proof_matches_the_content_of_the_named_file() -> None:
+    """file:<path>=<値> の突合: 中身が値と一致する時だけ通し、違う・読めないは ValueError(参加しない)。
+    doeff は所有の台帳を持たない — 検めるのは据え付けの側が描いた証拠が動いていないことだけ。"""
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import Ownership, ProbeAnswer
+
+    owned = Ownership(grade="company", proof="file:/Users/x/.local/state/agora/host-id=mac")
+    assert run(join.ownership_verdict(owned, ProbeAnswer(value="mac"))) == owned
+    with pytest.raises(ValueError, match="proboscis-mbp"):
+        run(join.ownership_verdict(owned, ProbeAnswer(value="proboscis-mbp")))
+    with pytest.raises(ValueError, match="host-id"):
+        run(join.ownership_verdict(owned, ProbeAnswer(value=None)))
+
+
+def test_ownership_preflight_probes_a_file_proof_and_still_never_probes_declared() -> None:
+    """検は起動の前(preflight)に 1 回: file: も gce-project と同じく OwnershipProbe を撃ち、declared
+    だけが撃たない(不変)。中身が違う機体は ValueError で参加しない。"""
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import Ownership
+    from doeff_agents.sessionhost.acp.runtime import install
+
+    proof = "file:/Users/x/.local/state/agora/host-id=mac"
+    owned = Ownership(grade="company", proof=proof)
+    local = FakeLocal()
+    local.probe_answers[proof] = "mac"
+    assert run(install(join.ownership_preflight(owned), [local.dispatch])) == owned
+    assert local.probes == [proof]
+    local.probe_answers[proof] = "proboscis-mbp"
+    with pytest.raises(ValueError, match="proboscis-mbp"):
+        run(install(join.ownership_preflight(owned), [local.dispatch]))
+    declared = Ownership(grade="company", proof="declared")
+    before = list(local.probes)
+    assert run(install(join.ownership_preflight(declared), [local.dispatch])) == declared
+    assert local.probes == before
+
+
+def test_probe_ownership_reads_the_file_named_by_the_proof(tmp_path: Path) -> None:
+    """読み(handler)は描かれた path ちょうどを読み、strip した中身を答える。不在・空 = None
+    (値を発明しない)。期待する値の突合は判断の側(ownership-verdict)で、読みは値を見ない。"""
+    from doeff_agents.sessionhost.acp.effects import ProbeAnswer
+    from doeff_agents.sessionhost.acp.handlers import probe_ownership
+
+    host_id = tmp_path / "host-id"
+    host_id.write_text("mac\n", encoding="utf-8")
+    assert probe_ownership(f"file:{host_id}=mac") == ProbeAnswer(value="mac")
+    assert probe_ownership(f"file:{host_id}=proboscis-mbp") == ProbeAnswer(value="mac")
+    assert probe_ownership(f"file:{tmp_path / 'absent'}=mac") == ProbeAnswer(value=None)
+    host_id.write_text("   \n", encoding="utf-8")
+    assert probe_ownership(f"file:{host_id}=mac") == ProbeAnswer(value=None)
+
+
 def test_node_observations_carry_the_ownership_when_declared() -> None:
     """node の status.observations.ownership = {grade, proof}(宣言が在る時だけ・無ければ欄ごと無い =
     未観測)。書く点は judgment.node-status-with-observations の 1 点。"""

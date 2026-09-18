@@ -722,6 +722,7 @@ JOIN_STATE_DIR_DEFAULT = "doeff/acp-agentd"
 JOIN_SESSION_HOOKS_DEFAULT = "inherit"
 #: 機体の所有の等級(契約 agora-kinds.json node.status.observations.ownership.grade の閉語彙)と
 #: 検の方法(proof)の綴り: gce-project:<project-id> = GCE の metadata server の project-id が一致 /
+#: file:<絶対 path>=<期待する値> = その file の中身(strip)が値と一致 /
 #: declared = 宣言のみ(検なし — 機体の所有の判定は別の座が持つ)。
 OwnershipGrade = Literal["company", "personal"]
 OWNERSHIP_GRADES: frozenset[OwnershipGrade] = frozenset({"company", "personal"})
@@ -730,7 +731,26 @@ OWNERSHIP_GRADES: frozenset[OwnershipGrade] = frozenset({"company", "personal"})
 #: 判断(judgment.profile-rows-held)が両側をこの 1 語で読む。
 OWNERSHIP_GRADE_COMPANY: OwnershipGrade = "company"
 OWNERSHIP_PROOF_GCE_PREFIX = "gce-project:"
+#: 機体の耐久の file の中身を証拠にする検の方法(card ki-d6cc49cbf33f 決定 D4 ①): 綴りは
+#: `file:<絶対 path>=<期待する値>`。据え付けの側(宣言を描く道具)が機体の身元を台帳で判じ、その証拠の
+#: file と値を proof に描く — agentd は台帳を持たず(hostname も置き場も所有の判定に使わない)、描かれた
+#: 証拠が動いていないことだけを検める。綴りの割り方は下の ownership_proof_file_parts の 1 点で、判断
+#: (join.ownership-of / ownership-verdict)と読み(handlers.probe_ownership)が同じ割りを借りる。
+OWNERSHIP_PROOF_FILE_PREFIX = "file:"
+OWNERSHIP_PROOF_FILE_SEPARATOR = "="
 OWNERSHIP_PROOF_DECLARED = "declared"
+
+
+def ownership_proof_file_parts(proof: str) -> tuple[str, str] | None:
+    """検の方法 `file:<path>=<値>` を (path, 期待する値) に割る(最初の `=` 1 つで割る — 値に `=` が
+    在ってよい)。綴りが外れる(prefix が違う・`=` が無い・path か値が空)= None。"""
+    if not proof.startswith(OWNERSHIP_PROOF_FILE_PREFIX):
+        return None
+    rest = proof[len(OWNERSHIP_PROOF_FILE_PREFIX) :]
+    path, separator, expected = rest.partition(OWNERSHIP_PROOF_FILE_SEPARATOR)
+    if not separator or not path or not expected:
+        return None
+    return (path, expected)
 
 # ------------------------------------------------------------------ 起動の宣言(join・所有)
 
@@ -815,7 +835,8 @@ class JoinPlan:
 
 @dataclass(frozen=True)
 class ProbeAnswer:
-    """OwnershipProbe の答え: 検の材料の値(gce-project = metadata の project-id)。None = 読めない。"""
+    """OwnershipProbe の答え: 検の材料の値(gce-project = metadata の project-id・file: = その file の
+    中身を strip したもの)。None = 読めない。"""
 
     value: str | None
 
@@ -2529,7 +2550,8 @@ class CommandStop(EffectBase):
 @dataclass(frozen=True)
 class OwnershipProbe(EffectBase):
     """検の方法(proof)に従って機体の所有の証拠を読む(gce-project:<id> = GCE の metadata server の
-    project-id)。結果 = ProbeAnswer(読めなければ value None — 判断は join.ownership-verdict)。"""
+    project-id / file:<path>=<値> = その path の file の中身)。結果 = ProbeAnswer(読めなければ
+    value None — 判断は join.ownership-verdict)。"""
 
     proof: str
 

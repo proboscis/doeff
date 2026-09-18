@@ -178,6 +178,7 @@ from doeff_agents.sessionhost.acp.effects import (
     WatchKind,
     WriteOutcome,
     Written,
+    ownership_proof_file_parts,
 )
 
 Dispatcher: TypeAlias = Callable[[EffectBase, K], "Resume | Pass"]
@@ -1665,9 +1666,26 @@ GCE_METADATA_HEADER = ("Metadata-Flavor", "Google")
 GCE_METADATA_TIMEOUT_SECONDS = 3.0
 
 
+def _read_text_stripped(path: str) -> str | None:
+    """file の中身を strip して読む葉(不在・読めない・空 = None — 値を発明しない)。札の読みと
+    所有の証拠の読み(probe_ownership の file:)が借りる 1 点。"""
+    expanded = os.path.expanduser(path)
+    try:
+        with open(expanded, encoding="utf-8") as handle:
+            text = handle.read().strip()
+    except OSError:
+        return None
+    return text or None
+
+
 def probe_ownership(proof: str) -> ProbeAnswer:
     """検の方法に従って所有の証拠を読む。gce-project = metadata server の project-id(届かない・
-    2xx でない・空 = None)。それ以外の綴りは読むものが無い(None — declared は判断の側で通す)。"""
+    2xx でない・空 = None)。file:<path>=<値> = その path の file の中身(不在・読めない・空 = None
+    — 読むのは描かれた path ちょうどで、期待する値との突合は join.ownership-verdict の側)。それ以外
+    の綴りは読むものが無い(None — declared は判断の側で通す)。"""
+    parts = ownership_proof_file_parts(proof)
+    if parts is not None:
+        return ProbeAnswer(value=_read_text_stripped(parts[0]))
     if not proof.startswith(OWNERSHIP_PROOF_GCE_PREFIX):
         return ProbeAnswer(value=None)
     request = urllib.request.Request(GCE_METADATA_PROJECT_URL, method="GET")
@@ -1687,13 +1705,7 @@ def probe_ownership(proof: str) -> ProbeAnswer:
 
 def read_secret_file(path: str) -> str | None:
     """札の file(bearer / 借り手札)を読む。不在・空は None。"""
-    expanded = os.path.expanduser(path)
-    try:
-        with open(expanded, encoding="utf-8") as handle:
-            text = handle.read().strip()
-    except OSError:
-        return None
-    return text or None
+    return _read_text_stripped(path)
 
 
 def socket_is_listening(path: str) -> bool:
