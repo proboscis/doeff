@@ -14,10 +14,11 @@ import time
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import get_args
+from typing import Any, get_args
 
 import hy  # noqa: F401  # registers the .hy importer
 import pytest
+from doeff_agents.agentd_client import AgentdClient, AgentdClientError
 from doeff_agents.sessionhost.acp import handlers, join, judgment
 from doeff_agents.sessionhost.acp.effects import (
     AGENTD_PRINCIPAL,
@@ -49,6 +50,7 @@ from doeff_agents.sessionhost.acp.effects import (
     PaneSeat,
     PaneSeatsUnavailable,
     SessionRefused,
+    SessionSend,
     SessionView,
     TURN_RECORD_ENTRIES_BYTE_BUDGET,
     TURN_RECORD_KIND,
@@ -3935,6 +3937,10 @@ def test_headless_warm_send_folds_every_input_into_one_prompt() -> None:
         ),
         True,
     )
+    # 添付の列も 1 度きり(fake.sends は添付を持たないので、畳みの添付側はこちらで読む —
+    # 郵便ごとの添付は first-turn-attachments-of が inputs の順に 1 本へ並べて同じ 1 手番に載る)。
+    assert len(world.sessions.sent_attachments) == 1, world.sessions.sent_attachments
+    assert world.sessions.sent_attachments[0][0] == sid
     assert world.local.metrics[-1]["metric"] == "agent-job-to-send"
     assert world.local.metrics[-1]["arm"] == "send"
     record = world.turn_record("j-2")
@@ -4014,6 +4020,70 @@ def test_a_refused_send_lands_as_a_condition_and_does_not_escape_the_turn() -> N
     status = world.job("j-2").status
     assert status is not None
     assert status["phase"] == PHASE_RUNNING
+    assert [c["type"] for c in world.state.jobs[0].pending_conditions] == [
+        "InputUndelivered",
+        "InputUnavailable",
+    ]
+    # 永久には沈まない: 器が実況を進めて新しい turn_ended_at を刻んだ拍(host の policy の
+    # turn-end の連言は level-trigger)に手番は閉じ、**条件は Ended の行へ乗る** — 郵便が
+    # 届かなかった事実は手番の終わりまで残る(配り直しはしない)。
+    world.local.transcripts[f"/events/{sid}.events.jsonl"] += _claude_events(sid, "again")
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(sid, world.local.now_ms + 100)
+    world.tick(advance_ms=1_000)
+    assert world.state.jobs == ()
+    ended = world.job("j-2").status
+    assert ended is not None
+    assert ended["phase"] == PHASE_ENDED
+    landed = ended["conditions"]
+    assert isinstance(landed, list)
+    riding = [item for item in landed if isinstance(item, dict)]
+    assert [item["type"] for item in riding] == ["InputUndelivered", "InputUnavailable"]
+    assert "headless session already exists" in str(riding[0]["reason"])
+
+
+def test_the_session_handler_turns_a_refused_send_into_a_typed_refusal() -> None:
+    """C の器の側(card acp:kanban-issue:ki-3149aebbf675): host の断り(RPC の error 封筒)は
+    handlers.SessionRpc の腕で型つきに写り、AgentdClientError は呼び手へ抜けない — 抜けると
+    receive-bound-jobs の外まで落ち、計器も turn-record も走らない(失敗が最も見えない形)。
+    socket の失敗(OSError)は今までどおり素通し(tick の縁が持ち越す)。"""
+
+    class _RefusingClient(AgentdClient):
+        def __init__(self) -> None:
+            """socket は開かない(この検体は request の断りだけを持つ)。"""
+
+        def request(
+            self,
+            method: str,
+            params: Mapping[str, Any] | None = None,
+            *,
+            read_timeout: float | None = None,
+        ) -> Any:
+            assert method == "session.send"
+            raise AgentdClientError("headless session already exists", error_code=-32002)
+
+    class _BrokenSocketClient(_RefusingClient):
+        def request(
+            self,
+            method: str,
+            params: Mapping[str, Any] | None = None,
+            *,
+            read_timeout: float | None = None,
+        ) -> Any:
+            raise OSError("socket closed")
+
+    rpc = handlers.SessionRpc.__new__(handlers.SessionRpc)
+    effect = SessionSend(session_id="s-1", text="hello", awaiting=True)
+
+    rpc._client = _RefusingClient()
+    refused = rpc._act(effect)
+    assert isinstance(refused, SessionRefused)
+    assert refused.error == "headless session already exists"
+    assert refused.error_code == "-32002"
+
+    rpc._client = _BrokenSocketClient()
+    with pytest.raises(OSError, match="socket closed"):
+        rpc._act(effect)
 
 
 def test_tui_launch_still_sends_the_mail_after_the_launch() -> None:
