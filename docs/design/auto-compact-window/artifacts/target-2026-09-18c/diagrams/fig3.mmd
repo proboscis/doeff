@@ -1,0 +1,13 @@
+flowchart TB
+  C["charter<br/>auto_compact_window"]
+  C --> N1["名簿 1<br/>judgment.resume-params-of"]
+  C --> N2["名簿 2<br/>host.build-launch-program-params<br/>(wire の受理形・閉じた 23 欄)"]
+  C --> N2b["名簿 3<br/>host の session.resume<br/>program-params"]
+  N2b --> N3["名簿 4<br/>launch.resume-session<br/>launch-params"]
+  N2 --> N4["名簿 5<br/>headless の launch-overlay<br/>(行に残す意図)"]
+  N4 --> N5["続きの手番<br/>continue-headless-process<br/>(行だけを読んで argv を組む)"]
+  N1 --> ARGV["build-claude-argv"]
+  N3 --> ARGV
+  N4 --> ARGV
+  N5 --> ARGV
+  ARGV --> CLI["claude"]

@@ -1,0 +1,15 @@
+# E4 — claude-autocompact-value の入力ごとの戻り(worktree doeff-wt-autocompact-window)
+欄が無い       None            -> 400000
+int        200000          -> 200000
+str        '200000'        -> 200000
+auto       'auto'          -> auto
+大文字        'AUTO'          -> auto
+幅の下        50000           -> auto
+幅の上        2000000         -> auto
+float      400000.0        -> 400000
+bool       True            -> auto
+読めない       'nope'          -> auto
+空文字        ''              -> 400000
+負          -1              -> auto
+
+claude-autocompact-args({}) = ['--autocompact', '400000']

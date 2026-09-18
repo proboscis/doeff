@@ -1,0 +1,11 @@
+flowchart TB
+  CH["会話の宣言<br/>charter"] --> D1["訳す 1 点<br/>charter → LaunchIntent"]
+  D1 -->|"socket を渡る JSON"| D2["復号 1 点<br/>JSON → LaunchIntent<br/>既定値は型が持つ"]
+  D2 --> INT["LaunchIntent<br/>型のまま持ち回る"]
+  INT --> OV["overlay-of<br/>→ LaunchOverlay<br/>行に残してよい部分"]
+  OV --> ROW[("行<br/>launch_overlay_json")]
+  ROW --> RES["蘇生・続きの手番<br/>replace 行の Overlay と<br/>呼び手が名乗った欄"]
+  RES --> ARGV["build-claude-argv"]
+  INT --> ARGV
+  HOST["host が所有する値<br/>socket の path・同時実行数・<br/>backend の種類<br/>別の値として添える"] --> ARGV
+  ARGV --> CLI["claude"]

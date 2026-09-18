@@ -1,0 +1,81 @@
+# E9 — 盲検の反例 A / B と、その再現・修理・再検証(2026-09-18 01:57:48 JST)
+
+## 起動の記録
+要求した model と effort、実際に使ったもの、fallback の理由:
+  1) gpt-6-astra / low  → **使えない**。codex personal の 7 日枠 0.0%・credits 0(ai usage --cached の実測)。
+     系の規律で有償 credit は買わない(CLAUDE.md『never ask me to pay for credit』)ので fallback。
+  2) claude-fable-5-1 / xhigh → **使えない**。この席の profile(p10160)の Fable 週枠が 0.0%。
+     週枠の残る profile(ca 45% / p10186 34% / gecko 23% / cryptic-3 24%)は 5 時間枠が全部 0.0% で、
+     道具自身が『Fable 選択可能なアカウントなし』と名乗る。
+  3) claude-opus-5 / xhigh → **これを使った**。起動口 = 席内の subagent(Agent tool)・会話履歴を渡さない新しい文脈。
+     ⚠ この起動口は effort を明示する引数を持たない。要求した xhigh が効いたかは**未確認**(黙って別 effort へ落としてはいない ── 指定できない)。
+  機体 = 会社 Mac CA-20038667 / profile = ca-pro(p10160)。A と B は互いの返答を見ていない。
+  渡した入力一式 = blind/input.md(sha256 ba3823ae95e1aef7718591176144461dea7699b6e1f6de8f9ee857d92e3ca1ca)。
+  著者の自己評価・既知の反例・望む結論・親会話は渡していない。
+  返答の全文 = blind/reply-A.md / blind/reply-B.md(加工していない)。
+
+## 反例 A — 宣言が argv の導出点に届かない(**成立**)
+
+主張: wire の受理形 host.build-launch-program-params が閉じた名簿で params を作り直すので、
+charter の auto_compact_window は落ち、どの腕でも code の床が出る。
+
+### 修理前(origin/main + 私の最初の実装)
+$ build_launch_program_params({... "auto_compact_window": 800000}, cfg) に欄が在るか
+  → False(A が実測。私も同じ手順で再現した)
+
+### 修理後(この worktree)
+  auto_compact_window in program params? True
+  値: 800000
+  宣言なしの時に欄を作らないか: True
+
+### 修理(根の側で直した)
+  A の指摘どおり、名簿は 1 つではなく直列に 5 つある(wire の受理形 / session.resume の
+  program-params / launch.resume-session の launch-params / 行に残す launch-overlay /
+  降りた process の続き continue-headless-process)。1 つずつ足すのは対症なので、
+  **旗になる欄の集合を policy で 1 度だけ宣言**し(LAUNCH-FLAG-KEYS)、名簿は
+  carry-launch-flags で写す形にした。旗を足す時に数え直すのはその集合 1 つだけ。
+  A が数え落としを指摘した『4 つ目の起こす腕』(温かい送りで process が降りていた時の
+  --resume)も、行の overlay から同じ集合で運ぶ。
+
+## 反例 B — 検査を通り抜けて幅の外の値が argv に載る(**成立**)
+
+主張: 「Sonnet / Haiku は窓が 200k だから、モデルの窓の 40% で頭打ちに」という素直な要求を
+実装すると 200000 × 0.4 = 80000 が argv に載り、幅(100k〜1M)の下なので手番が丸ごと消える。
+関門の関数には 1 文字も触らないので、単体の検(model が Fable 固定)も semgrep も素通しする。
+B の実測: 単体 deftest 8 passed(修正前後とも)・semgrep 0 findings(修正前後とも)。
+
+### 修理 — 不変量を『導出点の戻り』から『argv に出る値』へ移した
+  claude-autocompact-args の後置条件に autocompact-arg-pair-ok を足した(出口の関門)。
+
+### 反例を隔離の複製へ当てて再検証
+$ PYTHONPATH=/tmp/acw/cexB/src pytest tests -k always_inside_the_band
+E      AssertionError: claude-autocompact-args: post-condition failed: hy.models.Expression([
+/tmp/acw/cexB/src/doeff_agents/sessionhost/impls/claude_code.hy:159: AssertionError
+AssertionError: claude-autocompact-args: post-condition failed: hy.models.Expression([
+1 failed, 2302 deselected, 1 warning in 1.18s
+  → 反例を当てると**契約が**赤になる(検の assert ではなく後置条件が止める)。
+
+$ 正常例(この worktree)
+1 passed, 2302 deselected, 1 warning in 0.79s
+
+## 修理後の焦点の検(触った層と、その依存先)
+$ pytest tests/test_sessionhost_impls.py tests/test_sessionhost_host.py -q
+test-admission: focused — 72 本(焦点走 — 許可不要)
+72 passed, 1 warning in 1.23s
+$ pytest tests/test_sessionhost_headless.py tests/test_sessionhost_resume.py tests/test_sessionhost_acp_rehydrate.py tests/test_sessionhost_launch.py -q
+test-admission: focused — 189 本(焦点走 — 許可不要)
+189 passed, 1 warning in 15.10s
+$ pytest tests/test_sessionhost_acp_compact.py tests/test_sessionhost_acp_turn_events.py tests/test_sessionhost_policy.py -q
+test-admission: focused — 103 本(焦点走 — 許可不要)
+103 passed, 1 warning in 0.48s
+
+## A / B が挙げたもので、まだ直していないもの
+  * A 2-4 / 私の E7: 既にある compactAt(会話の宣言・%)との干渉 → operator の裁定待ち(未決)。
+  * A: 欄が落ちた時の縮退先が床で、宣言由来か床由来かを外から区別できない。
+    名簿を 1 点から導く形にしたので落ちる道は塞いだが、**落ちたことを名乗る印は無い**ままで、
+    6 つ目の名簿が将来足された時に同じ形が再発しうる(残る危険として記録する)。
+  * A / B: 床 400,000 は 1M の窓を仮定した値で、窓 200k のモデル(Sonnet / Haiku)では
+    CLI が min(指定, モデルの窓)で 200k に丸めるため**早く畳む効果が出ない**。値の見直しは
+    配備後の実測に回す(未測定)。
+  * B: doeff-linter(Rust)・pyright・pre-commit は走らせていない(未確認)。
+  * A / B とも claude の実物は起こしていない。幅と綴りは私の E1 が実射で押さえている。
