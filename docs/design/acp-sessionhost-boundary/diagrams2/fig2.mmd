@@ -1,0 +1,13 @@
+flowchart TB
+  subgraph K["client(汚さない)"]
+    K1["知るのは<br/>提供する側の語彙だけ"]
+    K2["doeff-agent-haskell<br/>acp_client"]
+    K1 --- K2
+  end
+  subgraph G["adapter(必ず汚す)"]
+    G1["知るのは<br/>両方の語彙<br/>charter → AgentSpec"]
+    G2["引く側の glue<br/>押す側の Handler.Agentd"]
+    G1 --- G2
+  end
+  K --> KO["提供する側に置いてよい"]
+  G --> GO["どちらに置いても mixup<br/>⇒ 両方を必要とする理由を持つ側<br/>= agora に置く"]

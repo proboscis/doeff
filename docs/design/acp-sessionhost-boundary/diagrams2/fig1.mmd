@@ -1,0 +1,22 @@
+flowchart TB
+  subgraph A["混ざっている 1 — repo: doeff(monorepo)の package doeff-agents"]
+    direction TB
+    A1["実行の入口 = acp.entry:main"]
+    A2["glue  sessionhost/acp/  15,753 行<br/>ACP の行を見る・charter を組む"]
+    A3["sessionhost  13,711 行<br/>汎用の runner"]
+    A1 --> A2
+    A2 -->|"同じ process の thread が<br/>自分自身に unix socket で"| A3
+  end
+  subgraph B["混ざっている 2 — repo: agent-control-plane(1 つの library・1 つの binary)"]
+    direction LR
+    B1["engine<br/>kinds / 行 / watch / CAS / RBAC"]
+    B2["配置の方策  App/Scheduling/<br/>profile の梯子・席の占有・会社の境界"]
+    B3["押す側の adapter<br/>Agent/Handler/Agentd.hs"]
+  end
+  subgraph C["既に正しく分かれている物(それぞれ別 repo)"]
+    direction LR
+    C1["doeff-agent-haskell<br/>薄い client・型つき"]
+    C2["custody<br/>資格"]
+    C3["agora-controllers<br/>controller 10 個"]
+    C4["agora<br/>protocol / HUD"]
+  end

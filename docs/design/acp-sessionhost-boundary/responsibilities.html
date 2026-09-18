@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>責務と置き場 — いまの姿と、分け方</title>
+<style>
+:root{--bg:#fbfaf8;--fg:#1e1c1a;--mut:#6b655e;--line:#ddd7cf;--acc:#8a5a2b;--code:#f2efea;--hi:#fff4e2;--warn:#a8422a}
+@media (prefers-color-scheme:dark){:root{--bg:#16150f;--fg:#ece7de;--mut:#a39c91;--line:#3a352c;--acc:#d8a460;--code:#211f18;--hi:#2a2318;--warn:#e0805f}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:"Hiragino Sans","Noto Sans JP",-apple-system,sans-serif;line-height:1.9;font-size:16px;letter-spacing:.012em}
+main{max-width:980px;margin:0 auto;padding:60px 26px 140px}
+h1{font-size:2rem;line-height:1.35;margin:0 0 .35em;font-weight:700;letter-spacing:-.01em}
+h2{font-size:1.4rem;margin:2.9em 0 .7em;padding-bottom:.35em;border-bottom:2px solid var(--line)}
+h3{font-size:1.06rem;margin:2em 0 .5em;color:var(--acc)}
+p{margin:.95em 0}
+code{background:var(--code);padding:.13em .4em;border-radius:4px;font-size:.87em;font-family:"SF Mono",Menlo,monospace}
+pre{background:var(--code);padding:16px 18px;border-radius:8px;overflow-x:auto;border:1px solid var(--line);font-size:.86rem;line-height:1.65}
+pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1.5em 0;font-size:.91rem}
+th,td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}
+th{background:var(--code);font-weight:600}
+tbody tr:hover{background:var(--hi)}
+td strong{color:var(--warn)}
+hr{border:0;border-top:1px solid var(--line);margin:3em 0}
+figure.diagram{margin:2.4em 0;padding:24px 20px 16px;background:var(--code);border:1px solid var(--line);border-radius:10px;text-align:center}
+figure.diagram .svgwrap{overflow-x:auto}
+figure.diagram svg{max-width:100%;height:auto}
+figcaption{margin-top:16px;color:var(--mut);font-size:.87rem;line-height:1.7;text-align:left}
+ul,ol{padding-left:1.45em}
+li{margin:.4em 0}
+</style></head><body><main><h1>責務と置き場 — いまの姿と、分け方</h1>
+<p>2026-09-18。会話の圧縮の閾値が起動の引数に届かない欠陥を追ううちに、境界そのものが根だと
+分かった。この文書は<strong>責務がどこに住んでいるか</strong>を実測で並べ、<strong>どう分けるか</strong>を示す。</p>
+<p>目標の構造だけを読むなら <code>target.html</code>。現状の欠陥の説明は
+<code>../auto-compact-window/artifacts/situation-2026-09-18/report.html</code>。</p>
+<hr>
+<h2>1. 登場する実体</h2>
+<table>
+<thead>
+<tr>
+<th>実体</th>
+<th>何か</th>
+<th>置き場</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>sessionhost</strong></td>
+<td>agent の process を起こす・見張る・止める汎用の runner</td>
+<td>doeff-agents の中の module</td>
+</tr>
+<tr>
+<td><strong>doeff-agents</strong></td>
+<td>器の package(effect と型と CLI ごとの adapter)</td>
+<td><code>doeff</code> monorepo の 1 package</td>
+</tr>
+<tr>
+<td><strong>ACP</strong></td>
+<td>制御面の engine(kinds・行・watch・CAS・RBAC)</td>
+<td>repo <code>agent-control-plane</code></td>
+</tr>
+<tr>
+<td><strong>agora</strong></td>
+<td>製品の面(protocol / HUD / daemon / relay)</td>
+<td>repo <code>agora</code>(旧 herdr-hud)</td>
+</tr>
+<tr>
+<td><strong>agora-controllers</strong></td>
+<td>agora の運転の controller 群(Hy + doeff)</td>
+<td>repo <code>agora-controllers</code></td>
+</tr>
+<tr>
+<td>custody</td>
+<td>資格の保管と貸与</td>
+<td>別 repo・別 service</td>
+</tr>
+<tr>
+<td>doeff-agent-haskell</td>
+<td>器の薄い client(型つき)</td>
+<td>別 repo</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2>2. いまの姿</h2>
+<figure class="diagram"><div class="svgwrap"><svg id="mmd-rfig1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" class="flowchart" style="max-width: 1465.08px; background-color: transparent;" viewBox="0 0 1465.078125 571" role="graphics-document document" aria-roledescription="flowchart-v2"><style>#mmd-rfig1{font-family:"trebuchet ms",verdana,arial,sans-serif;font-size:16px;fill:#333;}@keyframes edge-animation-frame{from{stroke-dashoffset:0;}}@keyframes dash{to{stroke-dashoffset:0;}}#mmd-rfig1 .edge-animation-slow{stroke-dasharray:9,5!important;stroke-dashoffset:900;animation:dash 50s linear infinite;stroke-linecap:round;}#mmd-rfig1 .edge-animation-fast{stroke-dasharray:9,5!important;stroke-dashoffset:900;animation:dash 20s linear infinite;stroke-linecap:round;}#mmd-rfig1 .error-icon{fill:#552222;}#mmd-rfig1 .error-text{fill:#552222;stroke:#552222;}#mmd-rfig1 .edge-thickness-normal{stroke-width:1px;}#mmd-rfig1 .edge-thickness-thick{stroke-width:3.5px;}#mmd-rfig1 .edge-pattern-solid{stroke-dasharray:0;}#mmd-rfig1 .edge-thickness-invisible{stroke-width:0;fill:none;}#mmd-rfig1 .edge-pattern-dashed{stroke-dasharray:3;}#mmd-rfig1 .edge-pattern-dotted{stroke-dasharray:2;}#mmd-rfig1 .marker{fill:#333333;stroke:#333333;}#mmd-rfig1 .marker.cross{stroke:#333333;}#mmd-rfig1 svg{font-family:"trebuchet ms",verdana,arial,sans-serif;font-size:16px;}#mmd-rfig1 p{margin:0;}#mmd-rfig1 .label{font-family:"trebuchet ms",verdana,arial,sans-serif;color:#333;}#mmd-rfig1 .cluster-label text{fill:#333;}#mmd-rfig1 .cluster-label span{color:#333;}#mmd-rfig1 .cluster-label span p{background-color:transparent;}#mmd-rfig1 .label text,#mmd-rfig1 span{fill:#333;color:#333;}#mmd-rfig1 .node rect,#mmd-rfig1 .node circle,#mmd-rfig1 .node ellipse,#mmd-rfig1 .node polygon,#mmd-rfig1 .node path{fill:#ECECFF;stroke:#9370DB;stroke-width:1px;}#mmd-rfig1 .rough-node .label text,#mmd-rfig1 .node .label text,#mmd-rfig1 .image-shape .label,#mmd-rfig1 .icon-shape .label{text-anchor:middle;}#mmd-rfig1 .node .katex path{fill:#000;stroke:#000;stroke-width:1px;}#mmd-rfig1 .rough-node .label,#mmd-rfig1 .node .label,#mmd-rfig1 .image-shape .label,#mmd-rfig1 .icon-shape .label{text-align:center;}#mmd-rfig1 .node.clickable{cursor:pointer;}#mmd-rfig1 .root .anchor path{fill:#333333!important;stroke-width:0;stroke:#333333;}#mmd-rfig1 .arrowheadPath{fill:#333333;}#mmd-rfig1 .edgePath .path{stroke:#333333;stroke-width:1px;}#mmd-rfig1 .flowchart-link{stroke:#333333;fill:none;}#mmd-rfig1 .edgeLabel{background-color:rgba(232,232,232, 0.8);text-align:center;}#mmd-rfig1 .edgeLabel p{background-color:rgba(232,232,232, 0.8);}#mmd-rfig1 .edgeLabel rect{opacity:0.5;background-color:rgba(232,232,232, 0.8);fill:rgba(232,232,232, 0.8);}#mmd-rfig1 .labelBkg{background-color:rgba(232, 232, 232, 0.5);}#mmd-rfig1 .cluster rect{fill:#ffffde;stroke:#aaaa33;stroke-width:1px;}#mmd-rfig1 .cluster text{fill:#333;}#mmd-rfig1 .cluster span{color:#333;}#mmd-rfig1 div.mermaidTooltip{position:absolute;text-align:center;max-width:200px;padding:2px;font-family:"trebuchet ms",verdana,arial,sans-serif;font-size:12px;background:hsl(80, 100%, 96.2745098039%);border:1px solid #aaaa33;border-radius:2px;pointer-events:none;z-index:100;}#mmd-rfig1 .flowchartTitleText{text-anchor:middle;font-size:18px;fill:#333;}#mmd-rfig1 rect.text{fill:none;stroke-width:0;}#mmd-rfig1 .icon-shape,#mmd-rfig1 .image-shape{background-color:rgba(232,232,232, 0.8);text-align:center;}#mmd-rfig1 .icon-shape p,#mmd-rfig1 .image-shape p{background-color:rgba(232,232,232, 0.8);padding:2px;}#mmd-rfig1 .icon-shape .label rect,#mmd-rfig1 .image-shape .label rect{opacity:0.5;background-color:rgba(232,232,232, 0.8);fill:rgba(232,232,232, 0.8);}#mmd-rfig1 .label-icon{display:inline-block;height:1em;overflow:visible;vertical-align:-0.125em;}#mmd-rfig1 .node .label-icon path{fill:currentColor;stroke:revert;stroke-width:revert;}#mmd-rfig1 .node .neo-node{stroke:#9370DB;}#mmd-rfig1 [data-look="neo"].node rect,#mmd-rfig1 [data-look="neo"].cluster rect,#mmd-rfig1 [data-look="neo"].node polygon{stroke:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#mmd-rfig1 [data-look="neo"].swimlane.cluster rect{filter:none;}#mmd-rfig1 [data-look="neo"].node path{stroke:#9370DB;stroke-width:1px;}#mmd-rfig1 [data-look="neo"].node .outer-path{filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#mmd-rfig1 [data-look="neo"].node .neo-line path{stroke:#9370DB;filter:none;}#mmd-rfig1 [data-look="neo"].node circle{stroke:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#mmd-rfig1 [data-look="neo"].node circle .state-start{fill:#000000;}#mmd-rfig1 [data-look="neo"].icon-shape .icon{fill:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#mmd-rfig1 [data-look="neo"].icon-shape .icon-neo path{stroke:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#mmd-rfig1 :root{--mermaid-font-family:"trebuchet ms",verdana,arial,sans-serif;}</style><g><marker id="mmd-rfig1_flowchart-v2-pointEnd" class="marker flowchart-v2" viewBox="0 0 10 10" refX="5" refY="5" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig1_flowchart-v2-pointStart" class="marker flowchart-v2" viewBox="0 0 10 10" refX="4.5" refY="5" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M 0 5 L 10 10 L 10 0 z" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig1_flowchart-v2-pointEnd-margin" class="marker flowchart-v2" viewBox="0 0 11.5 14" refX="11.5" refY="7" markerUnits="userSpaceOnUse" markerWidth="10.5" markerHeight="14" orient="auto"><path d="M 0 0 L 11.5 7 L 0 14 z" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig1_flowchart-v2-pointStart-margin" class="marker flowchart-v2" viewBox="0 0 11.5 14" refX="1" refY="7" markerUnits="userSpaceOnUse" markerWidth="11.5" markerHeight="14" orient="auto"><polygon points="0,7 11.5,14 11.5,0" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig1_flowchart-v2-circleEnd" class="marker flowchart-v2" viewBox="0 0 10 10" refX="11" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig1_flowchart-v2-circleStart" class="marker flowchart-v2" viewBox="0 0 10 10" refX="-1" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig1_flowchart-v2-circleEnd-margin" class="marker flowchart-v2" viewBox="0 0 10 10" refY="5" refX="12.25" markerUnits="userSpaceOnUse" markerWidth="14" markerHeight="14" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig1_flowchart-v2-circleStart-margin" class="marker flowchart-v2" viewBox="0 0 10 10" refX="-2" refY="5" markerUnits="userSpaceOnUse" markerWidth="14" markerHeight="14" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig1_flowchart-v2-crossEnd" class="marker cross flowchart-v2" viewBox="0 0 11 11" refX="12" refY="5.2" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><path d="M 1,1 l 9,9 M 10,1 l -9,9" class="arrowMarkerPath" style="stroke-width: 2; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig1_flowchart-v2-crossStart" class="marker cross flowchart-v2" viewBox="0 0 11 11" refX="-1" refY="5.2" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><path d="M 1,1 l 9,9 M 10,1 l -9,9" class="arrowMarkerPath" style="stroke-width: 2; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig1_flowchart-v2-crossEnd-margin" class="marker cross flowchart-v2" viewBox="0 0 15 15" refX="17.7" refY="7.5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto"><path d="M 1,1 L 14,14 M 1,14 L 14,1" class="arrowMarkerPath" style="stroke-width: 2.5;"/></marker><marker id="mmd-rfig1_flowchart-v2-crossStart-margin" class="marker cross flowchart-v2" viewBox="0 0 15 15" refX="-3.5" refY="7.5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto"><path d="M 1,1 L 14,14 M 1,14 L 14,1" class="arrowMarkerPath" style="stroke-width: 2.5; stroke-dasharray: 1, 0;"/></marker><g class="root"><g class="clusters"/><g class="edgePaths"/><g class="edgeLabels"/><g class="nodes"><g class="root" transform="translate(25.6875, 11.5)"><g class="clusters"><g class="cluster" id="mmd-rfig1-C" data-look="classic"><rect style="" x="-17.6875" y="8" width="328.21875" height="532"/><g class="cluster-label" transform="translate(-13.6875, 8)"><foreignObject width="320.21875" height="24"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5;"><span class="nodeLabel"><p>既に正しく分かれている物(それぞれ別 repo)</p></span></div></foreignObject></g></g></g><g class="edgePaths"/><g class="edgeLabels"/><g class="nodes"><g class="node default" id="mmd-rfig1-flowchart-C1-10" data-look="classic" transform="translate(146.421875, 82)"><rect class="basic label-container" style="" x="-100.921875" y="-39" width="201.84375" height="78"/><g class="label" style="" transform="translate(-70.921875, -24)"><rect/><foreignObject width="141.84375" height="48"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>doeff-agent-haskell<br />薄い client・型つき</p></span></div></foreignObject></g></g><g class="node default" id="mmd-rfig1-flowchart-C2-11" data-look="classic" transform="translate(146.421875, 210)"><rect class="basic label-container" style="" x="-57.4375" y="-39" width="114.875" height="78"/><g class="label" style="" transform="translate(-27.4375, -24)"><rect/><foreignObject width="54.875" height="48"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>custody<br />資格</p></span></div></foreignObject></g></g><g class="node default" id="mmd-rfig1-flowchart-C3-12" data-look="classic" transform="translate(146.421875, 338)"><rect class="basic label-container" style="" x="-91.390625" y="-39" width="182.78125" height="78"/><g class="label" style="" transform="translate(-61.390625, -24)"><rect/><foreignObject width="122.78125" height="48"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>agora-controllers<br />controller 10 個</p></span></div></foreignObject></g></g><g class="node default" id="mmd-rfig1-flowchart-C4-13" data-look="classic" transform="translate(146.421875, 466)"><rect class="basic label-container" style="" x="-84.28125" y="-39" width="168.5625" height="78"/><g class="label" style="" transform="translate(-54.28125, -24)"><rect/><foreignObject width="108.5625" height="48"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>agora<br />protocol / HUD</p></span></div></foreignObject></g></g></g></g><g class="root" transform="translate(482.40625, 39.5)"><g class="clusters"><g class="cluster" id="mmd-rfig1-B" data-look="classic"><rect style="" x="-96.1875" y="8" width="543.375" height="476"/><g class="cluster-label" transform="translate(-92.1875, 8)"><foreignObject width="535.375" height="24"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5;"><span class="nodeLabel"><p>混ざっている 2 — repo: agent-control-plane(1 つの library・1 つの binary)</p></span></div></foreignObject></g></g></g><g class="edgePaths"/><g class="edgeLabels"/><g class="nodes"><g class="node default" id="mmd-rfig1-flowchart-B1-7" data-look="classic" transform="translate(175.5, 94)"><rect class="basic label-container" style="" x="-130" y="-51" width="260" height="102"/><g class="label" style="" transform="translate(-100, -36)"><rect/><foreignObject width="200" height="72"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;"><span class="nodeLabel"><p>engine<br />kinds / 行 / watch / CAS / RBAC</p></span></div></foreignObject></g></g><g class="node default" id="mmd-rfig1-flowchart-B2-8" data-look="classic" transform="translate(175.5, 258)"><rect class="basic label-container" style="" x="-130" y="-63" width="260" height="126"/><g class="label" style="" transform="translate(-100, -48)"><rect/><foreignObject width="200" height="96"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;"><span class="nodeLabel"><p>配置の方策  App/Scheduling/<br />profile の梯子・席の占有・会社の境界</p></span></div></foreignObject></g></g><g class="node default" id="mmd-rfig1-flowchart-B3-9" data-look="classic" transform="translate(175.5, 410)"><rect class="basic label-container" style="" x="-122.7734375" y="-39" width="245.546875" height="78"/><g class="label" style="" transform="translate(-92.7734375, -24)"><rect/><foreignObject width="185.546875" height="48"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>押す側の adapter<br />Agent/Handler/Agentd.hs</p></span></div></foreignObject></g></g></g></g><g class="root" transform="translate(1045.3359375, 0)"><g class="clusters"><g class="cluster" id="mmd-rfig1-A" data-look="classic"><rect style="" x="-65.7421875" y="8" width="477.484375" height="555"/><g class="cluster-label" transform="translate(-61.7421875, 8)"><foreignObject width="469.484375" height="24"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5;"><span class="nodeLabel"><p>混ざっている 1 — repo: doeff(monorepo)の package doeff-agents</p></span></div></foreignObject></g></g></g><g class="edgePaths"><path d="M173,123.5L173,129.75C173,136,173,148.5,173,160.333C173,172.167,173,183.333,173,188.917L173,194.5" id="mmd-rfig1-L_A1_A2_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_A1_A2_0" data-points="W3sieCI6MTczLCJ5IjoxMjMuNX0seyJ4IjoxNzMsInkiOjE2MX0seyJ4IjoxNzMsInkiOjE5OC41fV0=" data-look="classic" marker-end="url(#mmd-rfig1_flowchart-v2-pointEnd)"/><path d="M173,324.5L173,334.75C173,345,173,365.5,173,385.333C173,405.167,173,424.333,173,433.917L173,443.5" id="mmd-rfig1-L_A2_A3_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_A2_A3_0" data-points="W3sieCI6MTczLCJ5IjozMjQuNX0seyJ4IjoxNzMsInkiOjM4Nn0seyJ4IjoxNzMsInkiOjQ0Ny41fV0=" data-look="classic" marker-end="url(#mmd-rfig1_flowchart-v2-pointEnd)"/></g><g class="edgeLabels"><g class="edgeLabel"><g class="label" data-id="L_A1_A2_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(173, 386)"><g class="label" data-id="L_A2_A3_0" transform="translate(-93.328125, -24)"><foreignObject width="186.65625" height="48"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"><p>同じ process の thread が<br />自分自身に unix socket で</p></span></div></foreignObject></g></g></g><g class="nodes"><g class="node default" id="mmd-rfig1-flowchart-A1-0" data-look="classic" transform="translate(173, 84.5)"><rect class="basic label-container" style="" x="-130" y="-39" width="260" height="78"/><g class="label" style="" transform="translate(-100, -24)"><rect/><foreignObject width="200" height="48"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;"><span class="nodeLabel"><p>実行の入口 = acp.entry:main</p></span></div></foreignObject></g></g><g class="node default" id="mmd-rfig1-flowchart-A2-1" data-look="classic" transform="translate(173, 261.5)"><rect class="basic label-container" style="" x="-130" y="-63" width="260" height="126"/><g class="label" style="" transform="translate(-100, -48)"><rect/><foreignObject width="200" height="96"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;"><span class="nodeLabel"><p>glue  sessionhost/acp/  15,753 行<br />ACP の行を見る・charter を組む</p></span></div></foreignObject></g></g><g class="node default" id="mmd-rfig1-flowchart-A3-2" data-look="classic" transform="translate(173, 486.5)"><rect class="basic label-container" style="" x="-106.8359375" y="-39" width="213.671875" height="78"/><g class="label" style="" transform="translate(-76.8359375, -24)"><rect/><foreignObject width="153.671875" height="48"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>sessionhost  13,711 行<br />汎用の runner</p></span></div></foreignObject></g></g></g></g></g></g></g><defs><filter id="mmd-rfig1-drop-shadow" height="130%" width="130%"><feDropShadow dx="4" dy="4" stdDeviation="0" flood-opacity="0.06" flood-color="#000000"/></filter></defs><defs><filter id="mmd-rfig1-drop-shadow-small" height="150%" width="150%"><feDropShadow dx="2" dy="2" stdDeviation="0" flood-opacity="0.06" flood-color="#000000"/></filter></defs></svg></div><figcaption>図 1 — いまの姿。混ざっているのは 2 か所で、どちらも「実行時だけ切れていて、binary から下は同じ」という同じ形。右の 4 つは既に正しく分かれている。</figcaption></figure>
+
+<p><strong>混ざっているのは 2 か所</strong>で、どちらも同じ形をしている。</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>中に居る物</th>
+<th>大きさ</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>doeff-agents</td>
+<td>汎用の runner + <strong>ACP の glue</strong>。しかも<strong>実行の入口が glue 側</strong>(<code>acp.entry:main</code>)</td>
+<td>runner 13,711 行 / glue <strong>15,753 行</strong></td>
+</tr>
+<tr>
+<td>agent-control-plane</td>
+<td>engine + <strong>agora の配置の方策</strong> + <strong>押す側の adapter</strong></td>
+<td><code>App/Scheduling/</code> + <code>Agent/Handler/Agentd.hs</code></td>
+</tr>
+</tbody>
+</table>
+<h3>切れているのは実行時だけ</h3>
+<table>
+<thead>
+<tr>
+<th>層</th>
+<th>doeff-agents の glue</th>
+<th>ACP の配置の方策</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>走る process</td>
+<td><strong>同じ</strong>(thread が自分自身に unix socket で話す)</td>
+<td>別(<code>acp daemon</code> と別 subcommand)</td>
+</tr>
+<tr>
+<td>binary</td>
+<td>同じ(<code>doeff-sessionhost</code>)</td>
+<td>同じ(<code>acp</code>)</td>
+</tr>
+<tr>
+<td>package / library</td>
+<td>同じ</td>
+<td>同じ(<code>acp-engine</code>)</td>
+</tr>
+<tr>
+<td>repo</td>
+<td>同じ</td>
+<td>同じ</td>
+</tr>
+</tbody>
+</table>
+<p>論理的な境界(import の向き)は<strong>どちらも綺麗</strong>(核から glue への逆流は 0 件)。
+それでも混ざる。<strong>宣言されない境界は守られない。</strong></p>
+<p>実例: この設計の議論のさなか、私は 1 時間のうちに ACP の語(<code>charter</code>)を汎用の runner の
+註に 3 か所書いていた。何も止めなかった。</p>
+<hr>
+<h2>3. 責務と置き場</h2>
+<p>凡例 — <strong>合</strong> = 場所と責務が一致 / <strong>ズレ</strong> = 一致していない / <strong>未決</strong> = あるべき場所が未定。</p>
+<h3>器を走らせる</h3>
+<table>
+<thead>
+<tr>
+<th>責務</th>
+<th>いまの場所</th>
+<th></th>
+<th>あるべき</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>process を起こす・見張る・止める</td>
+<td>doeff-agents <code>sessionhost/</code></td>
+<td>合</td>
+<td>同じ</td>
+</tr>
+<tr>
+<td>CLI ごとの argv の組み立て</td>
+<td>doeff-agents <code>sessionhost/impls/</code></td>
+<td>合</td>
+<td>同じ</td>
+</tr>
+<tr>
+<td>起こす口の protocol(unix socket)</td>
+<td>doeff-agents <code>sessionhost/host.hy</code></td>
+<td>合</td>
+<td>同じ</td>
+</tr>
+<tr>
+<td><strong>起こす口の型</strong></td>
+<td><strong>無い</strong> — <code>SessionLaunch(params: JSONObject)</code>、説明文に「params = charter そのもの」</td>
+<td><strong>ズレ</strong></td>
+<td>doeff-agents</td>
+</tr>
+<tr>
+<td>薄い client(Haskell)</td>
+<td><code>doeff-agent-haskell</code>(別 repo・1 module・型つき)</td>
+<td>合</td>
+<td>同じ</td>
+</tr>
+<tr>
+<td><strong>薄い client(Python)</strong></td>
+<td><strong>無い</strong> — <code>agentd_client.py</code> 1,475 行が内側に絡む</td>
+<td><strong>ズレ</strong></td>
+<td>別成果物</td>
+</tr>
+</tbody>
+</table>
+<h3>制御面の基盤</h3>
+<table>
+<thead>
+<tr>
+<th>責務</th>
+<th>いまの場所</th>
+<th></th>
+<th>あるべき</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>kinds / 行 / watch / CAS / RBAC</td>
+<td>ACP <code>library acp-engine</code></td>
+<td>合</td>
+<td>同じ</td>
+</tr>
+<tr>
+<td>kind の登録(契約から data だけで)</td>
+<td>ACP <code>scripts/register_contract_kinds.hy</code></td>
+<td>合</td>
+<td>同じ</td>
+</tr>
+<tr>
+<td>領域の意味を持たないこと</td>
+<td><code>installedApps</code> は空・daemon は Scheduling を呼ばない</td>
+<td>合</td>
+<td>同じ</td>
+</tr>
+<tr>
+<td>配達の判断(郵便を誰に届けるか)</td>
+<td>ACP <code>App/Messaging/Decide.hs</code></td>
+<td>合</td>
+<td>同じ</td>
+</tr>
+</tbody>
+</table>
+<h3>agora の運転</h3>
+<table>
+<thead>
+<tr>
+<th>責務</th>
+<th>いまの場所</th>
+<th></th>
+<th>あるべき</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>口座の予算・枯渇の観測 → condition</td>
+<td><code>agora-controllers/controllers/budget</code></td>
+<td>合</td>
+<td>同じ</td>
+</tr>
+<tr>
+<td>盤 / 会話 / 画面 / 成果物 / 自動処理 / 分類 / 耐久</td>
+<td>agora-controllers の各 dir</td>
+<td>合</td>
+<td>同じ</td>
+</tr>
+<tr>
+<td>node の boot の事実</td>
+<td><code>agora-controllers/controllers/nodeboot</code></td>
+<td>合</td>
+<td>同じ</td>
+</tr>
+<tr>
+<td>受付の会話の据え付け(判断は持たない)</td>
+<td><code>agora-controllers/controllers/messaging</code></td>
+<td>合</td>
+<td>同じ</td>
+</tr>
+<tr>
+<td><strong>配置(どの profile・どの node で起こすか)</strong></td>
+<td><strong>ACP <code>App/Scheduling/</code></strong></td>
+<td><strong>ズレ</strong></td>
+<td><strong>未決</strong></td>
+</tr>
+<tr>
+<td><strong>profile の選定</strong></td>
+<td><strong>ACP <code>Decide.credentialFor</code></strong> と <strong>dotfiles <code>pick_pool_profile</code></strong> の <strong>2 つ</strong></td>
+<td><strong>ズレ(重複)</strong></td>
+<td>1 つへ</td>
+</tr>
+<tr>
+<td>headless の席の切り替え</td>
+<td>ACP の配置</td>
+<td>ズレ</td>
+<td>同上</td>
+</tr>
+<tr>
+<td><strong>pane の席の切り替え</strong></td>
+<td><strong>dotfiles <code>limit_switch.py</code></strong></td>
+<td><strong>ズレ</strong></td>
+<td><strong>未決</strong></td>
+</tr>
+</tbody>
+</table>
+<h3>glue(両方の語彙を知る物)</h3>
+<table>
+<thead>
+<tr>
+<th>責務</th>
+<th>いまの場所</th>
+<th></th>
+<th>あるべき</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>引く側:ACP の行を見て器を起こす</td>
+<td><strong>doeff-agents <code>sessionhost/acp/</code></strong></td>
+<td><strong>ズレ</strong></td>
+<td>agora 側</td>
+</tr>
+<tr>
+<td>押す側:ACP の spec を器の型へ訳す</td>
+<td><strong>ACP <code>Agent/Handler/Agentd.hs</code></strong></td>
+<td><strong>ズレ</strong></td>
+<td>agora 側</td>
+</tr>
+<tr>
+<td>node の join / lease / 能力の名乗り</td>
+<td>doeff-agents <code>sessionhost/acp/join.hy</code></td>
+<td><strong>ズレ</strong></td>
+<td>agora 側</td>
+</tr>
+<tr>
+<td>借りた札を手番の env に載せる</td>
+<td>doeff-agents <code>sessionhost/acp/</code></td>
+<td><strong>ズレ</strong></td>
+<td>agora 側</td>
+</tr>
+</tbody>
+</table>
+<h3>資格・製品の面・手元の道具</h3>
+<table>
+<thead>
+<tr>
+<th>責務</th>
+<th>いまの場所</th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>資格の保管と貸与</td>
+<td><code>custody</code>(別 repo・別 service)</td>
+<td>合</td>
+</tr>
+<tr>
+<td>利用枠の観測(会社機体でのみ測れる)</td>
+<td>会社機体の worker → cluster へ報告</td>
+<td>合</td>
+</tr>
+<tr>
+<td>観測の置き場</td>
+<td>ACP の <code>profile</code> の行 <code>status.windows</code></td>
+<td>合</td>
+</tr>
+<tr>
+<td>protocol / HUD / daemon / relay</td>
+<td><code>agora</code></td>
+<td>合</td>
+</tr>
+<tr>
+<td><code>ai</code> の CLI(薄い皮)・利用枠の読み</td>
+<td>dotfiles <code>agentcli</code></td>
+<td>合</td>
+</tr>
+</tbody>
+</table>
+<p><strong>ズレは 9 行。</strong> うち 4 行が glue、2 行が「型 / client が無い」、2 行が方策の置き場、1 行が重複。</p>
+<hr>
+<h2>4. glue はどこに住むのか</h2>
+<p>「glue」と呼ばれる物は <strong>2 種類</strong>あり、置き場の答えが違う。</p>
+<figure class="diagram"><div class="svgwrap"><svg id="mmd-rfig2" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" class="flowchart" style="max-width: 1236.75px; background-color: transparent;" viewBox="0 0 1236.75 364" role="graphics-document document" aria-roledescription="flowchart-v2"><style>#mmd-rfig2{font-family:"trebuchet ms",verdana,arial,sans-serif;font-size:16px;fill:#333;}@keyframes edge-animation-frame{from{stroke-dashoffset:0;}}@keyframes dash{to{stroke-dashoffset:0;}}#mmd-rfig2 .edge-animation-slow{stroke-dasharray:9,5!important;stroke-dashoffset:900;animation:dash 50s linear infinite;stroke-linecap:round;}#mmd-rfig2 .edge-animation-fast{stroke-dasharray:9,5!important;stroke-dashoffset:900;animation:dash 20s linear infinite;stroke-linecap:round;}#mmd-rfig2 .error-icon{fill:#552222;}#mmd-rfig2 .error-text{fill:#552222;stroke:#552222;}#mmd-rfig2 .edge-thickness-normal{stroke-width:1px;}#mmd-rfig2 .edge-thickness-thick{stroke-width:3.5px;}#mmd-rfig2 .edge-pattern-solid{stroke-dasharray:0;}#mmd-rfig2 .edge-thickness-invisible{stroke-width:0;fill:none;}#mmd-rfig2 .edge-pattern-dashed{stroke-dasharray:3;}#mmd-rfig2 .edge-pattern-dotted{stroke-dasharray:2;}#mmd-rfig2 .marker{fill:#333333;stroke:#333333;}#mmd-rfig2 .marker.cross{stroke:#333333;}#mmd-rfig2 svg{font-family:"trebuchet ms",verdana,arial,sans-serif;font-size:16px;}#mmd-rfig2 p{margin:0;}#mmd-rfig2 .label{font-family:"trebuchet ms",verdana,arial,sans-serif;color:#333;}#mmd-rfig2 .cluster-label text{fill:#333;}#mmd-rfig2 .cluster-label span{color:#333;}#mmd-rfig2 .cluster-label span p{background-color:transparent;}#mmd-rfig2 .label text,#mmd-rfig2 span{fill:#333;color:#333;}#mmd-rfig2 .node rect,#mmd-rfig2 .node circle,#mmd-rfig2 .node ellipse,#mmd-rfig2 .node polygon,#mmd-rfig2 .node path{fill:#ECECFF;stroke:#9370DB;stroke-width:1px;}#mmd-rfig2 .rough-node .label text,#mmd-rfig2 .node .label text,#mmd-rfig2 .image-shape .label,#mmd-rfig2 .icon-shape .label{text-anchor:middle;}#mmd-rfig2 .node .katex path{fill:#000;stroke:#000;stroke-width:1px;}#mmd-rfig2 .rough-node .label,#mmd-rfig2 .node .label,#mmd-rfig2 .image-shape .label,#mmd-rfig2 .icon-shape .label{text-align:center;}#mmd-rfig2 .node.clickable{cursor:pointer;}#mmd-rfig2 .root .anchor path{fill:#333333!important;stroke-width:0;stroke:#333333;}#mmd-rfig2 .arrowheadPath{fill:#333333;}#mmd-rfig2 .edgePath .path{stroke:#333333;stroke-width:1px;}#mmd-rfig2 .flowchart-link{stroke:#333333;fill:none;}#mmd-rfig2 .edgeLabel{background-color:rgba(232,232,232, 0.8);text-align:center;}#mmd-rfig2 .edgeLabel p{background-color:rgba(232,232,232, 0.8);}#mmd-rfig2 .edgeLabel rect{opacity:0.5;background-color:rgba(232,232,232, 0.8);fill:rgba(232,232,232, 0.8);}#mmd-rfig2 .labelBkg{background-color:rgba(232, 232, 232, 0.5);}#mmd-rfig2 .cluster rect{fill:#ffffde;stroke:#aaaa33;stroke-width:1px;}#mmd-rfig2 .cluster text{fill:#333;}#mmd-rfig2 .cluster span{color:#333;}#mmd-rfig2 div.mermaidTooltip{position:absolute;text-align:center;max-width:200px;padding:2px;font-family:"trebuchet ms",verdana,arial,sans-serif;font-size:12px;background:hsl(80, 100%, 96.2745098039%);border:1px solid #aaaa33;border-radius:2px;pointer-events:none;z-index:100;}#mmd-rfig2 .flowchartTitleText{text-anchor:middle;font-size:18px;fill:#333;}#mmd-rfig2 rect.text{fill:none;stroke-width:0;}#mmd-rfig2 .icon-shape,#mmd-rfig2 .image-shape{background-color:rgba(232,232,232, 0.8);text-align:center;}#mmd-rfig2 .icon-shape p,#mmd-rfig2 .image-shape p{background-color:rgba(232,232,232, 0.8);padding:2px;}#mmd-rfig2 .icon-shape .label rect,#mmd-rfig2 .image-shape .label rect{opacity:0.5;background-color:rgba(232,232,232, 0.8);fill:rgba(232,232,232, 0.8);}#mmd-rfig2 .label-icon{display:inline-block;height:1em;overflow:visible;vertical-align:-0.125em;}#mmd-rfig2 .node .label-icon path{fill:currentColor;stroke:revert;stroke-width:revert;}#mmd-rfig2 .node .neo-node{stroke:#9370DB;}#mmd-rfig2 [data-look="neo"].node rect,#mmd-rfig2 [data-look="neo"].cluster rect,#mmd-rfig2 [data-look="neo"].node polygon{stroke:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#mmd-rfig2 [data-look="neo"].swimlane.cluster rect{filter:none;}#mmd-rfig2 [data-look="neo"].node path{stroke:#9370DB;stroke-width:1px;}#mmd-rfig2 [data-look="neo"].node .outer-path{filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#mmd-rfig2 [data-look="neo"].node .neo-line path{stroke:#9370DB;filter:none;}#mmd-rfig2 [data-look="neo"].node circle{stroke:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#mmd-rfig2 [data-look="neo"].node circle .state-start{fill:#000000;}#mmd-rfig2 [data-look="neo"].icon-shape .icon{fill:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#mmd-rfig2 [data-look="neo"].icon-shape .icon-neo path{stroke:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#mmd-rfig2 :root{--mermaid-font-family:"trebuchet ms",verdana,arial,sans-serif;}</style><g><marker id="mmd-rfig2_flowchart-v2-pointEnd" class="marker flowchart-v2" viewBox="0 0 10 10" refX="5" refY="5" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig2_flowchart-v2-pointStart" class="marker flowchart-v2" viewBox="0 0 10 10" refX="4.5" refY="5" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M 0 5 L 10 10 L 10 0 z" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig2_flowchart-v2-pointEnd-margin" class="marker flowchart-v2" viewBox="0 0 11.5 14" refX="11.5" refY="7" markerUnits="userSpaceOnUse" markerWidth="10.5" markerHeight="14" orient="auto"><path d="M 0 0 L 11.5 7 L 0 14 z" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig2_flowchart-v2-pointStart-margin" class="marker flowchart-v2" viewBox="0 0 11.5 14" refX="1" refY="7" markerUnits="userSpaceOnUse" markerWidth="11.5" markerHeight="14" orient="auto"><polygon points="0,7 11.5,14 11.5,0" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig2_flowchart-v2-circleEnd" class="marker flowchart-v2" viewBox="0 0 10 10" refX="11" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig2_flowchart-v2-circleStart" class="marker flowchart-v2" viewBox="0 0 10 10" refX="-1" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig2_flowchart-v2-circleEnd-margin" class="marker flowchart-v2" viewBox="0 0 10 10" refY="5" refX="12.25" markerUnits="userSpaceOnUse" markerWidth="14" markerHeight="14" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig2_flowchart-v2-circleStart-margin" class="marker flowchart-v2" viewBox="0 0 10 10" refX="-2" refY="5" markerUnits="userSpaceOnUse" markerWidth="14" markerHeight="14" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig2_flowchart-v2-crossEnd" class="marker cross flowchart-v2" viewBox="0 0 11 11" refX="12" refY="5.2" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><path d="M 1,1 l 9,9 M 10,1 l -9,9" class="arrowMarkerPath" style="stroke-width: 2; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig2_flowchart-v2-crossStart" class="marker cross flowchart-v2" viewBox="0 0 11 11" refX="-1" refY="5.2" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><path d="M 1,1 l 9,9 M 10,1 l -9,9" class="arrowMarkerPath" style="stroke-width: 2; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig2_flowchart-v2-crossEnd-margin" class="marker cross flowchart-v2" viewBox="0 0 15 15" refX="17.7" refY="7.5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto"><path d="M 1,1 L 14,14 M 1,14 L 14,1" class="arrowMarkerPath" style="stroke-width: 2.5;"/></marker><marker id="mmd-rfig2_flowchart-v2-crossStart-margin" class="marker cross flowchart-v2" viewBox="0 0 15 15" refX="-3.5" refY="7.5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto"><path d="M 1,1 L 14,14 M 1,14 L 14,1" class="arrowMarkerPath" style="stroke-width: 2.5; stroke-dasharray: 1, 0;"/></marker><g class="root"><g class="clusters"/><g class="edgePaths"><path d="M943.789,168L943.789,174.167C943.789,180.333,943.789,192.667,943.789,208.333C943.789,224,943.789,243,943.789,252.5L943.789,262" id="mmd-rfig2-L_K_KO_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_K_KO_0" data-points="W3sieCI6OTQzLjc4OTA2MjUsInkiOjE2OH0seyJ4Ijo5NDMuNzg5MDYyNSwieSI6MjA1fSx7IngiOjk0My43ODkwNjI1LCJ5IjoyNjZ9XQ==" data-look="classic" marker-end="url(#mmd-rfig2_flowchart-v2-pointEnd)"/><path d="M308.414,180L308.414,184.167C308.414,188.333,308.414,196.667,308.414,204.333C308.414,212,308.414,219,308.414,222.5L308.414,226" id="mmd-rfig2-L_G_GO_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_G_GO_0" data-points="W3sieCI6MzA4LjQxNDA2MjUsInkiOjE4MH0seyJ4IjozMDguNDE0MDYyNSwieSI6MjA1fSx7IngiOjMwOC40MTQwNjI1LCJ5IjoyMzB9XQ==" data-look="classic" marker-end="url(#mmd-rfig2_flowchart-v2-pointEnd)"/></g><g class="edgeLabels"><g class="edgeLabel"><g class="label" data-id="L_K_KO_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g><g class="edgeLabel"><g class="label" data-id="L_G_GO_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g></g><g class="nodes"><g class="root" transform="translate(0, 0)"><g class="clusters"><g class="cluster" id="mmd-rfig2-G" data-look="classic"><rect style="" x="8" y="8" width="600.828125" height="172"/><g class="cluster-label" transform="translate(242.5703125, 8)"><foreignObject width="131.6875" height="24"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5;"><span class="nodeLabel"><p>adapter(必ず汚す)</p></span></div></foreignObject></g></g></g><g class="edgePaths"><path d="M257.375,94L263.625,94C269.875,94,282.375,94,294.875,94C307.375,94,319.875,94,326.125,94L332.375,94" id="mmd-rfig2-L_G1_G2_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_G1_G2_0" data-points="W3sieCI6MjU3LjM3NSwieSI6OTR9LHsieCI6Mjk0Ljg3NSwieSI6OTR9LHsieCI6MzMyLjM3NSwieSI6OTR9XQ==" data-look="classic"/></g><g class="edgeLabels"><g class="edgeLabel"><g class="label" data-id="L_G1_G2_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g></g><g class="nodes"><g class="node default" id="mmd-rfig2-flowchart-G1-4" data-look="classic" transform="translate(151.4375, 94)"><rect class="basic label-container" style="" x="-105.9375" y="-51" width="211.875" height="102"/><g class="label" style="" transform="translate(-75.9375, -36)"><rect/><foreignObject width="151.875" height="72"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>知るのは<br />両方の語彙<br />charter → AgentSpec</p></span></div></foreignObject></g></g><g class="node default" id="mmd-rfig2-flowchart-G2-5" data-look="classic" transform="translate(451.8515625, 94)"><rect class="basic label-container" style="" x="-119.4765625" y="-39" width="238.953125" height="78"/><g class="label" style="" transform="translate(-89.4765625, -24)"><rect/><foreignObject width="178.953125" height="48"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>引く側の glue<br />押す側の Handler.Agentd</p></span></div></foreignObject></g></g></g></g><g class="root" transform="translate(650.828125, 12)"><g class="clusters"><g class="cluster" id="mmd-rfig2-K" data-look="classic"><rect style="" x="8" y="8" width="569.921875" height="148"/><g class="cluster-label" transform="translate(234.578125, 8)"><foreignObject width="116.765625" height="24"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5;"><span class="nodeLabel"><p>client(汚さない)</p></span></div></foreignObject></g></g></g><g class="edgePaths"><path d="M265.5,82L271.75,82C278,82,290.5,82,303,82C315.5,82,328,82,334.25,82L340.5,82" id="mmd-rfig2-L_K1_K2_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_K1_K2_0" data-points="W3sieCI6MjY1LjUsInkiOjgyfSx7IngiOjMwMywieSI6ODJ9LHsieCI6MzQwLjUsInkiOjgyfV0=" data-look="classic"/></g><g class="edgeLabels"><g class="edgeLabel"><g class="label" data-id="L_K1_K2_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g></g><g class="nodes"><g class="node default" id="mmd-rfig2-flowchart-K1-0" data-look="classic" transform="translate(155.5, 82)"><rect class="basic label-container" style="" x="-110" y="-39" width="220" height="78"/><g class="label" style="" transform="translate(-80, -24)"><rect/><foreignObject width="160" height="48"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>知るのは<br />提供する側の語彙だけ</p></span></div></foreignObject></g></g><g class="node default" id="mmd-rfig2-flowchart-K2-1" data-look="classic" transform="translate(440.4609375, 82)"><rect class="basic label-container" style="" x="-99.9609375" y="-39" width="199.921875" height="78"/><g class="label" style="" transform="translate(-69.9609375, -24)"><rect/><foreignObject width="139.921875" height="48"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>doeff-agent-haskell<br />acp_client</p></span></div></foreignObject></g></g></g></g><g class="node default" id="mmd-rfig2-flowchart-KO-9" data-look="classic" transform="translate(943.7890625, 293)"><rect class="basic label-container" style="" x="-117.6875" y="-27" width="235.375" height="54"/><g class="label" style="" transform="translate(-87.6875, -12)"><rect/><foreignObject width="175.375" height="24"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>提供する側に置いてよい</p></span></div></foreignObject></g></g><g class="node default" id="mmd-rfig2-flowchart-GO-11" data-look="classic" transform="translate(308.4140625, 293)"><rect class="basic label-container" style="" x="-130" y="-63" width="260" height="126"/><g class="label" style="" transform="translate(-100, -48)"><rect/><foreignObject width="200" height="96"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;"><span class="nodeLabel"><p>どちらに置いても mixup<br />⇒ 両方を必要とする理由を持つ側<br />= agora に置く</p></span></div></foreignObject></g></g></g></g></g><defs><filter id="mmd-rfig2-drop-shadow" height="130%" width="130%"><feDropShadow dx="4" dy="4" stdDeviation="0" flood-opacity="0.06" flood-color="#000000"/></filter></defs><defs><filter id="mmd-rfig2-drop-shadow-small" height="150%" width="150%"><feDropShadow dx="2" dy="2" stdDeviation="0" flood-opacity="0.06" flood-color="#000000"/></filter></defs></svg></div><figcaption>図 2 — client と adapter は別物。client は提供する側の語彙しか知らないので置いても汚さない。両方の語彙を知る adapter だけが、どちらに置いても汚す。</figcaption></figure>
+
+<table>
+<thead>
+<tr>
+<th></th>
+<th>何を知るか</th>
+<th>置き場</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>client / SDK</strong></td>
+<td><strong>提供する側の語彙だけ</strong>。使う側を知らない</td>
+<td>提供する側でよい。<strong>汚さない</strong></td>
+</tr>
+<tr>
+<td><strong>adapter</strong></td>
+<td><strong>両方の語彙</strong>(<code>charter → AgentSpec</code>)</td>
+<td><strong>どちらに置いても汚す</strong></td>
+</tr>
+</tbody>
+</table>
+<p><code>doeff-agent-haskell</code> と <code>acp_client</code> は client であって glue ではない。ACP を 1 語も知らないから、
+doeff 側に在っても純度を壊さない。</p>
+<p>汚すのは adapter の方で、これを ACP に置けば ACP の純度が、runner に置けば runner の純度が壊れる。</p>
+<p><strong>解 = adapter は「両方を必要とする理由を持つ側」に住む。</strong> この系ではそれは <strong>agora</strong>。
+ACP も doeff-agents も、相手が居なくても存在理由がある。両方が要るのは agora だけ。</p>
+<p>判定は 1 つで足りる — <strong>2 つ以上の領域の語を名指すか。</strong> 名指すなら agora 側、名指さないなら提供する側の client。</p>
+<p>⚠ ただし「判断が全部 agora へ出る」わけではない。<code>controllers/messaging</code> の README は
+「配達の判断は ACP の 1 点で、<strong>この repo に第 2 の判定点は置かない</strong>」と明言している。
+何が engine の判断で何が運転の方策かは、責務ごとに線を引く。</p>
+<hr>
+<h2>5. 目標の姿</h2>
+<figure class="diagram"><div class="svgwrap"><svg id="mmd-rfig3" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" class="flowchart" style="max-width: 472.141px; background-color: transparent;" viewBox="0 0 472.140625 446" role="graphics-document document" aria-roledescription="flowchart-v2"><style>#mmd-rfig3{font-family:"trebuchet ms",verdana,arial,sans-serif;font-size:16px;fill:#333;}@keyframes edge-animation-frame{from{stroke-dashoffset:0;}}@keyframes dash{to{stroke-dashoffset:0;}}#mmd-rfig3 .edge-animation-slow{stroke-dasharray:9,5!important;stroke-dashoffset:900;animation:dash 50s linear infinite;stroke-linecap:round;}#mmd-rfig3 .edge-animation-fast{stroke-dasharray:9,5!important;stroke-dashoffset:900;animation:dash 20s linear infinite;stroke-linecap:round;}#mmd-rfig3 .error-icon{fill:#552222;}#mmd-rfig3 .error-text{fill:#552222;stroke:#552222;}#mmd-rfig3 .edge-thickness-normal{stroke-width:1px;}#mmd-rfig3 .edge-thickness-thick{stroke-width:3.5px;}#mmd-rfig3 .edge-pattern-solid{stroke-dasharray:0;}#mmd-rfig3 .edge-thickness-invisible{stroke-width:0;fill:none;}#mmd-rfig3 .edge-pattern-dashed{stroke-dasharray:3;}#mmd-rfig3 .edge-pattern-dotted{stroke-dasharray:2;}#mmd-rfig3 .marker{fill:#333333;stroke:#333333;}#mmd-rfig3 .marker.cross{stroke:#333333;}#mmd-rfig3 svg{font-family:"trebuchet ms",verdana,arial,sans-serif;font-size:16px;}#mmd-rfig3 p{margin:0;}#mmd-rfig3 .label{font-family:"trebuchet ms",verdana,arial,sans-serif;color:#333;}#mmd-rfig3 .cluster-label text{fill:#333;}#mmd-rfig3 .cluster-label span{color:#333;}#mmd-rfig3 .cluster-label span p{background-color:transparent;}#mmd-rfig3 .label text,#mmd-rfig3 span{fill:#333;color:#333;}#mmd-rfig3 .node rect,#mmd-rfig3 .node circle,#mmd-rfig3 .node ellipse,#mmd-rfig3 .node polygon,#mmd-rfig3 .node path{fill:#ECECFF;stroke:#9370DB;stroke-width:1px;}#mmd-rfig3 .rough-node .label text,#mmd-rfig3 .node .label text,#mmd-rfig3 .image-shape .label,#mmd-rfig3 .icon-shape .label{text-anchor:middle;}#mmd-rfig3 .node .katex path{fill:#000;stroke:#000;stroke-width:1px;}#mmd-rfig3 .rough-node .label,#mmd-rfig3 .node .label,#mmd-rfig3 .image-shape .label,#mmd-rfig3 .icon-shape .label{text-align:center;}#mmd-rfig3 .node.clickable{cursor:pointer;}#mmd-rfig3 .root .anchor path{fill:#333333!important;stroke-width:0;stroke:#333333;}#mmd-rfig3 .arrowheadPath{fill:#333333;}#mmd-rfig3 .edgePath .path{stroke:#333333;stroke-width:1px;}#mmd-rfig3 .flowchart-link{stroke:#333333;fill:none;}#mmd-rfig3 .edgeLabel{background-color:rgba(232,232,232, 0.8);text-align:center;}#mmd-rfig3 .edgeLabel p{background-color:rgba(232,232,232, 0.8);}#mmd-rfig3 .edgeLabel rect{opacity:0.5;background-color:rgba(232,232,232, 0.8);fill:rgba(232,232,232, 0.8);}#mmd-rfig3 .labelBkg{background-color:rgba(232, 232, 232, 0.5);}#mmd-rfig3 .cluster rect{fill:#ffffde;stroke:#aaaa33;stroke-width:1px;}#mmd-rfig3 .cluster text{fill:#333;}#mmd-rfig3 .cluster span{color:#333;}#mmd-rfig3 div.mermaidTooltip{position:absolute;text-align:center;max-width:200px;padding:2px;font-family:"trebuchet ms",verdana,arial,sans-serif;font-size:12px;background:hsl(80, 100%, 96.2745098039%);border:1px solid #aaaa33;border-radius:2px;pointer-events:none;z-index:100;}#mmd-rfig3 .flowchartTitleText{text-anchor:middle;font-size:18px;fill:#333;}#mmd-rfig3 rect.text{fill:none;stroke-width:0;}#mmd-rfig3 .icon-shape,#mmd-rfig3 .image-shape{background-color:rgba(232,232,232, 0.8);text-align:center;}#mmd-rfig3 .icon-shape p,#mmd-rfig3 .image-shape p{background-color:rgba(232,232,232, 0.8);padding:2px;}#mmd-rfig3 .icon-shape .label rect,#mmd-rfig3 .image-shape .label rect{opacity:0.5;background-color:rgba(232,232,232, 0.8);fill:rgba(232,232,232, 0.8);}#mmd-rfig3 .label-icon{display:inline-block;height:1em;overflow:visible;vertical-align:-0.125em;}#mmd-rfig3 .node .label-icon path{fill:currentColor;stroke:revert;stroke-width:revert;}#mmd-rfig3 .node .neo-node{stroke:#9370DB;}#mmd-rfig3 [data-look="neo"].node rect,#mmd-rfig3 [data-look="neo"].cluster rect,#mmd-rfig3 [data-look="neo"].node polygon{stroke:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#mmd-rfig3 [data-look="neo"].swimlane.cluster rect{filter:none;}#mmd-rfig3 [data-look="neo"].node path{stroke:#9370DB;stroke-width:1px;}#mmd-rfig3 [data-look="neo"].node .outer-path{filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#mmd-rfig3 [data-look="neo"].node .neo-line path{stroke:#9370DB;filter:none;}#mmd-rfig3 [data-look="neo"].node circle{stroke:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#mmd-rfig3 [data-look="neo"].node circle .state-start{fill:#000000;}#mmd-rfig3 [data-look="neo"].icon-shape .icon{fill:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#mmd-rfig3 [data-look="neo"].icon-shape .icon-neo path{stroke:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#mmd-rfig3 :root{--mermaid-font-family:"trebuchet ms",verdana,arial,sans-serif;}</style><g><marker id="mmd-rfig3_flowchart-v2-pointEnd" class="marker flowchart-v2" viewBox="0 0 10 10" refX="5" refY="5" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig3_flowchart-v2-pointStart" class="marker flowchart-v2" viewBox="0 0 10 10" refX="4.5" refY="5" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M 0 5 L 10 10 L 10 0 z" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig3_flowchart-v2-pointEnd-margin" class="marker flowchart-v2" viewBox="0 0 11.5 14" refX="11.5" refY="7" markerUnits="userSpaceOnUse" markerWidth="10.5" markerHeight="14" orient="auto"><path d="M 0 0 L 11.5 7 L 0 14 z" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig3_flowchart-v2-pointStart-margin" class="marker flowchart-v2" viewBox="0 0 11.5 14" refX="1" refY="7" markerUnits="userSpaceOnUse" markerWidth="11.5" markerHeight="14" orient="auto"><polygon points="0,7 11.5,14 11.5,0" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig3_flowchart-v2-circleEnd" class="marker flowchart-v2" viewBox="0 0 10 10" refX="11" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig3_flowchart-v2-circleStart" class="marker flowchart-v2" viewBox="0 0 10 10" refX="-1" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig3_flowchart-v2-circleEnd-margin" class="marker flowchart-v2" viewBox="0 0 10 10" refY="5" refX="12.25" markerUnits="userSpaceOnUse" markerWidth="14" markerHeight="14" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig3_flowchart-v2-circleStart-margin" class="marker flowchart-v2" viewBox="0 0 10 10" refX="-2" refY="5" markerUnits="userSpaceOnUse" markerWidth="14" markerHeight="14" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig3_flowchart-v2-crossEnd" class="marker cross flowchart-v2" viewBox="0 0 11 11" refX="12" refY="5.2" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><path d="M 1,1 l 9,9 M 10,1 l -9,9" class="arrowMarkerPath" style="stroke-width: 2; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig3_flowchart-v2-crossStart" class="marker cross flowchart-v2" viewBox="0 0 11 11" refX="-1" refY="5.2" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><path d="M 1,1 l 9,9 M 10,1 l -9,9" class="arrowMarkerPath" style="stroke-width: 2; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-rfig3_flowchart-v2-crossEnd-margin" class="marker cross flowchart-v2" viewBox="0 0 15 15" refX="17.7" refY="7.5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto"><path d="M 1,1 L 14,14 M 1,14 L 14,1" class="arrowMarkerPath" style="stroke-width: 2.5;"/></marker><marker id="mmd-rfig3_flowchart-v2-crossStart-margin" class="marker cross flowchart-v2" viewBox="0 0 15 15" refX="-3.5" refY="7.5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto"><path d="M 1,1 L 14,14 M 1,14 L 14,1" class="arrowMarkerPath" style="stroke-width: 2.5; stroke-dasharray: 1, 0;"/></marker><g class="root"><g class="clusters"/><g class="edgePaths"><path d="M130.156,86L130.156,92.167C130.156,98.333,130.156,110.667,136.733,122.562C143.309,134.458,156.462,145.915,163.039,151.644L169.615,157.373" id="mmd-rfig3-L_AG_ACR_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_AG_ACR_0" data-points="W3sieCI6MTMwLjE1NjI1LCJ5Ijo4Nn0seyJ4IjoxMzAuMTU2MjUsInkiOjEyM30seyJ4IjoxNzIuNjMxMDkzNzUsInkiOjE2MH1d" data-look="classic" marker-end="url(#mmd-rfig3_flowchart-v2-pointEnd)"/><path d="M173.266,286L166.249,292.167C159.232,298.333,145.198,310.667,138.181,322.333C131.164,334,131.164,345,131.164,350.5L131.164,356" id="mmd-rfig3-L_ACR_ACP_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_ACR_ACP_0" data-points="W3sieCI6MTczLjI2NjAxNTYyNSwieSI6Mjg2fSx7IngiOjEzMS4xNjQwNjI1LCJ5IjozMjN9LHsieCI6MTMxLjE2NDA2MjUsInkiOjM2MH1d" data-look="classic" marker-end="url(#mmd-rfig3_flowchart-v2-pointEnd)"/><path d="M316.64,286L323.657,292.167C330.674,298.333,344.708,310.667,351.725,322.333C358.742,334,358.742,345,358.742,350.5L358.742,356" id="mmd-rfig3-L_ACR_SH_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_ACR_SH_0" data-points="W3sieCI6MzE2LjY0MDIzNDM3NSwieSI6Mjg2fSx7IngiOjM1OC43NDIxODc1LCJ5IjozMjN9LHsieCI6MzU4Ljc0MjE4NzUsInkiOjM2MH1d" data-look="classic" marker-end="url(#mmd-rfig3_flowchart-v2-pointEnd)"/><path d="M359.75,86L359.75,92.167C359.75,98.333,359.75,110.667,353.174,122.562C346.597,134.458,333.444,145.915,326.868,151.644L320.291,157.373" id="mmd-rfig3-L_CU_ACR_0" class="edge-thickness-normal edge-pattern-dotted edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_CU_ACR_0" data-points="W3sieCI6MzU5Ljc1LCJ5Ijo4Nn0seyJ4IjozNTkuNzUsInkiOjEyM30seyJ4IjozMTcuMjc1MTU2MjUsInkiOjE2MH1d" data-look="classic" marker-end="url(#mmd-rfig3_flowchart-v2-pointEnd)"/></g><g class="edgeLabels"><g class="edgeLabel"><g class="label" data-id="L_AG_ACR_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(131.1640625, 323)"><g class="label" data-id="L_ACR_ACP_0" transform="translate(-45.953125, -12)"><foreignObject width="91.90625" height="24"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"><p>acp の client</p></span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(358.7421875, 323)"><g class="label" data-id="L_ACR_SH_0" transform="translate(-87.3046875, -12)"><foreignObject width="174.609375" height="24"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"><p>sessionhost の client(型)</p></span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(359.75, 123)"><g class="label" data-id="L_CU_ACR_0" transform="translate(-72, -12)"><foreignObject width="144" height="24"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"><p>手番ごとに札を貸す</p></span></div></foreignObject></g></g></g><g class="nodes"><g class="node default" id="mmd-rfig3-flowchart-AG-0" data-look="classic" transform="translate(130.15625, 47)"><rect class="basic label-container" style="" x="-122.15625" y="-39" width="244.3125" height="78"/><g class="label" style="" transform="translate(-92.15625, -24)"><rect/><foreignObject width="184.3125" height="48"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>agora<br />製品の面(protocol / HUD)</p></span></div></foreignObject></g></g><g class="node default" id="mmd-rfig3-flowchart-ACR-1" data-look="classic" transform="translate(244.953125, 223)"><rect class="basic label-container" style="" x="-130" y="-63" width="260" height="126"/><g class="label" style="" transform="translate(-100, -48)"><rect/><foreignObject width="200" height="96"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;"><span class="nodeLabel"><p>agora-controllers<br />agora の運転の方策 + adapter<br />handler を 2 つ持つ</p></span></div></foreignObject></g></g><g class="node default" id="mmd-rfig3-flowchart-ACP-2" data-look="classic" transform="translate(131.1640625, 399)"><rect class="basic label-container" style="" x="-72.1796875" y="-39" width="144.359375" height="78"/><g class="label" style="" transform="translate(-42.1796875, -24)"><rect/><foreignObject width="84.359375" height="48"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>ACP<br />engine だけ</p></span></div></foreignObject></g></g><g class="node default" id="mmd-rfig3-flowchart-SH-3" data-look="classic" transform="translate(358.7421875, 399)"><rect class="basic label-container" style="" x="-105.3984375" y="-39" width="210.796875" height="78"/><g class="label" style="" transform="translate(-75.3984375, -24)"><rect/><foreignObject width="150.796875" height="48"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>sessionhost(別 repo)<br />+ 薄い client(型つき)</p></span></div></foreignObject></g></g><g class="node default" id="mmd-rfig3-flowchart-CU-4" data-look="classic" transform="translate(359.75, 47)"><rect class="basic label-container" style="" x="-57.4375" y="-39" width="114.875" height="78"/><g class="label" style="" transform="translate(-27.4375, -24)"><rect/><foreignObject width="54.875" height="48"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>custody<br />資格</p></span></div></foreignObject></g></g></g></g></g><defs><filter id="mmd-rfig3-drop-shadow" height="130%" width="130%"><feDropShadow dx="4" dy="4" stdDeviation="0" flood-opacity="0.06" flood-color="#000000"/></filter></defs><defs><filter id="mmd-rfig3-drop-shadow-small" height="150%" width="150%"><feDropShadow dx="2" dy="2" stdDeviation="0" flood-opacity="0.06" flood-color="#000000"/></filter></defs></svg></div><figcaption>図 3 — 目標。controller が handler を 2 つ持ち、それぞれの client を叩く。ACP から sessionhost への辺は無い。</figcaption></figure>
+
+<p>依存は片方向で、<strong>宣言に現れる</strong>。</p>
+<pre><code>agora              →  agora-controllers
+agora-controllers  →  acp の client + 契約
+                   →  sessionhost の client(型つき)   ← adapter の handler だけ
+ACP                →  (この集合の誰にも依存しない)
+sessionhost        →  (同上)
+</code></pre>
+<p><code>ACP → sessionhost</code> という辺は<strong>無い</strong>。controller が <strong>handler を 2 つ</strong>持ち、
+それぞれの client を叩く。</p>
+<hr>
+<h2>6. なぜ repo を切るのか</h2>
+<p>整理のためではない。<strong>純度を機械で検められるようにする唯一の手段</strong>だから。</p>
+<p>「この成果物は相手の領域を知らない」を検めるには、<strong>依存の宣言が読める</strong>必要がある。
+同じ package の中では宣言が無いので、検めようがない。検められなければ drift は必ず戻る。</p>
+<p>そしてもう 1 つ、切ると<strong>欠けている物が強制的に生まれる</strong>。</p>
+<p>いま glue は <code>from doeff_agents.sessionhost...</code> で内側へ手を伸ばせる。repo が別になれば、
+それができない。すると glue は<strong>公開された client</strong> を使うしかなくなり、その client は
+内部構造を渡せないので<strong>型</strong>を持つしかなくなる。</p>
+<p>表の「ズレ」9 行のうち 3 行(型が無い・Python の client が無い・glue が runner の中)は、
+<strong>repo を切ると同時に解ける</strong>。気をつけて直すのではなく、構造上そうなるしかなくなる。</p>
+<p>これは Haskell 側で既に起きたことでもある —— 別 repo だったから、client は薄くなり型を持った。</p>
+<h3>切るのに要る物</h3>
+<ul>
+<li><code>doeff</code> / <code>doeff-hy</code> / <code>doeff-time</code> を monorepo の外から引けること
+  (実測: sessionhost の外向きの依存はこの 3 つだけ。monorepo に絡んでいない)</li>
+<li>検の機構(<code>doeff-adr</code> の plugin・品質検査〔<code>code-quality</code> は既に別 repo〕・走行の受付の門)</li>
+<li><code>.agents/</code> の宣言と land queue</li>
+<li>配備(<code>doeff-sessionhost</code> の uv tool の元が repo になる)</li>
+</ul>
+<h3>順序の制約</h3>
+<p><strong>いまの実行の入口が <code>acp.entry:main</code>。</strong> glue が入口を握っているので、
+「sessionhost だけ先に切る」はできない。glue を先に出すか、切るのと同時に出すか。</p>
+<hr>
+<h2>7. 決まっていること / 未決</h2>
+<p><strong>決まっている</strong>(法と実物が在る)</p>
+<ul>
+<li>engine は domain-free(<code>daemon-binary-must-be-domain-free</code> / <code>installedApps</code> は空)</li>
+<li>配置の係は engine の外で判断する(<code>scheduling operator decides outside the engine</code>)</li>
+<li><code>src/Acp</code> へ運転政策を足さない(2026-08-17 裁定・<code>layer-boundary-baseline.json</code> の ratchet が守る)</li>
+<li>agora の controller の住処は <code>agora-controllers</code>(10 個が既に居る・履歴ごと移した前例が 2 件)</li>
+</ul>
+<p><strong>未決</strong></p>
+<ul>
+<li>配置の方策は「運転政策」か。そうなら <code>src/Acp</code> を出る</li>
+<li>profile の選定を ACP(Haskell)と dotfiles(Python)のどちらへ寄せるか</li>
+<li>pane の席の切り替えの責任者</li>
+<li>sessionhost を切る repo の名前と、glue を出す順序</li>
+</ul></main></body></html>
