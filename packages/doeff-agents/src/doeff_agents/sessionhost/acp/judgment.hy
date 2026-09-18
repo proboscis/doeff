@@ -210,6 +210,7 @@
   RESULT-CAUSE-KEY
   InFlightJob
   InterruptRead
+  OpenToolBlock
   BINDING-NODE-KEY
   BINDING-NODE-ROW-KEY
   JOB-INTERRUPTS-DELIVERED-KEY
@@ -3998,8 +3999,19 @@
   shrunk)
 
 
-(defk claude-deltas-of [records job-id seq-start at streamed]
-  {:pre [(: records tuple) (: job-id str) (: seq-start int) (: at int) (: streamed bool)]
+(defk tool-input-chunks [text limit]
+  {:pre [(: text str) (: limit int)]
+   :post [(: % tuple)]}
+  "書きかけの引数の続き(1 回の読みの中で連結した partial_json)→ frame ごとの chunk の列。limit 字を超える連結は続きの
+   chunk に分ける(字は落とさない — 読み手は総字数を chunk の長さの和で数える)。空の連結は空の chunk 1 つ(道具の開始の
+   拍に走行器が送る空の差分 — 名前だけのカードが開始の拍に出る)。"
+  (if (<= (len text) limit)
+      #(text)
+      (tuple (lfor start (range 0 (len text) limit) (cut text start (+ start limit))))))
+
+
+(defk claude-deltas-of [records job-id seq-start at streamed open-blocks]
+  {:pre [(: records tuple) (: job-id str) (: seq-start int) (: at int) (: streamed bool) (: open-blocks tuple)]
    :post [(: % DeltaBatch)]}
   "claude の行(transcript の jsonl も stream-json の stdout も同じ形: assistant の content
    block・user の tool_result)→ frame と entries。usage は message.id ごとに 1 度だけ数える
@@ -4010,8 +4022,21 @@
    claude-system-note)を kind system の entry に、result の行の誤り(claude-result-error)を
    kind error の entry に写す(手番の終わりの判定は host が読む — ここは記録だけ)。本文は
    text-body 等で切らずに組み(DeltaBatch.bodies — 段 9f lane 9f-2)、entries(見出し)はそこから headline-of-body の
-   1 点で導く(段 9f lane 9f-4 — 本文は ACP へ写さない)。"
+   1 点で導く(段 9f lane 9f-4 — 本文は ACP へ写さない)。
+   道具の呼び出しの書きかけの引数(2026-09-19・card acp:kanban-issue:ki-0d0bcd1e81d9): streamed では stream_event の
+   content_block_start の tool_use で block を開き(open-blocks = 前の読みからまだ開いている block の表・OpenToolBlock の列)、
+   input_json_delta の partial_json を**この読みの中で同じ block ごとに連結して** tool_input_delta の frame 1 つに写す
+   (束ねる粒は読みの周期そのもの — 時間の定数を足さない)。chunk は文字列のまま運び、JSON として解釈しない。frame は
+   その block の最初の差分の位置に置く(完成の tool_use の frame より必ず前)。message_start でその message の表を空に
+   戻し、content_block_stop で block を閉じる。開始を見ていない差分は frame にせず数える(orphan-input-deltas — id も
+   名前も発明しない)。書きかけは frame だけで、bodies / entries には 1 字も書かない(記録は完成した tool_use だけ)。
+   読み終えてまだ開いている block は DeltaBatch.open-tool-blocks で返す(次の読みの入力)。"
   (setv frames [])
+  ;; 開いている道具の block: (parent, index) → OpenToolBlock。drafts = この読みで差分を見た block → 連結中の chunk と
+  ;; frames の中の置き場(最初の差分の位置 — 順を保つ)。
+  (setv opened (dfor block open-blocks #(block.parent block.index) block))
+  (setv drafts {})
+  (setv orphan-input-deltas 0)
   (setv bodies [])
   (setv usage None)
   (setv seen-messages (set))
@@ -4079,7 +4104,50 @@
                  (isinstance (.get delta "text") str))
         (<- chunk-frame dict (delta-frame job-id seq at "text" {"text" (get delta "text")}))
         (.append frames chunk-frame)
-        (setv seq (+ seq 1))))
+        (setv seq (+ seq 1)))
+      ;; 道具の呼び出しの書きかけの引数。block の名指しは (parent_tool_use_id, index) — index は message ごとの番号。
+      (when (isinstance event dict)
+        (setv event-type (.get event "type"))
+        (setv parent (.get record "parent_tool_use_id"))
+        (setv parent-key (if (isinstance parent str) parent ""))
+        (setv block-index (.get event "index"))
+        (setv indexed (and (isinstance block-index int) (not (isinstance block-index bool))))
+        (cond
+          (= event-type "message_start")
+          (for [key (list opened)]
+            (when (= (get key 0) parent-key)
+              (.pop opened key)))
+          (and (= event-type "content_block_start") indexed)
+          (do
+            (setv started (.get event "content_block"))
+            (setv started-id (if (isinstance started dict) (.get started "id") None))
+            (setv started-name (if (isinstance started dict) (.get started "name") None))
+            ;; 同じ番号の前の block は終わっている(番号の使い回し)— 道具でない block の開始でも表から外す。
+            (.pop opened #(parent-key block-index) None)
+            (when (and (isinstance started dict) (= (.get started "type") "tool_use")
+                       (isinstance started-id str) started-id (isinstance started-name str) started-name)
+              (setv (get opened #(parent-key block-index))
+                    (OpenToolBlock :parent parent-key :index block-index :tool-use-id started-id :name started-name))))
+          (and (= event-type "content_block_stop") indexed)
+          (.pop opened #(parent-key block-index) None)
+          (and (= event-type "content_block_delta") indexed (isinstance delta dict)
+               (= (.get delta "type") "input_json_delta") (isinstance (.get delta "partial_json") str))
+          (do
+            (setv open-block (.get opened #(parent-key block-index)))
+            (cond
+              (is open-block None)
+              (setv orphan-input-deltas (+ orphan-input-deltas 1))
+              (in open-block.tool-use-id drafts)
+              (.append (get (get drafts open-block.tool-use-id) "parts") (get delta "partial_json"))
+              True
+              (do
+                ;; 最初の差分の位置に frame の置き場を取る(seq もここで振る)。chunk は読み終えてから連結して入れる。
+                (<- draft-frame dict (delta-frame job-id seq at "tool_input_delta"
+                                                  {"toolUseId" open-block.tool-use-id "name" open-block.name "chunk" ""}))
+                (.append frames draft-frame)
+                (setv (get drafts open-block.tool-use-id) {"frame" draft-frame "parts" [(get delta "partial_json")]})
+                (setv seq (+ seq 1)))))
+          True None)))
     (when (and (in kind #{"assistant" "user"}) (isinstance message dict))
       (setv content (.get message "content"))
       (setv message-model (.get message "model"))
@@ -4139,11 +4207,30 @@
                 (.append bodies result-body)
                 (setv seq (+ seq 1)))
               True None))))))
+  ;; 書きかけの連結を frame の置き場へ入れる。上限(tool_use.input の文字列を切るのと同じ DELTA-INPUT-STRING-LIMIT 字)を
+  ;; 超える連結は続きの frame に分け、置き場の直後へ差す(順を保つ・字は落とさない)。分けた分の seq は読みの末尾から振る
+  ;; (seq は frame の名で、並びの鍵は中継の連番 — 完成の tool_use より前に並ぶことは置き場が保つ)。
+  (for [draft (.values drafts)]
+    (<- pieces tuple (tool-input-chunks (.join "" (get draft "parts")) DELTA-INPUT-STRING-LIMIT))
+    (setv head-frame (get draft "frame"))
+    (setv (get (get head-frame "payload") "chunk") (get pieces 0))
+    ;; 置き場を探すのは分ける時だけ(ふつうの読みは 1 frame — frame の seq は読みの中で一意なので等値で 1 つに決まる)。
+    (setv place (if (> (len pieces) 1) (+ (.index frames head-frame) 1) 0))
+    (for [piece (cut pieces 1 None)]
+      (<- more-frame dict (delta-frame job-id seq at "tool_input_delta"
+                                       {"toolUseId" (get (get head-frame "payload") "toolUseId")
+                                        "name" (get (get head-frame "payload") "name")
+                                        "chunk" piece}))
+      (.insert frames place more-frame)
+      (setv place (+ place 1))
+      (setv seq (+ seq 1))))
   (<- entries tuple (entries-of-bodies (tuple bodies)))
   (DeltaBatch :frames (tuple frames) :entries entries :bodies (tuple bodies) :usage usage
               :next-seq seq :model model
               :context (if (is context-tokens None) None {"tokens" context-tokens "window" context-window})
-              :interrupt-reads (tuple reads)))
+              :interrupt-reads (tuple reads)
+              :open-tool-blocks (tuple (.values opened))
+              :orphan-input-deltas orphan-input-deltas))
 
 
 (defk codex-context-of [last window]
@@ -4346,8 +4433,8 @@
               :next-seq seq :model None :context context :interrupt-reads (tuple reads)))
 
 
-(defk events-to-deltas [agent-type text job-id seq-start at]
-  {:pre [(: agent-type str) (: text str) (: job-id str) (: seq-start int) (: at int)]
+(defk events-to-deltas [agent-type text job-id seq-start at open-blocks]
+  {:pre [(: agent-type str) (: text str) (: job-id str) (: seq-start int) (: at int) (: open-blocks tuple)]
    :post [(: % DeltaBatch)]}
   "headless の events file の追記(stdout の行)→ TurnDelta の frame と entries(契約の
    種類の閉語彙 text / tool_use / tool_result / usage)。claude = stream-json の行、codex =
@@ -4355,7 +4442,7 @@
   (<- records tuple (parse-json-lines text))
   (cond
     (= agent-type "claude")
-    (do (<- claude-batch DeltaBatch (claude-deltas-of records job-id seq-start at True))
+    (do (<- claude-batch DeltaBatch (claude-deltas-of records job-id seq-start at True open-blocks))
         claude-batch)
     (= agent-type "codex")
     (do (<- codex-batch DeltaBatch (codex-event-deltas-of records job-id seq-start at))
@@ -4363,20 +4450,21 @@
     True (DeltaBatch :frames #() :entries #() :usage None :next-seq seq-start :model None)))
 
 
-(defk deltas-of [agent-type source text job-id seq-start at]
+(defk deltas-of [agent-type source text job-id seq-start at open-blocks]
   {:pre [(: agent-type str) (: source str) (: text str) (: job-id str) (: seq-start int)
-         (: at int)]
+         (: at int) (: open-blocks tuple)]
    :post [(: % DeltaBatch)]}
   "実況の材料の追記(text)→ kind と材料の種類(閉語彙 effects.StreamSource)別の TurnDelta の
    frame と entries: events = headless の stdout の行(events-to-deltas)、transcript = tui の
    transcript の行。未知の kind は空。"
   (when (= source STREAM-SOURCE-EVENTS)
-    (<- streamed DeltaBatch (events-to-deltas agent-type text job-id seq-start at))
+    (<- streamed DeltaBatch (events-to-deltas agent-type text job-id seq-start at open-blocks))
     (return streamed))
   (<- records tuple (parse-json-lines text))
   (cond
     (= agent-type "claude")
-    (do (<- claude-batch DeltaBatch (claude-deltas-of records job-id seq-start at False))
+    ;; transcript(tui)は完成した block の行だけで、引数の差分を運ばない — 開いた block の表は空のまま。
+    (do (<- claude-batch DeltaBatch (claude-deltas-of records job-id seq-start at False #()))
         claude-batch)
     (= agent-type "codex")
     (do (<- codex-batch DeltaBatch (codex-deltas-of records job-id seq-start at))

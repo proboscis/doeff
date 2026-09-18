@@ -106,19 +106,19 @@
 (deftest test-claude-events-measure-the-last-message-against-the-result-context-window
   ;; 末尾の assistant の usage(入力側 + 出力)を、result の modelUsage の**その model** の contextWindow で割る(haiku の
   ;; 副 model の窓は読まない)。60,000 + 5 + 20 / 100,000 = 60%。
-  (setv batch (run (deltas-of "claude" "events" (claude-turn "答え" 100 60000 100000) "j-1" 0 AT)))
+  (setv batch (run (deltas-of "claude" "events" (claude-turn "答え" 100 60000 100000) "j-1" 0 AT #())))
   (assert (isinstance batch DeltaBatch))
   (assert (= batch.context {"tokens" (+ 100 60000 5 20) "window" 100000}) batch.context)
   (assert (= (run (context-percent-of batch.context)) 60))
   ;; 窓を超えた実測は 100 で止める(比較は「以上」なので意味は変わらない)。
   (assert (= (run (context-percent-of {"tokens" 250000 "window" 200000})) 100))
   ;; result に modelUsage が無い(古い CLI・途中で落ちた手番)= 窓が無い = 測れない(None)。
-  (setv blind (run (deltas-of "claude" "events" (claude-turn "答え" 100 60000 None) "j-1" 0 AT)))
+  (setv blind (run (deltas-of "claude" "events" (claude-turn "答え" 100 60000 None) "j-1" 0 AT #())))
   (assert (= blind.context {"tokens" (+ 100 60000 5 20) "window" None}) blind.context)
   (assert (is (run (context-percent-of blind.context)) None))
   (assert (is (run (context-percent-of None)) None))
   ;; tui の transcript(streamed でない)には result の行が無いので窓は無い。
-  (setv transcript (run (deltas-of "claude" "transcript" (claude-turn "答え" 100 60000 100000) "j-1" 0 AT)))
+  (setv transcript (run (deltas-of "claude" "transcript" (claude-turn "答え" 100 60000 100000) "j-1" 0 AT #())))
   (assert (= (get transcript.context "window") None) transcript.context))
 
 
@@ -129,7 +129,7 @@
                                                     "info" {"total_token_usage" {"input_tokens" 900000 "output_tokens" 1000 "cached_input_tokens" 800000}
                                                             "last_token_usage" {"input_tokens" 120000 "output_tokens" 500 "cached_input_tokens" 100000}
                                                             "model_context_window" 258400}}})]))
-  (setv batch (run (deltas-of "codex" "transcript" rollout "j-1" 0 AT)))
+  (setv batch (run (deltas-of "codex" "transcript" rollout "j-1" 0 AT #())))
   (assert (= batch.context {"tokens" 120500 "window" 258400}) batch.context)
   (assert (= (run (context-percent-of batch.context)) 46))
   ;; app-server の thread/tokenUsage/updated: tokenUsage.last と modelContextWindow。
@@ -138,13 +138,13 @@
                                        "tokenUsage" {"total" {"inputTokens" 5 "outputTokens" 5}
                                                      "last" {"inputTokens" 200000 "cachedInputTokens" 1000 "outputTokens" 400}
                                                      "modelContextWindow" 258400}}}))
-  (setv events (run (deltas-of "codex" "events" notice "j-1" 0 AT)))
+  (setv events (run (deltas-of "codex" "events" notice "j-1" 0 AT #())))
   (assert (= events.context {"tokens" 200400 "window" 258400}) events.context)
   (assert (= (run (context-percent-of events.context)) 77))
   ;; 窓を名乗らない通知は測れない(None)。
   (setv bare (stream-line {"jsonrpc" "2.0" "method" "thread/tokenUsage/updated"
                            "params" {"tokenUsage" {"total" {} "last" {"inputTokens" 10}}}}))
-  (assert (is (run (context-percent-of (. (run (deltas-of "codex" "events" bare "j-1" 0 AT)) context))) None)))
+  (assert (is (run (context-percent-of (. (run (deltas-of "codex" "events" bare "j-1" 0 AT #())) context))) None)))
 
 
 (deftest test-compact-at-reads-the-declared-percent-and-nothing-else

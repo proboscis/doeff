@@ -650,7 +650,7 @@
      (interpretation
        "割り込み(R13): cancel(終端)と「手番だけ止めて session は残す」は 1 つの動詞に同居できないので、新しい動詞 session.interrupt(headless = SIGINT / turn/interrupt・tmux = Escape)を両 backend に足す。agentd は Withdrawn(書き手 = 作った側)を watch で受け、自分の走っている job なら interrupt-arm-for の 1 点で session.interrupt を撃ち、turn-record を ended(ここまでの entries と usage)、agent-job に condition Interrupted(phase は書かない)、session は片付けない(idle の寿命は sessions-to-retire)。取り下げは片付けの合図ではなく中断の合図。")
      (interpretation
-       "events の実況(R12): headless の器は stdout の行を events file(backend_ref.events_path・1 行 1 event)に追記し、agentd はそこから offset で読んで純関数 events-to-deltas で TurnDelta に写す(text の delta は 1 行ずつ frame に、完成した本文は entries に — 同じ本文を frame で二度流さない)。pane は無いので frame の capture は撃たない。node の observations.streamCapability は host の backend から導く(headless = events・tmux / herdr = frames)。")
+       "events の実況(R12): headless の器は stdout の行を events file(backend_ref.events_path・1 行 1 event)に追記し、agentd はそこから offset で読んで純関数 events-to-deltas で TurnDelta に写す(text の delta は 1 行ずつ frame に、完成した本文は entries に — 同じ本文を frame で二度流さない。道具の呼び出しの書きかけの引数〔input_json_delta の partial_json〕は 1 回の読みの中で道具ごとに連結して tool_input_delta の frame 1 つに — 記録には書かない・2026-09-19 追補)。pane は無いので frame の capture は撃たない。node の observations.streamCapability は host の backend から導く(headless = events・tmux / herdr = frames)。")
      (interpretation
        "差分の読みと計器の始点(R14): watch で起きた拍は agent-job の全量 list ではなく ACP の event-window(cursor-only・(after, through] の post-image)で変わった行だけを読み、知っている行の cache(AgentdState.rows)に差し替える。全量 list は最初の拍・周期の保険(watch_resync_seconds)・gap・接続の張り直し・窓が retention の床の下(409)の時だけ。郵便の本文は鍵で 1 行ずつ読む。計器 agent-job-to-send の始点は行の生まれの着地(generation 1 の image の resourceLandedAt・ns 精度)で、欄が無ければ今日の値(秒の粒度の createdAt)。")
      (interpretation
@@ -672,7 +672,7 @@
      (rule R8 "capture の gone は終端の合図で例外ではない: SessionCapture の答えは閉語彙 CaptureFrame | CaptureGone、実 handler は host の断り(AgentdClientError)を CaptureGone に写す(host.hy / substrate は触らない)。gone の job は capturing = False・stream_gone = True で、以後 capture も購読の読み直しもせず、器の終端(同じ拍に読み直す)で記録の腕へ。器が終端の拍は capture を撃たない(job-step-of を実況より先に読む)。")
      (rule R9 "tick の縁: heartbeat・profile の残量の観測(R18)・受け・割り込みの配達(R21)・job ごとの観測は互いの I/O の失敗(effects.IO_FAILURES = RuntimeError | OSError)で止まらない — program の agentd-tick が 5 つの腕をそれぞれ捕まえ、log して次の周期 / 次の拍へ持ち越す(condition には写さない — 一時の失敗を job の結末にしない)。I/O より広い例外は捕まえない(runtime.run_loop の縁)。")
      (rule R11 "headless backend: host の backend の閉語彙は tmux | herdr | headless。headless の器は専用の program(sessionhost/headless.hy)と substrate(effects.hy の Headless* → substrate_headless.hy → headless_process.py)で、host.hy は backend の分岐だけ(RPC の語彙は同じ意味・session.interrupt を足す)。stdin / stdout の作法と手番の判断は headless_protocol.py の Dialogue / turn_verdict の純関数 1 点。claude の print mode の argv の家は impls/headless_argv.hy ちょうどで、semgrep doeff-agents-no-claude-print-mode の除外もその家と headless の substrate / program / 検だけ。admission と identity の準備は tui の launch と共有する(launch.hy admit-launch / prepare-launch-workspace)。")
-     (rule R12 "events の実況: agentd は headless の器の実況を events file(wire の backend_ref.events_path)から offset で読み(SessionEvents)、純関数 judgment.events-to-deltas(claude = stream-json・codex = app-server の通知)で契約の種類の閉語彙(text / tool_use / tool_result / usage)の TurnDelta に写す。text の delta は 1 行ずつ frame、完成した本文は entries だけ。headless の器に pane の capture は撃たない。node の observations.streamCapability は host の backend から導く(judgment.stream-capability-of-backend の 1 点: headless = events・それ以外 = frames)。")
+     (rule R12 "events の実況: agentd は headless の器の実況を events file(wire の backend_ref.events_path)から offset で読み(SessionEvents)、純関数 judgment.events-to-deltas(claude = stream-json・codex = app-server の通知)で契約の種類の閉語彙(text / tool_use / tool_input_delta / tool_result / usage)の TurnDelta に写す。text の delta は 1 行ずつ frame、完成した本文は entries だけ。headless の器に pane の capture は撃たない。2026-09-19 の追補(agora-redesign の card acp:kanban-issue:ki-0d0bcd1e81d9 — 本番の実測: 2,559 字の引数が 9.9 秒・210 回に分けて届く間、面に道具のカードは 1 つも出ず完成の 0.1 秒後に一度に出た。走っている手番の差分のほとんどは引数〔1 会話の材料で input_json_delta 851 件・text_delta 39 件〕なのに、agentd は text_delta だけを写していた): claude の道具の呼び出しの書きかけの引数は、content_block_start の tool_use で block を開き(id と名はこの拍にだけ名乗られる)、input_json_delta の partial_json を **1 回の材料の読みの中で同じ block ごとに連結して** tool_input_delta の frame 1 つに写す(束ねる粒は読みの周期そのもの — 時間の定数を足さない)。chunk は文字列のまま運び、JSON として解釈しない。開いている block の表(effects.OpenToolBlock — 鍵は行の parent_tool_use_id と event の index)は読みをまたぐので InFlightJob.open_tool_blocks が持ち、判断 judgment.claude-deltas-of の入力と出力にする(純関数のまま)。message_start でその message の表を空に戻し、content_block_stop で block を閉じる。開始を見ていない差分は frame にせず数える(DeltaBatch.orphan_input_deltas → 計器 agent-job-orphan-input-deltas — id も名前も発明しない)。1 frame の chunk は DELTA_INPUT_STRING_LIMIT 字まで(tool_use.input の文字列を切るのと同じ 1 点 — 超える連結は続きの frame に分け、字は落とさない・第 2 の上限を置かない)。完成した tool_use の frame(input・clipped・1 MiB の規則)と記録は変えない — 書きかけは frame だけで、bodies / entries / 記録の service には 1 字も書かない。引数の差分を送らない走行器(codex)と transcript(tui)は名乗らない。node の observations.streamCapability は host の backend から導く(judgment.stream-capability-of-backend の 1 点: headless = events・それ以外 = frames)。")
      (rule R13 "withdraw は中断の合図: 自分の走っている job の行が Withdrawn(書き手 = 作った側)になったら、judgment.interrupt-arm-for の 1 点で手番の途中なら session.interrupt(headless = SIGINT / turn/interrupt・tmux = Escape・session は残す)を撃ち、turn-record を ended(ここまでの entries と usage)、agent-job の conditions に Interrupted(phase は書かない)。session.cleanup は撃たない(温かい session は残す — 寿命は sessions-to-retire)。")
      (rule R14 "watch の拍は差分の読み・計器の始点は生まれの着地: 行の読み直しの様式は judgment.list-mode-for の 1 点(full = 最初の拍・周期の保険・gap・接続の張り直し / window = watch で起きた拍 = GET /api/event-window の post-image で AgentdState.rows を差し替え・窓が読めなければ full に落ちる / none = idle)。郵便の本文は鍵で 1 行ずつ読む(全量 list しない)。計器 agent-job-to-send の createdAtMs は judgment.birth-ms-of の 1 点(生まれの表 → generation 1 の image の landed_at_ms → 今日の値 created_at_ms)。")
      (rule R15 "session の id は agentd が鋳造する: 起こす session の id(session_id と session_name・sessionHandle.sessionId・stream の name)は effect MintId(ULID・時刻と乱数は handler)の答えで、charter(Messaging が組む launch の params)の session_id / session_name は読まない(judgment.launch-plan-of が落とす・据えるのは charter-with-session-id の 1 点)。実弾 2026-09-12: 温かい session が idle TTL で片付いた後、charter の固定の id の launch が `session is already registered`(host は片付いた行を登記のまま残す)に落ちて LaunchFailed で Ended した。")
@@ -836,10 +836,16 @@
          [(counterexample "tui の adapter(impls/claude_code.hy)に -p を足す — 1 手番で process が死に、monitor が result を validate / 再促できない(ADR-DOE-AGENTS-002 の禁止そのもの)")
           (counterexample "semgrep の除外を packages/** に広げる — print mode の禁止が死に、次の one-shot の launch site が黙って通る")])
      (law headless-events-are-mapped-by-one-pure-function
-       :statement "for_all headless session s (backend_kind = headless): the live stream of s is read from backend_ref.events_path (SessionEvents) and mapped to TurnDelta by judgment.events-to-deltas; text deltas become text frames one per line and completed text becomes entries only; SessionCapture is never issued for s; AgentdSettings.stream_capability = events iff the host backend is headless"
+       :statement "for_all headless session s (backend_kind = headless): the live stream of s is read from backend_ref.events_path (SessionEvents) and mapped to TurnDelta by judgment.events-to-deltas; text deltas become text frames one per line and completed text becomes entries only; the partial arguments of a tool call (input_json_delta) opened by a seen content_block_start become one tool_input_delta frame per tool per read, carrying the verbatim continuation and the id and name the runner declared at the start, and never reach bodies, entries or the record service; a partial argument whose start was not seen is counted and not framed; SessionCapture is never issued for s; AgentdSettings.stream_capability = events iff the host backend is headless"
        :counterexamples
          [(counterexample "headless の器に pane の capture を撃つ — 無い pane への capture が gone で毎拍落ちる(実弾 003 の headless 版)")
           (counterexample "完成した assistant の本文を text frame でも流す — 画面に同じ本文が delta と全文で二度出る")
+          (counterexample "道具の呼び出しの引数の差分(input_json_delta)を『完成の行の管轄』として読み捨てる — 走っている手番の差分のほとんどはこれで(実測 851 対 39)、面は完成まで道具のカードを 1 つも出せない(2026-09-19 の本番の実測: 9.9 秒の無表示のあと 2,559 字が一度に出た)")
+          (counterexample "開始(content_block_start)を見ていない引数の差分に、推測した id や名前を付けて frame にする — 読み手は完成の呼び出しへ置き換えられず、消えないカードが残る。数えて捨てる")
+          (counterexample "書きかけの partial_json を JSON として解釈して input の object を組み立てて運ぶ — 閉じていない断面から値を発明する。運ぶのは続きの文字列ちょうど")
+          (counterexample "書きかけを bodies / entries / 記録の service に書く — 確定した記録が実況で動く。記録に残るのは完成した tool_use だけ")
+          (counterexample "書きかけの frame を束ねるために新しい時間の定数(例: 100 ms の窓)や第 2 の字数の上限を agentd に置く — 束ねる粒は材料の読みの周期そのもの・字数の上限は DELTA_INPUT_STRING_LIMIT の 1 点")
+          (counterexample "開いている block の表を index だけで引く — index は message ごとの番号なので、下請けの agent の message(parent_tool_use_id つき)の同じ番号の差分が親の道具の書きかけに混ざる")
           (counterexample "streamCapability を値の宣言の literal に固定する — headless の node が frames を名乗り、画面が端末の眺めで chat の block を描けない")])
      (law headless-first-turn-carries-the-mail
        :statement "for_all Bound job j claimed by launch or resume on a host whose backend is headless (AgentdSettings.backend_kind = headless): the prompt of session.launch / session.resume = first-turn-prompt-of(charter.prompt, bodies(inputs(j))) (blank-line joined・charter only when inputs are empty) ∧ no SessionSend is issued for j; on a tui host the launch prompt = charter.prompt ∧ SessionSend(bodies) follows; the send arm sends bodies only (never the charter prompt) on every host, and on a headless host it folds them into exactly one SessionSend(first-turn-prompt-of(empty prefix, bodies), first-turn-attachments-of(carried)) — zero sends when bodies is empty; the two decisions are judgment.first-turn-carries-inputs (charter, backend ∧ arm) and judgment.send-folds-bodies (after-start, backend alone) and nothing else"
@@ -1816,13 +1822,32 @@
        (assert (= (lfor k kinds :if (= k "text") k) ["text" "text"]))
        (assert (not-in "frame" kinds))
        (assert (= world.sessions.captures []))
+       ;; 2026-09-19 追補: 道具の呼び出しの書きかけの引数は、開始の拍に名乗られた id と名で tool_input_delta の frame になる。
+       ;; 拍 1 = 開始 + 差分 2 つ(連結して 1 frame)・拍 2 = 続きだけ(開始の行は材料に無い — 表が拍をまたぐ)。
+       (setv events-path f"/events/{h-sid}.events.jsonl")
+       (setv (get world.local.transcripts events-path)
+             (+ (get world.local.transcripts events-path)
+                "{\"type\": \"stream_event\", \"parent_tool_use_id\": null, \"event\": {\"type\": \"content_block_start\", \"index\": 1, \"content_block\": {\"type\": \"tool_use\", \"id\": \"toolu_h\", \"name\": \"Bash\", \"input\": {}}}}\n"
+                "{\"type\": \"stream_event\", \"parent_tool_use_id\": null, \"event\": {\"type\": \"content_block_delta\", \"index\": 1, \"delta\": {\"type\": \"input_json_delta\", \"partial_json\": \"{\\\"comm\"}}}\n"
+                "{\"type\": \"stream_event\", \"parent_tool_use_id\": null, \"event\": {\"type\": \"content_block_delta\", \"index\": 1, \"delta\": {\"type\": \"input_json_delta\", \"partial_json\": \"and\\\": \"}}}\n"))
+       (.tick world 500)
+       (setv (get world.local.transcripts events-path)
+             (+ (get world.local.transcripts events-path)
+                "{\"type\": \"stream_event\", \"parent_tool_use_id\": null, \"event\": {\"type\": \"content_block_delta\", \"index\": 1, \"delta\": {\"type\": \"input_json_delta\", \"partial_json\": \"\\\"ls\\\"}\"}}}\n"
+                "{\"type\": \"stream_event\", \"parent_tool_use_id\": null, \"event\": {\"type\": \"content_block_delta\", \"index\": 7, \"delta\": {\"type\": \"input_json_delta\", \"partial_json\": \"{\"}}}\n"))
+       (.tick world 500)
+       (setv drafts (lfor [_o _n frames] world.acp.pushes frame frames :if (= (get frame "kind") "tool_input_delta") (get frame "payload")))
+       (assert (= drafts [{"toolUseId" "toolu_h" "name" "Bash" "chunk" "{\"command\": "}
+                          {"toolUseId" "toolu_h" "name" "Bash" "chunk" "\"ls\"}"}])
+               f"書きかけの引数が道具ごと・読みごとの 1 frame になっていない(開始を見ていない index 7 の差分は frame にしない): {drafts}")
        (.finish-turn world.sessions h-sid (+ world.local.now-ms 100))
        (.tick world 1000)
        (setv record (status-of (get world.acp.rows "default:turn-record:h-1")))
        (assert (= (get record "state") "ended"))
        (setv entries (get record "entries"))
        (assert (isinstance entries list))
-       (assert (= (lfor e entries :if (isinstance e dict) (get e "kind")) ["text"]))
+       (assert (= (lfor e entries :if (isinstance e dict) (get e "kind")) ["text"])
+               "書きかけの引数が記録の entries に入っている(記録に残るのは完成した呼び出しだけ)")
        (setv first-entry (get entries 0))
        (assert (isinstance first-entry dict))
        (assert (not-in "text" first-entry) "見出しに本文が在る(段 9f lane 9f-4)")

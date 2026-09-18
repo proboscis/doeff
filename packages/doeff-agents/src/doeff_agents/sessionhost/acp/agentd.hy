@@ -1623,15 +1623,22 @@
   {:pre [(: settings AgentdSettings) (: job InFlightJob) (: source str) (: path str)
          (: now-ms int)]
    :post [(: % InFlightJob)]}
-  "実況の材料の追記を読み、TurnDelta(text / tool_use / tool_result / usage)を押し、その拍の
-   出来事(entries)を turn-record へ追記する(events は text の delta が 1 行ずつ・判断は純関数
+  "実況の材料の追記を読み、TurnDelta(text / tool_use / tool_input_delta / tool_result / usage)を押し、その拍の
+   出来事(entries)を turn-record へ追記する(events は text の delta が 1 行ずつ・道具の書きかけの引数は
+   この読みの中で道具ごとに連結した 1 frame — 記録には書かない・判断は純関数
    deltas-of / events-to-deltas)。持ち越しの出来事(pending-entries)は先頭に乗る。
    ⚠ 追記の拍は transcript の周期(judgment.record-due — 段 8 lane 4aa): push は events の周期
    (≤ 50 ms)で押すが、記録の書き(= ACP の event 1 つ)を拍ごとにすると journal と画面の糊の
    watch の拍が飽和する。書かない拍の出来事は pending-entries に持ち越す(落とさない)。"
   (<- chunk TranscriptChunk (read-stream source path job.transcript-offset))
-  (<- batch DeltaBatch (deltas-of job.agent-type source chunk.text job.job-id job.delta-seq now-ms))
-  (setv next (replace job :transcript-offset chunk.offset :delta-seq batch.next-seq))
+  (<- batch DeltaBatch (deltas-of job.agent-type source chunk.text job.job-id job.delta-seq now-ms job.open-tool-blocks))
+  ;; 開いている道具の block の表(書きかけの引数を id と名に結ぶ — 読みをまたぐ)は判断の出力をそのまま持つ。
+  (setv next (replace job :transcript-offset chunk.offset :delta-seq batch.next-seq
+                          :open-tool-blocks batch.open-tool-blocks))
+  ;; 開始を見ていない引数の差分は frame にしていない(id も名前も発明しない)— 黙って捨てず計器に数える。
+  (when batch.orphan-input-deltas
+    (<- (MetricLine :fields {"metric" "agent-job-orphan-input-deltas" "agentJobId" job.job-id
+                                    "sessionId" job.session-id "count" batch.orphan-input-deltas "atMs" now-ms})))
   ;; 段 10 lane 10n: 材料の中の「model が割り込みを読んだ」証拠を memory に写す(行への書きは settle-interrupts)。
   (<- read tuple (interrupt-reads-of next batch.interrupt-reads))
   (when read
@@ -1949,7 +1956,7 @@
       (DeltaBatch :frames #() :entries #() :usage None :next-seq 0 :model None)
       (do
         (<- chunk TranscriptChunk (read-stream source path job.start-offset))
-        (<- whole DeltaBatch (deltas-of job.agent-type source chunk.text job.job-id 0 now-ms))
+        (<- whole DeltaBatch (deltas-of job.agent-type source chunk.text job.job-id 0 now-ms #()))
         whole)))
 
 
