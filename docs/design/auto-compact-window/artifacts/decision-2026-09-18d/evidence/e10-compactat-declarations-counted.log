@@ -1,0 +1,43 @@
+# E10 — compactAt を宣言している会話の実数(U6 を閉じる)
+
+版 c の設計は選択 4 の註で「現に compactAt を宣言している会話が何本あるかは、この機体から
+control plane に届かず**数えられていない**(evidence U6)」と書いた。届いた。
+
+## 測り方
+
+ACP の store を直に読む(kanban の CLI と同じ composition root = assignment_ledger._client)。
+会話の宣言は行の resourceStatusJson.agent に載る(resourcePayload ではない — 最初の測りは
+payload を見て 0 を返した。これは測り方の誤りで、行の形は下のとおり)。
+
+  client = agentcli.kanban_cli._acp_client()
+  for r in client.iter_resources(kind="conversation"):
+      agent = (r.get("resourceStatusJson") or {}).get("agent")
+
+## 実測(2026-09-18 17:5x JST・会社 Mac)
+
+  conversation の行            : 51,475
+  status.agent を持つ行        :    361
+  compactAt を宣言している会話 :      1   値 = 60
+  autoCompactWindow を宣言     :      0
+
+## status.agent の欄の出現数(原則 11 の累積 — card ki-95a9cbc3e7cd の実測)
+
+  declaredAt   361
+  generation   361
+  model        351
+  effort       318
+  workDir      185
+  profile       41
+  fallback       4
+  compactAt      1
+
+欄は 8 つ。会話の概念に器の語(model / effort / workDir / profile / fallback)が 5 つ載っている。
+
+## 選択 4 への帰結
+
+床 400k / 窓 1M では使用率が約 40% で頭打ちになるので、40 より上の compactAt は撃たなくなる
+(E7)。**現に影響を受ける会話は 1 本**(値 60)。ACP の検が使う 70 / 80 は test/Acp/App/
+MessagingSpec.hs の検体の値で、走っている会話の値ではない。
+
+⇒ 案 a(内側の輪を優先)の影響範囲は会話 1 本。案 b(compactAt を宣言した会話には床を当てない)
+を採ると、その 1 本を守るために残り全部の床の判断を ACP 側の分岐に足すことになる。

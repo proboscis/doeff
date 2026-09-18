@@ -74,7 +74,7 @@
 ;; R-4484fd43 law headless-compaction-threshold-declared-by-the-runner)と同じ側へ
 ;; 倒す ── **起こす側が必ず名乗る**。「誰も選ばない」は effort と違って「系が
 ;; 選ばない」ではなく「窓の上限任せ」に落ちるからで、上限任せが直そうとしている
-;; 欠陥そのもの。会話が charter で名乗った値が第一で、名乗らない拍だけこの定数。
+;; 欠陥そのもの。呼び手が params で名乗った値が第一で、名乗らない拍だけこの定数。
 ;;
 ;; ⚠ 縮退の向きは常に `auto`(= CLI 自身の窓に合わせた調整)。読めない値・幅の外の
 ;;   値を argv に載せることは**手番を殺す**(claude 2.1.274 実測: argv 解釈の段で
@@ -90,7 +90,7 @@
 (setv AUTOCOMPACT-MAX-TOKENS 1000000)
 ;: 会話が名乗らない拍の閾値(token)。1M の窓に対して 40% ≒ 実装の途中で畳んで、
 ;: 最終盤(最も文脈が要る時)に畳まれない位置。役ごとの値は会話の宣言が運ぶ
-;: (方策の行の charter → charter.auto_compact_window)ので、ここは床ちょうど。
+;: (呼び手が params の欄で運ぶ)ので、ここは床ちょうど。
 (setv AUTOCOMPACT-DEFAULT-TOKENS 400000)
 ;: ⚠ 欄の綴り AUTOCOMPACT-PARAM-KEY は policy が正本(起こす腕の名簿が同じ語を写す
 ;: ── policy.LAUNCH-FLAG-KEYS)。ここでは import するだけで、第 2 の綴りを置かない。
@@ -165,7 +165,7 @@
      self-gate することを契約前提にする。
    - effort → model の順(oracle 順序、無指定はフラグ自体を出さない)
    - model の後ろに `--autocompact <auto|tokens>` を**必ず**載せる(上の節の理由。
-     値は charter.auto_compact_window、無ければ床)。⚠ 旧 Rust 実装はこの旗を持たない
+     値は params の欄、無ければ床)。⚠ 旧 Rust 実装はこの旗を持たない
      が、parity の基準ではない — 2026-07-06 の裁定で「Rust = oracle」は破棄され、
      canonical gate は Hy の session host(conformance/README.md 冒頭)
    - caller mcp_servers(sse)+ result channel(stdio)を単一 --mcp-config に
