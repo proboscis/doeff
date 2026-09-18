@@ -1,0 +1,23 @@
+flowchart TB
+  subgraph acp["ACP(制御面・Haskell)"]
+    E["Agent の effect<br/>effectful"]
+    H1["handler: Agentd<br/>押す"]
+    H2["handler: AgentJob<br/>行を書く"]
+    H3["handler: Mock<br/>検用"]
+    E --> H1
+    E --> H2
+    E --> H3
+  end
+  subgraph adp["adapter = node の controller(ACP の成果物)"]
+    C["acp_client.runtime の上<br/>informer で行を追う"]
+    T["翻訳<br/>ACP の spec → AgentSpec"]
+    C --> T
+  end
+  subgraph da["doeff-agents(ACP を知らない)"]
+    API["公開の口<br/>AgentSpec・effect の宣言・socket の client"]
+    SH["sessionhost<br/>汎用の runner"]
+    API --> SH
+  end
+  H2 -->|"agent-job の行"| C
+  T -->|"AgentSpec を直列化"| API
+  H1 -->|"LaunchRequest(既に型つき)"| API
