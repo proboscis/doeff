@@ -5034,23 +5034,23 @@
 (defk summarize-output-of [text]
   {:pre [(: text (| str None))]
    :post [(: % (| SummaryOutcome str))]}
-  "claude -p --output-format json の答え(result の 1 object)を読む: subtype が success で result が空でない文字列なら要約の本文・
+  "claude の print モード(--output-format json)の答え(result の 1 object)を読む: subtype が success で result が空でない文字列なら要約の本文・
    usage(input_tokens / output_tokens / cache_creation_input_tokens / cache_read_input_tokens → 契約 turn-record の usage の 4 欄)・
    modelUsage の鍵の model。JSON でない・object でない・誤り(is_error / subtype != success)・本文が空 = 理由の文。"
   (when (or (is text None) (= (.strip text) ""))
-    (return "claude -p wrote no answer (the out file is empty)"))
+    (return "claude in print mode wrote no answer (the out file is empty)"))
   (setv document None)
   (try
     (setv document (json.loads text))
     (except [ValueError]
-      (return f"claude -p answered non-JSON: {(cut (.strip text) 0 200) !r}")))
+      (return f"claude in print mode answered non-JSON: {(cut (.strip text) 0 200) !r}")))
   (when (not (isinstance document dict))
-    (return f"claude -p answered a JSON {(. (type document) __name__)}, not the result object"))
+    (return f"claude in print mode answered a JSON {(. (type document) __name__)}, not the result object"))
   (setv result (.get document "result"))
   (when (or (is (.get document "is_error") True) (and (in "subtype" document) (!= (.get document "subtype") "success")))
-    (return f"claude -p answered an error ({(.get document "subtype")}): {(if (isinstance result str) (cut result 0 400) result) !r}"))
+    (return f"claude in print mode answered an error ({(.get document "subtype")}): {(if (isinstance result str) (cut result 0 400) result) !r}"))
   (when (not (and (isinstance result str) (!= (.strip result) "")))
-    (return "claude -p answered success without a result text"))
+    (return "claude in print mode answered success without a result text"))
   (setv usage-raw (.get document "usage"))
   (setv usage None)
   (when (isinstance usage-raw dict)

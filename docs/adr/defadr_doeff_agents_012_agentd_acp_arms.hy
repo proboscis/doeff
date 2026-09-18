@@ -192,6 +192,196 @@
   out)
 
 
+;; ---------------------------------------------------------------------------
+;; 針の照準の部品(構造で撃つ口)と、集合の宣言(名簿)
+;;
+;; 実弾 2026-09-17〜09-19(日次の全体検証がこの冊で赤 7 本): 7 本ともルール本文 = law の
+;; statement は現在のコードで満たされたままで、落ちたのは針が焼き付けた**ソースの字面**
+;; (行の literal・出現回数・語の有無)だけが正当な変更で動いたため。⇒ 針は「数」ではなく
+;; **名前の集合**を、「行の字面」ではなく**呼び先と引数の役**を撃つ。集合の宣言(名簿)は
+;; この冊の 1 か所に置き、針はそこを読む — 針の中に第 2 の名簿を書かない。
+;; ---------------------------------------------------------------------------
+
+(setv TOP-FORM-RE
+      (re.compile r"^\((?:defk|deff|defn|defmacro|defclass)\s+(?:#\^\s*\S+\s+)?([^\s\[\(\]]+)"))
+
+
+(defn #^ list bare-code-lines [#^ Path path]
+  "code 行から、さらに**註釈の続き(行末の ; / #)と文字列 literal の中身**を落とした行の列
+   (f-string の {…} の中は code なので残す)。『この語を**読んでいない**』を撃つ針だけがこれを使う。
+   反例: judgment.charter-place-of の docstring が方策の欄の名(delivery-policy)を**説明として**
+   綴った拍に R29 の禁止語の針が当たった(016a8e3b・2026-09-19)。註と文字列は読みではない。
+
+   ⚠ 読み口を 2 つにした理由(1 行): code-lines はこの冊の private(他の 26 冊は 1 か所も参照
+   していない)ので育ててもよかったが、この冊の**他の 42 本が文字列 literal の中身を positive に
+   読んでいる**(effects.py の綴りの pin・headless_protocol.py の 1 行の pin 等)ので、code-lines が
+   文字列を落とすとその 42 本が落ちる。⇒ code-lines は旧側の値のまま運び、禁止語の針だけが
+   この口を読む。行頭が # の行を落とす code-lines の既存の癖も、意図して据え置く。"
+  (setv hy? (= path.suffix ".hy"))
+  (setv comment-char (if hy? ";" "#"))
+  (setv quotes (if hy? "\"" "\"'"))
+  (setv out [])
+  (setv in-string None)
+  (setv depth 0)
+  (for [line (.splitlines (.read-text path :encoding "utf-8"))]
+    (setv kept [])
+    (setv i 0)
+    (setv n (len line))
+    (while (< i n)
+      (setv ch (get line i))
+      (cond
+        (is-not in-string None)
+        (cond
+          (and (= ch "\\") (< (+ i 1) n)) (setv i (+ i 2))
+          (= (cut line i (+ i (len in-string))) in-string)
+            (do (setv i (+ i (len in-string))) (setv in-string None) (setv depth 0))
+          (= ch "{") (do (setv depth (+ depth 1)) (.append kept " ") (setv i (+ i 1)))
+          (= ch "}") (do (setv depth (max 0 (- depth 1))) (.append kept " ") (setv i (+ i 1)))
+          (> depth 0) (do (.append kept ch) (setv i (+ i 1)))
+          True (setv i (+ i 1)))
+        (= ch comment-char) (setv i n)
+        (in ch quotes)
+        (do (setv opener (if (= (cut line i (+ i 3)) (* ch 3)) (* ch 3) ch))
+            (setv in-string opener)
+            (setv depth 0)
+            (.append kept " ")
+            (setv i (+ i (len opener))))
+        True (do (.append kept ch) (setv i (+ i 1)))))
+    (setv text (.join "" kept))
+    (when (.strip text) (.append out text)))
+  out)
+
+
+(defn #^ list live-bare-lines [#^ Path path #^ list proofs]
+  "禁止語の針が読む行(bare-code-lines)を、**走査が生きている証拠**つきで返す。
+   proofs のどれか 1 つでも見つからなければ赤 — 『絞り込みが空になって静かに緑』を作らない。
+   実弾 2026-09-19: 同じ日次の別の族で、rg の type 名の綴り違い(rs)が exit 2 + 空の stdout を
+   返し、13 本の検査が**何も走査せずに緑**だった。`not-in` の形の針は空の走査で必ず通るので、
+   その形を使う針は走査が生きている証拠を自分で持つ。"
+  (setv lines (bare-code-lines path))
+  (for [proof proofs]
+    (assert (any (gfor line lines (in proof line)))
+            f"禁止語の針の走査が生きていない — 証拠 {proof} が {path.name} の code 行に 1 つも無い"))
+  lines)
+
+
+(defn #^ str collapsed-code [#^ Path path]
+  "code 行を 1 本の文へ均した綴り(空白の連なりは 1 つ)。**行の折れ方に依らない**針のため。
+   反例: :launch-overlay の overlay が carry-launch-flags に包まれて 2 行に折れた拍に、
+   1 行の文字列一致で撃っていた針が外れた(a0f475fb・2026-09-18)。"
+  (re.sub r"\s+" " " (.join " " (lfor line (code-lines path) (.strip line)))))
+
+
+(defn #^ dict readers-of [#^ list paths #^ str word]
+  "語 word を**読む点**を『それを囲む頂点の form の名 → その行の列』で返す。
+   頂点の外の行(import の一覧の項)は読みではないので数えない。
+   数ではなく名前の集合で撃つための材料 — 名簿と突き合わせれば、読み手が増えた便は
+   『読み手 X を足した — 名簿へ宣言せよ』という読める赤になる。"
+  (setv found {})
+  (for [path paths]
+    (setv block None)
+    (for [line (code-lines path)]
+      (when (.startswith line "(")
+        (setv hit (.search TOP-FORM-RE line))
+        (setv block (if (is hit None) None (.group hit 1))))
+      (when (and (is-not block None) (in word line))
+        (.setdefault found block [])
+        (.append (get found block) line))))
+  found)
+
+
+(defn #^ list io-failure-edges-of [#^ Path path]
+  "『I/O の失敗を切り離す縁』(except IO-FAILURES)を、その縁が自分で名乗る log の語で並べる
+   (`agentd: <縁の名> failed …`)。f-string の欄は {} に均す。数ではなく名前で撃つための材料。"
+  (setv lines (code-lines path))
+  (setv edges [])
+  (for [[i line] (enumerate lines)]
+    (when (in "(except [e IO-FAILURES]" line)
+      (setv named None)
+      (for [ahead (cut lines (+ i 1) (+ i 6))]
+        (setv hit (re.search r"agentd: (.+?) failed" ahead))
+        (when (and (is-not hit None) (is named None))
+          (setv named (re.sub r"\{[^{}]*\}" "{}" (.group hit 1)))))
+      (assert (is-not named None)
+              f"I/O の縁が log で自分を名乗っていない(名で撃てない縁を足さない): {path.name} の {(+ i 1)} 行目")
+      (.append edges named)))
+  edges)
+
+
+(defn #^ list call-args-of [#^ list lines #^ str name]
+  "code 行の列から `(name …)` の呼びを見つけ、頂点の引数の綴りの列を呼びごとに返す。
+   呼び先と**引数の役**で撃つための材料 — 行の折れ方・空白・局所変数の名に依らない。
+   反例: ローカル変数の改名(job-status → fresh-status・6401d1d5 2026-09-17)で、呼びの 1 行を
+   字面で pin していた針が 2 本落ちた。渡っている cause は 1 度も欠けていなかった。"
+  (setv text (.join " " (lfor line lines (.strip line))))
+  (setv out [])
+  (setv start 0)
+  (while True
+    (setv at (.find text f"({name} " start))
+    (when (< at 0) (break))
+    (setv i (+ at 1 (len name)))
+    (setv depth 1)
+    (setv args [])
+    (setv token [])
+    (setv in-string False)
+    (while (and (< i (len text)) (> depth 0))
+      (setv ch (get text i))
+      (cond
+        in-string
+          (do (when (and (= ch "\\") (< (+ i 1) (len text)))
+                (.append token ch)
+                (setv i (+ i 1))
+                (setv ch (get text i)))
+              (when (= ch "\"") (setv in-string False))
+              (.append token ch))
+        (= ch "\"") (do (setv in-string True) (.append token ch))
+        (in ch "([{") (do (setv depth (+ depth 1)) (.append token ch))
+        (in ch ")]}") (do (setv depth (- depth 1)) (when (> depth 0) (.append token ch)))
+        (and (= depth 1) (= ch " ")) (do (when token (.append args (.join "" token))) (setv token []))
+        True (.append token ch))
+      (setv i (+ i 1)))
+    (when token (.append args (.join "" token)))
+    (.append out args)
+    (setv start (+ at 1)))
+  out)
+
+
+;; ---------------------------------------------------------------------------
+;; 集合の宣言(名簿)— この冊の唯一の定義点。law の statement はこの名簿を名指し、
+;; 針はこの名簿と実測の集合を突き合わせる。名簿の写しを針の中にも statement の中にも置かない。
+;; ---------------------------------------------------------------------------
+
+;; R2: PHASE-BOUND(結ばれた語)を読む点と、それぞれが答える問い。
+;; job を**選ぶ**判定はこのうち bound-to-me の 1 点ちょうどで、他は選ばない読み。
+(setv PHASE-BOUND-READERS
+      {"bound-to-me" "この行は自分に結ばれた Bound か — job を選ぶ唯一の判定"
+       "end-retry-verdict" "届かなかった Ended を、置き直された行(Pending / Bound)へ書き直すか(選ばない)"
+       "rebound-rows-of" "置き直された行のうち、持ち越している Ended の引き継ぎ先はどれか(選ばない)"})
+
+;; R10: JOB-STEP-TURN-END(温かい手番の終わり)に触る点と、それぞれの問い。
+;; **返す**のは job-step-of の 1 点ちょうどで、他は読むだけ(第 2 の判定点ではない)。
+(setv JOB-STEP-TURN-END-READERS
+      {"job-step-of" "温かい手番は終わったか — turn-end を**返す**唯一の点"
+       "retire-reason-after-job" "手番の終わりの後にこの session を片付ける理由が在るか(返さず**読む**だけ)"})
+
+;; R9 / R18 / R21 / R36 / R37 / 段 9f lane 9f-2: agentd.hy の拍が I/O の失敗を切り離す縁。
+;; 名は縁が自分で名乗る log の語(`agentd: <名> failed …`)で、値はその縁が何を隔てるか。
+;; 数ではなく名前で釘づける — 縁を足す便はここへ 1 行宣言する(針は数を知らない)。
+(setv IO-FAILURE-EDGES
+      {"heartbeat" "参加の lease の打刻(拍の I/O が塞がっても lease を切らさない独立の縁・段 10 lane 10ba)"
+       "profile observation" "この機体が持つ資格の profile の残量の観測(R18・遅い周期)"
+       "receive" "行の受け(list / event-window)"
+       "turn-record sweep" "走っている turn-record の終状態の巡回(遅い周期・memory なし)"
+       "interrupt delivery" "走っている自分の job に載った割り込みの配達(R21)"
+       "cancel handling" "取り消しの合図(spec.cancel)の 3 段"
+       "carried Ended re-write" "着かなかった Ended の書き直し(置き直された行へ)"
+       "job {} tick" "job ごとの観測(1 job の器の RPC が落ちても他の job と heartbeat は進む)"
+       "verify job {} tick" "走らせている verify の命令ごとの観測(R36)"
+       "summarize job {} tick" "走らせている summarize の区間ごとの観測(R37)"
+       "record spool for job {}" "拍の途中に本文を spool へ置く書き(段 9f lane 9f-2)"
+       "record flush" "拍の終わりに spool を会話の記録の service へ送る(段 9f lane 9f-2)"})
+
+
 (defn #^ list source-files []
   (sorted (+ (list (.rglob SESSIONHOST-DIR "*.hy"))
              (list (.rglob SESSIONHOST-DIR "*.py")))))
@@ -561,7 +751,8 @@
           (counterexample "still_queued を読まずに result を常に飲む形: abort の瞬間に畳みの途中だった注入は次の手番にならず(bundle の記述)、host は永久に手番の途中のまま。答えを読んで、生き残りが無ければ interrupted で終える")
           (counterexample "停止の合図を拍ごとに撃ち直す形: control_request は手番ごとに 1 度で足りる(queued の注入を全部次の手番に運ぶ)— 二度目は次の手番(注入の行の手番)を止めてしまう。合図は session に 1 つ・答え待ちの間は出さない")
           (counterexample "codex に停止の合図を出す形: 注入の段が無く inject が turn/interrupt で既に止めている — 二度目の turn/interrupt は注入の行の turn を止める。codex の能力は stop で、読んだ証拠は turn/started")
-          (counterexample "interrupts を拍の周期(transcript の周期)で polling する形: 載せてから注入まで拍の分だけ遅れる。watch の changed で拍を起こし、同じ拍で渡す(目標 1 秒以内)")]
+          (counterexample "interrupts を拍の周期(transcript の周期)で polling する形: 載せてから注入まで拍の分だけ遅れる。watch の changed で拍を起こし、同じ拍で渡す(目標 1 秒以内)")
+          (counterexample "『この語を読んでいない』を**註と文字列を含む生の行**で撃つ形: 禁止語を『ここでは読まない』と書いた説明文そのものに針が当たる(実弾 016a8e3b 2026-09-19 — judgment.charter-place-of の docstring が『要求の正本は配達方策の 1 欄で、ここは結ばれた行の綴りを写すだけ』と書いた拍に R29 の delivery-policy の針が赤くなった。違反の逆を書いた行が違反と読まれた)。読みを撃つ針は註と文字列 literal を落とした code 行だけを見る — ただし f-string の {…} は code なので残す")]
        :enforcement ["docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test-adr-doe-agents-012-interrupts-are-read-within-the-deadline"
                      "packages/doeff-agents/tests/test_sessionhost_acp.py::test_interrupt_is_injected_with_the_message_id_as_its_name_and_read_at_the_boundary_is_recorded"
                      "packages/doeff-agents/tests/test_sessionhost_acp.py::test_interrupt_unread_past_the_deadline_escalates_once_and_the_next_turn_carries_it"
@@ -585,7 +776,8 @@
           (counterexample "拾い直した手番の記録の腕を created のまま組む形(recovered-record-of が #(1 0) を返しても既定の created): 行が無いことに誰も気づかず、手番の終わりの ensure-turn-record は 1 bit も触らず、agent-job は条件なしで Ended になる — 郵便は『手番が 1 度も始まらなかった』と読んで failed にする(pool の pod は配備のたびに再起動するので最も当たる穴)")
           (counterexample "手番の終わりの最後の create が断られた時に期限(turn_record_create_deadline_seconds)の内なら pending のままにする形: 次の拍が来ないので条件が 1 つも乗らず『Ended・記録なし・理由なし』になる。短い手番(20 秒)が頭の答えない拍に当たると必ずこれ")
           (counterexample "行が在って書きだけ断られた拍に create を撃ち直す形: 409 が返るだけで記録は閉じず、断りが続く間ずっと撃ち続ける。行の在否を鍵で確かめ、在れば巡回に任せる")
-          (counterexample "ACP の turnlessOf や契約の lifecycle の宣言を変えて『記録の無い Ended』を通す形: 郵便の側の語の問題(#589)と agentd の側の取り残し(#537)を混ぜ、どちらも直らない。agentd の側の不変条件で閉じる")]
+          (counterexample "ACP の turnlessOf や契約の lifecycle の宣言を変えて『記録の無い Ended』を通す形: 郵便の側の語の問題(#589)と agentd の側の取り残し(#537)を混ぜ、どちらも直らない。agentd の側の不変条件で閉じる")
+          (counterexample "終端の書きが cause を運ぶことを、**呼びの 1 行の字面**で pin する針で守る形: 局所変数を 1 つ改名した正当な便(job-status → fresh-status・6401d1d5 2026-09-17)だけで『cause を渡していない』と赤くなり、しかも 2 本の針が同じ 1 文字列を共有していて同時に落ちた(実弾 2026-09-17〜19 の日次)。渡っている cause は 1 度も欠けていない。守るべきは綴りではなく**役**なので、呼び先と引数の役(4 引数・第 3 が cause を運ぶ式)で撃つ")]
        :enforcement ["docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test-adr-doe-agents-012-turn-records-are-not-left-to-one-write"
                      "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-a-turn-record-left-running-by-a-refused-write-is-ended-by-the-sweep"
                      "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-the-sweep-closes-the-leftovers-of-a-restart-and-leaves-the-live-ones-alone"
@@ -621,10 +813,11 @@
           (counterexample "拾い直した Running を Bound と同じに扱って launch し直す — 走っている session が 2 つになり、turn-record が二重になる")
           (counterexample "agentd.hy が終端の語彙を直に読んで record-end を決める — 次の 1 手の判定点が 2 つになり、memory の有無で結末が食い違う")])
      (law capture-gone-is-a-terminal-signal-not-an-error
-       :statement "SessionCapture ∈ {CaptureFrame, CaptureGone}; CaptureGone ⇒ no exception escapes the job's tick ∧ capturing = False ∧ stream_gone = True ∧ no further SessionCapture ∧ the job ends by the record arm (turn-record ended・phase Ended) once the session is terminal; session terminal at the tick ⇒ SessionCapture is not issued at all"
+       :statement "SessionCapture ∈ {CaptureFrame, CaptureGone}; CaptureGone ⇒ no exception escapes the job's tick ∧ capturing = False ∧ stream_gone = True ∧ no further SessionCapture ∧ the job ends by the record arm (turn-record ended・phase Ended) once the session is terminal; session terminal at the tick ⇒ SessionCapture is not issued at all; and the I/O-isolating edges of agentd.hy (except IO_FAILURES) form a **declared set**, not a count: the set of edges equals exactly this ADR's single roster IO-FAILURE-EDGES, each edge named by the phrase it logs (`agentd: <edge> failed …`) and carrying, in the roster, what it isolates — adding an edge without declaring it there is the violation, and no number of edges is ever pinned"
        :counterexamples
          [(counterexample "片付いた session の capture を例外のまま tick に上げる — 器が done で result も在るのに tick ごと落ち、job は Running・turn-record は running のまま(実弾 003)")
-          (counterexample "gone の後も frame の capture や購読の読み直しを続ける — 無い pane への tmux capture の連打")])
+          (counterexample "gone の後も frame の capture や購読の読み直しを続ける — 無い pane への tmux capture の連打")
+          (counterexample "縁の**数**(執筆時の 9)を針に焼き付ける — 縁を 1 つ足す正当な便(R36 の verify・R37 の summarize・#402 の着かなかった Ended の書き直し)が入るたびにこの law が赤くなり、赤の文は『何を直せばよいか』を 1 語も言わない(実弾 2026-09-17〜19 の日次: 実測 12 に対し針は 9 を数えていた)。数ではなく名前の集合で釘づけ、名簿を宣言の 1 点にする")])
      (law session-is-a-conversation-resource-and-a-job-is-a-turn
        :statement "for_all Bound job j of conversation c on node n: exists session s of c alive ∧ idle (lifecycle = multi_turn ∧ turn_ended_at ≠ None) ⇒ claim(j) issues no session.launch / session.resume and exactly session.send(inputs(j)) to s ∧ sessionHandle(j) = s ∧ turn-record(j) is its own row; no such s ⇒ launch, or resume / rehydrate by R20 when the conversation has a previous session; s mid-turn ⇒ j stays Bound (defer)"
        :counterexamples
@@ -632,10 +825,11 @@
           (counterexample "会話 → session の対応を process の memory にだけ持つ — 再起動で温かい session を見失い、生きている session を残したまま同じ会話をもう 1 つ起こす")
           (counterexample "手番の途中の session に次の手番の本文を send で積む — 前の手番の終わりの turn_ended_at を次の手番の終わりと読み違え、turn-record の境界が壊れる")])
      (law warm-send-is-decided-at-one-point
-       :statement "the only decision launch | send | resume | rehydrate | defer for a Bound job is judgment.next-arm-for-job; the only reading of a warm turn's end is judgment.job-step-of (turn-end ⇔ lifecycle = multi_turn ∧ turn_ended_at > floor ∧ progressed); agentd.hy neither compares lifecycle words nor reads turn_ended_at"
+       :statement "the only decision launch | send | resume | rehydrate | defer for a Bound job is judgment.next-arm-for-job; the only point that **returns** a warm turn's end is judgment.job-step-of (turn-end ⇔ lifecycle = multi_turn ∧ turn_ended_at > floor ∧ progressed); the points that touch JOB-STEP-TURN-END form a **declared set** — exactly this ADR's single roster JOB-STEP-TURN-END-READERS, which names each point with the question it answers — and every member other than job-step-of only **reads** that verdict without re-deciding it (today: retire-reason-after-job asks whether the session has a reason to be retired after the turn ended); agentd.hy neither compares lifecycle words nor reads turn_ended_at"
        :counterexamples
          [(counterexample "agentd.hy が『予め resume か launch か』を自分で分岐し、judgment にも同じ分岐を持つ — 判定点が 2 つになり memory の有無で起こし方が食い違う")
-          (counterexample "agentd が transcript の落ち着きを自分で数えて手番の終わりを宣言する — policy.hy の turn-end の連言(会話記録の鮮度窓・queued messages・awaiting)を持たない第 2 の判定で、走行中の手番を終わりと読む")])
+          (counterexample "agentd が transcript の落ち着きを自分で数えて手番の終わりを宣言する — policy.hy の turn-end の連言(会話記録の鮮度窓・queued messages・awaiting)を持たない第 2 の判定で、走行中の手番を終わりと読む")
+          (counterexample "turn-end の語の**出現回数**(執筆時の 2 = import の項 + 返す 1 点)を針に焼き付ける — 片付ける理由を問うために verdict を**読む**だけの点が増えた拍(277ae0f6 2026-09-17 の retire-reason-after-job)に赤くなり、『判定点が 2 つになった』のか『読み手が 1 つ増えた』のかを赤が区別しない。返す点と読む点を名簿で分け、読み手は名前と問いで宣言する")])
      (law print-mode-has-one-home-the-headless-backend
        :statement "the spelling of claude's print mode (`-p` in an argv) appears in sessionhost/ exactly in impls/headless_argv.hy; host.hy's backend vocabulary is {tmux, herdr, headless} and every RPC arm chooses the headless program by the one predicate headless-backend?; the semgrep rule doeff-agents-no-claude-print-mode excludes only the headless home (argv / protocol / process / program / substrate / tests)"
        :counterexamples
@@ -799,7 +993,8 @@
           (counterexample "session.send の session_env を launch と別の関所に通す(素通しする)— binding 所有キーの裏口が送りの口に開き、auth の合成の 1 点(R7)が壊れる")
           (counterexample "運べない組み合わせ(tmux の器・mode = interrupt)で session_env を黙って落とす — 呼び手は新しい札で起きたと思い、実際は誕生の札の process が走る(#92 の形が別の口で再生する)")
           (counterexample "手番の CLI に agentd の process env を丸ごと継がせる — 会話の中の道具が ACP の札と口・預かり所の URL・借り手札の path を読め、agentd の名で系を撃てる(実弾 #95 2026-09-14)")
-          (counterexample "継がせない名を否定の名簿(ACP_* / DOEFF_* を落とす)で書く — 新しい接頭の env が増えるたびに漏れ、名簿の改訂を忘れた拍に静かに破れる。名簿は許可の側で書く")])
+          (counterexample "継がせない名を否定の名簿(ACP_* / DOEFF_* を落とす)で書く — 新しい接頭の env が増えるたびに漏れ、名簿の改訂を忘れた拍に静かに破れる。名簿は許可の側で書く")
+          (counterexample "『行に札を残さない』を**1 行の文字列一致**で守る形: overlay を組む式が別の関数に包まれて 2 行に折れただけの正当な便(carry-launch-flags・a0f475fb 2026-09-18)で針が外れ、overlay-without-turn-auth は今日も通っているのに赤くなる(実弾 2026-09-17〜19 の日次)。折り方は不変条件ではない — 行を 1 本の文へ均してから『overlay の session_env が overlay-without-turn-auth を通る』を撃つ")])
      (law node-row-is-named-by-the-machine-from-its-declaration
        :statement "for_all heartbeat of agentd a with settings s: no live node row named s.node_name => AcpCreate(node, s.node_name, node-spec-of(s), declaration_sha256 = s.declaration_sha256); a live node row n with n.spec != node-spec-declared(n.spec, s) => AcpPutSpec(n, node-spec-declared(n.spec, s), declaration_sha256 = s.declaration_sha256) and the lease is written in the same heartbeat whether or not the spec write lands; s.node_capacity = int([agentd].capacity) and a declaration without it refuses to join; s.declaration_sha256 = sha256(bytes of the declaration file a read) and both writes carry it as the header x-declaration-sha256; s.work_roots declared ⇒ node-spec-of(s).workRoots = node-spec-declared(n.spec, s).workRoots = list(s.work_roots) and undeclared ⇒ neither carries workRoots"
        :counterexamples
@@ -1042,11 +1237,23 @@
        (assert (not-in "has-api-limit-marker (" judgment-text) "制御面が族の表を撃っている(R33)")
        (for [word ["you've hit" "you've reached" "rate limit" "usage limit" "quota exceeded"]]
          (assert (not-in word (.lower judgment-text)) f"族の表が制御面に写っている(R33): {word}"))
-       (setv agentd-text (.join "\n" (code-lines (/ ACP-DIR "agentd.hy"))))
+       (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
+       (setv agentd-text (.join "\n" agentd-lines))
        (assert (in "(provider-limit-condition-of" agentd-text) "手番の終わりが判断を撃っていない(R33)")
        (assert (in "view.terminal-cause" agentd-text) "読む材料が器の終端の cause でない(R33)")
-       (assert (in "(ended-status-of job-status outcome.result" agentd-text) "result を条件で置き換えている(R33)")
-       (assert (in "(if (is limit None) #() #(limit))" agentd-text) "条件が conditions に足されていない(R33)")
+       ;; 呼びの字面ではなく**引数の役**で撃つ: 手番の終わりの書きは器の result をそのまま第 2 引数で運ぶ
+       ;; (条件で置き換えない)。局所変数の名は針の材料ではない。
+       (assert (any (gfor args (call-args-of agentd-lines "ended-status-of")
+                          (and (= (get args 1) "outcome.result") (in "cause" (get args 2)))))
+               "手番の終わりの書きが器の result を運んでいない — result を条件で置き換えている(R33)")
+       ;; 乗るのは conditions で result ではない — 行の折れ方にも局所変数の名にも依らない形で撃つ
+       ;; (同じ便 6401d1d5 でこの式も 2 行に折れた)。
+       (assert (is-not (re.search r"\(\+ [A-Za-z0-9_.\-]*conditions #\(limit\)\)"
+                                  (collapsed-code (/ ACP-DIR "agentd.hy")))
+                       None)
+               "限度の条件が conditions の列へ足されていない(R33)")
+       (for [args (call-args-of agentd-lines "ended-status-of")]
+         (assert (!= (get args 1) "limit") f"限度を result の座に載せている(R33): {args}"))
        (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
        (for [needle ["CONDITION_PROVIDER_LIMIT: ConditionType = \"ProviderLimit\""
                      "REASON_RATE_LIMITED: str = \"rate-limited\""
@@ -1253,18 +1460,19 @@
                (.append hits f"{(.relative-to path SESSIONHOST-DIR)}: {word}")))))
        (assert (= hits []) f"agentd の出口は ACP と custody だけ(ADR-DOE-AGENTS-012 R1): {hits}"))
      (deftest test-adr-doe-agents-012-bound-to-me-is-the-only-job-selection
-       ;; R2 の針: Bound の語を判定に使うのは judgment.hy の bound-to-me だけ、
+       ;; R2 の針: PHASE-BOUND を読む点の集合は宣言の名簿 PHASE-BOUND-READERS ちょうど(数ではなく
+       ;; **名前**で釘づける)、そのうち job を**選ぶ**判定は bound-to-me の 1 点、
        ;; status の "binding" 欄を書く形(setv (get … "binding"))が acp/ に無い。
        (setv judgment (/ ACP-DIR "judgment.hy"))
        (setv agentd (/ ACP-DIR "agentd.hy"))
-       ;; import の一覧の項(行が語そのもの)は使用ではない。
-       (setv bound-uses (lfor line (+ (code-lines judgment) (code-lines agentd))
-                              :if (and (in "PHASE-BOUND" line)
-                                       (!= (.strip line) "PHASE-BOUND"))
-                              line))
-       (assert (= (len bound-uses) 1)
-               f"Bound の判定は bound-to-me の 1 点(ADR-DOE-AGENTS-012 R2): {bound-uses}")
-       (assert (in "(= (.get status \"phase\") PHASE-BOUND)" (get bound-uses 0)))
+       (setv bound-readers (readers-of [judgment agentd] "PHASE-BOUND"))
+       (assert (= (set (.keys bound-readers)) (set (.keys PHASE-BOUND-READERS)))
+               (+ "PHASE-BOUND を読む点が名簿と違う(ADR-DOE-AGENTS-012 R2)— 読み手を足した便は"
+                  " この冊の名簿 PHASE-BOUND-READERS へ『名前と、それが答える問い』を 1 行宣言する: "
+                  f"実測 {(sorted (.keys bound-readers))} / 名簿 {(sorted (.keys PHASE-BOUND-READERS))}"))
+       (assert (any (gfor line (get bound-readers "bound-to-me")
+                          (in "(= (.get status \"phase\") PHASE-BOUND)" line)))
+               "job を選ぶ判定は bound-to-me の phase の突合ちょうど(ADR-DOE-AGENTS-012 R2)")
        ;; status の "binding" 欄を書く形は無い。同じ語が charter(session.launch の typed
        ;; auth binding)にも在るので、charter を組む charter-with-grant の中だけを許す。
        (for [path [judgment agentd]]
@@ -1399,16 +1607,20 @@
        (assert (= (run (job-step-of None 0 True)) "fail-missing")))
      (deftest test-adr-doe-agents-012-capture-gone-is-terminal-and-ticks-do-not-share-failure
        ;; R8 の針: SessionCapture の答えは閉語彙(agentd.hy の bind の型)・実 handler は host の
-       ;; 断り(AgentdClientError)を CaptureGone に写す・R9 の縁は agentd.hy に 7 つ(agentd-tick に heartbeat・profile の
-       ;; 観測〔R18〕・受け・割り込みの配達〔R21〕・job ごと・spool の送り〔段 9f lane 9f-2〕の 6 つ + 拍の途中の spool の
-       ;; 書き spool-record-bodies の 1 つ)。
+       ;; 断り(AgentdClientError)を CaptureGone に写す・R9 の縁の集合は宣言の名簿 IO-FAILURE-EDGES
+       ;; ちょうど(縁は自分の log の語で名乗る — 数は焼き付けない)。
        (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
        (setv handler-lines (code-lines (/ ACP-DIR "handlers.py")))
        (assert (any (gfor line agentd-lines (in "(<- outcome (| CaptureFrame CaptureGone)" line))))
        (assert (any (gfor line handler-lines (in "except AgentdClientError" line))))
        (assert (any (gfor line handler-lines (in "return CaptureGone(" line))))
-       (assert (= (len (lfor line agentd-lines :if (in "(except [e IO-FAILURES]" line) line)) 9)
-               "縁は heartbeat・profile の観測・受け・割り込みの配達・job ごと・verify の命令ごと(段 12 lane 12a R36)・summarize ごと(段 12 lane 12j R37)・spool の送り・spool の書きの 9 つ(ADR-DOE-AGENTS-012 R9・R18・R21・R36・R37・段 9f lane 9f-2)")
+       (setv edges (io-failure-edges-of (/ ACP-DIR "agentd.hy")))
+       (assert (= (len edges) (len (set edges)))
+               f"縁の名(log の語)が重なっていて見分けられない(ADR-DOE-AGENTS-012 R9): {edges}")
+       (assert (= (set edges) (set (.keys IO-FAILURE-EDGES)))
+               (+ "I/O を切り離す縁の集合が名簿と違う(ADR-DOE-AGENTS-012 R9・R18・R21・R36・R37・段 9f lane 9f-2)—"
+                  " 縁を足した便はこの冊の名簿 IO-FAILURE-EDGES へ『名前と、何を隔てるか』を 1 行宣言する: "
+                  f"実測 {(sorted (set edges))} / 名簿 {(sorted (.keys IO-FAILURE-EDGES))}"))
        ;; 反例(挙動): gone は例外にならず、capture を止め、器の終端で Ended と ended。
        (setv world (World))
        (.put-row world.acp (bound-row "s-gone" "mac-1" None "claude" PHASE-BOUND))
@@ -1463,12 +1675,22 @@
        ;; (SessionList の絞りの引数だけ)。TTL の値は AgentdSettings の 1 点(既定 600)。
        ;; host 側: lifecycle の閉語彙に multi_turn・turn_ended_at の書き点は policy.hy の 1 つ。
        (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
-       (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
        (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk next-arm-for-job ") line)) 1))
        (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk sessions-to-retire ") line)) 1))
-       (assert (= (len (lfor line judgment-lines :if (in "JOB-STEP-TURN-END" line) line)) 2)
-               "turn-end を返す点は job-step-of ちょうど(import の項 + 1)")
-       (for [line agentd-lines]
+       ;; turn-end に触る点の集合は宣言の名簿 JOB-STEP-TURN-END-READERS ちょうど(数ではなく名前)。
+       ;; そのうち**返す**のは job-step-of の 1 点で、他は読むだけ(第 2 の判定点ではない)。
+       (setv turn-end-readers (readers-of [(/ ACP-DIR "judgment.hy")] "JOB-STEP-TURN-END"))
+       (assert (= (set (.keys turn-end-readers)) (set (.keys JOB-STEP-TURN-END-READERS)))
+               (+ "JOB-STEP-TURN-END に触る点が名簿と違う(R10)— 読み手を足した便はこの冊の名簿"
+                  " JOB-STEP-TURN-END-READERS へ『名前と、それが答える問い』を 1 行宣言する: "
+                  f"実測 {(sorted (.keys turn-end-readers))} / 名簿 {(sorted (.keys JOB-STEP-TURN-END-READERS))}"))
+       (setv turn-end-returning
+             (sorted (lfor [name lines] (.items turn-end-readers)
+                           :if (any (gfor line lines (= (.strip line) "JOB-STEP-TURN-END")))
+                           name)))
+       (assert (= turn-end-returning ["job-step-of"])
+               f"turn-end を**返す**点は job-step-of ちょうど(他は読む側)(R10): {turn-end-returning}")
+       (for [line (live-bare-lines (/ ACP-DIR "agentd.hy") ["(defk agentd-tick " "(defk claim-job "])]
          (assert (not-in "turn-ended-at" line)
                  f"agentd.hy は turn_ended_at を直に読まない(R10): {line}")
          (assert (not (and (in "LIFECYCLE-MULTI-TURN" line) (in "(= " line)))
@@ -2323,19 +2545,24 @@
        (assert (any (gfor line judgment-lines (in "(<- cause dict (terminal-cause-of CAUSE-CATEGORY-INTERRUPTED CAUSE-REASON-WITHDRAWN))" line))) "取り下げの行に interrupted の cause を足していない(R47)")
        (assert (any (gfor line judgment-lines (in "(replace outcome :cause cause))" line))) "outcome-with-cancel が結末の cause を置き換えていない(R47)")
        (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
-       (setv ended-calls (lfor line agentd-lines :if (in "(ended-status-of " line) line))
+       ;; 呼びの 1 行を字面で pin せず、**呼び先と引数の役**で撃つ(局所変数の改名では落ちない)。
+       (setv ended-calls (call-args-of agentd-lines "ended-status-of"))
        (assert (= (len ended-calls) 6) f"Ended の書き手は 6 点(end-job-now / settle-record × 2 / record-unrecorded-ends / end-summarize-job / end-command)(R47): {(len ended-calls)}")
-       (for [needle ["(<- ended dict (ended-status-of status None cause (+ pending #(condition))))"
-                     "(<- ended dict (ended-status-of job-status outcome.result limited.cause ended-conditions))"
-                     "(<- ended-again dict (ended-status-of again-status outcome.result limited.cause ended-conditions))"
-                     "(<- ended dict (ended-status-of status end.result end.cause end.conditions))"
-                     "(<- cause dict (command-cause-of conditions))"
-                     "(<- limited JobOutcome (outcome-with-limit outcome limit))"
-                     "(<- lost-cause dict (terminal-cause-of CAUSE-CATEGORY-FAILED CONDITION-SESSION-LOST))"
-                     "(<- stop-cause dict (terminal-cause-of CAUSE-CATEGORY-AGENTD-STOPPED CAUSE-REASON-DRAIN-DEADLINE))"
-                     "(<- end UnrecordedEnd (unrecorded-end-of job outcome.result limited.cause ended-conditions now-ms))"]]
-         (assert (any (gfor line agentd-lines (in needle line))) f"agentd の Ended の書き手が cause を渡していない(R47): {needle}"))
-       (assert (= (len (lfor line agentd-lines :if (in "(<- cause dict (command-cause-of conditions))" line) line)) 2) "命令の族の 2 つの書き手(summarize / verify)が command-cause-of を読む(R47)")
+       (for [args ended-calls]
+         (assert (= (len args) 4) f"Ended の書きは status / result / cause / conditions の 4 引数(R47): {args}")
+         (assert (in "cause" (get args 2)) f"Ended の書きの第 3 引数が cause を運んでいない(R47): {args}"))
+       (setv carried-ends (call-args-of agentd-lines "unrecorded-end-of"))
+       (assert (= (len carried-ends) 1) f"持ち越し(UnrecordedEnd)を組む点は 1 つ(R47): {carried-ends}")
+       (assert (and (= (len (get carried-ends 0)) 5) (in "cause" (get (get carried-ends 0) 2)))
+               f"持ち越しも同じ役(第 3 引数)で cause を運ぶ(R47): {carried-ends}")
+       (assert (= (len (call-args-of agentd-lines "outcome-with-limit")) 1) "限度を結末に載せる点は 1 つ(R47)")
+       (assert (= (len (call-args-of agentd-lines "command-cause-of")) 2) "命令の族の 2 つの書き手(summarize / verify)が command-cause-of を読む(R47)")
+       (setv terminal-causes (call-args-of agentd-lines "terminal-cause-of"))
+       (for [args terminal-causes]
+         (assert (.startswith (get args 0) "CAUSE-CATEGORY-") f"終端の cause の族は閉語彙の綴りで渡す(R47): {args}"))
+       (setv cause-categories (sfor args terminal-causes (get args 0)))
+       (for [needed ["CAUSE-CATEGORY-FAILED" "CAUSE-CATEGORY-AGENTD-STOPPED"]]
+         (assert (in needed cause-categories) f"agentd が組む終端の cause に {needed} が無い(R47)"))
        (setv tests (.read-text (/ (. (Path __file__) parent parent parent) "packages" "doeff-agents" "tests" "test_sessionhost_acp_ended_cause.py") :encoding "utf-8"))
        (for [needle ["def test_the_closed_categories_are_the_contracts_five_words"
                      "def test_a_naturally_ended_turn_carries_completed_with_or_without_a_value"
@@ -2565,7 +2792,10 @@
                "合図を出す点は 1 つ(R29)")
        (assert (any (gfor line agentd-lines (in ":ref message-id" line)))
                "注入の行の名は Message の id(R29)")
-       (for [line (+ agentd-lines judgment-lines)]
+       ;; 「この語を**読んでいない**」は註と文字列 literal を落とした code 行で撃つ — 説明の綴りは読みではない
+       ;; (実弾 016a8e3b: charter-place-of の docstring が方策の欄の名を綴った拍にこの針が当たった)。
+       (for [line (+ (live-bare-lines (/ ACP-DIR "agentd.hy") ["(defk settle-interrupts " "(defk claim-job "])
+                     (live-bare-lines (/ ACP-DIR "judgment.hy") ["(defk interrupt-reads-of "]))]
          (assert (not-in "delivery-policy" line) f"agentd は方策の行を読まない — 期限は charter だけ(R29): {line}")
          (assert (not-in "control_request" line) f"agentd / judgment は器の作法の綴り control_request を書かない(R29): {line}"))
        (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
@@ -2574,7 +2804,7 @@
        (assert (= (len (lfor line effects-lines :if (.startswith line "CHARTER_INTERRUPT_ESCALATION_KEY: str = \"interruptEscalationSeconds\"") line)) 1))
        (assert (= (len (lfor line effects-lines :if (.startswith line "    interrupt_escalation_seconds: int | None = None") line)) 1)
                "期限の memory は InFlightJob の 1 欄・既定は None(宣言なし)で数の既定を置かない(R29)")
-       (for [line effects-lines]
+       (for [line (live-bare-lines (/ ACP-DIR "effects.py") ["JOB_INTERRUPTS_READ_KEY" "CHARTER_INTERRUPT_ESCALATION_KEY"])]
          (assert (not (re.search r"ESCALATION_SECONDS\w*\s*(:\s*int)?\s*=\s*\d" line)) f"期限の既定の定数を置かない(R29): {line}"))
        (assert (any (gfor line effects-lines (in "\"claude\": \"steer-then-stop\"" line))))
        (assert (any (gfor line effects-lines (in "\"codex\": \"stop\"" line))))
@@ -2639,8 +2869,15 @@
                "引換券を換えるのは口座の worker の /redeem へ 1 度(R30)")
        (assert (any (gfor line handler-lines (in "_UNDECLARED" line)))
                "宣言の無い預かり所は型付きに断る(R30)")
-       (for [path (sorted (.glob (/ ACP-DIR "..") "**/*.py"))]
-         (for [line (code-lines path)]
+       (setv acp-py-files (sorted (.glob (/ ACP-DIR "..") "**/*.py")))
+       (setv acp-py-names (sfor path acp-py-files path.name))
+       ;; 走査が生きている証拠(空の走査は not-in の針を黙って通す)。
+       (for [known ["handlers.py" "effects.py" "runtime.py"]]
+         (assert (in known acp-py-names) f"走査が生きていない — {known} が走査の対象に無い(R30)"))
+       (assert (any (gfor path acp-py-files (any (gfor line (bare-code-lines path) (in "CustodyHttp" line)))))
+               "走査が生きていない — 預かり所の client の綴りが 1 つも見つからない(R30)")
+       (for [path acp-py-files]
+         (for [line (bare-code-lines path)]
            (assert (not-in "CUSTODY_URL_DEFAULT" line)
                    f"預かり所の URL に既定値を置かない(R30): {path.name}: {line}")))
        (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
@@ -2687,7 +2924,7 @@
                "要求の門が種類の分岐より後に在る — verify / summarize が門を素通りする(card ki-d13566f4d5eb)")
        (assert (= (len (lfor line agentd-lines :if (in "(turn-session-env-of lease)" line) line)) 1)
                "手番ごとの env を組む点は 1 つ(R30)")
-       (for [line agentd-lines]
+       (for [line (live-bare-lines (/ ACP-DIR "agentd.hy") ["(defk claim-job " "(turn-session-env-of lease)"])]
          (assert (not-in "CLAUDE_CODE_OAUTH_TOKEN" line)
                  f"agentd.hy は札の env の名を直に持たない(R30): {line}"))
        (setv policy-lines (code-lines (/ SESSIONHOST-DIR "policy.hy")))
@@ -2707,9 +2944,16 @@
        (assert (= (len (lfor line launch-lines :if (in "(session-env-admission-error session-env \"session.launch\")" line) line)) 1)
                "launch の関所も同じ 1 点(R30)")
        (setv headless-lines (code-lines (/ SESSIONHOST-DIR "headless.hy")))
-       (for [lines [launch-lines headless-lines]]
-         (assert (= (len (lfor line lines :if (in ":launch-overlay {\"session_env\" (overlay-without-turn-auth session-env)" line) line)) 1)
-                 "行には手番ごとの札を残さない(R30)"))
+       ;; 行の**折れ方に依らない**形で撃つ: overlay を組む式が overlay-without-turn-auth を通ること
+       ;; (実弾 a0f475fb: headless の overlay が carry-launch-flags に包まれて 2 行に折れ、1 行の一致が外れた)。
+       (for [name ["launch.hy" "headless.hy"]]
+         (setv overlay-text (collapsed-code (/ SESSIONHOST-DIR name)))
+         (setv overlay-ends (lfor hit (re.finditer r":launch-overlay" overlay-text) (.end hit)))
+         (assert (= (len overlay-ends) 1) f"行に残す launch の意図を組む点は 1 つ(R30): {name}")
+         (assert (is-not (re.search r"\"session_env\" \(overlay-without-turn-auth session-env\)"
+                                    (cut overlay-text (get overlay-ends 0) (+ (get overlay-ends 0) 400)))
+                         None)
+                 f"行には手番ごとの札を残さない — overlay の session_env は overlay-without-turn-auth を通す(R30): {name}"))
        (assert (any (gfor line headless-lines (in "(| (dict (or (.get overlay \"session_env\") {}))" line)))
                "起こし直しは誕生の env にこの手番の env を重ねる(R30)")
        (setv substrate-lines (code-lines (/ SESSIONHOST-DIR "substrate_headless.hy")))
