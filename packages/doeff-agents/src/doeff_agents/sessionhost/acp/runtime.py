@@ -338,6 +338,8 @@ def initial_state() -> AgentdState:
         deferred=(),
         last_profile_observed_ms=None,
         no_profile_homes_logged=False,
+        # 段 12(agora-redesign #537 便 1): 起動の拍から走っている turn-record の終状態を読む(None = まだ 1 度も = 即)。
+        last_turn_record_sweep_ms=None,
     )
 
 

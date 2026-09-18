@@ -32,6 +32,7 @@
   NODE-KIND
   PHASE-BOUND
   PHASE-ENDED
+  PHASE-PENDING
   PHASE-RUNNING
   PHASE-WITHDRAWN
   RECORD-CREATE-CREATED
@@ -41,6 +42,8 @@
   TURN-RECORD-ENTRIES-BYTE-BUDGET
   MODEL-UNDECLARED
   TURN-RECORD-KIND
+  TURN-RECORD-SWEEP-END
+  TURN-RECORD-SWEEP-SKIP
   TurnEntryHeadline
   Written])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeSessions])
@@ -50,6 +53,8 @@
   attempt-refused?
   binding-attempt-of
   job-rows-running-on
+  live-node-names-of
+  turn-record-sweep-verdict
   refused-attempt-status-of
   retired-rows-of
   claude-system-note
@@ -723,14 +728,19 @@
 (deftest test-record-create-verdict-splits-deterministic-from-unreachable
   ;; 純関数 1 点: Written / Conflict = created・4xx(408 / 429 を除く)= given-up・0 / 5xx / 408 / 429 = 期限内は pending。
   (setv started 1000)
-  (assert (= (run (record-create-verdict (Written "ev-1") started 2000 300)) RECORD-CREATE-CREATED))
-  (assert (= (run (record-create-verdict (Conflict 3) started 2000 300)) RECORD-CREATE-CREATED))
+  (assert (= (run (record-create-verdict (Written "ev-1") started 2000 300 False)) RECORD-CREATE-CREATED))
+  (assert (= (run (record-create-verdict (Conflict 3) started 2000 300 False)) RECORD-CREATE-CREATED))
   (for [status [400 403 404 413 422]]
-    (assert (= (run (record-create-verdict (Refused status "no") started 2000 300)) RECORD-CREATE-GIVEN-UP) status))
+    (assert (= (run (record-create-verdict (Refused status "no") started 2000 300 False)) RECORD-CREATE-GIVEN-UP) status))
   (for [status [0 500 502 503 504 408 429]]
-    (assert (= (run (record-create-verdict (Refused status "later") started 2000 300)) RECORD-CREATE-PENDING) status)
+    (assert (= (run (record-create-verdict (Refused status "later") started 2000 300 False)) RECORD-CREATE-PENDING) status)
     ;; 期限(started + 300 s)を越えたら given-up
-    (assert (= (run (record-create-verdict (Refused status "later") started (+ started 300001) 300)) RECORD-CREATE-GIVEN-UP) status)))
+    (assert (= (run (record-create-verdict (Refused status "later") started (+ started 300001) 300 False)) RECORD-CREATE-GIVEN-UP) status)
+    ;; agora-redesign #537 H3: 手番の終わりの最後の 1 度(final)は期限の内でも pending にしない — 次の拍が無いので
+    ;; pending のままだと条件が 1 つも乗らず『Ended・記録なし・理由なし』になる。
+    (assert (= (run (record-create-verdict (Refused status "later") started 2000 300 True)) RECORD-CREATE-GIVEN-UP) status))
+  ;; final でも作れた拍は created(final は断りの読み方だけを変える)。
+  (assert (= (run (record-create-verdict (Written "ev-2") started 2000 300 True)) RECORD-CREATE-CREATED)))
 
 
 (deftest test-turn-record-is-created-after-the-head-answers-again
@@ -864,3 +874,224 @@
   (assert (= (get (.record-status world) "state") "ended"))
   (assert (= (lfor entry (.record-entries world) (get entry "kind")) ["system" "text" "tool_use" "tool_result"]))
   (assert (not (any (gfor c (job-conditions world) (= (get c "type") "RecordUnavailable"))))))
+
+
+;; ---------------------------------------------------------------------------
+;; agora-redesign #537(段 12): 手番の記録を「1 度の書き」に預けない
+;;   便 A = 終状態を読む巡回(running の取り残しを閉じる)/ 便 B = 記録なしで Ended にしない(穴 H1 / H2 / H3)
+;; ---------------------------------------------------------------------------
+
+(setv SWEEP-AHEAD-MS 301000)  ;; 巡回の周期(既定 300 s)を 1 拍で越える進み
+
+
+(defn #^ str record-key-of [#^ str job-id]
+  f"{AGORA-KINDS-NAMESPACE}:{TURN-RECORD-KIND}:{job-id}")
+
+
+(defn #^ str job-key-of [#^ str job-id]
+  f"{AGENT-JOB-NAMESPACE}:{AGENT-JOB-KIND}:{job-id}")
+
+
+(defn #^ AcpRow running-record-row [#^ str job-id #^ str node]
+  "走っている手番の記録の行(巡回の相手)— 契約の spec(conversationId / agentJobId / node / profile / model / sessionId)。"
+  (row-of AGORA-KINDS-NAMESPACE TURN-RECORD-KIND job-id
+          {"conversationId" CONVERSATION "agentJobId" job-id "node" node
+           "profile" "personal" "model" "claude-opus-5" "sessionId" f"sid-{job-id}"}
+          {"state" "running"}))
+
+
+(defn #^ AcpRow job-row-in-phase [#^ str job-id #^ str phase #^ str node]
+  (row-of AGENT-JOB-NAMESPACE AGENT-JOB-KIND job-id
+          {"subject" CONVERSATION "inputs" [] "charter" {}}
+          {"phase" phase "binding" {"node" node "profile" "personal"} "conditions" []}))
+
+
+(defn #^ list record-writes-of [#^ World world #^ str job-id]
+  (lfor [key status] world.acp.writes :if (= key (record-key-of job-id)) status))
+
+
+(deftest test-a-turn-record-left-running-by-a-refused-write-is-ended-by-the-sweep
+  ;; agora-redesign #537 便 A(受入 1): 手番の終わりの 1 度の書きが断られた(頭の 5xx)記録は、その拍では running のまま
+  ;; 残る(行は在るので作り直しもしない)。次の巡回の拍が終状態(対の agent-job が Ended)を読んで閉じる。
+  (setv world (World))
+  (.tick world 0)
+  (setv sid (.sid world))
+  (setv (get world.local.transcripts f"/events/{sid}.events.jsonl") (claude-events sid "hello"))
+  (.tick world 1000)
+  ;; 終わりの拍の 1 度の書きを断る(engine の 5xx)。
+  (setv (get world.acp.status-refusals (record-key-of "j-1")) [(Refused 503 "head restarting")])
+  (.finish world.sessions sid "done" {"ok" True} None)
+  (.tick world 1000)
+  (assert (= (get (job-status world) "phase") PHASE-ENDED) (job-status world))
+  (assert (= (get (.record-status world) "state") "running") "断られた書きで記録が閉じている(検体が弱い)")
+  (assert (any (gfor line world.local.logs (in "could not be ended at turn end" line))) world.local.logs)
+  (assert (= (.get world.acp.creates (record-key-of "j-1")) 1) "行は在るのに作り直した")
+  (assert (= world.state.jobs #()) "手番は memory から外れている(巡回の相手になる)")
+  ;; 周期の前の拍は撃たない。
+  (.tick world 1000)
+  (assert (= (get (.record-status world) "state") "running"))
+  ;; 周期の拍: 終状態(対は Ended・node は自分)を読んで閉じる。
+  (.tick world SWEEP-AHEAD-MS)
+  (assert (= (get (.record-status world) "state") "ended") (.record-status world))
+  (assert (not-in "usage" (.record-status world)) "巡回は usage を書かない(消費の和は手番の終わりの 1 回だけ)")
+  (assert (any (gfor line world.local.logs (in "ended by the sweep" line))) world.local.logs)
+  (setv ended (lfor m world.local.metrics :if (= (get m "metric") "agentd_turn_record_sweep_ended") m))
+  (assert (= (lfor m ended (get m "agentJobId")) ["j-1"]) ended)
+  ;; 冪等: 次の周期は 1 bit も書かない(ended の行は候補にならない)。
+  (setv writes-before (len (record-writes-of world "j-1")))
+  (.tick world SWEEP-AHEAD-MS)
+  (assert (= (len (record-writes-of world "j-1")) writes-before) "ended の記録に二度書いた"))
+
+
+(deftest test-the-sweep-closes-the-leftovers-of-a-restart-and-leaves-the-live-ones-alone
+  ;; agora-redesign #537 便 A(受入 2 / 3 / 4): 再起動(memory が空)の直後の 1 拍で、終状態から読める取り残しだけを閉じる。
+  ;;   閉じる = 対が Ended(j-2)・対の行ごと無い(j-3)・名乗る node が生きていない(j-6)
+  ;;   触らない = 対が Pending / Bound / Running(j-4a / j-4b / j-4c)・生きている別の機体の手番(j-5)
+  (setv world (World))
+  ;; 生きている別の機体と、退役した機体の行。
+  (.put-row world.acp (row-of AGORA-KINDS-NAMESPACE NODE-KIND "live-node"
+                              {"name" "live-node" "labels" {} "capacity" 1 "streamCapability" "events"}
+                              {"state" "joined"}))
+  (.put-row world.acp (row-of AGORA-KINDS-NAMESPACE NODE-KIND "dead-node"
+                              {"name" "dead-node" "labels" {} "capacity" 1 "streamCapability" "events"}
+                              {"state" "gone"}))
+  ;; 閉じる 3 本。
+  (.put-row world.acp (running-record-row "j-2" NODE))
+  (.put-row world.acp (job-row-in-phase "j-2" PHASE-ENDED NODE))
+  (.put-row world.acp (running-record-row "j-3" NODE))          ;; 対の行ごと無い
+  (.put-row world.acp (running-record-row "j-6" "dead-node"))
+  (.put-row world.acp (job-row-in-phase "j-6" PHASE-ENDED "dead-node"))
+  ;; 触らない 4 本(対が非終端 3 つ + 生きている別の機体 1 つ)。結びは自分でない — 受けの腕が拾わないように。
+  (for [[job-id phase] [#("j-4a" PHASE-PENDING) #("j-4b" PHASE-BOUND) #("j-4c" PHASE-RUNNING)]]
+    (.put-row world.acp (running-record-row job-id NODE))
+    (.put-row world.acp (job-row-in-phase job-id phase "live-node")))
+  (.put-row world.acp (running-record-row "j-5" "live-node"))
+  (.put-row world.acp (job-row-in-phase "j-5" PHASE-ENDED "live-node"))
+  ;; 起動の拍(AgentdState.last-turn-record-sweep-ms = None)で即撃つ。
+  (.tick world 0)
+  (assert (= world.acp.running-record-lists 1) world.acp.running-record-lists)
+  (for [job-id ["j-2" "j-3" "j-6"]]
+    (setv status (. (get world.acp.rows (record-key-of job-id)) status))
+    (assert (isinstance status dict))
+    (assert (= (get status "state") "ended") #(job-id status)))
+  (for [job-id ["j-4a" "j-4b" "j-4c" "j-5"]]
+    (setv status (. (get world.acp.rows (record-key-of job-id)) status))
+    (assert (isinstance status dict))
+    (assert (= (get status "state") "running") #(job-id status))
+    (assert (= (record-writes-of world job-id) []) #(job-id (record-writes-of world job-id))))
+  ;; この拍に claim した自分の手番(j-1)の記録は走っている = 触らない(memory に在るので読み直しもしない)。
+  (assert (= (get (.record-status world) "state") "running"))
+  (assert (= (record-writes-of world "j-1") []))
+  (setv skipped (lfor m world.local.metrics :if (= (get m "metric") "agentd_turn_record_sweep_skipped") (get m "agentJobId")))
+  (assert (= (sorted skipped) ["j-4a" "j-4b" "j-4c" "j-5"]) skipped)
+  (assert (not-in "j-1" skipped) "memory に在る手番の記録を読み直した"))
+
+
+(deftest test-turn-record-sweep-verdict-reads-the-end-state-of-the-pair-and-the-node
+  ;; agora-redesign #537 便 A: 判断の 1 点(純関数)。end は 4 つが揃った時ちょうど。
+  (setv mine (running-record-row "j-1" NODE))
+  (setv ended-pair (job-row-in-phase "j-1" PHASE-ENDED NODE))
+  (setv live (frozenset [NODE "live-node"]))
+  (assert (= (run (turn-record-sweep-verdict mine ended-pair NODE live (set))) TURN-RECORD-SWEEP-END))
+  ;; 1. 既に ended の記録は触らない(冪等)。
+  (setv closed (dataclasses.replace mine :status {"state" "ended"}))
+  (assert (= (run (turn-record-sweep-verdict closed ended-pair NODE live (set))) TURN-RECORD-SWEEP-SKIP))
+  ;; 2. 自分が走らせている手番(memory)は触らない。
+  (assert (= (run (turn-record-sweep-verdict mine ended-pair NODE live #{"j-1"})) TURN-RECORD-SWEEP-SKIP))
+  ;; 3. 対が非終端(置き直し待ちの Running を含む)は触らない・終端(Ended / Withdrawn)と不在だけ閉じる。
+  (for [phase [PHASE-PENDING PHASE-BOUND PHASE-RUNNING]]
+    (assert (= (run (turn-record-sweep-verdict mine (job-row-in-phase "j-1" phase NODE) NODE live (set)))
+               TURN-RECORD-SWEEP-SKIP) phase))
+  (assert (= (run (turn-record-sweep-verdict mine (job-row-in-phase "j-1" PHASE-WITHDRAWN NODE) NODE live (set)))
+             TURN-RECORD-SWEEP-END))
+  (assert (= (run (turn-record-sweep-verdict mine None NODE live (set))) TURN-RECORD-SWEEP-END) "対の行ごと無い")
+  ;; 4. 生きている別の機体の手番は持ち主に任せる / 生きていない機体の手番は誰でも閉じる。
+  (setv elsewhere (running-record-row "j-9" "live-node"))
+  (assert (= (run (turn-record-sweep-verdict elsewhere (job-row-in-phase "j-9" PHASE-ENDED "live-node") NODE live (set)))
+             TURN-RECORD-SWEEP-SKIP))
+  (setv orphan (running-record-row "j-9" "pool-pod-7"))
+  (assert (= (run (turn-record-sweep-verdict orphan (job-row-in-phase "j-9" PHASE-ENDED "pool-pod-7") NODE live (set)))
+             TURN-RECORD-SWEEP-END))
+  ;; 生きている node の名の集合は status.state == joined の行だけ(綴りは node-row-entry-of の 1 点)。
+  (setv joined (row-of AGORA-KINDS-NAMESPACE NODE-KIND "a" {"name" "a"} {"state" "joined"}))
+  (setv gone (row-of AGORA-KINDS-NAMESPACE NODE-KIND "b" {"name" "b"} {"state" "gone"}))
+  (setv nameless (row-of AGORA-KINDS-NAMESPACE NODE-KIND "c" {"labels" {}} {"state" "joined"}))
+  (assert (= (run (live-node-names-of #(joined gone nameless))) (frozenset ["a" ""]))))
+
+
+(deftest test-a-recovered-turn-without-a-record-row-re-creates-it-before-the-end
+  ;; agora-redesign #537 便 B(受入 5・穴 H1): 再起動で拾い直した手番の turn-record が 404 なら、記録の腕を pending に戻して
+  ;; 段 9p の網で作り直す — 「Ended・記録なし・条件なし」(郵便が agent-job-ended-without-a-turn で failed になる形)にしない。
+  (setv world (World))
+  ;; 作り直しの周期を 1 秒に(本番は now-ms が epoch なので record-create-last-ms = 0 は常に「周期を過ぎている」= 次の拍。
+  ;; 検体の時計は 1000 ms から始まるので、同じ形を短い周期で撃つ)。
+  (setv world.settings (dataclasses.replace world.settings :record-retry-seconds 1.0))
+  (.tick world 0)
+  (setv sid (.sid world))
+  (setv (get world.local.transcripts f"/events/{sid}.events.jsonl") (claude-events sid "hello"))
+  (.tick world 1000)
+  ;; 再起動の再現: memory を捨て、記録の行も消す(GC / 別の incarnation が作れていない)。
+  (.delete-row world.acp (record-key-of "j-1"))
+  (setv world.state (initial-state))
+  (setv creates-before (.get world.acp.creates (record-key-of "j-1") 0))
+  (.tick world 1000)
+  ;; 拾い直しの拍で腕を pending に戻し、同じ拍の観測(stream-job → ensure-turn-record)が行を作り直す
+  ;; (H1 が無いと腕は created のままで、行が無いことに誰も気づかず手番の終わりまで進む)。
+  (assert (any (gfor line world.local.logs (in "has no turn-record row; record-create = pending" line))) world.local.logs)
+  (assert (in (record-key-of "j-1") world.acp.rows) "拾い直した手番の記録が作り直されていない")
+  (assert (> (.get world.acp.creates (record-key-of "j-1")) creates-before))
+  (assert (= (. (in-flight world) record-create) RECORD-CREATE-CREATED))
+  ;; 手番の終わり: 記録は Ended の**前**に在る(同じ拍の書きの順 — 記録 → agent-job)。
+  (.finish world.sessions sid "done" {"ok" True} None)
+  (.tick world 1000)
+  (assert (= (get (.record-status world) "state") "ended") (.record-status world))
+  (setv keys (lfor [key _] world.acp.writes key))
+  (setv record-at (.index keys (record-key-of "j-1")))
+  (setv job-at (- (len keys) 1 (.index (list (reversed keys)) (job-key-of "j-1"))))
+  (assert (< record-at job-at) keys)
+  (assert (= (get (job-status world) "phase") PHASE-ENDED))
+  (assert (not (any (gfor c (job-conditions world) (= (get c "type") "RecordUnavailable")))) (job-conditions world)))
+
+
+(deftest test-a-turn-that-ends-inside-the-deadline-still-names-the-missing-record
+  ;; agora-redesign #537 便 B(受入 5・穴 H3): 短い手番(20 秒)が頭の答えない拍に当たると、期限(300 s)の内で終わるので
+  ;; 記録の腕は pending のまま = 条件が 1 つも乗らない「Ended・記録なし・理由なし」だった。手番の終わりの最後の 1 度
+  ;; (force)は期限に依らず given-up に倒す — 郵便の側が「本当に始まらなかった」と区別できる。
+  (setv world (World))
+  (setv world.settings (dataclasses.replace world.settings :record-retry-seconds 1.0))
+  (setv (get world.acp.create-refusals (record-key-of "j-1")) (lfor _ (range 20) (Refused 0 "unreachable: reset")))
+  (.tick world 0)
+  (setv sid (.sid world))
+  (assert (= (. (in-flight world) record-create) RECORD-CREATE-PENDING))
+  (setv (get world.local.transcripts f"/events/{sid}.events.jsonl") (claude-events sid "hello"))
+  (.tick world 1000)
+  ;; 期限(既定 300 s)の遥か内側で手番が終わる。
+  (.finish world.sessions sid "done" {"ok" True} None)
+  (.tick world 1000)
+  (assert (not-in (record-key-of "j-1") world.acp.rows))
+  (assert (= (get (job-status world) "phase") PHASE-ENDED) (job-status world))
+  (setv conditions (job-conditions world))
+  (assert (= (lfor c conditions (get c "type")) ["RecordUnavailable"]) conditions)
+  (assert (any (gfor line world.local.logs (in "given up" line))) world.local.logs)
+  ;; 記録が 1 行も無いので巡回の相手にもならない(黙って消えない — 理由は行の条件が運ぶ)。
+  (.tick world SWEEP-AHEAD-MS)
+  (assert (not-in (record-key-of "j-1") world.acp.rows)))
+
+
+(deftest test-a-turn-record-that-vanished-before-the-end-is-re-created-and-ended
+  ;; agora-redesign #537 便 B(穴 H2): 「作れている」はずの行が終わりの拍に無い(GC・消えた)なら、その拍に 1 度だけ
+  ;; 作り直して ended まで書く。
+  (setv world (World))
+  (.tick world 0)
+  (setv sid (.sid world))
+  (setv (get world.local.transcripts f"/events/{sid}.events.jsonl") (claude-events sid "hello"))
+  (.tick world 1000)
+  (assert (= (. (in-flight world) record-create) RECORD-CREATE-CREATED))
+  (setv creates-before (.get world.acp.creates (record-key-of "j-1")))
+  (.delete-row world.acp (record-key-of "j-1"))
+  (.finish world.sessions sid "done" {"ok" True} None)
+  (.tick world 1000)
+  (assert (= (.get world.acp.creates (record-key-of "j-1")) (+ creates-before 1)) "終わりの拍に作り直していない")
+  (assert (= (get (.record-status world) "state") "ended") (.record-status world))
+  (assert (any (gfor line world.local.logs (in "was missing at turn end; re-created" line))) world.local.logs)
+  (assert (= (get (job-status world) "phase") PHASE-ENDED)))

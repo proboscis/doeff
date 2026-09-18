@@ -21,6 +21,7 @@ from doeff_agents.sessionhost.acp.effects import (
     SUMMARY_SPEC_CONVERSATION_KEY,
     SUMMARY_STREAM_PREFIX,
     TURN_RECORD_KIND,
+    TURN_RECORD_RUNNING,
     AcpConversationMail,
     AcpConversationSummaries,
     AcpCreate,
@@ -30,6 +31,7 @@ from doeff_agents.sessionhost.acp.effects import (
     AcpPutSpec,
     AcpPutStatus,
     AcpRow,
+    AcpRunningTurnRecords,
     AcpStreamPush,
     AcpTurnHeadlines,
     AcpWatchSse,
@@ -152,6 +154,11 @@ class FakeAcp:
         #: 尽きたら普通に作る。作った回数は creates に鍵ごと数える。
         self.create_refusals: dict[str, list[Refused]] = {}
         self.creates: dict[str, int] = {}
+        #: 段 12(agora-redesign #537): status の書きを鍵ごとに断る列(先頭から消費 — 手番の終わりの 1 度の書きが
+        #: 着かない拍の再現。conflict_once は「1 度だけ CAS が負ける」で、こちらは engine の断り 400 / 503 等)。
+        self.status_refusals: dict[str, list[Refused]] = {}
+        #: 段 12(#537 便 1): 走っている記録の一覧(AcpRunningTurnRecords)を撃った回数(巡回の周期の検が数える)。
+        self.running_record_lists: int = 0
         #: 段 10 lane 10d: spec の書き(鍵・書いた spec)と、鍵ごとに spec の書きを断る列(先頭から消費)。
         self.spec_writes: list[tuple[str, JSONObject]] = []
         #: 段 10 lane 10y: 誕生と spec の書きが運んだ宣言 file の指紋(鍵・指紋 | None)— 書きの順。
@@ -187,6 +194,8 @@ class FakeAcp:
         self._land(key, None)
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
+        if isinstance(effect, AcpRunningTurnRecords):
+            return Resume(k, self._running_turn_records())
         if isinstance(
             effect,
             (AcpGet, AcpGetRow, AcpEventWindow, AcpWatchSse, AcpConversationMail, AcpTurnHeadlines, AcpConversationSummaries),
@@ -232,6 +241,18 @@ class FakeAcp:
         if self.wakes:
             return self.wakes.pop(0)
         return WatchAdvance(kind="idle", sequence=effect.since)
+
+    def _running_turn_records(self) -> tuple[AcpRow, ...]:
+        """段 12(agora-redesign #537 便 1): engine の field selector status.state=running と同じ絞り。
+        全量 list(AcpGet)の列には数えない — 別の読みなので、差分の読みの検が数える母集団を動かさない。"""
+        self.running_record_lists += 1
+        return tuple(
+            row
+            for row in self.rows.values()
+            if row.kind == TURN_RECORD_KIND
+            and isinstance(row.status, dict)
+            and row.status.get("state") == TURN_RECORD_RUNNING
+        )
 
     def _history(self, effect: AcpConversationMail | AcpTurnHeadlines) -> tuple[AcpRow, ...]:
         """履歴からの再開の材料(郵便 / 見出し)— 読んだ会話の id を種類ごとに数える(段 9q の検が読む:
@@ -298,6 +319,9 @@ class FakeAcp:
         existing = self.rows.get(row.key)
         if existing is None:
             return Refused(404, "no such row")
+        queued = self.status_refusals.get(row.key)
+        if queued:
+            return queued.pop(0)
         if row.key in self.conflict_once:
             return Conflict(self.conflict_once.pop(row.key))
         if existing.generation != row.generation:
