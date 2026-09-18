@@ -30,8 +30,14 @@ resume-physics.md と同じ役割 — 偽 CLI(tests/headless_stubs/claude)が真
 - 含意(sessionhost の物理): claude の headless は `--input-format stream-json` の**温かい process**へ
   (impls/headless_argv.hy の CLAUDE-HEADLESS-FLAGS)。手番の本文 = user の行(閉じない)、割り込みの本文 = 同じ
   user の行を手番の途中に(`ClaudeDialogue.inject` — `in_flight` の間だけ。手番の外に書くと**次の手番**になるので
-  器は断り、呼び手が queued へ倒す)。次の手番は同じ process へ(`accepts_turn`)、process が降りていれば
-  `--resume <sid>` で起こし直す(従来の道)。
+  器は断り、呼び手が queued へ倒す)。
+- 追記(段 12 lane 12e・agora-redesign #517・実弾 2026-09-17 19:4x): result の後も stdin が開いていると、CLI は
+  自分の background task / Monitor の完了(`<task-notification>`)で model を**手番の外で**起こし直し tool を撃つ
+  (同じ会話の 2 つの process が本番に作用・stream が閉じた後なので記録に載らない)。⇒ **手番の終わり = 対話の
+  終わり = process の終わり**: 器は result の行で stdin に EOF を出して降ろす(`ClaudeDialogue._end` の
+  `Step.close` → `HeadlessProcess.retire`・EOF で降りない process は猶予の後に SIGTERM → SIGKILL)。次の手番は
+  毎回 `--resume <sid>` の新しい process(`accepts_turn` は result の後は偽)。温かい claude(同じ process への
+  次の手番)は退役。codex(app-server・turn/start の無い手番は起きない)は温かいまま。
 
 ## codex — app-server(実測なし・依頼書の指定どおり)
 

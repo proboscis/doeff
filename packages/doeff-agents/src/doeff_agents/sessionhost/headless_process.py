@@ -5,8 +5,15 @@ stdout の読み手・events file への追記・観測の束(agora-redesign #37
 Dialogue(純粋)が効果の値で返し、ここはそれを運ぶだけ(書き手 thread へ積む・SIGINT を送る・process を
 降ろす)。読み手 thread は stdout の 1 行ごとに (1) events file へ逐語で追記(1 行 1 event —
 agentd が offset から読む実況の正本)、(2) Dialogue.on_line の答えの sends を書き手へ、(3) 手番の
-終わり・会話の id・型付きの失敗を観測の束へ積む。monitor の拍(HeadlessPoll)が束を空にして
-HeadlessObservation として受け取る。
+終わり・会話の id・型付きの失敗を観測の束へ積む、(4) 答えが対話の終わり(``Step.close``)なら**その
+行で** process を降ろし始める(retire = stdin に EOF → 猶予 → SIGTERM → 猶予 → SIGKILL の梯子を
+自分の thread で — 呼び手を止めない)。monitor の拍(HeadlessPoll)が束を空にして HeadlessObservation
+として受け取る。
+
+retire(段 12 lane 12e・agora-redesign #517): claude の手番の終わり = process の終わり。読み手が result の
+行を読んだその場で EOF を出すのは、CLI が result の後に自分の background task の完了で model を起こし
+直す隙間(手番の外の tool_use・記録に載らない行動)を **拍の待ち(monitor の 1 秒)より前に**閉じるため。
+EOF で降りない process は梯子が降ろす — 「手番の終わり = process の終わり」は EOF の作法に依らず器が守る。
 
 読み手と書き手を分ける理由(dotfiles agentcli/headless.py の _StdinWriter と同じ): 読みの thread が
 stdin へ書くと、server が stdin を読んでいない拍に stdout の読みまで止まる。
@@ -127,6 +134,9 @@ class HeadlessProcess:
         self._conversation: dict[str, str] | None = None
         self._failure: str | None = None
         self._interrupted = False
+        #: retire(対話の終わりで降ろし始めた)— 梯子の thread は 1 本だけ(冪等)。
+        self._retire_lock = threading.Lock()
+        self._retiring: threading.Thread | None = None
         self._process = subprocess.Popen(
             list(argv),
             cwd=cwd,
@@ -269,13 +279,49 @@ class HeadlessProcess:
         降りなかった process は HeadlessProcessStillAliveError で型付きに断る(降りたと偽らない —
         agora-redesign #547)。"""
         self.close_stdin()
-        if not self._went_down(EOF_GRACE_SECONDS):
-            self.terminate()
-            if not self._went_down(TERM_GRACE_SECONDS):
-                self.force_kill()
-                if not self._went_down(TERM_GRACE_SECONDS):
-                    raise HeadlessProcessStillAliveError(self.name, self.pid)
+        if not self._escort_down():
+            raise HeadlessProcessStillAliveError(self.name, self.pid)
         self.join_io(2.0)
+
+    def _escort_down(self) -> bool:
+        """降りるまで付き添う梯子(呼び手の thread で・有界): EOF の猶予 → SIGTERM → 猶予 → SIGKILL → 猶予。
+        戻り = 降りたか(偽 = 全部の段を踏んでも生きている)。"""
+        if self._went_down(EOF_GRACE_SECONDS):
+            return True
+        self.terminate()
+        if self._went_down(TERM_GRACE_SECONDS):
+            return True
+        self.force_kill()
+        return self._went_down(TERM_GRACE_SECONDS)
+
+    # -- retire(対話の終わり = process の終わり・段 12 lane 12e・agora-redesign #517) --------------
+
+    @property
+    def retired(self) -> bool:
+        """対話の終わりで降ろし始めた(stdin は閉じ、梯子が付き添っている / 付き添い終えた)。"""
+        return self._retiring is not None
+
+    def retire(self) -> None:
+        """対話の終わりで process を降ろし始める(冪等・呼び手を止めない): stdin に EOF を出し、梯子
+        (EOF の猶予 → SIGTERM → 猶予 → SIGKILL)を自分の thread で回す。読み手は process が降りるまで
+        stdout を読み続ける(降り際の行も events file に残る)。梯子を踏み切っても降りない process は
+        registry.kill / kill_all(cleanup)が HeadlessProcessStillAliveError で型付きに名乗る(ここでは投げない —
+        読み手の thread に持ち主は居ない)。"""
+        with self._retire_lock:
+            if self._retiring is not None:
+                return
+            self._retiring = threading.Thread(
+                target=self._escort_down, name=f"headless-retire-{self.name}", daemon=True
+            )
+            self.close_stdin()
+            self._retiring.start()
+
+    def join_retire(self, timeout: float) -> None:
+        """梯子の thread に合流する(検・置き換えの前の待ち)。"""
+        with self._retire_lock:
+            escort = self._retiring
+        if escort is not None:
+            escort.join(timeout)
 
     def _went_down(self, grace: float) -> bool:
         """猶予の中で process が降りたか(既に降りていれば待たずに真)。"""
@@ -330,6 +376,9 @@ class HeadlessProcess:
                         self._conversation = dict(step.conversation)
                     if step.failure is not None and self._failure is None:
                         self._failure = step.failure
+                # 対話の終わり(claude の手番の終わり)= この行で process を降ろし始める(段 12 lane 12e・#517)。
+                if step.close:
+                    self.retire()
                 # 手番の終わりは lock の外で合図する(待ち手は observe() で束を取りに来る — 束は先に置いてある)。
                 if step.ended is not None and self._on_turn_ended is not None:
                     self._on_turn_ended(self.name)
@@ -392,6 +441,11 @@ class HeadlessRegistry:
         降りた process(SIGINT で止めた claude・idle で退いた器)は置き換える。"""
         with self._lock:
             existing = self._processes.get(name)
+            if existing is not None and existing.alive() and existing.retired:
+                # 対話の終わりで降り始めた process が梯子の途中(EOF から数秒の内に次の手番が来た):
+                # 付き添い終えてから置き換える(有界 — 梯子の猶予の和)。同じ名に生きた process は 1 つ。
+                existing.join_retire(EOF_GRACE_SECONDS + 2 * TERM_GRACE_SECONDS + 1.0)
+                existing.join_io(1.0)
             if existing is not None and existing.alive():
                 raise RuntimeError(f"headless session already exists: {name}")
             process = HeadlessProcess(name, argv, cwd, env, events_path, dialogue, self._turn_ended)

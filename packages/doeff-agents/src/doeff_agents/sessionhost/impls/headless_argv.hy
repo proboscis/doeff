@@ -47,8 +47,9 @@
    - 会話の最初の手番は `--session-id <sid>`(build-claude-argv が conversation から
      付ける — 登記時鋳造の id が初手番から会話の id)、続きの手番(resume_mode =
      \"resume\")は `--resume <sid>`
-   - dialogue = ClaudeDialogue(温かい process・prompt は stdin の user の行・result で手番の
-     終わり・次の行が次の手番・途中の行は割り込みの本文)"
+   - dialogue = ClaudeDialogue(1 手番 1 process・prompt は stdin の user の行・result で手番の
+     終わり = 対話の終わり〔器が EOF で降ろす・段 12 lane 12e #517〕・途中の行は割り込みの本文・
+     次の手番は --resume の新しい process)"
   (setv base-params (dict params))
   (setv resume-mode (.get params "resume_mode"))
   (setv conversation (.get params "conversation"))
