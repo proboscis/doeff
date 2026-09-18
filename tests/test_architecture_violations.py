@@ -21,10 +21,16 @@ two opposite ways. With `rg` off PATH, all 13 tests raised
 tests passed vacuously, scanning nothing. Both modes are gone once the scan runs
 in-process, and a violation now names the repo-relative path and line, so a red
 run says which file is at fault instead of which host it ran on.
+
+The half of that contract a green run cannot show — that an empty scan is an
+error and not "no violations" — is itself checked, by
+`TestEmptyScanIsNotNoViolations` below.
 """
 
 import re
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VM_CORE_SRC = REPO_ROOT / "packages" / "doeff-vm-core" / "src"
@@ -80,6 +86,27 @@ def _filter_non_test_non_comment(lines: list[str]) -> list[str]:
                 continue
         filtered.append(line)
     return filtered
+
+
+class TestEmptyScanIsNotNoViolations:
+    """The scanner must refuse an empty scan instead of reporting no violations.
+
+    Guards the module contract above. A scan that silently covers nothing comes
+    back green, so without this the 13 checks below could all pass while
+    checking nothing — which is exactly what `rg --type rs` (not a ripgrep file
+    type) did until 2026-09-19.
+    """
+
+    def test_scan_with_no_existing_directory_is_an_error(self):
+        absent = REPO_ROOT / "packages" / "doeff-no-such-package" / "src"
+
+        with pytest.raises(AssertionError) as excinfo:
+            _grep_rust(r"ContId", dirs=[absent])
+        assert "packages/doeff-no-such-package/src" in str(excinfo.value)
+
+        # One real directory is enough to scan: a missing one beside it is
+        # normal (CORE_EFFECTS_SRC carries no Rust tree today), not an error.
+        assert _grep_rust(r"struct Continuation", dirs=[absent, VM_CORE_SRC])
 
 
 class TestNoContId:
