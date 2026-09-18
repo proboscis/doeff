@@ -1,0 +1,37 @@
+# E5 — 焦点の検(worktree doeff-wt-autocompact-window・2026-09-18 01:35:36 JST)
+
+## argv の検(impls)
+$ pytest tests -k "autocompact or threshold or argv_golden or golden_wiring or hooks_inherit" -q
+test-admission: focused — 12 本(焦点走 — 許可不要)
+............                                                             [100%]
+12 passed, 2288 deselected, 1 warning in 0.73s
+
+## 蘇生の腕の名簿の検(acp rehydrate)
+$ pytest tests -k "compaction_threshold or carries_the_attachment" -q
+test-admission: focused — 4 本(焦点走 — 許可不要)
+....                                                                     [100%]
+4 passed, 2296 deselected, 1 warning in 0.66s
+
+## 走らせた検の名前
+  packages/doeff-agents/tests/test_sessionhost_acp_compact.py::test_below_the_threshold_or_without_a_declaration_the_warm_session_is_kept
+  packages/doeff-agents/tests/test_sessionhost_acp_compact.py::test_compaction_is_due_only_with_both_a_threshold_and_a_measurement_at_or_above_it
+  packages/doeff-agents/tests/test_sessionhost_acp_rehydrate.py::test_every_arm_that_wakes_the_seat_carries_the_compaction_threshold
+  packages/doeff-agents/tests/test_sessionhost_impls.py::test_claude_argv_always_declares_the_compaction_threshold
+  packages/doeff-agents/tests/test_sessionhost_impls.py::test_claude_argv_carries_the_threshold_the_conversation_declared
+  packages/doeff-agents/tests/test_sessionhost_impls.py::test_claude_argv_golden_wiring
+  packages/doeff-agents/tests/test_sessionhost_impls.py::test_claude_argv_never_carries_a_threshold_that_kills_the_turn
+  packages/doeff-agents/tests/test_sessionhost_impls.py::test_claude_argv_session_hooks_inherit
+  packages/doeff-agents/tests/test_sessionhost_impls.py::test_claude_resume_argv_declares_the_threshold_too
+  packages/doeff-agents/tests/test_sessionhost_impls.py::test_codex_argv_golden_wiring
+  packages/doeff-agents/tests/test_sessionhost_launch.py::test_launch_claude_session_hooks_inherit_knob
+  packages/doeff-agents/tests/test_sessionhost_store.py::test_vacuum_if_bloated_threshold
+
+## 本番の経路(headless backend)の検 — 後から足した
+$ pytest tests/test_sessionhost_headless.py -k "headless_argv_is_print_mode or declares_the_compaction_threshold" -q
+test-admission: focused — 2 本(焦点走 — 許可不要)
+..                                                                       [100%]
+2 passed, 58 deselected, 1 warning in 0.27s
+
+ACP の agentd は backend = headless(~/.local/state/doeff/acp-agentd/agentd.toml)なので、
+この経路が本番。test_headless_claude_declares_the_compaction_threshold_on_both_arms が
+fresh / 宣言つき / resume / 幅の外の 4 通りを固定する。

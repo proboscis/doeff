@@ -123,3 +123,8 @@ ORCH_PROMPT.md
 
 # 設計記録の書き込みロック(道具が作る・repo に入れない)
 docs/design/*/.records.lock
+
+# 設計記録の成果物は repo に入れる — global の `artifacts` 除外を打ち消す
+# (打ち消しは dir を先に戻さないと中身に効かない)
+!docs/design/*/artifacts/
+!docs/design/*/artifacts/**

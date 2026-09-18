@@ -1,0 +1,15 @@
+# E1 — claude 2.1.274 が受ける --autocompact の幅(実射 2026-09-18 01:29:31 JST)
+$ claude --version
+2.1.274 (Claude Code)
+
+$ claude --autocompact bogus -p hi
+error: option '--autocompact <auto|tokens>' argument 'bogus' is invalid. It must be 'auto', or between 100k and 1M (e.g. 500k, 200000, or 200 as shorthand)
+
+$ claude --autocompact 50k -p hi
+error: option '--autocompact <auto|tokens>' argument '50k' is invalid. It must be 'auto', or between 100k and 1M (e.g. 500k, 200000, or 200 as shorthand)
+
+$ claude --autocompact 2000000 -p hi
+error: option '--autocompact <auto|tokens>' argument '2000000' is invalid. It must be 'auto', or between 100k and 1M (e.g. 500k, 200000, or 200 as shorthand)
+
+$ claude --autocompact 200000 -p hi
+You've reached your Fable limit. Switch to another model to continue.

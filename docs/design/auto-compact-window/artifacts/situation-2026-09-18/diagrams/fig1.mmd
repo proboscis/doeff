@@ -1,0 +1,24 @@
+flowchart TB
+  subgraph send["送る側(ACP)"]
+    CH["会話の宣言<br/>charter"]
+    R1["名簿 1<br/>resume-params-of"]
+    CH --> R1
+  end
+  R1 -->|"socket を渡る JSON"| J
+  subgraph recv["受ける側(agentd・1 つの process の中)"]
+    J["json.loads<br/>host.hy:1698"]
+    R2["名簿 2<br/>build-launch-program-params<br/>23 欄を手で数え直す"]
+    R3["名簿 3<br/>蘇生の受け口の<br/>program-params"]
+    R4["名簿 4<br/>resume-session の<br/>launch-params"]
+    R5["名簿 5<br/>行に残す launch-overlay<br/>4 欄だけ抜き出す"]
+    R6["続きの手番<br/>continue-headless-process<br/>行だけを読んで組み直す"]
+    J --> R2
+    J --> R3
+    R2 --> R5
+    R5 --> R6
+    R3 --> R4
+  end
+  R2 --> ARGV["build-claude-argv"]
+  R4 --> ARGV
+  R6 --> ARGV
+  ARGV --> CLI["claude"]
