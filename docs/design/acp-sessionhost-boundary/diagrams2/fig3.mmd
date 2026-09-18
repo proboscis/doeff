@@ -1,0 +1,10 @@
+flowchart TB
+  AG["agora<br/>製品の面(protocol / HUD)"]
+  ACR["agora-controllers<br/>agora の運転の方策 + adapter<br/>handler を 2 つ持つ"]
+  ACP["ACP<br/>engine だけ"]
+  SH["sessionhost(別 repo)<br/>+ 薄い client(型つき)"]
+  CU["custody<br/>資格"]
+  AG --> ACR
+  ACR -->|"acp の client"| ACP
+  ACR -->|"sessionhost の client(型)"| SH
+  CU -.->|"手番ごとに札を貸す"| ACR
