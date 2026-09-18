@@ -1,0 +1,10 @@
+flowchart LR
+  subgraph now["いま"]
+    N1["doeff-agents<br/>sessionhost 13,711 行<br/>+ acp/ 15,753 行<br/>実行の入口 = acp.entry"]
+  end
+  subgraph then["目標"]
+    T1["doeff-agents<br/>sessionhost + 公開の口<br/>入口は自分の物"]
+    T2["ACP の repo<br/>node の controller<br/>acp_client.runtime の上"]
+  end
+  N1 -->|"acp/ を移す<br/>runtime の作り直しは捨てる"| T2
+  N1 -->|"型・client・添付の型を<br/>公開の口として残す"| T1
