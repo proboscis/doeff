@@ -171,6 +171,7 @@
   SummaryOutcome
   SummaryRegion
   CONDITION-ATTACHMENT-IGNORED
+  CONDITION-INPUT-UNDELIVERED
   AGENT-JOB-KIND
   AGORA-KINDS-NAMESPACE
   AcpConversationMail
@@ -410,6 +411,8 @@
   effort-of-plan
   fallback-arm-of
   first-turn-carries-inputs
+  first-turn-prompt-of
+  send-folds-bodies
   frame-lines-of
   session-affinity-key-of
   provider-limit-condition-of
@@ -1428,9 +1431,11 @@
          (: bodies tuple) (: carried tuple) (: missing tuple)]
    :post [(: % AgentdState)]}
   "手番の始まり(session を起こした後・温かい session ならそのまま): 郵便の本文(bodies — headless の
-   起こす腕では空: 本文は起こした prompt に畳んである)を送る(awaiting — 送った本文は owed)・
-   見つからなかった id(missing)は condition InputUnavailable・計器・turn-record・status frame・
-   in-flight に登記。手番の始まりの offset は送る前の file の大きさ(send / resume)。"
+   起こす腕では空: 本文は起こした prompt に畳んである)を送る(awaiting — 送った本文は owed。headless は
+   相乗りした N 通を 1 本に畳んで 1 回だけ撃つ — judgment.send-folds-bodies)・見つからなかった
+   id(missing)は condition InputUnavailable・器が送りを断った拍は condition InputUndelivered
+   (例外にしない)・計器・turn-record・status frame・in-flight に登記。手番の始まりの offset は
+   送る前の file の大きさ(send / resume)。"
   (setv job-id row.resource-id)
   (setv pending [])
   (<- start tuple (start-offset-of view arm))
@@ -1440,15 +1445,40 @@
   (<- turn-env dict (turn-session-env-of lease))
   ;; 段 10 lane 10o(agora-redesign #96・依頼者の追補): 添付は型つきのまま器へ渡す(綴りは Dialogue)。
   ;; 器が受けなかった(SessionSend の答えが断りを名乗った)拍は条件 AttachmentIgnored に写す。
-  (for [[index body] (enumerate bodies)]
-    (setv attachments (if (< index (len carried)) (get carried index) #()))
-    (<- ignored (| str None)
-        (SessionSend :session-id view.session-id :text body :awaiting True
+  ;; card acp:kanban-issue:ki-3149aebbf675 B: headless の器では相乗りした郵便を **1 手番 = 1 prompt** に
+  ;; 畳んで 1 回だけ送る(N 回送ると走っている手番の途中には積めず、先頭 1 通しか agent に届かない —
+  ;; 実測 2026-09-18: log 全体 168 job)。畳むかの判断は judgment.send-folds-bodies の 1 点で、腕では
+  ;; 分岐しない。bodies が空なら撃たない(起こす腕は charter に畳んであるので #() で来る)。
+  (<- folds bool (send-folds-bodies settings.backend-kind))
+  (setv parcels [])
+  (if folds
+      (when bodies
+        (<- text str (first-turn-prompt-of "" bodies))
+        (<- attachments tuple (first-turn-attachments-of carried))
+        (.append parcels #(text attachments)))
+      (for [[index body] (enumerate bodies)]
+        (.append parcels #(body (if (< index (len carried)) (get carried index) #())))))
+  (setv refused None)
+  (for [parcel parcels]
+    (<- answer (| str None SessionRefused)
+        (SessionSend :session-id view.session-id :text (get parcel 0) :awaiting True
                      :session-env turn-env
-                     :attachments attachments))
-    (when (and (isinstance ignored str) ignored)
-      (<- condition dict (condition-of CONDITION-ATTACHMENT-IGNORED ignored))
+                     :attachments (get parcel 1)))
+    (when (isinstance answer SessionRefused)
+      (setv refused answer))
+    (when (and (isinstance answer str) answer)
+      (<- condition dict (condition-of CONDITION-ATTACHMENT-IGNORED answer))
       (.append pending condition)))
+  ;; card acp:kanban-issue:ki-3149aebbf675 C: 器が送りを断った拍は例外を出さずに条件 1 件へ写して続ける
+  ;; (以後の計器・turn-record の作成・status frame は今までどおり撃つ)。郵便の再配達はしない —
+  ;; 落ちたことを見えるようにするだけ。理由 = 器の断りの逐語 + 届かなかった郵便の id。
+  (when (is-not refused None)
+    (<- asked tuple (inputs-of row))
+    (setv undelivered (tuple (lfor input-id asked :if (not-in input-id missing) input-id)))
+    (<- condition dict (condition-of CONDITION-INPUT-UNDELIVERED
+                                     (+ refused.error " — messages not delivered: "
+                                        (.join ", " undelivered))))
+    (.append pending condition))
   (when missing
     (<- condition dict (condition-of "InputUnavailable"
                                      (+ "messages not found: " (.join ", " missing))))

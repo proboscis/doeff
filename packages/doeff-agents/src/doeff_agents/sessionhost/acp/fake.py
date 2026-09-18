@@ -475,6 +475,9 @@ class FakeSessions:
         self.interjections: list[tuple[str, str]] = []
         #: None = 引き受ける / SessionRefused = 器が断る(走っている手番が無い)。
         self.refuse_interject: SessionRefused | None = None
+        #: card acp:kanban-issue:ki-3149aebbf675 C: session.send を断る(host の error 封筒の写し —
+        #: 走っている手番が無い・行が無い・同じ名の process が既に在る)。本文は届いていない。
+        self.refuse_send: SessionRefused | None = None
         #: 段 10 lane 10n: 注入の行の名(session_id, ref)の順 — agentd は Message の id を渡す。
         self.interjection_refs: list[tuple[str, str]] = []
         #: 段 10 lane 10n: 停止の合図(session.escalate)を受けた session の順と、断り(None = 出す)。
@@ -519,6 +522,25 @@ class FakeSessions:
             return Resume(k, self._look(effect))
         return Pass(effect, k)
 
+    def _send(self, effect: SessionSend) -> str | None | SessionRefused:
+        """``session.send``(手番の本文)— 器が断る拍(refuse_send)は本文が届いていない印で、
+        送った列には載せない(card acp:kanban-issue:ki-3149aebbf675 C)。"""
+        if self.refuse_send is not None:
+            return self.refuse_send
+        self.sends.append((effect.session_id, effect.text, effect.awaiting))
+        # 追補 2(実弾 #92): 手番ごとの env は「その送りが運ぶ値」— 検はこの列で
+        # 「起こし直しがこの手番の札で起きる」ことを読む。
+        self.send_envs.append((effect.session_id, dict(effect.session_env)))
+        # 段 10 lane 10o(agora-redesign #96): 型つきの添付を器へ渡した記録(綴りは器の Dialogue)。
+        self.sent_attachments.append((effect.session_id, effect.attachments))
+        # host と同じ意味論(headless.hy headless-send-program): 降りた process への次の手番は
+        # --resume で起こし直す = 送った session の backend は生きる。
+        if effect.session_id in self.views:
+            self.views[effect.session_id] = replace(
+                self.views[effect.session_id], backend_alive=True
+            )
+        return self.attachments_ignored or None
+
     def _act(
         self,
         effect: SessionLaunch
@@ -532,19 +554,7 @@ class FakeSessions:
         if isinstance(effect, (SessionLaunch, SessionResume)):
             return self._incarnate(effect)
         if isinstance(effect, SessionSend):
-            self.sends.append((effect.session_id, effect.text, effect.awaiting))
-            # 追補 2(実弾 #92): 手番ごとの env は「その送りが運ぶ値」— 検はこの列で
-            # 「起こし直しがこの手番の札で起きる」ことを読む。
-            self.send_envs.append((effect.session_id, dict(effect.session_env)))
-            # 段 10 lane 10o(agora-redesign #96): 型つきの添付を器へ渡した記録(綴りは器の Dialogue)。
-            self.sent_attachments.append((effect.session_id, effect.attachments))
-            # host と同じ意味論(headless.hy headless-send-program): 降りた process への次の手番は
-            # --resume で起こし直す = 送った session の backend は生きる。
-            if effect.session_id in self.views:
-                self.views[effect.session_id] = replace(
-                    self.views[effect.session_id], backend_alive=True
-                )
-            return self.attachments_ignored or None
+            return self._send(effect)
         if isinstance(effect, SessionInterject):
             if self.refuse_interject is not None:
                 return self.refuse_interject
