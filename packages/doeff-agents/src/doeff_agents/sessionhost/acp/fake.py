@@ -150,6 +150,10 @@ class FakeAcp:
         #: 鍵 → 次の status の書き 1 回だけ Conflict で断る時の currentGeneration(agentd が読んだ
         #: 後に他の書き手が行を進めた race の再現・1 回で消える)。
         self.conflict_once: dict[str, int] = {}
+        #: 鍵 → status の書きを最初の N 回だけ Conflict で断る時の currentGeneration と残りの回数
+        #: (conflict_once の N 回版 — 「読み直して書き直す」腕が 2 度以上負ける拍を宣言で組む口。
+        #: 検体が fake の private な腕を差し替えなくて済むよう、断りの形は fake の宣言の欄で持つ)。
+        self.conflict_times: dict[str, tuple[int, int]] = {}
         #: 段 9p: create を鍵ごとに断る列(先頭から消費 — 頭が答えない拍 Refused(0, …) を N 回・決定論的な断り 400 等)。
         #: 尽きたら普通に作る。作った回数は creates に鍵ごと数える。
         self.create_refusals: dict[str, list[Refused]] = {}
@@ -322,6 +326,11 @@ class FakeAcp:
         queued = self.status_refusals.get(row.key)
         if queued:
             return queued.pop(0)
+        repeated = self.conflict_times.get(row.key)
+        if repeated is not None and repeated[1] > 0:
+            generation, remaining = repeated
+            self.conflict_times[row.key] = (generation, remaining - 1)
+            return Conflict(generation)
         if row.key in self.conflict_once:
             return Conflict(self.conflict_once.pop(row.key))
         if existing.generation != row.generation:

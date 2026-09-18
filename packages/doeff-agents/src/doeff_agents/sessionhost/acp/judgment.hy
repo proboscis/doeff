@@ -56,6 +56,7 @@
   CHARTER-KIND-KEY
   CHARTER-KIND-TURN
   CHARTER-KIND-VERIFY
+  CHARTER-PLACE-KEY
   CHARTER-VERIFY-DEADLINE-KEY
   CHARTER-VERIFY-JOB-ID-KEY
   CHARTER-VERIFY-JOB-ID-PATTERN
@@ -879,6 +880,29 @@
    受ける・pool = personal だけなので会社の口座を断る)。名乗りの無い側が在る拍は偽(前段の門は判らないもので
    止めない — 止めるのは預かり所の側の構造)。"
   (and (bool places) (is-not boundary None) (not-in boundary places)))
+
+
+(defk charter-place-of [row]
+  {:pre [(: row AcpRow)]
+   :post [(: % (| str None))]}
+  "job の charter が要求する置き場(spec.charter.place の語・無い = None)。段 12(card acp:kanban-issue:ki-d13566f4d5eb・
+   決定 案 A・2026-09-19): 要求の座は方策の 1 欄(delivery-policy の reception.rules[class=operate].open.place)で、
+   ここは結ばれた行の綴りを写すだけ — 語彙の検は配置(ACP Inputs.jobViewOf)が結ぶ前に済ませている(判断の第 2 の点を
+   作らない)。文字列でない・空は None(要求が無い = 今日どおりどの宿でも起きる)。"
+  (setv charter (.get row.spec "charter"))
+  (setv place (if (isinstance charter dict) (.get charter CHARTER-PLACE-KEY) None))
+  (if (and (isinstance place str) place) place None))
+
+
+(defk place-mismatch [places place]
+  {:pre [(: places tuple) (: place (| str None))]
+   :post [(: % bool)]}
+  "charter が要求する置き場と自分の名乗りの食い違い(段 12・card acp:kanban-issue:ki-d13566f4d5eb の検 1 本の走行側)—
+   **要求が在って、自分の集合にその語が無い**時だけ真。要求の無い手番(place = None)は今日どおり通る(欄を持たない
+   charter の byte は不変 = overlay の identity)。集合の宣言が空(検体の断面 — 本番は参加しない)も止めない:
+   判らないもので止めるのは前段の門の仕事ではない。口座の置き場の門(credential-place-mismatch)とは別の軸で、
+   あちらは資格が宿の外へ出るか・こちらは宿が道具を持つか。比べる点はこの 1 つ。"
+  (and (bool places) (is-not place None) (not-in place places)))
 
 
 (defk compact-at-of [row]

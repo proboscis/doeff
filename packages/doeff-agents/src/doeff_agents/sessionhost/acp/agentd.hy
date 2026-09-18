@@ -249,6 +249,7 @@
   RecordUnsent
   RecordedTurns
   CONDITION-CREDENTIAL-PLACE-MISMATCH
+  CONDITION-PLACE-MISMATCH
   PLACES-SEPARATOR
   CONDITION-WORK-DIR-MISSING
   WORK-DIR-STEP-CREATE
@@ -379,6 +380,8 @@
   capture-verdict
   retire-reason-after-job
   condition-of
+  charter-place-of
+  place-mismatch
   credential-place-mismatch
   credential-place-of
   credential-from-custody
@@ -1228,6 +1231,20 @@
    defer(会話の session が手番の途中)なら claim せず次の list へ。それ以外は Running + sessionHandle を
    CAS で書き(負けたら次の list へ)、start-claimed で起こす — 所要を計器に 1 行、turn-record を作り、
    status frame を 1 つ押す。起こす session の id は agentd が鋳造する(MintId — charter の id は読まない)。"
+  ;; 段 12(card acp:kanban-issue:ki-d13566f4d5eb・決定 案 A・2026-09-19): charter が置き場を**要求**していて、自分の
+  ;; 名乗り(spec.places)にその語が無いなら起こさない — 種類の分岐より前の 1 点なので turn / verify / summarize の
+  ;; どれも同じ門を通る。配置(ACP Scheduling.Decide.nodeServesPlace)が同じ要求を先に判じるが、配置の版が古い・
+  ;; 手で結んだ拍にも**実際の宿が名乗る**ための走行側の門(実弾 2026-09-18: 運用の 5 手番が kubectl の無い pod に
+  ;; 黙って落ちた)。要求の座は方策の 1 欄で、ここは第 2 の方策点ではない。
+  (<- charter-place (| str None) (charter-place-of row))
+  (<- place-mismatched bool (place-mismatch settings.places charter-place))
+  (when place-mismatched
+    (<- (end-job-now settings row CONDITION-PLACE-MISMATCH
+                     (+ f"agent-job {row.resource-id} requires place {charter-place} but node "
+                        f"{settings.node-name} serves places {(.join PLACES-SEPARATOR settings.places)} — "
+                        f"the turn needs a machine that declares {charter-place}")
+                     #() now-ms))
+    (return state))
   ;; 段 12 lane 12a(agora-redesign #230): charter.kind = verify の job は会話の手番ではない — script を 1 つ走らせる腕へ
   ;; (claude / codex を起こさず、札も借りず、作業場の門も歩かない)。種類の読みは judgment.job-kind-of の 1 点。
   (<- kind str (job-kind-of row))

@@ -139,6 +139,7 @@ ConditionType = Literal[
     "RecordUnavailable",
     "CredentialSourceMissing",
     "CredentialPlaceMismatch",
+    "PlaceMismatch",
     "AgentSettingIgnored",
     "SessionLost",
     "AgentdRestart",
@@ -181,6 +182,12 @@ CONDITION_CREDENTIAL_SOURCE_MISSING: ConditionType = "CredentialSourceMissing"
 #: 口座の置き場(profile の行の spec.boundary)が自分の置き場の集合(spec.places)に無い job を起こさなかった印
 #: (段 10 lane 10d 便 2・agora-redesign #85 の I5・段 11 lane 11u・#224 で集合へ — 判断は judgment.credential-place-mismatch の 1 点)。
 CONDITION_CREDENTIAL_PLACE_MISMATCH: ConditionType = "CredentialPlaceMismatch"
+#: charter が要求する置き場(spec.charter.place)が自分の置き場の集合(spec.places)に無い job を起こさなかった印
+#: (段 12・card acp:kanban-issue:ki-d13566f4d5eb の決定 案 A — 判断は judgment.place-mismatch の 1 点)。
+#: 口座の置き場の門(CredentialPlaceMismatch)とは別の軸: あちらは**資格**がその宿の外へ出るか、こちらは
+#: 宿が**道具**を持つか。配置(ACP Scheduling.Decide.nodeServesPlace)が同じ要求を判じるが、配置の版が古い・
+#: 手で結んだ拍にも実際の宿が名乗るための走行側の門(第 2 の方策点ではない — 要求の座は方策の 1 欄)。
+CONDITION_PLACE_MISMATCH: ConditionType = "PlaceMismatch"
 #: 段 10 lane 10y(agora-redesign #110・依頼者の裁定 2026-09-15 案 A): 手番の work_dir(家からの相対 `~/…` は node の HOME で展開した後)が
 #: この node に無く、charter が scratch の印(CHARTER_WORK_DIR_SCRATCH_KEY = true)を持たない job を起こさなかった印。配車の係は
 #: この条件を「会話 × node」で読み、同じ会話の手番の候補からこの node を外す(ACP 側・lane 10d)。判断は judgment.work-dir-step-of の 1 点。
@@ -241,11 +248,16 @@ CONDITION_VERIFY_COMMAND_LOST: ConditionType = "VerifyCommandLost"
 #: VerifyDeadlineExceeded = charter.deadlineSeconds を越えて走っていたので agentd が止めた。
 CONDITION_VERIFY_DEADLINE_EXCEEDED: ConditionType = "VerifyDeadlineExceeded"
 #: charter の種類の欄と閉語彙(ACP docs/contracts/scheduling.json charterKind の写し — 綴りの定義点は ACP の
-#: Acp.App.Scheduling.Contract)。無い = turn(会話の手番・従来どおり)。agentd が読むのは kind の 1 語で、配置が
-#: 読む place は読まない(配置が結んだ node = 自分・置き場は配置が判じ終えている)。
+#: Acp.App.Scheduling.Contract)。無い = turn(会話の手番・従来どおり)。
 CHARTER_KIND_KEY: str = "kind"
 CHARTER_KIND_TURN: str = "turn"
 CHARTER_KIND_VERIFY: str = "verify"
+#: charter が要求する置き場(ACP Acp.App.Scheduling.Contract.charterPlaceKey の写し・語彙は AGENTD_PLACES)。
+#: 段 12(card acp:kanban-issue:ki-d13566f4d5eb・決定 案 A・2026-09-19): 手番の charter も置き場を持ってよく、
+#: **走行係は結ばれた行の要求を自分の名乗りで検める**(claim の門 judgment.place-mismatch の 1 点)。
+#: 「配置が判じ終えているから走行係は読まない」は旧い形 — 配置の版が古い・手で結んだ拍に、道具の無い宿が
+#: 黙って手番を取っていた(実弾 2026-09-18: 運用の 5 手番が kubectl の無い pod に落ちた)。
+CHARTER_PLACE_KEY: str = "place"
 #: verify の charter の欄(契約 scheduling.json charterKind.verify.runnerCharter の写し): 便の id(= script の名・
 #: ai land verify の --loop-id)・発火の鍵(k8s の Job 名・記録の材料)・命令の上限(秒)。
 CHARTER_VERIFY_JOB_ID_KEY: str = "jobId"
@@ -579,8 +591,15 @@ RECORD_URL_ENV = "RECORD_SERVICE_URL"
 RECORD_SPOOL_DIR_ENV = "DOEFF_AGENTD_RECORD_SPOOL_DIR"
 NODE_NAME_ENV = "DOEFF_AGENTD_NODE_NAME"
 #: 機体の置き場の語(段 10 lane 10d 便 2・agora-redesign #85)— 閉語彙は ACP の契約 agora-kinds.json の
-#: profile.spec.boundary / node.spec.places.items と**同じ綴り**(新しい語を作らない)。
-AgentdPlace = Literal["company", "personal"]
+#: node.spec.places.items と**同じ綴り**(新しい語を作らない)。⚠ profile.spec.boundary の語彙は
+#: この語彙の**部分集合**(company | personal)で、cluster は口座の境界にならない(下)。
+#: 段 12(card acp:kanban-issue:ki-d13566f4d5eb・決定 案 A・2026-09-19): cluster =
+#: **この宿で起きる手番は、PATH の kubectl と、家の k3s(eos)に届く KUBECONFIG を持つ**。
+#: 資格(口座)の区画ではなく**道具の供給**の名乗りで、運用(operate)の手番が要求する語
+#: (要求 = 方策 delivery-policy の reception.rules[class=operate].open.place)。kubeconfig の在処は
+#: 宣言に入れない(path は機体ごと)— 名乗る宿は agentd の環境で KUBECONFIG を向け、宣言と実体の
+#: 突合は据え付けの検(dotfiles `ai provision check`)が持つ。
+AgentdPlace = Literal["company", "personal", "cluster"]
 #: 綴りの定義点は上の型 1 つ(実行時の照合はここから導く — 語彙を 2 度書かない)。
 AGENTD_PLACES: frozenset[str] = frozenset(get_args(AgentdPlace))
 #: node の spec のうち置き場の**集合**を名乗る型つきの欄(契約 agora-kinds.json v4 node.spec.places・段 11 lane 11u・
