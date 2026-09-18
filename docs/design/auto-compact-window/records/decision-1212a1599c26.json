@@ -1,0 +1,38 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/decision-2026-09-18d/evidence/e10-compactat-declarations-counted.log",
+      "sha256": "5ee47aa4004319a9af6bc136fde51745af8fc1e505cc4757b3faa05a3816a0dc"
+    }
+  ],
+  "body": {
+    "actor": "agent",
+    "authority": "internal",
+    "decision": "design",
+    "outcome": "accepted",
+    "scope_of_agreement": "この決定が覆うのは選択 4(既にある compactAt との関係)ちょうど。床の値(400k・役ごとの lead 400k / worker 200k)は decision-60d1d5e005c5 のとおり初期値で、配備後の実測で決め直す。**含まない** = doeff 本線への merge の可否そのもの(着地の列の窓が判断する)と、compactAt の退役(案 c = 出荷済み機能の削除・今回の範囲外)。戻す手順 = この決定を outcome revoked の新しい decision で覆し、claude_code.hy の AUTOCOMPACT-DEFAULT-TOKENS を消して縮退先を auto に戻す(定数 1 つ・1 commit で戻る)。影響を受ける会話 1 本(compactAt=60)の振る舞いが問題になった時は、案 b の置き場の指示(ACP 側 charterFor で auto を名乗る)が版 c の設計に残っている。",
+    "source": "版 c の選択 4 は「推奨 = a。ただしこれは operator の目的を変える判断なので、配備の前に戻す(合意の記録なし)」と書いて operator の裁定を待っていた。待ちを解いた根拠は 2 つ。(1) CLAUDE.md の two-way door の規則 — 戻せる決定(code の定数と宣言・revert で戻る)は席が推奨を 1 つ選んで決め、operator を待たない。(2) 待っていた理由そのものが未知の量だった(選択 4 の註「現に compactAt を宣言している会話が何本あるかは数えられていない」= evidence U6)。その未知を測った結果が新しい artifact E10 で、影響を受ける会話は 1 本(値 60)。CLAUDE.md の「見積りを根拠に先送りしない・実行して実測で知る」に従い、待つのをやめて測った。",
+    "statement": "選択 4 は案 a(内側の輪を優先し、compactAt は宣言が低い時だけ撃つ backstop にする)を採る。段 1 の床(既定 400,000 token)をそのまま配備し、compactAt を宣言した会話への特別扱いは置かない。",
+    "subjects": [
+      "design-3c927e1b645c"
+    ],
+    "supersedes": []
+  },
+  "created_at": "2026-09-18T08:53:04.538190+00:00",
+  "id": "decision-1212a1599c26",
+  "inputs": [
+    {
+      "id": "design-3c927e1b645c",
+      "role": "subject",
+      "sha256": "1d708c178111fb885a8e0d46c7ef99996cc734bfe221cc98b9795194701a9ec8"
+    },
+    {
+      "id": "plan-3afdf74bfe5c",
+      "role": "basis",
+      "sha256": "47a2819e3b39baea45284240ec4b7f111d5e8f600d7a9c25536a3b41d33ca207"
+    }
+  ],
+  "kind": "decision",
+  "schema_version": 1,
+  "scope": "agentd が起こす claude 席の会話圧縮の閾値(auto-compact window)の宣言 — charter から起動 argv までの契約と、役(計画席 lead / 実装席 worker)ごとの値の所在。対象 = doeff-agents の起動物理・ACP の charter 組み立て・dotfiles の起票側の宣言。"
+}
