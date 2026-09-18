@@ -1252,7 +1252,7 @@
     (<- claimed-verify AgentdState (claim-verify-job settings state row now-ms))
     (return claimed-verify))
   ;; 段 12 lane 12j(agora-redesign #233): charter.kind = summarize の job は会話の履歴の段階つき要約 — 会話の profile の札を借りて
-  ;; claude -p を区間ごとに 1 回起こす腕へ(session は起こさず・作業場の門も歩かない・turn-record も書かない)。
+  ;; claude の print モードを区間ごとに 1 回起こす腕へ(session は起こさず・作業場の門も歩かない・turn-record も書かない)。
   (when (= kind CHARTER-KIND-SUMMARIZE)
     (<- claimed-summarize AgentdState (claim-summarize-job settings state row now-ms))
     (return claimed-summarize))
@@ -2137,7 +2137,7 @@
   (for [command (list current.commands)]
     (<- (LogLine :text (+ f"agentd: verify job {command.job-id} (pid {command.pid}) keeps running through the stop of agentd; "
                           "its row stays Running and the next agentd recovers the outcome from the row and the rc file"))))
-  ;; 段 12 lane 12j: summarize の claude -p も自分の session で走っていて降りない — 行は Running のまま・次の agentd が拾い直す。
+  ;; 段 12 lane 12j: summarize の print モードの process も自分の session で走っていて降りない — 行は Running のまま・次の agentd が拾い直す。
   (for [command (list current.summaries)]
     (<- (LogLine :text (+ f"agentd: summarize job {command.job-id} (pid {command.pid}) keeps running through the stop of agentd; "
                           "its row stays Running and the next agentd recovers the outcome from the row and the out / rc files"))))
@@ -2681,7 +2681,8 @@
 ;; operator 2026-09-16 "lets see if 1 will work"(方法 1)。charter.kind = summarize の job は会話の履歴の段階つき要約 1 つ。この agentd は
 ;; **会話の profile の札を預かり所から借り**(配置が結んだ binding.account — 手番と同じ資格・API 鍵は置かない)、記録の service の
 ;; 古い区間 [from, to](原文の kind だけ・1 区間 ≤ regionByteBudget)を prompt(judgment.summarize-prompt-of の 1 点)に畳み、
-;; Claude Code(claude -p・道具なし・session を残さない)を自分の session で 1 回起こす(CommandStart — verify と同じ process の形・
+;; Claude Code を print モード(道具なし・session を残さない)で自分の session で 1 回起こす(CommandStart — verify と同じ process の形・
+;; print モード = 1 回だけ答えて降りる起こし方で、argv の綴りの座は judgment.summarize-argv-of の sh の 1 行ちょうど・
 ;; env に札と家)。答え(JSON)の本文を記録の service の stream(streamKind summary)へ積み、agora の kind summary の行(claim check)を
 ;; 書き、次の区間へ進む。全区間(until まで)が済んだら札を返し Ended(result に区間の数)。
 ;; 会話の手番ではない: session を起こさない(SessionLaunch を撃たない)・turn-record を作らない・中継へ押さない・郵便を読まない。
@@ -2737,7 +2738,7 @@
          (: job-key str) (: job-namespace str) (: regions-done int)]
    :post [(: % (| InFlightSummarize str))]}
   "1 区間の要約を起こす: 会話の profile の札を借り(区間ごとに借り直す — 期限を越えない)、原文を prompt に畳んで file に書き、
-   claude -p を自分の session で起こす(env に札と家・待たない)。戻り = memory の状態か、起こせなかった理由の文(札は返してある)。"
+   claude を print モードで自分の session で起こす(env に札と家・待たない)。戻り = memory の状態か、起こせなかった理由の文(札は返してある)。"
   (<- lease (| LeaseGrant LeaseRefused) (CustodyLeaseBorrow :kind "claude" :account plan.account :purpose f"summarize {plan.job-id}"))
   (when (isinstance lease LeaseRefused)
     (return f"custody refused the lease of account {plan.account} for the summarize ({lease.status}: {lease.error})"))
@@ -2754,7 +2755,7 @@
   (<- launched (| CommandStarted CommandRefused) (CommandStart :argv argv :cwd settings.summarize-runs-dir :env env))
   (when (isinstance launched CommandRefused)
     (<- (CustodyLeaseRevoke :lease-id lease.lease-id))
-    (return (+ f"claude -p could not be started for the summary of {plan.conversation-id} [{region.from-seq}, {region.to-seq}] "
+    (return (+ f"claude in print mode could not be started for the summary of {plan.conversation-id} [{region.from-seq}, {region.to-seq}] "
                f"on node {settings.node-name}: {launched.error}")))
   (<- (LogLine :text (+ f"agentd: summarize job {plan.job-id} summarizes conversation {plan.conversation-id} "
                         f"[{region.from-seq}, {region.to-seq}] ({(len region.events)} events, {region.source-bytes} bytes) "
@@ -2773,7 +2774,7 @@
   "1 つの Bound の summarize の行を受ける: 欄を summarize-plan-of の 1 点で写し(読めない = 条件 SummarizePlanInvalid で Ended)、
    要約済みの区間(kind summary の行 — summary-rows-covered-to)の続きから次の区間を記録の service で読み(読めない = 条件
    SummarizeRegionUnreadable・原文が無い = 結末 regions 0 で Ended・条件なし)、Running + sessionHandle{stream, summarize} を CAS で
-   書き(負けたら次の list へ)、札を借りて claude -p を起こす(起こせない = 条件 SummarizeStartFailed)。memory には
+   書き(負けたら次の list へ)、札を借りて claude を print モードで起こす(起こせない = 条件 SummarizeStartFailed)。memory には
    InFlightSummarize を置き、観測は observe-summarize。"
   (setv job-id row.resource-id)
   (<- planned (| SummarizePlan str) (summarize-plan-of row settings.summarize-region-byte-budget settings.summarize-deadline-seconds))
@@ -2882,13 +2883,13 @@
 (defk settle-summary-region [settings state command rc now-ms]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: command InFlightSummarize) (: rc int) (: now-ms int)]
    :post [(: % AgentdState)]}
-  "区間の claude -p が終わった: rc != 0 か答えが読めない → 条件 SummarizeOutputUnreadable(log の path を理由に)で Ended /
+  "区間の print モードの process が終わった: rc != 0 か答えが読めない → 条件 SummarizeOutputUnreadable(log の path を理由に)で Ended /
    答えの本文を記録の service の stream(streamKind summary)へ積み、kind summary の行(claim check)を書き、次の区間へ。"
   (setv done command.regions-done)
   (when (!= rc 0)
     (<- result-rc dict (summarize-result-of command done now-ms))
     (<- condition-rc dict (condition-of CONDITION-SUMMARIZE-OUTPUT-UNREADABLE
-                                        f"claude -p exited rc={rc} for [{command.from-seq}, {command.to-seq}] of conversation {command.conversation-id}; log {command.log-path}"))
+                                        f"claude in print mode exited rc={rc} for [{command.from-seq}, {command.to-seq}] of conversation {command.conversation-id}; log {command.log-path}"))
     (<- finished-rc AgentdState (finish-summarize settings state command result-rc #(condition-rc) now-ms))
     (return finished-rc))
   ;; 答えは本文 + usage + modelUsage の JSON(実弾 2026-09-16 16:04: 9,207 byte)— 小さな file の既定(256 字)では切れて non-JSON になる。
@@ -2974,7 +2975,7 @@
     (do
       (<- result-lost dict (summarize-result-of current current.regions-done now-ms))
       (<- condition-lost dict (condition-of CONDITION-SUMMARIZE-COMMAND-LOST
-                                            (+ f"claude -p (pid {current.pid}) for [{current.from-seq}, {current.to-seq}] of conversation {current.conversation-id} "
+                                            (+ f"claude in print mode (pid {current.pid}) for [{current.from-seq}, {current.to-seq}] of conversation {current.conversation-id} "
                                                f"left no exit code in {current.rc-path} and is not running on node {settings.node-name}")))
       (<- (LogLine :text f"agentd: summarize job {current.job-id} lost its process — {(get condition-lost "reason")}"))
       (<- finished-lost AgentdState (finish-summarize settings state current result-lost #(condition-lost) now-ms))
@@ -2985,7 +2986,7 @@
         (<- (CommandStop :pid current.pid)))
       (<- result-timed dict (summarize-result-of current current.regions-done now-ms))
       (<- condition-timed dict (condition-of CONDITION-SUMMARIZE-DEADLINE-EXCEEDED
-                                             (+ f"claude -p for [{current.from-seq}, {current.to-seq}] of conversation {current.conversation-id} ran past its deadline "
+                                             (+ f"claude in print mode for [{current.from-seq}, {current.to-seq}] of conversation {current.conversation-id} ran past its deadline "
                                                 f"of {current.deadline-seconds} s on node {settings.node-name}; stopped (SIGTERM)")))
       (<- (LogLine :text f"agentd: summarize job {current.job-id} stopped — {(get condition-timed "reason")}"))
       (<- finished-timed AgentdState (finish-summarize settings state current result-timed #(condition-timed) now-ms))
@@ -3031,7 +3032,7 @@
   (<- wrote (| Written Conflict Refused) (AcpPutStatus :row target :status interrupted))
   (when (not (isinstance wrote Written))
     (<- (LogLine :text f"agentd: Interrupted condition of summarize job {command.job-id} not written ({wrote})")))
-  (<- (LogLine :text f"agentd: summarize job {command.job-id} withdrawn; claude -p (pid {command.pid}) stopped"))
+  (<- (LogLine :text f"agentd: summarize job {command.job-id} withdrawn; claude in print mode (pid {command.pid}) stopped"))
   (<- dropped AgentdState (without-summarize state command.job-id))
   dropped)
 

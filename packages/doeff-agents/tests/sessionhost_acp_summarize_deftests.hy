@@ -2,10 +2,10 @@
 ;;; 焦点の検(段 12 lane 12j・agora-redesign #233・依頼者の裁定 2026-09-16・ADR-DOE-AGENTS-012 R37)。
 ;;;
 ;;; 形: この agentd(手番の終わりに文脈の大きさを測る)が ACP に agent-job(charter.kind = summarize・subject = 会話)を 1 つ書き、配置が
-;;; 会話の profile の account で結び、その agentd が **会話の profile の札を借りて** claude -p(道具なし・session を残さない)を区間ごとに
+;;; 会話の profile の account で結び、その agentd が **会話の profile の札を借りて** claude を print モード(道具なし・session を残さない)で区間ごとに
 ;;; 1 回起こし、答えの本文を記録の service の stream(streamKind summary)へ、claim check を agora の kind summary の行へ書く。ここで撃つのは
 ;;;   * 受け: Running + sessionHandle{stream, summarize}・札を借りる(verify との違い)・**反例 = session を起こす形が赤**(launches == [])・
-;;;     CommandStart の argv は sh の 1 行(pid → claude -p → rc・位置引数)・env に札と家・prompt の file に原文と残す / 落とすの規則
+;;;     CommandStart の argv は sh の 1 行(pid → claude の print モード → rc・位置引数)・env に札と家・prompt の file に原文と残す / 落とすの規則
 ;;;   * 結末: 答えの JSON → 記録の service の出来事(kind summary)+ kind summary の行(spec の claim check・status の model / at / usage)・
 ;;;     Ended{regions}・札を返す
 ;;;   * 段階: 上限で区間を切り、要約済みの区間(既に在る行の to)の続きから・区間ごとに起こし直し・全区間で Ended
@@ -92,7 +92,7 @@
 
 
 (defn #^ str claude-answer [#^ str text]
-  "claude -p --output-format json の答え(result の object)。本番の答えは本文 + usage + modelUsage で数千 byte(実弾 2026-09-16 16:04:
+  "claude の print モード(--output-format json)の答え(result の object)。本番の答えは本文 + usage + modelUsage で数千 byte(実弾 2026-09-16 16:04:
    9,207 byte)— 小さな file の読みの既定(256 字)では切れるので、検の答えも既定より長い形にする(usage の内訳を本番の欄で運ぶ)。"
   (json.dumps {"type" "result" "subtype" "success" "is_error" False "result" text
                "duration_ms" 59068 "duration_api_ms" 62784 "num_turns" 1 "total_cost_usd" 1.547655 "session_id" "7b48491f-599a-4611-871e-ef0000000000"
@@ -164,7 +164,7 @@
     found)
 
   (defn #^ None finish [self #^ str job-id #^ int rc #^ (| str None) answer]
-    "claude -p が答え(out の file)と rc を書いて終わった。answer = None は out の file を書かない。"
+    "claude の print モードが答え(out の file)と rc を書いて終わった。answer = None は out の file を書かない。"
     (setv command (.current self job-id))
     (assert (is-not command None) f"{job-id} は走っていない")
     (when (is-not answer None)
@@ -176,12 +176,12 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; 受け: 札を借りて claude -p を起こす — session は無い(反例)
+;; 受け: 札を借りて claude を print モードで起こす — session は無い(反例)
 ;; ---------------------------------------------------------------------------
 
 (deftest test-summarize-job-borrows-the-conversation-lease-and-runs-claude-print-without-a-session
   ;; R37 (1)(2)(4): session を起こさない・会話の profile の札を借りる・Running + sessionHandle{stream, summarize}・
-  ;; CommandStart の argv は sh の 1 行(pid → claude -p → rc・位置引数)・env に札と家・prompt に原文と規則。
+  ;; CommandStart の argv は sh の 1 行(pid → claude の print モード → rc・位置引数)・env に札と家・prompt に原文と規則。
   (setv world (World))
   (.seed world 5)
   (.put-row world.acp (summarize-row "sj-1" 5 PHASE-BOUND None))
@@ -305,7 +305,7 @@
 
 
 (deftest test-a-long-summary-answer-is-read-whole-not-cut-at-the-small-file-default
-  ;; 実弾 2026-09-16 16:04(便 4 の 1 発目): claude -p の答え 9,207 byte を rc / pid 用の既定 256 字で読んで「non-JSON」と断り、要約が 1 つも
+  ;; 実弾 2026-09-16 16:04(便 4 の 1 発目): claude の print モードの答え 9,207 byte を rc / pid 用の既定 256 字で読んで「non-JSON」と断り、要約が 1 つも
   ;; 書かれなかった。答えの読みは SUMMARY_ANSWER_MAX_CHARS の器で、本文が数 KB でも丸ごと行に載る。
   (setv world (World))
   (.seed world 5)
@@ -365,7 +365,7 @@
 
 (deftest test-summarize-job-advances-region-by-region-and-skips-what-is-already-summarized
   ;; R37 (3)(7): 既に在る summary の行(to = 2)の続き(from = 3)から・1 区間の上限(charter.regionByteBudget = 1 出来事分)で区間を切り・
-  ;; 区間ごとに claude -p を起こし直し・札は区間ごとに借り直して返す・全区間で Ended{regions}。
+  ;; 区間ごとに claude を print モードで起こし直し・札は区間ごとに借り直して返す・全区間で Ended{regions}。
   (setv world (World))
   (.seed world 6)
   (.put-row world.acp (summary-row 0 2))

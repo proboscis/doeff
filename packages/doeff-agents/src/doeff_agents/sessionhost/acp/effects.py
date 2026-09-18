@@ -286,7 +286,7 @@ VERIFY_STEP_TIMED_OUT: VerifyStep = "timed-out"
 #: charter.kind = summarize の job = 会話の履歴の段階つき要約 1 つ(#55 案 D)。契機はこの agentd(手番の終わりに測った文脈の
 #: 大きさが summarize_trigger_tokens を超えた拍 — judgment.summarize-due)・配置は手番と同じ資格の路(ACP scheduling.json
 #: charterKind.summarize)・実行は結ばれた node の agentd が会話と同じ profile の Claude Code(charter.model・預かり所の札)を
-#: 区間ごとに 1 回起こし(claude -p・道具なし)、記録の service の古い区間 [from, to] を 1 段落に縮め、本文を記録の service の
+#: 区間ごとに 1 回起こし(claude の print モード・道具なし)、記録の service の古い区間 [from, to] を 1 段落に縮め、本文を記録の service の
 #: stream(streamKind summary)へ積み、agora の kind summary の行(claim check = recordRef / bytes / sha256)を書く。
 #: 会話の手番ではない(turn-record は書かない・郵便を読まない・中継へ押さない)。ACP scheduling.json charterKind の写し。
 CHARTER_KIND_SUMMARIZE: str = "summarize"
@@ -310,12 +310,12 @@ SUMMARY_STREAM_PREFIX: str = "summary#"
 #: 原文として畳む出来事の kind(記録の service の eventKinds のうち会話の中身 — frame は画面の断面・message は郵便で ACP の行から
 #: 畳む・attachment は画像・summary は要約そのもの)。要約の区間の読みと履歴からの再開の読みが kinds= に渡す **1 点**。
 RECORD_RAW_EVENT_KINDS: tuple[str, ...] = ("text", "tool_use", "tool_result", "system", "error", "user")
-#: summarize の結末の置き場(state_dir の下・区間ごと): prompt・claude -p の答え(JSON)・log・rc・pid の 5 file。
+#: summarize の結末の置き場(state_dir の下・区間ごと): prompt・claude の print モードの答え(JSON)・log・rc・pid の 5 file。
 SUMMARY_RUNS_RELDIR: str = "summary-runs"
 #: summarize の job の sessionHandle の欄(拾い直しの材料 — R7: 正本は行)。
 JOB_HANDLE_SUMMARIZE_KEY: str = "summarize"
 #: summarize の条件: 行の欄が読めない(charter の until / model・binding の profile / account)/ 区間の原文を記録の service から
-#: 読めない / process を起こせない / 結末を残さず消えた / 期限超過 / claude -p の答えが読めない(JSON でない・誤り・空)/
+#: 読めない / process を起こせない / 結末を残さず消えた / 期限超過 / claude の print モードの答えが読めない(JSON でない・誤り・空)/
 #: 要約の本文か行を書けなかった。
 CONDITION_SUMMARIZE_PLAN_INVALID: ConditionType = "SummarizePlanInvalid"
 CONDITION_SUMMARIZE_REGION_UNREADABLE: ConditionType = "SummarizeRegionUnreadable"
@@ -1427,7 +1427,7 @@ class SummaryRegion:
 
 @dataclass(frozen=True)
 class SummaryOutcome:
-    """claude -p --output-format json の答えの読み(judgment.summarize-output-of): 要約の本文・消費(契約 turn-record の usage と
+    """claude の print モード(--output-format json)の答えの読み(judgment.summarize-output-of): 要約の本文・消費(契約 turn-record の usage と
     同じ 4 欄 + 任意の内訳・無ければ None)・答えが名乗った model(無ければ None)。"""
 
     text: str
@@ -2479,7 +2479,7 @@ class FsFileExists(EffectBase):
 
 #: 小さな text の file の読みの既定の上限(rc / pid の file — 数字 1 行)。
 FS_READ_TEXT_DEFAULT_MAX_CHARS: int = 256
-#: summarize の claude -p の答え(result の JSON・本文 + usage + modelUsage)の読みの上限(段 12 lane 12j 便 4 の実弾 2026-09-16 16:04:
+#: summarize の claude の print モードの答え(result の JSON・本文 + usage + modelUsage)の読みの上限(段 12 lane 12j 便 4 の実弾 2026-09-16 16:04:
 #: 9,207 byte の答えを既定 256 字で読んで「non-JSON」と断った)。要約の本文に上限は置かないので、答えの器は大きく(4 MiB)。
 SUMMARY_ANSWER_MAX_CHARS: int = 4_194_304
 
