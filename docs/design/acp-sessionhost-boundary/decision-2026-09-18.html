@@ -1,0 +1,157 @@
+<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>決定 — context ごとの成果物の割り(2026-09-18)</title>
+<style>
+:root{--bg:#fbfaf8;--fg:#1e1c1a;--mut:#6b655e;--line:#ddd7cf;--acc:#8a5a2b;--code:#f2efea;--hi:#fff4e2}
+@media (prefers-color-scheme:dark){:root{--bg:#16150f;--fg:#ece7de;--mut:#a39c91;--line:#3a352c;--acc:#d8a460;--code:#211f18;--hi:#2a2318}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:"Hiragino Sans","Noto Sans JP",-apple-system,sans-serif;line-height:1.9;font-size:16px}
+main{max-width:900px;margin:0 auto;padding:60px 26px 140px}
+h1{font-size:1.9rem;line-height:1.35;margin:0 0 .35em;font-weight:700}
+h2{font-size:1.35rem;margin:2.8em 0 .7em;padding-bottom:.35em;border-bottom:2px solid var(--line)}
+h3{font-size:1.05rem;margin:1.9em 0 .5em;color:var(--acc)}
+p{margin:.95em 0}
+code{background:var(--code);padding:.13em .4em;border-radius:4px;font-size:.87em;font-family:"SF Mono",Menlo,monospace}
+pre{background:var(--code);padding:16px 18px;border-radius:8px;overflow-x:auto;border:1px solid var(--line);font-size:.85rem}
+pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1.4em 0;font-size:.92rem}
+th,td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}
+th{background:var(--code);font-weight:600}
+tbody tr:hover{background:var(--hi)}
+hr{border:0;border-top:1px solid var(--line);margin:2.6em 0}
+figure.diagram{margin:2.2em 0;padding:22px 18px 14px;background:var(--code);border:1px solid var(--line);border-radius:10px;text-align:center}
+figure.diagram .svgwrap{overflow-x:auto}
+figure.diagram svg{max-width:100%;height:auto}
+figcaption{margin-top:14px;color:var(--mut);font-size:.86rem;text-align:left;line-height:1.7}
+ul,ol{padding-left:1.45em}
+li{margin:.4em 0}
+</style></head><body><main><h1>決定 — context ごとの成果物の割り</h1>
+<p><strong>決めた人</strong>: operator / <strong>日時</strong>: 2026-09-18 / <strong>場で</strong>: この設計の会話
+<strong>改訂する物</strong>: <code>agora-redesign/docs/design/bounded-contexts-2026-09-11.md</code> の E(配置)と D(郵便)の置き場</p>
+<hr>
+<h2>決めたこと</h2>
+<h3>決定 1 — 配置と郵便を engine の外へ出し、<strong>context ごとに別の成果物</strong>にする</h3>
+<p>配置(Scheduling・7,517 行)と郵便(Messaging・13,301 行)は、いま <code>acp-engine</code> の library に住み、
+engine と同じ binary で配られている。これを engine の外の <strong>controller</strong> にする。
+2 つを 1 つの成果物にまとめず、<strong>context ごとに分ける</strong>。</p>
+<p><strong>言語は変えない。</strong> Haskell のまま、<code>Acp.Sdk.WireClient</code> で wire を話す out-of-process の controller になる。
+書き直しではなく、成果物の境界だけが変わる。</p>
+<h3>決定 2 — <code>Acp.Sdk.WireClient</code> を公開の package にする</h3>
+<p>2 系統の controller(Haskell と Hy)が同じ wire を話すので、Haskell 側の client を
+公開の形にする。置き場は ACP の repo のままでよい(<strong>client は提供する側の物</strong>で、
+相手の語彙を知らないので純度を壊さない)。</p>
+<hr>
+<h2>なぜ</h2>
+<ul>
+<li><strong>規則との一致</strong>: engine は基盤(kinds・行・watch・CAS・RBAC・欄ごとの書き手)で、
+  運転の方策は controller。配置も郵便も方策であって基盤ではない。</li>
+<li><strong>2026-08-17 の裁定が成果物の水準でも成立する</strong>: 「<code>src/Acp</code> へ運転政策を足さない」は
+  今日、実行時にしか成立していない(<code>installedApps</code> は空・daemon は Scheduling を呼ばない)。
+  library と binary には 20,818 行の方策が同居している。</li>
+<li><strong>版が切り離せる</strong>: 配置の方策(profile の梯子・会社の境界・予算)は頻繁に変わる。
+  engine の binary を配り直さずに変えられるようにする。</li>
+<li><strong>安い</strong>: ADR 0013 O5/O6 の <code>Acp.Sdk.WireClient</code> が「Haskell の controller を engine の外で
+  走らせる」ために既に在る。client と apiserver が同じ Haskell の型と同じ Aeson の instance を
+  共有するので、wire への書きは in-process と <strong>byte 一致</strong>する。</li>
+<li><strong>context ごとに分ける理由</strong>: 責務ごとに版と所有を分けるため。まとめると、郵便を直すために
+  配置を配り直すことになる。</li>
+</ul>
+<hr>
+<h2>決定後の割り</h2>
+<figure class="diagram"><div class="svgwrap"><svg id="mmd-d1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" class="flowchart" style="max-width: 870.781px; background-color: transparent;" viewBox="0 0 870.78125 1032" role="graphics-document document" aria-roledescription="flowchart-v2"><style>#mmd-d1{font-family:"trebuchet ms",verdana,arial,sans-serif;font-size:16px;fill:#333;}@keyframes edge-animation-frame{from{stroke-dashoffset:0;}}@keyframes dash{to{stroke-dashoffset:0;}}#mmd-d1 .edge-animation-slow{stroke-dasharray:9,5!important;stroke-dashoffset:900;animation:dash 50s linear infinite;stroke-linecap:round;}#mmd-d1 .edge-animation-fast{stroke-dasharray:9,5!important;stroke-dashoffset:900;animation:dash 20s linear infinite;stroke-linecap:round;}#mmd-d1 .error-icon{fill:#552222;}#mmd-d1 .error-text{fill:#552222;stroke:#552222;}#mmd-d1 .edge-thickness-normal{stroke-width:1px;}#mmd-d1 .edge-thickness-thick{stroke-width:3.5px;}#mmd-d1 .edge-pattern-solid{stroke-dasharray:0;}#mmd-d1 .edge-thickness-invisible{stroke-width:0;fill:none;}#mmd-d1 .edge-pattern-dashed{stroke-dasharray:3;}#mmd-d1 .edge-pattern-dotted{stroke-dasharray:2;}#mmd-d1 .marker{fill:#333333;stroke:#333333;}#mmd-d1 .marker.cross{stroke:#333333;}#mmd-d1 svg{font-family:"trebuchet ms",verdana,arial,sans-serif;font-size:16px;}#mmd-d1 p{margin:0;}#mmd-d1 .label{font-family:"trebuchet ms",verdana,arial,sans-serif;color:#333;}#mmd-d1 .cluster-label text{fill:#333;}#mmd-d1 .cluster-label span{color:#333;}#mmd-d1 .cluster-label span p{background-color:transparent;}#mmd-d1 .label text,#mmd-d1 span{fill:#333;color:#333;}#mmd-d1 .node rect,#mmd-d1 .node circle,#mmd-d1 .node ellipse,#mmd-d1 .node polygon,#mmd-d1 .node path{fill:#ECECFF;stroke:#9370DB;stroke-width:1px;}#mmd-d1 .rough-node .label text,#mmd-d1 .node .label text,#mmd-d1 .image-shape .label,#mmd-d1 .icon-shape .label{text-anchor:middle;}#mmd-d1 .node .katex path{fill:#000;stroke:#000;stroke-width:1px;}#mmd-d1 .rough-node .label,#mmd-d1 .node .label,#mmd-d1 .image-shape .label,#mmd-d1 .icon-shape .label{text-align:center;}#mmd-d1 .node.clickable{cursor:pointer;}#mmd-d1 .root .anchor path{fill:#333333!important;stroke-width:0;stroke:#333333;}#mmd-d1 .arrowheadPath{fill:#333333;}#mmd-d1 .edgePath .path{stroke:#333333;stroke-width:1px;}#mmd-d1 .flowchart-link{stroke:#333333;fill:none;}#mmd-d1 .edgeLabel{background-color:rgba(232,232,232, 0.8);text-align:center;}#mmd-d1 .edgeLabel p{background-color:rgba(232,232,232, 0.8);}#mmd-d1 .edgeLabel rect{opacity:0.5;background-color:rgba(232,232,232, 0.8);fill:rgba(232,232,232, 0.8);}#mmd-d1 .labelBkg{background-color:rgba(232, 232, 232, 0.5);}#mmd-d1 .cluster rect{fill:#ffffde;stroke:#aaaa33;stroke-width:1px;}#mmd-d1 .cluster text{fill:#333;}#mmd-d1 .cluster span{color:#333;}#mmd-d1 div.mermaidTooltip{position:absolute;text-align:center;max-width:200px;padding:2px;font-family:"trebuchet ms",verdana,arial,sans-serif;font-size:12px;background:hsl(80, 100%, 96.2745098039%);border:1px solid #aaaa33;border-radius:2px;pointer-events:none;z-index:100;}#mmd-d1 .flowchartTitleText{text-anchor:middle;font-size:18px;fill:#333;}#mmd-d1 rect.text{fill:none;stroke-width:0;}#mmd-d1 .icon-shape,#mmd-d1 .image-shape{background-color:rgba(232,232,232, 0.8);text-align:center;}#mmd-d1 .icon-shape p,#mmd-d1 .image-shape p{background-color:rgba(232,232,232, 0.8);padding:2px;}#mmd-d1 .icon-shape .label rect,#mmd-d1 .image-shape .label rect{opacity:0.5;background-color:rgba(232,232,232, 0.8);fill:rgba(232,232,232, 0.8);}#mmd-d1 .label-icon{display:inline-block;height:1em;overflow:visible;vertical-align:-0.125em;}#mmd-d1 .node .label-icon path{fill:currentColor;stroke:revert;stroke-width:revert;}#mmd-d1 .node .neo-node{stroke:#9370DB;}#mmd-d1 [data-look="neo"].node rect,#mmd-d1 [data-look="neo"].cluster rect,#mmd-d1 [data-look="neo"].node polygon{stroke:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#mmd-d1 [data-look="neo"].swimlane.cluster rect{filter:none;}#mmd-d1 [data-look="neo"].node path{stroke:#9370DB;stroke-width:1px;}#mmd-d1 [data-look="neo"].node .outer-path{filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#mmd-d1 [data-look="neo"].node .neo-line path{stroke:#9370DB;filter:none;}#mmd-d1 [data-look="neo"].node circle{stroke:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#mmd-d1 [data-look="neo"].node circle .state-start{fill:#000000;}#mmd-d1 [data-look="neo"].icon-shape .icon{fill:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#mmd-d1 [data-look="neo"].icon-shape .icon-neo path{stroke:#9370DB;filter:drop-shadow(1px 2px 2px rgba(185, 185, 185, 1));}#mmd-d1 :root{--mermaid-font-family:"trebuchet ms",verdana,arial,sans-serif;}</style><g><marker id="mmd-d1_flowchart-v2-pointEnd" class="marker flowchart-v2" viewBox="0 0 10 10" refX="5" refY="5" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-d1_flowchart-v2-pointStart" class="marker flowchart-v2" viewBox="0 0 10 10" refX="4.5" refY="5" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M 0 5 L 10 10 L 10 0 z" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-d1_flowchart-v2-pointEnd-margin" class="marker flowchart-v2" viewBox="0 0 11.5 14" refX="11.5" refY="7" markerUnits="userSpaceOnUse" markerWidth="10.5" markerHeight="14" orient="auto"><path d="M 0 0 L 11.5 7 L 0 14 z" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-d1_flowchart-v2-pointStart-margin" class="marker flowchart-v2" viewBox="0 0 11.5 14" refX="1" refY="7" markerUnits="userSpaceOnUse" markerWidth="11.5" markerHeight="14" orient="auto"><polygon points="0,7 11.5,14 11.5,0" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-d1_flowchart-v2-circleEnd" class="marker flowchart-v2" viewBox="0 0 10 10" refX="11" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-d1_flowchart-v2-circleStart" class="marker flowchart-v2" viewBox="0 0 10 10" refX="-1" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-d1_flowchart-v2-circleEnd-margin" class="marker flowchart-v2" viewBox="0 0 10 10" refY="5" refX="12.25" markerUnits="userSpaceOnUse" markerWidth="14" markerHeight="14" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-d1_flowchart-v2-circleStart-margin" class="marker flowchart-v2" viewBox="0 0 10 10" refX="-2" refY="5" markerUnits="userSpaceOnUse" markerWidth="14" markerHeight="14" orient="auto"><circle cx="5" cy="5" r="5" class="arrowMarkerPath" style="stroke-width: 0; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-d1_flowchart-v2-crossEnd" class="marker cross flowchart-v2" viewBox="0 0 11 11" refX="12" refY="5.2" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><path d="M 1,1 l 9,9 M 10,1 l -9,9" class="arrowMarkerPath" style="stroke-width: 2; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-d1_flowchart-v2-crossStart" class="marker cross flowchart-v2" viewBox="0 0 11 11" refX="-1" refY="5.2" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><path d="M 1,1 l 9,9 M 10,1 l -9,9" class="arrowMarkerPath" style="stroke-width: 2; stroke-dasharray: 1, 0;"/></marker><marker id="mmd-d1_flowchart-v2-crossEnd-margin" class="marker cross flowchart-v2" viewBox="0 0 15 15" refX="17.7" refY="7.5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto"><path d="M 1,1 L 14,14 M 1,14 L 14,1" class="arrowMarkerPath" style="stroke-width: 2.5;"/></marker><marker id="mmd-d1_flowchart-v2-crossStart-margin" class="marker cross flowchart-v2" viewBox="0 0 15 15" refX="-3.5" refY="7.5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto"><path d="M 1,1 L 14,14 M 1,14 L 14,1" class="arrowMarkerPath" style="stroke-width: 2.5; stroke-dasharray: 1, 0;"/></marker><g class="root"><g class="clusters"><g class="cluster" id="mmd-d1-HS" data-look="classic"><rect style="" x="8" y="8" width="475.109375" height="128"/><g class="cluster-label" transform="translate(57.5546875, 8)"><foreignObject width="376" height="24"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5;"><span class="nodeLabel"><p>Haskell の controller(決定 1・context ごとに分ける)</p></span></div></foreignObject></g></g><g class="cluster" id="mmd-d1-E" data-look="classic"><rect style="" x="30.7734375" y="210" width="462.0078125" height="814"/><g class="cluster-label" transform="translate(168.36328125, 210)"><foreignObject width="186.828125" height="24"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5;"><span class="nodeLabel"><p>agent-control-plane(repo)</p></span></div></foreignObject></g></g></g><g class="edgePaths"><path d="M133.273,111L133.273,115.167C133.273,119.333,133.273,127.667,133.273,138C133.273,148.333,133.273,160.667,133.273,173C133.273,185.333,133.273,197.667,149.596,247.875C165.918,298.083,198.562,386.166,214.885,430.208L231.207,474.249" id="mmd-d1-L_SC_SD_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_SC_SD_0" data-points="W3sieCI6MTMzLjI3MzQzNzUsInkiOjExMX0seyJ4IjoxMzMuMjczNDM3NSwieSI6MTM2fSx7IngiOjEzMy4yNzM0Mzc1LCJ5IjoxNzN9LHsieCI6MTMzLjI3MzQzNzUsInkiOjIxMH0seyJ4IjoyMzIuNTk2OTgxODgxMTA3NSwieSI6NDc4fV0=" data-look="classic" marker-end="url(#mmd-d1_flowchart-v2-pointEnd)"/><path d="M360.828,111L360.828,115.167C360.828,119.333,360.828,127.667,360.828,138C360.828,148.333,360.828,160.667,360.828,173C360.828,185.333,360.828,197.667,344.506,247.875C328.184,298.083,295.539,386.166,279.217,430.208L262.895,474.249" id="mmd-d1-L_MS_SD_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_MS_SD_0" data-points="W3sieCI6MzYwLjgyODEyNSwieSI6MTExfSx7IngiOjM2MC44MjgxMjUsInkiOjEzNn0seyJ4IjozNjAuODI4MTI1LCJ5IjoxNzN9LHsieCI6MzYwLjgyODEyNSwieSI6MjEwfSx7IngiOjI2MS41MDQ1ODA2MTg4OTI1MywieSI6NDc4fV0=" data-look="classic" marker-end="url(#mmd-d1_flowchart-v2-pointEnd)"/><path d="M247.051,556L247.051,602.667C247.051,649.333,247.051,742.667,249.484,795.5C251.917,848.333,256.783,860.667,259.215,866.833L261.648,873" id="mmd-d1-L_SD_EN_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_SD_EN_0" data-points="W3sieCI6MjQ3LjA1MDc4MTI1LCJ5Ijo1NTZ9LHsieCI6MjQ3LjA1MDc4MTI1LCJ5Ijo4MzZ9LHsieCI6MjYxLjY0ODQzNzUsInkiOjg3M31d" data-look="classic"/><path d="M527.781,681.685L501.622,707.404C475.464,733.123,423.146,784.562,392.217,815.938C361.288,847.314,351.747,858.628,346.977,864.285L342.207,869.942" id="mmd-d1-L_HY_EN_0" class="edge-thickness-normal edge-pattern-solid edge-thickness-normal edge-pattern-solid flowchart-link" style=";" data-edge="true" data-et="edge" data-id="L_HY_EN_0" data-points="W3sieCI6NTI3Ljc4MTI1LCJ5Ijo2ODEuNjg0ODA2MTY0MjE4Nn0seyJ4IjozNzAuODI4MTI1LCJ5Ijo4MzZ9LHsieCI6MzM5LjYyODE2NDA2MjUsInkiOjg3M31d" data-look="classic" marker-end="url(#mmd-d1_flowchart-v2-pointEnd)"/></g><g class="edgeLabels"><g class="edgeLabel" transform="translate(133.2734375, 173)"><g class="label" data-id="L_SC_SD_0" transform="translate(-15.7109375, -12)"><foreignObject width="31.421875" height="24"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"><p>wire</p></span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(360.828125, 173)"><g class="label" data-id="L_MS_SD_0" transform="translate(-15.7109375, -12)"><foreignObject width="31.421875" height="24"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"><p>wire</p></span></div></foreignObject></g></g><g class="edgeLabel"><g class="label" data-id="L_SD_EN_0" transform="translate(0, 0)"><foreignObject width="0" height="0"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"></span></div></foreignObject></g></g><g class="edgeLabel" transform="translate(432.04875, 775.80831)"><g class="label" data-id="L_HY_EN_0" transform="translate(-58.90625, -12)"><foreignObject width="117.8125" height="24"><div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="edgeLabel"><p>wire(acp_client)</p></span></div></foreignObject></g></g></g><g class="nodes"><g class="root" transform="translate(519.78125, 227)"><g class="clusters"><g class="cluster" id="mmd-d1-HY" data-look="classic"><rect style="" x="8" y="8" width="335" height="564"/><g class="cluster-label" transform="translate(26.3359375, 8)"><foreignObject width="298.328125" height="24"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5;"><span class="nodeLabel"><p>agora-controllers(repo)— Hy の controller</p></span></div></foreignObject></g></g></g><g class="edgePaths"/><g class="edgeLabels"/><g class="nodes"><g class="node default" id="mmd-d1-flowchart-CV-4" data-look="classic" transform="translate(175.5, 70)"><rect class="basic label-container" style="" x="-46" y="-27" width="92" height="54"/><g class="label" style="" transform="translate(-16, -12)"><rect/><foreignObject width="32" height="24"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>会話</p></span></div></foreignObject></g></g><g class="node default" id="mmd-d1-flowchart-KB-5" data-look="classic" transform="translate(175.5, 174)"><rect class="basic label-container" style="" x="-38" y="-27" width="76" height="54"/><g class="label" style="" transform="translate(-8, -12)"><rect/><foreignObject width="16" height="24"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>盤</p></span></div></foreignObject></g></g><g class="node default" id="mmd-d1-flowchart-BG-6" data-look="classic" transform="translate(175.5, 278)"><rect class="basic label-container" style="" x="-46" y="-27" width="92" height="54"/><g class="label" style="" transform="translate(-16, -12)"><rect/><foreignObject width="32" height="24"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>予算</p></span></div></foreignObject></g></g><g class="node default" id="mmd-d1-flowchart-SR-7" data-look="classic" transform="translate(175.5, 382)"><rect class="basic label-container" style="" x="-46" y="-27" width="92" height="54"/><g class="label" style="" transform="translate(-16, -12)"><rect/><foreignObject width="32" height="24"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>画面</p></span></div></foreignObject></g></g><g class="node default" id="mmd-d1-flowchart-AR-8" data-look="classic" transform="translate(175.5, 498)"><rect class="basic label-container" style="" x="-130" y="-39" width="260" height="78"/><g class="label" style="" transform="translate(-100, -24)"><rect/><foreignObject width="200" height="48"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;"><span class="nodeLabel"><p>成果物・自動処理・分類・耐久・node の boot</p></span></div></foreignObject></g></g></g></g><g class="node default" id="mmd-d1-flowchart-EN-0" data-look="classic" transform="translate(286.50390625, 936)"><rect class="basic label-container" style="" x="-130" y="-63" width="260" height="126"/><g class="label" style="" transform="translate(-100, -48)"><rect/><foreignObject width="200" height="96"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table; white-space: break-spaces; line-height: 1.5; max-width: 200px; text-align: center; width: 200px;"><span class="nodeLabel"><p>acp-engine<br />kinds / 行 / watch / CAS / RBAC<br />欄ごとの書き手</p></span></div></foreignObject></g></g><g class="node default" id="mmd-d1-flowchart-SD-1" data-look="classic" transform="translate(247.05078125, 517)"><rect class="basic label-container" style="" x="-105.3984375" y="-39" width="210.796875" height="78"/><g class="label" style="" transform="translate(-75.3984375, -24)"><rect/><foreignObject width="150.796875" height="48"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>Acp.Sdk.WireClient<br />公開の client(決定 2)</p></span></div></foreignObject></g></g><g class="node default" id="mmd-d1-flowchart-SC-2" data-look="classic" transform="translate(133.2734375, 72)"><rect class="basic label-container" style="" x="-90.2734375" y="-39" width="180.546875" height="78"/><g class="label" style="" transform="translate(-60.2734375, -24)"><rect/><foreignObject width="120.546875" height="48"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>配置(Scheduling)<br />7,517 行</p></span></div></foreignObject></g></g><g class="node default" id="mmd-d1-flowchart-MS-3" data-look="classic" transform="translate(360.828125, 72)"><rect class="basic label-container" style="" x="-87.28125" y="-39" width="174.5625" height="78"/><g class="label" style="" transform="translate(-57.28125, -24)"><rect/><foreignObject width="114.5625" height="48"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5; max-width: 200px; text-align: center;"><span class="nodeLabel"><p>郵便(Messaging)<br />13,301 行</p></span></div></foreignObject></g></g></g></g></g><defs><filter id="mmd-d1-drop-shadow" height="130%" width="130%"><feDropShadow dx="4" dy="4" stdDeviation="0" flood-opacity="0.06" flood-color="#000000"/></filter></defs><defs><filter id="mmd-d1-drop-shadow-small" height="150%" width="150%"><feDropShadow dx="2" dy="2" stdDeviation="0" flood-opacity="0.06" flood-color="#000000"/></filter></defs></svg></div><figcaption>図 — 決定後の割り。engine は 1 つ、wire は 1 つ、controller は成果物に分かれ、言語は問わない(Haskell と Hy が同じ engine を相手にする)。</figcaption></figure>
+
+<table>
+<thead>
+<tr>
+<th>context</th>
+<th>成果物</th>
+<th>言語</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A. ACP の核</td>
+<td><code>agent-control-plane</code>(engine + 公開の client)</td>
+<td>Haskell</td>
+</tr>
+<tr>
+<td>B. 仕事(Work)</td>
+<td>未確認(棚卸しが要る)</td>
+<td>—</td>
+</tr>
+<tr>
+<td>C. 会話</td>
+<td><code>agora-controllers/controllers/conversation</code></td>
+<td>Hy</td>
+</tr>
+<tr>
+<td><strong>D. 郵便</strong></td>
+<td><strong>新しい成果物(郵便の controller)</strong></td>
+<td><strong>Haskell</strong></td>
+</tr>
+<tr>
+<td><strong>E. 配置</strong></td>
+<td><strong>新しい成果物(配置の controller)</strong></td>
+<td><strong>Haskell</strong></td>
+</tr>
+<tr>
+<td>F. 実行</td>
+<td>doeff-agents / sessionhost(+ glue は別の決定)</td>
+<td>Hy</td>
+</tr>
+<tr>
+<td>G. 資格</td>
+<td><code>custody</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td>H. 盤</td>
+<td><code>agora-controllers/controllers/kanban</code></td>
+<td>Hy</td>
+</tr>
+<tr>
+<td>I. 画面と糊</td>
+<td><code>agora-controllers/controllers/screen</code> + <code>agora</code></td>
+<td>Hy / TS</td>
+</tr>
+</tbody>
+</table>
+<p>engine は 1 つ、wire は 1 つ、controller は複数の成果物に分かれ、言語は問わない。</p>
+<hr>
+<h2>戻し方</h2>
+<p>どちらの決定も戻せる。</p>
+<ul>
+<li><strong>決定 1</strong>: 出した controller の code を <code>acp-engine</code> の library へ戻し、<code>app/Acp/Cli/</code> の
+  subcommand から起こす形に戻す(いまの形)。wire を話す部分だけが余分になる。</li>
+<li><strong>決定 2</strong>: 公開をやめて内部 module に戻す。依存していた controller は同 repo へ戻る。</li>
+</ul>
+<p>戻す判断が要るとしたら、wire 越しの往復が配置の待ち時間に響いた時(engine と controller が
+同じ process だった時の in-process の呼び出しが無くなるため)。ただし ADR 0013 の註が
+「書きは byte 一致」と言っているので、差が出るのは読みの往復の側。</p>
+<hr>
+<h2>この決定が触らないこと</h2>
+<ul>
+<li><strong>会話の置き場</strong>。行は ACP の kind として住み、意味は <code>agora-controllers/controllers/conversation</code>
+  が持つ。両方とも設計どおりで、動かさない。</li>
+<li><strong>engine の役割</strong>。基盤のまま。</li>
+<li><strong>09-11 の設計の残り 7 context</strong>。</li>
+</ul>
+<hr>
+<h2>次にやること(順序)</h2>
+<ol>
+<li><strong><code>Acp.Sdk.WireClient</code> を公開の package にする</strong>(決定 2)— 2 つの controller の前提</li>
+<li><strong>配置(E)を出す</strong> — 7,517 行。<code>Decide.hs</code> は純粋な判断なのでそのまま動く。
+   出す時に、<strong>dotfiles の <code>pick_pool_profile</code> との重複</strong>をどちらへ寄せるか決める</li>
+<li><strong>郵便(D)を出す</strong> — 13,301 行。<code>controllers/messaging</code> の据え付けと合流させるか、
+   Haskell の controller のままにするかを決める</li>
+<li>各段で engine の library から消えたことを確かめる(<code>layer-boundary-baseline.json</code> の ratchet)</li>
+</ol>
+<hr>
+<h2>まだ決まっていないこと</h2>
+<ul>
+<li>新しい成果物の名前と repo(ACP の repo の中の別 package か、別 repo か)</li>
+<li><strong>B(仕事 / Work)がいまどこに住んでいるか</strong> — 棚卸ししていない</li>
+<li>配置を出す時に、profile の選定の重複(ACP の Haskell と dotfiles の Python)をどちらへ寄せるか</li>
+<li>郵便の据え付け(<code>agora-controllers/controllers/messaging</code>)と判断(Haskell)の関係</li>
+<li>会話の <code>status.agent</code> の 9 欄(器の語)の扱い — <strong>別の決定</strong>(原則 11 の違反)</li>
+</ul></main></body></html>

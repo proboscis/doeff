@@ -1,0 +1,20 @@
+flowchart TB
+  subgraph E["agent-control-plane(repo)"]
+    EN["acp-engine<br/>kinds / 行 / watch / CAS / RBAC<br/>欄ごとの書き手"]
+    SD["Acp.Sdk.WireClient<br/>公開の client(決定 2)"]
+  end
+  subgraph HS["Haskell の controller(決定 1・context ごとに分ける)"]
+    SC["配置(Scheduling)<br/>7,517 行"]
+    MS["郵便(Messaging)<br/>13,301 行"]
+  end
+  subgraph HY["agora-controllers(repo)— Hy の controller"]
+    CV["会話"]
+    KB["盤"]
+    BG["予算"]
+    SR["画面"]
+    AR["成果物・自動処理・分類・耐久・node の boot"]
+  end
+  SC -->|"wire"| SD
+  MS -->|"wire"| SD
+  HY -->|"wire(acp_client)"| EN
+  SD --- EN
