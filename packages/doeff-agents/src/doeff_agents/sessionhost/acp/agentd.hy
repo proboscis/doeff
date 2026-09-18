@@ -411,8 +411,10 @@
   effort-of-plan
   fallback-arm-of
   first-turn-carries-inputs
-  first-turn-prompt-of
   send-folds-bodies
+  send-parcels-of
+  mail-input-ids-of
+  inputs-delivered-status-of
   frame-lines-of
   session-affinity-key-of
   provider-limit-condition-of
@@ -1435,9 +1437,13 @@
   "手番の始まり(session を起こした後・温かい session ならそのまま): 郵便の本文(bodies — headless の
    起こす腕では空: 本文は起こした prompt に畳んである)を送る(awaiting — 送った本文は owed。headless は
    相乗りした N 通を 1 本に畳んで 1 回だけ撃つ — judgment.send-folds-bodies)・見つからなかった
-   id(missing)は condition InputUnavailable・器が送りを断った拍は condition InputUndelivered
-   (例外にしない)・計器・turn-record・status frame・in-flight に登記。手番の始まりの offset は
-   送る前の file の大きさ(send / resume)。"
+   id(missing)は condition InputUnavailable・計器・turn-record・status frame・in-flight に登記。
+   手番の始まりの offset は送る前の file の大きさ(send / resume)。
+   card acp:kanban-issue:ki-3149aebbf675 A: **器へ渡せた郵便の id は行へ写す**(status.inputsDelivered —
+   claim が空で宣言した欄への 1 回の CAS)。これが『郵便が届いたか』の唯一の証拠で、ACP は手番の phase から
+   推定しない。器が送りを断った拍は condition InputUndelivered(例外にしない)で、**1 通も渡せなかった手番は
+   その場で Ended**(cause = failed / InputUndelivered・札は返す・session は残す)— Running のまま残すと
+   1 会話 1 手番の門がその会話の次の手番を全部塞ぐ。郵便の積み直しは ACP の配達の 1 点が担う。"
   (setv job-id row.resource-id)
   (setv pending [])
   (<- start tuple (start-offset-of view arm))
@@ -1452,34 +1458,41 @@
   ;; 実測 2026-09-18: log 全体 168 job)。畳むかの判断は judgment.send-folds-bodies の 1 点で、腕では
   ;; 分岐しない。bodies が空なら撃たない(起こす腕は charter に畳んであるので #() で来る)。
   (<- folds bool (send-folds-bodies settings.backend-kind))
-  (setv parcels [])
-  (if folds
-      (when bodies
-        (<- text str (first-turn-prompt-of "" bodies))
-        (<- attachments tuple (first-turn-attachments-of carried))
-        (.append parcels #(text attachments)))
-      (for [[index body] (enumerate bodies)]
-        (.append parcels #(body (if (< index (len carried)) (get carried index) #())))))
+  ;; card acp:kanban-issue:ki-3149aebbf675 A: この手番が運ぶ郵便の id と、送りの束の対応は judgment の 1 点
+  ;; (mail-input-ids-of / send-parcels-of)。腕で並べ直すと、届いた id と行へ記帳する id がずれる。
+  (<- asked tuple (inputs-of row))
+  (<- mail-ids tuple (mail-input-ids-of asked missing))
+  (<- parcels tuple (send-parcels-of mail-ids bodies carried folds))
+  ;; 起こす腕(headless の launch / resume / rehydrate)は郵便を 1 手番目の prompt に畳んであり、
+  ;; ここへは空の bodies で来る — その拍は器を起こせた時点で郵便は届いている(法 R16
+  ;; headless-first-turn-carries-the-mail)。畳んだかの判断は first-turn-carries-inputs の 1 点で、
+  ;; start-claimed が bodies を空にするのに使ったのと同じ述語・同じ引数(第 2 の述語を置かない)。
+  (<- rode-launch bool (first-turn-carries-inputs settings.backend-kind arm))
+  (setv delivered (if rode-launch (list mail-ids) []))
   (setv refused None)
   (for [parcel parcels]
     (<- answer (| str None SessionRefused)
         (SessionSend :session-id view.session-id :text (get parcel 0) :awaiting True
                      :session-env turn-env
                      :attachments (get parcel 1)))
-    (when (isinstance answer SessionRefused)
-      (setv refused answer))
+    (if (isinstance answer SessionRefused)
+        (setv refused answer)
+        (.extend delivered (get parcel 2)))
     (when (and (isinstance answer str) answer)
       (<- condition dict (condition-of CONDITION-ATTACHMENT-IGNORED answer))
       (.append pending condition)))
-  ;; card acp:kanban-issue:ki-3149aebbf675 C: 器が送りを断った拍は例外を出さずに条件 1 件へ写して続ける
-  ;; (以後の計器・turn-record の作成・status frame は今までどおり撃つ)。郵便の再配達はしない —
-  ;; 落ちたことを見えるようにするだけ。理由 = 器の断りの逐語 + 届かなかった郵便の id。
-  (when (is-not refused None)
-    (<- asked tuple (inputs-of row))
-    (setv undelivered (tuple (lfor input-id asked :if (not-in input-id missing) input-id)))
-    (<- condition dict (condition-of CONDITION-INPUT-UNDELIVERED
-                                     (+ refused.error " — messages not delivered: "
-                                        (.join ", " undelivered))))
+  (setv undelivered (tuple (lfor input-id mail-ids :if (not-in input-id delivered) input-id)))
+  ;; card acp:kanban-issue:ki-3149aebbf675 C: 器が送りを断った拍は例外を出さずに条件 1 件へ写す。
+  ;; 理由 = 器の断りの逐語 + 届かなかった郵便の id。
+  (setv undelivered-reason
+        (if (is refused None)
+            ""
+            (+ refused.error " — messages not delivered: " (.join ", " undelivered))))
+  ;; 1 通も渡せなかった拍は下で手番ごと閉じる — その条件は end-job-now が終端の cause と一緒に書くので、
+  ;; ここでは足さない(同じ型の条件を 2 度載せない)。
+  (setv refused-all (and (is-not refused None) (not delivered)))
+  (when (and (is-not refused None) (not refused-all))
+    (<- condition dict (condition-of CONDITION-INPUT-UNDELIVERED undelivered-reason))
     (.append pending condition))
   (when missing
     (<- condition dict (condition-of "InputUnavailable"
@@ -1490,6 +1503,19 @@
   (for [condition ignored]
     (<- (LogLine :text f"agentd: job {job-id} ignores an agent setting — {(get condition "reason")}"))
     (.append pending condition))
+  ;; card acp:kanban-issue:ki-3149aebbf675 A(④ の「閉じる」): 郵便を 1 通も渡せなかった手番は Running のまま
+  ;; 残さず、ここで閉じる(cause = failed / InputUndelivered)。残すと、その会話は**次の手番を 1 つも受けられない** —
+  ;; 配置の門は 1 会話 1 手番(Acp.App.Scheduling.Decide conversation-turn-in-flight)で、Running を解くのは
+  ;; 手番の期限(scheduling-ladder.json turnDeadlineSeconds = 4 時間)・取り下げ・agentd の停止だけ。
+  ;; 器は手番を始めていないので turn_ended_at は前の手番のまま = 手番の終わりの判定は永久に立たない
+  ;; (実測: 断られた job が 5 拍たっても Running のまま居座った)。郵便の積み直しは ACP の配達の 1 点
+  ;; (Decide.carrierEndedOf — 行が inputsDelivered でこの郵便を名乗らない終端の carrier)が担う:
+  ;; agentd に第 2 の再配達の判断点を置かない。session は片付けない(温かいまま次の手番が使う)。
+  (when refused-all
+    (when (is-not lease None)
+      (<- (CustodyLeaseRevoke :lease-id lease.lease-id)))
+    (<- (end-job-now settings row CONDITION-INPUT-UNDELIVERED undelivered-reason (tuple pending) now-ms))
+    (return state))
   (<- sent-ms int (ClockNowMs))
   ;; 始点 = 行の生まれの着地(generation 1 の image の landed_at・ns 精度 — 秒の粒度の
   ;; createdAt ではない。判断は birth-ms-of の 1 点・欄が無ければ今日の値)。
@@ -1509,6 +1535,11 @@
   ;; 遅れて中継に届き、画面の最初の差分(chat.live-first-tail)が 250〜330 ms に伸びていた(本番の実射 2026-09-15:
   ;; 押し 1 往復 ≈ 70 ms・中継 → 画面 ≈ 20 ms・画面 → 面 ≈ 30〜50 ms)。frame は記録の行に依らない(中継は共有状態ではない)。
   (<- job InFlightJob (probe-subscribers settings job sent-ms "running"))
+  ;; card acp:kanban-issue:ki-3149aebbf675 A: 渡せた郵便の id を行へ(1 回の CAS・append-only)。
+  ;; ここは frame の押しの**後ろ**: 最初の frame は送った拍に押すのが 段 10 lane 10s 追補 3 の規律で、
+  ;; 頭への書き 1 往復(≈ 60〜100 ms)をその前に挟むと画面の最初の差分がその分遅れる。
+  (when delivered
+    (<- (record-inputs-delivered row.key job-id (tuple delivered))))
   (<- spec dict (turn-record-spec-of job))
   (<- created (| Written Conflict Refused)
       (AcpCreate :namespace AGORA-KINDS-NAMESPACE :kind TURN-RECORD-KIND :resource-id job-id :spec spec))
@@ -2584,6 +2615,31 @@
       (<- wrote (| Written Conflict Refused) (AcpPutStatus :row again :status delivered-again))))
   (when (not (isinstance wrote Written))
     (<- (LogLine :text f"agentd: interrupts of job {job.job-id} delivered but not recorded ({wrote}); recording again next tick")))
+  (isinstance wrote Written))
+
+
+(defk record-inputs-delivered [job-key job-id ids]
+  {:pre [(: job-key str) (: job-id str) (: ids tuple)]
+   :post [(: % bool)]}
+  "渡せた inputs の郵便を行へ写す(card acp:kanban-issue:ki-3149aebbf675 A): 鍵で読み直した行に CAS で
+   inputsDelivered へ足す(1 回の書き・append-only)。Conflict は 1 度だけ読み直して撃ち直す。
+   戻り = 着地したか(しなければ ACP は次の拍まで『まだ渡していない』と読む — 欄は claim の拍から在るので
+   旧い推定〔phase = Running〕には落ちない)。⚠ この欄の書き手は agentd だけ・消す腕は無い。"
+  (<- fresh (| AcpRow None) (AcpGetRow :key job-key))
+  (when (is fresh None)
+    (<- (LogLine :text f"agentd: agent-job {job-id} vanished before its delivered inputs could be recorded"))
+    (return False))
+  (<- status dict (status-object-of fresh))
+  (<- delivered dict (inputs-delivered-status-of status ids))
+  (<- wrote (| Written Conflict Refused) (AcpPutStatus :row fresh :status delivered))
+  (when (isinstance wrote Conflict)
+    (<- again (| AcpRow None) (AcpGetRow :key job-key))
+    (when (is-not again None)
+      (<- status-again dict (status-object-of again))
+      (<- delivered-again dict (inputs-delivered-status-of status-again ids))
+      (<- wrote (| Written Conflict Refused) (AcpPutStatus :row again :status delivered-again))))
+  (when (not (isinstance wrote Written))
+    (<- (LogLine :text f"agentd: inputs of job {job-id} delivered but not recorded ({wrote}); the delivery reads them as not handed until a later write")))
   (isinstance wrote Written))
 
 

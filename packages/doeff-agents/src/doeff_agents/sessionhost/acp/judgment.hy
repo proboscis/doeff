@@ -214,6 +214,7 @@
   OpenToolBlock
   BINDING-NODE-KEY
   BINDING-NODE-ROW-KEY
+  JOB-INPUTS-DELIVERED-KEY
   JOB-INTERRUPTS-DELIVERED-KEY
   JOB-INTERRUPTS-ESCALATED-KEY
   JOB-INTERRUPTS-KEY
@@ -1534,6 +1535,20 @@
   next)
 
 
+(defk inputs-delivered-status-of [status ids]
+  {:pre [(: status dict) (: ids tuple)]
+   :post [(: % dict)]}
+  "器へ渡せた inputs の郵便を行に写した status(card acp:kanban-issue:ki-3149aebbf675 A・同じ 1 回の書き):
+   inputsDelivered の末尾に ids を足す(既に在る id は足さない・順は保つ)。他の欄は写す。
+   append-only ちょうど — 消す腕は無い(割り込みの interrupts → interruptsDelivered のような移し替えも無い:
+   inputs は spec の欄で agentd は書かない)。"
+  (setv next (dict status))
+  (<- delivered tuple (string-list-of status JOB-INPUTS-DELIVERED-KEY))
+  (setv (get next JOB-INPUTS-DELIVERED-KEY)
+        (+ (list delivered) (lfor message-id ids :if (not-in message-id delivered) message-id)))
+  next)
+
+
 (defk escalation-seconds-of-charter [charter]
   {:pre [(: charter dict)]
    :post [(: % (| int None))]}
@@ -1819,12 +1834,19 @@
   {:pre [(: row AcpRow) (: session-id str) (: principal str)]
    :post [(: % dict)]}
   "受けた job の status: committed の欄を写し、phase = Running と sessionHandle
-   {sessionId, stream{owner, name}} だけ書く(binding は触らない — 書き手は scheduling)。"
+   {sessionId, stream{owner, name}} と inputsDelivered だけ書く(binding は触らない — 書き手は scheduling)。
+   card acp:kanban-issue:ki-3149aebbf675 A: inputsDelivered は**受けた拍に空で宣言する** —
+   「この agentd は郵便を渡せた id だけをこの欄に足す」の名乗りで、以後この行の配達は欄ちょうどで判じられる
+   (欄が現れるのを送りの着地まで待つと、claim から送りまでの間〔器を起こす数秒〕に配達の拍が走り、
+   phase = Running の推定で handedAt が先に立つ — 直そうとしている取り違えがその窓に残る)。
+   既に在る値は写す(拾い直し・置き直しの Running の書きが渡した id を消さない — append-only)。"
   (<- next dict (status-object-of row))
   (setv (get next "phase") PHASE-RUNNING)
   (setv (get next "sessionHandle")
         {"sessionId" session-id
          "stream" {"owner" principal "name" session-id}})
+  (when (not (isinstance (.get next JOB-INPUTS-DELIVERED-KEY) list))
+    (setv (get next JOB-INPUTS-DELIVERED-KEY) []))
   next)
 
 
@@ -2687,6 +2709,38 @@
      "・from=" (get words "from")
      "・parent=" (get words "parent")
      "・at=" at-text "]"))
+
+
+(defk mail-input-ids-of [asked missing]
+  {:pre [(: asked tuple) (: missing tuple)]
+   :post [(: % tuple)]}
+  "この手番が運ぶ郵便の id(行の inputs の順): 行が頼んだ id のうち、本文を読めなかった id(missing —
+   条件 InputUnavailable の座)を除いたもの。message-bodies-of の bodies / attachments と同じ並びで、
+   i 番の本文は i 番の id の郵便(card acp:kanban-issue:ki-3149aebbf675 A: 『渡せた』を id で記帳するには
+   本文の並びと id の並びが 1 点で対応していなければならない)。"
+  (tuple (lfor input-id asked :if (not-in input-id missing) input-id)))
+
+
+(defk send-parcels-of [ids bodies carried folds]
+  {:pre [(: ids tuple) (: bodies tuple) (: carried tuple) (: folds bool)]
+   :post [(: % tuple)]}
+  "after-start が撃つ送りの束(card acp:kanban-issue:ki-3149aebbf675 B / A の 1 点): 各項は
+   #(本文 添付 その送りが運ぶ郵便の id の組)。畳む(headless)なら 1 通の束 1 つ — 1 手番 = 1 prompt なので
+   相乗りした N 通は 1 回の send に畳み、その 1 回の成否が N 通ぜんぶの成否(判断は send-folds-bodies)。
+   畳まない(tui)なら 1 通 1 束で、i 番の束は i 番の郵便ちょうど。bodies が空なら束も空(起こす腕は
+   1 手番目の prompt に畳んであるので送りは無い)。⚠ 本文と id の対応を知るのはこの 1 点 — 呼び手が
+   並びを組み直すと、届いた id と記帳する id がずれる。"
+  (when (not bodies)
+    (return #()))
+  (if folds
+      (do
+        (<- text str (first-turn-prompt-of "" bodies))
+        (<- attachments tuple (first-turn-attachments-of carried))
+        #(#(text attachments ids)))
+      (tuple (lfor [index body] (enumerate bodies)
+                   #(body
+                     (if (< index (len carried)) (get carried index) #())
+                     (if (< index (len ids)) #((get ids index)) #()))))))
 
 
 (defk mail-turn-text-of [message-id spec body]
