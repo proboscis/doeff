@@ -219,7 +219,7 @@ async def test_custom_cost_calculator_overrides_default() -> None:
                     ),
                 )
             )
-        yield Pass()
+        yield Pass(effect, k)
 
     @do
     def flow():
@@ -258,7 +258,7 @@ async def test_cost_calculation_failure_raises() -> None:
             _ = k
             _ = effect.call_result
             raise ValueError("boom")
-        yield Pass()
+        yield Pass(effect, k)
 
     @do
     def flow():

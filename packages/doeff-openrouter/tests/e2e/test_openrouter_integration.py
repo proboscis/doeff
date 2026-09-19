@@ -105,7 +105,7 @@ def _build_mock_handler(client: MockOpenRouterClient) -> Callable[..., Any]:
             return (yield Resume(k, client))
         if isinstance(effect, AskEffect) and effect.key == "openrouter_api_key":
             return (yield Resume(k, "fake-key"))
-        yield Pass()
+        yield Pass(effect, k)
 
     return _program_handler(handler)
 

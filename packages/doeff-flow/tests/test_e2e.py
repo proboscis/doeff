@@ -130,7 +130,7 @@ class TestWithHandlerTracing:
         def capturing_handler(effect: Effect, k):
             _ = k
             captured_effects.append(effect)
-            return (yield Pass())
+            return (yield Pass(effect, k))
 
         @do
         def workflow():
@@ -158,7 +158,7 @@ class TestWithHandlerTracing:
         def capturing_handler(effect: Effect, k):
             _ = k
             captured_effects.append(effect)
-            return (yield Pass())
+            return (yield Pass(effect, k))
 
         @do
         def workflow():

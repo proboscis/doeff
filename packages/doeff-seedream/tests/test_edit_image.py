@@ -59,7 +59,7 @@ def _build_mock_seedream_handler(overrides: dict[str, Any]):
     def _handler(effect: Effect, k: Any):
         if isinstance(effect, AskEffect) and effect.key in overrides:
             return (yield Resume(k, overrides[effect.key]))
-        yield Pass()
+        yield Pass(effect, k)
 
     return _program_handler(_handler)
 
@@ -90,10 +90,7 @@ def _cost_tracking_program():
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="doeff_seedream production handler yields bare Pass() on every delegate path - #618",
-)
+@pytest.mark.awaiting_api_migration(reason="test reads the removed .log result face - #619")
 @pytest.mark.asyncio
 async def test_edit_image_seedream4_decodes_payload_and_tracks_cost_with_handler():
     encoded = base64.b64encode(b"dummy-image-bytes").decode("ascii")
@@ -126,10 +123,7 @@ async def test_edit_image_seedream4_decodes_payload_and_tracks_cost_with_handler
     assert any("estimated cost" in str(entry) for entry in run_result.log)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="doeff_seedream production handler yields bare Pass() on every delegate path - #618",
-)
+@pytest.mark.awaiting_api_migration(reason="test reads the removed .log result face - #619")
 @pytest.mark.asyncio
 async def test_edit_image_seedream4_surfaces_api_error_with_handler():
     client = FailingSeedreamClient(RuntimeError("seedream api failure"))
@@ -152,10 +146,6 @@ async def test_edit_image_seedream4_surfaces_api_error_with_handler():
     assert any("failed" in str(entry) for entry in run_result.log)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="doeff_seedream production handler yields bare Pass() on every delegate path - #618",
-)
 @pytest.mark.asyncio
 async def test_edit_image_seedream4_invalid_base64_payload_returns_error_with_handler():
     client = RecordingSeedreamClient(
@@ -182,10 +172,6 @@ async def test_edit_image_seedream4_invalid_base64_payload_returns_error_with_ha
     assert "Failed to decode Seedream base64 image payload" in str(run_result.error)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="doeff_seedream production handler yields bare Pass() on every delegate path - #618",
-)
 @pytest.mark.asyncio
 async def test_edit_image_seedream4_missing_data_field_returns_error_with_handler():
     client = RecordingSeedreamClient({"model": "dummy-model", "usage": {"generated_images": 1}})
@@ -206,10 +192,6 @@ async def test_edit_image_seedream4_missing_data_field_returns_error_with_handle
     assert "Seedream response did not include image data" in str(run_result.error)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="doeff_seedream production handler yields bare Pass() on every delegate path - #618",
-)
 @pytest.mark.asyncio
 async def test_get_seedream_client_initializes_and_caches_via_with_handler():
     @do
@@ -243,10 +225,6 @@ async def test_get_seedream_client_initializes_and_caches_via_with_handler():
     assert dict(first.default_headers or {}) == {"X-Test": "seedream"}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="doeff_seedream production handler yields bare Pass() on every delegate path - #618",
-)
 @pytest.mark.asyncio
 async def test_get_seedream_client_prefers_injected_client_with_handler():
     injected_client = SeedreamClient(api_key="injected-key", base_url="https://injected.test/v3")

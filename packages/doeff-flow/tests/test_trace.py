@@ -216,7 +216,7 @@ class TestWithHandlerObservability:
         def capturing_handler(effect: Effect, k):
             _ = k
             captured_effects.append(effect)
-            return (yield Pass())
+            return (yield Pass(effect, k))
 
         @do
         def workflow():
@@ -246,7 +246,7 @@ class TestWithHandlerObservability:
             if type(effect).__name__ == "PyAsk" and seen_ask < 2:
                 seen_ask += 1
                 return (yield Resume(k, 5))
-            return (yield Pass())
+            return (yield Pass(effect, k))
 
         @do
         def workflow():

@@ -66,7 +66,7 @@ def _do_crashing_handler(effect, k):
     if isinstance(effect, Ping):
         raise ValueError("handler body crashed")
         yield  # unreachable, makes it a generator
-    yield Pass()
+    yield Pass(effect, k)
 
 
 # ---------------------------------------------------------------------------
