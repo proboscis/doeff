@@ -4780,6 +4780,202 @@ def test_join_reads_work_roots_into_the_env_and_settings_and_refuses_ambiguous_r
     assert sixteen.work_roots is not None and len(sixteen.work_roots) == 16
 
 
+# ---------------------------------------------------------------- 段 12(agora-redesign #520): 席へ運ぶ宣言の env(`[agentd].seat_env`)
+
+
+SEAT_ENV_DECLARED = """
+# 席の道具の宛先(この 3 本は doeff の語彙ではなく宣言の写し)
+ACP_BASE=http://acp-control.acp-control.svc.cluster.local:8868
+
+AGORA_BRAIN_URL=http://agora-1.herdr-hud.svc.cluster.local:8300
+HERDR_HUD_STATE_BACKEND=pg
+"""
+
+
+def test_join_seat_env_parses_declared_lines() -> None:
+    """agora-redesign #520: 宣言 file の [agentd].seat_env(改行区切りの `NAME=value`)の解釈は join.seat-env-of の 1 点。
+    空行と `#` の行は飛ばし、宣言の順で対を返す。値は最初の `=` の後を逐語(引用の剥がしも ${} の展開もしない)。
+    `=` の無い行・名の形の外・同じ名の 2 度は参加を断る(ValueError — 黙って読み飛ばさない)。"""
+    from doeff_agents.sessionhost.acp.effects import SeatEnv
+
+    assert run(join.seat_env_of(SEAT_ENV_DECLARED)) == SeatEnv(pairs=(
+        ("ACP_BASE", "http://acp-control.acp-control.svc.cluster.local:8868"),
+        ("AGORA_BRAIN_URL", "http://agora-1.herdr-hud.svc.cluster.local:8300"),
+        ("HERDR_HUD_STATE_BACKEND", "pg"),
+    ))
+    # 無い・空・空白だけ = 宣言しない(今日どおりの機体)。
+    assert run(join.seat_env_of(None)) == SeatEnv(pairs=())
+    assert run(join.seat_env_of("")) == SeatEnv(pairs=())
+    assert run(join.seat_env_of("\n  \n\t\n")) == SeatEnv(pairs=())
+    # 値は逐語 — 引用も `=` も `#` も `${}` も剥がさず展開しない(第 2 の置換の言語を作らない)。
+    assert run(join.seat_env_of('A="quoted"\nB=x=y\nC=has # hash\nD=${HOME}/x\nE=')) == SeatEnv(pairs=(
+        ("A", '"quoted"'),
+        ("B", "x=y"),
+        ("C", "has # hash"),
+        ("D", "${HOME}/x"),
+        ("E", ""),
+    ))
+    # `=` の無い行。
+    with pytest.raises(ValueError, match="seat_env"):
+        run(join.seat_env_of("ACP_BASE http://a"))
+    # 名の形の外(空・数字始まり・`-` / 空白入り)。
+    for wrong in ("=v", "1ACP=v", "ACP-BASE=v", "ACP BASE=v", "ACP_BASE =v"):
+        with pytest.raises(ValueError, match="seat_env"):
+            run(join.seat_env_of(wrong))
+    # 同じ名が 2 度(どちらが勝つかを黙って決めない)。
+    with pytest.raises(ValueError, match="2 度"):
+        run(join.seat_env_of("ACP_BASE=a\nACP_BASE=b"))
+
+
+def test_join_refuses_credential_shaped_seat_env() -> None:
+    """agora-redesign #520 / doeff ADR-012 R30 (4) / ACP 法 11d8cc 反例 7: この口は宛先を運ぶためのもので、資格の輸送路に
+    化けてはならない。締め出しは語彙ではなく**形**(正規化した綴りが _KEY / _KEY_FILE / _KEY_PATH / _TOKEN / _TOKEN_FILE で
+    終わる・SECRET / PASSWORD / CREDENTIAL を含む)+ binding 所有の auth env と従量課金の形(policy の 1 点)。
+    当たった宣言を持つ機体は参加しない(ValueError — 起動の門で断る)。"""
+    shaped = [
+        "ACP_BEARER_TOKEN=abc",
+        "ACP_BEARER_TOKEN_FILE=/etc/acp/t.token",
+        "FOO_KEY=abc",
+        "FOO_KEY_FILE=/k",
+        "FOO_KEY_PATH=/k",
+        "MY_SECRET_THING=abc",
+        "DB_PASSWORD=abc",
+        "GH_CREDENTIAL=abc",
+        "ANTHROPIC_API_KEY=sk-ant-x",
+        "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-x",
+        "ANTHROPIC_AUTH_TOKEN=abc",
+    ]
+    for line in shaped:
+        with pytest.raises(ValueError, match="seat_env"):
+            run(join.seat_env_of(line))
+    # 宛先の 3 本は資格の形ではない(門は宛先を通す)。
+    assert len(run(join.seat_env_of(SEAT_ENV_DECLARED)).pairs) == 3
+
+
+def test_join_refuses_seat_env_that_names_conversation_identity() -> None:
+    """agora-redesign #520: 会話の身元(AGORA_CONVERSATION_ID / AGORA_SEAT_OPENER)は judgment.charter-with-conversation-env が
+    置く 1 点で、機体の宣言は名乗れない。宣言した機体は参加しない(門と、charter を組む順序の二重の守り)。"""
+    from doeff_agents.sessionhost.acp.effects import CONVERSATION_ID_ENV, SEAT_OPENER_ENV
+
+    for name in (CONVERSATION_ID_ENV, SEAT_OPENER_ENV):
+        with pytest.raises(ValueError, match="seat_env"):
+            run(join.seat_env_of(f"{name}=spoofed"))
+
+
+def _incarnation_charter(seat_env: tuple[tuple[str, str], ...], charter: JSONObject) -> JSONObject:
+    from doeff_agents.sessionhost.acp.effects import NEXT_ARM_LAUNCH, ArmChoice, LaunchPlan
+
+    built = run(
+        judgment.incarnation_charter_of(
+            LaunchPlan(
+                charter=charter,
+                predecessor=None,
+                lease_kind=None,
+                account=None,
+                profile="personal-1",
+                model="claude-opus-5",
+            ),
+            ArmChoice(arm=NEXT_ARM_LAUNCH, source=None, retire=None),
+            "s-1",
+            (),
+            "",
+            {"conversationId": CONVERSATION},
+            "headless",
+            None,
+            HOMES,
+            "system",
+            seat_env,
+        )
+    )
+    assert isinstance(built, tuple)
+    result = built[0]
+    assert isinstance(result, dict)
+    return result
+
+
+def test_charter_seat_env_cannot_override_conversation_identity() -> None:
+    """agora-redesign #520 の順序の契約: incarnation-charter-of は宣言の env を重ねてから会話の身元を置く
+    (charter-with-seat-env → charter-with-conversation-env)。だから宣言は AGORA_CONVERSATION_ID / AGORA_SEAT_OPENER を
+    偽れない。呼び手が置いた他の session_env の欄は残る。"""
+    from doeff_agents.sessionhost.acp.effects import CONVERSATION_ID_ENV, SEAT_OPENER_ENV
+
+    charter = _incarnation_charter(
+        (("ACP_BASE", "http://svc:8868"), (CONVERSATION_ID_ENV, "spoofed"), (SEAT_OPENER_ENV, "spoofed")),
+        {"prompt": "hi", "session_env": {"CALLER": "kept"}},
+    )
+    env = charter["session_env"]
+    assert isinstance(env, dict)
+    assert env[CONVERSATION_ID_ENV] == CONVERSATION
+    assert env[SEAT_OPENER_ENV] == "system"
+    assert env["ACP_BASE"] == "http://svc:8868"
+    assert env["CALLER"] == "kept"
+    # 宣言しない機体の charter は今日どおり(会話の身元と呼び手の欄ちょうど)。
+    bare = _incarnation_charter((), {"prompt": "hi", "session_env": {"CALLER": "kept"}})
+    assert bare["session_env"] == {CONVERSATION_ID_ENV: CONVERSATION, SEAT_OPENER_ENV: "system", "CALLER": "kept"}
+
+
+def test_join_without_seat_env_still_joins() -> None:
+    """agora-redesign #520: seat_env を宣言しない宣言 file(Mac の今日の宣言)は 1 bit も変わらず参加する — JoinSpec の欄は
+    空・env に DOEFF_AGENTD_SEAT_ENV は現れない・settings の欄も空。"""
+    from doeff_agents.sessionhost.acp.effects import JoinSpec
+    from doeff_agents.sessionhost.acp.runtime import settings_from_env
+
+    base = ["--server", "http://acp:8868", "--token-file", "/t", "--capacity", "2", "--places", "personal"]
+    bare = _join_spec(base)
+    assert isinstance(bare, JoinSpec)
+    assert bare.seat_env == ()
+    assert "DOEFF_AGENTD_SEAT_ENV" not in dict(run(join.join_plan_of(bare)).env)
+    recorded = {
+        "DOEFF_AGENTD_NODE_NAME": NODE,
+        "RECORD_SERVICE_URL": "http://record:8874",
+        "DOEFF_AGENTD_CAPACITY": "1",
+        "DOEFF_AGENTD_PLACES": "personal",
+    }
+    assert settings_from_env(recorded, ()).seat_env == ()
+
+
+def test_join_seat_env_travels_from_the_declaration_to_the_launch_charter() -> None:
+    """agora-redesign #520 の口の一周(kubelet 型): 宣言 file の [agentd].seat_env → JoinSpec.seat_env → env
+    DOEFF_AGENTD_SEAT_ENV → AgentdSettings.seat_env → 起こす手番の charter.session_env。doeff は値の語彙を知らず、
+    宣言の写しを運ぶだけ。"""
+    from doeff_agents.sessionhost.acp.effects import JoinSpec
+    from doeff_agents.sessionhost.acp.runtime import settings_from_env
+
+    base = ["--server", "http://acp:8868", "--token-file", "/t", "--capacity", "2", "--places", "personal"]
+    declaration: dict[str, object] = {
+        "schema": "doeff.agentd-join.v1",
+        "agentd": {"seat_env": SEAT_ENV_DECLARED},
+    }
+    spec = _join_spec(base, declaration)
+    assert isinstance(spec, JoinSpec)
+    assert spec.seat_env == (
+        ("ACP_BASE", "http://acp-control.acp-control.svc.cluster.local:8868"),
+        ("AGORA_BRAIN_URL", "http://agora-1.herdr-hud.svc.cluster.local:8300"),
+        ("HERDR_HUD_STATE_BACKEND", "pg"),
+    )
+    env = dict(run(join.join_plan_of(spec)).env)
+    settings = settings_from_env(
+        {
+            "DOEFF_AGENTD_NODE_NAME": NODE,
+            "RECORD_SERVICE_URL": "http://record:8874",
+            "DOEFF_AGENTD_CAPACITY": "1",
+            "DOEFF_AGENTD_PLACES": "personal",
+            "DOEFF_AGENTD_SEAT_ENV": env["DOEFF_AGENTD_SEAT_ENV"],
+        },
+        (),
+    )
+    assert settings.seat_env == spec.seat_env
+    charter = _incarnation_charter(settings.seat_env, {"prompt": "hi"})
+    session_env = charter["session_env"]
+    assert isinstance(session_env, dict)
+    assert session_env["ACP_BASE"] == "http://acp-control.acp-control.svc.cluster.local:8868"
+    assert session_env["AGORA_BRAIN_URL"] == "http://agora-1.herdr-hud.svc.cluster.local:8300"
+    assert session_env["HERDR_HUD_STATE_BACKEND"] == "pg"
+    # 宣言 file の値は全部文字列(declared-values-of の不変条件)— 表を宣言した機体は参加しない。
+    with pytest.raises(ValueError, match="文字列"):
+        _join_spec(base, {"schema": "doeff.agentd-join.v1", "agentd": {"seat_env": {"ACP_BASE": "x"}}})
+
+
 def test_acp_writes_put_the_fingerprint_header_only_on_the_writes_that_carry_it(monkeypatch: pytest.MonkeyPatch) -> None:
     """handlers.AcpHttp: 指紋は書きごとの header x-declaration-sha256(誕生・spec の書きが運ぶ時だけ)。運ばない書きと status の
     書きの header は札だけ。"""
