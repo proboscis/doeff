@@ -8,6 +8,8 @@ HTTP も socket も tmux も無い。
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import threading
 import time
@@ -5851,3 +5853,79 @@ def test_join_derives_the_held_work_dir_roots_from_actuality_and_carries_them_in
     old_row = {"name": "pool-1", "labels": {}, "capacity": 2, "streamCapability": "events"}
     assert run(judgment.node_spec_declared(old_row, holder))["workDirRoots"] == ["~/.worktrees/"]
     assert "workDirRoots" not in run(judgment.node_spec_declared(old_row, settings))
+
+
+def test_node_declares_the_custody_borrower_equivalence_key_from_the_identity_it_borrows_as(
+    tmp_path: Path,
+) -> None:
+    """card acp:kanban-issue:ki-40021864e62f(ACP 側の依頼 lt-FMEPYFTCRQSKV4V8V0A82VQQFC): 機体は
+    **預かり所へ名乗る借り手の身元の等価鍵**を node の行に名乗る(契約 node.spec.custodyBorrower)。
+    配車(ACP Decide.nodeCustodyKey / leaseHeldNodes)は口座の錠をこの鍵で束ね、等値比較だけをする。
+
+    反例(この欄の前): ACP の束ねの鍵は node **行**で、pool の pod は全部同じ ServiceAccount で名乗る
+    (借り手は 1 つ)のに pod 間で束ねが掛かった ⇒ pool の入れ替え(旧 pod を cap 0 で排水)のたびに
+    旧 pod へ手番を持つ口座の待ちが全部 account-lease-elsewhere で凍った(実測 2026-09-19 05:34Z =
+    待ち 137 本のうち 110 本・入れ替えは 17.5 時間に 11 回)。
+
+    材料は預かり所へ名乗る身元ちょうど 2 つ(handlers.CustodyHttp._identity_headers と同じ file を同じ
+    reader で読む)・判断は join.custody-borrower-of の 1 点・写しは judgment.node-custody-borrower-of。"""
+    from dataclasses import replace
+
+    from doeff_agents.sessionhost.acp import join, judgment
+    from doeff_agents.sessionhost.acp.effects import AgentdSettings
+    from doeff_agents.sessionhost.acp.runtime import settings_from_env
+
+    def sa_token(namespace: str, name: str) -> str:
+        claims = {
+            "kubernetes.io/serviceaccount/namespace": namespace,
+            "kubernetes.io/serviceaccount/service-account.name": name,
+        }
+        payload = base64.urlsafe_b64encode(json.dumps(claims).encode("utf-8")).decode("ascii").rstrip("=")
+        return f"header.{payload}.signature"
+
+    # 判断(純関数)— pod は SA token の claims から、Mac は札の digest から名乗る
+    assert run(join.custody_borrower_of(None, sa_token("acp-control", "default"))) == "sa:acp-control/default"
+    assert run(join.service_account_borrower_of(sa_token("other", "runner"))) == "sa:other/runner"
+    digest = hashlib.sha256(b"mac-studio-secret").hexdigest()[:16]
+    assert run(join.custody_borrower_of("mac-studio-secret", None)) == f"key:{digest}"
+    # ⚠ 札の実値は 1 byte も鍵に入らない(node の行は誰でも読める)
+    assert "mac-studio-secret" not in (run(join.custody_borrower_of("mac-studio-secret", None)) or "")
+    # 同じ札 = 同じ鍵・違う札 = 違う鍵(預かり所の錠が借り手名で分かれるのと同じ分かれ方)
+    assert run(join.custody_borrower_of(" mac-studio-secret ", None)) == run(join.custody_borrower_of("mac-studio-secret", None))
+    assert run(join.custody_borrower_of("company-mac", None)) != run(join.custody_borrower_of("mac-studio-secret", None))
+    # 名乗らない側は全部 None(推測しない — 配車は node 名で束ねる = この軸が無かった時と同じ)
+    assert run(join.custody_borrower_of(None, None)) is None
+    assert run(join.custody_borrower_of("  ", "  ")) is None
+    for unreadable in ("not-a-jwt", "two.segments", "h.@@@not-base64@@@.s", "h." + base64.urlsafe_b64encode(b"[]").decode().rstrip("=") + ".s"):
+        assert run(join.service_account_borrower_of(unreadable)) is None
+    # claims の片方だけ・空の claim も名乗らない
+    for claims in ({"kubernetes.io/serviceaccount/namespace": "ns"}, {"kubernetes.io/serviceaccount/namespace": "ns", "kubernetes.io/serviceaccount/service-account.name": " "}):
+        payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+        assert run(join.service_account_borrower_of(f"h.{payload}.s")) is None
+    # ⚠ 両方を宣言した機体は名乗らない: 錠をどちらで分けるかを決めるのは預かり所の側で、
+    # ここで片方を選ぶのは推測 — 外せば別の借り手を同じと読み、借りが 409 で断られる
+    assert run(join.custody_borrower_of("mac-studio-secret", sa_token("acp-control", "default"))) is None
+
+    # composition root の I/O(預かり所へ名乗る file ちょうど 2 つ・同じ reader)
+    token_file = tmp_path / "token"
+    token_file.write_text(sa_token("acp-control", "default") + "\n", encoding="utf-8")
+    key_file = tmp_path / "borrower"
+    key_file.write_text("mac-studio-secret\n", encoding="utf-8")
+    recorded = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACES": "personal"}
+    custody = {**recorded, "AGORA_CUSTODY_URL": "http://custody:8320"}
+    assert settings_from_env({**custody, "AGORA_CUSTODY_SA_TOKEN_PATH": str(token_file)}, ()).custody_borrower == "sa:acp-control/default"
+    assert settings_from_env({**custody, "AGORA_BORROWER_KEY_PATH": str(key_file)}, ()).custody_borrower == f"key:{digest}"
+    # 宣言した token が読めない拍は名乗らない(参加は断らない — この欄は任意)
+    assert settings_from_env({**custody, "AGORA_CUSTODY_SA_TOKEN_PATH": str(tmp_path / "absent")}, ()).custody_borrower is None
+    # ⚠ 預かり所を宣言していない機体は名乗らない(借りない機体の身元は束ねに意味を持たない)
+    assert settings_from_env({**recorded, "AGORA_BORROWER_KEY_PATH": str(key_file)}, ()).custody_borrower is None
+    assert settings_from_env(recorded, ()).custody_borrower is None
+
+    # node の spec の欄(名乗らない機体の spec は 1 bit も変わらない = 片側だけ着地した断面の排水路)
+    settings = AgentdSettings(node_name="pool-1", node_capacity=20, stream_capability="events")
+    assert "custodyBorrower" not in run(judgment.node_spec_of(settings))
+    pod = replace(settings, custody_borrower="sa:acp-control/default")
+    assert run(judgment.node_spec_of(pod))["custodyBorrower"] == "sa:acp-control/default"
+    old_row = {"name": "pool-1", "labels": {"cordon": "installing"}, "capacity": 20, "streamCapability": "events"}
+    assert run(judgment.node_spec_declared(old_row, pod))["custodyBorrower"] == "sa:acp-control/default"
+    assert "custodyBorrower" not in run(judgment.node_spec_declared(old_row, settings))

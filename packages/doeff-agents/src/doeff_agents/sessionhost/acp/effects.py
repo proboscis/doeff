@@ -713,6 +713,29 @@ WORK_DIR_ROOTS_MAX = 16
 #: 「家を持つ = 家の下の何でも持つ」と読まれ、checkout を持たない pod へ手番が飛ぶ。
 WORK_DIR_ROOT_CANDIDATES: tuple[str, ...] = ("~/.worktrees/",)
 
+#: card acp:kanban-issue:ki-40021864e62f(2026-09-19・ACP 側の依頼 lt-FMEPYFTCRQSKV4V8V0A82VQQFC・既知の形 = k8s の volume
+#: topology key): 契約 agora-kinds.json node.spec.custodyBorrower —— この機体が**預かり所へ名乗る借り手の身元の等価鍵**。
+#: 配車(ACP Decide.nodeCustodyKey / leaseHeldNodes)は口座の錠(1 認証 1 借り手)をこの鍵で束ね、**等値比較だけ**をする
+#: (ACP は預かり所の知識を持たない)。⚠ 根 = 預かり所の錠の単位は**借り手名**で、同じ借り手の再要求は再具現・409 は別の
+#: 借り手にだけ(custody 冊 0008 law codex-lease-locks-one-host-per-account ②)。pool の pod は全部同じ ServiceAccount で
+#: 名乗るので借り手は 1 つ(実読 2026-09-19 05:5xZ: 9 口座の heldBy が全部 acp-control/default)。ACP が node 行を鍵に
+#: していた間、pool の入れ替え(旧 pod を cap 0 で排水)のたびに旧 pod へ束ねられた口座の待ちが凍った(05:34Z: 待ち 137 本の
+#: うち 110 本・入れ替えは 17.5 時間に 11 回)。⚠ 欄は**任意**で、名乗らない agentd の判定は今日と 1 bit も変わらない
+#: (ACP は node 名へ落ちる)= 版が混ざる艦隊の排水路。綴りの定義点はここ 1 点で、材料は預かり所へ名乗る身元の 2 つ
+#: ちょうど(handlers.CustodyHttp._identity_headers と同じ材料 —— 判断は join.custody-borrower-of の 1 点・I/O は
+#: composition root の runtime.settings_from_env)。
+NODE_SPEC_CUSTODY_BORROWER = "custodyBorrower"
+#: SA token で名乗る機体(pod)の鍵の綴り: `sa:<namespace>/<serviceaccount>` —— 預かり所の backend が TokenReview で解く
+#: 借り手名(ns/sa)と 1 対 1。token の claims から読む(署名は検めない —— 名乗るだけで、認証するのは預かり所の側)。
+CUSTODY_BORROWER_SA_PREFIX = "sa:"
+#: 借り手札で名乗る機体(Mac)の鍵の綴り: `key:<sha256(札) の先頭 16 hex>` —— **札の実値は 1 byte も載せない**
+#: (行は誰でも読める)。16 hex = 64 bit で、艦隊の機体の数に対して衝突は無視できる。
+CUSTODY_BORROWER_KEY_PREFIX = "key:"
+CUSTODY_BORROWER_KEY_HEX_CHARS = 16
+#: projected token の JWT の claims の綴り(k8s の ServiceAccount token の正本)。
+CUSTODY_SA_NAMESPACE_CLAIM = "kubernetes.io/serviceaccount/namespace"
+CUSTODY_SA_NAME_CLAIM = "kubernetes.io/serviceaccount/service-account.name"
+
 
 @dataclass(frozen=True)
 class WorkDirRoots:
@@ -1141,6 +1164,12 @@ class AgentdSettings:
     #: node が持つ作業場の**根**(段 12 lane 12j 追補 — join が据えた WORK_DIR_ROOTS_ENV の写し・検は
     #: join.work-dir-roots-of の 1 点)。None = 導いていない(spec に workDirRoots を書かない)・空の tuple = 根が 1 つも無い。
     work_dir_roots: tuple[str, ...] | None = None
+    #: 預かり所へ名乗る借り手の身元の**等価鍵**(card acp:kanban-issue:ki-40021864e62f — 契約
+    #: node.spec.custodyBorrower・綴りの定義点は NODE_SPEC_CUSTODY_BORROWER の註)。composition root
+    #: (runtime.settings_from_env)が預かり所へ名乗る材料 2 つ(借り手札・SA token の file — handlers の
+    #: read_secret_file で読む)を渡し、判断は join.custody-borrower-of の 1 点。None = 名乗らない
+    #: (node の spec に欄を書かない —— 配車は node 名で束ねる = この軸が無かった時と同じ)。
+    custody_borrower: str | None = None
     #: host の backend(wire の閉語彙 tmux | herdr | headless の写し — agentd が読む語は
     #: BACKEND_HEADLESS だけ)。composition root(runtime.settings_from_env)が host の argv / env
     #: (valve.backend_of)から導く 1 点で、stream_capability も同じ源から導く。headless の器は

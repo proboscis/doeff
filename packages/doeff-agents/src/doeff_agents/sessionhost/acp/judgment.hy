@@ -143,6 +143,7 @@
   NODE-SPEC-WORK-ROOTS
   NODE-SPEC-WORK-DIRS
   NODE-SPEC-WORK-DIR-ROOTS
+  NODE-SPEC-CUSTODY-BORROWER
   PROFILE-KIND
   AGENTD-PRINCIPAL
   AGORA-KINDS-NAMESPACE
@@ -2924,6 +2925,21 @@
   next)
 
 
+(defk node-custody-borrower-of [settings spec]
+  {:pre [(: settings AgentdSettings) (: spec dict)]
+   :post [(: % dict)]}
+  "composition root が導いた「預かり所へ名乗る借り手の等価鍵」を spec の欄 custodyBorrower に置いた写し
+   (card acp:kanban-issue:ki-40021864e62f・ACP 側の依頼 lt-FMEPYFTCRQSKV4V8V0A82VQQFC)。
+   None(名乗らない)なら**欄ごと足さない** —— 配車(ACP Decide.nodeCustodyKey)は欄の無い node を node 名で
+   束ね、この軸が無かった時と 1 bit も変わらない(版が混ざる艦隊と、ACP 先 / doeff 後で片側だけ着地した
+   断面の排水路)。判断は composition root(runtime._custody_borrower_of_env → join.custody-borrower-of)の
+   1 点で、ここは写すだけ。"
+  (setv next (dict spec))
+  (when (is-not settings.custody-borrower None)
+    (setv (get next NODE-SPEC-CUSTODY-BORROWER) settings.custody-borrower))
+  next)
+
+
 (defk declared-capacity-of [settings]
   {:pre [(: settings AgentdSettings)]
    :post [(: % int)]}
@@ -2961,7 +2977,9 @@
   (<- rooted dict (node-work-roots-of settings placed))
   (<- held dict (node-work-dirs-of settings rooted))
   (<- under dict (node-work-dir-roots-of settings held))
-  under)
+  ;; card acp:kanban-issue:ki-40021864e62f: 預かり所へ名乗る借り手の等価鍵(名乗らない機体は欄ごと無い)。
+  (<- borrowing dict (node-custody-borrower-of settings under))
+  borrowing)
 
 
 (defk node-spec-declared [spec settings]
@@ -2983,7 +3001,9 @@
   (<- rooted dict (node-work-roots-of settings placed))
   (<- held dict (node-work-dirs-of settings rooted))
   (<- under dict (node-work-dir-roots-of settings held))
-  under)
+  ;; card acp:kanban-issue:ki-40021864e62f: 預かり所へ名乗る借り手の等価鍵(名乗らない機体は欄ごと無い)。
+  (<- borrowing dict (node-custody-borrower-of settings under))
+  borrowing)
 
 
 (defk node-lease-of [settings now-ms]

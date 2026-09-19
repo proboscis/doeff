@@ -131,6 +131,9 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
     work_dirs = _work_dirs_of_env(env)
     # 段 12 lane 12j 追補(card acp:kanban-issue:ki-3bfe48a9d5dc): join が実勢から導いた持つ根(env に在る時だけ)
     work_dir_roots = _work_dir_roots_of_env(env)
+    # card acp:kanban-issue:ki-40021864e62f: 預かり所へ名乗る借り手の等価鍵 — 材料は預かり所へ名乗る身元
+    # ちょうど 2 つ(handlers.CustodyHttp._identity_headers と同じ file を同じ reader で読む)
+    custody_borrower = _custody_borrower_of_env(env)
     return AgentdSettings(
         node_name=node_name,
         node_capacity=node_capacity,
@@ -152,6 +155,8 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         work_roots=work_roots,
         work_dirs=work_dirs,
         work_dir_roots=work_dir_roots,
+        # card acp:kanban-issue:ki-40021864e62f: None = 名乗らない(node の spec に欄を書かない)
+        custody_borrower=custody_borrower,
         # 段 10 lane 10y: charter の work_dir の `~` を展開する node の家(env HOME ちょうど・無ければ process の家)
         home=(env.get("HOME") or os.path.expanduser("~")).strip(),
         # 段 12 lane 12a(agora-redesign #230): verify の命令の結末の置き場 = join が導いた state_dir(spool の親)の下
@@ -166,6 +171,29 @@ def _capacity_of_env(env: Mapping[str, str]) -> int:
     verdict: object = PyVM().run(join.capacity_of(env.get(CAPACITY_ENV)))
     if not isinstance(verdict, int):
         raise TypeError(f"capacity_of returned {type(verdict).__name__}")
+    return verdict
+
+
+def _custody_borrower_of_env(env: Mapping[str, str]) -> str | None:
+    """預かり所へ名乗る借り手の身元の**等価鍵**(card acp:kanban-issue:ki-40021864e62f・ACP 側の依頼
+    lt-FMEPYFTCRQSKV4V8V0A82VQQFC)。I/O はここだけ —— 読むのは預かり所へ名乗る身元の file ちょうど 2 つで、
+    ``handlers.CustodyHttp._identity_headers`` が header に組むのと**同じ file を同じ reader**
+    (``read_secret_file``)で読む(第 2 の身元を発明しない)。判断は ``join.custody_borrower_of`` の 1 点。
+
+    ⚠ 預かり所を宣言していない機体(``AGORA_CUSTODY_URL`` が空)は名乗らない —— 借りない機体の身元は
+    配車の束ねに何の意味も持たず、名乗ると『同じ札を偶然持つ借りない機体』と束が融ける。
+    None = 名乗らない(spec に欄を書かない = 配車は node 名で束ねる・この軸が無かった時と同じ)。
+    """
+    if not (env.get(CUSTODY_URL_ENV) or "").strip():
+        return None
+    borrower_key = read_secret_file(env.get(BORROWER_KEY_PATH_ENV) or BORROWER_KEY_PATH_DEFAULT)
+    sa_token_path = (env.get(CUSTODY_SA_TOKEN_PATH_ENV) or "").strip()
+    sa_token = read_secret_file(sa_token_path) if sa_token_path else None
+    verdict: object = PyVM().run(join.custody_borrower_of(borrower_key, sa_token))
+    if verdict is None:
+        return None
+    if not isinstance(verdict, str):
+        raise TypeError(f"custody_borrower_of returned {type(verdict).__name__}")
     return verdict
 
 
