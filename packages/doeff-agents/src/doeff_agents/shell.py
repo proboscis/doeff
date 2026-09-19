@@ -1,31 +1,62 @@
 """Shell command helpers for tmux-launched agent processes."""
 
+import functools
 import shlex
-
-FORBIDDEN_AGENT_ENV_KEYS = frozenset(
-    {
-        "ANTHROPIC_API_KEY",
-        "ANTHROPIC_API_KEY_PERSONAL",
-        "ANTHROPIC_API_KEY__PERSONAL",
-        "ANTHROPIC_AUTH_TOKEN",
-        "ANTHROPIC_BASE_URL",
-        "ANTHROPIC_MODEL",
-        "CLAUDE_API_KEY",
-        "CLAUDE_CODE_OAUTH_TOKEN",
-        "OPENAI_API_KEY",
-        "OPENROUTER_API_KEY",
-    }
-)
+from types import ModuleType
+from typing import Any
 
 
-def _normalized_env_key(key: str) -> str:
-    return key.replace("-", "_").upper()
+def _policy() -> ModuleType:
+    """sessionhost/policy.hy — the single home of the agent-boundary env vocabulary.
+
+    Imported lazily inside the functions that need it, never at module import:
+    the Hy module costs ~0.3s to compile and ``doeff_agents.shell`` is on the
+    import path of every handler.  Same rule as
+    ``assert_session_env_is_non_auth_overlay`` below.
+    """
+    import hy  # noqa: F401 -- installs the .hy import hook
+
+    from doeff_agents.sessionhost import policy
+
+    return policy
+
+
+@functools.cache
+def _forbidden_agent_env_keys() -> frozenset[str]:
+    """The env names this layer refuses, named (not copied) from policy.
+
+    The tmux launch layer is the widest of the three boundaries: on top of the
+    provider keys it also refuses the routing spellings (which swap the
+    provider without being a key) and the per-turn OAuth token — a turn
+    credential rides the host's typed send path, never a shell ``export``.
+
+    Do NOT flatten the three sets into one list here: admission and spawn
+    deliberately carry TURN_AUTH (ADR-DOE-AGENTS-012 R5/R30), so the union
+    belongs to this layer only (card acp:kanban-issue:ki-2a061da56ca9).
+    """
+    policy = _policy()
+    return frozenset(
+        set(policy.PROVIDER_AUTH_ENV_KEYS)
+        | set(policy.PROVIDER_ROUTING_ENV_KEYS)
+        | set(policy.TURN_AUTH_ENV_KEYS)
+    )
+
+
+def __getattr__(name: str) -> Any:
+    """PEP 562: keep ``FORBIDDEN_AGENT_ENV_KEYS`` readable without paying the import.
+
+    The spelling is quoted as evidence by ADR-DOE-AGENTS-004 R7, so the name
+    stays even though the set now lives in policy.hy.
+    """
+    if name == "FORBIDDEN_AGENT_ENV_KEYS":
+        return _forbidden_agent_env_keys()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def forbidden_agent_env_keys(env: dict[str, str] | None) -> list[str]:
     if not env:
         return []
-    return sorted(key for key in env if _normalized_env_key(key) in FORBIDDEN_AGENT_ENV_KEYS)
+    return _policy().env_offenders_against(dict(env), _forbidden_agent_env_keys())
 
 
 def assert_no_forbidden_agent_env(
@@ -60,11 +91,7 @@ def assert_session_env_is_non_auth_overlay(
     """
     if not env:
         return
-    import hy  # noqa: F401 -- installs the .hy import hook
-
-    from doeff_agents.sessionhost.policy import overlay_env_offenders
-
-    offenders = overlay_env_offenders(dict(env))
+    offenders = _policy().overlay_env_offenders(dict(env))
     if offenders:
         joined = ", ".join(offenders)
         raise ValueError(
