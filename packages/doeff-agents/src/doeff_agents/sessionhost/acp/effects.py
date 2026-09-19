@@ -481,7 +481,9 @@ INTERRUPT_ARM_NONE: InterruptArm = "none"
 #: 手番の途中なら割り込み(session.interrupt — 取り下げと同じ腕)を撃ち、status.cancel {acknowledgedAt, stage: graceful}
 #: を書く(見届け・1 度)/ 段 3 強制 = requestedAt + graceSeconds を過ぎても手番が終わらなければ agentd が器を片付け
 #: (session.cleanup = process を殺す)Ended + result.cause {category: cancelled, stage: forced, reason}。猶予の内に手番が
-#: 終われば Ended + result.cause {…, stage: graceful}。withdraw-job(phase Withdrawn)は「いま強制」(猶予 0)として残る。
+#: 終われば Ended + result.cause {…, stage: graceful}。「いま強制」(猶予 0)は合図の cancel-job {graceSeconds: 0} で名乗る
+#: (猶予 0 の別名だった語は契約 messaging.json v2 で消えた — 取り消しの語は cancel-job の 1 つ)。phase Withdrawn(書き手は
+#: 作った側)の行は猶予を待たず、今日の腕(interrupt-job = session.interrupt・session は片付けない)のまま。
 JOB_SPEC_CANCEL_KEY: str = "cancel"
 CANCEL_REQUESTED_AT_KEY: str = "requestedAt"
 CANCEL_GRACE_SECONDS_KEY: str = "graceSeconds"
