@@ -28,7 +28,6 @@ from doeff_agents.sessionhost.acp.effects import (
     JobOutcome,
     JSONObject,
 )
-from doeff_agents.sessionhost.acp.runtime import run_close_for_stop
 from test_sessionhost_acp import (
     World,
     bound_job,
@@ -152,12 +151,7 @@ def test_the_stop_of_agentd_carries_agentd_stopped_drain_deadline() -> None:
     """場面 7: agentd の停止の排水の期限で閉じた手番 = agentd-stopped / drain-deadline(条件 AgentdRestart と同じ拍)。"""
     world = World()
     _start(world)
-    world.state = run_close_for_stop(
-        world.settings,
-        world.state,
-        [world.acp.dispatch, world.custody.dispatch, world.sessions.dispatch, world.local.dispatch],
-        "SIGTERM",
-    )
+    world.close_for_stop("SIGTERM")
     assert _result_of(world, "j-1") == {"cause": {"category": "agentd-stopped", "reason": "drain-deadline"}}
     assert _condition_types(_status_of(world, "j-1"))[-1] == "AgentdRestart"
 
