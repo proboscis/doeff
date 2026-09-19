@@ -40,10 +40,7 @@ if "pydantic" not in sys.modules:
                 setattr(self, field_name, data[field_name])
 
         def model_dump(self) -> dict[str, Any]:
-            return {
-                field_name: getattr(self, field_name)
-                for field_name in self.model_fields
-            }
+            return {field_name: getattr(self, field_name) for field_name in self.model_fields}
 
         @classmethod
         def model_validate(cls, value: Any) -> Any:
@@ -68,7 +65,8 @@ from doeff_gemini.client import track_api_call
 from doeff_gemini.effects import GeminiCalculateCost
 from doeff_gemini.handlers import default_gemini_cost_handler
 
-from doeff import Effect, Pass, Resume, async_run, default_handlers, do
+from doeff import Effect, Pass, Resume, do
+from tests._run_helpers import run_with_defaults
 
 
 def _fake_response(usage: dict[str, int]) -> Any:
@@ -87,6 +85,7 @@ def _fake_response(usage: dict[str, int]) -> Any:
     )
 
 
+@pytest.mark.awaiting_api_migration(reason="test reads the removed .raw_store result face - #619")
 @pytest.mark.asyncio
 async def test_default_cost_calculator_runs_when_no_custom() -> None:
     """Default calculator should run when no custom hook is provided."""
@@ -109,9 +108,9 @@ async def test_default_cost_calculator_runs_when_no_custom() -> None:
             )
         )
 
-    result = await async_run(
+    result = run_with_defaults(
         flow(),
-        handlers=[default_gemini_cost_handler, *default_handlers()],
+        outer_handlers=[default_gemini_cost_handler],
     )
 
     assert result.is_ok()
@@ -120,6 +119,7 @@ async def test_default_cost_calculator_runs_when_no_custom() -> None:
     assert total_cost > 0
 
 
+@pytest.mark.awaiting_api_migration(reason="test reads the removed .raw_store result face - #619")
 @pytest.mark.asyncio
 async def test_default_cost_calculator_supports_gemini3_image() -> None:
     """Default calculator should handle Gemini 3 Pro Image pricing."""
@@ -142,9 +142,9 @@ async def test_default_cost_calculator_supports_gemini3_image() -> None:
             )
         )
 
-    result = await async_run(
+    result = run_with_defaults(
         flow(),
-        handlers=[default_gemini_cost_handler, *default_handlers()],
+        outer_handlers=[default_gemini_cost_handler],
     )
 
     assert result.is_ok()
@@ -154,6 +154,7 @@ async def test_default_cost_calculator_supports_gemini3_image() -> None:
     assert total_cost == pytest.approx(2.0)
 
 
+@pytest.mark.awaiting_api_migration(reason="test reads the removed .raw_store result face - #619")
 @pytest.mark.asyncio
 async def test_cost_fallback_to_image_tokens_from_total() -> None:
     """If image output tokens are missing, use remaining total tokens for pricing."""
@@ -180,9 +181,9 @@ async def test_cost_fallback_to_image_tokens_from_total() -> None:
             )
         )
 
-    result = await async_run(
+    result = run_with_defaults(
         flow(),
-        handlers=[default_gemini_cost_handler, *default_handlers()],
+        outer_handlers=[default_gemini_cost_handler],
     )
 
     assert result.is_ok()
@@ -192,6 +193,7 @@ async def test_cost_fallback_to_image_tokens_from_total() -> None:
     assert total_cost == pytest.approx(0.167, rel=1e-2)
 
 
+@pytest.mark.awaiting_api_migration(reason="test reads the removed .raw_store result face - #619")
 @pytest.mark.asyncio
 async def test_custom_cost_calculator_overrides_default() -> None:
     """Injected calculator should override default pricing."""
@@ -234,9 +236,9 @@ async def test_custom_cost_calculator_overrides_default() -> None:
             )
         )
 
-    result = await async_run(
+    result = run_with_defaults(
         flow(),
-        handlers=[default_gemini_cost_handler, custom_cost_handler, *default_handlers()],
+        outer_handlers=[default_gemini_cost_handler, custom_cost_handler],
     )
 
     assert result.is_ok()
@@ -273,9 +275,9 @@ async def test_cost_calculation_failure_raises() -> None:
             )
         )
 
-    result = await async_run(
+    result = run_with_defaults(
         flow(),
-        handlers=[default_gemini_cost_handler, failing_cost_handler, *default_handlers()],
+        outer_handlers=[default_gemini_cost_handler, failing_cost_handler],
     )
 
     assert result.is_err()

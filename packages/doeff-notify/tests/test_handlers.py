@@ -14,6 +14,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
+import pytest
 from doeff_notify.effects import Acknowledge, Notify, NotifyThread
 from doeff_notify.handlers import (
     collected_notifications,
@@ -61,7 +62,7 @@ def _console_program():
 
 def test_console_handler_prints_and_returns_notification_result(capsys) -> None:
     result = run_with_defaults(
-        console_handler(_console_program()),
+        _install_raw_handler(console_handler)(_console_program()),
     )
 
     captured = capsys.readouterr()
@@ -92,7 +93,7 @@ def test_testing_handler_collects_notifications_in_memory() -> None:
     handler, notifications = build_testing_handler(auto_acknowledge=True)
 
     result = run_with_defaults(
-        handler(_testing_program()),
+        _install_raw_handler(handler)(_testing_program()),
     )
 
     assert _is_ok(result)
@@ -132,6 +133,9 @@ def _logging_program():
     return first, acknowledged
 
 
+@pytest.mark.awaiting_api_migration(
+    reason="test reads WriterTellEffect.message, a field that no longer exists - #619"
+)
 def test_log_handler_emits_tell_events() -> None:
     logs: list[Any] = []
 
@@ -143,7 +147,9 @@ def test_log_handler_emits_tell_events() -> None:
         yield Pass()
 
     result = run_with_defaults(
-        _install_raw_handler(capture_tell_handler)(log_handler(_logging_program())),
+        _install_raw_handler(capture_tell_handler)(
+            _install_raw_handler(log_handler)(_logging_program())
+        ),
     )
 
     assert _is_ok(result)

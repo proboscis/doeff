@@ -1,7 +1,6 @@
 # ruff: noqa: E402
 """Integration tests for unified multi-provider image workflows."""
 
-
 import sys
 from pathlib import Path
 
@@ -48,10 +47,13 @@ import doeff_seedream.handlers.production as seedream_production
 from doeff_image.effects import ImageEdit, ImageGenerate
 from doeff_image.types import ImageResult
 
-from doeff import Delegate, EffectGenerator, Resume, default_handlers, do, run
+from doeff import Delegate, EffectGenerator, Resume, do
+from doeff import handler as _install_raw_handler
+from tests._run_helpers import run_with_defaults
 
 
 def _fallback_handler(value: str):
+    @do
     def _handler(effect, k):
         if isinstance(effect, (ImageGenerate, ImageEdit)):
             return (yield Resume(k, value))
@@ -70,9 +72,10 @@ def test_seedream_handler_delegates_unsupported_model() -> None:
             )
         )
 
-    result = run(
-        seedream_production.seedream_image_handler(_fallback_handler("delegated")(flow())),
-        handlers=default_handlers(),
+    result = run_with_defaults(
+        _install_raw_handler(seedream_production.seedream_image_handler)(
+            _install_raw_handler(_fallback_handler("delegated"))(flow())
+        ),
     )
     assert result.is_ok()
     assert result.value == "delegated"
@@ -88,9 +91,10 @@ def test_gemini_handler_delegates_unsupported_model() -> None:
             )
         )
 
-    result = run(
-        gemini_production.gemini_image_handler(_fallback_handler("delegated")(flow())),
-        handlers=default_handlers(),
+    result = run_with_defaults(
+        _install_raw_handler(gemini_production.gemini_image_handler)(
+            _install_raw_handler(_fallback_handler("delegated"))(flow())
+        ),
     )
     assert result.is_ok()
     assert result.value == "delegated"
@@ -136,9 +140,10 @@ def test_multi_provider_workflow_with_stacked_handlers(monkeypatch) -> None:
         )
         return base, edited
 
-    result = run(
-        seedream_production.seedream_image_handler(gemini_production.gemini_image_handler(flow())),
-        handlers=default_handlers(),
+    result = run_with_defaults(
+        _install_raw_handler(seedream_production.seedream_image_handler)(
+            _install_raw_handler(gemini_production.gemini_image_handler)(flow())
+        ),
     )
 
     assert result.is_ok()

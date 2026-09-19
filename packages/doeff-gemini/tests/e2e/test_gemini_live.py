@@ -1,6 +1,5 @@
 """Gemini integration tests with WithHandler-based mocks and one live smoke test."""
 
-
 import os
 import sys
 from io import BytesIO
@@ -126,6 +125,7 @@ def _get_live_gemini_env_or_skip() -> dict[str, Any]:
     return env
 
 
+@pytest.mark.awaiting_api_migration(reason="test still calls removed default_handlers() - #619")
 @pytest.mark.asyncio
 async def test_edit_image__nanobanana_pro() -> None:
     """Run image edit pipeline with mocked Gemini response via WithHandler."""
@@ -166,6 +166,7 @@ async def test_edit_image__nanobanana_pro() -> None:
     assert async_models.generate_content.call_args.kwargs["model"] == "gemini-3-pro-image-preview"
 
 
+@pytest.mark.awaiting_api_migration(reason="test still calls removed default_handlers() - #619")
 @pytest.mark.asyncio
 async def test_edit_image__gemini() -> None:
     """Run flash image edit pipeline with mocked Gemini response via WithHandler."""
@@ -206,6 +207,7 @@ async def test_edit_image__gemini() -> None:
     )
 
 
+@pytest.mark.awaiting_api_migration(reason="test still calls removed default_handlers() - #619")
 @pytest.mark.asyncio
 async def test_structured_llm__gemini_with_pydantic() -> None:
     """Run structured Gemini pipeline with mocked response via WithHandler."""

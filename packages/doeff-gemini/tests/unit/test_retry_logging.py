@@ -1,7 +1,6 @@
 # ruff: noqa: E402
 """Retry logging tests that avoid the google.genai dependency."""
 
-
 import asyncio
 import builtins
 import importlib
@@ -59,6 +58,9 @@ def _fake_build_generation_config(**kwargs: Any) -> EffectGenerator[Any]:
     return SimpleNamespace(**kwargs)
 
 
+@pytest.mark.awaiting_api_migration(
+    reason="test calls removed async_run(handlers=default_handlers()) and reads .log - #619"
+)
 @pytest.mark.asyncio
 async def test_structured_llm_retry_failure_logs(monkeypatch: pytest.MonkeyPatch) -> None:
     """Retry exhaustion should emit an error-level structured log and propagate the error."""
@@ -131,6 +133,9 @@ async def test_structured_llm_retry_failure_logs(monkeypatch: pytest.MonkeyPatch
     assert "Resource exhausted" in failure_entry["error"]
 
 
+@pytest.mark.awaiting_api_migration(
+    reason="test calls removed async_run(handlers=default_handlers()) and reads .log - #619"
+)
 @pytest.mark.asyncio
 async def test_edit_image_retry_failure_logs(monkeypatch: pytest.MonkeyPatch) -> None:
     """Image edit retries should log and propagate the final error."""

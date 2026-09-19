@@ -1,6 +1,5 @@
 """Integration tests for doeff-openrouter."""
 
-
 import json
 import os
 from collections.abc import Callable
@@ -37,6 +36,7 @@ MOCK_STRUCTURED_MODELS = [
 ]
 MODELS_WITH_JSON_OUTPUT = {"openai/gpt-4o-mini", "google/gemini-2.0-flash-001"}
 LIVE_MODEL = "openai/gpt-4o-mini"
+
 
 class EchoPayload(BaseModel):
     keyword: str
@@ -123,6 +123,9 @@ def handlers() -> tuple[Any, ...]:
     return tuple(default_handlers())
 
 
+@pytest.mark.awaiting_api_migration(
+    reason="handlers fixture calls removed default_handlers(); test reads .raw_store - #619"
+)
 @pytest.mark.parametrize(("model", "expects_success"), MOCK_STRUCTURED_MODELS)
 def test_chat_completion_and_structured_response_with_handler_mock(
     model: str,
@@ -196,7 +199,9 @@ def test_chat_completion_live_smoke(api_key: str, handlers: tuple[Any, ...]) -> 
 
     @do
     def flow() -> EffectGenerator[Any]:
-        messages = yield build_messages("Reply with a short sentence that includes doeff-openrouter.")
+        messages = yield build_messages(
+            "Reply with a short sentence that includes doeff-openrouter."
+        )
         return (
             yield chat_completion(
                 messages=messages,

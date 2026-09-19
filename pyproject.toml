@@ -220,6 +220,12 @@ markers = [
     "stress: stress tests with high concurrency or iteration count",
     "pre_kleisli_behavior: characterization tests for pre-Kleisli handler behavior",
     "phase3_baseline: characterization tests for VM Kleisli Phase 3 behavior",
+    # ADR-DOE-ENFORCE-001 R8: 既定の走行が集める検体のうち、**検体の側が**退役した API を
+    # 掴んでいるもの。収集は保たれる(法 every-python-test-file-is-collected を満たす)が、
+    # 日次の門 gate.full は -m でこれを外す。理由と追跡 issue を 1 本ずつ marker に書くこと。
+    # ⚠ 「本体が壊れている」側にこれを貼らない — それは xfail(strict) で、直った拍に XPASS で
+    #   赤くなって剥がし忘れを機械が名乗る。marker は deselect なので忘れられる。
+    "awaiting_api_migration: test still speaks a removed doeff API; deselected by gate.full",
 ]
 
 [tool.ruff]

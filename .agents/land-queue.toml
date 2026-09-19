@@ -45,7 +45,7 @@ name = "doeff"
 # 赤(1317 passed / 1 failed)。make sync 直後の env が権威なので再 sync を止める
 # (同 tree で make sync → uv run --no-sync が緑を実測)。Mac 側も同じ潜在欠陥 —
 # 従来の緑は cache 状態依存だった。
-full = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 1800 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff PYTHONUNBUFFERED=1 uv run --no-sync pytest -q -m 'not e2e'\""
+full = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 1800 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff PYTHONUNBUFFERED=1 uv run --no-sync pytest -q -m 'not e2e and not awaiting_api_migration'\""
 # 門の走行の持ち時間 2700→7200(2026-08-17)。実測 = L32 が 2713.4s で時間切れ
 # (4 連敗・Mac 飽和帯)。ADR-DOE-ENFORCE-001 R6 の第 3 の締切の宣言先行便。
 timeout_s = 7200

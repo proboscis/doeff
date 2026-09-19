@@ -3,16 +3,17 @@
 import hy  # noqa: F401 - activates Hy import hooks for test modules
 
 from doeff import run, do
-from doeff_core_effects import reader, writer, slog_handler
+from tests._run_helpers import wrap_with_defaults
 
 from doeff_docker.handlers.dockerfile import collect_dockerfile
 from doeff_ml_nexus.docker import uv_image, uv_gpu_image
 
 
 def _run_with_handlers(program):
-    return run(
-        writer(slog_handler(reader(env={})(program)))
-    )
+    # The hand-rolled chain here had no ``state`` handler, so ``writer_log``'s
+    # Get escaped every handler (UnhandledEffect). Use the one shared
+    # definition of the legacy order instead.
+    return run(wrap_with_defaults(program, env={}))
 
 
 class TestUvImage:
@@ -41,7 +42,7 @@ class TestUvImage:
         # Create a fake project with local dep
         dep_dir = tmp_path / "libs" / "mylib"
         dep_dir.mkdir(parents=True)
-        (tmp_path / "pyproject.toml").write_text('''
+        (tmp_path / "pyproject.toml").write_text("""
 [project]
 name = "test"
 version = "0.1.0"
@@ -49,7 +50,7 @@ dependencies = ["mylib"]
 
 [tool.uv.sources]
 mylib = { path = "libs/mylib", editable = true }
-''')
+""")
 
         @do
         def test():
@@ -62,14 +63,14 @@ mylib = { path = "libs/mylib", editable = true }
         dep_dir = tmp_path / "libs" / "rustlib"
         dep_dir.mkdir(parents=True)
         (dep_dir / "Cargo.toml").write_text("[package]\nname = 'rustlib'")
-        (tmp_path / "pyproject.toml").write_text('''
+        (tmp_path / "pyproject.toml").write_text("""
 [project]
 name = "test"
 version = "0.1.0"
 
 [tool.uv.sources]
 rustlib = { path = "libs/rustlib", editable = true }
-''')
+""")
 
         @do
         def test():

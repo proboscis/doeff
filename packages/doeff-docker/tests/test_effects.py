@@ -3,11 +3,17 @@
 import hy  # noqa: F401
 import pytest
 from doeff import run, Pure, do
-from doeff_core_effects import reader, writer, slog_handler
+from tests._run_helpers import wrap_with_defaults
 
 from doeff_docker.effects import (
-    From, Run, Copy, Workdir, SetEnv, Expose,
-    DockerBuild, DockerRun,
+    From,
+    Run,
+    Copy,
+    Workdir,
+    SetEnv,
+    Expose,
+    DockerBuild,
+    DockerRun,
 )
 from doeff_docker.handlers.dockerfile import (
     collect_dockerfile,
@@ -15,9 +21,10 @@ from doeff_docker.handlers.dockerfile import (
 
 
 def _run_with_handlers(program):
-    return run(
-        writer(slog_handler(reader(env={})(program)))
-    )
+    # The hand-rolled chain here had no ``state`` handler, so ``writer_log``'s
+    # Get escaped every handler (UnhandledEffect). Use the one shared
+    # definition of the legacy order instead.
+    return run(wrap_with_defaults(program, env={}))
 
 
 class TestDockerfileEffects:
@@ -42,6 +49,7 @@ class TestDockerfileEffects:
 
     def test_docker_build_defaults(self):
         from pathlib import Path
+
         e = DockerBuild(dockerfile="FROM x", tag="t:1", context_path=Path("/ctx"))
         assert e.host == "localhost"
 
@@ -90,6 +98,7 @@ class TestCollectDockerfile:
 
     def test_conditional_instructions(self):
         """Dockerfile = Program means conditionals work naturally."""
+
         @do
         def image(gpu: bool):
             yield From(image="python:3.13")

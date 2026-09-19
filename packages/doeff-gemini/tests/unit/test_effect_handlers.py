@@ -133,6 +133,10 @@ def test_effect_exports() -> None:
     assert issubclass(GeminiEmbedding, LLMEmbedding)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="GeminiChat/GeminiStructuredOutput/GeminiEmbedding aliases are uncallable - #616",
+)
 def test_deprecated_effect_aliases_emit_warnings() -> None:
     import pytest
 
@@ -247,7 +251,9 @@ def test_gemini_handler_delegates_unsupported_models() -> None:
         )
 
     result = run_with_defaults(
-        _install_raw_handler(fallback_handler)(gemini_mock_handler(program())),
+        _install_raw_handler(fallback_handler)(
+            _install_raw_handler(gemini_mock_handler)(program())
+        ),
     )
 
     assert result.is_ok()
