@@ -119,7 +119,7 @@
 
 ;; ---------------------------------------------------------------- 純関数(journal の読みと「いつ返すか」)
 
-(deftest test-lease-journal-reads-and-writes-only-the-pairs-it-knows [run]
+(deftest test-lease-journal-reads-and-writes-only-the-pairs-it-knows
   ;; 無い file・綴りでない text・object でない JSON・str でない値は空(発明しない)。
   (assert (= (run (lease-journal-of None)) {}))
   (assert (= (run (lease-journal-of "")) {}))
@@ -140,7 +140,7 @@
   (assert (= (run (lease-journal-of (run (lease-journal-text after)))) after)))
 
 
-(deftest test-lease-to-return-prefers-memory-then-the-journal [run]
+(deftest test-lease-to-return-prefers-memory-then-the-journal
   ;; 「いつ返すか」は 1 点: memory の貸与の id が在ればそれ、無ければ journal、どちらも無ければ返さない。
   (setv journal {"aj-1" "lease-j"})
   (assert (= (run (lease-to-return-of "lease-m" journal "aj-1")) "lease-m") "memory が先")
@@ -151,7 +151,7 @@
 
 ;; ---------------------------------------------------------------- 一周(借りた拍に載り、返した拍に消える)
 
-(deftest test-the-borrowed-lease-is-journalled-and-forgotten-when-it-is-returned [run]
+(deftest test-the-borrowed-lease-is-journalled-and-forgotten-when-it-is-returned
   (setv world (World))
   (.put-row world.acp (bound-job "s-1"))
   (.tick world 0)
@@ -167,7 +167,7 @@
 
 ;; ---------------------------------------------------------------- ★ 実弾の反例(入れ替え → 器から session が消える)
 
-(deftest test-a-replaced-agentd-returns-the-lease-of-a-vanished-session [run]
+(deftest test-a-replaced-agentd-returns-the-lease-of-a-vanished-session
   ;; 実弾 2026-09-19 08:44Z: agentd の入れ替えで手番の CLI が死に(session exited: vanished)、拾い直しの腕は
   ;; 器に session が無いのを見て手番を閉じたが、貸与の id は死んだ process の memory にしか無く錠は返せなかった。
   (setv world (World))
@@ -187,7 +187,7 @@
 
 ;; ---------------------------------------------------------------- 排水(SIGTERM)で閉じた手番
 
-(deftest test-the-drain-returns-the-lease-of-the-turn-it-closes [run]
+(deftest test-the-drain-returns-the-lease-of-the-turn-it-closes
   (setv world (World))
   (.put-row world.acp (bound-job "s-1"))
   (.tick world 0)
@@ -199,7 +199,7 @@
 
 ;; ---------------------------------------------------------------- B3: 返せなかった拍は log 1 行
 
-(deftest test-a-refused-revoke-is-not-swallowed [run]
+(deftest test-a-refused-revoke-is-not-swallowed
   (setv world (World))
   (.put-row world.acp (bound-job "s-1"))
   (.tick world 0)
@@ -214,7 +214,7 @@
 
 ;; ---------------------------------------------------------------- 置き場の定義点
 
-(deftest test-the-journal-lives-under-the-state-dir [run]
+(deftest test-the-journal-lives-under-the-state-dir
   ;; 置き場の定義点を増やさない(state_dir は spool と同じ 1 点から導く — verify / summarize の置き場と同じ形)。
   (setv env {"DOEFF_AGENTD_RECORD_SPOOL_DIR" "/state/acp-agentd/record-spool"})
   (assert (= (lease-journal-path env) "/state/acp-agentd/leases.json")))

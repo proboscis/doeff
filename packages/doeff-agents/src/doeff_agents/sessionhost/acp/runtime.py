@@ -61,6 +61,7 @@ from doeff_agents.sessionhost.acp.effects import (
     HOMES_ROOT_ENV,
     JOIN_RECORD_SPOOL_DIR,
     JOIN_STATE_DIR_DEFAULT,
+    LEASE_JOURNAL_FILENAME,
     SUMMARY_RUNS_RELDIR,
     VERIFY_RUNS_RELDIR,
     NODE_NAME_ENV,
@@ -176,6 +177,8 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         verify_runs_dir=verify_runs_dir(env),
         # 段 12 lane 12j(agora-redesign #233): summarize(会話の履歴の段階つき要約)の結末の置き場 = 同じ state_dir の下
         summarize_runs_dir=summarize_runs_dir(env),
+        # 段 12(card acp:kanban-issue:ki-f2747267e24d B2): 借りた錠の手元の journal — 同じ state_dir の下の 1 file
+        lease_journal_path=lease_journal_path(env),
     )
 
 
@@ -395,6 +398,12 @@ def verify_runs_dir(env: Mapping[str, str]) -> str:
     """verify の命令の結末(log / rc / pid)の置き場(段 12 lane 12a): record spool の親 = join の宣言 [agentd].state_dir の下の
     VERIFY_RUNS_RELDIR。置き場の定義点を増やさない(state_dir は spool と同じ 1 点から導く)。"""
     return os.path.join(os.path.dirname(record_spool_dir(env)), VERIFY_RUNS_RELDIR)
+
+
+def lease_journal_path(env: Mapping[str, str]) -> str:
+    """借りた錠の手元の journal(段 12・card acp:kanban-issue:ki-f2747267e24d B2): verify / summarize の結末と同じく
+    state_dir(record spool の親)の下の 1 file。置き場の定義点を増やさない。"""
+    return os.path.join(os.path.dirname(record_spool_dir(env)), LEASE_JOURNAL_FILENAME)
 
 
 def summarize_runs_dir(env: Mapping[str, str]) -> str:

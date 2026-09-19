@@ -148,6 +148,7 @@
   SUMMARY-SPEC-FROM-KEY
   SUMMARY-SPEC-RECORD-REF-KEY
   SUMMARY-ANSWER-MAX-CHARS
+  LEASE-JOURNAL-MAX-CHARS
   RecordReadStream
   SUMMARY-EVENT-KIND
   CHARTER-KIND-SUMMARIZE
@@ -462,6 +463,11 @@
   plan-with-node-home
   work-dir-of
   work-dir-step-of
+  lease-journal-of
+  lease-journal-text
+  lease-journal-with
+  lease-journal-without
+  lease-to-return-of
   lease-renew-due
   list-mode-for
   merge-rows
@@ -885,11 +891,72 @@
   (isinstance outcome Written))
 
 
-(defk borrow-lease [plan purpose]
-  {:pre [(: plan LaunchPlan) (: purpose str)]
+(defk read-lease-journal [settings]
+  {:pre [(: settings AgentdSettings)]
+   :post [(: % dict)]}
+  "機体の disk の journal(job の id → 貸与の id)を読む(ADR-DOE-AGENTS-012 R51)。置き場を宣言していない機体は空
+   (今日どおり memory だけで回る — 検体の既定)。読みの規則は judgment.lease-journal-of の 1 点。"
+  (when (not settings.lease-journal-path)
+    (return {}))
+  (<- text (| str None) (FsReadText :path settings.lease-journal-path :max-chars LEASE-JOURNAL-MAX-CHARS))
+  (<- journal dict (lease-journal-of text))
+  journal)
+
+
+(defk write-lease-journal [settings journal]
+  {:pre [(: settings AgentdSettings) (: journal dict)]
+   :post [(: % bool)]}
+  "journal を disk へ置き換える(0600 の temp + rename — 借り手の秘密ではないが、他の借り手に読ませる物でもない)。
+   戻り = disk に置いたか(置き場を宣言していない機体は False = journal を持たない)。"
+  (when (not settings.lease-journal-path)
+    (return False))
+  (<- text str (lease-journal-text journal))
+  (<- (FsWritePrivateText :path settings.lease-journal-path :text text))
+  True)
+
+
+(defk remember-lease [settings job-id lease-id]
+  {:pre [(: settings AgentdSettings) (: job-id str) (: lease-id str)]
+   :post [(: % bool)]}
+  "借りた錠を手元に記す(ADR-DOE-AGENTS-012 R51): 次の process(入れ替え・再起動・排水の後)が
+   『自分の機体が何を握っているか』を disk から組み直せるようにする。戻り = disk に置いたか。"
+  (<- journal dict (read-lease-journal settings))
+  (<- next dict (lease-journal-with journal job-id lease-id))
+  (<- kept bool (write-lease-journal settings next))
+  kept)
+
+
+(defk return-lease [settings job-id lease-id]
+  {:pre [(: settings AgentdSettings) (: job-id str) (: lease-id (| str None))]
+   :post [(: % bool)]}
+  "**手番を閉じた process が錠を返す 1 点**(ADR-DOE-AGENTS-012 R51・card acp:kanban-issue:ki-f2747267e24d B2 / B3)。
+   返す貸与の id は judgment.lease-to-return-of(memory が先・無ければ journal)— どの腕で閉じても
+   (settle-record・fail-missing・interrupt・launch の失敗・排水)同じ 1 点を通る。
+   返せなかった拍(預かり所が 200 で答えない・不達)は黙って捨てず log 1 行(B3): 錠は hold の期限まで残り、
+   その口座の借りはその間ずっと 409 で断られる — 見えない失敗にしない。
+   記録は返した後に外す(返せなかった拍も外す — この job はもう閉じていて、握りを繰り返し読む主体が無い)。
+   戻り = 預かり所が返却を受けたか(返す物が無かった拍は True — 握っていないのは失敗ではない)。"
+  (<- journal dict (read-lease-journal settings))
+  (<- held (| str None) (lease-to-return-of lease-id journal job-id))
+  (when (is held None)
+    (return True))
+  (<- returned bool (CustodyLeaseRevoke :lease-id held))
+  (when (not returned)
+    (<- (LogLine :text (+ f"agentd: lease {held} of job {job-id} was not returned to custody "
+                          "(the revoke did not answer 200) — the account stays locked until its hold expires "
+                          "and every borrow of that account is refused with 409 until then"))))
+  (when (in job-id journal)
+    (<- dropped dict (lease-journal-without journal job-id))
+    (<- (write-lease-journal settings dropped)))
+  returned)
+
+
+(defk borrow-lease [settings job-id plan purpose]
+  {:pre [(: settings AgentdSettings) (: job-id str) (: plan LaunchPlan) (: purpose str)]
    :post [(: % tuple)]}
   "binding.account が在れば預かり所から借りる。戻り = #(lease-grant-or-None refusal-or-None)
-   (借りた札で charter を組むのは judgment.incarnation-charter-of の 1 点)。"
+   (借りた札で charter を組むのは judgment.incarnation-charter-of の 1 点)。
+   借りた拍に手元の journal へ記す(R51)— 次の process が返せるように。"
   (if (or (is plan.lease-kind None) (is plan.account None))
       #(None None)
       (do
@@ -897,7 +964,9 @@
             (CustodyLeaseBorrow :kind plan.lease-kind :account plan.account :purpose purpose))
         (if (isinstance lease LeaseRefused)
             #(None lease)
-            #(lease None)))))
+            (do
+              (<- (remember-lease settings job-id lease.lease-id))
+              #(lease None))))))
 
 
 (defk headline-turns-for [subject reason]
@@ -1153,7 +1222,7 @@
   ;; 段 10 lane 10o: 郵便の添付(bodies と同じ並び)。畳む腕は 1 手番目に、送る腕は SessionSend に載る。
   (setv carried (get mail 1))
   (<- exclude tuple (inputs-of row))
-  (<- borrowed tuple (borrow-lease plan f"agent-job {job-id}"))
+  (<- borrowed tuple (borrow-lease settings job-id plan f"agent-job {job-id}"))
   (setv lease (get borrowed 0))
   (setv refusal (get borrowed 1))
   (if (is-not refusal None)
@@ -1191,8 +1260,7 @@
             (setv used fallback)))
         (if (isinstance outcome SessionRefused)
             (do
-              (when (is-not lease None)
-                (<- (CustodyLeaseRevoke :lease-id lease.lease-id)))
+              (<- (return-lease settings job-id (if (is lease None) None lease.lease-id)))
               (<- (end-job-now settings row "LaunchFailed" outcome.error #() now-ms))
               state)
             (do
@@ -1516,8 +1584,7 @@
   ;; (Decide.carrierEndedOf — 行が inputsDelivered でこの郵便を名乗らない終端の carrier)が担う:
   ;; agentd に第 2 の再配達の判断点を置かない。session は片付けない(温かいまま次の手番が使う)。
   (when refused-all
-    (when (is-not lease None)
-      (<- (CustodyLeaseRevoke :lease-id lease.lease-id)))
+    (<- (return-lease settings row.resource-id (if (is lease None) None lease.lease-id)))
     (<- (end-job-now settings row CONDITION-INPUT-UNDELIVERED undelivered-reason (tuple pending) now-ms))
     (return state))
   (<- sent-ms int (ClockNowMs))
@@ -1991,8 +2058,12 @@
         (CustodyLeaseBorrow :kind current.lease-kind :account current.lease-account
                             :purpose f"agent-job {current.job-id} (renew)"))
     (if (isinstance lease LeaseGrant)
-        (setv current (replace current :lease-id lease.lease-id
-                                       :lease-hold-ms lease.hold-expires-at-ms))
+        (do
+          ;; R52: 借り直しが新しい貸与の id を返す拍が在る — 機体の journal も同じ拍に進める
+          ;; (古い id のまま残すと、次の process が既に死んだ錠を返して新しい錠を握ったままにする)。
+          (<- (remember-lease settings current.job-id lease.lease-id))
+          (setv current (replace current :lease-id lease.lease-id
+                                         :lease-hold-ms lease.hold-expires-at-ms)))
         (<- (LogLine :text f"agentd: lease renew for job {current.job-id} refused ({lease.status}): {lease.error}"))))
   current)
 
@@ -2217,9 +2288,8 @@
   ;; 実況の終わりの印(seq は最後の材料の読みの続き)
   (<- frame dict (status-frame job.job-id drained.delta-seq now-ms "ended"))
   (<- (push-frames settings job #(frame)))
-  ;; 札を返す
-  (when (is-not job.lease-id None)
-    (<- (CustodyLeaseRevoke :lease-id job.lease-id)))
+  ;; 札を返す(R51: 手番を閉じた process が返す — memory が先・無ければ機体の journal)
+  (<- (return-lease settings job.job-id job.lease-id))
   (<- (MetricLine :fields {"metric" "agent-job-turn"
                                   "agentJobId" job.job-id
                                   "sessionId" job.session-id
@@ -2293,8 +2363,8 @@
       (<- (LogLine :text f"agentd: agent-job {job-id} vanished before Ended"))
       (<- landed bool (end-job-now settings fresh "SessionFailed"
                                    "session is not registered in the host" pending now-ms)))
-  (when (is-not lease-id None)
-    (<- (CustodyLeaseRevoke :lease-id lease-id)))
+  ;; R51: 拾い直しの腕は memory を持たない(lease-id = None)— 機体の journal が握りを名乗る。
+  (<- (return-lease settings job-id lease-id))
   landed)
 
 
@@ -2408,7 +2478,7 @@
               (<- plan LaunchPlan (launch-plan-of row))
               (setv lease None)
               (when (= step JOB-STEP-OBSERVE)
-                (<- borrowed tuple (borrow-lease plan f"agent-job {row.resource-id} (recovered)"))
+                (<- borrowed tuple (borrow-lease settings row.resource-id plan f"agent-job {row.resource-id} (recovered)"))
                 (setv lease (get borrowed 0))
                 (setv refusal (get borrowed 1))
                 (when (is-not refusal None)
@@ -2480,8 +2550,7 @@
     (<- (LogLine :text f"agentd: Interrupted condition of job {job.job-id} not written ({wrote})")))
   (<- frame dict (status-frame job.job-id drained.delta-seq now-ms "ended"))
   (<- (push-frames settings job #(frame)))
-  (when (is-not job.lease-id None)
-    (<- (CustodyLeaseRevoke :lease-id job.lease-id)))
+  (<- (return-lease settings job.job-id job.lease-id))
   (<- (LogLine :text (+ f"agentd: job {job.job-id} withdrawn ({arm}); turn-record ended, "
                              f"session {job.session-id} kept")))
   (<- dropped AgentdState (without-job measured job.job-id))
@@ -2919,8 +2988,11 @@
   (<- lease (| LeaseGrant LeaseRefused) (CustodyLeaseBorrow :kind "claude" :account plan.account :purpose f"summarize {plan.job-id}"))
   (when (isinstance lease LeaseRefused)
     (return f"custody refused the lease of account {plan.account} for the summarize ({lease.status}: {lease.error})"))
+  ;; R51: 要約の札も借りた拍に手元へ記す — 拾い直した summarize は行から札の id を組み直せない
+  ;; (judgment.summarize-of-handle は :lease-id None)ので、返す腕が機体の journal から読む。
+  (<- (remember-lease settings plan.job-id lease.lease-id))
   (when (is lease.access-token None)
-    (<- (CustodyLeaseRevoke :lease-id lease.lease-id))
+    (<- (return-lease settings plan.job-id lease.lease-id))
     (return f"custody lent account {plan.account} without an access token"))
   (<- made bool (FsMakeDirectories :path settings.summarize-runs-dir))
   (<- text str (summary-region-text region))
@@ -2931,7 +3003,7 @@
   (<- env tuple (summarize-env-of lease.access-token home))
   (<- launched (| CommandStarted CommandRefused) (CommandStart :argv argv :cwd settings.summarize-runs-dir :env env))
   (when (isinstance launched CommandRefused)
-    (<- (CustodyLeaseRevoke :lease-id lease.lease-id))
+    (<- (return-lease settings plan.job-id lease.lease-id))
     (return (+ f"claude in print mode could not be started for the summary of {plan.conversation-id} [{region.from-seq}, {region.to-seq}] "
                f"on node {settings.node-name}: {launched.error}")))
   (<- (LogLine :text (+ f"agentd: summarize job {plan.job-id} summarizes conversation {plan.conversation-id} "
@@ -3002,8 +3074,7 @@
          (: conditions tuple) (: now-ms int)]
    :post [(: % AgentdState)]}
   "summarize を終える: 借りている札を返し、行を Ended(result / conditions)にし、memory から外す(書けなければ次の拍に撃ち直す)。"
-  (when (is-not command.lease-id None)
-    (<- (CustodyLeaseRevoke :lease-id command.lease-id)))
+  (<- (return-lease settings command.job-id command.lease-id))
   (<- landed bool (end-summarize-job settings command.job-key command.job-id result conditions now-ms))
   (if landed
       (do (<- dropped AgentdState (without-summarize state command.job-id)) dropped)
@@ -3034,8 +3105,7 @@
     (<- finished-done AgentdState (finish-summarize settings state command result-done #() now-ms))
     (return finished-done))
   ;; 前の区間の札を返してから次の区間の札を借りる(1 認証 1 宿の錠を 2 つ持たない)。
-  (when (is-not command.lease-id None)
-    (<- (CustodyLeaseRevoke :lease-id command.lease-id)))
+  (<- (return-lease settings command.job-id command.lease-id))
   (<- plan SummarizePlan (summarize-plan-of-command command))
   (<- started-ms int (ClockNowMs))
   (<- paths dict (summarize-paths-of settings.summarize-runs-dir command.job-id region started-ms))
@@ -3200,8 +3270,7 @@
    Withdrawn のまま・書き手は作った側)、観測をやめる。"
   (when (is-not command.pid None)
     (<- (CommandStop :pid command.pid)))
-  (when (is-not command.lease-id None)
-    (<- (CustodyLeaseRevoke :lease-id command.lease-id)))
+  (<- (return-lease settings command.job-id command.lease-id))
   (<- fresh (| AcpRow None) (AcpGetRow :key row.key))
   (setv target (if (is fresh None) row fresh))
   (<- status dict (status-object-of target))
