@@ -1,4 +1,4 @@
-"""Regression tests for executable ADR collection wiring."""
+"""Regression tests for canonical-gate collection wiring (executable ADRs and Python tests)."""
 
 import subprocess
 import sys
@@ -125,6 +125,135 @@ def test_wiring_discovery_skips_norecursedirs_matched_directories(
 
     result.assert_outcomes(passed=1)
     assert "defadr_wiring_copy" not in _combined_output(result)
+
+
+def _make_orphan_python_test(pytester: pytest.Pytester, tree: str) -> None:
+    """A Python test file in a tree of its own — the shape of an unwired package."""
+    parts: list[str] = []
+    for part in tree.split("/"):
+        parts.append(part)
+        pytester.mkdir("/".join(parts))
+    pytester.makefile(".py", **{f"{tree}/test_orphan": "def test_orphan():\n    assert True\n"})
+
+
+def test_strict_wiring_fails_when_python_test_file_is_outside_collection_scope(
+    pytester: pytest.Pytester,
+) -> None:
+    # The second file kind. A test tree nobody added to testpaths is silent in
+    # exactly the way an unwired defadr is, and the failure mode is worse: the
+    # tests look written, so nobody re-writes them (doeff 2026-09-19: 19 package
+    # trees, 3,200 tests, five of them rotted against APIs deleted months
+    # earlier without a single red).
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+        """
+    )
+    _make_smoke_test(pytester)
+    _make_orphan_python_test(pytester, "packages/pkg/tests")
+
+    result: pytest.RunResult = pytester.runpytest("-q", "--doeff-adr-wiring=strict")
+
+    assert result.ret != pytest.ExitCode.OK
+    output: str = _combined_output(result)
+    assert "doeff-adr wiring verification failed" in output
+    assert "packages/pkg/tests/test_orphan.py" in output
+
+
+def test_strict_wiring_passes_when_python_test_tree_is_in_testpaths(
+    pytester: pytest.Pytester,
+) -> None:
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        testpaths = ["tests", "packages/pkg/tests"]
+        """
+    )
+    _make_smoke_test(pytester)
+    _make_orphan_python_test(pytester, "packages/pkg/tests")
+
+    result: pytest.RunResult = pytester.runpytest("-q", "--doeff-adr-wiring=strict")
+
+    result.assert_outcomes(passed=2)
+
+
+def test_wiring_reads_pytests_own_python_files_patterns(
+    pytester: pytest.Pytester,
+) -> None:
+    # The gate must not hold a second opinion about which .py files are tests:
+    # a project that renamed the pattern would otherwise get both false reds
+    # (test_*.py that pytest never collects) and false greens (its real tests).
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+        python_files = ["check_*.py"]
+        """
+    )
+    pytester.mkdir("tests")
+    pytester.makefile(".py", **{"tests/check_smoke": "def test_smoke():\n    assert True\n"})
+    pytester.mkdir("helpers")
+    # Matches the project's pattern but sits outside testpaths: uncollected.
+    pytester.makefile(".py", **{"helpers/check_orphan": "def test_orphan():\n    assert True\n"})
+    # Matches pytest's *default* pattern but not this project's: not a test file
+    # here at all, so naming it would be a false red.
+    pytester.makefile(".py", **{"helpers/test_not_a_test": "def test_never():\n    assert True\n"})
+
+    result: pytest.RunResult = pytester.runpytest("-q", "--doeff-adr-wiring=strict")
+
+    assert result.ret != pytest.ExitCode.OK
+    output: str = _combined_output(result)
+    assert "helpers/check_orphan.py" in output
+    assert "test_not_a_test.py" not in output
+
+
+def test_wiring_exclude_declares_files_that_must_never_be_collected(
+    pytester: pytest.Pytester,
+) -> None:
+    # Some test_*.py are inputs, not tests: sample sources another tool's Rust
+    # test suite feeds through the linter, example scripts that execute at
+    # import. They can never be collected, so the gate needs a declared way to
+    # say "dark on purpose" — otherwise the only way to silence it is to turn it
+    # off entirely.
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+        doeff_adr_wiring_exclude = ["packages/lint/tests/fixtures/*"]
+        """
+    )
+    _make_smoke_test(pytester)
+    _make_orphan_python_test(pytester, "packages/lint/tests/fixtures")
+
+    result: pytest.RunResult = pytester.runpytest("-q", "--doeff-adr-wiring=strict")
+
+    result.assert_outcomes(passed=1)
+    assert "test_orphan.py" not in _combined_output(result)
+
+
+def test_default_scope_wiring_reports_python_test_file_outside_testpaths(
+    pytester: pytest.Pytester,
+) -> None:
+    # The in-session mouth answers for the second file kind too, so doeff's own
+    # gate test needs no second collection to see an unwired package tree.
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+        """
+    )
+    pytester.mkdir("tests")
+    _make_orphan_python_test(pytester, "packages/pkg/tests")
+    _make_gate_test(
+        pytester,
+        "assert isinstance(verdict, WiringUncollected), verdict",
+        "assert [path.name for path in verdict.uncollected] == ['test_orphan.py']",
+    )
+
+    result: pytest.RunResult = pytester.runpytest("-q")
+
+    result.assert_outcomes(passed=1, warnings=1)
 
 
 def _make_deep_directories(pytester: pytest.Pytester, count: int) -> None:
@@ -262,7 +391,7 @@ def test_default_scope_wiring_verifies_from_the_sessions_own_collection(
     _make_gate_test(
         pytester,
         "assert isinstance(verdict, WiringVerified), verdict",
-        "assert [path.name for path in verdict.executable_adrs] == ['defadr_gate_green.hy']",
+        "assert [path.name for path in verdict.wired_files] == ['defadr_gate_green.hy']",
     )
 
     result: pytest.RunResult = pytester.runpytest("-q")
