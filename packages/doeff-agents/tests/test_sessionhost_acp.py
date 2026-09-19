@@ -3303,8 +3303,8 @@ def test_a_turn_whose_result_reached_the_events_file_is_not_a_lost_session() -> 
     turn_ended_at を刻む前に agentd の拍が入ると、旧 job-step-of は turn-end の連言(turn_ended_at > floor)を
     満たせず、次の (not live-backend) で SessionLost と判じて器から結末を読まずに手番を閉じた。ACP は carrier の
     理由で終わった処理を同じ入力で作り直す(carrierRetryLimit 既定 2)ので、同じ入力に副作用つきの違う答えが 2 つ出る
-    (2026-09-19 の全数: 作り直し 302 件・両方読めた 114 組のうち答えが同一だった組は 0 件・死んだ側の 71.6% は
-    既に答えを書き終えていた)。直し = 判定の材料に「この手番の結果が器の記録へ出たか」を足し、live-backend より
+    (2026-09-19 の全数・成果物 = 送った郵便で測った正: 作り直し 302 件・同じ手紙に二度答えた組 10/123・
+    死んだ側の出力が実際に世へ出ていた組 75/123)。直し = 判定の材料に「この手番の結果が器の記録へ出たか」を足し、live-backend より
     **先に**読む。process の生死は代理で、判定が要るのは結果が出たかの事実。"""
     dead = replace(
         _view("p", "running", lifecycle="multi_turn", turn_ended_at_ms=None), backend_alive=False
