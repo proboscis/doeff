@@ -106,14 +106,22 @@ STOP_JOIN_SECONDS = 5.0
 DRAIN_POLL_SECONDS = 1.0
 
 
+def _node_name_of_env(env: Mapping[str, str]) -> str:
+    """この機体の名の 1 点(宣言の env・無ければ機体の host 名)。参加の宣言と、実況の push が名乗る
+    header(card acp:kanban-issue:ki-6eb745f6d528)が**同じ値**を読むための定義点 —— 面が
+    acp_stream_push_interval_seconds の label で見る名と、node の行の名が別々に導かれると突き合わない。"""
+    node_name = (env.get(NODE_NAME_ENV) or platform.node() or "").strip()
+    if not node_name:
+        raise ValueError(f"{NODE_NAME_ENV} is empty and the machine has no host name")
+    return node_name
+
+
 def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> AgentdSettings:
     """env → 値の宣言(既定値は effects.AgentdSettings の 1 点)。host の backend(argv / env —
     valve.backend_of)はここで 1 度だけ読み、backend_kind とそこから導く streamCapability
     (headless = events・tmux / herdr = frames — judgment.stream-capability-of-backend の 1 点)の
     両方に据える。"""
-    node_name = (env.get(NODE_NAME_ENV) or platform.node() or "").strip()
-    if not node_name:
-        raise ValueError(f"{NODE_NAME_ENV} is empty and the machine has no host name")
+    node_name = _node_name_of_env(env)
     homes_root = env.get(HOMES_ROOT_ENV) or os.path.join(_state_home(env), "doeff", "agentd-homes")
     backend = backend_of(host_argv, env)
     ownership = _ownership_of_env(env)
@@ -641,7 +649,7 @@ def _acp_url_of_env(env: Mapping[str, str]) -> str:
 def heartbeat_dispatchers(env: Mapping[str, str]) -> tuple[list[Dispatcher], Callable[[], None]]:
     """lease の heartbeat の thread の handler の列と、その後始末(段 10 lane 10ba): tick の handler とは別の AcpHttp を持つ
     (thread ごとに接続を分け、tick の読みの I/O と待ちを共有しない)。宛先と札は tick と同じ 1 点から読む。"""
-    acp = AcpHttp(_acp_url_of_env(env), _acp_token_of_env(env))
+    acp = AcpHttp(_acp_url_of_env(env), _acp_token_of_env(env), None, _node_name_of_env(env))
     return [acp.dispatch, LocalIo().dispatch], acp.close
 
 
@@ -651,7 +659,7 @@ def real_dispatchers(
     """実 I/O の handler の列と、その後始末。``wakes`` = 拍を起こす合図の列(段 12 lane 12b): ACP の watch の frame と
     器の出来事の合図(SessionEventWaker — 起こすのは start_agentd_thread)が同じ列に載る。無ければ watch だけ。"""
     token = _acp_token_of_env(env)
-    acp = AcpHttp(_acp_url_of_env(env), token, wakes)
+    acp = AcpHttp(_acp_url_of_env(env), token, wakes, _node_name_of_env(env))
     custody = CustodyHttp(
         # 宣言ちょうど(既定の宿は無い — 段 10 lane 10d 便 2)。空 = 借りない機体で、借りの要求はそこで断られる
         (env.get(CUSTODY_URL_ENV) or "").strip(),
