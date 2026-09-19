@@ -149,6 +149,8 @@
   SUMMARY-SPEC-RECORD-REF-KEY
   SUMMARY-ANSWER-MAX-CHARS
   LEASE-JOURNAL-MAX-CHARS
+  PROVIDER-LIMIT-ATTEMPT-KEY
+  CREDENTIAL-LEASE-HELD-UNTIL-KEY
   RecordReadStream
   SUMMARY-EVENT-KIND
   CHARTER-KIND-SUMMARIZE
@@ -463,6 +465,7 @@
   plan-with-node-home
   work-dir-of
   work-dir-step-of
+  credential-lease-held-condition-of
   lease-journal-of
   lease-journal-text
   lease-journal-with
@@ -1227,9 +1230,29 @@
   (setv refusal (get borrowed 1))
   (if (is-not refusal None)
       (do
-        (<- (end-job-now settings row "CredentialUnavailable"
-                                f"custody refused ({refusal.status}): {refusal.error}"
-                                #() now-ms))
+        ;; card acp:kanban-issue:ki-f2747267e24d B1(実弾 2026-09-19 08:44Z〜17 時台 JST): 預かり所が 409(錠は別の借り手)で
+        ;; 断った手番は**失った試み**で、手番の終わりではない —— 錠は他所の hold の期限で必ず解ける。Ended に書くと
+        ;; 配達係が終端を数え(上限 2・backoff なし)数秒で郵便が failed になり、17 時台に 330 通が落ちた。
+        ;; 記録だけ足して phase / binding / sessionHandle / result は離す(judgment.refused-attempt-status-of の形)—
+        ;; 置き直す先も待つ時刻も数えるかも、判じるのは ACP の配置の 1 点。409 以外の断り・hold を名乗らない断り・
+        ;; 宣言の無い預かり所は今日のまま Ended(判断は credential-lease-held-condition-of の 1 点)。
+        (<- fresh (| AcpRow None) (AcpGetRow :key row.key))
+        (setv target (if (is fresh None) row fresh))
+        (<- target-status dict (status-object-of target))
+        (<- held (| dict None) (credential-lease-held-condition-of refusal target-status now-ms))
+        (if (is held None)
+            (<- (end-job-now settings row "CredentialUnavailable"
+                                    f"custody refused ({refusal.status}): {refusal.error}"
+                                    #() now-ms))
+            (do
+              (<- kept dict (refused-attempt-status-of target-status #(held)))
+              (<- wrote (| Written Conflict Refused) (AcpPutStatus :row target :status kept))
+              (<- (LogLine :text (+ f"agentd: job {job-id} attempt {(get held PROVIDER-LIMIT-ATTEMPT-KEY)} could not borrow "
+                                    f"account {plan.account} — custody holds the lock for another borrower until "
+                                    f"{(get held CREDENTIAL-LEASE-HELD-UNTIL-KEY)} ({refusal.error}); leaving the row "
+                                    f"{(.get target-status "phase")} for the placement to place it again "
+                                    (if (isinstance wrote Written) "(recorded)" f"(record not written: {wrote})")))))) 
+        ;; memory には載せない(置き直し待ちの行は次の拍で拾い直さない — judgment.attempt-refused?)。
         state)
       (do
         (when (is-not choice.retire None)
