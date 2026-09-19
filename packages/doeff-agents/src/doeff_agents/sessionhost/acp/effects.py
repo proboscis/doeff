@@ -158,6 +158,7 @@ ConditionType = Literal[
     "WorkDirMissing",
     "ProviderLimit",
     "CredentialLeaseHeld",
+    "CredentialNotLeasable",
     "TurnProducedNothing",
     "VerifyScriptMissing",
     "VerifyStartFailed",
@@ -280,6 +281,41 @@ CUSTODY_LEASE_HELD_STATUS: int = 409
 CREDENTIAL_LEASE_HELD_UNTIL_KEY: str = "until"
 CREDENTIAL_LEASE_HELD_ACCOUNT_KEY: str = "account"
 CREDENTIAL_LEASE_HELD_NODE_ROW_KEY: str = "nodeRow"
+#: card acp:kanban-issue:ki-b3bed1e983fb: 預かり所の断りを **「誰が答えられるか」** で分けた class。
+#: HTTP の status は軸にならない(403 が 2 本に割れる — 置き場の門 Custody.Judge.Company.companyPlacementViolation は
+#: 口座 × 預かり所の配置の事実で誰に対しても同じ / 借り手の門 companyBorrowerViolation は名乗った借り手の事実で
+#: 宣言された機体なら通る)。判断は judgment.custody-refusal-verdict-of の 1 点。
+#:   nobody          = 誰も答えない(宣言が変わるまでどの担い手でも同じ断り)— 最初の 1 回で送信者へ返す(hard rule 7)。
+#:   another-carrier = 別の担い手が答える(この機体の身元・この機体の宣言・口座の worker の都合)— 有界の再投入。
+#:   time            = 時間が答える(貸与の錠の hold)— 行に記録を残して phase を離す(置き直しは ACP の配置)。
+CustodyRefusalAnswerer = Literal["nobody", "another-carrier", "time"]
+CUSTODY_ANSWERER_NOBODY: CustodyRefusalAnswerer = "nobody"
+CUSTODY_ANSWERER_ANOTHER_CARRIER: CustodyRefusalAnswerer = "another-carrier"
+CUSTODY_ANSWERER_TIME: CustodyRefusalAnswerer = "time"
+#: 預かり所が「その口座を預かっていない」と答える status(master の findHeading / worker の redeem — どちらも
+#: 在庫の事実で、どの担い手が頼んでも同じ)。
+CUSTODY_ACCOUNT_ABSENT_STATUS: int = 404
+#: 預かり所の **置き場の門** の断りの文の印(Custody.Judge.Company.companyPlacementViolation の 1 点が鋳る文の
+#: 逐語の一部)。⚠ これは repo をまたぐ **散文への結合**: 預かり所の断りの本文は {ok: false, error: <人が読む 1 文>}
+#: だけで、貸与の口の 403 に機械可読の code が無い(契約 custody-api.json conventions.errors)。だから
+#: 「置き場の門か借り手の門か」は文の印でしか分けられない。印が当たらない 403 は **another-carrier**(今日の挙動 =
+#: 有界の再投入)へ倒す — 預かり所が文を書き換えた拍に壊れるのは「1 回で返せたはずの断りを 2 回試す」側だけで、
+#: 「別の機体なら通る断りを 1 回で殺す」側には倒れない(実測 2026-09-19 の 403 は 4 件とも借り手の門)。
+#: 直す道 = 預かり所の貸与の口の断りに code を足す(redeem の口は既に RedeemRefusal で code を名乗る)。
+#: 会社境界の 2 つの門(置き場・借り手)が返す status。この 1 語だけでは class が決まらないので、
+#: 置き場の門の印(上)と対で読む。
+CUSTODY_PLACEMENT_REFUSAL_STATUS: int = 403
+CUSTODY_PLACEMENT_REFUSAL_MARK: str = "会社の機体の外へ出さない"
+#: 段 10c(agora-redesign #80)から在る語の名前(これまで agentd.hy に裸の文字列で在った)。預かり所が断り、
+#: **別の担い手なら通り得る**時の終端の語 — ACP の配達はこの語を carrierEndedFailureReasons の membership で読み、
+#: 有界に組み直す(Acp.App.Messaging.Contract)。
+CONDITION_CREDENTIAL_UNAVAILABLE: ConditionType = "CredentialUnavailable"
+#: card acp:kanban-issue:ki-b3bed1e983fb: 預かり所が **どの担い手にも** その口座を貸さない時の終端の語。
+#: = 口座が預かりに無い(404)/ 会社階級の口座が会社の置き場でない預かり所に在る(403 置き場の門)。
+#: ⚠ **この語が carrierEndedFailureReasons(ACP)に無いことが受入の本体**: membership から外れるので、配達は
+#: 組み直さず 1 回で郵便を failed にして送信者へ返す(CredentialSourceMissing / WorkDirMissing と同じ扱い)。
+#: 語を足すのは agentd 側だけ — ACP の list は触らない(reason の語彙は閉じていない: 契約 scheduling.json resultCause)。
+CONDITION_CREDENTIAL_NOT_LEASABLE: ConditionType = "CredentialNotLeasable"
 #: 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D1・D3): 温かい session の手番が終わったのに、本文のための model の出力が 1 本も
 #: 無かった(材料は読めたのに assistant の見出し text / tool_use / tool_result が 0 本・usage も無い)印。= model が 1 度も
 #: 呼ばれていない = **手番が走らなかった**事実で、手番自身の結末ではない — result.cause は {category: failed, reason:
@@ -1457,6 +1493,33 @@ class LeaseRefused:
 
 
 LeaseOutcome: TypeAlias = "LeaseGrant | LeaseRefused"
+
+
+@dataclass(frozen=True)
+class CustodyRefusalVerdict:
+    """預かり所の断りを **「誰が答えられるか」** に解いた答え(card acp:kanban-issue:ki-b3bed1e983fb)。
+
+    根: agentd は断りの status(型のある int)と逐語を ``custody refused (403): …`` の 1 文へ畳み、
+    終端の語を 1 つ書いていた。配達の側(ACP ``Acp.App.Messaging.Decide.carrierEndedOf``)は phase と
+    result.cause と回数しか読まないので、**再試行してよいかを判ずる材料が 1 つも残らない**。
+    ⇒ 直す場所は判定の側ではなく **語を鋳る側** — class を語にして終端へ載せる。
+
+    ``answerer`` が 3 つの処置を名指す:
+
+    * ``nobody``          — ``condition_type`` = :data:`CONDITION_CREDENTIAL_NOT_LEASABLE`(組み直さない語)。
+    * ``another-carrier`` — ``condition_type`` = :data:`CONDITION_CREDENTIAL_UNAVAILABLE`(有界に組み直す語)。
+    * ``time``            — ``held`` に :data:`CONDITION_CREDENTIAL_LEASE_HELD` の記録 1 項。呼び手は
+      phase を触らず条件だけ足す(``condition_type`` は書かない語として同じ型を名乗る)。
+
+    ``reason`` は終端に載る文で、**預かり所の逐語をそのまま含む**(畳まない)。頭に class の意味
+    (次の一手)が付くので、送信者は「宣言が変わるまで誰が頼んでも同じ」か「別の機体なら通る」かを読める。
+    """
+
+    answerer: CustodyRefusalAnswerer
+    condition_type: ConditionType
+    reason: str
+    #: answerer == "time" の拍だけ非 None(CredentialLeaseHeld の記録 1 項)。
+    held: JSONObject | None
 
 
 # ------------------------------------------------------------------ session(器)の値
