@@ -109,6 +109,7 @@
   ATTACHMENT-SHA256-KEY
   CONDITION-ATTACHMENT-IGNORED
   CAUSE-CATEGORY-RATE-LIMITED
+  CONDITION-CREDENTIAL-UNAVAILABLE
   CONDITION-PROVIDER-LIMIT
   CONDITION-TURN-PRODUCED-NOTHING
   CONDITION-UNSCHEDULABLE
@@ -238,6 +239,7 @@
   MESSAGE-KIND
   LaunchPlan
   LeaseGrant
+  LeaseRefused
   NEXT-ARM-DEFER
   NEXT-ARM-LAUNCH
   NEXT-ARM-REHYDRATE
@@ -1856,6 +1858,35 @@
    :post [(: % dict)]}
   "conditions の 1 項(改訂 R1-a の {type, status, reason})。"
   {"type" condition-type "status" "True" "reason" reason})
+
+
+(defk lease-refusal-condition-of [refusal]
+  {:pre [(: refusal LeaseRefused)]
+   :post [(: % dict)]}
+  "段 12(card acp:kanban-issue:ki-f2747267e24d): 預かり所に貸与を断られた手番の条件 1 項 —
+   型 CredentialUnavailable・散文は断りの status と本文、そして **409 が名乗る錠の期限だけを
+   構造の欄 until(epoch ミリ秒)に載せる**。
+
+   なぜ欄が要るか: 断りの型は 1 つでも意味は 2 つ在る —— 403(借り手が所有者の名簿に無い)は
+   **宣言の欠陥**で別の宿でも通らず、409(その口座の生きた貸与を別の宿が持つ)は**一時の競合**で
+   錠が明ければ通る。読み手(制御面の配置)がこの 2 つを分けられなければ、後者を前者として
+   終端にするか、前者を後者として撃ち続けるかのどちらかになる。欄が在る拍だけが『時計で解ける』の
+   印で、判定は欄の実在ちょうど(散文は読まない)。
+
+   期限は預かり所が既に構造で名乗っており(custody の 409 の応答の holdExpiresAt)、借り手の型が
+   既に運んでいる(effects.LeaseRefused.hold-expires-at-ms)—— 捨てていたのはこの 1 点だけだった。
+   custody 冊 0008 law claude-lease-lifetime-is-the-turn ③ の『人向けの散文とは別に機械が読む面を
+   持つ』の、機械の面がここ。
+
+   ⚠ until が無い断り(403 / 503 / 不達、そして期限を名乗らない 409)は欄を**作らない** —— 欠落は
+   『期限を知らない』であって『すぐ解ける』ではない(欄を発明すると、宣言の欠陥が時計で消える顔を
+   する)。"
+  (<- condition dict
+      (condition-of CONDITION-CREDENTIAL-UNAVAILABLE
+                    f"custody refused ({refusal.status}): {refusal.error}"))
+  (when (is-not refusal.hold-expires-at-ms None)
+    (setv (get condition "until") refusal.hold-expires-at-ms))
+  condition)
 
 
 (defk ended-status-of [status result cause conditions]

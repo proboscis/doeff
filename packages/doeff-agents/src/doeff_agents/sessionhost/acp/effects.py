@@ -190,6 +190,15 @@ CONDITION_RECORD_UNAVAILABLE: ConditionType = "RecordUnavailable"
 #: 手番の資格は預かり所の貸与ちょうどなので、起こさず(Running も sessionHandle も書かず)この条件で Ended に閉じる
 #: (判断は judgment.credential-source-of の 1 点)。
 CONDITION_CREDENTIAL_SOURCE_MISSING: ConditionType = "CredentialSourceMissing"
+#: 預かり所が貸与を断った印(段 12・card acp:kanban-issue:ki-f2747267e24d)。断りの型は 1 つでも
+#: 意味は 2 つ在る: 403 = 借り手が所有者の名簿に無い(**宣言の欠陥** — 別の宿でも通らない)/ 409 = その口座の
+#: 生きた貸与を別の宿が持っている(**一時の競合** — 錠が明ければ通る)。弁別は散文ではなく条件の欄で運ぶ:
+#: 409 の時だけ `until` に錠の期限(epoch ミリ秒)を載せる(judgment.lease-refusal-condition-of の 1 点)。
+#: custody 冊 0008 law claude-lease-lifetime-is-the-turn ③ が「錠の期限は**構造の欄**で名乗る(散文は人向けで
+#: 1 文字変わってよい)」と定める、その機械の面がこれ。⚠ 期限を散文にしか書かないと、読む点が 0 件のまま
+#: 配置が盲目になる(実弾 2026-09-19: 325 通が failed — 配置は錠の持ち主を自分の生きた手番からしか導けず、
+#: 手番より長生きした錠〔返し忘れ・保持期限 900 秒〕の窓で必ず断られる宿へ置き続けた)。
+CONDITION_CREDENTIAL_UNAVAILABLE: ConditionType = "CredentialUnavailable"
 #: 口座の置き場(profile の行の spec.boundary)が自分の置き場の集合(spec.places)に無い job を起こさなかった印
 #: (段 10 lane 10d 便 2・agora-redesign #85 の I5・段 11 lane 11u・#224 で集合へ — 判断は judgment.credential-place-mismatch の 1 点)。
 CONDITION_CREDENTIAL_PLACE_MISMATCH: ConditionType = "CredentialPlaceMismatch"

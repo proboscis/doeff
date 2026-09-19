@@ -448,6 +448,49 @@ def test_custody_refusal_ends_the_job_without_launching() -> None:
     last = conditions[-1]
     assert isinstance(last, dict)
     assert last["type"] == "CredentialUnavailable"
+    # 錠の期限を名乗らない断り(この検体の 409 は None)は until の欄を作らない。
+    assert "until" not in last
+
+
+def test_lease_conflict_carries_the_lock_expiry_in_the_condition() -> None:
+    """段 12(card acp:kanban-issue:ki-f2747267e24d)の反例の検 その 1: 409(1 認証 1 宿)の断りは
+    錠の期限を**構造の欄 until**(epoch ミリ秒)で残す — 散文だけに畳まない。
+
+    これが無いと制御面は「一時の競合(錠が明ければ通る)」と「宣言の欠陥(どの宿でも通らない)」を
+    分けられず、配置は必ず断られる宿へ置き続ける(実弾 2026-09-19: 325 通が failed)。"""
+    world = World()
+    world.custody.refuse_with = LeaseRefused(
+        409, "同じ認証の生きた貸与は 1 つだけ(1 認証 1 宿)", 1_789_800_000_000
+    )
+    world.acp.put_row(bound_job("s-3b", inputs=[]))
+    world.tick()
+    assert world.sessions.launches == []
+    job = world.job("s-3b")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_ENDED
+    last = job.status["conditions"][-1]
+    assert last["type"] == "CredentialUnavailable"
+    assert last["until"] == 1_789_800_000_000
+    # 終端の cause の綴りは条件の型から読むので、口を分ける前と 1 文字も変わらない。
+    assert job.status["result"] == {
+        "cause": {"category": "failed", "reason": "CredentialUnavailable"}
+    }
+
+
+def test_roster_refusal_carries_no_expiry_so_it_never_looks_transient() -> None:
+    """反例の検 その 2: 403(借り手が所有者の名簿に無い)は**宣言の欠陥**で、別の宿でも通らない。
+    期限を知らない断りに until を発明すると、欠陥が『時計で消える』顔をする — 欄は作らない。"""
+    world = World()
+    world.custody.refuse_with = LeaseRefused(
+        403, "会社階級の資格は、所有者が会社機体と宣言した借り手にだけ渡す", None
+    )
+    world.acp.put_row(bound_job("s-3c", inputs=[]))
+    world.tick()
+    job = world.job("s-3c")
+    assert job.status is not None
+    last = job.status["conditions"][-1]
+    assert last["type"] == "CredentialUnavailable"
+    assert "until" not in last
 
 
 def test_custody_declared_node_does_not_launch_a_job_without_an_account() -> None:
