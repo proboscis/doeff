@@ -1,13 +1,11 @@
-
 import asyncio
 from dataclasses import dataclass
 
 from doeff_core_effects import Await
 from doeff_core_effects.scheduler import Spawn, Wait
 from doeff_events.effects import Publish, WaitForEvent
-from doeff_events.handlers import event_handler
 
-from doeff import do, run
+from doeff import do
 
 
 @dataclass(frozen=True)
@@ -21,22 +19,17 @@ class OrderFilled:
     quantity: int
 
 
-def test_publish_with_no_listeners_is_noop() -> None:
+def test_publish_with_no_listeners_is_noop(run_events) -> None:
     @do
     def program():
         yield Publish(Heartbeat("alive"))
         return "ok"
 
-    result = run(
-        event_handler()(program()),
-        handlers=default_handlers(),  # noqa: F821 - legacy removed API reference is intentionally preserved
-    )
-
-    assert result.is_ok()
-    assert result.value == "ok"
+    result = run_events(program())
+    assert result == "ok"
 
 
-def test_composes_with_spawn_producer_consumer_pattern() -> None:
+def test_composes_with_spawn_producer_consumer_pattern(run_events) -> None:
     event = OrderFilled(symbol="AAPL", quantity=100)
 
     @do
@@ -58,12 +51,7 @@ def test_composes_with_spawn_producer_consumer_pattern() -> None:
         producer_status = yield Wait(producer_task)
         return (processed, producer_status)
 
-    result = run(
-        event_handler()(program()),
-        handlers=default_handlers(),  # noqa: F821 - legacy removed API reference is intentionally preserved
-    )
-
-    assert result.is_ok()
-    processed, producer_status = result.value
+    result = run_events(program())
+    processed, producer_status = result
     assert processed == "Processed: AAPL x100"
     assert producer_status == "done"
