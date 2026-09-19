@@ -44,7 +44,13 @@ executable ADRs (`defadr_*.hy`, plus `doeff_adr_hy_files`) and Python test files
 matching pytest's own `python_files` ini — an unwired `packages/*/tests` tree is
 the same hole as an unwired `docs/adr`, and the Python side is worse because the
 tests look written, so nobody rewrites them. Normal pytest runs default to
-`warn` so targeted local runs remain usable. Set
+`warn` so targeted local runs remain usable, and a `warn` report folds its list
+— the count, the first few paths, and the mouth that prints them all
+(`--doeff-adr-wiring=strict`, `uv run doeff-adr verify-wiring`). A run that
+names its own paths leaves the rest of the repository uncollected by
+construction, so its list is the size of the repository; folding keeps the
+verdict (anything uncollected is reported, in every session) and drops only the
+enumeration. `strict` still names every path it refuses. Set
 `doeff_adr_wiring = "strict"` in pytest configuration when every invocation
 should fail closed, or pass `--doeff-adr-wiring=off` only for an intentional
 local opt-out. `defsemgrep` enforcement separately fails, rather than skips,
@@ -108,8 +114,8 @@ For proboscis-ema and agent-control-plane follow-ups, add their existing
 `docs/adr` directory to the pytest roots used by the real CI test command,
 install `semgrep` when those ADRs contain `defsemgrep`, and run
 `uv run doeff-adr verify-wiring` as a required step. The gate reports every
-remaining `defadr_*.hy` path, so migration can be completed without maintaining
-a second hand-written ADR file list.
+remaining owned path, so migration can be completed without maintaining a
+second hand-written ADR file list.
 
 If an ADR uses `deftest`, the consuming project must provide the
 `doeff_interpreter` pytest fixture in its own `conftest.py` or test shim.
