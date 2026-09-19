@@ -4828,28 +4828,34 @@ def test_join_seat_env_parses_declared_lines() -> None:
 
 
 def test_join_refuses_credential_shaped_seat_env() -> None:
-    """agora-redesign #520 / doeff ADR-012 R30 (4) / ACP 法 11d8cc 反例 7: この口は宛先を運ぶためのもので、資格の輸送路に
-    化けてはならない。締め出しは語彙ではなく**形**(正規化した綴りが _KEY / _KEY_FILE / _KEY_PATH / _TOKEN / _TOKEN_FILE で
-    終わる・SECRET / PASSWORD / CREDENTIAL を含む)+ binding 所有の auth env と従量課金の形(policy の 1 点)。
-    当たった宣言を持つ機体は参加しない(ValueError — 起動の門で断る)。"""
-    shaped = [
-        "ACP_BEARER_TOKEN=abc",
-        "ACP_BEARER_TOKEN_FILE=/etc/acp/t.token",
-        "FOO_KEY=abc",
-        "FOO_KEY_FILE=/k",
-        "FOO_KEY_PATH=/k",
-        "MY_SECRET_THING=abc",
-        "DB_PASSWORD=abc",
-        "GH_CREDENTIAL=abc",
+    """agora-redesign #520 / doeff ADR-012 R30 (4) / R51 (1): この口は宛先を運ぶためのもので、資格の輸送路に化けてはならない。
+    ⚠ 判定は**家の関所 1 点**(policy.session-env-admission-error — launch と session.send の口が通るのと同じ)を通すだけで、
+    join.hy に第 2 の関所を写さない(「運ぶ口が増えても判定を並行実装しない」= その docstring)。関所の線は**名の形ちょうど**
+    (値は 1 byte も見ない): 正規化して `_API_KEY` で終わる名と既知の別名(従量課金)/ CLAUDE_CONFIG_DIR・CODEX_HOME
+    (binding 所有)。断りの文は verb `join.seat_env` で始まる。"""
+    for line in [
         "ANTHROPIC_API_KEY=sk-ant-x",
-        "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-x",
+        "OPENAI_API_KEY=sk-x",
         "ANTHROPIC_AUTH_TOKEN=abc",
-    ]
-    for line in shaped:
-        with pytest.raises(ValueError, match="seat_env"):
+        "OPENAI_KEY=abc",
+        "GOOGLE_GENAI_KEY=abc",
+    ]:
+        with pytest.raises(ValueError, match=r"join\.seat_env"):
             run(join.seat_env_of(line))
-    # 宛先の 3 本は資格の形ではない(門は宛先を通す)。
+    # 宛先の 3 本は関所の線に当たらない(門は宛先を通す)。
     assert len(run(join.seat_env_of(SEAT_ENV_DECLARED)).pairs) == 3
+    # ⚠ 通す側の残り(`ACP_BEARER_TOKEN_FILE` / `AGORA_BORROWER_KEY_PATH` = 札の **path** の綴り)は
+    #   依頼者の裁定 δ / β 待ちで、この便では**どちらにも pin しない**(片向きの検で黙って固まらないよう、
+    #   裁定が出た拍に両向きで足す — 依頼 lt-G809RCAAGKSY0RA0J54S8S23XY の note lt-WYTN9MJFW2C9PXWGX6BH4NM5Q4)。
+
+
+def test_join_refuses_seat_env_that_names_a_binding_owned_home() -> None:
+    """agora-redesign #520(上流 accept の贈り物): 家の関所は CLAUDE_CONFIG_DIR / CODEX_HOME を **binding 所有**として断る。
+    ⇒ 「会話の身元が必ず勝つ」の契約が charter の順序だけでなく**門の側からも**守られる — node 全体の seat_env の宣言で
+    会話ごとの家(binding が決める profile の置き場)を上書きする道が構造で塞がる。"""
+    for line in ("CLAUDE_CONFIG_DIR=/tmp/other-home", "CODEX_HOME=/tmp/other-home"):
+        with pytest.raises(ValueError, match="binding-owned auth env"):
+            run(join.seat_env_of(line))
 
 
 def test_join_refuses_seat_env_that_names_conversation_identity() -> None:
