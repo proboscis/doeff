@@ -49,6 +49,11 @@
 (import re)
 
 (import doeff_agents.sessionhost.attachment [TurnAttachment attachment-wire])
+;; card acp:kanban-issue:ki-2bd49c68b042: 「その result の行は CLI 自身の手番のものか」を名乗る表は器と
+;; **同じ 1 点**(headless_protocol.cli-own-turn-result — origin.kind の閉語彙)。純関数で I/O を持たない。
+;; 2 つ目の表を持つと、孤児の background task の報せ(実測 2026-09-19 07:28 JST aj-9AHT…)で本文の手番が
+;; 切られる形が agentd 側にだけ戻る。
+(import doeff_agents.sessionhost.headless_protocol [cli-own-turn-result])
 ;; 段 12 lane 12j(agora-redesign #320): 名前が指す「生きている行」を解く 3 値の判断は ACP の client library の写し
 ;; (live_row.hy・contracts.lock の kind = code)の 1 点 — ここに名前の索引を持たない。
 (import doeff_agents.sessionhost.acp.live_row [resolve-live-row])
@@ -532,8 +537,9 @@
   (tuple out))
 
 
-(defk job-step-of [view floor-ms progressed]
-  {:pre [(: view (| SessionView None)) (: floor-ms int) (: progressed bool)]
+(defk job-step-of [view floor-ms progressed turn-result-seen]
+  {:pre [(: view (| SessionView None)) (: floor-ms int) (: progressed bool)
+         (: turn-result-seen bool)]
    :post [(: % str)]}
   "自分の Running の行の次の 1 手(閉語彙 effects.JobStep)— 器の現況ちょうどから:
    器に session が無い → fail-missing(記録が在れば ended にし、SessionFailed で Ended)/
@@ -541,11 +547,29 @@
    温かい session(multi_turn)で host が手番の終わり(turn_ended_at)をこの手番の始まりの
    下限(floor = 本文を送った時刻)より後に刻み、記録が進んでいる(送った本文が届いて手番が
    始まった証拠 = 前の手番の終わりの stale な観測と区別する)→ turn-end(記録の腕だけ・
-   session は生かす)/ 行は非終端だが host の観測で backend が死んでいる(段 10 lane 10h —
+   session は生かす)/ 温かい session の process が降りていて、しかもこの手番の結果が既に器の
+   記録へ出ている → turn-end(下)/ 行は非終端だが host の観測で backend が死んでいる(段 10 lane 10h —
    手番は終わらない)→ session-lost(記録の腕・job は SessionLost で Ended・session は host の
    monitor に任せる)/ それ以外 → observe。memory に在る job も無い job も同じ 1 点で決める。
    backend の生死は status の語から推測しない(judgment.backend-alive — 観測の無い眺めは生きて
-   いると読む: 観測断 ≠ 死亡)。"
+   いると読む: 観測断 ≠ 死亡)。
+
+   card acp:kanban-issue:ki-2bd49c68b042(2026-09-19 の全数測定): #517 で「手番の終わり = process の
+   終わり」になってから、CLI が result を出して降りた拍と host の monitor が turn_ended_at を刻む拍が
+   競合するようになった。monitor(DEFAULT-MONITOR-INTERVAL-MS 1000)が agentd の tick(TICK-BACKOFF 1 秒)に
+   遅れた拍では turn-end の連言が立たず、次の (not live-backend) が SessionLost を返して、器から結末を
+   読まずに手番を閉じていた —— ACP は carrier の理由で終わった処理を同じ入力で作り直す
+   (delivery-policy.spec.carrierRetryLimit 既定 2)ので、同じ入力に副作用つきの違う答えが 2 つ出る
+   (作り直し 302 件・両方読めた 114 組のうち答えが同一だった組は 0 件・死んだ側の 71.6% は既に答えを
+   書き終えていた・最悪は完成した 5,740 byte の答えが 86 byte の error に置き換わった)。
+   直し = **結果が既に器へ出ているか**(turn-result-seen — 材料そのものが名乗る事実。claude = CLI 自身の
+   手番ではない result の行・codex = turn/completed。呼び手は agentd.observe-job-fast がその拍で読んだ
+   材料から渡す)を live-backend **より先に**読む。どちらの時計が先に来ても結末は同じ: monitor が先なら
+   turn_ended_at の連言で、agentd の読みが先なら結果の事実で、同じ turn-end に着く。
+   ⚠ 生きている process の結果は手番の終わりの証拠にしない —— CLI は queued の注入が在れば result の後も
+   手番を続ける(headless_protocol.ClaudeDialogue._on_result)。手番の終わりを名乗るのは器の monitor の
+   1 点のままで、ここが読むのは「**降りた** process が結果を残したか」という、SessionLost と本物の死を
+   分ける事実ちょうど。result を出さずに exit した手番は今日どおり session-lost。"
   (<- live-backend bool (backend-alive view))
   (cond
     (is view None) JOB-STEP-FAIL-MISSING
@@ -554,6 +578,8 @@
          (is-not view.turn-ended-at-ms None)
          (> view.turn-ended-at-ms floor-ms)
          progressed)
+    JOB-STEP-TURN-END
+    (and (= view.lifecycle LIFECYCLE-MULTI-TURN) (not live-backend) turn-result-seen)
     JOB-STEP-TURN-END
     (not live-backend) JOB-STEP-SESSION-LOST
     True JOB-STEP-OBSERVE))
@@ -4286,6 +4312,7 @@
   ;; 終わり」で誤りではない(同じ材料の中で読めた時 — 実測 4 ms 差)。
   (setv reads [])
   (setv stopped-by-signal False)
+  (setv turn-result False)
   (for [record records]
     (setv kind (.get record "type"))
     (setv message (.get record "message"))
@@ -4321,6 +4348,10 @@
         (<- system-body dict (note-body seq at ENTRY-KIND-SYSTEM note))
         (.append bodies system-body)
         (setv seq (+ seq 1))))
+    ;; card acp:kanban-issue:ki-2bd49c68b042: 走行器がこの手番の結末を名乗った行(CLI 自身の手番の result は
+    ;; 本文の手番の終わりではない — 器と同じ 1 点の判定 cli-own-turn-result)。事実の写しで、判定ではない。
+    (when (and streamed (= kind "result") (not (cli-own-turn-result record)))
+      (setv turn-result True))
     (when (and streamed (= kind "result"))
       (<- failure (| str None) (claude-result-error record))
       (when (is-not failure None)
@@ -4465,7 +4496,8 @@
               :context (if (is context-tokens None) None {"tokens" context-tokens "window" context-window})
               :interrupt-reads (tuple reads)
               :open-tool-blocks (tuple (.values opened))
-              :orphan-input-deltas orphan-input-deltas))
+              :orphan-input-deltas orphan-input-deltas
+              :turn-result turn-result))
 
 
 (defk codex-context-of [last window]
@@ -4576,6 +4608,7 @@
   ;; 段 10 lane 10n: codex に注入の段は無い(inject = turn/interrupt → 同じ thread へ turn/start)。止めた後の
   ;; turn/started が「積んであった注入を model が読む拍」— 名を運ぶ欄が無いので ref = None(未読を全部)。
   (setv reads [])
+  (setv turn-result False)
   (for [record records]
     (setv method (.get record "method"))
     (setv params (.get record "params"))
@@ -4625,6 +4658,8 @@
             (setv seq (+ seq 1))))
         (= method "turn/completed")
         (do
+          ;; card acp:kanban-issue:ki-2bd49c68b042: 走行器がこの手番の結末を名乗った通知(事実の写し)。
+          (setv turn-result True)
           ;; 手番の終わりの誤り(status ≠ completed)を kind error の entry に(判定は host — ここは記録だけ)。
           ;; 段 10 lane 10n: interrupted は止めた段の終わり(割り込みの本文を渡すため・取り下げ)で誤りではない → kind system。
           (setv turn (.get params "turn"))
@@ -4665,7 +4700,8 @@
         True None)))
   (<- entries tuple (entries-of-bodies (tuple bodies)))
   (DeltaBatch :frames (tuple frames) :entries entries :bodies (tuple bodies) :usage usage
-              :next-seq seq :model None :context context :interrupt-reads (tuple reads)))
+              :next-seq seq :model None :context context :interrupt-reads (tuple reads)
+              :turn-result turn-result))
 
 
 (defk events-to-deltas [agent-type text job-id seq-start at open-blocks]
