@@ -1,4 +1,6 @@
 from doeff import handler as _install_raw_handler
+from tests._run_helpers import run_with_defaults
+
 # ruff: noqa: E402, I001
 """Tests for Gemini effect and handler modules."""
 
@@ -63,9 +65,7 @@ from doeff import (
     Delegate,
     EffectGenerator,
     Resume,
-    default_handlers,
     do,
-    run,
 )
 from doeff_image.effects import ImageEdit
 from doeff_image.effects import ImageEdit as UnifiedImageEdit
@@ -92,9 +92,8 @@ class FunFact(BaseModel):
 
 
 def _run_with_handler(program, handler):
-    return run(
+    return run_with_defaults(
         handler(program),
-        handlers=default_handlers(),
     )
 
 
@@ -247,9 +246,8 @@ def test_gemini_handler_delegates_unsupported_models() -> None:
             )
         )
 
-    result = run(
+    result = run_with_defaults(
         _install_raw_handler(fallback_handler)(gemini_mock_handler(program())),
-        handlers=default_handlers(),
     )
 
     assert result.is_ok()

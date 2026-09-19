@@ -1,4 +1,5 @@
 from doeff import handler as _install_raw_handler
+from tests._run_helpers import run_with_defaults
 
 # ruff: noqa: E402
 """Tests for doeff-notify effects and built-in handlers."""
@@ -24,7 +25,7 @@ from doeff_notify.handlers import (
 )
 from doeff_notify.types import Channel, NotificationResult, Urgency
 
-from doeff import Effect, Pass, Resume, WriterTellEffect, default_handlers, do, run
+from doeff import Effect, Pass, Resume, WriterTellEffect, do
 
 
 def _is_ok(run_result: Any) -> bool:
@@ -59,9 +60,8 @@ def _console_program():
 
 
 def test_console_handler_prints_and_returns_notification_result(capsys) -> None:
-    result = run(
+    result = run_with_defaults(
         console_handler(_console_program()),
-        handlers=default_handlers(),
     )
 
     captured = capsys.readouterr()
@@ -81,7 +81,9 @@ def _testing_program():
         urgency=Urgency.LOW,
         tags=("deploy",),
     )
-    yield NotifyThread(thread_id=first.thread_id or first.notification_id, message="Reviewer assigned")
+    yield NotifyThread(
+        thread_id=first.thread_id or first.notification_id, message="Reviewer assigned"
+    )
     acknowledged = yield Acknowledge(notification_id=first.notification_id, timeout=0.1)
     return first, acknowledged
 
@@ -89,9 +91,8 @@ def _testing_program():
 def test_testing_handler_collects_notifications_in_memory() -> None:
     handler, notifications = build_testing_handler(auto_acknowledge=True)
 
-    result = run(
+    result = run_with_defaults(
         handler(_testing_program()),
-        handlers=default_handlers(),
     )
 
     assert _is_ok(result)
@@ -124,7 +125,9 @@ def _logging_program():
         metadata={"budget": "marketing"},
         link="https://example.local/budget",
     )
-    yield NotifyThread(thread_id=first.thread_id or first.notification_id, message="Escalating to on-call")
+    yield NotifyThread(
+        thread_id=first.thread_id or first.notification_id, message="Escalating to on-call"
+    )
     acknowledged = yield Acknowledge(notification_id=first.notification_id, timeout=5.0)
     return first, acknowledged
 
@@ -139,9 +142,8 @@ def test_log_handler_emits_tell_events() -> None:
             return (yield Resume(k, None))
         yield Pass()
 
-    result = run(
+    result = run_with_defaults(
         _install_raw_handler(capture_tell_handler)(log_handler(_logging_program())),
-        handlers=default_handlers(),
     )
 
     assert _is_ok(result)

@@ -1,6 +1,5 @@
 """Tests for doeff-secret effects and built-in handlers."""
 
-
 import os
 import sys
 from pathlib import Path
@@ -18,7 +17,8 @@ from doeff_secret.testing import (  # noqa: E402
     in_memory_handlers,
 )
 
-from doeff import default_handlers, do, run  # noqa: E402
+from doeff import do  # noqa: E402
+from tests._run_helpers import run_with_defaults  # noqa: E402
 
 
 def _is_ok(run_result: Any) -> bool:
@@ -27,9 +27,8 @@ def _is_ok(run_result: Any) -> bool:
 
 
 def _run_with_handler(program, handler):
-    return run(
+    return run_with_defaults(
         handler(program),
-        handlers=default_handlers(),
     )
 
 
@@ -68,9 +67,10 @@ def test_in_memory_handlers_support_secret_crud() -> None:
 
 
 def test_in_memory_handler_delegates_when_stacked() -> None:
-    result = run(
-        env_var_handler(environ={})(in_memory_handler(seed_data={"db-password": "from-memory"})(_read_secret("db-password"))),
-        handlers=default_handlers(),
+    result = run_with_defaults(
+        env_var_handler(environ={})(
+            in_memory_handler(seed_data={"db-password": "from-memory"})(_read_secret("db-password"))
+        ),
     )
 
     assert _is_ok(result)
@@ -93,9 +93,8 @@ def test_env_var_handler_prefers_prefix_when_configured() -> None:
         "DB_PASSWORD": "unprefixed",
     }
 
-    result = run(
+    result = run_with_defaults(
         env_var_handler(environ=env, prefix="service")(_read_secret("db-password")),
-        handlers=default_handlers(),
     )
 
     assert _is_ok(result)
@@ -110,9 +109,8 @@ def test_in_memory_store_is_public_for_external_mocks() -> None:
 def test_env_var_handler_uses_raw_secret_id_when_enabled() -> None:
     env = {"db-password": "raw-name"}
 
-    result = run(
+    result = run_with_defaults(
         env_var_handler(environ=env, include_raw_secret_id=True)(_read_secret("db-password")),
-        handlers=default_handlers(),
     )
 
     assert _is_ok(result)
@@ -122,9 +120,8 @@ def test_env_var_handler_uses_raw_secret_id_when_enabled() -> None:
 def test_env_var_handler_can_read_process_environment(monkeypatch) -> None:
     monkeypatch.setenv("DB_PASSWORD", "from-process-env")
 
-    result = run(
+    result = run_with_defaults(
         env_var_handler(environ=os.environ)(_read_secret("db-password")),
-        handlers=default_handlers(),
     )
 
     assert _is_ok(result)

@@ -1,6 +1,5 @@
 """Tests for OpenRouter effect/handler modules."""
 
-
 import importlib
 import json
 from typing import Any
@@ -27,8 +26,9 @@ from doeff_openrouter.handlers import (
 )
 from pydantic import BaseModel
 
-from doeff import Delegate, Resume, default_handlers, do, run
+from doeff import Delegate, Resume, do
 from doeff import handler as _install_raw_handler
+from tests._run_helpers import run_with_defaults
 
 
 class StructuredPayload(BaseModel):
@@ -37,9 +37,8 @@ class StructuredPayload(BaseModel):
 
 
 def _run_with_handler(program, handler):
-    return run(
+    return run_with_defaults(
         handler(program),
-        handlers=default_handlers(),
     )
 
 
@@ -213,9 +212,8 @@ def test_openrouter_handler_delegates_embedding_effects() -> None:
     def workflow():
         return (yield LLMEmbedding(input="hello", model="text-embedding-3-small"))
 
-    result = run(
+    result = run_with_defaults(
         _install_raw_handler(fallback)(openrouter_mock_handler(workflow())),
-        handlers=default_handlers(),
     )
 
     assert result.is_ok()

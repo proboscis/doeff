@@ -4,8 +4,9 @@ from typing import Any
 
 import pytest
 
-from doeff import Ask, AskEffect, Effect, Pass, Resume, default_handlers, do, run
+from doeff import Ask, AskEffect, Effect, Pass, Resume, do
 from doeff import handler as _install_raw_handler
+from tests._run_helpers import run_with_defaults
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -41,9 +42,8 @@ def test_withhandler_basic_effect_pipeline_with_mock_handler():
             return (yield Resume(k, f"mock-{effect.key}"))
         return (yield Pass())
 
-    result = run(
+    result = run_with_defaults(
         _install_raw_handler(mock_handler)(_test_target_pipeline()),
-        handlers=default_handlers(),
     )
 
     assert result.value == {"alpha": "alpha", "beta": "beta", "gamma": "mock-gamma"}
@@ -62,9 +62,10 @@ def test_withhandler_nesting_inner_handler_overrides_outer_handler():
             return (yield Resume(k, "inner-mock"))
         return (yield Pass())
 
-    result = run(
-        _install_raw_handler(outer_handler)(_install_raw_handler(inner_handler)(_nested_ask_program())),
-        handlers=default_handlers(),
+    result = run_with_defaults(
+        _install_raw_handler(outer_handler)(
+            _install_raw_handler(inner_handler)(_nested_ask_program())
+        ),
     )
 
     assert result.value == ("outer-outer", "inner-mock")
@@ -80,9 +81,8 @@ def test_withhandler_error_propagation_from_handler():
             raise HandlerFailure("mock handler failure for explode")
         return (yield Pass())
 
-    result = run(
+    result = run_with_defaults(
         _install_raw_handler(failing_handler)(_single_ask_program("explode")),
-        handlers=default_handlers(),
     )
 
     assert result.is_err()
@@ -101,9 +101,8 @@ def test_withhandler_delegate_passthrough_uses_default_reader():
             seen_keys.append(effect.key)
         return (yield Pass())
 
-    result = run(
+    result = run_with_defaults(
         _install_raw_handler(delegating_handler)(_single_ask_program("service_name")),
-        handlers=default_handlers(),
         env={"service_name": "doeff-test-target"},
     )
 
@@ -121,15 +120,15 @@ def test_withhandler_resume_supports_various_value_types():
     ]
 
     for sample_value in sample_values:
+
         @do
         def typed_mock_handler(effect: Effect, k, sample_value=sample_value):
             if isinstance(effect, AskEffect):
                 return (yield Resume(k, sample_value))
             return (yield Pass())
 
-        result = run(
+        result = run_with_defaults(
             _install_raw_handler(typed_mock_handler)(_single_ask_program("any-key")),
-            handlers=default_handlers(),
         )
 
         assert result.value == sample_value
