@@ -78,7 +78,29 @@
        (setv plugin (.read-text (/ root "packages/doeff-adr/src/doeff_adr/pytest_plugin.py")
                                 :encoding "utf-8"))
        (assert (in "def default_scope_wiring(" plugin)
-               "plugin の口 default_scope_wiring が消えている — ADR-DOE-ADR-001 R5"))]
+               "plugin の口 default_scope_wiring が消えている — ADR-DOE-ADR-001 R5"))
+     (deftest test-adr-doe-adr-001-law-and-code-name-the-same-two-kinds
+       ;; R1 + law every-gate-owned-file-is-collected の外延 pin。
+       ;; 2026-09-19 実弾: plugin は pytest の python_files に一致する .py も
+       ;; 測り始めたのに、法の主語は「実行可能 ADR」のままだった。法より広い
+       ;; enforcement は、次に読む人が law を読んで code の挙動を取り違える形で
+       ;; 効き続ける(現に「R1 の改訂だから触れない」と読まれた)。
+       (import doeff-adr.registry [get-adr])
+       (import pathlib [Path])
+       (setv root (get (. (Path __file__) parents) 2))
+       (setv plugin (.read-text (/ root "packages/doeff-adr/src/doeff_adr/pytest_plugin.py")
+                                :encoding "utf-8"))
+       (assert (in "python_files" plugin)
+               "plugin が pytest の python_files を測らなくなった — code を狭めるなら法(R1・law)を同じ commit で狭めること")
+       (setv spec (get-adr "ADR-DOE-ADR-001"))
+       (setv r1 (next (gfor rule (. spec decision)
+                            :if (= (.get rule "id") "R1")
+                            (.get rule "text"))))
+       (assert (in "python_files" r1)
+               "R1 の主語が plugin より狭い — code は defadr_*.hy と pytest の python_files の 2 種を測っている")
+       (setv statements (.join "\n" (gfor law (. spec laws) (.get law "statement" ""))))
+       (assert (in "gate_owned_file" statements)
+               "law の主語が実行可能 ADR だけのまま — 門が受け持つ 2 種を名乗ること"))]
   :plans ["packages/doeff-adr/tests/test_wiring.py"
           "packages/doeff-adr/README.md"
           "tests/test_adr_wiring_gate.py"

@@ -232,6 +232,110 @@ def test_wiring_exclude_declares_files_that_must_never_be_collected(
     assert "test_orphan.py" not in _combined_output(result)
 
 
+WIRING_FOLD_SHOWN = 5
+
+
+def _make_orphan_python_tests(pytester: pytest.Pytester, tree: str, count: int) -> list[str]:
+    """``count`` unwired Python test files — the report at repository scale."""
+    parts: list[str] = []
+    for part in tree.split("/"):
+        parts.append(part)
+        pytester.mkdir("/".join(parts))
+    created: list[str] = []
+    for index in range(count):
+        stem = f"{tree}/test_orphan_{index:02d}"
+        pytester.makefile(".py", **{stem: "def test_orphan():\n    assert True\n"})
+        created.append(f"{stem}.py")
+    return created
+
+
+def _listed_paths(output: str) -> list[str]:
+    return [
+        line.strip()[2:]
+        for line in output.splitlines()
+        if line.strip().startswith("- ") and line.strip().endswith((".py", ".hy"))
+    ]
+
+
+def test_warn_message_folds_a_long_uncollected_list(
+    pytester: pytest.Pytester,
+) -> None:
+    # The report is drawn on every run, and one uncollected file per unwired
+    # test file means the list is the size of the repository: doeff measured 405
+    # path lines (378 .py + 27 .hy) on every focused `pytest tests/test_one.py`
+    # once the second file kind joined the walk (2026-09-19). Folding is a
+    # property of the *drawing* only — the verdict (non-empty uncollected =>
+    # report, R1/R2) is untouched, and the full list stays one flag away.
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+        """
+    )
+    _make_smoke_test(pytester)
+    created = _make_orphan_python_tests(pytester, "packages/pkg/tests", 12)
+
+    result: pytest.RunResult = pytester.runpytest("-q")
+
+    result.assert_outcomes(passed=1, warnings=1)
+    output: str = _combined_output(result)
+    assert f"warning: {len(created)} files" in output
+    assert len(_listed_paths(output)) == WIRING_FOLD_SHOWN
+    assert f"{len(created) - WIRING_FOLD_SHOWN} more" in output
+    assert "--doeff-adr-wiring=strict" in output
+
+
+def test_strict_message_enumerates_every_uncollected_file(
+    pytester: pytest.Pytester,
+) -> None:
+    # law strict-wiring-fails-closed: strict is the CI mouth and owes every path
+    # it refuses on. Only the warn drawing folds.
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+        """
+    )
+    _make_smoke_test(pytester)
+    created = _make_orphan_python_tests(pytester, "packages/pkg/tests", 12)
+
+    result: pytest.RunResult = pytester.runpytest("-q", "--doeff-adr-wiring=strict")
+
+    assert result.ret != pytest.ExitCode.OK
+    output: str = _combined_output(result)
+    assert len(_listed_paths(output)) == len(created)
+    for path in created:
+        assert path in output
+
+
+def test_named_path_session_still_reports_uncollected_files(
+    pytester: pytest.Pytester,
+) -> None:
+    # R1's own counterexample is a named-path command ("CI が tests だけを明示して
+    # docs/adr を走査しない"): a session that chose its own paths is where the
+    # rule's failure lives, so the report must speak there too. R5's
+    # NotDefaultScope governs the in-session gate *test's* verdict (a narrow
+    # session may not call the default scope green), which is a different
+    # question from whether the session may report what it did not reach. What
+    # the drawing owes such a session is the reason its list is long.
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        testpaths = ["tests", "docs/adr"]
+        """
+    )
+    _make_smoke_test(pytester)
+    _make_executable_adr(pytester, "WIRING-NAMED")
+
+    result: pytest.RunResult = pytester.runpytest("-q", "tests/test_smoke.py")
+
+    result.assert_outcomes(passed=1, warnings=1)
+    output: str = _combined_output(result)
+    assert "doeff-adr wiring verification warning" in output
+    assert "docs/adr/defadr_wiring_named.hy" in output
+    assert "collected the paths it was given" in output
+
+
 def test_default_scope_wiring_reports_python_test_file_outside_testpaths(
     pytester: pytest.Pytester,
 ) -> None:
