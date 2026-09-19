@@ -5,6 +5,8 @@ Tests:
   2. lazy clause in defk — same mechanism
   3. <-> effectful threading macro
 """
+
+import sys
 from dataclasses import dataclass
 
 import pytest
@@ -18,6 +20,7 @@ from doeff import run as doeff_run
 
 # ── Test effects ──────────────────────────────────────────────────
 
+
 @dataclass(frozen=True)
 class FetchData(EffectBase):
     source: str
@@ -30,6 +33,7 @@ class Transform(EffectBase):
 
 
 # ── Helpers ───────────────────────────────────────────────────────
+
 
 def run_with(program, env=None, store=None):
     """Run a program with lazy_ask + state + scheduler."""
@@ -47,6 +51,7 @@ def run_with(program, env=None, store=None):
 # ═══════════════════════════════════════════════════════════════════
 # 1. lazy clause in defhandler — macro-level
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestLazyHandlerMacro:
     """Test lazy clause parsing and AST expansion in defhandler."""
@@ -90,7 +95,7 @@ class TestLazyHandlerMacro:
 (setv _result (doeff-run wrapped))
 (assert (= _result ["client:localhost:a" "client:localhost:b"]))
 """
-        hy.eval(hy.read_many(code), module=__name__)
+        hy.eval(hy.read_many(code), module=sys.modules[__name__])
         # Can't easily extract result from hy.eval in this pattern,
         # so test via direct module-level execution instead.
 
@@ -104,6 +109,7 @@ class TestLazyHandlerMacro:
         def handler_with_lazy(effect, k):
             """Simulates what the lazy macro should expand to."""
             from doeff.program import Pass, Resume
+
             if isinstance(effect, FetchData):
                 # --- This is what lazy macro should generate ---
                 cached = yield Get(f"{__name__}/handler_with_lazy/client")
@@ -136,6 +142,7 @@ class TestLazyHandlerMacro:
         @do
         def handler_with_lazy_none(effect, k):
             from doeff.program import Pass, Resume
+
             if isinstance(effect, FetchData):
                 cached = yield Get(f"{__name__}/handler/val")
                 if isinstance(cached, Some):
@@ -165,6 +172,7 @@ class TestLazyHandlerMacro:
 # 2. lazy clause in defhandler — full Hy macro integration
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestLazyHandlerHyIntegration:
     """Test that the actual defhandler lazy clause Hy macro works end-to-end."""
 
@@ -185,7 +193,7 @@ class TestLazyHandlerHyIntegration:
   (lazy greeting "hello")
   (Ping [] (resume greeting)))
 """
-        hy.eval(hy.read_many(code))
+        hy.eval(hy.read_many(code), module=sys.modules[__name__])
 
     def test_defhandler_lazy_with_effects(self):
         """Lazy init body can perform effects (Ask) for config."""
@@ -224,9 +232,11 @@ class TestLazyHandlerHyIntegration:
 (setv __test_result__ (doeff-run wrapped))
 """
         import types
+
         mod = types.ModuleType("_test_lazy_hy")
         mod.__file__ = "<test>"
         import sys
+
         sys.modules["_test_lazy_hy"] = mod
         try:
             hy.eval(hy.read_many(code), module=mod)
@@ -247,6 +257,7 @@ class TestLazyHandlerHyIntegration:
         @do
         def spy_state(effect, k):
             from doeff.program import Pass, Resume
+
             if isinstance(effect, Get):
                 observed_keys.append(effect.key)
                 result = yield Resume(k, None)
@@ -278,6 +289,7 @@ class TestLazyHandlerHyIntegration:
         mod = types.ModuleType("my_test_module")
         mod.__file__ = "<test>"
         import sys
+
         sys.modules["my_test_module"] = mod
         try:
             hy.eval(hy.read_many(code), module=mod)
@@ -299,6 +311,7 @@ class TestLazyHandlerHyIntegration:
 # ═══════════════════════════════════════════════════════════════════
 # 3. lazy clause in defk
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestLazyDefk:
     """Test lazy clause in defk."""
@@ -338,6 +351,7 @@ class TestLazyDefk:
         mod = types.ModuleType("_test_lazy_defk")
         mod.__file__ = "<test>"
         import sys
+
         sys.modules["_test_lazy_defk"] = mod
         try:
             hy.eval(hy.read_many(code), module=mod)
@@ -349,6 +363,7 @@ class TestLazyDefk:
 # ═══════════════════════════════════════════════════════════════════
 # 4. <-> effectful threading macro
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestThreadingMacro:
     """Test <-> effectful threading macro."""
@@ -393,6 +408,7 @@ class TestThreadingMacro:
         mod = types.ModuleType("_test_threading")
         mod.__file__ = "<test>"
         import sys
+
         sys.modules["_test_threading"] = mod
         try:
             hy.eval(hy.read_many(code), module=mod)
@@ -428,6 +444,7 @@ class TestThreadingMacro:
         mod = types.ModuleType("_test_threading_single")
         mod.__file__ = "<test>"
         import sys
+
         sys.modules["_test_threading_single"] = mod
         try:
             hy.eval(hy.read_many(code), module=mod)
@@ -465,6 +482,7 @@ class TestThreadingMacro:
         mod = types.ModuleType("_test_threading_two")
         mod.__file__ = "<test>"
         import sys
+
         sys.modules["_test_threading_two"] = mod
         try:
             hy.eval(hy.read_many(code), module=mod)
@@ -476,6 +494,7 @@ class TestThreadingMacro:
 # ═══════════════════════════════════════════════════════════════════
 # 5. lazy-val / lazy-var + set!
 # ═══════════════════════════════════════════════════════════════════
+
 
 def _hy_eval_in_module(code, mod_name):
     """Helper: eval Hy code in a fresh module, return the module."""
@@ -498,6 +517,7 @@ class TestLazyValVar:
     def test_lazy_val_is_alias_for_lazy(self):
         """(lazy-val name body) should work identically to (lazy name body)."""
         import sys
+
         # Build body separately to avoid defp issues
         code2 = """
 (require doeff-hy.macros [defp <-])
@@ -532,6 +552,7 @@ class TestLazyValVar:
     def test_lazy_var_with_set_bang(self):
         """lazy-var + set! should update both local and state."""
         import sys
+
         code = """
 (require doeff-hy.macros [defk defp <- set!])
 (require doeff-hy.handle [defhandler])
@@ -572,6 +593,7 @@ class TestLazyValVar:
     def test_lazy_var_set_bang_persists_across_calls(self):
         """set! on lazy-var should persist via state (not just local)."""
         import sys
+
         code = """
 (require doeff-hy.macros [defk defp <- set!])
 (require doeff-hy.handle [defhandler])
@@ -630,11 +652,12 @@ class TestLazyValVar:
     (resume x)))
 """
         with pytest.raises(Exception, match=r"lazy-val.*immutable|set!.*lazy-val"):
-            hy.eval(hy.read_many(code))
+            hy.eval(hy.read_many(code), module=sys.modules[__name__])
 
     def test_lazy_var_in_defk(self):
         """lazy-var + set! should work in defk context too."""
         import sys
+
         code = """
 (require doeff-hy.macros [defk defp <- set!])
 (import doeff [do :as _doeff-do EffectBase run :as doeff-run])

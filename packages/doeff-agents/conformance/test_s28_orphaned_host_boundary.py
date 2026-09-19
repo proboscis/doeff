@@ -47,6 +47,7 @@ from harness import (
     SESSIONHOST_BACKEND,
     AgentdHarness,
     kill_session_out_of_band,
+    require_binaries,
     resolve_agentd_bin,
     session_exists_out_of_band,
 )
@@ -101,9 +102,7 @@ def _read_json_line(proc: subprocess.Popen, timeout_s: float) -> dict:
     buffer = b""
     while time.monotonic() < deadline:
         if proc.poll() is not None and not buffer:
-            raise AssertionError(
-                f"child driver exited early rc={proc.returncode} before reporting"
-            )
+            raise AssertionError(f"child driver exited early rc={proc.returncode} before reporting")
         ready, _, _ = select.select([fd], [], [], 0.25)
         if not ready:
             continue
@@ -143,6 +142,11 @@ def test_s28a_daemon_and_agent_die_after_driver_sigkill() -> None:
     """Acceptance counterexample: SIGKILL the pytest-side driver (so the
     harness `__exit__` NEVER runs) and assert the daemon AND its parked
     conformance agent are gone within bounded time."""
+    # The child harness calls require_binaries() too, but its pytest.skip lands
+    # in a *subprocess* -- the parent only sees an empty pipe and reports
+    # "child driver never reported". Gate here so a machine without the
+    # multiplexer skips instead of failing.
+    require_binaries()
     if SESSIONHOST_BACKEND == "herdr":
         pytest.skip(
             "the pane-pid probe below is tmux-native (the boundary itself is"
@@ -159,10 +163,9 @@ def test_s28a_daemon_and_agent_die_after_driver_sigkill() -> None:
     info: dict | None = None
     try:
         info = _read_json_line(child, timeout_s=90.0)
-        assert "error" not in info, (
-            f"child driver failed to build the leak shape: {info}\n"
-            + Path(stderr_name).read_text(encoding="utf-8", errors="replace")
-        )
+        assert "error" not in info, f"child driver failed to build the leak shape: {info}\n" + Path(
+            stderr_name
+        ).read_text(encoding="utf-8", errors="replace")
         daemon_pid = int(info["daemon_pid"])
         session_id = str(info["session_id"])
 
@@ -195,8 +198,7 @@ def test_s28a_daemon_and_agent_die_after_driver_sigkill() -> None:
         )
         leaked = sorted(pid for pid in agent_pids if _alive(pid))
         assert not leaked, (
-            f"conformance agent processes leaked with the daemon gone: {leaked}\n"
-            f"{log_text}"
+            f"conformance agent processes leaked with the daemon gone: {leaked}\n{log_text}"
         )
         assert not session_exists_out_of_band(session_id), (
             f"mux session {session_id} leaked past the boundary\n{log_text}"
@@ -277,9 +279,7 @@ def _spawn_bare_daemon_via_dying_parent(knob: str) -> tuple[int, str]:
     if "error" in info or child.returncode != 0:
         log_path = Path(runtime_dir) / "agentd.log"
         log_text = (
-            log_path.read_text(encoding="utf-8", errors="replace")
-            if log_path.exists()
-            else ""
+            log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else ""
         )
         shutil.rmtree(runtime_dir, ignore_errors=True)
         raise AssertionError(
@@ -319,9 +319,7 @@ def test_s28c_with_knob_daemon_self_evicts_after_parent_death() -> None:
             time.sleep(0.5)
         log_path = Path(runtime_dir) / "agentd.log"
         log_text = (
-            log_path.read_text(encoding="utf-8", errors="replace")
-            if log_path.exists()
-            else ""
+            log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else ""
         )
         assert not _alive(daemon_pid), (
             f"supervised daemon (pid {daemon_pid}) outlived its parent beyond"
