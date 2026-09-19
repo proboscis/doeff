@@ -1853,6 +1853,11 @@ METRIC_TURN_RECORD_SWEEP_SKIPPED = "agentd_turn_record_sweep_skipped"
 #: (粗さは N の単調な関数ではない — 依頼者の実測 2026-09-19: 載り 10 の Mac が 25.8 秒・載り 20 の pod が
 #: 2.5 秒。だから N は「原因」ではなく**同じ行に居る観測**として持つ)。
 METRIC_TICK_MS = "agentd_tick_ms"
+#: 実況の push が「どの機体が押したか」を名乗る header(card acp:kanban-issue:ki-6eb745f6d528・依頼者の便
+#: 2026-09-19 lt-BM9E73V8EWSK72K9E0JMQ1RXPT)。ACP 側の acp_stream_push_interval_seconds は「26 秒」とは
+#: 言えても「どの機体が」とは言えない —— 中継は store を読めない(ACP 法 fabff2)ので行から node を引くことも
+#: できない。だから押す側が名乗る。⚠ 綴りの写しは ACP 側(Acp.App.Server の push の口)に 1 つ在る。
+STREAM_SOURCE_HEADER = "X-Acp-Stream-Source"
 #: 拍の腕の名(計器 agentd_tick_ms の欄・順は拍の中で通る順)。閉語彙 1 点 —— 腕を足す日はここと
 #: agentd.agentd-tick の計りが同じ commit で動き、検 test_agentd_tick_emits_one_metric_line_with_the_arm_split
 #: が「腕の和 = 拍の総所要」で名の無い仕事を許さない。
