@@ -4902,10 +4902,13 @@ rules:
     message: >
       agentd の外向きの HTTP は host ごとに保った接続で撃つ
       (handlers.HttpConnections — 壊れたら 1 度だけ張り直す)。
-      urllib.request.urlopen は呼び毎に TCP を張り直すので、1 拍 約 35 往復 ×
-      11 ms(cluster の中の実測の 1 往復 p50・server 側の処理は 0.17 ms・Mac は
-      tailnet の RTT でさらに重い)がそのまま拍の周期になる — 手番 20 本の agentd で
-      拍の周期 p50 1.243 秒・frame の at から面の着まで p50 0.554 秒
+      urllib.request.urlopen は呼び毎に TCP を張り直す = 1 発ごとに名前を引き直す
+      ので、その名引きがそのまま拍の周期になる。実射(2026-09-19・同じ宿・n=9・
+      中央値): この宿は ndots:5 + search 4 つで、点で終わらない綴りは探索の列を歩き
+      名引きだけで 23.61 ms・全体 25.20 ms の 94 %(server 側の処理は 0.17 ms)。
+      保った接続は名引きを接続 1 本につき 1 度に畳んで 1 発 0.46 ms —— 1 拍 約 35 往復で
+      0.882 秒 → 0.016 秒。手番 20 本の agentd で拍の周期 p50 1.243 秒・frame の at から
+      面の着まで p50 0.554 秒
       (card acp:kanban-issue:ki-6eb745f6d528・ADR-DOE-AGENTS-012 R22)。
     patterns:
       - pattern: urllib.request.urlopen(...)
