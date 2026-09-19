@@ -4761,6 +4761,18 @@
   (replace state :jobs (tuple (+ kept [job]))))
 
 
+(defk job-in-flight [state job-id]
+  {:pre [(: state AgentdState) (: job-id str)]
+   :post [(: % (| InFlightJob None))]}
+  "memory の手番を id で引く(無ければ None)。拍の 2 周目が 1 周目の後の姿を読む 1 点 —— 1 周目で閉じた
+  (without-job された)job は None で、2 周目は飛ばす(card acp:kanban-issue:ki-6eb745f6d528)。"
+  (setv found None)
+  (for [job state.jobs]
+    (when (= job.job-id job-id)
+      (setv found job)))
+  found)
+
+
 (defk in-flight-ids [state]
   {:pre [(: state AgentdState)]
    :post [(: % set)]}

@@ -1472,8 +1472,10 @@ def test_one_job_failure_does_not_stop_the_heartbeat_or_other_jobs() -> None:
     assert still.status is not None
     assert still.status["phase"] == PHASE_RUNNING
     assert [job.job_id for job in world.state.jobs] == ["s-a"]
+    # R22 の追補(card acp:kanban-issue:ki-6eb745f6d528): 器の眺めは拍の 1 周目(live tail)で読む —
+    # その job はその縁で切れ、2 周目に載らない(他の job の実況も遅い腕も進む)。
     assert any(
-        line == "agentd: job s-a tick failed: RuntimeError: socket reset"
+        line == "agentd: job s-a live tail failed: RuntimeError: socket reset"
         for line in world.local.logs
     )
     del world.sessions.failures[world.sid("s-a")]
@@ -4770,7 +4772,12 @@ def test_acp_writes_put_the_fingerprint_header_only_on_the_writes_that_carry_it(
     seen: list[dict[str, str]] = []
 
     def fake_http(
-        method: str, url: str, headers: Mapping[str, str], body: JSON, timeout: float
+        connections: handlers.HttpConnections,
+        method: str,
+        url: str,
+        headers: Mapping[str, str],
+        body: JSON,
+        timeout: float,
     ) -> handlers.HttpReply:
         seen.append(dict(headers))
         return handlers.HttpReply(200, {"eventId": "ev-1"})
@@ -4795,7 +4802,6 @@ def test_acp_history_reads_name_one_conversation_with_the_field_selector(monkeyp
     spec.conversationId の field selector を 1 回、郵便は spec.to と spec.from を 1 回ずつ撃ち、同じ行(自分宛の自分の
     郵便)は鍵で 1 つにする。kind の全量の読み(field selector の無い URL)は撃たない。"""
     import urllib.parse
-    import urllib.request
 
     from doeff_agents.sessionhost.acp.effects import AcpConversationMail, AcpTurnHeadlines
 
@@ -4820,26 +4826,23 @@ def test_acp_history_reads_name_one_conversation_with_the_field_selector(monkeyp
     }
     urls: list[str] = []
 
-    class Reply:
-        def __init__(self, body: bytes) -> None:
-            self.body = body
+    class FakeConnections:
+        """保つ口(handlers.HttpConnections)の代わり — 撃った URL を順に数える。"""
 
-        def read(self) -> bytes:
-            return self.body
+        def request(
+            self,
+            method: str,
+            url: str,
+            headers: Mapping[str, str],
+            body: bytes | None,
+            timeout: float,
+        ) -> handlers.HttpRaw:
+            urls.append(url)
+            selector = urllib.parse.unquote(url.split("fieldSelector=", 1)[1])
+            return handlers.HttpRaw(200, json.dumps(answers[selector]).encode("utf-8"), "")
 
-        def __enter__(self) -> "Reply":
-            return self
-
-        def __exit__(self, *exc: object) -> None:
-            return None
-
-    def fake_urlopen(request: urllib.request.Request, timeout: float) -> Reply:
-        urls.append(request.full_url)
-        selector = urllib.parse.unquote(request.full_url.split("fieldSelector=", 1)[1])
-        return Reply(json.dumps(answers[selector]).encode("utf-8"))
-
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     acp = handlers.AcpHttp("http://acp.test", "tok")
+    monkeypatch.setattr(acp, "_http", FakeConnections())
     mail = acp._read(AcpConversationMail(conversation_id=cid))
     headlines = acp._read(AcpTurnHeadlines(conversation_id=cid))
     assert isinstance(mail, tuple)
@@ -5339,7 +5342,12 @@ def test_borrow_takes_the_voucher_to_the_worker_and_the_token_never_touches_the_
     seen: list[tuple[str, str, JSON]] = []
 
     def fake_http(
-        method: str, url: str, headers: Mapping[str, str], body: JSON, timeout: float
+        connections: handlers.HttpConnections,
+        method: str,
+        url: str,
+        headers: Mapping[str, str],
+        body: JSON,
+        timeout: float,
     ) -> handlers.HttpReply:
         seen.append((method, url, body))
         if url.endswith("/lease/claude"):
@@ -5365,7 +5373,12 @@ def test_borrow_refuses_when_the_voucher_cannot_be_redeemed(monkeypatch: pytest.
     """引換券を札に換えられない拍(worker 不達・期限切れ・別の借り手)は断り — 貸与の hold は master の答えから運ぶ。"""
 
     def fake_http(
-        method: str, url: str, headers: Mapping[str, str], body: JSON, timeout: float
+        connections: handlers.HttpConnections,
+        method: str,
+        url: str,
+        headers: Mapping[str, str],
+        body: JSON,
+        timeout: float,
     ) -> handlers.HttpReply:
         if url.endswith("/lease/claude"):
             return handlers.HttpReply(200, _lease_answer())
@@ -5388,7 +5401,12 @@ def test_borrow_names_the_pod_by_its_service_account_token_to_master_and_worker(
     seen: list[tuple[str, dict[str, str]]] = []
 
     def fake_http(
-        method: str, url: str, headers: Mapping[str, str], body: JSON, timeout: float
+        connections: handlers.HttpConnections,
+        method: str,
+        url: str,
+        headers: Mapping[str, str],
+        body: JSON,
+        timeout: float,
     ) -> handlers.HttpReply:
         seen.append((url, dict(headers)))
         if url.endswith("/lease/claude"):
@@ -5430,7 +5448,12 @@ def test_borrow_with_a_declared_but_unreadable_service_account_token_refuses_wit
     seen: list[dict[str, str]] = []
 
     def fake_http(
-        method: str, url: str, headers: Mapping[str, str], body: JSON, timeout: float
+        connections: handlers.HttpConnections,
+        method: str,
+        url: str,
+        headers: Mapping[str, str],
+        body: JSON,
+        timeout: float,
     ) -> handlers.HttpReply:
         seen.append(dict(headers))
         return handlers.HttpReply(409, {"ok": False, "error": "held"})
