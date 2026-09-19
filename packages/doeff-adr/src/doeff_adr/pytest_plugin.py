@@ -103,10 +103,16 @@ class NotDefaultScope:
 WiringVerdict = WiringVerified | WiringUncollected | WiringWalkAborted
 
 # Wiring is a property of the collection *scope*, not of the selection: -k / -m /
-# --deselect drop items after collection, and an ADR they deselect was still
+# --deselect drop items after collection, and a file they deselect was still
 # reached (the canonical doeff gate itself runs with ``-m 'not e2e'``). The files
 # are therefore snapshotted before any deselection hook runs.
 _COLLECTED_FILES_KEY = pytest.StashKey[frozenset[Path]]()
+# Every file the collection *reached*, whether or not items came out of it.
+# Item count is the wrong measure for the same reason selection is: a module
+# with a top-level ``pytest.importorskip`` yields zero items wherever the
+# optional dependency is missing, so an item-based verdict would call a
+# correctly wired tree mis-wired on one machine and not another.
+_REACHED_FILES_KEY = pytest.StashKey[set[Path]]()
 # One measurement per session: the collection-finish report and an in-session
 # gate test read the same verdict instead of walking rootdir twice.
 _WIRING_VERDICT_KEY = pytest.StashKey[WiringVerdict]()
@@ -153,6 +159,13 @@ def pytest_collect_file(file_path: Any, parent: pytest.Collector) -> pytest.Coll
     if not _should_collect_hy_file(path, parent.config):
         return None
     return DoeffAdrHyFile.from_parent(parent, path=path)
+
+
+def pytest_collectstart(collector: pytest.Collector) -> None:
+    if not isinstance(collector, pytest.File):
+        return
+    reached = collector.config.stash.setdefault(_REACHED_FILES_KEY, set())
+    reached.add(Path(collector.path).resolve())
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -324,10 +337,11 @@ def _measure_wiring(session: pytest.Session) -> WiringVerdict:
 
 
 def _collected_files(session: pytest.Session) -> frozenset[Path]:
+    reached = session.config.stash.get(_REACHED_FILES_KEY, set())
     snapshot = session.config.stash.get(_COLLECTED_FILES_KEY, None)
-    if snapshot is not None:
-        return snapshot
-    return frozenset(Path(item.path).resolve() for item in session.items)
+    if snapshot is None:
+        snapshot = frozenset(Path(item.path).resolve() for item in session.items)
+    return frozenset(reached | set(snapshot))
 
 
 def _wiring_verdict(
