@@ -26,7 +26,7 @@
 
 (require doeff-hy.macros [defk <-])
 
-(import doeff_agents.sessionhost.policy [seat-env-credential-shaped-offenders session-env-admission-error])
+(import doeff_agents.sessionhost.policy [session-env-admission-error])
 
 (import doeff_agents.sessionhost.acp.effects [
   ACP-TOKEN-FILE-ENV
@@ -692,15 +692,17 @@
    ValueError(どちらが勝つかを黙って決めない)/ 値は最初の `=` の後を**逐語** — 引用の剥がしも `${}` の
    展開もしない(第 2 の置換の言語を作らない)。
 
-   参加の門(fail-closed): 解いた表が
-     (a) binding 所有の auth env / 従量課金の資格の形(policy.session-env-admission-error の 1 点 —
-         launch と session.send の口が通るのと同じ関所)
-     (b) 資格の形の綴り(policy.seat-env-credential-shaped-offenders — `*_KEY` / `*_TOKEN` / `*SECRET*` 等)
-     (c) 会話の身元が所有する名(effects.CONVERSATION-ID-ENV / SEAT-OPENER-ENV)
-   のどれかに当たれば ValueError(参加しない)。⚠ (b) は語彙ではなく**形**で締める — doeff は席の道具の
-   宛先の綴りを 1 つも知らないまま、この口が資格の輸送路に化ける形だけを構造で塞ぐ(ADR-DOE-AGENTS-004
-   R30 (4) / ACP 法 11d8cc 反例 7 が別の path で戻らない側)。札は家の既定の置き場への file の mount が
-   唯一の形で、この口は宛先だけを運ぶ。"
+   参加の門(fail-closed)は**家の関所を 1 点のまま再利用する**: 解いた表を
+   policy.session-env-admission-error(launch の口と session.send の口が通るのと同じ 1 点 —
+   「運ぶ口が増えても判定を並行実装しない」がその docstring)へ
+   通し(verb は `join.seat_env` — 既存の `session.launch` / `session.send` と同じ流儀)、
+   断りの文が返れば ValueError(参加しない)。⚠ **第 2 の関所を立てない**: 資格の判定を
+   join.hy へ写すと、判定点が 2 つになって片方だけが育つ(policy.hy の関所は binding 所有の
+   auth env〔CLAUDE_CONFIG_DIR / CODEX_HOME〕と従量課金の形〔正規化して `_API_KEY` で終わる名と
+   既知の別名〕を、名の形ちょうどで断る)。これは贈り物でもある — CLAUDE_CONFIG_DIR が断られるので、
+   node 全体の宣言で会話ごとの家を上書きする道が門の側からも塞がる。
+   加えて、会話の身元が所有する名(effects.CONVERSATION-ID-ENV / SEAT-OPENER-ENV)は断る
+   (置く点は手番ごとの judgment.charter-with-conversation-env の 1 点)。"
   (setv where f"[{TABLE-AGENTD}].{KEY-SEAT-ENV}")
   (setv pairs [])
   (setv seen [])
@@ -720,15 +722,10 @@
       (raise (ValueError f"{where} に同じ名が 2 度: {name !r}(どちらが勝つかを黙って決めない)")))
     (.append seen name)
     (.append pairs #(name value)))
-  (setv table (dict pairs))
-  (setv admission (session-env-admission-error table where))
+  ;; 資格の関所は家の 1 点(policy)— ここに第 2 の判定を写さない(R30 (4)・R51 (1))。
+  (setv admission (session-env-admission-error (dict pairs) "join.seat_env"))
   (when (is-not admission None)
     (raise (ValueError admission)))
-  (setv shaped (seat-env-credential-shaped-offenders table))
-  (when shaped
-    (raise (ValueError (+ f"{where} は宛先を運ぶ口で、資格の輸送路ではない(資格の形の名: "
-                          f"{(.join ", " shaped)})。札は家の既定の置き場への file の mount で置き、"
-                          "env では渡さない(ADR-DOE-AGENTS-004 R30 (4)・ACP 法 11d8cc)"))))
   (setv owned (sorted (lfor name seen :if (in name #{CONVERSATION-ID-ENV SEAT-OPENER-ENV}) name)))
   (when owned
     (raise (ValueError (+ f"{where} は会話の身元の名を宣言できない({(.join ", " owned)})— "
