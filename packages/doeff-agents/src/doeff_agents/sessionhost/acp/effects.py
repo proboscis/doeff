@@ -749,6 +749,14 @@ class Places:
     """機体が仕える置き場の集合の宣言(join.places-of の答え — 検を通った語を宣言の順・重複なしで運ぶ・段 11 lane 11u)。"""
 
     words: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SeatEnv:
+    """席へ運ぶ env の宣言(join.seat-env-of の答え — 参加の門を通った対を宣言の順・重複なしで運ぶ・
+    段 12・agora-redesign #520)。Places / WorkRoots と同じ形の器で、値の**語彙は持たない**。"""
+
+    pairs: tuple[tuple[str, str], ...]
 #: 置き場の集合の env(join が宣言 file の [agentd].places / flag --places から , 区切りで据える — 段 11 lane 11u)。
 #: 無い agentd は参加しない。1 値の DOEFF_AGENTD_PLACE(段 10 lane 10d 便 2)は退役。
 PLACES_ENV = "DOEFF_AGENTD_PLACES"
@@ -797,6 +805,15 @@ DECLARATION_FINGERPRINT_HEADER = "x-declaration-sha256"
 #: 置く点は judgment.charter-with-conversation-env の 1 点(incarnation-charter-of が呼ぶ — launch / resume / rehydrate)。
 CONVERSATION_ID_ENV = "AGORA_CONVERSATION_ID"
 SEAT_OPENER_ENV = "AGORA_SEAT_OPENER"
+#: agora-redesign #520(段 12・既知の形 = kubelet が node 局所の宣言の表を workload の env へ具現化する): 機体の参加の宣言
+#: (join の [agentd].seat_env — 改行区切りの `NAME=value` の行)が名乗った、席へ運ぶ env の対。join が解いて JoinSpec →
+#: この env(同じ改行区切りの形)→ AgentdSettings.seat_env → charter.session_env(judgment.charter-with-seat-env の 1 点)。
+#: ⚠ doeff は値の**語彙を知らない**(宛先の綴りは宣言の側 = ACP の ConfigMap と読み手 dotfiles が持つ)— ここは写しを運ぶ口で、
+#: 第 2 の既定を doeff に作らない。継承の名簿(policy.SPAWN_INHERITED_ENV_KEYS)は 1 語も開けない: 席が機体の env を継ぐ形
+#: (実弾 #95)はそのまま締めたまま、**宣言された値だけ**が charter を通って届く。
+SEAT_ENV_ENV = "DOEFF_AGENTD_SEAT_ENV"
+#: seat_env の宣言の行の区切り(宣言 file と env の両方で同じ 1 つの綴り — 読みは join.seat-env-of の 1 点)。
+SEAT_ENV_SEPARATOR = "\n"
 HOST_BACKEND_ENV = "DOEFF_SESSIONHOST_BACKEND"
 HEADLESS_DIR_ENV = "DOEFF_SESSIONHOST_HEADLESS_DIR"
 SESSION_HOOKS_ENV = "DOEFF_AGENTD_SESSION_HOOKS"
@@ -940,6 +957,10 @@ class JoinSpec:
     #: agentd は AGENTD_REVISION_UNSTAMPED / AGENTD_BUILD_LOCAL を名乗る)。
     revision: str | None = None
     build: str | None = None
+    #: 席へ運ぶ env の対(agora-redesign #520 — 宣言 file の [agentd].seat_env・宣言の順・重複なし)。空 = 宣言しない
+    #: (今日どおりの機体 — env SEAT_ENV_ENV に現れない)。⚠ 資格の形の名と会話の身元の名は join.seat-env-of の門が
+    #: 断る(参加しない)ので、ここは検を通った宛先の対を運ぶ欄。
+    seat_env: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1170,6 +1191,10 @@ class AgentdSettings:
     #: read_secret_file で読む)を渡し、判断は join.custody-borrower-of の 1 点。None = 名乗らない
     #: (node の spec に欄を書かない —— 配車は node 名で束ねる = この軸が無かった時と同じ)。
     custody_borrower: str | None = None
+    #: 席へ運ぶ env の対(agora-redesign #520 — join が据えた SEAT_ENV_ENV の写し・読みは join.seat-env-of の 1 点)。
+    #: 空 = 宣言しない(手番の charter に欄が増えない = 今日どおり)。起こす手番の charter.session_env へ
+    #: judgment.charter-with-seat-env が重ねる(会話の身元より**先** — 宣言は身元を偽れない)。
+    seat_env: tuple[tuple[str, str], ...] = ()
     #: host の backend(wire の閉語彙 tmux | herdr | headless の写し — agentd が読む語は
     #: BACKEND_HEADLESS だけ)。composition root(runtime.settings_from_env)が host の argv / env
     #: (valve.backend_of)から導く 1 点で、stream_capability も同じ源から導く。headless の器は

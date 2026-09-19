@@ -525,6 +525,30 @@
   "session_env に居てはならない provider の鍵・札の綴りの列挙(純粋の 1 点)。"
   (env-offenders-against session-env PROVIDER-AUTH-ENV-KEYS))
 
+;; 席へ運ぶ宣言の env(agora-redesign #520 — join の [agentd].seat_env)が **資格の輸送路に化けない**
+;; ための締め出し。判定は語彙ではなく**形**: doeff は ACP_BASE も AGORA_BRAIN_URL も知らないまま
+;; (宛先の綴りの定義点は宣言の側)、「これは鍵・札・秘密だ」と読める綴りだけを構造で塞ぐ。
+;; 根 = ADR-DOE-AGENTS-004 R30 (4) / ACP 法 11d8cc 反例 7(札を容器の env で席へ渡す形)。札は
+;; **file の mount** で家の既定の置き場に置くのが唯一の形で、宣言の env は宛先だけを運ぶ。
+;; 過剰包摂側へ倒す fail-closed: 資格でない `FOO_TOKEN` が弾かれたら起動の門で loud に見えて直せるが、
+;; 逆は黙って札が会話へ届く。
+(setv SEAT-ENV-CREDENTIAL-SHAPED-SUFFIXES
+      #("_KEY" "_KEY_FILE" "_KEY_PATH" "_TOKEN" "_TOKEN_FILE"))
+(setv SEAT-ENV-CREDENTIAL-SHAPED-WORDS #("SECRET" "PASSWORD" "CREDENTIAL"))
+
+(deff seat-env-credential-shaped-offenders [seat-env]
+  {:pre [(: seat-env dict)]
+   :post [(: % list)]}
+  "席へ運ぶ宣言の env に居てはならない『資格の形』の名の列挙(純粋の 1 点・綴りの正規化は
+   policy-normalized-env-key と同規約)。"
+  (sorted (lfor key (.keys seat-env)
+                :if (do (setv normalized (policy-normalized-env-key key))
+                        (or (any (gfor suffix SEAT-ENV-CREDENTIAL-SHAPED-SUFFIXES
+                                       (.endswith normalized suffix)))
+                            (any (gfor word SEAT-ENV-CREDENTIAL-SHAPED-WORDS
+                                       (in word normalized)))))
+                key)))
+
 ;; ---------------------------------------------------------------------------
 ;; billing class(2026-09: 従量課金の資格を「宣言して」受ける経路 —
 ;; ADR-DOE-AGENTS-004 R9 改訂 / law

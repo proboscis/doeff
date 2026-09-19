@@ -26,12 +26,18 @@
 
 (require doeff-hy.macros [defk <-])
 
+(import doeff_agents.sessionhost.policy [seat-env-credential-shaped-offenders session-env-admission-error])
+
 (import doeff_agents.sessionhost.acp.effects [
   ACP-TOKEN-FILE-ENV
   ACP-URL-ENV
   ACP-VALVE-ENV
   BORROWER-KEY-PATH-ENV
   CUSTODY-SA-TOKEN-PATH-ENV
+  CONVERSATION-ID-ENV
+  SEAT-OPENER-ENV
+  SEAT-ENV-ENV
+  SEAT-ENV-SEPARATOR
   DECLARATION-SHA256-ENV
   WORK-ROOTS-ENV
   WORK-ROOTS-MAX
@@ -51,6 +57,7 @@
   CUSTODY-SA-NAMESPACE-CLAIM
   CUSTODY-SA-NAME-CLAIM
   Places
+  SeatEnv
   AGENTD-PLACES
   CAPACITY-ENV
   DRAIN-SECONDS-ENV
@@ -134,6 +141,11 @@
 ;; 段 12 lane 12j(agora-redesign #367): agentd の版の刻印(任意)— 据え付けの側が書く(git sha と image の tag か local)。
 (setv KEY-REVISION "revision")
 (setv KEY-BUILD "build")
+;; 席へ運ぶ env の宣言(agora-redesign #520・任意)— 改行区切りの `NAME=value` の行を 1 つの文字列に詰める
+;; (places / work_roots と同じ作法。`declared-values-of` の不変条件「宣言 file の値は全部文字列」を割らないため、
+;; 表〔dict〕にはしない)。この鍵を知らない agentd は「宣言に無い鍵」で参加を断る(fail-closed — 旧い機体は
+;; 宣言された宛先を黙って落とさない)。
+(setv KEY-SEAT-ENV "seat_env")
 ;; 従量課金の binding kind を受けるか(従量課金の便 lane A・任意・既定 false)。
 ;; 閉語彙 "true" | "false" の文字列 — 宣言 file の値は全部文字列(declared-values-of の
 ;; 1 つの不変条件)なので、bool を 1 つだけ足して読み手に 2 つ目の型の分岐を作らない。
@@ -148,7 +160,7 @@
 ;; 表 → 許す鍵(宣言に無い鍵は誤りとして名指す — 黙って読み飛ばさない)。
 (setv AGENTD-KEYS #{KEY-SERVER KEY-TOKEN-FILE KEY-NODE-NAME KEY-STATE-DIR KEY-BACKEND
                     KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY KEY-PLACES KEY-WORK-ROOTS KEY-DRAIN-SECONDS
-                    KEY-ALLOW-METERED-BILLING KEY-REVISION KEY-BUILD})
+                    KEY-ALLOW-METERED-BILLING KEY-REVISION KEY-BUILD KEY-SEAT-ENV})
 (setv CUSTODY-KEYS #{KEY-CUSTODY-URL KEY-BORROWER-KEY-FILE KEY-SERVICE-ACCOUNT-TOKEN-FILE})
 (setv RECORD-KEYS #{KEY-RECORD-URL})
 ;; flag の綴り(`--config` は composition root が先に読む — config-path-of)。
@@ -667,6 +679,63 @@
   (= word "true"))
 
 
+(defk seat-env-of [text]
+  {:pre [(: text (| str None))]
+   :post [(: % SeatEnv)]}
+  "席へ運ぶ env の宣言の読み(段 12・agora-redesign #520・既知の形 = kubelet が node 局所の宣言を workload の env へ
+   具現化する〔k3s の config.yaml → kubelet → 容器の env / systemd の EnvironmentFile=〕): 宣言 file の
+   [agentd].seat_env(改行区切りの `NAME=value` の行)→ SeatEnv(#(名 値) の tuple・宣言の順)。
+   無い・空 = 空の SeatEnv(宣言しない機体は今日どおり)。
+
+   規則: 行の前後の空白は落とす / 空行と `#` で始まる行は飛ばす / `=` の無い行は ValueError /
+   名が空・`[A-Za-z_][A-Za-z0-9_]*` の外(`NAME = value` の空白も形の外)は ValueError / 同じ名が 2 度は
+   ValueError(どちらが勝つかを黙って決めない)/ 値は最初の `=` の後を**逐語** — 引用の剥がしも `${}` の
+   展開もしない(第 2 の置換の言語を作らない)。
+
+   参加の門(fail-closed): 解いた表が
+     (a) binding 所有の auth env / 従量課金の資格の形(policy.session-env-admission-error の 1 点 —
+         launch と session.send の口が通るのと同じ関所)
+     (b) 資格の形の綴り(policy.seat-env-credential-shaped-offenders — `*_KEY` / `*_TOKEN` / `*SECRET*` 等)
+     (c) 会話の身元が所有する名(effects.CONVERSATION-ID-ENV / SEAT-OPENER-ENV)
+   のどれかに当たれば ValueError(参加しない)。⚠ (b) は語彙ではなく**形**で締める — doeff は席の道具の
+   宛先の綴りを 1 つも知らないまま、この口が資格の輸送路に化ける形だけを構造で塞ぐ(ADR-DOE-AGENTS-004
+   R30 (4) / ACP 法 11d8cc 反例 7 が別の path で戻らない側)。札は家の既定の置き場への file の mount が
+   唯一の形で、この口は宛先だけを運ぶ。"
+  (setv where f"[{TABLE-AGENTD}].{KEY-SEAT-ENV}")
+  (setv pairs [])
+  (setv seen [])
+  (for [raw (.split (if (is text None) "" text) SEAT-ENV-SEPARATOR)]
+    (setv line (.strip raw))
+    (when (or (not line) (.startswith line "#"))
+      (continue))
+    (setv #(name separator value) (.partition line "="))
+    (when (not separator)
+      (raise (ValueError f"{where} の行は NAME=value であること(`=` が無い): {line !r}")))
+    (when (not (and name
+                    (.isascii name)
+                    (or (.isalpha (get name 0)) (= (get name 0) "_"))
+                    (all (gfor ch name (or (.isalnum ch) (= ch "_"))))))
+      (raise (ValueError f"{where} の名は [A-Za-z_][A-Za-z0-9_]* であること: {name !r}(行 {line !r})")))
+    (when (in name seen)
+      (raise (ValueError f"{where} に同じ名が 2 度: {name !r}(どちらが勝つかを黙って決めない)")))
+    (.append seen name)
+    (.append pairs #(name value)))
+  (setv table (dict pairs))
+  (setv admission (session-env-admission-error table where))
+  (when (is-not admission None)
+    (raise (ValueError admission)))
+  (setv shaped (seat-env-credential-shaped-offenders table))
+  (when shaped
+    (raise (ValueError (+ f"{where} は宛先を運ぶ口で、資格の輸送路ではない(資格の形の名: "
+                          f"{(.join ", " shaped)})。札は家の既定の置き場への file の mount で置き、"
+                          "env では渡さない(ADR-DOE-AGENTS-004 R30 (4)・ACP 法 11d8cc)"))))
+  (setv owned (sorted (lfor name seen :if (in name #{CONVERSATION-ID-ENV SEAT-OPENER-ENV}) name)))
+  (when owned
+    (raise (ValueError (+ f"{where} は会話の身元の名を宣言できない({(.join ", " owned)})— "
+                          "置く点は手番ごとの judgment.charter-with-conversation-env の 1 点"))))
+  (SeatEnv :pairs (tuple pairs)))
+
+
 (defk join-spec-of [argv declaration state-home]
   {:pre [(: argv JoinArgv) (: declaration JoinDeclaration) (: state-home str)]
    :post [(: % JoinSpec)]}
@@ -704,6 +773,8 @@
   (<- build (| str None) (build-of (.get agentd KEY-BUILD)))
   ;; 従量課金の binding kind を受けるか(従量課金の便 lane A・任意・既定 false)。
   (<- allow-metered bool (allow-metered-billing-of (.get agentd KEY-ALLOW-METERED-BILLING)))
+  ;; 席へ運ぶ env の宣言(段 12・agora-redesign #520・任意)— 解釈と参加の門は seat-env-of の 1 点。
+  (<- declared-seat-env SeatEnv (seat-env-of (.get agentd KEY-SEAT-ENV)))
   (JoinSpec
     :server server
     :token-file token-file
@@ -721,6 +792,8 @@
     :work-roots (if (is declared-roots None) None declared-roots.roots)
     :revision revision
     :build build
+    ;; 席へ運ぶ env の対(agora-redesign #520)— 形と資格の締め出しは seat-env-of の 1 点(宣言しない = #())。
+    :seat-env declared-seat-env.pairs
     :ownership ownership
     :capacity capacity
     :drain-seconds drain-seconds
@@ -792,6 +865,11 @@
     (.append env #(WORK-DIRS-ENV (.join WORK-DIRS-SEPARATOR spec.work-dirs))))
   (when (is-not spec.work-dir-roots None)
     (.append env #(WORK-DIR-ROOTS-ENV (.join WORK-DIR-ROOTS-SEPARATOR spec.work-dir-roots))))
+  ;; 段 12(agora-redesign #520): 席へ運ぶ env は宣言した時だけ現れる(宣言の順・同じ改行区切りの綴りで運び、
+  ;; 読み直しは同じ seat-env-of の 1 点 — 第 2 の解釈を作らない)。
+  (when spec.seat-env
+    (.append env #(SEAT-ENV-ENV (.join SEAT-ENV-SEPARATOR
+                                       (lfor #(name value) spec.seat-env f"{name}={value}")))))
   ;; 段 12 lane 12j(#367): 版の刻印は名乗った時だけ env に現れる(無ければ agentd は unstamped / local を名乗る)。
   (when (is-not spec.revision None)
     (.append env #(AGENTD-REVISION-ENV spec.revision)))
