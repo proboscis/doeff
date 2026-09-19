@@ -10,8 +10,9 @@ The package provides Hy macros for:
 - `deftest`: re-exported from `doeff-hy` for ADR-local executable examples.
 - pytest plugin: collect `defadr_*.hy` / `test_defadr_*.hy` executable ADR
   files and run generated `test_*` functions.
-- wiring self-check: compare every executable ADR in the repository with the
-  files that the current pytest invocation actually collected.
+- wiring self-check: compare every file the canonical gate owns — executable
+  ADRs *and* ordinary Python test files — with the files that the current
+  pytest invocation actually collected.
 
 Accepted ADRs must carry at least one executable enforcement.
 
@@ -38,12 +39,31 @@ uv run doeff-adr verify-wiring
 ```
 
 The command runs pytest collection in `strict` mode and exits nonzero while any
-matching executable ADR is absent from the effective collection. Normal pytest
-runs default to `warn` so targeted local runs remain usable. Set
+owned file is absent from the effective collection. Two kinds are owned:
+executable ADRs (`defadr_*.hy`, plus `doeff_adr_hy_files`) and Python test files
+matching pytest's own `python_files` ini — an unwired `packages/*/tests` tree is
+the same hole as an unwired `docs/adr`, and the Python side is worse because the
+tests look written, so nobody rewrites them. Normal pytest runs default to
+`warn` so targeted local runs remain usable. Set
 `doeff_adr_wiring = "strict"` in pytest configuration when every invocation
 should fail closed, or pass `--doeff-adr-wiring=off` only for an intentional
 local opt-out. `defsemgrep` enforcement separately fails, rather than skips,
 when the `semgrep` executable is unavailable.
+
+Some files match `python_files` but can never be collected: sample sources a
+Rust test suite feeds through a linter, example scripts that execute at import.
+Declare those per path, with the reason, so the escape hatch stays reviewable:
+
+```toml
+[tool.pytest.ini_options]
+doeff_adr_wiring_exclude = [
+    # Rust linter fixtures: inputs for cargo test, not pytest tests.
+    "packages/doeff-linter/tests/fixtures/*",
+]
+```
+
+`doeff_adr_wiring = "off"` remains the whole-repository opt-out; a line in
+`doeff_adr_wiring_exclude` silences exactly one path and leaves a diff behind.
 
 Wiring is a property of the collection scope, not of the selection: the
 collected files are measured before `-k` / `-m` / `--deselect` drop items, so a
@@ -67,7 +87,7 @@ from doeff_adr.pytest_plugin import (
 )
 
 
-def test_all_executable_adrs_are_collected(request: pytest.FixtureRequest) -> None:
+def test_everything_the_gate_owns_is_collected(request: pytest.FixtureRequest) -> None:
     verdict = default_scope_wiring(request.session)
     if isinstance(verdict, NotDefaultScope):
         pytest.skip(f"session collected {list(verdict.args)}, not the default scope")
@@ -77,11 +97,12 @@ def test_all_executable_adrs_are_collected(request: pytest.FixtureRequest) -> No
 
 `default_scope_wiring` answers `WiringVerified`, `WiringUncollected`, or
 `WiringWalkAborted` for a default invocation (no path arguments), reusing the
-one measurement the plugin already took at collection finish. A session aimed
-at explicit paths answers `NotDefaultScope`: it cannot speak for the default
-scope in either direction (narrower paths miss ADRs the default scope reaches;
-wider paths reach ADRs the default scope leaves silent), so the test must not
-report it as a pass.
+one measurement the plugin already took at collection finish.
+`WiringVerified.wired_files` holds both kinds in one set. A session aimed at
+explicit paths answers `NotDefaultScope`: it cannot speak for the default scope
+in either direction (narrower paths miss files the default scope reaches; wider
+paths reach files the default scope leaves silent), so the test must not report
+it as a pass.
 
 For proboscis-ema and agent-control-plane follow-ups, add their existing
 `docs/adr` directory to the pytest roots used by the real CI test command,

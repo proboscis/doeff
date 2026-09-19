@@ -1,4 +1,14 @@
-"""Pytest plugin for executable ADR Hy files."""
+"""Pytest plugin for executable ADR Hy files, and for the wiring of the canonical gate.
+
+Wiring verification owns two file kinds, because the hole is the same one
+twice: a file that exists, looks like a check, and is never reached by the
+default ``pytest`` invocation. Kind one is the executable ADR (``defadr_*.hy``)
+this plugin also collects; kind two is the ordinary Python test file, which
+pytest collects on its own — as long as somebody put its directory in
+``testpaths``. Nobody did, for 19 of doeff's 27 package test trees
+(2026-09-19: 3,200 tests silent, five files rotted against APIs deleted
+months earlier). One measurement answers for both kinds.
+"""
 
 import fnmatch
 import importlib
@@ -57,14 +67,14 @@ class WiringWalkBudgetError(Exception):
 
 @dataclass(frozen=True)
 class WiringVerified:
-    """Every executable ADR under rootdir was reached by the session's collection."""
+    """Every file the gate owns under rootdir was reached by the session's collection."""
 
-    executable_adrs: frozenset[Path]
+    wired_files: frozenset[Path]
 
 
 @dataclass(frozen=True)
 class WiringUncollected:
-    """Executable ADRs exist that the session's collection did not reach."""
+    """Files the gate owns exist that the session's collection did not reach."""
 
     uncollected: tuple[Path, ...]
 
@@ -82,8 +92,8 @@ class NotDefaultScope:
     """The session collected caller-chosen paths, not the configured default scope.
 
     Such a collection cannot speak for the default invocation in either
-    direction: a narrower one misses ADRs the default scope reaches, and a wider
-    one (``pytest tests docs/adr`` while testpaths lacks docs/adr) reaches ADRs
+    direction: a narrower one misses files the default scope reaches, and a wider
+    one (``pytest tests docs/adr`` while testpaths lacks docs/adr) reaches files
     the default scope would leave silent.
     """
 
@@ -106,6 +116,14 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addini(
         "doeff_adr_hy_files",
         "Glob patterns for executable ADR Hy files collected by doeff-adr.",
+        type="linelist",
+        default=[],
+    )
+    parser.addini(
+        "doeff_adr_wiring_exclude",
+        "Path globs (rootdir-relative, posix) for files the canonical gate must NOT collect: "
+        "sample inputs another tool feeds through its own suite, example scripts that run at "
+        "import, and trees declared dark on purpose. Write the reason next to each entry.",
         type="linelist",
         default=[],
     )
@@ -219,6 +237,20 @@ def _file_patterns(config: pytest.Config) -> tuple[str, ...]:
     return (*DEFAULT_FILE_PATTERNS, *config.getini("doeff_adr_hy_files"))
 
 
+def _python_file_patterns(config: pytest.Config) -> tuple[str, ...]:
+    """pytest's own ``python_files``. The gate holds no second opinion about it.
+
+    A project that renamed the pattern would otherwise get both false reds (a
+    ``test_*.py`` pytest never collects here) and false greens (its actual
+    tests, invisible to a hardcoded guess).
+    """
+    return tuple(config.getini("python_files"))
+
+
+def _exclude_patterns(config: pytest.Config) -> tuple[str, ...]:
+    return tuple(config.getini("doeff_adr_wiring_exclude"))
+
+
 def _matches_file_patterns(path: Path, root: Path, patterns: tuple[str, ...]) -> bool:
     rel = _relative_posix(path, root)
     candidates = {path.name, rel, path.as_posix()}
@@ -278,15 +310,17 @@ def _measure_wiring(session: pytest.Session) -> WiringVerdict:
     config = session.config
     max_dirs = _wiring_max_dirs(config)
     try:
-        executable_adrs = _discover_executable_adrs(
+        wired_files = _discover_wired_files(
             Path(config.rootpath),
             _file_patterns(config),
+            _python_file_patterns(config),
             _norecurse_dir_patterns(config),
+            _exclude_patterns(config),
             max_dirs=max_dirs,
         )
     except WiringWalkBudgetError as exc:
         return WiringWalkAborted(dirs_walked=exc.dirs_walked, max_dirs=max_dirs)
-    return _wiring_verdict(executable_adrs, _collected_files(session))
+    return _wiring_verdict(wired_files, _collected_files(session))
 
 
 def _collected_files(session: pytest.Session) -> frozenset[Path]:
@@ -297,32 +331,34 @@ def _collected_files(session: pytest.Session) -> frozenset[Path]:
 
 
 def _wiring_verdict(
-    executable_adrs: set[Path], collected_files: frozenset[Path]
+    wired_files: set[Path], collected_files: frozenset[Path]
 ) -> WiringVerified | WiringUncollected:
-    uncollected = tuple(sorted(executable_adrs - collected_files))
+    uncollected = tuple(sorted(wired_files - collected_files))
     if uncollected:
         return WiringUncollected(uncollected)
-    return WiringVerified(frozenset(executable_adrs))
+    return WiringVerified(frozenset(wired_files))
 
 
 def _norecurse_dir_patterns(config: pytest.Config) -> tuple[str, ...]:
     """Directory-name globs pytest itself refuses to collect into (norecursedirs).
 
     Wiring discovery must stay consistent with what pytest collection *could*
-    reach: a defadr file inside a norecursedirs-matched directory (default
-    includes ``.*`` — e.g. ``.claude/worktrees`` checkout copies) can never be
-    collected, so reporting it as mis-wired is a false positive by construction.
+    reach: a file inside a norecursedirs-matched directory (default includes
+    ``.*`` — e.g. ``.claude/worktrees`` checkout copies) can never be collected,
+    so reporting it as mis-wired is a false positive by construction.
     """
     return tuple(config.getini("norecursedirs"))
 
 
-def _discover_executable_adrs(
+def _discover_wired_files(
     root: Path,
-    patterns: tuple[str, ...],
+    adr_patterns: tuple[str, ...],
+    python_patterns: tuple[str, ...] = (),
     norecurse: tuple[str, ...] = (),
+    exclude: tuple[str, ...] = (),
     max_dirs: int = DEFAULT_WIRING_MAX_DIRS,
 ) -> set[Path]:
-    executable_adrs: set[Path] = set()
+    wired_files: set[Path] = set()
     for dirs_walked, (directory, directory_names, file_names) in enumerate(
         os.walk(root), start=1
     ):
@@ -336,18 +372,49 @@ def _discover_executable_adrs(
         )
         for file_name in sorted(file_names):
             path = Path(directory, file_name)
-            if path.suffix == ".hy" and _matches_file_patterns(path, root, patterns):
-                executable_adrs.add(path.resolve())
-    return executable_adrs
+            if not _is_gate_owned_file(path, root, adr_patterns, python_patterns):
+                continue
+            if _is_declared_uncollectable(path, root, exclude):
+                continue
+            wired_files.add(path.resolve())
+    return wired_files
+
+
+def _is_gate_owned_file(
+    path: Path,
+    root: Path,
+    adr_patterns: tuple[str, ...],
+    python_patterns: tuple[str, ...],
+) -> bool:
+    """The two kinds the canonical gate answers for: executable ADRs and Python tests."""
+    if path.suffix == ".hy":
+        return _matches_file_patterns(path, root, adr_patterns)
+    if path.suffix == ".py":
+        return any(fnmatch.fnmatch(path.name, pattern) for pattern in python_patterns)
+    return False
+
+
+def _is_declared_uncollectable(path: Path, root: Path, exclude: tuple[str, ...]) -> bool:
+    """A file the project declared the gate must not expect to be collected.
+
+    The escape hatch is deliberately per-path and written in the project's own
+    ini, so silencing the gate leaves a reviewable line behind — unlike
+    ``doeff_adr_wiring=off``, which silences everything at once.
+    """
+    rel = _relative_posix(path, root)
+    return any(fnmatch.fnmatch(rel, pattern) for pattern in exclude)
 
 
 def _wiring_message(root: Path, paths: list[Path], mode: WiringMode) -> str:
     outcome = "failed" if mode == "strict" else "warning"
     rendered_paths = "\n".join(f"  - {_relative_posix(path, root)}" for path in paths)
     return (
-        f"doeff-adr wiring verification {outcome}: executable ADR files exist but were not "
-        f"collected:\n{rendered_paths}\n"
-        "Add their directories to pytest testpaths or the CI pytest arguments. "
+        f"doeff-adr wiring verification {outcome}: files the canonical pytest gate must "
+        f"collect (executable ADRs and Python test files) exist but were not collected:\n"
+        f"{rendered_paths}\n"
+        "Add their directories to pytest testpaths or the CI pytest arguments. A file that "
+        "can never be collected (a sample input for another tool, a script that runs at "
+        "import) belongs in doeff_adr_wiring_exclude with its reason. "
         "Use doeff_adr_wiring=off only for an intentional opt-out."
     )
 
@@ -360,7 +427,7 @@ def _walk_budget_message(root: Path, dirs_walked: int, max_dirs: int, mode: Wiri
         "The verification walk covers the whole rootdir; a rootdir this broad usually means no "
         "ini file anchors the project and pytest resolved rootdir far above it (e.g. the home "
         "directory), which makes every run silently crawl the filesystem. Fix: anchor rootdir "
-        "with a pytest.ini/pyproject.toml near the executable ADRs, raise "
+        "with a pytest.ini/pyproject.toml near the tests, raise "
         "doeff_adr_wiring_max_dirs, or set doeff_adr_wiring=off for an intentional opt-out."
     )
 
