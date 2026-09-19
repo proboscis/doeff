@@ -256,6 +256,41 @@ def test_default_scope_wiring_reports_python_test_file_outside_testpaths(
     result.assert_outcomes(passed=1, warnings=1)
 
 
+def test_wiring_counts_a_file_pytest_reached_even_with_no_items(
+    pytester: pytest.Pytester,
+) -> None:
+    # Wiring is whether the default scope *reached* the file, not how many
+    # items came out of it.  A module-level ``pytest.importorskip`` yields zero
+    # items wherever the optional dependency is absent (doeff has two such
+    # files), so counting items would make the gate red on one machine and
+    # green on another — for a tree that is correctly wired on both.
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+        """
+    )
+    _make_smoke_test(pytester)
+    pytester.makefile(
+        ".py",
+        **{
+            "tests/test_optional_dep": (
+                "import pytest\n"
+                "pytest.importorskip('a_module_that_is_not_installed')\n"
+                "\n"
+                "def test_needs_the_dep():\n"
+                "    assert True\n"
+            )
+        },
+    )
+
+    result: pytest.RunResult = pytester.runpytest("-q", "--doeff-adr-wiring=strict")
+
+    # The skip is the point: zero items came out of a file that was reached.
+    result.assert_outcomes(passed=1, skipped=1)
+    assert "test_optional_dep.py" not in _combined_output(result)
+
+
 def _make_deep_directories(pytester: pytest.Pytester, count: int) -> None:
     path = ""
     for index in range(count):
