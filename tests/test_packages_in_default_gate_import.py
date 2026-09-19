@@ -28,17 +28,13 @@ def _wired_package_modules() -> list[tuple[str, str]]:
     """(package directory, top-level module) for every package in testpaths."""
     ini = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     testpaths = ini["tool"]["pytest"]["ini_options"]["testpaths"]
-    packages = sorted(
-        {path.split("/")[1] for path in testpaths if path.startswith("packages/")}
-    )
+    packages = sorted({path.split("/")[1] for path in testpaths if path.startswith("packages/")})
     wired: list[tuple[str, str]] = []
     for package in packages:
         base = ROOT / "packages" / package
         # src layout first, flat layout second; a package that ships no Python
         # module (a Rust crate whose tests read its sources) contributes none.
-        inits = sorted((base / "src").glob("*/__init__.py")) + sorted(
-            base.glob("*/__init__.py")
-        )
+        inits = sorted((base / "src").glob("*/__init__.py")) + sorted(base.glob("*/__init__.py"))
         for init in inits:
             module = init.parent.name
             if module.startswith((".", "test")):
