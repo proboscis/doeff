@@ -12,16 +12,22 @@
 ;;;     持つ側(agentd host / 直接束縛の fake)が解釈する生 IO の境界。
 ;;;     impls/ は substrate effect を yield するのみ(substrate-clean defsemgrep が守る)。
 ;;;
-;;; 各 effect の deff 構築子が契約面: :pre が引数型を fail-fast 検査し、
+;;; 各 effect の構築子が契約面: :pre が引数型を fail-fast 検査し、
 ;;; docstring が凍結物理(F-* マーカー・TerminalCause 表・knob 表)への束縛を書く。
+;;; headless の 11 本だけ defk(構築して実行し、handler が resume する値を返す)—
+;;; 呼び出しは今までどおり <- bind のまま(ADR-DOE-HY-004 R3 の一括出荷)。
 
-(require doeff-hy.macros [deff])
+(require doeff-hy.macros [deff defk <-])
 
 (import dataclasses [dataclass])
 (import datetime [datetime])
 (import typing [Any])
 (import doeff [EffectBase])
-(import doeff_agents.sessionhost.headless_protocol [ClaudeDialogue CodexDialogue])
+(import doeff_agents.sessionhost.headless_protocol [
+  BackendLiveness
+  ClaudeDialogue
+  CodexDialogue
+  HeadlessObservation])
 
 
 ;; ===========================================================================
@@ -1079,70 +1085,84 @@
   "ClockSleep を構築する(poll 間隔・再描画待ち)。"
   (ClockSleep :seconds (float seconds)))
 
-(deff build-headless-launch [agent-type params]
+(defk build-headless-launch [agent-type params]
   {:pre [(: agent-type str) (: params dict)]
-   :post [(: % BuildHeadlessLaunch)]}
-  "BuildHeadlessLaunch を構築する(headless の argv と作法は per-kind impl 所有)。"
-  (BuildHeadlessLaunch :agent-type agent-type :params params))
+   :post [(: % dict)]}
+  "BuildHeadlessLaunch を実行する(headless の argv と作法は per-kind impl 所有)。
+   戻り = impl が組んだ {argv, dialogue}。"
+  (<- built (BuildHeadlessLaunch :agent-type agent-type :params params))
+  built)
 
-(deff headless-spawn [session-name work-dir env argv events-path dialogue]
+(defk headless-spawn [session-name work-dir env argv events-path dialogue]
   {:pre [(: session-name str) (: work-dir str) (: env dict) (: argv list)
          (: events-path str) (: dialogue (| ClaudeDialogue CodexDialogue))]
-   :post [(: % HeadlessSpawn)]}
-  "HeadlessSpawn を構築する。"
-  (HeadlessSpawn :session-name session-name :work-dir work-dir :env env :argv argv
-                 :events-path events-path :dialogue dialogue))
+   :post [(: % int)]}
+  "HeadlessSpawn を実行する。戻り = 起こした子 process の pid。"
+  (<- pid (HeadlessSpawn :session-name session-name :work-dir work-dir :env env :argv argv
+                         :events-path events-path :dialogue dialogue))
+  pid)
 
-(deff headless-deliver [session-name text [attachments #()]]
+(defk headless-deliver [session-name text [attachments #()]]
   {:pre [(: session-name str) (: text str) (: attachments tuple)]
-   :post [(: % HeadlessDeliver)]}
-  "HeadlessDeliver を構築する(添付は段 10 lane 10o — 型つきのまま器へ)。"
-  (HeadlessDeliver :session-name session-name :text text :attachments attachments))
+   :post [(: % bool)]}
+  "HeadlessDeliver を実行する(添付は段 10 lane 10o — 型つきのまま器へ)。
+   戻り = 器が本文を受け取ったか。"
+  (<- delivered (HeadlessDeliver :session-name session-name :text text :attachments attachments))
+  delivered)
 
-(deff headless-poll [session-name]
+(defk headless-poll [session-name]
   {:pre [(: session-name str)]
-   :post [(: % HeadlessPoll)]}
-  "HeadlessPoll を構築する。"
-  (HeadlessPoll :session-name session-name))
+   :post [(: % (| HeadlessObservation None))]}
+  "HeadlessPoll を実行する。戻り = 器の観測(登記に process が無ければ None)。"
+  (<- observed (HeadlessPoll :session-name session-name))
+  observed)
 
-(deff headless-interrupt [session-name]
+(defk headless-interrupt [session-name]
   {:pre [(: session-name str)]
-   :post [(: % HeadlessInterrupt)]}
-  "HeadlessInterrupt を構築する。"
-  (HeadlessInterrupt :session-name session-name))
+   :post [(: % bool)]}
+  "HeadlessInterrupt を実行する。戻り = 合図を出せたか。"
+  (<- signalled (HeadlessInterrupt :session-name session-name))
+  signalled)
 
-(deff headless-inject [session-name text ref [attachments #()]]
+(defk headless-inject [session-name text ref [attachments #()]]
   {:pre [(: session-name str) (: text str) (: ref str) (: attachments tuple)]
-   :post [(: % HeadlessInject)]}
-  "HeadlessInject を構築する(段 8 lane 4x・ref は段 10 lane 10n・添付は段 10 lane 10o)。"
-  (HeadlessInject :session-name session-name :text text :ref ref :attachments attachments))
+   :post [(: % bool)]}
+  "HeadlessInject を実行する(段 8 lane 4x・ref は段 10 lane 10n・添付は段 10 lane 10o)。
+   戻り = 走っている手番へ注入できたか。"
+  (<- accepted (HeadlessInject :session-name session-name :text text :ref ref :attachments attachments))
+  accepted)
 
-(deff headless-escalate [session-name]
+(defk headless-escalate [session-name]
   {:pre [(: session-name str)]
-   :post [(: % HeadlessEscalate)]}
-  "HeadlessEscalate を構築する(段 10 lane 10n)。"
-  (HeadlessEscalate :session-name session-name))
+   :post [(: % bool)]}
+  "HeadlessEscalate を実行する(段 10 lane 10n)。戻り = 停止の合図を出したか。"
+  (<- signalled (HeadlessEscalate :session-name session-name))
+  signalled)
 
-(deff headless-kill [session-name]
+(defk headless-kill [session-name]
   {:pre [(: session-name str)]
-   :post [(: % HeadlessKill)]}
-  "HeadlessKill を構築する。"
-  (HeadlessKill :session-name session-name))
+   :post [(: % bool)]}
+  "HeadlessKill を実行する。戻り = 登記が在ったか(降ろした)。"
+  (<- killed (HeadlessKill :session-name session-name))
+  killed)
 
-(deff headless-has-session [session-name]
+(defk headless-has-session [session-name]
   {:pre [(: session-name str)]
-   :post [(: % HeadlessHasSession)]}
-  "HeadlessHasSession を構築する。"
-  (HeadlessHasSession :session-name session-name))
+   :post [(: % bool)]}
+  "HeadlessHasSession を実行する。戻り = 同じ名の生きた process が在るか。"
+  (<- exists (HeadlessHasSession :session-name session-name))
+  exists)
 
-(deff headless-kill-all []
+(defk headless-kill-all []
   {:pre []
-   :post [(: % HeadlessKillAll)]}
-  "HeadlessKillAll を構築する(段 10 lane 10h 便 2)。"
-  (HeadlessKillAll))
+   :post [(: % int)]}
+  "HeadlessKillAll を実行する(段 10 lane 10h 便 2)。戻り = 降ろした数。"
+  (<- killed (HeadlessKillAll))
+  killed)
 
-(deff headless-liveness [session-name pid]
+(defk headless-liveness [session-name pid]
   {:pre [(: session-name str) (: pid (| int None))]
-   :post [(: % HeadlessLiveness)]}
-  "HeadlessLiveness を構築する(段 10 lane 10h)。"
-  (HeadlessLiveness :session-name session-name :pid pid))
+   :post [(: % BackendLiveness)]}
+  "HeadlessLiveness を実行する(段 10 lane 10h)。戻り = backend の生死の観測。"
+  (<- liveness (HeadlessLiveness :session-name session-name :pid pid))
+  liveness)

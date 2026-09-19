@@ -248,7 +248,7 @@
   kind)
 
 
-(deff format-evidence-frames [frames]
+(defk format-evidence-frames [frames]
   {:pre [(: frames "value")] :post [(: % str)]}
   "保持 frame 列 → output_snippet 用の逐語ブロック(受入条件 (g): 保持数 1
    からの増量)。各 frame に gate 開始からの経過秒を付す — 『どの局面の
@@ -417,7 +417,7 @@
 ;; 再開の process は「その手番の送りが運ぶ env」で起きる(host の session.send の session_env)。
 (setv TURN-AUTH-ENV-KEYS #{"CLAUDE_CODE_OAUTH_TOKEN"})
 
-(deff overlay-without-turn-auth [env]
+(defk overlay-without-turn-auth [env]
   {:pre [(: env (| dict None))]
    :post [(: % dict)]}
   "行へ永続化する launch の意図から、手番ごとの資格の env を落とした写し
@@ -857,7 +857,7 @@
   (setv age (seconds-since now turn-since))
   (and (is-not age None) (> age threshold-seconds)))
 
-(deff observed-status-from-markers [obs]
+(defk observed-status-from-markers [obs]
   {:pre [(: obs PaneObservation)]
    :post [(: % str) (in % #{"failed" "blocked_api" "blocked" "running"})]}
   "凍結分類順: failure → api-limit → (waiting ∧ ¬active) → running
@@ -917,7 +917,7 @@
       row
       (replace row :terminal-cause cause)))
 
-(deff action-terminal-cause [row default-category reason observed-at]
+(defk action-terminal-cause [row default-category reason observed-at]
   {:pre [(: row SessionRow) (: default-category str)
          (in default-category TERMINAL-CAUSE-CATEGORIES)
          (: reason str) (: observed-at str)]
@@ -1002,7 +1002,7 @@
       (and (.isascii key) (.isalnum key))
       (in key ALLOWED-UNBLOCK-KEY-NAMES)))
 
-(deff parse-judge-verdict [raw]
+(defk parse-judge-verdict [raw]
   {:pre [(: raw str)]
    :post [(: % JudgeVerdict)]}
   "strict JSON verdict {blocked, keys, reason} の parse + whitelist 検証
@@ -1031,7 +1031,7 @@
         (raise (ValueError f"prompt judge verdict uses disallowed key {key !r}")))))
   (JudgeVerdict :blocked blocked :keys (tuple keys) :reason reason))
 
-(deff prompt-judge-instructions [pane]
+(defk prompt-judge-instructions [pane]
   {:pre [(: pane str)]
    :post [(: % str)]}
   "judge へ stdin で渡す指示 + pane capture(oracle prompt_judge_instructions)。
@@ -1064,12 +1064,12 @@
    judge 未設定・非 0 終了・verdict 不正は RuntimeError = judge failure。"
   (when (not knobs.judge-cmd)
     (raise (RuntimeError "no prompt judge configured")))
-  (<- res (proc-run knobs.judge-cmd (prompt-judge-instructions output)))
+  (<- res (proc-run knobs.judge-cmd (! (prompt-judge-instructions output))))
   (when (!= res.exit-code 0)
     (raise (RuntimeError
              f"prompt judge failed with exit {res.exit-code}: {res.stderr}")))
   (try
-    (setv verdict (parse-judge-verdict res.stdout))
+    (setv verdict (! (parse-judge-verdict res.stdout)))
     (except [e ValueError]
       (raise (RuntimeError f"prompt judge verdict invalid: {e}"))))
   verdict)
@@ -1130,10 +1130,10 @@
                 ;; 保険写像も同じ蒸留の家を通す(ACP ADR 0049 R9 第 3 改訂):
                 ;; ここだけ素の run_failed を残すと、cause 未書きの経路が
                 ;; 席帰属の既定へ落ちる裏口として残ってしまう。
-                (cause-if-absent row (action-terminal-cause
-                                       row "run_failed"
-                                       row.last-validation-error
-                                       observed-at))
+                (cause-if-absent row (! (action-terminal-cause
+                                          row "run_failed"
+                                          row.last-validation-error
+                                          observed-at)))
                 ;; reason 無し failed のみ output 写像(ハザード 2)
                 (cause-if-absent row (failed-output-cause
                                        obs output observed-at
@@ -1422,8 +1422,8 @@
           ;; 上書きされない —— 未配達の会計(011)はそのまま保たれる。
           (setv row
                 (cause-if-absent
-                  row (action-terminal-cause
-                        row "prompt_undelivered" reason observed-at)))
+                  row (! (action-terminal-cause
+                           row "prompt_undelivered" reason observed-at))))
           (<- failed-row (finalize row entry-status "failed" obs output observed-at))
           (return failed-row))))
 
@@ -1518,12 +1518,12 @@
       ;; transient なので provider 族に上書きされない。
       (setv row
             (cause-if-absent
-              row (action-terminal-cause row "timed_out" reason observed-at)))
+              row (! (action-terminal-cause row "timed_out" reason observed-at))))
       (<- timed-row (finalize row entry-status "failed" obs output observed-at))
       (return timed-row)))
 
   ;; --- 凍結分類順: failure → api-limit → waiting → running。
-  (setv raw-status (observed-status-from-markers obs))
+  (<- raw-status (observed-status-from-markers obs))
 
   ;; --- turn-end 判定は snippet 書き戻しの前に(stable = 前回 500 字 tail 一致。
   ;; 後に書くと current == current に退化して毎観測 stable になる)。
@@ -1647,9 +1647,9 @@
                           ;; 呼んだために起きた。
                           (setv row
                                 (cause-if-absent
-                                  row (action-terminal-cause
-                                        row "run_failed" reason
-                                        observed-at))))))))))
+                                  row (! (action-terminal-cause
+                                           row "run_failed" reason
+                                           observed-at)))))))))))
       ;; contract 無し RunToCompletion: turn-end 信号を work-end として信頼。
       (when (and turn-ended (is-run-to-completion row.lifecycle))
         (setv observed-status "done")))
@@ -1737,9 +1737,9 @@
       ;; interactive_prompt_blocked = 席帰属の確定的失敗と呼ばない)。
       (setv row
             (cause-if-absent
-              row (action-terminal-cause
-                    row "interactive_prompt_blocked" blocked-failure
-                    observed-at)))))
+              row (! (action-terminal-cause
+                       row "interactive_prompt_blocked" blocked-failure
+                       observed-at))))))
 
   ;; --- 書き戻し + 終端 taxonomy + 遷移 event(cleanup は monitor-cycle の
   ;; 単一掃き取り所有 — ADR-DOE-AGENTS-010 R5)。

@@ -1266,7 +1266,10 @@
                "verdict が status を素通ししていない(R33 追補)")
        (setv headless-lines (code-lines (/ SESSIONHOST-DIR "headless.hy")))
        (setv headless-text (.join "\n" headless-lines))
-       (assert (= (len (lfor line headless-lines :if (.startswith line "(deff headless-turn-limit-cause ") line)) 1)
+       (assert (= (len (lfor line headless-lines
+                             :if (is-not (re.match r"^\(def[fk] headless-turn-limit-cause " line) None)
+                             line))
+                  1)
                "限度を当てるのは器の側の 1 点(R33)")
        (assert (in "(import doeff_agents.sessionhost.impls.markers [is-api-limit-refusal])" headless-text)
                "限度の判定は markers の 1 点を呼ぶ(R33)")
@@ -1275,7 +1278,8 @@
        ;; R33 追補: 判定の家は markers(構造が先・文が後)— 429 の定数も文の族の表も同じ家
        (setv markers-text (.join "\n" (code-lines (/ SESSIONHOST-DIR "impls" "markers.hy"))))
        (assert (in "(setv API-LIMIT-ERROR-STATUS 429)" markers-text) "限度の status の定数が markers に無い(R33 追補)")
-       (assert (in "(deff is-api-limit-refusal [detail api-error-status]" markers-text) "判定の 1 点が markers に無い(R33 追補)")
+       (assert (is-not (re.search r"\(def[fk] is-api-limit-refusal \[detail api-error-status\]" markers-text) None)
+               "判定の 1 点が markers に無い(R33 追補)")
        (assert (in "(if (is api-error-status None)\n      (has-api-limit-marker detail)\n      (= api-error-status API-LIMIT-ERROR-STATUS))" markers-text)
                "構造が先・文が後の順でない(R33 追補)")
        (assert (in "(is-not (.search API-LIMIT-ORG-CAP-FAMILY-RE text) None)" markers-text)
@@ -1767,7 +1771,10 @@
        ;; policy.hy は deff / defhandler の Hy で共通の品質検査の投影が無いので、ここでは
        ;; import せず code 行で針を撃つ(挙動の反例は tests/sessionhost_policy_deftests.hy)。
        (setv policy-lines (code-lines (/ SESSIONHOST-DIR "policy.hy")))
-       (assert (= (len (lfor line policy-lines :if (.startswith line "(deff is-multi-turn ") line)) 1))
+       (assert (= (len (lfor line policy-lines
+                             :if (is-not (re.match r"^\(def[fk] is-multi-turn " line) None)
+                             line))
+                  1))
        (assert (any (gfor line policy-lines (in "(is-multi-turn row.lifecycle)))))" line)))
                "reap-exempt は multi_turn を免除しない(監視される)")
        ;; 反例(挙動): 同じ会話の 2 手番目は launch を呼ばず send、別会話は launch、
@@ -1838,7 +1845,10 @@
                f"print mode の argv の家は impls/headless_argv.hy ちょうど: {hits}")
        (setv host-lines (code-lines (/ SESSIONHOST-DIR "host.hy")))
        (assert (any (gfor line host-lines (in "#{\"tmux\" \"herdr\" HEADLESS-BACKEND-KIND}" line))))
-       (assert (= (len (lfor line host-lines :if (.startswith line "(deff headless-backend? ") line)) 1))
+       (assert (= (len (lfor line host-lines
+                             :if (is-not (re.match r"^\(def[fk] headless-backend\? " line) None)
+                             line))
+                  1))
        (assert (>= (len (lfor line host-lines :if (in "(headless-backend? config)" line) line)) 7)
                "launch / capture / send / interrupt / cancel / cleanup / monitor の分岐は述語 1 点を読む")
        (setv semgrep (.read-text (/ (. (Path __file__) parent parent parent) ".semgrep.yaml") :encoding "utf-8"))
@@ -3099,7 +3109,11 @@
                  f"agentd.hy は札の env の名を直に持たない(R30): {line}"))
        (setv policy-lines (code-lines (/ SESSIONHOST-DIR "policy.hy")))
        (for [name ["session-env-admission-error" "overlay-without-turn-auth" "inheritable-spawn-env" "spawn-env-inherited?"]]
-         (assert (= (len (lfor line policy-lines :if (.startswith line f"(deff {name} ") line)) 1) name))
+         (assert (= (len (lfor line policy-lines
+                               :if (is-not (re.match (+ r"^\(def[fk] " (re.escape name) " ") line) None)
+                               line))
+                    1)
+                 name))
        (assert (any (gfor line policy-lines (.startswith line "(setv TURN-AUTH-ENV-KEYS")))
                "手番ごとの資格の env の名は policy の 1 点(R30)")
        (assert (any (gfor line policy-lines (.startswith line "(setv SPAWN-INHERITED-ENV-KEYS")))
@@ -3140,7 +3154,7 @@
          (setv overlay-text (collapsed-code (/ SESSIONHOST-DIR name)))
          (setv overlay-ends (lfor hit (re.finditer r":launch-overlay" overlay-text) (.end hit)))
          (assert (= (len overlay-ends) 1) f"行に残す launch の意図を組む点は 1 つ(R30): {name}")
-         (assert (is-not (re.search r"\"session_env\" \(overlay-without-turn-auth session-env\)"
+         (assert (is-not (re.search r"\"session_env\" \(! \(overlay-without-turn-auth session-env\)\)"
                                     (cut overlay-text (get overlay-ends 0) (+ (get overlay-ends 0) 400)))
                          None)
                  f"行には手番ごとの札を残さない — overlay の session_env は overlay-without-turn-auth を通す(R30): {name}"))

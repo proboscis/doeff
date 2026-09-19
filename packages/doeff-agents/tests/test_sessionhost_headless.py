@@ -61,6 +61,19 @@ from doeff_agents.sessionhost.impls import headless_argv
 from doeff_agents.sessionhost.store import StoreActor, terminal_cause_from_dict
 from sessionhost_bin import resolve_sessionhost_bin
 
+from doeff import run
+
+
+def _build_claude_headless(params: dict) -> dict:
+    """headless の argv の組み立ては defk(ADR-DOE-HY-004 R3)— program を値にしてから読む。"""
+    return run(headless_argv.build_claude_headless(params))
+
+
+def _build_codex_headless(params: dict) -> dict:
+    """同上(codex 側)。"""
+    return run(headless_argv.build_codex_headless(params))
+
+
 STUBS = Path(__file__).parent / "headless_stubs"
 
 
@@ -616,7 +629,7 @@ def test_terminal_cause_from_dict_is_total_over_the_store() -> None:
 
 
 def test_headless_argv_is_print_mode_with_partial_messages() -> None:
-    fresh = headless_argv.build_claude_headless(
+    fresh = _build_claude_headless(
         {"work_dir": "/w", "session_hooks": "disabled", "conversation": {"session_id": "sid-1"}}
     )
     argv = fresh["argv"]
@@ -633,14 +646,14 @@ def test_headless_argv_is_print_mode_with_partial_messages() -> None:
     ]
     assert argv[-2:] == ["--session-id", "sid-1"]
     assert isinstance(fresh["dialogue"], ClaudeDialogue)
-    resumed = headless_argv.build_claude_headless(
+    resumed = _build_claude_headless(
         {"work_dir": "/w", "resume_mode": "resume", "conversation": {"session_id": "sid-1"}}
     )
     resumed_argv = resumed["argv"]
     assert isinstance(resumed_argv, list)
     assert resumed_argv[-2:] == ["--resume", "sid-1"]
     assert "--session-id" not in resumed_argv
-    codex = headless_argv.build_codex_headless(
+    codex = _build_codex_headless(
         {"work_dir": "/w", "model": "gpt-5", "effort": "high"}
     )
     assert codex["argv"] == [
@@ -662,18 +675,18 @@ def test_headless_claude_declares_the_compaction_threshold_on_both_arms() -> Non
     --autocompact を持つものが 0 本で、CLI が自分の窓(1M)いっぱいまで畳まずに伸びていた
     (1 手番の平均の文脈 550k・最大 967k)。値は charter.auto_compact_window、
     無ければ走行係の床。"""
-    fresh = headless_argv.build_claude_headless(
+    fresh = _build_claude_headless(
         {"work_dir": "/w", "conversation": {"session_id": "sid-1"}}
     )["argv"]
     assert "--autocompact" in fresh, fresh
     assert fresh[fresh.index("--autocompact") + 1] == "400000", fresh
 
-    declared = headless_argv.build_claude_headless(
+    declared = _build_claude_headless(
         {"work_dir": "/w", "auto_compact_window": 200000, "conversation": {"session_id": "sid-1"}}
     )["argv"]
     assert declared[declared.index("--autocompact") + 1] == "200000", declared
 
-    resumed = headless_argv.build_claude_headless(
+    resumed = _build_claude_headless(
         {
             "work_dir": "/w",
             "auto_compact_window": 200000,
@@ -685,7 +698,7 @@ def test_headless_claude_declares_the_compaction_threshold_on_both_arms() -> Non
     assert resumed[-2:] == ["--resume", "sid-1"], resumed
 
     # 幅の外の値は argv に出さない(出すと CLI が argv 解釈の段で死に、手番が 1 行も吐かない)
-    degraded = headless_argv.build_claude_headless(
+    degraded = _build_claude_headless(
         {"work_dir": "/w", "auto_compact_window": 2_000_000, "conversation": {"session_id": "sid-1"}}
     )["argv"]
     assert degraded[degraded.index("--autocompact") + 1] == "auto", degraded
@@ -723,7 +736,7 @@ def test_codex_headless_argv_carries_no_override_the_router_shim_refuses() -> No
     """agora-redesign #37 lane 2d-2: 全面許可の旗は argv に載せない(shim が exit 2 で拒む)。
     方策は app-server の thread / turn の params が正本 — 綴りは shim の
     full_access_app_server と同値(headless_protocol.THREAD_FULL_ACCESS / TURN_FULL_ACCESS)。"""
-    built = headless_argv.build_codex_headless(
+    built = _build_codex_headless(
         {
             "work_dir": "/w",
             "model": "gpt-5",
@@ -761,7 +774,7 @@ def test_codex_headless_argv_carries_no_override_the_router_shim_refuses() -> No
     assert turn_start["method"] == "turn/start"
     assert _obj(turn_start, "params")["sandboxPolicy"] == {"type": "dangerFullAccess"}
     # 続きの手番(resume)の thread/resume も同じ方策
-    resumed = headless_argv.build_codex_headless(
+    resumed = _build_codex_headless(
         {"work_dir": "/w", "resume_mode": "resume", "conversation": {"session_id": "thr-old"}}
     )
     resumed_argv = resumed["argv"]
@@ -2198,7 +2211,7 @@ def test_codex_injection_concatenation_keeps_both_texts_and_both_images() -> Non
 
 @pytest.mark.skipif(shutil.which("claude") is None, reason="claude binary is not installed here")
 def test_real_claude_accepts_the_headless_flags_help_only() -> None:
-    built = headless_argv.build_claude_headless(
+    built = _build_claude_headless(
         {"work_dir": os.getcwd(), "session_hooks": "disabled"}
     )
     argv = built["argv"]

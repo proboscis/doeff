@@ -804,7 +804,7 @@
   session-hooks)
 
 
-(deff launch-spawn-env [identity session-env]
+(defk launch-spawn-env [identity session-env]
   {:pre [(: identity (| dict None)) (: session-env dict)]
    :post [(: % dict)]}
   "実効 env = 非 auth overlay ∪ binding 由来 auth env(R7: auth の合成は per-kind impl の
@@ -878,7 +878,7 @@
 
   ;; --- tmux session 作成(禁止 env reject は substrate 所有)+ 起動。
   ;; 実効 env は launch-spawn-env の 1 点(tui と headless で同じ組み方)。
-  (setv effective-env (launch-spawn-env identity session-env))
+  (<- effective-env (launch-spawn-env identity session-env))
   (<- pane-id (tmux-new-session session-name (get params "work_dir") effective-env))
 
   ;; --- booting 行の登録(tmux-new-session 直後・ready 待ちの前 — issue
@@ -929,7 +929,7 @@
               ;; ADR-006: 非 auth の launch 意図を行に永続化(resume の復元源)。
               ;; 段 10 lane 10d 便 2 追補 2: 手番ごとの資格の札(TURN-AUTH-ENV-KEYS)は
               ;; 復元源にならない — 行に残さず、再開はその手番の送りが運ぶ env で起こす。
-              :launch-overlay {"session_env" (overlay-without-turn-auth session-env)
+              :launch-overlay {"session_env" (! (overlay-without-turn-auth session-env))
                                "model" (.get params "model")
                                "effort" (.get params "effort")
                                "mcp_servers" (or (.get params "mcp_servers") {})}
@@ -986,7 +986,7 @@
         ;; R-evidence-frames-9c17 — 受入条件 (g) の保持数増量)。追加 capture は
         ;; しない: 予算切れ後の 1 枚は既に別の画面かもしれず、gate が見た
         ;; ものを残すのが逐語性の要件。
-        (setv screen-tail (format-evidence-frames gate.frames))
+        (<- screen-tail (format-evidence-frames gate.frames))
         (<- fail-now (clock-now))
         (setv gate-reason
               (launch-not-ready-reason agent-type repl-idle-max-wait
