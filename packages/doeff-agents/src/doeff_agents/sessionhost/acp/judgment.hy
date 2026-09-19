@@ -2024,6 +2024,27 @@
   (if (and (isinstance opener str) opener) opener None))
 
 
+(defk charter-with-seat-env [charter seat-env]
+  {:pre [(: charter dict) (: seat-env tuple)]
+   :post [(: % dict)]}
+  "段 12(agora-redesign #520・既知の形 = kubelet): 機体の**参加の宣言**が名乗った env の対
+   (AgentdSettings.seat-env — 読みと参加の門は join.seat-env-of の 1 点)を、手番の process の env
+   (charter.session_env — 非 auth の overlay)へ宣言の順で重ねる 1 点。呼び手が置いた他の欄は残す。
+   宣言しない機体(空の tuple)は charter を 1 bit も変えない。
+
+   ⚠ 席は機体の env を**継がない**(policy.SPAWN-INHERITED-ENV-KEYS は 1 語も開かない・実弾 #95)。
+   届くのは宣言されたこの対ちょうどで、第 2 の口(容器の env・shell の export)は作らない。
+   ⚠ 呼びは incarnation-charter-of の中で charter-with-conversation-env の**直前**ちょうど —
+   会話の身元が必ず後に勝つので、宣言は AGORA_CONVERSATION_ID / AGORA_SEAT_OPENER を偽れない
+   (join.seat-env-of の門 (c) と二重の守り)。"
+  (setv next (dict charter))
+  (setv env (dict (or (.get charter "session_env") {})))
+  (for [#(name value) seat-env]
+    (setv (get env name) value))
+  (setv (get next "session_env") env)
+  next)
+
+
 (defk charter-with-conversation-env [charter conversation-id opener]
   {:pre [(: charter dict) (: conversation-id str) (: opener (| str None))]
    :post [(: % dict)]}
@@ -2039,16 +2060,22 @@
   next)
 
 
-(defk incarnation-charter-of [plan choice session-id bodies history attribution backend-kind lease homes-root opener]
+(defk incarnation-charter-of [plan choice session-id bodies history attribution backend-kind lease homes-root opener seat-env]
   {:pre [(: plan LaunchPlan) (: choice ArmChoice) (: session-id str) (: bodies tuple) (: history str)
-         (: attribution dict) (: backend-kind str) (: lease (| LeaseGrant None)) (: homes-root str) (: opener (| str None))]
+         (: attribution dict) (: backend-kind str) (: lease (| LeaseGrant None)) (: homes-root str) (: opener (| str None))
+         (: seat-env tuple)]
    :post [(: % tuple)]}
   "起こす session の charter を組む 1 点(launch / resume / rehydrate — send は起こさない): 鋳造した id →
-   会話の身元の env(段 10f 便 2 追補 3 — 会話の id は帰属の conversationId・opener は会話の行から)→
-   (rehydrate)これまでの会話 → (headless の起こす腕)郵便の本文 → 借りた札の家 → 帰属。戻り =
-   #(charter auth-file-or-None)(codex の借りた auth.json の置き場 — 書くのは呼び手の effect)。"
+   機体の宣言の env(段 12・agora-redesign #520)→ 会話の身元の env(段 10f 便 2 追補 3 — 会話の id は帰属の
+   conversationId・opener は会話の行から)→ (rehydrate)これまでの会話 → (headless の起こす腕)郵便の本文 →
+   借りた札の家 → 帰属。戻り = #(charter auth-file-or-None)(codex の借りた auth.json の置き場 — 書くのは
+   呼び手の effect)。
+
+   ⚠ 順序は契約: 宣言の env(charter-with-seat-env)は会話の身元(charter-with-conversation-env)の**前**
+   ちょうど — 身元が必ず勝つので、機体の宣言は会話の名乗りを偽れない(agora-redesign #520)。"
   (<- with-id dict (charter-with-session-id plan.charter session-id))
-  (<- with-env dict (charter-with-conversation-env with-id (str (get attribution "conversationId")) opener))
+  (<- with-seat dict (charter-with-seat-env with-id seat-env))
+  (<- with-env dict (charter-with-conversation-env with-seat (str (get attribution "conversationId")) opener))
   (setv charter with-env)
   (when (= choice.arm NEXT-ARM-REHYDRATE)
     (<- with-history dict (charter-with-history charter history))

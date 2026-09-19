@@ -47,6 +47,7 @@ from doeff_agents.sessionhost.acp.effects import (
     WorkDirs,
     WorkRoots,
     Places,
+    SeatEnv,
     CAPACITY_ENV,
     DRAIN_SECONDS_ENV,
     AGENTD_BUILD_ENV,
@@ -54,6 +55,7 @@ from doeff_agents.sessionhost.acp.effects import (
     AGENTD_REVISION_ENV,
     AGENTD_REVISION_UNSTAMPED,
     PLACES_ENV,
+    SEAT_ENV_ENV,
     CUSTODY_CONTRACT_VERSION,
     CUSTODY_URL_ENV,
     HOMES_ROOT_ENV,
@@ -142,6 +144,8 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
     # card acp:kanban-issue:ki-40021864e62f: 預かり所へ名乗る借り手の等価鍵 — 材料は預かり所へ名乗る身元
     # ちょうど 2 つ(handlers.CustodyHttp._identity_headers と同じ file を同じ reader で読む)
     custody_borrower = _custody_borrower_of_env(env)
+    # 段 12(agora-redesign #520): 機体の宣言が名乗った席へ運ぶ env(無い = 空 = 今日どおり charter に欄が増えない)
+    seat_env = _seat_env_of_env(env)
     return AgentdSettings(
         node_name=node_name,
         node_capacity=node_capacity,
@@ -165,6 +169,7 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         work_dir_roots=work_dir_roots,
         # card acp:kanban-issue:ki-40021864e62f: None = 名乗らない(node の spec に欄を書かない)
         custody_borrower=custody_borrower,
+        seat_env=seat_env,
         # 段 10 lane 10y: charter の work_dir の `~` を展開する node の家(env HOME ちょうど・無ければ process の家)
         home=(env.get("HOME") or os.path.expanduser("~")).strip(),
         # 段 12 lane 12a(agora-redesign #230): verify の命令の結末の置き場 = join が導いた state_dir(spool の親)の下
@@ -314,6 +319,15 @@ def _declaration_sha256_of_env(env: Mapping[str, str]) -> str | None:
     if verdict is not None and not isinstance(verdict, str):
         raise TypeError(f"declaration_sha256_of returned {type(verdict).__name__}")
     return verdict
+
+
+def _seat_env_of_env(env: Mapping[str, str]) -> tuple[tuple[str, str], ...]:
+    """席へ運ぶ env(段 12・agora-redesign #520)。読みの規則(解釈と参加の門)は join.seat-env-of の 1 点
+    — join がこの env へ据えた綴りをそのまま読み直す(第 2 の解釈を作らない)。無い / 空 = ()。"""
+    verdict: object = PyVM().run(join.seat_env_of(env.get(SEAT_ENV_ENV)))
+    if not isinstance(verdict, SeatEnv):
+        raise TypeError(f"seat_env_of returned {type(verdict).__name__}")
+    return verdict.pairs
 
 
 def _places_of_env(env: Mapping[str, str]) -> tuple[str, ...]:
