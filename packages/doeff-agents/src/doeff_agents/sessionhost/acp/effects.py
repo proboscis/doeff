@@ -1222,8 +1222,10 @@ class AgentdSettings:
     #: 1 拍に送る spool の batch の上限(ADR-DOE-AGENTS-012 R22 の追補・card acp:kanban-issue:ki-6eb745f6d528)。
     #: 拍の終わりの flush が spool の全部を上限なく回すと、溜まった拍の周期を **spool の深さ**が決める
     #: (実測の 24 秒級の外れ値の候補)。残りは spool に残して次の拍へ持ち越す(落とさない — 今日の規律は変えない)。
-    #: 既定 20 の根拠: 1 batch = 1 往復で、cluster の中の 1 往復は p50 11 ms ⇒ 20 往復 ≈ 0.2 秒 —— 実況の周期
-    #: (events_poll_seconds = 50 ms)の数倍に収まり、深い spool でも拍が秒の桁へ伸びない。
+    #: 既定 20 の根拠: 1 batch = 1 往復。保った接続(handlers.HttpConnections)の 1 往復は実射で p50 0.46 ms
+    #: ⇒ 20 往復 ≈ 10 ms で実況の周期(events_poll_seconds = 50 ms)の中に収まる。接続を保てなかった拍は
+    #: 1 往復が名引き込みで 25 ms 級まで伸びる(同じ実射の点なしの綴り)⇒ 20 往復 ≈ 0.5 秒 —— その日も
+    #: **上限が在るから**拍の周期を spool の深さが決めない。上限の値打ちは往復の速さに依存しない。
     record_flush_max_batches: int = 20
     #: 段 9p(agora-redesign #76): 手番の記録(turn-record)の行を作れない拍(頭の入れ替え・到達不能・5xx)に作り直しを
     #: 続ける上限(手番の始まりから・秒)。周期は record_retry_seconds(spool の再送と同じ弁)。期限を越えたら理由つきで
@@ -1843,6 +1845,34 @@ METRIC_SUMMARIZE_TRIGGERS_TOTAL = "agentd_summarize_triggers_total"
 #: 欄 agentJobId / node)。本番の針「running のまま取り残された記録 = 0」を測る材料。
 METRIC_TURN_RECORD_SWEEP_ENDED = "agentd_turn_record_sweep_ended"
 METRIC_TURN_RECORD_SWEEP_SKIPPED = "agentd_turn_record_sweep_skipped"
+#: card acp:kanban-issue:ki-6eb745f6d528(依頼者の便 2026-09-19): 1 拍 = 1 行の計器。ACP 側の
+#: acp_stream_push_interval_seconds は「面が受け取る実況の粒が 26 秒だった」とは言えても、**どの腕が
+#: 遅かったか**は言えない(中継は store を読めないので行から引くこともできない — ACP 法 fabff2)。
+#: この 1 行が拍の総所要(total)と腕ごとの内訳(ms)を同じ場所で名乗るので、粗い拍が来た時に往復なのか
+#: 機体の CPU なのか記録の service なのかがその場で分かる。欄 jobs = その拍に同時に持っていた手番の数
+#: (粗さは N の単調な関数ではない — 依頼者の実測 2026-09-19: 載り 10 の Mac が 25.8 秒・載り 20 の pod が
+#: 2.5 秒。だから N は「原因」ではなく**同じ行に居る観測**として持つ)。
+METRIC_TICK_MS = "agentd_tick_ms"
+#: 拍の腕の名(計器 agentd_tick_ms の欄・順は拍の中で通る順)。閉語彙 1 点 —— 腕を足す日はここと
+#: agentd.agentd-tick の計りが同じ commit で動き、検 test_agentd_tick_emits_one_metric_line_with_the_arm_split
+#: が「腕の和 = 拍の総所要」で名の無い仕事を許さない。
+TICK_ARMS: tuple[str, ...] = (
+    "watch",
+    "heartbeat",
+    "profiles",
+    "receive",
+    "sweep",
+    "interrupts",
+    "cancel",
+    "ends",
+    "jobs-fast",
+    "jobs-slow",
+    "commands",
+    "summaries",
+    "flush",
+)
+#: 1 行の欄ちょうど(型の集合を固定する — 読み手が欄を拾って数えなくてよい)。
+TICK_LINE_FIELDS: tuple[str, ...] = ("metric", "node", "total", "jobs", *TICK_ARMS)
 #: この batch だけの決まった断り(契約 record-service.json: 400 malformed・422 unstorable — 撃ち直しても通らない)。札(401 / 403)・
 #: 窓(429)・届かない・5xx は batch ではなく系の側(機体の設定か一時的)なので含めない — 残しておけば、設定を直した後に
 #: 自動で送れる(judgment.record-append-word-of)。
