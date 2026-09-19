@@ -19,6 +19,11 @@
 # ── 読み方
 #   1 行 1 つの git の pathspec(repo の根からの相対)。`#` で始まる行と空行は註。
 #   読み手は `git diff --quiet <版 a> <版 b> -- <この名簿>` の 3 値(同じ / 違う / 読めない)で判じる。
+#   除外は git の除外 pathspec `:(exclude)<綴り>` で書く。⚠ 綴りの末尾は `/**` —— `packages/*/tests/`
+#   のように `/` で終える形は **1 file も当たらない**(wildcard が在る pathspec は path 全体への
+#   wildmatch で、file の path は `/` で終わらないため。実測 2026-09-19)。
+#   ⚠ 読み手へ: この行を shell で語に割る時は file 名への展開を止めること(sh なら `set -f`)——
+#   `*` を含む行が作業 dir 次第で別の語へ化け、除外が黙って効かなくなる。
 #
 # ── 変える時
 #   ここを 1 行変えれば読み手は全部そろって変わる(読み手の側に写しを置かない)。
@@ -30,9 +35,23 @@
 #   docs・notes・specs だけの着地を落とし、venv の中身(uv の workspace の member・根の package・
 #   依存の集合・interpreter の版)を捉える。tests / scripts / .agents は image には入るが
 #   agentd の実行には載らないので外す。
+#
+# ── 除外の根拠(2026-09-19 の訂正・pr-review なし)
+#   上の内訳の「tests 7」は **根の `tests/`**(225 file)の数で、**package の下の tests**
+#   (`packages/*/tests/**` = 341 file)はそれとは別の、より大きい塊。`packages/` の 1 行は後者を
+#   丸ごと拾うので、「tests は外す」と宣言しながら値は外せていなかった(気づいた人 = ACP 側の読み手の
+#   検分)。実測: 9/12 以降の本線 151 commit のうち **7 本が package の下の tests だけ**の着地で、
+#   そのたびに pool が要らない入れ替えで転がっていた(排水の上限は手番の上限 = 4 時間)。
+#   同じ理由で package の下の docs / examples / README.md も落とす(根のそれらと同じく実行に載らない・
+#   この 4 つを足して減るのは 151 中もう 1 本)。狭めすぎの側は反例で見ている ——
+#   除外の外が 1 つでも動けば引く(ACP の検 T34 (o))。
 
 packages/
 doeff/
 pyproject.toml
 uv.lock
 .python-version
+:(exclude)packages/*/tests/**
+:(exclude)packages/*/docs/**
+:(exclude)packages/*/examples/**
+:(exclude)packages/*/README.md
