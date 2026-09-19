@@ -4822,6 +4822,31 @@ rules:
       include:
         - "**/sessionhost/turn.hy"
 
+  - id: doeff-agents-job-step-reads-the-stream-before-the-step
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      card acp:kanban-issue:ki-2bd49c68b042: agentd's tick must read this
+      turn's stream (stream-job-read) BEFORE it asks judgment.job-step-of
+      for the next step. One of the facts the step needs — whether the
+      runner already put this turn's result into the vessel's record
+      (turn-result-seen) — is carried by the material itself, so a step
+      decided from the previous tick's read is stale exactly in the window
+      that matters. Since #517 ("the end of the turn is the end of the
+      process") the CLI writes its result and exits, and a tick that lands
+      before the host monitor stamps turn_ended_at would fall through to
+      (not live-backend) and close the job as SessionLost — discarding a
+      finished answer. ACP then re-runs the same input (carrierRetryLimit
+      2): the 2026-09-19 census found 302 re-runs, 0 of the 114 readable
+      pairs agreed, and 71.6% of the killed side had already written its
+      answer. Keep the read first; do not add a second decision point.
+    pattern-regex: '(?s)\(defk observe-job-fast(?:(?!stream-job-read).)*?\(job-step-of'
+    paths:
+      include:
+        - "**/sessionhost/acp/agentd.hy"
+        - "**/sessionhost/acp/job_step_before_stream_read_forbidden.hy"
+
   - id: doeff-agents-no-lost-terminal-cause
     languages:
       - generic

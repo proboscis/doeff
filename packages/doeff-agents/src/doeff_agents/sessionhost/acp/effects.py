@@ -1867,6 +1867,11 @@ class DeltaBatch:
     open_tool_blocks: tuple[OpenToolBlock, ...] = ()
     #: 開始(content_block_start)を見ていない引数の差分の数 — frame にせず数える(黙って捨てない・名前を発明しない)。
     orphan_input_deltas: int = 0
+    #: card acp:kanban-issue:ki-2bd49c68b042: この読みの中に**走行器が名乗ったこの手番の結末の記録**が在ったか
+    #: (claude = CLI 自身の手番ではない ``result`` の行 / codex = ``turn/completed`` の通知)。events の材料でだけ立つ。
+    #: 読み手は agentd の次の 1 手(judgment.job-step-of)—— 降りた process が結果を器へ出していたなら、その手番は
+    #: 失われたのではなく終わっている。ここは**事実の写し**で、手番の終わりの判定ではない(判定点は job-step-of の 1 つ)。
+    turn_result: bool = False
 
 
 @dataclass(frozen=True)
@@ -2202,6 +2207,12 @@ class InFlightJob:
     #: judgment.retire-reason-after-job)。手番が既に終わっていて割り込まなかった取り消しは片付けない。拾い直し(再起動後)は
     #: 行の見届けが在れば「撃った」とみなす(印の有無は読めない — 片付ける側に倒す)。
     cancel_interrupted: bool = False
+    #: card acp:kanban-issue:ki-2bd49c68b042: この手番の材料(start_offset から読んだ events)に、走行器が名乗った
+    #: 結末の記録が出たか(DeltaBatch.turn_result の積み上げ)。手番ごとの InFlightJob に載るので前の手番の結末は
+    #: 継がない(次の手番の start_offset は送る前の file の大きさ)。判断の材料は**その拍で読んだもの**でなければ
+    #: 意味が無い(CLI が result を出して降りた拍と host の monitor の拍の競合)ので、拍の 1 周目は材料を読んでから
+    #: 次の 1 手を決める(agentd.observe-job-fast)。拾い直し(recover-job)は材料の進みを知らないので False。
+    turn_result_seen: bool = False
 
 
 @dataclass(frozen=True)

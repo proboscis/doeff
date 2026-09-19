@@ -1759,8 +1759,12 @@
   (<- chunk TranscriptChunk (read-stream source path job.transcript-offset))
   (<- batch DeltaBatch (deltas-of job.agent-type source chunk.text job.job-id job.delta-seq at job.open-tool-blocks))
   ;; 開いている道具の block の表(書きかけの引数を id と名に結ぶ — 読みをまたぐ)は判断の出力をそのまま持つ。
+  ;; card acp:kanban-issue:ki-2bd49c68b042: 走行器がこの手番の結末を器の記録へ出したか(材料が名乗る事実 —
+  ;; 一度立ったら手番の終わりまで消えない。この手番の材料は start-offset から読んでいるので前の手番の結末は継がない)。
+  ;; 読み手は次の 1 手の 1 点(judgment.job-step-of)— ここでは腕を選ばない。
   (setv next (replace job :transcript-offset chunk.offset :delta-seq batch.next-seq
-                          :open-tool-blocks batch.open-tool-blocks))
+                          :open-tool-blocks batch.open-tool-blocks
+                          :turn-result-seen (or job.turn-result-seen batch.turn-result)))
   ;; 開始を見ていない引数の差分は frame にしていない(id も名前も発明しない)— 黙って捨てず計器に数える。
   (when batch.orphan-input-deltas
     (<- (MetricLine :fields {"metric" "agent-job-orphan-input-deltas" "agentJobId" job.job-id
@@ -1804,7 +1808,7 @@
    :post [(: % InFlightJob)]}
   "材料を読んで押し、同じ呼びで出来事を turn-record へ追記する —— **手番の終わりの排水の 1 点**
    (drain-stream)だけがここを通る。走っている job の拍は 2 段に割れているので、押し(stream-push)と
-   追記(stream-append)を stream-job-fast / stream-job-slow が別々に呼ぶ(R22 の追補)。"
+   追記(stream-append)を stream-job-read / stream-job-slow が別々に呼ぶ(R22 の追補)。"
   (<- at int (ClockNowMs))
   (<- pushed InFlightJob (stream-push settings job source path at))
   (<- appended InFlightJob (stream-append settings pushed now-ms))
@@ -2032,32 +2036,48 @@
   current)
 
 
-(defk stream-job-fast [settings job view now-ms]
-  {:pre [(: settings AgentdSettings) (: job InFlightJob) (: view SessionView) (: now-ms int)]
+(defk stream-job-read [settings job source path]
+  {:pre [(: settings AgentdSettings) (: job InFlightJob) (: source (| str None))
+         (: path (| str None))]
    :post [(: % InFlightJob)]}
-  "走っている 1 つの job の拍の **1 周目**: 材料(transcript / events)の追記を読んで frame を押す —
-   tui の器なら pane の断面(購読者が居れば)と購読の読み直し(止まっていれば)も。
-   ⚠ **store への書きは 1 つも撃たない**(R22 の追補)。実況が終わった(stream-gone)job は frame も
-   読み直しも撃たない。headless(events)の器に pane は無いので frame の capture は撃たない
-   (実況は events の行そのもの)。
-   時計はこの job で 1 度だけ読み、この拍にこの job が押す frame の at はすべてその読み
-   (拍の頭の 1 度の読みを全 job に貼ると、手番 20 本では最後の job の frame が 0.45 秒前を名乗る —
-   card acp:kanban-issue:ki-6eb745f6d528)。周期の判定は拍の 1 点の now-ms のまま。"
+  "走っている 1 つの job の拍の 1 周目の **前半**: 材料(transcript / events)の追記を読んで frame を押す。
+   ⚠ **store への書きは 1 つも撃たない**(R22 の追補)。
+   時計は押す直前に読み、この読みで押す frame の at はすべてその読み(拍の頭の 1 度の読みを全 job に
+   貼ると、手番 20 本では最後の job の frame が 0.45 秒前を名乗る — card acp:kanban-issue:ki-6eb745f6d528)。
+   周期の判定は拍の 1 点の now-ms のまま(stream-job-watch)。
+
+   card acp:kanban-issue:ki-2bd49c68b042: この読みは**次の 1 手を決める前**に撃つ。判断が要る事実
+   (この手番の結果が器の記録へ出たか)は材料そのものが名乗るので、前の拍の読みでは間に合わない —— CLI が
+   result を出して降りた拍に agentd の tick が入ると、材料を読む前に「process が死んだ」だけで手番を
+   失われたと判じてしまう。読む量は今日と同じ(offset からの追記 1 回)で、手番の終わりの拍に読んだ分は
+   そのまま排水(settle-record の drain-stream)に乗る。"
+  (if (or (is path None) (is source None))
+      job
+      (do
+        (<- at int (ClockNowMs))
+        (<- pushed InFlightJob (stream-push settings job source path at))
+        pushed)))
+
+
+(defk stream-job-watch [settings job source now-ms]
+  {:pre [(: settings AgentdSettings) (: job InFlightJob) (: source (| str None)) (: now-ms int)]
+   :post [(: % InFlightJob)]}
+  "走っている 1 つの job の拍の 1 周目の **後半**(observe の拍だけ): tui の器の pane の断面
+   (購読者が居れば)と購読の読み直し(止まっていれば)。
+   ⚠ **store への書きは 1 つも撃たない**(R22 の追補)。実況が終わった(stream-gone)job は読み直しを
+   撃たない。headless(events)の器に pane は無いので frame の capture は撃たない(実況は events の行そのもの)。
+   手番の終わり・器の終端・器の不在の拍はここを通らない(片付いた pane を capture しない)。"
+  (when (= source STREAM-SOURCE-EVENTS)
+    ;; headless(events)の器に pane は無い — 断面も読み直しも時計も撃たない(実況は events の行そのもの)。
+    (return job))
   (<- at int (ClockNowMs))
-  (<- canon str (FsCanonicalPath :path view.work-dir))
-  (<- source tuple (stream-source-of view canon))
-  (setv path (get source 1))
   (setv current job)
-  (when (is-not path None)
-    (<- pushed InFlightJob (stream-push settings current (get source 0) path at))
-    (setv current pushed))
-  (setv frames-possible (!= (get source 0) STREAM-SOURCE-EVENTS))
   (<- frame-due bool (due current.last-frame-ms now-ms settings.frame-interval-seconds))
-  (when (and frames-possible current.capturing frame-due)
+  (when (and current.capturing frame-due)
     (<- captured InFlightJob (capture-frame settings current at))
     (setv current captured))
   (<- probe-due bool (due current.last-probe-ms now-ms settings.subscriber-recheck-seconds))
-  (when (and frames-possible (not current.capturing) (not current.stream-gone) probe-due)
+  (when (and (not current.capturing) (not current.stream-gone) probe-due)
     (<- probed InFlightJob (probe-subscribers settings current at "running"))
     (setv current probed))
   current)
@@ -2416,40 +2436,51 @@
       kept)))
 
 
-(defk progressed-of [job view]
-  {:pre [(: job InFlightJob) (: view SessionView)]
+(defk progressed-of [job path]
+  {:pre [(: job InFlightJob) (: path (| str None))]
    :post [(: % bool)]}
   "この手番の記録が進んだか(送った本文が届いて手番が始まった証拠)。記録の path を引けない
    器(材料の欠け)は進みを読めないので True(host の判定だけを信じる)。"
-  (<- canon str (FsCanonicalPath :path view.work-dir))
-  (<- source tuple (stream-source-of view canon))
-  (or (is (get source 1) None) (> job.transcript-offset job.start-offset)))
+  (or (is path None) (> job.transcript-offset job.start-offset)))
 
 
 (defk observe-job-fast [settings state job now-ms]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: job InFlightJob) (: now-ms int)]
    :post [(: % tuple)]}
-  "走っている 1 つの job の拍の **1 周目**: 器の眺め → 次の 1 手(純関数 1 点)。observe なら材料を
-   読んで frame を押すところまで(store へは書かない — 遅い腕は 2 周目)。その拍で実況が終わった
-   (capture が gone)なら器を読み直して腕を決め直す(器への RPC で、頭への書きではない)。
-   record-end / turn-end / fail-missing は実況を撃たない(片付いた pane を capture しない)。
-   戻り = #(state view step) —— 2 周目は同じ眺めで腕を撃つ(1 拍に器の眺めを 2 度読まない)。"
+  "走っている 1 つの job の拍の **1 周目**: 器の眺め → **材料の追記を読む** → 次の 1 手(純関数 1 点)。
+   observe ならその拍の実況の見張り(tui の pane の断面と購読の読み直し)まで(store へは書かない —
+   遅い腕は 2 周目)。その拍で実況が終わった(capture が gone)なら器を読み直して腕を決め直す
+   (器への RPC で、頭への書きではない)。record-end / turn-end / fail-missing は実況を撃たない
+   (片付いた pane を capture しない)。
+   戻り = #(state view step) —— 2 周目は同じ眺めで腕を撃つ(1 拍に器の眺めを 2 度読まない)。
+
+   card acp:kanban-issue:ki-2bd49c68b042: 材料を読むのは**次の 1 手を決める前**。次の 1 手が要る事実の 1 つ
+   (この手番の結果が器の記録へ出たか — job-step-of の turn-result-seen)は材料そのものが名乗るので、前の拍の
+   読みでは間に合わない: CLI が result を出して降りた拍(#517 で手番の終わり = process の終わり)に tick が
+   入ると、材料を読む前に「process が死んだ」だけで手番を失われたと判じ、書き終えた答えを捨てていた。
+   読む量は今日と同じ(offset からの追記 1 回)で、手番の終わりの拍に読んだ分はそのまま排水
+   (settle-record の drain-stream)に乗る — 2 つ目の判定点も、時間の猶予も足さない。"
   (<- view (| SessionView None) (SessionGet :session-id job.session-id))
-  (setv progressed True)
+  (setv source None)
+  (setv path None)
   (when (isinstance view SessionView)
-    (<- moved bool (progressed-of job view))
-    (setv progressed moved))
-  (<- step str (job-step-of view job.turn-floor-ms progressed))
+    (<- canon str (FsCanonicalPath :path view.work-dir))
+    (<- found tuple (stream-source-of view canon))
+    (setv source (get found 0))
+    (setv path (get found 1)))
+  (<- live InFlightJob (stream-job-read settings job source path))
+  (<- current AgentdState (with-job state live))
+  (<- progressed bool (progressed-of live path))
+  (<- step str (job-step-of view live.turn-floor-ms progressed live.turn-result-seen))
   (setv seen-view view)
   (setv seen-step step)
-  (setv current state)
   (when (and (= step JOB-STEP-OBSERVE) (isinstance view SessionView))
-    (<- pushed InFlightJob (stream-job-fast settings job view now-ms))
-    (<- kept AgentdState (with-job state pushed))
+    (<- watched InFlightJob (stream-job-watch settings live source now-ms))
+    (<- kept AgentdState (with-job current watched))
     (setv current kept)
-    (when (and pushed.stream-gone (not job.stream-gone))
+    (when (and watched.stream-gone (not job.stream-gone))
       (<- again (| SessionView None) (SessionGet :session-id job.session-id))
-      (<- step-again str (job-step-of again job.turn-floor-ms progressed))
+      (<- step-again str (job-step-of again watched.turn-floor-ms progressed watched.turn-result-seen))
       (setv seen-view again)
       (setv seen-step step-again)))
   #(current seen-view seen-step))
@@ -2491,8 +2522,11 @@
         state)
       (do
         (<- view (| SessionView None) (SessionGet :session-id session-id))
-        ;; 拾い直しは記録の進みを知らない(下限 = 行の createdAt・進み = host の判定だけ)。
-        (<- step str (job-step-of view row.created-at-ms True))
+        ;; 拾い直しは記録の進みを知らない(下限 = 行の createdAt・進み = host の判定だけ)。同じ理由で、
+        ;; この手番の結果が器の記録へ出たかも知らない —— 拾い直した手番の材料の始まり(start-offset-of)は
+        ;; **今の file の大きさ**で、再起動の前に書かれた結末はもう読めない(card ki-2bd49c68b042: 材料から
+        ;; 読めない事実を発明しない)。拾い直しの生死の判断は今日どおり host の観測ちょうど。
+        (<- step str (job-step-of view row.created-at-ms True False))
         (if (not (isinstance view SessionView))
             (do
               (<- (fail-missing-arm settings row.key row.resource-id #() None now-ms))

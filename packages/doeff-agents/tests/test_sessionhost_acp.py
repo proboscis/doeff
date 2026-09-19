@@ -1524,22 +1524,22 @@ def test_acp_list_failure_does_not_stop_the_observation_of_running_jobs() -> Non
 
 
 def test_job_step_of_is_the_one_decision_for_a_running_row() -> None:
-    assert run(judgment.job_step_of(None, 0, True)) == "fail-missing"
+    assert run(judgment.job_step_of(None, 0, True, False)) == "fail-missing"
     view = _view("s", "running")
-    assert run(judgment.job_step_of(view, 0, True)) == "observe"
+    assert run(judgment.job_step_of(view, 0, True, False)) == "observe"
     for status in ("done", "failed", "exited", "stopped", "cancelled"):
-        assert run(judgment.job_step_of(_view("s", status), 0, True)) == "record-end"
+        assert run(judgment.job_step_of(_view("s", status), 0, True, False)) == "record-end"
     # 温かい session(multi_turn)の手番の終わり: 器は生きたまま turn_ended_at が手番の始まり
     # (floor)より後に付き、記録が進んでいる(自分の本文が届いた証拠)時だけ turn-end。
     warm = _view("s", "running", lifecycle="multi_turn", turn_ended_at_ms=5_000)
-    assert run(judgment.job_step_of(warm, 4_000, True)) == "turn-end"
-    assert run(judgment.job_step_of(warm, 6_000, True)) == "observe"
-    assert run(judgment.job_step_of(warm, 4_000, False)) == "observe"
+    assert run(judgment.job_step_of(warm, 4_000, True, False)) == "turn-end"
+    assert run(judgment.job_step_of(warm, 6_000, True, False)) == "observe"
+    assert run(judgment.job_step_of(warm, 4_000, False, False)) == "observe"
     busy = _view("s", "running", lifecycle="multi_turn", turn_ended_at_ms=None)
-    assert run(judgment.job_step_of(busy, 0, True)) == "observe"
+    assert run(judgment.job_step_of(busy, 0, True, False)) == "observe"
     # run_to_completion の器は turn_ended_at が付いても turn-end にはならない(終端で record-end)。
     cold = _view("s", "running", turn_ended_at_ms=5_000)
-    assert run(judgment.job_step_of(cold, 0, True)) == "observe"
+    assert run(judgment.job_step_of(cold, 0, True, False)) == "observe"
 
 
 def _view(
@@ -3279,13 +3279,13 @@ def test_backend_liveness_is_read_from_the_observation_not_the_status_word() -> 
     assert run(judgment.backend_alive(busy_dead)) is False
     assert run(judgment.backend_alive(busy_unobserved)) is True
     assert run(judgment.backend_alive(None)) is False
-    assert run(judgment.job_step_of(busy_alive, 0, True)) == "observe"
-    assert run(judgment.job_step_of(busy_unobserved, 0, True)) == "observe"
-    assert run(judgment.job_step_of(busy_dead, 0, True)) == "session-lost"
+    assert run(judgment.job_step_of(busy_alive, 0, True, False)) == "observe"
+    assert run(judgment.job_step_of(busy_unobserved, 0, True, False)) == "observe"
+    assert run(judgment.job_step_of(busy_dead, 0, True, False)) == "session-lost"
     # 終端の語・手番の終わりは backend の観測より先に読む(死んだ後に host が倒した行は record-end)
-    assert run(judgment.job_step_of(replace(busy_dead, status="exited"), 0, True)) == "record-end"
-    assert run(judgment.job_step_of(idle_dead, 0, True)) == "turn-end"
-    assert run(judgment.job_step_of(idle_dead, 20, True)) == "session-lost"
+    assert run(judgment.job_step_of(replace(busy_dead, status="exited"), 0, True, False)) == "record-end"
+    assert run(judgment.job_step_of(idle_dead, 0, True, False)) == "turn-end"
+    assert run(judgment.job_step_of(idle_dead, 20, True, False)) == "session-lost"
     assert run(judgment.next_arm_for_job("p", busy_alive, home, None, False)) == ArmChoice("defer", "p", None)
     assert run(judgment.next_arm_for_job("p", busy_unobserved, home, None, False)) == ArmChoice("defer", "p", None)
     assert run(judgment.next_arm_for_job("p", busy_dead, home, None, False)) == ArmChoice("resume", "p", "p")
@@ -3296,6 +3296,79 @@ def test_backend_liveness_is_read_from_the_observation_not_the_status_word() -> 
     assert "pid 22663" in condition["reason"]
     assert "headless" in condition["reason"]
     assert "2026-09-14T05:50:00Z" in condition["reason"]
+
+
+def test_a_turn_whose_result_reached_the_events_file_is_not_a_lost_session() -> None:
+    """card acp:kanban-issue:ki-2bd49c68b042: CLI が result を出して process が降りた直後、host の monitor が
+    turn_ended_at を刻む前に agentd の拍が入ると、旧 job-step-of は turn-end の連言(turn_ended_at > floor)を
+    満たせず、次の (not live-backend) で SessionLost と判じて器から結末を読まずに手番を閉じた。ACP は carrier の
+    理由で終わった処理を同じ入力で作り直す(carrierRetryLimit 既定 2)ので、同じ入力に副作用つきの違う答えが 2 つ出る
+    (2026-09-19 の全数: 作り直し 302 件・両方読めた 114 組のうち答えが同一だった組は 0 件・死んだ側の 71.6% は
+    既に答えを書き終えていた)。直し = 判定の材料に「この手番の結果が器の記録へ出たか」を足し、live-backend より
+    **先に**読む。process の生死は代理で、判定が要るのは結果が出たかの事実。"""
+    dead = replace(
+        _view("p", "running", lifecycle="multi_turn", turn_ended_at_ms=None), backend_alive=False
+    )
+    alive = replace(dead, backend_alive=True)
+    # 降りた process が **この手番の結果を器へ出していた** → 手番の終わり(結果を持つ)
+    assert run(judgment.job_step_of(dead, 0, True, True)) == "turn-end"
+    # 本物の死(result を出さずに exit)は従来どおり
+    assert run(judgment.job_step_of(dead, 0, True, False)) == "session-lost"
+    # 生きている process の result は手番の終わりの証拠にしない(注入が queued なら CLI は手番を続ける —
+    # 手番の終わりを名乗るのは器の monitor の 1 点のまま)
+    assert run(judgment.job_step_of(alive, 0, True, True)) == "observe"
+    # 終端の語は結果より先(死んだ後に host が行を倒していれば record-end — 結末は器が持つ)
+    assert run(judgment.job_step_of(replace(dead, status="exited"), 0, True, True)) == "record-end"
+    # 器の無い眺めは今日どおり fail-missing
+    assert run(judgment.job_step_of(None, 0, True, True)) == "fail-missing"
+    # 温かい session の手番の終わりだけ(run_to_completion の結末は器の result_payload を record-end で読む)
+    assert (
+        run(judgment.job_step_of(replace(dead, lifecycle="run_to_completion"), 0, True, True))
+        == "session-lost"
+    )
+
+
+def test_the_runners_own_result_record_is_read_from_the_events_of_this_turn() -> None:
+    """判定の材料(「結果が器へ出たか」)は agentd が読む材料そのものから: claude = CLI 自身の手番ではない
+    result の行 / codex = turn/completed の通知。CLI 自身の手番の result(origin.kind = task-notification —
+    孤児の background task の報せ・実測 2026-09-19 07:28 JST)は本文の手番の終わりではないので数えない
+    (器の判定 headless_protocol.cli-own-turn-result と同じ 1 点)。まだ走っている手番の材料は False。"""
+    ended = run(judgment.deltas_of("claude", "events", _claude_events("s-1", "hello world"), "j", 0, 1, ()))
+    assert ended.turn_result is True
+    running = run(
+        judgment.deltas_of(
+            "claude",
+            "events",
+            _stream_line({"type": "system", "subtype": "init", "session_id": "s-1"}),
+            "j",
+            0,
+            1,
+            (),
+        )
+    )
+    assert running.turn_result is False
+    own = run(
+        judgment.deltas_of(
+            "claude",
+            "events",
+            _stream_line(
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "is_error": False,
+                    "num_turns": 0,
+                    "origin": {"kind": "task-notification"},
+                }
+            ),
+            "j",
+            0,
+            1,
+            (),
+        )
+    )
+    assert own.turn_result is False
+    codex = run(judgment.deltas_of("codex", "events", _codex_events("t-1", "hello world"), "j", 0, 1, ()))
+    assert codex.turn_result is True
 
 
 def test_stop_closes_running_jobs_with_agentd_restart_and_leaves_the_session_to_the_host() -> None:
@@ -3749,6 +3822,107 @@ def test_headless_claude_turn_streams_text_deltas_and_records_entries() -> None:
     assert job.status is not None
     assert job.status["phase"] == PHASE_ENDED
     assert world.sessions.views[sid].status == "running"
+
+
+def test_headless_result_then_exit_before_the_monitor_ends_the_turn_not_the_session() -> None:
+    """受入 2(card acp:kanban-issue:ki-2bd49c68b042): 替え玉 CLI の「result を出して即 exit」
+    (headless_stubs/claude の DOEFF_HEADLESS_STUB_TURNS_BEFORE_EXIT — 段 12 lane 12e / #517 で
+    手番の終わり = process の終わりになった)と、**遅い monitor** の拍(monitor の間隔 > agentd の tick の
+    間隔 → turn_ended_at はまだ None・status も running のまま)の重なり。この拍で agentd は
+    SessionLost にせず、器の材料(events の result)から手番を終える: turn-record は ended で答えの
+    出来事を持ち、job の結末は completed、session は片付けない(温かいまま host に任せる)。"""
+    world = HeadlessWorld()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400))
+    world.tick()
+    sid = world.sid("j-1")
+    # CLI: 答えと result を events へ書いて即 exit(host の観測は backend_alive false)。
+    # monitor は遅れていて手番の終わりをまだ刻んでいない。
+    world.local.transcripts[f"/events/{sid}.events.jsonl"] = _claude_events(sid, "hello world")
+    world.sessions.kill_backend(sid)
+    assert world.sessions.views[sid].turn_ended_at_ms is None
+    assert world.sessions.views[sid].status == "running"
+    world.tick(advance_ms=1_000)
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_ENDED
+    assert job.status["result"] == {"cause": {"category": "completed"}}
+    conditions = job.status.get("conditions")
+    assert not any(
+        isinstance(condition, dict) and condition.get("type") == "SessionLost"
+        for condition in (conditions if isinstance(conditions, list) else [])
+    )
+    assert not any("lost its session" in line for line in world.local.logs)
+    # 答えは捨てられない: turn-record は ended で、この手番の出来事を持つ
+    record = world.turn_record("j-1")
+    assert record is not None
+    assert record.status is not None
+    assert record.status["state"] == "ended"
+    entries = record.status["entries"]
+    assert isinstance(entries, list)
+    assert [entry["kind"] for entry in entries if isinstance(entry, dict)] == [
+        "system",
+        "text",
+        "tool_use",
+        "tool_result",
+    ]
+    assert record.status["usage"] == {"input": 3, "output": 7, "cacheWrite": 1, "cacheRead": 2}
+    # 温かい session は agentd が片付けない(次の手番が --resume で起こし直す)
+    assert world.sessions.cleanups == []
+    assert world.state.jobs == ()
+
+
+def test_headless_death_without_a_result_is_still_a_lost_session() -> None:
+    """受入 3(card acp:kanban-issue:ki-2bd49c68b042)の 1: 本物の死 —— 答えを書きかけたまま
+    result を出さずに process が降りた手番は、今日どおり SessionLost で閉じる(器の材料に
+    この手番の結末が無い = 手番は終わっていない)。"""
+    world = HeadlessWorld()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400))
+    world.tick()
+    sid = world.sid("j-1")
+    world.local.transcripts[f"/events/{sid}.events.jsonl"] = _stream_line(
+        {"type": "system", "subtype": "init", "session_id": sid}
+    )
+    world.sessions.kill_backend(sid)
+    world.tick(advance_ms=1_000)
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_ENDED
+    assert job.status["result"] == {"cause": {"category": "failed", "reason": "SessionLost"}}
+    conditions = job.status["conditions"]
+    assert isinstance(conditions, list)
+    assert conditions[-1]["type"] == "SessionLost"
+    assert any("lost its session" in line for line in world.local.logs)
+
+
+def test_headless_next_turn_does_not_inherit_the_previous_turns_result() -> None:
+    """受入 3 の 2: 同じ器(同じ pid)に短時間で複数の手番が乗る形 —— 前の手番の result は events file に
+    残っているが、次の手番の材料は**その手番の始まりの offset から**で、前の結末を受け継がない。
+    結末を書かずに死んだ 2 つ目の手番は SessionLost のまま。"""
+    world = HeadlessWorld()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400))
+    world.tick()
+    sid = world.sid("j-1")
+    events = _claude_events(sid, "hello world")
+    world.local.transcripts[f"/events/{sid}.events.jsonl"] = events
+    world.tick(advance_ms=1_000)
+    # 1 手番目は普通に終わる(monitor が追いついた拍)
+    world.sessions.finish_turn(sid, world.local.now_ms + 100)
+    world.tick(advance_ms=1_000)
+    assert world.job("j-1").status["phase"] == PHASE_ENDED  # type: ignore[index]
+    # 2 手番目: 同じ温かい session へ送り、その process が結末を書かずに降りる
+    world.acp.put_row(message("m-2", "second"))
+    world.acp.put_row(bound_job("j-2", inputs=["m-2"], created_at_ms=world.local.now_ms))
+    world.tick(advance_ms=1_000)
+    assert world.sid("j-2") == sid
+    world.sessions.kill_backend(sid)
+    world.tick(advance_ms=1_000)
+    second = world.job("j-2")
+    assert second.status is not None
+    assert second.status["phase"] == PHASE_ENDED
+    assert second.status["result"] == {"cause": {"category": "failed", "reason": "SessionLost"}}
 
 
 def test_headless_codex_turn_streams_deltas_and_records_command_execution() -> None:
