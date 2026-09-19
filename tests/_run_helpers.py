@@ -7,10 +7,16 @@ behaviour use `run_with_defaults(...)` here instead.
 
 Individual tests that only need a subset of handlers should compose them
 inline with WithHandler rather than reach for this helper.
+
+NOT private despite the leading underscore: test files under seven different
+`packages/*/tests/` trees import `run_with_defaults` from here. The name is
+kept for churn reasons only -- treat this module as a shared entry point and
+migrate every importer together if it moves.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from doeff_core_effects.handlers import (
@@ -52,19 +58,38 @@ def default_handlers(env: Any = None, store: Any = None) -> list[Any]:
     ]
 
 
-def wrap_with_defaults(program: Any, env: Any = None, store: Any = None) -> Any:
-    """Wrap ``program`` with the default handler chain + scheduler."""
+def wrap_with_defaults(
+    program: Any,
+    env: Any = None,
+    store: Any = None,
+    outer_handlers: Sequence[Any] = (),
+) -> Any:
+    """Wrap ``program`` with the default handler chain + scheduler.
+
+    ``outer_handlers`` reproduces the pre-rebuild
+    ``run(p, handlers=[extra, *default_handlers()])`` shape: entries are
+    installed *outside* the default chain, in the same order the legacy list
+    had them (first entry outermost).
+    """
     wrapped = program
-    for handler in reversed(default_handlers(env=env, store=store)):
+    for handler in reversed([*outer_handlers, *default_handlers(env=env, store=store)]):
         wrapped = _program_handler(handler)(wrapped)
     return scheduled(wrapped)
+
+
+#: Keyword arguments the pre-rebuild ``run()`` accepted and today's runtime
+#: ignores. Absorbed silently; anything *not* on this list is a typo and must
+#: raise rather than be swallowed (a misspelled ``env=`` would otherwise run
+#: the program with no environment and look green).
+_ABSORBED_LEGACY_KWARGS = frozenset({"trace", "print_doeff_trace"})
 
 
 def run_with_defaults(
     program: Any,
     env: Any = None,
     store: Any = None,
-    **_legacy: Any,
+    outer_handlers: Sequence[Any] = (),
+    **legacy: Any,
 ) -> Any:
     """Run a program with the default handler chain.
 
@@ -73,11 +98,24 @@ def run_with_defaults(
     return a Result can keep calling ``result.is_ok()`` / ``result.value``
     without rewriting every call site.
 
-    ``_legacy`` absorbs removed kwargs (``trace``, ``print_doeff_trace``) from
-    pre-rebuild tests so call sites don't need a second migration step.
+    Only the kwargs in :data:`_ABSORBED_LEGACY_KWARGS` are ignored; any other
+    keyword raises ``TypeError``.
+
+    Only ``Exception`` is converted to ``Err``. ``BaseException`` must pass
+    through: ``pytest.skip()`` / ``pytest.fail()`` raise
+    ``_pytest.outcomes.OutcomeException`` (a ``BaseException``), and catching
+    those here would turn a skipped test into an ``Err`` result -- and would
+    swallow ``KeyboardInterrupt`` during long runs.
     """
+    unknown = set(legacy) - _ABSORBED_LEGACY_KWARGS
+    if unknown:
+        raise TypeError(
+            f"run_with_defaults() got unexpected keyword argument(s): {', '.join(sorted(unknown))}"
+        )
     try:
-        value = _run(wrap_with_defaults(program, env=env, store=store))
-    except BaseException as exc:
+        value = _run(
+            wrap_with_defaults(program, env=env, store=store, outer_handlers=outer_handlers)
+        )
+    except Exception as exc:
         return Err(exc)
     return Ok(value)
