@@ -144,7 +144,7 @@ def test_log_handler_emits_tell_events() -> None:
         if isinstance(effect, WriterTellEffect):
             logs.append(effect.message)
             return (yield Resume(k, None))
-        yield Pass()
+        yield Pass(effect, k)
 
     result = run_with_defaults(
         _install_raw_handler(capture_tell_handler)(

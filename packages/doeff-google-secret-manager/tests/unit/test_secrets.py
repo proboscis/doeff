@@ -96,7 +96,7 @@ def _build_handler(
             state[effect.key] = effect.value
             event_log.append(("put", effect.key, effect.value))
             return (yield Resume(k, None))
-        yield Pass()
+        yield Pass(effect, k)
 
     return mock_handler, state, event_log
 

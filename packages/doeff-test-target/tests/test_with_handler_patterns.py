@@ -35,15 +35,12 @@ def _single_ask_program(key: str):
     return (yield Ask(key))
 
 
-@pytest.mark.awaiting_api_migration(
-    reason="test reads Err.value; the current Err exposes .error - #619"
-)
 def test_withhandler_basic_effect_pipeline_with_mock_handler():
     @do
     def mock_handler(effect: Effect, k):
         if isinstance(effect, AskEffect):
             return (yield Resume(k, f"mock-{effect.key}"))
-        return (yield Pass())
+        return (yield Pass(effect, k))
 
     result = run_with_defaults(
         _install_raw_handler(mock_handler)(_test_target_pipeline()),
@@ -52,21 +49,18 @@ def test_withhandler_basic_effect_pipeline_with_mock_handler():
     assert result.value == {"alpha": "alpha", "beta": "beta", "gamma": "mock-gamma"}
 
 
-@pytest.mark.awaiting_api_migration(
-    reason="test reads Err.value; the current Err exposes .error - #619"
-)
 def test_withhandler_nesting_inner_handler_overrides_outer_handler():
     @do
     def outer_handler(effect: Effect, k):
         if isinstance(effect, AskEffect):
             return (yield Resume(k, f"outer-{effect.key}"))
-        return (yield Pass())
+        return (yield Pass(effect, k))
 
     @do
     def inner_handler(effect: Effect, k):
         if isinstance(effect, AskEffect) and effect.key == "inner":
             return (yield Resume(k, "inner-mock"))
-        return (yield Pass())
+        return (yield Pass(effect, k))
 
     result = run_with_defaults(
         _install_raw_handler(outer_handler)(
@@ -88,7 +82,7 @@ def test_withhandler_error_propagation_from_handler():
     def failing_handler(effect: Effect, _k):
         if isinstance(effect, AskEffect) and effect.key == "explode":
             raise HandlerFailure("mock handler failure for explode")
-        return (yield Pass())
+        return (yield Pass(effect, _k))
 
     result = run_with_defaults(
         _install_raw_handler(failing_handler)(_single_ask_program("explode")),
@@ -101,9 +95,6 @@ def test_withhandler_error_propagation_from_handler():
         _ = result.value
 
 
-@pytest.mark.awaiting_api_migration(
-    reason="test reads Err.value; the current Err exposes .error - #619"
-)
 def test_withhandler_delegate_passthrough_uses_default_reader():
     seen_keys: list[str] = []
 
@@ -111,7 +102,7 @@ def test_withhandler_delegate_passthrough_uses_default_reader():
     def delegating_handler(effect: Effect, _k):
         if isinstance(effect, AskEffect):
             seen_keys.append(effect.key)
-        return (yield Pass())
+        return (yield Pass(effect, _k))
 
     result = run_with_defaults(
         _install_raw_handler(delegating_handler)(_single_ask_program("service_name")),
@@ -137,7 +128,7 @@ def test_withhandler_resume_supports_various_value_types():
         def typed_mock_handler(effect: Effect, k, sample_value=sample_value):
             if isinstance(effect, AskEffect):
                 return (yield Resume(k, sample_value))
-            return (yield Pass())
+            return (yield Pass(effect, k))
 
         result = run_with_defaults(
             _install_raw_handler(typed_mock_handler)(_single_ask_program("any-key")),

@@ -92,7 +92,7 @@ def _with_mock_gemini_handler(program: Any, *, mock_client: Any, asked_keys: lis
                 return (yield Resume(k, mock_client))
             if effect.key == "gemini_api_key":
                 return (yield Resume(k, "fake-gemini-key"))
-        yield Pass()
+        yield Pass(effect, k)
 
     return _install_raw_handler(mock_handler)(program)
 
