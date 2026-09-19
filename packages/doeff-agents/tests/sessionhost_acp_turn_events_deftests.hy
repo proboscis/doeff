@@ -1014,7 +1014,10 @@
   (assert (= (get world.acp.creates (record-key)) 4))
   (setv conditions (job-conditions world))
   ;; この手番は本文を 1 つも出していない(init の system 行だけ)ので、7b81b077(L195・TurnProducedNothing)以降は出力 0 件の
-  ;; 条件も並ぶ。ここで見るのは記録の腕の条件ちょうど — 列の全体を pin しない(別の条件が増えるたびに赤にならない)。
+  ;; 条件も並ぶ。**型の集合を固定する**(c3454a16 で「RecordUnavailable を列から拾って数える」形にしていたが、それでは
+  ;; この手番に余計な条件が 1 つ増えても誰も気づかない — 検収 lt-EZJTXQMQQARCBP0Q1026TYBZ2A の指摘。在るべき集合を
+  ;; 固定すれば、条件が増えた拍に赤になり、この検の追随が要ると分かる)。
+  (assert (= (sfor c conditions (get c "type")) #{"RecordUnavailable" "TurnProducedNothing"}) conditions)
   (setv unavailable (lfor c conditions :if (= (get c "type") "RecordUnavailable") c))
   (assert (= (len unavailable) 1) conditions)
   (assert (in "after 3 s" (get (get unavailable 0) "reason")) conditions))
