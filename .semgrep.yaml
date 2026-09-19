@@ -4838,9 +4838,11 @@ rules:
       before the host monitor stamps turn_ended_at would fall through to
       (not live-backend) and close the job as SessionLost — discarding a
       finished answer. ACP then re-runs the same input (carrierRetryLimit
-      2): the 2026-09-19 census found 302 re-runs, 0 of the 114 readable
-      pairs agreed, and 71.6% of the killed side had already written its
-      answer. Keep the read first; do not add a second decision point.
+      2): the 2026-09-19 census, measured on the artifacts the turns
+      actually sent, found 302 re-runs, 10 of 123 pairs answering the same
+      letter twice, and 75 of 123 killed sides whose answer had already
+      reached the world. Keep the read first; do not add a second
+      decision point.
     pattern-regex: '(?s)\(defk observe-job-fast(?:(?!stream-job-read).)*?\(job-step-of'
     paths:
       include:
