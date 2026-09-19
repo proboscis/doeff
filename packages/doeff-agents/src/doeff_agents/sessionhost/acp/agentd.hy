@@ -383,6 +383,7 @@
   capture-verdict
   retire-reason-after-job
   condition-of
+  lease-refusal-condition-of
   charter-place-of
   place-mismatch
   credential-place-mismatch
@@ -864,17 +865,21 @@
 ;; agent-job の受け: Bound → Running → session を起こす → inputs を送る
 ;; ---------------------------------------------------------------------------
 
-(defk end-job-now [settings row reason-type reason pending now-ms]
-  {:pre [(: settings AgentdSettings) (: row AcpRow) (: reason-type str) (: reason str)
-         (: pending tuple) (: now-ms int)]
+(defk end-job-now-with [settings row condition pending now-ms]
+  {:pre [(: settings AgentdSettings) (: row AcpRow) (: condition dict) (: pending tuple) (: now-ms int)]
    :post [(: % bool)]}
-  "session の結末なしに job を Ended + condition で閉じる(fresh な行の generation で書く)。
-   pending = 手番の途中で判った事実(inputs の欠け等)を condition に添える。
-   戻り = Ended の書きが着地したか。"
+  "end-job-now の本体を、**条件の項を呼び手が組んで渡す**形で開いた口(段 12・card
+   acp:kanban-issue:ki-f2747267e24d)。散文の reason の外に構造の欄を持つ条件のための口で、
+   今日の唯一の使い手は預かり所の断り(409 の錠の期限を until に載せる —
+   judgment.lease-refusal-condition-of)。
+
+   終端の cause と log の綴りは条件の欄(type / reason)から読むので end-job-now と 1 文字も
+   変わらない —— 書きの点は 1 つのままで、増えたのは『条件を誰が組むか』の選択だけ。"
+  (setv reason-type (str (.get condition "type")))
+  (setv reason (str (.get condition "reason" "")))
   (<- fresh (| AcpRow None) (AcpGetRow :key row.key))
   (setv target (if (is fresh None) row fresh))
   (<- status dict (status-object-of target))
-  (<- condition dict (condition-of reason-type reason))
   ;; #349 行 3 粒 3a: session なしで閉じる終端の cause = failed / <条件の型>
   (<- cause dict (terminal-cause-of CAUSE-CATEGORY-FAILED reason-type))
   (<- ended dict (ended-status-of status None cause (+ pending #(condition))))
@@ -883,6 +888,18 @@
     (<- (LogLine :text f"agentd: could not end job {row.resource-id}: {outcome}")))
   (<- (LogLine :text f"agentd: job {row.resource-id} ended without a session: {reason-type} — {reason}"))
   (isinstance outcome Written))
+
+
+(defk end-job-now [settings row reason-type reason pending now-ms]
+  {:pre [(: settings AgentdSettings) (: row AcpRow) (: reason-type str) (: reason str)
+         (: pending tuple) (: now-ms int)]
+   :post [(: % bool)]}
+  "session の結末なしに job を Ended + condition で閉じる(fresh な行の generation で書く)。
+   pending = 手番の途中で判った事実(inputs の欠け等)を condition に添える。
+   戻り = Ended の書きが着地したか。"
+  (<- condition dict (condition-of reason-type reason))
+  (<- landed bool (end-job-now-with settings row condition pending now-ms))
+  landed)
 
 
 (defk borrow-lease [plan purpose]
@@ -1158,9 +1175,12 @@
   (setv refusal (get borrowed 1))
   (if (is-not refusal None)
       (do
-        (<- (end-job-now settings row "CredentialUnavailable"
-                                f"custody refused ({refusal.status}): {refusal.error}"
-                                #() now-ms))
+        ;; 段 12(card acp:kanban-issue:ki-f2747267e24d): 断りは**構造で**残す — 409 の錠の期限を
+        ;; 条件の欄 until に載せる(判断は judgment.lease-refusal-condition-of の 1 点)。散文だけに
+        ;; 畳むと、制御面は「一時の競合(待てば通る)」と「宣言の欠陥(どの宿でも通らない)」を
+        ;; 分けられず、配置は必ず断られる宿へ置き続ける(実弾 2026-09-19 の 325 通)。
+        (<- condition dict (lease-refusal-condition-of refusal))
+        (<- (end-job-now-with settings row condition #() now-ms))
         state)
       (do
         (when (is-not choice.retire None)
