@@ -6171,12 +6171,24 @@ def test_node_declares_the_custody_borrower_equivalence_key_from_the_identity_it
     token_file.write_text(sa_token("acp-control", "default") + "\n", encoding="utf-8")
     key_file = tmp_path / "borrower"
     key_file.write_text("mac-studio-secret\n", encoding="utf-8")
-    recorded = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACES": "personal"}
+    # ⚠ 鍵の path は必ず名指す: 名指さないと reader は既定 path(~/.local/state/agora/borrower-key)を読み、
+    # 預かり所の借り手である Mac では実の鍵を拾って結果が機体で変わる(差し戻し lt-APF60B4P48HW1ZYB45H044J6GB =
+    # 会社 Mac で SA の assert が None・pod は file が無いので緑に見えていた)。基底は存在しない path。
+    recorded = {
+        "DOEFF_AGENTD_NODE_NAME": NODE,
+        "RECORD_SERVICE_URL": "http://record:8874",
+        "DOEFF_AGENTD_CAPACITY": "1",
+        "DOEFF_AGENTD_PLACES": "personal",
+        "AGORA_BORROWER_KEY_PATH": str(tmp_path / "no-borrower-key"),
+    }
     custody = {**recorded, "AGORA_CUSTODY_URL": "http://custody:8320"}
     assert settings_from_env({**custody, "AGORA_CUSTODY_SA_TOKEN_PATH": str(token_file)}, ()).custody_borrower == "sa:acp-control/default"
     assert settings_from_env({**custody, "AGORA_BORROWER_KEY_PATH": str(key_file)}, ()).custody_borrower == f"key:{digest}"
     # 宣言した token が読めない拍は名乗らない(参加は断らない — この欄は任意)
     assert settings_from_env({**custody, "AGORA_CUSTODY_SA_TOKEN_PATH": str(tmp_path / "absent")}, ()).custody_borrower is None
+    # ⚠ 鍵と token の両方を持つ機体は名乗らない(上の純関数の枝が composition root でも効く — 鍵を持つ Mac に
+    # SA token を宣言した形。どちらの身元で錠が立つかは預かり所の側が決める)
+    assert settings_from_env({**custody, "AGORA_BORROWER_KEY_PATH": str(key_file), "AGORA_CUSTODY_SA_TOKEN_PATH": str(token_file)}, ()).custody_borrower is None
     # ⚠ 預かり所を宣言していない機体は名乗らない(借りない機体の身元は束ねに意味を持たない)
     assert settings_from_env({**recorded, "AGORA_BORROWER_KEY_PATH": str(key_file)}, ()).custody_borrower is None
     assert settings_from_env(recorded, ()).custody_borrower is None
