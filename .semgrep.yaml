@@ -4915,3 +4915,24 @@ rules:
     paths:
       include:
         - "**/sessionhost/acp/handlers.py"
+  - id: doeff-agents-does-not-spell-seat-facing-env
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      doeff-agents carries the declared seat env as an opaque copy and does
+      not know its vocabulary (ADR-DOE-AGENTS-012 R51 (4), agora-redesign
+      #520). The destinations a seat's tools read — ACP_BASE,
+      AGORA_BRAIN_URL, HERDR_HUD_STATE_BACKEND — are defined by the
+      declaration side (the k8s Service and the reading dotfiles CLI) and
+      travel through `[agentd].seat_env` -> JoinSpec.seat_env ->
+      DOEFF_AGENTD_SEAT_ENV -> charter.session_env. Spelling one of them
+      here creates a second default that drifts from the declaration: the
+      pod's ConfigMap says one thing, doeff quietly says another, and the
+      seat silently gets the stale one (the shape ACP law 11d8cc named for
+      the container env). Keep the names out of this package — put them in
+      the declaration.
+    pattern-regex: '["''](ACP_BASE|AGORA_BRAIN_URL|HERDR_HUD_STATE_BACKEND)["'']'
+    paths:
+      include:
+        - "/packages/doeff-agents/src/**"
