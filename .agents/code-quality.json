@@ -217,6 +217,19 @@
       "typed": true
     },
     {
+      "name": "sessionhost-policy",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy"
+      ],
+      "responsibility": "共有 session-host の monitor cycle の判断(ADR-DOE-AGENTS-004 C1・行から level-trigger で再導出する program・effect を yield するだけで I/O を呼ばない)。2026-09-19 に契約を与えた — 冊 012 がこの module の語(SEAT-ENV-CREDENTIAL-SHAPED-SEGMENTS ほか)を針で読むのに、依存先の契約が無く dependency-uncontracted になっていたため",
+      "layer": "pure",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy"
+      ],
+      "allow": [],
+      "typed": false
+    },
+    {
       "name": "agentd-runtime",
       "paths": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/acp/runtime.py",
@@ -335,7 +348,8 @@
         "agentd-join",
         "agentd-fake",
         "agentd-runtime",
-        "agentd-valve"
+        "agentd-valve",
+        "sessionhost-policy"
       ],
       "typed": true
     },
