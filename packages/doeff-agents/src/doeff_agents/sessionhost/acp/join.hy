@@ -45,6 +45,11 @@
   WORK-DIR-ROOTS-MAX
   WORK-DIR-ROOTS-SEPARATOR
   WorkDirRoots
+  CUSTODY-BORROWER-SA-PREFIX
+  CUSTODY-BORROWER-KEY-PREFIX
+  CUSTODY-BORROWER-KEY-HEX-CHARS
+  CUSTODY-SA-NAMESPACE-CLAIM
+  CUSTODY-SA-NAME-CLAIM
   Places
   AGENTD-PLACES
   CAPACITY-ENV
@@ -91,6 +96,12 @@
   RECORD-SPOOL-DIR-ENV
   RECORD-URL-ENV
   SESSION-HOOKS-ENV])
+
+;; card acp:kanban-issue:ki-40021864e62f: 借り手の等価鍵の導出に使う純粋な計算ちょうど
+;; (札の digest・JWT の claims の読み)。I/O は 1 つも無い(file の読みは composition root)。
+(import base64)
+(import hashlib)
+(import json)
 
 
 ;; ---------------------------------------------------------------------------
@@ -451,6 +462,87 @@
   (when (> (len found) WORK-DIR-ROOTS-MAX)
     (raise (ValueError f"持つ根は {WORK-DIR-ROOTS-MAX} までであること(契約 node.spec.workDirRoots.maxItems): {(len found)}")))
   (WorkDirRoots :roots (tuple found)))
+
+
+(defk service-account-borrower-of [token]
+  {:pre [(: token (| str None))]
+   :post [(: % (| str None))]}
+  "pod の ServiceAccount の token → 借り手の等価鍵 `sa:<namespace>/<serviceaccount>`(card
+   acp:kanban-issue:ki-40021864e62f)。読むのは JWT の payload の claims 2 つちょうど(CUSTODY-SA-NAMESPACE-CLAIM /
+   CUSTODY-SA-NAME-CLAIM — 預かり所の backend が TokenReview で解く借り手名 ns/sa と 1 対 1)。
+   ⚠ **署名は検めない**: この値は『自分は誰として借りるか』の名乗りで、認証するのは預かり所の側(TokenReview)。
+   agentd が自分の token の claims を偽っても、預かり所が貸すのは TokenReview の答えの借り手にだけなので、
+   嘘は『配車の束ねが間違う』ではなく『借りが 409 で断られる』に落ちる(嘘の得は無い)。
+   読めない token(段が 3 つでない・payload が base64url でない・JSON でない・claims が無い・空)は **None**
+   —— 推測しない(名乗らなければ配車は node 名で束ねる = この軸が無かった時と同じ・安全側)。"
+  (when (is token None)
+    (return None))
+  (setv word (.strip token))
+  (when (not word)
+    (return None))
+  (setv parts (.split word "."))
+  (when (!= (len parts) 3)
+    (return None))
+  (setv payload (get parts 1))
+  ;; base64url の padding は JWT が落とすので補って解く(長さの余りから足す)。
+  (setv padded (+ payload (* "=" (% (- 4 (% (len payload) 4)) 4))))
+  (try
+    (setv claims (json.loads (.decode (base64.urlsafe-b64decode padded) "utf-8")))
+    (except [Exception]
+      (return None)))
+  (when (not (isinstance claims dict))
+    (return None))
+  (setv namespace (.get claims CUSTODY-SA-NAMESPACE-CLAIM))
+  (setv name (.get claims CUSTODY-SA-NAME-CLAIM))
+  (when (or (not (isinstance namespace str)) (not (isinstance name str)))
+    (return None))
+  (when (or (not (.strip namespace)) (not (.strip name)))
+    (return None))
+  (+ CUSTODY-BORROWER-SA-PREFIX (.strip namespace) "/" (.strip name)))
+
+
+(defk borrower-key-digest-of [key]
+  {:pre [(: key (| str None))]
+   :post [(: % (| str None))]}
+  "借り手札 → 借り手の等価鍵 `key:<sha256(札) の先頭 16 hex>`(card acp:kanban-issue:ki-40021864e62f)。
+   ⚠ **札の実値は 1 byte も鍵に入らない**(node の行は誰でも読める)。同じ札を持つ機体は同じ鍵になり、
+   違う札なら違う鍵になる —— 預かり所の錠が借り手名で分かれるのと同じ分かれ方。無い・空 = None(名乗らない)。"
+  (when (is key None)
+    (return None))
+  (setv word (.strip key))
+  (when (not word)
+    (return None))
+  (setv digest (.hexdigest (hashlib.sha256 (.encode word "utf-8"))))
+  (+ CUSTODY-BORROWER-KEY-PREFIX (cut digest 0 CUSTODY-BORROWER-KEY-HEX-CHARS)))
+
+
+(defk custody-borrower-of [borrower-key service-account-token]
+  {:pre [(: borrower-key (| str None)) (: service-account-token (| str None))]
+   :post [(: % (| str None))]}
+  "預かり所へ名乗る借り手の身元の**等価鍵**の判断の 1 点(card acp:kanban-issue:ki-40021864e62f・ACP 側の依頼
+   lt-FMEPYFTCRQSKV4V8V0A82VQQFC)。材料は預かり所へ名乗る身元ちょうど 2 つで、handlers.CustodyHttp._identity_headers が
+   header に組むのと**同じ材料**(第 2 の身元を発明しない)。I/O は無い —— file の読みは composition root
+   (runtime.settings_from_env が handlers.read-secret-file で読む)。
+
+   * SA token だけを宣言(k3s の pool の pod)→ `sa:<ns>/<sa>`(service-account-borrower-of)。
+   * 借り手札だけを宣言(Mac の agentd)→ `key:<sha256 の先頭 16 hex>`(borrower-key-digest-of)。
+   * どちらも無い → None(名乗らない — 預かり所を宣言していない機体)。
+   * ⚠ **両方を宣言している機体は None**(名乗らない): 預かり所はその拍に 2 つの身元を受け取り、錠を
+     どちらで分けるかを決めるのは**預かり所の側**。ACP は預かり所の知識を持たないので、ここで片方を
+     選ぶのは推測になり、外した時は『別の借り手の機体を同じ借り手と読む』= 借りが 409 で断られて手番が
+     何も始めないまま死ぬ(2026-09-15 13:51 JST の実弾そのもの)。名乗らなければ配車は node 名で束ね、
+     今日と 1 bit も変わらない(安全側)。⇒ 本番の機体はどちらか一方だけを宣言している(pod = SA token・
+     Mac = 借り手札)ので、この枝は据え付けの誤りの受け皿。
+
+   答えは**名乗る値か None** で、途中の形の誤り(読めない token・空の札)も None —— 参加は断らない
+   (この欄は任意で、名乗らない機体は今日どおり手番を受ける)。"
+  (<- from-token (| str None) (service-account-borrower-of service-account-token))
+  (<- from-key (| str None) (borrower-key-digest-of borrower-key))
+  (cond
+    (and (is-not from-token None) (is-not from-key None)) None
+    (is-not from-token None) from-token
+    (is-not from-key None) from-key
+    True None))
 
 
 (defk revision-of [text]
