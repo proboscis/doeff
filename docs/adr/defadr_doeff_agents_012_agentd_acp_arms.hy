@@ -3017,6 +3017,13 @@
                "手番ごとの資格の env の名は policy の 1 点(R30)")
        (assert (any (gfor line policy-lines (.startswith line "(setv SPAWN-INHERITED-ENV-KEYS")))
                "継ぐ env は許可の名簿(R30)")
+       ;; 2026-09-19(card acp:kanban-issue:ki-2a061da56ca9): agent の境界で「運ばせない」
+       ;; env の綴りも policy の 1 点。受理 / spawn / shell の 3 層は集合を名指すだけで、
+       ;; 層ごとに literal の名簿を持たない(3 つの写しが別々に古びるのを止める)。
+       (assert (any (gfor line policy-lines (.startswith line "(setv PROVIDER-AUTH-ENV-KEYS")))
+               "provider の鍵・札の綴りは policy の 1 点(R30)")
+       (assert (any (gfor line policy-lines (.startswith line "(setv PROVIDER-ROUTING-ENV-KEYS")))
+               "provider を差し替える綴りは policy の 1 点(R30)")
        (setv host-lines (code-lines (/ SESSIONHOST-DIR "host.hy")))
        (assert (= (len (lfor line host-lines :if (in "(session-env-admission-error session-env \"session.send\")" line) line)) 1)
                "送りの口の関所は launch と同じ 1 点(R30)")
