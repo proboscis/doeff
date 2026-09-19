@@ -134,8 +134,10 @@ class FakeAcp:
         self.rows: dict[str, AcpRow] = {}
         self.sequence: int = 0
         self.writes: list[tuple[str, JSONObject]] = []
-        #: 書きと押しの**順**(段 10 lane 10s 追補 3): ("create", 鍵) / ("push", stream の名)— 手番の最初の frame が
-        #: turn-record の作成より先に中継へ出ることを検が読む。
+        #: 書きと押しの**順**(段 10 lane 10s 追補 3): ("create", 鍵) / ("status", 鍵) / ("spec", 鍵) / ("push", stream の名)
+        #: — 手番の最初の frame が turn-record の作成より先に中継へ出ることを検が読む。card
+        #: acp:kanban-issue:ki-6eb745f6d528: 拍の中でも**全 job の push が どの store への書きよりも先**かを読む
+        #: (FakeLocal に同じ list を渡すと ("clock", 値) も同じ 1 本に並ぶ)。
         self.trace: list[tuple[str, str]] = []
         self.pushes: list[tuple[str, str, tuple[JSONObject, ...]]] = []
         self.subscribers: dict[str, int] = {}
@@ -279,9 +281,11 @@ class FakeAcp:
 
     def _write(self, effect: AcpPutStatus | AcpPutSpec | AcpCreate | AcpStreamPush) -> object:
         if isinstance(effect, AcpPutStatus):
+            self.trace.append(("status", effect.row.key))
             return self._put_status(effect.row, effect.status)
         if isinstance(effect, AcpPutSpec):
             self.fingerprints.append((effect.row.key, effect.declaration_sha256))
+            self.trace.append(("spec", effect.row.key))
             return self._put_spec(effect.row, effect.spec)
         if isinstance(effect, AcpCreate):
             self.fingerprints.append((f"{effect.namespace}:{effect.kind}:{effect.resource_id}", effect.declaration_sha256))
@@ -698,8 +702,21 @@ class FakeLocal:
     """時計・計器・log・file・この機体の資格の残量の代わり。transcript / events は path → text の表
     (transcripts)、残量は kind → 答えの列(usage・既定は空 = 持たない)。"""
 
-    def __init__(self, now_ms: int = 1_000) -> None:
+    def __init__(
+        self,
+        now_ms: int = 1_000,
+        clock_step_ms: int = 0,
+        trace: list[tuple[str, str]] | None = None,
+    ) -> None:
         self.now_ms: int = now_ms
+        #: 時計を 1 度読むたびに進む幅(ms)。0 = 拍の中で時計が止まっている(既定 — 今日までの検の世界)。
+        #: > 0 は「読むたびに進む」世界で、どの読みがどの frame の at になったかを検が区別できる
+        #: (card acp:kanban-issue:ki-6eb745f6d528: frame の at は拍の頭の 1 度ではなく、その job の読み)。
+        self.clock_step_ms: int = clock_step_ms
+        #: 時計を読んだ値の順。
+        self.clock_reads: list[int] = []
+        #: FakeAcp.trace を渡すと、時計の読み ("clock", 値) が書き・押しと同じ 1 本の列に並ぶ。
+        self.trace: list[tuple[str, str]] | None = trace
         self.metrics: list[JSONObject] = []
         self.logs: list[str] = []
         self.files: dict[str, str] = {}
@@ -828,7 +845,12 @@ class FakeLocal:
 
     def _observe(self, effect: ClockNowMs | MetricLine | LogLine) -> object:
         if isinstance(effect, ClockNowMs):
-            return self.now_ms
+            value = self.now_ms
+            self.now_ms = value + self.clock_step_ms
+            self.clock_reads.append(value)
+            if self.trace is not None:
+                self.trace.append(("clock", str(value)))
+            return value
         if isinstance(effect, MetricLine):
             self.metrics.append(dict(effect.fields))
             return None
