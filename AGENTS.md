@@ -98,6 +98,8 @@ Write Python 3.10+ with four-space indentation, rich type hints, and generator-b
 ## Testing Guidelines
 Pytest with strict asyncio mode powers the suite, so mark coroutines with `@pytest.mark.asyncio` or use async fixtures. Name new tests `test_<feature>.py` and structure coroutine assertions with `await` rather than event loops. Add regression coverage near related tests (for example, extend `tests/test_program_monadic_methods.py` when touching `Program`). If you introduce long-running integrations, guard them with `pytest.mark.e2e` per the configured marker list.
 
+**Known red in the plain run:** `uv run pytest -m 'not e2e'` currently fails 28 tests tracked in proboscis/doeff#619 — tests under `packages/*/tests` that still speak a removed doeff API, each marked `@pytest.mark.awaiting_api_migration(reason=...)`. The daily gate runs `-m 'not e2e and not awaiting_api_migration'` and is green. The marker is deliberately *not* in `addopts`, so the debt stays visible in the plain run; migrating those 28 tests (and dropping the marker from the gate expression) is #619's job.
+
 ## Task Management
 When a request is provided, always use the Task tool (TaskCreate) to break the request into concrete todo items before starting work. Mark each task as `in_progress` when you begin it and `completed` when done. This ensures progress is visible and nothing is missed.
 
