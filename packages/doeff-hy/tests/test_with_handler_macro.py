@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 
@@ -30,7 +32,7 @@ def test_with_handler_macro_applies_stack_left_to_right() -> None:
 (setv _result (doeff-run (with-handler [outer inner] body)))
 (assert (= _result "start:inner"))
 """
-    hy.eval(hy.read_many(code), module=__name__)
+    hy.eval(hy.read_many(code), module=sys.modules[__name__])
 
 
 def test_with_handler_macro_rejects_empty_stack() -> None:
@@ -46,4 +48,4 @@ def test_with_handler_macro_rejects_empty_stack() -> None:
 (with-handler [] body)
 """
     with pytest.raises(HyMacroExpansionError, match="requires a non-empty handler vector"):
-        hy.eval(hy.read_many(code), module=__name__)
+        hy.eval(hy.read_many(code), module=sys.modules[__name__])
