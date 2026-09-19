@@ -162,6 +162,7 @@
                                                wait-seconds-for])
 (import doeff_agents.sessionhost.acp.runtime [AgentdPreflightError initial-state install run-heartbeat run-tick settings-from-env])
 (import doeff_agents.sessionhost.acp.valve [ACP-VALVE-DEFAULT ACP-VALVE-ENV acp-valve])
+(import doeff_agents.sessionhost.policy [SPAWN-INHERITED-ENV-KEYS SPAWN-INHERITED-ENV-PREFIXES])
 
 
 ;; ---------------------------------------------------------------------------
@@ -713,7 +714,8 @@
      (rule R47 "終端は必ず result.cause を運ぶ — Ended の書きの 1 点が cause を result に載せ、読み手は conditions 頼みにしない(段 12 lane 12k・agora-redesign #349 行 3 粒 3a・既知の形 CI runner (i)「手番の終わりに終端の状態を必ず返す」・#367 便 2 の result.cause {category: cancelled, stage, reason} を全部の終端へ広げる・契約 = ACP docs/contracts/scheduling.json の resultCause の節・ACP 側 = awaitOutcomeOf が cause の category で答えを組む): (1) category の閉語彙は effects.CauseCategory の 1 点(completed / cancelled / failed / interrupted / agentd-stopped — D-349r3a-1: condition の 26 語と 1:1 にしない・reason が語を運ぶ)で、表 CAUSE_CATEGORIES は Literal から導く(第 2 の並びを書かない)。この repo は scheduling.json の写しを持たないので、契約との一致は この針(定数の表の pin)と ACP の hspec(JSON と Haskell の parity)の 2 点で守る。(2) 書きの 1 点 = judgment.ended-status-of [status result cause conditions] — cause は引数で強い(None は書けない)、閉語彙の外は断り、result-with-cause で result に載せる(dict の結末 → 欄 cause・None → cause だけ・dict でない結末 → {value, cause})。全部の Ended の書き手(end-job-now・settle-record〔finalize / force-cancel / close-jobs-for-stop の共有〕・record-unrecorded-ends・end-summarize-job・end-command)がこれを通る。(3) cause の組み立て: 自然に終わった手番 = {completed}(value があれば同じ result に・judgment.job-outcome-of)/ 取り消し = {cancelled, stage, reason}(R42・outcome-with-cancel が結末の cause を置き換える — 合図が先に在った)/ 失敗の condition で閉じる = {failed, reason: <condition の型>}(end-job-now = 閉じた条件の型・session-lost = SessionLost・done 以外の器の終端 = SessionFailed・命令の族 = command-cause-of〔条件なし = completed・あり = 先頭の条件の型〕)/ provider の限度 = judgment.outcome-with-limit の 1 点が completed / failed だけを {failed, ProviderLimit} に置き換える(「result に書かない」の旧規則は「value は書かない・cause は書く」へ)/ 取り下げ(interrupt-job・phase Withdrawn は作った側の書き)= interrupted-status-of が Withdrawn の行に {interrupted, withdrawn} を足す / 排水の期限(close-jobs-for-stop)= {agentd-stopped, drain-deadline}。(4) 持ち越し(UnrecordedEnd・R46)も cause を運ぶ。(5) 旧 agentd の行(cause の無い Ended)は読み手が寛容(D-349r3a-2: result を schema で必須にしない)— 日次の針は新しい agentd の行だけを数える。")
      (rule R48 "claude の手番の終わり = process の終わり — 器は result の行で対話を閉じ(stdin の EOF)process を降ろし、次の手番は --resume の新しい process で起こす。手番の境界の所有者は host ちょうどで、CLI に result の後の手番(background task / Monitor の完了で起きる model)を持たせない(段 12 lane 12e・agora-redesign #517・card ki-ec55c1318483・実弾 2026-09-17 19:4x: 前の手番の process が WAIT の後に Monitor の合図で起き直り、次の手番の job と同じ会話で並走して本番に作用・記録に載らない行動)。段 8 lane 4x の温かい claude(result の後も同じ process へ次の user の行)は退役 — 手番の途中の注入(R21)は残る(stdin は手番の間だけ開いている)。codex(turn/start の無い手番は起きない)は温かいまま")
      (rule R49 "手番の記録(turn-record)を『1 度の書き』に預けない — 終状態を読む巡回が running の取り残しを閉じ、記録なしで Ended にしない(段 12・agora-redesign #537・既知の形 = k8s の controller の reconcile〔出来事ではなく終状態へ寄せる〕・実弾 3 本 = 依頼が死ぬ / 担い手の報告が届かない / 検収 accept が偽の failed になる): 郵便の側(ACP Messaging の turnlessOf)は『その job の turn-record の行が在るか』で手番の在否を読み、無ければ agent-job-ended-without-a-turn で郵便を failed にする。ゆえに agentd の側の不変条件は 2 つ。(A) **running の記録は取り残さない**: 手番の終わりの 1 度の書き(end-turn-record)は残したまま、その上に周期の巡回(agentd.sweep-turn-records)を載せる — 走っている turn-record を field selector(effects.TURN_RECORD_RUNNING_SELECTOR の 1 点)で引き、鍵で読み直した記録と対の agent-job から judgment.turn-record-sweep-verdict(閉語彙 TurnRecordSweepVerdict = end | skip)が判じ、end なら turn-record-ended-status で ended(usage は書かない — 消費の和は手番の終わりの 1 回)。end = 記録が running ∧ その手番が自分の memory に無い ∧ 対が終端(Ended / Withdrawn)か行ごと無い ∧ 記録の名乗る node が自分か生きていない(judgment.live-node-names-of)— pool の pod は再配備で名前が変わるので『自分の行だけ』では死んだ pod の記録を誰も閉じない。腕は memory を持たず(level-triggered・冪等)、書きは ifGeneration の CAS なので複数の agentd が読んでも先に着いた 1 本が勝つ。周期の宣言は AgentdSettings.turn_record_sweep_seconds の 1 点・刻印は AgentdState.last_turn_record_sweep_ms(None = 起動の拍に即)・排水の最中も走る。(B) **記録なしで Ended にしない**: 拾い直した手番の turn-record が 404 なら記録の腕を pending に戻して段 9p の網に乗せる(agentd.recover-job)/ 手番の終わりに行が無ければその拍に 1 度だけ作り直して ended まで書く(agentd.settle-record — 行が在って書きだけ断られた拍は作り直さず、巡回に任せる)/ 手番の終わりの最後の create(force)は期限の内でも pending にせず given-up へ倒し、条件 RecordUnavailable が理由を運ぶ(judgment.record-create-verdict の引数 final — 判断の点は増やさない)。ACP の側(turnlessOf・契約の lifecycle の宣言)は 1 bit も変えない(語の側は #589 が持つ)。")
-     (rule R50 "「郵便が届いたか」の証拠は器の報告であって手番の phase ではない(card acp:kanban-issue:ki-3149aebbf675 A・実測 2026-09-18: 相乗り 10 通のうち agent に届いたのは 1 通なのに台帳は 10 通とも handedAt): agent-job の status.inputsDelivered(effects.JOB_INPUTS_DELIVERED_KEY・書き手 = agentd だけ・行の寿命の間 append-only)が『この手番で器へ渡せた inputs の郵便の id』を行の順で名乗る。受けた拍(judgment.running-status-of)に**空で宣言する** — claim から送りまでは器を起こす数秒あり、その窓で配達の拍が走ると phase = Running の推定で handedAt が先に立つので、欄は送りの着地を待たずに現れなければならない。送りが着地した拍に id を足す(agentd.record-inputs-delivered = 鍵で読み直した行への 1 回の CAS・Conflict は 1 度だけ撃ち直す)/ 断られた拍は 1 つも足さない。畳んだ 1 回の送りが成功 = その送りが運んだ id 全部が届いた(判断は judgment.send-parcels-of の 1 点 — 本文の並びと id の並びの対応を知るのはここだけ)。起こす腕(first-turn-carries-inputs)は郵便を 1 手番目の prompt に畳むので、器を起こせた拍に全部届いている。⇒ 郵便を **1 通も渡せなかった手番はその場で Ended**(cause = failed / InputUndelivered・札は返し session は残す): Running のまま残すと 1 会話 1 手番の門(ACP Scheduling の conversation-turn-in-flight)がその会話の次の手番を全部塞ぎ、解けるのは 4 時間の手番の期限だけ(器は手番を始めていないので turn_ended_at が動かず、手番の終わりの判定は永久に立たない)。郵便の積み直しは ACP の配達の 1 点(Messaging.Decide.carrierEndedOf)が担う — agentd に第 2 の再配達の判断点を置かない。")]
+     (rule R50 "「郵便が届いたか」の証拠は器の報告であって手番の phase ではない(card acp:kanban-issue:ki-3149aebbf675 A・実測 2026-09-18: 相乗り 10 通のうち agent に届いたのは 1 通なのに台帳は 10 通とも handedAt): agent-job の status.inputsDelivered(effects.JOB_INPUTS_DELIVERED_KEY・書き手 = agentd だけ・行の寿命の間 append-only)が『この手番で器へ渡せた inputs の郵便の id』を行の順で名乗る。受けた拍(judgment.running-status-of)に**空で宣言する** — claim から送りまでは器を起こす数秒あり、その窓で配達の拍が走ると phase = Running の推定で handedAt が先に立つので、欄は送りの着地を待たずに現れなければならない。送りが着地した拍に id を足す(agentd.record-inputs-delivered = 鍵で読み直した行への 1 回の CAS・Conflict は 1 度だけ撃ち直す)/ 断られた拍は 1 つも足さない。畳んだ 1 回の送りが成功 = その送りが運んだ id 全部が届いた(判断は judgment.send-parcels-of の 1 点 — 本文の並びと id の並びの対応を知るのはここだけ)。起こす腕(first-turn-carries-inputs)は郵便を 1 手番目の prompt に畳むので、器を起こせた拍に全部届いている。⇒ 郵便を **1 通も渡せなかった手番はその場で Ended**(cause = failed / InputUndelivered・札は返し session は残す): Running のまま残すと 1 会話 1 手番の門(ACP Scheduling の conversation-turn-in-flight)がその会話の次の手番を全部塞ぎ、解けるのは 4 時間の手番の期限だけ(器は手番を始めていないので turn_ended_at が動かず、手番の終わりの判定は永久に立たない)。郵便の積み直しは ACP の配達の 1 点(Messaging.Decide.carrierEndedOf)が担う — agentd に第 2 の再配達の判断点を置かない。")
+     (rule R51 "席へ運ぶ env は機体の**参加の宣言**が名乗り、charter の 1 点で重ねる(段 12・agora-redesign #520・既知の形 = **kubelet 型**: runner が node 局所の宣言の表を workload の env へ具現化し、workload は runner 自身の env を 1 bit も継がない〔k3s の config.yaml → kubelet → 容器の env / systemd の EnvironmentFile=〕): 宣言 file の [agentd].seat_env(改行区切りの `NAME=value` の 1 つの文字列 — 表〔dict〕にしないのは `declared-values-of` の不変条件『宣言 file の値は全部文字列』を割らないため・旧い agentd はこの鍵を『宣言に無い鍵』で断って**参加しない** = fail-closed)を join.seat-env-of が解き(空行と `#` の行は飛ばす・`=` の無い行と名の形〔`[A-Za-z_][A-Za-z0-9_]*`〕の外と同じ名の 2 度は ValueError・値は最初の `=` の後を**逐語**で引用の剥がしも `${}` の展開もしない = 第 2 の置換の言語を作らない)、JoinSpec.seat_env → env DOEFF_AGENTD_SEAT_ENV(同じ綴りで運び読み直しも同じ 1 点)→ AgentdSettings.seat_env → 起こす手番の charter.session_env(judgment.charter-with-seat-env の 1 点・incarnation-charter-of が呼ぶ)。(1) **参加の門は形で締める**: 解いた表が binding 所有の auth env / 従量課金の資格(policy.session-env-admission-error — launch と session.send の口と同じ関所)・資格の形の綴り(policy.seat-env-credential-shaped-offenders = 正規化した名が `_KEY` / `_KEY_FILE` / `_KEY_PATH` / `_TOKEN` / `_TOKEN_FILE` で終わる、または `SECRET` / `PASSWORD` / `CREDENTIAL` を含む)・会話の身元の名(effects.CONVERSATION-ID-ENV / SEAT-OPENER-ENV)のどれかに当たれば ValueError で参加しない。語彙ではなく**形**で締めるのは、doeff が席の道具の宛先の綴り(ACP_BASE / AGORA_BRAIN_URL / HERDR_HUD_STATE_BACKEND)を 1 つも知らないまま、この口が資格の輸送路に化ける形だけを構造で塞ぐため(R30 (4) / ACP 法 11d8cc 反例 7 が別の path で戻らない側)。札は家の既定の置き場への **file の mount** が唯一の形で、この口は宛先だけを運ぶ。(2) **順序は契約**: incarnation-charter-of は charter-with-seat-env を charter-with-conversation-env の**直前**に 1 度呼ぶ — 会話の身元が必ず後に勝つので、機体の宣言は会話の名乗りを偽れない((1) の門と二重の守り)。(3) **継承の名簿は 1 語も開けない**(R30 (4) は不変): policy.SPAWN-INHERITED-ENV-KEYS / substrate_headless の headless-spawn-env は触らない — 席が機体の env を丸ごと継ぐ形(実弾 #95)は締めたまま、**宣言された対だけ**が charter を通って届く。(4) **doeff は語彙を知らない**: 宛先の綴りの定義点は宣言の側(k8s の Service と読み手 dotfiles)で、doeff-agents の src は席向けの名を 1 つも綴らない(semgrep doeff-agents-does-not-spell-seat-facing-env)— 写しが第 2 の既定へ育たない。(5) **宣言は process の起動時に読む**: 走っている agentd は新しい表を拾わないので、宣言を変えたら pool を roll する(宣言 file の指紋 declaration-sha256 が変わるので node の行から読める)。走っている席の env は差し替えられない(charter は incarnation ごとに組む)ので、受入の実射は roll の**後に新しく起こした手番**で測る。")]
   :laws
     [(law interrupts-ride-the-running-turn-and-are-recorded-on-the-row
        :statement "for_all Running job j run by this agentd with status.interrupts = [m1..mn]: each mi not in status.interruptsDelivered ∪ memory.interrupts_sent is handed to the session by SessionInterject(body(mi)) in placement order, and every accepted mi is written back by one CAS that removes it from interrupts and appends it to interruptsDelivered; a refused mi stops the order and stays on the row; agentd never starts a turn for an interrupt and never removes an id it did not hand over"
@@ -2832,7 +2834,7 @@
        (assert (= (len (lfor line agentd-lines :if (in "\"metric\" METRIC-COMPACTIONS-TOTAL" line) line)) 1) "計器は 1 点(R27)")
        ;; 追補 3 の針: 会話の身元の env は judgment.charter-with-conversation-env の 1 点で、incarnation-charter-of が呼ぶ。名は effects の 1 点。
        (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk charter-with-conversation-env ") line)) 1) "会話の身元の env は 1 点(R27 追補 3)")
-       (assert (= (len (lfor line judgment-lines :if (in "(charter-with-conversation-env with-id (str (get attribution \"conversationId\")) opener)" line) line)) 1) "incarnation-charter-of が呼ぶ(R27 追補 3)")
+       (assert (= (len (lfor line judgment-lines :if (in "(charter-with-conversation-env with-seat (str (get attribution \"conversationId\")) opener)" line) line)) 1) "incarnation-charter-of が呼ぶ(R27 追補 3・重ねる先は宣言の env を載せた charter = R51 (2) の順序)")
        (assert (= (len (lfor line agentd-lines :if (in "(<- opener (| str None) (conversation-opener-of conversation-row))" line) line)) 1) "opener は claim の腕が会話の行から読む(R27 追補 3)")
        (for [line agentd-lines]
          (assert (not-in "AGORA_CONVERSATION_ID" line) f"agentd.hy は env の名を直に持たない(R27 追補 3): {line}"))
@@ -3097,6 +3099,57 @@
        (setv substrate-lines (code-lines (/ SESSIONHOST-DIR "substrate_headless.hy")))
        (assert (= (len (lfor line substrate-lines :if (in "(inheritable-spawn-env (dict os.environ))" line) line)) 1)
                "機体から継ぐ env は名簿の 1 点を通る(R30)"))
+     (deftest test-adr-doe-agents-012-seat-facing-env-is-declared-once-and-loses-to-the-conversation
+       ;; R51 の針(構造): 解釈と参加の門は join.seat-env-of の 1 点・charter へ重ねる点は judgment.charter-with-seat-env の
+       ;; 1 点・incarnation-charter-of の呼びは 1 度で charter-with-conversation-env より**前**(会話の身元が勝つ)・
+       ;; 資格の形の締め出しは policy の 1 点・**継承の名簿は 1 語も開いていない**(R30 (4) は不変)。
+       ;; 反例(挙動)は test_sessionhost_acp.py の 6 本(解釈・資格の形・会話の身元・順序・旧い宣言の互換・口の一周)。
+       (setv join-lines (code-lines (/ ACP-DIR "join.hy")))
+       (assert (= (len (lfor line join-lines :if (.startswith line "(defk seat-env-of ") line)) 1)
+               "席へ運ぶ env の解釈と門は 1 点(R51)")
+       (assert (= (len (lfor line join-lines :if (in "(seat-env-of (.get agentd KEY-SEAT-ENV))" line) line)) 1)
+               "join-spec-of がその 1 点を 1 度呼ぶ(R51)")
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk charter-with-seat-env ") line)) 1)
+               "charter へ重ねる点は 1 つ(R51)")
+       (assert (= (len (lfor line judgment-lines :if (in "(charter-with-seat-env with-id seat-env)" line) line)) 1)
+               "incarnation-charter-of が 1 度呼ぶ(R51)")
+       (setv seat-at (next (gfor [i line] (enumerate judgment-lines)
+                                 :if (in "(charter-with-seat-env with-id seat-env)" line) i)))
+       (setv identity-at (next (gfor [i line] (enumerate judgment-lines)
+                                     :if (in "(charter-with-conversation-env with-seat " line) i)))
+       (assert (< seat-at identity-at)
+               "宣言の env は会話の身元より**前**に重ねる — 後なら宣言が身元を偽れる(R51 (2))")
+       (setv policy-lines (code-lines (/ SESSIONHOST-DIR "policy.hy")))
+       (assert (= (len (lfor line policy-lines :if (.startswith line "(deff seat-env-credential-shaped-offenders ") line)) 1)
+               "資格の形の締め出しは policy の 1 点(R51 (1))")
+       ;; R51 (3) / R30 (4): 継承の名簿は 1 語も開いていない(席が機体の env を継ぐ形は締めたまま)。
+       (assert (= SPAWN-INHERITED-ENV-KEYS
+                  #{"PATH" "HOME" "USER" "LOGNAME" "SHELL" "TMPDIR" "TERM" "TZ" "LANG"
+                    "SSH_AUTH_SOCK"
+                    "SSL_CERT_FILE" "SSL_CERT_DIR" "NODE_EXTRA_CA_CERTS" "REQUESTS_CA_BUNDLE"
+                    "HTTP_PROXY" "HTTPS_PROXY" "NO_PROXY"})
+               f"継承の名簿が動いた(R51 (3)・R30 (4)は不変): {(sorted SPAWN-INHERITED-ENV-KEYS) !r}")
+       (assert (= SPAWN-INHERITED-ENV-PREFIXES #("LC_"))
+               f"継承の族の接頭が動いた(R51 (3)): {SPAWN-INHERITED-ENV-PREFIXES !r}")
+       (for [line (code-lines (/ SESSIONHOST-DIR "substrate_headless.hy"))]
+         (assert (not-in "seat_env" line) f"輸送の層は参加の宣言を知らない(R51 (3)): {line}"))
+       ;; R51 (4): doeff は席向けの綴りを 1 つも持たない(semgrep の同名の rule と同じ不変条件を、
+       ;; 冊の側でも撃つ — 名簿が 1 語増えた日に赤が 2 つ立つ)。
+       (for [name ["join.hy" "judgment.hy" "agentd.hy" "effects.py" "runtime.py"]]
+         (for [line (code-lines (/ ACP-DIR name))]
+           (for [word ["\"ACP_BASE\"" "\"AGORA_BRAIN_URL\"" "\"HERDR_HUD_STATE_BACKEND\""]]
+             (assert (not-in word line) f"doeff は席向けの env の綴りを持たない(R51 (4)): {name} {line}"))))
+       ;; 反例(挙動)の検が在ること。
+       (setv tests (.read-text (/ (. (Path __file__) parent parent parent) "packages" "doeff-agents" "tests"
+                                  "test_sessionhost_acp.py") :encoding "utf-8"))
+       (for [name ["test_join_seat_env_parses_declared_lines"
+                   "test_join_refuses_credential_shaped_seat_env"
+                   "test_join_refuses_seat_env_that_names_conversation_identity"
+                   "test_charter_seat_env_cannot_override_conversation_identity"
+                   "test_join_without_seat_env_still_joins"
+                   "test_join_seat_env_travels_from_the_declaration_to_the_launch_charter"]]
+         (assert (in (+ "def " name "(") tests) f"R51 の反例の検が無い: {name}")))
      (deftest test-adr-doe-agents-012-attachment-spelling-lives-in-the-dialogue
       ;; R31 の針 1(構造): agentd は CLI の綴りを 1 語も持たず、綴りの座は Dialogue の 2 腕ちょうど。
       (for [name ["agentd.hy" "judgment.hy"]]
