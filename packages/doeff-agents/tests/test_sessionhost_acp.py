@@ -43,6 +43,7 @@ from doeff_agents.sessionhost.acp.effects import (
     LeaseGrant,
     LeaseRefused,
     MESSAGE_KIND,
+    METRIC_TICK_MS,
     NODE_KIND,
     PHASE_BOUND,
     PHASE_ENDED,
@@ -73,6 +74,22 @@ from doeff import run
 NODE = "mac-1"
 HOMES = "/homes"
 TOKEN = "sk-ant-oat01-secret-token"
+
+
+def last_metric(world: World, name: str) -> JSONObject:
+    """名指しの計器の最後の 1 行。
+
+    ⚠ ``world.local.metrics[-1]`` で読まない —— card acp:kanban-issue:ki-6eb745f6d528 から、
+    拍は終わりに必ず 1 行(agentd_tick_ms = 腕ごとの内訳)名乗るので、列の末尾は常にその行。
+    検が見たいのは「その腕が名乗った行」であって「最後に出た行」ではない。"""
+    lines = [line for line in world.local.metrics if line.get("metric") == name]
+    assert lines, f"計器 {name} が 1 行も出ていない: {world.local.metrics}"
+    return lines[-1]
+
+
+def metrics_other_than_the_tick_line(world: World) -> list[JSONObject]:
+    """拍の 1 行(agentd_tick_ms)を除いた計器の列 — 腕が名乗った行だけを順に見る検のため。"""
+    return [line for line in world.local.metrics if line.get("metric") != METRIC_TICK_MS]
 
 
 def row(
@@ -325,7 +342,7 @@ def _assert_ended(world: World) -> None:
     assert world.custody.revoked == ["lease-1"]
     assert world.pushed_kinds()[-1] == "status"
     assert world.state.jobs == ()
-    assert world.local.metrics[-1]["metric"] == "agent-job-turn"
+    assert last_metric(world, "agent-job-turn") is not None
 
 
 def test_agentd_round_trip_join_bound_running_delta_ended() -> None:
@@ -1386,7 +1403,7 @@ def test_running_job_of_mine_is_recovered_on_the_first_tick_after_restart() -> N
     assert record.status is not None
     assert record.status["state"] == "ended"
     assert world.state.jobs == ()
-    assert world.local.metrics[-1]["metric"] == "agent-job-turn"
+    assert last_metric(world, "agent-job-turn") is not None
 
 
 def test_running_job_without_a_session_is_ended_with_session_failed() -> None:
@@ -3318,8 +3335,7 @@ def test_stop_closes_running_jobs_with_agentd_restart_and_leaves_the_session_to_
     assert world.sessions.cleanups == []
     assert world.sessions.views[sid].status == "running"
     assert any("closed for the stop of agentd" in line for line in world.local.logs)
-    assert world.local.metrics[-1]["metric"] == "agent-job-turn"
-    assert world.local.metrics[-1]["step"] == "agentd-stop"
+    assert last_metric(world, "agent-job-turn")["step"] == "agentd-stop"
     # 再起動後の最初の拍: Ended の行は拾わない(running-on-me でない)— 二度閉じない
     world.restart()
     world.tick(advance_ms=1_000)
@@ -3856,8 +3872,8 @@ def test_headless_launch_folds_the_mail_into_the_first_turn_and_does_not_send() 
     sid = world.sid("j-1")
     assert world.sessions.launches[-1]["prompt"] == "start\n\n" + mailed("m-1", "first")
     assert world.sessions.sends == []
-    assert [m["metric"] for m in world.local.metrics] == ["agent-job-to-send"]
-    assert world.local.metrics[-1]["arm"] == "launch"
+    assert [m["metric"] for m in metrics_other_than_the_tick_line(world)] == ["agent-job-to-send"]
+    assert last_metric(world, "agent-job-to-send")["arm"] == "launch"
     record = world.turn_record("j-1")
     assert record is not None
     assert record.status == {"state": "running"}
@@ -3890,8 +3906,7 @@ def test_headless_launch_folds_the_mail_into_the_first_turn_and_does_not_send() 
     assert len(world.sessions.resumes) == 1
     assert world.sessions.resumes[0]["prompt"] == "start\n\n" + mailed("m-3", "third")
     assert world.sessions.sends == [(sid, mailed("m-2", "second"), True)]
-    assert world.local.metrics[-1]["metric"] == "agent-job-to-send"
-    assert world.local.metrics[-1]["arm"] == "resume"
+    assert last_metric(world, "agent-job-to-send")["arm"] == "resume"
 
 
 def test_the_first_status_frame_is_pushed_before_the_turn_record_is_created() -> None:
@@ -3909,7 +3924,7 @@ def test_the_first_status_frame_is_pushed_before_the_turn_record_is_created() ->
     assert world.acp.trace.index(("push", sid)) < world.acp.trace.index(("create", create)), world.acp.trace
     # frame の at = 送った拍(sent-ms)— 作成の往復の後の時刻ではない
     frame = world.acp.pushes[0][2][0]
-    assert frame["at"] == world.local.metrics[-1]["sentAtMs"]
+    assert frame["at"] == last_metric(world, "agent-job-to-send")["sentAtMs"]
 
 
 def test_headless_launch_without_mail_or_with_missing_mail_uses_the_charter_alone() -> None:
@@ -3965,8 +3980,7 @@ def test_headless_warm_send_folds_every_input_into_one_prompt() -> None:
     # 郵便ごとの添付は first-turn-attachments-of が inputs の順に 1 本へ並べて同じ 1 手番に載る)。
     assert len(world.sessions.sent_attachments) == 1, world.sessions.sent_attachments
     assert world.sessions.sent_attachments[0][0] == sid
-    assert world.local.metrics[-1]["metric"] == "agent-job-to-send"
-    assert world.local.metrics[-1]["arm"] == "send"
+    assert last_metric(world, "agent-job-to-send")["arm"] == "send"
     record = world.turn_record("j-2")
     assert record is not None
     assert record.status == {"state": "running"}
