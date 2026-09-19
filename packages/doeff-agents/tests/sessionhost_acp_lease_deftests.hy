@@ -26,6 +26,12 @@
   AGORA-KINDS-NAMESPACE
   AcpRow
   AgentdSettings
+  CONDITION-CREDENTIAL-LEASE-HELD
+  CONDITION-CREDENTIAL-NOT-LEASABLE
+  CONDITION-CREDENTIAL-UNAVAILABLE
+  CUSTODY-ANSWERER-ANOTHER-CARRIER
+  CUSTODY-ANSWERER-NOBODY
+  CUSTODY-ANSWERER-TIME
   MESSAGE-KIND
   NODE-KIND
   PHASE-BOUND
@@ -37,6 +43,7 @@
 (import doeff_agents.sessionhost.acp.judgment [
   attempt-refused?
   credential-lease-held-condition-of
+  custody-refusal-verdict-of
   lease-journal-of
   lease-journal-text
   lease-journal-with
@@ -277,11 +284,85 @@
   (assert (is (run (attempt-refused? before)) True) "同じ試みの行は起動しない"))
 
 
-(deftest test-refusals-that-are-not-a-held-lease-still-end-the-turn
-  ;; 待って直る保証の無い断り(口座が預かり所に無い・宣言が無い・hold を名乗らない 409)は今日のまま Ended。
-  (for [refusal [(LeaseRefused 404 "account not in custody" None)
-                 (LeaseRefused 503 "custody URL is not declared" None)
-                 (LeaseRefused 409 "held (no hold time)" None)]]
+;; ---------------------------------------------------------------- card ki-b3bed1e983fb: 断りの class は「誰が答えられるか」
+
+;; ACP の配達が『器の都合で終わった手番』として有界に組み直す終端の語(正本 =
+;; Acp.App.Messaging.Contract.carrierEndedFailureReasons・契約 messaging.json delivery)。**この写しは検のためだけ**:
+;; class nobody の語がこの membership から外れていることが、この便の受入の本体だから(外れる = 配達は組み直さず
+;; 1 回で郵便を failed にして送信者へ返す = 再試行の予算を 1 も消費しない)。
+(setv CARRIER-ENDED-FAILURE-REASONS
+      #("SessionFailed" "SessionLost" "CredentialUnavailable" "CredentialPlaceMismatch" "TurnProducedNothing"))
+
+;; 預かり所の断りの実物(2026-09-19 の裏取り — 逐語の出所は custody の source の 1 点ずつ)。
+(setv REFUSAL-ACCOUNT-ABSENT
+      (LeaseRefused 404 "その account は預かっていない(入庫が先)" None))
+(setv REFUSAL-WORKER-HAS-NO-ACCOUNT
+      (LeaseRefused 404 "その account はこの worker に預かっていない" None))
+(setv REFUSAL-PLACEMENT-GATE
+      (LeaseRefused 403 (+ "会社階級の資格は会社の機体の外へ出さない — この預かり所の置き場 personal は "
+                           "会社の口座を持ってよい置き場ではない(宣言 = company)。会社の口座は会社の機体の worker でだけ貸与する")
+                    None))
+(setv REFUSAL-BORROWER-GATE
+      (LeaseRefused 403 (+ "会社階級の資格は、所有者が会社機体と宣言した借り手にだけ渡す — 借り手 proboscis-mbp は "
+                           "所有者の宣言(系構成台帳 COMPANY-BORROWERS)に無い。貸与しない")
+                    None))
+(setv REFUSAL-WORKER-UNREACHABLE
+      (LeaseRefused 503 "口座の worker company-mac へ届かない(worker の heartbeat が 90 秒来ていない)— 貸与の行を作らない" None))
+(setv REFUSAL-UNDECLARED
+      (LeaseRefused 503 "custody URL is not declared (join の [custody].url / --custody → AGORA_CUSTODY_URL) — 既定の宿は無い" None))
+(setv REFUSAL-UNREACHABLE (LeaseRefused 0 "custody is unreachable" None))
+(setv REFUSAL-HELD-NO-HOLD (LeaseRefused 409 "held (no hold time)" None))
+(setv REFUSAL-HELD (LeaseRefused 409 "account acct is held by borrower sa:acp-control/default" 1900000))
+
+
+(deftest test-the-custody-refusal-class-is-one-judgment
+  ;; 受入 1: 「誰が答えられるか」の判定は 1 関数(呼び手に第 2 の判定を置かない — held の腕も同じ答えの中に在る)。
+  ;; ⚠ HTTP status は軸ではない: 403 が 2 本に割れる(置き場の門 = nobody / 借り手の門 = another-carrier)。
+  (setv status {"phase" PHASE-BOUND "binding" {"node" NODE "profile" "personal" "account" ACCOUNT}})
+  (setv table [;; class nobody = 宣言・在庫の事実(どの担い手が頼んでも同じ答え)
+               #(REFUSAL-ACCOUNT-ABSENT CUSTODY-ANSWERER-NOBODY CONDITION-CREDENTIAL-NOT-LEASABLE)
+               #(REFUSAL-WORKER-HAS-NO-ACCOUNT CUSTODY-ANSWERER-NOBODY CONDITION-CREDENTIAL-NOT-LEASABLE)
+               #(REFUSAL-PLACEMENT-GATE CUSTODY-ANSWERER-NOBODY CONDITION-CREDENTIAL-NOT-LEASABLE)
+               ;; class another-carrier = この機体の都合(別の機体なら通り得る)
+               #(REFUSAL-BORROWER-GATE CUSTODY-ANSWERER-ANOTHER-CARRIER CONDITION-CREDENTIAL-UNAVAILABLE)
+               #(REFUSAL-WORKER-UNREACHABLE CUSTODY-ANSWERER-ANOTHER-CARRIER CONDITION-CREDENTIAL-UNAVAILABLE)
+               #(REFUSAL-UNDECLARED CUSTODY-ANSWERER-ANOTHER-CARRIER CONDITION-CREDENTIAL-UNAVAILABLE)
+               #(REFUSAL-UNREACHABLE CUSTODY-ANSWERER-ANOTHER-CARRIER CONDITION-CREDENTIAL-UNAVAILABLE)
+               #(REFUSAL-HELD-NO-HOLD CUSTODY-ANSWERER-ANOTHER-CARRIER CONDITION-CREDENTIAL-UNAVAILABLE)
+               ;; class time = 錠の hold(記録を足して phase を離す — 今日は custody be81f6f で発火しない)
+               #(REFUSAL-HELD CUSTODY-ANSWERER-TIME CONDITION-CREDENTIAL-LEASE-HELD)])
+  (for [[refusal answerer word] table]
+    (setv verdict (run (custody-refusal-verdict-of refusal status 7000)))
+    (assert (= verdict.answerer answerer) f"{refusal.status} {refusal.error}: {verdict.answerer}")
+    (assert (= verdict.condition-type word) f"{refusal.status}: {verdict.condition-type}")
+    (assert (in refusal.error verdict.reason)
+            f"預かり所の逐語が終端の文に残っていない: {verdict.reason}")
+    (assert (= (is-not verdict.held None) (= answerer CUSTODY-ANSWERER-TIME))
+            f"{refusal.status}: held = {verdict.held}"))
+  ;; ★ 受入 2 の構造の本体: class nobody の語だけが ACP の membership から外れる(= 組み直されない)。
+  (assert (not-in CONDITION-CREDENTIAL-NOT-LEASABLE CARRIER-ENDED-FAILURE-REASONS)
+          "nobody の語が carrierEndedFailureReasons に在ると、配達が組み直して予算を消費する")
+  (assert (in CONDITION-CREDENTIAL-UNAVAILABLE CARRIER-ENDED-FAILURE-REASONS)
+          "another-carrier の語は membership の中(= 今日どおり有界の再投入)")
+  ;; ⚠ 印の当たらない 403(預かり所が文を書き換えた拍)は another-carrier へ倒す — 非対称の既定:
+  ;; nobody を取り違えると遅れるだけ、another-carrier を取り違えると別の機体なら通る断りを 1 回で殺す。
+  (setv unknown (run (custody-refusal-verdict-of (LeaseRefused 403 "forbidden" None) status 7000)))
+  (assert (= unknown.answerer CUSTODY-ANSWERER-ANOTHER-CARRIER) f"未知の 403: {unknown.answerer}")
+  ;; 次の一手を名乗る(送信者が読む文 — 畳まない)。
+  (setv nobody (run (custody-refusal-verdict-of REFUSAL-PLACEMENT-GATE status 7000)))
+  (assert (in "no carrier" nobody.reason) nobody.reason)
+  (assert (in ACCOUNT nobody.reason) nobody.reason)
+  (setv other (run (custody-refusal-verdict-of REFUSAL-BORROWER-GATE status 7000)))
+  (assert (in "another carrier" other.reason) other.reason))
+
+
+(deftest test-a-refusal-nobody-can-answer-ends-the-turn-with-its-own-word
+  ;; 受入 2: class nobody の断りは **再試行の予算を 1 も消費せず**に最初の 1 回で送信者へ返る。
+  ;; 器の側で撃てるのは「終端の語と cause がその語ちょうどで、ACP の membership の外」まで — 予算を数えるのは
+  ;; 配達の側(Acp.App.Messaging.Decide.carrierEndedOf)で、そこは語を読むだけ(この便で 1 bit も変えない)。
+  ;; ⚠ この性質は今日すべて潜在(2026-09-19 の全数: 機構の窓に入った custody の断りは 409 だけ)— だから台帳を
+  ;; 問い合わせる形ではなくこの単体の検で固定する。
+  (for [refusal [REFUSAL-ACCOUNT-ABSENT REFUSAL-PLACEMENT-GATE]]
     (setv world (World))
     (setv world.custody.refuse-with refusal)
     (.put-row world.acp (bound-job "s-1"))
@@ -289,8 +370,38 @@
     (setv status (. (.job world "s-1") status))
     (assert (= (get status "phase") PHASE-ENDED) f"{refusal} で閉じなかった: {status}")
     (setv types (lfor c (get status "conditions") (get c "type")))
-    (assert (in "CredentialUnavailable" types) f"{refusal}: {types}")
-    (assert (not-in "CredentialLeaseHeld" types) f"{refusal}: {types}")))
+    (assert (= types [CONDITION-CREDENTIAL-NOT-LEASABLE]) f"{refusal}: {types}")
+    (setv cause (get (get status "result") "cause"))
+    (assert (= cause {"category" "failed" "reason" CONDITION-CREDENTIAL-NOT-LEASABLE}) f"{refusal}: {cause}")
+    (assert (not-in (get cause "reason") CARRIER-ENDED-FAILURE-REASONS)
+            "組み直される語で閉じた(予算を消費する)")
+    ;; 預かり所の逐語をそのまま運ぶ(畳まない — 送信者が次の一手を読める)。
+    (setv reason (get (get (get status "conditions") 0) "reason"))
+    (assert (in refusal.error reason) f"逐語が消えた: {reason}")
+    (assert (= world.sessions.launches []) "器は起こさない")))
+
+
+(deftest test-a-refusal-another-carrier-can-answer-still-ends-the-turn-for-the-requeue
+  ;; 受入 3: class another-carrier の断りは **今日どおり** CredentialUnavailable で Ended(配達が有界に組み直す)。
+  ;; 旧 deftest test-refusals-that-are-not-a-held-lease-still-end-the-turn の表を class で書き直したもの:
+  ;; 404 は nobody へ移り(上の検)、残りはここ。403 の借り手の門を足した(実測 2026-09-19 の 403 4 件 = この arm)。
+  (for [refusal [REFUSAL-BORROWER-GATE REFUSAL-WORKER-UNREACHABLE REFUSAL-UNDECLARED
+                 REFUSAL-UNREACHABLE REFUSAL-HELD-NO-HOLD]]
+    (setv world (World))
+    (setv world.custody.refuse-with refusal)
+    (.put-row world.acp (bound-job "s-1"))
+    (.tick world 0)
+    (setv status (. (.job world "s-1") status))
+    (assert (= (get status "phase") PHASE-ENDED) f"{refusal} で閉じなかった: {status}")
+    (setv types (lfor c (get status "conditions") (get c "type")))
+    (assert (= types [CONDITION-CREDENTIAL-UNAVAILABLE]) f"{refusal}: {types}")
+    (assert (not-in CONDITION-CREDENTIAL-LEASE-HELD types) f"{refusal}: {types}")
+    (setv cause (get (get status "result") "cause"))
+    (assert (= (get cause "reason") CONDITION-CREDENTIAL-UNAVAILABLE) f"{refusal}: {cause}")
+    (assert (in (get cause "reason") CARRIER-ENDED-FAILURE-REASONS)
+            "有界の再投入の語で閉じていない(唯一観測されている arm を壊した)")
+    (setv reason (get (get (get status "conditions") 0) "reason"))
+    (assert (in refusal.error reason) f"逐語が消えた: {reason}")))
 
 
 (deftest test-the-held-lease-record-is-one-judgment

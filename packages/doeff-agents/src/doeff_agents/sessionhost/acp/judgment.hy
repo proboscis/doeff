@@ -120,6 +120,15 @@
   CREDENTIAL-LEASE-HELD-NODE-ROW-KEY
   CREDENTIAL-LEASE-HELD-UNTIL-KEY
   CUSTODY-LEASE-HELD-STATUS
+  CONDITION-CREDENTIAL-NOT-LEASABLE
+  CONDITION-CREDENTIAL-UNAVAILABLE
+  CUSTODY-ACCOUNT-ABSENT-STATUS
+  CUSTODY-ANSWERER-ANOTHER-CARRIER
+  CUSTODY-ANSWERER-NOBODY
+  CUSTODY-ANSWERER-TIME
+  CUSTODY-PLACEMENT-REFUSAL-MARK
+  CUSTODY-PLACEMENT-REFUSAL-STATUS
+  CustodyRefusalVerdict
   REFUSED-ATTEMPT-CONDITION-TYPES
   CONDITION-TURN-PRODUCED-NOTHING
   CONDITION-UNSCHEDULABLE
@@ -502,6 +511,86 @@
   (when (and (isinstance node-row str) (.strip node-row))
     (setv (get condition CREDENTIAL-LEASE-HELD-NODE-ROW-KEY) node-row))
   condition)
+
+
+(defk custody-refusal-verdict-of [refusal status now-ms]
+  {:pre [(: refusal LeaseRefused) (: status dict) (: now-ms int)]
+   :post [(: % CustodyRefusalVerdict)]}
+  "**預かり所の断りをどう扱うかの 1 点**(card acp:kanban-issue:ki-b3bed1e983fb)。断りを 1 語へ畳むのをやめ、
+   **「誰が答えられるか」**で class を分ける — 呼び手(agentd.start-claimed)はこの答えに従うだけで、第 2 の判定を
+   持たない(credential-lease-held-condition-of はこの関数の中の 1 腕として呼ぶ — 外からは呼ばない)。
+
+   根: これまでは status(型のある int)と預かり所の逐語を `custody refused (403): …` の 1 文へ畳んで
+   CredentialUnavailable を書いていた。配達の側(ACP Acp.App.Messaging.Decide.carrierEndedOf)は phase と
+   result.cause と回数しか読まないので、**再試行してよいかを判ずる材料が 1 つも残らない**。
+   carrierEndedOf が読まないのは設計の欠落ではなく、読むべき材料が届いていないから — 直す場所は語を鋳る側。
+
+   class(効果 = 終端の語。ACP の code は 1 bit も変えない — CredentialNotLeasable は
+   Acp.App.Messaging.Contract.carrierEndedFailureReasons の membership から外れるので、配達は
+   CredentialSourceMissing / WorkDirMissing と同じ『1 回で失敗させて送信者へ返す』経路へ自然に落ちる):
+
+   | class           | 預かり所の断り                                          | 終端の語                    |
+   |-----------------|---------------------------------------------------------|-----------------------------|
+   | nobody          | 404(その口座を預かっていない)/ 403 置き場の門           | CredentialNotLeasable       |
+   | another-carrier | 403 借り手の門・503(worker 不達・宣言の欠け)・到達不能 | CredentialUnavailable       |
+   | time            | 409 + holdExpiresAt(貸与の錠)                          | CredentialLeaseHeld(記録)  |
+
+   ⚠ **HTTP status は軸ではない** — 403 が 2 本に割れる(裏取り 2026-09-19):
+     * 置き場の門(custody Judge/Company.companyPlacementViolation・Program/Master.hs:198 で借り手の門より先)=
+       会社階級の口座が会社の置き場でない預かり所に在る、という **口座 × 預かり所の配置の事実**。
+       どの担い手が頼んでも同じ 403 なので待っても機体を変えても直らない ⇒ nobody。
+     * 借り手の門(companyBorrowerViolation)= 名乗った借り手が所有者の宣言(COMPANY-BORROWERS)に無い。
+       宣言は 1 行(company-mac-intake-20260830 / place company)なので **その 1 台へ移れば通る** ⇒ another-carrier。
+       実測 2026-09-19 の 403 は 4 件ともこちら(= 今日の有界の再投入が正しい処置だった)。
+   ⚠ **未知の断りは another-carrier へ倒す**(今日の挙動)。倒す向きは非対称に選んである:
+   nobody を取り違えると『1 回で返せたはずの断りを 2 回試す』(遅れるだけ)、another-carrier を取り違えると
+   『別の機体なら通る断りを 1 回で殺す』(唯一観測されている arm が壊れる)。
+   ⚠ 置き場の門と借り手の門の見分けだけは **預かり所の散文への結合**(CUSTODY-PLACEMENT-REFUSAL-MARK)—
+   貸与の口の 403 に機械可読の code が無いため(契約 custody-api.json conventions.errors)。印が外れた拍は
+   上の既定(another-carrier)へ落ちる。直す道は預かり所の貸与の口の断りに code を足すこと。
+
+   reason は **預かり所の逐語をそのまま含む**(畳まない)。頭に class の意味を置くので、送信者が読む文が
+   次の一手を名乗る: nobody なら『どの担い手が頼んでも同じ』・another-carrier なら『別の機体なら通り得る』。"
+  (<- held (| dict None) (credential-lease-held-condition-of refusal status now-ms))
+  (when (is-not held None)
+    (return (CustodyRefusalVerdict :answerer CUSTODY-ANSWERER-TIME
+                                   :condition-type CONDITION-CREDENTIAL-LEASE-HELD
+                                   :reason refusal.error
+                                   :held held)))
+  (setv binding (.get status "binding"))
+  (setv account (if (isinstance binding dict) (.get binding BINDING-ACCOUNT-KEY) None))
+  (setv named (if (and (isinstance account str) (.strip account)) f"account {account}" "the bound account"))
+  (<- nobody bool (custody-refuses-every-carrier? refusal))
+  (if nobody
+      (CustodyRefusalVerdict
+        :answerer CUSTODY-ANSWERER-NOBODY
+        :condition-type CONDITION-CREDENTIAL-NOT-LEASABLE
+        :reason (+ f"custody lends {named} to no carrier — moving this turn to another node or trying again "
+                   f"gets the same answer until the declaration changes; custody refused ({refusal.status}): "
+                   refusal.error)
+        :held None)
+      (CustodyRefusalVerdict
+        :answerer CUSTODY-ANSWERER-ANOTHER-CARRIER
+        :condition-type CONDITION-CREDENTIAL-UNAVAILABLE
+        :reason (+ f"custody refused this carrier's borrow of {named} — another carrier may still borrow it; "
+                   f"custody refused ({refusal.status}): " refusal.error)
+        :held None)))
+
+
+(defk custody-refuses-every-carrier? [refusal]
+  {:pre [(: refusal LeaseRefused)]
+   :post [(: % bool)]}
+  "class nobody の腕ちょうど(custody-refusal-verdict-of の中の 1 判断 — 呼び手はここではなく verdict を読む)。
+   真 = 預かり所の断りが **宣言・在庫の事実** で、どの担い手が頼んでも同じ答えになる:
+     * 404 = その口座を預かっていない(master の findHeading の notFoundText / worker の redeem の
+       『その account はこの worker に預かっていない』)。status だけで決まる。
+     * 403 かつ置き場の門の印 = 会社階級の口座が会社の置き場でない預かり所に在る
+       (custody Judge/Company.companyPlacementViolation)。403 のもう 1 本(借り手の門)は偽 —
+       宣言された借り手の機体なら通るので another-carrier。"
+  (when (= refusal.status CUSTODY-ACCOUNT-ABSENT-STATUS)
+    (return True))
+  (and (= refusal.status CUSTODY-PLACEMENT-REFUSAL-STATUS)
+       (in CUSTODY-PLACEMENT-REFUSAL-MARK refusal.error)))
 
 
 (defk refused-attempt-status-of [status conditions]

@@ -151,6 +151,7 @@
   LEASE-JOURNAL-MAX-CHARS
   PROVIDER-LIMIT-ATTEMPT-KEY
   CREDENTIAL-LEASE-HELD-UNTIL-KEY
+  CustodyRefusalVerdict
   RecordReadStream
   SUMMARY-EVENT-KIND
   CHARTER-KIND-SUMMARIZE
@@ -465,7 +466,7 @@
   plan-with-node-home
   work-dir-of
   work-dir-step-of
-  credential-lease-held-condition-of
+  custody-refusal-verdict-of
   lease-journal-of
   lease-journal-text
   lease-journal-with
@@ -1231,20 +1232,24 @@
   (setv refusal (get borrowed 1))
   (if (is-not refusal None)
       (do
-        ;; card acp:kanban-issue:ki-f2747267e24d B1(実弾 2026-09-19 08:44Z〜17 時台 JST): 預かり所が 409(錠は別の借り手)で
-        ;; 断った手番は**失った試み**で、手番の終わりではない —— 錠は他所の hold の期限で必ず解ける。Ended に書くと
-        ;; 配達係が終端を数え(上限 2・backoff なし)数秒で郵便が failed になり、17 時台に 330 通が落ちた。
-        ;; 記録だけ足して phase / binding / sessionHandle / result は離す(judgment.refused-attempt-status-of の形)—
-        ;; 置き直す先も待つ時刻も数えるかも、判じるのは ACP の配置の 1 点。409 以外の断り・hold を名乗らない断り・
-        ;; 宣言の無い預かり所は今日のまま Ended(判断は credential-lease-held-condition-of の 1 点)。
+        ;; card acp:kanban-issue:ki-b3bed1e983fb: 断りを 1 語へ畳まず、**「誰が答えられるか」**で class を分ける。
+        ;; 畳むと配達の側(ACP Acp.App.Messaging.Decide.carrierEndedOf)に再試行の可否を判ずる材料が 1 つも残らない ——
+        ;; 直す場所は判定の側ではなく語を鋳る側で、判定は judgment.custody-refusal-verdict-of の 1 点
+        ;; (ここに第 2 の判定を置かない — 呼び手は verdict の 3 つの腕に従うだけ)。
+        ;;   nobody          = 宣言・在庫の事実(404 / 403 置き場の門)→ CredentialNotLeasable で Ended。この語は
+        ;;                     carrierEndedFailureReasons に無いので、配達は組み直さず 1 回で送信者へ返す(hard rule 7)。
+        ;;   another-carrier = この機体の都合(403 借り手の門・503・到達不能)→ 今日どおり CredentialUnavailable で
+        ;;                     Ended(配達が有界に組み直す — 実測 2026-09-19 の 403 4 件はこちら)。
+        ;;   time            = 409 + hold(card ki-f2747267e24d B1・実弾 2026-09-19 17 時台に 330 通が落ちた形)→ 記録だけ
+        ;;                     足して phase / binding / sessionHandle / result は離す(refused-attempt-status-of の形 —
+        ;;                     置き直すのは ACP の配置の 1 点)。⚠ 錠は custody be81f6f で廃止 = この腕は今日は発火しない。
         (<- fresh (| AcpRow None) (AcpGetRow :key row.key))
         (setv target (if (is fresh None) row fresh))
         (<- target-status dict (status-object-of target))
-        (<- held (| dict None) (credential-lease-held-condition-of refusal target-status now-ms))
+        (<- verdict CustodyRefusalVerdict (custody-refusal-verdict-of refusal target-status now-ms))
+        (setv held verdict.held)
         (if (is held None)
-            (<- (end-job-now settings row "CredentialUnavailable"
-                                    f"custody refused ({refusal.status}): {refusal.error}"
-                                    #() now-ms))
+            (<- (end-job-now settings row verdict.condition-type verdict.reason #() now-ms))
             (do
               (<- kept dict (refused-attempt-status-of target-status #(held)))
               (<- wrote (| Written Conflict Refused) (AcpPutStatus :row target :status kept))
