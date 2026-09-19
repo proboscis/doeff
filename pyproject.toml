@@ -113,7 +113,6 @@ testpaths = [
     "packages/doeff-docker/tests",
     "packages/doeff-domain/tests",
     "packages/doeff-events/tests",
-    "packages/doeff-flow/tests",
     "packages/doeff-gemini/tests",
     "packages/doeff-git/tests",
     "packages/doeff-google-secret-manager/tests",
