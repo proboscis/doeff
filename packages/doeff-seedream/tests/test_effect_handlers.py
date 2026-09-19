@@ -23,7 +23,8 @@ from doeff_seedream.effects import SeedreamGenerate, SeedreamStructuredOutput
 from doeff_seedream.handlers import mock_handlers, production_handlers
 from doeff_seedream.types import SeedreamImage, SeedreamImageEditResult
 
-from doeff import EffectGenerator, default_handlers, do, run
+from doeff import EffectGenerator, do
+from tests._run_helpers import run_with_defaults
 
 
 class SummarySchema:
@@ -62,9 +63,8 @@ def _build_result(*, prompt: str, model: str, payload: bytes) -> SeedreamImageEd
 
 
 def _run_with_handler(program, handler):
-    return run(
+    return run_with_defaults(
         handler(program),
-        handlers=default_handlers(),
     )
 
 

@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 
-from doeff import default_handlers, run
+from tests._run_helpers import run_with_defaults
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -16,9 +16,8 @@ from doeff_test_target.scenarios.target_effects import fixture_effect_roundtrip
 
 
 def _run_with_handler(program, handler, *, env=None):
-    return run(
+    return run_with_defaults(
         handler(program),
-        handlers=default_handlers(),
         env=env,
     )
 
