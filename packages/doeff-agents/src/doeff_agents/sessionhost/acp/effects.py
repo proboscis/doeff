@@ -1190,6 +1190,12 @@ class AgentdSettings:
     #: spool の再送の周期(送れなかった拍の後 — 送れている間は出来事を読んだ拍の終わりに送る)。届かない service へ拍ごとに
     #: 撃って loop を塞がないための有界の backoff(judgment.record-flush-due)。
     record_retry_seconds: float = 15.0
+    #: 1 拍に送る spool の batch の上限(ADR-DOE-AGENTS-012 R22 の追補・card acp:kanban-issue:ki-6eb745f6d528)。
+    #: 拍の終わりの flush が spool の全部を上限なく回すと、溜まった拍の周期を **spool の深さ**が決める
+    #: (実測の 24 秒級の外れ値の候補)。残りは spool に残して次の拍へ持ち越す(落とさない — 今日の規律は変えない)。
+    #: 既定 20 の根拠: 1 batch = 1 往復で、cluster の中の 1 往復は p50 11 ms ⇒ 20 往復 ≈ 0.2 秒 —— 実況の周期
+    #: (events_poll_seconds = 50 ms)の数倍に収まり、深い spool でも拍が秒の桁へ伸びない。
+    record_flush_max_batches: int = 20
     #: 段 9p(agora-redesign #76): 手番の記録(turn-record)の行を作れない拍(頭の入れ替え・到達不能・5xx)に作り直しを
     #: 続ける上限(手番の始まりから・秒)。周期は record_retry_seconds(spool の再送と同じ弁)。期限を越えたら理由つきで
     #: condition RecordUnavailable(judgment.record-create-verdict の 1 点)。頭の入れ替え(image beat の再起動)の実測は
