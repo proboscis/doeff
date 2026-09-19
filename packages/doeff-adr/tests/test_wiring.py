@@ -391,7 +391,9 @@ def test_default_scope_wiring_verifies_from_the_sessions_own_collection(
     _make_gate_test(
         pytester,
         "assert isinstance(verdict, WiringVerified), verdict",
-        "assert [path.name for path in verdict.wired_files] == ['defadr_gate_green.hy']",
+        # One set, both kinds: the ADR and the gate test itself.
+        "names = sorted(path.name for path in verdict.wired_files)",
+        "assert names == ['defadr_gate_green.hy', 'test_gate.py'], names",
     )
 
     result: pytest.RunResult = pytester.runpytest("-q")
