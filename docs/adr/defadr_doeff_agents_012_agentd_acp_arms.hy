@@ -376,7 +376,8 @@
        "interrupt delivery" "走っている自分の job に載った割り込みの配達(R21)"
        "cancel handling" "取り消しの合図(spec.cancel)の 3 段"
        "carried Ended re-write" "着かなかった Ended の書き直し(置き直された行へ)"
-       "job {} tick" "job ごとの観測(1 job の器の RPC が落ちても他の job と heartbeat は進む)"
+       "job {} live tail" "job ごとの拍の 1 周目 = 材料を読んで frame を押す(R22 の追補・card acp:kanban-issue:ki-6eb745f6d528 — 1 job の器の RPC が落ちても、他の job の実況と 2 周目の遅い腕は進む)"
+       "job {} tick" "job ごとの拍の 2 周目 = 遅い腕(1 job の頭への書きが落ちても他の job と heartbeat は進む)"
        "verify job {} tick" "走らせている verify の命令ごとの観測(R36)"
        "summarize job {} tick" "走らせている summarize の区間ごとの観測(R37)"
        "record spool for job {}" "拍の途中に本文を spool へ置く書き(段 9f lane 9f-2)"
@@ -1594,7 +1595,7 @@
          (assert (not (and (in "PHASE-RUNNING" line) (in "(= " line)))
                  f"Running の述語は judgment.hy の running-on-me の 1 点(R2 / R7): {line}"))
        (assert (>= (len (lfor line agentd-lines :if (in "(job-step-of " line) line)) 2)
-               "observe-job と recover-job は同じ job-step-of を通る")
+               "observe-job-fast と recover-job は同じ job-step-of を通る")
        ;; 反例(挙動): 再起動(memory を捨てる)後の最初の tick で自分の Running を行から拾い、
        ;; 器が終端なら記録の腕だけで閉じる(launch は増えない)。他人の Running は触らない。
        (setv world (World))
@@ -1689,7 +1690,10 @@
        (assert (= (get (object-at node "lease") "heartbeatAt") 31000))
        (assert (= (get (status-of (get shared.acp.rows "acp-system:agent-job:s-b")) "phase") PHASE-ENDED))
        (assert (= (get (status-of (get shared.acp.rows "acp-system:agent-job:s-a")) "phase") PHASE-RUNNING))
-       (assert (in "agentd: job s-a tick failed: RuntimeError: socket reset" shared.local.logs)))
+       ;; R22 の追補(card acp:kanban-issue:ki-6eb745f6d528): 器の眺めは拍の **1 周目**(live tail)で読むので、
+       ;; 器の RPC が落ちた job はその縁で切れる —— その job は 2 周目に載らず、他の job の実況も遅い腕も進む。
+       (assert (in "agentd: job s-a live tail failed: RuntimeError: socket reset" shared.local.logs)
+               shared.local.logs))
      (deftest test-adr-doe-agents-012-warm-session-send-instead-of-launch
        ;; R10 の針: 起こし方の判定は judgment.hy の next-arm-for-job の 1 点、手番の終わりの読みは
        ;; job-step-of の 1 点。agentd.hy は lifecycle の語を比較せず turn-ended-at を読まない
