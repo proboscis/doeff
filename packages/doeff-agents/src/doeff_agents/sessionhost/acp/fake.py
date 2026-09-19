@@ -417,6 +417,9 @@ class FakeCustody:
         self.borrowed: list[tuple[LeaseKind, str, str]] = []
         self.revoked: list[str] = []
         self.refuse_with: LeaseRefused | None = None
+        #: card acp:kanban-issue:ki-f2747267e24d B3: 返却が 200 で答えない拍(預かり所が落ちている・不達)の再現 —
+        #: 撃った id は revoked に残る(撃ってはいる)が答えは False。
+        self.revoke_ok: bool = True
         self.counter: int = 0
         #: 段 10 lane 10d 便 4: /health が名乗る答え(None = 読めない・欄なし = 版 1 の預かり所)。
         self.health: JSONObject | None = {"ok": True, "role": "master", "contract": CUSTODY_CONTRACT_VERSION}
@@ -446,7 +449,7 @@ class FakeCustody:
             )
         if isinstance(effect, CustodyLeaseRevoke):
             self.revoked.append(effect.lease_id)
-            return Resume(k, True)
+            return Resume(k, self.revoke_ok)
         return Pass(effect, k)
 
 

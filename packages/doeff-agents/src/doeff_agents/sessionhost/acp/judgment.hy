@@ -576,6 +576,69 @@
 
 
 ;; ---------------------------------------------------------------------------
+;; 借りた錠の手元の記録(journal)— 手番を閉じた process が錠を返す(R51)
+;; ---------------------------------------------------------------------------
+
+(defk lease-journal-of [text]
+  {:pre [(: text (| str None))]
+   :post [(: % dict)]}
+  "機体の disk の journal の text → {jobId: leaseId}(card acp:kanban-issue:ki-f2747267e24d B2)。
+   無い file・綴りでない text・object でない JSON・str でない値は空 — **読めない journal は『何も握っていない』**と読む
+   (発明しない: 読めない text から貸与の id をこしらえると、他人の錠を返しにいく)。"
+  (when (or (is text None) (not (.strip text)))
+    (return {}))
+  (try
+    (setv parsed (json.loads text))
+    (except [json.JSONDecodeError]
+      (return {})))
+  (when (not (isinstance parsed dict))
+    (return {}))
+  (dfor [job-id lease-id] (.items parsed)
+        :if (and (isinstance job-id str) (isinstance lease-id str) job-id lease-id)
+        job-id lease-id))
+
+
+(defk lease-journal-with [journal job-id lease-id]
+  {:pre [(: journal dict) (: job-id str) (: lease-id str)]
+   :post [(: % dict)]}
+  "借りた錠を journal に足した写し(元の dict は触らない)。"
+  (setv next (dict journal))
+  (setv (get next job-id) lease-id)
+  next)
+
+
+(defk lease-journal-without [journal job-id]
+  {:pre [(: journal dict) (: job-id str)]
+   :post [(: % dict)]}
+  "返した錠を journal から外した写し(元の dict は触らない・無い job を外しても壊れない)。"
+  (setv next (dict journal))
+  (.pop next job-id None)
+  next)
+
+
+(defk lease-journal-text [journal]
+  {:pre [(: journal dict)]
+   :post [(: % str)]}
+  "journal → disk に書く text(鍵の順は綴りで決める — 同じ握りは同じ byte)。"
+  (json.dumps journal :ensure-ascii False :sort-keys True :separators #("," ":")))
+
+
+(defk lease-to-return-of [lease-id journal job-id]
+  {:pre [(: lease-id (| str None)) (: journal dict) (: job-id str)]
+   :post [(: % (| str None))]}
+  "**いつ返すかの 1 点**(card acp:kanban-issue:ki-f2747267e24d B2): 手番を閉じる腕が返す貸与の id —
+   この process の memory(InFlightJob.lease-id / 行の sessionHandle)が在ればそれ、無ければ機体の disk の journal、
+   どちらも無ければ None(返さない)。memory が先なのは、journal が書けなかった拍にも今日どおり返るため。
+   ⚠ 借り手の名で一括に返す掃除(sweep)にしない — 預かり所は参照を数えず、revoke は口座の錠をそのまま解くので
+   (custody Program/Master.releaseHolder)、同じ機体の別の生きた手番が同じ貸与の id を握っていたらその錠まで外れる。
+   返すのは job が名乗る 1 つだけ(今日の finalize の revoke と同じ粒)。"
+  (when (and (isinstance lease-id str) lease-id)
+    (return lease-id))
+  (setv held (.get journal job-id))
+  (if (and (isinstance held str) held) held None))
+
+
+;; ---------------------------------------------------------------------------
 ;; 温かい session — 会話の資源としての session と手番の起こし方(R10)
 ;; ---------------------------------------------------------------------------
 

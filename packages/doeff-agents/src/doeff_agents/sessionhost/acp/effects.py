@@ -301,6 +301,16 @@ VERIFY_SCRIPTS_RELDIR: str = "dotfiles/cron_management"
 #: 走らせ方 = sh の 1 行(judgment.verify-argv-of の 1 点)が pid を書き、script を走らせ、rc を書く — agentd が
 #: 再起動しても process は残り(自分の session)、結末は file から読める(R7: 正本は行と file)。
 VERIFY_RUNS_RELDIR: str = "verify-runs"
+#: 段 12(card acp:kanban-issue:ki-f2747267e24d B2): 借りた錠の手元の記録(journal)の置き場 —
+#: AgentdSettings の state_dir(record spool の親)の下の 1 file。中身は {jobId: leaseId} の組ちょうどで、
+#: 借りた拍に足し返した拍に外す。読み手は**手番を閉じる腕**: 貸与の id は借りた process の memory にしか
+#: 無かったので、agentd の入れ替え・再起動・排水で process が変わると錠を返せなかった(実弾 2026-09-19
+#: 08:44Z — 錠は hold の 900 秒残り、その間の借りは全部 409)。既知の形 = kubelet の再起動後の volume の
+#: 再構成(disk に残した記録から「自分が握っている物」を組み直して後始末する)。
+#: ⚠ 借り手の名で一括に返す掃除(sweep)は作らない — 返すのは journal が job ごとに名乗る 1 つだけ。
+LEASE_JOURNAL_FILENAME: str = "leases.json"
+#: journal の読みの上限(1 組 ≈ 80 byte・機体の同時の手番は 2 桁)— 上限で切れた text は読みが断る(空に倒す)。
+LEASE_JOURNAL_MAX_CHARS: int = 262_144
 #: verify の job の sessionHandle の欄(agentd が Running の書きで置く — 契約は opaque・stream{owner, name} だけ共有の形)。
 JOB_HANDLE_VERIFY_KEY: str = "verify"
 #: verify の命令の次の 1 手(judgment.verify-step-of の閉語彙): observe = 走っている / ended = rc の file が在る /
@@ -1165,6 +1175,10 @@ class AgentdSettings:
     summarize_model: str = "claude-opus-5"
     #: 要約の結末の置き場(runtime.summarize_runs_dir の 1 点 — state_dir の下の SUMMARY_RUNS_RELDIR)。
     summarize_runs_dir: str = ""
+    #: 段 12(card acp:kanban-issue:ki-f2747267e24d B2): 借りた錠の手元の journal の file(runtime.lease_journal_path の
+    #: 1 点 — state_dir の下の LEASE_JOURNAL_FILENAME)。空 = journal を持たない機体(検体の既定 — 借りも返しも
+    #: 今日どおり memory だけで回る)。
+    lease_journal_path: str = ""
     #: Claude Code の binary(argv の先頭 — PATH で解く)。
     claude_binary: str = "claude"
     #: この node が預かり所(custody)を宣言しているか(段 10c・agora-redesign #80)。composition root
