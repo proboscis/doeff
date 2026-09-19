@@ -50,7 +50,10 @@
   FsFileMtime
   GitRun
   EnvGet])
-(import doeff_agents.sessionhost.policy [ACTIVE-STATUSES])
+(import doeff_agents.sessionhost.policy [ACTIVE-STATUSES
+                                         PROVIDER-AUTH-ENV-KEYS
+                                         env-offenders-against
+                                         policy-normalized-env-key])
 
 
 ;; ---------------------------------------------------------------------------
@@ -59,8 +62,11 @@
 
 ;; agent process へ決して渡さない env(oracle FORBIDDEN_AGENT_ENV_KEYS —
 ;; API-key 呼び出しは memoized LLM handler 経由のみ、agent session env は禁止)。
-(setv FORBIDDEN-AGENT-ENV-KEYS
-      #{"ANTHROPIC_API_KEY" "ANTHROPIC_API_KEY_PERSONAL" "ANTHROPIC_API_KEY__PERSONAL"})
+;; 綴りは持たず policy の語彙を名指す(card acp:kanban-issue:ki-2a061da56ca9:
+;; 3 層が別々の literal を持っていたので 3 つとも中身が違った)。ここは最後の砦
+;; なので **PROVIDER-AUTH ちょうど** — 手番の札(TURN-AUTH)は受理と同じく
+;; わざと通す(ADR 012 R5・R30)。
+(setv FORBIDDEN-AGENT-ENV-KEYS PROVIDER-AUTH-ENV-KEYS)
 
 ;; 新 pane の shell に足す prompt 抑制 env(呼び手が明示していない時のみ)。
 (setv SHELL-PROMPT-SUPPRESSING-ENV
@@ -80,17 +86,15 @@
 (deff normalized-env-key [key]
   {:pre [(: key str)]
    :post [(: % str)]}
-  "env key の正規化(oracle normalized_env_key: `-`→`_`・大文字化)。"
-  (.upper (.replace key "-" "_")))
+  "env key の正規化(oracle normalized_env_key: `-`→`_`・大文字化)。
+   規約の定義点は policy 側の 1 つ — ここは oracle の名を保つ薄い呼び出し。"
+  (policy-normalized-env-key key))
 
 (deff ensure-no-forbidden-agent-env [env]
   {:pre [(: env dict)]
    :post [(: % "None — 違反は raise")]}
   "禁止 env の hard reject(oracle ensure_no_forbidden_agent_env)。"
-  (setv forbidden
-        (lfor key (.keys env)
-              :if (in (normalized-env-key key) FORBIDDEN-AGENT-ENV-KEYS)
-              key))
+  (setv forbidden (env-offenders-against env FORBIDDEN-AGENT-ENV-KEYS))
   (when forbidden
     (setv joined (.join ", " forbidden))
     (raise (RuntimeError
