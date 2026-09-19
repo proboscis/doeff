@@ -141,6 +141,10 @@ addopts = ["--import-mode=importlib"]
 # dir をここで名指す。⚠ これは「集める木の宣言」ではない(それは testpaths)。
 pythonpath = [
     "packages/doeff-agents/conformance",
+    # 既定の走行では test_agent_launch_invariants.py が(名前順で先に import され
+    # るので)この dir を sys.path へ押し込み、fake_io_support が偶然引ける。
+    # 順序に頼るのをやめて宣言する — file を名指した走行では現に落ちる。
+    "packages/doeff-agents/tests",
     "packages/doeff-domain/tests",
 ]
 # ADR-DOE-ENFORCE-001 R8 の唯一の逃げ口(law every-python-test-file-is-collected の
