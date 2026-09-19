@@ -946,8 +946,9 @@
   (<- returned bool (CustodyLeaseRevoke :lease-id held))
   (when (not returned)
     (<- (LogLine :text (+ f"agentd: lease {held} of job {job-id} was not returned to custody "
-                          "(the revoke did not answer 200) — the account stays locked until its hold expires "
-                          "and every borrow of that account is refused with 409 until then"))))
+                          "(the revoke did not answer 200) — the lease record stays open until its hold "
+                          "expires; since 2026-09-19 the custody counts no hosts (law lease-counts-no-hosts), "
+                          "so this blocks nobody else's borrow — it only leaves a stale record behind"))))
   (when (in job-id journal)
     (<- dropped dict (lease-journal-without journal job-id))
     (<- (write-lease-journal settings dropped)))
@@ -3127,7 +3128,9 @@
     (<- result-done dict (summarize-result-of command done now-ms))
     (<- finished-done AgentdState (finish-summarize settings state command result-done #() now-ms))
     (return finished-done))
-  ;; 前の区間の札を返してから次の区間の札を借りる(1 認証 1 宿の錠を 2 つ持たない)。
+  ;; 前の区間の札を返してから次の区間の札を借りる(貸与の記録を 1 手番 1 本に保つ —
+  ;; 2026-09-19 より前は「1 認証 1 宿の錠を 2 つ持たない」が理由だったが、預かり所は宿を
+  ;; 数えなくなった〔law lease-counts-no-hosts〕。返す理由は衛生に変わり、腕は変わらない)。
   (<- (return-lease settings command.job-id command.lease-id))
   (<- plan SummarizePlan (summarize-plan-of-command command))
   (<- started-ms int (ClockNowMs))

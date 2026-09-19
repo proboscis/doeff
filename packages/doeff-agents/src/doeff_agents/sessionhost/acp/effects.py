@@ -247,6 +247,12 @@ REASON_RATE_LIMITED: str = "rate-limited"
 PROVIDER_LIMIT_PROFILE_KEY: str = "profile"
 PROVIDER_LIMIT_ATTEMPT_KEY: str = "attempt"
 PROVIDER_LIMIT_AT_KEY: str = "at"
+#: ⚠⚠ 2026-09-19 の追補: この記録を生む **409(錠の競合)は廃止された**(operator 裁定 19:2x・custody law
+#: lease-counts-no-hosts・本番 be81f6f 11:18Z 配備)。預かり所は宿を数えないので、同じ口座の 2 台目の借りは断られない。
+#: ⇒ **この腕は今日以降、原理的に発火しない**。残してあるのは (a) 提供側が同じ access token の同時利用を拒んだ場合に
+#: 錠を戻す判断があり得ること (b) 発火しない以上、残す害が無いこと の 2 点による。消すなら custody の錠と ACP の配置の
+#: 絞りを戻す便と対で。⚠ 貸与の断りの型 LeaseRefused 自体は生きている(403 = 借り手が名簿に無い / 503 = worker 不達)—
+#: 死んだのは 409 の腕だけ。
 #: 段 12(card acp:kanban-issue:ki-f2747267e24d B1・実弾 2026-09-19 08:44Z〜17 時台 JST): 預かり所が **409**(錠は別の借り手が
 #: 握っている — 1 認証 1 宿)で手番の借りを断った印。**失った試みの記録であって手番の終わりではない**: 錠は他所の hold の
 #: 期限(holdExpiresAt)で必ず解けるので、この手番は『いまこの口座を借りられなかった』だけで、口座も手番も壊れていない。
@@ -1444,7 +1450,9 @@ class LeaseGrant:
 class LeaseRefused:
     status: int
     error: str
-    #: 409(1 認証 1 宿)の時に預かり所が名乗る「いつまで一時か」。
+    #: 預かり所が「いつまで一時か」を名乗る時の期限。⚠ 2026-09-19 に『1 認証 1 宿』の錠は
+    #: 廃止された(custody law lease-counts-no-hosts)ので、錠の競合による 409 はもう出ない —
+    #: この欄が埋まるのは、預かり所が別の理由で期限を名乗った拍だけ(欠落 = 期限を知らない)。
     hold_expires_at_ms: int | None
 
 
