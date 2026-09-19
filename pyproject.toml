@@ -86,6 +86,15 @@ doeff-ml-nexus = { workspace = true }
 doeff-hy = { workspace = true }
 doeff-adr = { workspace = true }
 doeff-domain = { workspace = true }
+# ADR-DOE-ENFORCE-001 R8: 既定の走行が集める木は、既定の env で import できなければ
+# 収集エラーにしかならない。testpaths に載せた packages/*/tests の package は
+# workspace source を宣言し、下の dev 群で必ず .venv に入れる。
+doeff-google-secret-manager = { workspace = true }
+doeff-image = { workspace = true }
+doeff-notify = { workspace = true }
+doeff-secret = { workspace = true }
+doeff-seedream = { workspace = true }
+doeff-test-target = { workspace = true }
 
 [tool.pytest.ini_options]
 timeout = 60
@@ -97,10 +106,80 @@ testpaths = [
     "tests",
     "docs/adr",
     "packages/doeff-adr/tests",
+    "packages/doeff-agentic/tests",
+    "packages/doeff-agents/conformance",
+    "packages/doeff-agents/tests",
+    "packages/doeff-conductor/tests",
+    "packages/doeff-docker/tests",
     "packages/doeff-domain/tests",
+    "packages/doeff-events/tests",
+    "packages/doeff-flow/tests",
+    "packages/doeff-gemini/tests",
+    "packages/doeff-git/tests",
+    "packages/doeff-google-secret-manager/tests",
+    "packages/doeff-hy/tests",
+    "packages/doeff-image/tests",
+    "packages/doeff-ml-nexus/tests",
+    "packages/doeff-notify/tests",
+    "packages/doeff-openai/tests",
+    "packages/doeff-openrouter/tests",
+    "packages/doeff-secret/tests",
+    "packages/doeff-seedream/tests",
+    "packages/doeff-test-target/tests",
     "packages/doeff-time/tests",
+    "packages/doeff-traverse/tests",
     "packages/doeff-vm/tests",
     "packages/doeff-vm-core/tests",
+]
+# ADR-DOE-ENFORCE-001 R8: 取り込み方式は importlib。既定の走行が packages 配下の
+# 27 木を集めると、prepend 方式では同名 file(test_effect_handlers.py が 9 本など)が
+# 同じ module 名に畳まれて "import file mismatch" になる(2026-09-19 実測 14 件)。
+# file を 14 本改名するより、方式を 1 行宣言する方が小さい。
+addopts = ["--import-mode=importlib"]
+# importlib 方式は test file の dir を sys.path へ入れない。隣の helper module を
+# import する木(conformance の harness.py・doeff-domain の fixture 群)は、その
+# dir をここで名指す。⚠ これは「集める木の宣言」ではない(それは testpaths)。
+pythonpath = [
+    "packages/doeff-agents/conformance",
+    "packages/doeff-domain/tests",
+]
+# ADR-DOE-ENFORCE-001 R8 の唯一の逃げ口(law every-python-test-file-is-collected の
+# 「宣言された暗がり」)。ここに 1 行足すと **2 つのことが同時に**起きる:
+#   ① 門(doeff-adr の配線検査)がその path を「集められるべき」から外す
+#   ② root conftest.py がこの同じ表を collect_ignore_glob へ渡し、pytest も集めない
+# 第 2 の表を作らないこと — 片方だけ書いた日から「集めないのに門が赤い」か
+# 「門は緑なのに収集が落ちる」のどちらかになる。
+# ⚠ 1 行ごとに理由を書く。理由の無い行は門を黙らせる装置でしかない。
+doeff_adr_wiring_exclude = [
+    # ── 集めてはいけない側(他の道具の入力・import で走る script)──────────
+    # Rust の linter / indexer が cargo test で食わせる見本。わざと違反を含むので
+    # pytest が走らせてはいけない(doeff-linter は自分の conftest でも守っている)。
+    "packages/doeff-linter/tests/fixtures/*",
+    "packages/doeff-indexer/tests/fixtures/*",
+    # `uv run python examples/...` で走らせる見本。module 直下に実行文が在るので、
+    # 収集した瞬間に workflow が走る。
+    "packages/doeff-agentic/examples/*",
+    # doeff-test-target の production module。package 名が "test-target" なので
+    # src の中の effects/test_effects.py が python_files にたまたま当たるだけ。
+    "packages/doeff-test-target/src/*",
+    # 複数の interpreter へ `uv run` を撃つ CLI script(pytest の検体ではない)。
+    "tools/test_python_versions.py",
+    # PyCharm plugin の gutter icon の見本(型註だけで検体を持たない)。
+    "ide-plugins/pycharm/test_program_detection.py",
+    # ── 腐っている側(#467 が開けて見つけた・直すのは別便)────────────────
+    # doeff-flow は package 本体が壊れている: run_workflow が削除済みの
+    # default_handlers() を呼び、trace.py が消えた doeff_vm.RunResult を import する。
+    # 2026-07-13 の slog 意味論の計画に既知として登記済み(docs/doeff-2026-07-13-
+    # slog-semantics-architecture-plan.md:123)で、この repo の誰も import していない。
+    # 直すのは package の API 移行(1,110 行)で、木を配線する #467 の射程の外。
+    "packages/doeff-flow/tests/*",
+    # 対象の doeff_agentic.handlers.production が、doeff-agents から消えた Sleep を
+    # import する(26db24dd)。同 module は TmuxAgentHandler を直に握っており
+    # CLAUDE.md の agent 認証境界にも触れるので、直しは設計の判断を伴う。
+    "packages/doeff-agentic/tests/test_handlers_module.py",
+    # 旧 `run(program, handlers=..., env=...)` 時代の検体(29 箇所が is_ok()/.value)。
+    # 隣の test_effect_handlers.py と同じ移行が要る。
+    "packages/doeff-openrouter/tests/unit/test_structured_llm.py",
 ]
 markers = [
     "e2e: tests that exercise external integrations and may require real API keys",
@@ -170,4 +249,16 @@ dev = [
     "cloudpickle>=3.0",
     "semgrep>=1.161.0,<2",
     "pre-commit>=4,<5",
+    # ADR-DOE-ENFORCE-001 R8: testpaths に載る packages/*/tests が import する
+    # workspace package は、1 つ残らず dev 群に居ること。居ない package の木は
+    # 「収集はされるが毎回 ImportError」という最悪の形(赤いのに誰も直せない)になる。
+    "doeff-docker",
+    "doeff-events",
+    "doeff-google-secret-manager",
+    "doeff-image",
+    "doeff-ml-nexus",
+    "doeff-notify",
+    "doeff-secret",
+    "doeff-seedream",
+    "doeff-test-target",
 ]
