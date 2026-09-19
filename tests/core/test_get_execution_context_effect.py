@@ -4,6 +4,7 @@ import inspect
 from pathlib import Path
 from typing import Any
 
+import pytest
 from doeff_vm import (
     GetExecutionContext,
     Pass,
@@ -56,16 +57,17 @@ def test_base_exception_bypasses_get_execution_context_conversion() -> None:
             seen.append("called")
             context = yield Delegate()
             return (yield Resume(k, context))
-        yield Pass()
+        yield Pass(effect, k)
 
     @do
     def failing_program() -> Program[None]:
         raise KeyboardInterrupt("stop")
 
     wrapped = _install_raw_handler(observer)(failing_program())
-    result = run_with_defaults(wrapped)
-    assert result.is_err()
-    assert isinstance(result.error, KeyboardInterrupt)
+    # A BaseException is not converted into a doeff error (no GetExecutionContext
+    # round-trip, so the observer never runs); it propagates out of run() as-is.
+    with pytest.raises(KeyboardInterrupt, match="stop"):
+        run_with_defaults(wrapped)
     assert seen == []
 
 
