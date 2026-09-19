@@ -1,13 +1,11 @@
-
 import asyncio
 from dataclasses import dataclass
 
 from doeff_core_effects import Await
 from doeff_core_effects.scheduler import Spawn, Wait
 from doeff_events.effects import Publish, WaitForEvent
-from doeff_events.handlers import event_handler
 
-from doeff import do, run
+from doeff import do
 
 
 @dataclass(frozen=True)
@@ -25,7 +23,7 @@ class OrderFilled(MarketEvent):
     quantity: int
 
 
-def test_waiter_ignores_non_matching_event_types() -> None:
+def test_waiter_ignores_non_matching_event_types(run_events) -> None:
     matching_event = OrderFilled(symbol="AAPL", quantity=5)
 
     @do
@@ -48,19 +46,14 @@ def test_waiter_ignores_non_matching_event_types() -> None:
         publish_status = yield Wait(publisher_task)
         return (received, publish_status)
 
-    result = run(
-        event_handler()(program()),
-        handlers=default_handlers(),  # noqa: F821 - legacy removed API reference is intentionally preserved
-    )
-
-    assert result.is_ok()
-    received, publish_status = result.value
+    result = run_events(program())
+    received, publish_status = result
     assert publish_status == "published"
     assert received == matching_event
     assert isinstance(received, OrderFilled)
 
 
-def test_wait_for_base_type_receives_subclass_events() -> None:
+def test_wait_for_base_type_receives_subclass_events(run_events) -> None:
     published_event = PriceUpdated(symbol="MSFT", price_cents=42500)
 
     @do
@@ -76,13 +69,8 @@ def test_wait_for_base_type_receives_subclass_events() -> None:
         publish_status = yield Wait(publisher_task)
         return (received, publish_status)
 
-    result = run(
-        event_handler()(program()),
-        handlers=default_handlers(),  # noqa: F821 - legacy removed API reference is intentionally preserved
-    )
-
-    assert result.is_ok()
-    received, publish_status = result.value
+    result = run_events(program())
+    received, publish_status = result
     assert publish_status == "published"
     assert received == published_event
     assert isinstance(received, PriceUpdated)
