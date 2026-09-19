@@ -54,7 +54,9 @@ timeout_s = 7200
 # 2700 秒の門は許容範囲外」— 先例 = herdr-hud D568 出荷 B / ACP 同日切替)。
 # operator 裁定 2026-08-17 逐語「mergeにテストは必須じゃない」: 着地の門は merge の
 # 力学(rebase 成立・patch-id 突合・受入検定)のみ。テストは全部事後 =
-# ① 日次全量検査(gate.full を ai land verify が使う — launchd 便は別途敷設)
+# ① 日次全量検査(gate.full を ai land verify が使う — 運び手 = ns herdr-hud の
+#   CronJob `land-verify-doeff`・毎日 03:30 JST・宣言の正本 = herdr-hud
+#   deploy/periodic/jobs.json の state live)
 # ② 全走が緑の断面だけが stable ブランチ(policy.stable_branch)へ昇格
 # ③ 赤の復旧は fix-forward(容疑名指しの修理便の自動起票)— revert 自動化は不採。
 # 実測根拠: Mac 飽和帯で make sync だけが 23 分・全量が門 2700s に収まらず同一便が
@@ -66,7 +68,9 @@ mode = "focus"
 # 方策宣言そのものへの変更だけは常時 full battery(自己参照の fail-closed)
 # ⚠ 2026-08-17 operator 逐語「全量検査を無効にしてくれ」: full_paths を空に —
 # 着地の窓はいかなる path でも全量検査(gate.full)を走らせない。gate.full の
-# 唯一の消費者 = 日次検証便(ai land verify・launchd)。方策 toml の変更も
+# 唯一の消費者 = 日次検証便(ai land verify・ns herdr-hud の CronJob land-verify-doeff・
+# 毎日 03:30 JST。2026-09-13 の退役までは Mac の launchd com.masui.land-verify-doeff が
+# 受けていた)。方策 toml の変更も
 # 窓では力学のみで着地する(検分は事後 + fix-forward)。復活は operator 裁定で。
 full_paths = []
 
