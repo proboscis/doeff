@@ -4894,3 +4894,21 @@ rules:
     paths:
       include:
         - "**/doeff_adr/**"
+
+  - id: ban-urlopen-in-agentd-handlers
+    languages:
+      - python
+    severity: ERROR
+    message: >
+      agentd の外向きの HTTP は host ごとに保った接続で撃つ
+      (handlers.HttpConnections — 壊れたら 1 度だけ張り直す)。
+      urllib.request.urlopen は呼び毎に TCP を張り直すので、1 拍 約 35 往復 ×
+      11 ms(cluster の中の実測の 1 往復 p50・server 側の処理は 0.17 ms・Mac は
+      tailnet の RTT でさらに重い)がそのまま拍の周期になる — 手番 20 本の agentd で
+      拍の周期 p50 1.243 秒・frame の at から面の着まで p50 0.554 秒
+      (card acp:kanban-issue:ki-6eb745f6d528・ADR-DOE-AGENTS-012 R22)。
+    patterns:
+      - pattern: urllib.request.urlopen(...)
+    paths:
+      include:
+        - "**/sessionhost/acp/handlers.py"
