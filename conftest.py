@@ -122,14 +122,35 @@ def _stop_watchdog():
         _watchdog_timer = None
 
 
+# ---------------------------------------------------------------------------
+# Files that must never be collected (ADR-DOE-ENFORCE-001 R8)
+#
+# The list lives in exactly one place — ``doeff_adr_wiring_exclude`` in
+# pyproject.toml, with a reason on every line — and is consumed twice: the
+# doeff-adr wiring gate drops those paths from "should have been collected",
+# and pytest itself skips them through this ``collect_ignore_glob``.
+#
+# A second table would be worse than none: the day the two drift, the repo gets
+# either a file pytest refuses to collect while the gate calls it missing, or a
+# green gate over a collection that errors out.  Filled in pytest_configure
+# because the ini is not readable at conftest import time; the list object is
+# mutated in place because pytest reads the attribute during collection.
+# ---------------------------------------------------------------------------
+collect_ignore_glob: list[str] = []
+
+
 def pytest_configure(config):
     """Scale both wall-clock deadlines by the machine's oversubscription.
 
     The per-test deadline has exactly one home — ``[tool.pytest.ini_options]
     timeout`` — so it is read from there rather than mirrored here, and the
     watchdog is derived from the scaled value so the two can never cross.
+
+    Also publishes the declared-uncollectable list (see above) to pytest.
     """
     global _WATCHDOG_TIMEOUT  # noqa: PLW0603
+
+    collect_ignore_glob.extend(config.getini("doeff_adr_wiring_exclude"))
 
     per_test_base = _per_test_base_seconds(config)
     scaled_per_test = per_test_base * _DEADLINE_SCALE
