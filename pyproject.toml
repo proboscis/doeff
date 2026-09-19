@@ -173,7 +173,7 @@ doeff_adr_wiring_exclude = [
     # ImportError)。2026-07-13 の slog 意味論の計画に既知として登記済み
     # (docs/doeff-2026-07-13-slog-semantics-architecture-plan.md:123)で、この repo の
     # 誰も doeff_flow を import していない。直すのは package の API 移行(1,110 行)で、
-    # 木を配線する #467 の射程の外。移行は issue で追う。
+    # 木を配線する #467 の射程の外。移行は #611 で追う(退役か移行かの判断込み)。
     # ↓ 1 file ずつ、その file が何を掴んで落ちるかを名乗る(glob で束ねない)。
     #   doeff_flow.cli → doeff_flow/__init__.py:102 の default_handlers で ImportError。
     "packages/doeff-flow/tests/test_cli.py",
@@ -185,10 +185,10 @@ doeff_adr_wiring_exclude = [
     "packages/doeff-flow/tests/test_trace.py",
     # 対象の doeff_agentic.handlers.production が、doeff-agents から消えた Sleep を
     # import する(26db24dd)。同 module は TmuxAgentHandler を直に握っており
-    # CLAUDE.md の agent 認証境界にも触れるので、直しは設計の判断を伴う。
+    # CLAUDE.md の agent 認証境界にも触れるので、直しは設計の判断を伴う。移行は #612。
     "packages/doeff-agentic/tests/test_handlers_module.py",
     # 旧 `run(program, handlers=..., env=...)` 時代の検体(29 箇所が is_ok()/.value)。
-    # 隣の test_effect_handlers.py と同じ移行が要る。
+    # 隣の test_effect_handlers.py と同じ移行が要る。移行は #613。
     "packages/doeff-openrouter/tests/unit/test_structured_llm.py",
     # ── 費用で外す側(#467 受入 6 の予算・腐りではなく「値段が合わない」)───────
     # doeff-google-secret-manager の 3 file。木を載せるには dev 群へ package を足す
@@ -198,7 +198,7 @@ doeff_adr_wiring_exclude = [
     # --run-timeout 1800 の内側で走らせる(.agents/land-queue.toml:48)ので、この
     # 516 秒は走行の予算そのものを食う。買えるのは 12 本で、うち 9 本は他の木と同じ
     # 旧 default_handlers() の腐りで赤(実測 9 failed / 2 passed / 1 deselected)。
-    # 最大の費用で最小の収穫なので、この便では外して移行の issue で追う。
+    # 最大の費用で最小の収穫なので、この便では外して #614 で追う。
     "packages/doeff-google-secret-manager/tests/unit/test_secrets.py",
     "packages/doeff-google-secret-manager/tests/unit/test_effect_handlers.py",
     "packages/doeff-google-secret-manager/tests/e2e/test_access_secret_e2e.py",
