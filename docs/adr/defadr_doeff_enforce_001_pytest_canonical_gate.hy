@@ -38,7 +38,7 @@
        "GitHub Actions は予算制約により停止中であり、再有効化は選択肢にない(2026-07-14 maintainer)。ゲートは開発者・エージェントが常に走らせるローカル実行に置くしかない。"
        :evidence "2026-07-14 doeff 投資計画議論")
      (fact
-       "R2 で docs/adr を testpaths へ載せた後も、同じ穴が .py 側に開いたままだった(2026-09-19 実測・origin/main 14b0f2b3)。packages/*/tests は 27 木あるが testpaths に在るのは 5 木だけで、19 木 + packages/doeff-agents/conformance(32 file)が既定の走行の外。既定の収集 1,551 本に対し、集められない側が 3,200 本 — **集めない数が集める数の 2 倍**。重さは理由にならない(全数の収集が 11 秒・代表 461 本の実走が 3.7 秒)。誰も testpaths に書かなかっただけである。直接の実害として、誰も集めないので誰も気づかない腐りが 6 file: doeff-flow の 4 file(本体の run_workflow が削除済みの default_handlers() と doeff_vm.RunResult を呼ぶ)・doeff-agentic の 1 file(対象 module が消えた Sleep を import)・doeff-openrouter の 1 file(旧 run(program, handlers=…) 時代の検体)。"
+       "R2 で docs/adr を testpaths へ載せた後も、同じ穴が .py 側に開いたままだった(2026-09-19 実測・origin/main 14b0f2b3)。packages/*/tests は 27 木あるが testpaths に在るのは 5 木だけで、19 木 + packages/doeff-agents/conformance(32 file)が既定の走行の外。既定の収集 1,551 本に対し、集められない側が 3,200 本 — **集めない数が集める数の 2 倍**。重さは理由にならない(全数の収集が 11 秒・代表 461 本の実走が 3.7 秒)。誰も testpaths に書かなかっただけである。直接の実害として、誰も集めないので誰も気づかない腐りが 6 file: doeff-flow の 4 file(本体の run_workflow が削除済みの default_handlers() と doeff_vm.RunResult を呼ぶ)・doeff-agentic の 1 file(対象 module が、doeff_agents の __init__ から再輸出の落ちた Sleep を import。class 自体は io_effects.hy:156 に在るので消えてはいない — 再輸出の一覧という『誰も検めない表』が本体と乖離しても、木が暗がりに在る限り誰も気づかない)・doeff-openrouter の 1 file(旧 run(program, handlers=…) 時代の検体)。"
        :evidence "agora-redesign #467; card acp:kanban-issue:ki-ba058de03685; docs/doeff-2026-07-13-slog-semantics-architecture-plan.md:123")]
   :context
     [(interpretation
