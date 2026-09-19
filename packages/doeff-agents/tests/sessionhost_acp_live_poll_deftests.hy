@@ -31,6 +31,7 @@
   InFlightJob
   LIST-MODE-NONE
   MESSAGE-KIND
+  METRIC-TICK-MS
   NODE-KIND
   PHASE-BOUND
   PHASE-ENDED
@@ -39,6 +40,8 @@
   RecordBatch
   RecordStream
   Refused
+  TICK-ARMS
+  TICK-LINE-FIELDS
   TURN-RECORD-KIND
   WatchAdvance])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeRecord FakeSessions])
@@ -451,3 +454,28 @@
       (.close acp)
       (.shutdown server)
       (.server-close server))))
+
+
+(deftest test-agentd-tick-emits-one-metric-line-with-the-arm-split
+  ;; card acp:kanban-issue:ki-6eb745f6d528(依頼者の便 2026-09-19 lt-BM9E73V8EWSK72K9E0JMQ1RXPT):
+  ;; ACP 側の acp_stream_push_interval_seconds は「粒が 26 秒だった」とは言えても**どの腕が遅かったか**は
+  ;; 言えない。だから拍は自分で 1 行名乗る —— 腕の名の集合は宣言 TICK-ARMS ちょうど・拍の総所要は total・
+  ;; **腕の和は total に等しい**(名の付いていない仕事が拍の中に残らない = この 1 行で拍を説明しきる)。
+  (assert (= TICK-ARMS #("watch" "heartbeat" "profiles" "receive" "sweep" "interrupts" "cancel"
+                         "ends" "jobs-fast" "jobs-slow" "commands" "summaries" "flush"))
+          TICK-ARMS)
+  ;; 時計が読むたびに進む世界(拍の中で腕の所要が 0 でない)。
+  (setv world (World :clock-step-ms 1))
+  (.tick world 0)
+  (setv lines (lfor line world.local.metrics :if (= (.get line "metric") METRIC-TICK-MS) line))
+  (assert (= (len lines) 1) f"1 拍 = 1 行: {world.local.metrics}")
+  (setv line (get lines 0))
+  (assert (= (set (.keys line)) (set TICK-LINE-FIELDS)) (sorted (.keys line)))
+  (assert (= (get line "node") NODE) line)
+  (assert (> (get line "total") 0) line)
+  (assert (= (sum (lfor name TICK-ARMS (get line name))) (get line "total"))
+          f"腕の和 = 拍の総所要(名の無い仕事を残さない): {line}")
+  ;; 2 拍目も 1 行(拍ごとに 1 行 — 溜めない・落とさない)。
+  (.tick world 1000)
+  (assert (= (len (lfor entry world.local.metrics :if (= (.get entry "metric") METRIC-TICK-MS) entry)) 2)
+          world.local.metrics))
