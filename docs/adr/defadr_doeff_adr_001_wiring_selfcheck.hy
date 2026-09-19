@@ -6,7 +6,7 @@
 
 
 (defadr ADR-DOE-ADR-001
-  :title "実行可能 ADR の存在と実際の pytest collection を全量照合する"
+  :title "門が受け持つ 2 種の file(実行可能 ADR と Python の検体)の存在と実際の pytest collection を全量照合する"
   :status "accepted"
   :scope ["doeff-adr" "pytest collection" "CI wiring"]
   :problem
@@ -18,7 +18,10 @@
        :evidence "packages/doeff-adr/src/doeff_adr/pytest_plugin.py")
      (fact
        "doeff 自身の既定ゲートへの組み込み(tests/test_adr_wiring_gate.py)は、テストの中から strict の `pytest --collect-only` を子 process で撃ち、全 suite をもう 1 回収集していた。日次の全体検証(pod)で 2026-09-15 から 3 日連続で、この 1 本が pytest-timeout の 60 秒に当たり、thread 方式なので process ごと落ちて summary 行の無い赤になった(進捗 約 28 % の地点・失敗名の抽出 0 件)。pod の実測(2026-09-17): 全 1,549 本の収集は bytecode cache が冷たいと 135 秒・温かいと 3.7 秒(Mac は冷 19 秒・温 4 秒)。着地の機構は子を PYTHONDONTWRITEBYTECODE=1 で走らせるので、日次の走行では cache が書かれず、入れ子の収集は毎回冷たい。冷たい収集の大半は Hy の ADR 1 ファイルの compile で(docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy — Mac で 19 秒中 13 秒)、このファイルが 09-14 の 165 KB(この検は通過)から 09-15 の 285 KB・09-17 の 400 KB へ育って締切を越えた。"
-       :evidence "agora-redesign #467 根 3/9; agora-1-0 の land-runs/doeff-verify-20260917-033009.log; dotfiles agentcli land.py の _hygiene_env")]
+       :evidence "agora-redesign #467 根 3/9; agora-1-0 の land-runs/doeff-verify-20260917-033009.log; dotfiles agentcli land.py の _hygiene_env")
+     (fact
+       "穴は同じ穴が 2 度。doeff 自身の 27 ある packages/*/tests のうち 19 木が testpaths の外に置かれ、約 3,200 本が 1 度も走らないまま、うち 5 file が数か月前に消えた doeff API に腐っていた(1 本も赤を出していない)。file は存在し、検査の形をしていて、既定の pytest が届かない — defadr_*.hy と同じ失敗で、検体の方は「書いてあるから書き直されない」ぶん悪い。"
+       :evidence "agora-redesign #467; PR proboscis/doeff#615; proboscis/doeff#619")]
   :context
     [(interpretation
        "設定ファイルを静的に推測するより、リポジトリ全体の候補と session.items の実測値を比較すれば testpaths・明示引数・ignore hook を同じ規則で扱える。")
@@ -29,21 +32,25 @@
      (interpretation
        "配線は収集の範囲の性質で、選択(-k / -m / --deselect)の性質ではない。doeff の正典ゲート自身が -m 'not e2e' で走る — 選択で落ちた ADR も範囲には届いている。")]
   :decision
-    [(rule R1 "pytest collection 完了時に、リポジトリ内の実行可能 ADR 候補と実際に収集された item のファイル集合を照合する。収集されたファイルの集合は選択(-k / -m / --deselect)が効く前に測る(2026-09-17 追補)。")
-     (rule R2 "既定モードは warn とし、strict では未収集 ADR を列挙して非ゼロ終了する。明示的な off は局所実行用に残す。")
+    [(rule R1 "pytest collection 完了時に、門が受け持つ 2 種の file の候補集合と、実際に収集されたファイルの集合を照合する。2 種とは (1) リポジトリ内の実行可能 ADR 候補(defadr_*.hy)と (2) pytest 自身の ini 値 python_files に一致する Python の検体で、python_files は pytest の設定をそのまま読む(門は 2 つ目の意見を持たない — 綴りを変えた project で偽の赤と偽の緑が同時に出る)。収集されたファイルの集合は選択(-k / -m / --deselect)が効く前に測る(2026-09-17 追補)。2 種目を加えたのは 2026-09-19(agora-redesign #467・PR proboscis/doeff#615)。")
+     (rule R2 "既定モードは warn とし、strict では未収集の file を全件列挙して非ゼロ終了する。明示的な off は局所実行用に残す。warn の描画は件数 + 先頭数件 + 残りの数と全量を見る口(--doeff-adr-wiring=strict / R3 の doeff-adr verify-wiring)に畳む — 畳むのは描画だけで、判定(未収集が非空 ⇒ 報告)も strict の全件列挙も変えない(2026-09-19 追補: 2 種目を加えた結果、焦点走 1 本の warn が 405 行になった)。path を名指した session も報告する(黙らせると R1 の counterexample「CI が tests だけを明示して docs/adr を走査しない」をちょうど盲にする)。名指しの session には、その一覧が長い理由を描画が 1 節で名乗る。")
      (rule R3 "doeff-adr verify-wiring は strict の collect-only pytest を起動する。外部リポジトリは CI 一行ゲートとして使える。doeff 自身は pytest 正典(ADR-DOE-ENFORCE-001 R1)に従い tests/test_adr_wiring_gate.py で既定ゲートに常時組み込む。")
      (rule R4 "defsemgrep は semgrep executable 不在を skip にせず fail-closed のまま維持する。wiring strict とは別の実行時依存検査として扱う。")
      (rule R5 "session の中から配線を検めるテスト(doeff の tests/test_adr_wiring_gate.py)は、走っている session 自身の収集結果を plugin の口 doeff_adr.pytest_plugin.default_scope_wiring で読む。テストの中から 2 回目の収集(入れ子の pytest)を起こさない(2026-09-17 追加 — agora-redesign #467 根 3/9 の根治)。照合は session につき 1 回で、収集完了時の報告(R1 / R2)とこの口は同じ測定値を読む。path を名指しした session は既定の範囲について何も言えない(狭ければ偽の赤・広ければ偽の緑)ので、口は NotDefaultScope を返し、テストは合格ではなく skip として理由を名乗る。手元で確かめる口は `uv run pytest -k <テスト名>`(既定の範囲・収集 1 回)か R3 の `doeff-adr verify-wiring`。")]
   :laws
-    [(law every-executable-adr-is-collected
-       :statement "exists(defadr_file) => collected_by_configured_pytest_scope(defadr_file)"
+    [(law every-gate-owned-file-is-collected
+       :statement "gate_owned_file in {defadr_*.hy, matches(ini.python_files)}; exists(gate_owned_file) => collected_by_configured_pytest_scope(gate_owned_file)"
        :counterexamples
          [(counterexample "docs/adr/defadr_*.hy が存在するが testpaths は tests のみ")
-          (counterexample "CI が tests だけを明示して docs/adr を走査しない")])
+          (counterexample "CI が tests だけを明示して docs/adr を走査しない")
+          (counterexample "packages/*/tests の 19 木が testpaths の外にあり、約 3,200 本が 1 度も走らないまま 5 file が消えた API に腐っていた(2026-09-19 実弾)")
+          (counterexample "門が python_files を自前で決め打ちする — 綴りを変えた project で偽の赤(pytest が収集しない test_*.py)と偽の緑(本物の検体が見えない)が同時に出る")
+          (counterexample "code だけを 2 種へ広げ、法の主語を実行可能 ADR のまま残す — 法より広い enforcement が main に載り、次に読む人は law を読んで code の挙動を取り違える(2026-09-19 実弾: この枝で 1 度起きた)")])
      (law strict-wiring-fails-closed
-       :statement "uncollected_defadr and wiring_mode(strict) => nonzero_exit_with_paths"
+       :statement "uncollected_gate_owned_file and wiring_mode(strict) => nonzero_exit_with_paths"
        :counterexamples
-         [(counterexample "未収集 ADR があっても collected test の成功だけで CI が緑になる")])
+         [(counterexample "未収集の file があっても collected test の成功だけで CI が緑になる")
+          (counterexample "warn の騒音を減らすために strict の列挙まで畳む — CI が「どの file が未収集か」を名乗れなくなる")])
      (law gate-test-reads-the-sessions-own-collection
        :statement "in_session_gate_test(t) => reads(t, measured_collection(current_session)) AND NOT spawns(t, nested_collection); collected(session) measured_before selection(-k, -m, --deselect); explicit_path_args(session) => verdict(t) == NotDefaultScope, never green"
        :counterexamples

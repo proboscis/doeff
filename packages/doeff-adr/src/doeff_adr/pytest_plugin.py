@@ -55,6 +55,12 @@ WIRING_MODES = frozenset({"off", "warn", "strict"})
 # under load) must abort loudly instead of hanging the run without output. A
 # healthy project rootdir stays far below this bound.
 DEFAULT_WIRING_MAX_DIRS = 50_000
+# One line per uncollected file is the size of the repository once the second
+# file kind joined the walk: doeff measured 405 path lines (378 .py + 27 .hy) on
+# every focused ``pytest tests/test_one.py`` (2026-09-19). What folds is the
+# *drawing*, never the verdict — and only warn's: strict is the CI mouth and
+# owes every path it refuses on (law strict-wiring-fails-closed).
+WIRING_WARN_PATHS_SHOWN = 5
 
 
 class WiringWalkBudgetError(Exception):
@@ -180,7 +186,12 @@ def pytest_collection_finish(session: pytest.Session) -> None:
     verdict = session_wiring(session)
     if isinstance(verdict, WiringVerified):
         return
-    message = wiring_failure_message(verdict, Path(session.config.rootpath), mode)
+    message = wiring_failure_message(
+        verdict,
+        Path(session.config.rootpath),
+        mode,
+        default_scope=_collects_default_scope(session.config),
+    )
     if mode == "strict":
         raise pytest.UsageError(message)
     warnings.warn(pytest.PytestWarning(message), stacklevel=1)
@@ -216,9 +227,11 @@ def wiring_failure_message(
     verdict: WiringUncollected | WiringWalkAborted,
     root: Path,
     mode: WiringMode = "strict",
+    *,
+    default_scope: bool = True,
 ) -> str:
     if isinstance(verdict, WiringUncollected):
-        return _wiring_message(root, list(verdict.uncollected), mode)
+        return _wiring_message(root, list(verdict.uncollected), mode, default_scope=default_scope)
     return _walk_budget_message(root, verdict.dirs_walked, verdict.max_dirs, mode)
 
 
@@ -419,17 +432,43 @@ def _is_declared_uncollectable(path: Path, root: Path, exclude: tuple[str, ...])
     return any(fnmatch.fnmatch(rel, pattern) for pattern in exclude)
 
 
-def _wiring_message(root: Path, paths: list[Path], mode: WiringMode) -> str:
+def _wiring_message(
+    root: Path,
+    paths: list[Path],
+    mode: WiringMode,
+    *,
+    default_scope: bool = True,
+) -> str:
     outcome = "failed" if mode == "strict" else "warning"
-    rendered_paths = "\n".join(f"  - {_relative_posix(path, root)}" for path in paths)
+    shown = paths if mode == "strict" else paths[:WIRING_WARN_PATHS_SHOWN]
+    rendered_paths = "\n".join(f"  - {_relative_posix(path, root)}" for path in shown)
+    hidden = len(paths) - len(shown)
+    if hidden:
+        rendered_paths += (
+            f"\n  ... and {hidden} more; see them all with --doeff-adr-wiring=strict "
+            "or `doeff-adr verify-wiring`"
+        )
+    # A session that named its own paths legitimately leaves the rest of the
+    # repository uncollected, so its list is long for a reason that is not a
+    # wiring defect. It still reports: R1's own counterexample is a named-path
+    # CI command ("CI が tests だけを明示して docs/adr を走査しない"), which
+    # silence would blind. Saying why costs one clause.
+    scope_note = (
+        ""
+        if default_scope
+        else " This session collected the paths it was given, so everything outside them is "
+        "in that list; the gate speaks for the default invocation (no path arguments)."
+    )
+    noun = "file" if len(paths) == 1 else "files"
     return (
-        f"doeff-adr wiring verification {outcome}: files the canonical pytest gate must "
-        f"collect (executable ADRs and Python test files) exist but were not collected:\n"
+        f"doeff-adr wiring verification {outcome}: {len(paths)} {noun} the canonical pytest "
+        f"gate must collect (executable ADRs and Python test files) exist but were not "
+        f"collected:\n"
         f"{rendered_paths}\n"
         "Add their directories to pytest testpaths or the CI pytest arguments. A file that "
         "can never be collected (a sample input for another tool, a script that runs at "
         "import) belongs in doeff_adr_wiring_exclude with its reason. "
-        "Use doeff_adr_wiring=off only for an intentional opt-out."
+        f"Use doeff_adr_wiring=off only for an intentional opt-out.{scope_note}"
     )
 
 
