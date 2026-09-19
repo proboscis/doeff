@@ -525,6 +525,39 @@
   "session_env に居てはならない provider の鍵・札の綴りの列挙(純粋の 1 点)。"
   (env-offenders-against session-env PROVIDER-AUTH-ENV-KEYS))
 
+;; ⚠ この線は上の 3 層の名簿の族**ではない**(rebase の拍の判断・2026-09-19):族は「正規化した名が集合に在るか」
+;; で、こちらは「綴りがどんな形か」— env-offenders-against は集合しか取れないので畳めない。層も 4 つ目の口
+;; (機体の参加の宣言 = join.seat-env-of)で、受理 / spawn / shell のどれでもない。⇒ 並べて置き、畳まない。
+;; 席へ運ぶ宣言の env(agora-redesign #520 — join の [agentd].seat_env)が **資格の輸送路に化けない**
+;; ための、この口だけの線。上の関所(session-env-admission-error)を通した**上に**重ねる — 関所の線は
+;; 1 語も動かさない(出荷済みの不変条件・広げると launch / session.send の判定が同時に変わる)。
+;; 判定は語彙ではなく**形**: doeff は ACP_BASE も AGORA_BRAIN_URL も知らないまま(宛先の綴りの定義点は
+;; 宣言の側)、「これは鍵・札・秘密だ」と読める綴りだけを構造で塞ぐ。根 = ADR-DOE-AGENTS-012 R30 (4) / R51 (1)。
+;; 札は **file の mount** で家の既定の置き場に置くのが唯一の形で、宣言の env は宛先だけを運ぶ。
+;; ⚠ **末尾に錨を打たない**: `_KEY` / `_TOKEN` で**終わる**名で判じると、後ろに 1 語付いた綴り
+;; (`ANTHROPIC_API_KEY_PERSONAL` / `anthropic_api_key__personal` = この repo の CLAUDE.md が逐語で禁じる名 /
+;; `_2` / `_OLD` …)が全部通る(送り戻し lt-Y7XSNK0PK1N9706QZPMZDG0FNH の実測)。⇒ 正規化した名を `_` で
+;; 割り、**区間のどれか**が KEY / TOKEN なら当たり(`_KEY_FILE` / `_KEY_PATH` / `_TOKEN_FILE` も区間に持つ)。
+;; SECRET / PASSWORD / CREDENTIAL は**部分一致のまま**(区間にすると `SECRETARY_…` が通って今より弱くなる)。
+;; 過剰包摂側へ倒す fail-closed: 資格でない `SECRETARY_URL` が弾かれたら起動の門で loud に見えて直せるが、
+;; 逆は黙って札が会話へ届く。
+(setv SEAT-ENV-CREDENTIAL-SHAPED-SEGMENTS #{"KEY" "TOKEN"})
+(setv SEAT-ENV-CREDENTIAL-SHAPED-WORDS #("SECRET" "PASSWORD" "CREDENTIAL"))
+
+(defk seat-env-credential-shaped-offenders [seat-env]
+  {:pre [(: seat-env dict)]
+   :post [(: % list)]}
+  "席へ運ぶ宣言の env に居てはならない『資格の形』の名の列挙(純粋の 1 点・綴りの正規化は
+   policy-normalized-env-key と同規約)。区間(`_` で割った語)が KEY / TOKEN か、SECRET / PASSWORD /
+   CREDENTIAL を含む名 — 位置には依らない。"
+  (sorted (lfor key (.keys seat-env)
+                :if (do (setv normalized (policy-normalized-env-key key))
+                        (or (any (gfor segment (.split normalized "_")
+                                       (in segment SEAT-ENV-CREDENTIAL-SHAPED-SEGMENTS)))
+                            (any (gfor word SEAT-ENV-CREDENTIAL-SHAPED-WORDS
+                                       (in word normalized)))))
+                key)))
+
 ;; ---------------------------------------------------------------------------
 ;; billing class(2026-09: 従量課金の資格を「宣言して」受ける経路 —
 ;; ADR-DOE-AGENTS-004 R9 改訂 / law
