@@ -464,7 +464,12 @@
 (defk credential-lease-held-condition-of [refusal status now-ms]
   {:pre [(: refusal LeaseRefused) (: status dict) (: now-ms int)]
    :post [(: % (| dict None))]}
-  "**断りを記録にするか Ended にするかの 1 点**(card acp:kanban-issue:ki-f2747267e24d B1・実弾 2026-09-19):
+  "⚠⚠ 2026-09-19 の追補: **この判断が記録を作る条件(409 かつ holdExpiresAt)は原理的に満たされなくなった** —
+   預かり所の『1 認証 1 宿』の錠が廃止され(operator 裁定 19:2x・custody law lease-counts-no-hosts・
+   本番 be81f6f 11:18Z 配備)、同じ口座の 2 台目の借りが断られないため。判断は不活性のまま残す
+   (錠を戻す便が来たらそのまま効く・発火しないので残す害が無い)。403 / 503 の断りは今日のまま Ended。
+
+   **断りを記録にするか Ended にするかの 1 点**(card acp:kanban-issue:ki-f2747267e24d B1・実弾 2026-09-19):
    預かり所の借りの断り → CredentialLeaseHeld の記録 1 項(None = 記録にしない = 呼び手は今日どおり
    CredentialUnavailable で Ended)。
 
