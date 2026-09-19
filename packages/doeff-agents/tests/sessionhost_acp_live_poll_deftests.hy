@@ -40,6 +40,7 @@
   RecordBatch
   RecordStream
   Refused
+  STREAM-SOURCE-HEADER
   TICK-ARMS
   TICK-LINE-FIELDS
   TURN-RECORD-KIND
@@ -385,9 +386,12 @@
 
 
 (defclass CountingServer [ThreadingHTTPServer]
-  "accept の数を数える loopback の server(接続を使い回すかは socket の accept でしか見えない)。"
+  "accept の数を数える loopback の server(接続を使い回すかは socket の accept でしか見えない)。
+  押しと読みが名乗った機体の名(header)も順に貯める — 名乗りは要求の中にしか無い。"
   (defn #^ None __init__ [self #^ tuple address handler]
     (setv self.accepts 0)
+    (setv self.push-sources [])
+    (setv self.read-sources [])
     (.__init__ (super) address handler))
 
   (defn get-request [self]
@@ -400,11 +404,13 @@
   (setv protocol-version "HTTP/1.1")
 
   (defn #^ None do-GET [self]
+    (.append self.server.read-sources (.get self.headers STREAM-SOURCE-HEADER))
     (.reply self {"resourceNamespace" "agora-kinds" "resourceKey" "agora-kinds:node:mac-1"
                   "resourceKind" "node" "resourceId" "mac-1" "resourceVersion" "v1"
                   "resourceGeneration" 1 "resourceCreatedAt" "1970-01-01T00:00:00Z"}))
 
   (defn #^ None do-POST [self]
+    (.append self.server.push-sources (.get self.headers STREAM-SOURCE-HEADER))
     (setv length (int (.get self.headers "Content-Length" "0")))
     (when length
       (.read self.rfile length))
@@ -437,9 +443,10 @@
 
 
 (deftest test-agentd-acp-http-reuses-one-connection-per-host
-  ;; 由来 (c) HTTP が毎回 TCP を張り直す: cluster の中でも 1 往復 p50 11.35 ms(server 側の処理は 0.17 ms)で、
-  ;; 1 拍 約 35 往復 ≈ 0.4 秒が拍の周期になる(Mac は tailnet の RTT でさらに重い)。host ごとに 1 本の接続を
-  ;; 保つ(壊れたら 1 度だけ張り直す)。⚠ この検だけは loopback の HTTP server を立てる。
+  ;; 由来 (c) HTTP が毎回 TCP を張り直す = **1 発ごとに名前を引き直す**(依頼者の実射 2026-09-19: この宿は
+  ;; ndots:5 + search 4 つで、点で終わらない綴りは探索の列を歩き 名引き 23.61 ms・全体 25.20 ms の 94 %。
+  ;; 保った接続は名引きを接続 1 本につき 1 度に畳んで 1 発 0.46 ms ⇒ 1 拍 約 35 往復で 0.882 秒 → 0.016 秒)。
+  ;; host ごとに 1 本の接続を保つ(壊れたら 1 度だけ張り直す)。⚠ この検だけは loopback の HTTP server を立てる。
   (setv server (CountingServer #("127.0.0.1" 0) EchoHandler))
   (setv thread (threading.Thread :target server.serve-forever :daemon True))
   (.start thread)
@@ -479,3 +486,37 @@
   (.tick world 1000)
   (assert (= (len (lfor entry world.local.metrics :if (= (.get entry "metric") METRIC-TICK-MS) entry)) 2)
           world.local.metrics))
+
+
+(deftest test-agentd-stream-push-names-the-machine-that-pushed
+  ;; card acp:kanban-issue:ki-6eb745f6d528(依頼者の便 2026-09-19 lt-BM9E73V8EWSK72K9E0JMQ1RXPT 足す (A)):
+  ;; ACP 側の acp_stream_push_interval_seconds は「粒が 26 秒だった」とは言えても**どの機体が**押したかは
+  ;; 言えない。中継は store を読めない(ACP 法 stage0_stream_relay_ephemeral_owner_pushed_fabff2)ので行から
+  ;; node を引くこともできない —— だから押す側が要求に名乗る(header は effects.STREAM-SOURCE-HEADER の 1 点)。
+  ;; 名乗るのは**押す拍だけ**(読み書きには付けない — 要る問いは「実況の粒がどの機体で粗いか」1 つ)。
+  (setv server (CountingServer #("127.0.0.1" 0) EchoHandler))
+  (setv thread (threading.Thread :target server.serve-forever :daemon True))
+  (.start thread)
+  (try
+    (setv port (get server.server-address 1))
+    (setv acp (AcpHttp f"http://127.0.0.1:{port}" None None NODE))
+    (assert (= (.run (PyVM) (install (acp-five-calls) [acp.dispatch])) 5))
+    (assert (= server.push-sources [NODE NODE]) server.push-sources)
+    (assert (= server.read-sources [None None None])
+            f"読み書きは機体を名乗らない: {server.read-sources}")
+    (finally
+      (.close acp)
+      (.shutdown server)
+      (.server-close server)))
+  ;; 名を知らない口(検体・名の無い機体)は header そのものを持たない — 空の label を engine へ送らない。
+  (setv anonymous (CountingServer #("127.0.0.1" 0) EchoHandler))
+  (setv anonymous-thread (threading.Thread :target anonymous.serve-forever :daemon True))
+  (.start anonymous-thread)
+  (try
+    (setv acp-2 (AcpHttp f"http://127.0.0.1:{(get anonymous.server-address 1)}" None))
+    (assert (= (.run (PyVM) (install (acp-five-calls) [acp-2.dispatch])) 5))
+    (assert (= anonymous.push-sources [None None]) anonymous.push-sources)
+    (finally
+      (.close acp-2)
+      (.shutdown anonymous)
+      (.server-close anonymous))))

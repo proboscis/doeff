@@ -60,6 +60,7 @@ from doeff_agents.sessionhost.acp.effects import (
     OWNERSHIP_PROOF_GCE_PREFIX,
     RECORD_PAGE_MAX_LIMIT,
     RECORD_SPOOL_GIVEN_UP_DIR,
+    STREAM_SOURCE_HEADER,
     TURN_RECORD_CONVERSATION_FIELD,
     SUMMARY_KIND,
     SUMMARY_SPEC_CONVERSATION_KEY,
@@ -751,13 +752,19 @@ class AcpHttp:
     """ACP の資源の読み書き・watch・中継の push。bearer は名簿の agentd の札。``wakes`` が在れば watch の frame を
     その列に載せる(器の出来事の合図と共有 — 段 12 lane 12b)。"""
 
-    def __init__(self, base_url: str, token: str | None, wakes: WakeQueue | None = None) -> None:
+    def __init__(
+        self, base_url: str, token: str | None, wakes: WakeQueue | None = None, node: str = ""
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._headers: dict[str, str] = {}
         if token:
             self._headers["Authorization"] = f"Bearer {token}"
         self._watch: WatchReader | None = None
         self._wakes = wakes
+        #: この機体の名 — 実況の push だけがこれを header で名乗る(綴りは effects.STREAM_SOURCE_HEADER の
+        #: 1 点)。空 = 名乗らない(名を知らない口で撃つ検体・借りの口)。読み書きの札とは別の欄で、
+        #: 身元の証明ではない(engine 側は label の値として丸めるだけ — cardinality の門は engine が持つ)。
+        self._node = node.strip()
         #: 拍ごとの読み書きは host ごとに保った 1 本で撃つ(R22 の追補)。
         self._http = HttpConnections()
 
@@ -1000,8 +1007,13 @@ class AcpHttp:
             f"{self._base_url}/api/streams/"
             f"{urllib.parse.quote(owner, safe='')}/{urllib.parse.quote(name, safe='')}"
         )
+        # card acp:kanban-issue:ki-6eb745f6d528: 押す拍だけが「どの機体が押したか」を名乗る(読み書きには
+        # 付けない — 要る問いは「実況の粒がどの機体で粗いか」1 つ)。
+        headers = dict(self._headers)
+        if self._node:
+            headers[STREAM_SOURCE_HEADER] = self._node
         reply = _http_json(
-            self._http, "POST", url, self._headers, {"frames": list(frames)}, HTTP_TIMEOUT_SECONDS
+            self._http, "POST", url, headers, {"frames": list(frames)}, HTTP_TIMEOUT_SECONDS
         )
         if reply.status != 200:
             return Refused(reply.status, _error_text(reply))
