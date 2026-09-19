@@ -146,27 +146,27 @@
        (import doeff_agents.sessionhost.policy [observed-status-from-markers])
        ;; 常設フッター(waiting)だけ = 従来どおり blocked。
        (assert (= "blocked"
-                  (observed-status-from-markers
-                    (PaneObservation :has-waiting-marker True))))
+                  (! (observed-status-from-markers
+                       (PaneObservation :has-waiting-marker True)))))
        ;; 働いている pane(waiting ∧ active)は blocked にしない — 打ち切り 186 席中 175 席。
        (assert (= "running"
-                  (observed-status-from-markers
-                    (PaneObservation :has-waiting-marker True
-                                     :has-active-marker True))))
+                  (! (observed-status-from-markers
+                       (PaneObservation :has-waiting-marker True
+                                        :has-active-marker True)))))
        ;; 残渣 marker(turn-activity)は連言に入らない — 過剰修正の禁止。
        (assert (= "blocked"
-                  (observed-status-from-markers
-                    (PaneObservation :has-waiting-marker True
-                                     :has-turn-activity True))))
+                  (! (observed-status-from-markers
+                       (PaneObservation :has-waiting-marker True
+                                        :has-turn-activity True)))))
        ;; 上位の分類順は不変(failure / api-limit は active があっても勝つ)。
        (assert (= "failed"
-                  (observed-status-from-markers
-                    (PaneObservation :has-failure-marker True
-                                     :has-active-marker True))))
+                  (! (observed-status-from-markers
+                       (PaneObservation :has-failure-marker True
+                                        :has-active-marker True)))))
        (assert (= "blocked_api"
-                  (observed-status-from-markers
-                    (PaneObservation :has-api-limit-marker True
-                                     :has-active-marker True)))))
+                  (! (observed-status-from-markers
+                       (PaneObservation :has-api-limit-marker True
+                                        :has-active-marker True))))))
      (defsemgrep per-arm-cleanup-is-banned
        "doeff-agents-terminal-cleanup-single-sweep"
        [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy"

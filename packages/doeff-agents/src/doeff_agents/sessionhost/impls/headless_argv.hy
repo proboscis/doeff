@@ -15,7 +15,7 @@
 ;;;
 ;;; substrate-clean 領域: 生 IO 禁止(defsemgrep 執行)。ここは純粋な組み立てだけ。
 
-(require doeff-hy.macros [deff defhandler])
+(require doeff-hy.macros [defk defhandler <-])
 
 (import doeff_agents.sessionhost.effects [BuildHeadlessLaunch])
 
@@ -38,7 +38,7 @@
 (setv CODEX-APP-SERVER-ARGS ["app-server" "--listen" "stdio://"])
 
 
-(deff build-claude-headless [params]
+(defk build-claude-headless [params]
   {:pre [(: params dict)]
    :post [(: % dict)]}
   "claude の headless の起動: {argv, dialogue}。
@@ -65,7 +65,7 @@
   {"argv" argv "dialogue" (ClaudeDialogue)})
 
 
-(deff codex-root-config-args [params]
+(defk codex-root-config-args [params]
   {:pre [(: params dict)]
    :post [(: % list)]}
   "build-codex-argv の `-c key=value` の対だけ(effort・caller mcp・result channel)。
@@ -88,7 +88,7 @@
   out)
 
 
-(deff build-codex-headless [params]
+(defk build-codex-headless [params]
   {:pre [(: params dict)]
    :post [(: % dict)]}
   "codex の headless の起動: {argv, dialogue}。
@@ -102,7 +102,7 @@
    - dialogue = CodexDialogue(温かい process・initialize → thread/start | thread/resume →
      turn/start・turn/completed で終わり・turn/interrupt で割り込み)。続きの手番
      (resume_mode = \"resume\")は conversation.session_id を thread の id として resume。"
-  (setv argv (+ ["codex"] (codex-root-config-args params) (list CODEX-APP-SERVER-ARGS)))
+  (setv argv (+ ["codex"] (! (codex-root-config-args params)) (list CODEX-APP-SERVER-ARGS)))
   (setv conversation (.get params "conversation"))
   (setv resume-id
         (if (and (= (.get params "resume_mode") "resume") (isinstance conversation dict))
@@ -120,17 +120,18 @@
 ;; 循環を避けてここに置く。設置は host.hy run-hosted の backend=headless の枝)
 ;; ---------------------------------------------------------------------------
 
-(deff build-headless [agent-type params]
+(defk build-headless [agent-type params]
   {:pre [(: agent-type str) (: params dict)]
    :post [(: % dict)]}
   "kind → headless の起動(閉語彙 claude | codex — 他は loud に断る)。"
   (cond
-    (= agent-type "claude") (build-claude-headless params)
-    (= agent-type "codex") (build-codex-headless params)
+    (= agent-type "claude") (! (build-claude-headless params))
+    (= agent-type "codex") (! (build-codex-headless params))
     True (raise (RuntimeError
                   f"headless backend has no launch physics for agent_type {agent-type !r}"))))
 
 
 (defhandler headless-argv-impl []
   (BuildHeadlessLaunch [agent-type params]
-    (resume (build-headless agent-type params))))
+    (<- built (build-headless agent-type params))
+    (resume built)))
