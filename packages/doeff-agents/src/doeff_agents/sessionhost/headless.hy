@@ -44,7 +44,7 @@
 ;;; 器は引き受けず、host は型付きに断る(誰の job でもない手番を起こさない — 呼び手の agentd は
 ;;; 割り込みを行に残し、Messaging が queued へ積み直す)。
 
-(require doeff-hy.macros [defk deff <-])
+(require doeff-hy.macros [defk <-])
 
 (import dataclasses [replace])
 (import os)
@@ -122,7 +122,7 @@
 ;; 純粋な小片(path・行の読み)
 ;; ---------------------------------------------------------------------------
 
-(deff headless-events-path [events-root session-id]
+(defk headless-events-path [events-root session-id]
   {:pre [(: events-root str) (: session-id str)]
    :post [(: % str)]}
   "session の events file(stdout の行を 1 行 1 event で追記する実況の正本)の置き場。
@@ -130,13 +130,13 @@
   (os.path.join events-root f"{session-id}.events.jsonl"))
 
 
-(deff is-headless-row [row]
+(defk is-headless-row [row]
   {:pre [(: row SessionRow)]
    :post [(: % bool)]}
   (= row.backend-kind HEADLESS-BACKEND-KIND))
 
 
-(deff headless-backend-ref [session-name pid events-path argv socket-path]
+(defk headless-backend-ref [session-name pid events-path argv socket-path]
   {:pre [(: session-name str) (: pid int) (: events-path str) (: argv list) (: socket-path str)]
    :post [(: % dict)]}
   "行の backend_ref(oracle の {session_name, pane_id, command} に当たる headless の欄)。
@@ -149,7 +149,7 @@
    "socket_path" socket-path})
 
 
-(deff events-path-of-row [row]
+(defk events-path-of-row [row]
   {:pre [(: row SessionRow)]
    :post [(: % (| str None))]}
   (setv ref (or row.backend-ref {}))
@@ -157,7 +157,7 @@
   (if (isinstance path str) path None))
 
 
-(deff pid-of-row [row]
+(defk pid-of-row [row]
   {:pre [(: row SessionRow)]
    :post [(: % (| int None))]}
   "行の backend_ref の pid(headless-backend-ref が書いた int・無ければ None — 発明しない)。"
@@ -173,7 +173,7 @@
   (<- row (session-store-get session-id))
   (when (is row None)
     (raise (RuntimeError f"session is not registered: {session-id}")))
-  (when (not (is-headless-row row))
+  (when (not (! (is-headless-row row)))
     (raise (RuntimeError
              (+ f"session {session-id} is a {row.backend-kind} session — "
                 "this host speaks the headless backend"))))
@@ -261,8 +261,8 @@
                                   (.get params "socket_path" "")
                                   session-id))
   (setv argv (get built "argv"))
-  (setv effective-env (launch-spawn-env identity session-env))
-  (setv events-path (headless-events-path events-root session-id))
+  (<- effective-env (launch-spawn-env identity session-env))
+  (<- events-path (headless-events-path events-root session-id))
   (<- pid (headless-spawn session-name work-dir effective-env argv events-path
                           (get built "dialogue")))
 
@@ -286,15 +286,15 @@
               :effective-identity identity
               :work-dir work-dir
               :backend-kind HEADLESS-BACKEND-KIND
-              :backend-ref (headless-backend-ref session-name pid events-path argv
-                                                 (str (.get params "socket_path" "")))
+              :backend-ref (! (headless-backend-ref session-name pid events-path argv
+                                                    (str (.get params "socket_path" ""))))
               ;; 追補 2(実弾 #92): 手番ごとの資格の札は行に残さない — 再開はその手番の送りが運ぶ env で起こす
               ;; 会話の圧縮の閾値(設計記録 docs/design/auto-compact-window): 起こす旗も行の意図に残す — 残さないと、
               ;; 降りた process の続き(continue-headless-process)が行だけを読んで
               ;; argv を組み直すので、**その腕だけ**走行係の床へ戻る。
               :launch-overlay (carry-launch-flags
                                 params
-                                {"session_env" (overlay-without-turn-auth session-env)
+                                {"session_env" (! (overlay-without-turn-auth session-env))
                                  "model" (.get params "model")
                                  "effort" (.get params "effort")
                                  "mcp_servers" (or (.get params "mcp_servers") {})})
@@ -371,17 +371,17 @@
   (<- built (headless-launch-args params row.effective-identity row.conversation "resume"
                                   (str (.get ref "socket_path" "")) row.session-id))
   (setv argv (get built "argv"))
-  (setv effective-env (launch-spawn-env row.effective-identity
-                                        (| (dict (or (.get overlay "session_env") {}))
-                                           (dict (or turn-env {})))))
-  (setv events-path (or (events-path-of-row row)
+  (<- effective-env (launch-spawn-env row.effective-identity
+                                      (| (dict (or (.get overlay "session_env") {}))
+                                         (dict (or turn-env {})))))
+  (setv events-path (or (! (events-path-of-row row))
                         (raise (RuntimeError
                                  f"session {row.session-id} has no events_path in backend_ref"))))
   (<- pid (headless-spawn row.session-name row.work-dir effective-env argv events-path
                           (get built "dialogue")))
   (setv next-ref (dict ref))
-  (.update next-ref (headless-backend-ref row.session-name pid events-path argv
-                                          (str (.get ref "socket_path" ""))))
+  (.update next-ref (! (headless-backend-ref row.session-name pid events-path argv
+                                             (str (.get ref "socket_path" "")))))
   (replace row :backend-ref next-ref))
 
 
@@ -532,7 +532,7 @@
   updated)
 
 
-(deff tail-lines [text lines]
+(defk tail-lines [text lines]
   {:pre [(: text str) (: lines int)]
    :post [(: % str)]}
   (setv rows (.splitlines text))
@@ -547,11 +547,11 @@
    session_captured)。実況を読む正規の口は agentd の events の読み(offset)で、capture は
    眺め。"
   (<- row (require-headless-row session-id))
-  (setv path (events-path-of-row row))
+  (<- path (events-path-of-row row))
   (setv text "")
   (when (is-not path None)
     (<- raw (fs-read-text path))
-    (setv text (tail-lines (or raw "") lines)))
+    (<- text (tail-lines (or raw "") lines)))
   (<- now (clock-now))
   (setv updated (replace row
                          :output-snippet (tail-chars (or text " ") 500)
@@ -565,7 +565,7 @@
 ;; monitor(手番の終わり・process の死・会話の発見)
 ;; ---------------------------------------------------------------------------
 
-(deff headless-turn-error-of [verdict]
+(defk headless-turn-error-of [verdict]
   {:pre [(: verdict Verdict)]
    :post [(: % (| str None))]}
   "手番の終わりの verdict → 行の turn-error(依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB・D2): ok なら None、失敗なら走行器が
@@ -576,7 +576,7 @@
     True "turn ended with an error"))
 
 
-(deff headless-turn-limit-cause [verdict observed-at]
+(defk headless-turn-limit-cause [verdict observed-at]
   {:pre [(: verdict Verdict) (: observed-at str)]
    :post [(: % (| TerminalCause None))]}
   "段 11 lane 11n 便 C(agora-redesign #179・依頼者の裁定 2026-09-15 案 c′): 手番の終わりが
@@ -649,11 +649,11 @@
           ;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D2): 手番の終わりの ok / detail を捨てない — 失敗で終わった手番は
           ;; 走行器が名乗った文を turn-error に写す(成功なら None)。session は今日どおり生かす(温かい席を殺さない)。
           ;; 読み手 = agentd の手番の終わりの判断(judgment.turn-produced-nothing-condition-of が条件の文に運ぶ)。
-          (setv row (replace row :turn-error (headless-turn-error-of verdict)))
+          (setv row (replace row :turn-error (! (headless-turn-error-of verdict))))
           ;; 段 11 lane 11n 便 C: provider が限度で断った手番は器ごと終える(判断は
           ;; headless-turn-limit-cause の 1 点)。温かいままにすると同じ profile の次の手番も
           ;; 断られ、行には何も残らない(実弾 2026-09-15 13:2x の 5 連敗)。
-          (setv limit (headless-turn-limit-cause verdict observed-at))
+          (<- limit (headless-turn-limit-cause verdict observed-at))
           (if (is-not limit None)
               (do
                 (setv row (replace row :status "failed"
@@ -721,7 +721,7 @@
   {:pre [(: row SessionRow)]
    :post [(: % BackendLiveness)]}
   "行の backend の生死の観測(段 10 lane 10h): pid の存在と registry の所有。判断は持たない。"
-  (<- liveness (headless-liveness row.session-name (pid-of-row row)))
+  (<- liveness (headless-liveness row.session-name (! (pid-of-row row))))
   liveness)
 
 
@@ -759,7 +759,7 @@
   (<- rows (session-store-list-active))
   (setv outcomes {})
   (for [row (sorted rows :key (fn [r] r.session-id))]
-    (when (is-headless-row row)
+    (when (! (is-headless-row row))
       (try
         (<- recovered (recover-headless-row row))
         (setv (get outcomes row.session-id) recovered.status)
@@ -804,7 +804,7 @@
   (<- rows (session-store-list-active))
   (setv outcomes {})
   (for [row (sorted rows :key (fn [r] r.session-id))]
-    (when (is-headless-row row)
+    (when (! (is-headless-row row))
       (try
         (<- stopped (stop-headless-row row reason))
         (setv (get outcomes row.session-id) stopped.status)
@@ -826,7 +826,7 @@
   (<- rows (session-store-list-active))
   (setv outcomes {})
   (for [row (sorted rows :key (fn [r] r.session-id))]
-    (when (is-headless-row row)
+    (when (! (is-headless-row row))
       (try
         (<- updated (observe-headless-row row))
         (setv (get outcomes row.session-id) updated.status)
@@ -835,7 +835,7 @@
                 f"error:{(. (type e) __name__)}")))))
   (<- pending (session-store-list-cleanup-pending))
   (for [row (sorted pending :key (fn [r] r.session-id))]
-    (when (and (is-headless-row row) (not (reap-exempt row)))
+    (when (and (! (is-headless-row row)) (not (reap-exempt row)))
       (try
         (<- _ (cleanup-headless-terminal-once row))
         (except [e Exception]
