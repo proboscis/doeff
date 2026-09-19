@@ -30,6 +30,14 @@ from doeff import handler as _program_handler
 class GetValue(EffectBase):
     key: str
 
+# The hy snippets below import GetValue back out of this module. They must spell
+# the module by the name pytest registered it under (``__name__``): with
+# ``--import-mode=importlib`` that is rootdir-relative (``tests.test_deftest_macro``),
+# and importing the bare basename instead loads a *second* copy of this file whose
+# GetValue is a different class object, so the stub handler's isinstance check
+# never matches and the effect surfaces as UnhandledEffect.
+_THIS_MODULE = __name__
+
 
 def stub_handler():
     @_doeff_do
@@ -123,10 +131,10 @@ class TestDeftestEffects:
     def test_deftest_with_effect_binding(self, tmp_hy_dir):
         """deftest can use <- to bind effects."""
         # Write a self-contained test that imports GetValue from this test module
-        (tmp_hy_dir / "effect_test.hy").write_text(textwrap.dedent("""\
+        (tmp_hy_dir / "effect_test.hy").write_text(textwrap.dedent(f"""\
             (require doeff-hy.macros [deftest <-])
             (import doeff [do :as _doeff-do])
-            (import test-deftest-macro [GetValue])
+            (import {_THIS_MODULE} [GetValue])
             (deftest test-effect
               (<- price (GetValue :key "price"))
               (assert (= price 100.0)))
@@ -140,10 +148,10 @@ class TestDeftestEffects:
 
     def test_deftest_assert_failure_propagates(self, tmp_hy_dir):
         """AssertionError inside deftest should propagate."""
-        (tmp_hy_dir / "fail_test.hy").write_text(textwrap.dedent("""\
+        (tmp_hy_dir / "fail_test.hy").write_text(textwrap.dedent(f"""\
             (require doeff-hy.macros [deftest <-])
             (import doeff [do :as _doeff-do])
-            (import test-deftest-macro [GetValue])
+            (import {_THIS_MODULE} [GetValue])
             (deftest test-fails
               (<- price (GetValue :key "price"))
               (assert (= price 999.0) "price should be 999"))
@@ -304,9 +312,9 @@ class TestDeftestTypedBind:
     """
 
     def _import(self, tmp_hy_dir, filename, body):
-        (tmp_hy_dir / filename).write_text(textwrap.dedent("""\
+        (tmp_hy_dir / filename).write_text(textwrap.dedent(f"""\
             (require doeff-hy.macros [deftest <-])
-            (import test-deftest-macro [GetValue])
+            (import {_THIS_MODULE} [GetValue])
         """) + textwrap.dedent(body))
         sys.modules.pop(filename.removesuffix(".hy"), None)
         importlib.invalidate_caches()
