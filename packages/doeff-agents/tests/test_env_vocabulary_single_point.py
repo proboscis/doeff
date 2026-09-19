@@ -10,30 +10,32 @@
 from __future__ import annotations
 
 import hy  # noqa: F401 -- installs the .hy import hook
-
 from doeff_agents import shell
 from doeff_agents.sessionhost import policy, substrate
 
 
 def test_layer_sets_are_derived_from_policy() -> None:
     """層ごとの名簿は policy の語彙の合成ちょうど(literal の写しが無い)。"""
-    assert substrate.FORBIDDEN_AGENT_ENV_KEYS == policy.PROVIDER_AUTH_ENV_KEYS
+    provider_auth = set(policy.PROVIDER_AUTH_ENV_KEYS)
+    provider_routing = set(policy.PROVIDER_ROUTING_ENV_KEYS)
+    turn_auth = set(policy.TURN_AUTH_ENV_KEYS)
 
-    assert shell.FORBIDDEN_AGENT_ENV_KEYS == (
-        set(policy.PROVIDER_AUTH_ENV_KEYS)
-        | set(policy.PROVIDER_ROUTING_ENV_KEYS)
-        | set(policy.TURN_AUTH_ENV_KEYS)
-    )
+    # spawn は最後の砦 — provider の鍵ちょうど(手番の札はわざと通す)。
+    assert set(substrate.FORBIDDEN_AGENT_ENV_KEYS) == provider_auth
+
+    # shell は 3 層で最も広い — 鍵 + 宛先の差し替え + 手番の札。
+    assert set(shell.FORBIDDEN_AGENT_ENV_KEYS) == provider_auth | provider_routing | turn_auth
 
     # 語彙は交わらない(同じ名を 2 つの家が持たない = 足す日に迷わない)。
-    assert not set(policy.PROVIDER_AUTH_ENV_KEYS) & set(policy.PROVIDER_ROUTING_ENV_KEYS)
-    assert not set(policy.PROVIDER_AUTH_ENV_KEYS) & set(policy.TURN_AUTH_ENV_KEYS)
-    assert not set(policy.PROVIDER_ROUTING_ENV_KEYS) & set(policy.TURN_AUTH_ENV_KEYS)
+    assert not provider_auth & provider_routing
+    assert not provider_auth & turn_auth
+    assert not provider_routing & turn_auth
 
 
 def test_admission_rejects_provider_auth_and_keeps_turn_auth() -> None:
     """受理は provider の鍵と binding 所有の名を全部落とし、手番の札は通す。"""
-    for name in set(policy.PROVIDER_AUTH_ENV_KEYS) | set(policy.BINDING_OWNED_ENV_KEYS):
+    forbidden = set(policy.PROVIDER_AUTH_ENV_KEYS) | set(policy.BINDING_OWNED_ENV_KEYS)
+    for name in forbidden:
         assert policy.session_env_admission_error({name: "x"}, "session.launch") is not None, name
 
     # 手番ごとの資格の札は「わざと運ぶ」(policy TURN-AUTH-ENV-KEYS / ADR 012 R5・R30)。
