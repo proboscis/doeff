@@ -157,6 +157,7 @@ ConditionType = Literal[
     "AttachmentIgnored",
     "WorkDirMissing",
     "ProviderLimit",
+    "CredentialLeaseHeld",
     "TurnProducedNothing",
     "VerifyScriptMissing",
     "VerifyStartFailed",
@@ -246,6 +247,33 @@ REASON_RATE_LIMITED: str = "rate-limited"
 PROVIDER_LIMIT_PROFILE_KEY: str = "profile"
 PROVIDER_LIMIT_ATTEMPT_KEY: str = "attempt"
 PROVIDER_LIMIT_AT_KEY: str = "at"
+#: 段 12(card acp:kanban-issue:ki-f2747267e24d B1・実弾 2026-09-19 08:44Z〜17 時台 JST): 預かり所が **409**(錠は別の借り手が
+#: 握っている — 1 認証 1 宿)で手番の借りを断った印。**失った試みの記録であって手番の終わりではない**: 錠は他所の hold の
+#: 期限(holdExpiresAt)で必ず解けるので、この手番は『いまこの口座を借りられなかった』だけで、口座も手番も壊れていない。
+#: 行の形 = {type, status: "True", reason: <預かり所の断りの逐語>, attempt: <binding.attempt>, at: <記録を書いた時刻・epoch ms>,
+#: until: <holdExpiresAt・epoch ms>, account: <binding.account>, nodeRow: <binding.nodeRow>}。
+#: 既知の形 = #519 の ProviderLimit と同じ(runner は条件の記録を足すだけで phase を離す・置き直しの判断は配置の supervision)/
+#: k8s Job の podFailurePolicy の Ignore。⚠ **phase / binding / sessionHandle / result は触らない**
+#: (judgment.refused-attempt-status-of の形)— 置き直すか・いつまで待つか・数えるかを判じるのは ACP の配置の 1 点で、
+#: agentd は断りの事実(409 と holdExpiresAt)を写すだけ。同じ試み(attempt = binding.attempt)の記録を持つ行は次の拍で
+#: 起動し直さない(judgment.attempt-refused? — ProviderLimit と同じ 1 点)。
+#: 409 以外の断り・hold を名乗らない断り・宣言の無い預かり所は今日どおり CONDITION_CREDENTIAL_UNAVAILABLE で Ended。
+CONDITION_CREDENTIAL_LEASE_HELD: ConditionType = "CredentialLeaseHeld"
+#: 『いまの試みは断られ、配置の置き直しを待っている』を名乗る記録の型の集合(judgment.attempt-refused? の 1 点が読む —
+#: Bound の起動と Running の拾い直しの両方がこの 1 つの判定を通る)。どちらも runner が条件を足して phase を離す形で、
+#: 置き直すのは配置(ACP Scheduling の supervision)。
+REFUSED_ATTEMPT_CONDITION_TYPES: tuple[str, ...] = (
+    CONDITION_PROVIDER_LIMIT,
+    CONDITION_CREDENTIAL_LEASE_HELD,
+)
+#: 錠が別の借り手に在る時に預かり所が返す status(契約 custody-api.json の /lease/{kind} — この 1 語だけを記録に解く)。
+CUSTODY_LEASE_HELD_STATUS: int = 409
+#: CONDITION_CREDENTIAL_LEASE_HELD の記録が自分で名乗る欄(attempt / at は ProviderLimit と同じ綴り = 同じ読み手が同じ
+#: 判定(attempt = binding.attempt)を 1 点で書けるように揃える)。until = 錠が解ける時刻・account = 借りられなかった口座・
+#: nodeRow = 断られた機体の行の id。
+CREDENTIAL_LEASE_HELD_UNTIL_KEY: str = "until"
+CREDENTIAL_LEASE_HELD_ACCOUNT_KEY: str = "account"
+CREDENTIAL_LEASE_HELD_NODE_ROW_KEY: str = "nodeRow"
 #: 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D1・D3): 温かい session の手番が終わったのに、本文のための model の出力が 1 本も
 #: 無かった(材料は読めたのに assistant の見出し text / tool_use / tool_result が 0 本・usage も無い)印。= model が 1 度も
 #: 呼ばれていない = **手番が走らなかった**事実で、手番自身の結末ではない — result.cause は {category: failed, reason:
@@ -432,6 +460,8 @@ RECORD_CREATE_GIVEN_UP: RecordCreateState = "given-up"
 #: (AgentdState.node_row_id)を比べ、無い結び(この欄が生まれる前の書き)だけ名前に落ちる — 判断は judgment.binding-names-me の 1 点。
 BINDING_NODE_KEY: str = "node"
 BINDING_NODE_ROW_KEY: str = "nodeRow"
+#: 結びの口座の欄(契約 scheduling.json binding.fields.account)— 手番が借りる預かり所の口座。
+BINDING_ACCOUNT_KEY: str = "account"
 JOB_INTERRUPTS_KEY: str = "interrupts"
 JOB_INTERRUPTS_DELIVERED_KEY: str = "interruptsDelivered"
 #: card acp:kanban-issue:ki-3149aebbf675 A: agent-job の status.inputsDelivered = この手番で agentd が

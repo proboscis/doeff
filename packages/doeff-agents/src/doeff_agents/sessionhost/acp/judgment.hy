@@ -110,6 +110,12 @@
   CONDITION-ATTACHMENT-IGNORED
   CAUSE-CATEGORY-RATE-LIMITED
   CONDITION-PROVIDER-LIMIT
+  CONDITION-CREDENTIAL-LEASE-HELD
+  CREDENTIAL-LEASE-HELD-ACCOUNT-KEY
+  CREDENTIAL-LEASE-HELD-NODE-ROW-KEY
+  CREDENTIAL-LEASE-HELD-UNTIL-KEY
+  CUSTODY-LEASE-HELD-STATUS
+  REFUSED-ATTEMPT-CONDITION-TYPES
   CONDITION-TURN-PRODUCED-NOTHING
   CONDITION-UNSCHEDULABLE
   MODEL-UNDECLARED
@@ -214,6 +220,7 @@
   InterruptRead
   OpenToolBlock
   BINDING-NODE-KEY
+  BINDING-ACCOUNT-KEY
   BINDING-NODE-ROW-KEY
   JOB-INPUTS-DELIVERED-KEY
   JOB-INTERRUPTS-DELIVERED-KEY
@@ -238,6 +245,7 @@
   MESSAGE-KIND
   LaunchPlan
   LeaseGrant
+  LeaseRefused
   NEXT-ARM-DEFER
   NEXT-ARM-LAUNCH
   NEXT-ARM-REHYDRATE
@@ -346,12 +354,19 @@
 (defk job-rows-bound-to [rows node-name node-row-id]
   {:pre [(: rows tuple) (: node-name str) (: node-row-id (| str None))]
    :post [(: % tuple)]}
-  "list の行のうち自分に結ばれた行を、行の順のまま(優先も選択も無し)。"
+  "list の行のうち自分に結ばれた行を、行の順のまま(優先も選択も無し)。
+   card acp:kanban-issue:ki-f2747267e24d B1: **断られて置き直し待ちの行は起動しない** — いまの試み(binding.attempt)を
+   名乗る『失った試み』の記録(CredentialLeaseHeld / ProviderLimit)を持つ行は、配置が Pending へ戻して別の口座か別の拍へ
+   置き直すのを待っている行。もう一度起こすと同じ錠をまた借りにいって同じ 409 を数え続ける(判断は attempt-refused? の
+   1 点 — Running の拾い job-rows-running-on と同じ関数)。置き直しの後の次の試み(attempt が進んだ行)は今日どおり受ける。"
   (setv out [])
   (for [row rows]
     (<- mine bool (bound-to-me row node-name node-row-id))
     (when mine
-      (.append out row)))
+      (<- status dict (status-object-of row))
+      (<- refused bool (attempt-refused? status))
+      (when (not refused)
+        (.append out row))))
   (tuple out))
 
 
@@ -422,8 +437,11 @@
 (defk attempt-refused? [status]
   {:pre [(: status dict)]
    :post [(: % bool)]}
-  "agora-redesign #519: 行のいまの試み(binding.attempt)を名乗る ProviderLimit{status True} の記録が在るか =
-   この試みは口座に断られ、配置の置き直しを待っている(契約 scheduling.json supervision provider-refused と同じ判定)。
+  "**この行を起動する / 拾い直すかの 1 点**: 行のいまの試み(binding.attempt)を名乗る『失った試み』の記録が在るか =
+   この試みは断られ、配置の置き直しを待っている(契約 scheduling.json supervision と同じ判定)。
+   記録の語は 2 つ(どちらも runner が条件を足して phase を離す形 — 置き直すのは配置):
+     * ProviderLimit(agora-redesign #519)= 口座が provider の限度で断られた
+     * CredentialLeaseHeld(card acp:kanban-issue:ki-f2747267e24d B1)= 預かり所が 409(錠は別の借り手)で借りを断った
    attempt を名乗らない記録(旧 agentd の書き — その手番は Ended)は当たらない。"
   (<- attempt int (binding-attempt-of status))
   (setv conditions (.get status "conditions"))
@@ -431,11 +449,49 @@
     (return False))
   (for [condition conditions]
     (when (and (isinstance condition dict)
-               (= (.get condition "type") CONDITION-PROVIDER-LIMIT)
+               (in (.get condition "type") REFUSED-ATTEMPT-CONDITION-TYPES)
                (= (.get condition "status") "True")
                (= (.get condition PROVIDER-LIMIT-ATTEMPT-KEY) attempt))
       (return True)))
   False)
+
+
+(defk credential-lease-held-condition-of [refusal status now-ms]
+  {:pre [(: refusal LeaseRefused) (: status dict) (: now-ms int)]
+   :post [(: % (| dict None))]}
+  "**断りを記録にするか Ended にするかの 1 点**(card acp:kanban-issue:ki-f2747267e24d B1・実弾 2026-09-19):
+   預かり所の借りの断り → CredentialLeaseHeld の記録 1 項(None = 記録にしない = 呼び手は今日どおり
+   CredentialUnavailable で Ended)。
+
+   記録にするのは **409 かつ holdExpiresAt を名乗る断りだけ**: 409 は『錠は別の借り手が握っている』(1 認証 1 宿)で、
+   hold の期限に必ず解ける —— 手番も口座も壊れていないので、手番の終わりではなく**失った試み**として行に残し、
+   置き直しは配置の supervision に任せる(既知の形 = #519 の ProviderLimit・k8s Job の podFailurePolicy の Ignore)。
+   409 でも hold を名乗らない断り(いつ解けるか判らない)・404(口座が預かり所に無い)・503(宣言の無い預かり所・
+   身元が組めない)は今日のまま Ended —— 待って直る保証が無い断りを『待てば直る』の語に畳まない。
+
+   記録が自分で名乗る欄: reason = 預かり所の断りの**逐語**(何が起きたかは預かり所の言葉のまま)・
+   attempt = 行の binding.attempt(binding-attempt-of — 欄の無い結びは 1)・at = 記録を書く拍の時計(epoch ms)・
+   until = holdExpiresAt(錠が解ける時刻)・account = binding.account・nodeRow = binding.nodeRow。
+   ⚠ status.result には書かない(result が在ることは『手番が結果を報告した』の意味)。"
+  (when (!= refusal.status CUSTODY-LEASE-HELD-STATUS)
+    (return None))
+  (setv until refusal.hold-expires-at-ms)
+  (when (not (and (isinstance until int) (not (isinstance until bool))))
+    (return None))
+  (<- attempt int (binding-attempt-of status))
+  (setv binding (.get status "binding"))
+  (setv account (if (isinstance binding dict) (.get binding BINDING-ACCOUNT-KEY) None))
+  (setv node-row (if (isinstance binding dict) (.get binding BINDING-NODE-ROW-KEY) None))
+  (setv condition {"type" CONDITION-CREDENTIAL-LEASE-HELD "status" "True"
+                   "reason" refusal.error
+                   PROVIDER-LIMIT-ATTEMPT-KEY attempt
+                   PROVIDER-LIMIT-AT-KEY now-ms
+                   CREDENTIAL-LEASE-HELD-UNTIL-KEY until})
+  (when (and (isinstance account str) (.strip account))
+    (setv (get condition CREDENTIAL-LEASE-HELD-ACCOUNT-KEY) account))
+  (when (and (isinstance node-row str) (.strip node-row))
+    (setv (get condition CREDENTIAL-LEASE-HELD-NODE-ROW-KEY) node-row))
+  condition)
 
 
 (defk refused-attempt-status-of [status conditions]

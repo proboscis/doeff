@@ -31,9 +31,12 @@
   PHASE-BOUND
   PHASE-ENDED
   PHASE-RUNNING
+  LeaseRefused
   TURN-RECORD-KIND])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeSessions])
 (import doeff_agents.sessionhost.acp.judgment [
+  attempt-refused?
+  credential-lease-held-condition-of
   lease-journal-of
   lease-journal-text
   lease-journal-with
@@ -218,3 +221,96 @@
   ;; 置き場の定義点を増やさない(state_dir は spool と同じ 1 点から導く — verify / summarize の置き場と同じ形)。
   (setv env {"DOEFF_AGENTD_RECORD_SPOOL_DIR" "/state/acp-agentd/record-spool"})
   (assert (= (lease-journal-path env) "/state/acp-agentd/leases.json")))
+
+
+;; ---------------------------------------------------------------- B1: 409 は失った試みの記録で、手番の終わりではない
+
+(deftest test-a-custody-409-with-a-hold-is-recorded-and-does-not-end-the-turn
+  ;; 実弾 2026-09-19 17 時台 JST: 錠が旧 process のまま残り、pool の pod の借りが全部 409 で断られた。
+  ;; 断りを Ended(CredentialUnavailable)と書くと配達係の再試行(上限 2・backoff なし)が数秒で尽き、
+  ;; 330 通の郵便が failed になった。409 は「いまこの口座を借りられなかった」だけ — 錠は hold の期限で解ける。
+  (setv world (World))
+  (setv world.custody.refuse-with (LeaseRefused 409 "account acct is held by borrower sa:acp-control/default" 1900000))
+  (.put-row world.acp (bound-job "s-1"))
+  (.tick world 0)
+  (setv status (. (.job world "s-1") status))
+  ;; ⚠ 断りの拍の行は **Running**(Bound ではない): claim-job は借りより先に Running + sessionHandle を CAS で
+  ;; 書くので、借りが断られた時には既に受けている。だから読み手(ACP の配置)はこの記録を #519 の
+  ;; ProviderLimit と同じ **Running の行の supervision** として読む。phase は触らない。
+  (assert (= (get status "phase") PHASE-RUNNING) f"409 の断りで phase を動かした: {status}")
+  (assert (not-in "result" status) "結末は書かない(手番は結果を報告していない)")
+  (assert (= (get (get status "sessionHandle") "sessionId") (.sid world "s-1")) "sessionHandle も触らない")
+  (setv held (lfor c (get status "conditions") :if (= (get c "type") "CredentialLeaseHeld") c))
+  (assert (= (len held) 1) f"CredentialLeaseHeld の記録が 1 行でない: {(get status "conditions")}")
+  (setv record (get held 0))
+  (assert (= (get record "status") "True"))
+  (assert (= (get record "reason") "account acct is held by borrower sa:acp-control/default") "断りの逐語")
+  (assert (= (get record "attempt") 1) "行の binding.attempt(欄の無い結びは 1)")
+  (assert (= (get record "at") world.local.now-ms) "記録を書いた拍の時計")
+  (assert (= (get record "until") 1900000) "錠が解ける時刻 = 預かり所の holdExpiresAt")
+  (assert (= (get record "account") "acct") "借りられなかった口座")
+  (assert (= world.state.jobs #()) "memory には載せない(置き直しを待つ行)")
+  (assert (= world.sessions.launches []) "器は起こさない"))
+
+
+(deftest test-the-row-of-a-held-lease-is-not-started-again-on-the-next-beat
+  ;; 記録を置いたまま次の拍が同じ行を起動すると、同じ錠をまた借りにいって同じ 409 を数え続ける
+  ;; (拾い直しの腕が走れば器に session が無いので SessionFailed で Ended — #519 と同じ穴)。
+  (setv world (World))
+  (setv world.custody.refuse-with (LeaseRefused 409 "held by another borrower" 1900000))
+  (.put-row world.acp (bound-job "s-1"))
+  (.tick world 0)
+  (setv borrows (len world.custody.borrowed))
+  (setv before (. (.job world "s-1") status))
+  (.tick world 1000)
+  (setv after (. (.job world "s-1") status))
+  (assert (!= (get after "phase") PHASE-ENDED) f"次の拍が手番を閉じた: {after}")
+  (assert (= (len world.custody.borrowed) borrows) "同じ試みでもう一度借りにいかない")
+  (assert (= (len (lfor c (get after "conditions") :if (= (get c "type") "CredentialLeaseHeld") c)) 1)
+          "記録は 1 行のまま(拍ごとに積まない)")
+  (assert (= world.sessions.launches []) "器は起こさない")
+  ;; 置き直し(配置が attempt を進めて結び直す)た行は今日どおり受ける。
+  (setv placed (dict after))
+  (setv (get placed "binding") {"node" NODE "profile" "personal" "account" ACCOUNT "attempt" 2})
+  (setv (get placed "phase") PHASE-BOUND)
+  (assert (is (run (attempt-refused? placed)) False) "attempt が進んだ行は起動する")
+  (assert (is (run (attempt-refused? before)) True) "同じ試みの行は起動しない"))
+
+
+(deftest test-refusals-that-are-not-a-held-lease-still-end-the-turn
+  ;; 待って直る保証の無い断り(口座が預かり所に無い・宣言が無い・hold を名乗らない 409)は今日のまま Ended。
+  (for [refusal [(LeaseRefused 404 "account not in custody" None)
+                 (LeaseRefused 503 "custody URL is not declared" None)
+                 (LeaseRefused 409 "held (no hold time)" None)]]
+    (setv world (World))
+    (setv world.custody.refuse-with refusal)
+    (.put-row world.acp (bound-job "s-1"))
+    (.tick world 0)
+    (setv status (. (.job world "s-1") status))
+    (assert (= (get status "phase") PHASE-ENDED) f"{refusal} で閉じなかった: {status}")
+    (setv types (lfor c (get status "conditions") (get c "type")))
+    (assert (in "CredentialUnavailable" types) f"{refusal}: {types}")
+    (assert (not-in "CredentialLeaseHeld" types) f"{refusal}: {types}")))
+
+
+(deftest test-the-held-lease-record-is-one-judgment
+  ;; 「記録にするか Ended にするか」は 1 関数(呼び手に第 2 の判定を置かない)。
+  (setv status {"phase" PHASE-RUNNING
+                "binding" {"node" NODE "profile" "personal" "account" ACCOUNT "attempt" 3 "nodeRow" "nr-1"}})
+  (setv record (run (credential-lease-held-condition-of (LeaseRefused 409 "held by sa:acp-control/default" 90000) status 7000)))
+  (assert (= record {"type" "CredentialLeaseHeld" "status" "True" "reason" "held by sa:acp-control/default"
+                     "attempt" 3 "at" 7000 "until" 90000 "account" ACCOUNT "nodeRow" "nr-1"}))
+  ;; 409 でない・hold を名乗らない断りは記録にしない(None = 呼び手は今日どおり Ended)。
+  (for [refusal [(LeaseRefused 404 "account not in custody" None)
+                 (LeaseRefused 503 "custody URL is not declared" None)
+                 (LeaseRefused 500 "custody is down" 90000)
+                 (LeaseRefused 409 "held" None)]]
+    (assert (is (run (credential-lease-held-condition-of refusal status 7000)) None) f"{refusal} が記録に解けた"))
+  ;; 欄の無い結びは attempt 1・口座と行の id を名乗らない結びはその欄を落とす(発明しない)。
+  (setv bare (run (credential-lease-held-condition-of (LeaseRefused 409 "held" 90000) {"phase" PHASE-RUNNING} 7000)))
+  (assert (= bare {"type" "CredentialLeaseHeld" "status" "True" "reason" "held" "attempt" 1 "at" 7000 "until" 90000}))
+  ;; ProviderLimit と同じ 1 点で「この試みは断られた」と読める(拾いの判定は 1 つ)。
+  (setv refused-status {"phase" PHASE-RUNNING "binding" {"attempt" 3} "conditions" [record]})
+  (assert (is (run (attempt-refused? refused-status)) True))
+  (setv next-attempt {"phase" PHASE-RUNNING "binding" {"attempt" 4} "conditions" [record]})
+  (assert (is (run (attempt-refused? next-attempt)) False)))
