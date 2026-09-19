@@ -29,14 +29,14 @@ from doeff import handler as _install_raw_handler
 @pytest.mark.parametrize(
     ("model", "input_rate", "output_rate", "cached_rate"),
     [
-        ("gpt-5",        0.00125, 0.010,   0.000125),
-        ("gpt-5-mini",   0.00025, 0.002,   0.000025),
-        ("gpt-5-nano",   0.00005, 0.0004,  0.000005),
-        ("gpt-5.4",      0.00250, 0.015,   0.000250),
-        ("gpt-5.4-mini", 0.00075, 0.0045,  0.0000750),
+        ("gpt-5", 0.00125, 0.010, 0.000125),
+        ("gpt-5-mini", 0.00025, 0.002, 0.000025),
+        ("gpt-5-nano", 0.00005, 0.0004, 0.000005),
+        ("gpt-5.4", 0.00250, 0.015, 0.000250),
+        ("gpt-5.4-mini", 0.00075, 0.0045, 0.0000750),
         ("gpt-5.4-nano", 0.00020, 0.00125, 0.0000200),
-        ("gpt-5.5",              0.005, 0.030, 0.0005),
-        ("gpt-5.5-2026-04-23",   0.005, 0.030, 0.0005),
+        ("gpt-5.5", 0.005, 0.030, 0.0005),
+        ("gpt-5.5-2026-04-23", 0.005, 0.030, 0.0005),
     ],
 )
 def test_gpt5_family_rates(model, input_rate, output_rate, cached_rate):
@@ -75,9 +75,9 @@ def test_calculate_cost_gpt5_with_cached_tokens():
     )
     cost = calculate_cost("gpt-5", usage)
     expected = (
-        (500 / 1000) * 0.00125      # fresh input
-        + (500 / 1000) * 0.000125   # cached input
-        + (500 / 1000) * 0.010      # output
+        (500 / 1000) * 0.00125  # fresh input
+        + (500 / 1000) * 0.000125  # cached input
+        + (500 / 1000) * 0.010  # output
     )
     assert cost.total_cost == pytest.approx(expected)
 
@@ -124,7 +124,7 @@ def _ask_cost(model, usage):
 
 def test_calculate_cost_effect_known_model_resumes_with_cost_info():
     usage = TokenUsage(prompt_tokens=1000, completion_tokens=500, total_tokens=1500)
-    result = run(openai_production_handler(_ask_cost("gpt-5-mini", usage)))
+    result = run(_install_raw_handler(openai_production_handler)(_ask_cost("gpt-5-mini", usage)))
     assert isinstance(result, CostInfo)
     assert result.model == "gpt-5-mini"
     assert result.total_cost > 0
@@ -137,15 +137,25 @@ def test_calculate_cost_effect_unknown_model_passes_to_outer_handler():
     @do
     def zero_cost_override(effect, k):
         if isinstance(effect, CalculateCost):
-            return (yield Resume(k, CostInfo(
-                input_cost=0.0, output_cost=0.0, total_cost=0.0,
-                model=effect.model, token_usage=effect.token_usage,
-            )))
+            return (
+                yield Resume(
+                    k,
+                    CostInfo(
+                        input_cost=0.0,
+                        output_cost=0.0,
+                        total_cost=0.0,
+                        model=effect.model,
+                        token_usage=effect.token_usage,
+                    ),
+                )
+            )
         yield Pass(effect, k)
 
     usage = TokenUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150)
     result = run(
-        _install_raw_handler(zero_cost_override)(openai_production_handler(_ask_cost("future-model-v9", usage)))
+        _install_raw_handler(zero_cost_override)(
+            _install_raw_handler(openai_production_handler)(_ask_cost("future-model-v9", usage))
+        )
     )
     assert result.total_cost == 0.0
     assert result.model == "future-model-v9"
@@ -157,7 +167,7 @@ def test_calculate_cost_effect_unknown_model_no_outer_handler_raises():
     # is the loud-fail property: silent fall-back is impossible.
     usage = TokenUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150)
     with pytest.raises(RuntimeError, match="no handler found for effect"):
-        run(openai_production_handler(_ask_cost("future-model-v9", usage)))
+        run(_install_raw_handler(openai_production_handler)(_ask_cost("future-model-v9", usage)))
 
 
 def test_calculate_cost_effect_cached_on_legacy_model_passes():
@@ -170,7 +180,7 @@ def test_calculate_cost_effect_cached_on_legacy_model_passes():
         cached_prompt_tokens=100,
     )
     with pytest.raises(RuntimeError, match="no handler found for effect"):
-        run(openai_production_handler(_ask_cost("gpt-3.5-turbo", usage)))
+        run(_install_raw_handler(openai_production_handler)(_ask_cost("gpt-3.5-turbo", usage)))
 
 
 # ---------------------------------------------------------------------------

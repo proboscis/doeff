@@ -22,21 +22,14 @@ from typing import Any
 
 from doeff_core_effects.effects import Try
 from doeff_core_effects.handlers import (
-    await_handler,
-    lazy_ask,
-    listen_handler,
-    local_handler,
-    slog_handler,
-    state,
-    try_handler,
-    writer,
     writer_log,
 )
-from doeff_core_effects.scheduler import scheduled
 from doeff_openai.handlers import calculate_cost_handler
 from doeff_vm import Err, Ok
 
 from doeff import AskEffect, Pass, Resume, do, run
+from doeff import handler as _install_raw_handler
+from tests._run_helpers import wrap_with_defaults
 
 
 @dataclass
@@ -57,27 +50,15 @@ class RunResult:
 def _build_chain(program: Any, env: dict | None):
     """Build the legacy default handler chain.
 
-    Returns a single wrapped program.  The writer log is captured inside
-    the program via ``writer_log()`` — no side-channel ``.log`` access.
-
-    Composition order mirrors ``doeff-traverse/tests`` — ``scheduled``
-    is outermost so scheduler effects resolve regardless of scope.
-
-    ``slog_handler`` is positioned outside ``writer`` — writer captures
-    the ``Tell`` stream and passes through; ``slog_handler`` handles
-    structured ``slog`` calls.
+    Delegates to ``tests/_run_helpers.py`` -- the one definition of the
+    pre-rebuild handler order that the root suite and seven package trees
+    already share -- and only adds the openai-specific cost handler on the
+    inside. Hand-rolling the order here got it wrong: ``state()`` sat inside
+    ``writer``, so ``writer_log()``'s ``Get`` escaped past every handler and
+    20 tests died with ``UnhandledEffect: Get('__doeff_writer_log__')``.
     """
-    wrapped = program
-    wrapped = calculate_cost_handler(wrapped)
-    wrapped = await_handler()(wrapped)
-    wrapped = listen_handler(wrapped)
-    wrapped = local_handler(wrapped)
-    wrapped = state()(wrapped)
-    wrapped = try_handler(wrapped)
-    wrapped = writer(wrapped)
-    wrapped = slog_handler(wrapped)
-    wrapped = lazy_ask(env=env or {})(wrapped)
-    return scheduled(wrapped)
+    wrapped = _install_raw_handler(calculate_cost_handler)(program)
+    return wrap_with_defaults(wrapped, env=env or {})
 
 
 async def run_program(program: Any, env: dict | None = None) -> RunResult:
@@ -102,9 +83,7 @@ async def run_program(program: Any, env: dict | None = None) -> RunResult:
         return RunResult(value=outcome.value, log=list(log))
     if isinstance(outcome, Err):
         return RunResult(error=outcome.error, log=list(log))
-    raise RuntimeError(
-        f"unexpected Try outcome: {type(outcome).__name__} — expected Ok/Err"
-    )
+    raise RuntimeError(f"unexpected Try outcome: {type(outcome).__name__} — expected Ok/Err")
 
 
 @do

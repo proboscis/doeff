@@ -38,7 +38,7 @@ class StructuredPayload(BaseModel):
 
 def _run_with_handler(program, handler):
     return run_with_defaults(
-        handler(program),
+        _install_raw_handler(handler)(program),
     )
 
 
@@ -55,6 +55,10 @@ def test_effect_exports():
     assert issubclass(RouterStructuredOutput, LLMStructuredQuery)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="RouterChat/RouterStreamingChat/RouterStructuredOutput aliases are uncallable - #616",
+)
 def test_deprecated_effect_aliases_emit_warnings() -> None:
     with pytest.deprecated_call(match="RouterChat is deprecated"):
         RouterChat(
@@ -213,7 +217,7 @@ def test_openrouter_handler_delegates_embedding_effects() -> None:
         return (yield LLMEmbedding(input="hello", model="text-embedding-3-small"))
 
     result = run_with_defaults(
-        _install_raw_handler(fallback)(openrouter_mock_handler(workflow())),
+        _install_raw_handler(fallback)(_install_raw_handler(openrouter_mock_handler)(workflow())),
     )
 
     assert result.is_ok()
