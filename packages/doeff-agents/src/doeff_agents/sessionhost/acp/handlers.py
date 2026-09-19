@@ -406,10 +406,24 @@ class HttpConnections:
     """外向きの HTTP の口 — **host ごとに 1 本の接続を保つ**(ADR-DOE-AGENTS-012 R22 の追補・card
     acp:kanban-issue:ki-6eb745f6d528)。
 
-    呼び毎に TCP を張り直すと、1 拍 約 35 往復 × 11 ms(cluster の中の実測の 1 往復 p50・server 側の
-    処理は 0.17 ms・Mac は tailnet の RTT でさらに重い)がそのまま拍の周期になる。保った接続は相手の
-    idle timeout で先に閉じていることがあるので、**使い回した接続が落ちた時だけ** 1 度張り直す
-    (新しく張った接続の失敗は本物の失敗 — POST を二度撃たない)。"""
+    呼び毎に TCP を張り直すと、**1 発ごとに名前を引き直す**(getaddrinfo)。この宿は resolv.conf が
+    ``options ndots:5`` + search 4 つで、点で終わらない綴り(`…svc.cluster.local` は 4 dots < 5)は
+    探索の列を歩く —— 依頼者の実射(2026-09-19・同じ宿・同じ港・同じ路・n=9・中央値): 点なしは
+    名引き 23.61 ms / 全体 25.20 ms(**全体の 94 % が名引き**・server 側の処理は 0.17 ms)、点ありは
+    3.90 / 5.64 ms、ClusterIP の数字なら 0.02 / 1.46 ms。保った接続は名引きを**接続 1 本につき 1 度**に
+    畳むので、綴りに関わらず 1 発 0.46 ms(n=40・p50)—— 1 拍 約 35 往復で 0.882 秒 → 0.016 秒。
+    保った接続は相手の idle timeout で先に閉じていることがあるので、**使い回した接続が落ちた時だけ**
+    1 度張り直す(新しく張った接続の失敗は本物の失敗 — POST を二度撃たない)。
+
+    ⚠ 保つのは **host ごとに 1 本**で、同じ宛先を 2 つの thread が同時に使った拍は後から来た方が
+    その場で接続を張る = **名引き + 握手を払い直す**(実射の「初回」: 点なし 46.26 ms / 点あり
+    15.28 ms / ClusterIP 31.81 ms)。今日その値段を払う口は 1 つも無い —— この process の 4 つの thread は
+    ``sessionhost-agentd``(拍。``runtime.real_dispatchers`` の口を独りで使う)/
+    ``sessionhost-agentd-heartbeat``(``runtime.heartbeat_dispatchers`` の**別の** AcpHttp)/
+    ``agentd-watch``(長く開いたままの SSE 1 本で、この口には載せない — WatchReader._loop の註)/
+    ``agentd-session-wake``(器の unix socket の ``session.wait_events`` — HTTP を 1 発も撃たない)で、
+    1 つの HttpConnections を 2 つの thread が共有しない。``_keep`` の押し出しはその日の備えで、
+    上の値段がその拍の代価。"""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
