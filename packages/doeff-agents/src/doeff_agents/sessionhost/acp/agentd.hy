@@ -232,6 +232,7 @@
   METRIC-RECORD-LAG-SEQ
   METRIC-STORE-EPOCH-RELISTS
   METRIC-RECORD-SPOOL-DEPTH
+  METRIC-TICK-MS
   MetricLine
   MintId
   RECORD-PAGE-MAX-LIMIT
@@ -314,6 +315,7 @@
   SessionTranscript
   SessionView
   TURN-RECORD-ENDED
+  TICK-ARMS
   TURN-RECORD-KIND
   TURN-RECORD-SWEEP-END
   TranscriptChunk
@@ -422,6 +424,7 @@
   session-lost-condition-of
   in-flight-ids
   in-flight-job-of
+  job-in-flight
   incarnation-charter-of
   inputs-of
   interrupt-arm-for
@@ -1650,47 +1653,71 @@
         (replace job :record None :pending-entries entries :delta-seq delta-seq))))
 
 
-(defk stream-records [settings job source path now-ms]
+(defk stream-push [settings job source path at]
   {:pre [(: settings AgentdSettings) (: job InFlightJob) (: source str) (: path str)
-         (: now-ms int)]
+         (: at int)]
    :post [(: % InFlightJob)]}
-  "実況の材料の追記を読み、TurnDelta(text / tool_use / tool_input_delta / tool_result / usage)を押し、その拍の
-   出来事(entries)を turn-record へ追記する(events は text の delta が 1 行ずつ・道具の書きかけの引数は
-   この読みの中で道具ごとに連結した 1 frame — 記録には書かない・判断は純関数
-   deltas-of / events-to-deltas)。持ち越しの出来事(pending-entries)は先頭に乗る。
-   ⚠ 追記の拍は transcript の周期(judgment.record-due — 段 8 lane 4aa): push は events の周期
-   (≤ 50 ms)で押すが、記録の書き(= ACP の event 1 つ)を拍ごとにすると journal と画面の糊の
-   watch の拍が飽和する。書かない拍の出来事は pending-entries に持ち越す(落とさない)。"
+  "拍の**前半**(その job の分): 実況の材料の追記を読み、TurnDelta(text / tool_use / tool_input_delta /
+   tool_result / usage)を中継へ押し、その拍の出来事(entries)を pending-entries に載せる
+   (events は text の delta が 1 行ずつ・道具の書きかけの引数はこの読みの中で道具ごとに連結した 1 frame —
+   記録には書かない・判断は純関数 deltas-of / events-to-deltas)。
+   ⚠ **store へは 1 bit も書かない**(ADR-DOE-AGENTS-012 R22 の追補・card acp:kanban-issue:ki-6eb745f6d528):
+   turn-record への CAS をここに置くと、job k の生の frame が job k−1 の頭への 1 往復の後ろに並び、
+   手番 20 本の agentd で同じ拍の中の job 間のずれが p50 0.453 秒(max 1.432)になる。
+   at = **この job の**時計読み(押す frame の at はこれ 1 つ — 拍の頭の 1 度の読みを全 job に貼らない)。"
   (<- chunk TranscriptChunk (read-stream source path job.transcript-offset))
-  (<- batch DeltaBatch (deltas-of job.agent-type source chunk.text job.job-id job.delta-seq now-ms job.open-tool-blocks))
+  (<- batch DeltaBatch (deltas-of job.agent-type source chunk.text job.job-id job.delta-seq at job.open-tool-blocks))
   ;; 開いている道具の block の表(書きかけの引数を id と名に結ぶ — 読みをまたぐ)は判断の出力をそのまま持つ。
   (setv next (replace job :transcript-offset chunk.offset :delta-seq batch.next-seq
                           :open-tool-blocks batch.open-tool-blocks))
   ;; 開始を見ていない引数の差分は frame にしていない(id も名前も発明しない)— 黙って捨てず計器に数える。
   (when batch.orphan-input-deltas
     (<- (MetricLine :fields {"metric" "agent-job-orphan-input-deltas" "agentJobId" job.job-id
-                                    "sessionId" job.session-id "count" batch.orphan-input-deltas "atMs" now-ms})))
+                                    "sessionId" job.session-id "count" batch.orphan-input-deltas "atMs" at})))
   ;; 段 10 lane 10n: 材料の中の「model が割り込みを読んだ」証拠を memory に写す(行への書きは settle-interrupts)。
   (<- read tuple (interrupt-reads-of next batch.interrupt-reads))
   (when read
     (setv next (replace next :interrupts-read (+ next.interrupts-read read) :interrupt-marks-dirty True))
     (for [[message-id seq] read]
       (<- (MetricLine :fields {"metric" "agent-job-interrupt-read" "agentJobId" job.job-id
-                                      "sessionId" job.session-id "messageId" message-id "seq" seq "atMs" now-ms}))))
+                                      "sessionId" job.session-id "messageId" message-id "seq" seq "atMs" at}))))
   ;; 段 9f lane 9f-2: 本文(切る前)は読んだ拍に spool へ(送るのは拍の終わりの flush-record-spool の 1 点)。
+  ;; spool は自分の機体の file(outbox)で、頭への往復ではない — 読んだ拍に耐久化する規律は変えない。
   (when (and settings.record-enabled batch.bodies)
     (<- (spool-record-bodies next batch.bodies)))
   (when batch.frames
     (<- subscribers (| int None) (push-frames settings next batch.frames))
     (<- verdict str (capture-verdict subscribers))
     (setv next (replace next :capturing (and (not next.stream-gone) (= verdict "continue")))))
-  (setv carried (+ next.pending-entries batch.entries))
-  (<- write-now bool (record-due next now-ms settings))
-  (if (and carried write-now)
+  (replace next :pending-entries (+ next.pending-entries batch.entries)))
+
+
+(defk stream-append [settings job now-ms]
+  {:pre [(: settings AgentdSettings) (: job InFlightJob) (: now-ms int)]
+   :post [(: % InFlightJob)]}
+  "拍の**後半**(その job の分): 持ち越した出来事(pending-entries)を turn-record へ追記する。
+   ⚠ 追記の拍は transcript の周期(judgment.record-due — 段 8 lane 4aa): push は events の周期
+   (≤ 50 ms)で押すが、記録の書き(= ACP の event 1 つ)を拍ごとにすると journal と画面の糊の
+   watch の拍が飽和する。書かない拍の出来事は pending-entries に持ち越す(落とさない)。"
+  (<- write-now bool (record-due job now-ms settings))
+  (if (and job.pending-entries write-now)
       (do
-        (<- recorded InFlightJob (append-entries next carried))
+        (<- recorded InFlightJob (append-entries job job.pending-entries))
         (replace recorded :last-record-ms now-ms))
-      (replace next :pending-entries carried)))
+      job))
+
+
+(defk stream-records [settings job source path now-ms]
+  {:pre [(: settings AgentdSettings) (: job InFlightJob) (: source str) (: path str)
+         (: now-ms int)]
+   :post [(: % InFlightJob)]}
+  "材料を読んで押し、同じ呼びで出来事を turn-record へ追記する —— **手番の終わりの排水の 1 点**
+   (drain-stream)だけがここを通る。走っている job の拍は 2 段に割れているので、押し(stream-push)と
+   追記(stream-append)を stream-job-fast / stream-job-slow が別々に呼ぶ(R22 の追補)。"
+  (<- at int (ClockNowMs))
+  (<- pushed InFlightJob (stream-push settings job source path at))
+  (<- appended InFlightJob (stream-append settings pushed now-ms))
+  appended)
 
 
 (defk spool-record-bodies [job bodies]
@@ -1716,14 +1743,23 @@
   "spool の batch を鍵の順に会話の記録の service へ送り、受理(と 409)で消す(段 9f lane 9f-2・outbox の送り)。拍の終わりに
    撃つので、送れている間は出来事を読んだ拍に送られる。送れなかった batch は残して backoff(judgment.record-flush-due)、
    この batch だけの決まった断り(400 / 422)は隔離して理由を名乗り後ろの batch へ進み、系の側の送れなさ(届かない・5xx・札)は
-   この拍の残りも撃たない(扱いは judgment.record-append-word-of の 1 点・段 9f lane 9f-8)。計器: 追記の結末
-   (agentd_record_append_total)・追いつきの差(agentd_record_lag_seq)・spool の深さ(agentd_record_spool_depth — 変わった時)。"
+   この拍の残りも撃たない(扱いは judgment.record-append-word-of の 1 点・段 9f lane 9f-8)。
+   1 拍に送る batch は settings.record-flush-max-batches が上限(R22 の追補)— 残りは spool に残して次の拍へ。
+   計器: 追記の結末(agentd_record_append_total)・追いつきの差(agentd_record_lag_seq)・spool の深さ
+   (agentd_record_spool_depth — 変わった時・**上限で切る前の深さ**)。"
   (<- listing RecordSpoolListing (RecordSpoolList))
   (for [name listing.unreadable]
     (<- (LogLine :text f"agentd: record spool file {name} is unreadable; left in place")))
   (setv remaining (+ (len listing.batches) (len listing.unreadable)))
   (setv failed False)
-  (for [batch listing.batches]
+  ;; 拍あたりの上限(ADR-DOE-AGENTS-012 R22 の追補・card acp:kanban-issue:ki-6eb745f6d528): 1 batch = 1 往復なので、
+  ;; 深い spool を 1 拍で全部回すと拍の周期を spool の深さが決める。上限の宣言は AgentdSettings の 1 点で、
+  ;; 残りは spool に残して次の拍へ(送れている間は backoff が無いので、次の拍がすぐ続きを送る)。
+  (setv sending (cut listing.batches 0 settings.record-flush-max-batches))
+  (when (> (len listing.batches) (len sending))
+    (<- (LogLine :text (+ f"agentd: record spool has {(len listing.batches)} batches; sending "
+                          f"{(len sending)} this tick (record_flush_max_batches) and carrying the rest"))))
+  (for [batch sending]
     (setv stream-id batch.stream.stream-id)
     (<- outcome (| RecordAppended RecordConflicted RecordUnsent) (RecordAppend :batch batch))
     (<- word str (record-append-word-of outcome))
@@ -1905,30 +1941,49 @@
   current)
 
 
-(defk stream-job [settings job view now-ms]
+(defk stream-job-fast [settings job view now-ms]
   {:pre [(: settings AgentdSettings) (: job InFlightJob) (: view SessionView) (: now-ms int)]
    :post [(: % InFlightJob)]}
-  "走っている 1 つの job の実況の拍: 材料(transcript / events)の追記 → frame(tui で
-   購読者が居れば)→ 購読の読み直し(止まっていれば)→ 札の延長。実況が終わった
-   (stream-gone)job は frame も読み直しも撃たない。headless(events)の器に pane は
-   無いので frame の capture は撃たない(実況は events の行そのもの)。"
+  "走っている 1 つの job の拍の **1 周目**: 材料(transcript / events)の追記を読んで frame を押す —
+   tui の器なら pane の断面(購読者が居れば)と購読の読み直し(止まっていれば)も。
+   ⚠ **store への書きは 1 つも撃たない**(R22 の追補)。実況が終わった(stream-gone)job は frame も
+   読み直しも撃たない。headless(events)の器に pane は無いので frame の capture は撃たない
+   (実況は events の行そのもの)。
+   時計はこの job で 1 度だけ読み、この拍にこの job が押す frame の at はすべてその読み
+   (拍の頭の 1 度の読みを全 job に貼ると、手番 20 本では最後の job の frame が 0.45 秒前を名乗る —
+   card acp:kanban-issue:ki-6eb745f6d528)。周期の判定は拍の 1 点の now-ms のまま。"
+  (<- at int (ClockNowMs))
   (<- canon str (FsCanonicalPath :path view.work-dir))
   (<- source tuple (stream-source-of view canon))
   (setv path (get source 1))
-  ;; 段 9p: 行を作れていない job は先に作り直す(周期は record_retry_seconds)— この拍の出来事が乗る先を用意する。
-  (<- current InFlightJob (ensure-turn-record settings job now-ms False))
+  (setv current job)
   (when (is-not path None)
-    (<- current InFlightJob (stream-records settings current (get source 0) path now-ms)))
-  ;; 段 10 lane 10n: 割り込みの約束(期限の判断・停止の合図・印の書き)— 材料を読んだ後の同じ拍。
-  (when (or current.interrupts-injected current.interrupt-marks-dirty)
-    (<- current InFlightJob (settle-interrupts current now-ms)))
+    (<- pushed InFlightJob (stream-push settings current (get source 0) path at))
+    (setv current pushed))
   (setv frames-possible (!= (get source 0) STREAM-SOURCE-EVENTS))
   (<- frame-due bool (due current.last-frame-ms now-ms settings.frame-interval-seconds))
   (when (and frames-possible current.capturing frame-due)
-    (<- current InFlightJob (capture-frame settings current now-ms)))
+    (<- captured InFlightJob (capture-frame settings current at))
+    (setv current captured))
   (<- probe-due bool (due current.last-probe-ms now-ms settings.subscriber-recheck-seconds))
   (when (and frames-possible (not current.capturing) (not current.stream-gone) probe-due)
-    (<- current InFlightJob (probe-subscribers settings current now-ms "running")))
+    (<- probed InFlightJob (probe-subscribers settings current at "running"))
+    (setv current probed))
+  current)
+
+
+(defk stream-job-slow [settings job now-ms]
+  {:pre [(: settings AgentdSettings) (: job InFlightJob) (: now-ms int)]
+   :post [(: % InFlightJob)]}
+  "走っている 1 つの job の拍の **2 周目**(遅い腕): turn-record の行の作り直し → この拍の出来事の
+   CAS 追記 → 割り込みの印 → 札の延長。ここから先の頭への往復は、**どの job の frame よりも後ろ**
+   (R22 の追補)。"
+  ;; 段 9p: 行を作れていない job は先に作り直す(周期は record_retry_seconds)— この拍の出来事が乗る先を用意する。
+  (<- current InFlightJob (ensure-turn-record settings job now-ms False))
+  (<- current InFlightJob (stream-append settings current now-ms))
+  ;; 段 10 lane 10n: 割り込みの約束(期限の判断・停止の合図・印の書き)— 材料を読んだ後の同じ拍。
+  (when (or current.interrupts-injected current.interrupt-marks-dirty)
+    (<- current InFlightJob (settle-interrupts current now-ms)))
   (<- renew bool (lease-renew-due current now-ms settings))
   (when (and renew (is-not current.lease-kind None) (is-not current.lease-account None))
     (<- lease (| LeaseGrant LeaseRefused)
@@ -2277,31 +2332,47 @@
   (or (is (get source 1) None) (> job.transcript-offset job.start-offset)))
 
 
-(defk observe-job [settings state job now-ms]
+(defk observe-job-fast [settings state job now-ms]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: job InFlightJob) (: now-ms int)]
-   :post [(: % AgentdState)]}
-  "走っている 1 つの job の拍: 器の眺め → 次の 1 手(純関数 1 点)。observe なら実況を回し、
-   その拍で実況が終わった(capture が gone)なら器を読み直して同じ拍で腕を決める。
-   record-end / turn-end / fail-missing は実況を撃たずに記録の腕へ(片付いた pane を
-   capture しない)。"
+   :post [(: % tuple)]}
+  "走っている 1 つの job の拍の **1 周目**: 器の眺め → 次の 1 手(純関数 1 点)。observe なら材料を
+   読んで frame を押すところまで(store へは書かない — 遅い腕は 2 周目)。その拍で実況が終わった
+   (capture が gone)なら器を読み直して腕を決め直す(器への RPC で、頭への書きではない)。
+   record-end / turn-end / fail-missing は実況を撃たない(片付いた pane を capture しない)。
+   戻り = #(state view step) —— 2 周目は同じ眺めで腕を撃つ(1 拍に器の眺めを 2 度読まない)。"
   (<- view (| SessionView None) (SessionGet :session-id job.session-id))
   (setv progressed True)
   (when (isinstance view SessionView)
     (<- moved bool (progressed-of job view))
     (setv progressed moved))
   (<- step str (job-step-of view job.turn-floor-ms progressed))
+  (setv seen-view view)
+  (setv seen-step step)
+  (setv current state)
+  (when (and (= step JOB-STEP-OBSERVE) (isinstance view SessionView))
+    (<- pushed InFlightJob (stream-job-fast settings job view now-ms))
+    (<- kept AgentdState (with-job state pushed))
+    (setv current kept)
+    (when (and pushed.stream-gone (not job.stream-gone))
+      (<- again (| SessionView None) (SessionGet :session-id job.session-id))
+      (<- step-again str (job-step-of again job.turn-floor-ms progressed))
+      (setv seen-view again)
+      (setv seen-step step-again)))
+  #(current seen-view seen-step))
+
+
+(defk observe-job-slow [settings state job view step now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: job InFlightJob)
+         (: view (| SessionView None)) (: step str) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "走っている 1 つの job の拍の **2 周目**(遅い腕): 1 周目が読んだ眺めと 1 手に従って撃つ。
+   observe なら記録の追記・割り込みの印・札の延長(stream-job-slow)、それ以外(実況が終わった・
+   手番が終わった・器が居ない)は記録の腕(settle-known)。"
   (if (and (= step JOB-STEP-OBSERVE) (isinstance view SessionView))
       (do
-        (<- current InFlightJob (stream-job settings job view now-ms))
-        (if (and current.stream-gone (not job.stream-gone))
-            (do
-              (<- again (| SessionView None) (SessionGet :session-id job.session-id))
-              (<- step-again str (job-step-of again job.turn-floor-ms progressed))
-              (<- settled AgentdState (settle-known settings state current again step-again now-ms))
-              settled)
-            (do
-              (<- kept AgentdState (with-job state current))
-              kept)))
+        (<- current InFlightJob (stream-job-slow settings job now-ms))
+        (<- kept AgentdState (with-job state current))
+        kept)
       (do
         (<- settled AgentdState (settle-known settings state job view step now-ms))
         settled)))
@@ -3459,11 +3530,25 @@
   "1 拍: watch を待つ → 参加の heartbeat → profile の残量の観測(遅い周期)→ 結ばれた job の受け →
    走っている job への割り込みの配達(段 8 lane 4x)→ 走っている job の観測。腕は互いの I/O の失敗で
    止まらない(R9): 失敗は log して次の周期 / 次の拍へ持ち越す(heartbeat・観測・受けは周期の刻印を
-   進めて洪水を避ける)。I/O より広い例外(bug)は捕まえない。"
+   進めて洪水を避ける)。I/O より広い例外(bug)は捕まえない。
+
+   拍は終わりに **1 行だけ**名乗る(計器 agentd_tick_ms・card acp:kanban-issue:ki-6eb745f6d528):
+   総所要(total)と腕ごとの内訳(ms)と、その拍に同時に持っていた手番の数(jobs)。ACP 側の
+   acp_stream_push_interval_seconds は粒が粗かったことは言えても**どの腕が**遅かったかは言えないので、
+   26 秒の拍が来た日にそれが往復なのか機体の CPU なのか記録の service なのかをこの 1 行が分ける。
+   腕の名は effects.TICK-ARMS の 1 点・欄の集合は effects.TICK-LINE-FIELDS の 1 点で、**腕の和は
+   総所要に等しい**(名の付いていない仕事を拍の中に残さない)。"
+  (<- tick-start int (ClockNowMs))
   (<- wait float (wait-seconds-for state settings))
   (<- signal WatchAdvance (AcpWatchSse :since state.since :wait-seconds wait))
   (<- now-ms int (ClockNowMs))
   (setv #^ AgentdState current (replace state :since signal.sequence))
+  ;; 拍の 1 行(計器 agentd_tick_ms・card acp:kanban-issue:ki-6eb745f6d528)の材料。腕の名は
+  ;; effects.TICK-ARMS の 1 点で、時計は**腕の切れ目ごとに 1 度**読んで印(mark)を進める。走らなかった
+  ;; 腕は 0(欄は毎拍そろえる — 読み手が欄の在否を数えない)。
+  (setv #^ dict arms (dict (lfor name TICK-ARMS #(name 0))))
+  (setv (get arms "watch") (- now-ms tick-start))
+  (setv #^ int mark now-ms)
   (<- heartbeat bool (due current.last-heartbeat-ms now-ms settings.node-heartbeat-seconds))
   (when heartbeat
     (try
@@ -3472,6 +3557,9 @@
       (except [e IO-FAILURES]
         (<- (LogLine :text f"agentd: heartbeat failed: {(. (type e) __name__)}: {e}"))
         (setv current (replace current :last-heartbeat-ms now-ms)))))
+  (<- arm-ms int (ClockNowMs))
+  (setv (get arms "heartbeat") (- arm-ms mark))
+  (setv mark arm-ms)
   (<- profiles-due bool (due current.last-profile-observed-ms now-ms settings.profile-observe-seconds))
   (when profiles-due
     (try
@@ -3480,6 +3568,9 @@
       (except [e IO-FAILURES]
         (<- (LogLine :text f"agentd: profile observation failed: {(. (type e) __name__)}: {e}"))
         (setv current (replace current :last-profile-observed-ms now-ms)))))
+  (<- arm-ms int (ClockNowMs))
+  (setv (get arms "profiles") (- arm-ms mark))
+  (setv mark arm-ms)
   (<- mode str (list-mode-for signal current now-ms settings))
   (when (!= mode LIST-MODE-NONE)
     (try
@@ -3488,6 +3579,9 @@
       (except [e IO-FAILURES]
         (<- (LogLine :text f"agentd: receive failed: {(. (type e) __name__)}: {e}"))
         (setv current (replace current :last-resync-ms now-ms)))))
+  (<- arm-ms int (ClockNowMs))
+  (setv (get arms "receive") (- arm-ms mark))
+  (setv mark arm-ms)
   ;; 段 12(agora-redesign #537 便 1): 走っている turn-record の終状態の巡回(遅い周期・memory なし)。受けの後に撃つので、
   ;; この拍に claim / 拾い直した手番は memory に居る = 巡回の相手にならない。I/O の失敗でも刻印は進める(洪水を避ける)。
   (<- sweep-due bool (due current.last-turn-record-sweep-ms now-ms settings.turn-record-sweep-seconds))
@@ -3498,6 +3592,9 @@
       (except [e IO-FAILURES]
         (<- (LogLine :text f"agentd: turn-record sweep failed: {(. (type e) __name__)}: {e}"))
         (setv current (replace current :last-turn-record-sweep-ms now-ms)))))
+  (<- arm-ms int (ClockNowMs))
+  (setv (get arms "sweep") (- arm-ms mark))
+  (setv mark arm-ms)
   ;; 段 8 lane 4x: 走っている自分の job に載った割り込みを器へ — 毎拍・行の cache から(level-
   ;; triggered: 器が断った id は cache に残り、次の拍が同じ id で撃ち直す。受けの拍でなくてもよい)。
   (try
@@ -3505,6 +3602,9 @@
     (setv current interrupted)
     (except [e IO-FAILURES]
       (<- (LogLine :text f"agentd: interrupt delivery failed: {(. (type e) __name__)}: {e}"))))
+  (<- arm-ms int (ClockNowMs))
+  (setv (get arms "interrupts") (- arm-ms mark))
+  (setv mark arm-ms)
   ;; 段 12 lane 12j(agora-redesign #367): 取り消しの合図(spec.cancel)の 3 段 — 毎拍・行の cache から(猶予の期限は行が
   ;; 変わらなくても来る)。強制で閉じた job はこの拍の観測に乗らない。
   (try
@@ -3512,6 +3612,9 @@
     (setv current cancelled)
     (except [e IO-FAILURES]
       (<- (LogLine :text f"agentd: cancel handling failed: {(. (type e) __name__)}: {e}"))))
+  (<- arm-ms int (ClockNowMs))
+  (setv (get arms "cancel") (- arm-ms mark))
+  (setv mark arm-ms)
   ;; 段 12 lane 12j(agora-redesign #402): 着かなかった Ended の書き直し — 毎拍・行を読み直して(監督が Pending / Bound に置き直した
   ;; 行にも)書く。着けば忘れる・別の session が走らせていれば忘れる。
   (when current.unrecorded-ends
@@ -3520,12 +3623,38 @@
       (setv current recorded-ends)
       (except [e IO-FAILURES]
         (<- (LogLine :text f"agentd: carried Ended re-write failed: {(. (type e) __name__)}: {e}")))))
+  (<- arm-ms int (ClockNowMs))
+  (setv (get arms "ends") (- arm-ms mark))
+  (setv mark arm-ms)
+  ;; 拍は 2 段(ADR-DOE-AGENTS-012 R22 の追補・card acp:kanban-issue:ki-6eb745f6d528)。
+  ;; 1 周目 = 全 job の「材料を読む + frame を押す」だけ(store へは 1 bit も書かない)。直列の 1 周に
+  ;; 追記の CAS を混ぜると、job k の生の frame が job k−1 の頭への 1 往復の後ろに並ぶ —— 手番 20 本の
+  ;; agentd で同じ拍の中の job 間のずれ p50 0.453 秒(max 1.432)。
+  (setv seen [])
   (for [job (list current.jobs)]
     (try
-      (<- observed AgentdState (observe-job settings current job now-ms))
-      (setv current observed)
+      (<- pushed tuple (observe-job-fast settings current job now-ms))
+      (setv current (get pushed 0))
+      (.append seen #(job.job-id (get pushed 1) (get pushed 2)))
       (except [e IO-FAILURES]
-        (<- (LogLine :text f"agentd: job {job.job-id} tick failed: {(. (type e) __name__)}: {e}")))))
+        (<- (LogLine :text f"agentd: job {job.job-id} live tail failed: {(. (type e) __name__)}: {e}")))))
+  (<- arm-ms int (ClockNowMs))
+  (setv (get arms "jobs-fast") (- arm-ms mark))
+  (setv mark arm-ms)
+  ;; 2 周目 = 遅い腕(turn-record の CAS 追記・割り込みの印・札の延長・手番の終わりの記録)。
+  ;; 1 周目で閉じた job は memory に居ないので飛ばす(judgment.job-in-flight が None を返す)。
+  (for [entry seen]
+    (setv job-id (get entry 0))
+    (<- slow (| InFlightJob None) (job-in-flight current job-id))
+    (when (is-not slow None)
+      (try
+        (<- observed AgentdState (observe-job-slow settings current slow (get entry 1) (get entry 2) now-ms))
+        (setv current observed)
+        (except [e IO-FAILURES]
+          (<- (LogLine :text f"agentd: job {job-id} tick failed: {(. (type e) __name__)}: {e}"))))))
+  (<- arm-ms int (ClockNowMs))
+  (setv (get arms "jobs-slow") (- arm-ms mark))
+  (setv mark arm-ms)
   ;; 段 12 lane 12a: 走らせている verify の命令の観測(行と file から毎拍 — 器の眺めは無い)。
   (for [command (list current.commands)]
     (try
@@ -3533,6 +3662,9 @@
       (setv current observed-command)
       (except [e IO-FAILURES]
         (<- (LogLine :text f"agentd: verify job {command.job-id} tick failed: {(. (type e) __name__)}: {e}")))))
+  (<- arm-ms int (ClockNowMs))
+  (setv (get arms "commands") (- arm-ms mark))
+  (setv mark arm-ms)
   ;; 段 12 lane 12j: 走らせている summarize(会話の履歴の段階つき要約)の観測 — 区間ごとの process を行と file から毎拍。
   (for [command (list current.summaries)]
     (try
@@ -3540,6 +3672,9 @@
       (setv current observed-summary)
       (except [e IO-FAILURES]
         (<- (LogLine :text f"agentd: summarize job {command.job-id} tick failed: {(. (type e) __name__)}: {e}")))))
+  (<- arm-ms int (ClockNowMs))
+  (setv (get arms "summaries") (- arm-ms mark))
+  (setv mark arm-ms)
   ;; 段 9f lane 9f-2: この拍で spool に置いた本文(と前の拍に送れなかった残り)を会話の記録の service へ — 拍の終わりの 1 点。
   (when settings.record-enabled
     (<- flush bool (record-flush-due current now-ms settings))
@@ -3550,4 +3685,11 @@
         (except [e IO-FAILURES]
           (<- (LogLine :text f"agentd: record flush failed: {(. (type e) __name__)}: {e}"))
           (setv current (replace current :record-backoff-ms now-ms))))))
+  (<- tick-end int (ClockNowMs))
+  (setv (get arms "flush") (- tick-end mark))
+  ;; 欄の集合の宣言は effects.TICK-LINE-FIELDS の 1 点(検が production と突き合わせる)。
+  (setv #^ dict fields {"metric" METRIC-TICK-MS "node" settings.node-name
+                        "total" (- tick-end tick-start) "jobs" (len current.jobs)})
+  (.update fields arms)
+  (<- (MetricLine :fields fields))
   current)

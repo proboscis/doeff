@@ -42,13 +42,11 @@ import sys
 import tempfile
 import threading
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from http.client import HTTPResponse
+from http.client import HTTPConnection, HTTPException, HTTPResponse, HTTPSConnection
 from typing import TypeAlias
 
 from doeff import EffectBase, K, Pass, Resume
@@ -62,6 +60,7 @@ from doeff_agents.sessionhost.acp.effects import (
     OWNERSHIP_PROOF_GCE_PREFIX,
     RECORD_PAGE_MAX_LIMIT,
     RECORD_SPOOL_GIVEN_UP_DIR,
+    STREAM_SOURCE_HEADER,
     TURN_RECORD_CONVERSATION_FIELD,
     SUMMARY_KIND,
     SUMMARY_SPEC_CONVERSATION_KEY,
@@ -373,7 +372,138 @@ class HttpReply:
     body: JSONObject
 
 
+@dataclass(frozen=True)
+class HttpRaw:
+    """生の応答。status 0 = 届かなかった(error に理由・body は空)。"""
+
+    status: int
+    body: bytes
+    error: str
+
+
+#: 接続の宛先(scheme, host, port)— 保つ単位はこれ 1 つ。
+HttpHost: TypeAlias = "tuple[str, str, int]"
+
+
+def _split_url(url: str) -> tuple[HttpHost, str]:
+    """URL を宛先(scheme, host, port)と要求行の target に割る。"""
+    parts = urllib.parse.urlsplit(url)
+    host = parts.hostname or ""
+    port = parts.port if parts.port is not None else (443 if parts.scheme == "https" else 80)
+    target = parts.path or "/"
+    if parts.query:
+        target = f"{target}?{parts.query}"
+    return (parts.scheme, host, port), target
+
+
+def _new_connection(host: HttpHost, timeout: float) -> HTTPConnection:
+    scheme, name, port = host
+    if scheme == "https":
+        return HTTPSConnection(name, port, timeout=timeout)
+    return HTTPConnection(name, port, timeout=timeout)
+
+
+class HttpConnections:
+    """外向きの HTTP の口 — **host ごとに 1 本の接続を保つ**(ADR-DOE-AGENTS-012 R22 の追補・card
+    acp:kanban-issue:ki-6eb745f6d528)。
+
+    呼び毎に TCP を張り直すと、**1 発ごとに名前を引き直す**(getaddrinfo)。この宿は resolv.conf が
+    ``options ndots:5`` + search 4 つで、点で終わらない綴り(`…svc.cluster.local` は 4 dots < 5)は
+    探索の列を歩く —— 依頼者の実射(2026-09-19・同じ宿・同じ港・同じ路・n=9・中央値): 点なしは
+    名引き 23.61 ms / 全体 25.20 ms(**全体の 94 % が名引き**・server 側の処理は 0.17 ms)、点ありは
+    3.90 / 5.64 ms、ClusterIP の数字なら 0.02 / 1.46 ms。保った接続は名引きを**接続 1 本につき 1 度**に
+    畳むので、綴りに関わらず 1 発 0.46 ms(n=40・p50)—— 1 拍 約 35 往復で 0.882 秒 → 0.016 秒。
+    保った接続は相手の idle timeout で先に閉じていることがあるので、**使い回した接続が落ちた時だけ**
+    1 度張り直す(新しく張った接続の失敗は本物の失敗 — POST を二度撃たない)。
+
+    ⚠ 保つのは **host ごとに 1 本**で、同じ宛先を 2 つの thread が同時に使った拍は後から来た方が
+    その場で接続を張る = **名引き + 握手を払い直す**(実射の「初回」: 点なし 46.26 ms / 点あり
+    15.28 ms / ClusterIP 31.81 ms)。今日その値段を払う口は 1 つも無い —— この process の 4 つの thread は
+    ``sessionhost-agentd``(拍。``runtime.real_dispatchers`` の口を独りで使う)/
+    ``sessionhost-agentd-heartbeat``(``runtime.heartbeat_dispatchers`` の**別の** AcpHttp)/
+    ``agentd-watch``(長く開いたままの SSE 1 本で、この口には載せない — WatchReader._loop の註)/
+    ``agentd-session-wake``(器の unix socket の ``session.wait_events`` — HTTP を 1 発も撃たない)で、
+    1 つの HttpConnections を 2 つの thread が共有しない。``_keep`` の押し出しはその日の備えで、
+    上の値段がその拍の代価。"""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._held: dict[HttpHost, HTTPConnection] = {}
+
+    def request(
+        self,
+        method: str,
+        url: str,
+        headers: Mapping[str, str],
+        body: bytes | None,
+        timeout: float,
+    ) -> HttpRaw:
+        host, target = _split_url(url)
+        sent = dict(headers)
+        if body is not None:
+            sent["Content-Type"] = "application/json"
+        failure = ""
+        for _attempt in (0, 1):
+            connection, reused = self._checkout(host, timeout)
+            try:
+                connection.request(method, target, body=body, headers=sent)
+                response = connection.getresponse()
+                raw = response.read()
+                status = int(response.status)
+                will_close = response.will_close
+            except (OSError, TimeoutError, HTTPException) as error:
+                connection.close()
+                failure = str(error)
+                if reused:
+                    continue
+                return HttpRaw(0, b"", failure)
+            if will_close:
+                connection.close()
+            else:
+                self._keep(host, connection)
+            return HttpRaw(status, raw, "")
+        return HttpRaw(0, b"", failure)
+
+    def close(self) -> None:
+        with self._lock:
+            held = tuple(self._held.values())
+            self._held.clear()
+        for connection in held:
+            connection.close()
+
+    def _checkout(self, host: HttpHost, timeout: float) -> tuple[HTTPConnection, bool]:
+        with self._lock:
+            connection = self._held.pop(host, None)
+        if connection is not None:
+            connection.timeout = timeout
+            return connection, True
+        return _new_connection(host, timeout), False
+
+    def _keep(self, host: HttpHost, connection: HTTPConnection) -> None:
+        with self._lock:
+            displaced = self._held.get(host)
+            self._held[host] = connection
+        if displaced is not None and displaced is not connection:
+            # 同じ宛先を 2 つの thread が同時に使った拍 — 後から戻った 1 本だけを保つ。
+            displaced.close()
+
+
+def _http_once(method: str, url: str, headers: Mapping[str, str], timeout: float) -> HttpRaw:
+    """1 度きりの要求(起動の拍の 1 回・接続は保たない)。"""
+    host, target = _split_url(url)
+    connection = _new_connection(host, timeout)
+    try:
+        connection.request(method, target, headers=dict(headers))
+        response = connection.getresponse()
+        return HttpRaw(int(response.status), response.read(), "")
+    except (OSError, TimeoutError, HTTPException) as error:
+        return HttpRaw(0, b"", str(error))
+    finally:
+        connection.close()
+
+
 def _http_json(
+    connections: HttpConnections,
     method: str,
     url: str,
     headers: Mapping[str, str],
@@ -382,20 +512,10 @@ def _http_json(
 ) -> HttpReply:
     """JSON の要求 → JSON の応答(HTTP の断りも HttpReply — 到達不能だけ 0)。"""
     data = None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
-    request = urllib.request.Request(url, data=data, method=method)
-    for name, value in headers.items():
-        request.add_header(name, value)
-    if data is not None:
-        request.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw = response.read()
-            return HttpReply(int(response.status), _as_object(_loads(raw)))
-    except urllib.error.HTTPError as error:
-        raw = error.read()
-        return HttpReply(int(error.code), _as_object(_loads(raw)))
-    except (urllib.error.URLError, OSError, TimeoutError) as error:
-        return HttpReply(0, {"error": f"unreachable: {error}"})
+    raw = connections.request(method, url, headers, data, timeout)
+    if raw.status == 0:
+        return HttpReply(0, {"error": f"unreachable: {raw.error}"})
+    return HttpReply(raw.status, _as_object(_loads(raw.body)))
 
 
 def _error_text(reply: HttpReply) -> str:
@@ -490,19 +610,22 @@ class WatchReader:
         return WatchAdvance(kind="idle", sequence=since)
 
     def _loop(self) -> None:
+        # watch は長く開いたままの 1 本(拍ごとの往復ではない)なので、保つ口(HttpConnections)には
+        # 載せない — この読み手が自分の接続を持ち、閉じたら張り直す。
         while not self._stop.is_set():
-            url = f"{self._base_url}/api/watch/stream?since={self._since}"
-            request = urllib.request.Request(url, method="GET")
-            for name, value in self._headers.items():
-                request.add_header(name, value)
-            request.add_header("Accept", "text/event-stream")
+            host, target = _split_url(
+                f"{self._base_url}/api/watch/stream?since={self._since}"
+            )
+            connection = _new_connection(host, WATCH_READ_TIMEOUT_SECONDS)
             try:
-                with urllib.request.urlopen(
-                    request, timeout=WATCH_READ_TIMEOUT_SECONDS
-                ) as response:
-                    self._read_stream(response)
-            except (urllib.error.URLError, OSError, TimeoutError):
+                connection.request(
+                    "GET", target, headers={**self._headers, "Accept": "text/event-stream"}
+                )
+                self._read_stream(connection.getresponse())
+            except (OSError, TimeoutError, HTTPException):
                 pass
+            finally:
+                connection.close()
             if self._stop.is_set():
                 return
             self._frames.put(_Frame("closed", self._since))
@@ -629,13 +752,21 @@ class AcpHttp:
     """ACP の資源の読み書き・watch・中継の push。bearer は名簿の agentd の札。``wakes`` が在れば watch の frame を
     その列に載せる(器の出来事の合図と共有 — 段 12 lane 12b)。"""
 
-    def __init__(self, base_url: str, token: str | None, wakes: WakeQueue | None = None) -> None:
+    def __init__(
+        self, base_url: str, token: str | None, wakes: WakeQueue | None = None, node: str = ""
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._headers: dict[str, str] = {}
         if token:
             self._headers["Authorization"] = f"Bearer {token}"
         self._watch: WatchReader | None = None
         self._wakes = wakes
+        #: この機体の名 — 実況の push だけがこれを header で名乗る(綴りは effects.STREAM_SOURCE_HEADER の
+        #: 1 点)。空 = 名乗らない(名を知らない口で撃つ検体・借りの口)。読み書きの札とは別の欄で、
+        #: 身元の証明ではない(engine 側は label の値として丸めるだけ — cardinality の門は engine が持つ)。
+        self._node = node.strip()
+        #: 拍ごとの読み書きは host ごとに保った 1 本で撃つ(R22 の追補)。
+        self._http = HttpConnections()
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(effect, AcpRunningTurnRecords):
@@ -694,6 +825,7 @@ class AcpHttp:
     def close(self) -> None:
         if self._watch is not None:
             self._watch.stop()
+        self._http.close()
 
     def _conversation_mail(self, conversation_id: str) -> tuple[AcpRow, ...]:
         """会話の郵便(段 10 lane 10ba): spec の MESSAGE_CONVERSATION_FIELDS の欄ごとに ACP の field selector で 1 回ずつ
@@ -710,15 +842,12 @@ class AcpHttp:
         if field_selector is not None:
             query = f"{query}&fieldSelector={urllib.parse.quote(field_selector, safe='')}"
         url = f"{self._base_url}/api/resources?{query}"
-        request = urllib.request.Request(url, method="GET")
-        for name, value in self._headers.items():
-            request.add_header(name, value)
-        try:
-            with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
-                listed = _loads(response.read())
-        except (urllib.error.URLError, OSError, TimeoutError) as error:
+        raw = self._http.request("GET", url, self._headers, None, HTTP_TIMEOUT_SECONDS)
+        if raw.status != 200:
             narrowed = "" if field_selector is None else f" ({field_selector})"
-            raise RuntimeError(f"agentd: ACP list of {kind}{narrowed} failed: {error}") from error
+            detail = raw.error if raw.status == 0 else f"HTTP {raw.status}"
+            raise RuntimeError(f"agentd: ACP list of {kind}{narrowed} failed: {detail}")
+        listed = _loads(raw.body)
         if not isinstance(listed, list):
             return ()
         decoded = [decode_row(item) for item in listed]
@@ -726,6 +855,7 @@ class AcpHttp:
 
     def _row(self, key: str) -> AcpRow | None:
         reply = _http_json(
+            self._http,
             "GET",
             f"{self._base_url}/api/resources/{urllib.parse.quote(key, safe='')}",
             self._headers,
@@ -744,6 +874,7 @@ class AcpHttp:
         """変わった行だけ(cursor-only の窓)。409(cursor が retention の床の下)と到達不能は
         complete = False(呼び手は全量 list に落ちる)、それ以外の断りは RuntimeError(tick の縁)。"""
         reply = _http_json(
+            self._http,
             "GET",
             f"{self._base_url}/api/event-window?after={after}&limit={limit}",
             self._headers,
@@ -766,7 +897,7 @@ class AcpHttp:
             else {**self._headers, DECLARATION_FINGERPRINT_HEADER: declaration_sha256}
         )
         reply = _http_json(
-            "POST", f"{self._base_url}/api/events", headers, body, HTTP_TIMEOUT_SECONDS
+            self._http, "POST", f"{self._base_url}/api/events", headers, body, HTTP_TIMEOUT_SECONDS
         )
         if reply.status == 200:
             event_id = _str_field(reply.body, "eventId")
@@ -876,8 +1007,13 @@ class AcpHttp:
             f"{self._base_url}/api/streams/"
             f"{urllib.parse.quote(owner, safe='')}/{urllib.parse.quote(name, safe='')}"
         )
+        # card acp:kanban-issue:ki-6eb745f6d528: 押す拍だけが「どの機体が押したか」を名乗る(読み書きには
+        # 付けない — 要る問いは「実況の粒がどの機体で粗いか」1 つ)。
+        headers = dict(self._headers)
+        if self._node:
+            headers[STREAM_SOURCE_HEADER] = self._node
         reply = _http_json(
-            "POST", url, self._headers, {"frames": list(frames)}, HTTP_TIMEOUT_SECONDS
+            self._http, "POST", url, headers, {"frames": list(frames)}, HTTP_TIMEOUT_SECONDS
         )
         if reply.status != 200:
             return Refused(reply.status, _error_text(reply))
@@ -900,6 +1036,8 @@ class CustodyHttp:
         self._borrower_key = borrower_key
         #: token の file は要求ごとに読む(kubelet が projected の token を回すので、起動時の値を持ち続けない)。
         self._service_account_token_file = service_account_token_file
+        #: 預かり所も host ごとに 1 本の接続を保つ(R22 の追補 — 札の借り直しは拍の中の往復)。
+        self._http = HttpConnections()
 
     def _identity_headers(self) -> dict[str, str] | LeaseRefused:
         """要求に載せる身元の header。SA token の file を宣言したのに読めない拍は断り(名乗らずに撃って
@@ -932,7 +1070,7 @@ class CustodyHttp:
             # 届かない / 200 でない拍は None(判断は持たない — 判じるのは judgment の 1 点)。
             if not self._base_url:
                 return Resume(k, None)
-            reply = _http_json("GET", f"{self._base_url}/health", {}, None, HTTP_TIMEOUT_SECONDS)
+            reply = _http_json(self._http, "GET", f"{self._base_url}/health", {}, None, HTTP_TIMEOUT_SECONDS)
             return Resume(k, reply.body if reply.status == 200 else None)
         if isinstance(effect, CustodyLeaseBorrow):
             return Resume(k, self._borrow(effect))
@@ -948,6 +1086,7 @@ class CustodyHttp:
         if isinstance(headers, LeaseRefused):
             return False
         reply = _http_json(
+            self._http,
             "POST",
             f"{self._base_url}/lease/{lease_id}/revoke",
             headers,
@@ -967,6 +1106,7 @@ class CustodyHttp:
         if isinstance(headers, LeaseRefused):
             return headers
         reply = _http_json(
+            self._http,
             "POST",
             f"{self._base_url}/lease/{effect.kind}",
             headers,
@@ -988,6 +1128,7 @@ class CustodyHttp:
                 None,
             )
         redeemed = _http_json(
+            self._http,
             "POST",
             f"{worker_url.rstrip('/')}/redeem",
             headers,
@@ -1702,18 +1843,16 @@ def probe_ownership(proof: str) -> ProbeAnswer:
         return ProbeAnswer(value=_read_text_stripped(parts[0]))
     if not proof.startswith(OWNERSHIP_PROOF_GCE_PREFIX):
         return ProbeAnswer(value=None)
-    request = urllib.request.Request(GCE_METADATA_PROJECT_URL, method="GET")
-    request.add_header(*GCE_METADATA_HEADER)
-    try:
-        with urllib.request.urlopen(request, timeout=GCE_METADATA_TIMEOUT_SECONDS) as response:
-            raw = response.read()
-            status = int(response.status)
-    except (urllib.error.URLError, OSError, TimeoutError):
-        # HTTPError は URLError の子 — 2xx でない答えも「読めない」(値を発明しない)。
+    answer = _http_once(
+        "GET",
+        GCE_METADATA_PROJECT_URL,
+        dict([GCE_METADATA_HEADER]),
+        GCE_METADATA_TIMEOUT_SECONDS,
+    )
+    # 届かない答えも 2xx でない答えも「読めない」(値を発明しない)。
+    if answer.status < 200 or answer.status >= 300:
         return ProbeAnswer(value=None)
-    if status < 200 or status >= 300:
-        return ProbeAnswer(value=None)
-    text = raw.decode("utf-8", errors="replace").strip()
+    text = answer.body.decode("utf-8", errors="replace").strip()
     return ProbeAnswer(value=text or None)
 
 
@@ -1870,6 +2009,8 @@ class RecordHttp:
     def __init__(self, base_url: str, token: str) -> None:
         self._base_url = base_url.rstrip("/")
         self._headers: dict[str, str] = {"Authorization": f"Bearer {token}"}
+        #: 記録の service も host ごとに 1 本の接続を保つ(R22 の追補 — 拍の終わりの flush は連続の往復)。
+        self._http = HttpConnections()
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(effect, RecordAppend):
@@ -1887,7 +2028,7 @@ class RecordHttp:
         stream_id = urllib.parse.quote(batch.stream.stream_id, safe="")
         url = f"{self._base_url}/v1/conversations/{cid}/streams/{stream_id}/events"
         reply = _http_json(
-            "POST", url, self._headers, record_append_body(batch), RECORD_HTTP_TIMEOUT_SECONDS
+            self._http, "POST", url, self._headers, record_append_body(batch), RECORD_HTTP_TIMEOUT_SECONDS
         )
         return decode_record_reply(reply)
 
@@ -1897,7 +2038,7 @@ class RecordHttp:
             {"before": "latest" if before is None else str(before), "limit": str(limit)}
         )
         url = f"{self._base_url}/v1/conversations/{cid}/events?{query}"
-        reply = _http_json("GET", url, self._headers, None, RECORD_HTTP_TIMEOUT_SECONDS)
+        reply = _http_json(self._http, "GET", url, self._headers, None, RECORD_HTTP_TIMEOUT_SECONDS)
         return decode_record_page(reply)
 
     def _read_since(self, conversation_id: str, since: int, limit: int, kinds: tuple[str, ...]) -> RecordReadOutcome:
@@ -1908,7 +2049,7 @@ class RecordHttp:
             fields["kinds"] = ",".join(kinds)
         query = urllib.parse.urlencode(fields)
         url = f"{self._base_url}/v1/conversations/{cid}/events?{query}"
-        reply = _http_json("GET", url, self._headers, None, RECORD_HTTP_TIMEOUT_SECONDS)
+        reply = _http_json(self._http, "GET", url, self._headers, None, RECORD_HTTP_TIMEOUT_SECONDS)
         return decode_record_page(reply)
 
     def _read_stream(self, conversation_id: str, stream_id: str) -> RecordReadOutcome:
@@ -1917,7 +2058,7 @@ class RecordHttp:
         stream = urllib.parse.quote(stream_id, safe="")
         query = urllib.parse.urlencode({"since": "0", "limit": str(RECORD_PAGE_MAX_LIMIT)})
         url = f"{self._base_url}/v1/conversations/{cid}/streams/{stream}/events?{query}"
-        reply = _http_json("GET", url, self._headers, None, RECORD_HTTP_TIMEOUT_SECONDS)
+        reply = _http_json(self._http, "GET", url, self._headers, None, RECORD_HTTP_TIMEOUT_SECONDS)
         return decode_record_page(reply)
 
 
