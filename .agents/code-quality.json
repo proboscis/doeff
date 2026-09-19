@@ -20,6 +20,7 @@
     "packages/doeff-agents/src/doeff_agents/sessionhost/usage.py",
     "packages/doeff-agents/tests/test_sessionhost_usage.py",
     "packages/doeff-agents/tests/test_sessionhost_acp.py",
+    "packages/doeff-agents/tests/test_sessionhost_acp_ended_cause.py",
     "packages/doeff-agents/tests/sessionhost_acp_profile_deftests.hy",
     "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy",
     "packages/doeff-agents/tests/sessionhost_acp_rehydrate_deftests.hy",
@@ -296,6 +297,7 @@
       "name": "agentd-tests",
       "paths": [
         "packages/doeff-agents/tests/test_sessionhost_acp.py",
+        "packages/doeff-agents/tests/test_sessionhost_acp_ended_cause.py",
         "packages/doeff-agents/tests/sessionhost_acp_profile_deftests.hy",
         "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy",
         "packages/doeff-agents/tests/sessionhost_acp_rehydrate_deftests.hy",
@@ -303,7 +305,7 @@
         "packages/doeff-agents/tests/sessionhost_acp_live_poll_deftests.hy",
         "packages/doeff-agents/tests/sessionhost_acp_record_deftests.hy"
       ],
-      "responsibility": "agentd の焦点の検(fake の handler の e2e・判断の純関数・弁)と、profile の残量の観測の deftest(段 7 lane 7d-3)と、手番の出来事の耐久化の deftest(段 8 lane 4u・agora-redesign #49)と、実況の push の周期(購読者が居る間の events の読み ≤ 50 ms)の deftest(段 8 lane 4aa・agora-redesign #63)。収集の wrapper test_sessionhost_acp_profile.py / test_sessionhost_acp_turn_events.py / test_sessionhost_acp_live_poll.py は他の *_deftests.hy の wrapper と同じ足場で契約の外。自己圧縮(会話の宣言 compactAt と直前の手番の文脈の実測)の deftest sessionhost_acp_compact_deftests.hy(段 10f 便 2・agora-redesign #82)— wrapper test_sessionhost_acp_compact.py は同じ足場で契約の外",
+      "responsibility": "agentd の焦点の検(fake の handler の e2e・判断の純関数・弁)と、profile の残量の観測の deftest(段 7 lane 7d-3)と、手番の出来事の耐久化の deftest(段 8 lane 4u・agora-redesign #49)と、実況の push の周期(購読者が居る間の events の読み ≤ 50 ms)の deftest(段 8 lane 4aa・agora-redesign #63)。収集の wrapper test_sessionhost_acp_profile.py / test_sessionhost_acp_turn_events.py / test_sessionhost_acp_live_poll.py は他の *_deftests.hy の wrapper と同じ足場で契約の外。自己圧縮(会話の宣言 compactAt と直前の手番の文脈の実測)の deftest sessionhost_acp_compact_deftests.hy(段 10f 便 2・agora-redesign #82)— wrapper test_sessionhost_acp_compact.py は同じ足場で契約の外。器の終端の cause(場面ごとの category / reason)の焦点の検 test_sessionhost_acp_ended_cause.py は同じ World を借りるので同じ module",
       "layer": "runtime",
       "public": [],
       "allow": [
@@ -314,6 +316,7 @@
         "agentd-handlers",
         "agentd-runtime",
         "agentd-valve",
+        "agentd-client",
         "sessionhost-attachment"
       ],
       "typed": true

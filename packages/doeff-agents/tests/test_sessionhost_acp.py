@@ -14,7 +14,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, get_args
+from typing import NamedTuple, NoReturn, get_args
 
 import hy  # noqa: F401  # registers the .hy importer
 import pytest
@@ -27,6 +27,7 @@ from doeff_agents.sessionhost.acp.effects import (
     AGORA_KINDS_NAMESPACE,
     AcpRow,
     AgentdSettings,
+    AgentdState,
     CLAUDE_OAUTH_TOKEN_ENV,
     CONDITION_CREDENTIAL_PLACE_MISMATCH,
     CONDITION_PLACE_MISMATCH,
@@ -169,7 +170,7 @@ class World:
         self.custody = FakeCustody(tokens={"acct": TOKEN})
         self.sessions = FakeSessions()
         self.local = FakeLocal(now_ms=1_000)
-        self.state = initial_state()
+        self._mut_state = initial_state()
         self.acp.put_row(
             row(
                 AGORA_KINDS_NAMESPACE,
@@ -180,13 +181,36 @@ class World:
             )
         )
 
+    @property
+    def state(self) -> AgentdState:
+        """いまの状態(読み取り専用 — 書くのは World の操作 tick / restart / close_for_stop /
+        carry_unrecorded_ends だけ。本番も状態の書き手は loop の thread 1 つ)。"""
+        return self._mut_state
+
     def tick(self, advance_ms: int = 0) -> None:
         self.local.now_ms += advance_ms
-        self.state = run_tick(
+        self._mut_state = run_tick(
             self.settings,
-            self.state,
+            self._mut_state,
             [self.acp.dispatch, self.custody.dispatch, self.sessions.dispatch, self.local.dispatch],
         )
+
+    def restart(self) -> None:
+        """agentd の再起動(process の memory を捨てて生まれの状態から始める)。"""
+        self._mut_state = initial_state()
+
+    def close_for_stop(self, signal_name: str) -> None:
+        """agentd の停止の拍(排水の期限で手番を閉じる)。"""
+        self._mut_state = run_close_for_stop(
+            self.settings,
+            self._mut_state,
+            [self.acp.dispatch, self.custody.dispatch, self.sessions.dispatch, self.local.dispatch],
+            signal_name,
+        )
+
+    def carry_unrecorded_ends(self, ends: tuple[UnrecordedEnd, ...]) -> None:
+        """記録の書けていない終わりを次の拍へ持ち越す(再起動をまたぐ持ち越しの再現)。"""
+        self._mut_state = replace(self._mut_state, unrecorded_ends=ends)
 
     def heartbeat(self, advance_ms: int = 0) -> str:
         """lease の heartbeat の 1 拍(段 10 lane 10ba — 本番は tick と別の thread の runtime.run_heartbeat_loop)。"""
@@ -1349,7 +1373,7 @@ def test_running_job_of_mine_is_recovered_on_the_first_tick_after_restart() -> N
     world.acp.put_row(bound_job("s-r", inputs=[], account=None))
     world.tick()
     assert len(world.sessions.launches) == 1
-    world.state = initial_state()
+    world.restart()
     world.sessions.finish(world.sid("s-r"), "done", {"ok": True})
     world.tick(advance_ms=1_000)
     assert len(world.sessions.launches) == 1
@@ -1396,7 +1420,7 @@ def test_running_job_with_a_live_session_is_adopted_and_observed() -> None:
     world.acp.put_row(bound_job("s-live", inputs=[]))
     world.tick()
     assert world.custody.borrowed == [("claude", "acct", "agent-job s-live")]
-    world.state = initial_state()
+    world.restart()
     world.tick(advance_ms=1_000)
     assert len(world.state.jobs) == 1
     assert world.state.jobs[0].job_id == "s-live"
@@ -2257,7 +2281,7 @@ def test_a_carried_ended_lands_on_the_re_placed_row_instead_of_claiming_it() -> 
     world.acp.put_row(placed)
     carried = UnrecordedEnd(job_key=key, job_id="j-9", session_id="sid-lost", result={"ok": True}, cause={"category": "failed", "reason": "SessionFailed"},
                             conditions=({"type": "SessionFailed", "status": "True", "reason": "x"},), at_ms=world.local.now_ms)
-    world.state = replace(world.state, unrecorded_ends=(carried,))
+    world.carry_unrecorded_ends((carried,))
     world.tick(advance_ms=1_000)
     assert len(world.sessions.launches) == 0, "持ち越し中の job の Bound を claim した(#402)"
     ended = world.job("j-9")
@@ -2352,7 +2376,14 @@ def _place_cancel(
     )
 
 
-def _start_warm_second_turn(world: World) -> tuple[str, str]:
+class WarmSecondTurn(NamedTuple):
+    """温かい session へ 2 手番目を送った後の値(その session の id と、transcript の path)。"""
+
+    session_id: str
+    transcript_path: str
+
+
+def _start_warm_second_turn(world: World) -> WarmSecondTurn:
     """1 手番目を終えた温かい session へ 2 手番目(j-2)を送る。戻り = (session の id, transcript の path)。"""
     path = _run_first_turn(world)
     world.acp.put_row(message("m-2", "second"))
@@ -2361,7 +2392,7 @@ def _start_warm_second_turn(world: World) -> tuple[str, str]:
     world.acp.put_row(bound_job("j-2", inputs=["m-2"], created_at_ms=world.local.now_ms))
     world.tick(advance_ms=1_000)
     assert len(world.state.jobs) == 1
-    return world.sid("j-1"), path
+    return WarmSecondTurn(session_id=world.sid("j-1"), transcript_path=path)
 
 
 def test_cancel_signal_interrupts_once_is_acknowledged_on_the_row_and_the_turn_ends_cancelled_gracefully() -> None:
@@ -2558,7 +2589,7 @@ def test_a_recovered_job_carries_the_cancel_and_its_acknowledgement_from_the_row
     _place_cancel(world, "j-2", grace_seconds=5, reason="drained")
     world.tick(advance_ms=1_000)
     assert world.sessions.interrupts == [warm]
-    world.state = initial_state()
+    world.restart()
     world.tick(advance_ms=1_000)
     assert len(world.state.jobs) == 1
     recovered = world.state.jobs[0]
@@ -3130,7 +3161,7 @@ def test_dead_backend_of_a_running_job_ends_it_with_session_lost_and_the_next_tu
     sid = world.sid("j-1")
     assert len(world.state.jobs) == 1
     # 再起動: memory を捨てる・子 process は死んだ(観測)・行は running のまま
-    world.state = initial_state()
+    world.restart()
     world.sessions.kill_backend(sid)
     assert world.sessions.views[sid].status == "running"
     assert world.sessions.views[sid].turn_ended_at_ms is None
@@ -3180,7 +3211,7 @@ def test_live_backend_of_a_recovered_job_is_observed_not_lost() -> None:
     world.acp.put_row(bound_job("j-live", inputs=[]))
     world.tick()
     sid = world.sid("j-live")
-    world.state = initial_state()
+    world.restart()
     world.tick(advance_ms=1_000)
     assert [job.job_id for job in world.state.jobs] == ["j-live"]
     job = world.job("j-live")
@@ -3258,12 +3289,7 @@ def test_stop_closes_running_jobs_with_agentd_restart_and_leaves_the_session_to_
     path = f"{HOMES}/claude/acct/projects/-work/{sid}.jsonl"
     world.local.transcripts[path] = transcript_line("assistant", [{"type": "text", "text": "partial"}])
     assert len(world.state.jobs) == 1
-    world.state = run_close_for_stop(
-        world.settings,
-        world.state,
-        [world.acp.dispatch, world.custody.dispatch, world.sessions.dispatch, world.local.dispatch],
-        "SIGTERM",
-    )
+    world.close_for_stop("SIGTERM")
     assert world.state.jobs == ()
     job = world.job("j-1")
     assert job.status is not None
@@ -3293,17 +3319,12 @@ def test_stop_closes_running_jobs_with_agentd_restart_and_leaves_the_session_to_
     assert world.local.metrics[-1]["metric"] == "agent-job-turn"
     assert world.local.metrics[-1]["step"] == "agentd-stop"
     # 再起動後の最初の拍: Ended の行は拾わない(running-on-me でない)— 二度閉じない
-    world.state = initial_state()
+    world.restart()
     world.tick(advance_ms=1_000)
     assert world.state.jobs == ()
     # job の無い停止は書かない
     writes_before = len(world.acp.writes)
-    world.state = run_close_for_stop(
-        world.settings,
-        world.state,
-        [world.acp.dispatch, world.custody.dispatch, world.sessions.dispatch, world.local.dispatch],
-        "SIGTERM",
-    )
+    world.close_for_stop("SIGTERM")
     assert len(world.acp.writes) == writes_before
 
 
@@ -4085,10 +4106,10 @@ def test_the_session_handler_turns_a_refused_send_into_a_typed_refusal() -> None
         def request(
             self,
             method: str,
-            params: Mapping[str, Any] | None = None,
+            params: Mapping[str, object] | None = None,
             *,
             read_timeout: float | None = None,
-        ) -> Any:
+        ) -> NoReturn:
             assert method == "session.send"
             raise AgentdClientError("headless session already exists", error_code=-32002)
 
@@ -4096,10 +4117,10 @@ def test_the_session_handler_turns_a_refused_send_into_a_typed_refusal() -> None
         def request(
             self,
             method: str,
-            params: Mapping[str, Any] | None = None,
+            params: Mapping[str, object] | None = None,
             *,
             read_timeout: float | None = None,
-        ) -> Any:
+        ) -> NoReturn:
             raise OSError("socket closed")
 
     rpc = handlers.SessionRpc.__new__(handlers.SessionRpc)
@@ -5589,7 +5610,15 @@ def test_close_for_stop_drains_before_closing_when_the_node_declares_drain_secon
         thread.join()
         return thread
 
-    def make_run(world: World, drain_seconds: int) -> tuple[AgentdRun, StateHolder, threading.Event, list[str]]:
+    class DrainRun(NamedTuple):
+        """停止の腕を撃つための一式(走行係と、その状態の器・排水の合図・後始末の記録)。"""
+
+        run: AgentdRun
+        holder: StateHolder
+        drain: threading.Event
+        closed: list[str]
+
+    def make_run(world: World, drain_seconds: int) -> DrainRun:
         holder = StateHolder()
         holder.state = world.state
         stop = threading.Event()
@@ -5600,7 +5629,7 @@ def test_close_for_stop_drains_before_closing_when_the_node_declares_drain_secon
             replace(world.settings, drain_seconds=drain_seconds), dispatchers, stop, drain, holder,
             started("loop"), lambda: closed.append("closed"), started("heartbeat"),
         )
-        return run_obj, holder, drain, closed
+        return DrainRun(run=run_obj, holder=holder, drain=drain, closed=closed)
 
     # (1) 手番が排水の間に終わる → 閉じる job は 0・drain の合図が立ち・後始末は 1 度
     world = World()

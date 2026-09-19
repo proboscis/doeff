@@ -26,7 +26,7 @@ wire の綴り(ACP の route・kind 名・phase の語)はこの file が唯一�
 
 # pyright: strict
 from dataclasses import dataclass, field
-from typing import Literal, TypeAlias, get_args
+from typing import Literal, NamedTuple, TypeAlias, get_args
 
 from doeff import EffectBase
 from doeff_agents.sessionhost.attachment import TurnAttachment
@@ -823,7 +823,14 @@ OWNERSHIP_PROOF_FILE_SEPARATOR = "="
 OWNERSHIP_PROOF_DECLARED = "declared"
 
 
-def ownership_proof_file_parts(proof: str) -> tuple[str, str] | None:
+class OwnershipProofFile(NamedTuple):
+    """検の方法 `file:<path>=<値>` を割った結果(読む file の path と、そこに在るべき値)。"""
+
+    path: str
+    expected: str
+
+
+def ownership_proof_file_parts(proof: str) -> OwnershipProofFile | None:
     """検の方法 `file:<path>=<値>` を (path, 期待する値) に割る(最初の `=` 1 つで割る — 値に `=` が
     在ってよい)。綴りが外れる(prefix が違う・`=` が無い・path か値が空)= None。"""
     if not proof.startswith(OWNERSHIP_PROOF_FILE_PREFIX):
@@ -832,7 +839,7 @@ def ownership_proof_file_parts(proof: str) -> tuple[str, str] | None:
     path, separator, expected = rest.partition(OWNERSHIP_PROOF_FILE_SEPARATOR)
     if not separator or not path or not expected:
         return None
-    return (path, expected)
+    return OwnershipProofFile(path=path, expected=expected)
 
 # ------------------------------------------------------------------ 起動の宣言(join・所有)
 
