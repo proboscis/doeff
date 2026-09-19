@@ -89,7 +89,6 @@ doeff-domain = { workspace = true }
 # ADR-DOE-ENFORCE-001 R8: 既定の走行が集める木は、既定の env で import できなければ
 # 収集エラーにしかならない。testpaths に載せた packages/*/tests の package は
 # workspace source を宣言し、下の dev 群で必ず .venv に入れる。
-doeff-google-secret-manager = { workspace = true }
 doeff-image = { workspace = true }
 doeff-notify = { workspace = true }
 doeff-secret = { workspace = true }
@@ -115,7 +114,6 @@ testpaths = [
     "packages/doeff-events/tests",
     "packages/doeff-gemini/tests",
     "packages/doeff-git/tests",
-    "packages/doeff-google-secret-manager/tests",
     "packages/doeff-hy/tests",
     "packages/doeff-image/tests",
     "packages/doeff-ml-nexus/tests",
@@ -170,12 +168,21 @@ doeff_adr_wiring_exclude = [
     # PyCharm plugin の gutter icon の見本(型註だけで検体を持たない)。
     "ide-plugins/pycharm/test_program_detection.py",
     # ── 腐っている側(#467 が開けて見つけた・直すのは別便)────────────────
-    # doeff-flow は package 本体が壊れている: run_workflow が削除済みの
-    # default_handlers() を呼び、trace.py が消えた doeff_vm.RunResult を import する。
-    # 2026-07-13 の slog 意味論の計画に既知として登記済み(docs/doeff-2026-07-13-
-    # slog-semantics-architecture-plan.md:123)で、この repo の誰も import していない。
-    # 直すのは package の API 移行(1,110 行)で、木を配線する #467 の射程の外。
-    "packages/doeff-flow/tests/*",
+    # doeff-flow の 4 file — package 本体が壊れている(doeff_flow/__init__.py:102 が
+    # 削除済みの doeff.default_handlers を import するので、doeff_flow に触れた瞬間に
+    # ImportError)。2026-07-13 の slog 意味論の計画に既知として登記済み
+    # (docs/doeff-2026-07-13-slog-semantics-architecture-plan.md:123)で、この repo の
+    # 誰も doeff_flow を import していない。直すのは package の API 移行(1,110 行)で、
+    # 木を配線する #467 の射程の外。移行は issue で追う。
+    # ↓ 1 file ずつ、その file が何を掴んで落ちるかを名乗る(glob で束ねない)。
+    #   doeff_flow.cli → doeff_flow/__init__.py:102 の default_handlers で ImportError。
+    "packages/doeff-flow/tests/test_cli.py",
+    #   doeff_flow.run_workflow に加え、自分でも doeff.default_handlers を import する。
+    "packages/doeff-flow/tests/test_e2e.py",
+    #   doeff.default_handlers を import し、run(..., handlers=default_handlers()) を呼ぶ。
+    "packages/doeff-flow/tests/test_effect_handlers.py",
+    #   doeff_flow.trace が消えた doeff_vm.RunResult を import する(trace.py:32)。
+    "packages/doeff-flow/tests/test_trace.py",
     # 対象の doeff_agentic.handlers.production が、doeff-agents から消えた Sleep を
     # import する(26db24dd)。同 module は TmuxAgentHandler を直に握っており
     # CLAUDE.md の agent 認証境界にも触れるので、直しは設計の判断を伴う。
@@ -183,6 +190,18 @@ doeff_adr_wiring_exclude = [
     # 旧 `run(program, handlers=..., env=...)` 時代の検体(29 箇所が is_ok()/.value)。
     # 隣の test_effect_handlers.py と同じ移行が要る。
     "packages/doeff-openrouter/tests/unit/test_structured_llm.py",
+    # ── 費用で外す側(#467 受入 6 の予算・腐りではなく「値段が合わない」)───────
+    # doeff-google-secret-manager の 3 file。木を載せるには dev 群へ package を足す
+    # 必要があり、それが google-cloud-secret-manager → grpcio を引く。python 3.14t
+    # (自由スレッド)に grpcio の wheel が無いので、冷えた lane では source build に
+    # 8 分 36 秒(実測 2026-09-19)。日次の門は `make sync && pytest` を丸ごと
+    # --run-timeout 1800 の内側で走らせる(.agents/land-queue.toml:48)ので、この
+    # 516 秒は走行の予算そのものを食う。買えるのは 12 本で、うち 9 本は他の木と同じ
+    # 旧 default_handlers() の腐りで赤(実測 9 failed / 2 passed / 1 deselected)。
+    # 最大の費用で最小の収穫なので、この便では外して移行の issue で追う。
+    "packages/doeff-google-secret-manager/tests/unit/test_secrets.py",
+    "packages/doeff-google-secret-manager/tests/unit/test_effect_handlers.py",
+    "packages/doeff-google-secret-manager/tests/e2e/test_access_secret_e2e.py",
 ]
 markers = [
     "e2e: tests that exercise external integrations and may require real API keys",
@@ -257,7 +276,6 @@ dev = [
     # 「収集はされるが毎回 ImportError」という最悪の形(赤いのに誰も直せない)になる。
     "doeff-docker",
     "doeff-events",
-    "doeff-google-secret-manager",
     "doeff-image",
     "doeff-ml-nexus",
     "doeff-notify",
