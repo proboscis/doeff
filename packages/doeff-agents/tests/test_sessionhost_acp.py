@@ -4829,24 +4829,45 @@ def test_join_seat_env_parses_declared_lines() -> None:
 
 def test_join_refuses_credential_shaped_seat_env() -> None:
     """agora-redesign #520 / doeff ADR-012 R30 (4) / R51 (1): この口は宛先を運ぶためのもので、資格の輸送路に化けてはならない。
-    ⚠ 判定は**家の関所 1 点**(policy.session-env-admission-error — launch と session.send の口が通るのと同じ)を通すだけで、
-    join.hy に第 2 の関所を写さない(「運ぶ口が増えても判定を並行実装しない」= その docstring)。関所の線は**名の形ちょうど**
-    (値は 1 byte も見ない): 正規化して `_API_KEY` で終わる名と既知の別名(従量課金)/ CLAUDE_CONFIG_DIR・CODEX_HOME
-    (binding 所有)。断りの文は verb `join.seat_env` で始まる。"""
+    門は 2 段で、どちらも**名の形ちょうど**(値は 1 byte も見ない):
+      (a) 家の関所 1 点の再利用(policy.session-env-admission-error — launch と session.send の口が通るのと同じ):
+          正規化して `_API_KEY` で終わる名と既知の別名(従量課金)/ CLAUDE_CONFIG_DIR・CODEX_HOME(binding 所有)。
+      (b) この口だけの線(policy.seat-env-credential-shaped-offenders): 正規化した名を `_` で割り、**区間のどれか**が
+          `KEY` か `TOKEN` なら断る + `SECRET` / `PASSWORD` / `CREDENTIAL` の部分一致で断る。⚠ **末尾に錨を打たない**:
+          `_KEY` で**終わる**形で判じると、この repo の CLAUDE.md が逐語で禁じる `anthropic_api_key__personal` と、
+          1 語足しただけの `ANTHROPIC_API_KEY_PERSONAL` が通る(送り戻し lt-Y7XSNK0PK1N9706QZPMZDG0FNH の実測)。
+          過剰包摂側へ倒す fail-closed(`SECRETARY_URL` が弾かれたら起動の門で loud に見えて直せるが、逆は黙って札が届く)。
+    (a) の線は 1 語も動かさない(出荷済みの不変条件 — 広げると launch / session.send の判定が同時に変わる・別 card)。
+    断りの文はどちらの段でも `seat_env` を名乗る。"""
     for line in [
+        # (a) 家の関所: 従量課金の形と既知の別名
         "ANTHROPIC_API_KEY=sk-ant-x",
         "OPENAI_API_KEY=sk-x",
         "ANTHROPIC_AUTH_TOKEN=abc",
         "OPENAI_KEY=abc",
         "GOOGLE_GENAI_KEY=abc",
+        # (a) 家の関所: binding 所有の家(会話の身元が門の側からも勝つ — 上流 accept の贈り物)
+        "CLAUDE_CONFIG_DIR=/x",
+        "CODEX_HOME=/x",
+        # (b) 末尾に錨を打たない: CLAUDE.md が逐語で禁じる名と、末尾に 1 語足した綴り
+        "anthropic_api_key__personal=sk-ant-x",
+        "ANTHROPIC_API_KEY_PERSONAL=sk-ant-x",
+        # (b) 札の path の綴り(区間に KEY / TOKEN)— 札は file の mount で家の既定の置き場へ、この口は宛先ちょうど
+        "AGORA_BORROWER_KEY_PATH=/run/secrets/borrower.key",
+        "ACP_BEARER_TOKEN_FILE=/run/secrets/bearer",
+        # (b) 区間の形と、部分一致の語
+        "FOO_TOKEN=x",
+        "MY_KEY_2=x",
+        "DB_PASSWORD=x",
+        "GCP_CREDENTIAL_JSON=x",
+        "SECRETARY_URL=http://s",  # 過剰包摂側(fail-closed)— 弾かれたら loud に見える
     ]:
-        with pytest.raises(ValueError, match=r"join\.seat_env"):
+        with pytest.raises(ValueError, match="seat_env"):
             run(join.seat_env_of(line))
-    # 宛先の 3 本は関所の線に当たらない(門は宛先を通す)。
+    # 宛先の 3 本は関所の線にも口の線にも当たらない(門は宛先を通す)。
     assert len(run(join.seat_env_of(SEAT_ENV_DECLARED)).pairs) == 3
-    # ⚠ 通す側の残り(`ACP_BEARER_TOKEN_FILE` / `AGORA_BORROWER_KEY_PATH` = 札の **path** の綴り)は
-    #   依頼者の裁定 δ / β 待ちで、この便では**どちらにも pin しない**(片向きの検で黙って固まらないよう、
-    #   裁定が出た拍に両向きで足す — 依頼 lt-G809RCAAGKSY0RA0J54S8S23XY の note lt-WYTN9MJFW2C9PXWGX6BH4NM5Q4)。
+    # (b) は**区間**で見る(部分一致ではない): `KEY` / `TOKEN` が長い語の一部なら宛先の名として通る。
+    assert len(run(join.seat_env_of("KEYBOARD_LAYOUT=us\nTOKENIZER_URL=http://t")).pairs) == 2
 
 
 def test_join_refuses_seat_env_that_names_a_binding_owned_home() -> None:
