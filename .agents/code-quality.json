@@ -56,7 +56,10 @@
     "packages/doeff-hy/src/doeff_hy/record.hy",
     "docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy",
     "packages/doeff-hy/src/doeff_hy/typecheck_handlers.hy",
-    "packages/doeff-hy/src/doeff_hy/typecheck_handlers.pyi"
+    "packages/doeff-hy/src/doeff_hy/typecheck_handlers.pyi",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_observation.hy",
+    "packages/doeff-agents/tests/test_sessionhost_cache_observation.py",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_observation.pyi"
   ],
   "exclude": [],
   "baseline": ".agents/code-quality-baseline.json",
@@ -117,7 +120,8 @@
         "agentd-effects",
         "sessionhost-attachment",
         "acp-live-row",
-        "sessionhost-headless-protocol"
+        "sessionhost-headless-protocol",
+        "agentd-cache-observation"
       ],
       "typed": true
     },
@@ -166,7 +170,8 @@
       "allow": [
         "agentd-effects",
         "agentd-judgment",
-        "sessionhost-attachment"
+        "sessionhost-attachment",
+        "agentd-cache-observation"
       ],
       "typed": true
     },
@@ -943,6 +948,38 @@
         "packages/doeff-agents/src/doeff_agents/sessionhost/attachment.py"
       ],
       "allow": [],
+      "typed": true
+    },
+    {
+      "name": "agentd-cache-observation",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_observation.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_observation.pyi"
+      ],
+      "responsibility": "API応答のキャッシュ観測と実行元の保存。応答完了の時刻を期限の起点にしない",
+      "layer": "domain",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_observation.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_observation.pyi"
+      ],
+      "allow": [
+        "agentd-effects"
+      ],
+      "typed": true
+    },
+    {
+      "name": "agentd-cache-observation-tests",
+      "paths": [
+        "packages/doeff-agents/tests/test_sessionhost_cache_observation.py"
+      ],
+      "responsibility": "キャッシュ観測の時計・親API・期限・turn記録の接続検証",
+      "layer": "runtime",
+      "public": [],
+      "allow": [
+        "agentd-cache-observation",
+        "agentd-judgment",
+        "agentd-effects"
+      ],
       "typed": true
     }
   ],
