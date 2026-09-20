@@ -2386,6 +2386,12 @@ class InFlightJob:
     #: 読んだが行へまだ書けていない出来事(書きが断られた / 行がまだ無い拍の持ち越し)。次の拍の
     #: 追記と手番の終わりの書きに先頭で乗る(出来事は落とさない・順は seq)。
     pending_entries: tuple[TurnEntryHeadline, ...] = ()
+    #: 会話の記録の service が受理した答え(本文の在処 recordRef・受理済みの最大 producerSeq)のうち、行へまだ
+    #: 写していないもの(card acp:kanban-issue:ki-c418e597017a 便 3)。走っている手番では受理のたびに行を書かず、
+    #: **次の追記の書きか手番の終わりの書きに同乗させる** — 行の書きは status の全体(見出しの配列ごと)の post-image
+    #: なので、整数 1 つを進めるための単独の書きが ACP の journal の 4 分の 1 を占めていた(実測 2026-09-21: 連続する
+    #: 書き 745 対のうち 375 対が recordedSeq だけの差)。None = 写すものが無い。正本は service(行の値は写し)。
+    recorded_mark: tuple[str, int] | None = None
     #: 段 8 lane 4x: この手番で器へ渡した割り込みの Message の id(memory の写し — 行の
     #: interruptsDelivered への CAS が着地するまでの間、同じ id を二度渡さないための cache。正本は行:
     #: 再起動で消えても、行の interruptsDelivered に在る id は渡さない)。

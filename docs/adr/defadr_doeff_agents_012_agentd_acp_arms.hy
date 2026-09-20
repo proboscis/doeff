@@ -85,7 +85,8 @@
 ;;; input / output / model は型に無い)。既知の形 = claim check(control plane には参照と見出し・本文は記録の service)。
 ;;; 見出しを導く点は judgment.headline-of-body の 1 つ・JSON への写しは entry-json-of の 1 つ・bytes / sha256 は service の
 ;;; 冪等の判断と同じ計算(record-body-bytes-of)。受理の答え(highestProducerSeq)は status.recordRef / recordedSeq に写す
-;;; (agentd.mark-recorded・judgment.turn-record-recorded-status)。履歴からの再開は service の before=latest から後向きに
+;;; (agentd.mark-recorded・judgment.turn-record-recorded-status — 走っている手番では単独で書かず、次の追記か手番の終わりの
+;;; 書きに同乗させる: 2026-09-21・card acp:kanban-issue:ki-c418e597017a 便 3)。履歴からの再開は service の before=latest から後向きに
 ;;; 読み(agentd.record-turns-for・effect RecordRead)、届かない時は ACP の見出しで薄く再開すると名乗る(HeadlineTurns —
 ;;; 本文の無い行を本文として扱わない・型で分ける)。
 ;;; 段 9f lane 9f-6(同 #59)の改訂 = R17 の追補: 本文の行き先(record の宛先)を持たない agentd は参加を断る — 判断は
@@ -2105,6 +2106,21 @@
        (for [name ["entry-of-body" "text-entry" "tool-use-entry" "tool-result-entry" "note-entry"]]
          (assert (not (any (gfor line judgment-lines (.startswith line f"(defk {name} ")))) f"本文を写す {name} が残っている(R19)"))
        (assert (in "(defk mark-recorded [" agentd-src) "受理の写しの腕 mark-recorded が無い(R19)")
+       ;; 2026-09-21(card acp:kanban-issue:ki-c418e597017a 便 3): 走っている手番では受理のためだけに行を書かない —
+       ;; 行の書きは status の全体(見出しの配列ごと)の post-image で、ACP はそれを出来事の本体と後像の 2 度 journal に置く。
+       ;; 実測(本番の journal の最新 2,000 件): turn-record の連続する書き 745 対のうち 375 対が recordedSeq だけの差 =
+       ;; journal の全 byte の 24.7%。受理の答えは memory の刻印(InFlightJob.recorded-mark)に持ち、次の追記の書きか手番の
+       ;; 終わりの書きに同乗させる(judgment.turn-record-marked-status の 1 点)。針は形で撃つ: mark-recorded の本体は
+       ;; 「走っている手番を見つけたら書かずに帰る」が AcpPutStatus より前に在り、追記と終わりの 2 つの書き手が刻印を同乗させる。
+       ;; 挙動の反例(出来事の無い拍に行を書かない・追記と受理で 1 回)は tests/sessionhost_acp_record_deftests.hy。
+       (setv mark-body (get (.split (get (.split agentd-src "(defk mark-recorded [") 1) "\n\n\n") 0))
+       (assert (in "(replace held :recorded-mark mark)" mark-body) "走っている手番の受理を memory の刻印に持っていない(R19)")
+       (assert (< (.index mark-body "(return carried)") (.index mark-body "AcpPutStatus"))
+               "mark-recorded が走っている手番でも行を単独で書く形に戻っている(R19)")
+       (assert (= (.count agentd-src "(turn-record-marked-status appended job.recorded-mark)") 2)
+               "追記の書き(最初の書きと Conflict の積み直し)に受理の刻印が同乗していない(R19)")
+       (assert (in "(turn-record-marked-status ended-record mark)" agentd-src) "手番の終わりの書きに受理の刻印が同乗していない(R19)")
+       (assert (in "recorded_mark: tuple[str, int] | None = None" effects-src) "受理の刻印の欄が InFlightJob に無い(R19)")
        (setv world (World))
        (setv world.settings (AgentdSettings :node-name "mac-1" :homes-root "/homes" :backend-kind "headless" :stream-capability "events"))
        (setv world.sessions (FakeSessions :backend-kind "headless" :events-root "/events"))
