@@ -13,7 +13,7 @@
 (import socket :as socket-mod)
 (import tempfile)
 (import time)
-(import doeff [EffectBase])
+(import doeff [EffectBase run])
 
 (import doeff_agents.sessionhost.effects [
   tmux-new-session
@@ -58,7 +58,7 @@
 (setv HERDR-AVAILABLE (herdr-server-available?))
 
 
-(deff close-workspaces-with-label [label]
+(defk close-workspaces-with-label [label]
   {:pre [(: label str)]
    :post [(: % "None")]}
   "テスト teardown 専用の帯域外掃除: label が一致する workspace を全部閉じる。
@@ -79,7 +79,7 @@
   None)
 
 
-(deff simulate-agent-name-plate-loss [pane-id]
+(defk simulate-agent-name-plate-loss [pane-id]
   {:pre [(: pane-id str)]
    :post [(: % "None")]}
   "実 agent 起動時に herdr の実 agent 検出が起こす名札上書きを、検出と同じ
@@ -251,7 +251,7 @@
     ;; --- (2) 名札消失後の重複(実 agent 起動後に相当する最悪ケース):
     ;;     agent 名簿にはもう session 名が無い — label アンカーの判定だけが
     ;;     拒否できる(旧実装はここで素通りして二重 session を作った)。
-    (simulate-agent-name-plate-loss pane)
+    (run (simulate-agent-name-plate-loss pane))
     (setv raised2 None)
     (try
       (<- _ ((herdr-substrate DEFAULT-HERDR-SOCKET)
@@ -280,7 +280,7 @@
     (assert (= pane-ids [pane])
             f"name resolution must stay on the incumbent pane: {pane-ids}")
     (finally
-      (close-workspaces-with-label session-name)
+      (run (close-workspaces-with-label session-name))
       (shutil.rmtree d :ignore-errors True))))
 
 
@@ -346,7 +346,7 @@
               (tmux-has-session session-name)))
     (assert (not gone))
     (finally
-      (close-workspaces-with-label session-name)
+      (run (close-workspaces-with-label session-name))
       (shutil.rmtree d :ignore-errors True))))
 
 
@@ -492,7 +492,7 @@
               None)))
 
 
-(deff name-external-seat [pane-id name]
+(defk name-external-seat [pane-id name]
   {:pre [(: pane-id str) (: name str)]
    :post [(: % "None")]}
   "外部命名席の模擬: doeff の label と無関係な agent 名を herdr の名簿に付ける
@@ -531,7 +531,7 @@
                          {"label" label "focus" False}))
     (setv pane (get (get ws "root_pane") "pane_id"))
     (time.sleep 0.5)
-    (name-external-seat pane ext-name)
+    (run (name-external-seat pane ext-name))
     ;; --- 模擬の実効: 名簿は名前を解決し、label は名前を保持しない。
     (setv got (herdr-call DEFAULT-HERDR-SOCKET "agent.get" {"target" ext-name}))
     (assert (= (get (get got "agent") "pane_id") pane) got)
@@ -562,7 +562,7 @@
                (tmux-has-session ext-name)))
     (assert still "refused kill must leave the external seat alive")
     (finally
-      (close-workspaces-with-label label))))
+      (run (close-workspaces-with-label label)))))
 
 
 (deftest test-herdr-identity-survives-agent-name-loss
@@ -585,7 +585,7 @@
               (tmux-new-session session-name d {})))
     ;; shell 起動を待ってから名札を消す(fresh pane は prompt 描画前がある)。
     (time.sleep 1.0)
-    (simulate-agent-name-plate-loss pane)
+    (run (simulate-agent-name-plate-loss pane))
     ;; --- 模擬の実効の直接確認: agent 名での解決はもう成立しない。
     ;;     (これが成立しないなら模擬が壊れており、以降の assert は無意味。)
     (setv plate-lost False)
@@ -623,7 +623,7 @@
               (tmux-has-session session-name)))
     (assert (not gone) "kill-session must terminate the session after name loss")
     (finally
-      (close-workspaces-with-label session-name)
+      (run (close-workspaces-with-label session-name))
       (shutil.rmtree d :ignore-errors True))))
 
 

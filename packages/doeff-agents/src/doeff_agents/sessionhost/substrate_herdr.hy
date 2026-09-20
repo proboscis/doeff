@@ -55,7 +55,7 @@
 ;;;   - pane.send_keys のキー名: Enter/Up/Down/Left/Right/Escape/Tab/Space は
 ;;;     大文字小文字不問、BSpace は backspace のみ、Home/End は非対応。
 
-(require doeff-hy.macros [deff defhandler])
+(require doeff-hy.macros [deff defk defhandler <-])
 
 (import json)
 (import os)
@@ -253,7 +253,7 @@
    herdr-workspace-order-key を適用する。"
   (herdr-label-holders (herdr-call socket-path "workspace.list" {}) label))
 
-(deff herdr-session-pane-ids-io [socket-path session-name]
+(defk herdr-session-pane-ids-io [socket-path session-name]
   {:pre [(: socket-path str) (: session-name str)]
    :post [(: % list)]}
   "session 名 → 所有 pane 集合(ADR-DOE-AGENTS-010 R4 の帰属観測)。
@@ -330,7 +330,7 @@
       (raise)))
   (herdr-registry-agent-pane-id result name))
 
-(deff herdr-new-session-io [socket-path session-name work-dir env]
+(defk herdr-new-session-io [socket-path session-name work-dir env]
   {:pre [(: socket-path str) (: session-name str) (: work-dir str) (: env dict)]
    :post [(: % str)]}
   "TmuxNewSession の実体(herdr 0.7.5 / protocol 17): workspace.create が
@@ -401,7 +401,7 @@
                 f"(label held by workspace {others})"))))
   pane-id)
 
-(deff herdr-capture-io [socket-path pane-id lines]
+(defk herdr-capture-io [socket-path pane-id lines]
   {:pre [(: socket-path str) (: pane-id str) (: lines int)]
    :post [(: % str)]}
   "TmuxCapture の実体(tmux capture-pane -p -J -S -N parity):
@@ -427,7 +427,7 @@
                               "format" "ansi"}))
   (normalize-ansi-read (get (get fallback "read") "text")))
 
-(deff herdr-pane-current-command-io [socket-path pane-id]
+(defk herdr-pane-current-command-io [socket-path pane-id]
   {:pre [(: socket-path str) (: pane-id str)]
    :post [(: % (| str None))]}
   "TmuxPaneCurrentCommand の実体: pane.process_info の
@@ -488,7 +488,7 @@
               {"pane_id" pane-id "keys" [(herdr-key-name key)]})
   None)
 
-(deff herdr-send-keys-io [socket-path pane-id text literal submit]
+(defk herdr-send-keys-io [socket-path pane-id text literal submit]
   {:pre [(: socket-path str) (: pane-id str) (: text str)
          (: literal bool) (: submit bool)]
    :post [(: % "None")]}
@@ -507,14 +507,14 @@
     (when (and literal text)
       (time.sleep CONFIRM-INITIAL-SECONDS)
       (for [_ (range CONFIRM-MAX-RETRIES)]
-        (setv output (herdr-capture-io socket-path pane-id 40))
+        (<- output (herdr-capture-io socket-path pane-id 40))
         (when (not (unsubmitted-paste-input? output text))
           (break))
         (herdr-send-key-io socket-path pane-id "Enter")
         (time.sleep CONFIRM-RETRY-SECONDS))))
   None)
 
-(deff herdr-kill-session-io [socket-path session-name]
+(defk herdr-kill-session-io [socket-path session-name]
   {:pre [(: socket-path str) (: session-name str)]
    :post [(: % "None")]}
   "TmuxKillSession の実体: label を持つ workspace を **全部** workspace.close
@@ -546,7 +546,8 @@
 
 (defhandler herdr-substrate [socket-path]
   (TmuxNewSession [session-name work-dir env]
-    (resume (herdr-new-session-io socket-path session-name work-dir env)))
+    (<- pane-id (herdr-new-session-io socket-path session-name work-dir env))
+    (resume pane-id))
 
   (TmuxHasSession [session-name]
     ;; 生死 = 外部命名席(herdr の agent 名簿に name が居る — koine
@@ -562,18 +563,21 @@
                 (bool (herdr-label-workspace-ids-io socket-path session-name)))))
 
   (TmuxSessionPaneIds [session-name]
-    (resume (herdr-session-pane-ids-io socket-path session-name)))
+    (<- pane-ids (herdr-session-pane-ids-io socket-path session-name))
+    (resume pane-ids))
 
   (TmuxPaneCurrentCommand [pane-id]
-    (resume (herdr-pane-current-command-io socket-path pane-id)))
+    (<- command (herdr-pane-current-command-io socket-path pane-id))
+    (resume command))
 
   (TmuxCapture [pane-id lines]
-    (resume (herdr-capture-io socket-path pane-id lines)))
+    (<- text (herdr-capture-io socket-path pane-id lines))
+    (resume text))
 
   (TmuxSendKeys [pane-id text literal submit]
-    (herdr-send-keys-io socket-path pane-id text literal submit)
+    (<- _ (herdr-send-keys-io socket-path pane-id text literal submit))
     (resume None))
 
   (TmuxKillSession [session-name]
-    (herdr-kill-session-io socket-path session-name)
+    (<- _ (herdr-kill-session-io socket-path session-name))
     (resume None)))
