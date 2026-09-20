@@ -47,7 +47,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.client import HTTPConnection, HTTPException, HTTPResponse, HTTPSConnection
-from typing import TypeAlias
+from typing import TypeAlias, cast, get_args
 
 from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.agentd_client import AgentdClient, AgentdClientError, launch_rpc_timeout_seconds
@@ -2122,14 +2122,17 @@ def encode_spooled_batch(batch: RecordBatch) -> JSONObject:
     }
 
 
+#: 語彙の写し — 定義点は effects.RecordStreamKind の 1 つで、ここはそこから導く。
+#: card acp:kanban-issue:ki-9fc7d4bca4dc: 以前は語を手で並べた arm だったので、
+#: 記憶の語(memory)を型と fake に足した便が decoder を見落とし、append の直後の
+#: 読み戻しが本番で 100% 空振りした(行が 1 本も立たない・fake は自分で語を組むので検は緑)。
+_RECORD_STREAM_KINDS: frozenset[str] = frozenset(get_args(RecordStreamKind))
+
+
 def _stream_kind_of(value: JSON) -> RecordStreamKind | None:
-    if value == "turn":
-        return "turn"
-    if value == "mail":
-        return "mail"
-    if value == "summary":
-        # 段 12 lane 12j(agora-redesign #233): 会話の履歴の段階つき要約の本文の stream。
-        return "summary"
+    """契約の語彙(RecordStreamKind)の語だけを通す — 外の値は None(発明しない)。"""
+    if isinstance(value, str) and value in _RECORD_STREAM_KINDS:
+        return cast(RecordStreamKind, value)
     return None
 
 

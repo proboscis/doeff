@@ -24,6 +24,7 @@
 (import json)
 (import os)
 (import tempfile)
+(import typing [get-args])
 (import doeff [run])
 (import doeff_agents.sessionhost.acp.effects [
   AGENT-JOB-KIND
@@ -46,6 +47,7 @@
   RecordConflicted
   RecordEvent
   RecordPage
+  RecordStreamKind
   RecordUnread
   RecordUnsent
   TURN-ENTRY-MAX-BYTES
@@ -53,7 +55,8 @@
   TurnEntryHeadline])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeRecord FakeSessions record-body-sha256])
 (import doeff_agents.sessionhost.acp.handlers [
-  HttpReply RecordSpool decode-record-page decode-record-reply decode-spooled-batch record-append-body])
+  HttpReply RECORD-SPOOL-SCHEMA RecordSpool decode-record-page decode-record-reply decode-spooled-batch
+  record-append-body])
 (import doeff_agents.sessionhost.acp.join [join-plan-of join-spec-of record-sink-of])
 (import doeff_agents.sessionhost.acp.effects [JoinSpec])
 (import doeff_agents.sessionhost.acp.judgment [
@@ -324,6 +327,45 @@
   (setv body (record-append-body (get (run (record-batches-of (job-of 1) #((run (text-body 0 AT "t" None))))) 0)))
   (assert (= (get body "stream") {"kind" "turn" "id" STREAM "startedAt" AT "node" NODE "profile" "personal" "attempt" 1}))
   (assert (= (get body "events") [{"producerSeq" 0 "at" AT "kind" "text" "text" "t"}])))
+
+
+(deftest test-every-word-of-the-stream-vocabulary-survives-the-read-back
+  ;; card acp:kanban-issue:ki-9fc7d4bca4dc(法 ACP 575b1e の便 3 の穴): 読み手の語彙が**手で並べた arm**
+  ;; だったので、記憶の語(memory)を型(effects.RecordStreamKind)と fake に足した便が decoder を見落とし、
+  ;; append の直後の読み戻しが本番で 100% 空振りした(生きた pod の 90 分 = 畳み戻し 13 回・書けた行 0)。
+  ;; fake は stream の id の前置きから自分で語を組むので、この穴は deftest からは構造上見えない。
+  ;; ⇒ ここで撃つのは 1 語ずつではなく **語彙の全語**が往復すること。語を足した拍に母集団が自動で
+  ;; 増える(手で並べた arm は増えない)。
+  (setv kinds (get-args RecordStreamKind))
+  (assert (in "memory" kinds) "語彙に記憶の語が無い")
+  (for [kind kinds]
+    (setv stream-id f"{kind}#x")
+    ;; readEvents の応答の 1 項(記録の service から読み戻す側)
+    (setv page (decode-record-page (HttpReply 200 {"cid" CONVERSATION
+                                                   "events" [{"recordSeq" 3 "streamId" stream-id "streamKind" kind
+                                                              "producerSeq" 0 "at" AT "kind" "text" "text" "t"
+                                                              "bytes" 12 "sha256" "ab" "version" 1}]
+                                                   "cursor" {"direction" "before" "next" None}})))
+    (assert (isinstance page RecordPage) f"{kind} の頁が読めない")
+    (assert (= (len page.events) 1) f"{kind} の項が落ちた — 語彙から外れて読まれている")
+    (assert (= (. (get page.events 0) stream-kind) kind) f"{kind} が別の語になった")
+    ;; spool の file の本文(送る前の outbox を読み戻す側 — 消費点はこの 2 つ)
+    (setv batch (decode-spooled-batch {"schema" RECORD-SPOOL-SCHEMA "spoolKey" "k" "conversationId" CONVERSATION
+                                       "request" {"stream" {"kind" kind "id" stream-id "startedAt" AT "attempt" 1}
+                                                  "events" [{"producerSeq" 0 "at" AT "kind" "text" "text" "t"}]}}))
+    (assert (is-not batch None) f"{kind} の batch が読めない — spool に落ちた本文が捨てられる")
+    (assert (= (. batch stream kind) kind) f"{kind} の batch の語が変わった"))
+  ;; 語彙の外は通さない(発明しない — 落とす側の腕は残る)
+  (setv unknown (decode-record-page (HttpReply 200 {"cid" CONVERSATION
+                                                    "events" [{"recordSeq" 3 "streamId" "x#1" "streamKind" "shout"
+                                                               "producerSeq" 0 "at" AT "kind" "text" "bytes" 1 "sha256" "ab"}]
+                                                    "cursor" {"direction" "before" "next" None}})))
+  (assert (= (len unknown.events) 0) "語彙の外の語が通った")
+  (assert (is (decode-spooled-batch {"schema" RECORD-SPOOL-SCHEMA "spoolKey" "k" "conversationId" CONVERSATION
+                                     "request" {"stream" {"kind" "shout" "id" "x#1" "startedAt" AT "attempt" 1}
+                                                "events" []}})
+              None)
+          "語彙の外の語の batch が通った"))
 
 
 ;; ---------------------------------------------------------------------------
