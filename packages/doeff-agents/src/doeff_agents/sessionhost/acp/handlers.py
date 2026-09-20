@@ -62,11 +62,14 @@ from doeff_agents.sessionhost.acp.effects import (
     RECORD_SPOOL_GIVEN_UP_DIR,
     STREAM_SOURCE_HEADER,
     TURN_RECORD_CONVERSATION_FIELD,
+    MEMORY_KIND,
+    MEMORY_SPEC_CONVERSATION_KEY,
     SUMMARY_KIND,
     SUMMARY_SPEC_CONVERSATION_KEY,
     TURN_RECORD_KIND,
     TURN_RECORD_RUNNING_SELECTOR,
     AcpConversationMail,
+    AcpConversationMemories,
     AcpConversationSummaries,
     AcpCreate,
     AcpEventWindow,
@@ -104,6 +107,7 @@ from doeff_agents.sessionhost.acp.effects import (
     FsFileExists,
     FsMakeDirectories,
     FS_READ_TEXT_DEFAULT_MAX_CHARS,
+    FsListDirectory,
     FsReadText,
     FsFileSize,
     FsWritePrivateText,
@@ -144,6 +148,9 @@ from doeff_agents.sessionhost.acp.effects import (
     RecordReadOutcome,
     RecordReadSince,
     RecordReadStream,
+    RecordSupersede,
+    RecordSuperseded,
+    RecordSupersedeOutcome,
     RecordSpoolGiveUp,
     RecordSpoolList,
     RecordSpoolListing,
@@ -775,7 +782,8 @@ class AcpHttp:
             return Resume(k, self._list(TURN_RECORD_KIND, TURN_RECORD_RUNNING_SELECTOR))
         if isinstance(
             effect,
-            (AcpGet, AcpGetRow, AcpEventWindow, AcpWatchSse, AcpConversationMail, AcpTurnHeadlines, AcpConversationSummaries),
+            (AcpGet, AcpGetRow, AcpEventWindow, AcpWatchSse, AcpConversationMail, AcpTurnHeadlines,
+             AcpConversationSummaries, AcpConversationMemories),
         ):
             return Resume(k, self._read(effect))
         if isinstance(effect, (AcpPutStatus, AcpPutSpec, AcpCreate, AcpStreamPush)):
@@ -790,10 +798,14 @@ class AcpHttp:
         | AcpWatchSse
         | AcpConversationMail
         | AcpTurnHeadlines
-        | AcpConversationSummaries,
+        | AcpConversationSummaries
+        | AcpConversationMemories,
     ) -> object:
         if isinstance(effect, AcpGet):
             return self._list(effect.kind)
+        if isinstance(effect, AcpConversationMemories):
+            # card acp:kanban-issue:ki-9fc7d4bca4dc: この会話の kind agent-memory の行だけ(宣言の indexes が引く)。
+            return self._list(MEMORY_KIND, f"spec.{MEMORY_SPEC_CONVERSATION_KEY}={effect.conversation_id}")
         if isinstance(effect, AcpConversationSummaries):
             # 段 12 lane 12j(agora-redesign #233): この会話の kind summary の行だけ(field selector・宣言の indexes が引く)。
             return self._list(SUMMARY_KIND, f"spec.{SUMMARY_SPEC_CONVERSATION_KEY}={effect.conversation_id}")
@@ -1433,6 +1445,8 @@ class LocalIo:
             return Resume(k, self._file(effect))
         if isinstance(effect, FsDirectoryExists):
             return Resume(k, os.path.isdir(effect.path))
+        if isinstance(effect, FsListDirectory):
+            return Resume(k, list_directory(effect.path))
         if isinstance(effect, FsMakeDirectories):
             return Resume(k, make_directories(effect.path))
         return Pass(effect, k)
@@ -1607,6 +1621,16 @@ def make_directories(path: str) -> bool:
     except OSError:
         return False
     return os.path.isdir(path)
+
+
+def list_directory(path: str) -> tuple[str, ...]:
+    """dir の直下の **file** の名(card acp:kanban-issue:ki-9fc7d4bca4dc — 記憶の置き場の冊)。名の順・dir は数えない。
+    dir が無い・読めない = 空(置き場は手番の頭に作られるので、無い = まだ 1 冊も書いていない)。"""
+    try:
+        names = sorted(os.listdir(path))
+    except OSError:
+        return ()
+    return tuple(name for name in names if os.path.isfile(os.path.join(path, name)))
 
 
 def _write_private(path: str, text: str) -> None:
@@ -1985,6 +2009,9 @@ def decode_record_event(doc: JSON) -> RecordEvent | None:
         data=_str_field(doc, "data"),
         # 段 12 lane 12l(agora-redesign #383 粒 2): 本文が消された刻(無ければ None・bool は刻ではない)。
         tombstoned_at=_int_field(doc, "tombstonedAt"),
+        # card acp:kanban-issue:ki-9fc7d4bca4dc: 版(契約 storedEvent.version・required なので必ず在るが、
+        # 古い service の答えには無いので既定 1 に倒す)。記憶の畳み戻しが supersede の相手を読み直す材料。
+        version=_int_field(doc, "version") or 1,
     )
 
 
@@ -2021,6 +2048,8 @@ class RecordHttp:
             return Resume(k, self._read_since(effect.conversation_id, effect.since, effect.limit, effect.kinds))
         if isinstance(effect, RecordReadStream):
             return Resume(k, self._read_stream(effect.conversation_id, effect.stream_id))
+        if isinstance(effect, RecordSupersede):
+            return Resume(k, self._supersede(effect))
         return Pass(effect, k)
 
     def _append(self, batch: RecordBatch) -> RecordAppendOutcome:
@@ -2031,6 +2060,27 @@ class RecordHttp:
             self._http, "POST", url, self._headers, record_append_body(batch), RECORD_HTTP_TIMEOUT_SECONDS
         )
         return decode_record_reply(reply)
+
+    def _supersede(self, effect: RecordSupersede) -> RecordSupersedeOutcome:
+        """契約 supersede: 既に在る出来事を新しい版で置き換える(上書きではない — 前の版は鎖として残る)。
+        2xx = versionAnswer / それ以外は送れなさを値で返す(409 = もう置き換えられている)。"""
+        cid = urllib.parse.quote(effect.conversation_id, safe="")
+        url = f"{self._base_url}/v1/conversations/{cid}/events/{effect.record_seq}/supersede"
+        reply = _http_json(
+            self._http,
+            "POST",
+            url,
+            self._headers,
+            {"reason": effect.reason, "event": effect.event},
+            RECORD_HTTP_TIMEOUT_SECONDS,
+        )
+        if not (200 <= reply.status < 300):
+            return RecordUnsent(reply.status, _record_error_text(reply))
+        record_seq = _int_field(reply.body, "recordSeq")
+        version = _int_field(reply.body, "version")
+        if record_seq is None or version is None:
+            return RecordUnsent(reply.status, "versionAnswer without recordSeq / version")
+        return RecordSuperseded(record_seq=record_seq, version=version)
 
     def _read(self, conversation_id: str, before: int | None, limit: int) -> RecordReadOutcome:
         cid = urllib.parse.quote(conversation_id, safe="")

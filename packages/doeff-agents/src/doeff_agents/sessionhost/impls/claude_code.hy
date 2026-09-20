@@ -158,6 +158,10 @@
 ;;   * `--settings` の inline JSON は flagSettings として読まれ、userSettings より先に効く
 ;; 反例つきの実射の記録は ADR-DOE-AGENTS-006 R11。
 (setv CLAUDE-AUTO-MEMORY-DIR-SETTING "autoMemoryDirectory")
+;; charter が運ぶ記憶の冊の欄(card acp:kanban-issue:ki-9fc7d4bca4dc)。綴りの正本は
+;; sessionhost/acp/effects.py の CHARTER_MEMORY_FILES_KEY で、ここはその写し(検が突き合わせる)。
+;; この層は行を読まない — 運ばれてきた {name, text} を置き場へ書くだけ。
+(setv CLAUDE-MEMORY-FILES-KEY "memory_files")
 
 
 (defk build-claude-argv [params]
@@ -381,7 +385,21 @@
   ;; claude の auto-memory に当たる置き場を持たない。
   (setv memory-dir (.get params "memory_dir"))
   (when (and (isinstance memory-dir str) (.strip memory-dir))
-    (<- _ (fs-make-dirs memory-dir)))
+    (<- _ (fs-make-dirs memory-dir))
+    ;; card acp:kanban-issue:ki-9fc7d4bca4dc(法 ACP 575b1e conversation-memory-lives-in-the-row):
+    ;; 記憶の正本は ACP の行で、置き場は手番ごとの写し。charter が運んできた冊(起こす側が行から読んで
+    ;; 載せた — history / first_turn と同じ形)をここで実体化する。索引 MEMORY.md も同じ列に入っていて、
+    ;; 行から導いた本文で毎手番上書きされる(file としての正本を持たない)。
+    ;; ⚠ **行を読むのはここではない**: この module は substrate-clean(生 IO 禁止・Fs* / EnvGet だけ)なので、
+    ;; ACP も記録の service も import しない。運ぶのは charter の 1 欄ちょうど。
+    ;; 置き場に残った余りの file は消さない(消す動詞をこの層に置かない)— 退役した冊を書き戻さないのは
+    ;; 起こす側の判断(judgment.memory-row-retired?)。
+    (for [book (or (.get params CLAUDE-MEMORY-FILES-KEY) [])]
+      (setv book-name (if (isinstance book dict) (.get book "name") None))
+      (setv book-text (if (isinstance book dict) (.get book "text") None))
+      (when (and (isinstance book-name str) (isinstance book-text str)
+                 (.strip book-name) (not (in "/" book-name)) (not (.startswith book-name ".")))
+        (<- _ (fs-write-text-atomic f"{memory-dir}/{book-name}" book-text ".agentd-tmp")))))
   (when (not (.get params "skip_trust_setup" False))
     (<- _ (preseed-claude-trust config-dir (get params "work_dir"))))
   (setv identity {"CLAUDE_CONFIG_DIR" config-dir

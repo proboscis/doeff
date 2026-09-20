@@ -140,8 +140,21 @@
   VERIFY-STEP-OBSERVE
   VERIFY-STEP-TIMED-OUT
   VerifyPlan
+  AcpConversationMemories
   AcpConversationSummaries
   RecordBatch
+  RecordSupersede
+  RecordSuperseded
+  FsListDirectory
+  MEMORY-BOOK-MAX-CHARS
+  MEMORY-KIND
+  MEMORY-SPEC-RECORD-REF-KEY
+  MemoryAppend
+  MemoryBook
+  MemoryMalformed
+  MemorySupersede
+  MemoryUnchanged
+  CONDITION-MEMORY-UNWRITABLE
   AGENT-JOB-NAMESPACE
   HistorySummary
   METRIC-SUMMARIZE-TRIGGERS-TOTAL
@@ -369,6 +382,21 @@
   summary-spec-of
   summary-status-of
   summary-stream-id-of
+  charter-with-memory-files
+  memory-batch-of
+  memory-body-of
+  memory-book-of
+  memory-book-of-row
+  memory-files-of
+  memory-home-of
+  memory-row-id-of
+  memory-row-retired?
+  memory-rows-by-name
+  memory-spec-of
+  memory-status-of
+  memory-stream-id-of
+  memory-unwritable-noted
+  memory-write-verdict
   with-summarize
   withdrawn-summarize-rows-of
   without-summarize
@@ -1182,6 +1210,11 @@
                                                 settings.memory-root opener settings.seat-env))
         (setv charter (get built 0))
         (setv auth-file (get built 1))
+        ;; card acp:kanban-issue:ki-9fc7d4bca4dc(法 ACP 575b1e): 会話の記憶は行が正本 — 起こす前に行から読み、
+        ;; charter に載せる(器の側が置き場へ書き出す)。行を読むのは effect を持つこの層ちょうどで、
+        ;; 器の kind module(substrate-clean)には ACP も記録の service も import しない。
+        (<- memory-files tuple (memory-files-for-launch subject))
+        (<- charter dict (charter-with-memory-files charter memory-files))
         (when (and (is-not auth-file None) (is-not lease None) (is-not lease.auth-json None))
           (<- (FsWritePrivateText :path auth-file :text lease.auth-json)))
         ;; 段 10 lane 10o(agora-redesign #96): 起こす腕は郵便を 1 手番目の本文に畳む(first-turn-carries-inputs)。
@@ -1196,6 +1229,62 @@
             (do
               (<- launched (| SessionView SessionRefused) (SessionLaunch :params charter))
               launched)))))
+
+
+(defk memory-files-for-launch [subject]
+  {:pre [(: subject str)]
+   :post [(: % tuple)]}
+  "手番の頭の水入れ(card acp:kanban-issue:ki-9fc7d4bca4dc・法 ACP 575b1e): この会話の記憶の行を 1 回引き、
+   本文を記録の service の stream から読んで、置き場へ書き出す file の列にする。索引 MEMORY.md は
+   **行から導く**(file としての正本を持たない — 実測 2026-09-20: 本 18 冊に対し索引 15 行に腐っていた)。
+
+   ⚠ **水入れと畳み戻しは対で 1 便**(依頼書の禁止 1)。読めない行・本文の無い行は落として数だけ log に出す
+   (黙って空の置き場を正としない — 空の dir を正として畳み戻すと記憶が消える)。
+
+   帯域: 読みの窓は principal(agentd)ごとに 60 秒 / distinct 会話 200 / 268 MB で、1 手番 = 1 会話。
+   艦隊の実測(2026-09-20・ACP の turn-record 全数の 60 秒の滑り窓)は distinct 会話の最大 30(門の 15.0%)・
+   2.3 MB(門の 0.85%)で、本文ごと撒いても 6.7 倍の交通量まで当たらない(計画段 c-J40MF0ZA8T… の測り)。"
+  (<- rows tuple (AcpConversationMemories :conversation-id subject))
+  ;; 記憶を 1 度も書いていない会話は charter を 1 byte も変えない(今日の挙動のまま)。
+  (when (not rows)
+    (return #()))
+  (setv books [])
+  (setv unread 0)
+  (setv retired-count 0)
+  (for [row rows]
+    (<- retired bool (memory-row-retired? row))
+    ;; 退役した行は本文を引きに行かない(手番の頭に載せない)— これは「読めない」ではないので別に数える。
+    (when retired
+      (setv retired-count (+ retired-count 1))
+      (continue))
+    (<- stream-id (| str None) (summary-stream-id-of-ref (.get row.spec MEMORY-SPEC-RECORD-REF-KEY)))
+    (if (is stream-id None)
+        (setv unread (+ unread 1))
+        (do
+          (<- page (| RecordPage RecordUnread) (RecordReadStream :conversation-id subject :stream-id stream-id))
+          (if (isinstance page RecordUnread)
+              (setv unread (+ unread 1))
+              (do
+                (setv event (next (gfor e page.events :if (and (= e.producer-seq 0) (isinstance e.text str)) e) None))
+                (if (is event None)
+                    (setv unread (+ unread 1))
+                    (do
+                      (<- book (| MemoryBook None) (memory-book-of-row row event.text))
+                      (if (is book None)
+                          (setv unread (+ unread 1))
+                          (.append books book)))))))))
+  (when (> unread 0)
+    (<- (LogLine :text (+ f"agentd: conversation {subject} has {unread} memory row(s) whose body could not be read; "
+                          "the turn starts without them"))))
+  ;; 1 冊も読めなかったのに行は在る = 記録の service が答えなかった形。ここで空の索引を書くと
+  ;; 「記憶は無い」と読める置き場を正として残してしまうので、置き場に手を付けない(前の手番の写しが残る)。
+  (when (and (not books) (> unread 0))
+    (return #()))
+  ;; 冊が 0 でも行が在って全部読めた(= 全部退役した)なら索引は書き直す — 腐った索引を残さない。
+  (<- files tuple (memory-files-of (tuple books)))
+  (<- (MetricLine :fields {"metric" "agent-memory-hydrated" "conversationId" subject
+                           "books" (len books) "unreadable" unread "retired" retired-count}))
+  files)
 
 
 (defk start-claimed [settings state row plan choice view session-id now-ms opener]
@@ -2218,6 +2307,151 @@
   settled)
 
 
+(defk memory-books-of-home [home]
+  {:pre [(: home str)]
+   :post [(: % tuple)]}
+  "置き場の file を読んで冊の列にする(card acp:kanban-issue:ki-9fc7d4bca4dc)。読めない file は
+   MemoryMalformed のまま返す — 呼び手が理由を log に出して**書かない**(欄を発明して行を作らない)。
+   判断は judgment.memory-book-of の 1 点で、ここは読むだけ。"
+  (<- names tuple (FsListDirectory :path home))
+  (setv readings [])
+  (for [name names]
+    (<- text (| str None) (FsReadText :path f"{home}/{name}" :max-chars MEMORY-BOOK-MAX-CHARS))
+    (when (isinstance text str)
+      (<- reading (| MemoryBook MemoryMalformed) (memory-book-of name text))
+      (.append readings reading)))
+  (tuple readings))
+
+
+(defk fold-one-memory [settings job book now-ms row]
+  {:pre [(: settings AgentdSettings) (: job InFlightJob) (: book MemoryBook) (: now-ms int) (: row (| AcpRow None))]
+   :post [(: % (| str None))]}
+  "1 冊を行へ畳み戻す(法 ACP 575b1e)。戻り = 書けなかった理由(None = 書けた か 撃つ必要が無かった)。
+
+   撃ち分けは judgment.memory-write-verdict の 1 規則(行の recordSeq の在否):
+     * 変わっていない(行の sha256 が同じ)→ 1 bit も撃たない
+     * 行が在る → その recordSeq へ supersede(producerSeq は 0 のまま・前の版は鎖として残る)
+     * 行が無い → append。**409 は事故ではなく合図** — 『行が消えて stream が残っている』形なので
+       stream を読み直して今の版の recordSeq へ supersede に落ちる(第 2 の語彙を足さない)。"
+  (<- body dict (memory-body-of book.text now-ms))
+  (<- material bytes (record-body-bytes-of body))
+  (setv sha256 (.hexdigest (hashlib.sha256 material)))
+  (<- verdict (| MemoryUnchanged MemoryAppend MemorySupersede) (memory-write-verdict row sha256))
+  (when (isinstance verdict MemoryUnchanged)
+    (return None))
+  (<- stream-id str (memory-stream-id-of book.name))
+  (setv record-seq None)
+  (setv version None)
+  (when (isinstance verdict MemoryAppend)
+    (<- batch RecordBatch (memory-batch-of job.subject book.name body job.started-ms settings.node-name job.profile))
+    (<- appended (| RecordAppended RecordConflicted RecordUnsent) (RecordAppend :batch batch))
+    (cond
+      (isinstance appended RecordUnsent)
+      (return f"the record service did not accept memory {book.name} ({appended.status}: {appended.error})")
+      (isinstance appended RecordConflicted)
+      ;; 行が消えて stream が残っている形 — 今の版を読み直して supersede へ落ちる(素の再 append は
+      ;; 保存済みが勝つので、ここで諦めると新しい本文が永久に積めない)。
+      (do
+        (<- page (| RecordPage RecordUnread) (RecordReadStream :conversation-id job.subject :stream-id stream-id))
+        (when (isinstance page RecordUnread)
+          (return (+ f"memory {book.name} is already in the record with another body and its stream could not be "
+                     f"re-read ({page.status}: {page.error})")))
+        (setv current (next (gfor e page.events :if (= e.producer-seq 0) e) None))
+        (when (is current None)
+          (return f"memory {book.name} conflicted but its stream {stream-id} holds no producerSeq 0 event"))
+        (setv verdict (MemorySupersede :name book.name :record-seq current.record-seq :version current.version)))
+      True
+      (do
+        ;; 積めた(または既在で同じ本文 = ignored)— 今の版を読んで recordSeq と版を知る。
+        (<- page (| RecordPage RecordUnread) (RecordReadStream :conversation-id job.subject :stream-id stream-id))
+        (when (isinstance page RecordUnread)
+          (return f"memory {book.name} was appended but its stream could not be read back ({page.status}: {page.error})"))
+        (setv stored (next (gfor e page.events :if (= e.producer-seq 0) e) None))
+        (when (is stored None)
+          (return f"memory {book.name} was appended but its stream {stream-id} holds no producerSeq 0 event"))
+        (setv record-seq stored.record-seq)
+        (setv version stored.version))))
+  (when (isinstance verdict MemorySupersede)
+    (<- replaced (| RecordSuperseded RecordUnsent)
+        (RecordSupersede :conversation-id job.subject :record-seq verdict.record-seq
+                         :reason f"the conversation rewrote memory {book.name} in turn {job.job-id}"
+                         :event body))
+    (when (isinstance replaced RecordUnsent)
+      (return f"the record service refused the new version of memory {book.name} ({replaced.status}: {replaced.error})"))
+    (setv record-seq replaced.record-seq)
+    (setv version replaced.version))
+  (when (or (is record-seq None) (is version None))
+    (return f"memory {book.name} was written but the record service named no version"))
+  ;; 行は claim check ちょうど(本文は 1 字も持たない)。
+  (<- record-ref str (record-ref-of job.subject stream-id))
+  (<- spec dict (memory-spec-of job.subject book record-ref record-seq (len material) sha256 version job.job-id))
+  (<- row-id str (memory-row-id-of job.subject book.name))
+  (<- status dict (memory-status-of now-ms))
+  (if (is row None)
+      (do
+        (<- created (| Written Conflict Refused)
+            (AcpCreate :namespace AGORA-KINDS-NAMESPACE :kind MEMORY-KIND :resource-id row-id :spec spec))
+        (when (and (isinstance created Refused) (not (in "already exists" created.error)))
+          (return f"ACP refused the memory row {row-id} ({created.status}: {created.error})")))
+      (do
+        (<- wrote-spec (| Written Conflict Refused) (AcpPutSpec :row row :spec spec))
+        (when (isinstance wrote-spec Refused)
+          (return f"ACP refused the new spec of memory row {row-id} ({wrote-spec.status}: {wrote-spec.error})"))))
+  (<- fresh (| AcpRow None) (AcpGetRow :key f"{AGORA-KINDS-NAMESPACE}:{MEMORY-KIND}:{row-id}"))
+  (when (is-not fresh None)
+    (<- wrote (| Written Conflict Refused) (AcpPutStatus :row fresh :status status))
+    (when (not (isinstance wrote Written))
+      (<- (LogLine :text f"agentd: memory row {row-id} was written but its status was not ({wrote})"))))
+  None)
+
+
+(defk fold-memories [settings job now-ms]
+  {:pre [(: settings AgentdSettings) (: job InFlightJob) (: now-ms int)]
+   :post [(: % InFlightJob)]}
+  "手番の終いの畳み戻し(card acp:kanban-issue:ki-9fc7d4bca4dc・法 ACP 575b1e): 置き場の冊を読み、
+   会話の記憶の行と突き合わせ、変わった冊だけを記録の service へ書いて行を進める。
+
+   ⚠ **水入れと対で 1 便**(依頼書の禁止 1): 畳み戻しだけが在ると、割れた 2 機体が同じ名前へ交互に
+   書いて手番の頭に載る本が痩せる。
+
+   書けなかった冊は condition AgentMemoryUnwritable を 1 つ立てるだけで**手番は落とさない**
+   (記憶が書けないことは手番の失敗ではない)。置き場を宣言していない機体(memory-root が空)と
+   綴りの組めない会話 id では 1 つも撃たない。"
+  (<- home (| str None) (memory-home-of settings.memory-root job.subject))
+  (when (is home None)
+    (return job))
+  (<- readings tuple (memory-books-of-home home))
+  (when (not readings)
+    (return job))
+  (setv books (tuple (gfor r readings :if (isinstance r MemoryBook) r)))
+  (for [bad (gfor r readings :if (isinstance r MemoryMalformed) r)]
+    (<- (LogLine :text f"agentd: memory {bad.name} of conversation {job.subject} was not written back: {bad.reason}")))
+  (when (not books)
+    (return job))
+  (<- rows tuple (AcpConversationMemories :conversation-id job.subject))
+  (<- by-name dict (memory-rows-by-name rows))
+  (setv noted job)
+  (setv written 0)
+  (for [book books]
+    (setv row (.get by-name book.name))
+    (<- retired bool (memory-row-retired? row))
+    (when retired
+      ;; 退役した冊は置き場に file が残っていても書き戻さない(でないと退役が次の手番で取り消される)。
+      ;; 戻すのは同じ鍵で 2 拍(spec を書き直し → status を current)で、その判断は operator の側。
+      (<- (LogLine :text f"agentd: memory {book.name} of conversation {job.subject} is retired; the file left in the home is not written back"))
+      (continue))
+    (<- reason (| str None) (fold-one-memory settings job book now-ms row))
+    (if (is reason None)
+        (setv written (+ written 1))
+        (do
+          (<- (LogLine :text f"agentd: {reason}"))
+          (<- carried InFlightJob (memory-unwritable-noted noted reason))
+          (setv noted carried))))
+  (<- (MetricLine :fields {"metric" "agent-memory-folded" "agentJobId" job.job-id "conversationId" job.subject
+                           "books" (len books) "written" written "unreadable" (- (len readings) (len books))}))
+  noted)
+
+
 (defk settle-record [settings state job view source path outcome step now-ms]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: job InFlightJob)
          (: view (| SessionView None)) (: source (| str None)) (: path (| str None))
@@ -2238,6 +2472,9 @@
   (<- measured AgentdState (with-context-percent state job.session-id percent))
   ;; 段 12 lane 12j 便 3: 文脈の大きさが宣言の閾値を超えた手番の終わりに、古い区間の要約の job を 1 つ書く(判断は judgment.summarize-due)。
   (<- (trigger-summarize settings job batch now-ms))
+  ;; card acp:kanban-issue:ki-9fc7d4bca4dc(法 ACP 575b1e): 会話が手番の間に書き溜めた自動記憶を行へ畳み戻す。
+  ;; 書けなかった冊は condition を 1 つ足すだけで手番は落とさない(記憶が書けないことは手番の失敗ではない)。
+  (<- drained InFlightJob (fold-memories settings drained now-ms))
   ;; 段 11 lane 11n 便 C(agora-redesign #179・依頼者の裁定 2026-09-15 案 c′): 器が provider の限度で
   ;; 終わった手番は、その事実を型で残す(判断は judgment.provider-limit-condition-of の 1 点で、読むのは
   ;; 器が書いた終端の cause ちょうど・None = 限度の断りではない)。この条件が無いと「どの model が
