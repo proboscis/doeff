@@ -3062,6 +3062,7 @@ def _in_flight_job(job_id: str, session_id: str) -> InFlightJob:
         last_frame_ms=0,
         last_probe_ms=0,
         pending_conditions=(),
+        materials_cover_the_turn=True,
     )
 
 
@@ -4384,6 +4385,7 @@ def test_interrupt_arm_for_is_the_one_decision() -> None:
             last_frame_ms=0,
             last_probe_ms=0,
             pending_conditions=(),
+            materials_cover_the_turn=True,
         )
 
     def view(status: str, turn_ended_at_ms: int | None) -> SessionView:

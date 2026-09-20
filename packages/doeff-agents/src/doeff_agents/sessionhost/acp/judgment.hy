@@ -131,6 +131,7 @@
   CustodyRefusalVerdict
   REFUSED-ATTEMPT-CONDITION-TYPES
   CONDITION-TURN-PRODUCED-NOTHING
+  CONDITION-TURN-OUTPUT-UNMEASURED
   CONDITION-UNSCHEDULABLE
   MODEL-UNDECLARED
   REASON-RATE-LIMITED
@@ -1326,6 +1327,16 @@
       None))
 
 
+(defk stream-starts-at-head [arm]
+  {:pre [(: arm str)]
+   :post [(: % bool)]}
+  "この腕の手番の材料(transcript / events)を file の頭から読むか —— **読み始めの判断の 1 点**。
+   launch / rehydrate = この手番が session を起こしたので file の頭がこの手番の始まり。send / resume =
+   温かい session の続きなので、前の手番の行を混ぜないために『その拍の file の大きさ』が始まり。
+   agentd.start-offset-of はこの述語だけを読む(腕の membership を第 2 の点に写さない)。"
+  (not-in arm #{NEXT-ARM-SEND NEXT-ARM-RESUME}))
+
+
 (defk recovered-arm-of [plan view job-id]
   {:pre [(: plan LaunchPlan) (: view SessionView) (: job-id str)]
    :post [(: % str)]}
@@ -1598,16 +1609,24 @@
 ;; 結末の型で区別できなかった)。
 
 
-(defk turn-produced-nothing-condition-of [step source path batch turn-error]
-  {:pre [(: step str) (: source (| str None)) (: path (| str None)) (: batch DeltaBatch) (: turn-error (| str None))]
+(defk turn-output-condition-of [step source path batch turn-error covers]
+  {:pre [(: step str) (: source (| str None)) (: path (| str None)) (: batch DeltaBatch) (: turn-error (| str None))
+         (: covers bool)]
    :post [(: % (| dict None))]}
-  "温かい手番の終わり(turn-end)で本文のための model の出力が 1 本も無かったか —— **判断の 1 点**。None = 何か出した /
-   温かい手番の終わりではない / 材料が読めない器(stream の path が無い — 読めないことは「何も出していない」の証拠ではない)。
+  "温かい手番の終わり(turn-end)の材料が、その手番の出力について何を言っているか —— **判断の 1 点**。3 値:
+
+   - None = 何か出した / 温かい手番の終わりではない / 材料の在る器ではない(stream の path が無い — 読めないことは
+     「何も出していない」の証拠ではない)。
+   - {type: TurnProducedNothing} = 材料はこの手番を覆っていて(covers)、その中に出力が 1 本も無い = model が本文のために
+     1 度も呼ばれていない = 手番が走らなかった事実。
+   - {type: TurnOutputUnmeasured} = 材料がこの手番を覆っていない(covers が False = 再起動の後に行から拾い直した手番の
+     うち、読み始めが『拾い直した拍の file の大きさ』になる腕)。出力が 0 本なのは **測れていない** だけで、出さなかった
+     証拠ではない(card acp:kanban-issue:ki-ef537db05f7f)。
 
    材料 = 手番の始まりから読み直した batch(turn-batch-of): assistant の見出し(text / tool_use / tool_result)が 0 本で、
    usage も無い(usage は assistant の message からだけ組む — result の行の usage は数えない。thinking だけの手番も usage は
-   在るので当たらない)。= model が本文のために 1 度も呼ばれていない = 手番が走らなかった事実。条件の文には根拠を残す
-   (system の見出しの数・usage の無さ・器が名乗った手番の失敗の文 turn-error — D2)。"
+   在るので当たらない)。条件の文には根拠を残す(system の見出しの数・usage の無さ・器が名乗った手番の失敗の文 turn-error
+   — D2)。⚠ 覆いの検は **出力の検の後**(覆っていない材料でも、その中に出力が在れば『出した』は確かに読めた)。"
   (when (!= step JOB-STEP-TURN-END)
     (return None))
   (when (or (is source None) (is path None))
@@ -1621,27 +1640,43 @@
   (setv said (if (and (isinstance turn-error str) (.strip turn-error))
                  f"; the runner said the turn failed: {(.strip turn-error)}"
                  "; the runner reported the turn as ended without an error"))
+  (setv read-so-far f"({(len kinds)} headlines, {system-count} system, 0 text / tool_use / tool_result, no usage)")
+  (when (not covers)
+    (<- unmeasured dict
+        (condition-of CONDITION-TURN-OUTPUT-UNMEASURED
+                      (+ f"the material this agentd could read for the turn carries no model output {read-so-far}"
+                         f"{said}, but the material does not cover the turn: the turn was picked up from its row after "
+                         "a restart and the read starts at the file's size at that moment, so anything written before "
+                         "the restart is unreadable — whether the turn produced output is unmeasured, not zero")))
+    (return unmeasured))
   (<- condition dict
       (condition-of CONDITION-TURN-PRODUCED-NOTHING
-                    (+ f"the turn ended with no model output for its input ({(len kinds)} headlines, "
-                       f"{system-count} system, 0 text / tool_use / tool_result, no usage){said} — "
+                    (+ f"the turn ended with no model output for its input {read-so-far}{said} — "
                        "the model was never called, so the turn did not run")))
   condition)
 
 
-(defk outcome-with-nothing [outcome nothing]
-  {:pre [(: outcome JobOutcome) (: nothing (| dict None))]
+(defk outcome-with-output-condition [outcome condition]
+  {:pre [(: outcome JobOutcome) (: condition (| dict None))]
    :post [(: % JobOutcome)]}
-  "出力 0 件の条件(turn-produced-nothing-condition-of・None = 何か出した)を結末に写す(依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB・D1):
-   cause が completed の時だけ {category: failed, reason: TurnProducedNothing} に置き換え、条件を 1 項足す。取り消し・停止・
-   限度・器の失敗の cause は上書きしない(合図・決定的な理由が先に在った — 手番が走らなかった側へ畳まない・D3)。"
-  (when (is nothing None)
+  "手番の出力の条件(turn-output-condition-of・None = 何か出した / 判じない)を結末に写す(依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB・D1):
+
+   - TurnProducedNothing(材料が手番を覆っていて出力 0 本)= cause が completed の時だけ {category: failed, reason:
+     TurnProducedNothing} に置き換え、条件を 1 項足す。取り消し・停止・限度・器の失敗の cause は上書きしない
+     (合図・決定的な理由が先に在った — 手番が走らなかった側へ畳まない・D3)。
+   - TurnOutputUnmeasured(材料が手番を覆っていない)= **cause は 1 bit も変えず**条件だけ足す(card
+     acp:kanban-issue:ki-ef537db05f7f)。failed へ倒すと ACP の配達が一過性として同じ郵便で手番を作り直し、答え終えた
+     手番の答えが 2 度出る。測れなかったことは条件として行に残す(数えられる形にする)。"
+  (when (is condition None)
     (return outcome))
+  (setv typed (.get condition "type"))
+  (when (!= typed CONDITION-TURN-PRODUCED-NOTHING)
+    (return (replace outcome :conditions (+ outcome.conditions #(condition)))))
   (setv category (if (isinstance outcome.cause dict) (.get outcome.cause CAUSE-CATEGORY-KEY) None))
   (when (!= category CAUSE-CATEGORY-COMPLETED)
     (return outcome))
   (<- failed dict (terminal-cause-of CAUSE-CATEGORY-FAILED CONDITION-TURN-PRODUCED-NOTHING))
-  (replace outcome :cause failed :conditions (+ outcome.conditions #(nothing))))
+  (replace outcome :cause failed :conditions (+ outcome.conditions #(condition))))
 
 
 (defk recovered-cancel-of [job row]
@@ -3536,15 +3571,17 @@
   f"{AGORA-KINDS-NAMESPACE}:{TURN-RECORD-KIND}:{job-id}")
 
 
-(defk in-flight-job-of [row plan view node-name started-ms turn-floor-ms start-offset lease pending]
+(defk in-flight-job-of [row plan view node-name started-ms turn-floor-ms start-offset covers lease pending]
   {:pre [(: row AcpRow) (: plan LaunchPlan) (: view SessionView) (: node-name str)
-         (: started-ms int) (: turn-floor-ms int) (: start-offset int)
+         (: started-ms int) (: turn-floor-ms int) (: start-offset int) (: covers bool)
          (: lease (| LeaseGrant None)) (: pending tuple)]
    :post [(: % InFlightJob)]}
   "agent-job の行 + 起こし方の写し + 器の眺めから、観測に要る memory の状態を組む 1 点。
    受けた直後(after-start)も再起動後の拾い直し(adopt)も同じ形 — 行と器に無い欄
    (offset・seq・capture の可否)は始まりの値で、発明しない。turn-floor-ms = この手番の
-   始まりの下限(送った時刻・拾い直しは行の createdAt)。期限(interrupt-escalation-seconds)は charter の値ちょうど
+   始まりの下限(送った時刻・拾い直しは行の createdAt)。covers = その offset から読んだ材料がこの手番を覆うか
+   (after-start は手番の始まりに取るので True・拾い直しは file の頭から読む腕だけ True — card
+   acp:kanban-issue:ki-ef537db05f7f)。期限(interrupt-escalation-seconds)は charter の値ちょうど
    (段 10 lane 10n・None = 宣言なし)。"
   (<- escalation-seconds (| int None) (escalation-seconds-of-charter plan.charter))
   (InFlightJob
@@ -3561,6 +3598,7 @@
     :turn-floor-ms turn-floor-ms
     :start-offset start-offset
     :transcript-offset start-offset
+    :materials-cover-the-turn covers
     :delta-seq 0
     :lease-id (if (is lease None) None lease.lease-id)
     :lease-kind (if (is lease None) None lease.kind)

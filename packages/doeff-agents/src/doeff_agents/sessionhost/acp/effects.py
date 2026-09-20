@@ -75,7 +75,7 @@ ENTRY_KIND_FRAME: EntryKind = "frame"
 ENTRY_KIND_SYSTEM: EntryKind = "system"
 ENTRY_KIND_ERROR: EntryKind = "error"
 #: 手番の**出力**の見出し(model が本文のために書いた・撃った・受けた)— 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D1): これが 0 本で
-#: usage も無い温かい手番は completed を名乗らない(判断は judgment.turn-produced-nothing-condition-of の 1 点)。system / error /
+#: usage も無い温かい手番は completed を名乗らない(判断は judgment.turn-output-condition-of の 1 点)。system / error /
 #: frame は器・走行器の見出しで、model の出力ではない。
 TURN_OUTPUT_ENTRY_KINDS: tuple[EntryKind, ...] = (
     ENTRY_KIND_TEXT,
@@ -160,6 +160,7 @@ ConditionType = Literal[
     "CredentialLeaseHeld",
     "CredentialNotLeasable",
     "TurnProducedNothing",
+    "TurnOutputUnmeasured",
     "VerifyScriptMissing",
     "VerifyStartFailed",
     "VerifyCommandLost",
@@ -319,13 +320,23 @@ CONDITION_CREDENTIAL_NOT_LEASABLE: ConditionType = "CredentialNotLeasable"
 #: 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D1・D3): 温かい session の手番が終わったのに、本文のための model の出力が 1 本も
 #: 無かった(材料は読めたのに assistant の見出し text / tool_use / tool_result が 0 本・usage も無い)印。= model が 1 度も
 #: 呼ばれていない = **手番が走らなかった**事実で、手番自身の結末ではない — result.cause は {category: failed, reason:
-#: TurnProducedNothing}(判断は judgment.turn-produced-nothing-condition-of / outcome-with-nothing の 1 点・completed の時だけ
+#: TurnProducedNothing}(判断は judgment.turn-output-condition-of / outcome-with-output-condition の 1 点・completed の時だけ
 #: 置き換える — 取り消し・停止・限度・器の失敗の cause は上書きしない)。ACP の Messaging はこの reason を一過性の側
 #: (carrierEndedFailureReasons)として有界に組み直す — 決定的な理由(WorkDirMissing・PlaceMismatch 等)は起こす前に
 #: 決まって TURN-END に来ないので、この語に畳まれない。実弾 2026-09-19 07:28 JST aj-9AHT1RWPYNTTWEZBWRNN0R34T6: --resume の
 #: CLI が孤児の task の報せを自分の手番として走らせ、器がその result で本文の手番を切った(根は headless_protocol の
 #: CLI_OWN_TURN_ORIGINS で直した — この語は同じ形の取り違えが別の経路で起きた時に黙って completed を名乗らないための網)。
 CONDITION_TURN_PRODUCED_NOTHING: ConditionType = "TurnProducedNothing"
+#: card acp:kanban-issue:ki-ef537db05f7f: 出力 0 件を **測れていない** 手番の印 — 材料(start_offset から読む
+#: transcript / events)がこの手番を覆っていないので、出力が 0 本なのは「出さなかった」の証拠にならない。当たるのは
+#: 再起動の後に行から拾い直した手番(recover-job)のうち、読み始めが『拾い直した拍の file の大きさ』になる腕
+#: (send / resume)ちょうど — 再起動の前に書かれた出力はもう読めない。⚠ **この語は cause を変えない**(結末は
+#: completed のまま・郵便は消費される): failed へ倒すと ACP の配達が一過性として同じ郵便で手番を作り直し、答え終えた
+#: 手番の答えが 2 度出る(実弾 2026-09-19 22:29Z aj-6EKERTYDCD4MC666PGPVA9R9HA: `ai tell` を 2 回撃って result success で
+#: 終わった手番が entries 0 で TurnProducedNothing になり、作り直し aj-7EKG2XCJT01XJK9WXPDRPG04XQ が同じ郵便へもう一度
+#: 答えた)。測れなかったことは黙って捨てず、この条件として行に残す(数えられる形にする — 判断は
+#: judgment.turn-output-condition-of の 1 点)。
+CONDITION_TURN_OUTPUT_UNMEASURED: ConditionType = "TurnOutputUnmeasured"
 #: agora-redesign #519: 配置が退役させた手番(scheduling.json retirement)の印 — Withdrawn の行の条件 Unschedulable{status True,
 #: reason: retry-budget-exhausted}(書き手 acp-scheduling)。最後の runner(sessionHandle の owner)がその turn-record を ended に
 #: する(judgment.retired-rows-of / agentd.end-retired-records)— 記録は手番が本当に終わる時に ended(1 手番 1 行)。
@@ -1557,7 +1568,7 @@ class SessionView:
     backend_alive: bool | None = None
     #: 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D2): 温かい session の手番が**失敗で**終わった時に走行器が名乗った文(wire の
     #: turn_error — turn_ended_at と対の level-triggered の欄・成功の終わりと次の手番の送りで欄ごと無い)。None = 成功で
-    #: 終わった / 終わっていない / 走行器が名乗らない器(tmux)。読み手は手番の終わりの判断(judgment.turn-produced-nothing-condition-of)。
+    #: 終わった / 終わっていない / 走行器が名乗らない器(tmux)。読み手は手番の終わりの判断(judgment.turn-output-condition-of)。
     turn_error: str | None = None
 
 
@@ -2221,6 +2232,12 @@ class InFlightJob:
     last_probe_ms: int
     #: 手番の途中で判った事実(inputs の欠け等)— Ended の書きで conditions に足す。
     pending_conditions: tuple[JSONObject, ...]
+    #: card acp:kanban-issue:ki-ef537db05f7f: この手番の材料(start_offset から読む transcript / events)が
+    #: **手番の始まりから覆っているか**。手番の始まりに取った offset(after-start)は必ず覆う。再起動の後に行から
+    #: 拾い直した手番(recover-job)は、offset を取ったのが手番の始まりではなく拾い直した拍なので、file の頭から読む腕
+    #: (launch / rehydrate = この手番が session を起こした)だけが覆い、send / resume の腕は覆わない。覆っていない材料の
+    #: 「出力 0 件」は『出さなかった』の証拠にならない(judgment.turn-output-condition-of が TurnOutputUnmeasured に分ける)。
+    materials_cover_the_turn: bool
     #: 手番の記録(turn-record)の行の最後に知った image(段 8 lane 4u — 出来事の追記の CAS の相手)。
     #: None = まだ読んでいない(最初の追記で鍵から読む)。書けた拍に generation + 1 と書いた status で
     #: 差し替え、Conflict は読み直して積み直す。正本は行(R7)— 再起動で消えても鍵から戻る。

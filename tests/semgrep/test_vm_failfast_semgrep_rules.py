@@ -388,6 +388,43 @@ def test_job_step_stream_read_ordering_rule_is_clean_on_shipped_agentd() -> None
     )
 
 
+def test_recovered_turn_output_rules_detect_the_pre_fix_shape() -> None:
+    """card acp:kanban-issue:ki-ef537db05f7f: both guards fire on the pre-fix
+    shape — recover-job rebuilding the InFlightJob without the coverage that
+    start-offset-of returns, and settle-record asking the turn-end judgment
+    for "did it produce nothing" with a literal instead of the job's own
+    reading of whether the material covers the turn."""
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    target = (
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/"
+        "recovered_turn_output_unmeasured_forbidden.hy"
+    )
+    results = _semgrep_results(REPO_ROOT / ".semgrep.yaml", target, cwd=fixture_root)
+    assert _rule_start_lines(
+        results, "doeff-agents-recovered-turns-do-not-claim-unread-output"
+    ) == {10}
+    assert _rule_start_lines(
+        results, "doeff-agents-turn-output-judgment-reads-the-materials-coverage"
+    ) == {23}
+
+
+def test_recovered_turn_output_rules_are_clean_on_shipped_agentd() -> None:
+    """Both guards must stay silent on the shipped agentd.hy (recover-job
+    carries (get start 2) and settle-record reads
+    drained.materials-cover-the-turn) — otherwise they rot into always-on
+    false positives."""
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy",
+        cwd=REPO_ROOT,
+    )
+    for rule in (
+        "doeff-agents-recovered-turns-do-not-claim-unread-output",
+        "doeff-agents-turn-output-judgment-reads-the-materials-coverage",
+    ):
+        assert _rule_start_lines(results, rule) == set(), rule
+
+
 # issue #575 M2: doeff-agentd-repl-ready-wait-must-not-discard-readiness の
 # 発火 assert は rule・fixture(tests/semgrep/fixtures/rust/packages/
 # doeff-agentd/)と 3 点セットで退役した — 対象(退役 Rust crate の src)が

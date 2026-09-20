@@ -441,8 +441,8 @@
   job-cancel-of
   outcome-with-cancel
   outcome-with-limit
-  outcome-with-nothing
-  turn-produced-nothing-condition-of
+  outcome-with-output-condition
+  turn-output-condition-of
   terminal-cause-of
   command-cause-of
   recovered-cancel-of
@@ -517,6 +517,7 @@
   profile-status-with-observed
   record-unavailable-noted
   recovered-arm-of
+  stream-starts-at-head
   rehydrate-history-of
   restart-condition-of
   retire-reason-of
@@ -1517,17 +1518,23 @@
 (defk start-offset-of [view arm]
   {:pre [(: view SessionView) (: arm str)]
    :post [(: % tuple)]}
-  "手番の始まりの実況の材料(transcript / events)の offset と path: send(温かい)と resume の
-   手番は前の手番の行を entries に混ぜない — 今の file の大きさが始まり。戻り =
-   #(path-or-None offset)。"
+  "手番の実況の材料(transcript / events)の offset と path: send(温かい)と resume の
+   手番は前の手番の行を entries に混ぜない — その拍の file の大きさが始まり(判断は
+   judgment.stream-starts-at-head の 1 点)。戻り = #(path-or-None offset from-head)。
+
+   ⚠ from-head(file の頭から読む腕か)は **いつこの offset を取ったか** と対で読む: 手番の始まり
+   (after-start)に取った offset は腕に依らずその手番を覆うが、再起動の後の拾い直し(recover-job)に
+   取った offset が覆うのは from-head の腕だけ —— send / resume の腕は『拾い直した拍の file の
+   大きさ』で、再起動の前に書かれた出力はもう読めない(card acp:kanban-issue:ki-ef537db05f7f)。"
   (<- canon str (FsCanonicalPath :path view.work-dir))
   (<- source tuple (stream-source-of view canon))
   (setv path (get source 1))
+  (<- from-head bool (stream-starts-at-head arm))
   (setv start-offset 0)
-  (when (and (in arm #{NEXT-ARM-SEND NEXT-ARM-RESUME}) (is-not path None))
+  (when (and (not from-head) (is-not path None))
     (<- size int (FsFileSize :path path))
     (setv start-offset size))
-  #(path start-offset))
+  #(path start-offset from-head))
 
 
 (defk after-start [settings state row plan view lease arm now-ms bodies carried missing]
@@ -1628,7 +1635,9 @@
                                   "sentAtMs" sent-ms
                                   "ms" (- sent-ms born-ms)}))
   (<- job InFlightJob
-      (in-flight-job-of row plan view settings.node-name now-ms sent-ms (get start 1) lease
+      ;; 手番の始まりに取った offset なので、材料はこの手番を覆う(covers = True・腕に依らない —
+      ;; card acp:kanban-issue:ki-ef537db05f7f)。
+      (in-flight-job-of row plan view settings.node-name now-ms sent-ms (get start 1) True lease
                         (tuple pending)))
   ;; 段 10 lane 10s 追補 3(agora-redesign #79): 手番の最初の frame(status running・at = sent-ms)は**送った拍に押す** —
   ;; turn-record の作成(頭への書き 1 往復 ≈ 60〜100 ms・Mac → tailnet)の後ろに置くと、frame が名乗る at より 1 往復
@@ -2192,7 +2201,7 @@
     ;; turn-end(温かい session の手番の終わり — 器は終端ではないので job-outcome-of は結末を読まない)= 自然に終わった手番 =
     ;; completed(#349 行 3 粒 3a・result は今日どおり無し → {cause} だけ)。⚠ これは仮置き: settle-record が手番の材料を
     ;; 読み直した batch から「何か出したか」を判じ、出力 0 件なら failed / TurnProducedNothing に導き直す
-    ;; (依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB・D1 — judgment.outcome-with-nothing の 1 点)。
+    ;; (依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB・D1 — judgment.outcome-with-output-condition の 1 点)。
     (= step JOB-STEP-TURN-END)
     (do
       (<- read JobOutcome (job-outcome-of view))
@@ -2278,13 +2287,14 @@
         ;; #349 行 3 粒 3a: 限度の断りは cause にも写す(failed / ProviderLimit・取り消しの cause は上書きしない — judgment.outcome-with-limit の 1 点)
         (<- limited JobOutcome (outcome-with-limit outcome limit))
         ;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D1): 温かい手番の終わりで本文のための model の出力が 1 本も無ければ completed を
-        ;; 名乗らない — failed / TurnProducedNothing + 根拠の条件(判断は judgment.turn-produced-nothing-condition-of /
-        ;; outcome-with-nothing の 1 点・材料は上で読み直した batch と器が名乗った手番の失敗の文 turn-error〔D2〕)。ACP の
+        ;; 名乗らない — failed / TurnProducedNothing + 根拠の条件(判断は judgment.turn-output-condition-of /
+        ;; outcome-with-output-condition の 1 点・材料は上で読み直した batch と器が名乗った手番の失敗の文 turn-error〔D2〕)。ACP の
         ;; Messaging はこの reason を一過性として有界に組み直す(郵便を黙って消費しない)。
-        (<- nothing (| dict None) (turn-produced-nothing-condition-of
+        (<- nothing (| dict None) (turn-output-condition-of
                                     step source path batch
-                                    (if (isinstance view SessionView) view.turn-error None)))
-        (<- evidenced JobOutcome (outcome-with-nothing limited nothing))
+                                    (if (isinstance view SessionView) view.turn-error None)
+                                    drained.materials-cover-the-turn))
+        (<- evidenced JobOutcome (outcome-with-output-condition limited nothing))
         ;; agent-job → Ended(段 12 lane 12j・agora-redesign #402: 着かなければ行を 1 度読み直して書き直し〔監督が Pending へ戻した /
         ;; Bound attempt N に置き直した行にも Ended を書く — 手番は終わっている〕、それでも着かなければ持ち越す〔毎拍の
         ;; record-unrecorded-ends が書き直す・その id の Bound は claim しない〕。判断は judgment.end-retry-verdict の 1 点。)
@@ -2550,8 +2560,11 @@
               (<- recovered-arm str (recovered-arm-of plan view row.resource-id))
               (<- start tuple (start-offset-of view recovered-arm))
               (<- job InFlightJob
+                  ;; card acp:kanban-issue:ki-ef537db05f7f: 拾い直しの offset は**手番の始まりではなく拾い直した拍**に
+                  ;; 取ったので、材料がこの手番を覆うのは file の頭から読む腕(start-offset-of の from-head = launch /
+                  ;; rehydrate — この手番自身が session を起こした)だけ。send / resume の腕は覆わない。
                   (in-flight-job-of row plan view settings.node-name row.created-at-ms
-                                    row.created-at-ms (get start 1) lease #()))
+                                    row.created-at-ms (get start 1) (get start 2) lease #()))
               ;; 段 9f lane 9f-2: 本文の stream の拾い直しの番と採番の下限は turn-record の行から(judgment.recovered-record-of)。
               (<- record-key str (turn-record-key-of row.resource-id))
               (<- record-row (| AcpRow None) (AcpGetRow :key record-key))

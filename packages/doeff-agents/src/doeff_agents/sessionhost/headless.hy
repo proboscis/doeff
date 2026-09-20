@@ -648,7 +648,7 @@
           (setv row (replace row :turn-ended-at observed-at))
           ;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D2): 手番の終わりの ok / detail を捨てない — 失敗で終わった手番は
           ;; 走行器が名乗った文を turn-error に写す(成功なら None)。session は今日どおり生かす(温かい席を殺さない)。
-          ;; 読み手 = agentd の手番の終わりの判断(judgment.turn-produced-nothing-condition-of が条件の文に運ぶ)。
+          ;; 読み手 = agentd の手番の終わりの判断(judgment.turn-output-condition-of が条件の文に運ぶ)。
           (setv row (replace row :turn-error (! (headless-turn-error-of verdict))))
           ;; 段 11 lane 11n 便 C: provider が限度で断った手番は器ごと終える(判断は
           ;; headless-turn-limit-cause の 1 点)。温かいままにすると同じ profile の次の手番も
