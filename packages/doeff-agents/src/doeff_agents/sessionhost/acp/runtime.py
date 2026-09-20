@@ -38,6 +38,7 @@ from doeff_agents.sessionhost.acp.effects import (
     ACP_TOKEN_FILE_ENV,
     ACP_URL_ENV,
     BORROWER_KEY_PATH_ENV,
+    CLAUDE_SETTINGS_FILE_ENV,
     CUSTODY_SA_TOKEN_PATH_ENV,
     DECLARATION_SHA256_ENV,
     WORK_DIRS_ENV,
@@ -152,6 +153,11 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
     custody_borrower = _custody_borrower_of_env(env)
     # 段 12(agora-redesign #520): 機体の宣言が名乗った席へ運ぶ env(無い = 空 = 今日どおり charter に欄が増えない)
     seat_env = _seat_env_of_env(env)
+    # card acp:kanban-issue:ki-7b52bb76aa6e(R13 の訂正・依頼書 §10-2 受入 8): 席の settings file の名指しと、
+    # **参加の拍に在ったか**。名乗るのは node の行の labels.seat-settings(judgment.node-labels-of)— 断らないので
+    # 名乗る(不在は degrade の正規の道で、参加を止めると pool 全体が capacity 0 に落ちる)。
+    seat_settings_file = (env.get(CLAUDE_SETTINGS_FILE_ENV) or "").strip() or None
+    seat_settings_present = seat_settings_file is not None and os.path.isfile(seat_settings_file)
     return AgentdSettings(
         node_name=node_name,
         node_capacity=node_capacity,
@@ -176,6 +182,9 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         work_dir_roots=work_dir_roots,
         # card acp:kanban-issue:ki-40021864e62f: None = 名乗らない(node の spec に欄を書かない)
         custody_borrower=custody_borrower,
+        # card acp:kanban-issue:ki-7b52bb76aa6e: None = 名指していない(node の行に labels.seat-settings を書かない)
+        claude_settings_file=seat_settings_file,
+        claude_settings_file_present=seat_settings_present,
         seat_env=seat_env,
         # 段 10 lane 10y: charter の work_dir の `~` を展開する node の家(env HOME ちょうど・無ければ process の家)
         home=(env.get("HOME") or os.path.expanduser("~")).strip(),
@@ -837,29 +846,41 @@ def read_join_declaration(path: str | None) -> JoinDeclaration:
 
 def _admitted_claude_settings_file(spec: JoinSpec, home: str) -> str | None:
     """席の settings file の参加の門(card acp:kanban-issue:ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13)— composition root の側。
-    宣言の綴り(JoinSpec.claude_settings_file・`~` は agentd の HOME で展開)→ (a) file が読める(I/O はここ)→ (b)(c)(d) は
-    join.claude-settings-declaration-of の 1 点 → 通った**絶対 path**(env CLAUDE_SETTINGS_FILE_ENV に載せる値)。
-    None = 名乗らない(今日どおり)。外れは AgentdPreflightError(参加しない — 黙って hook 無しの席を起こさない)。
-    中身は据えない: launch / headless が起動の拍ごとに同じ path を読む(daemon の memory に写しを持たない)。"""
+    宣言の綴り(JoinSpec.claude_settings_file・`~` は agentd の HOME で展開)→ file を読む(I/O はここ)→ 門は
+    join.claude-settings-declaration-of の 1 点 → 名指した**絶対 path**(env CLAUDE_SETTINGS_FILE_ENV に載せる値)。
+    None = 名乗らない(今日どおり)。宣言そのものの誤り(session_hooks ≠ inherit・在るのに JSON の object でない・
+    doeff の鍵を含む)は AgentdPreflightError(参加しない — 黙って hook 無しの席を起こさない)。
+    ⚠ **file が読めないのは参加を断る理由にしない**(R13 の訂正・依頼書 §10-2): 宿の入口は「先端で揃えられない日は
+    image の下限へ戻して立つ」正規の degrade を持ち、その日の checkout に file は無い。そこで断ると degrade が
+    pool 全体の capacity 0 に化ける。不在は**参加して名乗る** — ここで名前つきの 1 行を log へ出し(join の拍)、
+    起動の拍ごとの 1 行は launch.claude-settings-declaration、node の行は judgment.node-labels-of が名乗る。
+    不在でも path は返す(env に載る): launch / headless は起動の拍ごとに同じ path を読むので、宿の checkout が
+    後から追いついた日はその拍から hook が届く(daemon の memory に写しを持たない)。"""
     declared = spec.claude_settings_file
     if declared is None:
         return None
     path = home.rstrip("/") + declared[1:] if declared == "~" or declared.startswith("~/") else declared
     where = f"[{join.TABLE_AGENTD}].{join.KEY_CLAUDE_SETTINGS_FILE}"
+    absent: str | None = None
     try:
         with open(path, encoding="utf-8") as handle:
-            text = handle.read()
+            text: str | None = handle.read()
     except (OSError, UnicodeDecodeError) as error:
-        raise AgentdPreflightError(
-            f"join: {where} が名指す file {path} が読めない: {error} — 席に hook を届けられない agentd は参加しない"
-            "(file は dotfiles claude-hooks/seat-settings.json・名指しを消せば今日どおり hook 無しで参加する)"
-        ) from error
+        text, absent = None, str(error)
     try:
         verdict: object = PyVM().run(join.claude_settings_declaration_of(text, spec.session_hooks))
     except ValueError as error:
         raise AgentdPreflightError(f"join: {error}") from error
-    if not isinstance(verdict, dict):
+    if verdict is not None and not isinstance(verdict, dict):
         raise TypeError(f"claude_settings_declaration_of returned {type(verdict).__name__}")
+    if absent is not None:
+        # 名乗り(断りの代わり)— 参加はする。同じ事実は node の行の labels.seat-settings と、席の起動ごとの 1 行にも出る。
+        sys.stderr.write(
+            f"join: seat-settings-file-absent {where} が名指す file {path} が読めない: {absent} — "
+            "hook 無しで参加する(宿の checkout が dotfiles claude-hooks/seat-settings.json を含むまで・"
+            "名指しを消せば名乗りも消える)\n"
+        )
+        sys.stderr.flush()
     return path
 
 

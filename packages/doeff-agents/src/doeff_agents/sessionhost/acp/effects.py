@@ -788,6 +788,17 @@ NODE_SPEC_PLACE_RETIRED = "place"
 NODE_LABEL_PLACES = "places"
 #: 退役した 1 値の写しの鍵(labels.place)。揃えの写しで落とす。
 NODE_LABEL_PLACE_RETIRED = "place"
+#: 席の settings file の名乗り(card acp:kanban-issue:ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13・依頼書 §10-2 の受入 8):
+#: 参加の宣言 [agentd].claude_settings_file を名乗った機体が、その file を**参加の拍に読めたか**を node の行へ載せる鍵。
+#: 無い = この機体は名指していない(今日どおり)。値は下の 2 語ちょうど。契約の欄を増やさない(labels は自由な文字列の表)
+#: ので、ACP の kind の登録の同期を待たずに読める — 観測の欄を足すと、登録が古い間の書きが 400 で断られて
+#: **観測ごと固まる**(image-beat の註「登録が古い契約のままなら、契約を変えた kind の書きは 400 で断られます」)。
+NODE_LABEL_SEAT_SETTINGS = "seat-settings"
+#: 参加の拍に file が読めた(席の起動は --settings に合流させる)。
+SEAT_SETTINGS_PRESENT = "present"
+#: 参加の拍に file が無かった(参加はする・席は hook 無しで起こす・起動ごとに 1 行 log する — 依頼書 §10-2)。
+#: 宿の入口の degrade(先端で揃えられない日は image の下限へ戻して立つ)で checkout が ① より古い日に出る。
+SEAT_SETTINGS_MISSING = "missing"
 #: 宣言の綴り(1 つの文字列に , 区切り — 宣言 file の値は文字列ちょうど・work_roots と同じ形)と env・labels の区切り。
 PLACES_SEPARATOR = ","
 #: node が持つ作業場の根(段 10 lane 10y・agora-redesign #110・依頼者の裁定 2026-09-15 案 C・既知の形 = volume topology の先読み):
@@ -1362,6 +1373,15 @@ class AgentdSettings:
     #: 空 = 宣言しない(手番の charter に欄が増えない = 今日どおり)。起こす手番の charter.session_env へ
     #: judgment.charter-with-seat-env が重ねる(会話の身元より**先** — 宣言は身元を偽れない)。
     seat_env: tuple[tuple[str, str], ...] = ()
+    #: 席の settings file の**名指し**(card acp:kanban-issue:ki-7b52bb76aa6e — join が門を通して据えた
+    #: CLAUDE_SETTINGS_FILE_ENV の絶対 path の写し)。None = 名乗らない(今日どおり)。席の起動はこの欄ではなく
+    #: env を use-site で読む(launch.claude-settings-declaration)— ここは node の行の名乗りのためだけに持つ。
+    claude_settings_file: str | None = None
+    #: その file が**参加の拍に**在ったか(composition root runtime.settings_from_env の 1 読み)。
+    #: node の行の labels.seat-settings(NODE_LABEL_SEAT_SETTINGS)へ present / missing で名乗る。
+    #: 参加の拍の事実 = spec(名乗り)であって観測ではない: pod の checkout は pod の生涯で動かず、Mac は
+    #: agentd-follow が据え直す拍に参加し直す。起動の拍の実勢は席ごとの log の 1 行が持つ。
+    claude_settings_file_present: bool = False
     #: host の backend(wire の閉語彙 tmux | herdr | headless の写し — agentd が読む語は
     #: BACKEND_HEADLESS だけ)。composition root(runtime.settings_from_env)が host の argv / env
     #: (valve.backend_of)から導く 1 点で、stream_capability も同じ源から導く。headless の器は

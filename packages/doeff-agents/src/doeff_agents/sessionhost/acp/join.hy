@@ -26,9 +26,9 @@
 ;;;                    宣言された状態で断り、推測しない。宛先が在って届かないのは spool が受ける。
 ;;;   * claude-settings-file-of / claude-settings-declaration-of  席の settings file(card acp:kanban-issue:
 ;;;                    ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13): 宣言 [agentd].claude_settings_file の綴りの読みと、
-;;;                    参加の門 (b)(c)(d)(JSON の object / doeff の鍵を含まない / session_hooks = inherit)。
-;;;                    (a) file が読めるは composition root(runtime.join_plan)。外れは参加しない — 黙って hook 無しの
-;;;                    席を起こさない。
+;;;                    参加の門 (d)(b)(c)(session_hooks = inherit / JSON の object / doeff の鍵を含まない)。
+;;;                    file の読みは composition root(runtime.join_plan)で、**読めない = 断らない**(不在は参加して
+;;;                    名乗る — 依頼書 §10-2 の訂正)。断るのは宣言そのものの誤りだけ。
 ;;; wire の綴り(env の名・host の flag・schema・閉語彙)は effects.py だけが持ち、ここは import する。
 ;;; I/O は 1 つも無い(file の読みは composition root・metadata の読みは handlers.py)。
 
@@ -780,18 +780,31 @@
 
 
 (defk claude-settings-declaration-of [text session-hooks]
-  {:pre [(: text str) (: session-hooks str)]
-   :post [(: % dict)]}
+  {:pre [(: text (| str None)) (: session-hooks str)]
+   :post [(: % (| dict None))]}
   "参加の門の 1 点(card acp:kanban-issue:ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13): 宣言が名指した席の settings file の
-   本文(読めたもの — 読めないは composition root が (a) で断る)と宣言の session_hooks → 席へ渡す settings(dict)。
-   外れは ValueError(参加しない — 黙って hook 無しの席を起こさない):
+   本文(読めたもの — **読めない = None**・読みは composition root)と宣言の session_hooks → 席へ渡す settings(dict)。
+   外れは ValueError(参加しない — 宣言そのものの誤りだけを断る):
+     (d) session_hooks が inherit であること — disabled の宣言に settings を足しても disableAllHooks が勝って hook は
+         配られない(file を効かせる前提条件)。**file の在否に依らない**(宣言 file の 2 行の食い違いなので、
+         degrade で file が消えた日にも同じく誤り)。だから先に検める。
      (b) JSON の object であること(配列・数・文字列は settings ではない)
      (c) doeff が置く鍵(impls/claude_code.hy CLAUDE-SETTINGS-OWNED-KEYS = disableAllHooks と記憶の置き場の鍵)を
          **含まない**こと — 含むと argv の合流で衝突し、黙って後勝ちにすれば hook か記憶の置き場のどちらかが無音で消える
-     (d) session_hooks が inherit であること — disabled の宣言に settings を足しても disableAllHooks が勝って hook は
-         配られない(file を効かせる前提条件)。
+   ⚠ **file が無い(text = None)は断らない**(R13 の訂正・依頼書 §10-2): 宿の入口は「先端で揃えられない日は image の
+   下限へ戻して立つ」正規の degrade を持ち、その日の checkout に file は無い。そこで参加を断ると degrade が
+   **pool 全体の capacity 0** に化ける(今日の欠陥より悪い)。不在は参加して名乗る = None を返し、名乗りは
+   起動の拍の 1 行(launch.claude-settings-declaration)と node の行(judgment.node-labels-of)。
    宣言しない機体(名指し無し)はこの門を通らない(今日どおり)。"
   (setv where f"[{TABLE-AGENTD}].{KEY-CLAUDE-SETTINGS-FILE}")
+  ;; (d) は宣言どうしの食い違いなので file を読む前に検める(不在の日も同じく誤り)。
+  (when (!= session-hooks JOIN-SESSION-HOOKS-DEFAULT)
+    (raise (ValueError (+ f"{where} は [{TABLE-AGENTD}].{KEY-SESSION-HOOKS} = {JOIN-SESSION-HOOKS-DEFAULT !r} の宣言にだけ"
+                          f"効く(いま {session-hooks !r})— disableAllHooks が勝って名指した hook は 1 本も配られない。"
+                          "hook を配らないなら名指しの行を消す"))))
+  ;; 不在 = 非致命(依頼書 §10-2)。読めた時だけ中身を検める。
+  (when (is text None)
+    (return None))
   (try
     (setv parsed (json.loads text))
     (except [error ValueError]
@@ -804,10 +817,6 @@
     (raise (ValueError (+ f"{where} が名指す file は doeff が置く鍵を持てない({(.join ", " owned)})— "
                           "hook の無効化と記憶の置き場は doeff が `--settings` の合流点で自分で置く"
                           "(ADR-DOE-AGENTS-004 R13・衝突は黙って後勝ちにしない)"))))
-  (when (!= session-hooks JOIN-SESSION-HOOKS-DEFAULT)
-    (raise (ValueError (+ f"{where} は [{TABLE-AGENTD}].{KEY-SESSION-HOOKS} = {JOIN-SESSION-HOOKS-DEFAULT !r} の宣言にだけ"
-                          f"効く(いま {session-hooks !r})— disableAllHooks が勝って名指した hook は 1 本も配られない。"
-                          "hook を配らないなら名指しの行を消す"))))
   parsed)
 
 

@@ -56,7 +56,8 @@
   FsListDir
   FsDirExists
   FsFileExists
-  EnvGet])
+  EnvGet
+  LogLine])
 (import doeff_agents.sessionhost.effects [READY-PROBE-TEXT])
 (import doeff_agents.sessionhost.policy [ACTIVE-STATUSES])
 (import doeff_agents.sessionhost.impls.claude_code [claude-code-impl])
@@ -88,6 +89,7 @@
     (setv self.captures 0)
     (setv self.trace [])            ;; 効果の時系列(順序 assert 用)
     (setv self.sent-keys [])
+    (setv self.log-lines [])        ;; LogLine の名乗り(R13 の「黙って hook 無しで起こさない」の担保)
     (setv self.delivered [])
     (setv self.fs {})
     (setv self.env {})
@@ -125,6 +127,10 @@
                   :if (in r.status ACTIVE-STATUSES) r)))
   (FsListDir [path]
     (resume (sorted (.get world.listings path []))))
+  (LogLine [text]
+    (.append world.log-lines text)
+    (.append world.trace #("log-line" text))
+    (resume None))
   (FsDirExists [path]
     ;; 既定 = 実在。missing-dirs に積まれた path だけ不在(work_dir 消失の模型)。
     (.append world.trace #("dir-exists" path))
@@ -844,15 +850,15 @@
   (assert (not-in "hook-proxy.py" cmd2) cmd2))
 
 
-(deftest test-launch-claude-refuses-an-unreadable-seat-settings-file
-  ;; R13: 参加の門を通った file が起動の拍に読めない・JSON の object でない = fail-loud(tmux 効果ゼロ)。
-  ;; 黙って hook 無しの席を起こすと 49b3549b の「安全 hook 全滅」が無言で戻る。
-  (for [[label text] [["missing" None] ["not-json" "{not json"] ["not-an-object" "[]"]]]
+(deftest test-launch-claude-refuses-a-broken-seat-settings-file
+  ;; R13: 参加の門を通った file が起動の拍に**在って壊れている**(JSON でない・object でない)= fail-loud
+  ;; (tmux 効果ゼロ)。黙って hook 無しの席を起こすと 49b3549b の「安全 hook 全滅」が無言で戻る。
+  ;; ⚠ 不在はここに居ない(依頼書 §10-2 の訂正 — 下の test-launch-claude-names-an-absent-seat-settings-file)。
+  (for [[label text] [["not-json" "{not json"] ["not-an-object" "[]"]]]
     (setv world (LaunchWorld))
     (setv (get world.env "DOEFF_AGENTD_SESSION_HOOKS") "inherit")
     (setv (get world.env "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE") "/home/agentd/seat-settings.json")
-    (when (is-not text None)
-      (setv (get world.fs "/home/agentd/seat-settings.json") text))
+    (setv (get world.fs "/home/agentd/seat-settings.json") text)
     (setv world.capture-script ["❯ {composer}"])
     (setv raised None)
     (try
@@ -863,6 +869,31 @@
     (assert (is-not raised None) label)
     (assert (in "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE" (str raised)) #(label (str raised)))
     (assert (not-in "new-session" (lfor t world.trace (get t 0))) label)))
+
+
+(deftest test-launch-claude-names-an-absent-seat-settings-file-and-still-opens-the-seat
+  ;; ⚑ 受入 8(card acp:kanban-issue:ki-7b52bb76aa6e・依頼書 §10-2 の訂正): 名指した file が起動の拍に**無い**のは
+  ;; 非致命 — 宿の入口は「先端で揃えられない日は image の下限へ戻して立つ」正規の degrade を持ち、その日の
+  ;; checkout に file は無い。そこで起こさないと degrade がその機体の全席の停止に化ける。だから席は起こす:
+  ;; argv は名指しの無い日と byte 同一(--settings を出さない)で、代わりに**起動ごとに名前つきの 1 行**を log へ。
+  (setv world (LaunchWorld))
+  (setv (get world.env "DOEFF_AGENTD_SESSION_HOOKS") "inherit")
+  (setv (get world.env "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE") "/home/agentd/dotfiles/claude-hooks/seat-settings.json")
+  (setv world.capture-script ["❯ {composer}"])
+  (<- row (run-launch world (launch-params
+                              :agent_type "claude"
+                              :binding {"kind" "claude-code"
+                                        "config_dir" "/x/claude"})))
+  (setv [pane cmd literal submit] (get world.sent-keys 0))
+  (assert (.startswith cmd "claude --dangerously-skip-permissions") cmd)
+  (assert (not-in "--settings" cmd) cmd)
+  (assert (not-in "hook-proxy.py" cmd) cmd)
+  ;; 名乗り: 起動の 1 行(名前つき)に file の path が入る
+  (setv named (lfor line world.log-lines :if (in "seat-settings-file-absent" line) line))
+  (assert (= (len named) 1) world.log-lines)
+  (assert (in "/home/agentd/dotfiles/claude-hooks/seat-settings.json" (get named 0)) (get named 0))
+  ;; 黙って落としていない = 席は起きている(tmux の効果が在る)
+  (assert (in "new-session" (lfor t world.trace (get t 0)))))
 
 
 (deftest test-launch-rejects-unknown-session-hooks-vocab

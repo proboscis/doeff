@@ -5243,11 +5243,15 @@ def test_join_claude_settings_file_is_a_declared_key_carried_verbatim_to_the_spe
 
 
 def test_join_claude_settings_declaration_gates_are_one_pure_point() -> None:
-    """R13 の門 (b)(c)(d)は join.claude-settings-declaration-of の 1 点(純粋・I/O なし)。通った本文は dict で返る。"""
+    """R13 の門 (d)(b)(c)は join.claude-settings-declaration-of の 1 点(純粋・I/O なし)。通った本文は dict で返る。
+    ⚠ 訂正(依頼書 §10-2): **file が無い(text=None)は断らない** — None を返す(参加して名乗る)。断るのは宣言そのものの
+    誤りだけで、(d) は file の在否に依らない(宣言 file の 2 行の食い違いなので、不在の日も同じく誤り)。"""
     ok = run(join.claude_settings_declaration_of(SEAT_SETTINGS_JSON, "inherit"))
     assert isinstance(ok, dict)
     assert set(ok) == {"hooks"}
     assert run(join.claude_settings_declaration_of("{}", "inherit")) == {}
+    # 不在 = 非致命(degrade の日に pool 全体を capacity 0 に落とさない)
+    assert run(join.claude_settings_declaration_of(None, "inherit")) is None
     # (b) JSON の object であること
     for text in ("[]", '"hooks"', "1", "{not json"):
         with pytest.raises(ValueError, match="claude_settings_file"):
@@ -5258,15 +5262,23 @@ def test_join_claude_settings_declaration_gates_are_one_pure_point() -> None:
     for owned in ({"disableAllHooks": False, "hooks": {}}, {claude_code.CLAUDE_AUTO_MEMORY_DIR_SETTING: "/x"}):
         with pytest.raises(ValueError, match="doeff が置く鍵"):
             run(join.claude_settings_declaration_of(json.dumps(owned), "inherit"))
-    # (d) session_hooks = inherit の宣言にだけ効く
-    with pytest.raises(ValueError, match="inherit"):
-        run(join.claude_settings_declaration_of(SEAT_SETTINGS_JSON, "disabled"))
+    # (d) session_hooks = inherit の宣言にだけ効く — file が在っても無くても同じく断る
+    for text in (SEAT_SETTINGS_JSON, None):
+        with pytest.raises(ValueError, match="inherit"):
+            run(join.claude_settings_declaration_of(text, "disabled"))
 
 
-def test_join_plan_admits_the_seat_settings_file_through_four_gates_and_expands_home(tmp_path: Path) -> None:
-    """R13 の一周(composition root): 宣言 file の [agentd].claude_settings_file(`~/…`)→ agentd の HOME で展開 → (a) 読める →
-    (b)(c)(d) → env DOEFF_AGENTD_CLAUDE_SETTINGS_FILE = 絶対 path。外れは AgentdPreflightError(参加しない — 黙って hook 無しの
-    席を起こさない)。名指しの無い宣言は今日どおり(env に現れない)。"""
+def test_join_plan_admits_the_seat_settings_file_and_joins_when_it_is_absent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """R13 の一周(composition root): 宣言 file の [agentd].claude_settings_file(`~/…`)→ agentd の HOME で展開 → file を読む →
+    門 → env DOEFF_AGENTD_CLAUDE_SETTINGS_FILE = 絶対 path。名指しの無い宣言は今日どおり(env に現れない)。
+
+    ⚠ 受入 8(依頼書 §10-2 の訂正)= **file が不在でも参加する**: 宿の入口は「先端で揃えられない日は image の下限へ戻して
+    立つ」正規の degrade を持ち、その日の checkout に file は無い。断ると degrade が pool 全体の capacity 0 に化ける。
+    不在は名乗る(join の拍に名前つきの 1 行)+ path は env に載せる(起動の拍ごとに読むので、checkout が追いついた拍から
+    hook が届く)。断るのは宣言そのものの誤りだけ — 在って壊れている 2 つ(JSON の object でない・doeff の鍵を含む)と、
+    file の在否に依らない (d)(session_hooks ≠ inherit)。"""
     from doeff_agents.sessionhost.acp.runtime import AgentdPreflightError, join_plan
 
     home = tmp_path / "home"
@@ -5285,23 +5297,71 @@ def test_join_plan_admits_the_seat_settings_file_through_four_gates_and_expands_
     assert declared["DOEFF_AGENTD_CLAUDE_SETTINGS_FILE"] == str(seat)
     absolute = plan_env(f'claude_settings_file = "{seat}"\n')
     assert absolute["DOEFF_AGENTD_CLAUDE_SETTINGS_FILE"] == str(seat)
-    # (a) file が読めない = 参加しない
-    with pytest.raises(AgentdPreflightError, match="読めない"):
-        plan_env('claude_settings_file = "~/dotfiles/claude-hooks/absent.json"\n')
-    # (b) JSON の object でない
+    # ⚑ 受入 8: file が不在 = 参加する(断らない)・path は env に載る・名乗りの 1 行が log に出る
+    capsys.readouterr()
+    absent = plan_env('claude_settings_file = "~/dotfiles/claude-hooks/absent.json"\n')
+    assert absent["DOEFF_AGENTD_CLAUDE_SETTINGS_FILE"] == str(home / "dotfiles" / "claude-hooks" / "absent.json")
+    named = capsys.readouterr().err
+    assert "seat-settings-file-absent" in named
+    assert str(home / "dotfiles" / "claude-hooks" / "absent.json") in named
+    # 在って壊れている: JSON の object でない
     seat.write_text("[]")
     with pytest.raises(AgentdPreflightError, match="object"):
         plan_env('claude_settings_file = "~/dotfiles/claude-hooks/seat-settings.json"\n')
-    # (c) doeff が置く鍵を含む
+    # 在って壊れている: doeff が置く鍵を含む
     seat.write_text(json.dumps({"disableAllHooks": False, "hooks": {}}))
     with pytest.raises(AgentdPreflightError, match="disableAllHooks"):
         plan_env('claude_settings_file = "~/dotfiles/claude-hooks/seat-settings.json"\n')
-    # (d) session_hooks = disabled の宣言に名指し
+    # (d) session_hooks = disabled の宣言に名指し — 在っても無くても断る(宣言どうしの食い違い)
     seat.write_text(SEAT_SETTINGS_JSON)
-    with pytest.raises(AgentdPreflightError, match="inherit"):
-        plan_env('claude_settings_file = "~/dotfiles/claude-hooks/seat-settings.json"\nsession_hooks = "disabled"\n')
+    for spelled in ("seat-settings.json", "absent.json"):
+        with pytest.raises(AgentdPreflightError, match="inherit"):
+            plan_env(f'claude_settings_file = "~/dotfiles/claude-hooks/{spelled}"\nsession_hooks = "disabled"\n')
     # 名指しを消せば今日どおり参加する(戻す手)
     assert "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE" not in plan_env('session_hooks = "disabled"\n')
+
+
+def test_node_row_names_whether_the_seat_settings_file_was_there(tmp_path: Path) -> None:
+    """⚑ 受入 8 の node の行の側(card ki-7b52bb76aa6e・依頼書 §10-2): 名指した機体は labels.seat-settings で
+    present / missing を名乗り、名指さない機体の行には鍵が無い(揃えの拍で落ちる = 戻す手が行にも効く)。
+    欄は contract の観測ではなく labels(自由な文字列の表)— ACP の kind の登録の同期を待たずに読め、登録が
+    古い間も書きが 400 で断られない(観測の欄を足すと、断られた拍に観測ごと固まる)。"""
+    from doeff_agents.sessionhost.acp.effects import (
+        NODE_LABEL_SEAT_SETTINGS,
+        SEAT_SETTINGS_MISSING,
+        SEAT_SETTINGS_PRESENT,
+    )
+    from doeff_agents.sessionhost.acp.runtime import settings_from_env
+
+    bare = AgentdSettings(node_name="pool-1", node_capacity=2, stream_capability="events", places=("personal",))
+    assert NODE_LABEL_SEAT_SETTINGS not in run(judgment.node_spec_of(bare))["labels"]
+    present = replace(bare, claude_settings_file="/x/seat-settings.json", claude_settings_file_present=True)
+    missing = replace(bare, claude_settings_file="/x/seat-settings.json", claude_settings_file_present=False)
+    assert run(judgment.node_spec_of(present))["labels"][NODE_LABEL_SEAT_SETTINGS] == SEAT_SETTINGS_PRESENT
+    assert run(judgment.node_spec_of(missing))["labels"][NODE_LABEL_SEAT_SETTINGS] == SEAT_SETTINGS_MISSING
+    # 揃えの拍: 行に残った名乗りは宣言へ揃う(名指しを消した機体の行からは落ちる)。他の名乗りは触らない。
+    stale = {"places": "personal", NODE_LABEL_SEAT_SETTINGS: SEAT_SETTINGS_MISSING, "boundary": "company"}
+    aligned = run(judgment.node_spec_declared({"labels": stale}, present))["labels"]
+    assert aligned[NODE_LABEL_SEAT_SETTINGS] == SEAT_SETTINGS_PRESENT
+    assert aligned["boundary"] == "company"
+    assert NODE_LABEL_SEAT_SETTINGS not in run(judgment.node_spec_declared({"labels": stale}, bare))["labels"]
+    # composition root: 名指しと**参加の拍の在否**は env + 1 読みから導く(judgment は読まない)
+    seat = tmp_path / "seat-settings.json"
+    base = {
+        "DOEFF_AGENTD_NODE_NAME": NODE,
+        "RECORD_SERVICE_URL": "http://record:8874",
+        "DOEFF_AGENTD_CAPACITY": "1",
+        "DOEFF_AGENTD_PLACES": "personal",
+        "HOME": str(tmp_path),
+        "XDG_STATE_HOME": str(tmp_path / "state"),
+    }
+    assert settings_from_env(base, ()).claude_settings_file is None
+    named = {**base, "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE": str(seat)}
+    assert settings_from_env(named, ()).claude_settings_file_present is False
+    seat.write_text(SEAT_SETTINGS_JSON)
+    read = settings_from_env(named, ())
+    assert read.claude_settings_file == str(seat)
+    assert read.claude_settings_file_present is True
 
 
 def test_acp_writes_put_the_fingerprint_header_only_on_the_writes_that_carry_it(monkeypatch: pytest.MonkeyPatch) -> None:

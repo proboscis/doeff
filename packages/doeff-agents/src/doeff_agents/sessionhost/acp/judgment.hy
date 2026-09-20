@@ -185,6 +185,9 @@
   NODE-CAPABILITIES-KEY
   NODE-LABEL-PLACES
   NODE-LABEL-PLACE-RETIRED
+  NODE-LABEL-SEAT-SETTINGS
+  SEAT-SETTINGS-PRESENT
+  SEAT-SETTINGS-MISSING
   NODE-SPEC-PLACES
   NODE-SPEC-PLACE-RETIRED
   PLACES-SEPARATOR
@@ -3246,11 +3249,21 @@
    を重ねた形(段 10 lane 10d 便 2・agora-redesign #85・段 11 lane 11u・#224 で集合へ)。退役した 1 値の写し labels.place
    は落とす(旧い agentd が書いた行を揃える時 — 配車は読まないが、2 つの綴りを並べない)。行の他の名乗り(会社境界の
    boundary 等・宣言の外のもの)は触らない。集合の宣言が空の断面(検体の既定 — 本番は composition root が参加を断る)では
-   足さない: 嘘の名乗りを書かない。"
+   足さない: 嘘の名乗りを書かない。
+
+   席の settings file の名乗り labels.seat-settings(card acp:kanban-issue:ki-7b52bb76aa6e・R13 の訂正・依頼書 §10-2 受入 8):
+   参加の宣言 [agentd].claude_settings_file を名乗った機体だけが present / missing を書く。missing = 宣言したのに
+   参加の拍に file が無かった — それでも**参加する**(断ると宿の入口の degrade〔先端で揃えられない日は image の下限へ
+   戻して立つ〕が pool 全体の capacity 0 に化ける)ので、断りの代わりにこの 1 語で名乗る。名指しを消した機体の行からは
+   鍵ごと落とす(揃えの拍で消える = 戻す手が行にも効く)。"
   (setv next (dict labels))
   (.pop next NODE-LABEL-PLACE-RETIRED None)
   (when settings.places
     (setv (get next NODE-LABEL-PLACES) (.join PLACES-SEPARATOR settings.places)))
+  (.pop next NODE-LABEL-SEAT-SETTINGS None)
+  (when (is-not settings.claude-settings-file None)
+    (setv (get next NODE-LABEL-SEAT-SETTINGS)
+          (if settings.claude-settings-file-present SEAT-SETTINGS-PRESENT SEAT-SETTINGS-MISSING)))
   next)
 
 
