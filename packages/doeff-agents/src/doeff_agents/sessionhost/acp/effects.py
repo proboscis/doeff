@@ -88,7 +88,16 @@ TURN_OUTPUT_ENTRY_KINDS: tuple[EntryKind, ...] = (
 #: 段 9f lane 9f-5 便 2b(agora-redesign #59): 262,144 → 32,768。見出しだけの行(1 entry ≤ 256 byte)の上限へ、ACP の契約の締め
 #: (便 2c — conventions.turnRecordEntries.byteBudget 32,768 と engine の statusByteBudget の門)より**先に**書き手が下げる(消費者が先)。
 #: 超えた行は古い見出しから落として印を残す(本文は会話の記録の service に在るので失われない)。
-TURN_RECORD_ENTRIES_BYTE_BUDGET = 32_768
+#: 2026-09-21(card acp:kanban-issue:ki-c418e597017a 便 3a): 32,768 → 4,096。ACP の記録簿(acp-pg)が 1 日 5.8 GiB 育ち、
+#: byte の 43% が turn-record だった。根 = **1 行の上限は在るが 1 手番に何回書くかに上限が無い**: 追記は行の entries を
+#: 読んで足して**全体を書き戻す**(CAS)ので、journal には追記のたびに配列の全体が後像として入る(1 本の追跡 = 2 分 19 秒で
+#: 56 回・2 B → 9,883 B へ単調増加・標本全体で書いた 15.2 MB が表す最終状態は 0.86 MB = 17.7 倍・最悪 38.2 倍)。
+#: 上限を 8 分の 1 にすると平均の書き込み量が約 8 分の 1 になる。読み手は変わらない: 古い見出しは印(dropped)と
+#: entriesTruncated(firstKeptSeq / recordRef)が「それより古いのは記録の service で読む」と名乗る仕組みが既に在る
+#: (claim check — 全史は service・行は上限つきの要約)。前例と同じ順で、ACP の契約の締め(conventions.turnRecordEntries.
+#: byteBudget と statusByteBudget = byteBudget + 4,096)より**先に**書き手が下げる(消費者が先)— 書き手の上限が契約より
+#: 小さいのは常に安全で、大きいのは engine が 400 で断る側。
+TURN_RECORD_ENTRIES_BYTE_BUDGET = 4_096
 #: 見出しの 1 entry の compact JSON の上限 byte(契約 §2.2「1 entry ≤ 256 byte」の写し — 検の物差し。走行時の門は ACP の
 #: engine の statusByteBudget で、agentd は見出しに本文を持てない型で守る)。
 TURN_ENTRY_MAX_BYTES = 256

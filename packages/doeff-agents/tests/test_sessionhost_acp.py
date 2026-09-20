@@ -5759,7 +5759,13 @@ def test_agentd_values_copied_from_agora_kinds_match_the_copy() -> None:
         f"agentd が書く entries の kind が契約の語彙の外: {sorted(written - entry_kinds)}"
     )
     budget = _lookup(copy, "conventions.turnRecordEntries.byteBudget")
-    assert budget == TURN_RECORD_ENTRIES_BYTE_BUDGET, repr(budget)
+    # 書き手の上限は契約の上限を**超えない**(超えれば engine の statusByteBudget が 400 で断る側)。等号でないのは
+    # 「消費者が先に下げる」順のため — 2026-09-21(card ki-c418e597017a 便 3a)に書き手を 4,096 へ下げ、契約の写し
+    # (pin = contracts.lock の ACP の commit)はその後の ACP の便で 4,096 に追随する。追随したら等号に戻してよい。
+    assert isinstance(budget, int) and TURN_RECORD_ENTRIES_BYTE_BUDGET <= budget, (
+        TURN_RECORD_ENTRIES_BYTE_BUDGET,
+        budget,
+    )
     for kind, axis in _AGENTD_STATUS_AXES:
         writers = _string_list(_lookup(copy, f"kinds.{kind}.declaration.writers.status.{axis}"))
         assert AGENTD_PRINCIPAL in writers, (
