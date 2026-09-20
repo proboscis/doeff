@@ -13,6 +13,8 @@
 
 (require doeff-hy.macros [defk deff <- defhandler])
 
+(import doeff [run])
+
 (import json)
 (import re)
 (import uuid)
@@ -96,7 +98,7 @@
 ;: ── policy.LAUNCH-FLAG-KEYS)。ここでは import するだけで、第 2 の綴りを置かない。
 
 
-(deff claude-autocompact-value [params]
+(defk claude-autocompact-value [params]
   {:pre [(: params dict)]
    :post [(: % str)]}
   "argv に載せる圧縮の閾値の**唯一の導出点**(純粋 — params を読むだけ)。
@@ -139,17 +141,17 @@
                 (<= AUTOCOMPACT-MIN-TOKENS (int (get pair 1)) AUTOCOMPACT-MAX-TOKENS)))))
 
 
-(deff claude-autocompact-args [params]
+(defk claude-autocompact-args [params]
   {:pre [(: params dict)]
    :post [(: % list) (autocompact-arg-pair-ok %)]}
   "発射に載る圧縮の閾値の並び。**常に載る**(空の並びを返さない)。
 
    ⚠ effort(名乗らない席は旗そのものを出さない)とは向きが逆で、それが要点 —
    上の節の理由。後置条件が argv に出る値そのものを見る(上の述語の註)。"
-  [AUTOCOMPACT-ARG (claude-autocompact-value params)])
+  [AUTOCOMPACT-ARG (! (claude-autocompact-value params))])
 
 
-(deff build-claude-argv [params]
+(defk build-claude-argv [params]
   {:pre [(: params dict)]
    :post [(: % list)]}
   "claude の起動 argv。凍結物理:
@@ -182,7 +184,7 @@
   (when model
     (.extend args ["--model" model]))
   ;; 圧縮の閾値は model の後ろ・mcp の前(凍結接頭と `--effort` の位置を動かさない)。
-  (.extend args (claude-autocompact-args params))
+  (.extend args (! (claude-autocompact-args params)))
   (setv servers {})
   (for [[name url] (.items (.get params "mcp_servers" {}))]
     (setv (get servers name) {"type" "sse" "url" url}))
@@ -222,7 +224,7 @@
    - prompt は argv に載せない(BuildLaunch と同一の live-terminal 物理)"
   (setv base-params (dict params))
   (.pop base-params "conversation" None)
-  (setv args (build-claude-argv base-params))
+  (setv args (run (build-claude-argv base-params)))
   (setv conv-id (get (get params "conversation") "session_id"))
   (.extend args ["--resume" conv-id])
   (when (= (get params "resume_mode") "fork")
@@ -506,7 +508,8 @@
 (defhandler claude-code-impl [result-command]
   (BuildLaunch [agent-type params]
     :when (= agent-type "claude")
-    (resume (build-claude-argv params)))
+    (<- argv (build-claude-argv params))
+    (resume argv))
 
   (BuildResume [agent-type params]
     :when (= agent-type "claude")

@@ -56,7 +56,7 @@
   (when (= resume-mode "resume")
     ;; --session-id は fresh だけ(build-claude-argv は resume_mode が在ると付けない)
     (.pop base-params "conversation" None))
-  (setv base (build-claude-argv base-params))
+  (<- base (build-claude-argv base-params))
   (setv argv (+ [(get base 0)] (list CLAUDE-HEADLESS-FLAGS) (list (cut base 1 None))))
   (when (and (= resume-mode "resume") (isinstance conversation dict))
     (setv conv-id (.get conversation "session_id"))
