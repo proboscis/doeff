@@ -24,12 +24,20 @@
 ;;;   * record-sink-of 本文の行き先の検(段 9f lane 9f-6・agora-redesign #59): 会話の記録の service の
 ;;;                    宛先を持たない agentd は参加を断る(ValueError — runtime が fail-closed に写す)。
 ;;;                    宣言された状態で断り、推測しない。宛先が在って届かないのは spool が受ける。
+;;;   * claude-settings-file-of / claude-settings-declaration-of  席の settings file(card acp:kanban-issue:
+;;;                    ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13): 宣言 [agentd].claude_settings_file の綴りの読みと、
+;;;                    参加の門 (b)(c)(d)(JSON の object / doeff の鍵を含まない / session_hooks = inherit)。
+;;;                    (a) file が読めるは composition root(runtime.join_plan)。外れは参加しない — 黙って hook 無しの
+;;;                    席を起こさない。
 ;;; wire の綴り(env の名・host の flag・schema・閉語彙)は effects.py だけが持ち、ここは import する。
 ;;; I/O は 1 つも無い(file の読みは composition root・metadata の読みは handlers.py)。
 
 (require doeff-hy.macros [defk <-])
 
 (import doeff_agents.sessionhost.policy [seat-env-credential-shaped-offenders session-env-admission-error])
+;; 席の settings の鍵の家(card acp:kanban-issue:ki-7b52bb76aa6e): doeff が `--settings` に置く鍵の集合は argv の合流点
+;; (impls/claude_code.hy)が 1 点で持ち、参加の門 (c) はそれを読む — 綴りを写さない。
+(import doeff_agents.sessionhost.impls.claude_code [CLAUDE-SETTINGS-OWNED-KEYS])
 
 (import doeff_agents.sessionhost.acp.effects [
   ACP-TOKEN-FILE-ENV
@@ -41,6 +49,7 @@
   SEAT-OPENER-ENV
   SEAT-ENV-ENV
   SEAT-ENV-SEPARATOR
+  CLAUDE-SETTINGS-FILE-ENV
   DECLARATION-SHA256-ENV
   WORK-ROOTS-ENV
   WORK-ROOTS-MAX
@@ -151,6 +160,11 @@
 ;; 表〔dict〕にはしない)。この鍵を知らない agentd は「宣言に無い鍵」で参加を断る(fail-closed — 旧い機体は
 ;; 宣言された宛先を黙って落とさない)。
 (setv KEY-SEAT-ENV "seat_env")
+;; 席の settings file(card acp:kanban-issue:ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13・任意): 機体の参加の宣言が名指す
+;; 「無人席へ hook を届ける settings」(dotfiles claude-hooks/seat-settings.json = proxy 登録 1 枚)の path(絶対 か `~/…`・
+;; `~` は agentd の HOME で composition root が展開)。seat_env と同じ kubelet 型: 宣言 → JoinSpec → env → 起動の拍ごとに読む。
+;; この鍵を知らない agentd は「宣言に無い鍵」で参加を断る(fail-closed — 旧い機体は名指された file を黙って落とさない)。
+(setv KEY-CLAUDE-SETTINGS-FILE "claude_settings_file")
 ;; 従量課金の binding kind を受けるか(従量課金の便 lane A・任意・既定 false)。
 ;; 閉語彙 "true" | "false" の文字列 — 宣言 file の値は全部文字列(declared-values-of の
 ;; 1 つの不変条件)なので、bool を 1 つだけ足して読み手に 2 つ目の型の分岐を作らない。
@@ -165,7 +179,8 @@
 ;; 表 → 許す鍵(宣言に無い鍵は誤りとして名指す — 黙って読み飛ばさない)。
 (setv AGENTD-KEYS #{KEY-SERVER KEY-TOKEN-FILE KEY-NODE-NAME KEY-STATE-DIR KEY-BACKEND
                     KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY KEY-PLACES KEY-WORK-ROOTS KEY-DRAIN-SECONDS
-                    KEY-ALLOW-METERED-BILLING KEY-REVISION KEY-BUILD KEY-SEAT-ENV})
+                    KEY-ALLOW-METERED-BILLING KEY-REVISION KEY-BUILD KEY-SEAT-ENV
+                    KEY-CLAUDE-SETTINGS-FILE})
 (setv CUSTODY-KEYS #{KEY-CUSTODY-URL KEY-BORROWER-KEY-FILE KEY-SERVICE-ACCOUNT-TOKEN-FILE})
 (setv RECORD-KEYS #{KEY-RECORD-URL})
 ;; flag の綴り(`--config` は composition root が先に読む — config-path-of)。
@@ -748,6 +763,54 @@
   (SeatEnv :pairs (tuple pairs)))
 
 
+(defk claude-settings-file-of [text]
+  {:pre [(: text (| str None))]
+   :post [(: % (| str None))]}
+  "席の settings file の名指しの読み(card acp:kanban-issue:ki-7b52bb76aa6e): 宣言 file の [agentd].claude_settings_file
+   の文字列 → 綴り(strip)。無い・空 = None(名乗らない = 今日どおり)。形は絶対 path か `~` / `~/…`(agentd の HOME で
+   composition root が展開)— cwd に依る相対 path は断る(どの cwd で読むかを黙って決めない)。file の読みと 4 つの門は
+   runtime.join_plan(I/O)+ claude-settings-declaration-of(判断)。"
+  (setv word (if (is text None) "" (.strip text)))
+  (when (not word)
+    (return None))
+  (when (not (or (.startswith word "/") (= word "~") (.startswith word "~/")))
+    (raise (ValueError (+ f"[{TABLE-AGENTD}].{KEY-CLAUDE-SETTINGS-FILE} は絶対 path か ~/… であること"
+                          f"(cwd 相対は断る): {word !r}"))))
+  word)
+
+
+(defk claude-settings-declaration-of [text session-hooks]
+  {:pre [(: text str) (: session-hooks str)]
+   :post [(: % dict)]}
+  "参加の門の 1 点(card acp:kanban-issue:ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13): 宣言が名指した席の settings file の
+   本文(読めたもの — 読めないは composition root が (a) で断る)と宣言の session_hooks → 席へ渡す settings(dict)。
+   外れは ValueError(参加しない — 黙って hook 無しの席を起こさない):
+     (b) JSON の object であること(配列・数・文字列は settings ではない)
+     (c) doeff が置く鍵(impls/claude_code.hy CLAUDE-SETTINGS-OWNED-KEYS = disableAllHooks と記憶の置き場の鍵)を
+         **含まない**こと — 含むと argv の合流で衝突し、黙って後勝ちにすれば hook か記憶の置き場のどちらかが無音で消える
+     (d) session_hooks が inherit であること — disabled の宣言に settings を足しても disableAllHooks が勝って hook は
+         配られない(file を効かせる前提条件)。
+   宣言しない機体(名指し無し)はこの門を通らない(今日どおり)。"
+  (setv where f"[{TABLE-AGENTD}].{KEY-CLAUDE-SETTINGS-FILE}")
+  (try
+    (setv parsed (json.loads text))
+    (except [error ValueError]
+      (raise (ValueError f"{where} が名指す file は JSON であること: {error}"))))
+  (when (not (isinstance parsed dict))
+    (raise (ValueError (+ f"{where} が名指す file は JSON の object(settings の表)であること: "
+                          (. (type parsed) __name__)))))
+  (setv owned (sorted (lfor key parsed :if (in key CLAUDE-SETTINGS-OWNED-KEYS) key)))
+  (when owned
+    (raise (ValueError (+ f"{where} が名指す file は doeff が置く鍵を持てない({(.join ", " owned)})— "
+                          "hook の無効化と記憶の置き場は doeff が `--settings` の合流点で自分で置く"
+                          "(ADR-DOE-AGENTS-004 R13・衝突は黙って後勝ちにしない)"))))
+  (when (!= session-hooks JOIN-SESSION-HOOKS-DEFAULT)
+    (raise (ValueError (+ f"{where} は [{TABLE-AGENTD}].{KEY-SESSION-HOOKS} = {JOIN-SESSION-HOOKS-DEFAULT !r} の宣言にだけ"
+                          f"効く(いま {session-hooks !r})— disableAllHooks が勝って名指した hook は 1 本も配られない。"
+                          "hook を配らないなら名指しの行を消す"))))
+  parsed)
+
+
 (defk join-spec-of [argv declaration state-home]
   {:pre [(: argv JoinArgv) (: declaration JoinDeclaration) (: state-home str)]
    :post [(: % JoinSpec)]}
@@ -787,6 +850,9 @@
   (<- allow-metered bool (allow-metered-billing-of (.get agentd KEY-ALLOW-METERED-BILLING)))
   ;; 席へ運ぶ env の宣言(段 12・agora-redesign #520・任意)— 解釈と参加の門は seat-env-of の 1 点。
   (<- declared-seat-env SeatEnv (seat-env-of (.get agentd KEY-SEAT-ENV)))
+  ;; 席の settings file の名指し(card ki-7b52bb76aa6e・任意)— 綴りだけ。読みと 4 つの門は runtime.join_plan(I/O)+
+  ;; claude-settings-declaration-of(判断)で、通った絶対 path が composition root からこの欄へ据え直される。
+  (<- declared-settings-file (| str None) (claude-settings-file-of (.get agentd KEY-CLAUDE-SETTINGS-FILE)))
   (JoinSpec
     :server server
     :token-file token-file
@@ -806,6 +872,7 @@
     :build build
     ;; 席へ運ぶ env の対(agora-redesign #520)— 形と資格の締め出しは seat-env-of の 1 点(宣言しない = #())。
     :seat-env declared-seat-env.pairs
+    :claude-settings-file declared-settings-file
     :ownership ownership
     :capacity capacity
     :drain-seconds drain-seconds
@@ -882,6 +949,10 @@
   (when spec.seat-env
     (.append env #(SEAT-ENV-ENV (.join SEAT-ENV-SEPARATOR
                                        (lfor #(name value) spec.seat-env f"{name}={value}")))))
+  ;; card ki-7b52bb76aa6e: 席の settings file は名指した時だけ env に現れる(composition root が門を通した絶対 path —
+  ;; 読み手は launch.hy / headless.hy の起動の拍で、file をそのたびに読む。daemon の memory に中身を持たない)。
+  (when (is-not spec.claude-settings-file None)
+    (.append env #(CLAUDE-SETTINGS-FILE-ENV spec.claude-settings-file)))
   ;; 段 12 lane 12j(#367): 版の刻印は名乗った時だけ env に現れる(無ければ agentd は unstamped / local を名乗る)。
   (when (is-not spec.revision None)
     (.append env #(AGENTD-REVISION-ENV spec.revision)))

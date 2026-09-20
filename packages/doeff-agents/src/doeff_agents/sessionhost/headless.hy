@@ -87,6 +87,7 @@
   INTERACTIVE-AGENT-TYPES
   RESULT-PROTOCOL-INSTRUCTION
   admit-launch
+  claude-settings-declaration
   launch-spawn-env
   prepare-launch-workspace
   session-hooks-mode])
@@ -192,8 +193,12 @@
    result channel(expected_result が在る時)+ conversation + resume_mode。"
   (setv agent-type (get params "agent_type"))
   (<- session-hooks (session-hooks-mode))
+  ;; card ki-7b52bb76aa6e(ADR-004 R13): 席の settings の宣言は tui と同じ 1 点(launch.hy)で読む — 起動の拍ごと。
+  (<- claude-settings (claude-settings-declaration agent-type))
   (setv effective (dict params))
   (setv (get effective "session_hooks") session-hooks)
+  (when (is-not claude-settings None)
+    (setv (get effective "claude_settings") claude-settings))
   (when (and (is-not (.get params "expected_result") None)
              (in agent-type INTERACTIVE-AGENT-TYPES))
     (<- channel (wire-result-channel agent-type session-id socket-path))

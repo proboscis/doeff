@@ -791,7 +791,10 @@
        --settings {\"disableAllHooks\":true} — 49b3549b 傷跡の既定を変えない)
      \"inherit\" = その pair を argv から外し、config-dir 所有者の hook 層へ
        委ねる(hook 層は AGENT_SESSION_CLASS で会話種別 self-gate する契約)
-   語彙外は fail-loud: 黙った綴り違いは「安全 hook 全滅」を無言で復活させる。"
+   語彙外は fail-loud: 黙った綴り違いは「安全 hook 全滅」を無言で復活させる。
+   ⚠ inherit の委ね先(config-dir の持ち主)は資格の預かりの後は **doeff 自身**(借りの拍に作る家・
+   settings.json 無し)なので、委ねるだけでは hook は届かない — 機体の参加の宣言が名指した席の settings
+   file を doeff が運ぶ(claude-settings-declaration・理由の置き場 = ADR-DOE-AGENTS-004 R13)。"
   (<- session-hooks-raw (env-get "DOEFF_AGENTD_SESSION_HOOKS"))
   (setv session-hooks (or session-hooks-raw "disabled"))
   (when (not-in session-hooks #{"disabled" "inherit"})
@@ -802,6 +805,41 @@
                 "hooks (a silent typo here would silently re-disable the "
                 "safety hooks)"))))
   session-hooks)
+
+
+(defk claude-settings-declaration [agent-type]
+  {:pre [(: agent-type str)]
+   :post [(: % (| dict None))]}
+  "席の settings の宣言(card acp:kanban-issue:ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13): 機体の参加の宣言
+   [agentd].claude_settings_file が名指した file(join が 4 つの門を通して据えた絶対 path = env
+   DOEFF_AGENTD_CLAUDE_SETTINGS_FILE — 綴りの正本は acp/effects.py CLAUDE_SETTINGS_FILE_ENV)を**起動の拍ごとに**
+   読み、claude の `--settings` に合流させる dict を返す(合流点は impls/claude_code.hy build-claude-argv・鍵の衝突は
+   そこで fail-loud)。session-hooks-mode と同じ use-site の流儀で env から読む。
+     名指しが無い = None(今日どおり — argv は 1 byte も変わらない)
+     claude 以外の kind = None(file の名は claude の settings — codex の起動は読まない)
+     読めない / JSON でない / object でない = fail-loud(RuntimeError — 参加の門を通った file が起動の拍に壊れた形。
+       黙って hook 無しの席を起こさない: 49b3549b と同じ「安全 hook 全滅」を無言で作らない)"
+  (when (!= agent-type "claude")
+    (return None))
+  (<- path (env-get "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE"))
+  (when (not (and (isinstance path str) (.strip path)))
+    (return None))
+  (<- text (fs-read-text path))
+  (when (is text None)
+    (raise (RuntimeError
+             (+ f"session.launch: DOEFF_AGENTD_CLAUDE_SETTINGS_FILE={path} が読めない — 機体の参加の宣言が名指した"
+                "席の settings file(dotfiles claude-hooks/seat-settings.json)。hook を届けられない席は起こさない"
+                "(ADR-DOE-AGENTS-004 R13)"))))
+  (try
+    (setv parsed (json.loads text))
+    (except [error ValueError]
+      (raise (RuntimeError
+               f"session.launch: DOEFF_AGENTD_CLAUDE_SETTINGS_FILE={path} は JSON であること: {error}"))))
+  (when (not (isinstance parsed dict))
+    (raise (RuntimeError
+             (+ f"session.launch: DOEFF_AGENTD_CLAUDE_SETTINGS_FILE={path} は JSON の object であること: "
+                (. (type parsed) __name__)))))
+  parsed)
 
 
 (defk launch-spawn-env [identity session-env]
@@ -850,6 +888,7 @@
   (setv minted-conversation (get prepared "conversation"))
   (setv resume-context (.get params "resume_context"))
   (<- session-hooks (session-hooks-mode))
+  (<- claude-settings (claude-settings-declaration agent-type))
 
   ;; --- result channel 配線 + 起動 command(oracle resolve_launch_command:
   ;; override は verbatim、それ以外は per-kind argv builder)。
@@ -857,6 +896,9 @@
   (when (not has-override)
     (setv effective-params (dict params))
     (setv (get effective-params "session_hooks") session-hooks)
+    ;; card ki-7b52bb76aa6e: 名指しの無い手番は欄を作らない(argv の byte 同一の pin を保つ)。
+    (when (is-not claude-settings None)
+      (setv (get effective-params "claude_settings") claude-settings))
     (when (and (is-not expected-result None)
                (in agent-type INTERACTIVE-AGENT-TYPES))
       (<- channel (wire-result-channel agent-type session-id
