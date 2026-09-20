@@ -14,7 +14,10 @@
 ;;;                    写す — 会社 profile の API 呼び出しは会社所有の機体だけ・CLAUDE.md の境界)。
 ;;;                    証拠は機体の外か機体の耐久の物ちょうど(gce-project = GCE の metadata /
 ;;;                    file:<path>=<値> = 据え付けの側が描いた file の中身)— 所有の判定の台帳は
-;;;                    doeff に無い(card ki-d6cc49cbf33f 決定 D4)。
+;;;                    doeff に無い(card ki-d6cc49cbf33f 決定 D4)。検めを撃つ引き金は『所有を
+;;;                    名乗ったか』ではなく『特権の置き場(PRIVILEGED-PLACES)を名乗ったか』で
+;;;                    (同 決定 D4 ③)、places に company が在る宣言は両欄が空でも declared でも
+;;;                    断る — 他機体の宣言 file を写した agentd を止める錠。
 ;;;   * capacity-of    node の capacity の読み(段 10 lane 10d・agora-redesign #85): 宣言 file の [agentd].capacity /
 ;;;                    flag --capacity(10 進の非負の整数)。無い・読めない agentd は参加しない(ValueError)— agentd は
 ;;;                    自分の node の行をこの値から名乗る(既知の形 = kubelet の Node の自己登記)。
@@ -91,6 +94,7 @@
   PLACES-ENV
   PLACES-SEPARATOR
   OWNERSHIP-ENV
+  OWNERSHIP-GRADE-COMPANY
   OWNERSHIP-GRADES
   OWNERSHIP-PROOF-DECLARED
   OWNERSHIP-PROOF-ENV
@@ -99,6 +103,7 @@
   ownership-proof-file-parts
   Ownership
   OwnershipProbe
+  PRIVILEGED-PLACES
   ProbeAnswer
   RECORD-SPOOL-DIR-ENV
   RECORD-URL-ENV
@@ -932,14 +937,48 @@
     None))
 
 
-(defk ownership-verdict [ownership answer]
-  {:pre [(: ownership Ownership) (: answer ProbeAnswer)]
-   :post [(: % Ownership)]}
-  "宣言と証拠の突合の 1 点。declared = 宣言をそのまま(検なし)。gce-project:<id> = metadata の
-   project-id が id と一致する時だけ通す(読めない・違う = ValueError — 参加しない)。
-   file:<path>=<値> = その file の中身が値と一致する時だけ通す(読めない・違う = ValueError)—
-   証拠を描いたのは据え付けの側で、ここは台帳を持たず(hostname も置き場も見ない)証拠が
-   動いていないことだけを検める。"
+(defk ownership-verdict [places ownership answer]
+  {:pre [(: places tuple) (: ownership (| Ownership None)) (: answer ProbeAnswer)]
+   :post [(: % (| Ownership None))]}
+  "宣言と証拠の突合の 1 点。gce-project:<id> = metadata の project-id が id と一致する時だけ通す
+   (読めない・違う = ValueError — 参加しない)。file:<path>=<値> = その file の中身が値と一致する時だけ
+   通す(読めない・違う = ValueError)— 証拠を描いたのは据え付けの側で、ここは台帳を持たず(hostname も
+   置き場も**所有の等級の判定**には使わない)証拠が動いていないことだけを検める。
+
+   検めの引き金(card acp:kanban-issue:ki-d6cc49cbf33f 決定 D4 ③)は『所有を名乗ったか』ではなく
+   『**特権の場所を名乗ったか**』: 宣言 file を他機体から写した agentd は places も node_name も一緒に
+   写すので、両欄(ownership / ownership_proof)を空にすれば検めを 1 度も撃たずに company を名乗れた
+   (実弾 2026-09-18 21:57: 個人 MacBook が会社 Mac の宣言 file で起動し 86 秒 company の行として
+   配車された — 断ったのは custody の借り手の門だけ)。⇒ places に PRIVILEGED-PLACES の語が在るか、
+   等級が company の宣言は、証拠(gce-project: / file:)が要る。declared も、所有を 1 欄も名乗らない
+   宣言も断る。
+
+   ⚠ R17 との区別: places から**等級を導く**形は今日も禁じられている(等級は宣言の grade ちょうど)。
+   places が決めるのは『証拠が要るかどうか』だけで、判定の材料ではない — agentd は所有の台帳を持たない
+   まま(描かれた証拠が動いていないことだけを検める)。非特権の語(personal / cluster)の扱いは今日のまま。"
+  ;; 引き金(上の 2 節)。privileged = 宣言が名乗った特権の語(宣言の順)。
+  (setv privileged (tuple (lfor word places :if (in word PRIVILEGED-PLACES) word)))
+  (setv claims-company (and (is-not ownership None) (= ownership.grade OWNERSHIP-GRADE-COMPANY)))
+  (setv needs-evidence (or (bool privileged) claims-company))
+  (when needs-evidence
+    (setv named (if privileged (.join PLACES-SEPARATOR privileged) OWNERSHIP-GRADE-COMPANY))
+    (setv why (if privileged
+                  f"[{TABLE-AGENTD}].{KEY-PLACES} が特権の置き場 {named} を名乗っている"
+                  f"[{TABLE-AGENTD}].{KEY-OWNERSHIP} が {OWNERSHIP-GRADE-COMPANY} を名乗っている"))
+    (setv how (+ f"{why}のに所有の証拠が無い(いま "
+                 (if (is ownership None)
+                     f"[{TABLE-AGENTD}].{KEY-OWNERSHIP} も [{TABLE-AGENTD}].{KEY-OWNERSHIP-PROOF} も空"
+                     f"[{TABLE-AGENTD}].{KEY-OWNERSHIP-PROOF} = {OWNERSHIP-PROOF-DECLARED !r} = 検なし")
+                 f")。特権の置き場を名乗る宣言は [{TABLE-AGENTD}].{KEY-OWNERSHIP-PROOF} に "
+                 f"`{OWNERSHIP-PROOF-FILE-PREFIX}<絶対 path>=<値>` か "
+                 f"`{OWNERSHIP-PROOF-GCE-PREFIX}<project-id>` が要る。"))
+    (setv fix (+ "この 1 手で直る: dotfiles の checkout で `sh agent/venv-run.sh \"$PWD/agentcli\" hy "
+                 "cron_management/acp_single_mac.hy --declaration <この機体の宣言> install --only agentd`"
+                 "(証拠は据え付けの側が描く。宣言 file は機体ごと — 他機体の宣言 file で参加しない)。"))
+    (when (or (is ownership None) (= ownership.proof OWNERSHIP-PROOF-DECLARED))
+      (raise (ValueError (+ how fix)))))
+  (when (is ownership None)
+    (return None))
   (setv parts (ownership-proof-file-parts ownership.proof))
   (cond
     (= ownership.proof OWNERSHIP-PROOF-DECLARED) ownership
@@ -983,14 +1022,16 @@
   refusal)
 
 
-(defk ownership-preflight [ownership]
-  {:pre [(: ownership Ownership)]
-   :post [(: % Ownership)]}
+(defk ownership-preflight [places ownership]
+  {:pre [(: places tuple) (: ownership (| Ownership None))]
+   :post [(: % (| Ownership None))]}
   "起動の前に 1 回撃つ検: 検の方法が証拠を要るなら OwnershipProbe を撃ち(gce-project も
-   file: も撃つ・declared だけが撃たない)、ownership-verdict で突合する。"
-  (if (= ownership.proof OWNERSHIP-PROOF-DECLARED)
-      (<- verdict Ownership (ownership-verdict ownership (ProbeAnswer :value None)))
+   file: も撃つ・declared と所有の無い宣言は撃たない)、ownership-verdict で突合する。
+   ⚠ 撃つ引き金は『所有を名乗ったか』ではなく『特権の場所を名乗ったか』(D4 ③)— 両欄が空でも
+   places に特権の語が在れば断る(読む物が宣言されていないので、証拠は読みに行かずに断る)。"
+  (if (or (is ownership None) (= ownership.proof OWNERSHIP-PROOF-DECLARED))
+      (<- verdict (| Ownership None) (ownership-verdict places ownership (ProbeAnswer :value None)))
       (do
         (<- answer ProbeAnswer (OwnershipProbe :proof ownership.proof))
-        (<- verdict Ownership (ownership-verdict ownership answer))))
+        (<- verdict (| Ownership None) (ownership-verdict places ownership answer))))
   verdict)
