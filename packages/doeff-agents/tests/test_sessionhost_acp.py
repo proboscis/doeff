@@ -1617,6 +1617,7 @@ def test_expired_mail_does_not_launch_an_agent_or_borrow_credentials() -> None:
     assert world.sessions.launches == []
     assert world.sessions.sends == []
     assert world.state.jobs == ()
+    assert world.custody.borrowed == []
     ended = world.job("expired-ping-job")
     assert ended.status is not None
     assert ended.status["phase"] == PHASE_ENDED
@@ -1634,7 +1635,9 @@ def test_expired_mail_does_not_discard_normal_mail_in_the_same_turn() -> None:
     assert len(world.sessions.launches) == 1
     assert "this is a ping" not in world.sessions.launches[0]["prompt"]
     assert "continue the work" in world.sessions.launches[0]["prompt"]
-    assert world.job("mixed-mail-job").status["inputsDelivered"] == ["normal-mail"]
+    running = world.job("mixed-mail-job")
+    assert running.status is not None
+    assert running.status["inputsDelivered"] == ["normal-mail"]
 
 
 def _run_first_turn(world: World, job_id: str = "j-1") -> str:
@@ -1660,6 +1663,25 @@ def _run_first_turn(world: World, job_id: str = "j-1") -> str:
     assert world.sessions.views[sid].status == "running"
     assert world.state.jobs == ()
     return path
+
+
+def test_expired_mail_preserves_the_previous_session_without_sending() -> None:
+    world = World()
+    _run_first_turn(world)
+    warm = world.sid("j-1")
+    launches = len(world.sessions.launches)
+    sends = len(world.sessions.sends)
+    borrows = len(world.custody.borrowed)
+    ping = message("expired-ping", "this is a ping, only answer with ping")
+    world.acp.put_row(replace(ping, spec={**ping.spec, "deliverBy": world.local.now_ms}))
+    world.acp.put_row(bound_job("expired-ping-job", inputs=["expired-ping"], predecessor=warm))
+    world.tick(advance_ms=1_000)
+    assert len(world.sessions.launches) == launches
+    assert len(world.sessions.sends) == sends
+    assert len(world.custody.borrowed) == borrows
+    assert world.sessions.cleanups == []
+    assert world.sessions.views[warm].status == "running"
+    assert world.state.jobs == ()
 
 
 def test_warm_send_carries_the_token_this_turn_borrowed() -> None:
@@ -3959,7 +3981,9 @@ def test_headless_next_turn_does_not_inherit_the_previous_turns_result() -> None
     # 1 手番目は普通に終わる(monitor が追いついた拍)
     world.sessions.finish_turn(sid, world.local.now_ms + 100)
     world.tick(advance_ms=1_000)
-    assert world.job("j-1").status["phase"] == PHASE_ENDED  # type: ignore[index]
+    ended = world.job("j-1")
+    assert ended.status is not None
+    assert ended.status["phase"] == PHASE_ENDED
     # 2 手番目: 同じ温かい session へ送り、その process が結末を書かずに降りる
     world.acp.put_row(message("m-2", "second"))
     world.acp.put_row(bound_job("j-2", inputs=["m-2"], created_at_ms=world.local.now_ms))

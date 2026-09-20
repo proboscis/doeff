@@ -57,6 +57,7 @@
 ;; 段 12 lane 12j(agora-redesign #320): 名前が指す「生きている行」を解く 3 値の判断は ACP の client library の写し
 ;; (live_row.hy・contracts.lock の kind = code)の 1 点 — ここに名前の索引を持たない。
 (import doeff_agents.sessionhost.acp.live_row [resolve-live-row])
+(import doeff_agents.sessionhost.acp.cache_observation [cache-observation-of cache-context-of])
 (import doeff_agents.sessionhost.acp.effects [
   CHARTER-KIND-KEY
   CHARTER-KIND-TURN
@@ -3134,6 +3135,18 @@
   (+ heading "\n" body))
 
 
+(defk unexpired-messages-of [rows now-ms]
+  {:pre [(: rows tuple) (: now-ms int)] :post [(: % tuple)]}
+  "配達期限はagent-jobが作られた後も有効。本文と添付を同じ行の集合で除外する。"
+  (setv kept [] expired [])
+  (for [row rows]
+    (setv deadline (.get row.spec "deliverBy"))
+    (if (and (isinstance deadline int) (not (isinstance deadline bool)) (>= now-ms deadline))
+        (.append expired (.get row.spec "id" row.resource-id))
+        (.append kept row)))
+  #((tuple kept) (tuple expired)))
+
+
 (defk message-bodies-of [rows inputs fetched carried]
   {:pre [(: rows tuple) (: inputs tuple) (: fetched dict) (: carried dict)]
    :post [(: % tuple)]}
@@ -3672,6 +3685,7 @@
    acp:kanban-issue:ki-ef537db05f7f)。期限(interrupt-escalation-seconds)は charter の値ちょうど
    (段 10 lane 10n・None = 宣言なし)。"
   (<- escalation-seconds (| int None) (escalation-seconds-of-charter plan.charter))
+  (<- cache-context (| dict None) (cache-context-of row.status plan.account))
   (InFlightJob
     :job-key row.key
     :job-namespace row.namespace
@@ -3687,6 +3701,7 @@
     :start-offset start-offset
     :transcript-offset start-offset
     :materials-cover-the-turn covers
+    :cache-context cache-context
     :delta-seq 0
     :lease-id (if (is lease None) None lease.lease-id)
     :lease-kind (if (is lease None) None lease.kind)
@@ -3706,12 +3721,14 @@
   "契約 turn-record の spec(conversationId・agentJobId・node・profile・model・sessionId)。sessionId = この手番を
    走らせた session(段 8q — Messaging が次の手番の affinity.predecessor に名指す綴り。書かないと会話の前の
    session が名指されず、温かい session が片付いた次の手番は文脈なしで起きる)。"
-  {"conversationId" job.subject
+  (setv spec {"conversationId" job.subject
    "agentJobId" job.job-id
    "node" job.node
    "profile" job.profile
    "model" job.model
    "sessionId" job.session-id})
+  (when (is-not job.cache-context None) (setv (get spec "cacheContext") job.cache-context))
+  spec)
 
 
 (defk entries-of-status [status]
@@ -3855,8 +3872,8 @@
   next)
 
 
-(defk turn-record-ended-status [status usage entries]
-  {:pre [(: status dict) (: usage (| dict None)) (: entries tuple)]
+(defk turn-record-ended-status [status usage entries [cache-observation None]]
+  {:pre [(: status dict) (: usage (| dict None)) (: entries tuple) (: cache-observation (| dict None))]
    :post [(: % dict)]}
   "手番の終わりの turn-record の status: 残りの見出し(entries — TurnEntryHeadline の列)を行の entries に**追記**
    した上で state = ended・usage(素材があれば)。行の entries は落とさない(手番の間に追記した見出しが正本)。"
@@ -3864,6 +3881,8 @@
   (setv (get next "state") TURN-RECORD-ENDED)
   (when (is-not usage None)
     (setv (get next "usage") usage))
+  (when (is-not cache-observation None)
+    (setv (get next "cacheObservation") cache-observation))
   next)
 
 
@@ -4958,7 +4977,8 @@
   (cond
     (= agent-type "claude")
     (do (<- claude-batch DeltaBatch (claude-deltas-of records job-id seq-start at True open-blocks))
-        claude-batch)
+        (<- cache-observation (| dict None) (cache-observation-of records))
+        (replace claude-batch :cache-observation cache-observation))
     (= agent-type "codex")
     (do (<- codex-batch DeltaBatch (codex-event-deltas-of records job-id seq-start at))
         codex-batch)
@@ -4980,7 +5000,8 @@
     (= agent-type "claude")
     ;; transcript(tui)は完成した block の行だけで、引数の差分を運ばない — 開いた block の表は空のまま。
     (do (<- claude-batch DeltaBatch (claude-deltas-of records job-id seq-start at False #()))
-        claude-batch)
+        (<- cache-observation (| dict None) (cache-observation-of records))
+        (replace claude-batch :cache-observation cache-observation))
     (= agent-type "codex")
     (do (<- codex-batch DeltaBatch (codex-deltas-of records job-id seq-start at))
         codex-batch)
