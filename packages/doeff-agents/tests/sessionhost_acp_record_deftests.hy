@@ -123,7 +123,7 @@
                :profile "personal" :model "claude-opus-5" :started-ms AT :turn-floor-ms AT :start-offset 0
                :transcript-offset 0 :delta-seq 0 :lease-id None :lease-kind None :lease-account None
                :lease-hold-ms None :capturing False :stream-gone False :last-frame-ms 0 :last-probe-ms 0
-               :pending-conditions #() :record-attempt attempt))
+               :pending-conditions #() :materials-cover-the-turn True :record-attempt attempt))
 
 
 (defclass RecordWorld []

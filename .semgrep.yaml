@@ -4849,6 +4849,51 @@ rules:
         - "**/sessionhost/acp/agentd.hy"
         - "**/sessionhost/acp/job_step_before_stream_read_forbidden.hy"
 
+  - id: doeff-agents-recovered-turns-do-not-claim-unread-output
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      card acp:kanban-issue:ki-ef537db05f7f: recover-job must carry the
+      coverage that start-offset-of returns — #(path offset from-head) — into
+      the InFlightJob it rebuilds from the row. A turn picked up after a
+      restart starts its read at the file's size AT THAT MOMENT, so every
+      byte the turn wrote before the restart is unreadable; claiming the
+      material covers the turn makes "0 output headlines" mean "the model was
+      never called" when it only means "not measured". agentd then ends the
+      turn failed/TurnProducedNothing, ACP's delivery treats that reason as
+      transient and re-runs the same letter: on 2026-09-19 the turn
+      aj-6EKERTYDCD4MC666PGPVA9R9HA had already sent two `ai tell` letters and
+      exited with result success, was recorded with 0 entries, and its retry
+      aj-7EKG2XCJT01XJK9WXPDRPG04XQ answered the same letter a second time.
+      Pass (get start 2) — do not substitute a literal.
+    pattern-regex: '(?s)\(defk recover-job(?:(?!\n\(defk ).)*?\(in-flight-job-of(?:(?!\(get start 2\)).)*?\)\)\n'
+    paths:
+      include:
+        - "**/sessionhost/acp/agentd.hy"
+        - "**/sessionhost/acp/recovered_turn_output_unmeasured_forbidden.hy"
+
+  - id: doeff-agents-turn-output-judgment-reads-the-materials-coverage
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      card acp:kanban-issue:ki-ef537db05f7f: the turn-end judgment
+      judgment.turn-output-condition-of is three-valued — produced output /
+      produced nothing / UNMEASURED — and the third answer exists only
+      because the caller tells it whether the material it read covers the
+      turn. settle-record must pass the job's own
+      drained.materials-cover-the-turn, never a literal: a hard-coded True
+      re-opens the double-answer bug (a turn recovered after a restart reads
+      an empty window and is then reported as a turn that never ran), and a
+      hard-coded False silences the real TurnProducedNothing signal that
+      catches a runner which consumed the letter without calling the model.
+    pattern-regex: '(?s)\(turn-output-condition-of(?:(?!materials-cover-the-turn).)*?\)\)\n'
+    paths:
+      include:
+        - "**/sessionhost/acp/agentd.hy"
+        - "**/sessionhost/acp/recovered_turn_output_unmeasured_forbidden.hy"
+
   - id: doeff-agents-no-lost-terminal-cause
     languages:
       - generic

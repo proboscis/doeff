@@ -212,7 +212,7 @@
                          :agent-type "claude" :node NODE :profile "p" :model "m" :started-ms 0 :turn-floor-ms 0
                          :start-offset 0 :transcript-offset 0 :delta-seq 0 :lease-id None :lease-kind None
                          :lease-account None :lease-hold-ms None :capturing True :stream-gone False :last-frame-ms 0
-                         :last-probe-ms 0 :pending-conditions #()))
+                         :last-probe-ms 0 :pending-conditions #() :materials-cover-the-turn True))
   (setv state (replace (initial-state) :jobs #(job)))
   (setv frames (AgentdSettings :node-name NODE :backend-kind "tmux" :stream-capability "frames"))
   (setv events (AgentdSettings :node-name NODE :backend-kind "headless" :stream-capability "events"))
