@@ -17,12 +17,16 @@ from doeff_agents.sessionhost.acp.effects import (
     MESSAGE_CONVERSATION_FIELDS,
     MESSAGE_KIND,
     TURN_RECORD_CONVERSATION_FIELD,
+    MEMORY_KIND,
+    MEMORY_SPEC_CONVERSATION_KEY,
+    MEMORY_STREAM_PREFIX,
     SUMMARY_KIND,
     SUMMARY_SPEC_CONVERSATION_KEY,
     SUMMARY_STREAM_PREFIX,
     TURN_RECORD_KIND,
     TURN_RECORD_RUNNING,
     AcpConversationMail,
+    AcpConversationMemories,
     AcpConversationSummaries,
     AcpCreate,
     AcpEventWindow,
@@ -55,6 +59,7 @@ from doeff_agents.sessionhost.acp.effects import (
     CommandStop,
     FsDirectoryExists,
     FsFileExists,
+    FsListDirectory,
     FsMakeDirectories,
     FsReadText,
     FsFileSize,
@@ -89,6 +94,9 @@ from doeff_agents.sessionhost.acp.effects import (
     RecordRead,
     RecordReadSince,
     RecordReadStream,
+    RecordSupersede,
+    RecordSuperseded,
+    RecordSupersedeOutcome,
     RecordReadOutcome,
     RecordSpoolGiveUp,
     RecordSpoolList,
@@ -180,6 +188,8 @@ class FakeAcp:
         self.store_epoch: str | None = None
         #: 会話の郵便(AcpConversationMail)を読んだ会話の id の順(履歴からの再開の読みは手番を起こし直す時だけ — 段 8q)。
         self.history_reads: list[str] = []
+        #: card acp:kanban-issue:ki-9fc7d4bca4dc: 会話の記憶の行(AcpConversationMemories)を読んだ会話の id の順。
+        self.memory_reads: list[str] = []
         #: 段 12 lane 12j: 会話の summary の行(AcpConversationSummaries)を読んだ会話の id の順。
         self.summary_reads: list[str] = []
         #: 手番の見出し(AcpTurnHeadlines = kind turn-record の全量)を読んだ会話の id の順 — 薄い再開の拍だけ(段 9q・#77)。
@@ -204,7 +214,8 @@ class FakeAcp:
             return Resume(k, self._running_turn_records())
         if isinstance(
             effect,
-            (AcpGet, AcpGetRow, AcpEventWindow, AcpWatchSse, AcpConversationMail, AcpTurnHeadlines, AcpConversationSummaries),
+            (AcpGet, AcpGetRow, AcpEventWindow, AcpWatchSse, AcpConversationMail, AcpTurnHeadlines,
+             AcpConversationSummaries, AcpConversationMemories),
         ):
             return Resume(k, self._read(effect))
         if isinstance(effect, (AcpPutStatus, AcpPutSpec, AcpCreate, AcpStreamPush)):
@@ -219,10 +230,19 @@ class FakeAcp:
         | AcpWatchSse
         | AcpConversationMail
         | AcpTurnHeadlines
-        | AcpConversationSummaries,
+        | AcpConversationSummaries
+        | AcpConversationMemories,
     ) -> object:
         if isinstance(effect, (AcpConversationMail, AcpTurnHeadlines)):
             return self._history(effect)
+        if isinstance(effect, AcpConversationMemories):
+            # card acp:kanban-issue:ki-9fc7d4bca4dc: この会話の kind agent-memory の行(engine の field selector と同じ絞り)。
+            self.memory_reads.append(effect.conversation_id)
+            return tuple(
+                row
+                for row in self.rows.values()
+                if row.kind == MEMORY_KIND and row.spec.get(MEMORY_SPEC_CONVERSATION_KEY) == effect.conversation_id
+            )
         if isinstance(effect, AcpConversationSummaries):
             # 段 12 lane 12j: この会話の kind summary の行(engine の field selector spec.conversationId と同じ絞り)。
             self.summary_reads.append(effect.conversation_id)
@@ -798,6 +818,19 @@ class FakeLocal:
             return Resume(k, True)
         if isinstance(effect, FsFileExists):
             return Resume(k, effect.path in self.existing_files)
+        if isinstance(effect, FsListDirectory):
+            # card acp:kanban-issue:ki-9fc7d4bca4dc: files の鍵のうち、この dir の直下の名(名の順)。
+            prefix = effect.path.rstrip("/") + "/"
+            return Resume(
+                k,
+                tuple(
+                    sorted(
+                        path[len(prefix) :]
+                        for path in self.files
+                        if path.startswith(prefix) and "/" not in path[len(prefix) :]
+                    )
+                ),
+            )
         if isinstance(effect, FsReadText):
             # 本物の handler と同じく先頭 max_chars 字まで(段 12 lane 12j 便 4 の実弾: 既定 256 で答えの JSON が切れた)。
             text = self.files.get(effect.path)
@@ -912,6 +945,13 @@ class FakeRecord:
         self.unreachable: bool = False
         #: 届いた要求への断り(先頭から 1 つずつ使う)。
         self.refusals: list[RecordUnsent] = []
+        #: card acp:kanban-issue:ki-9fc7d4bca4dc: 置き換えた前の版(鍵 → [本文 …]・**消さずに残す** — 本物の service も
+        #: tombstone を撃たない限り鎖として持つ。検が「後の薄い版が濃い版を消していない」を撃つ読み口)。
+        self.superseded: dict[tuple[str, str, int], list[JSONObject]] = {}
+        #: 鍵 → 今の版の番号(最初の追記が 1)。
+        self.versions: dict[tuple[str, str, int], int] = {}
+        #: RecordSupersede を受けた (会話, recordSeq, 理由) の順。
+        self.supersedes: list[tuple[str, int, str]] = []
         #: RecordSpoolGiveUp で隔離した鍵 → 理由。
         self.given_up: dict[str, str] = {}
 
@@ -928,6 +968,8 @@ class FakeRecord:
             return Resume(k, self._read_since(effect.conversation_id, effect.since, effect.limit, effect.kinds))
         if isinstance(effect, RecordReadStream):
             return Resume(k, self._read_stream(effect.conversation_id, effect.stream_id))
+        if isinstance(effect, RecordSupersede):
+            return Resume(k, self._supersede(effect))
         return Pass(effect, k)
 
     def _spool(
@@ -979,6 +1021,32 @@ class FakeRecord:
         return RecordAppended(
             highest_producer_seq=highest, appended=tuple(appended), ignored=tuple(ignored)
         )
+
+    def _supersede(self, effect: RecordSupersede) -> RecordSupersedeOutcome:
+        """契約 supersede: 名指した recordSeq を新しい版で置き換える。**前の版は消さない** — superseded に
+        積んで鎖として残す(本物の service は recordSeq + version + supersedes の鎖で同じことをする)。"""
+        self.supersedes.append((effect.conversation_id, effect.record_seq, effect.reason))
+        if self.unreachable:
+            return RecordUnsent(0, "unreachable: fake record service")
+        if self.refusals:
+            return self.refusals.pop(0)
+        target = next(
+            (key for key in self.stored if key[0] == effect.conversation_id and self._number(key) == effect.record_seq),
+            None,
+        )
+        if target is None:
+            return RecordUnsent(404, f"no event {effect.record_seq} in conversation {effect.conversation_id}")
+        if _producer_seq(effect.event) != target[2]:
+            return RecordUnsent(400, "event.producerSeq must equal the superseded event's producerSeq")
+        self.superseded.setdefault(target, []).append(self.stored[target])
+        self.stored[target] = dict(effect.event)
+        version = self.versions.get(target, 1) + 1
+        self.versions[target] = version
+        # 置き換えは新しい recordSeq を採る(会話ごとに単調)— 鍵はそのまま、番号だけ進める。
+        taken = [seq for (cid, _sid, _pseq), seq in self.record_seqs.items() if cid == effect.conversation_id]
+        fresh = (max(taken) if taken else 0) + 1
+        self.record_seqs[target] = fresh
+        return RecordSuperseded(record_seq=fresh, version=version)
 
     def _number(self, key: tuple[str, str, int]) -> int:
         """recordSeq を会話ごとに単調に採番する(既に採番済みならその値)。"""
@@ -1054,7 +1122,14 @@ class FakeRecord:
             record_seq=record_seq,
             stream_id=key[1],
             # 段 12 lane 12j: 要約の stream(summary#…)は summary・それ以外は turn(郵便の stream は本物の service だけが mail と名乗る)。
-            stream_kind="summary" if key[1].startswith(SUMMARY_STREAM_PREFIX) else "turn",
+            stream_kind=(
+                "summary"
+                if key[1].startswith(SUMMARY_STREAM_PREFIX)
+                # card acp:kanban-issue:ki-9fc7d4bca4dc: 記憶の stream(memory#…)は memory。
+                else "memory"
+                if key[1].startswith(MEMORY_STREAM_PREFIX)
+                else "turn"
+            ),
             producer_seq=key[2],
             at=at if isinstance(at, int) and not isinstance(at, bool) else 0,
             kind=kind if isinstance(kind, str) else "text",
@@ -1073,6 +1148,7 @@ class FakeRecord:
             model=model if isinstance(model, str) else None,
             is_error=stored.get("isError") is True,
             truncated=False,
+            version=self.versions.get(key, 1),
             tombstoned_at=(stored.get("tombstonedAt")
                            if isinstance(stored.get("tombstonedAt"), int) and not isinstance(stored.get("tombstonedAt"), bool)
                            else None),

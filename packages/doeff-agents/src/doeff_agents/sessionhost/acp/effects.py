@@ -426,6 +426,39 @@ SUMMARY_STATE_SUPERSEDED: str = "superseded"
 SUMMARY_STREAM_KIND: str = "summary"
 SUMMARY_EVENT_KIND: str = "summary"
 SUMMARY_STREAM_PREFIX: str = "summary#"
+#: agora の kind agent-memory(ACP agora-kinds.json kinds.agent-memory — 書き手 agentd・identityKey [conversationId, name]・
+#: 法 ACP 575b1e conversation-memory-lives-in-the-row)の綴り。行は claim check(recordRef / recordSeq / bytes / sha256 /
+#: version)と索引の材料(description / type / links)だけで、本文を 1 字も持たない。本文の正本は記録の service の
+#: stream(streamKind memory・id = memory#<name>・出来事は kind memory の 1 つ・producerSeq 0・本文は text)。
+MEMORY_KIND: str = "agent-memory"
+MEMORY_SPEC_CONVERSATION_KEY: str = "conversationId"
+MEMORY_SPEC_NAME_KEY: str = "name"
+MEMORY_SPEC_TYPE_KEY: str = "type"
+MEMORY_SPEC_DESCRIPTION_KEY: str = "description"
+MEMORY_SPEC_RECORD_REF_KEY: str = "recordRef"
+MEMORY_SPEC_RECORD_SEQ_KEY: str = "recordSeq"
+MEMORY_SPEC_BYTES_KEY: str = "bytes"
+MEMORY_SPEC_SHA256_KEY: str = "sha256"
+MEMORY_SPEC_VERSION_KEY: str = "version"
+MEMORY_SPEC_LINKS_KEY: str = "links"
+MEMORY_SPEC_WRITTEN_BY_KEY: str = "writtenBy"
+MEMORY_STATE_CURRENT: str = "current"
+MEMORY_STATE_RETIRED: str = "retired"
+#: 記憶の種類(frontmatter の metadata.type・契約の enum の写し)。閉語彙の外を名乗る file は書かない。
+MEMORY_TYPES: tuple[str, ...] = ("user", "feedback", "project", "reference")
+#: 記録の service の stream と出来事の綴り(agora-controllers docs/contracts/record-service.json の写し)。
+MEMORY_EVENT_KIND: str = "memory"
+MEMORY_STREAM_PREFIX: str = "memory#"
+#: 記憶の置き場の中の綴り: 1 冊 = <name>.md・索引は MEMORY.md(**file として正本を持たない** — 手番の頭に
+#: 行から組み直す。実測 2026-09-20: 本 18 冊に対し索引 15 行に腐っていた)。
+MEMORY_FILE_SUFFIX: str = ".md"
+MEMORY_INDEX_FILE: str = "MEMORY.md"
+#: charter が運ぶ記憶の本(起こす腕が行から読んで載せ、器の側が置き場へ書き出す)。ACP の行へは書かない
+#: (history / first_turn と同じく起こすためだけの値)。
+CHARTER_MEMORY_FILES_KEY: str = "memory_files"
+#: 記憶を書けなかった手番の条件(手番は落とさない — 記憶が書けないことは手番の失敗ではない)。
+CONDITION_MEMORY_UNWRITABLE: ConditionType = "AgentMemoryUnwritable"
+
 #: 原文として畳む出来事の kind(記録の service の eventKinds のうち会話の中身 — frame は画面の断面・message は郵便で ACP の行から
 #: 畳む・attachment は画像・summary は要約そのもの)。要約の区間の読みと履歴からの再開の読みが kinds= に渡す **1 点**。
 RECORD_RAW_EVENT_KINDS: tuple[str, ...] = ("text", "tool_use", "tool_result", "system", "error", "user")
@@ -1713,6 +1746,60 @@ class SummaryRegion:
 
 
 @dataclass(frozen=True)
+class MemoryBook:
+    """置き場の 1 冊(card acp:kanban-issue:ki-9fc7d4bca4dc): file の逐語と、frontmatter から読んだ索引の材料。
+    name は file 名(``.md`` を落とした綴り)が正本 — frontmatter の name と食い違っても file 名を採る
+    (置き場の身元は path で、行の identityKey [conversationId, name] もそれを写す)。"""
+
+    name: str
+    text: str
+    type: str
+    description: str
+    links: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class MemoryMalformed:
+    """冊として読めない file(frontmatter が無い・種類が閉語彙の外・名が綴れない)。書かずに理由を名乗る —
+    欄を発明して行を作らない。"""
+
+    name: str
+    reason: str
+
+
+#: 置き場の file 1 つの読み(純関数 judgment.memory-book-of の答え)。
+MemoryReading: TypeAlias = "MemoryBook | MemoryMalformed"
+
+
+@dataclass(frozen=True)
+class MemoryUnchanged:
+    """行の sha256 が書こうとしている本文と同じ — 何も撃たない(冪等)。"""
+
+    name: str
+
+
+@dataclass(frozen=True)
+class MemoryAppend:
+    """行が無い(この会話で初めての冊)— stream へ producerSeq 0 で append。409 が返れば『行が消えて stream が
+    残っている』形なので、stream を読み直して MemorySupersede へ落ちる。"""
+
+    name: str
+
+
+@dataclass(frozen=True)
+class MemorySupersede:
+    """行が在る — その recordSeq へ supersede(producerSeq は 0 のまま)。前の版は鎖として残る。"""
+
+    name: str
+    record_seq: int
+    version: int
+
+
+#: 1 冊の書き方(法 ACP 575b1e: 撃ち分けの鍵は**行の recordSeq の在否**の 1 規則 — 版を数えて選ばない)。
+MemoryWriteVerdict: TypeAlias = "MemoryUnchanged | MemoryAppend | MemorySupersede"
+
+
+@dataclass(frozen=True)
 class SummaryOutcome:
     """claude の print モード(--output-format json)の答えの読み(judgment.summarize-output-of): 要約の本文・消費(契約 turn-record の usage と
     同じ 4 欄 + 任意の内訳・無ければ None)・答えが名乗った model(無ければ None)。"""
@@ -1988,10 +2075,12 @@ class JobOutcome:
 # ------------------------------------------------------------------ 会話の記録の service(段 9f lane 9f-2)
 
 #: stream の種類(契約 record-service.json streamKinds の写し)。agentd が書くのは手番(turn)だけ。
-RecordStreamKind = Literal["turn", "mail", "summary"]
+RecordStreamKind = Literal["turn", "mail", "summary", "memory"]
 RECORD_STREAM_TURN: RecordStreamKind = "turn"
 #: 段 12 lane 12j(agora-redesign #233): 会話の履歴の段階つき要約の本文の stream の種類(型つきの綴り — SUMMARY_STREAM_KIND と同じ語)。
 RECORD_STREAM_SUMMARY: RecordStreamKind = "summary"
+#: card acp:kanban-issue:ki-9fc7d4bca4dc: 会話の自動記憶 1 冊の本文の stream の種類(MEMORY_EVENT_KIND と同じ語)。
+RECORD_STREAM_MEMORY: RecordStreamKind = "memory"
 #: 1 要求の出来事の上限(契約 limits.batchMaxEvents の写し)— 超える拍は batch を分ける(judgment.record-batches-of)。
 RECORD_BATCH_MAX_EVENTS = 1_000
 #: 追記の結末の語(計器 agentd_record_append_total の outcome)= spool の扱いの閉語彙 — 決めるのは judgment.record-append-word-of の
@@ -2110,6 +2199,18 @@ RecordAppendOutcome: TypeAlias = "RecordAppended | RecordConflicted | RecordUnse
 
 
 @dataclass(frozen=True)
+class RecordSuperseded:
+    """2xx(versionAnswer)— 新しい版の recordSeq と版の番号(最初の追記が 1・置き換えるたびに 1 つ進む)。"""
+
+    record_seq: int
+    version: int
+
+
+#: 置き換えの結末(送れなさは追記と同じ RecordUnsent で値として返す — 409 は「もう置き換えられている」)。
+RecordSupersedeOutcome: TypeAlias = "RecordSuperseded | RecordUnsent"
+
+
+@dataclass(frozen=True)
 class RecordSpoolListing:
     """spool の中身(鍵の順 = 送る順)と、読めなかった file の名(消さずに残す)。"""
 
@@ -2169,6 +2270,9 @@ class RecordEvent:
     #: 段 12 lane 12l(agora-redesign #383 粒 2): 本文が消された刻(storedEvent の tombstonedAt・epoch ms)。保存期間の係
     #: (retention)か手の tombstone で本文の欄が消えた行だけが持つ — 履歴の畳みは「空の本文」と「消えた本文」を見分けて印を付ける。
     tombstoned_at: int | None = None
+    #: card acp:kanban-issue:ki-9fc7d4bca4dc: 出来事の版(契約 storedEvent.version・最初の追記は 1)。
+    #: 記憶の畳み戻しが「行が消えて stream が残っている」形から今の版を読み直す材料(読みは最新の版だけを返す)。
+    version: int = 1
 
 
 @dataclass(frozen=True)
@@ -2451,6 +2555,15 @@ class AcpConversationSummaries(EffectBase):
 
 
 @dataclass(frozen=True)
+class AcpConversationMemories(EffectBase):
+    """この会話の kind agent-memory の行(``GET /api/resources?kind=agent-memory&fieldSelector=spec.conversationId=<cid>``・
+    宣言の indexes が引く)。結果 = tuple[AcpRow, ...]。手番の頭の水入れ(行 → 置き場)と、手番の終いの畳み戻しが
+    append と supersede を撃ち分ける材料(行の recordSeq の在否 — 法 ACP 575b1e)。"""
+
+    conversation_id: str
+
+
+@dataclass(frozen=True)
 class AcpPutStatus(EffectBase):
     """行の status を丸ごと書く(``POST /api/events`` の status_synced・ifGeneration = 行の generation)。
 
@@ -2555,6 +2668,19 @@ class RecordAppend(EffectBase):
     Bearer = 名簿の agentd の札)。冪等 — 同じ鍵と本文の再送は ignored。結果 = RecordAppendOutcome(送れなさも値で返す)。"""
 
     batch: RecordBatch
+
+
+@dataclass(frozen=True)
+class RecordSupersede(EffectBase):
+    """既に在る出来事を**新しい版で置き換える**(契約 supersede: ``POST /v1/conversations/{cid}/events/{recordSeq}/supersede``・
+    Bearer = 名簿の agentd の札)。上書きではない — 前の版は recordSeq + version + supersedes の鎖として残り、
+    tombstone を撃たない限り本文ごと在る(法 ACP 575b1e)。event.producerSeq は置き換える行と同じでなければ 400。
+    結果 = RecordSupersedeOutcome(送れなさも値で返す)。"""
+
+    conversation_id: str
+    record_seq: int
+    reason: str
+    event: JSONObject
 
 
 @dataclass(frozen=True)
@@ -2841,6 +2967,20 @@ class FsFileExists(EffectBase):
 
     path: str
 
+
+@dataclass(frozen=True)
+class FsListDirectory(EffectBase):
+    """dir の直下の file の名(card acp:kanban-issue:ki-9fc7d4bca4dc — 記憶の置き場の冊を数える)。
+    結果 = tuple[str, ...](名だけ・path ではない・名の順)。dir が無い・読めない = 空(黙って空へ倒すのではなく
+    『冊が 0』と同じ扱い — 置き場は手番の頭に作られるので、無い = まだ 1 冊も書いていない)。"""
+
+    path: str
+
+
+#: 記憶の 1 冊の読みの上限(置き場の file は人が読む散文 1 冊 — 実測 2026-09-20 の最大は 4,247 byte)。
+#: 上限で切れた text は frontmatter が閉じないか本文が短くなるので、書き戻しの前に sha256 が変わって
+#: 別の版として積まれうる ⇒ 器は大きく取る(1 MiB)。
+MEMORY_BOOK_MAX_CHARS: int = 1_048_576
 
 #: 小さな text の file の読みの既定の上限(rc / pid の file — 数字 1 行)。
 FS_READ_TEXT_DEFAULT_MAX_CHARS: int = 256

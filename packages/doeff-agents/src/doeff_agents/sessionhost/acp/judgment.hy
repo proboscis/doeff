@@ -84,9 +84,36 @@
   InFlightSummarize
   JOB-HANDLE-SUMMARIZE-KEY
   RECORD-RAW-EVENT-KINDS
+  RECORD-STREAM-MEMORY
   RECORD-STREAM-SUMMARY
   RecordBatch
   RecordStream
+  CHARTER-MEMORY-FILES-KEY
+  MEMORY-EVENT-KIND
+  MEMORY-FILE-SUFFIX
+  MEMORY-INDEX-FILE
+  MEMORY-KIND
+  MEMORY-SPEC-BYTES-KEY
+  MEMORY-SPEC-CONVERSATION-KEY
+  MEMORY-SPEC-DESCRIPTION-KEY
+  MEMORY-SPEC-LINKS-KEY
+  MEMORY-SPEC-NAME-KEY
+  MEMORY-SPEC-RECORD-REF-KEY
+  MEMORY-SPEC-RECORD-SEQ-KEY
+  MEMORY-SPEC-SHA256-KEY
+  MEMORY-SPEC-TYPE-KEY
+  MEMORY-SPEC-VERSION-KEY
+  MEMORY-SPEC-WRITTEN-BY-KEY
+  MEMORY-STATE-CURRENT
+  MEMORY-STATE-RETIRED
+  MEMORY-STREAM-PREFIX
+  MEMORY-TYPES
+  MemoryAppend
+  MemoryBook
+  MemoryMalformed
+  MemorySupersede
+  MemoryUnchanged
+  CONDITION-MEMORY-UNWRITABLE
   SUMMARY-EVENT-KIND
   SUMMARY-KIND
   SUMMARY-SPEC-CONVERSATION-KEY
@@ -5900,3 +5927,264 @@
   (setv tos (lfor summary summaries summary.to-seq))
   (if tos (max tos) None))
 
+
+
+;; --- 会話の自動記憶(card acp:kanban-issue:ki-9fc7d4bca4dc・法 ACP 575b1e conversation-memory-lives-in-the-row)-------
+;;
+;; 正本の座は行。本文は記録の service の stream(streamKind memory・id = memory#<name>)で、kind agent-memory の行は
+;; claim check と索引の材料だけを持つ。ここは**純関数だけ** — 撃つのは agentd.hy の腕(手番の頭の水入れ・終いの畳み戻し)。
+;;
+;;   * 撃ち分けの鍵は**行の recordSeq の在否**の 1 規則(memory-write-verdict)。版を数えて選ばない。
+;;   * 本文の同一性は記録の service と同じ計算(record-body-bytes-of → sha256)— 同じなら 1 bit も撃たない。
+;;   * 索引(MEMORY.md)は file として正本を持たず、行から組み直す(memory-index-of)。
+
+(setv MEMORY-FRONTMATTER-FENCE "---")
+;; 記憶の名の綴り(ACP agora-kinds.json kinds.agent-memory の spec.name の pattern の写し)。
+(setv MEMORY-NAME-PATTERN r"^[a-z0-9][a-z0-9-]*$")
+;; 本文が [[name]] で指した他の記憶の名(索引の材料・まだ存在しない名でもよい)。
+(setv MEMORY-LINK-PATTERN r"\[\[([a-z0-9][a-z0-9-]*)\]\]")
+;; 契約の spec.links の上限(maxItems)と description の上限(maxLength)の写し — 超える分は落とす(行を断られない)。
+(setv MEMORY-LINKS-MAX 32)
+(setv MEMORY-DESCRIPTION-MAX 512)
+
+
+(defk memory-stream-id-of [name]
+  {:pre [(: name str)]
+   :post [(: % str)]}
+  "1 冊の本文の stream の id(記録の service・streamKind memory)= memory#<name>(ACP agora-kinds.json
+   kinds.agent-memory の recordRef の綴り)。stream は名ごとに 1 本で、版は stream を増やさない。"
+  f"{MEMORY-STREAM-PREFIX}{name}")
+
+
+(defk memory-body-of [text at]
+  {:pre [(: text str) (: at int)]
+   :post [(: % dict)]}
+  "1 冊の本文の出来事(契約 record-service eventIn・kind memory・producerSeq 0・本文は text)。
+   producerSeq が 0 で固定なのは、版を append で積まないから(2 度目以降は supersede)。"
+  {"producerSeq" 0 "at" at "kind" MEMORY-EVENT-KIND "text" text})
+
+
+(defk memory-batch-of [conversation-id name body started-at-ms node profile]
+  {:pre [(: conversation-id str) (: name str) (: body dict) (: started-at-ms int) (: node str) (: profile str)]
+   :post [(: % RecordBatch)]}
+  "1 冊の appendEvents の要求(stream = streamKind memory・出来事は 1 つ・spool の鍵 = memory-<会話>-<name>)。"
+  (<- stream-id str (memory-stream-id-of name))
+  (RecordBatch :spool-key f"memory-{conversation-id}-{name}"
+               :conversation-id conversation-id
+               :stream (RecordStream :kind RECORD-STREAM-MEMORY :stream-id stream-id :started-at-ms started-at-ms
+                                     :node node :profile profile :attempt 1)
+               :events #(body)))
+
+
+(defk memory-row-id-of [conversation-id name]
+  {:pre [(: conversation-id str) (: name str)]
+   :post [(: % str)]}
+  "kind agent-memory の行の id(identityKey は [conversationId, name] — id はその写し・1 冊 1 行)。"
+  f"mem-{conversation-id}-{name}")
+
+
+(defk memory-name-of-file [file-name]
+  {:pre [(: file-name str)]
+   :post [(: % (| str None))]}
+  "置き場の file 名 → 記憶の名(`.md` を落とした綴り)。索引 MEMORY.md・接尾辞の違う file・契約の pattern の
+   外の綴りは None(行にしない — 名を潰して身元を作らない)。"
+  (when (or (= file-name MEMORY-INDEX-FILE) (not (.endswith file-name MEMORY-FILE-SUFFIX)))
+    (return None))
+  (setv name (cut file-name 0 (- (len file-name) (len MEMORY-FILE-SUFFIX))))
+  (if (re.match MEMORY-NAME-PATTERN name) name None))
+
+
+(defk memory-book-of [file-name text]
+  {:pre [(: file-name str) (: text str)]
+   :post [(: % (| MemoryBook MemoryMalformed))]}
+  "置き場の file 1 つ → 冊 か 読めなさ(純関数)。frontmatter(`---` で挟んだ最初の塊)から description と
+   metadata.type を、本文から [[name]] の指し先を読む。名の正本は **file 名**(frontmatter の name と
+   食い違っても file 名を採る — 行の identityKey がそれを写すから)。
+
+   読めない形は書かずに理由を名乗る: 名が綴れない / frontmatter が無い / 種類が閉語彙の外 / 要旨が無い。
+   欄を発明して行を作らない(契約の required を満たさない行は engine に断られる)。"
+  (<- name (| str None) (memory-name-of-file file-name))
+  (when (is name None)
+    (return (MemoryMalformed :name file-name :reason "file name is not a memory name (<name>.md with a-z0-9-)")))
+  (setv lines (.splitlines text))
+  (when (or (not lines) (!= (.strip (get lines 0)) MEMORY-FRONTMATTER-FENCE))
+    (return (MemoryMalformed :name name :reason "no frontmatter fence on the first line")))
+  (setv closing None)
+  (for [[i line] (enumerate (cut lines 1 None))]
+    (when (and (is closing None) (= (.strip line) MEMORY-FRONTMATTER-FENCE))
+      (setv closing (+ i 1))))
+  (when (is closing None)
+    (return (MemoryMalformed :name name :reason "frontmatter is not closed")))
+  (setv description "")
+  (setv kind "")
+  (for [line (cut lines 1 closing)]
+    (setv stripped (.strip line))
+    (when (.startswith stripped "description:")
+      (setv description (.strip (cut stripped (len "description:") None))))
+    (when (.startswith stripped "type:")
+      (setv kind (.strip (cut stripped (len "type:") None)))))
+  (when (not description)
+    (return (MemoryMalformed :name name :reason "frontmatter has no description")))
+  (when (not (in kind MEMORY-TYPES))
+    (return (MemoryMalformed :name name :reason f"metadata.type {(repr kind)} is outside {(list MEMORY-TYPES)}")))
+  ;; 指し先は本文の順・重複なし(まだ存在しない名でもよい — 索引の材料)。
+  (setv links [])
+  (for [found (re.findall MEMORY-LINK-PATTERN text)]
+    (when (and (not (in found links)) (< (len links) MEMORY-LINKS-MAX))
+      (.append links found)))
+  (MemoryBook :name name :text text :type kind
+              :description (cut description 0 MEMORY-DESCRIPTION-MAX)
+              :links (tuple links)))
+
+
+(defk memory-spec-of [conversation-id book record-ref record-seq body-bytes sha256 version written-by]
+  {:pre [(: conversation-id str) (: book MemoryBook) (: record-ref str) (: record-seq int) (: body-bytes int)
+         (: sha256 str) (: version int) (: written-by (| str None))]
+   :post [(: % dict)]}
+  "kind agent-memory の spec(ACP agora-kinds.json kinds.agent-memory の schema の写し): 身元・索引の材料・
+   本文の claim check。**本文の欄は 1 つも無い**(法 575b1e)。"
+  (setv spec {MEMORY-SPEC-CONVERSATION-KEY conversation-id
+              MEMORY-SPEC-NAME-KEY book.name
+              MEMORY-SPEC-TYPE-KEY book.type
+              MEMORY-SPEC-DESCRIPTION-KEY book.description
+              MEMORY-SPEC-RECORD-REF-KEY record-ref
+              MEMORY-SPEC-RECORD-SEQ-KEY record-seq
+              MEMORY-SPEC-BYTES-KEY body-bytes
+              MEMORY-SPEC-SHA256-KEY sha256
+              MEMORY-SPEC-VERSION-KEY version})
+  (when book.links
+    (setv (get spec MEMORY-SPEC-LINKS-KEY) (list book.links)))
+  (when (is-not written-by None)
+    (setv (get spec MEMORY-SPEC-WRITTEN-BY-KEY) written-by))
+  spec)
+
+
+(defk memory-status-of [at]
+  {:pre [(: at int)]
+   :post [(: % dict)]}
+  "kind agent-memory の status(state = current・この版を書いた刻)。"
+  {"state" MEMORY-STATE-CURRENT "at" at})
+
+
+(defk memory-rows-by-name [rows]
+  {:pre [(: rows tuple)]
+   :post [(: % dict)]}
+  "この会話の kind agent-memory の行 → {name: row}(**退役した行も入れる** — 名の綴れない行だけ落とす)。
+   同じ名が 2 行来たら recordSeq の大きい方を採る(identityKey が守るので起きないはずの形 — 黙って 1 つ選ばない)。
+
+   ⚠ 退役を落とさないのは、落とすと『行が無い』と見分けが付かなくなるから: 置き場に file が残ったまま
+   退役した冊は、次の手番の畳み戻しが append に倒れて**退役を取り消してしまう**(置き場の file は
+   水入れが消さないので必ず残る)。読み分けは memory-row-retired? の 1 点。"
+  (setv by-name {})
+  (for [row rows]
+    (setv spec (if (isinstance row.spec dict) row.spec {}))
+    (setv name (.get spec MEMORY-SPEC-NAME-KEY))
+    (setv seq (.get spec MEMORY-SPEC-RECORD-SEQ-KEY))
+    (when (and (isinstance name str) (re.match MEMORY-NAME-PATTERN name)
+               (isinstance seq int) (not (isinstance seq bool)))
+      (setv seen (.get by-name name))
+      (when (or (is seen None) (> seq (.get (. seen spec) MEMORY-SPEC-RECORD-SEQ-KEY -1)))
+        (setv (get by-name name) row))))
+  by-name)
+
+
+(defk memory-row-retired? [row]
+  {:pre [(: row (| AcpRow None))]
+   :post [(: % bool)]}
+  "行が退役しているか(status.state = retired)。退役した冊は手番の頭に置き場へ書き出さず、
+   置き場に file が残っていても畳み戻さない — でないと退役が次の手番で取り消される。
+   戻すのは同じ鍵で 2 拍(spec を書き直し → status を current)で、その判断は operator の側。"
+  (when (is row None)
+    (return False))
+  (setv status (if (isinstance row.status dict) row.status {}))
+  (= (.get status "state") MEMORY-STATE-RETIRED))
+
+
+(defk memory-write-verdict [row sha256]
+  {:pre [(: row (| AcpRow None)) (: sha256 str)]
+   :post [(: % (| MemoryUnchanged MemoryAppend MemorySupersede))]}
+  "1 冊の書き方を決める **1 点**(法 ACP 575b1e): 行の sha256 が同じなら何も撃たない / 行が在れば
+   その recordSeq へ supersede / 行が無ければ append。**版を数えて選ばない** — 鍵は行の recordSeq の在否。
+
+   行が在るのに recordSeq / version が読めない拍は append に倒す。素の append は 409 で保存済みが勝つので、
+   呼び手はその 409 を『行が消えて stream が残っている』の合図として stream を読み直す(第 2 の語彙を足さない)。"
+  (when (is row None)
+    (return (MemoryAppend :name "")))
+  (setv spec (if (isinstance row.spec dict) row.spec {}))
+  (setv name (.get spec MEMORY-SPEC-NAME-KEY))
+  (setv seq (.get spec MEMORY-SPEC-RECORD-SEQ-KEY))
+  (setv version (.get spec MEMORY-SPEC-VERSION-KEY))
+  (setv label (if (isinstance name str) name ""))
+  (when (= (.get spec MEMORY-SPEC-SHA256-KEY) sha256)
+    (return (MemoryUnchanged :name label)))
+  (when (not (and (isinstance seq int) (not (isinstance seq bool))
+                  (isinstance version int) (not (isinstance version bool))))
+    (return (MemoryAppend :name label)))
+  (MemorySupersede :name label :record-seq seq :version version))
+
+
+(defk memory-index-of [books]
+  {:pre [(: books tuple)]
+   :post [(: % str)]}
+  "索引 MEMORY.md を冊から組み直す(file としての正本を持たない — 実測 2026-09-20: 本 18 冊に対し索引 15 行に
+   腐っていて、落ちた 3 冊は file として在るのに手番の頭に載らなかった)。行数は冊の数とちょうど同じ。"
+  (setv lines ["# MEMORY"
+               ""
+               "⚠ この索引は手番の頭に記憶の行から組み直される — 手で書いた行は次の手番で消える。"
+               ""])
+  (for [book (sorted books :key (fn [b] b.name))]
+    (.append lines f"- [{book.name}]({book.name}{MEMORY-FILE-SUFFIX}) — {book.description}"))
+  (+ (.join "\n" lines) "\n"))
+
+
+(defk memory-files-of [books]
+  {:pre [(: books tuple)]
+   :post [(: % tuple)]}
+  "手番の頭に置き場へ書き出す file の列(純関数): 冊ごとに <name>.md、最後に行から導いた索引 MEMORY.md。
+   冊が 0 でも索引は書く(前の手番の腐った索引を残さない)。"
+  (setv files (lfor book (sorted books :key (fn [b] b.name))
+                    {"name" f"{book.name}{MEMORY-FILE-SUFFIX}" "text" book.text}))
+  (<- index str (memory-index-of books))
+  (tuple (+ files [{"name" MEMORY-INDEX-FILE "text" index}])))
+
+
+(defk memory-book-of-row [row text]
+  {:pre [(: row AcpRow) (: text str)]
+   :post [(: % (| MemoryBook None))]}
+  "kind agent-memory の行 + 記録の service から読んだ本文 → 手番の頭に置き場へ書き出す冊。
+   索引の材料(type / description / links)は**行から**採る(行が索引の正本 — file の frontmatter を
+   読み直さない)。名が綴れない・種類が閉語彙の外・本文が空 = None(書き出さない)。"
+  (setv spec (if (isinstance row.spec dict) row.spec {}))
+  (setv name (.get spec MEMORY-SPEC-NAME-KEY))
+  (setv kind (.get spec MEMORY-SPEC-TYPE-KEY))
+  (setv description (.get spec MEMORY-SPEC-DESCRIPTION-KEY))
+  (when (not (and (isinstance name str) (re.match MEMORY-NAME-PATTERN name)
+                  (in kind MEMORY-TYPES) (isinstance description str) (.strip text)))
+    (return None))
+  (setv links (.get spec MEMORY-SPEC-LINKS-KEY))
+  (MemoryBook :name name :text text :type kind :description description
+              :links (tuple (lfor l (if (isinstance links list) links []) :if (isinstance l str) l))))
+
+
+(defk memory-unwritable-noted [job reason]
+  {:pre [(: job InFlightJob) (: reason str)]
+   :post [(: % InFlightJob)]}
+  "記憶を畳み戻せなかった理由を condition AgentMemoryUnwritable として job の pending-conditions に足す
+   (Ended の書きに乗る — 同じ型を二度足さない・最初の理由を残す)。**手番は落とさない**: 記憶が書けないことは
+   手番の失敗ではない(summary の CONDITION-SUMMARY-UNWRITABLE と同じ扱い)。"
+  (when (any (gfor c job.pending-conditions (= (.get c "type") CONDITION-MEMORY-UNWRITABLE)))
+    (return job))
+  (<- condition dict (condition-of CONDITION-MEMORY-UNWRITABLE reason))
+  (replace job :pending-conditions (+ job.pending-conditions #(condition))))
+
+
+(defk charter-with-memory-files [charter files]
+  {:pre [(: charter dict) (: files tuple)]
+   :post [(: % dict)]}
+  "charter に手番の頭の記憶の本を載せる(history / first_turn と同じく**起こすためだけの値** — ACP の行へは
+   書かない)。0 冊なら欄を立てない(その charter は 1 byte も変わらず、今日の挙動のまま)。"
+  (when (not files)
+    (return charter))
+  (setv next (dict charter))
+  (setv (get next CHARTER-MEMORY-FILES-KEY) (list files))
+  next)
