@@ -956,6 +956,12 @@
    "binding" (.get params "binding")
    "session_env" (or (.get params "session_env") {})
    "expected_result" (.get params "expected_result")
+   ;; ADR-DOE-AGENTS-006 R11: 自動記憶の置き場(会話 id から導いた 1 つ)は wire でも運ぶ。
+   ;; ここは charter → resume params(judgment.resume-params-of)→ launch params
+   ;; (launch.resume-session)に続く**名簿の 4 枚目**で、落とすと RPC 越しの手番だけ
+   ;; 記憶が既定の置き場(家の projects/<cwd>/memory)へ行き、誤りも条件も出ないまま
+   ;; 会話から剥がれる(2026-09-15 の添付が 3 枚の名簿で落ちたのと同型)。
+   "memory_dir" (.get params "memory_dir")
    ;; law context-file-rides-the-wire(上の admit-context-file 参照): 実体化は
    ;; launch program(spawn 前・work_dir 検査後)が fs-write-text-atomic で行う
    "context_file" (.get params "context_file")
@@ -1325,8 +1331,11 @@
     ;; cross-binding 拡張 3 param は resume 専用(ADR-006 改訂 R4)— fork への
     ;; 指定は fail-closed(黙殺は誤配線を隠す)。
     (when (= method "session.fork")
+      ;; memory_dir が resume 専用なのは、fork が**新しい会話**だから(ADR-DOE-AGENTS-006 R11):
+      ;; 置き場は会話 id から導くが、fork の新 identity は CLI が鋳造するまで判らない。親の値を
+      ;; 通せば新しい会話に親の記憶が黙って付く — 直している誤帰属そのもの。黙殺せず断る。
       (for [banned #("binding" "new_session_id" "expected_result"
-                     "context_file" "launch_attribution")]
+                     "context_file" "launch_attribution" "memory_dir")]
         (when (in banned p)
           (raise (RuntimeError
                    (+ f"invalid params for session.fork: `{banned}` is "
@@ -1364,6 +1373,8 @@
            "mcp_servers" (or (.get p "mcp_servers") {})
            "session_env" (or (.get p "session_env") {})
            "binding" (.get p "binding")
+           ;; ADR-DOE-AGENTS-006 R11(名簿の 4 枚目・resume 面): 同じ会話の続きなので置き場も続く。
+           "memory_dir" (.get p "memory_dir")
            "new_session_id" (.get p "new_session_id")
            "expected_result" (.get p "expected_result")
            "expected_result_specified" (in "expected_result" p)

@@ -5086,6 +5086,9 @@ def _incarnation_charter(seat_env: tuple[tuple[str, str], ...], charter: JSONObj
             "headless",
             None,
             HOMES,
+            # 記憶の根は宣言しない(この検の軸は宣言の env の順序 — ADR-DOE-AGENTS-006 R11 の
+            # 置き場は空の根では据わらない)。
+            "",
             "system",
             seat_env,
         )

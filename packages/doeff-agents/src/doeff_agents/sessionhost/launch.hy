@@ -1304,6 +1304,11 @@
          "skip_trust_setup" False
          "lifecycle" source.lifecycle
          "binding" binding
+         ;; 自動記憶の置き場(ADR-DOE-AGENTS-006 R11)は会話に従う durable な状態なので、resume の
+         ;; params でも素通しする。ここは charter → resume params(judgment.resume-params-of)に続く
+         ;; **2 枚目の名簿** — 足した欄を両方に入れないと、腕が resume の手番だけ黙って落ちる
+         ;; (実弾 2026-09-15 の添付と同じ形の落ち方)。欄が無ければ今日の挙動のまま。
+         "memory_dir" (.get params "memory_dir")
          "session_env" overlay-env
          "expected_result" effective-expected
          "socket_path" (.get params "socket_path" "")

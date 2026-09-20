@@ -447,6 +447,32 @@ rules:
       include:
         - /packages/doeff-agents/src/doeff_agents/sessionhost/impls/**
 
+  - id: doeff-agents-auto-memory-dir-spelling-has-one-home
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      ADR-DOE-AGENTS-006 R11 / law auto-memory-home-is-keyed-by-the-conversation:
+      the auto-memory home is DECIDED in one place (judgment.memory-home-of —
+      <memory root>/<conversation id>, with neither the custody account nor the
+      working directory among its arguments) and SPELLED for the CLI in one
+      place (CLAUDE-AUTO-MEMORY-DIR-SETTING in sessionhost/impls/claude_code.hy).
+      A second site that spells `autoMemoryDirectory` builds a memory home
+      nobody declared. That is the defect this law fixes: until 2026-09-20 the
+      effective key was "custody account x working directory", so one
+      conversation read two disjoint memory homes in consecutive turns (measured
+      on the company Mac: 30 homes, intersection 0) and a memory written 15
+      minutes earlier was gone by the next turn. Carry the charter's
+      `memory_dir` field through instead of respelling the setting.
+    patterns:
+      - pattern-regex: 'autoMemoryDirectory'
+    paths:
+      include:
+        - /packages/doeff-agents/**
+      exclude:
+        - "**/sessionhost/impls/claude_code.hy"
+        - "**/tests/sessionhost_impls_deftests.hy"
+
   - id: doeff-agents-agentd-spawn-only-via-ensure-boundary
     languages: [python]
     severity: ERROR

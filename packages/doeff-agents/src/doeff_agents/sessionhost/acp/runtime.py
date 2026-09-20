@@ -59,6 +59,7 @@ from doeff_agents.sessionhost.acp.effects import (
     CUSTODY_CONTRACT_VERSION,
     CUSTODY_URL_ENV,
     HOMES_ROOT_ENV,
+    MEMORY_ROOT_ENV,
     JOIN_RECORD_SPOOL_DIR,
     JOIN_STATE_DIR_DEFAULT,
     LEASE_JOURNAL_FILENAME,
@@ -126,6 +127,8 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
     両方に据える。"""
     node_name = _node_name_of_env(env)
     homes_root = env.get(HOMES_ROOT_ENV) or os.path.join(_state_home(env), "doeff", "agentd-homes")
+    # 自動記憶の置き場の根: homes-root と同じ導き方で、資格の家の**外**に 1 つ(会話 1 つにつき <根>/<会話 id>)。
+    memory_root = env.get(MEMORY_ROOT_ENV) or os.path.join(_state_home(env), "doeff", "agent-memory")
     backend = backend_of(host_argv, env)
     ownership = _ownership_of_env(env)
     # 参加の門(段 9f lane 9f-6): 本文の行き先が無ければここで断る(理由は AgentdPreflightError の文)。
@@ -157,6 +160,7 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         agentd_build=_build_of_env(env),
         places=places,
         homes_root=homes_root,
+        memory_root=memory_root,
         backend_kind=backend,
         stream_capability=_stream_capability(backend),
         ownership=ownership,

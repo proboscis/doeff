@@ -2336,10 +2336,52 @@
   next)
 
 
-(defk incarnation-charter-of [plan choice session-id bodies history attribution backend-kind lease homes-root opener seat-env]
+(defk memory-home-of [memory-root conversation-id]
+  {:pre [(: memory-root str) (: conversation-id str)]
+   :post [(: % (| str None))]}
+  "自動記憶(auto-memory)の置き場を決める 1 点: <記憶の根>/<会話 id>。None = 据えない
+   (呼び手は charter に欄を立てず、CLI の既定〔家の projects/<潰した cwd>/memory〕に落ちる)。
+
+   鍵が**会話 id ちょうど**なのは、記憶が会話に付く durable な状態だから(ADR-DOE-AGENTS-006 R11)。
+   今日の実効の鍵は「預かり所の account × 作業ディレクトリ」— どちらも誰も宣言していない組で、
+   profile を替えるたびに 1 つの会話が別の置き場へ割れ、同じ account に載った別々の会話が相席する
+   (実測 2026-09-20 会社 Mac: 家 30・同じ会話の連続する 2 手番が交わり 0 件の 2 つの置き場を読んだ)。
+   ⇒ 根は資格の家(homes-root)の**外**に置く(家の中だと account が替わった拍に置き場も替わる)。
+   作業ディレクトリも鍵に入れない — 同じ会話が隔離作業ツリーと主 checkout を行き来しても続くように。
+
+   綴りの安全: 会話 id は path の 1 節になるので、account の家と同じ規約で潰す
+   (`[^A-Za-z0-9._-]` → `_`)。潰した結果が空・`.`・`..` になる id は置き場を持たない(None —
+   根の外へ出る綴りを組まない)。"
+  (setv root (.rstrip memory-root "/"))
+  (setv safe (re.sub r"[^A-Za-z0-9._-]" "_" conversation-id))
+  (if (or (not root) (in safe #{"" "." ".."}))
+      None
+      f"{root}/{safe}"))
+
+
+(defk charter-with-memory-home [charter memory-root conversation-id]
+  {:pre [(: charter dict) (: memory-root str) (: conversation-id str)]
+   :post [(: % dict)]}
+  "charter に自動記憶の置き場の欄(`memory_dir` — launch params の綴りは `binding` / `session_env` と
+   同じく literal)を据える。決めるのは memory-home-of の
+   1 点で、ここは写すだけ。根を宣言していない機体(memory-root が空)と綴りの組めない会話 id では
+   欄を立てない — その charter は 1 byte も変わらず、今日の挙動のまま。
+
+   **貸与の有無に依らず据える**(charter-with-grant の中ではない): 記憶の置き場は資格ではないので、
+   預かり所を宣言していない機体でも会話に従う。"
+  (<- home (| str None) (memory-home-of memory-root conversation-id))
+  (if (is home None)
+      charter
+      (do (setv next (dict charter))
+          (setv (get next "memory_dir") home)
+          next)))
+
+
+(defk incarnation-charter-of [plan choice session-id bodies history attribution backend-kind lease homes-root
+                              memory-root opener seat-env]
   {:pre [(: plan LaunchPlan) (: choice ArmChoice) (: session-id str) (: bodies tuple) (: history str)
-         (: attribution dict) (: backend-kind str) (: lease (| LeaseGrant None)) (: homes-root str) (: opener (| str None))
-         (: seat-env tuple)]
+         (: attribution dict) (: backend-kind str) (: lease (| LeaseGrant None)) (: homes-root str)
+         (: memory-root str) (: opener (| str None)) (: seat-env tuple)]
    :post [(: % tuple)]}
   "起こす session の charter を組む 1 点(launch / resume / rehydrate — send は起こさない): 鋳造した id →
    機体の宣言の env(段 12・agora-redesign #520)→ 会話の身元の env(段 10f 便 2 追補 3 — 会話の id は帰属の
@@ -2352,7 +2394,11 @@
   (<- with-id dict (charter-with-session-id plan.charter session-id))
   (<- with-seat dict (charter-with-seat-env with-id seat-env))
   (<- with-env dict (charter-with-conversation-env with-seat (str (get attribution "conversationId")) opener))
-  (setv charter with-env)
+  ;; 自動記憶の置き場は会話に従う(ADR-DOE-AGENTS-006 R11)— 起こす 3 つの腕すべてで据える 1 点。
+  ;; 借りた札の家(下)より前に据えるのは、記憶が資格ではなく会話の durable な状態だから。
+  (<- with-memory dict (charter-with-memory-home with-env memory-root
+                                                 (str (get attribution "conversationId"))))
+  (setv charter with-memory)
   (when (= choice.arm NEXT-ARM-REHYDRATE)
     (<- with-history dict (charter-with-history charter history))
     (setv charter with-history))
@@ -2811,6 +2857,9 @@
              ;; params にするので素通しだが、resume は名簿の写し — ここに無いと
              ;; **蘇生の手番だけ**閾値が落ちて窓の上限任せに戻る(上の傷跡と同じ形)。
              CHARTER-AUTO-COMPACT-WINDOW-KEY
+             ;; 自動記憶の置き場(ADR-DOE-AGENTS-006 R11)も同じ形 — 名簿に無いと
+             ;; **蘇生の手番だけ**置き場が落ちて CLI の既定へ戻る。
+             "memory_dir"
              MESSAGE-ATTACHMENTS-KEY]]
     (when (in key charter)
       (setv (get params key) (get charter key))))
