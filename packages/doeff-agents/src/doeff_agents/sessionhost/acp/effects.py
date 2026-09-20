@@ -960,6 +960,15 @@ OWNERSHIP_PROOF_GCE_PREFIX = "gce-project:"
 OWNERSHIP_PROOF_FILE_PREFIX = "file:"
 OWNERSHIP_PROOF_FILE_SEPARATOR = "="
 OWNERSHIP_PROOF_DECLARED = "declared"
+#: 特権の置き場の綴り(card acp:kanban-issue:ki-d6cc49cbf33f 決定 D4 ③): spec.places にこの語を名乗る
+#: 機体は、参加の前に所有の証拠(OWNERSHIP_PROOF_GCE_PREFIX / OWNERSHIP_PROOF_FILE_PREFIX)を撃たなければ
+#: ならない(declared も、所有を 1 欄も名乗らない宣言も断る — join.ownership-verdict の 1 点)。綴りは上の
+#: OWNERSHIP_GRADE_COMPANY を借りる(会社の語を 2 度書かない)。
+#: ⚠ ACP の配備の宣言 privilegedPlaces とは**別の役**で、写しではない: あちらは配備の方策
+#: 「この行をこの語で信じてよいか」・こちらは機体の自制「証拠なしにこの語を名乗らない」。参加の前の
+#: 機体から配備の宣言は読めない(ACP へ繋ぐ前の拍)ので写しにできず、第 2 の定義点にもならない。
+#: 非特権の語(personal / cluster)の扱いはこの集合の外 = 今日のまま(証拠を要求しない)。
+PRIVILEGED_PLACES: frozenset[str] = frozenset({OWNERSHIP_GRADE_COMPANY})
 
 
 class OwnershipProofFile(NamedTuple):

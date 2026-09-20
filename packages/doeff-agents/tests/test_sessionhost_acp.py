@@ -5391,14 +5391,15 @@ def test_ownership_verdict_gce_project_must_match_and_declared_is_taken_as_is() 
     from doeff_agents.sessionhost.acp import join
     from doeff_agents.sessionhost.acp.effects import Ownership, ProbeAnswer
 
+    places = ("company", "personal")
     gce = Ownership(grade="company", proof="gce-project:cyberagent-050")
-    assert run(join.ownership_verdict(gce, ProbeAnswer(value="cyberagent-050"))) == gce
+    assert run(join.ownership_verdict(places, gce, ProbeAnswer(value="cyberagent-050"))) == gce
     with pytest.raises(ValueError, match="cyberagent-050"):
-        run(join.ownership_verdict(gce, ProbeAnswer(value="someone-else")))
+        run(join.ownership_verdict(places, gce, ProbeAnswer(value="someone-else")))
     with pytest.raises(ValueError, match="metadata"):
-        run(join.ownership_verdict(gce, ProbeAnswer(value=None)))
+        run(join.ownership_verdict(places, gce, ProbeAnswer(value=None)))
     declared = Ownership(grade="personal", proof="declared")
-    assert run(join.ownership_verdict(declared, ProbeAnswer(value=None))) == declared
+    assert run(join.ownership_verdict(("personal",), declared, ProbeAnswer(value=None))) == declared
 
 
 def test_ownership_preflight_probes_gce_only_for_a_gce_proof_and_refuses_a_mismatch() -> None:
@@ -5408,17 +5409,21 @@ def test_ownership_preflight_probes_gce_only_for_a_gce_proof_and_refuses_a_misma
     from doeff_agents.sessionhost.acp.effects import Ownership
     from doeff_agents.sessionhost.acp.runtime import install
 
+    places = ("company", "personal")
     gce = Ownership(grade="company", proof="gce-project:cyberagent-050")
     local = FakeLocal()
     local.probe_answers["gce-project:cyberagent-050"] = "cyberagent-050"
-    assert run(install(join.ownership_preflight(gce), [local.dispatch])) == gce
+    assert run(install(join.ownership_preflight(places, gce), [local.dispatch])) == gce
     assert local.probes == ["gce-project:cyberagent-050"]
     local.probe_answers["gce-project:cyberagent-050"] = None
     with pytest.raises(ValueError, match="metadata"):
-        run(install(join.ownership_preflight(gce), [local.dispatch]))
-    declared = Ownership(grade="company", proof="declared")
+        run(install(join.ownership_preflight(places, gce), [local.dispatch]))
+    declared = Ownership(grade="personal", proof="declared")
     before = list(local.probes)
-    assert run(install(join.ownership_preflight(declared), [local.dispatch])) == declared
+    assert (
+        run(install(join.ownership_preflight(("personal",), declared), [local.dispatch]))
+        == declared
+    )
     assert local.probes == before
 
 
@@ -5450,12 +5455,13 @@ def test_ownership_verdict_file_proof_matches_the_content_of_the_named_file() ->
     from doeff_agents.sessionhost.acp import join
     from doeff_agents.sessionhost.acp.effects import Ownership, ProbeAnswer
 
+    places = ("company", "personal")
     owned = Ownership(grade="company", proof="file:/Users/x/.local/state/agora/host-id=mac")
-    assert run(join.ownership_verdict(owned, ProbeAnswer(value="mac"))) == owned
+    assert run(join.ownership_verdict(places, owned, ProbeAnswer(value="mac"))) == owned
     with pytest.raises(ValueError, match="proboscis-mbp"):
-        run(join.ownership_verdict(owned, ProbeAnswer(value="proboscis-mbp")))
+        run(join.ownership_verdict(places, owned, ProbeAnswer(value="proboscis-mbp")))
     with pytest.raises(ValueError, match="host-id"):
-        run(join.ownership_verdict(owned, ProbeAnswer(value=None)))
+        run(join.ownership_verdict(places, owned, ProbeAnswer(value=None)))
 
 
 def test_ownership_preflight_probes_a_file_proof_and_still_never_probes_declared() -> None:
@@ -5465,19 +5471,143 @@ def test_ownership_preflight_probes_a_file_proof_and_still_never_probes_declared
     from doeff_agents.sessionhost.acp.effects import Ownership
     from doeff_agents.sessionhost.acp.runtime import install
 
+    places = ("company", "personal")
     proof = "file:/Users/x/.local/state/agora/host-id=mac"
     owned = Ownership(grade="company", proof=proof)
     local = FakeLocal()
     local.probe_answers[proof] = "mac"
-    assert run(install(join.ownership_preflight(owned), [local.dispatch])) == owned
+    assert run(install(join.ownership_preflight(places, owned), [local.dispatch])) == owned
     assert local.probes == [proof]
     local.probe_answers[proof] = "proboscis-mbp"
     with pytest.raises(ValueError, match="proboscis-mbp"):
-        run(install(join.ownership_preflight(owned), [local.dispatch]))
-    declared = Ownership(grade="company", proof="declared")
+        run(install(join.ownership_preflight(places, owned), [local.dispatch]))
+    declared = Ownership(grade="personal", proof="declared")
     before = list(local.probes)
-    assert run(install(join.ownership_preflight(declared), [local.dispatch])) == declared
+    assert (
+        run(install(join.ownership_preflight(("personal",), declared), [local.dispatch]))
+        == declared
+    )
     assert local.probes == before
+
+
+def test_a_privileged_place_without_any_ownership_declaration_refuses_to_join() -> None:
+    """D4 ③(card ki-d6cc49cbf33f): 検めの門は「所有を名乗ったか」ではなく「**特権の場所を名乗ったか**」に
+    条件づく。places に company を含む宣言は、所有の宣言そのものが無ければ参加の前に断る(2026-09-18 の実弾:
+    個人 MacBook が会社 Mac の宣言 file で起動し 86 秒 company を名乗った — 両欄が空でも通る形が根)。"""
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import ProbeAnswer
+    from doeff_agents.sessionhost.acp.runtime import install
+
+    local = FakeLocal()
+    with pytest.raises(ValueError, match="company"):
+        run(
+            install(
+                join.ownership_preflight(("company", "personal", "cluster"), None), [local.dispatch]
+            )
+        )
+    # 断りは参加の前の判定ちょうど — 証拠を読みに行かない(読む物が宣言されていない)。
+    assert local.probes == []
+    # 純関数を直に撃っても同じ答え(判定点は 1 つ)。
+    with pytest.raises(ValueError, match="ownership"):
+        run(join.ownership_verdict(("company",), None, ProbeAnswer(value=None)))
+
+
+def test_a_privileged_place_declared_without_evidence_refuses_to_join() -> None:
+    """D4 ③: places に company を含む宣言は declared(検なし)では参加できない。等級が personal でも、
+    名乗った**場所**が特権なら証拠が要る(場所は引き金で、等級の材料ではない — R17 の区別)。"""
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import Ownership, ProbeAnswer
+    from doeff_agents.sessionhost.acp.runtime import install
+
+    local = FakeLocal()
+    for grade in ("company", "personal"):
+        declared = Ownership(grade=grade, proof="declared")
+        with pytest.raises(ValueError, match="declared"):
+            run(
+                install(
+                    join.ownership_preflight(("personal", "company"), declared), [local.dispatch]
+                )
+            )
+        with pytest.raises(ValueError, match="declared"):
+            run(join.ownership_verdict(("company",), declared, ProbeAnswer(value=None)))
+    assert local.probes == []
+
+
+def test_a_company_grade_declared_without_evidence_refuses_even_with_no_company_place() -> None:
+    """D4 ③ の受入 3: `grade = company` も同じ検めに乗る — 今の第 1 枝が等級を問わず declared を
+    通していた形を外す(places に company が無くても、会社を名乗る等級は証拠が要る)。"""
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import Ownership, ProbeAnswer
+    from doeff_agents.sessionhost.acp.runtime import install
+
+    local = FakeLocal()
+    declared = Ownership(grade="company", proof="declared")
+    with pytest.raises(ValueError, match="declared"):
+        run(install(join.ownership_preflight(("personal",), declared), [local.dispatch]))
+    with pytest.raises(ValueError, match="declared"):
+        run(join.ownership_verdict(("personal",), declared, ProbeAnswer(value=None)))
+    assert local.probes == []
+
+
+def test_the_refusal_names_the_declaration_and_the_one_command_that_fixes_it() -> None:
+    """D4 ③ の受入 4 と §7: 断りは理由と直し方を名乗る — 宣言の鍵(places / ownership / ownership_proof)と、
+    据え直しの 1 手。古い宣言を据えた機体が黙って艦隊から落ちる形を避ける。"""
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import Ownership, ProbeAnswer
+
+    for places, ownership in (
+        (("company",), None),
+        (("company",), Ownership(grade="company", proof="declared")),
+    ):
+        with pytest.raises(ValueError, match="ownership_proof") as caught:
+            run(join.ownership_verdict(places, ownership, ProbeAnswer(value=None)))
+        text = str(caught.value)
+        for needle in ("places", "ownership_proof", "acp_single_mac.hy", "file:", "gce-project:"):
+            assert needle in text, f"断りの文に {needle} が無い: {text}"
+
+
+def test_non_privileged_places_join_byte_for_byte_as_today() -> None:
+    """D4 ③ の受入 6: personal / cluster しか名乗らない宣言の扱いは今日のまま — 所有が無ければ何も検めず
+    通り(答え None)、declared は撃たずに通る(pool の pod・個人 Mac の 2 枚が今日どおり参加する)。"""
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import Ownership, ProbeAnswer
+    from doeff_agents.sessionhost.acp.runtime import install
+
+    local = FakeLocal()
+    assert run(install(join.ownership_preflight(("personal",), None), [local.dispatch])) is None
+    assert (
+        run(install(join.ownership_preflight(("personal", "cluster"), None), [local.dispatch]))
+        is None
+    )
+    declared = Ownership(grade="personal", proof="declared")
+    assert (
+        run(install(join.ownership_preflight(("personal",), declared), [local.dispatch]))
+        == declared
+    )
+    assert (
+        run(join.ownership_verdict(("personal", "cluster"), None, ProbeAnswer(value=None))) is None
+    )
+    assert local.probes == []
+
+
+def test_a_company_place_with_a_file_proof_still_probes_and_admits() -> None:
+    """D4 ③ の §7 の予言(会社 Mac の行): places に company を含み、証拠 file:<path>=<値> が動いていれば
+    今日どおり通る — この便で断られる行は 1 枚も無い。"""
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import Ownership
+    from doeff_agents.sessionhost.acp.runtime import install
+
+    proof = "file:/Users/s22625/.local/state/agora/host-id=mac"
+    owned = Ownership(grade="company", proof=proof)
+    local = FakeLocal()
+    local.probe_answers[proof] = "mac"
+    admitted = run(
+        install(
+            join.ownership_preflight(("company", "personal", "cluster"), owned), [local.dispatch]
+        )
+    )
+    assert admitted == owned
+    assert local.probes == [proof]
 
 
 def test_probe_ownership_reads_the_file_named_by_the_proof(tmp_path: Path) -> None:

@@ -4,8 +4,10 @@
 1 命令 — run_join が宣言から env の束を導いて同じ入口へ)から 1 度だけ呼ばれる。agentd は
 sessionhost の socket の client(公開の境界)として同じ process の daemon thread で走る:
 host の起動(socket の bind)を待ってから参加し、host が死ねば thread も消える。
-所有の等級(ownership)が宣言されていれば、thread を起こす前に join.ownership-preflight で
-機体の証拠と突合し、不一致は AgentdPreflightError(参加しない — fail-closed)。
+thread を起こす前に join.ownership-preflight で機体の証拠と突合し、不一致は AgentdPreflightError
+(参加しない — fail-closed)。検めを撃つ引き金は『所有を名乗ったか』ではなく『特権の置き場
+(effects.PRIVILEGED_PLACES)を名乗ったか』で(card ki-d6cc49cbf33f 決定 D4 ③)、places に company が
+在る宣言は所有の両欄が空でも declared でも断る — 他機体の宣言 file を写した agentd を止める錠。
 会話の記録の service の宛先(RECORD_SERVICE_URL — join が宣言 file の [record].url から導く)が無ければ
 settings_from_env が join.record-sink-of の 1 点で参加を断る(AgentdPreflightError・理由つき —
 段 9f lane 9f-6: 本文の行き先を持たない agentd は見出しだけを書いて本文を失うので、宣言が直るまで
@@ -734,14 +736,18 @@ def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> Age
     wakes = WakeQueue()
     dispatchers, close = real_dispatchers(env, socket_path, wakes)
     waker = SessionEventWaker(session_journal_poll(socket_path), wakes, _stderr)
-    if settings.ownership is not None:
-        try:
-            verified: object = PyVM().run(
-                install(join.ownership_preflight(settings.ownership), dispatchers)
-            )
-        except ValueError as error:
-            close()
-            raise AgentdPreflightError(f"agentd ownership check refused: {error}") from error
+    # card acp:kanban-issue:ki-d6cc49cbf33f 決定 D4 ③: 検めは**常に**撃つ — 門の条件は「所有を名乗ったか」
+    # ではなく「特権の置き場(effects.PRIVILEGED_PLACES)を名乗ったか」で、その判定は join.ownership-verdict の
+    # 1 点が持つ(ここは places と宣言を渡して答えを受けるだけ)。両欄が空でも places に company が在れば
+    # 断る — 実弾 2026-09-18 21:57 の写した宣言 file はこの形で 86 秒 company を名乗った。
+    try:
+        verified: object = PyVM().run(
+            install(join.ownership_preflight(settings.places, settings.ownership), dispatchers)
+        )
+    except ValueError as error:
+        close()
+        raise AgentdPreflightError(f"agentd ownership check refused: {error}") from error
+    if verified is not None:
         if not isinstance(verified, Ownership):
             close()
             raise TypeError(f"ownership_preflight returned {type(verified).__name__}")
