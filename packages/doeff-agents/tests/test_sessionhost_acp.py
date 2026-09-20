@@ -1316,6 +1316,24 @@ def turn_record_row(job_id: str) -> AcpRow:
     )
 
 
+def test_cache_context_is_persisted_before_the_job_can_be_collected() -> None:
+    world = World()
+    job = bound_job("cache-context", inputs=[], node_row=NODE)
+    assert job.status is not None
+    status = dict(job.status)
+    binding = status["binding"]
+    assert isinstance(binding, dict)
+    status["binding"] = {**binding, "declarationGeneration": 7}
+    world.acp.put_row(replace(job, status=status))
+    world.tick()
+    record = world.turn_record("cache-context")
+    assert record is not None
+    assert record.spec["cacheContext"] == {
+        "nodeRow": NODE, "account": "acct", "declarationGeneration": 7,
+    }
+    assert world.state.jobs[0].request_start_lower_bound_ms == 1_000
+
+
 def _start_capturing(world: World, job_id: str) -> None:
     world.acp.put_row(bound_job(job_id, inputs=[], account=None))
     world.tick()
@@ -1588,6 +1606,35 @@ def message(message_id: str, body: str) -> AcpRow:
         {"id": message_id, "body": body},
         {"state": "inbox"},
     )
+
+
+def test_expired_mail_does_not_launch_an_agent_or_borrow_credentials() -> None:
+    world = HeadlessWorld()
+    ping = message("expired-ping", "this is a ping, only answer with ping")
+    world.acp.put_row(replace(ping, spec={**ping.spec, "deliverBy": 999}))
+    world.acp.put_row(bound_job("expired-ping-job", inputs=["expired-ping"]))
+    world.tick()
+    assert world.sessions.launches == []
+    assert world.sessions.sends == []
+    assert world.state.jobs == ()
+    ended = world.job("expired-ping-job")
+    assert ended.status is not None
+    assert ended.status["phase"] == PHASE_ENDED
+    assert ended.status["inputsDelivered"] == []
+    assert ended.status["result"]["cause"]["reason"] == "InputExpired"
+
+
+def test_expired_mail_does_not_discard_normal_mail_in_the_same_turn() -> None:
+    world = HeadlessWorld()
+    ping = message("expired-ping", "this is a ping, only answer with ping")
+    world.acp.put_row(replace(ping, spec={**ping.spec, "deliverBy": 999}))
+    world.acp.put_row(message("normal-mail", "continue the work"))
+    world.acp.put_row(bound_job("mixed-mail-job", inputs=["expired-ping", "normal-mail"]))
+    world.tick()
+    assert len(world.sessions.launches) == 1
+    assert "this is a ping" not in world.sessions.launches[0]["prompt"]
+    assert "continue the work" in world.sessions.launches[0]["prompt"]
+    assert world.job("mixed-mail-job").status["inputsDelivered"] == ["normal-mail"]
 
 
 def _run_first_turn(world: World, job_id: str = "j-1") -> str:
