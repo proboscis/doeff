@@ -260,7 +260,7 @@
     (except [ValueError] (return None)))
   (if (> value 0) value None))
 
-(deff normalize-prompt-judge-cmd [raw]
+(defk normalize-prompt-judge-cmd [raw]
   {:pre [(: raw str)]
    :post [(: % (| str None))]}
   "空白のみの judge cmd は None = judge 無効(oracle normalize_prompt_judge_cmd)。
@@ -287,7 +287,7 @@
   "$XDG_STATE_HOME/doeff/agentd.sqlite(oracle default_db_path :718-720)。"
   (os.path.join (xdg-state-home) "doeff" "agentd.sqlite"))
 
-(deff default-headless-events-root []
+(defk default-headless-events-root []
   {:pre [True]
    :post [(: % str)]}
   "$XDG_STATE_HOME/doeff/headless(headless backend の events file の置き場 —
@@ -422,9 +422,9 @@
         (or (env-u32 ENV-PROMPT-UNBLOCK-ATTEMPTS)
             DEFAULT-PROMPT-UNBLOCK-LIMIT))
   (setv prompt-judge-cmd
-        (normalize-prompt-judge-cmd
-          (.get os.environ ENV-PROMPT-JUDGE-CMD
-                DEFAULT-PROMPT-JUDGE-CMD)))
+        (run (normalize-prompt-judge-cmd
+               (.get os.environ ENV-PROMPT-JUDGE-CMD
+                     DEFAULT-PROMPT-JUDGE-CMD))))
   ;; herdr トライアルの transfer gate: conformance harness は daemon の argv を
   ;; 組み替えないため、env knob(flag が優先)で backend を切り替えられるように
   ;; する(CONFORMANCE_AGENTD_BIN seam と組で使う)。
@@ -433,7 +433,7 @@
                            DEFAULT-HERDR-SOCKET))
   ;; headless backend(agora-redesign #37): events file の置き場も env knob。
   (setv headless-events-root (.get os.environ ENV-HEADLESS-DIR
-                                   (default-headless-events-root)))
+                                   (run (default-headless-events-root))))
   ;; out-of-band 寿命境界(opt-in、env-only — CLI 語彙は oracle parse_args の
   ;; 凍結物理なので足さない。backend knob と同じ搬送経路)。
   (setv exit-when-orphaned
@@ -504,7 +504,7 @@
       (= arg FLAG-PROMPT-JUDGE-CMD)
       (do (+= index 1)
           (setv raw (required-arg args index FLAG-PROMPT-JUDGE-CMD))
-          (setv prompt-judge-cmd (normalize-prompt-judge-cmd raw)))
+          (setv prompt-judge-cmd (run (normalize-prompt-judge-cmd raw))))
       (= arg FLAG-BACKEND)
       (do (+= index 1)
           (setv backend (required-arg args index FLAG-BACKEND)))
@@ -750,7 +750,7 @@
       "the session substrate delivers keystrokes to a pane and cannot carry attachments")
 
 
-(deff turn-attachments-of [params method]
+(defk turn-attachments-of [params method]
   {:pre [(: params dict) (: method str)]
    :post [(: % tuple)]}
   "RPC の params の attachments(呼び手 = agentd)→ 型つきの添付の並び。欄が無ければ空。
@@ -1282,7 +1282,7 @@
     ;; 段 10 lane 10o(agora-redesign #96): 起こす腕は郵便を 1 手番目に畳むので、その郵便の添付も
     ;; この launch に載る。型つきに解いて器へ渡す(綴りは器の Dialogue)— 添付の段を持たない器
     ;; (tui)には渡さず、断りを答えに名乗る。
-    (setv launch-attachments (turn-attachments-of wire-params "session.launch"))
+    (setv launch-attachments (run (turn-attachments-of wire-params "session.launch")))
     (setv launch-ignored (if (and launch-attachments (not (headless-backend? config)))
                              ATTACHMENTS-UNSUPPORTED-REASON
                              ""))
@@ -1348,7 +1348,7 @@
       (run (admit-launch-attribution p "session.resume")))
     ;; 段 10 lane 10o(実弾 2026-09-15 09:5x): 起こす腕は launch だけではない — resume も 1 手番目に
     ;; 郵便を畳むので、添付は同じ 1 点で型つきに解いて運ぶ(添付の段を持たない器は断りを名乗る)。
-    (setv resume-attachments (turn-attachments-of p method))
+    (setv resume-attachments (run (turn-attachments-of p method)))
     (setv resume-ignored (if (and resume-attachments (not (headless-backend? config)))
                              ATTACHMENTS-UNSUPPORTED-REASON
                              ""))
@@ -1591,7 +1591,7 @@
     ;; 段 10 lane 10o(agora-redesign #96・依頼者の追補): 郵便の添付は**型つき**で受け取り、そのまま
     ;; 器へ渡す(CLI の綴りは kind ごとの Dialogue が組む — この module に画像の綴りは無い)。
     ;; 添付の段を持たない器(tui = tmux / herdr)は断りを名乗る — 本文は届く・添付だけ落ちる。
-    (setv attachments (turn-attachments-of p "session.send"))
+    (setv attachments (run (turn-attachments-of p "session.send")))
     (setv ignored (if (and attachments (not (headless-backend? config)))
                       ATTACHMENTS-UNSUPPORTED-REASON
                       ""))
