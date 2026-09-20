@@ -19,7 +19,7 @@
 ;;; 生まれたら(C5 opencode)その kind のモジュールへ物理を移す。
 ;;; 純テキスト関数のみ — IO ゼロ(substrate-clean 領域)。
 
-(require doeff-hy.macros [deff])
+(require doeff-hy.macros [deff defk])
 
 (import re)
 
@@ -610,7 +610,7 @@
 ;; PaneObservation の組み立て(事実の束 — 分類は policy 所有)
 ;; ---------------------------------------------------------------------------
 
-(deff classify-output [output]
+(defk classify-output [output]
   {:pre [(: output str)] :post [(: % PaneObservation)]}
   "pane capture → PaneObservation(kind 横断の oracle 検出関数の束)。"
   (setv [dialog dismiss-keys] (detect-dialog output))

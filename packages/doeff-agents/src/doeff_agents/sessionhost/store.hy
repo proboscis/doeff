@@ -23,7 +23,9 @@
 ;;; (CODEX_HOME / CLAUDE_CONFIG_DIR)を行に永続化する。書き込みは launch の
 ;;; 一度きりなので COALESCE 保護(後続 upsert が識別情報を消さない)。
 
-(require doeff-hy.macros [deff defhandler])
+(require doeff-hy.macros [deff defk defhandler])
+
+(import doeff [run])
 
 (import datetime [datetime timezone timedelta])
 (import json)
@@ -1252,7 +1254,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
   (setv (get snap "turn_wait") None)
   snap)
 
-(deff db-merge-policy-row [conn row]
+(defk db-merge-policy-row [conn row]
   {:pre [(: conn sqlite3.Connection) (: row SessionRow)]
    :post [(: % "None")]}
   "SessionStoreUpsert の実体: 既存 full 行に policy patch を重ねて upsert
@@ -1288,7 +1290,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
     (resume (if (is snap None) None (snapshot-to-policy-row snap))))
 
   (SessionStoreUpsert [row]
-    (.submit actor (fn [conn] (db-merge-policy-row conn row)))
+    (.submit actor (fn [conn] (run (db-merge-policy-row conn row))))
     (resume None))
 
   (SessionStoreResultPayload [session-id]

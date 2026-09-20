@@ -125,6 +125,7 @@
        ;; R-frame-class-6f3d の機械面: 2026-08-11 断面に実在した画面の形が、
        ;; それぞれ別の class になる(0 標本の区分を「実装済み」と呼ばないため、
        ;; live に無い形〔unknown-dialog〕は合成標本で撃つ)。
+       (import doeff [run])
        (import doeff_agents.sessionhost.impls.markers [classify-output])
        (import doeff_agents.sessionhost.policy [launch-not-ready-class])
        (setv shapes
@@ -159,40 +160,41 @@
                    "6129f510-70f3-4cac-a29c-3956d5c925a0\n"
                    "CA-1:~ s22625$")})
        (for [[expected frame] (.items shapes)]
-         (setv obs (classify-output frame))
+         (setv obs (run (classify-output frame)))
          (setv actual (launch-not-ready-class obs frame))
          (assert (= actual expected)
                  f"frame の分類が {expected} でなく {actual}")))
      (deftest test-adr-doe-agents-011-timeout-kind-is-total
        ;; R-timeout-kind-single-home-3c5f の機械面: 産出 site の実物 reason が
        ;; 1 つも unclassified に落ちない + 既存観測面が依存する逐語が残る。
+       (import doeff [run])
        (import doeff_agents.sessionhost.policy [LAUNCH-NOT-READY-CLASSES
                                                 launch-not-ready-reason
                                                 sessionhost-timeout-kind])
        ;; (i) 起動段 gate: 全 class の reason が launch-ready-gate へ落ちる
        (for [cls LAUNCH-NOT-READY-CLASSES]
-         (setv reason (launch-not-ready-reason "claude" 120 cls))
-         (assert (= (sessionhost-timeout-kind reason) "launch-ready-gate") reason)
+         (setv reason (run (launch-not-ready-reason "claude" 120 cls)))
+         (assert (= (run (sessionhost-timeout-kind reason)) "launch-ready-gate") reason)
          (assert (in f"[{cls}]" reason))
          ;; argus sensor / conformance が拾う逐語を保存している
          (assert (in "did not become ready" reason))
          (assert (in "the prompt was never delivered" reason)))
        ;; (ii)(iii) monitor 側 watchdog の逐語(policy.hy の 2 site)
-       (assert (= (sessionhost-timeout-kind
-                    "launch timeout: never reached active state within 60s (stuck in startup — likely a hung MCP server)")
+       (assert (= (run (sessionhost-timeout-kind
+                         "launch timeout: never reached active state within 60s (stuck in startup — likely a hung MCP server)"))
                   "launch-never-active"))
-       (assert (= (sessionhost-timeout-kind
-                    "launch timeout: launch pipeline did not complete within 180s (BOOTING row left behind — launcher died mid-launch?)")
+       (assert (= (run (sessionhost-timeout-kind
+                         "launch timeout: launch pipeline did not complete within 180s (BOOTING row left behind — launcher died mid-launch?)"))
                   "launch-pipeline-incomplete"))
        ;; ADR-DOE-AGENTS-010 R2/R3 の 2 site
-       (assert (= (sessionhost-timeout-kind
-                    "unsubmitted-prompt: composer still holds an unsubmitted prompt/attachment after 5 Enter resubmit(s)")
+       (assert (= (run (sessionhost-timeout-kind
+                         "unsubmitted-prompt: composer still holds an unsubmitted prompt/attachment after 5 Enter resubmit(s)"))
                   "unsubmitted-prompt"))
-       (assert (= (sessionhost-timeout-kind
-                    "awaiting-response timeout: prompt/solicitation was delivered but no work evidence appeared within 600s (turn never started)")
+       (assert (= (run (sessionhost-timeout-kind
+                         "awaiting-response timeout: prompt/solicitation was delivered but no work evidence appeared within 600s (turn never started)"))
                   "awaiting-response"))
        ;; 語彙外は unclassified(gate error の材料 — 黙って通さない)
-       (assert (= (sessionhost-timeout-kind "some other terminal reason")
+       (assert (= (run (sessionhost-timeout-kind "some other terminal reason"))
                   "unclassified")))
      (deftest test-adr-doe-agents-011-retired-fixed-prose-cannot-return
        ;; R-frame-class-6f3d の tripwire: 実測 341 件で 0 件だった断定文言と、

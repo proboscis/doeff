@@ -639,7 +639,7 @@
   ;; --- R7 admission(純粋検査 — 全副作用より前): auth は typed binding で
   ;; 運び、session_env は非 auth overlay。binding 所有キーの overlay 混入は
   ;; 裏口(2026-07 まで合成 CODEX_HOME がここを通っていた)なので typed reject。
-  (setv binding-error (binding-admission-error binding agent-type))
+  (<- binding-error (binding-admission-error binding agent-type))
   (when (is-not binding-error None)
     (raise (RuntimeError f"session.launch: invalid binding — {binding-error}")))
   ;; 課金の階級の関所(2026-09・ADR-DOE-AGENTS-004 R9 改訂 / law
@@ -988,9 +988,9 @@
         ;; ものを残すのが逐語性の要件。
         (<- screen-tail (format-evidence-frames gate.frames))
         (<- fail-now (clock-now))
-        (setv gate-reason
-              (launch-not-ready-reason agent-type repl-idle-max-wait
-                                       gate.failure-class))
+        (<- gate-reason
+            (launch-not-ready-reason agent-type repl-idle-max-wait
+                                     gate.failure-class))
         (setv failed-row
               (replace row
                        :status "failed"
@@ -1138,8 +1138,8 @@
   ;; 全副作用(transplant の symlink 敷設・tmux)より前に typed reject。
   (setv requested-binding (.get params "binding"))
   (when (is-not requested-binding None)
-    (setv requested-binding-error
-          (binding-admission-error requested-binding source.agent-type))
+    (<- requested-binding-error
+        (binding-admission-error requested-binding source.agent-type))
     (when (is-not requested-binding-error None)
       (raise (RuntimeError
                f"session.{mode}: invalid binding — {requested-binding-error}"))))

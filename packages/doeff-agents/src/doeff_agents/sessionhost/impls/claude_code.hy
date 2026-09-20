@@ -321,7 +321,8 @@
   ;; {config_dir} なので、admission を通った metered の launch には必ず binding が
   ;; 在り、config-dir は binding 由来(env / $HOME への fallback には届かない)。
   (<- settings-text (fs-read-text f"{config-dir}/{CLAUDE-SETTINGS-FILE}"))
-  (setv [settings-status declarations usable] (claude-home-metered-reading settings-text))
+  (setv [settings-status declarations usable]
+        (! (claude-home-metered-reading settings-text)))
   ;; lane B の締め直し(ADR-DOE-AGENTS-003 R4 改訂): **定額**の kind の家に従量課金の
   ;; 宣言があれば拒否する。今日の検査は env の名しか見ないので、家の中に鍵を入れれば
   ;; 黙って通る道が開いていた — 黙って通る道は運用主の不変条件(従量課金を系に入れない)
@@ -533,7 +534,8 @@
 
   (ClassifyPane [agent-type output]
     :when (= agent-type "claude")
-    (resume (classify-output output)))
+    (<- observation (classify-output output))
+    (resume observation))
 
   (WireResultChannel [agent-type session-id socket-path]
     :when (= agent-type "claude")

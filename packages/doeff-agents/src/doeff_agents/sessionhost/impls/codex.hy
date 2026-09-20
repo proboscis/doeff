@@ -239,7 +239,7 @@
   (setv auth-declares-api-key False)
   (when (and (is-not codex-home None) (is-not billing None))
     (<- auth-text (fs-read-text f"{codex-home}/auth.json"))
-    (setv [status declared] (codex-home-metered-reading auth-text))
+    (setv [status declared] (! (codex-home-metered-reading auth-text)))
     (setv auth-status status)
     (setv auth-declares-api-key declared))
   ;; lane B の締め直し(ADR-DOE-AGENTS-003 R4 改訂): **定額**の kind の家(native 形
@@ -485,7 +485,8 @@
 
   (ClassifyPane [agent-type output]
     :when (= agent-type "codex")
-    (resume (classify-output output)))
+    (<- observation (classify-output output))
+    (resume observation))
 
   (WireResultChannel [agent-type session-id socket-path]
     :when (= agent-type "codex")

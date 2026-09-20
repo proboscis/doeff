@@ -249,6 +249,7 @@
        ;; 機械面: 階級は kind の関数(env でも旗でもない)で、旗は許可の側だけを
        ;; 動かす。家の中の宣言は「非空」で判じる(欄の有無ではない)。
        (import json)
+       (import doeff [run])
        (import doeff_agents.sessionhost.policy [
          BILLING-METERED
          BILLING-SUBSCRIPTION
@@ -269,18 +270,18 @@
        (assert (is (binding-billing-class None) None))
        (assert (is (binding-billing-class {"kind" "gemini"}) None))
        ;; 家の中の宣言: 非空だけが宣言(codex の定額の login は欄を null で持つ)
-       (assert (is (get (codex-home-metered-reading
-                          (json.dumps {"OPENAI_API_KEY" None "auth_mode" "chatgpt"})) 1)
+       (assert (is (get (run (codex-home-metered-reading
+                              (json.dumps {"OPENAI_API_KEY" None "auth_mode" "chatgpt"}))) 1)
                    False))
-       (assert (is (get (codex-home-metered-reading
-                          (json.dumps {"OPENAI_API_KEY" "sk-x"})) 1)
+       (assert (is (get (run (codex-home-metered-reading
+                              (json.dumps {"OPENAI_API_KEY" "sk-x"}))) 1)
                    True))
        ;; claude が metered kind で受けるのは apiKeyHelper か Vertex の対だけ
-       (assert (= (get (claude-home-metered-reading
-                         (json.dumps {"apiKeyHelper" "cat /k"})) 2)
+       (assert (= (get (run (claude-home-metered-reading
+                             (json.dumps {"apiKeyHelper" "cat /k"}))) 2)
                   "apiKeyHelper"))
-       (assert (is (get (claude-home-metered-reading
-                          (json.dumps {"env" {"ANTHROPIC_API_KEY" "sk"}})) 2)
+       (assert (is (get (run (claude-home-metered-reading
+                              (json.dumps {"env" {"ANTHROPIC_API_KEY" "sk"}}))) 2)
                    None)))
      (deftest test-adr-doe-agents-004-reads-never-start-a-host
        ;; law reads-never-start-a-host の機械面: 観測の動詞は ensure に触れず、

@@ -195,7 +195,7 @@
 (setv LAUNCH-READY-GATE-REASON-PREFIX "launch ready gate")
 
 
-(deff launch-not-ready-reason [agent-type budget-seconds failure-class]
+(defk launch-not-ready-reason [agent-type budget-seconds failure-class]
   {:pre [(: agent-type str) (: budget-seconds (| int float))
          (: failure-class str) (in failure-class LAUNCH-NOT-READY-CLASSES)]
    :post [(: % str)]}
@@ -234,7 +234,7 @@
         #("awaiting-response" "awaiting-response timeout:")))
 
 
-(deff sessionhost-timeout-kind [reason]
+(defk sessionhost-timeout-kind [reason]
   {:pre [(: reason (| str None))] :post [(: % str)]}
   "reason → 終端の種別 token(閉語彙 + \"unclassified\")。
    sessionhost が産むどの reason も unclassified に落ちてはならない
@@ -619,7 +619,7 @@
   (setv value (.get obj key))
   (and (isinstance value str) (bool (.strip value))))
 
-(deff claude-home-metered-reading [settings-text]
+(defk claude-home-metered-reading [settings-text]
   {:pre [(: settings-text (| str None))]
    :post [(: % tuple)]}
   "claude の家の settings.json の本文 → #(status declarations usable)(純粋の 1 点)。
@@ -658,7 +658,7 @@
       (.append declarations f"env.{key}")))
   #(HOME-READING-READ (sorted declarations) usable))
 
-(deff codex-home-metered-reading [auth-text]
+(defk codex-home-metered-reading [auth-text]
   {:pre [(: auth-text (| str None))]
    :post [(: % tuple)]}
   "codex の家の auth.json の本文 → #(status declared)(純粋の 1 点)。
@@ -709,7 +709,7 @@
                "(ADR-DOE-AGENTS-004 R9).")))
   None)
 
-(deff binding-admission-error [binding agent-type]
+(defk binding-admission-error [binding agent-type]
   {:pre [(: binding (| dict None)) (: agent-type str)]
    :post [(: % (| str None))]}
   "wire binding の admission(ADR 0044 R3 と同思想: parse できた binding だけが
@@ -994,7 +994,7 @@
               (if (.strip reason) reason "agent output indicated failure")
               observed-at))
 
-(deff is-allowed-unblock-key [key]
+(defk is-allowed-unblock-key [key]
   {:pre [(: key str)]
    :post [(: % bool)]}
   "whitelist(oracle is_allowed_unblock_key): 単一英数字 or 名前付きキーのみ。"
@@ -1027,7 +1027,7 @@
       (raise (ValueError
                f"prompt judge verdict carries {(len keys)} keys (max {PROMPT-JUDGE-MAX-KEYS})")))
     (for [key keys]
-      (when (not (is-allowed-unblock-key key))
+      (when (not (! (is-allowed-unblock-key key)))
         (raise (ValueError f"prompt judge verdict uses disallowed key {key !r}")))))
   (JudgeVerdict :blocked blocked :keys (tuple keys) :reason reason))
 
