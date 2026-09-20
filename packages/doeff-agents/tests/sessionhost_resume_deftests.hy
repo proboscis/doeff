@@ -757,3 +757,41 @@
   (setv world.capture-script ["› {composer}"])
   (<- row (run-resume world (resume-params)))
   (assert (is (. (get world.rows "s1~g2") launch-attribution) None)))
+
+
+;; ---------------------------------------------------------------------------
+;; 自動記憶の置き場は resume の腕でも会話に従う(ADR-DOE-AGENTS-006 R11)
+;; ---------------------------------------------------------------------------
+
+(defn seed-subscription-claude [world]
+  "定額の claude の行 + 家 + transcript(resume の admission が読む物)。"
+  (setv row (seed-source world :agent_type "claude"
+                         :effective_identity {"CLAUDE_CONFIG_DIR" "/x/claude"}
+                         :conversation {"session_id" "conv-A"}))
+  (setv world.capture-script ["❯ {composer}"])
+  (setv (get world.fs "/x/claude/projects/-work-dir/conv-A.jsonl") "{}")
+  row)
+
+
+(deftest test-resume-carries-the-conversation-memory-home-into-the-argv
+  ;; 名簿の 2 枚目(launch.resume-session の launch-params)。charter → resume params
+  ;; (judgment.resume-params-of)→ **ここ** → 器の argv と写しが 1 枚でも落ちると、
+  ;; 腕が resume の手番だけ記憶が既定の置き場(家の projects/<潰した cwd>/memory)へ行き、
+  ;; 誤りも条件も出ないまま会話から剥がれる(実弾 2026-09-15 の添付と同じ落ち方)。
+  ;; だから写しの有無ではなく **argv に出る綴り**で固定する。
+  (setv world (LaunchWorld))
+  (seed-subscription-claude world)
+  (<- row (run-resume world (resume-params :memory_dir "/state/doeff/agent-memory/c-01ARZ")))
+  (assert (= row.session-id "s1~g2"))
+  (setv [pane cmd literal submit] (get world.sent-keys 0))
+  (assert (.endswith cmd "--resume conv-A") cmd)
+  (assert (in "\"autoMemoryDirectory\":\"/state/doeff/agent-memory/c-01ARZ\"" cmd) cmd))
+
+
+(deftest test-resume-without-a-memory-home-spells-no-memory-setting
+  ;; 置き場を宣言しない resume の argv は今日と 1 文字も変わらない(綴りが 1 度も出ない)。
+  (setv world (LaunchWorld))
+  (seed-subscription-claude world)
+  (<- row (run-resume world (resume-params)))
+  (setv [pane cmd literal submit] (get world.sent-keys 0))
+  (assert (not-in "autoMemoryDirectory" cmd) cmd))

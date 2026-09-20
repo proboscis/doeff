@@ -472,6 +472,7 @@ rules:
       exclude:
         - "**/sessionhost/impls/claude_code.hy"
         - "**/tests/sessionhost_impls_deftests.hy"
+        - "**/tests/sessionhost_resume_deftests.hy"
 
   - id: doeff-agents-agentd-spawn-only-via-ensure-boundary
     languages: [python]
