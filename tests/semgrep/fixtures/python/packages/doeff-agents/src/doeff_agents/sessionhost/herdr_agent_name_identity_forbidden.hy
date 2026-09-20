@@ -7,7 +7,7 @@
 ;;; substrate-herdr-session-identity-anchor-r2-607f0c. The line below is the
 ;;; banned shape and must keep firing the rule.
 
-(deff herdr-agent-pane-id-io [socket-path session-name]
+(defk herdr-agent-pane-id-io [socket-path session-name]
   (herdr-call socket-path "agent.get" {"target" session-name}))
 
 ;;; The ONE sanctioned shape (must NOT fire): the existence probe for
@@ -16,7 +16,7 @@
 ;;; herdr-session-identity-is-workspace-label). Only has-session /
 ;;; session-pane-ids for names WITHOUT a label holder may consume it.
 
-(deff herdr-external-agent-pane-id-io [socket-path name]
+(defk herdr-external-agent-pane-id-io [socket-path name]
   (try
     ;; registry-existence-probe: 外部命名席の実在確認だけに許す(同一性・帰属・kill は label)
     (setv result (herdr-call socket-path "agent.get" {"target" name}))
@@ -30,6 +30,12 @@
 ;;; a different call) does not cover a later kill-path resolution — this
 ;;; line must keep firing.
 
-(deff herdr-kill-session-io [socket-path session-name]
+(defk herdr-kill-session-io [socket-path session-name]
   (setv result (herdr-call socket-path "agent.get" {"target" session-name}))
   (herdr-call socket-path "pane.close" {"pane_id" (get (get result "agent") "pane_id")}))
+;;;
+;;; ⚠ 語彙（deff / defk）はこの検体の争点ではない — rule の pattern は agent.get
+;;; の regex で、定義の綴りには依存しない。実 code には deff のまま残る関数も在るが、
+;;; この検体は ADR-DOE-HY-004 の台帳（コメント・文字列の中の字面も数える）に載るので
+;;; defk で書く。行番号は test_vm_failfast_semgrep_rules.py が pin しているので、
+;;; 註は必ず file の末尾に置く（deff と defk は同じ 4 文字なので行はずれない）。
