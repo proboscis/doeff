@@ -3945,6 +3945,28 @@
   next)
 
 
+(defk recorded-mark-merged [current record-ref highest]
+  {:pre [(: current (| tuple None)) (: record-ref str) (: highest int)]
+   :post [(: % tuple)]}
+  "走っている手番が memory に持つ受理の刻印(InFlightJob.recorded-mark)へ新しい答えを重ねる: 後ろへ戻さない
+   (古い stream の遅れた再送は小さい値を持つ — turn-record-recorded-status と同じ向き)。"
+  (if (and (is-not current None) (>= (get current 1) highest))
+      current
+      #(record-ref highest)))
+
+
+(defk turn-record-marked-status [status mark]
+  {:pre [(: status dict) (: mark (| tuple None))]
+   :post [(: % dict)]}
+  "行へ書こうとしている status(追記・手番の終わり)に、memory の受理の刻印を同乗させる(card
+   acp:kanban-issue:ki-c418e597017a 便 3)。刻印が無い・進まない(行が既に同じか大きい値)なら status をそのまま返す。
+   進むかの判断は turn-record-recorded-status の 1 点。"
+  (when (is mark None)
+    (return status))
+  (<- marked (| dict None) (turn-record-recorded-status status (get mark 0) (get mark 1)))
+  (if (is marked None) status marked))
+
+
 (defk record-spool-key-of [stream-id first-seq last-seq]
   {:pre [(: stream-id str) (: first-seq int) (: last-seq int)]
    :post [(: % str)]}
