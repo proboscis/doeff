@@ -158,6 +158,13 @@
 ;;   * `--settings` の inline JSON は flagSettings として読まれ、userSettings より先に効く
 ;; 反例つきの実射の記録は ADR-DOE-AGENTS-006 R11。
 (setv CLAUDE-AUTO-MEMORY-DIR-SETTING "autoMemoryDirectory")
+;; 既定の hook の無効化(49b3549b 傷跡)の綴り。
+(setv CLAUDE-DISABLE-ALL-HOOKS-SETTING "disableAllHooks")
+;; doeff が `--settings` に自分で置く鍵の集合(card acp:kanban-issue:ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13)。
+;; 機体の参加の宣言が名指した席の settings file(dotfiles claude-hooks/seat-settings.json)がこの鍵を持つと、join の
+;; 参加の門 (c) が断り(acp/join.hy claude-settings-declaration-of)、build-claude-argv の合流も fail-loud で断る —
+;; 定義点はこの 1 つ(綴りの家はこの file — .semgrep.yaml doeff-agents の autoMemoryDirectory の規則)。
+(setv CLAUDE-SETTINGS-OWNED-KEYS #{CLAUDE-DISABLE-ALL-HOOKS-SETTING CLAUDE-AUTO-MEMORY-DIR-SETTING})
 ;; charter が運ぶ記憶の冊の欄(card acp:kanban-issue:ki-9fc7d4bca4dc)。綴りの正本は
 ;; sessionhost/acp/effects.py の CHARTER_MEMORY_FILES_KEY で、ここはその写し(検が突き合わせる)。
 ;; この層は行を読まない — 運ばれてきた {name, text} を置き場へ書くだけ。
@@ -185,6 +192,11 @@
      canonical gate は Hy の session host(conformance/README.md 冒頭)
    - caller mcp_servers(sse)+ result channel(stdio)を単一 --mcp-config に
      まとめ、非空なら --strict-mcp-config を付ける
+   - params claude_settings(dict・card acp:kanban-issue:ki-7b52bb76aa6e・ADR-004 R13: 機体の
+     参加の宣言が名指した席の settings file を launch.hy / headless.hy が起動の拍ごとに読んで
+     載せる)は同じ 1 つの `--settings` に合流する。doeff が置く鍵との衝突は fail-loud・
+     disableAllHooks(session_hooks ≠ inherit)との同居も fail-loud。欄の無い手番の argv は
+     1 byte も変わらない。
    - prompt は決して argv に載せない(live terminal transport のみ)・
      print mode(-p / --print)不使用"
   (setv args ["claude" "--dangerously-skip-permissions"])
@@ -193,10 +205,32 @@
   ;; 旗自体を出さない — 欄の無い charter の argv は今日と 1 byte も変わらない。
   (setv settings {})
   (when (!= (.get params "session_hooks") "inherit")
-    (setv (get settings "disableAllHooks") True))
+    (setv (get settings CLAUDE-DISABLE-ALL-HOOKS-SETTING) True))
   (setv memory-dir (.get params "memory_dir"))
   (when (and (isinstance memory-dir str) (.strip memory-dir))
     (setv (get settings CLAUDE-AUTO-MEMORY-DIR-SETTING) memory-dir))
+  ;; card acp:kanban-issue:ki-7b52bb76aa6e(ADR-DOE-AGENTS-004 R13): 機体の参加の宣言が名指した席の settings
+  ;; (launch / headless が起動の拍ごとに読んで params へ)を**同じ 1 つの** `--settings` に合流する。doeff が置く鍵との
+  ;; 衝突は fail-loud — 黙って後勝ちにすると「hook を配ったつもりで disableAllHooks が残る」か「記憶の置き場が消える」の
+  ;; どちらかが無音で起きる。空の宣言({})は「何も足さない」(argv は今日と同じ)。
+  (setv declared (.get params "claude_settings"))
+  (when declared
+    (when (not (isinstance declared dict))
+      (raise (RuntimeError
+               (+ "claude_settings(席の settings の宣言)は JSON の object であること: "
+                  (. (type declared) __name__)))))
+    (when (in CLAUDE-DISABLE-ALL-HOOKS-SETTING settings)
+      (raise (RuntimeError
+               (+ "claude_settings(席の settings の宣言)は session_hooks=inherit の手番にだけ合流する — "
+                  f"{CLAUDE-DISABLE-ALL-HOOKS-SETTING} と同居させると宣言した hook が黙って死ぬ"
+                  "(ADR-DOE-AGENTS-004 R13・参加の門 (d) が断るはずの形)"))))
+    (for [[key value] (.items declared)]
+      (when (or (in key settings) (in key CLAUDE-SETTINGS-OWNED-KEYS))
+        (raise (RuntimeError
+                 (+ f"claude_settings の鍵 {key !r} は doeff が置く鍵と衝突する(doeff の鍵: "
+                    (.join ", " (sorted CLAUDE-SETTINGS-OWNED-KEYS))
+                    ")— 席の settings file は hook の登録だけを持つ(ADR-DOE-AGENTS-004 R13・参加の門 (c))"))))
+      (setv (get settings key) value)))
   (when settings
     (.extend args ["--settings" (json.dumps settings :separators #("," ":"))]))
   (setv effort (.get params "effort"))

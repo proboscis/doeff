@@ -811,6 +811,60 @@
   (assert (not-in "--settings" cmd)))
 
 
+(deftest test-launch-claude-carries-the-declared-seat-settings-file
+  ;; card acp:kanban-issue:ki-7b52bb76aa6e(ADR-DOE-AGENTS-004 R13): 機体の参加の宣言が名指した席の settings file
+  ;; (join が門を通して据えた env DOEFF_AGENTD_CLAUDE_SETTINGS_FILE)を起動の拍ごとに読み、claude の
+  ;; --settings に合流する(inherit の委ね先 = config-dir の持ち主 = doeff 自身なので、doeff が運ぶ)。
+  (setv world (LaunchWorld))
+  (setv (get world.env "DOEFF_AGENTD_SESSION_HOOKS") "inherit")
+  (setv (get world.env "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE") "/home/agentd/dotfiles/claude-hooks/seat-settings.json")
+  (setv (get world.fs "/home/agentd/dotfiles/claude-hooks/seat-settings.json")
+        (json.dumps {"hooks" {"PreToolUse" [{"matcher" "*"
+                                            "hooks" [{"type" "command"
+                                                      "command" "python3 ~/dotfiles/claude-hooks/hook-proxy.py PreToolUse"
+                                                      "timeout" 120}]}]}}))
+  (setv world.capture-script ["❯ {composer}"])
+  (<- row (run-launch world (launch-params
+                              :agent_type "claude"
+                              :binding {"kind" "claude-code"
+                                        "config_dir" "/x/claude"})))
+  (setv [pane cmd literal submit] (get world.sent-keys 0))
+  (assert (.startswith cmd "claude --dangerously-skip-permissions"))
+  (assert (in "--settings" cmd) cmd)
+  (assert (in "hook-proxy.py" cmd) cmd)
+  (assert (not-in "disableAllHooks" cmd) cmd)
+  ;; 同じ env でも codex の起動は file を読まない(file の名は claude の settings)— fs に無くても起きる。
+  (setv world2 (LaunchWorld))
+  (setv (get world2.env "DOEFF_AGENTD_SESSION_HOOKS") "inherit")
+  (setv (get world2.env "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE") "/home/agentd/dotfiles/claude-hooks/seat-settings.json")
+  (setv world2.capture-script ["codex booting banner" "› {composer}"])
+  (<- _ (run-launch world2 (launch-params)))
+  (setv [pane2 cmd2 literal2 submit2] (get world2.sent-keys 0))
+  (assert (.startswith cmd2 "codex") cmd2)
+  (assert (not-in "hook-proxy.py" cmd2) cmd2))
+
+
+(deftest test-launch-claude-refuses-an-unreadable-seat-settings-file
+  ;; R13: 参加の門を通った file が起動の拍に読めない・JSON の object でない = fail-loud(tmux 効果ゼロ)。
+  ;; 黙って hook 無しの席を起こすと 49b3549b の「安全 hook 全滅」が無言で戻る。
+  (for [[label text] [["missing" None] ["not-json" "{not json"] ["not-an-object" "[]"]]]
+    (setv world (LaunchWorld))
+    (setv (get world.env "DOEFF_AGENTD_SESSION_HOOKS") "inherit")
+    (setv (get world.env "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE") "/home/agentd/seat-settings.json")
+    (when (is-not text None)
+      (setv (get world.fs "/home/agentd/seat-settings.json") text))
+    (setv world.capture-script ["❯ {composer}"])
+    (setv raised None)
+    (try
+      (<- _ (run-launch world (launch-params
+                                :agent_type "claude"
+                                :binding {"kind" "claude-code" "config_dir" "/x/claude"})))
+      (except [e RuntimeError] (setv raised e)))
+    (assert (is-not raised None) label)
+    (assert (in "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE" (str raised)) #(label (str raised)))
+    (assert (not-in "new-session" (lfor t world.trace (get t 0))) label)))
+
+
 (deftest test-launch-rejects-unknown-session-hooks-vocab
   ;; 語彙外の DOEFF_AGENTD_SESSION_HOOKS は fail-loud(黙った綴り違いが
   ;; 「安全 hook 全滅」を無言で復活させるため)。tmux 効果ゼロ。

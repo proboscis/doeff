@@ -358,6 +358,90 @@
           resume-argv))
 
 
+(deftest test-claude-argv-merges-the-declared-seat-settings
+  ;; card acp:kanban-issue:ki-7b52bb76aa6e(ADR-DOE-AGENTS-004 R13): 機体の参加の宣言が名指した席の settings
+  ;; (launch / headless が起動の拍ごとに読んで params claude_settings に載せる — 中身は dotfiles の proxy 登録 1 枚)は、
+  ;; 記憶の置き場と**同じ 1 つの** `--settings` に合流する。--settings を 2 回出すと後勝ちで片方が黙って消える。
+  (setv world (ImplWorld))
+  (setv seat-hooks {"hooks" {"PreToolUse" [{"matcher" "*"
+                                          "hooks" [{"type" "command"
+                                                    "command" "python3 ~/dotfiles/claude-hooks/hook-proxy.py PreToolUse"
+                                                    "timeout" 120}]}]}})
+  (setv params (base-params :agent_type "claude"
+                            :session_hooks "inherit"
+                            :memory_dir "/state/agent-memory/c-01ARZ"
+                            :claude_settings seat-hooks
+                            :effort "high"
+                            :result_channel (channel-spec)))
+  (<- argv (run-claude world (build-launch "claude" params)))
+  (assert (= (cut argv 0 2) ["claude" "--dangerously-skip-permissions"]))
+  (assert (= (.count argv "--settings") 1) argv)
+  (setv settings (json.loads (get argv (+ (.index argv "--settings") 1))))
+  (assert (= settings {"autoMemoryDirectory" "/state/agent-memory/c-01ARZ"
+                       "hooks" (get seat-hooks "hooks")})
+          settings)
+  ;; disableAllHooks は inherit の手番に現れない(宣言した hook が生きる)。
+  (assert (not-in "disableAllHooks" settings) settings)
+  ;; 記憶の置き場の無い手番でも合流点は同じ 1 つ(席の settings だけの --settings)。
+  (setv bare (base-params :agent_type "claude" :session_hooks "inherit" :claude_settings seat-hooks))
+  (<- bare-argv (run-claude world (build-launch "claude" bare)))
+  (assert (= (.count bare-argv "--settings") 1) bare-argv)
+  (assert (= (json.loads (get bare-argv (+ (.index bare-argv "--settings") 1))) seat-hooks) bare-argv)
+  ;; 蘇生の argv も同じ 1 点(build-claude-argv)を通る — headless_argv も同じ点を借りる。
+  (<- resume-argv (run-claude world (build-resume "claude"
+                                                   (base-params :agent_type "claude"
+                                                                :session_hooks "inherit"
+                                                                :resume_mode "resume"
+                                                                :conversation {"session_id" "conv-1"}
+                                                                :claude_settings seat-hooks))))
+  (assert (= (.count resume-argv "--settings") 1) resume-argv)
+  (assert (in "hook-proxy.py" (get resume-argv (+ (.index resume-argv "--settings") 1))) resume-argv))
+
+
+(deftest test-claude-argv-refuses-seat-settings-that-collide-with-doeff-keys
+  ;; R13: 鍵の衝突は fail-loud — 黙って後勝ちにすると「hook を配ったつもりで disableAllHooks が残る」か
+  ;; 「記憶の置き場が消える」のどちらかが無音で起きる。参加の門 (c)(d) が断るはずの形が起動の拍に現れても、
+  ;; argv の合流点は自分で断る(門の写しではなく、合流点の自衛)。
+  (setv world (ImplWorld))
+  (for [[label params] [
+         ;; (c) doeff が置く鍵を宣言が持つ — inherit で置き場が無くても autoMemoryDirectory は doeff の鍵
+         ["autoMemoryDirectory" (base-params :agent_type "claude" :session_hooks "inherit"
+                                             :claude_settings {"autoMemoryDirectory" "/elsewhere"})]
+         ["disableAllHooks" (base-params :agent_type "claude" :session_hooks "inherit"
+                                         :claude_settings {"disableAllHooks" False "hooks" {}})]
+         ;; 置き場と同じ鍵 — 後勝ちで置き場が消える形
+         ["memory-dir-collision" (base-params :agent_type "claude" :session_hooks "inherit"
+                                              :memory_dir "/state/agent-memory/c-01ARZ"
+                                              :claude_settings {"autoMemoryDirectory" "/x"})]
+         ;; (d) disabled の手番に席の settings — disableAllHooks が勝って宣言した hook が黙って死ぬ
+         ["disabled-with-hooks" (base-params :agent_type "claude" :session_hooks "disabled"
+                                             :claude_settings {"hooks" {}})]
+         ;; object でない宣言
+         ["not-an-object" (base-params :agent_type "claude" :session_hooks "inherit"
+                                       :claude_settings ["hooks"])]]]
+    (setv raised None)
+    (try
+      (<- _ (run-claude world (build-launch "claude" params)))
+      (except [e RuntimeError] (setv raised e)))
+    (assert (is-not raised None) label)
+    (assert (in "claude_settings" (str raised)) #(label (str raised)))))
+
+
+(deftest test-claude-argv-without-declared-seat-settings-is-byte-identical
+  ;; R13: 宣言の無い機体(欄なし・None・空の {})の argv は今日と 1 byte も変わらない — 既定と inherit の両方で。
+  (setv world (ImplWorld))
+  (for [hooks ["disabled" "inherit"]]
+    (<- baseline (run-claude world (build-launch "claude" (base-params :agent_type "claude"
+                                                                       :session_hooks hooks
+                                                                       :memory_dir "/state/agent-memory/c-01ARZ"))))
+    (for [blank [None {}]]
+      (<- argv (run-claude world (build-launch "claude" (base-params :agent_type "claude"
+                                                                     :session_hooks hooks
+                                                                     :memory_dir "/state/agent-memory/c-01ARZ"
+                                                                     :claude_settings blank))))
+      (assert (= argv baseline) #(hooks blank argv)))))
+
+
 (deftest test-claude-argv-caller-sse-servers
   (setv world (ImplWorld))
   (setv params (base-params :agent_type "claude"

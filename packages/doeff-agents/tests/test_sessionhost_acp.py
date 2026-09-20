@@ -5182,6 +5182,128 @@ def test_join_seat_env_travels_from_the_declaration_to_the_launch_charter() -> N
         _join_spec(base, {"schema": "doeff.agentd-join.v1", "agentd": {"seat_env": {"ACP_BASE": "x"}}})
 
 
+# ---------------------------------------------------------------- card acp:kanban-issue:ki-7b52bb76aa6e: 席の settings file(`[agentd].claude_settings_file`)
+
+
+SEAT_SETTINGS_JSON = json.dumps(
+    {
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": "*",
+                    "hooks": [
+                        {"type": "command", "command": "python3 ~/dotfiles/claude-hooks/hook-proxy.py PreToolUse", "timeout": 120}
+                    ],
+                }
+            ]
+        }
+    }
+)
+
+
+def _join_declaration_text(agentd_lines: str) -> str:
+    return (
+        'schema = "doeff.agentd-join.v1"\n\n[agentd]\nserver = "http://acp:8868"\ntoken_file = "/t/agentd.token"\n'
+        'capacity = "2"\nplaces = "personal"\n' + agentd_lines + '\n[record]\nurl = "http://record:8874"\n'
+    )
+
+
+def test_join_claude_settings_file_is_a_declared_key_carried_verbatim_to_the_spec() -> None:
+    """card ki-7b52bb76aa6e(ADR-DOE-AGENTS-004 R13・kubelet 型 = seat_env と同じ形): 宣言 file の [agentd].claude_settings_file
+    は JoinSpec.claude_settings_file に**綴りのまま**運ばれる(`~` の展開・読み・門は composition root の join_plan)。無い・空 =
+    None(今日どおり — env に現れない)。cwd 相対の綴りは断る(どの cwd で読むかを黙って決めない)。旧い agentd は
+    この鍵を「宣言に無い鍵」で断る(fail-closed — 下の test_join_spec_refuses_missing_server_or_token_unknown_flags_and_bad_words
+    と同じ門)。"""
+    from doeff_agents.sessionhost.acp.effects import CLAUDE_SETTINGS_FILE_ENV, JoinSpec
+
+    assert CLAUDE_SETTINGS_FILE_ENV == "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE"  # launch.hy が use-site で読む綴り
+    base = ["--server", "http://acp:8868", "--token-file", "/t", "--capacity", "2", "--places", "personal"]
+    bare = _join_spec(base)
+    assert isinstance(bare, JoinSpec)
+    assert bare.claude_settings_file is None
+    assert CLAUDE_SETTINGS_FILE_ENV not in dict(run(join.join_plan_of(bare)).env)
+    for blank in ("", "   "):
+        spec = _join_spec(base, {"schema": "doeff.agentd-join.v1", "agentd": {"claude_settings_file": blank}})
+        assert isinstance(spec, JoinSpec)
+        assert spec.claude_settings_file is None
+    for spelled in ("~/dotfiles/claude-hooks/seat-settings.json", "/home/kento/dotfiles/claude-hooks/seat-settings.json"):
+        spec = _join_spec(base, {"schema": "doeff.agentd-join.v1", "agentd": {"claude_settings_file": f"  {spelled}  "}})
+        assert isinstance(spec, JoinSpec)
+        assert spec.claude_settings_file == spelled
+        # join-plan-of は欄をそのまま env に載せる(composition root が門を通した絶対 path へ据え直してから呼ぶ)
+        assert dict(run(join.join_plan_of(spec)).env)[CLAUDE_SETTINGS_FILE_ENV] == spelled
+    with pytest.raises(ValueError, match="claude_settings_file"):
+        _join_spec(base, {"schema": "doeff.agentd-join.v1", "agentd": {"claude_settings_file": "dotfiles/seat-settings.json"}})
+    # 宣言 file の値は全部文字列(declared-values-of の不変条件)
+    with pytest.raises(ValueError, match="文字列"):
+        _join_spec(base, {"schema": "doeff.agentd-join.v1", "agentd": {"claude_settings_file": ["a"]}})
+    # 旧い agentd(この鍵を知らない版)の門の形: 宣言に無い鍵は名指して断る
+    with pytest.raises(ValueError, match="宣言に無い鍵"):
+        _join_spec(base, {"schema": "doeff.agentd-join.v1", "agentd": {"claude_settings_file_v2": "/x"}})
+
+
+def test_join_claude_settings_declaration_gates_are_one_pure_point() -> None:
+    """R13 の門 (b)(c)(d)は join.claude-settings-declaration-of の 1 点(純粋・I/O なし)。通った本文は dict で返る。"""
+    ok = run(join.claude_settings_declaration_of(SEAT_SETTINGS_JSON, "inherit"))
+    assert isinstance(ok, dict)
+    assert set(ok) == {"hooks"}
+    assert run(join.claude_settings_declaration_of("{}", "inherit")) == {}
+    # (b) JSON の object であること
+    for text in ("[]", '"hooks"', "1", "{not json"):
+        with pytest.raises(ValueError, match="claude_settings_file"):
+            run(join.claude_settings_declaration_of(text, "inherit"))
+    # (c) doeff が置く鍵を含まない(綴りの家は impls/claude_code.hy)
+    from doeff_agents.sessionhost.impls import claude_code
+
+    for owned in ({"disableAllHooks": False, "hooks": {}}, {claude_code.CLAUDE_AUTO_MEMORY_DIR_SETTING: "/x"}):
+        with pytest.raises(ValueError, match="doeff が置く鍵"):
+            run(join.claude_settings_declaration_of(json.dumps(owned), "inherit"))
+    # (d) session_hooks = inherit の宣言にだけ効く
+    with pytest.raises(ValueError, match="inherit"):
+        run(join.claude_settings_declaration_of(SEAT_SETTINGS_JSON, "disabled"))
+
+
+def test_join_plan_admits_the_seat_settings_file_through_four_gates_and_expands_home(tmp_path: Path) -> None:
+    """R13 の一周(composition root): 宣言 file の [agentd].claude_settings_file(`~/…`)→ agentd の HOME で展開 → (a) 読める →
+    (b)(c)(d) → env DOEFF_AGENTD_CLAUDE_SETTINGS_FILE = 絶対 path。外れは AgentdPreflightError(参加しない — 黙って hook 無しの
+    席を起こさない)。名指しの無い宣言は今日どおり(env に現れない)。"""
+    from doeff_agents.sessionhost.acp.runtime import AgentdPreflightError, join_plan
+
+    home = tmp_path / "home"
+    (home / "dotfiles" / "claude-hooks").mkdir(parents=True)
+    seat = home / "dotfiles" / "claude-hooks" / "seat-settings.json"
+    seat.write_text(SEAT_SETTINGS_JSON)
+    env = {"HOME": str(home), "XDG_STATE_HOME": str(tmp_path / "state")}
+
+    def plan_env(agentd_lines: str) -> dict[str, str]:
+        path = tmp_path / "agentd.toml"
+        path.write_text(_join_declaration_text(agentd_lines))
+        return dict(join_plan(["--config", str(path)], env).env)
+
+    assert "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE" not in plan_env("")
+    declared = plan_env('claude_settings_file = "~/dotfiles/claude-hooks/seat-settings.json"\n')
+    assert declared["DOEFF_AGENTD_CLAUDE_SETTINGS_FILE"] == str(seat)
+    absolute = plan_env(f'claude_settings_file = "{seat}"\n')
+    assert absolute["DOEFF_AGENTD_CLAUDE_SETTINGS_FILE"] == str(seat)
+    # (a) file が読めない = 参加しない
+    with pytest.raises(AgentdPreflightError, match="読めない"):
+        plan_env('claude_settings_file = "~/dotfiles/claude-hooks/absent.json"\n')
+    # (b) JSON の object でない
+    seat.write_text("[]")
+    with pytest.raises(AgentdPreflightError, match="object"):
+        plan_env('claude_settings_file = "~/dotfiles/claude-hooks/seat-settings.json"\n')
+    # (c) doeff が置く鍵を含む
+    seat.write_text(json.dumps({"disableAllHooks": False, "hooks": {}}))
+    with pytest.raises(AgentdPreflightError, match="disableAllHooks"):
+        plan_env('claude_settings_file = "~/dotfiles/claude-hooks/seat-settings.json"\n')
+    # (d) session_hooks = disabled の宣言に名指し
+    seat.write_text(SEAT_SETTINGS_JSON)
+    with pytest.raises(AgentdPreflightError, match="inherit"):
+        plan_env('claude_settings_file = "~/dotfiles/claude-hooks/seat-settings.json"\nsession_hooks = "disabled"\n')
+    # 名指しを消せば今日どおり参加する(戻す手)
+    assert "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE" not in plan_env('session_hooks = "disabled"\n')
+
+
 def test_acp_writes_put_the_fingerprint_header_only_on_the_writes_that_carry_it(monkeypatch: pytest.MonkeyPatch) -> None:
     """handlers.AcpHttp: 指紋は書きごとの header x-declaration-sha256(誕生・spec の書きが運ぶ時だけ)。運ばない書きと status の
     書きの header は札だけ。"""

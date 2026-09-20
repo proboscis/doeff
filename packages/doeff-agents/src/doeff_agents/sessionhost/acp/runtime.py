@@ -835,6 +835,34 @@ def read_join_declaration(path: str | None) -> JoinDeclaration:
         ) from error
 
 
+def _admitted_claude_settings_file(spec: JoinSpec, home: str) -> str | None:
+    """席の settings file の参加の門(card acp:kanban-issue:ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13)— composition root の側。
+    宣言の綴り(JoinSpec.claude_settings_file・`~` は agentd の HOME で展開)→ (a) file が読める(I/O はここ)→ (b)(c)(d) は
+    join.claude-settings-declaration-of の 1 点 → 通った**絶対 path**(env CLAUDE_SETTINGS_FILE_ENV に載せる値)。
+    None = 名乗らない(今日どおり)。外れは AgentdPreflightError(参加しない — 黙って hook 無しの席を起こさない)。
+    中身は据えない: launch / headless が起動の拍ごとに同じ path を読む(daemon の memory に写しを持たない)。"""
+    declared = spec.claude_settings_file
+    if declared is None:
+        return None
+    path = home.rstrip("/") + declared[1:] if declared == "~" or declared.startswith("~/") else declared
+    where = f"[{join.TABLE_AGENTD}].{join.KEY_CLAUDE_SETTINGS_FILE}"
+    try:
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+    except (OSError, UnicodeDecodeError) as error:
+        raise AgentdPreflightError(
+            f"join: {where} が名指す file {path} が読めない: {error} — 席に hook を届けられない agentd は参加しない"
+            "(file は dotfiles claude-hooks/seat-settings.json・名指しを消せば今日どおり hook 無しで参加する)"
+        ) from error
+    try:
+        verdict: object = PyVM().run(join.claude_settings_declaration_of(text, spec.session_hooks))
+    except ValueError as error:
+        raise AgentdPreflightError(f"join: {error}") from error
+    if not isinstance(verdict, dict):
+        raise TypeError(f"claude_settings_declaration_of returned {type(verdict).__name__}")
+    return path
+
+
 def join_plan(argv: Sequence[str], env: Mapping[str, str]) -> JoinPlan:
     """join の argv(subcommand の後の列)→ JoinPlan。宣言 file の読みはここ(I/O)、判断は join.hy。"""
     items = JoinArgv(items=tuple(argv))
@@ -853,6 +881,8 @@ def join_plan(argv: Sequence[str], env: Mapping[str, str]) -> JoinPlan:
     # 追補(card acp:kanban-issue:ki-3bfe48a9d5dc): 名簿に綴れない根(~/.worktrees/)も同じく**実勢**から導く(在る dir だけ)。
     home = (env.get("HOME") or os.path.expanduser("~")).strip()
     spec = replace(spec, work_dirs=_held_work_dirs(home), work_dir_roots=_held_work_dir_roots(home))
+    # card acp:kanban-issue:ki-7b52bb76aa6e: 席の settings file は読めて門を通った時だけ(絶対 path で)env に載る(読みはここ・判断は join)。
+    spec = replace(spec, claude_settings_file=_admitted_claude_settings_file(spec, home))
     plan: object = PyVM().run(join.join_plan_of(spec))
     if not isinstance(plan, JoinPlan):
         raise TypeError(f"join_plan_of returned {type(plan).__name__}")
