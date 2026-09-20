@@ -151,6 +151,15 @@
   [AUTOCOMPACT-ARG (! (claude-autocompact-value params))])
 
 
+;; claude の settings の綴り(この repo で 1 か所 — 判断は judgment.memory-home-of、値は charter の
+;; `memory_dir`、綴りはここ)。実射 2026-09-20 で確かめた事実:
+;;   * 効く綴りは `autoMemoryDirectory`(`memoryDir` は CLI 内部の property 名で、設定の鍵ではない —
+;;     その綴りを渡した手番は黙って既定の家の置き場を作った)
+;;   * `--settings` の inline JSON は flagSettings として読まれ、userSettings より先に効く
+;; 反例つきの実射の記録は ADR-DOE-AGENTS-006 R11。
+(setv CLAUDE-AUTO-MEMORY-DIR-SETTING "autoMemoryDirectory")
+
+
 (defk build-claude-argv [params]
   {:pre [(: params dict)]
    :post [(: % list)]}
@@ -175,8 +184,17 @@
    - prompt は決して argv に載せない(live terminal transport のみ)・
      print mode(-p / --print)不使用"
   (setv args ["claude" "--dangerously-skip-permissions"])
+  ;; --settings は 1 つだけ出す(2 回出すと後勝ちで片方が黙って消える)。中身は宣言の合流点:
+  ;; hook の無効化(既定)と自動記憶の置き場(charter が運んだ時だけ)。両方とも無い手番では
+  ;; 旗自体を出さない — 欄の無い charter の argv は今日と 1 byte も変わらない。
+  (setv settings {})
   (when (!= (.get params "session_hooks") "inherit")
-    (.extend args ["--settings" "{\"disableAllHooks\":true}"]))
+    (setv (get settings "disableAllHooks") True))
+  (setv memory-dir (.get params "memory_dir"))
+  (when (and (isinstance memory-dir str) (.strip memory-dir))
+    (setv (get settings CLAUDE-AUTO-MEMORY-DIR-SETTING) memory-dir))
+  (when settings
+    (.extend args ["--settings" (json.dumps settings :separators #("," ":"))]))
   (setv effort (.get params "effort"))
   (when effort
     (.extend args ["--effort" effort]))
@@ -357,6 +375,13 @@
                 f"{CLAUDE-SETTINGS-VERTEX-PROJECT-ENV}=<project>. The host never reads the "
                 "credential value — it only checks that the home declares one "
                 "(ADR-DOE-AGENTS-004 R9)."))))
+  ;; 自動記憶の置き場は起こす前に在らせる(CLI 側も作るが、無い dir を設定で指さない)。
+  ;; 判断は judgment.memory-home-of の 1 点 — ここは charter が運んだ path を実体化するだけで、
+  ;; path を組まない。codex は対象外: codex の作業状態は profile dir の側の話で、
+  ;; claude の auto-memory に当たる置き場を持たない。
+  (setv memory-dir (.get params "memory_dir"))
+  (when (and (isinstance memory-dir str) (.strip memory-dir))
+    (<- _ (fs-make-dirs memory-dir)))
   (when (not (.get params "skip_trust_setup" False))
     (<- _ (preseed-claude-trust config-dir (get params "work_dir"))))
   (setv identity {"CLAUDE_CONFIG_DIR" config-dir

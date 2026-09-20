@@ -311,6 +311,53 @@
   (assert (not-in "-p" argv)))
 
 
+(deftest test-claude-argv-carries-the-conversation-memory-home
+  ;; V4(ADR-DOE-AGENTS-006 R11): charter が運ぶ置き場は `--settings` の**1 つの JSON**に合流する。
+  ;; --settings を 2 回出すと後勝ちで片方が黙って消えるので、hook の無効化と同居させる。
+  ;; 綴りは `autoMemoryDirectory` — 実射 2026-09-20 で `memoryDir`(CLI 内部の property 名)は
+  ;; 黙って無視され、既定の家の置き場が作られた。
+  (setv world (ImplWorld))
+  (setv params (base-params :agent_type "claude" :memory_dir "/state/agent-memory/c-01ARZ"))
+  (<- argv (run-claude world (build-launch "claude" params)))
+  (assert (= (.count argv "--settings") 1) argv)
+  (setv settings (json.loads (get argv (+ (.index argv "--settings") 1))))
+  (assert (= settings {"disableAllHooks" True "autoMemoryDirectory" "/state/agent-memory/c-01ARZ"})
+          settings)
+  ;; 置き場だけを宣言した手番(hook は継ぐ)でも --settings は 1 つで、置き場は落ちない。
+  (setv inherit (base-params :agent_type "claude" :session_hooks "inherit"
+                             :memory_dir "/state/agent-memory/c-01ARZ"))
+  (<- inherit-argv (run-claude world (build-launch "claude" inherit)))
+  (assert (= (.count inherit-argv "--settings") 1) inherit-argv)
+  (assert (= (json.loads (get inherit-argv (+ (.index inherit-argv "--settings") 1)))
+             {"autoMemoryDirectory" "/state/agent-memory/c-01ARZ"})
+          inherit-argv))
+
+
+(deftest test-claude-argv-without-a-memory-home-is-byte-identical-to-today
+  ;; V5: 置き場を宣言しない手番の argv は 1 byte も変わらない(凍結配線の pin を壊さない)。
+  ;; 空・空白だけの欄も「宣言していない」— 設定に空の path を書かない。
+  (setv world (ImplWorld))
+  (<- baseline (run-claude world (build-launch "claude" (base-params :agent_type "claude"))))
+  (assert (= (cut baseline 0 4)
+             ["claude" "--dangerously-skip-permissions"
+              "--settings" "{\"disableAllHooks\":true}"])
+          baseline)
+  (for [blank [None "" "   "]]
+    (<- argv (run-claude world (build-launch "claude" (base-params :agent_type "claude"
+                                                                   :memory_dir blank))))
+    (assert (= argv baseline) #(blank argv)))
+  ;; resume の argv も同じ 1 点(build-claude-argv)を通るので、同じ保証が効く。
+  (<- resume-argv (run-claude world (build-resume "claude"
+                                                   (base-params :agent_type "claude"
+                                                                :resume_mode "resume"
+                                                                :conversation {"session_id" "conv-1"}
+                                                                :memory_dir "/state/agent-memory/c-01ARZ"))))
+  (assert (= (.count resume-argv "--settings") 1) resume-argv)
+  (assert (in "autoMemoryDirectory"
+              (get resume-argv (+ (.index resume-argv "--settings") 1)))
+          resume-argv))
+
+
 (deftest test-claude-argv-caller-sse-servers
   (setv world (ImplWorld))
   (setv params (base-params :agent_type "claude"

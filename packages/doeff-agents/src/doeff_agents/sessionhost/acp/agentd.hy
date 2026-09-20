@@ -1178,8 +1178,8 @@
             (<- (LogLine :text f"agentd: job {job-id} rehydrate headline: {fold.dropped-headline}"))))
         (<- attribution dict (session-attribution-of plan job-id subject choice.arm))
         (<- built tuple (incarnation-charter-of plan choice session-id bodies history attribution
-                                                settings.backend-kind lease settings.homes-root opener
-                                                settings.seat-env))
+                                                settings.backend-kind lease settings.homes-root
+                                                settings.memory-root opener settings.seat-env))
         (setv charter (get built 0))
         (setv auth-file (get built 1))
         (when (and (is-not auth-file None) (is-not lease None) (is-not lease.auth-json None))

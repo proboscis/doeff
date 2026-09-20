@@ -878,6 +878,10 @@ NODE_SPEC_AGENTD_PROTOCOL_KEY = "protocol"
 NODE_SPEC_AGENTD_REVISION_KEY = "revision"
 NODE_SPEC_AGENTD_BUILD_KEY = "build"
 HOMES_ROOT_ENV = "DOEFF_AGENTD_HOMES_ROOT"
+#: 自動記憶(auto-memory)の置き場の根。会話 1 つにつき <根>/<会話 id> が 1 つ(judgment.memory-home-of)。
+#: 既定は homes-root と同じ導き方(runtime.settings_from_env)で、資格の家の**外**に置く —
+#: 家の中に置くと預かり所が別の account を貸した拍に置き場が変わり、記憶が会話から剥がれる。
+MEMORY_ROOT_ENV = "DOEFF_AGENTD_MEMORY_ROOT"
 CUSTODY_URL_ENV = "AGORA_CUSTODY_URL"
 BORROWER_KEY_PATH_ENV = "AGORA_BORROWER_KEY_PATH"
 #: 段 10 lane 10y(agora-redesign #110・依頼者の裁定 問い 3 案 A): k8s の pod の身元 = ServiceAccount の token の file。
@@ -1239,6 +1243,10 @@ class AgentdSettings:
     lease_renew_margin_seconds: int = 120
     #: 借りた資格の家の根(claude = CLAUDE_CONFIG_DIR・codex = auth.json の置き場)。
     homes_root: str = ""
+    #: 自動記憶(auto-memory)の置き場の根 — 会話 1 つにつき <根>/<会話 id>(judgment.memory-home-of)。
+    #: 既定は composition root(runtime.settings_from_env)が homes-root と同じ導き方で据える。空 = 据えない
+    #: (charter に欄が立たず、CLI の既定 = 家の projects/<cwd>/memory に落ちる)。
+    memory_root: str = ""
     #: この node の家(段 10 lane 10y — composition root が env HOME から据える)。charter の work_dir の `~` はこの値で展開する
     #: (judgment.plan-with-node-home)。空 = 展開しない(`~` のままの path は無い dir として WorkDirMissing に落ちる)。
     home: str = ""
