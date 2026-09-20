@@ -969,10 +969,13 @@ HEADLESS_DIR_ENV = "DOEFF_SESSIONHOST_HEADLESS_DIR"
 SESSION_HOOKS_ENV = "DOEFF_AGENTD_SESSION_HOOKS"
 #: card acp:kanban-issue:ki-7b52bb76aa6e(2026-09-21・ADR-DOE-AGENTS-004 R13・既知の形 = seat_env と同じ kubelet 型): 機体の参加の
 #: 宣言 [agentd].claude_settings_file が名指した「席の settings file」(dotfiles claude-hooks/seat-settings.json = hook の proxy
-#: 登録 1 枚)の**絶対 path**。join が 4 つの門(file が読める / JSON の object / doeff が置く鍵を含まない / session_hooks =
-#: inherit)を通してから据え、launch / headless が**起動の拍ごとに**読んで params claude_settings に載せ、impls/claude_code.hy
-#: build-claude-argv(`--settings` の唯一の合流点)が記憶の置き場の鍵(CLAUDE-AUTO-MEMORY-DIR-SETTING)と合わせて 1 つの JSON に合流する。
-#: 無い = 今日どおり(argv は 1 byte も変わらない)。inherit の委ね先(config-dir の持ち主)は doeff 自身なので、doeff が運ぶ。
+#: 登録 1 枚)の**絶対 path**。join が 3 つの門(session_hooks = inherit / 読めたなら JSON の object / 読めたなら doeff が置く鍵を
+#: 含まない — **宣言そのものの誤りだけ**)を通してから据え、launch / headless が**起動の拍ごとに**読んで params claude_settings に載せ、
+#: impls/claude_code.hy build-claude-argv(`--settings` の唯一の合流点)が記憶の置き場の鍵(CLAUDE-AUTO-MEMORY-DIR-SETTING)と合わせて
+#: 1 つの JSON に合流する。名指しが無い = 今日どおり(argv は 1 byte も変わらない)。⚠ **名指した file が読めないのは断る理由にしない**
+#: (R13 の訂正・依頼書 §10-2): 不在でもこの env には path が載る — 読むのは起動の拍ごとなので、宿の checkout が後から追いついた日は
+#: その拍から hook が届く。不在の名乗りは join の 1 行(seat-settings-file-absent)・起動ごとの 1 行・node の行の labels.seat-settings。
+#: inherit の委ね先(config-dir の持ち主)は doeff 自身なので、doeff が運ぶ。
 CLAUDE_SETTINGS_FILE_ENV = "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE"
 OWNERSHIP_ENV = "DOEFF_AGENTD_OWNERSHIP"
 OWNERSHIP_PROOF_ENV = "DOEFF_AGENTD_OWNERSHIP_PROOF"
@@ -1129,7 +1132,9 @@ class JoinSpec:
     seat_env: tuple[tuple[str, str], ...] = ()
     #: 席の settings file(card acp:kanban-issue:ki-7b52bb76aa6e — 宣言 file の [agentd].claude_settings_file・任意)。
     #: join-spec-of は宣言の綴りを運び(空 = None = 名乗らない)、composition root(runtime.join_plan)が `~` を agentd の HOME で
-    #: 展開して 4 つの門を通し、通った絶対 path をこの欄へ据え直す。None = 名乗らない(env CLAUDE_SETTINGS_FILE_ENV に現れない)。
+    #: 展開して 3 つの門(session_hooks = inherit / 読めたなら JSON の object / 読めたなら doeff が置く鍵を含まない)を通し、
+    #: **file が読めた日も読めない日も同じ**絶対 path をこの欄へ据え直す(不在は断らない — R13 の訂正・依頼書 §10-2)。
+    #: None = 名指していない(env CLAUDE_SETTINGS_FILE_ENV に現れない)。
     claude_settings_file: str | None = None
 
 

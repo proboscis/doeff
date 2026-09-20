@@ -768,8 +768,9 @@
    :post [(: % (| str None))]}
   "席の settings file の名指しの読み(card acp:kanban-issue:ki-7b52bb76aa6e): 宣言 file の [agentd].claude_settings_file
    の文字列 → 綴り(strip)。無い・空 = None(名乗らない = 今日どおり)。形は絶対 path か `~` / `~/…`(agentd の HOME で
-   composition root が展開)— cwd に依る相対 path は断る(どの cwd で読むかを黙って決めない)。file の読みと 4 つの門は
-   runtime.join_plan(I/O)+ claude-settings-declaration-of(判断)。"
+   composition root が展開)— cwd に依る相対 path は断る(どの cwd で読むかを黙って決めない)。file の読みと 3 つの門は
+   runtime.join_plan(I/O)+ claude-settings-declaration-of(判断)で、**読めない file は断らない**(不在は名乗って参加する
+   — R13 の訂正・依頼書 §10-2)。"
   (setv word (if (is text None) "" (.strip text)))
   (when (not word)
     (return None))
@@ -859,8 +860,9 @@
   (<- allow-metered bool (allow-metered-billing-of (.get agentd KEY-ALLOW-METERED-BILLING)))
   ;; 席へ運ぶ env の宣言(段 12・agora-redesign #520・任意)— 解釈と参加の門は seat-env-of の 1 点。
   (<- declared-seat-env SeatEnv (seat-env-of (.get agentd KEY-SEAT-ENV)))
-  ;; 席の settings file の名指し(card ki-7b52bb76aa6e・任意)— 綴りだけ。読みと 4 つの門は runtime.join_plan(I/O)+
-  ;; claude-settings-declaration-of(判断)で、通った絶対 path が composition root からこの欄へ据え直される。
+  ;; 席の settings file の名指し(card ki-7b52bb76aa6e・任意)— 綴りだけ。読みと 3 つの門は runtime.join_plan(I/O)+
+  ;; claude-settings-declaration-of(判断)で、**読めた日も読めない日も同じ**絶対 path が composition root からこの欄へ
+  ;; 据え直される(不在は断らない — R13 の訂正・依頼書 §10-2)。
   (<- declared-settings-file (| str None) (claude-settings-file-of (.get agentd KEY-CLAUDE-SETTINGS-FILE)))
   (JoinSpec
     :server server
