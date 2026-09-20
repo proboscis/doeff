@@ -17,6 +17,7 @@
 (import json)
 (import os)
 (import subprocess)
+(import sys)
 (import threading)
 (import time)
 
@@ -49,7 +50,8 @@
   FsFileExists
   FsFileMtime
   GitRun
-  EnvGet])
+  EnvGet
+  LogLine])
 (import doeff_agents.sessionhost.policy [ACTIVE-STATUSES
                                          PROVIDER-AUTH-ENV-KEYS
                                          env-offenders-against
@@ -397,6 +399,13 @@
 
   (ClockSleep [seconds]
     (time.sleep seconds)
+    (resume None))
+
+  (LogLine [text]
+    ;; 名乗りの 1 行(R13): agentd の log(stderr)へ。program は substrate-clean なので
+    ;; 書くのはここ 1 点 — agentd の同名の effect(acp/handlers.py)と同じ行き先。
+    (.write sys.stderr (+ text "\n"))
+    (.flush sys.stderr)
     (resume None))
 
   (ProcRun [command stdin]

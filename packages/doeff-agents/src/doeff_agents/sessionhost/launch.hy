@@ -64,7 +64,8 @@
   tmux-capture
   tmux-kill-session
   clock-now
-  clock-sleep])
+  clock-sleep
+  log-line])
 (import dataclasses [replace])
 
 (import doeff_agents.sessionhost.policy [
@@ -811,13 +812,18 @@
   {:pre [(: agent-type str)]
    :post [(: % (| dict None))]}
   "席の settings の宣言(card acp:kanban-issue:ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13): 機体の参加の宣言
-   [agentd].claude_settings_file が名指した file(join が 4 つの門を通して据えた絶対 path = env
+   [agentd].claude_settings_file が名指した file(join が門を通して据えた絶対 path = env
    DOEFF_AGENTD_CLAUDE_SETTINGS_FILE — 綴りの正本は acp/effects.py CLAUDE_SETTINGS_FILE_ENV)を**起動の拍ごとに**
    読み、claude の `--settings` に合流させる dict を返す(合流点は impls/claude_code.hy build-claude-argv・鍵の衝突は
    そこで fail-loud)。session-hooks-mode と同じ use-site の流儀で env から読む。
      名指しが無い = None(今日どおり — argv は 1 byte も変わらない)
      claude 以外の kind = None(file の名は claude の settings — codex の起動は読まない)
-     読めない / JSON でない / object でない = fail-loud(RuntimeError — 参加の門を通った file が起動の拍に壊れた形。
+     **file が無い = None + 名乗りの 1 行**(R13 の訂正・依頼書 §10-2): 宿は「先端で揃えられない日は image の下限へ
+       戻して立つ」正規の degrade を持ち、その日の checkout に file は無い。そこで起動を止めると degrade が
+       **その機体の全席の停止**に化ける(今日の欠陥より悪い)。だから起こす — ただし黙っては起こさず、起動の拍ごとに
+       名前つきの 1 行(seat-settings-file-absent)を log へ出す。node の行の側の名乗りは
+       judgment.node-labels-of(labels.seat-settings)。
+     JSON でない / object でない = fail-loud(RuntimeError — 在るのに壊れている = 宣言そのものの誤り。
        黙って hook 無しの席を起こさない: 49b3549b と同じ「安全 hook 全滅」を無言で作らない)"
   (when (!= agent-type "claude")
     (return None))
@@ -826,10 +832,11 @@
     (return None))
   (<- text (fs-read-text path))
   (when (is text None)
-    (raise (RuntimeError
-             (+ f"session.launch: DOEFF_AGENTD_CLAUDE_SETTINGS_FILE={path} が読めない — 機体の参加の宣言が名指した"
-                "席の settings file(dotfiles claude-hooks/seat-settings.json)。hook を届けられない席は起こさない"
-                "(ADR-DOE-AGENTS-004 R13)"))))
+    (<- _ (log-line
+            (+ f"session.launch: seat-settings-file-absent DOEFF_AGENTD_CLAUDE_SETTINGS_FILE={path} — "
+               "機体の参加の宣言が名指した席の settings file が無いので、この席は hook 無しで起こす"
+               "(dotfiles claude-hooks/seat-settings.json が宿の checkout に入るまで・ADR-DOE-AGENTS-004 R13)")))
+    (return None))
   (try
     (setv parsed (json.loads text))
     (except [error ValueError]

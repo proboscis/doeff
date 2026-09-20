@@ -747,6 +747,15 @@
    直接束縛では呼び手 env)。戻り値: str | None。"
   #^ str name)
 
+(defclass [(dataclass :frozen True :kw-only True)] LogLine [EffectBase]
+  "運用 log の 1 行(stderr)。席の起動が**黙って落とした前提**を名乗るための口
+   (card acp:kanban-issue:ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13): 参加の宣言が名指した
+   席の settings file が起動の拍に無い時、hook 無しで起こしたことを起動ごとに 1 行で名乗る。
+   program は substrate-clean(生 IO 禁止)なので print ではなくこの effect を通す。
+   綴りの家は agentd の同名の effect(acp/effects.py LogLine)と同じ形 — 2 つの層が
+   別々に stderr へ書く(sessionhost の program 用と agentd の program 用)。戻り値: None。"
+  #^ str text)
+
 (defclass [(dataclass :frozen True :kw-only True)] ClockSleep [EffectBase]
   "実時間待ち(wait-for-repl-idle の poll 間隔・dialog 再描画待ち)。
    時間算術が ClockNow 経由であるのと同じく、待ちも effect 経由 — program は
@@ -1078,6 +1087,12 @@
    :post [(: % EnvGet)]}
   "EnvGet を構築する(process env fallback、S11 caveat)。"
   (EnvGet :name name))
+
+(deff log-line [text]
+  {:pre [(: text str) (> (len text) 0)]
+   :post [(: % LogLine)]}
+  "LogLine を構築する(名乗りの 1 行 — R13 の『黙って hook 無しで起こさない』の担保)。"
+  (LogLine :text text))
 
 (deff clock-sleep [seconds]
   {:pre [(: seconds (| int float)) (>= seconds 0)]
