@@ -77,7 +77,10 @@
 ;;; service へ送って受理(と 409)で消す。送れない batch は残し record_retry_seconds の後に再送(冪等 — 同じ鍵と本文は ignored)。
 ;;; ACP の turn-record への追記は**見出しだけ**(段 9f lane 9f-4・設計 §2.2: entries は本文から judgment.headline-of-body の
 ;;; 1 点で導く TurnEntryHeadline — seq・at・kind・toolName・toolUseId・bytes・sha256・isError。本文の欄は型に無い)。service が
-;;; 受理した答え(highestProducerSeq)は mark-recorded が status.recordRef / recordedSeq に写す。履歴からの再開は service の
+;;; 受理した答え(highestProducerSeq)は mark-recorded が status.recordRef / recordedSeq に写す — ⚠ 走っている手番では単独で
+;;; 書かず、memory(InFlightJob.recorded-mark)に持って**次の追記の書きか手番の終わりの書きに同乗**させる(card
+;;; acp:kanban-issue:ki-c418e597017a 便 3: 行の書きは status の全体の post-image なので、整数 1 つのための単独の書きが
+;;; journal の 4 分の 1 を占めていた)。手番が memory から消えた後に届いた受理は今日どおり鍵で読んで書く。履歴からの再開は service の
 ;;; before=latest から読み(record-turns-for)、届かなければ ACP の見出しで薄く再開すると名乗る。stream = 手番
 ;;; `<jobId>#a<attempt>`(拾い直しは turn-record の行の generation + 1 — judgment.recovered-record-of)。弁 =
 ;;; AgentdSettings.record_enabled(RECORD_SERVICE_URL の在否)— off の間は Record* を 1 つも撃たない。実運転の off は
@@ -544,6 +547,7 @@
   profile-rows-held
   profile-status-with-observed
   record-unavailable-noted
+  recorded-mark-merged
   recovered-arm-of
   stream-starts-at-head
   rehydrate-history-of
@@ -567,6 +571,7 @@
   turn-record-ended-status
   turn-record-sweep-verdict
   turn-record-key-of
+  turn-record-marked-status
   turn-record-recorded-status
   turn-record-spec-of
   turn-session-env-of
@@ -1826,6 +1831,8 @@
   (<- numbered tuple (renumbered-entries entries floor))
   (setv delta-seq (max job.delta-seq (+ (. (get numbered -1) seq) 1)))
   (<- appended dict (turn-record-appended-status record-status numbered))
+  ;; 受理の刻印(memory)はこの書きに同乗する(単独の書きを撃たない — mark-recorded の docstring)。
+  (<- appended dict (turn-record-marked-status appended job.recorded-mark))
   (<- wrote (| Written Conflict Refused) (AcpPutStatus :row record :status appended))
   (when (isinstance wrote Conflict)
     (<- key str (turn-record-key-of job.job-id))
@@ -1838,10 +1845,12 @@
       (<- numbered tuple (renumbered-entries entries floor))
       (setv delta-seq (max job.delta-seq (+ (. (get numbered -1) seq) 1)))
       (<- appended dict (turn-record-appended-status record-status numbered))
+      (<- appended dict (turn-record-marked-status appended job.recorded-mark))
       (<- wrote (| Written Conflict Refused) (AcpPutStatus :row record :status appended))))
   (if (isinstance wrote Written)
       (replace job :record (replace record :generation (+ record.generation 1) :status appended)
                    :pending-entries #()
+                   :recorded-mark None
                    :delta-seq delta-seq)
       (do
         (<- (LogLine :text f"agentd: turn-record append for job {job.job-id} did not land ({wrote}); keeping {(len entries)} entries for the next tick"))
@@ -2002,20 +2011,28 @@
    :post [(: % AgentdState)]}
   "service が本文を受理した答えを turn-record の行へ写す(段 9f lane 9f-4・設計 §2.2): status.recordRef = 本文の在処
    (judgment.record-ref-of)・status.recordedSeq = 受理済みの最大 producerSeq(judgment.turn-record-recorded-status — 進む時
-   だけ・後ろへ戻さない)。行は走っている手番の memory の image(InFlightJob.record)があればそれに CAS(次の追記も
-   その image から続く)、無ければ鍵で読む(手番の終わりの後に届いた受理も行に写る)。Conflict は image を捨てて次の拍
-   (追記の腕が読み直す)。"
+   だけ・後ろへ戻さない)。
+   ⚠ **走っている手番(state.jobs に居る)ではここで行を書かない**(card acp:kanban-issue:ki-c418e597017a 便 3): 答えを
+   memory の刻印(InFlightJob.recorded-mark)に重ね、次の追記の書き(append-entries)か手番の終わりの書き
+   (end-turn-record)に同乗させる。行の書きは status の全体(見出しの配列ごと)の post-image で、ACP はそれを出来事の本体と
+   後像の 2 度 journal に置く — 受理のたびの単独の書きは、整数 1 つを進めるために配列の全体を書き直していた(実測
+   2026-09-21: 連続する書き 745 対のうち 375 対が recordedSeq だけの差・journal の全 byte の 24.7%)。
+   走っている間の行の recordedSeq は最後の書きの拍の値で、service の実際より小さいことが在る(正本は service・行は写し —
+   追いつきの差の計器 agentd_record_lag_seq は行を経ずに答えから直に出るので変わらない)。手番の終わりの最後の受理は
+   手番が memory から消えた後に届くので、下の「鍵で読む」腕が書く ⇒ 終わった手番の行の値は今日どおり正確。
+   手番が memory に居ない(終わった後・再起動の後に届いた受理)時は、今日どおり鍵で読んで書く。"
   (<- job-id str (record-stream-job-of stream-id))
   (<- key str (turn-record-key-of job-id))
   (<- ref str (record-ref-of conversation-id stream-id))
   (setv held None)
   (for [job state.jobs]
-    (when (and (= job.job-id job-id) (is-not job.record None))
+    (when (= job.job-id job-id)
       (setv held job)))
-  (setv record (if (is held None) None held.record))
-  (when (is record None)
-    (<- found (| AcpRow None) (AcpGetRow :key key))
-    (setv record found))
+  (when (is-not held None)
+    (<- mark tuple (recorded-mark-merged held.recorded-mark ref highest))
+    (<- carried AgentdState (with-job state (replace held :recorded-mark mark)))
+    (return carried))
+  (<- record (| AcpRow None) (AcpGetRow :key key))
   (when (is record None)
     (<- (LogLine :text f"agentd: turn-record of job {job-id} is not readable; recordedSeq {highest} not written"))
     (return state))
@@ -2026,13 +2043,7 @@
   (<- wrote (| Written Conflict Refused) (AcpPutStatus :row record :status recorded))
   (when (not (isinstance wrote Written))
     (<- (LogLine :text f"agentd: recordedSeq {highest} for job {job-id} did not land ({wrote}); next flush retries")))
-  (when (is held None)
-    (return state))
-  (setv image (if (isinstance wrote Written)
-                  (replace record :generation (+ record.generation 1) :status recorded)
-                  None))
-  (<- next AgentdState (with-job state (replace held :record image)))
-  next)
+  state)
 
 
 (defk capture-frame [settings job now-ms]
@@ -2219,12 +2230,13 @@
 ;; 記録(turn-record)と手番の終わり
 ;; ---------------------------------------------------------------------------
 
-(defk end-turn-record [job-id usage entries]
-  {:pre [(: job-id str) (: usage (| dict None)) (: entries tuple)]
+(defk end-turn-record [job-id usage entries mark]
+  {:pre [(: job-id str) (: usage (| dict None)) (: entries tuple) (: mark (| tuple None))]
    :post [(: % bool)]}
   "turn-record を ended に(usage・残りの entries を行の entries に追記)。行は鍵で読み直す
    (正本は行)。戻り = 行が在って書けたか(無ければ False — 受けた直後に落ちた job には記録が
-   無いのが普通なので、ここでは log しない)。"
+   無いのが普通なので、ここでは log しない)。mark = 手番が memory に持っていた受理の刻印
+   (InFlightJob.recorded-mark — 無ければ None): この書きに同乗させる(mark-recorded の docstring)。"
   (<- key str (turn-record-key-of job-id))
   (<- record (| AcpRow None) (AcpGetRow :key key))
   (if (is record None)
@@ -2232,6 +2244,7 @@
       (do
         (<- record-status dict (status-object-of record))
         (<- ended-record dict (turn-record-ended-status record-status usage entries))
+        (<- ended-record dict (turn-record-marked-status ended-record mark))
         (<- wrote (| Written Conflict Refused) (AcpPutStatus :row record :status ended-record))
         (when (not (isinstance wrote Written))
           (<- (LogLine :text f"agentd: turn-record of job {job-id} not ended ({wrote})")))
@@ -2491,7 +2504,7 @@
   (if (is limit None)
       (do
         ;; turn-record → ended(追記できずに持ち越した出来事があれば最後の書きに乗せる)
-        (<- recorded bool (end-turn-record drained.job-id batch.usage drained.pending-entries))
+        (<- recorded bool (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark))
         ;; agora-redesign #537 H2: 終わりの書きが着かなかった拍は、鍵で行の在否を確かめる(正本は行 — 戻りの False は
         ;; 「行が無い」と「書きが断られた」の両方を含む)。行が**無い**なら、その拍に 1 度だけ作り直して ended まで書く —
         ;; 記録なしで Ended にしない(ACP Messaging の turnlessOf は turn-record の行の在否で読み、無ければ
@@ -2515,7 +2528,7 @@
                                                                f"re-created ({remade.status}: {remade.error})")))
                       (setv drained noted))
                     (do
-                      (<- again bool (end-turn-record drained.job-id batch.usage drained.pending-entries))
+                      (<- again bool (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark))
                       (setv recorded again)))
                 (<- (LogLine :text (+ f"agentd: turn-record for job {job.job-id} was missing at turn end; re-created -> "
                                       f"{remade} (ended: {recorded}) (#537)"))))))
@@ -2652,7 +2665,7 @@
    :post [(: % bool)]}
   "器に session が無い job の腕: 記録が在れば ended に、job は SessionFailed で Ended、
    借りていた札は返す。戻り = Ended の書きが着地したか。"
-  (<- (end-turn-record job-id None #()))
+  (<- (end-turn-record job-id None #() None))
   (<- fresh (| AcpRow None) (AcpGetRow :key job-key))
   (setv landed False)
   (if (is fresh None)
@@ -2853,7 +2866,7 @@
   ;; 段 10f 便 2: 割り込みで終わる手番も文脈の実測を session の cache に置く(settle-record と同じ 1 点の判断)。
   (<- percent (| int None) (context-percent-of batch.context))
   (<- measured AgentdState (with-context-percent state job.session-id percent))
-  (<- (end-turn-record drained.job-id batch.usage drained.pending-entries))
+  (<- (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark))
   (<- fresh (| AcpRow None) (AcpGetRow :key row.key))
   (setv target (if (is fresh None) row fresh))
   (<- status dict (status-object-of target))

@@ -64,10 +64,12 @@
   record-body-bytes-of
   record-ref-of
   record-stream-job-of
+  recorded-mark-merged
   recovered-record-of
   text-body
   tool-result-body
   tool-use-body
+  turn-record-marked-status
   turn-record-recorded-status])
 (import doeff_agents.sessionhost.acp.runtime [AgentdPreflightError initial-state run-tick settings-from-env])
 
@@ -171,6 +173,10 @@
     (setv status (. (get self.acp.rows f"{AGORA-KINDS-NAMESPACE}:{TURN-RECORD-KIND}:j-1") status))
     (assert (isinstance status dict))
     status)
+
+  (defn #^ int record-generation [self]
+    "turn-record の行の generation(行の書き 1 回で 1 進む — 書きの回数の物差し)。"
+    (. (get self.acp.rows f"{AGORA-KINDS-NAMESPACE}:{TURN-RECORD-KIND}:j-1") generation))
 
   (defn #^ list record-entries [self]
     (setv entries (.get (.record-status self) "entries" []))
@@ -359,11 +365,12 @@
   (assert (= (get (get stored 2) "input") {"file_path" "/work/a.txt"}) "道具の本文は入力そのもの")
   (assert (= (get (get stored 3) "output") "alpha"))
   (assert (= world.record.spool {}) "受理された batch が spool に残っている")
-  ;; 受理の答えが行に写る: recordRef = 本文の在処・recordedSeq = 受理済みの最大 producerSeq。
+  ;; 受理の答え(recordRef = 本文の在処・recordedSeq = 受理済みの最大 producerSeq)は、走っている手番では memory の刻印に
+  ;; 在り、行を単独では書かない(次の追記か手番の終わりの書きに同乗 — card acp:kanban-issue:ki-c418e597017a 便 3)。
   (setv status (.record-status world))
   (setv last-seq (get (get acp-entries -1) "seq"))
-  (assert (= (get status "recordRef") f"record:{CONVERSATION}/{STREAM}") status)
-  (assert (= (get status "recordedSeq") last-seq) status)
+  (assert (not-in "recordedSeq" status) "受理のためだけに行を書いた(status の全体の post-image が journal に 1 本増える)")
+  (assert (= (. (get world.state.jobs 0) recorded-mark) #(f"record:{CONVERSATION}/{STREAM}" last-seq)) world.state.jobs)
   (assert (not-in "recordRef" (.record-status plain)) "弁 off の世界に recordRef が在る")
   (assert (= (lfor line (.metrics-named world "agentd_record_append_total") (get line "outcome")) ["ok"]))
   (assert (= (lfor line (.metrics-named world "agentd_record_spool_depth") (get line "depth")) [0]))
@@ -379,9 +386,60 @@
   (assert (= (get (.record-status world) "recordRef") f"record:{CONVERSATION}/{STREAM}")))
 
 
+;; card acp:kanban-issue:ki-c418e597017a 便 3: 受理の刻印は行の次の書きに同乗する(単独の書きを撃たない)。
+;; 実測 2026-09-21(本番の journal の最新 2,000 件): turn-record の連続する書き 745 対のうち 375 対が recordedSeq だけの差で、
+;; journal の全 byte の 24.7% — 行の書きは status の全体(見出しの配列ごと)の post-image だから。
+(deftest test-the-acceptance-mark-rides-the-next-row-write-and-never-costs-a-write-of-its-own
+  (setv world (RecordWorld True))
+  (.tick world 0)
+  (setv first-burst (claude-events (.sid world) "hello"))
+  (.write-events world first-burst)
+  (.tick world 1000)
+  (setv after-first (.record-generation world))
+  (setv first-last (get (get (.record-entries world) -1) "seq"))
+  (assert (= world.record.spool {}) "1 つ目の batch が受理されていない")
+  (assert (not-in "recordedSeq" (.record-status world)))
+  ;; 出来事の無い拍は行を 1 度も書かない(刻印を書くためだけの書きが無い)。
+  (.tick world 1000)
+  (.tick world 1000)
+  (assert (= (.record-generation world) after-first) "出来事の無い拍に行を書いた")
+  ;; 次の出来事の追記の書き 1 回に、前の受理の刻印が同乗する。
+  (.write-events world (+ first-burst
+                          (stream-line {"type" "assistant"
+                                        "message" {"id" "msg_2" "role" "assistant" "model" "claude-opus-5"
+                                                   "content" [{"type" "text" "text" "again"}]
+                                                   "usage" {"input_tokens" 1 "output_tokens" 1}}})))
+  (.tick world 1000)
+  (assert (= (.record-generation world) (+ after-first 1)) "追記と受理で行を 2 回書いた")
+  (assert (= (get (.record-status world) "recordedSeq") first-last) "前の受理の刻印が追記の書きに乗っていない")
+  (assert (= (get (.record-status world) "recordRef") f"record:{CONVERSATION}/{STREAM}"))
+  (setv second-last (get (get (.record-entries world) -1) "seq"))
+  (assert (> second-last first-last))
+  (assert (= (. (get world.state.jobs 0) recorded-mark) #(f"record:{CONVERSATION}/{STREAM}" second-last))
+          "2 つ目の受理が memory の刻印に重なっていない")
+  ;; 手番の終わりの書きに最後の刻印が同乗する ⇒ 終わった手番の行は正確。
+  (setv before-end (.record-generation world))
+  (.finish-turn world.sessions (.sid world) (+ world.local.now-ms 100))
+  (.tick world 1000)
+  (assert (= world.state.jobs #()) world.local.logs)
+  (assert (= (get (.record-status world) "state") "ended"))
+  (assert (= (get (.record-status world) "recordedSeq") second-last))
+  (assert (= (.record-generation world) (+ before-end 1)) "手番の終わりに行を 2 回以上書いた")
+  ;; 純関数: 刻印は後ろへ戻さない・進まない刻印は status を変えない。
+  (assert (= (run (recorded-mark-merged None "record:c/s" 4)) #("record:c/s" 4)))
+  (assert (= (run (recorded-mark-merged #("record:c/s" 9) "record:c/s" 4)) #("record:c/s" 9)))
+  (assert (= (run (recorded-mark-merged #("record:c/s" 4) "record:c/s" 9)) #("record:c/s" 9)))
+  (setv base {"state" "running" "entries" [] "recordRef" "record:c/s" "recordedSeq" 7})
+  (assert (is (run (turn-record-marked-status base None)) base))
+  (assert (is (run (turn-record-marked-status base #("record:c/s" 7))) base))
+  (assert (= (get (run (turn-record-marked-status base #("record:c/s" 8))) "recordedSeq") 8))
+  (assert (= (get base "recordedSeq") 7) "元の status を書き換えた"))
+
+
 (deftest test-unsent-batch-stays-in-the-spool-and-lands-after-the-retry-period
   ;; 宛先あり届かない → 参加して spool(段 9f lane 9f-6): 参加の門は宣言の検で、届くかは検めない。
-  (assert (. (settings-from-env {"DOEFF_AGENTD_NODE_NAME" NODE RECORD-URL-ENV "http://127.0.0.1:1"}) record-enabled)
+  (assert (. (settings-from-env {"DOEFF_AGENTD_NODE_NAME" NODE RECORD-URL-ENV "http://127.0.0.1:1"
+                                  "DOEFF_AGENTD_CAPACITY" "1" "DOEFF_AGENTD_PLACES" "personal"}) record-enabled)
           "届かない宛先でも宣言が在れば参加する(届かないのは spool が受ける)")
   (setv world (RecordWorld True))
   (.tick world 0)
@@ -566,7 +624,8 @@
 
 (deftest test-join-record-table-derives-the-record-env-and-settings-read-the-valve
   (setv tables {"schema" JOIN-SCHEMA
-                "agentd" {"server" "http://acp:8868" "token_file" "/t/agentd.token" "state_dir" "/s"}
+                "agentd" {"server" "http://acp:8868" "token_file" "/t/agentd.token" "state_dir" "/s"
+                          "capacity" "1" "places" "personal"}
                 "record" {"url" "http://agora-record.example:8874"}})
   (setv spec (run (join-spec-of (JoinArgv :items #()) (JoinDeclaration :tables tables) "/state")))
   (assert (= spec.record-url "http://agora-record.example:8874"))
@@ -593,7 +652,8 @@
       (setv refused (str error))))
   (assert (in "[record].token_file" refused) "宣言に無い鍵を断らなかった")
   ;; 宛先あり → 参加(settings の弁は on — 段 9f lane 9f-6 の門を通った形)
-  (assert (. (settings-from-env {"DOEFF_AGENTD_NODE_NAME" "n" RECORD-URL-ENV "http://r:8874"}) record-enabled)))
+  (assert (. (settings-from-env {"DOEFF_AGENTD_NODE_NAME" "n" RECORD-URL-ENV "http://r:8874"
+                                  "DOEFF_AGENTD_CAPACITY" "1" "DOEFF_AGENTD_PLACES" "personal"}) record-enabled)))
 
 
 (deftest test-join-without-a-record-sink-is-refused-with-the-reason
@@ -620,13 +680,15 @@
       (except [error AgentdPreflightError]
         (return (str error))))
     "")
-  (setv unset (preflight-refusal-of {"DOEFF_AGENTD_NODE_NAME" NODE}))
+  (setv unset (preflight-refusal-of {"DOEFF_AGENTD_NODE_NAME" NODE "DOEFF_AGENTD_CAPACITY" "1" "DOEFF_AGENTD_PLACES" "personal"}))
   (assert (in "refuses to join" unset) unset)
   (assert (in "[record].url" unset) unset)
-  (assert (in RECORD-URL-ENV (preflight-refusal-of {"DOEFF_AGENTD_NODE_NAME" NODE RECORD-URL-ENV " "})))
+  (assert (in RECORD-URL-ENV (preflight-refusal-of {"DOEFF_AGENTD_NODE_NAME" NODE RECORD-URL-ENV " "
+                                                 "DOEFF_AGENTD_CAPACITY" "1" "DOEFF_AGENTD_PLACES" "personal"})))
   ;; 宣言 file に [record] が無い → join の env の束に宛先が無い → 同じ門で断る(宣言 → env → 門の一周)。
   (setv tables {"schema" JOIN-SCHEMA
-                "agentd" {"server" "http://acp:8868" "token_file" "/t/agentd.token" "state_dir" "/s"}})
+                "agentd" {"server" "http://acp:8868" "token_file" "/t/agentd.token" "state_dir" "/s"
+                          "capacity" "1" "places" "personal"}})
   (setv plan (run (join-plan-of (run (join-spec-of (JoinArgv :items #()) (JoinDeclaration :tables tables) "/state")))))
   (setv env (dict plan.env))
   (assert (not-in RECORD-URL-ENV env))
