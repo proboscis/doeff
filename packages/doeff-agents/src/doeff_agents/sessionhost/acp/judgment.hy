@@ -6233,8 +6233,10 @@
 (defk memory-baselines-with [baselines fold]
   {:pre [(: baselines dict) (: fold MemoryFold)]
    :post [(: % dict)]}
-  "畳み戻した 1 冊の結末で基準を進める。動くのは**撃てた冊だけ**(Unchanged / Unbased / 書けなかった冊は
-   据え置き — 撃っていない冊の基準を進めると、次の手番が席の編集を『触っていない』と読んで捨てる)。"
+  "畳み戻した 1 冊の結末で基準を進める。動くのは**撃てた冊**と、**行が手元の写しを証明した冊**
+   (規則 1・裁定 (f))の 2 つだけ。Unbased / 書けなかった冊と、規則 2a の Unchanged は据え置き —
+   撃ってもいない・証明も無い冊の基準を進めると、次の手番が席の編集を『触っていない』と読んで捨てる。
+   判ずるのは fold の欄(fold.baseline)で、ここでは何も比べない(判定点を増やさない)。"
   (when (is fold.baseline None)
     (return baselines))
   (setv next (dict baselines))
@@ -6253,9 +6255,11 @@
    mail-hold-has-two-exits が v2 6,503 byte → v3 4,620 byte へ痩せた — 触っていない古い写しが新しい行を
    巻き戻した)。基準は正本ではない(行が正本)— 『出した時の姿』を覚えているだけ。
 
-     1   行の sha256 == 手元          → Unchanged(行と置き場は一致 — 撃つ理由が無い)
+     1   行の sha256 == 手元          → Unchanged(proven-by-row True — 行が『置き場の写しは行の今の版
+                                          そのもの』を証明している。呼び手はこの拍で**基準を据える**)
      2   基準が在る
-       2a  手元 == 基準               → Unchanged(席は 1 字も触っていない。行が先へ動いていても**巻き戻さない**)
+       2a  手元 == 基準               → Unchanged(proven-by-row False — 席は 1 字も触っていない。行が
+                                          先へ動いていても**巻き戻さないし、基準も動かさない**)
        2b  行が無い                   → Append(基準だけ在って行が消えた — 409 が stream を読み直す合図)
        2c  基準の recordSeq == 行     → Supersede(conflicted False — 席が編集し、行は動いていない)
        2d  基準の recordSeq != 行     → Supersede(conflicted True・base-seq を名乗る — 席も編集し、行も
@@ -6267,15 +6271,21 @@
 
    行が在るのに recordSeq / version が読めない拍は今日どおり append に倒す。素の append は 409 で
    保存済みが勝つので、呼び手はその 409 を『行が消えて stream が残っている』の合図として stream を
-   読み直す(第 2 の語彙を足さない)。"
+   読み直す(第 2 の語彙を足さない)。
+
+   ⚠ 規則 1 と 2a は**同じ型**で返るのに、呼び手の 1 手が違う(基準を据える / 据えない)。割るのは
+   MemoryUnchanged.proven-by-row の 1 欄で、呼び手は**読むだけ**: 呼び手側で sha を比べ直すと判定点が
+   2 つになる。2a で基準を据えると、次の手番は 2c / 2d へ落ちて席が触っていない古い写しで行を巻き戻す —
+   この関数が閉じた実弾の形がそのまま戻る(依頼者の裁定 2026-09-21 (f)・c-H89Q の指摘)。"
   (setv spec (if (and (is-not row None) (isinstance row.spec dict)) row.spec {}))
   (setv name (.get spec MEMORY-SPEC-NAME-KEY))
   (setv label (cond (isinstance name str) name
                     (is-not baseline None) baseline.name
                     True ""))
-  ;; 1: 行と置き場が既に一致している(基準を見るまでもない)。
+  ;; 1: 行と置き場が既に一致している(基準を見るまでもない)。行がその一致を**証明**しているので、
+  ;;    呼び手はこの拍で基準を据えてよい — proven-by-row でそれを名乗る(2a は名乗らない)。
   (when (and (is-not row None) (= (.get spec MEMORY-SPEC-SHA256-KEY) sha256))
-    (return (MemoryUnchanged :name label)))
+    (return (MemoryUnchanged :name label :proven-by-row True)))
   (setv seq (.get spec MEMORY-SPEC-RECORD-SEQ-KEY))
   (setv version (.get spec MEMORY-SPEC-VERSION-KEY))
   (setv readable (and (isinstance seq int) (not (isinstance seq bool))
