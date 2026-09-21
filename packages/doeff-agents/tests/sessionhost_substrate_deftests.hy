@@ -8,6 +8,7 @@
 
 (require doeff-hy.macros [deftest defk deff <-])
 
+(import errno)
 (import glob)
 (import mmap)
 (import os)
@@ -19,6 +20,7 @@
 (import time)
 (import pytest)
 (import doeff [EffectBase run])
+(import sessionhost_launch_deftests [LaunchWorld fake-launch-substrate])
 
 (import doeff_agents.sessionhost.effects [
   fs-canonical-path
@@ -27,9 +29,17 @@
   fs-write-text-atomic
   fs-ensure-symlink
   fs-make-dirs
-  FS-ENSURE-SYMLINK-LINKED
-  FS-ENSURE-SYMLINK-OCCUPIED
-  FS-ENSURE-SYMLINK-UNCHANGED
+  fs-link-artifact
+  FsSymlinkOutcome
+  FS-ENSURE-SYMLINK-STATES
+  FS-LINK-ARTIFACT-STATES
+  FS-SYMLINK-LINKED
+  FS-SYMLINK-OCCUPIED
+  FS-SYMLINK-REFUSED
+  FS-SYMLINK-SAME-ENTITY
+  FS-SYMLINK-SOURCE-MISSING
+  FS-SYMLINK-TARGET-CONFLICT
+  FS-SYMLINK-UNCHANGED
   env-get
   clock-now
   tmux-new-session
@@ -37,6 +47,7 @@
   tmux-capture
   tmux-send-keys
   tmux-kill-session])
+(import doeff_agents.sessionhost.substrate :as substrate)
 (import doeff_agents.sessionhost.substrate [
   real-substrate
   ensure-symlink-outcome
@@ -362,24 +373,24 @@
     (setv link (os.path.join d "home" "skills"))
     ;; 何も居ない → 張る(親 dir も作る)
     (<- first (drive (fs-ensure-symlink link old-target)))
-    (assert (= first FS-ENSURE-SYMLINK-LINKED) first)
+    (assert (= (. first state) FS-SYMLINK-LINKED) first)
     (assert (= (os.path.realpath link) old-target))
     ;; 同じ先 → 触らない(inode も mtime も動かさない = 走っている席の見張りを起こさない)
     (setv before (os.lstat link))
     (<- second (drive (fs-ensure-symlink link old-target)))
-    (assert (= second FS-ENSURE-SYMLINK-UNCHANGED) second)
+    (assert (= (. second state) FS-SYMLINK-UNCHANGED) second)
     (setv after (os.lstat link))
     (assert (= before.st-ino after.st-ino))
     ;; 別の先 → 張り替える
     (<- third (drive (fs-ensure-symlink link new-target)))
-    (assert (= third FS-ENSURE-SYMLINK-LINKED) third)
+    (assert (= (. third state) FS-SYMLINK-LINKED) third)
     (assert (= (os.path.realpath link) new-target))
     ;; symlink でない実体が居る → 触らない(erosion guard)
     (setv occupied (os.path.join d "home" "real"))
     (with [f (open occupied "w" :encoding "utf-8")]
       (.write f "someone's real file"))
     (<- fourth (drive (fs-ensure-symlink occupied new-target)))
-    (assert (= fourth FS-ENSURE-SYMLINK-OCCUPIED) fourth)
+    (assert (= (. fourth state) FS-SYMLINK-OCCUPIED) fourth)
     (assert (not (os.path.islink occupied)))
     (with [f (open occupied :encoding "utf-8")]
       (assert (= (.read f) "someone's real file")))
@@ -416,6 +427,7 @@
   "子: 同拍で 1 回だけ張り、結果を 1 行で親へ返して即座に落ちる(**戻らない**)。"
   (try
     (race-spin-barrier shared index 2 (+ (time.monotonic) 30))
+    ;; str(outcome) は state(理由が在れば state (detail))— 旧来の 1 行の綴りのまま。
     (os.write write-fd (.encode f"ok:{(ensure-symlink-outcome link target)}" "utf-8"))
     (except [error BaseException]
       (try
@@ -576,6 +588,346 @@
     ;; 針: 読みが少なければ競りの窓を張れていない(0 回の読みで緑にならない)
     (assert (> reads 500) f"読みが {reads} 回では競りの窓を張れていない")
     (assert (= missing 0) f"根の無い瞬間を {missing} / {reads} 回見た")
+    (finally
+      (shutil.rmtree d :ignore-errors True))))
+
+
+;; ---------------------------------------------------------------------------
+;; 失敗の語彙(2026-09-22 — 設計 docs/design/symlink-verbs-fail-vocabulary-ZCN5BD)
+;; ---------------------------------------------------------------------------
+;;
+;; symlink を据える 2 動詞は「例外を投げない・決まった値のどれかを返す」と約束しているのに、
+;; **器(file system)が断った拍の値**を持っていなかった。断りは必ず起きる(権限・容量・
+;; 読み取り専用・同時実行)ので、語彙に無い断りは 2 つの出口しか持たない — 素の OSError が
+;; effect の外まで抜けるか、正常系の値に化けるか。下の検はその 2 つを塞ぐ。
+
+(defn race-child-links [shared index handler source target write-fd]
+  "子: 同拍で 1 回だけ敷設し、結果を 1 行で親へ返して即座に落ちる(**戻らない**)。
+   ⚠ ensure-symlink-outcome と違い、FsLinkArtifact の物理は handler の中に在るので
+   effect を駆動する(raw の関数が無い)。"
+  (try
+    (race-spin-barrier shared index 2 (+ (time.monotonic) 30))
+    (setv outcome (run (handler (fs-link-artifact source target))))
+    (os.write write-fd (.encode f"ok:{(. outcome state)}" "utf-8"))
+    (except [error BaseException]
+      (try
+        (os.write write-fd (.encode f"err:{(. (type error) __name__)}" "utf-8"))
+        (except [OSError] None)))
+    (finally
+      (os._exit 0))))
+
+
+(deftest test-fs-link-artifact-survives-two-seats-landing-on-one-target
+  ;; ⚑ 受入 1: 同じ敷設先へ 2 process が同拍で降りても、**例外 0・語彙の外 0・敷設先が
+  ;; 正しくない回 0**。直す前は「見てから張る」の 2 手だったので、見た後・張る前に相手が
+  ;; 張った拍で FileExistsError が effect の外まで抜けた(計画段の実測: 200 ラウンド中
+  ;; 184 / 196 = 92〜98 %)。家は資格ごとに鋳られ、同じ資格の複数の会話が 1 つの家へ同じ拍で
+  ;; 降りるので、これは理論上の窓ではない(現に届く敷設先 = claude の sessions-index.json と
+  ;; launch の workspaces-root/sibling)。
+  ;; ⚠ lock は足さない。家は process をまたぐので process の中の lock は届かない —
+  ;; だから thread ではなく **process** で撃つこと自体が検の本体。
+  (setv d (os.path.realpath (tempfile.mkdtemp)))
+  (try
+    (setv source (os.path.join d "rollout.jsonl"))
+    (with [f (open source "w" :encoding "utf-8")]
+      (.write f "{}"))
+    (setv handler (real-substrate "tmux"))
+    (setv failures [])
+    (setv outside [])
+    (setv wrong [])
+    (for [round-index (range 200)]
+      (setv target (os.path.join d f"home-{round-index}" "sessions" "rollout.jsonl"))
+      (setv shared (mmap.mmap -1 2))
+      (setv (get shared 0) 0)
+      (setv (get shared 1) 0)
+      (setv read-fds [])
+      (setv pids [])
+      (for [index (range 2)]
+        (setv [read-fd write-fd] (os.pipe))
+        (setv pid (os.fork))
+        (when (= pid 0)
+          (os.close read-fd)
+          (race-child-links shared index handler source target write-fd))
+        (os.close write-fd)
+        (.append read-fds read-fd)
+        (.append pids pid))
+      (setv deadline (+ (time.monotonic) 60))
+      (for [read-fd read-fds]
+        (setv line (race-read-line read-fd deadline))
+        (os.close read-fd)
+        (if (.startswith line "ok:")
+            ;; 語彙の中か(閉語彙の外を返していないか)
+            (when (not-in (cut line 3 None) FS-LINK-ARTIFACT-STATES)
+              (.append outside #(round-index line)))
+            ;; 例外が抜けた / 締切
+            (.append failures #(round-index line))))
+      (race-reap pids deadline)
+      (.close shared)
+      ;; 勝ち negative でも負けでも、据わるのは source を指す symlink 1 つだけ
+      (when (not (and (os.path.islink target)
+                      (= (os.path.realpath target) source)))
+        (.append wrong round-index)))
+    (assert (= failures []) f"同拍で落ちた敷設 {(len failures)} 件: {(cut failures 0 8)}")
+    (assert (= outside []) f"語彙の外を返した回 {(len outside)} 件: {(cut outside 0 8)}")
+    (assert (= wrong []) f"敷設先が正しくない回: {(cut wrong 0 8)}")
+    (finally
+      (shutil.rmtree d :ignore-errors True))))
+
+
+(defn container-refusal-homes [d]
+  "器の断りの 3 形を作り、#(名 link/target) の list を返す(設計 2.2 の表)。
+     親の位置に実体 file が居る / 家が書けない(r-x)/ 親 dir を作れない"
+  (setv blocker (os.path.join d "blocker"))
+  (with [f (open blocker "w" :encoding "utf-8")]
+    (.write f "a real file where a directory is required"))
+  (setv read-only (os.path.join d "read-only-home"))
+  (os.makedirs read-only)
+  (os.chmod read-only 0o555)
+  (setv read-only-parent (os.path.join d "read-only-parent"))
+  (os.makedirs read-only-parent)
+  (os.chmod read-only-parent 0o555)
+  [#("親の位置に実体 file" (os.path.join blocker "child" "seat"))
+   #("家が r-x" (os.path.join read-only "seat"))
+   #("親 dir を作れない" (os.path.join read-only-parent "sub" "seat"))])
+
+
+(defn restore-writable [d]
+  "後片付けのために r-x を戻す(戻さないと rmtree が中身を落とせない)。"
+  (for [name ["read-only-home" "read-only-parent"]]
+    (try
+      (os.chmod (os.path.join d name) 0o755)
+      (except [OSError] None))))
+
+
+(deftest test-fs-ensure-symlink-names-the-container-refusal
+  ;; ⚑ 受入 2(据え付けの側): 器の断り 3 形で refused-by-container + errno を返し、例外 0。
+  ;; 直す前は makedirs / symlink が try の外に在ったので、3 形とも素の OSError が
+  ;; effect の外まで抜けた(この動詞は raise しない約束なのに、その約束ごと破れて席が起きない)。
+  (when (= (os.geteuid) 0)
+    (pytest.skip "root は r-x を素通りするので器の断りを再現できない"))
+  (setv d (os.path.realpath (tempfile.mkdtemp)))
+  (try
+    (setv target (os.path.join d "skills-src"))
+    (os.makedirs target)
+    (for [#(name link) (container-refusal-homes d)]
+      (setv outcome (ensure-symlink-outcome link target))
+      (assert (isinstance outcome FsSymlinkOutcome) #(name outcome))
+      (assert (= (. outcome state) FS-SYMLINK-REFUSED) #(name (. outcome state)))
+      (assert (in (. outcome state) FS-ENSURE-SYMLINK-STATES) #(name outcome))
+      (assert (is-not (. outcome errno) None) #(name "errno が無い"))
+      ;; detail は「どの syscall が何と言ったか」— 理由の無い断りは無益な文言にしかならない
+      (assert (is-not (. outcome detail) None) #(name "detail が無い"))
+      (assert (in (str (. outcome errno)) (str (. outcome errno))))
+      ;; 名乗りには理由が載る(ログの 1 行がそのまま診断になる)
+      (assert (.startswith (str outcome) f"{FS-SYMLINK-REFUSED} (") (str outcome)))
+    (finally
+      (restore-writable d)
+      (shutil.rmtree d :ignore-errors True))))
+
+
+(deftest test-fs-link-artifact-names-the-container-refusal
+  ;; ⚑ 受入 2(敷設の側): **同じ 3 形が FsLinkArtifact にも在る**(計画段の実測 2.2 —
+  ;; 依頼者は据え付けの側だけの話と見ていたが、敷設の側にも全部在った)。
+  ;; 同時実行の直しだけでは 3 形とも抜けたままだったことも実測済み。
+  (when (= (os.geteuid) 0)
+    (pytest.skip "root は r-x を素通りするので器の断りを再現できない"))
+  (setv d (os.path.realpath (tempfile.mkdtemp)))
+  (try
+    (setv source (os.path.join d "rollout.jsonl"))
+    (with [f (open source "w" :encoding "utf-8")]
+      (.write f "{}"))
+    (setv handler (real-substrate "tmux"))
+    (for [#(name target) (container-refusal-homes d)]
+      (setv outcome (run (handler (fs-link-artifact source target))))
+      (assert (isinstance outcome FsSymlinkOutcome) #(name outcome))
+      (assert (= (. outcome state) FS-SYMLINK-REFUSED) #(name (. outcome state)))
+      (assert (in (. outcome state) FS-LINK-ARTIFACT-STATES) #(name outcome))
+      (assert (is-not (. outcome errno) None) #(name "errno が無い"))
+      (assert (is-not (. outcome detail) None) #(name "detail が無い")))
+    (finally
+      (restore-writable d)
+      (shutil.rmtree d :ignore-errors True))))
+
+
+(defn blinded-lstat [path]
+  "その 1 つの path だけ『何も居ない』に見せる os.lstat を返す。
+
+   rename の枝は、見分け(1 回の lstat)と rename の**間に**実体が現れた拍にだけ届く —
+   実体が見分けの時点で据わっていれば erosion guard が先に当たる(そちらは
+   test-fs-ensure-symlink-three-outcomes が押さえている)。残る窓は設計 docstring が
+   名指している既知の 1 つで、自然には掴めないので syscall の境界で再現する。"
+  (setv real-lstat os.lstat)
+  (defn blinded [candidate #* args #** kwargs]
+    (when (= candidate path)
+      (raise (FileNotFoundError errno.ENOENT "No such file or directory" path)))
+    (real-lstat candidate #* args #** kwargs))
+  blinded)
+
+
+(deftest test-fs-ensure-symlink-splits-the-rename-errno
+  ;; ⚑ 受入 3: rename(2) の except を **errno で割る**。直す前は無型の except OSError が
+  ;; すべてを「実体が居る」と名乗っていたので、権限や容量で断られた拍にも
+  ;; occupied-by-real-entity が出て、運用者が**居もしない実体を手で片付けに**行った。
+  ;; EISDIR / ENOTEMPTY / EEXIST は POSIX が rename に定めた「宛先に実体が据わっている」の
+  ;; 綴りなので Darwin 固有ではない(実測 = 設計 2.3: 空の dir も中身入りの dir も EISDIR)。
+  (setv d (os.path.realpath (tempfile.mkdtemp)))
+  (setv real-lstat os.lstat)
+  (setv real-replace os.replace)
+  (try
+    (setv target (os.path.join d "skills-src"))
+    (os.makedirs target)
+    ;; (a) 空の dir が rename に当たる → occupied(EISDIR)
+    (setv empty-dir (os.path.join d "home" "empty"))
+    (os.makedirs empty-dir)
+    (try
+      (setv os.lstat (blinded-lstat empty-dir))
+      (setv first (ensure-symlink-outcome empty-dir target))
+      (finally
+        (setv os.lstat real-lstat)))
+    (assert (= (. first state) FS-SYMLINK-OCCUPIED) first)
+    (assert (= (. first errno) errno.EISDIR) first)
+    (assert (in "rename" (. first detail)) first)
+    (assert (os.path.isdir empty-dir))
+    (assert (not (os.path.islink empty-dir)))
+    ;; (b) 中身入りの dir が rename に当たる → occupied(EISDIR)
+    (setv full-dir (os.path.join d "home" "full"))
+    (os.makedirs full-dir)
+    (with [f (open (os.path.join full-dir "inside.txt") "w" :encoding "utf-8")]
+      (.write f "x"))
+    (try
+      (setv os.lstat (blinded-lstat full-dir))
+      (setv second (ensure-symlink-outcome full-dir target))
+      (finally
+        (setv os.lstat real-lstat)))
+    (assert (= (. second state) FS-SYMLINK-OCCUPIED) second)
+    (assert (= (. second errno) errno.EISDIR) second)
+    (assert (= (os.listdir full-dir) ["inside.txt"]) (os.listdir full-dir))
+    ;; (c) それ以外の OSError は **refused**(実体を名乗らない)。自然には出ない errno なので
+    ;; syscall の境界で注入する — 割り方そのものが検の対象。
+    (setv link (os.path.join d "home" "seat"))
+    (defn refusing-replace [src dst]
+      (raise (OSError errno.EACCES "Permission denied")))
+    (try
+      (setv os.replace refusing-replace)
+      (setv third (ensure-symlink-outcome link target))
+      (finally
+        (setv os.replace real-replace)))
+    (assert (= (. third state) FS-SYMLINK-REFUSED) third)
+    (assert (= (. third errno) errno.EACCES) third)
+    (assert (in "rename" (. third detail)) third)
+    ;; 仮は自分のぶんだけ掃除して名乗る — 家に残骸を残さない
+    (assert (= (sorted (os.listdir (os.path.join d "home"))) ["empty" "full"])
+            (os.listdir (os.path.join d "home")))
+    ;; ENOTEMPTY / EEXIST も「据わっている」側(集合の綴りが動いたら赤)
+    (for [code [errno.EISDIR errno.ENOTEMPTY errno.EEXIST]]
+      (assert (in code substrate._RENAME-OCCUPIED-ERRNOS) code))
+    (finally
+      (setv os.lstat real-lstat)
+      (setv os.replace real-replace)
+      (shutil.rmtree d :ignore-errors True))))
+
+
+(deftest test-fs-symlink-outcome-keeps-the-old-log-word
+  ;; ⚑ 受入 5: **旧側の値を運ぶ**。ログの f"outcome={outcome}" は理由が無い限り
+  ;; 綴りそのもの(既存 6 語の綴りは 1 ビットも変えない)。理由が在る時だけ
+  ;; "state (detail)" になる。
+  (for [state [FS-SYMLINK-LINKED FS-SYMLINK-UNCHANGED FS-SYMLINK-OCCUPIED
+               FS-SYMLINK-SOURCE-MISSING FS-SYMLINK-SAME-ENTITY
+               FS-SYMLINK-TARGET-CONFLICT FS-SYMLINK-REFUSED]]
+    (assert (= (str (FsSymlinkOutcome :state state)) state) state))
+  (assert (= (str (FsSymlinkOutcome :state FS-SYMLINK-REFUSED
+                                    :errno 13
+                                    :detail "symlink: EACCES Permission denied"))
+             "refused-by-container (symlink: EACCES Permission denied)"))
+  ;; record と str の比較は **常に誤り** — 移行で黙って False になる代わりに声を出す
+  (setv outcome (FsSymlinkOutcome :state FS-SYMLINK-LINKED))
+  (with [(pytest.raises TypeError)]
+    (= outcome "linked"))
+  (with [(pytest.raises TypeError)]
+    (= "linked" outcome)))
+
+
+;; ---------------------------------------------------------------------------
+;; 偽ハンドラの同型性(受入 6 — 2026-09-22)
+;; ---------------------------------------------------------------------------
+;;
+;; 台本の substrate(sessionhost_launch_deftests の LaunchWorld)は、実物と**同じ
+;; effect 契約の fake** でなければならない。片方が文字列・片方がレコードだと、
+;; 台本で緑の code が本番で黙って False を踏む(移行の第 2 の契約)。
+;; ⚠ 台本の世界では器は断らないので refused-by-container は出ない。出ないことも
+;;    契約のうち(errno / detail は None)。
+
+(deftest test-fake-substrate-returns-the-same-symlink-outcome-type
+  (setv d (os.path.realpath (tempfile.mkdtemp)))
+  (try
+    (setv handler (real-substrate "tmux"))
+    (setv world (LaunchWorld))
+    (setv drive-fake (fake-launch-substrate world))
+    (setv first-target (os.path.join d "skills-v1"))
+    (setv second-target (os.path.join d "skills-v2"))
+    (os.makedirs first-target)
+    (os.makedirs second-target)
+    (setv link (os.path.join d "home" "skills"))
+    ;; 台本の世界にも同じ実体を置く(dir は listings、file は fs)
+    (setv (get world.listings first-target) [])
+    (setv (get world.listings second-target) [])
+    (defn both [program-real program-fake]
+      "実物と台本を同じ拍で撃ち、#(実物 台本) を返す。"
+      #((run (handler program-real)) (run (drive-fake program-fake))))
+    (defn same-shape [name real fake]
+      (assert (isinstance real FsSymlinkOutcome) #(name "real" real))
+      (assert (isinstance fake FsSymlinkOutcome) #(name "fake" fake))
+      (assert (= (. real state) (. fake state)) #(name (. real state) (. fake state)))
+      ;; 台本の器は断らない
+      (assert (is (. fake errno) None) #(name (. fake errno)))
+      (assert (is (. fake detail) None) #(name (. fake detail))))
+    ;; 据え付け 4 値のうち、台本が表せる 3 つ
+    (setv [r f] (both (fs-ensure-symlink link first-target)
+                      (fs-ensure-symlink link first-target)))
+    (same-shape "何も居ない" r f)
+    (assert (= (. r state) FS-SYMLINK-LINKED) r)
+    (setv [r f] (both (fs-ensure-symlink link first-target)
+                      (fs-ensure-symlink link first-target)))
+    (same-shape "同じ先" r f)
+    (assert (= (. r state) FS-SYMLINK-UNCHANGED) r)
+    (setv [r f] (both (fs-ensure-symlink link second-target)
+                      (fs-ensure-symlink link second-target)))
+    (same-shape "別の先" r f)
+    (assert (= (. r state) FS-SYMLINK-LINKED) r)
+    (setv occupied (os.path.join d "home" "real"))
+    (with [file (open occupied "w" :encoding "utf-8")]
+      (.write file "someone's real file"))
+    (setv (get world.fs occupied) "someone's real file")
+    (setv [r f] (both (fs-ensure-symlink occupied first-target)
+                      (fs-ensure-symlink occupied first-target)))
+    (same-shape "実体が居る" r f)
+    (assert (= (. r state) FS-SYMLINK-OCCUPIED) r)
+    ;; 敷設 5 値のうち、台本が表せる 4 つ
+    (setv source (os.path.join d "rollout.jsonl"))
+    (setv artifact (os.path.join d "target-home" "rollout.jsonl"))
+    (setv [r f] (both (fs-link-artifact source artifact)
+                      (fs-link-artifact source artifact)))
+    (same-shape "source 不在" r f)
+    (assert (= (. r state) FS-SYMLINK-SOURCE-MISSING) r)
+    (with [file (open source "w" :encoding "utf-8")]
+      (.write file "{}"))
+    (setv (get world.fs source) "{}")
+    (setv [r f] (both (fs-link-artifact source artifact)
+                      (fs-link-artifact source artifact)))
+    (same-shape "敷設先が空いている" r f)
+    (assert (= (. r state) FS-SYMLINK-LINKED) r)
+    (setv [r f] (both (fs-link-artifact source artifact)
+                      (fs-link-artifact source artifact)))
+    (same-shape "同一実体" r f)
+    (assert (= (. r state) FS-SYMLINK-SAME-ENTITY) r)
+    (setv other (os.path.join d "other.jsonl"))
+    (with [file (open other "w" :encoding "utf-8")]
+      (.write file "{}"))
+    (setv (get world.fs other) "{}")
+    (setv [r f] (both (fs-link-artifact other artifact)
+                      (fs-link-artifact other artifact)))
+    (same-shape "別実体が据わっている" r f)
+    (assert (= (. r state) FS-SYMLINK-TARGET-CONFLICT) r)
     (finally
       (shutil.rmtree d :ignore-errors True))))
 

@@ -39,8 +39,10 @@ def test_symlink_install_outside_the_one_verb_is_rejected() -> None:
     findings = _semgrep_results(
         root / ".semgrep.yaml", FIXTURE, cwd=root / "tests/semgrep/fixtures/python"
     )
-    # 2 行目 = os.symlink / 3 行目 = Path.symlink_to。委ねる形と読みの syscall は外れる。
-    assert _hits(findings, RULE) == [2, 3]
+    # 2 行目 = os.symlink / 3 行目 = Path.symlink_to / 4 行目 = shell の `ln -sfn`
+    # (BSD の ln は原子的でない — 規則の文言が禁じている物理の中で最悪)。
+    # 委ねる形と読みの syscall は外れる。
+    assert _hits(findings, RULE) == [2, 3, 4]
 
 
 def test_the_one_verb_itself_stays_green() -> None:

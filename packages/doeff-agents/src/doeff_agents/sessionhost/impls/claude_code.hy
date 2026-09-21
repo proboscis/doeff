@@ -29,6 +29,7 @@
   DeliverMessage
   ProbeConversationActivity
   RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE
+  RESUME-ERR-TRANSPLANT-REFUSED
   TransplantConversation
   WireResultChannel
   fs-canonical-path
@@ -36,6 +37,8 @@
   fs-file-exists
   fs-file-mtime
   fs-link-artifact
+  FS-SYMLINK-REFUSED
+  FS-SYMLINK-SOURCE-MISSING
   fs-list-dir
   fs-read-text
   fs-write-text-atomic
@@ -528,8 +531,12 @@
                 本体は skills の dir を見張っていて、張り替えると走っている席にも効く(§3.5)
    知らない kind は loud に落ちる(名簿と器がずれたまま黙って飛ばさない)。
 
-   ⚠ **名乗りは動詞が返した 3 値そのもの**(D1b): 「やろうとしたこと」ではなく起きたことを書く。
+   ⚠ **名乗りは動詞が返した 4 値そのもの**(D1b): 「やろうとしたこと」ではなく起きたことを書く。
    実体が居て張れなかった拍(occupied-by-real-entity)は、その語のまま 1 行に出る。
+   器が断った拍(refused-by-container)も同じく 1 行に出て、**理由(errno と syscall)が
+   その行に載る**(2026-09-22)。ここで先に落とさないのは、容量切れ・読み取り専用なら
+   セッションの起動が別の場所でも失敗する見込みが高く、ここで落とすと診断が遠のくため —
+   黙って skills を入れない形だけが消える。
 
    ⚠ 射程: 据え付けは**起こす拍**ちょうど。降りた process の続き(headless.continue-headless-process)は
    この関数を通らない — 家は session の生涯で残るので普段の手番は影響を受けないが、正本の path が
@@ -785,7 +792,7 @@
     (return {"ok" True "action" "same-home"}))
   (<- outcome (fs-link-artifact source-transcript
                                 f"{target-project}/{conv-id}.jsonl"))
-  (when (= outcome "source-missing")
+  (when (= (. outcome state) FS-SYMLINK-SOURCE-MISSING)
     (return {"ok" False
              "code" RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE
              "message" (+ f"session.resume: transcript "
@@ -794,6 +801,18 @@
                           "transplant requires the source transcript "
                           "(resume-physics.md probe (a): the real CLI fails "
                           "loud without it)")}))
+  ;; 2026-09-22: 器が敷設を断った(権限 / 容量 / 読み取り専用)。transcript は在るので
+  ;; transcript-not-discoverable では**ない** — その語を当てると運用者が居もしない
+  ;; transcript を探しに行く。起動してから実 CLI が 120 秒かけて死ぬのを前倒しする、
+  ;; という R10 の設計思想はそのまま(必須 artifact なので typed reject)。
+  (when (= (. outcome state) FS-SYMLINK-REFUSED)
+    (return {"ok" False
+             "code" RESUME-ERR-TRANSPLANT-REFUSED
+             "message" (+ f"session.resume: transcript "
+                          f"'{source-transcript}' exists but could not be "
+                          f"transplanted into '{target-project}' — the "
+                          f"container refused the install "
+                          f"({(. outcome detail)}) (transplant-refused)")}))
   ;; 周辺 artifact は best-effort(share.py の残り 3 対と同型)。
   (<- _ (fs-link-artifact f"{source-project}/sessions-index.json"
                           f"{target-project}/sessions-index.json"))
@@ -801,7 +820,9 @@
                           f"{target-dir}/session-env/{conv-id}"))
   (<- _ (fs-link-artifact f"{source-dir}/file-history/{conv-id}"
                           f"{target-dir}/file-history/{conv-id}"))
-  {"ok" True "action" outcome})
+  ;; wire には state だけを載せる(record は host の中だけ — JSON 化できない値を
+  ;; 辞書へ入れる形は残さない)。
+  {"ok" True "action" (. outcome state)})
 
 
 ;; ---------------------------------------------------------------------------
