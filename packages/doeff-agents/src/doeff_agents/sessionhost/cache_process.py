@@ -6,8 +6,11 @@ from doeff_agents.sessionhost.cache_host_model import CacheProcessIdentity
 
 
 def identify_process(pid: int) -> CacheProcessIdentity | None:
+    """終了していないprocessだけを識別する。未回収のPIDは稼働の根拠にしない。"""
     try:
         process = psutil.Process(pid)
+        if process.status() == psutil.STATUS_ZOMBIE:
+            return None
         return CacheProcessIdentity(pid, process.create_time())
     except psutil.NoSuchProcess:
         return None
