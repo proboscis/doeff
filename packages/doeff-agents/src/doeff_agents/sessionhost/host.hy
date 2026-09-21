@@ -70,6 +70,7 @@
   monitor-cycle
   session-env-admission-error
   tail-chars
+  TURN-CARRIED-KEYS
   turn-stalled])
 (import doeff_agents.sessionhost.schema [validate-against-schema schema-admission-error])
 (import doeff_agents.sessionhost.substrate [real-substrate])
@@ -1377,8 +1378,12 @@
       ;; 通せば新しい会話に親の記憶が黙って付く — 直している誤帰属そのもの。黙殺せず断る。
       ;; memory_files(置き場へ書き出す冊そのもの)も同じ理由で resume 専用 — 親の記憶を
       ;; 新しい会話の置き場へ書き出したら、誤帰属は置き場の名ではなく**中身**で起きる。
-      (for [banned #("binding" "new_session_id" "expected_result"
-                     "context_file" "launch_attribution" "memory_dir" "memory_files")]
+      ;; ⚠ 記憶の族は**名簿から**採る(policy.TURN-CARRIED-KEYS の 1 点・card ki-6b5c4b270ca0):
+      ;; 手で並べると、族に欄を足した便がこの断りを落とし、fork が親の値をそのまま持って行く
+      ;; (memory_retired_files ならば、親の退役した名で**新しい会話の置き場の file を消す**)。
+      (for [banned (+ #("binding" "new_session_id" "expected_result"
+                        "context_file" "launch_attribution")
+                      TURN-CARRIED-KEYS)]
         (when (in banned p)
           (raise (RuntimeError
                    (+ f"invalid params for session.fork: `{banned}` is "

@@ -49,6 +49,7 @@
   FsCanonicalPath
   FsComposeHomeView
   FsReadText
+  FsRemoveFile
   FsWriteTextAtomic
   GitRun
   FsMakeDirs
@@ -302,6 +303,11 @@
     (.append world.trace #("fs-write" path))
     (setv (get world.fs path) text)
     (resume None))
+  (FsRemoveFile [path]
+    ;; card acp:kanban-issue:ki-6b5c4b270ca0: 名指した 1 file を落とす(不在は成功)。
+    ;; 痕跡に残すのは「宣言外の path を触らない」を**消し**でも撃てるようにするため。
+    (.append world.trace #("fs-remove" path))
+    (resume (is-not (.pop world.fs path None) None)))
   (FsMakeDirs [path]
     (resume None))
   (FsEnsureSymlink [link target]

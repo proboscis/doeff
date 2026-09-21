@@ -478,6 +478,11 @@ MEMORY_RESERVED_FILES: tuple[str, ...] = (MEMORY_INDEX_FILE, MEMORY_BASE_FILE)
 #: charter が運ぶ記憶の本(起こす腕が行から読んで載せ、器の側が置き場へ書き出す)。ACP の行へは書かない
 #: (history / first_turn と同じく起こすためだけの値)。
 CHARTER_MEMORY_FILES_KEY: str = "memory_files"
+#: charter が運ぶ**取り除く file の名**(退役した行と同じ名前ちょうど・card acp:kanban-issue:ki-6b5c4b270ca0)。
+#: 置き場はエージェントが触る面なので、退役した冊の file は水入れが書かないだけでは消えない ⇒ 残った file を
+#: 次の手番の畳み戻しが読んで、退役を毎回 取り消していた。⚠ 名は**行から**来る(器は名を組まない・行を読まない):
+#: 器が名を組むと、行に無い名前の file を消す枝がこの層に生え、手番の途中に席が書いた記憶を消せるようになる。
+CHARTER_MEMORY_RETIRED_FILES_KEY: str = "memory_retired_files"
 #: 自動記憶の置き場(会話 id から導いた 1 つ・ADR-DOE-AGENTS-006 R11)を運ぶ charter の欄。
 #: 綴りの家をここに置くのは、本文(上)と置き場が**同じ族**だから — 族のどちらかだけを名簿へ手で足す
 #: 便が、もう片方を落としたまま通った(card acp:kanban-issue:ki-a40292ed30d9)。
@@ -628,6 +633,7 @@ CHARTER_CARRIED_KEYS: tuple[str, ...] = (
     CHARTER_AUTO_COMPACT_WINDOW_KEY,
     CHARTER_MEMORY_DIR_KEY,
     CHARTER_MEMORY_FILES_KEY,
+    CHARTER_MEMORY_RETIRED_FILES_KEY,
 )
 
 #: 段 10 lane 10n: agent の種類ごとの割り込みの能力(node の status.capabilities[kind].interrupt の閉語彙):
@@ -1944,6 +1950,39 @@ class MemoryUnbased:
 
 
 @dataclass(frozen=True)
+class MemoryRetire:
+    """置き場から消えた冊(card acp:kanban-issue:ki-6b5c4b270ca0)— **控えに在って手元に無い** =
+    エージェントがこの手番で撤回した。行の ``status.state`` を ``retired`` にする。本文の版は 1 つも
+    消さない(tombstone を撃たない — 記録の鎖はそのまま残り、同じ鍵で戻れる)。
+
+    ⚠ 立つのは控え(MEMORY.base.json)に**その名が在る**拍ちょうど。控えは『器がこの手番の頭に
+    **現に書けた**冊』の claim check なので、控えに名が在る = その file は確かに置き場に在った。
+    控えが無い置き場(旧い版の機体・生まれたての pod・読めない控え)は控えが空に倒れる ⇒ この語は
+    1 度も立たない(実測 2026-09-21 会社 Mac: 置き場 278 会話・記憶 1,025 file に対し控えの file は 0 個
+    — この機体は 1 件も退役させない)。控えを守りに使わずに『置き場に無い』だけで撃つと、未修正の
+    機体の空の置き場が全件を退役させる。"""
+
+    name: str
+
+
+@dataclass(frozen=True)
+class MemoryRevive:
+    """退役した行に、**行の claim check と中身の違う** file が置き場に現れた = エージェントが同じ名前で
+    書き直した。本文を記録の stream へ重ね、行の ``status.state`` を ``current`` へ戻す(identityKey が
+    同じ鍵で戻れるのは identitySupersedes を宣言していないから — 法 575b1e の context)。
+
+    撃ち先は行の claim check の版。行は記録の頭の遅れる投影なので 409 は起き得るが、それは
+    ``MemorySupersede`` と同じ『頭が動いた』の合図で、呼び手が頭を読み直して重ねる(枝を増やさない)。
+
+    ⚠ 中身が行と**同じ** file は復活ではなく残骸(旧い機体の置き場に残った写し)⇒ ``MemoryUnchanged``。
+    残骸で復活させると、退役が別の機体の古い写しで毎手番 取り消される。"""
+
+    name: str
+    record_seq: int
+    version: int
+
+
+@dataclass(frozen=True)
 class MemoryBaseline:
     """手番の頭に置き場へ出した 1 冊の claim check(= 基準の 1 項)。正本ではない(行が正本)— 手元の写しが
     出した時のままかを次の畳み戻しが判ずるためだけに置く。"""
@@ -1970,6 +2009,13 @@ class MemoryFold:
     unchanged: bool = False
     unbased: bool = False
     conflicted: bool = False
+    #: card acp:kanban-issue:ki-6b5c4b270ca0: 行を ``retired`` にした冊(置き場から消えた = 撤回)。
+    #: ``written`` とは別の欄 — 退役は本文を 1 byte も書かない(記録の stream は 1 版も動かない)ので、
+    #: written に混ぜると計器の「書けた冊」が撤回の数で膨らむ。控えの項もこの拍で落とす。
+    retired: bool = False
+    #: 退役した行に中身の違う file が現れて ``current`` へ戻した冊。本文は書くので ``written`` も立つ —
+    #: この欄は「戻した」の側だけを名乗る(計器で撤回と復活の往復が見える)。
+    revived: bool = False
     reason: str | None = None
     baseline: MemoryBaseline | None = None
     base_seq: int | None = None
@@ -1977,7 +2023,27 @@ class MemoryFold:
 
 
 #: 1 冊の書き方(法 ACP 575b1e)。突き合わせるのは 3 点 — 手元・行・基準(judgment.memory-write-verdict)。
-MemoryWriteVerdict: TypeAlias = "MemoryUnchanged | MemoryAppend | MemorySupersede | MemoryUnbased"
+#: card acp:kanban-issue:ki-6b5c4b270ca0 で **手元が無い**(置き場に file が無い)拍と**行が退役している**拍が
+#: 同じ関数に入り、撤回(MemoryRetire)と復活(MemoryRevive)がこの語彙に加わった。
+MemoryWriteVerdict: TypeAlias = (
+    "MemoryUnchanged | MemoryAppend | MemorySupersede | MemoryUnbased | MemoryRetire | MemoryRevive"
+)
+
+
+@dataclass(frozen=True)
+class MemoryTurnFiles:
+    """手番の頭に器へ渡す記憶の荷(agentd.memory-files-for-turn の答え)。
+
+    ``files`` = 置き場へ書き出す file の列(冊 + 索引 + 控え)。
+    ``swept`` = 置き場から**取り除く** file の名の列 = 退役した行と同じ名前ちょうど
+                (card acp:kanban-issue:ki-6b5c4b270ca0)。
+
+    ⚠ 2 つを 1 つの型で運ぶのは、**同じ拍・同じ書き手(器)で**置き場へ当てるため: 別の腕が掃除を
+    持つと『冊は書けたが掃除は落ちた』が起き、退役した冊の file が残って次の畳み戻しが読む(控えを
+    冊と同じ列に載せたのと同じ理由 — judgment.memory-files-of の頭注)。"""
+
+    files: tuple[JSONObject, ...] = ()
+    swept: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

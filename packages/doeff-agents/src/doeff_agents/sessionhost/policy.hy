@@ -324,7 +324,7 @@
 ;; ⚠ **欄を 1 つ足す時に数え直すのはこの 2 つの集合だけ**(名簿を 5 つ数えない)。
 ;;   落ちたら赤になる検 = tests/sessionhost_charter_reaches_the_seat_deftests.hy
 ;;   (charter の欄を反射で数え、席へ届かない欄を 1 つでも見つけたら落ちる)。
-(setv TURN-CARRIED-KEYS #("memory_dir" "memory_files"))
+(setv TURN-CARRIED-KEYS #("memory_dir" "memory_files" "memory_retired_files"))
 
 ;; 席へ運ぶ欄の全体(旗 + 手番の荷)。wire の受理形と蘇生の名簿はこれを写す。
 (setv CHARTER-CARRIED-KEYS (+ LAUNCH-FLAG-KEYS TURN-CARRIED-KEYS))

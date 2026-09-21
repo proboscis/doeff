@@ -34,11 +34,13 @@
   CHARTER-KEYS-AGENTD-CONSUMES
   CHARTER-MEMORY-DIR-KEY
   CHARTER-MEMORY-FILES-KEY
+  CHARTER-MEMORY-RETIRED-FILES-KEY
   MEMORY-BASE-FILE
   MEMORY-FILE-SUFFIX
   MEMORY-INDEX-FILE
   MemoryBaseline
-  MemoryBook])
+  MemoryBook
+  MemoryTurnFiles])
 (import doeff_agents.sessionhost.acp.judgment [
   memory-baseline-text-of
   memory-baselines-of-text
@@ -49,6 +51,7 @@
   ClockNow
   EnvGet
   FsMakeDirs
+  FsRemoveFile
   FsWriteTextAtomic
   HeadlessDeliver
   HeadlessPoll
@@ -70,6 +73,7 @@
 (import doeff_agents.sessionhost.impls.claude_code [CLAUDE-MEMORY-BASE-FILE
                                                    CLAUDE-MEMORY-FILE-SUFFIX
                                                    CLAUDE-MEMORY-FILES-KEY
+                                                   CLAUDE-MEMORY-RETIRED-FILES-KEY
                                                    CLAUDE-MEMORY-INDEX-FILE])
 
 (import sessionhost_launch_deftests [LaunchWorld launch-params run-launch])
@@ -107,7 +111,9 @@
                     "memory_dir" MEMORY-HOME
                     "memory_files" [{"name" "a.md" "text" "A"}
                                     {"name" MEMORY-INDEX-FILE "text" "# MEMORY\n"}
-                                    {"name" MEMORY-BASE-FILE "text" "{\"books\": {}}\n"}]})
+                                    {"name" MEMORY-BASE-FILE "text" "{\"books\": {}}\n"}]
+                    ;; 退役した行と同じ名前で置き場から取り除く file(card ki-6b5c4b270ca0)。
+                    "memory_retired_files" ["gone.md"]})
 
 
 (defn #^ dict probe-charter []
@@ -221,6 +227,7 @@
   (defn __init__ [self]
     (setv self.rows {})
     (setv self.fs {})        ;; path → 本文(器が置き場へ書いた file)
+    (setv self.removed [])   ;; 器が置き場から取り除いた path(card ki-6b5c4b270ca0)
     (setv self.dirs (set))
     (setv self.log-lines [])
     (setv self.built [])     ;; BuildHeadlessLaunch が受けた params(= 席に届いた欄)
@@ -249,6 +256,10 @@
   (FsWriteTextAtomic [path text tmp-suffix]
     (setv (get world.fs path) text)
     (resume None))
+  (FsRemoveFile [path]
+    ;; card acp:kanban-issue:ki-6b5c4b270ca0: 名指した 1 file を落とす(不在は成功)。
+    (.append world.removed path)
+    (resume (is-not (.pop world.fs path None) None)))
   (HeadlessPoll [session-name]
     ;; 降りている = 次の手番は「起こし直す腕」を通る(claude の普段の手番)。
     (resume None))
@@ -453,8 +464,8 @@
 (deftest test-the-index-the-agentd-derives-from-the-rows-reaches-the-seat
   ;; 索引 MEMORY.md は file としての正本を持たず、行から組み直される(memory-files-of)。
   ;; その索引も同じ 1 枚の名簿を渡る — 渡らないと置き場に索引だけが古いまま残る。
-  (<- files tuple (memory-files-of #() {}))
-  (assert (= (lfor f files (get f "name")) [MEMORY-INDEX-FILE MEMORY-BASE-FILE]) files))
+  (<- turn MemoryTurnFiles (memory-files-of #() {} #()))
+  (assert (= (lfor f turn.files (get f "name")) [MEMORY-INDEX-FILE MEMORY-BASE-FILE]) turn))
 
 
 ;; ---------------------------------------------------------------------------
@@ -541,7 +552,8 @@
   (setv baselines (dfor book books book.name
                         (MemoryBaseline :name book.name :record-seq (+ 3 (len book.name))
                                         :sha256 (* "a" 64) :version 2)))
-  (<- files tuple (memory-files-of books baselines))
+  (<- turn MemoryTurnFiles (memory-files-of books baselines #()))
+  (setv files turn.files)
   (setv charter {"session_id" "s1" "session_name" "doeff-s1" "agent_type" "claude"
                  "work_dir" "/work/dir" "lifecycle" "run_to_completion"
                  "binding" {"kind" "claude-code" "config_dir" "/x/claude"}
@@ -602,3 +614,61 @@
   (assert (in "books=2" line) line)
   (assert (in "declared=5" line) line)
   (assert (in "base=1" line) line))
+
+
+;; ---------------------------------------------------------------------------
+;; (8) 器は運ばれた名の file を取り除く — 名を組まず、行も読まない
+;;     (card acp:kanban-issue:ki-6b5c4b270ca0)
+;; ---------------------------------------------------------------------------
+
+(deftest test-the-seat-removes-exactly-the-files-the-turn-named
+  ;; 置き場はエージェントが触る面なので、退役した冊の file は『書き出さない』だけでは消えない。
+  ;; ⇒ 起こす側が**退役した行と同じ名前**を荷に載せ、器がその file を落とす。器に在るのは
+  ;; 「名指された 1 file を落とす」だけで、何を落とすかの判断は 1 つも無い。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["❯ {composer}"])
+  ;; 置き場には 3 file 在る: 退役した冊・残る冊・行をまだ持たない冊。
+  (for [name ["gone.md" "kept.md" "brand-new.md"]]
+    (setv (get world.fs f"{MEMORY-HOME}/{name}") "---\nname: x\ndescription: d\nmetadata:\n  type: project\n---\n\nbody\n"))
+  (<- row (run-launch world (launch-params
+                              :agent_type "claude"
+                              :binding {"kind" "claude-code" "config_dir" "/x/claude"}
+                              :memory_dir MEMORY-HOME
+                              :memory_files (list (sample-books 0))
+                              :memory_retired_files ["gone.md"])))
+  (setv written (books-in world MEMORY-HOME))
+  ;; 名指した 1 file だけが消え、名指していない file は 1 つも触られない。
+  (assert (not-in "gone.md" written) #("名指した file が残っている" written))
+  (assert (in "kept.md" written) #("名指していない file を消した" written))
+  (assert (in "brand-new.md" written)
+          #("行をまだ持たない冊を消した — 手番の途中に席が書いた記憶が失われる形" written))
+  ;; 触った path も名指した 1 つだけ(痕跡で撃つ — 消しは書きと違って跡が残らない)。
+  (setv removed (lfor #(verb path) world.trace :if (= verb "fs-remove") path))
+  (assert (= removed [f"{MEMORY-HOME}/gone.md"]) #("名簿の外の path を消しに行った" removed))
+  ;; 器の名乗りに消した数が出る(log だけで『掃除が落ちている』形を読めるようにする)。
+  (setv line (get (memory-log-lines world) 0))
+  (assert (in "swept=1" line) line)
+  ;; 綴りの家は 2 つちょうど(acp/effects.py と器の写し)— 割れると黙って落ちる。
+  (assert (= CLAUDE-MEMORY-RETIRED-FILES-KEY CHARTER-MEMORY-RETIRED-FILES-KEY)))
+
+
+(deftest test-the-seat-never-builds-a-name-from-the-carried-roster
+  ;; 器は運ばれた綴りを**そのまま**使う。置き場の外を指せる綴り(節・上の dir・隠し file)は
+  ;; 落とさずに飛ばす — 名の門は起こす側(judgment.memory-name-of-row)に在るが、器の側も
+  ;; 素通しにしない(2 重の門: 片方が腐っても置き場の外の file を消さない)。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["❯ {composer}"])
+  (setv (get world.fs "/etc/passwd") "root")
+  (setv (get world.fs f"{MEMORY-HOME}/.hidden") "x")
+  (<- row (run-launch world (launch-params
+                              :agent_type "claude"
+                              :binding {"kind" "claude-code" "config_dir" "/x/claude"}
+                              :memory_dir MEMORY-HOME
+                              :memory_files (list (sample-books 0))
+                              :memory_retired_files ["../../etc/passwd" ".hidden" "" "  " 7 None])))
+  (setv removed (lfor #(verb path) world.trace :if (= verb "fs-remove") path))
+  (assert (= removed []) #("置き場の外や隠し file を消しに行った" removed))
+  (assert (in "/etc/passwd" world.fs) (sorted (.keys world.fs)))
+  (assert (in f"{MEMORY-HOME}/.hidden" world.fs) (sorted (.keys world.fs)))
+  (setv line (get (memory-log-lines world) 0))
+  (assert (in "swept=0" line) line))

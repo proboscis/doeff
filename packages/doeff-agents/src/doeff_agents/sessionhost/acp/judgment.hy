@@ -93,6 +93,7 @@
   CHARTER-CARRIED-KEYS
   CHARTER-MEMORY-DIR-KEY
   CHARTER-MEMORY-FILES-KEY
+  CHARTER-MEMORY-RETIRED-FILES-KEY
   MEMORY-BASE-BOOKS-KEY
   MEMORY-BASE-FILE
   MEMORY-EVENT-KIND
@@ -120,7 +121,10 @@
   MemoryBook
   MemoryFold
   MemoryMalformed
+  MemoryRetire
+  MemoryRevive
   MemorySupersede
+  MemoryTurnFiles
   MemoryUnbased
   MemoryUnchanged
   CONDITION-MEMORY-UNWRITABLE
@@ -6173,6 +6177,20 @@
   {"state" MEMORY-STATE-CURRENT "at" at})
 
 
+(defk memory-retired-status-of [at]
+  {:pre [(: at int)]
+   :post [(: % dict)]}
+  "kind agent-memory の status(state = retired・退役を書いた刻)。上の姉妹ちょうどで、状態語の綴りは
+   effects.py の MEMORY-STATE-* の 1 点から来る(card acp:kanban-issue:ki-6b5c4b270ca0)。
+
+   ⚠ 退役は **status だけ**を動かす: spec(claim check と索引の材料)は 1 字も触らない。本文の版も
+   1 つも消さない(tombstone を撃たない)ので、同じ鍵で戻る拍は spec を書き直して state を current へ
+   戻すだけで済む(契約の declaration は identitySupersedes を宣言していない — 法 575b1e の context)。
+   ⚠ 契約の states / terminal(current / retired・terminal = retired)は 1 字も変えない。lifetime = record の
+   kind なので、terminal になった行が ACP の GC で消えることもない。"
+  {"state" MEMORY-STATE-RETIRED "at" at})
+
+
 (defk memory-rows-by-name [rows]
   {:pre [(: rows tuple)]
    :post [(: % dict)]}
@@ -6199,12 +6217,36 @@
   {:pre [(: row (| AcpRow None))]
    :post [(: % bool)]}
   "行が退役しているか(status.state = retired)。退役した冊は手番の頭に置き場へ書き出さず、
-   置き場に file が残っていても畳み戻さない — でないと退役が次の手番で取り消される。
-   戻すのは同じ鍵で 2 拍(spec を書き直し → status を current)で、その判断は operator の側。"
+   同じ名前の file は置き場から**取り除く**(card acp:kanban-issue:ki-6b5c4b270ca0)— 残すと次の手番の
+   畳み戻しがそれを読んで退役を取り消す。
+
+   ⚠ **戻す 1 手はエージェント自身**: 同じ名前で**中身の違う** file を置けば、次の畳み戻しが行を
+   current へ戻して本文を重ねる(memory-write-verdict の復活の枝)。旧い註はここに『戻すのは
+   operator の 2 拍』と書いていたが、契約 agora-kinds.json の writers.status.state は **agentd ちょうど**
+   なので利用者はその 2 拍を撃てない ⇒ 退役した記憶は二度と戻らなかった。2026-09-21 の改訂で直した
+   (法 ACP 575b1e の新しい rule)。"
   (when (is row None)
     (return False))
   (setv status (if (isinstance row.status dict) row.status {}))
   (= (.get status "state") MEMORY-STATE-RETIRED))
+
+
+(defk memory-name-of-row [row]
+  {:pre [(: row (| AcpRow None))]
+   :post [(: % (| str None))]}
+  "行が名乗る冊の名(綴れない行は None)。名の門は置き場の file 名と**同じ 1 つの綴り**
+   (MEMORY-NAME-PATTERN)で、置き場の path の 1 節になる値を行から採る唯一の口
+   (card acp:kanban-issue:ki-6b5c4b270ca0)。
+
+   ⚠ 掃除(退役した行と同じ名前の file を置き場から取り除く)がこの口を通るのは、器に名を組ませない
+   ため: 綴れない名で `<name>.md` を組むと、置き場の外や行に無い file を指す path が作れてしまう。"
+  (when (is row None)
+    (return None))
+  (setv spec (if (isinstance row.spec dict) row.spec {}))
+  (setv name (.get spec MEMORY-SPEC-NAME-KEY))
+  (when (not (and (isinstance name str) (re.match MEMORY-NAME-PATTERN name)))
+    (return None))
+  name)
 
 
 (defk memory-reserved-file? [file-name]
@@ -6272,7 +6314,8 @@
 
    ⚠ 動かすのは **claim check の 4 欄ちょうど**: 身元(conversationId / name)と索引の材料
    (type / description / links / recordRef)は行が正本なので 1 字も触らない。
-   ⚠ 退役した行は触らない(蘇らせない — 戻すのは operator の 2 拍)。
+   ⚠ 退役した行は触らない(蘇らせない)。戻すのは畳み戻しの復活の枝ちょうど — 席が同じ名前で
+     中身の違う file を置いた拍に current へ戻る(card acp:kanban-issue:ki-6b5c4b270ca0)。
    ⚠ 揃っているかは身元の 3 欄(recordSeq / sha256 / version)で判ずる: bytes は service の数え方に
    依るので、その差だけで毎手番 書き直さない。"
   (when (is row None)
@@ -6362,9 +6405,17 @@
   {:pre [(: baselines dict) (: fold MemoryFold)]
    :post [(: % dict)]}
   "畳み戻した 1 冊の結末で基準を進める。動くのは**撃てた冊**と、**行が手元の写しを証明した冊**
-   (規則 1・裁定 (f))の 2 つだけ。Unbased / 書けなかった冊と、規則 2a の Unchanged は据え置き —
+   (規則 2・裁定 (f))の 2 つだけ。Unbased / 書けなかった冊と、規則 3a の Unchanged は据え置き —
    撃ってもいない・証明も無い冊の基準を進めると、次の手番が席の編集を『触っていない』と読んで捨てる。
-   判ずるのは fold の欄(fold.baseline)で、ここでは何も比べない(判定点を増やさない)。"
+   判ずるのは fold の欄(fold.baseline / fold.retired)で、ここでは何も比べない(判定点を増やさない)。
+
+   ⚠ 退役させた冊は基準から**落とす**(card acp:kanban-issue:ki-6b5c4b270ca0): 残すと、置き場の基準は
+   『この手番の頭にその冊を出した』と言い続ける ⇒ 同じ手番の内に 2 度目の畳み戻しが走る形では同じ
+   撤回をもう 1 度撃つ。次の手番の頭の書き出しも退役した行を載せないので、端の状態が揃う。"
+  (when fold.retired
+    (setv dropped (dict baselines))
+    (.pop dropped fold.name None)
+    (return dropped))
   (when (is fold.baseline None)
     (return baselines))
   (setv next (dict baselines))
@@ -6373,77 +6424,117 @@
 
 
 (defk memory-write-verdict [row sha256 baseline]
-  {:pre [(: row (| AcpRow None)) (: sha256 str) (: baseline (| MemoryBaseline None))]
-   :post [(: % (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased))]}
+  {:pre [(: row (| AcpRow None)) (: sha256 (| str None)) (: baseline (| MemoryBaseline None))]
+   :post [(: % (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased MemoryRetire MemoryRevive))]}
   "1 冊の書き方を決める **1 点**(法 ACP 575b1e)。突き合わせるのは 3 点 — **手元**(sha256 = いま置き場に
-   在る本文の digest)・**行**(row)・**基準**(baseline = 手番の頭にその写しを出した時の claim check)。
+   在る本文の digest。**None = 置き場に file が無い**)・**行**(row)・**基準**(baseline = 手番の頭にその
+   写しを出した時の claim check)。
 
    2 点(手元と行)だけでは『席がこの手番で書いた』と『席は 1 字も触っていないが行が別の機体で動いた』が
    割れない。割れないまま supersede に倒していたのが実弾の壊れ方だった(2026-09-21: 冊
    mail-hold-has-two-exits が v2 6,503 byte → v3 4,620 byte へ痩せた — 触っていない古い写しが新しい行を
    巻き戻した)。基準は正本ではない(行が正本)— 『出した時の姿』を覚えているだけ。
 
-     1   行の sha256 == 手元          → Unchanged(proven-by-row True — 行が『置き場の写しは行の今の版
+   ⚠ card acp:kanban-issue:ki-6b5c4b270ca0 で **手元が無い拍**(sha256 None)と **行が退役している拍**が
+   この関数に入った。前は呼び手(agentd.fold-memories)が退役を 3 点比較の**外**で skip し、置き場から
+   消えた冊はどこにも判断が無かった ⇒ エージェントが消した記憶が次の手番の書き出しで戻り続けた
+   (状態 retired を書く座が doeff に 1 つも無かった)。判定点を 2 つに割らないため、退役・復活・残骸の
+   枝も**この関数の中**に在る。
+
+     0   行が退役している(status.state = retired)
+       0a  手元に無い                 → Unchanged(端の状態は既に揃っている)
+       0b  行の sha256 == 手元         → Unchanged(**残骸** — 旧い機体の置き場に残った写し。復活させると
+                                          退役が別の機体の古い写しで毎手番 取り消される)
+       0c  版が読めない               → Unchanged(半端な版へ重ねない)
+       0d  行の sha256 != 手元         → **Revive**(席が同じ名前で書き直した — 本文を重ねて current へ戻す)
+     1   手元に無い(sha256 None・行は current)
+       1a  基準に在る ∧ 行が在る      → **Retire**(器が現に書けた冊が消えた = この手番の撤回)
+       1b  それ以外                   → Unchanged(控えの無い置き場・行だけの冊は 1 bit も触らない)
+     2   手元に在る・行と一致          → Unchanged(proven-by-row True — 行が『置き場の写しは行の今の版
                                           そのもの』を証明している。呼び手はこの拍で**基準を据える**)
-     2   基準が在る
-       2a  手元 == 基準               → Unchanged(proven-by-row False — 席は 1 字も触っていない。行が
+     3   基準が在る
+       3a  手元 == 基準               → Unchanged(proven-by-row False — 席は 1 字も触っていない。行が
                                           先へ動いていても**巻き戻さないし、基準も動かさない**)
-       2b  行が無い                   → Append(基準だけ在って行が消えた — 409 が stream を読み直す合図)
-       2c  基準の recordSeq == 行     → Supersede(**基準の recordSeq へ**・conflicted False — 席が編集し、
+       3b  行が無い                   → Append(基準だけ在って行が消えた — 409 が stream を読み直す合図)
+       3c  基準の recordSeq == 行      → Supersede(**基準の recordSeq へ**・conflicted False — 席が編集し、
                                           行も基準と同じ版を指している)
-       2d  基準の recordSeq != 行     → Supersede(**基準の recordSeq へ**・conflicted True・行の値も名乗る —
+       3d  基準の recordSeq != 行      → Supersede(**基準の recordSeq へ**・conflicted True・行の値も名乗る —
                                           行が遅れているか、手番の**間に**先へ動いたか。断らない: 席の編集を
                                           捨てず、両方の版を鎖に残して log と計器で名乗る)
+     4   基準が無い
+       4a  行が無い                   → Append(この会話で初めての冊)
+       4b  行が在る                   → Unbased(手元が編集か古い写しか判らない — **撃たずに名乗る**)
 
-   ⚠ 撃ち先は 2c / 2d とも **基準**(手元の写しが降りてきた版)で、**行の recordSeq ではない**
+   ⚠ 1a が**基準**を契機にするのは、置き場の空を撤回と読ませないため: 基準の file は『器がこの手番の頭に
+     **現に書けた**冊』だけを持つ(impls/claude_code.claude-baseline-kept)ので、基準に名が在る = その file は
+     確かに置き場に在った。基準の file が無い置き場(旧い版の機体・生まれたての pod・読めない基準)は
+     memory-baselines-of-text が空へ倒す ⇒ 1a は 1 度も立たない(実測 2026-09-21 会社 Mac: 置き場 278 会話・
+     記憶 1,025 file に対し基準の file は 0 個 — この機体は 1 件も退役させない)。
+
+   ⚠ 撃ち先は 3c / 3d とも **基準**(手元の写しが降りてきた版)で、**行の recordSeq ではない**
      (法 575b1e 3f70 の 2026-09-21 改訂)。行を撃ち先にすると、行が頭より遅れている拍に死んだ版を撃ち、
      記録の service が 409 を返す ⇒ その冊はどの機体のどの手番からも二度と書けない(毎手番 同じ死んだ版を
      撃ち直す)。実測 2026-09-21: 艦隊 1,149 冊中 13 冊・8 会話。撃ち先が死んでいた拍は呼び手が頭を
-     読み直して重ねる(409 =『頭が動いた』の合図)。
-     3   基準が無い
-       3a  行が無い                   → Append(この会話で初めての冊)
-       3b  行が在る                   → Unbased(手元が編集か古い写しか判らない — **撃たずに名乗る**)
+     読み直して重ねる(409 =『頭が動いた』の合図)。0d の復活も同じ扱い(行の版へ撃ち、409 は頭を読み直す)。
 
    行が在るのに recordSeq / version が読めない拍は今日どおり append に倒す。素の append は 409 で
    保存済みが勝つので、呼び手はその 409 を『行が消えて stream が残っている』の合図として stream を
    読み直す(第 2 の語彙を足さない)。
 
-   ⚠ 規則 1 と 2a は**同じ型**で返るのに、呼び手の 1 手が違う(基準を据える / 据えない)。割るのは
+   ⚠ 規則 2 と 3a は**同じ型**で返るのに、呼び手の 1 手が違う(基準を据える / 据えない)。割るのは
    MemoryUnchanged.proven-by-row の 1 欄で、呼び手は**読むだけ**: 呼び手側で sha を比べ直すと判定点が
-   2 つになる。2a で基準を据えると、次の手番は 2c / 2d へ落ちて席が触っていない古い写しで行を巻き戻す —
-   この関数が閉じた実弾の形がそのまま戻る(依頼者の裁定 2026-09-21 (f)・c-H89Q の指摘)。"
+   2 つになる。3a で基準を据えると、次の手番は 3c / 3d へ落ちて席が触っていない古い写しで行を巻き戻す —
+   この関数が閉じた実弾の形がそのまま戻る(依頼者の裁定 2026-09-21 (f)・c-H89Q の指摘)。
+   ⚠ 退役の枝(0a〜0c)は proven-by-row を名乗らない: 名乗ると呼び手が退役した冊の基準を据え、
+   置き場へ 1 byte 書く(ACP へは撃たないが、撃たないなら 1 bit も動かさないのが受入の形)。"
   (setv spec (if (and (is-not row None) (isinstance row.spec dict)) row.spec {}))
   (setv name (.get spec MEMORY-SPEC-NAME-KEY))
   (setv label (cond (isinstance name str) name
                     (is-not baseline None) baseline.name
                     True ""))
-  ;; 1: 行と置き場が既に一致している(基準を見るまでもない)。行がその一致を**証明**しているので、
-  ;;    呼び手はこの拍で基準を据えてよい — proven-by-row でそれを名乗る(2a は名乗らない)。
-  (when (and (is-not row None) (= (.get spec MEMORY-SPEC-SHA256-KEY) sha256))
-    (return (MemoryUnchanged :name label :proven-by-row True)))
   (setv seq (.get spec MEMORY-SPEC-RECORD-SEQ-KEY))
   (setv version (.get spec MEMORY-SPEC-VERSION-KEY))
   (setv readable (and (isinstance seq int) (not (isinstance seq bool))
                       (isinstance version int) (not (isinstance version bool))))
+  ;; 0: 退役した行(card acp:kanban-issue:ki-6b5c4b270ca0)。⚠ **手元の無い拍を先に閉じる**: 行が sha256 の
+  ;;    欄を持たない拍は `.get` が None を返すので、順を入れ替えると `None == None` が『一致』に化ける。
+  (<- retired bool (memory-row-retired? row))
+  (when retired
+    (when (is sha256 None)
+      (return (MemoryUnchanged :name label)))
+    (when (= (.get spec MEMORY-SPEC-SHA256-KEY) sha256)
+      (return (MemoryUnchanged :name label)))
+    (when (not readable)
+      (return (MemoryUnchanged :name label)))
+    (return (MemoryRevive :name label :record-seq seq :version version)))
+  ;; 1: 置き場から消えた冊 — 基準が『器が現に書けた』を証明している拍ちょうどで撤回と読む。
+  (when (is sha256 None)
+    (when (and (is-not baseline None) (is-not row None))
+      (return (MemoryRetire :name label)))
+    (return (MemoryUnchanged :name label)))
+  ;; 2: 行と置き場が既に一致している(基準を見るまでもない)。行がその一致を**証明**しているので、
+  ;;    呼び手はこの拍で基準を据えてよい — proven-by-row でそれを名乗る(3a は名乗らない)。
+  (when (and (is-not row None) (= (.get spec MEMORY-SPEC-SHA256-KEY) sha256))
+    (return (MemoryUnchanged :name label :proven-by-row True)))
   (when (is-not baseline None)
-    ;; 2a: 席が触っていない写し — 行が先へ動いていても巻き戻さない(実弾の形はここで閉じる)。
+    ;; 3a: 席が触っていない写し — 行が先へ動いていても巻き戻さない(実弾の形はここで閉じる)。
     (when (= baseline.sha256 sha256)
       (return (MemoryUnchanged :name label)))
-    ;; 2b: 行が消えた(基準だけ在る)。
+    ;; 3b: 行が消えた(基準だけ在る)。
     (when (is row None)
       (return (MemoryAppend :name label)))
     (when (not readable)
       (return (MemoryAppend :name label)))
-    ;; 2c / 2d: 席が編集した。撃ち先は **基準**(手元の写しが降りてきた版)— 行は頭の遅れる投影なので
+    ;; 3c / 3d: 席が編集した。撃ち先は **基準**(手元の写しが降りてきた版)— 行は頭の遅れる投影なので
     ;; 撃ち先にしない(法 575b1e 3f70 の 2026-09-21 改訂)。行が基準と割れている拍は名乗る(断らない):
     ;; 行が遅れている形も、行が手番の**間に**先へ動いた形も、どちらもここに来る。
     (return (MemorySupersede :name label :record-seq baseline.record-seq :version baseline.version
                              :base-seq baseline.record-seq :row-seq seq
                              :conflicted (!= baseline.record-seq seq))))
-  ;; 3a: 初めての冊。
+  ;; 4a: 初めての冊。
   (when (is row None)
     (return (MemoryAppend :name label)))
-  ;; 3b: 行は在るが基準が無い — 撃たずに名乗る。
+  ;; 4b: 行は在るが基準が無い — 撃たずに名乗る。
   (MemoryUnbased :name label))
 
 
@@ -6461,21 +6552,31 @@
   (+ (.join "\n" lines) "\n"))
 
 
-(defk memory-files-of [books baselines]
-  {:pre [(: books tuple) (: baselines dict)]
-   :post [(: % tuple)]}
-  "手番の頭に置き場へ書き出す file の列(純関数): 冊ごとに <name>.md、行から導いた索引 MEMORY.md、
-   最後に畳み戻しの基準 MEMORY.base.json。冊が 0 でも索引と基準は書く(前の手番の腐った写しを残さない)。
+(defk memory-files-of [books baselines retired]
+  {:pre [(: books tuple) (: baselines dict) (: retired tuple)]
+   :post [(: % MemoryTurnFiles)]}
+  "手番の頭に置き場へ当てる荷(純関数): 書き出す file の列(冊ごとに <name>.md、行から導いた索引
+   MEMORY.md、最後に畳み戻しの基準 MEMORY.base.json)と、**取り除く** file の名の列。冊が 0 でも索引と
+   基準は書く(前の手番の腐った写しを残さない)。
 
    基準を**この列に載せる**のは、冊と同じ拍・同じ書き手(器)で置くため — 別の腕が置くと『冊は落ちたが
    基準は着いた』が起き、基準が嘘をつく。器は列を 1 つずつ書き、基準だけは書けた冊へ絞って最後に置く
-   (impls/claude_code.hy — 席が書いた file が基準の証拠)。"
+   (impls/claude_code.hy — 席が書いた file が基準の証拠)。
+
+   retired = 退役した行の**名**(綴りは行が持っている)。ここで file 名へ直すのは、器に名を組ませない
+   ため(card acp:kanban-issue:ki-6b5c4b270ca0): 器が名を組むと、行に無い名前の file を消す枝が
+   substrate-clean の層に生える。掃除も書き出しと**同じ荷**に載せるのは基準と同じ理由 — 別の腕が
+   持つと『冊は書けたが掃除は落ちた』が起き、退役した冊の file が残って次の畳み戻しが読む。
+   ⚠ 掃除の母集団は**行の名ちょうど**。置き場の file を走査して余りを消す形には**しない**: 手番の途中に
+   席が書いた新しい冊(まだ行が無い)を、その拍で消してしまう。"
   (setv files (lfor book (sorted books :key (fn [b] b.name))
                     {"name" f"{book.name}{MEMORY-FILE-SUFFIX}" "text" book.text}))
   (<- index str (memory-index-of books))
   (<- base str (memory-baseline-text-of baselines))
-  (tuple (+ files [{"name" MEMORY-INDEX-FILE "text" index}
-                   {"name" MEMORY-BASE-FILE "text" base}])))
+  (MemoryTurnFiles
+    :files (tuple (+ files [{"name" MEMORY-INDEX-FILE "text" index}
+                            {"name" MEMORY-BASE-FILE "text" base}]))
+    :swept (tuple (lfor name (sorted retired) f"{name}{MEMORY-FILE-SUFFIX}"))))
 
 
 (defk memory-book-of-row [row text]
@@ -6508,18 +6609,19 @@
   (replace job :pending-conditions (+ job.pending-conditions #(condition))))
 
 
-(defk turn-charter-of [memory-root conversation-id files]
-  {:pre [(: memory-root str) (: conversation-id str) (: files tuple)]
+(defk turn-charter-of [memory-root conversation-id turn-files]
+  {:pre [(: memory-root str) (: conversation-id str) (: turn-files MemoryTurnFiles)]
    :post [(: % dict)]}
-  "温かい session への送りが運ぶ**この手番の荷**(policy.TURN-CARRIED-KEYS = 記憶の置き場と冊)を組む
+  "温かい session への送りが運ぶ**この手番の荷**(policy.TURN-CARRIED-KEYS = 記憶の置き場と冊と掃除)を組む
    1 点(card acp:kanban-issue:ki-a40292ed30d9 の 4 つ目の腕)。
 
-   組み方は起こす腕と**同じ 2 つの関数**に空の charter を当てるだけ — 欄の綴りをここで書かない
+   組み方は起こす腕と**同じ 3 つの関数**に空の charter を当てるだけ — 欄の綴りをここで書かない
    (第 2 の定義点を作らない)。根を宣言していない機体・組めない会話 id・0 冊では、その欄を立てない
    ⇒ 記憶を使わない会話の送りの wire は 1 byte も変わらない。"
   (<- home dict (charter-with-memory-home {} memory-root conversation-id))
-  (<- carried dict (charter-with-memory-files home files))
-  carried)
+  (<- carried dict (charter-with-memory-files home turn-files.files))
+  (<- swept dict (charter-with-memory-sweep carried turn-files.swept))
+  swept)
 
 
 (defk charter-with-memory-files [charter files]
@@ -6531,4 +6633,18 @@
     (return charter))
   (setv next (dict charter))
   (setv (get next CHARTER-MEMORY-FILES-KEY) (list files))
+  next)
+
+
+(defk charter-with-memory-sweep [charter swept]
+  {:pre [(: charter dict) (: swept tuple)]
+   :post [(: % dict)]}
+  "charter に**取り除く file の名**を載せる(card acp:kanban-issue:ki-6b5c4b270ca0)。上の姉妹ちょうどで、
+   0 件なら欄を立てない(退役した行の無い会話の charter は 1 byte も変わらない)。
+
+   ⚠ 運ぶのは名ちょうど: 器は運ばれた名を消すだけで、名を組まず行も読まない(substrate-clean)。"
+  (when (not swept)
+    (return charter))
+  (setv next (dict charter))
+  (setv (get next CHARTER-MEMORY-RETIRED-FILES-KEY) (list swept))
   next)

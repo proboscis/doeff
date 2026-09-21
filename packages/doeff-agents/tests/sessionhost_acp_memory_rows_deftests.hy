@@ -34,6 +34,7 @@
   AgentdSettings
   CHARTER-MEMORY-DIR-KEY
   CHARTER-MEMORY-FILES-KEY
+  CHARTER-MEMORY-RETIRED-FILES-KEY
   CONDITION-MEMORY-UNWRITABLE
   MEMORY-BASE-FILE
   MEMORY-INDEX-FILE
@@ -51,7 +52,10 @@
   MemoryBaseline
   MemoryBook
   MemoryMalformed
+  MemoryRetire
+  MemoryRevive
   MemorySupersede
+  MemoryTurnFiles
   MemoryUnbased
   MemoryUnchanged
   RecordEvent
@@ -66,6 +70,9 @@
   memory-body-of
   memory-book-of
   memory-files-of
+  memory-name-of-row
+  memory-retired-status-of
+  memory-status-of
   memory-index-of
   memory-baseline-of-handed-copy
   memory-row-realignment-of
@@ -174,12 +181,17 @@
     None)
 
   (defn #^ None hydrate [self]
-    "器(impls/claude_code)が charter の memory_files を置き場へ書いた体。この世界の器は fake なので
-     『全部書けた席』を写す — 名の門と基準の絞りは**本物の器**の検(sessionhost_charter_reaches_the_seat)側。"
+    "器(impls/claude_code)が charter の荷を置き場へ当てた体。この世界の器は fake なので『全部書けた席』を
+     写す — 名の門と基準の絞りは**本物の器**の検(sessionhost_charter_reaches_the_seat)側。
+
+     荷は 2 つ: 取り除く file(退役した行と同じ名前・card acp:kanban-issue:ki-6b5c4b270ca0)と書き出す冊。
+     本物の器と同じ順(掃除 → 書き出し)で当てる。"
     (when (not self.sessions.launches)
       (return None))
     (when self.stale-seat
       (return None))
+    (for [name (.swept self)]
+      (.pop self.local.files f"{HOME}/{name}" None))
     (for [book (.hydrated self)]
       (setv (get self.local.files f"{HOME}/{(get book "name")}") (get book "text")))
     None)
@@ -304,6 +316,10 @@
   (defn #^ tuple hydrated [self]
     (tuple (.get (.seat-memory-input self) CHARTER-MEMORY-FILES-KEY #())))
 
+  (defn #^ tuple swept [self]
+    "この手番で器へ渡した『取り除く file の名』(退役した行と同じ名前ちょうど)。"
+    (tuple (.get (.seat-memory-input self) CHARTER-MEMORY-RETIRED-FILES-KEY #())))
+
   (defn #^ list job-conditions [self]
     (setv status (. (get self.acp.rows f"{AGENT-JOB-NAMESPACE}:{AGENT-JOB-KIND}:{(.job-id self)}") status))
     (assert (isinstance status dict))
@@ -420,6 +436,92 @@
     (assert (isinstance gated MemoryAppend) #("bool を int として読んだ" gated))))
 
 
+(deftest test-the-write-verdict-reads-the-home-as-the-end-state-of-the-row
+  ;; 受入 1(card acp:kanban-issue:ki-6b5c4b270ca0): 置き場はエージェントが触る面で、畳み戻しはその
+  ;; **端の状態**を行へ寄せる。撤回・復活・残骸の反例は memory-write-verdict の 1 点で撃つ
+  ;; (呼び手側に第 2 の判定を置かない — 置くと片方だけ直る日が来る)。
+  (setv home (* "a" 64))   ; 置き場のいまの本文の digest
+  (setv base (* "b" 64))   ; 手番の頭に置き場へ出した時の digest
+  (setv row-sha (* "c" 64))
+  ;; 撤回: 基準に在る(器が現に書けた)∧ 手元なし ∧ 行 current → Retire。
+  (<- withdrawn (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased MemoryRetire MemoryRevive)
+      (memory-write-verdict (memory-row "a" base 7 2) None
+                            (MemoryBaseline :name "a" :record-seq 7 :sha256 base :version 2)))
+  (assert (isinstance withdrawn MemoryRetire) #("置き場から消えた冊を撤回と読まない" withdrawn))
+  (assert (= withdrawn.name "a") withdrawn)
+  ;; 基準に無い ∧ 手元なし → 何もしない(行にしか無い冊は 1 bit も触らない)。
+  (<- only-row (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased MemoryRetire MemoryRevive)
+      (memory-write-verdict (memory-row "a" row-sha 7 2) None None))
+  (assert (isinstance only-row MemoryUnchanged) #("基準の無い冊を撤回した" only-row))
+  ;; 基準が空(控えの file が無い機体・生まれたての pod)→ 1 件も撃たない。⚠ これが未修正の機体で
+  ;; 全件が退役する形を塞いでいる唯一の門(実測 2026-09-21 会社 Mac: 控えの file は 0 個)。
+  (<- unbased-gone (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased MemoryRetire MemoryRevive)
+      (memory-write-verdict (memory-row "a" row-sha 7 2) None None))
+  (assert (not (isinstance unbased-gone MemoryRetire)) #("控えの無い置き場で退役させた" unbased-gone))
+  ;; 行が無い ∧ 手元なし ∧ 基準に在る → 何もしない(消す相手が無い)。
+  (<- no-row (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased MemoryRetire MemoryRevive)
+      (memory-write-verdict None None (MemoryBaseline :name "a" :record-seq 7 :sha256 base :version 2)))
+  (assert (isinstance no-row MemoryUnchanged) no-row)
+  (assert (= no-row.name "a") #("名を基準から採っていない" no-row))
+  ;; 復活: 行 retired ∧ 手元あり ∧ 行の sha と違う → Revive(行の版へ重ねる)。
+  (setv retired-row (replace (memory-row "a" row-sha 7 2) :status {"state" "retired"}))
+  (<- revived (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased MemoryRetire MemoryRevive)
+      (memory-write-verdict retired-row home
+                            (MemoryBaseline :name "a" :record-seq 7 :sha256 base :version 2)))
+  (assert (isinstance revived MemoryRevive) #("退役した行に現れた別の本文を復活と読まない" revived))
+  (assert (= revived.record-seq 7) revived)
+  (assert (= revived.version 2) revived)
+  ;; 復活は基準を要求しない(退役した冊は手番の頭に載らない = 基準を持てない)。
+  (<- revived-bare (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased MemoryRetire MemoryRevive)
+      (memory-write-verdict retired-row home None))
+  (assert (isinstance revived-bare MemoryRevive) #("基準が無いと復活できない" revived-bare))
+  ;; 残骸: 行 retired ∧ 手元あり ∧ 行の sha と同じ → 何もしない。
+  (<- residue (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased MemoryRetire MemoryRevive)
+      (memory-write-verdict retired-row row-sha None))
+  (assert (isinstance residue MemoryUnchanged) #("残骸で復活させた" residue))
+  ;; ⚠ 残骸の拍は proven-by-row を名乗らない — 名乗ると呼び手が基準を据え、撃たないはずの拍で
+  ;;    置き場へ 1 byte 書く。
+  (assert (not residue.proven-by-row) #("残骸の拍で基準を据えさせている" residue))
+  ;; 行 retired ∧ 手元なし → 何もしない(端の状態は既に揃っている)。
+  (<- settled (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased MemoryRetire MemoryRevive)
+      (memory-write-verdict retired-row None
+                            (MemoryBaseline :name "a" :record-seq 7 :sha256 base :version 2)))
+  (assert (isinstance settled MemoryUnchanged) settled)
+  (assert (not settled.proven-by-row) settled)
+  ;; ⚠ 行が sha256 の欄を持たない拍: `.get` は None を返すので、手元 None を先に閉じないと
+  ;;    `None == None` が『一致』に化ける(退役した行は残骸に、current の行は撃たない Unchanged に
+  ;;    化けて、撤回が永久に立たない)。
+  (setv blank (replace (memory-row "a" row-sha 7 2) :spec {"conversationId" CID "name" "a"
+                                                           MEMORY-SPEC-RECORD-SEQ-KEY 7
+                                                           MEMORY-SPEC-VERSION-KEY 2}))
+  (<- blanked (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased MemoryRetire MemoryRevive)
+      (memory-write-verdict blank None (MemoryBaseline :name "a" :record-seq 7 :sha256 base :version 2)))
+  (assert (isinstance blanked MemoryRetire) #("sha256 の無い行で手元なしが『一致』に化けた" blanked))
+  ;; 退役した行の版が読めない拍は撃たずに残す(半端な版へ重ねない)。
+  (setv broken (replace blank :status {"state" "retired"}))
+  (setv broken (replace broken :spec {"conversationId" CID "name" "a" MEMORY-SPEC-SHA256-KEY row-sha}))
+  (<- unreadable (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased MemoryRetire MemoryRevive)
+      (memory-write-verdict broken home None))
+  (assert (isinstance unreadable MemoryUnchanged) #("版の読めない退役した行へ撃った" unreadable)))
+
+
+(deftest test-the-retired-status-writes-only-the-state-and-the-instant
+  ;; 退役は status ちょうど(spec も本文も触らない)。状態語の綴りは effects.py の 1 点から来る。
+  (<- status dict (memory-retired-status-of 1789200000123))
+  (assert (= status {"state" "retired" "at" 1789200000123}) status)
+  ;; current の姉妹と**同じ形**(欄が割れると片方だけ読む読み手が生まれる)。
+  (<- current dict (memory-status-of 1789200000123))
+  (assert (= (sorted (.keys status)) (sorted (.keys current))) #(status current))
+  ;; 掃除の名は行から採る(器に名を組ませない)— 綴れない行は名を持たない。
+  (assert (= (run (memory-name-of-row (memory-row "a-fact" (* "a" 64) 7 2))) "a-fact"))
+  (assert (is (run (memory-name-of-row None)) None))
+  (for [bad ["Upper" "with/slash" "" ".dot"]]
+    (setv row (replace (memory-row "a" (* "a" 64) 7 2)
+                       :spec {"conversationId" CID "name" bad MEMORY-SPEC-SHA256-KEY (* "a" 64)
+                              MEMORY-SPEC-RECORD-SEQ-KEY 7 MEMORY-SPEC-VERSION-KEY 2}))
+    (assert (is (run (memory-name-of-row row)) None) #("綴れない名を掃除の荷に載せた" bad))))
+
+
 (deftest test-the-baseline-file-round-trips-and-drops-what-it-cannot-read
   ;; 基準は置き場の side car で **正本ではない**: 本文を 1 字も持たず、行にも stream にも書かない。
   (setv baselines {"a-fact" (MemoryBaseline :name "a-fact" :record-seq 7 :sha256 (* "a" 64) :version 2)
@@ -466,14 +568,23 @@
                     f"- [mid](mid.md) — mid の要旨"
                     f"- [zeta](zeta.md) — zeta の要旨"]) items)
   ;; 書き出す列は 冊 + 索引 で、索引は最後の 1 つ。
-  (<- files tuple (memory-files-of books {}))
+  (<- turn MemoryTurnFiles (memory-files-of books {} #()))
+  (setv files turn.files)
   (assert (= (len files) (+ (len books) 2)) files)
   (assert (= (get (get files -2) "name") MEMORY-INDEX-FILE) files)
   ;; 基準は最後(冊と同じ拍・同じ書き手で置く — 器は書けた冊へ絞ってからこれを書く)。
   (assert (= (get (get files -1) "name") MEMORY-BASE-FILE) files)
+  ;; 退役した行が無ければ掃除は 0 件(欄が立たない = charter は 1 byte も変わらない)。
+  (assert (= turn.swept #()) turn)
   ;; 冊が 0 でも索引と基準は書く(前の手番の腐った写しを残さない)。
-  (<- empty tuple (memory-files-of #() {}))
-  (assert (= (lfor f empty (get f "name")) [MEMORY-INDEX-FILE MEMORY-BASE-FILE]) empty))
+  (<- empty MemoryTurnFiles (memory-files-of #() {} #()))
+  (assert (= (lfor f empty.files (get f "name")) [MEMORY-INDEX-FILE MEMORY-BASE-FILE]) empty)
+  ;; card acp:kanban-issue:ki-6b5c4b270ca0: 退役した行の名は**取り除く file** の列になる(名の順)。
+  ;; 器に名を組ませないための口 — file 名へ直すのはここちょうど。
+  (<- swept MemoryTurnFiles (memory-files-of #() {} #("zeta" "alpha")))
+  (assert (= swept.swept #("alpha.md" "zeta.md")) swept)
+  ;; 取り除く名は書き出す列に**入らない**(同じ file を消してから書き戻す形を作らない)。
+  (assert (= (lfor f swept.files (get f "name")) [MEMORY-INDEX-FILE MEMORY-BASE-FILE]) swept))
 
 
 (deftest test-a-first-write-lands-in-the-record-and-the-row-carries-only-the-claim-check
@@ -526,28 +637,46 @@
   (assert (in "k3s へ移すのであって" (get (get kept 0) "text")) kept))
 
 
-(deftest test-a-retired-memory-is-not-written-back-from-a-file-left-in-the-home
-  ;; 置き場の file は水入れが消さないので、退役した冊の file は残る。書き戻すと退役が次の手番で取り消される。
+(deftest test-a-retired-row-comes-back-when-a-different-body-appears-in-the-home
+  ;; 受入 4(card acp:kanban-issue:ki-6b5c4b270ca0): 退役した行 + 中身の違う同名 file
+  ;; ⇒ 行が current に戻り、版が 1 つ増える。
+  ;; ⚠ この検は 2026-09-21 まで**逆**を撃っていた(test-a-retired-memory-is-not-written-back-from-a-file-left-in-the-home
+  ;;    — 退役した冊は置き場に file が残っていても 1 bit も撃たない)。当時は「戻すのは operator の 2 拍」
+  ;;    と書いてあったが、契約の writers.status.state は agentd ちょうどなので**利用者は撃てない** =
+  ;;    退役した記憶は二度と戻らなかった。⇒ 戻す 1 手はエージェント自身の『同じ名前で書き直す』。
   (setv world (MemoryWorld))
   (.put-file world "stale.md" (book-text "stale" "もう要らない" "古い事実。"))
   (.turn world)
   (setv row (get (.memory-rows world) 0))
   (assert (not (run (memory-row-retired? row))) row)
-  ;; operator が退役させた(spec はそのまま・status.state だけ retired へ)。
-  (setv retired (replace row :status {"state" "retired"}))
-  (setv (get world.acp.rows retired.key) retired)
-  (assert (run (memory-row-retired? retired)) retired)
-  ;; file を書き換えて手番が終わっても、退役した冊は 1 bit も撃たれない。
-  (.put-file world "stale.md" (book-text "stale" "もう要らない" "書き換えた本文。"))
-  (setv appends (len (.memory-appends world)))
+  ;; 席がこの手番で消す ⇒ 行が退役する。
+  (.drop-file world "stale.md")
   (.turn world)
-  (assert (= (len (.memory-appends world)) appends) "退役した冊を追記している")
-  (assert (= world.record.supersedes []) "退役した冊を置き換えている")
-  (assert (= (. (get (.memory-rows world) 0) status) {"state" "retired"})
-          "退役した行の status が書き換わった")
-  ;; 退役した行は手番の頭にも載らない(索引だけ)。
+  (setv retired (get (.memory-rows world) 0))
+  (assert (run (memory-row-retired? retired)) retired)
+  (setv before-version (get retired.spec MEMORY-SPEC-VERSION-KEY))
+  ;; 次の手番で席が**同じ名前で書き直す**(掃除が消した後に落ちる = 本物の順序)。
+  (.put-file world "stale.md" (book-text "stale" "やはり要る" "書き直した本文。"))
+  (.turn world)
+  (setv back (get (.memory-rows world) 0))
+  (assert (= (get back.status "state") "current") #("復活していない" back.status))
+  (assert (= (get back.spec MEMORY-SPEC-VERSION-KEY) (+ before-version 1))
+          #("版が 1 つ増えていない" back.spec))
+  ;; 本文は記録の頭に在り、前の版も鎖に残る(1 版も消さない)。
+  (setv events (.events-of world.record CID (run (memory-stream-id-of "stale"))))
+  (assert (in "書き直した本文。" (get (get events 0) "text")) events)
+  (setv kept (get (list (.values world.record.superseded)) 0))
+  (assert (= (len kept) 1) kept)
+  (assert (in "古い事実。" (get (get kept 0) "text")) kept)
+  ;; 計器は復活を名乗る(往復が読めないと、退役が毎手番 取り消される形に戻っても静かなまま)。
+  (setv folded (get (.metric-lines world "agent-memory-folded") -1))
+  (assert (= (get folded "revived") 1) folded)
+  (assert (= (get folded "written") 1) folded)
+  ;; その次の手番の頭には、復活した冊が普通に載る。
+  (.turn world)
   (setv files (.hydrated world))
-  (assert (= (lfor f files (get f "name")) [MEMORY-INDEX-FILE MEMORY-BASE-FILE]) files))
+  (assert (in "stale.md" (lfor f files (get f "name"))) files)
+  (assert (= (.swept world) #()) (.swept world)))
 
 
 (deftest test-the-next-turn-starts-with-the-book-the-previous-turn-wrote
@@ -775,41 +904,118 @@
   (assert (= (get hydrated "books") 1) hydrated))
 
 
-(deftest test-a-retired-row-with-a-file-and-no-baseline-is-not-written-back
-  ;; 退役の skip は 3 点比較より**前**(順序を入れ替えない)。基準も無い形で二重に守られる:
-  ;; もし退役の判断を比較の後ろへ動かしたら、この検は unbased=1 か書き込みで赤くなる。
+(deftest test-a-retired-row-with-a-residue-file-in-the-home-is-not-touched
+  ;; 受入 5(card acp:kanban-issue:ki-6b5c4b270ca0): 退役した行 + **残骸** file(中身が行と同じ)
+  ;; ⇒ ACP への書きが 0。残骸で復活させると、退役が別の機体の古い写しで毎手番 取り消される。
+  ;; ⚠ この検は 2026-09-21 まで別の性質(退役の skip が 3 点比較の**前**)を撃っていた
+  ;;    (test-a-retired-row-with-a-file-and-no-baseline-is-not-written-back)。退役の判断が
+  ;;    memory-write-verdict の中へ畳まれた今は『前か後か』が無い ⇒ 残す性質は「残骸では動かない」。
+  ;;    基準の無い形(基準の file を落とす)もそのまま残す — 復活は基準を要求しないので、
+  ;;    残骸を残骸と見分けているのは**行の sha256** ちょうどであることをこの検が固定する。
   (setv world (MemoryWorld))
   (.put-file world "stale.md" (book-text "stale" "もう要らない" "古い事実。"))
   (.turn world)
-  (setv row (get (.memory-rows world) 0))
-  (setv (get world.acp.rows row.key) (replace row :status {"state" "retired"}))
-  (setv appends (len (.memory-appends world)))
-  (.drop-file world MEMORY-BASE-FILE)
-  (.put-file world "stale.md" (book-text "stale" "もう要らない" "退役した後に書き換えた本文。"))
+  (.drop-file world "stale.md")
   (.turn world)
-  (assert (= (len (.memory-appends world)) appends) "退役した冊を追記している")
-  (assert (= world.record.supersedes []) "退役した冊を置き換えている")
-  (assert (= (. (get (.memory-rows world) 0) status) {"state" "retired"}) "退役が取り消された")
+  (setv retired (get (.memory-rows world) 0))
+  (assert (run (memory-row-retired? retired)) retired)
+  (setv appends (len (.memory-appends world)))
+  ;; 旧い版の器の置き場(掃除を知らない)に、退役の**前**の本文がそのまま残っている体。
+  ;; 基準も落として、守っているのが基準ではなく行の sha であることを示す。
+  (.drop-file world MEMORY-BASE-FILE)
+  (.put-file world "stale.md" (book-text "stale" "もう要らない" "古い事実。"))
+  (.turn world)
+  (assert (= (len (.memory-appends world)) appends) "残骸で追記している")
+  (assert (= world.record.supersedes []) "残骸で置き換えている")
+  (setv after (get (.memory-rows world) 0))
+  (assert (= (get after.status "state") "retired") #("残骸で退役が取り消された" after.status))
+  (assert (= after.spec retired.spec) #("残骸で行が動いた" after.spec))
   (setv folded (get (.metric-lines world "agent-memory-folded") -1))
   (assert (= (get folded "written") 0) folded)
-  (assert (= (get folded "unbased") 0) #("退役した冊が 3 点比較まで進んだ" folded)))
+  (assert (= (get folded "revived") 0) folded)
+  (assert (= (get folded "retired") 0) #("既に退役した行をもう 1 度撃った" folded))
+  (assert (= (get folded "unbased") 0) #("退役した行が基準の無い枝へ落ちた" folded)))
 
 
-(deftest test-a-book-that-vanished-from-the-home-does-not-touch-the-row
-  ;; 基準に在って置き場から消えた冊を「削除」と読まない(退役は operator の側の 2 拍の判断)。
-  ;; 畳み戻しが回すのは**置き場に在る冊ちょうど**で、行にしか無い冊は 1 bit も動かさない。
+(deftest test-a-book-that-vanished-from-the-home-retires-its-row
+  ;; 受入 2(card acp:kanban-issue:ki-6b5c4b270ca0): 書き出し → 席が file を消す → 畳み戻し
+  ;; ⇒ 行が retired・記録の stream の版は 1 つも減らない。
+  ;; ⚠ この検は 2026-09-21 まで**逆**を撃っていた(test-a-book-that-vanished-from-the-home-does-not-touch-the-row
+  ;;    — 消失は退役ではない)。当時は基準の file がまだ無く、置き場の空と撤回が割れなかったので
+  ;;    「触らない」が安全側だった。基準(器が現に書けた冊の claim check)が入ってからは割れる ⇒
+  ;;    依頼者の裁定 2026-09-21 がこちらを採った。
   (setv world (MemoryWorld))
   (.put-file world "a-fact.md" (book-text "a-fact" "要旨" "1 手番目の本文。"))
   (.turn world)
   (setv before (get (.memory-rows world) 0))
   (setv appends (len (.memory-appends world)))
+  ;; 2 手番目: 頭の書き出しが冊と基準を置き、席がその file を消す。
   (.drop-file world "a-fact.md")
   (.turn world)
+  ;; 撤回は本文を 1 byte も書かない — 記録の service へは 1 度も撃たない。
   (assert (= (len (.memory-appends world)) appends) before)
   (assert (= world.record.supersedes []) world.record.supersedes)
+  ;; 版は 1 つも減らない(tombstone を撃たない)= 本文はそのまま記録に在る。
+  (setv events (.events-of world.record CID (run (memory-stream-id-of "a-fact"))))
+  (assert (= (len events) 1) events)
+  (assert (in "1 手番目の本文。" (get (get events 0) "text")) events)
+  ;; 行は retired(status だけが動き、claim check と索引の材料は 1 字も変わらない)。
   (setv after (get (.memory-rows world) 0))
-  (assert (= after.spec before.spec) #("置き場から消えた冊で行が動いた" after.spec before.spec))
-  (assert (= (get after.status "state") "current") after.status))
+  (assert (= (get after.status "state") "retired") after.status)
+  (assert (= (get after.status "at") world.local.now-ms) after.status)
+  (assert (= after.spec before.spec) #("撤回が spec を動かした" after.spec before.spec))
+  ;; 計器は撤回を written と別に数える(本文を書いていないので written は 0)。
+  (setv folded (get (.metric-lines world "agent-memory-folded") -1))
+  (assert (= (get folded "retired") 1) folded)
+  (assert (= (get folded "vanished") 1) folded)
+  (assert (= (get folded "written") 0) folded)
+  ;; 撤回した名は基準から落ちる(置き場の端の状態と揃う)。
+  (assert (not-in "a-fact" (.baseline-of-home world)) (.baseline-of-home world)))
+
+
+(deftest test-the-turn-after-a-withdrawal-neither-hands-the-book-back-nor-indexes-it
+  ;; 受入 3: その次の手番 ⇒ 置き場にその名前の file が出ない・索引 MEMORY.md にその行が出ない。
+  ;; **書き出さないだけでは足りない**: 置き場の file は前の手番の写しなので残る ⇒ 退役した行と同じ
+  ;; 名前の file は掃除の荷で取り除かせる(card acp:kanban-issue:ki-6b5c4b270ca0)。
+  (setv world (MemoryWorld))
+  (.put-file world "a-fact.md" (book-text "a-fact" "要旨" "1 手番目の本文。"))
+  (.turn world)
+  (.drop-file world "a-fact.md")
+  (.turn world)
+  (assert (= (get (. (get (.memory-rows world) 0) status) "state") "retired"))
+  ;; 3 手番目の頭: 冊の列に載らない(索引と基準だけ)。
+  (setv appends (len (.memory-appends world)))
+  (.turn world)
+  (setv files (.hydrated world))
+  (assert (= (lfor f files (get f "name")) [MEMORY-INDEX-FILE MEMORY-BASE-FILE]) files)
+  ;; 索引は行から組み直され、退役した冊の行を 1 つも持たない。
+  (setv index (get (get files 0) "text"))
+  (assert (not-in "a-fact" index) index)
+  (assert (= (lfor line (.splitlines index) :if (.startswith line "- [") line) []) index)
+  ;; 置き場にも file は出ない。
+  (assert (not-in f"{HOME}/a-fact.md" world.local.files) (sorted (.keys world.local.files)))
+  ;; そして 3 手番目は 1 bit も撃たない(撤回は 1 度きり・冪等)。
+  (assert (= (len (.memory-appends world)) appends) "退役した行へ撃ち直している")
+  (assert (= world.record.supersedes []) world.record.supersedes))
+
+
+(deftest test-the-sweep-names-only-the-retired-rows-file
+  ;; 受入 3 の対の針: 掃除の名簿は**退役した行の名ちょうど**。行に無い名前の file(手番の途中に席が
+  ;; 書いた新しい冊・別の会話の残骸)を 1 つも名指さない — 名指すと、まだ行の無い新しい記憶が
+  ;; 次の手番の頭で消える。
+  (setv world (MemoryWorld))
+  (.put-file world "kept.md" (book-text "kept" "残る" "残る本文。"))
+  (.put-file world "gone.md" (book-text "gone" "消える" "消える本文。"))
+  (.turn world)
+  (.drop-file world "gone.md")
+  ;; 同じ手番で、行をまだ持たない冊が置き場に現れる(席がこの手番で書いた新しい記憶)。
+  (.put-file world "brand-new.md" (book-text "brand-new" "新しい" "この手番で書いた本文。"))
+  (.turn world)
+  ;; 次の手番の掃除は gone.md ちょうど。
+  (.turn world)
+  (assert (= (.swept world) #("gone.md")) (.swept world))
+  (assert (in f"{HOME}/kept.md" world.local.files) (sorted (.keys world.local.files)))
+  (assert (in f"{HOME}/brand-new.md" world.local.files) (sorted (.keys world.local.files))))
 
 
 ;; ---------------------------------------------------------------------------

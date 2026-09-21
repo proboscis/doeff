@@ -40,6 +40,7 @@
   fs-read-text
   fs-write-text-atomic
   fs-make-dirs
+  fs-remove-file
   log-line
   env-get
   tmux-send-keys])
@@ -191,6 +192,10 @@
 ;; sessionhost/acp/effects.py の CHARTER_MEMORY_FILES_KEY で、ここはその写し(検が突き合わせる)。
 ;; この層は行を読まない — 運ばれてきた {name, text} を置き場へ書くだけ。
 (setv CLAUDE-MEMORY-FILES-KEY "memory_files")
+;; charter が運ぶ**取り除く file の名**(card acp:kanban-issue:ki-6b5c4b270ca0)。綴りの家は
+;; sessionhost/acp/effects.py の CHARTER_MEMORY_RETIRED_FILES_KEY で、ここはその写し(検が突き合わせる)。
+;; ⚠ この層は名を**組まない**: 運ばれてきた名をそのまま置き場の 1 節として使うだけで、行も読まない。
+(setv CLAUDE-MEMORY-RETIRED-FILES-KEY "memory_retired_files")
 ;: 索引の file 名(計器が冊と索引を分けて数えるための綴り)。綴りの家は
 ;: sessionhost/acp/effects.py の MEMORY_INDEX_FILE で、ここはその写し(検が突き合わせる)。
 (setv CLAUDE-MEMORY-INDEX-FILE "MEMORY.md")
@@ -455,9 +460,18 @@
   ;; 載せた — history / first_turn と同じ形)をここで実体化する。索引 MEMORY.md も同じ列に入っていて、
   ;; 行から導いた本文で毎手番上書きされる(file としての正本を持たない)。
   ;; ⚠ **行を読むのはここではない**: この module は substrate-clean(生 IO 禁止・Fs* / EnvGet だけ)なので、
-  ;; ACP も記録の service も import しない。運ぶのは charter の 1 欄ちょうど。
-  ;; 置き場に残った余りの file は消さない(消す動詞をこの層に置かない)— 退役した冊を書き戻さないのは
-  ;; 起こす側の判断(judgment.memory-row-retired?)。
+  ;; ACP も記録の service も import しない。運ぶのは charter の 2 欄ちょうど。
+  ;; card acp:kanban-issue:ki-6b5c4b270ca0: 掃除は**運ばれてきた名ちょうど**(退役した行と同じ名前)。
+  ;; 置き場を走査して余りを消す形にはしない — 手番の途中に席が書いた新しい冊(まだ行が無い)を、その拍で
+  ;; 消してしまう。⇒ この層に在るのは「名指された 1 file を落とす」だけで、何を落とすかの判断は無い。
+  ;; 掃除を書き出しの**前**に置くのは、同じ名前が両方の列に来ることが構造的に無いから(退役した行は
+  ;; 冊の列に載らない — 起こす側の agentd.memory-files-for-turn)であり、順序で守っているのではない。
+  (setv swept 0)
+  (for [name (list (or (.get params CLAUDE-MEMORY-RETIRED-FILES-KEY) []))]
+    (when (and (isinstance name str) (.strip name) (not (in "/" name)) (not (.startswith name ".")))
+      (<- gone (fs-remove-file f"{memory-dir}/{name}"))
+      (when gone
+        (setv swept (+ swept 1)))))
   (setv declared (list (or (.get params CLAUDE-MEMORY-FILES-KEY) [])))
   (setv written [])
   (setv base-text None)
@@ -487,7 +501,7 @@
   (<- _ (log-line
           (+ f"{verb}: agent-memory-written dir={memory-dir} "
              f"books={(len books)} index={(if (in CLAUDE-MEMORY-INDEX-FILE written) 1 0)} "
-             f"base={base-written} declared={(len declared)}")))
+             f"base={base-written} declared={(len declared)} swept={swept}")))
   None)
 
 
