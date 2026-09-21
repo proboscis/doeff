@@ -1,4 +1,30 @@
 rules:
+  - id: cache-process-no-unfenced-signals
+    languages: [python]
+    severity: ERROR
+    message: 専用pingの復旧ではPIDの再利用を検査してください。PIDだけのsignal送信は禁止です。
+    pattern-either:
+      - pattern: os.kill(...)
+      - pattern: os.killpg(...)
+    paths:
+      include:
+        - '**/sessionhost/cache_process.py'
+      exclude:
+        - /tests/semgrep/fixtures/**
+  - id: cache-maintenance-never-becomes-normal-turn
+    languages: [generic]
+    severity: ERROR
+    message: >
+      キャッシュ維持は専用操作です。通常turnの送信・状態更新・event記録へ変換せず、
+      HostCacheの専用記録とSessionCachePingのeffectを使ってください。
+    pattern-regex: '\b(SessionSend|SessionLaunch|AcpCreate|SessionStoreUpsert|SessionStoreRecordEvent|session-store-upsert|session-store-record-event|headless-send-program)\b'
+    paths:
+      include:
+        - '**/sessionhost/cache_host.hy'
+        - '**/sessionhost/acp/cache_maintenance.hy'
+        - '**/sessionhost/acp/cache_live.hy'
+      exclude:
+        - /tests/semgrep/fixtures/**
   # =============================================================================
   # DOEFF ARCHITECTURAL ENFORCEMENT RULES
   # =============================================================================

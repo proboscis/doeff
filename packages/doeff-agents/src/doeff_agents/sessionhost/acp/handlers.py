@@ -47,25 +47,33 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.client import HTTPConnection, HTTPException, HTTPResponse, HTTPSConnection
-from typing import TypeAlias, cast, get_args
+from typing import NamedTuple, TypeAlias, TypeGuard, assert_never, get_args
 
 from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.agentd_client import AgentdClient, AgentdClientError, launch_rpc_timeout_seconds
-from doeff_agents.sessionhost.attachment import TurnAttachment, attachment_wire
+from doeff_agents.sessionhost.acp.cache_operation import (
+    AcpCacheOperations,
+    MaintenanceTransportUncertainError,
+    SessionCachePing,
+    SessionCacheProbe,
+)
 from doeff_agents.sessionhost.acp.effects import (
     DECLARATION_FINGERPRINT_HEADER,
+    FS_READ_TEXT_DEFAULT_MAX_CHARS,
     JSON,
+    MEMORY_KIND,
+    MEMORY_SPEC_CONVERSATION_KEY,
     MESSAGE_CONVERSATION_FIELDS,
     MESSAGE_KIND,
     OWNERSHIP_PROOF_GCE_PREFIX,
     RECORD_PAGE_MAX_LIMIT,
     RECORD_SPOOL_GIVEN_UP_DIR,
+    SESSION_OBSERVED_BUSY,
+    SESSION_OBSERVED_IDLE,
     STREAM_SOURCE_HEADER,
-    TURN_RECORD_CONVERSATION_FIELD,
-    MEMORY_KIND,
-    MEMORY_SPEC_CONVERSATION_KEY,
     SUMMARY_KIND,
     SUMMARY_SPEC_CONVERSATION_KEY,
+    TURN_RECORD_CONVERSATION_FIELD,
     TURN_RECORD_KIND,
     TURN_RECORD_RUNNING_SELECTOR,
     AcpConversationMail,
@@ -75,10 +83,10 @@ from doeff_agents.sessionhost.acp.effects import (
     AcpEventWindow,
     AcpGet,
     AcpGetRow,
-    AcpRunningTurnRecords,
     AcpPutSpec,
     AcpPutStatus,
     AcpRow,
+    AcpRunningTurnRecords,
     AcpStreamPush,
     AcpTurnHeadlines,
     AcpWatchSse,
@@ -86,13 +94,6 @@ from doeff_agents.sessionhost.acp.effects import (
     CaptureGone,
     CaptureOutcome,
     ClockNowMs,
-    Conflict,
-    CustodyHealth,
-    CustodyLeaseBorrow,
-    CustodyLeaseRevoke,
-    Escalated,
-    EventWindow,
-    FsCanonicalPath,
     CommandExited,
     CommandGone,
     CommandProbe,
@@ -100,16 +101,22 @@ from doeff_agents.sessionhost.acp.effects import (
     CommandRefused,
     CommandRunning,
     CommandStart,
-    CommandStartOutcome,
     CommandStarted,
+    CommandStartOutcome,
     CommandStop,
+    Conflict,
+    CustodyHealth,
+    CustodyLeaseBorrow,
+    CustodyLeaseRevoke,
+    Escalated,
+    EventWindow,
+    FsCanonicalPath,
     FsDirectoryExists,
     FsFileExists,
-    FsMakeDirectories,
-    FS_READ_TEXT_DEFAULT_MAX_CHARS,
-    FsListDirectory,
-    FsReadText,
     FsFileSize,
+    FsListDirectory,
+    FsMakeDirectories,
+    FsReadText,
     FsWritePrivateText,
     Interjected,
     JSONObject,
@@ -123,13 +130,11 @@ from doeff_agents.sessionhost.acp.effects import (
     MetricLine,
     MintId,
     OwnershipProbe,
-    ProbeAnswer,
     PaneSeat,
     PaneSeatsOutcome,
     PaneSeatsUnavailable,
+    ProbeAnswer,
     ProfileHome,
-    SESSION_OBSERVED_BUSY,
-    SESSION_OBSERVED_IDLE,
     ProfileUsage,
     ProfileUsageOutcome,
     ProfileUsageUnavailable,
@@ -148,9 +153,6 @@ from doeff_agents.sessionhost.acp.effects import (
     RecordReadOutcome,
     RecordReadSince,
     RecordReadStream,
-    RecordSupersede,
-    RecordSuperseded,
-    RecordSupersedeOutcome,
     RecordSpoolGiveUp,
     RecordSpoolList,
     RecordSpoolListing,
@@ -158,6 +160,9 @@ from doeff_agents.sessionhost.acp.effects import (
     RecordSpoolRemove,
     RecordStream,
     RecordStreamKind,
+    RecordSupersede,
+    RecordSuperseded,
+    RecordSupersedeOutcome,
     RecordUnread,
     RecordUnsent,
     Refused,
@@ -180,12 +185,22 @@ from doeff_agents.sessionhost.acp.effects import (
     UsageWindow,
     UsageWindowName,
     WatchAdvance,
-    WorkerPublished,
     WatchKind,
+    WorkerPublished,
     WriteOutcome,
     Written,
     ownership_proof_file_parts,
 )
+from doeff_agents.sessionhost.acp.io_types import (
+    AcpRows,
+    Offsets,
+    PaneSeats,
+    Paths,
+    ProfileHomes,
+    ProfileUsageOutcomes,
+)
+from doeff_agents.sessionhost.attachment import TurnAttachment, attachment_wire
+from doeff_agents.sessionhost.cache_host_model import HostCacheRecord, decode_cache_receipt
 
 Dispatcher: TypeAlias = Callable[[EffectBase, K], "Resume | Pass"]
 
@@ -243,7 +258,8 @@ USAGE_RECORD_WINDOWS: tuple[tuple[UsageWindowName, str], ...] = (
 def attachment_params(attachments: tuple[TurnAttachment, ...]) -> list[JSON]:
     """段 10 lane 10o(agora-redesign #96): 型つきの添付 → session.send の wire の項。mime と base64 の
     逐語を運ぶだけ — 画像の綴り(block / input の項)は器の Dialogue が組む(法 012 R21)。"""
-    return [attachment_wire(attachment) for attachment in attachments]
+    result: list[JSONObject] = [dict(attachment_wire(attachment)) for attachment in attachments]
+    return list(result)
 
 
 def attachments_ignored_of(answer: JSON) -> str | None:
@@ -392,7 +408,17 @@ class HttpRaw:
 HttpHost: TypeAlias = "tuple[str, str, int]"
 
 
-def _split_url(url: str) -> tuple[HttpHost, str]:
+class HttpAddress(NamedTuple):
+    host: HttpHost
+    target: str
+
+
+class CheckedOutConnection(NamedTuple):
+    connection: HTTPConnection
+    reused: bool
+
+
+def _split_url(url: str) -> HttpAddress:
     """URL を宛先(scheme, host, port)と要求行の target に割る。"""
     parts = urllib.parse.urlsplit(url)
     host = parts.hostname or ""
@@ -400,7 +426,7 @@ def _split_url(url: str) -> tuple[HttpHost, str]:
     target = parts.path or "/"
     if parts.query:
         target = f"{target}?{parts.query}"
-    return (parts.scheme, host, port), target
+    return HttpAddress((parts.scheme, host, port), target)
 
 
 def _new_connection(host: HttpHost, timeout: float) -> HTTPConnection:
@@ -478,13 +504,13 @@ class HttpConnections:
         for connection in held:
             connection.close()
 
-    def _checkout(self, host: HttpHost, timeout: float) -> tuple[HTTPConnection, bool]:
+    def _checkout(self, host: HttpHost, timeout: float) -> CheckedOutConnection:
         with self._lock:
             connection = self._held.pop(host, None)
         if connection is not None:
             connection.timeout = timeout
-            return connection, True
-        return _new_connection(host, timeout), False
+            return CheckedOutConnection(connection, True)
+        return CheckedOutConnection(_new_connection(host, timeout), False)
 
     def _keep(self, host: HttpHost, connection: HTTPConnection) -> None:
         with self._lock:
@@ -570,7 +596,7 @@ class WatchReader:
     ) -> None:
         self._base_url = base_url
         self._headers = dict(headers)
-        self._since = since
+        self._mut_since = since
         self._frames: queue.Queue[_Frame] = frames if frames is not None else queue.Queue()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, name="agentd-watch", daemon=True)
@@ -582,7 +608,7 @@ class WatchReader:
         self._stop.set()
 
     def take(self, since: int, wait_seconds: float) -> WatchAdvance:
-        self._since = max(self._since, since)
+        self._mut_since = max(self._mut_since, since)
         latest: int | None = None
         gap: int | None = None
         closed = False
@@ -621,7 +647,7 @@ class WatchReader:
         # 載せない — この読み手が自分の接続を持ち、閉じたら張り直す。
         while not self._stop.is_set():
             host, target = _split_url(
-                f"{self._base_url}/api/watch/stream?since={self._since}"
+                f"{self._base_url}/api/watch/stream?since={self._mut_since}"
             )
             connection = _new_connection(host, WATCH_READ_TIMEOUT_SECONDS)
             try:
@@ -635,7 +661,7 @@ class WatchReader:
                 connection.close()
             if self._stop.is_set():
                 return
-            self._frames.put(_Frame("closed", self._since))
+            self._frames.put(_Frame("closed", self._mut_since))
             self._stop.wait(WATCH_RECONNECT_SECONDS)
 
     def _read_stream(self, response: HTTPResponse) -> None:
@@ -663,16 +689,16 @@ class WatchReader:
         payload = _as_object(_loads(data.encode("utf-8")))
         if event == "gap":
             resume_at = _int_field(payload, "resumeAt")
-            self._frames.put(_Frame("gap", resume_at if resume_at is not None else self._since))
+            self._frames.put(_Frame("gap", resume_at if resume_at is not None else self._mut_since))
             return
         latest = _int_field(payload, "latestSequence")
         if latest is None:
             return
         changed = payload.get("changed")
         if event == "watch" and changed is False:
-            self._since = max(self._since, latest)
+            self._mut_since = max(self._mut_since, latest)
             return
-        self._since = max(self._since, latest)
+        self._mut_since = max(self._mut_since, latest)
         self._frames.put(_Frame("changed", latest))
 
 
@@ -766,7 +792,7 @@ class AcpHttp:
         self._headers: dict[str, str] = {}
         if token:
             self._headers["Authorization"] = f"Bearer {token}"
-        self._watch: WatchReader | None = None
+        self._mut_watch: WatchReader | None = None
         self._wakes = wakes
         #: この機体の名 — 実況の push だけがこれを header で名乗る(綴りは effects.STREAM_SOURCE_HEADER の
         #: 1 点)。空 = 名乗らない(名を知らない口で撃つ検体・借りの口)。読み書きの札とは別の欄で、
@@ -776,6 +802,8 @@ class AcpHttp:
         self._http = HttpConnections()
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
+        if isinstance(effect, AcpCacheOperations):
+            return Resume(k, self._list("cache-operation", f"spec.nodeRow={effect.node_row}"))
         if isinstance(effect, AcpRunningTurnRecords):
             # 段 12(agora-redesign #537 便 1): 走っている記録だけ(engine の status 軸の field selector —
             # 綴りは effects の 1 点)。kind の全量は読まない。
@@ -803,6 +831,15 @@ class AcpHttp:
     ) -> object:
         if isinstance(effect, AcpGet):
             return self._list(effect.kind)
+        if isinstance(effect, AcpConversationMemories | AcpConversationSummaries | AcpConversationMail | AcpTurnHeadlines):
+            return self._read_conversation(effect)
+        if isinstance(effect, AcpGetRow):
+            return self._row(effect.key)
+        if isinstance(effect, AcpEventWindow):
+            return self._event_window(effect.after, effect.limit)
+        return self._watch_take(effect.since, effect.wait_seconds)
+
+    def _read_conversation(self, effect: AcpConversationMemories | AcpConversationSummaries | AcpConversationMail | AcpTurnHeadlines) -> object:
         if isinstance(effect, AcpConversationMemories):
             # card acp:kanban-issue:ki-9fc7d4bca4dc: この会話の kind agent-memory の行だけ(宣言の indexes が引く)。
             return self._list(MEMORY_KIND, f"spec.{MEMORY_SPEC_CONVERSATION_KEY}={effect.conversation_id}")
@@ -812,16 +849,13 @@ class AcpHttp:
         if isinstance(effect, AcpConversationMail):
             # 段 10 lane 10ba(#115): この会話を名指す郵便だけ(欄ごとの field selector・履歴に入れる判断は judgment)。
             return self._conversation_mail(effect.conversation_id)
-        if isinstance(effect, AcpTurnHeadlines):
-            # 薄い再開の拍だけ(段 9q・#77)— 段 10 lane 10ba: この会話の行だけ(旧来の kind の全量は 172 MB / 59 秒)。
-            return self._list(
-                TURN_RECORD_KIND, f"spec.{TURN_RECORD_CONVERSATION_FIELD}={effect.conversation_id}"
-            )
-        if isinstance(effect, AcpGetRow):
-            return self._row(effect.key)
-        if isinstance(effect, AcpEventWindow):
-            return self._event_window(effect.after, effect.limit)
-        return self._watch_take(effect.since, effect.wait_seconds)
+        match effect:
+            case AcpTurnHeadlines():
+                # 薄い再開の拍だけ(段 9q・#77)— 段 10 lane 10ba: この会話の行だけ(旧来の kind の全量は 172 MB / 59 秒)。
+                return self._list(
+                    TURN_RECORD_KIND, f"spec.{TURN_RECORD_CONVERSATION_FIELD}={effect.conversation_id}"
+                )
+        assert_never(effect)
 
     def _write(self, effect: AcpPutStatus | AcpPutSpec | AcpCreate | AcpStreamPush) -> object:
         if isinstance(effect, AcpPutStatus):
@@ -835,11 +869,11 @@ class AcpHttp:
         return self._push(effect.owner, effect.name, effect.frames)
 
     def close(self) -> None:
-        if self._watch is not None:
-            self._watch.stop()
+        if self._mut_watch is not None:
+            self._mut_watch.stop()
         self._http.close()
 
-    def _conversation_mail(self, conversation_id: str) -> tuple[AcpRow, ...]:
+    def _conversation_mail(self, conversation_id: str) -> AcpRows:
         """会話の郵便(段 10 lane 10ba): spec の MESSAGE_CONVERSATION_FIELDS の欄ごとに ACP の field selector で 1 回ずつ
         読み(ACP の field selector は 1 回の読みに条件 1 つ)、同じ行(自分宛の自分の郵便)は鍵で 1 つにする。順は読んだ順。"""
         merged: dict[str, AcpRow] = {}
@@ -848,7 +882,7 @@ class AcpHttp:
                 merged.setdefault(row.key, row)
         return tuple(merged.values())
 
-    def _list(self, kind: str, field_selector: str | None = None) -> tuple[AcpRow, ...]:
+    def _list(self, kind: str, field_selector: str | None = None) -> AcpRows:
         """kind の行の一覧。field_selector(``spec.<欄>=<値>`` — 段 10 lane 10ba)が在れば engine がその行だけを返す。"""
         query = f"kind={urllib.parse.quote(kind, safe='')}"
         if field_selector is not None:
@@ -1008,11 +1042,11 @@ class AcpHttp:
         )
 
     def _watch_take(self, since: int, wait_seconds: float) -> WatchAdvance:
-        if self._watch is None:
+        if self._mut_watch is None:
             frames = self._wakes.frames if self._wakes is not None else None
-            self._watch = WatchReader(self._base_url, self._headers, since, frames)
-            self._watch.start()
-        return self._watch.take(since, wait_seconds)
+            self._mut_watch = WatchReader(self._base_url, self._headers, since, frames)
+            self._mut_watch.start()
+        return self._mut_watch.take(since, wait_seconds)
 
     def _push(self, owner: str, name: str, frames: tuple[JSONObject, ...]) -> PushOutcome:
         url = (
@@ -1215,6 +1249,8 @@ class SessionRpc:
         self._client = AgentdClient(socket_path)
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
+        if isinstance(effect, (SessionCachePing, SessionCacheProbe)):
+            return Resume(k, self._cache_operation(effect))
         if isinstance(
             effect,
             (
@@ -1231,6 +1267,21 @@ class SessionRpc:
         if isinstance(effect, (SessionGet, SessionList, SessionCapture)):
             return Resume(k, self._look(effect))
         return Pass(effect, k)
+
+    def _cache_operation(self, effect: SessionCachePing | SessionCacheProbe) -> HostCacheRecord | None:
+        operation = effect.operation
+        params: dict[str, object] = {
+            "session_id": operation.target.session, "operation_id": operation.key,
+        }
+        method = "session.cache-ping-status"
+        if isinstance(effect, SessionCachePing):
+            method = "session.cache-ping"
+            params.update(expires_at=operation.expires_at, session_env=effect.session_env)
+        try:
+            result = self._client.request(method, params)
+        except OSError as error:
+            raise MaintenanceTransportUncertainError("sessionhostの専用操作応答を確認できません") from error
+        return None if result is None else decode_cache_receipt(result)
 
     def _act(
         self,
@@ -1416,28 +1467,21 @@ class LocalIo:
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(effect, MintId):
             return Resume(k, mint_ulid(int(time.time() * 1000), os.urandom(10)))
-        if isinstance(effect, CommandStart):
-            return Resume(k, self._start_command(effect))
-        if isinstance(effect, CommandProbe):
-            return Resume(k, self._probe_command(effect))
-        if isinstance(effect, CommandStop):
-            return Resume(k, stop_command(effect.pid))
+        if isinstance(effect, CommandStart | CommandProbe | CommandStop):
+            return self._command_dispatch(effect, k)
+        if isinstance(effect, FsFileExists | FsReadText | FsCanonicalPath | FsFileSize | FsWritePrivateText | SessionTranscript | SessionEvents | FsDirectoryExists | FsListDirectory | FsMakeDirectories):
+            return self._filesystem_dispatch(effect, k)
+        if isinstance(effect, OwnershipProbe | ListProfileHomes | ListPaneSeats | ReadProfileUsage | PublishWorker):
+            return self._profile_dispatch(effect, k)
+        if isinstance(effect, (ClockNowMs, MetricLine, LogLine)):
+            return Resume(k, self._observe(effect))
+        return Pass(effect, k)
+
+    def _filesystem_dispatch(self, effect: FsFileExists | FsReadText | FsCanonicalPath | FsFileSize | FsWritePrivateText | SessionTranscript | SessionEvents | FsDirectoryExists | FsListDirectory | FsMakeDirectories, k: K) -> Resume | Pass:
         if isinstance(effect, FsFileExists):
             return Resume(k, os.path.isfile(effect.path))
         if isinstance(effect, FsReadText):
             return Resume(k, read_small_text(effect.path, effect.max_chars))
-        if isinstance(effect, OwnershipProbe):
-            return Resume(k, probe_ownership(effect.proof))
-        if isinstance(effect, ListProfileHomes):
-            return Resume(k, list_profile_homes(effect.kind))
-        if isinstance(effect, ListPaneSeats):
-            return Resume(k, list_pane_seats())
-        if isinstance(effect, ReadProfileUsage):
-            return Resume(k, read_profile_usage(effect.kind, effect.cache_ttl_seconds))
-        if isinstance(effect, PublishWorker):
-            return Resume(k, publish_worker(effect))
-        if isinstance(effect, (ClockNowMs, MetricLine, LogLine)):
-            return Resume(k, self._observe(effect))
         if isinstance(
             effect,
             (FsCanonicalPath, FsFileSize, FsWritePrivateText, SessionTranscript, SessionEvents),
@@ -1447,9 +1491,34 @@ class LocalIo:
             return Resume(k, os.path.isdir(effect.path))
         if isinstance(effect, FsListDirectory):
             return Resume(k, list_directory(effect.path))
-        if isinstance(effect, FsMakeDirectories):
-            return Resume(k, make_directories(effect.path))
-        return Pass(effect, k)
+        match effect:
+            case FsMakeDirectories():
+                return Resume(k, make_directories(effect.path))
+        assert_never(effect)
+
+    def _profile_dispatch(self, effect: OwnershipProbe | ListProfileHomes | ListPaneSeats | ReadProfileUsage | PublishWorker, k: K) -> Resume | Pass:
+        if isinstance(effect, OwnershipProbe):
+            return Resume(k, probe_ownership(effect.proof))
+        if isinstance(effect, ListProfileHomes):
+            return Resume(k, list_profile_homes(effect.kind))
+        if isinstance(effect, ListPaneSeats):
+            return Resume(k, list_pane_seats())
+        if isinstance(effect, ReadProfileUsage):
+            return Resume(k, read_profile_usage(effect.kind, effect.cache_ttl_seconds))
+        match effect:
+            case PublishWorker():
+                return Resume(k, publish_worker(effect))
+        assert_never(effect)
+
+    def _command_dispatch(self, effect: CommandStart | CommandProbe | CommandStop, k: K) -> Resume | Pass:
+        if isinstance(effect, CommandStart):
+            return Resume(k, self._start_command(effect))
+        if isinstance(effect, CommandProbe):
+            return Resume(k, self._probe_command(effect))
+        match effect:
+            case CommandStop():
+                return Resume(k, stop_command(effect.pid))
+        assert_never(effect)
 
     def _observe(self, effect: ClockNowMs | MetricLine | LogLine) -> object:
         if isinstance(effect, ClockNowMs):
@@ -1491,7 +1560,7 @@ class LocalIo:
             env = dict(os.environ)
             env.update(dict(effect.env))
         try:
-            proc = subprocess.Popen(  # noqa: S603 — argv は judgment.verify-argv-of / summarize-argv-of の 1 点が組んだ列(文字列の shell 化はしない)
+            proc = subprocess.Popen(
                 list(effect.argv),
                 cwd=effect.cwd or None,
                 stdin=subprocess.DEVNULL,
@@ -1623,7 +1692,7 @@ def make_directories(path: str) -> bool:
     return os.path.isdir(path)
 
 
-def list_directory(path: str) -> tuple[str, ...]:
+def list_directory(path: str) -> Paths:
     """dir の直下の **file** の名(card acp:kanban-issue:ki-9fc7d4bca4dc — 記憶の置き場の冊)。名の順・dir は数えない。
     dir が無い・読めない = 空(置き場は手番の頭に作られるので、無い = まだ 1 冊も書いていない)。"""
     try:
@@ -1671,7 +1740,7 @@ def _epoch_ms_of(value: JSON) -> int | None:
     return int(value * 1000)
 
 
-def decode_profile_usage(doc: JSON, kind: str) -> tuple[ProfileUsageOutcome, ...]:
+def decode_profile_usage(doc: JSON, kind: str) -> ProfileUsageOutcomes:
     """``ai usage --json`` の答え → 資格の種類(kind = 答えの鍵 claude | codex)の record ごとの答え。
     ``error`` を持つ record(会社境界の断り・provider の失敗 — 判定は agentcli)は
     ProfileUsageUnavailable、断面の時刻(captured_at_epoch)が無い record も同じ。窓は
@@ -1702,7 +1771,7 @@ def decode_profile_usage(doc: JSON, kind: str) -> tuple[ProfileUsageOutcome, ...
     return tuple(out)
 
 
-def decode_profile_homes(doc: JSON, present: Callable[[str], bool]) -> tuple[ProfileHome, ...]:
+def decode_profile_homes(doc: JSON, present: Callable[[str], bool]) -> ProfileHomes:
     """``agentcli profiles list --json`` の答え(登録簿の record の列)→ profile ごとの家の在否。
     ``name`` か ``dir`` の無い record は読まない(発明しない)。``present`` = 家の実在の検
     (実 = os.path.isdir・検では表)。``aliases`` = 登録簿の別名の列(文字列だけ・無ければ空 — #479:
@@ -1721,7 +1790,7 @@ def decode_profile_homes(doc: JSON, present: Callable[[str], bool]) -> tuple[Pro
     return tuple(out)
 
 
-def decode_pane_seats(doc: JSON) -> tuple[PaneSeat, ...]:
+def decode_pane_seats(doc: JSON) -> PaneSeats:
     """``ai pane-sessions --json`` の答え(席の列)→ PaneSeat の列(純関数)。
 
     必須の 3 欄(conversationId / sessionId / state)を持たない要素と、state が契約の 2 語でない要素は
@@ -1761,7 +1830,7 @@ def list_pane_seats() -> PaneSeatsOutcome:
     return decode_pane_seats(doc)
 
 
-def list_profile_homes(kind: LeaseKind) -> tuple[ProfileHome, ...]:
+def list_profile_homes(kind: LeaseKind) -> ProfileHomes:
     """agentcli の登録簿の 1 点を subprocess で撃ち、家の dir の実在を検める。起動できない・期限・
     非 0 の終了・JSON でない答えは RuntimeError(tick の縁が log して次の周期へ)。"""
     argv = [*PROFILES_COMMAND, PROFILES_KIND_FLAG, kind]
@@ -1786,7 +1855,7 @@ def list_profile_homes(kind: LeaseKind) -> tuple[ProfileHome, ...]:
     return decode_profile_homes(doc, os.path.isdir)
 
 
-def read_profile_usage(kind: LeaseKind, cache_ttl_seconds: int) -> tuple[ProfileUsageOutcome, ...]:
+def read_profile_usage(kind: LeaseKind, cache_ttl_seconds: int) -> ProfileUsageOutcomes:
     """agentcli の usage の 1 点を subprocess で撃つ。起動できない・期限・非 0 の終了・JSON でない
     答えは RuntimeError(tick の縁が log して次の周期へ)。答えの中の profile ごとの断り・失敗は
     値(ProfileUsageUnavailable)で返る。"""
@@ -1829,7 +1898,7 @@ def publish_worker(effect: PublishWorker) -> WorkerPublished:
         return WorkerPublished(ok=False, worker="", detail=f"`{' '.join(argv)}` exited {completed.returncode}: {tail}")
     lines = completed.stdout.decode("utf-8", errors="replace").strip().splitlines()
     try:
-        doc = json.loads(lines[-1]) if lines else {}
+        doc: JSON = _loads(lines[-1].encode("utf-8")) if lines else {}
     except ValueError:
         doc = {}
     worker = str(doc.get("worker") or "") if isinstance(doc, dict) else ""
@@ -1931,7 +2000,7 @@ def record_append_body(batch: RecordBatch) -> JSONObject:
     return {"stream": record_stream_wire(batch.stream), "events": events}
 
 
-def _int_items(value: JSON) -> tuple[int, ...]:
+def _int_items(value: JSON) -> Offsets:
     if not isinstance(value, list):
         return ()
     return tuple(item for item in value if isinstance(item, int) and not isinstance(item, bool))
@@ -2129,10 +2198,14 @@ def encode_spooled_batch(batch: RecordBatch) -> JSONObject:
 _RECORD_STREAM_KINDS: frozenset[str] = frozenset(get_args(RecordStreamKind))
 
 
+def _is_stream_kind(value: JSON) -> TypeGuard[RecordStreamKind]:
+    return isinstance(value, str) and value in _RECORD_STREAM_KINDS
+
+
 def _stream_kind_of(value: JSON) -> RecordStreamKind | None:
     """契約の語彙(RecordStreamKind)の語だけを通す — 外の値は None(発明しない)。"""
-    if isinstance(value, str) and value in _RECORD_STREAM_KINDS:
-        return cast(RecordStreamKind, value)
+    if _is_stream_kind(value):
+        return value
     return None
 
 
@@ -2208,7 +2281,7 @@ class RecordSpool:
         if isinstance(effect, RecordSpoolList):
             return Resume(k, self.listing())
         if isinstance(effect, RecordSpoolRemove):
-            self.remove(effect.spool_key)
+            self.delete_record(effect.spool_key)
             return Resume(k, None)
         if isinstance(effect, RecordSpoolGiveUp):
             self.give_up(effect.spool_key, effect.reason)
@@ -2265,6 +2338,10 @@ class RecordSpool:
         return RecordSpoolListing(batches=tuple(batches), unreadable=tuple(unreadable))
 
     def remove(self, spool_key: str) -> None:
+        """既存呼び手の互換入口。"""
+        self.delete_record(spool_key)
+
+    def delete_record(self, spool_key: str) -> None:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(self._path(spool_key))
         _fsync_directory(self._directory)

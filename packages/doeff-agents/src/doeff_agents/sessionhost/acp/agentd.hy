@@ -113,10 +113,12 @@
 ;;; interrupts / interruptsDelivered / interruptsRead / interruptsEscalated、node の status.lease / status.observations、turn-record の create と
 ;;; status、profile の status.observed。binding は書かない・Node の行は作らない(scheduling の欄と動詞)。
 
-(require doeff-hy.macros [defk <-])
+(require doeff-hy.macros [defk defhandler <-])
+(import .cache_operation [BorrowCacheCredential ReleaseCacheCredential])
 
 (import dataclasses [replace])
 (import hashlib)
+(import doeff_agents.sessionhost.acp.cache_observation [with-request-start-bound])
 
 (import doeff_agents.sessionhost.attachment [TurnAttachment])
 (import doeff_agents.sessionhost.acp.effects [
@@ -523,6 +525,7 @@
   launch-charter-with-attachments
   message-attachments-of
   message-bodies-of
+  unexpired-messages-of
   mail-turn-text-of
   message-body-ref-of
   message-key-of
@@ -1017,6 +1020,19 @@
               (<- (remember-lease settings job-id lease.lease-id))
               #(lease None))))))
 
+(defhandler cache-credential-handler [#^ AgentdSettings settings]
+  (BorrowCacheCredential [operation]
+    ;; 既に通常turnが持つleaseを借用しない。専用操作のidをjournalの鍵にする。
+    (<- (return-lease settings operation.key None))
+    (<- lease (| LeaseGrant LeaseRefused)
+      (CustodyLeaseBorrow :kind "claude" :account operation.target.account :purpose f"cache-maintenance {operation.key}"))
+    (when (isinstance lease LeaseGrant)
+      (<- (remember-lease settings operation.key lease.lease-id)))
+    (resume lease))
+  (ReleaseCacheCredential [operation]
+    (<- returned bool (return-lease settings operation.key None))
+    (resume returned)))
+
 
 (defk headline-turns-for [subject reason]
   {:pre [(: subject str) (: reason str)]
@@ -1337,6 +1353,12 @@
   (setv choice resolved)
   (<- mail tuple (mail-of settings row))
   (setv bodies (get mail 0))
+  ;; 期限切れだけなら、認証の借用・sessionの破棄・起動の前に終了する。
+  ;; 本文が同居する通常の郵便はそのまま運び、届いたidにも期限切れを混ぜない。
+  (when (and (get mail 3) (not bodies))
+    (<- (end-job-now settings row "InputExpired"
+                     (+ "message delivery deadline passed: " (.join ", " (get mail 3))) #() now-ms))
+    (return state))
   ;; 段 10 lane 10o: 郵便の添付(bodies と同じ並び)。畳む腕は 1 手番目に、送る腕は SessionSend に載る。
   (setv carried (get mail 1))
   (<- exclude tuple (inputs-of row))
@@ -1612,7 +1634,7 @@
 (defk mail-of [settings row]
   {:pre [(: settings AgentdSettings) (: row AcpRow)]
    :post [(: % tuple)]}
-  "inputs の郵便の本文・添付・見つからなかった id: #(bodies attachments missing)。本文は鍵で 1 行ずつ読む
+  "inputs の郵便の本文・添付・利用できなかったid・期限切れid: #(bodies attachments missing expired)。本文は鍵で 1 行ずつ読む
    (郵便の全量 list を watch の拍ごとに撃たない — R14)。添付は段 10 lane 10o(型つき — 綴りは Dialogue)。"
   (<- inputs tuple (inputs-of row))
   (setv found [])
@@ -1622,9 +1644,12 @@
     (when (is-not message None)
       (.append found message)))
   (<- read tuple (mail-bodies-by-ref settings (tuple found)))
+  ;; 本文の読み出しが長引いた場合も含め、現在時刻で判定する。
+  (<- now-ms int (ClockNowMs))
+  (<- eligible tuple (unexpired-messages-of (tuple found) now-ms))
   ;; 段 10 lane 10o: 本文と添付は同じ 1 つの判断で inputs の順に並ぶ(並びがずれる第 2 の述語を置かない)。
-  (<- triple tuple (message-bodies-of (tuple found) inputs (get read 0) (get read 1)))
-  triple)
+  (<- triple tuple (message-bodies-of (get eligible 0) inputs (get read 0) (get read 1)))
+  (+ triple #((get eligible 1))))
 
 
 (defk start-offset-of [view arm]
@@ -1751,6 +1776,7 @@
       ;; card acp:kanban-issue:ki-ef537db05f7f)。
       (in-flight-job-of row plan view settings.node-name now-ms sent-ms (get start 1) True lease
                         (tuple pending)))
+  (setv job (replace job :request-start-lower-bound-ms now-ms))
   ;; 段 10 lane 10s 追補 3(agora-redesign #79): 手番の最初の frame(status running・at = sent-ms)は**送った拍に押す** —
   ;; turn-record の作成(頭への書き 1 往復 ≈ 60〜100 ms・Mac → tailnet)の後ろに置くと、frame が名乗る at より 1 往復
   ;; 遅れて中継に届き、画面の最初の差分(chat.live-first-tail)が 250〜330 ms に伸びていた(本番の実射 2026-09-15:
@@ -2248,8 +2274,8 @@
 ;; 記録(turn-record)と手番の終わり
 ;; ---------------------------------------------------------------------------
 
-(defk end-turn-record [job-id usage entries mark]
-  {:pre [(: job-id str) (: usage (| dict None)) (: entries tuple) (: mark (| tuple None))]
+(defk end-turn-record [job-id usage entries mark [cache-observation None]]
+  {:pre [(: job-id str) (: usage (| dict None)) (: entries tuple) (: mark (| tuple None)) (: cache-observation (| dict None))]
    :post [(: % bool)]}
   "turn-record を ended に(usage・残りの entries を行の entries に追記)。行は鍵で読み直す
    (正本は行)。戻り = 行が在って書けたか(無ければ False — 受けた直後に落ちた job には記録が
@@ -2261,7 +2287,7 @@
       False
       (do
         (<- record-status dict (status-object-of record))
-        (<- ended-record dict (turn-record-ended-status record-status usage entries))
+        (<- ended-record dict (turn-record-ended-status record-status usage entries cache-observation))
         (<- ended-record dict (turn-record-marked-status ended-record mark))
         (<- wrote (| Written Conflict Refused) (AcpPutStatus :row record :status ended-record))
         (when (not (isinstance wrote Written))
@@ -2293,7 +2319,9 @@
       (do
         (<- chunk TranscriptChunk (read-stream source path job.start-offset))
         (<- whole DeltaBatch (deltas-of job.agent-type source chunk.text job.job-id 0 now-ms #()))
-        whole)))
+        (<- bounded (| dict None) (with-request-start-bound whole.cache-observation
+                                    job.request-start-lower-bound-ms job.materials-cover-the-turn))
+        (replace whole :cache-observation bounded))))
 
 
 (defk finalize-job [settings state job view source path step now-ms]
@@ -2602,7 +2630,7 @@
   (if (is limit None)
       (do
         ;; turn-record → ended(追記できずに持ち越した出来事があれば最後の書きに乗せる)
-        (<- recorded bool (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark))
+        (<- recorded bool (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark batch.cache-observation))
         ;; agora-redesign #537 H2: 終わりの書きが着かなかった拍は、鍵で行の在否を確かめる(正本は行 — 戻りの False は
         ;; 「行が無い」と「書きが断られた」の両方を含む)。行が**無い**なら、その拍に 1 度だけ作り直して ended まで書く —
         ;; 記録なしで Ended にしない(ACP Messaging の turnlessOf は turn-record の行の在否で読み、無ければ
@@ -2626,7 +2654,7 @@
                                                                f"re-created ({remade.status}: {remade.error})")))
                       (setv drained noted))
                     (do
-                      (<- again bool (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark))
+                      (<- again bool (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark batch.cache-observation))
                       (setv recorded again)))
                 (<- (LogLine :text (+ f"agentd: turn-record for job {job.job-id} was missing at turn end; re-created -> "
                                       f"{remade} (ended: {recorded}) (#537)"))))))
@@ -2964,7 +2992,7 @@
   ;; 段 10f 便 2: 割り込みで終わる手番も文脈の実測を session の cache に置く(settle-record と同じ 1 点の判断)。
   (<- percent (| int None) (context-percent-of batch.context))
   (<- measured AgentdState (with-context-percent state job.session-id percent))
-  (<- (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark))
+  (<- (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark batch.cache-observation))
   (<- fresh (| AcpRow None) (AcpGetRow :key row.key))
   (setv target (if (is fresh None) row fresh))
   (<- status dict (status-object-of target))
