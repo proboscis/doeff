@@ -21,6 +21,19 @@
 ;; cache の TTL(分)— この口座の prompt cache は 1 時間(Mac の profile と同じ値)。
 (setv FAST-JEV-CACHE-TTL-MINUTES 60)
 
+;; plugin の状態 file(session ごとの温冷の記憶・journal)の置き場 — 家(HOME)の下の `.local/state` は pod の
+;; StatefulSet が序数ごとの PVC で持ち越す(ACP acpcluster.yaml seat-home-state)ので、pod が入れ替わっても
+;; 「前の応答からの経過」が残り、温かい cache を「記録が無い = 冷えた」と誤って圧縮しない。既定の
+;; `~/.cache/fast-jev-compaction` は持ち越されない(実測 2026-09-22 08:1x: 07:4x の入れ替えで journal ごと消えた)。
+(setv FAST-JEV-STATE-DIR-SUFFIX ".local/state/fast-jev-compaction")
+
+
+(deff fast-jev-state-dir [home]
+  {:pre [(: home str) (> (len home) 0)]
+   :post [(: % str)]}
+  "家(HOME)から plugin の状態 file の置き場を組む(純関数)。"
+  (+ (.rstrip home "/") "/" FAST-JEV-STATE-DIR-SUFFIX))
+
 
 (deff fast-jev-compaction-enabled [settings-text]
   {:pre [(: settings-text (| str None))]
@@ -46,12 +59,12 @@
                    (= (str (.get env "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS" "")) "1"))))))
 
 
-(deff fast-jev-home-settings [settings-text key-file]
-  {:pre [(: settings-text (| str None)) (: key-file str) (> (len key-file) 0)]
+(deff fast-jev-home-settings [settings-text key-file state-dir]
+  {:pre [(: settings-text (| str None)) (: key-file str) (> (len key-file) 0) (: state-dir str) (> (len state-dir) 0)]
    :post [(: % str)]}
   "借りた家の settings.json の本文に plugin の宣言を合流させた本文(純関数・冪等)。
    足す欄: enabledPlugins[plugin]=true・extraKnownMarketplaces[name]={source git url}・
-   pluginConfigs[plugin].options = {cacheTtlMinutes, apiKeyFile}・env.CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=\"1\"。
+   pluginConfigs[plugin].options = {cacheTtlMinutes, apiKeyFile, stateDir}・env.CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=\"1\"。
    他の欄は触らない。壊れた本文(JSON でない・object でない)は {} から組む(CLI は壊れた settings に
    loud に落ちるので、直す方が今日より悪くならない)。"
   (setv settings None)
@@ -71,7 +84,7 @@
   (setv configs (.setdefault settings "pluginConfigs" {}))
   (when (not (isinstance configs dict)) (setv configs {}) (setv (get settings "pluginConfigs") configs))
   (setv (get configs FAST-JEV-PLUGIN-ID)
-        {"options" {"cacheTtlMinutes" FAST-JEV-CACHE-TTL-MINUTES "apiKeyFile" key-file}})
+        {"options" {"cacheTtlMinutes" FAST-JEV-CACHE-TTL-MINUTES "apiKeyFile" key-file "stateDir" state-dir}})
   (setv env (.setdefault settings "env" {}))
   (when (not (isinstance env dict)) (setv env {}) (setv (get settings "env") env))
   (setv (get env "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS") "1")
