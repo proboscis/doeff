@@ -1,0 +1,10 @@
+### 実行: 2026-09-21T08:46:29Z・機体 Proboscis-MBP.local・本体 2.1.278(sha256 bd245662fb8a0e32…)・計画段 c-AJ8C0BK9RF29HQ92ZQ986FXQVT
+### 計り方: 捕捉 server へ向けた claude -p の request body に目印の skill の説明文が載った数(requests=2 は本体の 2 回の送信 — 1 回につき 1 件)
+--- home-dot-skills__cwd-under-home: rc=1 requests=2 homedot(A)=2 cfg(B)=0 project(P)=0
+      HOME=<作業 dir>/h1  CLAUDE_CONFIG_DIR=<作業 dir>/cfg-empty  cwd=<作業 dir>/h1/work/repo
+--- home-dot-skills__cwd-outside-home: rc=1 requests=2 homedot(A)=0 cfg(B)=0 project(P)=0
+      HOME=<作業 dir>/h1  CLAUDE_CONFIG_DIR=<作業 dir>/cfg-empty  cwd=<作業 dir>/outside/work
+--- config-dir-skills__control: rc=1 requests=2 homedot(A)=0 cfg(B)=2 project(P)=0
+      HOME=<作業 dir>/h1  CLAUDE_CONFIG_DIR=<作業 dir>/cfg-b  cwd=<作業 dir>/h1/work/repo
+--- collision__config-B_vs_project-P: rc=1 requests=2 homedot(A)=0 cfg(B)=2 project(P)=0
+      HOME=<作業 dir>/h1  CLAUDE_CONFIG_DIR=<作業 dir>/cfg-b  cwd=<作業 dir>/h1/work/repo4
