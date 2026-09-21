@@ -1436,7 +1436,9 @@
     (<- idle bool (session-idle view))
     (when (and idle
                (is-not view.turn-ended-at-ms None)
-               (>= now-ms (+ view.turn-ended-at-ms (* 1000 ttl-seconds))))
+               (>= now-ms (+ view.turn-ended-at-ms (* 1000 ttl-seconds)))
+               (or (is view.cache-retained-until-ms None)
+                   (>= now-ms view.cache-retained-until-ms)))
       (.append out view.session-id)))
   (tuple out))
 

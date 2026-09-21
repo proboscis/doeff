@@ -78,7 +78,7 @@
 (import doeff_agents.sessionhost.impls.headless_argv [headless-argv-impl])
 (import doeff_agents.sessionhost.effects [headless-kill headless-liveness])
 (import doeff_agents.sessionhost.headless_protocol [backend-alive])
-(import doeff_agents.sessionhost.cache_host [cache-host-ping cache-host-probe cache-host-guard-normal-send cache-host-cancel])
+(import doeff_agents.sessionhost.cache_host [cache-host-ping cache-host-probe cache-host-guard-normal-send cache-host-cancel cache-resident-retention])
 (import doeff_agents.sessionhost.cache_host_model [CacheMaintenanceActiveError CACHE-MAINTENANCE-ACTIVE])
 (import doeff_agents.sessionhost.cache_host_model [HostCacheRead])
 (import doeff_agents.sessionhost.cache_host_store [session-mutation-lock])
@@ -1104,6 +1104,8 @@
      status の語ではなくこれで判断する)。終端の行は観測せず false(host が既に終端と
      裁定した行の backend は片付けの対象で、次の手番を受ける器ではない)。"
   (setv wire (wire-with-stalled wire))
+  (setv (get wire "cache_retained_until_ms")
+        (run-hosted config actor (cache-resident-retention wire)))
   (setv now (datetime.now timezone.utc))
   (setv (get wire "backend_alive")
         (if (is-terminal-status (get wire "status"))

@@ -145,3 +145,59 @@
   (assert (= uncertain.state MaintenanceState.UNKNOWN))
   (assert (is uncertain.reply None))
   (assert (= (get state "starts") 1)))
+
+;; 時間・ファイル・receiptだけを差し替え、実際の応答処理とidle回収を組み合わせる。
+(import datetime [datetime timezone])
+(import json)
+(import doeff_agents.sessionhost.cache_host [cache-resident-retention cache-host-probe])
+(import doeff_agents.sessionhost.cache_host_model [HostCacheRetainedUntil HostCacheWrite])
+(import doeff_agents.sessionhost.effects [ClockNow FsReadText HeadlessKill])
+(import doeff_agents.sessionhost.acp.handlers [session-view-of])
+(import doeff_agents.sessionhost.acp.judgment [sessions-to-retire])
+
+(defhandler residency-world [#^ dict state]
+  (ClockNow [] (resume (datetime.fromtimestamp (/ (get state "now") 1000) timezone.utc)))
+  (FsReadText [path] (resume (get state "events")))
+  (HeadlessKill [session-name] (resume True))
+  (HostCacheWrite [record]
+    (.append (get state "receipts") record)
+    (resume None))
+  (HostCacheRetainedUntil [session-id]
+    (setv deadlines (lfor r (get state "receipts")
+      :if (and (= r.session-id session-id) (= r.state MaintenanceState.SUCCEEDED)
+               (is-not r.reply None) (> (+ r.reply.cache-read r.reply.cache-write) 0))
+      (+ r.reply.completed-at 3600000)))
+    (resume (if deadlines (max deadlines) None))))
+
+(deftest test-clock-swapped-idle-cleanup-ping-and-next-cycle
+  (setv state {"now" 0 "events" "" "receipts" []}
+        wire {"session_id" "resident" "agent_type" "claude" "backend_kind" "headless"
+              "status" "running" "work_dir" "/same" "lifecycle" "multi_turn"
+              "conversation" {"session_id" "provider-session"}
+              "turn_ended_at" "1970-01-01T00:00:00+00:00"})
+  (for [now #(600000 3300000 3600000 6600000 6900000)]
+    (setv (get state "now") now)
+    (<- retained (| int None) ((residency-world state) (cache-resident-retention wire)))
+    (setv snapshot (| wire {"cache_retained_until_ms" retained})
+          view (session-view-of snapshot))
+    (<- retired tuple (sessions-to-retire #(view) now 600))
+    (assert (= retired #()))
+    (when (in now #(3300000 6600000))
+      ;; provider応答をleaf handlerで与える。成功判定・保持の判断は実Program。
+      (setv (get state "events") (+
+        (json.dumps {"type" "assistant" "timestamp" (.isoformat (datetime.fromtimestamp (/ now 1000) timezone.utc))
+          "message" {"id" f"response-{now}" "model" "model" "usage"
+            {"cache_read_input_tokens" 64000 "cache_creation_input_tokens" 42
+             "cache_creation" {"ephemeral_1h_input_tokens" 42}}}})
+        "\n" (json.dumps {"type" "result" "is_error" False})))
+      (setv pending (HostCacheRecord f"ping-{now}" "resident" (+ now 300000)
+        "process" "events" :state MaintenanceState.RUNNING :started-at now))
+      (<- completed HostCacheRecord ((residency-world state) (cache-host-probe pending)))
+      (assert (= completed.state MaintenanceState.SUCCEEDED))))
+  ;; handlerを作り直しても永続receiptが同じなら同じ期限。新しい応答なしでは有限で回収。
+  (<- retained (| int None) ((residency-world state) (cache-resident-retention wire)))
+  (assert (= retained 10200000))
+  (setv view (session-view-of (| wire {"cache_retained_until_ms" retained})))
+  (<- expired tuple (sessions-to-retire #(view) 10200000 600))
+  (assert (= expired #("resident")))
+  (assert (= view.turn-ended-at-ms 0)))
