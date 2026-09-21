@@ -16,7 +16,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from test_vm_failfast_semgrep_rules import _semgrep_results
 
 pytestmark = pytest.mark.semgrep
