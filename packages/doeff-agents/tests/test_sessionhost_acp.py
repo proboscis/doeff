@@ -4063,6 +4063,41 @@ def test_mail_heading_names_the_message_id_kind_class_sender_parent_and_jst_time
     )
 
 
+def test_the_mail_heading_names_the_served_class_when_the_delivery_table_rewrote_it() -> None:
+    """card acp:kanban-issue:ki-fa719b70d37c(設計 §D2c-4): 配送表は 1 つの class を**別の class として配る**行
+    (投函の身元の名簿 postedBy + 扱う class の宣言 as)を持てる。担い手は「自分がどの class の担当として開かれたか」を
+    見出しの 1 行で読むので、名乗りだけを出すと前置きの段落と食い違う(kanban の担い手が dev の手順を読む)。
+
+    ⚠ 読みは行の `status.routing.servedClass` ちょうど — ここで方策の受付の表を読み直さない(第 2 の導出を置かない)。"""
+    spec: JSONObject = {"id": "lt-1", "kind": "ask", "class": "dev", "from": "operator", "at": 1789446082000}
+    rewritten = {"state": "routed", "routing": {"servedClass": "kanban", "decidedBy": "machine"}}
+    assert run(judgment.mail_heading_of("lt-1", spec, rewritten)) == (
+        "[郵便 lt-1・kind=ask・class=kanban(名乗り dev)・from=operator・parent=無し・at=2026-09-15 13:21:22 JST]"
+    )
+    # 読み替えが起きていない拍は今日と 1 文字も変わらない(欄が無い・同じ語・status ごと無い・形が違う)
+    for status in [
+        None,
+        {},
+        {"state": "routed"},
+        {"routing": {}},
+        {"routing": "not-an-object"},
+        {"routing": {"servedClass": "dev"}},
+        {"routing": {"servedClass": ""}},
+        {"routing": {"servedClass": 3}},
+    ]:
+        assert run(judgment.mail_heading_of("lt-1", spec, status)) == (
+            "[郵便 lt-1・kind=ask・class=dev・from=operator・parent=無し・at=2026-09-15 13:21:22 JST]"
+        ), status
+    # 名乗りの無い郵便(class を綴らずに送った拍)も、扱う class が在れば行き先を名乗る
+    assert run(judgment.mail_heading_of("lt-2", {"kind": "ask", "from": "operator"}, rewritten)) == (
+        "[郵便 lt-2・kind=ask・class=kanban(名乗り 無し)・from=operator・parent=無し・at=無し]"
+    )
+    # 手番へ渡る文も同じ 1 点を通る(見出し 1 行 + 本文)
+    assert run(judgment.mail_turn_text_of("lt-1", spec, "本文", rewritten)) == (
+        "[郵便 lt-1・kind=ask・class=kanban(名乗り dev)・from=operator・parent=無し・at=2026-09-15 13:21:22 JST]\n本文"
+    )
+
+
 def test_the_first_turn_fold_and_the_warm_send_carry_the_same_mail_heading() -> None:
     """同じ見出しが 1 手番目の畳み(headless の launch)と温かい session への send の両方に載る(綴りは mail-heading-of の 1 点)。"""
     def asked(message_id: str, body: str) -> AcpRow:
