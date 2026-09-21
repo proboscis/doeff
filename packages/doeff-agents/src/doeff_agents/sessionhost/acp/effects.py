@@ -462,6 +462,18 @@ MEMORY_STREAM_PREFIX: str = "memory#"
 #: 行から組み直す。実測 2026-09-20: 本 18 冊に対し索引 15 行に腐っていた)。
 MEMORY_FILE_SUFFIX: str = ".md"
 MEMORY_INDEX_FILE: str = "MEMORY.md"
+#: 畳み戻しの**基準**(baseline)の side car。手番の頭に置き場へ出した写しの claim check を、冊と同じ拍・
+#: 同じ書き手(器)で置く。⚠ **正本ではない** — ACP の行にも記録の service にも 1 bit も書かない
+#: (法 575b1e の正本の座は行)。これが在るから畳み戻しは「手元 ≠ 行」を『席が書いた』と『席は触って
+#: いないが行が別の機体で動いた』に割れる。2 点(手元と行)だけの比較は割れず、席が 1 字も触っていない
+#: 古い写しで行を巻き戻していた(実測 2026-09-21: 冊 mail-hold-has-two-exits が v2 6,503 → v3 4,620 byte)。
+MEMORY_BASE_FILE: str = "MEMORY.base.json"
+#: 基準の JSON の綴り: {"books": {<name>: {recordSeq, sha256, version}}}。内側の 3 語は行の spec と
+#: **同じ綴り**(MEMORY_SPEC_RECORD_SEQ_KEY / _SHA256_KEY / _VERSION_KEY)を使う — 第 2 の語彙を作らない。
+MEMORY_BASE_BOOKS_KEY: str = "books"
+#: 置き場の予約名(索引と基準)。冊でも『読めない file』でもないので、読み手は**黙って**除く。
+#: 数えると計器の unreadable が正常でも 1 を名乗り(索引 1 つ分)、直しが劣化に見える。
+MEMORY_RESERVED_FILES: tuple[str, ...] = (MEMORY_INDEX_FILE, MEMORY_BASE_FILE)
 #: charter が運ぶ記憶の本(起こす腕が行から読んで載せ、器の側が置き場へ書き出す)。ACP の行へは書かない
 #: (history / first_turn と同じく起こすためだけの値)。
 CHARTER_MEMORY_FILES_KEY: str = "memory_files"
@@ -1873,15 +1885,62 @@ class MemoryAppend:
 
 @dataclass(frozen=True)
 class MemorySupersede:
-    """行が在る — その recordSeq へ supersede(producerSeq は 0 のまま)。前の版は鎖として残る。"""
+    """行が在る — その recordSeq へ supersede(producerSeq は 0 のまま)。前の版は鎖として残る。
+
+    ``base_seq`` / ``conflicted`` = 基準が指していた recordSeq と、それが行の今の値と割れていたか
+    (= 手番の**間に**別の機体が同じ冊を書いた)。衝突でも断らない — 席の編集を捨てず、行の今の版へ
+    重ねて名乗る(両方の版が鎖に残る)。"""
 
     name: str
     record_seq: int
     version: int
+    base_seq: int | None = None
+    conflicted: bool = False
 
 
-#: 1 冊の書き方(法 ACP 575b1e: 撃ち分けの鍵は**行の recordSeq の在否**の 1 規則 — 版を数えて選ばない)。
-MemoryWriteVerdict: TypeAlias = "MemoryUnchanged | MemoryAppend | MemorySupersede"
+@dataclass(frozen=True)
+class MemoryUnbased:
+    """基準が無いのに行が在る — 手元の写しが『席がこの手番で書いた本文』か『前の手番の古い写し』かを
+    判る材料が無い。**撃たずに名乗る**(安全側): ここで supersede に倒すのが、触っていない写しで行を
+    巻き戻していた壊れ方そのものだった。次の水入れが基準を置けば、その手番から普通に畳み戻る。"""
+
+    name: str
+
+
+@dataclass(frozen=True)
+class MemoryBaseline:
+    """手番の頭に置き場へ出した 1 冊の claim check(= 基準の 1 項)。正本ではない(行が正本)— 手元の写しが
+    出した時のままかを次の畳み戻しが判ずるためだけに置く。"""
+
+    name: str
+    record_seq: int
+    sha256: str
+    version: int
+
+
+@dataclass(frozen=True)
+class MemoryFold:
+    """1 冊を畳み戻した結末(agentd.fold-one-memory の答え)。
+
+    ⚠ **『撃った』と『撃つ理由が無かった』を 1 つに畳まない**: 畳むと計器の written が「error が
+    出なかった冊の数」になり、艦隊の agent-memory-folded 221 行が 100% ``written == books`` を
+    名乗っていた(冊が毎手番全部変わっているはずがない — この 100% がその指紋)。
+
+    ``baseline`` = 次の手番へ渡す基準の 1 項(撃てた冊だけが値を持つ・None = 基準を据え置く)。"""
+
+    name: str
+    written: bool = False
+    unchanged: bool = False
+    unbased: bool = False
+    conflicted: bool = False
+    reason: str | None = None
+    baseline: MemoryBaseline | None = None
+    base_seq: int | None = None
+    row_seq: int | None = None
+
+
+#: 1 冊の書き方(法 ACP 575b1e)。突き合わせるのは 3 点 — 手元・行・基準(judgment.memory-write-verdict)。
+MemoryWriteVerdict: TypeAlias = "MemoryUnchanged | MemoryAppend | MemorySupersede | MemoryUnbased"
 
 
 @dataclass(frozen=True)
