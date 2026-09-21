@@ -393,3 +393,49 @@ plugin の skill だけ)。発注者の席(個人 Mac)の一覧も同梱の 13 �
 - ⚠ `~/repos/doeff` は共有の作業場で、**同時に別の席が動いていることがある**。
   branch 作業は専用の `git worktree`(置き場は `~/.worktrees/` の中ちょうど)で行い、
   他と重ならない綴りを選ぶ。
+
+---
+
+## 検収の記録(2026-09-21・計画段 c-AJ8C0BK9RF29HQ92ZQ986FXQVT)
+
+実装の報告 `lt-1WW45MA6K6N0NNJVYVY85NNQW0` を **accept**(`lt-JT6S0S08F48BFP67E8F9PV19J3`)。
+1 度差し戻し(`lt-VZ34EHCR0RTDMJN67F64421B8K`・受入 11 の 1 点)→ L259 で直り、以下を計画段が
+**自分で撃って**確かめた(個人 Mac = BSD・本線 `57bc38cf`。実装の実測は pod = Linux なので、
+0 が OS をまたいで立つ)。
+
+| 撃ったもの | 結果 |
+| --- | --- |
+| `test_fs_ensure_symlink_survives_two_seats_landing_on_one_empty_home` ほか 3 本 | pass |
+| 門の弁別 + 席の家の検(semgrep 2 file + deftest) | 18 本 pass |
+| `evidence/symlink_install_race_real_fn.py` を着地形へ | **400/400 `ok:linked`**・例外 0・偽 occupied 0(直す前は 165 例外 + 17 偽 occupied) |
+| 実体の file が居る家 | `occupied-by-real-entity`・**中身は無傷**・残骸 0 |
+| 実体の dir が居る家へ 3 度起動 | 3 度とも `occupied`・家の entry は増えず・残骸 0 |
+
+検が空振りしない作りであることも確認: `os.fork` の本物の 2 process・共有 memory の spin barrier・
+子の語が `ok:linked` / `ok:unchanged` 以外なら赤・読み手側は「読み 500 回超」の針つき。
+
+### 決定 1(戻せる決定): 見分けと `rename` の間の窓は**最善努力**として受け入れる
+
+`lstat` で枝を決めてから `rename` で被せる対は原子ではないので、その隙に**実体の file** が
+現れた拍にはそれを置き換える(実体の dir なら `rename` が `OSError` になり `occupied` に落ちる)。
+採る理由: 「symlink か不在の時だけ被せる」を原子的に言える syscall は移植できる形では無く、
+erosion guard が守る形は長く据わっている実体なので見分けが先に当たる。**戻す時の手順**:
+Linux 限定の `renameat2`(張り替えを弾くので使えない)ではなく、据え付けの前に家を占有の有無で
+分ける形から検討する。決めた席 = 計画段 c-AJ8C0BK9RF29HQ92ZQ986FXQVT / 2026-09-21T11:2xZ。
+出自 = 依頼者 c-3JYBNJMC… の pod の実測(`rename` 単体は実体の file を黙って潰す)と、
+実装 c-EWR4R2XYWYEPDCMYVBEHRNF1MB の註。
+
+### 決定 2(戻せる決定): 受入 1〜4 は宣言つき deviation のまま accept する
+
+pod の agentd が `ec654440`(実装より前)を走らせている限り、生きた席の実射は原理的に撃てない。
+担い手の未了ではないので報告を止めない。**pool が実装入りの image に載った拍に撃つ**を card
+`acp:kanban-issue:ki-62aa1f4e9c9c` の追跡に残す。戻す時 = その拍に受入 1 / 3 / 4 を入れ替わった
+直後の pod で撃ち直すだけ。
+
+### 射程外の所見(この依頼では直さない)
+
+- `os.replace` が dir 以外の理由(権限・容量)で `OSError` になった拍も `occupied-by-real-entity` を
+  名乗るので、log は「実体が居た」と言い、追う人は在りもしない物を探す。3 値の語彙は変えずに
+  log へ errno を添える形が後の便で価値がある。
+- pod に tmux が無く、tmux の検 3 本が skip ではなく `assert` で赤になる(素の `cc58379a` でも同じ)。
+  計画段から受付へ起票した。
