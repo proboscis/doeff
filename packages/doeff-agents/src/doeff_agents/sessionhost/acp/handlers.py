@@ -47,7 +47,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.client import HTTPConnection, HTTPException, HTTPResponse, HTTPSConnection
-from typing import NamedTuple, TypeAlias, assert_never, cast, get_args
+from typing import NamedTuple, TypeAlias, TypeGuard, assert_never, get_args
 
 from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.agentd_client import AgentdClient, AgentdClientError, launch_rpc_timeout_seconds
@@ -2198,10 +2198,14 @@ def encode_spooled_batch(batch: RecordBatch) -> JSONObject:
 _RECORD_STREAM_KINDS: frozenset[str] = frozenset(get_args(RecordStreamKind))
 
 
+def _is_stream_kind(value: JSON) -> TypeGuard[RecordStreamKind]:
+    return isinstance(value, str) and value in _RECORD_STREAM_KINDS
+
+
 def _stream_kind_of(value: JSON) -> RecordStreamKind | None:
     """契約の語彙(RecordStreamKind)の語だけを通す — 外の値は None(発明しない)。"""
-    if isinstance(value, str) and value in _RECORD_STREAM_KINDS:
-        return cast(RecordStreamKind, value)
+    if _is_stream_kind(value):
+        return value
     return None
 
 

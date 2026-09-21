@@ -36,6 +36,8 @@
   HeadlessSpawn])
 (import doeff_agents.sessionhost.headless_process [HeadlessRegistry pid-exists])
 (import doeff_agents.sessionhost.headless_protocol [BackendLiveness])
+(import doeff_agents.sessionhost.cache_host_model [HostCacheIdentifyProcess HostCacheStopProcess])
+(import doeff_agents.sessionhost.cache_process [identify-process stop-identified-process])
 (import doeff_agents.sessionhost.policy [inheritable-spawn-env])
 (import doeff_agents.sessionhost.substrate [
   SHELL-PROMPT-SUPPRESSING-ENV
@@ -63,6 +65,19 @@
 
 
 (defhandler headless-substrate [registry]
+  (HostCacheIdentifyProcess [process-name]
+    (setv process (.get registry process-name))
+    (if (or (is process None) (not (.alive process)))
+      (resume None)
+      (do
+        (setv identity (identify-process process.pid))
+        ;; 死亡/reapとPID再利用を跨いだ観測は保存しない。本文送信はこの後だけ。
+        (resume (if (.alive process) identity None)))))
+
+  (HostCacheStopProcess [identity]
+    (stop-identified-process identity)
+    (resume None))
+
   (HeadlessSpawn [session-name work-dir env argv events-path dialogue]
     (setv process (.spawn registry session-name argv work-dir
                           (headless-spawn-env env) events-path dialogue))

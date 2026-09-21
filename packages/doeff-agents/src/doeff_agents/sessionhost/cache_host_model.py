@@ -1,6 +1,7 @@
 """sessionhostの専用cache-ping。通常session行の完了状態とは別に記録する。"""
 
 from dataclasses import dataclass
+from math import isfinite
 
 from doeff import EffectBase
 from doeff_agents.sessionhost.acp.cache_operation import CacheReply, MaintenanceState
@@ -10,6 +11,16 @@ CACHE_MAINTENANCE_ACTIVE = "cache-maintenance-active"
 
 class CacheMaintenanceActiveError(RuntimeError):
     """専用操作が同じ会話を使用中。通常入力は未送信なので後で再試行できる。"""
+
+
+@dataclass(frozen=True)
+class CacheProcessIdentity:
+    pid: int
+    created_at: float
+
+    def __post_init__(self) -> None:
+        if self.pid <= 0 or not isfinite(self.created_at) or self.created_at <= 0:
+            raise ValueError("process識別のPID・起動時刻が不正です")
 
 
 @dataclass(frozen=True)
@@ -23,6 +34,17 @@ class HostCacheRecord:
     started_at: int | None = None
     reply: CacheReply | None = None
     reason: str | None = None
+    process: CacheProcessIdentity | None = None
+
+
+@dataclass(frozen=True)
+class HostCacheIdentifyProcess(EffectBase):
+    process_name: str
+
+
+@dataclass(frozen=True)
+class HostCacheStopProcess(EffectBase):
+    identity: CacheProcessIdentity
 
 
 @dataclass(frozen=True)
@@ -71,10 +93,19 @@ def decode_cache_receipt(value: object) -> HostCacheRecord:
         )
     started = value.get("started_at")
     reason = value.get("reason")
+    raw_process = value.get("process")
+    process = None
+    if raw_process is not None:
+        if not isinstance(raw_process, dict):
+            raise ValueError("専用操作のprocess識別がobjectではありません")
+        created_at = raw_process.get("created_at")
+        if not isinstance(created_at, (int, float)) or isinstance(created_at, bool):
+            raise ValueError("専用操作のprocess起動時刻が不正です")
+        process = CacheProcessIdentity(_integer(raw_process.get("pid")), float(created_at))
     return HostCacheRecord(
         _text(value.get("operation_id")), _text(value.get("session_id")),
         _integer(value.get("expires_at")), _text(value.get("process_name")),
         _text(value.get("events_path")), MaintenanceState(_text(value.get("state"))),
         None if started is None else _integer(started), reply,
-        None if reason is None else _text(reason),
+        None if reason is None else _text(reason), process,
     )

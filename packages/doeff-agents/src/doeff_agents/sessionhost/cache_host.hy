@@ -4,7 +4,8 @@
 (import hashlib)
 (import json)
 (import datetime [datetime timezone])
-(import .cache_host_model [HostCacheRecord HostCacheRead HostCacheWrite HostCacheActive CacheMaintenanceActiveError])
+(import .cache_host_model [HostCacheRecord HostCacheRead HostCacheWrite HostCacheActive CacheMaintenanceActiveError
+  CacheProcessIdentity HostCacheIdentifyProcess HostCacheStopProcess])
 (import .acp.cache_operation [MaintenanceState CacheReply PING-TEXT])
 (import .acp.cache_observation [cache-observation-of])
 (import .effects [clock-now fs-read-text headless-has-session headless-spawn
@@ -18,6 +19,13 @@
   {:pre [True] :post [(: % int)]}
   (<- now (clock-now))
   (int (* (now.timestamp) 1000)))
+
+(defk stop-cache-process [record]
+  {:pre [(: record HostCacheRecord)] :post [(: % "None")]}
+  (<- (headless-kill record.process-name))
+  (when record.process
+    (<- (HostCacheStopProcess record.process)))
+  None)
 
 (defk cache-host-probe [record]
   {:pre [(: record HostCacheRecord)] :post [(: % HostCacheRecord)]}
@@ -61,10 +69,10 @@
                           (get observation "cacheWrite")))
             (setv updated (replace record :state MaintenanceState.SUCCEEDED :reply reply))))
         ;; CLIのresult後の処理も終えてからsessionの排他を解く。
-        (<- (headless-kill record.process-name)))
+        (<- (stop-cache-process record)))
     (>= now record.expires-at)
       (do
-        (<- (headless-kill record.process-name))
+        (<- (stop-cache-process record))
         (setv updated (replace record :state MaintenanceState.UNKNOWN :reason "deadline-without-result"))))
   (when (!= record updated) (<- (HostCacheWrite updated)))
   updated)
@@ -114,9 +122,18 @@
   (<- (HostCacheWrite record))
   (<- (headless-spawn record.process-name row.work-dir effective-env
         (get built "argv") record.events-path (get built "dialogue")))
+  (<- process (| CacheProcessIdentity None) (HostCacheIdentifyProcess record.process-name))
+  (when (is process None)
+    (<- (stop-cache-process record))
+    (setv record (replace record :state MaintenanceState.FAILED :reason "process-exited-before-ping"))
+    (<- (HostCacheWrite record))
+    (return record))
+  ;; この記録前に死んだ場合は本文未送信。記録後なら再起動したhostが同じprocessを止められる。
+  (setv record (replace record :process process))
+  (<- (HostCacheWrite record))
   (<- delivered bool (headless-deliver record.process-name PING-TEXT #()))
   (when (not delivered)
-    (<- (headless-kill record.process-name))
+    (<- (stop-cache-process record))
     (setv record (replace record :state MaintenanceState.FAILED :reason "ping-not-delivered"))
     (<- (HostCacheWrite record)))
   record)
@@ -134,6 +151,6 @@
   {:pre [(: session-id str)] :post [(: % "None")]}
   (<- active (| HostCacheRecord None) (HostCacheActive session-id))
   (when active
-    (<- (headless-kill active.process-name))
+    (<- (stop-cache-process active))
     (<- (HostCacheWrite (replace active :state MaintenanceState.FAILED :reason "session-cancelled"))))
   None)
