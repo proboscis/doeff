@@ -6361,6 +6361,20 @@
   (replace job :pending-conditions (+ job.pending-conditions #(condition))))
 
 
+(defk turn-charter-of [memory-root conversation-id files]
+  {:pre [(: memory-root str) (: conversation-id str) (: files tuple)]
+   :post [(: % dict)]}
+  "温かい session への送りが運ぶ**この手番の荷**(policy.TURN-CARRIED-KEYS = 記憶の置き場と冊)を組む
+   1 点(card acp:kanban-issue:ki-a40292ed30d9 の 4 つ目の腕)。
+
+   組み方は起こす腕と**同じ 2 つの関数**に空の charter を当てるだけ — 欄の綴りをここで書かない
+   (第 2 の定義点を作らない)。根を宣言していない機体・組めない会話 id・0 冊では、その欄を立てない
+   ⇒ 記憶を使わない会話の送りの wire は 1 byte も変わらない。"
+  (<- home dict (charter-with-memory-home {} memory-root conversation-id))
+  (<- carried dict (charter-with-memory-files home files))
+  carried)
+
+
 (defk charter-with-memory-files [charter files]
   {:pre [(: charter dict) (: files tuple)]
    :post [(: % dict)]}

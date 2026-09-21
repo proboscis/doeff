@@ -436,6 +436,23 @@
   #^ str agent-type
   #^ dict params)
 
+(defclass [(dataclass :frozen True :kw-only True)] HydrateMemoryHome [EffectBase]
+  "会話の自動記憶の置き場を**起こす前に**実体化する(card acp:kanban-issue:ki-9fc7d4bca4dc・
+   法 ACP 575b1e): 置き場の dir を在らせ、charter が運んできた冊と索引を file に落とし、
+   器が**書いた数**を 1 行で名乗る。claude の実体は impls/claude_code.hy・codex は対象外
+   (auto-memory の置き場を持たない = 何もしない)。戻り値: None。
+
+   ⚠ **起こす腕(PreLaunchSetup の中)と、降りた process の続き
+   (headless.continue-headless-process)の両方がこの 1 点を呼ぶ。** 腕ごとに書き出しを持つと、
+   腕が 1 つ増えた時に**その腕だけ**黙って空の置き場を指す(2026-09-21 の実弾: 起こした手番は
+   置き場を名乗るのに、同じ会話の 2 手番目から冊も索引も書かれていなかった)。
+
+   verb = この仕事を起こした RPC の動詞(session.launch / session.send)。計器の 1 行の頭に出て、
+   どの腕の置き場かを log だけで読めるようにする。"
+  #^ str agent-type
+  #^ dict params
+  #^ str verb)
+
 (defclass [(dataclass :frozen True :kw-only True)] ClassifyPane [EffectBase]
   "pane capture(tail 100 行)を kind 別 marker で観測する。戻り値: PaneObservation。
    marker は lowercase tail の部分文字列一致(oracle main.rs:2775-3229、F-* 表)。
@@ -866,6 +883,14 @@
    :post [(: % PreLaunchSetup)]}
   "PreLaunchSetup を構築する(S11/S12 の trust / home 物理)。"
   (PreLaunchSetup :agent-type agent-type :params params))
+
+(defk hydrate-memory-home [agent-type params verb]
+  {:pre [(: agent-type str) (: params dict) (: verb str)]
+   :post [(: % "None — 置き場の実体化は副作用で、返す値を持たない")]}
+  "HydrateMemoryHome を実行する(置き場の実体化と冊の書き出しは per-kind impl 所有)。
+   置き場を名乗らない params では impl が何もしない — 記憶を使わない会話の起動は 1 byte も変わらない。"
+  (<- _ (HydrateMemoryHome :agent-type agent-type :params params :verb verb))
+  None)
 
 (deff classify-pane [agent-type output]
   {:pre [(: agent-type str) (: output str)]

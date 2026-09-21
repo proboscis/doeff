@@ -497,6 +497,33 @@ rules:
         - "**/sessionhost/acp/effects.py"
         - "**/sessionhost/impls/claude_code.hy"
 
+  - id: doeff-agents-turn-carried-key-must-not-become-a-launch-flag
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      card acp:kanban-issue:ki-a40292ed30d9 / law
+      conversation-memory-lives-in-the-row (ACP 575b1e): the per-turn charter
+      fields (`memory_dir`, `memory_files`) are TURN-CARRIED — the charter
+      names them again every turn and the session row never keeps a copy.
+      Writing them into the row (policy.LAUNCH-FLAG-KEYS, or a session row's
+      launch_overlay) gives the value a second definition point: the row's copy
+      is written once at birth and then silently wins — or silently rots —
+      while the source of truth (the ACP memory rows) keeps moving. That is the
+      shape the 4th-arm fix explicitly rejected on 2026-09-21: the arm that
+      wakes a downed process (headless.continue-headless-process) must read
+      this turn's charter (session.send `turn_charter`), not a stale row copy.
+      If an arm is missing the value, carry the turn's charter to that arm —
+      do not persist it.
+    pattern-either:
+      - pattern-regex: '(LAUNCH-FLAG-KEYS|launch[-_]overlay)[^\n]*memory_(dir|files)'
+      - pattern-regex: 'memory_(dir|files)[^\n]*(LAUNCH-FLAG-KEYS|launch[-_]overlay)'
+    paths:
+      include:
+        - /packages/doeff-agents/**
+        # hit fixture(規則が現に火を噴くことの証拠 — 本体の走査対象の外に置く)
+        - "**/sessionhost/turn_carried_key_as_launch_flag_forbidden.hy"
+
   - id: doeff-agents-auto-memory-dir-spelling-has-one-home
     languages:
       - generic

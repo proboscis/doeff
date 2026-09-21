@@ -90,6 +90,7 @@ def after_start(
     lease: LeaseGrant | None,
     arm: str,
     now_ms: int,
+    subject: str,
     bodies: tuple,
     carried: tuple,
     missing: tuple,
