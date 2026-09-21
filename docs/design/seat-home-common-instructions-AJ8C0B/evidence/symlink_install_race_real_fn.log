@@ -1,0 +1,22 @@
+# 現物の ensure-symlink-outcome を 2 process の同拍で叩いた実測(前回の 1:1 の写しではない)
+# 機体 Proboscis-MBP.local(個人 Mac)/ 本線 cc58379a / 2026-09-21T10:5xZ
+# 撃ち方:
+#   cd ~/.worktrees/doeff-wt-accept-seat-home-AJ8C0B
+#   PYTHONPATH=packages/doeff-agents/src ~/repos/doeff/.venv/bin/python \
+#     docs/design/seat-home-common-instructions-AJ8C0B/evidence/symlink_install_race_real_fn.py
+
+A 空の家へ 2 席が同拍で張る × 200 回(現物の関数): {'ok:linked': 200, 'raise:FileExistsError': 165, 'ok:occupied-by-real-entity': 17, 'ok:unchanged': 18}
+
+# 読み方(400 呼び出し = 200 回 × 2 席):
+#   勝った側        linked                    200 回(常に 1 席は成功する)
+#   負けた側 (1)    FileExistsError            165 回 = 82.5 %
+#   負けた側 (2)    occupied-by-real-entity     17 回 =  8.5 %  ← 偽の erosion guard
+#   負けた側 (3)    unchanged                   18 回 =  9.0 %  ← 無害(相手が同じ先を張り終えていた)
+#
+# 偽の occupied の機序: islink が False → 相手が張る → exists が symlink を辿って
+# 正本の dir に当たり True → 「実体が居る」と読む。
+#
+# 帰結は呼び手の座で違う:
+#   substrate.hy _ensure-view-symlink   → RuntimeError「実 file が居る。手で直せ」= 居ない物を指して席が落ちる
+#   impls/claude_code.hy:532            → その語のまま 1 行 log ちょうど = **黙って skills が入らない**
+#                                          (この card が直そうとしている欠陥そのものが、直した後に再発する)
