@@ -229,7 +229,8 @@ pod の agentd の容器に入り、共通の条文と skills の在り処を実
 
 | file | 足すもの |
 | --- | --- |
-| `acp/effects.py` | **【D11】** `CarriedSource` と名簿 `CARRIED_INSTRUCTION_SOURCES`(= 綴りの定義点。env 鍵・宣言の鍵・params の欄・家の中の名・名乗りの語を **1 行**に持つ)+ `AgentdSettings` の 4 欄(path 2 + present 2)+ `JoinSpec` の 2 欄 |
+| `sessionhost/policy.hy` | **【D11】** `CarriedSource` と名簿 `CARRIED-INSTRUCTION-SOURCES`(= 綴りの定義点。env 鍵・宣言の鍵・kind・家の中の名・名乗りの語・不在の語を **1 行**に持つ)+ params の欄名 `CARRIED-INSTRUCTION-SOURCES-PARAM`。⚠ **置き場は `acp/effects.py` ではない** — 名簿を読むのは器(`impls/claude_code.hy`)と両腕(`launch.hy` / `headless.hy`)で、この 3 つは既存の規則 `doeff-agents-memory-baseline-spelling-has-one-home`(「substrate-clean な器は acp から import しない」)の側に在る。⇒ 名簿は両側から引ける `policy.hy` に 1 つ置き、`acp/join.hy` がそれを import する(2026-09-21 の実装で確定・依頼者の裁定 lt-46ADR4MBWB91X6QHR6A6X9K0J8 の 4) |
+| `acp/effects.py` | **【D11】** `AgentdSettings` の **2 欄**(`instruction_sources` = (鍵, path) の対の tuple / `instruction_sources_present` = 実在した鍵の tuple)+ `JoinSpec` の **1 欄**(`instruction_sources`)。⚠ 1 種ごとに path と present の 2 欄を足す形(旧稿の「4 欄」)にしない — それが D11 が禁じた「1 種足すと欄が増える」形そのもの(依頼者の裁定 lt-0WRQ0387E1PWFJ43C5HDWD19BB の 3) |
 | `acp/join.hy` | **【D11】** `AGENTD-KEYS` は名簿から**導く**(手で 2 鍵を書き足さない)+ 門は名簿を回る 1 本(`claude-settings-file-of` と同じ純関数 — path の**形**だけを見る) |
 | `acp/runtime.py` | `_admitted_claude_settings_file` に倣った `~` の展開と在否の名乗り(I/O はここ)+ `join_plan` の `replace` + `settings_from_env` |
 | `acp/judgment.hy` | `node-labels-of` に `seat-memory` / `seat-skills` |
