@@ -6573,6 +6573,39 @@ def test_join_spec_reads_drain_seconds_and_settings_carry_it() -> None:
     assert settings_from_env(env, ()).draining is False
 
 
+def test_transcripts_observed_max_is_declared_once_and_bounded() -> None:
+    """ADR-DOE-AGENTS-012 R56(card acp:kanban-issue:ki-95169e9e265d 便 1): 宣言 file の
+    [agentd].transcripts_observed_max(任意)→ JoinSpec → env DOEFF_AGENTD_TRANSCRIPTS_OBSERVED_MAX →
+    AgentdSettings.transcripts_observed_max。無し = 名乗らない(env に現れず、既定は effects.py の 1 点のまま)。
+    1 未満・契約の天井(64 = node.status.observations.transcripts の maxItems)超え・数でない値は参加しない。"""
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import (
+        TRANSCRIPTS_OBSERVED_MAX_CEILING,
+        TRANSCRIPTS_OBSERVED_MAX_ENV,
+        AgentdSettings,
+        JoinSpec,
+    )
+    from doeff_agents.sessionhost.acp.runtime import settings_from_env
+
+    flags = ["--server", "http://acp:8868", "--token-file", "/t/agentd.token", "--capacity", "1", "--places", "personal"]
+    bare = _join_spec(flags)
+    assert isinstance(bare, JoinSpec) and bare.transcripts_observed_max is None
+    assert TRANSCRIPTS_OBSERVED_MAX_ENV not in dict(run(join.join_plan_of(bare)).env)
+    declared = _join_spec(flags, {"schema": "doeff.agentd-join.v1", "agentd": {"transcripts_observed_max": "20"}})
+    assert isinstance(declared, JoinSpec) and declared.transcripts_observed_max == 20
+    assert dict(run(join.join_plan_of(declared)).env)[TRANSCRIPTS_OBSERVED_MAX_ENV] == "20"
+    # flag でも同じ鍵に着く(綴りは FLAG-KEYS の 1 点)。
+    assert _join_spec([*flags, "--transcripts-observed-max", "32"]).transcripts_observed_max == 32
+    for bad in ("0", "65", "sixteen", "-1"):
+        with pytest.raises(ValueError, match="transcripts_observed_max"):
+            _join_spec(flags, {"schema": "doeff.agentd-join.v1", "agentd": {"transcripts_observed_max": bad}})
+    env = {"DOEFF_AGENTD_NODE_NAME": NODE, "RECORD_SERVICE_URL": "http://record:8874", "DOEFF_AGENTD_CAPACITY": "1", "DOEFF_AGENTD_PLACES": "personal"}
+    # 宣言が無い機体は既定のまま(既定の数はこの検にも写さない — 読むのは effects.py の 1 点)。
+    assert settings_from_env(env, ()).transcripts_observed_max == AgentdSettings.transcripts_observed_max
+    assert settings_from_env({**env, TRANSCRIPTS_OBSERVED_MAX_ENV: "20"}, ()).transcripts_observed_max == 20
+    assert AgentdSettings.transcripts_observed_max <= TRANSCRIPTS_OBSERVED_MAX_CEILING
+
+
 def test_join_spec_reads_revision_and_build_and_the_node_names_its_agentd_version() -> None:
     """段 12 lane 12j(agora-redesign #367・既知の形 行 3 (h)): 宣言 file の [agentd].revision / build(任意)→ JoinSpec → env
     DOEFF_AGENTD_REVISION / DOEFF_AGENTD_BUILD → AgentdSettings.agentd_revision / agentd_build → node の spec.agentd

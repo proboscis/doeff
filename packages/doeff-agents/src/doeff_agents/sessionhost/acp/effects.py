@@ -971,6 +971,13 @@ CAPACITY_ENV = "DOEFF_AGENTD_CAPACITY"
 #: 段 12 lane 12j(agora-redesign #304 便 2): 停止(SIGTERM)の排水の上限(秒)。宣言 file の [agentd].drain_seconds から join が運ぶ。
 #: 0 / 無し = 今日どおり即座に走っている手番を閉じる(AgentdRestart)。
 DRAIN_SECONDS_ENV = "DOEFF_AGENTD_DRAIN_SECONDS"
+#: node の status.observations.transcripts に載せる件数の上限(card acp:kanban-issue:ki-95169e9e265d 便 1・
+#: ADR-DOE-AGENTS-012 R56)。宣言 file の [agentd].transcripts_observed_max から join が運ぶ。
+#: 無し = AgentdSettings.transcripts_observed_max の既定(この file の 1 点)。
+TRANSCRIPTS_OBSERVED_MAX_ENV = "DOEFF_AGENTD_TRANSCRIPTS_OBSERVED_MAX"
+#: 契約 agora-kinds.json kinds.node.status.observations.transcripts の maxItems(宣言で重ねられる上限の天井)。
+#: 契約の値の写しで、超える宣言は join が断る(行ごと 400 で断られるより、参加の拍で名指す)。
+TRANSCRIPTS_OBSERVED_MAX_CEILING = 64
 #: 段 12 lane 12j(agora-redesign #367・既知の形 行 3 (h) = kubelet の最小版 / Buildkite の agent version floor): agentd が参加時に名乗る
 #: 自分の版(契約 agora-kinds.json kinds.node.spec.agentd {protocol, revision, build})。protocol = ACP との wire の版(整数・
 #: **doeff-agents が wire を変える時にここを 1 進める** — 配置の床 scheduling.json ladder.fields.agentdProtocolFloor が比べる)。
@@ -1181,6 +1188,9 @@ class JoinSpec:
     allow_metered_billing: bool = False
     #: 停止(SIGTERM)の排水の上限(秒 — 宣言 file の [agentd].drain_seconds・段 12 lane 12j・agora-redesign #304 便 2)。0 = 排水しない(既定)。
     drain_seconds: int = 0
+    #: node の観測に載せる transcript の件数の上限(宣言 file の [agentd].transcripts_observed_max・
+    #: ADR-DOE-AGENTS-012 R56)。None = 名乗らない(env に現れず、agentd は AgentdSettings の既定を使う)。
+    transcripts_observed_max: int | None = None
     #: agentd の版の刻印(段 12 lane 12j・agora-redesign #367 — 宣言 file の [agentd].revision / build・任意)。None = 名乗らない(env に現れず、
     #: agentd は AGENTD_REVISION_UNSTAMPED / AGENTD_BUILD_LOCAL を名乗る)。
     revision: str | None = None
@@ -1501,7 +1511,11 @@ class AgentdSettings:
     rehydrate_history_byte_budget: int = 65_536
     #: node の observations.transcripts に載せる件数の上限(段 8q — 終端の session のうち transcript が
     #: この機体に残るもの・会話ごとに最新の 1 つ・新しい順)。heartbeat ごとに node の行へ書くので小さく
-    #: 保つ(契約の maxItems 64 以下)。
+    #: 保つ(契約の maxItems 64 以下 = TRANSCRIPTS_OBSERVED_MAX_CEILING)。
+    #: ⚠ **既定の宣言はこの 1 行ちょうど**(ADR-DOE-AGENTS-012 R56): 宿は宣言 file の
+    #: [agentd].transcripts_observed_max で**重ねられる**(composition root が TRANSCRIPTS_OBSERVED_MAX_ENV から据える)。
+    #: 席の枠(capacity)より小さいと、器の死んだ行が transcripts へ移った拍(R25 の改訂)に上限で落ちて、
+    #: 配置が affinity.predecessor を名指せない会話が出る。
     transcripts_observed_max: int = 16
     #: 会話の記録の service への本文の二重書き(段 9f lane 9f-2・設計 §2.4)。composition root(runtime.settings_from_env)が
     #: RECORD_URL_ENV の在否から導く 1 点 — False の間 agentd は Record* の要求を 1 つも撃たない(ACP の追記は今日どおり)。

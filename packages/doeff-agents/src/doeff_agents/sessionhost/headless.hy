@@ -32,9 +32,13 @@
 ;;; 道連れにするので、手番の途中(awaiting)のまま残った行は誰も終端に倒さない — 会話が永久に「動いている」
 ;;; になり、agentd は defer を返し続けた(実弾 2026-09-14 14:35〜18:5x)。host は accept を始める前に
 ;;; recover-headless-rows で各行の backend を観測(HeadlessLiveness = pid の存在 + registry の所有)し、
-;;; 判断 headless_protocol.recovery_verdict の 1 点で「手番の途中 ∧ backend が死んでいる」行だけを
-;;; exited + cause vanished(ADR-DOE-AGENTS-009: 証拠つき死亡の語彙・reason に pid と観測の文)にして
-;;; session_exited を刻む。idle の温かい行は触らない(次の send が --resume で同じ session を起こし直す)。
+;;; 判断 headless_protocol.recovery_verdict の 1 点で「backend が死んでいる」行を exited + cause vanished
+;;; (ADR-DOE-AGENTS-009: 証拠つき死亡の語彙・reason に pid と観測の文)にして session_exited を刻む。
+;;; ⚠ 2026-09-22 の追補(R25 の改訂・card acp:kanban-issue:ki-95169e9e265d 便 1): 倒す条件から「手番の途中」が
+;;; 外れた —— idle の温かい行も器が死んでいれば倒す。旧形は「次の send が --resume で起こし直す」を理由に
+;;; 残していたが、行が非終端のまま残ると、器を 1 つも持たない機体が node の status.observations.sessions に
+;;; 「走っている session」として名乗り、その欄を「現に走っている器」と読む読み手(keepalive の対象の選び)が
+;;; 死んだ器へ ping を送る。倒した行は transcripts の半分に移り、次の手番は --resume の腕で起きる(cache は保つ)。
 ;;; 起動時の awaiting latch の全 clear(store.hy db-clear-awaiting-latches — tui の物理)は headless の行を
 ;;; 対象にしない: headless の latch は「手番の途中」の事実そのもので、消すと復帰が判断できない。
 ;;;
@@ -790,7 +794,9 @@
    :post [(: % SessionRow)]}
   "host の起動時の復帰の 1 行(段 10 lane 10h・agora-redesign #84): backend を観測し、判断
    (recovery_verdict の 1 点)が backend-dead なら exited + cause vanished(証拠つき死亡 —
-   reason に pid と観測の文)・awaiting を下ろし・session_exited を刻む。keep はそのまま。"
+   reason に pid と観測の文)・awaiting を下ろし・session_exited を刻む。keep はそのまま。
+   ⚠ 2026-09-22(R25 の改訂): 倒す行は手番の途中のものだけではない — idle の温かい行も器が死んで
+   いれば倒す(理由は module の頭注)。"
   (<- liveness (observe-backend-liveness row))
   (setv verdict (recovery-verdict (is-terminal-status row.status) row.awaiting-response liveness))
   (when (!= verdict.kind "backend-dead")
