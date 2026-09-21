@@ -2484,6 +2484,50 @@ def test_host_headless_send_runs_the_cold_compaction_prompt_before_the_resumed_t
         headless_host.ok("session.cleanup", {"session_id": sid})
 
 
+def test_host_headless_resume_launch_runs_the_cold_compaction_prompt_before_the_first_resumed_turn(
+    headless_host: Host,
+) -> None:
+    """冷えた再開の前の圧縮(2026-09-22 追補・実測 pool -1 06:36): 会話を**この家で初めて**続ける起動
+    (session.resume — pod の入れ替え後の続きはこの腕)は冷えた再開そのもの。続きの手番の腕と同じく、
+    plugin が効く profile では起動の process の**前**に `claude -p "/compact fast-jev-if-cold" --resume <sid>`
+    が 1 回走り、plugin の無い profile では走らない。"""
+    log = headless_host.root / "argv.log"
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_ARGV_LOG"] = str(log)
+
+    def _resume(sid: str) -> str:
+        headless_host.ok("session.launch", _launch_params(headless_host.root, sid, "claude"))
+        _wait_turn_end(headless_host, sid)
+        headless_host.ok("session.cleanup", {"session_id": sid})
+        snap = headless_host.snap(sid)
+        conversation = _text(_obj(snap, "conversation"), "session_id")
+        canonical = os.path.realpath(_text(snap, "work_dir"))
+        mangled = "".join(ch if ch.isalnum() else "-" for ch in canonical)
+        transcript = headless_host.root / "claude-home" / "projects" / mangled / f"{conversation}.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        transcript.write_text("{}\n", encoding="utf-8")
+        before = len(log.read_text().splitlines())
+        headless_host.ok("session.resume", {"session_id": sid, "new_session_id": f"{sid}-r", "prompt": "again"})
+        again = _wait_turn_end(headless_host, f"{sid}-r")
+        assert _text(again, "status") == "running", again
+        headless_host.ok("session.cleanup", {"session_id": f"{sid}-r"})
+        return "\n".join(log.read_text().splitlines()[before:])
+
+    # plugin なし: 起動の前に圧縮の prompt は走らない
+    off = _resume("h-cold-launch-off")
+    assert "--resume " in off, off
+    assert "/compact fast-jev-if-cold" not in off, off
+    # plugin あり: 起動の process の前に 1 回だけ、同じ --resume で走る
+    _enable_fast_jev_plugin(headless_host.root)
+    lines = _resume("h-cold-launch-on").splitlines()
+    turns = [i for i, line in enumerate(lines) if "--input-format stream-json" in line and "--resume " in line]
+    assert len(turns) == 1, lines
+    resumed_id = lines[turns[0]].split("--resume ", 1)[1].split(" ", 1)[0]
+    compactions = [i for i, line in enumerate(lines) if f"-p /compact fast-jev-if-cold --resume {resumed_id}" in line]
+    assert len(compactions) == 1, lines
+    assert compactions[0] < turns[0], lines
+    assert "stream-json" not in lines[compactions[0]]
+
+
 def test_fast_jev_home_settings_merges_the_plugin_declaration_and_keeps_the_rest() -> None:
     """借りた家の settings.json に plugin の宣言を合流させる(純関数・冪等・他の欄は保つ・壊れた本文は {} から)。"""
     merged = json.loads(fast_jev.fast_jev_home_settings(json.dumps({"permissions": {"defaultMode": "auto"}, "env": {"X": "1"}}), "/run/typesafe/key"))
