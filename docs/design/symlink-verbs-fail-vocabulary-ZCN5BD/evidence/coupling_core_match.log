@@ -1,0 +1,20 @@
+# watchlist: /Users/s22625/dotfiles/docs/coupling-core-watchlist.md
+# coupling-core-paths: 98 pattern / coupling-core-fleet-paths: 1 pattern
+
+## doeff
+  -   packages/doeff-agents/src/doeff_agents/sessionhost/substrate.hy
+  -   packages/doeff-agents/src/doeff_agents/sessionhost/effects.hy
+  -   packages/doeff-agents/src/doeff_agents/sessionhost/effects.pyi
+  -   packages/doeff-agents/src/doeff_agents/sessionhost/impls/claude_code.hy
+  -   packages/doeff-agents/src/doeff_agents/sessionhost/impls/codex.hy
+  -   packages/doeff-agents/src/doeff_agents/sessionhost/launch.hy
+  -   packages/doeff-agents/tests/sessionhost_substrate_deftests.hy
+  -   packages/doeff-agents/tests/sessionhost_launch_deftests.hy
+  -   packages/doeff-agents/tests/sessionhost_resume_cross_binding_deftests.hy
+  -   tests/semgrep/test_symlink_install_rule.py
+  -   tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/sessionhost/impls/symlink_install_outside_substrate_forbidden.hy
+  -   .semgrep.yaml
+  -   docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+  -   docs/adr/enforcement-ledger.json
+
+# 当たり: 0 件

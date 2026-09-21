@@ -1,0 +1,10 @@
+# 機体 CA-20038667 / Darwin 25.5.0 / python 3.14.3
+-- os.replace(仮 symlink, 据わっている物) --
+  dir-empty              → IsADirectoryError errno=21 EISDIR (Is a directory)
+  dir-nonempty           → IsADirectoryError errno=21 EISDIR (Is a directory)
+  file-real              → 成功(黙って置き換えた)
+  symlink-other          → 成功(黙って置き換えた)
+-- 参考: os.symlink(…, 据わっている物) --
+  s-dir-empty            → FileExistsError errno=17 EEXIST
+  s-file-real            → FileExistsError errno=17 EEXIST
+  s-symlink-other        → FileExistsError errno=17 EEXIST

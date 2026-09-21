@@ -1,0 +1,24 @@
+# 機体 CA-20038667 / Darwin 25.5.0 / python 3.14.3
+# 検体 = 本線 7451fa17 の substrate.hy FsLinkArtifact(実 handler を駆動)
+# 回数 = 200 回 × 2 process / 作業 dir = /private/var/folders/gz/jl4t49qj3bl905ybm1t5t_rjzy6cl8/T/link-artifact-doors-t2hx0ipk
+
+-- 同拍の競り(出荷・200 回 × 2 席 = 400 呼び出し)--
+  RAISED:FileExistsError     196  (49.0 %)
+  linked                     200  (50.0 %)
+  same-entity                  4  (1.0 %)
+  根が正しい先を指さない回: 0
+
+-- 同拍の競り(試作・200 回 × 2 席 = 400 呼び出し)--
+  linked                     200  (50.0 %)
+  same-entity                200  (50.0 %)
+  根が正しい先を指さない回: 0
+
+-- 器の断り(ship)--
+  親の位置に実体 file  → RAISED:FileExistsError
+  家が書けない(r-x)   → RAISED:PermissionError
+  親 dir を作れない    → RAISED:PermissionError
+
+-- 器の断り(fixed)--
+  親の位置に実体 file  → RAISED:FileExistsError
+  家が書けない(r-x)   → RAISED:PermissionError
+  親 dir を作れない    → RAISED:PermissionError
