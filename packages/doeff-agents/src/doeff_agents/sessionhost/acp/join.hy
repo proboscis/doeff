@@ -177,10 +177,14 @@
 ;; `[record]` の鍵(札は [agentd].token_file の再利用 — 名簿の agentd が service の書き手なので鍵は宛先だけ)。
 (setv KEY-RECORD-URL "url")
 ;; 表 → 許す鍵(宣言に無い鍵は誤りとして名指す — 黙って読み飛ばさない)。
-(setv AGENTD-KEYS #{KEY-SERVER KEY-TOKEN-FILE KEY-NODE-NAME KEY-STATE-DIR KEY-BACKEND
-                    KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY KEY-PLACES KEY-WORK-ROOTS KEY-DRAIN-SECONDS
-                    KEY-ALLOW-METERED-BILLING KEY-REVISION KEY-BUILD KEY-SEAT-ENV
-                    KEY-CLAUDE-SETTINGS-FILE})
+;; card acp:kanban-issue:ki-62aa1f4e9c9c(決定 D11): 席の家へ運ぶ共通の指示の鍵は**名簿から導く** —
+;; 手で書き足さない。名簿に 1 行足した日に、この集合と env と据え付けが**同時に**追随する
+;; (書き足す形は、足し忘れた鍵を「宣言に無い鍵」で断る = その機体が参加できない形で失敗する)。
+(setv AGENTD-KEYS (| #{KEY-SERVER KEY-TOKEN-FILE KEY-NODE-NAME KEY-STATE-DIR KEY-BACKEND
+                       KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY KEY-PLACES KEY-WORK-ROOTS KEY-DRAIN-SECONDS
+                       KEY-ALLOW-METERED-BILLING KEY-REVISION KEY-BUILD KEY-SEAT-ENV
+                       KEY-CLAUDE-SETTINGS-FILE}
+                     (sfor source CARRIED-INSTRUCTION-SOURCES source.key)))
 (setv CUSTODY-KEYS #{KEY-CUSTODY-URL KEY-BORROWER-KEY-FILE KEY-SERVICE-ACCOUNT-TOKEN-FILE})
 (setv RECORD-KEYS #{KEY-RECORD-URL})
 ;; flag の綴り(`--config` は composition root が先に読む — config-path-of)。
@@ -889,6 +893,9 @@
   ;; claude-settings-declaration-of(判断)で、**読めた日も読めない日も同じ**絶対 path が composition root からこの欄へ
   ;; 据え直される(不在は断らない — R13 の訂正・依頼書 §10-2)。
   (<- declared-settings-file (| str None) (claude-settings-file-of (.get agentd KEY-CLAUDE-SETTINGS-FILE)))
+  ;; 席の家へ運ぶ共通の指示の名指し(card ki-62aa1f4e9c9c D4 / D11・任意)— 綴りと形だけ。
+  ;; `~` の展開は composition root(runtime.join_plan)で、現物の在否はここでは見ない(D5)。
+  (<- declared-instruction-sources tuple (instruction-sources-of agentd))
   (JoinSpec
     :server server
     :token-file token-file
@@ -909,6 +916,8 @@
     ;; 席へ運ぶ env の対(agora-redesign #520)— 形と資格の締め出しは seat-env-of の 1 点(宣言しない = #())。
     :seat-env declared-seat-env.pairs
     :claude-settings-file declared-settings-file
+    ;; 名簿の順・名指した種だけ(名簿を回った結果 — 種ごとの欄を持たない: D11)。
+    :instruction-sources declared-instruction-sources
     :ownership ownership
     :capacity capacity
     :drain-seconds drain-seconds
@@ -989,6 +998,11 @@
   ;; 読み手は launch.hy / headless.hy の起動の拍で、file をそのたびに読む。daemon の memory に中身を持たない)。
   (when (is-not spec.claude-settings-file None)
     (.append env #(CLAUDE-SETTINGS-FILE-ENV spec.claude-settings-file)))
+  ;; card ki-62aa1f4e9c9c(D11): 席の家へ運ぶ共通の指示も同じ形 — 名指した種だけ env に現れる。
+  ;; 綴りの対応は名簿の 1 点(policy.CARRIED-INSTRUCTION-SOURCES)で、ここは**回る**だけ。
+  (setv carried-env-of (dfor source CARRIED-INSTRUCTION-SOURCES source.key source.env))
+  (for [#(key path) spec.instruction-sources]
+    (.append env #((get carried-env-of key) path)))
   ;; 段 12 lane 12j(#367): 版の刻印は名乗った時だけ env に現れる(無ければ agentd は unstamped / local を名乗る)。
   (when (is-not spec.revision None)
     (.append env #(AGENTD-REVISION-ENV spec.revision)))

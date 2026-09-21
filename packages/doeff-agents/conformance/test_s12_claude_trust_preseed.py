@@ -8,7 +8,7 @@ main.rs:1493) — otherwise a fresh workspace stalls the launch on the
 interactive trust dialog. Claude keys projects by the REALPATH of the cwd
 (`/tmp` is `/private/tmp` on macOS), hence `os.path.realpath` here.
 
-The write is temp+rename (`.claude.json.agentd-tmp` → `.claude.json`,
+The write is temp+rename (`.claude.json.<unique>.agentd-tmp` → `.claude.json`,
 main.rs:1540) so a concurrent claude never reads a torn state file; the
 observable of that discipline is the absence of the leftover tmp file.
 
@@ -54,7 +54,9 @@ def test_s12_claude_trust_preseeded_into_config_dir(tmp_path) -> None:
         assert project["hasTrustDialogAccepted"] is True, state
         assert project["hasCompletedProjectOnboarding"] is True, state
         # temp+rename discipline: no torn/leftover temp file
-        assert not (claude_config_dir / ".claude.json.agentd-tmp").exists()
+        # card acp:kanban-issue:ki-62aa1f4e9c9c D9: tmp の名は書き手ごとに一意
+        # (.claude.json.<mkstemp>.agentd-tmp)なので、綴り 1 つではなく glob で数える。
+        assert not list(claude_config_dir.glob(".claude.json.*agentd-tmp"))
 
         # M1 really ran: the PATH shim was executed by the real launch
         # pipeline and the pasted prompt reached the fake's tty

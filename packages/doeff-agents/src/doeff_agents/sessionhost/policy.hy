@@ -405,6 +405,11 @@
 (setv CARRIED-ITEM-HOME-NAME "home_name")
 (setv CARRIED-ITEM-TEXT "text")
 (setv CARRIED-ITEM-PATH "path")
+;: 席の $HOME(card ki-62aa1f4e9c9c D6 の材料)。起動の拍に launch.hy が読んで params へ載せ、
+;: **導出は器の 1 点**(impls/claude_code.hy build-claude-argv)で行う。欄が無い = 導けない宿
+;: (鍵を置かない — 発明しない)。⚠ 器が自分で env を読まないのは、build-claude-argv が
+;: **効果を持てない**ため(build-claude-resume-argv が素の run で回す純関数)。
+(setv CARRIED-SEAT-HOME-PARAM "seat_home")
 
 
 (defn carry-keys [keys src dst]

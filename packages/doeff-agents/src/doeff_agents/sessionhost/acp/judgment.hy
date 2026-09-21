@@ -49,6 +49,7 @@
 (import re)
 
 (import doeff_agents.sessionhost.attachment [TurnAttachment attachment-wire])
+(import doeff_agents.sessionhost.policy [CARRIED-INSTRUCTION-SOURCES])
 ;; card acp:kanban-issue:ki-2bd49c68b042: 「その result の行は CLI 自身の手番のものか」を名乗る表は器と
 ;; **同じ 1 点**(headless_protocol.cli-own-turn-result — origin.kind の閉語彙)。純関数で I/O を持たない。
 ;; 2 つ目の表を持つと、孤児の background task の報せ(実測 2026-09-19 07:28 JST aj-9AHT…)で本文の手番が
@@ -3282,6 +3283,17 @@
   (when (is-not settings.claude-settings-file None)
     (setv (get next NODE-LABEL-SEAT-SETTINGS)
           (if settings.claude-settings-file-present SEAT-SETTINGS-PRESENT SEAT-SETTINGS-MISSING)))
+  ;; 席の家へ運ぶ共通の指示の名乗り(card acp:kanban-issue:ki-62aa1f4e9c9c D5 / D11): 名簿を回る 1 本で、
+  ;; **名指した種だけ**が present / missing を書く。語彙は seat-settings と同じ 2 語(第 2 の語彙を作らない)。
+  ;; 名指しを消した機体の行からは鍵ごと落ちる(揃えの拍で消える = 戻す手が行にも効く)。
+  (setv carried (dict settings.instruction-sources))
+  (for [source CARRIED-INSTRUCTION-SOURCES]
+    (.pop next source.label None)
+    (when (in source.key carried)
+      (setv (get next source.label)
+            (if (in source.key settings.instruction-sources-present)
+                SEAT-SETTINGS-PRESENT
+                SEAT-SETTINGS-MISSING))))
   next)
 
 

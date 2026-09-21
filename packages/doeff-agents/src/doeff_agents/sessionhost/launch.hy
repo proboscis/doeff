@@ -71,6 +71,16 @@
 (import doeff_agents.sessionhost.policy [
   BILLING-METERED
   BINDING-OWNED-ENV-KEYS
+  CARRIED-INSTRUCTION-SOURCES
+  CARRIED-INSTRUCTION-SOURCES-PARAM
+  CARRIED-ITEM-HOME-NAME
+  CARRIED-ITEM-KEY
+  CARRIED-ITEM-KIND
+  CARRIED-ITEM-PATH
+  CARRIED-ITEM-TEXT
+  CARRIED-SEAT-HOME-PARAM
+  CARRIED-SOURCE-DIR-LINK
+  CARRIED-SOURCE-FILE-TEXT
   carry-charter-fields
   binding-admission-error
   binding-billing-class
@@ -849,6 +859,83 @@
   parsed)
 
 
+(defk claude-instruction-sources [agent-type]
+  {:pre [(: agent-type str)]
+   :post [(: % tuple)]}
+  "席の家へ運ぶ**共通の指示**の読み(card acp:kanban-issue:ki-62aa1f4e9c9c 決定 D1 / D11)。
+
+   機体の参加の宣言が名指した正本(join が門を通して据えた絶対 path = 名簿 policy.CARRIED-INSTRUCTION-SOURCES
+   の env)を**起動の拍ごとに**読み、器が家へ実体化できる形にして返す。claude-settings-declaration と
+   同じ use-site の流儀 — daemon の memory に写しを持たないので、宿の checkout が後から追いついた日は
+   その拍から届く。
+
+   戻り値 = {key, kind, home_name, text | path} の dict の tuple(名簿の順・**現物が在った種だけ**)。
+     名指しが無い = その種は列に現れない(= 今日どおり)
+     claude 以外の kind = #()(家の中の名は claude の家の綴り — codex の起動は 1 byte も変わらない)
+     **名指しが在って現物が無い = 列に入れず、名乗りの 1 行**(D5): 宿の入口は「先端で揃えられない日は
+       image の下限へ戻して立つ」正規の degrade を持つ。そこで起動を止めると degrade が**その機体の
+       全席の停止**に化ける。だから起こす — ただし黙っては起こさず、起動の拍ごとに名前つきの 1 行を出す。
+     名簿の運び方が閉語彙の外 = fail-loud(名簿と読み手がずれたまま黙って飛ばさない)
+
+   ⚠ **種ごとの枝をここに書かない**(D11): 分岐は運び方(kind)の 2 つだけで、種が増えても 1 行も動かない。"
+  (when (!= agent-type "claude")
+    (return #()))
+  (setv items [])
+  (for [source CARRIED-INSTRUCTION-SOURCES]
+    (<- raw (env-get source.env))
+    (setv path (if (isinstance raw str) (.strip raw) ""))
+    (when path
+      (setv landing {CARRIED-ITEM-KEY source.key
+                     CARRIED-ITEM-KIND source.kind
+                     CARRIED-ITEM-HOME-NAME source.home-name})
+      (cond
+        (= source.kind CARRIED-SOURCE-FILE-TEXT)
+          (do
+            (<- text (fs-read-text path))
+            (if (is text None)
+                (<- _ (log-line
+                        (+ f"session.launch: {source.absent-word} {source.env}={path} — "
+                           "機体の参加の宣言が名指した共通の指示が無いので、この席はそれ無しで起こす"
+                           "(宿の checkout が追いつくまで・card acp:kanban-issue:ki-62aa1f4e9c9c D5)")))
+                (do
+                  (setv (get landing CARRIED-ITEM-TEXT) text)
+                  (.append items landing))))
+        (= source.kind CARRIED-SOURCE-DIR-LINK)
+          (do
+            (<- present (fs-dir-exists path))
+            (if present
+                (do
+                  (setv (get landing CARRIED-ITEM-PATH) path)
+                  (.append items landing))
+                (<- _ (log-line
+                        (+ f"session.launch: {source.absent-word} {source.env}={path} — "
+                           "機体の参加の宣言が名指した共通の指示が無いので、この席はそれ無しで起こす"
+                           "(宿の checkout が追いつくまで・card acp:kanban-issue:ki-62aa1f4e9c9c D5)")))))
+        True
+          (raise (RuntimeError
+                   (+ f"session.launch: 名簿 policy.CARRIED-INSTRUCTION-SOURCES の運び方が閉語彙の外: "
+                      f"{source.kind !r}(key={source.key})— 読み手と名簿がずれている"))))))
+  (tuple items))
+
+
+(defk params-with-instruction-sources [params agent-type]
+  {:pre [(: params dict) (: agent-type str)]
+   :post [(: % dict)]}
+  "起動の拍に読んだ共通の指示(と、二重読みの落としの材料 = 席の $HOME)を params へ載せた写し。
+   **両方の腕**(tui の launch-session と headless の launch / 続き)がこの 1 点を通る。
+   1 種も届かない手番では params を**触らない** — 名指しの無い機体の argv と家は 1 byte も変わらない
+   (受入 8)。"
+  (<- sources (claude-instruction-sources agent-type))
+  (when (not sources)
+    (return params))
+  (setv next (dict params))
+  (setv (get next CARRIED-INSTRUCTION-SOURCES-PARAM) sources)
+  (<- home (env-get "HOME"))
+  (when (and (isinstance home str) (.strip home))
+    (setv (get next CARRIED-SEAT-HOME-PARAM) (.strip home)))
+  next)
+
+
 (defk launch-spawn-env [identity session-env]
   {:pre [(: identity (| dict None)) (: session-env dict)]
    :post [(: % dict)]}
@@ -890,6 +977,10 @@
   (<- tmux-exists (tmux-has-session session-name))
   (when tmux-exists
     (raise (RuntimeError f"tmux session already exists: {session-name}")))
+  ;; card acp:kanban-issue:ki-62aa1f4e9c9c(D1): 席の家への据え付けは**起動の拍**で、座は
+  ;; per-kind の PreLaunchSetup(claude-pre-launch)の 1 か所。読みはここ(腕の共有点)で、
+  ;; 器は運ばれてきた物を実体化するだけ(memory_files と同じ規律)。
+  (<- params (params-with-instruction-sources params agent-type))
   (<- prepared (prepare-launch-workspace params))
   (setv identity (get prepared "identity"))
   (setv minted-conversation (get prepared "conversation"))

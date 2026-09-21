@@ -25,7 +25,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import NamedTuple, TypeAlias
 
 import tomllib
@@ -33,6 +33,7 @@ from doeff_vm import PyVM, WithHandler
 
 from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.agentd_client import default_agentd_paths
+from doeff_agents.sessionhost import policy
 from doeff_agents.sessionhost.acp import join
 from doeff_agents.sessionhost.acp.agentd import agentd_tick, close_jobs_for_stop, lease_heartbeat
 from doeff_agents.sessionhost.acp.effects import (
@@ -186,6 +187,9 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
     # 名乗る(不在は degrade の正規の道で、参加を止めると pool 全体が capacity 0 に落ちる)。
     seat_settings_file = (env.get(CLAUDE_SETTINGS_FILE_ENV) or "").strip() or None
     seat_settings_present = seat_settings_file is not None and os.path.isfile(seat_settings_file)
+    # card acp:kanban-issue:ki-62aa1f4e9c9c(決定 D11): 席の家へ運ぶ共通の指示 — 名簿を**回って**
+    # env から読む(種ごとの枝をここに書かない)。不在は断らない(D5)ので、名乗りだけを持つ。
+    instruction_sources = _instruction_sources_of_env(env)
     return AgentdSettings(
         node_name=node_name,
         node_capacity=node_capacity,
@@ -213,6 +217,9 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         # card acp:kanban-issue:ki-7b52bb76aa6e: None = 名指していない(node の行に labels.seat-settings を書かない)
         claude_settings_file=seat_settings_file,
         claude_settings_file_present=seat_settings_present,
+        # card acp:kanban-issue:ki-62aa1f4e9c9c: 空 = 1 種も名指していない(node の行に labels を書かない)
+        instruction_sources=instruction_sources.named,
+        instruction_sources_present=instruction_sources.present,
         seat_env=seat_env,
         # 段 10 lane 10y: charter の work_dir の `~` を展開する node の家(env HOME ちょうど・無ければ process の家)
         home=(env.get("HOME") or os.path.expanduser("~")).strip(),
@@ -222,6 +229,50 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         summarize_runs_dir=summarize_runs_dir(env),
         # 段 12(card acp:kanban-issue:ki-f2747267e24d B2): 借りた錠の手元の journal — 同じ state_dir の下の 1 file
         lease_journal_path=lease_journal_path(env),
+    )
+
+
+@dataclass(frozen=True)
+class InstructionSourcesReading:
+    """席の家へ運ぶ共通の指示の、参加の拍の読み(card acp:kanban-issue:ki-62aa1f4e9c9c D11)。
+
+    named   (名簿の鍵, 絶対 path)の対の列(名簿の順・名指した種だけ)
+    present そのうち**現物が在った**種の鍵(node の行の labels が present / missing を名乗る材料)
+    """
+
+    named: tuple[tuple[str, str], ...]
+    present: tuple[str, ...]
+
+
+def _carried_source_exists(source: policy.CarriedSource, path: str) -> bool:
+    """名指した現物が在るか — **運び方で見分ける**(file-text = file・dir-link = dir)。
+
+    名簿の運び方が閉語彙の外なら**参加を断る**(黙って file 扱いに倒すと、dir を名指した宣言が
+    永久に missing を名乗る)。
+    """
+    if source.kind == policy.CARRIED_SOURCE_DIR_LINK:
+        return os.path.isdir(path)
+    if source.kind == policy.CARRIED_SOURCE_FILE_TEXT:
+        return os.path.isfile(path)
+    raise AgentdPreflightError(
+        f"join: the carried-source roster declares an unknown kind "
+        f"{source.kind!r} for {source.key} — the vocabulary is "
+        f"{sorted(policy.CARRIED_SOURCE_KINDS)}"
+    )
+
+
+def _instruction_sources_of_env(env: Mapping[str, str]) -> InstructionSourcesReading:
+    """名簿(policy.CARRIED_INSTRUCTION_SOURCES)を回って env を読む 1 点 — 種ごとの枝を呼び手に作らない。"""
+    spelled = tuple(
+        (source, (env.get(source.env) or "").strip())
+        for source in policy.CARRIED_INSTRUCTION_SOURCES
+    )
+    return InstructionSourcesReading(
+        named=tuple((source.key, path) for source, path in spelled if path),
+        present=tuple(
+            source.key for source, path in spelled
+            if path and _carried_source_exists(source, path)
+        ),
     )
 
 
@@ -907,6 +958,24 @@ def _admitted_claude_settings_file(spec: JoinSpec, home: str) -> str | None:
     return path
 
 
+def _with_admitted_instruction_sources(spec: JoinSpec, home: str) -> JoinSpec:
+    """宣言の綴り → env に載せる**絶対 path**(card acp:kanban-issue:ki-62aa1f4e9c9c D4 / D11)。
+
+    `~` / `~/…` を agentd の HOME で展開するだけ(形の門は join.instruction-sources-of が済ませている)。
+    ⚠ **現物を読まない・在否で断らない**(D5): 宿の入口は「先端で揃えられない日は image の下限へ戻して
+    立つ」正規の degrade を持ち、その日の checkout に正本は無い。そこで断ると degrade が pool 全体の
+    capacity 0 に化ける(claude_settings_file と同じ判断 — R13 の訂正)。名乗りは node の行の labels と、
+    起動の拍ごとの 1 行(launch.claude-instruction-sources)。
+    """
+    return replace(
+        spec,
+        instruction_sources=tuple(
+            (key, home.rstrip("/") + word[1:] if word == "~" or word.startswith("~/") else word)
+            for key, word in spec.instruction_sources
+        ),
+    )
+
+
 def join_plan(argv: Sequence[str], env: Mapping[str, str]) -> JoinPlan:
     """join の argv(subcommand の後の列)→ JoinPlan。宣言 file の読みはここ(I/O)、判断は join.hy。"""
     items = JoinArgv(items=tuple(argv))
@@ -927,6 +996,9 @@ def join_plan(argv: Sequence[str], env: Mapping[str, str]) -> JoinPlan:
     spec = replace(spec, work_dirs=_held_work_dirs(home), work_dir_roots=_held_work_dir_roots(home))
     # card acp:kanban-issue:ki-7b52bb76aa6e: 席の settings file は読めて門を通った時だけ(絶対 path で)env に載る(読みはここ・判断は join)。
     spec = replace(spec, claude_settings_file=_admitted_claude_settings_file(spec, home))
+    # card acp:kanban-issue:ki-62aa1f4e9c9c: 席の家へ運ぶ共通の指示は `~` を展開して env に載せる
+    # (読みは起動の拍ごと — daemon の memory に中身を持たない)。
+    spec = _with_admitted_instruction_sources(spec, home)
     plan: object = PyVM().run(join.join_plan_of(spec))
     if not isinstance(plan, JoinPlan):
         raise TypeError(f"join_plan_of returned {type(plan).__name__}")

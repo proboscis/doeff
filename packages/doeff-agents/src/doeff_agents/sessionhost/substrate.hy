@@ -18,6 +18,7 @@
 (import os)
 (import subprocess)
 (import sys)
+(import tempfile)
 (import threading)
 (import time)
 
@@ -42,9 +43,13 @@
   FsCanonicalPath
   FsComposeHomeView
   FsReadText
+  FsEnsureSymlink
   FsWriteTextAtomic
   FsMakeDirs
   FsLinkArtifact
+  FS-ENSURE-SYMLINK-LINKED
+  FS-ENSURE-SYMLINK-OCCUPIED
+  FS-ENSURE-SYMLINK-UNCHANGED
   FsListDir
   FsDirExists
   FsFileExists
@@ -292,22 +297,46 @@
   (setv digest (.hexdigest (hashlib.sha256 (.encode f"{auth-resolved}\x00{profile-resolved}" "utf-8"))))
   f"{(os.path.basename profile-resolved)}--{(cut digest 0 8)}")
 
+(deff ensure-symlink-outcome [link target]
+  {:pre [(: link str) (: target str)]
+   :post [(: % str)]}
+  "symlink を正しい先へ据える **1 つの動詞**(card acp:kanban-issue:ki-62aa1f4e9c9c D8・盲検 A)。
+   3 値を返す(raise しない — 方針判断は呼び手所有):
+     同じ先を指す symlink   \"unchanged\"(触らない — 本体は skills の dir を見張っているので、
+                            用の無い張り替えは走っている席にまで効く)
+     別の先を指す symlink   **張り替えて** \"linked\"
+     symlink でない実体     触らず \"occupied-by-real-entity\"(erosion guard)
+     何も居ない             親 dir を作って張り \"linked\"
+   ⚠ FsLinkArtifact(据わっている物を絶対に置き換えない)との違いは**張り替えるか**の 1 点で、
+   それが無いと正本の path が動いた日に家の symlink が古い先を指したまま残る。"
+  (when (os.path.islink link)
+    (when (= (os.readlink link) target)
+      (return FS-ENSURE-SYMLINK-UNCHANGED))
+    (os.unlink link)
+    (os.symlink target link)
+    (return FS-ENSURE-SYMLINK-LINKED))
+  (when (os.path.exists link)
+    (return FS-ENSURE-SYMLINK-OCCUPIED))
+  (setv parent (os.path.dirname link))
+  (when parent
+    (os.makedirs parent :exist-ok True))
+  (os.symlink target link)
+  FS-ENSURE-SYMLINK-LINKED)
+
 (deff _ensure-view-symlink [link target]
   {:pre [(: link str) (: target str)]
    :post [(: % "None — 実ファイル/実 dir は raise(erosion guard)")]}
   "apps _ensure-symlink の意味移植: symlink は張り替え、実ファイル/実 dir が
    居たら typed fail(erosion guard — 黙って置換しない。silent 置換は registry
-   と token の fork を隠す)。"
-  (when (os.path.islink link)
-    (os.unlink link)
-    (os.symlink target link)
-    (return None))
-  (when (os.path.exists link)
+   と token の fork を隠す)。
+   ⚠ 張り替えの物理は ensure-symlink-outcome の 1 点へ畳んである(D8)— ここはその 3 値のうち
+   `occupied-by-real-entity` だけを home view の契約(typed fail)へ戻す薄い層で、
+   FsComposeHomeView の振る舞いは 1 byte も変わらない。"
+  (when (= (ensure-symlink-outcome link target) FS-ENSURE-SYMLINK-OCCUPIED)
     (raise (RuntimeError
              (+ link " is a real file where a symlink into the profile "
                 "bundle is required (erosion guard) — reconcile it manually; "
                 "refusing to overwrite"))))
-  (os.symlink target link)
   None)
 
 (deff compose-home-view [auth-file profile-dir view-root]
@@ -438,11 +467,30 @@
 
   (FsWriteTextAtomic [path text tmp-suffix]
     ;; write-new + rename(oracle: 並走 reader が torn state を読まない)
-    (setv tmp-path (+ path tmp-suffix))
-    (with [f (open tmp-path "w" :encoding "utf-8")]
-      (.write f text))
-    (os.replace tmp-path path)
+    ;; ⚠ tmp の名は**書き手ごとに一意**(card acp:kanban-issue:ki-62aa1f4e9c9c D9・盲検 A の反例):
+    ;; 固定名 <path><suffix> は、同じ家へ 2 席が同拍で書くと互いの書きかけを上書きし、
+    ;; 先に rename した側の tmp を後の側が消して **FileNotFoundError で片方の書きが落ちる**。
+    ;; 家は資格ごとに共有され(1 つの config-dir に複数の席)、この便でその家へ書く物が増えるので、
+    ;; 既存の preseed-claude-trust の競りもここで同時に閉じる。suffix は残す(残骸の見分けの綴り)。
+    (setv directory (or (os.path.dirname path) "."))
+    (setv [fd tmp-path] (tempfile.mkstemp :dir directory
+                                          :prefix (+ (os.path.basename path) ".")
+                                          :suffix tmp-suffix))
+    (try
+      (with [f (os.fdopen fd "w" :encoding "utf-8")]
+        (.write f text))
+      (os.replace tmp-path path)
+      (except [error Exception]
+        ;; 自分の tmp だけを掃除して送出する(他の書き手の tmp には触らない)。
+        (try
+          (os.unlink tmp-path)
+          (except [OSError] None))
+        (raise)))
     (resume None))
+
+  (FsEnsureSymlink [link target]
+    ;; D8: 張り替える symlink の据え付け(3 値)。物理は ensure-symlink-outcome の 1 点。
+    (resume (ensure-symlink-outcome link target)))
 
   (FsMakeDirs [path]
     (os.makedirs path :exist-ok True)
