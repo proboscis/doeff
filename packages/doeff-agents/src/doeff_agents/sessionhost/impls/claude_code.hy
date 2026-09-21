@@ -38,6 +38,7 @@
   fs-read-text
   fs-write-text-atomic
   fs-make-dirs
+  log-line
   env-get
   tmux-send-keys])
 (import doeff_agents.sessionhost.policy [
@@ -169,6 +170,9 @@
 ;; sessionhost/acp/effects.py の CHARTER_MEMORY_FILES_KEY で、ここはその写し(検が突き合わせる)。
 ;; この層は行を読まない — 運ばれてきた {name, text} を置き場へ書くだけ。
 (setv CLAUDE-MEMORY-FILES-KEY "memory_files")
+;: 索引の file 名(計器が冊と索引を分けて数えるための綴り)。綴りの家は
+;: sessionhost/acp/effects.py の MEMORY_INDEX_FILE で、ここはその写し(検が突き合わせる)。
+(setv CLAUDE-MEMORY-INDEX-FILE "MEMORY.md")
 
 
 (defk build-claude-argv [params]
@@ -428,12 +432,25 @@
     ;; ACP も記録の service も import しない。運ぶのは charter の 1 欄ちょうど。
     ;; 置き場に残った余りの file は消さない(消す動詞をこの層に置かない)— 退役した冊を書き戻さないのは
     ;; 起こす側の判断(judgment.memory-row-retired?)。
-    (for [book (or (.get params CLAUDE-MEMORY-FILES-KEY) [])]
+    (setv declared (list (or (.get params CLAUDE-MEMORY-FILES-KEY) [])))
+    (setv written [])
+    (for [book declared]
       (setv book-name (if (isinstance book dict) (.get book "name") None))
       (setv book-text (if (isinstance book dict) (.get book "text") None))
       (when (and (isinstance book-name str) (isinstance book-text str)
                  (.strip book-name) (not (in "/" book-name)) (not (.startswith book-name ".")))
-        (<- _ (fs-write-text-atomic f"{memory-dir}/{book-name}" book-text ".agentd-tmp")))))
+        (<- _ (fs-write-text-atomic f"{memory-dir}/{book-name}" book-text ".agentd-tmp"))
+        (.append written book-name)))
+    ;; 計器(card acp:kanban-issue:ki-a40292ed30d9 受入 3): **器が書いた数**を起動ごとに 1 行で名乗る。
+    ;; agentd 側の agent-memory-hydrated が数えるのは**行から読んだ数**なので、この 2 行が割れている
+    ;; 拍(読んだ 44・書いた 0)が今回の壊れ方そのものだった — 読みの数だけでは log が成功しか言わない。
+    ;; 置き場を名乗った手番は 0 冊でも名乗る(黙る拍を作らない)。索引は冊と別に数える
+    ;; (行から導いた索引が落ちると、冊は在るのに読み手が古い索引を読む)。
+    (setv books (lfor name written :if (!= name CLAUDE-MEMORY-INDEX-FILE) name))
+    (<- _ (log-line
+            (+ f"session.launch: agent-memory-written dir={memory-dir} "
+               f"books={(len books)} index={(if (in CLAUDE-MEMORY-INDEX-FILE written) 1 0)} "
+               f"declared={(len declared)}"))))
   (when (not (.get params "skip_trust_setup" False))
     (<- _ (preseed-claude-trust config-dir (get params "work_dir"))))
   (setv identity {"CLAUDE_CONFIG_DIR" config-dir

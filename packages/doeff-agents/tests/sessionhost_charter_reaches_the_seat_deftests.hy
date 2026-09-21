@@ -40,6 +40,7 @@
   build-launch-program-params
   build-resume-program-params])
 (import doeff_agents.sessionhost.launch [resume-launch-params-of])
+(import doeff_agents.sessionhost.impls.claude_code [CLAUDE-MEMORY-FILES-KEY CLAUDE-MEMORY-INDEX-FILE])
 
 (import sessionhost_launch_deftests [LaunchWorld launch-params run-launch])
 (import sessionhost_resume_deftests [resume-params run-resume seed-source])
@@ -266,3 +267,65 @@
   (<- files tuple (memory-files-of #()))
   (assert (= (len files) 1) files)
   (assert (= (get (get files 0) "name") MEMORY-INDEX-FILE) files))
+
+
+;; ---------------------------------------------------------------------------
+;; (6) 器が**書いた数**は起動ごとに 1 行で読める(card ki-a40292ed30d9 受入 3)
+;; ---------------------------------------------------------------------------
+
+(defn #^ list memory-log-lines [world]
+  (lfor line world.log-lines :if (in "agent-memory-written" line) line))
+
+
+(deftest test-the-seat-names-how-many-books-it-wrote
+  ;; 起票者の受入 3: 「器が冊を書いたことが log の 1 行で読める」。
+  ;; agentd 側の agent-memory-hydrated が数えるのは**行から読んだ数**で、書いた数ではない。
+  ;; 今回の壊れ方では「読んだ 44 / 書いた 0」だったのに、log は読みの数しか言わなかった
+  ;; ⇒ 同じ形がまた起きた時に無音にならないよう、書いた数をこの座で名乗る。
+  (setv n 3)
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["❯ {composer}"])
+  (<- row (run-launch world (launch-params
+                              :agent_type "claude"
+                              :binding {"kind" "claude-code" "config_dir" "/x/claude"}
+                              :memory_dir MEMORY-HOME
+                              :memory_files (list (sample-books n)))))
+  (setv lines (memory-log-lines world))
+  (assert (= (len lines) 1) #("書いた数の名乗りは起動ごとに 1 行" world.log-lines))
+  (setv line (get lines 0))
+  (assert (in f"books={n}" line) line)
+  (assert (in "index=1" line) line)
+  (assert (in f"declared={(+ n 1)}" line) line)
+  (assert (in MEMORY-HOME line) line))
+
+
+(deftest test-a-memory-home-with-no-books-still-names-itself
+  ;; 0 冊でも名乗る(黙る拍を作らない)。ここが黙ると「読んだ N / 書いた 0」の割れが
+  ;; log から消え、今回と同じ無音の壊れ方に戻る。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["❯ {composer}"])
+  (<- row (run-launch world (launch-params
+                              :agent_type "claude"
+                              :binding {"kind" "claude-code" "config_dir" "/x/claude"}
+                              :memory_dir MEMORY-HOME)))
+  (setv lines (memory-log-lines world))
+  (assert (= (len lines) 1) #("置き場を名乗った手番は 0 冊でも名乗る" world.log-lines))
+  (assert (in "books=0" (get lines 0)) (get lines 0))
+  (assert (in "declared=0" (get lines 0)) (get lines 0)))
+
+
+(deftest test-a-seat-without-a-memory-home-says-nothing
+  ;; 置き場を名乗らない手番の log は今日と 1 行も変わらない(記憶を使わない会話に行を足さない)。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["❯ {composer}"])
+  (<- row (run-launch world (launch-params
+                              :agent_type "claude"
+                              :binding {"kind" "claude-code" "config_dir" "/x/claude"})))
+  (assert (= (memory-log-lines world) []) world.log-lines))
+
+
+(deftest test-the-index-spelling-has-one-home
+  ;; 計器が冊と索引を分けて数えるための綴りは器の側にも写しが要る — 割れると
+  ;; 索引が冊として数えられ、「N 冊 → N + 1 file」の受入が 1 ずれる。
+  (assert (= CLAUDE-MEMORY-INDEX-FILE MEMORY-INDEX-FILE))
+  (assert (= CLAUDE-MEMORY-FILES-KEY CHARTER-MEMORY-FILES-KEY)))
