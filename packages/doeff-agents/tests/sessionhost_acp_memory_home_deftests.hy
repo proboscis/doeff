@@ -193,11 +193,21 @@
       (setv response (json.loads (dispatch-line line config actor)))
       (assert (= (get response "ok") False) response)
       (assert (in "`memory_dir` is " (get response "error")) response)
+      ;; card ki-a40292ed30d9: 冊そのもの(memory_files)も同じ理由で resume 専用。置き場の名だけを
+      ;; 断って中身を通したら、誤帰属は置き場ではなく**新しい会話の置き場に書かれた親の本文**で起きる。
+      (setv books-line (json.dumps {"id" 3 "method" "session.fork"
+                                    "params" {"session_id" "s-parent"
+                                              "memory_files" [{"name" "a.md" "text" "A"}]}}))
+      (setv books-answer (json.loads (dispatch-line books-line config actor)))
+      (assert (= (get books-answer "ok") False) books-answer)
+      (assert (in "`memory_files` is " (get books-answer "error")) books-answer)
       ;; resume は同じ会話の続きなので、同じ欄が断られない。
       (setv resume-line (json.dumps {"id" 2 "method" "session.resume"
                                      "params" {"session_id" "s-parent"
-                                               "memory_dir" f"{MEMORY-ROOT}/{CONVERSATION}"}}))
+                                               "memory_dir" f"{MEMORY-ROOT}/{CONVERSATION}"
+                                               "memory_files" [{"name" "a.md" "text" "A"}]}}))
       (setv resumed (json.loads (dispatch-line resume-line config actor)))
       (assert (not-in "memory_dir" (str (.get resumed "error" ""))) resumed)
+      (assert (not-in "memory_files" (str (.get resumed "error" ""))) resumed)
       (finally (.close actor)))
     (finally (shutil.rmtree d :ignore-errors True))))
