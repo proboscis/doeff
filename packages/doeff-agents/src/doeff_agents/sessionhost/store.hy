@@ -32,6 +32,8 @@
 (import queue)
 (import sqlite3)
 (import threading)
+(import doeff_agents.sessionhost.cache_host_model [HostCacheRead HostCacheActive HostCacheWrite])
+(import doeff_agents.sessionhost.cache_host_store [cache-receipt-get cache-receipt-active cache-receipt-put])
 
 (import doeff_agents.sessionhost.effects [
   SessionRow
@@ -1271,6 +1273,13 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
 
 
 (defhandler sqlite-session-store [actor]
+  (HostCacheRead [operation-id]
+    (resume (.submit actor (fn [conn] (cache-receipt-get conn operation-id)))))
+  (HostCacheActive [session-id]
+    (resume (.submit actor (fn [conn] (cache-receipt-active conn session-id)))))
+  (HostCacheWrite [record]
+    (.submit actor (fn [conn] (cache-receipt-put conn record)))
+    (resume None))
   ;; SessionStore substrate effect の host 束縛(DOE-004 R1)。すべて actor
   ;; 経由 = 直列化済み。oracle monitor は backend_kind="tmux" も filter する
   ;; (:3486)が、Hy host の行は launch 経路しか作らないので常に tmux —
