@@ -1,4 +1,16 @@
 rules:
+  - id: cache-process-no-unfenced-signals
+    languages: [python]
+    severity: ERROR
+    message: 専用pingの復旧ではPIDの再利用を検査してください。PIDだけのsignal送信は禁止です。
+    pattern-either:
+      - pattern: os.kill(...)
+      - pattern: os.killpg(...)
+    paths:
+      include:
+        - '**/sessionhost/cache_process.py'
+      exclude:
+        - /tests/semgrep/fixtures/**
   - id: cache-maintenance-never-becomes-normal-turn
     languages: [generic]
     severity: ERROR

@@ -2,6 +2,7 @@
 ;;; state machineと復旧の判断は既存のProgram。I/Oの待ちだけasync-dispatchがAwaitにする。
 (require doeff-hy.macros [defk defhandler <-])
 (import asyncio)
+(import types [NoneType])
 (import dataclasses [replace])
 (import doeff [Program])
 (import doeff_core_effects.effects [Await])
@@ -34,7 +35,7 @@
     (resume answer)))
 
 (defk normal-worker-loop [settings state]
-  {:pre [(: settings AgentdSettings) (: state AgentdState)] :post [(: % "None")]}
+  {:pre [(: settings AgentdSettings) (: state AgentdState)] :post [(: % NoneType)]}
   (setv backoff 1.0)
   (while True
     (<- control LoopControl (ReadLoopControl))
@@ -50,7 +51,7 @@
   None)
 
 (defk cache-worker-loop [settings]
-  {:pre [(: settings AgentdSettings)] :post [(: % "None")]}
+  {:pre [(: settings AgentdSettings)] :post [(: % NoneType)]}
   ;; 通常turnの資格journalと別の所有者。同じfileへのread-modify-writeを競合させない。
   (setv settings (replace settings :lease-journal-path
     (if settings.lease-journal-path (+ settings.lease-journal-path ".cache") "")))
@@ -74,7 +75,7 @@
   program)
 
 (defk run-worker-programs [normal maintenance]
-  {:pre [(: normal Program) (: maintenance (| Program None))] :post [(: % "None")]}
+  {:pre [(: normal Program) (: maintenance (| Program None))] :post [(: % NoneType)]}
   (<- worker (Spawn normal))
   (if maintenance
     (do
@@ -85,7 +86,7 @@
 
 (defk concurrent-worker [settings state normal-dispatchers cache-dispatchers ports]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: normal-dispatchers tuple)
-         (: cache-dispatchers tuple) (: ports LoopPorts)] :post [(: % "None")]}
+         (: cache-dispatchers tuple) (: ports LoopPorts)] :post [(: % NoneType)]}
   (setv normal (async-stack normal-dispatchers
     ((cache-send-serialization) (normal-worker-loop settings state))))
   (setv maintenance (if cache-dispatchers

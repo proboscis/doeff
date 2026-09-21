@@ -1,6 +1,9 @@
 """専用pingと通常sessionの分離を実sessionhostとCLI替え玉で検証する。"""
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -9,6 +12,7 @@ import pytest
 from doeff_agents.sessionhost.acp.cache_operation import MaintenanceState
 from doeff_agents.sessionhost.cache_host_model import HostCacheRecord
 from doeff_agents.sessionhost.cache_host_store import cache_receipt_get, cache_receipt_put
+from doeff_agents.sessionhost.cache_process import identify_process
 from doeff_agents.sessionhost.impls.claude_code import CLAUDE_AUTO_MEMORY_DIR_SETTING
 from doeff_agents.sessionhost.impls.headless_argv import build_claude_headless
 from test_sessionhost_headless import Host, _launch_params, _pause, _wait_turn_end
@@ -117,3 +121,47 @@ def test_cache_ping_and_normal_send_never_write_same_history_together(headless_h
     assert isinstance(cancelled, dict)
     assert cancelled["state"] == "failed"
     assert cancelled["reason"] == "session-cancelled"
+
+
+def test_dead_host_ping_is_stopped_before_recovered_host_releases_session(headless_host: Host) -> None:
+    """実際に親processを失わせる。復旧側には元のregistryもstdioも無い。"""
+    child_source = """
+import json, os, sys, time
+from pathlib import Path
+from test_sessionhost_headless import Host, _launch_params, _wait_turn_end
+h = Host(Path(sys.argv[1]))
+sid = "cache-host-death"
+h.ok("session.launch", _launch_params(h.root, sid, "claude"))
+_wait_turn_end(h, sid)
+params = {"session_id": sid, "operation_id": "crashed-host-ping",
+          "expires_at": int(time.time() * 1000) + 3000,
+          "session_env": {"DOEFF_HEADLESS_STUB_DELAY": "30"}}
+until = time.monotonic() + 2
+while time.monotonic() < until:
+    receipt = h.ok("session.cache-ping", params)
+    if receipt.get("process"):
+        print(json.dumps(receipt), flush=True)
+        os._exit(0)
+    time.sleep(0.01)
+raise RuntimeError("ping was not started")
+"""
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(sys.path))
+    result = subprocess.run(
+        [sys.executable, "-c", child_source, str(headless_host.root)],
+        env=env, capture_output=True, text=True, timeout=10, check=True,
+    )
+    receipt = json.loads(result.stdout.splitlines()[-1])
+    pid = receipt["process"]["pid"]
+    assert identify_process(pid) is not None, "孤児processが実際に残る条件で検証する"
+    remaining = max(0, receipt["expires_at"] / 1000 - time.time())
+    _pause(remaining + 0.05)
+    recovered = headless_host.ok("session.cache-ping-status", {
+        "session_id": "cache-host-death", "operation_id": "crashed-host-ping",
+    })
+    assert isinstance(recovered, dict)
+    assert recovered["state"] == "unknown", recovered
+    assert identify_process(pid) is None
+    # 同じDBを読む新しいhostが、専用操作の死亡確認後に通常入力を受け付ける。
+    headless_host.ok("session.send", {
+        "session_id": "cache-host-death", "message": "normal work", "awaiting": True,
+    })

@@ -16,3 +16,15 @@ def test_cache_maintenance_rule_rejects_only_normal_turn_effects() -> None:
     hits = [finding["start"]["line"] for finding in findings
             if finding["check_id"].endswith("cache-maintenance-never-becomes-normal-turn")]
     assert hits == [2, 4]
+
+
+def test_cache_process_rule_rejects_signals_without_identity_check() -> None:
+    root = Path(__file__).resolve().parents[2]
+    findings = _semgrep_results(
+        root / ".semgrep.yaml",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/cache_process.py",
+        cwd=root / "tests/semgrep/fixtures/python",
+    )
+    hits = [finding["start"]["line"] for finding in findings
+            if finding["check_id"].endswith("cache-process-no-unfenced-signals")]
+    assert hits == [2, 3]

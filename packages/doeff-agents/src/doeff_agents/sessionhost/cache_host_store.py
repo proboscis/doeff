@@ -63,6 +63,8 @@ def cache_receipt_put(conn: sqlite3.Connection, record: HostCacheRecord) -> None
     if (existing is not None and existing.state == MaintenanceState.RUNNING
             and record.state == MaintenanceState.REQUESTED):
         raise ValueError("送信の記録を未送信へ戻すことはできません")
+    if existing is not None and existing.process is not None and existing.process != record.process:
+        raise ValueError("送信先processの識別を変更することはできません")
     if existing is not None and existing.state not in (
         MaintenanceState.REQUESTED, MaintenanceState.RUNNING
     ):
