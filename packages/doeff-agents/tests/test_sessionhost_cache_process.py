@@ -7,7 +7,6 @@ from dataclasses import replace
 
 import psutil
 import pytest
-
 from doeff_agents.sessionhost.cache_process import identify_process, stop_identified_process
 
 
