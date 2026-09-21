@@ -5138,3 +5138,80 @@ rules:
     paths:
       include:
         - "/packages/doeff-agents/src/**"
+
+  - id: doeff-agents-claude-md-excludes-spelling-has-one-home
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      card acp:kanban-issue:ki-62aa1f4e9c9c decision D6: the settings key that
+      drops the seat-specific DOUBLE read of the common CLAUDE.md is spelled in
+      exactly one place (CLAUDE-MD-EXCLUDES-SETTING in
+      sessionhost/impls/claude_code.hy, which is also the single merge point of
+      `--settings`). A second site that spells `claudeMdExcludes` builds an
+      exclude list that the merge point does not own: the two lists then race in
+      one `--settings` flag and the later one silently wins, so the seat either
+      reads the common instructions twice (measured: user_memory_occurrences=4
+      for two turns — evidence/probe_user_layer.log) or loses a declared hook.
+      The value is DERIVED from the seat's $HOME (one entry), never declared per
+      host — a per-host list leaks by the third machine.
+    patterns:
+      - pattern-regex: 'claudeMdExcludes'
+    paths:
+      include:
+        - /packages/doeff-agents/**
+      exclude:
+        - "**/sessionhost/impls/claude_code.hy"
+
+  - id: doeff-agents-seat-home-instruction-names-have-one-home
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      card acp:kanban-issue:ki-62aa1f4e9c9c decision D11: the names the seat's
+      home carries (`CLAUDE.md`, `skills`) are spelled ONCE — in the roster
+      policy.CARRIED-INSTRUCTION-SOURCES (home-name of each row). Every other
+      site walks that roster. Spelling `<home>/CLAUDE.md` or `<home>/skills`
+      here builds a second home for the name: the day a row changes (or a third
+      kind is carried) this site keeps writing the old name, and the seat reads
+      a file nobody declared. This is the d8472e1a lesson the design registered
+      in advance — adding one carried kind must touch ONE line, not four
+      rosters.
+    patterns:
+      - pattern-either:
+          - pattern-regex: '"CLAUDE\.md"'
+          - pattern-regex: '"skills"'
+          - pattern-regex: '"[^"]*/(CLAUDE\.md|skills)"'
+    paths:
+      include:
+        - /packages/doeff-agents/src/**
+      exclude:
+        - "**/sessionhost/policy.hy"
+
+  - id: doeff-agents-host-checkout-layout-is-never-spelled-here
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      card acp:kanban-issue:ki-62aa1f4e9c9c decision D10 (blind counterexample
+      B): doeff must not spell the HOST's checkout layout. Where the common
+      instructions (or any host-side asset) live differs per host — the pod's
+      container has no `dotfiles` tree at all — so the path arrives through the
+      join declaration and the env it sets, never through a literal in this
+      tree. A literal `"…dotfiles/…"` here is a second, undeclared source of
+      truth: it works on the machine the author had, and on every other host it
+      silently points at nothing (or, worse, at someone else's checkout).
+      ⚠ This rule has NO paths.exclude on purpose — the write it forbids would
+      happen exactly in the file an exclude would open (the vessel that installs
+      into the home).
+    patterns:
+      # ⚠ 行内に閉じる([^"] は改行を含むので、閉じないと隣の註の逐語まで 1 致に巻き込む)。
+      - pattern-regex: '"[^"\n]*dotfiles/[^"\n]*"'
+      # 射程外の既知の 1 件(依頼 lt-JH7GM60YZ02MSGKKNXTDQK79A1 の報告): 定期便の verify の
+      # script の置き場 acp/effects.py VERIFY_SCRIPTS_RELDIR。直すには charter.kind = verify の
+      # 契約に宣言の鍵を 1 本足す別便が要るので、この 1 つの綴りだけを名指しで通す
+      # (paths.exclude ではない — 他のどの file に同じ綴りが現れても発火する)。
+      - pattern-not-regex: '"dotfiles/cron_management"'
+    paths:
+      include:
+        - /packages/doeff-agents/src/**
