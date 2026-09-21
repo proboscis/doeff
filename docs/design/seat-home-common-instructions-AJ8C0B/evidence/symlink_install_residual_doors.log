@@ -1,0 +1,24 @@
+# 検収の後に残っていた扉を、動詞そのものを呼んで測る(計画段 c-AJ8C0BK9RF29HQ92ZQ986FXQVT)
+#
+# 機体   : CA-20038667(会社 Mac)/ macOS 26.5.2 / APFS
+# 検体   : origin/main ef0eaa55 の substrate.hy(隔離 worktree・主 checkout は d4705914 で 6 日古い)
+# 撃ち方 : PYTHONPATH=<worktree>/packages/{doeff-agents,doeff-hy}/src .venv/bin/python symlink_install_residual_doors.py
+# 註     : doeff-hy は d4705914 と ef0eaa55 で差分 0(git diff --stat が空)なので macro 層の遅れは効かない
+#
+
+=== macOS-26.5.2-arm64-arm-64bit-Mach-O / python 3.14.3 ===
+=== 検体 /Users/s22625/.worktrees/doeff-wt-residual-doors-AJ8C0B/packages/doeff-agents/src/doeff_agents/sessionhost/substrate.hy ===
+-- 扉 1: try の外の syscall から raise が抜けるか --
+  親が実体 file       → RAISED:FileExistsError/File exists
+  家が書けない(r-x)  → RAISED:PermissionError/Permission denied
+  親 dir を作れない   → RAISED:PermissionError/Permission denied
+-- 扉 2: replace の except は何を occupied と名乗るか --
+  実体 dir(空)            → occupied-by-real-entity  後に居る物 = dir
+  実体 dir(中身入り)         → occupied-by-real-entity  後に居る物 = dir
+  実体 file              → occupied-by-real-entity  後に居る物 = file
+  -- replace の段を単独で(動詞の中の except が何を掴むか) --
+  同じ dir 内の欠けた仮        → FileNotFoundError/No such file or directory ・実体は居るか = False ⇒ 動詞なら occupied-by-real-entity を名乗る
+-- 扉 3: unchanged は綴りの一致か、指す先の一致か --
+  宣言 = 据わっている綴り            1 回目=unchanged 2 回目=unchanged 3 回目=unchanged 指す先は正しいか=True
+  宣言に末尾 / が付いた             1 回目=linked    2 回目=unchanged 3 回目=unchanged 指す先は正しいか=True
+  宣言に ./ が挟まった             1 回目=linked    2 回目=unchanged 3 回目=unchanged 指す先は正しいか=True

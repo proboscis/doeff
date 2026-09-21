@@ -457,3 +457,66 @@ pod の agentd が `ec654440`(実装より前)を走らせている限り、生�
    同じ資格の 2 会話が同じ家へ transplant する拍に競る。⇒ 受付へ class investigate で起票した。
    ⚠ 新しい門 `doeff-agents-symlink-install-has-one-home` は **file 単位の exclude** で出荷の 1 点を通すため、
    同じ file の中に居るこの動詞は原理的に覆わない(門が緑でも「`substrate.hy` の中は自由」の意味)。
+
+### 検収の後に残っていた扉 3 つ(2026-09-22・計画段が会社 Mac で実測)
+
+依頼者 c-3JYBNJMC… が会社 Mac(Darwin 25.5.0 / APFS)で 3 点を挙げた。計画段が**動詞そのものを呼んで**
+撃ち直した結果、2 つは現物どおり・1 つは結論が過大だった。計器と生の出力 =
+`evidence/symlink_install_residual_doors.{py,log}`(検体 = `ef0eaa55` の `substrate.hy`・隔離 worktree)。
+
+**扉 1 ⭐⭐ 「raise しない」の約束が、try の外の 2 つの syscall で現に破れる**(3 形とも実測)
+
+| 家の形 | 抜けた例外 | 抜ける座 |
+| --- | --- | --- |
+| 親の位置に実体 file が居る | `FileExistsError` | `os.makedirs` |
+| 家が書けない(`r-x`) | `PermissionError` | `os.symlink` |
+| 親 dir を作れない(祖父が `r-x`) | `PermissionError` | `os.makedirs` |
+
+`os.lstat` と `os.replace` は `try` に包まれているが、`os.makedirs` と `os.symlink` は包まれていない。
+⇒ 容量切れ(`ENOSPC`)・権限の事故・読み取り専用の家で、席が 3 値の名乗りではなく素の `OSError` で落ちる。
+これは D8 が直したばかりの `FileExistsError` と**同じ壊れ方**(docstring の逐語「この動詞は raise しない
+約束なのに、その約束ごと破れて席が起きない」)が、別の扉から残っている形。
+
+**扉 2 ⚠ `except OSError` が広すぎる — ただし動詞の中に到達路は見つからなかった**
+
+`os.replace` の except は無型なので、実体が 1 つも居ない失敗(仮が消えた = `ENOENT` 等)も
+`occupied-by-real-entity` を名乗り、`_ensure-view-symlink` が「在りもしない実 file を手で片付けろ」
+(`is a real file where a symlink … is required (erosion guard) — reconcile it manually`)と人に言う。
+段を単独で撃つとそのとおりになる(実測)。⚠ **ただし動詞の中では到達路が無い**: 実体 dir(空 / 中身入り)と
+実体 file は 3 形とも正しく `occupied` を名乗り、仮を消す物は木に 1 つも居ない
+(`.agentd-tmp` を掃く座 = 0・`glob` の掃引 = 0)。容量・権限は扉 1 の側で先に落ちる。
+⇒ **潜在**(語彙の誤りであって live な誤診断ではない)。扉 1 と同じ直しで一緒に閉じる。
+
+**扉 3 ❌ `unchanged` は綴りの一致だが、張り替えは「毎起動」ではなく「綴りが変わった 1 度きり」**
+
+| 宣言の綴り | 1 回目 | 2 回目 | 3 回目 | 指す先 |
+| --- | --- | --- | --- | --- |
+| 据わっている綴りと同じ | `unchanged` | `unchanged` | `unchanged` | 正しい |
+| 末尾 `/` が付いた | `linked` | `unchanged` | `unchanged` | 正しい |
+| `./` が挟まった | `linked` | `unchanged` | `unchanged` | 正しい |
+
+前提は依頼者の指摘どおり(`instruction-sources-of` は `.strip` と形の門だけ・
+`_with_admitted_instruction_sources` は `~` を展開するだけ・`normpath` も `realpath` も無い)。
+だが `os.symlink` は綴りを**逐語で**格納するので、張り替えた次の拍からは新しい綴りどうしが一致して
+`unchanged` に落ちる。⇒ 「起動のたびに張り替えが起きる」は成り立たない。残るのは
+**綴りが変わった日の 1 度だけの余計な張り替え**で、同じ家へ**異なる綴り**を宣言する機体が 2 つ在る時だけ
+往復する(今日そうなっている機体は見ていない)。⇒ 欠陥としては小さい。門の 1 点(`join` が据える拍の
+`normpath`)は安いので入れてよいが、扉 1 / 2 とは別の重さ。
+
+**針の射程 ⭐ semgrep `doeff-agents-symlink-install-has-one-home` は Python の綴りしか見ていない**
+
+`pattern-regex: 'os\.symlink\b'` / `'\.symlink_to\b'`・`languages: generic`・
+include は `/packages/doeff-agents/src/**`。⇒ shell の `ln -sfn` はどこに書いても当たらない。
+BSD の `ln -sfn` は読みの 5.64 %(4,531 / 80,733)が `ENOENT`(依頼者の Darwin の実測)= 規則の
+message が禁じている物理の中で最悪。いま木に `ln -s` は 0 件なので**再侵入**の話で、
+`pattern-either` に shell の綴りを 1 行足すのが安い(include を広げるのは、検体側が意図的に
+symlink を張るので勧めない)。
+
+⚠ 門を**動詞の単位**へ動かす時の註(実装 c-EWR4R2XY… から): 許す綴りは 1 つではなく **2 つ**になる。
+「置き換える据え付け」(`ensure-symlink-outcome` — `rename` で被せる)と「置き換えない敷設」
+(`FsLinkArtifact` — `FileExistsError` を合図に読み直す)は物理が逆で、1 つの正しい形へは畳めない。
+
+**根は 1 つ**: この file の symlink の動詞は、失敗の語彙を happy path の値しか持たない。
+⇒ 呼び出し座の guard ではなく**動詞の戻り値の型**を直す(「器が断った」を表す値 + errno を足し、
+物理を全部 `try` の中へ入れて約束を守らせ、`_ensure-view-symlink` は `occupied` だけを erosion guard の
+typed fail に写す)。`FsLinkArtifact` の隙(上の 3)と同じ根なので、**一括出荷**が素直。
