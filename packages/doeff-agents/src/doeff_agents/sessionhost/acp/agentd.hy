@@ -149,13 +149,17 @@
   RecordSupersede
   RecordSuperseded
   FsListDirectory
+  MEMORY-BASE-FILE
   MEMORY-BOOK-MAX-CHARS
   MEMORY-KIND
   MEMORY-SPEC-RECORD-REF-KEY
   MemoryAppend
+  MemoryBaseline
   MemoryBook
+  MemoryFold
   MemoryMalformed
   MemorySupersede
+  MemoryUnbased
   MemoryUnchanged
   CONDITION-MEMORY-UNWRITABLE
   AGENT-JOB-NAMESPACE
@@ -386,12 +390,18 @@
   summary-status-of
   summary-stream-id-of
   charter-with-memory-files
+  memory-baseline-of-row
+  memory-baseline-text-of
+  memory-baselines-of-text
+  memory-baselines-with
   memory-batch-of
   memory-body-of
   memory-book-of
   memory-book-of-row
   memory-files-of
   memory-home-of
+  memory-material-of
+  memory-reserved-file?
   memory-row-id-of
   memory-row-retired?
   memory-rows-by-name
@@ -1254,6 +1264,7 @@
   (when (not rows)
     (return #()))
   (setv books [])
+  (setv baselines {})
   (setv unread 0)
   (setv retired-count 0)
   (for [row rows]
@@ -1277,7 +1288,13 @@
                       (<- book (| MemoryBook None) (memory-book-of-row row event.text))
                       (if (is book None)
                           (setv unread (+ unread 1))
-                          (.append books book)))))))))
+                          (do
+                            (.append books book)
+                            ;; 出した写しの claim check を基準として同じ拍で持つ(次の手番の畳み戻しの第 3 点)。
+                            ;; 4 欄が読めない行は基準を持てない ⇒ その冊は規則 3b で撃たれない(安全側)。
+                            (<- base (| MemoryBaseline None) (memory-baseline-of-row row))
+                            (when (is-not base None)
+                              (setv (get baselines base.name) base)))))))))))
   (when (> unread 0)
     (<- (LogLine :text (+ f"agentd: conversation {subject} has {unread} memory row(s) whose body could not be read; "
                           "the turn starts without them"))))
@@ -1286,9 +1303,10 @@
   (when (and (not books) (> unread 0))
     (return #()))
   ;; 冊が 0 でも行が在って全部読めた(= 全部退役した)なら索引は書き直す — 腐った索引を残さない。
-  (<- files tuple (memory-files-of (tuple books)))
+  (<- files tuple (memory-files-of (tuple books) baselines))
   (<- (MetricLine :fields {"metric" "agent-memory-hydrated" "conversationId" subject
-                           "books" (len books) "unreadable" unread "retired" retired-count}))
+                           "books" (len books) "based" (len baselines)
+                           "unreadable" unread "retired" retired-count}))
   files)
 
 
@@ -2325,10 +2343,18 @@
    :post [(: % tuple)]}
   "置き場の file を読んで冊の列にする(card acp:kanban-issue:ki-9fc7d4bca4dc)。読めない file は
    MemoryMalformed のまま返す — 呼び手が理由を log に出して**書かない**(欄を発明して行を作らない)。
-   判断は judgment.memory-book-of の 1 点で、ここは読むだけ。"
+   判断は judgment.memory-book-of の 1 点で、ここは読むだけ。
+
+   ⚠ 予約名(索引 MEMORY.md・基準 MEMORY.base.json)は**母集団に入れない**: 冊でも誤りでもない。
+   入れると計器の unreadable が正常でも 1 を名乗り(実測: 会社 Mac の 3 手番とも books 8/10/15・
+   unreadable 1)、直しが劣化に見える。式 `(- (len readings) (len books))` は動かさず、readings の
+   側を正す。"
   (<- names tuple (FsListDirectory :path home))
   (setv readings [])
   (for [name names]
+    (<- reserved bool (memory-reserved-file? name))
+    (when reserved
+      (continue))
     (<- text (| str None) (FsReadText :path f"{home}/{name}" :max-chars MEMORY-BOOK-MAX-CHARS))
     (when (isinstance text str)
       (<- reading (| MemoryBook MemoryMalformed) (memory-book-of name text))
@@ -2336,22 +2362,57 @@
   (tuple readings))
 
 
-(defk fold-one-memory [settings job book now-ms row]
-  {:pre [(: settings AgentdSettings) (: job InFlightJob) (: book MemoryBook) (: now-ms int) (: row (| AcpRow None))]
-   :post [(: % (| str None))]}
-  "1 冊を行へ畳み戻す(法 ACP 575b1e)。戻り = 書けなかった理由(None = 書けた か 撃つ必要が無かった)。
+(defk memory-baselines-of-home [home]
+  {:pre [(: home str)]
+   :post [(: % dict)]}
+  "置き場の基準の side car を読む(手番の頭に器が置いた物)。無い・読めない = 空 ⇒ 行の在る冊は
+   規則 3b(MemoryUnbased)で**撃たれない**(安全側)。判断は judgment.memory-baselines-of-text の 1 点。"
+  (<- text (| str None) (FsReadText :path f"{home}/{MEMORY-BASE-FILE}" :max-chars MEMORY-BOOK-MAX-CHARS))
+  (when (not (isinstance text str))
+    (return {}))
+  (<- baselines dict (memory-baselines-of-text text))
+  baselines)
 
-   撃ち分けは judgment.memory-write-verdict の 1 規則(行の recordSeq の在否):
-     * 変わっていない(行の sha256 が同じ)→ 1 bit も撃たない
-     * 行が在る → その recordSeq へ supersede(producerSeq は 0 のまま・前の版は鎖として残る)
+
+(defk write-memory-baselines [home baselines]
+  {:pre [(: home str) (: baselines dict)]
+   :post [(: % int)]}
+  "進めた基準を置き場へ書き戻す(次の手番の 3 点比較の第 3 点)。戻り = 基準の項の数。
+   ⚠ **正本ではない** — この text は ACP の行にも記録の service にも 1 bit も書かない(法 575b1e)。"
+  (<- text str (memory-baseline-text-of baselines))
+  (<- (FsWritePrivateText :path f"{home}/{MEMORY-BASE-FILE}" :text text))
+  (len baselines))
+
+
+(defk fold-one-memory [settings job book now-ms row baseline]
+  {:pre [(: settings AgentdSettings) (: job InFlightJob) (: book MemoryBook) (: now-ms int)
+         (: row (| AcpRow None)) (: baseline (| MemoryBaseline None))]
+   :post [(: % MemoryFold)]}
+  "1 冊を行へ畳み戻す(法 ACP 575b1e)。戻り = この冊の結末(MemoryFold)。
+
+   ⚠ **『撃った』と『撃つ理由が無かった』を 1 つに畳まない**(旧: 戻りが「書けなかった理由 | None」で、
+   Unchanged も None を返して written に数えられていた)。畳むと計器の written が『error が出なかった
+   冊の数』になる — 艦隊の agent-memory-folded 221 行が 100% written == books を名乗っていた。
+
+   撃ち分けは judgment.memory-write-verdict の 1 点(3 点比較 — 手元・行・基準):
+     * 行と一致 / 席が触っていない(手元 == 基準)→ 1 bit も撃たない
+     * 席が編集した → 行の recordSeq へ supersede(行が手番の間に動いていたら conflicted を名乗る)
      * 行が無い → append。**409 は事故ではなく合図** — 『行が消えて stream が残っている』形なので
-       stream を読み直して今の版の recordSeq へ supersede に落ちる(第 2 の語彙を足さない)。"
+       stream を読み直して今の版の recordSeq へ supersede に落ちる(第 2 の語彙を足さない)。
+     * 基準が無いのに行が在る → **撃たない**(MemoryUnbased・呼び手が名乗る)。"
   (<- body dict (memory-body-of book.text now-ms))
-  (<- material bytes (record-body-bytes-of body))
-  (setv sha256 (.hexdigest (hashlib.sha256 material)))
-  (<- verdict (| MemoryUnchanged MemoryAppend MemorySupersede) (memory-write-verdict row sha256))
+  (<- pair tuple (memory-material-of body))
+  (setv material (get pair 0))
+  (setv sha256 (get pair 1))
+  (<- verdict (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased)
+      (memory-write-verdict row sha256 baseline))
   (when (isinstance verdict MemoryUnchanged)
-    (return None))
+    (return (MemoryFold :name book.name :unchanged True)))
+  (when (isinstance verdict MemoryUnbased)
+    (return (MemoryFold :name book.name :unbased True)))
+  (setv base-seq (if (is baseline None) None baseline.record-seq))
+  (setv row-seq (if (isinstance verdict MemorySupersede) verdict.record-seq None))
+  (setv conflicted (if (isinstance verdict MemorySupersede) verdict.conflicted False))
   (<- stream-id str (memory-stream-id-of book.name))
   (setv record-seq None)
   (setv version None)
@@ -2360,28 +2421,32 @@
     (<- appended (| RecordAppended RecordConflicted RecordUnsent) (RecordAppend :batch batch))
     (cond
       (isinstance appended RecordUnsent)
-      (return f"the record service did not accept memory {book.name} ({appended.status}: {appended.error})")
+      (return (MemoryFold :name book.name :reason f"the record service did not accept memory {book.name} ({appended.status}: {appended.error})"))
       (isinstance appended RecordConflicted)
       ;; 行が消えて stream が残っている形 — 今の版を読み直して supersede へ落ちる(素の再 append は
       ;; 保存済みが勝つので、ここで諦めると新しい本文が永久に積めない)。
       (do
         (<- page (| RecordPage RecordUnread) (RecordReadStream :conversation-id job.subject :stream-id stream-id))
         (when (isinstance page RecordUnread)
-          (return (+ f"memory {book.name} is already in the record with another body and its stream could not be "
-                     f"re-read ({page.status}: {page.error})")))
+          (return (MemoryFold :name book.name
+                              :reason (+ f"memory {book.name} is already in the record with another body and its "
+                                         f"stream could not be re-read ({page.status}: {page.error})"))))
         (setv current (next (gfor e page.events :if (= e.producer-seq 0) e) None))
         (when (is current None)
-          (return f"memory {book.name} conflicted but its stream {stream-id} holds no producerSeq 0 event"))
+          (return (MemoryFold :name book.name
+                              :reason f"memory {book.name} conflicted but its stream {stream-id} holds no producerSeq 0 event")))
         (setv verdict (MemorySupersede :name book.name :record-seq current.record-seq :version current.version)))
       True
       (do
         ;; 積めた(または既在で同じ本文 = ignored)— 今の版を読んで recordSeq と版を知る。
         (<- page (| RecordPage RecordUnread) (RecordReadStream :conversation-id job.subject :stream-id stream-id))
         (when (isinstance page RecordUnread)
-          (return f"memory {book.name} was appended but its stream could not be read back ({page.status}: {page.error})"))
+          (return (MemoryFold :name book.name
+                              :reason f"memory {book.name} was appended but its stream could not be read back ({page.status}: {page.error})")))
         (setv stored (next (gfor e page.events :if (= e.producer-seq 0) e) None))
         (when (is stored None)
-          (return f"memory {book.name} was appended but its stream {stream-id} holds no producerSeq 0 event"))
+          (return (MemoryFold :name book.name
+                              :reason f"memory {book.name} was appended but its stream {stream-id} holds no producerSeq 0 event")))
         (setv record-seq stored.record-seq)
         (setv version stored.version))))
   (when (isinstance verdict MemorySupersede)
@@ -2390,11 +2455,13 @@
                          :reason f"the conversation rewrote memory {book.name} in turn {job.job-id}"
                          :event body))
     (when (isinstance replaced RecordUnsent)
-      (return f"the record service refused the new version of memory {book.name} ({replaced.status}: {replaced.error})"))
+      (return (MemoryFold :name book.name
+                          :reason f"the record service refused the new version of memory {book.name} ({replaced.status}: {replaced.error})")))
     (setv record-seq replaced.record-seq)
     (setv version replaced.version))
   (when (or (is record-seq None) (is version None))
-    (return f"memory {book.name} was written but the record service named no version"))
+    (return (MemoryFold :name book.name
+                        :reason f"memory {book.name} was written but the record service named no version")))
   ;; 行は claim check ちょうど(本文は 1 字も持たない)。
   (<- record-ref str (record-ref-of job.subject stream-id))
   (<- spec dict (memory-spec-of job.subject book record-ref record-seq (len material) sha256 version job.job-id))
@@ -2405,17 +2472,22 @@
         (<- created (| Written Conflict Refused)
             (AcpCreate :namespace AGORA-KINDS-NAMESPACE :kind MEMORY-KIND :resource-id row-id :spec spec))
         (when (and (isinstance created Refused) (not (in "already exists" created.error)))
-          (return f"ACP refused the memory row {row-id} ({created.status}: {created.error})")))
+          (return (MemoryFold :name book.name
+                              :reason f"ACP refused the memory row {row-id} ({created.status}: {created.error})"))))
       (do
         (<- wrote-spec (| Written Conflict Refused) (AcpPutSpec :row row :spec spec))
         (when (isinstance wrote-spec Refused)
-          (return f"ACP refused the new spec of memory row {row-id} ({wrote-spec.status}: {wrote-spec.error})"))))
+          (return (MemoryFold :name book.name
+                              :reason f"ACP refused the new spec of memory row {row-id} ({wrote-spec.status}: {wrote-spec.error})")))))
   (<- fresh (| AcpRow None) (AcpGetRow :key f"{AGORA-KINDS-NAMESPACE}:{MEMORY-KIND}:{row-id}"))
   (when (is-not fresh None)
     (<- wrote (| Written Conflict Refused) (AcpPutStatus :row fresh :status status))
     (when (not (isinstance wrote Written))
       (<- (LogLine :text f"agentd: memory row {row-id} was written but its status was not ({wrote})"))))
-  None)
+  ;; 撃てた ⇒ 次の手番の基準はこの版(書けた冊だけが基準を進める)。
+  (MemoryFold :name book.name :written True :conflicted conflicted
+              :baseline (MemoryBaseline :name book.name :record-seq record-seq :sha256 sha256 :version version)
+              :base-seq base-seq :row-seq row-seq))
 
 
 (defk fold-memories [settings job now-ms]
@@ -2443,25 +2515,51 @@
     (return job))
   (<- rows tuple (AcpConversationMemories :conversation-id job.subject))
   (<- by-name dict (memory-rows-by-name rows))
+  ;; 3 点比較の第 3 点: 手番の頭に器が置いた基準(無ければ空 = 行の在る冊は撃たない)。
+  (<- baselines dict (memory-baselines-of-home home))
+  (setv advanced baselines)
   (setv noted job)
   (setv written 0)
+  (setv unchanged 0)
+  (setv unbased 0)
+  (setv conflicted 0)
   (for [book books]
     (setv row (.get by-name book.name))
     (<- retired bool (memory-row-retired? row))
     (when retired
       ;; 退役した冊は置き場に file が残っていても書き戻さない(でないと退役が次の手番で取り消される)。
       ;; 戻すのは同じ鍵で 2 拍(spec を書き直し → status を current)で、その判断は operator の側。
+      ;; ⚠ この skip は基準の比較より**前**(退役の判断は 3 点比較の外 — 順序を入れ替えない)。
       (<- (LogLine :text f"agentd: memory {book.name} of conversation {job.subject} is retired; the file left in the home is not written back"))
       (continue))
-    (<- reason (| str None) (fold-one-memory settings job book now-ms row))
-    (if (is reason None)
-        (setv written (+ written 1))
-        (do
-          (<- (LogLine :text f"agentd: {reason}"))
-          (<- carried InFlightJob (memory-unwritable-noted noted reason))
-          (setv noted carried))))
+    (<- fold MemoryFold (fold-one-memory settings job book now-ms row (.get baselines book.name)))
+    (when fold.unchanged
+      (setv unchanged (+ unchanged 1)))
+    (when fold.unbased
+      (setv unbased (+ unbased 1))
+      ;; 基準が無い冊は撃たずに名乗る(黙って supersede に倒すと、席が触っていない古い写しで行が巻き戻る)。
+      (<- (LogLine :text (+ f"agentd: memory {book.name} of conversation {job.subject} has no baseline in {home}; "
+                            "the row is left alone (the copy in the home may be one this turn never wrote)"))))
+    (when fold.conflicted
+      (setv conflicted (+ conflicted 1))
+      (<- (LogLine :text (+ f"agentd: memory {book.name} of conversation {job.subject} moved under the turn "
+                            f"(baseline recordSeq {fold.base-seq} -> row recordSeq {fold.row-seq}); "
+                            "the new body is layered on the row's current version and both stay in the chain"))))
+    (when fold.written
+      (setv written (+ written 1)))
+    (when (is-not fold.reason None)
+      (<- (LogLine :text f"agentd: {fold.reason}"))
+      (<- carried InFlightJob (memory-unwritable-noted noted fold.reason))
+      (setv noted carried))
+    (<- next-baselines dict (memory-baselines-with advanced fold))
+    (setv advanced next-baselines))
+  ;; 撃てた冊の基準だけを進める(1 冊も撃っていない手番は置き場に 1 byte も書かない)。
+  (when (!= advanced baselines)
+    (<- (write-memory-baselines home advanced)))
   (<- (MetricLine :fields {"metric" "agent-memory-folded" "agentJobId" job.job-id "conversationId" job.subject
-                           "books" (len books) "written" written "unreadable" (- (len readings) (len books))}))
+                           "books" (len books) "written" written "unchanged" unchanged
+                           "unbased" unbased "conflicted" conflicted
+                           "unreadable" (- (len readings) (len books))}))
   noted)
 
 

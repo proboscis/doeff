@@ -91,10 +91,13 @@
   CHARTER-CARRIED-KEYS
   CHARTER-MEMORY-DIR-KEY
   CHARTER-MEMORY-FILES-KEY
+  MEMORY-BASE-BOOKS-KEY
+  MEMORY-BASE-FILE
   MEMORY-EVENT-KIND
   MEMORY-FILE-SUFFIX
   MEMORY-INDEX-FILE
   MEMORY-KIND
+  MEMORY-RESERVED-FILES
   MEMORY-SPEC-BYTES-KEY
   MEMORY-SPEC-CONVERSATION-KEY
   MEMORY-SPEC-DESCRIPTION-KEY
@@ -111,9 +114,12 @@
   MEMORY-STREAM-PREFIX
   MEMORY-TYPES
   MemoryAppend
+  MemoryBaseline
   MemoryBook
+  MemoryFold
   MemoryMalformed
   MemorySupersede
+  MemoryUnbased
   MemoryUnchanged
   CONDITION-MEMORY-UNWRITABLE
   SUMMARY-EVENT-KIND
@@ -6134,27 +6140,164 @@
   (= (.get status "state") MEMORY-STATE-RETIRED))
 
 
-(defk memory-write-verdict [row sha256]
-  {:pre [(: row (| AcpRow None)) (: sha256 str)]
-   :post [(: % (| MemoryUnchanged MemoryAppend MemorySupersede))]}
-  "1 冊の書き方を決める **1 点**(法 ACP 575b1e): 行の sha256 が同じなら何も撃たない / 行が在れば
-   その recordSeq へ supersede / 行が無ければ append。**版を数えて選ばない** — 鍵は行の recordSeq の在否。
+(defk memory-reserved-file? [file-name]
+  {:pre [(: file-name str)]
+   :post [(: % bool)]}
+  "置き場の予約名か(索引 MEMORY.md と基準 MEMORY.base.json)。冊でも『読めない file』でもないので、
+   読み手は**黙って**除く — 誤りとして数えると計器の unreadable が正常でも 1 を名乗り、直しが劣化に見える。"
+  (in file-name MEMORY-RESERVED-FILES))
 
-   行が在るのに recordSeq / version が読めない拍は append に倒す。素の append は 409 で保存済みが勝つので、
-   呼び手はその 409 を『行が消えて stream が残っている』の合図として stream を読み直す(第 2 の語彙を足さない)。"
+
+(defk memory-material-of [body]
+  {:pre [(: body dict)]
+   :post [(: % tuple)]}
+  "1 冊の本文の出来事 → #(byte 列 sha256)。記録の service と**同じ計算**(compact・鍵 sort・UTF-8)を
+   1 点に置く: 行の claim check・基準・手元の写しが同じ digest で比べられることが 3 点比較の前提。"
+  (<- material bytes (record-body-bytes-of body))
+  #(material (.hexdigest (hashlib.sha256 material))))
+
+
+(defk memory-sha256-of [body]
+  {:pre [(: body dict)]
+   :post [(: % str)]}
+  "1 冊の本文の出来事 → sha256(memory-material-of の digest の側だけが要る呼び手の口)。"
+  (<- pair tuple (memory-material-of body))
+  (get pair 1))
+
+
+(defk memory-baseline-of-row [row]
+  {:pre [(: row (| AcpRow None))]
+   :post [(: % (| MemoryBaseline None))]}
+  "行 → 手番の頭に出す基準の 1 項(claim check の写し)。名・recordSeq・sha256・version の 4 つが**全部**
+   読める行だけが基準を持てる。読めない行の冊は基準なしで出て、次の畳み戻しは規則 3b で撃たない
+   (半端な基準で撃つより、撃たずに名乗る方が安全)。"
   (when (is row None)
-    (return (MemoryAppend :name "")))
+    (return None))
   (setv spec (if (isinstance row.spec dict) row.spec {}))
   (setv name (.get spec MEMORY-SPEC-NAME-KEY))
   (setv seq (.get spec MEMORY-SPEC-RECORD-SEQ-KEY))
+  (setv sha256 (.get spec MEMORY-SPEC-SHA256-KEY))
   (setv version (.get spec MEMORY-SPEC-VERSION-KEY))
-  (setv label (if (isinstance name str) name ""))
-  (when (= (.get spec MEMORY-SPEC-SHA256-KEY) sha256)
-    (return (MemoryUnchanged :name label)))
-  (when (not (and (isinstance seq int) (not (isinstance seq bool))
+  (when (not (and (isinstance name str) (re.match MEMORY-NAME-PATTERN name)
+                  (isinstance seq int) (not (isinstance seq bool))
+                  (isinstance sha256 str) sha256
                   (isinstance version int) (not (isinstance version bool))))
+    (return None))
+  (MemoryBaseline :name name :record-seq seq :sha256 sha256 :version version))
+
+
+(defk memory-baselines-of-text [text]
+  {:pre [(: text str)]
+   :post [(: % dict)]}
+  "基準の file の本文 → {name: MemoryBaseline}。読めない**項だけ**を落とす(JSON でない・object でない・
+   欄が足りない・版が bool・名が綴れない)。file 全体を捨てないのは、1 項の腐りで全冊が 3b に倒れて
+   1 冊も書き戻せなくなるのを避けるため。読めない file は空 = 全冊 3b(安全側)。"
+  (try
+    (setv parsed (json.loads text))
+    (except [Exception]
+      (return {})))
+  (when (not (isinstance parsed dict))
+    (return {}))
+  (setv books (.get parsed MEMORY-BASE-BOOKS-KEY))
+  (when (not (isinstance books dict))
+    (return {}))
+  (setv baselines {})
+  (for [#(name entry) (.items books)]
+    (when (not (and (isinstance name str) (re.match MEMORY-NAME-PATTERN name) (isinstance entry dict)))
+      (continue))
+    (setv seq (.get entry MEMORY-SPEC-RECORD-SEQ-KEY))
+    (setv sha256 (.get entry MEMORY-SPEC-SHA256-KEY))
+    (setv version (.get entry MEMORY-SPEC-VERSION-KEY))
+    (when (and (isinstance seq int) (not (isinstance seq bool))
+               (isinstance sha256 str) sha256
+               (isinstance version int) (not (isinstance version bool)))
+      (setv (get baselines name)
+            (MemoryBaseline :name name :record-seq seq :sha256 sha256 :version version))))
+  baselines)
+
+
+(defk memory-baseline-text-of [baselines]
+  {:pre [(: baselines dict)]
+   :post [(: % str)]}
+  "{name: MemoryBaseline} → 基準の file の本文(名の順・人が読める JSON)。⚠ **正本ではない** —
+   この text は行にも記録の service にも書かない(置き場の side car ちょうど)。"
+  (setv books {})
+  (for [name (sorted (.keys baselines))]
+    (setv base (get baselines name))
+    (setv (get books name) {MEMORY-SPEC-RECORD-SEQ-KEY base.record-seq
+                            MEMORY-SPEC-SHA256-KEY base.sha256
+                            MEMORY-SPEC-VERSION-KEY base.version}))
+  (+ (json.dumps {MEMORY-BASE-BOOKS-KEY books} :ensure-ascii False :sort-keys True :indent 2) "\n"))
+
+
+(defk memory-baselines-with [baselines fold]
+  {:pre [(: baselines dict) (: fold MemoryFold)]
+   :post [(: % dict)]}
+  "畳み戻した 1 冊の結末で基準を進める。動くのは**撃てた冊だけ**(Unchanged / Unbased / 書けなかった冊は
+   据え置き — 撃っていない冊の基準を進めると、次の手番が席の編集を『触っていない』と読んで捨てる)。"
+  (when (is fold.baseline None)
+    (return baselines))
+  (setv next (dict baselines))
+  (setv (get next fold.name) fold.baseline)
+  next)
+
+
+(defk memory-write-verdict [row sha256 baseline]
+  {:pre [(: row (| AcpRow None)) (: sha256 str) (: baseline (| MemoryBaseline None))]
+   :post [(: % (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased))]}
+  "1 冊の書き方を決める **1 点**(法 ACP 575b1e)。突き合わせるのは 3 点 — **手元**(sha256 = いま置き場に
+   在る本文の digest)・**行**(row)・**基準**(baseline = 手番の頭にその写しを出した時の claim check)。
+
+   2 点(手元と行)だけでは『席がこの手番で書いた』と『席は 1 字も触っていないが行が別の機体で動いた』が
+   割れない。割れないまま supersede に倒していたのが実弾の壊れ方だった(2026-09-21: 冊
+   mail-hold-has-two-exits が v2 6,503 byte → v3 4,620 byte へ痩せた — 触っていない古い写しが新しい行を
+   巻き戻した)。基準は正本ではない(行が正本)— 『出した時の姿』を覚えているだけ。
+
+     1   行の sha256 == 手元          → Unchanged(行と置き場は一致 — 撃つ理由が無い)
+     2   基準が在る
+       2a  手元 == 基準               → Unchanged(席は 1 字も触っていない。行が先へ動いていても**巻き戻さない**)
+       2b  行が無い                   → Append(基準だけ在って行が消えた — 409 が stream を読み直す合図)
+       2c  基準の recordSeq == 行     → Supersede(conflicted False — 席が編集し、行は動いていない)
+       2d  基準の recordSeq != 行     → Supersede(conflicted True・base-seq を名乗る — 席も編集し、行も
+                                          手番の**間に**動いた。断らない: 席の編集を捨てず行の今の版へ重ね、
+                                          両方の版を鎖に残して log と計器で名乗る)
+     3   基準が無い
+       3a  行が無い                   → Append(この会話で初めての冊)
+       3b  行が在る                   → Unbased(手元が編集か古い写しか判らない — **撃たずに名乗る**)
+
+   行が在るのに recordSeq / version が読めない拍は今日どおり append に倒す。素の append は 409 で
+   保存済みが勝つので、呼び手はその 409 を『行が消えて stream が残っている』の合図として stream を
+   読み直す(第 2 の語彙を足さない)。"
+  (setv spec (if (and (is-not row None) (isinstance row.spec dict)) row.spec {}))
+  (setv name (.get spec MEMORY-SPEC-NAME-KEY))
+  (setv label (cond (isinstance name str) name
+                    (is-not baseline None) baseline.name
+                    True ""))
+  ;; 1: 行と置き場が既に一致している(基準を見るまでもない)。
+  (when (and (is-not row None) (= (.get spec MEMORY-SPEC-SHA256-KEY) sha256))
+    (return (MemoryUnchanged :name label)))
+  (setv seq (.get spec MEMORY-SPEC-RECORD-SEQ-KEY))
+  (setv version (.get spec MEMORY-SPEC-VERSION-KEY))
+  (setv readable (and (isinstance seq int) (not (isinstance seq bool))
+                      (isinstance version int) (not (isinstance version bool))))
+  (when (is-not baseline None)
+    ;; 2a: 席が触っていない写し — 行が先へ動いていても巻き戻さない(実弾の形はここで閉じる)。
+    (when (= baseline.sha256 sha256)
+      (return (MemoryUnchanged :name label)))
+    ;; 2b: 行が消えた(基準だけ在る)。
+    (when (is row None)
+      (return (MemoryAppend :name label)))
+    (when (not readable)
+      (return (MemoryAppend :name label)))
+    ;; 2c / 2d: 席が編集した。行が手番の間に動いていたら名乗る(断らない)。
+    (return (MemorySupersede :name label :record-seq seq :version version
+                             :base-seq baseline.record-seq
+                             :conflicted (!= baseline.record-seq seq))))
+  ;; 3a: 初めての冊。
+  (when (is row None)
     (return (MemoryAppend :name label)))
-  (MemorySupersede :name label :record-seq seq :version version))
+  ;; 3b: 行は在るが基準が無い — 撃たずに名乗る。
+  (MemoryUnbased :name label))
 
 
 (defk memory-index-of [books]
@@ -6171,15 +6314,21 @@
   (+ (.join "\n" lines) "\n"))
 
 
-(defk memory-files-of [books]
-  {:pre [(: books tuple)]
+(defk memory-files-of [books baselines]
+  {:pre [(: books tuple) (: baselines dict)]
    :post [(: % tuple)]}
-  "手番の頭に置き場へ書き出す file の列(純関数): 冊ごとに <name>.md、最後に行から導いた索引 MEMORY.md。
-   冊が 0 でも索引は書く(前の手番の腐った索引を残さない)。"
+  "手番の頭に置き場へ書き出す file の列(純関数): 冊ごとに <name>.md、行から導いた索引 MEMORY.md、
+   最後に畳み戻しの基準 MEMORY.base.json。冊が 0 でも索引と基準は書く(前の手番の腐った写しを残さない)。
+
+   基準を**この列に載せる**のは、冊と同じ拍・同じ書き手(器)で置くため — 別の腕が置くと『冊は落ちたが
+   基準は着いた』が起き、基準が嘘をつく。器は列を 1 つずつ書き、基準だけは書けた冊へ絞って最後に置く
+   (impls/claude_code.hy — 席が書いた file が基準の証拠)。"
   (setv files (lfor book (sorted books :key (fn [b] b.name))
                     {"name" f"{book.name}{MEMORY-FILE-SUFFIX}" "text" book.text}))
   (<- index str (memory-index-of books))
-  (tuple (+ files [{"name" MEMORY-INDEX-FILE "text" index}])))
+  (<- base str (memory-baseline-text-of baselines))
+  (tuple (+ files [{"name" MEMORY-INDEX-FILE "text" index}
+                   {"name" MEMORY-BASE-FILE "text" base}])))
 
 
 (defk memory-book-of-row [row text]

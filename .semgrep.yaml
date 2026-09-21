@@ -472,6 +472,31 @@ rules:
       include:
         - /packages/doeff-agents/src/doeff_agents/sessionhost/impls/**
 
+  - id: doeff-agents-memory-baseline-spelling-has-one-home
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      card acp:kanban-issue:ki-9fc7d4bca4dc / law
+      conversation-memory-lives-in-the-row: the fold-back BASELINE file
+      (`MEMORY.base.json`) has exactly two homes — the wire spelling in
+      acp/effects.py (MEMORY_BASE_FILE, next to MEMORY_INDEX_FILE) and the
+      seat's copy in sessionhost/impls/claude_code.hy
+      (CLAUDE-MEMORY-BASE-FILE, which the substrate-clean vessel may not import
+      from acp). A third site that spells the file builds a side car nobody
+      reads: the fold-back then sees no baseline, writes NO book back (verdict
+      rule 3b) and the memory silently stops moving. Import the constant
+      instead. The baseline is not a record of truth — it must never be written
+      into an ACP row or a record-service stream.
+    patterns:
+      - pattern-regex: '"MEMORY\.base\.json"'
+    paths:
+      include:
+        - /packages/doeff-agents/**
+      exclude:
+        - "**/sessionhost/acp/effects.py"
+        - "**/sessionhost/impls/claude_code.hy"
+
   - id: doeff-agents-auto-memory-dir-spelling-has-one-home
     languages:
       - generic

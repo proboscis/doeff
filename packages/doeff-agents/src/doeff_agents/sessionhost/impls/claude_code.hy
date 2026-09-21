@@ -173,6 +173,39 @@
 ;: 索引の file 名(計器が冊と索引を分けて数えるための綴り)。綴りの家は
 ;: sessionhost/acp/effects.py の MEMORY_INDEX_FILE で、ここはその写し(検が突き合わせる)。
 (setv CLAUDE-MEMORY-INDEX-FILE "MEMORY.md")
+;: 畳み戻しの基準の file 名と冊の接尾辞。綴りの家は sessionhost/acp/effects.py の MEMORY_BASE_FILE /
+;: MEMORY_FILE_SUFFIX で、ここはその写し(検 test-the-index-spelling-has-one-home が突き合わせ、
+;: .semgrep.yaml の doeff-agents-memory-baseline-spelling-has-one-home が第 3 の座を断る)。
+(setv CLAUDE-MEMORY-BASE-FILE "MEMORY.base.json")
+(setv CLAUDE-MEMORY-FILE-SUFFIX ".md")
+
+
+(defk claude-baseline-kept [text written]
+  {:pre [(: text str) (: written list)]
+   :post [(: % str)]}
+  "畳み戻しの基準のうち、器が**現に書けた冊**の分だけを残す(純関数)。
+
+   ⚠ これが要るのは、下の loop が名の門で落ちた冊を黙って飛ばすから: 冊 A が飛ばされたのに基準 A が
+   そのまま着くと、基準は『置き場の A は行と同じ姿』と嘘をつき、次の畳み戻しが**前の手番の古い写し**で
+   行を supersede する(この便が直している壊れ方そのもの)。⇒ 基準の証拠は『用意した冊』ではなく
+   『書けた冊』の側(依頼書 §5(b))。逆向き(起こす側が中身を確定して器は素通し)は同じ穴が開く —
+   器が何を書けたかを起こす側は知らないから。
+
+   読めない基準(JSON でない・欄が無い)は**空の基準**へ倒す: 空 = 次の畳み戻しが 1 冊も撃たない
+   (安全側)。"
+  (try
+    (setv parsed (json.loads text))
+    (except [Exception]
+      (setv parsed None)))
+  (setv books (if (isinstance parsed dict) (.get parsed "books") None))
+  (when (not (isinstance books dict))
+    (setv books {}))
+  (setv names (frozenset written))
+  (setv kept {})
+  (for [#(name entry) (.items books)]
+    (when (and (isinstance name str) (in f"{name}{CLAUDE-MEMORY-FILE-SUFFIX}" names))
+      (setv (get kept name) entry)))
+  (+ (json.dumps {"books" kept} :ensure-ascii False :sort-keys True :indent 2) "\n"))
 
 
 (defk build-claude-argv [params]
@@ -434,13 +467,24 @@
     ;; 起こす側の判断(judgment.memory-row-retired?)。
     (setv declared (list (or (.get params CLAUDE-MEMORY-FILES-KEY) [])))
     (setv written [])
+    (setv base-text None)
     (for [book declared]
       (setv book-name (if (isinstance book dict) (.get book "name") None))
       (setv book-text (if (isinstance book dict) (.get book "text") None))
       (when (and (isinstance book-name str) (isinstance book-text str)
                  (.strip book-name) (not (in "/" book-name)) (not (.startswith book-name ".")))
-        (<- _ (fs-write-text-atomic f"{memory-dir}/{book-name}" book-text ".agentd-tmp"))
-        (.append written book-name)))
+        ;; 基準は loop では書かない — 書けた冊が確定してから絞って置く(claude-baseline-kept の頭注)。
+        (if (= book-name CLAUDE-MEMORY-BASE-FILE)
+            (setv base-text book-text)
+            (do
+              (<- _ (fs-write-text-atomic f"{memory-dir}/{book-name}" book-text ".agentd-tmp"))
+              (.append written book-name)))))
+    ;; 畳み戻しの基準は**最後に・書けた冊へ絞って**置く(依頼書 §5(b): 席が書いた file が基準の証拠)。
+    (setv base-written 0)
+    (when (isinstance base-text str)
+      (<- kept str (claude-baseline-kept base-text written))
+      (<- _ (fs-write-text-atomic f"{memory-dir}/{CLAUDE-MEMORY-BASE-FILE}" kept ".agentd-tmp"))
+      (setv base-written 1))
     ;; 計器(card acp:kanban-issue:ki-a40292ed30d9 受入 3): **器が書いた数**を起動ごとに 1 行で名乗る。
     ;; agentd 側の agent-memory-hydrated が数えるのは**行から読んだ数**なので、この 2 行が割れている
     ;; 拍(読んだ 44・書いた 0)が今回の壊れ方そのものだった — 読みの数だけでは log が成功しか言わない。
@@ -450,7 +494,7 @@
     (<- _ (log-line
             (+ f"session.launch: agent-memory-written dir={memory-dir} "
                f"books={(len books)} index={(if (in CLAUDE-MEMORY-INDEX-FILE written) 1 0)} "
-               f"declared={(len declared)}"))))
+               f"base={base-written} declared={(len declared)}"))))
   (when (not (.get params "skip_trust_setup" False))
     (<- _ (preseed-claude-trust config-dir (get params "work_dir"))))
   (setv identity {"CLAUDE_CONFIG_DIR" config-dir
