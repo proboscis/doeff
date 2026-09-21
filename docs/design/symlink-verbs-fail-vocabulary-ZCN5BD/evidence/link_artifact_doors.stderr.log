@@ -1,0 +1,17 @@
+# 出荷中の実装が effect の外へ投げた例外の生の出力(同じ形の繰り返しなので先頭 1 件 + 件数)
+# 総行数     1992 / FileExistsError の行 197 / PermissionError の行 2
+
+
+doeff Traceback (most recent call last):
+
+  real_substrate.<locals>._hy_anon_85()  ~/.worktrees/doeff-wt-symlink-fail-vocab/packages/doeff-agents/src/doeff_agents/sessionhost/substrate.hy:414
+    (defhandler real-substrate [tmux-bin]
+  _hy_anon_85()  ~/.worktrees/doeff-wt-symlink-fail-vocab/packages/doeff-agents/src/doeff_agents/sessionhost/substrate.hy:414
+    (defhandler real-substrate [tmux-bin]
+
+FileExistsError: [Errno 17] File exists: '/private/var/folders/gz/jl4t49qj3bl905ybm1t5t_rjzy6cl8/T/link-artifact-doors-t2hx0ipk/ship-src.jsonl' -> '/private/var/folders/gz/jl4t49qj3bl905ybm1t5t_rjzy6cl8/T/link-artifact-doors-t2hx0ipk/ship-proj-0/sessions-index.json'
+
+
+doeff Traceback (most recent call last):
+
+  real_substrate.<locals>._hy_anon_85()  ~/.worktrees/doeff-wt-symlink-fail-vocab/packages/doeff-agents/src/doeff_agents/sessionhost/substrate.hy:414
