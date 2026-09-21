@@ -674,12 +674,16 @@
       (shutil.rmtree d :ignore-errors True))))
 
 
-(defn skip-unless-r-x-refuses-writes []
-  "『家が r-x』の枡は、宿が権限ビットを現に守っている時だけ意味を持つ。uid を
-   読むのではなく **1 バイト書いてみて測る**: root は素通りするが、権限を素通しする
-   file system(container の一部の mount・CI の overlay)でも同じ結果になるので、
-   uid の判定はその母集団を取りこぼす。書けてしまう宿ではこの 1 形だけ skip する
-   (残る 2 形 — 親の位置に実体 file / 親 dir を作れない — はそのまま撃てる)。"
+(defn r-x-refuses-writes? []
+  "この宿が r-x の dir への書きを現に断るか。uid を読むのではなく **1 バイト
+   書いてみて測る**: root は素通りするが、権限を素通しする file system(container の
+   一部の mount・CI の overlay)でも同じ結果になるので、uid の判定はその母集団を
+   取りこぼす。
+   ⚠ 返りは **形ごとの判断**に使う(検ごと skip しない — 2026-09-22 の検分)。
+   器の断り 4 形のうち 2 形(親の位置に実体 file = ENOTDIR / 親そのものが実体 file
+   = EEXIST)は権限ビットに依らず断るので、書けてしまう宿でも撃てる。検の頭で
+   skip するとその 2 形の覆いまで黙って 0 になる — この語彙は借りた家(pod)で起きる
+   事故を閉じるために入れたので、家が root だった日に覆いが消える形は残さない。"
   (setv probe (tempfile.mkdtemp))
   (setv home (os.path.join probe "r-x"))
   (setv wrote False)
@@ -696,12 +700,12 @@
         (os.chmod home 0o755)
         (except [OSError] None))
       (shutil.rmtree probe :ignore-errors True)))
-  (when wrote
-    (pytest.skip "この宿は r-x の dir へ書けるので器の断りを再現できない")))
+  (not wrote))
 
 
 (defn container-refusal-homes [d]
-  "器の断りの 4 形を作り、#(名 link/target) の list を返す(設計 2.2 の表 + 1)。
+  "器の断りの 4 形を作り、#(名 link/target 権限ビット依りか) の list を返す
+   (設計 2.2 の表 + 1)。
      親の位置に実体 file が居る / 家が書けない(r-x)/ 親 dir を作れない /
      **親そのものが実体 file**(= makedirs が EEXIST を出す形 — 依頼書の改訂が
      名指した反例。errno の表を syscall 間で共有すると、この 1 形が『実体の居座り』に
@@ -718,10 +722,12 @@
   (setv read-only-parent (os.path.join d "read-only-parent"))
   (os.makedirs read-only-parent)
   (os.chmod read-only-parent 0o555)
-  [#("親の位置に実体 file" (os.path.join blocker "child" "seat"))
-   #("親そのものが実体 file(EEXIST)" (os.path.join blocker "seat"))
-   #("家が r-x" (os.path.join read-only "seat"))
-   #("親 dir を作れない" (os.path.join read-only-parent "sub" "seat"))])
+  ;; 3 つ目の欄 = **権限ビットを守る宿でしか撃てない形か**。前の 2 形は ENOTDIR /
+  ;; EEXIST で断るので root でも bit を無視する mount でも撃てる(実測 2026-09-22)。
+  [#("親の位置に実体 file" (os.path.join blocker "child" "seat") False)
+   #("親そのものが実体 file(EEXIST)" (os.path.join blocker "seat") False)
+   #("家が r-x" (os.path.join read-only "seat") True)
+   #("親 dir を作れない" (os.path.join read-only-parent "sub" "seat") True)])
 
 
 (defn restore-writable [d]
@@ -733,15 +739,20 @@
 
 
 (deftest test-fs-ensure-symlink-names-the-container-refusal
-  ;; ⚑ 受入 2(据え付けの側): 器の断り 3 形で refused-by-container + errno を返し、例外 0。
-  ;; 直す前は makedirs / symlink が try の外に在ったので、3 形とも素の OSError が
+  ;; ⚑ 受入 2(据え付けの側): 器の断り 4 形で refused-by-container + errno を返し、例外 0。
+  ;; 直す前は makedirs / symlink が try の外に在ったので、4 形とも素の OSError が
   ;; effect の外まで抜けた(この動詞は raise しない約束なのに、その約束ごと破れて席が起きない)。
-  (skip-unless-r-x-refuses-writes)
+  (setv bits-enforced (r-x-refuses-writes?))
+  (setv ran 0)
   (setv d (os.path.realpath (tempfile.mkdtemp)))
   (try
     (setv target (os.path.join d "skills-src"))
     (os.makedirs target)
-    (for [#(name link) (container-refusal-homes d)]
+    (for [#(name link needs-bits) (container-refusal-homes d)]
+      ;; 権限ビットを素通しする宿(root / 一部の mount)では r-x 依りの 2 形だけ外す
+      (when (and needs-bits (not bits-enforced))
+        (continue))
+      (+= ran 1)
       (setv outcome (ensure-symlink-outcome link target))
       (assert (isinstance outcome FsSymlinkOutcome) #(name outcome))
       (assert (= (. outcome state) FS-SYMLINK-REFUSED) #(name (. outcome state)))
@@ -752,29 +763,36 @@
       (assert (in (str (. outcome errno)) (str (. outcome errno))))
       ;; 名乗りには理由が載る(ログの 1 行がそのまま診断になる)
       (assert (.startswith (str outcome) f"{FS-SYMLINK-REFUSED} (") (str outcome)))
+    ;; 権限ビットに依らない 2 形は宿を問わず走る(検ごと skip すると覆いが黙って 0 になる)
+    (assert (>= ran 2) f"器の断りの形が {ran} 件しか走っていない(宿を問わず 2 形は撃てる)")
     (finally
       (restore-writable d)
       (shutil.rmtree d :ignore-errors True))))
 
 
 (deftest test-fs-link-artifact-names-the-container-refusal
-  ;; ⚑ 受入 2(敷設の側): **同じ 3 形が FsLinkArtifact にも在る**(計画段の実測 2.2 —
+  ;; ⚑ 受入 2(敷設の側): **同じ形が FsLinkArtifact にも在る**(計画段の実測 2.2 —
   ;; 依頼者は据え付けの側だけの話と見ていたが、敷設の側にも全部在った)。
-  ;; 同時実行の直しだけでは 3 形とも抜けたままだったことも実測済み。
-  (skip-unless-r-x-refuses-writes)
+  ;; 同時実行の直しだけでは全形とも抜けたままだったことも実測済み。
+  (setv bits-enforced (r-x-refuses-writes?))
+  (setv ran 0)
   (setv d (os.path.realpath (tempfile.mkdtemp)))
   (try
     (setv source (os.path.join d "rollout.jsonl"))
     (with [f (open source "w" :encoding "utf-8")]
       (.write f "{}"))
     (setv handler (real-substrate "tmux"))
-    (for [#(name target) (container-refusal-homes d)]
+    (for [#(name target needs-bits) (container-refusal-homes d)]
+      (when (and needs-bits (not bits-enforced))
+        (continue))
+      (+= ran 1)
       (setv outcome (run (handler (fs-link-artifact source target))))
       (assert (isinstance outcome FsSymlinkOutcome) #(name outcome))
       (assert (= (. outcome state) FS-SYMLINK-REFUSED) #(name (. outcome state)))
       (assert (in (. outcome state) FS-LINK-ARTIFACT-STATES) #(name outcome))
       (assert (is-not (. outcome errno) None) #(name "errno が無い"))
       (assert (is-not (. outcome detail) None) #(name "detail が無い")))
+    (assert (>= ran 2) f"器の断りの形が {ran} 件しか走っていない(宿を問わず 2 形は撃てる)")
     (finally
       (restore-writable d)
       (shutil.rmtree d :ignore-errors True))))
