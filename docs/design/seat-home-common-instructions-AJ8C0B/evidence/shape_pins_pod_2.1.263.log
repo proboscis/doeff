@@ -1,0 +1,28 @@
+### 出所(この file は写し): 依頼者 c-3JYBNJMC2RZTM1S8V43939MP42 が pod で撃った結果を、その郵便
+### lt-AADFQ4F7Q2J739MY28749VNWTF(2026-09-21 16:48 JST)の本文から計画段 c-AJ8C0BK9RF29HQ92ZQ986FXQVT が写した。
+### 席が消えると元の出力は残らないので、郵便の本文を正本とする。
+### 撃った時刻: 2026-09-21T07:4xZ(郵便の記載)
+### 機体: pod agentd-pool-6dd96ccd58-hhm5p
+### 本体: /usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe(2.1.263)
+### script: main bbcdc552 の evidence/shape_pins_across_versions.py を変えずに撃った(2 つに割った skills の形を足す前の版)
+### ⚠ 弁別の 6 行は、郵便では「弁別 6 本すべて red-OK」の 1 行に畳まれている(1 行ずつの出力は写っていない)
+同定(CLAUDE_CONFIG_DIR)=yes
+OK  user-memory-lives-under-the-config-dir: 1 件  case"User":return Ke(Se(),"CLAUDE.md")
+OK  user-layer-drops-symlink-and-hardlink: 1 件  if(t==="User"&&!v)try{let q=await ae().lstat(e);if(d===0&&q.isSymbolicLink()||(q.nlink??1)>1&&q.isFile())return[]}catch{}
+OK  the-gate-fires-only-for-local-agent: 1 件  function wgr(){return CN()!=="local-agent"}
+OK  user-skills-live-under-the-config-dir: 1 件  let r=Ah(Se(),"skills"),o=Ah(HS(),".claude","skills")
+OK  skills-entries-accept-a-symlink: 2 件  if(!N.isDirectory()&&!N.isSymbolicLink())return null;
+OK  md-excludes-applies-to-the-user-layer: 1 件  if(t!=="User"&&t!=="Project"&&t!=="Local")return!1;
+OK  drop-branch-is-controlled-by-the-gate: v=o&&(t!=="User"||wgr())
+OK  gate-reader-reads-entrypoint: function CN(){return o().entrypoint}
+弁別 6 本すべて red-OK
+'$' を含む関数名: 975 / 45301
+
+### 郵便に書かれた補足(依頼者の実測・同じ本体)
+### - 雛形の逐語 6 本はこの本体に現に在る。5 本は形が当てた byte とそのまま一致。
+###   6 本目は、形が落としている関数の頭 `function Sgr(e,t){` まで含めた逐語もこの本体に在る
+###   ⇒ 頭ごとの pin が赤になるのは 2.1.278 だけ。
+### - skills の entry の 2 件は別の場所:
+###   一致 1 = dir の走査の側: …return null;if(r==="skills"&&DB(N.name))return n(`[skills] skipping reserved dir name…
+###   一致 2 = SKILL.md を読む側: …return null;if(DB(E.name))return null;if(f.has(E.name))return null;try{return await ume(Ah(t,E.name,"SKILL.md"))}
+### - 2 つに割った形(re.S): 走査の側・読み込みの側とも一致 1 件、弁別("skills"->"skillz" / "SKILL.md"->"SKILL.mx")は red-OK。

@@ -1,4 +1,4 @@
-### 実行: 2026-09-21T07:13:47Z・機体 Proboscis-MBP.local・計画段 c-AJ8C0BK9RF29HQ92ZQ986FXQVT
+### 実行: 2026-09-21T08:06:22Z・機体 Proboscis-MBP.local・計画段 c-AJ8C0BK9RF29HQ92ZQ986FXQVT
 ### 2.1.265 sha256 164b09eb800dedb9bb06304129fbf07743ab9db972ae07333ef4f18cde0cb8d5
 ### 2.1.276 sha256 9de364db11a410d53cbbb0f6b1f18c66c90053efc9a63370072856d10db66329
 ### 2.1.278 sha256 bd245662fb8a0e321b3bf133e930371d6563c387527885f30b2613aef3ba14d6
@@ -16,6 +16,9 @@
   OK  user-skills-live-under-the-config-dir: 一致 1 件  let r=Vh(be(),"skills"),o=Vh(Jb(),".claude","skills")
   OK  skills-entries-accept-a-symlink: 一致 2 件  if(!N.isDirectory()&&!N.isSymbolicLink())return null;
   OK  md-excludes-applies-to-the-user-layer: 一致 1 件  if(n!=="User"&&n!=="Project"&&n!=="Local")return!1;
+  OK  skills-scan-entry-accepts-a-symlink: 一致 1 件  if(!N.isDirectory()&&!N.isSymbolicLink())return null;if(r==="skills"&&HL(N.name))
+  OK  skills-loader-entry-accepts-a-symlink: 一致 1 件  if(!E.isDirectory()&&!E.isSymbolicLink())return null;if(HL(E.name))return null;if(p.has(E.name))return null;try{return await dge(Vh(n,E.name,"SKILL.md")
+  OK  skills-scan-and-loader-are-different-sites: 幅 152 byte(窓 200)
   OK  drop-branch-is-controlled-by-the-gate: C=o&&(n!=="User"||Abr())
   OK  gate-reader-reads-entrypoint: function xM(){return n().entrypoint}
   red-OK 弁別 user-memory-lives-under-the-config-dir: "CLAUDE.md" -> "CLAUDE.mx"
@@ -24,6 +27,8 @@
   red-OK 弁別 user-skills-live-under-the-config-dir: "skills" -> "skillz"
   red-OK 弁別 skills-entries-accept-a-symlink: .isSymbolicLink() -> .isSymbolicLinx()
   red-OK 弁別 md-excludes-applies-to-the-user-layer: "Local" -> "Locax"
+  red-OK 弁別 skills-scan-entry-accepts-a-symlink: "skills" -> "skillz"
+  red-OK 弁別 skills-loader-entry-accepts-a-symlink: "SKILL.md" -> "SKILL.mx"
   '$' を含む関数名: 1050 / 46194
 ===== ~/.local/share/claude/versions/2.1.276  同定(CLAUDE_CONFIG_DIR)=yes
   OK  user-memory-lives-under-the-config-dir: 一致 1 件  case"User":return He(Ee(),"CLAUDE.md")
@@ -32,6 +37,9 @@
   OK  user-skills-live-under-the-config-dir: 一致 1 件  let r=jp(Ee(),"skills"),s=jp(lA(),".claude","skills")
   OK  skills-entries-accept-a-symlink: 一致 2 件  if(!U.isDirectory()&&!U.isSymbolicLink())return null;
   OK  md-excludes-applies-to-the-user-layer: 一致 1 件  if(n!=="User"&&n!=="Project"&&n!=="Local")return!1;
+  OK  skills-scan-entry-accepts-a-symlink: 一致 1 件  if(!U.isDirectory()&&!U.isSymbolicLink())return null;if(r==="skills"&&k$(U.name))
+  OK  skills-loader-entry-accepts-a-symlink: 一致 1 件  if(!w.isDirectory()&&!w.isSymbolicLink())return null;if(k$(w.name))return null;if(h.has(w.name))return null;try{return await sue(jp(n,w.name,"SKILL.md")
+  OK  skills-scan-and-loader-are-different-sites: 幅 152 byte(窓 200)
   OK  drop-branch-is-controlled-by-the-gate: M=s&&(n!=="User"||Ztn())
   OK  gate-reader-reads-entrypoint: function TU(){return n().entrypoint}
   red-OK 弁別 user-memory-lives-under-the-config-dir: "CLAUDE.md" -> "CLAUDE.mx"
@@ -40,6 +48,8 @@
   red-OK 弁別 user-skills-live-under-the-config-dir: "skills" -> "skillz"
   red-OK 弁別 skills-entries-accept-a-symlink: .isSymbolicLink() -> .isSymbolicLinx()
   red-OK 弁別 md-excludes-applies-to-the-user-layer: "Local" -> "Locax"
+  red-OK 弁別 skills-scan-entry-accepts-a-symlink: "skills" -> "skillz"
+  red-OK 弁別 skills-loader-entry-accepts-a-symlink: "SKILL.md" -> "SKILL.mx"
   '$' を含む関数名: 1142 / 50820
 ===== ~/.local/share/claude/versions/2.1.278  同定(CLAUDE_CONFIG_DIR)=yes
   OK  user-memory-lives-under-the-config-dir: 一致 1 件  case"User":return et(we(),"CLAUDE.md")
@@ -48,6 +58,9 @@
   OK  user-skills-live-under-the-config-dir: 一致 1 件  let r=pc(we(),"skills"),s=pc(nE(),".claude","skills")
   OK  skills-entries-accept-a-symlink: 一致 2 件  if(!U.isDirectory()&&!U.isSymbolicLink())return null;
   OK  md-excludes-applies-to-the-user-layer: 一致 1 件  if(n!=="User"&&n!=="Project"&&n!=="Local")return!1;
+  OK  skills-scan-entry-accepts-a-symlink: 一致 1 件  if(!U.isDirectory()&&!U.isSymbolicLink())return null;if(r==="skills"&&VN(U.name))
+  OK  skills-loader-entry-accepts-a-symlink: 一致 1 件  if(!w.isDirectory()&&!w.isSymbolicLink())return null;if(VN(w.name))return null;if(h.has(w.name))return null;try{return await mX(pc(n,w.name,"SKILL.md")
+  OK  skills-scan-and-loader-are-different-sites: 幅 151 byte(窓 200)
   OK  drop-branch-is-controlled-by-the-gate: O=s&&(n!=="User"||KRt())
   OK  gate-reader-reads-entrypoint: function mB(){return n().entrypoint}
   red-OK 弁別 user-memory-lives-under-the-config-dir: "CLAUDE.md" -> "CLAUDE.mx"
@@ -56,4 +69,6 @@
   red-OK 弁別 user-skills-live-under-the-config-dir: "skills" -> "skillz"
   red-OK 弁別 skills-entries-accept-a-symlink: .isSymbolicLink() -> .isSymbolicLinx()
   red-OK 弁別 md-excludes-applies-to-the-user-layer: "Local" -> "Locax"
+  red-OK 弁別 skills-scan-entry-accepts-a-symlink: "skills" -> "skillz"
+  red-OK 弁別 skills-loader-entry-accepts-a-symlink: "SKILL.md" -> "SKILL.mx"
   '$' を含む関数名: 1118 / 51622
