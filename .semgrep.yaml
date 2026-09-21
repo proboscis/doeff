@@ -5181,10 +5181,14 @@ rules:
       - pattern-either:
           - pattern-regex: '"CLAUDE\.md"'
           - pattern-regex: '"skills"'
-          - pattern-regex: '"[^"]*/(CLAUDE\.md|skills)"'
+          # ⚠ 行内に閉じる([^"] は改行を含むので、閉じないと開き引用符 1 つと
+          #   数行下の綴りが 1 致に巻き込まれる — D10 と同じ穴。対照 =
+          #   tests/semgrep/fixtures/.../seat_home_instruction_names_forbidden.hy の 8〜10 行)。
+          - pattern-regex: '"[^"\n]*/(CLAUDE\.md|skills)"'
     paths:
       include:
         - /packages/doeff-agents/src/**
+        - /tests/semgrep/fixtures/python/packages/doeff-agents/src/**
       exclude:
         - "**/sessionhost/policy.hy"
 
@@ -5205,13 +5209,20 @@ rules:
       happen exactly in the file an exclude would open (the vessel that installs
       into the home).
     patterns:
-      # ⚠ 行内に閉じる([^"] は改行を含むので、閉じないと隣の註の逐語まで 1 致に巻き込む)。
-      - pattern-regex: '"[^"\n]*dotfiles/[^"\n]*"'
-      # 射程外の既知の 1 件(依頼 lt-JH7GM60YZ02MSGKKNXTDQK79A1 の報告): 定期便の verify の
-      # script の置き場 acp/effects.py VERIFY_SCRIPTS_RELDIR。直すには charter.kind = verify の
-      # 契約に宣言の鍵を 1 本足す別便が要るので、この 1 つの綴りだけを名指しで通す
+      # ⚠ 行内に閉じる([^"'] は改行を含むので、閉じないと隣の註の逐語まで 1 致に巻き込む)。
+      # ⚠ 当たるのは **path の要素としての `dotfiles`**(左は語の境界・右は `/` か閉じ引用符)で、
+      #   引用符の直後だけではない — 違反は `"/home/kento/dotfiles/…"`・`f"{home}/dotfiles/…"`・
+      #   `(os.path.join home "dotfiles" …)`・`Path(home) / "dotfiles" / …`・単引用符でも書ける
+      #   (対照 = tests/semgrep/fixtures/.../host_checkout_layout_forbidden.{py,hy})。
+      #   `my-dotfiles/` `dotfiles-base/` `acp.dotfiles/` は語の境界で外れる。
+      - pattern-regex: '["''][^"''\n]*(?<![\w.-])dotfiles(?:/[^"''\n]*)?["'']'
+      # 射程外の既知の 1 件(依頼 lt-JH7GM60YZ02MSGKKNXTDQK79A1 の報告・別便の card
+      # acp:kanban-issue:ki-6f8425e88733): 定期便の verify の script の置き場 acp/effects.py
+      # VERIFY_SCRIPTS_RELDIR。直すには charter.kind = verify の契約に宣言の鍵を 1 本足す
+      # 別便が要るので、この 1 つの綴りだけを名指しで通す
       # (paths.exclude ではない — 他のどの file に同じ綴りが現れても発火する)。
       - pattern-not-regex: '"dotfiles/cron_management"'
     paths:
       include:
         - /packages/doeff-agents/src/**
+        - /tests/semgrep/fixtures/python/packages/doeff-agents/src/**
