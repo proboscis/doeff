@@ -7,7 +7,8 @@
 ;;;   D2  CLAUDE.md は**実体 file**(symlink / hard link にしない — 本体の user 層が落とす)
 ;;;   D3  skills は dir ごとの symlink・既に正しい先なら張り替えない(走っている席の見張りを起こさない)
 ;;;   D5  名指しが在って現物が無いのは**非致命**(参加も起動も断らない・名乗り 1 行 + 行の labels)
-;;;   D6  二重読みは doeff が置く 3 つ目の鍵 claudeMdExcludes で落とす(値は席の $HOME から導く 1 本)
+;;;   D6  二重読みは doeff が置く 3 つ目の settings の鍵(綴りの家 = impls/claude_code.hy の
+;;;       CLAUDE-MD-EXCLUDES-SETTING)で落とす。値は席の $HOME から導く 1 本
 ;;;   D8  張り替えの動詞は substrate の FsEnsureSymlink(3 値)— 器は呼ぶだけ(盲検 A の反例)
 ;;;   D10 宣言していない path を器が触らない(盲検 B の反例 — 囮を置いて弁別する)
 ;;;   D11 運ぶ物の綴りは 1 つの名簿(policy.CARRIED-INSTRUCTION-SOURCES)— 検は**回る**・列挙しない
@@ -231,7 +232,7 @@
 ;; ---------------------------------------------------------------------------
 
 (deftest test-a-seat-settings-file-may-not-spell-the-doeff-exclude-key
-  ;; ⚑ D6: claudeMdExcludes は doeff が合流点で置く鍵。席の settings file がこれを持つと、
+  ;; ⚑ D6: 落としの鍵(CLAUDE-MD-EXCLUDES-SETTING)は doeff が合流点で置く。席の settings file がこれを持つと、
   ;; argv の合流で衝突して**二重読みの落としが黙って消える**(か hook が死ぬ)。
   ;; 参加の門 (c) が断る = CLAUDE-SETTINGS-OWNED-KEYS にこの鍵が入っていること。
   (setv raised None)
