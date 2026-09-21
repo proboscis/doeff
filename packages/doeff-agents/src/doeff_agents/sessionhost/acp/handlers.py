@@ -161,6 +161,7 @@ from doeff_agents.sessionhost.acp.effects import (
     RecordStream,
     RecordStreamKind,
     RecordSupersede,
+    RecordSupersedeConflicted,
     RecordSuperseded,
     RecordSupersedeOutcome,
     RecordUnread,
@@ -2137,7 +2138,8 @@ class RecordHttp:
 
     def _supersede(self, effect: RecordSupersede) -> RecordSupersedeOutcome:
         """契約 supersede: 既に在る出来事を新しい版で置き換える(上書きではない — 前の版は鎖として残る)。
-        2xx = versionAnswer / それ以外は送れなさを値で返す(409 = もう置き換えられている)。"""
+        2xx = versionAnswer / 409 = 名指した版はもう置き換えられている(= 頭が動いた・立ち直れる)/
+        それ以外は送れなさを値で返す。"""
         cid = urllib.parse.quote(effect.conversation_id, safe="")
         url = f"{self._base_url}/v1/conversations/{cid}/events/{effect.record_seq}/supersede"
         reply = _http_json(
@@ -2148,6 +2150,10 @@ class RecordHttp:
             {"reason": effect.reason, "event": effect.event},
             RECORD_HTTP_TIMEOUT_SECONDS,
         )
+        if reply.status == 409:
+            # 本番の逐語: {"error":"sha256-conflict","reason":"event <seq> is already-superseded"}。
+            # 送れなさに畳むと、呼び手は「頭を読み直せば書ける」拍と「届かなかった」拍を割れない。
+            return RecordSupersedeConflicted(_record_error_text(reply))
         if not (200 <= reply.status < 300):
             return RecordUnsent(reply.status, _record_error_text(reply))
         record_seq = _int_field(reply.body, "recordSeq")

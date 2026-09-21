@@ -149,6 +149,7 @@
   AcpConversationSummaries
   RecordBatch
   RecordSupersede
+  RecordSupersedeConflicted
   RecordSuperseded
   FsListDirectory
   MEMORY-BASE-FILE
@@ -393,6 +394,7 @@
   summary-status-of
   summary-stream-id-of
   charter-with-memory-files
+  memory-baseline-of-handed-copy
   memory-baseline-of-row
   memory-baseline-text-of
   memory-baselines-of-text
@@ -406,6 +408,7 @@
   memory-material-of
   memory-reserved-file?
   memory-row-id-of
+  memory-row-realignment-of
   memory-row-retired?
   memory-rows-by-name
   memory-spec-of
@@ -1294,6 +1297,7 @@
   (setv baselines {})
   (setv unread 0)
   (setv retired-count 0)
+  (setv realigned 0)
   (for [row rows]
     (<- retired bool (memory-row-retired? row))
     ;; 退役した行は本文を引きに行かない(手番の頭に載せない)— これは「読めない」ではないので別に数える。
@@ -1318,10 +1322,22 @@
                           (do
                             (.append books book)
                             ;; 出した写しの claim check を基準として同じ拍で持つ(次の手番の畳み戻しの第 3 点)。
-                            ;; 4 欄が読めない行は基準を持てない ⇒ その冊は規則 3b で撃たれない(安全側)。
-                            (<- base (| MemoryBaseline None) (memory-baseline-of-row row))
-                            (when (is-not base None)
-                              (setv (get baselines base.name) base)))))))))))
+                            ;; ⚠ 基準は**手渡した写し**から採る(行から写さない — 法 575b1e 3f70 の 2026-09-21
+                            ;;    改訂)。行は記録の頭の遅れる投影なので、遅れている拍に行の sha を基準に
+                            ;;    据えると、席が 1 字も触っていない冊が『編集された』に見え、死んだ版を撃って
+                            ;;    409 で永久に詰まる(実弾の 4 拍の 2 拍目)。
+                            (<- base MemoryBaseline (memory-baseline-of-handed-copy book.name event.text event))
+                            (setv (get baselines base.name) base)
+                            ;; 寄せ(法 575b1e 8d81): 行が頭と食い違っていれば、**この拍**で頭の値へ揃える。
+                            ;; 頭はもう読んである(新しい読みは 0)。原因が何であれ(行の書きの Conflict・
+                            ;; 取りこぼし・落ち)毎手番 自力で治る — 1 度きりの移行の腕は原因が残る限り再発する。
+                            (<- moved (| dict None) (memory-row-realignment-of row event))
+                            (when (is-not moved None)
+                              (<- aligned (| Written Conflict Refused) (AcpPutSpec :row row :spec moved))
+                              (if (isinstance aligned Written)
+                                  (setv realigned (+ realigned 1))
+                                  (<- (LogLine :text (+ f"agentd: the memory row of {book.name} in conversation {subject} lags the "
+                                                        f"record head and was not realigned ({aligned}); the next turn tries again"))))))))))))))
   (when (> unread 0)
     (<- (LogLine :text (+ f"agentd: conversation {subject} has {unread} memory row(s) whose body could not be read; "
                           "the turn starts without them"))))
@@ -1333,7 +1349,9 @@
   (<- files tuple (memory-files-of (tuple books) baselines))
   (<- (MetricLine :fields {"metric" "agent-memory-hydrated" "conversationId" subject
                            "arm" arm "books" (len books) "based" (len baselines)
-                           "unreadable" unread "retired" retired-count}))
+                           "unreadable" unread "retired" retired-count
+                           ;; 寄せた行の数(書けた数・据えた数と混ぜない — 法 575b1e 8d81)。
+                           "realigned" realigned}))
   files)
 
 
@@ -2444,7 +2462,10 @@
 
    撃ち分けは judgment.memory-write-verdict の 1 点(3 点比較 — 手元・行・基準):
      * 行と一致 / 席が触っていない(手元 == 基準)→ 1 bit も撃たない
-     * 席が編集した → 行の recordSeq へ supersede(行が手番の間に動いていたら conflicted を名乗る)
+     * 席が編集した → **基準の recordSeq**(手元の写しが降りてきた版)へ supersede。⚠ 行の recordSeq は
+       撃ち先にしない(法 575b1e 3f70 の 2026-09-21 改訂)— 行は頭の遅れる投影で、遅れている拍に行の
+       番号を撃つと死んだ版を撃ち、409 でその冊は永久に書けなくなる。409 は『頭が動いた』の合図なので
+       頭を読み直して重ねる(行が基準と割れていたら conflicted を名乗る)
      * 行が無い → append。**409 は事故ではなく合図** — 『行が消えて stream が残っている』形なので
        stream を読み直して今の版の recordSeq へ supersede に落ちる(第 2 の語彙を足さない)。
      * 基準が無いのに行が在る → **撃たない**(MemoryUnbased・呼び手が名乗る)。
@@ -2473,7 +2494,7 @@
   (when (isinstance verdict MemoryUnbased)
     (return (MemoryFold :name book.name :unbased True)))
   (setv base-seq (if (is baseline None) None baseline.record-seq))
-  (setv row-seq (if (isinstance verdict MemorySupersede) verdict.record-seq None))
+  (setv row-seq (if (isinstance verdict MemorySupersede) verdict.row-seq None))
   (setv conflicted (if (isinstance verdict MemorySupersede) verdict.conflicted False))
   (<- stream-id str (memory-stream-id-of book.name))
   (setv record-seq None)
@@ -2512,13 +2533,38 @@
         (setv record-seq stored.record-seq)
         (setv version stored.version))))
   (when (isinstance verdict MemorySupersede)
-    (<- replaced (| RecordSuperseded RecordUnsent)
+    (<- replaced (| RecordSuperseded RecordSupersedeConflicted RecordUnsent)
         (RecordSupersede :conversation-id job.subject :record-seq verdict.record-seq
                          :reason f"the conversation rewrote memory {book.name} in turn {job.job-id}"
                          :event body))
     (when (isinstance replaced RecordUnsent)
       (return (MemoryFold :name book.name
                           :reason f"the record service refused the new version of memory {book.name} ({replaced.status}: {replaced.error})")))
+    (when (isinstance replaced RecordSupersedeConflicted)
+      ;; 409 = 手渡した版はもう置き換えられている = **記録の頭が動いた**合図(法 575b1e 3f70)。append 側の
+      ;; RecordConflicted と対称に、頭を読み直してそこへ重ねる — ここで諦めると席の本物の編集が黙って
+      ;; 捨てられる(撃ち直しは 1 度きり・第 2 の語彙は足さない)。
+      (setv conflicted True)
+      (<- page (| RecordPage RecordUnread) (RecordReadStream :conversation-id job.subject :stream-id stream-id))
+      (when (isinstance page RecordUnread)
+        (return (MemoryFold :name book.name
+                            :reason (+ f"the version memory {book.name} came from was already superseded and its stream "
+                                       f"could not be re-read ({page.status}: {page.error})"))))
+      (setv current (next (gfor e page.events :if (= e.producer-seq 0) e) None))
+      (when (is current None)
+        (return (MemoryFold :name book.name
+                            :reason f"memory {book.name} was already superseded but its stream {stream-id} holds no producerSeq 0 event")))
+      (<- (LogLine :text (+ f"agentd: the version memory {book.name} of conversation {job.subject} came from was already "
+                            f"superseded (handed recordSeq {verdict.record-seq} -> head {current.record-seq}); "
+                            "the seat's edit is layered on the head and both stay in the chain")))
+      (<- again (| RecordSuperseded RecordSupersedeConflicted RecordUnsent)
+          (RecordSupersede :conversation-id job.subject :record-seq current.record-seq
+                           :reason f"the conversation rewrote memory {book.name} in turn {job.job-id}"
+                           :event body))
+      (when (not (isinstance again RecordSuperseded))
+        (return (MemoryFold :name book.name
+                            :reason f"the record service refused the new version of memory {book.name} on its head ({again})")))
+      (setv replaced again))
     (setv record-seq replaced.record-seq)
     (setv version replaced.version))
   (when (or (is record-seq None) (is version None))
@@ -2529,19 +2575,37 @@
   (<- spec dict (memory-spec-of job.subject book record-ref record-seq (len material) sha256 version job.job-id))
   (<- row-id str (memory-row-id-of job.subject book.name))
   (<- status dict (memory-status-of now-ms))
+  (setv row-key f"{AGORA-KINDS-NAMESPACE}:{MEMORY-KIND}:{row-id}")
+  (setv landed False)
   (if (is row None)
       (do
         (<- created (| Written Conflict Refused)
             (AcpCreate :namespace AGORA-KINDS-NAMESPACE :kind MEMORY-KIND :resource-id row-id :spec spec))
         (when (and (isinstance created Refused) (not (in "already exists" created.error)))
           (return (MemoryFold :name book.name
-                              :reason f"ACP refused the memory row {row-id} ({created.status}: {created.error})"))))
+                              :reason f"ACP refused the memory row {row-id} ({created.status}: {created.error})")))
+        (setv landed (isinstance created Written)))
       (do
         (<- wrote-spec (| Written Conflict Refused) (AcpPutSpec :row row :spec spec))
         (when (isinstance wrote-spec Refused)
           (return (MemoryFold :name book.name
-                              :reason f"ACP refused the new spec of memory row {row-id} ({wrote-spec.status}: {wrote-spec.error})")))))
-  (<- fresh (| AcpRow None) (AcpGetRow :key f"{AGORA-KINDS-NAMESPACE}:{MEMORY-KIND}:{row-id}"))
+                              :reason f"ACP refused the new spec of memory row {row-id} ({wrote-spec.status}: {wrote-spec.error})")))
+        (setv landed (isinstance wrote-spec Written))))
+  ;; ⚠ 着かなかった拍(世代の Conflict・既に在った行)を**素通りさせない**: 素通りすると記録の頭だけが
+  ;;    進んで行は古い claim check のまま残り、しかも戻りは『書けた』を名乗る ⇒ 計器 written が嘘をつき、
+  ;;    ずれは誰にも見えないまま次の手番の判定の材料になる(実弾 2026-09-21 の 13 冊を生んだ側)。
+  ;;    409 が名乗る今の世代で 1 度だけ読み直して撃ち直し、それでも着かなければ理由を名乗って written に数えない。
+  (when (not landed)
+    (<- reread (| AcpRow None) (AcpGetRow :key row-key))
+    (when (is reread None)
+      (return (MemoryFold :name book.name
+                          :reason f"the memory row {row-id} could not be read back after a write that did not land")))
+    (<- again (| Written Conflict Refused) (AcpPutSpec :row reread :spec spec))
+    (when (not (isinstance again Written))
+      (return (MemoryFold :name book.name
+                          :reason (+ f"the new claim check of memory {book.name} did not land on row {row-id} ({again}); "
+                                     "the record holds the new body and the row is realigned at the next hydration")))))
+  (<- fresh (| AcpRow None) (AcpGetRow :key row-key))
   (when (is-not fresh None)
     (<- wrote (| Written Conflict Refused) (AcpPutStatus :row fresh :status status))
     (when (not (isinstance wrote Written))
@@ -2618,7 +2682,7 @@
       (setv conflicted (+ conflicted 1))
       (<- (LogLine :text (+ f"agentd: memory {book.name} of conversation {job.subject} moved under the turn "
                             f"(baseline recordSeq {fold.base-seq} -> row recordSeq {fold.row-seq}); "
-                            "the new body is layered on the row's current version and both stay in the chain"))))
+                            "the new body is layered on the version the copy came from and both stay in the chain"))))
     (when fold.written
       (setv written (+ written 1)))
     (when (is-not fold.reason None)

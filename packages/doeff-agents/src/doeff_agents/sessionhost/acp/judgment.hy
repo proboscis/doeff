@@ -6038,7 +6038,10 @@
 ;; 正本の座は行。本文は記録の service の stream(streamKind memory・id = memory#<name>)で、kind agent-memory の行は
 ;; claim check と索引の材料だけを持つ。ここは**純関数だけ** — 撃つのは agentd.hy の腕(手番の頭の水入れ・終いの畳み戻し)。
 ;;
-;;   * 撃ち分けの鍵は**行の recordSeq の在否**の 1 規則(memory-write-verdict)。版を数えて選ばない。
+;;   * 撃ち分け(append か supersede か)の鍵は**行の在否**の 1 規則(memory-write-verdict)。版を数えて選ばない。
+;;   * ⚠ 撃ち分けの鍵は行でも、**撃ち先は基準**(手元の写しが降りてきた版)— 行は記録の頭の遅れる投影で、
+;;     遅れている拍に行の番号を撃つと死んだ版を撃って 409 で永久に詰まる(法 575b1e 3f70 の 2026-09-21 改訂)。
+;;   * 投影のずれは水入れの拍の寄せ 1 点で治す(memory-row-realignment-of・法 575b1e 8d81)。
 ;;   * 本文の同一性は記録の service と同じ計算(record-body-bytes-of → sha256)— 同じなら 1 bit も撃たない。
 ;;   * 索引(MEMORY.md)は file として正本を持たず、行から組み直す(memory-index-of)。
 
@@ -6229,6 +6232,67 @@
   (get pair 1))
 
 
+(defk memory-sha256-of-text [text]
+  {:pre [(: text str)]
+   :post [(: % str)]}
+  "本文 → claim check の digest。同一性の式は **memory-material-of の 1 点**ちょうど(2 か所で綴ると、
+   緑のまま逆を測る — 実弾 2026-09-21: 生の byte で比べた席が『55/55 巻き戻り』と誤診した)。
+   刻(at)と producerSeq は同一性の材料ではない(record-body-of が読むのは text / summary / input /
+   output だけ)ので、刻を持たずに digest を決められる。"
+  (<- body dict (memory-body-of text 0))
+  (<- sha str (memory-sha256-of body))
+  sha)
+
+
+(defk memory-baseline-of-handed-copy [name text event]
+  {:pre [(: name str) (: text str) (: event RecordEvent)]
+   :post [(: % MemoryBaseline)]}
+  "手番の頭に手渡した写し → 次の畳み戻しの基準(法 575b1e 3f70)。
+
+   ⚠ **行を引数に取らない**。基準は『手渡した写しの claim check』で、行から写す物ではない —
+   行は記録の頭の遅れる投影なので、遅れている拍に行の sha を基準に据えると、席が 1 字も触っていない
+   冊が『編集された』に見え、死んだ版を撃って 409 で永久に詰まる(実弾 2026-09-21 の 4 拍の 2 拍目)。
+
+   sha256 = **置き場へ書いた本文そのもの**の digest(記録の見出しの sha を写さない — service が本文を
+   切った拍は見出しの sha と手元の digest が違い、写すと毎手番『編集された』に化ける)。
+   recordSeq / version = その本文が降りてきた版(= supersede の撃ち先)。"
+  (<- sha str (memory-sha256-of-text text))
+  (MemoryBaseline :name name :record-seq event.record-seq :sha256 sha :version event.version))
+
+
+(defk memory-row-realignment-of [row event]
+  {:pre [(: row (| AcpRow None)) (: event RecordEvent)]
+   :post [(: % (| dict None))]}
+  "行 + 記録の頭 → **寄せる spec**(揃っていれば None)。法 575b1e
+   R-the-row-is-a-lagging-projection-realigned-at-hydration-8d81。
+
+   投影がずれる拍は在る(行の書きの Conflict・取りこぼし・落ち)ので、直しは経路ごとの後始末ではなく
+   **水入れの拍の寄せ 1 点**にする: 手番の頭は既に全冊の頭を読んでいるので、食い違う冊だけを頭の値へ
+   揃える。原因が何であれ毎手番 自力で治る(端の状態を観測する — 1 度きりの移行の腕は原因が残る限り再発する)。
+
+   ⚠ 動かすのは **claim check の 4 欄ちょうど**: 身元(conversationId / name)と索引の材料
+   (type / description / links / recordRef)は行が正本なので 1 字も触らない。
+   ⚠ 退役した行は触らない(蘇らせない — 戻すのは operator の 2 拍)。
+   ⚠ 揃っているかは身元の 3 欄(recordSeq / sha256 / version)で判ずる: bytes は service の数え方に
+   依るので、その差だけで毎手番 書き直さない。"
+  (when (is row None)
+    (return None))
+  (<- retired bool (memory-row-retired? row))
+  (when retired
+    (return None))
+  (setv spec (if (isinstance row.spec dict) row.spec {}))
+  (when (and (= (.get spec MEMORY-SPEC-RECORD-SEQ-KEY) event.record-seq)
+             (= (.get spec MEMORY-SPEC-SHA256-KEY) event.sha256)
+             (= (.get spec MEMORY-SPEC-VERSION-KEY) event.version))
+    (return None))
+  (setv moved (dict spec))
+  (setv (get moved MEMORY-SPEC-RECORD-SEQ-KEY) event.record-seq)
+  (setv (get moved MEMORY-SPEC-SHA256-KEY) event.sha256)
+  (setv (get moved MEMORY-SPEC-BYTES-KEY) event.bytes)
+  (setv (get moved MEMORY-SPEC-VERSION-KEY) event.version)
+  moved)
+
+
 (defk memory-baseline-of-row [row]
   {:pre [(: row (| AcpRow None))]
    :post [(: % (| MemoryBaseline None))]}
@@ -6325,10 +6389,17 @@
        2a  手元 == 基準               → Unchanged(proven-by-row False — 席は 1 字も触っていない。行が
                                           先へ動いていても**巻き戻さないし、基準も動かさない**)
        2b  行が無い                   → Append(基準だけ在って行が消えた — 409 が stream を読み直す合図)
-       2c  基準の recordSeq == 行     → Supersede(conflicted False — 席が編集し、行は動いていない)
-       2d  基準の recordSeq != 行     → Supersede(conflicted True・base-seq を名乗る — 席も編集し、行も
-                                          手番の**間に**動いた。断らない: 席の編集を捨てず行の今の版へ重ね、
-                                          両方の版を鎖に残して log と計器で名乗る)
+       2c  基準の recordSeq == 行     → Supersede(**基準の recordSeq へ**・conflicted False — 席が編集し、
+                                          行も基準と同じ版を指している)
+       2d  基準の recordSeq != 行     → Supersede(**基準の recordSeq へ**・conflicted True・行の値も名乗る —
+                                          行が遅れているか、手番の**間に**先へ動いたか。断らない: 席の編集を
+                                          捨てず、両方の版を鎖に残して log と計器で名乗る)
+
+   ⚠ 撃ち先は 2c / 2d とも **基準**(手元の写しが降りてきた版)で、**行の recordSeq ではない**
+     (法 575b1e 3f70 の 2026-09-21 改訂)。行を撃ち先にすると、行が頭より遅れている拍に死んだ版を撃ち、
+     記録の service が 409 を返す ⇒ その冊はどの機体のどの手番からも二度と書けない(毎手番 同じ死んだ版を
+     撃ち直す)。実測 2026-09-21: 艦隊 1,149 冊中 13 冊・8 会話。撃ち先が死んでいた拍は呼び手が頭を
+     読み直して重ねる(409 =『頭が動いた』の合図)。
      3   基準が無い
        3a  行が無い                   → Append(この会話で初めての冊)
        3b  行が在る                   → Unbased(手元が編集か古い写しか判らない — **撃たずに名乗る**)
@@ -6363,9 +6434,11 @@
       (return (MemoryAppend :name label)))
     (when (not readable)
       (return (MemoryAppend :name label)))
-    ;; 2c / 2d: 席が編集した。行が手番の間に動いていたら名乗る(断らない)。
-    (return (MemorySupersede :name label :record-seq seq :version version
-                             :base-seq baseline.record-seq
+    ;; 2c / 2d: 席が編集した。撃ち先は **基準**(手元の写しが降りてきた版)— 行は頭の遅れる投影なので
+    ;; 撃ち先にしない(法 575b1e 3f70 の 2026-09-21 改訂)。行が基準と割れている拍は名乗る(断らない):
+    ;; 行が遅れている形も、行が手番の**間に**先へ動いた形も、どちらもここに来る。
+    (return (MemorySupersede :name label :record-seq baseline.record-seq :version baseline.version
+                             :base-seq baseline.record-seq :row-seq seq
                              :conflicted (!= baseline.record-seq seq))))
   ;; 3a: 初めての冊。
   (when (is row None)

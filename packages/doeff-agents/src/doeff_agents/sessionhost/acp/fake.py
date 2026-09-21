@@ -101,6 +101,7 @@ from doeff_agents.sessionhost.acp.effects import (
     RecordSpoolPut,
     RecordSpoolRemove,
     RecordSupersede,
+    RecordSupersedeConflicted,
     RecordSuperseded,
     RecordSupersedeOutcome,
     RecordUnread,
@@ -1069,6 +1070,10 @@ class FakeRecord:
         self.versions: dict[tuple[str, str, int], int] = {}
         #: RecordSupersede を受けた (会話, recordSeq, 理由) の順。
         self.supersedes: list[tuple[str, int, str]] = []
+        #: 置き換えで退いた番号 (会話, 古い recordSeq) → 鍵。本物の service はその番号への置き換えを
+        #: 409 sha256-conflict / already-superseded で断る(404 ではない — 出来事は在り、版が進んだだけ)。
+        #: ⚠ 404 を返す fake は「検は緑・本番は詰まったまま」を作る(実弾 2026-09-21・c-3TFD の突合)。
+        self.retired_seqs: dict[tuple[str, int], tuple[str, str, int]] = {}
         #: RecordSpoolGiveUp で隔離した鍵 → 理由。
         self.given_up: dict[str, str] = {}
 
@@ -1158,6 +1163,11 @@ class FakeRecord:
             None,
         )
         if target is None:
+            retired = self.retired_seqs.get((effect.conversation_id, effect.record_seq))
+            if retired is not None:
+                return RecordSupersedeConflicted(
+                    f"sha256-conflict: event {effect.record_seq} is already-superseded"
+                )
             return RecordUnsent(404, f"no event {effect.record_seq} in conversation {effect.conversation_id}")
         if _producer_seq(effect.event) != target[2]:
             return RecordUnsent(400, "event.producerSeq must equal the superseded event's producerSeq")
@@ -1168,6 +1178,7 @@ class FakeRecord:
         # 置き換えは新しい recordSeq を採る(会話ごとに単調)— 鍵はそのまま、番号だけ進める。
         taken = [seq for (cid, _sid, _pseq), seq in self.record_seqs.items() if cid == effect.conversation_id]
         fresh = (max(taken) if taken else 0) + 1
+        self.retired_seqs[(effect.conversation_id, self.record_seqs[target])] = target
         self.record_seqs[target] = fresh
         return RecordSuperseded(record_seq=fresh, version=version)
 
@@ -1188,6 +1199,8 @@ class FakeRecord:
         self.versions[key] = self.versions.get(key, 1) + 1
         taken = [seq for (cid, _sid, _pseq), seq in self.record_seqs.items() if cid == conversation_id]
         fresh = (max(taken) if taken else 0) + 1
+        if key in self.record_seqs:
+            self.retired_seqs[(conversation_id, self.record_seqs[key])] = key
         self.record_seqs[key] = fresh
         return fresh
 
