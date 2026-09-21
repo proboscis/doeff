@@ -58,7 +58,7 @@ from doeff_agents.sessionhost.headless_protocol import (
     stop_verdict,
     turn_verdict,
 )
-from doeff_agents.sessionhost.impls import headless_argv
+from doeff_agents.sessionhost.impls import headless_argv, claude_code
 from doeff_agents.sessionhost.store import StoreActor, terminal_cause_from_dict
 from sessionhost_bin import resolve_sessionhost_bin
 
@@ -662,6 +662,20 @@ def test_headless_argv_is_print_mode_with_partial_messages() -> None:
     assert cold[-4:] == ["-p", "/compact fast-jev-if-cold", "--resume", "sid-1"]
     assert "stream-json" not in cold and "--session-id" not in cold
     assert "cold_compaction_argv" not in fresh
+    # disableAllHooks は載せない(plugin の hook を殺すと /compact が組込みの要約に落ちる)。他に欄が無ければ
+    # --settings の旗ごと消える。手番の argv には今日どおり disableAllHooks が在る。
+    assert "--settings" not in cold, cold
+    assert "disableAllHooks" in json.loads(resumed_argv[resumed_argv.index("--settings") + 1])
+    # 自動記憶の置き場など他の欄は保つ
+    with_memory = _build_claude_headless(
+        {"work_dir": "/w", "resume_mode": "resume", "conversation": {"session_id": "sid-1"},
+         "memory_dir": "/m"}
+    )
+    cold_memory = with_memory["cold_compaction_argv"]
+    assert cold_memory.count("--settings") == 1
+    assert json.loads(cold_memory[cold_memory.index("--settings") + 1]) == {
+        claude_code.CLAUDE_AUTO_MEMORY_DIR_SETTING: "/m"  # 綴りの家は impls/claude_code.hy の 1 点
+    }
     codex = _build_codex_headless(
         {"work_dir": "/w", "model": "gpt-5", "effort": "high"}
     )
