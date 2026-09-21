@@ -581,8 +581,14 @@ def test_turn_verdict_closed_vocabulary(
     [
         # 終端の行は観測に依らず keep
         (True, True, BackendLiveness(pid=1, exists=False, owned=False), "keep"),
-        # idle の温かい行(process が降りていても)は keep — 次の send が --resume で起こし直す
-        (False, False, BackendLiveness(pid=1, exists=False, owned=False), "keep"),
+        (True, False, BackendLiveness(pid=1, exists=False, owned=False), "keep"),
+        # idle の温かい行 ∧ backend が生きて所有 → keep(器が在る)
+        (False, False, BackendLiveness(pid=1, exists=True, owned=True), "keep"),
+        # idle の温かい行 ∧ backend が死んでいる → backend-dead(2026-09-22 の改訂・R25 の追補:
+        # 旧形はここを keep にしていたので、器を 1 つも持たない機体が observations.sessions に
+        # 「走っている session」として名乗った)
+        (False, False, BackendLiveness(pid=1, exists=False, owned=False), "backend-dead"),
+        (False, False, BackendLiveness(pid=7, exists=True, owned=False), "backend-dead"),
         # 手番の途中 ∧ backend が生きて所有 → keep
         (False, True, BackendLiveness(pid=1, exists=True, owned=True), "keep"),
         # 手番の途中 ∧ pid が無い → backend-dead
@@ -596,15 +602,32 @@ def test_turn_verdict_closed_vocabulary(
 def test_recovery_verdict_is_the_one_decision(
     terminal: bool, in_flight: bool, liveness: BackendLiveness, kind: str
 ) -> None:
-    """段 10 lane 10h(agora-redesign #84): 起動時の復帰の判断は recovery_verdict の 1 点 —
-    手番の途中 ∧ backend が死んでいる(pid が無い / この host の所有でない)時だけ終端。"""
+    """段 10 lane 10h(agora-redesign #84)+ 2026-09-22 の改訂(card acp:kanban-issue:ki-95169e9e265d 便 1):
+    起動時の復帰の判断は recovery_verdict の 1 点 — 非終端 ∧ backend が死んでいる(pid が無い / この host の
+    所有でない)行を終端に倒す。手番の途中かどうかは倒すかどうかを決めず、detail の文だけを分ける。"""
     verdict = recovery_verdict(terminal, in_flight, liveness)
     assert verdict.kind == kind
     if kind == "backend-dead":
         assert "backend process dead" in verdict.detail
         assert f"pid {liveness.pid if liveness.pid is not None else 'none'}" in verdict.detail
         assert ("not owned" in verdict.detail) is liveness.exists
+        # 手番の途中と idle は同じ判断・違う文(cause の reason が何を失ったかを名乗る)。
+        assert ("while the turn was in flight" in verdict.detail) is in_flight
+        assert ("the row was idle between turns" in verdict.detail) is (not in_flight)
     assert backend_alive(liveness) is (liveness.exists and liveness.owned)
+
+
+def test_recovery_verdict_folds_the_idle_warm_row_whose_backend_is_gone() -> None:
+    """2026-09-22(R25 の改訂): 器の死んだ idle の温かい行は「走っている session」ではない — 倒して
+    transcripts の半分へ移す(次の手番は next-arm-for-job の terminal ∧ same-home の腕で --resume)。
+    倒さないと、pod の家が永続した機体が死んだ器を observations.sessions に名乗り、その欄だけを読む
+    keepalive が死んだ器へ ping を送る。"""
+    dead = BackendLiveness(pid=22663, exists=False, owned=False)
+    assert recovery_verdict(False, False, dead).kind == "backend-dead"
+    # 生きている器は idle でも触らない(次の send がそのまま届く)。
+    assert recovery_verdict(False, False, BackendLiveness(pid=1, exists=True, owned=True)).kind == "keep"
+    # 終端の行は観測に依らず触らない。
+    assert recovery_verdict(True, False, dead).kind == "keep"
 
 
 def test_stop_verdict_cuts_only_the_mid_turn_rows() -> None:

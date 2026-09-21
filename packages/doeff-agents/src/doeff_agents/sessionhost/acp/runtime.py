@@ -51,6 +51,7 @@ from doeff_agents.sessionhost.acp.effects import (
     CUSTODY_URL_ENV,
     DECLARATION_SHA256_ENV,
     DRAIN_SECONDS_ENV,
+    TRANSCRIPTS_OBSERVED_MAX_ENV,
     HOMES_ROOT_ENV,
     JOIN_RECORD_SPOOL_DIR,
     JOIN_STATE_DIR_DEFAULT,
@@ -190,11 +191,20 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
     # card acp:kanban-issue:ki-62aa1f4e9c9c(決定 D11): 席の家へ運ぶ共通の指示 — 名簿を**回って**
     # env から読む(種ごとの枝をここに書かない)。不在は断らない(D5)ので、名乗りだけを持つ。
     instruction_sources = _instruction_sources_of_env(env)
+    # ADR-DOE-AGENTS-012 R56: 宣言が在れば重ねる(無い = None = 既定のまま)。
+    declared_transcripts_max = _transcripts_observed_max_of_env(env)
     return AgentdSettings(
         node_name=node_name,
         node_capacity=node_capacity,
         # 段 12 lane 12j(agora-redesign #304 便 2): 停止の排水の上限(宣言 file の [agentd].drain_seconds — 無い = 0 = 排水しない)
         drain_seconds=_drain_seconds_of_env(env),
+        # ADR-DOE-AGENTS-012 R56: 観測に載せる transcript の件数の上限 — 宣言が在ればそれ、無ければ
+        # AgentdSettings の既定(既定の宣言はあちら 1 点で、ここには数を書かない)。
+        transcripts_observed_max=(
+            AgentdSettings.transcripts_observed_max
+            if declared_transcripts_max is None
+            else declared_transcripts_max
+        ),
         # 段 12 lane 12j(agora-redesign #367): 参加時に名乗る自分の版(読みの規則は join.revision-of / build-of の 1 点・無ければ unstamped / local)
         agentd_revision=_revision_of_env(env),
         agentd_build=_build_of_env(env),
@@ -332,6 +342,19 @@ def _drain_seconds_of_env(env: Mapping[str, str]) -> int:
     verdict: object = PyVM().run(join.drain_seconds_of(env.get(DRAIN_SECONDS_ENV)))
     if not isinstance(verdict, int):
         raise TypeError(f"drain_seconds_of returned {type(verdict).__name__}")
+    return verdict
+
+
+def _transcripts_observed_max_of_env(env: Mapping[str, str]) -> int | None:
+    """node の観測に載せる transcript の件数の上限(ADR-DOE-AGENTS-012 R56)。読みの規則は
+    join.transcripts-observed-max-of の 1 点(無い = None = 宣言しない → AgentdSettings の既定)。"""
+    verdict: object = PyVM().run(
+        join.transcripts_observed_max_of(env.get(TRANSCRIPTS_OBSERVED_MAX_ENV))
+    )
+    if verdict is None:
+        return None
+    if not isinstance(verdict, int):
+        raise TypeError(f"transcripts_observed_max_of returned {type(verdict).__name__}")
     return verdict
 
 

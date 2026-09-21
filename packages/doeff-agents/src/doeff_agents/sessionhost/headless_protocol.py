@@ -839,11 +839,25 @@ def recovery_verdict(
     status_terminal: bool, in_flight: bool, liveness: BackendLiveness
 ) -> RecoveryVerdict:
     """host の起動時の復帰の 1 行の判断(閉語彙 RecoveryKind)— 行の事実と backend の観測から:
-    終端の行 → keep / 手番の途中でない(idle の温かい行 — 次の send が --resume で同じ session を起こし直す)
-    → keep / 手番の途中 ∧ backend が生きて所有 → keep(起こした process が在る)/ 手番の途中 ∧ backend が
-    死んでいる(pid が無い・この host の所有でない)→ backend-dead(呼び手が status を終端に倒し、cause と
-    event を刻む)。detail は cause の reason に載る観測の文(pid と在否・所有)。"""
-    if status_terminal or not in_flight:
+    終端の行 → keep / backend が生きて所有 → keep(起こした process が在る)/ backend が死んでいる
+    (pid が無い・この host の所有でない)→ backend-dead(呼び手が status を終端に倒し、cause と event を
+    刻む)。手番の途中かどうかは**倒すかどうかを決めない** —— 決めるのは detail の文(手番が切れたのか、
+    idle の温かい行が器を失ったのか)だけ。
+
+    ⚠ 改訂 2026-09-22(ADR-DOE-AGENTS-012 R25 の追補・card acp:kanban-issue:ki-95169e9e265d 便 1):
+    旧形は『手番の途中 ∧ backend が死』だけを倒し、idle の温かい行は次の send が --resume で起こし直す
+    ので keep だった。send の腕は今でもそう働く(headless.hy headless-send-program が受けられない
+    process を continue-headless-process で起こし直す)が、**行を非終端のまま残すと、器が 1 つも無い
+    機体が node の status.observations.sessions に『走っている session』として名乗る**。読み手はその
+    欄を「この機体で現に走っている session」として読む —— 例: keepalive の対象の選び(agora-controllers
+    cache_inventory.resident_targets)は sessions の欄だけを見るので、死んだ器へ ping を送り、ping の
+    ために会話 1 本ぶんの --resume を払う。pod の家が永続するまでは店ごと消えていたので現れなかった形で、
+    永続の店(StatefulSet の volumeClaimTemplates)を入れた便が初めてこれを常態にする。
+    倒した行は `observe-transcripts` の候補(終端 ∧ 帰属あり ∧ transcript の file が在る)に移り、
+    配置は transcripts の半分で同じ会話を同じ機体へ名指す(scheduler の affinity.predecessor)ので、
+    次の手番は next-arm-for-job の『候補が器に登記されて終端 ∧ 同じ家 → resume』の腕で --resume される
+    (cache は保つ —— 実測 2026-09-22 の別 pod からの --resume: cache_read 16,641 / cache_write 42)。"""
+    if status_terminal:
         return RecoveryVerdict("keep")
     if backend_alive(liveness):
         return RecoveryVerdict("keep")
@@ -853,9 +867,10 @@ def recovery_verdict(
         if not liveness.exists
         else "running but not owned by this host (its stdio pipes died with the previous host)"
     )
+    when = "while the turn was in flight" if in_flight else "and the row was idle between turns"
     return RecoveryVerdict(
         "backend-dead",
-        detail=f"backend process dead: headless process pid {pid} is {fact} while the turn was in flight",
+        detail=f"backend process dead: headless process pid {pid} is {fact} {when}",
     )
 
 

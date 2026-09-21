@@ -73,6 +73,8 @@
   AGENTD-PLACES
   CAPACITY-ENV
   DRAIN-SECONDS-ENV
+  TRANSCRIPTS-OBSERVED-MAX-ENV
+  TRANSCRIPTS-OBSERVED-MAX-CEILING
   AGENTD-REVISION-ENV
   AGENTD-BUILD-ENV
   CUSTODY-URL-ENV
@@ -152,6 +154,9 @@
 (setv KEY-WORK-ROOTS "work_roots")
 ;; 停止(SIGTERM)の排水の上限(秒・任意・段 12 lane 12j・agora-redesign #304 便 2)。0 / 無し = 排水しない(今日どおり)。
 (setv KEY-DRAIN-SECONDS "drain_seconds")
+;; node の観測に載せる transcript の件数の上限(任意・ADR-DOE-AGENTS-012 R56・card acp:kanban-issue:ki-95169e9e265d 便 1)。
+;; 無し = agentd の既定(effects.AgentdSettings.transcripts_observed_max)。席の枠(capacity)と揃えるための 1 鍵。
+(setv KEY-TRANSCRIPTS-OBSERVED-MAX "transcripts_observed_max")
 ;; 段 12 lane 12j(agora-redesign #367): agentd の版の刻印(任意)— 据え付けの側が書く(git sha と image の tag か local)。
 (setv KEY-REVISION "revision")
 (setv KEY-BUILD "build")
@@ -181,7 +186,7 @@
 ;; 手で書き足さない。名簿に 1 行足した日に、この集合と env と据え付けが**同時に**追随する
 ;; (書き足す形は、足し忘れた鍵を「宣言に無い鍵」で断る = その機体が参加できない形で失敗する)。
 (setv AGENTD-KEYS (| #{KEY-SERVER KEY-TOKEN-FILE KEY-NODE-NAME KEY-STATE-DIR KEY-BACKEND
-                       KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY KEY-PLACES KEY-WORK-ROOTS KEY-DRAIN-SECONDS
+                       KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY KEY-PLACES KEY-WORK-ROOTS KEY-DRAIN-SECONDS KEY-TRANSCRIPTS-OBSERVED-MAX
                        KEY-ALLOW-METERED-BILLING KEY-REVISION KEY-BUILD KEY-SEAT-ENV
                        KEY-CLAUDE-SETTINGS-FILE}
                      (sfor source CARRIED-INSTRUCTION-SOURCES source.key)))
@@ -200,6 +205,7 @@
 (setv FLAG-CAPACITY "--capacity")
 (setv FLAG-PLACES "--places")
 (setv FLAG-WORK-ROOTS "--work-roots")
+(setv FLAG-TRANSCRIPTS-OBSERVED-MAX "--transcripts-observed-max")
 (setv FLAG-ALLOW-METERED-BILLING "--allow-metered-billing")
 (setv FLAG-CUSTODY "--custody")
 (setv FLAG-BORROWER-KEY-FILE "--borrower-key-file")
@@ -217,6 +223,7 @@
                  FLAG-CAPACITY #(TABLE-AGENTD KEY-CAPACITY)
                  FLAG-PLACES #(TABLE-AGENTD KEY-PLACES)
                  FLAG-WORK-ROOTS #(TABLE-AGENTD KEY-WORK-ROOTS)
+                 FLAG-TRANSCRIPTS-OBSERVED-MAX #(TABLE-AGENTD KEY-TRANSCRIPTS-OBSERVED-MAX)
                  FLAG-ALLOW-METERED-BILLING #(TABLE-AGENTD KEY-ALLOW-METERED-BILLING)
                  FLAG-CUSTODY #(TABLE-CUSTODY KEY-CUSTODY-URL)
                  FLAG-BORROWER-KEY-FILE #(TABLE-CUSTODY KEY-BORROWER-KEY-FILE)
@@ -270,6 +277,11 @@
      (+ "Work roots this node offers, up to " (str WORK-ROOTS-MAX) ", separated by "
         "`" WORK-ROOTS-SEPARATOR "`. Each root starts with `/` or `~/` and ends "
         "with `/`. Dispatch filters absolute work directories through them."))
+   #(FLAG-TRANSCRIPTS-OBSERVED-MAX "<count>"
+     (+ "How many finished conversations whose transcript is still on this host "
+        "the node names in status.observations.transcripts. Default: the agentd "
+        "built-in; at most " (str TRANSCRIPTS-OBSERVED-MAX-CEILING) " (the contract's "
+        "maxItems). Keep it at or above the seat capacity."))
    #(FLAG-ALLOW-METERED-BILLING "<true|false>"
      (+ "Whether this host admits metered binding kinds. Default: false. Unlike "
         "the host's own flag this one takes a value, because a declaration file "
@@ -622,6 +634,27 @@
   (int word))
 
 
+(defk transcripts-observed-max-of [text]
+  {:pre [(: text (| str None))]
+   :post [(: % (| int None))]}
+  "node の観測に載せる transcript の件数の上限の読み(ADR-DOE-AGENTS-012 R56・card acp:kanban-issue:ki-95169e9e265d 便 1):
+   宣言 file の [agentd].transcripts_observed_max / flag --transcripts-observed-max の文字列(10 進の正の整数)→ int。
+   無い・空 = None(名乗らない — agentd は effects.AgentdSettings の既定を使う。既定の宣言はあちら 1 点で、ここには写さない)。
+   1 未満・契約の天井(TRANSCRIPTS-OBSERVED-MAX-CEILING = agora-kinds.json node.status.observations.transcripts の maxItems)を
+   超える値・数でない値は ValueError(参加しない — 黙って丸めない。丸めると宣言と実勢が食い違ったまま走る)。"
+  (setv word (if (is text None) "" (.strip text)))
+  (when (not word)
+    (return None))
+  (when (not (and (.isascii word) (.isdigit word)))
+    (raise (ValueError f"[{TABLE-AGENTD}].{KEY-TRANSCRIPTS-OBSERVED-MAX} は正の整数(10 進の数字)であること: {word !r}")))
+  (setv value (int word))
+  (when (or (< value 1) (> value TRANSCRIPTS-OBSERVED-MAX-CEILING))
+    (raise (ValueError (+ f"[{TABLE-AGENTD}].{KEY-TRANSCRIPTS-OBSERVED-MAX} は 1 以上 "
+                          f"{TRANSCRIPTS-OBSERVED-MAX-CEILING} 以下(契約 node.status.observations.transcripts の maxItems)"
+                          f"であること: {value}"))))
+  value)
+
+
 (defk work-roots-of [text]
   {:pre [(: text (| str None))]
    :post [(: % (| WorkRoots None))]}
@@ -878,6 +911,7 @@
   (<- capacity int (capacity-of (.get agentd KEY-CAPACITY)))
   ;; 停止の排水の上限(段 12 lane 12j・#304 便 2・任意)。
   (<- drain-seconds int (drain-seconds-of (.get agentd KEY-DRAIN-SECONDS)))
+  (<- transcripts-observed-max (| int None) (transcripts-observed-max-of (.get agentd KEY-TRANSCRIPTS-OBSERVED-MAX)))
   ;; 機体が仕える置き場の集合(段 11 lane 11u — 1 値の place は退役)。
   (<- declared-places Places (places-of (.get agentd KEY-PLACES)))
   ;; node が持つ作業場の根(段 10 lane 10y 案 C・任意)。
@@ -921,6 +955,7 @@
     :ownership ownership
     :capacity capacity
     :drain-seconds drain-seconds
+    :transcripts-observed-max transcripts-observed-max
     :places declared-places.words
     ;; 空文字は「名乗らない」= env に現れない(参加の門 record-sink-of が読みの 1 点で断る — 段 9f lane 9f-6)。
     ;; 従量課金の binding kind を受けるか(従量課金の便 lane A)— 真のときだけ host の argv に旗が立つ。
@@ -969,6 +1004,9 @@
   ;; 段 12 lane 12j(#304 便 2): 排水の上限は名乗った時だけ env に現れる(0 = 既定 = 排水しない)。
   (when (> spec.drain-seconds 0)
     (.append env #(DRAIN-SECONDS-ENV (str spec.drain-seconds))))
+  ;; R56: 件数の上限も名乗った時だけ env に現れる(無し = agentd の既定 — 既定を join が写さない)。
+  (when (is-not spec.transcripts-observed-max None)
+    (.append env #(TRANSCRIPTS-OBSERVED-MAX-ENV (str spec.transcripts-observed-max))))
   ;; 段 11 lane 11u: 置き場の集合は , 区切りの 1 文字列で運ぶ(読みは runtime の places-of の 1 点)。
   (.append env #(PLACES-ENV (.join PLACES-SEPARATOR spec.places)))
   (.extend env [#(HOST-BACKEND-ENV spec.backend)
