@@ -16,6 +16,7 @@
 (import hashlib)
 (import json)
 (import os)
+(import stat)
 (import subprocess)
 (import sys)
 (import tempfile)
@@ -308,19 +309,56 @@
      symlink でない実体     触らず \"occupied-by-real-entity\"(erosion guard)
      何も居ない             親 dir を作って張り \"linked\"
    ⚠ FsLinkArtifact(据わっている物を絶対に置き換えない)との違いは**張り替えるか**の 1 点で、
-   それが無いと正本の path が動いた日に家の symlink が古い先を指したまま残る。"
-  (when (os.path.islink link)
-    (when (= (os.readlink link) target)
-      (return FS-ENSURE-SYMLINK-UNCHANGED))
-    (os.unlink link)
-    (os.symlink target link)
-    (return FS-ENSURE-SYMLINK-LINKED))
-  (when (os.path.exists link)
-    (return FS-ENSURE-SYMLINK-OCCUPIED))
+   それが無いと正本の path が動いた日に家の symlink が古い先を指したまま残る。
+   ⚠ **張りも張り替えも rename 1 手**(D9 の書きと同じ物理・計画段の実測
+   evidence/symlink_install_race.log と tests の A / B)。家は資格ごとに鋳られ、同じ資格の
+   複数の席が 1 つの家へ同時に降りる(pool の入れ替えの直後は排水中に溜まった郵便が一斉に
+   手番になる)。素の symlink / unlink→symlink の 2 手には、そこで 2 つの穴が開く:
+     * 空の家へ 2 席が同拍で張ると片方が FileExistsError で落ちる(直す前の実測: 会社 Mac
+       200/200・pod 198/200)。この動詞は raise しない約束なのに、その約束ごと破れて席が起きない。
+     * 張り替えの 2 手の間に読んだ席が **根の無い瞬間**を見る(同 52 % / 53 %)。そこへ本体の
+       skills の discovery が当たると、その席の user 層の skills は 0 件。
+   ⇒ 書き手ごとに一意な名の仮の symlink を張り、rename(2) で被せる。rename は宛先が symlink なら
+   symlink そのものを原子的に置き換えるので、読み手は常に古い先か新しい先のどちらかを見る。
+   lock は足さない(家は process をまたいで共有されるので、process の中の lock は届かない)。
+   ⚠ 残る窓は 1 つ: 下の見分けと rename の間に **実体の file** が現れると rename はそれを黙って
+   置き換える(実体の dir なら rename が OSError になるので occupied に落ちる)。erosion guard が
+   守る形は長く据わっている実体なので見分けが先に当たるが、「symlink か不在の時だけ被せる」を
+   原子的に言える syscall は移植できる形では無い。"
+  ;; ⚠ 在否と種別は **1 回の lstat** で見る。`islink` と `lexists` の 2 回に割ると、その隙に
+  ;; 相手の席の rename が着地した拍で「symlink では無いのに在る」= 実体が居るに見え、空の家に
+  ;; 居もしない実体を名乗って席が skills を失う(この形は tests の A が 200 回中 4 回で掴んだ)。
+  (setv seated
+    (try
+      (os.lstat link)
+      (except [OSError]
+        ;; 何も居ない(親 dir がまだ無い拍を含む)
+        None)))
+  (when (is-not seated None)
+    (when (not (stat.S-ISLNK seated.st-mode))
+      (return FS-ENSURE-SYMLINK-OCCUPIED))
+    (try
+      (when (= (os.readlink link) target)
+        (return FS-ENSURE-SYMLINK-UNCHANGED))
+      (except [OSError]
+        ;; 読む間に別の席が張り替えた(または消した)— 下の据え付けで決める(raise しない)
+        None)))
   (setv parent (os.path.dirname link))
   (when parent
     (os.makedirs parent :exist-ok True))
-  (os.symlink target link)
+  ;; 仮の名は**書き手ごとに一意**(D9 と同じ反例 — 固定名だと 2 席が互いの仮を踏む)。
+  ;; suffix は残す(残骸の見分けの綴り)。
+  (setv staged (os.path.join (or parent ".")
+                             f".{(os.path.basename link)}.{(os.getpid)}.{(.hex (os.urandom 4))}.agentd-tmp"))
+  (os.symlink target staged)
+  (try
+    (os.replace staged link)
+    (except [OSError]
+      ;; 実体の dir が居る(rename は dir を置き換えられない)— 自分の仮だけ掃除して名乗る
+      (try
+        (os.unlink staged)
+        (except [OSError] None))
+      (return FS-ENSURE-SYMLINK-OCCUPIED)))
   FS-ENSURE-SYMLINK-LINKED)
 
 (deff _ensure-view-symlink [link target]
