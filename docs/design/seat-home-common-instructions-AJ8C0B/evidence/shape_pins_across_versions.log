@@ -1,0 +1,59 @@
+### 実行: 2026-09-21T07:13:47Z・機体 Proboscis-MBP.local・計画段 c-AJ8C0BK9RF29HQ92ZQ986FXQVT
+### 2.1.265 sha256 164b09eb800dedb9bb06304129fbf07743ab9db972ae07333ef4f18cde0cb8d5
+### 2.1.276 sha256 9de364db11a410d53cbbb0f6b1f18c66c90053efc9a63370072856d10db66329
+### 2.1.278 sha256 bd245662fb8a0e321b3bf133e930371d6563c387527885f30b2613aef3ba14d6
+===== 雛形の逐語(2.1.263)を形が受けるか
+  OK  user-memory-lives-under-the-config-dir
+  OK  user-layer-drops-symlink-and-hardlink
+  OK  the-gate-fires-only-for-local-agent
+  OK  user-skills-live-under-the-config-dir
+  OK  skills-entries-accept-a-symlink
+  OK  md-excludes-applies-to-the-user-layer
+===== ~/.local/share/claude/versions/2.1.265  同定(CLAUDE_CONFIG_DIR)=yes
+  OK  user-memory-lives-under-the-config-dir: 一致 1 件  case"User":return Ke(be(),"CLAUDE.md")
+  OK  user-layer-drops-symlink-and-hardlink: 一致 1 件  if(n==="User"&&!C)try{let V=await ae().lstat(e);if(d===0&&V.isSymbolicLink()||(V.nlink??1)>1&&V.isFile())return[]}catch{}
+  OK  the-gate-fires-only-for-local-agent: 一致 1 件  function Abr(){return xM()!=="local-agent"}
+  OK  user-skills-live-under-the-config-dir: 一致 1 件  let r=Vh(be(),"skills"),o=Vh(Jb(),".claude","skills")
+  OK  skills-entries-accept-a-symlink: 一致 2 件  if(!N.isDirectory()&&!N.isSymbolicLink())return null;
+  OK  md-excludes-applies-to-the-user-layer: 一致 1 件  if(n!=="User"&&n!=="Project"&&n!=="Local")return!1;
+  OK  drop-branch-is-controlled-by-the-gate: C=o&&(n!=="User"||Abr())
+  OK  gate-reader-reads-entrypoint: function xM(){return n().entrypoint}
+  red-OK 弁別 user-memory-lives-under-the-config-dir: "CLAUDE.md" -> "CLAUDE.mx"
+  red-OK 弁別 user-layer-drops-symlink-and-hardlink: nlink??1)>1 -> nlink??1)>2
+  red-OK 弁別 the-gate-fires-only-for-local-agent: "local-agent" -> "local-agenx"
+  red-OK 弁別 user-skills-live-under-the-config-dir: "skills" -> "skillz"
+  red-OK 弁別 skills-entries-accept-a-symlink: .isSymbolicLink() -> .isSymbolicLinx()
+  red-OK 弁別 md-excludes-applies-to-the-user-layer: "Local" -> "Locax"
+  '$' を含む関数名: 1050 / 46194
+===== ~/.local/share/claude/versions/2.1.276  同定(CLAUDE_CONFIG_DIR)=yes
+  OK  user-memory-lives-under-the-config-dir: 一致 1 件  case"User":return He(Ee(),"CLAUDE.md")
+  OK  user-layer-drops-symlink-and-hardlink: 一致 1 件  if(n==="User"&&!M)try{let we=await le().lstat(e);if(g===0&&we.isSymbolicLink()||(we.nlink??1)>1&&we.isFile())return[]}catch{}
+  OK  the-gate-fires-only-for-local-agent: 一致 1 件  function Ztn(){return TU()!=="local-agent"}
+  OK  user-skills-live-under-the-config-dir: 一致 1 件  let r=jp(Ee(),"skills"),s=jp(lA(),".claude","skills")
+  OK  skills-entries-accept-a-symlink: 一致 2 件  if(!U.isDirectory()&&!U.isSymbolicLink())return null;
+  OK  md-excludes-applies-to-the-user-layer: 一致 1 件  if(n!=="User"&&n!=="Project"&&n!=="Local")return!1;
+  OK  drop-branch-is-controlled-by-the-gate: M=s&&(n!=="User"||Ztn())
+  OK  gate-reader-reads-entrypoint: function TU(){return n().entrypoint}
+  red-OK 弁別 user-memory-lives-under-the-config-dir: "CLAUDE.md" -> "CLAUDE.mx"
+  red-OK 弁別 user-layer-drops-symlink-and-hardlink: nlink??1)>1 -> nlink??1)>2
+  red-OK 弁別 the-gate-fires-only-for-local-agent: "local-agent" -> "local-agenx"
+  red-OK 弁別 user-skills-live-under-the-config-dir: "skills" -> "skillz"
+  red-OK 弁別 skills-entries-accept-a-symlink: .isSymbolicLink() -> .isSymbolicLinx()
+  red-OK 弁別 md-excludes-applies-to-the-user-layer: "Local" -> "Locax"
+  '$' を含む関数名: 1142 / 50820
+===== ~/.local/share/claude/versions/2.1.278  同定(CLAUDE_CONFIG_DIR)=yes
+  OK  user-memory-lives-under-the-config-dir: 一致 1 件  case"User":return et(we(),"CLAUDE.md")
+  OK  user-layer-drops-symlink-and-hardlink: 一致 1 件  if(n==="User"&&!O)try{let ve=await le().lstat(e);if(g===0&&ve.isSymbolicLink()||(ve.nlink??1)>1&&ve.isFile())return[]}catch{}
+  OK  the-gate-fires-only-for-local-agent: 一致 1 件  function KRt(){return mB()!=="local-agent"}
+  OK  user-skills-live-under-the-config-dir: 一致 1 件  let r=pc(we(),"skills"),s=pc(nE(),".claude","skills")
+  OK  skills-entries-accept-a-symlink: 一致 2 件  if(!U.isDirectory()&&!U.isSymbolicLink())return null;
+  OK  md-excludes-applies-to-the-user-layer: 一致 1 件  if(n!=="User"&&n!=="Project"&&n!=="Local")return!1;
+  OK  drop-branch-is-controlled-by-the-gate: O=s&&(n!=="User"||KRt())
+  OK  gate-reader-reads-entrypoint: function mB(){return n().entrypoint}
+  red-OK 弁別 user-memory-lives-under-the-config-dir: "CLAUDE.md" -> "CLAUDE.mx"
+  red-OK 弁別 user-layer-drops-symlink-and-hardlink: nlink??1)>1 -> nlink??1)>2
+  red-OK 弁別 the-gate-fires-only-for-local-agent: "local-agent" -> "local-agenx"
+  red-OK 弁別 user-skills-live-under-the-config-dir: "skills" -> "skillz"
+  red-OK 弁別 skills-entries-accept-a-symlink: .isSymbolicLink() -> .isSymbolicLinx()
+  red-OK 弁別 md-excludes-applies-to-the-user-layer: "Local" -> "Locax"
+  '$' を含む関数名: 1118 / 51622

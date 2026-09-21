@@ -1167,6 +1167,26 @@ class FakeRecord:
         self.record_seqs[target] = fresh
         return RecordSuperseded(record_seq=fresh, version=version)
 
+    def rewrite(self, conversation_id: str, stream_id: str, event: JSONObject) -> int:
+        """検の書き口(card acp:kanban-issue:ki-9fc7d4bca4dc): **別の機体が**同じ冊を書いた体にする —
+        保存済みの producerSeq 0 を新しい本文で置き換え、前の版を鎖に残し、版と recordSeq を進める。
+        戻り = 新しい recordSeq。
+
+        ``self.supersedes`` には積まない: あれは「試している agentd が撃った置き換え」の読み口で、
+        他機体の書きを混ぜると検が数を読めなくなる。この口が要るのは、行が手番の**途中**で動く形
+        (規則 2d の衝突)を、private への手入れ無しに作れる唯一の道だから。"""
+        key = (conversation_id, stream_id, 0)
+        stored = self.stored.get(key)
+        if stored is None:
+            raise KeyError(f"no producerSeq 0 event in {conversation_id}/{stream_id}")
+        self.superseded.setdefault(key, []).append(stored)
+        self.stored[key] = dict(event)
+        self.versions[key] = self.versions.get(key, 1) + 1
+        taken = [seq for (cid, _sid, _pseq), seq in self.record_seqs.items() if cid == conversation_id]
+        fresh = (max(taken) if taken else 0) + 1
+        self.record_seqs[key] = fresh
+        return fresh
+
     def _number(self, key: tuple[str, str, int]) -> int:
         """recordSeq を会話ごとに単調に採番する(既に採番済みならその値)。"""
         known = self.record_seqs.get(key)

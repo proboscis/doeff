@@ -1,0 +1,14 @@
+## (1) 現行の全規則 → 違反例
+Ran 18 rules on 1 file: 0 findings.
+## (2) 当初 §6 が足すと宣言した規則(autoMemoryDirectory と同形)→ 違反例
+Ran 1 rule on 0 files: 0 findings.
+## (3) 陰性対照 — 同じ綴りを綴りの家の**外**に置くと (2) は発火するか
+Ran 1 rule on 1 file: 1 finding.
+    packages/doeff-agents/src/doeff_agents/sessionhost/launch.hy
+## (4) 修正 R3a の規則 → 違反例(除外を持たないので綴りの家の中でも発火する)
+Ran 1 rule on 2 files: 1 finding.
+    packages/doeff-agents/src/doeff_agents/sessionhost/impls/claude_code.hy
+          宿の checkout の layout(dotfiles/…)は機体の参加宣言が名指す値で、doeff が                                     
+            5┆ (setv CLAUDE-COMMON-MEMORY-FALLBACKS ["{home}/dotfiles/claude/CLAUDE.md"
+## (5) 陽性対照 — 違反の 2 行を消すと (4) は緑か
+Ran 1 rule on 2 files: 0 findings.
