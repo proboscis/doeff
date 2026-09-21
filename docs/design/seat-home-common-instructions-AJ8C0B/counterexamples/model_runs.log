@@ -1,0 +1,28 @@
+### ⚠ 復元注記(2026-09-21・依頼者 c-3JYBNJMC2RZTM1S8V43939MP42): 元の file は pod の作り直しで失われ、この内容は会話の記録に印字された分だけの部分復元です(元の sha256 は evidence/SHA256SUMS.txt)。
+### 構成: 最終の実行(記録 229・05:47Z)の tail -25 だけ。見出し行(実行時刻・本体の版・sha256)と 1〜3 節の頭は失われています。
+
+ok   A1_moving_the_canon_repoints_the_home_symlink: 狙った理由で拒否 — 張り替わっていない: /tmp/tmp6n_n1avt/home/dotfiles/agent/skills
+
+## 修正前の A-2(tmp が `path + suffix` 固定)
+ok   A2_two_seats_writing_the_shared_home_do_not_break_each_other: 狙った理由で拒否 — 同拍の書きが落ちた: 196 件 FileNotFoundError
+
+## 盲検 B の実装(据え付け層が宿の file layout の戻り先を持つ)
+ok   B_no_declaration_means_the_home_is_untouched…: 狙った理由で拒否 — 宣言が無いのに条文が届いた
+ok   B_the_installer_reads_only_what_the_declaration_named: 狙った理由で拒否 — 宣言が名指していない path を触った: ['/tmp/tmpstkncjgd/home/.claude/CLAUDE.md', '/tmp/tmpstkncjgd/home/.claude/skills', '/tm
+
+ALL OK — 4 件の違反例がすべて狙った理由で拒否された
+rc=0
+
+=== 4. 盲検後に残っていた軸 S2 / S4 / S5(正常例と違反例の両方)— model/test_scenario_checks.py ===
+ok   S2_negative_a_kind_outside_the_roster_is_refused_loudly: 狙った理由で拒否 — [agentd] に宣言に無い鍵: claude_agents_dir
+ok   S2_positive_a_third_carried_kind_is_one_roster_line: 名簿 1 行 + 宣言 1 行で 3 種目が席まで届いた(回る側の 3 関数は不変)
+ok   S4_negative_an_older_agentd_refuses_the_new_declaration: 狙った理由で拒否 — 旧版は参加を断る(黙って条文なしで起きない): [agentd] に宣言に無い鍵: claude_memory_file, claude_skills_dir
+ok   S4_positive_the_needle_derives_the_population: 4 台目を足すだけで針が赤くなり、名乗らせると緑に戻った(列挙していない)
+ok   S5_negative_a_moved_contract_turns_the_instrument_red: 狙った理由で拒否 — 逐語が動いた版は red(欠け=['the-gate-fires-only-for-local-agent'])/ 本体でない file は abstain(3 値が弁別する)
+ok   S5_positive_the_instrument_is_green_on_the_seated_body: green — /usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe
+ALL OK
+rc=0
+
+=== 5. 据わっている本体への計器の単射 — model/check_body_contract.py ===
+green	/usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe	逐語が揃っている
+rc=0
