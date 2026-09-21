@@ -5246,11 +5246,20 @@ rules:
       Claude's skills discovery lands, that seat's user-layer skills are 0. Emit
       the FsEnsureSymlink effect (or call ensure-symlink-outcome) instead; both
       resolve to the one verb, whose atomicity the two real-process tests guard
-      (tests/sessionhost_substrate_deftests.hy A / B).
+      (tests/sessionhost_substrate_deftests.hy A / B). Shelling out to `ln -s`
+      is banned for the same reason and then some: BSD `ln -sfn` is not atomic
+      (measured on Darwin: of 80,733 reads taken during a relink, 4,531 = 5.64%
+      hit ENOENT), so it is the worst physics inside the shape this rule forbids.
+      Note that the substrate file itself is excluded here on a FILE basis, which
+      means "anything goes inside that file". The function-level scope (only
+      ensure-symlink-outcome and FsLinkArtifact may install) is guarded by
+      packages/doeff-agents/tests/test_symlink_install_verb_scope.py, which reads
+      the Hy syntax tree. Both guards are needed; neither replaces the other.
     patterns:
       - pattern-either:
           - pattern-regex: 'os\.symlink\b'
           - pattern-regex: '\.symlink_to\b'
+          - pattern-regex: '\bln\s+-[a-zA-Z]*s'
     paths:
       include:
         - /packages/doeff-agents/src/**

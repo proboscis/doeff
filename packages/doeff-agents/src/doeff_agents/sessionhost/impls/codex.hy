@@ -22,6 +22,7 @@
   DeliverMessage
   ProbeConversationActivity
   RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE
+  RESUME-ERR-TRANSPLANT-REFUSED
   TransplantConversation
   WireResultChannel
   fs-canonical-path
@@ -29,6 +30,8 @@
   fs-file-exists
   fs-file-mtime
   fs-link-artifact
+  FS-SYMLINK-REFUSED
+  FS-SYMLINK-SOURCE-MISSING
   fs-list-dir
   fs-read-text
   fs-write-text-atomic
@@ -420,7 +423,7 @@
                           "be derived (transcript-not-discoverable)")}))
   (setv rel (cut rollout (+ idx (len marker)) None))
   (<- outcome (fs-link-artifact rollout f"{target-root}/{rel}"))
-  (when (= outcome "source-missing")
+  (when (= (. outcome state) FS-SYMLINK-SOURCE-MISSING)
     (return {"ok" False
              "code" RESUME-ERR-TRANSCRIPT-NOT-DISCOVERABLE
              "message" (+ f"session.resume: rollout '{rollout}' does not "
@@ -428,7 +431,17 @@
                           "cross-binding transplant requires the source "
                           "rollout (resume-physics.md probe (c): codex fails "
                           "loud without it)")}))
-  {"ok" True "action" outcome})
+  ;; 2026-09-22: 器が敷設を断った。rollout は在るので transcript-not-discoverable では
+  ;; **ない**(claude 側の必須 artifact と同じ扱い — 理由は detail が運ぶ)。
+  (when (= (. outcome state) FS-SYMLINK-REFUSED)
+    (return {"ok" False
+             "code" RESUME-ERR-TRANSPLANT-REFUSED
+             "message" (+ f"session.resume: rollout '{rollout}' exists but "
+                          f"could not be transplanted into '{target-root}' — "
+                          f"the container refused the install "
+                          f"({(. outcome detail)}) (transplant-refused)")}))
+  ;; wire には state だけを載せる(record は host の中だけ)。
+  {"ok" True "action" (. outcome state)})
 
 
 ;; ---------------------------------------------------------------------------
