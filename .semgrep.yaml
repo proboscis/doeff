@@ -5060,3 +5060,90 @@ rules:
     paths:
       include:
         - "/packages/doeff-agents/src/**"
+  - id: doeff-agents-does-not-spell-the-dotfiles-checkout
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      doeff-agents must not spell a rooted path into the dotfiles checkout
+      (card acp:kanban-issue:ki-62aa1f4e9c9c D10). The common CLAUDE.md and
+      the skills directory are declared per host — `[agentd]
+      .claude_user_instructions_file` / `.claude_skills_dir` in the join
+      declaration (the Macs' cron_management/*.toml and the pool's ACP
+      ConfigMap) — and travel JoinSpec -> DOEFF_AGENTD_* -> the launch tick,
+      which reads them from the env. doeff owns the config home's shape; it
+      does not own where the sources live, and the two Macs and the pod do
+      not agree on it. A rooted literal here (`~/dotfiles/...`,
+      `/home/kento/dotfiles/...`) is a second, undeclared source: a host that
+      never declared the keys would silently get files installed into its
+      seats, and the day the canonical checkout moves the literal keeps
+      pointing at the old place while the declaration says otherwise. The
+      behavioural counterpart is
+      test_launch_claude_without_the_declaration_is_byte_identical (a decoy
+      lays the sources on disk with no declaration; the trace must show the
+      paths were never touched). Relative sub-paths joined to a declared home
+      — VERIFY_SCRIPTS_RELDIR = "dotfiles/cron_management", joined to
+      AgentdSettings.home — are not this defect and do not match: the
+      dangerous shape is the one that reaches the checkout WITHOUT a
+      declaration.
+    pattern-regex: '["''][^"'']*(~/dotfiles|/dotfiles/)'
+    paths:
+      include:
+        - "/packages/doeff-agents/src/**"
+
+  - id: doeff-agents-instruction-source-spelling-has-one-home
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      The things doeff carries into a seat's config home (the common
+      CLAUDE.md and the skills dir) are spelled in exactly one place:
+      policy.CARRIED-INSTRUCTION-SOURCES (card
+      acp:kanban-issue:ki-62aa1f4e9c9c D11). One carried thing is one row —
+      {key, env, kind, home-name, label} — and every consumer WALKS the
+      roster: the join gate's allowed keys (AGENTD-KEYS), the env the plan
+      emits, the launch/headless read at each launch tick, the install in
+      impls/claude_code.hy, and the node row's labels. Re-spelling
+      `DOEFF_AGENTD_CLAUDE_USER_INSTRUCTIONS_FILE` or
+      `DOEFF_AGENTD_CLAUDE_SKILLS_DIR` anywhere else rebuilds the 4-sheet
+      roster that broke identically three times (attachments 2026-09-15, the
+      auto-compact window 2026-09-18, the conversation memory books
+      2026-09-21: 44 rows in ACP, 0 files in the seat's memory home, measured
+      on a pool pod) — adding one field made you touch four sheets and the
+      fourth was always forgotten. Add a row to the roster instead; the
+      chain picks it up with no other edit (pinned by
+      test_join_derives_the_instruction_source_keys_from_the_one_roster).
+    pattern-regex: '(DOEFF_AGENTD_CLAUDE_USER_INSTRUCTIONS_FILE|DOEFF_AGENTD_CLAUDE_SKILLS_DIR)'
+    paths:
+      include:
+        - "/packages/doeff-agents/src/**"
+      exclude:
+        - "**/sessionhost/policy.hy"
+
+  - id: doeff-agents-claude-md-excludes-spelling-has-one-home
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      ADR-DOE-AGENTS-004 R13 / card acp:kanban-issue:ki-62aa1f4e9c9c D6: the
+      `claudeMdExcludes` setting is spelled for the CLI in exactly one place
+      (CLAUDE-SEAT-HOME-EXCLUDES-SETTING in
+      sessionhost/impls/claude_code.hy), the same way
+      `autoMemoryDirectory` is. doeff emits it only because it installs a
+      REAL CLAUDE.md into the config home (the body silently drops a
+      symlinked or hard-linked user-layer CLAUDE.md when the entrypoint is
+      local-agent), and a real file defeats the body's realpath dedup: on a
+      Mac the same 64KB text would then load twice — once as the user layer
+      from the config home, once as the project layer from the ancestor walk
+      into $HOME/.claude/CLAUDE.md. The excluded path is DERIVED from the
+      seat's $HOME at the launch tick, never declared and never spelled
+      twice. A second site that spells the key builds an exclusion nobody
+      declared, and the double read comes back silently.
+    pattern-regex: 'claudeMdExcludes'
+    paths:
+      include:
+        - "/packages/doeff-agents/**"
+      exclude:
+        - "**/sessionhost/impls/claude_code.hy"
+        - "**/tests/sessionhost_launch_deftests.hy"
+        - "**/tests/sessionhost_impls_deftests.hy"
