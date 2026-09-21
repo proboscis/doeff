@@ -24,8 +24,9 @@ import platform
 import sys
 import threading
 import time
-from collections.abc import Callable, Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
+from typing import NamedTuple, TypeAlias
 
 import tomllib
 from doeff_vm import PyVM, WithHandler
@@ -37,43 +38,38 @@ from doeff_agents.sessionhost.acp.agentd import agentd_tick, close_jobs_for_stop
 from doeff_agents.sessionhost.acp.effects import (
     ACP_TOKEN_FILE_ENV,
     ACP_URL_ENV,
-    BORROWER_KEY_PATH_ENV,
-    CLAUDE_SETTINGS_FILE_ENV,
-    CUSTODY_SA_TOKEN_PATH_ENV,
-    DECLARATION_SHA256_ENV,
-    WORK_DIRS_ENV,
-    WORK_DIRS_SCAN_PARENTS,
-    WORK_DIR_ROOTS_ENV,
-    WORK_DIR_ROOT_CANDIDATES,
-    WORK_ROOTS_ENV,
-    WorkDirRoots,
-    WorkDirs,
-    WorkRoots,
-    Places,
-    SeatEnv,
-    CAPACITY_ENV,
-    DRAIN_SECONDS_ENV,
     AGENTD_BUILD_ENV,
     AGENTD_BUILD_LOCAL,
     AGENTD_REVISION_ENV,
     AGENTD_REVISION_UNSTAMPED,
-    PLACES_ENV,
-    SEAT_ENV_ENV,
+    BORROWER_KEY_PATH_ENV,
+    CAPACITY_ENV,
+    CLAUDE_SETTINGS_FILE_ENV,
     CUSTODY_CONTRACT_VERSION,
+    CUSTODY_SA_TOKEN_PATH_ENV,
     CUSTODY_URL_ENV,
+    DECLARATION_SHA256_ENV,
+    DRAIN_SECONDS_ENV,
     HOMES_ROOT_ENV,
-    MEMORY_ROOT_ENV,
     JOIN_RECORD_SPOOL_DIR,
     JOIN_STATE_DIR_DEFAULT,
     LEASE_JOURNAL_FILENAME,
-    SUMMARY_RUNS_RELDIR,
-    VERIFY_RUNS_RELDIR,
+    MEMORY_ROOT_ENV,
     NODE_NAME_ENV,
     OWNERSHIP_ENV,
     OWNERSHIP_GRADES,
     OWNERSHIP_PROOF_ENV,
+    PLACES_ENV,
     RECORD_SPOOL_DIR_ENV,
     RECORD_URL_ENV,
+    SEAT_ENV_ENV,
+    SUMMARY_RUNS_RELDIR,
+    VERIFY_RUNS_RELDIR,
+    WORK_DIR_ROOT_CANDIDATES,
+    WORK_DIR_ROOTS_ENV,
+    WORK_DIRS_ENV,
+    WORK_DIRS_SCAN_PARENTS,
+    WORK_ROOTS_ENV,
     AgentdSettings,
     AgentdState,
     JoinArgv,
@@ -81,7 +77,12 @@ from doeff_agents.sessionhost.acp.effects import (
     JoinPlan,
     JoinSpec,
     Ownership,
+    Places,
+    SeatEnv,
     StreamCapability,
+    WorkDirRoots,
+    WorkDirs,
+    WorkRoots,
 )
 from doeff_agents.sessionhost.acp.handlers import (
     BORROWER_KEY_PATH_DEFAULT,
@@ -97,15 +98,42 @@ from doeff_agents.sessionhost.acp.handlers import (
     session_journal_poll,
     socket_is_listening,
 )
+from doeff_agents.sessionhost.acp.io_types import NodePlaces, Paths, SeatEnvPairs
 from doeff_agents.sessionhost.acp.judgment import stream_capability_of_backend
+from doeff_agents.sessionhost.acp.loop_model import LoopPorts
 from doeff_agents.sessionhost.acp.valve import backend_of, socket_path_override
+from doeff_agents.sessionhost.acp.worker_loop import concurrent_worker
 
 Dispatcher = Callable[[EffectBase, K], "Resume | Pass"]
 
+
+class HomeEntry(NamedTuple):
+    parent: str
+    name: str
+    has_git: bool
+
+
+class HomeRootEntry(NamedTuple):
+    root: str
+    exists: bool
+
+
+HomeEntries: TypeAlias = tuple[HomeEntry, ...]
+HomeRootEntries: TypeAlias = tuple[HomeRootEntry, ...]
+
+
+class DrainOutcome(NamedTuple):
+    remaining: int
+    elapsed_seconds: float
+
+
+class HandlerBundle(NamedTuple):
+    dispatchers: list[Dispatcher]
+    close: Callable[[], None]
+
+
 #: host の socket が出るまで待つ上限と、tick が例外で落ちた時の待ち(有界の backoff)。
 HOST_WAIT_SECONDS = 120.0
-TICK_BACKOFF_SECONDS = 1.0
-TICK_BACKOFF_MAX_SECONDS = 30.0
 #: 停止(段 10 lane 10h 便 2): loop の thread が今の拍を終えるのを待つ上限。launchd の ExitTimeOut(既定 20 s)の
 #: 内側で、host の子 process の片付け(EOF → TERM → KILL の猶予 ≤ 10 s)と合わせて収める。
 STOP_JOIN_SECONDS = 5.0
@@ -256,7 +284,7 @@ def _drain_seconds_of_env(env: Mapping[str, str]) -> int:
     return verdict
 
 
-def _work_roots_of_env(env: Mapping[str, str]) -> tuple[str, ...] | None:
+def _work_roots_of_env(env: Mapping[str, str]) -> Paths | None:
     """node が持つ作業場の根(段 10 lane 10y 案 C)。読みの規則は join.work-roots-of の 1 点(無い = None・形違い = ValueError)。"""
     verdict: object = PyVM().run(join.work_roots_of(env.get(WORK_ROOTS_ENV)))
     if verdict is None:
@@ -266,7 +294,7 @@ def _work_roots_of_env(env: Mapping[str, str]) -> tuple[str, ...] | None:
     return verdict.roots
 
 
-def _work_dirs_of_env(env: Mapping[str, str]) -> tuple[str, ...] | None:
+def _work_dirs_of_env(env: Mapping[str, str]) -> Paths | None:
     """node が持つ作業場(段 12 lane 12j・#575 便 2)。読みの規則は join.work-dirs-of の 1 点(env 無し = None・"" = 空 = 何も持たない・形違い = ValueError)。"""
     verdict: object = PyVM().run(join.work_dirs_of(env.get(WORK_DIRS_ENV)))
     if verdict is None:
@@ -276,10 +304,10 @@ def _work_dirs_of_env(env: Mapping[str, str]) -> tuple[str, ...] | None:
     return verdict.dirs
 
 
-def home_entries(home: str) -> tuple[tuple[str, str, bool], ...]:
+def home_entries(home: str) -> HomeEntries:
     """家の一覧の読み(段 12 lane 12j・#575 便 2 — join の I/O はここ 1 点): ~ の直下と ~/repos の直下(effects.WORK_DIRS_SCAN_PARENTS)
     の dir を #(親, 名, .git の有無) で返す(名の順)。読めない親は無い親(空)。判断(どれを名乗るか)は join.held-work-dirs-of。"""
-    found: list[tuple[str, str, bool]] = []
+    found: list[HomeEntry] = []
     for parent in WORK_DIRS_SCAN_PARENTS:
         base = os.path.join(home, parent) if parent else home
         try:
@@ -289,11 +317,11 @@ def home_entries(home: str) -> tuple[tuple[str, str, bool], ...]:
         for name in names:
             path = os.path.join(base, name)
             if os.path.isdir(path):
-                found.append((parent, name, os.path.exists(os.path.join(path, ".git"))))
+                found.append(HomeEntry(parent, name, os.path.exists(os.path.join(path, ".git"))))
     return tuple(found)
 
 
-def _held_work_dirs(home: str) -> tuple[str, ...]:
+def _held_work_dirs(home: str) -> Paths:
     """家の一覧 → 持つ作業場(判断は join.held-work-dirs-of の 1 点)。"""
     verdict: object = PyVM().run(join.held_work_dirs_of(home_entries(home)))
     if not isinstance(verdict, WorkDirs):
@@ -301,7 +329,7 @@ def _held_work_dirs(home: str) -> tuple[str, ...]:
     return verdict.dirs
 
 
-def _work_dir_roots_of_env(env: Mapping[str, str]) -> tuple[str, ...] | None:
+def _work_dir_roots_of_env(env: Mapping[str, str]) -> Paths | None:
     """node が持つ作業場の根(段 12 lane 12j 追補)。読みの規則は join.work-dir-roots-of の 1 点(env 無し = None・"" = 根なし・形違い = ValueError)。"""
     verdict: object = PyVM().run(join.work_dir_roots_of(env.get(WORK_DIR_ROOTS_ENV)))
     if verdict is None:
@@ -311,19 +339,19 @@ def _work_dir_roots_of_env(env: Mapping[str, str]) -> tuple[str, ...] | None:
     return verdict.roots
 
 
-def home_root_entries(home: str) -> tuple[tuple[str, bool], ...]:
+def home_root_entries(home: str) -> HomeRootEntries:
     """候補の根の**在否**の読み(段 12 lane 12j 追補・card acp:kanban-issue:ki-3bfe48a9d5dc — この軸の I/O はここ 1 点):
     effects.WORK_DIR_ROOT_CANDIDATES の各根を家で展開し、#(根の綴り, その dir が在るか)で返す(宣言の順)。
     根の下は 1 つも列挙しない(会社 Mac の ~/.worktrees/ は 3,105)。判断(どれを名乗るか)は join.held-work-dir-roots-of。"""
-    found: list[tuple[str, bool]] = []
+    found: list[HomeRootEntry] = []
     for root in WORK_DIR_ROOT_CANDIDATES:
         relative = root[2:].rstrip("/")
         path = os.path.join(home, relative) if relative else home
-        found.append((root, os.path.isdir(path)))
+        found.append(HomeRootEntry(root, os.path.isdir(path)))
     return tuple(found)
 
 
-def _held_work_dir_roots(home: str) -> tuple[str, ...]:
+def _held_work_dir_roots(home: str) -> Paths:
     """候補の根の在否 → 持っている根(判断は join.held-work-dir-roots-of の 1 点)。"""
     verdict: object = PyVM().run(join.held_work_dir_roots_of(home_root_entries(home)))
     if not isinstance(verdict, WorkDirRoots):
@@ -339,7 +367,7 @@ def _declaration_sha256_of_env(env: Mapping[str, str]) -> str | None:
     return verdict
 
 
-def _seat_env_of_env(env: Mapping[str, str]) -> tuple[tuple[str, str], ...]:
+def _seat_env_of_env(env: Mapping[str, str]) -> SeatEnvPairs:
     """席へ運ぶ env(段 12・agora-redesign #520)。読みの規則(解釈と参加の門)は join.seat-env-of の 1 点
     — join がこの env へ据えた綴りをそのまま読み直す(第 2 の解釈を作らない)。無い / 空 = ()。"""
     verdict: object = PyVM().run(join.seat_env_of(env.get(SEAT_ENV_ENV)))
@@ -348,7 +376,7 @@ def _seat_env_of_env(env: Mapping[str, str]) -> tuple[tuple[str, str], ...]:
     return verdict.pairs
 
 
-def _places_of_env(env: Mapping[str, str]) -> tuple[str, ...]:
+def _places_of_env(env: Mapping[str, str]) -> NodePlaces:
     """機体が仕える置き場の集合(段 11 lane 11u・agora-redesign #224)。読みの規則は join.places-of の 1 点
     (, 区切り・閉語彙 company | personal・無い / 空 / 重複は ValueError = 参加しない)。"""
     verdict: object = PyVM().run(join.places_of(env.get(PLACES_ENV)))
@@ -485,28 +513,21 @@ def run_loop(
     log: Callable[[str], None],
     holder: StateHolder | None = None,
     drain: threading.Event | None = None,
+    cache_dispatchers: Sequence[Dispatcher] = (),
 ) -> None:
-    """tick を回し続ける。例外は log して有界の backoff で続ける(1 拍の失敗で腕を落とさない)。
-    holder が在れば拍ごとの状態を置く(停止の腕が読む)。drain(段 12 lane 12j・#304 便 2)が立った拍からは
-    settings.draining = True で回す — 新しい claim を止め・node の capacity を 0 に名乗り、走っている手番の終わりまで観測を続ける
-    (判断は judgment.declared-capacity-of / agentd.receive-bound-jobs の 1 点ずつ・この loop は写すだけ)。"""
-    state = initial_state()
-    backoff = TICK_BACKOFF_SECONDS
-    announced = False
-    while not stop.is_set():
-        try:
-            draining = drain is not None and drain.is_set()
-            if draining and not announced:
-                log("agentd: draining — capacity 0 and no new claims; running turns are observed to their end")
-                announced = True
-            state = run_tick(replace(settings, draining=True) if draining else settings, state, dispatchers)
-            if holder is not None:
-                holder.state = state
-            backoff = TICK_BACKOFF_SECONDS
-        except Exception as error:  # loop の縁: 落とさず log して続ける(Exception より下は握らない)
-            log(f"agentd: tick failed: {type(error).__name__}: {error}")
-            stop.wait(backoff)
-            backoff = min(TICK_BACKOFF_MAX_SECONDS, backoff * 2)
+    """同じVMで通常処理と専用操作を実行する。I/O待ちは他の処理を止めない。"""
+
+    def publish(state: AgentdState) -> None:
+        if holder is not None:
+            holder.state = state
+
+    def draining() -> bool:
+        return drain is not None and drain.is_set()
+
+    ports = LoopPorts(stop.is_set, draining, publish, log)
+    PyVM().run(concurrent_worker(
+        settings, initial_state(), tuple(dispatchers), tuple(cache_dispatchers), ports
+    ))
 
 
 def run_heartbeat(settings: AgentdSettings, dispatchers: Sequence[Dispatcher]) -> str:
@@ -566,7 +587,7 @@ def drain_until(
     now: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     poll: float = DRAIN_POLL_SECONDS,
-) -> tuple[int, float]:
+) -> DrainOutcome:
     """排水の待ち(段 12 lane 12j・agora-redesign #304 便 2): 走っている手番の数が 0 になるか、期限(monotonic)に届くまで
     poll ごとに読み直す。戻り = (残った手番の数, 待った秒)。判断はこの 1 点(停止の腕はこれを呼ぶだけ)。"""
     started = now()
@@ -574,7 +595,7 @@ def drain_until(
         left = running()
         current = now()
         if left == 0 or current >= deadline:
-            return left, current - started
+            return DrainOutcome(left, current - started)
         sleep(min(poll, max(0.0, deadline - current)))
 
 
@@ -684,16 +705,16 @@ def _acp_url_of_env(env: Mapping[str, str]) -> str:
     return acp_url
 
 
-def heartbeat_dispatchers(env: Mapping[str, str]) -> tuple[list[Dispatcher], Callable[[], None]]:
+def heartbeat_dispatchers(env: Mapping[str, str]) -> HandlerBundle:
     """lease の heartbeat の thread の handler の列と、その後始末(段 10 lane 10ba): tick の handler とは別の AcpHttp を持つ
     (thread ごとに接続を分け、tick の読みの I/O と待ちを共有しない)。宛先と札は tick と同じ 1 点から読む。"""
     acp = AcpHttp(_acp_url_of_env(env), _acp_token_of_env(env), None, _node_name_of_env(env))
-    return [acp.dispatch, LocalIo().dispatch], acp.close
+    return HandlerBundle([acp.dispatch, LocalIo().dispatch], acp.close)
 
 
 def real_dispatchers(
     env: Mapping[str, str], socket_path: str, wakes: WakeQueue | None = None
-) -> tuple[list[Dispatcher], Callable[[], None]]:
+) -> HandlerBundle:
     """実 I/O の handler の列と、その後始末。``wakes`` = 拍を起こす合図の列(段 12 lane 12b): ACP の watch の frame と
     器の出来事の合図(SessionEventWaker — 起こすのは start_agentd_thread)が同じ列に載る。無ければ watch だけ。"""
     token = _acp_token_of_env(env)
@@ -719,7 +740,7 @@ def real_dispatchers(
         sessions.dispatch,
         local.dispatch,
     ]
-    return dispatchers, acp.close
+    return HandlerBundle(dispatchers, acp.close)
 
 
 def host_socket_path(host_argv: Sequence[str]) -> str:
@@ -778,11 +799,13 @@ def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> Age
     drain = threading.Event()
     holder = StateHolder()
     beat_dispatchers, beat_close = heartbeat_dispatchers(env)
+    cache_dispatchers, cache_close = real_dispatchers(env, socket_path)
 
     def close_all() -> None:
         waker.stop()
         close()
         beat_close()
+        cache_close()
 
     def beat() -> None:
         run_heartbeat_loop(settings, beat_dispatchers, stop, _stderr)
@@ -810,7 +833,7 @@ def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> Age
         waker.start()
         # 後始末(watch の thread を閉じる)は停止の腕 AgentdRun.close_for_stop が最後に行う — loop は stop が
         # 立った時にだけ抜けるので、ここで閉じると停止の腕が器と ACP を読めない。
-        run_loop(settings, dispatchers, stop, _stderr, holder, drain)
+        run_loop(settings, dispatchers, stop, _stderr, holder, drain, cache_dispatchers)
 
     thread = threading.Thread(target=body, name="sessionhost-agentd", daemon=True)
     thread.start()
@@ -910,8 +933,6 @@ def join_plan(argv: Sequence[str], env: Mapping[str, str]) -> JoinPlan:
     return plan
 
 
-def apply_join_env(plan: JoinPlan, environ: MutableMapping[str, str]) -> None:
-    """導いた env の束を process の env に据える(host.hy と agentd の読み手は今日どおり env を読む
-    — 座は join-plan-of の 1 点で、読み手は増やさない)。"""
-    for name, value in plan.env:
-        environ[name] = value
+def apply_join_env(plan: JoinPlan, apply: Callable[[Mapping[str, str]], None]) -> None:
+    """起動環境の適用先はentryが選ぶ。渡された環境を暗黙に変更しない。"""
+    apply(dict(plan.env))

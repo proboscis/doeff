@@ -5,6 +5,12 @@ from dataclasses import dataclass
 from doeff import EffectBase
 from doeff_agents.sessionhost.acp.cache_operation import CacheReply, MaintenanceState
 
+CACHE_MAINTENANCE_ACTIVE = "cache-maintenance-active"
+
+
+class CacheMaintenanceActiveError(RuntimeError):
+    """専用操作が同じ会話を使用中。通常入力は未送信なので後で再試行できる。"""
+
 
 @dataclass(frozen=True)
 class HostCacheRecord:
@@ -72,4 +78,3 @@ def decode_cache_receipt(value: object) -> HostCacheRecord:
         None if started is None else _integer(started), reply,
         None if reason is None else _text(reason),
     )
-

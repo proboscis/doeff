@@ -4,7 +4,7 @@
 (import hashlib)
 (import json)
 (import datetime [datetime timezone])
-(import .cache_host_model [HostCacheRecord HostCacheRead HostCacheWrite HostCacheActive])
+(import .cache_host_model [HostCacheRecord HostCacheRead HostCacheWrite HostCacheActive CacheMaintenanceActiveError])
 (import .acp.cache_operation [MaintenanceState CacheReply PING-TEXT])
 (import .acp.cache_observation [cache-observation-of])
 (import .effects [clock-now fs-read-text headless-has-session headless-spawn
@@ -127,7 +127,7 @@
   (when active
     (<- checked HostCacheRecord (cache-host-probe active))
     (when (in checked.state #(MaintenanceState.REQUESTED MaintenanceState.RUNNING))
-      (raise (RuntimeError "cache-maintenance-active: retry after dedicated operation"))))
+      (raise (CacheMaintenanceActiveError "cache-maintenance-active: retry after dedicated operation"))))
   None)
 
 (defk cache-host-cancel [session-id]
