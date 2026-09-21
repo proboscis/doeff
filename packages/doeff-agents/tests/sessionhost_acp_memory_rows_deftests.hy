@@ -25,6 +25,7 @@
 (import json)
 (import dataclasses [replace])
 (import doeff [run])
+(import doeff_vm [PyVM])
 (import doeff_agents.sessionhost.acp.effects [
   AGENT-JOB-KIND
   AGENT-JOB-NAMESPACE
@@ -37,6 +38,7 @@
   MEMORY-BASE-FILE
   MEMORY-INDEX-FILE
   MEMORY-KIND
+  MEMORY-SPEC-BYTES-KEY
   MEMORY-SPEC-RECORD-SEQ-KEY
   MEMORY-SPEC-SHA256-KEY
   MEMORY-SPEC-VERSION-KEY
@@ -51,7 +53,11 @@
   MemoryMalformed
   MemorySupersede
   MemoryUnbased
-  MemoryUnchanged])
+  MemoryUnchanged
+  RecordEvent
+  RecordSupersede
+  RecordSupersedeConflicted])
+(import doeff_agents.sessionhost.acp.effects [Conflict])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeRecord FakeSessions])
 (import doeff_agents.sessionhost.acp.judgment [
   memory-baseline-of-row
@@ -61,13 +67,16 @@
   memory-book-of
   memory-files-of
   memory-index-of
+  memory-baseline-of-handed-copy
+  memory-row-realignment-of
   memory-row-retired?
   memory-rows-by-name
   memory-sha256-of
+  memory-sha256-of-text
   memory-spec-of
   memory-stream-id-of
   memory-write-verdict])
-(import doeff_agents.sessionhost.acp.runtime [initial-state run-tick])
+(import doeff_agents.sessionhost.acp.runtime [initial-state install run-tick])
 
 
 (setv NODE "CA-20038667")
@@ -180,13 +189,37 @@
     (.append self.pending #("elsewhere" name text))
     None)
 
+  (defn #^ None lag-the-row-mid-turn [self #^ str name #^ str text]
+    "別の機体が同じ冊を**この手番の中**で書き、その行の書きだけが着かなかった体(行の Conflict・落ち)。"
+    (.append self.pending #("lagged" name text))
+    None)
+
   (defn #^ None apply-pending [self]
     (for [#(verb name text) self.pending]
       (cond (= verb "put") (setv (get self.local.files f"{HOME}/{name}") text)
             (= verb "drop") (.pop self.local.files f"{HOME}/{name}" None)
-            True (.elsewhere self name text)))
+            (= verb "elsewhere") (.elsewhere self name text)
+            (= verb "lagged") (.lag-the-row self name text)
+            True (raise (AssertionError f"unknown pending verb {verb}"))))
     (setv self.pending [])
     None)
+
+  (defn #^ None lag-the-row [self #^ str name #^ str text]
+    "**別の機体が書いたのに行が動かなかった**体(行の書きの Conflict・取りこぼし・落ち)= 行が記録の頭の
+     **遅れる投影**になった形。記録の stream の今の版だけを置き換え、行の claim check には 1 字も触らない。
+     ⇒ 行が名指す recordSeq はここで**死ぬ**(その番号への supersede は記録の service が 409 で断る)。"
+    (setv body (run (memory-body-of text (+ self.local.now-ms 5))))
+    (setv stream-id (run (memory-stream-id-of name)))
+    (.rewrite self.record CID stream-id body)
+    None)
+
+  (defn #^ dict row-spec [self #^ str name]
+    (. (get self.acp.rows f"{AGORA-KINDS-NAMESPACE}:{MEMORY-KIND}:mem-{CID}-{name}") spec))
+
+  (defn #^ dict head-event [self #^ str name]
+    "記録の stream の頭(producerSeq 0)の今の姿 — 行が指すべき claim check の正本。"
+    (setv events (.events-of self.record CID (run (memory-stream-id-of name))))
+    (get events 0))
 
   (defn #^ None elsewhere [self #^ str name #^ str text]
     "**別の機体**が同じ冊を手番の途中で書いた体: 記録の stream の今の版を置き換え、行の claim check を
@@ -354,15 +387,19 @@
   (assert (= two-c.version 2) two-c)
   (assert (= two-c.base-seq 7) two-c)
   (assert (not two-c.conflicted) #("動いていない行を衝突と名乗った" two-c))
-  ;; 規則 2d: 席も編集し、行も手番の**間に**動いた → 断らず行の**今の**版へ重ね、衝突を名乗る。
+  ;; 規則 2d: 席も編集し、行も基準と割れている(遅れているか、手番の**間に**先へ動いたか)。
+  ;; ⚠ 2026-09-21 の法の改訂(ACP L1802・3f70): 撃ち先は **基準**(手元の写しが降りてきた版)で、
+  ;;    行の recordSeq ではない。行を撃つと、行が遅れている拍に死んだ版を撃って 409 で永久に詰まる。
+  ;;    行が先へ動いていた拍もここへ来るが、その 409 は『頭が動いた』の合図なので呼び手が読み直して重ねる。
   (<- two-d (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased)
       (memory-write-verdict (memory-row "a" moved 9 3) home
                             (MemoryBaseline :name "a" :record-seq 7 :sha256 base :version 2)))
   (assert (isinstance two-d MemorySupersede) two-d)
-  (assert (= two-d.record-seq 9) #("行の今の recordSeq へ重ねる" two-d))
-  (assert (= two-d.version 3) two-d)
+  (assert (= two-d.record-seq 7) #("行の recordSeq を撃ち先にしている(法 575b1e 3f70 の反例)" two-d))
+  (assert (= two-d.version 2) two-d)
   (assert (= two-d.base-seq 7) #("基準が指していた recordSeq を名乗る" two-d))
-  (assert two-d.conflicted #("行が動いたのに衝突を名乗らない" two-d))
+  (assert (= two-d.row-seq 9) #("行の今の値を名乗らない — log が『どこから どこへ』を書けない" two-d))
+  (assert two-d.conflicted #("行が基準と割れているのに名乗らない" two-d))
   ;; 規則 3a: 基準も行も無い = この会話で初めての冊 → append。
   (<- three-a (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased)
       (memory-write-verdict None home None))
@@ -638,7 +675,10 @@
   (assert (= (get folded "written") 1) folded)
   (assert (= (get folded "conflicted") 1) folded)
   (assert (= (get folded "unbased") 0) folded)
-  (assert (= (len world.record.supersedes) 1) world.record.supersedes)
+  ;; ⚠ 2026-09-21 の法の改訂(3f70)で**撃ち先が基準**になったので、行が手番の間に先へ動いた拍は
+  ;;    2 度撃つ: 1 度目 = 手渡した版(もう置き換えられている ⇒ 409)・2 度目 = 読み直した頭。
+  ;;    旧い形(行を撃って 1 度で着く)は、行が**遅れている**拍に死んだ版を撃って永久に詰まる側だった。
+  (assert (= (len world.record.supersedes) 2) world.record.supersedes)
   ;; 行は席の版を指す。
   (setv events (.events-of world.record CID (run (memory-stream-id-of "a-fact"))))
   (assert (in "席がこの手番で書いた本文" (get (get events 0) "text")) events)
@@ -846,3 +886,253 @@
   (assert (= world.record.supersedes []) "触っていない古い写しで行を巻き戻している")
   (setv events (.events-of world.record CID (run (memory-stream-id-of "mail-hold-has-two-exits"))))
   (assert (in "別の機体が書いた濃い本文" (get (get events 0) "text")) #("濃い版が薄い版に巻き戻された" events)))
+
+
+(deftest test-the-write-verdict-aims-at-the-version-the-copy-came-from-not-the-row
+  ;; 法 575b1e `R-the-second-write-supersedes-the-named-version-3f70`(2026-09-21 改訂・ACP L1802):
+  ;; 撃ち先は **その置き場の写しが降りてきた版**(手番の頭に手渡した記録の event の recordSeq = 基準)で、
+  ;; **行の recordSeq ではない**。行は記録の頭の遅れる投影なので、遅れている拍に行の番号を撃つと
+  ;; 既に置き換えられた版を撃ち、記録の service は 409 を返す ⇒ その冊はどの機体のどの手番からも
+  ;; 二度と書けない(毎手番 同じ死んだ版を撃ち直す)。実測 2026-09-21: 艦隊の 1,149 冊中 13 冊。
+  ;; ⚠ この針は**系でただ 1 つの機械の守り**: ACP 側の needle は契約 JSON しか読めず、撃ち先は
+  ;;    書き手(この repo)の振る舞いなので留められない(法の :enforcement が穴を逐語で申告している)。
+  (setv baseline (MemoryBaseline :name "a-fact" :record-seq 756 :sha256 "head-sha" :version 3))
+  ;; 行が頭より**遅れている**(実弾の形 — 記録への置き換えは着いたのに続く行の書きが着かなかった拍)。
+  (<- lagging (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased)
+      (memory-write-verdict (memory-row "a-fact" "row-sha" 641 2) "the-seat-wrote" baseline))
+  (assert (isinstance lagging MemorySupersede) lagging)
+  (assert (= lagging.record-seq 756) #("行の死んだ recordSeq を撃っている(409 で永久に詰まる)" lagging))
+  (assert (= lagging.version 3) lagging)
+  (assert (= lagging.base-seq 756) lagging)
+  (assert lagging.conflicted #("行が基準と違う拍を名乗っていない" lagging))
+  ;; 行が手番の**間に**先へ動いた形でも撃ち先は基準のまま(409 は『頭が動いた』の合図で、
+  ;; 呼び手が頭を読み直して重ねる — 行を第 2 の頭として読まない)。
+  (<- ahead (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased)
+      (memory-write-verdict (memory-row "a-fact" "row-sha" 900 4) "the-seat-wrote" baseline))
+  (assert (isinstance ahead MemorySupersede) ahead)
+  (assert (= ahead.record-seq 756) #("行の今の recordSeq を撃っている" ahead))
+  (assert ahead.conflicted ahead)
+  ;; 行と基準が揃っている平時は今までどおり(衝突を名乗らない)。
+  (<- aligned (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased)
+      (memory-write-verdict (memory-row "a-fact" "row-sha" 756 3) "the-seat-wrote" baseline))
+  (assert (isinstance aligned MemorySupersede) aligned)
+  (assert (= aligned.record-seq 756) aligned)
+  (assert (not aligned.conflicted) aligned))
+
+
+(deftest test-the-baseline-is-the-claim-check-of-the-copy-the-turn-handed
+  ;; 基準 = 「手番の頭に手渡した写しの claim check」。**行から写さない** — 行は頭の遅れる投影なので、
+  ;; 遅れている拍に行の sha を基準に据えると、席が 1 字も触っていない冊が『編集された』に見え、
+  ;; 死んだ版を撃って 409 で永久に詰まる(実弾の 4 拍の 2 拍目)。⇒ この関数は**行を引数に取らない**。
+  (setv head (RecordEvent :record-seq 756 :stream-id "mem-a-fact" :stream-kind RECORD-STREAM-MEMORY
+                          :producer-seq 0 :at NOW :kind "memory" :bytes 5962 :sha256 "head-sha"
+                          :version 3 :text "頭の本文。"))
+  (<- based MemoryBaseline (memory-baseline-of-handed-copy "a-fact" "頭の本文。" head))
+  (assert (= based.name "a-fact") based)
+  ;; recordSeq / version = その本文が降りてきた版。
+  (assert (= based.record-seq 756) based)
+  (assert (= based.version 3) based)
+  ;; sha256 = **置き場へ書いた本文そのもの**の digest(同一性の式は memory-material-of の 1 点)。
+  (assert (= based.sha256 (run (memory-sha256-of-text "頭の本文。"))) based)
+  (assert (= based.sha256 (run (memory-sha256-of (run (memory-body-of "頭の本文。" 0))))) based)
+  ;; ⚠ 行の sha を写していたら、この値は event の見出しの sha("head-sha")になる。
+  (assert (!= based.sha256 "head-sha") #("記録の見出しの sha を写している(手渡した本文の digest ではない)" based)))
+
+
+(deftest test-the-realignment-moves-only-the-claim-check-of-a-row-that-lags-the-head
+  ;; 法 575b1e `R-the-row-is-a-lagging-projection-realigned-at-hydration-8d81`(新設): 直しは
+  ;; 経路ごとの後始末ではなく**水入れの拍の寄せ 1 点**。動かすのは行の claim check ちょうどで、
+  ;; 身元と索引の材料(type / description / links / recordRef)は 1 字も触らない。
+  (setv row (memory-row "a-fact" "old-sha" 641 2))
+  (setv spec (dict row.spec))
+  (setv (get spec "type") "project")
+  (setv (get spec "description") "要旨")
+  (setv (get spec "recordRef") f"{CID}/mem-{CID}-a-fact")
+  (setv (get spec MEMORY-SPEC-BYTES-KEY) 3649)
+  (setv row (replace row :spec spec))
+  (setv head (RecordEvent :record-seq 756 :stream-id "mem-a-fact" :stream-kind RECORD-STREAM-MEMORY
+                          :producer-seq 0 :at NOW :kind "memory" :bytes 5962 :sha256 "head-sha"
+                          :version 3 :text "頭の本文。"))
+  (<- moved (| dict None) (memory-row-realignment-of row head))
+  (assert (is-not moved None) "頭より遅れた行を寄せていない")
+  (assert (= (get moved MEMORY-SPEC-RECORD-SEQ-KEY) 756) moved)
+  (assert (= (get moved MEMORY-SPEC-SHA256-KEY) "head-sha") moved)
+  (assert (= (get moved MEMORY-SPEC-VERSION-KEY) 3) moved)
+  (assert (= (get moved MEMORY-SPEC-BYTES-KEY) 5962) moved)
+  (for [field ["conversationId" "name" "type" "description" "recordRef"]]
+    (assert (= (get moved field) (get row.spec field)) #("寄せが claim check の外を動かした" field moved)))
+  ;; 揃っている行には 1 bit も書かない(毎手番 同じ書きを撃たない — 寄せは端の状態を観測する)。
+  (setv aligned-spec (dict row.spec))
+  (setv (get aligned-spec MEMORY-SPEC-RECORD-SEQ-KEY) 756)
+  (setv (get aligned-spec MEMORY-SPEC-SHA256-KEY) "head-sha")
+  (setv (get aligned-spec MEMORY-SPEC-VERSION-KEY) 3)
+  (setv (get aligned-spec MEMORY-SPEC-BYTES-KEY) 5962)
+  (<- still (| dict None) (memory-row-realignment-of (replace row :spec aligned-spec) head))
+  (assert (is still None) #("揃っている行を毎手番 書き直している" still))
+  ;; 退役した行は触らない(蘇らせない)。
+  (<- retired (| dict None)
+      (memory-row-realignment-of (replace row :status {"state" "retired"}) head))
+  (assert (is retired None) #("退役した行を寄せて蘇らせた" retired)))
+
+
+(deftest test-a-row-that-lags-the-record-head-is-realigned-at-hydration
+  ;; 実弾 2026-09-21(艦隊 1,149 冊中 13 冊・8 会話): 記録への置き換えは着いたのに続く行の書きが
+  ;; 着かず、行だけが古い版を名指したまま残った。以後その冊は毎手番 死んだ版を撃って落ち、席の
+  ;; 本物の編集は毎回 黙って捨てられる。⇒ 寄せが無ければ**自力で治る道がどこにも無い**。
+  (setv world (MemoryWorld))
+  (.put-file world "a-fact.md" (book-text "a-fact" "要旨" "1 手番目の本文。"))
+  (.turn world)
+  (setv before (get (.row-spec world "a-fact") MEMORY-SPEC-RECORD-SEQ-KEY))
+  ;; 行が動かないまま記録の頭だけが進む(= 行が遅れた投影になり、行の名指す版はここで死ぬ)。
+  (.lag-the-row world "a-fact" (book-text "a-fact" "要旨" "別の機体が書いた濃い本文。"))
+  (assert (= (get (.row-spec world "a-fact") MEMORY-SPEC-RECORD-SEQ-KEY) before) "検体が作れていない")
+  (.turn world)
+  (setv spec (.row-spec world "a-fact"))
+  (assert (> (get spec MEMORY-SPEC-RECORD-SEQ-KEY) before) #("遅れた行が寄せられていない" spec))
+  (setv stream-id (run (memory-stream-id-of "a-fact")))
+  (assert (= (get spec MEMORY-SPEC-SHA256-KEY) (.sha256-of world.record CID stream-id 0)) spec)
+  (setv hydrated (get (.metric-lines world "agent-memory-hydrated") -1))
+  (assert (= (get hydrated "realigned") 1) #("寄せた数を名乗っていない" hydrated))
+  ;; ⚠ 痩せの退行針: 席は 1 字も触っていないので 1 bit も撃たない(寄せは書き戻しの代わりではない)。
+  (assert (= world.record.supersedes []) "寄せた拍に触っていない写しで本文を撃っている")
+  (setv folded (get (.metric-lines world "agent-memory-folded") -1))
+  (assert (= (get folded "written") 0) folded)
+  (assert (in "別の機体が書いた濃い本文" (get (.head-event world "a-fact") "text"))
+          #("濃い版が古い写しで巻き戻された" (.head-event world "a-fact")))
+  ;; 詰まりは解けている: 次の手番の**本物の編集**が書ける。
+  (.put-file world "a-fact.md" (book-text "a-fact" "要旨" "詰まりが解けた後に席が書いた本文。"))
+  (.turn world)
+  (assert (in "詰まりが解けた後に席が書いた本文" (get (.head-event world "a-fact") "text"))
+          #("寄せた後も席の編集が捨てられている" (.head-event world "a-fact"))))
+
+
+(deftest test-the-realign-leaves-a-book-it-cannot-read-alone
+  ;; 寄せの制約: 頭が読めない冊は触らない(半端な claim check を発明しない)。読めなかった数は
+  ;; 今日どおり unreadable で名乗る。
+  (setv world (MemoryWorld))
+  (.put-file world "a-fact.md" (book-text "a-fact" "要旨" "1 手番目の本文。"))
+  (.turn world)
+  ;; recordRef を持たない行(本文の在り処を名乗れない)= 頭が読めない冊。
+  (setv broken (row-of AGORA-KINDS-NAMESPACE MEMORY-KIND f"mem-{CID}-no-ref"
+                       {"conversationId" CID "name" "no-ref" "type" "project" "description" "要旨"
+                        MEMORY-SPEC-RECORD-SEQ-KEY 1 MEMORY-SPEC-SHA256-KEY "sha" MEMORY-SPEC-VERSION-KEY 1}
+                       {"state" "current"}))
+  (.put-row world.acp broken)
+  (.turn world)
+  (assert (= (. (get world.acp.rows broken.key) spec) broken.spec) "読めない冊の行を書き換えた")
+  (setv hydrated (get (.metric-lines world "agent-memory-hydrated") -1))
+  (assert (= (get hydrated "unreadable") 1) hydrated)
+  (assert (= (get hydrated "realigned") 0) hydrated))
+
+
+(deftest test-a-record-version-that-is-already-superseded-is-refused-as-a-conflict
+  ;; ⚠ c-3TFD の実弾の逐語(本番の記録の service):
+  ;;     POST /v1/conversations/<cid>/events/641/supersede
+  ;;     → 409 {"error":"sha256-conflict","reason":"event 641 is already-superseded"}
+  ;; fake が 404「no event 641」を返していると、**検は緑・本番は詰まったまま**になる(409 は
+  ;; 『頭が動いた』の合図で、呼び手はそれを見て頭を読み直す — 404 では立ち直れない)。
+  (setv record (FakeRecord))
+  (setv stream-id (run (memory-stream-id-of "a-fact")))
+  (setv (get record.stored #(CID stream-id 0)) (run (memory-body-of "1 版目の本文。" NOW)))
+  (setv (get record.record-seqs #(CID stream-id 0)) 641)
+  ;; 別の機体が置き換えた ⇒ 641 は死ぬ(頭は新しい番号)。
+  (setv head (.rewrite record CID stream-id (run (memory-body-of "2 版目の本文。" NOW))))
+  (assert (> head 641) head)
+  (setv answer (.run (PyVM)
+                     (install (RecordSupersede :conversation-id CID :record-seq 641
+                                               :reason "test" :event (run (memory-body-of "3 版目。" NOW)))
+                              [record.dispatch])))
+  (assert (isinstance answer RecordSupersedeConflicted)
+          #("死んだ版への置き換えを『届かなかった』として返している(本番は 409)" answer)))
+
+
+(deftest test-a-supersede-that-lands-on-a-dead-version-is-layered-on-the-head-instead
+  ;; append 側には既に在る立ち直り(409 =『行が消えて stream が残っている』→ 読み直して置き換えへ落ちる)の
+  ;; **対称形**: 置き換えの 409 は『頭が動いた』の合図なので、頭を読み直して席の編集を重ねる。
+  ;; これが無いと、手番の途中で頭が動いた拍の編集が黙って捨てられる。
+  (setv world (MemoryWorld))
+  (.put-file world "a-fact.md" (book-text "a-fact" "要旨" "1 手番目の本文。"))
+  (.turn world)
+  ;; 手番の**途中**で別の機体が書き、その行の書きだけが着かなかった ⇒ 手渡した版(基準)が死ぬ。
+  (.lag-the-row-mid-turn world "a-fact" (book-text "a-fact" "要旨" "別の機体が手番の途中で書いた本文。"))
+  (.put-file world "a-fact.md" (book-text "a-fact" "要旨" "席がこの手番で書いた本文。"))
+  (.turn world)
+  (setv folded (get (.metric-lines world "agent-memory-folded") -1))
+  (assert (= (get folded "written") 1) #("頭が動いた拍で席の編集が捨てられた" folded))
+  (assert (= (get folded "conflicted") 1) #("重ねた拍を名乗っていない" folded))
+  ;; 1 度目 = 死んだ版・2 度目 = 読み直した頭(撃ち直しは 1 度きり)。
+  (assert (= (len world.record.supersedes) 2) world.record.supersedes)
+  (assert (in "席がこの手番で書いた本文" (get (.head-event world "a-fact") "text")) (.head-event world "a-fact"))
+  ;; どの版も消えない(鎖に残る)。
+  (setv chain (get (list (.values world.record.superseded)) 0))
+  (assert (= (len chain) 2) chain)
+  (assert (in "1 手番目の本文" (get (get chain 0) "text")) chain)
+  (assert (in "別の機体が手番の途中で書いた本文" (get (get chain 1) "text")) chain)
+  (setv named (lfor line world.local.logs :if (in "was already superseded" line) line))
+  (assert (= (len named) 1) world.local.logs)
+  (assert (in "handed recordSeq" (get named 0)) named)
+  (assert (in "head" (get named 0)) named))
+
+
+(deftest test-a-row-write-that-conflicts-is-not-named-as-written
+  ;; 行の書きの Conflict を素通りさせると、記録の頭だけが進んで行は古い claim check のまま残り、
+  ;; しかも戻りは『書けた』を名乗る ⇒ 計器 written が嘘をつき、ずれは誰にも見えないまま次の手番の
+  ;; 判定の材料になる(実弾の 4 拍の 1 拍目・この 13 冊を生んだ側)。
+  (setv world (MemoryWorld))
+  (.put-file world "a-fact.md" (book-text "a-fact" "要旨" "1 手番目の本文。"))
+  (.turn world)
+  (setv key f"{AGORA-KINDS-NAMESPACE}:{MEMORY-KIND}:mem-{CID}-a-fact")
+  (setv before (get world.local.files f"{HOME}/{MEMORY-BASE-FILE}"))
+  ;; 行の書きが 2 度とも世代の競合で落ちる(読み直して撃ち直しても着かない形)。
+  (setv (get world.acp.spec-refusals key) [(Conflict 9) (Conflict 9)])
+  (.put-file world "a-fact.md" (book-text "a-fact" "要旨" "2 手番目に席が書いた本文。"))
+  (.turn world)
+  (setv folded (get (.metric-lines world "agent-memory-folded") -1))
+  (assert (= (get folded "written") 0) #("行が動いていないのに『書けた』と名乗った" folded))
+  (assert (in CONDITION-MEMORY-UNWRITABLE (lfor c (.job-conditions world) (.get c "type")))
+          #("行が着かなかったことを名乗っていない" (.job-conditions world)))
+  ;; 基準は進めない(進めると次の手番が『席は触っていない』と読んで、次の編集を捨てる)。
+  (assert (= (get world.local.files f"{HOME}/{MEMORY-BASE-FILE}") before)
+          #("行が着かなかった冊の基準を進めた" (get world.local.files f"{HOME}/{MEMORY-BASE-FILE}") before))
+  ;; 1 度きりの競合は読み直して撃ち直す(別の機体が同じ拍に status を書いた形 — 捨てる理由がない)。
+  (setv second (MemoryWorld))
+  (.put-file second "a-fact.md" (book-text "a-fact" "要旨" "1 手番目の本文。"))
+  (.turn second)
+  (setv (get second.acp.spec-refusals key) [(Conflict 9)])
+  (.put-file second "a-fact.md" (book-text "a-fact" "要旨" "2 手番目に席が書いた本文。"))
+  (.turn second)
+  (setv folded-2 (get (.metric-lines second "agent-memory-folded") -1))
+  (assert (= (get folded-2 "written") 1) #("1 度の競合で諦めている" folded-2))
+  (assert (= (get (.row-spec second "a-fact") MEMORY-SPEC-SHA256-KEY)
+             (.sha256-of second.record CID (run (memory-stream-id-of "a-fact")) 0))
+          "撃ち直した行が頭を指していない"))
+
+
+(deftest test-a-row-that-could-not-be-realigned-still-writes-nothing-for-an-untouched-book
+  ;; ⚠ **順序の針**(依頼書 §4 の一括出荷の肝): 寄せ(8d81)と 409 の立ち直り(3f70)だけを入れて
+  ;; 基準を**行から**採ったままにすると、寄せが着かなかった拍に壊れ方が戻る —
+  ;;     基準 = 行の古い sha ≠ 手元(頭の本文)⇒ 席が 1 字も触っていない冊が『編集された』に化け、
+  ;;     死んだ版を撃ち、409 の立ち直りが**触っていない写しで頭に重ねる**。
+  ;; これが実弾(mail-hold-has-two-exits v2 6,503 → v3 4,620 byte)の形そのもの。基準を手渡した写しから
+  ;; 採っていれば規則 2a で 1 bit も撃たない。⇒ 寄せが着く拍は規則 1 が同じ守りをするので、この針は
+  ;; **寄せの書きがわざと着かない拍**で撃つ(基準の出所だけを残して測る)。
+  (setv world (MemoryWorld))
+  (.put-file world "mail-hold-has-two-exits.md"
+             (book-text "mail-hold-has-two-exits" "郵便の保留には出口が 2 つ" "1 手番目に席が書いた薄い本文。"))
+  (.turn world)
+  (.lag-the-row world "mail-hold-has-two-exits"
+                (book-text "mail-hold-has-two-exits" "郵便の保留には出口が 2 つ"
+                           "別の機体が書いた濃い本文(出口は解放と期限切れの 2 つ)。"))
+  ;; 寄せの書きが着かない(別の機体が同じ拍に行を書いた形)。
+  (setv (get world.acp.spec-refusals f"{AGORA-KINDS-NAMESPACE}:{MEMORY-KIND}:mem-{CID}-mail-hold-has-two-exits")
+        [(Conflict 9)])
+  (.turn world)
+  (setv hydrated (get (.metric-lines world "agent-memory-hydrated") -1))
+  (assert (= (get hydrated "realigned") 0) #("寄せが着いてしまい、基準の出所を測れていない" hydrated))
+  ;; 席は 1 字も触っていない ⇒ 1 bit も撃たない。
+  (assert (= world.record.supersedes []) "触っていない写しで頭に重ねた(基準を行から採っている)")
+  (setv folded (get (.metric-lines world "agent-memory-folded") -1))
+  (assert (= (get folded "written") 0) folded)
+  (assert (= (get folded "unchanged") 1) folded)
+  (assert (in "別の機体が書いた濃い本文" (get (.head-event world "mail-hold-has-two-exits") "text"))
+          (.head-event world "mail-hold-has-two-exits")))

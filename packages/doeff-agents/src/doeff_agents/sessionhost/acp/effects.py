@@ -1915,16 +1915,22 @@ class MemoryAppend:
 
 @dataclass(frozen=True)
 class MemorySupersede:
-    """行が在る — その recordSeq へ supersede(producerSeq は 0 のまま)。前の版は鎖として残る。
+    """行が在る — **手元の写しが降りてきた版**(基準の recordSeq)へ supersede(producerSeq は 0 のまま)。
+    前の版は鎖として残る。
 
-    ``base_seq`` / ``conflicted`` = 基準が指していた recordSeq と、それが行の今の値と割れていたか
-    (= 手番の**間に**別の機体が同じ冊を書いた)。衝突でも断らない — 席の編集を捨てず、行の今の版へ
-    重ねて名乗る(両方の版が鎖に残る)。"""
+    ⚠ 撃ち先は基準であって**行の recordSeq ではない**(法 575b1e
+    R-the-second-write-supersedes-the-named-version-3f70・2026-09-21 改訂): 行は記録の頭の遅れる投影で、
+    遅れている拍に行の番号を撃つと既に置き換えられた版を撃ち、409 でその冊は永久に書けなくなる。
+
+    ``base_seq`` / ``row_seq`` / ``conflicted`` = 撃ち先(= 基準)と行の今の値、そしてそれが割れていたか。
+    割れる形は 2 つ — 行が遅れている(投影が古い)/ 行が先へ動いた(手番の**間に**別の機体が書いた)。
+    どちらでも断らない: 席の編集を捨てず、重ねて名乗る(両方の版が鎖に残る)。"""
 
     name: str
     record_seq: int
     version: int
     base_seq: int | None = None
+    row_seq: int | None = None
     conflicted: bool = False
 
 
@@ -2383,8 +2389,20 @@ class RecordSuperseded:
     version: int
 
 
-#: 置き換えの結末(送れなさは追記と同じ RecordUnsent で値として返す — 409 は「もう置き換えられている」)。
-RecordSupersedeOutcome: TypeAlias = "RecordSuperseded | RecordUnsent"
+@dataclass(frozen=True)
+class RecordSupersedeConflicted:
+    """409(sha256-conflict / already-superseded)— 名指した版はもう置き換えられている = **記録の頭が動いた**合図。
+
+    送れなさ(RecordUnsent)と**同じ語にしない**のは、この 409 だけが立ち直れるから: 頭を読み直して
+    そこへ重ねれば席の編集は生き残る(法 575b1e R-the-second-write-supersedes-the-named-version-3f70)。
+    追記の 409 を RecordConflicted に割っているのと同じ理由で、置き換えの 409 も別の語で返す。
+    """
+
+    error: str
+
+
+#: 置き換えの結末(送れなさは追記と同じ RecordUnsent・409 は「頭が動いた」の RecordSupersedeConflicted)。
+RecordSupersedeOutcome: TypeAlias = "RecordSuperseded | RecordSupersedeConflicted | RecordUnsent"
 
 
 @dataclass(frozen=True)
