@@ -17,6 +17,8 @@ from doeff_agents.sessionhost.acp.effects import (
 JOIN_FLAG_SPECS: list[tuple[str, str, str]]
 #: 宣言 file を名指す flag(composition root が先に読む)。
 FLAG_CONFIG: str
+#: process の役を名指す flag(宣言 file の鍵ではない — 1 枚の宣言を 2 つの unit が読む)。
+FLAG_ROLE: str
 #: 値を取る flag → (宣言 file の表, 鍵)。受け付ける flag はこれと FLAG_CONFIG で全部。
 FLAG_KEYS: dict[str, tuple[str, str]]
 #: 宣言 file の [agentd] の表の名と、席の settings file の鍵(card acp:kanban-issue:ki-7b52bb76aa6e)— runtime の断りの文が名指す。
@@ -24,6 +26,7 @@ TABLE_AGENTD: str
 KEY_CLAUDE_SETTINGS_FILE: str
 
 def config_path_of(argv: JoinArgv) -> Program: ...
+def role_of(argv: JoinArgv) -> Program: ...
 def flag_values_of(argv: JoinArgv) -> Program: ...
 def declared_values_of(declaration: JoinDeclaration) -> Program: ...
 def merged_values_of(flags: dict, declared: dict) -> Program: ...

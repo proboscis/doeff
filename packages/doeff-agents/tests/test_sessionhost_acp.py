@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import threading
 import time
 from collections.abc import Mapping
@@ -4896,7 +4897,7 @@ def test_join_flag_specs_cover_the_accepted_flags() -> None:
     (FLAG_KEYS + FLAG_CONFIG)と乖離すると help が嘘を言う — 受け手が最初に撃つ
     面なので、集合の一致を針で押さえる。
     """
-    accepted = set(join.FLAG_KEYS) | {join.FLAG_CONFIG}
+    accepted = set(join.FLAG_KEYS) | {join.FLAG_CONFIG, join.FLAG_ROLE}
     listed = [flag for flag, _placeholder, _help in join.JOIN_FLAG_SPECS]
     assert len(listed) == len(set(listed)), "表に同じ flag が 2 度載っている"
     assert set(listed) == accepted
@@ -4917,6 +4918,146 @@ def test_join_config_path_is_read_from_the_flag() -> None:
     assert run(join.config_path_of(JoinArgv(items=("--server", "x")))) is None
     with pytest.raises(ValueError, match="--config requires a value"):
         run(join.config_path_of(JoinArgv(items=("--server", "x", "--config"))))
+
+
+def test_join_role_is_a_closed_vocabulary_read_from_the_argv() -> None:
+    """役(card acp:kanban-issue:ki-567f2dd6140f §3.1a)は argv の 1 flag・閉語彙・既定 both。
+
+    語彙の外は黙って既定に倒さず名指して断る(倒すと `--role hst` の typo が
+    『両方を起こす process』として据わり、器を持つ process が 2 つになる)。
+    """
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import (
+        JOIN_ROLE_AGENTD,
+        JOIN_ROLE_BOTH,
+        JOIN_ROLE_HOST,
+        JOIN_ROLES,
+        JoinArgv,
+    )
+
+    assert sorted(JOIN_ROLES) == sorted([JOIN_ROLE_BOTH, JOIN_ROLE_AGENTD, JOIN_ROLE_HOST])
+    assert run(join.role_of(JoinArgv(items=("--server", "x")))) == JOIN_ROLE_BOTH
+    assert run(join.role_of(JoinArgv(items=("--role", "agentd")))) == JOIN_ROLE_AGENTD
+    assert (
+        run(join.role_of(JoinArgv(items=("--config", "/c", "--role", "host")))) == JOIN_ROLE_HOST
+    )
+    with pytest.raises(ValueError, match="--role must be one of"):
+        run(join.role_of(JoinArgv(items=("--role", "hst"))))
+    with pytest.raises(ValueError, match="--role requires a value"):
+        run(join.role_of(JoinArgv(items=("--server", "x", "--role"))))
+
+
+def test_join_role_is_not_a_declaration_key_and_never_reaches_the_env_bundle() -> None:
+    """役は起こす側(unit / container)の宣言で、機体の宣言 file にも env の束にも現れない。
+
+    受入 6(card acp:kanban-issue:ki-567f2dd6140f): `--role` を付けない起動が今日と 1 byte 差なく
+    同じであること — と、付けた起動も **env の束と host の argv が 1 byte 同じ**であること
+    (1 枚の宣言 file を 2 つの unit が読む形が成り立つ根拠)。
+    """
+    from doeff_agents.sessionhost.acp import join
+    from doeff_agents.sessionhost.acp.effects import JoinArgv, JoinDeclaration
+
+    base = ["--server", "http://a", "--token-file", "/t", "--capacity", "1", "--places", "personal",
+            "--record", "http://r", "--state-dir", "/s"]
+
+    def plan_of(argv: list[str]) -> object:
+        spec = run(
+            join.join_spec_of(JoinArgv(items=tuple(argv)), JoinDeclaration(tables={}), "/state")
+        )
+        return run(join.join_plan_of(spec))
+
+    bare = plan_of(base)
+    for role in ("both", "agentd", "host"):
+        assert plan_of([*base, "--role", role]) == bare, role
+    # 宣言 file の鍵ではない(写した機体の宣言に混ざらない)。
+    assert "role" not in join.AGENTD_KEYS
+    assert join.FLAG_ROLE not in join.FLAG_KEYS
+
+
+def test_entry_main_splits_the_halves_by_role_and_keeps_the_default_whole(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """入口の 3 つの枝(card acp:kanban-issue:ki-567f2dd6140f §3.1a・受入 6 の構造側)。
+
+    `--role` を付けない join は今日どおり = agentd の thread(役 both)+ 停止の hook
+    (close_for_stop)+ host。`--role host` は agentd の thread を起こさず host だけ。
+    `--role agentd` は host を起こさず run_agentd_only だけで、停止の hook も登録しない
+    (登録する相手の accept loop がこの process に無い)。導出点は join_plan の 1 つのまま —
+    3 つの枝が同じ join の argv を同じ 1 点に渡す。語彙の外の役は exit 2 で名指して断る。
+    """
+    import sys
+
+    from doeff_agents.sessionhost import host as host_module
+    from doeff_agents.sessionhost.acp import entry, runtime
+    from doeff_agents.sessionhost.acp.effects import (
+        JOIN_ROLE_AGENTD,
+        JOIN_ROLE_BOTH,
+        JOIN_ROLE_HOST,
+        JoinPlan,
+    )
+
+    plan = JoinPlan(host_argv=("--socket", "/tmp/x.sock", "serve"), env=((ACP_VALVE_ENV, "on"),))
+
+    stopped: list[str] = []
+
+    class Run:
+        def close_for_stop(self, reason: str) -> int:
+            stopped.append(reason)
+            return 0
+
+    def drive(argv: list[str]) -> dict[str, list[object]]:
+        seen: dict[str, list[object]] = {"plans": [], "threads": [], "only": [], "hooks": [], "hosts": []}
+
+        def fake_plan(a: list[str], _env: object) -> JoinPlan:
+            seen["plans"].append(tuple(a))
+            return plan
+
+        def fake_apply(p: JoinPlan, _apply: object) -> None:
+            for key, value in p.env:
+                monkeypatch.setenv(key, value)
+
+        def fake_thread(host_argv: list[str], _env: object, *, role: str) -> Run:
+            seen["threads"].append((tuple(host_argv), role))
+            return Run()
+
+        monkeypatch.setattr(runtime, "join_plan", fake_plan)
+        monkeypatch.setattr(runtime, "apply_join_env", fake_apply)
+        monkeypatch.setattr(runtime, "start_agentd_thread", fake_thread)
+        monkeypatch.setattr(runtime, "run_agentd_only", lambda host_argv, _env: seen["only"].append(tuple(host_argv)))
+        monkeypatch.setattr(host_module, "register_shutdown_hook", seen["hooks"].append)
+        monkeypatch.setattr(entry, "host_main", lambda: seen["hosts"].append(tuple(sys.argv[1:])))
+        monkeypatch.setattr(sys, "argv", ["doeff-sessionhost", *argv])
+        monkeypatch.delenv(ACP_VALVE_ENV, raising=False)
+        entry.main()
+        return seen
+
+    def shape(seen: dict[str, list[object]]) -> tuple[list[object], list[object], list[object], int]:
+        return (seen["threads"], seen["only"], seen["hosts"], len(seen["hooks"]))
+
+    config = ["--config", "/etc/agentd/agentd.toml"]
+    bare = drive(["join", *config])
+    assert shape(bare) == ([(plan.host_argv, JOIN_ROLE_BOTH)], [], [plan.host_argv], 1)
+    hook = bare["hooks"][0]
+    assert callable(hook)
+    hook()
+    assert stopped == ["SIGTERM"]  # 今日の停止の hook = 走っている手番を閉じる腕(close_for_stop)
+
+    host_only = drive(["join", "--role", JOIN_ROLE_HOST, *config])
+    assert shape(host_only) == ([], [], [plan.host_argv], 0)
+
+    agentd_only = drive(["join", "--role", JOIN_ROLE_AGENTD, *config])
+    assert shape(agentd_only) == ([], [plan.host_argv], [], 0)
+
+    # 導出点は 1 つ: 3 つの枝とも join の argv をそのまま join_plan の 1 点に渡す(役の flag は plan に入らない)。
+    assert [bare["plans"], host_only["plans"], agentd_only["plans"]] == [
+        [tuple(config)],
+        [("--role", JOIN_ROLE_HOST, *config)],
+        [("--role", JOIN_ROLE_AGENTD, *config)],
+    ]
+
+    with pytest.raises(SystemExit) as refused:
+        drive(["join", "--role", "hst", *config])
+    assert refused.value.code == 2
 
 
 def test_join_plan_derives_the_host_argv_and_the_env_bundle_from_the_spec() -> None:
@@ -6433,6 +6574,50 @@ def test_a_draining_agentd_leaves_bound_jobs_unclaimed_and_names_it() -> None:
     assert len(world.state.jobs) == 1
 
 
+def test_the_drain_file_raises_and_lowers_the_same_draining_signal(tmp_path: Path) -> None:
+    """外から立てる排水の合図(card acp:kanban-issue:ki-567f2dd6140f §3.1d)。
+
+    file の**在否**が settings.draining に落ち、消えれば宣言の capacity に戻る(level-triggered)。
+    停止の腕が立てる process 内の合図と同じ 1 つの答えに落ちるので、capacity の判断は
+    judgment.declared-capacity-of の 1 点のまま。在否が動いた拍だけ 1 行名乗る。
+    """
+    from doeff_agents.sessionhost.acp.runtime import drain_port
+
+    marker = tmp_path / "drain"
+    logs: list[str] = []
+    event = threading.Event()
+    draining = drain_port(event, str(marker), logs.append)
+
+    assert draining() is False
+    assert logs == []
+    marker.write_text("host の入れ替え(便 X)\n2 行目は読まない\n", encoding="utf-8")
+    assert draining() is True
+    assert draining() is True  # 拍ごとに同じ行を積まない
+    assert len(logs) == 1, logs
+    assert "host の入れ替え(便 X)" in logs[0], logs
+    assert "2 行目" not in logs[0]
+    marker.unlink()
+    assert draining() is False
+    assert len(logs) == 2, logs
+    assert "is gone" in logs[1], logs
+    # 停止の腕の合図は file が無くても効く(2 つの合図・1 つの答え)。
+    event.set()
+    assert draining() is True
+    # file を名乗らない起動(role=both の今日の形の一部・test の world)は file を読まない。
+    assert drain_port(None, None, logs.append)() is False
+
+
+def test_the_drain_file_lives_under_the_state_dir_next_to_the_spool() -> None:
+    """置き場の定義点を増やさない: verify / summarize / lease の journal と同じ state_dir の下。"""
+    from doeff_agents.sessionhost.acp.runtime import drain_file_path, record_spool_dir
+
+    env = {"DOEFF_AGENTD_RECORD_SPOOL_DIR": "/var/lib/agentd/record-spool"}
+    assert drain_file_path(env) == "/var/lib/agentd/drain"
+    assert os.path.dirname(record_spool_dir(env)) == "/var/lib/agentd"
+    # 宣言が無い機体は join の既定の state_dir の下(第 2 の既定を作らない)。
+    assert drain_file_path({"XDG_STATE_HOME": "/s"}) == "/s/doeff/acp-agentd/drain"
+
+
 def test_drain_until_returns_when_the_turns_end_or_the_deadline_passes() -> None:
     """排水の待ちは judgment ではなく runtime の純関数 1 点(drain_until): 走っている数が 0 になるか期限に届くまで poll ごとに読み直す。"""
     from doeff_agents.sessionhost.acp.runtime import drain_until
@@ -6548,6 +6733,71 @@ def test_close_for_stop_drains_before_closing_when_the_node_declares_drain_secon
     run3, _holder3, drain3, _closed3 = make_run(world3, drain_seconds=0)
     assert run3.close_for_stop("SIGTERM") == 1
     assert not drain3.is_set()
+
+
+def test_close_for_exit_leaves_the_running_turns_to_the_host_process() -> None:
+    """ACP 側だけの process が降りる腕(card acp:kanban-issue:ki-567f2dd6140f §3.1b)。
+
+    ``close_for_exit`` は走っている job を **1 つも閉じない** —— 器は別 process の host が親として
+    持ち続けるので、手番はそのまま走り切る(既知の形 = kubelet を入れ替えても container は走り続ける)。
+    立てるのは stop の合図だけで、排水も cordon も lease の取り下げも撃たない(lease は TTL の内側で
+    次の process が同じ行を拾い直す = node の行が切れない)。
+
+    対の ``close_for_stop``(器と ACP の腕が同じ process で一緒に死ぬ今日の形)は同じ状態で
+    job を AgentdRestart で閉じる —— 2 つの腕が別物であることを同じ検で押さえる。
+    """
+    import threading
+    from dataclasses import replace
+
+    from doeff_agents.sessionhost.acp.runtime import AgentdRun, StateHolder
+
+    def started(name: str) -> threading.Thread:
+        thread = threading.Thread(target=lambda: None, name=name)
+        thread.start()
+        thread.join()
+        return thread
+
+    def make_run(world: World) -> tuple[AgentdRun, list[str]]:
+        holder = StateHolder()
+        holder.state = world.state
+        closed: list[str] = []
+        dispatchers = [world.acp.dispatch, world.custody.dispatch, world.sessions.dispatch, world.local.dispatch]
+        return (
+            AgentdRun(
+                replace(world.settings, drain_seconds=0), dispatchers, threading.Event(),
+                threading.Event(), holder, started("loop"),
+                lambda: closed.append("closed"), started("heartbeat"),
+            ),
+            closed,
+        )
+
+    world = World()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"]))
+    world.tick()
+    assert len(world.state.jobs) == 1
+
+    run_obj, closed = make_run(world)
+    assert run_obj.close_for_exit("SIGTERM") is None
+    assert run_obj.stop.is_set()
+    assert not run_obj.drain.is_set()  # 排水は撃たない(ACP 側の入れ替えは手番を待たない)
+    assert closed == ["closed"]
+    still = world.job("j-1")
+    assert still.status is not None
+    assert still.status["phase"] == PHASE_RUNNING, still.status
+    # 走っている job は state にも残ったまま(閉じていない = 次の process が行から拾い直す)。
+    assert len(run_obj.holder.state.jobs) == 1
+
+    # 対の腕: 同じ状態で close_for_stop は閉じる。
+    other = World()
+    other.acp.put_row(message("m-1", "first"))
+    other.acp.put_row(bound_job("j-1", inputs=["m-1"]))
+    other.tick()
+    stop_run, _ = make_run(other)
+    assert stop_run.close_for_stop("SIGTERM") == 1
+    ended = other.job("j-1")
+    assert ended.status is not None
+    assert ended.status["phase"] == PHASE_ENDED
 
 
 def test_join_spec_reads_drain_seconds_and_settings_carry_it() -> None:
