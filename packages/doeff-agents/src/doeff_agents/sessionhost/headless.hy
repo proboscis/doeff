@@ -282,6 +282,12 @@
   (setv argv (get built "argv"))
   (<- effective-env (launch-spawn-env identity session-env))
   (<- events-path (headless-events-path events-root session-id))
+  ;; 冷えた再開の前の圧縮(2026-09-22 追補・実測 06:36 pool -1): 会話を**この家で初めて**続ける起動
+  ;; (session.resume・pod の入れ替え後の続き)は冷えた再開そのもの — 続きの手番の腕と同じ 1 点を、
+  ;; 行が立つ前に呼ぶ(row なし: 失敗は刻めない・圧縮は最適化・起動は止めない)。初手番(fresh)は
+  ;; 圧縮する歴史が無いので built に argv が無く、同じ 1 点が None を返す。
+  (when (= resume-mode "resume")
+    (<- _ (headless-cold-compaction-run session-name work-dir identity effective-env built None)))
   (<- pid (headless-spawn session-name work-dir effective-env argv events-path
                           (get built "dialogue")))
 
@@ -362,8 +368,9 @@
   row)
 
 
-(defk headless-cold-compaction [row effective-env built]
-  {:pre [(: row SessionRow) (: effective-env dict) (: built dict)]
+(defk headless-cold-compaction-run [session-name work-dir effective-identity effective-env built row]
+  {:pre [(: session-name str) (: work-dir str) (: effective-identity (| dict None))
+         (: effective-env dict) (: built dict) (: row (| SessionRow None))]
    :post [(: % (| ProcResult None))]}
   "冷えた再開の前の圧縮(2026-09-22): 続きの手番を起こす前に、同じ実効 env で
    print mode の prompt `/compact fast-jev-if-cold` を同じ会話の続きとして 1 回走らせる(argv の綴りは
@@ -371,10 +378,12 @@
    圧縮 plugin の 1 点(自分の状態 file: TTL・profile・model・機体)— ここは判断を持たない。
    撃つ条件は 2 つだけ: kind が argv を組んでいる(claude の続き)・その profile の settings.json
    で plugin が実際に効く形(fast-jev-compaction-enabled)。plugin が無い profile で撃つと組込みの
-   要約(model 1 回・会話全体)に落ちるので撃たない。失敗(exit != 0・時間切れ)は行の出来事に
-   刻んで手番は起こす(圧縮は最適化)。戻り値: 走らせた時の ProcResult・撃たなかった時 None。"
+   要約(model 1 回・会話全体)に落ちるので撃たない。失敗(exit != 0・時間切れ)は行が在れば行の
+   出来事に刻み、手番は起こす(圧縮は最適化)。呼び手は 2 つ — 降りた process の続き
+   (continue-headless-process・row あり)と、会話をこの家で初めて続ける起動(headless-launch-session の
+   resume・行が立つ前なので row なし)。戻り値: 走らせた時の ProcResult・撃たなかった時 None。"
   (setv argv (.get built "cold_compaction_argv"))
-  (setv config-dir (.get (or row.effective-identity {}) "CLAUDE_CONFIG_DIR"))
+  (setv config-dir (.get (or effective-identity {}) "CLAUDE_CONFIG_DIR"))
   (if (or (not (isinstance argv list)) (not (isinstance config-dir str)) (= config-dir ""))
       None
       (do
@@ -382,11 +391,18 @@
         (if (not (fast-jev-compaction-enabled settings))
             None
             (do
-              (<- res (headless-run-once row.session-name row.work-dir effective-env argv))
-              (when (!= res.exit-code 0)
+              (<- res (headless-run-once session-name work-dir effective-env argv))
+              (when (and (!= res.exit-code 0) (is-not row None))
                 (<- _ (session-store-record-event row.session-id "cold_compaction_failed" row)))
               res)))))
 
+
+(defk headless-cold-compaction [row effective-env built]
+  {:pre [(: row SessionRow) (: effective-env dict) (: built dict)]
+   :post [(: % (| ProcResult None))]}
+  "降りた process の続き(行あり)の冷えた再開の前の圧縮 — headless-cold-compaction-run の薄い皮。"
+  (<- res (headless-cold-compaction-run row.session-name row.work-dir row.effective-identity effective-env built row))
+  res)
 
 (defk continue-headless-process [row turn-env turn-charter]
   {:pre [(: row SessionRow) (: turn-env (| dict None)) (: turn-charter (| dict None))]
