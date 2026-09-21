@@ -338,7 +338,8 @@
         "agentd-runtime",
         "agentd-valve",
         "agentd-client",
-        "sessionhost-attachment"
+        "sessionhost-attachment",
+        "sessionhost-claude-code"
       ],
       "typed": true
     },
@@ -981,6 +982,21 @@
         "agentd-effects"
       ],
       "typed": true
+    },
+    {
+      "name": "sessionhost-claude-code",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/impls/claude_code.hy"
+      ],
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/impls/claude_code.hy"
+      ],
+      "allow": [
+        "sessionhost-policy"
+      ],
+      "responsibility": "既存Claude backendのhandlerとCLI設定名の定義元。agentdの設定入力テストが参照するautoMemoryDirectoryの綴りはこのmoduleが所有し、複製しない。既存Hy backendの型検査は未導入であり、公開依存の登録は型検査合格の主張ではない。",
+      "layer": "io",
+      "typed": false
     }
   ],
   "tools": [
