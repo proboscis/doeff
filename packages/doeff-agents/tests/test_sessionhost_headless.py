@@ -2530,18 +2530,21 @@ def test_host_headless_resume_launch_runs_the_cold_compaction_prompt_before_the_
 
 def test_fast_jev_home_settings_merges_the_plugin_declaration_and_keeps_the_rest() -> None:
     """借りた家の settings.json に plugin の宣言を合流させる(純関数・冪等・他の欄は保つ・壊れた本文は {} から)。"""
-    merged = json.loads(fast_jev.fast_jev_home_settings(json.dumps({"permissions": {"defaultMode": "auto"}, "env": {"X": "1"}}), "/run/typesafe/key"))
+    merged = json.loads(fast_jev.fast_jev_home_settings(json.dumps({"permissions": {"defaultMode": "auto"}, "env": {"X": "1"}}), "/run/typesafe/key", "/h/.local/state/fast-jev-compaction"))
     assert merged["permissions"] == {"defaultMode": "auto"}
     assert merged["env"] == {"X": "1", "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1"}
     assert merged["enabledPlugins"] == {fast_jev.FAST_JEV_PLUGIN_ID: True}
     assert merged["extraKnownMarketplaces"][fast_jev.FAST_JEV_MARKETPLACE_NAME]["source"]["url"] == fast_jev.FAST_JEV_MARKETPLACE_URL
-    assert merged["pluginConfigs"][fast_jev.FAST_JEV_PLUGIN_ID]["options"] == {"cacheTtlMinutes": 60, "apiKeyFile": "/run/typesafe/key"}
+    assert merged["pluginConfigs"][fast_jev.FAST_JEV_PLUGIN_ID]["options"] == {"cacheTtlMinutes": 60, "apiKeyFile": "/run/typesafe/key", "stateDir": "/h/.local/state/fast-jev-compaction"}
     assert fast_jev.fast_jev_compaction_enabled(json.dumps(merged)) is True
     # 冪等
-    assert json.loads(fast_jev.fast_jev_home_settings(json.dumps(merged), "/run/typesafe/key")) == merged
+    assert json.loads(fast_jev.fast_jev_home_settings(json.dumps(merged), "/run/typesafe/key", "/h/.local/state/fast-jev-compaction")) == merged
     # 壊れた本文・不在
-    assert fast_jev.fast_jev_compaction_enabled(fast_jev.fast_jev_home_settings("not json", "/k")) is True
-    assert fast_jev.fast_jev_compaction_enabled(fast_jev.fast_jev_home_settings(None, "/k")) is True
+    assert fast_jev.fast_jev_compaction_enabled(fast_jev.fast_jev_home_settings("not json", "/k", "/s")) is True
+    assert fast_jev.fast_jev_compaction_enabled(fast_jev.fast_jev_home_settings(None, "/k", "/s")) is True
+    # 状態 file の置き場は家の下の持ち越される場所(pod の StatefulSet の PVC が持つ ~/.local/state の中)
+    assert fast_jev.fast_jev_state_dir("/home/kento") == "/home/kento/.local/state/fast-jev-compaction"
+    assert fast_jev.fast_jev_state_dir("/home/kento/") == "/home/kento/.local/state/fast-jev-compaction"
     # 据える命令は家を名乗り、marketplace の登録の失敗を無視して install に進む
     cmd = fast_jev.fast_jev_install_command("/h/claude-home")
     assert cmd.startswith("CLAUDE_CONFIG_DIR=/h/claude-home claude plugin marketplace add ")
