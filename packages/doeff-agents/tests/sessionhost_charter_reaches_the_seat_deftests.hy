@@ -23,6 +23,7 @@
 (require doeff-hy.macros [deftest defk <-])
 
 (import json)
+(import doeff [run])
 
 (import doeff_agents.sessionhost.policy [CHARTER-CARRIED-KEYS LAUNCH-FLAG-KEYS TURN-CARRIED-KEYS])
 (import doeff_agents.sessionhost.acp [effects])
@@ -31,8 +32,16 @@
   CHARTER-KEYS-AGENTD-CONSUMES
   CHARTER-MEMORY-DIR-KEY
   CHARTER-MEMORY-FILES-KEY
-  MEMORY-INDEX-FILE])
-(import doeff_agents.sessionhost.acp.judgment [memory-files-of resume-params-of])
+  MEMORY-BASE-FILE
+  MEMORY-FILE-SUFFIX
+  MEMORY-INDEX-FILE
+  MemoryBaseline
+  MemoryBook])
+(import doeff_agents.sessionhost.acp.judgment [
+  memory-baseline-text-of
+  memory-baselines-of-text
+  memory-files-of
+  resume-params-of])
 (import doeff_agents.sessionhost.effects [SessionRow])
 (import doeff_agents.sessionhost.host [
   DEFAULT-PROMPT-JUDGE-CMD
@@ -40,7 +49,10 @@
   build-launch-program-params
   build-resume-program-params])
 (import doeff_agents.sessionhost.launch [resume-launch-params-of])
-(import doeff_agents.sessionhost.impls.claude_code [CLAUDE-MEMORY-FILES-KEY CLAUDE-MEMORY-INDEX-FILE])
+(import doeff_agents.sessionhost.impls.claude_code [CLAUDE-MEMORY-BASE-FILE
+                                                   CLAUDE-MEMORY-FILE-SUFFIX
+                                                   CLAUDE-MEMORY-FILES-KEY
+                                                   CLAUDE-MEMORY-INDEX-FILE])
 
 (import sessionhost_launch_deftests [LaunchWorld launch-params run-launch])
 (import sessionhost_resume_deftests [resume-params run-resume seed-source])
@@ -76,7 +88,8 @@
                     "auto_compact_window" 800000
                     "memory_dir" MEMORY-HOME
                     "memory_files" [{"name" "a.md" "text" "A"}
-                                    {"name" MEMORY-INDEX-FILE "text" "# MEMORY\n"}]})
+                                    {"name" MEMORY-INDEX-FILE "text" "# MEMORY\n"}
+                                    {"name" MEMORY-BASE-FILE "text" "{\"books\": {}}\n"}]})
 
 
 (defn #^ dict probe-charter []
@@ -182,13 +195,22 @@
                 (.removeprefix path f"{home}/"))))
 
 
+(defn #^ str sample-baseline-text [names]
+  "N 冊分の基準(器が置き場へ置く side car の本文)。"
+  (run (memory-baseline-text-of
+         (dfor name names name (MemoryBaseline :name name :record-seq (+ 1 (len name))
+                                               :sha256 (* "a" 64) :version 1)))))
+
+
 (defn #^ tuple sample-books [n]
-  "N 冊 + 索引 = 器へ渡す memory_files(冊の本文は行から来た体)。N は検の引数で、本文に焼かない。"
+  "N 冊 + 索引 + 基準 = 器へ渡す memory_files(本物の memory-files-of と同じ形)。N は検の引数で、
+   本文に焼かない。基準は名簿の**最後**で、器はこれを loop では書かず、書けた冊へ絞って最後に置く。"
   (setv books (lfor i (range n)
-                    {"name" f"book-{i}.md"
+                    {"name" f"book-{i}{MEMORY-FILE-SUFFIX}"
                      "text" (+ "---\n" f"name: book-{i}\n" "description: d\n"
                                "metadata:\n  type: project\n---\n\n" f"body {i}\n")}))
-  (tuple (+ books [{"name" MEMORY-INDEX-FILE "text" "# MEMORY\n"}])))
+  (tuple (+ books [{"name" MEMORY-INDEX-FILE "text" "# MEMORY\n"}
+                   {"name" MEMORY-BASE-FILE "text" (sample-baseline-text (lfor i (range n) f"book-{i}"))}])))
 
 
 (deftest test-the-seat-writes-one-file-per-book-and-the-index-on-the-launch-arm
@@ -204,9 +226,10 @@
                                 :memory_dir MEMORY-HOME
                                 :memory_files (list books))))
     (setv written (books-in world MEMORY-HOME))
-    (assert (= (len written) (+ n 1))
-            #("N 冊 → 置き場に N + 1 file(冊 N + 索引)" n written))
+    (assert (= (len written) (+ n 2))
+            #("N 冊 → 置き場に N + 2 file(冊 N + 索引 + 畳み戻しの基準)" n written))
     (assert (in MEMORY-INDEX-FILE written) written)
+    (assert (in MEMORY-BASE-FILE written) written)
     ;; 本文は byte で届く(名だけ在って中身が空の file を数えない)。
     (for [book books]
       (assert (= (get world.fs f"{MEMORY-HOME}/{(get book "name")}") (get book "text"))
@@ -227,9 +250,10 @@
   (<- row (run-resume world (resume-params :memory_dir MEMORY-HOME
                                            :memory_files (list books))))
   (setv written (books-in world MEMORY-HOME))
-  (assert (= (len written) (+ n 1))
-          #("N 冊 → 置き場に N + 1 file(冊 N + 索引)" n written))
-  (assert (in MEMORY-INDEX-FILE written) written))
+  (assert (= (len written) (+ n 2))
+          #("N 冊 → 置き場に N + 2 file(冊 N + 索引 + 畳み戻しの基準)" n written))
+  (assert (in MEMORY-INDEX-FILE written) written)
+  (assert (in MEMORY-BASE-FILE written) written))
 
 
 ;; ---------------------------------------------------------------------------
@@ -257,16 +281,15 @@
   (setv (get program "socket_path") "/tmp/agentd.sock")
   (<- row (run-launch world program))
   (setv written (books-in world MEMORY-HOME))
-  (assert (= (len written) (+ n 1))
-          #("行 N 冊 → 置き場 N + 1 file" n written)))
+  (assert (= (len written) (+ n 2))
+          #("行 N 冊 → 置き場 N + 2 file(冊 + 索引 + 基準)" n written)))
 
 
 (deftest test-the-index-the-agentd-derives-from-the-rows-reaches-the-seat
   ;; 索引 MEMORY.md は file としての正本を持たず、行から組み直される(memory-files-of)。
   ;; その索引も同じ 1 枚の名簿を渡る — 渡らないと置き場に索引だけが古いまま残る。
-  (<- files tuple (memory-files-of #()))
-  (assert (= (len files) 1) files)
-  (assert (= (get (get files 0) "name") MEMORY-INDEX-FILE) files))
+  (<- files tuple (memory-files-of #() {}))
+  (assert (= (lfor f files (get f "name")) [MEMORY-INDEX-FILE MEMORY-BASE-FILE]) files))
 
 
 ;; ---------------------------------------------------------------------------
@@ -295,7 +318,9 @@
   (setv line (get lines 0))
   (assert (in f"books={n}" line) line)
   (assert (in "index=1" line) line)
-  (assert (in f"declared={(+ n 1)}" line) line)
+  ;; 基準は冊とも索引とも別に数える(足した file が books を 1 増やすと受入の N + 2 が崩れる)。
+  (assert (in "base=1" line) line)
+  (assert (in f"declared={(+ n 2)}" line) line)
   (assert (in MEMORY-HOME line) line))
 
 
@@ -325,7 +350,90 @@
 
 
 (deftest test-the-index-spelling-has-one-home
-  ;; 計器が冊と索引を分けて数えるための綴りは器の側にも写しが要る — 割れると
-  ;; 索引が冊として数えられ、「N 冊 → N + 1 file」の受入が 1 ずれる。
+  ;; 計器が冊・索引・基準を分けて数えるための綴りは器の側にも写しが要る — 割れると
+  ;; 予約名が冊として数えられ、「N 冊 → N + 2 file」の受入がずれる。基準の綴りが割れると
+  ;; もっと静かに壊れる: 器が基準を**冊として**書き、絞りが効かず、基準が嘘をつく。
   (assert (= CLAUDE-MEMORY-INDEX-FILE MEMORY-INDEX-FILE))
+  (assert (= CLAUDE-MEMORY-BASE-FILE MEMORY-BASE-FILE))
+  (assert (= CLAUDE-MEMORY-FILE-SUFFIX MEMORY-FILE-SUFFIX))
   (assert (= CLAUDE-MEMORY-FILES-KEY CHARTER-MEMORY-FILES-KEY)))
+
+
+;; ---------------------------------------------------------------------------
+;; (7) 畳み戻しの基準も同じ名簿を渡り、**書けた冊の分だけ**が置き場に着く
+;;     (card acp:kanban-issue:ki-9fc7d4bca4dc)
+;; ---------------------------------------------------------------------------
+
+(deftest test-the-fold-back-baseline-reaches-the-seat-in-the-same-roster-as-the-books
+  ;; 基準が冊と**別の腕**で運ばれると、名簿のどれか 1 枚で落ちた拍に「冊は着いたが基準は無い」
+  ;; (= 次の手番が 1 冊も書き戻さない)か「冊は落ちたが基準は着いた」(= 基準が嘘をつく)になる。
+  ;; ⇒ 起こす側が組んだ本物の名簿(memory-files-of)を wire に通し、**本物の器**に書かせて数える。
+  (setv books (tuple (lfor i (range 3)
+                           (MemoryBook :name f"book-{i}"
+                                       :text (+ "---\n" f"name: book-{i}\n" "description: d\n"
+                                                "metadata:\n  type: project\n---\n\n" f"body {i}\n")
+                                       :type "project" :description "d" :links #()))))
+  (setv baselines (dfor book books book.name
+                        (MemoryBaseline :name book.name :record-seq (+ 3 (len book.name))
+                                        :sha256 (* "a" 64) :version 2)))
+  (<- files tuple (memory-files-of books baselines))
+  (setv charter {"session_id" "s1" "session_name" "doeff-s1" "agent_type" "claude"
+                 "work_dir" "/work/dir" "lifecycle" "run_to_completion"
+                 "binding" {"kind" "claude-code" "config_dir" "/x/claude"}
+                 "session_env" {} "prompt" "go" "mcp_servers" {}
+                 "skip_trust_setup" False "command" None
+                 CHARTER-MEMORY-DIR-KEY MEMORY-HOME
+                 CHARTER-MEMORY-FILES-KEY (list files)})
+  (setv program (build-launch-program-params charter (host-config)))
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["❯ {composer}"])
+  (setv (get program "socket_path") "/tmp/agentd.sock")
+  (<- row (run-launch world program))
+  (setv written (books-in world MEMORY-HOME))
+  (assert (= written (sorted ["book-0.md" "book-1.md" "book-2.md" MEMORY-INDEX-FILE MEMORY-BASE-FILE]))
+          #("基準が名簿のどこかで落ちた" written))
+  ;; 全冊が着いた拍の基準は 1 byte も変わらない(絞りが何も落とさない)。
+  (<- landed dict (memory-baselines-of-text (get world.fs f"{MEMORY-HOME}/{MEMORY-BASE-FILE}")))
+  (assert (= landed baselines) #("置き場の基準が起こす側の基準と違う" landed))
+  ;; 器の名乗りは 冊・索引・基準を分けて数える。
+  (setv line (get (memory-log-lines world) 0))
+  (assert (in "books=3" line) line)
+  (assert (in "index=1" line) line)
+  (assert (in "base=1" line) line))
+
+
+(deftest test-the-seat-writes-the-baseline-only-for-the-books-it-could-write
+  ;; 器の書きの脚は名の門で落ちた entry を**黙って飛ばして**次へ進む(declared と written が割れる —
+  ;; 計器に books= と declared= の 2 欄が在るのはこのため)。基準がそのまま着くと、飛ばされた冊 A について
+  ;; 基準が『置き場の A は行と同じ姿』と嘘をつき、次の畳み戻しが**前の手番の古い写し**で行を supersede する
+  ;; (= この便が直している壊れ方そのもの)。⇒ 基準の証拠は「用意した冊」ではなく「書けた冊」の側。
+  (setv baseline-text (sample-baseline-text ["book-0" "book-1" "book-2"]))
+  ;; book-1 は本文が str でない(行の本文が読めなかった体)⇒ 器の門が黙って飛ばす。
+  (setv roster [{"name" "book-0.md" "text" "---\nname: book-0\ndescription: d\nmetadata:\n  type: project\n---\n\nbody 0\n"}
+                {"name" "book-1.md" "text" None}
+                {"name" "book-2.md" "text" "---\nname: book-2\ndescription: d\nmetadata:\n  type: project\n---\n\nbody 2\n"}
+                {"name" MEMORY-INDEX-FILE "text" "# MEMORY\n"}
+                {"name" MEMORY-BASE-FILE "text" baseline-text}])
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["❯ {composer}"])
+  (<- row (run-launch world (launch-params
+                              :agent_type "claude"
+                              :binding {"kind" "claude-code" "config_dir" "/x/claude"}
+                              :memory_dir MEMORY-HOME
+                              :memory_files roster)))
+  (setv written (books-in world MEMORY-HOME))
+  (assert (= written (sorted ["book-0.md" "book-2.md" MEMORY-INDEX-FILE MEMORY-BASE-FILE]))
+          #("門が落とした冊が置き場に在る / 基準が落ちた" written))
+  ;; 基準は**書けた冊だけ**を名乗る(飛ばされた book-1 は基準から消える ⇒ 次の畳み戻しは規則 3b で撃たない)。
+  (<- landed dict (memory-baselines-of-text (get world.fs f"{MEMORY-HOME}/{MEMORY-BASE-FILE}")))
+  (assert (= (sorted (.keys landed)) ["book-0" "book-2"])
+          #("書けなかった冊の基準が置き場に着いた(基準が嘘をつく)" (sorted (.keys landed))))
+  ;; 残った項は起こす側が渡した値そのもの(器は絞るだけで、値を作らない)。
+  (<- declared dict (memory-baselines-of-text baseline-text))
+  (for [name ["book-0" "book-2"]]
+    (assert (= (get landed name) (get declared name)) #(name (get landed name))))
+  ;; 計器: 書けた冊 2・用意した 5(この割れが log から読める)。
+  (setv line (get (memory-log-lines world) 0))
+  (assert (in "books=2" line) line)
+  (assert (in "declared=5" line) line)
+  (assert (in "base=1" line) line))
