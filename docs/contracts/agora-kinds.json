@@ -21,7 +21,7 @@
     "merge-queue",
     "agora-1"
   , "agora-reception", "agora-automation", "workflow-runner", "durable-controller", "dotfiles-land", "agora-artifact", "agora-roster", "agora-classifier"],
-  "principalsComment": "書き手の名(engine の roster の名の綴り・段 0 lane 0a の principals.json への登録は段 2〜4 の担当 — 今は名だけ)。agora-conversation = C 会話(agora の operator・Hy)/ agora-messaging = D 郵便(ACP の app・Haskell)/ acp-scheduling = E 配置(scheduling operator)/ agentd = F 実行(node の sessionhost)/ acp-work = W 仕事(段 5a の work operator `acp work` — docs/contracts/work-request.json の書き手。ここでは intent の結末〔status.state / reason / result〕を route-* の name の行に書くためだけに名乗る)。/ agora-kanban-observe · agora-kanban-sync · agora-kanban-dialogue = K 盤(段 5b の kanban operator を段 7 lane 7e で身分 3 つへ割ったもの — code は proboscis/agora-controllers の controllers/kanban/{observe,sync,dialogue}/・書ける欄の割りの正本は docs/contracts/kanban-kinds.json の identities。ここでは kanban-* の name の行の結末を書くためだけに名乗り、名乗るのは実体化する 2 身分〔agora-kanban-sync = 確認と差し戻し / agora-kanban-dialogue = 言う・動かす・やる〕ちょうど — 観測系 agora-kanban-observe は intent を 1 つも実体化しないので並ばない)。/ agora-budget = E 配置の観測側(段 7 lane 7d・agora-redesign #36 決定 #33-2 B — 口座の予算の controller・agora-controllers controllers/budget・Hy。profile の status.conditions〔type ProfileExhausted〕だけを書く。API を呼ばず、agentd が書いた status.observed を読むだけ)。/ merge-queue = 取り込みの controller(段 7 lane 7b-2・agora-redesign #35 / #36 — repo proboscis/merge-queue・agora-1 の pod の 1 container)。⚠ **この名は agora の kind を 1 つも書かない** — 書く先は着地の列の契約 docs/contracts/land-queue.json の 3 kind の status と自分の leader lease `merge-queue-lease` ちょうどで、ここに並ぶのは principal の名簿(engine の roster `principals.json` に載る名)の閉語彙をこの file が持っており、法 2adf77 の EXPECTED-PRINCIPALS がその全部を pin しているから(名簿に無い名は writers に書けない = 誰も撃てない kind が生まれる、を防ぐ側の宣言)。/ agora-1 = I 画面と糊(段 4 lane 4c-4・agora-redesign #22 — WebUI の入口の身元 = 頭脳自身の札・herdr-hud 法 operator-entrance-carries-the-brain-identity。code は proboscis/agora-controllers の controllers/screen・Deployment agora-screen・札は ns herdr-hud の Secret screen-principal の key agora-1.token)。⚠ **この名もこの契約の kind を 1 つも書かない** — 書くのは intake の append(POST /api/intake)ちょうどで、intake の受け口は名簿の認証だけを通し writers を読まない(法 2d5436 — 受理の返事の路に許可の判定を置かない)。intent の行を作るのは Intent controller(agora-messaging)の 1 点で、差出の名は spec.by に写るだけ。writers.create に並べると intake を経ずに intent の行を直に作れる第 2 の口になるので並べない(engine は agora-1 の intent / conversation の直の書きを 403 で断る — hspec DeclaredWriteSpec の agora-1 の節)。writers に現れる名はこの 11 語の閉語彙の中に限る(法 2adf77)。 段 10f 便 1(agora-redesign #82 問い 7): agora-reception = 受付の腕が名乗る名(intake の by・delivery-policy の openers に現れる — この契約の kind は forward-message の intent の実体化を通してだけ書く)。名の追加だけ。 段 10 lane 10l(agora-redesign #89): agora-automation = 盤の自動処理の係(agora-controllers controllers/automation・Hy)— kind intent の結末(kanban-convert の実体化)を書き、intake へ post-message を投函する(依頼の郵便)。盤の身分と同じく kanban-* の name の行の結末を書くためだけに名乗る。名の追加だけ。 段 11 lane 11a(agora-redesign #121 / #122): workflow-runner = durable な実行の runner(runtime ごとに 1 process — Haskell の effectful と Hy の doeff)/ durable-controller = durable execution controller(1 つ・agora-controllers・Hy)。⚠ **この 2 名はこの契約の kind を 1 つも書かない** — 書く先は docs/contracts/durable-runs.json の kind workflow-run / workflow-runner ちょうどで、merge-queue と同じく名簿の閉語彙としてだけ並ぶ。名の追加だけ。 / agora-artifact = 成果物の controller(段 12 lane 11z・agora-redesign #248 便 2・proboscis/agora-controllers)— kind artifact の唯一の書き手(agora-1 の一覧 GET /api/assets/artifact を観測して見出しを写す reconciler)。札の発行は依頼者の手番(lane 7d の agora-budget と同じ手順・2026-09-16 15:4x に発行済み)。 / agora-classifier = 分類の係(agora-redesign #569 便 1・設計 v2 §6 K1 / K2・code は #570 の agora-controllers)— 方策 delivery-policy.spec.reception.classifier.principal が名指す名で、intake へ intent annotate-request(便 2)を撃つだけ。⚠ **この名はこの契約の kind を 1 つも書かない**(intake-only・agora-1 / agora-reception と同じ — 行 status.routing の書き手は agora-messaging の 1 名のまま = 単一書き手)。名の追加だけ。",
+  "principalsComment": "書き手の名(engine の roster の名の綴り・段 0 lane 0a の principals.json への登録は段 2〜4 の担当 — 今は名だけ)。agora-conversation = C 会話(agora の operator・Hy)/ agora-messaging = D 郵便(ACP の app・Haskell)/ acp-scheduling = E 配置(scheduling operator)/ agentd = F 実行(node の sessionhost)/ acp-work = W 仕事(段 5a の work operator `acp work` — docs/contracts/work-request.json の書き手。ここでは intent の結末〔status.state / reason / result〕を route-* の name の行に書くためだけに名乗る)。/ agora-kanban-observe · agora-kanban-sync · agora-kanban-dialogue = K 盤(段 5b の kanban operator を段 7 lane 7e で身分 3 つへ割ったもの — code は proboscis/agora-controllers の controllers/kanban/{observe,sync,dialogue}/・書ける欄の割りの正本は docs/contracts/kanban-kinds.json の identities。ここでは kanban-* の name の行の結末を書くためだけに名乗り、名乗るのは実体化する 2 身分〔agora-kanban-sync = 確認と差し戻し / agora-kanban-dialogue = 言う・動かす・やる〕ちょうど — 観測系 agora-kanban-observe は intent を 1 つも実体化しないので並ばない)。/ agora-budget = E 配置の観測側(段 7 lane 7d・agora-redesign #36 決定 #33-2 B — 口座の予算の controller・agora-controllers controllers/budget・Hy。profile の status.conditions〔type ProfileExhausted〕だけを書く。API を呼ばず、agentd が書いた status.observed を読むだけ)。/ merge-queue = 取り込みの controller(段 7 lane 7b-2・agora-redesign #35 / #36 — repo proboscis/merge-queue・agora-1 の pod の 1 container)。⚠ **この名は agora の kind を 1 つも書かない** — 書く先は着地の列の契約 docs/contracts/land-queue.json の 3 kind の status と自分の leader lease `merge-queue-lease` ちょうどで、ここに並ぶのは principal の名簿(engine の roster `principals.json` に載る名)の閉語彙をこの file が持っており、法 2adf77 がその名簿を契約 1 点から読んでいるから(法の側に写しは無い)(名簿に無い名は writers に書けない = 誰も撃てない kind が生まれる、を防ぐ側の宣言)。/ agora-1 = I 画面と糊(段 4 lane 4c-4・agora-redesign #22 — WebUI の入口の身元 = 頭脳自身の札・herdr-hud 法 operator-entrance-carries-the-brain-identity。code は proboscis/agora-controllers の controllers/screen・Deployment agora-screen・札は ns herdr-hud の Secret screen-principal の key agora-1.token)。⚠ **この名もこの契約の kind を 1 つも書かない** — 書くのは intake の append(POST /api/intake)ちょうどで、intake の受け口は名簿の認証だけを通し writers を読まない(法 2d5436 — 受理の返事の路に許可の判定を置かない)。intent の行を作るのは Intent controller(agora-messaging)の 1 点で、差出の名は spec.by に写るだけ。writers.create に並べると intake を経ずに intent の行を直に作れる第 2 の口になるので並べない(engine は agora-1 の intent / conversation の直の書きを 403 で断る — hspec DeclaredWriteSpec の agora-1 の節)。writers に現れる名はこの 11 語の閉語彙の中に限る(法 2adf77)。 段 10f 便 1(agora-redesign #82 問い 7): agora-reception = 受付の腕が名乗る名(intake の by・delivery-policy の openers に現れる — この契約の kind は forward-message の intent の実体化を通してだけ書く)。名の追加だけ。 段 10 lane 10l(agora-redesign #89): agora-automation = 盤の自動処理の係(agora-controllers controllers/automation・Hy)— kind intent の結末(kanban-convert の実体化)を書き、intake へ post-message を投函する(依頼の郵便)。盤の身分と同じく kanban-* の name の行の結末を書くためだけに名乗る。名の追加だけ。 段 11 lane 11a(agora-redesign #121 / #122): workflow-runner = durable な実行の runner(runtime ごとに 1 process — Haskell の effectful と Hy の doeff)/ durable-controller = durable execution controller(1 つ・agora-controllers・Hy)。⚠ **この 2 名はこの契約の kind を 1 つも書かない** — 書く先は docs/contracts/durable-runs.json の kind workflow-run / workflow-runner ちょうどで、merge-queue と同じく名簿の閉語彙としてだけ並ぶ。名の追加だけ。 / agora-artifact = 成果物の controller(段 12 lane 11z・agora-redesign #248 便 2・proboscis/agora-controllers)— kind artifact の唯一の書き手(agora-1 の一覧 GET /api/assets/artifact を観測して見出しを写す reconciler)。札の発行は依頼者の手番(lane 7d の agora-budget と同じ手順・2026-09-16 15:4x に発行済み)。 / agora-classifier = 分類の係(agora-redesign #569 便 1・設計 v2 §6 K1 / K2・code は #570 の agora-controllers)— 方策 delivery-policy.spec.reception.classifier.principal が名指す名で、intake へ intent annotate-request(便 2)を撃つだけ。⚠ **この名はこの契約の kind を 1 つも書かない**(intake-only・agora-1 / agora-reception と同じ — 行 status.routing の書き手は agora-messaging の 1 名のまま = 単一書き手)。名の追加だけ。 / agora-roster = 名簿の同期の係(段 12 lane 12h・agora-redesign #337 D1 (b)・9e0c30a3)— kind profile の取り下げ(writers.withdraw)の 2 人目の書き手で、acp-scheduling の隣に並ぶ。登録の側は operator の承認つきの手のまま(#377)。intent を出さずにこの契約の kind を書くので intake-only ではない。 / dotfiles-land = 着地の列の台帳の書き手(段 12 lane 12i・agora-redesign #44・pod の land-api)。⚠ **この名はこの契約の kind を 1 つも書かない** — 書く先は docs/contracts/land-queue.json の 3 kind(land-item / land-partition / land-checkout)の status ちょうどで、merge-queue と同じく名簿の閉語彙としてだけ並ぶ(法 a5bbcd)。",
   "conventions": {
     "stagedSummaries": {
       "comment": "段 12 lane 12j(agora-redesign #233・#55 案 D・operator 2026-09-16「50 % を超えていたら(0.5M)Opus で compact したい」→「lets see if 1 will work」= 方法 1 = 段階つきの要約): 会話の履歴からの再開(rehydrate — cache を保てない新しい手番の最初の本文に会話の全史を畳む)で、古い区間を model の要約で置き換える規則。定義点は走行係(doeff agentd)の 1 点で、ここはその写し(値と語彙)。",
@@ -342,7 +342,7 @@
                   "job": {"type": "string", "minLength": 1, "description": "盤 acp:kanban-issue:ki-2cc041518bbf(段 12 lane 12m): この配達が名指した agent-job の id(書き手 = D・届いた〔queued / routed〕と割り込みの書き、および job を名指す失敗の書き)。この欄より前は id は detail の中の文字列 `agent-job <id>` だけに在り、終端の書きが detail を入れ替えると消えていた(実測 2026-09-19: 1 日に落ちた 608 通のうち郵便の id から計算し直せるのは 193 通だけ・残り 415 は既存の手番に相乗りしたので復元不能。実測 2026-09-18 19:xx の全量 = failed 845 通のうち delivery.job を持つ行は 0)。読みは Acp.App.Messaging.Decide.namedJobIdOf の 1 点がこの欄を先に読み、無ければ従来どおり detail を解く(この欄より前の行がそのまま動く)。割り込みの行では乗った手番の job(detail の `interrupt agent-job <id>` と同じ id)。欠落 = この欄より前に書かれた行、または job を名指さない書き(held / dead-letter / 受付の期限)。"},
                   "via": {"type": "string", "enum": ["turn", "next-turn", "interrupt", "pane-courier"], "description": "段 10 lane 10i(agora-redesign #86・operator 指示 2026-09-14「キューされているのか、インタラクトしているのかどうかが区別できない … その2つの表示を分けてほしい」): state = delivered の郵便が手番へどう渡るか(書き手 = D・delivered の書きと同じ 1 通)。turn = 走っている手番が無く、この郵便で新しい手番を起こした / next-turn = 手番が走っていたので待ち、その手番の終わりの後の手番の本文として渡す(queued)/ interrupt = 走っている手番へ割り込みとして渡す(agent-job の status.interrupts に載せ agentd が即座に渡す)。決め方は判断の 1 点 Acp.App.Messaging.Decide.decideDelivery(docs/contracts/messaging.json の delivery.via)。欠落 = この欄より前に配られた行(held / failed / dead-letter は手番へ渡らないので持たない)。"},
                   "handedAt": {"type": "integer", "minimum": 0, "description": "段 10 lane 10bc(agora-redesign #117・#86 裁定 案 B の残り)+ 盤 acp:kanban-issue:ki-3149aebbf675 A: state = delivered の郵便が**agent に届いた**と D が観測した拍(epoch ミリ秒・書き手 = D・delivered の行に 1 回だけ足す — 同じ書きで保つ欄〔job / handedEvidence / withdrawnAt / waitingOn〕は行のまま写す)。証拠は判断の 1 点 Acp.App.Messaging.Decide.handedEvidenceOf が、郵便の detail が名指す agent-job について**器の報告**を読む: 普通の郵便 = その job の status.inputsDelivered に郵便の id が在る(agentd は器へ渡せた id だけを足す・claim の拍に空で宣言する)/ 割り込み = その job の status.interruptsDelivered に在る。⚠ 『手番が始まったこと』(turn-record がその job を名指す / phase が Running)は**証拠ではない** — 1 回の手番に相乗りした 10 通のうち届いたのが 1 通でも 10 通とも handedAt が立っていた(実測 2026-09-18)。その 2 つの推定は行が status.inputsDelivered を持たない時(欄を書かない古い agentd の行)だけに残る。Pending / Bound では書かない。engine は終端の job を 5 分後に刈るが、この欄は郵便の行に残る — 面は job の行から導かずこの欄を読む(docs/contracts/messaging.json の delivery.handedAtComment)。欠落 = まだ観測していない(held / failed / dead-letter は持たない)。"},
-                  "handedEvidence": {"type": "string", "enum": ["input-delivered", "turn-record", "job-running", "interrupt-delivered"], "description": "盤 acp:kanban-issue:ki-2cc041518bbf(段 12 lane 12m): handedAt を立てた時に判定が何を証拠にしたか(閉語彙 4 語 = docs/contracts/messaging.json の delivery.handedEvidence・書き手 = D・Acp.App.Messaging.Decide.handedEvidenceWord が既に計算していた語)。語は log にしか出ておらず、agent-job の行が engine に刈られた後は「なぜ渡したと判じたか」が郵便の行から読めなかった。⚠ 盤 acp:kanban-issue:ki-3149aebbf675 A で語は 3 → 4(閉語彙は保つ — 足したのは 1 語ちょうど): input-delivered = agentd が自分の行で『渡した』と言った(agent-job の status.inputsDelivered)。turn-record / job-running はその欄を持たない古い行の推定に降りた。⚠ この enum だけが 3 語のまま据え置かれ(2026-09-19 08:58 JST の便 579f45d3 が messaging.json の列と Decide.hs の語を 4 にした時に写し忘れた)、input-delivered で渡った message の status の書きを engine が 400 schema-violation で断り、行に condition HandedWriteRefused が立った(本番の実測 2026-09-19 03:1xZ = 519 行・依頼 lt-ZWFDGA1DA136ZPD0HB8XRR1V05)。2 本の契約の集合を突き合わせる検は MessagingSpec の messaging operator の節に在る。欠落 = この欄より前に立った handedAt、または 4 語のどれでもない渡し(pane の飛脚 — そちらは via = pane-courier が言う / 配達の run 自身の hand の記録)。"},
+                  "handedEvidence": {"type": "string", "enum": ["input-delivered", "turn-record", "job-running", "interrupt-delivered", "run-reported"], "description": "盤 acp:kanban-issue:ki-2cc041518bbf(段 12 lane 12m): handedAt を立てた時に判定が何を証拠にしたか(閉語彙 5 語 = docs/contracts/messaging.json の delivery.handedEvidence・書き手 = D・Acp.App.Messaging.Decide.handedEvidenceWord が既に計算していた語)。語は log にしか出ておらず、agent-job の行が engine に刈られた後は「なぜ渡したと判じたか」が郵便の行から読めなかった。⚠ 盤 acp:kanban-issue:ki-3149aebbf675 A で語は 3 → 4(閉語彙は保つ — 足したのは 1 語ちょうど): input-delivered = agentd が自分の行で『渡した』と言った(agent-job の status.inputsDelivered)。turn-record / job-running はその欄を持たない古い行の推定に降りた。⚠ この enum だけが 3 語のまま据え置かれ(2026-09-19 08:58 JST の便 579f45d3 が messaging.json の列と Decide.hs の語を 4 にした時に写し忘れた)、input-delivered で渡った message の status の書きを engine が 400 schema-violation で断り、行に condition HandedWriteRefused が立った(本番の実測 2026-09-19 03:1xZ = 519 行・依頼 lt-ZWFDGA1DA136ZPD0HB8XRR1V05)。2 本の契約の集合を突き合わせる検は MessagingSpec の messaging operator の節に在る。⚠ 依頼 lt-PJP8JRQD1QQ3JHXFHD9C33ZF1Z で語は 4 → 5(足したのは 1 語ちょうど): run-reported = 配達の run 自身の hand の記録(Acp.App.Messaging.Program.withHandedAt)。語は誰が刻んだかを名乗るので、強さは run の待ちが読む turn-record と同じ(手番が始まった)で器の報告ではない。⇒ 欠落 = この欄より前に立った handedAt、または pane の飛脚の渡し(そちらは via = pane-courier が言う)の 2 つだけになり、行だけで解ける。それまでは欠落が 3 つに畳まれ、run の刻み(job を名乗る行の 26.3% = 4,850 / 18,421・実測 2026-09-20)は行の上で何も名乗らなかった。"},
                   "withdrawnAt": {"type": "integer", "minimum": 0, "description": "段 12 lane 12k(agora-redesign #590): state = delivered の郵便が乗っていた agent-job を、取り消し(cancel-job・理由は問わない)で Withdrawn になったと D が観測した拍(epoch ミリ秒・書き手 = D・delivered の行に 1 回だけ足す — 同じ書きで state / at / detail / via は写す)。判断の 1 点 = Acp.App.Messaging.Decide.carrierWithdrawnOf(郵便の detail が名指す agent-job の phase が Withdrawn)。engine は終端の job を猶予の後に刈るので、刈られた後は「取り下げは失敗ではない」の免除がこの欄にだけ残る — turnlessEndOf は job の行より先にこの欄を読む(行の不在は判定の材料の不在であって、失敗の証拠ではない)。欠落 = 取り下げを観測していない(手番がまだ来る行・Ended で終わった行は持たない)。"},
                   "waitingOn": {"type": "object", "description": "段 12 lane 12b 便 6(agora-redesign #487 子 B / #493 で schema に写した — 書き手は D の配達の run〔Acp.App.Messaging.Program withWaitingOn〕・held の郵便の配達の run が止まっている間、それが待つ解除の条件 = durable の契約〔docs/contracts/durable-runs.json〕の Wait の selector と同じ綴り {kind, fieldSelector})。欠落 = 待っていない。", "properties": {"kind": {"type": "string", "minLength": 1}, "fieldSelector": {"type": "string", "minLength": 1}}, "required": ["kind", "fieldSelector"], "additionalProperties": false}
                 },
@@ -1535,6 +1535,183 @@
                   "published",
                   "retired"
                 ]
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "spec"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "agent-memory": {
+      "owner": "F",
+      "comment": "会話が手番の間に書き溜めた自動記憶(auto-memory)1 冊の**見出し**(card acp:kanban-issue:ki-9fc7d4bca4dc の実測から・2026-09-21 の two-way door の決定・doeff ADR-DOE-AGENTS-006 R11 が『機体をまたぐ継続は本 R の範囲外 — 別に立てる』と名指した残り)。今日の記憶は走行係が手番ごとに作る home の file(<memory_root>/<会話 id>/<name>.md)だけに在り、home は手番が落ちた機体に残るので**会話が機体を移ると前の手番の記憶が見えない**(実測: 同じ会話の続けて走る手番の 41.0% で機体が変わる・pod の家 52 冊のうち 46 冊がどの Mac にも無かった・pod の生存の中央は 51 分〔60 体〕・同じ名前で両側に在る 6 組は 6 組とも中身が違い、後に書かれた方が 5 組で平均 24% 薄い)。⇒ 正本を行にして、手番の頭で home を行から組み直す。**本文は 1 字も持たない** — 本文の正本は会話の記録の service の stream(summary と同じ store・同じ書き手)で、この行は claim check(recordRef / recordSeq / bytes / sha256 / version)と索引の材料(description / type / links)だけを運ぶ。⚠ 版は**上書きしない**: stream は名ごとに 1 本で、2 回目以降の書きは記録の service の supersede の口(POST /v1/conversations/{cid}/events/{recordSeq}/supersede)を撃つ。前の版は recordSeq + version + supersedes の鎖として残り、tombstone を撃たない限り本文ごと在る。⇒ 後の書きが濃い版を消すことが構造的に起きない。identityKey は「上書きの許可証」ではなく**版の鎖を 1 行に束ねる糸**。identitySupersedes は宣言しない — 退役した名前は同じ鍵で戻れる(view / operator-preference と同じ 2 拍: spec を書き直し → status を current にする)。索引(MEMORY.md)は file として持たず、手番の頭に indexes の引きから組み直す(実測: 本 18 冊に対し索引 15 行に腐っていて、落ちた 3 冊は file として在るのに手番の頭に載らなかった)。⚠ この kind を登録する便は**記録の service の閉語彙を 5 点まとめて動かす**(1 つでも落ちると記憶の機能が会話の記録を落とす): 契約 record-service.json の streamKinds〔今 3 語〕・eventKinds〔今 10 語〕・retention.streamKinds、写し services/record/vocabulary.py の STREAM_KINDS / EVENT_KINDS、配備の env AGORA_RECORD_RETENTION(全 streamKind が要る — 無宣言は retention-undeclared で**service が起動しない**)、針 scripts/check_record_policy.hy の期待。✓ 動かさなくてよい点: 書き手の名簿(record-service の WRITERS に agentd が既に在る)と BODY_FIELDS(本文の欄を text にすれば既に在る)。",
+      "declaration": {
+        "identityKey": [
+          "conversationId",
+          "name"
+        ],
+        "indexes": [
+          "spec.conversationId"
+        ],
+        "initial": "current",
+        "lifecycle": {
+          "finisher": "controller",
+          "unrescuable": []
+        },
+        "lifetime": "record",
+        "parent": "root",
+        "specByteBudget": 8192,
+        "stateKey": "state",
+        "states": [
+          "current",
+          "retired"
+        ],
+        "terminal": [
+          "retired"
+        ],
+        "withdraw": {
+          "state": "retired"
+        },
+        "writers": {
+          "create": [
+            "agentd"
+          ],
+          "update": [
+            "agentd"
+          ],
+          "withdraw": [
+            "agentd"
+          ],
+          "status": {
+            "state": [
+              "agentd"
+            ],
+            "at": [
+              "agentd"
+            ]
+          }
+        }
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "acp.agora-kinds.v1/agent-memory",
+        "type": "object",
+        "properties": {
+          "spec": {
+            "type": "object",
+            "properties": {
+              "conversationId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "description": "この記憶を持つ会話。identityKey の 1 つ目・indexes の引き口。"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120,
+                "pattern": "^[a-z0-9][a-z0-9-]*$",
+                "examples": ["agent-memory-record-kind", "2026-incident-postmortem"],
+                "description": "記憶の名(home の file 名から .md を落とした綴り = frontmatter の name)。identityKey の 2 つ目。⚠ 名が同じでも身元が同じとは限らない(実測: 同じ名前で別の事実を書いた組が在った)— だから本文は上書きせず版を足す。"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "feedback",
+                  "project",
+                  "reference"
+                ],
+                "description": "記憶の種類(frontmatter の metadata.type の閉語彙)。"
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "description": "1 行の要旨(frontmatter の description)。**索引はこの欄から組む** — 手番の頭に載るのはここで、本文は要求時に recordRef から引く。"
+              },
+              "recordRef": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "description": "本文の在処 = record:<conversationId>/<streamId>(記録の service の stream・streamKind memory・streamId = memory#<name>・出来事は kind memory の 1 つ〔producerSeq 0・本文の欄は text〕)。summary.recordRef と同じ綴りの規則。⚠ stream は名ごとに 1 本で、版は stream を増やさない — 2 回目以降の書きは supersede で、置き換える行と同じ producerSeq でなければ 400。素の再 append は 409 で**保存済みの本文が勝つ**(agentd の summary の腕の逐語『keeping the stored one』)ので、版を append で積まない。"
+              },
+              "recordSeq": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "今の版の recordSeq(append の答え、または supersede の versionAnswer.recordSeq)。次の書きはこの値へ supersede を撃つ — **append と supersede の撃ち分けの鍵はこの欄の在否**(行が在れば supersede・無ければ append)。"
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "本文の UTF-8 byte 数(記録の service が答える storedEvent.bytes の写し)。"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$",
+                "examples": [
+                  "0000000000000000000000000000000000000000000000000000000000000000"
+                ],
+                "description": "本文の sha256(記録の service と同じ計算 — 冪等の鍵・版の同一性。同じ値なら書きを撃たない)。"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "今の版の番号(記録の service の versionAnswer.version・最初の append は 1)。順序と食い違いの検出のためだけの数で、身元には使わない(身元は identityKey の 2 つ)。⚠ 行が消えても stream は残るので、行を作り直す時はこの値を stream から読み直す(**行は cache・stream が正本**)。"
+              },
+              "links": {
+                "type": "array",
+                "maxItems": 32,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120,
+                  "pattern": "^[a-z0-9][a-z0-9-]*$",
+                  "examples": ["agent-memory-record-kind"]
+                },
+                "description": "本文が [[name]] で指した他の記憶の名(同じ会話とは限らない・まだ存在しない名でもよい)。索引の材料。"
+              },
+              "writtenBy": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256,
+                "description": "この版を書いた手番の agent-job の id(任意 — 記録の材料で identity には使わない。⚠ landed の ADR が『機械的な統合は著者を決められない(記憶 file に著者の欄が無い)』を理由に merge を却下した — 行にすると著者が付く)。"
+              }
+            },
+            "required": [
+              "conversationId",
+              "name",
+              "type",
+              "description",
+              "recordRef",
+              "recordSeq",
+              "bytes",
+              "sha256",
+              "version"
+            ],
+            "additionalProperties": false
+          },
+          "status": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "current",
+                  "retired"
+                ]
+              },
+              "at": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "この版を書いた時刻(epoch ミリ秒・agentd の時計)。"
               }
             },
             "required": [
