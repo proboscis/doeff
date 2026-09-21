@@ -229,6 +229,11 @@ def _turn(sid, prompt, uuid, resumed, carried=False):
 
 def main():
     args = sys.argv[1:]
+    argv_log = os.environ.get("DOEFF_HEADLESS_STUB_ARGV_LOG")
+    if argv_log:
+        # 検の読み手: 起こされた順に argv を 1 行ずつ(冷えた再開の前の圧縮が手番の前に走ったか)
+        with open(argv_log, "a", encoding="utf-8") as handle:
+            handle.write(" ".join(args) + "\n")
     if "--help" in args:
         sys.stdout.write("stub claude\n")
         return 0

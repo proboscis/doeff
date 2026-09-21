@@ -22,6 +22,7 @@
 (require doeff-hy.macros [defhandler])
 
 (import os)
+(import subprocess)
 
 (import doeff_agents.sessionhost.effects [
   HeadlessDeliver
@@ -33,7 +34,9 @@
   HeadlessKillAll
   HeadlessLiveness
   HeadlessPoll
-  HeadlessSpawn])
+  HeadlessRunOnce
+  HeadlessSpawn
+  ProcResult])
 (import doeff_agents.sessionhost.headless_process [HeadlessRegistry pid-exists])
 (import doeff_agents.sessionhost.headless_protocol [BackendLiveness])
 (import doeff_agents.sessionhost.cache_host_model [HostCacheIdentifyProcess HostCacheStopProcess])
@@ -46,6 +49,10 @@
 
 ;; host の process に 1 つの登記簿(session の名 → process)。
 (setv HEADLESS-REGISTRY (HeadlessRegistry))
+
+;; 1 回きりの子 process(冷えた再開の前の圧縮)の wall-clock の上限。圧縮 plugin の実測は
+;; 1〜2 秒 + CLI の起動で、model は 1 度も呼ばない — これを超えたら諦めて手番を起こす。
+(setv HEADLESS-RUN-ONCE-TIMEOUT-SECONDS 120)
 
 
 (defn headless-spawn-env [env]
@@ -82,6 +89,23 @@
     (setv process (.spawn registry session-name argv work-dir
                           (headless-spawn-env env) events-path dialogue))
     (resume process.pid))
+
+  (HeadlessRunOnce [session-name work-dir env argv]
+    ;; HeadlessSpawn と同じ実効 env(headless-spawn-env の 1 点)で完了まで走らせる。
+    ;; stdin は空(EOF)— prompt は argv に載っている(print mode の `/compact …`・綴りの家は impls/headless_argv.hy)。
+    (try
+      (setv res (subprocess.run argv
+                                :cwd work-dir
+                                :env (headless-spawn-env env)
+                                :input ""
+                                :capture-output True
+                                :text True
+                                :timeout HEADLESS-RUN-ONCE-TIMEOUT-SECONDS))
+      (resume (ProcResult :exit-code res.returncode :stdout res.stdout :stderr res.stderr))
+      (except [subprocess.TimeoutExpired]
+        (resume (ProcResult :exit-code 124
+                            :stdout ""
+                            :stderr f"process timed out after {HEADLESS-RUN-ONCE-TIMEOUT-SECONDS}s")))))
 
   (HeadlessDeliver [session-name text attachments]
     (setv process (.get registry session-name))

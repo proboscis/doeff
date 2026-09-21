@@ -838,6 +838,17 @@
   #^ str events-path
   #^ Any dialogue)
 
+(defclass [(dataclass :frozen True :kw-only True)] HeadlessRunOnce [EffectBase]
+  "headless の 1 回きりの子 process を、HeadlessSpawn と同じ実効 env(禁止 env の hard reject も
+   同じ 1 点)で完了まで走らせる。用途 = 冷えた再開の前の圧縮(print mode の prompt `/compact
+   fast-jev-if-cold` を同じ会話の続きとして 1 回 — 圧縮 plugin が自分の状態で温冷を決め、温ければ
+   何もしない)。stdout / stderr は捕り、wall-clock の上限は substrate 所有。
+   戻り値: ProcResult(exit-code != 0 も値 — 圧縮は最適化で、手番を止める理由にならない)。"
+  #^ str session-name
+  #^ str work-dir
+  #^ dict env
+  #^ list argv)
+
 (defclass [(dataclass :frozen True :kw-only True)] HeadlessDeliver [EffectBase]
   "次の手番の本文を process の stdin へ(綴りは Dialogue.turn — claude は stream-json の
    user の行・codex は turn/start)。戻り値: bool(process が生きていて書けたか)。"
@@ -1182,6 +1193,13 @@
   (<- pid (HeadlessSpawn :session-name session-name :work-dir work-dir :env env :argv argv
                          :events-path events-path :dialogue dialogue))
   pid)
+
+(defk headless-run-once [session-name work-dir env argv]
+  {:pre [(: session-name str) (: work-dir str) (: env dict) (: argv list) (> (len argv) 0)]
+   :post [(: % ProcResult)]}
+  "HeadlessRunOnce を実行する。戻り = 子 process の完了結果(ProcResult)。"
+  (<- res (HeadlessRunOnce :session-name session-name :work-dir work-dir :env env :argv argv))
+  res)
 
 (defk headless-deliver [session-name text [attachments #()]]
   {:pre [(: session-name str) (: text str) (: attachments tuple)]

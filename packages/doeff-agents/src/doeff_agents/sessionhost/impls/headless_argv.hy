@@ -15,7 +15,9 @@
 ;;;
 ;;; substrate-clean 領域: 生 IO 禁止(defsemgrep 執行)。ここは純粋な組み立てだけ。
 
-(require doeff-hy.macros [defk defhandler <-])
+(require doeff-hy.macros [deff defk defhandler <-])
+
+(import json)
 (import json)
 
 (import doeff_agents.sessionhost.effects [BuildHeadlessLaunch])
@@ -37,6 +39,38 @@
 (setv CLAUDE-HEADLESS-FLAGS
       ["-p" "--input-format" "stream-json" "--output-format" "stream-json" "--verbose" "--include-partial-messages"])
 (setv CODEX-APP-SERVER-ARGS ["app-server" "--listen" "stdio://"])
+
+;; 冷えた再開の前の圧縮(fast-jev-compaction plugin・2026-09-22): 続きの手番の process は
+;; 最初の model 呼び出しの前に plugin が圧縮できない(engine は起動時と prompt の送信時の
+;; hook からの圧縮を断る)。⇒ 起動側が先に `-p "/compact fast-jev-if-cold" --resume <sid>` を
+;; 1 回走らせ、plugin が自分の状態(TTL・profile・model・機体)で温冷を決める。温ければ何も
+;; 起きず(model の呼び出し 0 回)、冷えていれば古い tool の結果だけを消す(要約文は書かない)。
+(setv CLAUDE-COLD-COMPACTION-PROMPT "/compact fast-jev-if-cold")
+(setv FAST-JEV-PLUGIN-ID "fast-jev-compaction@fast-jev-compaction")
+
+
+(deff fast-jev-compaction-enabled [settings-text]
+  {:pre [(: settings-text (| str None))]
+   :post [(: % bool)]}
+  "profile の settings.json の本文から、圧縮 plugin が**実際に効く**形かを読む(純関数):
+   enabledPlugins に plugin が真で、env に CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 が在ること。
+   どちらか欠けると `/compact` は組込みの要約(model 1 回・会話全体を読む)に落ちるので、
+   その profile では圧縮の prompt を撃ってはならない — 会社の profile には plugin が無い。"
+  (setv parsed None)
+  (when (isinstance settings-text str)
+    (try
+      (setv parsed (json.loads settings-text))
+      (except [Exception]
+        (setv parsed None))))
+  (if (not (isinstance parsed dict))
+      False
+      (do
+        (setv plugins (.get parsed "enabledPlugins"))
+        (setv env (.get parsed "env"))
+        (bool (and (isinstance plugins dict)
+                   (is (.get plugins FAST-JEV-PLUGIN-ID) True)
+                   (isinstance env dict)
+                   (= (str (.get env "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS" "")) "1"))))))
 
 
 (defk build-claude-headless [params]
@@ -70,11 +104,17 @@
         (setv (get argv index) (json.dumps settings :separators #("," ":"))))
       (.extend argv ["--settings" (json.dumps {"disableAllHooks" True})]))
     (.extend argv ["--max-turns" "1"]))
+  (setv built {"argv" argv "dialogue" (ClaudeDialogue)})
   (when (and (= resume-mode "resume") (isinstance conversation dict))
     (setv conv-id (.get conversation "session_id"))
     (when (isinstance conv-id str)
-      (.extend argv ["--resume" conv-id])))
-  {"argv" argv "dialogue" (ClaudeDialogue)})
+      (.extend argv ["--resume" conv-id])
+      ;; 冷えた再開の前の圧縮の argv: 同じ基礎の旗 + print mode の prompt 1 つ + 同じ --resume。
+      ;; stream-json の旗は載せない(stdin の対話ではなく 1 回きり)。
+      (setv (get built "cold_compaction_argv")
+            (+ [(get base 0)] (list (cut base 1 None))
+               ["-p" CLAUDE-COLD-COMPACTION-PROMPT "--resume" conv-id]))))
+  built)
 
 
 (defk codex-root-config-args [params]
