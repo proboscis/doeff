@@ -191,6 +191,33 @@ rules:
       exclude:
         - "**/sessionhost/policy.hy"
 
+  - id: doeff-agents-turn-carried-key-declared-as-a-launch-flag
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      A turn-carried charter field (memory_dir / memory_files) is being declared as a
+      LAUNCH-FLAG key — i.e. copied into the session row's launch_overlay so that the arms
+      which only read the row can find it. Those two fields have their master copy in the
+      ACP row (law ACP 575b1e conversation-memory-lives-in-the-row); writing them into the
+      host's sqlite creates a second master that rots, and the row then points an old home
+      (or old books) at a conversation whose row has moved on. The continuation arm
+      (session.send -> headless.continue-headless-process, which restarts the dropped
+      process with --resume and therefore carries EVERY claude turn) is the 4th arm that
+      wakes a conversation, not an exception to the rule: it re-names the turn payload each
+      turn through the send's params (acp/effects.py SessionSend memory_dir / memory_files
+      -> host session.send -> continue-headless-process), exactly as launch / resume /
+      rehydrate re-name it through the charter. This is the wrong turn the 2026-09-21 fix
+      took first — "just move the key into LAUNCH-FLAG-KEYS" (card
+      acp:kanban-issue:ki-a068efe8f6d9). Declare it in policy.TURN-CARRIED-KEYS instead and
+      give the continuation arm a field to carry it.
+    patterns:
+      - pattern-regex: 'setv LAUNCH-FLAG-KEYS[^)]*"(memory_dir|memory_files)"'
+    paths:
+      include:
+        - "**/doeff_agents/sessionhost/policy.hy"
+        - "**/sessionhost/turn_carried_key_as_launch_flag_forbidden.hy"
+
   - id: doeff-agents-api-limit-possessive-verbatim-forbidden
     languages:
       - generic

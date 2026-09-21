@@ -1274,6 +1274,13 @@ class SessionRpc:
         # 値は秘密 — ここでも log に出さない。
         if effect.session_env:
             params["session_env"] = dict(effect.session_env)
+        # card acp:kanban-issue:ki-a068efe8f6d9: 起こし直しの拍(= 会話を起こす 4 つ目の腕)に効く
+        # 手番の荷 — 自動記憶の置き場と、その置き場へ書き出す冊。名乗った時だけ載せる
+        # (欄の有無が「この手番が名乗ったか」の印。行には残らないので、この 2 欄だけが決める)。
+        if effect.memory_dir:
+            params["memory_dir"] = effect.memory_dir
+        if effect.memory_files:
+            params["memory_files"] = [dict(book) for book in effect.memory_files]
         # 段 10 lane 10o(agora-redesign #96): 添付は型つきのまま wire の項にする(綴りは器の Dialogue)。
         if effect.attachments:
             params["attachments"] = attachment_params(effect.attachments)

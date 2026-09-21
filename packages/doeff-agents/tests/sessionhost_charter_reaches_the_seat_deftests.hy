@@ -25,7 +25,10 @@
 (import json)
 (import doeff [run])
 
+(import dataclasses [fields :as dataclass-fields])
+
 (import doeff_agents.sessionhost.policy [CHARTER-CARRIED-KEYS LAUNCH-FLAG-KEYS TURN-CARRIED-KEYS])
+(import doeff_agents.sessionhost.acp.effects [SessionSend])
 (import doeff_agents.sessionhost.acp [effects])
 (import doeff_agents.sessionhost.acp.effects [
   CHARTER-CARRIED-KEYS :as ACP-CHARTER-CARRIED-KEYS
@@ -56,6 +59,17 @@
 
 (import sessionhost_launch_deftests [LaunchWorld launch-params run-launch])
 (import sessionhost_resume_deftests [resume-params run-resume seed-source])
+;; 継続の腕の道具立て(行から argv と置き場までを 1 回回す)は焦点の検の家から借りる —
+;; 第 2 の harness を作らない(card acp:kanban-issue:ki-a068efe8f6d9)。
+(import sessionhost_acp_memory_home_deftests [
+  AUTO-MEMORY-SETTING
+  ContinueWorld
+  HOME-OF-CONVERSATION
+  PLAIN-OVERLAY
+  continue-turn
+  files-in
+  headless-row
+  settings-of-argv])
 
 
 (setv MEMORY-HOME "/state/doeff/agent-memory/c-01M28FFPKA9NDM1WCASFVC63W1")
@@ -437,3 +451,46 @@
   (assert (in "books=2" line) line)
   (assert (in "declared=5" line) line)
   (assert (in "base=1" line) line))
+
+
+;; ---------------------------------------------------------------------------
+;; (8) 4 つ目の腕 — 継続(降りた process の `--resume`)も同じ荷を席へ運ぶ
+;; ---------------------------------------------------------------------------
+;;
+;; 4 度目の同じ壊れ方(card acp:kanban-issue:ki-a068efe8f6d9・2026-09-21): この検が腕を
+;; **launch と resume の 2 つだけ手で並べていた**ので、継続の腕(session.send → 降りた process の
+;; `--resume` = claude の普段の手番はすべてこれ)が 1 度も数えられず、手番の荷(置き場と冊)が
+;; 両方落ちていた。charter を組まない腕なので「charter の欄」では数えられない —
+;; 数えるのは **policy.TURN-CARRIED-KEYS**(charter を組む 3 腕が charter で運ぶのと同じ荷)。
+
+(deftest test-the-continuation-arm-can-carry-every-turn-carried-key
+  ;; 継続の運び手は SessionSend(送りの effect)ちょうど。⇒ 手番の荷の鍵ごとに欄が在ること。
+  ;; 反射で数える — 手書きの名簿を持たない(荷を 1 つ足して運び手に欄を作らないと赤)。
+  (setv carrier (frozenset (gfor field (dataclass-fields SessionSend) field.name)))
+  (setv missing (sorted (lfor key TURN-CARRIED-KEYS :if (not-in key carrier) key)))
+  (assert (not missing)
+          #("継続の腕(SessionSend)が運べない手番の荷" missing
+            "足す所は acp/effects.py SessionSend の欄 + host の session.send の受理形")))
+
+
+(deftest test-every-turn-carried-key-reaches-the-seat-on-the-continuation-arm
+  ;; 届いた所で測る(依頼書 制約 4): 継続の腕を 1 回回し、手番の荷が**器の導出点**に現れることを
+  ;; 鍵ごとに撃つ。観測の仕方は鍵で違う(置き場 = argv の settings の鍵 / 冊 = 置き場に書かれた
+  ;; file)ので表で持つ。⚠ 表に無い鍵が TURN-CARRIED-KEYS に増えたら**この検が落ちる**
+  ;; (手書きの列挙を足さない — 2 度目の壊れ方はこの列挙の漏れだった)。
+  (setv books (sample-books 2))
+  (setv world (ContinueWorld))
+  (<- argv list (continue-turn world (headless-row PLAIN-OVERLAY) HOME-OF-CONVERSATION books))
+  (setv arrived
+        {"memory_dir" (fn [] (= (.get (settings-of-argv argv) AUTO-MEMORY-SETTING)
+                                HOME-OF-CONVERSATION))
+         ;; 2 冊 + 索引 + 基準 = 4 file(冊数は本文に焼かない — 渡した列から数える。基準は上の (7) の
+         ;; 見本 sample-books が名簿の最後に載せ、器は書けた冊へ絞って置く — 全冊書けた拍は 1 file)。
+         "memory_files" (fn [] (= (len (files-in world HOME-OF-CONVERSATION)) (len books)))})
+  (for [key TURN-CARRIED-KEYS]
+    (setv observer (.get arrived key))
+    (when (is observer None)
+      (assert False
+              (+ f"手番の荷に新しい鍵 {key !r} が増えている — 継続の腕(4 つ目)でそれが席へ"
+                 "届くことをこの検で数えること(手書きの列挙を足さない)")))
+    (assert (observer) #("継続の腕で席に届かなかった手番の荷" key argv (sorted (.keys world.fs))))))

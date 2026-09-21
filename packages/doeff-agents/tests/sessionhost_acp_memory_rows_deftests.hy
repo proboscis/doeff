@@ -215,13 +215,17 @@
     (assert (isinstance session-id str))
     session-id)
 
-  (defn #^ None turn [self]
+  (defn #^ None turn [self [warm False]]
     "1 手番を頭から終いまで(水入れ = incarnate → 本文 → 畳み戻し = settle-record)。
 
-     手番のたびに器の session を落とす — この便の世界では次の手番がどの機体に落ちるか分からず、
-     器は毎回作り直される(pod の世代交代・機体の移動)。生きた session が残っていると 2 手番目は
-     送りになって水入れの腕(incarnate)を通らないので、検が水入れを 1 度しか撃てない。"
-    (.clear self.sessions.views)
+     既定では手番のたびに器の session を落とす — この便の世界では次の手番がどの機体に落ちるか
+     分からず、器は毎回作り直される(pod の世代交代・機体の移動)。
+     warm = True は session を残す ⇒ 次の手番は**送りの腕**(会話を起こす 4 つ目の腕 = 降りた
+     process を `--resume` で起こし直す拍。claude の普段の手番はすべてこれ)。
+     card acp:kanban-issue:ki-a068efe8f6d9: その腕は 2026-09-21 まで水入れを 1 度も通らず、
+     置き場も冊も落ちていた — warm の検はその腕を撃つためのもの。"
+    (when (not warm)
+      (.clear self.sessions.views))
     (setv self.turns (+ self.turns 1))
     (setv job (.job-id self))
     (.put-row self.acp (row-of AGORA-KINDS-NAMESPACE MESSAGE-KIND f"m-{self.turns}"
@@ -675,3 +679,29 @@
   (setv after (get (.memory-rows world) 0))
   (assert (= after.spec before.spec) #("置き場から消えた冊で行が動いた" after.spec before.spec))
   (assert (= (get after.status "state") "current") after.status))
+
+
+(deftest test-the-warm-turn-carries-the-home-and-the-books-to-the-container
+  ;; card acp:kanban-issue:ki-a068efe8f6d9(受入: 継続の腕も水入れを通る): 温かい session への送りは
+  ;; 会話を起こす **4 つ目の腕**で、器はこの拍に降りた process を `--resume` で組み直す。
+  ;; ⇒ 置き場も冊もこの送りが名乗る。名乗らないと席は CLI の既定の置き場へ書き、畳み戻し
+  ;; (fold-memories は memory-home-of で導いた置き場を読む)と交わりが空になって冊が消える
+  ;; (実測 2026-09-20〜21 の会社 Mac: 6 時間で冊 18 件・うち 6 件は記録に行が無く失われた)。
+  (setv world (MemoryWorld))
+  (setv text (book-text "a-fact" "要旨" "本文。"))
+  (.put-file world "a-fact.md" text)
+  (.turn world)
+  ;; 置き場は空(宿が巻き直された体)。行と記録の service だけが残る。
+  (setv world.local.files {})
+  (.turn world :warm True)
+  ;; 2 手番目は起こし直していない = 送りの腕を通った(起こす腕なら水入れは今日でも通る)。
+  (assert (= (len world.sessions.launches) 1) world.sessions.launches)
+  (setv sent (get world.sessions.send-memory-dirs -1))
+  (assert (= (get sent 1) HOME) #("送りの手番が会話の置き場を名乗らない" sent))
+  (setv books (get (get world.sessions.send-memory-files -1) 1))
+  (setv by-name (dfor f books (get f "name") (get f "text")))
+  ;; 冊 + 索引 + 畳み戻しの基準(card ki-9fc7d4bca4dc)— 基準が継続の腕で落ちると、次の畳み戻しは
+  ;; 規則 3b(基準が無いのに行が在る)で 1 冊も書き戻さない ⇒ 4 つ目の腕こそ基準を運ぶこと。
+  (assert (= (sorted (.keys by-name)) (sorted ["a-fact.md" MEMORY-INDEX-FILE MEMORY-BASE-FILE])) by-name)
+  ;; 本文は逐語(記録の service から引いた本文そのもの — 置き場の残骸ではない)。
+  (assert (= (get by-name "a-fact.md") text) by-name))

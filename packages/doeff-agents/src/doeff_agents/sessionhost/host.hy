@@ -770,6 +770,31 @@
   (tuple built))
 
 
+(deff turn-memory-files-of [params method]
+  {:pre [(: params dict) (: method str)]
+   :post [(: % tuple)]}
+  "RPC の params の memory_files(呼び手 = agentd)→ 手番の頭に置き場へ書き出す冊の並び。
+   欄が無ければ空(この手番は置き場に手を付けない)。
+
+   card acp:kanban-issue:ki-a068efe8f6d9: 継続は会話を起こす 4 つ目の腕で、起こす 3 腕が
+   charter で運ぶ手番の荷(policy.TURN-CARRIED-KEYS)をこの口で名乗り直す。形(name と text が
+   文字列)の合わない項は**断る** — 黙って落とすと、呼び手は「冊を運んだ」と思ったまま置き場が
+   空になる(直している無音の形そのもの)。file 名の綴りの検めは器の側(impls/claude_code —
+   `/` や先頭の `.` を書かない)。"
+  (setv raw (.get params "memory_files" []))
+  (when (not (isinstance raw list))
+    (raise (RuntimeError f"invalid params for {method}: memory_files must be a list")))
+  (setv built [])
+  (for [item raw]
+    (when (not (and (isinstance item dict)
+                    (isinstance (.get item "name") str) (isinstance (.get item "text") str)
+                    (.strip (.get item "name"))))
+      (raise (RuntimeError
+               f"invalid params for {method}: each memory file needs a non-empty `name` and a `text`")))
+    (.append built {"name" (get item "name") "text" (get item "text")}))
+  (tuple built))
+
+
 (deff admit-expected-result [params method]
   {:pre [(: params dict) (: method str)]
    :post [(: % "None — 不適合は raise")]}
@@ -1602,6 +1627,16 @@
     (setv send-env-error (session-env-admission-error session-env "session.send"))
     (when (is-not send-env-error None)
       (raise (RuntimeError send-env-error)))
+    ;; card acp:kanban-issue:ki-a068efe8f6d9: memory_dir / memory_files = **この手番の**自動記憶の
+    ;; 置き場と、その置き場へ手番の頭に書き出す冊(policy.TURN-CARRIED-KEYS)。継続(降りた process を
+    ;; `--resume` で起こし直す拍)は会話を起こす 4 つ目の腕で、起こす 3 腕が charter で運ぶのと同じ
+    ;; 2 欄をここで名乗り直す — 行には残さない(正本は ACP の行・法 ACP 575b1e)。
+    ;; 欄の有無が「この手番が名乗ったか」の印なので、空は名乗っていないのと同じ(欄を作らない)。
+    (setv send-memory-dir (.get p "memory_dir" ""))
+    (when (not (isinstance send-memory-dir str))
+      (raise (RuntimeError
+               f"invalid params for session.send: memory_dir must be a string (got: {send-memory-dir !r})")))
+    (setv send-memory-files (turn-memory-files-of p "session.send"))
     ;; 手番ごとの env を運べない組み合わせは黙って落とさず断る(落とすと誕生の札で手番が走る =
     ;; まさに #92 の形): tmux の器には手番ごとの env が無く、mode = interrupt は走っている手番へ
     ;; 本文を注ぐだけで process を起こさない。
@@ -1613,6 +1648,20 @@
       (when (= mode SEND-MODE-INTERRUPT)
         (raise (RuntimeError
                  (+ "session.send: session_env belongs to mode = " SEND-MODE-TURN
+                    " — an interrupt is poured into the turn already in flight and starts no process.")))))
+    ;; 手番の荷も同じ理由で同じ組み合わせだけが運べる(黙って落とすと、まさに直している形 —
+    ;; 呼び手は「置き場を名乗った」と思ったまま既定の置き場へ書かれる)。
+    (setv memory-payload-key (cond send-memory-dir "memory_dir"
+                                   send-memory-files "memory_files"
+                                   True ""))
+    (when memory-payload-key
+      (when (not (headless-backend? config))
+        (raise (RuntimeError
+                 (+ f"session.send: {memory-payload-key} is only carried by the headless backend "
+                    f"(backend: {config.backend}). The tmux container restarts no process for a turn."))))
+      (when (= mode SEND-MODE-INTERRUPT)
+        (raise (RuntimeError
+                 (+ f"session.send: {memory-payload-key} belongs to mode = " SEND-MODE-TURN
                     " — an interrupt is poured into the turn already in flight and starts no process.")))))
     ;; 段 10 lane 10o(agora-redesign #96・依頼者の追補): 郵便の添付は**型つき**で受け取り、そのまま
     ;; 器へ渡す(CLI の綴りは kind ごとの Dialogue が組む — この module に画像の綴りは無い)。
@@ -1628,7 +1677,8 @@
                   (and (headless-backend? config) (= mode SEND-MODE-INTERRUPT))
                   (headless-inject-program sid message ref attachments)
                   (headless-backend? config)
-                  (headless-send-program sid message awaiting session-env attachments)
+                  (headless-send-program sid message awaiting session-env attachments send-memory-dir
+                                         send-memory-files)
                   True
                   (send-program sid message literal enter awaiting)))
     (record-command actor sid "session.send" message)

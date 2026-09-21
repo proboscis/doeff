@@ -490,6 +490,11 @@ class FakeSessions:
         self.sends: list[tuple[str, str, bool]] = []
         #: 段 10 lane 10d 便 2 追補 2: 送りが運んだ手番ごとの env — (session_id, env)の順。
         self.send_envs: list[tuple[str, JSONObject]] = []
+        #: card acp:kanban-issue:ki-a068efe8f6d9: 送りの手番が名乗った自動記憶の置き場と冊
+        #: (None / 空 = 名乗らなかった)。検はこの列で「起こし直しが会話の置き場を指し、
+        #: その置き場へ行の冊が書かれる」ことを読む。
+        self.send_memory_dirs: list[tuple[str, str | None]] = []
+        self.send_memory_files: list[tuple[str, tuple[JSONObject, ...]]] = []
         #: 段 10 lane 10o(agora-redesign #96): 器へ渡した型つきの添付(session_id と並び)。
         self.sent_attachments: list[tuple[str, tuple[TurnAttachment, ...]]] = []
         #: 器が添付を落とす時の理由(空 = 受ける — 検で tui の器を真似る)。
@@ -558,6 +563,8 @@ class FakeSessions:
         # 追補 2(実弾 #92): 手番ごとの env は「その送りが運ぶ値」— 検はこの列で
         # 「起こし直しがこの手番の札で起きる」ことを読む。
         self.send_envs.append((effect.session_id, dict(effect.session_env)))
+        self.send_memory_dirs.append((effect.session_id, effect.memory_dir))
+        self.send_memory_files.append((effect.session_id, effect.memory_files))
         # 段 10 lane 10o(agora-redesign #96): 型つきの添付を器へ渡した記録(綴りは器の Dialogue)。
         self.sent_attachments.append((effect.session_id, effect.attachments))
         # host と同じ意味論(headless.hy headless-send-program): 降りた process への次の手番は

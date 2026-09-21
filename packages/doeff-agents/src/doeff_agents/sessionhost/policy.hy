@@ -309,8 +309,21 @@
 ;;   TURN-CARRIED-KEYS = 手番ごとに charter が名乗り直す値。**行には残さない**
 ;;                       (正本が他所に在る: 記憶の本文と置き場の正本は ACP の行
 ;;                        〔法 ACP 575b1e〕で、sessionhost の sqlite へ写すと
-;;                        第 2 の正本が腐る)。起こす腕は launch / resume / rehydrate
-;;                        の 3 つとも毎回 charter から運ぶ。
+;;                        第 2 の正本が腐る)。名乗り直す腕は **4 つ**(下)。
+;;
+;; ⚠ 会話を起こす腕は **4 つ**で、継続はその 4 つ目(card acp:kanban-issue:ki-a068efe8f6d9):
+;;     launch / resume / rehydrate = charter を組む腕(手番の荷は charter が運ぶ)
+;;     継続(session.send → headless.continue-headless-process)= charter を組まない腕。
+;;       降りた process を `--resume` で起こし直すので **process の形は毎回組み直される** —
+;;       claude は 1 手番 1 process なので、普段の手番はすべてこの腕。
+;;   2026-09-21 までこの腕だけが数え落とされ、行の旗と行の 6 欄しか読まなかったので
+;;   **置き場も冊も両方**落ちた(会社 Mac 6 時間で冊 18 件が CLI の既定の置き場
+;;   〔<家>/projects/<潰した作業ディレクトリ>/memory〕へ・うち 6 件は記録に行が無く失われ・
+;;   5 会話が被害・別の会話の記憶の混入も発火)。
+;;   ⇒ 直し方は **手番の荷を行に移すことではない**(行に写した瞬間に第 2 の正本が生まれ、
+;;     上の族の定義が壊れる)。継続も他の 3 腕と同じく**手番ごとに名乗り直す** —
+;;     経路は送りの params(acp/effects.SessionSend の欄 → host の session.send →
+;;     headless.continue-headless-process)で、行は 1 欄も増えない。
 ;;
 ;; ⚠ **欄を 1 つ足す時に数え直すのはこの 2 つの集合だけ**(名簿を 5 つ数えない)。
 ;;   落ちたら赤になる検 = tests/sessionhost_charter_reaches_the_seat_deftests.hy

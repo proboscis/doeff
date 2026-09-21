@@ -2414,6 +2414,29 @@
           next)))
 
 
+(defk turn-memory-home-of [memory-root backend-kind conversation-id]
+  {:pre [(: memory-root str) (: backend-kind str) (: conversation-id str)]
+   :post [(: % (| str None))]}
+  "送りの手番(温かい session への session.send)が器へ運ぶ自動記憶の置き場。None = 運ばない。
+
+   起こす腕は charter が置き場を運ぶ(charter-with-memory-home)が、**送る腕は charter を組まない** —
+   それでも headless の器は降りた process を `--resume` で起こし直す(claude は 1 手番 1 process
+   なので普段の手番はすべてこれ)。⇒ 継続は会話を起こす **4 つ目の腕**で、他の 3 腕と同じく
+   手番の荷(policy.TURN-CARRIED-KEYS)を**手番ごとに名乗り直す**。行には残さない
+   (正本は ACP の行 — 法 ACP 575b1e。行へ写すと第 2 の正本が腐る)。
+
+   2026-09-21 までこの腕だけが数え落とされ、継続の argv は行の 6 欄と旗しか読まなかったので、
+   置き場も冊も落ちて CLI の既定の置き場へ書いた(card acp:kanban-issue:ki-a068efe8f6d9)。
+
+   判断は memory-home-of の 1 点(ここは写すだけ)。手番ごとの env(turn-session-env-of)と同じく
+   **headless の器だけ**が運べる — tui(tmux / herdr)の pane には起こし直しの拍が無く、
+   器が session.send の欄を断るので、名乗らない。"
+  (when (!= backend-kind BACKEND-HEADLESS)
+    (return None))
+  (<- home (| str None) (memory-home-of memory-root conversation-id))
+  home)
+
+
 (defk incarnation-charter-of [plan choice session-id bodies history attribution backend-kind lease homes-root
                               memory-root opener seat-env]
   {:pre [(: plan LaunchPlan) (: choice ArmChoice) (: session-id str) (: bodies tuple) (: history str)
