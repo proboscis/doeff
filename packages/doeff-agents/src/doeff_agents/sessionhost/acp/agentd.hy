@@ -578,6 +578,7 @@
   transcript-candidates-of
   transcript-observation-of
   transcript-path-of
+  turn-memory-home-of
   turn-record-ended-status
   turn-record-sweep-verdict
   turn-record-key-of
@@ -1228,7 +1229,7 @@
         ;; card acp:kanban-issue:ki-9fc7d4bca4dc(法 ACP 575b1e): 会話の記憶は行が正本 — 起こす前に行から読み、
         ;; charter に載せる(器の側が置き場へ書き出す)。行を読むのは effect を持つこの層ちょうどで、
         ;; 器の kind module(substrate-clean)には ACP も記録の service も import しない。
-        (<- memory-files tuple (memory-files-for-launch subject))
+        (<- memory-files tuple (memory-files-for-turn subject choice.arm (.get charter "memory_dir")))
         (<- charter dict (charter-with-memory-files charter memory-files))
         (when (and (is-not auth-file None) (is-not lease None) (is-not lease.auth-json None))
           (<- (FsWritePrivateText :path auth-file :text lease.auth-json)))
@@ -1246,12 +1247,18 @@
               launched)))))
 
 
-(defk memory-files-for-launch [subject]
-  {:pre [(: subject str)]
+(defk memory-files-for-turn [subject arm home]
+  {:pre [(: subject str) (: arm str) (: home (| str None))]
    :post [(: % tuple)]}
   "手番の頭の水入れ(card acp:kanban-issue:ki-9fc7d4bca4dc・法 ACP 575b1e): この会話の記憶の行を 1 回引き、
    本文を記録の service の stream から読んで、置き場へ書き出す file の列にする。索引 MEMORY.md は
    **行から導く**(file としての正本を持たない — 実測 2026-09-20: 本 18 冊に対し索引 15 行に腐っていた)。
+
+   ⚠ **会話を起こす 4 腕が同じこの 1 本を通る**(card acp:kanban-issue:ki-a068efe8f6d9):
+   起こす 3 腕(launch / resume / rehydrate)は charter に載せ、継続(send の腕 = 降りた process を
+   `--resume` で起こし直す拍)は送りの params に載せる。腕で別の読みを書かない。
+   arm / home は計器の項 — 宿が巻き直されても「どの腕がどの置き場を指したか」が log に残る
+   (行の側の証跡ではない。置き場を名乗らない手番は home="")。
 
    ⚠ **水入れと畳み戻しは対で 1 便**(依頼書の禁止 1)。読めない行・本文の無い行は落として数だけ log に出す
    (黙って空の置き場を正としない — 空の dir を正として畳み戻すと記憶が消える)。
@@ -1305,6 +1312,7 @@
   ;; 冊が 0 でも行が在って全部読めた(= 全部退役した)なら索引は書き直す — 腐った索引を残さない。
   (<- files tuple (memory-files-of (tuple books) baselines))
   (<- (MetricLine :fields {"metric" "agent-memory-hydrated" "conversationId" subject
+                           "arm" arm "home" (or home "")
                            "books" (len books) "based" (len baselines)
                            "unreadable" unread "retired" retired-count}))
   files)
@@ -1409,7 +1417,7 @@
               (<- folds bool (first-turn-carries-inputs settings.backend-kind used.arm))
               (<- started AgentdState
                   (after-start settings state row plan outcome lease used.arm now-ms
-                               (if folds #() bodies) (if folds #() carried) (get mail 2)))
+                               (if folds #() bodies) (if folds #() carried) (get mail 2) subject))
               started)))))
 
 
@@ -1649,10 +1657,10 @@
   #(path start-offset from-head))
 
 
-(defk after-start [settings state row plan view lease arm now-ms bodies carried missing]
+(defk after-start [settings state row plan view lease arm now-ms bodies carried missing subject]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: row AcpRow) (: plan LaunchPlan)
          (: view SessionView) (: lease (| LeaseGrant None)) (: arm str) (: now-ms int)
-         (: bodies tuple) (: carried tuple) (: missing tuple)]
+         (: bodies tuple) (: carried tuple) (: missing tuple) (: subject str)]
    :post [(: % AgentdState)]}
   "手番の始まり(session を起こした後・温かい session ならそのまま): 郵便の本文(bodies — headless の
    起こす腕では空: 本文は起こした prompt に畳んである)を送る(awaiting — 送った本文は owed。headless は
@@ -1671,6 +1679,13 @@
   ;; `--resume` で起こし直すことがある — その起こしに **この手番で借りた札** を載せる
   ;; (行に残った誕生の札で起こすと、更新で回った後は 401 を食う)。判断は judgment の 1 点。
   (<- turn-env dict (turn-session-env-of lease))
+  ;; card acp:kanban-issue:ki-a068efe8f6d9: 同じ起こし直しの拍に **手番の荷**(自動記憶の置き場と、
+  ;; その置き場へ書き出す冊 = policy.TURN-CARRIED-KEYS)も載せる。継続は会話を起こす 4 つ目の腕で、
+  ;; 器はこの拍に process を `--resume` で組み直す(claude は 1 手番 1 process)。ここで名乗らないと
+  ;; 器は行しか読めず、置き場も冊も落ちて CLI の既定の置き場
+  ;; (<家>/projects/<潰した作業ディレクトリ>/memory)へ書く。判断は judgment.turn-memory-home-of の
+  ;; 1 点(置き場そのものは memory-home-of・tui は None)、冊は起こす腕と同じ memory-files-for-turn。
+  (<- memory-home (| str None) (turn-memory-home-of settings.memory-root settings.backend-kind subject))
   ;; 段 10 lane 10o(agora-redesign #96・依頼者の追補): 添付は型つきのまま器へ渡す(綴りは Dialogue)。
   ;; 器が受けなかった(SessionSend の答えが断りを名乗った)拍は条件 AttachmentIgnored に写す。
   ;; card acp:kanban-issue:ki-3149aebbf675 B: headless の器では相乗りした郵便を **1 手番 = 1 prompt** に
@@ -1690,10 +1705,19 @@
   (<- rode-launch bool (first-turn-carries-inputs settings.backend-kind arm))
   (setv delivered (if rode-launch (list mail-ids) []))
   (setv refused None)
+  ;; 冊は**この拍に送る束が在る時だけ**行から読む: 起こす腕は charter で既に運んでおり
+  ;; (incarnate — 同じ memory-files-for-turn)、束の無い手番で読み直すと記録の service を 2 度引く。
+  ;; 置き場を名乗らない手番(tui の器・根を宣言していない機体)も読まない(書き出す先が無い)。
+  (setv memory-books #())
+  (when (and parcels (is-not memory-home None))
+    (<- books tuple (memory-files-for-turn subject NEXT-ARM-SEND memory-home))
+    (setv memory-books books))
   (for [parcel parcels]
     (<- answer (| str None SessionRefused)
         (SessionSend :session-id view.session-id :text (get parcel 0) :awaiting True
                      :session-env turn-env
+                     :memory-dir memory-home
+                     :memory-files memory-books
                      :attachments (get parcel 1)))
     (if (isinstance answer SessionRefused)
         (setv refused answer)

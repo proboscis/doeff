@@ -2940,12 +2940,27 @@ class SessionSend(EffectBase):
     ``session_env`` = **この手番の** env(段 10 lane 10d 便 2 の追補 2・実弾 #92)。降りた process を
     器が ``--resume`` で起こし直す時に重ねる値で、預かり所の貸与の札はここで運ぶ(行には残らない)。
     値は秘密 — log・簿・argv に出さない。
+
+    ``memory_dir`` / ``memory_files`` = **この手番の**自動記憶の置き場と、手番の頭にその置き場へ
+    書き出す冊(card acp:kanban-issue:ki-a068efe8f6d9)。継続(降りた process を ``--resume`` で
+    起こし直す拍)は会話を起こす **4 つ目の腕**で、他の 3 腕(launch / resume / rehydrate)が
+    charter で運ぶのと同じ手番の荷(policy.TURN-CARRIED-KEYS)をここで名乗り直す。
+    ⚠ 行には残さない(正本は ACP の行 — 法 ACP 575b1e。sessionhost の sqlite へ写すと第 2 の
+    正本が腐る)ので、継続の argv と置き場の中身は**この 2 欄だけ**が決める。
+    None / 空 = 名乗らない(tui の器には起こし直しの拍が無いので judgment が名乗らせない)。
     """
 
     session_id: str
     text: str
     awaiting: bool
     session_env: JSONObject = field(default_factory=_empty_json_object)
+    #: card acp:kanban-issue:ki-a068efe8f6d9: 手番が名乗る自動記憶の置き場(判断は
+    #: judgment.turn-memory-home-of → memory-home-of の 1 点)。None = 名乗らない。
+    memory_dir: str | None = None
+    #: card acp:kanban-issue:ki-a068efe8f6d9: 同じ手番が置き場へ書き出す冊({name, text} の列 —
+    #: 起こす腕の charter の CHARTER_MEMORY_FILES_KEY と同じ形・同じ材料(行から読んだ本文)。
+    #: 空 = 名乗らない(置き場に手を付けない — 前の手番の写しを残す)。
+    memory_files: tuple[JSONObject, ...] = ()
     #: 段 10 lane 10o(agora-redesign #96・依頼者の追補 2026-09-14・法 012 R21): 郵便の添付を**型つき**で
     #: 器へ渡す。CLI の綴り(block / input の項)は kind ごとの Dialogue が組む — agentd は組まない。
     #: 受けない器は SessionRefused で断り、呼び手が条件 AttachmentIgnored に写す(黙って落とさない)。

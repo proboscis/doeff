@@ -436,6 +436,19 @@
   #^ str agent-type
   #^ dict params)
 
+(defclass [(dataclass :frozen True :kw-only True)] HydrateMemoryHome [EffectBase]
+  "手番の頭の水入れ(card acp:kanban-issue:ki-a068efe8f6d9・法 ACP 575b1e): params の
+   `memory_dir` が在る時、同じ params の `memory_files`({name, text} の列)をその置き場へ
+   書き出す。戻り値 = 書き出した file の数。
+
+   ⚠ **起こす腕の PreLaunchSetup と同じ 1 点を通る**(並行実装を作らない — claude は
+   impls/claude_code.claude-hydrate-memory-home の 1 本)。起こす腕は PreLaunchSetup の中で
+   通り、継続の腕(降りた process の `--resume` = headless.continue-headless-process)は
+   PreLaunchSetup を通らないのでこの effect で通る。自動記憶の置き場を持たない kind
+   (codex — 作業状態は profile dir の側)は 0 を返す。"
+  #^ str agent-type
+  #^ dict params)
+
 (defclass [(dataclass :frozen True :kw-only True)] ClassifyPane [EffectBase]
   "pane capture(tail 100 行)を kind 別 marker で観測する。戻り値: PaneObservation。
    marker は lowercase tail の部分文字列一致(oracle main.rs:2775-3229、F-* 表)。
@@ -866,6 +879,12 @@
    :post [(: % PreLaunchSetup)]}
   "PreLaunchSetup を構築する(S11/S12 の trust / home 物理)。"
   (PreLaunchSetup :agent-type agent-type :params params))
+
+(deff hydrate-memory-home [agent-type params]
+  {:pre [(: agent-type str) (: params dict)]
+   :post [(: % HydrateMemoryHome)]}
+  "HydrateMemoryHome を構築する(手番の頭の水入れ — 置き場へ冊を書き出す)。"
+  (HydrateMemoryHome :agent-type agent-type :params params))
 
 (deff classify-pane [agent-type output]
   {:pre [(: agent-type str) (: output str)]

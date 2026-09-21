@@ -14,7 +14,19 @@ SEND_MODES: frozenset[str]
 def headless_events_path(events_root: str, session_id: str) -> str: ...
 def headless_launch_session(params: dict) -> Program: ...
 def headless_send_program(
-    session_id: str, message: str, awaiting: bool, turn_env: dict | None
+    session_id: str,
+    message: str,
+    awaiting: bool,
+    turn_env: dict | None,
+    attachments: tuple = ...,
+    memory_dir: str = ...,
+    memory_files: tuple = ...,
+) -> Program: ...
+def continue_headless_process(
+    row: object,
+    turn_env: dict | None,
+    memory_dir: str = ...,
+    memory_files: tuple = ...,
 ) -> Program: ...
 def headless_inject_program(session_id: str, message: str, ref: str) -> Program: ...
 def headless_escalate_program(session_id: str) -> Program: ...

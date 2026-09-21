@@ -17,6 +17,7 @@
   BuildResume
   DiscoverConversation
   PreLaunchSetup
+  HydrateMemoryHome
   ClassifyPane
   DeliverMessage
   ProbeConversationActivity
@@ -477,6 +478,13 @@
     :when (= agent-type "codex")
     (<- identity (codex-pre-launch params))
     (resume identity))
+
+  ;; card acp:kanban-issue:ki-a068efe8f6d9: codex は claude の auto-memory に当たる置き場を
+  ;; 持たない(作業状態は profile dir の側)。⇒ 0 file。黙って落とさず「書く物が無い」と
+  ;; 型で答える — 腕(起こす / 継続)を問わず同じ答えで、呼び手に分岐を作らせない。
+  (HydrateMemoryHome [agent-type params]
+    :when (= agent-type "codex")
+    (resume 0))
 
   (ProbeConversationActivity [agent-type params]
     :when (= agent-type "codex")

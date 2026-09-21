@@ -65,6 +65,7 @@
   headless-liveness
   headless-poll
   headless-spawn
+  hydrate-memory-home
   session-store-get
   session-store-list-active
   session-store-list-cleanup-pending
@@ -348,8 +349,8 @@
   row)
 
 
-(defk continue-headless-process [row turn-env]
-  {:pre [(: row SessionRow) (: turn-env (| dict None))]
+(defk continue-headless-process [row turn-env [memory-dir ""] [memory-files #()]]
+  {:pre [(: row SessionRow) (: turn-env (| dict None)) (: memory-dir str) (: memory-files tuple)]
    :post [(: % SessionRow)]}
   "降りた process の次の手番: 行の会話 identity で `--resume <sid>` の process を同じ session の
    名で起こし直す(events file は同じ path に追記)。会話の id が無い行は続けられない(発明
@@ -357,7 +358,15 @@
 
    段 10 lane 10d 便 2 の追補 2(実弾 #92): 資格の env は**この手番の送りが運ぶ値**(turn-env)を重ねる。
    誕生時の env は行に札を残さない(overlay-without-turn-auth)ので、更新で回って revoke された札で
-   起こすことは構造的に無い。turn-env が無い呼び(operator の救援等)は行の非 auth の意図だけで起きる。"
+   起こすことは構造的に無い。turn-env が無い呼び(operator の救援等)は行の非 auth の意図だけで起きる。
+
+   card acp:kanban-issue:ki-a068efe8f6d9: **この腕は会話を起こす 4 つ目の腕**(claude は 1 手番
+   1 process なので、普段の手番はすべてここを通る)。起こす 3 腕(launch / resume / rehydrate)が
+   charter で運ぶ手番の荷(policy.TURN-CARRIED-KEYS = 自動記憶の置き場と、その置き場へ書き出す冊)は、
+   この腕では**この手番の送りが名乗った値**(memory-dir / memory-files)で運ぶ — 行には残さない
+   (正本は ACP の行〔法 ACP 575b1e〕で、行へ写すと第 2 の正本が腐る)。名乗られなければ今日と
+   同じ argv(欄を作らない = CLI の既定の置き場)で、置き場にも手を付けない。
+   水入れ(置き場へ冊を書き出す)は起こす腕と同じ 1 本 — kind 別の effect HydrateMemoryHome。"
   (when (is row.conversation None)
     (raise (RuntimeError
              (+ f"session.send: session {row.session-id} has no conversation identity — "
@@ -372,6 +381,15 @@
                   "effort" (.get overlay "effort")
                   "mcp_servers" (or (.get overlay "mcp_servers") {})
                   "expected_result" row.expected-result}))
+  ;; 手番の荷(置き場と冊)は**この手番の送りだけ**が名乗る(行は 1 欄も持たない)。
+  ;; 欄の有無が「この手番が名乗ったか」の印なので、空は欄を作らない。
+  (when (.strip memory-dir)
+    (setv (get params "memory_dir") memory-dir))
+  (when memory-files
+    (setv (get params "memory_files") (list memory-files)))
+  ;; 手番の頭の水入れは起こす前(CLI は起きた拍に置き場を読む)。kind 別の 1 点
+  ;; (claude = impls/claude_code.claude-hydrate-memory-home・起こす腕の PreLaunchSetup と同じ本)。
+  (<- _ (hydrate-memory-home row.agent-type params))
   (setv ref (or row.backend-ref {}))
   (<- built (headless-launch-args params row.effective-identity row.conversation "resume"
                                   (str (.get ref "socket_path" "")) row.session-id))
@@ -417,23 +435,27 @@
   row)
 
 
-(defk headless-send-program [session-id message awaiting turn-env [attachments #()]]
+(defk headless-send-program [session-id message awaiting turn-env [attachments #()] [memory-dir ""]
+                            [memory-files #()]]
   {:pre [(: session-id str) (: message str) (: awaiting bool) (: turn-env (| dict None))
-         (: attachments tuple)]
+         (: attachments tuple) (: memory-dir str) (: memory-files tuple)]
    :post [(: % SessionRow)]}
   "session.send(headless・mode = turn): 次の手番の本文を stdin へ。process が次の手番を
    受けられる(生きた温かい process — codex)ならそのまま、受けられない(降りた process —
    claude は手番の終わりで必ず降りている・段 12 lane 12e #517)なら `--resume` で起こし直してから書く。awaiting(agentd の温かい手番)は latch を立て、
    turn_ended_at を None に戻す(次の手番が走り出した — level-triggered の欄)。
    turn-env = **この手番の** env(段 10 lane 10d 便 2 追補 2・実弾 #92): 起こし直す時に重ねる
-   (預かり所の貸与の札はここで来る — 行に残った誕生の札では起こさない)。"
+   (預かり所の貸与の札はここで来る — 行に残った誕生の札では起こさない)。
+   memory-dir / memory-files = **この手番の**自動記憶の置き場と、その置き場へ手番の頭に書き出す冊
+   (card acp:kanban-issue:ki-a068efe8f6d9・policy.TURN-CARRIED-KEYS)。同じ起こし直しの拍に効く
+   手番の荷で、行には残らない。空 = 名乗っていない(置き場にも argv にも手を付けない)。"
   (<- row (require-headless-row session-id))
   (when (is-terminal-status row.status)
     (raise (RuntimeError f"session {session-id} is {row.status}; cannot send to a terminal session")))
   (<- observed (headless-poll row.session-name))
   (setv accepts (and (isinstance observed HeadlessObservation) observed.accepts-turn))
   (when (not accepts)
-    (<- continued (continue-headless-process row turn-env))
+    (<- continued (continue-headless-process row turn-env memory-dir memory-files))
     (setv row continued))
   (<- delivered (headless-deliver row.session-name message attachments))
   (when (not delivered)
