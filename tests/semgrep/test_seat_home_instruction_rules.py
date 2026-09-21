@@ -21,7 +21,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from test_vm_failfast_semgrep_rules import _semgrep_results
 
 pytestmark = pytest.mark.semgrep
@@ -90,7 +89,8 @@ def test_old_shapes_are_the_ones_this_bundle_replaced(old: list[dict]) -> None:
     py = _lines(old, "old-d10", "host_checkout_layout_forbidden.py")
     assert py == [7, 8, 9, 10, 17, 19]
     # 誤爆: 17 = "my-dotfiles/claude"・19 = "acp.dotfiles/claude"
-    assert 17 in py and 19 in py
+    assert 17 in py
+    assert 19 in py
     # 改行またぎ: 10 行目の散文の引用符から 11 行目の綴りまでを 1 致にする
     straddle = [
         (finding["start"]["line"], finding["end"]["line"])
