@@ -34,7 +34,7 @@
 
 (require doeff-hy.macros [defk <-])
 
-(import doeff_agents.sessionhost.policy [seat-env-credential-shaped-offenders session-env-admission-error])
+(import doeff_agents.sessionhost.policy [CARRIED-INSTRUCTION-SOURCES seat-env-credential-shaped-offenders session-env-admission-error])
 ;; 席の settings の鍵の家(card acp:kanban-issue:ki-7b52bb76aa6e): doeff が `--settings` に置く鍵の集合は argv の合流点
 ;; (impls/claude_code.hy)が 1 点で持ち、参加の門 (c) はそれを読む — 綴りを写さない。
 (import doeff_agents.sessionhost.impls.claude_code [CLAUDE-SETTINGS-OWNED-KEYS])
@@ -778,6 +778,31 @@
     (raise (ValueError (+ f"[{TABLE-AGENTD}].{KEY-CLAUDE-SETTINGS-FILE} は絶対 path か ~/… であること"
                           f"(cwd 相対は断る): {word !r}"))))
   word)
+
+
+(defk instruction-sources-of [agentd]
+  {:pre [(: agentd dict)]
+   :post [(: % tuple)]}
+  "席の家へ運ぶ共通の指示の名指しの読み(card acp:kanban-issue:ki-62aa1f4e9c9c 決定 D4 / D11):
+   宣言 file の [agentd] の表 → (名簿の鍵, 綴り)の対の列(**名簿の順**・名指した種だけ)。
+   名簿は policy.CARRIED-INSTRUCTION-SOURCES の 1 点で、ここは**回る**だけ — 種ごとの枝を持たない
+   (1 種足す操作がこの関数を 1 行も動かさないことが D11 の守りたい形)。
+
+   形は claude-settings-file-of と同じ 1 つの規則: 絶対 path か `~` / `~/…`(`~` は agentd の HOME で
+   composition root が展開)。cwd に依る相対 path は断る(どの cwd で読むかを黙って決めない)。
+   無い・空 = 名乗らない(その種は対の列に現れない = env にも現れない = 今日どおり)。
+   現物の在否は**ここでは見ない**(D5: 不在は参加も起動も断らない — 名乗りは行の labels と
+   起動の拍の 1 行)。"
+  (setv pairs [])
+  (for [source CARRIED-INSTRUCTION-SOURCES]
+    (setv text (.get agentd source.key))
+    (setv word (if (is text None) "" (.strip text)))
+    (when word
+      (when (not (or (.startswith word "/") (= word "~") (.startswith word "~/")))
+        (raise (ValueError (+ f"[{TABLE-AGENTD}].{source.key} は絶対 path か ~/… であること"
+                              f"(cwd 相対は断る): {word !r}"))))
+      (.append pairs #(source.key word))))
+  (tuple pairs))
 
 
 (defk claude-settings-declaration-of [text session-hooks]

@@ -162,6 +162,12 @@
 (setv CLAUDE-AUTO-MEMORY-DIR-SETTING "autoMemoryDirectory")
 ;; 既定の hook の無効化(49b3549b 傷跡)の綴り。
 (setv CLAUDE-DISABLE-ALL-HOOKS-SETTING "disableAllHooks")
+;; 席に固有の二重読みを落とす鍵(card acp:kanban-issue:ki-62aa1f4e9c9c 決定 D6・綴りの定義点はここ 1 つ)。
+;; 実射で測った事実: 本体は cwd の祖先を登って <祖先>/.claude/CLAUDE.md も Project 層に積む。有人の席は
+;; それが user 層と同じ path なので畳まれるが、無人席の家は path が違うので畳まれず、**同じ中身が 2 度**載る
+;; (設計の evidence/probe_user_layer.log)。値は席の $HOME から導く 1 本ちょうど(glob を使わない・宣言に
+;; 書かせない — 宿ごとに書かせると 3 台目で漏れる)。
+(setv CLAUDE-MD-EXCLUDES-SETTING "claudeMdExcludes")
 ;; doeff が `--settings` に自分で置く鍵の集合(card acp:kanban-issue:ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13)。
 ;; 機体の参加の宣言が名指した席の settings file(dotfiles claude-hooks/seat-settings.json)がこの鍵を持つと、join の
 ;; 参加の門 (c) が断り(acp/join.hy claude-settings-declaration-of)、build-claude-argv の合流も fail-loud で断る —

@@ -726,6 +726,26 @@
   #^ str source-path
   #^ str target-path)
 
+(setv FS-ENSURE-SYMLINK-UNCHANGED "unchanged")
+(setv FS-ENSURE-SYMLINK-LINKED "linked")
+(setv FS-ENSURE-SYMLINK-OCCUPIED "occupied-by-real-entity")
+
+(defclass [(dataclass :frozen True :kw-only True)] FsEnsureSymlink [EffectBase]
+  "symlink を**正しい先へ据える**(card acp:kanban-issue:ki-62aa1f4e9c9c 決定 D8・盲検 A の反例)。
+   物理(3 値・冪等・level-triggered):
+     既に同じ先を指す symlink  = 触らない \"unchanged\"(走っている席の見張りを起こさない)
+     別の先を指す symlink      = **張り替える** → \"linked\"
+     symlink でない実体が居る  = 触らない \"occupied-by-real-entity\"(erosion guard —
+                                 実 file / 実 dir を黙って捨てない)
+     何も居ない                = 親 dir を mkdir して張る → \"linked\"
+   ⚠ FsLinkArtifact との違いは**張り替えるか**の 1 点。FsLinkArtifact は据わっている物を
+   絶対に置き換えない(\"target-conflict\" を返して終わる)ので、正本の path が変わった日に
+   家の symlink が**古い先を指したまま**になる(実射 = 設計の counterexamples/repro_A_real_substrate.py)。
+   呼び手は返ってきた 3 値を**そのまま**名乗る(D1b: やろうとしたことではなく起きたことを書く)。
+   戻り値: str(上の 3 値)。"
+  #^ str link
+  #^ str target)
+
 (defclass [(dataclass :frozen True :kw-only True)] FsDirExists [EffectBase]
   "ディレクトリの実在観測(ADR-DOE-AGENTS-006 R10 — 発注の物理前提検査)。
    symlink は解決して判定する(解決先が dir なら実在)。FsListDir は不在と
@@ -1081,6 +1101,13 @@
    :post [(: % FsLinkArtifact)]}
   "FsLinkArtifact を構築する(transplant の symlink 敷設プリミティブ)。"
   (FsLinkArtifact :source-path source-path :target-path target-path))
+
+(deff fs-ensure-symlink [link target]
+  {:pre [(: link str) (> (len link) 0)
+         (: target str) (> (len target) 0)]
+   :post [(: % FsEnsureSymlink)]}
+  "FsEnsureSymlink を構築する(D8: 張り替える symlink の据え付け — 3 値)。"
+  (FsEnsureSymlink :link link :target target))
 
 (deff fs-dir-exists [path]
   {:pre [(: path str) (> (len path) 0)]
