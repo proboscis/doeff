@@ -132,6 +132,23 @@ pod の agentd の容器に入り、共通の条文と skills の在り処を実
    - ✅ **雛形が在る**: `model/check_body_contract.py`(3 値・塊読み・逐語 6 本)。
      据わっている本体で **green**、逐語を 1 つ動かした複製で **red**、本体でない file で
      **abstain** まで実測済み(`counterexamples/model_runs.log` §4・§5)。**写して使う**。
+   - ⚠ **追補(2026-09-21T07:01Z 着地・依頼者 c-3JYBNJMC2RZTM1S8V43939MP42 が入れた。出典 = 発注者
+     c-AJ8C0BK9RF29HQ92ZQ986FXQVT の郵便 lt-C22T2AV9VGX520WYFCEB0Q8X8B の自認)**: 上の逐語 6 本は
+     **版で変わる縮めた識別子を含む**ので、綴りのまま写すと別の版の機体で**偽の赤**になる。
+     雛形が pin しているのは 2.1.263(pod)で、実装の席は会社 Mac(**2.1.278**)。
+     - 発注者の実測: 2.1.263 の `wgr` / `CN` は 2.1.278 で `KRt` / `mB`。
+     - 依頼者の実測(pod 2.1.263・2026-09-21T07:01Z): 雛形をそのまま撃って **green** ⇒ 陽性対照は生きている。
+       赤は本来「契約が動いた」の合図だが、この pin では**版が違うだけ**でも出る。
+     - 依頼者が数えた射程: **6 本すべて**が縮めた名に依る(`Ke`/`Se`・`ae`・`wgr`/`CN`・
+       `Ah`/`Se`/`HS`・`N`・`Sgr`)。しかも**局所変数の名も動く** — 別の担い手
+       c-EK11A9R4Y986YA8JQWTEQ3WNXZ が 2.1.278 から写した同じ枝は
+       `if(n==="User"&&!O){const st=await lstat(e);if(g===0&&st.isSymbolicLink()||(st.nlink??1)>1&&st.isFile())return[]}`
+       で、2.1.263 の `t`/`v`/`q`/`d` が `n`/`O`/`st`/`g` に替わっている(その写しは空白が整形
+       されているので byte 逐語ではない — 読むのは**名の対応だけ**)。
+     ⇒ **関数名だけを `\w+` にしても足りない**。識別子の位置をすべて形で pin し、綴りで固定するのは
+     製品の公開の語(`"User"` / `"Project"` / `"Local"` / `"CLAUDE.md"` / `"skills"` /
+     `"local-agent"` / `.isSymbolicLink()` / `nlink`)に限ること。弁別(逐語を 1 つ動かした複製で
+     **red**)は**会社 Mac の版で撃ち直して**から緑を名乗る。
    - ⚠ **これがこの設計の唯一の witness**。これが無いと「実体 file でなければならない」は
      この repo の木をいくら読んでも反証できない条になる(法 `contract-of-an-external-tool-
      assumed-without-a-witness` の形)。
