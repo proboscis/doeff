@@ -723,7 +723,11 @@
      (rule R52 "手番を閉じた process が錠を返す — 貸与の id を memory だけに置かない(段 12・card acp:kanban-issue:ki-f2747267e24d B2 / B3・実弾 2026-09-19 08:44Z・既知の形 = kubelet の再起動後の volume の再構成〔disk に残した記録から『自分が握っている物』を組み直して後始末する〕): 預かり所の錠は **1 認証 1 宿**で、返却(POST /lease/{id}/revoke)は口座の holder をそのまま解く —— 参照は数えない(custody Program/Master.releaseHolder)。だから錠を返せなかった手番は、その口座の**他の全部の借り**を hold の期限(900 秒)まで 409 で塞ぐ。ところが貸与の id は借りた process の memory(InFlightJob.lease-id)にしか無く、行の sessionHandle にも無かった(summarize の拾い直し judgment.summarize-of-handle も `:lease-id None`)ので、agentd の入れ替え・再起動・排水で process が変わると返す物が分からなかった —— 実弾: Mac(Proboscis-MBP)の入れ替えで手番の CLI が死に、新しい agentd の拾い直しは器に session が無いのを見て fail-missing の腕で閉じたが lease-id は None、錠は 900 秒残り、その間 pool の pod(借り手 sa:acp-control/default)の借りは全部 409 で 17 時台 JST に 330 通の郵便が failed。⇒ (1) **借りた拍に機体の disk へ記す**(journal = AgentdSettings.lease_journal_path — 置き場は runtime.lease_journal_path の 1 点 = state_dir〔record spool の親〕の下の effects.LEASE_JOURNAL_FILENAME・中身は {jobId: leaseId} ちょうど・書きは agentd.remember-lease の 1 点)。借りの口(agentd.borrow-lease と summarize の区間の借り)は全部この 1 点を通る。(2) **返しは agentd.return-lease の 1 点**で、どの腕で閉じても(settle-record / fail-missing / interrupt / launch の失敗 / 郵便が 1 通も渡せなかった拍 / 排水 / summarize の finish・withdraw・次の区間)同じ関数を呼ぶ —— `CustodyLeaseRevoke` を撃つ場所は src の中に**この 1 行だけ**。(3) **何を返すかの判断は judgment.lease-to-return-of の 1 点**: この process の memory が在ればそれ、無ければ journal、どちらも無ければ返さない。memory が先なのは journal が書けなかった拍にも今日どおり返るため。⚠ **借り手の名で一括に返す掃除(sweep)は作らない** —— 同じ機体の別の生きた手番が同じ貸与の id を握っている拍(同じ口座の借り直しは同じ id を更新する = HolderMine)に、借り手の名で返すとその手番の錠まで外れる。返すのは job が名乗る 1 つだけで、粒は今日の finalize の revoke と同じ(この便は今日の規則を 1 bit も緩めない)。(4) **読めない journal は『何も握っていない』**(judgment.lease-journal-of が空に倒す): 途中で切れた text や str でない値から貸与の id をこしらえると、他人の錠を返しにいく。(5) **返せなかった返却は黙って捨てない**(B3): `CustodyLeaseRevoke` の答えは bool で、False(200 以外・不達)の拍は agentd.return-lease が job と貸与の id と『口座は hold の期限まで塞がる』を名乗る log 1 行を残す —— 錠が残ったことが最も見えない失敗だった。")
      (rule R53 "預かり所の 409 は**失った試みの記録**で、手番の終わりではない(段 12・card acp:kanban-issue:ki-f2747267e24d B1・実弾 2026-09-19 17 時台 JST = 330 通・既知の形 = #519 の ProviderLimit〔runner は条件の記録を足して phase を離す・置き直しの判断は配置の supervision〕/ k8s Job の podFailurePolicy の Ignore): 預かり所の錠は 1 認証 1 宿で、借りが 409 で断られるのは『いまこの口座は別の借り手が握っている』であって、口座も手番も壊れていない —— 錠は答えが名乗る holdExpiresAt に**必ず**解ける。ところが借りの断りは全部 end-job-now で Ended(CredentialUnavailable・散文だけ)に畳まれていたので、配達係の再試行(上限 2・backoff なし)が数秒で尽き、Mac の錠が残っていた 900 秒の間に 330 通の郵便が failed になった。⇒ (1) **記録にするかの判断は judgment.credential-lease-held-condition-of の 1 点**で、**409 かつ holdExpiresAt を名乗る断りだけ**が記録に解ける。409 でも hold を名乗らない断り・404(口座が預かり所に無い)・503(宣言の無い預かり所・身元が組めない)は今日どおり Ended —— 待って直る保証の無い断りを『待てば直る』の語に畳まない。(2) 書くのは条件 CredentialLeaseHeld{status True, reason: 預かり所の断りの**逐語**, attempt: binding.attempt, at: 記録を書いた拍の時計, until: holdExpiresAt, account: binding.account, nodeRow: binding.nodeRow} の追加**ちょうど**で、**phase / binding / sessionHandle / result は 1 bit も触らない**(judgment.refused-attempt-status-of の形)。⚠ その拍の行は **Running**(Bound ではない): claim-job は借りより先に Running + sessionHandle を CAS で書くので、借りが断られた時には既に受けている —— だから読み手(ACP の配置)はこの記録を #519 の provider-refused と**同じ Running の行の supervision** として読む。(3) **memory には載せない**し、同じ試み(attempt = binding.attempt)の記録を持つ行は次の拍で起動も拾い直しもしない —— 判定は judgment.attempt-refused? の 1 点(ProviderLimit と CredentialLeaseHeld の 2 語 = effects.REFUSED_ATTEMPT_CONDITION_TYPES)で、Bound の拾い(job-rows-bound-to)と Running の拾い(job-rows-running-on)の**両方**が同じ関数を通る。置き直しの後の次の試み(attempt が進んだ行)は今日どおり受ける。(4) **正本の読み口**: 錠の正本は預かり所で、agentd は断りの事実(409 と holdExpiresAt)を行の条件に写すだけ —— 置き直す先・待つ時刻・数えるかを判じるのは ACP の配置の 1 点。(5) **着地の順**: この規則は engine が CredentialLeaseHeld を credential-lease-held として読み Pending へ戻す側(ACP の lane A)が**本番に配備された後**にだけ着地する。先に着地すると断られた行は Running のまま誰にも拾われず、4 時間の手番の期限まで会話が塞がる。")
      (rule R54 "預かり所の断りは **「誰が答えられるか」** で class を分け、class は語で終端に載せる(段 12・card acp:kanban-issue:ki-b3bed1e983fb・既知の形 = k8s Job の podFailurePolicy〔終端の理由で『数える / 無視する / 落とす』を分ける〕/ SMTP の 4xx と 5xx〔再送してよい失敗と、しても同じ失敗〕): 借りの断りは status(型のある int)と預かり所の逐語を `custody refused (403): …` の 1 文へ畳んでから終端の語を 1 つ書いていたので、配達の側(ACP Acp.App.Messaging.Decide.carrierEndedOf)には**再試行してよいかを判ずる材料が 1 つも残らなかった** —— carrierEndedOf が phase と result.cause と回数しか読まないのは設計の欠落ではなく、読むべき材料が届いていないから。⇒ 直す場所は判定の側ではなく**語を鋳る側**。(1) **class の判断は judgment.custody-refusal-verdict-of の 1 点**で、呼び手(agentd.start-claimed)は答えの 3 つの腕に従うだけ —— 錠の記録の判断(credential-lease-held-condition-of)も『どの担い手も答えない断りか』(custody-refuses-every-carrier?)も、この 1 つの答えの中の腕として呼ぶ(呼び手に第 2 の判定を置かない)。(2) **class と終端の語**: nobody(誰も答えない = 宣言・在庫の事実)→ CredentialNotLeasable / another-carrier(別の担い手が答える = この機体の身元・宣言・口座の worker の都合)→ CredentialUnavailable(今日の語)/ time(時間が答える = 貸与の錠の hold)→ 条件 CredentialLeaseHeld を足して phase を離す(R53 のまま)。(3) **ACP の code は 1 bit も変えない**: CredentialNotLeasable は Acp.App.Messaging.Contract.carrierEndedFailureReasons の **membership から外れる**ので、配達は組み直さず 1 回で郵便を failed にして送信者へ返す(CredentialSourceMissing / WorkDirMissing と同じ経路)—— 契約 scheduling.json の resultCause.reason.failed は閉語彙ではないので、語を足す側だけで足りる。ACP の list へ語を足す形(membership を広げる)を選ばない。(4) **HTTP status は軸ではない**: 403 が 2 本に割れる —— 置き場の門(custody Judge/Company.companyPlacementViolation・Program/Master.hs で借り手の門より先に判ずる)は『会社階級の口座が会社の置き場でない預かり所に在る』= 口座 × 預かり所の配置の事実で、どの担い手が頼んでも同じ ⇒ nobody。借り手の門(companyBorrowerViolation)は『名乗った借り手が所有者の宣言 COMPANY-BORROWERS に無い』で、宣言の 1 台(company-mac-intake-20260830)へ移れば通る ⇒ another-carrier。実測 2026-09-19(保持窓の全数)の 403 は **4 件とも借り手の門**だったので、『403 は再試行 0 回』は唯一観測されている arm を壊す。(5) **未知の断りは another-carrier へ倒す**(今日の挙動)—— 倒す向きは非対称に選ぶ: nobody を取り違えると『1 回で返せたはずの断りを 2 回試す』(遅れるだけ)、another-carrier を取り違えると『別の機体なら通る断りを 1 回で殺す』(郵便を失う)。(6) **送信者が受け取る文が次の一手を名乗る**: 終端の reason は預かり所の逐語を**そのまま含み**(畳まない)、頭に class の意味(『どの担い手が頼んでも同じ』/『別の機体なら通り得る』)を置く。(7) ⚠ **既知の借り**: 置き場の門と借り手の門の見分けだけは預かり所の**散文への結合**(effects.CUSTODY_PLACEMENT_REFUSAL_MARK)—— 貸与の口の 403 に機械可読の code が無い(契約 custody-api.json conventions.errors = {ok, error} の 1 文だけ。redeem の口は RedeemRefusal で code を名乗るのに、貸与の口は名乗らない)。印が外れた拍は (5) の既定へ落ちるので壊れ方は遅れる側だけだが、**直す道は預かり所の貸与の口の断りに code を足すこと**で、それが着いたら見分けは code の 1 点へ移す。(8) ⚠ **この欠陥は実データでは検出できない**(2026-09-19T22:2xZ・全数 20,796 行): custody の断りで failed になった郵便 344 の内訳は 409 × 333 / 403 × 4 / 503 × 5 / 到達不能 × 2 で、機構(ACP 60b76a89・09-18T18:28Z)の窓に入っている断りは **409 だけ** —— 台帳を問い合わせる形の受入は全部緑になる。だから受入は単体の検(sessionhost_acp_lease_deftests.hy)で固定する。")
-     (rule R55 "手番が出力を出したかの判断は **3 値**(出した / 出さなかった / 測れていない)で、3 つ目は材料の覆いから来る(段 12・card acp:kanban-issue:ki-ef537db05f7f・実弾 2026-09-19 22:29Z aj-6EKERTYDCD4MC666PGPVA9R9HA・既知の形 = 観測の欠測を 0 と読まない〔監視の gap ≠ 値 0〕): 材料の読み始め(start-offset-of)は腕で決まる —— launch / rehydrate は file の頭、send / resume は『その拍の file の大きさ』(前の手番の行を混ぜない)。**手番の始まり**(after-start)に取った offset はどの腕でもその手番を覆うが、**再起動の後の拾い直し**(recover-job)に取った offset が覆うのは file の頭から読む腕だけで、send / resume の腕では再起動の前に書かれた出力がもう読めない。ところが手番の終わりの判断(turn-produced-nothing-condition-of)は覆いを知らず、空の窓を『assistant の見出し 0 本・usage なし = model が 1 度も呼ばれていない』と結論して failed / TurnProducedNothing を書いていた。ACP の配達はその語を一過性(carrierEndedFailureReasons)として読み、同じ郵便で手番を作り直す ⇒ **答え終えた手番の答えが 2 度出る**(実弾: 前任は `ai tell` を 2 回撃って result success・num_turns 13 で終えたのに entries 0 で失敗と記帳され、作り直し aj-7EKG2XCJT01XJK9WXPDRPG04XQ が同じ郵便へもう一度答えた。別の 1 件 aj-P0F110VHBD7CCXEEB36N9Z8GB2 は答えが消えた側)。⇒ (1) **覆いは InFlightJob の欄で運ぶ**(materials_cover_the_turn)—— start-offset-of は #(path offset from-head) を返し、after-start は True を、recover-job は from-head を渡す。腕の membership の判断は judgment.stream-starts-at-head の 1 点で、第 2 の述語を置かない。(2) **判断は turn-output-condition-of の 1 点**で 3 値を返し、⚠ **覆いの検は出力の検の後**(覆っていない材料でも、その中に読めた見出しや usage が在れば『出した』は確かに読めた — 先に置くと答えを読めた手番まで測れていない側へ落ちる)。(3) **測れていない手番は cause を 1 bit も変えず**条件 TurnOutputUnmeasured だけ足す(outcome-with-output-condition)—— failed へ倒すのは語を変えても同じ被害(配達が組み直す)で、倒さないことがこの規則の本体。(4) **黙って completed にしない**: 測れなかった事実は条件として行に残す —— 残さないとこの族は ACP の行から 1 件も数えられず、実際この欠陥は機体の上で 45 MB の agentd の log を読むまで見つからなかった(検分は turn-record の status.entries で測り、切替の前 58/58 対 後 0/2 を『直った』と読んでいた —— entries が 0 なのがこの族では『測れなかった』だからで、窓をまたいで物差しの意味が変わっていた)。(5) **倒す向きは非対称に選ぶ**: 測れていないを『出さなかった』と取り違えると郵便が 2 度配られる(答えが二重になる = 外へ出る被害)。逆に取り違えると、本当に何も出さなかった拾い直しの手番の郵便が黙って消費される(条件が行に残るので後から数えられる = 内に留まる被害)。")]
+     (rule R55 "手番が出力を出したかの判断は **3 値**(出した / 出さなかった / 測れていない)で、3 つ目は材料の覆いから来る(段 12・card acp:kanban-issue:ki-ef537db05f7f・実弾 2026-09-19 22:29Z aj-6EKERTYDCD4MC666PGPVA9R9HA・既知の形 = 観測の欠測を 0 と読まない〔監視の gap ≠ 値 0〕): 材料の読み始め(start-offset-of)は腕で決まる —— launch / rehydrate は file の頭、send / resume は『その拍の file の大きさ』(前の手番の行を混ぜない)。**手番の始まり**(after-start)に取った offset はどの腕でもその手番を覆うが、**再起動の後の拾い直し**(recover-job)に取った offset が覆うのは file の頭から読む腕だけで、send / resume の腕では再起動の前に書かれた出力がもう読めない。ところが手番の終わりの判断(turn-produced-nothing-condition-of)は覆いを知らず、空の窓を『assistant の見出し 0 本・usage なし = model が 1 度も呼ばれていない』と結論して failed / TurnProducedNothing を書いていた。ACP の配達はその語を一過性(carrierEndedFailureReasons)として読み、同じ郵便で手番を作り直す ⇒ **答え終えた手番の答えが 2 度出る**(実弾: 前任は `ai tell` を 2 回撃って result success・num_turns 13 で終えたのに entries 0 で失敗と記帳され、作り直し aj-7EKG2XCJT01XJK9WXPDRPG04XQ が同じ郵便へもう一度答えた。別の 1 件 aj-P0F110VHBD7CCXEEB36N9Z8GB2 は答えが消えた側)。⇒ (1) **覆いは InFlightJob の欄で運ぶ**(materials_cover_the_turn)—— start-offset-of は #(path offset from-head) を返し、after-start は True を、recover-job は from-head を渡す。腕の membership の判断は judgment.stream-starts-at-head の 1 点で、第 2 の述語を置かない。(2) **判断は turn-output-condition-of の 1 点**で 3 値を返し、⚠ **覆いの検は出力の検の後**(覆っていない材料でも、その中に読めた見出しや usage が在れば『出した』は確かに読めた — 先に置くと答えを読めた手番まで測れていない側へ落ちる)。(3) **測れていない手番は cause を 1 bit も変えず**条件 TurnOutputUnmeasured だけ足す(outcome-with-output-condition)—— failed へ倒すのは語を変えても同じ被害(配達が組み直す)で、倒さないことがこの規則の本体。(4) **黙って completed にしない**: 測れなかった事実は条件として行に残す —— 残さないとこの族は ACP の行から 1 件も数えられず、実際この欠陥は機体の上で 45 MB の agentd の log を読むまで見つからなかった(検分は turn-record の status.entries で測り、切替の前 58/58 対 後 0/2 を『直った』と読んでいた —— entries が 0 なのがこの族では『測れなかった』だからで、窓をまたいで物差しの意味が変わっていた)。(5) **倒す向きは非対称に選ぶ**: 測れていないを『出さなかった』と取り違えると郵便が 2 度配られる(答えが二重になる = 外へ出る被害)。逆に取り違えると、本当に何も出さなかった拾い直しの手番の郵便が黙って消費される(条件が行に残るので後から数えられる = 内に留まる被害)。")
+     (rule R56 "ACP の腕と器の所有は **1 命令・1 宣言のまま 2 つの process に割れる**(card acp:kanban-issue:ki-567f2dd6140f・依頼 lt-ENGDDYZJPYG689RDH9133RN2FN・既知の形 = kubelet と container runtime の分離: kubelet を入れ替えても container は走り続ける): `doeff-sessionhost join --role <both|agentd|host>`(閉語彙 = effects.JOIN_ROLES の 1 点・読みは join.role-of の純関数 1 点・既定 both)。⚠ 役は **JoinPlan に入らない** — env の束にも host の argv にも現れず、宣言 file の鍵でもない(FLAG_KEYS の外)。機体の宣言は 1 枚のままで、役は起こす側(launchd の unit / pod の container)が名乗る ⇒ (a) `--role` を付けない起動は今日と 1 byte 差なく同じ、(b) 2 つの unit が同じ宣言 file を読んで役だけ違う形が成り立つ。both = 今日どおり(agentd の thread + host・停止の hook = close_for_stop)。agentd = ACP 側だけ(runtime.run_agentd_only が main thread で待つ・host の socket の出現を**上限なし**で待ち〔pod の host は入口の provisioning に POOL_PROVISION_TIMEOUT_S まで掛かる〕・SIGTERM は close_for_exit)。host = 器だけ(弁が on でも agentd の thread を起こさない)。境界そのものは今日の unix socket のまま(SessionRpc)で、新しい口も新しい protocol も足さない。")
+     (rule R57 "**ACP 側の process の停止は走っている手番を 1 つも閉じない**(同 card §3.1b・R39 の排水と別の腕): 役を分けた後、器(claude の子 process)の親は host の process で、ACP 側の process はその外に居る ⇒ ACP 側だけが降りる拍に手番を閉じるのは嘘になる。腕は 2 つ: `AgentdRun.close_for_stop`(**both** の今日の形 — 器と ACP の腕が一緒に死ぬので排水 → 走っている job を AgentdRestart で閉じる)と `AgentdRun.close_for_exit`(**agentd** の形 — stop の合図を立て、tick と lease の heartbeat の thread を有界に join し、handler を閉じるだけ。排水も cordon も撃たず、job を 1 つも閉じず、**lease を明示に落とさない**〔落とすと node がその拍で配車から外れる。入れ替えは lease の TTL の内側で終わり、次の process が judgment.node-row-named の 1 点で同じ行を拾い直す = node の行が切れない〕)。停止の hook(host.register-shutdown-hook)は役が both の時だけ登録する。host が先に降りた拍は host の stop-headless-rows が行を stopped にし、生きている ACP 側の process が次の周期に backend_alive = False を観測して既存の session-lost の経路で閉じる(今日より正しく終わる — 今日は agentd も一緒に死ぬ)。")
+     (rule R58 "**排水は外から立てられる file 1 つで、判断の座は増えない**(同 card §3.1d): `<state_dir>/drain`(綴り = effects.JOIN_DRAIN_FILE・置き場は runtime.drain_file_path = record spool の親 = verify / summarize / lease の journal と同じ state_dir の 1 点)の**在否**が `settings.draining` に落ちる。読むのは handler 側の 1 点(runtime.drain_port が LoopPorts.draining を組む)で、拍ごとに読み直す level-triggered(消えれば宣言の capacity に戻る)。file の中身は理由の 1 行で、log に出すだけ — 判断には使わない。signal ではなく file なのは、入れ替えの途中で ACP 側の process 自身が再起動しても排水の意思が残るため(host の入れ替えは ACP 側の process を跨いで進む)。停止の腕が立てる process 内の合図(`AgentdRun.drain_for_stop` の Event)と**同じ 1 つの答え**に落ちるので、capacity の判断は judgment.declared-capacity-of の 1 点のまま(R39)。cordon と中断の申請(DisruptionAllowed)は**機体そのものを止める**時の仕組みで、役ごとの入れ替えでは 1 文字も書かない。")
+     (rule R59 "**器の host は仕組みだけを持ち、方策を持たない** — 温かい session を専用操作(cache ping)の送信先としていつまで保つかの判断は ACP 側の 1 点(同 card §3.1e・訂正 B): host が wire に載せるのは**観測した事実** `cache_last_success_at_ms`(その session で最後に**成功した**専用操作の完了時刻・cache_host_store.cache_last_success_at = 成功 receipt の index 読み・無ければ欄が None)ちょうどで、適格の篩も保持の予算も持たない。期限は judgment.cache-resident-retention-of の 1 点が導く(適格 = claude ∧ headless ∧ multi_turn ∧ running ∧ 会話あり ∧ 手番の終わりが刻まれている・期限 = max(turn_ended_at, 最後の成功) + CACHE_RESIDENT_IDLE_MS〔ACP 側の acp.cache_operation の 1 点〕)。sessions-to-retire はその 1 点を読む。⚠ 専用操作の**実行**(process を起こして events を読む)と receipt の永続は host に残り、cache_maintenance / cache_live も ACP 側に残る(ACP の行と custody の借用に直結しているので、host へ移すと host に ACP の client と資格が要る = 分離の目的と正反対)。idle の片付け(sessions-to-retire + session_idle_ttl_seconds)は今日どおり ACP 側。")]
   :laws
     [(law interrupts-ride-the-running-turn-and-are-recorded-on-the-row
        :statement "for_all Running job j run by this agentd with status.interrupts = [m1..mn]: each mi not in status.interruptsDelivered ∪ memory.interrupts_sent is handed to the session by SessionInterject(body(mi)) in placement order, and every accepted mi is written back by one CAS that removes it from interrupts and appends it to interruptsDelivered; a refused mi stops the order and stays on the row; agentd never starts a turn for an interrupt and never removes an id it did not hand over"
@@ -1026,6 +1030,39 @@
           (counterexample "新しい cause の category(backend_process_dead)を凍結表に足す — 証拠つき死亡の語彙は vanished の 1 つ(ADR-DOE-AGENTS-009)で、同じ事実に 2 つ目の概念が生える")
           (counterexample "resume の腕が persisted cause の欄を get で読む(store.hy)— 手で書かれた行 1 つで session.get も resume も読めず、会話が rehydrate に落ちる(2026-09-14 18:5x 実弾 KeyError 'category')")
           (counterexample "headless の session.resume の launch-params に events_root を運ばない — headless-launch-session の (get params \"events_root\") で KeyError、本番の --resume が全部 rehydrate に落ちる(2026-09-14 実弾 2 件)")])
+     (law the-control-plane-half-and-the-session-owner-split-without-a-second-declaration
+       :statement "for_all join argv a: role(a) = join.role-of(a) ∈ effects.JOIN_ROLES with default both, an out-of-vocabulary value is refused by name, and role(a) appears in neither join-plan-of(join-spec-of(a, d)).env nor .host_argv nor join.FLAG_KEYS nor join.AGENTD_KEYS (one machine declaration, two units); role = both ⇒ the process starts the agentd thread and the host and registers close_for_stop as the host shutdown hook (today unchanged, byte for byte); role = agentd ⇒ the process runs runtime.run_agentd_only (no host, no shutdown hook, the wait for the host socket has no deadline and names the wait once per HOST_WAIT_SECONDS); role = host ⇒ the agentd thread is not started even when the valve is on; and in every role the boundary between the halves is the existing unix socket (SessionRpc) with no new port and no new protocol"
+       :counterexamples
+         [(counterexample "役を宣言 file の鍵([agentd].role)にする形 — 1 機体に 2 つの宣言 file が要り、据え付けが 2 枚を同期させる(綴りの座が 2 つ)。役は起こす側の性質で、機体の性質ではない")
+          (counterexample "役を env(DOEFF_AGENTD_ROLE)で運ぶ形 — join-plan-of の env の束に第 2 の綴りが増え、『--role を付けない起動は今日と 1 byte 差なく同じ』が構造では言えなくなる(検で毎回数えるしかない)")
+          (counterexample "語彙の外の --role を既定 both に倒す形 — `--role hst` の typo が『両方を起こす process』として据わり、器を持つ process が 2 つになる(socket の bind と sqlite の lease を奪い合う)")
+          (counterexample "role = agentd でも host の socket を 120 秒で諦める形 — pod の host の container は入口の provisioning に 300 秒まで掛かるので、agentd だけが落ちて再起動を繰り返す(1 つの process だった頃はこの上限で正しかった)")
+          (counterexample "役を分けるために agentd を socket ではなく HTTP / 第 2 の口で繋ぐ形 — 境界は既に socket に在るので、口を足すのは中身の作り直し。分けるのは起動の形と停止の作法ちょうど")]
+       :enforcement ["docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test-adr-doe-agents-012-the-halves-split-without-a-second-declaration"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_join_role_is_a_closed_vocabulary_read_from_the_argv"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_join_role_is_not_a_declaration_key_and_never_reaches_the_env_bundle"])
+     (law the-control-plane-process-exits-without-closing-the-running-turns
+       :statement "for_all AgentdRun r of a process whose role is agentd receiving SIGTERM / SIGINT: close_for_exit(reason) sets the stop signal, joins the tick and the lease-heartbeat threads within STOP_JOIN_SECONDS and closes the handlers, and for_all running job j of r: phase(j) is unchanged (no AgentdRestart, no turn-record end), the drain signal is not raised, and the node lease is not revoked — so the node row survives the swap inside its lease TTL and the next process resolves the same row through judgment.node-row-named; close_for_stop (role = both) keeps today's behaviour on the same state (drain, then Ended with AgentdRestart); the host shutdown hook is registered only when role = both; and when the host process dies first, the host's stop-headless-rows settles its rows and the surviving control-plane process closes the turns through the existing session-lost path (backend_alive = False), not through a second stop arm"
+       :counterexamples
+         [(counterexample "役を分けた後も停止の hook(close_for_stop)を登録する形 — ACP 側の規則を変えるたびに走っている手番が AgentdRestart で切れる。分離の目的そのものが消える(この card の 0 節)")
+          (counterexample "close_for_exit が lease を明示に落とす形 — node がその拍で配車から外れ、入れ替えの数秒が『配置から消えた機体』になる。受入 2『node の行が切れない』が偽になる")
+          (counterexample "close_for_exit が排水(drain_for_stop)を撃つ形 — ACP 側の入れ替えは手番を 1 つも切らないので待つ理由が無い。待てば入れ替えが手番の壁時計(最大 4 時間)に縛られ、cordon 無しの軽い入れ替えという性質が消える")
+          (counterexample "同じ 1 つの腕に『閉じるか閉じないか』の旗を足す形 — 停止の意味(器と一緒に死ぬ / 器を残して降りる)が呼び手の旗に散り、hook の登録の有無と 2 か所で表される")
+          (counterexample "host が先に死んだ拍のために ACP 側へ第 2 の停止の腕を足す形 — 器の消滅は既に backend_alive の観測から session-lost で閉じる路が在る(R23)。2 本目の路は観測断を死と読む側へ倒れる")]
+       :enforcement ["docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test-adr-doe-agents-012-the-control-plane-process-exits-without-closing-turns"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_close_for_exit_leaves_the_running_turns_to_the_host_process"])
+     (law draining-is-one-signal-read-from-outside-and-capacity-is-still-decided-once
+       :statement "for_all agentd loop with drain file f = runtime.drain_file_path(env) = dirname(record_spool_dir(env)) / effects.JOIN_DRAIN_FILE: LoopPorts.draining is runtime.drain_port(event, f, log) alone and answers true iff the stop arm's event is set or f exists, re-read every tick (level-triggered: removing f restores the declared capacity), the first line of f is logged as the reason and is never read as a decision, and the transition is named once per change; settings.draining is the only thing either signal writes, so node capacity stays judgment.declared-capacity-of alone (0 while draining, the declared value otherwise) and Bound rows stay unclaimed through agentd.receive-bound-jobs; and a per-role swap writes neither node.spec.labels.cordon nor node.spec.labels.disruption-requested (those belong to taking the machine itself out)"
+       :counterexamples
+         [(counterexample "排水を signal(SIGUSR1)で立てる形 — 入れ替えの途中で ACP 側の process 自身が再起動すると意思が消え、host を降ろす拍に capacity が宣言値へ戻っている(edge-triggered の合図を level-triggered の入れ替えに使う形)")
+          (counterexample "file の**中身**(`on` / `off` の語や期限の刻)で判ずる形 — 在否 1 bit で済むところに第 2 の書式と第 2 の parser が生まれ、書きかけの file が読まれる窓ができる")
+          (counterexample "外からの排水に第 2 の capacity の判断(『file が在れば 0 を書く』の別経路)を足す形 — node-spec-of と node-spec-declared が別々の答えを書き、揃えの拍ごとに capacity が振動する")
+          (counterexample "役ごとの入れ替えで cordon と中断の申請を撃つ形 — 機体を止める仕組み(予算・DisruptionAllowed・12 時間の猶予)を 1 unit の入れ替えに払い、艦隊の枠が直列に消える(実弾 2026-09-19: Mac 2 台が同じ秒に cordon した)")
+          (counterexample "排水の合図の置き場を state_dir の外(/tmp や第 2 の宣言)に置く形 — 置き場の定義点が spool / verify / summarize / lease の journal と別になり、state_dir を移した日に片方だけ動く")]
+       :enforcement ["docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test-adr-doe-agents-012-draining-is-one-signal-read-from-outside"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_the_drain_file_raises_and_lowers_the_same_draining_signal"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_the_drain_file_lives_under_the_state_dir_next_to_the_spool"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_declared_capacity_is_zero_while_draining_and_the_declaration_otherwise"])
      (law stop-closes-running-turns-instead-of-taking-the-children-down-silently
        :statement "for_all sessionhost host h receiving SIGTERM with the accept loop alive: before h exits, every registered shutdown hook runs (agentd: for_all running job j in memory: turn-record(j).state = ended ∧ phase(j) = Ended ∧ conditions(j) ∋ AgentdRestart naming the node, the reason, the session and the time, with the lease revoked and the status frame ended), then for_all non-terminal headless row r of h: in_flight(r) ⇒ status(r) = stopped ∧ cause(r).category = cancelled ∧ cause(r).reason names the host stop; ¬in_flight(r) ⇒ r is untouched; every registered headless process is terminated with one parallel grace (EOF → TERM → KILL) instead of one grace per process; the decision is headless_protocol.stop_verdict alone; h then re-raises the same signal to itself and exits through its finally (lease released); and the ACP address of agentd (stream push included) is the declared ACP_DAEMON_URL with no localhost default"
        :counterexamples
@@ -2755,7 +2792,10 @@
        (setv drain-at (next (gfor [i line] (enumerate runtime-lines) :if (in "self.drain_for_stop(reason)" line) i) None))
        (setv stop-at (next (gfor [i line] (enumerate runtime-lines) :if (and (is-not drain-at None) (> i drain-at) (in "self.stop.set()" line)) i) None))
        (assert (and (is-not drain-at None) (is-not stop-at None) (< drain-at stop-at)) "排水は loop を止める前(R39)")
-       (assert (any (gfor line runtime-lines (in "replace(settings, draining=True) if draining else settings" line))) "loop は drain の合図を settings.draining に写す(R39)")
+       ;; ⚠ 2026-09-22(R58 の便)で読み口を直した: loop の本体は worker_loop.hy(concurrent-worker)へ移っており、
+       ;;    runtime.py にこの綴りはもう無い(針は 2026-09-17 の移動から黙って赤だった)。写す点は今も 1 つ。
+       (setv worker-lines (code-lines (/ ACP-DIR "worker_loop.hy")))
+       (assert (= (len (lfor line worker-lines :if (in "(replace settings :draining control.draining)" line) line)) 1) "loop は drain の合図を settings.draining に写す(R39)")
        (assert (any (gfor line runtime-lines (in "drain_seconds=_drain_seconds_of_env(env)" line))) "宣言の排水の上限は settings の 1 欄へ(R39)")
        (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
        (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk declared-capacity-of ") line)) 1) "capacity の判断は 1 点(R39)")
@@ -3669,7 +3709,114 @@
                    "test_headless_process_claude_retire_ladder_terminates_a_cli_that_ignores_eof"]]
          (assert (in (+ "def " name "(") host-tests) f"R48 の反例の検が無い: {name}"))
        (setv stub-lines (code-lines (/ (. (Path __file__) parent parent parent) "packages" "doeff-agents" "tests" "headless_stubs" "claude")))
-       (assert (any (gfor line stub-lines (in "DOEFF_HEADLESS_STUB_REENTER_AFTER" line))) "替え玉は実物の再入(手番の外の tool_use)を再現できる(R48)"))]
+       (assert (any (gfor line stub-lines (in "DOEFF_HEADLESS_STUB_REENTER_AFTER" line))) "替え玉は実物の再入(手番の外の tool_use)を再現できる(R48)"))
+     (deftest test-adr-doe-agents-012-the-halves-split-without-a-second-declaration
+       ;; R56 の針(構造): 役の閉語彙は effects の 1 点・読みは join.role-of の 1 点・宣言 file の鍵でも env の綴りでもない・
+       ;; entry は役で 3 つに分かれる・上限なしの待ちは役 agentd の時だけ・境界は今日の socket のまま(第 2 の口を足さない)。
+       (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
+       (for [needle ["JOIN_ROLE_BOTH = " "JOIN_ROLE_AGENTD = " "JOIN_ROLE_HOST = " "JOIN_ROLES: frozenset[str] = "]]
+         (assert (= (len (lfor line effects-lines :if (.startswith line needle) line)) 1)
+                 f"役の閉語彙は effects の 1 点(R56): {needle}"))
+       (setv join-lines (code-lines (/ ACP-DIR "join.hy")))
+       (assert (= (len (lfor line join-lines :if (.startswith line "(defk role-of [argv]") line)) 1)
+               "役の読みは join.role-of の 1 点(R56)")
+       (assert (= (len (lfor line join-lines :if (.startswith line "(setv FLAG-ROLE ") line)) 1)
+               "役の flag の綴りは join の 1 点(R56)")
+       (setv join-text (.read-text (/ ACP-DIR "join.hy") :encoding "utf-8"))
+       (assert (not-in "FLAG-ROLE #(TABLE-AGENTD" join-text) "役が宣言 file の鍵になっている(R56)")
+       (assert (not-in "KEY-ROLE" join-text) "役の宣言 file の鍵が生えている(R56)")
+       (setv plan-at (next (gfor [i line] (enumerate join-lines) :if (.startswith line "(defk join-plan-of ") i) None))
+       (assert (is-not plan-at None) "join-plan-of が無い(R56)")
+       (setv plan-body [])
+       (for [line (cut join-lines (+ plan-at 1) None)]
+         (when (.startswith line "(def") (break))
+         (.append plan-body line))
+       (assert (not (any (gfor line plan-body (in "role" (.lower line)))))
+               "join-plan-of が役を読んでいる(R56 — 役は env の束にも host の argv にも現れない)")
+       (setv entry-lines (code-lines (/ ACP-DIR "entry.py")))
+       (assert (any (gfor line entry-lines (in "role = join_role(argv[1:])" line))) "entry が役を読んでいない(R56)")
+       (assert (any (gfor line entry-lines (in "verdict.enabled and role != JOIN_ROLE_HOST" line)))
+               "役 host で agentd の thread を止めていない(R56)")
+       (assert (any (gfor line entry-lines (in "if role == JOIN_ROLE_AGENTD:" line))) "役 agentd の枝が無い(R56)")
+       (setv runtime-lines (code-lines (/ ACP-DIR "runtime.py")))
+       (assert (= (len (lfor line runtime-lines :if (.startswith line "HOST_WAIT_SECONDS = ") line)) 1)
+               "host の待ちの上限は 1 点(R56)")
+       (assert (= (len (lfor line runtime-lines :if (.startswith line "def wait_for_host_socket(") line)) 1)
+               "host の socket の待ちは runtime の 1 点(R56)")
+       (assert (any (gfor line runtime-lines (in "bounded = role != JOIN_ROLE_AGENTD" line)))
+               "上限を外すのは役 agentd の時だけ(R56)")
+       (assert (= (len (lfor line runtime-lines :if (.startswith line "def run_agentd_only(") line)) 1)
+               "役 agentd の走らせ方は runtime の 1 点(R56)")
+       (assert (any (gfor line runtime-lines (in "sessions = SessionRpc(socket_path)" line)))
+               "器との境界が socket でなくなっている(R56)")
+       (setv tests (.read-text (/ (. (Path __file__) parent parent parent) "packages" "doeff-agents" "tests" "test_sessionhost_acp.py") :encoding "utf-8"))
+       (for [name ["test_join_role_is_a_closed_vocabulary_read_from_the_argv"
+                   "test_join_role_is_not_a_declaration_key_and_never_reaches_the_env_bundle"]]
+         (assert (in (+ "def " name "(") tests) f"R56 の反例の検が無い: {name}")))
+     (deftest test-adr-doe-agents-012-the-control-plane-process-exits-without-closing-turns
+       ;; R57 の針(構造): 停止の腕は 2 つで別物(close_for_exit は job を閉じない・排水も撃たない)・
+       ;; 停止の hook の登録は 1 点で、役 agentd の枝は その前に return する。
+       (setv runtime-lines (code-lines (/ ACP-DIR "runtime.py")))
+       (assert (= (len (lfor line runtime-lines :if (.startswith line "    def close_for_exit(self, reason: str) -> None:") line)) 1)
+               "ACP 側だけの停止の腕は 1 点(R57)")
+       (assert (= (len (lfor line runtime-lines :if (.startswith line "    def close_for_stop(self, reason: str) -> int:") line)) 1)
+               "器と一緒に死ぬ停止の腕は 1 点のまま(R57)")
+       (setv exit-at (next (gfor [i line] (enumerate runtime-lines)
+                                 :if (.startswith line "    def close_for_exit(self, reason: str) -> None:") i) None))
+       (assert (is-not exit-at None) "close_for_exit が無い(R57)")
+       (setv exit-body [])
+       (for [line (cut runtime-lines (+ exit-at 1) None)]
+         (when (.startswith line "    def ") (break))
+         (.append exit-body line))
+       (assert (not (any (gfor line exit-body (in "run_close_for_stop(" line)))) "close_for_exit が job を閉じている(R57)")
+       (assert (not (any (gfor line exit-body (in "drain_for_stop(" line)))) "close_for_exit が排水を撃っている(R57)")
+       (assert (any (gfor line exit-body (in "self.stop.set()" line))) "close_for_exit が loop を止めていない(R57)")
+       (assert (any (gfor line exit-body (in "self._close()" line))) "close_for_exit が handler を閉じていない(R57)")
+       (setv entry-lines (code-lines (/ ACP-DIR "entry.py")))
+       (assert (= (len (lfor line entry-lines :if (in "register_shutdown_hook(lambda:" line) line)) 1)
+               "停止の hook の登録は 1 点(R57)")
+       (setv hook-at (next (gfor [i line] (enumerate entry-lines) :if (in "register_shutdown_hook(lambda:" line) i) None))
+       (setv role-at (next (gfor [i line] (enumerate entry-lines) :if (in "if role == JOIN_ROLE_AGENTD:" line) i) None))
+       (setv return-at (next (gfor [i line] (enumerate entry-lines)
+                                   :if (and (is-not role-at None) (> i role-at) (= (.strip line) "return")) i) None))
+       (assert (and (is-not hook-at None) (is-not return-at None) (< return-at hook-at))
+               "役 agentd の process が停止の hook を登録している(R57)")
+       (setv tests (.read-text (/ (. (Path __file__) parent parent parent) "packages" "doeff-agents" "tests" "test_sessionhost_acp.py") :encoding "utf-8"))
+       (for [name ["test_close_for_exit_leaves_the_running_turns_to_the_host_process"]]
+         (assert (in (+ "def " name "(") tests) f"R57 の反例の検が無い: {name}")))
+     (deftest test-adr-doe-agents-012-draining-is-one-signal-read-from-outside
+       ;; R58 の針(構造): 合図の綴りと置き場は 1 点ずつ・port は runtime.drain_port の 1 点・
+       ;; capacity の判断は judgment の 1 点のまま(R39 と同じ座)・file の中身は log にしか行かない。
+       (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
+       (assert (= (len (lfor line effects-lines :if (.startswith line "JOIN_DRAIN_FILE = ") line)) 1)
+               "排水の合図の綴りは effects の 1 点(R58)")
+       (setv runtime-lines (code-lines (/ ACP-DIR "runtime.py")))
+       (assert (= (len (lfor line runtime-lines :if (.startswith line "def drain_file_path(") line)) 1)
+               "排水の合図の置き場は runtime の 1 点(R58)")
+       (assert (= (len (lfor line runtime-lines :if (.startswith line "def drain_port(") line)) 1)
+               "排水の port は runtime.drain_port の 1 点(R58)")
+       (assert (= (len (lfor line runtime-lines :if (in "LoopPorts(stop.is_set, drain_port(" line) line)) 1)
+               "loop の draining は drain_port の答えちょうど(R58)")
+       (assert (any (gfor line runtime-lines (in "os.path.dirname(record_spool_dir(env)), JOIN_DRAIN_FILE" line)))
+               "排水の合図が state_dir の外に在る(R58)")
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk declared-capacity-of ") line)) 1)
+               "capacity の判断は 1 点のまま(R58 / R39)")
+       (assert (not (any (gfor line judgment-lines (in "JOIN_DRAIN_FILE" line))))
+               "判断が合図の file を直に読んでいる(R58 — 読むのは handler 側)")
+       (setv reason-at (next (gfor [i line] (enumerate runtime-lines) :if (.startswith line "def _drain_reason(") i) None))
+       (assert (is-not reason-at None) "理由の読みが無い(R58)")
+       (setv reason-body [])
+       (for [line (cut runtime-lines (+ reason-at 1) None)]
+         (when (.startswith line "def ") (break))
+         (.append reason-body line))
+       (assert (not (any (gfor line reason-body (in "return True" line))))
+               "合図の中身が判断に使われている(R58)")
+       (setv tests (.read-text (/ (. (Path __file__) parent parent parent) "packages" "doeff-agents" "tests" "test_sessionhost_acp.py") :encoding "utf-8"))
+       (for [name ["test_the_drain_file_raises_and_lowers_the_same_draining_signal"
+                   "test_the_drain_file_lives_under_the_state_dir_next_to_the_spool"
+                   "test_declared_capacity_is_zero_while_draining_and_the_declaration_otherwise"]]
+         (assert (in (+ "def " name "(") tests) f"R58 の反例の検が無い: {name}")))]
   :plans ["docs/impl-requests/stage2-lane-prompts/lane-2b-agentd.md(agora-redesign)"
           "docs/impl-requests/stage2-lane-prompts/lane-2b2-agentd-fix.md(agora-redesign・改訂 R7〜R9)"
           "docs/impl-requests/stage2-lane-prompts/lane-2b3-warm-session.md(agora-redesign・改訂 R10)"

@@ -11,6 +11,12 @@ from doeff import EffectBase
 
 PING_TEXT = "this is a ping, only answer with ping"
 
+#: 温かい session を専用操作の送信先として保つ予算(ms)。provider の cache の有効期限を証明する値では
+#: なく、通常の idle 回収から送信先を守るための上限ちょうど(対応する cache TTL の最大 1 時間)。
+#: card acp:kanban-issue:ki-567f2dd6140f §3.1e: 「いつまで保持するか」は**判断**なので ACP 側が持つ
+#: (judgment.cache-resident-retention-of の 1 点が読む)。host はこの値を 1 度も見ない。
+CACHE_RESIDENT_IDLE_MS = 3_600_000
+
 
 @dataclass(frozen=True)
 class CacheTarget:

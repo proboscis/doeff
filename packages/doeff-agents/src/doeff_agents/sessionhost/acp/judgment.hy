@@ -59,6 +59,8 @@
 ;; (live_row.hy・contracts.lock の kind = code)の 1 点 — ここに名前の索引を持たない。
 (import doeff_agents.sessionhost.acp.live_row [resolve-live-row])
 (import doeff_agents.sessionhost.acp.cache_observation [cache-observation-of cache-context-of])
+;; card acp:kanban-issue:ki-567f2dd6140f §3.1e: 保持の予算は ACP 側の 1 点(host は 1 度も読まない)。
+(import doeff_agents.sessionhost.acp.cache_operation [CACHE-RESIDENT-IDLE-MS])
 (import doeff_agents.sessionhost.acp.effects [
   CHARTER-KIND-KEY
   CHARTER-KIND-TURN
@@ -1431,6 +1433,33 @@
   None)
 
 
+(defk cache-resident-retention-of [view]
+  {:pre [(: view SessionView)]
+   :post [(: % (| int None))]}
+  "この温かい session を専用操作(cache ping)の送信先として**いつまで保つか**の期限(epoch ms・None = 保たない)。
+
+   card acp:kanban-issue:ki-567f2dd6140f §3.1e: この判断の座は ACP 側のここ 1 点で、host は持たない
+   (host が名乗るのは観測した事実 = view.cache-last-success-at-ms ちょうど)。旧形は host の
+   cache_host.cache-resident-retention が適格の篩と保持の予算の両方を持っていた。
+
+   適格 = claude の headless の温かい session で、走っていて会話を持ち、手番の終わりが刻まれている。
+   期限 = max(手番の終わり + 予算, 最後に成功した専用操作の完了 + 予算)。予算 CACHE-RESIDENT-IDLE-MS は
+   対応する cache TTL の最大(1 時間)で、provider の cache の実在も送信の資格も宣言しない — 送信の資格は
+   応答の観測・identity・期限から控え側が別に判ずる。"
+  (when (or (!= view.agent-type "claude")
+            (!= view.backend-kind BACKEND-HEADLESS)
+            (!= view.lifecycle LIFECYCLE-MULTI-TURN)
+            (!= view.status "running")
+            (is view.conversation None)
+            (not view.conversation)
+            (is view.turn-ended-at-ms None))
+    (return None))
+  (setv initial (+ view.turn-ended-at-ms CACHE-RESIDENT-IDLE-MS))
+  (if (is view.cache-last-success-at-ms None)
+      initial
+      (max initial (+ view.cache-last-success-at-ms CACHE-RESIDENT-IDLE-MS))))
+
+
 (defk sessions-to-retire [views now-ms ttl-seconds]
   {:pre [(: views tuple) (: now-ms int) (: ttl-seconds int)]
    :post [(: % tuple)]}
@@ -1438,11 +1467,12 @@
   (setv out [])
   (for [view views]
     (<- idle bool (session-idle view))
+    (<- retained (| int None) (cache-resident-retention-of view))
     (when (and idle
                (is-not view.turn-ended-at-ms None)
                (>= now-ms (+ view.turn-ended-at-ms (* 1000 ttl-seconds)))
-               (or (is view.cache-retained-until-ms None)
-                   (>= now-ms view.cache-retained-until-ms)))
+               (or (is retained None)
+                   (>= now-ms retained)))
       (.append out view.session-id)))
   (tuple out))
 

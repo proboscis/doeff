@@ -92,6 +92,8 @@
   JOIN-HEADLESS-DIR
   JOIN-RECORD-SPOOL-DIR
   JOIN-SCHEMA
+  JOIN-ROLE-BOTH
+  JOIN-ROLES
   JOIN-SESSION-HOOKS-DEFAULT
   JOIN-SOCKET-FILE
   JOIN-STATE-DIR-DEFAULT
@@ -189,6 +191,10 @@
 (setv RECORD-KEYS #{KEY-RECORD-URL})
 ;; flag の綴り(`--config` は composition root が先に読む — config-path-of)。
 (setv FLAG-CONFIG "--config")
+;; process の役(card acp:kanban-issue:ki-567f2dd6140f)。`--config` と同じく**宣言 file の鍵ではない**
+;; (機体の宣言ではなく、その宿の unit / container がどちらの役で起きるかの宣言なので、1 枚の宣言 file を
+;;  2 つの unit が読める形を保つ)。だから FLAG-KEYS には入れず、config-path-of と同じ流儀で別に読む。
+(setv FLAG-ROLE "--role")
 (setv FLAG-SERVER "--server")
 (setv FLAG-TOKEN-FILE "--token-file")
 (setv FLAG-NODE-NAME "--node-name")
@@ -232,6 +238,12 @@
      (+ "Declaration file (TOML, schema " JOIN-SCHEMA "). A flag overrides the "
         "file, the file overrides the defaults. Keys carry the flag's name "
         "without the leading dashes, under [agentd] / [custody] / [record]."))
+   #(FLAG-ROLE (+ "<" (.join "|" (sorted JOIN-ROLES)) ">")
+     (+ "Which halves of this command run in this process. Default: " JOIN-ROLE-BOTH
+        " (one process carries both, exactly as before). " "agentd" " runs only the "
+        "control-plane node agent (it connects to the host over the socket); " "host"
+        " runs only the session owner. Not a declaration-file key: one machine "
+        "declaration feeds both units."))
    #(FLAG-SERVER "<URL>"
      (+ "Control-plane engine this node joins. Required (flag or ["
         TABLE-AGENTD "]." KEY-SERVER ")."))
@@ -303,20 +315,42 @@
   found)
 
 
+(defk role-of [argv]
+  {:pre [(: argv JoinArgv)]
+   :post [(: % str)]}
+  "join の argv から process の役(`--role <both|agentd|host>`)。無ければ JOIN-ROLE-BOTH = 今日どおり
+   1 process で両方。語彙の外は黙って既定に倒さず名指して断る(閉語彙の定義点は effects.JOIN-ROLES の 1 点)。
+   ⚠ **env に第 2 の綴りを足さない**: 役は起こす側(unit / container)の宣言で、機体の宣言 file にも
+   JoinPlan の env の束にも現れない — 既定のまま撃った起動が今日と 1 byte 差なく同じであるため。"
+  (setv items argv.items)
+  (setv found JOIN-ROLE-BOTH)
+  (setv index 0)
+  (while (< index (len items))
+    (when (= (get items index) FLAG-ROLE)
+      (when (>= (+ index 1) (len items))
+        (raise (ValueError f"{FLAG-ROLE} requires a value")))
+      (setv found (get items (+ index 1))))
+    (+= index 1))
+  (when (not-in found JOIN-ROLES)
+    (raise (ValueError (+ FLAG-ROLE " must be one of " (.join "|" (sorted JOIN-ROLES))
+                          ", got " (repr found)))))
+  found)
+
+
 (defk flag-values-of [argv]
   {:pre [(: argv JoinArgv)]
    :post [(: % dict)]}
-  "join の argv → {表 {鍵 値}}(flag の値だけ・`--config` は除く)。未知の flag・値の無い flag は断る。"
+  "join の argv → {表 {鍵 値}}(flag の値だけ・`--config` / `--role` は除く)。未知の flag・値の無い flag は断る。"
   (setv items argv.items)
   (setv values {TABLE-AGENTD {} TABLE-CUSTODY {} TABLE-RECORD {}})
   (setv index 0)
   (while (< index (len items))
     (setv arg (get items index))
     (cond
-      (= arg FLAG-CONFIG)
+      (in arg #(FLAG-CONFIG FLAG-ROLE))
       (do (+= index 1)
           (when (>= index (len items))
-            (raise (ValueError f"{FLAG-CONFIG} requires a value"))))
+            (raise (ValueError f"{arg} requires a value"))))
       (in arg FLAG-KEYS)
       (do (+= index 1)
           (when (>= index (len items))
