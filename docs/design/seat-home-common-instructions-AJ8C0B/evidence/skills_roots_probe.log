@@ -2,7 +2,8 @@
 ### 計り方: 捕捉 server へ向けた claude の request body に目印が載った数(requests=2 は本体の 2 回の送信 — 1 回につき 1 件)。
 ###   dotfiles = 一覧に "- herdr-comms" の行が在る数(111 件では説明文が落ちて名前だけの行になる)。live = 実席の起動引数・oauth = dummy の OAuth 札。
 ### 読み方: 1/2 = 走査は git の root で止まる / 3/4 = 本物のホームの .claude/skills は読まず、ホームより下の祖先は読む /
-###   5 = env の HOME を付け替えても本体はそれをホームとして扱わない(2026-09-21T08:46Z の旧 1 件目「HOME の下なら載る」はこれの見かけ) /
+###   5 = ⚠ この行の読みは 09:5xZ に取り消し — 2 は作業 dir が /tmp(→ /private/tmp の symlink)の下だった綴りの産物で、本体は env の HOME を尊重する
+###       (対照 = skills_roots_probe_ctl_home_spelling.log〔Mac 2.1.278〕・skills_roots_probe_pod_2.1.263.log の 5a/5b/5c〔pod〕)。08:46Z の旧 1 件目「HOME の下なら載る」も同じ産物 /
 ###   6 = 今日の席(家が空)には dotfiles の skill が載らない / 7 = 運んだ形(dir symlink)なら載る / 8・9 = 名前がぶつかると家の側が勝つ
 --- 1 ancestor, non-git cwd: rc=1 requests=2 ancestor(W1)=2 fakehome(W2)=0 cfg(B)=0 project(P)=0 dotfiles=0
       HOME=<作業 dir>/h  CLAUDE_CONFIG_DIR=<作業 dir>/cfg-empty  cwd=<作業 dir>/anc/a/b  live=False oauth=False

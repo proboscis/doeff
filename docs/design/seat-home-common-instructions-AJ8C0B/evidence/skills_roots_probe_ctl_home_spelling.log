@@ -1,0 +1,16 @@
+### 実行: 2026-09-21T09:49Z・機体 CA-20038667(会社 Mac)・本体 2.1.278(sha256 bd245662fb8a0e32…)・計画段 c-AJ8C0BK9RF29HQ92ZQ986FXQVT
+### 問い: skills_roots_probe.log の行 5(env の HOME を偽の dir へ付け替え・その下から起動 → fakehome=2)は「本体は env の HOME を
+###   ホームとして扱わない」の証拠か。依頼者 c-3JYBNJMC… が pod(2.1.263)の対照 5a/5b/5c で「逆 — 綴りの比較の産物」と指摘
+###   (郵便 lt-HH8KGE0FX6GP3WM7VVBXN5JF7E)。同じ問いを Mac の 2.1.278 で、偽の HOME の**綴り**だけを変えて 3 つ撃った。
+### 形: skills_roots_probe.py の probe() をそのまま呼ぶ(cfg は空・HOME の下の .claude/skills に目印 W2・cwd = HOME/work)。
+### 読み方: 5r(実体の綴り $HOME/…)= 0 / 5l(/tmp/… = macOS では /private/tmp への symlink の綴り)= 2 / 5p(/private/tmp/… 解決済みの綴り)= 0
+###   ⇒ 本体は env の HOME を尊重して止まる。止まらないのは HOME の綴りが symlink を経る時だけ(cwd の解決済みの綴りと一致しない)。
+###   ⇒ skills_roots_probe.log の行 5 の読み(「付け替えた HOME をホームとして扱わない」)は**取り消し**。元の測定の作業 dir が /tmp の下だった。
+###   ⇒ 受入 3 への含意: 席の cwd が symlink の綴り(macOS の /tmp・/var の下)なら、走査はホームで止まらず $HOME/.claude/skills まで
+###      project 層として読む。運んでいなくても dotfiles の skills が載る形が在る = 偽の緑の筋。
+--- 5r fake HOME under real spelling ($HOME/...): rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=0 cfg(B)=0 project(P)=0 dotfiles=0
+      HOME=/Users/s22625/.skills-probe-AJ8C0B-ctl/real/h  CLAUDE_CONFIG_DIR=/Users/s22625/.skills-probe-AJ8C0B-ctl/real/cfg-empty  cwd=/Users/s22625/.skills-probe-AJ8C0B-ctl/real/h/work  live=False oauth=False
+--- 5l fake HOME under symlink spelling (/tmp/...): rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=2 cfg(B)=0 project(P)=0 dotfiles=0
+      HOME=/tmp/skills-probe-AJ8C0B-ctl/h  CLAUDE_CONFIG_DIR=/tmp/skills-probe-AJ8C0B-ctl/cfg-empty  cwd=/tmp/skills-probe-AJ8C0B-ctl/h/work  live=False oauth=False
+--- 5p fake HOME under resolved spelling (/private/tmp/...): rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=0 cfg(B)=0 project(P)=0 dotfiles=0
+      HOME=/private/tmp/skills-probe-AJ8C0B-ctl-res/h  CLAUDE_CONFIG_DIR=/private/tmp/skills-probe-AJ8C0B-ctl-res/cfg-empty  cwd=/private/tmp/skills-probe-AJ8C0B-ctl-res/h/work  live=False oauth=False
