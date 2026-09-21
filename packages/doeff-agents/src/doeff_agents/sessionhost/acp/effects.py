@@ -2946,6 +2946,12 @@ class SessionSend(EffectBase):
     text: str
     awaiting: bool
     session_env: JSONObject = field(default_factory=_empty_json_object)
+    #: card acp:kanban-issue:ki-a40292ed30d9(4 つ目の腕): **この手番の荷**(policy.TURN-CARRIED-KEYS =
+    #: 記憶の置き場 memory_dir と冊 memory_files)。器が降りた process を ``--resume`` で起こし直す時に
+    #: charter の代わりになる値で、行には残らない(正本は ACP の行 — 法 ACP 575b1e)。
+    #: ⚠ ``session_env`` とは**別の口**: あちらは資格(秘密 — log にも argv にも出さない)の袋で、
+    #: こちらは置き場の file に落ちる本文。同じ袋に入れると、冊の本文が秘密の規律の側へ紛れる。
+    turn_charter: JSONObject = field(default_factory=_empty_json_object)
     #: 段 10 lane 10o(agora-redesign #96・依頼者の追補 2026-09-14・法 012 R21): 郵便の添付を**型つき**で
     #: 器へ渡す。CLI の綴り(block / input の項)は kind ごとの Dialogue が組む — agentd は組まない。
     #: 受けない器は SessionRefused で断り、呼び手が条件 AttachmentIgnored に写す(黙って落とさない)。

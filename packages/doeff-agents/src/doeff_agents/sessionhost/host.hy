@@ -1614,6 +1614,15 @@
         (raise (RuntimeError
                  (+ "session.send: session_env belongs to mode = " SEND-MODE-TURN
                     " — an interrupt is poured into the turn already in flight and starts no process.")))))
+    ;; card acp:kanban-issue:ki-a40292ed30d9(4 つ目の腕): turn_charter = **この手番の荷**
+    ;; (policy.TURN-CARRIED-KEYS = 記憶の置き場と冊)。降りた process を起こし直す腕は行の
+    ;; launch_overlay しか読まないので、行に残さない欄はこの口で来る。session_env とは別の口:
+    ;; あちらは資格(秘密)の袋で、こちらは file に落ちる値 — 同じ袋に入れると、冊の本文が
+    ;; 「log にも argv にも出さない」規律の側へ紛れる。
+    (setv turn-charter (or (.get p "turn_charter") {}))
+    (when (not (isinstance turn-charter dict))
+      (raise (RuntimeError
+               f"invalid params for session.send: turn_charter must be an object (got: {turn-charter !r})")))
     ;; 段 10 lane 10o(agora-redesign #96・依頼者の追補): 郵便の添付は**型つき**で受け取り、そのまま
     ;; 器へ渡す(CLI の綴りは kind ごとの Dialogue が組む — この module に画像の綴りは無い)。
     ;; 添付の段を持たない器(tui = tmux / herdr)は断りを名乗る — 本文は届く・添付だけ落ちる。
@@ -1628,7 +1637,7 @@
                   (and (headless-backend? config) (= mode SEND-MODE-INTERRUPT))
                   (headless-inject-program sid message ref attachments)
                   (headless-backend? config)
-                  (headless-send-program sid message awaiting session-env attachments)
+                  (headless-send-program sid message awaiting session-env turn-charter attachments)
                   True
                   (send-program sid message literal enter awaiting)))
     (record-command actor sid "session.send" message)

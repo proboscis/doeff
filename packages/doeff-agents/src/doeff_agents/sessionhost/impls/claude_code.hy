@@ -23,6 +23,7 @@
   BuildLaunch
   BuildResume
   DiscoverConversation
+  HydrateMemoryHome
   PreLaunchSetup
   ClassifyPane
   DeliverMessage
@@ -394,6 +395,67 @@
     True f"{path} declares no metered credential"))
 
 
+(defk claude-hydrate-memory-home [params verb]
+  {:pre [(: params dict) (: verb str)]
+   :post [(: % "None — 置き場の実体化は副作用で、返す値を持たない")]}
+  "自動記憶の置き場を実体化する(interface effect HydrateMemoryHome の claude 実体)。
+
+   判断は judgment.memory-home-of の 1 点 — ここは charter が運んだ path を実体化するだけで、
+   path を組まない。codex は対象外: codex の作業状態は profile dir の側の話で、claude の
+   auto-memory に当たる置き場を持たない。置き場を名乗らない params では**何もしない**
+   (記憶を使わない会話の起動は 1 byte も変わらない)。
+
+   ⚠ 呼ぶ腕は 2 つ — 起こす腕(claude-pre-launch = PreLaunchSetup の中)と、その名簿を 1 枚も
+   通らない腕(降りた process の続き headless.continue-headless-process)。腕ごとに写しを作らない:
+   2026-09-21 の実弾は「続きの腕だけがこの仕事を持たない」形で、claude は手番の終わりに必ず降りる
+   から、同じ会話の **2 手番目から**置き場が空のまま席が走っていた。
+
+   verb = この仕事を起こした RPC の動詞(session.launch / session.send)— 計器の 1 行の頭に出す。"
+  (setv memory-dir (.get params "memory_dir"))
+  (when (not (and (isinstance memory-dir str) (.strip memory-dir)))
+    (return None))
+  (<- _ (fs-make-dirs memory-dir))
+  ;; card acp:kanban-issue:ki-9fc7d4bca4dc(法 ACP 575b1e conversation-memory-lives-in-the-row):
+  ;; 記憶の正本は ACP の行で、置き場は手番ごとの写し。charter が運んできた冊(起こす側が行から読んで
+  ;; 載せた — history / first_turn と同じ形)をここで実体化する。索引 MEMORY.md も同じ列に入っていて、
+  ;; 行から導いた本文で毎手番上書きされる(file としての正本を持たない)。
+  ;; ⚠ **行を読むのはここではない**: この module は substrate-clean(生 IO 禁止・Fs* / EnvGet だけ)なので、
+  ;; ACP も記録の service も import しない。運ぶのは charter の 1 欄ちょうど。
+  ;; 置き場に残った余りの file は消さない(消す動詞をこの層に置かない)— 退役した冊を書き戻さないのは
+  ;; 起こす側の判断(judgment.memory-row-retired?)。
+  (setv declared (list (or (.get params CLAUDE-MEMORY-FILES-KEY) [])))
+  (setv written [])
+  (setv base-text None)
+  (for [book declared]
+    (setv book-name (if (isinstance book dict) (.get book "name") None))
+    (setv book-text (if (isinstance book dict) (.get book "text") None))
+    (when (and (isinstance book-name str) (isinstance book-text str)
+               (.strip book-name) (not (in "/" book-name)) (not (.startswith book-name ".")))
+      ;; 基準は loop では書かない — 書けた冊が確定してから絞って置く(claude-baseline-kept の頭注)。
+      (if (= book-name CLAUDE-MEMORY-BASE-FILE)
+          (setv base-text book-text)
+          (do
+            (<- _ (fs-write-text-atomic f"{memory-dir}/{book-name}" book-text ".agentd-tmp"))
+            (.append written book-name)))))
+  ;; 畳み戻しの基準は**最後に・書けた冊へ絞って**置く(依頼書 §5(b): 席が書いた file が基準の証拠)。
+  (setv base-written 0)
+  (when (isinstance base-text str)
+    (<- kept str (claude-baseline-kept base-text written))
+    (<- _ (fs-write-text-atomic f"{memory-dir}/{CLAUDE-MEMORY-BASE-FILE}" kept ".agentd-tmp"))
+    (setv base-written 1))
+  ;; 計器(card acp:kanban-issue:ki-a40292ed30d9 受入 3): **器が書いた数**を起動ごとに 1 行で名乗る。
+  ;; agentd 側の agent-memory-hydrated が数えるのは**行から読んだ数**なので、この 2 行が割れている
+  ;; 拍(読んだ 44・書いた 0)が今回の壊れ方そのものだった — 読みの数だけでは log が成功しか言わない。
+  ;; 置き場を名乗った手番は 0 冊でも名乗る(黙る拍を作らない)。索引は冊と別に数える
+  ;; (行から導いた索引が落ちると、冊は在るのに読み手が古い索引を読む)。
+  (setv books (lfor name written :if (!= name CLAUDE-MEMORY-INDEX-FILE) name))
+  (<- _ (log-line
+          (+ f"{verb}: agent-memory-written dir={memory-dir} "
+             f"books={(len books)} index={(if (in CLAUDE-MEMORY-INDEX-FILE written) 1 0)} "
+             f"base={base-written} declared={(len declared)}")))
+  None)
+
+
 (defk claude-pre-launch [params]
   {:pre [(: params dict)]
    :post [(: % dict)]}
@@ -451,50 +513,10 @@
                 "credential value — it only checks that the home declares one "
                 "(ADR-DOE-AGENTS-004 R9)."))))
   ;; 自動記憶の置き場は起こす前に在らせる(CLI 側も作るが、無い dir を設定で指さない)。
-  ;; 判断は judgment.memory-home-of の 1 点 — ここは charter が運んだ path を実体化するだけで、
-  ;; path を組まない。codex は対象外: codex の作業状態は profile dir の側の話で、
-  ;; claude の auto-memory に当たる置き場を持たない。
-  (setv memory-dir (.get params "memory_dir"))
-  (when (and (isinstance memory-dir str) (.strip memory-dir))
-    (<- _ (fs-make-dirs memory-dir))
-    ;; card acp:kanban-issue:ki-9fc7d4bca4dc(法 ACP 575b1e conversation-memory-lives-in-the-row):
-    ;; 記憶の正本は ACP の行で、置き場は手番ごとの写し。charter が運んできた冊(起こす側が行から読んで
-    ;; 載せた — history / first_turn と同じ形)をここで実体化する。索引 MEMORY.md も同じ列に入っていて、
-    ;; 行から導いた本文で毎手番上書きされる(file としての正本を持たない)。
-    ;; ⚠ **行を読むのはここではない**: この module は substrate-clean(生 IO 禁止・Fs* / EnvGet だけ)なので、
-    ;; ACP も記録の service も import しない。運ぶのは charter の 1 欄ちょうど。
-    ;; 置き場に残った余りの file は消さない(消す動詞をこの層に置かない)— 退役した冊を書き戻さないのは
-    ;; 起こす側の判断(judgment.memory-row-retired?)。
-    (setv declared (list (or (.get params CLAUDE-MEMORY-FILES-KEY) [])))
-    (setv written [])
-    (setv base-text None)
-    (for [book declared]
-      (setv book-name (if (isinstance book dict) (.get book "name") None))
-      (setv book-text (if (isinstance book dict) (.get book "text") None))
-      (when (and (isinstance book-name str) (isinstance book-text str)
-                 (.strip book-name) (not (in "/" book-name)) (not (.startswith book-name ".")))
-        ;; 基準は loop では書かない — 書けた冊が確定してから絞って置く(claude-baseline-kept の頭注)。
-        (if (= book-name CLAUDE-MEMORY-BASE-FILE)
-            (setv base-text book-text)
-            (do
-              (<- _ (fs-write-text-atomic f"{memory-dir}/{book-name}" book-text ".agentd-tmp"))
-              (.append written book-name)))))
-    ;; 畳み戻しの基準は**最後に・書けた冊へ絞って**置く(依頼書 §5(b): 席が書いた file が基準の証拠)。
-    (setv base-written 0)
-    (when (isinstance base-text str)
-      (<- kept str (claude-baseline-kept base-text written))
-      (<- _ (fs-write-text-atomic f"{memory-dir}/{CLAUDE-MEMORY-BASE-FILE}" kept ".agentd-tmp"))
-      (setv base-written 1))
-    ;; 計器(card acp:kanban-issue:ki-a40292ed30d9 受入 3): **器が書いた数**を起動ごとに 1 行で名乗る。
-    ;; agentd 側の agent-memory-hydrated が数えるのは**行から読んだ数**なので、この 2 行が割れている
-    ;; 拍(読んだ 44・書いた 0)が今回の壊れ方そのものだった — 読みの数だけでは log が成功しか言わない。
-    ;; 置き場を名乗った手番は 0 冊でも名乗る(黙る拍を作らない)。索引は冊と別に数える
-    ;; (行から導いた索引が落ちると、冊は在るのに読み手が古い索引を読む)。
-    (setv books (lfor name written :if (!= name CLAUDE-MEMORY-INDEX-FILE) name))
-    (<- _ (log-line
-            (+ f"session.launch: agent-memory-written dir={memory-dir} "
-               f"books={(len books)} index={(if (in CLAUDE-MEMORY-INDEX-FILE written) 1 0)} "
-               f"base={base-written} declared={(len declared)}"))))
+  ;; 書き出しは腕で分かれない 1 点(claude-hydrate-memory-home)— 起こす腕はここから、行の
+  ;; 名簿しか読まない腕(降りた process の続き headless.continue-headless-process)は
+  ;; interface effect HydrateMemoryHome から、**同じ関数**を呼ぶ。
+  (<- _ (claude-hydrate-memory-home params "session.launch"))
   (when (not (.get params "skip_trust_setup" False))
     (<- _ (preseed-claude-trust config-dir (get params "work_dir"))))
   (setv identity {"CLAUDE_CONFIG_DIR" config-dir
@@ -672,6 +694,13 @@
     :when (= agent-type "claude")
     (<- identity (claude-pre-launch params))
     (resume identity))
+
+  (HydrateMemoryHome [agent-type params verb]
+    ;; 起こす腕は PreLaunchSetup の中で同じ 1 点を呼ぶ。この口は**その名簿を通らない腕**
+    ;; (降りた process の続き headless.continue-headless-process)のために在る。
+    :when (= agent-type "claude")
+    (<- _ (claude-hydrate-memory-home params verb))
+    (resume None))
 
   (ClassifyPane [agent-type output]
     :when (= agent-type "claude")

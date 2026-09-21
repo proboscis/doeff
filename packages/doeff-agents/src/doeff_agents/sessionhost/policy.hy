@@ -309,8 +309,17 @@
 ;;   TURN-CARRIED-KEYS = 手番ごとに charter が名乗り直す値。**行には残さない**
 ;;                       (正本が他所に在る: 記憶の本文と置き場の正本は ACP の行
 ;;                        〔法 ACP 575b1e〕で、sessionhost の sqlite へ写すと
-;;                        第 2 の正本が腐る)。起こす腕は launch / resume / rehydrate
-;;                        の 3 つとも毎回 charter から運ぶ。
+;;                        第 2 の正本が腐る)。席の process を起こす腕は **4 つ**で、
+;;                        4 つとも毎回 charter から運ぶ:
+;;                          launch / resume / rehydrate  = 起こす腕(charter がそのまま行く)
+;;                          降りた process の続き        = headless.continue-headless-process
+;;                                                         (session.send の turn_charter が運ぶ)
+;;                        ⚠ 4 つ目を数え落とすと、**普段の手番だけ**落ちる: claude の headless は
+;;                        手番の終わりに必ず降りる(段 12 lane 12e #517)ので、会話の 2 手番目から
+;;                        先はこの腕しか通らない。2026-09-21 の実弾がその形で、起こした手番だけ
+;;                        置き場を名乗り、以後の手番は空の置き場を指していた。
+;;                        ⚠ 直し方を「行へ写す」に倒さない(= LAUNCH-FLAG-KEYS へ移さない):
+;;                        値の定義点が 2 つになり、行の写しが古い拍で手番の値と割れる。
 ;;
 ;; ⚠ **欄を 1 つ足す時に数え直すのはこの 2 つの集合だけ**(名簿を 5 つ数えない)。
 ;;   落ちたら赤になる検 = tests/sessionhost_charter_reaches_the_seat_deftests.hy

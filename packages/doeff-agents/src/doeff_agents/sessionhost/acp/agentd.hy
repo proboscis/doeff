@@ -352,6 +352,7 @@
   job-kind-of
   pid-of-text
   rc-of-text
+  turn-charter-of
   verify-argv-of
   verify-handle-of
   verify-plan-of
@@ -593,7 +594,8 @@
   warm-candidate-of
   with-job
   withdrawn-rows-of
-  without-job])
+  without-job
+])
 
 
 ;; ---------------------------------------------------------------------------
@@ -1228,7 +1230,7 @@
         ;; card acp:kanban-issue:ki-9fc7d4bca4dc(法 ACP 575b1e): 会話の記憶は行が正本 — 起こす前に行から読み、
         ;; charter に載せる(器の側が置き場へ書き出す)。行を読むのは effect を持つこの層ちょうどで、
         ;; 器の kind module(substrate-clean)には ACP も記録の service も import しない。
-        (<- memory-files tuple (memory-files-for-launch subject))
+        (<- memory-files tuple (memory-files-for-turn subject))
         (<- charter dict (charter-with-memory-files charter memory-files))
         (when (and (is-not auth-file None) (is-not lease None) (is-not lease.auth-json None))
           (<- (FsWritePrivateText :path auth-file :text lease.auth-json)))
@@ -1246,7 +1248,7 @@
               launched)))))
 
 
-(defk memory-files-for-launch [subject]
+(defk memory-files-for-turn [subject]
   {:pre [(: subject str)]
    :post [(: % tuple)]}
   "手番の頭の水入れ(card acp:kanban-issue:ki-9fc7d4bca4dc・法 ACP 575b1e): この会話の記憶の行を 1 回引き、
@@ -1258,7 +1260,11 @@
 
    帯域: 読みの窓は principal(agentd)ごとに 60 秒 / distinct 会話 200 / 268 MB で、1 手番 = 1 会話。
    艦隊の実測(2026-09-20・ACP の turn-record 全数の 60 秒の滑り窓)は distinct 会話の最大 30(門の 15.0%)・
-   2.3 MB(門の 0.85%)で、本文ごと撒いても 6.7 倍の交通量まで当たらない(計画段 c-J40MF0ZA8T… の測り)。"
+   2.3 MB(門の 0.85%)で、本文ごと撒いても 6.7 倍の交通量まで当たらない(計画段 c-J40MF0ZA8T… の測り)。
+
+   ⚠ 呼ぶ腕は 2 つで、**1 手番につき 1 回**(同じ手番で 2 度読まない): 起こす腕は incarnate(charter に
+   載せる)、温かい腕は after-start(送りの turn_charter に載せる — card acp:kanban-issue:ki-a40292ed30d9
+   の 4 つ目の腕)。どちらの腕でも 1 手番 = 1 会話の読みなので、上の帯域の測りはそのまま当たる。"
   (<- rows tuple (AcpConversationMemories :conversation-id subject))
   ;; 記憶を 1 度も書いていない会話は charter を 1 byte も変えない(今日の挙動のまま)。
   (when (not rows)
@@ -1408,7 +1414,7 @@
             (do
               (<- folds bool (first-turn-carries-inputs settings.backend-kind used.arm))
               (<- started AgentdState
-                  (after-start settings state row plan outcome lease used.arm now-ms
+                  (after-start settings state row plan outcome lease used.arm now-ms subject
                                (if folds #() bodies) (if folds #() carried) (get mail 2)))
               started)))))
 
@@ -1649,10 +1655,10 @@
   #(path start-offset from-head))
 
 
-(defk after-start [settings state row plan view lease arm now-ms bodies carried missing]
+(defk after-start [settings state row plan view lease arm now-ms subject bodies carried missing]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: row AcpRow) (: plan LaunchPlan)
          (: view SessionView) (: lease (| LeaseGrant None)) (: arm str) (: now-ms int)
-         (: bodies tuple) (: carried tuple) (: missing tuple)]
+         (: subject str) (: bodies tuple) (: carried tuple) (: missing tuple)]
    :post [(: % AgentdState)]}
   "手番の始まり(session を起こした後・温かい session ならそのまま): 郵便の本文(bodies — headless の
    起こす腕では空: 本文は起こした prompt に畳んである)を送る(awaiting — 送った本文は owed。headless は
@@ -1671,6 +1677,15 @@
   ;; `--resume` で起こし直すことがある — その起こしに **この手番で借りた札** を載せる
   ;; (行に残った誕生の札で起こすと、更新で回った後は 401 を食う)。判断は judgment の 1 点。
   (<- turn-env dict (turn-session-env-of lease))
+  ;; card acp:kanban-issue:ki-a40292ed30d9(4 つ目の腕): 温かい session への送りは、器が降りた process を
+  ;; `--resume` で起こし直す腕を通る(claude の headless は手番の終わりに必ず降りる)。その起こしは
+  ;; **行の launch_overlay しか読まない**ので、行に残さない手番の荷(記憶の置き場と冊)はこの送りが運ぶ。
+  ;; 起こす腕は charter で同じ値を運んでいる ⇒ ここで行を読み直すのは送りの腕だけ(読みを 2 度撃たない)。
+  (setv turn-charter {})
+  (when (= arm NEXT-ARM-SEND)
+    (<- memory-files tuple (memory-files-for-turn subject))
+    (<- carried-charter dict (turn-charter-of settings.memory-root subject memory-files))
+    (setv turn-charter carried-charter))
   ;; 段 10 lane 10o(agora-redesign #96・依頼者の追補): 添付は型つきのまま器へ渡す(綴りは Dialogue)。
   ;; 器が受けなかった(SessionSend の答えが断りを名乗った)拍は条件 AttachmentIgnored に写す。
   ;; card acp:kanban-issue:ki-3149aebbf675 B: headless の器では相乗りした郵便を **1 手番 = 1 prompt** に
@@ -1693,7 +1708,7 @@
   (for [parcel parcels]
     (<- answer (| str None SessionRefused)
         (SessionSend :session-id view.session-id :text (get parcel 0) :awaiting True
-                     :session-env turn-env
+                     :session-env turn-env :turn-charter turn-charter
                      :attachments (get parcel 1)))
     (if (isinstance answer SessionRefused)
         (setv refused answer)
