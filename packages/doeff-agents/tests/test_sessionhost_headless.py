@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from typing import NamedTuple
 import os
 import shutil
 import signal
@@ -653,6 +654,14 @@ def test_headless_argv_is_print_mode_with_partial_messages() -> None:
     assert isinstance(resumed_argv, list)
     assert resumed_argv[-2:] == ["--resume", "sid-1"]
     assert "--session-id" not in resumed_argv
+    # 冷えた再開の前の圧縮の argv: 同じ基礎の旗 + print mode の prompt 1 つ + 同じ --resume・
+    # stream-json の旗は無い。fresh(初手番)には無い(圧縮する歴史が無い)。
+    cold = resumed["cold_compaction_argv"]
+    assert isinstance(cold, list)
+    assert cold[0] == "claude"
+    assert cold[-4:] == ["-p", "/compact fast-jev-if-cold", "--resume", "sid-1"]
+    assert "stream-json" not in cold and "--session-id" not in cold
+    assert "cold_compaction_argv" not in fresh
     codex = _build_codex_headless(
         {"work_dir": "/w", "model": "gpt-5", "effort": "high"}
     )
@@ -1300,7 +1309,7 @@ class Host:
             ]
         )
         self.actor = StoreActor(self.config.db_path)
-        self.counter = 0
+        self._mut_counter = 0
         #: 替え玉の摘み(DOEFF_HEADLESS_STUB_*)は **charter の env** で運ぶ。段 10 lane 10d 便 2 の
         #: 追補 3 で、起こす process は agentd の process env を継がなくなった(名簿の外は届かない)—
         #: 検も本番と同じ路で摘みを渡す。値を替えると、その後に起こる process から効く
@@ -1308,12 +1317,12 @@ class Host:
         self.stub_env: dict[str, str] = {}
 
     def call(self, method: str, params: JSONObject) -> JSONObject:
-        self.counter += 1
+        self._mut_counter += 1
         if self.stub_env and _carries_turn_env(method, params):
             declared = params.get("session_env")
             overlay: JSONObject = dict(declared) if isinstance(declared, dict) else {}
             params = {**params, "session_env": {**self.stub_env, **overlay}}
-        line = json.dumps({"id": self.counter, "method": method, "params": params})
+        line = json.dumps({"id": self._mut_counter, "method": method, "params": params})
         return _record(host.dispatch_line(line, self.config, self.actor))
 
     def ok(self, method: str, params: JSONObject) -> JSON:
@@ -2030,7 +2039,13 @@ def _wait_real_host(proc: subprocess.Popen[str], root: Path) -> None:
             _pause(0.1)
 
 
-def _stored_row(root: Path, session_id: str) -> tuple[str, int, JSONObject]:
+class _StoredRow(NamedTuple):
+    status: str
+    awaiting: int
+    cause: JSONObject
+
+
+def _stored_row(root: Path, session_id: str) -> _StoredRow:
     conn = sqlite3.connect(root / "agentd.sqlite")
     try:
         row = conn.execute(
@@ -2042,7 +2057,7 @@ def _stored_row(root: Path, session_id: str) -> tuple[str, int, JSONObject]:
     assert row is not None
     cause = json.loads(row[2])
     assert isinstance(cause, dict)
-    return (str(row[0]), int(row[1]), cause)
+    return _StoredRow(str(row[0]), int(row[1]), cause)
 
 
 def test_real_host_sigterm_closes_the_running_turn_before_exit() -> None:
@@ -2364,3 +2379,68 @@ def test_host_wait_events_returns_when_the_journal_advances_and_at_the_bound_oth
         assert "invalid params for session.wait_events" in str(response["error"])
     _wait_turn_end(headless_host, sid)
     headless_host.ok("session.cleanup", {"session_id": sid})
+
+
+def test_fast_jev_compaction_enabled_reads_only_a_settings_that_makes_the_plugin_effective() -> None:
+    """plugin が真で function hooks の env が 1 の時だけ真。片方でも欠けると `/compact` は組込みの
+    要約(model 1 回)に落ちるので、その profile では圧縮の prompt を撃たない。"""
+    on = json.dumps({"enabledPlugins": {"fast-jev-compaction@fast-jev-compaction": True},
+                     "env": {"CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1"}})
+    assert headless_argv.fast_jev_compaction_enabled(on) is True
+    no_env = json.dumps({"enabledPlugins": {"fast-jev-compaction@fast-jev-compaction": True}})
+    assert headless_argv.fast_jev_compaction_enabled(no_env) is False
+    off = json.dumps({"enabledPlugins": {"fast-jev-compaction@fast-jev-compaction": False},
+                      "env": {"CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1"}})
+    assert headless_argv.fast_jev_compaction_enabled(off) is False
+    assert headless_argv.fast_jev_compaction_enabled(None) is False
+    assert headless_argv.fast_jev_compaction_enabled("not json") is False
+    assert headless_argv.fast_jev_compaction_enabled("[]") is False
+
+
+def _enable_fast_jev_plugin(root: Path) -> None:
+    home = root / "claude-home"
+    home.mkdir(exist_ok=True)
+    (home / "settings.json").write_text(json.dumps({
+        "enabledPlugins": {"fast-jev-compaction@fast-jev-compaction": True},
+        "env": {"CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1"},
+    }))
+
+
+def test_host_headless_send_runs_the_cold_compaction_prompt_before_the_resumed_turn_only_when_the_plugin_is_on(
+    headless_host: Host,
+) -> None:
+    """冷えた再開の前の圧縮(2026-09-22): 続きの手番(--resume の新しい process)の**前**に、同じ
+    実効 env で `claude -p "/compact fast-jev-if-cold" --resume <sid>` が 1 回走る — ただし profile の
+    settings.json で圧縮 plugin が実際に効く形の時だけ。plugin の無い profile(会社)では 1 度も
+    走らない(走ると組込みの要約に落ちる)。初手番の前には走らない(圧縮する歴史が無い)。"""
+    log = headless_host.root / "argv.log"
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_ARGV_LOG"] = str(log)
+    # plugin なし: 続きの手番の前に圧縮の prompt は走らない
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-cold-off", "claude"))
+    _wait_turn_end(headless_host, "h-cold-off")
+    headless_host.ok("session.send", {"session_id": "h-cold-off", "message": "second", "awaiting": True})
+    _wait_turn_end(headless_host, "h-cold-off")
+    off_lines = log.read_text().splitlines()
+    assert not [line for line in off_lines if "/compact fast-jev-if-cold" in line], off_lines
+    # plugin あり: 続きの手番の前に 1 回だけ、同じ --resume で走り、その後に手番の process が起きる
+    _enable_fast_jev_plugin(headless_host.root)
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-cold-on", "claude"))
+    _wait_turn_end(headless_host, "h-cold-on")
+    before = len(log.read_text().splitlines())
+    headless_host.ok("session.send", {"session_id": "h-cold-on", "message": "second", "awaiting": True})
+    ended = _wait_turn_end(headless_host, "h-cold-on")
+    assert _text(ended, "status") == "running", ended
+    lines = log.read_text().splitlines()[before:]
+    turns = [i for i, line in enumerate(lines) if "--input-format stream-json" in line and "--resume " in line]
+    assert len(turns) == 1, lines
+    resumed_id = lines[turns[0]].split("--resume ", 1)[1].split(" ", 1)[0]  # 手番が続ける会話の id
+    assert resumed_id, lines
+    compactions = [i for i, line in enumerate(lines) if f"-p /compact fast-jev-if-cold --resume {resumed_id}" in line]
+    assert len(compactions) == 1, lines
+    assert compactions[0] < turns[0], lines
+    assert "stream-json" not in lines[compactions[0]]
+    # 初手番(--session-id)の前には走っていない
+    first = [line for line in log.read_text().splitlines() if "--session-id " in line]
+    assert first and all("/compact" not in line for line in first), first
+    for sid in ("h-cold-off", "h-cold-on"):
+        headless_host.ok("session.cleanup", {"session_id": sid})

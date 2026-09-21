@@ -50,6 +50,7 @@
 (import os)
 
 (import doeff_agents.sessionhost.effects [
+  ProcResult
   SessionRow
   TerminalCause
   build-headless-launch
@@ -64,6 +65,7 @@
   headless-kill-all
   headless-liveness
   headless-poll
+  headless-run-once
   headless-spawn
   hydrate-memory-home
   session-store-get
@@ -75,6 +77,7 @@
 ;; 段 11 lane 11n 便 C(agora-redesign #179): provider の限度の族の表は impls/markers.hy の
 ;; 1 点(ADR-DOE-AGENTS-008 R1 の観測形式の家・pane の路と同じ表)。ここは表を写さず、
 ;; 手番の終わりの文へ当てるだけ。
+(import doeff_agents.sessionhost.impls.headless_argv [fast-jev-compaction-enabled])
 (import doeff_agents.sessionhost.impls.markers [is-api-limit-refusal])
 (import doeff_agents.sessionhost.headless_protocol [
   BackendLiveness
@@ -355,6 +358,32 @@
   row)
 
 
+(defk headless-cold-compaction [row effective-env built]
+  {:pre [(: row SessionRow) (: effective-env dict) (: built dict)]
+   :post [(: % (| ProcResult None))]}
+  "冷えた再開の前の圧縮(2026-09-22): 続きの手番を起こす前に、同じ実効 env で
+   print mode の prompt `/compact fast-jev-if-cold` を同じ会話の続きとして 1 回走らせる(argv の綴りは
+   impls/headless_argv.hy の cold_compaction_argv)。温冷の判断は
+   圧縮 plugin の 1 点(自分の状態 file: TTL・profile・model・機体)— ここは判断を持たない。
+   撃つ条件は 2 つだけ: kind が argv を組んでいる(claude の続き)・その profile の settings.json
+   で plugin が実際に効く形(fast-jev-compaction-enabled)。plugin が無い profile で撃つと組込みの
+   要約(model 1 回・会話全体)に落ちるので撃たない。失敗(exit != 0・時間切れ)は行の出来事に
+   刻んで手番は起こす(圧縮は最適化)。戻り値: 走らせた時の ProcResult・撃たなかった時 None。"
+  (setv argv (.get built "cold_compaction_argv"))
+  (setv config-dir (.get (or row.effective-identity {}) "CLAUDE_CONFIG_DIR"))
+  (if (or (not (isinstance argv list)) (not (isinstance config-dir str)) (= config-dir ""))
+      None
+      (do
+        (<- settings (fs-read-text f"{config-dir}/settings.json"))
+        (if (not (fast-jev-compaction-enabled settings))
+            None
+            (do
+              (<- res (headless-run-once row.session-name row.work-dir effective-env argv))
+              (when (!= res.exit-code 0)
+                (<- _ (session-store-record-event row.session-id "cold_compaction_failed" row)))
+              res)))))
+
+
 (defk continue-headless-process [row turn-env turn-charter]
   {:pre [(: row SessionRow) (: turn-env (| dict None)) (: turn-charter (| dict None))]
    :post [(: % SessionRow)]}
@@ -403,6 +432,8 @@
   ;; 要る(器は設定で指した dir を読むだけ — 冊を書くのは doeff 側)。per-kind の 1 点へ委ねる:
   ;; 置き場を名乗らない手番では impl が何もしないので、記憶を使わない会話の続きは今日と同じ。
   (<- _ (hydrate-memory-home row.agent-type params "session.send"))
+  ;; 冷えた再開の前の圧縮(plugin が効く profile だけ・温ければ何も起きない)。
+  (<- _ (headless-cold-compaction row effective-env built))
   (<- pid (headless-spawn row.session-name row.work-dir effective-env argv events-path
                           (get built "dialogue")))
   (setv next-ref (dict ref))
