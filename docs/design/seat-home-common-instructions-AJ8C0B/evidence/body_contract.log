@@ -1,0 +1,37 @@
+### body: /usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe
+### version: 2.1.263 (Claude Code)
+### sha256: 26d020351e8112f4006790f3cfce43b4c9df0c1bb1d0e542364d64151b81d5ba
+
+## (1) 設定の家の定義点 — CLAUDE_CONFIG_DIR ?? ~/.claude
+function s(){return process.env.CLAUDE_CONFIG_DIR}var Se=os(()=>(s()??i(R(),".claude")).normalize("NFC"),s);function Hye(e){return t(Se())==
+
+## (2) 4 層の記憶の file の座 — User は設定の家の下
+function dQ(e){let t=he();switch(e){case"User":return Ke(Se(),"CLAUDE.md");case"Local":return Ke(t,"CLAUDE.local.md");case"Project":return Ke(t,"CLAUDE.md");case"Managed":return Ke(HS(),"CLAUDE.md");case"Aut
+
+## (3) user 層の記憶の読みの呼び口(includeExternal は真固定・storageV5 を渡す)
+Or("userSettings")){let Pe=dQ("User");E.push(...await Q0(Pe,"User",v,!0,0,void 0,d!==void 0?{backend:d,key:Ae.state("user-memory")}:void 0));let Re=age();E.push(...await lfe({rulesDir:Re,type:"User",processedPaths:v,includeExternal:!0,conditionalRu
+
+## (4) ⚠ user 層だけの symlink / hard link の門(ここが反例の座)
+if(t==="User"&&!v)try{let q=await ae().lstat(e);if(d===0&&q.isSymbolicLink()||(q.nlink??1)>1&&q.isFile())return[]}catch{}if(D){let q=dp(x);if(r.has(q))return[];r.
+     v の定義:
+let v=o&&(t!=="User"||wgr());if(An(e)&&!Pi(e)||Dr(e)||vb(e)||Fm(e)||hf(e))return[];let{re
+     wgr の定義(CN() = CLAUDE_CODE_ENTRYPOINT):
+function wgr(){return CN()!=="local-agent"}
+function CN(){return o().entrypoint}
+
+## (5) user 層の skills の座 — 設定の家の下 / managed は /etc の下
+let r=Ah(Se(),"skills"),o=Ah(HS(),".claude","skills"),d=await l5("skills",e);n(`Loading skills from: managed=${o}, user=${r}, project=[${d.join(", ")}]`);let f=gf(),y=Fu("sk
+     skills の entry は symlink を明示で受ける:
+if(!N.isDirectory()&&!N.isSymbolicLink())return null;if(r==="skills"&&DB(N.name))return n(`[skills] skipping reserved dir name '${N.n
+
+## (6) 除外の鍵 claudeMdExcludes(User / Project / Local に効く)
+function Sgr(e,t){if(t!=="User"&&t!=="Project"&&t!=="Local")return!1;let r=ze().claudeMdExcludes;if(!r||r.length===0)return!1;let o={dot:!0},d=e.replaceAll("\\","/"),f=Kgs(r).filter((y)=>y.
+
+## (7) 退けた候補 A — skillsDirs は CLAUDE_MEMORY_STORES の team mount 専用
+skillsDirs:k(us().refine((e)=>e.split("/").at(-1)==="skills",{message:"the last segment must be 'skills'"})).max($c).optional(),promptIndexMaxBytes:w().int().positive().o
+x(N.mount,"skillsDirs is team-store only");continue}let F=d.get(N.mount);if(!F){x(
+
+## (8) 退けた候補 B — CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD は Project 層でしか載らない
+if(xe(a.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD)){let Pe=gf();for(let Re of Pe){let Ie=yk(Re,"CLAUDE.md");E.push(...await Q0(Ie,"Project",v,D));let Oe=yk(Re,".claude","CLAUDE.md");E.push(...await Q0(Oe,"Project",v,D));le
+
+### done

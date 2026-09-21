@@ -1,0 +1,59 @@
+### ⚠ 復元注記(2026-09-21・依頼者 c-3JYBNJMC2RZTM1S8V43939MP42): 元の file は pod の作り直しで失われ、この内容は会話の記録に印字された分だけの部分復元です(元の sha256 は evidence/SHA256SUMS.txt)。
+### 構成: (a) 初版 script の実行 1 回目の全文(記録 090・05:12Z)+ (b) 最終版 script の実行 3 回目のうち印字された「## 4.」以降(記録 129・05:21Z)。最終の実行 3 回目の「## 1.〜## 3.」は印字されておらず失われています。
+
+### ---- (a) 実行 1 回目(初版 script)----
+### claude binary: /usr/local/bin/claude
+### claude --version: 2.1.263 (Claude Code)
+### uname: Linux 7.0.0-31-generic x86_64
+### date: 2026-09-21T05:12:06Z
+
+## 1. 置き場の解決 — user 層は CLAUDE_CONFIG_DIR の下か
+--- A_symlink  rc=1  home=/tmp/ccprobe2/homeA cwd=/tmp/ccprobe2/cwd env=none args=none
+    requests=2  user_memory_occurrences=2  skill_occurrences=2
+    cited:       2 Contents of /tmp/ccprobe2/homeA/CLAUDE.md (user's private global instructions for all projects)
+--- B_regular_file  rc=1  home=/tmp/ccprobe2/homeB cwd=/tmp/ccprobe2/cwd env=none args=none
+    requests=2  user_memory_occurrences=2  skill_occurrences=2
+    cited:       2 Contents of /tmp/ccprobe2/homeB/CLAUDE.md (user's private global instructions for all projects)
+--- C_hardlink  rc=1  home=/tmp/ccprobe2/homeC cwd=/tmp/ccprobe2/cwd env=none args=none
+    requests=2  user_memory_occurrences=2  skill_occurrences=2
+    cited:       2 Contents of /tmp/ccprobe2/homeC/CLAUDE.md (user's private global instructions for all projects)
+
+## 2. 反例 — entrypoint local-agent で symlink / hard link の user 記憶が黙って落ちる
+--- A_symlink_localagent  rc=1  home=/tmp/ccprobe2/homeA cwd=/tmp/ccprobe2/cwd env=CLAUDE_CODE_ENTRYPOINT=local-agent args=none
+    requests=2  user_memory_occurrences=0  skill_occurrences=2
+--- B_regular_localagent  rc=1  home=/tmp/ccprobe2/homeB cwd=/tmp/ccprobe2/cwd env=CLAUDE_CODE_ENTRYPOINT=local-agent args=none
+    requests=2  user_memory_occurrences=2  skill_occurrences=2
+    cited:       2 Contents of /tmp/ccprobe2/homeB/CLAUDE.md (user's private global instructions for all projects)
+--- C_hardlink_localagent  rc=1  home=/tmp/ccprobe2/homeC cwd=/tmp/ccprobe2/cwd env=CLAUDE_CODE_ENTRYPOINT=local-agent args=none
+    requests=2  user_memory_occurrences=0  skill_occurrences=2
+
+## 3. 今日の倒れ方と新しい形(Mac の形: 家の下に cwd・$HOME/.claude/CLAUDE.md が在る)
+--- G_today_cwd_in_home  rc=1  home=/tmp/ccprobe2/fh3/.local/state/doeff/agentd-homes/claude/bare cwd=/tmp/ccprobe2/fh3/repos/doeff env=none args=none
+    requests=2  user_memory_occurrences=2  skill_occurrences=0
+    cited:       2 Contents of /tmp/ccprobe2/fh3/.claude/CLAUDE.md (project instructions, checked into the codebase)
+--- H_today_cwd_outside  rc=1  home=/tmp/ccprobe2/fh3/.local/state/doeff/agentd-homes/claude/bare cwd=/tmp/ccprobe2/outside/work env=none args=none
+    requests=2  user_memory_occurrences=0  skill_occurrences=0
+--- I_new_cwd_in_home  rc=1  home=/tmp/ccprobe2/fh3/.local/state/doeff/agentd-homes/claude/acct cwd=/tmp/ccprobe2/fh3/repos/doeff env=none args=none
+    requests=2  user_memory_occurrences=4  skill_occurrences=2
+    cited:       2 Contents of /tmp/ccprobe2/fh3/.claude/CLAUDE.md (project instructions, checked into the codebase)
+    cited:       2 Contents of /tmp/ccprobe2/fh3/.local/state/doeff/agentd-homes/claude/acct/CLAUDE.md (user's private global instructions for all projects)
+--- J_new_cwd_outside  rc=1  home=/tmp/ccprobe2/fh3/.local/state/doeff/agentd-homes/claude/acct cwd=/tmp/ccprobe2/outside/work env=none args=none
+    requests=2  user_memory_occurrences=2  skill_occurrences=2
+    cited:       2 Contents of /tmp/ccprobe2/fh3/.local/state/doeff/agentd-homes/claude/acct/CLAUDE.md (user's private global instructions for all projects)
+--- K_new_excluded  rc=1  home=/tmp/ccprobe2/fh3/.local/state/doeff/agentd-homes/claude/acct cwd=/tmp/ccprobe2/fh3/repos/doeff env=none args=--settings {"claudeMdExcludes":["/tmp/ccprobe2/fh3/CLAUDE.md","/tmp/ccprobe2/fh3/.claude/CLAUDE.md"]}
+    requests=2  user_memory_occurrences=2  skill_occurrences=2
+    cited:       2 Contents of /tmp/ccprobe2/fh3/.local/state/doeff/agentd-homes/claude/acct/CLAUDE.md (user's private global instructions for all projects)
+
+### done
+### ---- (b) 実行 3 回目(最終版 script)の ## 4. 以降 ----
+## 4. 除外の陽性対照 — 作業する repo 自身の CLAUDE.md は落ちない
+--- M_excluded_keeps_repo_md  rc=1  home=/tmp/ccprobe4/fh3/.local/state/doeff/agentd-homes/claude/acct cwd=/tmp/ccprobe4/fh3/repos/doeff env=none args=--settings {"claudeMdExcludes":["/tmp/ccprobe4/fh3/.claude/CLAUDE.md"]}
+    requests=2  user_memory_occurrences=2  skill_occurrences=2
+    cited:       2 Contents of /tmp/ccprobe4/fh3/.local/state/doeff/agentd-homes/claude/acct/CLAUDE.md (user's private global instructions for all projects)
+    cited:       2 Contents of /tmp/ccprobe4/fh3/repos/doeff/CLAUDE.md (project instructions, checked into the codebase)
+    repo_md_occurrences=2
+
+## 5. 対照 — 有人の席(家 = $HOME/.claude)は同じ形でも 1 件ちょうど(path が同じなので本体が畳む)
+--- L_human_session  rc=1  home=/tmp/ccprobe4/fh3/.claude cwd=/tmp/ccprobe4/fh3/repos/doeff env=none args=none
+    requests=2  user_memory_occurrences=2  skill_occurrences=2
+    cited:       2 Contents of /tmp/ccprobe4/fh3/.claude/CLAUDE.md (user's private global instructions for all projects)
