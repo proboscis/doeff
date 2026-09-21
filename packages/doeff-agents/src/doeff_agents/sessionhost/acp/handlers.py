@@ -1274,6 +1274,10 @@ class SessionRpc:
         # 値は秘密 — ここでも log に出さない。
         if effect.session_env:
             params["session_env"] = dict(effect.session_env)
+        # card acp:kanban-issue:ki-a40292ed30d9(4 つ目の腕): この手番の荷(記憶の置き場と冊)は
+        # 空でない時だけ載せる — 記憶を使わない会話の送りは 1 byte も変わらない。
+        if effect.turn_charter:
+            params["turn_charter"] = dict(effect.turn_charter)
         # 段 10 lane 10o(agora-redesign #96): 添付は型つきのまま wire の項にする(綴りは器の Dialogue)。
         if effect.attachments:
             params["attachments"] = attachment_params(effect.attachments)

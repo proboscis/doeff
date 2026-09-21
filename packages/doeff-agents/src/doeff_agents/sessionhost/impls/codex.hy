@@ -16,6 +16,7 @@
   BuildLaunch
   BuildResume
   DiscoverConversation
+  HydrateMemoryHome
   PreLaunchSetup
   ClassifyPane
   DeliverMessage
@@ -477,6 +478,13 @@
     :when (= agent-type "codex")
     (<- identity (codex-pre-launch params))
     (resume identity))
+
+  (HydrateMemoryHome [agent-type params verb]
+    ;; codex は claude の auto-memory に当たる置き場を持たない(作業状態は profile dir の側の話)。
+    ;; **明示的に何もしない**: 節を置かないと、codex の席の続きの腕が「handler の無い effect」で
+    ;; 落ちる — 対象外は黙って落ちるのではなく、ここで名乗る。
+    :when (= agent-type "codex")
+    (resume None))
 
   (ProbeConversationActivity [agent-type params]
     :when (= agent-type "codex")

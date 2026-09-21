@@ -31,6 +31,7 @@
   AGORA-KINDS-NAMESPACE
   AcpRow
   AgentdSettings
+  CHARTER-MEMORY-DIR-KEY
   CHARTER-MEMORY-FILES-KEY
   CONDITION-MEMORY-UNWRITABLE
   MEMORY-BASE-FILE
@@ -136,6 +137,7 @@
     (setv self.record (FakeRecord))
     (setv self.state (initial-state))
     (setv self.turns 0)
+    (setv self.warm False)
     ;; 席がこの手番で置き場へ起こす編集(水入れの**後**に落ちる — 本物の順序)。
     (setv self.pending []))
 
@@ -215,13 +217,19 @@
     (assert (isinstance session-id str))
     session-id)
 
-  (defn #^ None turn [self]
+  (defn #^ None turn [self [warm False]]
     "1 手番を頭から終いまで(水入れ = incarnate → 本文 → 畳み戻し = settle-record)。
 
-     手番のたびに器の session を落とす — この便の世界では次の手番がどの機体に落ちるか分からず、
+     既定では手番のたびに器の session を落とす — この便の世界では次の手番がどの機体に落ちるか分からず、
      器は毎回作り直される(pod の世代交代・機体の移動)。生きた session が残っていると 2 手番目は
-     送りになって水入れの腕(incarnate)を通らないので、検が水入れを 1 度しか撃てない。"
-    (.clear self.sessions.views)
+     送りになって水入れの腕(incarnate)を通らないので、検が水入れを 1 度しか撃てない。
+
+     warm = True はその落としを**しない** = 温かい session への送り(NEXT-ARM-SEND)。claude の
+     headless はそれでも手番の終わりに降りているので、器はこの送りで process を起こし直す
+     (card acp:kanban-issue:ki-a40292ed30d9 の 4 つ目の腕)。"
+    (setv self.warm warm)
+    (when (not warm)
+      (.clear self.sessions.views))
     (setv self.turns (+ self.turns 1))
     (setv job (.job-id self))
     (.put-row self.acp (row-of AGORA-KINDS-NAMESPACE MESSAGE-KIND f"m-{self.turns}"
@@ -241,8 +249,16 @@
     "この手番で器へ渡した charter(水入れが載せた memory_files はここに在る)。"
     (get self.sessions.launches -1))
 
+  (defn #^ dict seat-memory-input [self]
+    "この手番で器へ渡した『記憶の荷』。起こす腕は charter(launch params)・温かい腕は**送りの荷**
+     (SessionSend.turn_charter — 器はこれで降りた process を起こし直す)。腕で口が変わるのは、
+     行に残さない欄(policy.TURN-CARRIED-KEYS)だから: 行の写しでは 2 手番目に古い値で起きる。"
+    (if self.warm
+        (if self.sessions.send-turn-charters (get (get self.sessions.send-turn-charters -1) 1) {})
+        (.charter self)))
+
   (defn #^ tuple hydrated [self]
-    (tuple (.get (.charter self) CHARTER-MEMORY-FILES-KEY #())))
+    (tuple (.get (.seat-memory-input self) CHARTER-MEMORY-FILES-KEY #())))
 
   (defn #^ list job-conditions [self]
     (setv status (. (get self.acp.rows f"{AGENT-JOB-NAMESPACE}:{AGENT-JOB-KIND}:{(.job-id self)}") status))
@@ -502,6 +518,26 @@
   (assert (= items ["- [voice-origin-tag](voice-origin-tag.md) — 先頭が (voice) の指示は読み上げ向けに答える"]) items)
   ;; charter に載る欄は 1 つ(器の側はこれを書き出すだけ — 行も記録の service も知らない)。
   (assert (= CHARTER-MEMORY-FILES-KEY "memory_files")))
+
+
+(deftest test-a-warm-turn-carries-the-home-and-the-books-to-the-seat-too
+  ;; 4 つ目の腕(card acp:kanban-issue:ki-a40292ed30d9): 温かい session への手番は起こす腕
+  ;; (incarnate)を通らず、送りだけで進む。ところが claude の headless は手番の終わりに必ず降りる
+  ;; ので、器はこの送りで process を `--resume` から起こし直す ⇒ 置き場と冊がこの送りに載って
+  ;; いないと、**会話の 2 手番目から**席は空の置き場を読む(2026-09-21 の実弾)。
+  (setv world (MemoryWorld))
+  (setv text (book-text "wait-protocol" "待ちの作法" "本文。[[voice-origin-tag]]"))
+  (.put-file world "wait-protocol.md" text)
+  (.turn world)                      ;; 1 手番目 = 起こす腕(席が 1 冊書き、畳み戻しが行にする)
+  (setv world.local.files {})        ;; 機体が変わった体(置き場は空・行と記録だけが残る)
+  (.turn world :warm True)           ;; 2 手番目 = 送りの腕(器の session は生きたまま)
+  (setv carried (.seat-memory-input world))
+  (assert (= (.get carried CHARTER-MEMORY-DIR-KEY) HOME)
+          #("送りの腕が置き場を名乗らない" (sorted (.keys carried))))
+  (setv by-name (dfor f (.hydrated world) (get f "name") (get f "text")))
+  (assert (= (sorted (.keys by-name)) (sorted ["wait-protocol.md" MEMORY-INDEX-FILE MEMORY-BASE-FILE]))
+          by-name)
+  (assert (= (get by-name "wait-protocol.md") text) by-name))
 
 
 (deftest test-a-record-service-that-will-not-take-the-book-does-not-fail-the-turn

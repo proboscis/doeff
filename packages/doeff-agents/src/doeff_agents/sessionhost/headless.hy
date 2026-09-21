@@ -65,6 +65,7 @@
   headless-liveness
   headless-poll
   headless-spawn
+  hydrate-memory-home
   session-store-get
   session-store-list-active
   session-store-list-cleanup-pending
@@ -92,6 +93,7 @@
   prepare-launch-workspace
   session-hooks-mode])
 (import doeff_agents.sessionhost.policy [
+  carry-charter-fields
   carry-launch-flags
   cause-if-absent
   overlay-without-turn-auth
@@ -348,8 +350,8 @@
   row)
 
 
-(defk continue-headless-process [row turn-env]
-  {:pre [(: row SessionRow) (: turn-env (| dict None))]
+(defk continue-headless-process [row turn-env turn-charter]
+  {:pre [(: row SessionRow) (: turn-env (| dict None)) (: turn-charter (| dict None))]
    :post [(: % SessionRow)]}
   "降りた process の次の手番: 行の会話 identity で `--resume <sid>` の process を同じ session の
    名で起こし直す(events file は同じ path に追記)。会話の id が無い行は続けられない(発明
@@ -357,7 +359,14 @@
 
    段 10 lane 10d 便 2 の追補 2(実弾 #92): 資格の env は**この手番の送りが運ぶ値**(turn-env)を重ねる。
    誕生時の env は行に札を残さない(overlay-without-turn-auth)ので、更新で回って revoke された札で
-   起こすことは構造的に無い。turn-env が無い呼び(operator の救援等)は行の非 auth の意図だけで起きる。"
+   起こすことは構造的に無い。turn-env が無い呼び(operator の救援等)は行の非 auth の意図だけで起きる。
+
+   card acp:kanban-issue:ki-a40292ed30d9(4 つ目の腕): **行に残さない手番の荷**(policy.TURN-CARRIED-KEYS
+   = 記憶の置き場と冊)は turn-charter が運ぶ。claude は手番の終わりに必ず降りるので、普段の手番は
+   起こす腕ではなくこの腕を通る — ここが行の overlay だけを読んでいた間、同じ会話の 2 手番目から
+   記憶の置き場は argv にも現れず、冊も 1 冊も書かれなかった(2026-09-21 の実弾)。
+   ⚠ 行へ写して解かない: 正本は ACP の行(法 ACP 575b1e)で、sessionhost の sqlite へ写すと
+   第 2 の正本が腐る。運ぶのは**この手番の送り**ちょうど。"
   (when (is row.conversation None)
     (raise (RuntimeError
              (+ f"session.send: session {row.session-id} has no conversation identity — "
@@ -372,6 +381,9 @@
                   "effort" (.get overlay "effort")
                   "mcp_servers" (or (.get overlay "mcp_servers") {})
                   "expected_result" row.expected-result}))
+  ;; 手番の荷(policy.TURN-CARRIED-KEYS)はこの手番の送りが名乗った値で上書きする — 行の写しは
+  ;; 作らない。欄を 1 つ足す時に数え直すのは policy の 2 つの集合だけで、この腕は写す関数を呼ぶ。
+  (setv params (carry-charter-fields (or turn-charter {}) params))
   (setv ref (or row.backend-ref {}))
   (<- built (headless-launch-args params row.effective-identity row.conversation "resume"
                                   (str (.get ref "socket_path" "")) row.session-id))
@@ -382,6 +394,10 @@
   (setv events-path (or (! (events-path-of-row row))
                         (raise (RuntimeError
                                  f"session {row.session-id} has no events_path in backend_ref"))))
+  ;; 起こす腕の prepare-launch-workspace に当たる仕事のうち、**記憶の置き場の実体化**はこの腕にも
+  ;; 要る(器は設定で指した dir を読むだけ — 冊を書くのは doeff 側)。per-kind の 1 点へ委ねる:
+  ;; 置き場を名乗らない手番では impl が何もしないので、記憶を使わない会話の続きは今日と同じ。
+  (<- _ (hydrate-memory-home row.agent-type params "session.send"))
   (<- pid (headless-spawn row.session-name row.work-dir effective-env argv events-path
                           (get built "dialogue")))
   (setv next-ref (dict ref))
@@ -417,23 +433,26 @@
   row)
 
 
-(defk headless-send-program [session-id message awaiting turn-env [attachments #()]]
+(defk headless-send-program [session-id message awaiting turn-env turn-charter [attachments #()]]
   {:pre [(: session-id str) (: message str) (: awaiting bool) (: turn-env (| dict None))
-         (: attachments tuple)]
+         (: turn-charter (| dict None)) (: attachments tuple)]
    :post [(: % SessionRow)]}
   "session.send(headless・mode = turn): 次の手番の本文を stdin へ。process が次の手番を
    受けられる(生きた温かい process — codex)ならそのまま、受けられない(降りた process —
    claude は手番の終わりで必ず降りている・段 12 lane 12e #517)なら `--resume` で起こし直してから書く。awaiting(agentd の温かい手番)は latch を立て、
    turn_ended_at を None に戻す(次の手番が走り出した — level-triggered の欄)。
    turn-env = **この手番の** env(段 10 lane 10d 便 2 追補 2・実弾 #92): 起こし直す時に重ねる
-   (預かり所の貸与の札はここで来る — 行に残った誕生の札では起こさない)。"
+   (預かり所の貸与の札はここで来る — 行に残った誕生の札では起こさない)。
+   turn-charter = **この手番の荷**(policy.TURN-CARRIED-KEYS・card ki-a40292ed30d9): 記憶の置き場と
+   冊の本文。env とは別の口で運ぶ — turn-env は資格の口(貸与の札)で、冊の本文は秘密ではなく
+   file に落ちる値だから、同じ袋に入れない。起こし直さない拍(温かい process)では使わない。"
   (<- row (require-headless-row session-id))
   (when (is-terminal-status row.status)
     (raise (RuntimeError f"session {session-id} is {row.status}; cannot send to a terminal session")))
   (<- observed (headless-poll row.session-name))
   (setv accepts (and (isinstance observed HeadlessObservation) observed.accepts-turn))
   (when (not accepts)
-    (<- continued (continue-headless-process row turn-env))
+    (<- continued (continue-headless-process row turn-env turn-charter))
     (setv row continued))
   (<- delivered (headless-deliver row.session-name message attachments))
   (when (not delivered)
