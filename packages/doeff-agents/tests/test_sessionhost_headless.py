@@ -2592,5 +2592,15 @@ def test_host_headless_launch_installs_the_compaction_plugin_into_the_borrowed_h
     headless_host.ok("session.launch", _launch_params(headless_host.root, "h-plug-again", "claude"))
     _wait_turn_end(headless_host, "h-plug-again")
     assert sum(1 for line in log.read_text().splitlines() if line.startswith("plugin install")) == 1
-    for sid in ("h-plug-off", "h-plug-missing", "h-plug-on", "h-plug-again"):
+    # 据え済みだが options が古い形の家(PVC で持ち越された・stateDir なし): install は撃たず宣言へ揃える
+    stale = json.loads((home / "settings.json").read_text())
+    del stale["pluginConfigs"][fast_jev.FAST_JEV_PLUGIN_ID]["options"]["stateDir"]
+    (home / "settings.json").write_text(json.dumps(stale))
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-plug-reconcile", "claude"))
+    _wait_turn_end(headless_host, "h-plug-reconcile")
+    assert sum(1 for line in log.read_text().splitlines() if line.startswith("plugin install")) == 1
+    options = json.loads((home / "settings.json").read_text())["pluginConfigs"][fast_jev.FAST_JEV_PLUGIN_ID]["options"]
+    assert options["stateDir"].endswith("/.local/state/fast-jev-compaction"), options
+    assert options["apiKeyFile"] == str(key)
+    for sid in ("h-plug-off", "h-plug-missing", "h-plug-on", "h-plug-again", "h-plug-reconcile"):
         headless_host.ok("session.cleanup", {"session_id": sid})
