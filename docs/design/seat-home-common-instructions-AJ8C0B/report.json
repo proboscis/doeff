@@ -1,0 +1,455 @@
+{
+  "version": 1,
+  "task_id": "lt-HZRYH9ST368YKXR2T1Z2W9ZKJ9",
+  "base_revision": "57641077306214b7b7da86708b04e9ed0524499b",
+  "author": {
+    "conversation_id": "c-AJ8C0BK9RF29HQ92ZQ986FXQVT",
+    "model": "claude-opus-5",
+    "effort": "xhigh(起動口が effort 引数を受けないため、盲検側は requested-but-unverified として `blind/runs.md` に記載)"
+  },
+  "requirements": [
+    "完了の範囲: **設計まで**。この会話は code を 1 行も変えない(依頼の §9)。本実装・CI への接続はすべて「予定」として `implementation-request.md` の Phase 1〜5 に残す。",
+    "受入(依頼 §8): pod と Mac の**実際の agentd の席**で共通 CLAUDE.md が user 層として載り、dotfiles の skills が使えること。cwd を `$HOME` の外にした陽性対照。宿を**列挙せず導く**もれなさの針。mock 不可。",
+    "設計の問い(依頼 §4): (1) 据わっている本体から user 層の読み口を**実射で**測る、(2) 運ぶ手段を 3 候補以上比べて 1 つ選ぶ、(3) 二重読みを避けられるか測る、(4) 既存 31 家の後追いを決める。",
+    "設計の条(依頼 §5): 正本の読み口は宣言 → 参加 → env → 設定 → 起動の**既存の連鎖 1 本**に乗せ**第 2 の読み口を作らない**。起動・停止・排水・同時性(家は複数 session が共有)。綴りの定義点は 1 つで旧側の値を運ぶ。",
+    "結合核の突合(依頼 §6)と、開発中の検の制約(依頼 §7: 触った file の焦点の検だけ・1 分以内。全数と型検査は日次)。",
+    "実装は**別の依頼**(class dev)として起票し、依頼書の在り処を発注文に明記して検収まで持つ。"
+  ],
+  "design": {
+    "path": "design.md",
+    "sha256": "dce7e6b433ec5b600d53f8a222efb76d1dedd10b25d47ccd4e2a49b97f3cfd0d"
+  },
+  "modules": [
+    {
+      "id": "dotfiles-canon",
+      "responsibility": "宿に据わる共通の条文(CLAUDE.md)と skills の**中身**の正本を持つ。doeff の据え付けの手順も家の綴りも知らない。",
+      "owns": "共通 CLAUDE.md の本文(62,696 B)と skills の木(107 dir / 203 file / SKILL.md 101 枚)。",
+      "hides": "doeff がそれをどう席へ運ぶか(家の綴り・据え付けの順・env の鍵)。",
+      "interface": "file が在って読めること。**不在も正規の状態**(据え付け側は非致命として扱う)。",
+      "effects": "なし(この module は doeff の effect 語彙を 1 つも持たない — repo の checkout そのもの)。",
+      "lifetime": "checkout の寿命(git pull の拍で中身が変わる)。",
+      "invariants": "中身の正本はここ 1 つ。doeff 側に写しの定義点を作らない。"
+    },
+    {
+      "id": "host-declaration",
+      "responsibility": "その宿で正本が**どこに在るか**だけを宣言する(宿ごとの差の 1 点)。",
+      "owns": "`[agentd].claude_memory_file` / `[agentd].claude_skills_dir` の値(絶対 path か `~/…`)。",
+      "hides": "中身・据え付けの手順・家の綴り。",
+      "interface": "dotfiles `cron_management/*.toml` と ACP `deploy/acp-control/agentd-pool-join.yaml` の 2 鍵。既存 `claude_settings_file` と同じ形。",
+      "effects": "なし(静的な宣言 file)。",
+      "lifetime": "宿の設営の寿命(agentd の参加の拍に読まれる)。",
+      "invariants": "宿ごとの差はここ 1 点。code は宿の file layout を 1 文字も知らない。"
+    },
+    {
+      "id": "join-judgment",
+      "responsibility": "宣言の読みと門。path の**形**だけを見て、誤った形だけを断る。",
+      "owns": "`claude-memory-file-of` / `claude-skills-dir-of`(純関数)と `AGENTD-KEYS`(名簿から導く)。",
+      "hides": "file の I/O・家(`CLAUDE_CONFIG_DIR`)・席の存在。",
+      "interface": "`acp/join.hy` の純関数 3 本 + 参加の門 (c)(宣言が doeff の持ち鍵を名乗れない)。",
+      "effects": "なし(純関数。在否を見ないので I/O を持たない)。",
+      "lifetime": "参加の拍(join)。",
+      "invariants": "**不在で参加を断らない**(名指しが在って file が無いのは非致命)。cwd 相対は断る。"
+    },
+    {
+      "id": "agentd-effects",
+      "responsibility": "席へ運ぶ物の**綴りの定義点**を 1 つ持つ(env の鍵・宣言の鍵・params の欄・家の中の名・名乗りの語)。",
+      "owns": "`CarriedSource` と名簿 `CARRIED_INSTRUCTION_SOURCES`、`AgentdSettings` の 4 欄(path 2 + present 2)。",
+      "hides": "値(どの宿が何を名指しているか)と、据え付けの手順。",
+      "interface": "`acp/effects.py` の名簿 + `AgentdSettings` の型(`.pyi` に載る)。",
+      "effects": "なし(綴りと型だけ。I/O は `acp/runtime.py` の admit と launch の読みが持つ)。",
+      "lifetime": "process(agentd の起動から停止まで)。",
+      "invariants": "綴りの定義点はここ 1 つ。運ぶ物を 1 種足す操作は**名簿の 1 行**で、他の 3 層は回るだけ(R5・d8472e1a の再発防止)。"
+    },
+    {
+      "id": "launch-readout",
+      "responsibility": "**起動の拍ごと**に env を読み、正本を読んで params へ載せる。不在はその拍の 1 行で名乗る。",
+      "owns": "`claude-instruction-sources`(launch / headless の両腕)と不在の名乗りの 1 行。",
+      "hides": "家の綴りと書き方(どこへどう据えるか)。",
+      "interface": "env → params(名簿の `param` 欄)。既存 `claude-settings-declaration` と同じ形。",
+      "effects": "`EnvGet` / `FsReadText` / `FsIsDir` / `LogLine`(substrate の語彙のみ)。",
+      "lifetime": "起動の拍(1 席 1 回)。**memoize しない**。",
+      "invariants": "拍ごとに読む(agentd 起動時に凍らせない)。名指しが無い機体では欄を 1 つも出さない。"
+    },
+    {
+      "id": "claude-home-installer",
+      "responsibility": "家の綴りと据え付け(実体 file を書く / whole-dir symlink を張り替える)と `claudeMdExcludes` の導出。",
+      "owns": "`CLAUDE.md` / `skills` という家の中の名、`CLAUDE-MD-EXCLUDES-SETTING`、`--settings` の合流の 1 か所。",
+      "hides": "宣言・ACP の行・宿の file layout(運ばれてきた path を実体化するだけで、中身を判断しない)。",
+      "interface": "`claude-pre-launch`(戻りは identity)+ `build-claude-argv` の `--settings` 1 本。",
+      "effects": "`FsWriteTextAtomic` / `FsEnsureSymlink` / `FsMakeDirs` / `EnvGet` / `LogLine` のみ(substrate-clean = 生 IO 禁止)。",
+      "lifetime": "起動の拍。据え付けは冪等で状態を持たないので**解放は無い**(家の掃除の動詞はこの層に置かない — `memory_files` の層と同じ判断)。",
+      "invariants": "家への書き口はこの 1 か所。中身を読んで分岐しない。user 層の CLAUDE.md は**実体 file**(symlink / hard link は本体が黙って捨てる)。"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S1",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "宿の共通条文と skills を dotfiles の checkout ではなく専用の volume / OCI layer / `/opt/agent-canon` のような別の置き場から配る(pod で dotfiles を clone しない形)。",
+      "claim": "[盲検前] 変わるのは `host-declaration` の 2 鍵の値だけ。doeff 側は 1 行も変わらない。",
+      "expected_scope": "[盲検前] `cron_management/*.toml` の 2 行(+ pod の yaml の 2 行)。doeff は不変。",
+      "actual_scope": "宣言の値 2 行に加えて **doeff の substrate の語彙が 1 語増える**(`sessionhost/effects.hy` + `substrate.hy` + `effects.pyi` + 偽 substrate)。既存 `FsLinkArtifact` は「target が別実体なら触らず `target-conflict`」で、正本を移した日に家の symlink が**黙って**旧い先を指したままになる(実物の `real-substrate` handler で実測: 1st=linked / 2nd=target-conflict / 家の link は canonA のまま / 席が読む skills も旧いまま)。",
+      "reason": "隠すはずの知識の漏洩。§5 の責務表が `Fs*` を**一様な能力**として書いたため、`Fs*` の中の政策(`FsLinkArtifact` の非置換は会話 artifact の transplant 由来、`_ensure-view-symlink` の erosion guard は codex の profile bundle 由来)が見えていなかった。据え付け層が自分と無関係な 2 責務の置換 policy を知らないと書けない形になっていた。",
+      "revision": "R1 — `_ensure-view-symlink`(`substrate.hy:295-310`)の意味論を `FsEnsureSymlink` effect へ昇格し、結末を 3 値(`unchanged` / `linked` / `occupied-by-real-entity`)にする。置換可否の判断は呼び手の持ち物になる。R1b — 計器は意図ではなく**結末**を名乗る。⇒ 以後の「置き場を移す」は宣言の値だけで済む。盲検前の claim は `claims-before-blind.md` に書き換えずに残した。",
+      "changed_modules": [
+        "host-declaration",
+        "claude-home-installer"
+      ],
+      "unchanged_modules": [
+        "dotfiles-canon",
+        "join-judgment",
+        "launch-readout"
+      ]
+    },
+    {
+      "id": "S2",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "共通の `agents/`(subagent 定義)や `commands/` も席へ配りたくなる(運ぶ物が 1 種類増える)。",
+      "claim": "[盲検前] 足すのは鍵 1 本 + 据え付け 1 行で、`launch-readout` の 4 枚の名簿を手で触らせる形にはしない(d8472e1a の教訓)。",
+      "expected_scope": "[盲検前] `agentd-effects`(綴り 1 本)・`join-judgment`(鍵の集合 1 行)・`claude-home-installer`(据え付け 1 行)・宣言 1 行。risk として「`launch-readout` にも 1 行増える」を自己登記していた。",
+      "actual_scope": "初版は **5 か所**を手で触らせた(`AGENTD_KEYS` の集合 / join の組の列 / launch の枝 / 据え付けの枝 / 名乗りの語)。= 自己登記していた risk が実測で成立。R5 の後は **名簿の追加 1 行 / 削除 0 行**(`difflib` で計数)+ 宣言 1 行で、回る側の 3 関数(`join_env_of` / `instruction_sources` / `install_into_home`)の **bytecode が 1 byte も変わらない**ことまで実測した。",
+      "reason": "意図した契約の拡張ではなく、綴りの定義点が 4 層に散っていたための配線の重複(d8472e1a が「3 度壊れた」と結論した形)。",
+      "revision": "R5 — `CarriedSource{key, env, param, kind, home_name, label}` の名簿 `CARRIED_INSTRUCTION_SOURCES` を綴りの定義点にし、`AGENTD_KEYS` はそこから導く。join / launch / 据え付けは名簿を回る。運び方は 2 種(`file-text` / `dir-link`)で、名簿に無い `kind` は loud に落ちる。実装依頼書 D11。",
+      "changed_modules": [
+        "agentd-effects",
+        "host-declaration"
+      ],
+      "unchanged_modules": [
+        "dotfiles-canon",
+        "join-judgment",
+        "launch-readout",
+        "claude-home-installer"
+      ]
+    },
+    {
+      "id": "S3",
+      "axis": "concurrency",
+      "applicability": "applicable",
+      "change": "1 つの account の家(`CLAUDE_CONFIG_DIR`)で 10 席が同時に起き、走行中に dotfiles が更新される。",
+      "claim": "[盲検前] 書きは冪等(同じ宣言 → 同じ中身)かつ atomic(temp+rename)なので、どの席も自分の起動の拍の中身を持ち torn read は起きない。skills は「既に正しければ張り替えない」ので走っている席の watcher を叩かない。lock は足さない。",
+      "expected_scope": "[盲検前] 変わる責務は無い(`claude-home-installer` の内部の判断だけ)。",
+      "actual_scope": "torn read は実測 0 件で claim の後半は成立したが、**前半が偽**。実物の `FsWriteTextAtomic`(`substrate.hy:439-445`)は tmp が `path + tmp-suffix` の**固定名**で、共有の家へ 2 席が同拍で書くと `os.replace` が競って落ちる(実物の substrate で 200 回 × 2 席 → `FileNotFoundError` 151 件・torn 0 件)。しかも**今日から在る** — `preseed-claude-trust` が同じ家の `.claude.json` を同じ形で書いており、この設計は拍ごとに 1 file 増やすので窓を広げる側に働く。",
+      "reason": "「atomic」を `os.replace` の性質として書き、tmp の**名前の一意性**という前提を書き落としていた(共同の不変条件の見落とし)。責務の線そのものは動いていない。",
+      "revision": "R2 — `FsWriteTextAtomic` の tmp を書き手ごとに一意にする(同じ dir の `mkstemp`・`tmp-suffix` は印として前置に残す)。既存 `preseed-claude-trust` の競りも同時に閉じる。`conformance/test_s12_claude_trust_preseed.py:57` の残骸の不在 assert を glob へ広げる。実装依頼書 D9。",
+      "changed_modules": [
+        "claude-home-installer"
+      ],
+      "unchanged_modules": [
+        "dotfiles-canon",
+        "host-declaration",
+        "join-judgment",
+        "agentd-effects",
+        "launch-readout"
+      ]
+    },
+    {
+      "id": "S4",
+      "axis": "distribution",
+      "applicability": "applicable",
+      "change": "4 台目の宿が増える / pod の replica が古い image と新しい image で混ざる(宿が 3 台から N 台へ)。",
+      "claim": "[盲検前] もれなさは母集団を宣言から**導く**針が受け、版の崖は node の行の `spec.agentd.revision` で受ける。doeff の code は台数を知らない。",
+      "expected_scope": "[盲検前] 宣言 1 枚(+ 針は自動で母集団に入る)。doeff 側すべて不変。",
+      "actual_scope": "予想どおり。4 台目の宣言 file を置くだけで針が赤くなり(`claude_memory_file` / `claude_skills_dir` を名乗らせると緑)、節を持たない file は母集団の外に落ちた。要求する鍵も名簿から導くので、運ぶ物が増えた日に針が自動で厳しくなる。鍵を知らない旧版の agentd は参加を**断る**(黙って条文なしで席を起こさない)。",
+      "reason": "波及なし。台数の知識は宣言 file の**存在**にだけ現れ、code にも針にも列挙が無い。",
+      "revision": "不要。ただし pod の宣言は ACP repo に在るため dotfiles の針の母集団に入らない(隣 repo を読まない)— この穴は実装依頼書 Phase 4 の実射で受ける、と明記した。",
+      "changed_modules": [
+        "host-declaration"
+      ],
+      "unchanged_modules": [
+        "dotfiles-canon",
+        "join-judgment",
+        "agentd-effects",
+        "launch-readout",
+        "claude-home-installer"
+      ]
+    },
+    {
+      "id": "S5",
+      "axis": "hardware",
+      "applicability": "applicable",
+      "change": "会社 Mac の Claude Code 本体が 2.1.278 → 2.2.x へ上がり、user 層の記憶の門の逐語が変わる(機体の OS / arch / 本体の版が動く)。",
+      "claim": "[盲検前] 黙っては壊れない。据わっている本体から逐語を読む計器が赤くなり、設計の前提 P3 が偽になった日が名指しで分かる。",
+      "expected_scope": "[盲検前] 計器が赤 → `claude-home-installer` の据え付けの形(実体 file か symlink か)を測り直す便が 1 本。宣言・join・env・launch の連鎖は不変。",
+      "actual_scope": "予想どおり。計器の雛形(`model/check_body_contract.py`)を 3 方向へ撃ち、据わっている本体(2.1.263 / sha256 `26d02035…`)で **green**、逐語を 1 つだけ同長で書き換えた複製で **red**(欠け = `the-gate-fires-only-for-local-agent`)、本体でない file で **abstain**。赤と棄権が別値として弁別されることまで実測した。",
+      "reason": "波及なし。外部 tool の契約に依る条を witness(実行体の逐語)とセットで書いたので、版の移動は設計の内部へ漏れず計器の色に出る。",
+      "revision": "不要。ただし測ったのは pod の 2.1.263 で、Mac の 2.1.278 では測っていない(実装段で同じ計器を Mac で撃つ)。",
+      "changed_modules": [
+        "claude-home-installer"
+      ],
+      "unchanged_modules": [
+        "dotfiles-canon",
+        "host-declaration",
+        "join-judgment",
+        "agentd-effects",
+        "launch-readout"
+      ]
+    },
+    {
+      "id": "S6",
+      "axis": "simulation",
+      "applicability": "applicable",
+      "change": "実 claude を起こさずに「宣言 → 家の中の file」を決定的な検で固定したい。",
+      "claim": "[盲検前] `Fs*` / `EnvGet` だけの substrate-clean な層なので、既存の deftest の器で家の中の file を数えるところまで決定的に回せる。本体の読みは実行体の逐語の計器が別に受ける(2 段に割る)。",
+      "expected_scope": "[盲検前] 検 1 枚 + 計器 1 枚。実装は不変。",
+      "actual_scope": "決定的に回ること自体は成立(7 本の公開契約の検が tmp の世界だけで緑)。しかし**決定的世界が観測できない枝**が在った: `LaunchWorld` は `(setv self.env {})` で始まり `EnvGet` は `(.get world.env name)` を返すので、`HOME` を使う戻り先の枝は検の世界で 1 度も実行されず、本番(`os.environ`)でだけ生きる。⇒ 盲検 B の違反(宣言を経由しない第 2 の読み口)が**検からも lint からも見えない**。",
+      "reason": "隠すはずの知識の漏洩を**検の器の初期値**が隠していた。加えて §6 の強制は「綴りが 1 か所か」を見ており、「**宣言していない path を読んでいないか**」を見ていなかった。",
+      "revision": "R3a — `packages/doeff-agents/src/**` に literal `dotfiles` を**除外なしで**禁じる semgrep 規則(実物の `.semgrep.yaml` で「綴りの家の中の違反に発火 → 違反を消すと緑」まで実測)。R3b — 効果の跡で「触った正本は宣言が名指した path ちょうど」を撃つ検 2 本。⚠ (1) は**世界に `HOME` を据え囮を disk に置いて**、(2) は**劣化の日**(宣言は在るが file が無い)に撃つ — 平常日に置くと候補列が短絡して違反が素通りする(設計者の初版で実測)。R3c — 検の名簿に「宣言が無いときに届かない」を明示で足す。",
+      "changed_modules": [
+        "claude-home-installer",
+        "launch-readout"
+      ],
+      "unchanged_modules": [
+        "dotfiles-canon",
+        "host-declaration",
+        "join-judgment",
+        "agentd-effects"
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "id": "CHK-BODY-P",
+      "scenarios": [
+        "S5"
+      ],
+      "control": "positive",
+      "expectation": "据わっている本体(`CLAUDE_CONFIG_DIR` を指した席)で、共通条文が **user 層**として context に載り、skills が symlink でも一覧に出る。",
+      "observation": "実 claude を `CLAUDE_CONFIG_DIR=<家>` で起こし、`ANTHROPIC_BASE_URL` を捕捉 server に向けて `/v1/messages` の本文を読んだ。`Contents of <家>/CLAUDE.md (user's private global instructions for all projects)` が 1 件、skills は whole-dir symlink のまま一覧に出た。cwd を `$HOME` の外にしても載る。",
+      "evidence": {
+        "path": "evidence/probe_user_layer.log",
+        "sha256": "18ff5995c770ca445fb39ea2d7100af21a1aa38056faa54a4a30a242c18a4a6e"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "CHK-BODY-N",
+      "scenarios": [
+        "S5"
+      ],
+      "control": "negative",
+      "expectation": "user 層の CLAUDE.md を symlink / hard link にすると、`CLAUDE_CODE_ENTRYPOINT=local-agent` の席では**黙って落ちる**(= 実体 file でなければならない、が実射で決まる)。",
+      "observation": "同じ席で CLAUDE.md を symlink にすると user 層の引用が 0 件になり、entrypoint を変えると載る。据わっている実行体の逐語も一致: `if(t===\"User\"&&!v)try{…isSymbolicLink()||(q.nlink??1)>1&&q.isFile())return[]}` / `function wgr(){return CN()!==\"local-agent\"}`。skills 側は両方で安全。",
+      "evidence": {
+        "path": "evidence/body_contract.log",
+        "sha256": "627f18ca1b0f1155dc10128751f48ab58e736e749e81758ce11f0b3ea5790197"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "CHK-S1-P",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "R1 の後、正本を別の置き場へ移した拍で家の `skills` が**新しい先へ張り替わり**、実体が居座っている時だけ loud に落ちる。",
+      "observation": "`model/test_counterexamples.py::A1_moving_the_canon_repoints_the_home_symlink` と `A1b_a_real_entity_in_the_way_is_loud_not_silent` が緑(`model_runs.log` §2)。公開契約 7 本も緑のまま(§1)。",
+      "evidence": {
+        "path": "counterexamples/model_runs.log",
+        "sha256": "066272ac4acebaae93d56ac43c84dd233754fbb7fea570a03eaaf11882a739ad"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "CHK-S1-N",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "R1 前の設計(`FsLinkArtifact` の意味をそのまま使う)は、**実物の substrate handler** で張り替えに失敗し、席が旧い正本を読み続ける。",
+      "observation": "`real-substrate` を installer 形で回した実射: 1st `outcome='linked'` / 2nd `outcome='target-conflict'` / 家の link の先 = canonA / 席が読む skills = `['a-skill.md']`(旧いまま)。違反例の側も狙った理由で拒否された(`model_runs.log` §3「張り替わっていない」)。",
+      "evidence": {
+        "path": "counterexamples/repro_A_real_substrate.log",
+        "sha256": "eefe362efc81e7360c71bfa6a152ee74edcb6493ba9e4d811ec24b8fce875d27"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "CHK-S2-P",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "R5 の後、運ぶ物を 1 種増やす変更が**名簿の 1 行 + 宣言 1 行**に収まり、席の家まで届く。回る側の 3 関数は不変。",
+      "observation": "`model_runs.log` §4 `S2_positive_a_third_carried_kind_is_one_roster_line`: 追加 1 行 / 削除 0 行(difflib)、家に `agents` の symlink が据わり `a-agent.md` が読め、`join_env_of` / `instruction_sources` / `install_into_home` の bytecode が一致。",
+      "evidence": {
+        "path": "counterexamples/model_runs.log",
+        "sha256": "066272ac4acebaae93d56ac43c84dd233754fbb7fea570a03eaaf11882a739ad"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "CHK-S2-N",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "名簿に無い運び物を宣言に書くと、参加が**声を上げて**断る(d8472e1a の「wire の受理形で黙って落ちる」の逆)。",
+      "observation": "`model_runs.log` §4 `S2_negative_a_kind_outside_the_roster_is_refused_loudly`: `ValueError: [agentd] に宣言に無い鍵: claude_agents_dir`。env にもその鍵は現れない。",
+      "evidence": {
+        "path": "counterexamples/model_runs.log",
+        "sha256": "066272ac4acebaae93d56ac43c84dd233754fbb7fea570a03eaaf11882a739ad"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "CHK-S3-P",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "R2 の後、同じ家へ 2 席が 200 拍同時に書いても、例外 0 件・torn read 0 件で、家の中身は常にどちらかの席の拍の中身ちょうど。",
+      "observation": "`model_runs.log` §2 `A2_two_seats_writing_the_shared_home_do_not_break_each_other` が緑。`fs_ensure_symlink` の 3 値も同拍で崩れない。",
+      "evidence": {
+        "path": "counterexamples/model_runs.log",
+        "sha256": "066272ac4acebaae93d56ac43c84dd233754fbb7fea570a03eaaf11882a739ad"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "CHK-S3-N",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "R2 前の形(tmp が `path + suffix` 固定)は、**実物の substrate** で同拍の書きが落ちる。",
+      "observation": "実物の `FsWriteTextAtomic` で 200 回 × 2 席 → 例外 151 件(すべて `FileNotFoundError`)・torn 0 件。設計モデル側の違反例も狙った理由で拒否(`model_runs.log` §3「同拍の書きが落ちた」)。",
+      "evidence": {
+        "path": "counterexamples/repro_A_real_substrate.log",
+        "sha256": "eefe362efc81e7360c71bfa6a152ee74edcb6493ba9e4d811ec24b8fce875d27"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "CHK-S4-P",
+      "scenarios": [
+        "S4"
+      ],
+      "control": "positive",
+      "expectation": "もれなさの針が母集団を**列挙せず導く**: 4 台目の宣言 file を置くだけでその宿を数え、鍵を名乗らせると緑に戻る。",
+      "observation": "`model_runs.log` §4 `S4_positive_the_needle_derives_the_population`: 3 台で緑 → 4 台目(鍵なし)で `[(acp-fourth-host.toml, claude_memory_file), (…, claude_skills_dir)]` → 名乗らせて緑。節を持たない toml は母集団の外。",
+      "evidence": {
+        "path": "counterexamples/model_runs.log",
+        "sha256": "066272ac4acebaae93d56ac43c84dd233754fbb7fea570a03eaaf11882a739ad"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "CHK-S4-N",
+      "scenarios": [
+        "S4"
+      ],
+      "control": "negative",
+      "expectation": "鍵を知らない旧版の agentd は、席を条文なしで起こさずに**参加を断る**(版の崖が静かな劣化にならない)。",
+      "observation": "`model_runs.log` §4 `S4_negative_an_older_agentd_refuses_the_new_declaration`: `[agentd] に宣言に無い鍵: claude_memory_file, claude_skills_dir`。",
+      "evidence": {
+        "path": "counterexamples/model_runs.log",
+        "sha256": "066272ac4acebaae93d56ac43c84dd233754fbb7fea570a03eaaf11882a739ad"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "CHK-S5-P",
+      "scenarios": [
+        "S5"
+      ],
+      "control": "positive",
+      "expectation": "逐語の計器が、据わっている本体に対して **green**(設計の前提 P3 が生きている)。",
+      "observation": "`model/check_body_contract.py` を `/usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe`(2.1.263)へ撃って `green`(逐語 6 本が揃う・0.5 秒)。`model_runs.log` §4・§5。",
+      "evidence": {
+        "path": "counterexamples/model_runs.log",
+        "sha256": "066272ac4acebaae93d56ac43c84dd233754fbb7fea570a03eaaf11882a739ad"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "CHK-S5-N",
+      "scenarios": [
+        "S5"
+      ],
+      "control": "negative",
+      "expectation": "逐語が 1 つ動いた本体は **red**(棄権ではない)、本体でない file は **abstain**(赤と混ざらない)。",
+      "observation": "本体の複製の `local-agent` を同長の `local-agemt` で上書き → `red`(欠け = `the-gate-fires-only-for-local-agent`)。本体でない file → `abstain`。`model_runs.log` §4 `S5_negative_a_moved_contract_turns_the_instrument_red`。",
+      "evidence": {
+        "path": "counterexamples/model_runs.log",
+        "sha256": "066272ac4acebaae93d56ac43c84dd233754fbb7fea570a03eaaf11882a739ad"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "CHK-S6-P",
+      "scenarios": [
+        "S6"
+      ],
+      "control": "positive",
+      "expectation": "宣言 → env → 起動の拍 → 家の中の file までが、実 claude を起こさずに決定的に回る(7 本の公開契約)。",
+      "observation": "`model_runs.log` §1: `installs` / `absent_is_not_fatal` / `unnamed_is_today` / `idempotent_and_no_churn` / `owned_key_collision_is_loud` / `cwd_relative_declaration_is_refused` / `unknown_key_is_refused` の 7 本が緑(tmp の世界だけ)。",
+      "evidence": {
+        "path": "counterexamples/model_runs.log",
+        "sha256": "066272ac4acebaae93d56ac43c84dd233754fbb7fea570a03eaaf11882a739ad"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "CHK-S6-N",
+      "scenarios": [
+        "S6",
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "盲検 B の実装(据え付け層が宿の file layout の戻り先を持つ)が、**狙った理由で**拒否される: (1) 宣言が無い宿へ条文が届かない(囮を disk に置き `HOME` を世界に据えた上で)、(2) 劣化の日に宣言外の path を触らない。",
+      "observation": "`model_runs.log` §3: 「宣言が無いのに条文が届いた」「宣言が名指していない path を触った: ['…/.claude/CLAUDE.md', '…/.claude/skills', …]」の 2 本で拒否。⚠ 初版の検は平常日に置いていたため候補列が短絡して違反が**素通り**し、条件を劣化の日へ移して初めて弁別した(その失敗も記録に残す)。",
+      "evidence": {
+        "path": "counterexamples/model_runs.log",
+        "sha256": "066272ac4acebaae93d56ac43c84dd233754fbb7fea570a03eaaf11882a739ad"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "CHK-ENF-N",
+      "scenarios": [
+        "S6",
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "当初 §6 が足すと宣言した semgrep 規則(既存 `autoMemoryDirectory` 規則と同形 = 綴りの家を除外)は、**違反をその file の中に置くと原理的に届かない**。",
+      "observation": "実物の `.semgrep.yaml` を scratch の git tree へ複写して実射: (1) 現行 18 規則 → 0 findings、(2) 当初の規則 → `Ran 1 rule on 0 files`、(3) 陰性対照(綴りの家の外)→ 1 finding(規則自体は生きている)。`.hy` に届く静的検査が semgrep だけであることも逐語で確認(ruff は `.hy` を target にしない / pyright の include に `packages/doeff-agents` は無い / doeff-linter は `.py` だけ)。",
+      "evidence": {
+        "path": "counterexamples/verify_B_semgrep.log",
+        "sha256": "fe2b358ec40bb40be58d7b96d701939cd931e28cd7198d9de2af096b09cdb06e"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "CHK-ENF-P",
+      "scenarios": [
+        "S6",
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "R3a の規則(`packages/doeff-agents/src/**` の literal `dotfiles` を**除外なしで**禁じる)は、綴りの家の中の違反行に発火し、違反を消すと緑に戻る。",
+      "observation": "同じ実射の (4): `Ran 1 rule on 2 files: 1 finding.` — `impls/claude_code.hy` の `CLAUDE-COMMON-MEMORY-FALLBACKS` の行を名指した。(5): 違反の 2 行を消すと `0 findings`。",
+      "evidence": {
+        "path": "counterexamples/verify_B_semgrep.log",
+        "sha256": "fe2b358ec40bb40be58d7b96d701939cd931e28cd7198d9de2af096b09cdb06e"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "CHK-COUPLING",
+      "scenarios": [
+        "S4"
+      ],
+      "control": "positive",
+      "expectation": "この設計が触ると宣言した path が、dotfiles `docs/coupling-core-watchlist.md` の機械可読区画(`coupling-core-paths` 80 pattern / `coupling-core-fleet-paths` 1 pattern)に **1 件も当たらない**。",
+      "observation": "`evidence/coupling_core_match.py` で fnmatch 照合: 触る 23 path(doeff 17 / dotfiles 5 / ACP 1 — 盲検後に増えた 6 本を足して撃ち直した)に対し **当たり 0 件**。doeff 自身は repo 固有の名簿を持たないので艦隊の区画だけで数え、その唯一の pattern `.agents/land-queue.toml` はこの実装が触らない。",
+      "evidence": {
+        "path": "evidence/coupling_core_match.log",
+        "sha256": "de7f01d6d9e7e21a138c6816737f9ee2bc5095251fd12398a17d11fea03da065"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": []
+}

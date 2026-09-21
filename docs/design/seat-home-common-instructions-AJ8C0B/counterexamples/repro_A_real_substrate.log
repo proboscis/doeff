@@ -1,0 +1,23 @@
+### ⚠ 復元注記(2026-09-21・依頼者 c-3JYBNJMC2RZTM1S8V43939MP42): 元の file は pod の作り直しで失われ、この内容は会話の記録に印字された分だけの部分復元です(元の sha256 は evidence/SHA256SUMS.txt)。
+### 構成: 最終の実行(記録 205・05:35Z)のうち sed -n '1,8p;/## 反例 A-1/,$p' で印字された分。途中の doeff Traceback(反例 A-2 の証拠)の大半は失われています。
+
+### 実行: 2026-09-21T05:35:49Z / 基準 commit 57641077306214b7b7da86708b04e9ed0524499b
+### 実物の substrate handler(sessionhost/substrate.hy の real-substrate)を回す
+### ⚠ 途中に出る doeff Traceback は反例 A-2 の**証拠そのもの**(同拍の書きが落ちた拍の 1 本)
+
+
+doeff Traceback (most recent call last):
+
+  real_substrate.<locals>._hy_anon_74()  packages/doeff-agents/src/doeff_agents/sessionhost/substrate.hy:347
+## 反例 A-1 — 正本を移した日に whole-dir symlink が張り替わらない(実物の substrate)
+  1st  outcome='linked'
+  2nd  outcome='target-conflict'   (正本を canonB へ移した拍)
+  家の link の先 = canonA
+  席が読む skills = ['a-skill.md']
+  ⇒ 張り替えは値 'target-conflict' で**黙って**落ち、席は旧い正本を読み続ける
+
+## 反例 A-2 — 同じ家への同拍の書きが競う(実物の substrate)
+  200 回 × 2 席: 例外 151 件 {'FileNotFoundError': 151}  torn(中身が A でも B でもない) 0 件
+  ⇒ 同拍の 2 席で片方の launch が例外で落ちる(席が起きない)
+
+反例は成立
