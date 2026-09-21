@@ -77,7 +77,7 @@
 ;; 段 11 lane 11n 便 C(agora-redesign #179): provider の限度の族の表は impls/markers.hy の
 ;; 1 点(ADR-DOE-AGENTS-008 R1 の観測形式の家・pane の路と同じ表)。ここは表を写さず、
 ;; 手番の終わりの文へ当てるだけ。
-(import doeff_agents.sessionhost.impls.headless_argv [fast-jev-compaction-enabled])
+(import doeff_agents.sessionhost.impls.fast_jev [fast-jev-compaction-enabled])
 (import doeff_agents.sessionhost.impls.markers [is-api-limit-refusal])
 (import doeff_agents.sessionhost.headless_protocol [
   BackendLiveness
