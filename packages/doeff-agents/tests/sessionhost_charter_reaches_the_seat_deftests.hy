@@ -20,12 +20,14 @@
 ;;; 最後は**器が置き場へ書いた file** を数える(届いた所が母集団)。
 ;;; 冊数は本文に焼かない(制約 5): N 冊 → 置き場に N + 1 file(冊 N + 索引 MEMORY.md)。
 
-(require doeff-hy.macros [deftest defk <-])
+(require doeff-hy.macros [deftest defk <- defhandler])
 
+(import datetime [datetime timezone])
 (import json)
 (import doeff [run])
 
-(import doeff_agents.sessionhost.policy [CHARTER-CARRIED-KEYS LAUNCH-FLAG-KEYS TURN-CARRIED-KEYS])
+(import doeff_agents.sessionhost.policy [CHARTER-CARRIED-KEYS LAUNCH-FLAG-KEYS TURN-CARRIED-KEYS
+                                         carry-keys carry-launch-flags])
 (import doeff_agents.sessionhost.acp [effects])
 (import doeff_agents.sessionhost.acp.effects [
   CHARTER-CARRIED-KEYS :as ACP-CHARTER-CARRIED-KEYS
@@ -42,7 +44,23 @@
   memory-baselines-of-text
   memory-files-of
   resume-params-of])
-(import doeff_agents.sessionhost.effects [SessionRow])
+(import doeff_agents.sessionhost.effects [
+  BuildHeadlessLaunch
+  ClockNow
+  EnvGet
+  FsMakeDirs
+  FsWriteTextAtomic
+  HeadlessDeliver
+  HeadlessPoll
+  HeadlessSpawn
+  LogLine
+  SessionRow
+  SessionStoreGet
+  SessionStoreRecordEvent
+  SessionStoreUpsert])
+(import doeff_agents.sessionhost.headless [headless-send-program])
+(import doeff_agents.sessionhost.impls.headless_argv [build-headless])
+(import doeff_agents.sessionhost.impls.claude_code [claude-code-impl])
 (import doeff_agents.sessionhost.host [
   DEFAULT-PROMPT-JUDGE-CMD
   HostConfig
@@ -182,6 +200,153 @@
   (assert (not missing)
           #("蘇生の腕で席に届かなかった charter の欄" missing
             "足す所は acp/effects.py CHARTER_CARRIED_KEYS の 1 点(名簿を 4 枚触らない)")))
+
+
+;; ---------------------------------------------------------------------------
+;; (3b) 4 つ目の腕 — 降りた process の続き(headless.continue-headless-process)
+;; ---------------------------------------------------------------------------
+;;
+;; claude の headless の process は手番の終わりで必ず降りる(段 12 lane 12e #517)ので、
+;; **普段の手番**(温かい session への send)はこの腕を通る。ところがこの腕は起こす腕の名簿
+;; (prepare-launch-workspace → PreLaunchSetup)を 1 枚も通らず、行の launch_overlay だけを読んで
+;; argv を組み直していた ⇒ 行に残さない手番の荷(policy.TURN-CARRIED-KEYS = 記憶の置き場と冊)は
+;; **この腕だけ**落ちる。2026-09-21 の実測(pool の pod): 起こした手番は置き場を名乗るのに、
+;; その会話の 2 手番目からは `--settings` に置き場が無く、置き場に冊も索引も書かれない。
+;;
+;; ここは 2 本とも「届いた所」で測る: 席の argv を組む 1 点(BuildHeadlessLaunch)に届いた欄と、
+;; 器が置き場へ書いた file。
+
+(defclass ContinueWorld []
+  "4 つ目の腕の世界: 行は在る・process は降りている(HeadlessPoll が None = 登記に process 無し)。"
+  (defn __init__ [self]
+    (setv self.rows {})
+    (setv self.fs {})        ;; path → 本文(器が置き場へ書いた file)
+    (setv self.dirs (set))
+    (setv self.log-lines [])
+    (setv self.built [])     ;; BuildHeadlessLaunch が受けた params(= 席に届いた欄)
+    (setv self.spawns [])    ;; #(argv env)— 起こし直した process
+    (setv self.delivered [])))
+
+
+(defhandler fake-continue-substrate [world]
+  (SessionStoreGet [session-id]
+    (resume (.get world.rows session-id)))
+  (SessionStoreUpsert [row]
+    (setv (get world.rows row.session-id) row)
+    (resume None))
+  (SessionStoreRecordEvent [session-id event-type row]
+    (resume None))
+  (ClockNow []
+    (resume (datetime 2026 9 21 12 0 0 :tzinfo timezone.utc)))
+  (EnvGet [name]
+    (resume None))
+  (LogLine [text]
+    (.append world.log-lines text)
+    (resume None))
+  (FsMakeDirs [path]
+    (.add world.dirs path)
+    (resume None))
+  (FsWriteTextAtomic [path text tmp-suffix]
+    (setv (get world.fs path) text)
+    (resume None))
+  (HeadlessPoll [session-name]
+    ;; 降りている = 次の手番は「起こし直す腕」を通る(claude の普段の手番)。
+    (resume None))
+  (HeadlessDeliver [session-name text attachments]
+    (.append world.delivered text)
+    (resume True))
+  (HeadlessSpawn [session-name work-dir env argv events-path dialogue]
+    (.append world.spawns #((list argv) (dict env)))
+    (resume 4242))
+  (BuildHeadlessLaunch [agent-type params]
+    ;; 席へ届いた欄はここで採る(この後ろは argv の組み立てだけ)。argv は本物の組み立てに通す —
+    ;; 「params には在るが旗にならない」形をこの検で見落とさないため。
+    (.append world.built (dict params))
+    (<- built (build-headless agent-type params))
+    (resume built)))
+
+
+(defn #^ SessionRow continued-row [[overlay None]]
+  "続きの手番を待つ行(headless・会話 identity 在り・process は降りている)。"
+  (SessionRow :session-id "s1" :session-name "doeff-s1" :pane-id "headless:doeff-s1"
+              :agent-type "claude" :lifecycle "run_to_completion" :status "running"
+              :started-at "2026-09-21T00:00:00+00:00"
+              :work-dir (get PROBE-VALUES "work_dir")
+              :effective-identity {"CLAUDE_CONFIG_DIR" "/x/claude"}
+              :backend-kind "headless"
+              :backend-ref {"session_name" "doeff-s1" "pid" 41
+                            "events_path" "/state/events/s1.events.jsonl"
+                            "argv" [] "socket_path" ""}
+              :launch-overlay (or overlay {})
+              :conversation {"session_id" "conv-1"} :generation 1))
+
+
+(defn #^ dict turn-charter-of [charter]
+  "この手番の送りが運ぶ荷 = 行に残さない欄(policy.TURN-CARRIED-KEYS)だけ。
+   **行の写しではない**: 正本は ACP の行で、手番ごとに charter が名乗り直す(名簿は 1 点)。"
+  (carry-keys TURN-CARRIED-KEYS charter {}))
+
+
+(defk run-continue [world row turn-charter]
+  {:pre [(: world ContinueWorld) (: row SessionRow) (: turn-charter dict)]
+   :post [(: % SessionRow)]}
+  "4 つ目の腕を 1 度撃つ: 行は在るが process が降りている session へ次の手番を送る
+   (host の session.send = headless-send-program → continue-headless-process)。"
+  (setv (get world.rows row.session-id) row)
+  (<- sent ((fake-continue-substrate world)
+            ((claude-code-impl "/opt/doeff-sessionhost")
+             (headless-send-program row.session-id "next turn" True {} turn-charter))))
+  sent)
+
+
+(deftest test-declared-charter-keys-reach-the-seat-on-the-continue-arm
+  ;; 4 つ目の腕でも charter の欄は 1 つも落ちない。行に残る旗(LAUNCH-FLAG-KEYS)は行の
+  ;; launch_overlay から、行に残さない手番の荷(TURN-CARRIED-KEYS)は**この手番の送り**から来る。
+  (setv charter (probe-charter))
+  (setv world (ContinueWorld))
+  (setv overlay (carry-launch-flags charter {"session_env" {} "model" None "effort" None
+                                             "mcp_servers" {}}))
+  (<- _ (run-continue world (continued-row overlay) (turn-charter-of charter)))
+  (assert (= (len world.built) 1) #("続きの腕は席の argv を 1 度だけ組む" world.built))
+  (setv arrived (get world.built 0))
+  (setv missing (missing-of charter arrived))
+  (assert (not missing)
+          #("続きの腕で席に届かなかった charter の欄" missing
+            "足す所は policy.CHARTER-CARRIED-KEYS の 1 点(名簿を 5 枚触らない)"))
+  ;; 届いた所まで: 起こし直した argv に置き場が出る(params に在るのに旗にならない形を残さない)。
+  (assert (= (len world.spawns) 1) world.spawns)
+  (setv argv (get (get world.spawns 0) 0))
+  (assert (any (gfor arg argv (and (isinstance arg str) (in MEMORY-HOME arg))))
+          #("続きの腕の argv が置き場を名乗らない" argv)))
+
+
+(deftest test-the-seat-writes-one-file-per-book-and-the-index-on-the-continue-arm
+  ;; 置き場の名だけでは足りない(依頼者の必須 B): 冊を書く口も 4 つ目の腕を通らないと、
+  ;; 2 手番目から先は**空の置き場**を指した席が走る。N 冊 → 置き場に N + 2 file
+  ;; (冊 N + 索引 + 畳み戻しの基準)。畳み戻しの基準がこの腕で落ちると、席が書いた冊が
+  ;; 「席の触っていない写し」に見えて行が巻き戻る(9c5fdefc が直した形)。
+  ;; 計器も同じ腕で 1 行(0 冊でも名乗る — 黙る拍を作らない)。
+  (for [n #(0 1 3)]
+    (setv world (ContinueWorld))
+    (setv books (sample-books n))
+    (<- _ (run-continue world (continued-row)
+                        {"memory_dir" MEMORY-HOME "memory_files" (list books)}))
+    (setv written (books-in world MEMORY-HOME))
+    (assert (= (len written) (+ n 2))
+            #("N 冊 → 置き場に N + 2 file(冊 N + 索引 + 畳み戻しの基準)" n written))
+    (assert (in MEMORY-INDEX-FILE written) written)
+    (assert (in MEMORY-BASE-FILE written) written)
+    (for [book books]
+      (assert (= (get world.fs f"{MEMORY-HOME}/{(get book "name")}") (get book "text"))
+              #("置き場の本文が器へ渡した本文と違う" (get book "name"))))
+    (setv lines (memory-log-lines world))
+    (assert (= (len lines) 1)
+            #("続きの腕も書いた数を 1 行で名乗る(0 冊でも)" n world.log-lines))
+    (assert (in f"books={n}" (get lines 0)) (get lines 0))
+    (assert (in MEMORY-HOME (get lines 0)) (get lines 0))
+    ;; 名乗りは**どの腕の置き場か**まで言う(起こす腕は session.launch)— log だけで
+    ;; 「2 手番目から書かれていない」形を読めるようにする。
+    (assert (.startswith (get lines 0) "session.send: ") (get lines 0))))
 
 
 ;; ---------------------------------------------------------------------------
