@@ -245,7 +245,12 @@
     ;; 手番の順は 水入れ(器が charter の file を置き場へ書く)→ 席の編集 → 畳み戻し。
     (.hydrate self)
     (.apply-pending self)
-    (setv (get self.local.transcripts f"/events/{(.sid self)}.events.jsonl") (claude-events (.sid self) "hello"))
+    ;; 実況の file は**追記**(器の events file は 1 行 1 event の追記の正本)。温かい手番で置き換えると、
+    ;; 送りの腕が読む始点(start-offset-of)より前に今の手番の行が埋もれ、手番が終わらない
+    ;; ⇒ 終いの腕(settle-record = 畳み戻し)が 1 度も走らず、温かい腕の検が**空振りの緑**になる。
+    (setv path f"/events/{(.sid self)}.events.jsonl")
+    (setv prior (if warm (.get self.local.transcripts path "") ""))
+    (setv (get self.local.transcripts path) (+ prior (claude-events (.sid self) "hello")))
     (.tick self 1000)
     (.finish-turn self.sessions (.sid self) (+ self.local.now-ms 100))
     (.tick self 1000)
@@ -648,6 +653,49 @@
   (assert (in "a-fact" (get named 0)) named)
   (assert (in "baseline recordSeq" (get named 0)) named)
   (assert (in "row recordSeq" (get named 0)) named))
+
+
+(deftest test-the-warm-arm-bases-the-home-on-the-row-it-read-this-turn
+  ;; 差し戻し lt-X3N3TYN3Q071RM7JA269QWNPK1 の必須 F: 4 つ目の腕(送り)の水入れも、基準を
+  ;; **その手番の行から・同じ拍で**組む。基準が前の拍のまま置き場に残ると、壊れ方は 9c5fdefc の
+  ;; 判定表で 2 通り — 行に新しく増えた冊は規則 3b(Unbased)で撃たれず(席の編集が黙って行へ
+  ;; 上がらない)、既存の冊は規則 2d の**偽の衝突**になる。どちらも log にしか出ない。
+  ;; ⇒ 手番と手番の**間に**別の機体が行を進めてから送りの腕を撃ち、送りが運んだ基準が
+  ;; 「この手番に読んだ行」ちょうどを指すことと、その基準で畳み戻しが素直に撃てることを測る。
+  (setv world (MemoryWorld))
+  (.put-file world "a-fact.md" (book-text "a-fact" "要旨" "1 手番目に席が書いた本文。"))
+  (.turn world)                      ;; 1 手番目 = 起こす腕(行ができる)
+  (setv first-seq (get (. (get (.memory-rows world) 0) spec) MEMORY-SPEC-RECORD-SEQ-KEY))
+  ;; 手番の**外**で別の機体が同じ冊を濃く書く(行だけが進み、置き場は前の拍の写しのまま)。
+  (.elsewhere world "a-fact" (book-text "a-fact" "要旨" "別の機体が手番の間に書いた濃い本文。"))
+  (setv moved (. (get (.memory-rows world) 0) spec))
+  (assert (!= (get moved MEMORY-SPEC-RECORD-SEQ-KEY) first-seq)
+          #("別の機体の書きで行が進んでいない(検の前提)" moved))
+  ;; 2 手番目 = 送りの腕(温かい session)。席はこの手番で編集する。
+  (.put-file world "a-fact.md" (book-text "a-fact" "要旨" "2 手番目に席が書いた本文。"))
+  (.turn world :warm True)
+  ;; (1) 送りが運んだ基準は**この手番に読んだ行**の claim check ちょうど。
+  (setv by-name (dfor f (.hydrated world) (get f "name") (get f "text")))
+  (setv carried (run (memory-baselines-of-text (get by-name MEMORY-BASE-FILE))))
+  (setv base (.get carried "a-fact"))
+  (assert (is-not base None) #("送りの腕が基準を 1 欄も運んでいない" (sorted (.keys carried))))
+  (assert (= base.record-seq (get moved MEMORY-SPEC-RECORD-SEQ-KEY))
+          #("送りの腕の基準が前の拍のまま" base.record-seq (get moved MEMORY-SPEC-RECORD-SEQ-KEY)))
+  (assert (= base.sha256 (get moved MEMORY-SPEC-SHA256-KEY)) base)
+  ;; (2) その基準で畳み戻しが素直に撃てる — 席の編集は行へ上がり、偽の衝突も Unbased も立たない。
+  (setv folded (get (.metric-lines world "agent-memory-folded") -1))
+  (assert (= (get folded "written") 1) #("送りの腕で席の編集が行へ上がっていない" folded))
+  (assert (= (get folded "conflicted") 0) #("前の拍の基準で偽の衝突が立った(規則 2d)" folded))
+  (assert (= (get folded "unbased") 0) #("送りの腕が基準を運んでいない(規則 3b)" folded))
+  (setv events (.events-of world.record CID (run (memory-stream-id-of "a-fact"))))
+  (assert (in "2 手番目に席が書いた本文" (get (get events 0) "text")) events)
+  ;; (3) 計器は**どの腕の水入れか**を名乗る(発火点が起こす腕の中だけに残っていないか — 受入の
+  ;; 測りは「標本に継続の腕を通った行が 1 行以上」を先に示す必要が在り、腕の欄が無いと数えられない)。
+  (setv hydrated (get (.metric-lines world "agent-memory-hydrated") -1))
+  (assert (= (.get hydrated "arm") "send")
+          #("送りの腕の水入れが計器で腕を名乗らない" hydrated))
+  (assert (= (get hydrated "based") 1) hydrated)
+  (assert (= (get hydrated "books") 1) hydrated))
 
 
 (deftest test-the-hydrated-home-folds-back-unchanged-in-the-same-turn
