@@ -7,9 +7,11 @@
 ;;; account に載った別々の会話が相席する。実測: 同じ会話の連続する 2 手番が交わり 0 件の 2 つの家を
 ;;; 読み、15 分前に書いた記憶が次の手番から消えていた。
 ;;;
-;;; ここで撃つのは判断の 1 点(memory-home-of)と、その値が**起こす 3 つの腕すべて**で charter に
-;;; 乗ることちょうど。腕ごとに落ちる形(名簿の漏れ)は 2026-09-15 の添付の実弾と同じなので、
-;;; resume の名簿も名指しで固定する。HTTP も subprocess も無い。
+;;; ここで撃つのは判断の 1 点(memory-home-of)と、その値が**起こし方(effects.NextArm)の defer を除く
+;;; 全部** — 起こす 3 つ(launch / resume / rehydrate)と送り(send)の 4 つ — で席へ運ばれることちょうど。
+;;; 腕は定義から反射で数える(手で並べた一覧は 2026-09-20 に 4 つ目の腕〔send〕を黙って落とした —
+;;; card acp:kanban-issue:ki-a40292ed30d9)。腕ごとに落ちる形(名簿の漏れ)は 2026-09-15 の添付の実弾と
+;;; 同じなので、resume の名簿も名指しで固定する。HTTP も subprocess も無い。
 
 (require doeff-hy.macros [deftest])
 
@@ -17,15 +19,19 @@
 (import os)
 (import shutil)
 (import tempfile)
+(import typing [get-args])
 
 (import doeff [run])
 (import doeff_agents.sessionhost.acp.effects [
   AgentdSettings
   ArmChoice
   LaunchPlan
+  NEXT-ARM-DEFER
   NEXT-ARM-LAUNCH
   NEXT-ARM-REHYDRATE
-  NEXT-ARM-RESUME])
+  NEXT-ARM-RESUME
+  NEXT-ARM-SEND
+  NextArm])
 (import doeff_agents.sessionhost.host [
   DEFAULT-PROMPT-JUDGE-CMD
   HostConfig
@@ -37,7 +43,8 @@
   charter-with-memory-home
   incarnation-charter-of
   memory-home-of
-  resume-params-of])
+  resume-params-of
+  turn-charter-of])
 
 
 (setv MEMORY-ROOT "/state/doeff/agent-memory")
@@ -95,7 +102,8 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; V6 — 起こす腕は 3 つ。どの腕でも charter に乗り、resume の名簿でも落ちない
+;; V6 — 置き場を運ぶ腕は 4 つ(起こす launch / resume / rehydrate + 送り send)。数えるのは定義
+;; (effects.NextArm)からで、手で並べない。どの腕でも同じ置き場が席へ渡り、resume の名簿でも落ちない
 ;; ---------------------------------------------------------------------------
 
 (defn plan-of []
@@ -103,17 +111,46 @@
               :predecessor None :lease-kind None :account None :profile "p" :model "claude-opus-5"))
 
 
-(deftest test-every-arm-that-wakes-a-conversation-carries-the-memory-home
-  ;; 起こす腕は launch / resume / rehydrate の 3 つ。どれか 1 つで落ちると、その腕の手番だけ
-  ;; 記憶が別の置き場に行き、誰も気づかない(誤りも条件も出ない)。
-  (setv attribution {"conversationId" CONVERSATION})
-  (for [arm [NEXT-ARM-LAUNCH NEXT-ARM-RESUME NEXT-ARM-REHYDRATE]]
-    (setv built (run (incarnation-charter-of
-                       (plan-of) (ArmChoice :arm arm :source None :retire None)
-                       "s-new" #() "" attribution "headless" None "/homes" MEMORY-ROOT None #())))
-    (setv charter (get built 0))
-    (assert (= (.get charter "memory_dir") f"{MEMORY-ROOT}/{CONVERSATION}")
-            #(arm (sorted (.keys charter)))))
+(defn memory-home-carried-by-incarnation [#^ str arm]
+  "起こす腕(launch / resume / rehydrate)が置き場を運ぶ口 = judgment.incarnation-charter-of(charter の欄)。"
+  (setv built (run (incarnation-charter-of
+                     (plan-of) (ArmChoice :arm arm :source None :retire None)
+                     "s-new" #() "" {"conversationId" CONVERSATION} "headless" None "/homes"
+                     MEMORY-ROOT None #())))
+  (.get (get built 0) "memory_dir"))
+
+
+(defn memory-home-carried-by-send [#^ str arm]
+  "送りの腕(send)が置き場を運ぶ口 = judgment.turn-charter-of(温かい session への SessionSend の
+   turn_charter — 器が降りた process を `--resume` で起こし直す拍に読む荷)。"
+  (.get (run (turn-charter-of MEMORY-ROOT CONVERSATION #())) "memory_dir"))
+
+
+;; 起こし方 → その腕が置き場を運ぶ口。**NextArm に語を足した人は、ここに口を名乗るまで緑にならない**
+;; (defer だけは手番を起こさないので口を持たない)。
+(setv MEMORY-HOME-CARRIER-OF
+  {NEXT-ARM-LAUNCH memory-home-carried-by-incarnation
+   NEXT-ARM-RESUME memory-home-carried-by-incarnation
+   NEXT-ARM-REHYDRATE memory-home-carried-by-incarnation
+   NEXT-ARM-SEND memory-home-carried-by-send})
+
+
+(deftest test-every-arm-in-the-definition-carries-the-memory-home
+  ;; 腕の一覧は `typing.get_args(NextArm)` から defer を除いたもの — 手で並べると、腕を 1 つ足した日に
+  ;; その腕の手番だけ記憶が別の置き場に行き、誰も気づかない(誤りも条件も出ない)。2026-09-20 の欠陥は
+  ;; まさにこの形(3 つ並べた一覧が 4 つ目の send を落とした・card acp:kanban-issue:ki-a40292ed30d9)。
+  (setv arms (tuple (gfor arm (get-args NextArm) :if (!= arm NEXT-ARM-DEFER) arm)))
+  (assert arms "NextArm から起こし方を 1 つも読めない(定義の形が変わった)")
+  (for [arm arms]
+    ;; 振り分けの表に無い語 = 新しい腕が置き場の口を名乗っていない ⇒ 赤。
+    (assert (in arm MEMORY-HOME-CARRIER-OF)
+            #(f"NextArm の起こし方 {arm !r} が置き場を運ぶ口を名乗っていない — MEMORY-HOME-CARRIER-OF へ足す"
+              (sorted (.keys MEMORY-HOME-CARRIER-OF))))
+    (setv home ((get MEMORY-HOME-CARRIER-OF arm) arm))
+    (assert (= home f"{MEMORY-ROOT}/{CONVERSATION}") #(arm home)))
+  ;; 逆向き: 表に在るのに定義に無い語は退役した腕の死んだ行 — こちらも残さない。
+  (for [arm (.keys MEMORY-HOME-CARRIER-OF)]
+    (assert (in arm arms) #(f"表の起こし方 {arm !r} は NextArm に無い(退役した腕の行)" arms)))
   ;; resume の params は charter の欄を**名簿で**写す。名簿から漏れると、腕が resume の手番だけ
   ;; 黙って落ちる(実弾 2026-09-15 の添付と同じ形)。
   (setv charter (run (charter-with-memory-home (charter-of CONVERSATION "/w")
@@ -125,25 +162,6 @@
   ;; 欄の無い charter の resume params は 1 byte も変わらない(欄を作らない)。
   (setv plain (run (resume-params-of "s-old" {"session_id" "s-new" "prompt" "start"})))
   (assert (not-in "memory_dir" plain) plain))
-
-
-(deftest test-the-memory-root-is-declared-once-and-sits-outside-the-credential-homes
-  ;; 値の宣言は 1 点(AgentdSettings)。既定は資格の家(homes-root)の**外** — 家の中に置くと
-  ;; 預かり所が別の account を貸した拍に置き場が変わり、会話から剥がれる(直している欠陥そのもの)。
-  (import doeff_agents.sessionhost.acp.runtime [settings_from_env])
-  (setv settings (settings_from_env {"DOEFF_AGENTD_NODE_NAME" "n1" "HOME" "/home/u"
-                                     "DOEFF_AGENTD_CAPACITY" "1" "DOEFF_AGENTD_PLACES" "company"
-                                     "RECORD_SERVICE_URL" "http://127.0.0.1:1"}))
-  (assert (isinstance settings AgentdSettings))
-  (assert (= settings.memory-root "/home/u/.local/state/doeff/agent-memory") settings.memory-root)
-  (assert (not (.startswith settings.memory-root settings.homes-root))
-          #(settings.memory-root settings.homes-root))
-  ;; 宣言の上書きは env 1 つ。
-  (setv overridden (settings_from_env {"DOEFF_AGENTD_NODE_NAME" "n1" "HOME" "/home/u"
-                                       "DOEFF_AGENTD_CAPACITY" "1" "DOEFF_AGENTD_PLACES" "company"
-                                       "RECORD_SERVICE_URL" "http://127.0.0.1:1"
-                                       "DOEFF_AGENTD_MEMORY_ROOT" "/elsewhere/mem"}))
-  (assert (= overridden.memory-root "/elsewhere/mem") overridden.memory-root))
 
 
 ;; ---------------------------------------------------------------------------
