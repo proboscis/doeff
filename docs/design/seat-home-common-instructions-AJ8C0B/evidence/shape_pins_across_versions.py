@@ -22,8 +22,8 @@ import sys
 IDENT = rb"[\w$]+"
 
 
-def shape(pattern: bytes) -> re.Pattern[bytes]:
-    return re.compile(pattern.replace(b"@", IDENT))
+def shape(pattern: bytes, flags: int = 0) -> re.Pattern[bytes]:
+    return re.compile(pattern.replace(b"@", IDENT), flags)
 
 
 SHAPES: dict[str, re.Pattern[bytes]] = {
@@ -41,6 +41,14 @@ SHAPES: dict[str, re.Pattern[bytes]] = {
         shape(rb"if\(!(?P<n>@)\.isDirectory\(\)&&!(?P=n)\.isSymbolicLink\(\)\)return null;"),
     "md-excludes-applies-to-the-user-layer":
         shape(rb'if\((?P<t>@)!=="User"&&(?P=t)!=="Project"&&(?P=t)!=="Local"\)return!1;'),
+    # 上の skills-entries は 2 か所に当たるので、片方が動いても緑のまま残る。依頼者
+    # c-3JYBNJMC2RZTM1S8V43939MP42 の案(2026-09-21・re.S)で走査と読み込みの 2 つに割る。
+    "skills-scan-entry-accepts-a-symlink":
+        shape(rb'if\(!(?P<n>@)\.isDirectory\(\)&&!(?P=n)\.isSymbolicLink\(\)\)return null;'
+              rb'if\((?P<r>@)==="skills"&&@\((?P=n)\.name\)\)', re.S),
+    "skills-loader-entry-accepts-a-symlink":
+        shape(rb'if\(!(?P<e>@)\.isDirectory\(\)&&!(?P=e)\.isSymbolicLink\(\)\)return null;'
+              rb'.{0,200}?@\(@,(?P=e)\.name,"SKILL\.md"\)', re.S),
 }
 
 # 雛形の逐語(2.1.263)— 依頼者が pod の 2.1.263 で 2026-09-21T07:01Z に green を実測した綴り。
@@ -65,12 +73,16 @@ MUTATIONS: dict[str, tuple[bytes, bytes]] = {
     "user-skills-live-under-the-config-dir": (b'"skills"', b'"skillz"'),
     "skills-entries-accept-a-symlink": (b".isSymbolicLink()", b".isSymbolicLinx()"),
     "md-excludes-applies-to-the-user-layer": (b'"Local"', b'"Locax"'),
+    "skills-scan-entry-accepts-a-symlink": (b'"skills"', b'"skillz"'),
+    "skills-loader-entry-accepts-a-symlink": (b'"SKILL.md"', b'"SKILL.mx"'),
 }
 
 
 def check_verbatim_proxy() -> None:
     print("===== 雛形の逐語(2.1.263)を形が受けるか")
     for name, rx in SHAPES.items():
+        if name not in VERBATIM_2_1_263:
+            continue  # 雛形に逐語の無い形(2 つに割った skills)— pod の本体での実測は依頼者の log
         print(f"  {'OK ' if rx.search(VERBATIM_2_1_263[name]) else 'MISS'} {name}")
 
 
@@ -82,6 +94,11 @@ def check_body(path: str) -> None:
     for name, ms in hits.items():
         first = ms[0].group(0).decode("latin1") if ms else "-"
         print(f"  {'OK ' if ms else 'MISS'} {name}: 一致 {len(ms)} 件  {first}")
+    scan, load = hits["skills-scan-entry-accepts-a-symlink"], hits["skills-loader-entry-accepts-a-symlink"]
+    if scan and load:
+        apart = {m.start() for m in scan}.isdisjoint(m.start() for m in load)
+        print(f"  {'OK ' if apart else 'MISS'} skills-scan-and-loader-are-different-sites: "
+              f"幅 {len(load[0].group(0))} byte(窓 200)")
     drop, gate = hits["user-layer-drops-symlink-and-hardlink"], hits["the-gate-fires-only-for-local-agent"]
     if drop and gate:
         m, g = drop[0], gate[0]
