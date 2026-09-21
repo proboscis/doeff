@@ -674,9 +674,41 @@
       (shutil.rmtree d :ignore-errors True))))
 
 
+(defn skip-unless-r-x-refuses-writes []
+  "『家が r-x』の枡は、宿が権限ビットを現に守っている時だけ意味を持つ。uid を
+   読むのではなく **1 バイト書いてみて測る**: root は素通りするが、権限を素通しする
+   file system(container の一部の mount・CI の overlay)でも同じ結果になるので、
+   uid の判定はその母集団を取りこぼす。書けてしまう宿ではこの 1 形だけ skip する
+   (残る 2 形 — 親の位置に実体 file / 親 dir を作れない — はそのまま撃てる)。"
+  (setv probe (tempfile.mkdtemp))
+  (setv home (os.path.join probe "r-x"))
+  (setv wrote False)
+  (try
+    (os.makedirs home)
+    (os.chmod home 0o555)
+    (try
+      (with [f (open (os.path.join home "probe") "w" :encoding "utf-8")]
+        (.write f "x"))
+      (setv wrote True)
+      (except [OSError] None))
+    (finally
+      (try
+        (os.chmod home 0o755)
+        (except [OSError] None))
+      (shutil.rmtree probe :ignore-errors True)))
+  (when wrote
+    (pytest.skip "この宿は r-x の dir へ書けるので器の断りを再現できない")))
+
+
 (defn container-refusal-homes [d]
-  "器の断りの 3 形を作り、#(名 link/target) の list を返す(設計 2.2 の表)。
-     親の位置に実体 file が居る / 家が書けない(r-x)/ 親 dir を作れない"
+  "器の断りの 4 形を作り、#(名 link/target) の list を返す(設計 2.2 の表 + 1)。
+     親の位置に実体 file が居る / 家が書けない(r-x)/ 親 dir を作れない /
+     **親そのものが実体 file**(= makedirs が EEXIST を出す形 — 依頼書の改訂が
+     名指した反例。errno の表を syscall 間で共有すると、この 1 形が『実体の居座り』に
+     化けて、運用者が在りもしない dir を片付けに行く)。
+   ⚠ 実測(2026-09-22): 『親の位置に実体 file』の errno は宿で違う
+     (Darwin/APFS では `blocker/child` は ENOTDIR・`blocker` そのものは EEXIST)。
+     だから errno の綴りではなく **結末の状態**を検の対象にする。"
   (setv blocker (os.path.join d "blocker"))
   (with [f (open blocker "w" :encoding "utf-8")]
     (.write f "a real file where a directory is required"))
@@ -687,6 +719,7 @@
   (os.makedirs read-only-parent)
   (os.chmod read-only-parent 0o555)
   [#("親の位置に実体 file" (os.path.join blocker "child" "seat"))
+   #("親そのものが実体 file(EEXIST)" (os.path.join blocker "seat"))
    #("家が r-x" (os.path.join read-only "seat"))
    #("親 dir を作れない" (os.path.join read-only-parent "sub" "seat"))])
 
@@ -703,8 +736,7 @@
   ;; ⚑ 受入 2(据え付けの側): 器の断り 3 形で refused-by-container + errno を返し、例外 0。
   ;; 直す前は makedirs / symlink が try の外に在ったので、3 形とも素の OSError が
   ;; effect の外まで抜けた(この動詞は raise しない約束なのに、その約束ごと破れて席が起きない)。
-  (when (= (os.geteuid) 0)
-    (pytest.skip "root は r-x を素通りするので器の断りを再現できない"))
+  (skip-unless-r-x-refuses-writes)
   (setv d (os.path.realpath (tempfile.mkdtemp)))
   (try
     (setv target (os.path.join d "skills-src"))
@@ -729,8 +761,7 @@
   ;; ⚑ 受入 2(敷設の側): **同じ 3 形が FsLinkArtifact にも在る**(計画段の実測 2.2 —
   ;; 依頼者は据え付けの側だけの話と見ていたが、敷設の側にも全部在った)。
   ;; 同時実行の直しだけでは 3 形とも抜けたままだったことも実測済み。
-  (when (= (os.geteuid) 0)
-    (pytest.skip "root は r-x を素通りするので器の断りを再現できない"))
+  (skip-unless-r-x-refuses-writes)
   (setv d (os.path.realpath (tempfile.mkdtemp)))
   (try
     (setv source (os.path.join d "rollout.jsonl"))
@@ -818,9 +849,36 @@
     ;; 仮は自分のぶんだけ掃除して名乗る — 家に残骸を残さない
     (assert (= (sorted (os.listdir (os.path.join d "home"))) ["empty" "full"])
             (os.listdir (os.path.join d "home")))
-    ;; ENOTEMPTY / EEXIST も「据わっている」側(集合の綴りが動いたら赤)
-    (for [code [errno.EISDIR errno.ENOTEMPTY errno.EEXIST]]
-      (assert (in code substrate._RENAME-OCCUPIED-ERRNOS) code))
+    ;; (d) 依頼書 §4-3 の骨どおり、errno を**注入して**割りを撃つ(実体を据える形では
+    ;;     os.lstat が先に当たるので rename に 0 回しか届かない — 直す前の版でも緑になる)。
+    (setv injected (os.path.join d "home" "injected"))
+    (defn raising-replace [err]
+      (defn f [src dst #** kwargs]
+        (raise (OSError err (os.strerror err))))
+      f)
+    (try
+      (setv os.replace (raising-replace errno.EISDIR))
+      (setv fourth (ensure-symlink-outcome injected target))
+      (finally
+        (setv os.replace real-replace)))
+    (assert (= (. fourth state) FS-SYMLINK-OCCUPIED) fourth)
+    (assert (= (. fourth errno) errno.EISDIR) fourth)
+    ;; 仮の残骸 0(except の枝の「自分の仮だけ掃除する」が現に走った証拠 —
+    ;; 到達路が無かった間、この 1 行は一度も走っていない)
+    (assert (= (sorted (os.listdir (os.path.join d "home"))) ["empty" "full"])
+            (os.listdir (os.path.join d "home")))
+    ;; 割りの正本は純関数 1 点(substrate.refusal-of)。表を syscall 間で共有すると
+    ;; makedirs / symlink の EEXIST が「実体の居座り」に化けて受入 2 が赤くなる。
+    (assert (= (substrate.refusal-of "rename" errno.EISDIR) FS-SYMLINK-OCCUPIED))
+    (for [#(syscall code) [#("rename" errno.EACCES)
+                           #("rename" errno.EEXIST)
+                           #("rename" errno.ENOTEMPTY)
+                           #("rename" None)
+                           #("makedirs" errno.EEXIST)
+                           #("makedirs" errno.EACCES)
+                           #("symlink" errno.EEXIST)]]
+      (assert (= (substrate.refusal-of syscall code) FS-SYMLINK-REFUSED)
+              #(syscall code)))
     (finally
       (setv os.lstat real-lstat)
       (setv os.replace real-replace)

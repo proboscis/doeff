@@ -305,16 +305,36 @@
   (setv digest (.hexdigest (hashlib.sha256 (.encode f"{auth-resolved}\x00{profile-resolved}" "utf-8"))))
   f"{(os.path.basename profile-resolved)}--{(cut digest 0 8)}")
 
-(deff _symlink-refused [syscall error]
+(deff refusal-of [operation code]
+  {:pre [(: operation str) (: code (| int None))]
+   :post [(: % str)]}
+  "据え付けを断られた syscall(operation)と errno(code)から結末の状態を解く
+   **純関数の 1 点**(設計 docs/design/symlink-verbs-fail-vocabulary-ZCN5BD/design.md
+   の `refusal-of(operation, errno)`。第 2 引数を `errno` と綴ると module 名を
+   隠して `errno.EISDIR` が引けなくなるので `code`)。
+   `occupied-by-real-entity` になる組はただ 1 つ = (rename, EISDIR)。仮は必ず
+   symlink なので、rename(2) が『宛先は dir だ』と言う拍だけが実体の居座りで、
+   残りはすべて据え付けの断り(権限 / 容量 / 読み取り専用)。
+   ⚠ **errno の表を syscall 間で共有しない**: makedirs は『親の位置に実体 file』で
+   EEXIST を、symlink も同じ形で EEXIST を出すので、1 つの表を両方に当てると
+   在りもしない居座りを名乗り、運用者が居ない実体を手で片付けに行く(扉 2 の誤診断の
+   再生産)。ENOTEMPTY も rename からは出ない(仮が symlink なので dir → dir に
+   ならない)— 表に足さない。"
+  (if (and (= operation "rename") (= code errno.EISDIR))
+      FS-SYMLINK-OCCUPIED
+      FS-SYMLINK-REFUSED))
+
+(deff _container-verdict [syscall error]
   {:pre [(: syscall str) (: error OSError)]
    :post [(: % FsSymlinkOutcome)]}
-  "器(file system)が断った OSError を refused-by-container の結末へ写す。
-   理由は errno と detail が運ぶ — ENOSPC / EACCES / EROFS は運用者の取る手が
-   まったく違うので、理由の無い『断られた』は無益な文言にしかならない。"
+  "器(file system)が断った OSError を結末へ写す唯一の口。状態の割りは
+   refusal-of の 1 点で、ここは理由(errno と detail)を積むだけ — ENOSPC /
+   EACCES / EROFS は運用者の取る手がまったく違うので、理由の無い『断られた』は
+   無益な文言にしかならない。"
   (setv code (. error errno))
   (setv name (.get errno.errorcode code "ERRNO?"))
   (FsSymlinkOutcome
-    :state FS-SYMLINK-REFUSED
+    :state (refusal-of syscall code)
     :errno code
     :detail f"{syscall}: {name} {(. error strerror)}"))
 
@@ -338,13 +358,6 @@
         :state FS-SYMLINK-TARGET-CONFLICT
         :errno code
         :detail f"samefile: {name} {(. error strerror)}"))))
-
-;; rename(2) が「宛先に実体が据わっている」と言う errno。POSIX が rename に定めた
-;; 綴りなので Darwin 固有ではない(実測 = 設計 2.3: 空の dir も中身入りの dir も
-;; EISDIR)。これ以外の OSError は据え付けの断りであって、実体の居座りではない —
-;; 無型に受けて occupied と名乗ると、運用者が居もしない実体を手で探しに行く。
-(setv _RENAME-OCCUPIED-ERRNOS #{errno.EISDIR errno.ENOTEMPTY errno.EEXIST})
-
 
 (deff ensure-symlink-outcome [link target]
   {:pre [(: link str) (: target str)]
@@ -402,7 +415,7 @@
       (os.makedirs parent :exist-ok True)
       (except [error OSError]
         ;; 親の位置に実体 file が居る / 家が書けない / 読み取り専用 — 据え付けの断り
-        (return (_symlink-refused "makedirs" error)))))
+        (return (_container-verdict "makedirs" error)))))
   ;; 仮の名は**書き手ごとに一意**(D9 と同じ反例 — 固定名だと 2 席が互いの仮を踏む)。
   ;; suffix は残す(残骸の見分けの綴り)。
   (setv staged (os.path.join (or parent ".")
@@ -411,7 +424,7 @@
     (os.symlink target staged)
     (except [error OSError]
       ;; 仮すら張れない(権限 / 容量 / 読み取り専用)— 仮は生まれていないので掃除も要らない
-      (return (_symlink-refused "symlink" error))))
+      (return (_container-verdict "symlink" error))))
   (try
     (os.replace staged link)
     (except [error OSError]
@@ -419,16 +432,9 @@
       (try
         (os.unlink staged)
         (except [OSError] None))
-      (setv code (. error errno))
-      (setv name (.get errno.errorcode code "ERRNO?"))
-      (return
-        (if (in code _RENAME-OCCUPIED-ERRNOS)
-            ;; 実体の dir が居る(rename は dir を置き換えられない)
-            (FsSymlinkOutcome :state FS-SYMLINK-OCCUPIED
-                              :errno code
-                              :detail f"rename: {name} {(. error strerror)}")
-            ;; それ以外は据え付けの断り — 居もしない実体を名乗らない
-            (_symlink-refused "rename" error)))))
+      ;; 実体の居座り(EISDIR)と据え付けの断りの割りは refusal-of の 1 点 —
+      ;; ここで 2 つ目の表を作らない。
+      (return (_container-verdict "rename" error))))
   (FsSymlinkOutcome :state FS-SYMLINK-LINKED))
 
 (deff _ensure-view-symlink [link target]
@@ -646,7 +652,7 @@
               (try
                 (os.makedirs parent :exist-ok True)
                 (except [error OSError]
-                  (setv refused (_symlink-refused "makedirs" error)))))
+                  (setv refused (_container-verdict "makedirs" error)))))
             (if (is-not refused None)
                 refused
                 (try
@@ -658,7 +664,7 @@
                     ;; 据わっている物を読み直して名乗る — 置き換えは絶対にしない。
                     (_link-artifact-seated source-path target-path))
                   (except [error OSError]
-                    (_symlink-refused "symlink" error))))))))
+                    (_container-verdict "symlink" error))))))))
 
   (FsRemoveFile [path]
     ;; card acp:kanban-issue:ki-6b5c4b270ca0: 名指した 1 file を落とす。**dir は触らない**

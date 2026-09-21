@@ -55,7 +55,9 @@
   fs-dir-exists
   fs-link-artifact
   FS-SYMLINK-LINKED
+  FS-SYMLINK-REFUSED
   FS-SYMLINK-SAME-ENTITY
+  FS-SYMLINK-SOURCE-MISSING
   fs-make-dirs
   fs-read-text
   fs-write-text-atomic
@@ -368,10 +370,20 @@
       ;; outcome の str() が入るので、器が断った拍は理由(errno と syscall)が載る
       ;; (2026-09-22 — workspaces-root は同じ親の下の worktree が共有するので、
       ;; ここは同拍の敷設が現実に届く 2 つ目の座)。
+      ;; ⚠ 文言は**状態で分ける**: 「既存物は触らない」は据わっている実体が在る拍の
+      ;; 説明で、器が断った拍・敷設元が消えた拍に言うと**嘘になる**(実体は 1 つも
+      ;; 居ない)。扉 2 が作っていた「在りもしない実ファイルを手で片付けろ」と同じ
+      ;; 誤診断なので、断りは断りとして名乗る。**方針は変えない — 文言だけ**。
       (when (not-in (. outcome state) #{FS-SYMLINK-LINKED FS-SYMLINK-SAME-ENTITY})
         (raise (RuntimeError
                  (+ f"workspace seed: sibling link {sibling-name} -> {target} "
-                    f"failed ({outcome}) — 非破壊方針につき既存物は触らない"))))))
+                    (cond
+                      (= (. outcome state) FS-SYMLINK-REFUSED)
+                      f"failed ({outcome}) — 器が据え付けを断った(片付ける実体は居ない)"
+                      (= (. outcome state) FS-SYMLINK-SOURCE-MISSING)
+                      f"failed ({outcome}) — 敷設元が消えた(片付ける実体は居ない)"
+                      True
+                      f"failed ({outcome}) — 非破壊方針につき既存物は触らない")))))))
   None)
 
 
