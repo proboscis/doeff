@@ -58,7 +58,7 @@ from doeff_agents.sessionhost.headless_protocol import (
     stop_verdict,
     turn_verdict,
 )
-from doeff_agents.sessionhost.impls import headless_argv, claude_code
+from doeff_agents.sessionhost.impls import headless_argv, claude_code, fast_jev
 from doeff_agents.sessionhost.store import StoreActor, terminal_cause_from_dict
 from sessionhost_bin import resolve_sessionhost_bin
 
@@ -2400,15 +2400,16 @@ def test_fast_jev_compaction_enabled_reads_only_a_settings_that_makes_the_plugin
     要約(model 1 回)に落ちるので、その profile では圧縮の prompt を撃たない。"""
     on = json.dumps({"enabledPlugins": {"fast-jev-compaction@fast-jev-compaction": True},
                      "env": {"CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1"}})
+    assert fast_jev.fast_jev_compaction_enabled(on) is True
     assert headless_argv.fast_jev_compaction_enabled(on) is True
     no_env = json.dumps({"enabledPlugins": {"fast-jev-compaction@fast-jev-compaction": True}})
-    assert headless_argv.fast_jev_compaction_enabled(no_env) is False
+    assert fast_jev.fast_jev_compaction_enabled(no_env) is False
     off = json.dumps({"enabledPlugins": {"fast-jev-compaction@fast-jev-compaction": False},
                       "env": {"CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1"}})
-    assert headless_argv.fast_jev_compaction_enabled(off) is False
-    assert headless_argv.fast_jev_compaction_enabled(None) is False
-    assert headless_argv.fast_jev_compaction_enabled("not json") is False
-    assert headless_argv.fast_jev_compaction_enabled("[]") is False
+    assert fast_jev.fast_jev_compaction_enabled(off) is False
+    assert fast_jev.fast_jev_compaction_enabled(None) is False
+    assert fast_jev.fast_jev_compaction_enabled("not json") is False
+    assert fast_jev.fast_jev_compaction_enabled("[]") is False
 
 
 def _enable_fast_jev_plugin(root: Path) -> None:
@@ -2457,4 +2458,69 @@ def test_host_headless_send_runs_the_cold_compaction_prompt_before_the_resumed_t
     first = [line for line in log.read_text().splitlines() if "--session-id " in line]
     assert first and all("/compact" not in line for line in first), first
     for sid in ("h-cold-off", "h-cold-on"):
+        headless_host.ok("session.cleanup", {"session_id": sid})
+
+
+def test_fast_jev_home_settings_merges_the_plugin_declaration_and_keeps_the_rest() -> None:
+    """借りた家の settings.json に plugin の宣言を合流させる(純関数・冪等・他の欄は保つ・壊れた本文は {} から)。"""
+    merged = json.loads(fast_jev.fast_jev_home_settings(json.dumps({"permissions": {"defaultMode": "auto"}, "env": {"X": "1"}}), "/run/typesafe/key"))
+    assert merged["permissions"] == {"defaultMode": "auto"}
+    assert merged["env"] == {"X": "1", "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1"}
+    assert merged["enabledPlugins"] == {fast_jev.FAST_JEV_PLUGIN_ID: True}
+    assert merged["extraKnownMarketplaces"][fast_jev.FAST_JEV_MARKETPLACE_NAME]["source"]["url"] == fast_jev.FAST_JEV_MARKETPLACE_URL
+    assert merged["pluginConfigs"][fast_jev.FAST_JEV_PLUGIN_ID]["options"] == {"cacheTtlMinutes": 60, "apiKeyFile": "/run/typesafe/key"}
+    assert fast_jev.fast_jev_compaction_enabled(json.dumps(merged)) is True
+    # 冪等
+    assert json.loads(fast_jev.fast_jev_home_settings(json.dumps(merged), "/run/typesafe/key")) == merged
+    # 壊れた本文・不在
+    assert fast_jev.fast_jev_compaction_enabled(fast_jev.fast_jev_home_settings("not json", "/k")) is True
+    assert fast_jev.fast_jev_compaction_enabled(fast_jev.fast_jev_home_settings(None, "/k")) is True
+    # 据える命令は家を名乗り、marketplace の登録の失敗を無視して install に進む
+    cmd = fast_jev.fast_jev_install_command("/h/claude-home")
+    assert cmd.startswith("CLAUDE_CONFIG_DIR=/h/claude-home claude plugin marketplace add ")
+    assert "; CLAUDE_CONFIG_DIR=/h/claude-home claude plugin install fast-jev-compaction@fast-jev-compaction --scope user" in cmd
+
+
+def test_host_headless_launch_installs_the_compaction_plugin_into_the_borrowed_home_only_when_the_daemon_names_a_key_file(
+    headless_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """pod だけの腕(2026-09-22): daemon の env FAST_JEV_COMPACTION_API_KEY_FILE が実在する file を名乗る時だけ、
+    起動の前に `claude plugin marketplace add` + `install` を撃ち、家の settings.json に options(apiKeyFile /
+    cacheTtlMinutes)と env(function hooks)を合流させる。名乗りが無い(Mac)/ file が無い時は何もしない。
+    鍵の値は読まない(settings に載るのは path だけ)。"""
+    log = headless_host.root / "argv.log"
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_ARGV_LOG"] = str(log)  # 手番の process(session_env 経由)
+    monkeypatch.setenv("DOEFF_HEADLESS_STUB_ARGV_LOG", str(log))  # 据える命令(ProcRun = daemon の env)
+    home = headless_host.root / "claude-home"
+    # 名乗りなし: 何も起きない
+    monkeypatch.delenv(fast_jev.FAST_JEV_KEY_FILE_ENV, raising=False)
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-plug-off", "claude"))
+    _wait_turn_end(headless_host, "h-plug-off")
+    assert not (home / "settings.json").exists() or not fast_jev.fast_jev_compaction_enabled((home / "settings.json").read_text())
+    assert "plugin install" not in log.read_text()
+    # file が無い名乗り: 何も起きない(warning のみ)
+    monkeypatch.setenv(fast_jev.FAST_JEV_KEY_FILE_ENV, str(headless_host.root / "missing-key"))
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-plug-missing", "claude"))
+    _wait_turn_end(headless_host, "h-plug-missing")
+    assert "plugin install" not in log.read_text()
+    # 実在する鍵の file: install が走り、settings.json が効く形になる(値は載らない)
+    key = headless_host.root / "typesafe-key"
+    key.write_text("secret-value\n")
+    monkeypatch.setenv(fast_jev.FAST_JEV_KEY_FILE_ENV, str(key))
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-plug-on", "claude"))
+    _wait_turn_end(headless_host, "h-plug-on")
+    lines = log.read_text().splitlines()
+    installs = [i for i, line in enumerate(lines) if line.startswith("plugin install fast-jev-compaction@fast-jev-compaction")]
+    first_turn = [i for i, line in enumerate(lines) if "--session-id" in line and "h-plug-on" not in line]
+    assert len(installs) == 1, lines
+    assert any(line.startswith("plugin marketplace add") for line in lines), lines
+    text = (home / "settings.json").read_text()
+    assert fast_jev.fast_jev_compaction_enabled(text) is True
+    assert "secret-value" not in text
+    assert json.loads(text)["pluginConfigs"][fast_jev.FAST_JEV_PLUGIN_ID]["options"]["apiKeyFile"] == str(key)
+    # 2 度目の起動は据え直さない(冪等)
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-plug-again", "claude"))
+    _wait_turn_end(headless_host, "h-plug-again")
+    assert sum(1 for line in log.read_text().splitlines() if line.startswith("plugin install")) == 1
+    for sid in ("h-plug-off", "h-plug-missing", "h-plug-on", "h-plug-again"):
         headless_host.ok("session.cleanup", {"session_id": sid})

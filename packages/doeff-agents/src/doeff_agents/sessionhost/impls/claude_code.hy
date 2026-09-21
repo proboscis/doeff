@@ -43,6 +43,7 @@
   fs-remove-file
   log-line
   env-get
+  proc-run
   tmux-send-keys])
 (import doeff_agents.sessionhost.policy [
   AUTOCOMPACT-PARAM-KEY
@@ -68,6 +69,11 @@
   REPORT-RESULT-MCP-SERVER
   result-channel-spec])
 (import doeff_agents.sessionhost.impls.markers [classify-output])
+(import doeff_agents.sessionhost.impls.fast_jev [
+  FAST-JEV-KEY-FILE-ENV
+  fast-jev-compaction-enabled
+  fast-jev-home-settings
+  fast-jev-install-command])
 
 
 ;; ---------------------------------------------------------------------------
@@ -618,6 +624,9 @@
   (<- _ (claude-hydrate-memory-home params "session.launch"))
   (when (not (.get params "skip_trust_setup" False))
     (<- _ (preseed-claude-trust config-dir (get params "work_dir"))))
+  ;; 会話の圧縮 plugin(pod だけ・daemon の env が鍵の file を名乗る時)— 失敗は warning で、起動は止めない。
+  (<- plugin-warnings (install-fast-jev-plugin config-dir))
+  (.extend warnings plugin-warnings)
   (setv identity {"CLAUDE_CONFIG_DIR" config-dir
                   "warnings" warnings
                   "conversation" {"session_id" (str (uuid.uuid4))}})
@@ -631,6 +640,41 @@
 ;; ---------------------------------------------------------------------------
 ;; 会話 identity の事後発見(ADR-006 R1 — claude では fork の新 ID 用)
 ;; ---------------------------------------------------------------------------
+
+(defk install-fast-jev-plugin [config-dir]
+  {:pre [(: config-dir str) (> (len config-dir) 0)]
+   :post [(: % list)]}
+  "会話の圧縮 plugin を借りた家に据える(2026-09-22・pod だけ): daemon の env FAST_JEV_COMPACTION_API_KEY_FILE
+   が鍵の file の path を名乗り、その file が在る時だけ働く(Mac の agentd は名乗らないので何もしない —
+   Mac の profile は人が settings.json で入れてある)。家の settings.json が既に効く形なら何もしない(冪等)。
+   据える = `claude plugin marketplace add` + `install`(ProcRun・失敗は warning で返し起動は止めない)の後、
+   options(cacheTtlMinutes / apiKeyFile)と env(function hooks)を settings.json に合流(純関数 1 点)。
+   鍵の値は読まない — path を settings に書くだけで、読むのは plugin 自身。戻り値: warning の列。"
+  (<- key-file (env-get FAST-JEV-KEY-FILE-ENV))
+  (if (not (and (isinstance key-file str) (.strip key-file)))
+      []
+      (do
+        (<- present (fs-file-exists key-file))
+        (if (not present)
+            [(+ f"fast-jev-compaction: {FAST-JEV-KEY-FILE-ENV}={key-file} names a file that does not exist; "
+                "the plugin is not installed for this session")]
+            (do
+              (setv settings-path f"{config-dir}/{CLAUDE-SETTINGS-FILE}")
+              (<- before (fs-read-text settings-path))
+              (if (fast-jev-compaction-enabled before)
+                  []
+                  (do
+                    (setv warnings [])
+                    (<- res (proc-run (fast-jev-install-command config-dir) None))
+                    (when (!= res.exit-code 0)
+                      (.append warnings
+                               (+ f"fast-jev-compaction: plugin install exited {res.exit-code}: "
+                                  (.strip (cut (or res.stderr "") 0 300)))))
+                    ;; install が settings.json を書いた後に合流する(書き手は 1 つずつ・読み直す)
+                    (<- after (fs-read-text settings-path))
+                    (<- _ (fs-write-text-atomic settings-path (fast-jev-home-settings after key-file) ".agentd-tmp"))
+                    warnings)))))))
+
 
 (defk claude-discover-conversation [params]
   {:pre [(: params dict)]
