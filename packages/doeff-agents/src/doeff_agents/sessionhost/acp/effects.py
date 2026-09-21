@@ -1870,9 +1870,20 @@ MemoryReading: TypeAlias = "MemoryBook | MemoryMalformed"
 
 @dataclass(frozen=True)
 class MemoryUnchanged:
-    """行の sha256 が書こうとしている本文と同じ — 何も撃たない(冪等)。"""
+    """撃つ理由が無い — 何も撃たない(冪等)。立つ規則は 2 つで、**呼び手の 1 手が違う**:
+
+    ``proven_by_row`` True  = 規則 1(行の sha256 == 手元)。行が『置き場の写しは行の今の版そのもの』を
+                              証明している ⇒ 呼び手はこの拍で基準を据えてよい(据える値は証明つきで正しい)。
+    ``proven_by_row`` False = 規則 2a(手元 == 基準)。席が 1 字も触っていないだけで、行は先へ動いて
+                              いるかもしれない ⇒ **基準を動かさない**。動かすと次の手番が 2c / 2d へ落ち、
+                              席が触っていない古い写しで行を巻き戻す(この族が直した壊れ方そのもの)。
+
+    2 つを 1 語に畳むと呼び手が割れない。割るために呼び手側で sha を比べ直すと判定点が 2 つになり、
+    片方だけ直る日が来る ⇒ 判定は judgment.memory-write-verdict の 1 点のまま、**どちらの規則で
+    立ったかを欄で運ぶ**(依頼者の裁定 2026-09-21 (f) と c-H89Q の指摘)。"""
 
     name: str
+    proven_by_row: bool = False
 
 
 @dataclass(frozen=True)
@@ -1926,7 +1937,8 @@ class MemoryFold:
     出なかった冊の数」になり、艦隊の agent-memory-folded 221 行が 100% ``written == books`` を
     名乗っていた(冊が毎手番全部変わっているはずがない — この 100% がその指紋)。
 
-    ``baseline`` = 次の手番へ渡す基準の 1 項(撃てた冊だけが値を持つ・None = 基準を据え置く)。"""
+    ``baseline`` = 次の手番へ渡す基準の 1 項(None = 基準を据え置く)。値を持つのは 2 つの拍だけ —
+    **撃てた冊**(書いた版が次の基準)と、**行が手元の写しを証明した冊**(規則 1・裁定 (f))。"""
 
     name: str
     written: bool = False

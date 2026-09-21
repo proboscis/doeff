@@ -138,6 +138,10 @@
     (setv self.state (initial-state))
     (setv self.turns 0)
     (setv self.warm False)
+    ;; 旧い版の器(この族より前 — 記憶の綴りを 1 つも知らない)の体。charter は届いているのに置き場へ
+    ;; 1 file も書かないので、置き場は前の手番の写しのまま凍る。基準を持てないまま走り続ける席
+    ;; (裁定 (f) の窓)と、席が触っていない写しが行を巻き戻す実弾の形は、この形でしか作れない。
+    (setv self.stale-seat False)
     ;; 席がこの手番で置き場へ起こす編集(水入れの**後**に落ちる — 本物の順序)。
     (setv self.pending []))
 
@@ -164,6 +168,8 @@
     "器(impls/claude_code)が charter の memory_files を置き場へ書いた体。この世界の器は fake なので
      『全部書けた席』を写す — 名の門と基準の絞りは**本物の器**の検(sessionhost_charter_reaches_the_seat)側。"
     (when (not self.sessions.launches)
+      (return None))
+    (when self.stale-seat
       (return None))
     (for [book (.hydrated self)]
       (setv (get self.local.files f"{HOME}/{(get book "name")}") (get book "text")))
@@ -319,12 +325,17 @@
   (for [with-base [None (MemoryBaseline :name "a" :record-seq 7 :sha256 base :version 2)]]
     (<- one (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased)
         (memory-write-verdict (memory-row "a" home 7 2) home with-base))
-    (assert (isinstance one MemoryUnchanged) #("規則 1" one)))
+    (assert (isinstance one MemoryUnchanged) #("規則 1" one))
+    ;; 規則 1 は行が『手元の写しは行の今の版』を**証明**している拍 — 呼び手はここで基準を据える。
+    (assert one.proven-by-row #("規則 1 が証明を名乗っていない — 呼び手が基準を据えられない" one)))
   ;; 規則 2a: 手元 == 基準 = **席は 1 字も触っていない**。行が先へ動いていても巻き戻さない(実弾の形)。
   (<- two-a (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased)
       (memory-write-verdict (memory-row "a" moved 9 3) home
                             (MemoryBaseline :name "a" :record-seq 7 :sha256 home :version 2)))
   (assert (isinstance two-a MemoryUnchanged) #("規則 2a — 触っていない写しで行を巻き戻した" two-a))
+  ;; 2a は『席が触っていない』だけ。行は先へ動いているので**証明ではない** — ここで基準を据えると
+  ;; 次の手番が 2c/2d へ落ち、古い写しで行を巻き戻す(裁定 (f) を 1 語に畳むと起きる誤実装)。
+  (assert (not two-a.proven-by-row) #("規則 2a が証明を名乗った — 呼び手が基準を据えてしまう" two-a))
   ;; 規則 2b: 基準は在るが行が消えた → append(409 が『stream だけ残っている』の合図になる)。
   (<- two-b (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased)
       (memory-write-verdict None home (MemoryBaseline :name "a" :record-seq 7 :sha256 base :version 2)))
@@ -711,3 +722,79 @@
   (setv after (get (.memory-rows world) 0))
   (assert (= after.spec before.spec) #("置き場から消えた冊で行が動いた" after.spec before.spec))
   (assert (= (get after.status "state") "current") after.status))
+
+
+;; ---------------------------------------------------------------------------
+;; 裁定 (f)(依頼者 2026-09-21): 基準を持てない席の窓を、行が証明した拍で閉じる。
+;; ---------------------------------------------------------------------------
+
+(deftest test-a-home-an-old-seat-left-without-a-baseline-is-founded-by-the-row-that-proves-it
+  ;; 3 点比較だけを入れると、**旧い版の器に起こされて走り続けている席**は基準を持てないまま規則 3b に
+  ;; 落ち続け、席の**本物の編集**がその席の寿命ぶん黙って捨てられる(今日より悪い退行)。裁定 (f) =
+  ;; 規則 1 の拍 — 行の sha == 手元 = 行が『置き場の写しは行の今の版そのもの』を**証明**している拍 —
+  ;; で基準を据える。据える値は証明つきで正しいので、次の手番の編集が書ける。
+  (setv world (MemoryWorld))
+  (.put-file world "a-fact.md" (book-text "a-fact" "要旨" "1 手番目の本文。"))
+  (.turn world)
+  (setv seq (get (. (get (.memory-rows world) 0) spec) MEMORY-SPEC-RECORD-SEQ-KEY))
+  (setv appends (len (.memory-appends world)))
+  ;; ここから器は旧い版(置き場へ 1 file も書かない)+ 置き場の基準を落とす = (f) の窓。
+  (setv world.stale-seat True)
+  (.drop-file world MEMORY-BASE-FILE)
+  ;; 手番 2: 席は 1 字も編集していない ⇒ 手元 == 行 = 規則 1。撃たずに**基準だけ**据わる。
+  (.turn world)
+  (assert (= (len (.memory-appends world)) appends) "撃つ理由の無い拍で追記を撃っている")
+  (assert (= world.record.supersedes []) "撃つ理由の無い拍で行を上書きしている")
+  (setv folded (get (.metric-lines world "agent-memory-folded") -1))
+  (assert (= (get folded "written") 0) folded)
+  (assert (= (get folded "unchanged") 1) folded)
+  (assert (= (get folded "unbased") 0) #("基準を据えずに 3b へ落ちた — 窓が開いたまま" folded))
+  (assert (= (get folded "founded") 1) #("規則 1 の拍で基準を据えていない" folded))
+  (setv based (.baseline-of-home world))
+  (assert (= (sorted (.keys based)) ["a-fact"]) based)
+  (assert (= (. (get based "a-fact") record-seq) seq) #("据えた基準が行の今の版を指していない" based))
+  ;; 手番 3: 同じ(旧い版の器の)席が**本当に**編集する → 窓は閉じていて書ける。
+  (.put-file world "a-fact.md" (book-text "a-fact" "要旨" "温かい席が 3 手番目に書いた本文。"))
+  (.turn world)
+  (setv folded (get (.metric-lines world "agent-memory-folded") -1))
+  (assert (= (get folded "written") 1) #("基準が据わったのに席の編集が捨てられた" folded))
+  (assert (= (get folded "unbased") 0) folded)
+  (assert (= (get folded "conflicted") 0) #("動いていない行を衝突と名乗った" folded))
+  (setv events (.events-of world.record CID (run (memory-stream-id-of "a-fact"))))
+  (assert (in "温かい席が 3 手番目に書いた本文" (get (get events 0) "text")) events))
+
+
+(deftest test-the-baseline-does-not-move-on-the-beat-the-seat-never-touched-the-book
+  ;; 裁定 (f) を「Unchanged なら基準を進める」と 1 語で書くと**規則 2a にも効く**(判定は規則 1 と 2a の
+  ;; 両方が Unchanged で返る)。2a の姿は『手元 == 基準・行は先へ動いている』なので、そこで基準を行の
+  ;; 今の版へ進めると、次の手番が 2c/2d へ落ちて席が触っていない古い写しで行を巻き戻す = この族が
+  ;; 直した実弾の形(mail-hold-has-two-exits v2 6,503 → v3 4,620 byte)がそのまま戻る。
+  ;; ⚠ 既存の test-a-copy-the-seat-never-touched-does-not-roll-the-row-back は 1 手番ぶんの unchanged しか
+  ;;    見ないので、その誤実装を**緑で通す** — だから基準の byte と次の手番をここで留める。
+  (setv world (MemoryWorld))
+  (.put-file world "mail-hold-has-two-exits.md"
+             (book-text "mail-hold-has-two-exits" "郵便の保留には出口が 2 つ" "1 手番目に席が書いた薄い本文。"))
+  (.turn world)
+  ;; 器を旧い版にして置き場を凍らせる(手番の頭に写しが入れ替わると、席が『触っていない』形が作れない)。
+  (setv world.stale-seat True)
+  (setv before (get world.local.files f"{HOME}/{MEMORY-BASE-FILE}"))
+  (setv before-seq (. (get (run (memory-baselines-of-text before)) "mail-hold-has-two-exits") record-seq))
+  ;; 手番 2: 席は 1 字も触らず、別の機体が同じ冊へ濃い版を書く(= 規則 2a)。
+  (.put-elsewhere world "mail-hold-has-two-exits"
+                  (book-text "mail-hold-has-two-exits" "郵便の保留には出口が 2 つ"
+                             "別の機体が書いた濃い本文(出口は解放と期限切れの 2 つ)。"))
+  (.turn world)
+  (setv folded (get (.metric-lines world "agent-memory-folded") -1))
+  (assert (= (get folded "unchanged") 1) folded)
+  (assert (= (get folded "founded") 0) #("2a の拍で基準を据えた — 次の手番が古い写しで行を巻き戻す" folded))
+  ;; 行は先へ動いている(この検が意味を持つ前提 — 動いていなければ 2a を撃てていない)。
+  (setv row-seq (get (. (get (.memory-rows world) 0) spec) MEMORY-SPEC-RECORD-SEQ-KEY))
+  (assert (> row-seq before-seq) #("行が動いていない = 規則 2a の形になっていない" row-seq before-seq))
+  ;; 基準は 1 byte も動かない。
+  (assert (= (get world.local.files f"{HOME}/{MEMORY-BASE-FILE}") before)
+          #("2a の拍で基準が行の今の版へ進んだ" (get world.local.files f"{HOME}/{MEMORY-BASE-FILE}") before))
+  ;; 手番 3: 席はまだ 1 字も触っていない。基準が進んでいたらここで 2c に落ちて薄い本文が行を巻き戻す。
+  (.turn world)
+  (assert (= world.record.supersedes []) "触っていない古い写しで行を巻き戻している")
+  (setv events (.events-of world.record CID (run (memory-stream-id-of "mail-hold-has-two-exits"))))
+  (assert (in "別の機体が書いた濃い本文" (get (get events 0) "text")) #("濃い版が薄い版に巻き戻された" events)))

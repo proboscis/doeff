@@ -2414,7 +2414,10 @@
      * 席が編集した → 行の recordSeq へ supersede(行が手番の間に動いていたら conflicted を名乗る)
      * 行が無い → append。**409 は事故ではなく合図** — 『行が消えて stream が残っている』形なので
        stream を読み直して今の版の recordSeq へ supersede に落ちる(第 2 の語彙を足さない)。
-     * 基準が無いのに行が在る → **撃たない**(MemoryUnbased・呼び手が名乗る)。"
+     * 基準が無いのに行が在る → **撃たない**(MemoryUnbased・呼び手が名乗る)。
+
+   撃たない拍でも基準は 1 つだけ動く: 規則 1(行の sha == 手元)は行が手元の写しを**証明**しているので、
+   その拍で基準を据える(裁定 (f))。据えるだけで 1 bit も撃たないので written には入らない。"
   (<- body dict (memory-body-of book.text now-ms))
   (<- pair tuple (memory-material-of body))
   (setv material (get pair 0))
@@ -2422,7 +2425,18 @@
   (<- verdict (| MemoryUnchanged MemoryAppend MemorySupersede MemoryUnbased)
       (memory-write-verdict row sha256 baseline))
   (when (isinstance verdict MemoryUnchanged)
-    (return (MemoryFold :name book.name :unchanged True)))
+    ;; 規則 1 の拍**ちょうど**で基準を据える(依頼者の裁定 2026-09-21 (f)): 行が『置き場の写しは行の
+    ;; 今の版そのもの』を証明しているので、据える基準は証明つきで正しい。据えないと、基準を持たない
+    ;; 置き場(旧い agentd に起こされて走り続けている温かい席)は規則 3b に落ち続け、席の**本物の編集**が
+    ;; その席の寿命ぶん黙って捨てられる — 3 点比較を入れたことで今日より悪くなる形が残る。
+    ;; ⚠ 規則 2a では据えない(手元 == 基準・行は先へ動いているかもしれない)。据えると次の手番が
+    ;;    2c / 2d へ落ち、席が触っていない古い写しで行を巻き戻す = この族が直した壊れ方が戻る。
+    ;;    割るのは verdict の欄 1 つで、ここで sha を比べ直さない(第 2 の判定点を置かない)。
+    (setv founded None)
+    (when verdict.proven-by-row
+      (<- from-row (| MemoryBaseline None) (memory-baseline-of-row row))
+      (setv founded from-row))
+    (return (MemoryFold :name book.name :unchanged True :baseline founded)))
   (when (isinstance verdict MemoryUnbased)
     (return (MemoryFold :name book.name :unbased True)))
   (setv base-seq (if (is baseline None) None baseline.record-seq))
@@ -2514,6 +2528,12 @@
    ⚠ **水入れと対で 1 便**(依頼書の禁止 1): 畳み戻しだけが在ると、割れた 2 機体が同じ名前へ交互に
    書いて手番の頭に載る本が痩せる。
 
+   ⚠ **非目標: 置き場からの消失は退役ではない**(依頼書 §8・c-3TFD の指摘)。回すのは置き場に**在る冊
+   ちょうど**で、行にしか無い冊は触らない。3 点比較は『基準に在る ∧ 置き場に無い』を削除と読める形に
+   見えるが、その拍の正体は「器が書けなかった」「別の機体の置き場を見ている」「席が file を消した」の
+   どれかが判らない拍で、消す動詞をここに生やすと 1 度の取りこぼしで行が永久に消える。退役は同じ鍵で
+   2 拍(spec を書き直し → status を current)で、その判断は operator の側。
+
    書けなかった冊は condition AgentMemoryUnwritable を 1 つ立てるだけで**手番は落とさない**
    (記憶が書けないことは手番の失敗ではない)。置き場を宣言していない機体(memory-root が空)と
    綴りの組めない会話 id では 1 つも撃たない。"
@@ -2538,6 +2558,7 @@
   (setv unchanged 0)
   (setv unbased 0)
   (setv conflicted 0)
+  (setv founded 0)
   (for [book books]
     (setv row (.get by-name book.name))
     (<- retired bool (memory-row-retired? row))
@@ -2550,6 +2571,11 @@
     (<- fold MemoryFold (fold-one-memory settings job book now-ms row (.get baselines book.name)))
     (when fold.unchanged
       (setv unchanged (+ unchanged 1)))
+    (when (and fold.unchanged (is-not fold.baseline None))
+      ;; 裁定 (f): 規則 1 の拍で基準を据えた冊。**撃ってはいない**ので written には入らない —
+      ;; 別の欄で名乗るのは、本番で unbased が 0 へ落ちた時に「(f) が閉じた」のか「席が起こし直された」
+      ;; のかを後から割るため(割れないと、次に unbased > 0 を見た席が退行を見落とす)。
+      (setv founded (+ founded 1)))
     (when fold.unbased
       (setv unbased (+ unbased 1))
       ;; 基準が無い冊は撃たずに名乗る(黙って supersede に倒すと、席が触っていない古い写しで行が巻き戻る)。
@@ -2568,12 +2594,13 @@
       (setv noted carried))
     (<- next-baselines dict (memory-baselines-with advanced fold))
     (setv advanced next-baselines))
-  ;; 撃てた冊の基準だけを進める(1 冊も撃っていない手番は置き場に 1 byte も書かない)。
+  ;; 基準が動いた時だけ置き場へ書く。動くのは **撃てた冊**と、**行が手元を証明した冊**(規則 1・裁定 (f))
+  ;; の 2 つだけ ⇒ どちらも起きていない手番は置き場に 1 byte も書かない。
   (when (!= advanced baselines)
     (<- (write-memory-baselines home advanced)))
   (<- (MetricLine :fields {"metric" "agent-memory-folded" "agentJobId" job.job-id "conversationId" job.subject
                            "books" (len books) "written" written "unchanged" unchanged
-                           "unbased" unbased "conflicted" conflicted
+                           "unbased" unbased "conflicted" conflicted "founded" founded
                            "unreadable" (- (len readings) (len books))}))
   noted)
 
