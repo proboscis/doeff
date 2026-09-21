@@ -22,8 +22,12 @@ IDENTIFY = b"CLAUDE_CONFIG_DIR"
 # ⚠ 追補 2026-09-21T07:01Z(依頼者 c-3JYBNJMC2RZTM1S8V43939MP42 が入れた・出典 = 郵便
 #   lt-C22T2AV9VGX520WYFCEB0Q8X8B): 下の逐語は **2.1.263 の縮めた識別子**で pin してある。
 #   6 本すべてが版で変わる名(Ke/Se・ae・wgr/CN・Ah/Se/HS・N・Sgr)に依り、局所変数の名も動く
-#   (2.1.278 では t/v/q/d → n/O/st/g)。⇒ **写す時は識別子の位置を形の pin(\w+)に置き換える**こと。
-#   綴りのまま会社 Mac(2.1.278)へ持って行くと **偽の赤**になる。この pod(2.1.263)では 2026-09-21T07:01Z に green。
+#   (2.1.278 の実物では t/v/q/d → n/O/ve/g)。綴りのまま会社 Mac(2.1.278)へ持って行くと
+#   **偽の赤**になる。この pod(2.1.263)では 2026-09-21T07:01Z に green。
+#   07:15Z 発注者が書き直し — 写す時の 3 規則(束縛の名は `[\w$]+`(`\w+` は `$` を落とす)・
+#   literal と `.` の後ろの名だけ綴りで固定・関数の頭は含めず契約を担う断片だけ(6 本目は
+#   2.1.278 で引数が 3 つになり頭ごと pin すると偽の赤))と 4 つの版の実測は
+#   implementation-request.md の同じ追補と evidence/shape_pins_across_versions.{py,log}。
 
 # この設計が依っている契約の逐語(design.md §2 / evidence/body_contract.log)
 EXPECTED: tuple[tuple[str, bytes], ...] = (
