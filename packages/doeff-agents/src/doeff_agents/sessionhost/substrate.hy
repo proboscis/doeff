@@ -52,6 +52,7 @@
   FS-ENSURE-SYMLINK-OCCUPIED
   FS-ENSURE-SYMLINK-UNCHANGED
   FsListDir
+  FsRemoveFile
   FsDirExists
   FsFileExists
   FsFileMtime
@@ -555,6 +556,19 @@
               (os.symlink source-path target-path)
               (setv outcome "linked"))))
     (resume outcome))
+
+  (FsRemoveFile [path]
+    ;; card acp:kanban-issue:ki-6b5c4b270ca0: 名指した 1 file を落とす。**dir は触らない**
+    ;; (再帰も glob も無い)。不在は成功 = 端の状態を観測する形で、既に無いのは望みの状態。
+    ;; ⚠ raise しない: 置き場の掃除は席を起こすための前置きなので、ここで送出すると記憶を使う
+    ;; 会話だけが起動できなくなる。dir を渡された拍(IsADirectoryError)・権限も同じ扱いで、
+    ;; 消せなかったことは戻りの False として呼び手の名乗りに出る。
+    (setv removed False)
+    (try
+      (os.remove path)
+      (setv removed True)
+      (except [OSError]))
+    (resume removed))
 
   (FsListDir [path]
     ;; 発見用の非破壊読み(ADR-006): 不在・非 dir・権限は空 list —

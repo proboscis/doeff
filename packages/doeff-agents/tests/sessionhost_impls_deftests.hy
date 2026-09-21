@@ -33,6 +33,7 @@
   TmuxSendKeys
   FsCanonicalPath
   FsReadText
+  FsRemoveFile
   FsWriteTextAtomic
   FsMakeDirs
   EnvGet
@@ -58,6 +59,7 @@
     (setv self.fs {})              ;; path -> text
     (setv self.dirs [])            ;; FsMakeDirs の記録
     (setv self.atomic-writes [])   ;; [(path, tmp-suffix)]
+    (setv self.removed [])         ;; FsRemoveFile の記録(card ki-6b5c4b270ca0)
     (setv self.env {})             ;; EnvGet 台本(process env fallback)
     (setv self.canonical {})       ;; path -> canonical path 台本
     (setv self.tmux-calls [])      ;; あらゆる tmux effect の記録
@@ -74,6 +76,10 @@
     (.append world.atomic-writes #(path tmp-suffix))
     (setv (get world.fs path) text)
     (resume None))
+  (FsRemoveFile [path]
+    ;; card acp:kanban-issue:ki-6b5c4b270ca0: 名指した 1 file を落とす(不在は成功)。
+    (.append world.removed path)
+    (resume (is-not (.pop world.fs path None) None)))
   (FsMakeDirs [path]
     (.append world.dirs path)
     (resume None))

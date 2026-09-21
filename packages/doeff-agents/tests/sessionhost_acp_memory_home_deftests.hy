@@ -31,6 +31,7 @@
   NEXT-ARM-REHYDRATE
   NEXT-ARM-RESUME
   NEXT-ARM-SEND
+  MemoryTurnFiles
   NextArm])
 (import doeff_agents.sessionhost.host [
   DEFAULT-PROMPT-JUDGE-CMD
@@ -41,6 +42,7 @@
 (import doeff_agents.sessionhost.store [StoreActor])
 (import doeff_agents.sessionhost.acp.judgment [
   charter-with-memory-home
+  charter-with-memory-sweep
   incarnation-charter-of
   memory-home-of
   resume-params-of
@@ -123,7 +125,7 @@
 (defn memory-home-carried-by-send [#^ str arm]
   "送りの腕(send)が置き場を運ぶ口 = judgment.turn-charter-of(温かい session への SessionSend の
    turn_charter — 器が降りた process を `--resume` で起こし直す拍に読む荷)。"
-  (.get (run (turn-charter-of MEMORY-ROOT CONVERSATION #())) "memory_dir"))
+  (.get (run (turn-charter-of MEMORY-ROOT CONVERSATION (MemoryTurnFiles))) "memory_dir"))
 
 
 ;; 起こし方 → その腕が置き場を運ぶ口。**NextArm に語を足した人は、ここに口を名乗るまで緑にならない**
@@ -194,6 +196,44 @@
   (assert (not-in "memory_dir" bare) bare))
 
 
+(deftest test-the-sweep-roster-reaches-the-seat-on-every-roster
+  ;; 受入 6(card acp:kanban-issue:ki-6b5c4b270ca0): 掃除の荷(退役した行と同じ名前の file)も、置き場と
+  ;; 同じ**全部の名簿**を渡る。渡らない名簿が 1 枚在ると、その腕の手番だけ退役した冊の file が置き場に
+  ;; 残り、次の畳み戻しがそれを読んで退役を取り消す — 直している欠陥がその腕だけで再演する。
+  ;; 形は上の memory_dir の門ちょうど(名簿 = judgment.resume-params-of と host.build-launch-program-params)。
+  (setv swept #("gone.md" "stale.md"))
+  ;; 起こす腕: charter に載る(3 つの起こす腕は同じ charter をそのまま運ぶ)。
+  (setv charter (run (charter-with-memory-sweep
+                       (run (charter-with-memory-home (charter-of CONVERSATION "/w")
+                                                      MEMORY-ROOT CONVERSATION))
+                       swept)))
+  (assert (= (get charter "memory_retired_files") (list swept)) charter)
+  ;; 蘇生の名簿(judgment.resume-params-of)— 2026-09-15 の添付が落ちた 1 枚目。
+  (setv params (run (resume-params-of "s-old" charter)))
+  (assert (in "memory_retired_files" params)
+          #("resume の params が掃除の荷を運ばない(名簿の漏れ)" (sorted (.keys params))))
+  (assert (= (get params "memory_retired_files") (list swept)) params)
+  ;; wire の受理形(host.build-launch-program-params)— agentd と host が同じ process の検では
+  ;; 緑のまま落ちる 1 枚。
+  (setv wire {"session_id" "s1" "session_name" "doeff-s1" "agent_type" "claude" "work_dir" "/w"
+              "memory_dir" f"{MEMORY-ROOT}/{CONVERSATION}"
+              "memory_retired_files" (list swept)})
+  (setv program (build-launch-program-params wire (host-config)))
+  (assert (= (get program "memory_retired_files") (list swept)) program)
+  ;; 送りの腕(4 つ目)も同じ荷を運ぶ — 荷は 1 つの型(MemoryTurnFiles)で運ばれる。
+  (setv sent (run (turn-charter-of MEMORY-ROOT CONVERSATION (MemoryTurnFiles :swept swept))))
+  (assert (= (get sent "memory_retired_files") (list swept)) sent)
+  ;; 0 件の拍は**欄を立てない**(退役した行の無い会話の charter / wire は 1 byte も変わらない)。
+  (setv plain (run (charter-with-memory-sweep {"session_id" "s-new"} #())))
+  (assert (not-in "memory_retired_files" plain) plain)
+  (setv bare (build-launch-program-params
+               {"session_id" "s1" "session_name" "doeff-s1" "agent_type" "claude" "work_dir" "/w"}
+               (host-config)))
+  (assert (not-in "memory_retired_files" bare) bare)
+  (setv quiet (run (turn-charter-of MEMORY-ROOT CONVERSATION (MemoryTurnFiles))))
+  (assert (not-in "memory_retired_files" quiet) quiet))
+
+
 (deftest test-fork-refuses-to-inherit-the-parent-conversations-memory-home
   ;; fork は**新しい会話**で、その id は CLI が鋳造するまで判らない。親の置き場を通せば
   ;; 新しい会話に親の記憶が黙って付く — 直している誤帰属そのもの。だから resume 専用として
@@ -219,13 +259,24 @@
       (setv books-answer (json.loads (dispatch-line books-line config actor)))
       (assert (= (get books-answer "ok") False) books-answer)
       (assert (in "`memory_files` is " (get books-answer "error")) books-answer)
+      ;; card ki-6b5c4b270ca0: 掃除の荷(memory_retired_files)も同じ理由で resume 専用 — しかもこちらは
+      ;; **消す**荷なので、親の退役した名を通すと新しい会話の置き場の file が消える。断りの名簿は
+      ;; policy.TURN-CARRIED-KEYS の 1 点から採るので、族に欄を足す便は自動でこの門に入る。
+      (setv swept-line (json.dumps {"id" 4 "method" "session.fork"
+                                    "params" {"session_id" "s-parent"
+                                              "memory_retired_files" ["a.md"]}}))
+      (setv swept-answer (json.loads (dispatch-line swept-line config actor)))
+      (assert (= (get swept-answer "ok") False) swept-answer)
+      (assert (in "`memory_retired_files` is " (get swept-answer "error")) swept-answer)
       ;; resume は同じ会話の続きなので、同じ欄が断られない。
       (setv resume-line (json.dumps {"id" 2 "method" "session.resume"
                                      "params" {"session_id" "s-parent"
                                                "memory_dir" f"{MEMORY-ROOT}/{CONVERSATION}"
-                                               "memory_files" [{"name" "a.md" "text" "A"}]}}))
+                                               "memory_files" [{"name" "a.md" "text" "A"}]
+                                               "memory_retired_files" ["gone.md"]}}))
       (setv resumed (json.loads (dispatch-line resume-line config actor)))
       (assert (not-in "memory_dir" (str (.get resumed "error" ""))) resumed)
       (assert (not-in "memory_files" (str (.get resumed "error" ""))) resumed)
+      (assert (not-in "memory_retired_files" (str (.get resumed "error" ""))) resumed)
       (finally (.close actor)))
     (finally (shutil.rmtree d :ignore-errors True))))

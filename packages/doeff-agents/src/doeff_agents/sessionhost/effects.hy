@@ -689,6 +689,14 @@
   "ディレクトリの再帰作成(exist-ok。oracle: fs::create_dir_all)。戻り値: None。"
   #^ str path)
 
+(defclass [(dataclass :frozen True :kw-only True)] FsRemoveFile [EffectBase]
+  "1 file の取り除き(card acp:kanban-issue:ki-6b5c4b270ca0 — 自動記憶の置き場から、退役した行と
+   同じ名前の file を落とす)。**dir は触らない**(再帰も glob も無い — 消せるのは呼び手が名指した
+   1 つの path ちょうど)。不在は成功(端の状態を観測する形 — 既に無いのは望みの状態)。
+   raise しない: 置き場の掃除は席を起こすための前置きで、そこで落ちると記憶を使う会話だけが
+   起動できなくなる。戻り値: bool(現に消したか — 呼び手が数だけ名乗る)。"
+  #^ str path)
+
 (defclass [(dataclass :frozen True :kw-only True)] FsListDir [EffectBase]
   "ディレクトリ直下のエントリ名の列挙(ADR-006 の会話 identity 発見用の
    読み取り面)。不在・非ディレクトリは空 list — raise しない(discovery は
@@ -1086,6 +1094,12 @@
    :post [(: % FsListDir)]}
   "FsListDir を構築する(発見用の非破壊読み — 不在は空 list)。"
   (FsListDir :path path))
+
+(deff fs-remove-file [path]
+  {:pre [(: path str) (> (len path) 0)]
+   :post [(: % FsRemoveFile)]}
+  "FsRemoveFile を構築する(名指した 1 file の取り除き — 不在は成功・dir は触らない)。"
+  (FsRemoveFile :path path))
 
 (deff fs-compose-home-view [auth-file profile-dir view-root]
   {:pre [(: auth-file str) (> (len auth-file) 0)
