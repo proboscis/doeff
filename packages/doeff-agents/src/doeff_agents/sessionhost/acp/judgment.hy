@@ -3079,18 +3079,46 @@
       charter))
 
 
-(defk mail-heading-of [message-id spec]
-  {:pre [(: message-id str) (: spec dict)]
+(defk mail-served-class-of [status]
+  {:pre [(: status (| dict None))]
+   :post [(: % (| str None))]}
+  "郵便の行の status → **扱う class**(`status.routing.servedClass` の逐語・無ければ None)。
+
+   card acp:kanban-issue:ki-fa719b70d37c(設計 agora-redesign docs/design/kanban-class-route/README.md §D2c-4):
+   配送表は 1 つの class を**別の class として配る**行(投函の身元の名簿 `postedBy` + 扱う class の宣言 `as`)を
+   持てる。読み替えが起きた拍だけ ACP の純関数 `Acp.App.Messaging.Decide.servedClassOf` が 1 回この欄へ書く。
+   ⚠ **素通しちょうどで、第 2 の導出を置かない** — 方策の受付の表をここで読み直して同じ答えを組み直すと、
+     表が動いた日に 2 つの答えが割れる。⚠ 欄が無い = 読み替えが起きていない(「無い」を名乗りで埋めない)。"
+  (when (not (isinstance status dict))
+    (return None))
+  (setv routing (.get status "routing"))
+  (when (not (isinstance routing dict))
+    (return None))
+  (setv value (.get routing "servedClass"))
+  (if (and (isinstance value str) (.strip value)) value None))
+
+
+(defk mail-heading-of [message-id spec [status None]]
+  {:pre [(: message-id str) (: spec dict) (: status (| dict None))]
    :post [(: % str)]}
   "郵便の見出し 1 行(段 10 lane 10r 追補・agora-redesign #99・依頼者の裁定 2026-09-15 案 A): 郵便の身元は配達の封筒の一部で、
    CLI へ渡す係 = agentd が本文の前に付ける — 手番の agent は郵便を id で名指せる(受付の `ai forward <id> <担い手>` は
    id が要る)。綴りはこの 1 点: `[郵便 <id>・kind=<kind>・class=<class か 無し>・from=<会話 id か operator>・
-   parent=<id か 無し>・at=<JST>]`。欠けた欄は「無し」(発明しない)。at は契約の時計(epoch ms)を JST で。"
+   parent=<id か 無し>・at=<JST>]`。欠けた欄は「無し」(発明しない)。at は契約の時計(epoch ms)を JST で。
+
+   card acp:kanban-issue:ki-fa719b70d37c(設計 §D2c-4): `class=` が名乗るのは**扱う class** —— 配送表が読み替えて
+   配った拍は `class=kanban(名乗り dev)` の形で両方を出す。担い手は「自分がどの class の担当として開かれたか」を
+   この 1 行で読むので、名乗りだけを出すと**前置きの段落と食い違う**(kanban の担い手が dev の手順を読む)。
+   読み替えの無い拍は今日と 1 文字も変わらない。読みは行の `status.routing.servedClass` ちょうど(上の 1 点)。"
   (setv none "無し")
   (setv words {})
   (for [key ["kind" "class" "from" "parent"]]
     (setv value (.get spec key))
     (setv (get words key) (if (and (isinstance value str) (.strip value)) value none)))
+  ;; 扱う class が名乗りと違う拍だけ、名乗りを括弧に落として扱う class を主にする。
+  (<- served (| str None) (mail-served-class-of status))
+  (when (and (is-not served None) (!= served (get words "class")))
+    (setv (get words "class") (+ served "(名乗り " (get words "class") ")")))
   (setv at (.get spec "at"))
   (setv at-text (if (and (isinstance at int) (not (isinstance at bool)))
                     (.strftime (datetime.fromtimestamp (/ at 1000) :tz (timezone (timedelta :hours 9) "JST")) "%Y-%m-%d %H:%M:%S JST")
@@ -3135,12 +3163,12 @@
                      (if (< index (len ids)) #((get ids index)) #()))))))
 
 
-(defk mail-turn-text-of [message-id spec body]
-  {:pre [(: message-id str) (: spec dict) (: body str)]
+(defk mail-turn-text-of [message-id spec body [status None]]
+  {:pre [(: message-id str) (: spec dict) (: body str) (: status (| dict None))]
    :post [(: % str)]}
   "手番へ渡す郵便の文 = 見出し(mail-heading-of)1 行 + 本文。1 手番目に畳む腕(first-turn-prompt-of)・温かい session への
    send・割り込みの注入の 3 つの路が同じ文を運ぶ(郵便の手番の文を組む点はここだけ — message-bodies-of と割り込みの腕が呼ぶ)。"
-  (<- heading str (mail-heading-of message-id spec))
+  (<- heading str (mail-heading-of message-id spec status))
   (+ heading "\n" body))
 
 
@@ -3180,7 +3208,8 @@
     (if (and (is-not row None) (isinstance body str))
         (do
           ;; 段 10 lane 10r 追補: 本文の前に郵便の見出し(1 手番目の畳みと温かい send は同じ bodies を読む)。
-          (<- text str (mail-turn-text-of input-id row.spec body))
+          ;; card ki-fa719b70d37c: 見出しの class は**扱う class**(行の status.routing.servedClass)。
+          (<- text str (mail-turn-text-of input-id row.spec body row.status))
           (.append bodies text)
           ;; 読めなかった添付は carried に載っていない = 空(呼び手が条件 AttachmentIgnored に写す)。
           (.append attachments (.get carried input-id #())))

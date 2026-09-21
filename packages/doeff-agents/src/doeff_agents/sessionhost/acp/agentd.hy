@@ -3322,7 +3322,8 @@
           (do
             ;; 段 10 lane 10n: 注入の行の名 = Message の id(CLI の command_lifecycle がこの綴りで運命を名乗る)。
             ;; 段 10 lane 10r 追補: 注入の文も郵便の見出し + 本文(judgment.mail-turn-text-of の 1 点)。
-            (<- text str (mail-turn-text-of message-id message.spec body))
+            ;; card ki-fa719b70d37c: 見出しの class は**扱う class**(行の status.routing.servedClass)。
+            (<- text str (mail-turn-text-of message-id message.spec body message.status))
             (<- outcome (| Interjected SessionRefused)
                 (SessionInterject :session-id job.session-id :text text :ref message-id
                                   :attachments carried))
