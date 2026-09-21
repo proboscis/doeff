@@ -6698,3 +6698,95 @@ def test_node_declares_the_custody_borrower_equivalence_key_from_the_identity_it
     old_row = {"name": "pool-1", "labels": {"cordon": "installing"}, "capacity": 20, "streamCapability": "events"}
     assert run(judgment.node_spec_declared(old_row, pod))["custodyBorrower"] == "sa:acp-control/default"
     assert "custodyBorrower" not in run(judgment.node_spec_declared(old_row, settings))
+
+
+# ---------------------------------------------------------------- card acp:kanban-issue:ki-62aa1f4e9c9c: 席の家へ運ぶ共通の指示
+# 名簿 = policy.CARRIED-INSTRUCTION-SOURCES(D11)。下の検は**母集団を名簿から導く** — 綴りを数え直さない。
+# 行を 1 つ足して連鎖のどこかを通し忘れたら、ここが落ちるのが受入 15 の意味。
+
+
+def test_join_derives_the_instruction_source_keys_from_the_one_roster() -> None:
+    """⚑ 受入 15(D11): 運ぶ物の綴りの定義点は名簿ちょうど 1 つ。
+
+    join の許す鍵(AGENTD_KEYS)は名簿から**導く** — 手で数え直した集合を第 2 の名簿にしない
+    (d8472e1a: 「欄を 1 つ足す操作が名簿を 4 枚触らせる形は 3 度壊れた」)。
+    env の綴りの正本も名簿で、acp/effects.py はそれを写す(2 か所に書くと片方が黙って腐る)。
+    """
+    from doeff_agents.sessionhost import policy
+    from doeff_agents.sessionhost.acp import effects as acp_effects
+
+    roster = policy.CARRIED_INSTRUCTION_SOURCES
+    assert len(roster) >= 2
+    # 1 行の形が閉じている(欄を増やす時は名簿の型から)
+    for row in roster:
+        assert set(row) == {"key", "env", "kind", "home-name", "label"}, row
+        assert row["kind"] in policy.INSTRUCTION_SOURCE_KINDS, row
+        assert row["env"].startswith("DOEFF_AGENTD_"), row
+    # join の許す鍵は名簿を合流している(名簿に足した鍵は、その拍から宣言できる)
+    for key in policy.instruction_source_keys():
+        assert key in join.AGENTD_KEYS, key
+    # acp/effects.py の env の綴りは名簿の写し(検が突き合わせる = 割れたら赤)
+    assert acp_effects.CARRIED_INSTRUCTION_SOURCE_ENVS == policy.instruction_source_envs()
+
+
+def test_join_carries_every_instruction_source_verbatim_to_the_spec_and_env() -> None:
+    """名簿の全行について、宣言 → JoinSpec → env の 1 本が通る(`claude_settings_file` と同じ形)。
+
+    形の門も同じ: 絶対 path か `~/…` だけ(cwd 相対は断る — どの cwd で読むかを黙って決めない)。
+    無い・空 = 名乗らない(env に現れない = 今日どおり)。
+    """
+    from doeff_agents.sessionhost import policy
+
+    base = ["--server", "http://acp:8868", "--token-file", "/t", "--capacity", "2", "--places", "personal"]
+    bare = _join_spec(base)
+    bare_env = dict(run(join.join_plan_of(bare)).env)
+    for row in policy.CARRIED_INSTRUCTION_SOURCES:
+        assert bare.instruction_sources.get(row["key"]) is None
+        assert row["env"] not in bare_env
+    for spelled_prefix in ("~/dotfiles", "/home/kento/dotfiles"):
+        declared = {row["key"]: f"{spelled_prefix}/{row['key']}" for row in policy.CARRIED_INSTRUCTION_SOURCES}
+        spec = _join_spec(base, {"schema": "doeff.agentd-join.v1", "agentd": {k: f"  {v}  " for k, v in declared.items()}})
+        env = dict(run(join.join_plan_of(spec)).env)
+        for row in policy.CARRIED_INSTRUCTION_SOURCES:
+            assert spec.instruction_sources[row["key"]] == declared[row["key"]]
+            assert env[row["env"]] == declared[row["key"]]
+    # cwd 相対は断る(鍵の名を名指して)
+    for row in policy.CARRIED_INSTRUCTION_SOURCES:
+        with pytest.raises(ValueError, match=row["key"]):
+            _join_spec(base, {"schema": "doeff.agentd-join.v1", "agentd": {row["key"]: "dotfiles/x"}})
+
+
+def test_node_row_names_every_instruction_source_present_or_missing() -> None:
+    """⚑ 受入 7(D5): 名指しが在って正本が無い日も**参加する** — 断りの代わりに node の行で名乗る。
+
+    名乗る鍵は名簿の label(seat-settings と同じ流儀)。名指しを消した機体の行からは鍵ごと落とす
+    (揃えの拍で消える = 戻す手が行にも効く)。名指していない機体の行には 1 鍵も足さない。
+    母集団は名簿から導く — 行を 1 つ足して名乗りを通し忘れたらここが落ちる。
+    """
+    from doeff_agents.sessionhost import policy
+    from doeff_agents.sessionhost.acp.effects import (
+        AgentdSettings,
+        SEAT_SETTINGS_MISSING,
+        SEAT_SETTINGS_PRESENT,
+    )
+
+    roster = policy.CARRIED_INSTRUCTION_SOURCES
+    bare = AgentdSettings(node_name="pool-1", node_capacity=2, stream_capability="events", places=("personal",))
+    plain = run(judgment.node_spec_of(bare))["labels"]
+    for row in roster:
+        assert row["label"] not in plain, row
+    for present in (True, False):
+        named = replace(
+            bare,
+            instruction_sources={row["key"]: f"/d/{row['key']}" for row in roster},
+            instruction_sources_present={row["key"]: present for row in roster},
+        )
+        got = run(judgment.node_spec_of(named))["labels"]
+        for row in roster:
+            assert got[row["label"]] == (SEAT_SETTINGS_PRESENT if present else SEAT_SETTINGS_MISSING), row
+        # 揃えの拍: 名指しを消した機体の行からは鍵ごと落ちる。他の名乗りは触らない。
+        stale = {**got, "boundary": "company"}
+        aligned = run(judgment.node_spec_declared({"labels": stale}, bare))["labels"]
+        for row in roster:
+            assert row["label"] not in aligned, row
+        assert aligned["boundary"] == "company"

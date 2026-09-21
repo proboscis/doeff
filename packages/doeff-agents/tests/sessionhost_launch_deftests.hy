@@ -53,6 +53,7 @@
   GitRun
   FsMakeDirs
   FsLinkArtifact
+  FsEnsureSymlink
   FsListDir
   FsDirExists
   FsFileExists
@@ -60,6 +61,8 @@
   LogLine])
 (import doeff_agents.sessionhost.effects [READY-PROBE-TEXT])
 (import doeff_agents.sessionhost.policy [ACTIVE-STATUSES])
+;; card ki-62aa1f4e9c9c: 運ぶ物の名簿は module ごと引く(母集団を検で数え直さない)。
+(import doeff_agents.sessionhost.policy :as policy)
 (import doeff_agents.sessionhost.impls.claude_code [claude-code-impl])
 (import doeff_agents.sessionhost.impls.codex [codex-impl])
 (import doeff_agents.sessionhost.launch [
@@ -97,6 +100,12 @@
     (setv self.tmux-envs {})        ;; session-name → new-session に渡った env
     (setv self.listings {})         ;; path → エントリ名 list(FsListDir の台本)
     (setv self.links {})            ;; target → source(FsLinkArtifact の記録)
+    ;; card ki-62aa1f4e9c9c: FsEnsureSymlink の記録(link → target)と、その結末の時系列。
+    ;; links と分けて持つ: FsLinkArtifact は「別実体は触らない」、FsEnsureSymlink は
+    ;; 「doeff が張った symlink なら張り替える」— 契約が違うので台本も混ぜない。
+    (setv self.ensured-links {})    ;; link → target(現に張られている先)
+    (setv self.ensure-outcomes [])  ;; #(link target outcome) の時系列
+    (setv self.real-entities (set))  ;; 実体(file / dir)が居座っている link path
     (setv self.kill-broken False)   ;; True: TmuxKillSession が raise(cleanup 失敗)
     ;; ADR-DOE-AGENTS-006 R10: FsDirExists の台本。既定 = 実在(全 dir が在る
     ;; 世界)。work_dir 消失(2026-08-17 実測の ACP workspace 削除)を模す
@@ -319,6 +328,21 @@
             True
               (do (setv (get world.links target-path) source-path)
                   "linked")))
+    (resume outcome))
+  (FsEnsureSymlink [link-path target-path]
+    ;; 実 substrate と同じ 3 値(card ki-62aa1f4e9c9c D8):
+    ;;   unchanged               既に symlink で、先の綴りが同じ(張り替えない)
+    ;;   linked                  張った(無かった / 先が違ったので張り替えた)
+    ;;   occupied-by-real-entity 実体の file / dir が居座っている(触らない・raise しない)
+    ;; ⚠ FsLinkArtifact と違い、**先が違う symlink は張り替える** — 正本の path が
+    ;;   動いた日に家の link が黙って古いままになるのを防ぐのがこの effect の存在理由。
+    (.append world.trace #("ensure-symlink" link-path target-path))
+    (setv outcome
+          (cond
+            (in link-path world.real-entities) "occupied-by-real-entity"
+            (= (.get world.ensured-links link-path) target-path) "unchanged"
+            True (do (setv (get world.ensured-links link-path) target-path) "linked")))
+    (.append world.ensure-outcomes #(link-path target-path outcome))
     (resume outcome))
   (EnvGet [name]
     (resume (.get world.env name))))
@@ -1834,3 +1858,158 @@
   (<- row (run-launch world (launch-params)))
   (assert (is row.conversation None))
   (assert (= row.generation 1)))
+
+
+;; ---------------------------------------------------------------------------
+;; 席の家へ運ぶ共通の指示(card acp:kanban-issue:ki-62aa1f4e9c9c)
+;; ---------------------------------------------------------------------------
+;;
+;; 名簿 = policy.CARRIED-INSTRUCTION-SOURCES(1 種 = 1 行)。下の検は**母集団を
+;; 名簿から導く**(綴りを数え直さない)— 名簿に 1 行足したのに連鎖のどこかが
+;; 通っていなければ落ちる、が受入 15 の意味。
+
+(defn instruction-world [#** overrides]
+  "名簿の全行を宣言した世界(正本は fs / listings に実在)。overrides で 1 行だけ崩せる。"
+  (setv world (LaunchWorld))
+  (setv (get world.env "HOME") "/home/agentd")
+  (for [row policy.CARRIED-INSTRUCTION-SOURCES]
+    (setv src (.get overrides (get row "key") f"/home/agentd/dotfiles/{(get row "key")}"))
+    (setv (get world.env (get row "env")) src)
+    ;; 正本の実在の台本: file は fs に本文・dir は listings にエントリ。
+    (if (= (get row "kind") policy.INSTRUCTION-SOURCE-KIND-FILE)
+        (setv (get world.fs src) f"# 共通の条文({(get row "key")})")
+        (setv (get world.listings src) ["agora-artifact" "coupling-core" "model-routing"])))
+  (setv world.capture-script ["❯ {composer}"])
+  world)
+
+
+(defn claude-launch-params []
+  (launch-params :agent_type "claude"
+                 :binding {"kind" "claude-code" "config_dir" "/x/claude"}))
+
+
+(deftest test-launch-claude-installs-every-declared-instruction-source
+  ;; ⚑ 受入 1 / 2 / 15(card ki-62aa1f4e9c9c): 宣言された正本は**起動の拍ごとに**設定の家へ据わる。
+  ;; 母集団は名簿から導く — 行を 1 つ足して連鎖を通し忘れたらここが落ちる。
+  (setv world (instruction-world))
+  (<- row (run-launch world (claude-launch-params)))
+  (for [r policy.CARRIED-INSTRUCTION-SOURCES]
+    (setv home-entry f"/x/claude/{(get r "home-name")}")
+    (setv src (get world.env (get r "env")))
+    (cond
+      ;; D2: "file" は**実体 file**(本体は user 層の symlink / hard link を黙って捨てる)
+      (= (get r "kind") policy.INSTRUCTION-SOURCE-KIND-FILE)
+        (do
+          (assert (in home-entry world.fs) #((get r "key") (sorted (.keys world.fs))))
+          (assert (= (get world.fs home-entry) (get world.fs src)) (get r "key"))
+          (assert (not-in home-entry world.ensured-links)
+                  #("実体 file であること — symlink にすると本体が user 層で黙って捨てる" (get r "key"))))
+      ;; D3: "dir" は whole-dir symlink(107〜117 本を毎起動で写さない)
+      True
+        (do
+          (assert (= (.get world.ensured-links home-entry) src)
+                  #((get r "key") world.ensured-links))
+          (assert (not-in home-entry world.fs) (get r "key"))))))
+
+
+(deftest test-launch-claude-relinks-a-skills-dir-whose-source-moved
+  ;; ⚑ 受入 11(D8): 正本の path が変わった日に、家の link が**新しい先へ張り替わる**。
+  ;; FsLinkArtifact は別実体を絶対に置き換えないので、この面は新しい effect が要る。
+  (setv row (policy.instruction-source-of "claude_skills_dir"))
+  (setv world (instruction-world))
+  ;; 昨日の家: 同じ名で**古い先**を指す symlink が既に在る
+  (setv (get world.ensured-links f"/x/claude/{(get row "home-name")}") "/home/agentd/old-checkout/skills")
+  (<- _ (run-launch world (claude-launch-params)))
+  (assert (= (get world.ensured-links f"/x/claude/{(get row "home-name")}")
+             (get world.env (get row "env")))
+          world.ensured-links)
+  (setv mine (lfor [l t o] world.ensure-outcomes :if (= l f"/x/claude/{(get row "home-name")}") o))
+  (assert (= mine ["linked"]) mine))
+
+
+(deftest test-launch-claude-leaves-a-real-entity-in-the-home-alone
+  ;; D8 の 3 値の 3 つ目: 他人が置いた実体は触らない(raise もしない — 席は起きる)。
+  (setv row (policy.instruction-source-of "claude_skills_dir"))
+  (setv world (instruction-world))
+  (.add world.real-entities f"/x/claude/{(get row "home-name")}")
+  (<- _ (run-launch world (claude-launch-params)))
+  (setv mine (lfor [l t o] world.ensure-outcomes :if (= l f"/x/claude/{(get row "home-name")}") o))
+  (assert (= mine ["occupied-by-real-entity"]) mine)
+  (assert (in "new-session" (lfor t world.trace (get t 0)))))
+
+
+(deftest test-launch-claude-names-an-absent-instruction-source-and-still-opens-the-seat
+  ;; ⚑ 受入 7(D5): 名指しが在って正本が無い日は**非致命** — 席は起きて、名前つきの 1 行で名乗る。
+  ;; 宿の入口は「先端で揃えられない日は image の下限へ戻して立つ」正規の degrade を持つので、
+  ;; ここで断ると degrade がその機体の全席の停止に化ける(seat-settings-file-absent と同じ理由)。
+  (setv world (LaunchWorld))
+  (setv (get world.env "HOME") "/home/agentd")
+  (for [r policy.CARRIED-INSTRUCTION-SOURCES]
+    (setv (get world.env (get r "env")) f"/home/agentd/dotfiles/{(get r "key")}"))
+  (setv world.capture-script ["❯ {composer}"])
+  (<- _ (run-launch world (claude-launch-params)))
+  (assert (in "new-session" (lfor t world.trace (get t 0))))
+  (for [r policy.CARRIED-INSTRUCTION-SOURCES]
+    (setv named (lfor line world.log-lines
+                      :if (and (in "seat-instruction-source-absent" line)
+                               (in (get r "key") line))
+                      line))
+    (assert (= (len named) 1) #((get r "key") world.log-lines))
+    (assert (in (get world.env (get r "env")) (get named 0)) (get named 0))
+    ;; 無い物を家へ据えない
+    (assert (not-in f"/x/claude/{(get r "home-name")}" world.fs) (get r "key"))
+    (assert (not-in f"/x/claude/{(get r "home-name")}" world.ensured-links) (get r "key"))))
+
+
+(deftest test-launch-claude-without-the-declaration-is-byte-identical
+  ;; ⚑ 受入 8 / 13(囮つき): 宣言しない機体は今日どおり。
+  ;; **囮** = 正本は disk に在る(fs / listings に実在)が、宣言が 1 行も無い。
+  ;; ⇒ 家へ 1 byte も書かず・link を 1 本も張らず・argv も今日と同一・
+  ;;    宣言していない path(dotfiles)を 1 度も**触らない**(trace で見る・D10)。
+  (setv world (LaunchWorld))
+  (setv (get world.env "HOME") "/home/agentd")
+  (setv (get world.fs "/home/agentd/dotfiles/claude/CLAUDE.md") "# 囮")
+  (setv (get world.listings "/home/agentd/dotfiles/agent/skills") ["agora-artifact"])
+  (setv world.capture-script ["❯ {composer}"])
+  (<- _ (run-launch world (claude-launch-params)))
+  (setv [pane cmd literal submit] (get world.sent-keys 0))
+  (assert (.startswith cmd "claude --dangerously-skip-permissions") cmd)
+  (assert (not-in "claudeMdExcludes" cmd) cmd)
+  (assert (= world.ensured-links {}) world.ensured-links)
+  (for [r policy.CARRIED-INSTRUCTION-SOURCES]
+    (assert (not-in f"/x/claude/{(get r "home-name")}" world.fs) (get r "key")))
+  ;; D10: 宣言の無い拍に dotfiles の path が effect の引数に 1 度も現れない
+  (setv touched (lfor t world.trace :if (any (gfor a t (and (isinstance a str) (in "dotfiles" a)))) t))
+  (assert (= touched []) touched))
+
+
+(deftest test-launch-claude-excludes-the-seat-home-claude-md-once-it-carries-its-own
+  ;; ⚑ 受入 6(D6): 実体 file を家へ据えると、Mac では祖先の読み($HOME/.claude/CLAUDE.md が
+  ;; **project 層**)と本文が二重に載る(実測: 64KB × 2)。symlink なら realpath の重複排除が
+  ;; 効くが、D2 で実体 file に決めたので重複排除は効かない ⇒ doeff が 3 つ目の settings の鍵で外す。
+  ;; 値は席の $HOME から**導く** 1 本(綴りを宣言させない)。
+  ;; 本体側の裏: claudeMdExcludes は "Only applies to User, Project, and Local memory types"、
+  ;; 出所の優先順 jo() が flagSettings を必ず足すので --settings の inline JSON で効く。
+  (setv world (instruction-world))
+  (<- _ (run-launch world (claude-launch-params)))
+  (setv [pane cmd literal submit] (get world.sent-keys 0))
+  (assert (in "claudeMdExcludes" cmd) cmd)
+  (assert (in "/home/agentd/.claude/CLAUDE.md" cmd) cmd)
+  ;; 名簿に "file" の行が 1 つも無い世界では出さない(受入 8 の側)
+  (setv bare (LaunchWorld))
+  (setv (get bare.env "HOME") "/home/agentd")
+  (setv bare.capture-script ["❯ {composer}"])
+  (<- _ (run-launch bare (claude-launch-params)))
+  (setv [p2 cmd2 l2 s2] (get bare.sent-keys 0))
+  (assert (not-in "claudeMdExcludes" cmd2) cmd2))
+
+
+(deftest test-launch-codex-ignores-the-instruction-sources
+  ;; 名簿は claude の設定の家の話 — codex の起動は 1 行も読まない(seat-settings と同じ流儀)。
+  (setv world (instruction-world))
+  (setv world.capture-script ["codex booting banner" "› {composer}"])
+  (<- _ (run-launch world (launch-params)))
+  (setv [pane cmd literal submit] (get world.sent-keys 0))
+  (assert (.startswith cmd "codex") cmd)
+  (assert (= world.ensured-links {}) world.ensured-links)
+  (assert (not-in "claudeMdExcludes" cmd) cmd))
