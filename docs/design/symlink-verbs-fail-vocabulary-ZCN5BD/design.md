@@ -4,6 +4,9 @@
 - 検体: 本線 `7451fa17`(調査の出発点 `ef0eaa55` の 2 つ先。`substrate.hy` に差は無い)
 - 実測機: 会社 Mac CA-20038667 / Darwin 25.5.0(APFS)/ python 3.14.3
 - 先行: card `acp:kanban-issue:ki-62aa1f4e9c9c` の決定 D8(`docs/design/seat-home-common-instructions-AJ8C0B/`)
+- 改訂 2026-09-22(初版の着地 `61147f07` の後): 依頼者 `c-AJ8C0BK9…` の所見 A / B / C と
+  `c-3JYBNJMC…` の「受入 3 は反証不能」を全部採った。変わったのは 2.3・3.3・3.5・5 と、
+  新しい 2.6。**初版で誤っていたのは受入 3 の撃ち方**(下の 2.6)。
 
 ## 1. 何が問題か
 
@@ -84,6 +87,34 @@
 `EISDIR` は POSIX が `rename()` に定めた errno(新しい側がディレクトリで古い側がそうでない
 場合)なので、Darwin 固有ではない。**`EISDIR` だけを「実体が居る」に写し、残りを
 「器が断った」に写せばよい。**
+
+### 2.3b ⚠ 初版の誤り — `os.replace` の `except` 枝は、動詞を通すと競りからしか入れない
+
+2.3 は `os.replace` を**素で**撃った測りで、値は正しい。しかし初版の受入 3 は「実体ディレクトリを
+据えて `occupied-by-real-entity` が返ることを見る」と読める書き方をしていた。それでは**割りを
+1 行も通らない** — 頭の `os.lstat` が先に当たって `occupied` を返すからである。
+
+`c-3JYBNJMC…` が pod(Linux 7.0.0 / glibc 2.39)で `os.replace` を数える包みに差し替えて測り、
+本調査が同じ計器を会社 Mac でも撃った(`evidence/replace_reach_darwin.{py,log}`)。両機で同じ:
+
+| 家の形 | `os.replace` 到達 | 結末 |
+| --- | --- | --- |
+| 実体ディレクトリ(空) | **0 回** | `occupied-by-real-entity` |
+| 実体ディレクトリ(中身入り) | **0 回** | `occupied-by-real-entity` |
+| 実体ファイル | **0 回** | `occupied-by-real-entity` |
+| 親の位置に実体ファイル | **0 回** | `FileExistsError` errno=17 |
+| 家が `r-x` | **0 回** | `PermissionError` errno=13 |
+| 親ディレクトリを作れない | **0 回** | `PermissionError` errno=13 |
+| 不在 → 張る | 1 回 | `linked` |
+| 別の先 → 張り替え | 1 回 | `linked` |
+
+**失敗 6 形の合計到達 = 0。** `except` 枝に入れるのは「`lstat` と `rename` の間に実体が現れた」
+拍だけ、つまり**競りの窓からのみ**である(docstring が「残る窓は 1 つ」と書いているのがそれ)。
+
+⇒ **受入 3 は errno を注入して撃つ**(下の 5)。実体を据える形では撃てない。
+⇒ 同じ枡が**もう 1 つ**押さえる: `except` 枝の中の「自分の仮だけ掃除する」`os.unlink staged` は、
+到達路が無いので一度も走ったことがない。注入なら「値が割れる」と「`.agentd-tmp` の残骸 0」を
+同時に見られる。
 
 ### 2.4 同時実行が現実に届く敷設先は 2 つ(1 つは本調査が新たに見つけた)
 
@@ -173,8 +204,17 @@ FS-SYMLINK-REFUSED          "refused-by-container"   ← 新しい 1 語
 ### 3.3 決定 3 — `ensure-symlink-outcome` の直し(戻せる決定)
 
 - `os.makedirs` と `os.symlink` を `try` の中へ入れ、`OSError` を `refused-by-container` に写す。
-- `os.replace` の `except OSError` を errno で割る。`EISDIR`(念のため `ENOTEMPTY` / `EEXIST` も)
-  は `occupied-by-real-entity`、残りは `refused-by-container`。実測表 = 2.3。
+- `os.replace` の `except OSError` を errno で割る。**`EISDIR` だけ**が
+  `occupied-by-real-entity`、残りは `refused-by-container`。
+  ⚠ **errno → 状態の写しを 1 つの表にしない — syscall ごとに意味が違う。**
+  純関数 1 つ `refusal-of(operation, errno)` に畳み、**`refused-by-container` にならない唯一の
+  組は `(replace, EISDIR)`** とする。理由(`c-3JYBNJMC…` の指摘 + 本調査の実測):
+  - `EEXIST` を表に入れてはいけない。`os.replace` からは出ない(古い側が symlink なので
+    ディレクトリ相手は `EISDIR`)一方、**`os.makedirs` は「親の位置に実体ファイル」で
+    `EEXIST`(errno 17)を出す**(2.2 の実測)。同じ表を両方に使うと、その形が
+    `occupied-by-real-entity` に落ちて受入 2 が赤くなる。
+  - `ENOTEMPTY` も要らない。仮は必ず symlink なので、ディレクトリ → ディレクトリの
+    `rename` にはならない。
 - `os.readlink` の `except OSError` は今のまま(据え付けで決め直すので正しい)。
 - `_ensure-view-symlink` は `occupied` だけを今の文言の `RuntimeError` に写す。
   `refused-by-container` は**別の文言**の `RuntimeError`(「器が据え付けを断った: <detail>」)。
@@ -209,7 +249,17 @@ source が実体でも symlink でもない        → source-missing
 | `impls/claude_code.hy:728`(必須の transcript) | **typed reject** | 起動してから実 CLI が 120 秒かけて死ぬのを前倒しする、という既存の設計思想に合う |
 | `impls/codex.hy:422`(必須の rollout) | **typed reject** | 同上 |
 | `impls/claude_code.hy:740/742/744`(周辺 3 対) | 値を捨てるまま | best-effort と明記されている |
-| `launch.hy:363`(sibling の鏡) | 既存の `raise` にそのまま流れる | `{linked, same-entity}` 以外は loud、という既存の方針のまま。文言に理由が載る |
+| `launch.hy:365`(sibling の鏡) | 既存の `raise` にそのまま流れる。**ただし文言を状態で分ける**(下) | `{linked, same-entity}` 以外は loud、という既存の方針のまま |
+
+⚠ **`launch.hy:366` の文言は同じ変更で直す**(依頼者 `c-AJ8C0BK9…` の所見 B)。いまの
+
+```
+f"failed ({outcome}) — 非破壊方針につき既存物は触らない"
+```
+
+は、`refused-by-container` で返った拍に**嘘になる**(実体は 1 つも居ない)。扉 2 が作っていた
+「在りもしない実ファイルを手で片付けろ」とまったく同じ誤診断を再生産する形なので、状態で
+分ける 1 行にする。**方針は変えない — 変えるのは文言だけ**(「やらないこと」と矛盾しない)。
 
 typed reject のコードは `RESUME-ERR-TRANSPLANT-REFUSED "transplant_refused"` を 1 つ足す。
 既存の 5 語(`transcript_not_discoverable` ほか)はどれも意味が合わない
@@ -303,12 +353,36 @@ semgrep のファイル単位の除外は**維持する**(ファイルの外は 
 ## 5. 受入(実装の依頼書と同じ)
 
 1. 同じ敷設先へ 2 プロセスが同時に `FsLinkArtifact` を撃って **例外 0・語彙の外 0**(200 回 × 2)。
+   ⚠ この 1 本で `launch.hy:365` の `{workspaces-root}/{sibling-name}`(2.4 の 2 つ目)も一緒に
+   閉じる — 同時実行で負けた側は非破壊の判定に届く前に例外で落ちるので、別の変更は要らない
+   (依頼者 `c-AJ8C0BK9…` が読みで確認)。
 2. 器の断り 3 形で **両方の関数**が `refused-by-container` + errno を返し、例外 0。
-3. `os.replace` が `EISDIR` の時だけ `occupied-by-real-entity`、他は `refused-by-container`。
+   ⚠ **「家が `r-x`」は root だと偽の赤になる**(root は権限ビットを素通りするので `os.symlink` が
+   通り `linked` が返る)。uid を見るのではなく、**その dir へ 1 バイト書いてみて通ったら skip**
+   (宿の実勢を測る形)。この package に `geteuid` / `getuid` の検査は 0 件
+   (`c-AJ8C0BK9…` の実測・root で走る宿が現に在るかは未測定)。
+3. **errno を注入して**、`os.replace` が `EISDIR` の時だけ `occupied-by-real-entity`、
+   他の `OSError` は `refused-by-container`(+ errno 非 None)。
+   ⚠ **実体ディレクトリを据える形では撃てない**(2.3b — `os.lstat` が先に当たって
+   `os.replace` に 0 回しか届かない。据える形の枡は直す前の版でも緑になる = 反証不能)。
+   同じ枡で `.agentd-tmp` の残骸が 0 であることも見る(`except` 枝の中の掃除は、到達路が
+   無いので一度も走ったことがない)。
 4. `substrate.hy` の中で `os.symlink` / `.symlink_to` が許した 2 関数の外に 0 件(構造検査)。
    対象ディレクトリ配下の `ln -s` も 0 件(semgrep)。
 5. 既存 6 語の意味が変わっていない(既存の検査が緑)。
 6. 偽ハンドラが実物と同じレコードを返す。
+7. **語彙を文字列で比べている座を数え、新しい型で分岐が現に成立する。**
+   戻りをレコードにすると、`(= outcome "…")` は**黙って False** になる(`__str__` を足しても
+   等号は直らない)。origin/main `68f075d2` で数えた座:
+
+   | 座 | 壊れ方 | 既存の検査 |
+   | --- | --- | --- |
+   | `launch.hy:365` `(not-in outcome #{"linked" "same-entity"})` | 常に真 ⇒ `link_siblings` を持つ seed が毎回 raise | **赤で捕まる**(`sessionhost_launch_deftests.hy:505` `test-launch-materializes-workspace-seed-detached`) |
+   | `claude_code.hy:788` `(= outcome "source-missing")` | **黙って False** ⇒ source が無い拍の枝が死ぬ | **無い**(本調査の `git grep` 実測: 呼び手側で `source-missing` を見る検査は 0 件)|
+   | `codex.hy:423` 同上 | 同上 | **無い**(同上)|
+   | `effects.hy` の `FS-ENSURE-SYMLINK-*` 3 定数 | 消すので import で落ちる | 落ちること自体が声 |
+
+   ⇒ `claude_code.hy:788` / `codex.hy:423` は **検査を新しく足す**(silent な意味変化を残さない)。
 
 ## 6. 検査の走らせ方(全数は走らせない)
 
