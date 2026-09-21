@@ -120,7 +120,8 @@ def stream_job_watch(
 ) -> Program: ...
 def stream_job_slow(settings: AgentdSettings, job: InFlightJob, now_ms: int) -> Program: ...
 def end_turn_record(
-    job_id: str, usage: dict | None, entries: tuple, mark: tuple | None
+    job_id: str, usage: dict | None, entries: tuple, mark: tuple | None,
+    cache_observation: dict | None = None
 ) -> Program: ...
 def drain_stream(
     settings: AgentdSettings, job: InFlightJob, source: str | None, path: str | None, now_ms: int
