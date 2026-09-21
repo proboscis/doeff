@@ -1,0 +1,367 @@
+{
+  "version": 1,
+  "task_id": "lt-KR8T10F3PWDB5M2DJWDJTWWDDW",
+  "base_revision": "abd03fd2a58dbad29bcb21f435539451315db523",
+  "author": {
+    "conversation_id": "c-XYP9ZM3W0GG8GPB4J60GK2AF49",
+    "model": "claude-opus-5",
+    "effort": "xhigh"
+  },
+  "requirements": "日次の全体検証が 2026-09-22 03:30 JST に赤にした ADR-DOE-AGENTS-012 の 4 本について、(1) 各本に原因の commit か帰属しない理由を名指す (2) 焦点の走行で 4 本を緑にする (3) 直した側を 1 か所壊すと現に赤くなることを実演する (4) 本線へ着地し翌日の verify.failed から消す。⚠ 緑にするために検査の主張を弱める形(綴りを合わせて通す・assert を外す)は不可。範囲は**設計まで** — 実装は別の依頼として起票する。",
+  "design": {
+    "path": "design.md",
+    "sha256": "b833b901cd3cb1cfdb7edb0cdb7fa17a178beb337dbaa61bc2478c709c3dd191"
+  },
+  "modules": [
+    {
+      "id": "law",
+      "responsibility": "agentd / sessionhost について何が真であるべきかを宣言する",
+      "owns": "ADR の rule / law の :statement と :counterexamples",
+      "hides": "真の実現方法とソースの綴り",
+      "interface": "law の名と statement(針が :enforcement で名指す)",
+      "effects": "なし — 宣言のみ(副作用は持たない)",
+      "lifetime": "冊の版。改訂は法・反例・実装を 1 つの commit で出す",
+      "invariants": "statement は実装の綴りに言及しない"
+    },
+    {
+      "id": "needle",
+      "responsibility": "law の真偽を現在のコードで測る",
+      "owns": "測り方(何をどう読むか)と、赤の文言(何をせよか)",
+      "hides": "なし — 針は law と実装の両方から読まれてよい",
+      "interface": "deftest の名(law の :enforcement が名指す)と assert の文言",
+      "effects": "ソース file の読み取りのみ(FS read)。書き込み・network は無い",
+      "lifetime": "冊の版",
+      "invariants": "読んでよいのは 4 種ちょうど — 頂点の form の名と個数 / 呼び先の名と引数の役の在否 / 語の在不在 / 名前の集合と名簿の突合。行の字下げ・引数の総数と位置・acp 配下での file の在処・呼び手の総数は読まない"
+    },
+    {
+      "id": "impl",
+      "responsibility": "law が宣言した真を実現する",
+      "owns": "sessionhost/** の綴り(引数の並び・字下げ・file の在処・言語 Hy/Python の選択)",
+      "hides": "綴りそのもの — 針からも law からも見えてはならない",
+      "interface": "判断の座(defk / deff の名)と、その引数の役",
+      "effects": "ACP への I/O・custody の借り・子 process の起動(handlers が担う)",
+      "lifetime": "本線の版",
+      "invariants": "判断の座は law が言う数(多くは 1 点)ちょうどで、並行実装を作らない"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "sc-effects",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "session_env を運ぶ 5 つ目の口(新しい RPC の腕)が生える",
+      "claim": "判断 policy.session-env-admission-error は並行実装されず、冊は名簿 1 行だけ育つ",
+      "expected_scope": "実装 1 file + 冊の名簿 1 行",
+      "actual_scope": "実装 1 file + 冊の名簿 1 行",
+      "changed_modules": [
+        "impl",
+        "needle"
+      ],
+      "unchanged_modules": [
+        "law"
+      ],
+      "reason": "意図した公開契約の拡張。M3b で launch.hy に 5 つ目の口を足すと名簿の差として赤になり、何を宣言せよかが読める文言で出た。知識の漏洩ではない",
+      "revision": "当初案(readers-of で囲む form の名を採る)は host.hy の 2 口が同じ dispatch-method に 在るため 4 口を 3 名に畳んでいた。鍵を call-args-of で採った呼びの第 2 引数(動詞)へ改めた"
+    },
+    {
+      "id": "sc-storage",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "charter に運ぶ欄がもう 1 つ増え、resume の名簿が module の定数へ括り出される",
+      "claim": "添付の継承は保たれ、冊は 0 行で追随する",
+      "expected_scope": "実装 1 file のみ・冊は 0 行",
+      "actual_scope": "**当初案では偽** — 盲検 A の反例を実行すると、添付が継がれたまま針が赤になった。改訂(挙動で撃つ)後に予測どおり 0 行になった",
+      "changed_modules": [
+        "impl"
+      ],
+      "unchanged_modules": [
+        "law",
+        "needle"
+      ],
+      "reason": "当初の構造の針は『名簿がどこに書かれているか』という実装の知識に依存していた = 漏洩。継承は名簿の綴りではなく答えなので、答えを測る形へ移した",
+      "revision": "(e) を readers-of から resume-params-of の実行へ改めた。改訂後: A の反例で緑・添付を名簿から外す変異(M4)で赤"
+    },
+    {
+      "id": "sc-concurrency",
+      "axis": "concurrency",
+      "applicability": "applicable",
+      "change": "loop をまた別の層へ移す(runtime.py → worker_loop.hy と同じ形の続き)",
+      "claim": "drain の合図が settings.draining に落ちることは変わらず、冊は 0 行",
+      "expected_scope": "実装 1〜2 file・冊は 0 行",
+      "actual_scope": "予測どおり",
+      "changed_modules": [
+        "impl"
+      ],
+      "unchanged_modules": [
+        "law",
+        "needle"
+      ],
+      "reason": "針が file を名指さず acp/ 配下から書く点 1 つを探すので、在処と言語の移動に依らない",
+      "revision": "不要"
+    },
+    {
+      "id": "sc-distribution",
+      "axis": "distribution",
+      "applicability": "applicable",
+      "change": "手番の文の合成に欄が増える(郵便の見出しに status を足した b288669d と同じ形)",
+      "claim": "合成点は 1 つのままで、冊は 0 行",
+      "expected_scope": "実装 2 file・冊は 0 行",
+      "actual_scope": "予測どおり(引数の総数・位置を読まないため)",
+      "changed_modules": [
+        "impl"
+      ],
+      "unchanged_modules": [
+        "law",
+        "needle"
+      ],
+      "reason": "呼び先の名と役の在否で撃つので、引数が増えても当たらない",
+      "revision": "盲検 B が別の穴を示した — 呼びの**後で**返り値を作り直す形は通る。これは旧針でも通る元からの穴。改訂 3 で再束縛を撃つ針を足した(B の反例で赤・誤検知 0)"
+    },
+    {
+      "id": "sc-hardware",
+      "axis": "hardware",
+      "applicability": "applicable",
+      "change": "backend の種類が headless / tui の 3 つ目に増える",
+      "claim": "agentd.hy が backend の語を持たないことを撃つ禁止語の針は語の集合なので形は変わらない",
+      "expected_scope": "実装 1 file・冊は禁止語の名簿 1 行",
+      "actual_scope": "予測どおり(この便では触っていない)",
+      "changed_modules": [
+        "impl"
+      ],
+      "unchanged_modules": [
+        "law",
+        "needle"
+      ],
+      "reason": "語の在不在は許された 4 種の読みの 1 つで、種類が増えても針の形は同じ",
+      "revision": "不要"
+    },
+    {
+      "id": "sc-simulation",
+      "axis": "simulation",
+      "applicability": "applicable",
+      "change": "偽の器(fake.py / World / FakeSessions)の構成が変わる",
+      "claim": "構造の針はソースだけを読むので影響を受けない",
+      "expected_scope": "test 1 file・構造の針は 0 行",
+      "actual_scope": "予測どおり。ただし (e) を挙動へ移したので、(e) は judgment.resume-params-of の 実行に依存するようになった — 偽の器ではなく judgment の純関数なので器の構成には依らない",
+      "changed_modules": [
+        "impl"
+      ],
+      "unchanged_modules": [
+        "law",
+        "needle"
+      ],
+      "reason": "改訂後の (e) が触るのは defk 1 つの実行で、fake の器は経由しない",
+      "revision": "不要"
+    }
+  ],
+  "checks": [
+    {
+      "id": "pos-focus",
+      "scenarios": [
+        "sc-effects",
+        "sc-storage",
+        "sc-concurrency",
+        "sc-distribution",
+        "sc-hardware",
+        "sc-simulation"
+      ],
+      "control": "positive",
+      "expectation": "再照準後、基準 abd03fd2 の現行コードで対象 4 本が緑",
+      "observation": "4 passed, 55 deselected in 2.56s(冊の全数 59 passed in 0.90s — 他の針を壊していない)",
+      "evidence": {
+        "path": "evidence.md",
+        "sha256": "f50270e4a8eb29c552a07c724de242d239d77ade07e2736a424939b9ab2d1f0c"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "neg-M1",
+      "scenarios": [
+        "sc-distribution"
+      ],
+      "control": "negative",
+      "expectation": "agentd.hy の合成の呼びを消すと headless_first_turn が赤",
+      "observation": "赤 — `agentd.hy は手番の文を 1 度だけ組む(R16): 実測 0`",
+      "evidence": {
+        "path": "evidence.md",
+        "sha256": "f50270e4a8eb29c552a07c724de242d239d77ade07e2736a424939b9ab2d1f0c"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "neg-M2",
+      "scenarios": [
+        "sc-effects"
+      ],
+      "control": "negative",
+      "expectation": "送りの腕の呼びから session-env を落とすと turn_credential が赤",
+      "observation": "赤 — `役 session-env が ['sid','message','awaiting','turn-charter','attachments'] に無い`",
+      "evidence": {
+        "path": "evidence.md",
+        "sha256": "f50270e4a8eb29c552a07c724de242d239d77ade07e2736a424939b9ab2d1f0c"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "neg-M3b",
+      "scenarios": [
+        "sc-effects"
+      ],
+      "control": "negative",
+      "expectation": "5 つ目の関所の口を足すと名簿の差として赤で、何を宣言せよかが読める",
+      "observation": "赤 — `関所を呼ぶ口が名簿と違う … 実測 [… \"session.rehydrate\" …] / 名簿 […]`",
+      "evidence": {
+        "path": "evidence.md",
+        "sha256": "f50270e4a8eb29c552a07c724de242d239d77ade07e2736a424939b9ab2d1f0c"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "neg-M4",
+      "scenarios": [
+        "sc-storage"
+      ],
+      "control": "negative",
+      "expectation": "resume の名簿から添付を外すと attachment_spelling が赤",
+      "observation": "赤 — `resume の params に添付が乗らない(R31) … 実測 None`",
+      "evidence": {
+        "path": "evidence.md",
+        "sha256": "f50270e4a8eb29c552a07c724de242d239d77ade07e2736a424939b9ab2d1f0c"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "neg-M5",
+      "scenarios": [
+        "sc-concurrency"
+      ],
+      "control": "negative",
+      "expectation": "drain の書き込みを定数にすると stop_drains が赤",
+      "observation": "赤 — `定数を書くと level-triggered が壊れ、排水が下ろせない`",
+      "evidence": {
+        "path": "evidence.md",
+        "sha256": "f50270e4a8eb29c552a07c724de242d239d77ade07e2736a424939b9ab2d1f0c"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "ce-A",
+      "scenarios": [
+        "sc-storage"
+      ],
+      "control": "negative",
+      "expectation": "盲検 A の反例(名簿を module の定数へ括り出す)を当てる。当初案では偽陽性の赤 = 反例成立。改訂後は緑(継承は保たれている)で、本物の違反を重ねれば赤",
+      "observation": "当初案 → 赤(偽陽性・反例成立を確認)。改訂後 → 緑 1 passed in 1.73s。改訂後 + 本物の違反 → 赤 `実測 None`",
+      "evidence": {
+        "path": "evidence.md",
+        "sha256": "f50270e4a8eb29c552a07c724de242d239d77ade07e2736a424939b9ab2d1f0c"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "ce-B",
+      "scenarios": [
+        "sc-distribution"
+      ],
+      "control": "negative",
+      "expectation": "盲検 B の反例(呼びの後で返り値を作り直す)を当てる。改訂前は通る = 反例成立。旧針でも通ることを確かめ、後退でないことを示す。改訂 3 の針で赤になる",
+      "observation": "改訂前 → 緑 4 passed in 20.98s(反例成立)。旧針(綴り合わせのみ)→ 緑 1 passed in 1.49s(元からの穴と確認)。改訂 3 の針 → 赤 `agentd.hy が合成した文を呼びの後で作り直している`。現行コードでの誤検知 0",
+      "evidence": {
+        "path": "evidence.md",
+        "sha256": "f50270e4a8eb29c552a07c724de242d239d77ade07e2736a424939b9ab2d1f0c"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "repro-red",
+      "scenarios": [
+        "sc-effects",
+        "sc-storage",
+        "sc-concurrency",
+        "sc-distribution"
+      ],
+      "control": "negative",
+      "expectation": "日次が赤くした断面 68f075d2 で 4 本の赤を再現し、隠れた退行が無いことを確かめる",
+      "observation": "4 failed in 33.64s で再現。字面だけ合わせると 3 passed / 1 failed となり、turn_credential の後ろに 2 段目(関所の口が 4)が在ることが判明。名簿も直すと 4 passed in 1.71s ⇒ 断りは針 5 か所ちょうどで、実装の退行は 0",
+      "evidence": {
+        "path": "evidence.md",
+        "sha256": "f50270e4a8eb29c552a07c724de242d239d77ade07e2736a424939b9ab2d1f0c"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "proto-diff",
+      "scenarios": [
+        "sc-effects",
+        "sc-storage",
+        "sc-concurrency",
+        "sc-distribution"
+      ],
+      "control": "positive",
+      "expectation": "再照準の最小実験の差分が保存され、実装の依頼が参照できる",
+      "observation": "docs/adr の冊 1 file に +91 / -17(91 insertions, 17 deletions)",
+      "evidence": {
+        "path": "prototype.diff",
+        "sha256": "530b91a26b7c4a5d62065a084d4b331bd78d3f11bc794a14a35628331e810ac5"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "pos-hardware",
+      "scenarios": [
+        "sc-hardware"
+      ],
+      "control": "positive",
+      "expectation": "現行コード(器は headless / tui の 2 種)で headless_first_turn が緑",
+      "observation": "緑 — 1 passed, 58 deselected in 0.41s",
+      "evidence": {
+        "path": "evidence.md",
+        "sha256": "f50270e4a8eb29c552a07c724de242d239d77ade07e2736a424939b9ab2d1f0c"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "neg-hardware",
+      "scenarios": [
+        "sc-hardware"
+      ],
+      "control": "negative",
+      "expectation": "agentd.hy が backend の語を比較したら赤(判定点が judgment と 2 つになる形)",
+      "observation": "赤 — `agentd.hy は backend の語を比較しない(R16): (when (= settings.backend-kind \"headless\")`",
+      "evidence": {
+        "path": "evidence.md",
+        "sha256": "f50270e4a8eb29c552a07c724de242d239d77ade07e2736a424939b9ab2d1f0c"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "pos-simulation",
+      "scenarios": [
+        "sc-simulation"
+      ],
+      "control": "positive",
+      "expectation": "偽の器(World / FakeSessions)で回る挙動の節が現行コードで緑",
+      "observation": "緑 — 1 passed, 58 deselected in 9.76s",
+      "evidence": {
+        "path": "evidence.md",
+        "sha256": "f50270e4a8eb29c552a07c724de242d239d77ade07e2736a424939b9ab2d1f0c"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "neg-simulation",
+      "scenarios": [
+        "sc-simulation"
+      ],
+      "control": "negative",
+      "expectation": "1 手番目の畳みの判定を倒すと、偽の器で回る挙動の節が赤",
+      "observation": "赤 — judgment.first-turn-carries-inputs を (and False …) にすると World の tick の assert が落ちる(1 failed in 9.07s)。⚠ この assert は文言を持たず AssertionError としか出ない",
+      "evidence": {
+        "path": "evidence.md",
+        "sha256": "f50270e4a8eb29c552a07c724de242d239d77ade07e2736a424939b9ab2d1f0c"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": []
+}
