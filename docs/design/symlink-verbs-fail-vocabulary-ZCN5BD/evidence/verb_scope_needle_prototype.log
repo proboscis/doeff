@@ -1,0 +1,7 @@
+-- 許した動詞の本体の範囲(構文木から) --
+  (deff ensure-symlink-outcome) 行 301-362
+  (FsLinkArtifact ) 行 537-557
+-- 禁じた綴りの出現 --
+  行  353  os.symlink   → 許した動詞 ensure-symlink-outcome の中
+  行  555  os.symlink   → 許した動詞 FsLinkArtifact の中
+-- 判定: 動詞の外の出現 = 0 件(0 なら緑)--
