@@ -55,6 +55,13 @@
   FsMakeDirs
   FsLinkArtifact
   FsEnsureSymlink
+  FsSymlinkOutcome
+  FS-SYMLINK-LINKED
+  FS-SYMLINK-OCCUPIED
+  FS-SYMLINK-SAME-ENTITY
+  FS-SYMLINK-SOURCE-MISSING
+  FS-SYMLINK-TARGET-CONFLICT
+  FS-SYMLINK-UNCHANGED
   FsListDir
   FsDirExists
   FsFileExists
@@ -311,18 +318,21 @@
   (FsMakeDirs [path]
     (resume None))
   (FsEnsureSymlink [link target]
-    ;; 実 substrate の 3 値(card ki-62aa1f4e9c9c D8)の台本版: symlink は張り替える・
+    ;; 実 substrate の 4 値(card ki-62aa1f4e9c9c D8)の台本版: symlink は張り替える・
     ;; 実体(fs / listings に居る物)は触らない・同じ先なら何もしない。
+    ;; ⚠ 台本の世界では器は断らないので refused-by-container は出ない(errno / detail も
+    ;; None)。**型は実物と同じ** FsSymlinkOutcome — 同じ effect 契約の fake であって、
+    ;; 文字列を返す第 2 の契約を作らない(2026-09-22)。
     (.append world.trace #("ensure-symlink" link target))
-    (setv outcome
+    (setv state
           (cond
             (in link world.links)
               (if (= (get world.links link) target)
-                  "unchanged"
-                  (do (setv (get world.links link) target) "linked"))
-            (or (in link world.fs) (in link world.listings)) "occupied-by-real-entity"
-            True (do (setv (get world.links link) target) "linked")))
-    (resume outcome))
+                  FS-SYMLINK-UNCHANGED
+                  (do (setv (get world.links link) target) FS-SYMLINK-LINKED))
+            (or (in link world.fs) (in link world.listings)) FS-SYMLINK-OCCUPIED
+            True (do (setv (get world.links link) target) FS-SYMLINK-LINKED)))
+    (resume (FsSymlinkOutcome :state state)))
 
   (FsLinkArtifact [source-path target-path]
     ;; 実 substrate の share.py 同型意味論の台本版: source は fs / links /
@@ -331,18 +341,19 @@
     (setv source-known (or (in source-path world.fs)
                            (in source-path world.links)
                            (in source-path world.listings)))
-    (setv outcome
+    ;; ⚠ 型は実物と同じ FsSymlinkOutcome(台本の器は断らないので refused は出ない)。
+    (setv state
           (cond
-            (not source-known) "source-missing"
-            (in target-path world.fs) "target-conflict"
+            (not source-known) FS-SYMLINK-SOURCE-MISSING
+            (in target-path world.fs) FS-SYMLINK-TARGET-CONFLICT
             (in target-path world.links)
               (if (= (get world.links target-path) source-path)
-                  "same-entity"
-                  "target-conflict")
+                  FS-SYMLINK-SAME-ENTITY
+                  FS-SYMLINK-TARGET-CONFLICT)
             True
               (do (setv (get world.links target-path) source-path)
-                  "linked")))
-    (resume outcome))
+                  FS-SYMLINK-LINKED)))
+    (resume (FsSymlinkOutcome :state state)))
   (EnvGet [name]
     (resume (.get world.env name))))
 

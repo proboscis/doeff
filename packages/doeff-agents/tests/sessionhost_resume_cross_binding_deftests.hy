@@ -9,6 +9,9 @@
 ;;;     sessions 相対 path 保存 link(resume-physics.md 2026-08-11 プローブ)
 ;;;   - source transcript 不在は typed reject(error_code
 ;;;     transcript_not_discoverable・row 不生成・tmux 不接触)
+;;;   - transcript は在るが**器が敷設を断った**拍は別の typed reject
+;;;     (error_code transplant_refused — 2026-09-22。不在の語を当てると
+;;;     運用者が居もしない transcript を探しに行く)
 ;;;   - new_session_id は新 incarnation の id/name を呼び手が指定する
 ;;;     (未指定は従来の ~g<N> 鋳造。重複は launch と同語彙で reject)
 ;;;   - expected_result は明示指定(null 含む)が unfulfilled carry より優先
@@ -23,8 +26,41 @@
 
 (require doeff-hy.macros [deftest defk deff <- defhandler])
 
-(import sessionhost_launch_deftests [LaunchWorld])
+(import sessionhost_launch_deftests [LaunchWorld fake-launch-substrate])
 (import sessionhost_resume_deftests [seed-source resume-params run-resume])
+(import doeff_agents.sessionhost.effects [
+  FsLinkArtifact
+  FsSymlinkOutcome
+  FS-SYMLINK-REFUSED])
+(import doeff_agents.sessionhost.launch [resume-session])
+(import doeff_agents.sessionhost.impls.claude_code [claude-code-impl])
+(import doeff_agents.sessionhost.impls.codex [codex-impl])
+
+
+;; ---------------------------------------------------------------------------
+;; 器が敷設を断つ世界(2026-09-22 — 設計 3.5 の typed reject)
+;; ---------------------------------------------------------------------------
+;;
+;; 台本の LaunchWorld は器が断らない世界なので、断りの枝はそこでは撃てない。
+;; 敷設の 1 手だけを差し替える handler を impls の**内側**に挟む(effect は内から
+;; 外へ伝わるので、fake substrate より先にこれが受ける)。
+
+(defhandler refusing-link-artifact []
+  (FsLinkArtifact [source-path target-path]
+    (resume (FsSymlinkOutcome :state FS-SYMLINK-REFUSED
+                              :errno 13
+                              :detail "symlink: EACCES Permission denied"))))
+
+
+(defk run-resume-with-refusing-container [world params]
+  {:pre [(: world LaunchWorld) (: params dict)]
+   :post [(: % "SessionRow(成功時)")]}
+  (<- row ((fake-launch-substrate world)
+           ((refusing-link-artifact)
+            ((codex-impl "/opt/doeff-sessionhost")
+             ((claude-code-impl "/opt/doeff-sessionhost")
+              (resume-session params))))))
+  row)
 
 
 ;; ---------------------------------------------------------------------------
@@ -139,6 +175,55 @@
   (assert (= raised.code "transcript_not_discoverable"))
   (assert (in "transcript" (str raised)))
   ;; row 不生成(source 行のみ)・tmux 不接触
+  (assert (= (sorted (.keys world.rows)) ["s1"]))
+  (assert (not world.tmux-sessions)))
+
+
+(deftest test-resume-cross-binding-container-refusal-rejects-with-its-own-code
+  ;; ⚑ 受入(設計 3.5): transcript は**在る**のに器が敷設を断った拍は
+  ;; transplant_refused。transcript_not_discoverable を当てると
+  ;; 「見つからない」と読めて、運用者が居もしない transcript を探しに行く
+  ;; (既存 5 語はどれも意味が合わない — だから R9 の語彙に 1 語足した)。
+  ;; 前倒しで落とす方針そのものは R10 のまま(必須 artifact・row 不生成・tmux 不接触)。
+  (setv world (LaunchWorld))
+  (seed-source world #** (claude-seed-kwargs))
+  (setv (get world.fs CLAUDE-SOURCE-TRANSCRIPT) "{\"type\":\"meta\"}\n")
+  (setv raised None)
+  (try
+    (<- _ (run-resume-with-refusing-container
+            world (resume-params :binding {"kind" "claude-code"
+                                           "config_dir" "/x/claude-B"})))
+    (except [e RuntimeError]
+      (setv raised e)))
+  (assert (is-not raised None))
+  (assert (hasattr raised "code"))
+  (assert (= raised.code "transplant_refused") raised.code)
+  ;; 理由(どの syscall が何と言ったか)が文言に載る — これが在るから運用者が動ける
+  (assert (in "EACCES" (str raised)) (str raised))
+  ;; 「見つからない」とは言わない
+  (assert (not-in "does not exist" (str raised)) (str raised))
+  (assert (= (sorted (.keys world.rows)) ["s1"]))
+  (assert (not world.tmux-sessions)))
+
+
+(deftest test-resume-codex-cross-binding-container-refusal-rejects-with-its-own-code
+  ;; codex 側も同じ(必須 artifact = rollout)。
+  (setv world (LaunchWorld))
+  (seed-source world :conversation {"session_id" "conv-1"
+                                    "rollout_path" CODEX-ROLLOUT})
+  (setv (get world.fs CODEX-ROLLOUT)
+        "{\"type\":\"session_meta\",\"payload\":{\"id\":\"conv-1\"}}\n")
+  (setv raised None)
+  (try
+    (<- _ (run-resume-with-refusing-container
+            world (resume-params :binding {"kind" "codex"
+                                           "codex_home" "/y/codex"})))
+    (except [e RuntimeError]
+      (setv raised e)))
+  (assert (is-not raised None))
+  (assert (hasattr raised "code"))
+  (assert (= raised.code "transplant_refused") raised.code)
+  (assert (in "EACCES" (str raised)) (str raised))
   (assert (= (sorted (.keys world.rows)) ["s1"]))
   (assert (not world.tmux-sessions)))
 
