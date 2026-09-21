@@ -53,6 +53,7 @@
   GitRun
   FsMakeDirs
   FsLinkArtifact
+  FsEnsureSymlink
   FsListDir
   FsDirExists
   FsFileExists
@@ -294,6 +295,8 @@
     (.append world.trace #("compose-view" auth-file profile-dir view-root))
     (resume f"{view-root}/composed-view"))
   (FsReadText [path]
+    ;; 読んだ path を痕跡に残す(D10 の「宣言外の path を触らない」は**読み**で破れる)。
+    (.append world.trace #("fs-read" path))
     (resume (.get world.fs path)))
   (FsWriteTextAtomic [path text tmp-suffix]
     (.append world.trace #("fs-write" path))
@@ -301,6 +304,20 @@
     (resume None))
   (FsMakeDirs [path]
     (resume None))
+  (FsEnsureSymlink [link target]
+    ;; 実 substrate の 3 値(card ki-62aa1f4e9c9c D8)の台本版: symlink は張り替える・
+    ;; 実体(fs / listings に居る物)は触らない・同じ先なら何もしない。
+    (.append world.trace #("ensure-symlink" link target))
+    (setv outcome
+          (cond
+            (in link world.links)
+              (if (= (get world.links link) target)
+                  "unchanged"
+                  (do (setv (get world.links link) target) "linked"))
+            (or (in link world.fs) (in link world.listings)) "occupied-by-real-entity"
+            True (do (setv (get world.links link) target) "linked")))
+    (resume outcome))
+
   (FsLinkArtifact [source-path target-path]
     ;; 実 substrate の share.py 同型意味論の台本版: source は fs / links /
     ;; listings(dir 台本)のいずれかに実在するときのみ敷設できる。

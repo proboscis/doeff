@@ -1188,6 +1188,13 @@ class JoinSpec:
     #: **file が読めた日も読めない日も同じ**絶対 path をこの欄へ据え直す(不在は断らない — R13 の訂正・依頼書 §10-2)。
     #: None = 名指していない(env CLAUDE_SETTINGS_FILE_ENV に現れない)。
     claude_settings_file: str | None = None
+    #: 席の家へ運ぶ共通の指示の**宣言の綴り**(card acp:kanban-issue:ki-62aa1f4e9c9c 決定 D11 —
+    #: 名簿は policy.CARRIED-INSTRUCTION-SOURCES の 1 点)。(名簿の鍵, 宣言の綴り)の対の列で、
+    #: 名簿の順・名指した種だけ。空 = 1 種も名指していない(env に 1 本も現れない = 今日どおり)。
+    #: 形の門(絶対 path か `~/…`)は join.instruction-sources-of、`~` の展開と env への据え付けは
+    #: composition root(runtime.join_plan)。⚠ 欄を**種ごとに**増やさない: 1 種足す操作が欄を 2 つ
+    #: 増やす形は D11 が退けた形そのもの(d8472e1a の教訓)。
+    instruction_sources: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1439,6 +1446,15 @@ class AgentdSettings:
     #: 参加の拍の事実 = spec(名乗り)であって観測ではない: pod の checkout は pod の生涯で動かず、Mac は
     #: agentd-follow が据え直す拍に参加し直す。起動の拍の実勢は席ごとの log の 1 行が持つ。
     claude_settings_file_present: bool = False
+    #: 席の家へ運ぶ共通の指示の名指し(card acp:kanban-issue:ki-62aa1f4e9c9c D11 — join が据えた
+    #: 名簿の env の写し)。(名簿の鍵, **絶対 path**)の対の列で、名簿の順・名指した種だけ。
+    #: 空 = 名乗らない(node の行に labels を書かない = 今日どおり)。席の起動はこの欄ではなく env を
+    #: use-site で読む(launch.claude-instruction-sources)— ここは node の行の名乗りのためだけに持つ。
+    instruction_sources: tuple[tuple[str, str], ...] = ()
+    #: そのうち**参加の拍に現物が在った**種の鍵(composition root runtime.settings_from_env の 1 読み)。
+    #: node の行の labels(名簿の row.label)へ SEAT_SETTINGS_PRESENT / SEAT_SETTINGS_MISSING の
+    #: 1 語で名乗る(seat-settings と同じ 2 語 — 第 2 の語彙を作らない)。
+    instruction_sources_present: tuple[str, ...] = ()
     #: host の backend(wire の閉語彙 tmux | herdr | headless の写し — agentd が読む語は
     #: BACKEND_HEADLESS だけ)。composition root(runtime.settings_from_env)が host の argv / env
     #: (valve.backend_of)から導く 1 点で、stream_capability も同じ源から導く。headless の器は

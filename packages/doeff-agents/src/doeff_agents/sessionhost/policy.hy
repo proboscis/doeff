@@ -11,7 +11,7 @@
 
 (require doeff-hy.macros [defk deff <-])
 
-(import dataclasses [replace])
+(import dataclasses [dataclass replace])
 (import datetime [datetime])
 (import json)
 (import doeff_agents.sessionhost.effects [
@@ -334,6 +334,77 @@
 ;: 綴りの定義点は acp/effects.py CHARTER_AUTO_COMPACT_WINDOW_KEY で、同じ語である
 ;: ことは検が pin する(綴りが割れると黙って落ちる)。
 (setv AUTOCOMPACT-PARAM-KEY "auto_compact_window")
+
+
+;; ---------------------------------------------------------------------------
+;; 席の家へ運ぶ**共通の指示**の名簿(card acp:kanban-issue:ki-62aa1f4e9c9c・決定 D11)
+;; ---------------------------------------------------------------------------
+;;
+;; 機体の参加の宣言が名指した正本(共通の CLAUDE.md と skills)を、無人席の家
+;; (CLAUDE_CONFIG_DIR)へ運ぶ連鎖の**綴りの定義点**。1 種 = 1 行で、宣言の鍵・env の綴り・
+;; 運び方・家の中の名・行の labels の鍵・名乗りの語を 1 か所に持つ。
+;;
+;; ⚠ **名簿は回る — 列挙しない**(D11): join の許す鍵(acp/join.hy AGENTD-KEYS)・env への
+;; 据え付け(join-plan-of)・env からの読み(acp/runtime.py settings_from_env)・行の labels
+;; (acp/judgment.hy node-labels-of)・起動の拍の読み(launch.hy claude-instruction-sources)・
+;; 家への据え付け(impls/claude_code.hy claude-install-instruction-sources)は、どれもこの
+;; tuple を**回る**。1 種を足す操作は**この tuple に 1 行足すだけ**で、行き先を宣言しない
+;; 足し方は検(sessionhost_seat_home_instructions_deftests.hy の (k))が赤くする。
+;;
+;; ⚠ **置き場がここ(policy.hy)である理由**: 読み手が acp と sessionhost の**両側**に居る。
+;; acp/join.hy は既に policy を import し、substrate-clean の器(impls/claude_code.hy)は
+;; **acp から import できない**(.semgrep.yaml doeff-agents-memory-baseline-spelling-has-one-home
+;; の「the substrate-clean vessel may not import from acp」)。両側が読める module はここだけで、
+;; TURN-CARRIED-KEYS / LAUNCH-FLAG-KEYS(何を運ぶかの名簿)と同じ家でもある。
+(setv CARRIED-SOURCE-FILE-TEXT "file-text")
+(setv CARRIED-SOURCE-DIR-LINK "dir-link")
+;; 運び方の閉語彙(知らない語は器が loud に落ちる — 黙って飛ばさない)。
+(setv CARRIED-SOURCE-KINDS #{CARRIED-SOURCE-FILE-TEXT CARRIED-SOURCE-DIR-LINK})
+
+
+(defclass [(dataclass :frozen True :kw-only True)] CarriedSource []
+  "席の家へ運ぶ 1 種の綴り(D11 — 1 種 = 1 行)。
+
+   key        宣言 file の [agentd] の鍵(join の許す鍵はここから導く)
+   env        join が据える env の綴り(起動の拍の読み手が読む 1 点)
+   kind       運び方の閉語彙 CARRIED-SOURCE-KINDS(file-text = 実体 file を書く〔D2〕/
+              dir-link = dir ごと symlink〔D3〕)
+   home-name  家の中の名(<CLAUDE_CONFIG_DIR>/<この名>)
+   label      node の行の labels の鍵(present / missing の 1 語を名乗る)
+   absent-word 名指しが在って現物が無い拍の名乗りの語(起動の拍の 1 行の頭)"
+  #^ str key
+  #^ str env
+  #^ str kind
+  #^ str home-name
+  #^ str label
+  #^ str absent-word)
+
+
+(setv CARRIED-INSTRUCTION-SOURCES
+  #((CarriedSource :key "claude_memory_file"
+                   :env "DOEFF_AGENTD_CLAUDE_MEMORY_FILE"
+                   :kind CARRIED-SOURCE-FILE-TEXT
+                   :home-name "CLAUDE.md"
+                   :label "seat-memory"
+                   :absent-word "seat-memory-file-absent")
+    (CarriedSource :key "claude_skills_dir"
+                   :env "DOEFF_AGENTD_CLAUDE_SKILLS_DIR"
+                   :kind CARRIED-SOURCE-DIR-LINK
+                   :home-name "skills"
+                   :label "seat-skills"
+                   :absent-word "seat-skills-dir-absent")))
+
+
+;: 起動の拍に読んだ物を器へ渡す params の欄(launch.hy → impls/claude_code.hy)。値は
+;: {key, kind, home_name, text|path} の dict の tuple(名簿の順)。欄が無い = 名指しの無い
+;: 機体(argv も家も今日どおり — 受入 8)。
+(setv CARRIED-INSTRUCTION-SOURCES-PARAM "claude_instruction_sources")
+;: 上の dict の欄の綴り(器はこの 4 語しか読まない)。
+(setv CARRIED-ITEM-KEY "key")
+(setv CARRIED-ITEM-KIND "kind")
+(setv CARRIED-ITEM-HOME-NAME "home_name")
+(setv CARRIED-ITEM-TEXT "text")
+(setv CARRIED-ITEM-PATH "path")
 
 
 (defn carry-keys [keys src dst]
