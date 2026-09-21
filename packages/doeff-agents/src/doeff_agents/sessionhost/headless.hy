@@ -90,6 +90,7 @@
   admit-launch
   claude-settings-declaration
   launch-spawn-env
+  params-with-instruction-sources
   prepare-launch-workspace
   session-hooks-mode])
 (import doeff_agents.sessionhost.policy [
@@ -197,7 +198,9 @@
   (<- session-hooks (session-hooks-mode))
   ;; card ki-7b52bb76aa6e(ADR-004 R13): 席の settings の宣言は tui と同じ 1 点(launch.hy)で読む — 起動の拍ごと。
   (<- claude-settings (claude-settings-declaration agent-type))
-  (setv effective (dict params))
+  ;; card acp:kanban-issue:ki-62aa1f4e9c9c(D1 / D6): 席の家へ運ぶ共通の指示も同じ 1 点で起動の拍ごとに読む。
+  ;; ⚠ この腕は**降りた process の続き**(4 つ目の腕)も通る — argv の二重読みの落としは手番ごとに要る。
+  (<- effective (params-with-instruction-sources (dict params) agent-type))
   (setv (get effective "session_hooks") session-hooks)
   (when (is-not claude-settings None)
     (setv (get effective "claude_settings") claude-settings))
@@ -244,6 +247,8 @@
   (<- exists (headless-has-session session-name))
   (when exists
     (raise (RuntimeError f"headless session already exists: {session-name}")))
+  ;; card acp:kanban-issue:ki-62aa1f4e9c9c(D1): 据え付けは per-kind の PreLaunchSetup の中(tui と同じ座)。
+  (<- params (params-with-instruction-sources params agent-type))
   (<- prepared (prepare-launch-workspace params))
   (setv identity (get prepared "identity"))
   (setv minted-conversation (get prepared "conversation"))

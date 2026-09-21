@@ -8,18 +8,24 @@
 
 (require doeff-hy.macros [deftest defk deff <-])
 
+(import glob)
 (import os)
 (import shutil)
+(import threading)
 (import tempfile)
 (import pytest)
-(import doeff [EffectBase])
+(import doeff [EffectBase run])
 
 (import doeff_agents.sessionhost.effects [
   fs-canonical-path
   fs-file-mtime
   fs-read-text
   fs-write-text-atomic
+  fs-ensure-symlink
   fs-make-dirs
+  FS-ENSURE-SYMLINK-LINKED
+  FS-ENSURE-SYMLINK-OCCUPIED
+  FS-ENSURE-SYMLINK-UNCHANGED
   env-get
   clock-now
   tmux-new-session
@@ -101,6 +107,11 @@
   result)
 
 
+(defn drive-sync [op]
+  "thread の中から 1 effect を回す(deftest の <- は手番の外へ持ち出せないので素の run で回す)。"
+  (run ((real-substrate "tmux") op)))
+
+
 (deftest test-fs-write-atomic-and-read
   (setv d (tempfile.mkdtemp))
   (try
@@ -115,6 +126,9 @@
     (<- _ (drive (fs-write-text-atomic target "{\"ok\": true}" ".agentd-tmp")))
     (<- content (drive (fs-read-text target)))
     (assert (= content "{\"ok\": true}"))
+    ;; card acp:kanban-issue:ki-62aa1f4e9c9c D9: tmp の名は書き手ごとに一意なので、綴り 1 つでなく
+    ;; glob で数える(残骸ゼロの観測面は変えない)。
+    (assert (= (glob.glob (+ target ".*agentd-tmp")) []))
     (assert (not (os.path.exists (+ target ".agentd-tmp"))))
     (finally
       (shutil.rmtree d :ignore-errors True))))
@@ -323,4 +337,74 @@
     (<- _ ((real-substrate tmux) (tmux-send-keys pane message True False)))
     (finally
       (os.system f"{tmux} kill-session -t {session-name} 2>/dev/null")
+      (shutil.rmtree d :ignore-errors True))))
+
+
+;; ---------------------------------------------------------------------------
+;; D8 / D9(card acp:kanban-issue:ki-62aa1f4e9c9c・盲検 A の反例)
+;; ---------------------------------------------------------------------------
+
+(deftest test-fs-ensure-symlink-three-outcomes
+  ;; ⚑ 受入 11: 張り替えの動詞は 3 値を返し、**別の先を指す symlink は張り替える**。
+  ;; FsLinkArtifact はここで "target-conflict" を返して終わるので、それで組むと正本の path が
+  ;; 変わった日に家の skills が古い先を指したまま残る(実射 = 設計の repro_A_real_substrate.py)。
+  (setv d (os.path.realpath (tempfile.mkdtemp)))
+  (try
+    (setv old-target (os.path.join d "skills-v1"))
+    (setv new-target (os.path.join d "skills-v2"))
+    (os.makedirs old-target)
+    (os.makedirs new-target)
+    (setv link (os.path.join d "home" "skills"))
+    ;; 何も居ない → 張る(親 dir も作る)
+    (<- first (drive (fs-ensure-symlink link old-target)))
+    (assert (= first FS-ENSURE-SYMLINK-LINKED) first)
+    (assert (= (os.path.realpath link) old-target))
+    ;; 同じ先 → 触らない(inode も mtime も動かさない = 走っている席の見張りを起こさない)
+    (setv before (os.lstat link))
+    (<- second (drive (fs-ensure-symlink link old-target)))
+    (assert (= second FS-ENSURE-SYMLINK-UNCHANGED) second)
+    (setv after (os.lstat link))
+    (assert (= before.st-ino after.st-ino))
+    ;; 別の先 → 張り替える
+    (<- third (drive (fs-ensure-symlink link new-target)))
+    (assert (= third FS-ENSURE-SYMLINK-LINKED) third)
+    (assert (= (os.path.realpath link) new-target))
+    ;; symlink でない実体が居る → 触らない(erosion guard)
+    (setv occupied (os.path.join d "home" "real"))
+    (with [f (open occupied "w" :encoding "utf-8")]
+      (.write f "someone's real file"))
+    (<- fourth (drive (fs-ensure-symlink occupied new-target)))
+    (assert (= fourth FS-ENSURE-SYMLINK-OCCUPIED) fourth)
+    (assert (not (os.path.islink occupied)))
+    (with [f (open occupied :encoding "utf-8")]
+      (assert (= (.read f) "someone's real file")))
+    (finally
+      (shutil.rmtree d :ignore-errors True))))
+
+
+(deftest test-fs-write-text-atomic-survives-two-writers-on-one-home
+  ;; ⚑ 受入 12(D9・盲検 A): 家は**同じ資格の複数 session が共有する**。固定名の tmp
+  ;; (<path><suffix>)だと 2 席が同拍で書いた時に互いの書きかけを上書きし、先に rename した側の
+  ;; tmp を後の側が消して FileNotFoundError で片方の書きが落ちる。tmp が書き手ごとに一意なら、
+  ;; どちらも落ちず・残骸も残らず・中身は**どちらかの全文**(混ざらない)。
+  (setv d (os.path.realpath (tempfile.mkdtemp)))
+  (try
+    (setv target (os.path.join d "CLAUDE.md"))
+    (setv texts {"a" (* "α" 4096) "b" (* "β" 4096)})
+    (setv failures [])
+    (defn writer [name]
+      (for [_ (range 120)]
+        (try
+          (drive-sync (fs-write-text-atomic target (get texts name) ".agentd-tmp"))
+          (except [error Exception]
+            (.append failures #(name (repr error)))))))
+    (setv threads (lfor name ["a" "b"] (threading.Thread :target writer :args #(name))))
+    (for [t threads] (.start t))
+    (for [t threads] (.join t))
+    (assert (= failures []) failures)
+    (with [f (open target :encoding "utf-8")]
+      (setv content (.read f)))
+    (assert (in content (list (.values texts))) (cut content 0 32))
+    (assert (= (glob.glob (+ target ".*agentd-tmp")) []) (glob.glob (+ target ".*")))
+    (finally
       (shutil.rmtree d :ignore-errors True))))

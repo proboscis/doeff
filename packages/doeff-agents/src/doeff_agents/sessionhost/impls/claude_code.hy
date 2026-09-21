@@ -32,6 +32,7 @@
   TransplantConversation
   WireResultChannel
   fs-canonical-path
+  fs-ensure-symlink
   fs-file-exists
   fs-file-mtime
   fs-link-artifact
@@ -45,6 +46,15 @@
 (import doeff_agents.sessionhost.policy [
   AUTOCOMPACT-PARAM-KEY
   BILLING-METERED
+  CARRIED-INSTRUCTION-SOURCES-PARAM
+  CARRIED-ITEM-HOME-NAME
+  CARRIED-ITEM-KEY
+  CARRIED-ITEM-KIND
+  CARRIED-ITEM-PATH
+  CARRIED-ITEM-TEXT
+  CARRIED-SEAT-HOME-PARAM
+  CARRIED-SOURCE-DIR-LINK
+  CARRIED-SOURCE-FILE-TEXT
   BILLING-SUBSCRIPTION
   CLAUDE-SETTINGS-API-KEY-HELPER
   CLAUDE-SETTINGS-VERTEX-ENV
@@ -168,11 +178,15 @@
 ;; (設計の evidence/probe_user_layer.log)。値は席の $HOME から導く 1 本ちょうど(glob を使わない・宣言に
 ;; 書かせない — 宿ごとに書かせると 3 台目で漏れる)。
 (setv CLAUDE-MD-EXCLUDES-SETTING "claudeMdExcludes")
+;; 有人 profile の家の dir 名(CLAUDE_CONFIG_DIR を名乗らない人の既定)。綴りはこの 1 点で、
+;; resolve-claude-config-dir の fallback と二重読みの落としの導出が同じ語を読む。
+(setv CLAUDE-DEFAULT-HOME-DIR ".claude")
 ;; doeff が `--settings` に自分で置く鍵の集合(card acp:kanban-issue:ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13)。
 ;; 機体の参加の宣言が名指した席の settings file(dotfiles claude-hooks/seat-settings.json)がこの鍵を持つと、join の
 ;; 参加の門 (c) が断り(acp/join.hy claude-settings-declaration-of)、build-claude-argv の合流も fail-loud で断る —
 ;; 定義点はこの 1 つ(綴りの家はこの file — .semgrep.yaml doeff-agents の autoMemoryDirectory の規則)。
-(setv CLAUDE-SETTINGS-OWNED-KEYS #{CLAUDE-DISABLE-ALL-HOOKS-SETTING CLAUDE-AUTO-MEMORY-DIR-SETTING})
+(setv CLAUDE-SETTINGS-OWNED-KEYS #{CLAUDE-DISABLE-ALL-HOOKS-SETTING CLAUDE-AUTO-MEMORY-DIR-SETTING
+                                  CLAUDE-MD-EXCLUDES-SETTING})
 ;; charter が運ぶ記憶の冊の欄(card acp:kanban-issue:ki-9fc7d4bca4dc)。綴りの正本は
 ;; sessionhost/acp/effects.py の CHARTER_MEMORY_FILES_KEY で、ここはその写し(検が突き合わせる)。
 ;; この層は行を読まない — 運ばれてきた {name, text} を置き場へ書くだけ。
@@ -257,6 +271,21 @@
   ;; (launch / headless が起動の拍ごとに読んで params へ)を**同じ 1 つの** `--settings` に合流する。doeff が置く鍵との
   ;; 衝突は fail-loud — 黙って後勝ちにすると「hook を配ったつもりで disableAllHooks が残る」か「記憶の置き場が消える」の
   ;; どちらかが無音で起きる。空の宣言({})は「何も足さない」(argv は今日と同じ)。
+  ;; card acp:kanban-issue:ki-62aa1f4e9c9c(決定 D6): **席に固有の**二重読みを落とす。本体は cwd の祖先を
+  ;; 登って <祖先>/.claude/CLAUDE.md も Project 層に積む。有人の席ではそれが user 層と同じ path なので
+  ;; 畳まれるが、無人席の家は path が違うので畳まれず、同じ中身が 2 度載る(evidence/probe_user_layer.log)。
+  ;; 値は席の $HOME から**導く**(宣言に書かせない — 宿ごとに書かせると 3 台目で漏れる)。落とすのは
+  ;; **家へ実体を置いた種**の名ちょうどで、$HOME を名乗らない宿では鍵を置かない(導けない物を発明しない)。
+  (setv carried (list (or (.get params CARRIED-INSTRUCTION-SOURCES-PARAM) [])))
+  (setv seat-home (.get params CARRIED-SEAT-HOME-PARAM))
+  (when (and carried (isinstance seat-home str) (.strip seat-home))
+    (setv base (.rstrip (.strip seat-home) "/"))
+    (setv drops [])
+    (for [item carried]
+      (when (= (.get item CARRIED-ITEM-KIND) CARRIED-SOURCE-FILE-TEXT)
+        (.append drops f"{base}/{CLAUDE-DEFAULT-HOME-DIR}/{(get item CARRIED-ITEM-HOME-NAME)}")))
+    (when drops
+      (setv (get settings CLAUDE-MD-EXCLUDES-SETTING) drops)))
   (setv declared (.get params "claude_settings"))
   (when declared
     (when (not (isinstance declared dict))
@@ -358,7 +387,7 @@
     (when (is None home)
       (raise (RuntimeError
                "cannot resolve CLAUDE_CONFIG_DIR: no session_env entry, no process env, no HOME")))
-    (setv config-dir f"{home}/.claude"))
+    (setv config-dir f"{home}/{CLAUDE-DEFAULT-HOME-DIR}"))
   #(config-dir warnings))
 
 
@@ -462,6 +491,53 @@
   None)
 
 
+(defk claude-install-instruction-sources [config-dir params verb]
+  {:pre [(: config-dir str) (: params dict) (: verb str)]
+   :post [(: % "None — 家への据え付けは副作用で、返す値を持たない")]}
+  "席の家へ**共通の指示**を実体化する(card acp:kanban-issue:ki-62aa1f4e9c9c 決定 D1 / D2 / D3 / D8)。
+
+   運ばれてきた物を置くだけ — **正本の path も家の中の名もここでは組まない**(名簿は
+   policy.CARRIED-INSTRUCTION-SOURCES の 1 点で、読みは launch.claude-instruction-sources)。
+   memory_files の据え付けと同じ規律: この層は中身を判断しない。
+
+   運び方は 2 つ(名簿の kind):
+     file-text  **実体 file** を書く(fs-write-text-atomic)。symlink / hard link にしない —
+                本体の user 層は深さ 0 の symlink と nlink>1 の file を**黙って落とす**
+                (実射 = 設計 §2.3・計器 = dotfiles check_native_claude_home_contract.py)
+     dir-link   dir ごと 1 本の symlink(fs-ensure-symlink)。既に正しい先なら**張り替えない** —
+                本体は skills の dir を見張っていて、張り替えると走っている席にも効く(§3.5)
+   知らない kind は loud に落ちる(名簿と器がずれたまま黙って飛ばさない)。
+
+   ⚠ **名乗りは動詞が返した 3 値そのもの**(D1b): 「やろうとしたこと」ではなく起きたことを書く。
+   実体が居て張れなかった拍(occupied-by-real-entity)は、その語のまま 1 行に出る。
+
+   ⚠ 射程: 据え付けは**起こす拍**ちょうど。降りた process の続き(headless.continue-headless-process)は
+   この関数を通らない — 家は session の生涯で残るので普段の手番は影響を受けないが、正本の path が
+   手番の間に動いた日は次に**起こす**拍まで古い(D1 の「家の中身は席の起動の拍で決まる」)。"
+  (setv carried (list (or (.get params CARRIED-INSTRUCTION-SOURCES-PARAM) [])))
+  (when (not carried)
+    (return None))
+  (<- _ (fs-make-dirs config-dir))
+  (for [item carried]
+    (setv key (.get item CARRIED-ITEM-KEY))
+    (setv kind (.get item CARRIED-ITEM-KIND))
+    (setv landed f"{config-dir}/{(get item CARRIED-ITEM-HOME-NAME)}")
+    (cond
+      (= kind CARRIED-SOURCE-FILE-TEXT)
+        (do
+          (<- _ (fs-write-text-atomic landed (get item CARRIED-ITEM-TEXT) ".agentd-tmp"))
+          (<- _ (log-line f"{verb}: seat-instruction key={key} kind={kind} home={landed} outcome=written")))
+      (= kind CARRIED-SOURCE-DIR-LINK)
+        (do
+          (<- outcome (fs-ensure-symlink landed (get item CARRIED-ITEM-PATH)))
+          (<- _ (log-line f"{verb}: seat-instruction key={key} kind={kind} home={landed} outcome={outcome}")))
+      True
+        (raise (RuntimeError
+                 (+ f"session.launch: 席の家へ運ぶ物の運び方が閉語彙の外: {kind !r}(key={key})— "
+                    "名簿 policy.CARRIED-INSTRUCTION-SOURCES と器の分岐がずれている")))))
+  None)
+
+
 (defk claude-pre-launch [params]
   {:pre [(: params dict)]
    :post [(: % dict)]}
@@ -518,6 +594,9 @@
                 f"{CLAUDE-SETTINGS-VERTEX-PROJECT-ENV}=<project>. The host never reads the "
                 "credential value — it only checks that the home declares one "
                 "(ADR-DOE-AGENTS-004 R9)."))))
+  ;; card acp:kanban-issue:ki-62aa1f4e9c9c(決定 D1): 機体の参加の宣言が名指した共通の指示を家へ据える。
+  ;; 座はこの 1 か所(家へ書く既存の点)で、後追いの reconciler を足さない(D7 — 次の起動の拍で直る)。
+  (<- _ (claude-install-instruction-sources config-dir params "session.launch"))
   ;; 自動記憶の置き場は起こす前に在らせる(CLI 側も作るが、無い dir を設定で指さない)。
   ;; 書き出しは腕で分かれない 1 点(claude-hydrate-memory-home)— 起こす腕はここから、行の
   ;; 名簿しか読まない腕(降りた process の続き headless.continue-headless-process)は
