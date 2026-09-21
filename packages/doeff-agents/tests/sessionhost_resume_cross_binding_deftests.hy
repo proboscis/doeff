@@ -31,7 +31,8 @@
 (import doeff_agents.sessionhost.effects [
   FsLinkArtifact
   FsSymlinkOutcome
-  FS-SYMLINK-REFUSED])
+  FS-SYMLINK-REFUSED
+  FS-SYMLINK-SOURCE-MISSING])
 (import doeff_agents.sessionhost.launch [resume-session])
 (import doeff_agents.sessionhost.impls.claude_code [claude-code-impl])
 (import doeff_agents.sessionhost.impls.codex [codex-impl])
@@ -57,6 +58,27 @@
    :post [(: % "SessionRow(成功時)")]}
   (<- row ((fake-launch-substrate world)
            ((refusing-link-artifact)
+            ((codex-impl "/opt/doeff-sessionhost")
+             ((claude-code-impl "/opt/doeff-sessionhost")
+              (resume-session params))))))
+  row)
+
+
+;; 敷設元が**見てから張るまでの間に消えた**世界。呼び手は実在検査(fs-file-exists)を
+;; 先に通しているので、source-missing はこの窓からしか来ない — だから台本の世界では
+;; 敷設の 1 手を差し替えるしか撃ちようがない(実在検査を落とすと、そちらの枝が先に
+;; 当たって別の座の検になってしまう)。
+
+(defhandler vanishing-link-artifact []
+  (FsLinkArtifact [source-path target-path]
+    (resume (FsSymlinkOutcome :state FS-SYMLINK-SOURCE-MISSING))))
+
+
+(defk run-resume-with-vanishing-source [world params]
+  {:pre [(: world LaunchWorld) (: params dict)]
+   :post [(: % "SessionRow(成功時)")]}
+  (<- row ((fake-launch-substrate world)
+           ((vanishing-link-artifact)
             ((codex-impl "/opt/doeff-sessionhost")
              ((claude-code-impl "/opt/doeff-sessionhost")
               (resume-session params))))))
@@ -202,6 +224,37 @@
   (assert (in "EACCES" (str raised)) (str raised))
   ;; 「見つからない」とは言わない
   (assert (not-in "does not exist" (str raised)) (str raised))
+  (assert (= (sorted (.keys world.rows)) ["s1"]))
+  (assert (not world.tmux-sessions)))
+
+
+(deftest test-resume-cross-binding-vanished-transcript-rejects-as-not-discoverable
+  ;; ⚑ 受入 7(claude 側): 敷設の結末を **文字列ではなく状態**で見分ける座
+  ;; (impls/claude_code.hy の source-missing の枝)。戻りをレコードにした拍、
+  ;; `(= outcome "source-missing")` は黙って False になる — 型は合うので
+  ;; 例外も型検査も出ず、枝が**静かに死ぬ**。死ぬと source が消えた拍に
+  ;; transplant がそのまま先へ進み、席が起きてから実 CLI が 120 秒かけて死ぬ
+  ;; (R10 が前倒しで潰していた失敗が戻る)。この座を呼び手側から見る検査は
+  ;; 2026-09-22 まで 0 件だった(codex 側は missing-rollout の検が現に捕まえる)。
+  (setv world (LaunchWorld))
+  (seed-source world #** (claude-seed-kwargs))
+  ;; 実在検査は通す(transcript は見た時点では在る)
+  (setv (get world.fs CLAUDE-SOURCE-TRANSCRIPT) "{\"type\":\"meta\"}\n")
+  (setv raised None)
+  (try
+    (<- _ (run-resume-with-vanishing-source
+            world (resume-params :binding {"kind" "claude-code"
+                                           "config_dir" "/x/claude-B"})))
+    (except [e RuntimeError]
+      (setv raised e)))
+  (assert (is-not raised None) "source が消えたのに resume が通った")
+  (assert (hasattr raised "code"))
+  (assert (= raised.code "transcript_not_discoverable") raised.code)
+  ;; どの transcript が無いのかが文言に載る(運用者はこれで動ける)
+  (assert (in CLAUDE-SOURCE-TRANSCRIPT (str raised)) (str raised))
+  ;; 器の断りとは別の語彙 — 取り違えると居もしない transcript を探しに行く
+  (assert (not-in "transplant-refused" (str raised)) (str raised))
+  ;; R10: row 不生成(source 行のみ)・tmux 不接触
   (assert (= (sorted (.keys world.rows)) ["s1"]))
   (assert (not world.tmux-sessions)))
 

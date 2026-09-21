@@ -58,6 +58,7 @@
   FsSymlinkOutcome
   FS-SYMLINK-LINKED
   FS-SYMLINK-OCCUPIED
+  FS-SYMLINK-REFUSED
   FS-SYMLINK-SAME-ENTITY
   FS-SYMLINK-SOURCE-MISSING
   FS-SYMLINK-TARGET-CONFLICT
@@ -385,6 +386,26 @@
   (get (lfor [p t l s] world.sent-keys :if l #(p t l s)) -1))
 
 
+(defhandler refusing-link-artifact []
+  (FsLinkArtifact [source-path target-path]
+    ;; 台本の器は断らないので、断りの拍は敷設の 1 手を差し替えて作る
+    ;; (effect は内から外へ伝わるので fake substrate より先にここが受ける)。
+    (resume (FsSymlinkOutcome :state FS-SYMLINK-REFUSED
+                              :errno 28
+                              :detail "symlink: ENOSPC No space left on device"))))
+
+
+(defk run-launch-with-refusing-container [world params]
+  {:pre [(: world LaunchWorld) (: params dict)]
+   :post [(: % "SessionRow(成功時)")]}
+  (<- row ((fake-launch-substrate world)
+           ((refusing-link-artifact)
+            ((codex-impl "/opt/doeff-sessionhost")
+             ((claude-code-impl "/opt/doeff-sessionhost")
+              (launch-session params))))))
+  row)
+
+
 (defk run-launch [world params]
   {:pre [(: world LaunchWorld) (: params dict)]
    :post [(: % "SessionRow(成功時)")]}
@@ -552,6 +573,45 @@
               (get world.fs "/acp-root/.acp/workspaces/inv-w2/.acp-owner.json")))
   ;; session は生きて立った(work_dir 検証も通過)
   (assert (= row.status "running")))
+
+
+(deftest test-launch-sibling-link-refusal-does-not-blame-an-existing-file
+  ;; ⚑ 受入(依頼書 §3c): sibling の敷設を**器が**断った拍の文言。
+  ;; 直す前の 1 行は状態を問わず「非破壊方針につき既存物は触らない」と言っていたので、
+  ;; 器が断った拍(容量 / 権限 / 読み取り専用)に**在りもしない既存物**を名指し、
+  ;; 運用者が敷設先を片付けに行った(扉 2 の誤診断と同じ形)。方針は不変 —
+  ;; {linked, same-entity} 以外は今も loud に落とす。変わったのは文言だけ。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["codex booting banner" "› {composer}"])
+  (.add world.git-known-shas "abc1234def")
+  (.add world.missing-dirs "/acp-root/.acp/workspaces/inv-w2")
+  (setv (get world.fs "/repo/acp/cabal.project")
+        "packages:\n  .\n  ../doeff-agent-haskell\n")
+  (setv (get world.listings "/repo/doeff-agent-haskell") ["src"])
+  (setv raised None)
+  (try
+    (<- _ (run-launch-with-refusing-container
+            world (launch-params
+                    :work_dir "/acp-root/.acp/workspaces/inv-w2"
+                    :workspace_seed
+                    {"repo" "/repo/acp"
+                     "dir" "/acp-root/.acp/workspaces/inv-w2"
+                     "mode" "detached"
+                     "sha" "abc1234def"
+                     "link_siblings" True})))
+    (except [e RuntimeError]
+      (setv raised e)))
+  (assert (is-not raised None) "器が断ったのに seed が通った")
+  (setv message (str raised))
+  ;; 理由(どの syscall が何と言ったか)が載る — これが在るから運用者が動ける
+  (assert (in "ENOSPC" message) message)
+  (assert (in FS-SYMLINK-REFUSED message) message)
+  ;; 居もしない実体を名指さない
+  (assert (not-in "既存物は触らない" message) message)
+  (assert (in "片付ける実体は居ない" message) message)
+  ;; 敷設は成立していない(台本の links に残らない)・session は立たない
+  (assert (not-in "/acp-root/.acp/workspaces/doeff-agent-haskell" world.links))
+  (assert (= world.rows {}) world.rows))
 
 
 (deftest test-launch-workspace-seed-skips-when-dir-exists
