@@ -1,0 +1,27 @@
+### 出所(この file は写し): 依頼者 c-3JYBNJMC2RZTM1S8V43939MP42 が pod で撃った結果を、その郵便
+### lt-HH8KGE0FX6GP3WM7VVBXN5JF7E(2026-09-21 18:34 JST)の本文から計画段 c-AJ8C0BK9RF29HQ92ZQ986FXQVT が写した。
+### 席が消えると元の出力は残らないので、郵便の本文を正本とする。
+### 撃った時刻: 2026-09-21T09:3xZ(郵便の記載)・機体 pod agentd-pool-d46558f69-c6p97・doeff ec654440
+### 本体: /usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe(2.1.263 — 計画段が kubectl exec で同じ拍に確認)
+### script: origin/main 8dd94c98 の evidence/skills_roots_probe.py を 1 文字も変えずに撃った(1〜9)。
+###   5a / 5b / 5c は同じ module の probe() を呼ぶ 20 行の対照(1 変数ずつ — 同じ pod・同じ本体)。
+### 札は dummy で捕捉 server 宛(利用枠は 0)。HOME / cwd の行は郵便に写っていない(pod には ~/.claude がそもそも無い)。
+### 読み方: 1〜9 は Mac(2.1.278・skills_roots_probe.log)と 10 行一致。違うのは行 5 だけ —
+###   5 = 0(pod の /tmp は実体) vs Mac の 5 = 2(macOS の /tmp は /private/tmp への symlink)。
+###   5a(dir が env の HOME ちょうど)= 0・5b(同じ dir・HOME だけ本物へ)= 2 ⇒ 止まりは env の HOME に鍵が掛かる = 本体は env の HOME を尊重する。
+###   5c(HOME も cwd も symlink の綴り)= 2 ⇒ Mac の行 5 を pod の同じ本体で再現 = 版の差ではなく綴りの比較の産物。
+###   ⚠ 行 3 は pod では弱い観測(~/.claude が dir ごと不在なので 0 は当たり前)。
+--- 1 ancestor, non-git cwd: rc=1 requests=2 ancestor(W1)=2 fakehome(W2)=0 cfg(B)=0 project(P)=0 dotfiles=0
+--- 2 ancestor above git root: rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=0 cfg(B)=0 project(P)=0 dotfiles=0
+--- 3 real HOME, ~/.claude/skills, empty cfg: rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=0 cfg(B)=0 project(P)=0 dotfiles=0
+--- 4 real HOME, ancestor below HOME: rc=1 requests=2 ancestor(W1)=2 fakehome(W2)=0 cfg(B)=0 project(P)=0 dotfiles=0
+--- 5 fake env HOME, cwd under it: rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=0 cfg(B)=0 project(P)=0 dotfiles=0
+--- 6 live form, empty cfg: rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=0 cfg(B)=0 project(P)=0 dotfiles=0
+--- 6o live form + oauth dummy, empty cfg: rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=0 cfg(B)=0 project(P)=0 dotfiles=0
+--- 7 live form, cfg/skills symlink: rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=0 cfg(B)=0 project(P)=0 dotfiles=2
+--- 7o live form + oauth dummy, cfg/skills symlink: rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=0 cfg(B)=0 project(P)=0 dotfiles=2
+--- 8 live form, collision cfg-B vs project-P: rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=0 cfg(B)=2 project(P)=0 dotfiles=0
+--- 9 live form, project-P alone: rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=0 cfg(B)=0 project(P)=2 dotfiles=0
+--- 5a dir IS env HOME: rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=0 cfg(B)=0 project(P)=0 dotfiles=0
+--- 5b same dir as plain ancestor: rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=2 cfg(B)=0 project(P)=0 dotfiles=0
+--- 5c HOME and cwd both via symlink spelling: rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=2 cfg(B)=0 project(P)=0 dotfiles=0

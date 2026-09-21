@@ -284,7 +284,7 @@ PR の本文に **Verification の表**(この節の項 ↔ 出荷した検の `
 | --- | --- | --- |
 | 1 | **pod の席**で共通の CLAUDE.md が **user 層として** context に載る | 実際の agentd の席の context(`Contents of <家>/CLAUDE.md (user's private global instructions for all projects)` の札)。mock 不可 |
 | 2 | **Mac の席**で同じ | 同上(会社 Mac) |
-| 3 | 両方で dotfiles の skill が**使える一覧に在る** | 席の skill 一覧(`ai`/`claude` の一覧か、席の手番が名指しで 1 本呼べること) |
+| 3 | 両方で dotfiles の skill が**使える一覧に在る** | 席の skill 一覧(`ai`/`claude` の一覧か、席の手番が名指しで 1 本呼べること)。**Mac では、使った cwd が symlink を経ない綴りであることを札に pin するか、運んだ根を外した対照 1 席(同じ名前が 0 件)を並べる**(§5 の「偽の緑の筋」) |
 | 4 | **陽性対照**: cwd を `$HOME` の外にした席でも届く | 同上(cwd を `$HOME` の外にして 1 席) |
 | 5 | **もれなさの針**(宿を列挙せず導く) | dotfiles `test_every_seat_starting_declaration_names_the_common_instruction_sources` |
 | 6 | **二重読みが無い**(Mac の形で user 層 1 件ちょうど) | 席の context + doeff の deftest (f) |
@@ -321,15 +321,34 @@ plugin の skill だけ)。発注者の席(個人 Mac)の一覧も同梱の 13 �
       項目を 1 つずつ置いた。次の手番の一覧に**両方とも載った**。したがって、根が symlink でも、項目が symlink
       でも読まれる(形の pin `skills-entries-accept-a-symlink` の実射の裏取り)。管理設定の file は、標準の
       3 つの置場のどれにも無い。
+    - **pool の本体の版(2.1.263)での裏取り**(依頼者が pod `agentd-pool-d46558f69-c6p97` で同じ計器 1〜9 を 1 文字も
+      変えずに撃った・郵便 lt-HH8KGE0FX6GP3WM7VVBXN5JF7E・`evidence/skills_roots_probe_pod_2.1.263.log`): Mac(2.1.278)の
+      log と 10 行一致。行 7 / 7o = 2 なので、**運びの形は pool の版でも効く**。違うのは行 5 だけで、その理由は次項の
+      取り消しにある。⚠ 形の pin の逐語は 2.1.263 から取った物で、挙動の測定はこれまで 2.1.278 だけだった —
+      この裏取りで両方の版が揃った。
   - 実測 2(止まり方):
     - 読む: git でない作業ディレクトリの祖先。ホームより下の祖先。
-    - 読まない: git の root より上。本物のホームの `.claude/skills`。
+    - 読まない: git の root より上。本物のホームの `.claude/skills`(⚠ cwd を symlink の綴りで渡した時は例外 — 次々項)。
   - ⚠ 08:4xZ の測定は見かけだった。その測定の「作業ディレクトリが `$HOME` の下なら載る」は、env の `HOME` を
-    偽の dir に付け替えた測り方から出ていた。本体は付け替えた `HOME` をホームとして扱わないので、偽の dir は
-    ただの祖先として読まれていた(新しい測定の 5 件目で再現)。
+    偽の dir に付け替えた測り方から出ていた。
+    ⚠ **09:1xZ の版がここに書いた説明「本体は付け替えた `HOME` をホームとして扱わない・偽の dir はただの祖先として
+    読まれる」は取り消す**(2026-09-21T09:5xZ)。依頼者が pod(2.1.263)で 1 変数ずつの対照 5a / 5b / 5c を撃ち
+    (`evidence/skills_roots_probe_pod_2.1.263.log`)、発注者が会社 Mac(2.1.278)で偽の `HOME` の綴りだけを変えて追試した
+    (`evidence/skills_roots_probe_ctl_home_spelling.log`)。結果は同じ: **本体は env の `HOME` を尊重してホームの手前で止まる**。
+    行 5 が 2 だったのは、測定の作業 dir が macOS の `/tmp`(`/private/tmp` への symlink)の下にあり、`HOME` の綴りが
+    symlink 経由・cwd 側の綴りが解決済みで、止まりの比較(綴り同士)が一度も当たらなかったから。同じ形を `$HOME` の下や
+    `/private/tmp/…` の綴りで渡すと 0。pod(Linux・`/tmp` は実体)では最初から 0。版の差ではない(pod の同じ本体で
+    symlink の綴りを渡す 5c が 2 を再現)。上の「止まる点が 2 つ」の結論は変わらない — 変わるのは止まりの**条件**で、
+    ホームの止まりは「`HOME` の綴りと祖先の綴りが一致すること」に掛かっている。
+  - ⚠ **受入 3 の偽の緑の筋**(上の取り消しから導かれる): 席の cwd が symlink の綴り(macOS では `/tmp`・`/var` の下)で
+    与えられると、走査はホームで止まらず `$HOME/.claude/skills` とその上の祖先まで project 層として読む。両 Mac の
+    `$HOME/.claude/skills` は dotfiles の skills を指しているので、その条件の席は**運んでいなくても** 107〜117 件を受け取る。
+    ⇒ Mac で受入 3 を撃つ時は、使った cwd が symlink を経ない綴りであることを札に pin するか、運んだ根を外した対照 1 席
+    (同じ名前が 0 件になる)を並べる。名前が一覧に出たことだけでは、運びの証拠にならない(受入の表の行 3 に書いた)。
+    pod の席の家には `~/.claude` がそもそも無いので、pod ではこの筋は無い。
   - ⚠ 2 つ目の根に見える `…(<関数>(),".claude","skills")` の関数は**管理ポリシーの置場**
     (`getManagedFilePath`・ログの名は `managed=`)で、`$HOME` ではない。
-- ⇒ **受入 3 は Mac でも pod でも、そのまま見分けになる**。受入 4 で代えない。
+- ⇒ **受入 3 は Mac でも pod でも、そのまま見分けになる**。受入 4 で代えない(Mac では cwd の pin か対照つき — 上の偽の緑の筋)。
   確かめる時は **skill の名前で**見る。100 件を超えると一覧の文字数の予算で説明文が落ち、名前だけの行になる。
   手で開く会話が `~/.claude/skills` を読む時も同じ形なので、運び方の欠陥ではない。
 - **運んだ skills は、repo が持つ project 層の skills と並んで載る**。これが意図した意味で、戻せる決定として
