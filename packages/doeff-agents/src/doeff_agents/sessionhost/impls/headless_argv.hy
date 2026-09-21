@@ -16,6 +16,7 @@
 ;;; substrate-clean 領域: 生 IO 禁止(defsemgrep 執行)。ここは純粋な組み立てだけ。
 
 (require doeff-hy.macros [defk defhandler <-])
+(import json)
 
 (import doeff_agents.sessionhost.effects [BuildHeadlessLaunch])
 
@@ -58,6 +59,17 @@
     (.pop base-params "conversation" None))
   (<- base (build-claude-argv base-params))
   (setv argv (+ [(get base 0)] (list CLAUDE-HEADLESS-FLAGS) (list (cut base 1 None))))
+  (when (.get params "cache_maintenance" False)
+    ;; 専用pingがStop/WAIT hookで通常業務へ転化しない。その他のsettings・model・toolsは保存する。
+    ;; 通常turnのsession_hooks契約を緩めず、この明示された専用経路だけで合成する。
+    (if (in "--settings" argv)
+      (do
+        (setv index (+ (.index argv "--settings") 1))
+        (setv settings (json.loads (get argv index)))
+        (setv (get settings "disableAllHooks") True)
+        (setv (get argv index) (json.dumps settings :separators #("," ":"))))
+      (.extend argv ["--settings" (json.dumps {"disableAllHooks" True})]))
+    (.extend argv ["--max-turns" "1"]))
   (when (and (= resume-mode "resume") (isinstance conversation dict))
     (setv conv-id (.get conversation "session_id"))
     (when (isinstance conv-id str)

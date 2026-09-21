@@ -18,7 +18,7 @@
 
 (require doeff-hy.macros [deff defk <-])
 
-(import dataclasses [dataclass replace])
+(import dataclasses [dataclass replace asdict])
 (import datetime [datetime timedelta timezone])
 (import json)
 (import os)
@@ -78,6 +78,9 @@
 (import doeff_agents.sessionhost.impls.headless_argv [headless-argv-impl])
 (import doeff_agents.sessionhost.effects [headless-kill headless-liveness])
 (import doeff_agents.sessionhost.headless_protocol [backend-alive])
+(import doeff_agents.sessionhost.cache_host [cache-host-ping cache-host-probe cache-host-guard-normal-send cache-host-cancel])
+(import doeff_agents.sessionhost.cache_host_model [HostCacheRead])
+(import doeff_agents.sessionhost.cache_host_store [session-mutation-lock])
 (import doeff_agents.sessionhost.headless [
   HEADLESS-BACKEND-KIND
   EVENT-SESSION-INTERRUPTED
@@ -1572,6 +1575,31 @@
                                (capture-program sid lines))))
     (return {"text" text}))
 
+  (when (in method #("session.cache-ping" "session.cache-ping-status"))
+    (setv p (params-object params method))
+    (setv sid (required-str-param p "session_id" method))
+    (setv operation-id (required-str-param p "operation_id" method))
+    (when (not (headless-backend? config))
+      (raise (RuntimeError "cache ping requires the headless backend")))
+    (when (= method "session.cache-ping-status")
+      (setv receipt (run-hosted config actor (HostCacheRead operation-id)))
+      (when (is receipt None) (return None))
+      (when (!= receipt.session-id sid)
+        (raise (RuntimeError "cache operation session mismatch")))
+      (return (asdict (run-hosted config actor (cache-host-probe receipt)))))
+    (when (- (set p) #{"session_id" "operation_id" "expires_at" "session_env"})
+      (raise (RuntimeError "cache ping accepts no prompt, priority or turn parameters")))
+    (setv expires-at (.get p "expires_at"))
+    (when (not (and (= (type expires-at) int) (>= expires-at 0)))
+      (raise (RuntimeError "cache ping expires_at must be a nonnegative integer")))
+    (setv session-env (.get p "session_env" {}))
+    (when (not (isinstance session-env dict))
+      (raise (RuntimeError "cache ping session_env must be an object")))
+    (setv env-error (session-env-admission-error session-env method))
+    (when env-error (raise (RuntimeError env-error)))
+    (return (asdict (run-hosted config actor
+      (cache-host-ping sid operation-id expires-at session-env)))))
+
   (when (= method "session.send")
     (setv p (params-object params "session.send"))
     (setv sid (required-str-param p "session_id" "session.send"))
@@ -1623,6 +1651,8 @@
                       ""))
     (when ignored
       (setv attachments #()))
+    (when (headless-backend? config)
+      (run-hosted config actor (cache-host-guard-normal-send sid)))
     (run-hosted config actor
                 (cond
                   (and (headless-backend? config) (= mode SEND-MODE-INTERRUPT))
@@ -1734,7 +1764,16 @@
     (return (err-response None "invalid request: missing field `method`" None)))
   (setv params (.get request "params"))
   (try
-    (setv value (dispatch-method method params config actor))
+    ;; 一つのsessionの通常sendと専用pingを同時に開始させない。API完了までの短い区間だけ。
+    ;; await_result等の長い待ちはこのlockを取得しない。
+    (if (and (in method #("session.send" "session.cache-ping" "session.cache-ping-status"
+                          "session.cancel" "session.cleanup" "session.interrupt" "session.escalate"))
+             (isinstance params dict) (isinstance (.get params "session_id") str))
+      (with [(session-mutation-lock (get params "session_id"))]
+        (when (and (headless-backend? config) (in method #("session.cancel" "session.cleanup")))
+          (run-hosted config actor (cache-host-cancel (get params "session_id"))))
+        (setv value (dispatch-method method params config actor)))
+      (setv value (dispatch-method method params config actor)))
     (ok-response id value)
     (except [e RpcHostError]
       (err-response id e.message e.code))
