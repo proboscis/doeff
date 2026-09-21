@@ -13,6 +13,7 @@
 
 (require doeff-hy.macros [defk deff <- defhandler])
 
+(import os)
 (import doeff [run])
 
 (import json)
@@ -76,6 +77,7 @@
   FAST-JEV-KEY-FILE-ENV
   fast-jev-compaction-enabled
   fast-jev-home-settings
+  fast-jev-state-dir
   fast-jev-install-command])
 
 
@@ -655,7 +657,7 @@
    が鍵の file の path を名乗り、その file が在る時だけ働く(Mac の agentd は名乗らないので何もしない —
    Mac の profile は人が settings.json で入れてある)。家の settings.json が既に効く形なら何もしない(冪等)。
    据える = `claude plugin marketplace add` + `install`(ProcRun・失敗は warning で返し起動は止めない)の後、
-   options(cacheTtlMinutes / apiKeyFile)と env(function hooks)を settings.json に合流(純関数 1 点)。
+   options(cacheTtlMinutes / apiKeyFile / stateDir = 家の下の持ち越される置き場)と env(function hooks)を settings.json に合流(純関数 1 点)。
    鍵の値は読まない — path を settings に書くだけで、読むのは plugin 自身。戻り値: warning の列。"
   (<- key-file (env-get FAST-JEV-KEY-FILE-ENV))
   (if (not (and (isinstance key-file str) (.strip key-file)))
@@ -679,7 +681,10 @@
                                   (.strip (cut (or res.stderr "") 0 300)))))
                     ;; install が settings.json を書いた後に合流する(書き手は 1 つずつ・読み直す)
                     (<- after (fs-read-text settings-path))
-                    (<- _ (fs-write-text-atomic settings-path (fast-jev-home-settings after key-file) ".agentd-tmp"))
+                    ;; 状態 file の置き場は家の下の持ち越される場所(pod の入れ替えで温冷の記憶を失わない)
+                    (<- home (env-get "HOME"))
+                    (setv state-dir (fast-jev-state-dir (if (and (isinstance home str) (.strip home)) home (os.path.expanduser "~"))))
+                    (<- _ (fs-write-text-atomic settings-path (fast-jev-home-settings after key-file state-dir) ".agentd-tmp"))
                     warnings)))))))
 
 
