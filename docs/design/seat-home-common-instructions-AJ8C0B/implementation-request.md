@@ -46,7 +46,7 @@
 | D5 | 名指しが在って file / dir が無いのは**非致命**(参加も起動も断らない・名乗りの 1 行 + node の行の labels) | — |
 | D6 | 二重読みは doeff が置く 3 つ目の settings の鍵 `claudeMdExcludes` で落とす。値は席の `$HOME` から**導く** 1 本 `<$HOME>/.claude/CLAUDE.md` | 鍵を置く 1 行を外す |
 | D7 | 既存の家の後追いは**作らない**(D1 により次の起動で直る)。家を作り直さない・reconciler を足さない | — |
-| D8 | **張り替えの動詞を substrate に持つ**: `FsEnsureSymlink` を effect として足し、3 値 `unchanged` / `linked` / `occupied-by-real-entity` を返す。`impls` は**この動詞を呼ぶだけ**(盲検 A・`design.md` §10 R1)。**⚠ 2026-09-21T10:1xZ 追補 — 張る・張り替えるの物理は原子的に**: 同じ dir に書き手ごとに一意な名の仮の symlink を張り(D9 の `mkstemp` と同じ考え)、`os.replace(仮, link)` で被せる。`unlink` → `symlink` の 2 手も、空の家への素の `symlink` も使わない。実測(`evidence/symlink_install_race.{py,log}`・着地済みの `ensure-symlink-outcome` を 1:1 で写した): 空の家へ 2 席が同拍で張ると **200 回中 200 回**で片方が `FileExistsError`(= 席が起きない)、張り替えの間は読み手の **52 %** が根の無い瞬間を見る。lock は足さない(D9 と同じ)。**⚠ 2026-09-21T10:5xZ 追補 — 現物での実測で 3 つ目の壊れ方**: 写しではなく出荷されている `ensure-symlink-outcome` を個人 Mac で 2 process の同拍に掛けると、負けた側は `FileExistsError` が 82.5 %・**偽の `occupied-by-real-entity` が 8.5 %**(`islink` が False → 相手が張る → `exists` が symlink を辿って True になる)。偽の occupied の帰結は座で違う — `_ensure-view-symlink` は**居ない実 file を指して** `RuntimeError`(「手で直せ」)で席を落とし、`impls/claude_code.hy:532` は語のまま 1 行 log ちょうどで**黙って skills を入れない**(= この card が直している欠陥そのものが、直した後に再発する)。原子の 1 手にすればこの 3 つ目も同時に消える(`evidence/symlink_install_race_real_fn.{py,log}`) | effect ごと消す(呼び手は 1 か所) |
+| D8 | **張り替えの動詞を substrate に持つ**: `FsEnsureSymlink` を effect として足し、3 値 `unchanged` / `linked` / `occupied-by-real-entity` を返す。`impls` は**この動詞を呼ぶだけ**(盲検 A・`design.md` §10 R1)。**⚠ 2026-09-21T10:1xZ 追補 — 張る・張り替えるの物理は原子的に**: 同じ dir に書き手ごとに一意な名の仮の symlink を張り(D9 の `mkstemp` と同じ考え)、`os.replace(仮, link)` で被せる。`unlink` → `symlink` の 2 手も、空の家への素の `symlink` も使わない。実測(`evidence/symlink_install_race.{py,log}`・着地済みの `ensure-symlink-outcome` を 1:1 で写した): 空の家へ 2 席が同拍で張ると **200 回中 200 回**で片方が `FileExistsError`(= 席が起きない)、張り替えの間は読み手の **52 %** が根の無い瞬間を見る。lock は足さない(D9 と同じ)。**⚠ 2026-09-21T10:5xZ 追補 — 現物での実測で 3 つ目の壊れ方**: 写しではなく出荷されている `ensure-symlink-outcome` を個人 Mac で 2 process の同拍に掛けると、負けた側は `FileExistsError` が 82.5 %・**偽の `occupied-by-real-entity` が 8.5 %**(`islink` が False → 相手が張る → `exists` が symlink を辿って True になる)。偽の occupied の帰結は座で違う — `_ensure-view-symlink` は**居ない実 file を指して** `RuntimeError`(「手で直せ」)で席を落とし、`impls/claude_code.hy:532` は語のまま 1 行 log ちょうどで**黙って skills を入れない**(= この card が直している欠陥そのものが、直した後に再発する)。**⚠ 2026-09-21T12:1xZ 訂正 — 欠陥は独立に 2 つで、原子性だけでは 3 つ目が残る**(依頼者 c-3JYBNJMC… の Darwin の実測)。(1) **書きが原子でない**(`unlink` → `symlink` の谷)⇒ 一意な仮 + `rename` で閉じる。(2) **判定が symlink を辿る**(`os.path.exists` は symlink を辿って正本の dir に当たるので、相手が張った symlink を実体と読む)⇒ これは原子性では閉じない。閉じるのは**辿らない読みで枝を決める** = `os.lstat` **1 回**。⇒ 実装は **「判定は `lstat` 1 回(辿らない)」と「書きは一意な仮 + `rename`」を 2 つとも**満たすこと。片方だけでは 3 つ目(偽の `occupied-by-real-entity`)が残る — 原子化だけした形が 400 回とも緑に見えたのは窓が計器の分解能の下に入っただけで、窓が閉じた証拠ではない。実測 = `evidence/symlink_install_race_real_fn.{py,log}`・`evidence/symlink_install_darwin.{py,log}` | effect ごと消す(呼び手は 1 か所) |
 | D9 | **`FsWriteTextAtomic` の tmp を書き手ごとに一意にする**(`mkstemp`)。同じ家へ 2 席が同拍で書いても互いの tmp を消さない(盲検 A・§10 R2)。既存の `preseed-claude-trust` の競りも同時に閉じる | 戻すと既存の競りが開く ⇒ 戻さない |
 | D10 | **「宣言していない path を触っていないか」を見る**: `packages/doeff-agents/src/**` で literal `dotfiles` を **除外なしで**禁じる semgrep 規則 + 痕跡で見る deftest 2 本(盲検 B・§10 R3) | 規則の行を消す(ledger も同拍で) |
 | D11 | **運ぶ物の綴りは 1 つの名簿**(`CARRIED-INSTRUCTION-SOURCES` — 1 種 = `{key, env, param, kind, home-name, label}` の 1 行)。`AGENTD-KEYS` はそこから**導く**。join / launch / 据え付けは名簿を**回る**(§10 R5) | 名簿を平らに戻す(が、d8472e1a の形へ戻ることになる) |
@@ -299,13 +299,15 @@ PR の本文に **Verification の表**(この節の項 ↔ 出荷した検の `
 | 2 | **Mac の席**で同じ | 同上(会社 Mac) |
 | 3 | 両方で dotfiles の skill が**使える一覧に在る** | 席の skill 一覧(`ai`/`claude` の一覧か、席の手番が名指しで 1 本呼べること)。**Mac では、使った cwd が symlink を経ない綴りであることを札に pin するか、運んだ根を外した対照 1 席(同じ名前が 0 件)を並べる**(§5 の「偽の緑の筋」) |
 | 4 | **陽性対照**: cwd を `$HOME` の外にした席でも届く | 同上(cwd を `$HOME` の外にして 1 席) |
+
+⚠ **受入 1 / 2 / 3 / 4 の札には「どの機体で撃ったか」を書く**(12:1xZ 追補 — 依頼者の長命の宿の実測):家の名は資格ごとで**機体をまたいで同じ**(pod で使った名が Mac にも在る)が、**中身は機体ごとに別**。⇒「1 つの機体で据わった」は他の機体について何も言わない。なお長命の宿(会社 Mac / 個人 Mac)は**陰性対照として pool より強い** — 依頼者が数えた 11 個の家はどれにも `CLAUDE.md` も `skills` も無く、pod と違って「まだ据わっていないだけ」とは読めない。⇒ 受入 3 は pool と長命の宿の**両方**で撃てる。
 | 5 | **もれなさの針**(宿を列挙せず導く) | dotfiles `test_every_seat_starting_declaration_names_the_common_instruction_sources` |
 | 6 | **二重読みが無い**(Mac の形で user 層 1 件ちょうど) | 席の context + doeff の deftest (f) |
 | 7 | 名指した file が無い日も席は起きる | doeff の deftest (d) + 起動の拍の 1 行 |
 | 8 | 名指しの無い機体は今日どおり | doeff の deftest (e) |
 | 9 | 本体の契約が動いたら赤くなる | dotfiles `check_native_claude_home_contract.py`(緑で出荷・逐語が動けば赤) |
 | 10 | `make lint` 清浄(新しい semgrep 規則を含む) | `make lint` |
-| 11 | **【D8】正本の path が変わった日に、家の `skills` が新しい先へ張り替わる**。**同拍の 2 席**(空の家へ同時に張る・張り替えの間に読む)で例外 0・根の無い瞬間 0・**偽の `occupied-by-real-entity` 0**(10:1xZ / 10:5xZ 追補) | doeff の deftest (j)(2 process の同拍を含む)+ `sessionhost_substrate_deftests.hy` の 3 値の検 + `evidence/symlink_install_race_real_fn.py`(**現物の関数**を叩く方)を直した実装に当てて A の例外 0・偽の occupied 0、`evidence/symlink_install_race.py` で B の根の無い瞬間 0 |
+| 11 | **【D8】正本の path が変わった日に、家の `skills` が新しい先へ張り替わる**。**同拍の 2 席**(空の家へ同時に張る・張り替えの間に読む)で例外 0・根の無い瞬間 0・**偽の `occupied-by-real-entity` 0**(10:1xZ / 10:5xZ 追補)。⚠ **数えるのは「根が消えた読み」(`os.path.lexists` が false = ENOENT)ちょうどで、「読みの失敗」一般ではない**(12:1xZ 追補): macOS / APFS では張り替え中の `os.listdir` が一過性の `EINVAL` を 0.1 % 前後返すが、これは**古い形でも同率で出る**ので設計が防ぐ対象では無い。「失敗 0」と書くと Mac の枡だけ赤になる | doeff の deftest (j)(2 process の同拍を含む)+ `sessionhost_substrate_deftests.hy` の 3 値の検 + `evidence/symlink_install_race_real_fn.py`(**現物の関数**を叩く方)を直した実装に当てて A の例外 0・偽の occupied 0、`evidence/symlink_install_race.py` で B の根の無い瞬間 0 |
 | 12 | **【D9】同じ家へ 2 席が同拍で書いても、片方の書きが落ちない** | `sessionhost_substrate_deftests.hy` の同拍 2 書き手 + `conformance/test_s12_claude_trust_preseed.py`(glob) |
 | 13 | **【D10】宣言が無い機体へ条文が届かない / 劣化の日に宣言外の path を触らない** | doeff の deftest (h)(囮を置いた上で)と (i)(劣化の日) |
 | 14 | **【D10】`packages/doeff-agents/src/**` に literal `dotfiles` が 1 件も無い** | 新しい semgrep 規則(除外なし)・`make lint-semgrep` |
@@ -439,3 +441,19 @@ pod の agentd が `ec654440`(実装より前)を走らせている限り、生�
   log へ errno を添える形が後の便で価値がある。
 - pod に tmux が無く、tmux の検 3 本が skip ではなく `assert` で赤になる(素の `cc58379a` でも同じ)。
   計画段から受付へ起票した。
+
+### 検収の後に判った 3 つ(2026-09-21T12:1xZ・計画段)
+
+1. **計画段の実測はどの木か** — すべて隔離 worktree(`~/.worktrees/doeff-wt-accept-seat-home-AJ8C0B`・
+   HEAD `c668fa7d`)で、共有 checkout(この機体は本線から 199 commit 遅れ)ではない。import の実測で
+   `substrate.hy` と `doeff` は worktree 側に解け、`doeff_hy` だけ共有 checkout 側に解けたが、
+   `git diff de9b8cda origin/main -- packages/doeff-hy/src` が**空**なので測定に効く差は無い。
+2. **BSD `ln -sfn` は原子ではない**(依頼者の Darwin の実測: 読み 80,733 のうち `ENOENT` 4,531)。
+   GNU coreutils 9.4 では 0 だったので、これは実装の話ではなく**綴りを残さない理由**。文書・hook・shell の
+   手順のどこにも `ln -sfn` と書かない(綴りは「一意の仮 symlink + `rename`」)。
+3. **同じ file の `FsLinkArtifact` に同じ形の隙が残っている**(実装 c-EWR4R2XY… の申し送り + 計画段の到達性の確認)。
+   `exists` / `islink` で見てから素の `os.symlink` の 2 手で、負けた側は `FileExistsError` を投げる。
+   敷設先 `<target-project>/sessions-index.json`(`impls/claude_code.hy:740`)は**会話 id で割れていない**ので、
+   同じ資格の 2 会話が同じ家へ transplant する拍に競る。⇒ 受付へ class investigate で起票した。
+   ⚠ 新しい門 `doeff-agents-symlink-install-has-one-home` は **file 単位の exclude** で出荷の 1 点を通すため、
+   同じ file の中に居るこの動詞は原理的に覆わない(門が緑でも「`substrate.hy` の中は自由」の意味)。
