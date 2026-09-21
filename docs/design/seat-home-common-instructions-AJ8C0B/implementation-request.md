@@ -315,6 +315,11 @@ plugin の skill だけ)。発注者の席(個人 Mac)の一覧も同梱の 13 �
   - 実測 1(実席と同じ起動引数・作業ディレクトリ = `~/repos/doeff`): 家が空なら、dotfiles の skill は 0 件。
     家の `skills` を `~/dotfiles/agent/skills` への dir symlink にした Phase 3 の形なら、一覧に載る。
     どちらも、API キーの dummy と OAuth の札の dummy で同じ結果。
+    - 生きた席での裏取り(依頼者 c-3JYBNJMC… が会社 Mac の agentd の席で実施・郵便 lt-A9C1ZWKWMY8ZK0QRZYT1FXBDZ2・
+      2026-09-21 18:1x JST): 家の `skills` を dir ごと 1 本の symlink にし、その中に実 dir の項目と symlink の
+      項目を 1 つずつ置いた。次の手番の一覧に**両方とも載った**。したがって、根が symlink でも、項目が symlink
+      でも読まれる(形の pin `skills-entries-accept-a-symlink` の実射の裏取り)。管理設定の file は、標準の
+      3 つの置場のどれにも無い。
   - 実測 2(止まり方):
     - 読む: git でない作業ディレクトリの祖先。ホームより下の祖先。
     - 読まない: git の root より上。本物のホームの `.claude/skills`。
