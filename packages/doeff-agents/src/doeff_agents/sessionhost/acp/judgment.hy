@@ -88,6 +88,8 @@
   RECORD-STREAM-SUMMARY
   RecordBatch
   RecordStream
+  CHARTER-CARRIED-KEYS
+  CHARTER-MEMORY-DIR-KEY
   CHARTER-MEMORY-FILES-KEY
   MEMORY-EVENT-KIND
   MEMORY-FILE-SUFFIX
@@ -166,7 +168,6 @@
   PROVIDER-LIMIT-AT-KEY
   PROVIDER-LIMIT-ATTEMPT-KEY
   PROVIDER-LIMIT-PROFILE-KEY
-  CHARTER-AUTO-COMPACT-WINDOW-KEY
   MESSAGE-ATTACHMENTS-KEY
   NODE-CAPABILITY-ATTACHMENTS-KEY
   RECORD-ATTACHMENT-EVENT-KIND
@@ -2403,7 +2404,7 @@
   (if (is home None)
       charter
       (do (setv next (dict charter))
-          (setv (get next "memory_dir") home)
+          (setv (get next CHARTER-MEMORY-DIR-KEY) home)
           next)))
 
 
@@ -2877,20 +2878,18 @@
    運ばない — 新しい incarnation は蘇生元の行の lifecycle を継ぐ(launch.hy resume-session)。"
   (setv params {"session_id" predecessor
                 "new_session_id" (.get charter "session_id")})
-  ;; ⚠ ここは charter の欄を**名簿で**写す(素通しではない)— 足した欄は名簿にも足す。
+  ;; ⚠ ここは charter の欄を**名簿で**写す(素通しではない)。名簿は 2 段: 古くからの欄は名前で、
+  ;; 席へ運ぶ欄(下)は定義点 1 つから写す。
   ;; 実弾 2026-09-15 09:5x(operator): 段 10 lane 10o の attachments を名簿に入れ忘れたので、
   ;; **腕が resume の手番だけ**画像が黙って落ちていた(誤りも条件も出ないまま model が画像を見ない)。
   ;; 起こす腕は launch / resume / rehydrate の 3 つ — 検が launch しか通っていなかったのが見落としの根。
-  (for [key ["prompt" "model" "effort" "mcp_servers" "session_env" "binding"
-             "expected_result" "context_file" "launch_attribution"
-             ;; 圧縮の閾値(設計記録 docs/design/auto-compact-window): launch は charter を丸ごと
-             ;; params にするので素通しだが、resume は名簿の写し — ここに無いと
-             ;; **蘇生の手番だけ**閾値が落ちて窓の上限任せに戻る(上の傷跡と同じ形)。
-             CHARTER-AUTO-COMPACT-WINDOW-KEY
-             ;; 自動記憶の置き場(ADR-DOE-AGENTS-006 R11)も同じ形 — 名簿に無いと
-             ;; **蘇生の手番だけ**置き場が落ちて CLI の既定へ戻る。
-             "memory_dir"
-             MESSAGE-ATTACHMENTS-KEY]]
+  (for [key (+ #("prompt" "model" "effort" "mcp_servers" "session_env" "binding"
+                 "expected_result" "context_file" "launch_attribution"
+                 MESSAGE-ATTACHMENTS-KEY)
+               ;; 席へ運ぶ欄(閾値・記憶の置き場・記憶の本文)は**名前をここで数えない** —
+               ;; 定義点 1 つ(CHARTER-CARRIED-KEYS)から写す。名前で足した便が族のもう片方を
+               ;; 落としたまま通ったのが card acp:kanban-issue:ki-a40292ed30d9 の壊れ方。
+               CHARTER-CARRIED-KEYS)]
     (when (in key charter)
       (setv (get params key) (get charter key))))
   params)

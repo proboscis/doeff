@@ -166,6 +166,31 @@ rules:
       exclude:
         - "**/sessionhost/effects.hy"
 
+  - id: doeff-agents-charter-carried-key-hand-written-in-a-roster
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      A charter field that must reach the seat is being hand-written into one of the
+      rosters (host.build-launch-program-params / host.build-resume-program-params /
+      judgment.resume-params-of / launch.resume-launch-params-of). Those rosters must
+      not name carried charter fields: the set has exactly one home
+      (acp/effects.py CHARTER_CARRIED_KEYS, mirrored by policy.CHARTER-CARRIED-KEYS)
+      and the rosters copy it with policy.carry-charter-fields. Hand-writing the name
+      re-creates the 4-sheet roster that broke identically three times — attachments
+      (2026-09-15, resume arm only), the auto-compact window (2026-09-18, every arm),
+      and the conversation memory BOOKS (2026-09-21: 44 rows in ACP, 0 files in the
+      seat's memory home, measured on a pool pod) — because adding one field made you
+      touch four sheets and the fourth was always forgotten. Add the field to
+      CHARTER_CARRIED_KEYS instead (card acp:kanban-issue:ki-a40292ed30d9).
+    patterns:
+      - pattern-regex: '"(auto_compact_window|memory_dir|memory_files)"\s+\('
+    paths:
+      include:
+        - "**/doeff_agents/sessionhost/**"
+      exclude:
+        - "**/sessionhost/policy.hy"
+
   - id: doeff-agents-api-limit-possessive-verbatim-forbidden
     languages:
       - generic

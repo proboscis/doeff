@@ -61,7 +61,7 @@
 (import doeff_agents.sessionhost.policy [
   ACTIVE-STATUSES
   binding-kind-advertisement
-  carry-launch-flags
+  carry-charter-fields
   cause-if-absent
   is-run-to-completion
   is-terminal-status
@@ -940,7 +940,7 @@
   (admit-context-file params "session.launch")
   (admit-workspace-seed params "session.launch")
   (run (admit-launch-attribution params "session.launch"))
-  (carry-launch-flags
+  (carry-charter-fields
     params
     {"session_id" (get params "session_id")
    "session_name" (get params "session_name")
@@ -956,12 +956,9 @@
    "binding" (.get params "binding")
    "session_env" (or (.get params "session_env") {})
    "expected_result" (.get params "expected_result")
-   ;; ADR-DOE-AGENTS-006 R11: 自動記憶の置き場(会話 id から導いた 1 つ)は wire でも運ぶ。
-   ;; ここは charter → resume params(judgment.resume-params-of)→ launch params
-   ;; (launch.resume-session)に続く**名簿の 4 枚目**で、落とすと RPC 越しの手番だけ
-   ;; 記憶が既定の置き場(家の projects/<cwd>/memory)へ行き、誤りも条件も出ないまま
-   ;; 会話から剥がれる(2026-09-15 の添付が 3 枚の名簿で落ちたのと同型)。
-   "memory_dir" (.get params "memory_dir")
+   ;; ⚠ 自動記憶の置き場(memory_dir)と手番の頭に置き場へ書き出す冊(memory_files)は
+   ;; **ここに書かない** — policy.TURN-CARRIED-KEYS の 1 点から carry-charter-fields が写す
+   ;; (card ki-a40292ed30d9: 置き場だけをこの座へ手で足した便の次に、同じ座で本文が落ちた)。
    ;; law context-file-rides-the-wire(上の admit-context-file 参照): 実体化は
    ;; launch program(spawn 前・work_dir 検査後)が fs-write-text-atomic で行う
    "context_file" (.get params "context_file")
@@ -982,11 +979,49 @@
    "backend_kind" config.backend
    ;; headless backend の実況の正本の置き場(headless.hy が events file を作る)。
    "events_root" config.headless-events-root}
-  ;; 会話の圧縮の閾値(設計記録 docs/design/auto-compact-window): 起こす旗になる欄(policy.LAUNCH-FLAG-KEYS)を素通しする。
-  ;; ⚠ ここは wire の受理形 = **閉じた名簿**なので、旗を名簿に書き忘れると会話が名乗った
-  ;; 値が argv の導出点に 1 度も届かず、どの腕でも走行係の床が出る(盲検の反例 A で実測)。
+  ;; 席へ運ぶ charter の欄(policy.CHARTER-CARRIED-KEYS = 旗 + 手番の荷)を素通しする。
+  ;; ⚠ ここは wire の受理形 = **閉じた名簿**なので、欄を名簿に書き忘れると会話が名乗った
+  ;; 値が席の導出点に 1 度も届かない(盲検の反例 A で閾値・2026-09-21 で記憶の本文を実測)。
   ;; 数え直すのは policy の集合 1 つだけ。
   ))
+
+
+(deff build-resume-program-params [p config source-sid mode attachments]
+  {:pre [(: p dict) (: config HostConfig) (: source-sid str) (: mode str) (: attachments tuple)]
+   :post [(: % dict)]}
+  "wire(session.resume / session.fork の params)→ resume program params。
+
+   ⚠ ここは launch の受理形(build-launch-program-params)と同じ **閉じた名簿**で、
+   charter → resume params(judgment.resume-params-of)→ ここ → 蘇生の名簿
+   (launch.resume-session)と続く 4 枚のうちの 3 枚目。席へ運ぶ欄は数え直さず
+   policy.CHARTER-CARRIED-KEYS を carry-charter-fields で写す
+   (card acp:kanban-issue:ki-a40292ed30d9 — 置き場だけを 4 枚に手で足した便の次に、
+    同じ 4 枚で本文が落ちた)。"
+  (carry-charter-fields
+    p
+    {"session_id" source-sid
+     "mode" mode
+     "attachments" attachments
+     "context_file" (.get p "context_file")
+     "launch_attribution" (.get p "launch_attribution")
+     "prompt" (.get p "prompt")
+     "model" (.get p "model")
+     "effort" (.get p "effort")
+     "mcp_servers" (or (.get p "mcp_servers") {})
+     "session_env" (or (.get p "session_env") {})
+     "binding" (.get p "binding")
+     ;; ⚠ 置き場(memory_dir)と手番の冊(memory_files)は**ここに書かない** —
+     ;; policy.TURN-CARRIED-KEYS の 1 点から carry-charter-fields が写す。
+     "new_session_id" (.get p "new_session_id")
+     "expected_result" (.get p "expected_result")
+     "expected_result_specified" (in "expected_result" p)
+     "socket_path" config.socket-path
+     "max_running" config.max-running
+     "allow_metered_billing" config.allow-metered-billing
+     "repl_idle_max_wait_seconds" (env-positive-i64
+                                    "DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS")
+     "backend_kind" config.backend
+     "events_root" config.headless-events-root}))
 
 
 (deff wire-snapshot [actor session-id]
@@ -1334,8 +1369,10 @@
       ;; memory_dir が resume 専用なのは、fork が**新しい会話**だから(ADR-DOE-AGENTS-006 R11):
       ;; 置き場は会話 id から導くが、fork の新 identity は CLI が鋳造するまで判らない。親の値を
       ;; 通せば新しい会話に親の記憶が黙って付く — 直している誤帰属そのもの。黙殺せず断る。
+      ;; memory_files(置き場へ書き出す冊そのもの)も同じ理由で resume 専用 — 親の記憶を
+      ;; 新しい会話の置き場へ書き出したら、誤帰属は置き場の名ではなく**中身**で起きる。
       (for [banned #("binding" "new_session_id" "expected_result"
-                     "context_file" "launch_attribution" "memory_dir")]
+                     "context_file" "launch_attribution" "memory_dir" "memory_files")]
         (when (in banned p)
           (raise (RuntimeError
                    (+ f"invalid params for session.fork: `{banned}` is "
@@ -1362,31 +1399,9 @@
                              ATTACHMENTS-UNSUPPORTED-REASON
                              ""))
     (setv program-params
-          {"session_id" source-sid
-           "mode" mode
-           "attachments" (if resume-ignored #() resume-attachments)
-           "context_file" (.get p "context_file")
-           "launch_attribution" (.get p "launch_attribution")
-           "prompt" (.get p "prompt")
-           "model" (.get p "model")
-           "effort" (.get p "effort")
-           "mcp_servers" (or (.get p "mcp_servers") {})
-           "session_env" (or (.get p "session_env") {})
-           "binding" (.get p "binding")
-           ;; ADR-DOE-AGENTS-006 R11(名簿の 4 枚目・resume 面): 同じ会話の続きなので置き場も続く。
-           "memory_dir" (.get p "memory_dir")
-           "new_session_id" (.get p "new_session_id")
-           "expected_result" (.get p "expected_result")
-           "expected_result_specified" (in "expected_result" p)
-           "socket_path" config.socket-path
-           "max_running" config.max-running
-           "allow_metered_billing" config.allow-metered-billing
-           "repl_idle_max_wait_seconds" (env-positive-i64
-                                          "DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS")
-           "backend_kind" config.backend
-           "events_root" config.headless-events-root})
-    ;; 会話の圧縮の閾値(設計記録 docs/design/auto-compact-window): 起こす旗は resume の腕でも運ぶ(policy.LAUNCH-FLAG-KEYS)。
-    (setv program-params (carry-launch-flags p program-params))
+          (build-resume-program-params
+            p config source-sid mode
+            (if resume-ignored #() resume-attachments)))
     (setv row None)
     (try
       (setv row (run-hosted config actor (resume-session program-params)))

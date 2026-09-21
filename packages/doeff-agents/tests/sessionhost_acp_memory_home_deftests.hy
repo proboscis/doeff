@@ -166,12 +166,14 @@
               "memory_dir" f"{MEMORY-ROOT}/{CONVERSATION}"})
   (setv params (build-launch-program-params wire (host-config)))
   (assert (= (get params "memory_dir") f"{MEMORY-ROOT}/{CONVERSATION}") params)
-  ;; 欄の無い呼びは None(serde 既定値)— 今日の挙動に落ちる。
+  ;; 欄の無い呼びは**欄を作らない**(card acp:kanban-issue:ki-a40292ed30d9 — 席へ運ぶ欄は
+  ;; policy.CHARTER-CARRIED-KEYS の 1 点から写されるので、旗と同じ「欄の有無 = 会話が名乗ったか」
+  ;; の印に揃う)。読み手は全員 `.get` なので、None の欄と欄の不在は同じ振る舞い。
   (setv bare (build-launch-program-params
                {"session_id" "s1" "session_name" "doeff-s1"
                 "agent_type" "claude" "work_dir" "/w"}
                (host-config)))
-  (assert (is (get bare "memory_dir") None) bare))
+  (assert (not-in "memory_dir" bare) bare))
 
 
 (deftest test-fork-refuses-to-inherit-the-parent-conversations-memory-home
