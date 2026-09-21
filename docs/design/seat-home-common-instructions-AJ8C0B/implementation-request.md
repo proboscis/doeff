@@ -133,22 +133,42 @@ pod の agentd の容器に入り、共通の条文と skills の在り処を実
      据わっている本体で **green**、逐語を 1 つ動かした複製で **red**、本体でない file で
      **abstain** まで実測済み(`counterexamples/model_runs.log` §4・§5)。**写して使う**。
    - ⚠ **追補(2026-09-21T07:01Z 着地・依頼者 c-3JYBNJMC2RZTM1S8V43939MP42 が入れた。出典 = 発注者
-     c-AJ8C0BK9RF29HQ92ZQ986FXQVT の郵便 lt-C22T2AV9VGX520WYFCEB0Q8X8B の自認)**: 上の逐語 6 本は
+     c-AJ8C0BK9RF29HQ92ZQ986FXQVT の郵便 lt-C22T2AV9VGX520WYFCEB0Q8X8B の自認。07:15Z に発注者が
+     4 つの版の実測で書き直した — 別の注記は足していない)**: 上の逐語 6 本は
      **版で変わる縮めた識別子を含む**ので、綴りのまま写すと別の版の機体で**偽の赤**になる。
      雛形が pin しているのは 2.1.263(pod)で、実装の席は会社 Mac(**2.1.278**)。
-     - 発注者の実測: 2.1.263 の `wgr` / `CN` は 2.1.278 で `KRt` / `mB`。
      - 依頼者の実測(pod 2.1.263・2026-09-21T07:01Z): 雛形をそのまま撃って **green** ⇒ 陽性対照は生きている。
        赤は本来「契約が動いた」の合図だが、この pin では**版が違うだけ**でも出る。
-     - 依頼者が数えた射程: **6 本すべて**が縮めた名に依る(`Ke`/`Se`・`ae`・`wgr`/`CN`・
-       `Ah`/`Se`/`HS`・`N`・`Sgr`)。しかも**局所変数の名も動く** — 別の担い手
-       c-EK11A9R4Y986YA8JQWTEQ3WNXZ が 2.1.278 から写した同じ枝は
-       `if(n==="User"&&!O){const st=await lstat(e);if(g===0&&st.isSymbolicLink()||(st.nlink??1)>1&&st.isFile())return[]}`
-       で、2.1.263 の `t`/`v`/`q`/`d` が `n`/`O`/`st`/`g` に替わっている(その写しは空白が整形
-       されているので byte 逐語ではない — 読むのは**名の対応だけ**)。
-     ⇒ **関数名だけを `\w+` にしても足りない**。識別子の位置をすべて形で pin し、綴りで固定するのは
-     製品の公開の語(`"User"` / `"Project"` / `"Local"` / `"CLAUDE.md"` / `"skills"` /
-     `"local-agent"` / `.isSymbolicLink()` / `nlink`)に限ること。弁別(逐語を 1 つ動かした複製で
-     **red**)は**会社 Mac の版で撃ち直して**から緑を名乗る。
+     - 射程(依頼者が数えた): **6 本すべて**が縮めた名に依る(`Ke`/`Se`・`ae`・`wgr`/`CN`・
+       `Ah`/`Se`/`HS`・`N`・`Sgr`)。**局所変数の名も動く**。本体の実物の byte
+       (`evidence/shape_pins_across_versions.log`)で、落とす分岐は 2.1.263 の
+       `if(t==="User"&&!v)try{let q=await ae().lstat(e);if(d===0&&q.isSymbolicLink()…`
+       が 2.1.278 で `if(n==="User"&&!O)try{let ve=await le().lstat(e);if(g===0&&ve.isSymbolicLink()…`、
+       判定は `wgr`/`CN` が `KRt`/`mB`。(07:01Z の版のこの注記にあった `st` と裸の `lstat(e)` は、
+       別の担い手が整形して写した綴りで、本体の実物ではなかった。)
+     - **直し方 = 3 つの規則**(雛形の逐語〔2.1.263〕と本体 2.1.265・2.1.276・2.1.278 で実測済み —
+       `evidence/shape_pins_across_versions.py` / `.log`):
+       1. 束縛の名(関数名・局所変数・引数)は **`[\w$]+`** で受ける。**`\w+` では足りない** —
+          JS の識別子は `$` を含み、2.1.278 では関数名の約 2%(51,622 中 1,118)が `$` を持つ。
+       2. 綴りで固定してよいのは、縮める道具が付け替えない物ちょうど — 文字列の literal
+          (`"User"` / `"Project"` / `"Local"` / `"CLAUDE.md"` / `"skills"` / `".claude"` /
+          `"local-agent"`)・`.` の後ろの property / method の名(`lstat` / `isSymbolicLink` /
+          `isFile` / `isDirectory` / `nlink` / `entrypoint`)・構文。同じ束縛が何度も出る所は
+          名前付きの group で「同じ名であること」を pin する(例: `lstat` の結果と
+          `isSymbolicLink` / `nlink` / `isFile` の受け手が同じ変数)。
+       3. **契約を担う断片だけを pin する**。関数の頭まで含めると版で落ちる — 2.1.278 は除外の関数が
+          引数 2 つから 3 つに組み替わり(`zRt(e,n,r)`)、雛形の 6 本目
+          (`function Sgr(e,t){…`)は `[\w$]+` にしても**偽の赤**になる。層の判定
+          `if(<t>!=="User"&&<t>!=="Project"&&<t>!=="Local")return!1;` だけを pin すれば 4 つの版で緑。
+     - 実測の結果: 形 6 本はどの版でも緑、契約を担う語を 1 つ動かすと 6 本とも赤。さらに**結び付き 2 本** —
+       落とす分岐の `!<v>` が起動口の判定から作られていること(`<v>=<x>&&(<t>!=="User"||<判定>())`)・
+       判定が読むのが `.entrypoint` であること — も 3 つの本体で緑。この 2 本は「判定が在る」ではなく
+       「判定が落とす分岐を実際に制御している」を pin するので、計器に入れる価値がある(採否は担い手が決める)。
+     - 残る限界: skills の entry の形は 2 か所(skills の読み込みと skill 名の列挙)で当たり、片方が
+       動いても他方で緑のまま残る。弁別を強めるなら、後ろに続く `"SKILL.md"` と組にして pin する。
+       pod の 2.1.263 の本体そのものには形を撃っていない(雛形の逐語で代用 — 同じ本体で依頼者が
+       逐語の green を実測済み)。弁別(逐語を 1 つ動かした複製で **red**)は**会社 Mac の版で
+       撃ち直して**から緑を名乗る。
    - ⚠ **これがこの設計の唯一の witness**。これが無いと「実体 file でなければならない」は
      この repo の木をいくら読んでも反証できない条になる(法 `contract-of-an-external-tool-
      assumed-without-a-witness` の形)。
