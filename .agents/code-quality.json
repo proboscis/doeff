@@ -56,7 +56,20 @@
     "packages/doeff-hy/src/doeff_hy/record.hy",
     "docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy",
     "packages/doeff-hy/src/doeff_hy/typecheck_handlers.hy",
-    "packages/doeff-hy/src/doeff_hy/typecheck_handlers.pyi"
+    "packages/doeff-hy/src/doeff_hy/typecheck_handlers.pyi",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_observation.hy",
+    "packages/doeff-agents/tests/test_sessionhost_cache_observation.py",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_observation.pyi",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_operation.py",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/io_types.py",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/loop_model.py",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/worker_loop.hy",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/worker_loop.pyi",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/async_dispatch.hy",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_wire.py",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_maintenance.hy",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_live.hy",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/cache_host_model.py"
   ],
   "exclude": [],
   "baseline": ".agents/code-quality-baseline.json",
@@ -117,7 +130,8 @@
         "agentd-effects",
         "sessionhost-attachment",
         "acp-live-row",
-        "sessionhost-headless-protocol"
+        "sessionhost-headless-protocol",
+        "agentd-cache-observation"
       ],
       "typed": true
     },
@@ -166,7 +180,9 @@
       "allow": [
         "agentd-effects",
         "agentd-judgment",
-        "sessionhost-attachment"
+        "sessionhost-attachment",
+        "agentd-cache-observation",
+        "agentd-cache-operation"
       ],
       "typed": true
     },
@@ -183,7 +199,10 @@
       "allow": [
         "agentd-effects",
         "agentd-client",
-        "sessionhost-attachment"
+        "sessionhost-attachment",
+        "agentd-cache-operation",
+        "agentd-io-types",
+        "sessionhost-cache-model"
       ],
       "typed": true
     },
@@ -199,7 +218,9 @@
       ],
       "allow": [
         "agentd-effects",
-        "sessionhost-attachment"
+        "sessionhost-attachment",
+        "agentd-cache-operation",
+        "agentd-io-types"
       ],
       "typed": true
     },
@@ -250,7 +271,10 @@
         "agentd-valve",
         "agentd-client",
         "agentd-judgment",
-        "agentd-join"
+        "agentd-join",
+        "agentd-worker-loop",
+        "agentd-loop-model",
+        "agentd-io-types"
       ],
       "typed": true
     },
@@ -333,7 +357,8 @@
         "agentd-runtime",
         "agentd-valve",
         "agentd-client",
-        "sessionhost-attachment"
+        "sessionhost-attachment",
+        "sessionhost-claude-code"
       ],
       "typed": true
     },
@@ -454,7 +479,8 @@
       "allow": [
         "sessionhost-store",
         "sessionhost-headless-process",
-        "sessionhost-attachment"
+        "sessionhost-attachment",
+        "sessionhost-cache-model"
       ],
       "typed": false
     },
@@ -943,6 +969,200 @@
         "packages/doeff-agents/src/doeff_agents/sessionhost/attachment.py"
       ],
       "allow": [],
+      "typed": true
+    },
+    {
+      "name": "agentd-cache-observation",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_observation.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_observation.pyi"
+      ],
+      "responsibility": "API応答のキャッシュ観測と実行元の保存。応答完了の時刻を期限の起点にしない",
+      "layer": "domain",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_observation.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_observation.pyi"
+      ],
+      "allow": [
+        "agentd-effects"
+      ],
+      "typed": true
+    },
+    {
+      "name": "agentd-cache-observation-tests",
+      "paths": [
+        "packages/doeff-agents/tests/test_sessionhost_cache_observation.py"
+      ],
+      "responsibility": "キャッシュ観測の時計・親API・期限・turn記録の接続検証",
+      "layer": "runtime",
+      "public": [],
+      "allow": [
+        "agentd-cache-observation",
+        "agentd-judgment",
+        "agentd-effects"
+      ],
+      "typed": true
+    },
+    {
+      "name": "sessionhost-claude-code",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/impls/claude_code.hy"
+      ],
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/impls/claude_code.hy"
+      ],
+      "allow": [
+        "sessionhost-policy"
+      ],
+      "responsibility": "既存Claude backendのhandlerとCLI設定名の定義元。agentdの設定入力テストが参照するautoMemoryDirectoryの綴りはこのmoduleが所有し、複製しない。既存Hy backendの型検査は未導入であり、公開依存の登録は型検査合格の主張ではない。",
+      "layer": "io",
+      "typed": false
+    },
+    {
+      "name": "agentd-cache-operation",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_operation.py"
+      ],
+      "responsibility": "キャッシュ維持の専用操作とworker効果の契約",
+      "layer": "effects",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_operation.py"
+      ],
+      "allow": [
+        "agentd-effects"
+      ],
+      "typed": true
+    },
+    {
+      "name": "agentd-io-types",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/io_types.py"
+      ],
+      "responsibility": "I/O境界の型付き集合",
+      "layer": "effects",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/io_types.py"
+      ],
+      "allow": [
+        "agentd-effects"
+      ],
+      "typed": true
+    },
+    {
+      "name": "agentd-loop-model",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/loop_model.py"
+      ],
+      "responsibility": "同一VM内の通常処理と専用処理の停止・観測契約",
+      "layer": "effects",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/loop_model.py"
+      ],
+      "allow": [
+        "agentd-effects"
+      ],
+      "typed": true
+    },
+    {
+      "name": "agentd-worker-loop",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/worker_loop.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/worker_loop.pyi"
+      ],
+      "responsibility": "単一VM内で通常処理とキャッシュ維持を独立して実行",
+      "layer": "runtime",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/worker_loop.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/worker_loop.pyi"
+      ],
+      "allow": [
+        "agentd-effects",
+        "agentd-programs",
+        "agentd-judgment",
+        "agentd-loop-model",
+        "agentd-async-dispatch",
+        "agentd-cache-live",
+        "sessionhost-cache-model"
+      ],
+      "typed": true
+    },
+    {
+      "name": "agentd-async-dispatch",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/async_dispatch.hy"
+      ],
+      "responsibility": "同期I/O要求をAwaitに翻訳するhandler",
+      "layer": "runtime",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/async_dispatch.hy"
+      ],
+      "allow": [],
+      "typed": true
+    },
+    {
+      "name": "agentd-cache-wire",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_wire.py"
+      ],
+      "responsibility": "ACP専用操作のwire検証",
+      "layer": "domain",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_wire.py"
+      ],
+      "allow": [
+        "agentd-effects",
+        "agentd-cache-operation"
+      ],
+      "typed": true
+    },
+    {
+      "name": "agentd-cache-maintenance",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_maintenance.hy"
+      ],
+      "responsibility": "専用操作の永続状態から実行と復旧を決定",
+      "layer": "effects",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_maintenance.hy"
+      ],
+      "allow": [
+        "agentd-cache-operation"
+      ],
+      "typed": true
+    },
+    {
+      "name": "agentd-cache-live",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_live.hy"
+      ],
+      "responsibility": "専用操作をACP・sessionhost・認証効果へ翻訳",
+      "layer": "runtime",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_live.hy"
+      ],
+      "allow": [
+        "agentd-effects",
+        "agentd-judgment",
+        "agentd-cache-operation",
+        "agentd-cache-wire",
+        "agentd-cache-maintenance",
+        "sessionhost-cache-model"
+      ],
+      "typed": true
+    },
+    {
+      "name": "sessionhost-cache-model",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/cache_host_model.py"
+      ],
+      "responsibility": "専用pingの永続記録と排他契約",
+      "layer": "effects",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/cache_host_model.py"
+      ],
+      "allow": [
+        "agentd-cache-operation"
+      ],
       "typed": true
     }
   ],

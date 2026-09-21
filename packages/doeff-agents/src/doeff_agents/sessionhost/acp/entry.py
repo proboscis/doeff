@@ -55,7 +55,7 @@ def main() -> None:
         except AgentdPreflightError as error:
             sys.stderr.write(f"doeff-sessionhost: {error}\n")
             raise SystemExit(2) from error
-        apply_join_env(plan, os.environ)
+        apply_join_env(plan, os.environ.update)
         argv = list(plan.host_argv)
     verdict = acp_valve(argv, os.environ)
     if verdict.enabled:
