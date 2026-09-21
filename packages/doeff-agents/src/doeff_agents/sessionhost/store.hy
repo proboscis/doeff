@@ -32,8 +32,8 @@
 (import queue)
 (import sqlite3)
 (import threading)
-(import doeff_agents.sessionhost.cache_host_model [HostCacheRead HostCacheActive HostCacheWrite])
-(import doeff_agents.sessionhost.cache_host_store [cache-receipt-get cache-receipt-active cache-receipt-put])
+(import doeff_agents.sessionhost.cache_host_model [HostCacheRead HostCacheActive HostCacheWrite HostCacheRetainedUntil])
+(import doeff_agents.sessionhost.cache_host_store [cache-receipt-get cache-receipt-active cache-receipt-put cache-retained-until])
 
 (import doeff_agents.sessionhost.effects [
   SessionRow
@@ -1273,6 +1273,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
 
 
 (defhandler sqlite-session-store [actor]
+  (HostCacheRetainedUntil [session-id]
+    (resume (.submit actor (fn [conn] (cache-retained-until conn session-id)))))
   (HostCacheRead [operation-id]
     (resume (.submit actor (fn [conn] (cache-receipt-get conn operation-id)))))
   (HostCacheActive [session-id]

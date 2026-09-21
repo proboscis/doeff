@@ -160,6 +160,7 @@ ConditionType = Literal[
     "CredentialPlaceMismatch",
     "PlaceMismatch",
     "AgentSettingIgnored",
+    "AgentMemoryUnwritable",
     "SessionLost",
     "AgentdRestart",
     "InterruptEscalationUndeclared",
@@ -1733,6 +1734,8 @@ class SessionView:
     #: turn_error — turn_ended_at と対の level-triggered の欄・成功の終わりと次の手番の送りで欄ごと無い)。None = 成功で
     #: 終わった / 終わっていない / 走行器が名乗らない器(tmux)。読み手は手番の終わりの判断(judgment.turn-output-condition-of)。
     turn_error: str | None = None
+    #: 専用pingの送信先を保持する期限。cache有効期限・通常turn終了時刻とは別。
+    cache_retained_until_ms: int | None = None
 
 
 @dataclass(frozen=True)

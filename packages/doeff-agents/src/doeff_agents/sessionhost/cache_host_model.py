@@ -7,6 +7,9 @@ from doeff import EffectBase
 from doeff_agents.sessionhost.acp.cache_operation import CacheReply, MaintenanceState
 
 CACHE_MAINTENANCE_ACTIVE = "cache-maintenance-active"
+# sessionの保持の上限。providerのcache有効期限を証明する値ではない。
+# 対応するcache TTLの最大1時間まで、通常idle回収から送信先を保護する。
+CACHE_RESIDENT_IDLE_MS = 3_600_000
 
 
 class CacheMaintenanceActiveError(RuntimeError):
@@ -54,6 +57,11 @@ class HostCacheRead(EffectBase):
 
 @dataclass(frozen=True)
 class HostCacheActive(EffectBase):
+    session_id: str
+
+
+@dataclass(frozen=True)
+class HostCacheRetainedUntil(EffectBase):
     session_id: str
 
 

@@ -7,7 +7,11 @@ from dataclasses import asdict
 from weakref import WeakValueDictionary
 
 from doeff_agents.sessionhost.acp.cache_operation import MaintenanceState
-from doeff_agents.sessionhost.cache_host_model import HostCacheRecord, decode_cache_receipt
+from doeff_agents.sessionhost.cache_host_model import (
+    CACHE_RESIDENT_IDLE_MS,
+    HostCacheRecord,
+    decode_cache_receipt,
+)
 
 _locks: WeakValueDictionary[str, RLock] = WeakValueDictionary()
 _locks_guard = RLock()
@@ -33,6 +37,27 @@ def _table(conn: sqlite3.Connection) -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS cache_maintenance_active_session "
         "ON cache_maintenance(session_id) WHERE state IN ('requested','running')"
     )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS cache_maintenance_session_state "
+        "ON cache_maintenance(session_id,state)"
+    )
+
+
+def cache_retained_until(conn: sqlite3.Connection, session_id: str) -> int | None:
+    """成功receiptだけから導く保持期限。既存DB・再起動にも同じ読みを使う。
+
+    会話全体の履歴やACPを走査せず、indexで対象sessionの成功操作だけを読む。
+    これはcleanupの期限であり、cacheの実在・送信資格を宣言しない。
+    """
+    _table(conn)
+    row = conn.execute(
+        "SELECT MAX(json_extract(receipt_json, '$.reply.completed_at')) "
+        "FROM cache_maintenance WHERE session_id = ? AND state = 'succeeded' "
+        "AND (json_extract(receipt_json, '$.reply.cache_read') > 0 "
+        "OR json_extract(receipt_json, '$.reply.cache_write') > 0)",
+        (session_id,),
+    ).fetchone()
+    return None if row is None or row[0] is None else int(row[0]) + CACHE_RESIDENT_IDLE_MS
 
 
 def cache_receipt_get(conn: sqlite3.Connection, operation_id: str) -> HostCacheRecord | None:
