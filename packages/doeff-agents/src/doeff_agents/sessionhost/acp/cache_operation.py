@@ -145,3 +145,31 @@ class FinishMaintenance(EffectBase):
 
     previous: MaintenanceRecord
     updated: MaintenanceRecord
+
+
+@dataclass(frozen=True)
+class AcpCacheOperations(EffectBase):
+    """対象nodeの生きた専用操作だけをindexで読む。"""
+
+    node_row: str
+
+
+@dataclass(frozen=True)
+class SessionCachePing(EffectBase):
+    operation: CacheOperation
+    session_env: dict[str, str]
+
+
+@dataclass(frozen=True)
+class SessionCacheProbe(EffectBase):
+    operation: CacheOperation
+
+
+@dataclass(frozen=True)
+class BorrowCacheCredential(EffectBase):
+    operation: CacheOperation
+
+
+@dataclass(frozen=True)
+class ReleaseCacheCredential(EffectBase):
+    operation: CacheOperation

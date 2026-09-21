@@ -113,7 +113,8 @@
 ;;; interrupts / interruptsDelivered / interruptsRead / interruptsEscalated、node の status.lease / status.observations、turn-record の create と
 ;;; status、profile の status.observed。binding は書かない・Node の行は作らない(scheduling の欄と動詞)。
 
-(require doeff-hy.macros [defk <-])
+(require doeff-hy.macros [defk defhandler <-])
+(import .cache_operation [BorrowCacheCredential ReleaseCacheCredential])
 
 (import dataclasses [replace])
 (import hashlib)
@@ -1008,6 +1009,19 @@
             (do
               (<- (remember-lease settings job-id lease.lease-id))
               #(lease None))))))
+
+(defhandler cache-credential-handler [#^ AgentdSettings settings]
+  (BorrowCacheCredential [operation]
+    ;; 既に通常turnが持つleaseを借用しない。専用操作のidをjournalの鍵にする。
+    (<- (return-lease settings operation.key None))
+    (<- lease (| LeaseGrant LeaseRefused)
+      (CustodyLeaseBorrow :kind "claude" :account operation.target.account :purpose f"cache-maintenance {operation.key}"))
+    (when (isinstance lease LeaseGrant)
+      (<- (remember-lease settings operation.key lease.lease-id)))
+    (resume lease))
+  (ReleaseCacheCredential [operation]
+    (<- returned bool (return-lease settings operation.key None))
+    (resume returned)))
 
 
 (defk headline-turns-for [subject reason]

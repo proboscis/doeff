@@ -79,6 +79,7 @@
 (import doeff_agents.sessionhost.effects [headless-kill headless-liveness])
 (import doeff_agents.sessionhost.headless_protocol [backend-alive])
 (import doeff_agents.sessionhost.cache_host [cache-host-ping cache-host-probe cache-host-guard-normal-send cache-host-cancel])
+(import doeff_agents.sessionhost.cache_host_model [CacheMaintenanceActiveError CACHE-MAINTENANCE-ACTIVE])
 (import doeff_agents.sessionhost.cache_host_model [HostCacheRead])
 (import doeff_agents.sessionhost.cache_host_store [session-mutation-lock])
 (import doeff_agents.sessionhost.headless [
@@ -1652,7 +1653,10 @@
     (when ignored
       (setv attachments #()))
     (when (headless-backend? config)
-      (run-hosted config actor (cache-host-guard-normal-send sid)))
+      (try
+        (run-hosted config actor (cache-host-guard-normal-send sid))
+        (except [error CacheMaintenanceActiveError]
+          (raise (RpcHostError CACHE-MAINTENANCE-ACTIVE (str error))))))
     (run-hosted config actor
                 (cond
                   (and (headless-backend? config) (= mode SEND-MODE-INTERRUPT))
