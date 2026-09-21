@@ -1246,7 +1246,7 @@
         ;; card acp:kanban-issue:ki-9fc7d4bca4dc(法 ACP 575b1e): 会話の記憶は行が正本 — 起こす前に行から読み、
         ;; charter に載せる(器の側が置き場へ書き出す)。行を読むのは effect を持つこの層ちょうどで、
         ;; 器の kind module(substrate-clean)には ACP も記録の service も import しない。
-        (<- memory-files tuple (memory-files-for-turn subject))
+        (<- memory-files tuple (memory-files-for-turn subject choice.arm))
         (<- charter dict (charter-with-memory-files charter memory-files))
         (when (and (is-not auth-file None) (is-not lease None) (is-not lease.auth-json None))
           (<- (FsWritePrivateText :path auth-file :text lease.auth-json)))
@@ -1264,8 +1264,8 @@
               launched)))))
 
 
-(defk memory-files-for-turn [subject]
-  {:pre [(: subject str)]
+(defk memory-files-for-turn [subject arm]
+  {:pre [(: subject str) (: arm str)]
    :post [(: % tuple)]}
   "手番の頭の水入れ(card acp:kanban-issue:ki-9fc7d4bca4dc・法 ACP 575b1e): この会話の記憶の行を 1 回引き、
    本文を記録の service の stream から読んで、置き場へ書き出す file の列にする。索引 MEMORY.md は
@@ -1280,7 +1280,12 @@
 
    ⚠ 呼ぶ腕は 2 つで、**1 手番につき 1 回**(同じ手番で 2 度読まない): 起こす腕は incarnate(charter に
    載せる)、温かい腕は after-start(送りの turn_charter に載せる — card acp:kanban-issue:ki-a40292ed30d9
-   の 4 つ目の腕)。どちらの腕でも 1 手番 = 1 会話の読みなので、上の帯域の測りはそのまま当たる。"
+   の 4 つ目の腕)。どちらの腕でも 1 手番 = 1 会話の読みなので、上の帯域の測りはそのまま当たる。
+
+   arm = この水入れを起こした腕(judgment.next-arm-for-job の語 — launch / resume / rehydrate / send)。
+   計器の欄にそのまま出す: 腕の欄が無いと「継続の腕を通った手番が標本に在るか」を log から数えられず、
+   受入の測りが**継続の腕を 1 行も含まない標本で緑になる**(2026-09-21 の実測: 巻き直し直後の台帳は
+   argv を持つ行 6 が 6 行とも rehydrate)。器の側の名乗り(agent-memory-written)は verb で同じ事を言う。"
   (<- rows tuple (AcpConversationMemories :conversation-id subject))
   ;; 記憶を 1 度も書いていない会話は charter を 1 byte も変えない(今日の挙動のまま)。
   (when (not rows)
@@ -1327,7 +1332,7 @@
   ;; 冊が 0 でも行が在って全部読めた(= 全部退役した)なら索引は書き直す — 腐った索引を残さない。
   (<- files tuple (memory-files-of (tuple books) baselines))
   (<- (MetricLine :fields {"metric" "agent-memory-hydrated" "conversationId" subject
-                           "books" (len books) "based" (len baselines)
+                           "arm" arm "books" (len books) "based" (len baselines)
                            "unreadable" unread "retired" retired-count}))
   files)
 
@@ -1708,7 +1713,7 @@
   ;; 起こす腕は charter で同じ値を運んでいる ⇒ ここで行を読み直すのは送りの腕だけ(読みを 2 度撃たない)。
   (setv turn-charter {})
   (when (= arm NEXT-ARM-SEND)
-    (<- memory-files tuple (memory-files-for-turn subject))
+    (<- memory-files tuple (memory-files-for-turn subject arm))
     (<- carried-charter dict (turn-charter-of settings.memory-root subject memory-files))
     (setv turn-charter carried-charter))
   ;; 段 10 lane 10o(agora-redesign #96・依頼者の追補): 添付は型つきのまま器へ渡す(綴りは Dialogue)。
