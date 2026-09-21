@@ -21,6 +21,7 @@ settings_from_env が join.record-sink-of の 1 点で参加を断る(AgentdPref
 import hashlib
 import os
 import platform
+import signal
 import sys
 import threading
 import time
@@ -53,7 +54,10 @@ from doeff_agents.sessionhost.acp.effects import (
     DRAIN_SECONDS_ENV,
     TRANSCRIPTS_OBSERVED_MAX_ENV,
     HOMES_ROOT_ENV,
+    JOIN_DRAIN_FILE,
     JOIN_RECORD_SPOOL_DIR,
+    JOIN_ROLE_AGENTD,
+    JOIN_ROLE_BOTH,
     JOIN_STATE_DIR_DEFAULT,
     LEASE_JOURNAL_FILENAME,
     MEMORY_ROOT_ENV,
@@ -523,6 +527,16 @@ def lease_journal_path(env: Mapping[str, str]) -> str:
     return os.path.join(os.path.dirname(record_spool_dir(env)), LEASE_JOURNAL_FILENAME)
 
 
+def drain_file_path(env: Mapping[str, str]) -> str:
+    """排水の合図の file(card acp:kanban-issue:ki-567f2dd6140f): verify / summarize / lease の journal と同じく
+    state_dir(record spool の親)の下の 1 file。置き場の定義点を増やさない(綴りは effects.JOIN_DRAIN_FILE の 1 点)。
+
+    在否だけを読む level-triggered の合図で、拍ごとに読み直す(SIGTERM の排水と同じ ``settings.draining`` を立てる —
+    capacity の判断は judgment.declared-capacity-of の 1 点のまま)。file にしたのは signal と違って**入れ替えの
+    途中で agentd 自身が再起動しても排水の意思が残る**から(host の入れ替えは agentd を跨いで進む)。"""
+    return os.path.join(os.path.dirname(record_spool_dir(env)), JOIN_DRAIN_FILE)
+
+
 def summarize_runs_dir(env: Mapping[str, str]) -> str:
     """summarize の結末(prompt / 答え / log / rc / pid)の置き場(段 12 lane 12j): verify と同じく state_dir の下の SUMMARY_RUNS_RELDIR。"""
     return os.path.join(os.path.dirname(record_spool_dir(env)), SUMMARY_RUNS_RELDIR)
@@ -573,6 +587,58 @@ def run_tick(
     return result
 
 
+def drain_port(
+    drain: threading.Event | None, drain_file: str | None, log: Callable[[str], None]
+) -> Callable[[], bool]:
+    """``LoopPorts.draining`` の 1 点(card acp:kanban-issue:ki-567f2dd6140f §3.1d)。
+
+    合図は 2 つ、答えは 1 つ:
+
+    * ``drain`` — 停止の腕(``AgentdRun.drain_for_stop``)が立てる process 内の合図(今日どおり)。
+    * ``drain_file`` — **外から**立てられる file の在否(``runtime.drain_file_path``)。拍ごとに
+      読み直す level-triggered で、消えれば宣言の capacity に戻る。signal ではなく file なのは、
+      入れ替えの途中で agentd 自身が再起動しても排水の意思が残るため。
+
+    どちらも同じ ``settings.draining`` に落ちるので、capacity の**判断**は
+    ``judgment.declared-capacity-of`` の 1 点のまま(ここは合図を読むだけの handler 側)。
+    在否が変わった拍だけ 1 行 log する(拍ごとに同じ行を積まない)。
+    """
+    marked = False
+
+    def draining() -> bool:
+        nonlocal marked
+        if drain is not None and drain.is_set():
+            return True
+        if drain_file is None:
+            return False
+        # 在否 1 点(中身は理由の 1 行 — log に出すだけで判断には使わない)。
+        present = os.path.exists(drain_file)
+        if present != marked:
+            marked = present
+            if present:
+                log(
+                    f"agentd: drain file {drain_file} is present — no new claims, capacity 0, "
+                    f"the running turns are still observed to the end{_drain_reason(drain_file)}"
+                )
+            else:
+                log(
+                    f"agentd: drain file {drain_file} is gone — capacity is the declared value again"
+                )
+        return present
+
+    return draining
+
+
+def _drain_reason(path: str) -> str:
+    """排水の合図の file の中身(理由の 1 行)を log の尾に足す。読めない・空 = 何も足さない(判断には使わない)。"""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read().strip()
+    except (OSError, UnicodeDecodeError):
+        return ""
+    return f": {text.splitlines()[0]}" if text else ""
+
+
 class StateHolder:
     """loop の最後の状態の置き場(段 10 lane 10h 便 2): 停止の腕が loop の外から読む — 書くのは loop の thread だけ。"""
 
@@ -588,17 +654,20 @@ def run_loop(
     holder: StateHolder | None = None,
     drain: threading.Event | None = None,
     cache_dispatchers: Sequence[Dispatcher] = (),
+    drain_file: str | None = None,
 ) -> None:
-    """同じVMで通常処理と専用操作を実行する。I/O待ちは他の処理を止めない。"""
+    """同じVMで通常処理と専用操作を実行する。I/O待ちは他の処理を止めない。
+
+    ``drain_file`` = 外から立てられる排水の合図(card acp:kanban-issue:ki-567f2dd6140f・
+    runtime.drain_file_path)。在否を拍ごとに読み直す — 消えれば宣言の capacity に戻る
+    (level-triggered)。停止の腕が立てる ``drain`` の合図と**同じ** ``settings.draining`` に落ちるので、
+    capacity の判断は judgment.declared-capacity-of の 1 点のまま。"""
 
     def publish(state: AgentdState) -> None:
         if holder is not None:
             holder.state = state
 
-    def draining() -> bool:
-        return drain is not None and drain.is_set()
-
-    ports = LoopPorts(stop.is_set, draining, publish, log)
+    ports = LoopPorts(stop.is_set, drain_port(drain, drain_file, log), publish, log)
     PyVM().run(concurrent_worker(
         settings, initial_state(), tuple(dispatchers), tuple(cache_dispatchers), ports
     ))
@@ -721,6 +790,28 @@ class AgentdRun:
             )
         return left
 
+    def close_for_exit(self, reason: str) -> None:
+        """**ACP 側の process だけ**が降りる時の腕(card acp:kanban-issue:ki-567f2dd6140f §3.1b)。
+
+        走っている手番を **1 つも閉じない** — 器(claude の子 process)は別 process の host が親として
+        持ち続け、手番はそのまま走り切る。やるのは (1) tick の loop を止める (2) lease の heartbeat を
+        止める (3) handler を閉じる(記録の spool は put のたびに fsync + rename 済みなので、ここで
+        流し込む buffer は無い)の 3 つだけ。
+
+        ⚠ **lease を明示に落とさない**: 落とすと node がその拍で配車から外れる。入れ替えは lease の
+        TTL(AgentdSettings.node_lease_ttl_seconds)の内側で終わる前提で、TTL の間に新しい process が
+        同じ行(node-row-named が名で引く 1 点)を拾い直す — だから node の行は切れない。
+        ``close_for_stop``(host と同じ process で降りる今日の腕 = 走っている手番を AgentdRestart で
+        閉じる)と**別の腕**として分ける。"""
+        _stderr(
+            f"agentd: exit ({reason}) — leaving the running turns to the host process; not closing any job"
+        )
+        self.stop.set()
+        self.thread.join(STOP_JOIN_SECONDS)
+        if self.heartbeat.ident is not None:
+            self.heartbeat.join(STOP_JOIN_SECONDS)
+        self._close()
+
     def close_for_stop(self, reason: str) -> int:
         """host の停止の前に呼ぶ(host の accept loop が生きている間 — 器の眺めは RPC で読む): 排水(宣言が在れば)→ loop を止め、
         今の拍が終わるのを有界に待ち、走っている job を閉じる。戻り = 閉じた job の数。loop が拍を終えない
@@ -830,9 +921,57 @@ def _stderr(text: str) -> None:
     sys.stderr.flush()
 
 
-def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> AgentdRun:
+def wait_for_host_socket(
+    socket_path: str,
+    role: str,
+    stopping: Callable[[], bool],
+    log: Callable[[str], None],
+    sleep: Callable[[float], None] = time.sleep,
+    now: Callable[[], float] = time.monotonic,
+) -> bool:
+    """host の socket が現れるのを待つ(戻り = 参加してよいか)。
+
+    役が ``agentd``(host は別 process — card acp:kanban-issue:ki-567f2dd6140f §3.1c)なら**上限を持たない**:
+    pod の host の container は入口の provisioning に ``POOL_PROVISION_TIMEOUT_S``(300 秒)まで掛かるので、
+    120 秒で諦めて落ちると ACP 側だけが再起動を繰り返す。待っている事実は ``HOST_WAIT_SECONDS`` ごとに
+    1 行名乗る(黙って待たない)。役 ``both``(1 process で両方)は今日どおり上限つきで諦める。
+    停止の合図が立てば、どちらの役でも待ちを降りる。"""
+    bounded = role != JOIN_ROLE_AGENTD
+    began = now()
+    announced = began
+    while not socket_is_listening(socket_path):
+        current = now()
+        if bounded and current - began >= HOST_WAIT_SECONDS:
+            log(
+                f"agentd: sessionhost socket {socket_path} did not appear in {HOST_WAIT_SECONDS:.0f}s; not joining"
+            )
+            return False
+        if not bounded and current - announced >= HOST_WAIT_SECONDS:
+            announced = current
+            log(
+                f"agentd: still waiting for the sessionhost socket {socket_path} "
+                f"({current - began:.0f}s so far; the host is a separate process — no deadline)"
+            )
+        if stopping():
+            log(
+                f"agentd: stop was signalled while waiting for the sessionhost socket {socket_path}"
+            )
+            return False
+        sleep(0.5)
+    return True
+
+
+def start_agentd_thread(
+    host_argv: Sequence[str], env: Mapping[str, str], *, role: str = JOIN_ROLE_BOTH
+) -> AgentdRun:
     """弁が on の時の 1 点: 前提を検め(札)、host の socket を待ってから loop を回す thread を起こす。
-    戻り = thread と停止の腕(entry.py が host の停止の hook に登録する)。"""
+    戻り = thread と停止の腕(entry.py が host の停止の hook に登録する)。
+
+    ``role`` = この process の役(effects.JOIN_ROLES)。``JOIN_ROLE_AGENTD`` の時は host が**別の
+    process** なので socket の出現を待つ上限を撤廃する(card acp:kanban-issue:ki-567f2dd6140f §3.1c —
+    pod の host の container は入口の provisioning に POOL_PROVISION_TIMEOUT_S = 300 秒まで掛かるので、
+    120 秒で諦めて落ちると agentd だけが再起動を繰り返す)。待っている事実は一定間隔で 1 行ずつ log する。
+    loop の途中で socket が消えるのは既存の backoff が吸収する — そこは変えない。"""
     settings = settings_from_env(env, host_argv)
     socket_path = host_socket_path(host_argv)
     # 段 12 lane 12b(agora-redesign #207 根 1): 拍を起こす合図の列は 1 本 — ACP の watch(SSE)と器の出来事の
@@ -887,15 +1026,9 @@ def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> Age
     heartbeat = threading.Thread(target=beat, name="sessionhost-agentd-heartbeat", daemon=True)
 
     def body() -> None:
-        deadline = time.monotonic() + HOST_WAIT_SECONDS
-        while not socket_is_listening(socket_path):
-            if time.monotonic() >= deadline:
-                _stderr(
-                    f"agentd: sessionhost socket {socket_path} did not appear in {HOST_WAIT_SECONDS:.0f}s; not joining"
-                )
-                close_all()
-                return
-            time.sleep(0.5)
+        if not wait_for_host_socket(socket_path, role, stop.is_set, _stderr):
+            close_all()
+            return
         _stderr(
             f"agentd: joined as node {settings.node_name!r} (ACP {env.get(ACP_URL_ENV)}; "
             f"record {_record_url_of_env(env)})"
@@ -907,7 +1040,16 @@ def start_agentd_thread(host_argv: Sequence[str], env: Mapping[str, str]) -> Age
         waker.start()
         # 後始末(watch の thread を閉じる)は停止の腕 AgentdRun.close_for_stop が最後に行う — loop は stop が
         # 立った時にだけ抜けるので、ここで閉じると停止の腕が器と ACP を読めない。
-        run_loop(settings, dispatchers, stop, _stderr, holder, drain, cache_dispatchers)
+        run_loop(
+            settings,
+            dispatchers,
+            stop,
+            _stderr,
+            holder,
+            drain,
+            cache_dispatchers,
+            drain_file=drain_file_path(env),
+        )
 
     thread = threading.Thread(target=body, name="sessionhost-agentd", daemon=True)
     thread.start()
@@ -1031,3 +1173,43 @@ def join_plan(argv: Sequence[str], env: Mapping[str, str]) -> JoinPlan:
 def apply_join_env(plan: JoinPlan, apply: Callable[[Mapping[str, str]], None]) -> None:
     """起動環境の適用先はentryが選ぶ。渡された環境を暗黙に変更しない。"""
     apply(dict(plan.env))
+
+
+def join_role(argv: Sequence[str]) -> str:
+    """join の argv → この process の役(判断は join.role-of の 1 点・既定 = JOIN_ROLE_BOTH)。
+
+    ⚠ 役は **JoinPlan に入らない**(env の束にも host の argv にも現れない): 宣言 file は機体のもので、
+    役は起こす側(launchd の unit / pod の container)のものだから — 1 枚の宣言を 2 つの unit が読む。
+    ``--role`` を付けない起動が今日と 1 byte 差なく同じであることも、この分離で構造的に保たれる。"""
+    verdict: object = PyVM().run(join.role_of(JoinArgv(items=tuple(argv))))
+    if not isinstance(verdict, str):
+        raise TypeError(f"role_of returned {type(verdict).__name__}")
+    return verdict
+
+
+def run_agentd_only(host_argv: Sequence[str], env: Mapping[str, str]) -> None:
+    """``--role agentd``: host を起こさず、ACP 側の loop だけをこの process で回す
+    (card acp:kanban-issue:ki-567f2dd6140f §3.1a / §3.1b)。
+
+    既知の形 = kubelet と container runtime の分離: kubelet(= この process)を入れ替えても
+    container(= claude の子)は走り続ける。だから **SIGTERM は走っている手番を閉じない** —
+    ``AgentdRun.close_for_exit`` を撃つだけで、器は host が持ち続ける。host が先に降りた時は host の
+    ``stop-headless-rows`` が行を stopped にし、生きているこの process が次の周期に backend_alive=False
+    を観測して既存の session-lost の経路で手番を閉じる(今日より正しく終わる — 今日は agentd も一緒に死ぬ)。"""
+    run = start_agentd_thread(host_argv, env, role=JOIN_ROLE_AGENTD)
+    done = threading.Event()
+
+    def on_signal(signum: int, _frame: object) -> None:
+        name = signal.Signals(signum).name
+        try:
+            run.close_for_exit(name)
+        finally:
+            done.set()
+
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(signum, on_signal)
+    # loop の thread が自分から降りた(socket を諦めた等)拍も抜ける。
+    while not done.is_set() and run.thread.is_alive():
+        done.wait(1.0)
+    if not done.is_set():
+        run.close_for_exit("agentd loop ended")

@@ -3,10 +3,19 @@
 通常ターンの終了から600秒でsessionを片付ける従来の処理では、1時間の
 キャッシュを失効5分前に更新する専用pingが、その送信先を失っていた。
 
-通常ターンの終了時刻は変更しない。sessionhostは稼働中のClaude/headless/
-multi_turn sessionに対し、`cache_retained_until_ms`を読み出し時に導出する。
-初回は通常ターンの終了から1時間、以後はキャッシュ利用を観測した成功pingの
-応答時刻から1時間まで、そのsessionをidle回収から保護する。
+通常ターンの終了時刻は変更しない。sessionhostは読み出しのたびに
+`cache_last_success_at_ms`(その sessionで最後に成功した専用操作の完了時刻)を
+**観測した事実として**載せ、「いつまで保持するか」の判断は制御面側の1点
+(`judgment.cache-resident-retention-of`)が持つ。初回は通常ターンの終了から1時間、
+以後はキャッシュ利用を観測した成功pingの応答時刻から1時間まで、そのsessionを
+idle回収から保護する。適格(稼働中のClaude/headless/multi_turn・会話あり)の
+判定も同じ1点にある。
+
+> 2026-09-22(card acp:kanban-issue:ki-567f2dd6140f §3.1e)に座を移した。
+> 旧形はsessionhost側の`cache-resident-retention`が適格の篩と保持予算
+> (`CACHE_RESIDENT_IDLE_MS`)の両方を持ち、`cache_retained_until_ms`という
+> **期限**をwireに載せていた。sessionhostを制御面から切り離す(process分割)には、
+> sessionhostが仕組みだけを持ち判断を持たないことが前提になる。
 
 1時間は対応するキャッシュTTLの最大値に基づく**送信先の保持予算**であり、
 キャッシュの有効期限や有効性の証明ではない。controllerの送信判断は引き続き
@@ -30,8 +39,9 @@ pingが止まれば保持期限は有限で尽き、従来のidle条件も満た
   SQLite接続を開き直す試験で永続記録からの復元も検証する。
 - `sessionhost_cache_maintenance_deftests.hy`の
   `test-clock-swapped-idle-cleanup-ping-and-next-cycle`: 時計、ファイル、receiptの
-  handlerを差し替え、実際の`cache-host-probe`、保持期限導出、`sessions-to-retire`
-  を組み合わせて55分・110分の成功と、その後に応答がない場合の回収を検証する。
+  handlerを差し替え、実際の`cache-host-probe`、`cache-resident-retention-of`による
+  保持期限の導出、`sessions-to-retire`を組み合わせて55分・110分の成功と、
+  その後に応答がない場合の回収を検証する。
 - 既存の専用ping試験: 通常sendとの排他、通常sessionの状態を変えないこと、
   親processの死亡からの回復、通常枠0での実行を維持する。
 

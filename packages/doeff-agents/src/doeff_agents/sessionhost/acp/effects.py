@@ -1070,6 +1070,19 @@ JOIN_HEADLESS_DIR = "headless-events"
 JOIN_RECORD_SPOOL_DIR = "record-spool"
 JOIN_STATE_DIR_DEFAULT = "doeff/acp-agentd"
 JOIN_SESSION_HOOKS_DEFAULT = "inherit"
+#: 排水の合図の file(card acp:kanban-issue:ki-567f2dd6140f): state_dir の下に置いた **在否**だけで
+#: settings.draining が決まる(中身は log に出す理由の 1 行)。signal ではなく file なのは、入れ替えの
+#: 途中で agentd 自身が再起動しても排水の意思が残るため。判断の座は judgment.declared-capacity-of の
+#: 1 点のまま(この file を読むのは handler 側 = runtime.drain_file_path / run_loop の port)。
+JOIN_DRAIN_FILE = "drain"
+#: process の役(card acp:kanban-issue:ki-567f2dd6140f): 1 つの `join` の宣言から、ACP の node agent
+#: (agentd)と セッションの所有者(host)を**別々の process** として起こせるようにする閉語彙。
+#: both = 今日どおり 1 process で両方(既定 — 既定のまま撃った起動は env の束も host の argv も今日と同じ)。
+#: agentd = ACP 側だけ(host は起こさない・socket の client として繋ぐ)。host = 器だけ(agentd の thread を起こさない)。
+JOIN_ROLE_BOTH = "both"
+JOIN_ROLE_AGENTD = "agentd"
+JOIN_ROLE_HOST = "host"
+JOIN_ROLES: frozenset[str] = frozenset({JOIN_ROLE_BOTH, JOIN_ROLE_AGENTD, JOIN_ROLE_HOST})
 #: 機体の所有の等級(契約 agora-kinds.json node.status.observations.ownership.grade の閉語彙)と
 #: 検の方法(proof)の綴り: gce-project:<project-id> = GCE の metadata server の project-id が一致 /
 #: file:<絶対 path>=<期待する値> = その file の中身(strip)が値と一致 /
@@ -1754,8 +1767,11 @@ class SessionView:
     #: turn_error — turn_ended_at と対の level-triggered の欄・成功の終わりと次の手番の送りで欄ごと無い)。None = 成功で
     #: 終わった / 終わっていない / 走行器が名乗らない器(tmux)。読み手は手番の終わりの判断(judgment.turn-output-condition-of)。
     turn_error: str | None = None
-    #: 専用pingの送信先を保持する期限。cache有効期限・通常turn終了時刻とは別。
-    cache_retained_until_ms: int | None = None
+    #: この session で**最後に成功した専用操作**の完了時刻(epoch ms・wire の cache_last_success_at_ms・
+    #: None = 1 度も成功していない)。host が観測して名乗る事実ちょうどで、期限でも資格でもない —
+    #: 「いつまで送信先として保つか」の判断は judgment.cache-resident-retention-of の 1 点
+    #: (card acp:kanban-issue:ki-567f2dd6140f §3.1e: host は仕組みだけを持ち、判断を持たない)。
+    cache_last_success_at_ms: int | None = None
 
 
 @dataclass(frozen=True)

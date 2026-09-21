@@ -7,9 +7,6 @@ from doeff import EffectBase
 from doeff_agents.sessionhost.acp.cache_operation import CacheReply, MaintenanceState
 
 CACHE_MAINTENANCE_ACTIVE = "cache-maintenance-active"
-# sessionの保持の上限。providerのcache有効期限を証明する値ではない。
-# 対応するcache TTLの最大1時間まで、通常idle回収から送信先を保護する。
-CACHE_RESIDENT_IDLE_MS = 3_600_000
 
 
 class CacheMaintenanceActiveError(RuntimeError):
@@ -61,7 +58,14 @@ class HostCacheActive(EffectBase):
 
 
 @dataclass(frozen=True)
-class HostCacheRetainedUntil(EffectBase):
+class HostCacheLastSuccessAt(EffectBase):
+    """この session で最後に成功した専用操作の完了時刻(epoch ms・無ければ None)。
+
+    card acp:kanban-issue:ki-567f2dd6140f §3.1e: host が名乗るのは**観測した事実**ちょうどで、
+    「いつまで保持するか」の判断は持たない(ACP 側の judgment.cache-resident-retention-of の 1 点)。
+    旧名 ``HostCacheRetainedUntil`` は host が保持の予算(CACHE_RESIDENT_IDLE_MS)を足した**期限**を
+    返していた = host が方策を持っていた形。"""
+
     session_id: str
 
 

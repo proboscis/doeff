@@ -149,11 +149,11 @@
 ;; 時間・ファイル・receiptだけを差し替え、実際の応答処理とidle回収を組み合わせる。
 (import datetime [datetime timezone])
 (import json)
-(import doeff_agents.sessionhost.cache_host [cache-resident-retention cache-host-probe])
-(import doeff_agents.sessionhost.cache_host_model [HostCacheRetainedUntil HostCacheWrite])
+(import doeff_agents.sessionhost.cache_host [cache-last-success-at cache-host-probe])
+(import doeff_agents.sessionhost.cache_host_model [HostCacheLastSuccessAt HostCacheWrite])
 (import doeff_agents.sessionhost.effects [ClockNow FsReadText HeadlessKill])
 (import doeff_agents.sessionhost.acp.handlers [session-view-of])
-(import doeff_agents.sessionhost.acp.judgment [sessions-to-retire])
+(import doeff_agents.sessionhost.acp.judgment [sessions-to-retire cache-resident-retention-of])
 
 (defhandler residency-world [#^ dict state]
   (ClockNow [] (resume (datetime.fromtimestamp (/ (get state "now") 1000) timezone.utc)))
@@ -162,12 +162,14 @@
   (HostCacheWrite [record]
     (.append (get state "receipts") record)
     (resume None))
-  (HostCacheRetainedUntil [session-id]
-    (setv deadlines (lfor r (get state "receipts")
+  ;; card acp:kanban-issue:ki-567f2dd6140f §3.1e: host が名乗るのは**観測した事実**ちょうど
+  ;; (最後に成功した専用操作の完了時刻)。保持の予算を足すのは ACP 側の判断。
+  (HostCacheLastSuccessAt [session-id]
+    (setv completions (lfor r (get state "receipts")
       :if (and (= r.session-id session-id) (= r.state MaintenanceState.SUCCEEDED)
                (is-not r.reply None) (> (+ r.reply.cache-read r.reply.cache-write) 0))
-      (+ r.reply.completed-at 3600000)))
-    (resume (if deadlines (max deadlines) None))))
+      r.reply.completed-at))
+    (resume (if completions (max completions) None))))
 
 (deftest test-clock-swapped-idle-cleanup-ping-and-next-cycle
   (setv state {"now" 0 "events" "" "receipts" []}
@@ -177,8 +179,8 @@
               "turn_ended_at" "1970-01-01T00:00:00+00:00"})
   (for [now #(600000 3300000 3600000 6600000 6900000)]
     (setv (get state "now") now)
-    (<- retained (| int None) ((residency-world state) (cache-resident-retention wire)))
-    (setv snapshot (| wire {"cache_retained_until_ms" retained})
+    (<- observed (| int None) ((residency-world state) (cache-last-success-at (get wire "session_id"))))
+    (setv snapshot (| wire {"cache_last_success_at_ms" observed})
           view (session-view-of snapshot))
     (<- retired tuple (sessions-to-retire #(view) now 600))
     (assert (= retired #()))
@@ -195,9 +197,12 @@
       (<- completed HostCacheRecord ((residency-world state) (cache-host-probe pending)))
       (assert (= completed.state MaintenanceState.SUCCEEDED))))
   ;; handlerを作り直しても永続receiptが同じなら同じ期限。新しい応答なしでは有限で回収。
-  (<- retained (| int None) ((residency-world state) (cache-resident-retention wire)))
+  (<- observed (| int None) ((residency-world state) (cache-last-success-at (get wire "session_id"))))
+  (assert (= observed 6600000))
+  (setv view (session-view-of (| wire {"cache_last_success_at_ms" observed})))
+  ;; 期限の判断は ACP 側の 1 点(host は予算を 1 度も足さない)。
+  (<- retained (| int None) (cache-resident-retention-of view))
   (assert (= retained 10200000))
-  (setv view (session-view-of (| wire {"cache_retained_until_ms" retained})))
   (<- expired tuple (sessions-to-retire #(view) 10200000 600))
   (assert (= expired #("resident")))
   (assert (= view.turn-ended-at-ms 0)))

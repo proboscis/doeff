@@ -7,9 +7,12 @@ from pathlib import Path
 from doeff_agents.sessionhost.acp.cache_operation import CacheReply, MaintenanceState
 from doeff_agents.sessionhost.acp.effects import SessionView
 from doeff_agents.sessionhost.acp.handlers import session_view_of
-from doeff_agents.sessionhost.acp.judgment import sessions_to_retire
+from doeff_agents.sessionhost.acp.judgment import (
+    cache_resident_retention_of,
+    sessions_to_retire,
+)
 from doeff_agents.sessionhost.cache_host_model import HostCacheRecord
-from doeff_agents.sessionhost.cache_host_store import cache_receipt_put, cache_retained_until
+from doeff_agents.sessionhost.cache_host_store import cache_last_success_at, cache_receipt_put
 from test_sessionhost_headless import Host, _launch_params, _wait_turn_end
 from test_sessionhost_headless import headless_host as headless_host
 
@@ -63,10 +66,13 @@ def test_successful_ping_keeps_second_cycle_without_forging_turn_end(headless_ho
                      started_at=start + 6_600_000, reply=None, reason="lost-response")
     _save_receipt(headless_host, failed)
     assert _view(headless_host, sid) == after
-    # 明示的cancelは保持期限に優先する。
+    # 明示的cancelは保持期限に優先する。receipt は残る(host は観測を偽らない)が、期限の判断
+    # (ACP 側の 1 点)が running でない器を送信先として保たない。
     headless_host.ok("session.cancel", {"session_id": sid})
-    assert _view(headless_host, sid).status == "stopped"
-    assert _view(headless_host, sid).cache_retained_until_ms is None
+    stopped = _view(headless_host, sid)
+    assert stopped.status == "stopped"
+    assert stopped.cache_last_success_at_ms == reply.completed_at
+    assert run(cache_resident_retention_of(stopped)) is None
 
 
 def test_cache_residency_does_not_extend_codex_idle_lifetime(headless_host: Host) -> None:
@@ -86,8 +92,9 @@ def test_cache_residency_reopens_existing_receipts_and_ignores_unknown(tmp_path:
     with sqlite3.connect(db) as conn:
         cache_receipt_put(conn, record)
     with sqlite3.connect(db) as conn:
-        assert cache_retained_until(conn, "session") == 6_902_000
-        assert cache_retained_until(conn, "other-session") is None
+        # host が名乗るのは**観測した事実**ちょうど(保持の予算を足さない — 期限は ACP 側の判断)。
+        assert cache_last_success_at(conn, "session") == 3_302_000
+        assert cache_last_success_at(conn, "other-session") is None
         cache_receipt_put(conn, replace(record, operation_id="unknown",
                           state=MaintenanceState.UNKNOWN, reply=None))
-        assert cache_retained_until(conn, "session") == 6_902_000
+        assert cache_last_success_at(conn, "session") == 3_302_000
