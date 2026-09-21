@@ -111,10 +111,37 @@
       (.extend argv ["--resume" conv-id])
       ;; 冷えた再開の前の圧縮の argv: 同じ基礎の旗 + print mode の prompt 1 つ + 同じ --resume。
       ;; stream-json の旗は載せない(stdin の対話ではなく 1 回きり)。
-      (setv (get built "cold_compaction_argv")
-            (+ [(get base 0)] (list (cut base 1 None))
-               ["-p" CLAUDE-COLD-COMPACTION-PROMPT "--resume" conv-id]))))
+      ;; ⚠ --settings の disableAllHooks は載せない(実測 2026-09-22 01:4x): disableAllHooks は plugin の hook
+      ;;   まで殺し、`/compact` が組込みの要約(model 1 回・会話全体・3.5 分)に落ちる。この 1 回きりの process は
+      ;;   session_hooks = inherit と同じ形で起きる(config-dir の所有者の hook 層は spawn env の
+      ;;   AGENT_SESSION_CLASS で self-gate する契約 — 手番と同じ実効 env で起こす)。
+      (setv (get built "cold_compaction_argv") (cold-compaction-argv base conv-id))))
   built)
+
+
+(deff cold-compaction-argv [base conv-id]
+  {:pre [(: base list) (> (len base) 0) (: conv-id str)]
+   :post [(: % list)]}
+  "続きの手番の基礎の argv(build-claude-argv の並び)から、再開前の圧縮の 1 回きりの argv を組む(純関数)。
+   --settings から disableAllHooks を落とす(他の欄 — 自動記憶の置き場など — は保ち、空になれば旗ごと消す)。
+   末尾に print mode の prompt と --resume。"
+  (setv args (list base))
+  (setv out [])
+  (setv i 0)
+  (while (< i (len args))
+    (setv arg (get args i))
+    (if (and (= arg "--settings") (< (+ i 1) (len args)))
+        (do
+          (setv settings (try (json.loads (get args (+ i 1))) (except [Exception] {})))
+          (when (not (isinstance settings dict)) (setv settings {}))
+          (.pop settings "disableAllHooks" None)
+          (when settings
+            (.extend out ["--settings" (json.dumps settings :separators #("," ":"))]))
+          (setv i (+ i 2)))
+        (do
+          (.append out arg)
+          (setv i (+ i 1)))))
+  (+ out ["-p" CLAUDE-COLD-COMPACTION-PROMPT "--resume" conv-id]))
 
 
 (defk codex-root-config-args [params]
