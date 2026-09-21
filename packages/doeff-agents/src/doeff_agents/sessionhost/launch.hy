@@ -71,7 +71,7 @@
 (import doeff_agents.sessionhost.policy [
   BILLING-METERED
   BINDING-OWNED-ENV-KEYS
-  carry-launch-flags
+  carry-charter-fields
   binding-admission-error
   binding-billing-class
   counts-toward-launch-capacity
@@ -1118,6 +1118,79 @@
   (re.sub "~(g|fork)[0-9]+$" "" value))
 
 
+(defk resume-launch-params-of [params source overlay overlay-env binding conv mode new-sid new-name
+                              source-sid gen effective-expected]
+  {:pre [(: params dict) (: source SessionRow) (: overlay dict) (: overlay-env dict)
+         (: binding (| dict None)) (: conv dict) (: mode str) (: new-sid str) (: new-name str)
+         (: source-sid str) (: gen int) (: effective-expected (| dict None))]
+   :post [(: % dict)]}
+  "蘇生の名簿(resume program params + 蘇生元の行 → launch program params)。
+
+   ⚠ charter → resume params(judgment.resume-params-of)→ wire の受理形
+   (host.build-resume-program-params)→ **ここ** と続く 4 枚のうちの 4 枚目。純関数として
+   外へ出しているのは、検が『charter の欄が 1 枚でも落ちたら赤』をこの座で撃てるようにするため
+   (card acp:kanban-issue:ki-a40292ed30d9 受入・制約 4: 届いた所を母集団に入れる)。"
+  ;; 席へ運ぶ charter の欄(policy.CHARTER-CARRIED-KEYS)は蘇生の名簿でも運ぶ。2 度写すのは
+  ;; 優先の順そのもの: まず蘇生元の行の意図(overlay = 行に残る旗)、その上に呼び手の params
+  ;; (この手番の charter)を重ねる — 呼び手が名乗った欄が勝ち、名乗らない欄は行から戻る。
+  ;; ⚠ **欄の名をここで数えない**(card acp:kanban-issue:ki-a40292ed30d9: 置き場だけをこの座へ
+  ;; 手で足した便の次に、同じ座で記憶の本文が落ちた)。
+  (carry-charter-fields
+    params
+    (carry-charter-fields
+      overlay
+      {"session_id" new-sid
+      "session_name" new-name
+      "agent_type" source.agent-type
+      "work_dir" source.work-dir
+      ;; law context-file-rides-the-wire の resume 面: 新 invocation の
+      ;; 指示メモは resume でも wire で運ばれ、宿り先(= source.work-dir —
+      ;; R4 の cwd 鍵保証で resume はここに宿る)へ launch-session の既存
+      ;; 実体化(spawn 前・atomic write)がそのまま書く。素通し 1 点 —
+      ;; 並行実装を作らない(R3)。workspace_seed は素通ししない(resume の
+      ;; 宿り先は再割当でなく蘇生元 dir — seed 対応は宿り先意味論の設計後)
+      "context_file" (.get params "context_file")
+      ;; 帰属 metadata の resume 面(one law, both faces): 新 incarnation は
+      ;; 新しい invocation を宿すので、帰属も呼び手の申告を素通しする
+      ;; (蘇生元行からの復元はしない — 帰属は復元源ではなく出自申告)。
+      "launch_attribution" (.get params "launch_attribution")
+      "command" None
+      "prompt" (.get params "prompt")
+      "model" (or (.get params "model") (.get overlay "model"))
+      "effort" (or (.get params "effort") (.get overlay "effort"))
+      "mcp_servers" (or (.get params "mcp_servers")
+                         (.get overlay "mcp_servers")
+                         {})
+      "skip_trust_setup" False
+      "lifecycle" source.lifecycle
+      "binding" binding
+      ;; ⚠ 置き場(memory_dir)と手番の冊(memory_files)は**ここに書かない** —
+      ;; policy.TURN-CARRIED-KEYS の 1 点から上の carry-charter-fields が写す。
+      "session_env" overlay-env
+      "expected_result" effective-expected
+      "socket_path" (.get params "socket_path" "")
+      "max_running" (.get params "max_running")
+      ;; host の方針(起動時の旗)は resume にも運ぶ — 運ばないと、旗のある host でも
+      ;; 従量課金の会話の再開が admit-launch で断られる(admission は 1 点)。
+      "allow_metered_billing" (.get params "allow_metered_billing" False)
+      "repl_idle_max_wait_seconds" (.get params "repl_idle_max_wait_seconds")
+      "backend_kind" (.get params "backend_kind" "tmux")
+      ;; headless の実況の正本の置き場(host の config が program-params に運ぶ — 段 10 lane 10h・
+      ;; agora-redesign #84: 運んでいなかったので headless の session.resume は headless-launch-session の
+      ;; (get params "events_root") で KeyError になり、本番の --resume が全部 rehydrate に落ちていた)。
+      "events_root" (.get params "events_root")
+      ;; 段 10 lane 10o(実弾 2026-09-15 09:5x): 1 手番目に畳む郵便の添付。運ばないと
+      ;; headless-launch-session が空の並びを読み、**腕が resume の手番だけ**画像が黙って落ちる。
+      "attachments" (.get params "attachments" #())
+      "resume_context" {"mode" mode
+                         "conversation" conv
+                         "generation" gen
+                         "resumed_from_session_id"
+                           (when (= mode "resume") source-sid)
+                         "forked_from_session_id"
+                           (when (= mode "fork") source-sid)}})))
+
+
 (defk resume-session [params]
   {:pre [(: params dict)
          (in (.get params "mode") #{"resume" "fork"})]
@@ -1323,64 +1396,9 @@
   (setv overlay-env (dict (or (.get overlay "session_env") {})))
   (.update overlay-env (or (.get params "session_env") {}))
 
-  (setv launch-params
-        (carry-launch-flags
-          ;; 会話の圧縮の閾値(設計記録 docs/design/auto-compact-window): 起こす旗は蘇生の名簿でも運ぶ。呼び手の params が
-          ;; 名乗っていれば呼び手優先、無ければ蘇生元の行の意図(overlay)から復元する。
-          (if (in "auto_compact_window" params) params overlay)
-        {"session_id" new-sid
-         "session_name" new-name
-         "agent_type" source.agent-type
-         "work_dir" source.work-dir
-         ;; law context-file-rides-the-wire の resume 面: 新 invocation の
-         ;; 指示メモは resume でも wire で運ばれ、宿り先(= source.work-dir —
-         ;; R4 の cwd 鍵保証で resume はここに宿る)へ launch-session の既存
-         ;; 実体化(spawn 前・atomic write)がそのまま書く。素通し 1 点 —
-         ;; 並行実装を作らない(R3)。workspace_seed は素通ししない(resume の
-         ;; 宿り先は再割当でなく蘇生元 dir — seed 対応は宿り先意味論の設計後)
-         "context_file" (.get params "context_file")
-         ;; 帰属 metadata の resume 面(one law, both faces): 新 incarnation は
-         ;; 新しい invocation を宿すので、帰属も呼び手の申告を素通しする
-         ;; (蘇生元行からの復元はしない — 帰属は復元源ではなく出自申告)。
-         "launch_attribution" (.get params "launch_attribution")
-         "command" None
-         "prompt" (.get params "prompt")
-         "model" (or (.get params "model") (.get overlay "model"))
-         "effort" (or (.get params "effort") (.get overlay "effort"))
-         "mcp_servers" (or (.get params "mcp_servers")
-                           (.get overlay "mcp_servers")
-                           {})
-         "skip_trust_setup" False
-         "lifecycle" source.lifecycle
-         "binding" binding
-         ;; 自動記憶の置き場(ADR-DOE-AGENTS-006 R11)は会話に従う durable な状態なので、resume の
-         ;; params でも素通しする。ここは charter → resume params(judgment.resume-params-of)に続く
-         ;; **2 枚目の名簿** — 足した欄を両方に入れないと、腕が resume の手番だけ黙って落ちる
-         ;; (実弾 2026-09-15 の添付と同じ形の落ち方)。欄が無ければ今日の挙動のまま。
-         "memory_dir" (.get params "memory_dir")
-         "session_env" overlay-env
-         "expected_result" effective-expected
-         "socket_path" (.get params "socket_path" "")
-         "max_running" (.get params "max_running")
-         ;; host の方針(起動時の旗)は resume にも運ぶ — 運ばないと、旗のある host でも
-         ;; 従量課金の会話の再開が admit-launch で断られる(admission は 1 点)。
-         "allow_metered_billing" (.get params "allow_metered_billing" False)
-         "repl_idle_max_wait_seconds" (.get params "repl_idle_max_wait_seconds")
-         "backend_kind" (.get params "backend_kind" "tmux")
-         ;; headless の実況の正本の置き場(host の config が program-params に運ぶ — 段 10 lane 10h・
-         ;; agora-redesign #84: 運んでいなかったので headless の session.resume は headless-launch-session の
-         ;; (get params "events_root") で KeyError になり、本番の --resume が全部 rehydrate に落ちていた)。
-         "events_root" (.get params "events_root")
-         ;; 段 10 lane 10o(実弾 2026-09-15 09:5x): 1 手番目に畳む郵便の添付。運ばないと
-         ;; headless-launch-session が空の並びを読み、**腕が resume の手番だけ**画像が黙って落ちる。
-         "attachments" (.get params "attachments" #())
-         "resume_context" {"mode" mode
-                           "conversation" conv
-                           "generation" gen
-                           "resumed_from_session_id"
-                             (when (= mode "resume") source-sid)
-                           "forked_from_session_id"
-                             (when (= mode "fork") source-sid)}}))
+  (<- launch-params dict
+      (resume-launch-params-of params source overlay overlay-env binding conv mode
+                               new-sid new-name source-sid gen effective-expected))
   ;; 宿しは backend ごと(host の config が params に運ぶ backend_kind の 1 点):
   ;; headless は tui の ready gate / paste を持たない別の program(headless.hy —
   ;; admission と identity の準備は上の 2 つの defk を共有する)。

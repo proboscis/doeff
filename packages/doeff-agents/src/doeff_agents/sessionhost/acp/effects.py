@@ -465,6 +465,10 @@ MEMORY_INDEX_FILE: str = "MEMORY.md"
 #: charter が運ぶ記憶の本(起こす腕が行から読んで載せ、器の側が置き場へ書き出す)。ACP の行へは書かない
 #: (history / first_turn と同じく起こすためだけの値)。
 CHARTER_MEMORY_FILES_KEY: str = "memory_files"
+#: 自動記憶の置き場(会話 id から導いた 1 つ・ADR-DOE-AGENTS-006 R11)を運ぶ charter の欄。
+#: 綴りの家をここに置くのは、本文(上)と置き場が**同じ族**だから — 族のどちらかだけを名簿へ手で足す
+#: 便が、もう片方を落としたまま通った(card acp:kanban-issue:ki-a40292ed30d9)。
+CHARTER_MEMORY_DIR_KEY: str = "memory_dir"
 #: 記憶を書けなかった手番の条件(手番は落とさない — 記憶が書けないことは手番の失敗ではない)。
 CONDITION_MEMORY_UNWRITABLE: ConditionType = "AgentMemoryUnwritable"
 
@@ -522,8 +526,8 @@ CHARTER_SETTING_KEYS: dict[str, AgentSetting] = {"model": "model", "effort": "ef
 CHARTER_WORK_DIR_KEY = "work_dir"
 CHARTER_WORK_DIR_SCRATCH_KEY = "work_dir_scratch"
 #: 会話の圧縮の閾値(設計記録 docs/design/auto-compact-window): 会話の圧縮の閾値(token の整数、または "auto" = CLI の窓任せ)。
-#: 起こす params と同じ綴りで、launch は charter を丸ごと params にするので素通し、resume は
-#: judgment.resume-params-of の名簿が写す。argv の導出は impls.claude_code.claude-autocompact-value
+#: 起こす params と同じ綴り。**丸ごと素通しになる名簿は 1 枚も無い** — launch も resume も閉じた名簿を
+#: 通るので、この欄は下の CHARTER_CARRIED_KEYS の 1 点から写される。argv の導出は impls.claude_code.claude-autocompact-value
 #: の 1 点(幅 100k〜1M・外れる値は "auto" へ縮退 — 幅の外を argv に載せると手番が死ぬ)。
 CHARTER_AUTO_COMPACT_WINDOW_KEY = "auto_compact_window"
 #: 作業場の段(judgment.work-dir-step-of の閉語彙): launch = 在る / 宣言なし・create = 無いが scratch の印・missing = 無い。
@@ -577,6 +581,42 @@ JOB_INTERRUPTS_ESCALATED_KEY: str = "interruptsEscalated"
 #: 段 10 lane 10n: 期限(秒)を運ぶ charter の欄 — Messaging の Plan.charterFor が方策の行の値を会話の宣言で重ねて写す。
 #: agentd はこの欄だけを読む(方策・会話の行は読まない・既定の定数を置かない — 無い job は注入だけ + 条件)。
 CHARTER_INTERRUPT_ESCALATION_KEY: str = "interruptEscalationSeconds"
+# ---------------------------------------------------------------------------
+# charter の欄の行き先(card acp:kanban-issue:ki-a40292ed30d9 — 名簿を触らせない形)
+# ---------------------------------------------------------------------------
+#
+# charter の欄には行き先が 2 つしかない:
+#   (a) 席へ運ぶ  — 席の process の形を決める値。起こす腕(launch / resume / rehydrate)から
+#                   sessionhost の wire を渡って器の argv・置き場へ届く。
+#   (b) agentd が読む — 手番の割り当て・作業場の解決・verify / summarize の命令。器へは渡らない。
+#
+# 同じ壊れ方が 3 度(添付 2026-09-15 → 記憶の置き場 2026-09-18 → 記憶の**本文** 2026-09-21)起きたのは、
+# (a) の欄が渡る名簿が 4 枚在って、欄を足す操作が 4 枚とも手で触らせたから。⇒ 名簿は
+# policy.CHARTER-CARRIED-KEYS / carry-charter-fields の 1 点から写し、ここには **(b) の名簿だけ**を置く。
+#
+# ⚠ (a) の名簿はここに**書かない**(書くと 5 枚目になる)。(a) は「この module が宣言した CHARTER_*_KEY の
+#   うち (b) でないもの」= 引き算で決まり、検 tests/sessionhost_charter_reaches_the_seat_deftests.hy が
+#   module を反射で数えて「席へ届くか」を撃つ。新しい CHARTER_*_KEY を足して席へ運ばないなら、
+#   下の名簿に足すまで検は赤のまま(足す操作が必ず行き先を宣言させる)。
+CHARTER_KEYS_AGENTD_CONSUMES: tuple[str, ...] = (
+    CHARTER_KIND_KEY,  # どの腕の job か(turn / verify / summarize)
+    CHARTER_PLACE_KEY,  # 置き場の集合(配車が読む)
+    CHARTER_WORK_DIR_SCRATCH_KEY,  # work_dir の解決の手順(解決した path だけが席へ行く)
+    CHARTER_INTERRUPT_ESCALATION_KEY,  # 割り込みの期限(agentd が数える)
+    CHARTER_VERIFY_JOB_ID_KEY,  # verify の命令(席を起こさない腕)
+    CHARTER_VERIFY_RUN_KEY_KEY,
+    CHARTER_VERIFY_DEADLINE_KEY,
+    CHARTER_SUMMARIZE_UNTIL_KEY,  # summarize の命令(会話の手番ではない)
+    CHARTER_SUMMARIZE_REGION_BYTES_KEY,
+)
+#: 4 枚の名簿が写す欄(= 基の名簿に名前で書かれていない、席へ運ぶ欄)。host 側の写しは
+#: policy.CHARTER-CARRIED-KEYS で、**同じ語であること**は検が pin する(綴りが割れると黙って落ちる)。
+CHARTER_CARRIED_KEYS: tuple[str, ...] = (
+    CHARTER_AUTO_COMPACT_WINDOW_KEY,
+    CHARTER_MEMORY_DIR_KEY,
+    CHARTER_MEMORY_FILES_KEY,
+)
+
 #: 段 10 lane 10n: agent の種類ごとの割り込みの能力(node の status.capabilities[kind].interrupt の閉語彙):
 #: steer-then-stop = 注入(道具の境界で読む)→ 期限で停止の合図(claude)/ stop = 即座に止めて渡す(codex)。
 InterruptCapability = Literal["steer-then-stop", "stop"]

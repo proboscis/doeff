@@ -292,6 +292,34 @@
 ;;   **旗を 1 つ足す時に数え直すのはこの集合だけ**(名簿を 5 つ数えない)。
 (setv LAUNCH-FLAG-KEYS #("auto_compact_window"))
 
+;; ---------------------------------------------------------------------------
+;; 席へ運ぶ、会話の宣言の欄(card acp:kanban-issue:ki-a40292ed30d9)
+;; ---------------------------------------------------------------------------
+;;
+;; 同じ壊れ方の 3 度目(添付 2026-09-15 → 記憶の置き場 2026-09-18 → 記憶の**本文**
+;; 2026-09-21)で分かったこと: 旗(上)は「行にも残る起こす意図」という**狭い族**で、
+;; 名簿を 1 つでも通り抜けられない欄はそれだけではない。charter が席の process の形を
+;; 決めるために運ぶ欄は、旗でなくても同じ 4〜5 枚の名簿を渡る。
+;;
+;; ⇒ 族を 2 つに分けて**ここで 1 度だけ**宣言する。名簿は写す関数だけを呼ぶ。
+;;
+;;   LAUNCH-FLAG-KEYS  = 行の launch_overlay にも残る(降りた process の続き
+;;                       continue-headless-process も行だけを読んで起こし直すので、
+;;                       行に残さないとその腕だけ既定へ戻る)
+;;   TURN-CARRIED-KEYS = 手番ごとに charter が名乗り直す値。**行には残さない**
+;;                       (正本が他所に在る: 記憶の本文と置き場の正本は ACP の行
+;;                        〔法 ACP 575b1e〕で、sessionhost の sqlite へ写すと
+;;                        第 2 の正本が腐る)。起こす腕は launch / resume / rehydrate
+;;                        の 3 つとも毎回 charter から運ぶ。
+;;
+;; ⚠ **欄を 1 つ足す時に数え直すのはこの 2 つの集合だけ**(名簿を 5 つ数えない)。
+;;   落ちたら赤になる検 = tests/sessionhost_charter_reaches_the_seat_deftests.hy
+;;   (charter の欄を反射で数え、席へ届かない欄を 1 つでも見つけたら落ちる)。
+(setv TURN-CARRIED-KEYS #("memory_dir" "memory_files"))
+
+;; 席へ運ぶ欄の全体(旗 + 手番の荷)。wire の受理形と蘇生の名簿はこれを写す。
+(setv CHARTER-CARRIED-KEYS (+ LAUNCH-FLAG-KEYS TURN-CARRIED-KEYS))
+
 ;: 会話の圧縮の閾値を運ぶ欄の綴り(params・charter で同じ語)。argv の導出は
 ;: impls.claude_code.claude-autocompact-value の 1 点。wire(ACP の charter)側の
 ;: 綴りの定義点は acp/effects.py CHARTER_AUTO_COMPACT_WINDOW_KEY で、同じ語である
@@ -299,17 +327,31 @@
 (setv AUTOCOMPACT-PARAM-KEY "auto_compact_window")
 
 
-(defn carry-launch-flags [src dst]
-  "src(charter / params / 行の overlay)が持つ旗の欄を dst へ写して返す。
+(defn carry-keys [keys src dst]
+  "src(charter / params / 行の overlay)が持つ keys の欄を dst へ写して返す。
 
    無い欄は**作らない**(欄の有無が「会話が名乗ったか」の唯一の印なので、
    None を置くと『名乗った』と区別できなくなる)。dst は書き換えず、新しい
    dict を返す — 名簿を組む式の中でそのまま使えるように。"
   (setv out (dict dst))
-  (for [key LAUNCH-FLAG-KEYS]
+  (for [key keys]
     (when (in key src)
       (setv (get out key) (get src key))))
   out)
+
+
+(defn carry-launch-flags [src dst]
+  "行にも残る旗の欄だけを写す(launch_overlay と、行だけを読む続きの腕)。"
+  (carry-keys LAUNCH-FLAG-KEYS src dst))
+
+
+(defn carry-charter-fields [src dst]
+  "席へ運ぶ charter の欄(旗 + 手番の荷)を写す。
+
+   wire の受理形(host.build-launch-program-params / session.resume の
+   program-params)と蘇生の名簿(launch.resume-session の launch-params)は
+   これを呼ぶ — **欄の名を数え直さない**。"
+  (carry-keys CHARTER-CARRIED-KEYS src dst))
 
 
 (setv BINDING-OWNED-ENV-KEYS #{"CODEX_HOME" "CLAUDE_CONFIG_DIR"})
