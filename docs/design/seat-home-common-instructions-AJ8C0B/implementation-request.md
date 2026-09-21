@@ -132,6 +132,21 @@ pod の agentd の容器に入り、共通の条文と skills の在り処を実
    - ✅ **雛形が在る**: `model/check_body_contract.py`(3 値・塊読み・逐語 6 本)。
      据わっている本体で **green**、逐語を 1 つ動かした複製で **red**、本体でない file で
      **abstain** まで実測済み(`counterexamples/model_runs.log` §4・§5)。**写して使う**。
+   - ⚠ **ただし本体の探し方と棄権の rc は写さない**(2026-09-21T08:4xZ 追補・依頼者 c-3JYBNJMC2RZTM1S8V43939MP42 が
+     会社 Mac で見つけ、発注者が個人 Mac で再現): 雛形の既定の path `DEFAULT_BODY` は **pod の置場**
+     (`/usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe`)ちょうどで、Mac(native の installer・
+     `~/.local/share/claude/versions/<版>`)には無い。引数なしで撃つと `abstain` になり、雛形は
+     `sys.exit(0 if verdict in ("green","abstain") else 1)` なので **exit 0**。⇒ そのまま写すと、守るはずの Mac で
+     計器が**一度も発火せず、契約が動いても緑で通る**(本体を持たない宿での正直な棄権と見分けが付かない)。
+     - 直し方は雛形自身が挙げている先例の再利用: dotfiles `agent/tests/check_native_worktree_contract.py` の
+       `candidates()`(`shutil.which("claude")`・`~/.local/share/claude/versions` の新しい 3 本・`ClaudeCode.app`・
+       npm の置場、実 path で重複を畳む)と「候補のうち最初に目印の綴りを持つ物を本体とする」判定。
+       会社 Mac では `~/.local/bin/claude` の指す 2.1.278 が選ばれ、同居する古い版には引かれない(依頼者の実測)。
+     - rc は dotfiles `agent/tests/checker_outcome.py` の語彙(緑 0・赤 1・**棄権 2**)を import して使う。
+       棄権を 0 にしない。
+     - ⚠ 先例の候補に pod の置場 `…/claude-code/bin/claude.exe` は名指しで入っていない(npm の旧い `cli.js` だけ)。
+       pod では `which claude` がそこへ解決されることを**pod で撃って**確かめ、されなければ候補へ足す。
+     - 記録: `evidence/shape_pins_company_mac.log` §3。
    - ⚠ **追補(2026-09-21T07:01Z 着地・依頼者 c-3JYBNJMC2RZTM1S8V43939MP42 が入れた。出典 = 発注者
      c-AJ8C0BK9RF29HQ92ZQ986FXQVT の郵便 lt-C22T2AV9VGX520WYFCEB0Q8X8B の自認。07:15Z に発注者が
      4 つの版の実測で書き直した — 別の注記は足していない)**: 上の逐語 6 本は
@@ -179,7 +194,12 @@ pod の agentd の容器に入り、共通の条文と skills の在り処を実
          (実物の幅は 151〜152 byte で、窓 200 の余りは約 50 byte。版で間の処理が増えれば窓を広げる)
        - ⚠ 2.1.276 では走査の側の判定の関数名が **`k$`**(`if(r==="skills"&&k$(U.name))`)。`\w+` で組むと
          この版で**現に偽の赤**になる — 規則 1 の実例。
-     - 弁別(逐語を 1 つ動かした複製で **red**)は**会社 Mac の版で撃ち直して**から緑を名乗る。
+     - **会社 Mac でも実測済み**(依頼者 c-3JYBNJMC2RZTM1S8V43939MP42・2026-09-21T08:2xZ・`CA-20038667`):
+       同居する 2.1.276 / 2.1.277 / 2.1.278 の 3 版で、雛形の逐語は 3 版とも赤(欠け 6/6)、形の script は
+       57 項目すべて緑(2.1.277 は誰も測っていなかった版)。2.1.278 の `$` を含む関数名の数(1,118 / 51,622)が
+       個人 Mac の値と完全に一致 ⇒ 2 つの機体の 2.1.278 は同じ build で、機体をまたぐ限界は消えた
+       (`evidence/shape_pins_company_mac.log`)。
+     - 弁別(逐語を 1 つ動かした複製で **red**)は、計器を書いたら**据わる機体の版で撃ち直して**から緑を名乗る。
    - ⚠ **これがこの設計の唯一の witness**。これが無いと「実体 file でなければならない」は
      この repo の木をいくら読んでも反証できない条になる(法 `contract-of-an-external-tool-
      assumed-without-a-witness` の形)。
@@ -276,6 +296,30 @@ PR の本文に **Verification の表**(この節の項 ↔ 出荷した検の `
 | 13 | **【D10】宣言が無い機体へ条文が届かない / 劣化の日に宣言外の path を触らない** | doeff の deftest (h)(囮を置いた上で)と (i)(劣化の日) |
 | 14 | **【D10】`packages/doeff-agents/src/**` に literal `dotfiles` が 1 件も無い** | 新しい semgrep 規則(除外なし)・`make lint-semgrep` |
 | 15 | **【D11】運ぶ物の綴りの定義点が 1 つ**(名簿に 1 行足すだけで宣言 → 席まで通り、行き先を宣言しない足し方は赤) | doeff の deftest (k)(名簿を回る・列挙しない) |
+
+⚠ **Mac では受入 3 は運べた証拠にならない — 見分けるのは受入 4**(2026-09-21T08:4xZ 追補・発注者が
+個人 Mac の 2.1.278 で実測 — `evidence/skills_roots_probe.{py,log}`。依頼者 c-3JYBNJMC2RZTM1S8V43939MP42 が
+会社 Mac の生きた席で、家が空でも skills が 117 件効いているのを見つけたのが起点):
+
+- 本体は席の家(`CLAUDE_CONFIG_DIR`)の `skills` とは別に、**作業ディレクトリから上へ `$HOME` まで(含む)の
+  各 `.claude/skills` を project 層として読む**(本体の中の名は `getProjectDirsUpToHome`)。Mac の席は
+  `$HOME` を付け替えず、作業ディレクトリも `$HOME` の下なので、`$HOME/.claude/skills`
+  (両 Mac とも dotfiles の skills を指す)が家に何も無くても効く。
+  - 実測: `$HOME/.claude/skills` に目印を置き、家は空 — 作業ディレクトリが `$HOME` の下なら**載る**、
+    外なら**載らない**。
+  - ⚠ 2 つ目の根に見える `…(<関数>(),".claude","skills")` の関数は**管理ポリシーの置場**
+    (`getManagedFilePath`・ログの名は `managed=`)で、`$HOME` ではない。`$HOME` が効くのは project 層の側。
+- ⇒ Mac の受入 3(「skill が一覧に在る」)は、家に何も運べていない席でも緑になる。**Mac で運べた証拠は受入 4
+  (作業ディレクトリを `$HOME` の外に置いた席)で取る**。pod は `$HOME` の下に `.claude/skills` が無いので、
+  受入 3 のままで見分けになる。受入 3 を Mac で撃つなら、表の対応の欄に「Mac では受入 4 で代える」と書く
+  (黙った弱めにしない)。
+- **運びは「置き換え」ではなく「足し算」で、それが意図した意味**(戻せる決定・発注者が決めた):
+  この設計の目標は「共通の指示がどの席にも届く」(下限)で、「席は宣言した一式だけを見る」(上限)ではない。
+  上限にするには本体の project 層の読みを止めるしかなく、repo が持つ project の skills と CLAUDE.md まで消える。
+  戻す時は、席の起動に設定の読み元の絞り(`--setting-sources`)を足す別の便を出す。
+- **名前がぶつかったら運んだ側が勝つ**(実測・2.1.278): 家に目印 B、作業ディレクトリの project 層に同じ名前で
+  目印 P を置くと、context に載るのは B だけ(P は 0 件)。⇒ Mac の席で `$HOME/.claude/skills` と名簿が
+  同じ名前を持っても、席が使うのは運んだ版。実体が同じ file なら、本体は同じ file の重複として 1 件に畳む。
 
 ---
 

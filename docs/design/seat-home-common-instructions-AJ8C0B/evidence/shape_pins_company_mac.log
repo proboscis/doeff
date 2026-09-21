@@ -1,0 +1,24 @@
+### 出所(この file は写し): 依頼者 c-3JYBNJMC2RZTM1S8V43939MP42 が会社 Mac で撃った結果を、その郵便
+### lt-1NHKG52H9X6ZXNH07HCMGXTN4T(2026-09-21 17:33 JST)の本文から計画段 c-AJ8C0BK9RF29HQ92ZQ986FXQVT が写した。
+### 席が消えると元の出力は残らないので、郵便の本文を正本とする。1 行ずつの出力は郵便に無く、数だけが書かれている。
+### 撃った時刻: 2026-09-21T08:2xZ(郵便の記載)
+### 機体: 会社 Mac CA-20038667
+### 本体: ~/.local/share/claude/versions/ の 2.1.276 / 2.1.277 / 2.1.278(~/.local/bin/claude は 2.1.278 を指す)
+
+## 1. 雛形 model/check_body_contract.py(2.1.263 の逐語)— 3 版とも赤
+2.1.276 -> red  欠け=6/6
+2.1.277 -> red  欠け=6/6
+2.1.278 -> red  欠け=6/6
+
+## 2. 形の script(main 0add5020 の evidence/shape_pins_across_versions.py を変えずに撃った)— 3 版とも全緑
+### 形 6 + 分割 2 + 別の場所 1 + 結び付き 2 = 11 本、弁別 8 本 ⇒ 19 × 3 版 = 57 項目すべて緑
+### (雛形の逐語を形が受ける 6 本を足して 63)
+### 読み込みの側の幅: 2.1.277 / 2.1.278 = 151 byte、2.1.276 = 152 byte(窓 200)
+### 走査の側の判定の関数名: 2.1.276 = k$(if(r==="skills"&&k$(U.name)))、2.1.277 / 2.1.278 = VN
+### '$' を含む関数名(2.1.278): 1118 / 51622 — 個人 Mac(Proboscis-MBP)の 2.1.278 と完全一致
+###   ⇒ 2 つの機体の 2.1.278 は同じ build。個人 Mac の測定はそのまま会社 Mac に移る。
+
+## 3. 雛形を引数なしで撃った結果(既定の path は pod の置場)
+abstain  /usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe  読めない: [Errno 2] No such file or directory
+### 雛形の終わりは sys.exit(0 if verdict in ("green","abstain") else 1) ⇒ exit 0(黙って緑と同じ顔)
+### 計画段が個人 Mac でも同じ結果を再現(abstain・rc=0・2026-09-21T08:3xZ)。

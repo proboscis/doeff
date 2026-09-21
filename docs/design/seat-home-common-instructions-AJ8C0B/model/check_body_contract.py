@@ -15,6 +15,9 @@ import sys
 
 MACHINE_BOUND = True
 DEFAULT_BODY = "/usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
+# ⚠ 写さない(2026-09-21T08:4xZ 追補): pod の置場ちょうどで Mac には無い — 引数なしだと abstain になり、
+#   下の exit で 0 になる。先例 check_native_worktree_contract.py の candidates() と
+#   checker_outcome.py の rc(棄権 2)を使う(implementation-request.md の「写して使う」の直後)。
 
 # 同定 — 製品の公開の綴り(版が上がっても動きにくい)
 IDENTIFY = b"CLAUDE_CONFIG_DIR"
@@ -87,4 +90,5 @@ if __name__ == "__main__":
     result = inspect(target)
     print(f"{result['verdict']}\t{target}\t{result['why']}"
           + (f"\t欠け={result['missing']}" if result["missing"] else ""))
+    # ⚠ 写さない: 棄権を 0 にすると、本体を見つけられない機体で計器が黙って緑になる(上の DEFAULT_BODY の註)。
     sys.exit(0 if result["verdict"] in ("green", "abstain") else 1)
