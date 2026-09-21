@@ -5226,3 +5226,34 @@ rules:
       include:
         - /packages/doeff-agents/src/**
         - /tests/semgrep/fixtures/python/packages/doeff-agents/src/**
+
+  - id: doeff-agents-symlink-install-has-one-home
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      card acp:kanban-issue:ki-62aa1f4e9c9c decision D8: installing a symlink is
+      ONE verb — sessionhost/substrate.hy ensure-symlink-outcome — and that verb
+      stages a uniquely named link and lands it with a single rename(2). A second
+      site that calls os.symlink / Path.symlink_to hand-rolls the install without
+      that physics, and the home it writes into is SHARED: homes are minted per
+      credential, and several seats land in one home on the same beat (right after
+      a pool rollout the drained mail becomes turns in one burst). Measured on the
+      two-step shape that this rule bans: two seats racing into an empty home kill
+      one of them with FileExistsError (company Mac 200/200, pod 198/200 — the
+      effect raises, so that seat never starts), and a reader during an
+      unlink→symlink relink sees a rootless moment in 52-53% of its reads — where
+      Claude's skills discovery lands, that seat's user-layer skills are 0. Emit
+      the FsEnsureSymlink effect (or call ensure-symlink-outcome) instead; both
+      resolve to the one verb, whose atomicity the two real-process tests guard
+      (tests/sessionhost_substrate_deftests.hy A / B).
+    patterns:
+      - pattern-either:
+          - pattern-regex: 'os\.symlink\b'
+          - pattern-regex: '\.symlink_to\b'
+    paths:
+      include:
+        - /packages/doeff-agents/src/**
+        - /tests/semgrep/fixtures/python/packages/doeff-agents/src/**
+      exclude:
+        - "**/sessionhost/substrate.hy"
