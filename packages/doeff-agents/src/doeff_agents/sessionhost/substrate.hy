@@ -13,6 +13,7 @@
 
 (import dataclasses [replace])
 (import datetime [datetime timezone])
+(import errno)
 (import hashlib)
 (import json)
 (import os)
@@ -48,9 +49,14 @@
   FsWriteTextAtomic
   FsMakeDirs
   FsLinkArtifact
-  FS-ENSURE-SYMLINK-LINKED
-  FS-ENSURE-SYMLINK-OCCUPIED
-  FS-ENSURE-SYMLINK-UNCHANGED
+  FsSymlinkOutcome
+  FS-SYMLINK-LINKED
+  FS-SYMLINK-OCCUPIED
+  FS-SYMLINK-REFUSED
+  FS-SYMLINK-SAME-ENTITY
+  FS-SYMLINK-SOURCE-MISSING
+  FS-SYMLINK-TARGET-CONFLICT
+  FS-SYMLINK-UNCHANGED
   FsListDir
   FsRemoveFile
   FsDirExists
@@ -299,16 +305,58 @@
   (setv digest (.hexdigest (hashlib.sha256 (.encode f"{auth-resolved}\x00{profile-resolved}" "utf-8"))))
   f"{(os.path.basename profile-resolved)}--{(cut digest 0 8)}")
 
+(deff _symlink-refused [syscall error]
+  {:pre [(: syscall str) (: error OSError)]
+   :post [(: % FsSymlinkOutcome)]}
+  "器(file system)が断った OSError を refused-by-container の結末へ写す。
+   理由は errno と detail が運ぶ — ENOSPC / EACCES / EROFS は運用者の取る手が
+   まったく違うので、理由の無い『断られた』は無益な文言にしかならない。"
+  (setv code (. error errno))
+  (setv name (.get errno.errorcode code "ERRNO?"))
+  (FsSymlinkOutcome
+    :state FS-SYMLINK-REFUSED
+    :errno code
+    :detail f"{syscall}: {name} {(. error strerror)}"))
+
+(deff _link-artifact-seated [source-path target-path]
+  {:pre [(: source-path str) (: target-path str)]
+   :post [(: % FsSymlinkOutcome)]}
+  "敷設先に何かが据わっている拍の名乗り(FsLinkArtifact 専用)。同一実体なら
+   same-entity、別実体なら target-conflict。
+   ⚠ samefile の OSError(broken link 等)は『同一実体と確認できない』の意味なので
+   conflict 側へ倒す(share.py の except OSError: pass と同型 — 据わっている物を
+   触らない約束は、観測できない時こそ守る側に倒すのが安全)。ただし理由は detail に
+   載せる: **語彙は安全側・報告は正直**。"
+  (try
+    (if (os.path.samefile target-path source-path)
+        (FsSymlinkOutcome :state FS-SYMLINK-SAME-ENTITY)
+        (FsSymlinkOutcome :state FS-SYMLINK-TARGET-CONFLICT))
+    (except [error OSError]
+      (setv code (. error errno))
+      (setv name (.get errno.errorcode code "ERRNO?"))
+      (FsSymlinkOutcome
+        :state FS-SYMLINK-TARGET-CONFLICT
+        :errno code
+        :detail f"samefile: {name} {(. error strerror)}"))))
+
+;; rename(2) が「宛先に実体が据わっている」と言う errno。POSIX が rename に定めた
+;; 綴りなので Darwin 固有ではない(実測 = 設計 2.3: 空の dir も中身入りの dir も
+;; EISDIR)。これ以外の OSError は据え付けの断りであって、実体の居座りではない —
+;; 無型に受けて occupied と名乗ると、運用者が居もしない実体を手で探しに行く。
+(setv _RENAME-OCCUPIED-ERRNOS #{errno.EISDIR errno.ENOTEMPTY errno.EEXIST})
+
+
 (deff ensure-symlink-outcome [link target]
   {:pre [(: link str) (: target str)]
-   :post [(: % str)]}
+   :post [(: % FsSymlinkOutcome)]}
   "symlink を正しい先へ据える **1 つの動詞**(card acp:kanban-issue:ki-62aa1f4e9c9c D8・盲検 A)。
-   3 値を返す(raise しない — 方針判断は呼び手所有):
+   4 値を返す(raise しない — 方針判断は呼び手所有):
      同じ先を指す symlink   \"unchanged\"(触らない — 本体は skills の dir を見張っているので、
                             用の無い張り替えは走っている席にまで効く)
      別の先を指す symlink   **張り替えて** \"linked\"
      symlink でない実体     触らず \"occupied-by-real-entity\"(erosion guard)
      何も居ない             親 dir を作って張り \"linked\"
+     器が据え付けを断った   \"refused-by-container\"(errno / detail つき)
    ⚠ FsLinkArtifact(据わっている物を絶対に置き換えない)との違いは**張り替えるか**の 1 点で、
    それが無いと正本の path が動いた日に家の symlink が古い先を指したまま残る。
    ⚠ **張りも張り替えも rename 1 手**(D9 の書きと同じ物理・計画段の実測
@@ -322,8 +370,12 @@
    ⇒ 書き手ごとに一意な名の仮の symlink を張り、rename(2) で被せる。rename は宛先が symlink なら
    symlink そのものを原子的に置き換えるので、読み手は常に古い先か新しい先のどちらかを見る。
    lock は足さない(家は process をまたいで共有されるので、process の中の lock は届かない)。
+   ⚠ **器の断りは語彙の中に在る**(2026-09-22 — 設計 symlink-verbs-fail-vocabulary-ZCN5BD):
+   makedirs / symlink / rename は権限・容量・読み取り専用・親の位置の実体で必ず断る。
+   語彙に無かった頃はその断りが素の OSError として effect の外まで抜け、raise しない約束が
+   破れて席が起きなかった(実測 = 設計 2.2 の 3 形すべて)。
    ⚠ 残る窓は 1 つ: 下の見分けと rename の間に **実体の file** が現れると rename はそれを黙って
-   置き換える(実体の dir なら rename が OSError になるので occupied に落ちる)。erosion guard が
+   置き換える(実体の dir なら rename が EISDIR になるので occupied に落ちる)。erosion guard が
    守る形は長く据わっている実体なので見分けが先に当たるが、「symlink か不在の時だけ被せる」を
    原子的に言える syscall は移植できる形では無い。"
   ;; ⚠ 在否と種別は **1 回の lstat** で見る。`islink` と `lexists` の 2 回に割ると、その隙に
@@ -337,30 +389,47 @@
         None)))
   (when (is-not seated None)
     (when (not (stat.S-ISLNK seated.st-mode))
-      (return FS-ENSURE-SYMLINK-OCCUPIED))
+      (return (FsSymlinkOutcome :state FS-SYMLINK-OCCUPIED)))
     (try
       (when (= (os.readlink link) target)
-        (return FS-ENSURE-SYMLINK-UNCHANGED))
+        (return (FsSymlinkOutcome :state FS-SYMLINK-UNCHANGED)))
       (except [OSError]
         ;; 読む間に別の席が張り替えた(または消した)— 下の据え付けで決める(raise しない)
         None)))
   (setv parent (os.path.dirname link))
   (when parent
-    (os.makedirs parent :exist-ok True))
+    (try
+      (os.makedirs parent :exist-ok True)
+      (except [error OSError]
+        ;; 親の位置に実体 file が居る / 家が書けない / 読み取り専用 — 据え付けの断り
+        (return (_symlink-refused "makedirs" error)))))
   ;; 仮の名は**書き手ごとに一意**(D9 と同じ反例 — 固定名だと 2 席が互いの仮を踏む)。
   ;; suffix は残す(残骸の見分けの綴り)。
   (setv staged (os.path.join (or parent ".")
                              f".{(os.path.basename link)}.{(os.getpid)}.{(.hex (os.urandom 4))}.agentd-tmp"))
-  (os.symlink target staged)
+  (try
+    (os.symlink target staged)
+    (except [error OSError]
+      ;; 仮すら張れない(権限 / 容量 / 読み取り専用)— 仮は生まれていないので掃除も要らない
+      (return (_symlink-refused "symlink" error))))
   (try
     (os.replace staged link)
-    (except [OSError]
-      ;; 実体の dir が居る(rename は dir を置き換えられない)— 自分の仮だけ掃除して名乗る
+    (except [error OSError]
+      ;; 自分の仮だけ掃除してから名乗る(他の書き手の仮には触らない)。
       (try
         (os.unlink staged)
         (except [OSError] None))
-      (return FS-ENSURE-SYMLINK-OCCUPIED)))
-  FS-ENSURE-SYMLINK-LINKED)
+      (setv code (. error errno))
+      (setv name (.get errno.errorcode code "ERRNO?"))
+      (return
+        (if (in code _RENAME-OCCUPIED-ERRNOS)
+            ;; 実体の dir が居る(rename は dir を置き換えられない)
+            (FsSymlinkOutcome :state FS-SYMLINK-OCCUPIED
+                              :errno code
+                              :detail f"rename: {name} {(. error strerror)}")
+            ;; それ以外は据え付けの断り — 居もしない実体を名乗らない
+            (_symlink-refused "rename" error)))))
+  (FsSymlinkOutcome :state FS-SYMLINK-LINKED))
 
 (deff _ensure-view-symlink [link target]
   {:pre [(: link str) (: target str)]
@@ -368,14 +437,23 @@
   "apps _ensure-symlink の意味移植: symlink は張り替え、実ファイル/実 dir が
    居たら typed fail(erosion guard — 黙って置換しない。silent 置換は registry
    と token の fork を隠す)。
-   ⚠ 張り替えの物理は ensure-symlink-outcome の 1 点へ畳んである(D8)— ここはその 3 値のうち
-   `occupied-by-real-entity` だけを home view の契約(typed fail)へ戻す薄い層で、
-   FsComposeHomeView の振る舞いは 1 byte も変わらない。"
-  (when (= (ensure-symlink-outcome link target) FS-ENSURE-SYMLINK-OCCUPIED)
+   ⚠ 張り替えの物理は ensure-symlink-outcome の 1 点へ畳んである(D8)— ここはその 4 値のうち
+   `occupied-by-real-entity` と `refused-by-container` を home view の契約(typed fail)へ
+   戻す薄い層で、FsComposeHomeView の振る舞いは 1 byte も変わらない。
+   ⚠ **2 つの断りに同じ文言を当てない**(2026-09-22): 実体が居座っているなら「手で片付けろ」が
+   正しい案内だが、器が権限 / 容量 / 読み取り専用で断ったのなら片付ける実体は存在しない —
+   同じ文言にすると運用者が居もしない実ファイルを探しに行く。理由は outcome の detail が運ぶ。"
+  (setv outcome (ensure-symlink-outcome link target))
+  (when (= (. outcome state) FS-SYMLINK-OCCUPIED)
     (raise (RuntimeError
              (+ link " is a real file where a symlink into the profile "
                 "bundle is required (erosion guard) — reconcile it manually; "
                 "refusing to overwrite"))))
+  (when (= (. outcome state) FS-SYMLINK-REFUSED)
+    (raise (RuntimeError
+             (+ link " could not be installed as a symlink into the profile "
+                f"bundle — the container refused the install ({(. outcome detail)}); "
+                "nothing is seated at that path to reconcile"))))
   None)
 
 (deff compose-home-view [auth-file profile-dir view-root]
@@ -539,23 +617,48 @@
     ;; agentcli share.py link_session_artifact の意味移植(transplant の
     ;; symlink 敷設)。source 不在は触らず値で返す(方針判断は呼び手所有)。
     ;; target の別実体は share.py 同型の no-op — silent 置換はしない。
-    ;; samefile の OSError(broken link 等)は「同一実体と確認できない」の
-    ;; 意味なので conflict 側に倒す(share.py の except OSError: pass と同型)。
-    (setv outcome None)
-    (if (not (or (os.path.exists source-path) (os.path.islink source-path)))
-        (setv outcome "source-missing")
-        (if (or (os.path.exists target-path) (os.path.islink target-path))
-            (do
-              (setv same False)
+    ;;
+    ;; ⚠ **見てから張る**を判断の座にしない(2026-09-22・設計 3.4)。同じ敷設先へ
+    ;; 2 process が同拍で降りると、見た後・張る前に相手が張って FileExistsError が
+    ;; effect の外まで抜ける(直す前の実測: 200 ラウンド中 184〜196 = 92〜98 %)。
+    ;; 家は資格ごとに鋳られ、同じ資格の複数の会話が 1 つの家へ同じ拍で降りるので、
+    ;; これは理論上の窓ではない。lock は足さない(家は process をまたぐので process の
+    ;; 中の lock は届かない)— 閉じ方は物理そのもの: os.symlink を撃ち、
+    ;; FileExistsError を「見た後に何かが現れた」の合図として samefile を読み直す。
+    ;; 語彙は 1 つも増えない(same-entity / target-conflict のどちらかに落ちる)。
+    ;;
+    ;; ⚠ 器の断り(権限 / 容量 / 読み取り専用 / 親の位置の実体)は
+    ;; refused-by-container。理由は errno / detail が運ぶ。
+    (resume
+      (cond
+        (not (or (os.path.exists source-path) (os.path.islink source-path)))
+          (FsSymlinkOutcome :state FS-SYMLINK-SOURCE-MISSING)
+        (or (os.path.exists target-path) (os.path.islink target-path))
+          (_link-artifact-seated source-path target-path)
+        True
+          (do
+            (setv parent (os.path.dirname target-path))
+            (setv refused None)
+            ;; 親を作れない(親の位置に実体 file / 家が r-x / 読み取り専用)も据え付けの断り。
+            ;; parent の空文字は makedirs("") = FileNotFoundError になるので先に外す
+            ;; (ensure-symlink-outcome 側には在ったガード — 非対称を畳む)。
+            (when parent
               (try
-                (setv same (os.path.samefile target-path source-path))
-                (except [OSError]))
-              (setv outcome (if same "same-entity" "target-conflict")))
-            (do
-              (os.makedirs (os.path.dirname target-path) :exist-ok True)
-              (os.symlink source-path target-path)
-              (setv outcome "linked"))))
-    (resume outcome))
+                (os.makedirs parent :exist-ok True)
+                (except [error OSError]
+                  (setv refused (_symlink-refused "makedirs" error)))))
+            (if (is-not refused None)
+                refused
+                (try
+                  (do
+                    (os.symlink source-path target-path)
+                    (FsSymlinkOutcome :state FS-SYMLINK-LINKED))
+                  (except [FileExistsError]
+                    ;; 見た後に何かが現れた(相手の席が同拍で張った / 実体が置かれた)。
+                    ;; 据わっている物を読み直して名乗る — 置き換えは絶対にしない。
+                    (_link-artifact-seated source-path target-path))
+                  (except [error OSError]
+                    (_symlink-refused "symlink" error))))))))
 
   (FsRemoveFile [path]
     ;; card acp:kanban-issue:ki-6b5c4b270ca0: 名指した 1 file を落とす。**dir は触らない**

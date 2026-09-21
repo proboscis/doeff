@@ -54,6 +54,8 @@
   env-get
   fs-dir-exists
   fs-link-artifact
+  FS-SYMLINK-LINKED
+  FS-SYMLINK-SAME-ENTITY
   fs-make-dirs
   fs-read-text
   fs-write-text-atomic
@@ -362,7 +364,11 @@
                     f"expects directory {target} on this machine — absent"))))
       (<- outcome (fs-link-artifact target
                                     (os.path.join workspaces-root sibling-name)))
-      (when (not-in outcome #{"linked" "same-entity"})
+      ;; 非破壊方針はそのまま({linked, same-entity} 以外は loud)。文言には
+      ;; outcome の str() が入るので、器が断った拍は理由(errno と syscall)が載る
+      ;; (2026-09-22 — workspaces-root は同じ親の下の worktree が共有するので、
+      ;; ここは同拍の敷設が現実に届く 2 つ目の座)。
+      (when (not-in (. outcome state) #{FS-SYMLINK-LINKED FS-SYMLINK-SAME-ENTITY})
         (raise (RuntimeError
                  (+ f"workspace seed: sibling link {sibling-name} -> {target} "
                     f"failed ({outcome}) — 非破壊方針につき既存物は触らない"))))))

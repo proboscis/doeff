@@ -550,6 +550,12 @@
 ;; 解決(projects/<mangle(cwd)>)ごと別の家を見て『No conversation found』で
 ;; 即死する — 2026-08-16〜17 の resume 全滅 91/91 件の一次原因。
 (setv RESUME-ERR-WORKDIR-NOT-FOUND "workdir_not_found")
+;; 2026-09-22(symlink を据える 2 動詞の失敗の語彙): 器(file system)が据え付けを
+;; 断った拍の typed reject。既存 5 語はどれも「見つからない」の意味で、断りには
+;; 合わない — transcript は在るのに敷設だけが権限 / 容量 / 読み取り専用で通らない
+;; 形を transcript_not_discoverable と名乗ると、運用者が居もしない transcript を
+;; 探しに行く。message には FsSymlinkOutcome の detail(errno と syscall)を載せる。
+(setv RESUME-ERR-TRANSPLANT-REFUSED "transplant_refused")
 
 
 ;; ===========================================================================
@@ -722,35 +728,115 @@
   #^ str profile-dir
   #^ str view-root)
 
+
+;; ---------------------------------------------------------------------------
+;; symlink を据える 2 動詞の結末(2026-09-22・設計 docs/design/symlink-verbs-fail-vocabulary-ZCN5BD)
+;; ---------------------------------------------------------------------------
+;;
+;; 綴りの**唯一の定義点**。これまで FsLinkArtifact の 4 語は substrate の中に
+;; 文字列リテラルで書かれ、呼び手(impls/claude_code.hy・impls/codex.hy・launch.hy)も
+;; 同じ綴りをリテラルで持っていた = 閉じた語彙の第 2 定義点。
+;;
+;; 足した語は refused-by-container の 1 つだけ。既存 6 語の綴りと意味は変えない。
+
+(setv FS-SYMLINK-LINKED "linked")
+(setv FS-SYMLINK-UNCHANGED "unchanged")
+(setv FS-SYMLINK-OCCUPIED "occupied-by-real-entity")
+(setv FS-SYMLINK-SOURCE-MISSING "source-missing")
+(setv FS-SYMLINK-SAME-ENTITY "same-entity")
+(setv FS-SYMLINK-TARGET-CONFLICT "target-conflict")
+;; 新: 器(file system)が据え付けそのものを断った。権限 / 容量 / 読み取り専用 /
+;; 親の位置の実体 — どれも「必ず起きる」ので、語彙に無いと素の OSError が effect の
+;; 外へ抜けて席が起きない(実測 = 設計 2.2)。理由は errno / detail が運ぶ。
+(setv FS-SYMLINK-REFUSED "refused-by-container")
+
+;; 動詞ごとに返しうる状態の集合(検査が集合の外を許さない)。
+(setv FS-ENSURE-SYMLINK-STATES
+      #{FS-SYMLINK-LINKED FS-SYMLINK-UNCHANGED FS-SYMLINK-OCCUPIED FS-SYMLINK-REFUSED})
+(setv FS-LINK-ARTIFACT-STATES
+      #{FS-SYMLINK-SOURCE-MISSING FS-SYMLINK-LINKED FS-SYMLINK-SAME-ENTITY
+        FS-SYMLINK-TARGET-CONFLICT FS-SYMLINK-REFUSED})
+
+
+(defclass [(dataclass :frozen True :kw-only True :eq False)] FsSymlinkOutcome []
+  "symlink を据える 2 動詞(FsEnsureSymlink / FsLinkArtifact)の結末。
+
+   state  上の閉語彙の 1 語(動詞ごとの集合は FS-*-STATES)
+   errno  器が断った拍と、観測できずに安全側へ倒した拍だけ非 None
+   detail 人が読む 1 行(どの syscall が何と言ったか)
+
+   **なぜ 5 つ目の文字列では足りないか。** 呼び手が本当に要るのは理由である —
+   ENOSPC と EACCES と EROFS は運用者の取る手がまったく違う。理由の無い
+   「器が断った」は、無益な文言を別の無益な文言へ置き換えるだけになる。
+
+   **なぜ typed exception にしないか。** それが今まさに起きている壊れ方そのもの
+   (effect の外へ例外が抜けて席が起きない)で、受け損ねた 1 か所が同じ事故を再生産する。
+   D8 の設計の前提「この動詞は raise しない」も覆る。
+
+   ⚠ wire には載せない。`{\"ok\" True \"action\" …}` の action には (. outcome state) を
+   入れる(JSON 化できない値を辞書へ入れる形は残さない)。"
+  #^ str state
+  (setv #^ (| int None) errno None)
+  (setv #^ (| str None) detail None)
+
+  (defn __str__ [self]
+    ;; ログの f"outcome={outcome}" はそのまま読め、理由が在る時だけ理由が載る
+    ;; (既存のログに出る語を変えない — 旧側の値を運ぶ)。
+    (if (is self.detail None)
+        self.state
+        f"{self.state} ({self.detail})"))
+
+  (defn __eq__ [self other]
+    ;; レコードと文字列の比較は常に誤り — 移行で (= outcome "linked") が黙って
+    ;; False になるのを防ぐ(型逃げの逆: 声を出させる)。
+    (when (isinstance other str)
+      (raise (TypeError
+               (+ "FsSymlinkOutcome を str と比べている — 状態は (. outcome state) で "
+                  f"読むこと(比べた相手: {other !r})"))))
+    (if (isinstance other FsSymlinkOutcome)
+        (and (= self.state other.state)
+             (= self.errno other.errno)
+             (= self.detail other.detail))
+        NotImplemented))
+
+  (defn __hash__ [self]
+    (hash #(self.state self.errno self.detail))))
+
+
 (defclass [(dataclass :frozen True :kw-only True)] FsLinkArtifact [EffectBase]
   "会話 artifact の cross-home symlink 敷設(ADR-DOE-AGENTS-006 改訂 R7 の
    transplant プリミティブ — dotfiles agentcli share.py link_session_artifact
    の意味移植)。物理: source 不在(実体でも symlink でもない)= 触らず
    \"source-missing\" / target 実在: 同一実体 = no-op \"same-entity\"、
    別実体 = 触らず \"target-conflict\"(silent 置換はしない — share.py 同型の
-   no-op)/ それ以外 = 親 dir を mkdir して symlink、\"linked\"。冪等。
+   no-op)/ それ以外 = 親 dir を mkdir して symlink、\"linked\"。器が据え付けを
+   断ったら \"refused-by-container\"(errno / detail つき)。冪等。
+   ⚠ **見てから張る**を判断の座にしない: 同じ敷設先へ 2 process が同拍で降りると、
+   見た後・張る前に相手が張って FileExistsError が effect の外まで抜ける(直す前の
+   実測: 200 ラウンド中 184〜196 = 92〜98 %)。symlink(2) を撃ち、FileExistsError を
+   「見た後に何かが現れた」の合図として samefile を読み直す — 語彙を 1 つも足さずに
+   閉じる(lock は足さない。家は process をまたぐので process 内の lock は届かない)。
    方針判断(必須 artifact の不在を typed reject にする等)は呼び手所有 —
-   substrate は観測結果の 4 値を返すだけ。戻り値: str(上記 4 値)。"
+   substrate は観測結果の 5 値を返すだけ。戻り値: FsSymlinkOutcome(state は
+   FS-LINK-ARTIFACT-STATES の 5 語)。"
   #^ str source-path
   #^ str target-path)
 
-(setv FS-ENSURE-SYMLINK-UNCHANGED "unchanged")
-(setv FS-ENSURE-SYMLINK-LINKED "linked")
-(setv FS-ENSURE-SYMLINK-OCCUPIED "occupied-by-real-entity")
-
 (defclass [(dataclass :frozen True :kw-only True)] FsEnsureSymlink [EffectBase]
   "symlink を**正しい先へ据える**(card acp:kanban-issue:ki-62aa1f4e9c9c 決定 D8・盲検 A の反例)。
-   物理(3 値・冪等・level-triggered):
+   物理(4 値・冪等・level-triggered):
      既に同じ先を指す symlink  = 触らない \"unchanged\"(走っている席の見張りを起こさない)
      別の先を指す symlink      = **張り替える** → \"linked\"
      symlink でない実体が居る  = 触らない \"occupied-by-real-entity\"(erosion guard —
                                  実 file / 実 dir を黙って捨てない)
      何も居ない                = 親 dir を mkdir して張る → \"linked\"
+     器が据え付けを断った      = \"refused-by-container\"(errno / detail つき —
+                                 権限 / 容量 / 読み取り専用 / 親の位置の実体)
    ⚠ FsLinkArtifact との違いは**張り替えるか**の 1 点。FsLinkArtifact は据わっている物を
    絶対に置き換えない(\"target-conflict\" を返して終わる)ので、正本の path が変わった日に
    家の symlink が**古い先を指したまま**になる(実射 = 設計の counterexamples/repro_A_real_substrate.py)。
-   呼び手は返ってきた 3 値を**そのまま**名乗る(D1b: やろうとしたことではなく起きたことを書く)。
-   戻り値: str(上の 3 値)。"
+   呼び手は返ってきた 4 値を**そのまま**名乗る(D1b: やろうとしたことではなく起きたことを書く)。
+   戻り値: FsSymlinkOutcome(state は FS-ENSURE-SYMLINK-STATES の 4 語)。"
   #^ str link
   #^ str target)
 
@@ -1124,14 +1210,14 @@
   {:pre [(: source-path str) (> (len source-path) 0)
          (: target-path str) (> (len target-path) 0)]
    :post [(: % FsLinkArtifact)]}
-  "FsLinkArtifact を構築する(transplant の symlink 敷設プリミティブ)。"
+  "FsLinkArtifact を構築する(transplant の symlink 敷設プリミティブ — FsSymlinkOutcome の 5 値)。"
   (FsLinkArtifact :source-path source-path :target-path target-path))
 
 (deff fs-ensure-symlink [link target]
   {:pre [(: link str) (> (len link) 0)
          (: target str) (> (len target) 0)]
    :post [(: % FsEnsureSymlink)]}
-  "FsEnsureSymlink を構築する(D8: 張り替える symlink の据え付け — 3 値)。"
+  "FsEnsureSymlink を構築する(D8: 張り替える symlink の据え付け — FsSymlinkOutcome の 4 値)。"
   (FsEnsureSymlink :link link :target target))
 
 (deff fs-dir-exists [path]
