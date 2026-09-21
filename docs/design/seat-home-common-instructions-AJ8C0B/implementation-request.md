@@ -297,29 +297,44 @@ PR の本文に **Verification の表**(この節の項 ↔ 出荷した検の `
 | 14 | **【D10】`packages/doeff-agents/src/**` に literal `dotfiles` が 1 件も無い** | 新しい semgrep 規則(除外なし)・`make lint-semgrep` |
 | 15 | **【D11】運ぶ物の綴りの定義点が 1 つ**(名簿に 1 行足すだけで宣言 → 席まで通り、行き先を宣言しない足し方は赤) | doeff の deftest (k)(名簿を回る・列挙しない) |
 
-⚠ **Mac では受入 3 は運べた証拠にならない — 見分けるのは受入 4**(2026-09-21T08:4xZ 追補・発注者が
-個人 Mac の 2.1.278 で実測 — `evidence/skills_roots_probe.{py,log}`。依頼者 c-3JYBNJMC2RZTM1S8V43939MP42 が
-会社 Mac の生きた席で、家が空でも skills が 117 件効いているのを見つけたのが起点):
+⚠ **受入 3 は Mac でも pod でも運べた証拠になる — 今日の席は dotfiles の skills を 1 件も読んでいない**
+(2026-09-21T09:1xZ 訂正・発注者が個人 Mac の 2.1.278 で実測 — `evidence/skills_roots_probe.{py,log}`。
+この節の 08:4xZ の版は「Mac では受入 3 は証拠にならない・受入 4 で代える」と書いていた。その起点は依頼者
+c-3JYBNJMC2RZTM1S8V43939MP42 の「会社 Mac の生きた席で、家が空でも skills が 117 件効いている」という報告だった。
+依頼者はこれを撤回した(郵便 lt-7HQZS8PQMQ9YK2KEMR3PPKC0A4。生きた席の一覧に在るのは、本体に同梱の skill と
+plugin の skill だけ)。発注者の席(個人 Mac)の一覧も同梱の 13 件だけで、同じ結果になった。08:4xZ の版の
+結論は取り消し、この版で置き換える。受入の表は変えない):
 
-- 本体は席の家(`CLAUDE_CONFIG_DIR`)の `skills` とは別に、**作業ディレクトリから上へ `$HOME` まで(含む)の
-  各 `.claude/skills` を project 層として読む**(本体の中の名は `getProjectDirsUpToHome`)。Mac の席は
-  `$HOME` を付け替えず、作業ディレクトリも `$HOME` の下なので、`$HOME/.claude/skills`
-  (両 Mac とも dotfiles の skills を指す)が家に何も無くても効く。
-  - 実測: `$HOME/.claude/skills` に目印を置き、家は空 — 作業ディレクトリが `$HOME` の下なら**載る**、
-    外なら**載らない**。
+- 本体は、家(`CLAUDE_CONFIG_DIR`)の `skills` を user 層として読む。ほかに、**作業ディレクトリから上へ
+  たどった各 `.claude/skills` を project 層として読む**(本体の中の名は `getProjectDirsUpToHome`)。
+  このたどりには止まる点が 2 つある。**git の root では、root 自身まで読んで止まる**。**ホームディレクトリでは、
+  ホームに入る手前で止まる**。
+  ⇒ `$HOME/.claude/skills` が読まれるのは、家を付け替えていない時(`CLAUDE_CONFIG_DIR` を設定せず、既定の
+  `~/.claude` が家になる、人が手で開く会話)の user 層としてだけになる。project 層としては読まれない。
+  agentd の席は家を付け替えるので、**運ばなければ dotfiles の skills は 1 件も載らない**。
+  - 実測 1(実席と同じ起動引数・作業ディレクトリ = `~/repos/doeff`): 家が空なら、dotfiles の skill は 0 件。
+    家の `skills` を `~/dotfiles/agent/skills` への dir symlink にした Phase 3 の形なら、一覧に載る。
+    どちらも、API キーの dummy と OAuth の札の dummy で同じ結果。
+  - 実測 2(止まり方):
+    - 読む: git でない作業ディレクトリの祖先。ホームより下の祖先。
+    - 読まない: git の root より上。本物のホームの `.claude/skills`。
+  - ⚠ 08:4xZ の測定は見かけだった。その測定の「作業ディレクトリが `$HOME` の下なら載る」は、env の `HOME` を
+    偽の dir に付け替えた測り方から出ていた。本体は付け替えた `HOME` をホームとして扱わないので、偽の dir は
+    ただの祖先として読まれていた(新しい測定の 5 件目で再現)。
   - ⚠ 2 つ目の根に見える `…(<関数>(),".claude","skills")` の関数は**管理ポリシーの置場**
-    (`getManagedFilePath`・ログの名は `managed=`)で、`$HOME` ではない。`$HOME` が効くのは project 層の側。
-- ⇒ Mac の受入 3(「skill が一覧に在る」)は、家に何も運べていない席でも緑になる。**Mac で運べた証拠は受入 4
-  (作業ディレクトリを `$HOME` の外に置いた席)で取る**。pod は `$HOME` の下に `.claude/skills` が無いので、
-  受入 3 のままで見分けになる。受入 3 を Mac で撃つなら、表の対応の欄に「Mac では受入 4 で代える」と書く
-  (黙った弱めにしない)。
-- **運びは「置き換え」ではなく「足し算」で、それが意図した意味**(戻せる決定・発注者が決めた):
+    (`getManagedFilePath`・ログの名は `managed=`)で、`$HOME` ではない。
+- ⇒ **受入 3 は Mac でも pod でも、そのまま見分けになる**。受入 4 で代えない。
+  確かめる時は **skill の名前で**見る。100 件を超えると一覧の文字数の予算で説明文が落ち、名前だけの行になる。
+  手で開く会話が `~/.claude/skills` を読む時も同じ形なので、運び方の欠陥ではない。
+- **運んだ skills は、repo が持つ project 層の skills と並んで載る**。これが意図した意味で、戻せる決定として
+  発注者が決めた(前提を訂正したうえで維持):
   この設計の目標は「共通の指示がどの席にも届く」(下限)で、「席は宣言した一式だけを見る」(上限)ではない。
   上限にするには本体の project 層の読みを止めるしかなく、repo が持つ project の skills と CLAUDE.md まで消える。
-  戻す時は、席の起動に設定の読み元の絞り(`--setting-sources`)を足す別の便を出す。
-- **名前がぶつかったら運んだ側が勝つ**(実測・2.1.278): 家に目印 B、作業ディレクトリの project 層に同じ名前で
-  目印 P を置くと、context に載るのは B だけ(P は 0 件)。⇒ Mac の席で `$HOME/.claude/skills` と名簿が
-  同じ名前を持っても、席が使うのは運んだ版。実体が同じ file なら、本体は同じ file の重複として 1 件に畳む。
+  戻す時は、席の起動に設定の読み元の絞り(`--setting-sources`)を足す別の変更を出す。
+- **名前がぶつかったら運んだ側が勝つ**(実測・2.1.278・実席の起動引数): 家に目印 B を置き、git の root の
+  project 層に同じ名前で目印 P を置く。context に載るのは B だけ(P は 0 件)。対照として、家が空なら P は載る。
+  ⇒ repo の `.claude/skills` と名簿が同じ名前を持っていても、席が使うのは運んだ版。実体が同じ file なら、
+  本体は同じ file の重複として 1 件に畳む。
 
 ---
 

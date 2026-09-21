@@ -1,10 +1,28 @@
-### 実行: 2026-09-21T08:46:29Z・機体 Proboscis-MBP.local・本体 2.1.278(sha256 bd245662fb8a0e32…)・計画段 c-AJ8C0BK9RF29HQ92ZQ986FXQVT
-### 計り方: 捕捉 server へ向けた claude -p の request body に目印の skill の説明文が載った数(requests=2 は本体の 2 回の送信 — 1 回につき 1 件)
---- home-dot-skills__cwd-under-home: rc=1 requests=2 homedot(A)=2 cfg(B)=0 project(P)=0
-      HOME=<作業 dir>/h1  CLAUDE_CONFIG_DIR=<作業 dir>/cfg-empty  cwd=<作業 dir>/h1/work/repo
---- home-dot-skills__cwd-outside-home: rc=1 requests=2 homedot(A)=0 cfg(B)=0 project(P)=0
-      HOME=<作業 dir>/h1  CLAUDE_CONFIG_DIR=<作業 dir>/cfg-empty  cwd=<作業 dir>/outside/work
---- config-dir-skills__control: rc=1 requests=2 homedot(A)=0 cfg(B)=2 project(P)=0
-      HOME=<作業 dir>/h1  CLAUDE_CONFIG_DIR=<作業 dir>/cfg-b  cwd=<作業 dir>/h1/work/repo
---- collision__config-B_vs_project-P: rc=1 requests=2 homedot(A)=0 cfg(B)=2 project(P)=0
-      HOME=<作業 dir>/h1  CLAUDE_CONFIG_DIR=<作業 dir>/cfg-b  cwd=<作業 dir>/h1/work/repo4
+### 実行: 2026-09-21T09:09:53Z・機体 Proboscis-MBP.local・本体 2.1.278(sha256 bd245662fb8a0e32…)・計画段 c-AJ8C0BK9RF29HQ92ZQ986FXQVT
+### 計り方: 捕捉 server へ向けた claude の request body に目印が載った数(requests=2 は本体の 2 回の送信 — 1 回につき 1 件)。
+###   dotfiles = 一覧に "- herdr-comms" の行が在る数(111 件では説明文が落ちて名前だけの行になる)。live = 実席の起動引数・oauth = dummy の OAuth 札。
+### 読み方: 1/2 = 走査は git の root で止まる / 3/4 = 本物のホームの .claude/skills は読まず、ホームより下の祖先は読む /
+###   5 = env の HOME を付け替えても本体はそれをホームとして扱わない(2026-09-21T08:46Z の旧 1 件目「HOME の下なら載る」はこれの見かけ) /
+###   6 = 今日の席(家が空)には dotfiles の skill が載らない / 7 = 運んだ形(dir symlink)なら載る / 8・9 = 名前がぶつかると家の側が勝つ
+--- 1 ancestor, non-git cwd: rc=1 requests=2 ancestor(W1)=2 fakehome(W2)=0 cfg(B)=0 project(P)=0 dotfiles=0
+      HOME=<作業 dir>/h  CLAUDE_CONFIG_DIR=<作業 dir>/cfg-empty  cwd=<作業 dir>/anc/a/b  live=False oauth=False
+--- 2 ancestor above git root: rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=0 cfg(B)=0 project(P)=0 dotfiles=0
+      HOME=<作業 dir>/h  CLAUDE_CONFIG_DIR=<作業 dir>/cfg-empty  cwd=<作業 dir>/anc2/repo  live=False oauth=False
+--- 3 real HOME, ~/.claude/skills, empty cfg: rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=0 cfg(B)=0 project(P)=0 dotfiles=0
+      HOME=~  CLAUDE_CONFIG_DIR=<作業 dir>/cfg-empty  cwd=~/.skills-probe-AJ8C0B-scratch/work  live=False oauth=False
+--- 4 real HOME, ancestor below HOME: rc=1 requests=2 ancestor(W1)=2 fakehome(W2)=0 cfg(B)=0 project(P)=0 dotfiles=0
+      HOME=~  CLAUDE_CONFIG_DIR=<作業 dir>/cfg-empty  cwd=~/.skills-probe-AJ8C0B-scratch/work  live=False oauth=False
+--- 5 fake env HOME, cwd under it: rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=2 cfg(B)=0 project(P)=0 dotfiles=0
+      HOME=<作業 dir>/h  CLAUDE_CONFIG_DIR=<作業 dir>/cfg-empty  cwd=<作業 dir>/h/work  live=False oauth=False
+--- 6 live form, empty cfg: rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=0 cfg(B)=0 project(P)=0 dotfiles=0
+      HOME=~  CLAUDE_CONFIG_DIR=<作業 dir>/cfg-empty  cwd=~/repos/doeff  live=True oauth=False
+--- 6o live form + oauth dummy, empty cfg: rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=0 cfg(B)=0 project(P)=0 dotfiles=0
+      HOME=~  CLAUDE_CONFIG_DIR=<作業 dir>/cfg-empty  cwd=~/repos/doeff  live=True oauth=True
+--- 7 live form, cfg/skills symlink: rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=0 cfg(B)=0 project(P)=0 dotfiles=2
+      HOME=~  CLAUDE_CONFIG_DIR=<作業 dir>/cfg-carried  cwd=~/repos/doeff  live=True oauth=False
+--- 7o live form + oauth dummy, cfg/skills symlink: rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=0 cfg(B)=0 project(P)=0 dotfiles=2
+      HOME=~  CLAUDE_CONFIG_DIR=<作業 dir>/cfg-carried  cwd=~/repos/doeff  live=True oauth=True
+--- 8 live form, collision cfg-B vs project-P: rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=0 cfg(B)=2 project(P)=0 dotfiles=0
+      HOME=~  CLAUDE_CONFIG_DIR=<作業 dir>/cfg-b  cwd=<作業 dir>/repo-collide  live=True oauth=False
+--- 9 live form, project-P alone: rc=1 requests=2 ancestor(W1)=0 fakehome(W2)=0 cfg(B)=0 project(P)=2 dotfiles=0
+      HOME=~  CLAUDE_CONFIG_DIR=<作業 dir>/cfg-empty  cwd=<作業 dir>/repo-collide  live=True oauth=False
