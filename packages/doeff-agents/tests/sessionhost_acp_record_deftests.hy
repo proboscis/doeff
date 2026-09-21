@@ -478,6 +478,38 @@
   (assert (= (get base "recordedSeq") 7) "元の status を書き換えた"))
 
 
+(deftest test-turn-end-persists-cache-observation-and-record-acceptance-together
+  ;; 同じ ended 書込みを使う二つの機能を合成しても、どちらの観測も失わない。
+  (setv world (RecordWorld True))
+  (.tick world 0)
+  (.write-events world
+    (stream-line {"type" "assistant" "timestamp" "1970-01-01T00:00:02Z"
+                  "parent_tool_use_id" None
+                  "message" {"id" "cache-main" "role" "assistant" "model" "claude-opus-5"
+                             "content" [{"type" "text" "text" "ping"}]
+                             "usage" {"input_tokens" 1 "output_tokens" 1
+                                      "cache_read_input_tokens" 64000
+                                      "cache_creation_input_tokens" 20
+                                      "cache_creation" {"ephemeral_1h_input_tokens" 20
+                                                        "ephemeral_5m_input_tokens" 0}}}}))
+  (.tick world 1000)
+  (setv accepted-seq (get (get (.record-entries world) -1) "seq"))
+  (setv before-end (.record-generation world))
+  (.finish-turn world.sessions (.sid world) (+ world.local.now-ms 100))
+  (.tick world 1000)
+  (setv status (.record-status world))
+  (assert (= world.state.jobs #()) world.local.logs)
+  (assert (= (get status "state") "ended"))
+  (assert (= (get status "recordedSeq") accepted-seq))
+  (assert (= (get status "recordRef") f"record:{CONVERSATION}/{STREAM}"))
+  (assert (= (get status "cacheObservation")
+             {"responseId" "cache-main" "at" 2000 "ttlSeconds" 3600
+              "model" "claude-opus-5" "cacheRead" 64000 "cacheWrite" 20
+              "requestStartedAtLowerBound" 1000}))
+  (assert (= (.record-generation world) (+ before-end 1))
+          "終了時の二つの観測は1回の書込みに同乗する"))
+
+
 (deftest test-unsent-batch-stays-in-the-spool-and-lands-after-the-retry-period
   ;; 宛先あり届かない → 参加して spool(段 9f lane 9f-6): 参加の門は宣言の検で、届くかは検めない。
   (assert (. (settings-from-env {"DOEFF_AGENTD_NODE_NAME" NODE RECORD-URL-ENV "http://127.0.0.1:1"

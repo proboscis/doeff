@@ -2214,6 +2214,8 @@ class DeltaBatch:
     #: 読み手は agentd の次の 1 手(judgment.job-step-of)—— 降りた process が結果を器へ出していたなら、その手番は
     #: 失われたのではなく終わっている。ここは**事実の写し**で、手番の終わりの判定ではない(判定点は job-step-of の 1 つ)。
     turn_result: bool = False
+    #: 最後の主agentのAPI応答の時刻とキャッシュ利用。配達・poll時刻ではない。
+    cache_observation: JSONObject | None = None
 
 
 @dataclass(frozen=True)
@@ -2515,6 +2517,10 @@ class InFlightJob:
     #: (launch / rehydrate = この手番が session を起こした)だけが覆い、send / resume の腕は覆わない。覆っていない材料の
     #: 「出力 0 件」は『出さなかった』の証拠にならない(judgment.turn-output-condition-of が TurnOutputUnmeasured に分ける)。
     materials_cover_the_turn: bool
+    #: 起動・sendを呼ぶ前に読んだ時計。復旧時は不明(None)。送信完了のturn_floor_msで代用しない。
+    request_start_lower_bound_ms: int | None = None
+    #: job回収後もkeepaliveが照合する実行元。bindingの実値をturn-recordへ残す。
+    cache_context: JSONObject | None = None
     #: 手番の記録(turn-record)の行の最後に知った image(段 8 lane 4u — 出来事の追記の CAS の相手)。
     #: None = まだ読んでいない(最初の追記で鍵から読む)。書けた拍に generation + 1 と書いた status で
     #: 差し替え、Conflict は読み直して積み直す。正本は行(R7)— 再起動で消えても鍵から戻る。

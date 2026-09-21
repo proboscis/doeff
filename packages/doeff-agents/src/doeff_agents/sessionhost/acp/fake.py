@@ -9,20 +9,22 @@ test が状態を覗き、operator の代わりに行を置く(Bound の job・N
 import hashlib
 import json
 from dataclasses import dataclass, replace
+from typing import assert_never
 
 from doeff import EffectBase, K, Pass, Resume
-from doeff_agents.sessionhost.attachment import TurnAttachment
+from doeff_agents.sessionhost.acp.cache_operation import AcpCacheOperations
 from doeff_agents.sessionhost.acp.effects import (
+    CUSTODY_CONTRACT_VERSION,
     JSON,
-    MESSAGE_CONVERSATION_FIELDS,
-    MESSAGE_KIND,
-    TURN_RECORD_CONVERSATION_FIELD,
     MEMORY_KIND,
     MEMORY_SPEC_CONVERSATION_KEY,
     MEMORY_STREAM_PREFIX,
+    MESSAGE_CONVERSATION_FIELDS,
+    MESSAGE_KIND,
     SUMMARY_KIND,
     SUMMARY_SPEC_CONVERSATION_KEY,
     SUMMARY_STREAM_PREFIX,
+    TURN_RECORD_CONVERSATION_FIELD,
     TURN_RECORD_KIND,
     TURN_RECORD_RUNNING,
     AcpConversationMail,
@@ -42,13 +44,6 @@ from doeff_agents.sessionhost.acp.effects import (
     CaptureFrame,
     CaptureGone,
     ClockNowMs,
-    Conflict,
-    CUSTODY_CONTRACT_VERSION,
-    CustodyHealth,
-    CustodyLeaseBorrow,
-    CustodyLeaseRevoke,
-    EventWindow,
-    FsCanonicalPath,
     CommandExited,
     CommandGone,
     CommandProbe,
@@ -57,14 +52,20 @@ from doeff_agents.sessionhost.acp.effects import (
     CommandStart,
     CommandStarted,
     CommandStop,
+    Conflict,
+    CustodyHealth,
+    CustodyLeaseBorrow,
+    CustodyLeaseRevoke,
+    Escalated,
+    EventWindow,
+    FsCanonicalPath,
     FsDirectoryExists,
     FsFileExists,
+    FsFileSize,
     FsListDirectory,
     FsMakeDirectories,
     FsReadText,
-    FsFileSize,
     FsWritePrivateText,
-    Escalated,
     Interjected,
     JSONObject,
     LeaseGrant,
@@ -76,14 +77,13 @@ from doeff_agents.sessionhost.acp.effects import (
     MetricLine,
     MintId,
     OwnershipProbe,
-    ProbeAnswer,
     PaneSeatsOutcome,
+    ProbeAnswer,
     ProfileHome,
     ProfileUsageOutcome,
     PublishWorker,
     Pushed,
     ReadProfileUsage,
-    WorkerPublished,
     RecordAppend,
     RecordAppended,
     RecordAppendOutcome,
@@ -92,25 +92,25 @@ from doeff_agents.sessionhost.acp.effects import (
     RecordEvent,
     RecordPage,
     RecordRead,
+    RecordReadOutcome,
     RecordReadSince,
     RecordReadStream,
-    RecordSupersede,
-    RecordSuperseded,
-    RecordSupersedeOutcome,
-    RecordReadOutcome,
     RecordSpoolGiveUp,
     RecordSpoolList,
     RecordSpoolListing,
     RecordSpoolPut,
     RecordSpoolRemove,
+    RecordSupersede,
+    RecordSuperseded,
+    RecordSupersedeOutcome,
     RecordUnread,
     RecordUnsent,
     Refused,
     SessionCapture,
     SessionCleanup,
+    SessionEscalate,
     SessionEvents,
     SessionGet,
-    SessionEscalate,
     SessionInterject,
     SessionInterrupt,
     SessionLaunch,
@@ -122,8 +122,11 @@ from doeff_agents.sessionhost.acp.effects import (
     SessionView,
     TranscriptChunk,
     WatchAdvance,
+    WorkerPublished,
     Written,
 )
+from doeff_agents.sessionhost.acp.io_types import AcpRows, ProfileHomes
+from doeff_agents.sessionhost.attachment import TurnAttachment
 
 
 @dataclass(frozen=True)
@@ -137,10 +140,34 @@ class Birth:
 class FakeAcp:
     """ACP の資源の store・watch の sequence・中継(購読者の数は test が置く)。"""
 
+    @property
+    def sequence(self) -> int:
+        return self._mut_sequence
+
+    @sequence.setter
+    def sequence(self, value: int) -> None:
+        self._mut_sequence = value
+
+    @property
+    def running_record_lists(self) -> int:
+        return self._mut_running_record_lists
+
+    @running_record_lists.setter
+    def running_record_lists(self, value: int) -> None:
+        self._mut_running_record_lists = value
+
+    @property
+    def push_seq(self) -> int:
+        return self._mut_push_seq
+
+    @push_seq.setter
+    def push_seq(self, value: int) -> None:
+        self._mut_push_seq = value
+
     def __init__(self, births: dict[str, Birth]) -> None:
         self.births: dict[str, Birth] = births
         self.rows: dict[str, AcpRow] = {}
-        self.sequence: int = 0
+        self._mut_sequence: int = 0
         self.writes: list[tuple[str, JSONObject]] = []
         #: 書きと押しの**順**(段 10 lane 10s 追補 3): ("create", 鍵) / ("status", 鍵) / ("spec", 鍵) / ("push", stream の名)
         #: — 手番の最初の frame が turn-record の作成より先に中継へ出ることを検が読む。card
@@ -154,7 +181,7 @@ class FakeAcp:
         #: 器(host)の出来事の合図(段 12 lane 12b): test が積んだ WatchAdvance(kind session)を、ACP の sequence が
         #: 進んでいない拍に先頭から 1 つ返す(実の WakeQueue に SessionEventWaker が積む形の代わり)。
         self.wakes: list[WatchAdvance] = []
-        self.push_seq: int = 0
+        self._mut_push_seq: int = 0
         #: kind → list(AcpGet)で投げる例外(実弾 002 の Connection reset の再現)。
         self.list_failures: dict[str, Exception] = {}
         #: 鍵 → 次の status の書き 1 回だけ Conflict で断る時の currentGeneration(agentd が読んだ
@@ -172,7 +199,7 @@ class FakeAcp:
         #: 着かない拍の再現。conflict_once は「1 度だけ CAS が負ける」で、こちらは engine の断り 400 / 503 等)。
         self.status_refusals: dict[str, list[Refused]] = {}
         #: 段 12(#537 便 1): 走っている記録の一覧(AcpRunningTurnRecords)を撃った回数(巡回の周期の検が数える)。
-        self.running_record_lists: int = 0
+        self._mut_running_record_lists: int = 0
         #: 段 10 lane 10d: spec の書き(鍵・書いた spec)と、鍵ごとに spec の書きを断る列(先頭から消費)。
         self.spec_writes: list[tuple[str, JSONObject]] = []
         #: 段 10 lane 10y: 誕生と spec の書きが運んだ宣言 file の指紋(鍵・指紋 | None)— 書きの順。
@@ -196,8 +223,8 @@ class FakeAcp:
         self.headline_reads: list[str] = []
 
     def _land(self, key: str, row: AcpRow | None) -> None:
-        self.sequence += 1
-        self.journal.append((self.sequence, key, row))
+        self._mut_sequence += 1
+        self.journal.append((self._mut_sequence, key, row))
 
     def put_row(self, row: AcpRow) -> None:
         """test / operator の代わりに行を置く(書き手の判定は無い)。"""
@@ -210,6 +237,11 @@ class FakeAcp:
         self._land(key, None)
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
+        if isinstance(effect, AcpCacheOperations):
+            return Resume(k, tuple(row for row in self.rows.values()
+                                   if row.kind == "cache-operation"
+                                   and row.spec.get("nodeRow") == effect.node_row
+                                   and (row.status or {}).get("state") in ("requested", "running")))
         if isinstance(effect, AcpRunningTurnRecords):
             return Resume(k, self._running_turn_records())
         if isinstance(
@@ -233,24 +265,8 @@ class FakeAcp:
         | AcpConversationSummaries
         | AcpConversationMemories,
     ) -> object:
-        if isinstance(effect, (AcpConversationMail, AcpTurnHeadlines)):
-            return self._history(effect)
-        if isinstance(effect, AcpConversationMemories):
-            # card acp:kanban-issue:ki-9fc7d4bca4dc: この会話の kind agent-memory の行(engine の field selector と同じ絞り)。
-            self.memory_reads.append(effect.conversation_id)
-            return tuple(
-                row
-                for row in self.rows.values()
-                if row.kind == MEMORY_KIND and row.spec.get(MEMORY_SPEC_CONVERSATION_KEY) == effect.conversation_id
-            )
-        if isinstance(effect, AcpConversationSummaries):
-            # 段 12 lane 12j: この会話の kind summary の行(engine の field selector spec.conversationId と同じ絞り)。
-            self.summary_reads.append(effect.conversation_id)
-            return tuple(
-                row
-                for row in self.rows.values()
-                if row.kind == SUMMARY_KIND and row.spec.get(SUMMARY_SPEC_CONVERSATION_KEY) == effect.conversation_id
-            )
+        if isinstance(effect, AcpConversationMail | AcpTurnHeadlines | AcpConversationMemories | AcpConversationSummaries):
+            return self._read_conversation(effect)
         if isinstance(effect, AcpGet):
             failure = self.list_failures.get(effect.kind)
             if failure is not None:
@@ -261,17 +277,42 @@ class FakeAcp:
             return self.rows.get(effect.key)
         if isinstance(effect, AcpEventWindow):
             return self._window(effect.after, effect.limit)
+        return self._watch_advance(effect)
+
+    def _watch_advance(self, effect: AcpWatchSse) -> WatchAdvance:
         self.waits.append(effect.wait_seconds)
-        if self.sequence > effect.since:
-            return WatchAdvance(kind="changed", sequence=self.sequence)
+        if self._mut_sequence > effect.since:
+            return WatchAdvance(kind="changed", sequence=self._mut_sequence)
         if self.wakes:
             return self.wakes.pop(0)
         return WatchAdvance(kind="idle", sequence=effect.since)
 
-    def _running_turn_records(self) -> tuple[AcpRow, ...]:
+    def _read_conversation(self, effect: AcpConversationMail | AcpTurnHeadlines | AcpConversationMemories | AcpConversationSummaries) -> object:
+        if isinstance(effect, (AcpConversationMail, AcpTurnHeadlines)):
+            return self._history(effect)
+        if isinstance(effect, AcpConversationMemories):
+            # card acp:kanban-issue:ki-9fc7d4bca4dc: この会話の kind agent-memory の行(engine の field selector と同じ絞り)。
+            self.memory_reads.append(effect.conversation_id)
+            return tuple(
+                row
+                for row in self.rows.values()
+                if row.kind == MEMORY_KIND and row.spec.get(MEMORY_SPEC_CONVERSATION_KEY) == effect.conversation_id
+            )
+        match effect:
+            case AcpConversationSummaries():
+                # 段 12 lane 12j: この会話の kind summary の行(engine の field selector spec.conversationId と同じ絞り)。
+                self.summary_reads.append(effect.conversation_id)
+                return tuple(
+                    row
+                    for row in self.rows.values()
+                    if row.kind == SUMMARY_KIND and row.spec.get(SUMMARY_SPEC_CONVERSATION_KEY) == effect.conversation_id
+                )
+        assert_never(effect)
+
+    def _running_turn_records(self) -> AcpRows:
         """段 12(agora-redesign #537 便 1): engine の field selector status.state=running と同じ絞り。
         全量 list(AcpGet)の列には数えない — 別の読みなので、差分の読みの検が数える母集団を動かさない。"""
-        self.running_record_lists += 1
+        self._mut_running_record_lists += 1
         return tuple(
             row
             for row in self.rows.values()
@@ -280,7 +321,7 @@ class FakeAcp:
             and row.status.get("state") == TURN_RECORD_RUNNING
         )
 
-    def _history(self, effect: AcpConversationMail | AcpTurnHeadlines) -> tuple[AcpRow, ...]:
+    def _history(self, effect: AcpConversationMail | AcpTurnHeadlines) -> AcpRows:
         """履歴からの再開の材料(郵便 / 見出し)— 読んだ会話の id を種類ごとに数える(段 9q の検が読む:
         見出しは薄い再開の拍にだけ)。返すのは engine の field selector と同じ絞り(段 10 lane 10ba): 郵便は
         MESSAGE_CONVERSATION_FIELDS のどれかがこの会話の行、見出しは spec.conversationId がこの会話の行。"""
@@ -311,10 +352,10 @@ class FakeAcp:
             self.fingerprints.append((f"{effect.namespace}:{effect.kind}:{effect.resource_id}", effect.declaration_sha256))
             self.trace.append(("create", f"{effect.namespace}:{effect.kind}:{effect.resource_id}"))
             return self._create(effect)
-        self.push_seq += len(effect.frames)
+        self._mut_push_seq += len(effect.frames)
         self.pushes.append((effect.owner, effect.name, effect.frames))
         self.trace.append(("push", effect.name))
-        return Pushed(self.push_seq, self.subscribers.get(effect.name, 0))
+        return Pushed(self._mut_push_seq, self.subscribers.get(effect.name, 0))
 
     def _window(self, after: int, limit: int) -> EventWindow:
         if self.window_incomplete:
@@ -336,7 +377,7 @@ class FakeAcp:
         return EventWindow(
             complete=True,
             through=through,
-            latest=self.sequence,
+            latest=self._mut_sequence,
             rows=tuple(rows.values()),
             retired=tuple(retired),
             births=tuple(sorted(births.items())),
@@ -374,7 +415,7 @@ class FakeAcp:
         )
         self._land(row.key, self.rows[row.key])
         self.writes.append((row.key, dict(status)))
-        return Written(f"ev-{self.sequence}")
+        return Written(f"ev-{self._mut_sequence}")
 
     def _put_spec(self, row: AcpRow, spec: JSONObject) -> Written | Conflict | Refused:
         """段 10 lane 10d: 行の spec の書き(status は保つ — engine の SpecApplied は status の軸を触らない)。"""
@@ -389,7 +430,7 @@ class FakeAcp:
         self.rows[row.key] = replace(existing, generation=existing.generation + 1, spec=dict(spec))
         self._land(row.key, self.rows[row.key])
         self.spec_writes.append((row.key, dict(spec)))
-        return Written(f"ev-{self.sequence}")
+        return Written(f"ev-{self._mut_sequence}")
 
     def _create(self, effect: AcpCreate) -> Written | Conflict | Refused:
         key = f"{effect.namespace}:{effect.kind}:{effect.resource_id}"
@@ -419,11 +460,19 @@ class FakeAcp:
             status=status,
         )
         self._land(key, self.rows[key])
-        return Written(f"ev-{self.sequence}")
+        return Written(f"ev-{self._mut_sequence}")
 
 
 class FakeCustody:
     """預かり所の代わり: 預かっている account と、その貸出の記録。"""
+
+    @property
+    def counter(self) -> int:
+        return self._mut_counter
+
+    @counter.setter
+    def counter(self, value: int) -> None:
+        self._mut_counter = value
 
     def __init__(
         self,
@@ -440,7 +489,7 @@ class FakeCustody:
         #: card acp:kanban-issue:ki-f2747267e24d B3: 返却が 200 で答えない拍(預かり所が落ちている・不達)の再現 —
         #: 撃った id は revoked に残る(撃ってはいる)が答えは False。
         self.revoke_ok: bool = True
-        self.counter: int = 0
+        self._mut_counter: int = 0
         #: 段 10 lane 10d 便 4: /health が名乗る答え(None = 読めない・欄なし = 版 1 の預かり所)。
         self.health: JSONObject | None = {"ok": True, "role": "master", "contract": CUSTODY_CONTRACT_VERSION}
 
@@ -455,11 +504,11 @@ class FakeCustody:
             auth_json = self.auth_jsons.get(effect.account)
             if token is None and auth_json is None:
                 return Resume(k, LeaseRefused(404, "account not in custody", None))
-            self.counter += 1
+            self._mut_counter += 1
             return Resume(
                 k,
                 LeaseGrant(
-                    lease_id=f"lease-{self.counter}",
+                    lease_id=f"lease-{self._mut_counter}",
                     kind=effect.kind,
                     renewed=False,
                     hold_expires_at_ms=self.hold_ms,
@@ -475,6 +524,14 @@ class FakeCustody:
 
 class FakeSessions:
     """器の代わり: launch は行を作り、status は test が動かす。capture の呼びを数える。"""
+
+    @property
+    def clock(self) -> int:
+        return self._mut_clock
+
+    @clock.setter
+    def clock(self, value: int) -> None:
+        self._mut_clock = value
 
     def __init__(
         self,
@@ -529,7 +586,7 @@ class FakeSessions:
         #: session.resume だけを断る(transcript が見つからない等の typed reject の再現 — 行は作らない)。
         self.refuse_resume: SessionRefused | None = None
         #: 器の時計(started_at の代わり — 起こすたびに 1 進む)。
-        self.clock: int = 0
+        self._mut_clock: int = 0
         self.agent_type: str = agent_type
         self.work_dir: str = work_dir
         self.config_dir: str = "/homes/claude/acct"
@@ -586,6 +643,17 @@ class FakeSessions:
             return self._incarnate(effect)
         if isinstance(effect, SessionSend):
             return self._send(effect)
+        if isinstance(effect, SessionInterject | SessionEscalate | SessionInterrupt):
+            return self._interrupt_action(effect)
+        self.cleanups.append(effect.session_id)
+        if effect.session_id not in self.views:
+            return False
+        view = self.views[effect.session_id]
+        if view.status not in {"done", "failed", "exited", "stopped", "cancelled"}:
+            self.finish(effect.session_id, "stopped")
+        return True
+
+    def _interrupt_action(self, effect: SessionInterject | SessionEscalate | SessionInterrupt) -> object:
         if isinstance(effect, SessionInterject):
             if self.refuse_interject is not None:
                 return self.refuse_interject
@@ -598,16 +666,11 @@ class FakeSessions:
                 return self.refuse_escalate
             self.escalations.append(effect.session_id)
             return Escalated()
-        if isinstance(effect, SessionInterrupt):
-            self.interrupts.append(effect.session_id)
-            return None
-        self.cleanups.append(effect.session_id)
-        if effect.session_id not in self.views:
-            return False
-        view = self.views[effect.session_id]
-        if view.status not in {"done", "failed", "exited", "stopped", "cancelled"}:
-            self.finish(effect.session_id, "stopped")
-        return True
+        match effect:
+            case SessionInterrupt():
+                self.interrupts.append(effect.session_id)
+                return None
+        assert_never(effect)
 
     def _look(self, effect: SessionGet | SessionList | SessionCapture) -> object:
         if isinstance(effect, SessionGet):
@@ -657,7 +720,7 @@ class FakeSessions:
             source = self.views.get(str(params.get("session_id")))
             lifecycle = None if source is None else source.lifecycle
         attribution = params.get("launch_attribution")
-        self.clock += 1
+        self._mut_clock += 1
         view = SessionView(
             session_id=session_id,
             agent_type=self.agent_type,
@@ -679,7 +742,7 @@ class FakeSessions:
                 else None
             ),
             launch_attribution=attribution if isinstance(attribution, dict) else None,
-            started_at_ms=self.clock,
+            started_at_ms=self._mut_clock,
             # host と同じ意味論: 起こした直後の眺めの backend は生きている(観測)。
             backend_alive=True,
         )
@@ -729,13 +792,45 @@ class FakeLocal:
     """時計・計器・log・file・この機体の資格の残量の代わり。transcript / events は path → text の表
     (transcripts)、残量は kind → 答えの列(usage・既定は空 = 持たない)。"""
 
+    @property
+    def minted(self) -> int:
+        return self._mut_minted
+
+    @minted.setter
+    def minted(self, value: int) -> None:
+        self._mut_minted = value
+
+    @property
+    def next_pid(self) -> int:
+        return self._mut_next_pid
+
+    @next_pid.setter
+    def next_pid(self, value: int) -> None:
+        self._mut_next_pid = value
+
+    @property
+    def pane_seat_reads(self) -> int:
+        return self._mut_pane_seat_reads
+
+    @pane_seat_reads.setter
+    def pane_seat_reads(self, value: int) -> None:
+        self._mut_pane_seat_reads = value
+
+    @property
+    def now_ms(self) -> int:
+        return self._mut_now_ms
+
+    @now_ms.setter
+    def now_ms(self, value: int) -> None:
+        self._mut_now_ms = value
+
     def __init__(
         self,
         now_ms: int = 1_000,
         clock_step_ms: int = 0,
         trace: list[tuple[str, str]] | None = None,
     ) -> None:
-        self.now_ms: int = now_ms
+        self._mut_now_ms: int = now_ms
         #: 時計を 1 度読むたびに進む幅(ms)。0 = 拍の中で時計が止まっている(既定 — 今日までの検の世界)。
         #: > 0 は「読むたびに進む」世界で、どの読みがどの frame の at になったかを検が区別できる
         #: (card acp:kanban-issue:ki-6eb745f6d528: frame の at は拍の頭の 1 度ではなく、その job の読み)。
@@ -755,7 +850,7 @@ class FakeLocal:
         self.made_dirs: list[str] = []
         self.transcripts: dict[str, str] = {}
         #: 鋳造した session の id の数(id = sid-<n> — charter の id とは別の綴り)。
-        self.minted: int = 0
+        self._mut_minted: int = 0
         #: 所有の検の答え(proof → 材料の値・無い proof は None = 読めない)と撃った proof の列。
         self.probe_answers: dict[str, str | None] = {}
         self.probes: list[str] = []
@@ -768,7 +863,7 @@ class FakeLocal:
         #: 段 12(agora-redesign #577): この機体の pane の席(既定 = 席なし = pane を持たない機体)と読みの数。
         #: 読めない機体を写すには PaneSeatsUnavailable を据える。
         self.pane_seats: PaneSeatsOutcome = ()
-        self.pane_seat_reads: int = 0
+        self._mut_pane_seat_reads: int = 0
         #: この機体の profile の家の在否(kind → 登録簿の列)と、読んだ kind の列。据えていない kind は
         #: usage に答えのある profile の家が在る(usage を据えた検が家も据える手間を省く既定)。
         self.homes: dict[str, tuple[ProfileHome, ...]] = {}
@@ -786,40 +881,23 @@ class FakeLocal:
         self.stopped_pids: list[int] = []
         self.existing_files: set[str] = set()
         self.refuse_commands: str | None = None
-        self.next_pid: int = 4242
+        self._mut_next_pid: int = 4242
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(effect, MintId):
-            self.minted += 1
-            return Resume(k, f"sid-{self.minted}")
-        if isinstance(effect, CommandStart):
-            self.commands.append(tuple(effect.argv))
-            self.command_cwds.append(effect.cwd)
-            self.command_env_names.append(tuple(name for name, _ in effect.env))
-            self.command_envs.append(dict(effect.env))
-            if self.refuse_commands is not None:
-                return Resume(k, CommandRefused(error=self.refuse_commands))
-            pid = self.next_pid
-            self.next_pid += 1
-            self.alive_pids.add(pid)
-            # sh の 1 行が書く pid の file(argv の $0)
-            self.files[effect.argv[3]] = f"{pid}\n"
-            return Resume(k, CommandStarted(pid=pid))
-        if isinstance(effect, CommandProbe):
-            rc_text = self.files.get(effect.rc_path)
-            if rc_text is not None and rc_text.strip().isdigit():
-                return Resume(k, CommandExited(rc=int(rc_text.strip())))
-            pid = effect.pid
-            if pid is None:
-                pid_text = self.files.get(effect.pid_path)
-                pid = int(pid_text.strip()) if pid_text is not None and pid_text.strip().isdigit() else None
-            if pid is None:
-                return Resume(k, CommandRunning(pid=0))
-            return Resume(k, CommandRunning(pid=pid) if pid in self.alive_pids else CommandGone())
-        if isinstance(effect, CommandStop):
-            self.stopped_pids.append(effect.pid)
-            self.alive_pids.discard(effect.pid)
-            return Resume(k, True)
+            self._mut_minted += 1
+            return Resume(k, f"sid-{self._mut_minted}")
+        if isinstance(effect, CommandStart | CommandProbe | CommandStop):
+            return self._command_dispatch(effect, k)
+        if isinstance(effect, FsFileExists | FsListDirectory | FsReadText | FsCanonicalPath | FsFileSize | FsWritePrivateText | SessionTranscript | SessionEvents | FsDirectoryExists | FsMakeDirectories):
+            return self._filesystem_dispatch(effect, k)
+        if isinstance(effect, OwnershipProbe | ListProfileHomes | ListPaneSeats | ReadProfileUsage | PublishWorker):
+            return self._profile_dispatch(effect, k)
+        if isinstance(effect, (ClockNowMs, MetricLine, LogLine)):
+            return Resume(k, self._observe(effect))
+        return Pass(effect, k)
+
+    def _filesystem_dispatch(self, effect: FsFileExists | FsListDirectory | FsReadText | FsCanonicalPath | FsFileSize | FsWritePrivateText | SessionTranscript | SessionEvents | FsDirectoryExists | FsMakeDirectories, k: K) -> Resume | Pass:
         if isinstance(effect, FsFileExists):
             return Resume(k, effect.path in self.existing_files)
         if isinstance(effect, FsListDirectory):
@@ -839,25 +917,6 @@ class FakeLocal:
             # 本物の handler と同じく先頭 max_chars 字まで(段 12 lane 12j 便 4 の実弾: 既定 256 で答えの JSON が切れた)。
             text = self.files.get(effect.path)
             return Resume(k, None if text is None else text[: effect.max_chars])
-        if isinstance(effect, OwnershipProbe):
-            self.probes.append(effect.proof)
-            return Resume(k, ProbeAnswer(value=self.probe_answers.get(effect.proof)))
-        if isinstance(effect, ListProfileHomes):
-            self.home_reads.append(effect.kind)
-            return Resume(k, self._homes_of(effect.kind))
-        if isinstance(effect, ListPaneSeats):
-            self.pane_seat_reads += 1
-            return Resume(k, self.pane_seats)
-        if isinstance(effect, ReadProfileUsage):
-            self.usage_reads.append((effect.kind, effect.cache_ttl_seconds))
-            return Resume(k, self.usage.get(effect.kind, ()))
-        if isinstance(effect, PublishWorker):
-            self.publishes.append(effect)
-            if self.publish_ok:
-                return Resume(k, WorkerPublished(ok=True, worker="fake-mac", detail=""))
-            return Resume(k, WorkerPublished(ok=False, worker="", detail="publish refused (fake)"))
-        if isinstance(effect, (ClockNowMs, MetricLine, LogLine)):
-            return Resume(k, self._observe(effect))
         if isinstance(
             effect,
             (FsCanonicalPath, FsFileSize, FsWritePrivateText, SessionTranscript, SessionEvents),
@@ -866,15 +925,69 @@ class FakeLocal:
         if isinstance(effect, FsDirectoryExists):
             self.dir_checks.append(effect.path)
             return Resume(k, effect.path not in self.missing_dirs)
-        if isinstance(effect, FsMakeDirectories):
-            if effect.path in self.unmakeable_dirs:
-                return Resume(k, False)
-            self.made_dirs.append(effect.path)
-            self.missing_dirs.discard(effect.path)
-            return Resume(k, True)
-        return Pass(effect, k)
+        match effect:
+            case FsMakeDirectories():
+                created = effect.path not in self.unmakeable_dirs
+                if created:
+                    self.made_dirs.append(effect.path)
+                    self.missing_dirs.discard(effect.path)
+                return Resume(k, created)
+        assert_never(effect)
 
-    def _homes_of(self, kind: str) -> tuple[ProfileHome, ...]:
+    def _profile_dispatch(self, effect: OwnershipProbe | ListProfileHomes | ListPaneSeats | ReadProfileUsage | PublishWorker, k: K) -> Resume | Pass:
+        if isinstance(effect, OwnershipProbe):
+            self.probes.append(effect.proof)
+            return Resume(k, ProbeAnswer(value=self.probe_answers.get(effect.proof)))
+        if isinstance(effect, ListProfileHomes):
+            self.home_reads.append(effect.kind)
+            return Resume(k, self._homes_of(effect.kind))
+        if isinstance(effect, ListPaneSeats):
+            self._mut_pane_seat_reads += 1
+            return Resume(k, self.pane_seats)
+        if isinstance(effect, ReadProfileUsage):
+            self.usage_reads.append((effect.kind, effect.cache_ttl_seconds))
+            return Resume(k, self.usage.get(effect.kind, ()))
+        match effect:
+            case PublishWorker():
+                self.publishes.append(effect)
+                if self.publish_ok:
+                    return Resume(k, WorkerPublished(ok=True, worker="fake-mac", detail=""))
+                return Resume(k, WorkerPublished(ok=False, worker="", detail="publish refused (fake)"))
+        assert_never(effect)
+
+    def _command_dispatch(self, effect: CommandStart | CommandProbe | CommandStop, k: K) -> Resume | Pass:
+        if isinstance(effect, CommandStart):
+            self.commands.append(tuple(effect.argv))
+            self.command_cwds.append(effect.cwd)
+            self.command_env_names.append(tuple(name for name, _ in effect.env))
+            self.command_envs.append(dict(effect.env))
+            if self.refuse_commands is not None:
+                return Resume(k, CommandRefused(error=self.refuse_commands))
+            pid = self._mut_next_pid
+            self._mut_next_pid += 1
+            self.alive_pids.add(pid)
+            # sh の 1 行が書く pid の file(argv の $0)
+            self.files[effect.argv[3]] = f"{pid}\n"
+            return Resume(k, CommandStarted(pid=pid))
+        if isinstance(effect, CommandProbe):
+            rc_text = self.files.get(effect.rc_path)
+            if rc_text is not None and rc_text.strip().isdigit():
+                return Resume(k, CommandExited(rc=int(rc_text.strip())))
+            pid = effect.pid
+            if pid is None:
+                pid_text = self.files.get(effect.pid_path)
+                pid = int(pid_text.strip()) if pid_text is not None and pid_text.strip().isdigit() else None
+            if pid is None:
+                return Resume(k, CommandRunning(pid=0))
+            return Resume(k, CommandRunning(pid=pid) if pid in self.alive_pids else CommandGone())
+        match effect:
+            case CommandStop():
+                self.stopped_pids.append(effect.pid)
+                self.alive_pids.discard(effect.pid)
+                return Resume(k, True)
+        assert_never(effect)
+
+    def _homes_of(self, kind: str) -> ProfileHomes:
         declared = self.homes.get(kind)
         if declared is not None:
             return declared
@@ -885,8 +998,8 @@ class FakeLocal:
 
     def _observe(self, effect: ClockNowMs | MetricLine | LogLine) -> object:
         if isinstance(effect, ClockNowMs):
-            value = self.now_ms
-            self.now_ms = value + self.clock_step_ms
+            value = self._mut_now_ms
+            self._mut_now_ms = value + self.clock_step_ms
             self.clock_reads.append(value)
             if self.trace is not None:
                 self.trace.append(("clock", str(value)))
@@ -966,15 +1079,21 @@ class FakeRecord:
             return Resume(k, self._spool(effect))
         if isinstance(effect, RecordAppend):
             return Resume(k, self._append(effect.batch))
+        if isinstance(effect, RecordRead | RecordReadSince | RecordReadStream):
+            return self._read_dispatch(effect, k)
+        if isinstance(effect, RecordSupersede):
+            return Resume(k, self._supersede(effect))
+        return Pass(effect, k)
+
+    def _read_dispatch(self, effect: RecordRead | RecordReadSince | RecordReadStream, k: K) -> Resume | Pass:
         if isinstance(effect, RecordRead):
             return Resume(k, self._read(effect.conversation_id, effect.before, effect.limit))
         if isinstance(effect, RecordReadSince):
             return Resume(k, self._read_since(effect.conversation_id, effect.since, effect.limit, effect.kinds))
-        if isinstance(effect, RecordReadStream):
-            return Resume(k, self._read_stream(effect.conversation_id, effect.stream_id))
-        if isinstance(effect, RecordSupersede):
-            return Resume(k, self._supersede(effect))
-        return Pass(effect, k)
+        match effect:
+            case RecordReadStream():
+                return Resume(k, self._read_stream(effect.conversation_id, effect.stream_id))
+        assert_never(effect)
 
     def _spool(
         self, effect: RecordSpoolPut | RecordSpoolList | RecordSpoolRemove | RecordSpoolGiveUp
@@ -1142,6 +1261,7 @@ class FakeRecord:
         mime = stored.get("mime")
         name = stored.get("name")
         data = stored.get("data")
+        tombstoned = stored.get("tombstonedAt")
         return RecordEvent(
             record_seq=record_seq,
             stream_id=key[1],
@@ -1173,9 +1293,7 @@ class FakeRecord:
             is_error=stored.get("isError") is True,
             truncated=False,
             version=self.versions.get(key, 1),
-            tombstoned_at=(stored.get("tombstonedAt")
-                           if isinstance(stored.get("tombstonedAt"), int) and not isinstance(stored.get("tombstonedAt"), bool)
-                           else None),
+            tombstoned_at=tombstoned if isinstance(tombstoned, int) and not isinstance(tombstoned, bool) else None,
         )
 
     def events_of(self, conversation_id: str, stream_id: str) -> list[JSONObject]:
