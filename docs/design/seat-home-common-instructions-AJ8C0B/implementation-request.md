@@ -46,7 +46,7 @@
 | D5 | 名指しが在って file / dir が無いのは**非致命**(参加も起動も断らない・名乗りの 1 行 + node の行の labels) | — |
 | D6 | 二重読みは doeff が置く 3 つ目の settings の鍵 `claudeMdExcludes` で落とす。値は席の `$HOME` から**導く** 1 本 `<$HOME>/.claude/CLAUDE.md` | 鍵を置く 1 行を外す |
 | D7 | 既存の家の後追いは**作らない**(D1 により次の起動で直る)。家を作り直さない・reconciler を足さない | — |
-| D8 | **張り替えの動詞を substrate に持つ**: `FsEnsureSymlink` を effect として足し、3 値 `unchanged` / `linked` / `occupied-by-real-entity` を返す。`impls` は**この動詞を呼ぶだけ**(盲検 A・`design.md` §10 R1) | effect ごと消す(呼び手は 1 か所) |
+| D8 | **張り替えの動詞を substrate に持つ**: `FsEnsureSymlink` を effect として足し、3 値 `unchanged` / `linked` / `occupied-by-real-entity` を返す。`impls` は**この動詞を呼ぶだけ**(盲検 A・`design.md` §10 R1)。**⚠ 2026-09-21T10:1xZ 追補 — 張る・張り替えるの物理は原子的に**: 同じ dir に書き手ごとに一意な名の仮の symlink を張り(D9 の `mkstemp` と同じ考え)、`os.replace(仮, link)` で被せる。`unlink` → `symlink` の 2 手も、空の家への素の `symlink` も使わない。実測(`evidence/symlink_install_race.{py,log}`・着地済みの `ensure-symlink-outcome` を 1:1 で写した): 空の家へ 2 席が同拍で張ると **200 回中 200 回**で片方が `FileExistsError`(= 席が起きない)、張り替えの間は読み手の **52 %** が根の無い瞬間を見る。lock は足さない(D9 と同じ) | effect ごと消す(呼び手は 1 か所) |
 | D9 | **`FsWriteTextAtomic` の tmp を書き手ごとに一意にする**(`mkstemp`)。同じ家へ 2 席が同拍で書いても互いの tmp を消さない(盲検 A・§10 R2)。既存の `preseed-claude-trust` の競りも同時に閉じる | 戻すと既存の競りが開く ⇒ 戻さない |
 | D10 | **「宣言していない path を触っていないか」を見る**: `packages/doeff-agents/src/**` で literal `dotfiles` を **除外なしで**禁じる semgrep 規則 + 痕跡で見る deftest 2 本(盲検 B・§10 R3) | 規則の行を消す(ledger も同拍で) |
 | D11 | **運ぶ物の綴りは 1 つの名簿**(`CARRIED-INSTRUCTION-SOURCES` — 1 種 = `{key, env, param, kind, home-name, label}` の 1 行)。`AGENTD-KEYS` はそこから**導く**。join / launch / 据え付けは名簿を**回る**(§10 R5) | 名簿を平らに戻す(が、d8472e1a の形へ戻ることになる) |
@@ -108,6 +108,9 @@ pod の agentd の容器に入り、共通の条文と skills の在り処を実
      `counterexamples.md` の「自分の検に弁別力が無かった」)。**必ず劣化の日に置く**。
    - (j) **【D8】2 席が同じ家へ同拍で入っても、家の `skills` は正しい先を指し、
      互いの tmp を消さない**(`FsEnsureSymlink` の 3 値 + D9 の一意 tmp)。
+     ⚠ 追補(10:1xZ): **同拍は本当に 2 process(barrier)で撃つ** — 空の家へ同時に張って例外 0・link は正しい先、
+     別の先へ張り替える間にもう 1 つの process が `os.path.lexists(link)` を読み続けて根の無い瞬間 0。逐次の 3 値の検
+     (`test-fs-ensure-symlink-three-outcomes`)では競りは見えない(実測 `evidence/symlink_install_race.log`)。
    - (k) **【D11】母集団を名簿から導く**: `CARRIED-INSTRUCTION-SOURCES` を回り、各 1 種に
      ついて「宣言 → env → params → 家の中の名」まで届くことを撃つ。**列挙しない** ⇒
      名簿に 1 行足して行き先を宣言しなければ赤くなる。
@@ -280,6 +283,16 @@ Hy へ写す時の答え合わせに使えるが、**これは本実装ではな
 PR の本文に **Verification の表**(この節の項 ↔ 出荷した検の `path::name`)を必ず載せる。
 弱めた項が在れば `## Verification deviations` を明記する(黙った弱めは自動で差し戻し)。
 
+⚠ **前提(2026-09-21T10:1xZ・依頼者 c-3JYBNJMC… の pod の観測〔郵便 lt-6P2WV98TDN84JQHC2SCF04XMN8〕で裏取り): 席の家は会話ごとではなく、
+借りた資格(account)ごと**。家 = `<homes-root>/claude/<account の安全な綴り>`(`acp/judgment.hy` charter-with-grant)で、同じ資格の
+会話は同じ家を**同時に**読む(実測: 1 つの pod で 8 席 → 家 3 つ・1 つの家を 3 会話が共有・手番の最中に 3 つ目の家が生まれた)。
+`design.md` §3.5「家は同じ資格の複数 session が共有する」・D1「据え付けは起動の拍ごと」・D9 の一意 tmp はこの前提から出ている。帰結:
+(1) 家へ置くのは全会話で同じ bytes の共通の指示だけ — 会話固有の物は自動記憶と同じ会話 id の側へ(Phase 4 の 2 鍵が名指すのは宿ごとに
+1 つの在処なので、このまま整合する)。(2) 家は pod ごとに**空で鋳直される**(名は資格から決まるので使い回されるが、中身は運ばれない)—
+一度据えて終わりにはできず、D1 の起動の拍ごとの据え付けが要る。**受入 1 / 3 / 4 は入れ替わった直後の pod で撃つ**(温まった pod の緑は
+次の rollout で赤になる筋を残す)。(3) 据え付けは競り合う — D8 の追補(原子的な張り)と D9。家の名の形(pod = UUID・Mac = `claude_<16 hex>`)
+は資格の綴りの形で、実装は名の形に依らない(`CLAUDE_CONFIG_DIR` の値をそのまま使う)。
+
 | # | 受入 | 対応する検 / 実射 |
 | --- | --- | --- |
 | 1 | **pod の席**で共通の CLAUDE.md が **user 層として** context に載る | 実際の agentd の席の context(`Contents of <家>/CLAUDE.md (user's private global instructions for all projects)` の札)。mock 不可 |
@@ -292,7 +305,7 @@ PR の本文に **Verification の表**(この節の項 ↔ 出荷した検の `
 | 8 | 名指しの無い機体は今日どおり | doeff の deftest (e) |
 | 9 | 本体の契約が動いたら赤くなる | dotfiles `check_native_claude_home_contract.py`(緑で出荷・逐語が動けば赤) |
 | 10 | `make lint` 清浄(新しい semgrep 規則を含む) | `make lint` |
-| 11 | **【D8】正本の path が変わった日に、家の `skills` が新しい先へ張り替わる** | doeff の deftest (j) + `sessionhost_substrate_deftests.hy` の 3 値の検 |
+| 11 | **【D8】正本の path が変わった日に、家の `skills` が新しい先へ張り替わる**。**同拍の 2 席**(空の家へ同時に張る・張り替えの間に読む)で例外 0・根の無い瞬間 0(10:1xZ 追補) | doeff の deftest (j)(2 process の同拍を含む)+ `sessionhost_substrate_deftests.hy` の 3 値の検 + `evidence/symlink_install_race.py` を直した実装に当てて A の例外 0・B の根の無い瞬間 0 |
 | 12 | **【D9】同じ家へ 2 席が同拍で書いても、片方の書きが落ちない** | `sessionhost_substrate_deftests.hy` の同拍 2 書き手 + `conformance/test_s12_claude_trust_preseed.py`(glob) |
 | 13 | **【D10】宣言が無い機体へ条文が届かない / 劣化の日に宣言外の path を触らない** | doeff の deftest (h)(囮を置いた上で)と (i)(劣化の日) |
 | 14 | **【D10】`packages/doeff-agents/src/**` に literal `dotfiles` が 1 件も無い** | 新しい semgrep 規則(除外なし)・`make lint-semgrep` |

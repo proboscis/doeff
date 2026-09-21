@@ -1,0 +1,5 @@
+### 実行: 2026-09-21T10:0xZ・機体 CA-20038667(会社 Mac・macOS・python3 3.14.6)・写した実装 = origin/main f3d8b9a1 substrate.hy ensure-symlink-outcome
+### 読み方: A = 空の家へ 2 席が同拍で張ると毎回片方が FileExistsError で落ちる(launch の効果は raise する = 席が起きない) /
+###   B = unlink → symlink の 2 手の間は読み手が根の無い瞬間を見る(本体の skills の discovery がその瞬間に走ると user 層の skills が 0 件)
+A 空の家へ 2 席が同拍で張る × 200 回: 成功 200 件 / 例外 200 件 {'FileExistsError': 200}
+B 張り替え 20000 回の間に link を 431617 回読んだ: 根が無い瞬間 223948 回
