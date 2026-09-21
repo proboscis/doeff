@@ -9,10 +9,14 @@
 (require doeff-hy.macros [deftest defk deff <-])
 
 (import glob)
+(import mmap)
 (import os)
+(import select)
 (import shutil)
+(import signal)
 (import threading)
 (import tempfile)
+(import time)
 (import pytest)
 (import doeff [EffectBase run])
 
@@ -35,6 +39,7 @@
   tmux-kill-session])
 (import doeff_agents.sessionhost.substrate [
   real-substrate
+  ensure-symlink-outcome
   normalized-env-key
   ensure-no-forbidden-agent-env
   unsubmitted-paste-input?
@@ -378,6 +383,199 @@
     (assert (not (os.path.islink occupied)))
     (with [f (open occupied :encoding "utf-8")]
       (assert (= (.read f) "someone's real file")))
+    (finally
+      (shutil.rmtree d :ignore-errors True))))
+
+
+;; ---------------------------------------------------------------------------
+;; D8 の同拍 — 本物の 2 process(card acp:kanban-issue:ki-62aa1f4e9c9c・計画段の実測
+;; evidence/symlink_install_race.log)
+;; ---------------------------------------------------------------------------
+;;
+;; ⚠ 逐次の 3 値の検(test-fs-ensure-symlink-three-outcomes)では競りは見えない。家は
+;;   **資格ごと**に鋳られ、同じ資格の複数の席が 1 つの家を同時に読む(pod の実測: 1 つの家を
+;;   3 会話が共有・手番の最中に新しい家が鋳られる)。pool の入れ替えの直後は排水中に溜まった
+;;   郵便が一斉に手番になるので、空の家へ同じ拍で複数の席が降りる。
+;; ⚠ 待ち合わせに lock を 1 つも取らない(匿名の共有 mmap へ自分の byte だけ書き、相手の byte を
+;;   回して待つ)。fork の子の中で lock を取ると、親が fork した瞬間に別の thread が握っていた
+;;   lock をそのまま引き継いで子が固まる。thread では拍が揃わず競りが再現しないので、
+;;   process で撃つこと自体が検の本体。
+;; ⚠ 子は raw の ensure-symlink-outcome を撃つ(物理の点そのもの)。effect の層はこの関数へ
+;;   委ねる 1 行なので、効果の経路は引き続き 3 値の検が見張る。
+
+(defn race-spin-barrier [shared index total deadline]
+  "同拍の待ち合わせ: 自分の byte だけ書き、全員の byte が立つまで回る(lock を取らない)。"
+  (setv (get shared index) 1)
+  (while (any (gfor i (range total) (= (get shared i) 0)))
+    (when (> (time.monotonic) deadline)
+      (return False)))
+  True)
+
+
+(defn race-child-installs [shared index link target write-fd]
+  "子: 同拍で 1 回だけ張り、結果を 1 行で親へ返して即座に落ちる(**戻らない**)。"
+  (try
+    (race-spin-barrier shared index 2 (+ (time.monotonic) 30))
+    (os.write write-fd (.encode f"ok:{(ensure-symlink-outcome link target)}" "utf-8"))
+    (except [error BaseException]
+      (try
+        (os.write write-fd (.encode f"err:{(. (type error) __name__)}" "utf-8"))
+        (except [OSError] None)))
+    (finally
+      (os._exit 0))))
+
+
+(defn race-child-reads [link stop started write-fd]
+  "子: 根が在るかを回して読み続け、親が stop を立てたら #(読んだ回数 根の無かった回数) を返す
+   (**戻らない**)。"
+  (try
+    (setv reads 0)
+    (setv missing 0)
+    (setv deadline (+ (time.monotonic) 60))
+    (setv (get started 0) 1)
+    (while (and (= (get stop 0) 0) (< (time.monotonic) deadline))
+      (setv reads (+ reads 1))
+      (when (not (os.path.lexists link))
+        (setv missing (+ missing 1))))
+    (os.write write-fd (.encode f"{reads}:{missing}" "utf-8"))
+    (except [error BaseException]
+      (try
+        (os.write write-fd (.encode f"err:{(. (type error) __name__)}" "utf-8"))
+        (except [OSError] None)))
+    (finally
+      (os._exit 0))))
+
+
+(defn race-read-line [read-fd deadline]
+  "子の 1 行を締切つきで受け取る(子が固まっても suite を止めない)。"
+  (setv chunks [])
+  (while True
+    (setv remaining (- deadline (time.monotonic)))
+    (when (<= remaining 0)
+      (return "timeout:"))
+    (setv ready (get (select.select [read-fd] [] [] remaining) 0))
+    (when (not ready)
+      (return "timeout:"))
+    (setv chunk (os.read read-fd 256))
+    (when (not chunk)
+      (return (.join "" chunks)))
+    (.append chunks (.decode chunk "utf-8"))))
+
+
+(defn race-reap [pids deadline]
+  "子を締切つきで回収する(固まっていたら殺してから回収 — 孤児を残さない)。"
+  (for [pid pids]
+    (while True
+      (setv [done #* _] (os.waitpid pid os.WNOHANG))
+      (when (!= done 0)
+        (break))
+      (when (> (time.monotonic) deadline)
+        (try
+          (os.kill pid signal.SIGKILL)
+          (except [OSError] None))
+        (os.waitpid pid 0)
+        (break))
+      (time.sleep 0.001))))
+
+
+(deftest test-fs-ensure-symlink-survives-two-seats-landing-on-one-empty-home
+  ;; ⚑ 受入 11(D8 の同拍・A): 空の家へ 2 席が同拍で張ると、素の symlink / unlink→symlink の
+  ;; 2 手は **片方が FileExistsError で落ちる**(直す前の実測: 会社 Mac 200/200・この pod
+  ;; 187/200)。launch の効果は raise するので、その席は起きない。張りが rename 1 手なら
+  ;; どちらも落ちず、根は常に正しい先を指す。
+  (setv d (os.path.realpath (tempfile.mkdtemp)))
+  (try
+    (setv target (os.path.join d "skills-src"))
+    (os.makedirs target)
+    (setv failures [])
+    (setv wrong [])
+    (setv residue [])
+    (for [round-index (range 200)]
+      (setv home (os.path.join d f"home-{round-index}"))
+      (os.makedirs home)
+      (setv link (os.path.join home "skills"))
+      (setv shared (mmap.mmap -1 2))
+      (setv (get shared 0) 0)
+      (setv (get shared 1) 0)
+      (setv read-fds [])
+      (setv pids [])
+      (for [index (range 2)]
+        (setv [read-fd write-fd] (os.pipe))
+        (setv pid (os.fork))
+        (when (= pid 0)
+          (os.close read-fd)
+          (race-child-installs shared index link target write-fd))
+        (os.close write-fd)
+        (.append read-fds read-fd)
+        (.append pids pid))
+      (setv deadline (+ (time.monotonic) 60))
+      (for [read-fd read-fds]
+        (setv line (race-read-line read-fd deadline))
+        (os.close read-fd)
+        (when (not-in line ["ok:linked" "ok:unchanged"])
+          (.append failures #(round-index line))))
+      (race-reap pids deadline)
+      (.close shared)
+      (when (not (and (os.path.islink link) (= (os.readlink link) target)))
+        (.append wrong round-index))
+      ;; 仮の名は rename で消えるので、家に残るのは根 1 つだけ(残骸を残さない)
+      (when (!= (os.listdir home) ["skills"])
+        (.append residue #(round-index (os.listdir home)))))
+    (assert (= failures []) f"同拍で落ちた席 {(len failures)} 件: {(cut failures 0 8)}")
+    (assert (= wrong []) f"根が正しい先を指さない回: {(cut wrong 0 8)}")
+    (assert (= residue []) f"家に残骸が残った回: {(cut residue 0 8)}")
+    (finally
+      (shutil.rmtree d :ignore-errors True))))
+
+
+(deftest test-fs-ensure-symlink-never-shows-a-reader-a-rootless-moment
+  ;; ⚑ 受入 11(D8 の同拍・B): unlink→symlink の 2 手は、その間に読んだ席へ **根の無い瞬間**を
+  ;; 見せる(直す前の実測: 会社 Mac 52 %・この pod 53.0 %)。本体の skills の discovery が
+  ;; そこへ当たると、その席の user 層の skills は 0 件。rename なら読み手は常に古い先か
+  ;; 新しい先のどちらかを見る。
+  (setv d (os.path.realpath (tempfile.mkdtemp)))
+  (try
+    (setv first-target (os.path.join d "skills-v1"))
+    (setv second-target (os.path.join d "skills-v2"))
+    (os.makedirs first-target)
+    (os.makedirs second-target)
+    (setv link (os.path.join d "home" "skills"))
+    (ensure-symlink-outcome link first-target)
+    (setv stop (mmap.mmap -1 1))
+    (setv started (mmap.mmap -1 1))
+    (setv (get stop 0) 0)
+    (setv (get started 0) 0)
+    (setv [read-fd write-fd] (os.pipe))
+    (setv pid (os.fork))
+    (when (= pid 0)
+      (os.close read-fd)
+      (race-child-reads link stop started write-fd))
+    (os.close write-fd)
+    (setv deadline (+ (time.monotonic) 60))
+    ;; 読み手が回り始めてから張り替える(読み 0 回のまま緑になる筋を塞ぐ)
+    (while (and (= (get started 0) 0) (< (time.monotonic) deadline))
+      (time.sleep 0.001))
+    (setv writer-failures [])
+    (for [flip (range 3000)]
+      (try
+        (ensure-symlink-outcome link (if (% flip 2) second-target first-target))
+        (except [error Exception]
+          (.append writer-failures (. (type error) __name__)))))
+    (setv (get stop 0) 1)
+    (setv line (race-read-line read-fd deadline))
+    (os.close read-fd)
+    (race-reap [pid] deadline)
+    (.close stop)
+    (.close started)
+    (assert (= writer-failures []) f"張り替えで落ちた {(len writer-failures)} 件: {(cut writer-failures 0 8)}")
+    (setv parts (.split line ":"))
+    (assert (and (= (len parts) 2) (.isdigit (get parts 0)) (.isdigit (get parts 1)))
+            f"読み手が数を返さない: {line}")
+    (setv reads (int (get parts 0)))
+    (setv missing (int (get parts 1)))
+    ;; 針: 読みが少なければ競りの窓を張れていない(0 回の読みで緑にならない)
+    (assert (> reads 500) f"読みが {reads} 回では競りの窓を張れていない")
+    (assert (= missing 0) f"根の無い瞬間を {missing} / {reads} 回見た")
     (finally
       (shutil.rmtree d :ignore-errors True))))
 
