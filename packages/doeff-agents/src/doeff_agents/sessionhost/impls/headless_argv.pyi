@@ -2,6 +2,10 @@
 
 CLAUDE_HEADLESS_FLAGS: list[str]
 CODEX_APP_SERVER_ARGS: list[str]
+CLAUDE_COLD_COMPACTION_PROMPT: str
+FAST_JEV_PLUGIN_ID: str
+
+def fast_jev_compaction_enabled(settings_text: str | None) -> bool: ...
 
 def build_claude_headless(params: dict[str, object]) -> dict[str, object]: ...
 def build_codex_headless(params: dict[str, object]) -> dict[str, object]: ...
