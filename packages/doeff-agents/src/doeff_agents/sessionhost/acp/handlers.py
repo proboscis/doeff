@@ -1234,7 +1234,7 @@ def session_view_of(result: JSON) -> SessionView | None:
         started_at_ms=None if started is None else _epoch_ms_of_iso(started),
         backend_alive=alive if isinstance(alive, bool) else None,
         turn_error=_str_field(snapshot, "turn_error"),
-        cache_retained_until_ms=_int_field(snapshot, "cache_retained_until_ms"),
+        cache_last_success_at_ms=_int_field(snapshot, "cache_last_success_at_ms"),
     )
 
 

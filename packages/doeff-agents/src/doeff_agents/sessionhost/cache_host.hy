@@ -5,7 +5,7 @@
 (import json)
 (import datetime [datetime timezone])
 (import .cache_host_model [HostCacheRecord HostCacheRead HostCacheWrite HostCacheActive CacheMaintenanceActiveError
-  CacheProcessIdentity HostCacheIdentifyProcess HostCacheStopProcess HostCacheRetainedUntil CACHE-RESIDENT-IDLE-MS])
+  CacheProcessIdentity HostCacheIdentifyProcess HostCacheStopProcess HostCacheLastSuccessAt])
 (import .acp.cache_operation [MaintenanceState CacheReply PING-TEXT])
 (import .acp.cache_observation [cache-observation-of])
 (import .effects [clock-now fs-read-text headless-has-session headless-spawn
@@ -15,24 +15,16 @@
 (import .launch [launch-spawn-env])
 (import .policy [carry-launch-flags is-terminal-status])
 
-(defk cache-resident-retention [wire]
-  {:pre [(: wire dict)] :post [(: % (| int None))]}
-  "通常turnの時刻を偽らず、専用操作の送信先を有限時間保持する。
-   最大TTLの1時間を保持予算に使うが、cacheの実際の有効期限には使わない。
-   pingの送信資格はcontrollerが応答観測・identity・期限から別に判断する。"
-  (when (or (!= (.get wire "agent_type") "claude")
-            (!= (.get wire "backend_kind") "headless")
-            (!= (.get wire "lifecycle") "multi_turn")
-            (!= (.get wire "status") "running")
-            (not (.get wire "conversation")))
-    (return None))
-  (setv ended (.get wire "turn_ended_at"))
-  (when (not (isinstance ended str)) (return None))
-  (setv at (datetime.fromisoformat (.replace ended "Z" "+00:00")))
-  (when (is at.tzinfo None) (raise (ValueError "turn_ended_at must include timezone")))
-  (setv initial (+ (int (* (at.timestamp) 1000)) CACHE-RESIDENT-IDLE-MS))
-  (<- refreshed (| int None) (HostCacheRetainedUntil (get wire "session_id")))
-  (if (is refreshed None) initial (max initial refreshed)))
+(defk cache-last-success-at [session-id]
+  {:pre [(: session-id str)] :post [(: % (| int None))]}
+  "この session で最後に成功した専用操作の完了時刻(epoch ms・無ければ None)を**観測して名乗る**だけ。
+
+   card acp:kanban-issue:ki-567f2dd6140f §3.1e: 保持の期限(いつまで送信先として守るか)は**判断**なので
+   ACP 側の judgment.cache-resident-retention-of の 1 点が持ち、host は仕組みだけを持つ。旧形
+   `cache-resident-retention` はここで適格の篩(claude / headless / multi_turn / running / 会話あり)と
+   保持の予算(CACHE-RESIDENT-IDLE-MS)の両方を持っていた = host 側に 2 つ目の方策の座が在った形。"
+  (<- observed (| int None) (HostCacheLastSuccessAt session-id))
+  observed)
 
 (defk cache-host-now []
   {:pre [True] :post [(: % int)]}

@@ -8,7 +8,6 @@ from weakref import WeakValueDictionary
 
 from doeff_agents.sessionhost.acp.cache_operation import MaintenanceState
 from doeff_agents.sessionhost.cache_host_model import (
-    CACHE_RESIDENT_IDLE_MS,
     HostCacheRecord,
     decode_cache_receipt,
 )
@@ -43,11 +42,13 @@ def _table(conn: sqlite3.Connection) -> None:
     )
 
 
-def cache_retained_until(conn: sqlite3.Connection, session_id: str) -> int | None:
-    """成功receiptだけから導く保持期限。既存DB・再起動にも同じ読みを使う。
+def cache_last_success_at(conn: sqlite3.Connection, session_id: str) -> int | None:
+    """この session で最後に成功した専用操作の完了時刻(epoch ms・無ければ None)。
 
     会話全体の履歴やACPを走査せず、indexで対象sessionの成功操作だけを読む。
-    これはcleanupの期限であり、cacheの実在・送信資格を宣言しない。
+    これは**観測した事実**ちょうどで、cacheの実在・送信資格・保持の期限を1つも宣言しない
+    (card acp:kanban-issue:ki-567f2dd6140f §3.1e —— 期限の判断は ACP 側の
+    judgment.cache-resident-retention-of の1点が、この値と turn_ended_at から導く)。
     """
     _table(conn)
     row = conn.execute(
@@ -57,7 +58,7 @@ def cache_retained_until(conn: sqlite3.Connection, session_id: str) -> int | Non
         "OR json_extract(receipt_json, '$.reply.cache_write') > 0)",
         (session_id,),
     ).fetchone()
-    return None if row is None or row[0] is None else int(row[0]) + CACHE_RESIDENT_IDLE_MS
+    return None if row is None or row[0] is None else int(row[0])
 
 
 def cache_receipt_get(conn: sqlite3.Connection, operation_id: str) -> HostCacheRecord | None:

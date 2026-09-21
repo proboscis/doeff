@@ -79,7 +79,7 @@
 (import doeff_agents.sessionhost.impls.headless_argv [headless-argv-impl])
 (import doeff_agents.sessionhost.effects [headless-kill headless-liveness])
 (import doeff_agents.sessionhost.headless_protocol [backend-alive])
-(import doeff_agents.sessionhost.cache_host [cache-host-ping cache-host-probe cache-host-guard-normal-send cache-host-cancel cache-resident-retention])
+(import doeff_agents.sessionhost.cache_host [cache-host-ping cache-host-probe cache-host-guard-normal-send cache-host-cancel cache-last-success-at])
 (import doeff_agents.sessionhost.cache_host_model [CacheMaintenanceActiveError CACHE-MAINTENANCE-ACTIVE])
 (import doeff_agents.sessionhost.cache_host_model [HostCacheRead])
 (import doeff_agents.sessionhost.cache_host_store [session-mutation-lock])
@@ -1105,8 +1105,11 @@
      status の語ではなくこれで判断する)。終端の行は観測せず false(host が既に終端と
      裁定した行の backend は片付けの対象で、次の手番を受ける器ではない)。"
   (setv wire (wire-with-stalled wire))
-  (setv (get wire "cache_retained_until_ms")
-        (run-hosted config actor (cache-resident-retention wire)))
+  ;; card acp:kanban-issue:ki-567f2dd6140f §3.1e: host が載せるのは**観測した事実**ちょうど
+  ;; (最後に成功した専用操作の完了時刻)。「いつまで保持するか」は ACP 側の判断
+  ;; (judgment.cache-resident-retention-of)で、host はその式も予算も 1 つも持たない。
+  (setv (get wire "cache_last_success_at_ms")
+        (run-hosted config actor (cache-last-success-at (get wire "session_id"))))
   (setv now (datetime.now timezone.utc))
   (setv (get wire "backend_alive")
         (if (is-terminal-status (get wire "status"))
