@@ -11,14 +11,16 @@
 (import os)
 (import shutil)
 (import tempfile)
+(import threading)
 (import pytest)
-(import doeff [EffectBase])
+(import doeff [EffectBase run])
 
 (import doeff_agents.sessionhost.effects [
   fs-canonical-path
   fs-file-mtime
   fs-read-text
   fs-write-text-atomic
+  fs-ensure-symlink
   fs-make-dirs
   env-get
   clock-now
@@ -324,3 +326,78 @@
     (finally
       (os.system f"{tmux} kill-session -t {session-name} 2>/dev/null")
       (shutil.rmtree d :ignore-errors True))))
+
+
+;; ---------------------------------------------------------------------------
+;; 家へ据える link と、家を共有する書き(card acp:kanban-issue:ki-62aa1f4e9c9c D8 / D9)
+;; ---------------------------------------------------------------------------
+
+(deftest test-fs-ensure-symlink-is-three-valued-and-relinks-a-moved-source
+  ;; ⚑ 受入 11(D8): doeff が所有する家の link は、正本が動いた日に**新しい先へ張り替わる**。
+  ;; FsLinkArtifact はここで `target-conflict` になり触らない(= 家が古い先を指したまま黙って残る)
+  ;; ので、意味の違う effect を分けた。3 値は閉じている。
+  (setv tmp (tempfile.mkdtemp))
+  (try
+    (setv old-target (os.path.join tmp "old"))
+    (setv new-target (os.path.join tmp "new"))
+    (os.makedirs old-target)
+    (os.makedirs new-target)
+    (setv link (os.path.join tmp "home" "skills"))
+    ;; 無い → 張る(親 dir も掘る)
+    (<- first (drive (fs-ensure-symlink link old-target)))
+    (assert (= first "linked") first)
+    (assert (os.path.islink link))
+    (assert (= (os.readlink link) old-target))
+    ;; 同じ先 → 触らない
+    (<- again (drive (fs-ensure-symlink link old-target)))
+    (assert (= again "unchanged") again)
+    ;; 先が動いた → 張り替える(不可分 = 途中で link が消えている窓を作らない)
+    (<- moved (drive (fs-ensure-symlink link new-target)))
+    (assert (= moved "linked") moved)
+    (assert (= (os.readlink link) new-target))
+    ;; 実体が居座っている → 触らない・raise しない
+    (setv occupied (os.path.join tmp "home" "CLAUDE.md"))
+    (with [f (open occupied "w")] (.write f "他人の実体"))
+    (<- verdict (drive (fs-ensure-symlink occupied new-target)))
+    (assert (= verdict "occupied-by-real-entity") verdict)
+    (assert (not (os.path.islink occupied)))
+    (with [f (open occupied)] (assert (= (.read f) "他人の実体")))
+    (finally (shutil.rmtree tmp :ignore-errors True))))
+
+
+(deftest test-fs-ensure-symlink-does-not-follow-a-broken-link-into-a-refusal
+  ;; 先の実在は張る条件にしない(壊れた symlink は無害 — 本体は組み込みだけで立つ)。
+  ;; pod が古い checkout に戻って立つ日に、席の起動をここで止めない。
+  (setv tmp (tempfile.mkdtemp))
+  (try
+    (setv link (os.path.join tmp "skills"))
+    (<- verdict (drive (fs-ensure-symlink link (os.path.join tmp "not-there"))))
+    (assert (= verdict "linked") verdict)
+    (assert (os.path.islink link))
+    (assert (not (os.path.exists link)))
+    (finally (shutil.rmtree tmp :ignore-errors True))))
+
+
+(deftest test-fs-write-text-atomic-survives-two-seats-writing-the-same-home
+  ;; ⚑ 受入 12(D9): 家は複数の席が共有する。固定の tmp 名(`path + tmp-suffix`)だと
+  ;; 2 席が同拍で書いた時に `os.replace` が競って片方が FileNotFoundError で落ちる
+  ;; (実測: 200×2 で例外 151 件)。共通の CLAUDE.md を**起動の拍ごとに**家へ書く便が
+  ;; この競りを常態にするので、書き手ごとに一意な tmp で閉じる。
+  (setv tmp (tempfile.mkdtemp))
+  (try
+    (setv target (os.path.join tmp "CLAUDE.md"))
+    (setv errors [])
+    (defn writer [text]
+      (for [_ (range 60)]
+        (try
+          (run (drive (fs-write-text-atomic target text ".agentd-tmp")))
+          (except [e Exception] (.append errors (repr e))))))
+    (setv threads [(threading.Thread :target writer :args #("A"))
+                   (threading.Thread :target writer :args #("B"))])
+    (for [t threads] (.start t))
+    (for [t threads] (.join t))
+    (assert (= errors []) #((len errors) (cut errors 0 3)))
+    ;; 読み手は torn state を見ない = どちらかの完全な本文
+    (with [f (open target)] (setv got (.read f)))
+    (assert (in got #{"A" "B"}) got)
+    (finally (shutil.rmtree tmp :ignore-errors True))))

@@ -320,6 +320,82 @@
 ;; 席へ運ぶ欄の全体(旗 + 手番の荷)。wire の受理形と蘇生の名簿はこれを写す。
 (setv CHARTER-CARRIED-KEYS (+ LAUNCH-FLAG-KEYS TURN-CARRIED-KEYS))
 
+;; ---------------------------------------------------------------------------
+;; 席の家へ運ぶ「共通の指示」の名簿(card acp:kanban-issue:ki-62aa1f4e9c9c・D11)
+;; ---------------------------------------------------------------------------
+;;
+;; 運ぶ物 = 全席で同じ・dotfiles が正本・claude が**設定の家から**読む物
+;; (共通の CLAUDE.md と skills)。宿ごとに違うのは正本の絶対 path **だけ**なので、
+;; 連鎖は席の settings file(`claude_settings_file`)と同じ 1 本に乗せる:
+;;
+;;   参加の宣言 [agentd].<key>
+;;     → acp/join.hy   (形の門: 絶対 path か ~/… ・相対は断る)
+;;     → acp/effects.py <env>           (composition root が門を通した絶対 path)
+;;     → launch.hy / headless.hy        (**起動の拍ごとに** env から読む)
+;;     → impls/claude_code.hy           (設定の家へ据える)
+;;
+;; ⚠ **1 種 = この名簿の 1 行ちょうど。**join の許す鍵・env の綴り・launch の読み・
+;;   据え付け・node の行の名乗りは全部この名簿を**回る**(数え直さない)。
+;;   d8472e1a が登記した壊れ方 —「欄を 1 つ足す操作が名簿を 4 枚触らせる形は 3 度壊れた」
+;;   (添付 2026-09-15 / 記憶の置き場 2026-09-18 / 記憶の本文 2026-09-21)— を、
+;;   この族では**作らないうちに**閉じる。
+;;
+;; 1 行の欄:
+;;   key       参加の宣言 [agentd] の鍵(toml)
+;;   env       席へ運ぶ env の名(綴りの正本はここ。acp/effects.py はこれを写す)
+;;   kind      "file" | "dir" — 据え方が違う(下)
+;;   home-name 設定の家(CLAUDE_CONFIG_DIR)の中のエントリ名
+;;   label     node の行の labels の鍵(present / missing を名乗る)
+;;
+;; ⚠⚠ **kind が据え方を決める。ここは本体の契約に依っている**(2026-09-21 実測・
+;;   据わっている本体 2.1.278 の bundle から逐語で読んだ):
+;;
+;;     let O = s && (n!=="User" || KRt());
+;;     if (n==="User" && !O) { let ve = await le().lstat(e);
+;;       if (g===0 && ve.isSymbolicLink() || (ve.nlink??1)>1 && ve.isFile()) return []; }
+;;     function KRt(){ return mB()!=="local-agent" }   // mB() = env CLAUDE_CODE_ENTRYPOINT
+;;
+;;   user 層の呼び口は `s` が真に固定なので、**入口が local-agent の席では
+;;   symlink と hard link の CLAUDE.md が黙って捨てられる**(空の context になる。
+;;   `@` の取り込みも同じ枝で落ちる)。今日の agentd の席の入口は cli / sdk-cli なので
+;;   当たらないが、入口の綴りは doeff が決めている値ではない(本体自身が cli → sdk-cli へ
+;;   書き換える枝を持つ)⇒ **"file" は実体 file で据える。symlink にしない。**
+;;   skills 側にこの門は無い(探索は userConfigDir("skills") の readdir)ので
+;;   "dir" は whole-dir symlink — 107〜117 本を毎起動で写さない。
+;;   この契約が動いた日に赤くする計器 = dotfiles agent/tests/check_seat_home_instruction_contract.py。
+(setv CARRIED-INSTRUCTION-SOURCES
+      #({"key" "claude_user_instructions_file"
+         "env" "DOEFF_AGENTD_CLAUDE_USER_INSTRUCTIONS_FILE"
+         "kind" "file"
+         "home-name" "CLAUDE.md"
+         "label" "seat-memory"}
+        {"key" "claude_skills_dir"
+         "env" "DOEFF_AGENTD_CLAUDE_SKILLS_DIR"
+         "kind" "dir"
+         "home-name" "skills"
+         "label" "seat-skills"}))
+
+;; 据え方の閉語彙(名簿の kind の値域 — 分岐は網羅的に書く)。
+(setv INSTRUCTION-SOURCE-KIND-FILE "file")
+(setv INSTRUCTION-SOURCE-KIND-DIR "dir")
+(setv INSTRUCTION-SOURCE-KINDS #{INSTRUCTION-SOURCE-KIND-FILE INSTRUCTION-SOURCE-KIND-DIR})
+
+
+(defn instruction-source-keys []
+  "名簿の宣言の鍵(join の AGENTD-KEYS はこれを合流する — 数え直さない)。"
+  (tuple (gfor row CARRIED-INSTRUCTION-SOURCES (get row "key"))))
+
+
+(defn instruction-source-envs []
+  "名簿の env の名(composition root と起動の拍の読みが回る)。"
+  (tuple (gfor row CARRIED-INSTRUCTION-SOURCES (get row "env"))))
+
+
+(defn instruction-source-of [key]
+  "宣言の鍵 → 名簿の 1 行(無ければ None)。"
+  (next (gfor row CARRIED-INSTRUCTION-SOURCES :if (= (get row "key") key) row) None))
+
+
 ;: 会話の圧縮の閾値を運ぶ欄の綴り(params・charter で同じ語)。argv の導出は
 ;: impls.claude_code.claude-autocompact-value の 1 点。wire(ACP の charter)側の
 ;: 綴りの定義点は acp/effects.py CHARTER_AUTO_COMPACT_WINDOW_KEY で、同じ語である

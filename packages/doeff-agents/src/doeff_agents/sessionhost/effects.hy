@@ -709,6 +709,28 @@
   #^ str source-path
   #^ str target-path)
 
+(defclass [(dataclass :frozen True :kw-only True)] FsEnsureSymlink [EffectBase]
+  "doeff が所有する symlink を宣言どおりに在らせる(card acp:kanban-issue:ki-62aa1f4e9c9c D8)。
+
+   ⚠ FsLinkArtifact との違いがこの effect の**存在理由**: あちらは会話 artifact の
+   移植用で、先が違う実体は `target-conflict` で**触らない**(silent 置換をしない)。
+   それは artifact には正しいが、doeff が家へ据える link には正しくない — 正本の path が
+   動いた日(checkout の置場を変える・宿の綴りが変わる)に、家の link が古い先を指したまま
+   黙って残る。⇒ **doeff が所有する形(symlink)のときだけ張り替える。**
+
+   物理(3 値・閉じた集合):
+     \"unchanged\"               既に symlink で、先の綴りが同じ(何もしない)
+     \"linked\"                  無かった / 先が違った ⇒ 親を mkdir して張る・
+                                張り替えは一時名 → rename(不可分 — 同じ家を共有する
+                                席が同拍で起動しても壊れない)
+     \"occupied-by-real-entity\" symlink でない実体(file / dir)が居座っている ⇒
+                                **触らない**・raise しない(呼び手が名乗る)。
+                                他人が置いた物を doeff が黙って消さない。
+   先の実在は張る条件にしない(壊れた symlink は無害 — 本体は組み込みだけで立つ)。
+   戻り値: str(上記 3 値)。"
+  #^ str link-path
+  #^ str target-path)
+
 (defclass [(dataclass :frozen True :kw-only True)] FsDirExists [EffectBase]
   "ディレクトリの実在観測(ADR-DOE-AGENTS-006 R10 — 発注の物理前提検査)。
    symlink は解決して判定する(解決先が dir なら実在)。FsListDir は不在と
@@ -1056,6 +1078,13 @@
    :post [(: % FsLinkArtifact)]}
   "FsLinkArtifact を構築する(transplant の symlink 敷設プリミティブ)。"
   (FsLinkArtifact :source-path source-path :target-path target-path))
+
+(deff fs-ensure-symlink [link-path target-path]
+  {:pre [(: link-path str) (> (len link-path) 0)
+         (: target-path str) (> (len target-path) 0)]
+   :post [(: % FsEnsureSymlink)]}
+  "FsEnsureSymlink を構築する(doeff が所有する家の link の据え付け)。"
+  (FsEnsureSymlink :link-path link-path :target-path target-path))
 
 (deff fs-dir-exists [path]
   {:pre [(: path str) (> (len path) 0)]
