@@ -4,6 +4,9 @@
 - 発端: 依頼 `lt-B9RTA0JDQ81KV9B7RJ84QFS6G7` + 射程を広げる申し送り `lt-9V6CJG6XP502YWDDXMNERY3P1Q`
   (依頼者 `c-AJ8C0BK9RF29HQ92ZQ986FXQVT`)
 - リポジトリ: `doeff`(`~/repos/doeff`)。基点 = 本線 `7451fa17` 以降の origin/main
+- ⚠ **改訂 2026-09-22**(初版の着地 `61147f07` の後): 受入が 6 → **7 本**になり、
+  **受入 3 の撃ち方が変わった**(初版は反証不能だった)。errno → 状態の写しも直した。
+  変わった節 = 3b-1 / 3c / 4。既に着手していたら、この 3 節を読み直すこと。
 - 設計の正本: 同じディレクトリの `design.md`。**先にこれを読むこと。**
   実測の計器と生の出力は `evidence/` に在り、`ROUNDS` を変えて再実行できる。
 - 結合核: **該当なし**(名簿 98 + 1 パターンと突合して 0 件・`evidence/coupling_core_match.log`)
@@ -66,8 +69,15 @@
 ### 3b. `substrate.hy`
 
 1. `ensure-symlink-outcome`: `os.makedirs` と `os.symlink` を `try` の中へ。`os.replace` の
-   `except OSError` を errno で割る(`EISDIR` / `ENOTEMPTY` / `EEXIST` → `occupied`、
-   残り → `refused`)。仮 symlink の後始末は今と同じ(自分の仮だけ消す)。
+   `except OSError` を errno で割る。⚠ **改訂**: 割りは **`EISDIR` だけ** → `occupied`、
+   残り → `refused`。**errno → 状態の写しを 1 つの表にしないこと** — 純関数 1 つ
+   `refusal-of(operation, errno)` に畳み、`refused-by-container` にならない唯一の組を
+   `(replace, EISDIR)` にする。
+   - `EEXIST` を表に入れない: `os.replace` からは出ない(古い側が symlink)一方、
+     **`os.makedirs` は「親の位置に実体ファイル」で `EEXIST`(17)を出す** ⇒ 同じ表を
+     両方に使うと受入 2 が赤くなる。
+   - `ENOTEMPTY` も要らない(仮は必ず symlink なので dir → dir の rename にならない)。
+   仮 symlink の後始末は今と同じ(自分の仮だけ消す)。
 2. `_ensure-view-symlink`: `occupied` は今の文言のまま `RuntimeError`。`refused-by-container` は
    **別の文言**の `RuntimeError`(器が断ったこと・`detail` をそのまま載せる・手で片付ける実体が
    在るとは言わない)。
@@ -80,6 +90,14 @@
 
 `design.md` 3.5 の表のとおり。**`{"ok" True "action" outcome}` の `action` には
 `(. outcome state)` を入れる**(レコードを辞書に入れない)。
+
+⚠ **同じ変更で `launch.hy:366` の文言を状態で分ける**(改訂で足した)。いまの
+`f"failed ({outcome}) — 非破壊方針につき既存物は触らない"` は、`refused-by-container` で
+返った拍に**嘘になる**(実体は 1 つも居ない)。扉 2 が作っていた誤診断と同じ形なので、
+状態で分ける。**方針は変えない — 変えるのは文言だけ**(「やらないこと」と矛盾しない)。
+
+⚠ 行番号は origin/main `68f075d2` で数え直した: `claude_code.hy:788`(`source-missing` の判定)・
+`codex.hy:423`(同)・`launch.hy:365-366`・`substrate.hy` の `FsLinkArtifact` は 537-557。
 
 ### 3d. 検査(ゲート)
 
@@ -111,7 +129,7 @@
 `docs/adr/enforcement-ledger.json` は数の歯止め — ADR の法を足したら `adr_laws` を更新する
 (semgrep は既存規則への 1 行追加なので `semgrep_rules` は 269 のまま)。
 
-## 4. 受入
+## 4. 受入(改訂で 7 本)
 
 芯は 1 と 2。番号は報告でそのまま使うこと。
 
@@ -122,10 +140,30 @@
    (`os.fork` + 共有メモリのスピン待ち・ロックを取らない)。
    ⚠ 既存の骨をコピーせず、**共通の助け関数を使い回す**(`race-spin-barrier` /
    `race-child-installs` / `race-read-line` / `race-reap` は既に在る)。
+   ⚠ この 1 本で `launch.hy:365` の sibling の敷設先も一緒に閉じる(別の変更は要らない)。
 2. **器の断り**: 親の位置に実体ファイル / 家が `r-x` / 親ディレクトリを作れない の 3 形で、
    **両方の関数**が `refused-by-container` を返し、`errno` が非 None、例外 0。
-3. **`os.replace` の割り方**: 実体ディレクトリ(空・中身入り)は `occupied-by-real-entity`、
-   それ以外の `OSError` は `refused-by-container`。
+   ⚠ **「家が `r-x`」は root だと偽の赤になる**(root は権限ビットを素通りするので
+   `os.symlink` が通って `linked` が返る)。uid を見るのではなく、**その dir へ 1 バイト
+   書いてみて通ったら skip** すること(宿の実勢を測る形)。この package に `geteuid` /
+   `getuid` の検査は 0 件。
+3. ⚠ **改訂**: **errno を注入して**、`os.replace` が `EISDIR` の時だけ
+   `occupied-by-real-entity`、他の `OSError` は `refused-by-container`(errno 非 None)。
+   **実体ディレクトリを据える形では撃てない** — `os.lstat` が先に当たるので `os.replace` に
+   **0 回しか届かない**(Darwin と Linux の両方で失敗 6 形の合計到達 = 0・
+   `evidence/replace_reach_darwin.log` と `design.md` 2.3b)。据える形の枡は**直す前の版でも
+   緑**になるので、それでは受入になりません。骨:
+
+       real_replace = os.replace
+       def raising_replace(err):
+           def f(src, dst, **kw):
+               raise OSError(err, os.strerror(err))
+           return f
+       # os.replace = raising_replace(errno.EISDIR) → occupied-by-real-entity
+       # os.replace = raising_replace(errno.EACCES) → refused-by-container / errno 非 None
+
+   同じ枡で **`.agentd-tmp` の残骸が 0** であることも見る(`except` 枝の中の
+   「自分の仮だけ掃除する」`os.unlink staged` は、到達路が無いので一度も走ったことがない)。
 4. **検査の射程**: `substrate.hy` の中で `os.symlink` / `.symlink_to` が許した 2 関数の外に
    0 件。対象ディレクトリ配下の `ln -s` も 0 件。どちらも検査が現に赤くなることを、
    わざと違反する検体で確かめる(semgrep 側は既存の検体に、構造検査側はテストの中で
@@ -134,6 +172,19 @@
    cross-binding の移植の検査が緑。ログに出る語が変わっていない
    (理由が在る時だけ `state (detail)` になる)。
 6. **偽ハンドラの同型性**: 台本版が実物と同じ型を返す。
+7. ⚠ **新設**: **語彙を文字列で比べている座を数え、新しい型で分岐が現に成立する。**
+   戻りをレコードにすると `(= outcome "…")` は**黙って False** になる(`__str__` を足しても
+   等号は直りません)。origin/main `68f075d2` で数えた座は 4 つ:
+
+   | 座 | 壊れ方 | 既存の検査 |
+   | --- | --- | --- |
+   | `launch.hy:365` `(not-in outcome #{"linked" "same-entity"})` | 常に真 ⇒ `link_siblings` を持つ seed が毎回 raise | **赤で捕まる**(`sessionhost_launch_deftests.hy:505`)|
+   | `claude_code.hy:788` `(= outcome "source-missing")` | **黙って False** ⇒ source が無い拍の枝が死ぬ | **無い** |
+   | `codex.hy:423` 同上 | 同上 | **無い** |
+   | `effects.hy` の `FS-ENSURE-SYMLINK-*` 3 定数 | 消すので import で落ちる | 落ちること自体が声 |
+
+   ⇒ `claude_code.hy:788` / `codex.hy:423` は **検査を新しく足す**(silent な意味変化を残さない)。
+   報告では 4 座それぞれについて「どう直したか・何が覆っているか」を 1 行ずつ書くこと。
 
 ## 5. 検査の走らせ方(制約)
 

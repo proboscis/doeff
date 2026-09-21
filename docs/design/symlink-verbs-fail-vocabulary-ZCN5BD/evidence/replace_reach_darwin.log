@@ -1,0 +1,14 @@
+# 機体 CA-20038667 / Darwin 25.5.0 / python 3.14.3
+# 検体 = 本線 HEAD の substrate.hy ensure-symlink-outcome(動詞を通して撃つ)
+
+  実体 dir(空)              os.replace 到達 0 回 | 値=occupied-by-real-entity
+  実体 dir(中身入り)           os.replace 到達 0 回 | 値=occupied-by-real-entity
+  実体 file                os.replace 到達 0 回 | 値=occupied-by-real-entity
+  親の位置に実体 file           os.replace 到達 0 回 | raise=FileExistsError errno=17
+  家が r-x                 os.replace 到達 0 回 | raise=PermissionError errno=13
+  親 dir を作れない            os.replace 到達 0 回 | raise=PermissionError errno=13
+  不在 → 張る                os.replace 到達 1 回 | 値=linked
+  別の先 → 張り替え             os.replace 到達 1 回 | 値=linked
+
+-- 失敗 6 形の合計到達 = 0 --
+-- 正常 2 形の合計到達 = 2 --
