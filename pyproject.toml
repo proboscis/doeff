@@ -86,6 +86,8 @@ doeff-ml-nexus = { workspace = true }
 doeff-hy = { workspace = true }
 doeff-adr = { workspace = true }
 doeff-domain = { workspace = true }
+doeff-system-one = { workspace = true }
+doeff-jev = { workspace = true }
 
 [tool.pytest.ini_options]
 timeout = 60
