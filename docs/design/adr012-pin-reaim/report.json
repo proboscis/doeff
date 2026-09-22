@@ -361,6 +361,133 @@
         "sha256": "f50270e4a8eb29c552a07c724de242d239d77ade07e2736a424939b9ab2d1f0c"
       },
       "status": "passed"
+    },
+    {
+      "id": "accept-pos-focus-tip",
+      "scenarios": [
+        "sc-effects",
+        "sc-storage",
+        "sc-concurrency",
+        "sc-distribution",
+        "sc-hardware",
+        "sc-simulation"
+      ],
+      "control": "positive",
+      "expectation": "着地後の本線の先端(origin/main 4d20a578)で対象 4 本が緑 — 設計の基準 abd03fd2 ではなく先端で測る",
+      "observation": "4 passed, 55 deselected in 38.22s(冷)/ 17.61s(変異の後始末の確認)。着地 4e4d3eb1 は先端の祖先(merge-base --is-ancestor = YES)",
+      "evidence": {
+        "path": "acceptance-evidence.md",
+        "sha256": "8e272e4ef5df59cb55e77d258fd9207754eefb09752904c0146c6c189f6f0a28"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "accept-pos-book-tip",
+      "scenarios": [
+        "sc-effects",
+        "sc-storage",
+        "sc-concurrency",
+        "sc-distribution",
+        "sc-hardware",
+        "sc-simulation"
+      ],
+      "control": "positive",
+      "expectation": "冊 1 file の全 59 本が先端で緑・台帳の ratchet も緑(law / deftest の増減 0)",
+      "observation": "59 passed in 0.90s ・ tests/test_enforcement_ledger.py 1 passed in 0.13s ・ enforcement-ledger.json の差分 0 行",
+      "evidence": {
+        "path": "acceptance-evidence.md",
+        "sha256": "8e272e4ef5df59cb55e77d258fd9207754eefb09752904c0146c6c189f6f0a28"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "accept-neg-mouth5",
+      "scenarios": [
+        "sc-effects"
+      ],
+      "control": "negative",
+      "expectation": "当席の手で 5 つ目の関所の口を足すと、名簿の差として赤で、何を宣言せよかが読める",
+      "observation": "赤 0.47s — `session_env の関所を呼ぶ口が名簿と違う … SESSION-ENV-ADMISSION-MOUTHS へ 1 行宣言する: 実測 [… \"session.rehydrate\" …] / 名簿 [… 4 つ]`",
+      "evidence": {
+        "path": "acceptance-evidence.md",
+        "sha256": "8e272e4ef5df59cb55e77d258fd9207754eefb09752904c0146c6c189f6f0a28"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "accept-neg-blindB",
+      "scenarios": [
+        "sc-distribution"
+      ],
+      "control": "negative",
+      "expectation": "呼びの後で文を作り直す形(盲検 B・元からの穴)が当席の実射で赤",
+      "observation": "赤 9.67s — `agentd.hy が合成した文を呼びの後で作り直している —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点(R16)`",
+      "evidence": {
+        "path": "acceptance-evidence.md",
+        "sha256": "8e272e4ef5df59cb55e77d258fd9207754eefb09752904c0146c6c189f6f0a28"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "accept-neg-drain-const",
+      "scenarios": [
+        "sc-concurrency"
+      ],
+      "control": "negative",
+      "expectation": "drain の合図を定数に置き換えると赤(file を名指さない形でも噛む)",
+      "observation": "赤 10.36s — `loop は drain の合図を**読んで** settings.draining に写す(R39)—— 定数を書くと level-triggered が壊れ、排水が下ろせない`",
+      "evidence": {
+        "path": "acceptance-evidence.md",
+        "sha256": "8e272e4ef5df59cb55e77d258fd9207754eefb09752904c0146c6c189f6f0a28"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "accept-pos-blindA",
+      "scenarios": [
+        "sc-storage"
+      ],
+      "control": "positive",
+      "expectation": "名簿を module 定数へ括り出す正当な整理(盲検 A)では緑 = 偽陽性が消えている",
+      "observation": "緑 11.74s(attachment_spelling 1 passed)。RESUME-CARRIED-KEYS へ括り出した形で継承は保たれる",
+      "evidence": {
+        "path": "acceptance-evidence.md",
+        "sha256": "8e272e4ef5df59cb55e77d258fd9207754eefb09752904c0146c6c189f6f0a28"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "accept-neg-blindA-violation",
+      "scenarios": [
+        "sc-storage"
+      ],
+      "control": "negative",
+      "expectation": "盲検 A の整理 + 本物の違反(定数から添付を落とす)は赤 — A の緑が無条件でないことの実演(設計 R5 3 行目)",
+      "observation": "赤 13.34s — `resume の params に添付が乗らない(R31)—— charter の欄を写す名簿へ添付を足す。 実測 None`",
+      "evidence": {
+        "path": "acceptance-evidence.md",
+        "sha256": "8e272e4ef5df59cb55e77d258fd9207754eefb09752904c0146c6c189f6f0a28"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "accept-diff-constraints",
+      "scenarios": [
+        "sc-effects",
+        "sc-storage",
+        "sc-concurrency",
+        "sc-distribution",
+        "sc-hardware",
+        "sc-simulation"
+      ],
+      "control": "positive",
+      "expectation": "law の :statement の差分 0・sessionhost/** の差分 空・変更 file は冊 1 本ちょうど・法の正本を写していない",
+      "observation": "git show の :statement 差分 0 行 / sessionhost 配下の差分 空 / name-only = 冊 1 file / `(law spelling-pins` の定義 0 件(名指す 1 行のみ・212 行)",
+      "evidence": {
+        "path": "acceptance-evidence.md",
+        "sha256": "8e272e4ef5df59cb55e77d258fd9207754eefb09752904c0146c6c189f6f0a28"
+      },
+      "status": "passed"
     }
   ],
   "unresolved": []
