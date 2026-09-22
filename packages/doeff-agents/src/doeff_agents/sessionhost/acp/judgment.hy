@@ -373,6 +373,7 @@
   TURN-RECORD-KIND
   TurnEntryDropMarker
   TurnEntryHeadline
+  TurnReopen
   USAGE-WINDOW-FULL-PERCENT
   USAGE-WINDOW-SECONDS
   WatchAdvance
@@ -980,6 +981,21 @@
   {"account" plan.account
    "binding" (if (isinstance binding dict) binding None)
    "model" plan.model})
+
+
+(defk home-digest-of [home]
+  {:pre [(: home dict)]
+   :post [(: % str)]}
+  "session を使い回す鍵(session-affinity-key-of の組)の sha256(小文字の 16 進 64 字)。
+
+   card acp:kanban-issue:ki-4c0a0aa06b07: turn-record の spec.reopen.homeDigest に写す値。
+   **不透明な値で、比較にだけ使う** — 隣り合う手番の digest が違えば実行環境(口座・結び・model の
+   どれか)が入れ替わっていて、前の手番の prompt cache は次の手番へ続かない。鍵そのものを行に置くと
+   結びの中身(家の path・config の dir)が ACP の行へ漏れるので、digest 1 つに畳む。
+   材料は ACP の行から来た JSON なので default は届かないが、JSON にできない値で手番ごと落とさない
+   ために全域にしてある(digest は比較にしか使わないので repr で足りる)。"
+  (setv canonical (json.dumps home :sort-keys True :ensure-ascii False :separators #("," ":") :default repr))
+  (.hexdigest (hashlib.sha256 (.encode canonical "utf-8"))))
 
 
 (defk capabilities-of []
@@ -2375,6 +2391,48 @@
   (if (and (isinstance opener str) opener) opener None))
 
 
+;; ---------------------------------------------------------------------------
+;; 会話の結び(conversation.status.home)— card acp:kanban-issue:ki-4c0a0aa06b07
+;; ---------------------------------------------------------------------------
+;;
+;; 会話のターンがいま走っている実行元(機体 × 口座 × model)を、会話の行に 1 欄で据える。
+;; 書き手はここ(手番を起こす側)ちょうどで、読み手は cache の keepalive。keepalive は自分では
+;; 次のターンの実行元を知りようがなく、過去のターンから推し量ると外す(operator 指摘 2026-09-23
+;; 逐語 "pinger doesnt know if a session will be resumed by same agent or not right?")。
+;; ⚠ この欄は「次のターンも必ずここで走る」の保証ではなく宣言 — 保証は手番を組む側(配置の親和と
+;; model の据え置き)が担い、実行元が動いた拍は次の手番がこの欄を書き直す。
+
+(defk conversation-home-of [plan node-name now-ms]
+  {:pre [(: plan LaunchPlan) (: node-name str) (: now-ms int)]
+   :post [(: % (| dict None))]}
+  "この手番の実行元(契約 conversation.status.home の形)。口座を借りない手番(plan.account が無い)は
+   結びを名乗らない(None)— 温める先が決まらないので、欄を書かないほうが読み手は正しく止まる。"
+  (when (or (not node-name) (not plan.account) (not plan.model))
+    (return None))
+  {"node" node-name "account" plan.account "model" plan.model "at" now-ms})
+
+
+(defk conversation-home-differs [status home]
+  {:pre [(: status dict) (: home dict)]
+   :post [(: % bool)]}
+  "会話の行の status.home を据え直す必要が在るか。刻(at)だけの違いでは書かない — 実行元の 3 軸
+   (機体・口座・model)のどれかが動いた時だけ(手番ごとに 1 回の書きを増やさない)。"
+  (setv current (.get status "home"))
+  (when (not (isinstance current dict))
+    (return True))
+  (any (gfor axis #("node" "account" "model") (!= (.get current axis) (.get home axis)))))
+
+
+(defk conversation-status-with-home [status home]
+  {:pre [(: status dict) (: home dict)]
+   :post [(: % dict)]}
+  "status の写しに結びを 1 欄だけ据えたもの(他の欄は 1 bit も触らない — engine は**変わった欄**の
+   書き手だけを検めるので、他の係の欄を写したまま出してよい)。"
+  (setv next (dict status))
+  (setv (get next "home") home)
+  next)
+
+
 (defk charter-with-seat-env [charter seat-env]
   {:pre [(: charter dict) (: seat-env tuple)]
    :post [(: % dict)]}
@@ -3755,10 +3813,10 @@
   f"{AGORA-KINDS-NAMESPACE}:{TURN-RECORD-KIND}:{job-id}")
 
 
-(defk in-flight-job-of [row plan view node-name started-ms turn-floor-ms start-offset covers lease pending]
+(defk in-flight-job-of [row plan view node-name started-ms turn-floor-ms start-offset covers lease pending arm]
   {:pre [(: row AcpRow) (: plan LaunchPlan) (: view SessionView) (: node-name str)
          (: started-ms int) (: turn-floor-ms int) (: start-offset int) (: covers bool)
-         (: lease (| LeaseGrant None)) (: pending tuple)]
+         (: lease (| LeaseGrant None)) (: pending tuple) (: arm (| str None))]
    :post [(: % InFlightJob)]}
   "agent-job の行 + 起こし方の写し + 器の眺めから、観測に要る memory の状態を組む 1 点。
    受けた直後(after-start)も再起動後の拾い直し(adopt)も同じ形 — 行と器に無い欄
@@ -3769,6 +3827,8 @@
    (段 10 lane 10n・None = 宣言なし)。"
   (<- escalation-seconds (| int None) (escalation-seconds-of-charter plan.charter))
   (<- cache-context (| dict None) (cache-context-of row.status plan.account))
+  ;; card acp:kanban-issue:ki-4c0a0aa06b07: 引き継ぎ方は行へ 1 度だけ写す(spec.reopen)。
+  (<- reopen (| TurnReopen None) (turn-reopen-of plan arm))
   (InFlightJob
     :job-key row.key
     :job-namespace row.namespace
@@ -3785,6 +3845,7 @@
     :transcript-offset start-offset
     :materials-cover-the-turn covers
     :cache-context cache-context
+    :reopen reopen
     :delta-seq 0
     :lease-id (if (is lease None) None lease.lease-id)
     :lease-kind (if (is lease None) None lease.kind)
@@ -3798,10 +3859,30 @@
     :interrupt-escalation-seconds escalation-seconds))
 
 
+;; 引き継ぎ方が **前の手番の prompt cache を次の手番へ続けるか** — 判断はこの 1 点(card
+;; acp:kanban-issue:ki-4c0a0aa06b07)。send = 前の手番の生きた実行体へそのまま渡す / resume = 同じ
+;; 実行体を同じ文脈で起こし直す(どちらも先頭が残る)。launch は文脈が無く、rehydrate は履歴を
+;; 最初の入力へ組み直すので先頭が別物になる。
+(setv CACHE-CONTINUING-ARMS #{NEXT-ARM-SEND NEXT-ARM-RESUME})
+
+
+(defk turn-reopen-of [plan arm]
+  {:pre [(: plan LaunchPlan) (: arm (| str None))]
+   :post [(: % (| TurnReopen None))]}
+  "この手番の引き継ぎ方(turn-record の spec.reopen に写す形)。arm が無い / 契約の閉語彙(launch /
+   send / resume / rehydrate)の外(defer 等)なら None = 不明で、行に欄を書かない(現在の設定から
+   補わない — 不明を『引き継いだ』に倒すと keepalive が無駄な ping を送り続ける)。"
+  (when (or (is arm None) (not (in arm #{NEXT-ARM-LAUNCH NEXT-ARM-SEND NEXT-ARM-RESUME NEXT-ARM-REHYDRATE})))
+    (return None))
+  (<- home dict (session-affinity-key-of plan))
+  (<- digest str (home-digest-of home))
+  (TurnReopen :mode arm :home-digest digest))
+
+
 (defk turn-record-spec-of [job]
   {:pre [(: job InFlightJob)]
    :post [(: % dict)]}
-  "契約 turn-record の spec(conversationId・agentJobId・node・profile・model・sessionId)。sessionId = この手番を
+  "契約 turn-record の spec(conversationId・agentJobId・node・profile・model・sessionId・reopen)。sessionId = この手番を
    走らせた session(段 8q — Messaging が次の手番の affinity.predecessor に名指す綴り。書かないと会話の前の
    session が名指されず、温かい session が片付いた次の手番は文脈なしで起きる)。"
   (setv spec {"conversationId" job.subject
@@ -3811,6 +3892,10 @@
    "model" job.model
    "sessionId" job.session-id})
   (when (is-not job.cache-context None) (setv (get spec "cacheContext") job.cache-context))
+  ;; card acp:kanban-issue:ki-4c0a0aa06b07: 引き継ぎ方(mode)と実行環境の身元の digest。不明(None)は
+  ;; 欄ごと書かない — 読み手(keepalive)は欠落を「引き継がない」と同じ側に倒す。
+  (when (is-not job.reopen None)
+    (setv (get spec "reopen") {"mode" job.reopen.mode "homeDigest" job.reopen.home-digest}))
   spec)
 
 

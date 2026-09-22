@@ -547,6 +547,9 @@
   compact-at-of
   compaction-due
   conversation-opener-of
+  conversation-home-of
+  conversation-home-differs
+  conversation-status-with-home
   context-percent-for
   context-percent-of
   conversation-key-of
@@ -1631,9 +1634,39 @@
                     (<- (LogLine :text f"agentd: claim of job {job-id} did not land ({claimed}); will re-list"))
                     state)
                   (do
+                    ;; card acp:kanban-issue:ki-4c0a0aa06b07: 会話の結び(いま走っている実行元)を据える。
+                    ;; claim が着いた拍に 1 度・3 軸のどれかが動いた時だけ書く(会話の行は熱いので刻だけの
+                    ;; 書きを増やさない)。断られた拍は次の手番が同じ判断で据え直すので、ここでは log だけ。
+                    (<- bound bool (bind-conversation-home settings conversation-row plan subject now-ms))
                     (<- started AgentdState
                         (start-claimed settings state row plan choice view session-id now-ms opener))
                     started)))))))
+
+
+(defk bind-conversation-home [settings conversation-row plan subject now-ms]
+  {:pre [(: settings AgentdSettings) (: conversation-row (| AcpRow None)) (: plan LaunchPlan)
+         (: subject str) (: now-ms int)]
+   :post [(: % bool)]}
+  "会話の行に「いま走っている実行元」(status.home)を据える — cache の keepalive が読む唯一の結び。
+   判断は judgment の 2 点(conversation-home-of = 実行元の形・conversation-home-differs = 据え直すか)で、
+   ここは行を書くだけ。行が読めない / 口座を借りない手番は結びを名乗らない(欄を書かない — 読み手は
+   結びの無い会話へ ping を送らない)。"
+  (when (is conversation-row None)
+    (return False))
+  (<- home (| dict None) (conversation-home-of plan settings.node-name now-ms))
+  (when (is home None)
+    (return False))
+  (<- status dict (status-object-of conversation-row))
+  (<- changed bool (conversation-home-differs status home))
+  (when (not changed)
+    (return False))
+  (<- next dict (conversation-status-with-home status home))
+  (<- wrote (| Written Conflict Refused) (AcpPutStatus :row conversation-row :status next))
+  (when (not (isinstance wrote Written))
+    (<- (LogLine :text (+ f"agentd: the home of conversation {subject} could not be bound to "
+                          f"{(get home "node")} / {(get home "account")} / {(get home "model")} "
+                          f"({wrote}); the next turn binds it again"))))
+  (isinstance wrote Written))
 
 
 (defk mail-bodies-by-ref [settings messages]
@@ -1831,7 +1864,7 @@
       ;; 手番の始まりに取った offset なので、材料はこの手番を覆う(covers = True・腕に依らない —
       ;; card acp:kanban-issue:ki-ef537db05f7f)。
       (in-flight-job-of row plan view settings.node-name now-ms sent-ms (get start 1) True lease
-                        (tuple pending)))
+                        (tuple pending) arm))
   (setv job (replace job :request-start-lower-bound-ms now-ms))
   ;; 段 10 lane 10s 追補 3(agora-redesign #79): 手番の最初の frame(status running・at = sent-ms)は**送った拍に押す** —
   ;; turn-record の作成(頭への書き 1 往復 ≈ 60〜100 ms・Mac → tailnet)の後ろに置くと、frame が名乗る at より 1 往復
@@ -3162,8 +3195,12 @@
                   ;; card acp:kanban-issue:ki-ef537db05f7f: 拾い直しの offset は**手番の始まりではなく拾い直した拍**に
                   ;; 取ったので、材料がこの手番を覆うのは file の頭から読む腕(start-offset-of の from-head = launch /
                   ;; rehydrate — この手番自身が session を起こした)だけ。send / resume の腕は覆わない。
+                  ;; card acp:kanban-issue:ki-4c0a0aa06b07: 拾い直しの引き継ぎ方は recovered-arm-of が
+                  ;; 器の帰属から読んだ腕ちょうど(発明しない)。行が既に在れば spec は作成時のまま
+                  ;; (immutable)で、この値が効くのは #537 の作り直しの拍だけ。
                   (in-flight-job-of row plan view settings.node-name row.created-at-ms
-                                    row.created-at-ms (get start 1) (get start 2) lease #()))
+                                    row.created-at-ms (get start 1) (get start 2) lease #()
+                                    recovered-arm))
               ;; 段 9f lane 9f-2: 本文の stream の拾い直しの番と採番の下限は turn-record の行から(judgment.recovered-record-of)。
               (<- record-key str (turn-record-key-of row.resource-id))
               (<- record-row (| AcpRow None) (AcpGetRow :key record-key))
