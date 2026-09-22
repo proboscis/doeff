@@ -78,7 +78,11 @@
   fast-jev-compaction-enabled
   fast-jev-home-settings
   fast-jev-state-dir
-  fast-jev-install-command])
+  fast-jev-install-command
+  fast-jev-plugin-json-path
+  fast-jev-installed-version
+  fast-jev-plugin-outdated
+  fast-jev-update-command])
 
 
 ;; ---------------------------------------------------------------------------
@@ -676,11 +680,21 @@
               (if (fast-jev-compaction-enabled before)
                   ;; 据え済みの家(PVC で持ち越される)も宣言へ揃える — options が古い形(stateDir なし・
                   ;; 鍵の path 違い)なら合流した本文へ書き直す(冪等: 同じなら書かない・install は撃たない)。
+                  ;; plugin の版も宣言(FAST-JEV-PLUGIN-VERSION)へ揃える — 家の plugin.json の版が pin と
+                  ;; 違う時だけ update を撃つ(読めない家は撃たない・失敗は warning で起動は止めない)。
                   (do
                     (setv desired (fast-jev-home-settings before key-file state-dir))
                     (when (!= desired before)
                       (<- _ (fs-write-text-atomic settings-path desired ".agentd-tmp")))
-                    [])
+                    (setv warnings [])
+                    (<- plugin-json (fs-read-text (fast-jev-plugin-json-path config-dir)))
+                    (when (fast-jev-plugin-outdated (fast-jev-installed-version plugin-json))
+                      (<- res (proc-run (fast-jev-update-command config-dir) None))
+                      (when (!= res.exit-code 0)
+                        (.append warnings
+                                 (+ f"fast-jev-compaction: plugin update exited {res.exit-code}: "
+                                    (.strip (cut (or res.stderr "") 0 300))))))
+                    warnings)
                   (do
                     (setv warnings [])
                     (<- res (proc-run (fast-jev-install-command config-dir) None))
