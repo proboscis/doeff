@@ -1,0 +1,638 @@
+{
+ "version": 1,
+ "task_id": "lt-KR8T10F3PWDB5M2DJWDJTWWDDW",
+ "base_revision": "09309e77ecd24d3f555b012000e910782b734fa0",
+ "author": {
+  "conversation_id": "c-XYP9ZM3W0GG8GPB4J60GK2AF49",
+  "model": "claude-opus-5",
+  "effort": "既定(起動口が受け付けないため未確認)",
+  "note": "1 版・盲検の起動・反例 17 形 = claude-opus-5 の手番。2 版の設計と試作・反例の行列の起動 = claude-fable-5-1 の手番。行列の完走(28 形)・実行記録・この報告・実装の起票 = claude-opus-5 の手番。機体はどの手番も会社 Mac CA-20038667"
+ },
+ "requirements": "差し戻し lt-YMAW77605Z9EXP3PYNBTK6JQFZ の 1 点。制約 = 『註と報告が主張する範囲 = 針が現に赤くする範囲』。受入 1〜6 は依頼者の機体で成立済み。受入 7(盲検 B の穴を塞いだ)だけが成り立たず、着地した針は 2 つの正規表現で 1 行の字面を読むため 1 行の setv しか捕まえなかった(6 形が素通り)。直し方は 2 案(構造にする / 主張を縮める)のどちらでも受けると依頼者が明示し、推奨は構造にする案。追補 lt-XX7TCWJ2D55AAY6AGAQ5RRHJ0R: 向きは allowlist への反転で合意・hy_003 の先例は文字列を読む先例(file の軸は自前)・反例に §3 の 3 行(空の母集団)を足す・註に過剰に赤くする範囲も書き緩めない・範囲を広げない。この便の範囲 = 設計と最小実験まで(実装・着地は別便の実装段)。",
+ "design": {
+  "path": "design.md",
+  "sha256": "9034c0927bd056e81449dabb5275d37697a2f6fad2d96ccd1d439d0e0efbb72a"
+ },
+ "modules": [
+  {
+   "id": "law",
+   "responsibility": "agentd / sessionhost について何が真であるべきかを宣言する",
+   "owns": "ADR の rule / law の :statement と :counterexamples",
+   "hides": "真の実現方法とソースの綴り",
+   "interface": "law の名と statement(針が :enforcement で名指す)",
+   "effects": "なし — 宣言のみ(副作用は持たない)",
+   "lifetime": "冊の版。改訂は法・反例・実装を 1 つの commit で出す",
+   "invariants": "statement は実装の綴りに言及しない。この便では 1 行も変えていない"
+  },
+  {
+   "id": "needle",
+   "responsibility": "法が現在のコードで守られているかを機械で撃つ",
+   "owns": "冊の deftest とその中の走査の口・名簿(MAIL-TURN-TEXT-CONSUMERS 等)",
+   "hides": "実装の内部の綴り(局所変数の名・行の折れ方・引数の位置)",
+   "interface": "pytest から呼ばれる deftest と、冊の中の部品(form-use-head / carriers-of / bound-calls-of 等)",
+   "effects": "file の読み取りのみ(hy.read-many と Path.read-text)。書き込み・通信・並行実行は持たない。file が無い/解析できない時は例外 = 赤",
+   "lifetime": "冊の版。針の走査の口は冊の private で、他の 26 冊は 1 か所も参照していない",
+   "invariants": "禁止の綴りを列挙しない(開いた集合)。許されている読み手を 1 か所の名簿で宣言し(閉じた集合)、運ぶ名の閉包の実測と突き合わせる"
+  },
+  {
+   "id": "impl",
+   "responsibility": "手番へ渡す郵便の文を組み(judgment)、運ぶ(judgment の畳み・agentd の注入)",
+   "owns": "mail-turn-text-of(組む座 1 点)・message-bodies-of と deliver-interrupts-of(運ぶ)",
+   "hides": "見出しの綴り・欄の順・欄の在否の判断(運ぶ側は 1 つも知らない)",
+   "interface": "mail-turn-text-of [message-id spec body [status None]] -> str と SessionInterject / launch の prompt",
+   "effects": "judgment は純粋(defk の退化形・bind ゼロ)。agentd は型つきの要求(SessionInterject 等)を返すだけで実 I/O は handlers.py",
+   "lifetime": "常駐の拍ごと。session の生死は handlers と器の側",
+   "invariants": "文を組む座は 1 点。運ぶ側は組み替えない(積んだ先を歩いて書き足すのも組み替え)。この便では 1 byte も変えていない"
+  }
+ ],
+ "scenarios": [
+  {
+   "id": "sc-effects",
+   "axis": "effects",
+   "applicability": "applicable",
+   "change": "注入の路だけ「割り込みです」の 1 行を足したくなる / 相乗りの畳みに通番の見出しを足したくなる(運ぶ側で文を組み替える誘惑)",
+   "claim": "組み替えは綴りに依らず・束ねた名を経由しなくても赤になり、正当な拡張は judgment の 1 点(引数を足す)か冊の名簿 1 行で済む",
+   "expected_scope": "実装 1 file(judgment の組む座)+ 冊の名簿 0〜1 行",
+   "actual_scope": "同じ(addarg = 緑・組み替え 13 形 = 赤・盲検 B の numbered は 1 版で素通り → 2 版で赤)",
+   "changed_modules": [
+    "impl",
+    "needle"
+   ],
+   "unchanged_modules": [
+    "law"
+   ],
+   "reason": "意図した公開契約の拡張(judgment の欄を足す)と、知識の漏洩(運ぶ側が見出しの綴りを持つ)を針が区別した。1 版は積んだ先の組み替えを区別できず、2 版で運ぶ名の閉包を足した",
+   "revision": "あり — 盲検 B で主張 1 が反証され、carriers-of を足した(claims-outcome.md)"
+  },
+  {
+   "id": "sc-storage",
+   "axis": "storage",
+   "applicability": "applicable",
+   "change": "本文を記録の service に置いた郵便が増え、fetched から引く欄が育つ",
+   "claim": "文を組む座は変わらず、運ぶ側の読みの集合も変わらない",
+   "expected_scope": "実装 1 file(message-bodies-of の本文の引き)",
+   "actual_scope": "同じ(針は本文の出所を 1 つも読まない)",
+   "changed_modules": [
+    "impl"
+   ],
+   "unchanged_modules": [
+    "law",
+    "needle"
+   ],
+   "reason": "針が読むのは呼びを包む form と運ぶ名の読みだけで、本文の出所は読まない",
+   "revision": "なし"
+  },
+  {
+   "id": "sc-concurrency",
+   "axis": "concurrency",
+   "applicability": "applicable",
+   "change": "1 拍で複数の job の注入を並行に配る(腕が job ごとに分かれる)",
+   "claim": "針は form の構造を読むので、腕が増えても『呼びは 1 つ・読み手は名簿』の形で撃てる",
+   "expected_scope": "実装 1 file + 名簿 0 行",
+   "actual_scope": "同じ(針は並行実行の性質を持たない — file の読み取りのみ)",
+   "changed_modules": [
+    "impl"
+   ],
+   "unchanged_modules": [
+    "law",
+    "needle"
+   ],
+   "reason": "針の走査は純粋な読みで、拍の並行性に依存しない",
+   "revision": "なし"
+  },
+  {
+   "id": "sc-distribution",
+   "axis": "distribution",
+   "applicability": "applicable",
+   "change": "機体が増え、agentd が別の器(codex app-server)で文の形を変える / 器の注入の口の上限を運ぶ側で見たくなる(盲検 A)",
+   "claim": "器ごとの分岐は judgment の 1 点に入り、運ぶ側の組み替えは赤。組み替えない読み(長さを測る)も赤になるが名簿 1 行で緑",
+   "expected_scope": "実装 1 file(judgment)+ 冊 0〜1 行",
+   "actual_scope": "同じ(wrap / consume は赤・盲検 A の lencheck は赤 → lencheckdeclared は緑)",
+   "changed_modules": [
+    "impl",
+    "needle"
+   ],
+   "unchanged_modules": [
+    "law"
+   ],
+   "reason": "運ぶ側で器ごとに組み替える形が赤になるため、分岐は組む座へ寄せるしかない。過剰に赤くする範囲は註に名指しで書き、緩めない",
+   "revision": "註に『過剰に赤くする範囲』を足した"
+  },
+  {
+   "id": "sc-hardware",
+   "axis": "hardware",
+   "applicability": "applicable",
+   "change": "会話の器が音声で、文を平易化・短縮したくなる",
+   "claim": "平易化は組む座の中(または宣言した読み手)に入り、運ぶ側の組み替えは赤",
+   "expected_scope": "実装 1 file + 冊の名簿 0〜1 行",
+   "actual_scope": "同じ(newreader = 赤 / newreaderdeclared = 緑 の対で確認)",
+   "changed_modules": [
+    "impl",
+    "needle"
+   ],
+   "unchanged_modules": [
+    "law"
+   ],
+   "reason": "読み手を足す正当な拡張は名簿 1 行の宣言で通り、宣言しない形は赤(何を宣言せよかが文言で読める)",
+   "revision": "なし"
+  },
+  {
+   "id": "sc-simulation",
+   "axis": "simulation",
+   "applicability": "applicable",
+   "change": "決定的な再生(同じ郵便で同じ文)を要求する",
+   "claim": "文が 1 点で組まれる限り再生は決定的。第 2 の合成点が入ると再生が崩れる(盲検 B の検体: 郵便 2 通で同じ郵便に 2 つの綴り)",
+   "expected_scope": "実装 0 file(既に満たされている)",
+   "actual_scope": "同じ(第 2 の合成点を作る 13 形が赤)",
+   "changed_modules": [],
+   "unchanged_modules": [
+    "law",
+    "needle",
+    "impl"
+   ],
+   "reason": "針が第 2 の合成点を綴りに依らず・経路に依らず赤にするので、再生の決定性が構造で守られる",
+   "revision": "なし"
+  }
+ ],
+ "checks": [
+  {
+   "id": "pos-focus",
+   "scenarios": [
+    "sc-effects",
+    "sc-storage",
+    "sc-concurrency",
+    "sc-distribution",
+    "sc-hardware",
+    "sc-simulation"
+   ],
+   "control": "positive",
+   "expectation": "試作(2 版)を基準 09309e77 に当てて、焦点の 1 本(-k first_turn_carries・下線)が緑",
+   "observation": "1 passed, 58 deselected in 25.2s(冊 1 file の全 59 本も緑 — evidence.md R6)",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "pos-scope",
+   "scenarios": [
+    "sc-effects",
+    "sc-storage",
+    "sc-concurrency",
+    "sc-distribution",
+    "sc-hardware",
+    "sc-simulation"
+   ],
+   "control": "positive",
+   "expectation": "変更 file は冊 1 本・sessionhost の差分 0・law の :statement の差分 0・冊の中に (law spelling-pins… の定義 0 件",
+   "observation": "git status = 冊 1 本 / sessionhost の差分 空 / :statement の差分 0 行 / (law spelling-pins の定義 0 件(evidence.md R6)",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "neg-numbered",
+   "scenarios": [
+    "sc-effects",
+    "sc-simulation"
+   ],
+   "control": "negative",
+   "expectation": "盲検 B: 積んだ先の bodies を歩いて見出しに通番を書き足す(前の試作は緑で素通り) を当てると赤(狙った構造の assert か、読めない時の例外が撃つ)",
+   "observation": "赤(21.8s)・文言 = E   AssertionError: judgment.hy の message-bodies-of が合成した文(運ぶ名 ('bodies', 'text'))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): [\"'(enumerate bodies)\", \"'(",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "neg-setv1",
+   "scenarios": [
+    "sc-effects"
+   ],
+   "control": "negative",
+   "expectation": "1 行の setv(依頼者の盲検 B・旧い針が捕まえた唯一の形) を当てると赤(狙った構造の assert か、読めない時の例外が撃つ)",
+   "observation": "赤(22.2s)・文言 = E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('text',))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): ['\\'(+ \"[urgent] \" text)', '\\'(set",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "neg-rebind",
+   "scenarios": [
+    "sc-effects"
+   ],
+   "control": "negative",
+   "expectation": "<- で束ね直す(依頼者の指摘 1 — 旧い針は素通り) を当てると赤(狙った構造の assert か、読めない時の例外が撃つ)",
+   "observation": "赤(24.0s)・文言 = E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('text',))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): ['\\'(+ \"[urgent] \" text)', '\\'(<- ",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "neg-setv2",
+   "scenarios": [
+    "sc-effects"
+   ],
+   "control": "negative",
+   "expectation": "setv を 2 行に折る(依頼者の指摘 2 — 旧い針は素通り) を当てると赤(狙った構造の assert か、読めない時の例外が撃つ)",
+   "observation": "赤(30.3s)・文言 = E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('text',))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): ['\\'(+ \"[urgent] \" text)', '\\'(set",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "neg-foldcall",
+   "scenarios": [
+    "sc-effects"
+   ],
+   "control": "negative",
+   "expectation": "呼びの行を折る + 1 行の setv(依頼者の指摘 3 — 旧い針は bound が立たず黙る) を当てると赤(狙った構造の assert か、読めない時の例外が撃つ)",
+   "observation": "赤(27.3s)・文言 = E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('text',))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): ['\\'(+ \"[urgent] \" text)', '\\'(set",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "neg-consume",
+   "scenarios": [
+    "sc-effects",
+    "sc-distribution"
+   ],
+   "control": "negative",
+   "expectation": "送り先の引数でその場で組む を当てると赤(狙った構造の assert か、読めない時の例外が撃つ)",
+   "observation": "赤(25.8s)・文言 = E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('text',))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): ['\\'(+ \"[urgent] \" text)']",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "neg-let",
+   "scenarios": [
+    "sc-effects"
+   ],
+   "control": "negative",
+   "expectation": "let で覆って組み替える を当てると赤(狙った構造の assert か、読めない時の例外が撃つ)",
+   "observation": "赤(23.5s)・文言 = E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('text',))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): ['\\'(+ \"[urgent] \" text)', '\\'[tex",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "neg-wrap",
+   "scenarios": [
+    "sc-effects",
+    "sc-distribution"
+   ],
+   "control": "negative",
+   "expectation": "呼びを別の form で包む(親が <- でなくなる) を当てると赤(狙った構造の assert か、読めない時の例外が撃つ)",
+   "observation": "赤(21.7s)・文言 = E   AssertionError: agentd.hy の deliver-interrupts-of が合成の呼びを `with-urgency` で包んでいる —— 返った文は その場で組み替えず `(<- <名> str (mail-turn-text-of …))` で束ねる(R16)",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "neg-alias",
+   "scenarios": [
+    "sc-effects"
+   ],
+   "control": "negative",
+   "expectation": "別の名へ写してから渡す を当てると赤(狙った構造の assert か、読めない時の例外が撃つ)",
+   "observation": "赤(25.9s)・文言 = E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('other', 'text'))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): [\"'(setv other text)\"]",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "neg-overwrite",
+   "scenarios": [
+    "sc-simulation"
+   ],
+   "control": "negative",
+   "expectation": "束ねた名を読まずに別の値で置き換える(文を捨てる) を当てると赤(狙った構造の assert か、読めない時の例外が撃つ)",
+   "observation": "赤(27.4s)・文言 = E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('text',))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): ['\\'(setv text \"fixed\")']",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "neg-dropuse",
+   "scenarios": [
+    "sc-simulation"
+   ],
+   "control": "negative",
+   "expectation": "名簿の読み手が読まなくなる(束ねた文が捨てられる・agentd 側) を当てると赤(狙った構造の assert か、読めない時の例外が撃つ)",
+   "observation": "赤(26.1s)・文言 = E   AssertionError: agentd.hy の名簿の読み手が実際には読んでいない(読み手を足す/替える便は名簿へ 1 行宣言する・R16): 名簿 ['SessionInterject'] 実測 []",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "neg-rosterempty",
+   "scenarios": [
+    "sc-hardware"
+   ],
+   "control": "negative",
+   "expectation": "名簿から読み手の項を落とす(検査が噛む証拠の対・赤の側) を当てると赤(狙った構造の assert か、読めない時の例外が撃つ)",
+   "observation": "赤(22.7s)・文言 = E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('text',))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): [\"'(SessionInterject :session-id j",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "neg-newreader",
+   "scenarios": [
+    "sc-hardware"
+   ],
+   "control": "negative",
+   "expectation": "読み手を足して名簿へ宣言しない を当てると赤(狙った構造の assert か、読めない時の例外が撃つ)",
+   "observation": "赤(23.6s)・文言 = E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('text',))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): [\"'(LogLine :text text)\"]",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "neg-lencheck",
+   "scenarios": [
+    "sc-distribution"
+   ],
+   "control": "negative",
+   "expectation": "盲検 A: 注入の前に文の長さを測る(組み替えない読み — 過剰に赤くする範囲の実例) を当てると赤(狙った構造の assert か、読めない時の例外が撃つ)",
+   "observation": "赤(21.4s)・文言 = E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('text',))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): [\"'(len text)\"]",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "neg-renamecarrier",
+   "scenarios": [
+    "sc-effects"
+   ],
+   "control": "negative",
+   "expectation": "積む先の名 bodies を改名する(過剰に赤くする範囲 — 名簿の鍵と食い違う) を当てると赤(狙った構造の assert か、読めない時の例外が撃つ)",
+   "observation": "赤(27.9s)・文言 = E   AssertionError: judgment.hy の message-bodies-of が合成した文(運ぶ名 ('text', 'texts'))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): [\"'(.append texts text)\", \"'",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "neg-movecall",
+   "scenarios": [
+    "sc-simulation"
+   ],
+   "control": "negative",
+   "expectation": "呼び mail-turn-text-of を scan の外へ移す(呼びの行を消す)— §3-1 を当てると赤(狙った構造の assert か、読めない時の例外が撃つ)",
+   "observation": "赤(23.1s)・文言 = E   AssertionError: agentd.hy は手番の文を 1 度だけ組む(R16): 実測 0",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "neg-dropusej",
+   "scenarios": [
+    "sc-simulation"
+   ],
+   "control": "negative",
+   "expectation": "名簿の送り先の片方(judgment の .append)が文を読まなくなる — §3-2 を当てると赤(狙った構造の assert か、読めない時の例外が撃つ)",
+   "observation": "赤(21.3s)・文言 = E   AssertionError: judgment.hy の名簿の読み手が実際には読んでいない(読み手を足す/替える便は名簿へ 1 行宣言する・R16): 名簿 ['bodies.append', 'tuple'] 実測 []",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "neg-badpath",
+   "scenarios": [
+    "sc-simulation"
+   ],
+   "control": "negative",
+   "expectation": "検査器が読む path を存在しない名へ 1 字差し替える(例外でよい)— §3-3 を当てると赤(狙った構造の assert か、読めない時の例外が撃つ)",
+   "observation": "赤(20.7s)・文言 = E       FileNotFoundError: [Errno 2] No such file or directory: '/Users/s22625/.worktrees/doeff-wt-adr012-sendback/packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentc.hy'",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "pos-renamebound",
+   "scenarios": [
+    "sc-effects"
+   ],
+   "control": "positive",
+   "expectation": "束ねた名を改名する は緑のまま(偽陽性を作らない / 過剰な赤の直し方が通る)",
+   "observation": "緑(30.7s)",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "pos-foldonly",
+   "scenarios": [
+    "sc-effects"
+   ],
+   "control": "positive",
+   "expectation": "呼びを 3 行に折るだけ(何も足さない) は緑のまま(偽陽性を作らない / 過剰な赤の直し方が通る)",
+   "observation": "緑(22.7s)",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "pos-foldinter",
+   "scenarios": [
+    "sc-effects"
+   ],
+   "control": "positive",
+   "expectation": "送り先を折り直して欄の順を替える は緑のまま(偽陽性を作らない / 過剰な赤の直し方が通る)",
+   "observation": "緑(23.0s)",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "pos-newreaderdeclared",
+   "scenarios": [
+    "sc-hardware"
+   ],
+   "control": "positive",
+   "expectation": "読み手を足して名簿へ 1 行宣言する(検査が噛む証拠の対・緑の側) は緑のまま(偽陽性を作らない / 過剰な赤の直し方が通る)",
+   "observation": "緑(24.9s)",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "pos-lencheckdeclared",
+   "scenarios": [
+    "sc-distribution"
+   ],
+   "control": "positive",
+   "expectation": "盲検 A + 名簿へ 1 行宣言(過剰な赤の直し方 = 名簿を人が直す) は緑のまま(偽陽性を作らない / 過剰な赤の直し方が通る)",
+   "observation": "緑(22.8s)",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "pos-renamecarrierdeclared",
+   "scenarios": [
+    "sc-effects"
+   ],
+   "control": "positive",
+   "expectation": "積む先の改名 + 名簿の鍵を同じ便で直す(過剰な赤の直し方) は緑のまま(偽陽性を作らない / 過剰な赤の直し方が通る)",
+   "observation": "緑(26.1s)",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "pos-addarg",
+   "scenarios": [
+    "sc-effects",
+    "sc-storage"
+   ],
+   "control": "positive",
+   "expectation": "呼びに欄を足す(judgment の宣言と型の検査に既定つきの欄 + agentd が渡す) は緑のまま(偽陽性を作らない / 過剰な赤の直し方が通る)",
+   "observation": "緑(26.3s)",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "pos-commentmention",
+   "scenarios": [
+    "sc-effects"
+   ],
+   "control": "positive",
+   "expectation": "註が禁止の綴りを説明として書く(reader は ;; を捨てる — 字面の針なら誤検出) は緑のまま(偽陽性を作らない / 過剰な赤の直し方が通る)",
+   "observation": "緑(26.2s)",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "pos-stringmention",
+   "scenarios": [
+    "sc-effects"
+   ],
+   "control": "positive",
+   "expectation": "文字列 literal の中に禁止の綴り(String と Symbol は別の節点 — 字面の針なら誤検出) は緑のまま(偽陽性を作らない / 過剰な赤の直し方が通る)",
+   "observation": "緑(34.3s)",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "neg-empty-population",
+   "scenarios": [
+    "sc-simulation"
+   ],
+   "control": "negative",
+   "expectation": "空の母集団(呼びが居ない・読みが居ない・file が読めない)が緑に倒れない(依頼者 §3 の 3 行)",
+   "observation": "movecall / dropusej / badpath の 3 形とも赤(mutations.json)。0 件を緑と読む路は無い",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "neg-wrongreason",
+   "scenarios": [
+    "sc-storage"
+   ],
+   "control": "negative",
+   "expectation": "狙った違反ではない赤(不正な変更)を、検出の成功に数えない",
+   "observation": "1 版の addarg の最初の形(型の検査を足さない)は 5.7s で collection error(defk の既存の不変条件)。これを検出に数えず、型の検査も足した正しい形で撃ち直して緑",
+   "evidence": {
+    "path": "evidence.md",
+    "sha256": "747fac281aa032bb7acb13672b3a6677ae7d18e82e0b34051190e8fc07b1926c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "blind-A-lencheck",
+   "scenarios": [
+    "sc-hardware",
+    "sc-effects"
+   ],
+   "control": "negative",
+   "expectation": "盲検 A(claude-opus-5・独立文脈): 運ぶ側で文の長さを測るだけの読み (len text) を足す — 組み替えていないので責務の違反ではないが、名簿の外の読みなので赤になる(過剰に赤くする範囲)",
+   "observation": "赤(15.3s)・文言 = 名簿の外の読み手 ['(len text)']。名簿へ \"len\" を 1 行宣言すると緑(2.6s)。註に『組み替えない読みも赤・名簿を人が直す・緩めない』と書いた",
+   "evidence": {
+    "path": "blind-A.md",
+    "sha256": "a047255266d85dd6c261d4c1aba893c2dd738b099de45d00efaeefa519ff1ceb"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "blind-B-numbered",
+   "scenarios": [
+    "sc-effects",
+    "sc-simulation"
+   ],
+   "control": "negative",
+   "expectation": "盲検 B(claude-opus-5・独立文脈): 名簿の読み手が積んだ先 bodies を後から歩いて見出しに通番を書き足す — 同じ頂点の form の中の第 2 の合成点。前の版の試作は緑で通した(主張 1 の反例)",
+   "observation": "前の版 = 緑(11.1s)で素通り・B の検体で郵便 2 通の時に同じ郵便へ 2 つの綴りが立つことを実測。試作 2 版(運ぶ名の閉包)で赤 — mutations.json の numbered",
+   "evidence": {
+    "path": "blind-B.md",
+    "sha256": "dd2cfc3de5d4a9420089b35ffdef94ed7fd6c5347a211504036200d7a8b2b61f"
+   },
+   "status": "passed"
+  }
+ ],
+ "unresolved": []
+}

@@ -1,4 +1,18 @@
-# 実行記録(差し戻し 1・2 版)
+import json, pathlib
+D = pathlib.Path.home() / ".worktrees/doeff-wt-adr012-design/docs/design/adr012-pin-reaim/sendback-1"
+rows = json.loads((D / "mutations.json").read_text())
+by = {r["case"]: r for r in rows}
+bad = [r for r in rows if r["ok"] != "OK"]
+def jp(v): return {"green": "緑", "red": "赤"}.get(v, v)
+table = "\n".join(f"| {r['case']} | {r['what']} | {jp(r['expect'])} | **{jp(r['verdict'])}** | {r['seconds']} |" for r in rows)
+reds = [r for r in rows if r["verdict"] == "red"]
+def group(pred): return " / ".join(r["case"] for r in reds if pred(r["message"]))
+stray = group(lambda m: "名簿の外の読み手" in m)
+wrap = group(lambda m: "で包んでいる" in m)
+unread = group(lambda m: "実際には読んでいない" in m)
+once = group(lambda m: "1 度だけ組む" in m)
+exc = group(lambda m: "FileNotFoundError" in m)
+text = f"""# 実行記録(差し戻し 1・2 版)
 
 - 測った機体: 会社 Mac `CA-20038667`(Darwin)・python 3.14t・hy 1.3.0(この拍の実測。会話は機体を移るので報告のたびに書く)
 - 基準版: `origin/main` = `09309e77ecd24d3f555b012000e910782b734fa0`
@@ -7,7 +21,7 @@
   主 checkout `~/repos/doeff` は 1 byte も触っていない。
 - **検査器の撃ち方(逐語・`-k` は下線)**:
   ```
-  PYTHONPATH="$(cat /tmp/sb-pp.txt)" /Users/s22625/repos/doeff/.venv/bin/python -m pytest \
+  PYTHONPATH="$(cat /tmp/sb-pp.txt)" /Users/s22625/repos/doeff/.venv/bin/python -m pytest \\
     docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy -k first_turn_carries --no-header -q
   ```
   `/tmp/sb-pp.txt` = 主 checkout の editable の `.pth` の路を作業樹へ読み替えた PYTHONPATH(作り方は
@@ -20,46 +34,19 @@
 実射で確認済み(その機体の記録はこの機体に届かないため、下の R2 で**新しい針に対して**同じ形を
 撃ち直し、赤になることを測った)。
 
-## R2. 反例 28 形の実測(`mutations.json` が正本・食い違い 0)
+## R2. 反例 {len(rows)} 形の実測(`mutations.json` が正本・食い違い {len(bad)})
 
 | 形 | 何の形か | 期待 | 実測 | 秒 |
 | --- | --- | --- | --- | --- |
-| base | 素の本線(試作を当てただけ) | 緑 | **緑** | 25.2 |
-| numbered | 盲検 B: 積んだ先の bodies を歩いて見出しに通番を書き足す(前の試作は緑で素通り) | 赤 | **赤** | 21.8 |
-| lencheck | 盲検 A: 注入の前に文の長さを測る(組み替えない読み — 過剰に赤くする範囲の実例) | 赤 | **赤** | 21.4 |
-| lencheckdeclared | 盲検 A + 名簿へ 1 行宣言(過剰な赤の直し方 = 名簿を人が直す) | 緑 | **緑** | 22.8 |
-| movecall | 呼び mail-turn-text-of を scan の外へ移す(呼びの行を消す)— §3-1 | 赤 | **赤** | 23.1 |
-| dropusej | 名簿の送り先の片方(judgment の .append)が文を読まなくなる — §3-2 | 赤 | **赤** | 21.3 |
-| badpath | 検査器が読む path を存在しない名へ 1 字差し替える(例外でよい)— §3-3 | 赤 | **赤** | 20.7 |
-| setv1 | 1 行の setv(依頼者の盲検 B・旧い針が捕まえた唯一の形) | 赤 | **赤** | 22.2 |
-| rebind | <- で束ね直す(依頼者の指摘 1 — 旧い針は素通り) | 赤 | **赤** | 24.0 |
-| setv2 | setv を 2 行に折る(依頼者の指摘 2 — 旧い針は素通り) | 赤 | **赤** | 30.3 |
-| foldcall | 呼びの行を折る + 1 行の setv(依頼者の指摘 3 — 旧い針は bound が立たず黙る) | 赤 | **赤** | 27.3 |
-| consume | 送り先の引数でその場で組む | 赤 | **赤** | 25.8 |
-| let | let で覆って組み替える | 赤 | **赤** | 23.5 |
-| wrap | 呼びを別の form で包む(親が <- でなくなる) | 赤 | **赤** | 21.7 |
-| alias | 別の名へ写してから渡す | 赤 | **赤** | 25.9 |
-| overwrite | 束ねた名を読まずに別の値で置き換える(文を捨てる) | 赤 | **赤** | 27.4 |
-| dropuse | 名簿の読み手が読まなくなる(束ねた文が捨てられる・agentd 側) | 赤 | **赤** | 26.1 |
-| rosterempty | 名簿から読み手の項を落とす(検査が噛む証拠の対・赤の側) | 赤 | **赤** | 22.7 |
-| newreader | 読み手を足して名簿へ宣言しない | 赤 | **赤** | 23.6 |
-| renamecarrier | 積む先の名 bodies を改名する(過剰に赤くする範囲 — 名簿の鍵と食い違う) | 赤 | **赤** | 27.9 |
-| renamecarrierdeclared | 積む先の改名 + 名簿の鍵を同じ便で直す(過剰な赤の直し方) | 緑 | **緑** | 26.1 |
-| renamebound | 束ねた名を改名する | 緑 | **緑** | 30.7 |
-| foldonly | 呼びを 3 行に折るだけ(何も足さない) | 緑 | **緑** | 22.7 |
-| foldinter | 送り先を折り直して欄の順を替える | 緑 | **緑** | 23.0 |
-| newreaderdeclared | 読み手を足して名簿へ 1 行宣言する(検査が噛む証拠の対・緑の側) | 緑 | **緑** | 24.9 |
-| commentmention | 註が禁止の綴りを説明として書く(reader は ;; を捨てる — 字面の針なら誤検出) | 緑 | **緑** | 26.2 |
-| stringmention | 文字列 literal の中に禁止の綴り(String と Symbol は別の節点 — 字面の針なら誤検出) | 緑 | **緑** | 34.3 |
-| addarg | 呼びに欄を足す(judgment の宣言と型の検査に既定つきの欄 + agentd が渡す) | 緑 | **緑** | 26.3 |
+{table}
 
-赤 18 形はすべて**狙った assert(か、読めない時の例外)**が撃った(文言で確認・`mutations.json` の `message`):
+赤 {len(reds)} 形はすべて**狙った assert(か、読めない時の例外)**が撃った(文言で確認・`mutations.json` の `message`):
 
-- 「名簿の外の読み手が読んでいる」(文言に運ぶ名の組が出る)= numbered / lencheck / setv1 / rebind / setv2 / foldcall / consume / let / alias / overwrite / rosterempty / newreader / renamecarrier
-- 「合成の呼びを `<名>` で包んでいる」= wrap
-- 「名簿の読み手が実際には読んでいない」= dropusej / dropuse
-- 「手番の文を 1 度だけ組む: 実測 0」(空の母集団を緑にしない)= movecall
-- `FileNotFoundError`(file が読めない ⇒ 例外 = 赤・安全な向き)= badpath
+- 「名簿の外の読み手が読んでいる」(文言に運ぶ名の組が出る)= {stray}
+- 「合成の呼びを `<名>` で包んでいる」= {wrap}
+- 「名簿の読み手が実際には読んでいない」= {unread}
+- 「手番の文を 1 度だけ組む: 実測 0」(空の母集団を緑にしない)= {once}
+- `FileNotFoundError`(file が読めない ⇒ 例外 = 赤・安全な向き)= {exc}
 
 ## R3. 依頼者 §3 の 3 行(空の母集団が緑に倒れないこと)
 
@@ -81,7 +68,7 @@ agentd 側の同じ形は `dropuse`(赤)。
 ## R5. 間違った理由の赤を数えていない証拠(1 件見つけて外した — 1 版の拍)
 
 `addarg` を最初に「呼びと宣言の引数だけ」足す形で撃つと **5.7 秒で赤**になった。文言を読むと
-針ではなく **`defk` の既存の不変条件**(各引数に `{:pre [(: 名 型)]}` の型の検査を要求する)が
+針ではなく **`defk` の既存の不変条件**(各引数に `{{:pre [(: 名 型)]}}` の型の検査を要求する)が
 撃っていた。当席の変異が**不正な変更**だったため。型の検査も足した正しい形で撃ち直して **緑**
 (2 版でも `addarg` = 緑)。この 1 件は「狙った違反の検出」に数えていない。
 
@@ -100,3 +87,6 @@ agentd 側の同じ形は `dropuse`(赤)。
 焦点 1 本 = 温 2.4 秒 / 冷(冊の再 compile)16〜30 秒。冊の全 59 本 = 30.6 秒。どれも 1 分の内。
 反例の行列 28 形の合計 = 698.9 秒(1 形 平均 25 秒)— これは**設計検証の道具**で、開発の検ではない
 (実装段が撃つのは受入 3 の 12 形・約 5 分)。
+"""
+(D / "evidence.md").write_text(text, encoding="utf-8")
+print("evidence.md:", len(text.splitlines()), "行 / 形", len(rows), "/ 食い違い", len(bad))

@@ -5,8 +5,62 @@
     "expect": "green",
     "verdict": "green",
     "ok": "OK",
-    "seconds": 16.1,
+    "seconds": 25.2,
     "message": ""
+  },
+  {
+    "case": "numbered",
+    "what": "盲検 B: 積んだ先の bodies を歩いて見出しに通番を書き足す(前の試作は緑で素通り)",
+    "expect": "red",
+    "verdict": "red",
+    "ok": "OK",
+    "seconds": 21.8,
+    "message": "E   AssertionError: judgment.hy の message-bodies-of が合成した文(運ぶ名 ('bodies', 'text'))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): [\"'(enumerate bodies)\", \"'(len bodies)\", \"'(setv bodies numbered)\"]"
+  },
+  {
+    "case": "lencheck",
+    "what": "盲検 A: 注入の前に文の長さを測る(組み替えない読み — 過剰に赤くする範囲の実例)",
+    "expect": "red",
+    "verdict": "red",
+    "ok": "OK",
+    "seconds": 21.4,
+    "message": "E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('text',))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): [\"'(len text)\"]"
+  },
+  {
+    "case": "lencheckdeclared",
+    "what": "盲検 A + 名簿へ 1 行宣言(過剰な赤の直し方 = 名簿を人が直す)",
+    "expect": "green",
+    "verdict": "green",
+    "ok": "OK",
+    "seconds": 22.8,
+    "message": ""
+  },
+  {
+    "case": "movecall",
+    "what": "呼び mail-turn-text-of を scan の外へ移す(呼びの行を消す)— §3-1",
+    "expect": "red",
+    "verdict": "red",
+    "ok": "OK",
+    "seconds": 23.1,
+    "message": "E   AssertionError: agentd.hy は手番の文を 1 度だけ組む(R16): 実測 0"
+  },
+  {
+    "case": "dropusej",
+    "what": "名簿の送り先の片方(judgment の .append)が文を読まなくなる — §3-2",
+    "expect": "red",
+    "verdict": "red",
+    "ok": "OK",
+    "seconds": 21.3,
+    "message": "E   AssertionError: judgment.hy の名簿の読み手が実際には読んでいない(読み手を足す/替える便は名簿へ 1 行宣言する・R16): 名簿 ['bodies.append', 'tuple'] 実測 []"
+  },
+  {
+    "case": "badpath",
+    "what": "検査器が読む path を存在しない名へ 1 字差し替える(例外でよい)— §3-3",
+    "expect": "red",
+    "verdict": "red",
+    "ok": "OK",
+    "seconds": 20.7,
+    "message": "E       FileNotFoundError: [Errno 2] No such file or directory: '/Users/s22625/.worktrees/doeff-wt-adr012-sendback/packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentc.hy'"
   },
   {
     "case": "setv1",
@@ -14,8 +68,8 @@
     "expect": "red",
     "verdict": "red",
     "ok": "OK",
-    "seconds": 16.6,
-    "message": "E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文を、冊の名簿の外の読み手が読んでいる —— 手番の文を 組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): ['\\'(+ \"[urgent] \" text)', '\\'(setv text (+ \"[urgent] \" text))']"
+    "seconds": 22.2,
+    "message": "E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('text',))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): ['\\'(+ \"[urgent] \" text)', '\\'(setv text (+ \"[urgent] \" text))']"
   },
   {
     "case": "rebind",
@@ -23,8 +77,8 @@
     "expect": "red",
     "verdict": "red",
     "ok": "OK",
-    "seconds": 17.5,
-    "message": "E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文を、冊の名簿の外の読み手が読んでいる —— 手番の文を 組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): ['\\'(+ \"[urgent] \" text)', '\\'(<- text str (pure (+ \"[urgent] \" text)))']"
+    "seconds": 24.0,
+    "message": "E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('text',))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): ['\\'(+ \"[urgent] \" text)', '\\'(<- text str (pure (+ \"[urgent] \" text)))']"
   },
   {
     "case": "setv2",
@@ -32,8 +86,8 @@
     "expect": "red",
     "verdict": "red",
     "ok": "OK",
-    "seconds": 16.5,
-    "message": "E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文を、冊の名簿の外の読み手が読んでいる —— 手番の文を 組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): ['\\'(+ \"[urgent] \" text)', '\\'(setv text (+ \"[urgent] \" text))']"
+    "seconds": 30.3,
+    "message": "E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('text',))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): ['\\'(+ \"[urgent] \" text)', '\\'(setv text (+ \"[urgent] \" text))']"
   },
   {
     "case": "foldcall",
@@ -41,8 +95,8 @@
     "expect": "red",
     "verdict": "red",
     "ok": "OK",
-    "seconds": 18.6,
-    "message": "E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文を、冊の名簿の外の読み手が読んでいる —— 手番の文を 組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): ['\\'(+ \"[urgent] \" text)', '\\'(setv text (+ \"[urgent] \" text))']"
+    "seconds": 27.3,
+    "message": "E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('text',))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): ['\\'(+ \"[urgent] \" text)', '\\'(setv text (+ \"[urgent] \" text))']"
   },
   {
     "case": "consume",
@@ -50,8 +104,8 @@
     "expect": "red",
     "verdict": "red",
     "ok": "OK",
-    "seconds": 17.7,
-    "message": "E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文を、冊の名簿の外の読み手が読んでいる —— 手番の文を 組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): ['\\'(+ \"[urgent] \" text)']"
+    "seconds": 25.8,
+    "message": "E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('text',))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): ['\\'(+ \"[urgent] \" text)']"
   },
   {
     "case": "let",
@@ -59,8 +113,8 @@
     "expect": "red",
     "verdict": "red",
     "ok": "OK",
-    "seconds": 14.1,
-    "message": "E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文を、冊の名簿の外の読み手が読んでいる —— 手番の文を 組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): ['\\'(+ \"[urgent] \" text)', '\\'[text (+ \"[urgent] \" text)]']"
+    "seconds": 23.5,
+    "message": "E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('text',))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): ['\\'(+ \"[urgent] \" text)', '\\'[text (+ \"[urgent] \" text)]']"
   },
   {
     "case": "wrap",
@@ -68,7 +122,7 @@
     "expect": "red",
     "verdict": "red",
     "ok": "OK",
-    "seconds": 15.2,
+    "seconds": 21.7,
     "message": "E   AssertionError: agentd.hy の deliver-interrupts-of が合成の呼びを `with-urgency` で包んでいる —— 返った文は その場で組み替えず `(<- <名> str (mail-turn-text-of …))` で束ねる(R16)"
   },
   {
@@ -77,16 +131,25 @@
     "expect": "red",
     "verdict": "red",
     "ok": "OK",
-    "seconds": 16.3,
-    "message": "E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文を、冊の名簿の外の読み手が読んでいる —— 手番の文を 組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): [\"'(setv other text)\"]"
+    "seconds": 25.9,
+    "message": "E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('other', 'text'))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): [\"'(setv other text)\"]"
   },
   {
-    "case": "dropuse",
-    "what": "名簿の読み手が読まなくなる(束ねた文が捨てられる)",
+    "case": "overwrite",
+    "what": "束ねた名を読まずに別の値で置き換える(文を捨てる)",
     "expect": "red",
     "verdict": "red",
     "ok": "OK",
-    "seconds": 17.4,
+    "seconds": 27.4,
+    "message": "E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('text',))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): ['\\'(setv text \"fixed\")']"
+  },
+  {
+    "case": "dropuse",
+    "what": "名簿の読み手が読まなくなる(束ねた文が捨てられる・agentd 側)",
+    "expect": "red",
+    "verdict": "red",
+    "ok": "OK",
+    "seconds": 26.1,
     "message": "E   AssertionError: agentd.hy の名簿の読み手が実際には読んでいない(読み手を足す/替える便は名簿へ 1 行宣言する・R16): 名簿 ['SessionInterject'] 実測 []"
   },
   {
@@ -95,8 +158,8 @@
     "expect": "red",
     "verdict": "red",
     "ok": "OK",
-    "seconds": 15.5,
-    "message": "E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文を、冊の名簿の外の読み手が読んでいる —— 手番の文を 組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): [\"'(SessionInterject :session-id job.session-id :text text :ref message-id :attachments carried)\"]"
+    "seconds": 22.7,
+    "message": "E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('text',))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): [\"'(SessionInterject :session-id job.session-id :text text :ref message-id :attachments carried)\"]"
   },
   {
     "case": "newreader",
@@ -104,8 +167,26 @@
     "expect": "red",
     "verdict": "red",
     "ok": "OK",
-    "seconds": 14.7,
-    "message": "E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文を、冊の名簿の外の読み手が読んでいる —— 手番の文を 組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): [\"'(LogLine :text text)\"]"
+    "seconds": 23.6,
+    "message": "E   AssertionError: agentd.hy の deliver-interrupts-of が合成した文(運ぶ名 ('text',))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): [\"'(LogLine :text text)\"]"
+  },
+  {
+    "case": "renamecarrier",
+    "what": "積む先の名 bodies を改名する(過剰に赤くする範囲 — 名簿の鍵と食い違う)",
+    "expect": "red",
+    "verdict": "red",
+    "ok": "OK",
+    "seconds": 27.9,
+    "message": "E   AssertionError: judgment.hy の message-bodies-of が合成した文(運ぶ名 ('text', 'texts'))を、冊の名簿の外の読み手が読んでいる —— 手番の文を組む座は judgment.mail-turn-text-of の 1 点で、読み手の宣言は MAIL-TURN-TEXT-CONSUMERS の 1 点(R16): [\"'(.append texts text)\", \"'(.append texts text)\"]"
+  },
+  {
+    "case": "renamecarrierdeclared",
+    "what": "積む先の改名 + 名簿の鍵を同じ便で直す(過剰な赤の直し方)",
+    "expect": "green",
+    "verdict": "green",
+    "ok": "OK",
+    "seconds": 26.1,
+    "message": ""
   },
   {
     "case": "renamebound",
@@ -113,7 +194,7 @@
     "expect": "green",
     "verdict": "green",
     "ok": "OK",
-    "seconds": 11.2,
+    "seconds": 30.7,
     "message": ""
   },
   {
@@ -122,7 +203,7 @@
     "expect": "green",
     "verdict": "green",
     "ok": "OK",
-    "seconds": 11.9,
+    "seconds": 22.7,
     "message": ""
   },
   {
@@ -131,7 +212,7 @@
     "expect": "green",
     "verdict": "green",
     "ok": "OK",
-    "seconds": 11.5,
+    "seconds": 23.0,
     "message": ""
   },
   {
@@ -140,7 +221,25 @@
     "expect": "green",
     "verdict": "green",
     "ok": "OK",
-    "seconds": 11.9,
+    "seconds": 24.9,
+    "message": ""
+  },
+  {
+    "case": "commentmention",
+    "what": "註が禁止の綴りを説明として書く(reader は ;; を捨てる — 字面の針なら誤検出)",
+    "expect": "green",
+    "verdict": "green",
+    "ok": "OK",
+    "seconds": 26.2,
+    "message": ""
+  },
+  {
+    "case": "stringmention",
+    "what": "文字列 literal の中に禁止の綴り(String と Symbol は別の節点 — 字面の針なら誤検出)",
+    "expect": "green",
+    "verdict": "green",
+    "ok": "OK",
+    "seconds": 34.3,
     "message": ""
   },
   {
@@ -149,7 +248,7 @@
     "expect": "green",
     "verdict": "green",
     "ok": "OK",
-    "seconds": 26.9,
-    "message": "1 passed, 58 deselected, 1 warning in 26.57s"
+    "seconds": 26.3,
+    "message": ""
   }
 ]
