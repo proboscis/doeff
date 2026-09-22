@@ -2720,6 +2720,23 @@ class HistoryMaterial:
 
 
 @dataclass(frozen=True)
+class TurnReopen:
+    """この手番が前の手番の実行環境をどう引き継いだか(契約 agora-kinds.json turn-record spec.reopen)。
+
+    card acp:kanban-issue:ki-4c0a0aa06b07。mode = next-arm-for-job が選んだ腕(defer はここに来ない —
+    defer は手番を始めないので turn-record も無い)。home_digest = session-affinity-key-of の鍵
+    (account・binding・model の組)の sha256 で、**値は不透明・比較にだけ使う**。
+
+    なぜ行に載せるか: keepalive の controller は「次の手番も同じ prefix cache を読むか」を知る手がかりを
+    1 つも持っていなかった(実測 2026-09-23 ~/experiments/agent-subtask-cost/out/turn-reopen-cold-cache:
+    ping 102 本は cache を温めたが、次の手番が rehydrate で先頭を捨てるので 4/4 が冷えた)。
+    """
+
+    mode: NextArm
+    home_digest: str
+
+
+@dataclass(frozen=True)
 class InFlightJob:
     """受けて走らせている 1 つの agent-job(agentd の memory の状態・ACP には無い)。"""
 
@@ -2763,6 +2780,9 @@ class InFlightJob:
     request_start_lower_bound_ms: int | None = None
     #: job回収後もkeepaliveが照合する実行元。bindingの実値をturn-recordへ残す。
     cache_context: JSONObject | None = None
+    #: card acp:kanban-issue:ki-4c0a0aa06b07: この手番の引き継ぎ方(turn-record の spec.reopen へ 1 度だけ写す)。
+    #: None = 不明(組み立て側が腕を渡さなかった拍 — 欄を書かない。現在の設定から補わない)。
+    reopen: TurnReopen | None = None
     #: 手番の記録(turn-record)の行の最後に知った image(段 8 lane 4u — 出来事の追記の CAS の相手)。
     #: None = まだ読んでいない(最初の追記で鍵から読む)。書けた拍に generation + 1 と書いた status で
     #: 差し替え、Conflict は読み直して積み直す。正本は行(R7)— 再起動で消えても鍵から戻る。
