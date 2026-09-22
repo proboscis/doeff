@@ -2528,6 +2528,27 @@ def test_host_headless_resume_launch_runs_the_cold_compaction_prompt_before_the_
     assert "stream-json" not in lines[compactions[0]]
 
 
+def test_fast_jev_plugin_version_pin_reads_installed_version_and_decides_update() -> None:
+    """借りた家の plugin は宣言の版(FAST_JEV_PLUGIN_VERSION)へ揃える: plugin.json の版が pin と違う時だけ
+    update を撃つ。読めない(file 無し・壊れた JSON・version 無し)は「古い」ではなく「読めない」で、撃たない。"""
+    pin = fast_jev.FAST_JEV_PLUGIN_VERSION
+    assert fast_jev.fast_jev_plugin_json_path("/h/claude-home") == "/h/claude-home/plugins/marketplaces/fast-jev-compaction/.claude-plugin/plugin.json"
+    assert fast_jev.fast_jev_plugin_json_path("/h/claude-home/") == "/h/claude-home/plugins/marketplaces/fast-jev-compaction/.claude-plugin/plugin.json"
+    assert fast_jev.fast_jev_installed_version(json.dumps({"name": "fast-jev-compaction", "version": "0.4.6"})) == "0.4.6"
+    assert fast_jev.fast_jev_installed_version(json.dumps({"version": " 0.5.0 "})) == "0.5.0"
+    assert fast_jev.fast_jev_installed_version(None) is None
+    assert fast_jev.fast_jev_installed_version("not json") is None
+    assert fast_jev.fast_jev_installed_version(json.dumps({"name": "x"})) is None
+    assert fast_jev.fast_jev_installed_version(json.dumps({"version": ""})) is None
+    assert fast_jev.fast_jev_plugin_outdated("0.4.6") is True
+    assert fast_jev.fast_jev_plugin_outdated(pin) is False
+    assert fast_jev.fast_jev_plugin_outdated(None) is False
+    cmd = fast_jev.fast_jev_update_command("/h/claude-home")
+    assert cmd.startswith("CLAUDE_CONFIG_DIR=/h/claude-home claude plugin marketplace update fast-jev-compaction")
+    assert "; CLAUDE_CONFIG_DIR=/h/claude-home claude plugin update fast-jev-compaction@fast-jev-compaction" in cmd
+    assert "install" not in cmd
+
+
 def test_fast_jev_home_settings_merges_the_plugin_declaration_and_keeps_the_rest() -> None:
     """借りた家の settings.json に plugin の宣言を合流させる(純関数・冪等・他の欄は保つ・壊れた本文は {} から)。"""
     merged = json.loads(fast_jev.fast_jev_home_settings(json.dumps({"permissions": {"defaultMode": "auto"}, "env": {"X": "1"}}), "/run/typesafe/key", "/h/.local/state/fast-jev-compaction"))
@@ -2602,5 +2623,21 @@ def test_host_headless_launch_installs_the_compaction_plugin_into_the_borrowed_h
     options = json.loads((home / "settings.json").read_text())["pluginConfigs"][fast_jev.FAST_JEV_PLUGIN_ID]["options"]
     assert options["stateDir"].endswith("/.local/state/fast-jev-compaction"), options
     assert options["apiKeyFile"] == str(key)
-    for sid in ("h-plug-off", "h-plug-missing", "h-plug-on", "h-plug-again", "h-plug-reconcile"):
+    # 据え済みの家の plugin が pin より古い(pod の PVC で持ち越された 0.4.6 など): install は撃たず update を 1 回撃つ
+    assert "plugin update" not in log.read_text()
+    plugin_json = home / "plugins/marketplaces/fast-jev-compaction/.claude-plugin/plugin.json"
+    plugin_json.parent.mkdir(parents=True, exist_ok=True)
+    plugin_json.write_text(json.dumps({"name": "fast-jev-compaction", "version": "0.4.6"}))
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-plug-outdated", "claude"))
+    _wait_turn_end(headless_host, "h-plug-outdated")
+    lines = log.read_text().splitlines()
+    assert sum(1 for line in lines if line.startswith("plugin update fast-jev-compaction@fast-jev-compaction")) == 1, lines
+    assert any(line.startswith("plugin marketplace update fast-jev-compaction") for line in lines), lines
+    assert sum(1 for line in lines if line.startswith("plugin install")) == 1
+    # 版が pin と同じ家: update は撃たない(冪等)
+    plugin_json.write_text(json.dumps({"name": "fast-jev-compaction", "version": fast_jev.FAST_JEV_PLUGIN_VERSION}))
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-plug-current", "claude"))
+    _wait_turn_end(headless_host, "h-plug-current")
+    assert sum(1 for line in log.read_text().splitlines() if line.startswith("plugin update")) == 1
+    for sid in ("h-plug-off", "h-plug-missing", "h-plug-on", "h-plug-again", "h-plug-reconcile", "h-plug-outdated", "h-plug-current"):
         headless_host.ok("session.cleanup", {"session_id": sid})

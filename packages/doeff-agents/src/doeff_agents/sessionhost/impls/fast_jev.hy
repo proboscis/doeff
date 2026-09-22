@@ -21,6 +21,14 @@
 ;; cache の TTL(分)— この口座の prompt cache は 1 時間(Mac の profile と同じ値)。
 (setv FAST-JEV-CACHE-TTL-MINUTES 60)
 
+;; 借りた家に据える plugin の版の pin(宣言点はここ 1 つ)。据え済みの家(PVC で持ち越される)は、家の中の
+;; plugin.json の版がこの値と違う時だけ `claude plugin update` で揃える — 毎回の起動で git fetch を払わず、
+;; pin を進めた便でだけ更新が走る。実測 2026-09-22 23:1x: fork の 0.5.0(残量の上限・効き目の門)を push しても
+;; pod の家は 0.4.6 のままだった(据え付けは「effective でない時だけ install」で、更新の口が無かった)。
+(setv FAST-JEV-PLUGIN-VERSION "0.5.0")
+;; 家の中の plugin.json の path(CLAUDE_CONFIG_DIR からの相対)— `claude plugin install` が置く marketplace の clone。
+(setv FAST-JEV-PLUGIN-JSON-SUFFIX "plugins/marketplaces/fast-jev-compaction/.claude-plugin/plugin.json")
+
 ;; plugin の状態 file(session ごとの温冷の記憶・journal)の置き場 — 家(HOME)の下の `.local/state` は pod の
 ;; StatefulSet が序数ごとの PVC で持ち越す(ACP acpcluster.yaml seat-home-state)ので、pod が入れ替わっても
 ;; 「前の応答からの経過」が残り、温かい cache を「記録が無い = 冷えた」と誤って圧縮しない。既定の
@@ -101,3 +109,46 @@
   (setv home (shlex.quote config-dir))
   (+ f"CLAUDE_CONFIG_DIR={home} claude plugin marketplace add {(shlex.quote FAST-JEV-MARKETPLACE-URL)} >/dev/null 2>&1; "
      f"CLAUDE_CONFIG_DIR={home} claude plugin install {(shlex.quote FAST-JEV-PLUGIN-ID)} --scope user"))
+
+
+(deff fast-jev-plugin-json-path [config-dir]
+  {:pre [(: config-dir str) (> (len config-dir) 0)]
+   :post [(: % str)]}
+  "家(CLAUDE_CONFIG_DIR)から据え済み plugin の plugin.json の path を組む(純関数)。"
+  (+ (.rstrip config-dir "/") "/" FAST-JEV-PLUGIN-JSON-SUFFIX))
+
+
+(deff fast-jev-installed-version [plugin-json-text]
+  {:pre [(: plugin-json-text (| str None))]
+   :post [(: % (| str None))]}
+  "据え済み plugin の plugin.json の本文から版を読む(純関数)。file が無い・壊れている・version が無い時は None
+   (= 読めない。\"古い\" とは区別する — 読めない家は update を撃たず、据え付けの経路に任せる)。"
+  (setv parsed None)
+  (when (isinstance plugin-json-text str)
+    (try
+      (setv parsed (json.loads plugin-json-text))
+      (except [Exception]
+        (setv parsed None))))
+  (if (not (isinstance parsed dict))
+      None
+      (do
+        (setv v (.get parsed "version"))
+        (if (and (isinstance v str) (.strip v)) (.strip v) None))))
+
+
+(deff fast-jev-plugin-outdated [installed-version]
+  {:pre [(: installed-version (| str None))]
+   :post [(: % bool)]}
+  "据え済みの版が pin と違うか(純関数)。None(読めない)は False — 読めない家に update を撃たない。"
+  (and (isinstance installed-version str) (!= installed-version FAST-JEV-PLUGIN-VERSION)))
+
+
+(deff fast-jev-update-command [config-dir]
+  {:pre [(: config-dir str) (> (len config-dir) 0)]
+   :post [(: % str)]}
+  "据え済み plugin を pin の版へ揃える 1 命令(sh -c 用・純関数): marketplace の clone を fetch してから
+   plugin を入れ直す。settings.json は触らない(options と env は fast-jev-home-settings が合流済み)。"
+  (import shlex)
+  (setv home (shlex.quote config-dir))
+  (+ f"CLAUDE_CONFIG_DIR={home} claude plugin marketplace update {(shlex.quote FAST-JEV-MARKETPLACE-NAME)} >/dev/null 2>&1; "
+     f"CLAUDE_CONFIG_DIR={home} claude plugin update {(shlex.quote FAST-JEV-PLUGIN-ID)}"))
