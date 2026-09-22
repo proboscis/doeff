@@ -98,6 +98,11 @@ TURN_OUTPUT_ENTRY_KINDS: tuple[EntryKind, ...] = (
 #: byteBudget と statusByteBudget = byteBudget + 4,096)より**先に**書き手が下げる(消費者が先)— 書き手の上限が契約より
 #: 小さいのは常に安全で、大きいのは engine が 400 で断る側。
 TURN_RECORD_ENTRIES_BYTE_BUDGET = 4_096
+#: 応答の列の上限(契約 conventions.turnRecordResponses.byteBudget の写し — card acp:kanban-issue:ki-c3ac5832a0bd)。
+#: turn-record の status.responses の compact JSON(UTF-8)の上限 byte。items は古い順に先頭から足し、超える手前で止めて
+#: dropped が切った数を名乗る(1 本目は必ず残る — response_usage.responses-status-of の 1 点)。書くのは手番の終わりの書きだけ
+#: なので、走っている間の追記の書き(journal の後像)は増やさない。
+TURN_RECORD_RESPONSES_BYTE_BUDGET = 16_384
 #: 見出しの 1 entry の compact JSON の上限 byte(契約 §2.2「1 entry ≤ 256 byte」の写し — 検の物差し。走行時の門は ACP の
 #: engine の statusByteBudget で、agentd は見出しに本文を持てない型で守る)。
 TURN_ENTRY_MAX_BYTES = 256
@@ -2418,6 +2423,9 @@ class DeltaBatch:
     turn_result: bool = False
     #: 最後の主agentのAPI応答の時刻とキャッシュ利用。配達・poll時刻ではない。
     cache_observation: JSONObject | None = None
+    #: card acp:kanban-issue:ki-c3ac5832a0bd: この材料の応答ごとの消費(最初に見た順・output は最終値 —
+    #: response_usage.response-usages-of)。手番の終わりの読み直し(turn-batch-of)だけが行の status.responses へ写す。
+    responses: tuple[JSONObject, ...] = ()
 
 
 @dataclass(frozen=True)

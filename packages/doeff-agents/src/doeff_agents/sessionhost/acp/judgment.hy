@@ -60,6 +60,7 @@
 ;; (live_row.hy・contracts.lock の kind = code)の 1 点 — ここに名前の索引を持たない。
 (import doeff_agents.sessionhost.acp.live_row [resolve-live-row])
 (import doeff_agents.sessionhost.acp.cache_observation [cache-observation-of cache-context-of])
+(import doeff_agents.sessionhost.acp.response_usage [response-usages-of])
 ;; card acp:kanban-issue:ki-567f2dd6140f §3.1e: 保持の予算は ACP 側の 1 点(host は 1 度も読まない)。
 (import doeff_agents.sessionhost.acp.cache_operation [CACHE-RESIDENT-IDLE-MS])
 (import doeff_agents.sessionhost.acp.effects [
@@ -4335,17 +4336,22 @@
   next)
 
 
-(defk turn-record-ended-status [status usage entries [cache-observation None]]
-  {:pre [(: status dict) (: usage (| dict None)) (: entries tuple) (: cache-observation (| dict None))]
+(defk turn-record-ended-status [status usage entries [cache-observation None] [responses None]]
+  {:pre [(: status dict) (: usage (| dict None)) (: entries tuple) (: cache-observation (| dict None))
+         (: responses (| dict None))]
    :post [(: % dict)]}
   "手番の終わりの turn-record の status: 残りの見出し(entries — TurnEntryHeadline の列)を行の entries に**追記**
-   した上で state = ended・usage(素材があれば)。行の entries は落とさない(手番の間に追記した見出しが正本)。"
+   した上で state = ended・usage(素材があれば)。行の entries は落とさない(手番の間に追記した見出しが正本)。
+   responses = 応答ごとの消費(card acp:kanban-issue:ki-c3ac5832a0bd — response_usage.responses-status-of の形)は
+   **この終わりの書きでだけ**置く(走っている間の追記の書きに載せると、追記のたびに status の全体を書き戻して記録簿が育つ)。"
   (<- next dict (turn-record-appended-status status entries))
   (setv (get next "state") TURN-RECORD-ENDED)
   (when (is-not usage None)
     (setv (get next "usage") usage))
   (when (is-not cache-observation None)
     (setv (get next "cacheObservation") cache-observation))
+  (when (is-not responses None)
+    (setv (get next "responses") responses))
   next)
 
 
@@ -5441,7 +5447,8 @@
     (= agent-type "claude")
     (do (<- claude-batch DeltaBatch (claude-deltas-of records job-id seq-start at True open-blocks))
         (<- cache-observation (| dict None) (cache-observation-of records))
-        (replace claude-batch :cache-observation cache-observation))
+        (<- responses tuple (response-usages-of records))
+        (replace claude-batch :cache-observation cache-observation :responses responses))
     (= agent-type "codex")
     (do (<- codex-batch DeltaBatch (codex-event-deltas-of records job-id seq-start at))
         codex-batch)
@@ -5464,7 +5471,8 @@
     ;; transcript(tui)は完成した block の行だけで、引数の差分を運ばない — 開いた block の表は空のまま。
     (do (<- claude-batch DeltaBatch (claude-deltas-of records job-id seq-start at False #()))
         (<- cache-observation (| dict None) (cache-observation-of records))
-        (replace claude-batch :cache-observation cache-observation))
+        (<- responses tuple (response-usages-of records))
+        (replace claude-batch :cache-observation cache-observation :responses responses))
     (= agent-type "codex")
     (do (<- codex-batch DeltaBatch (codex-deltas-of records job-id seq-start at))
         codex-batch)
