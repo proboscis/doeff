@@ -60,6 +60,9 @@
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_observation.hy",
     "packages/doeff-agents/tests/test_sessionhost_cache_observation.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_observation.pyi",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/response_usage.hy",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/response_usage.pyi",
+    "packages/doeff-agents/tests/test_sessionhost_response_usage.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_operation.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/io_types.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/loop_model.py",
@@ -131,7 +134,8 @@
         "sessionhost-attachment",
         "acp-live-row",
         "sessionhost-headless-protocol",
-        "agentd-cache-observation"
+        "agentd-cache-observation",
+        "agentd-response-usage"
       ],
       "typed": true
     },
@@ -182,7 +186,8 @@
         "agentd-judgment",
         "sessionhost-attachment",
         "agentd-cache-observation",
-        "agentd-cache-operation"
+        "agentd-cache-operation",
+        "agentd-response-usage"
       ],
       "typed": true
     },
@@ -998,6 +1003,39 @@
       "public": [],
       "allow": [
         "agentd-cache-observation",
+        "agentd-judgment",
+        "agentd-effects"
+      ],
+      "typed": true
+    },
+    {
+      "name": "agentd-response-usage",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/response_usage.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/response_usage.pyi"
+      ],
+      "responsibility": "手番の応答ごとの消費(出力は message_delta の最終値)と turn-record の status.responses の形。行へ写すのは手番の終わりの書きだけ",
+      "layer": "domain",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/response_usage.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/response_usage.pyi"
+      ],
+      "allow": [
+        "agentd-cache-observation",
+        "agentd-effects"
+      ],
+      "typed": true
+    },
+    {
+      "name": "agentd-response-usage-tests",
+      "paths": [
+        "packages/doeff-agents/tests/test_sessionhost_response_usage.py"
+      ],
+      "responsibility": "応答ごとの消費の畳み・上限の切り方・終わりの書きへの接続・契約の写しとの突合の検証",
+      "layer": "runtime",
+      "public": [],
+      "allow": [
+        "agentd-response-usage",
         "agentd-judgment",
         "agentd-effects"
       ],

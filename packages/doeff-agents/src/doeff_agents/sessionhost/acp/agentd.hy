@@ -119,6 +119,7 @@
 (import dataclasses [replace])
 (import hashlib)
 (import doeff_agents.sessionhost.acp.cache_observation [with-request-start-bound])
+(import doeff_agents.sessionhost.acp.response_usage [responses-status-of usage-of-responses])
 
 (import doeff_agents.sessionhost.attachment [TurnAttachment])
 (import doeff_agents.sessionhost.acp.effects [
@@ -2453,20 +2454,26 @@
 ;; 記録(turn-record)と手番の終わり
 ;; ---------------------------------------------------------------------------
 
-(defk end-turn-record [job-id usage entries mark [cache-observation None]]
-  {:pre [(: job-id str) (: usage (| dict None)) (: entries tuple) (: mark (| tuple None)) (: cache-observation (| dict None))]
+(defk end-turn-record [job-id usage entries mark [cache-observation None] [responses #()]]
+  {:pre [(: job-id str) (: usage (| dict None)) (: entries tuple) (: mark (| tuple None)) (: cache-observation (| dict None))
+         (: responses tuple)]
    :post [(: % bool)]}
   "turn-record を ended に(usage・残りの entries を行の entries に追記)。行は鍵で読み直す
    (正本は行)。戻り = 行が在って書けたか(無ければ False — 受けた直後に落ちた job には記録が
    無いのが普通なので、ここでは log しない)。mark = 手番が memory に持っていた受理の刻印
-   (InFlightJob.recorded-mark — 無ければ None): この書きに同乗させる(mark-recorded の docstring)。"
+   (InFlightJob.recorded-mark — 無ければ None): この書きに同乗させる(mark-recorded の docstring)。
+   responses = 手番の応答ごとの消費(turn-batch-of の読み直しの DeltaBatch.responses)— 行の status.responses へ写すのは
+   この書きちょうど(card acp:kanban-issue:ki-c3ac5832a0bd)。空なら欄を書かない(codex の手番・材料の無い手番)。"
   (<- key str (turn-record-key-of job-id))
   (<- record (| AcpRow None) (AcpGetRow :key key))
   (if (is record None)
       False
       (do
         (<- record-status dict (status-object-of record))
-        (<- ended-record dict (turn-record-ended-status record-status usage entries cache-observation))
+        (setv shaped None)
+        (when responses
+          (<- shaped dict (responses-status-of responses)))
+        (<- ended-record dict (turn-record-ended-status record-status usage entries cache-observation shaped))
         (<- ended-record dict (turn-record-marked-status ended-record mark))
         (<- wrote (| Written Conflict Refused) (AcpPutStatus :row record :status ended-record))
         (when (not (isinstance wrote Written))
@@ -2492,7 +2499,10 @@
    :post [(: % DeltaBatch)]}
   "手番の始まりから今までの材料(transcript / events)を読み直し、usage を組む(frame は押さない
    — 実況は拍ごとに押した。entries も使わない — 出来事は拍ごとに行へ追記した側が正本で、ここは
-   message ごとの重複を跨いで数える usage のためだけ)。材料が無ければ空。"
+   message ごとの重複を跨いで数える usage のためだけ)。材料が無ければ空。
+   card acp:kanban-issue:ki-c3ac5832a0bd: 応答ごとの消費(responses)が組めた手番は、合計もその和にする — 読みの拍ごとの
+   和(claude-deltas-of の add-usage)は assistant の行の途中の出力(実測 5 対 message_delta の 1244)を数えていて、
+   手番の出力を桁で少なく名乗っていた。応答の列は message_delta の最終値まで畳んでいる(response-usages-of)。"
   (if (or (is path None) (is source None))
       (DeltaBatch :frames #() :entries #() :usage None :next-seq 0 :model None)
       (do
@@ -2500,7 +2510,8 @@
         (<- whole DeltaBatch (deltas-of job.agent-type source chunk.text job.job-id 0 now-ms #()))
         (<- bounded (| dict None) (with-request-start-bound whole.cache-observation
                                     job.request-start-lower-bound-ms job.materials-cover-the-turn))
-        (replace whole :cache-observation bounded))))
+        (<- summed (| dict None) (usage-of-responses whole.responses))
+        (replace whole :cache-observation bounded :usage (if (is summed None) whole.usage summed)))))
 
 
 (defk finalize-job [settings state job view source path step now-ms]
@@ -2976,7 +2987,7 @@
   (if (is limit None)
       (do
         ;; turn-record → ended(追記できずに持ち越した出来事があれば最後の書きに乗せる)
-        (<- recorded bool (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark batch.cache-observation))
+        (<- recorded bool (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark batch.cache-observation batch.responses))
         ;; agora-redesign #537 H2: 終わりの書きが着かなかった拍は、鍵で行の在否を確かめる(正本は行 — 戻りの False は
         ;; 「行が無い」と「書きが断られた」の両方を含む)。行が**無い**なら、その拍に 1 度だけ作り直して ended まで書く —
         ;; 記録なしで Ended にしない(ACP Messaging の turnlessOf は turn-record の行の在否で読み、無ければ
@@ -3000,7 +3011,7 @@
                                                                f"re-created ({remade.status}: {remade.error})")))
                       (setv drained noted))
                     (do
-                      (<- again bool (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark batch.cache-observation))
+                      (<- again bool (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark batch.cache-observation batch.responses))
                       (setv recorded again)))
                 (<- (LogLine :text (+ f"agentd: turn-record for job {job.job-id} was missing at turn end; re-created -> "
                                       f"{remade} (ended: {recorded}) (#537)"))))))
@@ -3342,7 +3353,7 @@
   ;; 段 10f 便 2: 割り込みで終わる手番も文脈の実測を session の cache に置く(settle-record と同じ 1 点の判断)。
   (<- percent (| int None) (context-percent-of batch.context))
   (<- measured AgentdState (with-context-percent state job.session-id percent))
-  (<- (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark batch.cache-observation))
+  (<- (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark batch.cache-observation batch.responses))
   (<- fresh (| AcpRow None) (AcpGetRow :key row.key))
   (setv target (if (is fresh None) row fresh))
   (<- status dict (status-object-of target))
