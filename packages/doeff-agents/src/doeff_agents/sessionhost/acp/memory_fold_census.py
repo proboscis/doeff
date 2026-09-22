@@ -55,8 +55,6 @@ log が丸ごと消える(実測 2026-09-22: agentd-pool-0 が 90 分の観測�
 前の container の 1,532 行は ``--previous`` からも消えた)。:attr:`Census.source` を必ず名乗ること。
 """
 
-from __future__ import annotations
-
 import json
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
