@@ -25,7 +25,7 @@
 ;; plugin.json の版がこの値と違う時だけ `claude plugin update` で揃える — 毎回の起動で git fetch を払わず、
 ;; pin を進めた便でだけ更新が走る。実測 2026-09-22 23:1x: fork の 0.5.0(残量の上限・効き目の門)を push しても
 ;; pod の家は 0.4.6 のままだった(据え付けは「effective でない時だけ install」で、更新の口が無かった)。
-(setv FAST-JEV-PLUGIN-VERSION "0.5.0")
+(setv FAST-JEV-PLUGIN-VERSION "0.6.0")
 ;; 家の中の plugin.json の path(CLAUDE_CONFIG_DIR からの相対)— `claude plugin install` が置く marketplace の clone。
 (setv FAST-JEV-PLUGIN-JSON-SUFFIX "plugins/marketplaces/fast-jev-compaction/.claude-plugin/plugin.json")
 
