@@ -627,6 +627,12 @@ CHARTER_KEYS_AGENTD_CONSUMES: tuple[str, ...] = (
     CHARTER_SUMMARIZE_UNTIL_KEY,  # summarize の命令(会話の手番ではない)
     CHARTER_SUMMARIZE_REGION_BYTES_KEY,
 )
+#: card acp:kanban-issue:ki-c3aace97d825: 組み直した transcript を席の家へ運ぶ charter の欄の綴り。
+#: 値 = {"session_id": <uuid>, "text": <jsonl>}。運ぶのは policy.TURN_CARRIED_KEYS の 1 点で、
+#: 家へ書くのは impls/claude_code.hy の 1 点(agentd は家の物理を知らない — 記憶の冊と同じ形)。
+CHARTER_REBUILT_TRANSCRIPT_KEY = "rebuilt_transcript"
+REBUILT_TRANSCRIPT_SESSION_FIELD = "session_id"
+REBUILT_TRANSCRIPT_TEXT_FIELD = "text"
 #: 4 枚の名簿が写す欄(= 基の名簿に名前で書かれていない、席へ運ぶ欄)。host 側の写しは
 #: policy.CHARTER-CARRIED-KEYS で、**同じ語であること**は検が pin する(綴りが割れると黙って落ちる)。
 CHARTER_CARRIED_KEYS: tuple[str, ...] = (
@@ -634,6 +640,7 @@ CHARTER_CARRIED_KEYS: tuple[str, ...] = (
     CHARTER_MEMORY_DIR_KEY,
     CHARTER_MEMORY_FILES_KEY,
     CHARTER_MEMORY_RETIRED_FILES_KEY,
+    CHARTER_REBUILT_TRANSCRIPT_KEY,
 )
 
 #: 段 10 lane 10n: agent の種類ごとの割り込みの能力(node の status.capabilities[kind].interrupt の閉語彙):
@@ -787,11 +794,17 @@ LIFECYCLE_MULTI_TURN = "multi_turn"
 #: ACP の会話の記録を最初の本文に畳んで新しい session を起こす(段 8q・operator 決定 #54: cache を保つのは
 #: 同じ機体 ∧ 同じ profile の家の時だけ)/ launch = 会話に前の session が無い / defer = 会話の session が
 #: 手番の途中(claim せず次の list で読み直す — 走っている手番に本文を積まない)。
-NextArm = Literal["launch", "send", "resume", "rehydrate", "defer"]
+NextArm = Literal["launch", "send", "resume", "rehydrate", "rebuild", "defer"]
 NEXT_ARM_LAUNCH: NextArm = "launch"
 NEXT_ARM_SEND: NextArm = "send"
 NEXT_ARM_RESUME: NextArm = "resume"
 NEXT_ARM_REHYDRATE: NextArm = "rehydrate"
+#: 会話の記録から Claude Code の transcript を組み直して同じ会話を --resume で続ける腕
+#: (card acp:kanban-issue:ki-c3aace97d825)。rehydrate と同じ条件(別の機体・別の家)で選ばれるが、
+#: 履歴を 1 通の巨大な最初の本文へ畳む代わりに、記録の出来事を手番ごとの user / assistant の行へ
+#: 写した transcript を家に置き、`claude --resume <sid>` で続ける。組み立てか検査が通らなければ
+#: 同じ拍で rehydrate に戻る(judgment.rebuild-arm-of / transcript-readable-of)。
+NEXT_ARM_REBUILD: NextArm = "rebuild"
 NEXT_ARM_DEFER: NextArm = "defer"
 #: agentd が起こす session の launch_attribution(sessionhost が素通しで保存し wire の眺めに返す
 #: opaque な帰属)の中で agentd が持つ欄の鍵(段 8q)。値 = {conversationId, agentJobId, account,
@@ -1001,6 +1014,10 @@ HOMES_ROOT_ENV = "DOEFF_AGENTD_HOMES_ROOT"
 #: 既定は homes-root と同じ導き方(runtime.settings_from_env)で、資格の家の**外**に置く —
 #: 家の中に置くと預かり所が別の account を貸した拍に置き場が変わり、記憶が会話から剥がれる。
 MEMORY_ROOT_ENV = "DOEFF_AGENTD_MEMORY_ROOT"
+#: card acp:kanban-issue:ki-c3aace97d825: 会話の記録から transcript を組み直して `--resume` で続けるか
+#: (AgentdSettings.transcript_rebuild_enabled)。"0" / "false" / "no" / "off" で切る(戻し方 = この 1 つ)。
+#: 既定は立っている —— 組み立てか起動前の検査が通らない拍は同じ拍で rehydrate に戻るので、切らなくても止まらない。
+TRANSCRIPT_REBUILD_ENV = "DOEFF_AGENTD_TRANSCRIPT_REBUILD"
 CUSTODY_URL_ENV = "AGORA_CUSTODY_URL"
 BORROWER_KEY_PATH_ENV = "AGORA_BORROWER_KEY_PATH"
 #: 段 10 lane 10y(agora-redesign #110・依頼者の裁定 問い 3 案 A): k8s の pod の身元 = ServiceAccount の token の file。
@@ -1522,6 +1539,20 @@ class AgentdSettings:
     #: 見出し 1 行(期間・kind ごとの件数・道具の名・全文の在処 = ACP の会話の記録)に畳んで残す(judgment.rehydrate-history-of —
     #: 段 11 lane 11v・agora-redesign #55 / #225・R34 / R35。model は呼ばない)。
     rehydrate_history_byte_budget: int = 65_536
+    #: card acp:kanban-issue:ki-c3aace97d825: 別の機体・別の家で始まる手番を、履歴の畳み直し(rehydrate)ではなく
+    #: 「会話の記録から transcript を組み直して --resume」で続けるか。False = 今日どおり rehydrate だけ。
+    #: True でも、組み立てか起動前の検査が通らなければ同じ拍で rehydrate に戻る(戻し方 = この旗を切る)。
+    #: composition root(runtime.settings_from_env)が TRANSCRIPT_REBUILD_ENV から据える。
+    transcript_rebuild_enabled: bool = True
+    #: 組み直す transcript の上限(UTF-8 の byte)。超えたら古い手番から落とし、落とした区間は見出し 1 行に畳む
+    #: (judgment.transcript-lines-of — 落とし方の向きは rehydrate と同じ)。
+    #: ⚠ **既定を rehydrate_history_byte_budget と同じ値に揃えてある**。畳み直しは「無駄な書き直し」であると同時に
+    #: **文脈の肥大を止める栓**でもあり(費用の実測 ~/experiments/agent-subtask-cost/out/kanban-worth/cost/README.md:
+    #: 履歴を 64 KB に切るので 1 応答が対話の 1/3.8 の文脈〔中央 107,722 トークン〕で済み、1 応答あたりでは
+    #: 温かい送りより 29% 安い)、組み直しで上限を緩めると**読み直しが増えて書き直しの節約を相殺する**。
+    #: ⇒ 組み直しが運ぶ履歴の量は畳み直しと同じにし、節約は「先頭が byte 同一になって読みに変わる」分だけで採る。
+    #: 上げるのは、1 応答の文脈の実測を見た上での別の決定(値はこの 1 行)。
+    transcript_rebuild_byte_budget: int = 65_536
     #: node の observations.transcripts に載せる件数の上限(段 8q — 終端の session のうち transcript が
     #: この機体に残るもの・会話ごとに最新の 1 つ・新しい順)。heartbeat ごとに node の行へ書くので小さく
     #: 保つ(契約の maxItems 64 以下 = TRANSCRIPTS_OBSERVED_MAX_CEILING)。
@@ -2135,6 +2166,56 @@ class ArmChoice:
     compacts: bool = False
 
 
+#: 組み直しを見送る理由の閉語彙(card ki-c3aace97d825)。
+#: no-history      = 記録に写せる出来事が 1 つも無い(履歴の無い会話は launch / rehydrate のまま)
+#: thin-record     = 記録の service に届かず見出しだけ(本文が無いので transcript にならない)
+#: empty-lines     = 畳んだ結果 1 行も残らなかった
+#: broken-chain    = 組んだ行の親子の鎖が繋がらない(器が読めない形)
+#: role-disorder   = user / assistant の並びが交互でない(器が読めない形)
+#: session-mismatch= 行の名乗る会話の id が揃っていない
+TranscriptRefusal = Literal[
+    "no-history",
+    "thin-record",
+    "empty-lines",
+    "broken-chain",
+    "role-disorder",
+    "session-mismatch",
+]
+
+@dataclass(frozen=True)
+class TranscriptBuilt:
+    """組み直した Claude Code の transcript(judgment.transcript-lines-of の答え・card ki-c3aace97d825)。
+
+    session_id   この transcript が名乗る会話の id(`claude --resume` の引数・器が家へ置く file 名)
+    lines        transcript の行(1 行 1 dict — 書き出しは jsonl)
+    turns        写した手番の数(落とした後)
+    dropped      上限で落とした手番の数
+    cut_bytes    最新の手番の先頭から切った byte(0 = 切っていない)
+    size_bytes   jsonl にした時の UTF-8 の大きさ
+    """
+
+    session_id: str
+    lines: tuple[JSON, ...]
+    turns: int
+    dropped: int
+    #: 最新の手番 1 つでも上限を超えた時に、その先頭から切った byte(0 = 切っていない)。
+    cut_bytes: int
+    size_bytes: int
+
+
+@dataclass(frozen=True)
+class TranscriptRefused:
+    """組み直しを見送った(judgment.transcript-lines-of / transcript-readable-of の答え)。
+
+    reason は閉語彙 — 呼び手はこの型を見たら同じ拍で rehydrate に戻る(第 2 の判断を置かない)。
+    """
+
+    reason: TranscriptRefusal
+
+
+TranscriptOutcome: TypeAlias = "TranscriptBuilt | TranscriptRefused"
+
+
 @dataclass(frozen=True)
 class HeadlineCounts:
     """見出しの数(段 8q・段 11 lane 11v・agora-redesign #55): 出来事と郵便の kind ごとの件数(初出の順)・道具の名(初出の順)・
@@ -2382,6 +2463,10 @@ METRIC_COMPACTIONS_TOTAL = "agentd_compactions_total"
 #: 段 12 lane 12j 便 3(agora-redesign #233): 手番の終わりの文脈の大きさが summarize_trigger_tokens を超え、要約の job を書いた回数
 #: (欄 conversationId・until・agentJobId)。書けなかった拍(既在・断り)は数えない(log の 1 行)。
 METRIC_SUMMARIZE_TRIGGERS_TOTAL = "agentd_summarize_triggers_total"
+#: card acp:kanban-issue:ki-c3aace97d825: 会話の記録から transcript を組み直した拍の 1 行。
+#: outcome = "built"(組めた)か judgment の断りの語(thin-record / no-history / broken-chain …)。
+#: 「組み直しが何回に何回通ったか」はこの 1 行の集計から読む(log と 2 か所で数えない)。
+METRIC_TRANSCRIPT_REBUILDS_TOTAL = "agentd_transcript_rebuilds_total"
 #: 段 12(agora-redesign #537 便 1): 終状態を読む巡回が閉じた / 触らなかった走っている turn-record(1 行 = 1 記録・
 #: 欄 agentJobId / node)。本番の針「running のまま取り残された記録 = 0」を測る材料。
 METRIC_TURN_RECORD_SWEEP_ENDED = "agentd_turn_record_sweep_ended"
@@ -2605,6 +2690,30 @@ class HeadlineTurns:
 
 
 HistorySource: TypeAlias = "RecordedTurns | HeadlineTurns"
+
+
+@dataclass(frozen=True)
+class HistoryMaterial:
+    """会話の再開に使う材料の 1 度の読み(card acp:kanban-issue:ki-c3aace97d825 で agentd.history-for から抽出)。
+
+    畳み先は 2 つある —— 履歴を 1 通の最初の本文にする rehydrate と、手番ごとの行にする transcript の組み直し。
+    **材料の読みは 1 度**(記録の service と ACP の行を 2 度引かない): 組み直しが通らなかった拍に rehydrate へ
+    戻る時も、同じ材料をそのまま使う。
+
+    messages   この会話を名指す ACP の kind message の行
+    source     手番の材料(記録の service の本文 = RecordedTurns / 届かなかった時の見出し = HeadlineTurns)
+    fetched    本文を記録の service に置いた郵便の表(郵便 id → 本文)
+    summaries  この会話の要約(古い順)
+    floor_at   要約が覆う記録の終わりの時刻(epoch ms・None = 要約なし / 読めない)
+    head_seq   読めた出来事の recordSeq の最大(0 = 出来事なし)。組み直した transcript の会話の id の材料。
+    """
+
+    messages: tuple["AcpRow", ...]
+    source: HistorySource
+    fetched: dict
+    summaries: tuple
+    floor_at: int | None
+    head_seq: int
 
 
 # ------------------------------------------------------------------ agentd の状態

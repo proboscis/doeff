@@ -110,6 +110,7 @@
   is-run-to-completion
   is-terminal-status
   iso-format
+  launch-conversation-plan-of
   make-cause
   reap-exempt
   tail-chars])
@@ -261,21 +262,15 @@
   (setv minted-conversation (get prepared "conversation"))
   (setv resume-context (.get params "resume_context"))
 
-  ;; 会話 identity: resume は親会話・fork は None(事後発見)・fresh の claude は鋳造済み
-  ;; UUID(--session-id)・fresh の codex は None(thread/start の応答で知る)。
-  (setv row-conversation
-        (cond
-          (is-not resume-context None)
-            (if (= (get resume-context "mode") "resume")
-                (get resume-context "conversation")
-                None)
-          (= agent-type "claude") minted-conversation
-          True None))
-  (setv resume-mode (when (is-not resume-context None) (get resume-context "mode")))
+  ;; 会話 identity と起こし方(--session-id / --resume)の判断は policy.launch-conversation-plan-of の 1 点
+  ;; (tui の launch.hy と同じ関数 — card acp:kanban-issue:ki-c3aace97d825)。
+  (<- plan dict (launch-conversation-plan-of resume-context minted-conversation
+                                             (bool (.get prepared "adopted" False))
+                                             agent-type False))
+  (setv row-conversation (get plan "row_conversation"))
+  (setv resume-mode (get plan "mode"))
   (<- built (headless-launch-args params identity
-                                  (if (is-not resume-context None)
-                                      (get resume-context "conversation")
-                                      minted-conversation)
+                                  (get plan "conversation")
                                   resume-mode
                                   (.get params "socket_path" "")
                                   session-id))

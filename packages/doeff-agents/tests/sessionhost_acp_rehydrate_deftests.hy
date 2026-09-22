@@ -185,9 +185,14 @@
 (defclass World []
   "fake の 4 handler(+ record = True なら会話の記録の service の fake)+ 値の宣言 + Node の行(agentd を一周させる最小の世界)。"
 
-  (defn #^ None __init__ [self #^ str backend #^ bool [record False]]
+  (defn #^ None __init__ [self #^ str backend #^ bool [record False] #^ bool [rebuild False]]
+    ;; card acp:kanban-issue:ki-c3aace97d825: この冊が pin するのは**履歴の畳み直し**の腕。組み直し
+    ;; (会話の記録から transcript を組んで --resume)は既定で立っているので、ここでは切っておく ——
+    ;; 畳み直しは組み直しが断られた拍(本文の無い薄い再開・壊れた行・claude 以外の器)と旗を切った宿で
+    ;; 現に走り続ける道なので、この冊はその道を撃ち続ける。組み直しの腕そのものの検は
+    ;; test-another-home-rebuilds-the-transcript-and-resumes 以下(rebuild True)。
     (setv self.settings (AgentdSettings :node-name NODE :homes-root "/homes" :backend-kind backend
-                                        :record-enabled record))
+                                        :record-enabled record :transcript-rebuild-enabled rebuild))
     (setv self.record-service (FakeRecord))
     (setv self.acp (FakeAcp :births {TURN-RECORD-KIND (Birth "state" "running")}))
     (.put-row self.acp (AcpRow :namespace AGORA-KINDS-NAMESPACE
@@ -654,6 +659,65 @@
   (assert (= (get metric "arm") "rehydrate")))
 
 
+(deftest test-another-home-rebuilds-the-transcript-and-resumes
+  ;; card acp:kanban-issue:ki-c3aace97d825: 旗が立っている宿では、家の違う手番は履歴を 1 通の本文へ畳み直す代わりに、
+  ;; 会話の記録から組んだ transcript を charter で家へ運び、器がそれを `--resume` で続ける。
+  ;; 起こす腕そのものは今日と同じ(session.launch)で、違うのは「最初の本文に履歴を積まない」ことと
+  ;; 「charter が transcript を運ぶ」ことの 2 つ。
+  (setv world (World "tmux" True :rebuild True))
+  (setv warm (run-first-turn world))
+  (setv asked (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (+ world.local.now-ms 100)))
+  (.put-row world.acp asked)
+  (.put-row world.acp (bound-row "j-2" ["m-2"] "other" warm))
+  (.tick world 1000)
+  (assert (= world.sessions.cleanups [warm]) world.local.logs)
+  (assert (= (len world.sessions.launches) 2) world.local.logs)
+  (setv launch (get world.sessions.launches -1))
+  ;; 履歴は最初の本文に積まない(積むと transcript と 2 度届く)。
+  (setv prompt (str-at launch "prompt"))
+  (assert (= prompt "start") prompt)
+  ;; charter が組み直した transcript を運ぶ。
+  (setv carried (get launch "rebuilt_transcript"))
+  (assert (isinstance carried dict) launch)
+  (setv session-id (get carried "session_id"))
+  (assert (isinstance session-id str) carried)
+  (setv lines (lfor line (.splitlines (get carried "text")) :if line (json.loads line)))
+  (assert lines carried)
+  (assert (= (lfor line lines (get line "sessionId")) (* [session-id] (len lines))) lines)
+  (setv whole (get carried "text"))
+  (assert (in f"operator → {CONVERSATION}(note): 合言葉は ひまわり" whole) whole)
+  (assert (in "agent: 覚えました" whole) whole)
+  (assert (not-in "合言葉は何でしたか" whole) "この手番の本文は transcript に畳まない")
+  ;; 帰属と計器が腕を名乗る(実測で「何回に何回組み直せたか」を数える口)。
+  (setv stamp (dict-at (dict-at launch "launch_attribution") "agentd"))
+  (assert (= (get stamp "arm") "rebuild") stamp)
+  (setv metric (get (lfor m world.local.metrics :if (= (get m "metric") "agentd_transcript_rebuilds_total") m) -1))
+  (assert (= (get metric "outcome") "built") metric)
+  (assert (= (get metric "sessionId") session-id) metric)
+  (assert (any (gfor line world.local.logs (in "rebuilds the transcript" line))) world.local.logs))
+
+
+(deftest test-a-thin-record-falls-back-to-rehydrating-in-the-same-tick
+  ;; 組み立てが通らない拍は**同じ拍で**履歴の畳み直しに戻る(operator の手も次の手番も待たない)。
+  ;; 記録の service が届かない時の材料は見出しだけで本文が無いので、transcript にはできない。
+  (setv world (World "tmux" True :rebuild True))
+  (setv warm (run-first-turn world))
+  (setv world.record-service.unreachable True)
+  (setv asked (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (+ world.local.now-ms 100)))
+  (.put-row world.acp asked)
+  (.put-row world.acp (bound-row "j-2" ["m-2"] "other" warm))
+  (.tick world 1000)
+  (setv launch (get world.sessions.launches -1))
+  (assert (not-in "rebuilt_transcript" launch) launch)
+  (setv prompt (str-at launch "prompt"))
+  (assert (.startswith prompt "start\n\nこれまでの会話") prompt)
+  (setv stamp (dict-at (dict-at launch "launch_attribution") "agentd"))
+  (assert (= (get stamp "arm") "rehydrate") stamp)
+  (setv metric (get (lfor m world.local.metrics :if (= (get m "metric") "agentd_transcript_rebuilds_total") m) -1))
+  (assert (= (get metric "outcome") "thin-record") metric)
+  (assert (any (gfor line world.local.logs (in "could not rebuild a transcript" line))) world.local.logs))
+
+
 (deftest test-same-node-profile-and-model-sends-to-the-warm-session
   ;; 段 9o lane 9o-3(#75)の検 (a): 同じ機体・同じ profile の家・同じ model の手番は温かい session へ send する(起こさない・
   ;; ACP の記録も記録の service も読まない)。
@@ -869,7 +933,9 @@
              [True True False False False False]))
   (setv world (World "headless" True))
   (setv world.settings (AgentdSettings :node-name NODE :homes-root "/homes" :backend-kind "headless"
-                                       :record-enabled True :rehydrate-history-byte-budget 4000))
+                                       :record-enabled True :rehydrate-history-byte-budget 4000
+                                       ;; card ki-c3aace97d825: この検が撃つのは畳み直しの頁送り(組み直しは別の冊)
+                                       :transcript-rebuild-enabled False))
   (.put-row world.acp (message-row "m-1" CONVERSATION "operator" "はじめの郵便" (- AT 90000)))
   ;; 会話に 2500 件の本文(1 件 ≈ 30 byte)— 上限 4000 byte なら末尾の 1 頁(1000 件)で足りる。
   (for [n (range 2500)]
