@@ -324,7 +324,34 @@
 ;; ⚠ **欄を 1 つ足す時に数え直すのはこの 2 つの集合だけ**(名簿を 5 つ数えない)。
 ;;   落ちたら赤になる検 = tests/sessionhost_charter_reaches_the_seat_deftests.hy
 ;;   (charter の欄を反射で数え、席へ届かない欄を 1 つでも見つけたら落ちる)。
-(setv TURN-CARRIED-KEYS #("memory_dir" "memory_files" "memory_retired_files"))
+(setv TURN-CARRIED-KEYS #("memory_dir" "memory_files" "memory_retired_files" "rebuilt_transcript"))
+
+
+(defk launch-conversation-plan-of [resume-context minted adopted agent-type has-override]
+  {:pre [(: resume-context (| dict None)) (: minted (| dict None)) (: adopted bool)
+         (: agent-type str) (: has-override bool)]
+   :post [(: % dict)]}
+  "起こす incarnation が名乗る会話と、`--session-id`(新しい会話)か `--resume`(続き)かの**判断の 1 点**
+   (card acp:kanban-issue:ki-c3aace97d825)。読み手は launch.hy(tui)と headless.hy の 2 つで、
+   写しを作らない —— 片方だけが組み直した transcript を継ぐ形になると、機体によって挙動が割れる。
+
+   戻り = {mode, conversation, row_conversation}:
+   - resume_context が在る(session.resume / fork)= 今日どおり親会話・mode はその語。
+   - 家に在る transcript を継いだ(adopted — 組み直しが置けた)= mode \"resume\"・会話は継いだ id。
+     器は既に在る id での `--session-id` を『already in use』で断るので、ここは `--resume` でなければならない。
+   - それ以外 = 今日どおり。fresh の claude は鋳造済みの id(--session-id)、codex と明示 command は
+     事後発見(None)。"
+  (cond
+    (is-not resume-context None)
+    {"mode" (get resume-context "mode")
+     "conversation" (get resume-context "conversation")
+     "row_conversation" (if (= (get resume-context "mode") "resume") (get resume-context "conversation") None)}
+    (and adopted (is-not minted None))
+    {"mode" "resume" "conversation" minted "row_conversation" minted}
+    True
+    {"mode" None
+     "conversation" minted
+     "row_conversation" (if (and (= agent-type "claude") (not has-override)) minted None)}))
 
 ;; 席へ運ぶ欄の全体(旗 + 手番の荷)。wire の受理形と蘇生の名簿はこれを写す。
 (setv CHARTER-CARRIED-KEYS (+ LAUNCH-FLAG-KEYS TURN-CARRIED-KEYS))

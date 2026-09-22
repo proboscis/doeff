@@ -113,7 +113,10 @@
                                     {"name" MEMORY-INDEX-FILE "text" "# MEMORY\n"}
                                     {"name" MEMORY-BASE-FILE "text" "{\"books\": {}}\n"}]
                     ;; 退役した行と同じ名前で置き場から取り除く file(card ki-6b5c4b270ca0)。
-                    "memory_retired_files" ["gone.md"]})
+                    "memory_retired_files" ["gone.md"]
+                    ;; 会話の記録から組み直した transcript(card ki-c3aace97d825)— 器が家へ置いて --resume する。
+                    "rebuilt_transcript" {"session_id" "11111111-2222-3333-4444-555555555555"
+                                          "text" "{\"type\": \"user\"}\n"}})
 
 
 (defn #^ dict probe-charter []

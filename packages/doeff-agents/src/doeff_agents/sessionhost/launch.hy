@@ -76,6 +76,7 @@
   BILLING-METERED
   BINDING-OWNED-ENV-KEYS
   CARRIED-INSTRUCTION-SOURCES
+  launch-conversation-plan-of
   CARRIED-INSTRUCTION-SOURCES-PARAM
   CARRIED-ITEM-HOME-NAME
   CARRIED-ITEM-KEY
@@ -798,6 +799,7 @@
           True None))
   (setv identity None)
   (setv minted-conversation None)
+  (setv adopted-conversation False)
   (when (is-not prelaunch-kind None)
     (<- resolved (pre-launch-setup prelaunch-kind params))
     ;; warnings は運用ログ向けの副産物(host が stderr へ出す)— 永続する
@@ -806,8 +808,12 @@
     ;; identity 列ではなく conversation 列の住人なのでここで分離する。
     (setv identity (dict resolved))
     (.pop identity "warnings" None)
-    (setv minted-conversation (.pop identity "conversation" None)))
-  {"identity" identity "conversation" minted-conversation})
+    (setv minted-conversation (.pop identity "conversation" None))
+    ;; card acp:kanban-issue:ki-c3aace97d825: 鋳造した新しい会話ではなく、家に在る transcript を継いだか。
+    ;; 継いだ拍は `--session-id`(新しい会話)ではなく `--resume`(続き)で起こす — 器は既に在る id での
+    ;; `--session-id` を『already in use』で断る(実射 2026-09-23)。
+    (setv adopted-conversation (bool (.pop identity "adopted_conversation" False))))
+  {"identity" identity "conversation" minted-conversation "adopted" adopted-conversation})
 
 
 (defk session-hooks-mode []
@@ -1003,6 +1009,11 @@
   (setv identity (get prepared "identity"))
   (setv minted-conversation (get prepared "conversation"))
   (setv resume-context (.get params "resume_context"))
+  ;; card acp:kanban-issue:ki-c3aace97d825: 会話 identity と起こし方(--session-id / --resume)の判断は
+  ;; policy.launch-conversation-plan-of の 1 点(headless.hy と同じ関数)。
+  (<- launch-plan dict (launch-conversation-plan-of resume-context minted-conversation
+                                                    (bool (.get prepared "adopted" False))
+                                                    agent-type has-override))
   (<- session-hooks (session-hooks-mode))
   (<- claude-settings (claude-settings-declaration agent-type))
 
@@ -1021,16 +1032,16 @@
                                        (.get params "socket_path" "")))
       (setv (get effective-params "result_channel") channel))
     ;; ADR-006 R3: incarnation の宿し(この program)は 1 本のまま、argv 構築
-    ;; だけを fresh launch / resume / fork で分岐する。
-    (if (is resume-context None)
+    ;; だけを fresh launch / resume / fork で分岐する。判断は
+    ;; policy.launch-conversation-plan-of の 1 点(headless.hy と同じ関数)。
+    (if (is (get launch-plan "mode") None)
         (do
-          (when (and (= agent-type "claude") (is-not minted-conversation None))
-            (setv (get effective-params "conversation") minted-conversation))
+          (when (and (= agent-type "claude") (is-not (get launch-plan "conversation") None))
+            (setv (get effective-params "conversation") (get launch-plan "conversation")))
           (<- argv (build-launch agent-type effective-params)))
         (do
-          (setv (get effective-params "resume_mode") (get resume-context "mode"))
-          (setv (get effective-params "conversation")
-                (get resume-context "conversation"))
+          (setv (get effective-params "resume_mode") (get launch-plan "mode"))
+          (setv (get effective-params "conversation") (get launch-plan "conversation"))
           (<- argv (build-resume agent-type effective-params))))
     (setv command-line (shell-join argv)))
 
@@ -1052,14 +1063,7 @@
   ;; None(CLI が新 ID を鋳造 → DiscoverConversation で事後発見)、fresh の
   ;; claude は鋳造済み UUID(--session-id 注入と同値)、fresh の codex /
   ;; 明示 command は None(事後発見)。
-  (setv row-conversation
-        (cond
-          (is-not resume-context None)
-            (if (= (get resume-context "mode") "resume")
-                (get resume-context "conversation")
-                None)
-          (and (= agent-type "claude") (not has-override)) minted-conversation
-          True None))
+  (setv row-conversation (get launch-plan "row_conversation"))
   ;; awaiting latch は登録時点から武装する(prompt を配送する launch のみ)。
   ;; latch の意味は「agent への prompt が owed — 見かけの turn-end を評価するな」
   ;; であり、配送中の窓も含む。conformance の await_monitor_ack(行が存在 &&

@@ -171,6 +171,7 @@
   AGENT-JOB-NAMESPACE
   HistorySummary
   METRIC-SUMMARIZE-TRIGGERS-TOTAL
+  METRIC-TRANSCRIPT-REBUILDS-TOTAL
   SUMMARY-SPEC-FROM-KEY
   SUMMARY-SPEC-RECORD-REF-KEY
   SUMMARY-ANSWER-MAX-CHARS
@@ -235,6 +236,7 @@
   FsWritePrivateText
   HeadlineTurns
   HistoryFold
+  HistoryMaterial
   IO-FAILURES
   InFlightJob
   Interjected
@@ -280,6 +282,8 @@
   RecordUnread
   RecordUnsent
   RecordedTurns
+  TranscriptBuilt
+  TranscriptRefused
   CONDITION-CREDENTIAL-PLACE-MISMATCH
   CONDITION-PLACE-MISMATCH
   PLACES-SEPARATOR
@@ -290,6 +294,7 @@
   CONDITION-INTERRUPT-ESCALATION-UNDECLARED
   CREDENTIAL-SOURCE-MISSING
   NEXT-ARM-DEFER
+  NEXT-ARM-REBUILD
   NEXT-ARM-REHYDRATE
   NEXT-ARM-RESUME
   NEXT-ARM-SEND
@@ -543,7 +548,9 @@
   next-arm-for-job
   conversation-recorded-of
   fresh-start-asks-record
+  charter-with-rebuilt-transcript
   fresh-start-arm-of
+  history-groups-of
   compact-at-of
   compaction-due
   conversation-opener-of
@@ -573,7 +580,12 @@
   recorded-mark-merged
   recovered-arm-of
   stream-starts-at-head
+  rebuild-arm-of
   rehydrate-history-of
+  transcript-jsonl-of
+  transcript-lines-of
+  transcript-readable-of
+  transcript-session-id-of
   restart-condition-of
   retire-reason-of
   resume-params-of
@@ -1107,14 +1119,12 @@
   (RecordedTurns :events (tuple events) :complete complete))
 
 
-(defk history-for [settings subject exclude]
+(defk history-material-for [settings subject exclude]
   {:pre [(: settings AgentdSettings) (: subject str) (: exclude tuple)]
-   :post [(: % HistoryFold)]}
-  "履歴からの再開の「これまでの会話」(R20・段 9f lane 9f-4・段 9q): 手番の本文は会話の記録の service から
-   (record-turns-for — 届かなければ ACP の見出しで薄い再開・見出しはその拍にだけ読む)、郵便は ACP の kind message のうち
-   この会話を名指す行を 1 度読み(AcpConversationMail — 手番を起こし直す時だけ・段 10 lane 10ba の field selector)、
-   読みの所要を計器 rehydrate-mail-read に 1 行(行数と ms)、畳みは judgment.rehydrate-history-of の 1 点(上限
-   AgentdSettings.rehydrate_history_byte_budget)。"
+   :post [(: % HistoryMaterial)]}
+  "会話の再開に使う材料を **1 度**読む(card acp:kanban-issue:ki-c3aace97d825 で history-for から抽出)。
+   畳み先は 2 つ(rehydrate の 1 通の本文 / 組み直した transcript の手番ごとの行)だが、記録の service と
+   ACP の行への読みはこの 1 点ちょうど —— 組み直しが通らずに rehydrate へ戻る拍でも読み直さない。"
   ;; 段 12 lane 12j 便 3(agora-redesign #233): 要約(kind summary の行 + 記録の service の本文)を先に読み、原文はその後の区間だけ。
   (<- summaries tuple (summaries-for settings subject))
   (<- floor (| int None) (summary-floor-of summaries))
@@ -1133,9 +1143,54 @@
     (<- edge (| RecordPage RecordUnread) (RecordReadSince :conversation-id subject :since (max 0 (- floor 1)) :limit 1 :kinds #()))
     (<- edge-at (| int None) (summary-floor-at-of edge floor))
     (setv floor-at edge-at))
-  (<- fold HistoryFold (rehydrate-history-of subject messages source exclude
-                                             settings.rehydrate-history-byte-budget (get read 0) summaries floor-at))
+  (setv head-seq (if (isinstance source RecordedTurns)
+                     (max (+ #(0) (tuple (gfor event source.events event.record-seq))))
+                     0))
+  (HistoryMaterial :messages messages :source source :fetched (get read 0)
+                   :summaries summaries :floor-at floor-at :head-seq head-seq))
+
+
+(defk history-for [settings subject exclude]
+  {:pre [(: settings AgentdSettings) (: subject str) (: exclude tuple)]
+   :post [(: % HistoryFold)]}
+  "履歴からの再開の「これまでの会話」(R20・段 9f lane 9f-4・段 9q): 手番の本文は会話の記録の service から
+   (record-turns-for — 届かなければ ACP の見出しで薄い再開・見出しはその拍にだけ読む)、郵便は ACP の kind message のうち
+   この会話を名指す行を 1 度読み(AcpConversationMail — 手番を起こし直す時だけ・段 10 lane 10ba の field selector)、
+   読みの所要を計器 rehydrate-mail-read に 1 行(行数と ms)、畳みは judgment.rehydrate-history-of の 1 点(上限
+   AgentdSettings.rehydrate_history_byte_budget)。読みは history-material-for の 1 点。"
+  (<- material HistoryMaterial (history-material-for settings subject exclude))
+  (<- fold HistoryFold (history-fold-of settings subject exclude material))
   fold)
+
+
+(defk history-fold-of [settings subject exclude material]
+  {:pre [(: settings AgentdSettings) (: subject str) (: exclude tuple) (: material HistoryMaterial)]
+   :post [(: % HistoryFold)]}
+  "読んだ材料 → 履歴からの再開の「これまでの会話」(畳みは judgment.rehydrate-history-of の 1 点)。"
+  (<- fold HistoryFold (rehydrate-history-of subject material.messages material.source exclude
+                                             settings.rehydrate-history-byte-budget material.fetched
+                                             material.summaries material.floor-at))
+  fold)
+
+
+(defk transcript-of [settings subject exclude material]
+  {:pre [(: settings AgentdSettings) (: subject str) (: exclude tuple) (: material HistoryMaterial)]
+   :post [(: % (| TranscriptBuilt TranscriptRefused))]}
+  "読んだ材料 → 組み直した Claude Code の transcript(card acp:kanban-issue:ki-c3aace97d825)。
+   並べ方と手番への割り方は rehydrate と同じ 1 点(judgment.history-groups-of)、畳み先だけが違う。
+   組んだ行は**起動の前に**器が読める形かを 1 回確かめる(transcript-readable-of)— 断りは typed で、
+   呼び手はその拍で rehydrate に戻る。"
+  (<- grouped tuple (history-groups-of subject material.messages material.source exclude
+                                       material.fetched material.floor-at
+                                       settings.rehydrate-history-byte-budget))
+  (<- session-id str (transcript-session-id-of subject material.head-seq))
+  (<- built (| TranscriptBuilt TranscriptRefused)
+      (transcript-lines-of subject session-id material.source (get grouped 0)
+                           material.summaries settings.transcript-rebuild-byte-budget))
+  (when (isinstance built TranscriptRefused)
+    (return built))
+  (<- checked (| TranscriptBuilt TranscriptRefused) (transcript-readable-of built))
+  checked)
 
 
 (defk summaries-for [settings subject]
@@ -1230,22 +1285,48 @@
       view
       (do
         (setv history "")
-        (when (= choice.arm NEXT-ARM-REHYDRATE)
+        (setv rebuilt None)
+        ;; card acp:kanban-issue:ki-c3aace97d825: 別の機体・別の家で始まる手番は、履歴を 1 通の本文へ畳み直す
+        ;; (rehydrate)代わりに、会話の記録から組んだ transcript を家へ置いて `claude --resume` で続ける。
+        ;; 材料の読みは 1 度(history-material-for)で、組み立てか起動前の検査が通らなければ**同じ拍で**
+        ;; rehydrate に戻る(旗 settings.transcript-rebuild-enabled を切れば今日どおり)。
+        (when (in choice.arm #{NEXT-ARM-REHYDRATE NEXT-ARM-REBUILD})
           (<- read-started int (ClockNowMs))
-          (<- fold HistoryFold (history-for settings subject exclude))
-          (<- read-ended int (ClockNowMs))
-          (setv history fold.text)
-          (<- (LogLine :text (+ f"agentd: job {job-id} rehydrates conversation {subject} "
-                                     (if fold.thin "thinly from ACP headlines " "from the record service ")
-                                     f"({fold.summary-regions} summaries, {fold.kept-turns} turns kept, {fold.thinned-turns} thinned, {fold.dropped-turns} dropped"
-                                     (if (is fold.dropped-headline None) "" " into a headline")
-                                     (if (> fold.dropped-summaries 0) f", {fold.dropped-summaries} summaries dropped" "")
-                                     (if (> fold.summarized-mails 0) f", {fold.summarized-mails} mails left to the summaries" "")
-                                     (if (> fold.cut-bytes 0) f", newest turn cut by {fold.cut-bytes} bytes" "")
-                                     f", {fold.size-bytes} bytes, history read {(- read-ended read-started)} ms)")))
-          ;; 段 11 lane 11v(agora-redesign #55・R34): 落とした区間の見出しは log にも 1 行(受入の証拠 = 最初の本文に入った行)。
-          (when (is-not fold.dropped-headline None)
-            (<- (LogLine :text f"agentd: job {job-id} rehydrate headline: {fold.dropped-headline}"))))
+          (<- material HistoryMaterial (history-material-for settings subject exclude))
+          (when (= choice.arm NEXT-ARM-REBUILD)
+            (<- outcome (| TranscriptBuilt TranscriptRefused) (transcript-of settings subject exclude material))
+            (if (isinstance outcome TranscriptRefused)
+                (do
+                  (<- (LogLine :text (+ f"agentd: job {job-id} could not rebuild a transcript for conversation {subject} "
+                                        f"({outcome.reason}) — falling back to rehydrating the history into the first message")))
+                  (<- (MetricLine :fields {"metric" METRIC-TRANSCRIPT-REBUILDS-TOTAL "conversationId" subject
+                                           "agentJobId" job-id "outcome" outcome.reason}))
+                  (setv choice (replace choice :arm NEXT-ARM-REHYDRATE)))
+                (do
+                  (setv rebuilt outcome)
+                  (<- (LogLine :text (+ f"agentd: job {job-id} rebuilds the transcript of conversation {subject} from the record "
+                                        f"service as session {outcome.session-id} ({outcome.turns} turns kept, {outcome.dropped} dropped, "
+                                        f"{outcome.size-bytes} bytes) and resumes it — the context head stays byte-identical to the "
+                                        "previous turn, so the container reads its cache instead of writing it")))
+                  (<- (MetricLine :fields {"metric" METRIC-TRANSCRIPT-REBUILDS-TOTAL "conversationId" subject
+                                           "agentJobId" job-id "outcome" "built"
+                                           "sessionId" outcome.session-id "turns" outcome.turns
+                                           "dropped" outcome.dropped "bytes" outcome.size-bytes})))))
+          (when (= choice.arm NEXT-ARM-REHYDRATE)
+            (<- fold HistoryFold (history-fold-of settings subject exclude material))
+            (<- read-ended int (ClockNowMs))
+            (setv history fold.text)
+            (<- (LogLine :text (+ f"agentd: job {job-id} rehydrates conversation {subject} "
+                                       (if fold.thin "thinly from ACP headlines " "from the record service ")
+                                       f"({fold.summary-regions} summaries, {fold.kept-turns} turns kept, {fold.thinned-turns} thinned, {fold.dropped-turns} dropped"
+                                       (if (is fold.dropped-headline None) "" " into a headline")
+                                       (if (> fold.dropped-summaries 0) f", {fold.dropped-summaries} summaries dropped" "")
+                                       (if (> fold.summarized-mails 0) f", {fold.summarized-mails} mails left to the summaries" "")
+                                       (if (> fold.cut-bytes 0) f", newest turn cut by {fold.cut-bytes} bytes" "")
+                                       f", {fold.size-bytes} bytes, history read {(- read-ended read-started)} ms)")))
+            ;; 段 11 lane 11v(agora-redesign #55・R34): 落とした区間の見出しは log にも 1 行(受入の証拠 = 最初の本文に入った行)。
+            (when (is-not fold.dropped-headline None)
+              (<- (LogLine :text f"agentd: job {job-id} rehydrate headline: {fold.dropped-headline}")))))
         (<- attribution dict (session-attribution-of plan job-id subject choice.arm))
         (<- built tuple (incarnation-charter-of plan choice session-id bodies history attribution
                                                 settings.backend-kind lease settings.homes-root
@@ -1266,6 +1347,11 @@
         ;; その郵便の添付も同じ 1 手番に載せる — 綴りは器の Dialogue が組む(agentd は型つきのまま運ぶ)。
         (<- first-turn tuple (first-turn-attachments-of carried))
         (<- charter dict (launch-charter-with-attachments charter first-turn))
+        ;; card acp:kanban-issue:ki-c3aace97d825: 組み直した transcript は charter が家へ運ぶ(記憶の冊と同じ形)。
+        ;; agentd は家の物理(projects/<作業場>/<sid>.jsonl)を知らない — 書くのは器の kind module の 1 点。
+        (when (is-not rebuilt None)
+          (<- text str (transcript-jsonl-of rebuilt.lines))
+          (<- charter dict (charter-with-rebuilt-transcript charter rebuilt.session-id text)))
         (if (and (= choice.arm NEXT-ARM-RESUME) (is-not choice.source None))
             (do
               (<- params dict (resume-params-of choice.source charter))
@@ -1398,6 +1484,10 @@
     (<- (LogLine :text (+ f"agentd: job {job-id} of conversation {subject} has no session to continue, but the record service "
                           "holds the conversation's turns — rehydrating from the record instead of launching without history"))))
   (setv choice resolved)
+  ;; card acp:kanban-issue:ki-c3aace97d825: 履歴の畳み直しは、旗が立っていれば「記録から組んだ transcript の --resume」に解ける
+  ;; (判断は judgment.rebuild-arm-of の 1 点)。組み立てか起動前の検査が通らない拍は incarnate が同じ拍で rehydrate に戻す。
+  (<- rebuilt-choice ArmChoice (rebuild-arm-of choice settings (str (.get plan.charter "agent_type" ""))))
+  (setv choice rebuilt-choice)
   (<- mail tuple (mail-of settings row))
   (setv bodies (get mail 0))
   ;; 期限切れだけなら、認証の借用・sessionの破棄・起動の前に終了する。

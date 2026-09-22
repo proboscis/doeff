@@ -45,6 +45,7 @@
 (import base64)
 (import binascii)
 (import hashlib)
+(import uuid)
 (import json)
 (import re)
 
@@ -307,6 +308,10 @@
   LeaseGrant
   LeaseRefused
   NEXT-ARM-DEFER
+  CHARTER-REBUILT-TRANSCRIPT-KEY
+  REBUILT-TRANSCRIPT-SESSION-FIELD
+  REBUILT-TRANSCRIPT-TEXT-FIELD
+  NEXT-ARM-REBUILD
   NEXT-ARM-LAUNCH
   NEXT-ARM-REHYDRATE
   NEXT-ARM-RESUME
@@ -355,6 +360,8 @@
   RecordUnread
   RecordUnsent
   RecordedTurns
+  TranscriptBuilt
+  TranscriptRefused
   Refused
   SEAT-OPENER-ENV
   SESSION-OBSERVED-BUSY
@@ -1367,7 +1374,7 @@
   "起こす腕が器に断られた時の次の腕(R20): resume が断られた(transcript が見つからない・会話の identity が
    無い・work_dir が無い…)→ rehydrate(cache が使えない会話は ACP の記録から続ける)/ それ以外 → None(launch /
    rehydrate の断りは LaunchFailed)。断りの理由の語で分けない(器の admission の語彙に結ばない)。"
-  (if (= choice.arm NEXT-ARM-RESUME)
+  (if (in choice.arm #{NEXT-ARM-RESUME NEXT-ARM-REBUILD})
       (ArmChoice :arm NEXT-ARM-REHYDRATE :source None :retire None)
       None))
 
@@ -1394,7 +1401,7 @@
   (cond
     (and (is-not mine None)
          (= (.get mine "agentJobId") job-id)
-         (in recorded #{NEXT-ARM-LAUNCH NEXT-ARM-RESUME NEXT-ARM-REHYDRATE}))
+         (in recorded #{NEXT-ARM-LAUNCH NEXT-ARM-RESUME NEXT-ARM-REHYDRATE NEXT-ARM-REBUILD}))
     recorded
     (is-not mine None) NEXT-ARM-SEND
     (is plan.predecessor None) NEXT-ARM-LAUNCH
@@ -2313,7 +2320,7 @@
    launch の直後の send が同じ名で --resume を spawn し `headless session already exists`)。
    send の腕(温かい session)は起こさないので畳む先が無い(郵便の本文だけを send)。tui(tmux /
    herdr)は launch の後に send(pane の paste は手番の途中でも積める)で今日どおり。"
-  (and (= backend-kind BACKEND-HEADLESS) (in arm #{NEXT-ARM-LAUNCH NEXT-ARM-RESUME NEXT-ARM-REHYDRATE})))
+  (and (= backend-kind BACKEND-HEADLESS) (in arm #{NEXT-ARM-LAUNCH NEXT-ARM-RESUME NEXT-ARM-REHYDRATE NEXT-ARM-REBUILD})))
 
 
 (defk send-folds-bodies [backend-kind]
@@ -2730,40 +2737,18 @@
   (if (= edge.record-seq floor) edge.at None))
 
 
-(defk rehydrate-history-of [conversation-id messages source exclude budget fetched summaries floor-at]
+(defk history-groups-of [conversation-id messages source exclude fetched floor-at thin-bytes]
   {:pre [(: conversation-id str) (: messages tuple) (: source (| RecordedTurns HeadlineTurns)) (: exclude tuple)
-         (: budget int) (: fetched dict) (: summaries tuple) (: floor-at (| int None))]
-   :post [(: % HistoryFold)]}
-  "会話の記録 → 履歴からの再開の手番の最初の本文に畳む「これまでの会話」(段 8q・R20・段 9f lane 9f-4・段 11 lane 11v R34 / R35)—
-   判断はここ 1 点: 郵便(ACP の行 — spec.to か spec.from がこの会話・exclude = この手番の inputs は除く — 本文として別に届く)と
-   手番の材料(source — 型で 2 つ: RecordedTurns = 会話の記録の service の本文〔設計 §2.4・before=latest から〕/ HeadlineTurns =
-   ACP の見出しだけ〔service に届かない時の**薄い再開** — 本文は畳めないので手番ごとの数だけ・名乗る〕)を時刻順(同じ
-   時刻は郵便が先)に並べ、会話へ届いた郵便(spec.to = この会話)ごとに手番に割る。UTF-8 で budget byte を超えたら 3 段:
-   段 1(R35)= 古い手番から新しい手番へ、道具の項(tool_use の入力・tool_result の本文)だけを先頭 budget / HISTORY_THIN_DIVISOR
-   byte に薄くして元の byte を名乗る(郵便・agent の text・user / system / error は 1 byte も変えない — 会話の意図と結論)。
-   段 2(R34)= 全部を薄くしても超える間、**古い手番から要約せず落とし**、落とした区間(古い手番の連なり)を**見出し 1 行**
-   (期間・落とした手番と項の数・kind ごとの件数・道具の名・全文の在処 — history-dropped-headline)に畳んで残した手番の前に置く
-   (黙って捨てない・model は呼ばない — agora-redesign #55 便 1)。段 3 = 最新の手番 1 つだけでも超えるならその手番の先頭を
-   落として末尾を残し、切った byte を名乗る。記録が無ければ text は空(薄い再開でも空)。
-   段 12 lane 12j 便 3(agora-redesign #233・#55 案 D): summaries = kind summary の行の要約(古い順・recordSeq の閉区間)を**原文の前**に
-   1 区間 1 段として置く(history-summary-line・道具の項ではないので薄くならない)。追補 5(便 4 の実射 2026-09-16 18:08・aj-88JXQX…): 要約は
-   原文と**別の前置き**で、時刻の並びには入れない(recordSeq を時刻に読まない)。上限では原文の手番を先に落とし(最新の 1 手番は残す)、
-   それでも超える時だけ古い要約から落として見出し〔kind 要約〕に数える — 要約は既に圧縮された履歴で byte あたりの価値が原文より高い。
-   旧の順(要約が最も古い項として先に落ちる)では上限 65,536 byte・原文 1,500 出来事・要約 4 本のとき本文に要約が 1 本も残らず、見出しの
-   期間は recordSeq 0 を時刻に読んで 1970 年から始まった。見出しの期間は落とした原文の時刻だけで数える(要約は件数)。
-   原文は呼び手が最大の to より新しい出来事だけを渡す(agentd.record-turns-for の floor)。summaries が空なら今日どおり。
-   追補 6(実射 2026-09-16 18:45: 落ちた 77 手番の大半が郵便 105 通で上限を食っていた): floor-at = 要約が覆う記録の終わり(recordSeq = floor
-   の出来事の at・summary-floor-at-of・None = 要約なし / 読めない)。それ以前の郵便は要約が担う(要約はその期間の郵便も読んで書いている)ので
-   畳まず、HistoryFold.summarized_mails に数える。"
+         (: fetched dict) (: floor-at (| int None)) (: thin-bytes int)]
+   :post [(: % tuple)]}
+  "会話の材料(郵便 + 手番の本文)を時刻順に並べ、会話へ届いた郵便ごとに手番へ割る **1 点**
+   (card acp:kanban-issue:ki-c3aace97d825 で rehydrate-history-of から抽出)。戻り = #(groups summarized-mails):
+   groups = 手番の列(1 手番 = HistoryItem の列・先頭は会話へ届いた郵便)/ summarized-mails = 要約が覆う期間の郵便の数
+   (畳まず数えるだけ — 上限を食わせない)。
+
+   ⚠ 読み手は 2 つ(履歴の畳み rehydrate-history-of と transcript の組み直し transcript-lines-of)で、
+   **並べ方と割り方の定義点はここだけ**。片方に写しを作ると、同じ会話の 2 つの再開が別の順序になる。"
   (setv thin (isinstance source HeadlineTurns))
-  (setv thin-k (// budget HISTORY-THIN-DIVISOR))
-  ;; 追補 5(便 4 の実射 2026-09-16 18:08): 要約は原文と別の前置き — recordSeq の区間の順に 1 区間 1 段で、時刻の並びには入れない
-  ;; (recordSeq を時刻に読まない)。落とすのは原文の手番(最新の 1 つを除く)を全部落としても超える時だけ・古い要約から(段 2b)。
-  (setv ordered-summaries (list (sorted summaries :key (fn [summary] summary.from-seq))))
-  (setv summary-lines [])
-  (for [summary ordered-summaries]
-    (<- summary-line str (history-summary-line summary))
-    (.append summary-lines summary-line))
   (setv items [])
   (setv order 0)
   (setv summarized-mails 0)
@@ -2799,7 +2784,7 @@
       (for [event source.events]
         (<- line (| str None) (history-event-line event))
         (when (is-not line None)
-          (<- thin-line (| str None) (history-event-thin-line event thin-k))
+          (<- thin-line (| str None) (history-event-thin-line event thin-bytes))
           (.append items (HistoryItem :at event.at :until event.at :order order :inbound False :line line
                                       :counts (HeadlineCounts :counts #(#(event.kind 1))
                                                               :tools (if (isinstance event.tool-name str) #(event.tool-name) #())
@@ -2811,6 +2796,48 @@
     (if (or (not groups) item.inbound)
         (.append groups [item])
         (.append (get groups -1) item)))
+  #(groups summarized-mails))
+
+
+(defk rehydrate-history-of [conversation-id messages source exclude budget fetched summaries floor-at]
+  {:pre [(: conversation-id str) (: messages tuple) (: source (| RecordedTurns HeadlineTurns)) (: exclude tuple)
+         (: budget int) (: fetched dict) (: summaries tuple) (: floor-at (| int None))]
+   :post [(: % HistoryFold)]}
+  "会話の記録 → 履歴からの再開の手番の最初の本文に畳む「これまでの会話」(段 8q・R20・段 9f lane 9f-4・段 11 lane 11v R34 / R35)—
+   判断はここ 1 点: 郵便(ACP の行 — spec.to か spec.from がこの会話・exclude = この手番の inputs は除く — 本文として別に届く)と
+   手番の材料(source — 型で 2 つ: RecordedTurns = 会話の記録の service の本文〔設計 §2.4・before=latest から〕/ HeadlineTurns =
+   ACP の見出しだけ〔service に届かない時の**薄い再開** — 本文は畳めないので手番ごとの数だけ・名乗る〕)を時刻順(同じ
+   時刻は郵便が先)に並べ、会話へ届いた郵便(spec.to = この会話)ごとに手番に割る。UTF-8 で budget byte を超えたら 3 段:
+   段 1(R35)= 古い手番から新しい手番へ、道具の項(tool_use の入力・tool_result の本文)だけを先頭 budget / HISTORY_THIN_DIVISOR
+   byte に薄くして元の byte を名乗る(郵便・agent の text・user / system / error は 1 byte も変えない — 会話の意図と結論)。
+   段 2(R34)= 全部を薄くしても超える間、**古い手番から要約せず落とし**、落とした区間(古い手番の連なり)を**見出し 1 行**
+   (期間・落とした手番と項の数・kind ごとの件数・道具の名・全文の在処 — history-dropped-headline)に畳んで残した手番の前に置く
+   (黙って捨てない・model は呼ばない — agora-redesign #55 便 1)。段 3 = 最新の手番 1 つだけでも超えるならその手番の先頭を
+   落として末尾を残し、切った byte を名乗る。記録が無ければ text は空(薄い再開でも空)。
+   段 12 lane 12j 便 3(agora-redesign #233・#55 案 D): summaries = kind summary の行の要約(古い順・recordSeq の閉区間)を**原文の前**に
+   1 区間 1 段として置く(history-summary-line・道具の項ではないので薄くならない)。追補 5(便 4 の実射 2026-09-16 18:08・aj-88JXQX…): 要約は
+   原文と**別の前置き**で、時刻の並びには入れない(recordSeq を時刻に読まない)。上限では原文の手番を先に落とし(最新の 1 手番は残す)、
+   それでも超える時だけ古い要約から落として見出し〔kind 要約〕に数える — 要約は既に圧縮された履歴で byte あたりの価値が原文より高い。
+   旧の順(要約が最も古い項として先に落ちる)では上限 65,536 byte・原文 1,500 出来事・要約 4 本のとき本文に要約が 1 本も残らず、見出しの
+   期間は recordSeq 0 を時刻に読んで 1970 年から始まった。見出しの期間は落とした原文の時刻だけで数える(要約は件数)。
+   原文は呼び手が最大の to より新しい出来事だけを渡す(agentd.record-turns-for の floor)。summaries が空なら今日どおり。
+   追補 6(実射 2026-09-16 18:45: 落ちた 77 手番の大半が郵便 105 通で上限を食っていた): floor-at = 要約が覆う記録の終わり(recordSeq = floor
+   の出来事の at・summary-floor-at-of・None = 要約なし / 読めない)。それ以前の郵便は要約が担う(要約はその期間の郵便も読んで書いている)ので
+   畳まず、HistoryFold.summarized_mails に数える。"
+  (setv thin (isinstance source HeadlineTurns))
+  (setv thin-bytes (// budget HISTORY-THIN-DIVISOR))
+  ;; 追補 5(便 4 の実射 2026-09-16 18:08): 要約は原文と別の前置き — recordSeq の区間の順に 1 区間 1 段で、時刻の並びには入れない
+  ;; (recordSeq を時刻に読まない)。落とすのは原文の手番(最新の 1 つを除く)を全部落としても超える時だけ・古い要約から(段 2b)。
+  (setv ordered-summaries (list (sorted summaries :key (fn [summary] summary.from-seq))))
+  (setv summary-lines [])
+  (for [summary ordered-summaries]
+    (<- summary-line str (history-summary-line summary))
+    (.append summary-lines summary-line))
+  ;; 材料の並べ方と手番への割り方は history-groups-of の 1 点(card acp:kanban-issue:ki-c3aace97d825 で抽出 —
+  ;; 同じ並びを transcript-lines-of も読む。写しを 2 つ持つと片方だけが腐る)。
+  (<- grouped tuple (history-groups-of conversation-id messages source exclude fetched floor-at thin-bytes))
+  (setv groups (get grouped 0))
+  (setv summarized-mails (get grouped 1))
   (when (and (not groups) (not summary-lines))
     (return (HistoryFold :text "" :kept-turns 0 :dropped-turns 0 :dropped-items 0 :thinned-turns 0 :dropped-headline None
                          :cut-bytes 0 :size-bytes 0 :thin thin :summary-regions 0 :dropped-summaries 0
@@ -2877,6 +2904,274 @@
                :summary-regions (- (len summary-lines) dropped-summaries)
                :dropped-summaries dropped-summaries
                :summarized-mails summarized-mails))
+
+
+;; ---------------------------------------------------------------------------
+;; 会話の記録 → Claude Code の transcript(card acp:kanban-issue:ki-c3aace97d825)
+;; ---------------------------------------------------------------------------
+;;
+;; **宣言された形はここ 1 つ**(器の内部仕様には契約が無いので、こちらが最小の必要集合を宣言し、
+;; 検 sessionhost_transcript_rebuild_deftests.hy がその形を pin する)。実物(Claude Code 2.1.280 の
+;; projects/<作業場>/<sid>.jsonl)から読み、実射で必要と分かった欄だけを書く:
+;;
+;;   どの行も: parentUuid / isSidechain / type / uuid / timestamp / sessionId / message
+;;   user      message = {role "user", content <文字列>}
+;;   assistant message = {id, type "message", role "assistant", model, content [{type "text", text}],
+;;                        stop_reason, stop_sequence, usage(4 つの 0)}
+;;
+;; 実射 2026-09-23(個人 profile・sonnet): この 7 欄だけの transcript を家に置いて器を
+;; `--resume <sid>` で起こすと通り、model が組んだ履歴の中身を答えた。同じ中身を別の会話 id で
+;; 2 度置くと 2 度目は読み 66,655 / 書き 0(= 先頭が丸ごと cache から読まれる)。
+;; ⚠ 器の版が上がって形が変わったら、起動前の検査(transcript-readable-of)ではなく**器**が断るので、
+;; その拍は launch の断り → fallback-arm-of で rehydrate に戻る(旗を切らなくても止まらない)。
+(setv TRANSCRIPT-USER-TYPE "user")
+(setv TRANSCRIPT-ASSISTANT-TYPE "assistant")
+;; 器が自分で作った(model を呼んでいない)本文に使う印。実物の transcript が同じ語を使う。
+(setv TRANSCRIPT-SYNTHETIC-MODEL "<synthetic>")
+;; 組み直しの uuid の名前空間(同じ材料からは同じ id — 純関数であるための 1 点)。
+(setv TRANSCRIPT-UUID-NAMESPACE "doeff-agentd/rebuilt-transcript")
+;; 組み直した transcript の最後が user の行で終わる時に足す締めの 1 行(器が次の本文を user として
+;; 積むので、user が 2 つ続く形を作らない)。
+(setv TRANSCRIPT-CLOSING-LINE "(ここまでが会話の記録から組み直した履歴です)")
+
+
+(defk transcript-time-of [at]
+  {:pre [(: at int)]
+   :post [(: % str)]}
+  "記録の時刻(epoch ms)→ transcript の timestamp(UTC・ミリ秒・末尾 Z — 器の実物と同じ綴り)。"
+  (.replace (.isoformat (datetime.fromtimestamp (/ at 1000) :tz timezone.utc) :timespec "milliseconds")
+            "+00:00" "Z"))
+
+
+(defk transcript-uuid-of [session-id index]
+  {:pre [(: session-id str) (: index int)]
+   :post [(: % str)]}
+  "transcript の 1 行の uuid — 会話の id と行の番号から導く(同じ材料からは同じ id)。"
+  (str (uuid.uuid5 uuid.NAMESPACE-URL f"{TRANSCRIPT-UUID-NAMESPACE}/{session-id}/{index}")))
+
+
+(defk transcript-session-id-of [conversation-id head-seq]
+  {:pre [(: conversation-id str) (: head-seq int)]
+   :post [(: % str)]}
+  "組み直した transcript が名乗る会話の id(`claude --resume` の引数)。会話の id と**その拍で読めた記録の頭**
+   (recordSeq の最大)から導く:
+
+   - 同じ材料からは同じ id ⇒ 同じ手番を撃ち直しても家の中の file が 1 つに収まる(器が途中まで書いた続きを拾う)。
+   - 手番が進めば別の id ⇒ 前の組み直しの file を**上書きしない**。上書きすると、その家で器が追記した本物の
+     やり取り(組み直した履歴より新しい)が消える。"
+  (str (uuid.uuid5 uuid.NAMESPACE-URL f"{TRANSCRIPT-UUID-NAMESPACE}/session/{conversation-id}/{head-seq}")))
+
+
+(defk transcript-user-line [session-id index parent at text]
+  {:pre [(: session-id str) (: index int) (: parent (| str None)) (: at int) (: text str)]
+   :post [(: % dict)]}
+  "transcript の user の 1 行(宣言した最小の必要集合ちょうど)。"
+  (<- line-id str (transcript-uuid-of session-id index))
+  (<- stamp str (transcript-time-of at))
+  {"parentUuid" parent
+   "isSidechain" False
+   "type" TRANSCRIPT-USER-TYPE
+   "uuid" line-id
+   "timestamp" stamp
+   "sessionId" session-id
+   "message" {"role" "user" "content" text}})
+
+
+(defk transcript-assistant-line [session-id index parent at text]
+  {:pre [(: session-id str) (: index int) (: parent (| str None)) (: at int) (: text str)]
+   :post [(: % dict)]}
+  "transcript の assistant の 1 行(宣言した最小の必要集合ちょうど)。model は器が自分で作った本文の印。"
+  (<- line-id str (transcript-uuid-of session-id index))
+  (<- stamp str (transcript-time-of at))
+  {"parentUuid" parent
+   "isSidechain" False
+   "type" TRANSCRIPT-ASSISTANT-TYPE
+   "uuid" line-id
+   "timestamp" stamp
+   "sessionId" session-id
+   "message" {"id" (+ "msg_" (cut (.replace line-id "-" "") 0 24))
+              "type" "message"
+              "role" "assistant"
+              "model" TRANSCRIPT-SYNTHETIC-MODEL
+              "content" [{"type" "text" "text" text}]
+              "stop_reason" None
+              "stop_sequence" None
+              "usage" {"input_tokens" 0 "output_tokens" 0
+                       "cache_creation_input_tokens" 0 "cache_read_input_tokens" 0}}})
+
+
+(defk transcript-turns-of [groups]
+  {:pre [(: groups list)]
+   :post [(: % list)]}
+  "手番の列 → #(役 本文) の列。1 手番 = 会話へ届いた郵便(user)+ その手番の出来事(assistant)。
+   役が続く所は 1 つに畳み(器は user と assistant が交互に並ぶ形しか読まない)、最後が user なら
+   締めの 1 行を足す。時刻は各塊の最初の項の時刻。"
+  (setv parts [])
+  (for [group groups]
+    (for [item group]
+      (setv role (if item.inbound "user" "assistant"))
+      (if (and parts (= (get (get parts -1) 0) role))
+          (setv (get (get parts -1) 1) (+ (get (get parts -1) 1) "\n" item.line))
+          (.append parts [role item.line item.at]))))
+  parts)
+
+
+(defk transcript-lines-of [conversation-id session-id source groups summaries budget]
+  {:pre [(: conversation-id str) (: session-id str) (: source (| RecordedTurns HeadlineTurns))
+         (: groups list) (: summaries tuple) (: budget int)]
+   :post [(: % (| TranscriptBuilt TranscriptRefused))]}
+  "会話の記録 → Claude Code の transcript の行(**純関数** — card acp:kanban-issue:ki-c3aace97d825)。
+
+   材料の並べ方と手番への割り方は history-groups-of の 1 点(rehydrate と同じ)。違うのは畳み先だけ:
+   rehydrate は 1 通の巨大な最初の本文にするが、ここは**手番ごとの user / assistant の行**にする —
+   だから隣り合う手番で先頭が byte 同一になり、器の cache が読みに変わる。
+
+   見出し(header)・要約(summary-lines)・落とした区間の見出し(headline)は最初の user の行に畳む。
+   上限(budget)は古い手番から落として満たす(落とし方の規則は rehydrate と同じ向き)。
+
+   本文を持たない材料(記録の service に届かず見出しだけ = HeadlineTurns)は transcript にしない —
+   見出しを本文のふりで積むと、器の履歴に『言っていないこと』が入る。この拍は rehydrate に戻る。"
+  (when (isinstance source HeadlineTurns)
+    (return (TranscriptRefused :reason "thin-record")))
+  (setv ordered-summaries (list (sorted summaries :key (fn [summary] summary.from-seq))))
+  (setv summary-lines [])
+  (for [summary ordered-summaries]
+    (<- summary-line str (history-summary-line summary))
+    (.append summary-lines summary-line))
+  (when (and (not groups) (not summary-lines))
+    (return (TranscriptRefused :reason "no-history")))
+  (setv where (+ f"全文は会話 {conversation-id} の記録 — 郵便は ACP の kind message(spec.to / spec.from = {conversation-id})"
+                 f"の行・手番の本文は会話の記録の service(GET /v1/conversations/{conversation-id}/events)— にあります"))
+  (<- header str (history-header-of conversation-id source (len summary-lines)))
+  ;; 上限: 古い手番から落とす(最新の 1 手番は残す — 落とし方の向きは rehydrate と同じ)。落とした区間は
+  ;; 最初の user の行の見出しが名乗る(黙って捨てない)。
+  (setv kept (list groups))
+  (setv dropped 0)
+  (setv headline None)
+  (setv lead (.join "\n\n" (+ [header] summary-lines)))
+  (<- parts list (transcript-turns-of kept))
+  (setv size (+ (len (.encode lead "utf-8"))
+                (sum (gfor part parts (len (.encode (get part 1) "utf-8"))))))
+  (while (and (> size budget) (> (len kept) 1))
+    (setv dropped (+ dropped 1))
+    (setv kept (cut groups dropped None))
+    (setv gone (tuple (gfor group (cut groups 0 dropped) item group item)))
+    (<- counts HeadlineCounts (dropped-headline-counts gone #()))
+    (<- headline str (history-dropped-headline counts dropped (len gone) budget where))
+    (setv lead (.join "\n\n" (+ [header headline] summary-lines)))
+    (<- parts list (transcript-turns-of kept))
+    (setv size (+ (len (.encode lead "utf-8"))
+                  (sum (gfor part parts (len (.encode (get part 1) "utf-8")))))))
+  ;; 最後の栓(rehydrate の段 3 と同じ): 手番を 1 つに落としても超えるなら、その塊の**先頭を切って末尾を残し**、
+  ;; 切った byte を名乗る。⚠ これが無いと「1 手番が巨大」な会話で上限が効かず、器が読み直す文脈が膨らんで
+  ;; 書き直しの節約を相殺する(費用の実測 kanban-worth/cost: 畳み直しの 64 KB の切りが 1 応答の文脈を
+  ;; 対話の 1/3.8 に保っている栓でもある)。
+  (setv cut-bytes 0)
+  (when (and parts (> size budget))
+    (setv newest (get parts -1))
+    (setv parts [newest])
+    (setv raw (.encode (get newest 1) "utf-8"))
+    (<- probe str (history-cut-notice budget (len raw) where))
+    (setv fixed (+ (len (.encode lead "utf-8")) (len (.encode probe "utf-8"))))
+    (setv room (max 0 (- budget fixed)))
+    (setv tail (.decode (cut raw (max 0 (- (len raw) room)) None) "utf-8" :errors "ignore"))
+    (setv cut-bytes (- (len raw) (len (.encode tail "utf-8"))))
+    (<- notice str (history-cut-notice budget cut-bytes where))
+    (setv (get (get parts 0) 1) (+ tail "\n\n" notice)))
+  (setv first-at (if parts (get (get parts 0) 2) 0))
+  ;; 頭の 1 通(見出し・要約・落とした区間の見出し)は user の行。最初の塊が user なら同じ行へ畳む
+  ;; (器は user が 2 つ続く形を読まない)。
+  (if (and parts (= (get (get parts 0) 0) "user"))
+      (setv (get (get parts 0) 1) (+ lead "\n\n" (get (get parts 0) 1)))
+      (.insert parts 0 ["user" lead first-at]))
+  (setv lines [])
+  (setv parent None)
+  (setv index 0)
+  (for [part parts]
+    (<- line dict (if (= (get part 0) "user")
+                      (transcript-user-line session-id index parent (get part 2) (get part 1))
+                      (transcript-assistant-line session-id index parent (get part 2) (get part 1))))
+    (.append lines line)
+    (setv parent (get line "uuid"))
+    (setv index (+ index 1)))
+  ;; 器は次の本文を user の行として積むので、最後が user のままだと user が 2 つ続く。
+  (when (= (get (get lines -1) "type") TRANSCRIPT-USER-TYPE)
+    (<- closing dict (transcript-assistant-line session-id index parent
+                                                (get (get parts -1) 2)
+                                                TRANSCRIPT-CLOSING-LINE))
+    (.append lines closing))
+  (<- text str (transcript-jsonl-of (tuple lines)))
+  (TranscriptBuilt :session-id session-id :lines (tuple lines) :turns (len kept)
+                   :dropped dropped :cut-bytes cut-bytes :size-bytes (len (.encode text "utf-8"))))
+
+
+(defk transcript-jsonl-of [lines]
+  {:pre [(: lines tuple)]
+   :post [(: % str)]}
+  "transcript の行 → 家へ置く jsonl の本文(1 行 1 dict・末尾に改行)。"
+  (.join "" (lfor line lines (+ (json.dumps line :ensure-ascii False) "\n"))))
+
+
+(defk transcript-readable-of [built]
+  {:pre [(: built TranscriptBuilt)]
+   :post [(: % (| TranscriptBuilt TranscriptRefused))]}
+  "組んだ transcript を器が読める形か、**起動の前に 1 回**確かめる(card acp:kanban-issue:ki-c3aace97d825)。
+
+   確かめるのは 4 点: 行が 1 つ以上ある / 親子の鎖が繋がる(最初の行の親は無し・以降は直前の行の uuid)/
+   どの行も同じ会話の id を名乗る / user と assistant が交互に並び user から始まる。
+   1 つでも欠ければ typed な断り = 呼び手はその拍で rehydrate に戻る(実 CLI の『No conversation found』で
+   120 秒かけて死ぬ形にしない — ADR-DOE-AGENTS-006 R10 と同じ考え)。"
+  (when (not built.lines)
+    (return (TranscriptRefused :reason "empty-lines")))
+  (setv previous None)
+  (setv expected TRANSCRIPT-USER-TYPE)
+  (for [line built.lines]
+    (when (!= (.get line "sessionId") built.session-id)
+      (return (TranscriptRefused :reason "session-mismatch")))
+    (when (!= (.get line "parentUuid") previous)
+      (return (TranscriptRefused :reason "broken-chain")))
+    (setv kind (.get line "type"))
+    (when (!= kind expected)
+      (return (TranscriptRefused :reason "role-disorder")))
+    (setv message (.get line "message"))
+    (when (not (isinstance message dict))
+      (return (TranscriptRefused :reason "role-disorder")))
+    (when (!= (.get message "role") kind)
+      (return (TranscriptRefused :reason "role-disorder")))
+    (setv previous (.get line "uuid"))
+    (setv expected (if (= kind TRANSCRIPT-USER-TYPE) TRANSCRIPT-ASSISTANT-TYPE TRANSCRIPT-USER-TYPE)))
+  built)
+
+
+(defk charter-with-rebuilt-transcript [charter session-id text]
+  {:pre [(: charter dict) (: session-id str) (: text str)]
+   :post [(: % dict)]}
+  "組み直した transcript を charter に載せる(card acp:kanban-issue:ki-c3aace97d825)。運ぶのは
+   policy.TURN-CARRIED-KEYS の 1 点で、家へ書くのは器の kind module(impls/claude_code.hy)の 1 点 ——
+   記憶の冊(memory_files)と同じ形で、agentd は家の物理を 1 つも知らない。"
+  (setv next (dict charter))
+  (setv (get next CHARTER-REBUILT-TRANSCRIPT-KEY)
+        {REBUILT-TRANSCRIPT-SESSION-FIELD session-id
+         REBUILT-TRANSCRIPT-TEXT-FIELD text})
+  next)
+
+
+(defk rebuild-arm-of [choice settings agent-type]
+  {:pre [(: choice ArmChoice) (: settings AgentdSettings) (: agent-type str)]
+   :post [(: % ArmChoice)]}
+  "履歴の畳み直し(rehydrate)を、会話の記録から組んだ transcript の `--resume`(rebuild)に解けるか —— 判断はここ 1 点
+   (card acp:kanban-issue:ki-c3aace97d825)。
+
+   解くのは 3 つが揃った時だけ: 旗が立っている(settings.transcript-rebuild-enabled)∧ 腕が rehydrate ∧ 器が claude。
+   ⚠ 圧縮のための rehydrate(choice.compacts)は解かない —— あれは『温かい cache を捨てて縮めて始める』が目的なので、
+   履歴をそのまま transcript に積むと圧縮にならない。
+   ⚠ 組み立て・検査が通らない拍は呼び手(agentd.incarnate)が同じ拍で rehydrate に戻す(第 2 の判断を置かない)。"
+  (if (and settings.transcript-rebuild-enabled
+           (= choice.arm NEXT-ARM-REHYDRATE)
+           (not choice.compacts)
+           (= agent-type "claude"))
+      (replace choice :arm NEXT-ARM-REBUILD)
+      choice))
 
 
 (defk history-summary-line [summary]

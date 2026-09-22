@@ -61,6 +61,7 @@ from doeff_agents.sessionhost.acp.effects import (
     JOIN_STATE_DIR_DEFAULT,
     LEASE_JOURNAL_FILENAME,
     MEMORY_ROOT_ENV,
+    TRANSCRIPT_REBUILD_ENV,
     NODE_NAME_ENV,
     OWNERSHIP_ENV,
     OWNERSHIP_GRADES,
@@ -202,6 +203,9 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         node_capacity=node_capacity,
         # 段 12 lane 12j(agora-redesign #304 便 2): 停止の排水の上限(宣言 file の [agentd].drain_seconds — 無い = 0 = 排水しない)
         drain_seconds=_drain_seconds_of_env(env),
+        # card acp:kanban-issue:ki-c3aace97d825: 会話の記録から transcript を組み直して --resume で続けるか。
+        # 既定は AgentdSettings の 1 行(ここに真偽を書かない)。env で切れるのが戻し方。
+        transcript_rebuild_enabled=_transcript_rebuild_of_env(env),
         # ADR-DOE-AGENTS-012 R56: 観測に載せる transcript の件数の上限 — 宣言が在ればそれ、無ければ
         # AgentdSettings の既定(既定の宣言はあちら 1 点で、ここには数を書かない)。
         transcripts_observed_max=(
@@ -347,6 +351,20 @@ def _drain_seconds_of_env(env: Mapping[str, str]) -> int:
     if not isinstance(verdict, int):
         raise TypeError(f"drain_seconds_of returned {type(verdict).__name__}")
     return verdict
+
+
+def _transcript_rebuild_of_env(env: Mapping[str, str]) -> bool:
+    """会話の記録から transcript を組み直して `--resume` で続けるか(card acp:kanban-issue:ki-c3aace97d825)。
+
+    既定の宣言は AgentdSettings.transcript_rebuild_enabled の 1 行で、ここは env が**切った**時だけそれを覆す。
+    切る綴りは閉語彙(0 / false / no / off・大小を問わない)—— 読めない値は既定のまま(黙って切らない)。
+    """
+    raw = (env.get(TRANSCRIPT_REBUILD_ENV) or "").strip().lower()
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    return AgentdSettings.transcript_rebuild_enabled
 
 
 def _transcripts_observed_max_of_env(env: Mapping[str, str]) -> int | None:

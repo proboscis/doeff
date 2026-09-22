@@ -249,6 +249,53 @@
   (+ (json.dumps {"books" kept} :ensure-ascii False :sort-keys True :indent 2) "\n"))
 
 
+;; charter が運ぶ**組み直した transcript**の欄(card acp:kanban-issue:ki-c3aace97d825)。綴りの家は
+;; sessionhost/acp/effects.py の CHARTER_REBUILT_TRANSCRIPT_KEY で、ここはその写し(検が突き合わせる)。
+;; ⚠ この層は中身を**組まない**: 運ばれてきた jsonl を家の中の正しい場所へ置くだけで、記録の service も
+;; ACP の行も読まない(記憶の冊 memory_files と同じ規律)。
+(setv CLAUDE-REBUILT-TRANSCRIPT-KEY "rebuilt_transcript")
+(setv CLAUDE-REBUILT-TRANSCRIPT-SESSION-KEY "session_id")
+(setv CLAUDE-REBUILT-TRANSCRIPT-TEXT-KEY "text")
+
+
+(defk claude-install-rebuilt-transcript [config-dir params]
+  {:pre [(: config-dir str) (: params dict)]
+   :post [(: % (| str None))]}
+  "組み直した transcript を借りた家へ置く(card acp:kanban-issue:ki-c3aace97d825)。戻り = その transcript が
+   名乗る会話の id(置けた / 既に在った)か None(運ばれていない / 置けなかった)。
+
+   家の中の場所は `<CLAUDE_CONFIG_DIR>/projects/<作業場の非英数字を - にした綴り>/<会話 id>.jsonl` ——
+   claude-discover-conversation / claude-transplant-conversation と**同じ 1 つの綴り方**。
+
+   ⚠ 既に在る file は上書きしない。同じ id が 2 度来るのは同じ手番の撃ち直しの時だけで、その file には
+   器が書き足した**本物の**やり取り(組み直した履歴より新しい)が載っていることがある。上書きすると消える。
+
+   置けなかった(器が断った・書けたのに実体が無い)時は None を返し、呼び手は今日どおり新しい会話の id を
+   鋳造して起こす(= 履歴の畳み直しへ戻る)。"
+  (setv payload (.get params CLAUDE-REBUILT-TRANSCRIPT-KEY))
+  (when (not (isinstance payload dict))
+    (return None))
+  (setv session-id (.get payload CLAUDE-REBUILT-TRANSCRIPT-SESSION-KEY))
+  (setv text (.get payload CLAUDE-REBUILT-TRANSCRIPT-TEXT-KEY))
+  (when (not (and (isinstance session-id str) (.strip session-id)
+                  (not (in "/" session-id))
+                  (isinstance text str) (.strip text)))
+    (return None))
+  (<- canon (fs-canonical-path (get params "work_dir")))
+  (setv mangled (re.sub "[^A-Za-z0-9]" "-" canon))
+  (setv project-dir f"{config-dir}/projects/{mangled}")
+  (setv path f"{project-dir}/{session-id}.jsonl")
+  (<- present (fs-file-exists path))
+  (when present
+    (return session-id))
+  (<- _ (fs-make-dirs project-dir))
+  (<- _ (fs-write-text-atomic path text ".agentd-tmp"))
+  ;; 起動の前に実体を 1 回確かめる(ADR-DOE-AGENTS-006 R10 と同じ考え — 実 CLI の
+  ;; 『No conversation found』で 120 秒かけて死ぬ形にしない)。
+  (<- written (fs-file-exists path))
+  (if written session-id None))
+
+
 (defk build-claude-argv [params]
   {:pre [(: params dict)]
    :post [(: % list)]}
@@ -640,9 +687,17 @@
   ;; 会話の圧縮 plugin(pod だけ・daemon の env が鍵の file を名乗る時)— 失敗は warning で、起動は止めない。
   (<- plugin-warnings (install-fast-jev-plugin config-dir))
   (.extend warnings plugin-warnings)
+  ;; card acp:kanban-issue:ki-c3aace97d825: 組み直した transcript が運ばれていれば家へ置き、その会話の id を
+  ;; 名乗る(= 器は `--resume <id>` で続ける)。置けなければ今日どおり新しい id を鋳造する(= 履歴の畳み直し)。
+  (<- adopted (| str None) (claude-install-rebuilt-transcript config-dir params))
+  (when (and (is adopted None) (isinstance (.get params CLAUDE-REBUILT-TRANSCRIPT-KEY) dict))
+    (.append warnings (+ "rebuilt transcript: the conversation's rebuilt transcript could not be installed into "
+                         f"{config-dir} — this turn starts a new session instead of resuming")))
   (setv identity {"CLAUDE_CONFIG_DIR" config-dir
                   "warnings" warnings
-                  "conversation" {"session_id" (str (uuid.uuid4))}})
+                  "conversation" {"session_id" (if (is adopted None) (str (uuid.uuid4)) adopted)}
+                  ;; 家に在る transcript を継いだか(呼び手が --session-id ではなく --resume を組む材料)。
+                  "adopted_conversation" (is-not adopted None)})
   ;; 課金の階級の印(行の effective_identity に残る — resume はこの印で kind を
   ;; 選ぶ)。env には出ない: launch-spawn-env は binding 所有キーだけを拾う。
   (when (= billing BILLING-METERED)
