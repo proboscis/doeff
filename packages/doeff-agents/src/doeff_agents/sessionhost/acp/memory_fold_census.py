@@ -1,7 +1,10 @@
 """計器 ``agent-memory-folded`` から「書けなかった記憶の冊」を数える読み手。
 
 card acp:kanban-issue:ki-554e364641e8 の望む状態 3。畳み戻しが記録の service へ書けなかった
-拍は ``AgentMemoryUnwritable`` を立てるだけで手番を落とさない ⇒ 落ちは行にも記録にも残らず、
+拍は、手番の行(agent-job)の条件 ``AgentMemoryUnwritable`` を立てるだけで手番を落とさない。
+その条件は落ちた**冊の数**を運ばない(型ごとに 1 つ・最初の理由だけ —
+``judgment.memory-unwritable-noted``)うえ、手番の行は終わってから 300 秒で刈られる
+(ACP の ``AgentJob`` の回収)。⇒ 条件は「落ちた手番」の短命な印で、落ちた**冊の数**は
 **この計器の勘定の破れだけ**が証拠になる。その破れを数えるのがこの module。
 
 ## 恒等式
