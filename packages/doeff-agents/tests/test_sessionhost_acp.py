@@ -319,6 +319,15 @@ def _assert_launched_with_borrowed_token(world: World) -> None:
         "profile": "personal",
         "model": "claude-opus-5",
         "sessionId": "sid-1",
+        # card acp:kanban-issue:ki-4c0a0aa06b07: 引き継ぎ方の観測(温かい候補が無いので launch)。
+        "reopen": {
+            "mode": "launch",
+            "homeDigest": run(
+                judgment.home_digest_of(
+                    run(judgment.session_affinity_key_of(run(judgment.launch_plan_of(bound_job("s-1", inputs=[])))))
+                )
+            ),
+        },
     }
     assert record.status == {"state": "running"}
     assert world.pushed_kinds() == ["status"]
@@ -1333,6 +1342,97 @@ def test_cache_context_is_persisted_before_the_job_can_be_collected() -> None:
         "nodeRow": NODE, "account": "acct", "declarationGeneration": 7,
     }
     assert world.state.jobs[0].request_start_lower_bound_ms == 1_000
+
+
+def test_reopen_names_the_arm_and_the_home_on_the_turn_record() -> None:
+    """card acp:kanban-issue:ki-4c0a0aa06b07: turn-record の spec.reopen が「この手番が前の手番の
+    実行環境をどう引き継いだか」を運ぶ。読み手(keepalive の controller)は、この 2 欄だけで
+    『次の手番も同じ prompt cache を読むか』を判ずる。
+
+    表(判断は judgment.turn-reopen-of の 1 点):
+      腕                     欄       digest
+      launch / send /        その語   session-affinity-key-of の sha256
+      resume / rehydrate
+      defer・不明(None)     欄ごと無し(現在の設定から補わない)
+    """
+    plan = run(judgment.launch_plan_of(bound_job("reopen", inputs=[], node_row=NODE)))
+    other = run(
+        judgment.launch_plan_of(bound_job("reopen-b", inputs=[], node_row=NODE, account="other-account"))
+    )
+    for arm in ("launch", "send", "resume", "rehydrate"):
+        reopen = run(judgment.turn_reopen_of(plan, arm))
+        assert reopen is not None
+        assert reopen.mode == arm
+        # 不透明な 64 字の 16 進 —— 契約 agora-kinds.json の pattern と同じ形。
+        assert len(reopen.home_digest) == 64
+        assert set(reopen.home_digest) <= set("0123456789abcdef")
+    # 同じ家は同じ digest・口座が変われば別の digest(比較にだけ使う値)。
+    assert run(judgment.turn_reopen_of(plan, "resume")).home_digest == run(
+        judgment.turn_reopen_of(plan, "send")
+    ).home_digest
+    assert run(judgment.turn_reopen_of(plan, "resume")).home_digest != run(
+        judgment.turn_reopen_of(other, "resume")
+    ).home_digest
+    assert run(judgment.home_digest_of(run(judgment.session_affinity_key_of(plan)))) == run(
+        judgment.turn_reopen_of(plan, "resume")
+    ).home_digest
+    # 腕が無い / 閉語彙の外(defer は手番を始めないので turn-record も無い)= 不明。
+    for arm in (None, "defer", "", "resumed"):
+        assert run(judgment.turn_reopen_of(plan, arm)) is None
+
+    # 行に写るところまで: 受けた手番の腕(温かい候補が無いので launch)が spec.reopen に載る。
+    world = World()
+    world.acp.put_row(bound_job("reopen", inputs=[], node_row=NODE))
+    world.tick()
+    record = world.turn_record("reopen")
+    assert record is not None
+    assert record.spec["reopen"] == {
+        "mode": "launch",
+        "homeDigest": run(judgment.turn_reopen_of(plan, "launch")).home_digest,
+    }
+    # 不明の手番は欄ごと書かない(欠落 = 不明 —— 読み手は「引き継がない」と同じ側に倒す)。
+    unknown = replace(world.state.jobs[0], reopen=None)
+    assert "reopen" not in run(judgment.turn_record_spec_of(unknown))
+
+
+def test_the_conversation_is_bound_to_the_home_its_turn_runs_in() -> None:
+    """card acp:kanban-issue:ki-4c0a0aa06b07: 会話の行の status.home が「いまターンが走っている
+    実行元」(機体 × 口座 × model)を名乗る —— cache の keepalive が読む唯一の結び。
+
+    表(判断は judgment の 2 点):
+      口座を借りない手番      → 結びを名乗らない(None)
+      3 軸のどれかが動いた     → 据え直す(True)
+      刻(at)だけが違う        → 据え直さない(会話の行は熱いので書きを増やさない)
+    """
+    plan = run(judgment.launch_plan_of(bound_job("home", inputs=[], node_row=NODE)))
+    home = run(judgment.conversation_home_of(plan, NODE, 7_000))
+    assert home == {"node": NODE, "account": "acct", "model": "claude-opus-5", "at": 7_000}
+    # 口座を借りない手番は温める先が決まらないので結びを名乗らない。
+    lent_nothing = run(judgment.launch_plan_of(bound_job("home-b", inputs=[], account=None)))
+    assert run(judgment.conversation_home_of(lent_nothing, NODE, 7_000)) is None
+    # 据え直しの表。
+    assert run(judgment.conversation_home_differs({}, home)) is True
+    assert run(judgment.conversation_home_differs({"home": {**home, "at": 9_999}}, home)) is False
+    for axis, moved in (("node", "other-machine"), ("account", "other"), ("model", "claude-fable-5-1")):
+        assert run(judgment.conversation_home_differs({"home": {**home, axis: moved}}, home)) is True
+    # 他の係の欄は 1 bit も触らない(engine は変わった欄の書き手だけを検める)。
+    kept = run(judgment.conversation_status_with_home({"state": "open", "agent": {"model": "x"}}, home))
+    assert kept == {"state": "open", "agent": {"model": "x"}, "home": home}
+
+    # 行に写るところまで: claim が着いた拍に会話の行へ据わる。
+    world = World()
+    world.acp.put_row(
+        row(AGORA_KINDS_NAMESPACE, "conversation", CONVERSATION, {"id": CONVERSATION}, {"state": "open"})
+    )
+    world.acp.put_row(bound_job("home", inputs=[], node_row=NODE))
+    world.tick()
+    conversation = world.acp.rows.get(f"{AGORA_KINDS_NAMESPACE}:conversation:{CONVERSATION}")
+    assert conversation is not None and conversation.status is not None
+    bound = conversation.status["home"]
+    assert isinstance(bound, dict)
+    assert {key: bound[key] for key in ("node", "account", "model")} == {
+        "node": NODE, "account": "acct", "model": "claude-opus-5",
+    }
 
 
 def _start_capturing(world: World, job_id: str) -> None:
