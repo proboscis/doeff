@@ -1446,8 +1446,8 @@ class AgentdSettings:
     summarize_region_byte_budget: int = 262_144
     #: 要約の 1 区間の上限(秒)— 越えたら止めて条件 SummarizeDeadlineExceeded。
     summarize_deadline_seconds: int = 900
-    #: 要約の model(operator の決定 2026-09-16 = Opus 5)。契機が書く agent-job の charter.model はこの値。
-    summarize_model: str = "claude-opus-5"
+    #: 要約の model(operator の決定 2026-09-16 = Opus 5・2026-09-23 に Opus 5.5 へ)。契機が書く agent-job の charter.model はこの値。
+    summarize_model: str = "claude-opus-5-5"
     #: 要約の結末の置き場(runtime.summarize_runs_dir の 1 点 — state_dir の下の SUMMARY_RUNS_RELDIR)。
     summarize_runs_dir: str = ""
     #: 段 12(card acp:kanban-issue:ki-f2747267e24d B2): 借りた錠の手元の journal の file(runtime.lease_journal_path の
