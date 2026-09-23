@@ -1,0 +1,11 @@
+Use case: infographic-diagram. 日本語技術記事の完成ダイアグラム。添付は表現トーンの参考のみ。全面が不透明な白、ネイビーの日本語、ティールの明瞭な矢印、薄い青/ミント/紫の平面的な角丸枠。写実・3D・金属・ガラス・立体的装置・台座・装飾的なイラストを禁止。横長3:2。図中に下記の短いコードを大きく正確な等幅文字で配置し、対応する操作や流れと矢印で結ぶ。大きいタイトル、余白、最大6ノード程度。日本語の説明を短く、コードは改変しない。原稿からの抜粋なので小さく「コードは抜粋。完全な例は本文へ」。以下の意味を守り、勝手な挙動や架空のAPIを追加しない。
+コードは提供されたもののみ。コード各行の日本語コメントも省略せず表示。機械的な循環矢印や図にないAPIを追加しない。
+見出し: ストリームの収集も、@doで合成する
+コード:
+while True:  # collect_openai_streamの中で反復
+    chunk = yield Await(anext(iterator, None))  # 1チャンク待つ
+    if chunk is None: return text  # 反復終了なら本文を返す
+    if chunk.choices:  # 本文の候補がある場合
+        text += chunk.choices[0].delta.content or ""  # 断片を追加
+図の意味と流れ: 呼び出し「yield collect_openai_stream(stream)」→「次の1チャンクをAwait」→判定「反復が終了した？」。はい→「完成した本文をreturn」→「呼び出し元の続きを再開」。いいえ→「本文の断片を追加」→「次の1チャンクをAwait」へループ。Noneは反復終了の値。下部に「AwaitはSDKとの境界。収集ループは@doの中」と記載。LLMStreamingChatのOpenAI応答を扱う図で、Gemini/OpenRouterのストリームとして描かない。 図内コードはcollect_openai_streamの反復部分の抜粋。iteratorとtextは関数内で初期化済み。
+説明: OpenAIのストリームを1チャンクずつAwaitし、反復と本文の収集を@doの中で進めます。

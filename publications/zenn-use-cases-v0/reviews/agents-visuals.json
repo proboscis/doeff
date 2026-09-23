@@ -1,0 +1,14 @@
+{
+  "concept": {
+    "title": "エージェントの操作を、ハンドラで解釈する",
+    "code": "session = yield LaunchSession(spec)  # セッションを取得\noutcome = yield AwaitResult(session)  # 状態と結果を待つ\nyield ReleaseSession(session)  # 利用した資源を解放\nreturn outcome  # 成否の判断材料を返す",
+    "flow": "白背景、平面の説明図。左に『共通の@do処理』と4行コード。中央に『選んだハンドラ』。そこから上下2つの選択肢を描く。上は『本番』『実セッションへ接続』、下は『シナリオ』『用意した応答を返す』。両選択肢から右の『AwaitOutcome』『status / result / validation_error』へ矢印。同時実行の分岐に見せず『実行時にどちらかを設置』を付記。コード右の1行目を取得、2行目を状態と結果、3行目を解放へ対応付ける。写真、立体機械、3D、床、質感は使わない。結果を成功と断定せず、状態確認が必要なことを示す。",
+    "caption": "LaunchSessionとAwaitResultの列は共通です。選んだハンドラが、実セッションまたはシナリオの応答として解釈します。"
+  },
+  "flow": {
+    "title": "2件のレビューを開始し、結果を待って可否を合成する",
+    "code": "language = yield Spawn(checked_review(language_spec, timeout_seconds))  # 文章を開始\nexamples = yield Spawn(checked_review(example_spec, timeout_seconds))  # コードを開始\nlanguage_result = yield Wait(language)  # 文章の結果を取得\nexample_result = yield Wait(examples)  # コードの結果を取得",
+    "flow": "白背景、濃紺と青緑の平面ダイアグラム。左上に4行のコード抜粋。右上の『Spawnを2回』から『文章のレビュー』『コードのレビュー』に分岐し、それぞれ『AwaitResult』→『結果の確認・ReleaseSession』→『Waitの結果』。文章の返り値『ok=True』、コードの返り値『ok=False』を大きく示す。最後に両方の矢印が『True and False』へ合流し『ready=False』に向かう。図の下に『エージェントの応答はシナリオ』『@doとスケジューラ、判断処理を実行』と明記。コード4行の後で、本文のreturnにある2結果のokの論理積を取ることを図で説明。1タスクの完了後にもう1タスクを起動する直列図にしない。写真や3Dは禁止。",
+    "caption": "2件を開始してから、それぞれの結果を待ちます。シナリオ例は文章がok=True、コードがok=Falseなので、最終結果はready=Falseです。"
+  }
+}

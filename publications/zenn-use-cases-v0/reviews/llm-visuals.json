@@ -1,0 +1,14 @@
+{
+  "concept": {
+    "title": "LLMへの依頼を、ハンドラで解釈する",
+    "code": "@do  # 合成できる処理を作る\ndef summarize(text, model):  # 文章とモデルを受け取る\n    return (yield LLMChat(  # 応答を依頼して返す\n        messages=[{\"role\": \"user\", \"content\": text}], model=model,  # 入力とモデル\n    ))  # 指定した依頼を閉じる",
+    "flow": "左から 処理本体 → yield LLMChat → 取り付けたハンドラ → 応答を返して続きを再開。ハンドラの選択肢として「OpenAI」「Gemini」「OpenRouter」「テスト用」を横方向の分岐で示す。どれかを選ぶ図であり、同時実行ではない。下に「対応機能・返り値はハンドラごとに確認」と明記。4種のLLM機能を全プロバイダが実装済みと見せない。コードは通常チャットの依頼だけを示す。",
+    "caption": "共通のLLMChatを、取り付けたハンドラが解釈します。対応機能と返り値はハンドラごとに確認します。"
+  },
+  "flow": {
+    "title": "ストリームの収集も、@doで合成する",
+    "code": "while True:  # collect_openai_streamの中で反復\n    chunk = yield Await(anext(iterator, None))  # 1チャンク待つ\n    if chunk is None: return text  # 反復終了なら本文を返す\n    if chunk.choices:  # 本文の候補がある場合\n        text += chunk.choices[0].delta.content or \"\"  # 断片を追加",
+    "flow": "呼び出し「yield collect_openai_stream(stream)」→「次の1チャンクをAwait」→判定「反復が終了した？」。はい→「完成した本文をreturn」→「呼び出し元の続きを再開」。いいえ→「本文の断片を追加」→「次の1チャンクをAwait」へループ。Noneは反復終了の値。下部に「AwaitはSDKとの境界。収集ループは@doの中」と記載。LLMStreamingChatのOpenAI応答を扱う図で、Gemini/OpenRouterのストリームとして描かない。 図内コードはcollect_openai_streamの反復部分の抜粋。iteratorとtextは関数内で初期化済み。",
+    "caption": "OpenAIのストリームを1チャンクずつAwaitし、反復と本文の収集を@doの中で進めます。"
+  }
+}

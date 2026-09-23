@@ -1,0 +1,19 @@
+digraph figure {
+graph [bgcolor="#f8fafc", pad="0.4", nodesep="0.35", ranksep="0.45", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#152c43", labelloc="t", label="文書ごとの計算と、失敗・集計の方針を分ける"];
+node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#c3d2e0", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#152c43", margin="0.2,0.15"];
+edge [color="#087e8b", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#087e8b"];
+a [label="複数の文書"];
+b [label="Traverse\n文書の長さ・ラベルを計算"];
+c [label="空の文書はFail"];
+d [label="成功した結果をZipで対応付ける"];
+e [label="SortBy → Take\n長い文書を選ぶ"];
+f [label="Reduceで合計・Inspectで失敗履歴"];
+g [label="parallel_fail_fastなら\n失敗を呼び出し元へ伝える"];
+a -> b [label=""];
+b -> c [label=""];
+b -> d [label="成功分"];
+c -> f [label="parallelで記録"];
+d -> e [label=""];
+e -> f [label=""];
+c -> g [label="別の実行方針"];
+}

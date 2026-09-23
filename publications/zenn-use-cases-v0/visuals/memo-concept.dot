@@ -1,0 +1,14 @@
+digraph figure {
+graph [bgcolor="#122336", pad="0.45", nodesep="0.4", ranksep="0.58", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#f4f8fc", labelloc="t", label="多段メモ化は、同じハンドラの積み重ね\n"];
+node [shape=box, style="rounded,filled", fillcolor="#203951", color="#55748e", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#f4f8fc", margin="0.22,0.17"];
+edge [color="#79e4c4", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#79e4c4"];
+p [label="処理本体\nMemoGet"];
+a [label="L1\n手元の保存"];
+b [label="L2\n次の保存先"];
+c [label="L3\nさらに外側の保存先"];
+p -> a [label="問い合わせ"];
+a -> b [label="なければ外側へ"];
+b -> c [label="なければ外側へ"];
+c -> b [label="見つけた結果を保存"];
+b -> a [label="見つけた結果を保存"];
+}
