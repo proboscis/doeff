@@ -1483,6 +1483,8 @@ def test_host_headless_turn_refused_by_the_provider_limit_fails_the_session_with
     cause = _obj(ended, "terminal_cause")
     assert _text(cause, "category") == "rate_limited", cause
     assert limit_text in _text(cause, "reason"), cause
+    # 2026-09-23: 文が model の族(Fable)を名乗る断りだけが limit_scope = model(器の側が当てて欄に載せる — R33)
+    assert _text(cause, "limit_scope") == "model", cause
     assert ended["awaiting_response"] is False
     # 手番の終わりの印も立つ(手番は終わっている — level-triggered の欄)
     assert _has(ended, "turn_ended_at")
@@ -1519,6 +1521,8 @@ def test_host_headless_turn_refused_with_api_status_429_is_a_limit_whatever_the_
     cause = _obj(ended, "terminal_cause")
     assert _text(cause, "category") == "rate_limited", cause
     assert unknown_wording in _text(cause, "reason"), cause
+    # 2026-09-23: model を名乗らない断りは口座全体(operator の規則「種類を問わず口座が枯れた」)
+    assert _text(cause, "limit_scope") == "account", cause
     # limit の語を含む文でも 403 は限度ではない(構造が先 — 文は読まない)
     headless_host.stub_env["DOEFF_HEADLESS_STUB_LIMIT_TEXT"] = (
         "Your organization has disabled Claude subscription access · usage limit reached"
