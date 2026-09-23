@@ -179,6 +179,67 @@ Handlers use `yield Resume(k, value)` to resume the continuation with a value,
 If a host handler returns an effect value, runtime normalizes it through `Perform(effect)`
 before continuing.
 
+A handler is any callable `(effect, k) -> DoExpr`: a `@do` function, a plain
+function, a bound method, a `functools.partial`, or a callable instance.
+
+### Typed handlers: the effect annotation selects the effects
+
+The type annotation of the effect parameter is the handler's filter. The VM
+skips the handler for any effect that is not an instance of the annotated
+type — exactly as if the handler had begun with
+`if not isinstance(effect, T): yield Pass(effect, k)` — without calling it.
+
+```python
+@do
+def clock(effect: ReadClock | Sleep, k):      # sees ReadClock and Sleep only
+    ...
+
+@do
+def audit(effect: EffectBase, k):             # sees every effect (no filter)
+    ...
+```
+
+Rules (single definition: `doeff_vm/_effect_types.py`):
+
+- the effect parameter is the first parameter that is not already bound
+  (`functools.partial` arguments and `self` are skipped; `@do` wrappers are followed)
+- no annotation, `Any`, `object`, `EffectBase` / `Effect` → every effect
+- a class → `isinstance` against it, so a parent class covers all subclasses
+- `A | B` → either; `Annotated[T, ...]` → `T`; `Parent[X]` → `Parent`
+- string annotations are evaluated in the handler's module; an annotation that
+  cannot be evaluated at runtime (a `TYPE_CHECKING`-only import) warns once and
+  falls back to every effect
+
+A handler whose annotation matches can still `yield Pass(effect, k)` after
+looking at field values; the annotation only states which effects it wants to see.
+
+### Catching a family of effects by their parent type
+
+Because the filter is `isinstance`, a guard written against a parent type also
+catches effects added later — there is no list to keep in sync. Give the
+family a common base (it does not have to derive from `EffectBase`):
+
+```python
+class WriteEffect:
+    """Marker base: every effect that writes shared state."""
+
+@dataclass(frozen=True)
+class WriteRow(EffectBase, WriteEffect):
+    key: str
+    value: dict
+
+@do
+def read_only_guard(effect: WriteEffect, k):
+    raise PermissionError(f"read-only job emitted {type(effect).__name__}")
+    yield
+
+# A DeleteRow(EffectBase, WriteEffect) added next year is refused without
+# touching the guard.
+```
+
+The remaining obligation is at the single place where an effect is defined:
+a new write effect must derive from `WriteEffect`.
+
 ## WithObserve Contract
 
 `WithObserve(observer, body)` installs scoped observation for yielded values.

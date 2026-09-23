@@ -32,6 +32,18 @@ pub trait Callable: Send + Sync + std::fmt::Debug + 'static {
         None
     }
 
+    /// Whether this handler wants to see `effect` at all.
+    ///
+    /// A typed handler declares the effect types it handles; for any other
+    /// effect the VM reperforms from the handler's parent exactly as if the
+    /// handler had yielded `Pass` before doing anything else. This is the
+    /// "typed handlers pattern-match after dispatch" extension of
+    /// SPEC-VM-020: perform/continue semantics are unchanged, the handler is
+    /// found as usual and only its call is skipped. Default: every effect.
+    fn accepts(&self, _effect: &Value) -> bool {
+        true
+    }
+
     /// Whether this callable runs as a multi-step generator handler.
     /// Generator handlers (e.g., Python `@do` generators) need a `Py<PyK>`
     /// backup handle for exception recovery across yields. Synchronous

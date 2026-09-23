@@ -70,13 +70,21 @@ impl PyEffectBase {
 #[derive(Debug)]
 pub struct PythonCallable {
     pub callable: Py<PyAny>,
+    /// Effect types the handler declares on its effect parameter
+    /// (`doeff_vm._effect_types.handler_effect_types`). `None` = every
+    /// effect. Captured once when the handler is installed (WithHandler);
+    /// plain `Callable(...)` values used with Apply never carry a filter.
+    effect_types: Option<Py<pyo3::types::PyTuple>>,
 }
 
 #[pymethods]
 impl PythonCallable {
     #[new]
     pub fn new(callable: Py<PyAny>) -> Self {
-        Self { callable }
+        Self {
+            callable,
+            effect_types: None,
+        }
     }
 
     fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyAny>,))> {
@@ -85,7 +93,11 @@ impl PythonCallable {
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit_py_field(&visit, &self.callable)
+        visit_py_field(&visit, &self.callable)?;
+        if let Some(types) = &self.effect_types {
+            visit.call(types)?;
+        }
+        Ok(())
     }
 
     fn __clear__(&mut self, py: Python<'_>) {
@@ -93,7 +105,47 @@ impl PythonCallable {
         // garbage at this point; any buggy post-clear use fails loudly
         // ("'NoneType' object is not callable").
         self.callable = py.None();
+        self.effect_types = None;
     }
+}
+
+impl PythonCallable {
+    /// A handler callable with the effect types its annotation declares.
+    fn handler(py: Python<'_>, handler: &Bound<'_, PyAny>) -> Result<Self, String> {
+        Ok(Self {
+            callable: handler.clone().unbind(),
+            effect_types: handler_effect_types(py, handler)?,
+        })
+    }
+}
+
+static HANDLER_EFFECT_TYPES: pyo3::sync::PyOnceLock<Py<PyAny>> = pyo3::sync::PyOnceLock::new();
+
+/// Resolve a handler's effect-parameter annotation to a type tuple through the
+/// single Python-side rule (`doeff_vm._effect_types.handler_effect_types`).
+/// The resolver caches per function, so re-installing a handler is cheap.
+fn handler_effect_types(
+    py: Python<'_>,
+    handler: &Bound<'_, PyAny>,
+) -> Result<Option<Py<pyo3::types::PyTuple>>, String> {
+    let resolver = HANDLER_EFFECT_TYPES
+        .get_or_try_init(py, || {
+            py.import("doeff_vm._effect_types")
+                .and_then(|m| m.getattr("handler_effect_types"))
+                .map(|f| f.unbind())
+        })
+        .map_err(|e| format!("WithHandler: cannot load the effect-type resolver: {e}"))?;
+    let types = resolver
+        .call1(py, (handler,))
+        .map_err(|e| format!("WithHandler: resolving the handler's effect types failed: {e}"))?;
+    let types = types.bind(py);
+    if types.is_none() {
+        return Ok(None);
+    }
+    types
+        .downcast::<pyo3::types::PyTuple>()
+        .map(|t| Some(t.clone().unbind()))
+        .map_err(|_| "WithHandler: effect-type resolver must return a tuple or None".to_string())
 }
 
 impl doeff_vm_core::value::Callable for PythonCallable {
@@ -130,6 +182,21 @@ impl doeff_vm_core::value::Callable for PythonCallable {
 
     fn is_generator_handler(&self) -> bool {
         true
+    }
+
+    fn accepts(&self, effect: &Value) -> bool {
+        let Some(types) = &self.effect_types else {
+            return true;
+        };
+        let Value::Opaque(obj) = effect else {
+            return true;
+        };
+        Python::attach(|py| {
+            // isinstance() against the declared tuple. An error (a broken
+            // __instancecheck__) must not hide the effect: deliver it and let
+            // the handler body decide, as without a filter.
+            obj.bind(py).is_instance(types.bind(py)).unwrap_or(true)
+        })
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -557,9 +624,11 @@ fn continuation_boundaries_value(
 }
 
 /// Wrap a handler callable as Value::Callable.
-fn wrap_handler(py: Python<'_>, handler: &Py<PyAny>) -> Value {
-    let callable = PythonCallable::new(handler.clone_ref(py));
-    Value::Callable(std::sync::Arc::new(callable) as doeff_vm_core::value::CallableRef)
+fn wrap_handler(py: Python<'_>, handler: &Bound<'_, PyAny>) -> Result<Value, String> {
+    let callable = PythonCallable::handler(py, handler)?;
+    Ok(Value::Callable(
+        std::sync::Arc::new(callable) as doeff_vm_core::value::CallableRef
+    ))
 }
 
 /// Classify a Python object into a DoCtrl.
@@ -627,7 +696,7 @@ pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<
     }
     if let Ok(wh) = obj.downcast::<PyWithHandler>() {
         let wh = wh.get();
-        let handler_value = wrap_handler(py, &wh.handler);
+        let handler_value = wrap_handler(py, wh.handler.bind(py))?;
         let body_doctrl = classify_python_object(py, &wh.body.bind(py))
             .map_err(|e| format!("WithHandler body: {}", e))?;
         return Ok(DoCtrl::WithHandler {
@@ -770,10 +839,7 @@ fn classify_tagged_to_doctrl(
             let handler_obj = obj
                 .getattr("handler")
                 .map_err(|_| "WithHandler: missing 'handler' attribute".to_string())?;
-            let handler_callable = PythonCallable::new(handler_obj.unbind());
-            let handler_value = Value::Callable(
-                std::sync::Arc::new(handler_callable) as doeff_vm_core::value::CallableRef
-            );
+            let handler_value = wrap_handler(py, &handler_obj)?;
             let body_obj = obj
                 .getattr("body")
                 .map_err(|_| "WithHandler: missing 'body' attribute".to_string())?;
