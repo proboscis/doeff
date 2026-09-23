@@ -747,6 +747,12 @@
    直接束縛では呼び手 env)。戻り値: str | None。"
   #^ str name)
 
+(defclass [(dataclass :frozen True :kw-only True)] LogLine [EffectBase]
+  "運用 log の 1 行(host の stderr — agentd の launchd / pod の log と同じ流れ)。program が
+   黙らないために名乗る口(card acp:kanban-issue:ki-7b52bb76aa6e 受入 8: 席の settings file が
+   不在でも起こす代わりに名乗る)。判断(何を名乗るか)は program、書く先は substrate。戻り値: None。"
+  #^ str text)
+
 (defclass [(dataclass :frozen True :kw-only True)] ClockSleep [EffectBase]
   "実時間待ち(wait-for-repl-idle の poll 間隔・dialog 再描画待ち)。
    時間算術が ClockNow 経由であるのと同じく、待ちも effect 経由 — program は
@@ -1078,6 +1084,12 @@
    :post [(: % EnvGet)]}
   "EnvGet を構築する(process env fallback、S11 caveat)。"
   (EnvGet :name name))
+
+(deff log-line [text]
+  {:pre [(: text str) (> (len text) 0)]
+   :post [(: % LogLine)]}
+  "LogLine を構築する(運用 log の名乗り 1 行)。"
+  (LogLine :text text))
 
 (deff clock-sleep [seconds]
   {:pre [(: seconds (| int float)) (>= seconds 0)]

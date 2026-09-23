@@ -52,6 +52,7 @@
   session-store-upsert
   session-store-record-event
   env-get
+  log-line
   fs-dir-exists
   fs-link-artifact
   fs-make-dirs
@@ -817,8 +818,11 @@
    そこで fail-loud)。session-hooks-mode と同じ use-site の流儀で env から読む。
      名指しが無い = None(今日どおり — argv は 1 byte も変わらない)
      claude 以外の kind = None(file の名は claude の settings — codex の起動は読まない)
-     読めない / JSON でない / object でない = fail-loud(RuntimeError — 参加の門を通った file が起動の拍に壊れた形。
-       黙って hook 無しの席を起こさない: 49b3549b と同じ「安全 hook 全滅」を無言で作らない)"
+     不在(読めない)= None **+ 名前つきの 1 行を log**(依頼書 §10-2・受入 8 — 非致命: 席は hook 無しで起こる。pod の
+       入口が image の下限へ戻して立つ degrade の日は file が無く、断ると pool 全体が止まる。黙って起こさない、の担保は
+       断りではなく名乗り — node の行の在否は agentd が拍ごとに observe-claude-settings-file で書く)
+     JSON でない / object でない = fail-loud(RuntimeError — 在って壊れている宣言。黙って hook 無しの席を起こさない:
+       49b3549b と同じ「安全 hook 全滅」を無言で作らない)"
   (when (!= agent-type "claude")
     (return None))
   (<- path (env-get "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE"))
@@ -826,10 +830,11 @@
     (return None))
   (<- text (fs-read-text path))
   (when (is text None)
-    (raise (RuntimeError
-             (+ f"session.launch: DOEFF_AGENTD_CLAUDE_SETTINGS_FILE={path} が読めない — 機体の参加の宣言が名指した"
-                "席の settings file(dotfiles claude-hooks/seat-settings.json)。hook を届けられない席は起こさない"
-                "(ADR-DOE-AGENTS-004 R13)"))))
+    ;; 不在 = 非致命(依頼書 §10-2・受入 8): 席は hook 無しで起こし、名前つきの 1 行で名乗る。
+    (<- _ (log-line
+            (+ f"session.launch: seat settings file {path} (DOEFF_AGENTD_CLAUDE_SETTINGS_FILE) is ABSENT — launching the "
+               f"{agent-type} seat WITHOUT the declared hooks (ADR-DOE-AGENTS-004 R13; card ki-7b52bb76aa6e acceptance 8)")))
+    (return None))
   (try
     (setv parsed (json.loads text))
     (except [error ValueError]

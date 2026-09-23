@@ -135,6 +135,9 @@
   CommandStart
   CommandStarted
   CommandStop
+  CLAUDE-SETTINGS-FILE-ABSENT
+  CLAUDE-SETTINGS-FILE-PRESENT
+  ClaudeSettingsFileObservation
   FsFileExists
   FsReadText
   InFlightCommand
@@ -685,10 +688,14 @@
         ;; 同じ列に載せる(数える側は会話の担い手の路で 2 つの半分を分ける)。読めない拍は空で続ける。
         (<- panes tuple (observe-pane-seats observations state.pane-seats-note))
         (setv #(pane-sessions pane-note) panes)
-        (<- (write-node-observations settings row.key (+ observations pane-sessions) transcripts))
+        ;; card ki-7b52bb76aa6e 受入 8: 席の settings file の在否(名指した機体だけ)— 不在は断らず、node の行と log で名乗る。
+        (<- seat-file tuple (observe-claude-settings-file settings state.claude-settings-file-note))
+        (setv #(seat-file-observation seat-file-note) seat-file)
+        (<- (write-node-observations settings row.key (+ observations pane-sessions) transcripts seat-file-observation))
         ;; 段 12 lane 12j(#321): 在った行(R43 の判断で解いた生きている行)の id = 自分の生きている行の id。
         (replace next :node-missing-logged False :node-spec-refusal-logged spec-refusal-logged
-                 :node-row-id node.resource-id :pane-seats-note pane-note))))
+                 :node-row-id node.resource-id :pane-seats-note pane-note
+                 :claude-settings-file-note seat-file-note))))
 
 
 (defk observe-pane-seats [sessions note]
@@ -716,18 +723,46 @@
   #(items ""))
 
 
-(defk write-node-observations [settings key sessions transcripts]
-  {:pre [(: settings AgentdSettings) (: key str) (: sessions list) (: transcripts list)]
+(defk observe-claude-settings-file [settings note]
+  {:pre [(: settings AgentdSettings) (: note str)]
+   :post [(: % tuple)]}
+  "席の settings file の在否の観測(card acp:kanban-issue:ki-7b52bb76aa6e 受入 8・依頼書 §10-2): 宣言 [agentd].claude_settings_file
+   を名指した機体だけが、拍ごとに file の実在(FsFileExists)を読んで node の行 observations.claudeSettingsFile に載せる。
+   不在は参加を断る理由にしない(pod の入口が image の下限へ戻して立つ正規の degrade の日に、断ると pool 全体が capacity 0 に
+   化ける)ので、断りの代わりに**名乗る**: 在否が変わった拍(起動の最初の拍を含む)に名前つきの 1 行を log する — 同じ語は
+   1 度だけ(周期ごとに同じ行を吐かない)。席の起動は launch.hy claude-settings-declaration が同じ path を起動の拍ごとに読み、
+   不在なら hook 無しで起こして自分の 1 行を log する(観測と起動は別の読み — どちらも file が正本で、写しを持たない)。
+   戻り = #(観測〔名指していない機体は None〕 名乗った語〔次の拍の note・名指していない機体は \"\"〕)。
+   判断(欄の形)は judgment.node-status-with-observations の 1 点 — ここは読みと log だけ。"
+  (setv path settings.claude-settings-file)
+  (when (is path None)
+    (return #(None "")))
+  (<- present bool (FsFileExists :path path))
+  (setv word (if present CLAUDE-SETTINGS-FILE-PRESENT CLAUDE-SETTINGS-FILE-ABSENT))
+  (when (!= note word)
+    (<- (LogLine :text (if present
+                           (+ f"agentd: seat settings file {path} is present — [agentd].claude_settings_file reaches each seat's "
+                              "--settings (declared hooks delivered); named in node observations.claudeSettingsFile")
+                           (+ f"agentd: seat settings file {path} is ABSENT — [agentd].claude_settings_file names a file this host "
+                              "does not have; joining anyway (capacity unchanged), seats launch WITHOUT the declared hooks until it "
+                              "appears; named in node observations.claudeSettingsFile (card ki-7b52bb76aa6e acceptance 8)")))))
+  #((ClaudeSettingsFileObservation :path path :present present) word))
+
+
+(defk write-node-observations [settings key sessions transcripts seat-file]
+  {:pre [(: settings AgentdSettings) (: key str) (: sessions list) (: transcripts list)
+         (: seat-file (| ClaudeSettingsFileObservation None))]
    :post [(: % str)]}
   "参加の腕の観測の書き(段 10 lane 10ba・agora-redesign #115): lease は別の thread(lease-heartbeat)が書くので、観測を組んだ
    後に行を読み直してから書く(器の眺めの読みや片付けの間に lease の書きが挟まっても、読みから書きまでを短くして CAS に
-   負けにくくする)。差し替えるのは observations と capabilities だけ(judgment.node-status-with-observations)。CAS に負けたら
+   負けにくくする)。差し替えるのは observations(席の settings file の在否 seat-file を含む — 受入 8)と capabilities だけ
+  (judgment.node-status-with-observations)。CAS に負けたら
    読み直して 1 度だけ撃ち直し、それでも負けたら log して次の周期へ。戻り = 結末の語(written / no-node-row / refused / conflict)。"
   (for [attempt [1 2]]
     (<- fresh (| AcpRow None) (AcpGetRow :key key))
     (when (is fresh None)
       (return "no-node-row"))
-    (<- status dict (node-status-with-observations fresh settings sessions transcripts))
+    (<- status dict (node-status-with-observations fresh settings sessions transcripts seat-file))
     (<- outcome (| Written Conflict Refused) (AcpPutStatus :row fresh :status status))
     (when (isinstance outcome Written)
       (return "written"))

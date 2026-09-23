@@ -26,9 +26,11 @@
 ;;;                    宣言された状態で断り、推測しない。宛先が在って届かないのは spool が受ける。
 ;;;   * claude-settings-file-of / claude-settings-declaration-of  席の settings file(card acp:kanban-issue:
 ;;;                    ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13): 宣言 [agentd].claude_settings_file の綴りの読みと、
-;;;                    参加の門 (b)(c)(d)(JSON の object / doeff の鍵を含まない / session_hooks = inherit)。
-;;;                    (a) file が読めるは composition root(runtime.join_plan)。外れは参加しない — 黙って hook 無しの
-;;;                    席を起こさない。
+;;;                    在る file の本文の門 (b)(c)(JSON の object / doeff の鍵を含まない)。(d) session_hooks = inherit
+;;;                    は宣言そのものの門で join-spec-of が撃つ(file の在否に依らない)。(a) 読みは composition root
+;;;                    (runtime.join_plan): **不在は非致命**(path を据えたまま参加し、agentd が node の行と log で名乗る —
+;;;                    依頼書 §10-2: 断ると pod の正規の degrade が pool 全体の capacity 0 に化ける)・在って壊れているのは
+;;;                    致命(宣言そのものの誤り — 黙って hook 無しの席を起こさない、の担保は断りと名乗りの 2 つ)。
 ;;; wire の綴り(env の名・host の flag・schema・閉語彙)は effects.py だけが持ち、ここは import する。
 ;;; I/O は 1 つも無い(file の読みは composition root・metadata の読みは handlers.py)。
 
@@ -779,17 +781,16 @@
   word)
 
 
-(defk claude-settings-declaration-of [text session-hooks]
-  {:pre [(: text str) (: session-hooks str)]
+(defk claude-settings-declaration-of [text]
+  {:pre [(: text str)]
    :post [(: % dict)]}
-  "参加の門の 1 点(card acp:kanban-issue:ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13): 宣言が名指した席の settings file の
-   本文(読めたもの — 読めないは composition root が (a) で断る)と宣言の session_hooks → 席へ渡す settings(dict)。
-   外れは ValueError(参加しない — 黙って hook 無しの席を起こさない):
+  "在る席の settings file の本文の門(card acp:kanban-issue:ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13): 宣言が名指した file の
+   本文(読めたもの — 不在は composition root が非致命で通し〔依頼書 §10-2〕、在って読めないは (a) で断る)→ 席へ渡す
+   settings(dict)。外れは ValueError(参加しない — 在って壊れているのは宣言そのものの誤り):
      (b) JSON の object であること(配列・数・文字列は settings ではない)
      (c) doeff が置く鍵(impls/claude_code.hy CLAUDE-SETTINGS-OWNED-KEYS = disableAllHooks と記憶の置き場の鍵)を
          **含まない**こと — 含むと argv の合流で衝突し、黙って後勝ちにすれば hook か記憶の置き場のどちらかが無音で消える
-     (d) session_hooks が inherit であること — disabled の宣言に settings を足しても disableAllHooks が勝って hook は
-         配られない(file を効かせる前提条件)。
+   (d) session_hooks = inherit は file の在否に依らない宣言の門なので join-spec-of が撃つ(ここでは見ない)。
    宣言しない機体(名指し無し)はこの門を通らない(今日どおり)。"
   (setv where f"[{TABLE-AGENTD}].{KEY-CLAUDE-SETTINGS-FILE}")
   (try
@@ -804,10 +805,6 @@
     (raise (ValueError (+ f"{where} が名指す file は doeff が置く鍵を持てない({(.join ", " owned)})— "
                           "hook の無効化と記憶の置き場は doeff が `--settings` の合流点で自分で置く"
                           "(ADR-DOE-AGENTS-004 R13・衝突は黙って後勝ちにしない)"))))
-  (when (!= session-hooks JOIN-SESSION-HOOKS-DEFAULT)
-    (raise (ValueError (+ f"{where} は [{TABLE-AGENTD}].{KEY-SESSION-HOOKS} = {JOIN-SESSION-HOOKS-DEFAULT !r} の宣言にだけ"
-                          f"効く(いま {session-hooks !r})— disableAllHooks が勝って名指した hook は 1 本も配られない。"
-                          "hook を配らないなら名指しの行を消す"))))
   parsed)
 
 
@@ -850,16 +847,24 @@
   (<- allow-metered bool (allow-metered-billing-of (.get agentd KEY-ALLOW-METERED-BILLING)))
   ;; 席へ運ぶ env の宣言(段 12・agora-redesign #520・任意)— 解釈と参加の門は seat-env-of の 1 点。
   (<- declared-seat-env SeatEnv (seat-env-of (.get agentd KEY-SEAT-ENV)))
-  ;; 席の settings file の名指し(card ki-7b52bb76aa6e・任意)— 綴りだけ。読みと 4 つの門は runtime.join_plan(I/O)+
-  ;; claude-settings-declaration-of(判断)で、通った絶対 path が composition root からこの欄へ据え直される。
+  ;; 席の settings file の名指し(card ki-7b52bb76aa6e・任意)— 綴りだけ。読みと本文の門は runtime.join_plan(I/O)+
+  ;; claude-settings-declaration-of(判断)で、絶対 path が composition root からこの欄へ据え直される(不在でも据える —
+  ;; 非致命・依頼書 §10-2)。
   (<- declared-settings-file (| str None) (claude-settings-file-of (.get agentd KEY-CLAUDE-SETTINGS-FILE)))
+  (setv session-hooks (.get agentd KEY-SESSION-HOOKS JOIN-SESSION-HOOKS-DEFAULT))
+  ;; (d) 名指しは session_hooks = inherit の宣言にだけ効く — disabled に settings を足しても disableAllHooks が勝って hook は
+  ;; 1 本も配られない。宣言そのものの誤りなので file の在否に依らず参加しない(在って壊れている側と同じ)。
+  (when (and (is-not declared-settings-file None) (!= session-hooks JOIN-SESSION-HOOKS-DEFAULT))
+    (raise (ValueError (+ f"[{TABLE-AGENTD}].{KEY-CLAUDE-SETTINGS-FILE} は [{TABLE-AGENTD}].{KEY-SESSION-HOOKS} = "
+                          f"{JOIN-SESSION-HOOKS-DEFAULT !r} の宣言にだけ効く(いま {session-hooks !r})— disableAllHooks が"
+                          "勝って名指した hook は 1 本も配られない。hook を配らないなら名指しの行を消す"))))
   (JoinSpec
     :server server
     :token-file token-file
     :node-name (.get agentd KEY-NODE-NAME)
     :state-dir (.get agentd KEY-STATE-DIR (+ state-home "/" JOIN-STATE-DIR-DEFAULT))
     :backend backend
-    :session-hooks (.get agentd KEY-SESSION-HOOKS JOIN-SESSION-HOOKS-DEFAULT)
+    :session-hooks session-hooks
     :custody-url (.get custody KEY-CUSTODY-URL)
     :borrower-key-file (.get custody KEY-BORROWER-KEY-FILE)
     ;; 空文字は「名乗らない」(宣言 file で欄を空にして外せる)。
