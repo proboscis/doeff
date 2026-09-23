@@ -12,6 +12,12 @@ authors = [
     {name = "doeff contributors"}
 ]
 
+[project.scripts]
+doeff-effects = "doeff_effect_analyzer.cli:main"
+
 [tool.maturin]
 features = ["python"]
-module-name = "doeff_effect_analyzer"
+# Mixed layout: the pure-Python front end lives in python/doeff_effect_analyzer,
+# the Rust core is the extension doeff_effect_analyzer._native.
+python-source = "python"
+module-name = "doeff_effect_analyzer._native"

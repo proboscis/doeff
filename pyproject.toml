@@ -100,6 +100,7 @@ testpaths = [
     "docs/adr",
     "packages/doeff-adr/tests",
     "packages/doeff-domain/tests",
+    "packages/doeff-effect-analyzer/tests/python",
     "packages/doeff-time/tests",
     "packages/doeff-vm/tests",
     "packages/doeff-vm-core/tests",
