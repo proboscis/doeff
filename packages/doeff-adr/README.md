@@ -15,6 +15,27 @@ The package provides Hy macros for:
 
 Accepted ADRs must carry at least one executable enforcement.
 
+## Where an installed `defsemgrep` reads its rule
+
+The installed form names a rule id and carries hit / clean fixtures:
+
+```hy
+(defsemgrep worker-files-rule
+  "worker-business-code-touches-files-only-through-effects"
+  [{"relative-path" "controllers/worker/lab/keeper.hy" "source" "…"}]    ; must fire
+  [{"relative-path" "controllers/worker/lab/keeper.hy" "source" "…"}]    ; must stay silent
+  :config "worker.semgrep.yaml")
+```
+
+- `:config` absent: the nearest `.semgrep.yaml` found by walking up from
+  pytest's working directory (the original behavior).
+- `:config "relative/path.yaml"`: resolved against the directory of the file
+  that declares the `defsemgrep`, so a rule file can live next to the ADR that
+  owns it and does not depend on where pytest was started.
+- `:config "/absolute/path.yaml"`: used as is.
+
+`doeff_adr.registry.resolved_config_path(spec)` returns the file a spec reads.
+
 Run executable ADR files directly:
 
 ```bash

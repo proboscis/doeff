@@ -65,11 +65,25 @@
   "Define a Semgrep enforcement with bad/good fixtures and a pytest check."
   (setv rule-id (hy.models.String (_symbol-text name)))
   (setv test-name (_test-symbol "test_" (+ (_symbol-text name) "_defsemgrep")))
-  (if (and (= (len forms) 3) (not (isinstance (get forms 0) hy.models.Keyword)))
+  (if (and (>= (len forms) 3) (not (isinstance (get forms 0) hy.models.Keyword)))
+      ;; Installed form: (defsemgrep name "rule-id" [hit …] [clean …] [:config "path"])
+      ;; :config absent → the nearest `.semgrep.yaml` above pytest's cwd (legacy).
+      ;; :config relative → resolved against the directory of the file that
+      ;; declares this defsemgrep, so the rule file can sit next to its ADR.
       (do
         (setv installed-rule-id (get forms 0))
         (setv hit-fixtures (get forms 1))
         (setv clean-fixtures (get forms 2))
+        (setv options (_pairs-to-dict (cut forms 3 None)))
+        (for [key options]
+          (when (!= key "config")
+            (raise (SyntaxError
+                     (.format "defsemgrep {}: unknown option :{} (the installed form accepts :config)"
+                              name key)))))
+        (setv config-forms
+          (if (in "config" options)
+              `[:config ~(get options "config") :declared-in __file__]
+              `[]))
         `(do
            (import doeff_adr.registry
              [register-semgrep-enforcement assert-semgrep-enforcement])
@@ -77,7 +91,8 @@
              ~rule-id
              :rule-id ~installed-rule-id
              :hit-fixtures ~hit-fixtures
-             :clean-fixtures ~clean-fixtures)
+             :clean-fixtures ~clean-fixtures
+             ~@config-forms)
            (defn ~test-name []
              (assert-semgrep-enforcement ~rule-id))))
       (do
