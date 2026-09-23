@@ -24,7 +24,8 @@ Usage:
 import logging
 import warnings
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from doeff_vm import Callable as _VmCallable
 from doeff_vm import EffectBase, Err, Ok, TailEval
@@ -35,7 +36,16 @@ from doeff.handler_utils import get_inner_boundaries
 from doeff.program import Pass, Perform, Pure, Resume, Transfer
 from doeff.program import handler as _program_handler
 
+if TYPE_CHECKING:
+    from doeff import Program
+
 _logger = logging.getLogger(__name__)
+
+# Answer types (docs/23-static-typing.md): Spawn answers Task[T], Wait / Race answer T,
+# Gather answers list[T]. Spawn's static __iter__ also yields the spawned program's
+# effects E: the task runs under the spawner's handlers, so the spawner declares them.
+_T = TypeVar("_T")
+_E = TypeVar("_E")
 
 # How long a blocking wait for external completions may stay silent before a
 # stall diagnostic is logged (#495b). Blocking semantics are unchanged: the
@@ -102,7 +112,7 @@ PRIORITY_NORMAL = 10
 PRIORITY_HIGH = 20
 
 
-class Spawn(EffectBase):
+class Spawn(EffectBase["Task[_T]"], Generic[_T, _E]):
     """Spawn a task; resumes the spawner with a Task handle.
 
     ``daemon=True`` declares that the task is background work the run does
@@ -123,11 +133,21 @@ class Spawn(EffectBase):
     other task.
     """
 
-    def __init__(self, program, priority=PRIORITY_NORMAL, daemon=False):
+    def __init__(
+        self, program: "Program[_T, _E]", priority: int = PRIORITY_NORMAL, daemon: bool = False
+    ) -> None:
         super().__init__()
         self.program = program
         self.priority = priority
         self.daemon = daemon
+
+    if TYPE_CHECKING:
+        # Static model only (runtime: EffectBase.__iter__ yields just the Spawn). The spawned
+        # program runs under the spawner's handler stack, so its effects E are the spawner's
+        # to declare — yielding them here makes `yield from Spawn(p)` add p's E to the caller.
+        def __iter__(  # pyright: ignore[reportIncompatibleMethodOverride]
+            self,
+        ) -> Generator["Spawn[_T, _E] | _E", Any, "Task[_T]"]: ...
 
 
 class TaskCompleted(EffectBase):
@@ -137,13 +157,13 @@ class TaskCompleted(EffectBase):
         self.result = result
 
 
-class Gather(EffectBase):
-    def __init__(self, *tasks):
+class Gather(EffectBase[list[_T]], Generic[_T]):
+    def __init__(self, *tasks: "Task[_T] | Future[_T]") -> None:
         super().__init__()
         self.tasks = tasks
 
 
-class Wait(EffectBase):
+class Wait(EffectBase[_T], Generic[_T]):
     """Wait for a Task or Future to resolve.
 
     ``priority`` controls the priority at which the waiter is re-enqueued
@@ -155,13 +175,13 @@ class Wait(EffectBase):
     wake would starve it behind the PRIORITY_EXTERNAL_WAIT shield.
     """
 
-    def __init__(self, task, priority=None):
+    def __init__(self, task: "Task[_T] | Future[_T]", priority: int | None = None) -> None:
         super().__init__()
         self.task = task
         self.priority = priority
 
 
-class Cancel(EffectBase):
+class Cancel(EffectBase[None]):
     """Request cancellation of a task; the requester resumes immediately.
 
     - A task that never started is cancelled without running its body.
@@ -178,7 +198,7 @@ class Cancel(EffectBase):
       keeps running until it ends or is cancelled again.
     - Cancelling a terminal task is a no-op.
     """
-    def __init__(self, task):
+    def __init__(self, task: "Task[Any]") -> None:
         super().__init__()
         self.task = task
 
@@ -234,51 +254,53 @@ class SchedulerDeadlockError(RuntimeError):
         super().__init__("scheduler deadlock: " + "; ".join(parts))
 
 
-class Race(EffectBase):
-    def __init__(self, *tasks):
+class Race(EffectBase[_T], Generic[_T]):
+    def __init__(self, *tasks: "Task[_T] | Future[_T]") -> None:
         super().__init__()
         self.tasks = tasks
 
 
-class CreatePromise(EffectBase):
-    def __init__(self):
+class CreatePromise(EffectBase["Promise[_T]"], Generic[_T]):
+    """``promise = yield from CreatePromise[int]()`` gives ``Promise[int]``."""
+
+    def __init__(self) -> None:
         super().__init__()
 
 
-class CompletePromise(EffectBase):
-    def __init__(self, promise, value):
+class CompletePromise(EffectBase[None], Generic[_T]):
+    def __init__(self, promise: "Promise[_T]", value: _T) -> None:
         super().__init__()
         self.promise = promise
         self.value = value
 
 
-class FailPromise(EffectBase):
-    def __init__(self, promise, error):
+class FailPromise(EffectBase[None]):
+    def __init__(self, promise: "Promise[Any]", error: BaseException) -> None:
         super().__init__()
         self.promise = promise
         self.error = error
 
 
-class CreateSemaphore(EffectBase):
-    def __init__(self, permits=1):
+class CreateSemaphore(EffectBase["Semaphore"]):
+    def __init__(self, permits: int = 1) -> None:
         super().__init__()
         self.permits = permits
 
 
-class AcquireSemaphore(EffectBase):
-    def __init__(self, semaphore):
+class AcquireSemaphore(EffectBase[None]):
+    def __init__(self, semaphore: "Semaphore") -> None:
         super().__init__()
         self.semaphore = semaphore
 
 
-class ReleaseSemaphore(EffectBase):
-    def __init__(self, semaphore):
+class ReleaseSemaphore(EffectBase[None]):
+    def __init__(self, semaphore: "Semaphore") -> None:
         super().__init__()
         self.semaphore = semaphore
 
 
-class CreateExternalPromise(EffectBase):
-    def __init__(self):
+class CreateExternalPromise(EffectBase["ExternalPromise[_T]"], Generic[_T]):
+    def __init__(self) -> None:
         super().__init__()
 
 
@@ -297,14 +319,16 @@ class _SchedulerIntrospection(EffectBase):
 # Handles
 # ---------------------------------------------------------------------------
 
-class Task:
+class Task(Generic[_T]):
+    """Handle of a spawned task; ``Task[T]`` = a task whose program returns T."""
+
     def __init__(self, task_id):
         self.task_id = task_id
     def __repr__(self):
         return f"Task({self.task_id})"
 
 
-class Future:
+class Future(Generic[_T]):
     """Read-side handle for a promise."""
     def __init__(self, promise_id):
         self.promise_id = promise_id
@@ -312,7 +336,7 @@ class Future:
         return f"Future({self.promise_id})"
 
 
-class Promise:
+class Promise(Generic[_T]):
     """Write-side handle for an internal promise.
 
     ``_register`` is the owning run's handle registrar (#502): every derived
@@ -324,7 +348,7 @@ class Promise:
         self._register = _register
 
     @property
-    def future(self):
+    def future(self) -> "Future[_T]":
         future = Future(self.promise_id)
         if self._register is not None:
             self._register(("promise", self.promise_id), future)
@@ -342,7 +366,7 @@ class Semaphore:
         return f"Semaphore({self.sem_id})"
 
 
-class ExternalPromise:
+class ExternalPromise(Generic[_T]):
     """Write-side handle for an external promise.
 
     ``complete``/``fail`` are the ONLY thread-safe operations — they may be
@@ -388,13 +412,13 @@ class ExternalPromise:
         self._bind_cancel(self.promise_id, callback)
 
     @property
-    def future(self):
+    def future(self) -> "Future[_T]":
         future = Future(self.promise_id)
         if self._register is not None:
             self._register(("promise", self.promise_id), future)
         return future
 
-    def complete(self, value):
+    def complete(self, value: _T) -> None:
         """Complete the promise with a value. Thread-safe, wakes scheduler via Queue."""
         self._queue.put(("complete", self.promise_id, value))
 
