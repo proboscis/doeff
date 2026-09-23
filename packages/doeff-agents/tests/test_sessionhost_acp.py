@@ -6503,6 +6503,9 @@ _AGORA_KINDS_CANON_MARKER = (
     "acp-contract-canon: proboscis/agent-control-plane:docs/contracts/agora-kinds.json"
 )
 #: agentd が書き手として名乗る status の軸(kind → 軸)。
+#: card acp:kanban-issue:ki-90019f023e19: agentd が既存の行の spec を書き直す kind(node = 宣言への揃え・turn-record = 継続の
+#: 揃え直し)。writers.update は agentd **ちょうど**(等号 — 他の principal を足す変更をこの検が赤にする)。
+_AGENTD_SPEC_UPDATE_KINDS: tuple[str, ...] = (NODE_KIND, TURN_RECORD_KIND)
 _AGENTD_STATUS_AXES: tuple[tuple[str, str], ...] = (
     (TURN_RECORD_KIND, "state"),
     (TURN_RECORD_KIND, "usage"),
@@ -6596,6 +6599,9 @@ def test_agentd_values_copied_from_agora_kinds_match_the_copy() -> None:
         assert AGENTD_PRINCIPAL in writers, (
             f"{kind}.status.{axis} の書き手に agentd が居ない: {writers}"
         )
+    for kind in _AGENTD_SPEC_UPDATE_KINDS:
+        writers = _string_list(_lookup(copy, f"kinds.{kind}.declaration.writers.update"))
+        assert writers == [AGENTD_PRINCIPAL], f"{kind}.writers.update は agentd ちょうどであるべき: {writers}"
     # 段 10 lane 10e: 能力の表の語彙(settings / restartOn の語)は契約の settings の閉語彙と同じ綴り、
     # effort の語は契約の efforts の閉語彙(claude の --effort / codex の model_reasoning_effort に渡す語)。
     from doeff_agents.sessionhost.acp.effects import AGENT_CAPABILITIES, AGENT_SETTINGS

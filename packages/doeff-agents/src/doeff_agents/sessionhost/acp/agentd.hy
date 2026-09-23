@@ -111,7 +111,9 @@
 ;;;
 ;;; 書く欄は契約の writers どおり: agent-job の phase / sessionHandle / result / conditions /
 ;;; interrupts / interruptsDelivered / interruptsRead / interruptsEscalated、node の status.lease / status.observations、turn-record の create と
-;;; status、profile の status.observed。binding は書かない・Node の行は作らない(scheduling の欄と動詞)。
+;;; status と、既に在る記録を続ける拍の spec の揃え直し(配置と session の欄を今の binding へ — 継続の腕 adopt-existing-record の 1 点・
+;;; spec.attempt が単調で、古い試みの agentd は新しい試みの記録を書き戻せない・card acp:kanban-issue:ki-90019f023e19)、
+;;; profile の status.observed。binding は書かない・Node の行は作らない(scheduling の欄と動詞)。
 
 (require doeff-hy.macros [defk defhandler <-])
 (import .cache_operation [BorrowCacheCredential ReleaseCacheCredential])
@@ -624,6 +626,7 @@
   turn-record-marked-status
   turn-record-recorded-status
   turn-record-spec-of
+  turn-record-spec-realignment-of
   turn-session-env-of
   usage-by-profile
   observed-window-of
@@ -2095,13 +2098,77 @@
   ;; 行の generation + 1・entries の seq の次)から取る — stream は `<jobId>#a<n>`・seq は続き(service の producerSeq と
   ;; 見出しの seq を同じ値に保つ)。
   (when (isinstance created Conflict)
-    (<- record-key str (turn-record-key-of job-id))
-    (<- record-row (| AcpRow None) (AcpGetRow :key record-key))
-    (<- resumed tuple (recovered-record-of record-row))
-    (setv job (replace job :record-attempt (get resumed 0) :delta-seq (max job.delta-seq (get resumed 1))))
-    (<- (LogLine :text f"agentd: job {job-id} continues the existing turn-record (stream attempt {job.record-attempt}, seq from {(get resumed 1)}) (#519)")))
+    (<- job InFlightJob (adopt-existing-record settings job)))
   (<- next AgentdState (with-job state job))
   next)
+
+
+(defk adopt-existing-record [settings job]
+  {:pre [(: settings AgentdSettings) (: job InFlightJob)]
+   :post [(: % InFlightJob)]}
+  "既に在る turn-record を続ける腕(継続点 3 つ — start-claimed の create の Conflict・ensure-turn-record の再試行の Conflict・
+   recover-job の拾い直し — の唯一の座・card acp:kanban-issue:ki-90019f023e19)。行を読み、本文の stream の番と採番の下限を
+   recovered-record-of で拾い(#519・段 9f lane 9f-2)、行の spec が今の手番の spec(turn-record-spec-of)と違えば**この拍で**
+   揃える(判断 = turn-record-spec-realignment-of の純関数 1 点・書き = AcpPutSpec の CAS)。結び直された手番(attempt ≥ 2・
+   別の node / 口座)の記録が 1 回目の配置の node と口座を名乗り続け、keepalive が古い機体を温めていた根の直し。
+   Conflict は読み直して 1 回だけ撃ち直し、それでも負けた・断られた(403 = 契約の writers.update の登録漏れ)拍は log と計器の
+   1 行で名乗って次へ(agent-job に条件は足さない)。書けなかった拍は job に record-spec-dirty の印を残し、次に行を鍵で読む拍
+   (append-entries・end-turn-record)が同じ判断をもう 1 度掛ける(realign-record-spec の 1 点)。行が無ければ触らない
+   (作り直しは ensure-turn-record の腕)。"
+  (<- record-key str (turn-record-key-of job.job-id))
+  (<- record-row (| AcpRow None) (AcpGetRow :key record-key))
+  (<- resumed tuple (recovered-record-of record-row))
+  (when (is-not record-row None)
+    (<- aligned tuple (realign-record-spec job record-row))
+    (setv job (get aligned 0)))
+  (setv job (replace job :record-attempt (get resumed 0) :delta-seq (max job.delta-seq (get resumed 1))))
+  (when (is-not record-row None)
+    (<- (LogLine :text f"agentd: job {job.job-id} continues the existing turn-record (stream attempt {job.record-attempt}, seq from {(get resumed 1)}) (#519)")))
+  job)
+
+
+(defk realign-record-spec [job row]
+  {:pre [(: job InFlightJob) (: row AcpRow)]
+   :post [(: % tuple)]}
+  "行(row = 読んだ turn-record)の spec を今の手番の spec へ揃える書きの 1 点(card acp:kanban-issue:ki-90019f023e19)。
+   判断は turn-record-spec-realignment-of(identity・配置の欄の集合・spec.attempt の単調性)で、書きは AcpPutSpec の CAS。
+   Conflict は読み直して 1 回だけ判断し直す(読み直した行がもう揃っている・より新しい試みの記録なら書くものは無い)。
+   戻り = #(job 行) — job の record-spec-dirty = 揃えるものが残っているか(書けなかった拍の印・次に行を読む拍が同じ判断を
+   掛け直す)、行 = この後の書きの CAS の相手(書けた拍は generation + 1 と書いた spec の post-image)。
+   log と計器は書けた拍と、印の立っていない job が初めて書けなかった拍だけ(403 が続いても拍ごとに log しない)。"
+  (<- wanted dict (turn-record-spec-of job))
+  (<- moved (| dict None) (turn-record-spec-realignment-of row.spec wanted))
+  (when (is moved None)
+    (return #((replace job :record-spec-dirty False) row)))
+  (setv target row)
+  (<- aligned (| Written Conflict Refused) (AcpPutSpec :row target :spec moved))
+  (when (isinstance aligned Conflict)
+    (<- fresh (| AcpRow None) (AcpGetRow :key row.key))
+    (when (is-not fresh None)
+      (setv target fresh)
+      (<- moved (| dict None) (turn-record-spec-realignment-of fresh.spec wanted))
+      (when (is moved None)
+        (return #((replace job :record-spec-dirty False) fresh)))
+      (<- aligned (| Written Conflict Refused) (AcpPutSpec :row fresh :spec moved))))
+  (setv written (isinstance aligned Written))
+  (setv was-node (.get row.spec "node"))
+  (when (or written (not job.record-spec-dirty))
+    (setv was-account (.get (or (.get row.spec "cacheContext") {}) "account"))
+    (setv now-account (.get (or (.get wanted "cacheContext") {}) "account"))
+    (setv outcome (cond written "written"
+                        (isinstance aligned Conflict) "conflict"
+                        True "refused"))
+    (<- (MetricLine :fields {"metric" "turn-record-spec-realigned" "agentJobId" job.job-id "outcome" outcome
+                             "fromNode" was-node "toNode" job.node}))
+    (if written
+        (<- (LogLine :text (+ f"agentd: turn-record of job {job.job-id} spec realigned to the current binding "
+                              f"(node {was-node} -> {job.node}, account {was-account} -> {now-account}) (ki-90019f023e19)")))
+        (<- (LogLine :text (+ f"agentd: turn-record of job {job.job-id} still names its first placement "
+                              f"(node {was-node}) and could not be realigned ({aligned}); retried when the row is next read")))))
+  (if written
+      #((replace job :record-spec-dirty False)
+        (replace target :generation (+ target.generation 1) :spec moved))
+      #((replace job :record-spec-dirty True) target)))
 
 
 ;; ---------------------------------------------------------------------------
@@ -2159,7 +2226,12 @@
   (when (is record None)
     (<- key str (turn-record-key-of job.job-id))
     (<- found (| AcpRow None) (AcpGetRow :key key))
-    (setv record found))
+    (setv record found)
+    ;; card acp:kanban-issue:ki-90019f023e19: 継続の拍に揃えられなかった spec は、行を鍵で読むこの拍に揃え直す。
+    (when (and (is-not found None) job.record-spec-dirty)
+      (<- aligned tuple (realign-record-spec job found))
+      (setv job (get aligned 0))
+      (setv record (get aligned 1))))
   (when (is record None)
     (<- (LogLine :text f"agentd: turn-record of job {job.job-id} is not readable; keeping {(len entries)} entries for the next tick"))
     (return (replace job :pending-entries entries)))
@@ -2427,6 +2499,8 @@
               ;; (次の拍が無いので pending のままだと『Ended・記録なし・理由なし』になる)。判断は record-create-verdict の 1 点。
               (<- applied InFlightJob
                   (record-create-applied job created now-ms settings.turn-record-create-deadline-seconds force))
+              (when (isinstance created Conflict)
+                (<- applied InFlightJob (adopt-existing-record settings applied)))
               (cond
                 (= applied.record-create RECORD-CREATE-PENDING)
                 (<- (LogLine :text f"agentd: turn-record for job {job.job-id} still not created ({created}); will retry"))
@@ -2568,21 +2642,26 @@
 ;; 記録(turn-record)と手番の終わり
 ;; ---------------------------------------------------------------------------
 
-(defk end-turn-record [job-id usage entries mark [cache-observation None] [responses #()]]
+(defk end-turn-record [job-id usage entries mark [cache-observation None] [responses #()] [job None]]
   {:pre [(: job-id str) (: usage (| dict None)) (: entries tuple) (: mark (| tuple None)) (: cache-observation (| dict None))
-         (: responses tuple)]
+         (: responses tuple) (: job (| InFlightJob None))]
    :post [(: % bool)]}
   "turn-record を ended に(usage・残りの entries を行の entries に追記)。行は鍵で読み直す
    (正本は行)。戻り = 行が在って書けたか(無ければ False — 受けた直後に落ちた job には記録が
    無いのが普通なので、ここでは log しない)。mark = 手番が memory に持っていた受理の刻印
    (InFlightJob.recorded-mark — 無ければ None): この書きに同乗させる(mark-recorded の docstring)。
    responses = 手番の応答ごとの消費(turn-batch-of の読み直しの DeltaBatch.responses)— 行の status.responses へ写すのは
-   この書きちょうど(card acp:kanban-issue:ki-c3ac5832a0bd)。空なら欄を書かない(codex の手番・材料の無い手番)。"
+   この書きちょうど(card acp:kanban-issue:ki-c3ac5832a0bd)。空なら欄を書かない(codex の手番・材料の無い手番)。
+   job = 終わる手番(在れば): 継続の拍に spec を揃えられなかった印(record-spec-dirty)が立っていれば、ended の書きの前に
+   同じ判断をもう 1 度掛ける(card acp:kanban-issue:ki-90019f023e19 — 記録は手番の後も残る唯一の身元なので最後に 1 度)。"
   (<- key str (turn-record-key-of job-id))
   (<- record (| AcpRow None) (AcpGetRow :key key))
   (if (is record None)
       False
       (do
+        (when (and (is-not job None) job.record-spec-dirty)
+          (<- aligned tuple (realign-record-spec job record))
+          (setv record (get aligned 1)))
         (<- record-status dict (status-object-of record))
         (setv shaped None)
         (when responses
@@ -3101,7 +3180,7 @@
   (if (is limit None)
       (do
         ;; turn-record → ended(追記できずに持ち越した出来事があれば最後の書きに乗せる)
-        (<- recorded bool (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark batch.cache-observation batch.responses))
+        (<- recorded bool (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark batch.cache-observation batch.responses drained))
         ;; agora-redesign #537 H2: 終わりの書きが着かなかった拍は、鍵で行の在否を確かめる(正本は行 — 戻りの False は
         ;; 「行が無い」と「書きが断られた」の両方を含む)。行が**無い**なら、その拍に 1 度だけ作り直して ended まで書く —
         ;; 記録なしで Ended にしない(ACP Messaging の turnlessOf は turn-record の行の在否で読み、無ければ
@@ -3125,7 +3204,7 @@
                                                                f"re-created ({remade.status}: {remade.error})")))
                       (setv drained noted))
                     (do
-                      (<- again bool (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark batch.cache-observation batch.responses))
+                      (<- again bool (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark batch.cache-observation batch.responses drained))
                       (setv recorded again)))
                 (<- (LogLine :text (+ f"agentd: turn-record for job {job.job-id} was missing at turn end; re-created -> "
                                       f"{remade} (ended: {recorded}) (#537)"))))))
@@ -3411,16 +3490,17 @@
                   ;; 取ったので、材料がこの手番を覆うのは file の頭から読む腕(start-offset-of の from-head = launch /
                   ;; rehydrate — この手番自身が session を起こした)だけ。send / resume の腕は覆わない。
                   ;; card acp:kanban-issue:ki-4c0a0aa06b07: 拾い直しの引き継ぎ方は recovered-arm-of が
-                  ;; 器の帰属から読んだ腕ちょうど(発明しない)。行が既に在れば spec は作成時のまま
-                  ;; (immutable)で、この値が効くのは #537 の作り直しの拍だけ。
+                  ;; 器の帰属から読んだ腕ちょうど(発明しない)。行が既に在れば adopt-existing-record が
+                  ;; 行の spec を今の手番の spec へ揃える(同じ試みで値が同じなら書かない — card ki-90019f023e19)。
                   (in-flight-job-of row plan view settings.node-name row.created-at-ms
                                     row.created-at-ms (get start 1) (get start 2) lease #()
                                     recovered-arm))
               ;; 段 9f lane 9f-2: 本文の stream の拾い直しの番と採番の下限は turn-record の行から(judgment.recovered-record-of)。
               (<- record-key str (turn-record-key-of row.resource-id))
               (<- record-row (| AcpRow None) (AcpGetRow :key record-key))
-              (<- resumed tuple (recovered-record-of record-row))
-              (setv job (replace job :record-attempt (get resumed 0) :delta-seq (get resumed 1)))
+              ;; card acp:kanban-issue:ki-90019f023e19: 拾い直しも継続の 1 点 — 行が在れば spec を今の配置へ揃える(腕は 1 つ)。
+              ;; 行は継続の腕がもう 1 度読む(揃え直しの CAS の相手は腕が自分で読んだ行 — 拾い直しは agentd の起動の 1 度だけ)。
+              (<- job InFlightJob (adopt-existing-record settings job))
               ;; agora-redesign #537 H1: 行が無いまま拾い直した手番は記録の腕を pending に戻す(段 9p の既存の網に乗せるだけ)。
               ;; in-flight-job-of の既定は created(行が在る前提の adopt)なので、そのままだと ensure-turn-record は 1 bit も
               ;; 触らず、手番の終わりに『Ended・turn-record なし・条件なし』になる — 郵便は failed と記帳される
@@ -3467,7 +3547,7 @@
   ;; 段 10f 便 2: 割り込みで終わる手番も文脈の実測を session の cache に置く(settle-record と同じ 1 点の判断)。
   (<- percent (| int None) (context-percent-of batch.context))
   (<- measured AgentdState (with-context-percent state job.session-id percent))
-  (<- (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark batch.cache-observation batch.responses))
+  (<- (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark batch.cache-observation batch.responses drained))
   (<- fresh (| AcpRow None) (AcpGetRow :key row.key))
   (setv target (if (is fresh None) row fresh))
   (<- status dict (status-object-of target))

@@ -4264,8 +4264,11 @@
    (段 10 lane 10n・None = 宣言なし)。"
   (<- escalation-seconds (| int None) (escalation-seconds-of-charter plan.charter))
   (<- cache-context (| dict None) (cache-context-of row.status plan.account))
-  ;; card acp:kanban-issue:ki-4c0a0aa06b07: 引き継ぎ方は行へ 1 度だけ写す(spec.reopen)。
+  ;; card acp:kanban-issue:ki-4c0a0aa06b07: 引き継ぎ方は行へ写す(spec.reopen)。
   (<- reopen (| TurnReopen None) (turn-reopen-of plan arm))
+  ;; card acp:kanban-issue:ki-90019f023e19: 結びの試みの回数を持つ(turn-record の spec.attempt に写す — 揃え直しの単調性の物差し)。
+  (<- row-status dict (status-object-of row))
+  (<- attempt int (binding-attempt-of row-status))
   (InFlightJob
     :job-key row.key
     :job-namespace row.namespace
@@ -4283,6 +4286,7 @@
     :materials-cover-the-turn covers
     :cache-context cache-context
     :reopen reopen
+    :attempt attempt
     :delta-seq 0
     :lease-id (if (is lease None) None lease.lease-id)
     :lease-kind (if (is lease None) None lease.kind)
@@ -4319,21 +4323,65 @@
 (defk turn-record-spec-of [job]
   {:pre [(: job InFlightJob)]
    :post [(: % dict)]}
-  "契約 turn-record の spec(conversationId・agentJobId・node・profile・model・sessionId・reopen)。sessionId = この手番を
-   走らせた session(段 8q — Messaging が次の手番の affinity.predecessor に名指す綴り。書かないと会話の前の
-   session が名指されず、温かい session が片付いた次の手番は文脈なしで起きる)。"
+  "契約 turn-record の spec(conversationId・agentJobId・node・profile・model・sessionId・attempt・cacheContext・reopen)。
+   sessionId = この手番を走らせた session(段 8q — Messaging が次の手番の affinity.predecessor に名指す綴り。書かないと
+   会話の前の session が名指されず、温かい session が片付いた次の手番は文脈なしで起きる)。attempt = 結びの試みの回数
+   (card acp:kanban-issue:ki-90019f023e19 — 記録を続ける拍の揃え直しの単調性の物差し)。identity の外に欄を足す時は
+   TURN-RECORD-PLACEMENT-FIELDS にも同じ名を足す(検が 2 つの集合の一致を確かめる)。"
   (setv spec {"conversationId" job.subject
    "agentJobId" job.job-id
    "node" job.node
    "profile" job.profile
    "model" job.model
-   "sessionId" job.session-id})
+   "sessionId" job.session-id
+   "attempt" job.attempt})
   (when (is-not job.cache-context None) (setv (get spec "cacheContext") job.cache-context))
   ;; card acp:kanban-issue:ki-4c0a0aa06b07: 引き継ぎ方(mode)と実行環境の身元の digest。不明(None)は
   ;; 欄ごと書かない — 読み手(keepalive)は欠落を「引き継がない」と同じ側に倒す。
   (when (is-not job.reopen None)
     (setv (get spec "reopen") {"mode" job.reopen.mode "homeDigest" job.reopen.home-digest}))
   spec)
+
+
+;; turn-record の spec のうち「この手番の配置と session」を名乗る欄 = turn-record-spec-of が identity の外に書く欄の全部。
+;; 揃え直しはこの欄だけを今の手番の値に置き換え、知らない欄(別の版の agentd が書いた欄・traceparent 等)は保つ。
+;; reopen(引き継ぎ方と実行環境の身元の digest)も配置の欄 — 結び直された手番に 1 回目の試みの家の digest を残すと、
+;; status の観測(結び直した後の試みが書く)と別の家を 1 つの記録が名乗る(この card と同じ食い違い)。
+(setv TURN-RECORD-PLACEMENT-FIELDS #("node" "profile" "model" "sessionId" "cacheContext" "attempt" "reopen"))
+
+
+(defk turn-record-spec-attempt-of [spec]
+  {:pre [(: spec dict)]
+   :post [(: % int)]}
+  "turn-record の spec.attempt(この記録が名乗る結びの試みの回数)。欄の無い行(この欄より前に書かれた記録)は 1 —
+   binding.attempt と同じ読み(binding-attempt-of)。bool は数でない・0 以下は無い。"
+  (setv attempt (.get spec "attempt"))
+  (if (and (isinstance attempt int) (not (isinstance attempt bool)) (>= attempt 1)) attempt 1))
+
+
+(defk turn-record-spec-realignment-of [existing wanted]
+  {:pre [(: existing dict) (: wanted dict)]
+   :post [(: % (| dict None))]}
+  "card acp:kanban-issue:ki-90019f023e19: 既に在る turn-record を続ける拍に、行の spec を今の手番の spec(wanted =
+   turn-record-spec-of)へ揃えるか — 揃えるなら書く spec、揃えないなら None。
+   None になるのは (1) identity(conversationId・agentJobId)が違う = 別の行(書かない・呼び手が log)、(2) 行が名乗る
+   試み(spec.attempt)が今の手番の試みより**新しい** = 結び直された後の記録を、失われたと判じられて生きていた古い試みの
+   agentd が書き戻そうとしている(盲検 A (b)・B — 書かない。所有は時機ではなく試みの回数の単調性で決める)、(3) 揃えた結果が
+   行と等しい = 書くものが無い(冪等 — 同じ手番で継続の拍を 2 度踏んでも書きは 1 回まで)。
+   揃えるのは TURN-RECORD-PLACEMENT-FIELDS だけ: 行のその欄を捨てて wanted の欄を重ねる(wanted に無い配置の欄 = 今の手番で
+   不明の欄は行からも消す — 前の試みの値を今の試みの値として残さない)。それ以外の欄(identity と、この版の agentd が知らない
+   欄 — 別の版が書いた欄・traceparent)は行の値を保つ(版の混在する配備で欄を消さない・盲検 A 5)。
+   値の定義点は turn-record-spec-of の 1 つ(ここは欄の集合と単調性だけを判じる)。"
+  (when (or (!= (.get existing "conversationId") (.get wanted "conversationId"))
+            (!= (.get existing "agentJobId") (.get wanted "agentJobId")))
+    (return None))
+  (<- have int (turn-record-spec-attempt-of existing))
+  (<- want int (turn-record-spec-attempt-of wanted))
+  (when (> have want)
+    (return None))
+  (setv realigned (dfor [k v] (.items existing) :if (not-in k TURN-RECORD-PLACEMENT-FIELDS) k v))
+  (.update realigned wanted)
+  (if (= realigned existing) None realigned))
 
 
 (defk entries-of-status [status]

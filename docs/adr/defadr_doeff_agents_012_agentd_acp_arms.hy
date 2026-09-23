@@ -406,6 +406,19 @@
        "record spool for job {}" "拍の途中に本文を spool へ置く書き(段 9f lane 9f-2)"
        "record flush" "拍の終わりに spool を会話の記録の service へ送る(段 9f lane 9f-2)"})
 
+;; R62: 既に在る turn-record を続ける点(継続の腕 adopt-existing-record を呼ぶ頂点の form)と、それぞれがいつ続けるか。
+;; 継続の腕は 1 つで、続ける点を足す便はここへ 1 行宣言する(card acp:kanban-issue:ki-90019f023e19)。
+(setv TURN-RECORD-CONTINUATION-POINTS
+      {"after-start" "受けた手番の create が Conflict(置き直された試み attempt ≥ 2 — 前の試みの記録が running のまま在る)"
+       "ensure-turn-record" "作れなかった記録の作り直しの再試行が Conflict(前の create は行に着いていた・または別の試みが作った)"
+       "recover-job" "agentd の再起動の後に自分の Running の行を拾い直す"})
+
+;; R62 (3): 揃え直しの書き(realign-record-spec)を掛ける点。継続の腕のほかは、書けなかった印の立った手番の行を鍵で読む拍だけ。
+(setv TURN-RECORD-REALIGN-POINTS
+      {"adopt-existing-record" "継続の拍(唯一の座)"
+       "append-entries" "出来事の追記が行を鍵で読み直す拍(record-spec-dirty の時だけ)"
+       "end-turn-record" "手番の終わりの ended の書きの前(record-spec-dirty の時だけ — 記録は手番の後に残る唯一の身元)"})
+
 
 (defn #^ list source-files []
   (sorted (+ (list (.rglob SESSIONHOST-DIR "*.hy"))
@@ -750,7 +763,8 @@
      (rule R58 "**ACP 側の process の停止は走っている手番を 1 つも閉じない**(同 card §3.1b・R39 の排水と別の腕): 役を分けた後、器(claude の子 process)の親は host の process で、ACP 側の process はその外に居る ⇒ ACP 側だけが降りる拍に手番を閉じるのは嘘になる。腕は 2 つ: `AgentdRun.close_for_stop`(**both** の今日の形 — 器と ACP の腕が一緒に死ぬので排水 → 走っている job を AgentdRestart で閉じる)と `AgentdRun.close_for_exit`(**agentd** の形 — stop の合図を立て、tick と lease の heartbeat の thread を有界に join し、handler を閉じるだけ。排水も cordon も撃たず、job を 1 つも閉じず、**lease を明示に落とさない**〔落とすと node がその拍で配車から外れる。入れ替えは lease の TTL の内側で終わり、次の process が judgment.node-row-named の 1 点で同じ行を拾い直す = node の行が切れない〕)。停止の hook(host.register-shutdown-hook)は役が both の時だけ登録する。host が先に降りた拍は host の stop-headless-rows が行を stopped にし、生きている ACP 側の process が次の周期に backend_alive = False を観測して既存の session-lost の経路で閉じる(今日より正しく終わる — 今日は agentd も一緒に死ぬ)。改訂 2026-09-23(pool の pod の入れ替えが手番を切った実弾 aj-1EDQ69WZH7Y78K55RCQDVZS30A・14:57 JST): 役 agentd の SIGTERM / SIGINT は `AgentdRun.exit_after_drain` = `drain_for_stop`(R39 の排水の 1 点 — 待つか・どれだけ待つかは機体の宣言 drain_seconds だけが決める)→ `close_for_exit`。宣言 0 / 無しの機体(Mac — 腕だけの入れ替え)は今日と 1 bit も変わらず即座に降りる。宣言の在る機体(pool の pod — 腕の停止は器と一緒の pod の削除の一部で、器の容器は腕の process が居なくなるまで preStop で待つ・ACP 法 9932b9)は、新しい claim を止め capacity 0 を名乗り、走っている手番の終わりを見届けてから降りる。期限に届いても job は閉じない(close_for_exit は排水も閉じも撃たない腕のまま)。排水は signal handler の中で撃たない(main thread が撃つ)。")
      (rule R59 "**排水は外から立てられる file 1 つで、判断の座は増えない**(同 card §3.1d): `<state_dir>/drain`(綴り = effects.JOIN_DRAIN_FILE・置き場は runtime.drain_file_path = record spool の親 = verify / summarize / lease の journal と同じ state_dir の 1 点)の**在否**が `settings.draining` に落ちる。読むのは handler 側の 1 点(runtime.drain_port が LoopPorts.draining を組む)で、拍ごとに読み直す level-triggered(消えれば宣言の capacity に戻る)。file の中身は理由の 1 行で、log に出すだけ — 判断には使わない。signal ではなく file なのは、入れ替えの途中で ACP 側の process 自身が再起動しても排水の意思が残るため(host の入れ替えは ACP 側の process を跨いで進む)。停止の腕が立てる process 内の合図(`AgentdRun.drain_for_stop` の Event)と**同じ 1 つの答え**に落ちるので、capacity の判断は judgment.declared-capacity-of の 1 点のまま(R39)。cordon と中断の申請(DisruptionAllowed)は**機体そのものを止める**時の仕組みで、役ごとの入れ替えでは 1 文字も書かない。")
      (rule R60 "**器の host は仕組みだけを持ち、方策を持たない** — 温かい session を専用操作(cache ping)の送信先としていつまで保つかの判断は ACP 側の 1 点(同 card §3.1e・訂正 B): host が wire に載せるのは**観測した事実** `cache_last_success_at_ms`(その session で最後に**成功した**専用操作の完了時刻・cache_host_store.cache_last_success_at = 成功 receipt の index 読み・無ければ欄が None)ちょうどで、適格の篩も保持の予算も持たない。期限は judgment.cache-resident-retention-of の 1 点が導く(適格 = claude ∧ headless ∧ multi_turn ∧ running ∧ 会話あり ∧ 手番の終わりが刻まれている・期限 = max(turn_ended_at, 最後の成功) + CACHE_RESIDENT_IDLE_MS〔ACP 側の acp.cache_operation の 1 点〕)。sessions-to-retire はその 1 点を読む。⚠ 専用操作の**実行**(process を起こして events を読む)と receipt の永続は host に残り、cache_maintenance / cache_live も ACP 側に残る(ACP の行と custody の借用に直結しているので、host へ移すと host に ACP の client と資格が要る = 分離の目的と正反対)。idle の片付け(sessions-to-retire + session_idle_ttl_seconds)は今日どおり ACP 側。")
-     (rule R61 "**node が申告する agent の種類は、その種類を起動する全 process で実行ファイルが見つかったものだけ**(card acp:kanban-issue:ki-f250d67a7157・本番の実測: 35 通が `LaunchFailed — [Errno 2] No such file or directory: 'codex'` で落ちた — capabilities-of が PATH と無関係に固定の表 AGENT_CAPABILITIES を node の行へ書き、codex の無い機体が codex を名乗って配車されていた)。(1) 種類 → 実行ファイルの名の定義点は `sessionhost/drivers.py` の `DRIVER_EXECUTABLE` ちょうど 1 つで、argv の先頭(impls の codex / claude_code / headless_argv)と `AgentdSettings.claude_binary` の既定はそこから読む。探し方も同じ file の 1 点(`driver_path_in` = Popen と同じ `os.get_exec_path(env)` の上の `shutil.which`)で、`--version` は実行せず、結果を保持しない(問われるたびに探す)。(2) host は読みの API `drivers.list` で答える(`kinds.list` と別の口・params.env を headless-spawn-env に重ねた env で判じる = 手番の CLI が実際に起動される env)。(3) agentd は参加の周期ごと(heartbeat の周期・器の眺め〔live-sessions〕より前)に ListHostDrivers(env = settings.seat_env)と ResolveLocalExecutable(settings.claude_binary — 要約の job は agentd 自身が claude を起こすので)を読み、judgment.launchable-agent-kinds の 1 点が積をとる(host で見つかった種類のうち、AGENTD_LAUNCHED_KINDS に在る種類は agentd の側でも見つかったものだけ)。capabilities-of はその種類の分だけを書く。host に届かない(socket の失敗 = DriversUnavailable の reachable が偽)周期は、前の申告にも固定の表にも戻らず、node の行の capabilities を 1 度だけ {} に書いて(読み直し → CAS)その周期を終える。host が答えたが読めない(古い host の unknown method・形の誤り = reachable が真)周期は種類 0 を申告して周期を続け、理由は変わった時だけ 1 行 log へ出す。(4) claim の門(judgment.agent-kind-refusal-of の 1 点)は置き場の門と verify の分岐の後・summarize の分岐の前に置く。job が起動する種類(judgment.job-agent-kind-of — summarize = agentd が起こす claude・turn = charter.agent_type・verify = 種類なし)が観測した申告に無ければ、条件 AgentKindUnavailable(綴りは ACP 側で確定 — ACP の 304a083d が carrierEndedFailureReasons に足した対)で job を閉じ、session も札も作業場も触らない。まだ 1 度も観測していない(AgentdState.agent_kinds = None)間は止めない。⚠ law the-machine-names-its-place-and-refuses-another-place-s-account の反例『道具の在否を走行係が実測して判じる(kubectl を which で探して自分で決める)』と矛盾しない: あちらは charter が要求する**置き場の語**の話で、置き場は宣言の 1 語で名乗り、手番ごとに道具を実測して置き場を決めることを禁じる(道具の揃いの検は dotfiles `ai provision check` の仕事のまま)。こちらは agentd と host が**自分で起動する実行ファイル**(配車の前提である capabilities)の観測で、手番ごとではなく参加の周期ごとに 1 度だけ探し、判定は judgment の関数 1 つ(機体の数だけ判定点が増えない)。置き場の宣言とその検の分担は変えない。")]
+     (rule R61 "**node が申告する agent の種類は、その種類を起動する全 process で実行ファイルが見つかったものだけ**(card acp:kanban-issue:ki-f250d67a7157・本番の実測: 35 通が `LaunchFailed — [Errno 2] No such file or directory: 'codex'` で落ちた — capabilities-of が PATH と無関係に固定の表 AGENT_CAPABILITIES を node の行へ書き、codex の無い機体が codex を名乗って配車されていた)。(1) 種類 → 実行ファイルの名の定義点は `sessionhost/drivers.py` の `DRIVER_EXECUTABLE` ちょうど 1 つで、argv の先頭(impls の codex / claude_code / headless_argv)と `AgentdSettings.claude_binary` の既定はそこから読む。探し方も同じ file の 1 点(`driver_path_in` = Popen と同じ `os.get_exec_path(env)` の上の `shutil.which`)で、`--version` は実行せず、結果を保持しない(問われるたびに探す)。(2) host は読みの API `drivers.list` で答える(`kinds.list` と別の口・params.env を headless-spawn-env に重ねた env で判じる = 手番の CLI が実際に起動される env)。(3) agentd は参加の周期ごと(heartbeat の周期・器の眺め〔live-sessions〕より前)に ListHostDrivers(env = settings.seat_env)と ResolveLocalExecutable(settings.claude_binary — 要約の job は agentd 自身が claude を起こすので)を読み、judgment.launchable-agent-kinds の 1 点が積をとる(host で見つかった種類のうち、AGENTD_LAUNCHED_KINDS に在る種類は agentd の側でも見つかったものだけ)。capabilities-of はその種類の分だけを書く。host に届かない(socket の失敗 = DriversUnavailable の reachable が偽)周期は、前の申告にも固定の表にも戻らず、node の行の capabilities を 1 度だけ {} に書いて(読み直し → CAS)その周期を終える。host が答えたが読めない(古い host の unknown method・形の誤り = reachable が真)周期は種類 0 を申告して周期を続け、理由は変わった時だけ 1 行 log へ出す。(4) claim の門(judgment.agent-kind-refusal-of の 1 点)は置き場の門と verify の分岐の後・summarize の分岐の前に置く。job が起動する種類(judgment.job-agent-kind-of — summarize = agentd が起こす claude・turn = charter.agent_type・verify = 種類なし)が観測した申告に無ければ、条件 AgentKindUnavailable(綴りは ACP 側で確定 — ACP の 304a083d が carrierEndedFailureReasons に足した対)で job を閉じ、session も札も作業場も触らない。まだ 1 度も観測していない(AgentdState.agent_kinds = None)間は止めない。⚠ law the-machine-names-its-place-and-refuses-another-place-s-account の反例『道具の在否を走行係が実測して判じる(kubectl を which で探して自分で決める)』と矛盾しない: あちらは charter が要求する**置き場の語**の話で、置き場は宣言の 1 語で名乗り、手番ごとに道具を実測して置き場を決めることを禁じる(道具の揃いの検は dotfiles `ai provision check` の仕事のまま)。こちらは agentd と host が**自分で起動する実行ファイル**(配車の前提である capabilities)の観測で、手番ごとではなく参加の周期ごとに 1 度だけ探し、判定は judgment の関数 1 つ(機体の数だけ判定点が増えない)。置き場の宣言とその検の分担は変えない。")
+     (rule R62 "**既に在る turn-record を続ける拍に、記録が名乗る配置と session は今の手番のもの(turn-record-spec-of)へ揃える**(card acp:kanban-issue:ki-90019f023e19・本番の実測 2026-09-23: 結び直された attempt > 1 の 7 本すべてが 1 回目の node と口座を名乗り、keepalive が古い機体・古い口座を温めていた — agentd は create の Conflict を受けて記録を続けるだけで spec に触らず、契約の writers.update も [] だった)。(1) 継続の腕は agentd.adopt-existing-record の 1 つ — 呼ぶ点は名簿 TURN-RECORD-CONTINUATION-POINTS(after-start の create の Conflict・ensure-turn-record の再試行の Conflict・recover-job の拾い直し)ちょうどで、第 4 の継続点を作らない。本文の stream の番と採番の下限(recovered-record-of)もこの腕の中で拾う。(2) 判断は judgment.turn-record-spec-realignment-of の純関数 1 点: identity(conversationId・agentJobId)が違えば書かない・行の spec.attempt が今の手番の試みより**新しければ**書かない(失われたと判じられて生きていた古い試みの agentd は、新しい試みの記録を書き戻せない — 所有は継続の時機ではなく試みの回数の単調性で決める)・揃えた結果が行と等しければ書かない(冪等)。置き換えるのは TURN-RECORD-PLACEMENT-FIELDS(turn-record-spec-of が identity の外に書く欄の全部 — node・profile・model・sessionId・cacheContext・attempt・reopen。欄を足す時は turn-record-spec-of とこの集合の 2 か所で、2 つの一致は検が確かめる)だけで、この版の agentd が書かない欄(traceparent 等・版の混在する配備で別の版が書いた欄)は行の値を保つ。wanted に無い配置の欄は行からも消す(前の試みの値を今の試みの値として残さない)。spec.attempt の読みは turn-record-spec-attempt-of の 1 点(欄の無い行 = 1・bool は数でない)で、値は InFlightJob.attempt(status.binding.attempt の写し)。(3) 書きは agentd.realign-record-spec の AcpPutSpec の CAS の 1 点(Conflict は読み直して 1 回だけ判断し直す)。書けなかった拍は InFlightJob.record_spec_dirty の印を持ち、次に行を鍵で読む拍(名簿 TURN-RECORD-REALIGN-POINTS の append-entries・end-turn-record)が同じ判断を掛け直す — 単調性があるので追記の拍に掛けても古い試みと新しい試みが書き合わない。log と計器(turn-record-spec-realigned)は書けた拍と、印の立っていない job が初めて書けなかった拍だけ。揃え直しが書けないことは手番の失敗ではない(agent-job に条件は足さない・記録は今日どおり ended まで進む)。(4) 書き手の名簿は契約 docs/contracts/agora-kinds.json の kinds.turn-record.declaration.writers.update = [agentd] の 1 点で、fake の門(FakeAcp._put_spec)は pin された写しを読む(第 2 の名簿を作らない)。読み手(keepalive・Messaging・scheduling の履歴)は変えない。")]
   :laws
     [(law a-dead-backend-is-not-a-live-session
        :statement "for_all headless session row r in this host's store at start: ¬terminal(r) ∧ ¬backend_alive(observe(r)) ⇒ r is folded to exited with cause vanished (reason = the observation) before accept opens, independently of whether r was mid-turn; hence node.status.observations.sessions names only rows whose backend process this host owns, every folded row whose transcript is still on disk is named by observations.transcripts instead, and the conversation's next turn takes the resume arm (terminal candidate ∧ same home) so the provider cache is kept"
@@ -1269,7 +1283,28 @@
                      "packages/doeff-agents/tests/sessionhost_acp_verify_deftests.hy::test-verify-job-runs-on-a-node-that-declares-no-agent-kind"
                      "packages/doeff-agents/tests/sessionhost_host_deftests.hy::test-dispatch-drivers-list-sees-an-executable-vanish-without-a-restart"
                      "packages/doeff-agents/tests/sessionhost_host_deftests.hy::test-dispatch-drivers-list-sees-an-executable-placed-after-the-start"
-                     "packages/doeff-agents/tests/sessionhost_host_deftests.hy::test-dispatch-drivers-list-searches-the-path-the-caller-overlays"])]
+                     "packages/doeff-agents/tests/sessionhost_host_deftests.hy::test-dispatch-drivers-list-searches-the-path-the-caller-overlays"])
+     (law a-continued-turn-record-names-the-current-placement-and-never-rolls-back-an-attempt
+       :statement "for_all turn-record row r and in-flight job j of agentd a with r.spec.agentJobId = j.job_id that a continues (the create answered Conflict in after-start or ensure-turn-record, or recover-job picked j up from its row — exactly the roster TURN-RECORD-CONTINUATION-POINTS): agentd.adopt-existing-record is the only continuation point; with wanted = judgment.turn-record-spec-of(j) it writes spec' = judgment.turn-record-spec-realignment-of(r.spec, wanted) by one CAS AcpPutSpec (Conflict ⇒ one re-read and one fresh judgment) iff spec' ≠ None, where spec' = None ⟺ identity(r.spec) ≠ identity(wanted) ∨ attempt(r.spec) > attempt(wanted) ∨ realigned = r.spec, realigned = (r.spec without TURN-RECORD-PLACEMENT-FIELDS) ∪ wanted, TURN-RECORD-PLACEMENT-FIELDS = keys(turn-record-spec-of(j)) ∖ {conversationId, agentJobId}, and attempt(s) = s.attempt if it is an int ≥ 1 and not a bool else 1; a write that does not land sets j.record_spec_dirty and the next key read of r in append-entries or end-turn-record (roster TURN-RECORD-REALIGN-POINTS) applies the same judgment again, never failing the turn; the spec update of turn-record is admitted only because the contract names agentd in writers.update. Hence once a rebound attempt n on node N under account A lands its write, r.spec names N, A, the session of attempt n and attempt n; fields this agentd does not write are kept; and no agentd of an attempt m < n rewrites r"
+       :counterexamples
+         [(counterexample "継続の拍に spec を触らない(旧の形・本番の実測 2026-09-23: 結び直された attempt > 1 の 7 本すべてが 1 回目の node と口座を名乗り、keepalive が古い機体・古い口座を温めていた)")
+          (counterexample "時機で所有を決める(『後から続けた側が勝つ』)— 失われたと判じられて生きていた attempt 1 の agentd の作り直しの再試行が Conflict を受けて続け、attempt 2 が揃えた記録を 1 回目の配置へ書き戻す(盲検 A (b)・B)。所有は spec.attempt の単調性で決める")
+          (counterexample "spec を turn-record-spec-of の値で丸ごと置き換える — 別の版の agentd が書いた欄(traceparent 等)が、版の混在する配備で揃え直しのたびに消える(盲検 A 5)")
+          (counterexample "wanted に無い配置の欄を行の値のまま残す — 口座を借りない手番に 1 回目の口座(cacheContext)が、引き継ぎ方が不明の手番に 1 回目の家の digest(reopen)が残り、今の試みの値として読まれる")
+          (counterexample "継続点ごとに揃え直しを書き写す(start の Conflict・再試行の Conflict・拾い直しの 3 か所)— 1 か所だけ直って、拾い直した手番の記録だけが古い配置を名乗る")
+          (counterexample "turn-record-spec-of に欄を足して TURN-RECORD-PLACEMENT-FIELDS に足し忘れる — その欄だけ 1 回目の試みの値のまま残る(この card と同じ食い違い)。2 つの集合の一致を検が撃つ")
+          (counterexample "契約の writers.update を [] のまま実装だけ出す — engine が 403 で断り、fake が門を持たなければ検は緑のまま本番で 1 本も揃わない(実測 2026-09-23: 写しの path の段を誤って門が外れ、5 本が偽の緑)")
+          (counterexample "揃え直しが書けなかった拍に agent-job を落とす / 拍ごとに 403 を log する — 記録の身元の食い違いは手番の失敗ではなく、登録漏れの間の log が拍ごとに積もる")]
+       :enforcement ["docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test-adr-doe-agents-012-a-continued-turn-record-is-realigned-at-one-point"
+                     "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-a-turn-rebound-to-another-node-realigns-the-record-spec-to-the-binding"
+                     "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-a-stale-attempt-does-not-roll-the-record-spec-back"
+                     "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-a-retried-create-that-finds-its-own-record-does-not-rewrite-the-spec"
+                     "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-turn-record-spec-realignment-keeps-identity-foreign-fields-and-attempt-order"
+                     "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-the-placement-fields-are-exactly-what-turn-record-spec-of-writes-outside-identity"
+                     "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-a-realignment-that-did-not-land-is-retried-when-the-row-is-next-read"
+                     "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-a-realignment-refused-every-time-names-itself-once-and-still-ends-the-record"
+                     "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-the-next-attempt-of-a-refused-turn-continues-the-same-turn-record"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_agentd_values_copied_from_agora_kinds_match_the_copy"])]
   :enforcement
     [(deftest test-adr-doe-agents-012-history-thins-tool-items-before-dropping-turns
        ;; R35 の針(構造): 薄くする点は judgment の 1 点ずつ(history-event-body / history-event-line-of / history-thin-body /
@@ -1582,7 +1617,7 @@
        (for [needle ["CHARTER_KIND_SUMMARIZE: str = \"summarize\"" "CHARTER_SUMMARIZE_UNTIL_KEY: str = \"until\""
                      "SUMMARY_KIND: str = \"summary\"" "SUMMARY_STREAM_KIND: str = \"summary\"" "SUMMARY_EVENT_KIND: str = \"summary\""
                      "RECORD_RAW_EVENT_KINDS: tuple[str, ...] = (\"text\", \"tool_use\", \"tool_result\", \"system\", \"error\", \"user\")"
-                     "    summarize_trigger_tokens: int = 500_000" "    summarize_model: str = \"claude-opus-5\""
+                     "    summarize_trigger_tokens: int = 500_000" "    summarize_model: str = \"claude-opus-5-5\""
                      "CONDITION_SUMMARIZE_OUTPUT_UNREADABLE: ConditionType = \"SummarizeOutputUnreadable\""
                      "CONDITION_SUMMARY_UNWRITABLE: ConditionType = \"SummaryUnwritable\"" "SUMMARY_ANSWER_MAX_CHARS: int = 4_194_304"]]
          (assert (any (gfor line effects-lines (.startswith line needle))) f"綴りは effects の 1 点(R37): {needle}"))
@@ -4109,6 +4144,54 @@
                                ["sessionhost_host_deftests.hy" "test-dispatch-drivers-list-searches-the-path-the-caller-overlays"]]]
          (assert (in (+ "(def" "test " name) (.read-text (/ tests-dir test-file) :encoding "utf-8"))
                  f"R61 の反例の検が無い: {test-file}::{name}")))
+     (deftest test-adr-doe-agents-012-a-continued-turn-record-is-realigned-at-one-point
+       ;; R62 の針(構造): 継続の腕は adopt-existing-record の 1 つで、呼ぶ点は名簿 TURN-RECORD-CONTINUATION-POINTS ちょうど・
+       ;; 本文の stream の番の拾い(recovered-record-of)もこの腕の中だけ・判断は judgment の純関数 1 点を realign-record-spec だけが
+       ;; 読み、realign-record-spec を掛ける点は名簿 TURN-RECORD-REALIGN-POINTS ちょうど・欄の集合と試みの読みは judgment の 1 点ずつ・
+       ;; InFlightJob が試みの回数と書けなかった印を持つ・fake の門は写しの writers.update を読む・写しの turn-record の update の書き手は
+       ;; agentd ちょうど。反例(挙動)は law の :enforcement に並べた検。
+       (setv agentd-path (/ ACP-DIR "agentd.hy"))
+       (setv continued (set (readers-of [agentd-path] "(adopt-existing-record ")))
+       (assert (= continued (set TURN-RECORD-CONTINUATION-POINTS))
+               f"継続の腕を呼ぶ点が名簿と違う(R62 — 足すなら名簿へ宣言する): {continued}")
+       (assert (= (set (readers-of [agentd-path] "(recovered-record-of ")) #{"adopt-existing-record"})
+               "本文の stream の番を継続の腕の外で拾っている = 揃え直しを通らない第 4 の継続点(R62)")
+       (assert (= (set (readers-of [agentd-path] "(turn-record-spec-realignment-of ")) #{"realign-record-spec"})
+               "揃え直しの判断を書きの 1 点の外で読んでいる(R62)")
+       (setv realigned (set (readers-of [agentd-path] "(realign-record-spec ")))
+       (assert (= realigned (set TURN-RECORD-REALIGN-POINTS))
+               f"揃え直しの書きを掛ける点が名簿と違う(R62): {realigned}")
+       (setv agentd-lines (code-lines agentd-path))
+       (setv writes (call-args-of (defk-body agentd-lines "realign-record-spec") "AcpPutSpec"))
+       (assert (and writes (all (gfor args writes (in ":spec" args)))) f"揃え直しの書きが AcpPutSpec の CAS でない(R62): {writes}")
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (for [name ["turn-record-spec-realignment-of" "turn-record-spec-attempt-of" "turn-record-spec-of"]]
+         (assert (= (len (lfor line judgment-lines :if (.startswith line f"(defk {name} ") line)) 1) f"R62 の判断は judgment の 1 点: {name}"))
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(setv TURN-RECORD-PLACEMENT-FIELDS ") line)) 1)
+               "配置の欄の集合は judgment の 1 点(R62)")
+       (assert (any (gfor line (defk-body judgment-lines "turn-record-spec-realignment-of") (in "(turn-record-spec-attempt-of " line)))
+               "揃え直しの単調性は試みの読みの 1 点を通る(R62)")
+       (setv effects-lines (lfor line (code-lines (/ ACP-DIR "effects.py")) (.strip line)))
+       (for [needle ["attempt: int = 1" "record_spec_dirty: bool = False"]]
+         (assert (in needle effects-lines) f"InFlightJob の欄が無い(R62): {needle}"))
+       ;; fake の門は pin された写しの writers.update を読む(第 2 の名簿を書かない)。
+       (setv fake-body (.join "\n" (code-lines (/ ACP-DIR "fake.py"))))
+       (for [word ["_SPEC_UPDATE_WRITERS.get(row.kind)" "AGENTD_PRINCIPAL not in roster"]]
+         (assert (in word fake-body) f"fake の spec の書きに写しの名簿の門が無い(R62): {word}"))
+       (setv root (. (Path __file__) parent parent parent))
+       (setv copy (json.loads (.read-text (/ root "docs" "contracts" "agora-kinds.json") :encoding "utf-8")))
+       (assert (= (get copy "kinds" "turn-record" "declaration" "writers" "update") ["agentd"])
+               "写しの turn-record の update の書き手が agentd ちょうどでない(R62 — ACP の契約を先に着地させ pin を進める)")
+       ;; 反例の検が在る(字の分割は台帳の数え方への配慮 — 文字列の中の検の開始の綴りを数えさせない)。
+       (setv tests (.read-text (/ root "packages" "doeff-agents" "tests" "sessionhost_acp_turn_events_deftests.hy") :encoding "utf-8"))
+       (for [name ["test-a-turn-rebound-to-another-node-realigns-the-record-spec-to-the-binding"
+                   "test-a-stale-attempt-does-not-roll-the-record-spec-back"
+                   "test-a-retried-create-that-finds-its-own-record-does-not-rewrite-the-spec"
+                   "test-turn-record-spec-realignment-keeps-identity-foreign-fields-and-attempt-order"
+                   "test-the-placement-fields-are-exactly-what-turn-record-spec-of-writes-outside-identity"
+                   "test-a-realignment-that-did-not-land-is-retried-when-the-row-is-next-read"
+                   "test-a-realignment-refused-every-time-names-itself-once-and-still-ends-the-record"]]
+         (assert (in (+ "(def" "test " name) tests) f"R62 の反例の検が無い: {name}")))
      ;; R61 の直書きの禁止(installed rule・.semgrep.yaml): argv の先頭の名・agentd が起こす実行ファイルの既定・探し方の置き場。
      (defsemgrep r61-agent-argv-head-names-the-driver-executable
        "doeff-agents-agent-argv-head-names-the-driver-executable"
@@ -4161,4 +4244,5 @@
           "docs/impl-requests/stage10-lane-prompts/lane-10h-agentd-dead-backend-recovery.md(agora-redesign #84・追補 R25 / R26: backend の生死は観測で・復帰・session-lost・resume の KeyError・停止で子を黙って道連れにしない・ACP の宛先は宣言ちょうど)"
           "docs/impl-requests/stage11-lane-prompts/lane-11v-rehydrate-compaction.md(agora-redesign #55 便 1・追補 R34: 上限で落とした古い手番は区間の見出し 1 行に畳む・model の要約は便 2 の設計だけ / 便 3 = #225・追補 R35: 落とす前に古い手番から道具の項を薄くする)"
           "agora-redesign docs/impl-requests/stage11-lane-prompts/lane-12a-company-repo-verify.md(agora-redesign #230・追補 R36: charter.kind = verify の job は機体の script を 1 つ走らせる命令 — claude / codex を起こさず札も借りない・結末は Ended の result)"
-          "agora-redesign の盤 card acp:kanban-issue:ki-f250d67a7157(追補 R61: node が申告する agent の種類は起動する全 process の実行ファイルの観測の積・起動前の門 AgentKindUnavailable — ACP 側の対は 304a083d)"])
+          "agora-redesign の盤 card acp:kanban-issue:ki-f250d67a7157(追補 R61: node が申告する agent の種類は起動する全 process の実行ファイルの観測の積・起動前の門 AgentKindUnavailable — ACP 側の対は 304a083d)"
+          "agora-redesign の盤 card acp:kanban-issue:ki-90019f023e19(追補 R62: 既に在る turn-record を続ける拍に配置と session の欄を今の binding へ揃える・spec.attempt で単調・継続の腕は 1 つ — 設計 = herdr-hud docs/design-checks/lt-A9WN4PP64G9SHR2KH554932K7F・ACP 側の対 = 契約 agora-kinds.json の turn-record の writers.update = [agentd] と spec.attempt)"])
