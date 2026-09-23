@@ -35,6 +35,7 @@
 ;;;   - defhandler stores __doeff_body__ for introspection (like defk)
 
 (import hy.models [Expression Symbol List Keyword Sequence String])
+(import doeff-hy.positions [locate-synthesized])
 
 
 ;; ---------------------------------------------------------------------------
@@ -465,11 +466,11 @@
    Wraps body with the Rust handler node. Unmatched effects auto-Pass.
    Compile-time error if any clause branch lacks resume/transfer/pass."
   (setv h-expr (_build-handler-expr clauses))
-  `(do
+  (locate-synthesized `(do
      (import doeff.do [do :as _doeff-do])
      (import doeff [Resume Transfer Pass])
      (import doeff_vm [WithHandler])
-     (WithHandler ~h-expr ~body)))
+     (WithHandler ~h-expr ~body))))
 
 
 (defmacro with-handler [handlers body]
@@ -577,7 +578,7 @@
   ;; defhandler produces a Program -> Program function instead of exposing a
   ;; raw handler dispatcher. The inner dispatcher is stored for introspection
   ;; and installed with the Rust VM WithHandler node.
-  (if (is params None)
+  (locate-synthesized (if (is params None)
       `(do
          (import doeff.do [do :as _doeff-do])
          (import doeff [Resume Transfer Pass])
@@ -612,4 +613,4 @@
            __doeff-handler-fn__)
          (setv (. ~name __doc__) ~docstring)
          (setv (. ~name __doeff_body__) ~quoted-body)
-         (setv (. ~name __doeff_name__) ~(str name)))))
+         (setv (. ~name __doeff_name__) ~(str name))))))
