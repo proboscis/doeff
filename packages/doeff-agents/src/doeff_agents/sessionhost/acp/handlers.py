@@ -1564,7 +1564,7 @@ class SessionRoutes:
         self._configured = socket_path
         self._state_dir = host_slots.state_dir_of_socket(socket_path)
         self._rpc_of = rpc_of
-        self._listening = listening if listening is not None else socket_is_listening
+        self._listening = listening if listening is not None else socket_may_have_host
         self._listdir = listdir
         self._read_pointer = read_pointer
         self._clock = clock
@@ -2209,6 +2209,27 @@ def socket_is_listening(path: str) -> bool:
         return True
     except OSError:
         return False
+    finally:
+        probe.close()
+
+
+def socket_may_have_host(path: str) -> bool:
+    """その socket の先に器が**居るかもしれない**か(器の区画の観測 — host_slots)。偽は「居ない」の証拠が在る拍ちょうど:
+    socket の file が無い(FileNotFoundError)か、file はあるが誰も listen していない(ConnectionRefusedError)。
+    connect の時間切れ・その他の失敗は**居る側**に倒す — 混んだ器の遅い connect を「降りた」と読むと、腕は新しい器の写し
+    (古い器で生きている session を終端と記す)を答えにして手番を閉じ、道具は手番を持った器を降ろす
+    (実弾 2026-09-23 15:5x 会社 Mac: 1 秒の connect の時間切れで古い器が区画の観測から外れ、手番 3 本を閉じた)。"""
+    if not os.path.exists(path):
+        return False
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        probe.settimeout(1.0)
+        probe.connect(path)
+        return True
+    except (FileNotFoundError, ConnectionRefusedError):
+        return False
+    except OSError:
+        return True
     finally:
         probe.close()
 
