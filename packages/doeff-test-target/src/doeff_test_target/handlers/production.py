@@ -54,7 +54,7 @@ def production_handlers(
             return (yield active_runtime.handle_read_value(effect, k))
         if isinstance(effect, RecordFixtureEvent):
             return (yield active_runtime.handle_record_event(effect, k))
-        return (yield Pass())
+        return (yield Pass(effect, k))
 
     return _program_handler(handler)
 
