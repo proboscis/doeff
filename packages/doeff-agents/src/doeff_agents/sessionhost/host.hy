@@ -2137,6 +2137,13 @@
         (print f"doeff-sessionhost stop: hook failed: {(. (type e) __name__)}: {e}" :file sys.stderr))))
   (when (headless-backend? config)
     (try
+      ;; 盲検 B の差分(停止中の器へ新しい手番を割り当てない・既存の外部宣言は上書きしない)
+      (when config.drain-file
+        (try
+          (with [stream (open config.drain-file "x" :encoding "utf-8")]
+            (.write stream f"sessionhost-stop {name}\n"))
+          (except [e FileExistsError]
+            None)))
       (setv declared (drain-declared config.drain-file))
       (setv outcomes (run-hosted config actor (stop-headless-rows name declared)))
       (setv cut (lfor [sid status] (.items outcomes) :if (and (!= sid "killed") (= status "stopped")) sid))
