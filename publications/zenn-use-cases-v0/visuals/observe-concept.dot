@@ -1,0 +1,13 @@
+digraph figure {
+graph [bgcolor="#122336", pad="0.45", nodesep="0.4", ranksep="0.58", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#f4f8fc", labelloc="t", label="処理の進行を、外側から見えるようにする\n"];
+node [shape=box, style="rounded,filled", fillcolor="#203951", color="#55748e", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#f4f8fc", margin="0.22,0.17"];
+edge [color="#79e4c4", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#79e4c4"];
+p [label="実行中の計算"];
+l [label="Tell / slog\n処理が出す情報"];
+t [label="実行トレース\n経路・現在の操作"];
+v [label="観測する側\nログ・履歴・CLI"];
+p -> l [label="記録"];
+p -> t [label="実行経路を観測"];
+l -> v [label=""];
+t -> v [label=""];
+}

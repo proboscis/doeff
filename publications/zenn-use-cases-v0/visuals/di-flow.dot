@@ -1,0 +1,16 @@
+digraph figure {
+graph [bgcolor="#f8fafc", pad="0.45", nodesep="0.4", ranksep="0.58", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#152c43", labelloc="t", label="依存を取得し、その値を使う\n"];
+node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#c3d2e0", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#152c43", margin="0.22,0.17"];
+edge [color="#087e8b", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#087e8b"];
+e [label="readerへ環境を渡す"];
+p [label="make_titleを実行"];
+a [label="Askでformatterを要求"];
+h [label="ハンドラが依存を返す"];
+c [label="formatter(text)を通常のPythonで呼ぶ"];
+r [label="整形結果を返す"];
+e -> p [label=""];
+p -> a [label=""];
+a -> h [label=""];
+h -> c [label=""];
+c -> r [label=""];
+}

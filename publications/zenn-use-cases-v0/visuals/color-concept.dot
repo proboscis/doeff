@@ -1,0 +1,14 @@
+digraph figure {
+graph [bgcolor="#122336", pad="0.45", nodesep="0.4", ranksep="0.58", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#f4f8fc", labelloc="t", label="異なる計算を、ひとつのProgramへ\n"];
+node [shape=box, style="rounded,filled", fillcolor="#203951", color="#55748e", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#f4f8fc", margin="0.22,0.17"];
+edge [color="#79e4c4", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#79e4c4"];
+s [label="同期的な値の取得"];
+a [label="非同期の待機"];
+t [label="仮想時間での待機"];
+p [label="共通の計算\nProgram / @do"];
+v [label="普通の値\n計算の結果"];
+s -> p [label="同じyieldでつなぐ"];
+a -> p [label="同じyieldでつなぐ"];
+t -> p [label="同じyieldでつなぐ"];
+p -> v [label="実行して結果を得る"];
+}

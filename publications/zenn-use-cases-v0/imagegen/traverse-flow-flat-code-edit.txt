@@ -1,0 +1,1 @@
+この図の誤った矢印だけを訂正し、上部コード各行コメントとタイトルと下部説明と配色を保持。正常な2と7をValueErrorへ流してはいけない。中央の大きい『共通のfail_handler』パネルを『各処理の結果』パネルへ置換し、内部に上から『成功: 2』『ValueError』『成功: 7』の3小枠を並べる。read_lengthの2→成功2、Fail(ValueError)→ValueError（この矢印に『fail_handlerが例外へ変換』）、7→成功7へそれぞれまっすぐ接続。3枠全体から右の実行戦略選択2枝へつなぐ。右上の『履歴(lengths)』からReduceとInspectへ別々に矢印を出す。Reduce→Inspectの矢印は消す（InspectはReduceの合計でなく同じlengthsを読む）。他の文字と枠を変更しない。

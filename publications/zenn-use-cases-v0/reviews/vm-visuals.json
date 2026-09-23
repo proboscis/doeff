@@ -1,0 +1,24 @@
+{
+  "concept": {
+    "title": "Pythonのyieldを、Rust VMが解釈する",
+    "code": "@do  # 計算を構築\ndef greet():  # 名前を求める処理\n    name = yield ReadName()  # 依頼し、名前を受け取る\n    return name  # 計算の結果を返す",
+    "code_line_notes": [
+      "@do: 呼び出し時に本体を実行せず、VMで実行する計算を作れるようにする。",
+      "def greet(): 名前を要求して返す計算を定義する。",
+      "name = yield ReadName(): 依頼をハンドラへ渡して停止し、再開時に渡された名前を受け取る。",
+      "return name: 受け取った名前を計算の結果として返す。"
+    ],
+    "flow": "Pythonのgenerator → yieldしたEffect → Rust VMのPerform → ハンドラ → sendでgeneratorを再開。Python本体とRustの制御を二段に分ける。PythonをRustへコンパイルする矢印は描かない。",
+    "caption": "Pythonの本体はgeneratorのまま実行し、Rust VMがエフェクトの配送と継続の接続を管理します。"
+  },
+  "flow": {
+    "title": "続きを切り離し、値を渡してつなぎ直す",
+    "code": "return (yield Resume(k, \"花子\"))  # 名前を渡して継続を再開",
+    "code_line_notes": [
+      "Resume(k, 花子): 停止中の継続へ名前を渡して再開する。",
+      "return (yield ...): このハンドラでは再開後にする処理がなく、継続の結果をそのまま返す。"
+    ],
+    "flow": "本体でyield ReadName() → 最も近いハンドラ境界までを継続kとして切り離す → 境界の外側でハンドラを実行 → Resumeで継続をつなぎ直す → send(花子)で本体のnameに値が入る。kには本体とハンドラ境界の両方が含まれる。継続の利用は一度だけ。",
+    "caption": "kには停止中の本体からハンドラ境界までが含まれます。Resumeはこの継続を一度だけつなぎ直し、yieldの位置へ値を渡します。"
+  }
+}

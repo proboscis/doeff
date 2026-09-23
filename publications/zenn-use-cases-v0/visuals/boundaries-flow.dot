@@ -1,0 +1,19 @@
+digraph figure {
+graph [bgcolor="#f8fafc", pad="0.4", nodesep="0.35", ranksep="0.45", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#152c43", labelloc="t", label="文書の取得という操作を、保存とデータ源から独立させる"];
+node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#c3d2e0", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#152c43", margin="0.2,0.15"];
+edge [color="#087e8b", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#087e8b"];
+a [label="文書のグループを処理\n同じページが複数のグループに登場"];
+b [label="SpawnでReadPageを並行に依頼"];
+c [label="メモ化のrewriter\nページIDと版からキーを作る"];
+d [label="保存済み：結果を返す"];
+e [label="未保存：データ源のハンドラへ"];
+f [label="メモリ + 仮想時間\nまたは asyncioの取得処理"];
+g [label="取得結果を保存 → Waitで集める"];
+a -> b [label=""];
+b -> c [label=""];
+c -> d [label=""];
+c -> e [label=""];
+e -> f [label=""];
+f -> g [label=""];
+d -> g [label=""];
+}
