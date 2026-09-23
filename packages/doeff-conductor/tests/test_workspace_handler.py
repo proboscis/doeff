@@ -400,6 +400,69 @@ class TestWorkspaceHandler:
         assert handler.resolve_path(app_workspace).exists()
         assert handler.resolve_path(docs_workspace).exists()
 
+    def test_explicit_repo_paths_do_not_require_a_git_cwd(
+        self,
+        tmp_path: Path,
+        workspace_base: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Constructing the handler must not resolve the cwd's git root.
+
+        Regression: the constructor used to run ``git rev-parse --show-toplevel``
+        eagerly, so any run from a tree without ``.git`` (an exported source
+        tree, a container image) failed before the first effect, even when the
+        workflow only targets explicitly configured repos.
+        """
+        outside = tmp_path / "not-a-repo"
+        outside.mkdir()
+        monkeypatch.chdir(outside)
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+        app_repo = tmp_path / "app"
+        _init_repo(app_repo)
+
+        handler = WorkspaceHandler(repo_paths={"app": app_repo}, workspace_base=workspace_base)
+        workspace = handler.handle_create_workspace(
+            CreateWorkspace(repo="app", workspace_id="ws-outside")
+        )
+
+        assert handler.resolve_path(workspace).exists()
+
+    def test_default_repo_resolves_from_construction_cwd_on_first_use(
+        self,
+        tmp_path: Path,
+        workspace_base: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The default repo is the git root of the cwd at construction time."""
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+        repo = tmp_path / "repo"
+        _init_repo(repo)
+        (repo / "sub").mkdir()
+        monkeypatch.chdir(repo / "sub")
+        handler = WorkspaceHandler(workspace_base=workspace_base)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+
+        assert handler.repo_path("default").resolve() == repo.resolve()
+
+    def test_default_repo_outside_git_fails_when_used(
+        self,
+        tmp_path: Path,
+        workspace_base: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Outside a checkout the failure surfaces at the first default-repo effect."""
+        outside = tmp_path / "not-a-repo"
+        outside.mkdir()
+        monkeypatch.chdir(outside)
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+
+        handler = WorkspaceHandler(workspace_base=workspace_base)
+
+        with pytest.raises(GitCommandError, match="rev-parse --show-toplevel"):
+            handler.handle_create_workspace(CreateWorkspace(workspace_id="ws-default"))
+
 
 class TestWorkspaceResumeStability:
     """Same identity ⇒ same branch + same worktree, across process restarts."""
