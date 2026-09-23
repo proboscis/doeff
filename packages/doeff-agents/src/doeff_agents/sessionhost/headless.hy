@@ -385,7 +385,7 @@
       None
       (do
         (<- settings (fs-read-text f"{config-dir}/settings.json"))
-        (if (not (fast-jev-compaction-enabled settings))
+        (if (not (! (fast-jev-compaction-enabled settings)))
             None
             (do
               (<- res (headless-run-once session-name work-dir effective-env argv))
@@ -679,13 +679,13 @@
   ;; 2026-09-23: 枯らした範囲と文が名乗る戻りの時刻を cause の欄に載せる(当てるのはここ・表は markers・
   ;; 制御面は欄を読む — ADR-DOE-AGENTS-012 R33)。文が model の族を名乗る時だけ model、他は全部 account。
   (setv cause (make-cause "rate_limited" verdict.detail observed-at))
-  (setv at-ms (observed-at-epoch-ms observed-at))
+  (<- at-ms (observed-at-epoch-ms observed-at))
   (replace cause
-           :limit-scope (if (api-limit-names-a-model verdict.detail) API-LIMIT-SCOPE-MODEL API-LIMIT-SCOPE-ACCOUNT)
-           :limit-resets-at-ms (if (is None at-ms) None (api-limit-resets-at verdict.detail at-ms))))
+           :limit-scope (if (! (api-limit-names-a-model verdict.detail)) API-LIMIT-SCOPE-MODEL API-LIMIT-SCOPE-ACCOUNT)
+           :limit-resets-at-ms (if (is None at-ms) None (! (api-limit-resets-at verdict.detail at-ms)))))
 
 
-(deff observed-at-epoch-ms [observed-at]
+(defk observed-at-epoch-ms [observed-at]
   {:pre [(: observed-at str)] :post [(: % (| int None))]}
   "器の時刻(isoformat・UTC)→ epoch ms。読めない綴りは None(戻りの時刻を名乗らない — 発明しない)。
    時間帯の無い綴りは UTC(器の時計は datetime.now timezone.utc の isoformat)。"

@@ -2,6 +2,8 @@
 
 from collections.abc import Callable
 
+from doeff import Program
+
 class TerminalCause:
     """effects.hy TerminalCause の写し(検が decode の答えを読む欄だけ)。"""
 
@@ -20,7 +22,7 @@ class StoreActor:
     def wait_journal(self, after: int, timeout: float) -> int: ...
     def close(self) -> None: ...
 
-def db_journal_seq(conn: object) -> int: ...
+def db_journal_seq(conn: object) -> Program[int]: ...
 
 def terminal_cause_from_dict(payload: dict[str, object]) -> TerminalCause | None: ...
 
