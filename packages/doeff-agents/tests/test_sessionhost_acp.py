@@ -57,7 +57,11 @@ from doeff_agents.sessionhost.acp.effects import (
     PaneSeatsUnavailable,
     SessionRefused,
     SessionSend,
+    SESSION_LIVE_STATUSES,
+    SESSION_TERMINAL_STATUSES,
     SessionView,
+    TRANSCRIPT_SCAN_PAGE_ROWS,
+    TRANSCRIPT_SCAN_ROWS_MAX,
     TURN_RECORD_ENTRIES_BYTE_BUDGET,
     TURN_RECORD_KIND,
     WatchAdvance,
@@ -5131,8 +5135,16 @@ def test_entry_main_splits_the_halves_by_role_and_keeps_the_default_whole(
         entry.main()
         return seen
 
-    def shape(seen: dict[str, list[object]]) -> tuple[list[object], list[object], list[object], int]:
-        return (seen["threads"], seen["only"], seen["hosts"], len(seen["hooks"]))
+    class Shape(NamedTuple):
+        """join が撃った形(thread・腕だけ・器・停止の hook の数)。"""
+
+        threads: list[object]
+        only: list[object]
+        hosts: list[object]
+        hooks: int
+
+    def shape(seen: dict[str, list[object]]) -> Shape:
+        return Shape(seen["threads"], seen["only"], seen["hosts"], len(seen["hooks"]))
 
     config = ["--config", "/etc/agentd/agentd.toml"]
     bare = drive(["join", *config])
@@ -6857,12 +6869,18 @@ def test_close_for_exit_leaves_the_running_turns_to_the_host_process() -> None:
         thread.join()
         return thread
 
-    def make_run(world: World) -> tuple[AgentdRun, list[str]]:
+    class ClosingRun(NamedTuple):
+        """走行係と後始末の記録。"""
+
+        run: AgentdRun
+        closed: list[str]
+
+    def make_run(world: World) -> ClosingRun:
         holder = StateHolder()
         holder.state = world.state
         closed: list[str] = []
         dispatchers = [world.acp.dispatch, world.custody.dispatch, world.sessions.dispatch, world.local.dispatch]
-        return (
+        return ClosingRun(
             AgentdRun(
                 replace(world.settings, drain_seconds=0), dispatchers, threading.Event(),
                 threading.Event(), holder, started("loop"),
@@ -7187,3 +7205,84 @@ def test_node_declares_the_custody_borrower_equivalence_key_from_the_identity_it
     old_row = {"name": "pool-1", "labels": {"cordon": "installing"}, "capacity": 20, "streamCapability": "events"}
     assert run(judgment.node_spec_declared(old_row, pod))["custodyBorrower"] == "sa:acp-control/default"
     assert "custodyBorrower" not in run(judgment.node_spec_declared(old_row, settings))
+
+
+def _ended_view(index: int, *, attributed: bool = True) -> SessionView:
+    """終端の温かい session(会話ごとに 1 つ・新しいほど index が大きい)。"""
+    sid = f"s-ended-{index:04d}"
+    stamp: JSONObject | None = (
+        {"agentd": {"conversationId": f"c-ended-{index:04d}", "agentJobId": f"a-{index}", "account": "acct"}}
+        if attributed
+        else None
+    )
+    return replace(
+        _view(sid, "stopped", lifecycle="multi_turn", turn_ended_at_ms=10),
+        launch_attribution=stamp,
+        started_at_ms=1_000 + index,
+    )
+
+
+def test_join_reads_only_live_sessions_and_pages_the_ended_history_for_transcripts() -> None:
+    """2026-09-23 会社 Mac の実弾: 参加の周期が絞らない session.list で終端の履歴 6,087 行(15 MB)を毎回読み、
+    器の読みの期限 10 秒を越えて heartbeat の 7 割以上が落ちていた(node の観測が数分古いまま)。
+    温かい session は生きている status だけを器に訊き、transcript の候補は終端を新しい順に頁で読んで、
+    候補が上限に満ちたら止める — 履歴がどれだけ積もっても 1 回の参加が読む量は変わらない。"""
+    world = World()
+    for index in range(500):
+        view = _ended_view(index)
+        world.sessions.views[view.session_id] = view
+        world.local.transcripts[f"{HOMES}/claude/acct/projects/-work/{view.session_id}.jsonl"] = transcript_line(
+            "assistant", [{"type": "text", "text": "x"}]
+        )
+    world.tick()
+    calls = world.sessions.list_calls
+    assert calls, "参加の周期は器に一覧を訊く"
+    live = [call for call in calls if call.limit is None]
+    assert live, calls
+    assert all(call.statuses == tuple(sorted(SESSION_LIVE_STATUSES)) for call in live), live
+    ended = [call for call in calls if call.limit is not None]
+    assert ended, calls
+    assert all(call.statuses == tuple(sorted(SESSION_TERMINAL_STATUSES)) for call in ended)
+    # 候補の上限 16 は 1 頁(64 行)で満ちる — 残りの 436 行は読まない。
+    assert [(call.offset, call.limit) for call in ended] == [(0, TRANSCRIPT_SCAN_PAGE_ROWS)]
+    node = world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"]
+    assert node.status is not None
+    observations = node.status["observations"]
+    assert isinstance(observations, dict)
+    transcripts = observations["transcripts"]
+    assert isinstance(transcripts, list)
+    expected = [f"s-ended-{index:04d}" for index in range(499, 499 - world.settings.transcripts_observed_max, -1)]
+    assert [item["sessionId"] for item in transcripts if isinstance(item, dict)] == expected
+
+
+def test_transcript_scan_stops_at_the_row_ceiling_when_the_history_has_no_candidates() -> None:
+    """帰属の無い古い終端の行ばかりの器でも、1 回の参加が読む行数は天井(TRANSCRIPT_SCAN_ROWS_MAX)まで。"""
+    world = World()
+    for index in range(TRANSCRIPT_SCAN_ROWS_MAX * 2):
+        view = _ended_view(index, attributed=False)
+        world.sessions.views[view.session_id] = view
+    world.tick()
+    ended = [call for call in world.sessions.list_calls if call.limit is not None]
+    assert sum(call.limit or 0 for call in ended) == TRANSCRIPT_SCAN_ROWS_MAX
+    assert ended[-1].offset + (ended[-1].limit or 0) == TRANSCRIPT_SCAN_ROWS_MAX
+
+
+def test_transcript_scan_continues_is_the_one_paging_decision() -> None:
+    """頁を読み続けるかの 1 点: 頁が満ちた ∧ 候補が足りない ∧ 天井未満。頁を知らない古い器が全件を返した
+    (頁より多い行)時は止まる(二度目を撃たない)。"""
+    page = TRANSCRIPT_SCAN_PAGE_ROWS
+    assert run(judgment.transcript_scan_continues(page, page, 3, 16)) is True
+    assert run(judgment.transcript_scan_continues(page - 1, page - 1, 3, 16)) is False
+    assert run(judgment.transcript_scan_continues(page, page, 16, 16)) is False
+    assert run(judgment.transcript_scan_continues(page, TRANSCRIPT_SCAN_ROWS_MAX, 3, 16)) is False
+    assert run(judgment.transcript_scan_continues(6_087, 6_087, 3, 16)) is False
+
+
+def test_session_live_statuses_are_the_host_active_statuses() -> None:
+    """agentd の写し(SESSION_LIVE_STATUSES / SESSION_TERMINAL_STATUSES)は器の policy の閉語彙ちょうど —
+    生きている status で絞った一覧が session-alive の集合と同じであることの前提。"""
+    from doeff_agents.sessionhost import policy
+
+    assert frozenset(policy.ACTIVE_STATUSES) == SESSION_LIVE_STATUSES
+    assert frozenset(policy.TERMINAL_STATUSES) == SESSION_TERMINAL_STATUSES
+    assert not SESSION_LIVE_STATUSES & SESSION_TERMINAL_STATUSES
