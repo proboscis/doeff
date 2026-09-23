@@ -20,6 +20,7 @@ from doeff_agents.sessionhost.acp.effects import (
     LaunchPlan,
     LeaseGrant,
     SessionView,
+    VerifyPlan,
 )
 
 def retire_sessions(session_ids: tuple, reason: str) -> Program: ...
@@ -74,7 +75,8 @@ def start_claimed(
     now_ms: int,
     opener: str | None,
 ) -> Program: ...
-def work_dir_ready(settings: AgentdSettings, row: AcpRow, plan: LaunchPlan, now_ms: int) -> Program: ...
+def work_dir_step_here(plan: LaunchPlan | VerifyPlan) -> Program: ...
+def work_dir_ready(settings: AgentdSettings, row: AcpRow, plan: LaunchPlan | VerifyPlan, now_ms: int) -> Program: ...
 def claim_job(
     settings: AgentdSettings,
     state: AgentdState,

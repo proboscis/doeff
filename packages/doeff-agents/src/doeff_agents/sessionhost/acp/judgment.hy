@@ -72,6 +72,7 @@
   CHARTER-VERIFY-JOB-ID-KEY
   CHARTER-VERIFY-JOB-ID-PATTERN
   CHARTER-VERIFY-RUN-KEY-KEY
+  AGENT-JOB-WORK-DIR-ENV
   CommandExited
   CommandGone
   CommandRunning
@@ -1094,35 +1095,40 @@
 
 
 (defk plan-with-node-home [plan home]
-  {:pre [(: plan LaunchPlan) (: home str)]
-   :post [(: % LaunchPlan)]}
+  {:pre [(: plan (| LaunchPlan VerifyPlan)) (: home str)]
+   :post [(: % (| LaunchPlan VerifyPlan))]}
   "charter の work_dir を node の家で展開した plan(段 10 lane 10y・agora-redesign #110・依頼者の裁定 2026-09-15 案 A): `~` と `~/…`
    だけを home で置き換える(それ以外 — 絶対 path・`~user`・相対 — は触らない)。home が空なら展開しない(`~` のままの path は
-   work-dir-step-of で無い dir に落ちる)。作業場を機体に依らない綴りで宣言でき、会社 Mac の絶対 path に結ばれない。"
-  (setv work-dir (.get plan.charter CHARTER-WORK-DIR-KEY))
-  (when (or (not (isinstance work-dir str)) (not home) (not (or (= work-dir "~") (.startswith work-dir "~/"))))
+   work-dir-step-of で無い dir に落ちる)。作業場を機体に依らない綴りで宣言でき、会社 Mac の絶対 path に結ばれない。
+   verify の plan(card acp:kanban-issue:ki-0a50e47ac56d・R36 (6))も同じ 1 点で展開する — 宣言は VerifyPlan.work_dir に在る。"
+  (<- work-dir (| str None) (work-dir-of plan))
+  (when (or (is work-dir None) (not home) (not (or (= work-dir "~") (.startswith work-dir "~/"))))
     (return plan))
   (setv expanded (+ (.rstrip home "/") (cut work-dir 1 None)))
-  (replace plan :charter (| plan.charter {CHARTER-WORK-DIR-KEY expanded})))
+  (if (isinstance plan VerifyPlan)
+      (replace plan :work-dir expanded)
+      (replace plan :charter (| plan.charter {CHARTER-WORK-DIR-KEY expanded}))))
 
 
 (defk work-dir-of [plan]
-  {:pre [(: plan LaunchPlan)]
+  {:pre [(: plan (| LaunchPlan VerifyPlan))]
    :post [(: % (| str None))]}
-  "手番の作業場(charter の work_dir・展開の後)。宣言が無い・空 = None(検める作業場が無い — 走行器の既定)。"
-  (setv work-dir (.get plan.charter CHARTER-WORK-DIR-KEY))
+  "job の作業場(手番 = charter の work_dir・verify = VerifyPlan.work_dir〔verify-plan-of が charter から写す〕— どちらも展開の後)。
+   宣言が無い・空・文字列でない = None(検める作業場が無い — 走行器の既定)。"
+  (setv work-dir (if (isinstance plan VerifyPlan) plan.work-dir (.get plan.charter CHARTER-WORK-DIR-KEY)))
   (if (and (isinstance work-dir str) work-dir) work-dir None))
 
 
 (defk work-dir-step-of [plan exists]
-  {:pre [(: plan LaunchPlan) (: exists bool)]
+  {:pre [(: plan (| LaunchPlan VerifyPlan)) (: exists bool)]
    :post [(: % str)]}
   "作業場の段の 1 点(段 10 lane 10y・閉語彙 effects.WorkDirStep): 在る(か宣言が無い)= launch / 無いが charter の
    work_dir_scratch が true = create(agentd が作ってよい scratch)/ 無い = missing(起こさずに条件 WorkDirMissing — repo を指す
-   work_dir を空の dir で偽装しない)。印は bool の true ちょうど(文字列の true 等は印ではない — 発明しない)。"
+   work_dir を空の dir で偽装しない)。印は bool の true ちょうど(文字列の true 等は印ではない — 発明しない)。
+   verify の plan は scratch の印を持たない(作業場は測る作業コピーで、作ってよい場所ではない)ので launch か missing。"
   (<- work-dir (| str None) (work-dir-of plan))
   (cond (or (is work-dir None) exists) WORK-DIR-STEP-LAUNCH
-        (is (.get plan.charter CHARTER-WORK-DIR-SCRATCH-KEY) True) WORK-DIR-STEP-CREATE
+        (and (isinstance plan LaunchPlan) (is (.get plan.charter CHARTER-WORK-DIR-SCRATCH-KEY) True)) WORK-DIR-STEP-CREATE
         True WORK-DIR-STEP-MISSING))
 
 
@@ -5960,7 +5966,9 @@
   "Bound の verify の行から走らせ方を写す(判断ではなく欄の写しと置き場の導出): charter.jobId(綴りは
    CHARTER-VERIFY-JOB-ID-PATTERN ちょうど — path の要素にそのまま使う)・runKey(無ければ空)・deadlineSeconds
    (正の整数・無ければ 0 = 期限なし)。script = home/VERIFY-SCRIPTS-RELDIR/<jobId>.sh、結末の 3 file = runs-dir の
-   下の <job id>.{log,rc,pid}。読めない行は理由の文(呼び手が条件 VerifyScriptMissing で閉じる)。"
+   下の <job id>.{log,rc,pid}。読めない行は理由の文(呼び手が条件 VerifyScriptMissing で閉じる)。
+   測る作業場(charter.work_dir・card acp:kanban-issue:ki-0a50e47ac56d)は宣言の綴りのまま写す — 展開は plan-with-node-home、
+   在否の段は work-dir-step-of の 1 点(手番と同じ判断・R32)。"
   (setv charter (.get row.spec "charter"))
   (when (not (isinstance charter dict))
     (return f"agent-job {row.resource-id}: spec.charter is not an object"))
@@ -5973,6 +5981,7 @@
   (setv deadline-seconds (if (and (isinstance deadline int) (not (isinstance deadline bool)) (> deadline 0)) deadline 0))
   (when (not home)
     (return f"agent-job {row.resource-id}: this node declares no home (AgentdSettings.home) to find {VERIFY-SCRIPTS-RELDIR} under"))
+  (setv work-dir (.get charter CHARTER-WORK-DIR-KEY))
   (VerifyPlan
     :job-id row.resource-id
     :verify-id verify-id
@@ -5981,7 +5990,20 @@
     :script-path f"{home}/{VERIFY-SCRIPTS-RELDIR}/{verify-id}.sh"
     :log-path f"{runs-dir}/{row.resource-id}.log"
     :rc-path f"{runs-dir}/{row.resource-id}.rc"
-    :pid-path f"{runs-dir}/{row.resource-id}.pid"))
+    :pid-path f"{runs-dir}/{row.resource-id}.pid"
+    :work-dir (if (and (isinstance work-dir str) work-dir) work-dir None)))
+
+
+(defk verify-env-of [plan]
+  {:pre [(: plan VerifyPlan)]
+   :post [(: % tuple)]}
+  "verify の命令に足す env の 1 点(card acp:kanban-issue:ki-0a50e47ac56d・R36 (6)): 作業場を名乗る plan(展開の後)は
+   AGENT-JOB-WORK-DIR-ENV = その絶対 path ちょうど 1 つ / 名乗らない plan は何も足さない(今日の形)。script は path を
+   書かず、この値をそのまま使う(選び直さない)。"
+  (<- work-dir (| str None) (work-dir-of plan))
+  (if (is work-dir None)
+      #()
+      #(#(AGENT-JOB-WORK-DIR-ENV work-dir))))
 
 
 (defk verify-argv-of [plan]

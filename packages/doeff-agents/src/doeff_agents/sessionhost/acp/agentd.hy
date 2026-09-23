@@ -300,6 +300,7 @@
   CONDITION-WORK-DIR-MISSING
   WORK-DIR-STEP-CREATE
   WORK-DIR-STEP-LAUNCH
+  WORK-DIR-STEP-MISSING
   CONDITION-CREDENTIAL-SOURCE-MISSING
   CONDITION-INTERRUPT-ESCALATION-UNDECLARED
   CREDENTIAL-SOURCE-MISSING
@@ -376,6 +377,7 @@
   rc-of-text
   turn-charter-of
   verify-argv-of
+  verify-env-of
   verify-handle-of
   verify-plan-of
   verify-plan-of-handle
@@ -1689,20 +1691,32 @@
               started)))))
 
 
-(defk work-dir-ready [settings row plan now-ms]
-  {:pre [(: settings AgentdSettings) (: row AcpRow) (: plan LaunchPlan) (: now-ms int)]
-   :post [(: % bool)]}
-  "手番の作業場の門(段 10 lane 10y・agora-redesign #110・依頼者の裁定 2026-09-15 案 A): 展開した work_dir がこの node に在るかを
-   読み(FsDirectoryExists)、段は judgment.work-dir-step-of の 1 点。create(scratch の印)は作ってから進み、missing と作れない拍は
-   起こさずに条件 WorkDirMissing で Ended に閉じる(Running も sessionHandle も書かない — 配車の係が会話 × node で候補から外す材料)。
-   戻り = 起こしてよいか。"
+(defk work-dir-step-here [plan]
+  {:pre [(: plan (| LaunchPlan VerifyPlan))]
+   :post [(: % str)]}
+  "作業場の段をこの node で読む 1 点: 展開した work_dir の在否(FsDirectoryExists — 宣言が無ければ読まない)を judgment.work-dir-step-of
+   へ渡す。読み手は門(work-dir-ready)と、verify の上限の前の資格(claim-verify-candidates — card acp:kanban-issue:ki-0a50e47ac56d)。"
   (<- work-dir (| str None) (work-dir-of plan))
   (when (is work-dir None)
-    (return True))
+    (<- undeclared str (work-dir-step-of plan False))
+    (return undeclared))
   (<- exists bool (FsDirectoryExists :path work-dir))
   (<- step str (work-dir-step-of plan exists))
+  step)
+
+
+(defk work-dir-ready [settings row plan now-ms]
+  {:pre [(: settings AgentdSettings) (: row AcpRow) (: plan (| LaunchPlan VerifyPlan)) (: now-ms int)]
+   :post [(: % bool)]}
+  "作業場の門(段 10 lane 10y・agora-redesign #110・依頼者の裁定 2026-09-15 案 A): 展開した work_dir がこの node に在るかを
+   読み(work-dir-step-here)、段は judgment.work-dir-step-of の 1 点。create(scratch の印)は作ってから進み、missing と作れない拍は
+   起こさずに条件 WorkDirMissing で Ended に閉じる(Running も sessionHandle も書かない — 配車の係が会話 × node で候補から外す材料)。
+   手番と、work_dir を名乗る verify(card acp:kanban-issue:ki-0a50e47ac56d・R36 (6) — 配置は件名 × node × work_dir で外す)の両方が
+   通る 1 点。戻り = 起こしてよいか。"
+  (<- step str (work-dir-step-here plan))
   (when (= step WORK-DIR-STEP-LAUNCH)
     (return True))
+  (<- work-dir (| str None) (work-dir-of plan))
   (when (= step WORK-DIR-STEP-CREATE)
     (<- made bool (FsMakeDirectories :path work-dir))
     (when made
@@ -4326,6 +4340,13 @@
                         f"{planned.script-path} — an unknown verify id is refused, never guessed")
                      #() now-ms))
     (return state))
+  ;; card acp:kanban-issue:ki-0a50e47ac56d(R36 (6)): charter が work_dir を名乗る verify は手番と同じ作業場の門(R32)を通る —
+  ;; `~` はこの node の家で展開し(plan-with-node-home の 1 点)、無ければ script を走らせず条件 WorkDirMissing で閉じる(配置は
+  ;; 件名 × node × work_dir でこの node を次の候補から外す)。名乗らない verify は門が何もしない(今日の形)。
+  (<- plan VerifyPlan (plan-with-node-home planned settings.home))
+  (<- ready bool (work-dir-ready settings row plan now-ms))
+  (when (not ready)
+    (return state))
   (<- started-ms int (ClockNowMs))
   (<- handle dict (verify-handle-of planned settings.principal started-ms))
   (<- running dict (verify-running-status-of row handle))
@@ -4335,7 +4356,9 @@
     (return state))
   (<- made bool (FsMakeDirectories :path settings.verify-runs-dir))
   (<- argv tuple (verify-argv-of planned))
-  (<- launched (| CommandStarted CommandRefused) (CommandStart :argv argv :cwd settings.home))
+  ;; 展開した作業場は env 1 つで script へ(judgment.verify-env-of の 1 点 — 名乗らない verify は何も足さない)。
+  (<- env tuple (verify-env-of plan))
+  (<- launched (| CommandStarted CommandRefused) (CommandStart :argv argv :cwd settings.home :env env))
   (when (isinstance launched CommandRefused)
     (<- (end-job-now settings row CONDITION-VERIFY-START-FAILED
                      f"agent-job {job-id}: verify {planned.verify-id} could not be started on node {settings.node-name}: {launched.error}"
@@ -4547,7 +4570,8 @@
   "この拍に自分に結ばれた Bound の verify の候補(memory に無い行・行の順)を、上限 AgentdSettings.verify-concurrency の下で
    受ける 1 点 — 判定 judgment.verify-claim-verdict の**唯一の呼び手**(拍ごとに 1 回・全候補で)。
    (1) 資格は上限の前(設計 6.2 改訂 4): 置き場の不一致(place-mismatch)・id の綴りの外(verify-plan-of が文の答え)・script が
-       この機体に無い(FsFileExists)行は枠を使わず、この拍の claim-job がいつもの条件(PlaceMismatch / VerifyScriptMissing)で閉じる。
+       この機体に無い(FsFileExists)・名乗った作業場がこの機体に無い(work-dir-step-here — card ki-0a50e47ac56d)行は枠を使わず、
+       この拍の claim-job がいつもの条件(PlaceMismatch / VerifyScriptMissing / WorkDirMissing)で閉じる。
    (2) この機体に既に在る自分の命令(verify-command-here)は起こし直さず引き取り(adopt-verify-command)、走っている数に入れる。
    (3) 走っている数 = memory の verify の命令 ∪ 自分に結ばれた Running の verify の行(再起動の直後は拾い直しがこの後なので
        行から数える)∪ 引き取った命令。
@@ -4570,6 +4594,12 @@
     (when eligible
       (<- present bool (FsFileExists :path planned.script-path))
       (setv eligible present))
+    ;; card acp:kanban-issue:ki-0a50e47ac56d: 名乗った作業場がこの node に無い行も枠を使わない(同じ段の読み work-dir-step-here —
+    ;; 閉じるのはこの拍の claim-job が通る作業場の門 work-dir-ready)。
+    (when eligible
+      (<- located VerifyPlan (plan-with-node-home planned settings.home))
+      (<- step str (work-dir-step-here located))
+      (setv eligible (!= step WORK-DIR-STEP-MISSING)))
     (if (not eligible)
         (<- current AgentdState (claim-job settings current rows row previously-deferred now-ms))
         (do
