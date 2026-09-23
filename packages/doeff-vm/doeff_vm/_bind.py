@@ -13,3 +13,9 @@ type from the effect's ``EffectBase[T]`` (see doeff_vm/__init__.pyi).
 
 def bind(node):
     return (yield node)
+
+
+def returning(value):
+    """A stream that returns ``value`` at once (a ``@do`` function that did not yield)."""
+    return value
+    yield

@@ -58,6 +58,40 @@ _UNRESOLVED = object()
 _CATCH_ALL = (typing.Any, object, EffectBase)
 
 
+class HandlerSpec(NamedTuple):
+    """What the VM captures once when it installs a handler (WithHandler).
+
+    ``effect_types``: the runtime filter (``handler_effect_types``).
+    ``generator_function`` / ``tail_resume_lines``: for a ``@do`` handler, the
+    undecorated generator function. The VM calls it directly and runs the
+    generator as the handler's stream, instead of evaluating the ``Expand`` the
+    ``@do`` wrapper would build for every effect (same end state).
+    """
+
+    effect_types: EffectTypes
+    generator_function: object
+    tail_resume_lines: tuple[int, ...]
+
+
+_SPEC_ATTR = "__doeff_handler_spec__"
+
+
+def handler_spec(handler: object) -> HandlerSpec:
+    """The VM's install-time view of a handler; cached on plain functions."""
+    if type(handler) is types.FunctionType:
+        cached = handler.__dict__.get(_SPEC_ATTR)
+        if cached is not None:
+            return cached
+        spec = HandlerSpec(
+            handler_effect_types(handler),
+            handler.__dict__.get("__doeff_generator_function__"),
+            tuple(handler.__dict__.get("__doeff_tail_resume_lines__", ())),
+        )
+        setattr(handler, _SPEC_ATTR, spec)
+        return spec
+    return HandlerSpec(handler_effect_types(handler), None, ())
+
+
 class _EffectParameter(NamedTuple):
     function: types.FunctionType | None
     position: int

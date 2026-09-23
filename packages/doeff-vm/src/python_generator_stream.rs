@@ -87,6 +87,13 @@ pub struct PythonCallable {
     /// effect. Captured once when the handler is installed (WithHandler);
     /// plain `Callable(...)` values used with Apply never carry a filter.
     effect_types: Option<Py<pyo3::types::PyTuple>>,
+    /// For a `@do` handler: the undecorated generator function and its
+    /// tail-resume lines. `call_handler` calls it directly and runs the
+    /// generator as the handler stream — the same end state as evaluating the
+    /// `Expand(Apply(Pure(Callable(thunk)), []))` the wrapper builds, without
+    /// building and classifying those nodes on every effect.
+    generator_function: Option<Py<PyAny>>,
+    tail_resume_lines: Vec<u32>,
 }
 
 #[pymethods]
@@ -96,6 +103,8 @@ impl PythonCallable {
         Self {
             callable,
             effect_types: None,
+            generator_function: None,
+            tail_resume_lines: Vec::new(),
         }
     }
 
@@ -109,6 +118,9 @@ impl PythonCallable {
         if let Some(types) = &self.effect_types {
             visit_py_field(&visit, types)?;
         }
+        if let Some(function) = &self.generator_function {
+            visit_py_field(&visit, function)?;
+        }
         Ok(())
     }
 
@@ -118,46 +130,113 @@ impl PythonCallable {
         // ("'NoneType' object is not callable").
         self.callable = py.None();
         self.effect_types = None;
+        self.generator_function = None;
     }
 }
 
 impl PythonCallable {
-    /// A handler callable with the effect types its annotation declares.
+    /// A handler callable with its install-time spec
+    /// (`doeff_vm._effect_types.handler_spec`).
     fn handler(py: Python<'_>, handler: &Bound<'_, PyAny>) -> Result<Self, String> {
+        let spec = handler_spec(py, handler)?;
+        let spec = spec.bind(py);
+        let field = |index: usize| {
+            spec.get_item(index)
+                .map_err(|e| format!("WithHandler: malformed handler spec: {e}"))
+        };
+        let types = field(0)?;
+        let effect_types = if types.is_none() {
+            None
+        } else {
+            Some(
+                types
+                    .downcast::<pyo3::types::PyTuple>()
+                    .map_err(|_| "WithHandler: effect types must be a tuple or None".to_string())?
+                    .clone()
+                    .unbind(),
+            )
+        };
+        let function = field(1)?;
+        let generator_function = if function.is_none() {
+            None
+        } else {
+            Some(function.unbind())
+        };
+        let tail_resume_lines = field(2)?
+            .extract::<Vec<u32>>()
+            .map_err(|e| format!("WithHandler: malformed tail-resume lines: {e}"))?;
         Ok(Self {
             callable: handler.clone().unbind(),
-            effect_types: handler_effect_types(py, handler)?,
+            effect_types,
+            generator_function,
+            tail_resume_lines,
+        })
+    }
+
+    /// Run a `@do` handler's generator function directly as the handler stream.
+    fn call_generator_function(
+        &self,
+        py: Python<'_>,
+        function: &Py<PyAny>,
+        args: Bound<'_, pyo3::types::PyTuple>,
+    ) -> Result<DoCtrl, doeff_vm_core::VMError> {
+        let result = function.bind(py).call1(args).map_err(|err| {
+            doeff_vm_core::VMError::uncaught_exception(Value::Opaque(PyShared::new(
+                err.value(py).clone().into_any().unbind(),
+            )))
+        })?;
+        // SAFETY: PyGen_Check only reads the object's type.
+        let is_generator = unsafe { pyo3::ffi::PyGen_Check(result.as_ptr()) } != 0;
+        let (generator, lines) = if is_generator {
+            (result, self.tail_resume_lines.clone())
+        } else {
+            // `@do` on a function that does not yield: the stream returns its value.
+            (returning_stream(py, &result)?, Vec::new())
+        };
+        let stream = PythonGeneratorStream::new(PyShared::new(generator.unbind()), lines);
+        let stream = doeff_vm_core::ir_stream::IRStreamRef::new(Box::new(stream));
+        Ok(DoCtrl::Expand {
+            expr: Box::new(DoCtrl::Pure {
+                value: Value::Stream(stream),
+            }),
         })
     }
 }
 
-static HANDLER_EFFECT_TYPES: pyo3::sync::PyOnceLock<Py<PyAny>> = pyo3::sync::PyOnceLock::new();
+static HANDLER_SPEC: pyo3::sync::PyOnceLock<Py<PyAny>> = pyo3::sync::PyOnceLock::new();
+static RETURNING: pyo3::sync::PyOnceLock<Py<PyAny>> = pyo3::sync::PyOnceLock::new();
 
-/// Resolve a handler's effect-parameter annotation to a type tuple through the
-/// single Python-side rule (`doeff_vm._effect_types.handler_effect_types`).
-/// The resolver caches per function, so re-installing a handler is cheap.
-fn handler_effect_types(
-    py: Python<'_>,
-    handler: &Bound<'_, PyAny>,
-) -> Result<Option<Py<pyo3::types::PyTuple>>, String> {
-    let resolver = HANDLER_EFFECT_TYPES
+/// A handler's install-time spec through the single Python-side rule
+/// (`doeff_vm._effect_types.handler_spec`): effect types (annotation filter)
+/// and, for `@do` handlers, the generator function. Cached per function.
+fn handler_spec(py: Python<'_>, handler: &Bound<'_, PyAny>) -> Result<Py<PyAny>, String> {
+    let resolver = HANDLER_SPEC
         .get_or_try_init(py, || {
             py.import("doeff_vm._effect_types")
-                .and_then(|m| m.getattr("handler_effect_types"))
+                .and_then(|m| m.getattr("handler_spec"))
                 .map(|f| f.unbind())
         })
-        .map_err(|e| format!("WithHandler: cannot load the effect-type resolver: {e}"))?;
-    let types = resolver
+        .map_err(|e| format!("WithHandler: cannot load the handler-spec resolver: {e}"))?;
+    resolver
         .call1(py, (handler,))
-        .map_err(|e| format!("WithHandler: resolving the handler's effect types failed: {e}"))?;
-    let types = types.bind(py);
-    if types.is_none() {
-        return Ok(None);
-    }
-    types
-        .downcast::<pyo3::types::PyTuple>()
-        .map(|t| Some(t.clone().unbind()))
-        .map_err(|_| "WithHandler: effect-type resolver must return a tuple or None".to_string())
+        .map_err(|e| format!("WithHandler: resolving the handler spec failed: {e}"))
+}
+
+fn returning_stream<'py>(
+    py: Python<'py>,
+    value: &Bound<'py, PyAny>,
+) -> Result<Bound<'py, PyAny>, doeff_vm_core::VMError> {
+    let returning = RETURNING
+        .get_or_try_init(py, || {
+            py.import("doeff_vm._bind")
+                .and_then(|m| m.getattr("returning"))
+                .map(|f| f.unbind())
+        })
+        .map_err(|e| doeff_vm_core::VMError::python_error(format!("{e}")))?;
+    returning
+        .bind(py)
+        .call1((value,))
+        .map_err(|e| doeff_vm_core::VMError::python_error(format!("{e}")))
 }
 
 impl doeff_vm_core::value::Callable for PythonCallable {
@@ -226,6 +305,10 @@ impl doeff_vm_core::value::Callable for PythonCallable {
                 .collect();
             let py_tuple = pyo3::types::PyTuple::new(py, &py_args)
                 .map_err(|e| doeff_vm_core::VMError::python_error(format!("{e}")))?;
+
+            if let Some(function) = &self.generator_function {
+                return self.call_generator_function(py, function, py_tuple);
+            }
 
             match self.callable.call(py, py_tuple, None) {
                 Ok(result) => {
@@ -646,12 +729,22 @@ fn wrap_handler(py: Python<'_>, handler: &Bound<'_, PyAny>) -> Result<Value, Str
 /// Classify a Python object into a DoCtrl.
 ///
 /// Priority order:
-/// 1. Rust pyclass DoExpr → downcast (fast pointer-type-check)
-/// 2. Legacy Python DoExpr with `tag` → fallback tag-based dispatch
-/// 3. EffectBase (no tag) → implicit Perform(effect)
+/// 1. EffectBase → implicit Perform(effect) (disjoint from the DoExpr pyclasses)
+/// 2. Rust pyclass DoExpr → downcast (fast pointer-type-check)
+/// 3. Legacy Python DoExpr with `tag` → fallback tag-based dispatch
 /// 4. Anything else → error
 pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<DoCtrl, String> {
     use crate::do_expr::*;
+
+    // --- EffectBase → implicit Perform ---
+    // Checked first: an effect is what a program body yields most often, and
+    // EffectBase and the DoExpr pyclasses are disjoint, so the order does not
+    // change the classification — it only skips 17 failed downcasts per effect.
+    if obj.is_instance_of::<PyEffectBase>() {
+        return Ok(DoCtrl::Perform {
+            effect: Value::Opaque(PyShared::new(obj.clone().unbind())),
+        });
+    }
 
     // --- Rust pyclass DoExpr (fast path) ---
 
@@ -761,13 +854,6 @@ pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<
         let inner_doctrl = classify_python_object(py, &inner)?;
         return Ok(DoCtrl::TailEval {
             expr: Box::new(inner_doctrl),
-        });
-    }
-
-    // --- EffectBase (no tag) → implicit Perform ---
-    if obj.is_instance_of::<PyEffectBase>() {
-        return Ok(DoCtrl::Perform {
-            effect: Value::Opaque(PyShared::new(obj.clone().unbind())),
         });
     }
 

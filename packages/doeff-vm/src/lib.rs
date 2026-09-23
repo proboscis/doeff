@@ -67,3 +67,12 @@ fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     Ok(())
 }
+
+/// The VM allocates and frees small Rust objects (frames, fibers, boxed
+/// DoCtrl, Vec) on every effect. On macOS the system allocator's `free` read
+/// the clock (`mach_absolute_time`) on each call and took ~20% of an effect's
+/// time in a profile; mimalloc made one effect 25% cheaper (1.27 → 0.95 µs,
+/// 2026-09-23) with no RSS growth over 1M effects. Only Rust-side allocations
+/// use it; Python objects keep CPython's allocator.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
