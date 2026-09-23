@@ -20,6 +20,10 @@ checkout を持てる機体の `python3 scripts/sync_contracts.py` と ACP 側�
 写しと正本の名乗り(正本側の検 `scripts/check_cross_repo_contracts.hy` がこの行を読む):
 
 - `agora-kinds.json` — acp-contract-canon: proboscis/agent-control-plane:docs/contracts/agora-kinds.json
+
+段 12 lane 12j(agora-redesign #320・#317 規則 1)から **code の写し**も同じ pin に載る(kind `code`・byte 写し・検は sha256 の一致だけ):
+
+- `packages/doeff-agents/src/doeff_agents/sessionhost/acp/live_row.hy` ← ACP `clients/hy/acp_client/shared/live_row.hy`(名前が指す生きている行を解く 3 値の純関数 — agentd の `judgment.node-row-named` が判断を借りる。隣の `live_row.pyi` は写しではなく doeff 側の型の宣言)
 - `read-freshness.json` — acp-contract-canon: proboscis/agent-control-plane:docs/contracts/read-freshness.json
 
 読む欄の宣言 = `reads.json`(schema `acp.contract-reads.v1` — 正本側の検が「読む欄が正本に実在し deprecated を読まない」を撃つ)。

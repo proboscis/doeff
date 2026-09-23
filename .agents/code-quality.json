@@ -7,6 +7,8 @@
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.pyi",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/live_row.hy",
+    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/live_row.pyi",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.pyi",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.pyi",
@@ -112,8 +114,24 @@
       ],
       "allow": [
         "agentd-effects",
-        "sessionhost-attachment"
+        "sessionhost-attachment",
+        "agentd-live-row-copy"
       ],
+      "typed": true
+    },
+    {
+      "name": "agentd-live-row-copy",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/live_row.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/live_row.pyi"
+      ],
+      "responsibility": "ACP の client library の写し(正本 = proboscis/agent-control-plane clients/hy/acp_client/shared/live_row.hy・pin = contracts.lock の kind code・生成の口 = scripts/sync_contracts.py — ここで直さない): 名前が指す生きている行を解く 3 値の純関数(#317 規則 1 / agora-redesign #320)。pyi は写しではなく doeff 側の型の宣言",
+      "layer": "pure",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/live_row.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/live_row.pyi"
+      ],
+      "allow": [],
       "typed": true
     },
     {
