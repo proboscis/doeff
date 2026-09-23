@@ -367,7 +367,10 @@
   SEAT-OPENER-ENV
   SESSION-OBSERVED-BUSY
   SESSION-OBSERVED-IDLE
+  SESSION-LIVE-STATUSES
   SESSION-TERMINAL-STATUSES
+  TRANSCRIPT-SCAN-PAGE-ROWS
+  TRANSCRIPT-SCAN-ROWS-MAX
   STREAM-CAPABILITY-EVENTS
   STREAM-CAPABILITY-FRAMES
   STREAM-SOURCE-EVENTS
@@ -2182,6 +2185,33 @@
   (setv ordered (sorted (.values newest)
                         :key (fn [view] #((- (or view.started-at-ms 0)) view.session-id))))
   (tuple (cut ordered 0 limit)))
+
+
+(defk live-session-statuses []
+  {:pre []
+   :post [(: % tuple)]}
+  "温かい session を器に訊く時の status の絞り(生きている status ちょうど・器が SQL で絞る)。
+   器の status の閉語彙は終端とこれの和なので、絞った答えは session-alive の答えと同じ集合。"
+  (tuple (sorted SESSION-LIVE-STATUSES)))
+
+
+(defk ended-session-statuses []
+  {:pre []
+   :post [(: % tuple)]}
+  "transcript の候補を探す時の status の絞り(終端ちょうど)。"
+  (tuple (sorted SESSION-TERMINAL-STATUSES)))
+
+
+(defk transcript-scan-continues [page-rows scanned-rows found limit]
+  {:pre [(: page-rows int) (: scanned-rows int) (: found int) (: limit int)]
+   :post [(: % bool)]}
+  "終端の session を新しい順に頁で読む時、次の頁を読むか(2026-09-23 会社 Mac の実弾 — 参加の周期が
+   終端の履歴の全件を毎回読んで読みの期限を越えていた)。頁が満ちた(= 履歴がまだ在る)∧ 候補が limit に
+   満ちていない ∧ 読んだ行が天井(TRANSCRIPT-SCAN-ROWS-MAX)未満 の時だけ続ける。頁を知らない古い器は
+   limit を無視して全件を返す(頁より多い行)— それは満ちた頁ではなく全部なので止まる。"
+  (and (= page-rows TRANSCRIPT-SCAN-PAGE-ROWS)
+       (< found limit)
+       (< scanned-rows TRANSCRIPT-SCAN-ROWS-MAX)))
 
 
 (defk transcript-observation-of [view]

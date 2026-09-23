@@ -1347,7 +1347,13 @@ class SessionRpc:
             result: JSON = self._client.request("session.get", {"session_id": effect.session_id})
             return None if result is None else session_view_of(result)
         if isinstance(effect, SessionList):
-            listed: JSON = self._client.request("session.list", {"lifecycle": effect.lifecycle})
+            params: JSONObject = {"lifecycle": effect.lifecycle}
+            if effect.statuses is not None:
+                params["status"] = list(effect.statuses)
+            if effect.limit is not None:
+                params["limit"] = effect.limit
+                params["offset"] = effect.offset
+            listed: JSON = self._client.request("session.list", params)
             items: list[JSON] = listed if isinstance(listed, list) else []
             views = [session_view_of(item) for item in items]
             return tuple(view for view in views if view is not None)
