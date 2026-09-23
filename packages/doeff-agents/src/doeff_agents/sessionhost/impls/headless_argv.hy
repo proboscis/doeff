@@ -28,6 +28,7 @@
   CodexPlan])
 (import doeff_agents.sessionhost.impls.claude_code [build-claude-argv])
 (import doeff_agents.sessionhost.impls.codex [build-codex-argv])
+(import doeff_agents.sessionhost.drivers [DRIVER-EXECUTABLE])
 
 
 ;; claude の print mode の旗(--verbose の後ろに --include-partial-messages: dotfiles
@@ -187,7 +188,8 @@
    - dialogue = CodexDialogue(温かい process・initialize → thread/start | thread/resume →
      turn/start・turn/completed で終わり・turn/interrupt で割り込み)。続きの手番
      (resume_mode = \"resume\")は conversation.session_id を thread の id として resume。"
-  (setv argv (+ ["codex"] (! (codex-root-config-args params)) (list CODEX-APP-SERVER-ARGS)))
+  ;; argv[0] = 種類の実行ファイルの名の唯一の定義(drivers.DRIVER-EXECUTABLE・ADR-DOE-AGENTS-012 R61)。
+  (setv argv (+ [(get DRIVER-EXECUTABLE "codex")] (! (codex-root-config-args params)) (list CODEX-APP-SERVER-ARGS)))
   (setv conversation (.get params "conversation"))
   (setv resume-id
         (if (and (= (.get params "resume_mode") "resume") (isinstance conversation dict))

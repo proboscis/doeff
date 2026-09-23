@@ -388,6 +388,85 @@
   (with-skeleton check))
 
 
+;; ---------------------------------------------------------------------------
+;; drivers.list(ADR-DOE-AGENTS-012 R61・card acp:kanban-issue:ki-f250d67a7157): 種類ごとの実行ファイルが
+;; host の子 process の実効 env で見つかるか — 本物の host(parse-args → dispatch-line)に、一時 dir を
+;; PATH にして問う。問うたびに探す(起動時に 1 度だけ探して固定する実装は 1 回だけ問う検を通るが、稼働中に
+;; 消えた codex を申告し続ける — その形を落とすのが下の 2 本)。
+;; ---------------------------------------------------------------------------
+
+(defn place-executable [directory name mode]
+  "directory/name に sh の 1 行を置き、mode を与える(0o755 = 実行できる・0o644 = 実行できない)。"
+  (setv path (os.path.join directory name))
+  (with [handle (open path "w" :encoding "utf-8")]
+    (.write handle "#!/bin/sh\nexit 0\n"))
+  (os.chmod path mode)
+  path)
+
+
+(defn ask-drivers [config actor env]
+  "本物の dispatch に drivers.list を 1 行で問い、{agent_type: path} を返す(env = None は params.env を送らない)。"
+  (setv params (if (is env None) {} {"env" env}))
+  (setv response (json.loads (dispatch-line (json.dumps {"id" 1 "method" "drivers.list" "params" params})
+                                            config actor)))
+  (assert (= (get response "ok") True) response)
+  (setv drivers (get (get response "result") "drivers"))
+  (assert (= (lfor item drivers #((get item "agent_type") (get item "executable")))
+             [#("claude" "claude") #("codex" "codex")])
+          drivers)
+  (dfor item drivers (get item "agent_type") (get item "path")))
+
+
+(deftest test-dispatch-drivers-list-sees-an-executable-vanish-without-a-restart
+  ;; (a) claude と codex を置いて起動 → 両方 path あり → codex の file を消す → 同じ host の次の問いで codex = null。
+  (setv bin (tempfile.mkdtemp))
+  (try
+    (setv claude (place-executable bin "claude" 0o755))
+    (setv codex (place-executable bin "codex" 0o755))
+    (defn check [config actor]
+      (assert (= (ask-drivers config actor None) {"claude" claude "codex" codex}))
+      (os.remove codex)
+      (assert (= (ask-drivers config actor None) {"claude" claude "codex" None})))
+    (with-env {"PATH" bin} (fn [] (with-skeleton check)))
+    (finally (shutil.rmtree bin :ignore-errors True))))
+
+
+(deftest test-dispatch-drivers-list-sees-an-executable-placed-after-the-start
+  ;; (b) claude だけで起動 → 起動の後に codex を置く → 次の問いで codex を申告する(再起動なし)。
+  (setv bin (tempfile.mkdtemp))
+  (try
+    (setv claude (place-executable bin "claude" 0o755))
+    (defn check [config actor]
+      (assert (= (ask-drivers config actor None) {"claude" claude "codex" None}))
+      (setv codex (place-executable bin "codex" 0o755))
+      (assert (= (ask-drivers config actor None) {"claude" claude "codex" codex})))
+    (with-env {"PATH" bin} (fn [] (with-skeleton check)))
+    (finally (shutil.rmtree bin :ignore-errors True))))
+
+
+(deftest test-dispatch-drivers-list-searches-the-path-the-caller-overlays
+  ;; (c) 機体の PATH には claude だけ・params.env.PATH に codex だけの dir を重ねる → 重ねた PATH で探す
+  ;; (claude = null・codex = path)。重ねなければ機体の PATH(Popen と同じ手順 — 実行権の無い file は見つからない)。
+  (setv host-bin (tempfile.mkdtemp))
+  (setv seat-bin (tempfile.mkdtemp))
+  (try
+    (setv claude (place-executable host-bin "claude" 0o755))
+    (setv codex (place-executable seat-bin "codex" 0o755))
+    (place-executable seat-bin "claude" 0o644)
+    (defn check [config actor]
+      (assert (= (ask-drivers config actor {"PATH" seat-bin}) {"claude" None "codex" codex}))
+      (assert (= (ask-drivers config actor None) {"claude" claude "codex" None}))
+      ;; 形の違う env は断る(推し量らない)。
+      (setv refused (json.loads (dispatch-line (json.dumps {"id" 2 "method" "drivers.list" "params" {"env" {"PATH" 1}}})
+                                               config actor)))
+      (assert (= (get refused "ok") False) refused)
+      (assert (in "invalid params for drivers.list" (get refused "error")) refused))
+    (with-env {"PATH" host-bin} (fn [] (with-skeleton check)))
+    (finally
+      (shutil.rmtree host-bin :ignore-errors True)
+      (shutil.rmtree seat-bin :ignore-errors True))))
+
+
 (deftest test-dispatch-skeleton-loud
   (defn check [config actor]
     ;; await: 不在 session は -32001 を error_code 付きで返す(oracle

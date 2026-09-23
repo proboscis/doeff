@@ -30,6 +30,7 @@ from typing import Literal, NamedTuple, TypeAlias, get_args
 
 from doeff import EffectBase
 from doeff_agents.sessionhost.attachment import TurnAttachment
+from doeff_agents.sessionhost.drivers import DRIVER_EXECUTABLE
 
 #: JSON の値(ACP の行の spec / status・中継の frame はこの形のまま運ぶ)。
 JSON: TypeAlias = "dict[str, JSON] | list[JSON] | str | int | float | bool | None"
@@ -164,6 +165,7 @@ ConditionType = Literal[
     "CredentialSourceMissing",
     "CredentialPlaceMismatch",
     "PlaceMismatch",
+    "AgentKindUnavailable",
     "AgentSettingIgnored",
     "AgentMemoryUnwritable",
     "SessionLost",
@@ -217,6 +219,12 @@ CONDITION_CREDENTIAL_PLACE_MISMATCH: ConditionType = "CredentialPlaceMismatch"
 #: 宿が**道具**を持つか。配置(ACP Scheduling.Decide.nodeServesPlace)が同じ要求を判じるが、配置の版が古い・
 #: 手で結んだ拍にも実際の宿が名乗るための走行側の門(第 2 の方策点ではない — 要求の座は方策の 1 欄)。
 CONDITION_PLACE_MISMATCH: ConditionType = "PlaceMismatch"
+#: ADR-DOE-AGENTS-012 R61(card acp:kanban-issue:ki-f250d67a7157): job の agent の種類(手番 = charter.agent_type・
+#: 要約 = agentd 自身が起こす claude)を、この node がいま申告していない(AgentdState.agent_kinds に無い — その種類の
+#: 実行ファイルが起動する process の実効 env で見つからない)ので起こさなかった印。綴りは ACP の対の条件と同じ
+#: (ACP 304a083d が carrierEndedFailureReasons に足した — この条件で閉じた job の郵便は配置が別の node へ回す)。
+#: 判断は judgment.agent-kind-refusal-of の 1 点。
+CONDITION_AGENT_KIND_UNAVAILABLE: ConditionType = "AgentKindUnavailable"
 #: 段 10 lane 10y(agora-redesign #110・依頼者の裁定 2026-09-15 案 A): 手番の work_dir(家からの相対 `~/…` は node の HOME で展開した後)が
 #: この node に無く、charter が scratch の印(CHARTER_WORK_DIR_SCRATCH_KEY = true)を持たない job を起こさなかった印。配車の係は
 #: この条件を「会話 × node」で読み、同じ会話の手番の候補からこの node を外す(ACP 側・lane 10d)。判断は judgment.work-dir-step-of の 1 点。
@@ -538,6 +546,12 @@ AGENT_CAPABILITIES: dict[str, dict[str, tuple[AgentSetting, ...]]] = {
     "claude": {"settings": AGENT_SETTINGS, "restartOn": AGENT_SETTINGS_RESTART_ON},
     "codex": {"settings": AGENT_SETTINGS, "restartOn": AGENT_SETTINGS_RESTART_ON},
 }
+#: ADR-DOE-AGENTS-012 R61(card acp:kanban-issue:ki-f250d67a7157): 上の表は種類ごとに**受け付ける欄**の意味で、node が
+#: 申告する種類はその部分集合 = この node の起動する process のすべてで実行ファイル(drivers.DRIVER_EXECUTABLE)が
+#: 見つかる種類(judgment.launchable-agent-kinds の 1 点)。手番は host が起こし、下の種類は agentd 自身も起こす:
+#: 要約の job(charter.kind = summarize)は agentd が AgentdSettings.claude_binary を print モードで起こす(host を
+#: 通らない — agentd.start-summary-region → CommandStart)ので、claude は host と agentd の両方で見つかる時だけ申告する。
+AGENTD_LAUNCHED_KINDS: tuple[str, ...] = ("claude",)
 #: node の status に能力の表を書く欄の名(契約 kinds.node.schema.properties.status.properties.capabilities・書き手 agentd)。
 NODE_CAPABILITIES_KEY = "capabilities"
 #: charter の欄 → 会話の宣言の欄の語(契約 conventions.agentSettings.settings)。profile は charter に無い(段 10c: 配置の係が
@@ -1353,6 +1367,33 @@ PaneSeatsOutcome: TypeAlias = "tuple[PaneSeat, ...] | PaneSeatsUnavailable"
 
 
 @dataclass(frozen=True)
+class DriverResolution:
+    """host の読み口 ``drivers.list`` の答えの 1 項(ADR-DOE-AGENTS-012 R61): 種類(charter.agent_type の語)・
+    起動する実行ファイルの名(drivers.DRIVER_EXECUTABLE)・host が子 process を起こす実効 env で見つかった path
+    (None = 見つからない)。観測の材料で、申告の判断は judgment.launchable-agent-kinds。"""
+
+    agent_type: str
+    executable: str
+    path: str | None
+
+
+@dataclass(frozen=True)
+class DriversUnavailable:
+    """host の実行ファイルの在否を読めなかった(ADR-DOE-AGENTS-012 R61)。
+
+    ``reachable`` = host の socket には届いた(断り — 読み口を持たない旧い host の unknown method・答えの形の誤り)か。
+    False = 届かない(host が降りている・入れ替えの途中)— その拍の器の眺めの読み(SessionList)も落ちる。
+    ⚠ 例外にしない: どちらも「この node は何も起動できると言えない」の観測で、申告は空になる(前の申告や固定の表へ
+    戻らない)。理由は人が読む 1 文で、同じ理由は 1 度だけ log する(AgentdState.drivers_note)。"""
+
+    reason: str
+    reachable: bool
+
+
+HostDriversOutcome: TypeAlias = "tuple[DriverResolution, ...] | DriversUnavailable"
+
+
+@dataclass(frozen=True)
 class ProfileObservation:
     """profile の行に書く status.observed(契約 {window, remaining, resetAt, observedAt, node})。"""
 
@@ -1469,8 +1510,10 @@ class AgentdSettings:
     #: 1 点 — state_dir の下の LEASE_JOURNAL_FILENAME)。空 = journal を持たない機体(検体の既定 — 借りも返しも
     #: 今日どおり memory だけで回る)。
     lease_journal_path: str = ""
-    #: Claude Code の binary(argv の先頭 — PATH で解く)。
-    claude_binary: str = "claude"
+    #: Claude Code の binary(要約の job の argv の先頭 — agentd の PATH で解く)。名の定義は drivers.DRIVER_EXECUTABLE の
+    #: 1 点(ADR-DOE-AGENTS-012 R61)— 参加の拍ごとに agentd の実効 env で探し(ResolveLocalExecutable)、見つからなければ
+    #: claude を申告しない。
+    claude_binary: str = DRIVER_EXECUTABLE["claude"]
     #: この node が預かり所(custody)を宣言しているか(段 10c・agora-redesign #80)。composition root
     #: (runtime.settings_from_env)が CUSTODY_URL_ENV(join の [custody].url / --custody)の在否から導く 1 点。True の node は
     #: status.binding.account の無い agent-job を起こさない(judgment.credential-source-of)— charter の binding
@@ -2911,6 +2954,14 @@ class AgentdState:
     #: 段 12(agora-redesign #577): pane の席を読めなかった最後の理由(同じ理由は 1 度だけ log する印 —
     #: 読み口を持たない機体〔pool の pod〕が周期ごとに同じ行を吐かない)。読めた拍に "" へ戻る。
     pane_seats_note: str = ""
+    #: ADR-DOE-AGENTS-012 R61(card acp:kanban-issue:ki-f250d67a7157): この node がいま申告している agent の種類(参加の拍が
+    #: judgment.launchable-agent-kinds で決め、node の status.capabilities に書いた種類・種類の名の順)。claim の起動前の検査
+    #: (judgment.agent-kind-refusal-of)はこれに無い種類の job を AgentKindUnavailable で閉じる。None = この process はまだ
+    #: 1 度も観測していない(起動直後の参加の拍より前・参加の拍が I/O の失敗で途中で落ちた)— 判らないもので止めない
+    #: (観測した「空」は () で、host に届かない拍・読み口の無い host はこちら)。
+    agent_kinds: tuple[str, ...] | None = None
+    #: 実行ファイルの在否を読めなかった最後の理由(同じ理由は 1 度だけ log する印 — pane_seats_note と同じ作法)。読めた拍に "" へ戻る。
+    drivers_note: str = ""
     #: 段 10f 便 2(agora-redesign #82): session ごとの直前の手番の文脈の使用率(%・手番の終わりに材料の末尾から測る —
     #: judgment.context-percent-of)。次の手番の claim が会話の宣言 compactAt と比べる材料(judgment.compaction-due)。
     #: memory の cache — agentd の再起動で消え、次の手番の終わりに測り直す(turn-record に同等の欄が無い間の実測)。
@@ -3561,6 +3612,26 @@ class ListPaneSeats(EffectBase):
     席の家の解きはすべて向こうが単一所有する — agentd は答えの 4 欄を受けるだけ(第 2 の観測点を持たない)。
     結果 = PaneSeatsOutcome(席の列 / 読めなかった理由)。読めない拍は観測の pane の半分が空になるだけで、
     自分の session の観測は書く(判断は judgment.pane-observations-of・log は 1 度)。"""
+
+
+@dataclass(frozen=True)
+class ListHostDrivers(EffectBase):
+    """host に、種類ごとの実行ファイルが子 process の実効 env で見つかるかを問う(ADR-DOE-AGENTS-012 R61 —
+    host の読み口 ``drivers.list``・判定は host の drivers.driver_path_in の 1 点 = Popen の探索と同じ手順)。
+    ``env`` = 呼び手が重ねる env(= 手番の charter に重ねる宣言の env AgentdSettings.seat_env — 認証は含まない)。
+    結果 = HostDriversOutcome(種類ごとの在否の列 / 読めなかった理由と届いたか)。参加の周期ごとに問い直す
+    (host も agentd も結果を持たない — 稼働中に消えた実行ファイルは次の周期に申告から落ちる)。"""
+
+    env: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class ResolveLocalExecutable(EffectBase):
+    """agentd 自身の実効 env(``os.environ``)で実行ファイル ``word`` が見つかる path(ADR-DOE-AGENTS-012 R61)。
+    agentd が自分で起こす要約の job(AGENTD_LAUNCHED_KINDS)の在否の観測 — 判定は drivers.driver_path_in の 1 点
+    (host と同じ関数)。結果 = str | None(None = 見つからない)。"""
+
+    word: str
 
 
 @dataclass(frozen=True)

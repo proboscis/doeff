@@ -20,6 +20,8 @@
 (import re)
 (import uuid)
 
+(import doeff_agents.sessionhost.drivers [DRIVER-EXECUTABLE])
+
 (import doeff_agents.sessionhost.effects [
   BuildLaunch
   BuildResume
@@ -329,7 +331,8 @@
      1 byte も変わらない。
    - prompt は決して argv に載せない(live terminal transport のみ)・
      print mode(-p / --print)不使用"
-  (setv args ["claude" "--dangerously-skip-permissions"])
+  ;; argv[0] = 種類の実行ファイルの名の唯一の定義(drivers.DRIVER-EXECUTABLE・ADR-DOE-AGENTS-012 R61)。
+  (setv args [(get DRIVER-EXECUTABLE "claude") "--dangerously-skip-permissions"])
   ;; --settings は 1 つだけ出す(2 回出すと後勝ちで片方が黙って消える)。中身は宣言の合流点:
   ;; hook の無効化(既定)と自動記憶の置き場(charter が運んだ時だけ)。両方とも無い手番では
   ;; 旗自体を出さない — 欄の無い charter の argv は今日と 1 byte も変わらない。

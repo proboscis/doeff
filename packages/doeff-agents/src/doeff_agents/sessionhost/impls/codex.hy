@@ -12,6 +12,8 @@
 
 (import json)
 
+(import doeff_agents.sessionhost.drivers [DRIVER-EXECUTABLE])
+
 (import doeff_agents.sessionhost.effects [
   BuildLaunch
   BuildResume
@@ -79,7 +81,8 @@
      `.args=[...]`(TOML 配列)— caller server → channel → model の順
    - prompt は決して argv に載せない(単発実行になり monitor が
      validate/再促serする前に process が死ぬ)"
-  (setv args ["codex" "--yolo"])
+  ;; argv[0] = 種類の実行ファイルの名の唯一の定義(drivers.DRIVER-EXECUTABLE・ADR-DOE-AGENTS-012 R61)。
+  (setv args [(get DRIVER-EXECUTABLE "codex") "--yolo"])
   (setv effort (.get params "effort"))
   (when effort
     (.extend args ["-c" f"model_reasoning_effort={(toml-quoted effort)}"]))

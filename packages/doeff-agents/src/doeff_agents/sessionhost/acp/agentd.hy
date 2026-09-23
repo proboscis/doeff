@@ -257,7 +257,9 @@
   LaunchPlan
   LeaseGrant
   LeaseRefused
+  ListHostDrivers
   ListPaneSeats
+  ResolveLocalExecutable
   ListProfileHomes
   LogLine
   MESSAGE-KIND
@@ -288,6 +290,7 @@
   TranscriptRefused
   CONDITION-CREDENTIAL-PLACE-MISMATCH
   CONDITION-PLACE-MISMATCH
+  CONDITION-AGENT-KIND-UNAVAILABLE
   PLACES-SEPARATOR
   CONDITION-WORK-DIR-MISSING
   WORK-DIR-STEP-CREATE
@@ -302,6 +305,7 @@
   NEXT-ARM-SEND
   NODE-KIND
   PaneSeatsUnavailable
+  DriversUnavailable
   PROFILE-KIND
   PROFILE-USAGE-KIND
   PROFILE-USAGE-KINDS
@@ -449,6 +453,7 @@
   condition-of
   charter-place-of
   place-mismatch
+  agent-kind-refusal-of
   credential-place-mismatch
   credential-place-of
   credential-from-custody
@@ -569,6 +574,8 @@
   node-spec-declared
   node-spec-of
   node-status-with-observations
+  capabilities-withdrawal-of
+  launchable-agent-kinds
   node-status-with-renewed-lease
   pane-frame
   pane-observations-of
@@ -660,12 +667,22 @@
    段 10 lane 10ba・agora-redesign #115)の 1 つ。R28(段 10 lane 10d・agora-redesign #85): node の spec の
    書き手は agentd(既知の形 = kubelet の Node の自己登記・spec の形は judgment.node-spec-of / node-spec-declared の 1 点)。
    行が無い拍は、node が退いた以上は温かい session を残さずに作る。作れない・揃えられない拍(書き手の断り等)は 1 度だけ
-   log して次の周期に撃ち直す — 揃えられなくても lease は書く(参加の生存を spec の書きの成否に結ばない)。"
+   log して次の周期に撃ち直す — 揃えられなくても lease は書く(参加の生存を spec の書きの成否に結ばない)。
+   ADR-DOE-AGENTS-012 R61: 器の眺めより前に、この node が起動できる agent の種類を観測する(observe-agent-kinds)。
+   種類は state.agent-kinds に置き(claim の起動前の検査が読む)、観測と同じ書きで status.capabilities に名乗る。
+   host に届かない拍は器の眺めも読めないので、名乗っていた能力の表を空にして 1 度だけ書き(withdraw-node-capabilities)、
+   そこで戻る — 走っている手番は止めない(lease は別の thread のまま)。"
   (<- rows tuple (AcpGet :kind NODE-KIND))
   (<- node (| AcpRow None) (node-row-named rows settings.node-name))
+  (<- observed tuple (observe-agent-kinds settings state))
+  (setv #(kinds drivers-note reachable) observed)
+  (setv next (replace state :last-heartbeat-ms now-ms :agent-kinds kinds :drivers-note drivers-note))
+  (when (not reachable)
+    (when (is-not node None)
+      (<- (withdraw-node-capabilities settings node.key)))
+    (return next))
   ;; 温かい session は生きている status だけを読む(器が SQL で絞る — 終端の履歴は読まない)。
   (<- views tuple (live-sessions))
-  (setv next (replace state :last-heartbeat-ms now-ms))
   (if (is node None)
       (do
         (setv alive [])
@@ -730,7 +747,7 @@
         ;; 同じ列に載せる(数える側は会話の担い手の路で 2 つの半分を分ける)。読めない拍は空で続ける。
         (<- panes tuple (observe-pane-seats observations state.pane-seats-note))
         (setv #(pane-sessions pane-note) panes)
-        (<- (write-node-observations settings row.key (+ observations pane-sessions) transcripts))
+        (<- (write-node-observations settings row.key (+ observations pane-sessions) transcripts kinds))
         ;; 段 12 lane 12j(#321): 在った行(R43 の判断で解いた生きている行)の id = 自分の生きている行の id。
         (replace next :node-missing-logged False :node-spec-refusal-logged spec-refusal-logged
                  :node-row-id node.resource-id :pane-seats-note pane-note))))
@@ -761,18 +778,69 @@
   #(items ""))
 
 
-(defk write-node-observations [settings key sessions transcripts]
-  {:pre [(: settings AgentdSettings) (: key str) (: sessions list) (: transcripts list)]
+(defk observe-agent-kinds [settings state]
+  {:pre [(: settings AgentdSettings) (: state AgentdState)]
+   :post [(: % tuple)]}
+  "この node が起動できる agent の種類の観測(ADR-DOE-AGENTS-012 R61・card acp:kanban-issue:ki-f250d67a7157): 手番を起こす
+   host に種類ごとの実行ファイルの在否を問い(ListHostDrivers — 渡す env = 手番の charter に重ねる宣言の env seat-env)、
+   agentd 自身が起こす要約の claude を自分の実効 env で探し(ResolveLocalExecutable に settings.claude-binary)、申告する種類を
+   judgment.launchable-agent-kinds の 1 点で決める。参加の周期ごとに問い直す(結果を持ち越さない)。
+   戻り = #(種類の tuple 読めなかった理由〔読めた拍は空〕 host に届いたか)。読めない理由は変わった時だけ 1 行、
+   読めた拍は申告する種類が変わった時だけ 1 行 log する(周期ごとに同じ行を吐かない)。判断はここに無い — 読みと log だけ。"
+  (<- host-drivers (| tuple DriversUnavailable) (ListHostDrivers :env settings.seat-env))
+  (<- agentd-resolved (| str None) (ResolveLocalExecutable :word settings.claude-binary))
+  (<- kinds tuple (launchable-agent-kinds host-drivers agentd-resolved))
+  (when (isinstance host-drivers DriversUnavailable)
+    (when (!= state.drivers-note host-drivers.reason)
+      (<- (LogLine :text (+ f"agentd: node {settings.node-name !r} declares no agent kinds — the host's executables "
+                            f"could not be read: {host-drivers.reason}"))))
+    (return #(kinds host-drivers.reason host-drivers.reachable)))
+  (when (!= kinds state.agent-kinds)
+    (setv declared (.join ", " kinds))
+    (setv on-host (.join ", " (lfor item host-drivers
+                                    (+ item.executable "=" (if (is item.path None) "not found" item.path)))))
+    (setv on-agentd (if (is agentd-resolved None) "not found" agentd-resolved))
+    (<- (LogLine :text (+ f"agentd: node {settings.node-name !r} declares agent kinds [{declared}] "
+                          f"(host: {on-host}; agentd {settings.claude-binary}={on-agentd})"))))
+  #(kinds "" True))
+
+
+(defk withdraw-node-capabilities [settings key]
+  {:pre [(: settings AgentdSettings) (: key str)]
+   :post [(: % str)]}
+  "host に届かない拍の申告の取り下げ(ADR-DOE-AGENTS-012 R61): 行を読み直し、名乗っている能力の表が空でなければ空の表に
+   した status を 1 度書く(judgment.capabilities-withdrawal-of — 観測と lease と state は写すだけ)。既に空なら書かない。
+   CAS に負けたら撃ち直さず次の周期へ(表が空でない限り次の周期がまた撃つ)。戻り = 結末の語
+   (written / unchanged / no-node-row / refused / conflict)。"
+  (<- fresh (| AcpRow None) (AcpGetRow :key key))
+  (when (is fresh None)
+    (return "no-node-row"))
+  (<- withdrawn (| dict None) (capabilities-withdrawal-of fresh))
+  (when (is withdrawn None)
+    (return "unchanged"))
+  (<- outcome (| Written Conflict Refused) (AcpPutStatus :row fresh :status withdrawn))
+  (when (isinstance outcome Written)
+    (<- (LogLine :text f"agentd: node {settings.node-name !r} withdrew its capabilities while the host is unreachable"))
+    (return "written"))
+  (when (isinstance outcome Refused)
+    (<- (LogLine :text f"agentd: node {settings.node-name !r} capabilities withdrawal refused ({outcome.status}): {outcome.error}"))
+    (return "refused"))
+  "conflict")
+
+
+(defk write-node-observations [settings key sessions transcripts kinds]
+  {:pre [(: settings AgentdSettings) (: key str) (: sessions list) (: transcripts list) (: kinds tuple)]
    :post [(: % str)]}
   "参加の腕の観測の書き(段 10 lane 10ba・agora-redesign #115): lease は別の thread(lease-heartbeat)が書くので、観測を組んだ
    後に行を読み直してから書く(器の眺めの読みや片付けの間に lease の書きが挟まっても、読みから書きまでを短くして CAS に
-   負けにくくする)。差し替えるのは observations と capabilities だけ(judgment.node-status-with-observations)。CAS に負けたら
+   負けにくくする)。差し替えるのは observations と capabilities だけ(judgment.node-status-with-observations — capabilities は
+   同じ拍に観測した種類 kinds ちょうど・R61)。CAS に負けたら
    読み直して 1 度だけ撃ち直し、それでも負けたら log して次の周期へ。戻り = 結末の語(written / no-node-row / refused / conflict)。"
   (for [attempt [1 2]]
     (<- fresh (| AcpRow None) (AcpGetRow :key key))
     (when (is fresh None)
       (return "no-node-row"))
-    (<- status dict (node-status-with-observations fresh settings sessions transcripts))
+    (<- status dict (node-status-with-observations fresh settings sessions transcripts kinds))
     (<- outcome (| Written Conflict Refused) (AcpPutStatus :row fresh :status status))
     (when (isinstance outcome Written)
       (return "written"))
@@ -1673,6 +1741,14 @@
   (when (= kind CHARTER-KIND-VERIFY)
     (<- claimed-verify AgentdState (claim-verify-job settings state row now-ms))
     (return claimed-verify))
+  ;; ADR-DOE-AGENTS-012 R61(card acp:kanban-issue:ki-f250d67a7157): 起こす agent の種類(手番 = charter.agent_type・要約 = agentd
+  ;; 自身の claude)をこの node がいま申告していなければ起こさない — 札も借りず作業場にも触れず、AgentKindUnavailable で閉じる
+  ;; (ACP はこの条件の job の郵便を別の node へ回す)。verify の後・要約の前の 1 点なので手番と要約の両方が通り、agent を
+  ;; 起こさない verify は通らない。配置も申告を読むが、配置の版が古い・申告の後に実行ファイルが消えた拍に実際の宿が名乗る門。
+  (<- kind-refusal (| str None) (agent-kind-refusal-of row settings.node-name state.agent-kinds))
+  (when (is-not kind-refusal None)
+    (<- (end-job-now settings row CONDITION-AGENT-KIND-UNAVAILABLE kind-refusal #() now-ms))
+    (return state))
   ;; 段 12 lane 12j(agora-redesign #233): charter.kind = summarize の job は会話の履歴の段階つき要約 — 会話の profile の札を借りて
   ;; claude の print モードを区間ごとに 1 回起こす腕へ(session は起こさず・作業場の門も歩かない・turn-record も書かない)。
   (when (= kind CHARTER-KIND-SUMMARIZE)

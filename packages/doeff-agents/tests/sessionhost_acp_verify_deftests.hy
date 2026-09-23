@@ -170,6 +170,19 @@
   (assert (= (len world.local.commands) 1) "走っている命令を起こし直した"))
 
 
+(deftest test-verify-job-runs-on-a-node-that-declares-no-agent-kind
+  ;; ADR-DOE-AGENTS-012 R61: 起動前の検査(AgentKindUnavailable)は agent を起こす job だけの門 — verify は agent を起こさない
+  ;; ので、host が実行ファイルを 1 つも見つけない(申告が空の)node でも今日どおり script を走らせる。
+  (setv world (World))
+  (setv world.sessions.driver-paths {"claude" None "codex" None})
+  (.put-row world.acp (verify-row "vj-7" VERIFY-ID 9000 PHASE-BOUND))
+  (.tick world 0)
+  (assert (= world.state.agent-kinds #()) world.state.agent-kinds)
+  (assert (= (get (.status world "vj-7") "phase") PHASE-RUNNING) (.status world "vj-7"))
+  (assert (= (.conditions world "vj-7") []))
+  (assert (= (len world.local.commands) 1) "申告の空な node で verify を走らせなかった"))
+
+
 (deftest test-verify-job-ends-with-the-exit-code-as-its-result
   ;; R36 (3): rc の file が在れば Ended・result に rc(赤 = rc != 0 も結末で条件ではない)・memory から外す。
   (setv world (World))

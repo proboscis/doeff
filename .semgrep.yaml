@@ -5266,3 +5266,71 @@ rules:
         - /tests/semgrep/fixtures/python/packages/doeff-agents/src/**
       exclude:
         - "**/sessionhost/substrate.hy"
+
+  - id: doeff-agents-agent-argv-head-names-the-driver-executable
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      ADR-DOE-AGENTS-012 R61 (card acp:kanban-issue:ki-f250d67a7157): the
+      executable an agent kind launches (argv[0]) is named in ONE place —
+      sessionhost/drivers.py DRIVER_EXECUTABLE — and every argv builder reads
+      it from there ((get DRIVER-EXECUTABLE "codex")). A literal "claude" /
+      "codex" at the head of an argv is a second definition: the node's
+      declaration (drivers.list → status.capabilities) checks one name while
+      the launch runs another, which is exactly how a node kept declaring
+      codex while its turns died with `No such file or directory: 'codex'`
+      (35 messages in production). Kind vocabularies such as
+      Literal["claude", "codex"] or ("claude", "codex") are not argv and do
+      not match (the head must be followed by a flag, a concatenation, or be
+      bound to an argv name).
+    pattern-either:
+      # 旗が続く頭: ["codex" "--yolo"] / ["claude", "-p"] / #("claude" "--print")
+      - pattern-regex: '[\[(]\s*"(claude|codex)"\s*,?\s*"-'
+      # Hy の連結の頭: (+ ["codex"] …)
+      - pattern-regex: '\(\+\s+\[\s*"(claude|codex)"\s*\]'
+      # argv の名に結ぶ頭: (setv args ["codex" …]) / argv = ["claude", …]
+      - pattern-regex: '\b(args|argv|cmd|command)\s*(=\s*)?[\[(]\s*"(claude|codex)"'
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/sessionhost/**
+
+  - id: doeff-agents-agent-binary-default-names-the-driver-executable
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      ADR-DOE-AGENTS-012 R61: a *_binary / *_executable setting that agentd
+      itself launches (AgentdSettings.claude_binary — the summarize job runs
+      claude in print mode without the host) takes its default from
+      sessionhost/drivers.py DRIVER_EXECUTABLE, never from a literal. The join
+      beat resolves that same name on agentd's own PATH (ResolveLocalExecutable)
+      to decide whether the node may declare claude; a literal default here
+      would let the declaration and the launch drift apart.
+    pattern-regex: '(?m)^\s+[a-z_]+_(binary|bin|executable)\s*:\s*str\s*=\s*"(claude|codex)"'
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/sessionhost/**
+
+  - id: doeff-agents-executable-lookup-has-one-home
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      ADR-DOE-AGENTS-012 R61: whether an executable is found on an env's PATH is
+      decided by ONE function — sessionhost/drivers.py driver_path_in (the same
+      search as subprocess.Popen: os.get_exec_path(env)). The host's
+      drivers.list and agentd's ResolveLocalExecutable both call it, so the node
+      declares a kind only by the rule the launch itself obeys. A second
+      shutil.which in sessionhost is a second judgment (a different env, a
+      different PATH default) that can disagree with the launch. Call
+      driver_path_in instead.
+    pattern-either:
+      - pattern-regex: '\bshutil\.which\b'
+      - pattern-regex: '(?m)^\s*from\s+shutil\s+import\s+[^\n]*\bwhich\b'
+      - pattern-regex: '\(\s*import\s+shutil\s+\[[^\]]*\bwhich\b'
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/sessionhost/**
+      exclude:
+        - "**/sessionhost/drivers.py"

@@ -108,6 +108,8 @@ from doeff_agents.sessionhost.acp.effects import (
     CustodyHealth,
     CustodyLeaseBorrow,
     CustodyLeaseRevoke,
+    DriverResolution,
+    DriversUnavailable,
     Escalated,
     EventWindow,
     FsCanonicalPath,
@@ -118,12 +120,14 @@ from doeff_agents.sessionhost.acp.effects import (
     FsMakeDirectories,
     FsReadText,
     FsWritePrivateText,
+    HostDriversOutcome,
     Interjected,
     JSONObject,
     LeaseGrant,
     LeaseKind,
     LeaseOutcome,
     LeaseRefused,
+    ListHostDrivers,
     ListPaneSeats,
     ListProfileHomes,
     LogLine,
@@ -167,6 +171,7 @@ from doeff_agents.sessionhost.acp.effects import (
     RecordUnread,
     RecordUnsent,
     Refused,
+    ResolveLocalExecutable,
     SessionCapture,
     SessionCleanup,
     SessionEscalate,
@@ -202,6 +207,7 @@ from doeff_agents.sessionhost.acp.io_types import (
 )
 from doeff_agents.sessionhost.attachment import TurnAttachment, attachment_wire
 from doeff_agents.sessionhost.cache_host_model import HostCacheRecord, decode_cache_receipt
+from doeff_agents.sessionhost.drivers import driver_path_in
 
 Dispatcher: TypeAlias = Callable[[EffectBase, K], "Resume | Pass"]
 
@@ -1244,6 +1250,30 @@ def _str_map(value: JSON) -> dict[str, str] | None:
     return {key: item for key, item in value.items() if isinstance(item, str)}
 
 
+def _driver_resolution_of(item: JSON) -> DriverResolution | None:
+    """``drivers.list`` の答えの 1 項 → 在否(形が違えば None — 項を推し量らない)。"""
+    entry = _as_object(item)
+    agent_type = _str_field(entry, "agent_type")
+    executable = _str_field(entry, "executable")
+    path = entry.get("path")
+    if agent_type is None or executable is None or not (path is None or isinstance(path, str)):
+        return None
+    return DriverResolution(agent_type=agent_type, executable=executable, path=path)
+
+
+def decode_driver_listing(result: JSON) -> HostDriversOutcome:
+    """host の ``drivers.list`` の答え ``{"drivers": [{"agent_type", "executable", "path"}…]}`` → 在否の列
+    (ADR-DOE-AGENTS-012 R61)。形の違う答えは読めなかった(host には届いた)— 項を推し量らない。"""
+    drivers = _as_object(result).get("drivers")
+    if not isinstance(drivers, list):
+        return DriversUnavailable(reason="drivers.list answered without a drivers list", reachable=True)
+    decoded = [(item, _driver_resolution_of(item)) for item in drivers]
+    malformed = [item for item, resolution in decoded if resolution is None]
+    if malformed:
+        return DriversUnavailable(reason=f"drivers.list answered a malformed item: {malformed[0]!r}", reachable=True)
+    return tuple(resolution for _, resolution in decoded if resolution is not None)
+
+
 class SessionRpc:
     """sessionhost の socket を話す(公開の境界 — host の内側には触らない)。"""
 
@@ -1268,7 +1298,23 @@ class SessionRpc:
             return Resume(k, self._act(effect))
         if isinstance(effect, (SessionGet, SessionList, SessionCapture)):
             return Resume(k, self._look(effect))
+        if isinstance(effect, ListHostDrivers):
+            return Resume(k, self._drivers(effect))
         return Pass(effect, k)
+
+    def _drivers(self, effect: ListHostDrivers) -> HostDriversOutcome:
+        """``drivers.list``(ADR-DOE-AGENTS-012 R61)→ 種類ごとの在否の列。host の断り(RPC の error 封筒 —
+        読み口を持たない旧い host の unknown method を含む)は届いた読めなさ、socket の失敗(OSError — host が
+        降りている)は届かない読めなさとして**値**で返す(例外にしない: 参加の腕はどちらでも申告を空にする)。"""
+        try:
+            answer: JSON = self._client.request("drivers.list", {"env": dict(effect.env)})
+        except AgentdClientError as error:
+            return DriversUnavailable(reason=f"the host refused drivers.list: {error}", reachable=True)
+        except OSError as error:
+            return DriversUnavailable(
+                reason=f"the host is unreachable: {type(error).__name__}: {error}", reachable=False
+            )
+        return decode_driver_listing(answer)
 
     def _cache_operation(self, effect: SessionCachePing | SessionCacheProbe) -> HostCacheRecord | None:
         operation = effect.operation
@@ -1487,6 +1533,10 @@ class LocalIo:
             return self._profile_dispatch(effect, k)
         if isinstance(effect, (ClockNowMs, MetricLine, LogLine)):
             return Resume(k, self._observe(effect))
+        if isinstance(effect, ResolveLocalExecutable):
+            # ADR-DOE-AGENTS-012 R61: agentd 自身が起こす process(要約の job — _start_command)の env の PATH は
+            # この process の os.environ そのもの(足す env は札と家だけ)なので、同じ env で host と同じ関数で探す。
+            return Resume(k, driver_path_in(effect.word, dict(os.environ)))
         return Pass(effect, k)
 
     def _filesystem_dispatch(self, effect: FsFileExists | FsReadText | FsCanonicalPath | FsFileSize | FsWritePrivateText | SessionTranscript | SessionEvents | FsDirectoryExists | FsListDirectory | FsMakeDirectories, k: K) -> Resume | Pass:
