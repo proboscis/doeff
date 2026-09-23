@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "doeff>=0.1.0",
+    "doeff-hy",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -17,3 +18,4 @@ packages = ["src/doeff_time"]
 
 [tool.uv.sources]
 doeff = { workspace = true }
+doeff-hy = { workspace = true }
