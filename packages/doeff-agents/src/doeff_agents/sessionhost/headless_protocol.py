@@ -887,6 +887,14 @@ def stop_verdict(status_terminal: bool, in_flight: bool) -> StopKind:
     return "turn-cut"
 
 
+StopCauseCategory = Literal["host_drained", "cancelled"]
+
+
+def stop_cause_category(declared: bool) -> StopCauseCategory:
+    """器の停止で切った行の cause の語(設計 ki-b5e0d04de958 D1・probe の試作): 排水の宣言の下 = host_drained / 宣言なし = cancelled(今日の語)。"""
+    return "host_drained" if declared else "cancelled"
+
+
 def parse_record(line: str) -> JSONObject | None:
     """stdout の 1 行 → JSON の object(壊れた行・object でない行は None — 発明しない)。"""
     stripped = line.strip()

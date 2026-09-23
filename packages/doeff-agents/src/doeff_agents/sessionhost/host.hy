@@ -80,6 +80,7 @@
 (import doeff_agents.sessionhost.impls.headless_argv [headless-argv-impl])
 (import doeff_agents.sessionhost.effects [headless-kill headless-liveness])
 (import doeff_agents.sessionhost.headless_protocol [backend-alive])
+(import doeff_agents.sessionhost.drain_marker [declared :as drain-declared])
 (import doeff_agents.sessionhost.cache_host [cache-host-ping cache-host-probe cache-host-guard-normal-send cache-host-cancel cache-last-success-at])
 (import doeff_agents.sessionhost.cache_host_model [CacheMaintenanceActiveError CACHE-MAINTENANCE-ACTIVE])
 (import doeff_agents.sessionhost.cache_host_model [HostCacheRead])
@@ -237,7 +238,9 @@
   ;; out-of-band 寿命境界(opt-in): spawn 元の死で自己終了 + launch 済み
   ;; session の reap。conformance harness が常時立てる(S28)。
   #^ bool exit-when-orphaned
-  (setv exit-when-orphaned False))
+  (setv exit-when-orphaned False)
+  #^ (| str None) drain-file
+  (setv drain-file None))
 
 
 ;; ---------------------------------------------------------------------------
@@ -341,6 +344,8 @@
 (setv ENV-HERDR-SOCKET "DOEFF_SESSIONHOST_HERDR_SOCKET")
 (setv ENV-HEADLESS-DIR "DOEFF_SESSIONHOST_HEADLESS_DIR")
 (setv ENV-EXIT-WHEN-ORPHANED "DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED")
+;; 設計 ki-b5e0d04de958 D1(probe の試作): 排水の宣言の file の path(役 host の起動の組み立てだけが立てる・env-only)。
+(setv ENV-DRAIN-FILE "DOEFF_SESSIONHOST_DRAIN_FILE")
 
 ;; serve の flag の一覧 = usage の生成元(並びがそのまま help の並び)。
 ;;   #(flag 値の見出し env の名 説明)
@@ -444,6 +449,7 @@
   ;; 凍結物理なので足さない。backend knob と同じ搬送経路)。
   (setv exit-when-orphaned
         (= (.get os.environ ENV-EXIT-WHEN-ORPHANED "") "1"))
+  (setv drain-file (or (.get os.environ ENV-DRAIN-FILE "") None))
   (setv command CMD-SERVE)
   (setv index 0)
   (while (< index (len args))
@@ -540,7 +546,8 @@
     :backend backend
     :herdr-socket herdr-socket
     :headless-events-root headless-events-root
-    :exit-when-orphaned exit-when-orphaned))
+    :exit-when-orphaned exit-when-orphaned
+    :drain-file drain-file))
 
 
 ;; ---------------------------------------------------------------------------
@@ -2130,7 +2137,8 @@
         (print f"doeff-sessionhost stop: hook failed: {(. (type e) __name__)}: {e}" :file sys.stderr))))
   (when (headless-backend? config)
     (try
-      (setv outcomes (run-hosted config actor (stop-headless-rows name)))
+      (setv declared (drain-declared config.drain-file))
+      (setv outcomes (run-hosted config actor (stop-headless-rows name declared)))
       (setv cut (lfor [sid status] (.items outcomes) :if (and (!= sid "killed") (= status "stopped")) sid))
       (print (+ f"doeff-sessionhost stop ({name}): {(.get outcomes "killed" 0)} headless process(es) terminated, "
                 f"{(len cut)} mid-turn row(s) ended as stopped/cancelled"
