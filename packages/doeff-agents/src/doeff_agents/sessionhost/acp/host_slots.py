@@ -165,13 +165,19 @@ def owner_of(
 ) -> str | None:
     """session id の要求をどの器へ送るか(純関数)。返り = 降りる途中の器の socket、None = 札の器。
 
-    札の器で生きていればそこ。札の器で生きておらず、降りる途中の器で生きていればそちら(古い器が
-    抱えている手番・温かい session)。どこでも生きていなければ札の器(終端の行は札の器にも写してある
-    — ``host-slot seed`` — ので、``--resume`` の元は札の器で引ける)。"""
+    札の器で生きていればそこ。札の器で生きていなければ、その session を**知っている**降りる途中の器(生きている器を先に・
+    無ければ行を持つ最初の器)— 古い器が抱えている手番・温かい session・古い器の上で終わった session の結末。
+    ⚠ 札の器の行は写し(``host-slot seed``)で、写した後の起動の復帰が「古い器で生きていた session」を exited / vanished と
+    記している — 古い器が行を持つ session の結末の正本は古い器(実弾 2026-09-23 15:4x 会社 Mac: 古い器の上で provider の
+    限度で failed になった手番 9 本を、写しの『vanished』で閉じ、限度の扱い〔profile の切り替え〕が効かなかった)。
+    どこも知らなければ札の器(終端の写しが ``--resume`` の元になる)。"""
     if session_live(active_view):
         return None
     for socket_path, view in draining_views:
         if session_live(view):
+            return socket_path
+    for socket_path, view in draining_views:
+        if view is not None:
             return socket_path
     return None
 
