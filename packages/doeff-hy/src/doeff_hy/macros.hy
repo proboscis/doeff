@@ -24,6 +24,7 @@
 
 (import os.path)
 (import inspect)
+(import doeff-hy.positions [locate-synthesized])
 
 ;; Re-export handle macros so users only need one require line.
 ;; Without this, forgetting (require doeff-hy.handle [defhandler]) causes
@@ -504,7 +505,8 @@ deff {name}: {{:post [...]}} is required.
 " :name name))))
   (_validate-pre-type-checks name params pre-checks)
   (_validate-post-type-check name post-checks)
-  (_build-fn-with-contracts [] name params pre-checks post-checks real-body))
+  (locate-synthesized
+    (_build-fn-with-contracts [] name params pre-checks post-checks real-body)))
 
 
 ;; ---------------------------------------------------------------------------
@@ -620,7 +622,7 @@ defk {name}: {{:post [...]}} is required.
         `(do (import doeff [Some])
              (import doeff_core_effects.effects [Get Put]))
         `(do)))
-  `(do
+  (locate-synthesized `(do
      (import doeff.do [do :as _doeff_do])
      (import doeff-hy.macros [_install-guard-globals])
      ~lazy-imports
@@ -628,7 +630,7 @@ defk {name}: {{:post [...]}} is required.
      (_install-guard-globals ~name)
      (setv (. ~name __doeff_body__) '~real-body)
      (setv (. ~name __doeff_args__) '~params)
-     (setv (. ~name __doeff_name__) ~(str name))))
+     (setv (. ~name __doeff_name__) ~(str name)))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -651,8 +653,9 @@ defk {name}: {{:post [...]}} is required.
    (fnk [x y] (+ (! (k1 x)) (! (k2 y))))"
   ;; Expand bangs in the body — in-place (yield ...) rewrite [ADR-DOE-HY-003]
   (setv expanded-forms (lfor form body (_expand-bangs form "fnk")))
-  `(do (import doeff.do [do :as _doeff_do])
-       (fn [~@params] ((_doeff_do (fn [] (do ~@expanded-forms)))))))
+  (locate-synthesized
+    `(do (import doeff.do [do :as _doeff_do])
+         (fn [~@params] ((_doeff_do (fn [] (do ~@expanded-forms))))))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -695,7 +698,7 @@ defk {name}: {{:post [...]}} is required.
                        ;; Effect binding — yield (typed bind keeps its isinstance)
                        (let [#(name tp expr) (_bind-parts bind)]
                          (_bind-yield name tp expr)))))
-  (if post-checks
+  (locate-synthesized (if post-checks
       (let [post-asserts (lfor check post-checks
                            (_expand-check check "do!" "post-condition"))]
         `(do (import doeff.do [do :as _doeff-do])
@@ -717,7 +720,7 @@ defk {name}: {{:post [...]}} is required.
                 ~@expanded
                 (setv _contract_result ~body-expr)
                 (_guard-performed _contract_result "do!")
-                (return _contract_result))))))))
+                (return _contract_result)))))))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -737,7 +740,7 @@ defk {name}: {{:post [...]}} is required.
     (raise (SyntaxError (+ "<-: expected (<- expr) / (<- name expr) / (<- name Type expr), got "
                            (str (len args)) " arguments"))))
   (setv #(name tp expr) parts)
-  (_bind-yield name tp expr))
+  (locate-synthesized (_bind-yield name tp expr)))
 
 
 ;; ---------------------------------------------------------------------------
@@ -902,7 +905,7 @@ defk {name}: {{:post [...]}} is required.
      (import doeff [do :as _doeff-do])
      (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])"
   (setv #(bindings body-expr) (_parse-do-body forms "traverse"))
-  (_gen-traverse-body bindings body-expr))
+  (locate-synthesized (_gen-traverse-body bindings body-expr)))
 
 
 (defmacro for/do [#* forms]
@@ -934,7 +937,7 @@ defk {name}: {{:post [...]}} is required.
      (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
      (import doeff_traverse [Skip :as _doeff_traverse_Skip])"
   (setv #(bindings body-expr) (_parse-do-body forms "for/do"))
-  (_gen-traverse-body bindings body-expr))
+  (locate-synthesized (_gen-traverse-body bindings body-expr)))
 
 
 ;; ---------------------------------------------------------------------------
@@ -1248,7 +1251,7 @@ the effect in the enclosing do-context.
      (<- data (load-data))
      (<- result (process data))
      result)"
-  (_build-defp "defp" name body))
+  (locate-synthesized (_build-defp "defp" name body)))
 
 (defmacro defpp [name #* body]
   "Define a Program[Program[T]] constant. Errors if return is NOT a Program.
@@ -1258,7 +1261,7 @@ the effect in the enclosing do-context.
      {:post [(inspect.isgenerator %)]}
      (<- config (load-config))
      (build-pipeline config))"
-  (_build-defp "defpp" name body :program-return-mode "require"))
+  (locate-synthesized (_build-defp "defpp" name body :program-return-mode "require")))
 
 
 ;; ---------------------------------------------------------------------------
@@ -1418,7 +1421,7 @@ the effect in the enclosing do-context.
       `(.skipif (. pytest mark) ~skip-if-expr :reason ~reason)))
 
   ;; Assemble the function definition with decorators
-  (if decorators
+  (locate-synthesized (if decorators
     `(do
        (import pytest)
        (import doeff.do [do :as _doeff_do])
@@ -1429,7 +1432,7 @@ the effect in the enclosing do-context.
        (import doeff.do [do :as _doeff_do])
        (import doeff-hy.macros [_install-guard-globals])
        (defn ~name [~@fn-params] ~fn-body)
-       (_install-guard-globals ~name {"_doeff_do" _doeff_do}))))
+       (_install-guard-globals ~name {"_doeff_do" _doeff_do})))))
 
 
 ;; ---------------------------------------------------------------------------
