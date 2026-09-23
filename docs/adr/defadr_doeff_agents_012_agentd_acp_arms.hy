@@ -3967,8 +3967,11 @@
        ;; 積と門と種類の読みは judgment の 1 点ずつ・門は置き場の門と verify の分岐の後で summarize の分岐の前・綴りは effects の 1 点。
        ;; 反例(挙動)は law の :enforcement に並べた検。名と探し方の直書きの禁止は下の semgrep 3 本。
        (import doeff_agents.sessionhost.drivers [DRIVER-EXECUTABLE])
-       (import doeff_agents.sessionhost.acp.effects [AGENT-CAPABILITIES AGENTD-LAUNCHED-KINDS])
+       (import doeff_agents.sessionhost.acp.effects [AGENT-CAPABILITIES AGENT-INTERRUPT-CAPABILITY AGENTD-LAUNCHED-KINDS])
        (assert (= (set DRIVER-EXECUTABLE) (set AGENT-CAPABILITIES)) "実行ファイルの名の表と能力の表が別の種類を名乗る(R61)")
+       ;; 盲検 A(実装段): 申告の組み立て(capabilities-of)は種類ごとに割り込みの表を必ず引く — 種類を足す変更が
+       ;; 能力の表と名の表にだけ行を足すと、その種類を申告する拍に KeyError で落ちる。3 つの表の種類は同じ集合。
+       (assert (= (set AGENT-INTERRUPT-CAPABILITY) (set AGENT-CAPABILITIES)) "割り込みの表と能力の表が別の種類を名乗る(R61)")
        (assert (<= (set AGENTD-LAUNCHED-KINDS) (set DRIVER-EXECUTABLE)) "agentd が自分で起こす種類が名の表に無い(R61)")
        ;; 探し方は drivers.py の 1 点: Popen と同じ path の列の上の which・起動の試しも保持もしない。
        (setv drivers-code (.join "\n" (live-bare-lines (/ SESSIONHOST-DIR "drivers.py")
@@ -4067,7 +4070,16 @@
        [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/drivers.py"
          "source" "import shutil\n\ndef driver_path_in(word: str, path: str) -> str | None:\n    return shutil.which(word, path=path)\n"}
         {"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/acp/handlers.py"
-         "source" "from doeff_agents.sessionhost.drivers import driver_path_in\n"}])]
+         "source" "from doeff_agents.sessionhost.drivers import driver_path_in\n"}])
+     ;; 盲検 B(card acp:kanban-issue:ki-f250d67a7157 の実装段): driver_listing だけが env の別の欄で実行ファイルを上書きすると、
+     ;; 上の 3 本と焦点の検を全部通したまま、申告は見つかる file を・起動は argv[0] の名を探して落ちる。drivers.py の env は
+     ;; Popen が探す PATH としてだけ読む(os.get_exec_path / driver-path-in へ渡すだけ)。
+     (defsemgrep r61-driver-lookup-reads-only-the-path
+       "doeff-agents-driver-lookup-reads-only-the-path"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/drivers.py"
+         "source" "import os\nfrom collections.abc import Mapping\n\ndef driver_listing(env: Mapping[str, str]) -> list[dict[str, object]]:\n    return [\n        {\"agent_type\": kind, \"executable\": word, \"path\": driver_path_in(word, env)}\n        for kind, default in sorted(DRIVER_EXECUTABLE.items())\n        for word in (env.get(f\"AGENT_{kind.upper()}_EXECUTABLE\", default),)\n    ]\n\ndef codex_word() -> str:\n    return os.environ.get(\"CODEX_BIN\", \"codex\")\n"}]
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/drivers.py"
+         "source" "import os\nimport shutil\nfrom collections.abc import Mapping\n\ndef driver_path_in(word: str, env: Mapping[str, str]) -> str | None:\n    search_path = os.pathsep.join(os.get_exec_path(dict(env)))\n    return shutil.which(word, path=search_path)\n\ndef driver_listing(env: Mapping[str, str]) -> list[dict[str, object]]:\n    return [\n        {\"agent_type\": kind, \"executable\": word, \"path\": driver_path_in(word, env)}\n        for kind, word in sorted(DRIVER_EXECUTABLE.items())\n    ]\n"}])]
   :plans ["docs/impl-requests/stage2-lane-prompts/lane-2b-agentd.md(agora-redesign)"
           "docs/impl-requests/stage2-lane-prompts/lane-2b2-agentd-fix.md(agora-redesign・改訂 R7〜R9)"
           "docs/impl-requests/stage2-lane-prompts/lane-2b3-warm-session.md(agora-redesign・改訂 R10)"

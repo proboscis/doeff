@@ -2293,12 +2293,18 @@ def test_launchable_agent_kinds_is_the_product_over_the_launching_processes() ->
 
 
 def test_driver_executable_names_the_same_kinds_as_the_capability_table() -> None:
-    """実行ファイルの名の定義元(drivers.DRIVER_EXECUTABLE)と能力の表(effects.AGENT_CAPABILITIES)の種類は同じ集合。
+    """実行ファイルの名の定義元(drivers.DRIVER_EXECUTABLE)と能力の表(effects.AGENT_CAPABILITIES)と割り込みの表
+    (effects.AGENT_INTERRUPT_CAPABILITY — capabilities-of が申告する種類ごとに必ず引く)の種類は同じ集合。
     agentd が自分で起こす種類は表の中にあり、要約の claude の既定の binary は定義元の名ちょうど。"""
-    from doeff_agents.sessionhost.acp.effects import AGENT_CAPABILITIES, AGENTD_LAUNCHED_KINDS
+    from doeff_agents.sessionhost.acp.effects import (
+        AGENT_CAPABILITIES,
+        AGENT_INTERRUPT_CAPABILITY,
+        AGENTD_LAUNCHED_KINDS,
+    )
     from doeff_agents.sessionhost.drivers import DRIVER_EXECUTABLE
 
     assert set(DRIVER_EXECUTABLE) == set(AGENT_CAPABILITIES)
+    assert set(AGENT_INTERRUPT_CAPABILITY) == set(AGENT_CAPABILITIES)
     assert set(AGENTD_LAUNCHED_KINDS) <= set(AGENT_CAPABILITIES)
     assert AGENTD_LAUNCHED_KINDS == ("claude",)
     assert AgentdSettings(node_name=NODE).claude_binary == DRIVER_EXECUTABLE["claude"]
