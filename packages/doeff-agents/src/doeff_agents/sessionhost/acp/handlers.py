@@ -1545,8 +1545,11 @@ class SessionRoutes:
     だけ — 終端の行は ``host-slot seed`` が札の器へ写してある)。降りる途中の器から返した眺めには
     ``draining=True`` を付ける(judgment.next-arm-for-job が send の腕を採らない — 古い器に新しい手番を
     積まない)。降りる途中の器が無い間(ふつうの時)は札の器 1 つへそのまま渡す(要求を 1 つも増やさない)。
-    ⚠ 降りる途中の器が答えない(降りた・落ちた)拍は「そこでは生きていない」と読む — その器の session は
-    器と共に消えたので、札の器の答え(終端の写し)が正しい。"""
+    ⚠ 降りる途中の器が**答えない**拍は例外をそのまま上げる(tick の縁が持ち越す)— 「そこでは生きていない」と
+    読まない。札の器の写しは古い器で生きている session を終端と記しているので、それを答えにすると腕が手番を閉じ、
+    片付けの要求で古い器の手番を切る(実弾 2026-09-23 15:45 会社 Mac: 古い器の session.get が時間切れ → 写しの
+    『exited / vanished』で 2 本の手番を閉じた)。器が**降りた**(socket が応答しない)拍は区画の観測
+    (HOST_LAYOUT_TTL_SECONDS ごと)から外れ、その後は札の器の答えだけになる。"""
 
     def __init__(
         self,
@@ -1628,10 +1631,10 @@ class SessionRoutes:
         return self._rpc(owner).answer(effect)
 
     def _draining_view(self, path: str, session_id: str) -> SessionView | None:
-        try:
-            found = self._rpc(path).answer(SessionGet(session_id=session_id))
-        except (OSError, AgentdClientError):
-            return None
+        """降りる途中の器の眺め。⚠ 答えない(時間切れ・断り)拍は例外をそのまま上げる(tick の縁が持ち越す)—
+        「そこには無い」と読んで指し札の器の写しを答えにしない: 写しは古い器で生きている session を終端と記して
+        いるので、腕はそれを読んで手番を閉じ、片付けの要求で古い器の手番を切る(実弾 2026-09-23 15:45・会社 Mac)。"""
+        found = self._rpc(path).answer(SessionGet(session_id=session_id))
         return found if isinstance(found, SessionView) else None
 
     def _list(
@@ -1650,10 +1653,8 @@ class SessionRoutes:
         ask = replace(effect, statuses=tuple(sorted(wanted)))
         index = {view.session_id: position for position, view in enumerate(views)}
         for path in draining:
-            try:
-                theirs = self._rpc(path).answer(ask)
-            except (OSError, AgentdClientError):
-                continue
+            # ⚠ 答えない拍は例外をそのまま上げる(_draining_view と同じ — 生きている行を黙って落とさない)。
+            theirs = self._rpc(path).answer(ask)
             for view in theirs if isinstance(theirs, tuple) else ():
                 if not isinstance(view, SessionView) or not host_slots.session_live(view):
                     continue
