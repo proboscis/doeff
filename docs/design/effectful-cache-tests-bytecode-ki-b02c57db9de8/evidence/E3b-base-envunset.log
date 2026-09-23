@@ -1,0 +1,13 @@
+# label=E3b-base-envunset
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 worktree=/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design
+# PYTHONDONTWRITEBYTECODE=<unset>
+# diff: 
+# diff sha256: e3b0c44298fc1c14
+# cmd: python -m pytest tests/test_effectful.py -q -k cache or rebuild
+
+deadline scale x1.6 (load/core) — per test 96s, watchdog 144s
+
+test-admission: focused — 2 件(変更箇所の検証)
+..                                                                       [100%]
+2 passed, 28 deselected in 0.36s
+# exit=0

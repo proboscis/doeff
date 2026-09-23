@@ -1,0 +1,31 @@
+# label=F-pos-xdist-env1
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 worktree=/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design
+# PYTHONDONTWRITEBYTECODE=1
+# diff:  M conftest.py  M packages/doeff-hy/tests/test_none_type_contract.py  M packages/doeff-hy/tests/test_source_positions.py  M tests/test_effectful.py ?? tests/test_bytecode_writing_off.py 
+# diff sha256: ff12e21f0cafa16c
+# cmd: python -m pytest tests/test_effectful.py tests/test_bytecode_writing_off.py -q -n 4
+
+deadline scale x1.6 (load/core) — per test 94s, watchdog 141s
+
+
+deadline scale x1.6 (load/core) — per test 94s, watchdog 141s
+
+
+deadline scale x1.6 (load/core) — per test 95s, watchdog 141s
+
+test-admission: focused — 33 件(変更箇所の検証)
+
+deadline scale x1.6 (load/core) — per test 95s, watchdog 141s
+
+test-admission: focused — 33 件(変更箇所の検証)
+
+deadline scale x1.6 (load/core) — per test 95s, watchdog 141s
+
+test-admission: focused — 33 件(変更箇所の検証)
+test-admission: focused — 33 件(変更箇所の検証)
+bringing up nodes...
+bringing up nodes...
+
+.................................                                        [100%]
+33 passed in 4.35s
+# exit=0

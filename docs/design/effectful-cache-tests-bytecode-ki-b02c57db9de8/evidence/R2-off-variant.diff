@@ -1,0 +1,8 @@
+301d300
+<         patch.setattr(sys, "pycache_prefix", None)
+303d301
+<         patch.delenv("PYTHONPYCACHEPREFIX", raising=False)
+306c304
+<     assert at_the_end == (True, None), (
+---
+>     assert at_the_end[0] is True, (

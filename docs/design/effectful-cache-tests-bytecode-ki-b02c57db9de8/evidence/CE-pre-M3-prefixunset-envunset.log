@@ -1,0 +1,13 @@
+# label=CE-pre-M3-prefixunset-envunset
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 worktree=/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design
+# PYTHONDONTWRITEBYTECODE=<unset> PYTHONPYCACHEPREFIX=<unset>
+# diff:  M conftest.py  M doeff/_effectful_rewrite.py  M packages/doeff-hy/tests/test_none_type_contract.py  M packages/doeff-hy/tests/test_source_positions.py  M tests/test_effectful.py ?? docs/design/effectful-cache-tests-bytecode-ki-b02c57db9de8/ ?? tests/test_bytecode_writing_off.py 
+# diff sha256: bf4c191d41b1082a
+# cmd: python -m pytest tests/test_effectful.py tests/test_bytecode_writing_off.py -q
+
+deadline scale x1.3 (load/core) — per test 78s, watchdog 116s
+
+test-admission: focused — 33 件(変更箇所の検証)
+.................................                                        [100%]
+33 passed in 4.47s
+# exit=0

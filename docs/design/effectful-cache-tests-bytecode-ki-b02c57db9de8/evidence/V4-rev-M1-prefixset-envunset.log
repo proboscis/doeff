@@ -1,0 +1,52 @@
+# label=V4-rev-M1-prefixset-envunset
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 worktree=/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design
+# PYTHONDONTWRITEBYTECODE=<unset> PYTHONPYCACHEPREFIX=/tmp/ki-b02c57db9de8/prefix-V
+# diff:  M conftest.py  M doeff/_effectful_rewrite.py  M packages/doeff-hy/tests/test_none_type_contract.py  M packages/doeff-hy/tests/test_source_positions.py  M tests/test_effectful.py ?? docs/design/effectful-cache-tests-bytecode-ki-b02c57db9de8/ ?? tests/test_bytecode_settings_pinned.py 
+# diff sha256: f07ebed6e5fac334
+# cmd: python -m pytest tests/test_effectful.py tests/test_bytecode_settings_pinned.py -q -rf
+
+deadline scale x1.4 (load/core) — per test 85s, watchdog 126s
+
+test-admission: focused — 33 件(変更箇所の検証)
+...........................F.....                                        [100%]
+=================================== FAILURES ===================================
+____________ test_no_cache_is_written_while_bytecode_writing_is_off ____________
+
+tmp_package = ('effectful_tmp_test_no_cache_is_written_while0', PosixPath('/tmp/pytest-of-kento/pytest-346/test_no_cache_is_written_while0/effectful_tmp_test_no_cache_is_written_while0'))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x24fd2b92590>
+
+    def test_no_cache_is_written_while_bytecode_writing_is_off(
+        tmp_package: tuple[str, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        name, package = tmp_package
+        source = package / "mod.py"
+        source.write_text(_MODULE)
+        cached = rewrite.cache_path(str(source))
+        # Control: with writing on, this very location does get the cache — so its absence
+        # below means the loader chose not to write, not that it could not.
+        monkeypatch.setattr(sys, "dont_write_bytecode", False)
+        _import_fresh(f"{name}.mod")
+        assert cached.is_file()
+        cached.unlink()
+    
+        monkeypatch.setattr(sys, "dont_write_bytecode", True)
+        compiled: list[str] = []
+        compile_source = rewrite.compile_source
+    
+        def counting_compile(source_bytes: bytes, filename: str) -> Any:
+            compiled.append(filename)
+            return compile_source(source_bytes, filename)
+    
+        monkeypatch.setattr(rewrite, "compile_source", counting_compile)
+        assert _run(_import_fresh(f"{name}.mod").twice()) == 2000
+        assert _run(_import_fresh(f"{name}.mod").twice()) == 2000
+>       assert not cached.exists()
+E       AssertionError: assert not True
+E        +  where True = exists()
+E        +    where exists = PosixPath('/tmp/pytest-of-kento/pytest-346/test_no_cache_is_written_while0/effectful_tmp_test_no_cache_is_written_while0/__pycache__/mod.cpython-314-doeff-effectful-f6730c17dabe9d02.pyc').exists
+
+tests/test_effectful.py:392: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_effectful.py::test_no_cache_is_written_while_bytecode_writing_is_off
+1 failed, 32 passed in 3.70s
+# exit=1
