@@ -382,9 +382,10 @@
 
 (deftest test-a-turn-end-over-the-summarize-trigger-writes-one-summarize-job-for-the-record-before-the-turn
   ;; 1 手番目(225 token)は契機を越えない → job なし。2 手番目の末尾が 600,125 token(> 500,000)→ 手番の終わりに summarize の
-  ;; agent-job を 1 つ(subject = 会話・inputs = []・charter{kind summarize, model = settings.summarize-model(既定 claude-opus-5-5), until = この手番の最初の出来事の
+  ;; agent-job を 1 つ(subject = 会話・inputs = []・charter{kind summarize, model = settings.summarize-model(既定は effects の 1 点 — 綴りをここに写さない), until = この手番の最初の出来事の
   ;; recordSeq − 1 = 1 手番目の最後})・計器 agentd_summarize_triggers_total 1 行。要約が until まで在る 3 手番目は書かない。
-  (setv world (World {"model" "claude-opus-5"}))
+  (setv conversation-agent {"model" "claude-opus-5"})
+  (setv world (World conversation-agent))
   (setv warm (.run-first-turn world 100))
   (assert (= (summarize-jobs world) {}) "閾値の下で summarize の job を書いた")
   (setv sid (run-turn world "j-2" "m-2" warm 600000))
@@ -400,9 +401,10 @@
   (assert (isinstance charter dict))
   (assert (= (get charter "kind") CHARTER-KIND-SUMMARIZE))
   (assert (= (get charter "agent_type") "claude"))
-  ;; charter.model は会話の model ではなく走行係の宣言 settings.summarize-model(57032bd8 で既定が claude-opus-5-5 へ)。
+  ;; charter.model は会話の model ではなく走行係の宣言 settings.summarize-model — **既定の値を写さない**(会話の model
+  ;; とは違う値であることが関係の検。既定が閉語彙に在ることは test_summarize_model_default_is_in_the_contract_copy.py)。
   (assert (= (get charter "model") world.settings.summarize-model))
-  (assert (= (get charter "model") "claude-opus-5-5"))
+  (assert (!= (get charter "model") (get conversation-agent "model")) "会話の model を写している")
   ;; until = 2 手番目の stream の最初の出来事の recordSeq − 1(= 1 手番目の本文の最後の recordSeq)
   (setv second-seqs (lfor [key seq] (.items world.record-service.record-seqs) :if (= (get key 1) "j-2#a1") seq))
   (setv first-seqs (lfor [key seq] (.items world.record-service.record-seqs) :if (= (get key 1) "j-1#a1") seq))

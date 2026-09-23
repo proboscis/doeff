@@ -1622,11 +1622,15 @@
        (for [needle ["残す情報" "落とす情報" "決定" "未解決の問い" "道具の生の出力"]]
          (assert (in needle prompt-body) f"prompt が残す / 落とすの規則を名乗らない(R37): {needle}"))
        ;; 綴りは effects の 1 点。
+       ;; ⚠ summarize_model は**行の頭だけ**を見る(値を書かない — 要約の model は operator の決定で改名のたびに動く
+       ;;    独立した定義点で、値が閉語彙に在ることは packages/doeff-agents/tests/test_summarize_model_default_is_in_the_contract_copy.py
+       ;;    が契約の写しとの関係で撃つ。改名 2026-09-23〔Opus 5 → 5.5〕でこの針が値を写していて赤になった —
+       ;;    card acp:kanban-issue:ki-2f90057f43a2 依頼 B7)。
        (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
        (for [needle ["CHARTER_KIND_SUMMARIZE: str = \"summarize\"" "CHARTER_SUMMARIZE_UNTIL_KEY: str = \"until\""
                      "SUMMARY_KIND: str = \"summary\"" "SUMMARY_STREAM_KIND: str = \"summary\"" "SUMMARY_EVENT_KIND: str = \"summary\""
                      "RECORD_RAW_EVENT_KINDS: tuple[str, ...] = (\"text\", \"tool_use\", \"tool_result\", \"system\", \"error\", \"user\")"
-                     "    summarize_trigger_tokens: int = 500_000" "    summarize_model: str = \"claude-opus-5-5\""
+                     "    summarize_trigger_tokens: int = 500_000" "    summarize_model: str = \""
                      "CONDITION_SUMMARIZE_OUTPUT_UNREADABLE: ConditionType = \"SummarizeOutputUnreadable\""
                      "CONDITION_SUMMARY_UNWRITABLE: ConditionType = \"SummaryUnwritable\"" "SUMMARY_ANSWER_MAX_CHARS: int = 4_194_304"]]
          (assert (any (gfor line effects-lines (.startswith line needle))) f"綴りは effects の 1 点(R37): {needle}"))
