@@ -40,6 +40,8 @@ class SemgrepSpec:
     # Directory a relative ``config`` is resolved against.  ``None`` keeps the
     # legacy lookup: the nearest ancestor of pytest's cwd that carries ``config``.
     config_base: str | None = None
+    # Installed form only: expand ``.hy`` fixtures to Python before scanning.
+    expand_hy: bool = False
     languages: tuple[str, ...] = ("generic",)
     message: str = "ADR Semgrep enforcement failed"
     severity: str = "ERROR"
@@ -160,6 +162,7 @@ def register_semgrep_enforcement(
     rule_id: str | None = None,
     config: str = ".semgrep.yaml",
     declared_in: str | None = None,
+    expand_hy: bool = False,
     languages: list[str] | tuple[str, ...] | None = None,
     message: str = "ADR Semgrep enforcement failed",
     severity: str = "ERROR",
@@ -179,6 +182,7 @@ def register_semgrep_enforcement(
         installed_rule_id=rule_id,
         config=config,
         config_base=None if declared_in is None else str(Path(declared_in).resolve().parent),
+        expand_hy=bool(expand_hy),
         languages=tuple(languages or ("generic",)),
         message=message,
         severity=severity,
@@ -325,20 +329,8 @@ def _assert_installed_semgrep_enforcement(semgrep: str, spec: SemgrepSpec) -> No
     if not config_path.is_file():
         raise AssertionError(f"{spec.id}: semgrep config does not exist: {config_path}")
     _ensure_installed_rule_exists(config_path, spec.installed_rule_id)
-    hit_results = _run_installed_semgrep_fixture_set(
-        semgrep,
-        config_path,
-        spec.hit_fixtures,
-        polarity="hit",
-    )
-    clean_results = _run_installed_semgrep_fixture_set(
-        semgrep,
-        config_path,
-        spec.clean_fixtures,
-        polarity="clean",
-    )
-    hit_rule_ids = _result_rule_ids(hit_results)
-    clean_rule_ids = _result_rule_ids(clean_results)
+    hit_rule_ids = _installed_fixture_rule_ids(semgrep, config_path, spec, polarity="hit")
+    clean_rule_ids = _installed_fixture_rule_ids(semgrep, config_path, spec, polarity="clean")
     if not _has_rule(hit_rule_ids, spec.installed_rule_id):
         raise AssertionError(
             f"{spec.id}: installed semgrep rule did not fire on hit fixtures: "
@@ -348,6 +340,26 @@ def _assert_installed_semgrep_enforcement(semgrep: str, spec: SemgrepSpec) -> No
         raise AssertionError(
             f"{spec.id}: installed semgrep rule fired on clean fixtures: {spec.installed_rule_id}"
         )
+
+
+def _installed_fixture_rule_ids(
+    semgrep: str, config_path: Path, spec: SemgrepSpec, *, polarity: str
+) -> set[str]:
+    fixtures = spec.hit_fixtures if polarity == "hit" else spec.clean_fixtures
+    if not spec.expand_hy:
+        return _result_rule_ids(
+            _run_installed_semgrep_fixture_set(semgrep, config_path, fixtures, polarity=polarity)
+        )
+    from doeff_adr.semgrep_hy import scan_with_hy_expansion
+
+    with tempfile.TemporaryDirectory(prefix=f"doeff-adr-hy-fixtures-{polarity}-") as tmp:
+        root = Path(tmp)
+        targets = _write_semgrep_structured_fixtures(root, fixtures)
+        # Project macros ((require my.macros [...])) resolve from pytest's cwd.
+        findings = scan_with_hy_expansion(
+            config_path, root, targets, python_path=(str(Path.cwd()),), semgrep=semgrep
+        )
+    return {finding.rule_id for finding in findings}
 
 
 def _run_installed_semgrep_fixture_set(
