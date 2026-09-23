@@ -45,7 +45,12 @@ name = "doeff"
 # 赤(1317 passed / 1 failed)。make sync 直後の env が権威なので再 sync を止める
 # (同 tree で make sync → uv run --no-sync が緑を実測)。Mac 側も同じ潜在欠陥 —
 # 従来の緑は cache 状態依存だった。
-full = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 1800 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff PYTHONUNBUFFERED=1 uv run --no-sync pytest -q -m 'not e2e'\""
+# 2026-09-24(operator 指示 "doeff main are to be fixed to have green tests" の続き・two-way door の決定): 日次の全量検査に
+# package の検(make test-packages)を足す。それまで CI(python-compatibility.yml)も日次もこの範囲を走らせておらず、
+# 18 package・約 200 本の赤が誰にも見えないまま積もっていた(削除された default_handlers・handler の呼び規約・
+# 環境に入らない新しい package)。run-timeout 1800 → 3600 = zeus 実測 root 約 480 s + package 約 960 s の約 2.5 倍。
+# 戻すには && から後ろの make test-packages を外し、run-timeout を 1800 へ戻す。
+full = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff PYTHONUNBUFFERED=1 uv run --no-sync pytest -q -m 'not e2e' && UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff PYTHONUNBUFFERED=1 make test-packages PACKAGE_UV_RUN='uv run --no-sync'\""
 # 門の走行の持ち時間 2700→7200(2026-08-17)。実測 = L32 が 2713.4s で時間切れ
 # (4 連敗・Mac 飽和帯)。ADR-DOE-ENFORCE-001 R6 の第 3 の締切の宣言先行便。
 timeout_s = 7200

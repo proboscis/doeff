@@ -146,13 +146,25 @@ test-e2e:
 	$(PYTEST_MEMORY_ENV) uv run pytest -m "e2e"
 
 # Run tests in all subpackages that have tests/ directories
+# - tests/ に Python の検が 1 本も無い package(doeff-indexer / doeff-linter — 検は Rust の cargo test、
+#   tests/fixtures の test_*.py は検体)は pytest に渡さない。渡すと「収集 0 件」の rc 5 で loop が止まり、
+#   後ろの package が 1 本も走らない(2026-09-24 実測)。
+# - 実 API / 実 CLI を撃つ e2e は日次の門(.agents/land-queue.toml gate.full)と同じく除く(-m "not e2e")。
+# - PACKAGE_UV_RUN: 日次の門は make sync の直後に `uv run --no-sync` で呼ぶ(素の uv run の暗黙の再 sync が
+#   invariant-checks の build を上書きしないように — gate.full の頭注と同じ理由)。
+PACKAGE_UV_RUN ?= uv run
 test-packages:
 	@echo "Running tests in subpackages..."
 	@for dir in packages/*/; do \
 		if [ -d "$$dir/tests" ]; then \
+			if [ -z "$$(find "$$dir/tests" -name 'test_*.py' -not -path '*/fixtures/*' | head -1)" ]; then \
+				echo ""; \
+				echo "=== Skipping $$(basename $$dir) (no Python tests — Rust tests run under cargo) ==="; \
+				continue; \
+			fi; \
 			echo ""; \
 			echo "=== Testing $$(basename $$dir) ==="; \
-			(cd "$$dir" && uv run pytest tests/) || exit 1; \
+			(cd "$$dir" && $(PACKAGE_UV_RUN) pytest tests/ -m "not e2e") || exit 1; \
 		fi; \
 	done
 
