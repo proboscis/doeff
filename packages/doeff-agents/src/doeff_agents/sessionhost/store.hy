@@ -1107,7 +1107,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
 ;; writer actor(単一 write connection の直列化点)
 ;; ---------------------------------------------------------------------------
 
-(deff db-journal-seq [conn]
+(defk db-journal-seq [conn]
   {:pre [(: conn sqlite3.Connection)]
    :post [(: % int)]}
   "出来事の journal(agent_session_events)の先端 = 最大の id(空なら 0)。session.wait_events の
@@ -1132,7 +1132,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
     (setv self.conn (open-conn db-path))
     (db-migrate self.conn)
     (setv self._journal (threading.Condition))
-    (setv self.journal-seq (db-journal-seq self.conn))
+    (setv self.journal-seq (run (db-journal-seq self.conn)))
     (setv self._queue (queue.Queue))
     (setv self._thread (threading.Thread :target self._run :daemon True
                                          :name "sessionhost-store"))
@@ -1158,7 +1158,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
 
   (defn _advance-journal [self]
     "actor thread だけが呼ぶ: journal の先端を読み直し、進んでいれば待ち手を起こす。"
-    (setv seq (db-journal-seq self.conn))
+    (setv seq (run (db-journal-seq self.conn)))
     (with [self._journal]
       (when (> seq self.journal-seq)
         (setv self.journal-seq seq)
@@ -1308,7 +1308,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    ;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D2): 手番の失敗の文も monitor が唯一の writer(turn_ended_at と対)。
    "turn_error" row.turn-error})
 
-(deff changed-policy-patch [row]
+(defk changed-policy-patch [row]
   {:pre [(: row SessionRow)]
    :post [(: % dict)]}
   "書き戻しで重ねる欄: store から読んだ行なら、読んだ時点の写し(read-base)から変わった欄だけ。
@@ -1349,7 +1349,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
       (db-upsert-snapshot conn (snapshot-from-policy-row row))
       (do
         (setv merged (dict existing))
-        (.update merged (changed-policy-patch row))
+        (.update merged (! (changed-policy-patch row)))
         (db-upsert-snapshot conn merged)))
   None)
 

@@ -9,7 +9,7 @@
 ;;;
 ;;; substrate-clean: 生 IO 禁止。ここは綴りと純関数だけ(読み書きは呼び手の effect)。
 
-(require doeff-hy.macros [deff])
+(require doeff-hy.macros [defk])
 
 (import json)
 
@@ -36,14 +36,14 @@
 (setv FAST-JEV-STATE-DIR-SUFFIX ".local/state/fast-jev-compaction")
 
 
-(deff fast-jev-state-dir [home]
+(defk fast-jev-state-dir [home]
   {:pre [(: home str) (> (len home) 0)]
    :post [(: % str)]}
   "家(HOME)から plugin の状態 file の置き場を組む(純関数)。"
   (+ (.rstrip home "/") "/" FAST-JEV-STATE-DIR-SUFFIX))
 
 
-(deff fast-jev-compaction-enabled [settings-text]
+(defk fast-jev-compaction-enabled [settings-text]
   {:pre [(: settings-text (| str None))]
    :post [(: % bool)]}
   "profile の settings.json の本文から、圧縮 plugin が**実際に効く**形かを読む(純関数):
@@ -67,7 +67,7 @@
                    (= (str (.get env "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS" "")) "1"))))))
 
 
-(deff fast-jev-home-settings [settings-text key-file state-dir]
+(defk fast-jev-home-settings [settings-text key-file state-dir]
   {:pre [(: settings-text (| str None)) (: key-file str) (> (len key-file) 0) (: state-dir str) (> (len state-dir) 0)]
    :post [(: % str)]}
   "借りた家の settings.json の本文に plugin の宣言を合流させた本文(純関数・冪等)。
@@ -99,7 +99,7 @@
   (json.dumps settings :indent 2 :ensure-ascii False))
 
 
-(deff fast-jev-install-command [config-dir]
+(defk fast-jev-install-command [config-dir]
   {:pre [(: config-dir str) (> (len config-dir) 0)]
    :post [(: % str)]}
   "plugin を家に据える 1 命令(sh -c 用・純関数): marketplace を登録し(登録済みなら失敗を無視)、install する。
@@ -111,14 +111,14 @@
      f"CLAUDE_CONFIG_DIR={home} claude plugin install {(shlex.quote FAST-JEV-PLUGIN-ID)} --scope user"))
 
 
-(deff fast-jev-plugin-json-path [config-dir]
+(defk fast-jev-plugin-json-path [config-dir]
   {:pre [(: config-dir str) (> (len config-dir) 0)]
    :post [(: % str)]}
   "家(CLAUDE_CONFIG_DIR)から据え済み plugin の plugin.json の path を組む(純関数)。"
   (+ (.rstrip config-dir "/") "/" FAST-JEV-PLUGIN-JSON-SUFFIX))
 
 
-(deff fast-jev-installed-version [plugin-json-text]
+(defk fast-jev-installed-version [plugin-json-text]
   {:pre [(: plugin-json-text (| str None))]
    :post [(: % (| str None))]}
   "据え済み plugin の plugin.json の本文から版を読む(純関数)。file が無い・壊れている・version が無い時は None
@@ -136,14 +136,14 @@
         (if (and (isinstance v str) (.strip v)) (.strip v) None))))
 
 
-(deff fast-jev-plugin-outdated [installed-version]
+(defk fast-jev-plugin-outdated [installed-version]
   {:pre [(: installed-version (| str None))]
    :post [(: % bool)]}
   "据え済みの版が pin と違うか(純関数)。None(読めない)は False — 読めない家に update を撃たない。"
   (and (isinstance installed-version str) (!= installed-version FAST-JEV-PLUGIN-VERSION)))
 
 
-(deff fast-jev-update-command [config-dir]
+(defk fast-jev-update-command [config-dir]
   {:pre [(: config-dir str) (> (len config-dir) 0)]
    :post [(: % str)]}
   "据え済み plugin を pin の版へ揃える 1 命令(sh -c 用・純関数): marketplace の clone を fetch してから

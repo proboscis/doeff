@@ -196,7 +196,7 @@
   ;; 2026-09-15 の添付はこの列の 1 枚目で落ちて、腕が resume の手番だけ画像が消えた。
   (setv charter (probe-charter))
   (<- wire dict (resume-params-of "s1" charter))
-  (setv program (build-resume-program-params wire (host-config) "s1" "resume" #()))
+  (<- program dict (build-resume-program-params wire (host-config) "s1" "resume" #()))
   (setv source (SessionRow :session-id "s1" :session-name "doeff-s1" :pane-id "%1"
                            :agent-type "claude" :lifecycle "run_to_completion" :status "done"
                            :started-at "2026-09-21T00:00:00+00:00"

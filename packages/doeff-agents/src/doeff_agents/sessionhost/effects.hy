@@ -1210,11 +1210,13 @@
   "FsListDir を構築する(発見用の非破壊読み — 不在は空 list)。"
   (FsListDir :path path))
 
-(deff fs-remove-file [path]
+(defk fs-remove-file [path]
   {:pre [(: path str) (> (len path) 0)]
-   :post [(: % FsRemoveFile)]}
-  "FsRemoveFile を構築する(名指した 1 file の取り除き — 不在は成功・dir は触らない)。"
-  (FsRemoveFile :path path))
+   :post [(: % bool)]}
+  "FsRemoveFile を実行する(名指した 1 file の取り除き — 不在は成功・dir は触らない)。
+   戻り = 現に消したか。"
+  (<- removed (FsRemoveFile :path path))
+  removed)
 
 (deff fs-compose-home-view [auth-file profile-dir view-root]
   {:pre [(: auth-file str) (> (len auth-file) 0)
@@ -1231,12 +1233,13 @@
   "FsLinkArtifact を構築する(transplant の symlink 敷設プリミティブ — FsSymlinkOutcome の 5 値)。"
   (FsLinkArtifact :source-path source-path :target-path target-path))
 
-(deff fs-ensure-symlink [link target]
+(defk fs-ensure-symlink [link target]
   {:pre [(: link str) (> (len link) 0)
          (: target str) (> (len target) 0)]
-   :post [(: % FsEnsureSymlink)]}
-  "FsEnsureSymlink を構築する(D8: 張り替える symlink の据え付け — FsSymlinkOutcome の 4 値)。"
-  (FsEnsureSymlink :link link :target target))
+   :post [(: % FsSymlinkOutcome)]}
+  "FsEnsureSymlink を実行する(D8: 張り替える symlink の据え付け — FsSymlinkOutcome の 4 値)。"
+  (<- outcome (FsEnsureSymlink :link link :target target))
+  outcome)
 
 (deff fs-dir-exists [path]
   {:pre [(: path str) (> (len path) 0)]
@@ -1269,11 +1272,12 @@
   "EnvGet を構築する(process env fallback、S11 caveat)。"
   (EnvGet :name name))
 
-(deff log-line [text]
+(defk log-line [text]
   {:pre [(: text str) (> (len text) 0)]
-   :post [(: % LogLine)]}
-  "LogLine を構築する(名乗りの 1 行 — R13 の『黙って hook 無しで起こさない』の担保)。"
-  (LogLine :text text))
+   :post [(: % "None — stderr への 1 行は副作用で、返す値を持たない")]}
+  "LogLine を実行する(名乗りの 1 行 — R13 の『黙って hook 無しで起こさない』の担保)。"
+  (<- _ (LogLine :text text))
+  None)
 
 (deff clock-sleep [seconds]
   {:pre [(: seconds (| int float)) (>= seconds 0)]

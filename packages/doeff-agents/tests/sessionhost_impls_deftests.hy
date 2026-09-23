@@ -19,7 +19,7 @@
 
 (import json)
 (import pytest)
-(import doeff [EffectBase])
+(import doeff [EffectBase run])
 
 (import doeff_agents.sessionhost.effects [
   PaneObservation
@@ -1068,33 +1068,33 @@
               "You've hit your usage limit. Upgrade to increase your limits."
               "You're out of usage credits · buy more credits or upgrade your plan"
               ""]]
-    (assert (not (api-limit-names-a-model said)) said))
+    (assert (not (run (api-limit-names-a-model said))) said))
   (for [said ["You've reached your Fable 5 limit. /model to switch models."
               "You've reached your Opus 4.5 weekly limit. /model to switch models."
               "You’ve reached your Fable limit."
               "You've reached your Sonnet limit"]]
-    (assert (api-limit-names-a-model said) said)))
+    (assert (run (api-limit-names-a-model said)) said)))
 
 
 (deftest test-api-limit-resets-at-reads-the-named-instant-in-its-zone
   (setv jst-15 1790143200000) ;; 2026-09-23 15:00 JST
   ;; 日付の無い形 = 断りの後で最初のその時刻。
-  (assert (= (api-limit-resets-at "You've hit your session limit · resets 6:20pm (Asia/Tokyo)" jst-15)
+  (assert (= (run (api-limit-resets-at "You've hit your session limit · resets 6:20pm (Asia/Tokyo)" jst-15))
              (+ jst-15 (* 200 60 1000))))
-  (assert (= (api-limit-resets-at "You've hit your session limit · resets 2:50am (Asia/Tokyo)" jst-15)
+  (assert (= (run (api-limit-resets-at "You've hit your session limit · resets 2:50am (Asia/Tokyo)" jst-15))
              (+ jst-15 (* (+ (* 11 60) 50) 60 1000))))
   ;; 日付の在る形(年は名乗らない)。
-  (assert (= (api-limit-resets-at "You've hit your weekly limit · resets Sep 27 at 7pm (Asia/Tokyo)" jst-15)
+  (assert (= (run (api-limit-resets-at "You've hit your weekly limit · resets Sep 27 at 7pm (Asia/Tokyo)" jst-15))
              (+ jst-15 (* (+ (* 4 24) 4) 3600 1000))))
   ;; 年の変わり目: 12 月末の断りの「resets Jan 2」は翌年。
   (setv dec-30 1830092400000) ;; 2027-12-30 00:00 JST
-  (assert (= (api-limit-resets-at "resets Jan 2 at 9am (Asia/Tokyo)" dec-30) (+ dec-30 (* (+ (* 3 24) 9) 3600 1000))))
+  (assert (= (run (api-limit-resets-at "resets Jan 2 at 9am (Asia/Tokyo)" dec-30)) (+ dec-30 (* (+ (* 3 24) 9) 3600 1000))))
   ;; 時間帯の無い形・戻りを名乗らない文・未知の時間帯は読まない。
   (for [said ["You've reached your usage limit · resets Jul 26 at 6am"
               "Your group's usage limit is set to $0 · ask your admin for a higher limit"
               "resets 6pm (Mars/Olympus)"
               "resets 13pm (Asia/Tokyo)"]]
-    (assert (is (api-limit-resets-at said jst-15) None) said)))
+    (assert (is (run (api-limit-resets-at said jst-15)) None) said)))
 
 
 (deftest test-api-limit-marker-possessive-family-bounded-match
