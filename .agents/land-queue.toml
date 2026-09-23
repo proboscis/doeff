@@ -166,3 +166,15 @@ window_s = 1800
 # (remote_check の中の `uv run --no-sync pytest -q -m 'not e2e'`。遠隔が使えない拍は
 #  同じ 1 本をこの機体で走らせる — どちらでも走行は 1 つ)。
 full_sessions = 1
+
+# 取り込みの後の再構築(2026-09-24・card acp:kanban-issue:ki-3965aa5188ae・設計の記録 = herdr-hud
+# docs/design-checks/lt-RZ3V004JPRC4571CHKTQHAVZBA/)。取り込みの実行(dotfiles `ai land run`)は、共有 checkout を
+# 本線の先端へ fast-forward した直後に、この命令をその checkout で**毎回**実行する(変わった path では絞らない)。
+# 失敗・上限超過なら checkout を取り込み前の版へ `git reset --keep` で戻し、同じ命令で戻した版を作り直す。
+# - venv-run.sh --exclusive: 同じ venv の読み手(venv-run.sh 経由)が使い終わるのを待ち、再構築の間は新しい読み手を待たせる。
+# - make sync: `uv sync --group dev` の後に maturin で Rust 拡張を作る(uv sync だけでは invariant-checks 付きで作らない)。
+# - UV_CACHE_DIR: 取り込み専用の uv cache(他の作業の cache と取り合わない)。
+# 鍵はこの 2 つだけ(それ以外の鍵を書くと取り込みが fast-forward の前に断る)。表の名 [follow] は取り込みの実行だけが読む表。
+[follow]
+install = "sh $HOME/dotfiles/agent/venv-run.sh --exclusive . -- sh -c 'UV_CACHE_DIR=$HOME/.cache/uv-lanes/land-doeff make sync'"
+install_timeout_s = 900
