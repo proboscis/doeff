@@ -1,0 +1,603 @@
+[
+  {
+    "id": "agents-concept",
+    "image": "images/zenn-use-cases-v0/generated/agents-concept.png",
+    "generation_prompt": "agents-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "4a407f38a22f367b1f8717dbef068cb573b89e08e0ee06259455ea5dcf13d9aa",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1388269,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "agents-flow",
+    "image": "images/zenn-use-cases-v0/generated/agents-flow.png",
+    "generation_prompt": "agents-flow-flat-code.txt",
+    "edit_prompts": [
+      "agents-flow-flat-code-edit.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "0ddd9942903dd2684beca7dafe3756f982d3e89182670c0df6f71ea7457d7a51",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1695665,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "boundaries-concept",
+    "image": "images/zenn-use-cases-v0/generated/boundaries-concept.png",
+    "generation_prompt": "boundaries-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "01ff66e1a23ddd159b3b0f090a8c93a54cf0ec10970157ed7fab595cd70a4e73",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1416675,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "boundaries-flow",
+    "image": "images/zenn-use-cases-v0/generated/boundaries-flow.png",
+    "generation_prompt": "boundaries-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "7d250ae9974a754fa6a6b49eb64933e6d7ca7c44f65083bf7ee659a2b786b47d",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1506448,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "color-concept",
+    "image": "images/zenn-use-cases-v0/generated/color-concept.png",
+    "generation_prompt": "color-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "74477f4efb86c8d2e810f7a3f156ddc395a3b656df5b92fe654a46fddfc99140",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1503533,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "color-flow",
+    "image": "images/zenn-use-cases-v0/generated/color-flow.png",
+    "generation_prompt": "color-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "bead1ab1e8397701e75d317d5974650bef719afa9d3a335e84f9aecdd57f84bc",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1491306,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "composition-concept",
+    "image": "images/zenn-use-cases-v0/generated/composition-concept.png",
+    "generation_prompt": "composition-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "e304fd250c1eca79425e4c6cee161bbb274bbf7ede57bc7bf5854ad47981141c",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1365392,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "composition-flow",
+    "image": "images/zenn-use-cases-v0/generated/composition-flow.png",
+    "generation_prompt": "composition-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "eabef9439ed3acc6be17a9e15eff349db5afe9466747a3dba63a281d93ebe6e0",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1495593,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "coroutines-concept",
+    "image": "images/zenn-use-cases-v0/generated/coroutines-concept.png",
+    "generation_prompt": "coroutines-concept-flat-code.txt",
+    "edit_prompts": [
+      "coroutines-concept-flat-code-edit.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "0372b48ec39a35fe238b23f90adbeadbcea02ba5a87d85880c9a2d7e6add7b07",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1723781,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "coroutines-flow",
+    "image": "images/zenn-use-cases-v0/generated/coroutines-flow.png",
+    "generation_prompt": "coroutines-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "64bc4361fdcac713b7b280e29350a96d1e069d81def7ea71ed5c948a120b765d",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1425399,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "di-concept",
+    "image": "images/zenn-use-cases-v0/generated/di-concept.png",
+    "generation_prompt": "di-concept-flat-code.txt",
+    "edit_prompts": [
+      "di-concept-flat-code-edit.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "809d3d66e60bb96ae399b12b1d4809de35f1f05d838a6cb2aed246351c1e4b15",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1801604,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "di-flow",
+    "image": "images/zenn-use-cases-v0/generated/di-flow.png",
+    "generation_prompt": "di-flow-flat-code.txt",
+    "edit_prompts": [
+      "di-flow-flat-code-edit.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "b9ee3577866cc0ff489bbdf16c5d45da1b8903ec09a6690a4ac81948d4a6c5b3",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1725225,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "durable-concept",
+    "image": "images/zenn-use-cases-v0/generated/durable-concept.png",
+    "generation_prompt": "durable-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "8e0df3172aa8751db5437e50c40b4292079712fa3d45227c73c158e7ac78b616",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1428503,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "durable-flow",
+    "image": "images/zenn-use-cases-v0/generated/durable-flow.png",
+    "generation_prompt": "durable-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "7085c74726203ca9c47cb00c9956bad9058de32a32c27e5b7258970ed8ab0ed9",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1419184,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "events-concept",
+    "image": "images/zenn-use-cases-v0/generated/events-concept.png",
+    "generation_prompt": "events-concept-flat-code.txt",
+    "edit_prompts": [
+      "events-concept-flat-code-edit.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "5cba1066522b529dd0703f2384e5ae4df825215a666a9dd88c87f2b68a8b44e9",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1546200,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "events-flow",
+    "image": "images/zenn-use-cases-v0/generated/events-flow.png",
+    "generation_prompt": "events-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "9655355e4a1e59156a93683f91847ff9253ee9a929d577acffaa567f276ada9c",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1544831,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "games-concept",
+    "image": "images/zenn-use-cases-v0/generated/games-concept.png",
+    "generation_prompt": "games-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "590b8cd19e4d350701c7c008ee7a9cb05acc5f36f2c59d8b3e9c8a4fe3319c1c",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1420602,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "games-flow",
+    "image": "images/zenn-use-cases-v0/generated/games-flow.png",
+    "generation_prompt": "games-flow-flat-code.txt",
+    "edit_prompts": [
+      "games-flow-flat-code-edit.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "d63b13f76596f9d24f55c3655d75b7055f48137e4f982dfc59e6e8e56f247562",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1592570,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "handlers-concept",
+    "image": "images/zenn-use-cases-v0/generated/handlers-concept.png",
+    "generation_prompt": "handlers-concept-flat-code.txt",
+    "edit_prompts": [
+      "handlers-concept-flat-code-edit.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "4d92c7ca0d8a24a2237f2b72256d2d6c95592b97e0c66552c050233a016c0fe9",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1356962,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "handlers-flow",
+    "image": "images/zenn-use-cases-v0/generated/handlers-flow.png",
+    "generation_prompt": "handlers-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "f9f0eed07e0b3a0665e917fc4327c0852100a8c97bc54d68b8b41ae68db8c25e",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1428984,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "hy-concept",
+    "image": "images/zenn-use-cases-v0/generated/hy-concept.png",
+    "generation_prompt": "hy-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "5e08938cc8b0dac3e541d1c48a1d6daedcb061537002fa75f68983f262e61a56",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1325353,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "hy-flow",
+    "image": "images/zenn-use-cases-v0/generated/hy-flow.png",
+    "generation_prompt": "hy-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "c5541cfb002583b04e8a88cfae9d9d0d32f7f7dd3e0dbeff4f3e039e7745a886",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1441927,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "image-concept",
+    "image": "images/zenn-use-cases-v0/generated/image-concept.png",
+    "generation_prompt": "image-concept-flat-code.txt",
+    "edit_prompts": [
+      "image-concept-flat-code-edit.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "7c698d716d9de502e8d020981fce6e325c1ce168345301157b99100cd474d6fd",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1674737,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "image-flow",
+    "image": "images/zenn-use-cases-v0/generated/image-flow.png",
+    "generation_prompt": "image-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "50766428d5e46882e7bb4a5400eaaadf1444b253f0afa85a0e8a0491d67e6d32",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1445405,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "llm-concept",
+    "image": "images/zenn-use-cases-v0/generated/llm-concept.png",
+    "generation_prompt": "llm-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "fdad9f8f174fa9366e2f5942130d8123491c732ce3a549dacbba5f6f1088e959",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1423558,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "llm-flow",
+    "image": "images/zenn-use-cases-v0/generated/llm-flow.png",
+    "generation_prompt": "llm-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "29fd1a0b64833579201b5297720172ac3c454abe1b81e697689e5dfc9b68c2b8",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1451032,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "main-concept",
+    "image": "images/zenn-use-cases-v0/generated/main-concept.png",
+    "generation_prompt": "main-concept-flat-code-v3.txt",
+    "edit_prompts": [
+      "main-concept-flat-code-v3-edit1.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "91b553e6cc66d3633341ad893834ff3b7ee5fbce098787c6bc84e4dcd4b1b4ac",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1610667,
+    "review": "2026-09-16：最小ハンドラの定義・with_handlersによる設置・Resumeと値の戻り先・runの結果を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "main-flow",
+    "image": "images/zenn-use-cases-v0/generated/main-flow.png",
+    "generation_prompt": "main-flow-flat-code-v3.txt",
+    "edit_prompts": [
+      "main-flow-flat-code-v3-edit1.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "f74d02bcb8b4a854cae6b7ef1b0f5370dfe207c56f69c422600bb7e55dce24c0",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1667879,
+    "review": "2026-09-16：最小ハンドラの定義・with_handlersによる設置・Resumeと値の戻り先・runの結果を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "main-hero",
+    "image": "images/zenn-use-cases-v0/generated/main-hero.png",
+    "generation_prompt": "main-hero-flat-code-v1.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "1b3b792a7ffe028ba5d6879241bc111876202ac411734a697a1475d972e9f5a6",
+    "width": 1672,
+    "height": 941,
+    "bytes": 1234645,
+    "review": "2026-09-16: doeffの文字、AskとResumeのコード・コメント、往復矢印、日本語、用途の表記、不透明な白背景を目視確認。冒頭用に採用。"
+  },
+  {
+    "id": "memo-concept",
+    "image": "images/zenn-use-cases-v0/generated/memo-concept.png",
+    "generation_prompt": "memo-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "2fa8818e3dd31db693beccf37c71bff85c3ab752b47b123f3235f240f990b155",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1416829,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "memo-flow",
+    "image": "images/zenn-use-cases-v0/generated/memo-flow.png",
+    "generation_prompt": "memo-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "ca1256a32796a465f84a3cea3f3ce23cc27644d2de110d15f4123f844f99387c",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1373939,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "observe-concept",
+    "image": "images/zenn-use-cases-v0/generated/observe-concept.png",
+    "generation_prompt": "observe-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "c360a0a1c9277c42148ba285a944fe384ab799d66c9ba86f8e9fceee9054af94",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1320871,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "observe-flow",
+    "image": "images/zenn-use-cases-v0/generated/observe-flow.png",
+    "generation_prompt": "observe-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "00e24dcc506ecdddcf6b78efbde46f13a46b87b1ac61ed2216991eb069040b25",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1515579,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "operations-concept",
+    "image": "images/zenn-use-cases-v0/generated/operations-concept.png",
+    "generation_prompt": "operations-concept-flat-code.txt",
+    "edit_prompts": [
+      "operations-concept-flat-code-edit.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "ffc35fe6a3c783919862a72a3de1aaed58e7ef5b4b2766ca182a1fa0ccd4e3a1",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1714242,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "operations-flow",
+    "image": "images/zenn-use-cases-v0/generated/operations-flow.png",
+    "generation_prompt": "operations-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "295bd1274a01421f0fdc1ec72ccfc05e5f3d5e0d43c729ff769b5c64cc01d400",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1344628,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "remote-concept",
+    "image": "images/zenn-use-cases-v0/generated/remote-concept.png",
+    "generation_prompt": "remote-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "f11c1ab6f67694094db5b9f6aed490d69e297bbb3167010f9bf145f5914a9ffb",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1360513,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "remote-flow",
+    "image": "images/zenn-use-cases-v0/generated/remote-flow.png",
+    "generation_prompt": "remote-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "57a00c4c0ca7ae504c036078a79afd8b5aca90b9cd175b7be380c0f0f6ba616e",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1461555,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "replay-concept",
+    "image": "images/zenn-use-cases-v0/generated/replay-concept.png",
+    "generation_prompt": "replay-concept-flat-code.txt",
+    "edit_prompts": [
+      "replay-concept-flat-code-edit.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "e546e7e0b91ef093fd08cb5eeed53a1c94accc22da272d5688fbefc74d22f112",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1371430,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "replay-flow",
+    "image": "images/zenn-use-cases-v0/generated/replay-flow.png",
+    "generation_prompt": "replay-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "d6c6d52a0fc6eff102c597b7afd64d88c5a271da7ff681296608d9084ac0becd",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1434383,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "time-concept",
+    "image": "images/zenn-use-cases-v0/generated/time-concept.png",
+    "generation_prompt": "time-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "c8c8abbf69bf1e593822bf2e451f80c8cc9eb38e5d7b8009da84dfc29df11b20",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1352216,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "time-flow",
+    "image": "images/zenn-use-cases-v0/generated/time-flow.png",
+    "generation_prompt": "time-flow-flat-code.txt",
+    "edit_prompts": [
+      "time-flow-flat-code-edit.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "d82915cca17f9a0b02214ffde7b29b2e0c9f03735335aaca50d09184ce1a488c",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1639049,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "tooling-concept",
+    "image": "images/zenn-use-cases-v0/generated/tooling-concept.png",
+    "generation_prompt": "tooling-concept-flat-code.txt",
+    "edit_prompts": [
+      "tooling-concept-flat-code-edit.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "d738c49ad8ab6c41675222da963789153b3f5eac526a21943a33810f948e8f43",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1718906,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "tooling-flow",
+    "image": "images/zenn-use-cases-v0/generated/tooling-flow.png",
+    "generation_prompt": "tooling-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "4b30eb46505655b1a93a3539f227993a3c1f83f7327eeba6d5748c852545a78c",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1422176,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "traverse-concept",
+    "image": "images/zenn-use-cases-v0/generated/traverse-concept.png",
+    "generation_prompt": "traverse-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "a2f5a9a33071ddb01d05960a0df0ced9ea2b0ec0393bedefb7d7d0fc82e3335c",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1440948,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "traverse-flow",
+    "image": "images/zenn-use-cases-v0/generated/traverse-flow.png",
+    "generation_prompt": "traverse-flow-flat-code.txt",
+    "edit_prompts": [
+      "traverse-flow-flat-code-edit.txt",
+      "traverse-flow-flat-code-edit-2.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "4c40a80ec28f1f263e2c3174fcaedf756509225c17fa193c7ccd64b35001376d",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1713468,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "vm-concept",
+    "image": "images/zenn-use-cases-v0/generated/vm-concept.png",
+    "generation_prompt": "vm-concept-flat-code.txt",
+    "edit_prompts": [
+      "vm-concept-flat-code-edit.txt",
+      "vm-concept-flat-code-edit-2.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "6af4290cd41d5255187c001be337ec126468a9b1672b18b43206c876753c8739",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1692960,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "vm-flow",
+    "image": "images/zenn-use-cases-v0/generated/vm-flow.png",
+    "generation_prompt": "vm-flow-flat-code.txt",
+    "edit_prompts": [
+      "vm-flow-flat-code-edit.txt",
+      "vm-flow-flat-code-edit-2.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "1e6d2a8fc2140b8a857157a0b77c91dbb2d57a70ae7bf2f56da09bc222feada4",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1681103,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  }
+]

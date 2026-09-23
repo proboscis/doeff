@@ -1,0 +1,9 @@
+Use case: infographic-diagram. 日本語技術記事の完成ダイアグラム。添付は表現トーンの参考のみ。全面が不透明な白、ネイビーの日本語、ティールの明瞭な矢印、薄い青/ミント/紫の平面的な角丸枠。写実・3D・金属・ガラス・立体的装置・台座・装飾的なイラストを禁止。横長3:2。図中に下記の短いコードを大きく正確な等幅文字で配置し、対応する操作や流れと矢印で結ぶ。大きいタイトル、余白、最大6ノード程度。日本語の説明を短く、コードは改変しない。原稿からの抜粋なので小さく「コードは抜粋。完全な例は本文へ」。以下の意味を守り、勝手な挙動や架空のAPIを追加しない。
+見出し: Pythonのyieldを、Rust VMが解釈する
+コード:
+@do
+def greet():
+    name = yield ReadName()
+    return name
+図の意味と流れ: Pythonのgenerator → yieldしたEffect → Rust VMのPerform → ハンドラ → sendでgeneratorを再開。Python本体とRustの制御を二段に分ける。PythonをRustへコンパイルする矢印は描かない。
+説明: Pythonの本体はgeneratorのまま実行し、Rust VMがエフェクトの配送と継続の接続を管理します。

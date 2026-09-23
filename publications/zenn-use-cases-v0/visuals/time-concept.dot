@@ -1,0 +1,15 @@
+digraph figure {
+graph [bgcolor="#122336", pad="0.45", nodesep="0.4", ranksep="0.58", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#f4f8fc", labelloc="t", label="「待つ」という依頼に、時計を選ぶ\n"];
+node [shape=box, style="rounded,filled", fillcolor="#203951", color="#55748e", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#f4f8fc", margin="0.22,0.17"];
+edge [color="#79e4c4", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#79e4c4"];
+p [label="処理の手順\nDelay / GetTime"];
+h [label="時間のハンドラ"];
+r [label="実時間\n実際に待つ"];
+v [label="仮想時間\n次の予定へ時計を進める"];
+s [label="スケジューラ\n待機と再開を管理"];
+p -> h [label="依頼"];
+h -> r [label="実行方法を選ぶ"];
+h -> v [label="実行方法を選ぶ"];
+r -> s [label="完了を通知"];
+v -> s [label="予定時刻で再開"];
+}

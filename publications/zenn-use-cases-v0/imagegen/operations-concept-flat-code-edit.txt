@@ -1,0 +1,1 @@
+この画像の最上部3行目のコードにある seed_data={"notice-signing-key", b"demo-key"} を seed_data={"notice-signing-key": b"demo-key"} へ訂正する。キーの後のコンマをコロンへ変える。他は一切変更しない。正確な完成行: p_combined = in_memory_handlers(seed_data={"notice-signing-key": b"demo-key"})(p_combined)  # 鍵を解決する。下部ノードの辞書も同じコロンであることを保持する。その他コードコメント文字矢印配置白背景はそのまま。

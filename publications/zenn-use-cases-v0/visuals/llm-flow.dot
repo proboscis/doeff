@@ -1,0 +1,14 @@
+digraph figure {
+graph [bgcolor="#f8fafc", pad="0.4", nodesep="0.35", ranksep="0.45", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#152c43", labelloc="t", label="4種類のLLM依頼を、文書の制作へつなぐ"];
+node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#c3d2e0", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#152c43", margin="0.2,0.15"];
+edge [color="#087e8b", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#087e8b"];
+a [label="話題と、環境から受け取るモデル名"];
+b [label="LLMStructuredQuery\n構成をArticlePlanとして受け取る"];
+c [label="LLMChat\n構成に沿った本文を作る"];
+d [label="LLMStreamingChat → Await\n紹介文の断片を集める"];
+e [label="LLMEmbedding\n本文の検索用ベクトルを得る"];
+a -> b [label="Ask"];
+b -> c [label="構成"];
+c -> d [label="本文"];
+d -> e [label="本文を次の依頼にも使う"];
+}

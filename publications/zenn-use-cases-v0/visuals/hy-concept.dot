@@ -1,0 +1,14 @@
+digraph figure {
+graph [bgcolor="#122336", pad="0.45", nodesep="0.4", ranksep="0.58", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#f4f8fc", labelloc="t", label="書き方を選んでも、同じProgramへ\n"];
+node [shape=box, style="rounded,filled", fillcolor="#203951", color="#55748e", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#f4f8fc", margin="0.22,0.17"];
+edge [color="#79e4c4", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#79e4c4"];
+p [label="Python\n@do / yield"];
+h [label="Hy\ndefk / <- / !"];
+m [label="マクロ展開\n結合と契約の検査"];
+r [label="doeffのProgram"];
+e [label="同じエフェクトとハンドラ"];
+p -> r [label="計算を定義"];
+h -> m [label="構文を展開"];
+m -> r [label="計算を定義"];
+r -> e [label="実行"];
+}

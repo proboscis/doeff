@@ -1,0 +1,19 @@
+digraph figure {
+graph [bgcolor="#f8fafc", pad="0.4", nodesep="0.35", ranksep="0.45", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#152c43", labelloc="t", label="2件のレビューを並行し、結果を確認して後続へ進む"];
+node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#c3d2e0", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#152c43", margin="0.2,0.15"];
+edge [color="#087e8b", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#087e8b"];
+a [label="2つのAgentSpec\n仕事・作業場所・結果スキーマ"];
+b [label="文章レビュー\nSpawn → LaunchSession"];
+c [label="コードレビュー\nSpawn → LaunchSession"];
+d [label="AwaitResultで状態と結果を受け取る"];
+e [label="入力待ち：FollowUp → 再度待つ\n未完了：停止・解放して失敗"];
+f [label="正常な結果を確認してセッションを解放"];
+g [label="両方のokを確認\nreadyと要約を後続へ渡す"];
+a -> b [label=""];
+a -> c [label=""];
+b -> d [label=""];
+c -> d [label=""];
+d -> e [label="状態に応じて"];
+d -> f [label="結果を利用できる"];
+f -> g [label="Waitで両方を集める"];
+}

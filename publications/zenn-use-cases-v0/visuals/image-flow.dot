@@ -1,0 +1,17 @@
+digraph figure {
+graph [bgcolor="#f8fafc", pad="0.4", nodesep="0.35", ranksep="0.45", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#152c43", labelloc="t", label="画像を生成し、その結果を編集へ渡す"];
+node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#c3d2e0", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#152c43", margin="0.2,0.15"];
+edge [color="#087e8b", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#087e8b"];
+a [label="文章の指示"];
+b [label="ImageGenerate\n画像生成を依頼"];
+c [label="ImageResult.images\n生成した画像"];
+d [label="ImageEdit\n画像と追加の指示を渡す"];
+e [label="編集後のImageResult"];
+h [label="ハンドラの選択\nGemini / Seedream / テスト"];
+a -> b [label=""];
+b -> c [label=""];
+c -> d [label="入力の画像として"];
+d -> e [label=""];
+h -> b [label="解釈"];
+h -> d [label="解釈"];
+}
