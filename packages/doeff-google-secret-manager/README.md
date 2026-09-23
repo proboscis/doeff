@@ -23,7 +23,9 @@ gcloud auth application-default login
 ```
 
 ```python
-from doeff import do, run_with_env
+from doeff import do, run, with_handlers
+from doeff_core_effects.handlers import await_handler, lazy_ask, state, try_handler, writer
+from doeff_core_effects.scheduler import scheduled
 from doeff_google_secret_manager import access_secret
 
 
@@ -37,14 +39,25 @@ def fetch_db_password() -> str:
     )
 
 
-result = run_with_env(fetch_db_password())
-print("password length:", len(result.value))
+# access_secret performs Ask / Get / Put / Try / Tell / Await, so compose the
+# handlers for them explicitly (there is no implicit default stack).
+result = run(
+    scheduled(
+        with_handlers(
+            [await_handler(), lazy_ask(strict=True), try_handler, state(), writer],
+            fetch_db_password(),
+        )
+    )
+)
+print("password length:", len(result))
 ```
 
 ## Handler Stacking Usage
 
 ```python
-from doeff import WithHandler, default_handlers, do, run
+from doeff import do, run, with_handlers
+from doeff_core_effects.handlers import lazy_ask, state, try_handler, writer
+from doeff_core_effects.scheduler import scheduled
 from doeff_google_secret_manager.handlers import production_handlers
 from doeff_secret.effects import GetSecret
 
@@ -55,11 +68,18 @@ def workflow():
 
 
 result = run(
-    WithHandler(
-        production_handlers(project="my-gcp-project"),
-        workflow(),
-    ),
-    handlers=default_handlers(),
+    scheduled(
+        with_handlers(
+            [
+                lazy_ask(strict=True),
+                try_handler,
+                state(),
+                writer,
+                production_handlers(project="my-gcp-project"),
+            ],
+            workflow(),
+        )
+    )
 )
 ```
 

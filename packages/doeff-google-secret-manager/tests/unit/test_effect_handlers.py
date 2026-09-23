@@ -15,11 +15,12 @@ SECRET_PACKAGE_ROOT = Path(__file__).resolve().parents[3] / "doeff-secret" / "sr
 if str(SECRET_PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(SECRET_PACKAGE_ROOT))
 
+import pytest  # noqa: E402
 from doeff_google_secret_manager.client import SecretManagerClient  # noqa: E402
 from doeff_google_secret_manager.handlers import mock_handlers, production_handlers  # noqa: E402
 from doeff_secret.effects import DeleteSecret, GetSecret, ListSecrets, SetSecret  # noqa: E402
 
-from doeff import default_handlers, do, run  # noqa: E402
+from doeff import do, run  # noqa: E402
 
 
 class AlreadyExistsError(Exception):
@@ -77,21 +78,8 @@ class _FakeSecretManagerAPI:
         return len(self._secrets)
 
 
-def _is_ok(run_result: Any) -> bool:
-    checker = run_result.is_ok
-    return bool(checker()) if callable(checker) else bool(checker)
-
-
-def _is_err(run_result: Any) -> bool:
-    checker = run_result.is_err
-    return bool(checker()) if callable(checker) else bool(checker)
-
-
 def _run_with_handler(program, handler):
-    return run(
-        handler(program),
-        handlers=default_handlers(),
-    )
+    return run(handler(program))
 
 
 def test_effect_exports() -> None:
@@ -132,8 +120,7 @@ def test_mock_handlers_use_in_memory_store() -> None:
             mock_handlers(seed_data={"seed-secret": "seed-value"}),
         )
 
-    assert _is_ok(result)
-    latest, all_secrets, remaining = result.value
+    latest, all_secrets, remaining = result
     assert latest == b"v1"
     assert all_secrets == ["api-key", "db-password", "seed-secret"]
     assert remaining == ["db-password", "seed-secret"]
@@ -167,8 +154,7 @@ def test_production_handlers_wrap_client_logic_with_injected_client() -> None:
         production_handlers(client=injected_client),
     )
 
-    assert _is_ok(result)
-    secret_value, filtered = result.value
+    secret_value, filtered = result
     assert secret_value == b"prod-v2"
     assert filtered == ["prod-secret"]
     assert fake_api.secret_count == 1
@@ -195,16 +181,14 @@ def test_handler_swapping_changes_behavior() -> None:
             _read_swap_target(),
             mock_handlers(seed_data={"swap-target": "from-mock"}),
         )
-    assert _is_ok(mock_result)
-    assert mock_result.value == b"from-mock"
+    assert mock_result == b"from-mock"
     assert any(
         "doeff_google_secret_manager.handlers.mock_handlers is deprecated" in str(item.message)
         for item in caught
     )
 
-    production_result = _run_with_handler(
-        _read_swap_target(),
-        production_handlers(client=injected_client),
-    )
-    assert _is_err(production_result)
-    assert isinstance(production_result.error, KeyError)
+    with pytest.raises(KeyError):
+        _run_with_handler(
+            _read_swap_target(),
+            production_handlers(client=injected_client),
+        )

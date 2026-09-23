@@ -5,10 +5,10 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, TypeAlias
 
-from doeff import Delegate, Effect, Resume, do
+from doeff import Effect, Pass, Resume, do
 from doeff import handler as _program_handler
-
-from .effects import DeleteSecret, GetSecret, ListSecrets, SetSecret
+from doeff.program import ProgramHandler
+from doeff_secret.effects import DeleteSecret, GetSecret, ListSecrets, SetSecret
 
 ProtocolHandler = Callable[[Any, Any], Any]
 SeedValue: TypeAlias = str | bytes | Sequence[str | bytes]
@@ -87,7 +87,7 @@ def in_memory_handlers(
     seed_data: Mapping[str, SeedValue] | None = None,
     project: str = "mock-project",
     store: InMemorySecretStore | None = None,
-) -> ProtocolHandler:
+) -> ProgramHandler:
     """Build an in-memory protocol handler for secret effects."""
 
     active_store = store or InMemorySecretStore.from_seed_data(
@@ -109,7 +109,7 @@ def in_memory_handlers(
         if isinstance(effect, DeleteSecret):
             active_store.delete_secret(effect.secret_id)
             return (yield Resume(k, None))
-        yield Delegate()
+        return (yield Pass(effect, k))
 
     return _program_handler(handler)
 
@@ -119,15 +119,7 @@ def in_memory_handler(
     seed_data: Mapping[str, SeedValue] | None = None,
     project: str = "mock-project",
     store: InMemorySecretStore | None = None,
-) -> ProtocolHandler:
-    """Build a single handler-protocol callable for stacked WithHandler usage."""
+) -> ProgramHandler:
+    """Build a single handler-protocol callable for stacked handler usage."""
     return in_memory_handlers(seed_data=seed_data, project=project, store=store)
 
-
-__all__ = [
-    "InMemorySecretStore",
-    "ProtocolHandler",
-    "SeedValue",
-    "in_memory_handler",
-    "in_memory_handlers",
-]
