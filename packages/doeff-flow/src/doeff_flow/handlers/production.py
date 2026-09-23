@@ -162,7 +162,7 @@ def production_handlers(
         if isinstance(effect, TraceCapture):
             captured = active_recorder.capture(effect.format)
             return (yield Resume(k, captured))
-        return (yield Pass())
+        return (yield Pass(effect, k))
 
     return _program_handler(handler)
 

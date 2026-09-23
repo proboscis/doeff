@@ -380,6 +380,7 @@ class AgenticAPI:
             writer,
         )
         from doeff_core_effects.scheduler import scheduled
+        from doeff_time import sync_time_handler
 
         from doeff import handler as _program_handler
         from doeff import run
@@ -405,6 +406,8 @@ class AgenticAPI:
             slog_handler,
             listen_handler,
             await_handler(),
+            # The agentic handler polls with doeff_time Delay.
+            sync_time_handler(),
         ]
         for h in reversed(entry_handlers):
             wrapped = _program_handler(h)(wrapped)

@@ -51,9 +51,56 @@ from doeff_flow.trace import (
 )
 
 if TYPE_CHECKING:
-    from doeff import Program, RunResult
+    from doeff import Err, Ok, Program
 
 T = TypeVar("T")
+
+
+def run_result(
+    program: "Program[T]",
+    *,
+    env: dict[Any, Any] | None = None,
+    store: dict[str, Any] | None = None,
+) -> "Ok[T] | Err":
+    """Run a program under the standard handler stack and return Ok / Err.
+
+    The stack is the same as ``doeff.cli.run_services.default_interpreter``
+    (reader, state, writer, try, slog, listen, await, scheduler), with the
+    caller's ``env`` seeded into Ask and ``store`` into Get/Put. An exception
+    raised by the program is returned as ``Err(error)`` instead of propagating,
+    so the value can be handed to ``write_terminal_trace``.
+    """
+    from doeff_core_effects import Try
+    from doeff_core_effects.handlers import (
+        await_handler,
+        lazy_ask,
+        listen_handler,
+        slog_handler,
+        state,
+        try_handler,
+        writer,
+    )
+    from doeff_core_effects.scheduler import scheduled
+
+    from doeff import do, run
+
+    @do
+    def _captured():
+        return (yield Try(program))
+
+    handlers = [
+        lazy_ask(env),
+        state(store),
+        writer,
+        try_handler,
+        slog_handler,
+        listen_handler,
+        await_handler(),
+    ]
+    wrapped = _captured()
+    for h in reversed(handlers):
+        wrapped = h(wrapped)
+    return run(scheduled(wrapped))
 
 
 def run_workflow(
@@ -63,7 +110,7 @@ def run_workflow(
     *,
     env: dict[Any, Any] | None = None,
     store: dict[str, Any] | None = None,
-) -> "RunResult[T]":
+) -> "Ok[T] | Err":
     """Run a workflow with live trace observability.
 
     Convenience wrapper that combines run with trace output.
@@ -75,11 +122,11 @@ def run_workflow(
             Must match [a-zA-Z0-9_-]+.
         trace_dir: Directory where trace files will be written.
             If None, uses XDG-compliant default (~/.local/state/doeff-flow).
-        env: Initial environment (optional).
-        store: Initial store (optional).
+        env: Initial environment for Ask (optional).
+        store: Initial state for Get/Put (optional).
 
     Returns:
-        RunResult containing the execution result.
+        ``Ok(value)`` on success, ``Err(error)`` when the program raised.
 
     Example:
         from doeff import do
@@ -99,8 +146,6 @@ def run_workflow(
         )
         print(result.value)  # 30
     """
-    from doeff import default_handlers
-    from doeff import run as run_sync
     from doeff_flow.trace import write_terminal_trace
 
     if trace_dir is None:
@@ -110,12 +155,7 @@ def run_workflow(
 
     with trace_observer(workflow_id, trace_dir) as on_step:
         _ = on_step
-        result = run_sync(
-            program,
-            handlers=default_handlers(),
-            env=env,
-            store=store,
-        )
+        result = run_result(program, env=env, store=store)
         write_terminal_trace(workflow_id, trace_dir, result)
         return result
 
@@ -126,7 +166,8 @@ __all__ = [
     "TraceFrame",
     # XDG support
     "get_default_trace_dir",
-    # Convenience wrapper
+    # Convenience wrappers
+    "run_result",
     "run_workflow",
     # Observer
     "trace_observer",

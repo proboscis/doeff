@@ -9,7 +9,7 @@
 (require doeff_docker.compose [with-handlers])
 (import doeff [do :as _doeff-do])
 (import doeff [run])
-(import doeff_core_effects [Ask reader slog-handler writer scheduled])
+(import doeff_core_effects [Ask reader slog-handler state writer scheduled])
 
 (import pathlib [Path])
 
@@ -48,5 +48,6 @@
   "Minimal interpreter for the runner program."
   (setv resolved-env (run (resolve-runner-env env)))
   (run (scheduled
-    (with-handlers [(reader :env resolved-env) slog-handler writer]
+    ;; slog-handler and writer keep their logs via Get/Put, so state must sit outside them.
+    (with-handlers [(state) (reader :env resolved-env) slog-handler writer]
       program))))
