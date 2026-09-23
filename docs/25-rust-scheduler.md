@@ -81,8 +81,8 @@ Python の版は `@do` の generator の handler、Rust の版は同期の handl
    回した effect だけを受ける。
 3. **捕まえた handler の列にある scheduler**: `GetHandlers` / `GetOuterHandlers` /
    boundary の捕獲で得た scheduler は `__doeff_scheduler_prompt__` が真の object になる
-   (Rust の版は `doeff_vm.doeff_vm.SchedulerPrompt`)。`handler(h)(program)` /
-   `WithHandler(h, program)` でそのまま付け直せる。doeff-agents の `mcp_server_loop` が
+   (Rust の版は `doeff_vm.doeff_vm.SchedulerPrompt`)。`handler(h)(program)` で
+   そのまま付け直せる。doeff-agents の `mcp_server_loop` が
    この印で scheduler を見分けている。
 4. **scheduler と協調する handler**: 仮想の時計の handler のように、handler の中から
    `CreatePromise`・`Spawn(..., priority=PRIORITY_IDLE, daemon=True)`・`Wait` を出して
