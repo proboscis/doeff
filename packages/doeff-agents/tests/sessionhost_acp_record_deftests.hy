@@ -53,7 +53,7 @@
   TURN-ENTRY-MAX-BYTES
   TURN-RECORD-KIND
   TurnEntryHeadline])
-(import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeRecord FakeSessions record-body-sha256])
+(import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeRecord FakeSessions record-body-bytes record-body-sha256])
 (import doeff_agents.sessionhost.acp.handlers [
   HttpReply RECORD-SPOOL-SCHEMA RecordSpool decode-record-page decode-record-reply decode-spooled-batch
   record-append-body])
@@ -204,7 +204,7 @@
   (assert (= head.seq 8) "見出しの seq は本文の producerSeq(採番は 1 点)")
   (setv material (run (record-body-bytes-of body)))
   (assert (= material (.encode (json.dumps {"text" long-text} :sort-keys True :separators #("," ":") :ensure-ascii False) "utf-8"))
-          "同一性の材料は text / summary / input / output の在る欄だけ・compact・鍵 sort")
+          "同一性の材料は本文の欄(effects.RECORD_BODY_FIELDS)のうち在るものだけ・compact・鍵 sort")
   (assert (= head.bytes (len material)))
   (assert (= head.sha256 (record-body-sha256 body)) "見出しの sha256 が service の計算と違う")
   (setv item (run (entry-json-of head)))
@@ -774,3 +774,62 @@
   (setv env (dict flagged.env))
   (setv (get env "DOEFF_AGENTD_NODE_NAME") NODE)
   (assert (. (settings-from-env env flagged.host-argv) record-enabled)))
+
+
+
+;; ---------------------------------------------------------------------------
+;; 本文の欄の選択(card acp:kanban-issue:ki-651086f48560・依頼 lt-GH3YPP5NEY8HDGVB0AQY677RY6 の D5)
+;; 本線(judgment.record-body-bytes-of)と fake(fake.record_body_bytes)は同じ定数 effects.RECORD_BODY_FIELDS を読む。
+;; 両方が同じ定数を読むと「本線 = fake」は自明なので、式の誤りは性質と golden(中央と同じ入力・同じ hex)で捕まえる。
+;; ---------------------------------------------------------------------------
+
+;; 中央のテスト test-an-attachment-is-stored-with-its-image-and-read-by-its-producer-seq と同じ画像の base64。
+(setv PNG-B64 "iVBORw0KGgo=")
+;; 中央(agora-controllers services/record — 契約の入口 decode-event → prepare-event)が同じ入力に返す値(2026-09-23 に中央で出した)。
+(setv ATTACHMENT-GOLDEN-SHA256 "0f820be1cbce81b7bbe408e8fa4bcca4b51ddea0d419e7bda5b87c580c23e08d")
+(setv ATTACHMENT-GOLDEN-BYTES 23)
+;; 契約 eventFields.head の欄と、それぞれの正当な値(見出しの欄 = 本文の digest の材料に入らない)。
+(setv HEAD-SAMPLES {"toolName" "Read" "toolUseId" "toolu_1" "model" "claude-opus-5" "isError" True "mime" "image/jpeg" "name" "a.png"})
+(setv EMPTY-BODY-BYTES (.encode (json.dumps {} :sort-keys True :separators #("," ":") :ensure-ascii False) "utf-8"))
+
+
+(defn #^ dict attachment-body [#^ str data]
+  {"producerSeq" 1 "at" AT "kind" "attachment" "mime" "image/png" "data" data})
+
+
+(defn #^ dict digests-of [#^ dict body]
+  ;; 本線と fake の両方の本文の綴り(見出しを導く点と fake の冪等の判断が使う 2 つの読み手)。
+  {"本線" (run (record-body-bytes-of body)) "fake" (record-body-bytes body)})
+
+
+(deftest test-an-attachment-only-body-is-not-the-empty-body
+  ;; 性質 1: 添付だけの本文(data だけが本文の欄)の digest は空の辞書の digest ではない — 本線が添付を {} に潰すと
+  ;; 中身の違う 2 通が同じ指紋になる(基準の断面で本線は 44136fa3… = 空の辞書を返していた・evidence/E1)。
+  (for [[reader material] (.items (digests-of (attachment-body PNG-B64)))]
+    (assert (!= material EMPTY-BODY-BYTES) f"{reader}: 添付だけの本文の綴りが空の辞書 {material !r}")))
+
+
+(deftest test-attachments-with-different-data-have-different-digests
+  ;; 性質 2: data の違う 2 通は違う digest。
+  (setv one (digests-of (attachment-body PNG-B64)))
+  (setv other (digests-of (attachment-body "aGk=")))
+  (for [reader ["本線" "fake"]]
+    (assert (!= (get one reader) (get other reader)) f"{reader}: data の違う 2 通が同じ綴り {(get one reader) !r}")))
+
+
+(deftest test-head-fields-do-not-move-the-body-digest
+  ;; 性質 3: 見出しの欄(契約 eventFields.head の 6 欄)をどれ足しても・全部足しても本文の digest は動かない。
+  (for [base [(attachment-body PNG-B64) (run (text-body 3 AT "本文" None))]]
+    (setv plain (digests-of base))
+    (for [[field value] (+ (list (.items HEAD-SAMPLES)) [#("*" None)])]
+      (setv headed (if (= field "*") (| base HEAD-SAMPLES) (| base {field value})))
+      (assert (= (digests-of headed) plain) f"見出しの欄 {field} を足すと本文の digest が動いた: {base}"))))
+
+
+(deftest test-the-attachment-digest-is-the-golden-of-the-central-service
+  ;; golden: 中央のテストと同じ入力に中央と同じ hex(値の literal — どちらかの repo が式を変えれば自分の repo で赤)。
+  (setv body (attachment-body PNG-B64))
+  (setv head (run (headline-of-body body)))
+  (assert (= #(head.sha256 head.bytes) #(ATTACHMENT-GOLDEN-SHA256 ATTACHMENT-GOLDEN-BYTES))
+          f"本線の見出しの digest {head.sha256}/{head.bytes} ≠ 中央の golden {ATTACHMENT-GOLDEN-SHA256}/{ATTACHMENT-GOLDEN-BYTES}")
+  (assert (= (record-body-sha256 body) ATTACHMENT-GOLDEN-SHA256) f"fake の digest {(record-body-sha256 body)} ≠ 中央の golden"))

@@ -518,6 +518,13 @@ CONDITION_MEMORY_UNWRITABLE: ConditionType = "AgentMemoryUnwritable"
 #: 原文として畳む出来事の kind(記録の service の eventKinds のうち会話の中身 — frame は画面の断面・message は郵便で ACP の行から
 #: 畳む・attachment は画像・summary は要約そのもの)。要約の区間の読みと履歴からの再開の読みが kinds= に渡す **1 点**。
 RECORD_RAW_EVENT_KINDS: tuple[str, ...] = ("text", "tool_use", "tool_result", "system", "error", "user")
+#: 記録の service の出来事の**本文の欄**(bytes / sha256 の材料・tombstone で消える欄)— この repo の中の定義点ちょうど 1 つ
+#: (card acp:kanban-issue:ki-651086f48560)。読み手 = judgment.record-body-of(見出し・記憶・要約の digest)と
+#: fake.record_body_bytes(FakeRecord の冪等の判断)。正本 = agora-controllers docs/contracts/record-service.json の
+#: eventFields.body(同じ値を agora-controllers 2bf5dfe9 の services/record/vocabulary.BODY_FIELDS から写し、eventFields は
+#: 同 repo の着地 L460 が新設)。この repo に契約の写しは無い(写しの機械検は別 card acp:kanban-issue:ki-b1db19e730b3)ので、
+#: 値の一致は tests/sessionhost_acp_record_deftests.hy の性質と golden(中央と同じ入力に同じ hex)が主張する。
+RECORD_BODY_FIELDS: tuple[str, ...] = ("text", "summary", "input", "output", "data")
 #: summarize の結末の置き場(state_dir の下・区間ごと): prompt・claude の print モードの答え(JSON)・log・rc・pid の 5 file。
 SUMMARY_RUNS_RELDIR: str = "summary-runs"
 #: summarize の job の sessionHandle の欄(拾い直しの材料 — R7: 正本は行)。
@@ -2379,8 +2386,8 @@ class HistoryFold:
 @dataclass(frozen=True)
 class TurnEntryHeadline:
     """ACP の turn-record の status.entries の 1 item = **見出しの閉じた欄**(設計 §2.2 — claim check: control plane には
-    参照と見出し・本文は会話の記録の service)。本文の欄(text / summary / input / output / model)はこの型に無い —
-    本文を持つ entry は型で落ちる。seq = 本文の producerSeq(採番は 1 点)・bytes / sha256 = 本文の同一性(service が
+    参照と見出し・本文は会話の記録の service)。本文の欄(``RECORD_BODY_FIELDS``)はこの型に無い — 本文を持つ entry は
+    型で落ちる(見出しの欄のうち model・mime・name もこの閉じた欄の外)。seq = 本文の producerSeq(採番は 1 点)・bytes / sha256 = 本文の同一性(service が
     冪等の判断に使う値と同じ計算 — judgment.record-body-bytes-of)。"""
 
     seq: int
