@@ -84,6 +84,7 @@
   VERIFY-STEP-OBSERVE
   VERIFY-STEP-TIMED-OUT
   VerifyPlan
+  VerifyClaimVerdict
   CHARTER-KIND-SUMMARIZE
   CHARTER-SUMMARIZE-REGION-BYTES-KEY
   CHARTER-SUMMARIZE-UNTIL-KEY
@@ -6152,6 +6153,23 @@
   {:pre [(: state AgentdState)]
    :post [(: % set)]}
   (set (gfor command state.commands command.job-id)))
+
+
+(defk verify-claim-verdict [in-flight candidates limit]
+  {:pre [(: in-flight frozenset) (: candidates tuple) (: limit int)]
+   :post [(: % VerifyClaimVerdict)]}
+  "同じ node で今 claim してよい verify の行と Bound のまま待たせる行(card acp:kanban-issue:ki-9b728780cfac・依頼
+   lt-A3ST0CMSHSTP2PBBBA38YVQTZD・設計 agent-control-plane docs/design-checks/lt-3CXH09FC999PXC6D12RZ9EXZCG)— 純関数の 1 点。
+   in-flight = 走っている verify の job の id(memory の命令 ∪ 自分に結ばれた Running の verify の行 ∪ 引き取った命令)・
+   candidates = 資格を通った Bound の verify の候補(in-flight に無い行)・limit = node の宣言(AgentdSettings.verify-concurrency ≥ 1)。
+   claim = (created-at-ms, resource-id) の古い順の先頭から max(0, limit − len(in-flight)) 本・hold = 残り(同じ順)。
+   不変条件: claim ∩ hold = ∅・claim ∪ hold = candidates・len(in-flight) ≤ limit なら len(in-flight) + len(claim) ≤ limit。
+   順は**作成時刻**で、行の鍵の順(= CronJob の名前の綴り)ではない — 停止の後に溜まった便は予定時刻の古い順に 1 本ずつ起きる
+   (実弾 2026-09-23: 4 本が 3 秒で全部起き、各 script の process 表の覗きが互いを見て 4 本とも見送った)。呼び手は
+   agentd.claim-verify-candidates の 1 か所(拍ごとに 1 回・全候補で — 行ごとに呼ぶ形は鍵の順で起きる・設計 6.1 盲検 B)。"
+  (setv room (max 0 (- limit (len in-flight))))
+  (setv ordered (sorted candidates :key (fn [row] #(row.created-at-ms row.resource-id))))
+  (VerifyClaimVerdict :claim (tuple (cut ordered 0 room)) :hold (tuple (cut ordered room None))))
 
 
 ;; ---------------------------------------------------------------------------

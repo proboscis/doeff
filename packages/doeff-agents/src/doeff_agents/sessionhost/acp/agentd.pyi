@@ -258,6 +258,20 @@ def observe_command(
 def recover_command(
     settings: AgentdSettings, state: AgentdState, row: AcpRow, now_ms: int
 ) -> Program: ...
+# card acp:kanban-issue:ki-9b728780cfac: 同じ node の verify の直列化(受け口の側 — 判定 judgment.verify_claim_verdict の唯一の呼び手)
+def verify_command_here(row: AcpRow, plan: VerifyPlan, now_ms: int) -> Program: ...
+def adopt_verify_command(
+    settings: AgentdSettings, state: AgentdState, row: AcpRow, plan: VerifyPlan, command: InFlightCommand
+) -> Program: ...
+def claim_verify_candidates(
+    settings: AgentdSettings,
+    state: AgentdState,
+    rows: tuple,
+    running: tuple,
+    candidates: tuple,
+    previously_deferred: tuple,
+    now_ms: int,
+) -> Program: ...
 def withdraw_command(
     settings: AgentdSettings, state: AgentdState, command: InFlightCommand, row: AcpRow, now_ms: int
 ) -> Program: ...

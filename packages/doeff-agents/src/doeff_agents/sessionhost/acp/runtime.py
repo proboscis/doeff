@@ -53,6 +53,7 @@ from doeff_agents.sessionhost.acp.effects import (
     DECLARATION_SHA256_ENV,
     DRAIN_SECONDS_ENV,
     TRANSCRIPTS_OBSERVED_MAX_ENV,
+    VERIFY_CONCURRENCY_ENV,
     HOMES_ROOT_ENV,
     HOST_DB_FLAG,
     HOST_SOCKET_FLAG,
@@ -245,6 +246,9 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         home=(env.get("HOME") or os.path.expanduser("~")).strip(),
         # 段 12 lane 12a(agora-redesign #230): verify の命令の結末の置き場 = join が導いた state_dir(spool の親)の下
         verify_runs_dir=verify_runs_dir(env),
+        # card acp:kanban-issue:ki-9b728780cfac: 同じ node で同時に走らせる verify の命令の上限 — 宣言が在ればそれ、無ければ
+        # AgentdSettings の既定(既定の宣言はあちら 1 点で、ここには数を書かない)。1 未満は join の読みが断る(起動しない)。
+        verify_concurrency=_verify_concurrency_of_env(env),
         # 段 12 lane 12j(agora-redesign #233): summarize(会話の履歴の段階つき要約)の結末の置き場 = 同じ state_dir の下
         summarize_runs_dir=summarize_runs_dir(env),
         # 段 12(card acp:kanban-issue:ki-f2747267e24d B2): 借りた錠の手元の journal — 同じ state_dir の下の 1 file
@@ -379,6 +383,17 @@ def _transcripts_observed_max_of_env(env: Mapping[str, str]) -> int | None:
         return None
     if not isinstance(verdict, int):
         raise TypeError(f"transcripts_observed_max_of returned {type(verdict).__name__}")
+    return verdict
+
+
+def _verify_concurrency_of_env(env: Mapping[str, str]) -> int:
+    """同じ node で同時に走らせる verify の命令の上限(card acp:kanban-issue:ki-9b728780cfac)。読みの規則は
+    join.verify-concurrency-of の 1 点(無い = None = 宣言しない → AgentdSettings の既定・1 未満 / 数でない = ValueError = 起動しない)。"""
+    verdict: object = PyVM().run(join.verify_concurrency_of(env.get(VERIFY_CONCURRENCY_ENV)))
+    if verdict is None:
+        return AgentdSettings.verify_concurrency
+    if not isinstance(verdict, int):
+        raise TypeError(f"verify_concurrency_of returned {type(verdict).__name__}")
     return verdict
 
 

@@ -76,6 +76,7 @@
   DRAIN-SECONDS-ENV
   TRANSCRIPTS-OBSERVED-MAX-ENV
   TRANSCRIPTS-OBSERVED-MAX-CEILING
+  VERIFY-CONCURRENCY-ENV
   AGENTD-REVISION-ENV
   AGENTD-BUILD-ENV
   CUSTODY-URL-ENV
@@ -161,6 +162,9 @@
 ;; node の観測に載せる transcript の件数の上限(任意・ADR-DOE-AGENTS-012 R56・card acp:kanban-issue:ki-95169e9e265d 便 1)。
 ;; 無し = agentd の既定(effects.AgentdSettings.transcripts_observed_max)。席の枠(capacity)と揃えるための 1 鍵。
 (setv KEY-TRANSCRIPTS-OBSERVED-MAX "transcripts_observed_max")
+;; 同じ node で同時に走らせる verify の命令(charter.kind = verify)の上限(任意・card acp:kanban-issue:ki-9b728780cfac)。
+;; 無し = agentd の既定(effects.AgentdSettings.verify_concurrency = 1)。1 未満・数でない値は参加しない。
+(setv KEY-VERIFY-CONCURRENCY "verify_concurrency")
 ;; 段 12 lane 12j(agora-redesign #367): agentd の版の刻印(任意)— 据え付けの側が書く(git sha と image の tag か local)。
 (setv KEY-REVISION "revision")
 (setv KEY-BUILD "build")
@@ -191,6 +195,7 @@
 ;; (書き足す形は、足し忘れた鍵を「宣言に無い鍵」で断る = その機体が参加できない形で失敗する)。
 (setv AGENTD-KEYS (| #{KEY-SERVER KEY-TOKEN-FILE KEY-NODE-NAME KEY-STATE-DIR KEY-BACKEND
                        KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY KEY-PLACES KEY-WORK-ROOTS KEY-DRAIN-SECONDS KEY-TRANSCRIPTS-OBSERVED-MAX
+                       KEY-VERIFY-CONCURRENCY
                        KEY-ALLOW-METERED-BILLING KEY-REVISION KEY-BUILD KEY-SEAT-ENV
                        KEY-CLAUDE-SETTINGS-FILE}
                      (sfor source CARRIED-INSTRUCTION-SOURCES source.key)))
@@ -722,6 +727,25 @@
   value)
 
 
+(defk verify-concurrency-of [text]
+  {:pre [(: text (| str None))]
+   :post [(: % (| int None))]}
+  "同じ node で同時に走らせる verify の命令の上限の読み(card acp:kanban-issue:ki-9b728780cfac・依頼 lt-A3ST0CMSHSTP2PBBBA38YVQTZD):
+   宣言 file の [agentd].verify_concurrency の文字列(10 進の正の整数)→ int。無い・空 = None(名乗らない — agentd は
+   effects.AgentdSettings.verify_concurrency の既定 1 を使う。既定の宣言はあちら 1 点で、ここには写さない)。
+   1 未満・数でない値は ValueError(参加しない — 黙って 1 に倒さない。0 は「verify を受けない」ではなく宣言の誤り: 受けない機体は
+   places に company を名乗らない)。"
+  (setv word (if (is text None) "" (.strip text)))
+  (when (not word)
+    (return None))
+  (when (not (and (.isascii word) (.isdigit word)))
+    (raise (ValueError f"[{TABLE-AGENTD}].{KEY-VERIFY-CONCURRENCY} は 1 以上の整数(10 進の数字)であること: {word !r}")))
+  (setv value (int word))
+  (when (< value 1)
+    (raise (ValueError f"[{TABLE-AGENTD}].{KEY-VERIFY-CONCURRENCY} は 1 以上であること(0 は宣言の誤り): {value}")))
+  value)
+
+
 (defk work-roots-of [text]
   {:pre [(: text (| str None))]
    :post [(: % (| WorkRoots None))]}
@@ -979,6 +1003,8 @@
   ;; 停止の排水の上限(段 12 lane 12j・#304 便 2・任意)。
   (<- drain-seconds int (drain-seconds-of (.get agentd KEY-DRAIN-SECONDS)))
   (<- transcripts-observed-max (| int None) (transcripts-observed-max-of (.get agentd KEY-TRANSCRIPTS-OBSERVED-MAX)))
+  ;; 同じ node の verify の上限(card acp:kanban-issue:ki-9b728780cfac・任意)。
+  (<- verify-concurrency (| int None) (verify-concurrency-of (.get agentd KEY-VERIFY-CONCURRENCY)))
   ;; 機体が仕える置き場の集合(段 11 lane 11u — 1 値の place は退役)。
   (<- declared-places Places (places-of (.get agentd KEY-PLACES)))
   ;; node が持つ作業場の根(段 10 lane 10y 案 C・任意)。
@@ -1023,6 +1049,7 @@
     :capacity capacity
     :drain-seconds drain-seconds
     :transcripts-observed-max transcripts-observed-max
+    :verify-concurrency verify-concurrency
     :places declared-places.words
     ;; 空文字は「名乗らない」= env に現れない(参加の門 record-sink-of が読みの 1 点で断る — 段 9f lane 9f-6)。
     ;; 従量課金の binding kind を受けるか(従量課金の便 lane A)— 真のときだけ host の argv に旗が立つ。
@@ -1074,6 +1101,9 @@
   ;; R56: 件数の上限も名乗った時だけ env に現れる(無し = agentd の既定 — 既定を join が写さない)。
   (when (is-not spec.transcripts-observed-max None)
     (.append env #(TRANSCRIPTS-OBSERVED-MAX-ENV (str spec.transcripts-observed-max))))
+  ;; card acp:kanban-issue:ki-9b728780cfac: verify の上限も名乗った時だけ env に現れる(無し = agentd の既定 1 — 既定を join が写さない)。
+  (when (is-not spec.verify-concurrency None)
+    (.append env #(VERIFY-CONCURRENCY-ENV (str spec.verify-concurrency))))
   ;; 段 11 lane 11u: 置き場の集合は , 区切りの 1 文字列で運ぶ(読みは runtime の places-of の 1 点)。
   (.append env #(PLACES-ENV (.join PLACES-SEPARATOR spec.places)))
   (.extend env [#(HOST-BACKEND-ENV spec.backend)
