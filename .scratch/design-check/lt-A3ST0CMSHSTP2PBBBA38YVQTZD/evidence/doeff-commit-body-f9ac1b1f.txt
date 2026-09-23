@@ -1,0 +1,53 @@
+同じ機体の日次の全体検証を 1 本ずつ走らせる — agentd の受け口に verify の同時数の上限(AgentdSettings.verify_concurrency・既定 1)を 1 か所だけ持たせ、溜まった Bound の verify は作成時刻の古い順に上限まで起こし、残りは Bound のまま何も書かない(card acp:kanban-issue:ki-9b728780cfac・依頼 lt-A3ST0CMSHSTP2PBBBA38YVQTZD)
+
+何が起きたか(実弾 2026-09-23・会社 Mac CA-20038667-2): agentd が 01:14〜08:16 に sessionhost の socket を待って止まっている間に
+予定時刻を過ぎた 4 本の日次の verify の行(acp / mediagen / orch / proboscis-ema)が溜まり、08:16:36〜39 の 3 秒で全部起こされた。
+各 script の `ai land verify --exclusive` が process 表を覗いて互いを見つけ、4 本とも見送り・exit 0 = 日次が 1 本も測られなかった。
+
+根: 「同じ機体で全体検証は同時に 1 本」という決まりの持ち主が居ない。起こす側(receive-bound-jobs → claim-job → claim-verify-job)は
+数を見ずに全部起こし、起こされた各検証が自分の中から process 表を覗いて自己判断する。覗きには順位も錠も無いので同時なら全員見送る。
+
+変更(設計 = agent-control-plane docs/design-checks/lt-3CXH09FC999PXC6D12RZ9EXZCG・特に 6. 盲検と最小実験を受けた改訂):
+1. 判定は純関数 1 つ = judgment.verify-claim-verdict(走っている verify の id の集合・Bound の verify の候補・上限 → claim と hold)。
+   claim は (created-at-ms, resource-id) の古い順に上限の空きの本数だけ。順は作成時刻で、行の鍵の順(= CronJob の名前の綴り)ではない。
+2. 呼ぶのは受け口の側の 1 か所 = agentd.claim-verify-candidates(receive-bound-jobs が verify の Bound を集めて拍ごとに 1 回・全候補で渡す)。
+   claim-verify-job(verify の腕)は上限を読まず判定も呼ばない。
+3. 資格は上限の前: 置き場の不一致(place-mismatch)・id の綴りの外(verify-plan-of が文の答え)・script が無い(FsFileExists)行は枠を使わず、
+   同じ拍の claim-job がいつもの条件で閉じる。
+4. この機体で生きている自分の命令は起こし直さず引き取る(agentd.verify-command-here → adopt-verify-command): 候補の pid の file が生きた pid を
+   指す(CommandRunning)か rc の file が既に在る(CommandExited)なら Running + sessionHandle{stream, verify} を書いて観測を引き継ぐ
+   (CommandStart しない)。pid が死んで rc も無い(CommandGone)は命令が無い — 今日どおり起こす。理由: agentd が lease の猶予を超えて
+   止まると node の行が新しい化身に替わり、配置(lostRunner)が Running の verify も Bound(attempt 2)に置き直すが、verify の process は
+   agentd の停止を越えて走り続ける — 基準版では同じ job の 2 本目が起きる。
+5. 走っている数 = memory の verify の命令 ∪ 自分に結ばれた Running の verify の行(再起動の直後は拾い直しが claim の後なので行から数える)
+   ∪ 引き取った命令。
+6. hold の行には何も書かない(phase も condition も)。log と計器 verify-claim-held は待たせ始めた拍に 1 行ずつ(AgentdState.held_verify_ids —
+   毎拍は書かない)。行は node に Bound のまま残り、配置は live で capacity > 0 の node の未 claim の Bound を置き直さない。
+7. 上限は node の宣言: agentd.toml の [agentd].verify_concurrency → join(verify-concurrency-of・1 未満と数でない値は参加しない)→
+   env DOEFF_AGENTD_VERIFY_CONCURRENCY(名乗った時だけ)→ runtime.settings_from_env → AgentdSettings.verify_concurrency(既定 1 の
+   定義点は effects の 1 点)。数えるのは charter.kind = verify の命令すべて(agentd は script の中身を知らない)。
+
+変えないもの: ACP の engine(配置・契約)・verify の腕の起動と観測の中身・turn / summarize の腕・排水の挙動。
+dotfiles 側(wrapper 13 本から --exclusive を外し、land.py の覗きを消す)は別便 — 取り込みは doeff を先、dotfiles を後。
+
+検(packages/doeff-agents/tests/sessionhost_acp_verify_deftests.hy): 性質(候補 0〜6 × 走行中 0〜2 × 上限 1〜3 の全組み合わせ)・
+09-23 の 4 本の runKey で鍵の順と作成時刻の順を分けた振る舞い(1 拍目は proboscis-ema だけ・他 3 本は Bound で generation 不変・
+終わらせると次に acp・上限 2 なら proboscis-ema と acp)・再起動(Running 1 + Bound 3・memory 空で CommandStart 0 回)・引き取り
+(置き直し attempt 2・古い pid 生存・CommandStart 0 回・別の 1 本は Bound)・構造(判定の呼び手は claim-verify-candidates の 1 か所・
+腕は verify-concurrency を読まない)・宣言(既定 1・join の読み・env・0 は参加 / 起動を断る)。
+
+  cd packages/doeff-agents && PYTHONPATH=$PWD/src ../../.venv/bin/python -m pytest tests/test_sessionhost_acp_verify.py -q
+  → 15 passed in 1.97s(依頼書が「基準版 89b4285f で赤」と書く
+    test_lost_command_and_exceeded_deadline_close_the_job_with_a_condition も、この branch の基底 e9025c13 では緑)
+
+反例の実行(振る舞いの検が狙った理由で落ちることの確認): claim-verify-candidates の判定の呼びを「行ごとに候補 1 本」(鍵の順で起きる形)へ
+一時的に変えて同じ命令を -k "burst_of_four or declared_verify_concurrency_two" で実行 →
+  FAILED test_burst_of_four_verify_rows_runs_one_at_a_time_oldest_first — AssertionError: 最古から 1 本だけ起こしていない: ['land-verify-acp.sh']
+  FAILED test_declared_verify_concurrency_two_runs_two_oldest_first — AssertionError: ['land-verify-acp.sh', 'land-verify-mediagen.sh']
+  (2 failed, 13 deselected)。元に戻して(cmp で同一)15 passed。
+
+lint: ruff / pyright を触った .py(effects.py・runtime.py)に 1 回 — 自分の行の指摘は無し(残るのは基準版から在る RUF002/RUF003 の全角括弧と
+effects.py:2034 の RecordEvent 未定義・runtime.py:21 の import の順)。
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+

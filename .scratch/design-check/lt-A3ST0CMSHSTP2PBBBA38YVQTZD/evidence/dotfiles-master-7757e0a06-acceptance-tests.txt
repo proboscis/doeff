@@ -1,0 +1,4 @@
+test-admission: focused — 34 件(変更箇所の検証)
+own-tree-freshness: fresh — /home/kento/.worktrees/dotfiles-wt-lt-a3st-verify-serial は公開 origin/main=526bc1e8f から**分岐**している(作業樹 7757e0a06)— 遅れではないので冊の食い違いを陳腐に数えない
+..................................                                       [100%]
+34 passed in 2.84s

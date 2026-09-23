@@ -1,0 +1,10 @@
+# 反例 2: claim-verify-candidates の引き取り(verify-command-here → adopt-verify-command)を無効にし、生きている自分の命令が在っても新しく起こす木(基底 f9ac1b1f)
+# 命令: cd packages/doeff-agents && PYTHONPATH=$PWD/src ../../.venv/bin/python -m pytest tests/test_sessionhost_acp_verify.py -q
+E   AssertionError: 生きている命令の job に 2 本目を起こした
+tests/sessionhost_acp_verify_deftests.hy:573: AssertionError
+AssertionError: 生きている命令の job に 2 本目を起こした
+FAILED tests/test_sessionhost_acp_verify.py::test_replaced_running_verify_is_adopted_not_started_again
+1 failed, 14 passed, 1 warning in 107.12s (0:01:47)
+
+# 元に戻した後(cmp で f9ac1b1f と同一)の同じ命令:
+15 passed, 1 warning in 88.99s (0:01:28)

@@ -1,0 +1,8 @@
+# L2045 の再現(worktree wt/lt3cxh-design @ ca8054b0・NEEDLE_BASE=4551bdb2)
+    - docs/adr/defadr_20260809_attend_failed_machine_exit_20359f.hy
+FAILED docs/adr/defadr_20260812_hy_house_language_92a008.hy::test_adr_92a008_ratchet_no_unlisted_python
+1 failed, 3 passed, 1 warning in 59.57s
+
+# 台帳へ 1 行足した後(branch wt/lt-a3st-design-record @ 807207f8 = 本線に着地)
+    - docs/adr/defadr_20260809_attend_failed_machine_exit_20359f.hy
+4 passed, 1 warning in 2.30s
