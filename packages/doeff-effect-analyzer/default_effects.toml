@@ -1,25 +1,29 @@
 # Default effect recognition configuration for SEDA.
 # Extend or override these patterns with a project-level `seda.toml` file.
+# The vocabulary mirrors the constructors doeff exports today
+# (`doeff_core_effects.effects`, re-exported from `doeff`); the built-in copy
+# lives in `src/effect_registry.rs`. A non-literal key is reported as
+# `<kind>:<dynamic>`.
 
 [effects.ask]
 kind = "ask"
-match = { call = "ask", args = ["literal"] }
+match = { call = "Ask", args = ["literal"] }
 
-[effects.emit]
-kind = "emit"
-match = { call = "emit", args = ["any"] }
+[effects.tell]
+kind = "tell"
+match = { call = "Tell", args = ["literal"] }
 
-[effects.log]
-kind = "log"
-match = { call = "log", args = ["any"] }
+[effects.get]
+kind = "get"
+match = { call = "Get", args = ["literal"] }
 
-[effects.state_get]
-kind = "state:get"
-match = { call = "get_state", args = [] }
+[effects.put]
+kind = "put"
+match = { call = "Put", args = ["literal", "any"] }
 
-[effects.state_set]
-kind = "state:set"
-match = { call = "set_state", args = ["any"] }
+[effects.slog]
+kind = "slog"
+match = { call = "slog", args = ["any"] }
 
 [combinators.compose]
 strategy = "union"
@@ -33,4 +37,3 @@ strategy = "alias"
 [limits]
 max_tree_depth = 8
 max_recursions = 16
-

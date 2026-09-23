@@ -45,19 +45,18 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 fn propagates_effects_across_kleisli_calls() {
     let tmp = tempdir().expect("tmpdir");
     let module_source = r#"
-from doeff import do
-from doeff.effects import ask, emit, log
+from doeff import Ask, Tell, do
 
 @do
 def fetch_user():
-    repo = yield ask("user_repo")
-    yield emit("user")
+    repo = yield Ask("user_repo")
+    yield Tell("user")
     return repo
 
 @do
 def main():
     yield fetch_user()
-    yield log("done")
+    yield Tell("done")
 "#;
     write_module(tmp.path(), "module", module_source);
 
@@ -69,7 +68,7 @@ def main():
     );
 
     let keys: HashSet<_> = effect_keys(&report).into_iter().collect();
-    let expected: HashSet<_> = ["ask:user_repo", "emit:user", "log:done"]
+    let expected: HashSet<_> = ["ask:user_repo", "tell:user", "tell:done"]
         .into_iter()
         .map(String::from)
         .collect();
@@ -81,18 +80,17 @@ def main():
 fn propagates_effects_for_program_values() {
     let tmp = tempdir().expect("tmpdir");
     let module_source = r#"
-from doeff import do
-from doeff.effects import ask, emit, log
+from doeff import Ask, Tell, do
 
 @do
 def fetch_user():
-    yield ask("user_repo")
-    yield emit("user")
+    yield Ask("user_repo")
+    yield Tell("user")
 
 @do
 def main():
     yield fetch_user()
-    yield log("done")
+    yield Tell("done")
 
 program = main()
 "#;
@@ -106,7 +104,7 @@ program = main()
     );
 
     let keys: HashSet<_> = effect_keys(&report).into_iter().collect();
-    let expected: HashSet<_> = ["ask:user_repo", "emit:user", "log:done"]
+    let expected: HashSet<_> = ["ask:user_repo", "tell:user", "tell:done"]
         .into_iter()
         .map(String::from)
         .collect();
@@ -129,20 +127,20 @@ fn complex_program_structure() {
 
     let keys: HashSet<_> = effect_keys(&report).into_iter().collect();
     let expected: HashSet<_> = [
-        "log:orchestrate",
+        "tell:orchestrate",
         "ask:alpha",
         "ask:beta",
-        "emit:beta",
+        "tell:beta",
         "ask:gamma",
-        "log:gamma",
+        "tell:gamma",
         "ask:delta",
         "ask:epsilon",
         "ask:zeta",
         "ask:eta",
         "ask:theta",
-        "emit:theta",
+        "tell:theta",
         "ask:iota",
-        "log:iota",
+        "tell:iota",
         "ask:kappa",
     ]
     .into_iter()
@@ -167,9 +165,9 @@ fn scenario_traverse_items() {
     let expected: HashSet<_> = [
         "ask:alpha",
         "ask:beta",
-        "emit:beta",
+        "tell:beta",
         "ask:gamma",
-        "log:gamma",
+        "tell:gamma",
     ]
     .into_iter()
     .map(String::from)
@@ -188,7 +186,7 @@ fn scenario_first_success_some() {
     )
     .expect("analysis succeeded");
     let success_keys: HashSet<_> = effect_keys(&success_report).into_iter().collect();
-    let success_expected: HashSet<_> = ["ask:alpha", "ask:beta", "emit:beta"]
+    let success_expected: HashSet<_> = ["ask:alpha", "ask:beta", "tell:beta"]
         .into_iter()
         .map(String::from)
         .collect();
@@ -246,7 +244,7 @@ fn scenario_comprehension_decorated_methods() {
     )
     .expect("analysis succeeded");
     let comps_keys: HashSet<_> = effect_keys(&comps).into_iter().collect();
-    let expected_comps: HashSet<_> = ["ask:alpha", "ask:beta", "emit:beta"]
+    let expected_comps: HashSet<_> = ["ask:alpha", "ask:beta", "tell:beta"]
         .into_iter()
         .map(String::from)
         .collect();
