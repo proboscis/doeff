@@ -24,6 +24,7 @@ from doeff_agents.sessionhost.acp.effects import (
     CAUSE_CATEGORY_FAILED,
     CAUSE_CATEGORY_INTERRUPTED,
     PHASE_ENDED,
+    PHASE_RUNNING,
     CauseCategory,
     JobOutcome,
     JSONObject,
@@ -108,17 +109,27 @@ def test_a_failed_session_carries_failed_with_the_condition_type() -> None:
     assert _condition_types(_status_of(world, "j-1"))[-1] == "SessionFailed"
 
 
-def test_a_provider_limit_refusal_carries_failed_with_provider_limit_and_no_value() -> None:
-    """場面 4: provider の限度で断られた手番 = 条件 ProviderLimit(段 11 lane 11n 便 C)+ result.cause {failed, ProviderLimit}。
-    value は書かない(value は手番が報告した結果)— 「result に書かない」の旧規則は「value は書かない・cause は書く」へ。"""
+def test_a_provider_limit_refusal_is_not_a_terminal_and_carries_no_result() -> None:
+    """場面 4: provider の限度で断られた試みは**終端ではない**(agora-redesign #519 便 4・6401d1d5・D-519-3)— 行は Running の
+    まま・条件 ProviderLimit{profile, attempt, at} を足すだけで、result(value も cause も)は書かず、器の終端の条件
+    SessionFailed も足さない。この試みの結末は ProviderLimit の記録が名乗り、配置の supervision が Pending へ戻して別の口座へ
+    結び直す(Ended に書くと engine が終端の巻き戻しを断り、郵便が delivered のまま止まった — 実弾 2026-09-17)。
+    旧形(段 11 lane 11n 便 C・#349 行 3 粒 3a: Ended + result.cause {failed, ProviderLimit})は #519 で置き換わった。"""
     world = World()
     sid = _start(world)
     world.sessions.finish(sid, "failed", cause={"category": "rate_limited", "reason": "You've reached your Opus limit"})
     world.tick(advance_ms=1_000)
-    assert _result_of(world, "j-1") == {"cause": {"category": "failed", "reason": "ProviderLimit"}}
-    types = _condition_types(_status_of(world, "j-1"))
+    status = _status_of(world, "j-1")
+    assert status["phase"] == PHASE_RUNNING
+    assert "result" not in status
+    types = _condition_types(status)
     assert "ProviderLimit" in types
-    assert "SessionFailed" in types
+    assert "SessionFailed" not in types
+    conditions = status["conditions"]
+    assert isinstance(conditions, list)
+    refusal = next(item for item in conditions if isinstance(item, dict) and item.get("type") == "ProviderLimit")
+    assert refusal["profile"] == "personal"
+    assert refusal["attempt"] == 1
 
 
 def test_a_turn_closed_without_a_session_carries_failed_with_the_closing_condition() -> None:

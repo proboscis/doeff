@@ -1418,10 +1418,17 @@ def headless_host(monkeypatch: pytest.MonkeyPatch) -> Iterator[Host]:
     monkeypatch.setenv("DOEFF_SESSIONHOST_HEADLESS_DIR", str(root / "events"))
     monkeypatch.delenv("DOEFF_HEADLESS_STUB_DELAY", raising=False)
     monkeypatch.setenv("XDG_STATE_HOME", str(root / "state"))
+    # 器の登記簿(host.HEADLESS_REGISTRY)は module の大域 — 検ごとに新しい簿を持たせる。共有のままだと前の検が
+    # 残した process が次の検の「登記の全 process」(停止の腕の killed の数・復帰の所有の観測)に混ざり、package を
+    # 通しで走らせた時だけ数が合わない(2026-09-24 zeus / Mac: killed 7 != 2)。後始末で簿に残った process を降ろす。
+    registry = HeadlessRegistry()
+    monkeypatch.setattr(host, "HEADLESS_REGISTRY", registry)
     host_under_test = Host(root)
     try:
         yield host_under_test
     finally:
+        host.HEADLESS_REGISTRY.kill_all()
+        registry.kill_all()
         host_under_test.close()
         shutil.rmtree(root, ignore_errors=True)
 

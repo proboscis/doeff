@@ -91,7 +91,8 @@ def run_agentd_real_agent_result_report_e2e(
                 prompt=_initial_prompt(agent_type),
                 model="opus" if agent_type == "claude" else None,
                 lifecycle=AgentSessionLifecycle.RUN_TO_COMPLETION,
-                session_env=_session_env(agent_type, runtime_dir, work_dir),
+                binding=_binding(agent_type, work_dir),
+                session_env=_session_env(agent_type),
                 expected_result={"payload_schema": RESULT_SCHEMA},
             )
             outcome = client.await_result(session_id, timeout_seconds=240.0)
@@ -145,20 +146,34 @@ def _fixed_summary(agent_type: str) -> str:
     return f"fixed by {agent_type}"
 
 
-def _session_env(agent_type: str, _runtime_dir: Path, work_dir: Path) -> dict[str, str]:
+def _binding(agent_type: str, work_dir: Path) -> dict[str, str]:
+    """The auth profile of the launch, declared through the typed ``binding`` field.
+
+    CLAUDE_CONFIG_DIR / CODEX_HOME are binding-owned: the host's admission
+    rejects them in ``session_env`` (ADR-DOE-AGENTS-004 R7 — policy
+    BINDING-OWNED-ENV-KEYS), so the home travels as the binding the host
+    resolves, never as an env overlay.
+    """
     if agent_type == "claude":
         claude_config_dir = _prepare_real_claude_home(work_dir)
-        real_home = str(Path.home())
-        return {
-            "CLAUDE_CONFIG_DIR": str(claude_config_dir),
-            "DISABLE_AUTO_UPDATE": "true",
-            "DISABLE_UPDATE_PROMPT": "true",
-            "HOME": real_home,
-        }
+        return {"kind": "claude-code", "config_dir": str(claude_config_dir)}
     if agent_type == "codex":
         codex_home = os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
         run_driver_io(trust_workspace_in_codex_home(codex_home, work_dir))
-        return {"CODEX_HOME": codex_home}
+        return {"kind": "codex", "codex_home": codex_home}
+    raise AssertionError(f"unsupported real agent type: {agent_type}")
+
+
+def _session_env(agent_type: str) -> dict[str, str]:
+    """The non-auth env overlay of the launch (no binding-owned keys — see ``_binding``)."""
+    if agent_type == "claude":
+        return {
+            "DISABLE_AUTO_UPDATE": "true",
+            "DISABLE_UPDATE_PROMPT": "true",
+            "HOME": str(Path.home()),
+        }
+    if agent_type == "codex":
+        return {}
     raise AssertionError(f"unsupported real agent type: {agent_type}")
 
 
