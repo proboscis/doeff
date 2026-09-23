@@ -83,6 +83,11 @@
   fast-jev-installed-version
   fast-jev-plugin-outdated
   fast-jev-update-command])
+(import doeff_agents.sessionhost.impls.otel_telemetry [
+  OTEL-ENDPOINT-ENV
+  OTEL-TENANT-ENV
+  OTEL-HOST-ENV
+  otel-home-settings])
 
 
 ;; ---------------------------------------------------------------------------
@@ -687,6 +692,8 @@
   ;; 会話の圧縮 plugin(pod だけ・daemon の env が鍵の file を名乗る時)— 失敗は warning で、起動は止めない。
   (<- plugin-warnings (install-fast-jev-plugin config-dir))
   (.extend warnings plugin-warnings)
+  ;; Claude Code の OTel の送り設定(daemon の env が送り先を名乗る機体だけ・card acp:kanban-issue:ki-b47afa9311a6)。
+  (<- _ (install-otel-telemetry config-dir))
   ;; card acp:kanban-issue:ki-c3aace97d825: 組み直した transcript が運ばれていれば家へ置き、その会話の id を
   ;; 名乗る(= 器は `--resume <id>` で続ける)。置けなければ今日どおり新しい id を鋳造する(= 履歴の畳み直し)。
   (<- adopted (| str None) (claude-install-rebuilt-transcript config-dir params))
@@ -761,6 +768,36 @@
                     (<- after (fs-read-text settings-path))
                     (<- _ (fs-write-text-atomic settings-path (fast-jev-home-settings after key-file state-dir) ".agentd-tmp"))
                     warnings)))))))
+
+
+(defk install-otel-telemetry [config-dir]
+  {:pre [(: config-dir str) (> (len config-dir) 0)]
+   :post [(: % bool)]}
+  "借りた家の settings.json に Claude Code の OTel の送り設定を据える(2026-09-23): daemon の env
+   CLAUDE_OTEL_ENDPOINT が送り先を名乗る時だけ働く(名乗らない機体では何もしない)。所属は
+   CLAUDE_OTEL_TENANT、機体名は CLAUDE_OTEL_HOST(無ければ HOSTNAME)。冪等 — 同じ本文なら書かない。
+   手番の CLI は機体の env を継がないので、家の settings.json の env が CLI に届く口。
+   fast-jev の据え付けの後に撃つ(install が settings.json を書き直すので、その後で合流する)。戻り値: 書いたか。"
+  (<- endpoint (env-get OTEL-ENDPOINT-ENV))
+  (if (not (and (isinstance endpoint str) (.strip endpoint)))
+      False
+      (do
+        (<- tenant (env-get OTEL-TENANT-ENV))
+        (<- host (env-get OTEL-HOST-ENV))
+        (<- hostname (env-get "HOSTNAME"))
+        (setv host-name (or (and (isinstance host str) (.strip host))
+                            (and (isinstance hostname str) (.strip hostname))
+                            ""))
+        (setv settings-path f"{config-dir}/{CLAUDE-SETTINGS-FILE}")
+        (<- before (fs-read-text settings-path))
+        (setv desired (otel-home-settings before (.strip endpoint)
+                                          (if (isinstance tenant str) (.strip tenant) "")
+                                          host-name))
+        (if (= desired before)
+            False
+            (do
+              (<- _ (fs-write-text-atomic settings-path desired ".agentd-tmp"))
+              True)))))
 
 
 (defk claude-discover-conversation [params]
