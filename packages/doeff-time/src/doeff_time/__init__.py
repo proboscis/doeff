@@ -15,6 +15,7 @@ from .effects import (
     set_time,
 )
 from .handlers import async_time_handler, sim_time_handler, sync_time_handler
+from .polling import poll_until
 
 __all__ = [
     "Delay",
@@ -28,6 +29,7 @@ __all__ = [
     "WaitUntil",
     "WaitUntilEffect",
     "async_time_handler",
+    "poll_until",
     "set_time",
     "sim_time_handler",
     "sync_time_handler",
