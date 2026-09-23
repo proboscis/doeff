@@ -63,6 +63,8 @@ the same PR.
 | --- | --- | --- |
 | `doeff-agentic-cli` | native helper | distributed with the agentic CLI workflow, not a public PyPI package |
 | `doeff-docker` | experimental runtime adapter | no public install contract yet |
+| `doeff-jev` | judgment provider package (TypeSafe Jev handlers for `doeff-system-one`) | new 2026-09-22 (e190a8c6); no public install contract yet |
+| `doeff-system-one` | judgment effects package | new 2026-09-22 (e190a8c6); no public install contract yet |
 | `doeff-domain` | vocabulary cohesion domain package | new E1 subpackage of ADR-DOE-DOMAIN-001 (status proposed); no public install contract yet |
 | `doeff-ml-nexus` | experimental runtime adapter | no public install contract yet |
 | `doeff-effect-analyzer` | native analysis helper | development tooling, not part of the PyPI user surface |
