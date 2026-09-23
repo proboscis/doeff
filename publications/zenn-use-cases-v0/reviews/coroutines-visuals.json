@@ -1,0 +1,14 @@
+{
+  "concept": {
+    "title": "待機する対象と、解釈する依頼を分ける",
+    "code": "@do  # 挨拶のProgramを作る\ndef greet():  # 名前を取得して挨拶する\n    name = yield ReadName()  # ハンドラから名前を受け取る\n    return f\"こんにちは、{name}さん\"  # 挨拶を返す",
+    "flow": "白背景、平面的な2段の比較図。写真、3D、立体装置を使わない。上段は『coroutineの実行』。greet_async内の『await read_name_async()』から『read_name_async』へ呼び出す矢印、そこから『花子』を返す矢印でgreet_asyncへ戻る。外側の薄い枠を『この例ではasyncioのTaskが実行を管理』とする。下段は『依頼の解釈』。greet内の『yield ReadName()』から『ReadNameという依頼』、それから『hanakoハンドラ』へ依頼の矢印。ハンドラから『Resume(k, 花子)』で元のgreetへ戻る別の矢印を引く。下段外枠に『Rust VMがハンドラ境界と継続を扱う』。上下とも最終結果を『こんにちは、花子さん』とする。コードパネルは下段のgreetの正確な4行。asyncioには非同期以外の処理が書けない、awaitで必ずTask切り替えが起こる、と読めるラベルを入れない。",
+    "caption": "awaitはawaitableを進める構文です。doeffでは依頼のデータと継続を、実行時に取り付けたハンドラへ渡します。"
+  },
+  "flow": {
+    "title": "ストリームは、1断片ずつdoeffへ戻す",
+    "code": "chunk = yield Await(anext(iterator, None))  # 次の1断片、終了はNone\nif chunk is None:  # 反復の終了を判定\n    return text  # 集めた全文を返す\ntext += chunk  # 到着順に結合",
+    "flow": "白背景、平面的なフローチャート。写真、3D、立体装置を使わない。大きな範囲枠を『@do collect_chunksのループ』とし、その内側に『次の1断片を依頼』→『Noneなら終了？』という判断を置く。次の1断片を依頼するノードから外側の『Awaitハンドラとスケジューラ』→『非同期イテレータ』へ矢印、結果chunkが同じ依頼位置へ戻ってから判断へ進む矢印。判断の『いいえ』は『textに断片を結合』→次の1断片を依頼するノードへ戻る。『はい』は『return text』→呼び出し元『yield collect_chunks(stream)』が全文を受け取る流れ。None以外は空文字列でも継続することを小さく補足。コードパネルは『collect_chunksのwhile True内』という見出しを必ず付けた4行抜粋。確認値は『4断片＋終了確認＝Await 5回』。収集ループ全体が非同期イテレータ側で動く図にしない。",
+    "caption": "収集ループと結合処理は@doに残し、次の1要素を待つ操作だけをAwaitで非同期実装へ接続します。"
+  }
+}

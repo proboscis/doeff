@@ -1,0 +1,14 @@
+{
+  "concept": {
+    "title": "異なる抽象を、同じyieldでつなぐ",
+    "code": "outcome = yield Try(convert_title(text))  # 成功か失敗を受け取る\ncount = yield Get(\"attempts\")  # 試行回数1を読む\nmessages = yield writer_log()  # 開始ログを受け取る\nreturn outcome, count, messages  # 結果・回数・ログを返す",
+    "flow": "白背景、平面的な角丸枠、紺文字、青緑の矢印。写真・3D不可。中央に4行のコードを大きく配置する。上から順にコード行へ対応する枠を置く。Tryの行は『変換の結果 → Ok / Err』、Getの行は『State → 試行回数1』、writer_logの行は『Writer → 開始ログ』。最後のreturnの行から『結果・回数・ログ』へ矢印を出す。上部の補助枠で『変換の中では Ask → 設定2秒、Delay → 仮想時間で待機』と表示し、変換の処理に接続する。抽象ごとに別の構文を必要とせずyieldで結果を受け取ることを示す。ハンドラの並列実行や、失敗時の状態リセットは描かない。コードの各行のコメントも必ず表示する。コードは抜粋と明記。",
+    "caption": "Tryで成功・失敗を値にし、Getで状態、writer_logでログを受け取ります。設定や時間も子Programの中で同じyieldを使います。"
+  },
+  "flow": {
+    "title": "失敗しても、試行回数と開始ログは残る",
+    "code": "failure, count, messages = execute_test(\"   \")  # 空の見出しを処理する\nassert isinstance(failure, Err)  # 変換失敗を値として受け取る\nassert count == 1  # 試行回数は巻き戻らない\nassert messages == [\"見出しの変換を開始\"]  # 開始ログも残る",
+    "flow": "白背景、平面的な処理図、紺文字、青緑の矢印。写真・3D不可。コードを上か左に正確に4行表示し、下か右に一方向の処理図を描く。順番は『Get / Put: 試行回数0→1』→『Tell: 開始ログを蓄積』→『Delay: 仮想時計で2秒待つ』→『空文字のためValueError』→『TryがErrを返す』→『inspectが回数1と開始ログを読む』。最後の枠からコードの3つのassertに対応する結果カード『Err(ValueError)』『count = 1』『開始ログ1件』へ接続する。状態やログを消す矢印は描かない。小さく『このハンドラ構成では、自動の巻き戻しはない』と添える。execute_testはテスト境界であり新しいeffectではない。コードは抜粋と明記し、各行の日本語コメントも表示する。",
+    "caption": "空の見出しはErrになりますが、Tryの後で読む試行回数は1、ログには開始メッセージが残ります。この構成に自動の巻き戻しはありません。"
+  }
+}

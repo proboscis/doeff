@@ -1,0 +1,19 @@
+digraph figure {
+graph [bgcolor="#f8fafc", pad="0.45", nodesep="0.4", ranksep="0.58", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#152c43", labelloc="t", label="記録済みの依頼だけを再生する\n"];
+node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#c3d2e0", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#152c43", margin="0.22,0.17"];
+edge [color="#087e8b", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#087e8b"];
+p [label="HttpRequestを依頼"];
+q [label="実行モードを選ぶ", shape=diamond, margin="0.1", fillcolor="#e7f5f2"];
+a [label="記録: HTTPを実行"];
+s [label="依頼と応答を保存"];
+k [label="再生: 対応する記録がある？", shape=diamond, margin="0.1", fillcolor="#e7f5f2"];
+r [label="応答を返す"];
+e [label="記録不足のエラー"];
+p -> q [label=""];
+q -> a [label="record"];
+a -> s [label=""];
+s -> r [label=""];
+q -> k [label="replay"];
+k -> r [label="ある"];
+k -> e [label="ない"];
+}

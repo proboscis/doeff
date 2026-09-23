@@ -1,0 +1,16 @@
+digraph figure {
+graph [bgcolor="#f8fafc", pad="0.45", nodesep="0.4", ranksep="0.58", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#152c43", labelloc="t", label="依存を揃え、計算をコンテナで実行する\n"];
+node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#c3d2e0", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#152c43", margin="0.22,0.17"];
+edge [color="#087e8b", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#087e8b"];
+s [label="ソースと依存を解決"];
+c [label="ビルド用の環境へ転送・設定"];
+d [label="Dockerfileを組み立てる"];
+b [label="Dockerイメージをビルド"];
+p [label="計算をシリアライズして渡す"];
+r [label="ランナーが実行し結果を返す"];
+s -> c [label=""];
+c -> d [label=""];
+d -> b [label=""];
+b -> p [label=""];
+p -> r [label=""];
+}

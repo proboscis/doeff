@@ -1,0 +1,15 @@
+digraph figure {
+graph [bgcolor="#122336", pad="0.45", nodesep="0.4", ranksep="0.58", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#f4f8fc", labelloc="t", label="エージェントの仕事を、計算へつなぐ\n"];
+node [shape=box, style="rounded,filled", fillcolor="#203951", color="#55748e", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#f4f8fc", margin="0.22,0.17"];
+edge [color="#79e4c4", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#79e4c4"];
+s [label="AgentSpec\n指示・実行場所・結果形式"];
+p [label="ワークフロー\n@do"];
+h [label="doeff-agents\n起動・結果・認証の境界"];
+a [label="エージェント\n作業・ツール利用"];
+r [label="AwaitOutcome\n状態と検証された結果"];
+s -> p [label="設定"];
+p -> h [label="LaunchSession / AwaitResult"];
+h -> a [label="実行"];
+a -> h [label="応答"];
+h -> r [label="受け渡し"];
+}

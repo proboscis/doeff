@@ -1,0 +1,25 @@
+Use case: infographic-diagram
+Asset type: doeffの日本語紹介記事の最上部に置く、目を引くブランド・キービジュアル。
+Create a wide 16:9 horizontal banner, 1536 x 864 if possible. This is a polished editorial hero for a Python framework, with striking typography and a compact, meaningful flat diagram. Not a dense instruction sheet.
+
+背景は完全に不透明な白。濃紺、鮮やかなティール、淡いミント、水色、ラベンダー。フラットな図形のみ。大胆で広い余白、強い文字の大小差。写真・3D・立体装置・ガラス・金属・影・グラデーション・人物・ロボットは禁止。小さい文字を詰め込まない。
+
+上部左に非常に大きく太い「doeff」の文字。これを主役にする。右またはその直下に日本語の見出しを二行で大きく：
+「処理を書く。」
+「動かし方は、選べる。」
+小さな肩書き：「Pythonのエフェクトとハンドラ」
+
+中央から下に、2枚の角丸カードを水平配置し、太く美しいティールの往復矢印で結ぶ。
+左カードは淡い水色。見出し「エフェクトで依頼」。上に小さなラベル「@do」。コード抜粋を大きい等幅で、正確に2行：
+# 名前を依頼する
+name = yield Ask("name")
+右カードは淡いラベンダー。見出し「ハンドラで解釈」。上に小さなラベル「@handler」。コード抜粋を大きい等幅で、正確に2行：
+# 花子を渡して再開する
+yield Resume(k, "花子")
+
+左から右へ向かう上側の矢印に「依頼」。右から左へ戻る下側の矢印に「値を返して再開」。矢印は文字・カードのコードへ重ねない。添える短い説明は「nameに『花子』が入る」。kのごく短い説明は「k = 中断した処理の続き」。2つのコードは本文中の抜粋であると分かるようにカードの小見出しへ「コード抜粋」を添える。完全なハンドラ定義を省略した部分に架空の構文を足さない。
+
+最下部には小さなフラットな5つのチップを横並びにして用途の広さを感じさせる。文字は次の5つだけ：
+「AIエージェント」「仮想時間」「ゲーム」「永続実行」「DI」
+
+No extra text or invented APIs. No opaque calls such as handler(program), no lazy_ask/env, no fake Python pseudo code. Underscores, @, quotes, brackets and Japanese must be crisp and correct. All body prose Japanese. The result should feel like an appealing framework landing-page cover that immediately communicates a two-way effect-handler exchange. Make the typography dominant and the diagram elegant, not cluttered.

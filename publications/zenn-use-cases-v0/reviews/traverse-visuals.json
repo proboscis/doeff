@@ -1,0 +1,14 @@
+{
+  "concept": {
+    "title": "処理は同じ、実行戦略を差し替える",
+    "code": "@do  # 集合の処理もProgramにする\ndef pipeline():  # 実行順は外で決める\n    collection = yield Traverse(process, [1, 2, 3])  # 3件を依頼\n    items = yield Inspect(collection)  # 入力順に結果を得る\n    return [item.value for item in items]  # [10, 20, 30]",
+    "flow": "白背景の平面的な説明図。3D・実写・立体台座は禁止。上部にコード枠を置く。processは「入力値と同じ秒数のDelayの後、10倍を返す」と図中に明記。中央のTraverse依頼から、実行時にどちらか一方だけを選ぶ分岐へ矢印を引く。上段sequential()は1秒→2秒→3秒の横一列、仮想時間合計6秒。下段parallel(concurrency=3)は同時に始まる1秒・2秒・3秒の3レーン、仮想時間合計3秒。両方の終点は同じ入力順の[10, 20, 30]。分岐を同時実行や後処理の段階として描かない。実時間の速度測定という文言を入れない。",
+    "caption": "`Traverse(process, [1, 2, 3])`という同じ依頼を、逐次か最大3並行かのどちらかで解釈します。どちらも結果は入力順の10・20・30です。"
+  },
+  "flow": {
+    "title": "文書ごとの計算と、失敗・集計の方針を分ける",
+    "code": "lengths = yield Traverse(read_length, texts)  # 2・失敗・7\ntotal = yield Reduce(add, 0, lengths)  # 成功分を足して9\nhistory = yield Inspect(lengths)  # 3件の履歴\nreturn total, history  # 合計と成否を返す",
+    "flow": "白背景の平面的な説明図。3D・実写・立体台座は禁止。コードは@do関数内の抜粋であると枠の外に明記。入力「短文」「空文字」「もう少し長い文」からread_lengthへ矢印。正常2件は2と7、空文字はFail(ValueError)へ。Failは共通の内側fail_handlerでValueErrorへ変わる。その次に外側の実行戦略を2択として示す。選択肢parallel(concurrency=2)では履歴[成功2, 失敗, 成功7]へ進み、Reduceは成功値2+7=9、Inspectは3件の履歴を返す。もう一方parallel_fail_fast(concurrency=2)ではValueErrorが呼び出し元へ届き全体が中断する。2択は同時実行する枝ではないと注記。失敗を0文字や成功値へ変換して描かない。",
+    "caption": "`parallel`では2・失敗・7を履歴に残し、`Reduce`が成功分を合計して9を返します。`parallel_fail_fast`を選ぶと、同じ空文書の例外が全体へ伝わります。"
+  }
+}

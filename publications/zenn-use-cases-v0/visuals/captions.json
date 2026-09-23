@@ -1,0 +1,141 @@
+{
+  "main": {
+    "concept_title": "同じAskに、ハンドラが違う名前を返す",
+    "concept_caption": "同じ`greet`から作った2つの計算へ、それぞれ名前を供給します。`Ask`から文字列を受け取る契約を保ち、本体を変えずに結果を変えています。",
+    "flow_title": "Askを受け取り、値を渡して挨拶の続きを再開する",
+    "flow_caption": "`yield Ask(\"name\")`で本文が中断し、ハンドラが「花子」を渡すと、その値が`name`に入って次の行へ進みます。最後の`return`が、`run()`の結果になります。",
+    "hero_title": "doeff — 処理を書く。動かし方は、選べる。"
+  },
+  "agents": {
+    "concept_title": "エージェントの操作を、ハンドラで解釈する",
+    "concept_caption": "LaunchSessionとAwaitResultの列は共通です。選んだハンドラが、実セッションまたはシナリオの応答として解釈します。",
+    "flow_title": "2件のレビューを開始し、結果を待って可否を合成する",
+    "flow_caption": "2件を開始してから、それぞれの結果を待ちます。シナリオ例は文章がok=True、コードがok=Falseなので、最終結果はready=Falseです。"
+  },
+  "llm": {
+    "concept_title": "LLMへの依頼を、ハンドラで解釈する",
+    "concept_caption": "共通のLLMChatを、取り付けたハンドラが解釈します。対応機能と返り値はハンドラごとに確認します。",
+    "flow_title": "ストリームの収集も、@doで合成する",
+    "flow_caption": "OpenAIのストリームを1チャンクずつAwaitし、反復と本文の収集を@doの中で進めます。"
+  },
+  "image": {
+    "concept_title": "生成と編集を、ひとつの制作処理へ",
+    "concept_caption": "生成と編集を別の依頼として表し、生成結果の画像を次の編集へ渡します。通信方法は取り付けるハンドラが担当します。",
+    "flow_title": "画像を生成し、その結果を編集へ渡す",
+    "flow_caption": "生成ハンドラがImageResultを返すと、生成を待っていた処理が再開します。そのimagesを編集依頼へ渡し、編集後のImageResultを後続へ返します。"
+  },
+  "games": {
+    "concept_title": "ゲームの進行を保ち、入力の解釈を取り替える",
+    "concept_caption": "ゲームは入力をyieldし、ハンドラが入力値を返します。固定入力と保存履歴を交換しても、ターンを進めるコードは共通です。",
+    "flow_title": "入力を記録し、同じルールで対局を再構成する",
+    "flow_caption": "記録時は入力ハンドラから得た6件の結果を保存します。再生時はJSONの履歴から入力を返し、同じ3ターン・HP0を再構成します。"
+  },
+  "events": {
+    "concept_title": "型のあるイベントで、処理をつなぐ",
+    "concept_caption": "待機を繰り返しポーリングする代わりに、イベントが届いたら続きを動かします。",
+    "flow_title": "待ち受けを登録してから、イベントを発行する",
+    "flow_caption": "組み込みハンドラは永続キューではありません。購読前のイベントを後から受け取る保証はありません。"
+  },
+  "traverse": {
+    "concept_title": "処理は同じ、実行戦略を差し替える",
+    "concept_caption": "`Traverse(process, [1, 2, 3])`という同じ依頼を、逐次か最大3並行かのどちらかで解釈します。どちらも結果は入力順の10・20・30です。",
+    "flow_title": "文書ごとの計算と、失敗・集計の方針を分ける",
+    "flow_caption": "`parallel`では2・失敗・7を履歴に残し、`Reduce`が成功分を合計して9を返します。`parallel_fail_fast`を選ぶと、同じ空文書の例外が全体へ伝わります。"
+  },
+  "time": {
+    "concept_title": "待機の手順はそのまま、時計を選ぶ",
+    "concept_caption": "`Delay`と`GetTime`を書く処理本体は共通です。外側に取り付けるハンドラで、実時間の待機か仮想時計の進行かを選びます。",
+    "flow_title": "10秒で再開し、次に20秒で再開する",
+    "flow_caption": "20秒のタスクと10秒のタスクが同じ仮想時刻に待機を始めます。10秒のタスクが先に再開し、最後にGatherが指定順で日時を返します。開始からの秒数へ変換すると`[20.0, 10.0]`です。"
+  },
+  "color": {
+    "concept_title": "処理をつなぐ書き方をProgramへ揃える",
+    "concept_caption": "設定の取得も子の計算もyieldでつなぎ、時間の依頼をどう扱うかは外側のハンドラで選びます。",
+    "flow_title": "子Programからの結果を、同じyieldで受け取る",
+    "flow_caption": "workflowは子Programの完了を待ちます。Delayの解釈を替えても、workerから受け取る値は「完了」です。"
+  },
+  "di": {
+    "concept_title": "依存を求め、受け取った処理をyieldでつなぐ",
+    "concept_caption": "`Ask`で実装を受け取り、その実装が返す`Program`を`yield`します。外側の辞書を替えると、同じ利用側から異なる見出しが得られます。",
+    "flow_title": "同じ範囲では再利用し、Localの中だけ作り直す",
+    "flow_caption": "取得は4回、作成は2回です。`Local`の内側で依存する値を変更しても、外側の挨拶は通常のまま使えます。"
+  },
+  "composition": {
+    "concept_title": "異なる抽象を、同じyieldでつなぐ",
+    "concept_caption": "Tryで成功・失敗を値にし、Getで状態、writer_logでログを受け取ります。設定や時間も子Programの中で同じyieldを使います。",
+    "flow_title": "失敗しても、試行回数と開始ログは残る",
+    "flow_caption": "空の見出しはErrになりますが、Tryの後で読む試行回数は1、ログには開始メッセージが残ります。この構成に自動の巻き戻しはありません。"
+  },
+  "replay": {
+    "concept_title": "HTTPの取得と保存を、別のハンドラで合成する",
+    "concept_caption": "メモ化の判定、保存先、保存ミス時の取得方法を独立に選びます。",
+    "flow_title": "保存ヒットはHTTPを通らず、保存ミスだけ取得担当へ進む",
+    "flow_caption": "保存ミス時の取得・拒否をHTTPハンドラで切り替え、得た応答の保存をMemoハンドラへ任せます。"
+  },
+  "durable": {
+    "concept_title": "完了した計算の結果を、次の実行へ渡す",
+    "concept_caption": "`finish()`を先頭から実行し直しても、保存済みの解析結果を受け取って見出し抽出へ進めます。保存するのは完了した結果です。",
+    "flow_title": "3つのプロセスで、完了結果を引き継ぐ",
+    "flow_caption": "初回は解析だけを保存し、2回目は解析結果を使って見出しを保存します。3回目は両方の結果を再利用して、同じ見出しを返します。"
+  },
+  "observe": {
+    "concept_title": "ログの表示と収集を、独立して組み合わせる",
+    "concept_caption": "本体はログの依頼を出します。Listenは依頼を収集して外側へ渡し、Slogのハンドラは表示するか捨てるかを選びます。",
+    "flow_title": "Listenで収集してから、元のログ処理へ渡す",
+    "flow_caption": "ListenはconvertのTellとSlogEffectを順に収集し、元の依頼を外側へ渡します。本体の結果と収集した2件が戻り、Writerの蓄積とSlogの表示も残ります。"
+  },
+  "operations": {
+    "concept_title": "操作の依頼を、3つのハンドラへ渡す",
+    "concept_caption": "Git・秘密情報・通知の依頼を分け、テストではそれぞれメモリのハンドラで解釈します。",
+    "flow_title": "PR作成の結果を、署名付き通知へつなぐ",
+    "flow_caption": "差分があればPRを作り、署名鍵を取得して、PR URLと署名を通知します。差分なしなら秘密情報の取得と通知へ進みません。"
+  },
+  "remote": {
+    "concept_title": "計算本体を値として、実行の依頼へ渡す",
+    "concept_caption": "計算本体をDockerRunへ渡し、実行先は依頼の引数とハンドラで決めます。固定ハンドラなら同じ依頼を受け取り、外部接続せずに検証できます。",
+    "flow_title": "Programを保存して渡し、実行結果を受け取る",
+    "flow_caption": "本番ハンドラの実装はProgramをシリアライズしてランナーへ渡し、結果を復元して続きを再開します。この記事ではシリアライズの往復を同じプロセスで確認し、実コンテナでの往復は実行していません。"
+  },
+  "tooling": {
+    "concept_title": "宣言と実行の両方を検査する",
+    "concept_caption": "操作とハンドラの対応宣言を検査し、具体的な入力への結果は別の実行テストで確認します。",
+    "flow_title": "宣言の検査と実行テストを組み合わせる",
+    "flow_caption": "対応宣言は通る例と落ちる例を検査し、処理を実行するテストでは具体的な戻り値を確認します。"
+  },
+  "memo": {
+    "concept_title": "保存先を重ね、同じMemo操作を渡す",
+    "concept_caption": "処理に近いL1からL2、L3へ問い合わせます。見つかった値は、戻る途中で手前の空の層へ保存されます。",
+    "flow_title": "L3の42を、L2・L1へ補充して返す",
+    "flow_caption": "L1とL2に値がないときだけ外側へ問い合わせ、L3の42を取得するとL2、L1の順に保存して処理を再開します。"
+  },
+  "boundaries": {
+    "concept_title": "切り出した操作を、別のエフェクトで実現する",
+    "concept_caption": "ドメインの操作を、HTTP・状態・Memoなどの操作へ翻訳できます。何を切り出すかと、どう実現するかを別々に設計します。",
+    "flow_title": "文書取得・Memo保存・HTTP・時計を別々に組む",
+    "flow_caption": "ReadPageの保存ヒットなら本文を戻し、保存ミスならHTTPへ翻訳して取得後に保存します。時計は取得待機を扱い、索引のProgramは共通です。"
+  },
+  "hy": {
+    "concept_title": "PythonもHyも、同じハンドラで実行する",
+    "concept_caption": "PythonのyieldもHyの<-も、Askの結果を受け取って挨拶を作ります。記述した計算は同じランタイムとハンドラを使えます。",
+    "flow_title": "式に書いた順序で、値を受け取る",
+    "flow_caption": "!はその位置のyieldへ展開されます。価格1000を受け取り、送料200を受け取ってから、合計1200を返します。"
+  },
+  "vm": {
+    "concept_title": "Pythonのyieldを、Rust VMが解釈する",
+    "concept_caption": "Pythonの本体はgeneratorのまま実行し、Rust VMがエフェクトの配送と継続の接続を管理します。",
+    "flow_title": "続きを切り離し、値を渡してつなぎ直す",
+    "flow_caption": "kには停止中の本体からハンドラ境界までが含まれます。Resumeはこの継続を一度だけつなぎ直し、yieldの位置へ値を渡します。"
+  },
+  "handlers": {
+    "concept_title": "ハンドラは、計算を包んで組み合わせる",
+    "concept_caption": "計算の内側からハンドラを探し、ハンドラが発行する操作は、その外側へ依頼できます。",
+    "flow_title": "順序を変えると、結果も変わる",
+    "flow_caption": "依頼は内側から外側へ進み、価格を加工する順序は外側から内側です。手数料と割引の順序により、88と90に分かれます。"
+  },
+  "coroutines": {
+    "concept_title": "待機する対象と、解釈する依頼を分ける",
+    "concept_caption": "awaitはawaitableを進める構文です。doeffでは依頼のデータと継続を、実行時に取り付けたハンドラへ渡します。",
+    "flow_title": "ストリームは、1断片ずつdoeffへ戻す",
+    "flow_caption": "収集ループと結合処理は@doに残し、次の1要素を待つ操作だけをAwaitで非同期実装へ接続します。"
+  }
+}

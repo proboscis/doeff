@@ -1,0 +1,14 @@
+{
+  "concept": {
+    "title": "同じAskに、ハンドラが違う名前を返す",
+    "code": "@do  # 手順を作る\ndef greet():  # 挨拶する\n    name = yield Ask(\"name\")  # 名前を依頼\n    return f\"こんにちは、{name}さん\"  # 結果\n\n@handler  # ハンドラを定義\n@do  # 再開もyieldで指示\ndef handle_ask_effect(effect, k):  # 依頼と続き\n    if (  # 名前の依頼を選ぶ\n        isinstance(effect, Ask)  # Ask型\n        and effect.key == \"name\"  # nameキー\n    ):\n        return (yield Resume(k, \"花子\"))  # 再開\n    return (yield Pass(effect, k))  # 担当外を委譲",
+    "flow": "処理greetのコードと、@handler @do def handle_ask_effect(effect,k)のコードを並べ、Askで依頼→ハンドラがResumeで花子を返す→greetのnameへ戻る流れを示す。下に別々の実行2行：with_handlers([handle_ask_effect], greet())はこんにちは、花子さん、with_handlers([handle_test_ask_effect], greet())はこんにちは、太郎さん。設置の明示にはwith_handlersを使い、handler(program)という呼び出しは描かない。lazy_askやenvやスケジューラも描かない。",
+    "caption": "同じ`greet`から作った2つの計算へ、それぞれ名前を供給します。`Ask`から文字列を受け取る契約を保ち、本体を変えずに結果を変えています。"
+  },
+  "flow": {
+    "title": "Askを受け取り、値を渡して挨拶の続きを再開する",
+    "code": "name = yield Ask(\"name\")  # 依頼して中断\nreturn (yield Resume(k, \"花子\"))  # 花子で続きを再開",
+    "flow": "白背景の平面シーケンス図。左レーンgreetの本文、中央Rust VM、右handle_ask_effect。1 Ask(name)をVMへ。2 VMが依頼effectと続きkをハンドラへ。3 ハンドラのyield Resume(k, 花子)をVMへ。4 VMがgreetへ花子を渡して再開、nameに花子が入る。5 greetの挨拶が最終runの結果になる。見出しの下にwith_handlers([handle_ask_effect], greet())という設置コードをコメント付きで表示。handler(program)、lazy_ask、envは描かない。kはyieldの後から先の続きという説明を添える。",
+    "caption": "`yield Ask(\"name\")`で本文が中断し、ハンドラが「花子」を渡すと、その値が`name`に入って次の行へ進みます。最後の`return`が、`run()`の結果になります。"
+  }
+}

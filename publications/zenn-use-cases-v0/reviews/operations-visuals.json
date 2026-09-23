@@ -1,0 +1,14 @@
+{
+  "concept": {
+    "title": "操作の依頼を、3つのハンドラへ渡す",
+    "code": "p_combined = mock_handlers(runtime=combined_git)(propose_and_notify(work_dir))  # Gitを解釈する\np_combined = notifications_only(combined_notify)(p_combined)  # 通知を解釈する\np_combined = in_memory_handlers(seed_data={\"notice-signing-key\": b\"demo-key\"})(p_combined)  # 鍵を解決する",
+    "flow": "白い不透明背景、平面の青・ミント・紫の角丸枠、紺文字、青緑の矢印。写真・3D禁止。上に3行のコードを等幅で正確に配置する。下は左の「同じProgram」から3種類の依頼が、それぞれ独立の矢印で右の担当ハンドラへ進む対応図。「Gitの依頼 → mock_handlers → PRHandle」「通知の依頼 → notifications_only → 通知の記録」「GetSecret → in_memory_handlers → bytesの鍵」。3種類の結果が同時に全ハンドラから返るような合流は描かない。通知ハンドラの下に短い注記「通知以外はPass(effect, k)」。現行版のコードで使う順序・役割を示すので、任意の順序で積めるとは書かない。メモリ上の動作とコードの各行を対応させる。",
+    "caption": "Git・秘密情報・通知の依頼を分け、テストではそれぞれメモリのハンドラで解釈します。"
+  },
+  "flow": {
+    "title": "PR作成の結果を、署名付き通知へつなぐ",
+    "code": "pr = yield propose_change(work_dir)  # PRまたはNoneを受け取る\nif pr is None:  # 差分がなければ終了する\n    return None  # 鍵の取得と通知へ進まない\nkey = yield signing_key()  # 署名用のbytesを受け取る",
+    "flow": "白背景の平面図。左に4行のコード。右に上から「stage済みの差分を確認」→分岐「差分あり？」。なしの矢印は小さな終点「Noneを返す」へ。ありの矢印は「commit・push・PR作成」→「秘密情報を取得しbytesへ変換」→「PR URLへHMAC署名」→「URLと署名をNotify」へ進む。なしの経路を鍵取得や通知へ絶対につながない。PRのmergeはこの流れに含めない。通知に鍵そのものを渡す矢印は描かない。コードのprはPR作成結果、keyは署名の入力に対応する。下に小さく「Git・秘密情報・通知はメモリのハンドラで検証」。写真・3D・立体物は使わない。",
+    "caption": "差分があればPRを作り、署名鍵を取得して、PR URLと署名を通知します。差分なしなら秘密情報の取得と通知へ進みません。"
+  }
+}

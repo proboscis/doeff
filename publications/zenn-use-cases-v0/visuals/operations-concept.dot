@@ -1,0 +1,16 @@
+digraph figure {
+graph [bgcolor="#122336", pad="0.45", nodesep="0.4", ranksep="0.58", rankdir="LR", fontname="Hiragino Sans", fontsize=25, fontcolor="#f4f8fc", labelloc="t", label="外部操作の意図と、実際の実行を分ける\n"];
+node [shape=box, style="rounded,filled", fillcolor="#203951", color="#55748e", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#f4f8fc", margin="0.22,0.17"];
+edge [color="#79e4c4", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#79e4c4"];
+p [label="自動化の処理\n@do"];
+g [label="Git\n差分・commit・PR"];
+n [label="通知\n送信・スレッド"];
+s [label="秘密情報\n取得・保管"];
+h [label="ハンドラ\n本番 / テスト用"];
+p -> g [label="依頼"];
+p -> n [label="依頼"];
+p -> s [label="依頼"];
+g -> h [label=""];
+n -> h [label=""];
+s -> h [label=""];
+}

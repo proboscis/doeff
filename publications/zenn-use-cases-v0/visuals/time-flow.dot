@@ -1,0 +1,19 @@
+digraph figure {
+graph [bgcolor="#f8fafc", pad="0.45", nodesep="0.4", ranksep="0.58", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#152c43", labelloc="t", label="仮想時間は、待機した処理の予定へ進む\n"];
+node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#c3d2e0", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#152c43", margin="0.22,0.17"];
+edge [color="#087e8b", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#087e8b"];
+p [label="タスクがDelayを依頼"];
+t [label="再開予定の時刻を登録"];
+w [label="タスクを待機させる"];
+q [label="実行可能な通常タスクがある？", shape=diamond, margin="0.1", fillcolor="#e7f5f2"];
+r [label="そのタスクを動かす"];
+v [label="仮想時計を次の予定へ進める"];
+n [label="予定時刻の処理を再開"];
+p -> t [label=""];
+t -> w [label=""];
+w -> q [label=""];
+q -> r [label="ある"];
+r -> q [label="再び確認"];
+q -> v [label="ない"];
+v -> n [label=""];
+}

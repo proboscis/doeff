@@ -1,0 +1,21 @@
+digraph figure {
+graph [bgcolor="#f8fafc", pad="0.4", nodesep="0.35", ranksep="0.45", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#152c43", labelloc="t", label="入力を記録し、同じルールで対局を再構成する"];
+node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#c3d2e0", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#152c43", margin="0.2,0.15"];
+edge [color="#087e8b", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#087e8b"];
+a [label="初期HPとルールのバージョン"];
+b [label="DrawCard → ChooseAction\nカードと行動を受け取る"];
+c [label="記録ハンドラ\n操作・入力・結果を履歴へ"];
+d [label="DealDamage → Get / Put\nルールがHPを更新"];
+e [label="HPが残れば次のターン"];
+f [label="JSONへ保存した入力履歴"];
+g [label="別の実行：再生ハンドラ\n同じ依頼へ保存済みの結果を返す"];
+h [label="同じルールで同じ最終状態を再構成"];
+a -> b [label=""];
+b -> c [label=""];
+c -> d [label=""];
+d -> e [label=""];
+e -> b [label="次のターン"];
+c -> f [label="対局の終了後"];
+f -> g [label=""];
+g -> h [label="初期状態も復元"];
+}

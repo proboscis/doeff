@@ -1,0 +1,30 @@
+Use case: infographic-diagram
+Asset type: 日本語のdoeff入門記事の図。1536x1024横長。
+Style: 完全に白い不透明背景、淡いミント・水色・ラベンダーの平面的な角丸ボックス、濃紺の文字、ティールの方向が明確な矢印。印刷物の明快な図解。3D・写実・ガラス・立体アイコン・質感・陰影・装置のイラストは禁止。
+Typography: 日本語とPythonコードを正確に、大きく読みやすく配置。ASCIIの@、_、引用符、括弧を正確に。コードは等幅、改行やインデントを保持する。句読点や括弧だけの行以外のコードには指定の日本語コメントを付ける。
+
+Title exactly: 同じAskに、ハンドラが違う名前を返す
+
+処理greetのコードと、@handler @do def handle_ask_effect(effect,k)のコードを並べ、Askで依頼→ハンドラがResumeで花子を返す→greetのnameへ戻る流れを示す。下に別々の実行2行：with_handlers([handle_ask_effect], greet())はこんにちは、花子さん、with_handlers([handle_test_ask_effect], greet())はこんにちは、太郎さん。設置の明示にはwith_handlersを使い、handler(program)という呼び出しは描かない。lazy_askやenvやスケジューラも描かない。
+
+コード（flowではそれぞれ対応するレーンに配置）：
+@do  # 手順を作る
+def greet():  # 挨拶する
+    name = yield Ask("name")  # 名前を依頼
+    return f"こんにちは、{name}さん"  # 結果
+
+@handler  # ハンドラを定義
+@do  # 再開もyieldで指示
+def handle_ask_effect(effect, k):  # 依頼と続き
+    if (  # 名前の依頼を選ぶ
+        isinstance(effect, Ask)  # Ask型
+        and effect.key == "name"  # nameキー
+    ):
+        return (yield Resume(k, "花子"))  # 再開
+    return (yield Pass(effect, k))  # 担当外を委譲
+
+Layout: 上の大見出し。その下は左が小さな処理コード、右がハンドラのコード。右は長いifを指定どおり複数行にして収める。コードを単なる写真にせず、Askの行から右のハンドラへ「依頼」、Resumeの行から左のnameへ「花子で再開」の2本の矢印を明確に描く。下段は「同じ手順・別の実行」とし、花子と太郎の結果を2行で比較する。コードパネルの余白を確保し矢印を文字に重ねない。
+設置例として下に表示する正確なコード:
+with_handlers([handle_ask_effect], greet())  # 花子のハンドラを設置
+with_handlers([handle_test_ask_effect], greet())  # 太郎のハンドラを設置
+下段の結果ラベル：「こんにちは、花子さん」「こんにちは、太郎さん」

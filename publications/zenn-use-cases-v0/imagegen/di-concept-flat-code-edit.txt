@@ -1,0 +1,1 @@
+左下make_titleノード内に誤ってある make_title(text: str) を make_title(text) に置き換える。型注釈は関数定義にだけ書くので上部のdef make_title(text: str)は正しいから変更しない。他のコード・コメント・文字・色・矢印・配置は全て保持。

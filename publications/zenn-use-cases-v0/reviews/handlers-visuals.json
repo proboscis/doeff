@@ -1,0 +1,14 @@
+{
+  "concept": {
+    "title": "ハンドラは、計算を包んで組み合わせる",
+    "code": "p = handler(base_price)(  # 外側から100を供給\n    handler(discount)(ReadPrice())  # 価格を2割引き\n)  # 実行すると80",
+    "flow": "入れ子の範囲を平面図で示す。外側はbase_price、その内側はdiscount、その中心はReadPrice()。依頼の矢印はReadPrice()→discount→base_price。結果の矢印はbase_priceから100、discountが80に加工してReadPrice()の呼び出し元へ戻す。依頼と結果を別の行で示す。写実的な装置や立体物を使わない。",
+    "caption": "計算の内側からハンドラを探し、ハンドラが発行する操作は、その外側へ依頼できます。"
+  },
+  "flow": {
+    "title": "順序を変えると、結果も変わる",
+    "code": "with_handlers(  # 外側から順に包む\n    [base_price, add_fee, discount],  # 100→110→88\n    ReadPrice(),  # 価格を依頼\n)  # 実行すると88",
+    "flow": "上下2段の平面処理図。上段見出し『手数料のあとで割引』、依頼はReadPrice()→discount→add_fee→base_price、結果は100→110→88の順に逆方向へ戻る。下段見出し『割引のあとで手数料』、依頼はReadPrice()→add_fee→discount→base_price、結果は100→80→90の順に逆方向へ戻る。100はbase_priceが返す値。上下の結果88と90を大きく示す。ハンドラを並行実行する図にしない。コードパネルは上段に対応する。",
+    "caption": "依頼は内側から外側へ進み、価格を加工する順序は外側から内側です。手数料と割引の順序により、88と90に分かれます。"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "concept": {
+    "title": "処理をつなぐ書き方をProgramへ揃える",
+    "code": "@do  # 設定取得と子の待機処理を、ひとつのProgramへ合成する。\ndef workflow(seconds: float):  # 3種類の時計で共有する処理の順序を表す。\n    prefix = yield Ask(\"result_prefix\")  # この実行範囲の設定から「処理結果」を受け取る。\n    result = yield worker(seconds)  # 子のProgramを進め、待機後に「完了」を受け取る。\n    return f\"{prefix}: {result}\"  # 設定と子の結果を使い、「処理結果: 完了」を返す。",
+    "flow": "白背景の平面的ダイアグラム。ネイビー文字・ティールの矢印・淡い角丸枠。左または上に正確な5行コード。右または下の主経路は「設定を依頼」→「prefix = 処理結果」→「子Programをyield」→「result = 完了」→「処理結果: 完了」。設定を依頼の下に小さく「lazy_ask」、子Programの下に小さく「workerがDelayを依頼」とラベルを置く。下部に「Delayの解釈を選ぶ」と3つの平たい選択肢「同期の実時間」「非同期の実時間」「仮想時間」。この3つは同時実行ではなく、実行ごとに1つを選ぶと明記。Askを時間ハンドラが処理するようには描かない。コード各行のコメントを含め、3D・写実・立体の装置は禁止。",
+    "caption": "設定の取得も子の計算もyieldでつなぎ、時間の依頼をどう扱うかは外側のハンドラで選びます。"
+  },
+  "flow": {
+    "title": "子Programからの結果を、同じyieldで受け取る",
+    "code": "@do  # 待機と結果を、呼び出し元がyieldできるProgramにする。\ndef worker(seconds: float):  # 必要な待機時間を受け取り、待ち方はハンドラへ委ねる。\n    yield Delay(seconds)  # 指定した秒数の経過を依頼し、完了すると次の行へ進む。\n    return \"完了\"  # 待機が終わった後に、呼び出し元へ文字列を返す。",
+    "flow": "白背景の平面シーケンス図。上にコメント付き4行コード。下の列は左から「workflow」「worker」「選んだ時間ハンドラ」。上から下へ時系列で、workflowからworkerへ「子Programをyield」、workerから時間ハンドラへ「Delay(seconds)」、ハンドラの待機処理「同期・非同期・仮想時間のいずれか」を示す平たい枠、ハンドラからworkerへ「Noneを渡して再開」、workerからworkflowへ「完了を返す」。最後にworkflow列に「処理結果: 完了」。Delayが「完了」を返すのではなく、DelayはNoneで再開しworkerのreturnが文字列を返すことを厳守。3つの時計を並列に動かす図にしない。写真・3D不可。",
+    "caption": "workflowは子Programの完了を待ちます。Delayの解釈を替えても、workerから受け取る値は「完了」です。"
+  }
+}

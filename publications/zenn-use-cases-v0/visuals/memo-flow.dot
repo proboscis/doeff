@@ -1,0 +1,18 @@
+digraph figure {
+graph [bgcolor="#f8fafc", pad="0.45", nodesep="0.4", ranksep="0.58", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#152c43", labelloc="t", label="L3の値が、L2とL1にも入る\n"];
+node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#c3d2e0", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#152c43", margin="0.22,0.17"];
+edge [color="#087e8b", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#087e8b"];
+g [label="MemoGet(\"answer\")"];
+a [label="L1: 見つからない"];
+b [label="L2: 見つからない"];
+c [label="L3: 42が見つかる"];
+d [label="L2に42を保存"];
+e [label="L1に42を保存"];
+r [label="処理本体へ42を返す"];
+g -> a [label=""];
+a -> b [label="委譲"];
+b -> c [label="委譲"];
+c -> d [label="戻りながら保存"];
+d -> e [label=""];
+e -> r [label=""];
+}
