@@ -7,8 +7,9 @@
 通常の import・bytecode の cache・実行の意味は変わらない。
 
 切替で形が変わる所(macros.hy の `_static-view?` を読む所がすべて):
-- `_bind-yield`: `(setv x (yield e))` → `x: T = _doeff_bound(e, (yield e))`
-  (`_doeff_bound` は e の戻り値の型を返すと宣言した静的な関数。doeff_hy/static_types.pyi)
+- `_bind-yield`: `(setv x (yield e))` → `x: T = _doeff_perform(e)`
+  (`_doeff_perform` は e の答えの型を返すと宣言した静的な関数。doeff_hy/static_types.pyi。
+  Python の `@effectful` の `x = perform(e)` と同じ形)
 - defk / defp / do! / deftest / fnk: `do` を型付きの `doeff_hy.static_types.do` から取る
   (呼んだ結果が core の `Expand[T, E]` = 答えの型 T を持つ Program になる)
 - defhandler の `resume` / `transfer`: core の `typed_resume` / `typed_transfer`

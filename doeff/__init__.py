@@ -17,6 +17,9 @@ from doeff_vm import PyVM as PyVM
 from doeff_vm import UnhandledEffect as UnhandledEffect
 
 from doeff.do import do as do
+from doeff.effectful import Effects as Effects
+from doeff.effectful import effectful as effectful
+from doeff.effectful import install_import_hook as install_import_hook
 from doeff.mcp import McpParamSchema as McpParamSchema
 from doeff.mcp import McpToolDef as McpToolDef
 from doeff.program import Apply as Apply
