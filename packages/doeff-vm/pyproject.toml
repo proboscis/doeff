@@ -22,3 +22,23 @@ classifiers = [
 features = ["pyo3/extension-module"]
 module-name = "doeff_vm.doeff_vm"
 python-source = "."
+
+# uv が「この package を作り直すか」を決める鍵。uv の既定の鍵は pyproject.toml / setup.py /
+# setup.cfg だけで Rust の source を見ないため、Rust だけが変わった更新の後の `uv sync` /
+# `uv run` は古い doeff_vm/*.so をそのまま使い続ける(2026-09-23 22:42〜23:17 に pod の
+# controller が古い .so で 35 分落ちた — card acp:kanban-issue:ki-3965aa5188ae)。
+# ここに列挙すると既定の鍵は置き換わるので pyproject.toml も自分で並べる。
+# path 依存の crate(Cargo.toml の [dependencies] の path = を推移的にたどった先)の
+# Cargo.toml / Cargo.lock / pyproject.toml / build.rs / library の *.rs が漏れなく
+# 載っていることは tests/test_uv_cache_keys_cover_rust_inputs.py が検査する。
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "Cargo.lock" },
+    { file = "src/**/*.rs" },
+    { file = "../doeff-vm-core/pyproject.toml" },
+    { file = "../doeff-vm-core/Cargo.toml" },
+    { file = "../doeff-vm-core/Cargo.lock" },
+    { file = "../doeff-vm-core/src/**/*.rs" },
+]
