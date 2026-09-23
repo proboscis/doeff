@@ -58,6 +58,11 @@ The expansion has one definition point (`_bind-yield` in `macros.hy`) shared by 
 `for/do` / `traverse` / `defhandler` clauses), so the type contract holds at runtime
 wherever the bind is written. The 2- and 3-element forms add no check.
 
+`None` is a type in these positions, as in a Python annotation: `(: % None)`,
+`(<- x None effect)` and `#(int None)` check against `type(None)` at runtime
+(`_runtime-type` in `macros.hy` is the one place that maps it). `(| int None)`
+needs no mapping.
+
 ### Bang evaluation position
 
 `(! effect)` is replaced with a `yield` expression at the position where it is
