@@ -5,8 +5,9 @@ Backed by a Rust VM with OCaml 5-aligned effect handler architecture.
 """
 
 # ruff: noqa: I001 - import order avoids doeff_core_effects circular imports.
+import types as _types
 from collections.abc import Generator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
 
 from doeff_vm import Callable as Callable
 from doeff_vm import Callable as _VmCallable
@@ -39,7 +40,13 @@ from doeff.program import (
 from doeff.program import WithObserve as WithObserveRaw
 from doeff.program import handler as handler
 from doeff.program import program as program
+from doeff.program import typed_resume as typed_resume
+from doeff.program import typed_transfer as typed_transfer
 from doeff.program import with_handlers as with_handlers
+from doeff_vm._effect_types import ProgramSignature as ProgramSignature
+from doeff_vm._effect_types import effect_result_type as effect_result_type
+from doeff_vm._effect_types import handler_effect_types as handler_effect_types
+from doeff_vm._effect_types import program_signature as program_signature
 from doeff.result import Err as Err
 from doeff.result import Maybe as Maybe
 from doeff.result import Nothing as Nothing
@@ -129,6 +136,28 @@ if TYPE_CHECKING:
         | GetTraceback | GetExecutionContext | GetHandlers | GetBoundaries
         | GetOuterHandlers
     )
+
+    from typing import Protocol, runtime_checkable
+
+    from typing_extensions import TypeVar as _DefaultedTypeVar
+
+    _ProgramResult = _DefaultedTypeVar("_ProgramResult", covariant=True)
+    _ProgramEffects = _DefaultedTypeVar("_ProgramEffects", covariant=True, default=Any)
+
+    @runtime_checkable
+    class Program(Protocol[_ProgramResult, _ProgramEffects]):
+        """A program returning ``T`` whose body may yield effects ``E``: ``Program[T, E]``.
+
+        Every program node (``Expand`` from ``@do``, ``Pure``, ``WithHandler``, ...)
+        and every effect satisfies it: ``x = yield from p`` runs ``p`` and gives
+        ``x: T``, and ``E`` joins the effects the calling generator declares.
+        ``Program[T]`` leaves the effects open (``Any``); bare ``Program`` is
+        "some program". At runtime ``Program`` is ``DoExpr`` (isinstance only).
+        """
+
+        def __iter__(self) -> Generator[_ProgramEffects, Any, _ProgramResult]: ...
+
+    ProgramBase = DoExpr
 else:
 
     class DoExpr(metaclass=_DoExprMeta):
@@ -138,9 +167,13 @@ else:
         (Pure, Expand, WithHandlerType, etc.).
         """
 
+        def __class_getitem__(cls, item):
+            # ``Program[int]`` / ``Program[int, ReadClock]`` in an evaluated
+            # annotation; the static meaning is the Protocol above.
+            return _types.GenericAlias(cls, item)
 
-Program = DoExpr
-ProgramBase = DoExpr
+    Program = DoExpr
+    ProgramBase = DoExpr
 AskEffect = Ask
 
 
@@ -176,7 +209,10 @@ class _Removed:
         raise RuntimeError(f"{self._name} was removed: {self._reason}")
 
 Delegate = _Removed("Delegate", "use 'yield effect' to re-perform in handler body")
-EffectGenerator = Generator  # Generator[Any, Any, T] — return type for @do function bodies
+_EffectGeneratorResult = TypeVar("_EffectGeneratorResult")
+EffectGenerator: TypeAlias = Generator[Any, Any, _EffectGeneratorResult]
+"""``EffectGenerator[T]`` = ``Generator[Any, Any, T]``: a ``@do`` body returning T with
+unchecked effects. Declare the effects too with ``Generator[E, Any, T]``."""
 WithIntercept = _Removed("WithIntercept", "use WithObserve")
 KleisliProgram = _Removed("KleisliProgram", "use @do instead")
 MissingEnvKeyError = KeyError

@@ -60,15 +60,15 @@ _CATCH_ALL = (typing.Any, object, EffectBase)
 
 class _EffectParameter(NamedTuple):
     function: types.FunctionType | None
-    index: int
+    position: int
 
 
 def handler_effect_types(handler: object) -> EffectTypes:
     """Types the handler's effect parameter admits, or None for every effect."""
-    parameter = _effect_parameter(handler)
-    if parameter.function is None:
+    function, position = _effect_parameter(handler)
+    if function is None:
         return None
-    return _cached_parameter_types(parameter.function, parameter.index)
+    return _cached_parameter_types(function, position)
 
 
 def _effect_parameter(handler: object) -> _EffectParameter:
@@ -186,3 +186,92 @@ def _warn_unresolved(function: types.FunctionType, name: str) -> None:
         function.__code__.co_filename,
         function.__code__.co_firstlineno,
     )
+
+
+# --- runtime readers of the static types (foundation for the Hy checker) -----------------------
+#
+# The static types live in ordinary annotations: ``class ReadClock(EffectBase[int])`` and
+# ``def f(...) -> Generator[E, Any, T]`` under ``@do``. These readers expose the same facts at
+# runtime so tools that cannot run pyright (the doeff-hy static checker, coverage checks of
+# effects against handler stacks) read one source of truth instead of re-declaring types.
+
+
+def effect_result_type(effect: object) -> object:
+    """The ``T`` of ``EffectBase[T]`` for an effect class or instance.
+
+    Follows generic parents: for ``class WriteEffect(EffectBase[T])`` and
+    ``class WriteShared(WriteEffect[bool])`` it returns ``bool``. An effect that
+    never parameterises ``EffectBase`` returns ``typing.Any``.
+    """
+    cls = effect if isinstance(effect, type) else type(effect)
+    found = _result_from(cls, {})
+    return typing.Any if found is _UNRESOLVED else found
+
+
+def _result_from(cls: type, substitution: dict[object, object]) -> object:
+    for base in cls.__dict__.get("__orig_bases__", ()):
+        origin = get_origin(base)
+        if origin is None:
+            continue
+        args = tuple(substitution.get(arg, arg) for arg in get_args(base))
+        if origin is EffectBase:
+            return args[0] if args else typing.Any
+        if isinstance(origin, type) and issubclass(origin, EffectBase):
+            parameters = _type_parameters(origin)
+            found = _result_from(origin, dict(zip(parameters, args, strict=False)))
+            if found is not _UNRESOLVED:
+                return found
+    for base in cls.__bases__:
+        if isinstance(base, type) and issubclass(base, EffectBase) and base is not EffectBase:
+            found = _result_from(base, substitution)
+            if found is not _UNRESOLVED:
+                return found
+    return _UNRESOLVED
+
+
+def _type_parameters(cls: type) -> list[object]:
+    declared = cls.__dict__.get("__parameters__")
+    if declared:
+        return list(declared)
+    collected: list[object] = []
+    for base in cls.__dict__.get("__orig_bases__", ()):
+        for arg in get_args(base):
+            if isinstance(arg, typing.TypeVar) and arg not in collected:
+                collected.append(arg)
+    return collected
+
+
+class ProgramSignature(NamedTuple):
+    """What a ``@do`` function's annotation declares.
+
+    ``effects``: the effect types its body may yield (the ``E`` of
+    ``Generator[E, Any, T]``, a union flattened into a tuple), or ``None`` when
+    the annotation leaves them open (no annotation, ``Any``, ``EffectGenerator[T]``).
+    ``result``: the ``T`` (``typing.Any`` when not declared).
+    """
+
+    effects: tuple[object, ...] | None
+    result: object
+
+
+def program_signature(function: object) -> ProgramSignature:
+    """Read ``Generator[E, Any, T]`` from a ``@do`` function (or the raw generator function)."""
+    current = function
+    while isinstance(current, types.FunctionType) and current.__dict__.get("__wrapped__") is not None:
+        current = current.__dict__["__wrapped__"]
+    if not isinstance(current, types.FunctionType):
+        return ProgramSignature(None, typing.Any)
+    annotation = _parameter_annotation(current, "return")
+    if isinstance(annotation, str):
+        annotation = _evaluate(annotation, current)
+    if annotation is _NOT_ANNOTATED or annotation is _UNRESOLVED:
+        return ProgramSignature(None, typing.Any)
+    args = get_args(annotation)
+    if len(args) != 3:
+        return ProgramSignature(None, typing.Any)
+    yielded, _sent, result = args
+    if yielded is typing.Any:
+        return ProgramSignature(None, result)
+    origin = get_origin(yielded)
+    effects = get_args(yielded) if origin is Union or origin is types.UnionType else (yielded,)
+    return ProgramSignature(tuple(effects), result)
