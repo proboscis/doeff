@@ -741,20 +741,20 @@
               (<- before (fs-read-text settings-path))
               ;; 状態 file の置き場は家の下の持ち越される場所(pod の入れ替えで温冷の記憶を失わない)
               (<- home (env-get "HOME"))
-              (setv state-dir (fast-jev-state-dir (if (and (isinstance home str) (.strip home)) home (os.path.expanduser "~"))))
-              (if (fast-jev-compaction-enabled before)
+              (setv state-dir (! (fast-jev-state-dir (if (and (isinstance home str) (.strip home)) home (os.path.expanduser "~")))))
+              (if (! (fast-jev-compaction-enabled before))
                   ;; 据え済みの家(PVC で持ち越される)も宣言へ揃える — options が古い形(stateDir なし・
                   ;; 鍵の path 違い)なら合流した本文へ書き直す(冪等: 同じなら書かない・install は撃たない)。
                   ;; plugin の版も宣言(FAST-JEV-PLUGIN-VERSION)へ揃える — 家の plugin.json の版が pin と
                   ;; 違う時だけ update を撃つ(読めない家は撃たない・失敗は warning で起動は止めない)。
                   (do
-                    (setv desired (fast-jev-home-settings before key-file state-dir))
+                    (setv desired (! (fast-jev-home-settings before key-file state-dir)))
                     (when (!= desired before)
                       (<- _ (fs-write-text-atomic settings-path desired ".agentd-tmp")))
                     (setv warnings [])
-                    (<- plugin-json (fs-read-text (fast-jev-plugin-json-path config-dir)))
-                    (when (fast-jev-plugin-outdated (fast-jev-installed-version plugin-json))
-                      (<- res (proc-run (fast-jev-update-command config-dir) None))
+                    (<- plugin-json (fs-read-text (! (fast-jev-plugin-json-path config-dir))))
+                    (when (! (fast-jev-plugin-outdated (! (fast-jev-installed-version plugin-json))))
+                      (<- res (proc-run (! (fast-jev-update-command config-dir)) None))
                       (when (!= res.exit-code 0)
                         (.append warnings
                                  (+ f"fast-jev-compaction: plugin update exited {res.exit-code}: "
@@ -762,14 +762,14 @@
                     warnings)
                   (do
                     (setv warnings [])
-                    (<- res (proc-run (fast-jev-install-command config-dir) None))
+                    (<- res (proc-run (! (fast-jev-install-command config-dir)) None))
                     (when (!= res.exit-code 0)
                       (.append warnings
                                (+ f"fast-jev-compaction: plugin install exited {res.exit-code}: "
                                   (.strip (cut (or res.stderr "") 0 300)))))
                     ;; install が settings.json を書いた後に合流する(書き手は 1 つずつ・読み直す)
                     (<- after (fs-read-text settings-path))
-                    (<- _ (fs-write-text-atomic settings-path (fast-jev-home-settings after key-file state-dir) ".agentd-tmp"))
+                    (<- _ (fs-write-text-atomic settings-path (! (fast-jev-home-settings after key-file state-dir)) ".agentd-tmp"))
                     warnings)))))))
 
 
@@ -793,9 +793,9 @@
                             ""))
         (setv settings-path f"{config-dir}/{CLAUDE-SETTINGS-FILE}")
         (<- before (fs-read-text settings-path))
-        (setv desired (otel-home-settings before (.strip endpoint)
+        (setv desired (! (otel-home-settings before (.strip endpoint)
                                           (if (isinstance tenant str) (.strip tenant) "")
-                                          host-name))
+                                          host-name)))
         (if (= desired before)
             False
             (do

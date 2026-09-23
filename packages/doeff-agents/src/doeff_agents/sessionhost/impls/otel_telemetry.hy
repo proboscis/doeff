@@ -14,7 +14,7 @@
 ;;;
 ;;; substrate-clean: 生 IO 禁止。ここは綴りと純関数だけ(読み書きは呼び手の effect)。
 
-(require doeff-hy.macros [deff])
+(require doeff-hy.macros [defk])
 
 (import json)
 
@@ -31,7 +31,7 @@
         "OTEL_LOGS_EXPORT_INTERVAL" "OTEL_RESOURCE_ATTRIBUTES"))
 
 
-(deff otel-env [endpoint tenant host]
+(defk otel-env [endpoint tenant host]
   {:pre [(: endpoint str) (> (len endpoint) 0) (: tenant str) (: host str)]
    :post [(: % dict)]}
   "借りた家に配る env の組(純関数)。tenant が personal の時だけ agora.tenant を名乗る。"
@@ -51,7 +51,7 @@
    "OTEL_RESOURCE_ATTRIBUTES" (.join "," attrs)})
 
 
-(deff otel-home-settings [settings-text endpoint tenant host]
+(defk otel-home-settings [settings-text endpoint tenant host]
   {:pre [(: settings-text (| str None)) (: endpoint str) (> (len endpoint) 0) (: tenant str) (: host str)]
    :post [(: % str)]}
   "借りた家の settings.json の本文に OTel の env を合流させた本文(純関数・冪等)。
@@ -68,6 +68,6 @@
   (setv env (.get settings "env"))
   (when (not (isinstance env dict)) (setv env {}))
   (setv merged (dfor [k v] (.items env) :if (not-in k OTEL-MANAGED-KEYS) k v))
-  (.update merged (otel-env endpoint tenant host))
+  (.update merged (! (otel-env endpoint tenant host)))
   (setv (get settings "env") merged)
   (json.dumps settings :indent 2 :ensure-ascii False))

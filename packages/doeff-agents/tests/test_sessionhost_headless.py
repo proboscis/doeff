@@ -740,8 +740,8 @@ def test_headless_claude_cannot_start_background_tasks_that_outlive_the_turn() -
     ping = _build_claude_headless(arms["cache-ping"])["argv"]
     assert json.loads(ping[ping.index("--settings") + 1])["disableAllHooks"] is True
     # 純関数の合流: 既に在る env の他の鍵は残り、同じ鍵は headless の値で上書き
-    merged = headless_argv.argv_with_settings_env(
-        ["claude", "--settings", json.dumps({"env": {"A": "x", key: "0"}})], {key: "1"})
+    merged = run(headless_argv.argv_with_settings_env(
+        ["claude", "--settings", json.dumps({"env": {"A": "x", key: "0"}})], {key: "1"}))
     assert json.loads(merged[2]) == {"env": {"A": "x", key: "1"}}
 
 
@@ -2457,16 +2457,16 @@ def test_fast_jev_compaction_enabled_reads_only_a_settings_that_makes_the_plugin
     要約(model 1 回)に落ちるので、その profile では圧縮の prompt を撃たない。"""
     on = json.dumps({"enabledPlugins": {"fast-jev-compaction@fast-jev-compaction": True},
                      "env": {"CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1"}})
-    assert fast_jev.fast_jev_compaction_enabled(on) is True
-    assert headless_argv.fast_jev_compaction_enabled(on) is True
+    assert run(fast_jev.fast_jev_compaction_enabled(on)) is True
+    assert run(headless_argv.fast_jev_compaction_enabled(on)) is True
     no_env = json.dumps({"enabledPlugins": {"fast-jev-compaction@fast-jev-compaction": True}})
-    assert fast_jev.fast_jev_compaction_enabled(no_env) is False
+    assert run(fast_jev.fast_jev_compaction_enabled(no_env)) is False
     off = json.dumps({"enabledPlugins": {"fast-jev-compaction@fast-jev-compaction": False},
                       "env": {"CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1"}})
-    assert fast_jev.fast_jev_compaction_enabled(off) is False
-    assert fast_jev.fast_jev_compaction_enabled(None) is False
-    assert fast_jev.fast_jev_compaction_enabled("not json") is False
-    assert fast_jev.fast_jev_compaction_enabled("[]") is False
+    assert run(fast_jev.fast_jev_compaction_enabled(off)) is False
+    assert run(fast_jev.fast_jev_compaction_enabled(None)) is False
+    assert run(fast_jev.fast_jev_compaction_enabled("not json")) is False
+    assert run(fast_jev.fast_jev_compaction_enabled("[]")) is False
 
 
 def _enable_fast_jev_plugin(root: Path) -> None:
@@ -2566,18 +2566,18 @@ def test_fast_jev_plugin_version_pin_reads_installed_version_and_decides_update(
     """借りた家の plugin は宣言の版(FAST_JEV_PLUGIN_VERSION)へ揃える: plugin.json の版が pin と違う時だけ
     update を撃つ。読めない(file 無し・壊れた JSON・version 無し)は「古い」ではなく「読めない」で、撃たない。"""
     pin = fast_jev.FAST_JEV_PLUGIN_VERSION
-    assert fast_jev.fast_jev_plugin_json_path("/h/claude-home") == "/h/claude-home/plugins/marketplaces/fast-jev-compaction/.claude-plugin/plugin.json"
-    assert fast_jev.fast_jev_plugin_json_path("/h/claude-home/") == "/h/claude-home/plugins/marketplaces/fast-jev-compaction/.claude-plugin/plugin.json"
-    assert fast_jev.fast_jev_installed_version(json.dumps({"name": "fast-jev-compaction", "version": "0.4.6"})) == "0.4.6"
-    assert fast_jev.fast_jev_installed_version(json.dumps({"version": " 0.5.0 "})) == "0.5.0"
-    assert fast_jev.fast_jev_installed_version(None) is None
-    assert fast_jev.fast_jev_installed_version("not json") is None
-    assert fast_jev.fast_jev_installed_version(json.dumps({"name": "x"})) is None
-    assert fast_jev.fast_jev_installed_version(json.dumps({"version": ""})) is None
-    assert fast_jev.fast_jev_plugin_outdated("0.4.6") is True
-    assert fast_jev.fast_jev_plugin_outdated(pin) is False
-    assert fast_jev.fast_jev_plugin_outdated(None) is False
-    cmd = fast_jev.fast_jev_update_command("/h/claude-home")
+    assert run(fast_jev.fast_jev_plugin_json_path("/h/claude-home")) == "/h/claude-home/plugins/marketplaces/fast-jev-compaction/.claude-plugin/plugin.json"
+    assert run(fast_jev.fast_jev_plugin_json_path("/h/claude-home/")) == "/h/claude-home/plugins/marketplaces/fast-jev-compaction/.claude-plugin/plugin.json"
+    assert run(fast_jev.fast_jev_installed_version(json.dumps({"name": "fast-jev-compaction", "version": "0.4.6"}))) == "0.4.6"
+    assert run(fast_jev.fast_jev_installed_version(json.dumps({"version": " 0.5.0 "}))) == "0.5.0"
+    assert run(fast_jev.fast_jev_installed_version(None)) is None
+    assert run(fast_jev.fast_jev_installed_version("not json")) is None
+    assert run(fast_jev.fast_jev_installed_version(json.dumps({"name": "x"}))) is None
+    assert run(fast_jev.fast_jev_installed_version(json.dumps({"version": ""}))) is None
+    assert run(fast_jev.fast_jev_plugin_outdated("0.4.6")) is True
+    assert run(fast_jev.fast_jev_plugin_outdated(pin)) is False
+    assert run(fast_jev.fast_jev_plugin_outdated(None)) is False
+    cmd = run(fast_jev.fast_jev_update_command("/h/claude-home"))
     assert cmd.startswith("CLAUDE_CONFIG_DIR=/h/claude-home claude plugin marketplace update fast-jev-compaction")
     assert "; CLAUDE_CONFIG_DIR=/h/claude-home claude plugin update fast-jev-compaction@fast-jev-compaction" in cmd
     assert "install" not in cmd
@@ -2585,23 +2585,23 @@ def test_fast_jev_plugin_version_pin_reads_installed_version_and_decides_update(
 
 def test_fast_jev_home_settings_merges_the_plugin_declaration_and_keeps_the_rest() -> None:
     """借りた家の settings.json に plugin の宣言を合流させる(純関数・冪等・他の欄は保つ・壊れた本文は {} から)。"""
-    merged = json.loads(fast_jev.fast_jev_home_settings(json.dumps({"permissions": {"defaultMode": "auto"}, "env": {"X": "1"}}), "/run/typesafe/key", "/h/.local/state/fast-jev-compaction"))
+    merged = json.loads(run(fast_jev.fast_jev_home_settings(json.dumps({"permissions": {"defaultMode": "auto"}, "env": {"X": "1"}}), "/run/typesafe/key", "/h/.local/state/fast-jev-compaction")))
     assert merged["permissions"] == {"defaultMode": "auto"}
     assert merged["env"] == {"X": "1", "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1"}
     assert merged["enabledPlugins"] == {fast_jev.FAST_JEV_PLUGIN_ID: True}
     assert merged["extraKnownMarketplaces"][fast_jev.FAST_JEV_MARKETPLACE_NAME]["source"]["url"] == fast_jev.FAST_JEV_MARKETPLACE_URL
     assert merged["pluginConfigs"][fast_jev.FAST_JEV_PLUGIN_ID]["options"] == {"cacheTtlMinutes": 60, "apiKeyFile": "/run/typesafe/key", "stateDir": "/h/.local/state/fast-jev-compaction"}
-    assert fast_jev.fast_jev_compaction_enabled(json.dumps(merged)) is True
+    assert run(fast_jev.fast_jev_compaction_enabled(json.dumps(merged))) is True
     # 冪等
-    assert json.loads(fast_jev.fast_jev_home_settings(json.dumps(merged), "/run/typesafe/key", "/h/.local/state/fast-jev-compaction")) == merged
+    assert json.loads(run(fast_jev.fast_jev_home_settings(json.dumps(merged), "/run/typesafe/key", "/h/.local/state/fast-jev-compaction"))) == merged
     # 壊れた本文・不在
-    assert fast_jev.fast_jev_compaction_enabled(fast_jev.fast_jev_home_settings("not json", "/k", "/s")) is True
-    assert fast_jev.fast_jev_compaction_enabled(fast_jev.fast_jev_home_settings(None, "/k", "/s")) is True
+    assert run(fast_jev.fast_jev_compaction_enabled(run(fast_jev.fast_jev_home_settings("not json", "/k", "/s")))) is True
+    assert run(fast_jev.fast_jev_compaction_enabled(run(fast_jev.fast_jev_home_settings(None, "/k", "/s")))) is True
     # 状態 file の置き場は家の下の持ち越される場所(pod の StatefulSet の PVC が持つ ~/.local/state の中)
-    assert fast_jev.fast_jev_state_dir("/home/kento") == "/home/kento/.local/state/fast-jev-compaction"
-    assert fast_jev.fast_jev_state_dir("/home/kento/") == "/home/kento/.local/state/fast-jev-compaction"
+    assert run(fast_jev.fast_jev_state_dir("/home/kento")) == "/home/kento/.local/state/fast-jev-compaction"
+    assert run(fast_jev.fast_jev_state_dir("/home/kento/")) == "/home/kento/.local/state/fast-jev-compaction"
     # 据える命令は家を名乗り、marketplace の登録の失敗を無視して install に進む
-    cmd = fast_jev.fast_jev_install_command("/h/claude-home")
+    cmd = run(fast_jev.fast_jev_install_command("/h/claude-home"))
     assert cmd.startswith("CLAUDE_CONFIG_DIR=/h/claude-home claude plugin marketplace add ")
     assert "; CLAUDE_CONFIG_DIR=/h/claude-home claude plugin install fast-jev-compaction@fast-jev-compaction --scope user" in cmd
 
@@ -2621,7 +2621,7 @@ def test_host_headless_launch_installs_the_compaction_plugin_into_the_borrowed_h
     monkeypatch.delenv(fast_jev.FAST_JEV_KEY_FILE_ENV, raising=False)
     headless_host.ok("session.launch", _launch_params(headless_host.root, "h-plug-off", "claude"))
     _wait_turn_end(headless_host, "h-plug-off")
-    assert not (home / "settings.json").exists() or not fast_jev.fast_jev_compaction_enabled((home / "settings.json").read_text())
+    assert not (home / "settings.json").exists() or not run(fast_jev.fast_jev_compaction_enabled((home / "settings.json").read_text()))
     assert "plugin install" not in log.read_text()
     # file が無い名乗り: 何も起きない(warning のみ)
     monkeypatch.setenv(fast_jev.FAST_JEV_KEY_FILE_ENV, str(headless_host.root / "missing-key"))
@@ -2640,7 +2640,7 @@ def test_host_headless_launch_installs_the_compaction_plugin_into_the_borrowed_h
     assert len(installs) == 1, lines
     assert any(line.startswith("plugin marketplace add") for line in lines), lines
     text = (home / "settings.json").read_text()
-    assert fast_jev.fast_jev_compaction_enabled(text) is True
+    assert run(fast_jev.fast_jev_compaction_enabled(text)) is True
     assert "secret-value" not in text
     assert json.loads(text)["pluginConfigs"][fast_jev.FAST_JEV_PLUGIN_ID]["options"]["apiKeyFile"] == str(key)
     # 2 度目の起動は据え直さない(冪等)
@@ -2682,18 +2682,18 @@ def test_otel_home_settings_merges_the_managed_env_and_keeps_the_rest() -> None:
     agora.tenant=personal を名乗るのは tenant が personal の時だけ(会社の行が個人用へ落ちる経路を作らない)。"""
     before = json.dumps({"permissions": {"defaultMode": "auto"},
                          "env": {"X": "1", "OTEL_LOGS_EXPORT_INTERVAL": "1", "OTEL_METRICS_EXPORTER": "old"}})
-    merged = json.loads(otel_telemetry.otel_home_settings(before, "http://c:4318", "personal", "agentd-pool-0"))
+    merged = json.loads(run(otel_telemetry.otel_home_settings(before, "http://c:4318", "personal", "agentd-pool-0")))
     assert merged["permissions"] == {"defaultMode": "auto"}
     assert merged["env"]["X"] == "1"
     assert merged["env"]["OTEL_METRICS_EXPORTER"] == "otlp"
     assert merged["env"]["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://c:4318"
     assert merged["env"]["OTEL_RESOURCE_ATTRIBUTES"] == "agora.tenant=personal,agora.host=agentd-pool-0,agora.runner=agentd"
     assert "OTEL_LOG_RAW_API_BODIES" not in merged["env"]
-    assert otel_telemetry.otel_home_settings(json.dumps(merged, indent=2, ensure_ascii=False), "http://c:4318", "personal", "agentd-pool-0") == json.dumps(merged, indent=2, ensure_ascii=False)
+    assert run(otel_telemetry.otel_home_settings(json.dumps(merged, indent=2, ensure_ascii=False), "http://c:4318", "personal", "agentd-pool-0")) == json.dumps(merged, indent=2, ensure_ascii=False)
     for tenant in ("", "company"):
-        attrs = json.loads(otel_telemetry.otel_home_settings(None, "http://c:4318", tenant, "h"))["env"]["OTEL_RESOURCE_ATTRIBUTES"]
+        attrs = json.loads(run(otel_telemetry.otel_home_settings(None, "http://c:4318", tenant, "h")))["env"]["OTEL_RESOURCE_ATTRIBUTES"]
         assert "agora.tenant" not in attrs
-    assert json.loads(otel_telemetry.otel_home_settings("not json", "http://c:4318", "personal", ""))["env"]["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
+    assert json.loads(run(otel_telemetry.otel_home_settings("not json", "http://c:4318", "personal", "")))["env"]["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
 
 
 def test_host_headless_launch_writes_otel_env_into_the_borrowed_home_only_when_the_daemon_names_an_endpoint(

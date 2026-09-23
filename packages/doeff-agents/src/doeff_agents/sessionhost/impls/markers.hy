@@ -195,7 +195,7 @@
 (setv API-LIMIT-MONTHS #("jan" "feb" "mar" "apr" "may" "jun" "jul" "aug" "sep" "oct" "nov" "dec"))
 
 
-(deff api-limit-names-a-model [detail]
+(defk api-limit-names-a-model [detail]
   {:pre [(: detail str)] :post [(: % bool)]}
   "限度の断りの文が model の族を名乗るか(True = その model だけの枯れ・False = 口座全体の枯れ)。
    所有格族の間の語に API-LIMIT-MODEL-FAMILY-WORDS の語が在る時だけ True。それ以外の文
@@ -207,7 +207,7 @@
   False)
 
 
-(deff api-limit-resets-at [detail at-ms]
+(defk api-limit-resets-at [detail at-ms]
   {:pre [(: detail str) (: at-ms int)] :post [(: % (| int None))]}
   "限度の断りの文が名乗る戻りの時刻(epoch ms)。時間帯つきの「resets <時刻>」だけを読む。
    日付の無い形は at-ms 以後で最初のその時刻、日付の在る形は at-ms 以後で最初のその日付(年は

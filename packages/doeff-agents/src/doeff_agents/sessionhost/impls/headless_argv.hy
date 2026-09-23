@@ -15,7 +15,7 @@
 ;;;
 ;;; substrate-clean 領域: 生 IO 禁止(defsemgrep 執行)。ここは純粋な組み立てだけ。
 
-(require doeff-hy.macros [deff defk defhandler <-])
+(require doeff-hy.macros [defk defhandler <-])
 
 (import json)
 (import json)
@@ -60,7 +60,7 @@
 (setv CLAUDE-HEADLESS-SETTINGS-ENV {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS" "1"})
 
 
-(deff argv-with-settings-env [argv env]
+(defk argv-with-settings-env [argv env]
   {:pre [(: argv list) (: env dict)]
    :post [(: % list)]}
   "argv の 1 つの --settings の env へ env を合流した新しい argv(無ければ --settings を足す・純関数)。
@@ -110,7 +110,7 @@
         (setv (get argv index) (json.dumps settings :separators #("," ":"))))
       (.extend argv ["--settings" (json.dumps {"disableAllHooks" True})]))
     (.extend argv ["--max-turns" "1"]))
-  (setv argv (argv-with-settings-env argv CLAUDE-HEADLESS-SETTINGS-ENV))
+  (<- argv (argv-with-settings-env argv CLAUDE-HEADLESS-SETTINGS-ENV))
   (setv built {"argv" argv "dialogue" (ClaudeDialogue)})
   (when (and (= resume-mode "resume") (isinstance conversation dict))
     (setv conv-id (.get conversation "session_id"))
@@ -122,11 +122,11 @@
       ;;   まで殺し、`/compact` が組込みの要約(model 1 回・会話全体・3.5 分)に落ちる。この 1 回きりの process は
       ;;   session_hooks = inherit と同じ形で起きる(config-dir の所有者の hook 層は spawn env の
       ;;   AGENT_SESSION_CLASS で self-gate する契約 — 手番と同じ実効 env で起こす)。
-      (setv (get built "cold_compaction_argv") (cold-compaction-argv base conv-id))))
+      (setv (get built "cold_compaction_argv") (! (cold-compaction-argv base conv-id)))))
   built)
 
 
-(deff cold-compaction-argv [base conv-id]
+(defk cold-compaction-argv [base conv-id]
   {:pre [(: base list) (> (len base) 0) (: conv-id str)]
    :post [(: % list)]}
   "続きの手番の基礎の argv(build-claude-argv の並び)から、再開前の圧縮の 1 回きりの argv を組む(純関数)。

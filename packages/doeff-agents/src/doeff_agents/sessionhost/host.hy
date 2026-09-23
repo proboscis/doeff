@@ -750,7 +750,7 @@
     (raise (RuntimeError f"invalid params for {method}: missing field `{key}`")))
   value)
 
-(deff page-int-param [params key minimum]
+(defk page-int-param [params key minimum]
   {:pre [(: params dict) (: key str) (: minimum int)]
    :post [(: % (| int None))]}
   "session.list の頁の欄(limit / offset): 無ければ None、在れば minimum 以上の整数(bool は整数と読まない)。"
@@ -1003,7 +1003,7 @@
   ))
 
 
-(deff build-resume-program-params [p config source-sid mode attachments]
+(defk build-resume-program-params [p config source-sid mode attachments]
   {:pre [(: p dict) (: config HostConfig) (: source-sid str) (: mode str) (: attachments tuple)]
    :post [(: % dict)]}
   "wire(session.resume / session.fork の params)→ resume program params。
@@ -1436,9 +1436,9 @@
                              ATTACHMENTS-UNSUPPORTED-REASON
                              ""))
     (setv program-params
-          (build-resume-program-params
-            p config source-sid mode
-            (if resume-ignored #() resume-attachments)))
+          (run (build-resume-program-params
+                 p config source-sid mode
+                 (if resume-ignored #() resume-attachments))))
     (setv row None)
     (try
       (setv row (run-hosted config actor (resume-session program-params)))
@@ -1503,8 +1503,8 @@
                    ;; ADR-007 §8: adopted filter(bool)— 対話席一覧の主 filter。
                    "adopted" (.get p "adopted")
                    ;; 頁(2026-09-23): 新しい順の一致行から offset 件飛ばして limit 件(無し = 全件)。
-                   "limit" (page-int-param p "limit" 1)
-                   "offset" (or (page-int-param p "offset" 0) 0)})
+                   "limit" (run (page-int-param p "limit" 1))
+                   "offset" (or (run (page-int-param p "offset" 0)) 0)})
     (setv snaps (.submit actor (fn [conn] (db-session-list conn filters))))
     (return (lfor s snaps
                   (augment-wire-snapshot config actor

@@ -9,9 +9,10 @@
 ;;; ここには直接束縛用の in-memory store のみ置く(呼び手 process 内で
 ;;; policy / launch を回すための最小の真実置き場)。
 
-(require doeff-hy.macros [deff defhandler])
+(require doeff-hy.macros [deff defk defhandler])
 
 (import dataclasses [replace])
+(import doeff [run])
 (import datetime [datetime timezone])
 (import errno)
 (import hashlib)
@@ -296,7 +297,7 @@
       (setv (get _COMPOSE-VIEW-LOCKS view-path) (threading.Lock)))
     (get _COMPOSE-VIEW-LOCKS view-path)))
 
-(deff compose-home-view-name [auth-resolved profile-resolved]
+(defk compose-home-view-name [auth-resolved profile-resolved]
   {:pre [(: auth-resolved str) (: profile-resolved str)]
    :post [(: % str)]}
   "決定的な view 名: 人間可読 prefix(profile basename)+ resolved realpath
@@ -305,7 +306,7 @@
   (setv digest (.hexdigest (hashlib.sha256 (.encode f"{auth-resolved}\x00{profile-resolved}" "utf-8"))))
   f"{(os.path.basename profile-resolved)}--{(cut digest 0 8)}")
 
-(deff refusal-of [operation code]
+(defk refusal-of [operation code]
   {:pre [(: operation str) (: code (| int None))]
    :post [(: % str)]}
   "据え付けを断られた syscall(operation)と errno(code)から結末の状態を解く
@@ -324,7 +325,7 @@
       FS-SYMLINK-OCCUPIED
       FS-SYMLINK-REFUSED))
 
-(deff _container-verdict [syscall error]
+(defk _container-verdict [syscall error]
   {:pre [(: syscall str) (: error OSError)]
    :post [(: % FsSymlinkOutcome)]}
   "器(file system)が断った OSError を結末へ写す唯一の口。状態の割りは
@@ -334,11 +335,11 @@
   (setv code (. error errno))
   (setv name (.get errno.errorcode code "ERRNO?"))
   (FsSymlinkOutcome
-    :state (refusal-of syscall code)
+    :state (! (refusal-of syscall code))
     :errno code
     :detail f"{syscall}: {name} {(. error strerror)}"))
 
-(deff _link-artifact-seated [source-path target-path]
+(defk _link-artifact-seated [source-path target-path]
   {:pre [(: source-path str) (: target-path str)]
    :post [(: % FsSymlinkOutcome)]}
   "敷設先に何かが据わっている拍の名乗り(FsLinkArtifact 専用)。同一実体なら
@@ -415,7 +416,7 @@
       (os.makedirs parent :exist-ok True)
       (except [error OSError]
         ;; 親の位置に実体 file が居る / 家が書けない / 読み取り専用 — 据え付けの断り
-        (return (_container-verdict "makedirs" error)))))
+        (return (run (_container-verdict "makedirs" error))))))
   ;; 仮の名は**書き手ごとに一意**(D9 と同じ反例 — 固定名だと 2 席が互いの仮を踏む)。
   ;; suffix は残す(残骸の見分けの綴り)。
   (setv staged (os.path.join (or parent ".")
@@ -424,7 +425,7 @@
     (os.symlink target staged)
     (except [error OSError]
       ;; 仮すら張れない(権限 / 容量 / 読み取り専用)— 仮は生まれていないので掃除も要らない
-      (return (_container-verdict "symlink" error))))
+      (return (run (_container-verdict "symlink" error)))))
   (try
     (os.replace staged link)
     (except [error OSError]
@@ -434,7 +435,7 @@
         (except [OSError] None))
       ;; 実体の居座り(EISDIR)と据え付けの断りの割りは refusal-of の 1 点 —
       ;; ここで 2 つ目の表を作らない。
-      (return (_container-verdict "rename" error))))
+      (return (run (_container-verdict "rename" error)))))
   (FsSymlinkOutcome :state FS-SYMLINK-LINKED))
 
 (deff _ensure-view-symlink [link target]
@@ -476,7 +477,7 @@
   (when (not (os.path.isdir profile-resolved))
     (raise (RuntimeError
              (+ "binding profile_dir does not resolve to a directory: " profile-dir))))
-  (setv view (os.path.join view-root (compose-home-view-name auth-resolved profile-resolved)))
+  (setv view (os.path.join view-root (run (compose-home-view-name auth-resolved profile-resolved))))
   (with [_ (_compose-view-lock view)]
     (os.makedirs view :exist-ok True)
     ;; sessions は bundle 側に掘る(incumbent 意味論: session 履歴は profile
@@ -640,7 +641,7 @@
         (not (or (os.path.exists source-path) (os.path.islink source-path)))
           (FsSymlinkOutcome :state FS-SYMLINK-SOURCE-MISSING)
         (or (os.path.exists target-path) (os.path.islink target-path))
-          (_link-artifact-seated source-path target-path)
+          (! (_link-artifact-seated source-path target-path))
         True
           (do
             (setv parent (os.path.dirname target-path))
@@ -652,7 +653,7 @@
               (try
                 (os.makedirs parent :exist-ok True)
                 (except [error OSError]
-                  (setv refused (_container-verdict "makedirs" error)))))
+                  (setv refused (! (_container-verdict "makedirs" error))))))
             (if (is-not refused None)
                 refused
                 (try
@@ -662,9 +663,9 @@
                   (except [FileExistsError]
                     ;; 見た後に何かが現れた(相手の席が同拍で張った / 実体が置かれた)。
                     ;; 据わっている物を読み直して名乗る — 置き換えは絶対にしない。
-                    (_link-artifact-seated source-path target-path))
+                    (! (_link-artifact-seated source-path target-path)))
                   (except [error OSError]
-                    (_container-verdict "symlink" error))))))))
+                    (! (_container-verdict "symlink" error)))))))))
 
   (FsRemoveFile [path]
     ;; card acp:kanban-issue:ki-6b5c4b270ca0: 名指した 1 file を落とす。**dir は触らない**
