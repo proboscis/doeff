@@ -1,0 +1,33 @@
+# label=F-neg-leak-detected-env1
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 worktree=/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design
+# PYTHONDONTWRITEBYTECODE=1
+# diff:  M conftest.py  M tests/test_effectful.py ?? tests/test_bytecode_writing_off.py 
+# diff sha256: 30d301a0e249d4e1
+# cmd: python -m pytest packages/doeff-hy/tests/test_source_positions.py tests/test_effectful.py -q
+
+deadline scale x1.5 (load/core) — per test 89s, watchdog 133s
+
+test-admission: focused — 35 件(変更箇所の検証)
+...................................E                                     [100%]
+==================================== ERRORS ====================================
+_________ ERROR at teardown of test_the_case_programs_are_strict_clean _________
+
+    @pytest.fixture(scope="session", autouse=True)
+    def _bytecode_writing_off():
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(sys, "dont_write_bytecode", True)
+            patch.setenv("PYTHONDONTWRITEBYTECODE", "1")
+            yield
+            still_off = sys.dont_write_bytecode
+>       assert still_off, (
+            "a test or fixture changed sys.dont_write_bytecode and did not restore it — "
+            "change it with monkeypatch (or pytest.MonkeyPatch.context() in a wider fixture)"
+        )
+E       AssertionError: a test or fixture changed sys.dont_write_bytecode and did not restore it — change it with monkeypatch (or pytest.MonkeyPatch.context() in a wider fixture)
+E       assert False
+
+conftest.py:298: AssertionError
+=========================== short test summary info ============================
+ERROR tests/test_effectful.py::test_the_case_programs_are_strict_clean - Asse...
+35 passed, 1 error in 5.61s
+# exit=1

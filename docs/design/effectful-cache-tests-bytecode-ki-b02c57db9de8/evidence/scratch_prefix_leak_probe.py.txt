@@ -1,0 +1,15 @@
+# Scratch probe (design experiment only, never committed): a module fixture that sets
+# sys.pycache_prefix directly and never restores it.
+import sys
+
+import pytest
+
+
+@pytest.fixture(scope="module")
+def prefixed():
+    sys.pycache_prefix = "/tmp/ki-b02c57db9de8/leaked-prefix"
+    return sys.pycache_prefix
+
+
+def test_uses_a_prefix(prefixed):
+    assert prefixed

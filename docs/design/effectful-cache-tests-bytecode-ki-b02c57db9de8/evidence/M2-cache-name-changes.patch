@@ -1,0 +1,9 @@
+--- a/doeff/_effectful_rewrite.py
++++ b/doeff/_effectful_rewrite.py
+@@ -348,5 +348,5 @@
+     source = Path(source_path)
+     tag = sys.implementation.cache_tag or "python"
+-    name = f"{source.stem}.{tag}-doeff-effectful-{REWRITE_VERSION}.pyc"
++    name = f"{source.stem}.{tag}-doeff-rw-{REWRITE_VERSION}.pyc"
+     return source.parent / "__pycache__" / name
+ 

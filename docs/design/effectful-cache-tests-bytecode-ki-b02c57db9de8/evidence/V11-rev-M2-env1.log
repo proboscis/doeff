@@ -1,0 +1,42 @@
+# label=V11-rev-M2-env1
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 worktree=/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design
+# PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=<unset>
+# diff:  M conftest.py  M doeff/_effectful_rewrite.py  M packages/doeff-hy/tests/test_none_type_contract.py  M packages/doeff-hy/tests/test_source_positions.py  M tests/test_effectful.py ?? docs/design/effectful-cache-tests-bytecode-ki-b02c57db9de8/ ?? tests/test_bytecode_settings_pinned.py 
+# diff sha256: ea0257f2261ffea5
+# cmd: python -m pytest tests/test_effectful.py tests/test_bytecode_settings_pinned.py -q
+
+deadline scale x1.8 (load/core) — per test 109s, watchdog 163s
+
+test-admission: focused — 33 件(変更箇所の検証)
+.........................F.......                                        [100%]
+=================================== FAILURES ===================================
+____________ test_cache_is_named_by_the_rewrite_version_and_reused _____________
+
+tmp_package = ('effectful_tmp_test_cache_is_named_by_the_rew0', PosixPath('/tmp/pytest-of-kento/pytest-369/test_cache_is_named_by_the_rew0/effectful_tmp_test_cache_is_named_by_the_rew0'))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x215dd1a1cd0>
+
+    def test_cache_is_named_by_the_rewrite_version_and_reused(
+        tmp_package: tuple[str, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The cache is only written where bytecode may be written (land / the daily run set
+        # PYTHONDONTWRITEBYTECODE=1), so this test states that precondition itself.
+        monkeypatch.setattr(sys, "dont_write_bytecode", False)
+        name, package = tmp_package
+        source = package / "mod.py"
+        source.write_text(_MODULE)
+        assert _run(_import_fresh(f"{name}.mod").twice()) == 2000
+        cached = rewrite.cache_path(str(source))
+        # The one place that pins where the cache lives and how it is named; the other cache
+        # tests ask cache_path() instead of spelling the location again.
+>       assert cached == (
+            package
+            / "__pycache__"
+            / (f"mod.{sys.implementation.cache_tag}-doeff-effectful-{rewrite.REWRITE_VERSION}.pyc")
+        )
+E       AssertionError: assert PosixPath('/tmp/pytest-of-kento/pytest-369/test_cache_is_named_by_the_rew0/effectful_tmp_test_cache_is_named_by_the_rew0/__pycache__/mod.cpython-314-doeff-rw-16bbe8e60be5637d.pyc') == ((PosixPath('/tmp/pytest-of-kento/pytest-369/test_cache_is_named_by_the_rew0/effectful_tmp_test_cache_is_named_by_the_rew0') / '__pycache__') / 'mod.cpython-314-doeff-effectful-16bbe8e60be5637d.pyc')
+
+tests/test_effectful.py:336: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_effectful.py::test_cache_is_named_by_the_rewrite_version_and_reused
+1 failed, 32 passed in 5.60s
+# exit=1
