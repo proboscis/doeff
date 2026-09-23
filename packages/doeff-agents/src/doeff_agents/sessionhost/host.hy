@@ -75,7 +75,19 @@
 (import doeff_agents.sessionhost.schema [validate-against-schema schema-admission-error])
 (import doeff_agents.sessionhost.substrate [real-substrate])
 (import doeff_agents.sessionhost.substrate_herdr [DEFAULT-HERDR-SOCKET herdr-substrate])
-(import doeff_agents.sessionhost.substrate_headless [HEADLESS-REGISTRY headless-substrate])
+(import doeff_agents.sessionhost.substrate_headless [HEADLESS-REGISTRY headless-substrate headless-spawn-env])
+(import shutil)
+
+;; E8(設計段階の実験・lt-HZ7RJ5FY571G4GCHYASQ4ZFYEH — 本実装ではない)。M-driver の代役の表と、
+;; drivers.list の 2 つの形: E8_VARIANT=cached は盲検 B の差分(起動時に解いて HostConfig に固定)、
+;; それ以外は設計の契約(問われるたびに子の env で解く)。
+(setv E8-DRIVER-EXECUTABLE {"claude" "claude" "codex" "codex"})
+
+(defn e8-resolve-drivers [spawn-env]
+  (setv search-path (.join os.pathsep (os.get-exec-path spawn-env)))
+  (lfor [agent-type executable] (sorted (.items E8-DRIVER-EXECUTABLE))
+        {"agent_type" agent-type "executable" executable
+         "path" (shutil.which executable :path search-path)}))
 (import doeff_agents.sessionhost.impls.headless_argv [headless-argv-impl])
 (import doeff_agents.sessionhost.effects [headless-kill headless-liveness])
 (import doeff_agents.sessionhost.headless_protocol [backend-alive])
@@ -221,6 +233,9 @@
   ;; 再読込は無い — 変えるには host の再起動(所有者は supervisor・R10(d))。
   #^ bool allow-metered-billing
   (setv allow-metered-billing False)
+  ;; E8 cached 形(盲検 B): 起動時に解いた drivers を固定で持つ。
+  #^ tuple e8-drivers
+  (setv e8-drivers #())
   #^ int result-solicitation-limit
   #^ int prompt-stall-seconds
   #^ int prompt-unblock-limit
@@ -539,7 +554,8 @@
     :backend backend
     :herdr-socket herdr-socket
     :headless-events-root headless-events-root
-    :exit-when-orphaned exit-when-orphaned))
+    :exit-when-orphaned exit-when-orphaned
+    :e8-drivers (tuple (e8-resolve-drivers (headless-spawn-env {})))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -1326,6 +1342,12 @@
   ;; — control plane の reconciler が登録済み binding と定期照合する読み口。
   (when (= method "kinds.list")
     (return {"kinds" (binding-kind-advertisement)}))
+
+  (when (= method "drivers.list")
+    (when (= (os.environ.get "E8_VARIANT") "cached")
+      (return {"drivers" (list config.e8-drivers)}))
+    (setv overlay (if (isinstance params dict) (.get params "env" {}) {}))
+    (return {"drivers" (e8-resolve-drivers (headless-spawn-env overlay))}))
 
   (when (= method "session.launch")
     (setv wire-params (params-object params "session.launch"))
