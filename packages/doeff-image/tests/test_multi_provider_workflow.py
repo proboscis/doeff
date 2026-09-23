@@ -48,16 +48,19 @@ import doeff_seedream.handlers.production as seedream_production
 from doeff_image.effects import ImageEdit, ImageGenerate
 from doeff_image.types import ImageResult
 
-from doeff import Delegate, EffectGenerator, Resume, default_handlers, do, run
+from doeff import EffectGenerator, Pass, Resume, do, handler, run
 
 
 def _fallback_handler(value: str):
+    """Outer catch-all that answers any image effect a provider passed on."""
+
+    @do
     def _handler(effect, k):
         if isinstance(effect, (ImageGenerate, ImageEdit)):
             return (yield Resume(k, value))
-        yield Delegate()
+        return (yield Pass(effect, k))
 
-    return _handler
+    return handler(_handler)
 
 
 def test_seedream_handler_delegates_unsupported_model() -> None:
@@ -71,11 +74,9 @@ def test_seedream_handler_delegates_unsupported_model() -> None:
         )
 
     result = run(
-        seedream_production.seedream_image_handler(_fallback_handler("delegated")(flow())),
-        handlers=default_handlers(),
+        _fallback_handler("delegated")(handler(seedream_production.seedream_image_handler)(flow()))
     )
-    assert result.is_ok()
-    assert result.value == "delegated"
+    assert result == "delegated"
 
 
 def test_gemini_handler_delegates_unsupported_model() -> None:
@@ -89,11 +90,9 @@ def test_gemini_handler_delegates_unsupported_model() -> None:
         )
 
     result = run(
-        gemini_production.gemini_image_handler(_fallback_handler("delegated")(flow())),
-        handlers=default_handlers(),
+        _fallback_handler("delegated")(handler(gemini_production.gemini_image_handler)(flow()))
     )
-    assert result.is_ok()
-    assert result.value == "delegated"
+    assert result == "delegated"
 
 
 def test_multi_provider_workflow_with_stacked_handlers(monkeypatch) -> None:
@@ -137,12 +136,12 @@ def test_multi_provider_workflow_with_stacked_handlers(monkeypatch) -> None:
         return base, edited
 
     result = run(
-        seedream_production.seedream_image_handler(gemini_production.gemini_image_handler(flow())),
-        handlers=default_handlers(),
+        handler(seedream_production.seedream_image_handler)(
+            handler(gemini_production.gemini_image_handler)(flow())
+        )
     )
 
-    assert result.is_ok()
-    base, edited = result.value
+    base, edited = result
     assert base.model == "seedream-4"
     assert edited.model == "gemini-3-pro-image"
     assert base.images[0].getpixel((0, 0)) == (255, 0, 0)

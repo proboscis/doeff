@@ -23,7 +23,7 @@ from doeff_seedream.effects import SeedreamGenerate, SeedreamStructuredOutput
 from doeff_seedream.handlers import mock_handlers, production_handlers
 from doeff_seedream.types import SeedreamImage, SeedreamImageEditResult
 
-from doeff import EffectGenerator, default_handlers, do, run
+from doeff import EffectGenerator, do, run
 
 
 class SummarySchema:
@@ -62,10 +62,7 @@ def _build_result(*, prompt: str, model: str, payload: bytes) -> SeedreamImageEd
 
 
 def _run_with_handler(program, handler):
-    return run(
-        handler(program),
-        handlers=default_handlers(),
-    )
+    return run(handler(program))
 
 
 @do
@@ -119,14 +116,8 @@ def test_mock_handlers_are_configurable_and_deterministic() -> None:
         structured_responses={SummarySchema: {"keyword": "lighthouse", "score": 7}},
     )
 
-    first = _run_with_handler(_domain_program(), handlers)
-    second = _run_with_handler(_domain_program(), handlers)
-
-    assert first.is_ok()
-    assert second.is_ok()
-
-    first_payload = first.value
-    second_payload = second.value
+    first_payload = _run_with_handler(_domain_program(), handlers)
+    second_payload = _run_with_handler(_domain_program(), handlers)
 
     assert first_payload["generated"].image_bytes == b"configured-bytes"
     assert second_payload["generated"].image_bytes == b"configured-bytes"
@@ -164,10 +155,8 @@ def test_handler_swapping_changes_behavior() -> None:
         production_handlers(generate_impl=production_generate),
     )
 
-    assert mock_result.is_ok()
-    assert production_result.is_ok()
-    assert mock_result.value != production_result.value
-    assert production_result.value == b"production-bytes"
+    assert mock_result != production_result
+    assert production_result == b"production-bytes"
 
 
 @do
@@ -182,5 +171,4 @@ def _unified_program() -> EffectGenerator[ImageResult]:
 
 def test_mock_handlers_support_unified_effects() -> None:
     result = _run_with_handler(_unified_program(), mock_handlers())
-    assert result.is_ok()
-    assert isinstance(result.value, ImageResult)
+    assert isinstance(result, ImageResult)

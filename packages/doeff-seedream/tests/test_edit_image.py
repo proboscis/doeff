@@ -1,6 +1,7 @@
 # ruff: noqa: E402
 import base64
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,15 @@ if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
 from doeff_core_effects.effects import EffectBase as Effect
+from doeff_core_effects.handlers import (
+    await_handler,
+    lazy_ask,
+    state,
+    try_handler,
+    writer,
+    writer_log,
+)
+from doeff_core_effects.scheduler import scheduled
 from doeff_seedream import SeedreamClient, edit_image__seedream4, get_seedream_client
 
 from doeff import (
@@ -26,9 +36,9 @@ from doeff import (
     Pass,
     Resume,
     Try,
-    async_run,
-    default_handlers,
     do,
+    run,
+    with_handlers,
 )
 
 
@@ -60,15 +70,46 @@ def _build_mock_seedream_handler(overrides: dict[str, Any]):
     def _handler(effect: Effect, k: Any):
         if isinstance(effect, AskEffect) and effect.key in overrides:
             return (yield Resume(k, overrides[effect.key]))
-        yield Pass()
+        return (yield Pass(effect, k))
 
     return _program_handler(_handler)
 
 
-async def _run_with_handler(program, overrides: dict[str, Any]):
-    return await async_run(
-        _build_mock_seedream_handler(overrides)(program),
-        handlers=default_handlers(),
+@dataclass(frozen=True)
+class _Outcome:
+    """What a run produced: the Ok/Err of the program and the writer log."""
+
+    result: Any
+    log: list[Any]
+
+
+@do
+def _capture(program):
+    # Try inside the stack so the writer log is still readable when the
+    # program raises (the log lives in the state handler, not a side channel).
+    result = yield Try(program)
+    log = yield writer_log()
+    return _Outcome(result=result, log=log)
+
+
+def _run_with_handler(program, overrides: dict[str, Any]) -> _Outcome:
+    # The helpers perform Ask (overrides first, then a strict empty env so a
+    # missing key raises for ``Try``), Get/Put, Try, Tell and Await — the
+    # handlers the removed ``default_handlers()`` used to supply.
+    return run(
+        scheduled(
+            with_handlers(
+                [
+                    await_handler(),
+                    lazy_ask(strict=True),
+                    try_handler,
+                    state(),
+                    writer,
+                    _build_mock_seedream_handler(overrides),
+                ],
+                _capture(program),
+            )
+        )
     )
 
 
@@ -92,8 +133,7 @@ def _cost_tracking_program():
     }
 
 
-@pytest.mark.asyncio
-async def test_edit_image_seedream4_decodes_payload_and_tracks_cost_with_handler():
+def test_edit_image_seedream4_decodes_payload_and_tracks_cost_with_handler():
     encoded = base64.b64encode(b"dummy-image-bytes").decode("ascii")
     client = RecordingSeedreamClient(
         {
@@ -102,7 +142,7 @@ async def test_edit_image_seedream4_decodes_payload_and_tracks_cost_with_handler
             "usage": {"generated_images": 1},
         }
     )
-    run_result = await _run_with_handler(
+    run_result = _run_with_handler(
         _cost_tracking_program(),
         {
             "seedream_client": client,
@@ -110,13 +150,13 @@ async def test_edit_image_seedream4_decodes_payload_and_tracks_cost_with_handler
         },
     )
 
-    assert run_result.is_ok()
-    value = run_result.value["result"]
+    assert run_result.result.is_ok()
+    value = run_result.result.value["result"]
     assert value.image_bytes == b"dummy-image-bytes"
     assert value.images[0].size == "64x64"
-    assert run_result.value["seedream_total_cost_usd"] == pytest.approx(0.05)
-    assert run_result.value["seedream_cost_dummy_model"] == pytest.approx(0.05)
-    calls = run_result.value["seedream_api_calls"]
+    assert run_result.result.value["seedream_total_cost_usd"] == pytest.approx(0.05)
+    assert run_result.result.value["seedream_cost_dummy_model"] == pytest.approx(0.05)
+    calls = run_result.result.value["seedream_api_calls"]
     assert calls
     assert calls[-1]["total_cost"] == pytest.approx(0.05)
     assert client.calls
@@ -124,8 +164,7 @@ async def test_edit_image_seedream4_decodes_payload_and_tracks_cost_with_handler
     assert any("estimated cost" in str(entry) for entry in run_result.log)
 
 
-@pytest.mark.asyncio
-async def test_edit_image_seedream4_surfaces_api_error_with_handler():
+def test_edit_image_seedream4_surfaces_api_error_with_handler():
     client = FailingSeedreamClient(RuntimeError("seedream api failure"))
 
     @do
@@ -138,16 +177,15 @@ async def test_edit_image_seedream4_surfaces_api_error_with_handler():
             )
         )
 
-    run_result = await _run_with_handler(program(), {"seedream_client": client})
-    assert run_result.is_err()
-    assert isinstance(run_result.error, RuntimeError)
-    assert "seedream api failure" in str(run_result.error)
+    run_result = _run_with_handler(program(), {"seedream_client": client})
+    assert run_result.result.is_err()
+    assert isinstance(run_result.result.error, RuntimeError)
+    assert "seedream api failure" in str(run_result.result.error)
     assert client.calls == 1
     assert any("failed" in str(entry) for entry in run_result.log)
 
 
-@pytest.mark.asyncio
-async def test_edit_image_seedream4_invalid_base64_payload_returns_error_with_handler():
+def test_edit_image_seedream4_invalid_base64_payload_returns_error_with_handler():
     client = RecordingSeedreamClient(
         {
             "model": "dummy-model",
@@ -166,14 +204,13 @@ async def test_edit_image_seedream4_invalid_base64_payload_returns_error_with_ha
             )
         )
 
-    run_result = await _run_with_handler(program(), {"seedream_client": client})
-    assert run_result.is_err()
-    assert isinstance(run_result.error, ValueError)
-    assert "Failed to decode Seedream base64 image payload" in str(run_result.error)
+    run_result = _run_with_handler(program(), {"seedream_client": client})
+    assert run_result.result.is_err()
+    assert isinstance(run_result.result.error, ValueError)
+    assert "Failed to decode Seedream base64 image payload" in str(run_result.result.error)
 
 
-@pytest.mark.asyncio
-async def test_edit_image_seedream4_missing_data_field_returns_error_with_handler():
+def test_edit_image_seedream4_missing_data_field_returns_error_with_handler():
     client = RecordingSeedreamClient({"model": "dummy-model", "usage": {"generated_images": 1}})
 
     @do
@@ -186,14 +223,13 @@ async def test_edit_image_seedream4_missing_data_field_returns_error_with_handle
             )
         )
 
-    run_result = await _run_with_handler(program(), {"seedream_client": client})
-    assert run_result.is_err()
-    assert isinstance(run_result.error, ValueError)
-    assert "Seedream response did not include image data" in str(run_result.error)
+    run_result = _run_with_handler(program(), {"seedream_client": client})
+    assert run_result.result.is_err()
+    assert isinstance(run_result.result.error, ValueError)
+    assert "Seedream response did not include image data" in str(run_result.result.error)
 
 
-@pytest.mark.asyncio
-async def test_get_seedream_client_initializes_and_caches_via_with_handler():
+def test_get_seedream_client_initializes_and_caches_via_with_handler():
     @do
     def program():
         first = yield get_seedream_client()
@@ -205,7 +241,7 @@ async def test_get_seedream_client_initializes_and_caches_via_with_handler():
             "cached": cached_result.value if cached_result.is_ok() else None,
         }
 
-    run_result = await _run_with_handler(
+    run_result = _run_with_handler(
         program(),
         {
             "seedream_api_key": "fake-seedream-key",
@@ -214,19 +250,18 @@ async def test_get_seedream_client_initializes_and_caches_via_with_handler():
         },
     )
 
-    assert run_result.is_ok()
-    first = run_result.value["first"]
-    second = run_result.value["second"]
+    assert run_result.result.is_ok()
+    first = run_result.result.value["first"]
+    second = run_result.result.value["second"]
     assert isinstance(first, SeedreamClient)
     assert first is second
-    assert run_result.value["cached"] is first
+    assert run_result.result.value["cached"] is first
     assert first.api_key == "fake-seedream-key"
     assert first.base_url == "https://seedream.test/v3"
     assert dict(first.default_headers or {}) == {"X-Test": "seedream"}
 
 
-@pytest.mark.asyncio
-async def test_get_seedream_client_prefers_injected_client_with_handler():
+def test_get_seedream_client_prefers_injected_client_with_handler():
     injected_client = SeedreamClient(api_key="injected-key", base_url="https://injected.test/v3")
 
     @do
@@ -238,9 +273,9 @@ async def test_get_seedream_client_prefers_injected_client_with_handler():
             "cached": cached_result.value if cached_result.is_ok() else None,
         }
 
-    run_result = await _run_with_handler(program(), {"seedream_client": injected_client})
+    run_result = _run_with_handler(program(), {"seedream_client": injected_client})
 
-    assert run_result.is_ok()
-    assert run_result.value["resolved"] is injected_client
+    assert run_result.result.is_ok()
+    assert run_result.result.value["resolved"] is injected_client
     # A pre-injected client returns early, so get_seedream_client does not write state.
-    assert run_result.value["cached"] is None
+    assert run_result.result.value["cached"] is None
