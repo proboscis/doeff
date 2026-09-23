@@ -7,6 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use crate::effect_registry::{EffectRegistry, FirstArgument};
 use crate::function_summary::{ArgumentValue, CallArgument, CallEdge, FunctionSummary};
 use crate::hy_reader::{parse_hy, span_at, SExpr, SExprKind};
 use crate::{EffectUsage, SourceSpan, TargetKind};
@@ -472,16 +473,18 @@ fn make_effect_usage(
 ) -> EffectUsage {
     let span = span_at(source, list[0].start, file);
 
-    // For Ask, try to extract the literal key
-    let key = if name == "Ask" {
-        if let Some(key_str) = list.get(1).and_then(|e| e.as_str()) {
-            format!("ask:{}", key_str)
-        } else {
-            "ask:<dynamic>".to_string()
-        }
-    } else {
-        name.replace('-', "_")
+    // Constructors in the shared vocabulary get the same key as on the Python
+    // side; any other PascalCase effect is keyed by its name.
+    let first = match list.get(1) {
+        None => FirstArgument::Missing,
+        Some(arg) => match arg.as_str() {
+            Some(literal) => FirstArgument::Literal(literal),
+            None => FirstArgument::Dynamic,
+        },
     };
+    let key = EffectRegistry::default()
+        .key_for(name, first)
+        .unwrap_or_else(|| name.replace('-', "_"));
 
     EffectUsage {
         key,

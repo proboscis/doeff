@@ -63,8 +63,8 @@ not installed).
 
 The crate in `src/` is the earlier engine: `seda analyze` / `seda hy` and the
 `analyze` / `analyze_symbol` functions (loaded lazily from the `_native`
-extension). It recognises effects by a fixed vocabulary of call names (`ask(`,
-`emit(` …) and reads Hy with its own reader, so it does not see project-defined
+extension). It recognises effects by a fixed vocabulary of doeff constructor names
+(`Ask(`, `Tell(`, `Get(`, `Put(`, `slog(`; `src/effect_registry.rs`) and reads Hy with its own reader, so it does not see project-defined
 effect classes or code produced by user macros. Use the Python front end above
 for effect sets and coverage.
 

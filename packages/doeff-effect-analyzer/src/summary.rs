@@ -640,7 +640,8 @@ struct ModuleData {
 impl ModuleData {
     fn from_parts(module: &str, file_path: PathBuf, source: String, tree: Tree) -> Result<Self> {
         let (functions, methods) = collect_symbols(&tree, &source);
-        let imports = build_import_map(module, &source)?;
+        let is_package = file_path.file_name().is_some_and(|name| name == "__init__.py");
+        let imports = build_import_map(module, is_package, &source)?;
         Ok(Self {
             file_path,
             source,
@@ -721,7 +722,11 @@ fn collect_class_methods(node: Node<'_>, source: &str, entry: &mut BTreeSet<Stri
     }
 }
 
-fn build_import_map(module: &str, source: &str) -> Result<BTreeMap<String, ImportTarget>> {
+fn build_import_map(
+    module: &str,
+    is_package: bool,
+    source: &str,
+) -> Result<BTreeMap<String, ImportTarget>> {
     let parsed = match parse(source, Mode::Module, module) {
         Ok(parsed) => parsed,
         Err(_) => return Ok(BTreeMap::new()),
@@ -737,6 +742,7 @@ fn build_import_map(module: &str, source: &str) -> Result<BTreeMap<String, Impor
                 let level = import_from.level.map(|lvl| lvl.to_u32());
                 let base = resolve_import_base(
                     module,
+                    is_package,
                     import_from.module.as_ref().map(|id| id.as_str()),
                     level,
                 );
@@ -805,17 +811,33 @@ fn split_import_target(base: &str, name: &str) -> (String, Option<String>) {
     }
 }
 
-fn resolve_import_base(module: &str, target: Option<&str>, level: Option<u32>) -> String {
+/// The module a `from <target> import ...` statement in `module` refers to.
+///
+/// An absolute import (`level` 0) names its module outright. A relative import
+/// of level `n` starts from the package containing `module` (the module itself
+/// when it is a package's `__init__.py`) and goes up `n - 1` packages, as Python
+/// does.
+fn resolve_import_base(
+    module: &str,
+    is_package: bool,
+    target: Option<&str>,
+    level: Option<u32>,
+) -> String {
+    let target = target.filter(|target| !target.is_empty());
+    let level = level.unwrap_or(0);
+    if level == 0 {
+        return target.unwrap_or_default().to_string();
+    }
+
     let mut parts: Vec<&str> = module.split('.').collect();
-    if let Some(lvl) = level {
-        for _ in 0..lvl {
-            parts.pop();
-        }
+    if !is_package {
+        parts.pop();
+    }
+    for _ in 1..level {
+        parts.pop();
     }
     if let Some(target) = target {
-        if !target.is_empty() {
-            parts.push(target);
-        }
+        parts.push(target);
     }
     parts.join(".")
 }
@@ -951,5 +973,39 @@ fn span_from_node(node: Node<'_>, source: &str, file_path: &Path) -> SourceSpan 
         file: file_path.to_string_lossy().into_owned(),
         line,
         column,
+    }
+}
+
+#[cfg(test)]
+mod import_base_tests {
+    use super::resolve_import_base;
+
+    #[test]
+    fn absolute_import_names_its_module() {
+        assert_eq!(
+            resolve_import_base("pkg.scenarios.traverse", false, Some("pkg.core.alpha"), Some(0)),
+            "pkg.core.alpha"
+        );
+        assert_eq!(
+            resolve_import_base("pkg.scenarios.traverse", false, Some("pkg.core.alpha"), None),
+            "pkg.core.alpha"
+        );
+    }
+
+    #[test]
+    fn relative_import_starts_from_the_containing_package() {
+        assert_eq!(
+            resolve_import_base("pkg.orchestrate", false, Some("core.alpha"), Some(1)),
+            "pkg.core.alpha"
+        );
+        assert_eq!(
+            resolve_import_base("pkg.scenarios.traverse", false, Some("core.alpha"), Some(2)),
+            "pkg.core.alpha"
+        );
+        assert_eq!(
+            resolve_import_base("pkg.scenarios", true, Some("traverse"), Some(1)),
+            "pkg.scenarios.traverse"
+        );
+        assert_eq!(resolve_import_base("pkg.scenarios.traverse", false, None, Some(1)), "pkg.scenarios");
     }
 }
