@@ -181,14 +181,39 @@ def test_new_turns_go_to_the_pointed_host_and_old_sessions_to_the_old_host() -> 
     assert len(old.asked) == asked_before
 
 
-def test_a_draining_host_that_went_away_is_read_as_holding_nothing() -> None:
-    old = FakeHost({"s": view("s")})
+def test_a_draining_host_that_does_not_answer_raises_until_it_is_gone() -> None:
+    """降りる途中の器が答えない拍は例外を上げる(tick の縁が持ち越す)— 札の器の写し(古い器で生きている session を
+    終端と記す)を答えにしない。器が降りて socket が応答しなくなった後(区画の観測の持ち回りの後)は札の器の答え。
+    実弾 2026-09-23 15:45(会社 Mac): 写しの『exited』を読んだ腕が古い器の手番を 2 本閉じて片付けた。"""
+    old = FakeHost({"s": view("s", turn_ended_at_ms=None)})
     new = FakeHost({"s": view("s", "exited")})
-    route = routes({ROOT_SOCK: old, B_SOCK: new}, "b")
+    now = [0.0]
+    hosts = {ROOT_SOCK: old, B_SOCK: new}
+
+    def rpc_of(path: str) -> FakeHost:
+        return hosts[path]
+
+    rpc_factory: Callable[[str], object] = rpc_of
+    route = SessionRoutes(
+        ROOT_SOCK,
+        rpc_of=rpc_factory,  # type: ignore[arg-type]
+        listening=lambda path: path in hosts and not hosts[path].down,
+        listdir=lambda _path: ["active", "b"],
+        read_pointer=lambda _path: "b",
+        clock=lambda: now[0],
+    )
     assert route.layout().draining == (ROOT_SOCK,)
     old.go_down()
+    for effect in (SessionGet(session_id="s"), SessionCleanup(session_id="s"),
+                   SessionList(lifecycle="multi_turn", statuses=("running",))):
+        with pytest.raises(OSError):
+            route.answer(effect)
+    assert not any(isinstance(e, SessionCleanup) for e in new.asked), "写しの器へ片付けを送っている"
+    now[0] = 60.0
     seen = route.answer(SessionGet(session_id="s"))
-    assert isinstance(seen, SessionView) and seen.status == "exited" and not seen.draining
+    assert isinstance(seen, SessionView)
+    assert seen.status == "exited"
+    assert not seen.draining
 
 
 # ---------------------------------------------------------------- store の写し
