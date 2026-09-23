@@ -1,0 +1,96 @@
+=================== scratch_module_fixture_probe.py.txt
+# Scratch probe (design experiment only, never committed): a test whose bytecode
+# assumption lives in a MODULE-scoped fixture, i.e. outside any function-scoped pin.
+import importlib
+import sys
+
+import pytest
+
+
+@pytest.fixture(scope="module")
+def imported(tmp_path_factory):
+    root = tmp_path_factory.mktemp("probe")
+    (root / "probe_mod_ki.py").write_text("X = 1\n")
+    sys.path.insert(0, str(root))
+    try:
+        importlib.import_module("probe_mod_ki")
+    finally:
+        sys.path.remove(str(root))
+        sys.modules.pop("probe_mod_ki", None)
+    return root
+
+
+def test_pyc_written_by_module_fixture(imported):
+    assert list((imported / "__pycache__").glob("probe_mod_ki.*.pyc"))
+=================== V7a-rev-session-pin-probe-envunset.log
+# label=V7a-rev-session-pin-probe-envunset
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 worktree=/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design
+# PYTHONDONTWRITEBYTECODE=<unset> PYTHONPYCACHEPREFIX=<unset>
+# diff:  M conftest.py  M packages/doeff-hy/tests/test_none_type_contract.py  M packages/doeff-hy/tests/test_source_positions.py  M tests/test_effectful.py ?? docs/design/effectful-cache-tests-bytecode-ki-b02c57db9de8/ ?? tests/test_bytecode_settings_pinned.py ?? tests/test_scratch_module_fixture_probe.py 
+# diff sha256: 6bd0d1fbcdc8fa39
+# cmd: python -m pytest tests/test_scratch_module_fixture_probe.py -q
+
+deadline scale x1.4 (load/core) — per test 86s, watchdog 128s
+
+test-admission: focused — 1 件(変更箇所の検証)
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______________________ test_pyc_written_by_module_fixture ______________________
+
+imported = PosixPath('/tmp/pytest-of-kento/pytest-357/probe0')
+
+    def test_pyc_written_by_module_fixture(imported):
+>       assert list((imported / "__pycache__").glob("probe_mod_ki.*.pyc"))
+E       AssertionError: assert []
+E        +  where [] = list(<map object at 0x3e5bcf09000>)
+E        +    where <map object at 0x3e5bcf09000> = glob('probe_mod_ki.*.pyc')
+E        +      where glob = (PosixPath('/tmp/pytest-of-kento/pytest-357/probe0') / '__pycache__').glob
+
+tests/test_scratch_module_fixture_probe.py:23: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_scratch_module_fixture_probe.py::test_pyc_written_by_module_fixture
+1 failed in 3.61s
+# exit=1
+=================== V7b-rev-function-pin-probe-envunset.log
+# label=V7b-rev-function-pin-probe-envunset
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 worktree=/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design
+# PYTHONDONTWRITEBYTECODE=<unset> PYTHONPYCACHEPREFIX=<unset>
+# diff:  M conftest.py  M packages/doeff-hy/tests/test_none_type_contract.py  M packages/doeff-hy/tests/test_source_positions.py  M tests/test_effectful.py ?? docs/design/effectful-cache-tests-bytecode-ki-b02c57db9de8/ ?? tests/test_bytecode_settings_pinned.py ?? tests/test_scratch_module_fixture_probe.py 
+# diff sha256: bae6b1ebd9865b23
+# cmd: python -m pytest tests/test_scratch_module_fixture_probe.py -q
+
+deadline scale x1.5 (load/core) — per test 91s, watchdog 136s
+
+test-admission: focused — 1 件(変更箇所の検証)
+.                                                                        [100%]
+1 passed in 0.14s
+# exit=0
+=================== V7c-rev-function-pin-probe-env1.log
+# label=V7c-rev-function-pin-probe-env1
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 worktree=/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design
+# PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=<unset>
+# diff:  M conftest.py  M packages/doeff-hy/tests/test_none_type_contract.py  M packages/doeff-hy/tests/test_source_positions.py  M tests/test_effectful.py ?? docs/design/effectful-cache-tests-bytecode-ki-b02c57db9de8/ ?? tests/test_bytecode_settings_pinned.py ?? tests/test_scratch_module_fixture_probe.py 
+# diff sha256: bae6b1ebd9865b23
+# cmd: python -m pytest tests/test_scratch_module_fixture_probe.py -q
+
+deadline scale x1.6 (load/core) — per test 93s, watchdog 140s
+
+test-admission: focused — 1 件(変更箇所の検証)
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______________________ test_pyc_written_by_module_fixture ______________________
+
+imported = PosixPath('/tmp/pytest-of-kento/pytest-359/probe0')
+
+    def test_pyc_written_by_module_fixture(imported):
+>       assert list((imported / "__pycache__").glob("probe_mod_ki.*.pyc"))
+E       AssertionError: assert []
+E        +  where [] = list(<map object at 0x58676e07e80>)
+E        +    where <map object at 0x58676e07e80> = glob('probe_mod_ki.*.pyc')
+E        +      where glob = (PosixPath('/tmp/pytest-of-kento/pytest-359/probe0') / '__pycache__').glob
+
+tests/test_scratch_module_fixture_probe.py:23: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_scratch_module_fixture_probe.py::test_pyc_written_by_module_fixture
+1 failed in 0.20s
+# exit=1

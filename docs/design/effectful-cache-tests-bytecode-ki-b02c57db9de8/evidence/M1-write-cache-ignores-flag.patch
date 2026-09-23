@@ -1,0 +1,10 @@
+--- a/doeff/_effectful_rewrite.py
++++ b/doeff/_effectful_rewrite.py
+@@ -377,6 +377,4 @@
+ 
+ def _write_cache(path: Path, header: bytes, code: CodeType) -> None:
+-    if sys.dont_write_bytecode:
+-        return
+     temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+     try:
+         path.parent.mkdir(exist_ok=True)

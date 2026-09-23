@@ -1,0 +1,47 @@
+# label=F-neg-mutant-M1-env1
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 worktree=/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design
+# PYTHONDONTWRITEBYTECODE=1
+# diff:  M conftest.py  M doeff/_effectful_rewrite.py  M packages/doeff-hy/tests/test_none_type_contract.py  M packages/doeff-hy/tests/test_source_positions.py  M tests/test_effectful.py ?? tests/test_bytecode_writing_off.py 
+# diff sha256: 2b3b403ce2dea848
+# cmd: python -m pytest tests/test_effectful.py -q -k cache or rebuild
+
+deadline scale x1.5 (load/core) — per test 89s, watchdog 133s
+
+test-admission: focused — 3 件(変更箇所の検証)
+..F                                                                      [100%]
+=================================== FAILURES ===================================
+____________ test_no_cache_is_written_while_bytecode_writing_is_off ____________
+
+tmp_package = ('effectful_tmp_test_no_cache_is_written_while0', PosixPath('/tmp/pytest-of-kento/pytest-242/test_no_cache_is_written_while0/effectful_tmp_test_no_cache_is_written_while0'))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x30e7a9a1e10>
+
+    def test_no_cache_is_written_while_bytecode_writing_is_off(
+        tmp_package: tuple[str, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "dont_write_bytecode", True)
+        name, package = tmp_package
+        source = package / "mod.py"
+        source.write_text(_MODULE)
+        compiled: list[str] = []
+        compile_source = rewrite.compile_source
+    
+        def counting_compile(source_bytes: bytes, filename: str) -> Any:
+            compiled.append(filename)
+            return compile_source(source_bytes, filename)
+    
+        monkeypatch.setattr(rewrite, "compile_source", counting_compile)
+        assert _run(_import_fresh(f"{name}.mod").twice()) == 2000
+        assert _run(_import_fresh(f"{name}.mod").twice()) == 2000
+>       assert not rewrite.cache_path(str(source)).exists()
+E       AssertionError: assert not True
+E        +  where True = exists()
+E        +    where exists = PosixPath('/tmp/pytest-of-kento/pytest-242/test_no_cache_is_written_while0/effectful_tmp_test_no_cache_is_written_while0/__pycache__/mod.cpython-314-doeff-effectful-f6730c17dabe9d02.pyc').exists
+E        +      where PosixPath('/tmp/pytest-of-kento/pytest-242/test_no_cache_is_written_while0/effectful_tmp_test_no_cache_is_written_while0/__pycache__/mod.cpython-314-doeff-effectful-f6730c17dabe9d02.pyc') = <function cache_path at 0x30e7ca7f6c0>('/tmp/pytest-of-kento/pytest-242/test_no_cache_is_written_while0/effectful_tmp_test_no_cache_is_written_while0/mod.py')
+E        +        where <function cache_path at 0x30e7ca7f6c0> = rewrite.cache_path
+E        +        and   '/tmp/pytest-of-kento/pytest-242/test_no_cache_is_written_while0/effectful_tmp_test_no_cache_is_written_while0/mod.py' = str(PosixPath('/tmp/pytest-of-kento/pytest-242/test_no_cache_is_written_while0/effectful_tmp_test_no_cache_is_written_while0/mod.py'))
+
+tests/test_effectful.py:381: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_effectful.py::test_no_cache_is_written_while_bytecode_writing_is_off
+1 failed, 2 passed, 28 deselected in 0.50s
+# exit=1

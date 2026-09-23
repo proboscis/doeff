@@ -1,0 +1,39 @@
+# label=V8a-rev-prefix-leak-envunset
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 worktree=/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design
+# PYTHONDONTWRITEBYTECODE=<unset> PYTHONPYCACHEPREFIX=<unset>
+# diff:  M conftest.py  M packages/doeff-hy/tests/test_none_type_contract.py  M packages/doeff-hy/tests/test_source_positions.py  M tests/test_effectful.py ?? docs/design/effectful-cache-tests-bytecode-ki-b02c57db9de8/ ?? tests/test_bytecode_settings_pinned.py ?? tests/test_scratch_prefix_leak_probe.py 
+# diff sha256: 6bd0d1fbcdc8fa39
+# cmd: python -m pytest tests/test_scratch_prefix_leak_probe.py -q
+
+deadline scale x1.6 (load/core) — per test 93s, watchdog 140s
+
+test-admission: focused — 1 件(変更箇所の検証)
+.E                                                                       [100%]
+==================================== ERRORS ====================================
+___________________ ERROR at teardown of test_uses_a_prefix ____________________
+
+    @pytest.fixture(scope="session", autouse=True)
+    def _bytecode_settings_pinned():
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(sys, "dont_write_bytecode", True)
+            patch.setattr(sys, "pycache_prefix", None)
+            patch.setenv("PYTHONDONTWRITEBYTECODE", "1")
+            patch.delenv("PYTHONPYCACHEPREFIX", raising=False)
+            yield
+            at_the_end = (sys.dont_write_bytecode, sys.pycache_prefix)
+>       assert at_the_end == (True, None), (
+            f"a test or fixture changed the bytecode settings and did not restore them "
+            f"(dont_write_bytecode, pycache_prefix) = {at_the_end} — change them with "
+            f"monkeypatch (or pytest.MonkeyPatch.context() in a wider fixture)"
+        )
+E       AssertionError: a test or fixture changed the bytecode settings and did not restore them (dont_write_bytecode, pycache_prefix) = (True, '/tmp/ki-b02c57db9de8/leaked-prefix') — change them with monkeypatch (or pytest.MonkeyPatch.context() in a wider fixture)
+E       assert (True, '/tmp/...eaked-prefix') == (True, None)
+E         
+E         At index 1 diff: '/tmp/ki-b02c57db9de8/leaked-prefix' != None
+E         Use -v to get more diff
+
+conftest.py:306: AssertionError
+=========================== short test summary info ============================
+ERROR tests/test_scratch_prefix_leak_probe.py::test_uses_a_prefix - Assertion...
+1 passed, 1 error in 0.21s
+# exit=1

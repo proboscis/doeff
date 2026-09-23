@@ -1,0 +1,362 @@
+{
+  "version": 1,
+  "task_id": "lt-64Y1D2GNNSNFQ1YBY6QPW4ZY50",
+  "base_revision": "5750826265f65e4e6727d6e00bebf76b97cb28b3",
+  "author": {
+    "conversation_id": "c-ZSX5HW937JVHSG80KE6JPCKC1W",
+    "model": "claude-opus-5-5",
+    "effort": "既定(起動口に effort の指定の欄が無い)"
+  },
+  "requirements": "card acp:kanban-issue:ki-b02c57db9de8 の望む状態: (1) @effectful のキャッシュの検査 2 本(test_cache_is_named_by_the_rewrite_version_and_reused・test_a_new_rewrite_version_rebuilds_the_cache)が自分の前提(bytecode を書ける)を検査の中で立て、どの環境でも同じ答えになる (2) sys.dont_write_bytecode が真の時に書かないことを別の 1 本で守る (3) dotfiles land.py の PYTHONDONTWRITEBYTECODE=1 は変えない (4) 受入 = 着地の翌日 03:30 JST の doeff の日次で 2 つの名前が失敗名から消え、PYTHONDONTWRITEBYTECODE=1 の手元の実行で直す前 2 本赤・直した後 緑。依頼書から: (5) 同じ前提を置く検査を 1 度走査し在れば同じ実装の依頼に入れる。完了の範囲 = 設計まで(実装は class dev の別依頼)。",
+  "design": {
+    "path": "design.md",
+    "sha256": "b5b4f6913865120d822902e3b90269634c7598e45a66ceca7f9ad6a2161150b7"
+  },
+  "modules": [
+    {
+      "id": "effectful-cache",
+      "responsibility": "@effectful の書き換えた bytecode を保存・再利用する(変えない)",
+      "owns": "書く / 書かないの判断(sys.dont_write_bytecode・書けない木)・置き場と名前の付け方(cache_path)",
+      "hides": "file の中身の形(header・marshal)",
+      "interface": "cache_path(source_path) -> Path・名前 __pycache__/<stem>.<cache_tag>-doeff-effectful-<REWRITE_VERSION>.pyc",
+      "effects": "__pycache__ の読み書き。書けない時は黙って書かない",
+      "lifetime": "import 1 回",
+      "invariants": "flag が真なら書かない・壊れた cache は捨てて compile"
+    },
+    {
+      "id": "cache-tests",
+      "responsibility": "キャッシュの名前・再利用・版での作り直し・書かない振る舞いを確かめる",
+      "owns": "各検査の前提(flag の値)を monkeypatch で立てて戻すこと。置き場と名前の契約の確かめは 1 か所",
+      "hides": "なし(検査は公開の cache_path に置き場を聞く)",
+      "interface": "tests/test_effectful.py の検査名 3 つ",
+      "effects": "tmp_path の下だけに書く。flag は monkeypatch で変えて戻す",
+      "lifetime": "検査 1 本",
+      "invariants": "答えが走行環境の bytecode の設定に依らない"
+    },
+    {
+      "id": "suite-pin",
+      "responsibility": "検査の走行の bytecode の設定を 1 つに揃える(書かない・標準の置き場)",
+      "owns": "収集の後から走行の終わりまでの sys.dont_write_bytecode=True・sys.pycache_prefix=None・PYTHONDONTWRITEBYTECODE=1・PYTHONPYCACHEPREFIX なし",
+      "hides": "なし",
+      "interface": "root conftest.py の session 単位の autouse fixture _bytecode_settings_pinned。検査は前提を変えたい時に monkeypatch で上書きする",
+      "effects": "process の 2 つの値と os.environ を session の間だけ変えて戻す。終わりに値が戻っていなければ走行を赤にする",
+      "lifetime": "pytest の session(xdist では worker ごと)",
+      "invariants": "開発機と日次でこの設定が同じ・終わりに値が戻っている"
+    },
+    {
+      "id": "hy-probe-fixtures",
+      "responsibility": "doeff-hy の .hy の probe を bytecode を書かずに import する",
+      "owns": "import の間だけ flag を真にして元の値へ戻すこと",
+      "hides": "なし",
+      "interface": "module fixture mod(2 file)",
+      "effects": "process の flag を import の間だけ変える",
+      "lifetime": "module",
+      "invariants": "fixture の後の flag = 前の flag"
+    },
+    {
+      "id": "land-env",
+      "responsibility": "機構の子の env を作る(dotfiles land.py _hygiene_env・外部・変えない)",
+      "owns": "子の env に PYTHONDONTWRITEBYTECODE=1",
+      "hides": "なし",
+      "interface": "子 process の env",
+      "effects": "なし、値を作るだけ",
+      "lifetime": "走行 1 回",
+      "invariants": "被験の木に __pycache__ を書かせない"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S1",
+      "axis": "distribution",
+      "applicability": "applicable",
+      "change": "日次の走行場所が変わる(zeus の遠隔実行 ↔ この機体への fallback ↔ 開発機)。場所ごとに PYTHONDONTWRITEBYTECODE の有無が違う",
+      "claim": "キャッシュの 3 本と固定の 2 本の答えは走行場所の env に依らず同じ。前提の書き忘れは開発機でも赤になる",
+      "expected_scope": "変わる module なし",
+      "actual_scope": "修正前: PYTHONPYCACHEPREFIX のある機体でだけ 2 本が赤(盲検 A-1 / B-1・C07)。修正後: DWB × prefix の 4 通りで同じ答え(C01)・書き忘れは開発機で赤(C03・C04)・値を戻さない fixture は赤(C05)",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "effectful-cache",
+        "cache-tests",
+        "suite-pin",
+        "hy-probe-fixtures",
+        "land-env"
+      ],
+      "reason": "固定が Python の bytecode の設定 2 つの片方しか揃えておらず、置き場の設定で答えが割れた(固定の責務の定義の不足)",
+      "revision": "R2: 固定を 2 つの設定(書くか・置き場)へ広げ、終わりの確かめも 2 つを見る。R1: 置き場を検査が組まず cache_path に聞く"
+    },
+    {
+      "id": "S2",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "キャッシュの名前の付け方を変える(盲検 A・B は置き場を sys.pycache_prefix に従わせる形でも試した)",
+      "claim": "変わるのは effectful-cache の cache_path と、名前を公開の形として確かめる cache-tests の 2 本。書かない側の 1 本・固定・land-env は変わらない",
+      "expected_scope": "effectful-cache・cache-tests(2 本)",
+      "actual_scope": "修正前: 置き場の変更で固定も直す必要があった(A-1)。修正後: 置き場の変更(M3)は検査へ波及しない(C06)。名前の綴りの変更(M2)で変わるのは名前の検査 1 本だけ(C08)",
+      "changed_modules": [
+        "effectful-cache",
+        "cache-tests"
+      ],
+      "unchanged_modules": [
+        "suite-pin",
+        "hy-probe-fixtures",
+        "land-env"
+      ],
+      "reason": "cache-tests が置き場の知識を 2 か所に写していた(隠すはずの知識の漏れ)。名前の契約の変更は意図した公開契約の変更",
+      "revision": "R1: 置き場と名前の契約の確かめを 1 か所にし、他は cache_path に聞く。R2 で prefix を固定"
+    },
+    {
+      "id": "S3",
+      "axis": "concurrency",
+      "applicability": "applicable",
+      "change": "日次を xdist の並列(-n N)で走らせる",
+      "claim": "変更なし。固定は worker の process ごとに立ち、各検査は自分の tmp_path だけを使う",
+      "expected_scope": "変わる module なし",
+      "actual_scope": "変わる module なし。修正後・-n 4・4 通りの env で緑(C09)。基準版の欠陥は -n 4 でも赤(C10)",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "effectful-cache",
+        "cache-tests",
+        "suite-pin",
+        "hy-probe-fixtures",
+        "land-env"
+      ],
+      "reason": "worker は別 process で session の fixture を各自で立てる",
+      "revision": "不要。予測と実測が一致"
+    },
+    {
+      "id": "S4",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "キャッシュを書かない条件を 1 つ足す、または今の条件を落とす",
+      "claim": "変わるのは effectful-cache と、その条件を確かめる cache-tests の 1 本。前提を立てた 2 本・固定・land-env は変わらない。今の条件を落とす変更は書かない側の 1 本が赤で止める",
+      "expected_scope": "effectful-cache・cache-tests",
+      "actual_scope": "修正前: 書けない置き場では条件を落としたミュータントを見逃した(A-2・C13)。修正後: 4 通りの env のどれでも書かない側の 1 本だけが赤(C12)。書けない置き場では対照の行で赤(C13)",
+      "changed_modules": [
+        "effectful-cache",
+        "cache-tests"
+      ],
+      "unchanged_modules": [
+        "suite-pin",
+        "hy-probe-fixtures",
+        "land-env"
+      ],
+      "reason": "書かない側の 1 本が「書ける置き場」を暗黙に前提していた",
+      "revision": "R3: 同じ置き場へ flag が偽なら書かれることを検査の中で先に示す(対照)"
+    },
+    {
+      "id": "S5",
+      "axis": "hardware",
+      "applicability": "excluded",
+      "reason": "書く / 書かないの判断は process の flag と木の書き込みの可否だけで決まり、機体の違いは env(S1)を通してしか入らない。Python の版の違いは cache_tag に出るが、検査は sys.implementation.cache_tag を読む"
+    },
+    {
+      "id": "S6",
+      "axis": "simulation",
+      "applicability": "excluded",
+      "reason": "キャッシュは import の副産物で、doeff の program の意味(effect・handler・scheduler)に入らない。決定的シミュレーションの対象になる状態を持たない"
+    }
+  ],
+  "checks": [
+    {
+      "id": "C01",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "修正後の差分で、DWB × prefix の 4 通りの env で 2 file(33 本)が緑",
+      "observation": "4 通りとも 33 passed・exit 0",
+      "evidence": {
+        "path": "evidence/checks/C01-S1-pos-revised-all-env.txt",
+        "sha256": "9e6b4a3f223ad04dd80bc37155c884ecea4b4822e65fb5f803b79bde1d3c180a"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C02",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "基準版では PYTHONDONTWRITEBYTECODE=1 で 2 本が赤(元の欠陥を検査が捕まえる)",
+      "observation": "DWB=1 で 2 failed(333・351 行)・env 無しで 2 passed",
+      "evidence": {
+        "path": "evidence/checks/C02-S1-neg-base-red-under-daily-env.txt",
+        "sha256": "468b4a09f127d7c65ab6dce633c48cb1d6ddc9a6c3735b3a13a3815272a0f850"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C03",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "前提の行を 1 本から消すと、env 無し(開発機)でも赤",
+      "observation": "修正後から rebuild の 1 本の前提行を消して 1 failed・修正前の版でも 2 failed",
+      "evidence": {
+        "path": "evidence/checks/C03-S1-neg-omitted-precondition-red-on-dev.txt",
+        "sha256": "8cfff4eaafbdea9c9f721fe753e66fbca3e69e5833197b82ad419e5cf6442563"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C04",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "module fixture が書くことを前提にする probe は、session 単位の固定なら開発機で赤。関数単位だと開発機で緑・DWB=1 で赤に割れる",
+      "observation": "session 固定・env 無し = 1 failed / 関数単位・env 無し = 1 passed / 関数単位・DWB=1 = 1 failed",
+      "evidence": {
+        "path": "evidence/checks/C04-S1-neg-module-fixture-assumption.txt",
+        "sha256": "bb14a58582b0cfcdc26137f18a1edcbe350f113d99a05ff00d84b74cd0aa7c87"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C05",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "bytecode の設定を戻さない fixture がある走行は赤",
+      "observation": "prefix を戻さない probe = 終わりの確かめの error・doeff-hy を戻さない版 = 守る検査 failed + error。基準版で doeff-hy が赤を隠す実測(34 passed)も同梱",
+      "evidence": {
+        "path": "evidence/checks/C05-S1-neg-unrestored-settings-detected.txt",
+        "sha256": "dac37172ea7d3859e425c14ffb56ca9ba4057c6935662d85a781ae96055bc819"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C06",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "置き場を prefix に従わせる変更(M3)で、修正後の検査は 4 通りの env で緑(検査へ波及しない)",
+      "observation": "4 通りとも 33 passed",
+      "evidence": {
+        "path": "evidence/checks/C06-S2-pos-location-follows-prefix-contained.txt",
+        "sha256": "cf6a1afa1a29a453a620db8a1922a33d18630b608d0fe746ecd2ae9f8bdf4e6d"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C07",
+      "scenarios": [
+        "S2",
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "盲検 A-1 / B-1 の再現: 修正前の検査 + M3 は prefix のある env でだけ赤",
+      "observation": "prefix あり 2 failed(DWB に依らず)・prefix なし 33 passed",
+      "evidence": {
+        "path": "evidence/checks/C07-S2-neg-blind-counterexample-reproduced.txt",
+        "sha256": "b43b09fa65e0335915c862950f01052acbe73a3dac9154144d9c21fb8d41b5d5"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C08",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "R2 だけ外した版 + M3 で、赤は置き場と名前の契約の 1 本と守る検査 2 本だけ。名前の綴りの変更(M2)では名前の検査 1 本だけ",
+      "observation": "prefix あり 3 failed(名前の検査・守る検査 2 本)・なし 33 passed。M2 = 1 failed(名前の検査)",
+      "evidence": {
+        "path": "evidence/checks/C08-S2-neg-location-knowledge-in-one-test.txt",
+        "sha256": "44f24d461a175be524c56ac2794491c4e0875684ffad73b7d5c4171bb8c8491b"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C09",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "修正後・-n 4・4 通りの env で緑",
+      "observation": "4 通りとも 33 passed",
+      "evidence": {
+        "path": "evidence/checks/C09-S3-pos-xdist-all-env.txt",
+        "sha256": "d880dd66f3321ad001193485e408b37e740c25b5afc18e764d59a03b7ccd4997"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C10",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "基準版の欠陥は -n 4・DWB=1 でも赤",
+      "observation": "2 failed",
+      "evidence": {
+        "path": "evidence/checks/C10-S3-neg-base-red-under-xdist.txt",
+        "sha256": "e6ed6abc5b6ba74069e1d4bb41b924d2f6bde08da02a5e22473eb8a7a495e4d5"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C11",
+      "scenarios": [
+        "S4"
+      ],
+      "control": "positive",
+      "expectation": "修正後・doeff-hy 2 file と 2 file・4 通りの env で緑",
+      "observation": "4 通りとも 41 passed",
+      "evidence": {
+        "path": "evidence/checks/C11-S4-pos-hy-and-effectful-all-env.txt",
+        "sha256": "2938f817d05b882da21f51a3d133f227c221f456e99bb7c477a3b5af5a9b59d1"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C12",
+      "scenarios": [
+        "S4"
+      ],
+      "control": "negative",
+      "expectation": "書かない判断を消すミュータント(M1)で、4 通りの env のどれでも書かない側の 1 本だけが赤",
+      "observation": "4 通りとも 1 failed(test_no_cache_is_written_while_bytecode_writing_is_off)",
+      "evidence": {
+        "path": "evidence/checks/C12-S4-neg-dropped-condition-caught.txt",
+        "sha256": "86bb3e8593395f202ef27e7ec05330cea5ab15dc3f208c0b9fc418daa75c2565"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C13",
+      "scenarios": [
+        "S4"
+      ],
+      "control": "negative",
+      "expectation": "盲検 A-2 の再現(修正前は書けない置き場で M1 を見逃す)と、修正後は見逃さない(固定あり = 捕まえる・固定を外しても対照の行で赤)",
+      "observation": "修正前 prefix あり 1 passed(見逃し)・なし 1 failed / 修正後 1 failed / R2 を外した版 = 378 行の対照で 1 failed(M1 あり・なしとも)",
+      "evidence": {
+        "path": "evidence/checks/C13-S4-neg-cannot-write-is-not-no-write.txt",
+        "sha256": "87a788de8ba05b1b7410af5639f3ee6ced31ac097ddfc66dcb2a01354ab7942a"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C14",
+      "scenarios": [
+        "S1",
+        "S2",
+        "S3",
+        "S4"
+      ],
+      "control": "positive",
+      "expectation": "触る 5 file で ruff check・semgrep が 0 件、pyright は基準版と同じ既存の 3 件だけ",
+      "observation": "ruff check 0・semgrep exit 0・pyright 3 件(基準版と同じ行)・format の差分は基準版から在る行だけ",
+      "evidence": {
+        "path": "evidence/checks/C14-all-pos-static-checks.txt",
+        "sha256": "8b431eac5eebeae5e59382225f57ce2976998384d4ef285180495ec8d12ddf0e"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": []
+}

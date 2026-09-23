@@ -1,0 +1,23 @@
+# Scratch probe (design experiment only, never committed): a test whose bytecode
+# assumption lives in a MODULE-scoped fixture, i.e. outside any function-scoped pin.
+import importlib
+import sys
+
+import pytest
+
+
+@pytest.fixture(scope="module")
+def imported(tmp_path_factory):
+    root = tmp_path_factory.mktemp("probe")
+    (root / "probe_mod_ki.py").write_text("X = 1\n")
+    sys.path.insert(0, str(root))
+    try:
+        importlib.import_module("probe_mod_ki")
+    finally:
+        sys.path.remove(str(root))
+        sys.modules.pop("probe_mod_ki", None)
+    return root
+
+
+def test_pyc_written_by_module_fixture(imported):
+    assert list((imported / "__pycache__").glob("probe_mod_ki.*.pyc"))
