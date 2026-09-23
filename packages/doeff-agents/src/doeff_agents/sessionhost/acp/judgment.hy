@@ -151,6 +151,10 @@
   AGENT-ATTACHMENT-CAPABILITY
   AGENT-CAPABILITIES
   AGENT-INTERRUPT-CAPABILITY
+  AGENTD-LAUNCHED-KINDS
+  DRIVER-EXECUTABLE
+  DriverResolution
+  DriversUnavailable
   ATTACHMENT-BYTES-KEY
   ATTACHMENT-MIME-KEY
   ATTACHMENT-NAME-KEY
@@ -1009,15 +1013,38 @@
   (.hexdigest (hashlib.sha256 (.encode canonical "utf-8"))))
 
 
-(defk capabilities-of []
-  {:pre []
+(defk launchable-agent-kinds [host-drivers agentd-resolved]
+  {:pre [(: host-drivers (| tuple DriversUnavailable)) (: agentd-resolved (| str None))]
+   :post [(: % tuple)]}
+  "この node が申告する agent の種類(ADR-DOE-AGENTS-012 R61・card acp:kanban-issue:ki-f250d67a7157)— 判断はここ 1 点:
+   **申告 = その種類を起動するこの node のすべての process で実行ファイルが見つかるかの積**。
+   * 手番は host が起こす: host の答え(drivers.list = host の子 process の実効 env での在否)で path が在る種類。
+   * 要約の job は agentd 自身が起こす(effects.AGENTD-LAUNCHED-KINDS — claude): その種類は agentd の実効 env でも
+     見つかる時だけ(agentd-resolved = agentd が AgentdSettings.claude-binary を探した path・None = 見つからない)。
+   種類の候補は能力の表(effects.AGENT-CAPABILITIES)の種類ちょうどで、表に無い種類を host が答えても申告しない。
+   host の答えが読めない(DriversUnavailable — 届かない・断り)= 空: 前の申告にも固定の表にも戻らない。
+   戻り = 種類の名の順の tuple。"
+  (when (isinstance host-drivers DriversUnavailable)
+    (return #()))
+  (setv found (sfor item host-drivers :if (and (isinstance item DriverResolution) (is-not item.path None)) item.agent-type))
+  (tuple (lfor kind (sorted AGENT-CAPABILITIES)
+               :if (and (in kind found)
+                        (or (not-in kind AGENTD-LAUNCHED-KINDS) (is-not agentd-resolved None)))
+               kind)))
+
+
+(defk capabilities-of [kinds]
+  {:pre [(: kinds tuple)]
    :post [(: % dict)]}
   "node の status.capabilities に名乗る能力の表(段 10 lane 10e・agora-redesign #53・契約 agora-kinds.json
    kinds.node.status.capabilities — 既知の形 = CI runner の label): agent の種類(charter.agent_type の語)ごとに
    settings(受ける欄)と restartOn(変えたら session を作り直す欄 — session-affinity-key-of の鍵の欄)と
    interrupt(割り込みの能力 — 段 10 lane 10n: steer-then-stop = 注入 → 期限で停止の合図 / stop = 即座に止めて渡す)。値は
-   effects.AGENT-CAPABILITIES / AGENT-INTERRUPT-CAPABILITY の写し(list に直すだけ — JSON の形)。"
+   effects.AGENT-CAPABILITIES / AGENT-INTERRUPT-CAPABILITY の写し(list に直すだけ — JSON の形)。
+   ADR-DOE-AGENTS-012 R61: 載せる種類は kinds(= launchable-agent-kinds — この node が起動できると観測した種類)ちょうどで、
+   表の中身(種類ごとに受ける欄)は変えない。kinds が空 = 空の表(何も起こせない node)。"
   (dfor [kind entry] (.items AGENT-CAPABILITIES)
+        :if (in kind kinds)
         kind {"settings" (list (get entry "settings"))
               "restartOn" (list (get entry "restartOn"))
               ;; 段 10 lane 10n: 割り込みの能力(閉語彙 effects.InterruptCapability)— 面の文言はこれに従う。
@@ -1223,6 +1250,40 @@
    判らないもので止めるのは前段の門の仕事ではない。口座の置き場の門(credential-place-mismatch)とは別の軸で、
    あちらは資格が宿の外へ出るか・こちらは宿が道具を持つか。比べる点はこの 1 つ。"
   (and (bool places) (is-not place None) (not-in place places)))
+
+
+(defk job-agent-kind-of [row]
+  {:pre [(: row AcpRow)]
+   :post [(: % (| str None))]}
+  "job が起こす agent の種類(ADR-DOE-AGENTS-012 R61): 要約の job(charter.kind = summarize)は agentd 自身が
+   AgentdSettings.claude-binary を起こすので claude(effects.AGENTD-LAUNCHED-KINDS の語・charter の agent_type に依らない)、
+   verify は agent を起こさないので None、手番は charter.agent_type の語(文字列でない・空 = None)。"
+  (<- kind str (job-kind-of row))
+  (when (= kind CHARTER-KIND-SUMMARIZE)
+    (return (get AGENTD-LAUNCHED-KINDS 0)))
+  (when (= kind CHARTER-KIND-VERIFY)
+    (return None))
+  (setv charter (.get row.spec "charter"))
+  (setv agent-type (if (isinstance charter dict) (.get charter "agent_type") None))
+  (if (and (isinstance agent-type str) agent-type) agent-type None))
+
+
+(defk agent-kind-refusal-of [row node-name kinds]
+  {:pre [(: row AcpRow) (: node-name str) (: kinds (| tuple None))]
+   :post [(: % (| str None))]}
+  "起動前の検査(ADR-DOE-AGENTS-012 R61・card acp:kanban-issue:ki-f250d67a7157)— 判断はここ 1 点: job の agent の種類
+   (job-agent-kind-of)を、この node がいま申告している種類(kinds = AgentdState.agent-kinds)が含まなければ、断りの理由の文
+   (種類・見つからなかった実行ファイルの名〔effects.DRIVER-EXECUTABLE〕・node の名・いま申告している種類)。起こしてよい = None。
+   判らないもので止めない: 種類を名乗らない job(verify・agent_type の無い charter)と、この process がまだ 1 度も観測して
+   いない拍(kinds = None)は通す。観測した空(host に届かない・読み口の無い host)は何も通さない。"
+  (<- kind (| str None) (job-agent-kind-of row))
+  (when (or (is kind None) (is kinds None) (in kind kinds))
+    (return None))
+  (setv executable (.get DRIVER-EXECUTABLE kind kind))
+  (setv declared (.join ", " kinds))
+  (+ f"agent-job {row.resource-id} launches agent kind {kind} (executable {executable !r}) but node {node-name} "
+     f"declares agent kinds [{declared}] — {executable !r} is not found on every process of this node that "
+     f"launches {kind}"))
 
 
 (defk compact-at-of [row]
@@ -3898,15 +3959,42 @@
   next)
 
 
-(defk node-status-with-observations [row settings sessions transcripts]
-  {:pre [(: row AcpRow) (: settings AgentdSettings) (: sessions list) (: transcripts list)]
+(defk node-status-with-capabilities [row kinds]
+  {:pre [(: row AcpRow) (: kinds tuple)]
+   :post [(: % dict)]}
+  "committed の status を写し、capabilities だけを kinds の能力の表(capabilities-of)に差し替えた node の status
+   (ADR-DOE-AGENTS-012 R61 — 能力の表を node の status に書く点はここ 1 つ)。"
+  (<- next dict (status-object-of row))
+  ;; 段 10 lane 10e: 能力の表(受ける欄 / 作り直す欄)を名乗る(契約の書き手 = agentd)。R61: 種類は観測した kinds ちょうど。
+  (<- table dict (capabilities-of kinds))
+  (setv (get next NODE-CAPABILITIES-KEY) table)
+  next)
+
+
+(defk capabilities-withdrawal-of [row]
+  {:pre [(: row AcpRow)]
+   :post [(: % (| dict None))]}
+  "host に届かない拍(ADR-DOE-AGENTS-012 R61)に書く node の status: committed の status.capabilities が空でない表なら、
+   それを空の表にした status(observations・lease・state は写すだけ)。既に空・欄が無い = None(書かない — 1 度だけ書く)。
+   届かない拍は器の眺め(SessionList)も読めないので観測は差し替えない。"
+  (<- status dict (status-object-of row))
+  (setv declared (.get status NODE-CAPABILITIES-KEY))
+  (when (not (and (isinstance declared dict) declared))
+    (return None))
+  (<- withdrawn dict (node-status-with-capabilities row #()))
+  withdrawn)
+
+
+(defk node-status-with-observations [row settings sessions transcripts kinds]
+  {:pre [(: row AcpRow) (: settings AgentdSettings) (: sessions list) (: transcripts list) (: kinds tuple)]
    :post [(: % dict)]}
   "tick の参加の腕が書く node の status: committed の status を写し(lease は写すだけ — 書くのは heartbeat の thread・
    段 10 lane 10ba)、observations{streamCapability, sessions, transcripts, ownership?}(sessions = session-observations-of の列・
    transcripts = 終端の session のうち transcript がこの機体に残る会話の列〔段 8q〕・
    ownership = 起動の前に検めた所有の等級 {grade, proof} — 宣言が無ければ欄ごと書かない = 未観測・
-   段 6 lane 6f)と capabilities(能力の表 — 段 10 lane 10e・capabilities-of)を差し替える。state(scheduling の欄)は写すだけ。"
-  (<- next dict (status-object-of row))
+   段 6 lane 6f)と capabilities(能力の表 — 段 10 lane 10e・R61 で同じ拍に観測した種類 kinds ちょうど・
+   node-status-with-capabilities)を差し替える。state(scheduling の欄)は写すだけ。"
+  (<- next dict (node-status-with-capabilities row kinds))
   (setv observations
         {"streamCapability" settings.stream-capability
          "sessions" sessions
@@ -3915,9 +4003,6 @@
     (setv (get observations "ownership")
           {"grade" settings.ownership.grade "proof" settings.ownership.proof}))
   (setv (get next "observations") observations)
-  ;; 段 10 lane 10e: 能力の表(受ける欄 / 作り直す欄)を lease と同じ拍に名乗る(契約の書き手 = agentd)。
-  (<- table dict (capabilities-of))
-  (setv (get next NODE-CAPABILITIES-KEY) table)
   next)
 
 

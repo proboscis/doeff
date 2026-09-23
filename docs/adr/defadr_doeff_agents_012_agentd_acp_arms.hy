@@ -147,7 +147,7 @@
 ;;; 区間(この手番の stream の最初の recordSeq − 1)を要約する summarize の job を create-only で 1 つ書く(judgment.summarize-due の 1 点)。
 ;;; 履歴からの再開は kind summary の行を先に読み(要約 = 原文の前・区間の順)、原文は要約の区間より新しい出来事だけ(record-turns-for の floor)。
 
-(require doeff-adr.macros [defadr rule law])
+(require doeff-adr.macros [defadr defsemgrep rule law])
 (require doeff-hy.macros [deftest])
 (import doeff-adr.macros [fact interpretation counterexample])
 (import json)
@@ -610,6 +610,9 @@
           "packages/doeff-agents/src/doeff_agents/sessionhost/headless_process.py"
           "packages/doeff-agents/src/doeff_agents/sessionhost/substrate_headless.hy"
           "packages/doeff-agents/src/doeff_agents/sessionhost/impls/headless_argv.hy"
+          "packages/doeff-agents/src/doeff_agents/sessionhost/impls/codex.hy"
+          "packages/doeff-agents/src/doeff_agents/sessionhost/impls/claude_code.hy"
+          "packages/doeff-agents/src/doeff_agents/sessionhost/drivers.py"
           "packages/doeff-agents/tests/test_sessionhost_headless.py"
           ".semgrep.yaml"]
   :problem
@@ -746,7 +749,8 @@
      (rule R57 "ACP の腕と器の所有は **1 命令・1 宣言のまま 2 つの process に割れる**(card acp:kanban-issue:ki-567f2dd6140f・依頼 lt-ENGDDYZJPYG689RDH9133RN2FN・既知の形 = kubelet と container runtime の分離: kubelet を入れ替えても container は走り続ける): `doeff-sessionhost join --role <both|agentd|host>`(閉語彙 = effects.JOIN_ROLES の 1 点・読みは join.role-of の純関数 1 点・既定 both)。⚠ 役は **JoinPlan に入らない** — env の束にも host の argv にも現れず、宣言 file の鍵でもない(FLAG_KEYS の外)。機体の宣言は 1 枚のままで、役は起こす側(launchd の unit / pod の container)が名乗る ⇒ (a) `--role` を付けない起動は今日と 1 byte 差なく同じ、(b) 2 つの unit が同じ宣言 file を読んで役だけ違う形が成り立つ。both = 今日どおり(agentd の thread + host・停止の hook = close_for_stop)。agentd = ACP 側だけ(runtime.run_agentd_only が main thread で待つ・host の socket の出現を**上限なし**で待ち〔pod の host は入口の provisioning に POOL_PROVISION_TIMEOUT_S まで掛かる〕・SIGTERM は close_for_exit)。host = 器だけ(弁が on でも agentd の thread を起こさない)。境界そのものは今日の unix socket のまま(SessionRpc)で、新しい口も新しい protocol も足さない。")
      (rule R58 "**ACP 側の process の停止は走っている手番を 1 つも閉じない**(同 card §3.1b・R39 の排水と別の腕): 役を分けた後、器(claude の子 process)の親は host の process で、ACP 側の process はその外に居る ⇒ ACP 側だけが降りる拍に手番を閉じるのは嘘になる。腕は 2 つ: `AgentdRun.close_for_stop`(**both** の今日の形 — 器と ACP の腕が一緒に死ぬので排水 → 走っている job を AgentdRestart で閉じる)と `AgentdRun.close_for_exit`(**agentd** の形 — stop の合図を立て、tick と lease の heartbeat の thread を有界に join し、handler を閉じるだけ。排水も cordon も撃たず、job を 1 つも閉じず、**lease を明示に落とさない**〔落とすと node がその拍で配車から外れる。入れ替えは lease の TTL の内側で終わり、次の process が judgment.node-row-named の 1 点で同じ行を拾い直す = node の行が切れない〕)。停止の hook(host.register-shutdown-hook)は役が both の時だけ登録する。host が先に降りた拍は host の stop-headless-rows が行を stopped にし、生きている ACP 側の process が次の周期に backend_alive = False を観測して既存の session-lost の経路で閉じる(今日より正しく終わる — 今日は agentd も一緒に死ぬ)。")
      (rule R59 "**排水は外から立てられる file 1 つで、判断の座は増えない**(同 card §3.1d): `<state_dir>/drain`(綴り = effects.JOIN_DRAIN_FILE・置き場は runtime.drain_file_path = record spool の親 = verify / summarize / lease の journal と同じ state_dir の 1 点)の**在否**が `settings.draining` に落ちる。読むのは handler 側の 1 点(runtime.drain_port が LoopPorts.draining を組む)で、拍ごとに読み直す level-triggered(消えれば宣言の capacity に戻る)。file の中身は理由の 1 行で、log に出すだけ — 判断には使わない。signal ではなく file なのは、入れ替えの途中で ACP 側の process 自身が再起動しても排水の意思が残るため(host の入れ替えは ACP 側の process を跨いで進む)。停止の腕が立てる process 内の合図(`AgentdRun.drain_for_stop` の Event)と**同じ 1 つの答え**に落ちるので、capacity の判断は judgment.declared-capacity-of の 1 点のまま(R39)。cordon と中断の申請(DisruptionAllowed)は**機体そのものを止める**時の仕組みで、役ごとの入れ替えでは 1 文字も書かない。")
-     (rule R60 "**器の host は仕組みだけを持ち、方策を持たない** — 温かい session を専用操作(cache ping)の送信先としていつまで保つかの判断は ACP 側の 1 点(同 card §3.1e・訂正 B): host が wire に載せるのは**観測した事実** `cache_last_success_at_ms`(その session で最後に**成功した**専用操作の完了時刻・cache_host_store.cache_last_success_at = 成功 receipt の index 読み・無ければ欄が None)ちょうどで、適格の篩も保持の予算も持たない。期限は judgment.cache-resident-retention-of の 1 点が導く(適格 = claude ∧ headless ∧ multi_turn ∧ running ∧ 会話あり ∧ 手番の終わりが刻まれている・期限 = max(turn_ended_at, 最後の成功) + CACHE_RESIDENT_IDLE_MS〔ACP 側の acp.cache_operation の 1 点〕)。sessions-to-retire はその 1 点を読む。⚠ 専用操作の**実行**(process を起こして events を読む)と receipt の永続は host に残り、cache_maintenance / cache_live も ACP 側に残る(ACP の行と custody の借用に直結しているので、host へ移すと host に ACP の client と資格が要る = 分離の目的と正反対)。idle の片付け(sessions-to-retire + session_idle_ttl_seconds)は今日どおり ACP 側。")]
+     (rule R60 "**器の host は仕組みだけを持ち、方策を持たない** — 温かい session を専用操作(cache ping)の送信先としていつまで保つかの判断は ACP 側の 1 点(同 card §3.1e・訂正 B): host が wire に載せるのは**観測した事実** `cache_last_success_at_ms`(その session で最後に**成功した**専用操作の完了時刻・cache_host_store.cache_last_success_at = 成功 receipt の index 読み・無ければ欄が None)ちょうどで、適格の篩も保持の予算も持たない。期限は judgment.cache-resident-retention-of の 1 点が導く(適格 = claude ∧ headless ∧ multi_turn ∧ running ∧ 会話あり ∧ 手番の終わりが刻まれている・期限 = max(turn_ended_at, 最後の成功) + CACHE_RESIDENT_IDLE_MS〔ACP 側の acp.cache_operation の 1 点〕)。sessions-to-retire はその 1 点を読む。⚠ 専用操作の**実行**(process を起こして events を読む)と receipt の永続は host に残り、cache_maintenance / cache_live も ACP 側に残る(ACP の行と custody の借用に直結しているので、host へ移すと host に ACP の client と資格が要る = 分離の目的と正反対)。idle の片付け(sessions-to-retire + session_idle_ttl_seconds)は今日どおり ACP 側。")
+     (rule R61 "**node が申告する agent の種類は、その種類を起動する全 process で実行ファイルが見つかったものだけ**(card acp:kanban-issue:ki-f250d67a7157・本番の実測: 35 通が `LaunchFailed — [Errno 2] No such file or directory: 'codex'` で落ちた — capabilities-of が PATH と無関係に固定の表 AGENT_CAPABILITIES を node の行へ書き、codex の無い機体が codex を名乗って配車されていた)。(1) 種類 → 実行ファイルの名の定義点は `sessionhost/drivers.py` の `DRIVER_EXECUTABLE` ちょうど 1 つで、argv の先頭(impls の codex / claude_code / headless_argv)と `AgentdSettings.claude_binary` の既定はそこから読む。探し方も同じ file の 1 点(`driver_path_in` = Popen と同じ `os.get_exec_path(env)` の上の `shutil.which`)で、`--version` は実行せず、結果を保持しない(問われるたびに探す)。(2) host は読みの API `drivers.list` で答える(`kinds.list` と別の口・params.env を headless-spawn-env に重ねた env で判じる = 手番の CLI が実際に起動される env)。(3) agentd は参加の周期ごと(heartbeat の周期・器の眺め〔live-sessions〕より前)に ListHostDrivers(env = settings.seat_env)と ResolveLocalExecutable(settings.claude_binary — 要約の job は agentd 自身が claude を起こすので)を読み、judgment.launchable-agent-kinds の 1 点が積をとる(host で見つかった種類のうち、AGENTD_LAUNCHED_KINDS に在る種類は agentd の側でも見つかったものだけ)。capabilities-of はその種類の分だけを書く。host に届かない(socket の失敗 = DriversUnavailable の reachable が偽)周期は、前の申告にも固定の表にも戻らず、node の行の capabilities を 1 度だけ {} に書いて(読み直し → CAS)その周期を終える。host が答えたが読めない(古い host の unknown method・形の誤り = reachable が真)周期は種類 0 を申告して周期を続け、理由は変わった時だけ 1 行 log へ出す。(4) claim の門(judgment.agent-kind-refusal-of の 1 点)は置き場の門と verify の分岐の後・summarize の分岐の前に置く。job が起動する種類(judgment.job-agent-kind-of — summarize = agentd が起こす claude・turn = charter.agent_type・verify = 種類なし)が観測した申告に無ければ、条件 AgentKindUnavailable(綴りは ACP 側で確定 — ACP の 304a083d が carrierEndedFailureReasons に足した対)で job を閉じ、session も札も作業場も触らない。まだ 1 度も観測していない(AgentdState.agent_kinds = None)間は止めない。⚠ law the-machine-names-its-place-and-refuses-another-place-s-account の反例『道具の在否を走行係が実測して判じる(kubectl を which で探して自分で決める)』と矛盾しない: あちらは charter が要求する**置き場の語**の話で、置き場は宣言の 1 語で名乗り、手番ごとに道具を実測して置き場を決めることを禁じる(道具の揃いの検は dotfiles `ai provision check` の仕事のまま)。こちらは agentd と host が**自分で起動する実行ファイル**(配車の前提である capabilities)の観測で、手番ごとではなく参加の周期ごとに 1 度だけ探し、判定は judgment の関数 1 つ(機体の数だけ判定点が増えない)。置き場の宣言とその検の分担は変えない。")]
   :laws
     [(law a-dead-backend-is-not-a-live-session
        :statement "for_all headless session row r in this host's store at start: ¬terminal(r) ∧ ¬backend_alive(observe(r)) ⇒ r is folded to exited with cause vanished (reason = the observation) before accept opens, independently of whether r was mid-turn; hence node.status.observations.sessions names only rows whose backend process this host owns, every folded row whose transcript is still on disk is named by observations.transcripts instead, and the conversation's next turn takes the resume arm (terminal candidate ∧ same home) so the provider cache is kept"
@@ -1233,7 +1237,35 @@
                      "packages/doeff-agents/tests/test_sessionhost_acp_rehydrate.py::test_tool_items_are_thinned_oldest_first_before_any_turn_is_dropped"
                      "packages/doeff-agents/tests/test_sessionhost_acp_rehydrate.py::test_when_thinning_everything_is_not_enough_turns_are_dropped_behind_the_headline_in_thin_form"
                      "packages/doeff-agents/tests/test_sessionhost_acp_rehydrate.py::test_a_thin_rehydrate_has_no_tool_bodies_to_thin_and_counts_none"
-                     "packages/doeff-agents/tests/test_sessionhost_acp_rehydrate.py::test_thinned_items_keep_the_head_and_name_the_original_bytes_while_text_and_mail_stay_byte_identical"])]
+                     "packages/doeff-agents/tests/test_sessionhost_acp_rehydrate.py::test_thinned_items_keep_the_head_and_name_the_original_bytes_while_text_and_mail_stay_byte_identical"])
+     ;; R61(card acp:kanban-issue:ki-f250d67a7157): 申告する種類は起動する全 process の観測の積・起動前の門は種類の分岐より前の 1 点。
+     (law the-node-declares-only-the-agent-kinds-every-launching-process-can-find
+       :statement "for_all agentd a and join period t: the executable of kind k is drivers.DRIVER_EXECUTABLE[k] alone (argv heads and AgentdSettings.claude_binary read it; DRIVER_EXECUTABLE and AGENT_CAPABILITIES name the same kinds) and finding it is drivers.driver_path_in alone (shutil.which over os.get_exec_path(env), searched on every query, never cached, never run with --version); host_drivers(t) = the host's drivers.list answered at t over headless-spawn-env(a.settings.seat_env); agentd_resolved(t) = driver_path_in(a.settings.claude_binary, agentd's own env); kinds(a, t) = judgment.launchable-agent-kinds(host_drivers(t), agentd_resolved(t)) = { k in AGENT_CAPABILITIES | the host found DRIVER_EXECUTABLE[k] and (k not in AGENTD_LAUNCHED_KINDS or agentd_resolved(t) is not None) }; the node row's capabilities at t = capabilities-of(kinds(a, t)); the host answered but unreadably (unknown method, malformed answer) => kinds(a, t) = () and the period continues; the host unreachable (socket failure) => the node row's capabilities become {} (written once, re-read then CAS) and nothing else is written in that period — never the previous declaration, never the fixed table. for_all Bound job j claimed by a: kind(j) = judgment.job-agent-kind-of(j) (summarize => the claude agentd launches itself; turn => charter.agent_type; verify => none); a.state.agent_kinds observed and kind(j) not None and kind(j) not in a.state.agent_kinds => j is Ended with condition AgentKindUnavailable naming the kind, its executable, the node and the declared kinds, and no session is launched, no credential is borrowed and no work dir is touched; the gate sits after the place gate and the verify branch and before the summarize branch; the comparison is judgment.agent-kind-refusal-of alone; a.state.agent_kinds not yet observed (None) => the job proceeds"
+       :counterexamples
+         [(counterexample "固定の表を申告する(capabilities-of が AGENT_CAPABILITIES をそのまま node の行へ書く — card ki-f250d67a7157 までの形)— codex の無い機体が codex を名乗って配車され、35 通が `LaunchFailed — [Errno 2] No such file or directory: 'codex'` で落ちた。申告は観測から導く")
+          (counterexample "起動時に 1 度だけ探して固定する — 据え付けの後に消えた / 足された実行ファイルが再起動まで申告に映らず、消えた種類の手番が配車され続ける。探すのは参加の周期ごと(host の読みも agentd の読みも結果を保持しない)")
+          (counterexample "host だけ見て agentd が起動する要約を忘れる — 要約の job は agentd 自身が claude を起こす(host を通らない)ので、host の PATH に claude が在っても agentd の PATH に無ければ要約が起動の瞬間に落ちる。申告は起動する全 process の積(AGENTD_LAUNCHED_KINDS)")
+          (counterexample "host が読めない周期に前の申告や固定の表へ戻る — 器が落ちている間も種類を名乗り続け、配車された手番が起動できずに落ちる。届かない周期は capabilities を {} に 1 度だけ書き、答えたが読めない周期は種類 0")
+          (counterexample "起動前の検査を種類の分岐の後ろ(turn の腕の中)に置いて要約が素通りする — summarize の job は門を通らず、claude の無い agentd が要約を起こして落ちる。門は verify の分岐の後・summarize の分岐の前の 1 点")
+          (counterexample "判定を agentd と host で別々に書く(host は自分の表で、agentd は自分の which で)— 種類 → 実行ファイルの名と探し方の定義点が 2 つになり、片方だけ直る。名は drivers.DRIVER_EXECUTABLE、探し方は drivers.driver_path_in、積は judgment.launchable-agent-kinds、門は judgment.agent-kind-refusal-of の各 1 点")
+          (counterexample "在否を `--version` の実行で判じる — 周期ごとに子 process が起き、壊れた / 遅い CLI が参加の周期(heartbeat)を塞ぐ。在否は PATH 上の実行可能な file の有無だけ")
+          (counterexample "まだ観測していない状態(agent_kinds = None)を『種類 0』と読んで門を閉じる — 再起動直後の最初の周期が一時的な I/O の失敗で終わると、結ばれていた job が全部 AgentKindUnavailable で閉じる。門が止めるのは観測した申告に無い種類だけ")
+          (counterexample "argv の先頭や claude_binary の既定に \"codex\" / \"claude\" を直に書く — 名の定義点が impls の数だけ増え、申告の名と起動の名が黙って食い違う。直書きは semgrep(doeff-agents-agent-argv-head-names-the-driver-executable / doeff-agents-agent-binary-default-names-the-driver-executable)が止める")]
+       :enforcement ["docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test-adr-doe-agents-012-the-node-declares-only-the-agent-kinds-it-can-launch"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_the_node_declares_only_the_kinds_whose_executable_the_host_finds"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_a_kind_agentd_launches_itself_is_declared_only_when_agentd_also_finds_it"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_a_host_without_the_drivers_reader_declares_no_kinds_and_says_so_once"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_an_unreachable_host_withdraws_the_declared_capabilities_once"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_launchable_agent_kinds_is_the_product_over_the_launching_processes"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_driver_executable_names_the_same_kinds_as_the_capability_table"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_a_turn_of_an_undeclared_kind_ends_with_agent_kind_unavailable_without_launching"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_the_kind_gate_is_one_judgment_that_does_not_stop_on_the_unknown"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_the_host_reader_arm_maps_refusal_and_socket_failure_to_values"
+                     "packages/doeff-agents/tests/sessionhost_acp_summarize_deftests.hy::test-a-summarize-job-is-not-started-when-agentd-cannot-find-claude"
+                     "packages/doeff-agents/tests/sessionhost_acp_verify_deftests.hy::test-verify-job-runs-on-a-node-that-declares-no-agent-kind"
+                     "packages/doeff-agents/tests/sessionhost_host_deftests.hy::test-dispatch-drivers-list-sees-an-executable-vanish-without-a-restart"
+                     "packages/doeff-agents/tests/sessionhost_host_deftests.hy::test-dispatch-drivers-list-sees-an-executable-placed-after-the-start"
+                     "packages/doeff-agents/tests/sessionhost_host_deftests.hy::test-dispatch-drivers-list-searches-the-path-the-caller-overlays"])]
   :enforcement
     [(deftest test-adr-doe-agents-012-history-thins-tool-items-before-dropping-turns
        ;; R35 の針(構造): 薄くする点は judgment の 1 点ずつ(history-event-body / history-event-line-of / history-thin-body /
@@ -3922,7 +3954,115 @@
        (for [name ["test_the_drain_file_raises_and_lowers_the_same_draining_signal"
                    "test_the_drain_file_lives_under_the_state_dir_next_to_the_spool"
                    "test_declared_capacity_is_zero_while_draining_and_the_declaration_otherwise"]]
-         (assert (in (+ "def " name "(") tests) f"R59 の反例の検が無い: {name}")))]
+         (assert (in (+ "def " name "(") tests) f"R59 の反例の検が無い: {name}")))
+     (deftest test-adr-doe-agents-012-the-node-declares-only-the-agent-kinds-it-can-launch
+       ;; R61 の針(構造): 種類 → 実行ファイルの名は drivers.DRIVER-EXECUTABLE の 1 点(能力の表と同じ種類を名乗る)・探し方は
+       ;; drivers.driver-path-in の 1 点(Popen と同じ os.get_exec_path・起動を試さず結果を保持しない)・host の読み口は drivers.list で
+       ;; 手番の CLI の env(headless-spawn-env)の上で判じる・agentd は参加の周期ごとに host と自分の両方を読み(器の眺めより前)・
+       ;; 積と門と種類の読みは judgment の 1 点ずつ・門は置き場の門と verify の分岐の後で summarize の分岐の前・綴りは effects の 1 点。
+       ;; 反例(挙動)は law の :enforcement に並べた検。名と探し方の直書きの禁止は下の semgrep 3 本。
+       (import doeff_agents.sessionhost.drivers [DRIVER-EXECUTABLE])
+       (import doeff_agents.sessionhost.acp.effects [AGENT-CAPABILITIES AGENTD-LAUNCHED-KINDS])
+       (assert (= (set DRIVER-EXECUTABLE) (set AGENT-CAPABILITIES)) "実行ファイルの名の表と能力の表が別の種類を名乗る(R61)")
+       (assert (<= (set AGENTD-LAUNCHED-KINDS) (set DRIVER-EXECUTABLE)) "agentd が自分で起こす種類が名の表に無い(R61)")
+       ;; 探し方は drivers.py の 1 点: Popen と同じ path の列の上の which・起動の試しも保持もしない。
+       (setv drivers-code (.join "\n" (live-bare-lines (/ SESSIONHOST-DIR "drivers.py")
+                                                       ["def driver_path_in(" "os.get_exec_path(" "shutil.which("])))
+       (for [word ["subprocess" "lru_cache" "functools" "global "]]
+         (assert (not-in word drivers-code) f"探し方が起動を試す / 結果を保持する(R61): {word}"))
+       ;; argv の先頭は 3 つの builder とも名の表から読む。
+       (for [name ["codex.hy" "claude_code.hy" "headless_argv.hy"]]
+         (assert (readers-of [(/ SESSIONHOST-DIR "impls" name)] "DRIVER-EXECUTABLE")
+                 f"argv の builder が名の表を読んでいない(R61): impls/{name}"))
+       ;; host の読み口: drivers.list は driver-listing を 1 か所で、手番の CLI の env の上で呼ぶ。
+       (setv host-lines (code-lines (/ SESSIONHOST-DIR "host.hy")))
+       (assert (any (gfor line host-lines (in "(= method \"drivers.list\")" line))) "host に drivers.list の読み口が無い(R61)")
+       (setv listing-calls (call-args-of host-lines "driver-listing"))
+       (assert (= (len listing-calls) 1) f"host が driver-listing を 1 か所で呼んでいない(R61): {listing-calls}")
+       (assert (.startswith (get listing-calls 0 0) "(headless-spawn-env ")
+               f"drivers.list が手番の CLI の env の上で判じていない(R61): {listing-calls}")
+       ;; 積・能力の表の写し・種類の読み・門は judgment の 1 点ずつ。積は agentd が自分で起こす種類も見る。
+       (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+       (for [name ["launchable-agent-kinds" "capabilities-of" "job-agent-kind-of" "agent-kind-refusal-of"]]
+         (assert (= (len (lfor line judgment-lines :if (.startswith line f"(defk {name} ") line)) 1) f"R61 の判断は judgment の 1 点: {name}"))
+       (setv product-body (.join "\n" (defk-body judgment-lines "launchable-agent-kinds")))
+       (for [word ["DriversUnavailable" "AGENTD-LAUNCHED-KINDS"]]
+         (assert (in word product-body) f"積が起動する全 process を見ていない(R61): {word}"))
+       ;; agentd: 読みは observe-agent-kinds の 1 点で、host には宣言の seat-env を、自分には claude-binary を問う。
+       (setv agentd-path (/ ACP-DIR "agentd.hy"))
+       ;; 呼びの引数は文字列の中身(docstring の説明)を落とした行で読む — 説明は呼びではない。
+       (setv agentd-lines (bare-code-lines agentd-path))
+       (for [[word reader] [["(ListHostDrivers " "observe-agent-kinds"] ["(ResolveLocalExecutable " "observe-agent-kinds"]
+                            ["(launchable-agent-kinds " "observe-agent-kinds"] ["(agent-kind-refusal-of " "claim-job"]]]
+         (assert (= (set (readers-of [agentd-path] word)) #{reader}) f"R61 の読みの点が 1 つでない: {word} → {(readers-of [agentd-path] word)}"))
+       (assert (= (call-args-of agentd-lines "ListHostDrivers") [[":env" "settings.seat-env"]]) "host に問う env が宣言の seat-env でない(R61)")
+       (assert (= (call-args-of agentd-lines "ResolveLocalExecutable") [[":word" "settings.claude-binary"]])
+               "agentd が自分の起こす claude(claude-binary)を探していない(R61)")
+       ;; 参加の周期: 種類の観測は器の眺め(live-sessions / SessionList)より前。
+       (setv join-body (defk-body agentd-lines "join-tick"))
+       (setv observe-at (next (gfor [i line] (enumerate join-body) :if (in "(observe-agent-kinds " line) i) None))
+       (setv views-at (next (gfor [i line] (enumerate join-body)
+                                  :if (or (in "(live-sessions" line) (in "(SessionList " line)) i)
+                            None))
+       (assert (and (is-not observe-at None) (is-not views-at None) (< observe-at views-at))
+               "種類の観測が参加の周期で器の眺めより前にない(R61)")
+       ;; claim の門: 置き場の門と verify の分岐の後・summarize の分岐の前。閉じる条件は AgentKindUnavailable。
+       (setv claim-body (defk-body agentd-lines "claim-job"))
+       (setv order (lfor needle ["(place-mismatch " "(claim-verify-job " "(agent-kind-refusal-of " "(claim-summarize-job "]
+                         (next (gfor [i line] (enumerate claim-body) :if (in needle line) i) None)))
+       (assert (not-in None order) f"claim-job の門の並びが読めない(R61): {order}")
+       (assert (< #* order) f"種類の門が置き場の門・verify の分岐の後で summarize の分岐の前にない(R61): {order}")
+       (assert (any (gfor args (call-args-of claim-body "end-job-now") (in "CONDITION-AGENT-KIND-UNAVAILABLE" args)))
+               "種類の門が AgentKindUnavailable で閉じない(R61)")
+       ;; 綴りは effects の 1 点(条件の綴りは ACP 側で確定)・claude-binary の既定は名の表から。
+       (setv effects-lines (lfor line (code-lines (/ ACP-DIR "effects.py")) (.strip line)))
+       (for [needle ["CONDITION_AGENT_KIND_UNAVAILABLE: ConditionType = \"AgentKindUnavailable\""
+                     "claude_binary: str = DRIVER_EXECUTABLE[\"claude\"]"
+                     "AGENTD_LAUNCHED_KINDS: tuple[str, ...] = (\"claude\",)"]]
+         (assert (any (gfor line effects-lines (.startswith line needle))) f"綴りは effects の 1 点(R61): {needle}"))
+       ;; 反例の検が在る(字の分割は台帳の数え方への配慮 — 文字列の中の検の開始の綴りを数えさせない)。
+       (setv tests-dir (/ (. (Path __file__) parent parent parent) "packages" "doeff-agents" "tests"))
+       (setv acp-tests (.read-text (/ tests-dir "test_sessionhost_acp.py") :encoding "utf-8"))
+       (for [name ["test_the_node_declares_only_the_kinds_whose_executable_the_host_finds"
+                   "test_a_kind_agentd_launches_itself_is_declared_only_when_agentd_also_finds_it"
+                   "test_a_host_without_the_drivers_reader_declares_no_kinds_and_says_so_once"
+                   "test_an_unreachable_host_withdraws_the_declared_capabilities_once"
+                   "test_launchable_agent_kinds_is_the_product_over_the_launching_processes"
+                   "test_driver_executable_names_the_same_kinds_as_the_capability_table"
+                   "test_a_turn_of_an_undeclared_kind_ends_with_agent_kind_unavailable_without_launching"
+                   "test_the_kind_gate_is_one_judgment_that_does_not_stop_on_the_unknown"
+                   "test_the_host_reader_arm_maps_refusal_and_socket_failure_to_values"]]
+         (assert (in (+ "def " name "(") acp-tests) f"R61 の反例の検が無い: {name}"))
+       (for [[test-file name] [["sessionhost_acp_summarize_deftests.hy" "test-a-summarize-job-is-not-started-when-agentd-cannot-find-claude"]
+                               ["sessionhost_acp_verify_deftests.hy" "test-verify-job-runs-on-a-node-that-declares-no-agent-kind"]
+                               ["sessionhost_host_deftests.hy" "test-dispatch-drivers-list-sees-an-executable-vanish-without-a-restart"]
+                               ["sessionhost_host_deftests.hy" "test-dispatch-drivers-list-sees-an-executable-placed-after-the-start"]
+                               ["sessionhost_host_deftests.hy" "test-dispatch-drivers-list-searches-the-path-the-caller-overlays"]]]
+         (assert (in (+ "(def" "test " name) (.read-text (/ tests-dir test-file) :encoding "utf-8"))
+                 f"R61 の反例の検が無い: {test-file}::{name}")))
+     ;; R61 の直書きの禁止(installed rule・.semgrep.yaml): argv の先頭の名・agentd が起こす実行ファイルの既定・探し方の置き場。
+     (defsemgrep r61-agent-argv-head-names-the-driver-executable
+       "doeff-agents-agent-argv-head-names-the-driver-executable"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/impls/codex.hy"
+         "source" "(setv args [\"codex\" \"--yolo\"])\n"}]
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/impls/codex.hy"
+         "source" "(setv args [(get DRIVER-EXECUTABLE \"codex\") \"--yolo\"])\n"}
+        {"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py"
+         "source" "AgentKind = Literal[\"claude\", \"codex\"]\nKNOWN_KINDS: tuple[str, ...] = (\"claude\", \"codex\")\n"}])
+     (defsemgrep r61-agent-binary-default-names-the-driver-executable
+       "doeff-agents-agent-binary-default-names-the-driver-executable"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py"
+         "source" "class AgentdSettings:\n    claude_binary: str = \"claude\"\n"}]
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py"
+         "source" "class AgentdSettings:\n    claude_binary: str = DRIVER_EXECUTABLE[\"claude\"]\n    summarize_model: str = \"claude-opus-5-5\"\n"}])
+     (defsemgrep r61-executable-lookup-has-one-home
+       "doeff-agents-executable-lookup-has-one-home"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/acp/handlers.py"
+         "source" "import shutil\n\ndef found(word: str) -> str | None:\n    return shutil.which(word)\n"}]
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/drivers.py"
+         "source" "import shutil\n\ndef driver_path_in(word: str, path: str) -> str | None:\n    return shutil.which(word, path=path)\n"}
+        {"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/acp/handlers.py"
+         "source" "from doeff_agents.sessionhost.drivers import driver_path_in\n"}])]
   :plans ["docs/impl-requests/stage2-lane-prompts/lane-2b-agentd.md(agora-redesign)"
           "docs/impl-requests/stage2-lane-prompts/lane-2b2-agentd-fix.md(agora-redesign・改訂 R7〜R9)"
           "docs/impl-requests/stage2-lane-prompts/lane-2b3-warm-session.md(agora-redesign・改訂 R10)"
@@ -3942,4 +4082,5 @@
           "docs/impl-requests/stage10-lane-prompts/lane-10e-agent-settings-catalog-and-chip.md(agora-redesign #53・追補 R24: 能力の表・effort の腕・AgentSettingIgnored)"
           "docs/impl-requests/stage10-lane-prompts/lane-10h-agentd-dead-backend-recovery.md(agora-redesign #84・追補 R25 / R26: backend の生死は観測で・復帰・session-lost・resume の KeyError・停止で子を黙って道連れにしない・ACP の宛先は宣言ちょうど)"
           "docs/impl-requests/stage11-lane-prompts/lane-11v-rehydrate-compaction.md(agora-redesign #55 便 1・追補 R34: 上限で落とした古い手番は区間の見出し 1 行に畳む・model の要約は便 2 の設計だけ / 便 3 = #225・追補 R35: 落とす前に古い手番から道具の項を薄くする)"
-          "agora-redesign docs/impl-requests/stage11-lane-prompts/lane-12a-company-repo-verify.md(agora-redesign #230・追補 R36: charter.kind = verify の job は機体の script を 1 つ走らせる命令 — claude / codex を起こさず札も借りない・結末は Ended の result)"])
+          "agora-redesign docs/impl-requests/stage11-lane-prompts/lane-12a-company-repo-verify.md(agora-redesign #230・追補 R36: charter.kind = verify の job は機体の script を 1 つ走らせる命令 — claude / codex を起こさず札も借りない・結末は Ended の result)"
+          "agora-redesign の盤 card acp:kanban-issue:ki-f250d67a7157(追補 R61: node が申告する agent の種類は起動する全 process の実行ファイルの観測の積・起動前の門 AgentKindUnavailable — ACP 側の対は 304a083d)"])

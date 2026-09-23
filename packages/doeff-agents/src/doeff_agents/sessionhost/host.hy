@@ -75,7 +75,8 @@
 (import doeff_agents.sessionhost.schema [validate-against-schema schema-admission-error])
 (import doeff_agents.sessionhost.substrate [real-substrate])
 (import doeff_agents.sessionhost.substrate_herdr [DEFAULT-HERDR-SOCKET herdr-substrate])
-(import doeff_agents.sessionhost.substrate_headless [HEADLESS-REGISTRY headless-substrate])
+(import doeff_agents.sessionhost.substrate_headless [HEADLESS-REGISTRY headless-spawn-env headless-substrate])
+(import doeff_agents.sessionhost.drivers [driver-listing])
 (import doeff_agents.sessionhost.impls.headless_argv [headless-argv-impl])
 (import doeff_agents.sessionhost.effects [headless-kill headless-liveness])
 (import doeff_agents.sessionhost.headless_protocol [backend-alive])
@@ -1337,6 +1338,17 @@
   ;; — control plane の reconciler が登録済み binding と定期照合する読み口。
   (when (= method "kinds.list")
     (return {"kinds" (binding-kind-advertisement)}))
+
+  ;; ADR-DOE-AGENTS-012 R61(card acp:kanban-issue:ki-f250d67a7157): 種類ごとの実行ファイルが、この host が
+  ;; 子 process を起こす実効 env(headless-spawn-env — 呼び手の重ねる env を機体の継承の名簿の上に重ねた 1 点)で
+  ;; 見つかるか。params.env = 呼び手が重ねる env(無ければ {})。問われるたびに探す(host は結果を持たない)・
+  ;; 起動の試しはしない。kinds.list(binding の種類の広告)には混ぜない。
+  (when (= method "drivers.list")
+    (setv overlay (if (is params None) {} (.get (params-object params "drivers.list") "env" {})))
+    (when (not (and (isinstance overlay dict)
+                    (all (gfor [key value] (.items overlay) (and (isinstance key str) (isinstance value str))))))
+      (raise (RuntimeError "invalid params for drivers.list: `env` must be an object of strings")))
+    (return {"drivers" (driver-listing (headless-spawn-env overlay))}))
 
   (when (= method "session.launch")
     (setv wire-params (params-object params "session.launch"))

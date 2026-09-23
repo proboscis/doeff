@@ -32,6 +32,7 @@ from doeff_agents.sessionhost.acp.effects import (
     AgentdSettings,
     AgentdState,
     CLAUDE_OAUTH_TOKEN_ENV,
+    CONDITION_AGENT_KIND_UNAVAILABLE,
     CONDITION_CREDENTIAL_PLACE_MISMATCH,
     CONDITION_PLACE_MISMATCH,
     CONDITION_CREDENTIAL_SOURCE_MISSING,
@@ -2126,8 +2127,11 @@ def test_node_status_names_the_capability_table() -> None:
     assert node.status is not None
     table = node.status["capabilities"]
     assert isinstance(table, dict)
-    assert table == run(judgment.capabilities_of())
+    # ADR-DOE-AGENTS-012 R61: 表に載る種類 = この node が起動できると観測した種類(検の世界では host も agentd も
+    # 両方の実行ファイルを見つける)。種類ごとの中身(受ける欄)は固定の表の写しのまま。
+    assert table == run(judgment.capabilities_of(("claude", "codex")))
     assert set(table) == {"claude", "codex"}
+    assert world.state.agent_kinds == ("claude", "codex")
     for kind, entry in table.items():
         assert isinstance(entry, dict)
         # 段 10 lane 10n: 割り込みの能力(steer-then-stop = 注入 → 期限で停止の合図 / stop = 即座に止めて渡す)
@@ -2156,6 +2160,250 @@ def test_node_status_names_the_capability_table() -> None:
     key = run(judgment.session_affinity_key_of(plan))
     assert set(key) == {"account", "binding", "model"}
     assert "effort" not in key and "workDir" not in key and "work_dir" not in key
+
+
+# ---------------------------------------------------------------- ADR-DOE-AGENTS-012 R61: 申告 = 起動できる種類の観測
+
+
+def _node_capabilities(world: World) -> JSON:
+    node = world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"]
+    assert node.status is not None
+    return node.status.get("capabilities")
+
+
+def _declared_kinds(world: World) -> set[str]:
+    """node の行の status.capabilities が名乗る種類の集合(表は種類 → 設定の dict)。"""
+    table = _node_capabilities(world)
+    assert isinstance(table, dict)
+    return set(table)
+
+
+#: 参加の周期(AgentdSettings.node_heartbeat_seconds の既定 30 秒)ちょうど進める — join-tick が必ず走る。
+_NEXT_HEARTBEAT_MS = 30_000
+
+
+def test_the_node_declares_only_the_kinds_whose_executable_the_host_finds() -> None:
+    """card acp:kanban-issue:ki-f250d67a7157(実弾: pool の pod の host の PATH に codex が無いのに codex を申告し、
+    codex の手番が `No such file or directory: 'codex'` で 35 通 LaunchFailed)。申告は固定の表ではなく、host が
+    子 process の実効 env で実行ファイルを見つけた種類ちょうど。消えれば次の参加の周期に申告から落ち、戻れば戻る
+    (再起動なし)。host には手番の charter に重ねる宣言の env(seat_env)を渡す。"""
+    world = World()
+    world.settings = replace(world.settings, seat_env=(("PATH", "/opt/agents/bin"),))
+    world.sessions.driver_paths["codex"] = None
+    world.tick()
+    table = _node_capabilities(world)
+    assert isinstance(table, dict)
+    assert set(table) == {"claude"}
+    assert table == run(judgment.capabilities_of(("claude",)))
+    assert world.state.agent_kinds == ("claude",)
+    assert world.sessions.driver_queries == [{"PATH": "/opt/agents/bin"}]
+    # 両方見つかるなら両方(次の参加の周期に読み直す — 起動時の 1 回で固定しない)。
+    world.sessions.driver_paths["codex"] = "/usr/local/bin/codex"
+    world.tick(advance_ms=_NEXT_HEARTBEAT_MS)
+    assert _declared_kinds(world) == {"claude", "codex"}
+    assert world.state.agent_kinds == ("claude", "codex")
+    # 稼働中に消えた実行ファイルは、次の周期に申告から落ちる。
+    world.sessions.driver_paths["claude"] = None
+    world.tick(advance_ms=_NEXT_HEARTBEAT_MS)
+    assert _declared_kinds(world) == {"codex"}
+    assert len(world.sessions.driver_queries) == 3
+    declared = [line for line in world.local.logs if "declares agent kinds" in line]
+    assert len(declared) == 3, declared
+    assert "codex=not found" in declared[0], declared[0]
+
+
+def test_a_kind_agentd_launches_itself_is_declared_only_when_agentd_also_finds_it() -> None:
+    """申告 = その種類を起動するこの node のすべての process で見つかるかの積。要約の job は agentd 自身が
+    claude を print モードで起こす(host を通らない)ので、host が claude を見つけても agentd の実効 env で見つからなければ
+    claude を申告しない(host だけ見て要約を忘れる形の反例)。両方で見つかれば両方。"""
+    world = World()
+    del world.local.executables["claude"]
+    world.tick()
+    assert _declared_kinds(world) == {"codex"}
+    assert world.state.agent_kinds == ("codex",)
+    assert world.local.executable_lookups == [world.settings.claude_binary]
+    world.local.executables["claude"] = "/opt/homebrew/bin/claude"
+    world.tick(advance_ms=_NEXT_HEARTBEAT_MS)
+    assert _declared_kinds(world) == {"claude", "codex"}
+
+
+def test_a_host_without_the_drivers_reader_declares_no_kinds_and_says_so_once() -> None:
+    """host が drivers.list を断る(読み口を持たない旧い host の unknown method)周期は、申告が空になる — 前の申告にも
+    固定の表にも戻らない。読めない理由は変わった時だけ 1 行(3 周期で 1 行)。観測の書きは続く(host には届いている)。"""
+    world = World()
+    world.sessions.refuse_drivers = "unknown method: drivers.list"
+    for step in range(3):
+        world.tick(advance_ms=0 if step == 0 else _NEXT_HEARTBEAT_MS)
+        assert _node_capabilities(world) == {}
+        assert world.state.agent_kinds == ()
+    unread = [line for line in world.local.logs if "could not be read" in line]
+    assert len(unread) == 1, world.local.logs
+    assert "unknown method: drivers.list" in unread[0]
+    node = world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"]
+    assert node.status is not None
+    assert "observations" in node.status
+    # 読めた拍に理由は戻り、申告も戻る。
+    world.sessions.refuse_drivers = None
+    world.tick(advance_ms=_NEXT_HEARTBEAT_MS)
+    assert world.state.drivers_note == ""
+    assert _declared_kinds(world) == {"claude", "codex"}
+
+
+def test_an_unreachable_host_withdraws_the_declared_capabilities_once() -> None:
+    """host に届かない周期は器の眺めも読めない。前に申告していた node 行の capabilities を空にして 1 度だけ書き
+    (以後の周期は書かない)、申告は空(claim の門が読む)。走っている手番は止めない。届けば戻る。"""
+    world = World()
+    world.tick()
+    assert _declared_kinds(world) == {"claude", "codex"}
+    world.sessions.unreachable = "no such file: /tmp/agentd.sock"
+    world.tick(advance_ms=_NEXT_HEARTBEAT_MS)
+    assert _node_capabilities(world) == {}
+    assert world.state.agent_kinds == ()
+    node_key = f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"
+    generation = world.acp.rows[node_key].generation
+    world.tick(advance_ms=_NEXT_HEARTBEAT_MS)
+    assert world.acp.rows[node_key].generation == generation, "既に空の表を書き直した"
+    withdrawn = [line for line in world.local.logs if "withdrew its capabilities" in line]
+    assert len(withdrawn) == 1, world.local.logs
+    world.sessions.unreachable = None
+    world.tick(advance_ms=_NEXT_HEARTBEAT_MS)
+    assert _declared_kinds(world) == {"claude", "codex"}
+
+
+def test_launchable_agent_kinds_is_the_product_over_the_launching_processes() -> None:
+    """判断は judgment.launchable-agent-kinds の 1 点: 能力の表の種類のうち host が見つけた種類、ただし agentd 自身が
+    起こす種類(AGENTD_LAUNCHED_KINDS)は agentd でも見つかる時だけ。host が読めない = 空。表に無い種類は申告しない。"""
+    from doeff_agents.sessionhost.acp.effects import (
+        DriverResolution,
+        DriversUnavailable,
+        HostDriversOutcome,
+    )
+
+    def host(**paths: str | None) -> HostDriversOutcome:
+        """host の drivers.list の答え(読めた形)— 種類ごとの在否の列。"""
+        return tuple(DriverResolution(agent_type=k, executable=k, path=p) for k, p in paths.items())
+
+    both = host(claude="/b/claude", codex="/b/codex")
+    assert run(judgment.launchable_agent_kinds(both, "/a/claude")) == ("claude", "codex")
+    assert run(judgment.launchable_agent_kinds(both, None)) == ("codex",)
+    assert run(judgment.launchable_agent_kinds(host(claude="/b/claude", codex=None), "/a/claude")) == ("claude",)
+    assert run(judgment.launchable_agent_kinds(host(claude="/b/claude", gemini="/b/gemini"), "/a/claude")) == ("claude",)
+    for reachable in (True, False):
+        assert run(judgment.launchable_agent_kinds(DriversUnavailable("x", reachable), "/a/claude")) == ()
+
+
+def test_driver_executable_names_the_same_kinds_as_the_capability_table() -> None:
+    """実行ファイルの名の定義元(drivers.DRIVER_EXECUTABLE)と能力の表(effects.AGENT_CAPABILITIES)の種類は同じ集合。
+    agentd が自分で起こす種類は表の中にあり、要約の claude の既定の binary は定義元の名ちょうど。"""
+    from doeff_agents.sessionhost.acp.effects import AGENT_CAPABILITIES, AGENTD_LAUNCHED_KINDS
+    from doeff_agents.sessionhost.drivers import DRIVER_EXECUTABLE
+
+    assert set(DRIVER_EXECUTABLE) == set(AGENT_CAPABILITIES)
+    assert set(AGENTD_LAUNCHED_KINDS) <= set(AGENT_CAPABILITIES)
+    assert AGENTD_LAUNCHED_KINDS == ("claude",)
+    assert AgentdSettings(node_name=NODE).claude_binary == DRIVER_EXECUTABLE["claude"]
+
+
+def test_a_turn_of_an_undeclared_kind_ends_with_agent_kind_unavailable_without_launching() -> None:
+    """起動前の検査(claim の頭・置き場の門と verify の分岐の後): 申告していない種類の手番は起こさず(札も借りず・
+    作業場にも触れず)AgentKindUnavailable で閉じる — ACP はこの条件の郵便を別の node へ回す。申告している種類は起こす。"""
+    world = World()
+    world.sessions.driver_paths["codex"] = None
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"], agent_type="codex"))
+    world.tick()
+    assert world.sessions.launches == []
+    assert world.sessions.resumes == []
+    assert world.custody.borrowed == []
+    assert world.local.dir_checks == []
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_ENDED
+    conditions = job.status["conditions"]
+    assert isinstance(conditions, list)
+    kinds = [c["type"] for c in conditions if isinstance(c, dict)]
+    assert kinds == [CONDITION_AGENT_KIND_UNAVAILABLE], conditions
+    reason = next(c["reason"] for c in conditions if isinstance(c, dict))
+    assert isinstance(reason, str)
+    for needle in ("codex", "'codex'", NODE, "[claude]"):
+        assert needle in reason, reason
+    # 申告している種類は今日どおり起こす。
+    world.acp.put_row(message("m-2", "second"))
+    world.acp.put_row(bound_job("j-2", inputs=["m-2"], subject="c-01ARZ3NDEKTSV4RRFFQ69G5FAX"))
+    world.tick(advance_ms=1_000)
+    assert len(world.sessions.launches) == 1
+
+
+def test_the_kind_gate_is_one_judgment_that_does_not_stop_on_the_unknown() -> None:
+    """判断は judgment.agent-kind-refusal-of の 1 点: 申告に無い種類 = 理由の文・在る = None。種類を名乗らない job
+    (verify・agent_type の無い charter)と、まだ 1 度も観測していない拍(None)は止めない。要約は charter の語に依らず
+    agentd の起こす claude。"""
+    turn = bound_job("t", inputs=[], agent_type="codex")
+    assert run(judgment.job_agent_kind_of(turn)) == "codex"
+    assert run(judgment.agent_kind_refusal_of(turn, NODE, ("claude", "codex"))) is None
+    assert run(judgment.agent_kind_refusal_of(turn, NODE, None)) is None
+    refusal = run(judgment.agent_kind_refusal_of(turn, NODE, ()))
+    assert isinstance(refusal, str)
+    assert "declares agent kinds []" in refusal
+    summarize = replace(turn, spec={**turn.spec, "charter": {"kind": "summarize", "agent_type": "codex", "until": 3}})
+    assert run(judgment.job_agent_kind_of(summarize)) == "claude"
+    assert run(judgment.agent_kind_refusal_of(summarize, NODE, ("codex",))) is not None
+    verify = replace(turn, spec={**turn.spec, "charter": {"kind": "verify", "jobId": "j"}})
+    assert run(judgment.job_agent_kind_of(verify)) is None
+    assert run(judgment.agent_kind_refusal_of(verify, NODE, ())) is None
+
+
+def test_the_host_reader_arm_maps_refusal_and_socket_failure_to_values() -> None:
+    """handlers.SessionRpc の drivers.list の腕: 答え → 種類ごとの在否 / host の断り(unknown method)→ 届いた読めなさ /
+    socket の失敗(host が降りている)→ 届かない読めなさ。どれも値で返り、参加の腕へ例外を抜けさせない。"""
+    from doeff_agents.sessionhost.acp.effects import (
+        DriverResolution,
+        DriversUnavailable,
+        ListHostDrivers,
+    )
+
+    class _Client(AgentdClient):
+        def __init__(self, answer: object) -> None:
+            """socket は開かない(この検体は request の答えだけを持つ)。"""
+            self.answer = answer
+            self.params: list[object] = []
+
+        def request(
+            self,
+            method: str,
+            params: Mapping[str, object] | None = None,
+            *,
+            read_timeout: float | None = None,
+        ) -> object:
+            assert method == "drivers.list"
+            self.params.append(params)
+            if isinstance(self.answer, Exception):
+                raise self.answer
+            return self.answer
+
+    rpc = handlers.SessionRpc.__new__(handlers.SessionRpc)
+    effect = ListHostDrivers(env=(("PATH", "/x"),))
+    ok = _Client({"drivers": [{"agent_type": "claude", "executable": "claude", "path": "/x/claude"},
+                              {"agent_type": "codex", "executable": "codex", "path": None}]})
+    rpc._client = ok
+    assert rpc._drivers(effect) == (
+        DriverResolution("claude", "claude", "/x/claude"),
+        DriverResolution("codex", "codex", None),
+    )
+    assert ok.params == [{"env": {"PATH": "/x"}}]
+    rpc._client = _Client(AgentdClientError("unknown method: drivers.list"))
+    refused = rpc._drivers(effect)
+    assert isinstance(refused, DriversUnavailable)
+    assert refused.reachable is True
+    assert "unknown method: drivers.list" in refused.reason
+    rpc._client = _Client(ConnectionRefusedError("socket gone"))
+    gone = rpc._drivers(effect)
+    assert isinstance(gone, DriversUnavailable)
+    assert gone.reachable is False
+    rpc._client = _Client({"drivers": "claude"})
+    malformed = rpc._drivers(effect)
+    assert isinstance(malformed, DriversUnavailable)
+    assert malformed.reachable is True
 
 
 def test_ignored_settings_of_is_the_one_decision() -> None:

@@ -28,6 +28,7 @@
   CHARTER-KIND-SUMMARIZE
   CHARTER-KIND-TURN
   CLAUDE-OAUTH-TOKEN-ENV
+  CONDITION-AGENT-KIND-UNAVAILABLE
   CONDITION-INTERRUPTED
   CONDITION-SUMMARIZE-COMMAND-LOST
   CONDITION-SUMMARIZE-DEADLINE-EXCEEDED
@@ -249,6 +250,25 @@
 ;; ---------------------------------------------------------------------------
 ;; 結末: 本文は記録の service・claim check は kind summary の行・Ended{regions}
 ;; ---------------------------------------------------------------------------
+
+(deftest test-a-summarize-job-is-not-started-when-agentd-cannot-find-claude
+  ;; ADR-DOE-AGENTS-012 R61(card acp:kanban-issue:ki-f250d67a7157): 要約の claude は agentd 自身が起こす(host を通らない)。
+  ;; agentd の実効 env で claude が見つからない node は claude を申告せず、結ばれた要約の job を起こさない —
+  ;; 札も借りず・process も起こさず・区間も読まず AgentKindUnavailable で閉じる(反例 = 門が種類の分岐の後ろに在って要約が素通りする形)。
+  (setv world (World))
+  (.seed world 5)
+  (.pop world.local.executables "claude")
+  (.put-row world.acp (summarize-row "sj-9" 5 PHASE-BOUND None))
+  (.tick world 0)
+  (assert (= world.state.agent-kinds #("codex")) world.state.agent-kinds)
+  (assert (= world.local.commands []) "申告していない claude の要約を起こした(反例)")
+  (assert (= world.custody.borrowed []) "起こさない要約の札を借りた")
+  (assert (= world.record.since-reads []) "起こさない要約の区間を読んだ")
+  (assert (= (get (.status world "sj-9") "phase") PHASE-ENDED))
+  (setv conditions (.conditions world "sj-9"))
+  (assert (= (lfor c conditions (get c "type")) [CONDITION-AGENT-KIND-UNAVAILABLE]) conditions)
+  (assert (in "'claude'" (get (get conditions 0) "reason")) conditions))
+
 
 (deftest test-summarize-job-writes-the-summary-body-to-the-record-service-and-the-claim-check-row
   ;; R37 (6)(7): 答えの本文 → 記録の service の stream summary#0-5(kind summary・producerSeq 0)→ kind summary の行(spec の claim check・

@@ -56,6 +56,8 @@ from doeff_agents.sessionhost.acp.effects import (
     CustodyHealth,
     CustodyLeaseBorrow,
     CustodyLeaseRevoke,
+    DriverResolution,
+    DriversUnavailable,
     Escalated,
     EventWindow,
     FsCanonicalPath,
@@ -66,11 +68,13 @@ from doeff_agents.sessionhost.acp.effects import (
     FsMakeDirectories,
     FsReadText,
     FsWritePrivateText,
+    HostDriversOutcome,
     Interjected,
     JSONObject,
     LeaseGrant,
     LeaseKind,
     LeaseRefused,
+    ListHostDrivers,
     ListPaneSeats,
     ListProfileHomes,
     LogLine,
@@ -107,6 +111,7 @@ from doeff_agents.sessionhost.acp.effects import (
     RecordUnread,
     RecordUnsent,
     Refused,
+    ResolveLocalExecutable,
     SessionCapture,
     SessionCleanup,
     SessionEscalate,
@@ -128,6 +133,7 @@ from doeff_agents.sessionhost.acp.effects import (
 )
 from doeff_agents.sessionhost.acp.io_types import AcpRows, ProfileHomes
 from doeff_agents.sessionhost.attachment import TurnAttachment
+from doeff_agents.sessionhost.drivers import DRIVER_EXECUTABLE
 
 
 @dataclass(frozen=True)
@@ -593,8 +599,38 @@ class FakeSessions:
         self.agent_type: str = agent_type
         self.work_dir: str = work_dir
         self.config_dir: str = "/homes/claude/acct"
+        #: ADR-DOE-AGENTS-012 R61: host の子 process の実効 env で種類ごとの実行ファイルが見つかる path(None = 見つからない)。
+        #: 既定 = どちらも見つかる(今日までの検の世界の申告 = 能力の表の全種類)。検は項を None にして「消えた」を写す。
+        self.driver_paths: dict[str, str | None] = {
+            kind: f"/usr/local/bin/{executable}" for kind, executable in DRIVER_EXECUTABLE.items()
+        }
+        #: None = drivers.list を答える / str = host が断る(読み口を持たない旧い host の unknown method)。
+        self.refuse_drivers: str | None = None
+        #: None = host に届く / str = host に届かない(降りている — drivers.list は届かない読めなさ・他の RPC は OSError)。
+        self.unreachable: str | None = None
+        #: drivers.list に渡った env(呼び手が重ねる env)の順。
+        self.driver_queries: list[dict[str, str]] = []
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
+        if isinstance(effect, ListHostDrivers):
+            return Resume(k, self._drivers(effect))
+        if self.unreachable is not None and isinstance(
+            effect,
+            (
+                SessionLaunch,
+                SessionResume,
+                SessionSend,
+                SessionInterject,
+                SessionEscalate,
+                SessionInterrupt,
+                SessionCleanup,
+                SessionGet,
+                SessionList,
+                SessionCapture,
+            ),
+        ):
+            # 本物の handler(SessionRpc)と同じ: socket の失敗は OSError のまま素通し(tick の縁が持ち越す)。
+            raise ConnectionRefusedError(self.unreachable)
         if isinstance(
             effect,
             (
@@ -611,6 +647,21 @@ class FakeSessions:
         if isinstance(effect, (SessionGet, SessionList, SessionCapture)):
             return Resume(k, self._look(effect))
         return Pass(effect, k)
+
+    def _drivers(self, effect: ListHostDrivers) -> HostDriversOutcome:
+        """``drivers.list``(ADR-DOE-AGENTS-012 R61)— 本物の handler と同じ写し: 届かない = reachable False・
+        断り = reachable True・答え = 種類の名の順の在否の列(問われるたびに driver_paths を読む)。"""
+        self.driver_queries.append(dict(effect.env))
+        if self.unreachable is not None:
+            return DriversUnavailable(
+                reason=f"the host is unreachable: ConnectionRefusedError: {self.unreachable}", reachable=False
+            )
+        if self.refuse_drivers is not None:
+            return DriversUnavailable(reason=f"the host refused drivers.list: {self.refuse_drivers}", reachable=True)
+        return tuple(
+            DriverResolution(agent_type=kind, executable=DRIVER_EXECUTABLE[kind], path=self.driver_paths.get(kind))
+            for kind in sorted(DRIVER_EXECUTABLE)
+        )
 
     def _send(self, effect: SessionSend) -> str | None | SessionRefused:
         """``session.send``(手番の本文)— 器が断る拍(refuse_send)は本文が届いていない印で、
@@ -896,11 +947,21 @@ class FakeLocal:
         self.existing_files: set[str] = set()
         self.refuse_commands: str | None = None
         self._mut_next_pid: int = 4242
+        #: ADR-DOE-AGENTS-012 R61: agentd 自身の実効 env で実行ファイルが見つかる path(語 → path・無い語 = 見つからない)。
+        #: 既定 = 種類の実行ファイルがどれも見つかる。検は語を消して「agentd の PATH に claude が無い」を写す。
+        self.executables: dict[str, str] = {
+            executable: f"/usr/local/bin/{executable}" for executable in DRIVER_EXECUTABLE.values()
+        }
+        #: ResolveLocalExecutable に問われた語の順。
+        self.executable_lookups: list[str] = []
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
         if isinstance(effect, MintId):
             self._mut_minted += 1
             return Resume(k, f"sid-{self._mut_minted}")
+        if isinstance(effect, ResolveLocalExecutable):
+            self.executable_lookups.append(effect.word)
+            return Resume(k, self.executables.get(effect.word))
         if isinstance(effect, CommandStart | CommandProbe | CommandStop):
             return self._command_dispatch(effect, k)
         if isinstance(effect, FsFileExists | FsListDirectory | FsReadText | FsCanonicalPath | FsFileSize | FsWritePrivateText | SessionTranscript | SessionEvents | FsDirectoryExists | FsMakeDirectories):
