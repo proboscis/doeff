@@ -251,6 +251,31 @@ def cancel_child():
             return v
 ```
 
+### Cancelling a task parked on external work
+
+When a cancelled task was parked on an `ExternalPromise` (directly via `Wait`/`Gather`/`Race`,
+or indirectly via `Await`), the cancellation reaches the external producer:
+
+- if no live (non-cancelled) waiter remains on that pending promise, the scheduler marks it
+  cancelled — later `complete()`/`fail()` calls are ignored and later waits raise
+  `TaskCancelledError` — and runs the callbacks registered with `promise.on_cancel(callback)`
+- `Await` registers the bridge future's `cancel`, so the awaited coroutine receives
+  `asyncio.CancelledError` at its current `await` and its `finally` blocks run
+- `Cancel` only requests this; it does not wait for the coroutine to finish unwinding, and a
+  coroutine that swallows `CancelledError` keeps running (its result is discarded)
+- a promise without `on_cancel` callbacks keeps the plain behaviour (stays pending)
+- a failing callback is re-raised to the `Cancel` caller as
+  `ExternalPromiseCancelCallbackError` after the cancellation has taken effect
+
+```python
+@do
+def watch_process(proc):
+    ep = yield CreateExternalPromise()
+    ep.on_cancel(proc.terminate)  # runs on the scheduler thread; keep it quick
+    start_reader_thread(proc, ep)  # calls ep.complete()/ep.fail()
+    return (yield Wait(ep.future))
+```
+
 ## Promise vs ExternalPromise
 
 Use `Promise` when producer and consumer are both inside doeff. Use `ExternalPromise` when

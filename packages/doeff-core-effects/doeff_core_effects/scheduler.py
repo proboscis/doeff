@@ -24,6 +24,7 @@ Usage:
 import logging
 import warnings
 import weakref
+from collections.abc import Callable
 
 from doeff_vm import Callable as _VmCallable
 from doeff_vm import EffectBase, Err, Ok, TailEval
@@ -171,6 +172,22 @@ class TaskCancelledError(Exception):
     """Raised when waiting on a cancelled task."""
 
 
+class ExternalPromiseCancelCallbackError(RuntimeError):
+    """Raised to the ``Cancel`` caller when an ``on_cancel`` callback failed.
+
+    The cancellation itself has already taken effect (the task and the
+    abandoned external promises are ``cancelled``); ``errors`` lists every
+    callback exception so none is lost.
+    """
+
+    def __init__(self, errors: list[Exception]) -> None:
+        self.errors = list(errors)
+        super().__init__(
+            "external promise cancel callback(s) failed: "
+            + "; ".join(repr(error) for error in self.errors)
+        )
+
+
 class SchedulerDeadlockError(RuntimeError):
     """Raised when the scheduler has parked work that cannot make progress."""
 
@@ -315,13 +332,44 @@ class ExternalPromise:
     ``complete``/``fail`` are the ONLY thread-safe operations — they may be
     called from foreign threads (the primary pattern) or from in-run tasks
     (a non-daemon in-run completer stays runnable below the external-wait
-    shield, #505). Minting ``.future`` must happen on the scheduler thread:
-    handle registration (#502) is scheduler-thread-confined.
+    shield, #505). Minting ``.future`` and registering ``on_cancel`` must
+    happen on the scheduler thread: handle registration (#502) and the
+    promise state are scheduler-thread-confined.
     """
-    def __init__(self, promise_id, queue, _register=None):
+    def __init__(self, promise_id, queue, _register=None, _bind_cancel=None) -> None:
         self.promise_id = promise_id
         self._queue = queue
         self._register = _register
+        self._bind_cancel = _bind_cancel
+
+    def on_cancel(self, callback: Callable[[], object]) -> None:
+        """Register ``callback()`` to stop the external producer on cancel.
+
+        The scheduler cancels a PENDING external promise when a ``Cancel``
+        removes its last live waiter (every task parked on it via Wait /
+        Gather / Race is cancelled): the promise becomes ``cancelled`` —
+        later ``complete``/``fail`` calls are ignored and later waits raise
+        ``TaskCancelledError`` — and each registered callback runs once, on
+        the scheduler thread, inside the ``Cancel`` dispatch. Callbacks must
+        therefore be quick and thread-safe towards the producer (e.g.
+        ``concurrent.futures.Future.cancel``). A callback exception is
+        re-raised to the ``Cancel`` caller as
+        ``ExternalPromiseCancelCallbackError`` after the cancellation took
+        effect.
+
+        Registering on an already-cancelled promise runs ``callback``
+        immediately; on a completed/failed promise it is a no-op. Must be
+        called on the scheduler thread (like minting ``.future``).
+        """
+        if not callable(callback):
+            raise TypeError(
+                f"on_cancel expects a callable, got {type(callback).__name__}"
+            )
+        if self._bind_cancel is None:
+            raise RuntimeError(
+                f"{self!r} is not bound to a scheduler run; on_cancel is unavailable"
+            )
+        self._bind_cancel(self.promise_id, callback)
 
     @property
     def future(self):
@@ -404,10 +452,16 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                     protected.update(entry[2]["keys"])
                 elif entry[0] == "race":
                     protected.update(entry[2]["pending_keys"])
+        # A cancelled PROMISE (external promise whose last waiter was
+        # cancelled) has no such re-read and is as final as completed/failed.
+        sweepable = {
+            "task": ("completed", "failed"),
+            "promise": ("completed", "failed", "cancelled"),
+        }
         for kind, store in (("task", tasks), ("promise", promises)):
             dead = []
             for wid, meta in store.items():
-                if meta["status"] not in ("completed", "failed"):
+                if meta["status"] not in sweepable[kind]:
                     continue
                 key = (kind, wid)
                 if key in waiters or key in protected:
@@ -613,10 +667,74 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                     live_parked_waiter_summary() or "none",
                     live_semaphore_waiters() or "none",
                 )
-        if pid in promises and promises[pid]["status"] == "pending":
-            promises[pid]["status"] = "completed" if action == "complete" else "failed"
-            promises[pid]["result"] = value
-            wake_waiters(("promise", pid))
+        settle_external(action, pid, value)
+
+    def settle_external(action: str, pid: int, value: object) -> None:
+        """Apply one drained external completion.
+
+        Only a PENDING promise settles: a late completion of a cancelled
+        external promise (its producer finished before observing the
+        cancel) — or a double resolution — is ignored.
+        """
+        promise = promises.get(pid)
+        if promise is None or promise["status"] != "pending":
+            return
+        promise["status"] = "completed" if action == "complete" else "failed"
+        promise["result"] = value
+        # Settled: nothing left to cancel; drop the callbacks' references.
+        promise.pop("cancel_callbacks", None)
+        wake_waiters(("promise", pid))
+
+    def bind_cancel_callback(pid: int, callback: Callable[[], object]) -> None:
+        """Backs ExternalPromise.on_cancel (scheduler thread only)."""
+        promise = promises[pid]
+        status = promise["status"]
+        if status == "cancelled":
+            callback()
+        elif status == "pending":
+            promise.setdefault("cancel_callbacks", []).append(callback)
+
+    def cancel_abandoned_external_promises(cancelled_tid: int) -> list[Exception]:
+        """Propagate a task cancellation to the producers it was waiting on.
+
+        A pending external promise with ``on_cancel`` callbacks is cancelled
+        when ``cancelled_tid`` was parked on it and no live waiter remains
+        (every remaining Wait/Gather/Race entry belongs to a cancelled task;
+        the root is never cancelled). Its waiters entry is dropped — every
+        owner is cancelled, so nothing can resume from it — and the
+        callbacks run. Promises without callbacks keep the historical
+        semantics (stay pending, a later completion still settles them).
+
+        Returns the callback exceptions; the caller surfaces them only after
+        every abandoned promise was cancelled, so one failing producer
+        cannot leave the others running.
+        """
+        errors = []
+        for key in list(waiters):
+            kind, pid = key
+            if kind != "promise":
+                continue
+            promise = promises.get(pid)
+            if (
+                promise is None
+                or promise["status"] != "pending"
+                or not promise.get("cancel_callbacks")
+            ):
+                continue
+            entries = waiters[key]
+            if not any(entry[1] == cancelled_tid for entry in entries):
+                continue
+            if any(not is_owner_cancelled(entry[1]) for entry in entries):
+                continue
+            del waiters[key]
+            promise["status"] = "cancelled"
+            promise["result"] = TaskCancelledError()
+            for callback in promise.pop("cancel_callbacks"):
+                try:
+                    callback()
+                except Exception as error:  # collected, re-raised by Cancel
+                    errors.append(error)
+        return errors
 
     def live_parked_waiter_summary(include_daemons=True):
         """Describe live (non-cancelled) parked waiters for diagnostics.
@@ -1088,10 +1206,7 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         """Drain all pending external completions into promise state."""
         while not external_queue.empty():
             action, pid, value = external_queue.get()
-            if pid in promises and promises[pid]["status"] == "pending":
-                promises[pid]["status"] = "completed" if action == "complete" else "failed"
-                promises[pid]["result"] = value
-                wake_waiters(("promise", pid))
+            settle_external(action, pid, value)
 
     def pop_live_semaphore_waiter(sem):
         while sem["waiters"]:
@@ -1326,11 +1441,19 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         elif isinstance(effect, Cancel):
             tid = effect.task.task_id
             task = tasks.get(tid)
+            cancel_errors = []
             if task and task["status"] in ("pending", "running", "suspended"):
                 task["status"] = "cancelled"
                 task["result"] = TaskCancelledError()
                 wake_waiters(("task", tid))
                 _release_task_refs(tid)
+                # Stop the external work the task was parked on (#498).
+                cancel_errors = cancel_abandoned_external_promises(tid)
+            if cancel_errors:
+                from doeff.program import ResumeThrow
+                error = ExternalPromiseCancelCallbackError(cancel_errors)
+                error.__cause__ = cancel_errors[0]
+                return (yield ResumeThrow(k, error))
             r = yield Resume(k, None)
             return r
 
@@ -1416,7 +1539,11 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             promises[pid]["external"] = True
             ep = register_handle(
                 ("promise", pid),
-                ExternalPromise(pid, external_queue, _register=register_handle),
+                ExternalPromise(
+                    pid, external_queue,
+                    _register=register_handle,
+                    _bind_cancel=bind_cancel_callback,
+                ),
             )
             r = yield Resume(k, ep)
             return r

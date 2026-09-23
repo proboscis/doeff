@@ -53,6 +53,7 @@ from doeff_core_effects.scheduler import (  # noqa: F401
     CreatePromise,
     CreateSemaphore,
     ExternalPromise,
+    ExternalPromiseCancelCallbackError,
     FailPromise,
     Future,
     Gather,

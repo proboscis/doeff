@@ -442,10 +442,16 @@ def await_handler():
     orphaning every other in-flight Await in the process, while gaining
     nothing: ``threading`` swallows SystemExit on daemon threads.
 
-    Known limitation (#498): cancelling a doeff task does NOT cancel the
-    in-flight bridged coroutine — it keeps running on the shared loop and
-    its late completion is ignored. Fixing that requires scheduler-side
-    cancel propagation to the run_coroutine_threadsafe future.
+    Cancellation (#498): the run_coroutine_threadsafe future's ``cancel`` is
+    registered as the promise's ``ExternalPromise.on_cancel`` callback.
+    When ``Cancel`` removes the last live waiter of the Await (the awaiting
+    task is cancelled), the scheduler cancels the promise and runs that
+    callback: the bridge task is cancelled on the shared loop, the awaited
+    coroutine receives ``asyncio.CancelledError`` at its current suspension
+    point and its ``finally`` blocks run there. ``Cancel`` only REQUESTS
+    this — it returns without waiting for the coroutine to unwind. A
+    coroutine that swallows the CancelledError keeps running; its late
+    completion is ignored (the promise is already ``cancelled``).
 
     Isolation trade-off of the shared loop: a bridged coroutine that blocks
     the loop (e.g. a synchronous call inside async code) now stalls every
@@ -479,6 +485,8 @@ def await_handler():
 
             fut = asyncio.run_coroutine_threadsafe(run_coro(), loop)
             fut.add_done_callback(_observe_await_bridge_future)
+            # Thread-safe: schedules the bridge task's cancel on the loop.
+            ep.on_cancel(fut.cancel)
             value = yield Wait(ep.future)
             return (yield Transfer(k, value))
         yield Pass(effect, k)
