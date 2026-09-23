@@ -89,6 +89,7 @@
   CHARTER-SUMMARIZE-UNTIL-KEY
   InFlightSummarize
   JOB-HANDLE-SUMMARIZE-KEY
+  RECORD-BODY-FIELDS
   RECORD-RAW-EVENT-KINDS
   RECORD-STREAM-MEMORY
   RECORD-STREAM-SUMMARY
@@ -2702,8 +2703,8 @@
 (defk history-event-body [event]
   {:pre [(: event RecordEvent)]
    :post [(: % str)]}
-  "会話の記録の service の出来事 1 つ → 畳む本文(text / summary / input / output の順に最初に在る欄・object は JSON・本文が無い行
-   〔tombstone〕は空)。"
+  "会話の記録の service の出来事 1 つ → 畳む本文(畳む順 text → summary → input → output で最初に在るもの・object は JSON・
+   本文が無い行〔tombstone〕は空)。添付の data は畳まない(base64 は会話の文にならない — 畳む対象の kind に attachment は無い)。"
   (cond (isinstance event.text str) event.text
         (isinstance event.summary str) event.summary
         (isinstance event.input str) event.input
@@ -4890,21 +4891,19 @@
 (defk record-body-of [body]
   {:pre [(: body dict)]
    :post [(: % dict)]}
-  "本文(契約 eventIn)の同一性の材料 = text / summary / input / output の在る欄だけ(None は無いのと同じ)— service の
-   judgment.body-of と同じ形。"
-  (setv out {})
-  (for [name ["text" "summary" "input" "output"]]
-    (setv field (.get body name))
-    (when (is-not field None)
-      (setv (get out name) field)))
-  out)
+  "本文(契約 eventIn)の同一性の材料 = 本文の欄のうち在るものだけ(None は無いのと同じ)。材料に選ぶ欄の定義点 =
+   effects.RECORD_BODY_FIELDS(正本 = agora-controllers の契約 record-service.json eventFields.body)— ここで欄を並べない。"
+  (dfor name RECORD-BODY-FIELDS
+        :setv field (.get body name)
+        :if (is-not field None)
+        name field))
 
 
 (defk record-body-bytes-of [body]
   {:pre [(: body dict)]
    :post [(: % bytes)]}
-  "本文の同一性の綴り = 材料(record-body-of)の compact JSON(鍵は sort・ASCII に逃がさない)の UTF-8 — service の
-   judgment.body-bytes-of と同じ 1 点(bytes と sha256 はこの綴りから)。"
+  "本文の同一性の綴り = 材料(record-body-of — 欄の選択は effects.RECORD_BODY_FIELDS の 1 点)の compact JSON(鍵は sort・
+   ASCII に逃がさない)の UTF-8。bytes と sha256 はこの綴りから(値が service と一致することは中央と同じ入力の golden が主張する)。"
   (<- material dict (record-body-of body))
   (.encode (json.dumps material :sort-keys True :separators #("," ":") :ensure-ascii False) "utf-8"))
 
@@ -4956,7 +4955,8 @@
   "本文(契約 record-service eventIn の形 — 会話の記録の service へ切らずに運ぶ出来事)→ ACP の turn-record の見出し
    (TurnEntryHeadline — 設計 §2.2 の閉じた欄)。**見出しを導く点はここ 1 つ**: seq = 本文の producerSeq(採番は 1 点)・
    at・kind・toolName / toolUseId(道具)・isError・bytes / sha256 = 本文の同一性(record-body-bytes-of — service が
-   冪等の判断に使う値と同じ)。本文の欄(text / summary / input / output / model)は型に無い — 写さない・切らない。"
+   冪等の判断に使う値と同じ)。本文の欄(effects.RECORD_BODY_FIELDS)は型に無い — 写さない・切らない(見出しの欄のうち model・
+   mime・name も turn-record の entry の閉じた欄の外)。"
   (<- material bytes (record-body-bytes-of body))
   (setv tool-name (.get body "toolName"))
   (setv tool-use-id (.get body "toolUseId"))
@@ -6837,8 +6837,8 @@
    :post [(: % str)]}
   "本文 → claim check の digest。同一性の式は **memory-material-of の 1 点**ちょうど(2 か所で綴ると、
    緑のまま逆を測る — 実弾 2026-09-21: 生の byte で比べた席が『55/55 巻き戻り』と誤診した)。
-   刻(at)と producerSeq は同一性の材料ではない(record-body-of が読むのは text / summary / input /
-   output だけ)ので、刻を持たずに digest を決められる。"
+   刻(at)と producerSeq は同一性の材料ではない(record-body-of は本文の欄 — effects.RECORD_BODY_FIELDS — だけを
+   読み、外枠の at / producerSeq を読まない)ので、刻を持たずに digest を決められる。"
   (<- body dict (memory-body-of text 0))
   (<- sha str (memory-sha256-of body))
   sha)

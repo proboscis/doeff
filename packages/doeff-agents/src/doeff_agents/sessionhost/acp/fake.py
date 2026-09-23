@@ -21,6 +21,7 @@ from doeff_agents.sessionhost.acp.effects import (
     MEMORY_STREAM_PREFIX,
     MESSAGE_CONVERSATION_FIELDS,
     MESSAGE_KIND,
+    RECORD_BODY_FIELDS,
     SUMMARY_KIND,
     SUMMARY_SPEC_CONVERSATION_KEY,
     SUMMARY_STREAM_PREFIX,
@@ -1110,7 +1111,7 @@ class FakeLocal:
 
 class FakeRecord:
     """会話の記録の service と本文の spool の代わり(段 9f lane 9f-2 / 9f-4・memory)。冪等は契約どおり: 鍵(会話・stream・
-    producerSeq)が既在で本文(text / summary / input / output)の sha256 が同じなら ignored、違えば 409(batch は丸ごと
+    producerSeq)が既在で本文(本文の欄 = effects.RECORD_BODY_FIELDS)の sha256 が同じなら ignored、違えば 409(batch は丸ごと
     積まない)。積んだ出来事は service と同じ計算の bytes / sha256(compact・鍵 sort・UTF-8)と会話ごとに単調な recordSeq を
     持ち、RecordRead は before(latest か recordSeq)から後向きに limit 件を recordSeq 昇順で返す(cursor.next = 頁の最初の
     recordSeq・これ以上無ければ None)。test は unreachable で届かない service を、stored に既在の出来事を、refusals に届いた
@@ -1403,11 +1404,11 @@ def _producer_seq(event: JSONObject) -> int:
 
 
 def record_body_bytes(event: JSONObject) -> bytes:
-    """本文の同一性の綴り(契約: text / summary / input / output / data の在る欄だけ・None は無いのと同じ・compact JSON・
-    鍵は sort・UTF-8)— agora-controllers services/record/vocabulary.BODY_FIELDS と judgment.hy body-bytes-of の写し。
-    段 10 lane 10o(agora-redesign #96): 添付の画像の base64(data)も本文の欄(見出しの mime / name は本文ではない)。"""
+    """本文の同一性の綴り(本文の欄のうち在るものだけ・None は無いのと同じ・compact JSON・鍵は sort・UTF-8)。
+    材料に選ぶ欄は effects.RECORD_BODY_FIELDS を読む(本線の judgment.record-body-of と同じ定義点 — ここで欄を並べない)。
+    値が service と一致することは tests/sessionhost_acp_record_deftests.hy の golden が主張する。"""
     body: JSONObject = {}
-    for name in ("text", "summary", "input", "output", "data"):
+    for name in RECORD_BODY_FIELDS:
         field = event.get(name)
         if field is not None:
             body[name] = field
