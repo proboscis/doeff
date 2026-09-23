@@ -1,0 +1,50 @@
+# agentd だけに効く path の名簿(器 = host 役の process は実行しない path)
+#
+# 「この repo の着地が、走っている**器**(`doeff-sessionhost join --role host` — claude を子に持ち、
+# 手番を実際に抱える process)の中身を変えるか」の定義点はこの file 1 つ。隣の
+# `docs/agentd-effective-paths.txt`(agentd に効く path)の**部分集合**で、そのうち器の process が
+# 実行しない path を 1 行ずつ挙げる。何が器に効くかを知っているのは doeff なので、名簿の持ち主も doeff。
+#
+# ── 誰が読むか(2026-09-23 現在)
+#   * Mac 側の agentd の追随(dotfiles `agentcli/src/agentcli/agentd_follow.py`)。器に効く path =
+#     「agentd に効く path の名簿 + この名簿の各行を `:(exclude)` にした物」で、器が最後に起動した版と
+#     本線の先端を `git diff --quiet` で比べる。差が無ければ ACP 側の腕(`--role agentd` の unit)だけを
+#     入れ替える — 腕は器の子を持たないので、cordon も排水も要らず、走っている手番は 1 本も切れない。
+#     差が在れば(または読めなければ)今日どおり器ごと排水して入れ替える。
+#
+# ── 読み方
+#   1 行 1 つの git の pathspec(repo の根からの相対)。`#` で始まる行と空行は註。
+#   ⚠ 行に `:` で始まる magic(`:(exclude)` 等)を書かない — 読み手が各行の頭に `:(exclude)` を付ける。
+#
+# ── 何を挙げてよいか(狭い側へ倒す)
+#   器の process が**読み込まない、または読み込んでも実行しない** file だけ。器の役は起動の拍に
+#   `acp/entry.py` → `acp/runtime.py` の `join_plan`(`acp/join.hy`・`acp/effects.py`)と `acp/valve.py` を
+#   通り、手番の間は `acp/cache_operation.py`・`acp/cache_observation.hy` を使う(`sessionhost/cache_host.hy`)。
+#   この 7 つと `acp/__init__.py` は**挙げない**(器の振る舞いか、器の起動時の env と argv を変える)。
+#   ⚠ `acp/runtime.py` は agentd の本体でもあるが、器が join_plan を読むので挙げない(広い側 = 器ごと入れ替える側)。
+#   ⚠ 新しい file を `acp/` に足した時は、挙げない限り「器に効く」側に数えられる(安全側の既定)。
+#   実測 2026-09-23: 器の役が読み込む module(hostmain・host・cache_host・headless と上の acp の module を
+#   import した後の sys.modules)に、下の file は 1 つも現れない。
+#
+# ── 広げすぎた時の症状
+#   器に効く変更で器が古いまま残る(ACP 側の腕だけが新しくなる)。器に効く file を挙げないこと。
+#   逆に挙げ漏れは「要らない排水が 1 回増える」だけ(今日の振る舞い)。
+
+packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy
+packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.pyi
+packages/doeff-agents/src/doeff_agents/sessionhost/acp/async_dispatch.hy
+packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_live.hy
+packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_maintenance.hy
+packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_wire.py
+packages/doeff-agents/src/doeff_agents/sessionhost/acp/fake.py
+packages/doeff-agents/src/doeff_agents/sessionhost/acp/handlers.py
+packages/doeff-agents/src/doeff_agents/sessionhost/acp/io_types.py
+packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy
+packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.pyi
+packages/doeff-agents/src/doeff_agents/sessionhost/acp/live_row.hy
+packages/doeff-agents/src/doeff_agents/sessionhost/acp/loop_model.py
+packages/doeff-agents/src/doeff_agents/sessionhost/acp/memory_fold_census.py
+packages/doeff-agents/src/doeff_agents/sessionhost/acp/response_usage.hy
+packages/doeff-agents/src/doeff_agents/sessionhost/acp/response_usage.pyi
+packages/doeff-agents/src/doeff_agents/sessionhost/acp/worker_loop.hy
+packages/doeff-agents/src/doeff_agents/sessionhost/acp/worker_loop.pyi
