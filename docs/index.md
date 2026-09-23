@@ -57,6 +57,7 @@ Welcome to the comprehensive documentation for doeff - an algebraic effects syst
 ### Design Notes
 
 - **[Why Effects Over DI?](20-why-effects-over-di.md)** - Real-world use cases where algebraic effects beat dependency injection
+- **[Static Typing](23-static-typing.md)** - Typed effects (`EffectBase[T]`), typed `@do` programs, typed handler answers, and runtime readers of the same types
 - **[Capability Classes](22-capability-classes.md)** - A four-class taxonomy predicting where effects pay off, retry under one-shot continuations, and adoption anti-patterns
 - **[CLI Architecture](cli-run-command-architecture.md)** - Run command pipeline design
 - **[Filesystem Effects](filesystem-effect-architecture.md)** - Filesystem effect design (draft)

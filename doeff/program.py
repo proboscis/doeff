@@ -7,9 +7,19 @@ The VM classifies them via downcast (not tag-based getattr).
 import functools
 import types
 from collections.abc import Callable, Iterable
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, Protocol, cast, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    NamedTuple,
+    Protocol,
+    TypeVar,
+    cast,
+    runtime_checkable,
+)
 
 from doeff_vm import Apply as Apply
+from doeff_vm import EffectBase, K
 from doeff_vm import Expand as Expand
 from doeff_vm import GetBoundaries as GetBoundaries
 from doeff_vm import GetExecutionContext as GetExecutionContext
@@ -116,6 +126,24 @@ def with_handlers(handlers: Iterable[ProgramHandler], program: object) -> object
             is_handler_fn = False
         wrapped = install(wrapped) if is_handler_fn is True else handler(install)(wrapped)
     return wrapped
+
+
+_Answer = TypeVar("_Answer")
+
+
+def typed_resume(effect: EffectBase[_Answer], k: K, value: _Answer) -> Resume:
+    """``Resume(k, value)`` whose value type is checked against the effect.
+
+    For ``class ReadClock(EffectBase[int])``, ``typed_resume(effect, k, "now")``
+    is a type error. Runtime behaviour is exactly ``Resume(k, value)``; the
+    ``@do`` tail-resume analysis recognises it like ``Resume``.
+    """
+    return Resume(k, value)
+
+
+def typed_transfer(effect: EffectBase[_Answer], k: K, value: _Answer) -> Transfer:
+    """``Transfer(k, value)`` whose value type is checked against the effect."""
+    return Transfer(k, value)
 
 
 def program(gen_fn, *args):

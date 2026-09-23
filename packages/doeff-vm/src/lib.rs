@@ -15,6 +15,7 @@ pub mod gc;
 pub mod python_generator_stream;
 pub mod pyvm;
 pub mod result;
+pub mod typing_support;
 
 // Re-export VM core types
 pub use doeff_vm_core::continuation::{OwnedControlContinuation, PendingContinuation, PyK};

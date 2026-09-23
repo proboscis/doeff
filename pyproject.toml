@@ -141,7 +141,7 @@ ignore = [
     "ARG001",  # unused function argument - pre-existing in tests
     "ARG002",  # unused method argument - pre-existing in tests
 ]
-external = ["PINJ"]
+external = ["PINJ", "DOEFF"]  # doeff-linter codes in `# noqa: DOEFFnnn`
 
 [tool.doeff-linter]
 disable = ["DOEFF013"]  # Prefer Maybe Monad - intentionally using Optional/None patterns

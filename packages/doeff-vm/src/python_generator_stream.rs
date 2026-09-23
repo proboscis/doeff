@@ -37,6 +37,18 @@ pub struct PyEffectBase;
 
 #[pymethods]
 impl PyEffectBase {
+    /// `x = yield from node` ≡ `x = yield node` (see crate::typing_support).
+    fn __iter__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::bind_iter(slf.as_any())
+    }
+    #[classmethod]
+    fn __class_getitem__<'py>(
+        cls: &Bound<'py, pyo3::types::PyType>,
+        item: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::class_getitem(cls, item)
+    }
+
     #[new]
     #[pyo3(signature = (*_args, **_kwargs))]
     fn new(
@@ -95,7 +107,7 @@ impl PythonCallable {
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
         visit_py_field(&visit, &self.callable)?;
         if let Some(types) = &self.effect_types {
-            visit.call(types)?;
+            visit_py_field(&visit, types)?;
         }
         Ok(())
     }

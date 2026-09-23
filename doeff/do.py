@@ -16,11 +16,13 @@ import warnings
 from collections.abc import Callable, Generator
 from functools import wraps
 from textwrap import dedent
-from typing import Any, ParamSpec, overload
+from typing import Any, ParamSpec, TypeVar, overload
 
 from doeff.program import Apply, Expand, Pure
 
 P = ParamSpec("P")
+_E = TypeVar("_E")
+_T = TypeVar("_T")
 
 
 class _ResumeYieldAnalysis(ast.NodeVisitor):
@@ -34,7 +36,7 @@ class _ResumeYieldAnalysis(ast.NodeVisitor):
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         if self.function_depth > 0:
             return
-        self.function_depth += 1
+        self.function_depth += 1  # noqa: DOEFF002 - int counter, not a mutable container
         self._visit_statement_block(node.body)
         self.function_depth -= 1
 
@@ -83,7 +85,7 @@ class _ResumeYieldAnalysis(ast.NodeVisitor):
         self._visit_statement_block(node.orelse)
 
     def visit_Try(self, node: ast.Try) -> None:
-        self.protected_depth += 1
+        self.protected_depth += 1  # noqa: DOEFF002 - int counter, not a mutable container
         self.generic_visit(node)
         self.protected_depth -= 1
 
@@ -154,7 +156,7 @@ class _ResumeYieldAnalysis(ast.NodeVisitor):
 def _is_resume_call(node: ast.AST | None) -> bool:
     if not isinstance(node, ast.Call):
         return False
-    return _call_leaf_name(node.func) in {"Resume", "ResumeThrow"}
+    return _call_leaf_name(node.func) in {"Resume", "ResumeThrow", "typed_resume"}
 
 
 def _call_leaf_name(node: ast.AST) -> str | None:
@@ -179,7 +181,7 @@ _RESUME_ANALYSIS_CACHE: dict[tuple[int, bool], tuple[int, ...]] = {}
 _RESUME_ANALYSIS_CACHE_KEEPALIVE: list[Any] = []
 
 
-def _analyze_resume_yields(fn: Callable[..., Any], *, non_tail: bool) -> tuple[int, ...]:
+def _analyze_resume_yields(fn: Callable[..., Any], *, non_tail: bool) -> tuple[int, ...]:  # noqa: DOEFF006 - immutable line-number set for IRStream
     # tail-resume analysis is purely a warning/diagnostic optimization. If we
     # cannot recover Python source for `fn` (e.g. Hy-defined handlers, lambdas
     # generated at runtime, frozen functions), silently skip — the runtime
@@ -199,7 +201,7 @@ def _analyze_resume_yields(fn: Callable[..., Any], *, non_tail: bool) -> tuple[i
             _RESUME_ANALYSIS_CACHE_KEEPALIVE.append(code)
             return ()
 
-    def _remember(result: tuple[int, ...]) -> tuple[int, ...]:
+    def _remember(result: tuple[int, ...]) -> tuple[int, ...]:  # noqa: DOEFF006 - same tuple as the cache value
         if cache_key is not None:
             _RESUME_ANALYSIS_CACHE[cache_key] = result
             # id(code) keys are only stable while the code object lives; keep
@@ -247,14 +249,14 @@ def _analyze_resume_yields(fn: Callable[..., Any], *, non_tail: bool) -> tuple[i
 
 
 @overload
-def do(fn: Callable[P, Generator[Any, Any, Any]], /) -> Callable[P, Expand]: ...
+def do(fn: Callable[P, Generator[_E, Any, _T]], /) -> Callable[P, Expand[_T, _E]]: ...
 
 
 @overload
 def do(
     *,
     non_tail: bool = False,
-) -> Callable[[Callable[P, Generator[Any, Any, Any]]], Callable[P, Expand]]: ...
+) -> Callable[[Callable[P, Generator[_E, Any, _T]]], Callable[P, Expand[_T, _E]]]: ...
 
 
 def do(
@@ -263,7 +265,15 @@ def do(
     *,
     non_tail: bool = False,
 ) -> Callable[P, Expand] | Callable[[Callable[P, Generator[Any, Any, Any]]], Callable[P, Expand]]:
-    """Wrap a generator function so calling it returns a DoExpr tree."""
+    """Wrap a generator function so calling it returns a DoExpr tree.
+
+    Typing: ``@do`` keeps the parameters, the effects and the result of the
+    body. For ``def f(x: int) -> Generator[ReadShared | WriteShared, Any, bool]``,
+    ``f`` is ``Callable[[int], Expand[bool, ReadShared | WriteShared]]``; a caller
+    runs it with ``ok = yield from f(1)`` (``ok: bool``) and must itself declare
+    ``ReadShared | WriteShared`` among the effects it yields. Yielding an effect
+    that the body's annotation does not list is a type error.
+    """
 
     def decorate(fn: Callable[P, Generator[Any, Any, Any]]) -> Callable[P, Expand]:
         tail_resume_lines = _analyze_resume_yields(fn, non_tail=non_tail)
