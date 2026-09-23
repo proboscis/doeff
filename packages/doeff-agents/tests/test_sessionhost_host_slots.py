@@ -240,3 +240,30 @@ def test_seeding_copies_the_sessions_and_drops_the_old_hosts_lease(tmp_path: Pat
     with sqlite3.connect(target) as conn:
         assert conn.execute("SELECT COUNT(*) FROM agent_daemon_lease").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM agent_sessions").fetchone()[0] == 0
+
+
+def test_a_slow_host_is_not_read_as_gone(tmp_path: Path) -> None:
+    """器が「居ない」のは socket の file が無いか誰も listen していない時だけ。connect が詰まる(時間切れ)器は居る側に倒す —
+    実弾 2026-09-23 15:5x: 1 秒の時間切れで古い器が区画の観測から外れ、腕が新しい器の写しを読んで手番を閉じた。"""
+    import socket as _socket
+
+    from doeff_agents.sessionhost.acp.handlers import socket_may_have_host
+
+    import tempfile
+
+    assert socket_may_have_host(str(tmp_path / "missing.sock")) is False
+    tmp_path = Path(tempfile.mkdtemp(prefix="hs", dir="/tmp"))  # AF_UNIX の path の長さの上限(104 字)の内側
+    stale = tmp_path / "stale.sock"
+    server = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+    server.bind(str(stale))
+    server.close()  # file は残るが誰も listen していない
+    assert socket_may_have_host(str(stale)) is False
+    live = tmp_path / "live.sock"
+    listener = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+    listener.bind(str(live))
+    listener.listen(1)
+    try:
+        assert socket_may_have_host(str(live)) is True
+    finally:
+        listener.close()
+
