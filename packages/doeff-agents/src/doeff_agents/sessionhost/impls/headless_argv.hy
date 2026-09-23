@@ -46,6 +46,35 @@
 ;; 1 回走らせ、plugin が自分の状態(TTL・profile・model・機体)で温冷を決める。温ければ何も
 ;; 起きず(model の呼び出し 0 回)、冷えていれば古い tool の結果だけを消す(要約文は書かない)。
 (setv CLAUDE-COLD-COMPACTION-PROMPT "/compact fast-jev-if-cold")
+
+;; 手番の中で生まれた仕事を手番の外へ持ち越させない(2026-09-23・card ki-266beb90dddf / ki-36a5b0e70f04 の計画の会話の実弾):
+;; 1 手番 1 process(R48・law claude-turn-end-is-process-end)の器は result の行で process を降ろす。ところが CLI は
+;; Agent tool の subagent を既定で background に回し(run_in_background)、model は「盲検 A・B の返答待ち」の
+;; WAIT: work で手番を終える — 降ろした process と一緒に subagent が死に、完了の合図で起きる続きの手番は誰も起こさない
+;; (依頼は開いたまま担い手は静止する)。⇒ headless の claude は background の仕事そのものを持てない形で起こす:
+;; CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 で Agent は同期(返答が同じ手番の tool の結果に返る)・Bash の
+;; run_in_background と Monitor は出ない(実測 2026-09-23: 旗なし = "Async agent launched" の後に result、
+;; 旗あり = subagent の報告が tool の結果に返ってから result)。運ぶ口は --settings の env(flagSettings・1 つの
+;; --settings に合流 — build-claude-argv の不変量)。
+(setv CLAUDE-HEADLESS-SETTINGS-ENV {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS" "1"})
+
+
+(deff argv-with-settings-env [argv env]
+  {:pre [(: argv list) (: env dict)]
+   :post [(: % list)]}
+  "argv の 1 つの --settings の env へ env を合流した新しい argv(無ければ --settings を足す・純関数)。
+   既に在る env の鍵は env の値で上書きする(この宣言が headless の物理 — 席の settings は hook だけを持つ R13)。"
+  (setv out (list argv))
+  (if (in "--settings" out)
+      (do
+        (setv index (+ (.index out "--settings") 1))
+        (setv settings (json.loads (get out index)))
+        (setv merged (dict (or (.get settings "env") {})))
+        (.update merged env)
+        (setv (get settings "env") merged)
+        (setv (get out index) (json.dumps settings :separators #("," ":"))))
+      (.extend out ["--settings" (json.dumps {"env" (dict env)} :separators #("," ":"))]))
+  out)
 (import doeff_agents.sessionhost.impls.fast_jev [fast-jev-compaction-enabled])
 
 
@@ -80,6 +109,7 @@
         (setv (get argv index) (json.dumps settings :separators #("," ":"))))
       (.extend argv ["--settings" (json.dumps {"disableAllHooks" True})]))
     (.extend argv ["--max-turns" "1"]))
+  (setv argv (argv-with-settings-env argv CLAUDE-HEADLESS-SETTINGS-ENV))
   (setv built {"argv" argv "dialogue" (ClaudeDialogue)})
   (when (and (= resume-mode "resume") (isinstance conversation dict))
     (setv conv-id (.get conversation "session_id"))

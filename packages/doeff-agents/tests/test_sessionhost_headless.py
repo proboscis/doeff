@@ -715,6 +715,36 @@ def test_headless_argv_is_print_mode_with_partial_messages() -> None:
     assert codex_dialogue.plan.model == "gpt-5"
 
 
+def test_headless_claude_cannot_start_background_tasks_that_outlive_the_turn() -> None:
+    """1 手番 1 process(R48)の器は result の行で process を降ろすので、CLI が手番の外へ持ち越す background の仕事
+    (Agent の run_in_background・Bash の background・Monitor)は降ろした時に黙って死ぬ。実弾 2026-09-23: 計画の会話
+    (c-SKD631B1SP… / c-3MZFCNDVHE…)が盲検 A・B の subagent を background に回し「返答待ち」で手番を終え、依頼が開いた
+    まま担い手が静止した。⇒ headless の claude の argv は全部の腕(初手番・続き・cache の ping・席の settings の合流)で
+    CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 を 1 つの --settings の env に持つ。反例 = どれかの腕で env が無ければ赤。"""
+    key = "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"
+    arms = {
+        "fresh": {"work_dir": "/w", "conversation": {"session_id": "sid-1"}},
+        "fresh-hooks-disabled": {"work_dir": "/w", "session_hooks": "disabled", "conversation": {"session_id": "sid-1"}},
+        "resume": {"work_dir": "/w", "resume_mode": "resume", "conversation": {"session_id": "sid-1"}, "memory_dir": "/m"},
+        "cache-ping": {"work_dir": "/w", "resume_mode": "resume", "conversation": {"session_id": "sid-1"},
+                       "cache_maintenance": True},
+    }
+    for name, params in arms.items():
+        argv = _build_claude_headless(params)["argv"]
+        assert argv.count("--settings") == 1, (name, argv)
+        settings = json.loads(argv[argv.index("--settings") + 1])
+        assert settings.get("env", {}).get(key) == "1", (name, settings)
+    # 既存の欄は保つ(自動記憶の置き場・cache の ping の disableAllHooks)
+    resumed = _build_claude_headless(arms["resume"])["argv"]
+    assert json.loads(resumed[resumed.index("--settings") + 1])[claude_code.CLAUDE_AUTO_MEMORY_DIR_SETTING] == "/m"
+    ping = _build_claude_headless(arms["cache-ping"])["argv"]
+    assert json.loads(ping[ping.index("--settings") + 1])["disableAllHooks"] is True
+    # 純関数の合流: 既に在る env の他の鍵は残り、同じ鍵は headless の値で上書き
+    merged = headless_argv.argv_with_settings_env(
+        ["claude", "--settings", json.dumps({"env": {"A": "x", key: "0"}})], {key: "1"})
+    assert json.loads(merged[2]) == {"env": {"A": "x", key: "1"}}
+
+
 def test_headless_claude_declares_the_compaction_threshold_on_both_arms() -> None:
     """会話の圧縮の閾値(設計記録 docs/design/auto-compact-window): ACP の本番の腕は headless backend なので、閾値が
     **この経路で**載ることを固定する。実弾 2026-09-18: 稼働中の claude 席 43 本のうち
