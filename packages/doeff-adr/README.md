@@ -36,6 +36,40 @@ The installed form names a rule id and carries hit / clean fixtures:
 
 `doeff_adr.registry.resolved_config_path(spec)` returns the file a spec reads.
 
+## Semgrep over Hy code (macro expansion)
+
+Semgrep has no Hy grammar, and a regular expression over Hy text sees neither
+code a macro writes nor a name brought in under an alias
+(`(import socket :as s) (s.socket)`). `doeff_adr.semgrep_hy` reads Hy the way Hy
+does: it macro-expands each `.hy` file with Hy's compiler (project macros such as
+a `defservice` wrapping `defk` included), writes the Python to a scan tree at the
+same relative path with a `.py` suffix, runs ordinary `languages: [python]`
+rules, and reports findings at the Hy file and line.
+
+```python
+from doeff_adr.semgrep_hy import scan_with_hy_expansion
+
+findings = scan_with_hy_expansion(Path("adr/worker.semgrep.yaml"), repo_root, ["controllers"])
+```
+
+```bash
+doeff-adr semgrep-hy --config adr/worker.semgrep.yaml --root . controllers
+```
+
+For fixtures, add `:expand-hy True` to an installed `defsemgrep`; its `.hy`
+fixtures are expanded the same way before the hit / clean check.
+
+Notes:
+
+- Path filters in the rule file see `.py` names (`lab/keeper.hy` is scanned as
+  `lab/keeper.py`): filter on directories or stems, not on the `.hy` suffix.
+- Expansion runs `require` (and any code a macro runs at expansion time), so
+  project macro modules must be importable: the project root is added
+  automatically; pass `python_path` / `--python-path` for anything else.
+- A file that fails to expand fails the scan (`HyScanExpansionError`); it is never
+  reported as clean.
+- Findings inside code a macro wrote are reported at the macro call's line.
+
 Run executable ADR files directly:
 
 ```bash
