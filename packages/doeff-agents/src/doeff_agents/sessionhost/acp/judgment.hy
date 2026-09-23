@@ -3769,6 +3769,9 @@
    (段 10 lane 10n・None = 宣言なし)。"
   (<- escalation-seconds (| int None) (escalation-seconds-of-charter plan.charter))
   (<- cache-context (| dict None) (cache-context-of row.status plan.account))
+  ;; card acp:kanban-issue:ki-90019f023e19: 結びの試みの回数を持つ(turn-record の spec.attempt に写す — 揃え直しの単調性の物差し)。
+  (<- row-status dict (status-object-of row))
+  (<- attempt int (binding-attempt-of row-status))
   (InFlightJob
     :job-key row.key
     :job-namespace row.namespace
@@ -3785,6 +3788,7 @@
     :transcript-offset start-offset
     :materials-cover-the-turn covers
     :cache-context cache-context
+    :attempt attempt
     :delta-seq 0
     :lease-id (if (is lease None) None lease.lease-id)
     :lease-kind (if (is lease None) None lease.kind)
@@ -3809,9 +3813,48 @@
    "node" job.node
    "profile" job.profile
    "model" job.model
-   "sessionId" job.session-id})
+   "sessionId" job.session-id
+   "attempt" job.attempt})
   (when (is-not job.cache-context None) (setv (get spec "cacheContext") job.cache-context))
   spec)
+
+
+;; turn-record の spec のうち「この手番の配置と session」を名乗る欄 = turn-record-spec-of が identity の外に書く欄の全部。
+;; 揃え直しはこの欄だけを今の手番の値に置き換え、知らない欄(別の版の agentd が書いた reopen・traceparent 等)は保つ。
+(setv TURN-RECORD-PLACEMENT-FIELDS #("node" "profile" "model" "sessionId" "cacheContext" "attempt"))
+
+
+(defk turn-record-spec-attempt-of [spec]
+  {:pre [(: spec dict)]
+   :post [(: % int)]}
+  "turn-record の spec.attempt(この記録が名乗る結びの試みの回数)。欄の無い行(この欄より前に書かれた記録)は 1 —
+   binding.attempt と同じ読み(binding-attempt-of)。bool は数でない・0 以下は無い。"
+  (setv attempt (.get spec "attempt"))
+  (if (and (isinstance attempt int) (not (isinstance attempt bool)) (>= attempt 1)) attempt 1))
+
+
+(defk turn-record-spec-realignment-of [existing wanted]
+  {:pre [(: existing dict) (: wanted dict)]
+   :post [(: % (| dict None))]}
+  "card acp:kanban-issue:ki-90019f023e19: 既に在る turn-record を続ける拍に、行の spec を今の手番の spec(wanted =
+   turn-record-spec-of)へ揃えるか — 揃えるなら書く spec、揃えないなら None。
+   None になるのは (1) identity(conversationId・agentJobId)が違う = 別の行(書かない・呼び手が log)、(2) 行が名乗る
+   試み(spec.attempt)が今の手番の試みより**新しい** = 結び直された後の記録を、失われたと判じられて生きていた古い試みの
+   agentd が書き戻そうとしている(盲検 A (b)・B — 書かない。所有は時機ではなく試みの回数の単調性で決める)、(3) 揃えた結果が
+   行と等しい = 書くものが無い(冪等 — 同じ手番で継続の拍を 2 度踏んでも書きは 1 回まで)。
+   揃えるのは TURN-RECORD-PLACEMENT-FIELDS だけ: 行のその欄を捨てて wanted の欄を重ねる。それ以外の欄(identity と、この版の
+   agentd が知らない欄 — 別の版が書いた reopen・traceparent)は行の値を保つ(版の混在する配備で欄を消さない・盲検 A 5)。
+   値の定義点は turn-record-spec-of の 1 つ(ここは欄の集合と単調性だけを判じる)。"
+  (when (or (!= (.get existing "conversationId") (.get wanted "conversationId"))
+            (!= (.get existing "agentJobId") (.get wanted "agentJobId")))
+    (return None))
+  (<- have int (turn-record-spec-attempt-of existing))
+  (<- want int (turn-record-spec-attempt-of wanted))
+  (when (> have want)
+    (return None))
+  (setv realigned (dfor [k v] (.items existing) :if (not-in k TURN-RECORD-PLACEMENT-FIELDS) k v))
+  (.update realigned wanted)
+  (if (= realigned existing) None realigned))
 
 
 (defk entries-of-status [status]

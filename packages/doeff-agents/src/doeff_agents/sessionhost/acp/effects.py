@@ -2654,6 +2654,9 @@ class InFlightJob:
     request_start_lower_bound_ms: int | None = None
     #: job回収後もkeepaliveが照合する実行元。bindingの実値をturn-recordへ残す。
     cache_context: JSONObject | None = None
+    #: この手番の結びの試みの回数(status.binding.attempt の写し・欄の無い結びは 1)。turn-record の spec.attempt に写し、
+    #: 記録を続ける拍の揃え直しを単調にする(古い試みの agentd は新しい試みの記録を書き戻せない — card ki-90019f023e19)。
+    attempt: int = 1
     #: 手番の記録(turn-record)の行の最後に知った image(段 8 lane 4u — 出来事の追記の CAS の相手)。
     #: None = まだ読んでいない(最初の追記で鍵から読む)。書けた拍に generation + 1 と書いた status で
     #: 差し替え、Conflict は読み直して積み直す。正本は行(R7)— 再起動で消えても鍵から戻る。
