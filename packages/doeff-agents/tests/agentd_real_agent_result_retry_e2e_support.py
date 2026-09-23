@@ -16,9 +16,10 @@ from typing import Any
 from doeff_agents.adapters.codex import trust_workspace_in_codex_home
 from doeff_agents.agentd_client import AgentdClient
 from doeff_agents.claude_home import prepare_claude_home
-from doeff_agents.io_handlers import run_driver_io
 from doeff_agents.effects import AgentSessionLifecycle, AwaitStatus
+from doeff_agents.io_handlers import run_driver_io
 from sessionhost_bin import resolve_sessionhost_bin
+from sessionhost_isolated_host import sessionhost_serve_argv
 
 RESULT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -63,18 +64,18 @@ def run_agentd_real_agent_result_report_e2e(
     try:
         with agentd_log_path.open("w", encoding="utf-8") as agentd_log:
             agentd_proc = subprocess.Popen(
-                [
-                    str(agentd_bin),
-                    "--db",
-                    str(db_path),
-                    "--socket",
-                    str(socket_path),
-                    "--monitor-interval-ms",
-                    "250",
-                    "--max-running",
-                    "2",
-                    "serve",
-                ],
+                # Even in this live-agent e2e the prompt judge is not under test: the
+                # daemon's default judge is a real one-shot claude that would run
+                # against the host's ~/.claude, so it is disabled (see the module
+                # docstring of sessionhost_isolated_host). The agent's own auth
+                # profile is declared through the binding.
+                sessionhost_serve_argv(
+                    agentd_bin,
+                    db_path=db_path,
+                    socket_path=socket_path,
+                    monitor_interval_ms=250,
+                    max_running=2,
+                ),
                 cwd=runtime_dir,
                 stdout=agentd_log,
                 stderr=subprocess.STDOUT,
@@ -158,7 +159,7 @@ def _binding(agent_type: str, work_dir: Path) -> dict[str, str]:
         claude_config_dir = _prepare_real_claude_home(work_dir)
         return {"kind": "claude-code", "config_dir": str(claude_config_dir)}
     if agent_type == "codex":
-        codex_home = os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
+        codex_home = os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))  # noqa: DOEFF004 - live e2e target is chosen by the runner's env (pre-existing)
         run_driver_io(trust_workspace_in_codex_home(codex_home, work_dir))
         return {"kind": "codex", "codex_home": codex_home}
     raise AssertionError(f"unsupported real agent type: {agent_type}")
@@ -205,7 +206,7 @@ def _real_claude_config_dir() -> Path:
 
 
 def _real_claude_auth_email() -> str:
-    return os.environ.get(
+    return os.environ.get(  # noqa: DOEFF004 - live e2e target is chosen by the runner's env (pre-existing)
         "DOEFF_AGENTS_REAL_CLAUDE_AUTH_EMAIL",
         DEFAULT_REAL_CLAUDE_AUTH_EMAIL,
     )
