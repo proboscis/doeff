@@ -55,6 +55,7 @@ from doeff_agents.sessionhost.headless_protocol import (
     claude_user_line,
     parse_record,
     recovery_verdict,
+    stop_cause_category,
     stop_verdict,
     turn_verdict,
 )
@@ -637,6 +638,80 @@ def test_stop_verdict_cuts_only_the_mid_turn_rows() -> None:
     assert stop_verdict(False, False) == "keep"
     assert stop_verdict(True, True) == "keep"
     assert stop_verdict(True, False) == "keep"
+
+
+def test_stop_cause_category_names_the_planned_stop_only_under_the_drain_marker() -> None:
+    """card acp:kanban-issue:ki-b5e0d04de958 D1(受入 1): 停止で切った行の語は stop_cause_category の 1 点 —
+    停止の拍に排水の印が在った = host_drained / 無い = cancelled(今日の語のまま)。2 語とも policy の閉語彙に在り、
+    host_drained は走らせ直せる(retryable)。"""
+    from doeff_agents.sessionhost.policy import TERMINAL_CAUSE_RETRYABLE
+
+    assert stop_cause_category(True) == "host_drained"
+    assert stop_cause_category(False) == "cancelled"
+    assert TERMINAL_CAUSE_RETRYABLE["host_drained"] is True
+    assert TERMINAL_CAUSE_RETRYABLE["cancelled"] is False
+
+
+def test_the_drain_marker_is_read_by_presence_and_its_line_is_only_a_reason(tmp_path: Path) -> None:
+    """drain_marker(設計の改訂 1a): 印ありの答えは在否だけ(中身が false でも在れば印あり)・path なし = 印なし・
+    中身は 1 行目を理由として返すだけ(読めない・空 = "")。"""
+    from doeff_agents.sessionhost import drain_marker
+
+    marker = tmp_path / "drain"
+    assert drain_marker.declared(None) is False
+    assert drain_marker.declared(str(marker)) is False
+    assert drain_marker.reason_line(str(marker)) == ""
+    assert drain_marker.reason_line(None) == ""
+    marker.write_text("false\n", encoding="utf-8")
+    assert drain_marker.declared(str(marker)) is True
+    marker.write_text("pool-prestop agentd-pool-1 u-1 2026-09-24T00:00:00Z pod termination\nsecond\n", encoding="utf-8")
+    assert drain_marker.reason_line(str(marker)) == "pool-prestop agentd-pool-1 u-1 2026-09-24T00:00:00Z pod termination"
+    marker.write_text("", encoding="utf-8")
+    assert drain_marker.declared(str(marker)) is True
+    assert drain_marker.reason_line(str(marker)) == ""
+
+
+def test_the_host_reads_the_drain_marker_path_only_from_its_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """設計の改訂 1c: host は印の path を env DOEFF_SESSIONHOST_DRAIN_FILE からだけ読む(CLI の語彙は凍結 —
+    argv に flag を足さない)。空・無し = None(印を読まない起動)。"""
+    argv = ["--db", "/tmp/x.sqlite", "--socket", "/tmp/x.sock", "--backend", "headless", "serve"]
+    monkeypatch.setenv(host.ENV_DRAIN_FILE, "/var/lib/agentd/drain")
+    assert host.parse_args(argv).drain_file == "/var/lib/agentd/drain"
+    monkeypatch.setenv(host.ENV_DRAIN_FILE, "")
+    assert host.parse_args(argv).drain_file is None
+    monkeypatch.delenv(host.ENV_DRAIN_FILE)
+    assert host.parse_args(argv).drain_file is None
+    with pytest.raises(ValueError, match="unknown argument: --drain-file"):
+        host.parse_args(["--drain-file", "/var/lib/agentd/drain", *argv])
+
+
+@pytest.mark.parametrize("first_declared", [False, True])
+def test_the_term_handler_reads_the_marker_once_at_the_first_term_and_never_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, first_declared: bool
+) -> None:
+    """card acp:kanban-issue:ki-b5e0d04de958(受入 2 の (d)・設計の改訂の残り): 印を読むのは 1 度目の TERM の拍に 1 回 —
+    答えは値のまま停止の腕へ渡り、1 度目の後に印が立っても・消えても、2 度目の TERM(撃ち直し・停止中の再送)は
+    SystemExit(0) だけで読み直さない。実 binary の TERM は handler と停止の thread の間の順序を外から挟めないので、
+    ここは handler そのものを直に撃つ(読む点が handler の 1 か所だけであることは ADR-DOE-AGENTS-012 の針が撃つ)。"""
+    marker = tmp_path / "drain"
+    if first_declared:
+        marker.write_text("pool-prestop agentd-pool-1 u-1 2026-09-24T00:00:00Z pod termination\n", encoding="utf-8")
+    monkeypatch.setenv(host.ENV_DRAIN_FILE, str(marker))
+    config = host.parse_args(["--db", str(tmp_path / "x.sqlite"), "--socket", str(tmp_path / "x.sock"), "serve"])
+    started: list[tuple[int, bool, str]] = []
+    handler = host.term_handler(config, lambda signum, declared, line: started.append((signum, declared, line)))
+    handler(signal.SIGTERM, None)
+    first = started[0]
+    assert first[1] is first_declared
+    assert (first[2] != "") is first_declared
+    if first_declared:
+        marker.unlink()
+    else:
+        marker.write_text("operator hold\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as again:
+        handler(signal.SIGTERM, None)
+    assert again.value.code == 0
+    assert started == [first]
 
 
 def test_terminal_cause_from_dict_is_total_over_the_store() -> None:
@@ -2053,6 +2128,24 @@ def test_host_headless_resume_reads_a_row_whose_persisted_cause_lacks_the_contra
     headless_host.ok("session.cleanup", {"session_id": "h-6-r"})
 
 
+def test_host_headless_stop_under_the_drain_marker_cuts_the_mid_turn_row_as_host_drained(headless_host: Host) -> None:
+    """card acp:kanban-issue:ki-b5e0d04de958 D1: 停止の腕は印の答えを値で受け(読まない)、手番の途中の行を stopped +
+    host_drained に倒す。散文は今日と同じ形(理由の欄に印の 1 行目が乗る — 判断には使わない)。"""
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_DELAY"] = "30"
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-busy", "claude"))
+    busy_pid = _obj(headless_host.snap("h-busy"), "backend_ref")["pid"]
+    assert isinstance(busy_pid, int)
+    reason = f"SIGTERM; drain declared: {_POOL_MARKER.strip()}"
+    outcomes = host.run_hosted(headless_host.config, headless_host.actor, headless_hy.stop_headless_rows(reason, True))
+    assert outcomes == {"h-busy": "stopped", "killed": 1}
+    _wait_until(lambda: not _pid_alive(busy_pid))
+    cut = headless_host.snap("h-busy")
+    assert _text(cut, "status") == "stopped"
+    cause = _obj(cut, "terminal_cause")
+    assert cause["category"] == "host_drained"
+    assert _text(cause, "reason").startswith(f"sessionhost stopped ({reason}) while the turn was running")
+
+
 def test_host_headless_stop_cuts_the_mid_turn_row_and_terminates_every_process(
     headless_host: Host, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2069,7 +2162,7 @@ def test_host_headless_stop_cuts_the_mid_turn_row_and_terminates_every_process(
     assert isinstance(busy_pid, int)
     assert isinstance(idle_pid, int)
     started = time.monotonic()
-    outcomes = host.run_hosted(headless_host.config, headless_host.actor, headless_hy.stop_headless_rows("SIGTERM"))
+    outcomes = host.run_hosted(headless_host.config, headless_host.actor, headless_hy.stop_headless_rows("SIGTERM", False))
     assert outcomes == {"h-busy": "stopped", "h-idle": "running", "killed": 2}
     assert time.monotonic() - started < 12.0  # 並列の猶予(EOF 5 s + TERM 5 s を process の数だけ積まない)
     _wait_until(lambda: not _pid_alive(busy_pid) and not _pid_alive(idle_pid))
@@ -2103,19 +2196,23 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def _spawn_real_headless_host(root: Path) -> subprocess.Popen[str]:
+def _spawn_real_headless_host(root: Path, *, drain_file: Path | None = None) -> subprocess.Popen[str]:
     """実 binary の headless の host を tmpdir で起こす(替え玉の claude・result の前で 30 秒待つ)。
 
     宿から隔離する(sessionhost_isolated_host の頭注): HOME / 資格の置き場は検の私設・画面判定は無効。
     PATH の先頭は替え玉(tests/headless_stubs)で、その後ろに本物の CLI の罠が続く。
+    drain_file = 排水の印の path を env で渡す(役 host の起動の形・card ki-b5e0d04de958 D1)— None = 渡さない。
     """
-    host = isolated_host(root / "host")
-    env = dict(host.env)
+    isolated = isolated_host(root / "host")
+    env = dict(isolated.env)
     env["PATH"] = f"{STUBS}{os.pathsep}{env['PATH']}"
     env["DOEFF_SESSIONHOST_HEADLESS_DIR"] = str(root / "events")
     env["DOEFF_HEADLESS_STUB_DELAY"] = "30"
     env["XDG_STATE_HOME"] = str(root / "state")
     env.pop("DOEFF_AGENTD_ACP", None)
+    env.pop(host.ENV_DRAIN_FILE, None)
+    if drain_file is not None:
+        env[host.ENV_DRAIN_FILE] = str(drain_file)
     with (root / "host.log").open("w", encoding="utf-8") as log:
         return subprocess.Popen(
             sessionhost_serve_argv(
@@ -2201,6 +2298,88 @@ def test_real_host_sigterm_closes_the_running_turn_before_exit() -> None:
         assert awaiting == 0
         assert cause["category"] == "cancelled"
         assert "sessionhost stopped (SIGTERM)" in _text(cause, "reason")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+_POOL_MARKER = "pool-prestop agentd-pool-1 0f3c-uid 2026-09-24T00:00:00Z pod termination\n"
+
+
+def _term_one_running_turn(root: Path, drain_file: Path | None) -> tuple[_StoredRow, str]:
+    """実 binary の host を起こし、手番 1 本の途中で TERM を 1 度送って降りるのを待つ(切った行と host の log)。"""
+    from doeff_agents.agentd_client import AgentdClient
+
+    proc = _spawn_real_headless_host(root, drain_file=drain_file)
+    try:
+        _wait_real_host(proc, root)
+        client = AgentdClient(root / "agentd.sock", timeout=2.0)
+        launched = client.request("session.launch", _launch_params(root, "h-drain", "claude"))
+        assert isinstance(launched, dict)
+        assert launched["awaiting_response"] is True
+        child_pid = _obj(launched, "backend_ref")["pid"]
+        assert isinstance(child_pid, int)
+        proc.send_signal(signal.SIGTERM)
+        proc.wait(timeout=30.0)
+        assert proc.returncode == 0, (root / "host.log").read_text(encoding="utf-8")
+        _wait_until(lambda: not _pid_alive(child_pid))
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5.0)
+    return _stored_row(root, "h-drain"), (root / "host.log").read_text(encoding="utf-8")
+
+
+def test_real_host_sigterm_under_the_drain_marker_cuts_the_turn_as_host_drained_and_leaves_the_marker_alone() -> None:
+    """card acp:kanban-issue:ki-b5e0d04de958 D1(受入 2 の (a)・実 binary): 停止の拍に排水の印が在れば、切った行の cause は
+    host_drained(計画された入れ替え)・散文に印の 1 行目が足される・log の数える語も行の語。host は印を読むだけで、
+    **file の中身は停止の前後で 1 byte も変わらない**(上書きしない・消さない — 書き手は doeff の外)。"""
+    root = Path(tempfile.mkdtemp(prefix="doeff-headless-drain-"))
+    try:
+        marker = root / "drain"
+        marker.write_text(_POOL_MARKER, encoding="utf-8")
+        before = marker.read_bytes()
+        stored, text = _term_one_running_turn(root, marker)
+        assert stored.status == "stopped"
+        assert stored.awaiting == 0
+        assert stored.cause["category"] == "host_drained"
+        assert "sessionhost stopped (SIGTERM; drain declared: pool-prestop agentd-pool-1 0f3c-uid" in _text(stored.cause, "reason")
+        assert "1 mid-turn row(s) ended as stopped/host_drained: h-drain" in text
+        assert marker.read_bytes() == before
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_real_host_sigterm_without_the_marker_stays_cancelled_and_the_host_writes_no_marker() -> None:
+    """同(受入 2 の (b)・盲検 B の反例の 1 層目): env が印の path を名指していても、停止の拍に印が無ければ行の cause は
+    今日どおり cancelled。**停止の前に無かった印の file は停止の後も無い** — host が自分で印を作ると、印の無い停止が
+    計画された停止の予算へ移る(card の受入 2 に反する)。"""
+    root = Path(tempfile.mkdtemp(prefix="doeff-headless-nodrain-"))
+    try:
+        marker = root / "drain"
+        assert not marker.exists()
+        stored, text = _term_one_running_turn(root, marker)
+        assert not marker.exists(), f"the host created the drain marker itself:\n{text}"
+        assert stored.status == "stopped"
+        assert stored.cause["category"] == "cancelled"
+        assert "drain declared" not in _text(stored.cause, "reason")
+        assert "1 mid-turn row(s) ended as stopped/cancelled: h-drain" in text
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_real_host_sigterm_without_the_env_stays_cancelled_even_with_a_marker_at_the_default_place() -> None:
+    """同(受入 2 の (c)): env を渡さない起動(役 both・join を通らない serve)は印を読まない — 既定の置き場
+    (runtime.drain_file_path が XDG_STATE_HOME から導く `<state>/doeff/acp-agentd/drain`)に印が在っても、host は
+    path を自分で導かないので cancelled のまま(置き場の定義点は ACP 側の 1 つ・host は渡された path だけを読む)。"""
+    root = Path(tempfile.mkdtemp(prefix="doeff-headless-noenv-"))
+    try:
+        default_place = root / "state" / "doeff" / "acp-agentd" / "drain"
+        default_place.parent.mkdir(parents=True)
+        default_place.write_text(_POOL_MARKER, encoding="utf-8")
+        stored, text = _term_one_running_turn(root, None)
+        assert stored.cause["category"] == "cancelled"
+        assert "1 mid-turn row(s) ended as stopped/cancelled: h-drain" in text
+        assert default_place.read_text(encoding="utf-8") == _POOL_MARKER
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

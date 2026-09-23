@@ -887,6 +887,17 @@ def stop_verdict(status_terminal: bool, in_flight: bool) -> StopKind:
     return "turn-cut"
 
 
+StopCauseCategory = Literal["host_drained", "cancelled"]
+
+
+def stop_cause_category(declared: bool) -> StopCauseCategory:
+    """host の停止(TERM)で切った行の cause の語の 1 点(card acp:kanban-issue:ki-b5e0d04de958 D1): 停止の拍に
+    排水の印(drain_marker.declared の答え)が在った = host_drained(計画された入れ替え — ACP 側の process が
+    agentd-stopped/host-drained へ写し、配達は運び手の失敗と別の予算で数える)/ 印なし = cancelled(今日の語のまま —
+    行の読み手に変化を起こさない)。語は policy.hy TERMINAL-CAUSE-RETRYABLE に在る。"""
+    return "host_drained" if declared else "cancelled"
+
+
 def parse_record(line: str) -> JSONObject | None:
     """stdout の 1 行 → JSON の object(壊れた行・object でない行は None — 発明しない)。"""
     stripped = line.strip()

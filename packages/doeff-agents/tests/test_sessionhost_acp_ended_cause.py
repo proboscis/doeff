@@ -167,6 +167,60 @@ def test_the_stop_of_agentd_carries_agentd_stopped_drain_deadline() -> None:
     assert _condition_types(_status_of(world, "j-1"))[-1] == "AgentdRestart"
 
 
+def test_a_host_drained_row_carries_agentd_stopped_host_drained_with_the_host_drained_condition() -> None:
+    """場面 8(card acp:kanban-issue:ki-b5e0d04de958 D2・受入 4): host の停止が排水の印の下で切った行(stopped +
+    host_drained)= agentd-stopped / host-drained・条件 HostDrained(理由 = 行の散文)。category は 5 語のまま —
+    reason が「計画された停止」を運び、ACP の配達は reason で別の予算に分ける。同じ program を一周させる。"""
+    world = World()
+    sid = _start(world)
+    prose = "sessionhost stopped (SIGTERM; drain declared: pool-prestop agentd-pool-1 u-1 2026-09-24T00:00:00Z pod termination) while the turn was running"
+    world.sessions.finish(sid, "stopped", cause={"category": "host_drained", "reason": prose})
+    world.tick(advance_ms=1_000)
+    assert _result_of(world, "j-1") == {"cause": {"category": "agentd-stopped", "reason": "host-drained"}}
+    status = _status_of(world, "j-1")
+    assert _condition_types(status)[-1] == "HostDrained"
+    conditions = status["conditions"]
+    assert isinstance(conditions, list)
+    last = conditions[-1]
+    assert isinstance(last, dict)
+    assert last["reason"] == f"session stopped: host_drained ({prose})"
+    assert "SessionFailed" not in _condition_types(status)
+
+
+def test_job_outcome_of_maps_only_the_host_drained_row_to_the_planned_stop() -> None:
+    """写しの表の 1 点(judgment.job-outcome-of・受入 4 の 3 例): host_drained → {agentd-stopped, host-drained} + HostDrained /
+    印の無い host の停止(cancelled)→ 今日どおり {failed, SessionFailed} / 器が消えた行(vanished)→ 今日どおり
+    {failed, SessionFailed}。印の無い停止を計画された停止へ移さない(card の受入 2)。"""
+    from doeff_agents.sessionhost.acp.effects import CAUSE_CATEGORY_HOST_DRAINED, SessionView
+
+    def outcome_of(status: str, category: str) -> JobOutcome:
+        view = SessionView(
+            session_id="s",
+            agent_type="claude",
+            status=status,
+            work_dir="/work",
+            lifecycle="run_to_completion",
+            conversation={"session_id": "s"},
+            effective_identity=None,
+            result_payload=None,
+            terminal_cause={"category": category, "reason": "why"},
+            turn_ended_at_ms=None,
+        )
+        outcome: object = run(judgment.job_outcome_of(view))
+        assert isinstance(outcome, JobOutcome)
+        return outcome
+
+    assert CAUSE_CATEGORY_HOST_DRAINED == "host_drained"
+    drained = outcome_of("stopped", "host_drained")
+    assert drained.ended is True
+    assert drained.cause == {"category": "agentd-stopped", "reason": "host-drained"}
+    assert [c["type"] for c in drained.conditions] == ["HostDrained"]
+    for status, category in (("stopped", "cancelled"), ("failed", "vanished")):
+        failed = outcome_of(status, category)
+        assert failed.cause == {"category": "failed", "reason": "SessionFailed"}, category
+        assert [c["type"] for c in failed.conditions] == ["SessionFailed"], category
+
+
 def test_the_terminal_write_refuses_a_missing_or_foreign_cause_and_composes_the_result() -> None:
     """判断の純関数: terminal-cause-of は閉語彙の外を断る・ended-status-of は cause 無し / 語彙外を断り、result に cause を
     載せる(dict の結末 → 欄 cause・None → cause だけ・dict でない結末 → {value, cause})・command-cause-of は条件の有無で

@@ -170,6 +170,7 @@ ConditionType = Literal[
     "AgentMemoryUnwritable",
     "SessionLost",
     "AgentdRestart",
+    "HostDrained",
     "InterruptEscalationUndeclared",
     "AttachmentIgnored",
     "WorkDirMissing",
@@ -203,6 +204,10 @@ CONDITION_SESSION_LOST: ConditionType = "SessionLost"
 #: 段 10 lane 10h 便 2: agentd の停止(TERM)の前に、走っている手番を黙って残さず閉じた — headless の子 process は host と共に
 #: 降りる(pipe の子)ので、turn-record を ended・job をこの条件で Ended にする(reason に node・理由・session・時刻)。
 CONDITION_AGENTD_RESTART: ConditionType = "AgentdRestart"
+#: card acp:kanban-issue:ki-b5e0d04de958 D2: host process の停止(TERM)が、停止の拍に排水の印の在った手番を切った
+#: (器の行の cause = CAUSE_CATEGORY_HOST_DRAINED)— 計画された入れ替え。job の cause = {agentd-stopped, host-drained}・
+#: reason = 行の散文。AgentdRestart(ACP 側の process の停止)とは別の事実なので別の語にする(ACP は型を運ぶだけ)。
+CONDITION_HOST_DRAINED: ConditionType = "HostDrained"
 #: 段 9p(agora-redesign #76): 手番の記録(turn-record)の行を作れないまま手番が終わった — 頭が答えない拍
 #: (入れ替え・到達不能)は期限まで再試行し、期限を越えた / 決定論的に断られた時だけ理由つきで立つ。
 CONDITION_RECORD_UNAVAILABLE: ConditionType = "RecordUnavailable"
@@ -547,6 +552,11 @@ CONDITION_SUMMARY_UNWRITABLE: ConditionType = "SummaryUnwritable"
 #: ここに写す(SESSION_TERMINAL_STATUSES と同じ扱い — 第 2 の定義点であることは
 #: ADR-DOE-AGENTS-012 R33 の報告に明記)。族の表そのものは markers.hy の 1 点のまま。
 CAUSE_CATEGORY_RATE_LIMITED: str = "rate_limited"
+#: card acp:kanban-issue:ki-b5e0d04de958 D2: 器の終端の cause の category のうち agentd の ACP の腕が読むもう 1 語 ——
+#: host の停止(TERM)で切った・停止の拍に排水の印が在った(書き手 = headless.stop-headless-row・語の 1 点 =
+#: headless_protocol.stop_cause_category・policy.hy TERMINAL-CAUSE-RETRYABLE に在る)。写しの扱いは上と同じで、
+#: 3 点の一致は ADR-DOE-AGENTS-012 の針が撃つ。judgment.job-outcome-of がこの語を {agentd-stopped, host-drained} へ写す。
+CAUSE_CATEGORY_HOST_DRAINED: str = "host_drained"
 #: charter が model を名乗らない手番の model の欄に置く語(走行器の既定で起こす事実の名 —
 #: judgment.launch-plan-of と turn-record の spec.model が同じ語を使う)。この語は「どの model が
 #: 走ったか分からない」の意味なので、provider の限度の条件では model の欄を落とす(発明しない)。
@@ -744,7 +754,9 @@ CANCEL_STAGE_FORCED: CancelStage = "forced"
 #: (D-349r3a-1: reason が語を運ぶ)。completed = 自然に終わった手番(value があれば同じ result に)/ cancelled = 取り消し(#367・
 #: stage graceful | forced・reason = cancel.reason)/ failed = 失敗の condition で閉じた(reason = その condition の型)/ interrupted =
 #: 取り下げ(phase Withdrawn — 書き手は作った側)で走っている手番を止めた(reason = withdrawn・Withdrawn の行に足す)/ agentd-stopped =
-#: agentd の停止の排水の期限で閉じた(reason = drain-deadline・条件 AgentdRestart と同じ拍)。
+#: 運び手の側の停止で閉じた(card acp:kanban-issue:ki-b5e0d04de958 で意味を広げた — 語は増やさない): reason = drain-deadline
+#: (役 both の停止の排水の期限・条件 AgentdRestart と同じ拍・印を問わない)| host-drained(host process の停止が排水の印の
+#: 下で手番を切った・条件 HostDrained — ACP の配達は reason で分けて別の予算で数える)。
 CauseCategory = Literal["completed", "cancelled", "failed", "interrupted", "agentd-stopped"]
 CAUSE_CATEGORY_COMPLETED: CauseCategory = "completed"
 CAUSE_CATEGORY_CANCELLED: CauseCategory = "cancelled"
@@ -760,6 +772,7 @@ CAUSE_REASON_KEY: str = "reason"
 RESULT_VALUE_KEY: str = "value"
 CAUSE_REASON_WITHDRAWN: str = "withdrawn"
 CAUSE_REASON_DRAIN_DEADLINE: str = "drain-deadline"
+CAUSE_REASON_HOST_DRAINED: str = "host-drained"
 #: 取り消しの合図を持つ job の腕(judgment.cancel-arm-for の閉語彙): acknowledge = まだ見届けていない(割り込み +
 #: status.cancel)/ force = 見届け済みで猶予を過ぎても手番が走っている(殺して Ended)/ none = 見届け済みで猶予の内
 #: (手番の終わりを待つ — 終われば finalize が result.cause {graceful} を書く)。

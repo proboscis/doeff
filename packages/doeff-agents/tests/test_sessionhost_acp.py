@@ -7011,6 +7011,95 @@ def test_the_drain_file_raises_and_lowers_the_same_draining_signal(tmp_path: Pat
     assert drain_port(None, None, logs.append)() is False
 
 
+def test_the_drain_port_and_the_host_read_the_same_answer_from_drain_marker(tmp_path: Path) -> None:
+    """card acp:kanban-issue:ki-b5e0d04de958(受入 5・設計の改訂 1a): 「何をもって印ありとするか」は drain_marker.declared の
+    1 点 — ACP 側の process の drain_port も host の TERM の handler も同じ答えを使う(file の在否を自分で読まない)。
+    中身が false の file も在れば印あり(在否の意味のまま)。drain_marker の答えを差し替えると drain_port が従う
+    (解釈を替える変更は drain_marker の 1 file で済む — 盲検 A の反例 exp_a_step3 の形)。"""
+    from doeff_agents.sessionhost import drain_marker
+    from doeff_agents.sessionhost.acp import runtime
+
+    marker = tmp_path / "drain"
+    for content in (None, "false\n", "pool-prestop agentd-pool-1 u-1 2026-09-24T00:00:00Z pod termination\n"):
+        if content is None:
+            if marker.exists():
+                marker.unlink()
+        else:
+            marker.write_text(content, encoding="utf-8")
+        answer = runtime.drain_port(None, str(marker), lambda _line: None)()
+        assert answer is drain_marker.declared(str(marker)), content
+    assert runtime.drain_port(None, None, lambda _line: None)() is drain_marker.declared(None) is False
+
+    flipped: list[str] = []
+
+    def by_content(path: str | None) -> bool:
+        flipped.append(str(path))
+        return path is not None and marker.read_text(encoding="utf-8").strip() == "true"
+
+    marker.write_text("false\n", encoding="utf-8")
+    original = drain_marker.declared
+    drain_marker.declared = by_content
+    try:
+        assert runtime.drain_port(None, str(marker), lambda _line: None)() is False
+        marker.write_text("true\n", encoding="utf-8")
+        assert runtime.drain_port(None, str(marker), lambda _line: None)() is True
+    finally:
+        drain_marker.declared = original
+    assert flipped == [str(marker), str(marker)]
+
+
+def test_entry_main_hands_the_drain_marker_path_to_the_host_role_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """card acp:kanban-issue:ki-b5e0d04de958(受入 3・設計の改訂 1c): 役 host の起動だけ、器の env に
+    DOEFF_SESSIONHOST_DRAIN_FILE = runtime.drain_file_path(env)(置き場の定義点は 1 つ・ACP 側の drain_port と同じ file)。
+    役 both(--role 無し)の起動は env の束も host の argv も今日と 1 byte 差なく同じ(その鍵が無い)。
+    host の argv に flag は足さない(CLI の語彙は凍結)。"""
+    import sys
+
+    from doeff_agents.sessionhost import host as host_module
+    from doeff_agents.sessionhost.acp import entry, runtime
+    from doeff_agents.sessionhost.acp.effects import JOIN_ROLE_HOST, RECORD_SPOOL_DIR_ENV, JoinPlan
+
+    assert entry.HOST_DRAIN_FILE_ENV == host_module.ENV_DRAIN_FILE
+    spool = "/var/lib/agentd/record-spool"
+    plan = JoinPlan(host_argv=("--socket", "/tmp/x.sock", "serve"), env=((ACP_VALVE_ENV, "on"), (RECORD_SPOOL_DIR_ENV, spool)))
+
+    class Run:
+        def close_for_stop(self, reason: str) -> int:
+            return 0
+
+    def drive(argv: list[str]) -> tuple[dict[str, str], tuple[str, ...]]:
+        seen: list[tuple[dict[str, str], tuple[str, ...]]] = []
+
+        def fake_apply(p: JoinPlan, _apply: object) -> None:
+            for key, value in p.env:
+                monkeypatch.setenv(key, value)
+
+        monkeypatch.setattr(runtime, "join_plan", lambda _a, _env: plan)
+        monkeypatch.setattr(runtime, "apply_join_env", fake_apply)
+        monkeypatch.setattr(runtime, "start_agentd_thread", lambda _argv, _env, *, role: Run())
+        monkeypatch.setattr(host_module, "register_shutdown_hook", lambda _hook: None)
+        monkeypatch.setattr(entry, "host_main", lambda: seen.append((dict(os.environ), tuple(sys.argv[1:]))))
+        monkeypatch.setattr(sys, "argv", ["doeff-sessionhost", *argv])
+        # entry は os.environ に直に書くので、元の不在を monkeypatch に覚えさせてから消す(teardown で不在へ戻る)。
+        monkeypatch.setenv(entry.HOST_DRAIN_FILE_ENV, "sentinel")
+        monkeypatch.delenv(entry.HOST_DRAIN_FILE_ENV)
+        monkeypatch.delenv(ACP_VALVE_ENV, raising=False)
+        monkeypatch.delenv(RECORD_SPOOL_DIR_ENV, raising=False)
+        entry.main()
+        assert len(seen) == 1
+        return seen[0]
+
+    config = ["--config", "/etc/agentd/agentd.toml"]
+    host_env, host_argv = drive(["join", "--role", JOIN_ROLE_HOST, *config])
+    assert host_env[entry.HOST_DRAIN_FILE_ENV] == runtime.drain_file_path(host_env) == "/var/lib/agentd/drain"
+    assert host_argv == plan.host_argv
+    both_env, both_argv = drive(["join", *config])
+    assert entry.HOST_DRAIN_FILE_ENV not in both_env
+    assert both_argv == plan.host_argv
+    # 役 host の env と役 both の env の差はその 1 鍵ちょうど(他の束は 1 byte も変えない)。
+    assert {k: v for k, v in host_env.items() if k != entry.HOST_DRAIN_FILE_ENV} == both_env
+
+
 def test_the_drain_file_lives_under_the_state_dir_next_to_the_spool() -> None:
     """置き場の定義点を増やさない: verify / summarize / lease の journal と同じ state_dir の下。"""
     from doeff_agents.sessionhost.acp.runtime import drain_file_path, record_spool_dir

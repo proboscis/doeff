@@ -34,7 +34,7 @@ from doeff_vm import PyVM, WithHandler
 
 from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.agentd_client import default_agentd_paths
-from doeff_agents.sessionhost import policy
+from doeff_agents.sessionhost import drain_marker, policy
 from doeff_agents.sessionhost.acp import host_slots, join
 from doeff_agents.sessionhost.acp.agentd import agentd_tick, close_jobs_for_stop, lease_heartbeat
 from doeff_agents.sessionhost.acp.effects import (
@@ -631,8 +631,8 @@ def drain_port(
             return True
         if drain_file is None:
             return False
-        # 在否 1 点(中身は理由の 1 行 — log に出すだけで判断には使わない)。
-        present = os.path.exists(drain_file)
+        # 印の解釈は drain_marker の 1 点(host process の停止の語と同じ答え — ki-b5e0d04de958 改訂 1a)。
+        present = drain_marker.declared(drain_file)
         if present != marked:
             marked = present
             if present:
@@ -650,13 +650,10 @@ def drain_port(
 
 
 def _drain_reason(path: str) -> str:
-    """排水の合図の file の中身(理由の 1 行)を log の尾に足す。読めない・空 = 何も足さない(判断には使わない)。"""
-    try:
-        with open(path, encoding="utf-8") as handle:
-            text = handle.read().strip()
-    except (OSError, UnicodeDecodeError):
-        return ""
-    return f": {text.splitlines()[0]}" if text else ""
+    """排水の合図の file の中身(理由の 1 行)を log の尾に足す。読めない・空 = 何も足さない(判断には使わない)。
+    中身の読みは drain_marker.reason_line の 1 点(ここは log の尾の形だけ)。"""
+    line = drain_marker.reason_line(path)
+    return f": {line}" if line else ""
 
 
 class StateHolder:

@@ -92,6 +92,7 @@
   Verdict
   recovery-verdict
   stop-verdict
+  stop-cause-category
   turn-verdict])
 (import doeff_agents.sessionhost.launch [
   INTERACTIVE-AGENT-TYPES
@@ -867,11 +868,14 @@
   outcomes)
 
 
-(defk stop-headless-row [row reason]
-  {:pre [(: row SessionRow) (: reason str)]
+(defk stop-headless-row [row reason declared]
+  {:pre [(: row SessionRow) (: reason str) (: declared bool)]
    :post [(: % SessionRow)]}
   "host の停止の前の 1 行(段 10 lane 10h 便 2): 判断(stop_verdict の 1 点)が turn-cut なら stopped +
-   cause cancelled(reason = host の停止と信号)・awaiting を下ろし・session_cancelled を刻む。keep はそのまま。"
+   cause(reason = host の停止と信号)・awaiting を下ろし・session_cancelled を刻む。keep はそのまま。
+   cause の語は stop_cause_category の 1 点(card acp:kanban-issue:ki-b5e0d04de958 D1): declared = 停止の拍に
+   排水の印が在った(host の TERM の handler が 1 度だけ読んだ答え)なら host_drained、無ければ cancelled。
+   ここは印を読まない(答えを値で受けるだけ)。"
   (setv verdict (stop-verdict (is-terminal-status row.status) row.awaiting-response))
   (when (!= verdict "turn-cut")
     (return row))
@@ -885,14 +889,14 @@
                          :awaiting-response False
                          :awaiting-response-since None
                          :last-validation-error detail))
-  (setv row (cause-if-absent row (make-cause "cancelled" detail now-str)))
+  (setv row (cause-if-absent row (make-cause (stop-cause-category declared) detail now-str)))
   (<- _ (session-store-upsert row))
   (<- _ (session-store-record-event row.session-id "session_cancelled" row))
   row)
 
 
-(defk stop-headless-rows [reason]
-  {:pre [(: reason str)]
+(defk stop-headless-rows [reason declared]
+  {:pre [(: reason str) (: declared bool)]
    :post [(: % dict)]}
   "host の停止(TERM)の腕(段 10 lane 10h 便 2・agora-redesign #84): 非終端の headless 行を 1 行ずつ
    stop-headless-row へ(手番の途中の行は stopped・idle の温かい行は触らない)、それから登記の全 process を
@@ -904,7 +908,7 @@
   (for [row (sorted rows :key (fn [r] r.session-id))]
     (when (! (is-headless-row row))
       (try
-        (<- stopped (stop-headless-row row reason))
+        (<- stopped (stop-headless-row row reason declared))
         (setv (get outcomes row.session-id) stopped.status)
         (except [e Exception]
           (setv (get outcomes row.session-id)
