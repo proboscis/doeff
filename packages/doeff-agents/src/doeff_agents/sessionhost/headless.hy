@@ -88,9 +88,12 @@
   RESULT-PROTOCOL-INSTRUCTION
   admit-launch
   claude-settings-declaration
+  instruction-source-declarations
   launch-spawn-env
   prepare-launch-workspace
   session-hooks-mode])
+;; 起動の拍に運ぶ欄の綴りの家は impls/claude_code.hy(据える側が持つ)。
+(import doeff_agents.sessionhost.impls.claude_code [CLAUDE-INSTRUCTION-EXCLUDES-KEY])
 (import doeff_agents.sessionhost.policy [
   carry-launch-flags
   cause-if-absent
@@ -195,10 +198,16 @@
   (<- session-hooks (session-hooks-mode))
   ;; card ki-7b52bb76aa6e(ADR-004 R13): 席の settings の宣言は tui と同じ 1 点(launch.hy)で読む — 起動の拍ごと。
   (<- claude-settings (claude-settings-declaration agent-type))
+  ;; card ki-62aa1f4e9c9c(D6): 二重読みを外す path も tui と同じ 1 点(launch.hy)で、起動の拍ごとに導く。
+  ;; ⚠ この arm は**続きの手番(resume)も通る** — 家に実体の CLAUDE.md が据わっている席は、
+  ;; 続きの process でも祖先の読みを外さないと同じ本文が 2 度載る(据えた拍だけ外す形では足りない)。
+  (<- instructions (instruction-source-declarations agent-type))
   (setv effective (dict params))
   (setv (get effective "session_hooks") session-hooks)
   (when (is-not claude-settings None)
     (setv (get effective "claude_settings") claude-settings))
+  (when (get instructions "excludes")
+    (setv (get effective CLAUDE-INSTRUCTION-EXCLUDES-KEY) (get instructions "excludes")))
   (when (and (is-not (.get params "expected_result") None)
              (in agent-type INTERACTIVE-AGENT-TYPES))
     (<- channel (wire-result-channel agent-type session-id socket-path))

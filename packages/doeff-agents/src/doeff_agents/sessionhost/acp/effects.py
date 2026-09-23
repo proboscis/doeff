@@ -26,10 +26,25 @@ wire の綴り(ACP の route・kind 名・phase の語)はこの file が唯一�
 
 # pyright: strict
 from dataclasses import dataclass, field
+from collections.abc import Mapping
 from typing import Literal, NamedTuple, TypeAlias, get_args
 
 from doeff import EffectBase
 from doeff_agents.sessionhost.attachment import TurnAttachment
+
+
+def _carried_instruction_source_envs() -> tuple[str, ...]:
+    """名簿(policy.CARRIED-INSTRUCTION-SOURCES)から env の名を導く。
+
+    ⚠ import を関数の中に置く理由: policy.hy は Hy の module で、この module は
+    sessionhost の wire の綴りの家として import の軽さを保つ(top-level で Hy の
+    import hook を強いると、この module を読むだけの経路〔schema の生成・型の読み〕が
+    重くなる)。呼ぶのは module の読み込み時の 1 度きり。
+    """
+    from doeff_agents.sessionhost import policy
+
+    return tuple(policy.instruction_source_envs())
+
 
 #: JSON の値(ACP の行の spec / status・中継の frame はこの形のまま運ぶ)。
 JSON: TypeAlias = "dict[str, JSON] | list[JSON] | str | int | float | bool | None"
@@ -1017,6 +1032,11 @@ SESSION_HOOKS_ENV = "DOEFF_AGENTD_SESSION_HOOKS"
 #: その拍から hook が届く。不在の名乗りは join の 1 行(seat-settings-file-absent)・起動ごとの 1 行・node の行の labels.seat-settings。
 #: inherit の委ね先(config-dir の持ち主)は doeff 自身なので、doeff が運ぶ。
 CLAUDE_SETTINGS_FILE_ENV = "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE"
+#: card acp:kanban-issue:ki-62aa1f4e9c9c(D11): 席の設定の家へ運ぶ「共通の指示」(共通の CLAUDE.md と skills)の env の名。
+#: ⚠ **綴りの正本は policy.CARRIED-INSTRUCTION-SOURCES の名簿**で、ここはその写し(この module は wire の綴りの家なので
+#: 名前で引けるようにだけ置く)。2 か所に書くと片方が黙って腐るので、同じであることは検が突き合わせる
+#: (test_join_derives_the_instruction_source_keys_from_the_one_roster)。名簿に 1 行足すとこの tuple も自動で伸びる。
+CARRIED_INSTRUCTION_SOURCE_ENVS: tuple[str, ...] = _carried_instruction_source_envs()
 OWNERSHIP_ENV = "DOEFF_AGENTD_OWNERSHIP"
 OWNERSHIP_PROOF_ENV = "DOEFF_AGENTD_OWNERSHIP_PROOF"
 #: host(oracle parse_args / host.hy parse-args)の argv の綴り(join が組む・valve が読む)。
@@ -1176,6 +1196,13 @@ class JoinSpec:
     #: **file が読めた日も読めない日も同じ**絶対 path をこの欄へ据え直す(不在は断らない — R13 の訂正・依頼書 §10-2)。
     #: None = 名指していない(env CLAUDE_SETTINGS_FILE_ENV に現れない)。
     claude_settings_file: str | None = None
+    #: 席の設定の家へ運ぶ共通の指示の名指し(card acp:kanban-issue:ki-62aa1f4e9c9c・任意)。
+    #: **名簿の鍵 → 宣言の綴り**の表(policy.CARRIED-INSTRUCTION-SOURCES の key。名乗らない種は鍵ごと不在)。
+    #: 欄を種ごとに分けない理由が D11 そのもの — 1 種を足すたびに型・門・env・起動・据え付けの 5 枚を
+    #: 触らせる形にすると、4 枚目が必ず忘れられる(d8472e1a が同じ壊れ方を 3 度登記している)。
+    #: join-spec-of は宣言の綴りを運び、composition root(runtime.join_plan)が `~` を agentd の HOME で
+    #: 展開した絶対 path へ据え直す。**正本が無い日は断らない**(名乗って参加する — D5)。
+    instruction_sources: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -1427,6 +1454,13 @@ class AgentdSettings:
     #: 参加の拍の事実 = spec(名乗り)であって観測ではない: pod の checkout は pod の生涯で動かず、Mac は
     #: agentd-follow が据え直す拍に参加し直す。起動の拍の実勢は席ごとの log の 1 行が持つ。
     claude_settings_file_present: bool = False
+    #: 席の設定の家へ運ぶ共通の指示(card acp:kanban-issue:ki-62aa1f4e9c9c)— join が門を通して据えた
+    #: 絶対 path の写し(名簿の鍵 → path)。席の起動はこの欄ではなく env を use-site で読む
+    #: (launch / headless の instruction-source-declarations)— ここは node の行の名乗りのためだけに持つ。
+    instruction_sources: Mapping[str, str] = field(default_factory=dict)
+    #: その正本が**参加の拍に**在ったか(名簿の鍵 → bool・composition root の 1 読み)。
+    #: node の行の labels(名簿の label 欄)へ present / missing で名乗る。名乗らない種は鍵ごと不在。
+    instruction_sources_present: Mapping[str, bool] = field(default_factory=dict)
     #: host の backend(wire の閉語彙 tmux | herdr | headless の写し — agentd が読む語は
     #: BACKEND_HEADLESS だけ)。composition root(runtime.settings_from_env)が host の argv / env
     #: (valve.backend_of)から導く 1 点で、stream_capability も同じ源から導く。headless の器は

@@ -34,6 +34,7 @@
   fs-file-exists
   fs-file-mtime
   fs-link-artifact
+  fs-ensure-symlink
   fs-list-dir
   fs-read-text
   fs-write-text-atomic
@@ -43,6 +44,8 @@
   tmux-send-keys])
 (import doeff_agents.sessionhost.policy [
   AUTOCOMPACT-PARAM-KEY
+  INSTRUCTION-SOURCE-KIND-FILE
+  INSTRUCTION-SOURCE-KIND-DIR
   BILLING-METERED
   BILLING-SUBSCRIPTION
   CLAUDE-SETTINGS-API-KEY-HELPER
@@ -161,11 +164,25 @@
 (setv CLAUDE-AUTO-MEMORY-DIR-SETTING "autoMemoryDirectory")
 ;; 既定の hook の無効化(49b3549b 傷跡)の綴り。
 (setv CLAUDE-DISABLE-ALL-HOOKS-SETTING "disableAllHooks")
+;; 祖先の読みを外す設定の綴り(card acp:kanban-issue:ki-62aa1f4e9c9c D6)。**この repo で 1 か所**
+;; (`autoMemoryDirectory` と同じ流儀 — .semgrep.yaml の
+;; doeff-agents-claude-md-excludes-spelling-has-one-home が第 2 の綴りを禁じる)。
+;; 本体の契約(2026-09-21 実測・据わっている 2.1.278 の bundle の逐語):
+;;   claudeMdExcludes: 'Glob patterns or absolute paths of CLAUDE.md files to exclude from
+;;     loading. Patterns are matched against absolute file paths using picomatch.
+;;     Only applies to User, Project, and Local memory types'
+;; 出所の優先順 jo() が flagSettings を必ず足すので、`--settings` の inline JSON で効く。
+;; 外す**値**は席の $HOME から導いた 1 本(launch.instruction-source-declarations)で、ここは綴りだけ。
+(setv CLAUDE-SEAT-HOME-EXCLUDES-SETTING "claudeMdExcludes")
+;; 起動の拍に運ばれてくる欄(綴りの正本は launch.instruction-source-declarations の戻り値)。
+(setv CLAUDE-INSTRUCTION-SOURCES-KEY "instruction_sources")
+(setv CLAUDE-INSTRUCTION-EXCLUDES-KEY "instruction_excludes")
 ;; doeff が `--settings` に自分で置く鍵の集合(card acp:kanban-issue:ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13)。
 ;; 機体の参加の宣言が名指した席の settings file(dotfiles claude-hooks/seat-settings.json)がこの鍵を持つと、join の
 ;; 参加の門 (c) が断り(acp/join.hy claude-settings-declaration-of)、build-claude-argv の合流も fail-loud で断る —
 ;; 定義点はこの 1 つ(綴りの家はこの file — .semgrep.yaml doeff-agents の autoMemoryDirectory の規則)。
-(setv CLAUDE-SETTINGS-OWNED-KEYS #{CLAUDE-DISABLE-ALL-HOOKS-SETTING CLAUDE-AUTO-MEMORY-DIR-SETTING})
+(setv CLAUDE-SETTINGS-OWNED-KEYS #{CLAUDE-DISABLE-ALL-HOOKS-SETTING CLAUDE-AUTO-MEMORY-DIR-SETTING
+                                   CLAUDE-SEAT-HOME-EXCLUDES-SETTING})
 ;; charter が運ぶ記憶の冊の欄(card acp:kanban-issue:ki-9fc7d4bca4dc)。綴りの正本は
 ;; sessionhost/acp/effects.py の CHARTER_MEMORY_FILES_KEY で、ここはその写し(検が突き合わせる)。
 ;; この層は行を読まない — 運ばれてきた {name, text} を置き場へ書くだけ。
@@ -173,6 +190,7 @@
 ;: 索引の file 名(計器が冊と索引を分けて数えるための綴り)。綴りの家は
 ;: sessionhost/acp/effects.py の MEMORY_INDEX_FILE で、ここはその写し(検が突き合わせる)。
 (setv CLAUDE-MEMORY-INDEX-FILE "MEMORY.md")
+
 
 
 (defk build-claude-argv [params]
@@ -213,6 +231,11 @@
   (setv memory-dir (.get params "memory_dir"))
   (when (and (isinstance memory-dir str) (.strip memory-dir))
     (setv (get settings CLAUDE-AUTO-MEMORY-DIR-SETTING) memory-dir))
+  ;; card ki-62aa1f4e9c9c(D6): 実体 file の共通 CLAUDE.md を家へ据えた拍だけ、祖先の読みを外す。
+  ;; 値は起動の拍に導かれた絶対 path の列(席の $HOME 由来)。欄が無い手番は旗の中身が今日と同じ。
+  (setv excludes (.get params CLAUDE-INSTRUCTION-EXCLUDES-KEY))
+  (when excludes
+    (setv (get settings CLAUDE-SEAT-HOME-EXCLUDES-SETTING) (list excludes)))
   ;; card acp:kanban-issue:ki-7b52bb76aa6e(ADR-DOE-AGENTS-004 R13): 機体の参加の宣言が名指した席の settings
   ;; (launch / headless が起動の拍ごとに読んで params へ)を**同じ 1 つの** `--settings` に合流する。doeff が置く鍵との
   ;; 衝突は fail-loud — 黙って後勝ちにすると「hook を配ったつもりで disableAllHooks が残る」か「記憶の置き場が消える」の
@@ -451,6 +474,34 @@
             (+ f"session.launch: agent-memory-written dir={memory-dir} "
                f"books={(len books)} index={(if (in CLAUDE-MEMORY-INDEX-FILE written) 1 0)} "
                f"declared={(len declared)}"))))
+  ;; 席の設定の家へ運ぶ共通の指示(card acp:kanban-issue:ki-62aa1f4e9c9c・D1: 据えるのは**起動の拍ごと**で
+  ;; 鋳造の拍ではない)。読みは起動の拍の 1 点(launch.instruction-source-declarations)で、ここは運ばれてきた
+  ;; 1 種ずつを家に在らせるだけ — path を組まず、正本の在り処も知らない。
+  ;; ⚠ 据え方は名簿の kind が決める(policy.CARRIED-INSTRUCTION-SOURCES の頭注に本体の逐語):
+  ;;   file … **実体**で書く。symlink / hard link にすると、本体は user 層でそれを黙って捨てる
+  ;;          (深さ 0 の lstat の枝。入口が local-agent の席で発火 — 入口の綴りは doeff が決めていない)
+  ;;   dir  … whole-dir symlink。107〜117 本を毎起動で写さない。先が動いた日は張り替わる(D8)
+  ;; 走っている席には影響しない(読みは process の起動時の 1 回 — 実測 M7)。既に在る家は次に使われた拍で直る。
+  (for [source (list (or (.get params CLAUDE-INSTRUCTION-SOURCES-KEY) []))]
+    (setv home-entry f"{config-dir}/{(get source "home-name")}")
+    (cond
+      (= (get source "kind") INSTRUCTION-SOURCE-KIND-FILE)
+        (do
+          (<- _ (fs-make-dirs config-dir))
+          (<- _ (fs-write-text-atomic home-entry (get source "text") ".agentd-tmp")))
+      (= (get source "kind") INSTRUCTION-SOURCE-KIND-DIR)
+        (do
+          (<- verdict (fs-ensure-symlink home-entry (get source "source")))
+          ;; 他人の実体が居座っている家は触らない — 黙って消さず、名乗って起こす。
+          (when (= verdict "occupied-by-real-entity")
+            (<- _ (log-line
+                    (+ f"session.launch: seat-instruction-home-occupied {(get source "key")} "
+                       f"{home-entry} に symlink でない実体が在るので張らない"
+                       "(他人が置いた物を doeff が消さない・card acp:kanban-issue:ki-62aa1f4e9c9c)")))))
+      True
+        (raise (RuntimeError
+                 (+ f"session.launch: 名簿の kind が閉語彙の外: {(get source "kind") !r}"
+                    "(policy.CARRIED-INSTRUCTION-SOURCES)")))))
   (when (not (.get params "skip_trust_setup" False))
     (<- _ (preseed-claude-trust config-dir (get params "work_dir"))))
   (setv identity {"CLAUDE_CONFIG_DIR" config-dir

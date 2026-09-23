@@ -57,6 +57,8 @@
 ;; 段 12 lane 12j(agora-redesign #320): 名前が指す「生きている行」を解く 3 値の判断は ACP の client library の写し
 ;; (live_row.hy・contracts.lock の kind = code)の 1 点 — ここに名前の索引を持たない。
 (import doeff_agents.sessionhost.acp.live_row [resolve-live-row])
+;; 運ぶ物の名簿(card ki-62aa1f4e9c9c D11): 名乗る label も名簿から導く。
+(import doeff_agents.sessionhost.policy [CARRIED-INSTRUCTION-SOURCES])
 (import doeff_agents.sessionhost.acp.effects [
   CHARTER-KIND-KEY
   CHARTER-KIND-TURN
@@ -3263,6 +3265,18 @@
   (when (is-not settings.claude-settings-file None)
     (setv (get next NODE-LABEL-SEAT-SETTINGS)
           (if settings.claude-settings-file-present SEAT-SETTINGS-PRESENT SEAT-SETTINGS-MISSING)))
+  ;; 席の設定の家へ運ぶ共通の指示の名乗り(card acp:kanban-issue:ki-62aa1f4e9c9c・D5): 名簿を**回る**
+  ;; (種を数え直さない)。seat-settings と同じ意味論 — 名指した機体だけが present / missing を書き、
+  ;; missing = 宣言したのに参加の拍に正本が無かった(それでも**参加する**: 断ると宿の degrade が
+  ;; pool 全体の capacity 0 に化ける)。名指しを消した機体の行からは鍵ごと落とす(戻す手が行にも効く)。
+  (for [row CARRIED-INSTRUCTION-SOURCES]
+    (setv label (get row "label"))
+    (.pop next label None)
+    (when (in (get row "key") settings.instruction-sources)
+      (setv (get next label)
+            (if (.get settings.instruction-sources-present (get row "key") False)
+                SEAT-SETTINGS-PRESENT
+                SEAT-SETTINGS-MISSING))))
   next)
 
 

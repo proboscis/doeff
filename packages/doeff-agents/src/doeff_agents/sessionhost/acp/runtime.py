@@ -158,6 +158,8 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
     # 名乗る(不在は degrade の正規の道で、参加を止めると pool 全体が capacity 0 に落ちる)。
     seat_settings_file = (env.get(CLAUDE_SETTINGS_FILE_ENV) or "").strip() or None
     seat_settings_present = seat_settings_file is not None and os.path.isfile(seat_settings_file)
+    # card acp:kanban-issue:ki-62aa1f4e9c9c: 共通の指示の名指しと、参加の拍の在否(名簿を回る — 種を数え直さない)。
+    instruction_sources, instruction_sources_present = _instruction_sources_of_env(env)
     return AgentdSettings(
         node_name=node_name,
         node_capacity=node_capacity,
@@ -185,6 +187,9 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         # card acp:kanban-issue:ki-7b52bb76aa6e: None = 名指していない(node の行に labels.seat-settings を書かない)
         claude_settings_file=seat_settings_file,
         claude_settings_file_present=seat_settings_present,
+        # card acp:kanban-issue:ki-62aa1f4e9c9c: 空 = 名指していない(node の行に名簿の label を書かない)
+        instruction_sources=instruction_sources,
+        instruction_sources_present=instruction_sources_present,
         seat_env=seat_env,
         # 段 10 lane 10y: charter の work_dir の `~` を展開する node の家(env HOME ちょうど・無ければ process の家)
         home=(env.get("HOME") or os.path.expanduser("~")).strip(),
@@ -884,6 +889,66 @@ def _admitted_claude_settings_file(spec: JoinSpec, home: str) -> str | None:
     return path
 
 
+def _instruction_sources_of_env(env: Mapping[str, str]) -> tuple[dict[str, str], dict[str, bool]]:
+    """env(join が据えた絶対 path)→ 名簿の鍵 → path と、参加の拍の在否。名簿を回る。
+
+    join の拍と同じ 1 読み(`os.path.isfile` / `isdir`)で在否を測る — 名乗りの座は node の行で、
+    起動の拍の実勢は席ごとの log の 1 行が持つ(pod の checkout は pod の生涯で動かず、Mac は
+    agentd-follow が据え直す拍に参加し直す)。
+    """
+    from doeff_agents.sessionhost import policy
+
+    sources: dict[str, str] = {}
+    present: dict[str, bool] = {}
+    for row in policy.CARRIED_INSTRUCTION_SOURCES:
+        path = (env.get(row["env"]) or "").strip()
+        if not path:
+            continue
+        sources[row["key"]] = path
+        present[row["key"]] = _instruction_source_present(path, row["kind"])
+    return sources, present
+
+
+def _admitted_instruction_sources(spec: JoinSpec, home: str) -> dict[str, str]:
+    """共通の指示の正本の参加の門(card acp:kanban-issue:ki-62aa1f4e9c9c)— composition root の側。
+
+    宣言の綴り(`~` は agentd の HOME で展開)→ 絶対 path(env に載せる値)。名簿を**回る**。
+    ⚠ **正本の在否はここでは断らない**(D5): 形の門は join.instruction-source-of(純粋)が既に通してあり、
+    残るのは「その path が今日の checkout に在るか」だけ。宿の入口は degrade を持つので、無い日も参加する
+    (断ると pool 全体が capacity 0 に落ちる)。不在は名乗る — この 1 行と、node の行の labels と、
+    席の起動ごとの 1 行。**不在でも path は返す**(env に載る): 起動の拍ごとに読み直すので、宿の checkout が
+    後から追いついた日はその拍から届く(daemon の memory に写しを持たない)。
+    """
+    from doeff_agents.sessionhost import policy
+
+    out: dict[str, str] = {}
+    for row in policy.CARRIED_INSTRUCTION_SOURCES:
+        declared = spec.instruction_sources.get(row["key"])
+        if declared is None:
+            continue
+        path = home.rstrip("/") + declared[1:] if declared == "~" or declared.startswith("~/") else declared
+        out[row["key"]] = path
+        if not _instruction_source_present(path, row["kind"]):
+            sys.stderr.write(
+                f"join: seat-instruction-source-absent [{join.TABLE_AGENTD}].{row['key']} が名指す "
+                f"{'dir' if row['kind'] == 'dir' else 'file'} {path} が無い — "
+                "共通の指示なしで参加する(宿の checkout が追いつくまで・名指しを消せば名乗りも消える)\n"
+            )
+            sys.stderr.flush()
+    return out
+
+
+def _instruction_source_present(path: str, kind: str) -> bool:
+    """正本が参加の拍に在ったか。kind の閉語彙で分ける(dir を file として測らない)。"""
+    from doeff_agents.sessionhost import policy
+
+    if kind == policy.INSTRUCTION_SOURCE_KIND_DIR:
+        return os.path.isdir(path)
+    if kind == policy.INSTRUCTION_SOURCE_KIND_FILE:
+        return os.path.isfile(path)
+    raise ValueError(f"名簿の kind が閉語彙の外: {kind!r}")
+
+
 def join_plan(argv: Sequence[str], env: Mapping[str, str]) -> JoinPlan:
     """join の argv(subcommand の後の列)→ JoinPlan。宣言 file の読みはここ(I/O)、判断は join.hy。"""
     items = JoinArgv(items=tuple(argv))
@@ -904,6 +969,8 @@ def join_plan(argv: Sequence[str], env: Mapping[str, str]) -> JoinPlan:
     spec = replace(spec, work_dirs=_held_work_dirs(home), work_dir_roots=_held_work_dir_roots(home))
     # card acp:kanban-issue:ki-7b52bb76aa6e: 席の settings file は読めて門を通った時だけ(絶対 path で)env に載る(読みはここ・判断は join)。
     spec = replace(spec, claude_settings_file=_admitted_claude_settings_file(spec, home))
+    # card acp:kanban-issue:ki-62aa1f4e9c9c: 共通の指示の正本も同じ拍で絶対 path へ据え直す(在否は断らない・名乗る)。
+    spec = replace(spec, instruction_sources=_admitted_instruction_sources(spec, home))
     plan: object = PyVM().run(join.join_plan_of(spec))
     if not isinstance(plan, JoinPlan):
         raise TypeError(f"join_plan_of returned {type(plan).__name__}")
