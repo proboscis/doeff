@@ -1929,8 +1929,10 @@ def test_host_headless_startup_recovery_ends_the_dead_mid_turn_row_and_keeps_the
 ) -> None:
     """段 10 lane 10h(agora-redesign #84・実弾 2026-09-14 14:35): host の再起動(registry が消え、
     launchd の kickstart が子 process を道連れにする)の後、手番の途中のまま残った行は起動時の復帰が
-    backend を観測して exited + vanished に倒す(session_exited・reason に pid)。idle の温かい行は
-    触らない(次の send が --resume で同じ session を起こし直す)。wire の backend_alive は観測から。"""
+    backend を観測して exited + vanished に倒す(session_exited・reason に pid)。2026-09-22 の改訂
+    (R25・法 a-dead-backend-is-not-a-live-session)から、器の死んだ idle の温かい行も同じく倒す
+    (手番の途中かどうかは reason の文だけを分ける)— その会話の次の手番は終端 ∧ 同じ家の resume の腕で
+    --resume される。wire の backend_alive は観測から。"""
     # h-busy: 手番の途中(替え玉は result の前で 30 秒待つ)/ h-idle: 手番が終わった行(段 12 lane 12e・#517:
     # 手番の終わり = process の終わり — process は降りていて行だけが温かい)
     headless_host.stub_env["DOEFF_HEADLESS_STUB_DELAY"] = "30"
@@ -1955,8 +1957,10 @@ def test_host_headless_startup_recovery_ends_the_dead_mid_turn_row_and_keeps_the
     before = headless_host.snap("h-busy")
     assert _text(before, "status") == "running"
     assert before["backend_alive"] is False
+    # 2026-09-22 の改訂(R25・法 a-dead-backend-is-not-a-live-session): 器の死んだ行は手番の途中かどうかに依らず倒す —
+    # 手番の途中かどうかは reason の文だけを分ける。
     outcomes = host.run_hosted(headless_host.config, headless_host.actor, headless_hy.recover_headless_rows())
-    assert outcomes == {"h-busy": "exited", "h-idle": "running"}
+    assert outcomes == {"h-busy": "exited", "h-idle": "exited"}
     after = headless_host.snap("h-busy")
     assert _text(after, "status") == "exited"
     assert after["awaiting_response"] is False
@@ -1965,23 +1969,36 @@ def test_host_headless_startup_recovery_ends_the_dead_mid_turn_row_and_keeps_the
     assert cause["retryable"] is True
     assert f"pid {busy_pid}" in _text(cause, "reason")
     assert "backend process dead" in _text(cause, "reason")
+    assert "while the turn was in flight" in _text(cause, "reason")
     assert after["backend_alive"] is False
-    kept = headless_host.snap("h-idle")
-    assert _text(kept, "status") == "running"
-    assert _has(kept, "turn_ended_at")
-    assert kept["backend_alive"] is False  # process は降りている(観測)— 行は温かいまま
-    # 復帰は冪等(2 度目は何も倒さない)
+    folded = headless_host.snap("h-idle")
+    assert _text(folded, "status") == "exited"
+    assert _has(folded, "turn_ended_at")
+    assert folded["backend_alive"] is False
+    idle_cause = _obj(folded, "terminal_cause")
+    assert idle_cause["category"] == "vanished"
+    assert "and the row was idle between turns" in _text(idle_cause, "reason")
+    # 復帰は冪等(2 度目は何も倒さない — 両方とも終端)
     again = host.run_hosted(headless_host.config, headless_host.actor, headless_hy.recover_headless_rows())
-    assert again == {"h-idle": "running"}
-    # idle の温かい行は次の手番を --resume で受ける(復帰が壊していない)
-    headless_host.ok("session.send", {"session_id": "h-idle", "message": "after restart", "awaiting": True})
-    resumed = headless_host.snap("h-idle")
+    assert again == {}
+    # 倒した idle の行の会話は次の手番を --resume で受ける(終端 ∧ 同じ家 → resume の腕・cache は保つ)。
+    # resume の admission が要る transcript(replaced CLI が書く projects/<mangled cwd>/<conv>.jsonl)を置く。
+    conversation = _text(_obj(folded, "conversation"), "session_id")
+    canonical = os.path.realpath(_text(folded, "work_dir"))
+    mangled = "".join(ch if ch.isalnum() else "-" for ch in canonical)
+    transcript = headless_host.root / "claude-home" / "projects" / mangled / f"{conversation}.jsonl"
+    transcript.parent.mkdir(parents=True, exist_ok=True)
+    if not transcript.exists():
+        transcript.write_text("{}\n", encoding="utf-8")
+    resumed = headless_host.ok(
+        "session.resume", {"session_id": "h-idle", "new_session_id": "h-idle-r", "prompt": "after restart"}
+    )
+    assert isinstance(resumed, dict)
     assert "--resume" in _texts(_obj(resumed, "backend_ref"), "argv")
-    assert resumed["backend_alive"] is True
-    ended = _wait_turn_end(headless_host, "h-idle")
+    ended = _wait_turn_end(headless_host, "h-idle-r")
     assert _text(ended, "status") == "running"
-    headless_host.ok("session.cleanup", {"session_id": "h-idle"})
-    # 終端の行に対しても 2 度目の復帰は keep(手番の途中でない)
+    headless_host.ok("session.cleanup", {"session_id": "h-idle-r"})
+    # 終端の行に対しても 3 度目の復帰は keep
     assert host.run_hosted(headless_host.config, headless_host.actor, headless_hy.recover_headless_rows()) == {}
 
 
@@ -2033,7 +2050,7 @@ def test_host_headless_stop_cuts_the_mid_turn_row_and_terminates_every_process(
 ) -> None:
     """段 10 lane 10h 便 2(agora-redesign #84): host の停止の腕は手番の途中の行を stopped + cancelled(理由 =
     host の停止)にして黙って残さず、idle の温かい行は触らず、登記の全 process を並列の猶予で降ろす。
-    次の起動の復帰は stopped の行を keep(vanished に読み替えない)・idle の行を keep。"""
+    次の起動の復帰は stopped の行を keep(vanished に読み替えない)・器の降りた idle の行は倒す(R25 の改訂)。"""
     headless_host.stub_env["DOEFF_HEADLESS_STUB_DELAY"] = "30"
     headless_host.ok("session.launch", _launch_params(headless_host.root, "h-busy", "claude"))
     headless_host.stub_env["DOEFF_HEADLESS_STUB_DELAY"] = "0"
@@ -2058,12 +2075,16 @@ def test_host_headless_stop_cuts_the_mid_turn_row_and_terminates_every_process(
     assert _text(kept, "status") == "running"
     assert _has(kept, "turn_ended_at")
     assert host.HEADLESS_REGISTRY.names() == ()
-    # 次の起動の復帰: stopped の行は終端 = keep(vanished に読み替えない)・idle の行は keep
+    # 次の起動の復帰: stopped の行は終端 = keep(vanished に読み替えない)。停止の腕が触らなかった idle の行は、
+    # 器が降りているので復帰が倒す(2026-09-22 の改訂 R25・法 a-dead-backend-is-not-a-live-session — 停止の腕と
+    # 復帰の腕は別の判断で、idle の行を倒すのは観測を持つ復帰の側ちょうど)。
     monkeypatch.setattr(host, "HEADLESS_REGISTRY", HeadlessRegistry())
     recovered = host.run_hosted(headless_host.config, headless_host.actor, headless_hy.recover_headless_rows())
-    assert recovered == {"h-idle": "running"}
+    assert recovered == {"h-idle": "exited"}
     assert _text(headless_host.snap("h-busy"), "status") == "stopped"
-    headless_host.ok("session.cleanup", {"session_id": "h-idle"})
+    idle_after = headless_host.snap("h-idle")
+    assert _text(idle_after, "status") == "exited"
+    assert _obj(idle_after, "terminal_cause")["category"] == "vanished"
 
 
 def _pid_alive(pid: int) -> bool:
