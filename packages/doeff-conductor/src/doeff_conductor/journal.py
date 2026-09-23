@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from doeff_agents.result_validation import validate_result_payload
 
@@ -210,7 +210,7 @@ class ProgressJournalEntry:
         return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
     @classmethod
-    def from_json_line(cls, line: str) -> "ProgressJournalEntry" | None:
+    def from_json_line(cls, line: str) -> Self | None:
         """Tolerant parse: a malformed observational line is skipped, never fatal."""
         try:
             payload = json.loads(line)

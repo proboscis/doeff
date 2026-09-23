@@ -146,13 +146,21 @@ class WorkspaceHandler:
         repo_paths: "Mapping[str, Path] | None" = None,
         workspace_base: Path | None = None,
     ) -> None:
-        default_repo_path: Path = repo_path or get_repo_root()
-        resolved_repo_paths: dict[str, Path] = {"default": default_repo_path}
+        resolved_repo_paths: dict[str, Path] = {}
+        if repo_path is not None:
+            resolved_repo_paths["default"] = repo_path
         if repo_paths is not None:
             for repo_name, candidate_path in repo_paths.items():
                 resolved_repo_paths[repo_name] = candidate_path
 
         self.repo_paths = resolved_repo_paths
+        # Without an explicit path the "default" repo is the git repository
+        # enclosing the construction-time cwd. The cwd is captured now, but the
+        # git lookup is deferred to the first effect that targets "default":
+        # a handler whose workflow never touches the default repo (explicit
+        # ``repo_paths`` only, or no workspace effects at all) must not require
+        # the process to run inside a git checkout.
+        self._default_repo_anchor: Path = Path.cwd()
         self.workspace_base = workspace_base or _get_workspace_base_dir()
         self.workspace_base.mkdir(parents=True, exist_ok=True)
         self.logs_dir = self.workspace_base / "logs"
@@ -164,7 +172,9 @@ class WorkspaceHandler:
     def repo_path(self, repo: str) -> Path:
         """Resolve a workflow repo name to a local repository path."""
         if repo not in self.repo_paths:
-            raise ValueError(f"Workspace repo is not configured: {repo}")
+            if repo != "default":
+                raise ValueError(f"Workspace repo is not configured: {repo}")
+            self.repo_paths["default"] = get_repo_root(self._default_repo_anchor)
         return self.repo_paths[repo]
 
     def resolve_path(self, workspace: Workspace) -> Path:
