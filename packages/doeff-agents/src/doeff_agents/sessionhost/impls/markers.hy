@@ -22,6 +22,7 @@
 (require doeff-hy.macros [deff defk])
 
 (import re)
+(import dataclasses [dataclass])
 (import datetime [datetime timedelta timezone])
 (import zoneinfo [ZoneInfo ZoneInfoNotFoundError])
 
@@ -165,16 +166,38 @@
 ;; (group の上限 $0 ×6・session ×1・weekly ×1)だったのに、走っていた model の名で記録され、予算の係が
 ;; model 別の枯れと書いて、配置が「Opus 5.5 だけ使えない・Fable は使える」と誤読した。
 ;; 分類は文の物理なのでここ(ADR-DOE-AGENTS-008 R1)に置き、判断の側(acp/judgment.hy)は答えを使うだけ。
+;;
+;; card acp:kanban-issue:ki-5d4849d22a4e(2026-09-24): 組織の側の上限の族「Your group's usage limit is set to
+;; $0」は**どの窓が枯れたかも model も名乗らない** —— 口座全体と読むと、Fable の週の窓だけが枯れた拍に同じ
+;; profile の Opus まで最長 5 時間止まる(設計の記録 ACP docs/design-checks/ki-5d4849d22a4e/design.md §0-2)。
+;; 文だけでは決まらないので、器は範囲 unknown を名乗って**決めない**(範囲と理由の推定は窓の写しを持つ
+;; 予算の係の 1 点 — 契約 ACP scheduling.json providerRefusal.unknownScope)。記録は範囲(scope)と
+;; 理由(reason)の 2 軸で、表の 1 行はその対を返す(api-limit-reading-of)。
 
 ;; 文が名乗り得る model の族の語(小文字)。所有格族「you've hit/reached your … limit」の間の語に
 ;; この語が在れば model の枯れ。無ければ(session / weekly / usage / monthly spend / individual spend …)
-;; 口座全体。所有格族の外の文(group の上限 $0・out of usage credits・rate limit exceeded …)も口座全体。
+;; 口座全体。所有格族の外の文は、組織の側の上限の族(group の上限 $0)が unknown・それ以外
+;; (out of usage credits・rate limit exceeded …)が口座全体。
 (setv API-LIMIT-MODEL-FAMILY-WORDS #("fable" "opus" "sonnet" "haiku"))
 
 ;; 範囲の語(TerminalCause.limit-scope の閉語彙 — 器の cause の欄。制御面は ACP の effects.py の
-;; PROVIDER_LIMIT_SCOPE_* で同じ綴りを条件へ写す)。
+;; PROVIDER_LIMIT_SCOPE_* で同じ綴りを条件へ写す)。unknown = 文が範囲を名乗らない(器は決めない)。
 (setv API-LIMIT-SCOPE-ACCOUNT "account")
 (setv API-LIMIT-SCOPE-MODEL "model")
+(setv API-LIMIT-SCOPE-UNKNOWN "unknown")
+
+;; 理由の語(TerminalCause.limit-reason の閉語彙 — 範囲とは別の軸。制御面は ACP の effects.py の
+;; PROVIDER_LIMIT_REASONS に在る語だけを条件の reason へ写す)。今日は 1 語: 利用の上限で断られた。
+;; provider が権限の欠如(例「Your plan does not include this model」)を名乗り始めたら、表に 1 行と語 1 つ
+;; (制御面の閉語彙と契約の enum にも 1 語)。
+(setv API-LIMIT-REASON-RATE-LIMITED "rate-limited")
+
+
+(defclass [(dataclass :frozen True :kw-only True)] ApiLimitReading []
+  "限度の断りの文が名乗る 2 軸(api-limit-reading-of の答え)。scope = 範囲(API-LIMIT-SCOPE-*)・
+   reason = 理由(API-LIMIT-REASON-*)。どちらも文の事実で、器の判断ではない。"
+  #^ str scope
+  #^ str reason)
 
 (setv API-LIMIT-POSSESSIVE-WORDS-RE
   (re.compile
@@ -197,14 +220,35 @@
 
 (defk api-limit-names-a-model [detail]
   {:pre [(: detail str)] :post [(: % bool)]}
-  "限度の断りの文が model の族を名乗るか(True = その model だけの枯れ・False = 口座全体の枯れ)。
-   所有格族の間の語に API-LIMIT-MODEL-FAMILY-WORDS の語が在る時だけ True。それ以外の文
-   (session / weekly / spend / group の上限 $0 / credit 切れ / 文の無い断り)は全部 False。"
+  "限度の断りの文が model の族を名乗るか(True = その model だけの枯れ・False = model を名乗らない —
+   範囲は api-limit-reading-of の表が決める)。所有格族の間の語に API-LIMIT-MODEL-FAMILY-WORDS の語が
+   在る時だけ True。それ以外の文(session / weekly / spend / group の上限 $0 / credit 切れ / 文の無い断り)は全部 False。"
   (for [found (.finditer API-LIMIT-POSSESSIVE-WORDS-RE (.lower detail))]
     (setv words (.split (.group found 1)))
     (when (any (gfor word words (in (get (.split word ".") 0) API-LIMIT-MODEL-FAMILY-WORDS)))
       (return True)))
   False)
+
+
+(defk api-limit-reading-of [detail]
+  {:pre [(: detail str)] :post [(: % ApiLimitReading)]}
+  "限度の断りの文 → 文が名乗る範囲と理由の対(器の族の表 —— 上から順に当て、最初に当たった行)。
+     1. 所有格族の間に model の族の語が在る(「You've reached your Fable 5 limit」)→ model
+     2. 所有格族が model でない範囲を名乗る(session / weekly / monthly spend / individual spend / usage)→ account
+     3. 組織の側の上限の族(「Your group's usage limit is set to $0」— 窓も model も名乗らない)→ unknown
+     4. それ以外(out of usage credits・rate limit exceeded・429 だけで表に無い文 …)→ account(2026-09-23 のまま)
+   範囲を名乗る文(1・2)が同じ文の中の 3 より先 —— 名乗った範囲は事実で、上限の額はどの窓かを言わない。
+   理由は今日どの行も rate-limited(軸を通すだけ)。器は決めない: unknown は『文が言わない』の事実。"
+  (setv text (.lower detail))
+  (cond
+    (! (api-limit-names-a-model detail))
+    (ApiLimitReading :scope API-LIMIT-SCOPE-MODEL :reason API-LIMIT-REASON-RATE-LIMITED)
+    (is-not (.search API-LIMIT-POSSESSIVE-WORDS-RE text) None)
+    (ApiLimitReading :scope API-LIMIT-SCOPE-ACCOUNT :reason API-LIMIT-REASON-RATE-LIMITED)
+    (is-not (.search API-LIMIT-ORG-CAP-FAMILY-RE text) None)
+    (ApiLimitReading :scope API-LIMIT-SCOPE-UNKNOWN :reason API-LIMIT-REASON-RATE-LIMITED)
+    True
+    (ApiLimitReading :scope API-LIMIT-SCOPE-ACCOUNT :reason API-LIMIT-REASON-RATE-LIMITED)))
 
 
 (defk api-limit-resets-at [detail at-ms]

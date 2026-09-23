@@ -265,9 +265,12 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
     (setv (get payload "reason") cause.reason))
   (setv (get payload "retryable") cause.retryable)
   (setv (get payload "observed_at") cause.observed-at)
-  ;; 限度の断りの範囲と戻りの時刻(2026-09-23・在る時だけ — 凍結表の外の情報の欄)。
+  ;; 限度の断りの範囲と戻りの時刻(2026-09-23)・理由(2026-09-24 card acp:kanban-issue:ki-5d4849d22a4e)
+  ;; — 在る時だけ・凍結表の外の情報の欄。
   (when (is-not cause.limit-scope None)
     (setv (get payload "limit_scope") cause.limit-scope))
+  (when (is-not cause.limit-reason None)
+    (setv (get payload "limit_reason") cause.limit-reason))
   (when (is-not cause.limit-resets-at-ms None)
     (setv (get payload "limit_resets_at_ms") cause.limit-resets-at-ms))
   payload)
@@ -292,6 +295,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
                      :retryable (bool (.get payload "retryable" False))
                      :observed-at observed-at
                      :limit-scope (let [scope (.get payload "limit_scope")] (if (isinstance scope str) scope None))
+                     :limit-reason (let [reason (.get payload "limit_reason")] (if (isinstance reason str) reason None))
                      :limit-resets-at-ms (let [resets (.get payload "limit_resets_at_ms")]
                                            (if (and (isinstance resets int) (not (isinstance resets bool))) resets None)))
       None))

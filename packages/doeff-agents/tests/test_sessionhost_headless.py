@@ -1568,6 +1568,8 @@ def test_host_headless_turn_refused_by_the_provider_limit_fails_the_session_with
     assert limit_text in _text(cause, "reason"), cause
     # 2026-09-23: 文が model の族(Fable)を名乗る断りだけが limit_scope = model(器の側が当てて欄に載せる — R33)
     assert _text(cause, "limit_scope") == "model", cause
+    # 2026-09-24(card acp:kanban-issue:ki-5d4849d22a4e): 範囲とは別の軸の理由(今日は rate-limited の 1 語)
+    assert _text(cause, "limit_reason") == "rate-limited", cause
     assert ended["awaiting_response"] is False
     # 手番の終わりの印も立つ(手番は終わっている — level-triggered の欄)
     assert _has(ended, "turn_ended_at")
@@ -1618,6 +1620,44 @@ def test_host_headless_turn_refused_with_api_status_429_is_a_limit_whatever_the_
     headless_host.stub_env.pop("DOEFF_HEADLESS_STUB_LIMIT_TEXT")
     headless_host.stub_env.pop("DOEFF_HEADLESS_STUB_API_ERROR_STATUS")
     for sid in ("h-429", "h-403"):
+        headless_host.ok("session.cleanup", {"session_id": sid})
+
+
+def test_host_headless_turn_refused_by_the_group_usage_limit_leaves_the_range_unknown(
+    headless_host: Host,
+) -> None:
+    """card acp:kanban-issue:ki-5d4849d22a4e(2026-09-24・受入 A6): 「Your group's usage limit is set to $N」の
+    族は、どの窓が枯れたかも model も名乗らない —— 器は範囲を決めず、cause の limit_scope に unknown を
+    名乗る(範囲と理由の推定は窓の写しを持つ予算の係の 1 点 — 契約 ACP scheduling.json
+    providerRefusal.unknownScope)。範囲を名乗る文(session の限度)は今日どおり account。記録の 2 軸目
+    limit_reason は今日どちらも rate-limited(文が名乗る理由 — 範囲とは別の軸)。
+
+    実物の文 = 2026-09-23 15:33〜16:33 JST に会社の口座 7 枚で Fable の手番が受けた断りと、同じ拍に p10184 の
+    Opus の手番が受けた session の限度の文。stub は 429 を名乗らせる(2026-09-17 の実測で限度の断りは文を問わず
+    全部 429 — 構造が先・文が後)。
+    """
+    cases = (
+        (
+            "h-group-cap",
+            "Your group's usage limit is set to $0 · ask your admin for a higher limit",
+            "unknown",
+        ),
+        ("h-session", "You've hit your session limit · resets 7:10pm (Asia/Tokyo)", "account"),
+    )
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_API_ERROR_STATUS"] = "429"
+    for sid, said, scope in cases:
+        headless_host.stub_env["DOEFF_HEADLESS_STUB_LIMIT_TEXT"] = said
+        headless_host.ok("session.launch", _launch_params(headless_host.root, sid, "claude"))
+        ended = _wait_turn_end(headless_host, sid)
+        assert _text(ended, "status") == "failed", ended
+        cause = _obj(ended, "terminal_cause")
+        assert _text(cause, "category") == "rate_limited", cause
+        assert said in _text(cause, "reason"), cause
+        assert _text(cause, "limit_scope") == scope, cause
+        assert _text(cause, "limit_reason") == "rate-limited", cause
+    headless_host.stub_env.pop("DOEFF_HEADLESS_STUB_LIMIT_TEXT")
+    headless_host.stub_env.pop("DOEFF_HEADLESS_STUB_API_ERROR_STATUS")
+    for sid, _said, _scope in cases:
         headless_host.ok("session.cleanup", {"session_id": sid})
 
 
