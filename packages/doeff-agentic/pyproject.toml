@@ -23,6 +23,7 @@ classifiers = [
 dependencies = [
     "doeff>=0.1.9",
     "doeff-flow>=0.1.0",
+    "doeff-time",
     "click>=8.0.0",
     "rich>=13.0.0",
     "textual>=0.44.0",
@@ -58,3 +59,4 @@ packages = ["src/doeff_agentic"]
 [tool.uv.sources]
 doeff = { workspace = true }
 doeff-flow = { workspace = true }
+doeff-time = { workspace = true }

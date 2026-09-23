@@ -29,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from doeff_vm import RunResult as VmRunResult
+from doeff import Err, Ok
 
 
 def get_default_trace_dir() -> Path:
@@ -202,19 +202,19 @@ def write_terminal_trace(
     error = None
     result_repr = None
 
-    if isinstance(run_result, VmRunResult):
-        is_ok = bool(run_result.is_ok())
-        if is_ok:
-            try:
-                result_repr = _safe_repr(run_result.value)
-            except Exception:
-                result_repr = None
-        else:
-            try:
-                err = run_result.error
-                error = f"{type(err).__name__}: {err}"
-            except Exception:
-                error = "UnknownError"
+    if isinstance(run_result, Ok):
+        is_ok = True
+        try:
+            result_repr = _safe_repr(run_result.value)
+        except Exception:
+            result_repr = None
+    elif isinstance(run_result, Err):
+        is_ok = False
+        try:
+            err = run_result.error
+            error = f"{type(err).__name__}: {err}"
+        except Exception:
+            error = "UnknownError"
     else:
         try:
             result_repr = _safe_repr(run_result)

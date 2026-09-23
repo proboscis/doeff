@@ -5,14 +5,12 @@ import json
 import threading
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
-from doeff_flow import run_workflow
+from doeff_flow import run_result, run_workflow
 from doeff_flow.cli import cli
 
-from doeff import Ask, Effect, Get, Pass, Pure, Put, async_run, default_handlers, do
+from doeff import Ask, Effect, Get, Pass, Pure, Put, do
 from doeff import handler as _install_raw_handler
-from doeff import run as run_sync
 
 
 def _read_trace_entries(trace_dir: Path, workflow_id: str) -> list[dict]:
@@ -130,7 +128,7 @@ class TestWithHandlerTracing:
         def capturing_handler(effect: Effect, k):
             _ = k
             captured_effects.append(effect)
-            return (yield Pass())
+            return (yield Pass(effect, k))
 
         @do
         def workflow():
@@ -138,39 +136,38 @@ class TestWithHandlerTracing:
             current = yield Get("counter")
             return current + 1
 
-        result = run_sync(
+        result = run_result(
             _install_raw_handler(capturing_handler)(workflow()),
-            handlers=default_handlers(),
             store={},
         )
 
         assert result.is_ok()
         assert result.value == 1
         effect_names = [type(effect).__name__ for effect in captured_effects]
-        assert "PyPut" in effect_names
-        assert "PyGet" in effect_names
+        assert "Put" in effect_names
+        assert "Get" in effect_names
 
-    @pytest.mark.asyncio
-    async def test_async_run_observes_effects_with_withhandler(self):
+    def test_scheduled_run_observes_effects_with_withhandler(self):
+        # async_run was removed in favour of run() over scheduled(); run_result
+        # runs under the scheduler, so this is the same observation on that path.
         captured_effects: list[object] = []
 
         @do
         def capturing_handler(effect: Effect, k):
             _ = k
             captured_effects.append(effect)
-            return (yield Pass())
+            return (yield Pass(effect, k))
 
         @do
         def workflow():
             value = yield Ask("base")
             return value * 2
 
-        result = await async_run(
+        result = run_result(
             _install_raw_handler(capturing_handler)(workflow()),
-            handlers=default_handlers(),
             env={"base": 15},
         )
 
         assert result.is_ok()
         assert result.value == 30
-        assert any(type(effect).__name__ == "PyAsk" for effect in captured_effects)
+        assert any(isinstance(effect, Ask) for effect in captured_effects)

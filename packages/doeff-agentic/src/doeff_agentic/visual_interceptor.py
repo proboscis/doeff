@@ -6,10 +6,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from doeff_core_effects.effects import WriterTellEffect
+from doeff_core_effects.effects import SlogEffect
 from rich.console import Console
 
-from doeff import Program, Pure, WithIntercept, do
+from doeff import Pass, Program, Resume, do
+from doeff import handler as _install_handler
 
 from .effects import (
     AgenticAbortSession,
@@ -47,8 +48,6 @@ EFFECT_CONFIG: dict[type, dict[str, Any]] = {
     AgenticSupportsCapability: {"icon": "??", "color": "dim", "name": "SupportsCapability"},
 }
 
-_WRITER_TELL_EFFECT = WriterTellEffect
-_INTERCEPT_TYPES: tuple[type[Any], ...] = tuple(EFFECT_CONFIG) + (_WRITER_TELL_EFFECT,)
 
 
 @dataclass
@@ -156,24 +155,30 @@ def _format_result(result: Any) -> str:
 def create_visual_interceptor(
     config: VisualInterceptorConfig | None = None,
 ) -> tuple[Any, Console]:
-    """Create interceptor transform and console for effect visualization."""
+    """Create an ``(effect, k)`` handler that prints agentic effects, and its console.
+
+    The handler prints each agentic effect, re-performs it so the handlers
+    outside answer it, prints the result, and resumes the program with that
+    result. Structured logs (``slog``) are printed and passed on unchanged.
+    Install it with ``doeff.handler`` (``with_visual_logging`` does this).
+    """
     cfg = config or VisualInterceptorConfig()
     console = cfg.console or Console()
 
     @do
-    def transform(effect: Any) -> Any:
-        effect_type = type(effect)
-
-        if isinstance(effect, _WRITER_TELL_EFFECT):
-            if cfg.show_slog and isinstance(effect.msg, dict):
+    def visual_handler(effect: Any, k: Any):
+        if isinstance(effect, SlogEffect):
+            if cfg.show_slog:
                 timestamp = f"[dim][{_get_timestamp()}][/dim] " if cfg.show_timestamps else ""
-                slog_text = _format_slog(effect.msg, cfg)
+                slog_text = _format_slog({"msg": effect.msg, **effect.kwargs}, cfg)
                 console.print(f"{timestamp}[yellow]---[/yellow] {slog_text}")
-            return effect
+            yield Pass(effect, k)
+            return None
 
-        effect_config = EFFECT_CONFIG.get(effect_type)
+        effect_config = EFFECT_CONFIG.get(type(effect))
         if effect_config is None:
-            return effect
+            yield Pass(effect, k)
+            return None
 
         icon = effect_config["icon"]
         color = effect_config["color"]
@@ -185,6 +190,7 @@ def create_visual_interceptor(
 
         console.print(f"{timestamp}[{color}]{icon}[/{color}] [bold]{name}[/bold]{details_str}")
         start_time = time.time()
+        # Effects yielded by a handler go to the handlers outside it.
         result = yield effect
         elapsed = time.time() - start_time
 
@@ -192,9 +198,9 @@ def create_visual_interceptor(
 
         result_str = _format_result(result)
         console.print(f"{timestamp}[dim {color}]<-[/dim {color}] [dim]{result_str}{duration_str}[/dim]")
-        return Pure(result)
+        return (yield Resume(k, result))
 
-    return transform, console
+    return visual_handler, console
 
 
 def with_visual_logging(
@@ -202,20 +208,16 @@ def with_visual_logging(
     config: VisualInterceptorConfig | None = None,
 ) -> Program:
     """Wrap a program with visual effect logging for examples and debugging."""
-    transform, _ = create_visual_interceptor(config)
-    return WithIntercept(transform, program, _INTERCEPT_TYPES, "include")
+    visual_handler, _ = create_visual_interceptor(config)
+    return _install_handler(visual_handler)(program)
 
 
 def visual_logging_console(
     config: VisualInterceptorConfig | None = None,
 ) -> tuple[Any, Console]:
     """Create visual logging wrapper and console for custom usage."""
-    transform, console = create_visual_interceptor(config)
-
-    def wrapper(program: Program) -> Program:
-        return WithIntercept(transform, program, _INTERCEPT_TYPES, "include")
-
-    return wrapper, console
+    visual_handler, console = create_visual_interceptor(config)
+    return _install_handler(visual_handler), console
 
 
 __all__ = [

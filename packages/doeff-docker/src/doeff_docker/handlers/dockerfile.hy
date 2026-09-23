@@ -1,6 +1,7 @@
 ;;; Dockerfile collector handler
 ;;; Collects Dockerfile instruction effects (From, Run, Copy, etc.)
-;;; via WithObserve + Tell, then retrieves via state.
+;;; via WithObserve + Tell. The Tell is still handled by writer, which needs an
+;;; outer state handler.
 
 (require doeff_hy.macros [defk <- defhandler])
 (import doeff [do :as _doeff-do])
