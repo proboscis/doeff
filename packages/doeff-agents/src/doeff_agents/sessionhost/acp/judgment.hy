@@ -175,6 +175,12 @@
   CUSTODY-ANSWERER-ANOTHER-CARRIER
   CUSTODY-ANSWERER-NOBODY
   CUSTODY-ANSWERER-TIME
+  CUSTODY-ANSWERER-LENDER
+  CUSTODY-ANSWERER-UNANSWERED
+  CUSTODY-LENDER-TRANSIENT
+  CUSTODY-UNANSWERED-WINDOW-MS
+  CUSTODY-UNANSWERED-RETRY-MS
+  CONDITION-CREDENTIAL-LENDER-UNREACHABLE
   CUSTODY-PLACEMENT-REFUSAL-MARK
   CUSTODY-PLACEMENT-REFUSAL-STATUS
   CustodyRefusalVerdict
@@ -579,8 +585,8 @@
   condition)
 
 
-(defk custody-refusal-verdict-of [refusal status now-ms]
-  {:pre [(: refusal LeaseRefused) (: status dict) (: now-ms int)]
+(defk custody-refusal-verdict-of [refusal status now-ms [unanswered-since-ms None]]
+  {:pre [(: refusal LeaseRefused) (: status dict) (: now-ms int) (: unanswered-since-ms (| int None))]
    :post [(: % CustodyRefusalVerdict)]}
   "**預かり所の断りをどう扱うかの 1 点**(card acp:kanban-issue:ki-b3bed1e983fb)。断りを 1 語へ畳むのをやめ、
    **「誰が答えられるか」**で class を分ける — 呼び手(agentd.start-claimed)はこの答えに従うだけで、第 2 の判定を
@@ -626,6 +632,36 @@
   (setv binding (.get status "binding"))
   (setv account (if (isinstance binding dict) (.get binding BINDING-ACCOUNT-KEY) None))
   (setv named (if (and (isinstance account str) (.strip account)) f"account {account}" "the bound account"))
+  ;; 試作(card ki-fd0f3b234a38・設計 v2 D2): 預かり所が機械の語で「今は貸せない・時間で晴れる」と言った断り。
+  ;; 分類の鍵は (段, status, code, why) だけ — 散文 refusal.error は読まない。
+  (setv transient-key #(refusal.stage refusal.status refusal.code))
+  (when (in transient-key CUSTODY-LENDER-TRANSIENT)
+    (setv whys (get CUSTODY-LENDER-TRANSIENT transient-key))
+    (when (or (is whys None) (in refusal.why whys))
+      (<- attempt int (binding-attempt-of status))
+      (setv node-row (if (isinstance binding dict) (.get binding BINDING-NODE-ROW-KEY) None))
+      (setv record {"type" CONDITION-CREDENTIAL-LENDER-UNREACHABLE "status" "True" "reason" refusal.error
+                    PROVIDER-LIMIT-ATTEMPT-KEY attempt PROVIDER-LIMIT-AT-KEY now-ms
+                    "stage" refusal.stage "code" refusal.code})
+      (when refusal.why (setv (get record "why") refusal.why))
+      (when (and (isinstance account str) (.strip account))
+        (setv (get record CREDENTIAL-LEASE-HELD-ACCOUNT-KEY) account))
+      (when (and (isinstance node-row str) (.strip node-row))
+        (setv (get record CREDENTIAL-LEASE-HELD-NODE-ROW-KEY) node-row))
+      (return (CustodyRefusalVerdict :answerer CUSTODY-ANSWERER-LENDER
+                                     :condition-type CONDITION-CREDENTIAL-LENDER-UNREACHABLE
+                                     :reason refusal.error :held record))))
+  ;; 試作: 接続が答えない(status 0)断りは誰の断りかまだ分からない — 預かり所が自分の語で言い始めるまでの窓の間は
+  ;; 手番を閉じずに撃ち直しを待つ。窓を過ぎても答えないなら、預かり所は worker を生きていると言い続けている =
+  ;; この機体の道の故障 → 下の another-carrier(今日どおり)。
+  (when (= refusal.status 0)
+    (setv since (if (is unanswered-since-ms None) now-ms unanswered-since-ms))
+    (when (< (- now-ms since) CUSTODY-UNANSWERED-WINDOW-MS)
+      (return (CustodyRefusalVerdict :answerer CUSTODY-ANSWERER-UNANSWERED
+                                     :condition-type CONDITION-CREDENTIAL-UNAVAILABLE
+                                     :reason refusal.error :held None
+                                     :unanswered-since-ms since
+                                     :retry-at-ms (+ now-ms CUSTODY-UNANSWERED-RETRY-MS)))))
   (<- nobody bool (custody-refuses-every-carrier? refusal))
   (if nobody
       (CustodyRefusalVerdict

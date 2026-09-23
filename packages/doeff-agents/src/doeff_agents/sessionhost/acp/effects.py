@@ -305,10 +305,26 @@ CONDITION_CREDENTIAL_LEASE_HELD: ConditionType = "CredentialLeaseHeld"
 #: 『いまの試みは断られ、配置の置き直しを待っている』を名乗る記録の型の集合(judgment.attempt-refused? の 1 点が読む —
 #: Bound の起動と Running の拾い直しの両方がこの 1 つの判定を通る)。どちらも runner が条件を足して phase を離す形で、
 #: 置き直すのは配置(ACP Scheduling の supervision)。
+#: 試作(card ki-fd0f3b234a38・設計 v2 D2): 預かり所が機械の語で「この口座は今は貸せない(時間で晴れる)」と
+#: 言った断りの記録。phase を触らず、配置の監督が数えない失った試みとして Pending へ戻す。
+CONDITION_CREDENTIAL_LENDER_UNREACHABLE: ConditionType = "CredentialLenderUnreachable"
 REFUSED_ATTEMPT_CONDITION_TYPES: tuple[str, ...] = (
     CONDITION_PROVIDER_LIMIT,
     CONDITION_CREDENTIAL_LEASE_HELD,
+    CONDITION_CREDENTIAL_LENDER_UNREACHABLE,
 )
+#: 試作: 「時間で晴れる」預かり所の断りの表 — (断った段, status, code) → 晴れる why の集合(None = why を問わない)。
+#: 本実装では預かり所の契約 custody-api.json が宣言する語の写し(写しの一致を検査する)。
+CUSTODY_LENDER_TRANSIENT: dict[tuple[str, int, str], frozenset[str] | None] = {
+    ("lease", 503, "worker-unreachable"): frozenset({"heartbeat-stale", "worker-store-unreadable"}),
+    ("redeem", 503, "master-unreachable"): None,
+}
+#: 試作: 接続が答えない断り(status 0)を「その場で待つ」窓 = 預かり所が worker の途絶を自分の語で言い始めるまでの
+#: 最長(workerStaleSeconds 90 + heartbeat の間隔 30)。窓の中は手番を閉じず、窓を過ぎても答えなければ今日どおり
+#: another-carrier(この機体の道の故障 — 預かり所は worker が生きていると言い続けている)。
+CUSTODY_UNANSWERED_WINDOW_MS: int = (90 + 30) * 1000
+#: 試作: 窓の中で借りを撃ち直す間隔(預かり所へ貸与の行を積みすぎない)。
+CUSTODY_UNANSWERED_RETRY_MS: int = 15 * 1000
 #: 錠が別の借り手に在る時に預かり所が返す status(契約 custody-api.json の /lease/{kind} — この 1 語だけを記録に解く)。
 CUSTODY_LEASE_HELD_STATUS: int = 409
 #: CONDITION_CREDENTIAL_LEASE_HELD の記録が自分で名乗る欄(attempt / at は ProviderLimit と同じ綴り = 同じ読み手が同じ
@@ -324,10 +340,14 @@ CREDENTIAL_LEASE_HELD_NODE_ROW_KEY: str = "nodeRow"
 #:   nobody          = 誰も答えない(宣言が変わるまでどの担い手でも同じ断り)— 最初の 1 回で送信者へ返す(hard rule 7)。
 #:   another-carrier = 別の担い手が答える(この機体の身元・この機体の宣言・口座の worker の都合)— 有界の再投入。
 #:   time            = 時間が答える(貸与の錠の hold)— 行に記録を残して phase を離す(置き直しは ACP の配置)。
-CustodyRefusalAnswerer = Literal["nobody", "another-carrier", "time"]
+CustodyRefusalAnswerer = Literal["nobody", "another-carrier", "time", "lender", "unanswered"]
 CUSTODY_ANSWERER_NOBODY: CustodyRefusalAnswerer = "nobody"
 CUSTODY_ANSWERER_ANOTHER_CARRIER: CustodyRefusalAnswerer = "another-carrier"
 CUSTODY_ANSWERER_TIME: CustodyRefusalAnswerer = "time"
+#: 試作: 貸す側が戻れば答える(記録を足して phase を離す・数えない)。
+CUSTODY_ANSWERER_LENDER: CustodyRefusalAnswerer = "lender"
+#: 試作: 誰の断りかまだ分からない(接続が答えない)— 窓の間は何も書かず、呼び手は撃ち直しを待つ。
+CUSTODY_ANSWERER_UNANSWERED: CustodyRefusalAnswerer = "unanswered"
 #: 預かり所が「その口座を預かっていない」と答える status(master の findHeading / worker の redeem — どちらも
 #: 在庫の事実で、どの担い手が頼んでも同じ)。
 CUSTODY_ACCOUNT_ABSENT_STATUS: int = 404
@@ -1799,6 +1819,10 @@ class LeaseRefused:
     #: 廃止された(custody law lease-counts-no-hosts)ので、錠の競合による 409 はもう出ない —
     #: この欄が埋まるのは、預かり所が別の理由で期限を名乗った拍だけ(欠落 = 期限を知らない)。
     hold_expires_at_ms: int | None
+    #: 試作: 断った段(lease = master の貸与の口 / redeem = worker の引換の口)・本文の code・本文の why(機械の語)。
+    stage: str = "lease"
+    code: str | None = None
+    why: str | None = None
 
 
 LeaseOutcome: TypeAlias = "LeaseGrant | LeaseRefused"
@@ -1829,6 +1853,10 @@ class CustodyRefusalVerdict:
     reason: str
     #: answerer == "time" の拍だけ非 None(CredentialLeaseHeld の記録 1 項)。
     held: JSONObject | None
+    #: 試作: answerer == "unanswered" の拍だけ非 None — 最初に答えなかった刻(呼び手の memory が覚える)と、
+    #: 次に借りを撃ち直してよい刻。
+    unanswered_since_ms: int | None = None
+    retry_at_ms: int | None = None
 
 
 # ------------------------------------------------------------------ session(器)の値
