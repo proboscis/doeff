@@ -86,8 +86,10 @@ def test_the_owner_is_the_host_where_the_session_is_live() -> None:
     assert host_slots.owner_of(view("s"), [(ROOT_SOCK, view("s"))]) is None
     assert host_slots.owner_of(view("s", "exited"), [(ROOT_SOCK, view("s"))]) == ROOT_SOCK
     assert host_slots.owner_of(None, [(ROOT_SOCK, view("s"))]) == ROOT_SOCK
-    assert host_slots.owner_of(view("s", "exited"), [(ROOT_SOCK, view("s", "stopped"))]) is None
+    # 古い器の上で終わった session の結末の正本は古い器(写しの『exited / vanished』ではない)
+    assert host_slots.owner_of(view("s", "exited"), [(ROOT_SOCK, view("s", "failed"))]) == ROOT_SOCK
     assert host_slots.owner_of(None, [(ROOT_SOCK, None)]) is None
+    assert host_slots.owner_of(view("s", "exited"), [(ROOT_SOCK, None)]) is None
 
 
 # ---------------------------------------------------------------- 経路(偽の器)
@@ -165,6 +167,13 @@ def test_new_turns_go_to_the_pointed_host_and_old_sessions_to_the_old_host() -> 
     # 新しい器で生きている session は新しい器から・印なし。
     fresh = route.answer(SessionGet(session_id="new"))
     assert isinstance(fresh, SessionView) and not fresh.draining
+    # 古い器の上で終わった session の結末は古い器の行(写しの『exited』ではない)。
+    old.sessions["old-failed"] = view("old-failed", "failed")
+    new.sessions["old-failed"] = view("old-failed", "exited")
+    ended = route.answer(SessionGet(session_id="old-failed"))
+    assert isinstance(ended, SessionView)
+    assert ended.status == "failed"
+    assert ended.draining
     # 古い器の session を片付ける要求は古い器へ。
     cleanup = SessionCleanup(session_id="old-warm")
     assert route.answer(cleanup) == ("acted", cleanup) and old.asked[-1] == cleanup
