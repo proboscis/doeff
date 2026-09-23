@@ -287,6 +287,67 @@ defk {name}: :post must include a return type check (: % Type).
       (hy.models.Tuple (lfor item tp (_runtime-type item)))
     True tp))
 
+;; ---------------------------------------------------------------------------
+;; 型の注記 — 契約の `(: x T)` を関数の注記にも書く(静的な検査が読む)
+;; ---------------------------------------------------------------------------
+;;
+;; 契約の型は実行時の isinstance の検査で使ってきたが、関数の注記には出していなかった
+;; ので、pyright は defk / deff の引数と戻り値の型を知らなかった(2026-09-23 実測:
+;; わざとの間違い 7 種を Hy 版は静的に 1 つも捕まえなかった)。同じ型を注記に写す。
+;; 注記は文字列で書く(Python 3.13 以前でも定義の時に評価しない — 後で定義する名前の型を
+;; 契約に書いても定義が落ちない)。文字列の型 `(: x "説明")` は注記にしない。
+
+(import doeff-hy.static-view [static-view-enabled])
+
+(defn _static-view? []
+  "doeff-hy-check が型検査のための展開をしている間だけ真(doeff_hy/static_view.py)。"
+  (static-view-enabled))
+
+(defn _type-source [tp]
+  "契約の型の式を Python の source の文字列にする。文字列の型(説明だけ)は None。
+   組 `#(int None)` は isinstance の書き方なので、注記では `int | None` へ写す。"
+  (import ast)
+  (import hy.compiler [hy-compile])
+  (cond
+    (isinstance tp hy.models.String) None
+    (and (isinstance tp hy.models.Symbol) (= (str tp) "None")) "None"
+    (isinstance tp hy.models.Tuple)
+      (let [parts (lfor item tp (_type-source item))]
+        (if (in None parts) None (.join " | " parts)))
+    ;; `(type None)`(None を isinstance に渡すための書き方)は注記では `None`。
+    (and (isinstance tp hy.models.Expression) (= (len tp) 2)
+         (= (str (get tp 0)) "type") (= (str (get tp 1)) "None"))
+      "None"
+    ;; root=ast.Expression は Hy が ast.Expression に type_ignores を渡して Python 3.14 で
+    ;; DeprecationWarning になるので、module として compile して最後の式を取る。
+    ;; 呼び出しの形(`(type x)` など)は型の注記として書けないので注記にしない。
+    True
+      (let [node (. (get (. (hy-compile tp "__main__" :import-stdlib False) body) -1) value)]
+        (if (isinstance node ast.Call) None (ast.unparse node)))))
+
+(defn _contract-types [checks]
+  "契約の `(: name T)` から {name: T の source} を作る(説明だけの型は除く)。"
+  (setv types {})
+  (for [check (or checks [])]
+    (when (_is-type-check check)
+      (setv source (_type-source (get check 2)))
+      (when (is-not source None)
+        (setv (get types (str (get check 1))) source))))
+  types)
+
+(defn _annotate-params [params types]
+  "引数の並びの各引数に、契約の型の注記を付ける。書き手が既に `#^ T x` と書いた引数・
+   `*`・`/`・`#* args` には触らない。"
+  (hy.models.List
+    (lfor p params
+      (cond
+        (and (isinstance p hy.models.Symbol) (in (str p) types))
+          `(annotate ~p ~(hy.models.String (get types (str p))))
+        (and (isinstance p hy.models.List) (> (len p) 0)
+             (isinstance (get p 0) hy.models.Symbol) (in (str (get p 0)) types))
+          `(annotate ~p ~(hy.models.String (get types (str (get p 0)))))
+        True p))))
+
 (defn _expand-check [check fn-name phase]
   "Expand a single contract check into an assert form.
    (: x T) → isinstance assert with clear type error message.
@@ -410,9 +471,44 @@ defk {name}: :post type annotation cannot be an empty string.
         (setv source
           (try (.lstrip (hy.repr form) "'")
                (except [Exception] (str form))))
-        `(_guard-statement-value ~form ~(str owner) ~line ~source))
+        ;; 型検査のための展開: 値の型を `reveal_type` でも出す。pyright は型の分からない
+        ;; (Unknown)値でも deprecated の overload(macros.pyi)を選ぶので、doeff-hy-check は
+        ;; 同じ位置の型が Unknown / Any なら赤を落とす(走らない Program と決めつけない)。
+        (if (_static-view?)
+            `(_guard-statement-value (reveal_type ~form) ~(str owner) ~line ~source)
+            `(_guard-statement-value ~form ~(str owner) ~line ~source)))
       form))
 
+
+(defn _helper-imports []
+  "macro の展開が参照する `do` と実行時の補助の import(1 点)。
+
+   実行時: doeff の `do`(`_doeff_do`)・`_install-guard-globals` と、本体が名前で呼ぶ補助(`_guard-performed` など)。
+   補助は `_install-guard-globals` が関数の globals へも入れる(class の本体で展開した
+   defk の method からも見えるように)ので、import は pyright のための宣言を兼ねる
+   (型は macros.pyi)。
+   型検査のための展開(`_static-view?`)では、加えて型付きの `do` と `_doeff_bound` を doeff_hy.static_types から取る(`_doeff_do` を上書きする)。"
+  (if (_static-view?)
+      `(do
+         (import doeff-hy.static-types [do :as _doeff_do _doeff-bound])
+         (import doeff-hy.macros [_install-guard-globals _guard-performed
+                                  _guard-statement-value _doeff-check-program-return]))
+      `(do
+         (import doeff.do [do :as _doeff_do])
+         (import doeff-hy.macros [_install-guard-globals _guard-performed
+                                  _guard-statement-value _doeff-check-program-return]))))
+
+(defn _result-symbol [origin]
+  "本体の結果を指す `_contract_result`。位置は最後の式から取る(`return` と戻り値の型の
+   赤が、defk の頭ではなく最後の式を指すように)。"
+  (.replace (hy.models.Symbol "_contract_result") origin))
+
+(defn _result-binding [last-form return-source]
+  "`(setv _contract_result 最後の式)`。契約に戻り値の型が在れば変数に注記する。"
+  (if (is return-source None)
+      `(setv ~(_result-symbol last-form) ~last-form)
+      `(setv (annotate ~(_result-symbol last-form) ~(hy.models.String return-source))
+             ~last-form)))
 
 (defn _build-fn-with-contracts [decorators name params pre-checks post-checks real-body]
   "Build a defn form with pre/post assertion wrappers.
@@ -430,6 +526,15 @@ defk {name}: :post type annotation cannot be an empty string.
   (setv pre-code (lfor check (or pre-checks [])
                    (_expand-check check name "pre-condition")))
   (setv kleisli? (any (gfor d decorators (= (str d) "_doeff_do"))))
+  ;; 契約の型を注記へ(引数・deff の戻り値)。defk は生成器なので戻り値そのものには
+  ;; 注記せず、結果を入れる局所変数 `_contract_result` に T を注記する(`_result-binding`)
+  ;; — 生成器かどうか(本体に yield が在るか)を macro が判定せずに、最後の式の型を T と
+  ;; 突き合わせられる。局所変数の注記は実行時に評価されない。
+  (setv params (_annotate-params params (_contract-types pre-checks))
+        return-source (.get (_contract-types post-checks) "%"))
+  (setv head (if (or kleisli? (is return-source None))
+                 name
+                 `(annotate ~name ~(hy.models.String return-source))))
   (setv guard-stmt
     (if kleisli?
         `(_guard-performed _contract_result ~(str name))
@@ -442,16 +547,16 @@ defk {name}: :post type annotation cannot be an empty string.
                            (lfor f (cut real-body 0 -1) (_wrap-statement-guard f name))
                            (list (cut real-body 0 -1)))
             last-form (get real-body -1)]
-        `(defn ~decorators ~name ~params
+        `(defn ~decorators ~head ~params
            ~@docstring-forms
            ~@pre-code
            ~@init-forms
-           (setv _contract_result ~last-form)
+           ~(_result-binding last-form return-source)
            ~guard-stmt
            (let [% _contract_result]
              ~@post-asserts)
-           _contract_result))
-      `(defn ~decorators ~name ~params
+           ~(_result-symbol last-form)))
+      `(defn ~decorators ~head ~params
          ~@docstring-forms
          ~@pre-code
          ~@real-body)))
@@ -623,14 +728,13 @@ defk {name}: {{:post [...]}} is required.
              (import doeff_core_effects.effects [Get Put]))
         `(do)))
   (locate-synthesized `(do
-     (import doeff.do [do :as _doeff_do])
-     (import doeff-hy.macros [_install-guard-globals])
+     ~(_helper-imports)
      ~lazy-imports
      ~fn-form
      (_install-guard-globals ~name)
-     (setv (. ~name __doeff_body__) '~real-body)
-     (setv (. ~name __doeff_args__) '~params)
-     (setv (. ~name __doeff_name__) ~(str name)))))
+     (setattr ~name "__doeff_body__" '~real-body)
+     (setattr ~name "__doeff_args__" '~params)
+     (setattr ~name "__doeff_name__" ~(str name)))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -654,7 +758,7 @@ defk {name}: {{:post [...]}} is required.
   ;; Expand bangs in the body — in-place (yield ...) rewrite [ADR-DOE-HY-003]
   (setv expanded-forms (lfor form body (_expand-bangs form "fnk")))
   (locate-synthesized
-    `(do (import doeff.do [do :as _doeff_do])
+    `(do ~(_helper-imports)
          (fn [~@params] ((_doeff_do (fn [] (do ~@expanded-forms))))))))
 
 
@@ -701,26 +805,24 @@ defk {name}: {{:post [...]}} is required.
   (locate-synthesized (if post-checks
       (let [post-asserts (lfor check post-checks
                            (_expand-check check "do!" "post-condition"))]
-        `(do (import doeff.do [do :as _doeff-do])
-             (import doeff-hy.macros [_install-guard-globals])
+        `(do ~(_helper-imports)
              ((_install-guard-globals
                 (_doeff-do (fn []
                   ~@pre-code
                   ~@expanded
-                  (setv _contract_result ~body-expr)
+                  ~(_result-binding body-expr (.get (_contract-types post-checks) "%"))
                   (_guard-performed _contract_result "do!")
                   (let [% _contract_result]
                     ~@post-asserts)
-                  (return _contract_result)))))))
-      `(do (import doeff.do [do :as _doeff-do])
-           (import doeff-hy.macros [_install-guard-globals])
+                  (return ~(_result-symbol body-expr))))))))
+      `(do ~(_helper-imports)
            ((_install-guard-globals
               (_doeff-do (fn []
                 ~@pre-code
                 ~@expanded
-                (setv _contract_result ~body-expr)
+                ~(_result-binding body-expr None)
                 (_guard-performed _contract_result "do!")
-                (return _contract_result)))))))))
+                (return ~(_result-symbol body-expr))))))))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -791,6 +893,21 @@ defk {name}: {{:post [...]}} is required.
      (<- name Type expr) → (do (setv name (yield expr))
                                (assert (isinstance name Type) \"expected Type, got <actual>\"))"
   (cond
+    ;; 型検査のための展開(doeff_hy/static_view.py): x の型 = expr の戻り値の型
+    ;; (`_doeff_bound` の宣言は static_types.pyi)。`(<- x T e)` は x に T を注記するので、
+    ;; e の戻り値の型が T に入らなければ pyright が赤にする。yield は残す(関数が生成器の
+    ;; ままであるため)。実行時の展開はこの枝を通らない。
+    (_static-view?)
+      ;; import を形の中に持つ(defhandler の節・利用者の defn など、`_helper-imports` を
+      ;; 出さない所の `<-` でも名前が解けるように。静的な展開は実行しないので費用は無い)。
+      (let [bound `(do (import doeff-hy.static-types [_doeff-bound])
+                       (_doeff-bound ~expr (yield ~expr)))
+            source (when (is-not tp None) (_type-source tp))]
+        (cond
+          (is name None) bound
+          (or (is source None) (not (isinstance name hy.models.Symbol)))
+            `(setv ~name ~bound)
+          True `(setv (annotate ~name ~(hy.models.String source)) ~bound)))
     (is name None) `(yield ~expr)
     (is tp None) `(setv ~name (yield ~expr))
     True `(do
@@ -1227,20 +1344,19 @@ the effect in the enclosing do-context.
   (setv post-asserts (lfor check post-checks
                        (_expand-check check name "post-condition")))
   `(do
-     (import doeff.do [do :as _doeff_do])
-     (import doeff-hy.macros [_install-guard-globals])
+     ~(_helper-imports)
      (setv ~name
        ((_install-guard-globals
           (_doeff_do (fn []
             ~@expanded
-            (setv _contract_result ~body-expr)
+            ~(_result-binding body-expr (.get (_contract-types post-checks) "%"))
             (let [% _contract_result]
               ~@post-asserts)
-            (return _contract_result))))))
+            (return ~(_result-symbol body-expr)))))))
      ;; Preserve S-expr body directly on Program value (DoExpr has __dict__ via pyclass(dict))
-     (setv (. ~name __doeff_body__) '~real-body)
-     (setv (. ~name __doeff_name__) ~(str name))
-     (setv (. ~name __doeff_module__) __name__)))
+     (setattr ~name "__doeff_body__" '~real-body)
+     (setattr ~name "__doeff_name__" ~(str name))
+     (setattr ~name "__doeff_module__" __name__)))
 
 (defmacro defp [name #* body]
   "Define a Program[T] constant. Errors if the return value is itself a Program.
@@ -1424,13 +1540,11 @@ the effect in the enclosing do-context.
   (locate-synthesized (if decorators
     `(do
        (import pytest)
-       (import doeff.do [do :as _doeff_do])
-       (import doeff-hy.macros [_install-guard-globals])
+       ~(_helper-imports)
        (defn [~@decorators] ~name [~@fn-params] ~fn-body)
        (_install-guard-globals ~name {"_doeff_do" _doeff_do}))
     `(do
-       (import doeff.do [do :as _doeff_do])
-       (import doeff-hy.macros [_install-guard-globals])
+       ~(_helper-imports)
        (defn ~name [~@fn-params] ~fn-body)
        (_install-guard-globals ~name {"_doeff_do" _doeff_do})))))
 
