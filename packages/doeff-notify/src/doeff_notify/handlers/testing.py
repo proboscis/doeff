@@ -80,7 +80,7 @@ def build_testing_handler(
             acknowledged = auto_acknowledge and effect.notification_id in seen_ids
             return (yield Resume(k, acknowledged))
 
-        yield Pass()
+        return (yield Pass(effect, k))
 
     return _handler, capture
 

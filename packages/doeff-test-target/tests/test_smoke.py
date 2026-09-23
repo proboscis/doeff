@@ -1,8 +1,6 @@
 import sys
 from pathlib import Path
 
-from doeff import Maybe
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from doeff_test_target import mock_handlers, orchestrate, production_handlers
@@ -22,4 +20,6 @@ def test_package_imports_and_public_api_usage():
     assert callable(iota)
     assert callable(choose_first_some)
     assert choose_first_some() is not None
-    assert hasattr(Maybe, "from_optional")
+    # Maybe.from_optional was retired in the OCaml-5 rebuild (54cad950). The
+    # scenarios are static-analysis input for doeff-effect-analyzer and keep the
+    # pre-rebuild combinator vocabulary on purpose; their bodies are not run.
