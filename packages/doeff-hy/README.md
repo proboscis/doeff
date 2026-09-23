@@ -63,6 +63,14 @@ wherever the bind is written. The 2- and 3-element forms add no check.
 (`_runtime-type` in `macros.hy` is the one place that maps it). `(| int None)`
 needs no mapping.
 
+### Static type checking
+
+`doeff-hy-check PATH... --root <repo>` expands Hy sources with the real macros and runs
+pyright on the result, reporting errors at `.hy` lines. Contract types (`(: x T)`) become
+parameter/result annotations, so argument types, missing arguments, result types, a
+forgotten `<-`, and effect constructor arguments are checked. What it does not catch yet
+(effect result types, env/effect sets) and why: `docs/static-check.md`.
+
 ### Bang evaluation position
 
 `(! effect)` is replaced with a `yield` expression at the position where it is
