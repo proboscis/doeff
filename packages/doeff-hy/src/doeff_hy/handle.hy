@@ -36,6 +36,16 @@
 
 (import hy.models [Expression Symbol List Keyword Sequence String])
 (import doeff-hy.positions [locate-synthesized])
+(import doeff-hy.static-view [static-view-enabled])
+
+(defn _do-import []
+  "handler の本体を包む `_doeff-do` の import。型検査のための展開(doeff_hy/static_view.py)
+   では型付きの doeff_hy.static_types.do を取る — 同じ module の defk と同じ名前に 2 つの
+   型が付くと、pyright から見た `_doeff_do` が両者の union になり誤検出を出すため
+   (macros.hy の `_helper-imports` と同じ決め)。"
+  (if (static-view-enabled)
+      `(import doeff-hy.static-types [do :as _doeff-do])
+      `(import doeff.do [do :as _doeff-do])))
 
 
 ;; ---------------------------------------------------------------------------
@@ -306,6 +316,17 @@
       (let [head (get form 0)
             hname (_sym-name head)]
         (cond
+          ;; 型検査のための展開(doeff_hy/static_view.py): core の typed_resume / typed_transfer
+          ;; で、答えの値を effect の答えの型(EffectBase[T] の T)と突き合わせる。`effect` は
+          ;; 節の `(isinstance effect EffectType)` で絞られている。実行時の展開は Resume / Transfer。
+          (and (= hname "resume") (= (len form) 2) (static-view-enabled))
+            `(yield (do (import doeff [typed-resume])
+                        (typed-resume effect k ~(_rewrite-ops (get form 1)))))
+
+          (and (= hname "transfer") (= (len form) 2) (static-view-enabled))
+            `(yield (do (import doeff [typed-transfer])
+                        (typed-transfer effect k ~(_rewrite-ops (get form 1)))))
+
           (and (= hname "resume") (= (len form) 2))
             `(yield (Resume k ~(_rewrite-ops (get form 1))))
 
@@ -467,7 +488,7 @@
    Compile-time error if any clause branch lacks resume/transfer/pass."
   (setv h-expr (_build-handler-expr clauses))
   (locate-synthesized `(do
-     (import doeff.do [do :as _doeff-do])
+     ~(_do-import)
      (import doeff [Resume Transfer Pass])
      (import doeff_vm [WithHandler])
      (WithHandler ~h-expr ~body))))
@@ -580,7 +601,7 @@
   ;; and installed with the Rust VM WithHandler node.
   (locate-synthesized (if (is params None)
       `(do
-         (import doeff.do [do :as _doeff-do])
+         ~(_do-import)
          (import doeff [Resume Transfer Pass])
          (import doeff_vm [WithHandler])
          ~lazy-imports
@@ -589,15 +610,15 @@
               (setv __doeff-handler-data__ ~handler-expr)
               (defn __doeff-handler-fn__ [__doeff-body__]
                 (WithHandler __doeff-handler-data__ __doeff-body__))
-              (setv (. __doeff-handler-fn__ __doc__) ~docstring)
-              (setv (. __doeff-handler-fn__ _doeff_is_handler_fn) True)
-              (setv (. __doeff-handler-fn__ __doeff_handler_data__)
+              (setattr __doeff-handler-fn__ "__doc__" ~docstring)
+              (setattr __doeff-handler-fn__ "_doeff_is_handler_fn" True)
+              (setattr __doeff-handler-fn__ "__doeff_handler_data__"
                     __doeff-handler-data__)
               __doeff-handler-fn__)))
-         (setv (. ~name __doeff_body__) ~quoted-body)
-         (setv (. ~name __doeff_name__) ~(str name)))
+         (setattr ~name "__doeff_body__" ~quoted-body)
+         (setattr ~name "__doeff_name__" ~(str name)))
       `(do
-         (import doeff.do [do :as _doeff-do])
+         ~(_do-import)
          (import doeff [Resume Transfer Pass])
          (import doeff_vm [WithHandler])
          ~lazy-imports
@@ -605,12 +626,12 @@
            (setv __doeff-handler-data__ ~handler-expr)
            (defn __doeff-handler-fn__ [__doeff-body__]
              (WithHandler __doeff-handler-data__ __doeff-body__))
-           (setv (. __doeff-handler-fn__ __doc__) ~docstring)
-           (setv (. __doeff-handler-fn__ _doeff_is_handler_fn) True)
-           (setv (. __doeff-handler-fn__ __doeff_handler_data__)
+           (setattr __doeff-handler-fn__ "__doc__" ~docstring)
+           (setattr __doeff-handler-fn__ "_doeff_is_handler_fn" True)
+           (setattr __doeff-handler-fn__ "__doeff_handler_data__"
                  __doeff-handler-data__)
-           (setv (. __doeff-handler-fn__ __doeff_name__) ~(str name))
+           (setattr __doeff-handler-fn__ "__doeff_name__" ~(str name))
            __doeff-handler-fn__)
-         (setv (. ~name __doc__) ~docstring)
-         (setv (. ~name __doeff_body__) ~quoted-body)
-         (setv (. ~name __doeff_name__) ~(str name))))))
+         (setattr ~name "__doc__" ~docstring)
+         (setattr ~name "__doeff_body__" ~quoted-body)
+         (setattr ~name "__doeff_name__" ~(str name))))))

@@ -17,22 +17,57 @@
 ;;; 埋めるので、入れ子の合成(`(do (setv x (yield e)) (assert ...))`)も内側から外側へ
 ;;; 利用者の式の範囲を得る。利用者の式を 1 つも含まない合成(`_guard-performed` の呼び出し
 ;;; など)は位置を持たないまま残り、Hy が従来どおり macro 呼び出しの位置で埋める。
-;;; 位置を既に持つ model(reader が作った利用者の式)には触らない。葉にも触らない
-;;; (同じ Symbol の object を複数の場所で使い回す合成があるため)。
+;;; 続けて上から、位置を持つ式の子のうち位置の無い物(合成した葉 = `_guard-statement-value`
+;;; の関数名など)に親の位置を付ける。位置を既に持つ model(reader が作った利用者の式)
+;;; には触らない。
 
-(import hy.models [Sequence])
+(import hy.models [Object Sequence])
 
 (defn _positioned? [model]
   (hasattr model "_start_line"))
 
+(defn _copy-position [target origin]
+  (setv (. target start-line) (. origin start-line)
+        (. target start-column) (. origin start-column)
+        (. target end-line) (. origin end-line)
+        (. target end-column) (. origin end-column)))
+
+(defn _inherit-down [tree]
+  "位置を持つ式の子のうち、位置の無い物(合成した葉・利用者の式を含まない合成)に親の位置を
+   付ける。`(_guard-statement-value form ...)` の関数名や `(yield (Resume k v))` の `k` が
+   macro 呼び出しの位置でなく、それを包む利用者の式の位置を持つように。"
+  (for [child tree]
+    ;; macro が `~(str name)` で差し込んだ素の Python の値は、まだ model でない(Hy が
+    ;; 後で model にする)ので属性を付けられない。model だけに付ける。
+    (when (and (isinstance child Object) (not (_positioned? child)))
+      (_copy-position child tree))
+    (when (isinstance child Sequence)
+      (_inherit-down child))))
+
 (defn locate-synthesized [tree]
+  "macro の出力に位置を付けて返す(その場で書き換える)。
+
+   1. 下から: 位置の無い Sequence に、位置を持つ子の範囲を付ける(`_locate-up`)。
+   2. 上から: 位置を持つ式の子のうち、まだ位置の無い物に親の位置を付ける(`_inherit-down`)。
+   一番外の式が位置を持たない(利用者の式を 1 つも含まない)時は何もしない — Hy が macro
+   呼び出しの位置で埋める。"
+  (_locate-up tree)
+  (cond
+    (not (isinstance tree Sequence)) None
+    (_positioned? tree) (_inherit-down tree)
+    True (for [child tree]
+           (when (and (isinstance child Sequence) (_positioned? child))
+             (_inherit-down child))))
+  tree)
+
+(defn _locate-up [tree]
   "位置を持たない Sequence に、位置を持つ子の範囲を付けて tree を返す(その場で書き換える)。
 
    位置を持つ利用者の式の中にも合成が在りうる(`_expand-bangs` が作り直した式の子)ので、
    位置の有無によらず子へは必ず降り、自分の位置は持っていない時だけ付ける。"
   (when (isinstance tree Sequence)
     (for [child tree]
-      (locate-synthesized child))
+      (_locate-up child))
     (when (not (_positioned? tree))
       (setv located (lfor child tree :if (_positioned? child) child))
       (when located
