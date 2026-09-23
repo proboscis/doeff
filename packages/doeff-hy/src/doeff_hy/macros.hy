@@ -270,6 +270,22 @@ defk {name}: :post must include a return type check (: % Type).
     {{:post [(: % pd.DataFrame) (> (len %) 0)]}}
 " :name fn-name)))))
 
+(defn _runtime-type [tp]
+  "型の式を isinstance に渡せる形へ写す(契約の `(: x T)` と `(<- x T e)` の 1 点)。
+
+   型の注記では `None` は「None という値の型」を意味する(PEP 484)が、isinstance の第 2
+   引数に `None` は渡せない(`TypeError: isinstance() arg 2 must be a type ...`)。
+   `(: % None)` が実行時に型エラーになっていた(2026-09-23 `sim_clock.hy` の
+   `clock-driver` で実測)ので、ここで `None` を `(type None)` へ写す。`#(int None)` の
+   組の中も同じく写す。`(| int None)` は Python 3.10 以降の isinstance がそのまま受ける
+   (`int | None` は types.UnionType)ので触らない。"
+  (cond
+    (and (isinstance tp hy.models.Symbol) (= (str tp) "None"))
+      `(type None)
+    (isinstance tp hy.models.Tuple)
+      (hy.models.Tuple (lfor item tp (_runtime-type item)))
+    True tp))
+
 (defn _expand-check [check fn-name phase]
   "Expand a single contract check into an assert form.
    (: x T) → isinstance assert with clear type error message.
@@ -292,7 +308,7 @@ defk {name}: :post type annotation cannot be an empty string.
 " :name fn-name))))
               '(do))
             (let [target-label (if (= (str target) "%") "return value" (str target))]
-              `(assert (isinstance ~target ~tp)
+              `(assert (isinstance ~target ~(_runtime-type tp))
                        (+ ~(+ (str fn-name) ": " phase " type error: `" target-label "` expected " (str tp) ", got ")
                           (. (type ~target) __name__))))))
       `(assert ~check ~(+ (str fn-name) ": " phase " failed: " (str check)))))
@@ -776,7 +792,7 @@ defk {name}: {{:post [...]}} is required.
     (is tp None) `(setv ~name (yield ~expr))
     True `(do
             (setv ~name (yield ~expr))
-            (assert (isinstance ~name ~tp)
+            (assert (isinstance ~name ~(_runtime-type tp))
                     (+ ~(+ "expected " (str tp) ", got ") (. (type ~name) __name__))))))
 
 
