@@ -81,8 +81,8 @@
 ;;;
 ;;; 段 9f lane 9f-2 / 9f-4(agora-redesign #59・設計 conversation-record-service §2.2 / §2.4)の改訂 = R19 / R20 の追補:
 ;;; 本文は会話の記録の service へ(spool → appendEvents・冪等)、ACP の turn-record の entry は**見出しの閉じた欄**
-;;; (effects.TurnEntryHeadline — seq・at・kind・toolName・toolUseId・bytes・sha256・isError。本文の欄 text / summary /
-;;; input / output / model は型に無い)。既知の形 = claim check(control plane には参照と見出し・本文は記録の service)。
+;;; (effects.TurnEntryHeadline — seq・at・kind・toolName・toolUseId・bytes・sha256・isError。本文の欄〔effects.RECORD_BODY_FIELDS
+;;; — 正本 = 契約 record-service.json eventFields.body・ここに列挙しない〕と model は型に無い)。既知の形 = claim check(control plane には参照と見出し・本文は記録の service)。
 ;;; 見出しを導く点は judgment.headline-of-body の 1 つ・JSON への写しは entry-json-of の 1 つ・bytes / sha256 は service の
 ;;; 冪等の判断と同じ計算(record-body-bytes-of)。受理の答え(highestProducerSeq)は status.recordRef / recordedSeq に写す
 ;;; (agentd.mark-recorded・judgment.turn-record-recorded-status — 走っている手番では単独で書かず、次の追記か手番の終わりの
@@ -160,6 +160,7 @@
          AgentdState CaptureGone InFlightJob JSONObject JoinArgv JoinDeclaration JoinPlan JoinSpec
          MESSAGE-ATTACHMENTS-KEY MESSAGE-KIND
          NODE-KIND Ownership PHASE-BOUND PHASE-ENDED PHASE-RUNNING PRIVILEGED-PLACES PROFILE-KIND PROFILE-USAGE-KIND
+         RECORD-BODY-FIELDS
          ProbeAnswer ProfileHome ProfileUsage ProfileUsageUnavailable TURN-RECORD-KIND UsageWindow])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeSessions])
 (import doeff_agents.sessionhost.acp.join [join-plan-of join-spec-of ownership-preflight ownership-verdict])
@@ -2268,7 +2269,7 @@
                  f"この法が名乗る行の上限 {named} が源の宣言 {source-budget} と違う — 値の宣言点は effects.py の 1 点(R19)"))
        ;; 段 9f lane 9f-4: 見出しの型は本文の欄を持たない・導く点と写す点は 1 つずつ・切り詰めの規則は agentd に無い。
        (assert (in "class TurnEntryHeadline:" effects-src) "見出しの型が無い(R19)")
-       (for [field ["    text:" "    summary:" "    input:" "    output:" "    model:"]]
+       (for [field (lfor name (sorted (| (set RECORD-BODY-FIELDS) #{"model"})) f"    {name}:")]
          (setv block (get (.split (get (.split effects-src "class TurnEntryHeadline:") 1) "\n\n\n") 0))
          (assert (not-in field block) f"見出しの型に本文の欄 {field} が在る(R19)"))
        (assert (not-in "ENTRY_SUMMARY_MAX_CHARS" effects-src) "agentd の切り詰めの規則が残っている(R19)")
@@ -2327,7 +2328,7 @@
                "終わりの書きは追記の上に ended(置換しない・R19)")
        (for [e ended-entries]
          (when (isinstance e dict)
-           (assert (= (set.intersection (set (.keys e)) #{"text" "summary" "input" "output" "model"}) (set))
+           (assert (= (set.intersection (set (.keys e)) (| (set RECORD-BODY-FIELDS) #{"model"})) (set))
                    f"見出しに本文の欄が在る(R19・段 9f lane 9f-4): {e}")
            (assert (and (in "bytes" e) (in "sha256" e)) f"見出しに同一性が無い(R19): {e}")))
        (assert (= (cut ended-entries 0 2) mid-entries) "途中の出来事(at・seq)が終わりの書きで変わった(R19)")
@@ -2357,7 +2358,8 @@
                                    (.strip line)))
        (assert (in "for name in RECORD_BODY_FIELDS:" fake-body-lines) "fake.record_body_bytes が RECORD_BODY_FIELDS を反復しない(R19)")
        (setv field-run (re.compile r"\"(?:text|summary|input|output|data)\"(?:[ ,]+\"(?:text|summary|input|output|data)\"){2,}"))
-       (for [[name path] [["judgment.hy" (/ ACP-DIR "judgment.hy")] ["fake.py" (/ ACP-DIR "fake.py")]]]
+       ;; この法の本文も母集団(2026-09-23: 見出しの assert が data を欠いた 5 欄の literal の set を持っていた — 検収の先行実測で発見)。
+       (for [[name path] [["judgment.hy" (/ ACP-DIR "judgment.hy")] ["fake.py" (/ ACP-DIR "fake.py")] ["この法" (Path __file__)]]]
          (setv runs (lfor line (code-lines path) :if (.search field-run line) (.strip line)))
          (assert (= runs []) f"{name} に本文の欄の literal の列が在る — 欄は effects.RECORD_BODY_FIELDS の 1 点(R19): {runs}")))
      (deftest test-adr-doe-agents-012-live-events-are-polled-within-50ms-while-watched
