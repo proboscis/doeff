@@ -8,7 +8,7 @@
 ;;; 読み、15 分前に書いた記憶が次の手番から消えていた。
 ;;;
 ;;; ここで撃つのは判断の 1 点(memory-home-of)と、その値が**起こし方(effects.NextArm)の defer を除く
-;;; 全部** — 起こす 3 つ(launch / resume / rehydrate)と送り(send)の 4 つ — で席へ運ばれることちょうど。
+;;; 全部** — 起こす 4 つ(launch / resume / rehydrate / rebuild)と送り(send)の 5 つ — で席へ運ばれることちょうど。
 ;;; 腕は定義から反射で数える(手で並べた一覧は 2026-09-20 に 4 つ目の腕〔send〕を黙って落とした —
 ;;; card acp:kanban-issue:ki-a40292ed30d9)。腕ごとに落ちる形(名簿の漏れ)は 2026-09-15 の添付の実弾と
 ;;; 同じなので、resume の名簿も名指しで固定する。HTTP も subprocess も無い。
@@ -28,6 +28,7 @@
   LaunchPlan
   NEXT-ARM-DEFER
   NEXT-ARM-LAUNCH
+  NEXT-ARM-REBUILD
   NEXT-ARM-REHYDRATE
   NEXT-ARM-RESUME
   NEXT-ARM-SEND
@@ -104,7 +105,7 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; V6 — 置き場を運ぶ腕は 4 つ(起こす launch / resume / rehydrate + 送り send)。数えるのは定義
+;; V6 — 置き場を運ぶ腕は 5 つ(起こす launch / resume / rehydrate / rebuild + 送り send)。数えるのは定義
 ;; (effects.NextArm)からで、手で並べない。どの腕でも同じ置き場が席へ渡り、resume の名簿でも落ちない
 ;; ---------------------------------------------------------------------------
 
@@ -114,7 +115,9 @@
 
 
 (defn memory-home-carried-by-incarnation [#^ str arm]
-  "起こす腕(launch / resume / rehydrate)が置き場を運ぶ口 = judgment.incarnation-charter-of(charter の欄)。"
+  "起こす腕(launch / resume / rehydrate / rebuild)が置き場を運ぶ口 = judgment.incarnation-charter-of(charter の欄)。
+   rebuild(記録から組んだ transcript を `--resume` で続ける腕・card acp:kanban-issue:ki-c3aace97d825)も
+   agentd.incarnate の同じ 1 点を通り、器へは SessionLaunch の charter で届く(置き場の欄は腕で分かれない)。"
   (setv built (run (incarnation-charter-of
                      (plan-of) (ArmChoice :arm arm :source None :retire None)
                      "s-new" #() "" {"conversationId" CONVERSATION} "headless" None "/homes"
@@ -134,6 +137,7 @@
   {NEXT-ARM-LAUNCH memory-home-carried-by-incarnation
    NEXT-ARM-RESUME memory-home-carried-by-incarnation
    NEXT-ARM-REHYDRATE memory-home-carried-by-incarnation
+   NEXT-ARM-REBUILD memory-home-carried-by-incarnation
    NEXT-ARM-SEND memory-home-carried-by-send})
 
 
@@ -202,7 +206,7 @@
   ;; 残り、次の畳み戻しがそれを読んで退役を取り消す — 直している欠陥がその腕だけで再演する。
   ;; 形は上の memory_dir の門ちょうど(名簿 = judgment.resume-params-of と host.build-launch-program-params)。
   (setv swept #("gone.md" "stale.md"))
-  ;; 起こす腕: charter に載る(3 つの起こす腕は同じ charter をそのまま運ぶ)。
+  ;; 起こす腕: charter に載る(4 つの起こす腕は同じ charter をそのまま運ぶ)。
   (setv charter (run (charter-with-memory-sweep
                        (run (charter-with-memory-home (charter-of CONVERSATION "/w")
                                                       MEMORY-ROOT CONVERSATION))
@@ -220,7 +224,7 @@
               "memory_retired_files" (list swept)})
   (setv program (build-launch-program-params wire (host-config)))
   (assert (= (get program "memory_retired_files") (list swept)) program)
-  ;; 送りの腕(4 つ目)も同じ荷を運ぶ — 荷は 1 つの型(MemoryTurnFiles)で運ばれる。
+  ;; 送りの腕も同じ荷を運ぶ — 荷は 1 つの型(MemoryTurnFiles)で運ばれる。
   (setv sent (run (turn-charter-of MEMORY-ROOT CONVERSATION (MemoryTurnFiles :swept swept))))
   (assert (= (get sent "memory_retired_files") (list swept)) sent)
   ;; 0 件の拍は**欄を立てない**(退役した行の無い会話の charter / wire は 1 byte も変わらない)。

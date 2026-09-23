@@ -2641,7 +2641,7 @@
          (: attribution dict) (: backend-kind str) (: lease (| LeaseGrant None)) (: homes-root str)
          (: memory-root str) (: opener (| str None)) (: seat-env tuple)]
    :post [(: % tuple)]}
-  "起こす session の charter を組む 1 点(launch / resume / rehydrate — send は起こさない): 鋳造した id →
+  "起こす session の charter を組む 1 点(launch / resume / rehydrate / rebuild — send は起こさない): 鋳造した id →
    機体の宣言の env(段 12・agora-redesign #520)→ 会話の身元の env(段 10f 便 2 追補 3 — 会話の id は帰属の
    conversationId・opener は会話の行から)→ (rehydrate)これまでの会話 → (headless の起こす腕)郵便の本文 →
    借りた札の家 → 帰属。戻り = #(charter auth-file-or-None)(codex の借りた auth.json の置き場 — 書くのは
@@ -2652,7 +2652,7 @@
   (<- with-id dict (charter-with-session-id plan.charter session-id))
   (<- with-seat dict (charter-with-seat-env with-id seat-env))
   (<- with-env dict (charter-with-conversation-env with-seat (str (get attribution "conversationId")) opener))
-  ;; 自動記憶の置き場は会話に従う(ADR-DOE-AGENTS-006 R11)— 起こす 3 つの腕すべてで据える 1 点。
+  ;; 自動記憶の置き場は会話に従う(ADR-DOE-AGENTS-006 R11)— 起こす 4 つの腕(rebuild を含む)すべてで据える 1 点。
   ;; 借りた札の家(下)より前に据えるのは、記憶が資格ではなく会話の durable な状態だから。
   (<- with-memory dict (charter-with-memory-home with-env memory-root
                                                  (str (get attribution "conversationId"))))

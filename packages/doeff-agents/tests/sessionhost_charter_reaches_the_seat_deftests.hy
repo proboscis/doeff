@@ -51,6 +51,7 @@
   ClockNow
   EnvGet
   FsMakeDirs
+  FsReadText
   FsRemoveFile
   FsWriteTextAtomic
   HeadlessDeliver
@@ -259,6 +260,11 @@
   (FsWriteTextAtomic [path text tmp-suffix]
     (setv (get world.fs path) text)
     (resume None))
+  (FsReadText [path]
+    ;; 本物の substrate と同じ契約: 在れば本文・不在は None。続きの腕は起こす前に家の
+    ;; settings.json を読み、冷えた再開の前の圧縮を撃つかを決める(headless-cold-compaction-run)。
+    ;; この世界の家には settings.json が無い = plugin の効かない profile なので圧縮は撃たれない。
+    (resume (.get world.fs path)))
   (FsRemoveFile [path]
     ;; card acp:kanban-issue:ki-6b5c4b270ca0: 名指した 1 file を落とす(不在は成功)。
     (.append world.removed path)
