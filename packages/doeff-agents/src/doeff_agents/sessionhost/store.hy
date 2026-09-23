@@ -677,10 +677,11 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    StoreActor を飽和させた 2026-07-27 wedge の hot path 根治。"
   (setv statuses (.get filters "status"))
   (setv order-by " ORDER BY started_at DESC, session_id ASC")
+  ;; 行は cursor のまま渡す(頁で止めた先の行を fetch も decode もしない)。
   (setv rows
         (cond
           (is statuses None)
-          (.fetchall (.execute conn (+ SNAPSHOT-SELECT order-by)))
+          (.execute conn (+ SNAPSHOT-SELECT order-by))
           ;; 空集合 filter は SQL の `IN ()` が書けないので構造的に空
           ;; (従来の Python filter と同値: どの行も一致しない)。
           (= (len statuses) 0)
@@ -688,15 +689,29 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
           True
           (do
             (setv placeholders (.join ", " (lfor _ statuses "?")))
-            (.fetchall (.execute conn
-                                 (+ SNAPSHOT-SELECT
-                                    f" WHERE status IN ({placeholders})"
-                                    order-by)
-                                 (tuple statuses))))))
-  (lfor row rows
-        :setv snap (snapshot-from-db-row row)
-        :if (list-query-matches snap filters)
-        snap))
+            (.execute conn
+                      (+ SNAPSHOT-SELECT
+                         f" WHERE status IN ({placeholders})"
+                         order-by)
+                      (tuple statuses)))))
+  ;; 頁(limit / offset — 2026-09-23 会社 Mac の実弾): 一致した行を新しい順に offset 件飛ばして
+  ;; limit 件だけ decode して返す。limit が無い一覧は従来どおり全件(API 契約の無条件一覧)。
+  ;; 終端の履歴 6,087 行を毎 heartbeat 全件 decode + 行ごとの wire 導出で返し(15 MB・5〜34 秒)、
+  ;; agentd の 10 秒の読みの期限を越え続けた。上限を持つ呼び手(agentd の transcript の候補)は
+  ;; 必要な件数だけを頁で読み、履歴の長さに比例する仕事を器に撃たせない。
+  (setv limit (.get filters "limit"))
+  (setv offset (or (.get filters "offset") 0))
+  (setv out [])
+  (setv skipped 0)
+  (for [row rows]
+    (when (and (is-not limit None) (>= (len out) limit))
+      (break))
+    (setv snap (snapshot-from-db-row row))
+    (when (list-query-matches snap filters)
+      (if (< skipped offset)
+          (setv skipped (+ skipped 1))
+          (.append out snap))))
+  out)
 
 (deff db-count-active [conn]
   {:pre [(: conn sqlite3.Connection)]

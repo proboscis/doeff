@@ -575,6 +575,8 @@ class FakeSessions:
         self.backend_kind: str = backend_kind
         self.events_root: str = events_root
         self.captures: list[tuple[str, int]] = []
+        #: 器へ撃った一覧の要求(絞りと頁 — 参加の腕が履歴を全部読まないことの観測)。
+        self.list_calls: list[SessionList] = []
         self.capture_text: str = "❯ \n"
         #: None = 断面を返す / str = pane も server も無い(理由)— host が capture を断った形
         #: (実 handler は RPC の error 封筒を CaptureGone に写す・fake は同じ値を直に返す)。
@@ -680,7 +682,18 @@ class FakeSessions:
                 raise failure
             return self.views.get(effect.session_id)
         if isinstance(effect, SessionList):
-            return tuple(view for view in self.views.values() if view.lifecycle == effect.lifecycle)
+            listed = [
+                view
+                for view in self.views.values()
+                if view.lifecycle == effect.lifecycle
+                and (effect.statuses is None or view.status in effect.statuses)
+            ]
+            self.list_calls.append(effect)
+            if effect.limit is None:
+                return tuple(listed)
+            # 本物の器と同じ順(新しい順・同刻は id の昇順)で頁を切る。
+            ordered = sorted(listed, key=lambda view: (-(view.started_at_ms or 0), view.session_id))
+            return tuple(ordered[effect.offset : effect.offset + effect.limit])
         self.captures.append((effect.session_id, effect.lines))
         if self.capture_gone is not None:
             if self.finish_on_capture is not None:

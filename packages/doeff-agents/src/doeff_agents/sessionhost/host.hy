@@ -749,6 +749,17 @@
     (raise (RuntimeError f"invalid params for {method}: missing field `{key}`")))
   value)
 
+(deff page-int-param [params key minimum]
+  {:pre [(: params dict) (: key str) (: minimum int)]
+   :post [(: % (| int None))]}
+  "session.list の頁の欄(limit / offset): 無ければ None、在れば minimum 以上の整数(bool は整数と読まない)。"
+  (setv value (.get params key))
+  (when (and (is-not value None)
+             (or (isinstance value bool) (not (isinstance value int)) (< value minimum)))
+    (raise (RuntimeError
+             f"invalid params for session.list: `{key}` must be an integer >= {minimum}")))
+  value)
+
 ;; 段 10 lane 10o(agora-redesign #96): 添付の段を持たない器(tui = tmux / herdr の pane)の断りの理由。
 ;; 呼び手(agentd)はこれを条件 AttachmentIgnored の reason に写す(黙って落とさない)。
 (setv ATTACHMENTS-UNSUPPORTED-REASON
@@ -1478,7 +1489,10 @@
                    "backend_kind" (.get p "backend_kind")
                    "lifecycle" (.get p "lifecycle")
                    ;; ADR-007 §8: adopted filter(bool)— 対話席一覧の主 filter。
-                   "adopted" (.get p "adopted")})
+                   "adopted" (.get p "adopted")
+                   ;; 頁(2026-09-23): 新しい順の一致行から offset 件飛ばして limit 件(無し = 全件)。
+                   "limit" (page-int-param p "limit" 1)
+                   "offset" (or (page-int-param p "offset" 0) 0)})
     (setv snaps (.submit actor (fn [conn] (db-session-list conn filters))))
     (return (lfor s snaps
                   (augment-wire-snapshot config actor

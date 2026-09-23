@@ -672,6 +672,24 @@
   (with-tmp-conn check))
 
 
+(deftest test-session-list-pages-with-limit-and-offset
+  ;; 2026-09-23 会社 Mac の実弾: 終端の履歴 6,087 行を毎回全件返していた。頁(limit / offset)は
+  ;; filter に一致した行を新しい順に offset 件飛ばして limit 件だけ返し、先の行は decode しない。
+  (defn check [conn]
+    (for [i (range 5)]
+      (db-upsert-snapshot conn (make-snap f"t{i}" :status "stopped"
+                                 :started_at f"2026-07-05T00:00:0{i}+00:00")))
+    (db-upsert-snapshot conn (make-snap "live" :status "running"
+                               :started_at "2026-07-05T00:00:09+00:00"))
+    (setv ended {"status" ["stopped"]})
+    (assert (= (lfor s (db-session-list conn (| ended {"limit" 2})) (get s "session_id")) ["t4" "t3"]))
+    (assert (= (lfor s (db-session-list conn (| ended {"limit" 2 "offset" 2})) (get s "session_id")) ["t2" "t1"]))
+    (assert (= (lfor s (db-session-list conn (| ended {"limit" 2 "offset" 4})) (get s "session_id")) ["t0"]))
+    ;; limit 無しは従来どおり全件
+    (assert (= (len (db-session-list conn ended)) 5)))
+  (with-tmp-conn check))
+
+
 (deftest test-prune-history-retention-and-batching
   ;; cutoff より古い events / commands だけを bounded batch で削除する。
   ;; 戻り値 = この呼び出しで削除した行数(0 = 収束)。
