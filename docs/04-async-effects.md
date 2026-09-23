@@ -228,16 +228,35 @@ def first_result():
 
 ## Cancel and TaskCancelledError
 
-Cancellation is explicit and cooperative:
+Cancellation is explicit and delivered into the task:
 
-- request cancellation via `yield Cancel(task)`
-- `Cancel` applies to `Pending`, `Running`, `Suspended`, and `Blocked` tasks
+- request cancellation via `yield Cancel(task)`; the request returns immediately
+- a task that never started is cancelled without running any of its body
+- a started task receives `TaskCancelledError` at the point where it is suspended (`Wait`,
+  `Gather`, `Race`, `AcquireSemaphore`, `Await`, or a queued resume), so its `except` and
+  `finally` blocks run; a task that cancels itself receives it at its own `Cancel`
+- cleanup may perform effects (scheduler effects, `Await` I/O, user effects); the task stays
+  live until it has finished unwinding
+- waiters (`Wait`, `Gather`, `Race`) are woken only after the task has finished unwinding, and
+  observe it as `TaskCancelledError`; to be sure the cleanup ran, `Wait` on the task after
+  `Cancel` (work still unwinding when the root body returns is abandoned, with the #501 warning)
+- if the cleanup raises a different exception, waiters observe that exception instead
+- a task that catches `TaskCancelledError` and carries on keeps running (one `Cancel` delivers
+  the exception once); waiters still observe `TaskCancelledError` when it ends, and its return
+  value is discarded. Another `Cancel` delivers the exception again at its next suspension point.
+  `TaskCancelledError` is an `Exception` subclass, so a broad `except Exception` also catches it
 - cancelling `Completed`/`Failed`/`Cancelled` tasks is a no-op
-- waiters (`Wait`, `Gather`, `Race`) observe cancelled tasks as `TaskCancelledError`
-- cancellation request returns immediately; running tasks cancel at next `SchedulerYield`
 
 ```python
 from doeff import Cancel, Ok, Err, Try, Spawn, Wait, do
+
+@do
+def work():
+    lease = yield acquire_lease()
+    try:
+        return (yield run_remote(lease))
+    finally:
+        yield release_lease(lease)  # runs on Cancel, may perform effects
 
 @do
 def cancel_child():
@@ -246,7 +265,7 @@ def cancel_child():
     result = yield Try(Wait(task))
     match result:
         case Err(error=e):
-            return e  # TaskCancelledError
+            return e  # TaskCancelledError, after work()'s finally ran
         case Ok(value=v):
             return v
 ```
