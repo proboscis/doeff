@@ -445,8 +445,11 @@ class ExternalPromise(Generic[_T]):
 SchedulerImplementation = Literal["python", "rust"]
 
 # Which implementation `scheduled()` uses when neither its argument nor the
-# environment variable chooses (docs/25-rust-scheduler.md).
-DEFAULT_IMPLEMENTATION: SchedulerImplementation = "rust"
+# environment variable chooses. Stays "python" until every deployment (image,
+# pool agentd, company / personal Mac agentd) has rebuilt the Rust extension
+# with the scheduler; the switch to "rust" lands separately
+# (docs/25-rust-scheduler.md).
+DEFAULT_IMPLEMENTATION: SchedulerImplementation = "python"
 
 # Environment variable that overrides DEFAULT_IMPLEMENTATION ("python" / "rust").
 IMPLEMENTATION_ENV_VAR = "DOEFF_SCHEDULER"
@@ -534,8 +537,18 @@ def _scheduled_rust(body_program: "Program[_T, Any]") -> "Program[_T, Any]":
     """``scheduled`` backed by the Rust scheduler (doeff_vm SchedulerCore)."""
     # Imported from the extension module itself (not the doeff_vm package
     # namespace), so a stale extension without the Rust scheduler fails here
-    # with an ImportError that names it, not at `import doeff_vm`.
-    from doeff_vm.doeff_vm import SchedulerCore
+    # with an ImportError that names it, not at `import doeff_vm`. Never
+    # falls back to the Python implementation silently.
+    try:
+        from doeff_vm.doeff_vm import SchedulerCore
+    except ImportError as error:
+        raise ImportError(
+            "the Rust scheduler was selected (implementation='rust' or "
+            f"${IMPLEMENTATION_ENV_VAR}=rust) but the loaded doeff_vm extension has no "
+            "SchedulerCore: rebuild the Rust extension (`make sync`, or "
+            "`maturin develop --release` in packages/doeff-vm), or select "
+            "implementation='python'"
+        ) from error
 
     core = SchedulerCore(
         {

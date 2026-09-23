@@ -204,3 +204,19 @@ def test_virtual_clock_handler_cooperates_with_the_scheduler(
     program = scheduled(install_handler(sim_clock)(body()), implementation=implementation)
     assert run(program) == ["a", "b"]
     assert order == [("b", 2), ("a", 3), ("b", 4), ("a", 6)]
+
+
+def test_default_is_python(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rust becomes the default only after every deployment rebuilt the extension."""
+    monkeypatch.delenv("DOEFF_SCHEDULER", raising=False)
+    assert resolve_implementation() == "python"
+
+
+def test_stale_extension_is_named_not_silently_replaced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import doeff_vm.doeff_vm as extension
+
+    monkeypatch.delattr(extension, "SchedulerCore")
+    with pytest.raises(ImportError, match="rebuild the Rust extension"):
+        scheduled(_one(), implementation="rust")
