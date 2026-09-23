@@ -21,14 +21,18 @@ Usage:
     run(scheduled(main()))
 """
 
+import functools
 import logging
+import os
+import sys
 import warnings
 import weakref
 from collections.abc import Callable, Generator
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
 from doeff_vm import Callable as _VmCallable
 from doeff_vm import EffectBase, Err, Ok, TailEval
+from doeff_vm import WithHandler as _WithHandlerRaw
 from doeff_vm import WithObserve as _WithObserveRaw
 
 from doeff.do import do
@@ -438,8 +442,137 @@ class ExternalPromise(Generic[_T]):
 # Scheduler
 # ---------------------------------------------------------------------------
 
-def scheduled(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
-    """Wrap a program with the scheduler. Returns a DoExpr."""
+SchedulerImplementation = Literal["python", "rust"]
+
+# Which implementation `scheduled()` uses when neither its argument nor the
+# environment variable chooses (docs/25-rust-scheduler.md).
+DEFAULT_IMPLEMENTATION: SchedulerImplementation = "rust"
+
+# Environment variable that overrides DEFAULT_IMPLEMENTATION ("python" / "rust").
+IMPLEMENTATION_ENV_VAR = "DOEFF_SCHEDULER"
+
+
+def resolve_implementation(
+    implementation: "SchedulerImplementation | None" = None,
+) -> SchedulerImplementation:
+    """The implementation ``scheduled(..., implementation=...)`` will use.
+
+    Order: the explicit argument, then ``$DOEFF_SCHEDULER``, then
+    ``DEFAULT_IMPLEMENTATION``. Read on every call, so a test can switch it
+    with ``monkeypatch.setenv``.
+    """
+    choice = implementation
+    if choice is None:
+        # The environment switch is the operator-facing rollback knob
+        # (docs/25-rust-scheduler.md); the argument is the injected path.
+        choice = os.environ.get(IMPLEMENTATION_ENV_VAR) or DEFAULT_IMPLEMENTATION  # noqa: DOEFF004
+    if choice not in ("python", "rust"):
+        raise ValueError(
+            f"scheduler implementation must be 'python' or 'rust', got {choice!r} "
+            f"(argument or ${IMPLEMENTATION_ENV_VAR})"
+        )
+    return choice
+
+
+def scheduled(
+    body_program: "Program[_T, Any]",
+    *,
+    implementation: "SchedulerImplementation | None" = None,
+) -> "Program[_T, Any]":
+    """Wrap a program with the scheduler. Returns a DoExpr.
+
+    Both implementations handle the same effects with the same semantics
+    (docs/25-rust-scheduler.md); ``implementation`` / ``$DOEFF_SCHEDULER``
+    choose between them for comparison and rollback.
+    """
+    if resolve_implementation(implementation) == "rust":
+        return _scheduled_rust(body_program)
+    return _scheduled_python(body_program)
+
+
+@functools.cache
+def _rust_spec() -> dict[str, object]:
+    """The classes and fixed settings the Rust scheduler reads (built once).
+
+    Module settings a test may monkeypatch are not cached here:
+    HANDLE_SWEEP_INTERVAL / HANDLE_REFS_PRUNE_MIN are read when a run starts
+    and EXTERNAL_STALL_LOG_INTERVAL_SECONDS whenever the scheduler blocks.
+    """
+    return {
+        "Spawn": Spawn,
+        "TaskCompleted": TaskCompleted,
+        "Wait": Wait,
+        "Gather": Gather,
+        "Race": Race,
+        "Cancel": Cancel,
+        "CreatePromise": CreatePromise,
+        "CompletePromise": CompletePromise,
+        "FailPromise": FailPromise,
+        "CreateExternalPromise": CreateExternalPromise,
+        "_SchedulerIntrospection": _SchedulerIntrospection,
+        "CreateSemaphore": CreateSemaphore,
+        "AcquireSemaphore": AcquireSemaphore,
+        "ReleaseSemaphore": ReleaseSemaphore,
+        "Task": Task,
+        "Future": Future,
+        "Promise": Promise,
+        "ExternalPromise": ExternalPromise,
+        "Semaphore": Semaphore,
+        "TaskCancelledError": TaskCancelledError,
+        "ExternalPromiseCancelCallbackError": ExternalPromiseCancelCallbackError,
+        "SchedulerDeadlockError": SchedulerDeadlockError,
+        "enrich_exception_traceback": _enrich_exception_traceback,
+        "logger": _logger,
+        "module": sys.modules[__name__],
+        "PRIORITY_IDLE": PRIORITY_IDLE,
+        "PRIORITY_EXTERNAL_WAIT": PRIORITY_EXTERNAL_WAIT,
+        "PRIORITY_NORMAL": PRIORITY_NORMAL,
+    }
+
+
+def _scheduled_rust(body_program: "Program[_T, Any]") -> "Program[_T, Any]":
+    """``scheduled`` backed by the Rust scheduler (doeff_vm SchedulerCore)."""
+    # Imported from the extension module itself (not the doeff_vm package
+    # namespace), so a stale extension without the Rust scheduler fails here
+    # with an ImportError that names it, not at `import doeff_vm`.
+    from doeff_vm.doeff_vm import SchedulerCore
+
+    core = SchedulerCore(
+        {
+            **_rust_spec(),
+            "HANDLE_SWEEP_INTERVAL": HANDLE_SWEEP_INTERVAL,
+            "HANDLE_REFS_PRUNE_MIN": HANDLE_REFS_PRUNE_MIN,
+        }
+    )
+
+    @do
+    def root_close_out(prog):
+        """Report work the run abandons when the root body returns (#501)."""
+        result = yield prog
+        abandoned, parked = core.close_out_report()
+        _warn_abandoned_work(abandoned, parked)
+        return result
+
+    return _WithHandlerRaw(core.prompt(), root_close_out(body_program))
+
+
+def _warn_abandoned_work(abandoned: list[str], parked: list[str]) -> None:
+    """The #501 close-out warning shared by both implementations."""
+    if abandoned or parked:
+        warnings.warn(
+            "scheduler root body returned while abandoning in-flight "
+            f"work (#501): ready entries [{'; '.join(abandoned)}]; "
+            f"parked waiters [{'; '.join(parked)}]. Spawned work that "
+            "must finish has to be awaited (Wait/Gather) before the "
+            "root body returns; intentional background work should be "
+            "spawned with Spawn(..., daemon=True).",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+
+
+def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
+    """``scheduled`` implemented in Python (the reference implementation)."""
     import heapq
     import queue as queue_mod
 
@@ -925,17 +1058,7 @@ def scheduled(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  # noqa: 
         result = yield prog
         abandoned = abandoned_ready_summary()
         parked = live_parked_waiter_summary(include_daemons=False)
-        if abandoned or parked:
-            warnings.warn(
-                "scheduler root body returned while abandoning in-flight "
-                f"work (#501): ready entries [{'; '.join(abandoned)}]; "
-                f"parked waiters [{'; '.join(parked)}]. Spawned work that "
-                "must finish has to be awaited (Wait/Gather) before the "
-                "root body returns; intentional background work should be "
-                "spawned with Spawn(..., daemon=True).",
-                RuntimeWarning,
-                stacklevel=2,
-            )
+        _warn_abandoned_work(abandoned, parked)
         return result
 
     def live_semaphore_waiters():
