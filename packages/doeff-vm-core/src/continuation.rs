@@ -142,6 +142,25 @@ impl DetachedFiberChain {
         frames
     }
 
+    /// The innermost source location of the chain — the first entry
+    /// `collect_traceback` would return — without asking every other frame
+    /// for its location (each ask reads a Python generator's code and line).
+    pub fn first_source_location(&self) -> Option<StreamSourceLocation> {
+        let mut cursor = Some(self.head);
+        while let Some(fid) = cursor {
+            let fiber = self.fiber(fid)?;
+            for frame in fiber.frames.iter().rev() {
+                if let crate::frame::Frame::Program { stream, .. } = frame {
+                    if let Some(loc) = stream.source_location() {
+                        return Some(loc);
+                    }
+                }
+            }
+            cursor = fiber.parent;
+        }
+        None
+    }
+
     pub fn handler_callables(&self) -> Vec<CallableRef> {
         let mut handlers = Vec::new();
         let mut cursor = Some(self.head);
@@ -391,6 +410,13 @@ impl Continuation {
 
     pub fn collect_traceback(&self) -> Option<Vec<StreamSourceLocation>> {
         self.chain.as_ref().map(DetachedFiberChain::collect_traceback)
+    }
+
+    /// See `DetachedFiberChain::first_source_location` (None also when consumed).
+    pub fn first_source_location(&self) -> Option<StreamSourceLocation> {
+        self.chain
+            .as_ref()
+            .and_then(DetachedFiberChain::first_source_location)
     }
 
     pub fn handler_callables(&self) -> Option<Vec<CallableRef>> {
