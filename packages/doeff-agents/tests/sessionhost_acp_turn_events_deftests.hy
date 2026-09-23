@@ -54,6 +54,8 @@
   provider-limit-condition-of
   attempt-refused?
   binding-attempt-of
+  turn-record-spec-of
+  turn-record-spec-realignment-of
   job-rows-running-on
   live-node-names-of
   turn-record-sweep-verdict
@@ -315,8 +317,11 @@
   (assert (> job.record-attempt 1) job.record-attempt)
   (assert (= job.record-attempt (+ record-generation 1)) #(job.record-attempt record-generation))
   (assert (>= job.delta-seq (len (.record-entries world))) #(job.delta-seq (len (.record-entries world))))
-  ;; 記録の行は作り直されていない(spec は attempt 1 の sessionId のまま・state running)。
-  (assert (= (get (. (.record world) spec) "sessionId") first-sid))
+  ;; 記録の行は作り直されていない(create は 2 度目も Conflict・state running)。spec の配置と session の欄は attempt 2 の値
+  ;; (card acp:kanban-issue:ki-90019f023e19: 続ける agentd が今の binding へ揃える — 前は attempt 1 の sessionId のままだった)。
+  (assert (= (get (. (.record world) spec) "sessionId") second-sid))
+  (assert (= (get (. (.record world) spec) "profile") "second"))
+  (assert (= (get (. (.record world) spec) "attempt") 2))
   (assert (= (get (.record-status world) "state") "running"))
   (assert (any (gfor line world.local.logs (in "continues the existing turn-record" line))) world.local.logs)
   ;; attempt 1 の記録は行に残る(予算の係の材料)。
@@ -1263,3 +1268,111 @@
   (assert (= (get (.record-status world) "state") "ended") (.record-status world))
   (assert (any (gfor line world.local.logs (in "was missing at turn end; re-created" line))) world.local.logs)
   (assert (= (get (job-status world) "phase") PHASE-ENDED)))
+
+
+(deftest test-a-turn-rebound-to-another-node-realigns-the-record-spec-to-the-binding
+  ;; card acp:kanban-issue:ki-90019f023e19: attempt 1 ran on another node ("mac-0") and wrote the record; the
+  ;; runner was lost and the placement re-bound attempt 2 to THIS node (NODE) under another account. The agentd
+  ;; that continues the record must make its spec name the current placement (node / profile / cacheContext /
+  ;; sessionId), keep the identity (conversationId / agentJobId), and keep the row (no re-create, entries kept).
+  (setv world (World))
+  (.put-row world.acp
+            (row-of AGORA-KINDS-NAMESPACE TURN-RECORD-KIND "j-1"
+                    {"conversationId" CONVERSATION "agentJobId" "j-1" "node" "mac-0" "profile" "personal"
+                     "model" "claude-opus-5" "sessionId" "sid-attempt-1"
+                     "cacheContext" {"nodeRow" "mac-0-2" "account" "old-acct" "declarationGeneration" 0}}
+                    {"state" "running" "entries" [{"seq" 0 "at" 900 "kind" "system" "bytes" 1 "sha256" "x"}]}))
+  (place-job-again world PHASE-BOUND {"node" NODE "nodeRow" NODE "profile" "second" "account" "acct"
+                                      "attempt" 2 "at" 7000 "declarationGeneration" 1} [])
+  (.tick world 0)
+  (.tick world 1000)
+  (setv job (in-flight world))
+  (setv sid (.sid world))
+  (setv spec (. (.record world) spec))
+  ;; identity untouched
+  (assert (= (get spec "conversationId") CONVERSATION) spec)
+  (assert (= (get spec "agentJobId") "j-1") spec)
+  ;; placement = the current binding
+  (assert (= (get spec "node") NODE) spec)
+  (assert (= (get spec "profile") "second") spec)
+  (assert (= (get spec "cacheContext") {"nodeRow" NODE "account" "acct" "declarationGeneration" 1}) spec)
+  (assert (= (get spec "sessionId") sid) spec)
+  (assert (= (get spec "attempt") 2) spec)
+  ;; continued, not re-created
+  (assert (= (get (.record-status world) "state") "running") (.record-status world))
+  (assert (= (len (.record-entries world)) 1) (.record-entries world))
+  (assert (= (.get world.acp.creates f"{AGORA-KINDS-NAMESPACE}:{TURN-RECORD-KIND}:j-1") 1) world.acp.creates)
+  (assert (> job.record-attempt 1) job.record-attempt))
+
+
+(deftest test-a-stale-attempt-does-not-roll-the-record-spec-back
+  ;; card acp:kanban-issue:ki-90019f023e19(盲検 A (b)・B): attempt 1 の create は行に着いたが応答を失い pending。配置が
+  ;; この agentd を失われたと判じて attempt 2 を別の node(mac-2)に結び、そちらの agentd が記録を自分の配置へ揃えた。
+  ;; 生きていた attempt 1 の作り直し(ensure-turn-record)が Conflict を受けても、記録が名乗る試み(2)は自分(1)より新しいので
+  ;; **書き戻さない**(所有は継続の時機ではなく試みの回数の単調性で決まる)。
+  (setv world (World))
+  (setv key f"{AGORA-KINDS-NAMESPACE}:{TURN-RECORD-KIND}:j-1")
+  (setv (get world.acp.create-refusals key) [(Refused 503 "gateway timeout")])
+  (.tick world 0)
+  (assert (= (. (in-flight world) record-create) RECORD-CREATE-PENDING) (. (in-flight world) record-create))
+  ;; attempt 2(mac-2)が揃えた記録と、そちらへ移った結び。
+  (.put-row world.acp
+            (row-of AGORA-KINDS-NAMESPACE TURN-RECORD-KIND "j-1"
+                    {"conversationId" CONVERSATION "agentJobId" "j-1" "node" "mac-2" "profile" "second"
+                     "model" "claude-opus-5" "sessionId" "sid-attempt-2" "attempt" 2
+                     "cacheContext" {"nodeRow" "mac-2" "account" "acct-b" "declarationGeneration" 1}}
+                    {"state" "running" "entries" []}))
+  (place-job-again world PHASE-RUNNING {"node" "mac-2" "nodeRow" "mac-2" "profile" "second" "account" "acct-b"
+                                        "attempt" 2 "at" 7000 "declarationGeneration" 1} [])
+  (.tick world 16000)
+  (setv spec (. (.record world) spec))
+  (assert (= (get spec "node") "mac-2") spec)
+  (assert (= (get spec "attempt") 2) spec)
+  (assert (= (get spec "sessionId") "sid-attempt-2") spec)
+  (assert (= (lfor [k _] world.acp.spec-writes :if (= k key) k) []) world.acp.spec-writes))
+
+
+(deftest test-a-retried-create-that-finds-its-own-record-does-not-rewrite-the-spec
+  ;; card acp:kanban-issue:ki-90019f023e19 (b): 自分の create は行に着いたが応答を失い pending。作り直し(ensure-turn-record)が
+  ;; Conflict を受けて続ける拍、行はもう自分の配置を名乗っているので spec は**書かない**(揃え直しは冪等)。
+  (setv world (World))
+  (setv key f"{AGORA-KINDS-NAMESPACE}:{TURN-RECORD-KIND}:j-1")
+  (setv (get world.acp.create-refusals key) [(Refused 503 "gateway timeout")])
+  (.tick world 0)
+  (setv job (in-flight world))
+  (assert (= job.record-create RECORD-CREATE-PENDING) job.record-create)
+  (.put-row world.acp (row-of AGORA-KINDS-NAMESPACE TURN-RECORD-KIND "j-1" (run (turn-record-spec-of job)) {"state" "running"}))
+  (.tick world 16000)
+  (assert (= (. (in-flight world) record-create) RECORD-CREATE-CREATED) (. (in-flight world) record-create))
+  (assert (= (lfor [k _] world.acp.spec-writes :if (= k key) k) []) world.acp.spec-writes)
+  (assert (= (.get world.acp.creates key) 2) world.acp.creates))
+
+
+(deftest test-turn-record-spec-realignment-keeps-identity-foreign-fields-and-attempt-order
+  ;; 純関数 1 点(card acp:kanban-issue:ki-90019f023e19): identity は書き換えない・知らない欄(reopen)は保つ・
+  ;; 配置の欄は wanted の値・記録の試みが新しければ None・等しければ None。
+  ;; まず fake の名簿の門が装着されていること(写しが読めて turn-record と node の update の名簿を持つ)— 門が外れていると
+  ;; 上の反例が偽の緑になる(実測 2026-09-23: 写しの path の段を誤って 5 本が緑)。
+  (import doeff_agents.sessionhost.acp.fake :as acp-fake)
+  (assert (in TURN-RECORD-KIND acp-fake._SPEC-UPDATE-WRITERS) acp-fake._SPEC-UPDATE-WRITERS)
+  (assert (in NODE-KIND acp-fake._SPEC-UPDATE-WRITERS) acp-fake._SPEC-UPDATE-WRITERS)
+  (setv existing {"conversationId" "c-1" "agentJobId" "j-1" "node" "a" "profile" "p" "model" "m" "sessionId" "s-1"
+                  "attempt" 1 "cacheContext" {"nodeRow" "a-1" "account" "x" "declarationGeneration" 0}
+                  "reopen" {"mode" "launch" "homeDigest" "d"}})
+  (setv wanted {"conversationId" "c-1" "agentJobId" "j-1" "node" "b" "profile" "q" "model" "m" "sessionId" "s-2" "attempt" 2
+                "cacheContext" {"nodeRow" "b-1" "account" "y" "declarationGeneration" 1}})
+  (setv moved (run (turn-record-spec-realignment-of existing wanted)))
+  (assert (= moved (| wanted {"reopen" (get existing "reopen")})) moved)
+  ;; identity が違えば書かない
+  (assert (is (run (turn-record-spec-realignment-of existing (| wanted {"agentJobId" "j-2"}))) None))
+  (assert (is (run (turn-record-spec-realignment-of existing (| wanted {"conversationId" "c-2"}))) None))
+  ;; 記録の試みが新しければ(古い agentd の書き戻し)書かない
+  (assert (is (run (turn-record-spec-realignment-of (| existing {"attempt" 3}) wanted)) None))
+  ;; 欄の無い行は attempt 1 と読む(同じ試みの拾い直しは揃える)
+  (setv legacy (dfor [k v] (.items existing) :if (!= k "attempt") k v))
+  (assert (= (get (run (turn-record-spec-realignment-of legacy (| wanted {"attempt" 1}))) "node") "b"))
+  ;; 等しければ None
+  (assert (is (run (turn-record-spec-realignment-of existing existing)) None))
+  ;; wanted に cacheContext が無ければ(口座を借りない手番)行の古い cacheContext は残さない
+  (setv bare (dfor [k v] (.items wanted) :if (!= k "cacheContext") k v))
+  (assert (not-in "cacheContext" (run (turn-record-spec-realignment-of existing bare)))))
