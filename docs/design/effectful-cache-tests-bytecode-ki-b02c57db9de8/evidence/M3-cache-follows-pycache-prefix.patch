@@ -1,0 +1,22 @@
+diff --git a/doeff/_effectful_rewrite.py b/doeff/_effectful_rewrite.py
+index bf1133a3..c1e67b7c 100644
+--- a/doeff/_effectful_rewrite.py
++++ b/doeff/_effectful_rewrite.py
+@@ -349,7 +349,7 @@ def cache_path(source_path: str) -> Path:
+     source = Path(source_path)
+     tag = sys.implementation.cache_tag or "python"
+     name = f"{source.stem}.{tag}-doeff-effectful-{REWRITE_VERSION}.pyc"
+-    return source.parent / "__pycache__" / name
++    return Path(importlib.util.cache_from_source(source_path)).with_name(name)
+ 
+ 
+ def _header(mtime: int, size: int) -> bytes:
+@@ -380,7 +380,7 @@ def _write_cache(path: Path, header: bytes, code: CodeType) -> None:
+         return
+     temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+     try:
+-        path.parent.mkdir(exist_ok=True)
++        path.parent.mkdir(parents=True, exist_ok=True)
+         temporary.write_bytes(header + marshal.dumps(code))
+         os.replace(temporary, path)
+     except OSError:

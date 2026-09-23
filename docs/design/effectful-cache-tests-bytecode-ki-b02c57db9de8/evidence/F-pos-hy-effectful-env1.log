@@ -1,0 +1,13 @@
+# label=F-pos-hy-effectful-env1
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 worktree=/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design
+# PYTHONDONTWRITEBYTECODE=1
+# diff:  M conftest.py  M packages/doeff-hy/tests/test_none_type_contract.py  M packages/doeff-hy/tests/test_source_positions.py  M tests/test_effectful.py ?? tests/test_bytecode_writing_off.py 
+# diff sha256: ff12e21f0cafa16c
+# cmd: python -m pytest packages/doeff-hy/tests/test_source_positions.py packages/doeff-hy/tests/test_none_type_contract.py tests/test_effectful.py tests/test_bytecode_writing_off.py -q
+
+deadline scale x1.4 (load/core) — per test 85s, watchdog 128s
+
+test-admission: focused — 41 件(変更箇所の検証)
+.........................................                                [100%]
+41 passed in 7.49s
+# exit=0

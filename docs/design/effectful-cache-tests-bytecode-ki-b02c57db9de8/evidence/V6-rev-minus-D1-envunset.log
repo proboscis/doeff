@@ -1,0 +1,39 @@
+# label=V6-rev-minus-D1-envunset
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 worktree=/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design
+# PYTHONDONTWRITEBYTECODE=<unset> PYTHONPYCACHEPREFIX=<unset>
+# diff:  M conftest.py  M packages/doeff-hy/tests/test_none_type_contract.py  M packages/doeff-hy/tests/test_source_positions.py  M tests/test_effectful.py ?? docs/design/effectful-cache-tests-bytecode-ki-b02c57db9de8/ ?? tests/test_bytecode_settings_pinned.py 
+# diff sha256: 021fa813c19bdde3
+# cmd: python -m pytest tests/test_effectful.py -q -k rebuild
+
+deadline scale x1.4 (load/core) — per test 86s, watchdog 128s
+
+test-admission: focused — 1 件(変更箇所の検証)
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________________ test_a_new_rewrite_version_rebuilds_the_cache _________________
+
+tmp_package = ('effectful_tmp_test_a_new_rewrite_version_reb0', PosixPath('/tmp/pytest-of-kento/pytest-356/test_a_new_rewrite_version_reb0/effectful_tmp_test_a_new_rewrite_version_reb0'))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x51c90c508d0>
+
+    def test_a_new_rewrite_version_rebuilds_the_cache(
+        tmp_package: tuple[str, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        name, package = tmp_package
+        source = package / "mod.py"
+        source.write_text(_MODULE)
+        _import_fresh(f"{name}.mod")
+        monkeypatch.setattr(rewrite, "REWRITE_VERSION", "next-version")
+        module = _import_fresh(f"{name}.mod")
+        assert module.__doeff_effectful__ == "next-version"
+        rebuilt = rewrite.cache_path(str(source))
+        assert "next-version" in rebuilt.name
+>       assert rebuilt.is_file()
+E       AssertionError: assert False
+E        +  where False = is_file()
+E        +    where is_file = PosixPath('/tmp/pytest-of-kento/pytest-356/test_a_new_rewrite_version_reb0/effectful_tmp_test_a_new_rewrite_version_reb0/__pycache__/mod.cpython-314-doeff-effectful-next-version.pyc').is_file
+
+tests/test_effectful.py:362: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_effectful.py::test_a_new_rewrite_version_rebuilds_the_cache
+1 failed, 30 deselected in 1.64s
+# exit=1

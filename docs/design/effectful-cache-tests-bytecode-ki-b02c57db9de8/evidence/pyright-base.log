@@ -1,0 +1,15 @@
+/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design/packages/doeff-hy/tests/test_none_type_contract.py
+  /home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design/packages/doeff-hy/tests/test_none_type_contract.py:68:16 - error: Argument of type "object" cannot be assigned to parameter "doexpr" of type "Program[_T@run, Any]" in function "run"
+    "object" is incompatible with protocol "Program[_T@run, Any]"
+      "__iter__" is not present (reportArgumentType)
+/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design/packages/doeff-hy/tests/test_source_positions.py
+  /home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design/packages/doeff-hy/tests/test_source_positions.py:92:16 - error: Argument of type "object" cannot be assigned to parameter "doexpr" of type "Program[_T@run, Any]" in function "run"
+    "object" is incompatible with protocol "Program[_T@run, Any]"
+      "__iter__" is not present (reportArgumentType)
+/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design/tests/test_effectful.py
+  /home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design/tests/test_effectful.py:75:28 - error: Cannot access attribute "__doeff_generator_function__" for class "FunctionType"
+    Attribute "__doeff_generator_function__" is unknown (reportFunctionMemberAccess)
+3 errors, 0 warnings, 0 informations
+WARNING: there is a new pyright version available (v1.1.411 -> v1.1.414).
+Please install the new version or set PYRIGHT_PYTHON_FORCE_VERSION to `latest`
+
