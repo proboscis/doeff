@@ -1,0 +1,12 @@
+{
+  "entries": [
+    {
+      "count": 7,
+      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/relaymain.py",
+      "reason": "legacy: relaymain の既存の所見(12h の実射)",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    }
+  ],
+  "version": 1
+}
