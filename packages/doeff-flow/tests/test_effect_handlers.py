@@ -4,10 +4,11 @@
 import json
 from pathlib import Path
 
+from doeff_flow import run_result
 from doeff_flow.effects import TraceAnnotate, TraceCapture, TracePush, TraceSnapshot
 from doeff_flow.handlers import mock_handlers, production_handlers
 
-from doeff import default_handlers, do, run
+from doeff import do
 
 
 def _read_entries(trace_dir: Path, workflow_id: str) -> list[dict]:
@@ -17,10 +18,7 @@ def _read_entries(trace_dir: Path, workflow_id: str) -> list[dict]:
 
 
 def _run_with_handler(program, handler):
-    return run(
-        handler(program),
-        handlers=default_handlers(),
-    )
+    return run_result(handler(program))
 
 
 @do
@@ -92,3 +90,21 @@ def test_handler_swapping_changes_trace_side_effects(tmp_path: Path) -> None:
     )
     assert prod_result.is_ok()
     assert trace_file.exists()
+
+
+def test_trace_handlers_pass_through_other_effects(tmp_path: Path) -> None:
+    from doeff import Ask
+
+    @do
+    def program():
+        yield TracePush(name="outer")
+        base = yield Ask("base")
+        return base + 1
+
+    for handler in (
+        mock_handlers(),
+        production_handlers(workflow_id="trace-pass-through", trace_dir=tmp_path),
+    ):
+        result = run_result(handler(program()), env={"base": 41})
+        assert result.is_ok(), result
+        assert result.value == 42

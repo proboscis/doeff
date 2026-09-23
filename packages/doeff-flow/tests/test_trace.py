@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
-from doeff_flow import run_workflow
+from doeff_flow import run_result, run_workflow
 from doeff_flow.trace import (
     LiveTrace,
     TraceFrame,
@@ -15,9 +15,8 @@ from doeff_flow.trace import (
     write_terminal_trace,
 )
 
-from doeff import Ask, Effect, Get, Pass, Pure, Put, Resume, default_handlers, do
+from doeff import Ask, Effect, Get, Pass, Pure, Put, Resume, do
 from doeff import handler as _install_raw_handler
-from doeff import run as run_sync
 
 
 def _read_trace_entries(trace_dir: Path, workflow_id: str) -> list[dict]:
@@ -109,7 +108,7 @@ class TestWriteTerminalTrace:
             b = yield Pure(20)
             return a + b
 
-        result = run_sync(simple_workflow(), handlers=default_handlers())
+        result = run_result(simple_workflow())
         assert result.is_ok()
         write_terminal_trace("terminal-ok", tmp_path, result)
 
@@ -125,7 +124,7 @@ class TestWriteTerminalTrace:
             yield Pure(10)
             raise ValueError("intentional failure")
 
-        result = run_sync(failing_workflow(), handlers=default_handlers())
+        result = run_result(failing_workflow())
         assert result.is_err()
         write_terminal_trace("terminal-fail", tmp_path, result)
 
@@ -216,7 +215,7 @@ class TestWithHandlerObservability:
         def capturing_handler(effect: Effect, k):
             _ = k
             captured_effects.append(effect)
-            return (yield Pass())
+            return (yield Pass(effect, k))
 
         @do
         def workflow():
@@ -225,17 +224,16 @@ class TestWithHandlerObservability:
             yield Put("counter", current + 1)
             return current
 
-        result = run_sync(
+        result = run_result(
             _install_raw_handler(capturing_handler)(workflow()),
-            handlers=default_handlers(),
             store={},
         )
 
         assert result.is_ok()
         assert result.value == 0
         effect_names = [type(effect).__name__ for effect in captured_effects]
-        assert "PyPut" in effect_names
-        assert "PyGet" in effect_names
+        assert "Put" in effect_names
+        assert "Get" in effect_names
 
     def test_can_modify_effect_result_with_resume(self):
         seen_ask = 0
@@ -243,10 +241,10 @@ class TestWithHandlerObservability:
         @do
         def override_ask_handler(effect: Effect, k):
             nonlocal seen_ask
-            if type(effect).__name__ == "PyAsk" and seen_ask < 2:
+            if isinstance(effect, Ask) and seen_ask < 2:
                 seen_ask += 1
                 return (yield Resume(k, 5))
-            return (yield Pass())
+            return (yield Pass(effect, k))
 
         @do
         def workflow():
@@ -254,9 +252,8 @@ class TestWithHandlerObservability:
             b = yield Ask("b")
             return a + b
 
-        result = run_sync(
+        result = run_result(
             _install_raw_handler(override_ask_handler)(workflow()),
-            handlers=default_handlers(),
             env={"a": 1, "b": 2},
         )
 

@@ -5,7 +5,7 @@
 (require doeff_docker.compose [with-handlers])
 (import doeff [do :as _doeff-do])
 (import doeff [run])
-(import doeff_core_effects [reader writer slog-handler scheduled])
+(import doeff_core_effects [reader state writer slog-handler scheduled])
 
 (import doeff_ml_nexus.serializer [default-serializer])
 (import doeff_ml_nexus.handlers.resolve [resolve-handler])
@@ -27,8 +27,10 @@
            (if (isinstance env dict) env (run env)))))
 
   (run (scheduled
+    ;; slog-handler and writer keep their logs via Get/Put, so state must sit outside them.
     (with-handlers
-      [(reader :env resolved-env)
+      [(state)
+       (reader :env resolved-env)
        slog-handler
        writer
        resolve-handler
