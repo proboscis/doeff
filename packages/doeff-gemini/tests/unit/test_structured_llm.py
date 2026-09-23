@@ -47,18 +47,19 @@ from doeff_gemini.structured_llm import GeminiStructuredOutputError
 from doeff_gemini.types import APICallMetadata
 
 genai_types = google_genai.types
+from _runner import async_run_program
 from doeff_core_effects.memo_effects import MemoGetEffect, MemoPutEffect
 from pydantic import BaseModel
 
-from doeff import EffectGenerator, async_run, default_handlers, do
+from doeff import EffectGenerator, do
 
 structured_llm_module = importlib.import_module("doeff_gemini.structured_llm")
 
 
 async def _run_with_default_cost(program: Any, *, env: dict[str, Any] | None = None):
-    return await async_run(
+    return await async_run_program(
         program,
-        handlers=[default_gemini_cost_handler, *default_handlers()],
+        handlers=[default_gemini_cost_handler],
         env=env,
     )
 
@@ -255,7 +256,7 @@ async def test_build_contents_uploads_local_file_and_caches_result(tmp_path: Pat
     assert cache.put_effects
     assert cache.put_effects[0].policy.ttl == 172800
     assert cache.put_effects[0].policy.lifecycle.value == "persistent"
-    assert cache.put_effects[0].policy.resolved_storage().value == "disk"
+    assert cache.put_effects[0].policy.recompute_cost.value == "expensive"
 
 
 @pytest.mark.asyncio
@@ -801,7 +802,7 @@ async def test_process_structured_response_without_json_payload() -> None:
     result = await _run_with_default_cost(flow())
 
     assert result.is_err()
-    error = result.result.error
+    error = result.error
     assert isinstance(error, GeminiStructuredOutputError)
     assert error.format_name.endswith("SimpleResponse")
 

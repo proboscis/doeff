@@ -1,6 +1,7 @@
 # ruff: noqa: E402
 """Tests for Gemini cost calculation hook and fallback behavior."""
 
+import importlib.util
 import sys
 import time
 from pathlib import Path
@@ -17,7 +18,10 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-if "pydantic" not in sys.modules:
+# Stub only when pydantic is really absent: checking sys.modules instead would
+# shadow the installed pydantic for every later test module (ImportError on
+# ConfigDict) whenever this file happens to be imported first.
+if "pydantic" not in sys.modules and importlib.util.find_spec("pydantic") is None:
     import types
 
     pydantic_stub = types.ModuleType("pydantic")
@@ -60,6 +64,7 @@ if "pydantic" not in sys.modules:
     pydantic_stub.ValidationError = ValidationError  # type: ignore[attr-defined]
     sys.modules["pydantic"] = pydantic_stub
 
+from _runner import async_run_program
 from doeff_gemini import (
     CostInfo,
     GeminiCostEstimate,
@@ -68,7 +73,7 @@ from doeff_gemini.client import track_api_call
 from doeff_gemini.effects import GeminiCalculateCost
 from doeff_gemini.handlers import default_gemini_cost_handler
 
-from doeff import Effect, Pass, Resume, async_run, default_handlers, do
+from doeff import Effect, Pass, Resume, do
 
 
 def _fake_response(usage: dict[str, int]) -> Any:
@@ -109,9 +114,9 @@ async def test_default_cost_calculator_runs_when_no_custom() -> None:
             )
         )
 
-    result = await async_run(
+    result = await async_run_program(
         flow(),
-        handlers=[default_gemini_cost_handler, *default_handlers()],
+        handlers=[default_gemini_cost_handler],
     )
 
     assert result.is_ok()
@@ -142,9 +147,9 @@ async def test_default_cost_calculator_supports_gemini3_image() -> None:
             )
         )
 
-    result = await async_run(
+    result = await async_run_program(
         flow(),
-        handlers=[default_gemini_cost_handler, *default_handlers()],
+        handlers=[default_gemini_cost_handler],
     )
 
     assert result.is_ok()
@@ -180,9 +185,9 @@ async def test_cost_fallback_to_image_tokens_from_total() -> None:
             )
         )
 
-    result = await async_run(
+    result = await async_run_program(
         flow(),
-        handlers=[default_gemini_cost_handler, *default_handlers()],
+        handlers=[default_gemini_cost_handler],
     )
 
     assert result.is_ok()
@@ -217,7 +222,7 @@ async def test_custom_cost_calculator_overrides_default() -> None:
                     ),
                 )
             )
-        yield Pass()
+        yield Pass(effect, k)
 
     @do
     def flow():
@@ -234,9 +239,9 @@ async def test_custom_cost_calculator_overrides_default() -> None:
             )
         )
 
-    result = await async_run(
+    result = await async_run_program(
         flow(),
-        handlers=[default_gemini_cost_handler, custom_cost_handler, *default_handlers()],
+        handlers=[default_gemini_cost_handler, custom_cost_handler],
     )
 
     assert result.is_ok()
@@ -256,7 +261,7 @@ async def test_cost_calculation_failure_raises() -> None:
             _ = k
             _ = effect.call_result
             raise ValueError("boom")
-        yield Pass()
+        yield Pass(effect, k)
 
     @do
     def flow():
@@ -273,9 +278,9 @@ async def test_cost_calculation_failure_raises() -> None:
             )
         )
 
-    result = await async_run(
+    result = await async_run_program(
         flow(),
-        handlers=[default_gemini_cost_handler, failing_cost_handler, *default_handlers()],
+        handlers=[default_gemini_cost_handler, failing_cost_handler],
     )
 
     assert result.is_err()

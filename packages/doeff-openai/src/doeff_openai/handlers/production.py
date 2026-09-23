@@ -12,6 +12,7 @@ from doeff_llm.effects import (
 )
 
 from doeff import Pass, Resume, do
+from doeff import handler as _program_handler
 from doeff_openai.chat import chat_completion
 from doeff_openai.costs import (
     MissingCachedPricingError,
@@ -28,7 +29,7 @@ from doeff_openai.effects import (
 from doeff_openai.embeddings import create_embedding
 from doeff_openai.structured_llm import build_api_parameters, process_structured_response
 
-ProtocolHandler = Callable[[Any, Any], Any]
+ProtocolHandler = Callable[[Any], Any]
 
 DEFAULT_STRUCTURED_MAX_TOKENS = 8192
 DEFAULT_STRUCTURED_TEMPERATURE = 0.7
@@ -123,8 +124,8 @@ def _handle_calculate_cost(effect: CalculateCost, k):
 
 
 @do
-def openai_production_handler(effect: Any, k: Any):
-    """Single protocol handler suitable for ``WithHandler`` usage."""
+def _openai_production_dispatch(effect: Any, k: Any):
+    """Raw ``(effect, k)`` dispatcher behind :data:`openai_production_handler`."""
     if isinstance(effect, LLMStreamingChat | StreamingChatCompletion):
         if _is_openai_model(effect.model):
             return (yield _handle_streaming_chat_completion(effect, k))
@@ -144,29 +145,23 @@ def openai_production_handler(effect: Any, k: Any):
     yield Pass(effect, k)
 
 
+openai_production_handler = _program_handler(_openai_production_dispatch)
+"""Program -> Program handler for real OpenAI API execution.
+
+Compose by calling it on the program: ``openai_production_handler(program)``.
+"""
+
+
 def production_handlers() -> ProtocolHandler:
-    """Protocol handler for real OpenAI API execution."""
+    """Program -> Program handler for real OpenAI API execution."""
     return openai_production_handler
 
 
-calculate_cost_handler = _handle_calculate_cost
-"""Standalone default handler for :class:`CalculateCost`.
+calculate_cost_handler = _program_handler(_handle_calculate_cost)
+"""Standalone Program -> Program default handler for :class:`CalculateCost`.
 
 Exposed so test stacks (and callers that swap out the full production
 handler) can still resolve cost queries without bringing in the real
 OpenAI client path. Same Pass-on-miss semantics as the version embedded
 in :func:`openai_production_handler`.
 """
-
-
-__all__ = [
-    "DEFAULT_STRUCTURED_MAX_TOKENS",
-    "DEFAULT_STRUCTURED_TEMPERATURE",
-    "OPENAI_MODEL_EXCLUSIONS",
-    "OPENAI_MODEL_PREFIXES",
-    "ProtocolHandler",
-    "_is_openai_model",
-    "calculate_cost_handler",
-    "openai_production_handler",
-    "production_handlers",
-]

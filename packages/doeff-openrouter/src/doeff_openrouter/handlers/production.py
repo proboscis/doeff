@@ -12,6 +12,7 @@ from doeff_llm.effects import (
 )
 
 from doeff import Pass, Resume, do
+from doeff import handler as _program_handler
 from doeff_openrouter.chat import chat_completion
 from doeff_openrouter.effects import (
     RouterChat,
@@ -23,7 +24,7 @@ from doeff_openrouter.structured_llm import (
     process_structured_response,
 )
 
-ProtocolHandler = Callable[[Any, Any], Any]
+ProtocolHandler = Callable[[Any], Any]
 
 
 def _validate_response_format(response_format: type[Any]) -> None:
@@ -76,8 +77,8 @@ def _handle_structured_output(effect: LLMStructuredQuery, k):
 
 
 @do
-def openrouter_production_handler(effect: Any, k: Any):
-    """Single protocol handler suitable for ``WithHandler`` usage."""
+def _openrouter_production_dispatch(effect: Any, k: Any):
+    """Raw ``(effect, k)`` dispatcher behind :data:`openrouter_production_handler`."""
     if isinstance(effect, LLMStreamingChat | RouterStreamingChat):
         return (yield _handle_streaming_chat(effect, k))
     if isinstance(effect, LLMChat | RouterChat):
@@ -92,13 +93,13 @@ def openrouter_production_handler(effect: Any, k: Any):
     yield Pass(effect, k)
 
 
+openrouter_production_handler = _program_handler(_openrouter_production_dispatch)
+"""Program -> Program handler for real OpenRouter execution.
+
+Compose by calling it on the program: ``openrouter_production_handler(program)``.
+"""
+
+
 def production_handlers() -> ProtocolHandler:
-    """Build a protocol handler backed by the real OpenRouter client helpers."""
+    """Program -> Program handler backed by the real OpenRouter client helpers."""
     return openrouter_production_handler
-
-
-__all__ = [
-    "ProtocolHandler",
-    "openrouter_production_handler",
-    "production_handlers",
-]

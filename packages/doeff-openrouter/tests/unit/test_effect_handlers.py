@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 import pytest
+from _runner import run_program
 from doeff_core_effects.effects import EffectBase as Effect
 from doeff_llm.effects import (
     LLMChat,
@@ -27,7 +28,7 @@ from doeff_openrouter.handlers import (
 )
 from pydantic import BaseModel
 
-from doeff import Delegate, Resume, default_handlers, do, run
+from doeff import Pass, Resume, do
 from doeff import handler as _install_raw_handler
 
 
@@ -37,10 +38,7 @@ class StructuredPayload(BaseModel):
 
 
 def _run_with_handler(program, handler):
-    return run(
-        handler(program),
-        handlers=default_handlers(),
-    )
+    return run_program(handler(program))
 
 
 def test_effect_exports():
@@ -207,15 +205,14 @@ def test_openrouter_handler_delegates_embedding_effects() -> None:
     def fallback(effect: Effect, k: Any):
         if isinstance(effect, LLMEmbedding):
             return (yield Resume(k, "embedding-fallback"))
-        yield Delegate()
+        yield Pass(effect, k)
 
     @do
     def workflow():
         return (yield LLMEmbedding(input="hello", model="text-embedding-3-small"))
 
-    result = run(
-        _install_raw_handler(fallback)(openrouter_mock_handler(workflow())),
-        handlers=default_handlers(),
+    result = run_program(
+        _install_raw_handler(fallback)(_install_raw_handler(openrouter_mock_handler)(workflow()))
     )
 
     assert result.is_ok()
