@@ -1,0 +1,14 @@
+# 反例: claim-verify-candidates の判定の呼びを「行ごとに候補 1 本」(行 = 鍵の順)へ一時的に変えた木(基底 f9ac1b1f・着地済みの本線の sha)
+# 命令: cd packages/doeff-agents && PYTHONPATH=$PWD/src ../../.venv/bin/python -m pytest tests/test_sessionhost_acp_verify.py -q -k 'burst_of_four or declared_verify_concurrency_two'
+E   AssertionError: 最古から 1 本だけ起こしていない: ['land-verify-acp.sh']
+tests/sessionhost_acp_verify_deftests.hy:483: AssertionError
+AssertionError: 最古から 1 本だけ起こしていない: ['land-verify-acp.sh']
+E   AssertionError: ['land-verify-acp.sh', 'land-verify-mediagen.sh']
+tests/sessionhost_acp_verify_deftests.hy:528: AssertionError
+AssertionError: ['land-verify-acp.sh', 'land-verify-mediagen.sh']
+FAILED tests/test_sessionhost_acp_verify.py::test_burst_of_four_verify_rows_runs_one_at_a_time_oldest_first
+FAILED tests/test_sessionhost_acp_verify.py::test_declared_verify_concurrency_two_runs_two_oldest_first
+2 failed, 13 deselected, 1 warning in 90.42s (0:01:30)
+
+# 元に戻した後(cmp で f9ac1b1f と同一)の同じ命令:
+2 passed, 13 deselected, 1 warning in 92.33s (0:01:32)

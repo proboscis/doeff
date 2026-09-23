@@ -1,0 +1,285 @@
+{
+  "version": 1,
+  "task_id": "lt-A3ST0CMSHSTP2PBBBA38YVQTZD",
+  "base_revision": "f9ac1b1ffdea909eec77b19556e6bcb2fdbc0ecb",
+  "author": {
+    "conversation_id": "c-W0817T9E3XDH95AZGW1JZ1EV60",
+    "model": "claude-fable-5-1",
+    "effort": "high"
+  },
+  "requirements": "実装段(親 = 設計検証つきの計画の依頼 lt-3CXH09FC999PXC6D12RZ9EXZCG)。同じ機体の日次の全体検証を 1 本ずつ走らせる: doeff の agentd の受け口に verify の同時数の上限(AgentdSettings.verify_concurrency・既定 1・node の宣言 agentd.toml)を 1 か所だけ持たせ(純関数 judgment.verify-claim-verdict・呼び手は claim-verify-candidates の 1 か所で拍ごとに 1 回・全候補・資格は上限の前・生きている自分の命令の引き取り・hold の行には何も書かない・計器 verify-claim-held)、dotfiles の ai land verify --exclusive(process 表の覗き)を退役させる。本線への取り込み: doeff L336(f9ac1b1f)→ dotfiles L3490(7757e0a06)。設計の記録 = agent-control-plane L2060(807207f8)。この報告は実装後の証拠(本線の sha での正常例と、一時的な変異による反例の実行記録)で、modules / scenarios は計画段の報告から引き継いだ(各項目の inherited_from)。盲検 A/B の反例生成は計画段で済んでおり再実施しない。",
+  "design": {
+    "path": "design.md",
+    "sha256": "854f351e8d96600dbbceaa005dd779b690c97ea1dad0506ef67c8ae502e70350"
+  },
+  "modules": [
+    {
+      "id": "verify-claim-verdict",
+      "responsibility": "同じ node で今 claim してよい verify の行と待たせる行を決める純関数",
+      "owns": "上限 N・走っている verify の id・候補の (作成時刻, id) の順",
+      "hides": "行の取得と書き込み・process の起動・script の中身",
+      "interface": "(verify-claim-verdict in-flight candidates limit) -> #(claim hold)",
+      "effects": "なし、純関数だから",
+      "lifetime": "拍ごとに呼ばれて捨てられる",
+      "invariants": "len(in-flight ∪ claim) <= N・claim は (作成時刻, id) の先頭から空きだけ・claim ∩ hold = ∅・claim ∪ hold = 候補",
+      "inherited_from": "lt-3CXH09FC999PXC6D12RZ9EXZCG"
+    },
+    {
+      "id": "agentd-receive",
+      "responsibility": "行を読み、資格で断る行を先に閉じ、生きた自分の命令を引き取り、判定を拍ごとに 1 回全候補で呼び、claim だけ claim-job へ渡す",
+      "owns": "この node の Bound / Running の行・memory の命令",
+      "hides": "判定の中身",
+      "interface": "receive-bound-jobs(既存の口)",
+      "effects": "行の読み・log・計器(verify-claim-held)",
+      "lifetime": "agentd の process",
+      "invariants": "hold の行に書かない・判定の呼び手はここ 1 か所",
+      "inherited_from": "lt-3CXH09FC999PXC6D12RZ9EXZCG"
+    },
+    {
+      "id": "agentd-verify-arm",
+      "responsibility": "1 本の verify を起こす・引き取る・観測する・終える",
+      "owns": "script の置き場・pid / log / rc の file",
+      "hides": "同時数の上限",
+      "interface": "claim-verify-job・adopt(新)・recover-command・observe-command",
+      "effects": "CommandStart / CommandProbe / 行の書き",
+      "lifetime": "1 本の verify",
+      "invariants": "同じ job の命令はこの機体で高々 1 本・上限の設定を読まない",
+      "inherited_from": "lt-3CXH09FC999PXC6D12RZ9EXZCG"
+    },
+    {
+      "id": "agentd-settings",
+      "responsibility": "node の宣言(上限 N)を読む",
+      "owns": "agentd.toml の値",
+      "hides": "なし、宣言を渡すだけだから",
+      "interface": "AgentdSettings.verify-concurrency: int(既定 1・1 未満は起動で拒否)",
+      "effects": "設定の読み",
+      "lifetime": "起動時",
+      "invariants": "N >= 1",
+      "inherited_from": "lt-3CXH09FC999PXC6D12RZ9EXZCG"
+    },
+    {
+      "id": "placement",
+      "responsibility": "verify の行を place で node へ結ぶ(ACP・変えない)",
+      "owns": "node の宣言・lease・capacity",
+      "hides": "agentd の保留",
+      "interface": "既存",
+      "effects": "行の書き(engine)",
+      "lifetime": "engine",
+      "invariants": "live で capacity > 0 の node に結んだ未 claim の Bound は時間切れで置き直さない",
+      "inherited_from": "lt-3CXH09FC999PXC6D12RZ9EXZCG"
+    },
+    {
+      "id": "land-verify-exclusive",
+      "responsibility": "(退役させる)process 表を覗いて別の ai land verify が在れば見送る(実装後: 退役 — dotfiles 7757e0a06 で wrapper 13 本の旗と land.py の覗きを消した)",
+      "owns": "process 表",
+      "hides": "なし、退役させるから",
+      "interface": "ai land verify --exclusive(12 本の wrapper が渡す)",
+      "effects": "ps",
+      "lifetime": "1 走行",
+      "invariants": "なし — 同じ不変量の 2 つ目の実装なので呼び手を 0 にして消す",
+      "inherited_from": "lt-3CXH09FC999PXC6D12RZ9EXZCG"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S1",
+      "axis": "concurrency",
+      "applicability": "applicable",
+      "change": "停止の後に溜まった 4 本の verify が同じ拍で Bound",
+      "claim": "同時に起きるのは上限の本数だけで、残りは作成時刻の順に 1 本ずつ起きる。0 本測定にならない",
+      "expected_scope": "verify-claim-verdict・agentd-receive",
+      "actual_scope": "verify-claim-verdict・agentd-receive(資格を上限の前に置く改訂 4 を含む)・agentd-settings(上限の値)・land-verify-exclusive(改訂 1 で退役)",
+      "changed_modules": [
+        "verify-claim-verdict",
+        "agentd-receive",
+        "agentd-settings",
+        "land-verify-exclusive"
+      ],
+      "unchanged_modules": [
+        "placement",
+        "agentd-verify-arm"
+      ],
+      "reason": "上限の欄は宣言の読み(配線)。覗きの退役は、上限の知識が dotfiles にも固定値 1 として漏れていた(盲検 A・exp1)ため",
+      "revision": "実装後の本線: doeff f9ac1b1ffdea909eec77b19556e6bcb2fdbc0ecb(L336)/ dotfiles 7757e0a06(L3490)。計画段の値: 改訂 1(覗きの退役)・改訂 3(判定は受けの 1 点・検は鍵の順と作成時刻の順を分ける)・改訂 4(資格は上限の前)。exp4 で再検証",
+      "inherited_from": "lt-3CXH09FC999PXC6D12RZ9EXZCG"
+    },
+    {
+      "id": "S2",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "verify が走っている間に agentd が再起動する(memory 空)/ lease の猶予を超えて止まり node の化身が替わる",
+      "claim": "Running の行と、この機体の生きた pid から数えるので、同じ job の 2 本目も別の日次も起こさない",
+      "expected_scope": "なし(S1 の実装の性質)",
+      "actual_scope": "agentd-receive・agentd-verify-arm(引き取りの口)",
+      "changed_modules": [
+        "agentd-receive",
+        "agentd-verify-arm"
+      ],
+      "unchanged_modules": [
+        "verify-claim-verdict",
+        "placement",
+        "agentd-settings"
+      ],
+      "reason": "配置の lostRunner が化身の交代で Running の verify も置き直すのに、verify の process は agentd の停止を越えて走り続ける(盲検 A・exp2-3)。基準版に既に在る穴で、行だけでは数えられない — 機体の pid の file を正本に加える正当な責務の追加",
+      "revision": "実装後の本線: doeff f9ac1b1ffdea909eec77b19556e6bcb2fdbc0ecb(L336)/ dotfiles 7757e0a06(L3490)。計画段の値: 改訂 2(生きた自分の命令は起こし直さず引き取る)。exp4 PROTO-RESTART / PROTO-REPLACED で再検証",
+      "inherited_from": "lt-3CXH09FC999PXC6D12RZ9EXZCG"
+    },
+    {
+      "id": "S3",
+      "axis": "hardware",
+      "applicability": "applicable",
+      "change": "大きい機体で上限を 2 にする",
+      "claim": "agentd の設定 1 値だけを変える",
+      "expected_scope": "なし(宣言だけ)",
+      "actual_scope": "改訂 1 の後は宣言だけ。改訂前は land-verify-exclusive が同じ拍の 2 本を両方見送らせる",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "verify-claim-verdict",
+        "agentd-receive",
+        "agentd-verify-arm",
+        "placement",
+        "agentd-settings"
+      ],
+      "reason": "改訂前は上限の知識が 2 か所(漏洩)",
+      "revision": "実装後の本線: doeff f9ac1b1ffdea909eec77b19556e6bcb2fdbc0ecb(L336)/ dotfiles 7757e0a06(L3490)。計画段の値: 改訂 1。exp4 PROTO-LIMIT2 で 2 本起きることを確認",
+      "inherited_from": "lt-3CXH09FC999PXC6D12RZ9EXZCG"
+    },
+    {
+      "id": "S4",
+      "axis": "distribution",
+      "applicability": "excluded",
+      "reason": "company を名乗る node は CA-20038667-2 の 1 台だけ(実測)。2 台目が加わり置き直された行が別の機体へ結ばれる場合は配置の側の問題として限界に記した(design.md 6.4)",
+      "inherited_from": "lt-3CXH09FC999PXC6D12RZ9EXZCG"
+    },
+    {
+      "id": "S5",
+      "axis": "effects",
+      "applicability": "excluded",
+      "reason": "この設計は hold の行に書かない(公開契約)。待ちを ACP の行に見せる要求は condition の所有の契約(ACP docs/contracts/condition-ownership.json)の意図した拡張で、その要求が来た時に検証する",
+      "inherited_from": "lt-3CXH09FC999PXC6D12RZ9EXZCG"
+    },
+    {
+      "id": "S6",
+      "axis": "simulation",
+      "applicability": "applicable",
+      "change": "同時 4 本・再起動・化身の交代・上限 2 を決定的に再現する",
+      "claim": "既存の fake の世界(World・run-tick)で新しい fake なしに書ける",
+      "expected_scope": "テストだけ",
+      "actual_scope": "テストだけ(fake.py の変更 0 行)。ただし script の側の自己排他(覗き)は fake の世界に写らない",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "verify-claim-verdict",
+        "agentd-receive",
+        "agentd-verify-arm",
+        "placement",
+        "agentd-settings"
+      ],
+      "reason": "覗きが残る限り fake の世界は実機の 0 本測定を再現できない(盲検 A の指摘・exp1)",
+      "revision": "実装後の本線: doeff f9ac1b1ffdea909eec77b19556e6bcb2fdbc0ecb(L336)/ dotfiles 7757e0a06(L3490)。計画段の値: 改訂 1 で覗きを退役させれば、上限の知識はすべて fake の世界が写す agentd の中に入る",
+      "inherited_from": "lt-3CXH09FC999PXC6D12RZ9EXZCG"
+    }
+  ],
+  "checks": [
+    {
+      "id": "I1",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "status": "passed",
+      "expectation": "本線 f9ac1b1f の木で、09-23 の 4 本の runKey(鍵の順 acp<mediagen<orch<proboscis-ema・作成時刻の順 proboscis-ema<acp<mediagen<orch)を同じ拍に Bound にすると 1 拍目は proboscis-ema だけ起き、他 3 本は Bound で generation 不変、終わらせると次に acp(test_burst_of_four_verify_rows_runs_one_at_a_time_oldest_first)",
+      "observation": "tests/test_sessionhost_acp_verify.py → 15 passed, 1 warning in 9.08s(性質・振る舞い・上限 2・再起動・引き取り・構造・宣言の全部)",
+      "evidence": {
+        "path": "evidence/doeff-main-f9ac1b1f-verify-tests.txt",
+        "sha256": "e1dfb91a04749023f1b441217ae325b53a1971c097bd351b95dbc2a391575ded"
+      }
+    },
+    {
+      "id": "I2",
+      "scenarios": [
+        "S1",
+        "S3",
+        "S6"
+      ],
+      "control": "negative",
+      "status": "passed",
+      "expectation": "判定を「行ごとに候補 1 本」(鍵の順で起きる形)で呼ぶ木では、鍵の順と作成時刻の順を分けた検が「最古から 1 本だけ起こしていない」で赤・上限 2 の検も鍵の順の 2 本で赤(fake の世界が決定的に区別する)。元に戻すと緑",
+      "observation": "tests/sessionhost_acp_verify_deftests.hy:483: AssertionError / AssertionError: 最古から 1 本だけ起こしていない: ['land-verify-acp.sh'] / tests/sessionhost_acp_verify_deftests.hy:528: AssertionError / AssertionError: ['land-verify-acp.sh', 'land-verify-mediagen.sh'] / FAILED tests/test_sessionhost_acp_verify.py::test_burst_of_four_verify_rows_runs_one_at_a_time_oldest_first / FAILED tests/test_sessionhost_acp_verify.py::test_declared_verify_concurrency_two_runs_two_oldest_first / 2 failed, 13 deselected, 1 warning in 90.42s (0:01:30) / 2 passed, 13 deselected, 1 warning in 92.33s (0:01:32)",
+      "evidence": {
+        "path": "evidence/doeff-counterexample-per-row-verdict.txt",
+        "sha256": "101538da0b6b268d84715309f15055dd08233c27a69e313abc6af47cdd2451f8"
+      }
+    },
+    {
+      "id": "I3",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "status": "passed",
+      "expectation": "Running の verify 1 本 + Bound 3 本・memory 空で 1 拍 → CommandStart 0 回(再起動)/ 置き直された行(Bound attempt 2)・古い pid 生存・memory 空 + 別の Bound 1 本で 1 拍 → CommandStart 0 回・置き直された行は Running(pid は古いもの)・別の 1 本は Bound(引き取り)",
+      "observation": "同じ走行に含まれる(test_replaced_running_verify_is_adopted_not_started_again ほか): 15 passed, 1 warning in 9.08s",
+      "evidence": {
+        "path": "evidence/doeff-main-f9ac1b1f-verify-tests.txt",
+        "sha256": "e1dfb91a04749023f1b441217ae325b53a1971c097bd351b95dbc2a391575ded"
+      }
+    },
+    {
+      "id": "I4",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "status": "passed",
+      "expectation": "引き取り(verify-command-here → adopt-verify-command)を無効にした木では、置き直された行に同じ job の 2 本目が起きて引き取りの検だけが赤になる。元に戻すと 15 passed",
+      "observation": "tests/sessionhost_acp_verify_deftests.hy:573: AssertionError / AssertionError: 生きている命令の job に 2 本目を起こした / FAILED tests/test_sessionhost_acp_verify.py::test_replaced_running_verify_is_adopted_not_started_again / 1 failed, 14 passed, 1 warning in 107.12s (0:01:47) / 15 passed, 1 warning in 88.99s (0:01:28)",
+      "evidence": {
+        "path": "evidence/doeff-counterexample-no-adoption.txt",
+        "sha256": "57dbdc837c5e6f0a3ff795da7c37f1415e2c401c418f2f1f357f73e85e46d138"
+      }
+    },
+    {
+      "id": "I5",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "positive",
+      "status": "passed",
+      "expectation": "宣言 verify_concurrency = 2 なら 1 拍目に proboscis-ema と acp の 2 本が起きる(test_declared_verify_concurrency_two_runs_two_oldest_first)・1 未満は参加を断る(宣言の検)",
+      "observation": "同じ走行に含まれる: 15 passed, 1 warning in 9.08s",
+      "evidence": {
+        "path": "evidence/doeff-main-f9ac1b1f-verify-tests.txt",
+        "sha256": "e1dfb91a04749023f1b441217ae325b53a1971c097bd351b95dbc2a391575ded"
+      }
+    },
+    {
+      "id": "I6",
+      "scenarios": [
+        "S6"
+      ],
+      "control": "positive",
+      "status": "passed",
+      "expectation": "同時 4 本・再起動・化身の交代・上限 2 が fake の世界(既存の World・fake.py 不変)で決定的に再現し、CommandStart の回数と行の phase で読める",
+      "observation": "決定的・9 秒: 15 passed, 1 warning in 9.08s",
+      "evidence": {
+        "path": "evidence/doeff-main-f9ac1b1f-verify-tests.txt",
+        "sha256": "e1dfb91a04749023f1b441217ae325b53a1971c097bd351b95dbc2a391575ded"
+      }
+    },
+    {
+      "id": "I7",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "status": "passed",
+      "expectation": "dotfiles 本線 7757e0a06 で、どの cron_management/land-verify-*.sh も ai land verify に --exclusive を渡さず、land.py に other_verify_processes / VERIFY_SKIP_EXCLUSIVE が無い(覗きの退役 = 設計 8・module land-verify-exclusive の退役)",
+      "observation": "test_land_verify_serialization_is_owned_by_agentd.py + test_land_verify_wrappers_name_their_kind.py → 34 passed in 2.84s",
+      "evidence": {
+        "path": "evidence/dotfiles-master-7757e0a06-acceptance-tests.txt",
+        "sha256": "4d9f6e5a47949888aa54fae749c11fe89164278fad7f3041176bf66c5e610c14"
+      }
+    }
+  ],
+  "unresolved": []
+}
