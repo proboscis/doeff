@@ -184,6 +184,9 @@
   LEASE-JOURNAL-MAX-CHARS
   PROVIDER-LIMIT-ATTEMPT-KEY
   CREDENTIAL-LEASE-HELD-UNTIL-KEY
+  CUSTODY-ANSWERER-LENDER
+  CUSTODY-ANSWERER-UNANSWERED
+  UnansweredBorrow
   CustodyRefusalVerdict
   RecordReadStream
   SUMMARY-EVENT-KIND
@@ -544,6 +547,11 @@
   work-dir-of
   work-dir-step-of
   custody-refusal-verdict-of
+  unanswered-borrow-of
+  unanswered-borrows-after
+  unanswered-borrows-without
+  unanswered-borrows-kept
+  unanswered-borrows-due
   lease-journal-of
   lease-journal-text
   lease-journal-with
@@ -1608,6 +1616,9 @@
    畳み(first-turn-carries-inputs)、それ以外は after-start が send する。"
   (setv job-id row.resource-id)
   (setv subject (str (.get row.spec "subject" job-id)))
+  ;; card ki-fd0f3b234a38: claim の拍に決めた起こし方(下の解きの前)— 接続が答えない借りのやり直しは同じ解きを
+  ;; もう 1 度通すので、memory には解く前のこの値を覚える。
+  (setv claimed-choice choice)
   ;; 段 12 lane 12j 追補 4 / 7(agora-redesign #233 / #176・実弾 2026-09-16 17:29 aj-545JP9E9ZMZHPM11ZW99KM51AC): 候補が無い = 新しい会話、ではない。
   ;; 宣言を変えた手番は Messaging の lineageFor(段 12 lane 12k)が predecessor を空にし、前の手番の agent-job の行は終了 300 s で回収されるので、
   ;; 記録の在る会話が「候補なし → launch」で全履歴を失って始まった。launch で claim が着いた job だけ、記録の service に「原文の出来事が
@@ -1659,24 +1670,57 @@
         ;;   time            = 409 + hold(card ki-f2747267e24d B1・実弾 2026-09-19 17 時台に 330 通が落ちた形)→ 記録だけ
         ;;                     足して phase / binding / sessionHandle / result は離す(refused-attempt-status-of の形 —
         ;;                     置き直すのは ACP の配置の 1 点)。⚠ 錠は custody be81f6f で廃止 = この腕は今日は発火しない。
+        ;; card acp:kanban-issue:ki-fd0f3b234a38(設計 v2 §10.1): 貸す側の途絶の 2 つの腕 —
+        ;;   lender     = 預かり所が機械の語で「今は貸せない・時間で晴れる」と言った → time と同じ形で CredentialLenderUnreachable
+        ;;                を足して phase を離す(監督が数えずに置き直す)。
+        ;;   unanswered = 接続が答えない・窓の中 → 行に何も書かず、memory(state.unanswered-borrows)にやり直しの刻を覚える。
+        ;;                ⚠ 行は claim で既に Running + sessionHandle なので、項の在る間は拾い直し(recover-job)に渡さない
+        ;;                (receive-bound-jobs)。やり直しは同じ start-claimed を retry-unanswered-borrow が撃ち直す。
+        ;;                窓の起点は memory の since(無ければこの拍 = runner が入れ替わって消えれば最初から)。
         (<- fresh (| AcpRow None) (AcpGetRow :key row.key))
         (setv target (if (is fresh None) row fresh))
         (<- target-status dict (status-object-of target))
-        (<- verdict CustodyRefusalVerdict (custody-refusal-verdict-of refusal target-status now-ms))
+        (<- attempt int (binding-attempt-of target-status))
+        (<- waiting (| UnansweredBorrow None) (unanswered-borrow-of state.unanswered-borrows job-id attempt))
+        (<- verdict CustodyRefusalVerdict
+            (custody-refusal-verdict-of refusal target-status now-ms (if (is waiting None) None waiting.since-ms)))
+        (when (is-not refusal.unreturned-lease-id None)
+          (<- (LogLine :text (+ f"agentd: lease {refusal.unreturned-lease-id} that custody granted for job {job-id} before the "
+                                f"redeem failed was not returned (the revoke did not answer 200) — it stays open until its hold "
+                                f"expires; the refusal is judged the same"))))
         (setv held verdict.held)
-        (if (is held None)
-            (<- (end-job-now settings row verdict.condition-type verdict.reason #() now-ms))
-            (do
-              (<- kept dict (refused-attempt-status-of target-status #(held)))
-              (<- wrote (| Written Conflict Refused) (AcpPutStatus :row target :status kept))
-              (<- (LogLine :text (+ f"agentd: job {job-id} attempt {(get held PROVIDER-LIMIT-ATTEMPT-KEY)} could not borrow "
-                                    f"account {plan.account} — custody holds the lock for another borrower until "
-                                    f"{(get held CREDENTIAL-LEASE-HELD-UNTIL-KEY)} ({refusal.error}); leaving the row "
-                                    f"{(.get target-status "phase")} for the placement to place it again "
-                                    (if (isinstance wrote Written) "(recorded)" f"(record not written: {wrote})")))))) 
-        ;; memory には載せない(置き直し待ちの行は次の拍で拾い直さない — judgment.attempt-refused?)。
-        state)
+        (cond
+          (= verdict.answerer CUSTODY-ANSWERER-UNANSWERED)
+          (when (is waiting None)
+            ;; 待ち始めた拍に 1 行ずつ(やり直しの拍ごとには書かない — verify の待ちの log と同じ作法)。
+            (<- (LogLine :text (+ f"agentd: job {job-id} attempt {attempt} could not reach custody to borrow account "
+                                  f"{plan.account} ({refusal.stage}: {refusal.error}) — the row stays "
+                                  f"{(.get target-status "phase")} and nothing is written; borrowing again from "
+                                  f"{verdict.retry-at-ms} until the custody's outage window from {verdict.unanswered-since-ms} "
+                                  "closes (card ki-fd0f3b234a38)"))))
+          (is held None)
+          (<- (end-job-now settings row verdict.condition-type verdict.reason #() now-ms))
+          True
+          (do
+            (<- kept dict (refused-attempt-status-of target-status #(held)))
+            (<- wrote (| Written Conflict Refused) (AcpPutStatus :row target :status kept))
+            (<- (LogLine :text (+ f"agentd: job {job-id} attempt {(get held PROVIDER-LIMIT-ATTEMPT-KEY)} could not borrow "
+                                  f"account {plan.account} — "
+                                  (if (= verdict.answerer CUSTODY-ANSWERER-LENDER)
+                                      (+ f"custody cannot lend it now and says it clears with time ({refusal.stage} "
+                                         f"{refusal.status} {refusal.code} {refusal.why}: {refusal.error})")
+                                      (+ f"custody holds the lock for another borrower until "
+                                         f"{(get held CREDENTIAL-LEASE-HELD-UNTIL-KEY)} ({refusal.error})"))
+                                  f"; leaving the row {(.get target-status "phase")} for the placement to place it again "
+                                  (if (isinstance wrote Written) "(recorded)" f"(record not written: {wrote})"))))))
+        ;; memory に InFlightJob は載せない(置き直し待ちの行は次の拍で拾い直さない — judgment.attempt-refused?)。
+        ;; 接続が答えない待ちの項だけを覚え、それ以外の答えはその job の項を捨てる(judgment.unanswered-borrows-after)。
+        (<- remembered tuple (unanswered-borrows-after state.unanswered-borrows job-id attempt verdict claimed-choice opener))
+        (replace state :unanswered-borrows remembered))
       (do
+        ;; card ki-fd0f3b234a38: 借りた = 待ちは終わり(項を捨ててから起こす — 次の拍にやり直しを撃たない)。
+        (<- settled tuple (unanswered-borrows-without state.unanswered-borrows job-id))
+        (setv state (replace state :unanswered-borrows settled))
         (when (is-not choice.retire None)
           (<- why str (retire-reason-of choice view job-id))
           (<- (retire-sessions #(choice.retire) why)))
@@ -1714,6 +1758,29 @@
                   (after-start settings state row plan outcome lease used.arm now-ms subject
                                (if folds "" lead) (if folds #() bodies) (if folds #() carried) (get mail 2)))
               started)))))
+
+
+(defk retry-unanswered-borrow [settings state row entry now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: row AcpRow) (: entry UnansweredBorrow) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "接続が答えなかった借りをやり直す 1 点(card acp:kanban-issue:ki-fd0f3b234a38・設計 v2 §10.1)。claim は既に着いている
+   (行は Running + sessionHandle — claim-job は借りより先に書く)ので、claim の拍と同じ start-claimed を同じ起こし方
+   (memory の choice / opener)で撃ち直す — 郵便の読み・期限・借り・断りの判定・起こすまでが今日の 1 本の経路を通る
+   (第 2 の起こし口を作らない)。plan と session の id は行から読み直し、候補の session の眺めは今の器から読み直す。
+   行が session の id を名乗らない拍は項を捨てて何もしない(次の拍の拾い直しの判断に任せる)。"
+  (<- declared-plan LaunchPlan (launch-plan-of row))
+  (<- plan LaunchPlan (plan-with-node-home declared-plan settings.home))
+  (<- session-id (| str None) (session-id-of-handle row))
+  (when (is session-id None)
+    (<- dropped tuple (unanswered-borrows-without state.unanswered-borrows row.resource-id))
+    (return (replace state :unanswered-borrows dropped)))
+  (setv candidate (if (is-not entry.choice.source None) entry.choice.source entry.choice.retire))
+  (setv view None)
+  (when (is-not candidate None)
+    (<- looked (| SessionView None) (SessionGet :session-id candidate))
+    (setv view looked))
+  (<- started AgentdState (start-claimed settings state row plan entry.choice view session-id now-ms entry.opener))
+  started)
 
 
 (defk work-dir-step-here [plan]
@@ -4732,6 +4799,10 @@
   ;; nodeRow を持つ結びは名前が同じでも別の化身の行なら受けない(判断は judgment.binding-names-me の 1 点)。
   (<- bound tuple (job-rows-bound-to rows settings.node-name refreshed.node-row-id))
   (<- running tuple (job-rows-running-on rows settings.node-name refreshed.node-row-id settings.principal))
+  ;; card acp:kanban-issue:ki-fd0f3b234a38: 接続が答えない借りを待つ memory は、自分の Running の同じ試みの行が在る項だけ残す
+  ;; (手番が終わった・取り下げ・置き直し・記録を持った行の項はここで消える — 漏れない 1 点 judgment.unanswered-borrows-kept)。
+  ;; 残った項の行は claim が着いたまま session が無いので、拾い直し(recover-job — 器に無い = SessionFailed)に渡さない。
+  (<- waiting tuple (unanswered-borrows-kept withdrawn-handled.unanswered-borrows running))
   (<- known-jobs set (in-flight-ids withdrawn-handled))
   (<- known-commands set (in-flight-command-ids withdrawn-handled))
   (<- known-summaries set (in-flight-summarize-ids withdrawn-handled))
@@ -4739,8 +4810,10 @@
   ;; 手番は終わっている(record-unrecorded-ends が Ended を書いて試みを閉じる)。
   (<- carried-ids set (unrecorded-end-ids withdrawn-handled))
   (setv known (| known-jobs known-commands known-summaries carried-ids))
+  ;; card ki-fd0f3b234a38: 接続が答えない借りを待っている job も受け済み(claim は着いている — 拾い直しにも claim にも渡さない)。
+  (setv known (| known (set (gfor entry waiting entry.job-id))))
   (setv previously-deferred withdrawn-handled.deferred)
-  (setv current (replace withdrawn-handled :deferred #()))
+  (setv current (replace withdrawn-handled :deferred #() :unanswered-borrows waiting))
   ;; 段 12 lane 12j(agora-redesign #402): 監督が置き直した(Bound attempt N)行を自分が**いま走らせている** job = 新しい session を
   ;; 起こさず、走っている session を名乗って Running に戻す(引き継ぐ)。判断は rebound-rows-of の 1 点。
   (<- rebound tuple (rebound-rows-of bound current.jobs))
@@ -4783,6 +4856,12 @@
         (<- current AgentdState (recover-summarize settings current row now-ms))
         True
         (<- current AgentdState (recover-job settings current row now-ms)))))
+  ;; card ki-fd0f3b234a38: 接続が答えなかった借りのやり直し — 刻の来た項だけ(刻の前の項の拍は借りを撃たず、行に何も書かない)。
+  (<- due tuple (unanswered-borrows-due current.unanswered-borrows now-ms))
+  (for [entry due]
+    (for [row running]
+      (when (= row.resource-id entry.job-id)
+        (<- current AgentdState (retry-unanswered-borrow settings current row entry now-ms)))))
   (replace current :last-resync-ms now-ms))
 
 

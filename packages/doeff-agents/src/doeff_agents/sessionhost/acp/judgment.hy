@@ -169,16 +169,28 @@
   CAUSE-CATEGORY-HOST-DRAINED
   CONDITION-PROVIDER-LIMIT
   CONDITION-CREDENTIAL-LEASE-HELD
+  CONDITION-CREDENTIAL-LENDER-UNREACHABLE
   CREDENTIAL-LEASE-HELD-ACCOUNT-KEY
   CREDENTIAL-LEASE-HELD-NODE-ROW-KEY
   CREDENTIAL-LEASE-HELD-UNTIL-KEY
+  CREDENTIAL-LENDER-CODE-KEY
+  CREDENTIAL-LENDER-STAGE-KEY
+  CREDENTIAL-LENDER-WHY-KEY
   CUSTODY-LEASE-HELD-STATUS
   CONDITION-CREDENTIAL-NOT-LEASABLE
   CONDITION-CREDENTIAL-UNAVAILABLE
   CUSTODY-ACCOUNT-ABSENT-STATUS
   CUSTODY-ANSWERER-ANOTHER-CARRIER
+  CUSTODY-ANSWERER-LENDER
   CUSTODY-ANSWERER-NOBODY
   CUSTODY-ANSWERER-TIME
+  CUSTODY-ANSWERER-UNANSWERED
+  CUSTODY-LENDER-TRANSIENT
+  CUSTODY-STAGE-LEASE
+  CUSTODY-UNANSWERED-RETRY-MS
+  CUSTODY-UNANSWERED-STATUS
+  CUSTODY-UNANSWERED-WINDOW-MS
+  UnansweredBorrow
   CUSTODY-PLACEMENT-REFUSAL-MARK
   CUSTODY-PLACEMENT-REFUSAL-STATUS
   CustodyRefusalVerdict
@@ -533,9 +545,10 @@
    :post [(: % bool)]}
   "**この行を起動する / 拾い直すかの 1 点**: 行のいまの試み(binding.attempt)を名乗る『失った試み』の記録が在るか =
    この試みは断られ、配置の置き直しを待っている(契約 scheduling.json supervision と同じ判定)。
-   記録の語は 2 つ(どちらも runner が条件を足して phase を離す形 — 置き直すのは配置):
+   記録の語は 3 つ(どれも runner が条件を足して phase を離す形 — 置き直すのは配置・集合は effects の 1 点):
      * ProviderLimit(agora-redesign #519)= 口座が provider の限度で断られた
      * CredentialLeaseHeld(card acp:kanban-issue:ki-f2747267e24d B1)= 預かり所が 409(錠は別の借り手)で借りを断った
+     * CredentialLenderUnreachable(card acp:kanban-issue:ki-fd0f3b234a38)= 預かり所が機械の語で「今は貸せない・時間で晴れる」と断った
    attempt を名乗らない記録(旧 agentd の書き — その手番は Ended)は当たらない。"
   (<- attempt int (binding-attempt-of status))
   (setv conditions (.get status "conditions"))
@@ -571,8 +584,12 @@
    記録が自分で名乗る欄: reason = 預かり所の断りの**逐語**(何が起きたかは預かり所の言葉のまま)・
    attempt = 行の binding.attempt(binding-attempt-of — 欄の無い結びは 1)・at = 記録を書く拍の時計(epoch ms)・
    until = holdExpiresAt(錠が解ける時刻)・account = binding.account・nodeRow = binding.nodeRow。
-   ⚠ status.result には書かない(result が在ることは『手番が結果を報告した』の意味)。"
-  (when (!= refusal.status CUSTODY-LEASE-HELD-STATUS)
+   ⚠ status.result には書かない(result が在ることは『手番が結果を報告した』の意味)。
+
+   card acp:kanban-issue:ki-fd0f3b234a38(設計 v2 §10.1 F3): 記録にするのは **貸与の処理ステージ(lease)の** 409 だけ。
+   引換の処理ステージの 409(引換券の使用済み voucher-spent — 使い回した接続の送り直しで生まれる)は、断りに master の
+   hold が付いて運ばれても時間では晴れないので記録にしない(以前はここで time に落ちていた)。"
+  (when (or (!= refusal.status CUSTODY-LEASE-HELD-STATUS) (!= refusal.stage CUSTODY-STAGE-LEASE))
     (return None))
   (setv until refusal.hold-expires-at-ms)
   (when (not (and (isinstance until int) (not (isinstance until bool))))
@@ -593,8 +610,24 @@
   condition)
 
 
-(defk custody-refusal-verdict-of [refusal status now-ms]
-  {:pre [(: refusal LeaseRefused) (: status dict) (: now-ms int)]
+(defk custody-lender-transient? [refusal]
+  {:pre [(: refusal LeaseRefused)]
+   :post [(: % bool)]}
+  "class lender の腕ちょうど(card acp:kanban-issue:ki-fd0f3b234a38・設計 v2 §10.1 — custody-refusal-verdict-of の中の 1 判断)。
+   真 = 預かり所の契約が「時間で晴れる」と宣言する組(CUSTODY-LENDER-TRANSIENT — 契約の写しから導いた表)に当たる断り:
+     * lease / 503 / worker-unreachable / why ∈ {heartbeat-stale, worker-store-unreadable}(面 1: master の貸与の口)
+     * redeem / 503 / master-unreachable(面 2: worker の引換の口 — 表の why が None = 本文の why を読まない)
+   鍵は機械の語だけ(処理ステージ・status・code・why)— 散文 refusal.error も機体も読まない(I4')。同じ worker-unreachable でも
+   why が時間で晴れない語(失効・名乗りなし・名簿に無い・url なし)か why の無い本文は偽(今日どおり another-carrier・T7)。"
+  (setv key #(refusal.stage refusal.status refusal.code))
+  (when (not-in key CUSTODY-LENDER-TRANSIENT)
+    (return False))
+  (setv whys (get CUSTODY-LENDER-TRANSIENT key))
+  (or (is whys None) (in refusal.why whys)))
+
+
+(defk custody-refusal-verdict-of [refusal status now-ms unanswered-since-ms]
+  {:pre [(: refusal LeaseRefused) (: status dict) (: now-ms int) (: unanswered-since-ms (| int None))]
    :post [(: % CustodyRefusalVerdict)]}
   "**預かり所の断りをどう扱うかの 1 点**(card acp:kanban-issue:ki-b3bed1e983fb)。断りを 1 語へ畳むのをやめ、
    **「誰が答えられるか」**で class を分ける — 呼び手(agentd.start-claimed)はこの答えに従うだけで、第 2 の判定を
@@ -614,6 +647,21 @@
    | nobody          | 404(その口座を預かっていない)/ 403 置き場の門           | CredentialNotLeasable       |
    | another-carrier | 403 借り手の門・503(worker 不達・宣言の欠け)・到達不能 | CredentialUnavailable       |
    | time            | 409 + holdExpiresAt(貸与の錠)                          | CredentialLeaseHeld(記録)  |
+
+   card acp:kanban-issue:ki-fd0f3b234a38(設計 v2 §10.1・盲検 A): 貸す側の途絶は runner へ 3 つの面で届く — 面 1 = master の
+   貸与の口の 503 worker-unreachable / 面 2 = worker の引換の口の 503 master-unreachable / 面 3 = 接続が答えない(status 0)。
+   master が途絶に気付くまでの最初の 90 秒は面 2・3 しか出ない。そこで class を 2 つ足し、判定の順は
+   **time → lender → unanswered → nobody → another-carrier**:
+
+   | class           | 条件(機械の語だけ)                                                        | 処置                                         |
+   |-----------------|-------------------------------------------------------------------------------|----------------------------------------------|
+   | time            | lease の処理ステージの 409 + hold(redeem の 409 は当たらない)             | CredentialLeaseHeld(記録)                   |
+   | lender          | 契約の写しの時間で晴れる組(custody-lender-transient? — 面 1・面 2)         | CredentialLenderUnreachable(記録)           |
+   | unanswered      | status 0(どちらの処理ステージでも)で、同じ試みの最初の刻から窓 W の中       | 行に何も書かない・やり直しの刻を返す         |
+   窓 W = CUSTODY-UNANSWERED-WINDOW-MS(契約の workerStaleSeconds + workerHeartbeatSeconds = 120 秒)。unanswered-since-ms は
+   呼び手の memory が覚えた最初の刻(None = 覚えていない = この拍が最初 — runner が入れ替わって memory が消えれば窓は
+   最初から数え直す)。窓を過ぎても答えない = 預かり所は worker を生きていると言い続けている = この機体の道の故障 ⇒
+   今日どおり another-carrier(機体を避けて組み直す)。表に無い 503(why の無い本文・時間で晴れない why)も今日どおり。
 
    ⚠ **HTTP status は軸ではない** — 403 が 2 本に割れる(裏取り 2026-09-19):
      * 置き場の門(custody Judge/Company.companyPlacementViolation・Program/Master.hs:198 で借り手の門より先)=
@@ -640,6 +688,41 @@
   (setv binding (.get status "binding"))
   (setv account (if (isinstance binding dict) (.get binding BINDING-ACCOUNT-KEY) None))
   (setv named (if (and (isinstance account str) (.strip account)) f"account {account}" "the bound account"))
+  ;; card ki-fd0f3b234a38 の腕 lender: 手番を終わらせず、数えない失った試みの記録を足して phase を離す
+  ;; (記録の形は CredentialLeaseHeld と同じ — 置き直すのは監督)。
+  (<- lender bool (custody-lender-transient? refusal))
+  (when lender
+    (<- attempt int (binding-attempt-of status))
+    (setv node-row (if (isinstance binding dict) (.get binding BINDING-NODE-ROW-KEY) None))
+    (setv record {"type" CONDITION-CREDENTIAL-LENDER-UNREACHABLE "status" "True"
+                  "reason" refusal.error
+                  PROVIDER-LIMIT-ATTEMPT-KEY attempt
+                  PROVIDER-LIMIT-AT-KEY now-ms
+                  CREDENTIAL-LENDER-STAGE-KEY refusal.stage
+                  CREDENTIAL-LENDER-CODE-KEY refusal.code})
+    (when (is-not refusal.why None)
+      (setv (get record CREDENTIAL-LENDER-WHY-KEY) refusal.why))
+    (when (and (isinstance account str) (.strip account))
+      (setv (get record CREDENTIAL-LEASE-HELD-ACCOUNT-KEY) account))
+    (when (and (isinstance node-row str) (.strip node-row))
+      (setv (get record CREDENTIAL-LEASE-HELD-NODE-ROW-KEY) node-row))
+    (return (CustodyRefusalVerdict :answerer CUSTODY-ANSWERER-LENDER
+                                   :condition-type CONDITION-CREDENTIAL-LENDER-UNREACHABLE
+                                   :reason refusal.error
+                                   :held record)))
+  ;; card ki-fd0f3b234a38 の腕 unanswered: 接続が答えない(どちらの処理ステージでも)。同じ試みで最初に答えなかった刻から
+  ;; 窓の中は、行に何も書かずやり直しの刻を返す(呼び手の memory が覚える)。窓を過ぎたら下の another-carrier。
+  (when (= refusal.status CUSTODY-UNANSWERED-STATUS)
+    (setv since (if (is unanswered-since-ms None) now-ms unanswered-since-ms))
+    (when (< (- now-ms since) CUSTODY-UNANSWERED-WINDOW-MS)
+      (return (CustodyRefusalVerdict
+                :answerer CUSTODY-ANSWERER-UNANSWERED
+                :condition-type CONDITION-CREDENTIAL-UNAVAILABLE
+                :reason (+ f"custody has not answered the borrow of {named} since {since} — retrying until the "
+                           f"custody's outage window closes; custody refused ({refusal.status}): " refusal.error)
+                :held None
+                :unanswered-since-ms since
+                :retry-at-ms (+ now-ms CUSTODY-UNANSWERED-RETRY-MS)))))
   (<- nobody bool (custody-refuses-every-carrier? refusal))
   (if nobody
       (CustodyRefusalVerdict
@@ -671,6 +754,65 @@
     (return True))
   (and (= refusal.status CUSTODY-PLACEMENT-REFUSAL-STATUS)
        (in CUSTODY-PLACEMENT-REFUSAL-MARK refusal.error)))
+
+
+;; ---------------------------------------------------------------------------
+;; 接続が答えない借りの memory(card acp:kanban-issue:ki-fd0f3b234a38・設計 v2 §10.1 / T8 — 行には書かない)
+;; ---------------------------------------------------------------------------
+
+(defk unanswered-borrow-of [entries job-id attempt]
+  {:pre [(: entries tuple) (: job-id str) (: attempt int)]
+   :post [(: % (| UnansweredBorrow None))]}
+  "memory の項のうち (job-id, attempt) の 1 項(無ければ None)— custody-refusal-verdict-of へ渡す since の出所の 1 点。
+   別の試みの項は当たらない(置き直された手番は窓を最初から数える)。"
+  (for [entry entries]
+    (when (and (= entry.job-id job-id) (= entry.attempt attempt))
+      (return entry)))
+  None)
+
+
+(defk unanswered-borrows-without [entries job-id]
+  {:pre [(: entries tuple) (: job-id str)]
+   :post [(: % tuple)]}
+  "job-id の項を捨てた memory(借りた拍 — 手番は起こす側へ進み、この項はもう要らない)。"
+  (tuple (gfor e entries :if (!= e.job-id job-id) e)))
+
+
+(defk unanswered-borrows-after [entries job-id attempt verdict choice opener]
+  {:pre [(: entries tuple) (: job-id str) (: attempt int) (: verdict CustodyRefusalVerdict)
+         (: choice ArmChoice) (: opener (| str None))]
+   :post [(: % tuple)]}
+  "借りが断られた拍の後の memory — job ごとに高々 1 項: 判定が unanswered なら (job-id, attempt) の項を判定の since /
+   retry-at で置き換え(choice / opener = やり直しの拍に同じ手番を同じ形で起こす材料)、それ以外の判定(lender / time の
+   記録・nobody / another-carrier の終わり)は job-id の項を捨てる。"
+  (<- kept tuple (unanswered-borrows-without entries job-id))
+  (if (and (= verdict.answerer CUSTODY-ANSWERER-UNANSWERED)
+           (is-not verdict.unanswered-since-ms None)
+           (is-not verdict.retry-at-ms None))
+      (+ kept #((UnansweredBorrow :job-id job-id :attempt attempt :since-ms verdict.unanswered-since-ms
+                                  :retry-at-ms verdict.retry-at-ms :choice choice :opener opener)))
+      kept))
+
+
+(defk unanswered-borrows-kept [entries rows]
+  {:pre [(: entries tuple) (: rows tuple)]
+   :post [(: % tuple)]}
+  "**漏れない 1 点**: rows(自分の Running の行 — job-rows-running-on の答え)に同じ job の同じ試み(binding.attempt)が
+   在る項だけを残す。手番が終わった(Ended)・取り下げられた(Withdrawn)・置き直された(Pending・別の試み・別の機体)・
+   断りの記録を持った(attempt-refused? — rows に載らない)行の項はここで消える。"
+  (setv live {})
+  (for [row rows]
+    (<- status dict (status-object-of row))
+    (<- attempt int (binding-attempt-of status))
+    (setv (get live row.resource-id) attempt))
+  (tuple (gfor e entries :if (= (.get live e.job-id) e.attempt) e)))
+
+
+(defk unanswered-borrows-due [entries now-ms]
+  {:pre [(: entries tuple) (: now-ms int)]
+   :post [(: % tuple)]}
+  "やり直しの刻(retry-at-ms)が来た項(memory の順)。刻の前の項の拍は何もしない — 借りを撃たず、行に何も書かない。"
+  (tuple (gfor e entries :if (>= now-ms e.retry-at-ms) e)))
 
 
 (defk refused-attempt-status-of [status conditions]
@@ -5881,11 +6023,15 @@
   "行をどう読み直すか(閉語彙 effects.ListMode)— 判断はここ 1 点: 周期の保険が来た・gap・
    接続の張り直し・まだ 1 度も読んでいない → full(全量 list)/ watch で起きた(changed)→
    window(変わった行だけ: event-window の post-image)/ idle・session(器の出来事で起きた拍 —
-   ACP の sequence は進んでいない・段 12 lane 12b)→ none。"
+   ACP の sequence は進んでいない・段 12 lane 12b)→ none。
+   card acp:kanban-issue:ki-fd0f3b234a38: 接続が答えなかった借りのやり直しの刻が来た(unanswered-borrows-due が空でない)
+   拍も window — やり直しは受けの腕(receive-bound-jobs)の中で行を読み直して撃つので、行が変わらない静かな拍でも
+   受けを走らせる(周期の保険 30 秒を待たない)。窓は変わった行だけなので、待ちの無い拍の読みは増えない。"
   (<- periodic bool (due state.last-resync-ms now-ms settings.watch-resync-seconds))
+  (<- borrows-due tuple (unanswered-borrows-due state.unanswered-borrows now-ms))
   (cond
     (or periodic (in signal.kind #{"gap" "closed"})) LIST-MODE-FULL
-    (= signal.kind "changed") LIST-MODE-WINDOW
+    (or (= signal.kind "changed") borrows-due) LIST-MODE-WINDOW
     True LIST-MODE-NONE))
 
 

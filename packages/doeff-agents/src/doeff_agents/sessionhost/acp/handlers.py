@@ -59,6 +59,8 @@ from doeff_agents.sessionhost.acp.cache_operation import (
     SessionCacheProbe,
 )
 from doeff_agents.sessionhost.acp.effects import (
+    CUSTODY_STAGE_LEASE,
+    CUSTODY_STAGE_REDEEM,
     DECLARATION_FINGERPRINT_HEADER,
     FS_READ_TEXT_DEFAULT_MAX_CHARS,
     JSON,
@@ -1153,7 +1155,13 @@ class CustodyHttp:
     def _borrow(self, effect: CustodyLeaseBorrow) -> LeaseOutcome:
         """借りは 2 段(預かり所の契約 v2・段 10 lane 10d): master へ貸与を頼んで**引換券**と口座の worker の基点を受け、
         その worker で引換券を札に換える。札は master を通らない(引換券は一回限り・期限は貸与の hold ちょうど)。
-        どちらの段の断りもそのまま LeaseRefused(呼び手は今日と同じ扱い — 409 の hold も master の答えから運ぶ)。
+        どちらの段の断りもそのまま LeaseRefused(409 の hold も master の答えから運ぶ)。
+
+        card acp:kanban-issue:ki-fd0f3b234a38(設計 v2 §10.1): 断りは**どの処理ステージが断ったか**(lease / redeem)と
+        本文の機械の語(code・why)を運ぶ — 分類(judgment.custody-refusal-verdict-of)は散文ではなくこの語で決める
+        (以前は error の文だけを写し、処理ステージと code を捨てていた)。引換に失敗した拍は、その直前に master が
+        出した貸与をここで返す(接続が答えない間の 15 秒ごとのやり直しで貸与の行を積まない)。返せなくても断りの
+        語は変えない(返せなかった貸与の id を断りに載せ、呼び手が log に名乗る)。
         """
         if not self._base_url:
             return self._UNDECLARED
@@ -1171,7 +1179,12 @@ class CustodyHttp:
         hold = _str_field(reply.body, "holdExpiresAt")
         if reply.status != 200:
             return LeaseRefused(
-                reply.status, _error_text(reply), _epoch_ms_of_iso(hold) if hold else None
+                reply.status,
+                _error_text(reply),
+                _epoch_ms_of_iso(hold) if hold else None,
+                CUSTODY_STAGE_LEASE,
+                _str_field(reply.body, "code"),
+                _str_field(reply.body, "why"),
             )
         lease_id = _str_field(reply.body, "leaseId")
         voucher = _str_field(reply.body, "voucher")
@@ -1191,8 +1204,18 @@ class CustodyHttp:
             HTTP_TIMEOUT_SECONDS,
         )
         if redeemed.status != 200:
-            # 引換券を札に換えられなかった拍(worker 不達・期限切れ・別の借り手)— 貸与の hold は master の答えから運ぶ
-            return LeaseRefused(redeemed.status, _error_text(redeemed), _epoch_ms_of_iso(hold))
+            # 引換券を札に換えられなかった拍(worker 不達・期限切れ・別の借り手)— 貸与の hold は master の答えから運ぶ。
+            # card ki-fd0f3b234a38: master が出した貸与はここで返す(返せたかは分類を変えない — 返せなかった id だけ運ぶ)。
+            returned = self._revoke(lease_id)
+            return LeaseRefused(
+                redeemed.status,
+                _error_text(redeemed),
+                _epoch_ms_of_iso(hold),
+                CUSTODY_STAGE_REDEEM,
+                _str_field(redeemed.body, "code"),
+                _str_field(redeemed.body, "why"),
+                None if returned else lease_id,
+            )
         auth_json_value = redeemed.body.get("authJson")
         return LeaseGrant(
             lease_id=lease_id,

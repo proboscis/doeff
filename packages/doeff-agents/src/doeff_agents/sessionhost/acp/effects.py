@@ -1,4 +1,6 @@
 """agentd の要求(effect)と値の型 — data だけで I/O を 1 つも行わない。
+(唯一の読み = この package に同梱した預かり所の契約の写し ``custody_lender_availability.json`` を import の拍に
+1 度読むこと — 機体に依らない値の宣言で、世界への要求ではない。card acp:kanban-issue:ki-fd0f3b234a38。)
 
 段 2(agora-redesign #19 / #20)の agentd は「ACP の cluster に参加して agent-job を受け、
 session を起こし、手番の記録と実況を ACP へ書く」腕で、判断は持たない。ここはその腕が
@@ -25,7 +27,10 @@ wire の綴り(ACP の route・kind 名・phase の語)はこの file が唯一�
 """
 
 # pyright: strict
+import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from importlib.resources import files
 from typing import Literal, NamedTuple, TypeAlias, get_args
 
 from doeff import EffectBase
@@ -176,6 +181,7 @@ ConditionType = Literal[
     "WorkDirMissing",
     "ProviderLimit",
     "CredentialLeaseHeld",
+    "CredentialLenderUnreachable",
     "CredentialNotLeasable",
     "TurnProducedNothing",
     "TurnOutputUnmeasured",
@@ -324,15 +330,39 @@ PROVIDER_LIMIT_RESETS_AT_KEY: str = "resetsAt"
 #: 起動し直さない(judgment.attempt-refused? — ProviderLimit と同じ 1 点)。
 #: 409 以外の断り・hold を名乗らない断り・宣言の無い預かり所は今日どおり CONDITION_CREDENTIAL_UNAVAILABLE で Ended。
 CONDITION_CREDENTIAL_LEASE_HELD: ConditionType = "CredentialLeaseHeld"
+#: card acp:kanban-issue:ki-fd0f3b234a38(設計 v2 §10.1): 預かり所が **機械の語で**「この口座は今は貸せない・時間で晴れる」と
+#: 言った断り(契約の写し custody_lender_availability.json の transientRefusals に当たる断り — CUSTODY_LENDER_TRANSIENT)の印。
+#: **失った試みの記録であって手番の終わりではない**: 行の形は CredentialLeaseHeld と同じ(phase / binding / sessionHandle /
+#: result は触らない)で、欄 = {type, status: "True", reason: <預かり所の断りの逐語>, attempt, at, account, nodeRow, stage,
+#: code, why}(stage・code・why は預かり所の契約の語・why は本文が名乗った時だけ)。読み手は監督(本番 agora-controllers
+#: lifecycle.hy・巻き戻し用 ACP Scheduling.Decide.lostRunner)— この試みを数えずに置き直し、置き直しの待ちの起点に at を
+#: 含める(ACP 契約 scheduling.json supervision.lostReasons の credential-lender-unreachable・retry.backoffOriginRecords)。
+#: 実弾 2026-09-23: worker personal の heartbeat が 3 回 90 秒以上途切れ、その間の借りの 503 worker-unreachable を
+#: CredentialUnavailable(別の運び手なら通る)で Ended にしたので、配達が運び手の組み直し 2 回を使い切り郵便 22 通が failed に
+#: なった(503 は 4 台の機体で同じ答え — 機体を避ける組み直しでは晴れない)。
+CONDITION_CREDENTIAL_LENDER_UNREACHABLE: ConditionType = "CredentialLenderUnreachable"
 #: 『いまの試みは断られ、配置の置き直しを待っている』を名乗る記録の型の集合(judgment.attempt-refused? の 1 点が読む —
-#: Bound の起動と Running の拾い直しの両方がこの 1 つの判定を通る)。どちらも runner が条件を足して phase を離す形で、
+#: Bound の起動と Running の拾い直しの両方がこの 1 つの判定を通る)。どれも runner が条件を足して phase を離す形で、
 #: 置き直すのは配置(ACP Scheduling の supervision)。
 REFUSED_ATTEMPT_CONDITION_TYPES: tuple[str, ...] = (
     CONDITION_PROVIDER_LIMIT,
     CONDITION_CREDENTIAL_LEASE_HELD,
+    CONDITION_CREDENTIAL_LENDER_UNREACHABLE,
 )
 #: 錠が別の借り手に在る時に預かり所が返す status(契約 custody-api.json の /lease/{kind} — この 1 語だけを記録に解く)。
+#: card ki-fd0f3b234a38(設計 v2 §10.1 F3): 記録に解くのは **貸与の処理ステージ(lease)の 409 だけ** — 引換の処理ステージの
+#: 409(引換券の使用済み voucher-spent)は時間では晴れない(断りに master の hold が付いて運ばれても time にしない)。
 CUSTODY_LEASE_HELD_STATUS: int = 409
+#: 借りの処理ステージ(預かり所の契約 lenderAvailability.stages の鍵 — 写しとの一致は tests/test_sessionhost_acp_custody_lender_copy.py
+#: が撃つ): lease = master の貸与の口(借りの 1 段目・POST /lease/<kind>)/ redeem = 答えの workerUrl の worker の引換の口
+#: (2 段目・POST /redeem)。断りに名乗らせるのは handlers.CustodyHttp._borrow の 1 点(card ki-fd0f3b234a38 — 以前は捨てていた)。
+CustodyStage = Literal["lease", "redeem"]
+CUSTODY_STAGE_LEASE: CustodyStage = "lease"
+CUSTODY_STAGE_REDEEM: CustodyStage = "redeem"
+#: CONDITION_CREDENTIAL_LENDER_UNREACHABLE の記録が名乗る欄のうち CredentialLeaseHeld に無い 3 つ(預かり所の契約の語を写す)。
+CREDENTIAL_LENDER_STAGE_KEY: str = "stage"
+CREDENTIAL_LENDER_CODE_KEY: str = "code"
+CREDENTIAL_LENDER_WHY_KEY: str = "why"
 #: CONDITION_CREDENTIAL_LEASE_HELD の記録が自分で名乗る欄(attempt / at は ProviderLimit と同じ綴り = 同じ読み手が同じ
 #: 判定(attempt = binding.attempt)を 1 点で書けるように揃える)。until = 錠が解ける時刻・account = 借りられなかった口座・
 #: nodeRow = 断られた機体の行の id。
@@ -346,10 +376,123 @@ CREDENTIAL_LEASE_HELD_NODE_ROW_KEY: str = "nodeRow"
 #:   nobody          = 誰も答えない(宣言が変わるまでどの担い手でも同じ断り)— 最初の 1 回で送信者へ返す(hard rule 7)。
 #:   another-carrier = 別の担い手が答える(この機体の身元・この機体の宣言・口座の worker の都合)— 有界の再投入。
 #:   time            = 時間が答える(貸与の錠の hold)— 行に記録を残して phase を離す(置き直しは ACP の配置)。
-CustodyRefusalAnswerer = Literal["nobody", "another-carrier", "time"]
+#:   lender          = 貸す側が戻れば答える(card ki-fd0f3b234a38 — 預かり所が機械の語で「今は貸せない・時間で晴れる」と
+#:                     言った)— 行に CredentialLenderUnreachable を残して phase を離す(監督が数えずに置き直す)。
+#:   unanswered      = まだ誰も答えていない(card ki-fd0f3b234a38 — 接続が答えない・窓 CUSTODY_UNANSWERED_WINDOW_MS の中)—
+#:                     行に何も書かず、runner の memory(AgentdState.unanswered_borrows)が覚えたやり直しの刻まで借りを撃たない。
+CustodyRefusalAnswerer = Literal["nobody", "another-carrier", "time", "lender", "unanswered"]
 CUSTODY_ANSWERER_NOBODY: CustodyRefusalAnswerer = "nobody"
 CUSTODY_ANSWERER_ANOTHER_CARRIER: CustodyRefusalAnswerer = "another-carrier"
 CUSTODY_ANSWERER_TIME: CustodyRefusalAnswerer = "time"
+CUSTODY_ANSWERER_LENDER: CustodyRefusalAnswerer = "lender"
+CUSTODY_ANSWERER_UNANSWERED: CustodyRefusalAnswerer = "unanswered"
+
+
+@dataclass(frozen=True)
+class CustodyLenderTerms:
+    """預かり所の契約の写し(lenderAvailability の節)から導いた、runner の断りの分類が読む値
+    (card acp:kanban-issue:ki-fd0f3b234a38・設計 v2 §10.1)。
+
+    * ``transient`` = 「時間で晴れる」断りの組: (処理ステージ, status, code) → 当たる why の集合。値の ``None`` =
+      本文の why を読まない(契約の why = null — redeem の master-unreachable)。表に無い組と、集合の外の why
+      (why の無い本文を含む)は時間では晴れない。
+    * ``unanswered_window_ms`` = 接続が答えない断りを待つ窓 W = worker の途絶の閾値 ``workerStaleSeconds`` +
+      heartbeat の間隔 ``workerHeartbeatSeconds``(ms)— 預かり所が途絶に気付いて貸与の 503 で名乗り始めるまでの最長。
+    """
+
+    transient: Mapping[tuple[str, int, str], frozenset[str] | None]
+    unanswered_window_ms: int
+
+
+def _positive_seconds(section: JSONObject, name: str) -> int:
+    value = section.get(name)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"custody lenderAvailability.{name} is not a positive integer: {value!r}")
+    return value
+
+
+def custody_lender_terms_of(section: JSONObject) -> CustodyLenderTerms:
+    """預かり所の契約の節 lenderAvailability(写しの ``copy``)→ :class:`CustodyLenderTerms` の 1 点(純関数)。
+
+    表と窓を直書きしない — 預かり所が時間で晴れる語を足したら、写しを進めるだけで分類が変わる(設計 §11 S1)。
+    写しが自分の宣言と食い違う(表の why が語彙に無い・clearsWithTime が偽の語を表が名乗る・数が正でない・形が違う)時は
+    ValueError — 黙って半分だけ読まない。
+    """
+    vocabulary = section.get("why")
+    if not isinstance(vocabulary, dict):
+        raise ValueError("custody lenderAvailability.why is not an object")
+    clears = {
+        word: isinstance(entry, dict) and entry.get("clearsWithTime") is True
+        for word, entry in vocabulary.items()
+    }
+    rows = section.get("transientRefusals")
+    if not isinstance(rows, list):
+        raise ValueError("custody lenderAvailability.transientRefusals is not a list")
+    transient: dict[tuple[str, int, str], frozenset[str] | None] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError(f"custody lenderAvailability.transientRefusals has a non-object row: {row!r}")
+        stage = row.get("stage")
+        status = row.get("status")
+        code = row.get("code")
+        whys = row.get("why")
+        if (
+            not isinstance(stage, str)
+            or not isinstance(code, str)
+            or isinstance(status, bool)
+            or not isinstance(status, int)
+        ):
+            raise ValueError(f"custody lenderAvailability.transientRefusals row is malformed: {row!r}")
+        if whys is None:
+            transient[(stage, status, code)] = None
+            continue
+        if not isinstance(whys, list):
+            raise ValueError(f"custody lenderAvailability.transientRefusals why is not a list or null: {row!r}")
+        words = frozenset(word for word in whys if isinstance(word, str))
+        standing = sorted(word for word in words if not clears.get(word, False))
+        if len(words) != len(whys) or standing:
+            raise ValueError(
+                "custody lenderAvailability.transientRefusals names why words that are not declared to clear "
+                f"with time: {standing or whys!r}"
+            )
+        transient[(stage, status, code)] = words
+    window_seconds = _positive_seconds(section, "workerStaleSeconds") + _positive_seconds(
+        section, "workerHeartbeatSeconds"
+    )
+    return CustodyLenderTerms(transient=transient, unanswered_window_ms=window_seconds * 1000)
+
+
+#: 預かり所の契約の写し(この package に同梱・形 = custody.lender-availability.copy.v1 — agora-controllers の写しと同じ形:
+#: {schema, source{repo, path, pointer, commit}, copy = 節の逐語})。写しと正本(custody の source.commit の
+#: docs/contracts/custody-api.json#/lenderAvailability)の一致は tests/test_sessionhost_acp_custody_lender_copy.py が撃つ。
+#: 写しを進める = 正本の新しい commit の節で file を書き直し、source.commit を進める(手で節を直さない)。
+CUSTODY_LENDER_COPY_PACKAGE: str = "doeff_agents.sessionhost.acp"
+CUSTODY_LENDER_COPY_RESOURCE: str = "custody_lender_availability.json"
+CUSTODY_LENDER_COPY_SCHEMA: str = "custody.lender-availability.copy.v1"
+
+
+def custody_lender_section_of(document: JSONObject) -> JSONObject:
+    """写しの文書 → 節(``copy``)。形(schema)が違う写しは ValueError。"""
+    if document.get("schema") != CUSTODY_LENDER_COPY_SCHEMA:
+        raise ValueError(f"custody lender copy is not {CUSTODY_LENDER_COPY_SCHEMA}: {document.get('schema')!r}")
+    section = document.get("copy")
+    if not isinstance(section, dict):
+        raise ValueError("custody lender copy has no copy object")
+    return section
+
+
+CUSTODY_LENDER_COPY: JSONObject = json.loads(
+    files(CUSTODY_LENDER_COPY_PACKAGE).joinpath(CUSTODY_LENDER_COPY_RESOURCE).read_text(encoding="utf-8")
+)
+CUSTODY_LENDER_TERMS: CustodyLenderTerms = custody_lender_terms_of(custody_lender_section_of(CUSTODY_LENDER_COPY))
+#: 分類の表(judgment.custody-lender-transient? の 1 点が読む)と窓 W — どちらも写しから導いた値(直書きしない)。
+CUSTODY_LENDER_TRANSIENT: Mapping[tuple[str, int, str], frozenset[str] | None] = CUSTODY_LENDER_TERMS.transient
+CUSTODY_UNANSWERED_WINDOW_MS: int = CUSTODY_LENDER_TERMS.unanswered_window_ms
+#: 接続が答えない(到達不能 — handlers の HttpRaw の status 0)断りの status。預かり所の契約の語ではなく runner の側の約束。
+CUSTODY_UNANSWERED_STATUS: int = 0
+#: 窓の中で借りをやり直す間隔(ms)。預かり所の契約に無い数なので runner の定数(two-way door — 設計 v2 §10.1 の 15 秒)。
+#: 検が固定するのは「窓より短い(窓の中で少なくとも 1 度はやり直す)」の関係だけで、比は固定しない。
+CUSTODY_UNANSWERED_RETRY_MS: int = 15_000
 #: 預かり所が「その口座を預かっていない」と答える status(master の findHeading / worker の redeem — どちらも
 #: 在庫の事実で、どの担い手が頼んでも同じ)。
 CUSTODY_ACCOUNT_ABSENT_STATUS: int = 404
@@ -1870,6 +2013,16 @@ class LeaseRefused:
     #: 廃止された(custody law lease-counts-no-hosts)ので、錠の競合による 409 はもう出ない —
     #: この欄が埋まるのは、預かり所が別の理由で期限を名乗った拍だけ(欠落 = 期限を知らない)。
     hold_expires_at_ms: int | None
+    #: card acp:kanban-issue:ki-fd0f3b234a38(設計 v2 §10.1): 断った処理ステージ(lease = master の貸与 / redeem = worker の
+    #: 引換)・本文の code・本文の why(預かり所の契約の機械の語 — 本文に文字列で無ければ None)。写すのは
+    #: handlers.CustodyHttp._borrow の 1 点。分類(judgment.custody-refusal-verdict-of)はこの 3 つと status だけを読み、
+    #: error の散文を読まない。借りの前に機体の側で断った拍(宣言の無い預かり所・身元が組めない)は lease のまま。
+    stage: CustodyStage = CUSTODY_STAGE_LEASE
+    code: str | None = None
+    why: str | None = None
+    #: 引換に失敗した拍に、その直前に master が出した貸与を返せなかった時のその貸与の id(返せた・貸与が無い = None)。
+    #: 返すのは handler(同じ借りの 1 点)で、呼び手はこの欄を log に名乗るだけ — 分類はこの欄を読まない。
+    unreturned_lease_id: str | None = None
 
 
 LeaseOutcome: TypeAlias = "LeaseGrant | LeaseRefused"
@@ -1890,6 +2043,10 @@ class CustodyRefusalVerdict:
     * ``another-carrier`` — ``condition_type`` = :data:`CONDITION_CREDENTIAL_UNAVAILABLE`(有界に組み直す語)。
     * ``time``            — ``held`` に :data:`CONDITION_CREDENTIAL_LEASE_HELD` の記録 1 項。呼び手は
       phase を触らず条件だけ足す(``condition_type`` は書かない語として同じ型を名乗る)。
+    * ``lender``          — ``held`` に :data:`CONDITION_CREDENTIAL_LENDER_UNREACHABLE` の記録 1 項(card ki-fd0f3b234a38)。
+      呼び手の扱いは time と同じ(条件だけ足して phase を離す)。
+    * ``unanswered``      — 行に何も書かない(card ki-fd0f3b234a38)。``unanswered_since_ms`` / ``retry_at_ms`` を
+      呼び手の memory が (job, attempt) ごとに覚え、やり直しの刻まで借りを撃たず、次の判定へ since を渡す。
 
     ``reason`` は終端に載る文で、**預かり所の逐語をそのまま含む**(畳まない)。頭に class の意味
     (次の一手)が付くので、送信者は「宣言が変わるまで誰が頼んでも同じ」か「別の機体なら通る」かを読める。
@@ -1898,8 +2055,11 @@ class CustodyRefusalVerdict:
     answerer: CustodyRefusalAnswerer
     condition_type: ConditionType
     reason: str
-    #: answerer == "time" の拍だけ非 None(CredentialLeaseHeld の記録 1 項)。
+    #: answerer == "time" / "lender" の拍だけ非 None(CredentialLeaseHeld / CredentialLenderUnreachable の記録 1 項)。
     held: JSONObject | None
+    #: answerer == "unanswered" の拍だけ非 None — 同じ試みで最初に答えなかった刻と、次に借りをやり直す刻(epoch ms)。
+    unanswered_since_ms: int | None = None
+    retry_at_ms: int | None = None
 
 
 # ------------------------------------------------------------------ session(器)の値
@@ -3055,6 +3215,27 @@ class InFlightJob:
 
 
 @dataclass(frozen=True)
+class UnansweredBorrow:
+    """接続が答えない借り(judgment.custody-refusal-verdict-of の class unanswered)を待っている手番の memory の 1 項
+    (card acp:kanban-issue:ki-fd0f3b234a38・設計 v2 §10.1 / T8 — 行にも条件にも書かない)。
+
+    鍵 = (job_id, attempt)。since_ms = 同じ試みで最初に答えなかった刻(窓 CUSTODY_UNANSWERED_WINDOW_MS の起点・判定へ渡す)・
+    retry_at_ms = 次に借りをやり直す刻(それより前の拍は借りを撃たず、行に何も書かない)。choice / opener = claim の拍に
+    start-claimed へ渡した起こし方と会話の opener(やり直しの拍に同じ手番を同じ形で起こす材料 — plan と session の id は行から
+    読み直す)。⚠ 行は claim で既に Running + sessionHandle(claim-job は借りより先に書く)なので、この項が在る間は拾い直し
+    (recover-job)に渡さない。項を捨てるのは、判定が unanswered 以外を答えた拍(借りた・記録にした・閉じた)と、行が自分の
+    Running の同じ試みでなくなった拍(judgment.unanswered-borrows-kept — 終わった・取り下げ・置き直し)。再起動で消える。
+    """
+
+    job_id: str
+    attempt: int
+    since_ms: int
+    retry_at_ms: int
+    choice: ArmChoice
+    opener: str | None
+
+
+@dataclass(frozen=True)
 class AgentdState:
     since: int
     jobs: tuple[InFlightJob, ...]
@@ -3126,6 +3307,9 @@ class AgentdState:
     #: 段 12(agora-redesign #537 便 1): 走っている turn-record の巡回の最後の拍。None = まだ 1 度も(起動直後は即・
     #: その後は AgentdSettings.turn_record_sweep_seconds の周期)。巡回は memory を持たない(正本は行)。
     last_turn_record_sweep_ms: int | None = None
+    #: card acp:kanban-issue:ki-fd0f3b234a38(設計 v2 §10.1): 預かり所への借りの接続が答えず、窓の中で借りのやり直しを
+    #: 待っている手番(UnansweredBorrow — job ごとに 1 つ)。行には何も書かない(正本は memory だけ — 再起動で消える)。
+    unanswered_borrows: tuple[UnansweredBorrow, ...] = ()
 
 
 # ------------------------------------------------------------------ 要求(ACP)

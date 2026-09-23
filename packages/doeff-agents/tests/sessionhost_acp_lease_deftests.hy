@@ -310,7 +310,8 @@
       (LeaseRefused 503 "口座の worker company-mac へ届かない(worker の heartbeat が 90 秒来ていない)— 貸与の行を作らない" None))
 (setv REFUSAL-UNDECLARED
       (LeaseRefused 503 "custody URL is not declared (join の [custody].url / --custody → AGORA_CUSTODY_URL) — 既定の宿は無い" None))
-(setv REFUSAL-UNREACHABLE (LeaseRefused 0 "custody is unreachable" None))
+;; card acp:kanban-issue:ki-fd0f3b234a38: 到達不能(status 0)の断りはこの表から sessionhost_acp_lender_deftests.hy へ移した
+;; (窓の中は unanswered・窓の後は今日どおり another-carrier — 窓は memory が覚えた最初の刻から数える)。
 (setv REFUSAL-HELD-NO-HOLD (LeaseRefused 409 "held (no hold time)" None))
 (setv REFUSAL-HELD (LeaseRefused 409 "account acct is held by borrower sa:acp-control/default" 1900000))
 
@@ -327,12 +328,12 @@
                #(REFUSAL-BORROWER-GATE CUSTODY-ANSWERER-ANOTHER-CARRIER CONDITION-CREDENTIAL-UNAVAILABLE)
                #(REFUSAL-WORKER-UNREACHABLE CUSTODY-ANSWERER-ANOTHER-CARRIER CONDITION-CREDENTIAL-UNAVAILABLE)
                #(REFUSAL-UNDECLARED CUSTODY-ANSWERER-ANOTHER-CARRIER CONDITION-CREDENTIAL-UNAVAILABLE)
-               #(REFUSAL-UNREACHABLE CUSTODY-ANSWERER-ANOTHER-CARRIER CONDITION-CREDENTIAL-UNAVAILABLE)
+               ;; 到達不能(status 0)は test-an-unanswered-borrow-waits-out-the-custody-window-then-blames-the-carrier へ移した
                #(REFUSAL-HELD-NO-HOLD CUSTODY-ANSWERER-ANOTHER-CARRIER CONDITION-CREDENTIAL-UNAVAILABLE)
                ;; class time = 錠の hold(記録を足して phase を離す — 今日は custody be81f6f で発火しない)
                #(REFUSAL-HELD CUSTODY-ANSWERER-TIME CONDITION-CREDENTIAL-LEASE-HELD)])
   (for [[refusal answerer word] table]
-    (setv verdict (run (custody-refusal-verdict-of refusal status 7000)))
+    (setv verdict (run (custody-refusal-verdict-of refusal status 7000 None)))
     (assert (= verdict.answerer answerer) f"{refusal.status} {refusal.error}: {verdict.answerer}")
     (assert (= verdict.condition-type word) f"{refusal.status}: {verdict.condition-type}")
     (assert (in refusal.error verdict.reason)
@@ -346,13 +347,13 @@
           "another-carrier の語は membership の中(= 今日どおり有界の再投入)")
   ;; ⚠ 印の当たらない 403(預かり所が文を書き換えた拍)は another-carrier へ倒す — 非対称の既定:
   ;; nobody を取り違えると遅れるだけ、another-carrier を取り違えると別の機体なら通る断りを 1 回で殺す。
-  (setv unknown (run (custody-refusal-verdict-of (LeaseRefused 403 "forbidden" None) status 7000)))
+  (setv unknown (run (custody-refusal-verdict-of (LeaseRefused 403 "forbidden" None) status 7000 None)))
   (assert (= unknown.answerer CUSTODY-ANSWERER-ANOTHER-CARRIER) f"未知の 403: {unknown.answerer}")
   ;; 次の一手を名乗る(送信者が読む文 — 畳まない)。
-  (setv nobody (run (custody-refusal-verdict-of REFUSAL-PLACEMENT-GATE status 7000)))
+  (setv nobody (run (custody-refusal-verdict-of REFUSAL-PLACEMENT-GATE status 7000 None)))
   (assert (in "no carrier" nobody.reason) nobody.reason)
   (assert (in ACCOUNT nobody.reason) nobody.reason)
-  (setv other (run (custody-refusal-verdict-of REFUSAL-BORROWER-GATE status 7000)))
+  (setv other (run (custody-refusal-verdict-of REFUSAL-BORROWER-GATE status 7000 None)))
   (assert (in "another carrier" other.reason) other.reason))
 
 
@@ -385,8 +386,10 @@
   ;; 受入 3: class another-carrier の断りは **今日どおり** CredentialUnavailable で Ended(配達が有界に組み直す)。
   ;; 旧 deftest test-refusals-that-are-not-a-held-lease-still-end-the-turn の表を class で書き直したもの:
   ;; 404 は nobody へ移り(上の検)、残りはここ。403 の借り手の門を足した(実測 2026-09-19 の 403 4 件 = この arm)。
+  ;; card ki-fd0f3b234a38: 到達不能(status 0)は最初の拍では閉じない(窓の中は unanswered)— 窓の後に今日どおり閉じる形は
+  ;; sessionhost_acp_lender_deftests.hy の test-an-unanswered-borrow-writes-nothing-and-borrows-again-only-at-its-retry-time。
   (for [refusal [REFUSAL-BORROWER-GATE REFUSAL-WORKER-UNREACHABLE REFUSAL-UNDECLARED
-                 REFUSAL-UNREACHABLE REFUSAL-HELD-NO-HOLD]]
+                 REFUSAL-HELD-NO-HOLD]]
     (setv world (World))
     (setv world.custody.refuse-with refusal)
     (.put-row world.acp (bound-job "s-1"))
