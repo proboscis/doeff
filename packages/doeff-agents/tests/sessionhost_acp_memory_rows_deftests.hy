@@ -60,7 +60,8 @@
   MemoryUnchanged
   RecordEvent
   RecordSupersede
-  RecordSupersedeConflicted])
+  RecordSupersedeConflicted
+  RecordUnread])
 (import doeff_agents.sessionhost.acp.effects [Conflict])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeRecord FakeSessions])
 (import doeff_agents.sessionhost.acp.judgment [
@@ -159,7 +160,9 @@
     ;; (裁定 (f) の窓)と、席が触っていない写しが行を巻き戻す実弾の形は、この形でしか作れない。
     (setv self.stale-seat False)
     ;; 席がこの手番で置き場へ起こす編集(水入れの**後**に落ちる — 本物の順序)。
-    (setv self.pending []))
+    (setv self.pending [])
+    ;; card ki-554e364641e8: この手番の**畳み戻しの拍だけ**記録の service が落ちる体(水入れは通る)。
+    (setv self.fold-outage False))
 
   (defn #^ list dispatchers [self]
     [self.record.dispatch self.acp.dispatch self.custody.dispatch self.sessions.dispatch self.local.dispatch])
@@ -298,7 +301,12 @@
     (setv (get self.local.transcripts path) (+ prior (claude-events (.sid self) "hello")))
     (.tick self 1000)
     (.finish-turn self.sessions (.sid self) (+ self.local.now-ms 100))
+    ;; card ki-554e364641e8: 終いの拍(settle-record = 畳み戻し)だけ記録の service を落とす。
+    (when self.fold-outage (setv self.record.unreachable True))
     (.tick self 1000)
+    (when self.fold-outage
+      (setv self.record.unreachable False)
+      (setv self.fold-outage False))
     None)
 
   (defn #^ dict charter [self]
@@ -1342,3 +1350,134 @@
   (assert (= (get folded "unchanged") 1) folded)
   (assert (in "別の機体が書いた濃い本文" (get (.head-event world "mail-hold-has-two-exits") "text"))
           (.head-event world "mail-hold-has-two-exits")))
+
+
+;; ---------------------------------------------------------------------------
+;; card acp:kanban-issue:ki-554e364641e8 望む状態 (A)・反例 (D)(a)
+;; 畳み戻しの拍だけ記録の service が落ち、席の編集が置き場にだけ残った。次の手番の水入れは
+;; その置き場を行の頭(古い本文)で上書きしてはならない — 上書きすると 3 点(手元・基準・記録)が
+;; 揃って検査は緑のまま、編集だけが永久に消える。
+;; ---------------------------------------------------------------------------
+
+(deftest test-an-edit-the-record-did-not-take-survives-the-next-hydration
+  (setv world (MemoryWorld))
+  (setv first (book-text "a-fact" "要旨" "1 手番目の本文。"))
+  (.put-file world "a-fact.md" first)
+  (.turn world)                                  ;; 行・記録・基準が揃う(v1)
+  (setv edited (book-text "a-fact" "要旨" "2 手番目に席が足した本文。"))
+  (.put-file world "a-fact.md" edited)
+  (setv world.fold-outage True)                  ;; 水入れは通り、畳み戻しの拍だけ記録の service が落ちる
+  (.turn world)
+  ;; 畳み戻しは落ちた: 記録は v1 のまま・条件が 1 つ立ち・置き場には編集が残っている。
+  (setv events (.events-of world.record CID (run (memory-stream-id-of "a-fact"))))
+  (assert (in "1 手番目の本文" (get (get events 0) "text")) events)
+  (assert (= (get world.local.files f"{HOME}/a-fact.md") edited) "畳み戻しの拍で置き場が動いた")
+  (setv conditions (lfor c (.job-conditions world) :if (= (get c "type") CONDITION-MEMORY-UNWRITABLE) c))
+  (assert (= (len conditions) 1) (.job-conditions world))
+  ;; 3 手番目の頭: 記録の service は戻っている。水入れが置き場を組み直す。
+  (.turn world)
+  ;; ★ 置き場の編集が生きている(いま: 1 手番目の本文へ戻る = 編集が消える)。
+  (assert (= (get world.local.files f"{HOME}/a-fact.md") edited)
+          #("水入れが届かなかった編集を古い本文で上書きした" (get world.local.files f"{HOME}/a-fact.md")))
+  ;; ★ 3 手番目の畳み戻しが編集を記録へ届け、行が v2 になる。
+  (setv events (.events-of world.record CID (run (memory-stream-id-of "a-fact"))))
+  (assert (in "2 手番目に席が足した本文" (get (get events 0) "text")) events)
+  (setv spec (. (get (.memory-rows world) 0) spec))
+  (assert (= (get spec MEMORY-SPEC-VERSION-KEY) 2) spec)
+  (setv folded (get (.metric-lines world "agent-memory-folded") -1))
+  (assert (= (get folded "written") 1) folded)
+  ;; 基準は届いた版へ進む。
+  (setv base (get (.baseline-of-home world) "a-fact"))
+  (assert (= base.sha256 (run (memory-sha256-of-text edited))) base)
+  ;; 水入れは『置き場だけが持つ編集を守った』と名乗る(agent-memory-hydrated の held)。
+  (setv hydrated (get (.metric-lines world "agent-memory-hydrated") -1))
+  (assert (= (.get hydrated "held") 1) hydrated))
+
+
+;; ---------------------------------------------------------------------------
+;; 盲検の反例を検にした 3 本(card ki-554e364641e8・設計検証 lt-A5JQ5TRYBQ6GM8E4PTNQHPH0C4)
+;; ---------------------------------------------------------------------------
+
+(defclass PartialRecord [FakeRecord]
+  "記録の service が**特定の stream だけ**読めない体(他の stream は答える)。冊ごとに独立の要求なので、
+   1 冊だけ timeout する形は機構上いつでも起きる。"
+  (defn __init__ [self]
+    (.__init__ (super))
+    (setv self.unread-streams (set)))
+  (defn _read-stream [self conversation-id stream-id]
+    (if (in stream-id self.unread-streams)
+        (RecordUnread 0 "unreachable: this stream only (fake)")
+        (.-read-stream (super) conversation-id stream-id))))
+
+
+(deftest test-an-edit-the-record-did-not-take-survives-the-next-warm-hydration
+  ;; T1d: T1 と同じ筋書きを、2・3 手番目とも温かい腕(送り・after-start)で通す。組み直しの腕は 2 つ在り、
+  ;; 2 手番目以降の普段の手番はこちらしか通らない。⚠ 2 手番目を普通の腕にすると、書き戻しの不通のあと
+  ;; 3 手番目は温かくならず(arm = rebuild)、fake の substrate が何も書かないので検が空振りの緑になる(診断 2026-09-23)。
+  (setv world (MemoryWorld))
+  (setv first (book-text "a-fact" "要旨" "1 手番目の本文。"))
+  (.put-file world "a-fact.md" first)
+  (.turn world)
+  (setv edited (book-text "a-fact" "要旨" "2 手番目に席が足した本文。"))
+  (.put-file world "a-fact.md" edited)
+  (setv world.fold-outage True)
+  (.turn world :warm True)                       ;; 2 手番目も温かい腕(送り)で通す
+  (assert (= (get world.local.files f"{HOME}/a-fact.md") edited) "畳み戻しの拍で置き場が動いた")
+  (.turn world :warm True)
+  (assert (= (get world.local.files f"{HOME}/a-fact.md") edited)
+          #("温かい腕の水入れが届かなかった編集を古い本文で上書きした" (get world.local.files f"{HOME}/a-fact.md")))
+  (setv events (.events-of world.record CID (run (memory-stream-id-of "a-fact"))))
+  (assert (in "2 手番目に席が足した本文" (get (get events 0) "text")) events))
+
+
+(deftest test-a-copy-the-seat-never-touched-is-replaced-by-the-head-another-node-advanced
+  ;; T4(盲検 B の反例の否定形・S3 の正常例): 席が 1 字も触っていない写しの上で、別の機体が頭を進めた。
+  ;; 次の組み直しは**頭で置き直す**(H3 Hand)。prior を行の claim check から取る実装は、ここで Hold に倒れ、
+  ;; 書き戻しが古い写しで頭を巻き戻す(2026-09-21 の実弾の形)⇒ この検が赤になる。
+  (setv world (MemoryWorld))
+  (setv first (book-text "a-fact" "要旨" "1 手番目の本文。"))
+  (.put-file world "a-fact.md" first)
+  (.turn world)
+  (setv elsewhere (book-text "a-fact" "要旨" "別の機体が 2 手番目の途中で書いた濃い本文。"))
+  (.put-elsewhere world "a-fact" elsewhere)
+  (.turn world)                                  ;; 席は触らない ⇒ 3a Unchanged
+  (assert (= world.record.supersedes []) "触っていない写しで置き換えを撃った")
+  (.turn world)                                  ;; 3 手番目の組み直し
+  (assert (= (get world.local.files f"{HOME}/a-fact.md") elsewhere)
+          #("触っていない写しが頭で置き直されていない" (get world.local.files f"{HOME}/a-fact.md")))
+  (assert (= world.record.supersedes []) "3 手番目の書き戻しが頭を古い写しで巻き戻した")
+  (setv events (.events-of world.record CID (run (memory-stream-id-of "a-fact"))))
+  (assert (in "別の機体が 2 手番目の途中で書いた濃い本文" (get (get events 0) "text")) events)
+  (setv folded (get (.metric-lines world "agent-memory-folded") -1))
+  (assert (= (get folded "written") 0) folded)
+  (setv hydrated (get (.metric-lines world "agent-memory-hydrated") -1))
+  (assert (= (.get hydrated "held" 0) 0) hydrated))
+
+
+(deftest test-a-book-whose-body-could-not-be-read-at-hydration-keeps-its-baseline-and-its-edit
+  ;; T5(盲検 A の反例): 組み直しの拍に 1 冊だけ本文が読めなかった(他は読めた)。現状はその冊の基準の項が
+  ;; 落ち、同じ手番の編集は書き戻しで 4b(基準なし・撃たない)、次の組み直しが古い本文で上書きする。
+  ;; 期待: 触らなかった冊の基準の項は前回の値を保ち、編集は書き戻しで届く。
+  (setv world (MemoryWorld))
+  (setv world.record (PartialRecord))
+  (.put-file world "a-fact.md" (book-text "a-fact" "要旨 a" "a の 1 手番目。"))
+  (.put-file world "b-fact.md" (book-text "b-fact" "要旨 b" "b の 1 手番目。"))
+  (.turn world)
+  (assert (= (sorted (.keys (.baseline-of-home world))) ["a-fact" "b-fact"]) (.baseline-of-home world))
+  ;; 2 手番目の頭: a の stream だけ読めない。席は a を編集する。
+  (.add world.record.unread-streams (run (memory-stream-id-of "a-fact")))
+  (setv edited (book-text "a-fact" "要旨 a" "a を 2 手番目に編集。"))
+  (.put-file world "a-fact.md" edited)
+  (.turn world)
+  (.clear world.record.unread-streams)
+  (setv hydrated (get (.metric-lines world "agent-memory-hydrated") -2))
+  (assert (= (get hydrated "unreadable") 1) hydrated)
+  ;; ★ 触らなかった a の基準の項が残っている(現状: b だけになる)。
+  (assert (= (sorted (.keys (.baseline-of-home world))) ["a-fact" "b-fact"])
+          #("読めなかった冊の基準の項が落ちた" (sorted (.keys (.baseline-of-home world)))))
+  ;; 3 手番目: 記録は正常。編集が生きていて、記録の頭に届いている。
+  (.turn world)
+  (assert (= (get world.local.files f"{HOME}/a-fact.md") edited)
+          #("読めなかった手番の編集を次の水入れが上書きした" (get world.local.files f"{HOME}/a-fact.md")))
+  (setv events (.events-of world.record CID (run (memory-stream-id-of "a-fact"))))
+  (assert (in "a を 2 手番目に編集" (get (get events 0) "text")) events))
