@@ -805,8 +805,7 @@ class AgentdRun:
             _stderr(f"agentd: stop ({reason}) — drained: every running turn ended in {waited:.0f}s")
         else:
             _stderr(
-                f"agentd: stop ({reason}) — drain deadline of {limit}s reached with {left} running job(s) left; "
-                "closing them with AgentdRestart"
+                f"agentd: stop ({reason}) — drain deadline of {limit}s reached with {left} running job(s) left"
             )
         return left
 
@@ -831,6 +830,20 @@ class AgentdRun:
         if self.heartbeat.ident is not None:
             self.heartbeat.join(STOP_JOIN_SECONDS)
         self._close()
+
+    def exit_after_drain(self, reason: str) -> int:
+        """**ACP 側だけの process** の停止(役 agentd の SIGTERM / SIGINT): 排水(``drain_for_stop``)→
+        ``close_for_exit``。戻り = 排水の後に残った job の数(0 = 全部終わった)。
+
+        2 つの既存の腕を順に撃つだけで、判断は足さない: 待つかどうか・どれだけ待つかは機体の宣言
+        ``drain_seconds`` の 1 点(0 / 無し = 待たない = Mac の腕の入れ替え・cordon 無しの軽い入れ替え)。
+        宣言が在る機体(pool の pod)は、腕の停止が**器と一緒の停止**(pod の削除)の一部なので、新しい
+        claim を止め・capacity 0 を名乗り、走っている手番が終わるのを見届けてから降りる —— 器の容器は
+        腕の process が居なくなるまで降りない(pod の preStop・ACP 法 9932b9)。期限に届いても job は
+        **閉じない**(R58 — 閉じるのは器が降りた後の session-lost の路か、次の process)。"""
+        left = self.drain_for_stop(reason)
+        self.close_for_exit(reason)
+        return left
 
     def close_for_stop(self, reason: str) -> int:
         """host の停止の前に呼ぶ(host の accept loop が生きている間 — 器の眺めは RPC で読む): 排水(宣言が在れば)→ loop を止め、
@@ -1236,23 +1249,28 @@ def run_agentd_only(host_argv: Sequence[str], env: Mapping[str, str]) -> None:
 
     既知の形 = kubelet と container runtime の分離: kubelet(= この process)を入れ替えても
     container(= claude の子)は走り続ける。だから **SIGTERM は走っている手番を閉じない** —
-    ``AgentdRun.close_for_exit`` を撃つだけで、器は host が持ち続ける。host が先に降りた時は host の
+    ``AgentdRun.exit_after_drain`` = 排水(宣言 ``drain_seconds`` が在る機体だけ待つ)→ ``close_for_exit``。
+    器は host が持ち続ける。host が先に降りた時は host の
     ``stop-headless-rows`` が行を stopped にし、生きているこの process が次の周期に backend_alive=False
-    を観測して既存の session-lost の経路で手番を閉じる(今日より正しく終わる — 今日は agentd も一緒に死ぬ)。"""
+    を観測して既存の session-lost の経路で手番を閉じる(今日より正しく終わる — 今日は agentd も一緒に死ぬ)。
+
+    排水は signal handler の中では撃たない(最長で宣言の上限 = 数時間塞ぐ): handler は合図の名を控えて
+    main thread を起こすだけで、排水と停止は main thread が撃つ。排水の間も tick の loop と lease の
+    heartbeat は回り続ける(手番の終わりを観測し、capacity 0 を名乗り、node の行を切らない)。"""
     run = start_agentd_thread(host_argv, env, role=JOIN_ROLE_AGENTD)
     done = threading.Event()
+    signalled: list[str] = []
 
     def on_signal(signum: int, _frame: object) -> None:
-        name = signal.Signals(signum).name
-        try:
-            run.close_for_exit(name)
-        finally:
-            done.set()
+        signalled.append(signal.Signals(signum).name)
+        done.set()
 
     for signum in (signal.SIGTERM, signal.SIGINT):
         signal.signal(signum, on_signal)
     # loop の thread が自分から降りた(socket を諦めた等)拍も抜ける。
     while not done.is_set() and run.thread.is_alive():
         done.wait(1.0)
-    if not done.is_set():
+    if signalled:
+        run.exit_after_drain(signalled[0])
+    else:
         run.close_for_exit("agentd loop ended")

@@ -7202,6 +7202,90 @@ def test_close_for_exit_leaves_the_running_turns_to_the_host_process() -> None:
     assert ended.status["phase"] == PHASE_ENDED
 
 
+def test_exit_after_drain_waits_for_the_turns_by_the_declaration_and_closes_none() -> None:
+    """役 agentd の停止(R58 改訂 2026-09-23・実弾 aj-1EDQ69WZH7Y78K55RCQDVZS30A)。
+
+    ``exit_after_drain`` = 排水(``drain_for_stop`` — 待つかどうかは宣言 ``drain_seconds`` の 1 点)→
+    ``close_for_exit``。pool の pod は腕と器が同じ削除で降りるので、宣言(14400)の在る機体の腕は新しい
+    claim を止め・capacity 0 を名乗り、走っている手番が終わるのを見届けてから降りる。期限に届いても
+    job は閉じない。宣言 0 の機体(Mac の腕だけの入れ替え)は即座に降り、排水の合図も立たない。
+    """
+    import threading
+    import time
+    from dataclasses import replace
+
+    from doeff_agents.sessionhost.acp.runtime import AgentdRun, StateHolder
+
+    def started(name: str) -> threading.Thread:
+        thread = threading.Thread(target=lambda: None, name=name)
+        thread.start()
+        thread.join()
+        return thread
+
+    class ExitRun(NamedTuple):
+        """世界と走行係と、その状態の器・排水の合図・後始末の記録。"""
+
+        world: World
+        run: AgentdRun
+        holder: StateHolder
+        drain: threading.Event
+        closed: list[str]
+
+    def make_run(drain_seconds: int) -> ExitRun:
+        world = World()
+        world.acp.put_row(message("m-1", "first"))
+        world.acp.put_row(bound_job("j-1", inputs=["m-1"]))
+        world.tick()
+        assert len(world.state.jobs) == 1
+        holder = StateHolder()
+        holder.state = world.state
+        drain = threading.Event()
+        closed: list[str] = []
+        dispatchers = [world.acp.dispatch, world.custody.dispatch, world.sessions.dispatch, world.local.dispatch]
+        run_obj = AgentdRun(
+            replace(world.settings, drain_seconds=drain_seconds), dispatchers, threading.Event(), drain,
+            holder, started("loop"), lambda: closed.append("closed"), started("heartbeat"),
+        )
+        return ExitRun(world=world, run=run_obj, holder=holder, drain=drain, closed=closed)
+
+    # (1) 宣言あり・手番が排水の間に終わる → 残り 0・合図が立つ・後始末 1 度・job は腕が閉じていない
+    world, run_obj, holder, drain, closed = make_run(drain_seconds=10)
+    drain_seen: list[bool] = []
+
+    def turn_ends() -> None:
+        drain_seen.append(drain.wait(5.0))
+        holder.state = replace(holder.state, jobs=())
+
+    ender = threading.Thread(target=turn_ends)
+    ender.start()
+    assert run_obj.exit_after_drain("SIGTERM") == 0
+    ender.join(5.0)
+    assert drain_seen == [True], drain_seen
+    assert run_obj.stop.is_set()
+    assert closed == ["closed"]
+    job = world.job("j-1")
+    assert job.status is not None and job.status["phase"] == PHASE_RUNNING
+    # (2) 宣言あり・期限に届く → 残り 1・それでも閉じない(AgentdRestart を書かない)
+    world2, run2, holder2, drain2, closed2 = make_run(drain_seconds=1)
+    began = time.monotonic()
+    assert run2.exit_after_drain("SIGTERM") == 1
+    assert time.monotonic() - began >= 0.9
+    assert drain2.is_set()
+    assert closed2 == ["closed"]
+    still = world2.job("j-1")
+    assert still.status is not None and still.status["phase"] == PHASE_RUNNING, still.status
+    assert len(holder2.state.jobs) == 1
+    # (3) 宣言 0(Mac)→ 待たず・合図も立たず・閉じない
+    world3, run3, _holder3, drain3, closed3 = make_run(drain_seconds=0)
+    began = time.monotonic()
+    assert run3.exit_after_drain("SIGTERM") == 1
+    assert time.monotonic() - began < 0.5
+    assert not drain3.is_set()
+    assert closed3 == ["closed"]
+    kept = world3.job("j-1")
+    assert kept.status is not None and kept.status["phase"] == PHASE_RUNNING
+
+
 def test_join_spec_reads_drain_seconds_and_settings_carry_it() -> None:
     """宣言 file の [agentd].drain_seconds(任意)→ JoinSpec.drain_seconds → env DOEFF_AGENTD_DRAIN_SECONDS → AgentdSettings.drain_seconds。
     無し = 0(env に現れない)・読めない値は参加しない(ValueError)。"""

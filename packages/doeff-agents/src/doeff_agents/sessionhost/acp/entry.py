@@ -18,7 +18,8 @@ thread + host)を走る。Mac(launchd)・Linux(systemd)・GCP node・runner pod 
 * ``both``(既定)— 今日どおり 1 process で両方。``--role`` を付けない起動は env の束も host の argv も
   今日と 1 byte 差なく同じで、停止の hook(走っている手番を AgentdRestart で閉じる)も今日のまま立つ。
 * ``agentd`` — ACP 側だけ。host は起こさず、socket の client として別 process の host に繋ぐ
-  (socket の出現を上限なしで待つ)。**SIGTERM で走っている手番を 1 つも閉じない** —— 器は host が
+  (socket の出現を上限なしで待つ)。SIGTERM は宣言 drain_seconds の分だけ排水してから降りる(宣言 0 = 待たない)。
+  **SIGTERM で走っている手番を 1 つも閉じない** —— 器は host が
   親として持ち続けるので、ACP 側の規則を変えるのに node を配置から外さなくてよい。
 * ``host`` — 器だけ。agentd の thread を起こさない(join の env の束は弁を on にするが、役が切る)。
 
