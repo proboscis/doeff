@@ -327,7 +327,8 @@
                #(REFUSAL-BORROWER-GATE CUSTODY-ANSWERER-ANOTHER-CARRIER CONDITION-CREDENTIAL-UNAVAILABLE)
                #(REFUSAL-WORKER-UNREACHABLE CUSTODY-ANSWERER-ANOTHER-CARRIER CONDITION-CREDENTIAL-UNAVAILABLE)
                #(REFUSAL-UNDECLARED CUSTODY-ANSWERER-ANOTHER-CARRIER CONDITION-CREDENTIAL-UNAVAILABLE)
-               #(REFUSAL-UNREACHABLE CUSTODY-ANSWERER-ANOTHER-CARRIER CONDITION-CREDENTIAL-UNAVAILABLE)
+               ;; 試作(card ki-fd0f3b234a38): 接続が答えない(status 0)は窓の中は unanswered — 検は
+               ;; sessionhost_acp_lender_deftests.hy の test-an-unanswered-borrow-waits-out-the-custody-window-then-blames-the-carrier へ移した。
                #(REFUSAL-HELD-NO-HOLD CUSTODY-ANSWERER-ANOTHER-CARRIER CONDITION-CREDENTIAL-UNAVAILABLE)
                ;; class time = 錠の hold(記録を足して phase を離す — 今日は custody be81f6f で発火しない)
                #(REFUSAL-HELD CUSTODY-ANSWERER-TIME CONDITION-CREDENTIAL-LEASE-HELD)])

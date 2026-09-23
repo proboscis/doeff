@@ -175,6 +175,13 @@
   CUSTODY-ANSWERER-ANOTHER-CARRIER
   CUSTODY-ANSWERER-NOBODY
   CUSTODY-ANSWERER-TIME
+  CUSTODY-ANSWERER-LENDER
+  CUSTODY-ANSWERER-UNANSWERED
+  CUSTODY-LENDER-TRANSIENT
+  CUSTODY-UNANSWERED-STATUS
+  CUSTODY-UNANSWERED-WINDOW-MS
+  CUSTODY-UNANSWERED-RETRY-MS
+  CONDITION-CREDENTIAL-LENDER-UNREACHABLE
   CUSTODY-PLACEMENT-REFUSAL-MARK
   CUSTODY-PLACEMENT-REFUSAL-STATUS
   CustodyRefusalVerdict
@@ -579,8 +586,14 @@
   condition)
 
 
-(defk custody-refusal-verdict-of [refusal status now-ms]
-  {:pre [(: refusal LeaseRefused) (: status dict) (: now-ms int)]
+(defn custody-lender-transient? [refusal]
+  ;; 試作(設計 v2 §10.1): 預かり所の契約が「時間で晴れる」と宣言する組か。鍵は機械の語だけ
+  ;; (処理ステージ・status・code・why — 散文 refusal.error も機体も読まない)。
+  (setv whys (.get CUSTODY-LENDER-TRANSIENT #(refusal.stage refusal.status refusal.code)))
+  (and (is-not whys None) (in refusal.why whys)))
+
+(defk custody-refusal-verdict-of [refusal status now-ms [unanswered-since-ms None]]
+  {:pre [(: refusal LeaseRefused) (: status dict) (: now-ms int) (: unanswered-since-ms (| int None))]
    :post [(: % CustodyRefusalVerdict)]}
   "**預かり所の断りをどう扱うかの 1 点**(card acp:kanban-issue:ki-b3bed1e983fb)。断りを 1 語へ畳むのをやめ、
    **「誰が答えられるか」**で class を分ける — 呼び手(agentd.start-claimed)はこの答えに従うだけで、第 2 の判定を
@@ -600,6 +613,10 @@
    | nobody          | 404(その口座を預かっていない)/ 403 置き場の門           | CredentialNotLeasable       |
    | another-carrier | 403 借り手の門・503(worker 不達・宣言の欠け)・到達不能 | CredentialUnavailable       |
    | time            | 409 + holdExpiresAt(貸与の錠)                          | CredentialLeaseHeld(記録)  |
+
+   試作(card ki-fd0f3b234a38・設計 v2 §10.1): 順は time → lender → unanswered → nobody → another-carrier。
+   lender = CUSTODY-LENDER-TRANSIENT の組(CredentialLenderUnreachable の記録・phase を離す)/ unanswered = status 0 で
+   窓の中(何も書かない・撃ち直しの刻を返す)。窓を過ぎた status 0 と表に無い 503 は今日どおり another-carrier。
 
    ⚠ **HTTP status は軸ではない** — 403 が 2 本に割れる(裏取り 2026-09-19):
      * 置き場の門(custody Judge/Company.companyPlacementViolation・Program/Master.hs:198 で借り手の門より先)=
@@ -626,6 +643,33 @@
   (setv binding (.get status "binding"))
   (setv account (if (isinstance binding dict) (.get binding BINDING-ACCOUNT-KEY) None))
   (setv named (if (and (isinstance account str) (.strip account)) f"account {account}" "the bound account"))
+  ;; 試作(設計 v2 §10.1)の腕 lender: 預かり所が機械の語で「今は貸せない・時間で晴れる」と言った。手番を終わらせず、
+  ;; 数えない失った試みの記録を足して phase を離す(置き直すのは監督 — 数えない表 UNCOUNTED-RECORDS が読む)。
+  (when (custody-lender-transient? refusal)
+    (<- attempt int (binding-attempt-of status))
+    (setv node-row (if (isinstance binding dict) (.get binding BINDING-NODE-ROW-KEY) None))
+    (setv record {"type" CONDITION-CREDENTIAL-LENDER-UNREACHABLE "status" "True" "reason" refusal.error
+                  PROVIDER-LIMIT-ATTEMPT-KEY attempt PROVIDER-LIMIT-AT-KEY now-ms
+                  "stage" refusal.stage "code" refusal.code})
+    (when refusal.why (setv (get record "why") refusal.why))
+    (when (and (isinstance account str) (.strip account)) (setv (get record CREDENTIAL-LEASE-HELD-ACCOUNT-KEY) account))
+    (when (and (isinstance node-row str) (.strip node-row)) (setv (get record CREDENTIAL-LEASE-HELD-NODE-ROW-KEY) node-row))
+    (return (CustodyRefusalVerdict :answerer CUSTODY-ANSWERER-LENDER
+                                   :condition-type CONDITION-CREDENTIAL-LENDER-UNREACHABLE
+                                   :reason refusal.error :held record)))
+  ;; 試作の腕 unanswered: 接続が答えない(どちらの処理ステージでも)。同じ試みで最初に答えなかった刻から窓の中は、
+  ;; 行に何も書かず撃ち直しの刻を返す(runner の memory が覚える)。窓を過ぎても答えない = 預かり所は worker を
+  ;; 生きていると言い続けている = この機体の道の故障 ⇒ 下の another-carrier(今日どおり機体を避けて組み直す)。
+  (when (= refusal.status CUSTODY-UNANSWERED-STATUS)
+    (setv since (if (is unanswered-since-ms None) now-ms unanswered-since-ms))
+    (when (< (- now-ms since) CUSTODY-UNANSWERED-WINDOW-MS)
+      (return (CustodyRefusalVerdict :answerer CUSTODY-ANSWERER-UNANSWERED
+                                     :condition-type CONDITION-CREDENTIAL-UNAVAILABLE
+                                     :reason (+ f"custody did not answer the borrow of {named} yet — retrying until the "
+                                                f"custody window closes; custody refused ({refusal.status}): " refusal.error)
+                                     :held None
+                                     :unanswered-since-ms since
+                                     :retry-at-ms (+ now-ms CUSTODY-UNANSWERED-RETRY-MS)))))
   (<- nobody bool (custody-refuses-every-carrier? refusal))
   (if nobody
       (CustodyRefusalVerdict
