@@ -70,6 +70,16 @@ async def _forever() -> None:
     await asyncio.Event().wait()
 
 
+@do
+def _unwound(task):
+    """Wait until a cancelled task finished unwinding (Cancel only requests)."""
+    try:
+        yield Wait(task)
+    except TaskCancelledError:
+        return None
+    raise AssertionError("cancelled task did not end cancelled")
+
+
 class _Probe:
     """Records what a long-running bridged coroutine observed."""
 
@@ -140,6 +150,7 @@ def test_cancel_right_after_parking_still_reaches_coroutine() -> None:
         # to start on the loop.
         yield Await(asyncio.sleep(0))
         yield Cancel(task)
+        yield _unwound(task)
         return "requested"
 
     assert _run_await(body()) == "requested"
@@ -245,6 +256,7 @@ def test_cancel_race_loser_parked_on_await() -> None:
         winner = yield Race(t_slow, t_fast)
         loser_alive_after_race = not loser.finalized.is_set()
         yield Cancel(t_slow)
+        yield _unwound(t_slow)
         return winner, loser_alive_after_race
 
     assert _run_await(body()) == ("fast", True)
@@ -271,6 +283,7 @@ def test_on_cancel_runs_when_last_waiter_is_cancelled() -> None:
         task = yield Spawn(waiter(ep))
         yield Await(asyncio.sleep(0))  # let the waiter park
         yield Cancel(task)
+        yield _unwound(task)
         ep.complete("late")  # a late completion is ignored
         try:
             yield Wait(ep.future)
@@ -316,6 +329,7 @@ def test_on_cancel_reaches_gather_waiter() -> None:
         task = yield Spawn(gatherer(ep))
         yield Await(asyncio.sleep(0))
         yield Cancel(task)
+        yield _unwound(task)
         return list(calls)
 
     assert _run_await(body()) == ["cancel"]

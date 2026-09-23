@@ -162,22 +162,38 @@ class Wait(EffectBase):
 
 
 class Cancel(EffectBase):
-    """Cancel a task cooperatively."""
+    """Request cancellation of a task; the requester resumes immediately.
+
+    - A task that never started is cancelled without running its body.
+    - A started task receives ``TaskCancelledError`` at the point where it
+      is suspended (Wait / Gather / Race / AcquireSemaphore / a queued
+      resume; a self-cancel at its own Cancel). Its ``except``/``finally``
+      blocks run and may perform effects; the task stays live
+      (``cancelling``) until it finishes unwinding.
+    - Waiters are woken when the task has finished unwinding. They observe
+      ``TaskCancelledError`` if it ended by propagating it or by swallowing
+      it and returning (the late value is discarded), or the other
+      exception its cleanup raised.
+    - Each Cancel delivers the exception once; a task that swallows it
+      keeps running until it ends or is cancelled again.
+    - Cancelling a terminal task is a no-op.
+    """
     def __init__(self, task):
         super().__init__()
         self.task = task
 
 
 class TaskCancelledError(Exception):
-    """Raised when waiting on a cancelled task."""
+    """Thrown into a cancelled task, and raised to whoever waits on it."""
 
 
 class ExternalPromiseCancelCallbackError(RuntimeError):
     """Raised to the ``Cancel`` caller when an ``on_cancel`` callback failed.
 
-    The cancellation itself has already taken effect (the task and the
-    abandoned external promises are ``cancelled``); ``errors`` lists every
-    callback exception so none is lost.
+    The cancellation itself has already taken effect (the task was sent
+    ``TaskCancelledError`` and the abandoned external promises are
+    ``cancelled``); ``errors`` lists every callback exception so none is
+    lost.
     """
 
     def __init__(self, errors: list[Exception]) -> None:
@@ -438,9 +454,10 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         An entry is swept when it is terminal, has no registered waiter, is
         not referenced by a live Gather/Race resolution, and every handle
         (Task, Promise/ExternalPromise, and each Future minted from them) is
-        dead. Cancelled tasks are exempt: a self-cancelled task still runs to
-        its TaskCompleted and a cancelled parked waiter is still woken through
-        task_priority — both re-read tasks[tid]. Semaphores are never swept:
+        dead. Cancelled tasks are exempt: a task dropped by the Cancel
+        fallback (continuation not held by the scheduler) may still run to
+        its TaskCompleted, which re-reads tasks[tid]; ``cancelling`` tasks
+        are live. Semaphores are never swept:
         "no permits outstanding" is not trackable from handle liveness.
         """
         protected = set()
@@ -694,23 +711,34 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         elif status == "pending":
             promise.setdefault("cancel_callbacks", []).append(callback)
 
-    def cancel_abandoned_external_promises(cancelled_tid: int) -> list[Exception]:
+    def keys_parked_by(tid: int) -> list[tuple[str, int]]:
+        """Waitable keys that hold a Wait/Gather/Race entry owned by ``tid``."""
+        return [
+            key
+            for key, entries in waiters.items()
+            if any(entry[1] == tid for entry in entries)
+        ]
+
+    def cancel_abandoned_external_promises(
+        parked_keys: list[tuple[str, int]],
+    ) -> list[Exception]:
         """Propagate a task cancellation to the producers it was waiting on.
 
-        A pending external promise with ``on_cancel`` callbacks is cancelled
-        when ``cancelled_tid`` was parked on it and no live waiter remains
-        (every remaining Wait/Gather/Race entry belongs to a cancelled task;
-        the root is never cancelled). Its waiters entry is dropped — every
-        owner is cancelled, so nothing can resume from it — and the
-        callbacks run. Promises without callbacks keep the historical
-        semantics (stay pending, a later completion still settles them).
+        ``parked_keys`` are the waitables the cancelled task was parked on
+        (captured before its continuation was detached). A pending external
+        promise among them with ``on_cancel`` callbacks is cancelled when no
+        live waiter remains (every remaining Wait/Gather/Race entry belongs
+        to a cancelled task; the root is never cancelled). Its waiters entry
+        is dropped — nothing can resume from it — and the callbacks run.
+        Promises without callbacks keep the historical semantics (stay
+        pending, a later completion still settles them).
 
         Returns the callback exceptions; the caller surfaces them only after
         every abandoned promise was cancelled, so one failing producer
         cannot leave the others running.
         """
         errors = []
-        for key in list(waiters):
+        for key in parked_keys:
             kind, pid = key
             if kind != "promise":
                 continue
@@ -721,12 +749,10 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 or not promise.get("cancel_callbacks")
             ):
                 continue
-            entries = waiters[key]
-            if not any(entry[1] == cancelled_tid for entry in entries):
-                continue
+            entries = waiters.get(key, [])
             if any(not is_owner_cancelled(entry[1]) for entry in entries):
                 continue
-            del waiters[key]
+            waiters.pop(key, None)
             promise["status"] = "cancelled"
             promise["result"] = TaskCancelledError()
             for callback in promise.pop("cancel_callbacks"):
@@ -735,6 +761,83 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
                 except Exception as error:  # collected, re-raised by Cancel
                     errors.append(error)
         return errors
+
+    def detach_parked_continuation(tid: int) -> object | None:
+        """Take the one continuation of started task ``tid`` the scheduler holds.
+
+        A started task that is not the one currently running is suspended in
+        exactly one scheduler structure: a Wait/Gather/Race registration in
+        ``waiters``, a queued resume/raise/permit in the ready heap, or a
+        semaphore wait queue. The continuation is removed from there (so no
+        wake can resume it a second time) and returned, so Cancel can throw
+        ``TaskCancelledError`` into it. Returns None when the scheduler does
+        not hold the task's continuation.
+        """
+        for detach in (detach_from_waiters, detach_from_ready, detach_from_semaphores):
+            cont = detach(tid)
+            if cont is not None:
+                return cont
+        return None
+
+    def detach_from_waiters(tid: int) -> object | None:
+        """Detach a Wait/Gather/Race registration of ``tid`` (see above).
+
+        The external-wait placeholder is claimed so it drops itself, and a
+        Gather/Race registration is resolved and removed from every key.
+        """
+        for key in list(waiters):
+            entries = waiters[key]
+            for index, entry in enumerate(entries):
+                if entry[1] != tid:
+                    continue
+                entry_type = entry[0]
+                if entry_type in ("gather", "race"):
+                    state = entry[2]
+                    state["resolved"] = True
+                    if entry_type == "gather":
+                        remove_gather_waiters(state)
+                    else:
+                        remove_race_waiters(state)
+                    return state["waiter_k"]
+                if entry_type == "wait_external":
+                    entry[3][0] = True  # drop the paired ready placeholder
+                del entries[index]
+                if not entries:
+                    del waiters[key]
+                return entry[2]
+        return None
+
+    def detach_from_ready(tid: int) -> object | None:
+        """Detach a queued resume/raise/permit of ``tid`` (see above).
+
+        A permit already transferred to the task is handed on (#496).
+        """
+        for index, heap_item in enumerate(ready):
+            entry = heap_item[2]
+            if entry[0] not in ("resume", "raise", "sem_resume") or entry[1] != tid:
+                continue
+            ready.pop(index)
+            heapq.heapify(ready)
+            if entry[0] == "sem_resume":
+                return_inflight_permit(entry[3], tid)
+            return entry[2]
+        return None
+
+    def detach_from_semaphores(tid: int) -> object | None:
+        """Detach ``tid`` from a semaphore wait queue (see above)."""
+        for sem in semaphores.values():
+            for waiter in sem["waiters"]:
+                if waiter[0] == tid:
+                    sem["waiters"].remove(waiter)
+                    return waiter[1]
+        return None
+
+    def finish_cancelled(tid: int, error: BaseException) -> None:
+        """Make ``tid`` terminal as cancelled and wake whoever waits on it."""
+        tasks[tid]["status"] = "cancelled"
+        tasks[tid]["result"] = error
+        wake_waiters(("task", tid))
+        _release_task_refs(tid)
 
     def live_parked_waiter_summary(include_daemons=True):
         """Describe live (non-cancelled) parked waiters for diagnostics.
@@ -1291,15 +1394,29 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
         elif isinstance(effect, TaskCompleted):
             tid = effect.task_id
             r = effect.result
-            if tasks[tid]["status"] == "cancelled":
+            status = tasks[tid]["status"]
+            error = None if (hasattr(r, "is_ok") and r.is_ok()) else (
+                r.error if hasattr(r, "error") else r
+            )
+            if status == "cancelled":
                 _release_task_refs(tid)
+            elif status == "cancelling" and (
+                error is None or isinstance(error, TaskCancelledError)
+            ):
+                # The task finished unwinding a Cancel: by propagating the
+                # TaskCancelledError, or by swallowing it and returning — the
+                # late value is discarded, the Cancel still wins.
+                finish_cancelled(
+                    tid, error if error is not None else TaskCancelledError()
+                )
             else:
-                if hasattr(r, "is_ok") and r.is_ok():
+                # A cancelling task whose cleanup raised something else is
+                # reported as failed with that error (it is not hidden).
+                if error is None:
                     tasks[tid]["status"] = "completed"
                     tasks[tid]["result"] = r.value
                 else:
                     tasks[tid]["status"] = "failed"
-                    error = r.error if hasattr(r, "error") else r
                     # Add spawn boundary to traceback
                     if isinstance(error, BaseException) and hasattr(error, "__doeff_traceback__"):
                         error.__doeff_traceback__.insert(0, {
@@ -1439,18 +1556,40 @@ def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing 
             yield TailEval(pick_next())
 
         elif isinstance(effect, Cancel):
+            # Cancellation is delivered INTO the task (see Cancel's docstring):
+            # a started task receives TaskCancelledError at its suspension
+            # point, so its except/finally run; it stays live ("cancelling")
+            # until it finishes unwinding, and only then are its waiters woken.
+            from doeff.program import ResumeThrow
             tid = effect.task.task_id
             task = tasks.get(tid)
             cancel_errors = []
-            if task and task["status"] in ("pending", "running", "suspended"):
-                task["status"] = "cancelled"
-                task["result"] = TaskCancelledError()
-                wake_waiters(("task", tid))
-                _release_task_refs(tid)
+            if task is not None and task["status"] == "pending":
+                # Never started: no body ran, so there is nothing to unwind.
+                finish_cancelled(tid, TaskCancelledError())
+            elif task is not None and task["status"] in ("running", "cancelling"):
+                task["status"] = "cancelling"
+                if tid == current_tid:
+                    # Self-cancel: this Cancel is the task's suspension point.
+                    return (yield ResumeThrow(k, TaskCancelledError()))
+                parked_keys = keys_parked_by(tid)
+                cont = detach_parked_continuation(tid)
+                if cont is None:
+                    # The scheduler does not hold the task's continuation, so
+                    # it cannot deliver the exception; fall back to the old
+                    # drop-the-task behaviour, loudly.
+                    _logger.warning(
+                        "Cancel(task %s): the scheduler does not hold its "
+                        "continuation; the task is dropped without running "
+                        "its except/finally blocks",
+                        tid,
+                    )
+                    finish_cancelled(tid, TaskCancelledError())
+                else:
+                    enqueue_raise(tid, cont, TaskCancelledError())
                 # Stop the external work the task was parked on (#498).
-                cancel_errors = cancel_abandoned_external_promises(tid)
+                cancel_errors = cancel_abandoned_external_promises(parked_keys)
             if cancel_errors:
-                from doeff.program import ResumeThrow
                 error = ExternalPromiseCancelCallbackError(cancel_errors)
                 error.__cause__ = cancel_errors[0]
                 return (yield ResumeThrow(k, error))
