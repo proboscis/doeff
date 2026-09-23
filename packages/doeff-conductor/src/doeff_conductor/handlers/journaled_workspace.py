@@ -9,17 +9,14 @@ run must still exist in the resumed run.
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
 
+from doeff_conductor.effects.workspace import CreateWorkspace
 from doeff_conductor.journal import (
     AGENT_JOURNAL_FILENAME,
     CreateWorkspaceJournalEntry,
     WorkspaceJournal,
 )
 from doeff_conductor.types import Workspace
-
-if TYPE_CHECKING:
-    from doeff_conductor.effects.workspace import CreateWorkspace
 
 
 class PreCoverageRunError(RuntimeError):
