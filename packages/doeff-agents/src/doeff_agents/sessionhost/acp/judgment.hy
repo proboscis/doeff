@@ -164,6 +164,7 @@
   ATTACHMENT-SHA256-KEY
   CONDITION-ATTACHMENT-IGNORED
   CAUSE-CATEGORY-RATE-LIMITED
+  CAUSE-CATEGORY-HOST-DRAINED
   CONDITION-PROVIDER-LIMIT
   CONDITION-CREDENTIAL-LEASE-HELD
   CREDENTIAL-LEASE-HELD-ACCOUNT-KEY
@@ -232,6 +233,7 @@
   BACKEND-HEADLESS
   CLAUDE-OAUTH-TOKEN-ENV
   CONDITION-AGENTD-RESTART
+  CONDITION-HOST-DRAINED
   CONDITION-INTERRUPTED
   CONDITION-RECORD-UNAVAILABLE
   CONDITION-SESSION-LOST
@@ -278,6 +280,7 @@
   CAUSE-CATEGORY-INTERRUPTED
   CAUSE-CATEGORY-AGENTD-STOPPED
   CAUSE-REASON-WITHDRAWN
+  CAUSE-REASON-HOST-DRAINED
   DEFAULT-CANCEL-GRACE-SECONDS
   JOB-SPEC-CANCEL-KEY
   JOB-STATUS-CANCEL-KEY
@@ -5852,24 +5855,33 @@
    :post [(: % JobOutcome)]}
   "器の眺めから手番の結末を読む(既存の turn-end の意味論 = 行の status が終端 —
    policy.hy の monitor が turn-end で done へ倒す。語彙は effects.SESSION-TERMINAL-STATUSES)。done 以外の終端は SessionFailed の
-   condition(理由 = terminal_cause の category と reason)。"
+   condition(理由 = terminal_cause の category と reason)。
+   ただし行の category が host_drained(host の停止が排水の印の下で切った — card acp:kanban-issue:ki-b5e0d04de958 D2)なら
+   cause = {agentd-stopped, host-drained}・condition = HostDrained(理由は同じ文)。行の語 → ACP の語の写しはここ 1 点で、
+   それ以外の done でない終端(cancelled・vanished …)は今日どおり {failed, SessionFailed}。"
   (if (not-in view.status SESSION-TERMINAL-STATUSES)
       (JobOutcome :ended False :result None :cause None :conditions #())
       (do
         (setv conditions [])
-        (when (!= view.status "done")
-          (setv session-cause (or view.terminal-cause {}))
+        (setv done (= view.status "done"))
+        (setv session-cause (or view.terminal-cause {}))
+        (setv drained (and (not done) (= (.get session-cause "category") CAUSE-CATEGORY-HOST-DRAINED)))
+        (when (not done)
           (setv category (.get session-cause "category"))
           (setv reason (.get session-cause "reason"))
-          (<- failed dict (condition-of "SessionFailed"
-                                        (+ f"session {view.status}"
-                                           (if (isinstance category str) f": {category}" "")
-                                           (if (isinstance reason str) f" ({reason})" ""))))
-          (.append conditions failed))
+          (<- closing dict (condition-of (if drained CONDITION-HOST-DRAINED "SessionFailed")
+                                         (+ f"session {view.status}"
+                                            (if (isinstance category str) f": {category}" "")
+                                            (if (isinstance reason str) f" ({reason})" ""))))
+          (.append conditions closing))
         ;; #349 行 3 粒 3a: 自然に終わった手番 = completed(value は result に)・done 以外の終端 = failed / SessionFailed
-        (setv done (= view.status "done"))
-        (<- cause dict (terminal-cause-of (if done CAUSE-CATEGORY-COMPLETED CAUSE-CATEGORY-FAILED)
-                                          (if done None "SessionFailed")))
+        ;; ki-b5e0d04de958 D2: 印の下の host の停止 = agentd-stopped / host-drained(category は 5 語のまま・reason が分ける)
+        (<- cause dict (terminal-cause-of (cond done CAUSE-CATEGORY-COMPLETED
+                                                drained CAUSE-CATEGORY-AGENTD-STOPPED
+                                                True CAUSE-CATEGORY-FAILED)
+                                          (cond done None
+                                                drained CAUSE-REASON-HOST-DRAINED
+                                                True "SessionFailed")))
         (JobOutcome :ended True :result view.result-payload :cause cause :conditions (tuple conditions)))))
 
 

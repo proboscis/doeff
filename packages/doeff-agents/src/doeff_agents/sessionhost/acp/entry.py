@@ -51,6 +51,9 @@ from doeff_agents.sessionhost.usage import help_topic_of, usage_text
 
 #: 器の入れ替えの口の subcommand(綴りの定義点は host_slot_cli — ここは Hy を読まずに分岐するための写し)。
 HOST_SLOT_SUBCOMMAND = "host-slot"
+#: 役 host の器へ排水の印の path を渡す env(card acp:kanban-issue:ki-b5e0d04de958 D1・綴りの定義点は host.hy の
+#: ENV-DRAIN-FILE — ここは Hy を読まずに立てるための写し。2 つの綴りの一致は ADR-DOE-AGENTS-012 の針が撃つ)。
+HOST_DRAIN_FILE_ENV = "DOEFF_SESSIONHOST_DRAIN_FILE"
 
 
 def main() -> None:
@@ -75,6 +78,7 @@ def main() -> None:
         from doeff_agents.sessionhost.acp.runtime import (
             AgentdPreflightError,
             apply_join_env,
+            drain_file_path,
             join_host_slot,
             join_plan,
             join_role,
@@ -92,6 +96,12 @@ def main() -> None:
             sys.stderr.write(f"doeff-sessionhost: {error}\n")
             raise SystemExit(2) from error
         apply_join_env(plan, os.environ.update)
+        if role == JOIN_ROLE_HOST:
+            # card acp:kanban-issue:ki-b5e0d04de958 D1: 役 host の器にだけ排水の印の path を渡す(停止の拍に 1 回読み、
+            # 切った行の語を決める)。置き場は runtime.drain_file_path の 1 点(ACP 側の process の drain_port と同じ file)。
+            # 役 both は立てない — env の束も argv も今日と 1 byte 差なく同じ(停止の hook が行より先に job を閉じる)。
+            # JoinPlan にも入れない(役は plan に入らない)。
+            os.environ[HOST_DRAIN_FILE_ENV] = drain_file_path(os.environ)
         argv = list(host_argv)
     verdict = acp_valve(argv, os.environ)
     # card acp:kanban-issue:ki-567f2dd6140f: 役が host なら agentd の thread を起こさない(弁が on でも —

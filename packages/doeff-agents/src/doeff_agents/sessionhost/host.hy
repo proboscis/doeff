@@ -79,7 +79,8 @@
 (import doeff_agents.sessionhost.drivers [driver-listing])
 (import doeff_agents.sessionhost.impls.headless_argv [headless-argv-impl])
 (import doeff_agents.sessionhost.effects [headless-kill headless-liveness])
-(import doeff_agents.sessionhost.headless_protocol [backend-alive])
+(import doeff_agents.sessionhost.headless_protocol [backend-alive stop-cause-category])
+(import doeff_agents.sessionhost.drain_marker [declared :as drain-declared reason-line :as drain-reason-line])
 (import doeff_agents.sessionhost.cache_host [cache-host-ping cache-host-probe cache-host-guard-normal-send cache-host-cancel cache-last-success-at])
 (import doeff_agents.sessionhost.cache_host_model [CacheMaintenanceActiveError CACHE-MAINTENANCE-ACTIVE])
 (import doeff_agents.sessionhost.cache_host_model [HostCacheRead])
@@ -237,7 +238,12 @@
   ;; out-of-band 寿命境界(opt-in): spawn 元の死で自己終了 + launch 済み
   ;; session の reap。conformance harness が常時立てる(S28)。
   #^ bool exit-when-orphaned
-  (setv exit-when-orphaned False))
+  (setv exit-when-orphaned False)
+  ;; 排水の印の path(card acp:kanban-issue:ki-b5e0d04de958 D1・env-only)。None = 印を読まない起動
+  ;; (役 both・join を通らない serve)= 停止で切った行は今日どおり cancelled。host は印を**読むだけ**で、
+  ;; 読みは TERM の handler が 1 度目の拍に drain_marker で 1 回(書く腕を持たない — ADR-DOE-AGENTS-012)。
+  #^ (| str None) drain-file
+  (setv drain-file None))
 
 
 ;; ---------------------------------------------------------------------------
@@ -341,6 +347,9 @@
 (setv ENV-HERDR-SOCKET "DOEFF_SESSIONHOST_HERDR_SOCKET")
 (setv ENV-HEADLESS-DIR "DOEFF_SESSIONHOST_HEADLESS_DIR")
 (setv ENV-EXIT-WHEN-ORPHANED "DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED")
+;; 排水の印の path(card acp:kanban-issue:ki-b5e0d04de958 D1): 立てるのは役 host の起動の組み立て
+;; (acp/entry.py — 値は runtime.drain_file_path の 1 点)だけ。綴りはここと entry の 2 か所(ADR-DOE-AGENTS-012 の針)。
+(setv ENV-DRAIN-FILE "DOEFF_SESSIONHOST_DRAIN_FILE")
 
 ;; serve の flag の一覧 = usage の生成元(並びがそのまま help の並び)。
 ;;   #(flag 値の見出し env の名 説明)
@@ -387,7 +396,11 @@
         "$XDG_STATE_HOME/doeff/headless"))
    #(ENV-EXIT-WHEN-ORPHANED
      (+ "Set to 1 to make the host exit when its parent goes away "
-        "(opt-in lifetime boundary)."))])
+        "(opt-in lifetime boundary)."))
+   #(ENV-DRAIN-FILE
+     (+ "Path of the drain marker (set by `join --role host`). Read once at the "
+        "first SIGTERM: turns cut while it exists end as host_drained (a planned "
+        "stop), otherwise as cancelled. The host never writes it."))])
 
 (deff arg-at [args index]
   {:pre [(: args list) (: index int)]
@@ -444,6 +457,8 @@
   ;; 凍結物理なので足さない。backend knob と同じ搬送経路)。
   (setv exit-when-orphaned
         (= (.get os.environ ENV-EXIT-WHEN-ORPHANED "") "1"))
+  ;; 排水の印の path も env-only(同じ理由 — CLI の語彙は凍結)。空 = 無し。
+  (setv drain-file (or (.get os.environ ENV-DRAIN-FILE "") None))
   (setv command CMD-SERVE)
   (setv index 0)
   (while (< index (len args))
@@ -540,7 +555,8 @@
     :backend backend
     :herdr-socket herdr-socket
     :headless-events-root headless-events-root
-    :exit-when-orphaned exit-when-orphaned))
+    :exit-when-orphaned exit-when-orphaned
+    :drain-file drain-file))
 
 
 ;; ---------------------------------------------------------------------------
@@ -2118,10 +2134,15 @@
   (.append SHUTDOWN-HOOKS hook)
   None)
 
-(defn graceful-stop [config actor signum]
+(defn graceful-stop [config actor signum declared marker]
   "TERM の 1 度目の腕(別 thread): hook → headless の行の停止 → 自分に同じ信号を撃ち直す。
-   hook / 腕の例外は log して次へ(停止を止めない)。"
+   hook / 腕の例外は log して次へ(停止を止めない)。declared / marker = TERM の handler が停止の拍に 1 度だけ読んだ
+   排水の印の答えと中身の 1 行目(card acp:kanban-issue:ki-b5e0d04de958 D1 — ここでは読み直さない)。切った行の語は
+   stop_cause_category の 1 点で決まり、marker は行の散文と log に足すだけ(判断には使わない)。"
   (setv name (. (signal.Signals signum) name))
+  (setv reason (if declared
+                   (+ name "; drain declared" (if marker f": {marker}" ""))
+                   name))
   (print f"doeff-sessionhost stop ({name}): closing running turns before exit" :file sys.stderr)
   (for [hook (list SHUTDOWN-HOOKS)]
     (try
@@ -2130,10 +2151,11 @@
         (print f"doeff-sessionhost stop: hook failed: {(. (type e) __name__)}: {e}" :file sys.stderr))))
   (when (headless-backend? config)
     (try
-      (setv outcomes (run-hosted config actor (stop-headless-rows name)))
+      (setv outcomes (run-hosted config actor (stop-headless-rows reason declared)))
       (setv cut (lfor [sid status] (.items outcomes) :if (and (!= sid "killed") (= status "stopped")) sid))
-      (print (+ f"doeff-sessionhost stop ({name}): {(.get outcomes "killed" 0)} headless process(es) terminated, "
-                f"{(len cut)} mid-turn row(s) ended as stopped/cancelled"
+      ;; 数える語は行の語から導く(固定の文字列で書かない — 印の有無が log から読める)。
+      (print (+ f"doeff-sessionhost stop ({reason}): {(.get outcomes "killed" 0)} headless process(es) terminated, "
+                f"{(len cut)} mid-turn row(s) ended as stopped/{(stop-cause-category declared)}"
                 (if cut f": {(.join ", " cut)}" ""))
              :file sys.stderr)
       (except [e Exception]
@@ -2144,21 +2166,30 @@
   (os.kill (os.getpid) signum)
   None)
 
-(defn install-graceful-stop [config actor]
-  "TERM の handler を据える(lease を取った後・serve の前): 1 度目は graceful-stop の thread、2 度目
-   (撃ち直し・停止中の再送)は SystemExit(0)。"
+(defn term-handler [config start-stop]
+  "TERM の handler(install-graceful-stop が据える): 1 度目 = 排水の印を**この拍に 1 回**読み(drain_marker の
+   答えと中身の 1 行目 — card acp:kanban-issue:ki-b5e0d04de958 D1)、値のまま start-stop [signum declared marker] へ
+   渡す / 2 度目(撃ち直し・停止中の再送)= SystemExit(0)で、印は読み直さない(語は停止の拍の事実で決まる —
+   hook の排水が長くても、その間に立った・消えた印で語は変わらない)。"
   (setv stopping (threading.Event))
   (defn on-term [signum frame]
     (if (.is-set stopping)
         (raise (SystemExit 0))
         (do
           (.set stopping)
-          (setv worker (threading.Thread :target graceful-stop
-                                         :args #(config actor signum)
-                                         :daemon True
-                                         :name "sessionhost-graceful-stop"))
-          (.start worker))))
-  (signal.signal signal.SIGTERM on-term)
+          (start-stop signum (drain-declared config.drain-file) (drain-reason-line config.drain-file)))))
+  on-term)
+
+(defn install-graceful-stop [config actor]
+  "TERM の handler を据える(lease を取った後・serve の前): 1 度目は graceful-stop の thread、2 度目
+   (撃ち直し・停止中の再送)は SystemExit(0)(term-handler の 1 点)。"
+  (defn start-stop [signum declared marker]
+    (setv worker (threading.Thread :target graceful-stop
+                                   :args #(config actor signum declared marker)
+                                   :daemon True
+                                   :name "sessionhost-graceful-stop"))
+    (.start worker))
+  (signal.signal signal.SIGTERM (term-handler config start-stop))
   None)
 
 

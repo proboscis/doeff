@@ -107,7 +107,11 @@
        "context_exhausted" False
        ;; host RPC(session.cancel / session.cleanup)所有 — oracle は
        ;; retryable=false を明示で渡す(:1985-1991)。
-       "cancelled" False})
+       "cancelled" False
+       ;; card acp:kanban-issue:ki-b5e0d04de958 D1: host の停止(TERM)で切った・停止の拍に排水の印が在った
+       ;; (計画された入れ替え — 書くのは headless.stop-headless-row・語は headless_protocol.stop_cause_category)。
+       ;; 別の host で同じ手番を走らせ直せる。印の無い停止は上の cancelled のまま。
+       "host_drained" True})
 
 (setv TERMINAL-CAUSE-CATEGORIES (frozenset (.keys TERMINAL-CAUSE-RETRYABLE)))
 
