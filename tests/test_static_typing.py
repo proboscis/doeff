@@ -437,3 +437,37 @@ def test_lab_style_code_is_strict_clean_without_a_typing_layer(tmp_path: Path) -
     report = _pyright(tmp_path, _STRICT_SAMPLE)
     problems = [d for d in report["generalDiagnostics"] if d["severity"] in {"error", "warning"}]
     assert problems == [], problems
+
+
+# Code written before effects and programs carried type arguments names them bare: a handler
+# that sees every effect (`effect: EffectBase`), a handler alias, "some program" (`Program`).
+# Shapes taken from agora-controllers (controllers/kanban/shared/runner/handlers.py, conftest.py).
+# Bare means `EffectBase[Any]` / `Program[Any, Any]`, so strict pyright stays clean
+# (measured 2026-09-23: without the defaults, kanban 17 → 119 and screen 3 → 128 errors).
+_BARE_SAMPLE = """\
+# pyright: strict
+from collections.abc import Callable
+
+from doeff import EffectBase, K, Pass, Program, Resume
+
+
+Handler = Callable[[EffectBase, K], Resume | Pass]
+
+
+def forward_everything(effect: EffectBase, continuation: K) -> Resume | Pass:
+    return Pass(effect, continuation)
+
+
+def installed() -> Handler:
+    return forward_everything
+
+
+def run_it(program: Program) -> Program:
+    return program
+"""
+
+
+def test_bare_effect_and_program_are_strict_clean(tmp_path: Path) -> None:
+    report = _pyright(tmp_path, _BARE_SAMPLE)
+    problems = [d for d in report["generalDiagnostics"] if d["severity"] in {"error", "warning"}]
+    assert problems == [], problems
