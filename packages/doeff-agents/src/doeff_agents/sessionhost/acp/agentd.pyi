@@ -20,6 +20,7 @@ from doeff_agents.sessionhost.acp.effects import (
     LaunchPlan,
     LeaseGrant,
     SessionView,
+    UnansweredBorrow,
     VerifyPlan,
 )
 
@@ -85,6 +86,10 @@ def start_claimed(
     session_id: str,
     now_ms: int,
     opener: str | None,
+) -> Program: ...
+# card acp:kanban-issue:ki-fd0f3b234a38: 接続が答えなかった借りのやり直し(claim の着いた行へ同じ start_claimed を撃ち直す)
+def retry_unanswered_borrow(
+    settings: AgentdSettings, state: AgentdState, row: AcpRow, entry: UnansweredBorrow, now_ms: int
 ) -> Program: ...
 def work_dir_step_here(plan: LaunchPlan | VerifyPlan) -> Program: ...
 def work_dir_ready(settings: AgentdSettings, row: AcpRow, plan: LaunchPlan | VerifyPlan, now_ms: int) -> Program: ...

@@ -1,0 +1,74 @@
+{
+  "schema": "custody.lender-availability.copy.v1",
+  "source": {
+    "repo": "proboscis/custody",
+    "path": "docs/contracts/custody-api.json",
+    "pointer": "/lenderAvailability",
+    "commit": "f32083edf71dbd8e4af1a1c7aba3bccbd8a7b633"
+  },
+  "copy": {
+    "note": "預かり所が口座を今は貸せない理由の閉語彙(why)と、借り手が「時間で晴れる」と読んでよい断りの組の宣言(card acp:kanban-issue:ki-fd0f3b234a38)。定義点はこの節 1 か所 — Haskell の Judge.Worker(LenderUnreachable・lenderUnreachableClearsWithTime・workerStaleSeconds・workerHeartbeatSeconds)との一致は ContractSpec が撃つ。借り手(agentd の runner の断りの分類・配車の在庫の観測)はこの節の写しを持ち、写しとこの節の一致を自分の側で検める。分類は機械の語(処理ステージ・status・code・why)だけで決め、error の散文を読まない。",
+    "workerHeartbeatSeconds": 30,
+    "workerStaleSeconds": 90,
+    "why": {
+      "heartbeat-stale": {
+        "clearsWithTime": true,
+        "note": "口座の worker の heartbeat が無い・読めない・workerStaleSeconds より古い(worker が黙っている)。worker が名乗りを再開すれば宣言を変えずに貸せる"
+      },
+      "worker-revoked": {
+        "clearsWithTime": false,
+        "note": "口座の worker の札が失効している(名簿を直すまで晴れない)"
+      },
+      "account-not-advertised": {
+        "clearsWithTime": false,
+        "note": "worker は生きているが、この口座を名乗っていない(入庫か worker の宣言を直すまで晴れない)"
+      },
+      "worker-unknown": {
+        "clearsWithTime": false,
+        "note": "口座の見出しの worker が名簿に無い"
+      },
+      "worker-store-unreadable": {
+        "clearsWithTime": true,
+        "note": "master の worker の簿(store)が読めない(預かり所の store の一時の不達)"
+      },
+      "url-not-advertised": {
+        "clearsWithTime": false,
+        "note": "worker が自分の基点(url)を名乗っていない"
+      }
+    },
+    "stages": {
+      "lease": {
+        "routes": [
+          "lease-claude",
+          "lease-codex"
+        ],
+        "note": "master の貸与の口(借りの 1 段目)"
+      },
+      "redeem": {
+        "routes": [
+          "redeem"
+        ],
+        "note": "答えの workerUrl の worker の引換の口(借りの 2 段目)"
+      }
+    },
+    "transientRefusals": [
+      {
+        "stage": "lease",
+        "status": 503,
+        "code": "worker-unreachable",
+        "why": [
+          "heartbeat-stale",
+          "worker-store-unreadable"
+        ],
+        "note": "why の列 = clearsWithTime が真の理由ちょうど。同じ code でも列の外の why(と why の無い本文)は時間では晴れない"
+      },
+      {
+        "stage": "redeem",
+        "status": 503,
+        "code": "master-unreachable",
+        "why": null,
+        "note": "worker が master へ届かない(引換券の一回限りを確かめられない)。本文に why は無い(null = why を読まない)— master の途絶と、master が気付く前の worker の途絶の最初の拍はこの面で借り手に届く"
+      }
+    ]
+  }
+}

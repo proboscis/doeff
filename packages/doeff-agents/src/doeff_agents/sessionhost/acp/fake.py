@@ -525,6 +525,9 @@ class FakeCustody:
         self.auth_jsons: dict[str, str] = dict(auth_jsons or {})
         self.hold_ms: int = hold_ms
         self.borrowed: list[tuple[LeaseKind, str, str]] = []
+        #: card acp:kanban-issue:ki-fd0f3b234a38: 借りの要求すべて(断った要求も — borrowed は貸した要求だけ)。
+        #: 「やり直しの刻の前は借りを撃たない」を数える材料。
+        self.asked: list[tuple[LeaseKind, str, str]] = []
         self.revoked: list[str] = []
         self.refuse_with: LeaseRefused | None = None
         #: card acp:kanban-issue:ki-f2747267e24d B3: 返却が 200 で答えない拍(預かり所が落ちている・不達)の再現 —
@@ -538,6 +541,7 @@ class FakeCustody:
         if isinstance(effect, CustodyHealth):
             return Resume(k, self.health)
         if isinstance(effect, CustodyLeaseBorrow):
+            self.asked.append((effect.kind, effect.account, effect.purpose))
             if self.refuse_with is not None:
                 return Resume(k, self.refuse_with)
             self.borrowed.append((effect.kind, effect.account, effect.purpose))
