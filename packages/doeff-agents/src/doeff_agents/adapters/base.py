@@ -6,6 +6,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+import hy  # noqa: F401  # .hy import hook — the I/O effect vocabulary is a Hy module
 from doeff import Program, do
 
 from doeff_agents.io_effects import which_executable

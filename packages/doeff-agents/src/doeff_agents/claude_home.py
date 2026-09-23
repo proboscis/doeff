@@ -11,6 +11,7 @@ import json
 import posixpath
 from pathlib import Path
 
+import hy  # noqa: F401  # .hy import hook — the I/O effect vocabulary is a Hy module
 from doeff import do
 
 from doeff_agents.io_effects import (
@@ -129,6 +130,3 @@ def prepare_claude_home(agent_home: Path, trusted_workspaces: tuple[Path, ...]) 
         source_home,
     )
     return None
-
-
-__all__ = ["onboarded_config_json", "prepare_claude_home", "trusted_projects_json"]
