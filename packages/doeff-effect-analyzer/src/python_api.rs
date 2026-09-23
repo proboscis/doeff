@@ -299,7 +299,7 @@ pub fn analyze_symbol(module: &str, symbol: &str) -> PyResult<PyReport> {
 }
 
 #[pymodule]
-pub fn doeff_effect_analyzer(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+pub fn _native(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(analyze, m)?)?;
     m.add_function(wrap_pyfunction!(analyze_symbol, m)?)?;
     m.add_class::<PyReport>()?;
