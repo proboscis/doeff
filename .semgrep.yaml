@@ -4698,6 +4698,44 @@ rules:
       include:
         - "**/sessionhost/turn.hy"
 
+  - id: doeff-agents-reconcile-must-not-mutate-substrate
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      ADR-DOE-AGENTS-007 R8 / law reconciler-observes-never-mutates-substrate:
+      the adopted-row reconciler is OBSERVATION + LEDGER WRITES ONLY. It may
+      read the live inventory (tmux-list-sessions) and write the store through
+      guarded updates, but must never touch the substrate — no kills, no key
+      sends, no session creation, no captures, no FS writes, no message
+      delivery, no subprocesses. Adopted seats are external live sessions the
+      SessionHost did not create; a reconciler that mutates what it observes
+      turns the ledger mirror into a hand that kills real seats.
+    pattern-regex: '\((tmux-send-keys|tmux-new-session|tmux-kill-session|tmux-capture|tmux-has-session|fs-write-text-atomic|deliver-message|proc-run|TmuxSendKeys|TmuxNewSession|TmuxKillSession|TmuxCapture|TmuxHasSession|FsWriteTextAtomic|DeliverMessage|ProcRun|herdr-call)\b'
+    paths:
+      include:
+        - "**/sessionhost/reconcile.hy"
+        - "**/sessionhost/reconcile_mutates_substrate_forbidden.hy"
+
+  - id: doeff-agents-reconcile-terminal-only-via-guarded-updates
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      ADR-DOE-AGENTS-007 R8 / law transient-absence-never-terminalizes: the
+      reconciler writes the store ONLY through the guarded-update effects
+      (session-store-reconcile-*). The general-purpose upsert
+      (session-store-upsert / SessionStoreUpsert) and direct status
+      replacement are forbidden on this path — they bypass the SQL-carved
+      preconditions (checks >= K, window elapsed, no live-conversation trace,
+      no successor row) that keep a transient absence from being stamped as a
+      terminal fact (D566).
+    pattern-regex: '\((session-store-upsert|SessionStoreUpsert|db-upsert-snapshot|db-merge-policy-row)\b|\(replace\s+\w+\s+:status'
+    paths:
+      include:
+        - "**/sessionhost/reconcile.hy"
+        - "**/sessionhost/reconcile_upserts_forbidden.hy"
+
   - id: doeff-agents-no-lost-terminal-cause
     languages:
       - generic

@@ -556,9 +556,59 @@
    新会話と誤認しないため)。戻り値: list[str]。"
   )
 
+(defclass [(dataclass :frozen True :kw-only True)] SessionStoreReconcileClearAbsence [EffectBase]
+  "reconciler の presence 記帳(ADR-DOE-AGENTS-007 R8): 不在 streak の
+   クリア(substrate_absent_since=NULL / checks=0)。guarded UPDATE —
+   adopted 非終端 かつ streak が実在する行だけに書く(no-op は 0 行)。
+   戻り値: int(affected 行数)。"
+  #^ str session-id)
+
+(defclass [(dataclass :frozen True :kw-only True)] SessionStoreReconcileFollowRename [EffectBase]
+  "reconciler の改名追随(R55 鋳造名化への追随): session_name を現在の
+   substrate 名へ更新する。guarded UPDATE — adopted 非終端 かつ 名前が
+   実際に変わる時のみ。戻り値: int(affected 行数)。"
+  #^ str session-id
+  #^ str new-name)
+
+(defclass [(dataclass :frozen True :kw-only True)] SessionStoreReconcileMarkAbsent [EffectBase]
+  "reconciler の不在記帳: substrate_absent_since は first-write-wins
+   (streak の起点)、substrate_absent_checks は加算。guarded UPDATE —
+   adopted 非終端のみ。戻り値: int(affected 行数)。"
+  #^ str session-id
+  #^ str observed-at)
+
+(defclass [(dataclass :frozen True :kw-only True)] SessionStoreReconcileVanish [EffectBase]
+  "reconciler の消滅終端: 前提条件(checks ≥ min-checks ∧ since ≤ cutoff ∧
+   同一会話の非終端の別行なし)は SQL の WHERE に彫られている — 満たさない
+   書き込みは構造的に 0 行(law transient-absence-never-terminalizes の
+   機械面)。戻り値: int(affected 行数)。"
+  #^ str session-id
+  #^ str observed-at
+  #^ str cutoff-iso
+  #^ int min-checks)
+
+(defclass [(dataclass :frozen True :kw-only True)] SessionStoreReconcileSupersede [EffectBase]
+  "reconciler の後継紐づけ終端(改名復活 = 会話の乗り換え): 後継行が
+   実在し・非終端で・同一会話のときのみ(SQL guard)。終端印は宿りの
+   終端であって会話の終了ではない(R9 — ended の唯一の源は agora 終端簿)。
+   戻り値: int(affected 行数)。"
+  #^ str session-id
+  #^ str successor-session-id
+  #^ str observed-at)
+
 (defclass [(dataclass :frozen True :kw-only True)] TmuxHasSession [EffectBase]
   "tmux session の生存確認。戻り値: bool。"
   #^ str session-name)
+
+(defclass [(dataclass :frozen True :kw-only True)] TmuxListSessions [EffectBase]
+  "substrate の生存一覧(ADR-DOE-AGENTS-007 R8 — reconciler の突合素材)。
+   戻り値: list[dict] — {\"session_name\" str, \"pane_id\" str,
+   \"conversation_id\" (str | None)}。herdr backend は agent.list 1 RPC
+   (会話 ID = agent_session kind=id の value)、tmux backend は
+   list-panes -a(会話 ID なし = None)。観測のみ — 変異しない。
+   空一覧・到達不能は呼び手(reconcile-cycle)が供給断として周期ごと
+   skip する(integration-lead 条件① — 観測の不成立 ≠ 不在)。"
+  )
 
 (defclass [(dataclass :frozen True :kw-only True)] TmuxPaneCurrentCommand [EffectBase]
   "pane の foreground command 名。戻り値: str | None。zombie 判定
@@ -823,11 +873,52 @@
   "SessionStoreKnownConversationIds を構築する(発見 arm の除外集合読み)。"
   (SessionStoreKnownConversationIds))
 
+(deff session-store-reconcile-clear-absence [session-id]
+  {:pre [(: session-id str)]
+   :post [(: % SessionStoreReconcileClearAbsence)]}
+  "SessionStoreReconcileClearAbsence を構築する(presence の streak クリア)。"
+  (SessionStoreReconcileClearAbsence :session-id session-id))
+
+(deff session-store-reconcile-follow-rename [session-id new-name]
+  {:pre [(: session-id str) (: new-name str) (> (len new-name) 0)]
+   :post [(: % SessionStoreReconcileFollowRename)]}
+  "SessionStoreReconcileFollowRename を構築する(改名追随)。"
+  (SessionStoreReconcileFollowRename :session-id session-id :new-name new-name))
+
+(deff session-store-reconcile-mark-absent [session-id observed-at]
+  {:pre [(: session-id str) (: observed-at str)]
+   :post [(: % SessionStoreReconcileMarkAbsent)]}
+  "SessionStoreReconcileMarkAbsent を構築する(不在の記帳)。"
+  (SessionStoreReconcileMarkAbsent :session-id session-id
+                                   :observed-at observed-at))
+
+(deff session-store-reconcile-vanish [session-id observed-at cutoff-iso min-checks]
+  {:pre [(: session-id str) (: observed-at str) (: cutoff-iso str)
+         (: min-checks int) (> min-checks 0)]
+   :post [(: % SessionStoreReconcileVanish)]}
+  "SessionStoreReconcileVanish を構築する(前提条件つき消滅終端)。"
+  (SessionStoreReconcileVanish :session-id session-id :observed-at observed-at
+                               :cutoff-iso cutoff-iso :min-checks min-checks))
+
+(deff session-store-reconcile-supersede [session-id successor-session-id observed-at]
+  {:pre [(: session-id str) (: successor-session-id str) (: observed-at str)]
+   :post [(: % SessionStoreReconcileSupersede)]}
+  "SessionStoreReconcileSupersede を構築する(後継紐づけ終端)。"
+  (SessionStoreReconcileSupersede :session-id session-id
+                                  :successor-session-id successor-session-id
+                                  :observed-at observed-at))
+
 (deff tmux-has-session [session-name]
   {:pre [(: session-name str)]
    :post [(: % TmuxHasSession)]}
   "TmuxHasSession を構築する。"
   (TmuxHasSession :session-name session-name))
+
+(deff tmux-list-sessions []
+  {:pre [True]
+   :post [(: % TmuxListSessions)]}
+  "TmuxListSessions を構築する(reconciler の生存一覧観測)。"
+  (TmuxListSessions))
 
 (deff tmux-pane-current-command [pane-id]
   {:pre [(: pane-id str)]

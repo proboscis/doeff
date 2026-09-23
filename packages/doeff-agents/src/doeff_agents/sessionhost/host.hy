@@ -66,6 +66,11 @@
   monitor-cycle
   tail-chars
   turn-stalled])
+(import doeff_agents.sessionhost.reconcile [
+  DEFAULT-RECONCILE-ABSENT-CHECKS
+  DEFAULT-RECONCILE-ABSENT-WINDOW-SECONDS
+  DEFAULT-RECONCILE-INTERVAL-SECONDS
+  reconcile-cycle])
 (import doeff_agents.sessionhost.schema [validate-against-schema schema-admission-error])
 (import doeff_agents.sessionhost.substrate [real-substrate])
 (import doeff_agents.sessionhost.substrate_herdr [DEFAULT-HERDR-SOCKET herdr-substrate])
@@ -132,11 +137,32 @@
 ;; 数値でなく typed 文字列 error_code を使う(数値表は oracle 凍結語彙 —
 ;; 新語彙をそこへ足さない)。
 (setv RPC-ERR-ADOPT-TARGET-NOT-FOUND "adopt_target_not_found")
+;; ADR-DOE-AGENTS-007 R10: adopted 行(observation-only の登記)の substrate を
+;; SessionHost は所有していない — cancel / cleanup は typed 拒否(外部の実席を
+;; 巻き添えで殺す穴の封鎖。掃き取り側は adopted=0 filter で既に除外済み)。
+(setv RPC-ERR-ADOPTED-SESSION-NOT-OWNED "adopted_session_not_owned")
+
+
+(defclass AdoptedSessionNotOwned [Exception]
+  "session.cancel / session.cleanup が adopted 行を対象にした(typed — host が
+   wire error_code \"adopted_session_not_owned\" へ写像する)。adopted 行の
+   substrate に SessionHost が加えてよい接触は観測のみ(ADR-007 R2/R3/R8/R10)。")
 
 ;; turn 打刻 counters(ADR-007 §4: daemon.status へ additive)。in-memory で
 ;; 開始 — 永続化は実測需要が出てから。unadopted は adopt 網羅の計器を兼ねる
 ;; (turn-stamp-path 決定 3: 未 adopt 打刻は正直 no-op + 可視 counter)。
 (setv TURN-COUNTERS {"turn_stamp_unadopted" 0 "turn_stamp_resolved" 0})
+
+;; adopted 行 reconciler counters(ADR-007 R8: daemon.status へ additive・
+;; in-memory)。supply_cut = 生存一覧の取得失敗・空一覧で周期ごと skip した
+;; 回数(integration-lead 条件① — 不在を記帳しなかった証跡)。held = 同一性
+;; 不確か等で何も書かなかった行の延べ数(倒れ先 = 不明側の計器)。
+(setv RECONCILE-COUNTERS {"reconcile_cycles" 0
+                          "reconcile_supply_cut" 0
+                          "reconcile_vanished" 0
+                          "reconcile_superseded" 0
+                          "reconcile_renamed" 0
+                          "reconcile_held" 0})
 
 ;; koine 条項 4 の stalled 導出閾値(既定 1800 — 発注元確定 2026-07-21)。
 (setv DEFAULT-TURN-STALL-SECONDS 1800)
@@ -485,8 +511,15 @@
   {:pre [(: session-id str)]
    :post [(: % SessionRow)]}
   "session.cancel(oracle session_cancel :1976-2003): tmux kill(生存時)→
-   stopped + cause cancelled(first-write-wins)+ session_cancelled。"
+   stopped + cause cancelled(first-write-wins)+ session_cancelled。
+   adopted 行は typed 拒否(ADR-007 R10 — SessionHost はその substrate を
+   作っておらず、kill は外部の実席の巻き添え殺し)。"
   (<- row (require-session-row session-id))
+  (when row.adopted
+    (raise (AdoptedSessionNotOwned
+             (+ f"session.cancel refused: '{session-id}' is an adopted "
+                "(observation-only) row — SessionHost does not own its "
+                "substrate (ADR-DOE-AGENTS-007 R10)"))))
   (<- exists (tmux-has-session row.session-name))
   (when exists
     (<- _ (tmux-kill-session row.session-name)))
@@ -507,8 +540,14 @@
    :post [(: % SessionRow)]}
   "session.cleanup(oracle session_cleanup :2005-2039): tmux kill(生存時)、
    非終端なら stopped + cause cancelled、finished_at は既存優先、cleaned_at
-   刻印 + session_cleaned。"
+   刻印 + session_cleaned。adopted 行は typed 拒否(ADR-007 R10 —
+   cancel-program と同じ所有境界)。"
   (<- row (require-session-row session-id))
+  (when row.adopted
+    (raise (AdoptedSessionNotOwned
+             (+ f"session.cleanup refused: '{session-id}' is an adopted "
+                "(observation-only) row — SessionHost does not own its "
+                "substrate (ADR-DOE-AGENTS-007 R10)"))))
   (<- exists (tmux-has-session row.session-name))
   (when exists
     (<- _ (tmux-kill-session row.session-name)))
@@ -842,6 +881,9 @@
    session.report_result は C3-impl-4 — それまで not-implemented で loud。
    契約外 method は oracle と同文言の unknown method。"
   (when (= method "daemon.status")
+    ;; ADR-007 §4/R8: turn 打刻 + reconciler counters(additive・in-memory)。
+    (setv all-counters (dict TURN-COUNTERS))
+    (.update all-counters RECONCILE-COUNTERS)
     (return {"state" "running"
              "pid" (os.getpid)
              "db_path" config.db-path
@@ -849,8 +891,7 @@
              "max_running" config.max-running
              "active_sessions" (.submit actor db-count-active)
              "lease" (.submit actor db-read-lease)
-             ;; ADR-007 §4: turn 打刻 counters(additive・in-memory)。
-             "counters" (dict TURN-COUNTERS)}))
+             "counters" all-counters}))
 
   ;; DOE-004 R5(縮小版、2026-07-08): kind 語彙の広告。純粋(store 非依存)
   ;; — control plane の reconciler が登録済み binding と定期照合する読み口。
@@ -1082,7 +1123,12 @@
   (when (= method "session.cancel")
     (setv p (params-object params "session.cancel"))
     (setv sid (required-str-param p "session_id" "session.cancel"))
-    (run-hosted config actor (cancel-program sid))
+    (try
+      (run-hosted config actor (cancel-program sid))
+      (except [e AdoptedSessionNotOwned]
+        ;; ADR-007 R10: typed 文字列 error_code(koine 由来の新契約は数値表に
+        ;; 足さない — R1 と同じ規律)。
+        (raise (RpcHostError RPC-ERR-ADOPTED-SESSION-NOT-OWNED (str e)))))
     (setv wire (wire-snapshot actor sid))
     (record-command actor sid "session.cancel" wire)
     (return wire))
@@ -1090,7 +1136,10 @@
   (when (= method "session.cleanup")
     (setv p (params-object params "session.cleanup"))
     (setv sid (required-str-param p "session_id" "session.cleanup"))
-    (run-hosted config actor (cleanup-program sid))
+    (try
+      (run-hosted config actor (cleanup-program sid))
+      (except [e AdoptedSessionNotOwned]
+        (raise (RpcHostError RPC-ERR-ADOPTED-SESSION-NOT-OWNED (str e)))))
     (setv wire (wire-snapshot actor sid))
     (record-command actor sid "session.cleanup" wire)
     (return wire))
@@ -1332,12 +1381,77 @@
     :judge-cmd config.prompt-judge-cmd))
 
 
+(deff effective-reconcile-interval-seconds []
+  {:pre [True]
+   :post [(: % int)]}
+  (or (env-positive-i64 "DOEFF_AGENTD_RECONCILE_INTERVAL_SECS")
+      DEFAULT-RECONCILE-INTERVAL-SECONDS))
+
+(deff reconcile-disabled? []
+  {:pre [True]
+   :post [(: % bool)]}
+  "kill switch(use-site の env 読み — 他の knob と同じ調整口)。"
+  (= (.get os.environ "DOEFF_AGENTD_RECONCILE_DISABLED" "") "1"))
+
+(defn reconcile-tick [config actor state]
+  "adopted 行 reconciler の 1 pass(ADR-DOE-AGENTS-007 R8)。state =
+   {\"successes\" int}(in-memory・daemon 起動ごとに 0 から)。
+
+   起動猶予(integration-lead 条件②): vanish は「供給断でない成功周期を
+   1 回以上経た後」にだけ許す — substrate_absent_since/checks は DB に永続
+   するため、daemon 停止中に窓が経過した行が再起動後の最初の周期(substrate
+   側の名簿がまだ部分的な時)で即 vanish になる形を塞ぐ。
+
+   供給断(条件①): 空一覧は program 側が skip を返し、socket 例外はここで
+   捕捉する — どちらも reconcile_supply_cut に計上し、成功周期に数えない
+   (観測の不成立 ≠ 不在)。"
+  (setv allow-vanish (>= (get state "successes") 1))
+  (try
+    (setv summary (run-hosted config actor
+                              (reconcile-cycle
+                                allow-vanish
+                                (or (env-positive-i64 "DOEFF_AGENTD_RECONCILE_ABSENT_WINDOW_SECS")
+                                    DEFAULT-RECONCILE-ABSENT-WINDOW-SECONDS)
+                                (or (env-positive-i64 "DOEFF_AGENTD_RECONCILE_ABSENT_CHECKS")
+                                    DEFAULT-RECONCILE-ABSENT-CHECKS))))
+    (except [e Exception]
+      (setv (get RECONCILE-COUNTERS "reconcile_supply_cut")
+            (+ (get RECONCILE-COUNTERS "reconcile_supply_cut") 1))
+      (print f"doeff-sessionhost reconcile supply cut: {e}" :file sys.stderr)
+      (return None)))
+  (when (= (.get summary "skipped") "supply_cut")
+    (setv (get RECONCILE-COUNTERS "reconcile_supply_cut")
+          (+ (get RECONCILE-COUNTERS "reconcile_supply_cut") 1))
+    (return None))
+  (setv (get state "successes") (+ (get state "successes") 1))
+  (setv (get RECONCILE-COUNTERS "reconcile_cycles")
+        (+ (get RECONCILE-COUNTERS "reconcile_cycles") 1))
+  (for [[counter key] [#("reconcile_vanished" "vanished")
+                       #("reconcile_superseded" "superseded")
+                       #("reconcile_renamed" "renamed")
+                       #("reconcile_held" "hold")]]
+    (setv (get RECONCILE-COUNTERS counter)
+          (+ (get RECONCILE-COUNTERS counter) (.get summary key 0))))
+  (setv n-vanished (.get summary "vanished" 0))
+  (setv n-superseded (.get summary "superseded" 0))
+  (setv n-renamed (.get summary "renamed" 0))
+  (when (or (> n-vanished 0) (> n-superseded 0) (> n-renamed 0))
+    (print (+ "doeff-sessionhost reconcile: "
+              f"vanished={n-vanished} superseded={n-superseded} "
+              f"renamed={n-renamed}")
+           :file sys.stderr))
+  None)
+
 (defn monitor-loop [config actor]
   "monitor loop(oracle monitor_loop :3447-3452)。tick = monitor-cycle
    program の実行 — per-session 隔離は program 所有(policy.hy:622、oracle の
-   tick 隔離より強い)。run-worker-tick は backstop。監査履歴の毎時 prune も
-   ここが持つ(retention 反故 = 無限成長は 2026-07-27 wedge の根)。"
+   tick 隔離より強い)。run-worker-tick は backstop。監査履歴の毎時 prune と
+   adopted 行 reconciler(ADR-007 R8 — 独立周期・既定 60s)もここが持つ。"
   (setv next-prune (+ (time.monotonic) HISTORY-PRUNE-INTERVAL-SECONDS))
+  ;; reconcile は初回 tick から回す(起動猶予は reconcile-tick 側の成功周期
+  ;; カウントが持つ — 周期タイマーと安全条件を混ぜない)。
+  (setv next-reconcile (time.monotonic))
+  (setv reconcile-state {"successes" 0})
   (while True
     (run-worker-tick
       "monitor"
@@ -1345,6 +1459,12 @@
     (when (>= (time.monotonic) next-prune)
       (run-worker-tick "history-prune" (fn [] (prune-history-tick actor)))
       (setv next-prune (+ (time.monotonic) HISTORY-PRUNE-INTERVAL-SECONDS)))
+    (when (and (not (reconcile-disabled?))
+               (>= (time.monotonic) next-reconcile))
+      (run-worker-tick "reconcile"
+                       (fn [] (reconcile-tick config actor reconcile-state)))
+      (setv next-reconcile (+ (time.monotonic)
+                              (effective-reconcile-interval-seconds))))
     (time.sleep config.monitor-interval-seconds)))
 
 

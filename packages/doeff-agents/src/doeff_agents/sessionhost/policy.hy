@@ -107,7 +107,12 @@
        "context_exhausted" False
        ;; host RPC(session.cancel / session.cleanup)所有 — oracle は
        ;; retryable=false を明示で渡す(:1985-1991)。
-       "cancelled" False})
+       "cancelled" False
+       ;; ADR-DOE-AGENTS-007 R8(adopted 行 reconciler): 改名復活 = 会話が
+       ;; 後継の宿り(行)へ乗り換えた旧行の終端。retryable=false — 会話は
+       ;; 後継で続いており、この宿りの再試行は誤り。終端印は宿りの終端で
+       ;; あって会話の終了ではない(R9 — ended の唯一の源は agora 終端簿)。
+       "superseded" False})
 
 (setv TERMINAL-CAUSE-CATEGORIES (frozenset (.keys TERMINAL-CAUSE-RETRYABLE)))
 

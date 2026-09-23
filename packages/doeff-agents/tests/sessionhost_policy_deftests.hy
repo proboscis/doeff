@@ -1522,6 +1522,9 @@
   ;; additive で後方安全: 未知 category に対する下流の既定は
   ;; 「CommandNonZeroExit + causeRetryable 由来の retry 意味論」
   ;; (ACP Observed.hs failureKindForCause の `_` 分岐)。
+  ;; ADR-DOE-AGENTS-007 R8 改訂 2(2026-08-17): superseded を追加
+  ;; (retryable=false — 会話は後継の宿りで続いており、この宿りの再試行は
+  ;; 誤り。終端印は宿りの終端であって会話の終了ではない — R9)。
   (assert (= TERMINAL-CAUSE-RETRYABLE
              {"rate_limited" True
               "timed_out" True
@@ -1534,7 +1537,8 @@
               "protocol_error" False
               "run_failed" False
               "interactive_prompt_blocked" False
-              "cancelled" False})))
+              "cancelled" False
+              "superseded" False})))
 
 
 ;; ---------------------------------------------------------------------------

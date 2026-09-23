@@ -30,6 +30,7 @@
   SessionStoreRecordEvent
   TmuxNewSession
   TmuxHasSession
+  TmuxListSessions
   TmuxPaneCurrentCommand
   TmuxSessionPaneIds
   TmuxCapture
@@ -355,6 +356,24 @@
   (TmuxHasSession [session-name]
     (setv res (run-tmux tmux-bin ["has-session" "-t" session-name]))
     (resume (= res.returncode 0)))
+
+  (TmuxListSessions []
+    ;; reconciler の生存一覧(ADR-DOE-AGENTS-007 R8)。1 コマンドで全
+    ;; session × pane を観測する — 行ごとの has-session 連打(一覧
+    ;; 2.3〜4.8s/32 行の病)を reconcile 経路に持ち込まない。tmux は
+    ;; 会話 ID を知らないので conversation_id は常に None(同一性照合は
+    ;; name + pane に縮退)。非 0 = tmux server 不達 = 供給断 — raise で
+    ;; 呼び手(reconcile-cycle 側)が周期ごと skip する。
+    (setv res (run-tmux tmux-bin
+                        ["list-panes" "-a" "-F" "#{session_name}\t#{pane_id}"]))
+    (when (!= res.returncode 0)
+      (raise (RuntimeError f"tmux list-panes failed: {(.strip res.stderr)}")))
+    (resume (lfor line (.splitlines res.stdout)
+                  :if (in "\t" line)
+                  :setv parts (.split (.strip line) "\t")
+                  {"session_name" (get parts 0)
+                   "pane_id" (get parts 1)
+                   "conversation_id" None})))
 
   (TmuxPaneCurrentCommand [pane-id]
     (setv res (run-tmux tmux-bin

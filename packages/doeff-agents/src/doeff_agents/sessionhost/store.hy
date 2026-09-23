@@ -40,7 +40,12 @@
   SessionStoreUpsert
   SessionStoreResultPayload
   SessionStoreRecordEvent
-  SessionStoreKnownConversationIds])
+  SessionStoreKnownConversationIds
+  SessionStoreReconcileClearAbsence
+  SessionStoreReconcileFollowRename
+  SessionStoreReconcileMarkAbsent
+  SessionStoreReconcileVanish
+  SessionStoreReconcileSupersede])
 (import doeff_agents.sessionhost.policy [ACTIVE-STATUSES TERMINAL-STATUSES
                                          parse-iso])
 
@@ -163,7 +168,15 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        ;; (族名 + 初回観測時刻)。api_limit_observed_at と同格の COALESCE
        ;; first-write-wins 保護 — 観測した事実を後続の書き戻しが消さない。
        #("agent_sessions" "provider_failure_class" "TEXT")
-       #("agent_sessions" "provider_failure_observed_at" "TEXT")])
+       #("agent_sessions" "provider_failure_observed_at" "TEXT")
+       ;; ADR-DOE-AGENTS-007 R8(adopted 行 reconciler): 不在の持続の観測
+       ;; (since = streak 起点の first-write / checks = 観測回数)と後継行への
+       ;; 紐づけ。書き手は reconcile の guarded UPDATE のみ — upsert の
+       ;; INSERT / SET には意図的に載せない(監視の書き戻しが streak を
+       ;; 消したり捏造したりする経路を構造的に持たない)。
+       #("agent_sessions" "substrate_absent_since" "TEXT")
+       #("agent_sessions" "substrate_absent_checks" "INTEGER NOT NULL DEFAULT 0")
+       #("agent_sessions" "successor_session_id" "TEXT")])
 
 (setv SNAPSHOT-SELECT
       (+ "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status, "
@@ -178,7 +191,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
          "adopted, turn_holder, turn_since, turn_wait_json, "
          "api_limit_observed_at, observation_gap_at, "
          "paste_resubmit_attempts, awaiting_response_since, "
-         "provider_failure_class, provider_failure_observed_at "
+         "provider_failure_class, provider_failure_observed_at, "
+         "substrate_absent_since, substrate_absent_checks, successor_session_id "
          "FROM agent_sessions"))
 
 
@@ -309,7 +323,10 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    "paste_resubmit_attempts" (int (get db-row 37))
    "awaiting_response_since" (get db-row 38)
    "provider_failure_class" (get db-row 39)
-   "provider_failure_observed_at" (get db-row 40)})
+   "provider_failure_observed_at" (get db-row 40)
+   "substrate_absent_since" (get db-row 41)
+   "substrate_absent_checks" (int (get db-row 42))
+   "successor_session_id" (get db-row 43)})
 
 (deff snapshot-to-wire-dict [snap]
   {:pre [(: snap dict)]
@@ -374,6 +391,15 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
     (setv (get wire "turn_since") (get snap "turn_since")))
   (when (is-not (.get snap "turn_wait") None)
     (setv (get wire "turn_wait") (get snap "turn_wait")))
+  ;; ADR-007 R8: reconciler の観測 field は None(streak なし)のとき field
+  ;; ごと省略 — 「観測していない」を null と区別して正直に運ぶ。checks は
+  ;; since が立っている時だけ意味を持つので対で載せる。
+  (when (is-not (.get snap "substrate_absent_since") None)
+    (setv (get wire "substrate_absent_since") (get snap "substrate_absent_since"))
+    (setv (get wire "substrate_absent_checks")
+          (.get snap "substrate_absent_checks" 0)))
+  (when (is-not (.get snap "successor_session_id") None)
+    (setv (get wire "successor_session_id") (get snap "successor_session_id")))
   wire)
 
 
@@ -845,6 +871,142 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
 
 
 ;; ---------------------------------------------------------------------------
+;; adopted 行 reconciler の guarded UPDATE 群(ADR-DOE-AGENTS-007 R8)
+;;
+;; 終端・記帳の前提条件を SQL の WHERE に彫る — 条件を満たさない書き込みは
+;; 構造的に 0 行になり、係のバグや将来の別コードが条件を飛ばして adopted 行を
+;; 終端する形を書き込み点で塞ぐ。reconcile 経路は session-store-upsert を
+;; 使わない(semgrep doeff-agents-reconcile-terminal-only-via-guarded-updates)。
+;; ---------------------------------------------------------------------------
+
+(setv RECONCILE-TERMINAL-GUARD
+      "AND adopted = 1 AND status NOT IN ('done','failed','exited','stopped','cancelled')")
+
+(deff db-reconcile-clear-absence [conn session-id]
+  {:pre [(: conn sqlite3.Connection) (: session-id str)]
+   :post [(: % int)]}
+  "presence の記帳: 不在 streak のクリア。streak が実在する行だけに書く
+   (毎周期の presence が生存行 87 行 × 周期の空書きにならない)。"
+  (setv cursor
+        (.execute conn
+                  (+ "UPDATE agent_sessions SET "
+                     "substrate_absent_since = NULL, substrate_absent_checks = 0 "
+                     "WHERE session_id = ? "
+                     RECONCILE-TERMINAL-GUARD
+                     " AND (substrate_absent_since IS NOT NULL"
+                     " OR substrate_absent_checks != 0)")
+                  #(session-id)))
+  cursor.rowcount)
+
+(deff db-reconcile-follow-rename [conn session-id new-name]
+  {:pre [(: conn sqlite3.Connection) (: session-id str) (: new-name str)
+         (> (len new-name) 0)]
+   :post [(: % int)]}
+  "改名追随(R55 鋳造名化): 同一の宿り(同 pane)の名前だけが変わった行の
+   session_name を現在名へ。実際に変わる時のみ 1 行。"
+  (setv cursor
+        (.execute conn
+                  (+ "UPDATE agent_sessions SET session_name = ? "
+                     "WHERE session_id = ? "
+                     RECONCILE-TERMINAL-GUARD
+                     " AND session_name != ?")
+                  #(new-name session-id new-name)))
+  cursor.rowcount)
+
+(deff db-reconcile-mark-absent [conn session-id observed-at]
+  {:pre [(: conn sqlite3.Connection) (: session-id str) (: observed-at str)]
+   :post [(: % int)]}
+  "不在の記帳: since は first-write-wins(streak の起点)・checks は加算。
+   複数回の観測 + 時間窓の素材はここにだけ堆積する。"
+  (setv cursor
+        (.execute conn
+                  (+ "UPDATE agent_sessions SET "
+                     "substrate_absent_since = COALESCE(substrate_absent_since, ?), "
+                     "substrate_absent_checks = substrate_absent_checks + 1 "
+                     "WHERE session_id = ? "
+                     RECONCILE-TERMINAL-GUARD)
+                  #(observed-at session-id)))
+  cursor.rowcount)
+
+(deff reconcile-cause-json [category reason retryable observed-at]
+  {:pre [(: category str) (: reason str) (: retryable bool) (: observed-at str)]
+   :post [(: % str)]}
+  "reconciler の TerminalCause JSON(terminal-cause-to-dict と同じ serde 順)。"
+  (json.dumps {"category" category "reason" reason "retryable" retryable
+               "observed_at" observed-at}
+              :separators #("," ":")))
+
+(deff db-reconcile-vanish [conn session-id observed-at cutoff-iso min-checks]
+  {:pre [(: conn sqlite3.Connection) (: session-id str) (: observed-at str)
+         (: cutoff-iso str) (: min-checks int) (> min-checks 0)]
+   :post [(: % int)]}
+  "消滅終端(status=exited・cause=vanished)。前提条件は WHERE に彫る:
+   ① checks ≥ min-checks(複数回の観測)② since ≤ cutoff(時間窓 —
+   ISO8601 同書式の文字列比較)③ 同一会話の非終端の別行が無い(改名復活の
+   痕跡が台帳内に在る行を消滅と誤裁定しない — その行は supersede の管轄)。
+   一過性の不在(D566)はこの 3 条件のどれかで必ず 0 行に落ちる。
+   終端印は宿り(1 回の実行体)の終端であって会話の終了ではない(R9)。"
+  (setv cause (reconcile-cause-json
+                "vanished"
+                (+ "adopted-row reconciler: identity-compatible live session "
+                   "absent past hysteresis (ADR-DOE-AGENTS-007 R8)")
+                True observed-at))
+  (setv cursor
+        (.execute conn
+                  (+ "UPDATE agent_sessions SET "
+                     "status = 'exited', "
+                     "finished_at = COALESCE(finished_at, ?), "
+                     "terminal_cause_json = COALESCE(terminal_cause_json, ?) "
+                     "WHERE session_id = ? "
+                     RECONCILE-TERMINAL-GUARD
+                     " AND substrate_absent_checks >= ?"
+                     " AND substrate_absent_since IS NOT NULL"
+                     " AND substrate_absent_since <= ?"
+                     " AND NOT EXISTS ("
+                     "SELECT 1 FROM agent_sessions AS s2 "
+                     "WHERE s2.session_id != agent_sessions.session_id "
+                     "AND agent_sessions.conversation_json IS NOT NULL "
+                     "AND json_extract(s2.conversation_json, '$.session_id') = "
+                     "json_extract(agent_sessions.conversation_json, '$.session_id') "
+                     "AND s2.status NOT IN ('done','failed','exited','stopped','cancelled'))")
+                  #(observed-at cause session-id min-checks cutoff-iso)))
+  cursor.rowcount)
+
+(deff db-reconcile-supersede [conn session-id successor-session-id observed-at]
+  {:pre [(: conn sqlite3.Connection) (: session-id str)
+         (: successor-session-id str) (: observed-at str)]
+   :post [(: % int)]}
+  "後継紐づけ終端(改名復活 = 会話の乗り換え): 後継行が実在し・非終端で・
+   同一会話のときのみ(EXISTS guard — 識別子越えの紐づけは構造的に 0 行)。
+   status=exited + cause=superseded(retryable=false — 会話は後継で続いて
+   おり、この宿りの再試行は誤り)+ successor_session_id(first-write-wins)。"
+  (setv cause (reconcile-cause-json
+                "superseded"
+                (+ "adopted-row reconciler: conversation continues in successor "
+                   f"row {successor-session-id} (ADR-DOE-AGENTS-007 R8)")
+                False observed-at))
+  (setv cursor
+        (.execute conn
+                  (+ "UPDATE agent_sessions SET "
+                     "status = 'exited', "
+                     "finished_at = COALESCE(finished_at, ?), "
+                     "terminal_cause_json = COALESCE(terminal_cause_json, ?), "
+                     "successor_session_id = COALESCE(successor_session_id, ?) "
+                     "WHERE session_id = ? "
+                     RECONCILE-TERMINAL-GUARD
+                     " AND EXISTS ("
+                     "SELECT 1 FROM agent_sessions AS s2 "
+                     "WHERE s2.session_id = ? "
+                     "AND s2.status NOT IN ('done','failed','exited','stopped','cancelled') "
+                     "AND agent_sessions.conversation_json IS NOT NULL "
+                     "AND json_extract(s2.conversation_json, '$.session_id') = "
+                     "json_extract(agent_sessions.conversation_json, '$.session_id'))")
+                  #(observed-at cause successor-session-id session-id
+                    successor-session-id)))
+  cursor.rowcount)
+
+
+;; ---------------------------------------------------------------------------
 ;; lease(oracle :1094-1157 / heartbeat :3462-3476)
 ;; ---------------------------------------------------------------------------
 
@@ -1188,4 +1350,33 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
                                  (policy-row-patch row)
                                  (snapshot-to-wire-dict snap)))
                (db-record-event conn session-id event-type payload)))
-    (resume None)))
+    (resume None))
+
+  ;; --- adopted 行 reconciler(ADR-DOE-AGENTS-007 R8)。すべて actor 経由の
+  ;; guarded UPDATE — 前提条件は SQL 側(db-reconcile-*)が持つ。
+  (SessionStoreReconcileClearAbsence [session-id]
+    (resume (.submit actor
+                     (fn [conn] (db-reconcile-clear-absence conn session-id)))))
+
+  (SessionStoreReconcileFollowRename [session-id new-name]
+    (resume (.submit actor
+                     (fn [conn]
+                       (db-reconcile-follow-rename conn session-id new-name)))))
+
+  (SessionStoreReconcileMarkAbsent [session-id observed-at]
+    (resume (.submit actor
+                     (fn [conn]
+                       (db-reconcile-mark-absent conn session-id observed-at)))))
+
+  (SessionStoreReconcileVanish [session-id observed-at cutoff-iso min-checks]
+    (resume (.submit actor
+                     (fn [conn]
+                       (db-reconcile-vanish conn session-id observed-at
+                                            cutoff-iso min-checks)))))
+
+  (SessionStoreReconcileSupersede [session-id successor-session-id observed-at]
+    (resume (.submit actor
+                     (fn [conn]
+                       (db-reconcile-supersede conn session-id
+                                               successor-session-id
+                                               observed-at))))))
