@@ -40,7 +40,7 @@ macro の展開が型のために持つ形:
 | `defk` / `deff` の引数 | `def f(x: 'int')`(`:pre` の型を文字列の注記に写す) | 同じ |
 | `deff` の戻り値 | `-> 'T'` | 同じ |
 | 本体の結果 | `_contract_result: 'T' = 最後の式`(局所変数の注記は実行時に評価されない) | 同じ |
-| `(<- x T e)` | `x = yield e` + isinstance の検査 | `x: 'T' = _doeff_bound(e, (yield e))` |
+| `(<- x T e)` | `x = yield e` + isinstance の検査 | `x: 'T' = _doeff_perform(e)`(Python の `@effectful` の `x = perform(e)` と同じ形・yield を出さない — docs/24-effectful-perform.md) |
 | defk を呼んだ結果 | `doeff.do.do` | 同じ型(core の `Expand[T, E]`)に、yield の無い関数の overload を足した `doeff_hy/static_types.pyi` の `do` |
 | `defhandler` の `(resume v)` / `(transfer v)` | `Resume(k, v)` / `Transfer(k, v)` | core の `typed_resume(effect, k, v)` / `typed_transfer`(v を effect の答えの型と突き合わせる) |
 | 文の位置の式 | `_guard_statement_value(form, …)` | `_guard_statement_value(reveal_type(form), …)` |
@@ -94,10 +94,10 @@ guard の method 不足・読みだけの job の書き)に当てると、Hy で
 - 文の位置の式(ADR-DOE-HY-001)は `macros.pyi` の deprecated の overload で捕まえる。pyright は型の
   分からない(Unknown)値でも deprecated の overload を選ぶので、同じ位置の `reveal_type` が
   Unknown / Any なら道具が赤を落とす(型の分からない値を「走らない Program」と決めつけない)。
-- 型が `object` / Unknown の値を `<-` しても赤にしない(`_doeff_bound` の最後の overload)。
+- 型が `object` / Unknown の値を `<-` しても赤にしない(`_doeff_perform` の最後の overload)。
 - `.hy` が実体の module(`doeff_hy.macros` など)の「source が見つからない」警告は落とし、
   stub の無い `.hy` の module の「解決できない import」は赤でなく注記にする(その module の型は見えない)。
-- 静的な `(<- x e)` は e が 2 回現れるので同じ赤が 2 回出る。同じ位置・同じ文言の赤は 1 つにする。
+- macro が同じ利用者の式を 2 か所へ写すと同じ赤が 2 回出るので、同じ位置・同じ文言の赤は 1 つにする(`(<- x e)` は `_doeff_perform(e)` になり e は 1 回だけ現れる)。
 
 agora-controllers の `controllers/worker` の 49 file(33 + 検体・テスト)で残った 45 件は、
 利用者のコードの型の穴(`#^ object` の緩い注記・`str | None` をそのまま渡す等)、repo の古い

@@ -145,9 +145,13 @@ class Spawn(EffectBase["Task[_T]"], Generic[_T, _E]):
         # Static model only (runtime: EffectBase.__iter__ yields just the Spawn). The spawned
         # program runs under the spawner's handler stack, so its effects E are the spawner's
         # to declare — yielding them here makes `yield from Spawn(p)` add p's E to the caller.
+        # The Spawn itself is yielded as `Spawn[Any, Any]` (the form a row declares), not
+        # `Spawn[_T, _E]`: with the self-referential form, pyright solving `perform(Spawn(p))`
+        # against the declared row filled a child with no effects (E = Never) with
+        # `Spawn[Unknown, Unknown]` — partially Unknown under strict (docs/24-effectful-perform.md).
         def __iter__(  # pyright: ignore[reportIncompatibleMethodOverride]
             self,
-        ) -> Generator["Spawn[_T, _E] | _E", Any, "Task[_T]"]: ...
+        ) -> Generator["Spawn[Any, Any] | _E", Any, "Task[_T]"]: ...
 
 
 class TaskCompleted(EffectBase):
@@ -1220,8 +1224,8 @@ def scheduled(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  # noqa: 
         """Resolve a Gather with an error; returns the wake priority used."""
         if gather_state["resolved"]:
             return None
-        gather_state["resolved"] = True
-        gather_state["failure"] = error
+        gather_state["resolved"] = True  # noqa: DOEFF007 - the scheduler-owned Gather/Race state cell (pre-existing)
+        gather_state["failure"] = error  # noqa: DOEFF007 - the scheduler-owned Gather/Race state cell (pre-existing)
         remove_gather_waiters(gather_state)
         return enqueue_raise(gather_state["owner_tid"], gather_state["waiter_k"], error)
 
@@ -1239,9 +1243,9 @@ def scheduled(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  # noqa: 
         if status != "completed":
             return None
 
-        gather_state["remaining"] -= 1
+        gather_state["remaining"] -= 1  # noqa: DOEFF007 - the scheduler-owned Gather/Race state cell (pre-existing)
         if gather_state["remaining"] == 0:
-            gather_state["resolved"] = True
+            gather_state["resolved"] = True  # noqa: DOEFF007 - the scheduler-owned Gather/Race state cell (pre-existing)
             results = [waitable_status(wk)[1] for wk in gather_state["keys"]]
             return enqueue_resume(
                 gather_state["owner_tid"], gather_state["waiter_k"], results
@@ -1278,7 +1282,7 @@ def scheduled(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  # noqa: 
         if status not in terminal_statuses:
             return None
 
-        race_state["resolved"] = True
+        race_state["resolved"] = True  # noqa: DOEFF007 - the scheduler-owned Gather/Race state cell (pre-existing)
         remove_race_waiters(race_state)
         if status == "completed":
             return enqueue_resume(race_state["owner_tid"], race_state["waiter_k"], result)

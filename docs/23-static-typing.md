@@ -28,6 +28,9 @@ subclasses plain `EffectBase` has an unknown answer type.
 
 ## `yield from` gives the answer its type
 
+(The same types without `yield from`: `@effectful` + `perform(e)`, rewritten at import —
+docs/24-effectful-perform.md.)
+
 ```python
 @do
 def elapsed(since: int) -> Generator[ReadClock, Any, int]:

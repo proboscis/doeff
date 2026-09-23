@@ -150,10 +150,12 @@ def test_static_view_does_not_leak_into_the_runtime_expansion() -> None:
     runtime = expand()
     with static_view():
         static = expand()
-    assert "_doeff_bound" not in runtime
+    assert "_doeff_perform" not in runtime
     assert "static_types" not in runtime
     assert "y = (yield g(x))" in runtime
-    assert "_doeff_bound" in static
+    # 型検査のための展開は Python の @effectful と同じ `x = perform(e)` の形(yield を出さない)
+    assert "y: 'int' = _doeff_perform(g(x))" in static
+    assert "yield" not in static
     # 実行時にも型の注記は付く(文字列 = 定義の時に評価しない)
     assert "def f(x: 'int')" in runtime
     assert "_contract_result: 'int' = y" in runtime

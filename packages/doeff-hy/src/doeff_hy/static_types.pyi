@@ -6,9 +6,11 @@
 
 - `do`: defk / defp などの関数を包む。core の `doeff.do.do` と同じ型(`Expand[T, E]`)に、
   本体に yield の無い関数(yield の無い defk は普通の関数になる)の overload を足した物。
-- `_doeff_bound(e, sent)`: `(<- x e)` の x の型 = e の答えの型。effect は `EffectBase[T]` の T、
+- `_doeff_perform(e)`: `(<- x e)` の x の型 = e の答えの型(Python の `@effectful` の
+  `x = perform(e)` と同じ形・docs/24-effectful-perform.md)。effect は `EffectBase[T]` の T、
   Program(defk を呼んだ結果など)は `Program[T, E]` の T。型の分からない値(`object`・Unknown)
-  は Any として通す — 誤検出を出さないことを優先する。
+  は Any として通す — 誤検出を出さないことを優先する。Hy には effect の集合を宣言する口が
+  まだ無いので、`perform: Effects[E]` の E の突き合わせはしない。
 """
 
 from collections.abc import Callable, Generator
@@ -31,6 +33,6 @@ def do(
     *, non_tail: bool = False
 ) -> Callable[[Callable[_P, Generator[_E, Any, _T]]], Callable[_P, Expand[_T, _E]]]: ...
 @overload
-def _doeff_bound(program: Program[_T, Any], sent: object, /) -> _T: ...
+def _doeff_perform(effect: Program[_T, Any], /) -> _T: ...
 @overload
-def _doeff_bound(program: object, sent: object, /) -> Any: ...
+def _doeff_perform(effect: object, /) -> Any: ...

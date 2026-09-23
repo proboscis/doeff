@@ -416,8 +416,8 @@ def _revealed(diagnostic: Diagnostic) -> str | None:
 def settle(diagnostics: list[Diagnostic]) -> Checked:
     """展開の都合で出る物を整える。返すのは (診断, 注記)。
 
-    - 同じ診断を 1 つにする: 型検査のための展開は `(<- x e)` を
-      `x = _doeff_bound(e, (yield e))` にするので、e の中の赤が 2 回出る(同じ Hy の位置)。
+    - 同じ診断を 1 つにする: macro が同じ利用者の式を 2 か所へ写すと、その式の中の赤が
+      同じ Hy の位置で 2 回出る。
     - .hy が実体の module: pyright は .hy を source と見ないので「source が見つからない」
       警告は落とし、「解決できない」赤は注記にする(その module の型は見えない)。
     - 文の位置の Program / effect(macros.pyi の deprecated の overload): 同じ位置の
