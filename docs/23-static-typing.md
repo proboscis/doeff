@@ -42,7 +42,9 @@ def elapsed(since: int) -> Generator[ReadClock, Any, int]:
 yields the effect once and returns what the VM sends back); only the static
 type differs — `yield eff` gives `Any`. Programs work the same way:
 `spent = yield from elapsed(400)` runs the sub-program and gives `spent: int`,
-as does `yield from Pure(x)` / `yield from WithHandler(h, p)`.
+as does `yield from Pure(x)`. A program under a handler, `h(p)` (a handler
+installed with `@handler`), is typed `Program[Any]`: the installer's signature
+does not carry `p`'s result type, so `yield from h(p)` gives `Any`.
 
 ## `@do` keeps parameters, effects and result
 
