@@ -66,24 +66,29 @@
   (setv rule-id (hy.models.String (_symbol-text name)))
   (setv test-name (_test-symbol "test_" (+ (_symbol-text name) "_defsemgrep")))
   (if (and (>= (len forms) 3) (not (isinstance (get forms 0) hy.models.Keyword)))
-      ;; Installed form: (defsemgrep name "rule-id" [hit …] [clean …] [:config "path"])
+      ;; Installed form: (defsemgrep name "rule-id" [hit …] [clean …] [:config "path"] [:expand-hy True])
       ;; :config absent → the nearest `.semgrep.yaml` above pytest's cwd (legacy).
       ;; :config relative → resolved against the directory of the file that
       ;; declares this defsemgrep, so the rule file can sit next to its ADR.
+      ;; :expand-hy True → `.hy` fixtures are macro-expanded to Python before the
+      ;; scan (doeff_adr.semgrep_hy), so `languages: [python]` rules read Hy code.
       (do
         (setv installed-rule-id (get forms 0))
         (setv hit-fixtures (get forms 1))
         (setv clean-fixtures (get forms 2))
         (setv options (_pairs-to-dict (cut forms 3 None)))
         (for [key options]
-          (when (!= key "config")
+          (when (not-in key ["config" "expand-hy"])
             (raise (SyntaxError
-                     (.format "defsemgrep {}: unknown option :{} (the installed form accepts :config)"
+                     (.format "defsemgrep {}: unknown option :{} (the installed form accepts :config and :expand-hy)"
                               name key)))))
         (setv config-forms
-          (if (in "config" options)
-              `[:config ~(get options "config") :declared-in __file__]
-              `[]))
+          (+ (if (in "config" options)
+                 `[:config ~(get options "config") :declared-in __file__]
+                 `[])
+             (if (in "expand-hy" options)
+                 `[:expand-hy ~(get options "expand-hy")]
+                 `[])))
         `(do
            (import doeff_adr.registry
              [register-semgrep-enforcement assert-semgrep-enforcement])

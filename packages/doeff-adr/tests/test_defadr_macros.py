@@ -1,4 +1,5 @@
 import importlib
+import re
 import sys
 import textwrap
 
@@ -199,7 +200,7 @@ def test_installed_defsemgrep_with_config_names_the_file_it_read(tmp_hy_dir):
         """,
     )
 
-    with pytest.raises(AssertionError, match="near.semgrep.yaml: no-such-rule"):
+    with pytest.raises(AssertionError, match=re.escape("near.semgrep.yaml: no-such-rule")):
         mod.test_near_missing_rule_defsemgrep()
 
 
