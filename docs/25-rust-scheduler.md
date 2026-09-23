@@ -1,7 +1,7 @@
 # 25. Rust の scheduler
 
 `scheduled()` の scheduler(Spawn・Wait・Gather・Race・Cancel・Semaphore・Promise・
-ExternalPromise)は Rust の版と Python の版の 2 つを持つ。意味は同じで、既定は Rust の版。
+ExternalPromise)は Rust の版と Python の版の 2 つを持つ。意味は同じで、既定は Python の版(Rust の版は選んで使う)。
 Rust の版は `packages/doeff-vm/src/scheduler.rs`、Python の版は
 `packages/doeff-core-effects/doeff_core_effects/scheduler.py` の `_scheduled_python`。
 
@@ -10,26 +10,35 @@ Rust の版は `packages/doeff-vm/src/scheduler.rs`、Python の版は
 ```python
 from doeff_core_effects.scheduler import scheduled
 
-run(scheduled(main()))                            # 既定(DEFAULT_IMPLEMENTATION = "rust")
-run(scheduled(main(), implementation="python"))  # この呼び出しだけ Python の版
+run(scheduled(main()))                            # 既定(DEFAULT_IMPLEMENTATION = "python")
+run(scheduled(main(), implementation="rust"))    # この呼び出しだけ Rust の版
 ```
 
 ```sh
-DOEFF_SCHEDULER=python python app.py              # process 全体を Python の版へ戻す
+DOEFF_SCHEDULER=rust python app.py                # process 全体を Rust の版にする
 ```
 
 決まる順は「引数 → 環境変数 `DOEFF_SCHEDULER` → `DEFAULT_IMPLEMENTATION`」。
 環境変数は `scheduled()` を呼ぶたびに読むので、テストでは `monkeypatch.setenv` で切り替えられる。
 `python` / `rust` 以外の値は `ValueError` になる。
+Rust の版を選んだのに、読み込んだ Rust の拡張が古くて scheduler を持たない時は、黙って Python の版へ
+落とさず `ImportError`(Rust の拡張を build し直す、と名指す)にする。
 
-## 既定を Rust の版にした理由と戻し方
+## 既定を Python の版にしている理由と、Rust の版へ切り替える条件
 
-- 決めたこと(2026-09-23): 既定を `"rust"` にする。
-- 理由: scheduler に関係するテスト 1,382 件(scheduler・Cancel・Semaphore・外部 Promise・
-  Await・doeff-time の仮想の時計・doeff-agents・doeff-conductor・doeff-traverse ほか)と、
+- 決めたこと(2026-09-23・元に戻せる決定): この変更では既定を `"python"` のままにする。
+  Rust の版は `DOEFF_SCHEDULER=rust` か `implementation="rust"` で選ぶ。
+- 理由: 既定を `"rust"` にすると、Python の source だけを本線に追随して Rust の拡張を build し直さない
+  環境(本線を追随する主 checkout を使う Mac の agentd など)で、古い拡張に scheduler が無いため
+  `scheduled()` が `ImportError` になり、本番の agent が止まりうる。
+- 意味が同じことの確認は済んでいる: scheduler に関係するテスト 1,382 件(scheduler・Cancel・Semaphore・
+  外部 Promise・Await・doeff-time の仮想の時計・doeff-agents・doeff-conductor・doeff-traverse ほか)と、
   下流の agora-controllers の worker のテスト 100 件が、両方の版で 1 件ずつ同じ結果になった
-  (合格・不合格・skip の組が完全に一致)。そのうえで下の測定のとおり 3.7〜12 倍速い。
-- 戻し方(どれも元に戻せる):
+  (合格・不合格・skip の組が完全に一致)。速さは下の測定のとおり 3.7〜12 倍。
+- 既定を `"rust"` へ切り替える条件: 本番の image・pool の agentd・会社の Mac と個人の Mac の agentd の
+  それぞれで、Rust の拡張がこの変更以降の版で build し直されたことを確かめる。
+  切り替えは `DEFAULT_IMPLEMENTATION` を `"rust"` にする 1 行を、この変更とは別の着地で出す。
+- 切り替えた後に戻す時(どれも元に戻せる):
   1. 1 つの process だけ: `DOEFF_SCHEDULER=python`。
   2. 1 つの呼び出しだけ: `scheduled(..., implementation="python")`。
   3. 既定そのもの: `scheduler.py` の `DEFAULT_IMPLEMENTATION` を `"python"` に戻す。
