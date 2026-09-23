@@ -166,15 +166,32 @@
 ;; model 別の枯れと書いて、配置が「Opus 5.5 だけ使えない・Fable は使える」と誤読した。
 ;; 分類は文の物理なのでここ(ADR-DOE-AGENTS-008 R1)に置き、判断の側(acp/judgment.hy)は答えを使うだけ。
 
+;;
+;; 2026-09-24(card acp:kanban-issue:ki-5d4849d22a4e): 「Your group's usage limit is set to $0 · ask your admin
+;; for a higher limit」の族は**どの窓が枯れたかを言わない**(口座の 5 時間の窓が枯れた拍にも、Fable の週の窓だけが
+;; 枯れた拍にも同じ文)。文だけでは範囲が決まらないので、器はこの族を口座全体と読まず、範囲の語 unknown で
+;; 「決められない」と正直に言う(範囲の推定は窓を持つ予算の係 — agora-controllers controllers/budget の
+;; refusal-scope-of — の 1 点)。分類は下の表 API-LIMIT-SCOPE-TABLE と api-limit-scope-of の 1 点で、答えは
+;; 範囲と**理由**の 2 軸(理由 = 文が名乗る理由の事実・今日は rate-limited の 1 語)。
+
 ;; 文が名乗り得る model の族の語(小文字)。所有格族「you've hit/reached your … limit」の間の語に
 ;; この語が在れば model の枯れ。無ければ(session / weekly / usage / monthly spend / individual spend …)
-;; 口座全体。所有格族の外の文(group の上限 $0・out of usage credits・rate limit exceeded …)も口座全体。
+;; 口座全体。所有格族の外の文(out of usage credits・rate limit exceeded …)も口座全体。group の上限 $N の
+;; 族だけは範囲を名乗らない(unknown — 上)。
 (setv API-LIMIT-MODEL-FAMILY-WORDS #("fable" "opus" "sonnet" "haiku"))
 
 ;; 範囲の語(TerminalCause.limit-scope の閉語彙 — 器の cause の欄。制御面は ACP の effects.py の
 ;; PROVIDER_LIMIT_SCOPE_* で同じ綴りを条件へ写す)。
 (setv API-LIMIT-SCOPE-ACCOUNT "account")
 (setv API-LIMIT-SCOPE-MODEL "model")
+;; 文が範囲も model も名乗らない断り(group の上限 $N の族)— 器は決めない。
+(setv API-LIMIT-SCOPE-UNKNOWN "unknown")
+
+;; 理由の語(TerminalCause.limit-reason の閉語彙 — 文が名乗る**理由**。範囲とは別の軸。制御面は ACP の
+;; effects.py の REASON_RATE_LIMITED 等で同じ綴りを条件の reason へ写す)。今日は 1 語。将来 provider が権限の
+;; 欠如を名乗る文(例「Your plan does not include this model」)で断り始めたら、下の表に 1 行
+;; (範囲 model・理由 model-not-enabled)と、ここと ACP の effects.py の閉語彙に 1 語を同じ便で足す。
+(setv API-LIMIT-REASON-RATE-LIMITED "rate-limited")
 
 (setv API-LIMIT-POSSESSIVE-WORDS-RE
   (re.compile
@@ -195,16 +212,51 @@
 (setv API-LIMIT-MONTHS #("jan" "feb" "mar" "apr" "may" "jun" "jul" "aug" "sep" "oct" "nov" "dec"))
 
 
-(defk api-limit-names-a-model [detail]
-  {:pre [(: detail str)] :post [(: % bool)]}
-  "限度の断りの文が model の族を名乗るか(True = その model だけの枯れ・False = 口座全体の枯れ)。
-   所有格族の間の語に API-LIMIT-MODEL-FAMILY-WORDS の語が在る時だけ True。それ以外の文
-   (session / weekly / spend / group の上限 $0 / credit 切れ / 文の無い断り)は全部 False。"
-  (for [found (.finditer API-LIMIT-POSSESSIVE-WORDS-RE (.lower detail))]
+(deff api-limit-text-names-a-model [text]
+  {:pre [(: text str)] :post [(: % bool)]}
+  "小文字の断りの文が model の族を名乗るか: 所有格族の間の語に API-LIMIT-MODEL-FAMILY-WORDS の語が在る時だけ
+   True(「You've reached your Fable 5 limit」)。表 API-LIMIT-SCOPE-TABLE の 1 行の照合。"
+  (for [found (.finditer API-LIMIT-POSSESSIVE-WORDS-RE text)]
     (setv words (.split (.group found 1)))
     (when (any (gfor word words (in (get (.split word ".") 0) API-LIMIT-MODEL-FAMILY-WORDS)))
       (return True)))
   False)
+
+
+(deff api-limit-text-states-an-org-cap [text]
+  {:pre [(: text str)] :post [(: % bool)]}
+  "小文字の断りの文が組織の側の上限の述部(usage limit is set to $<数字>)を名乗るか。族の照合は
+   has-api-limit-marker と同じ API-LIMIT-ORG-CAP-FAMILY-RE(定義は 1 つ)。表 API-LIMIT-SCOPE-TABLE の 1 行の照合。"
+  (is-not (.search API-LIMIT-ORG-CAP-FAMILY-RE text) None))
+
+
+;; 限度の断りの文 → #(範囲 理由) の表(上から順・最初に当たった行が答え・どの行にも当たらなければ
+;; API-LIMIT-SCOPE-OTHERWISE)。行 = #(照合〔小文字の文 → bool〕 範囲の語 理由の語)。
+;; - model の族を名乗る文 → その model だけの枯れ。
+;; - group の上限 $N の族 → 範囲を名乗らない(unknown — 器は決めない)。
+;; - それ以外(session / weekly / individual・monthly spend / credit 切れ / 未知の文 / 文の無い断り)→ 口座全体
+;;   (operator の規則 2026-09-17「種類を問わず口座が枯れた 1 事実」)。
+;; 新しい文の族は行を 1 つ足す(例: 権限の欠如の族 → #(<照合> API-LIMIT-SCOPE-MODEL <理由 model-not-enabled>))。
+(setv API-LIMIT-SCOPE-TABLE
+  #(#(api-limit-text-names-a-model API-LIMIT-SCOPE-MODEL API-LIMIT-REASON-RATE-LIMITED)
+    #(api-limit-text-states-an-org-cap API-LIMIT-SCOPE-UNKNOWN API-LIMIT-REASON-RATE-LIMITED)))
+
+(setv API-LIMIT-SCOPE-OTHERWISE #(API-LIMIT-SCOPE-ACCOUNT API-LIMIT-REASON-RATE-LIMITED))
+
+
+(deff api-limit-scope-of [detail]
+  {:pre [(: detail str)]
+   :post [(: % tuple) (= (len %) 2)]}
+  "限度の断りの文が名乗る #(範囲 理由) —— **分類の 1 点**(ADR-DOE-AGENTS-008 R1 の家・当てるのは器の側の
+   headless.headless-turn-limit-cause の 1 点・制御面は cause の欄を読むだけ — ADR-DOE-AGENTS-012 R33)。
+   範囲 = account(口座全体)| model(文が model の族を名乗る)| unknown(文が範囲を名乗らない — group の上限 $N)。
+   理由 = 文が名乗る理由(今日は rate-limited の 1 語)。答えは表 API-LIMIT-SCOPE-TABLE を上から当てた最初の行、
+   どれにも当たらなければ API-LIMIT-SCOPE-OTHERWISE(口座全体)。"
+  (setv text (.lower detail))
+  (for [[matches scope reason] API-LIMIT-SCOPE-TABLE]
+    (when (matches text)
+      (return #(scope reason))))
+  API-LIMIT-SCOPE-OTHERWISE)
 
 
 (defk api-limit-resets-at [detail at-ms]

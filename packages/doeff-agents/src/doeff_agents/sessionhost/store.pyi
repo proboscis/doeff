@@ -12,6 +12,7 @@ class TerminalCause:
     retryable: bool
     observed_at: str
     limit_scope: str | None
+    limit_reason: str | None
     limit_resets_at_ms: int | None
 
 class StoreActor:

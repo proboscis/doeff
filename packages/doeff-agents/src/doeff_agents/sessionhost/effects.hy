@@ -45,10 +45,16 @@
   ;; 2026-09-23(operator の規則 2026-09-17「profile が費用の上限で止まったら、種類を問わず口座が枯れた 1 事実」):
   ;; 限度の断り(category rate_limited)が枯らした範囲と、文が名乗った戻りの時刻。当てるのは器の側の 1 点
   ;; (headless.headless-turn-limit-cause — 表は impls/markers.hy)で、制御面はこの欄を読む(ADR-DOE-AGENTS-012 R33)。
-  ;; limit-scope = "account"(口座全体)| "model"(文が model の族を名乗る)・None = 限度の断りではない。
-  ;; 凍結表(category / retryable)の外の情報の欄 — 永続の JSON では limit_scope / limit_resets_at_ms。
+  ;; limit-scope = "account"(口座全体)| "model"(文が model の族を名乗る)| "unknown"(文が範囲を名乗らない —
+  ;; group の上限 $N の族・器は決めない — 2026-09-24 card acp:kanban-issue:ki-5d4849d22a4e)・None = 限度の断りではない。
+  ;; limit-reason = 文が名乗る**理由**(範囲とは別の軸・今日は "rate-limited" の 1 語)・None = 限度の断りではない /
+  ;; 理由の欄を持たない旧い器の cause(制御面 acp/judgment.provider-limit-condition-of は rate-limited と読む)。
+  ;; 分類は impls/markers.api-limit-scope-of の 1 点(範囲と理由の対)。
+  ;; 凍結表(category / retryable)の外の情報の欄 — 永続の JSON では limit_scope / limit_reason / limit_resets_at_ms。
   #^ (| str None) limit-scope
   (setv limit-scope None)
+  #^ (| str None) limit-reason
+  (setv limit-reason None)
   #^ (| int None) limit-resets-at-ms
   (setv limit-resets-at-ms None))
 
