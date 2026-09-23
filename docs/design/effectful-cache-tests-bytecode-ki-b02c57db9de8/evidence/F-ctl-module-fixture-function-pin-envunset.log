@@ -1,0 +1,13 @@
+# label=F-ctl-module-fixture-function-pin-envunset
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 worktree=/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design
+# PYTHONDONTWRITEBYTECODE=<unset>
+# diff:  M conftest.py  M packages/doeff-hy/tests/test_none_type_contract.py  M packages/doeff-hy/tests/test_source_positions.py  M tests/test_effectful.py ?? tests/test_bytecode_writing_off.py ?? tests/test_scratch_module_fixture_probe.py 
+# diff sha256: 9ab831b2e0370462
+# cmd: python -m pytest tests/test_scratch_module_fixture_probe.py -q
+
+deadline scale x1.5 (load/core) — per test 90s, watchdog 134s
+
+test-admission: focused — 1 件(変更箇所の検証)
+.                                                                        [100%]
+1 passed in 0.22s
+# exit=0

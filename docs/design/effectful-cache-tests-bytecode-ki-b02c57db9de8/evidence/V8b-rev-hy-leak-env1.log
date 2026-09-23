@@ -1,0 +1,49 @@
+# label=V8b-rev-hy-leak-env1
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 worktree=/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design
+# PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=<unset>
+# diff:  M conftest.py  M tests/test_effectful.py ?? docs/design/effectful-cache-tests-bytecode-ki-b02c57db9de8/ ?? tests/test_bytecode_settings_pinned.py 
+# diff sha256: 9e9aa993dc538a96
+# cmd: python -m pytest packages/doeff-hy/tests/test_source_positions.py tests/test_effectful.py tests/test_bytecode_settings_pinned.py -q
+
+deadline scale x1.6 (load/core) — per test 93s, watchdog 140s
+
+test-admission: focused — 37 件(変更箇所の検証)
+...................................F.E                                   [100%]
+==================================== ERRORS ====================================
+_ ERROR at teardown of test_subprocesses_inherit_the_pinned_bytecode_settings __
+
+    @pytest.fixture(scope="session", autouse=True)
+    def _bytecode_settings_pinned():
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(sys, "dont_write_bytecode", True)
+            patch.setattr(sys, "pycache_prefix", None)
+            patch.setenv("PYTHONDONTWRITEBYTECODE", "1")
+            patch.delenv("PYTHONPYCACHEPREFIX", raising=False)
+            yield
+            at_the_end = (sys.dont_write_bytecode, sys.pycache_prefix)
+>       assert at_the_end == (True, None), (
+            f"a test or fixture changed the bytecode settings and did not restore them "
+            f"(dont_write_bytecode, pycache_prefix) = {at_the_end} — change them with "
+            f"monkeypatch (or pytest.MonkeyPatch.context() in a wider fixture)"
+        )
+E       AssertionError: a test or fixture changed the bytecode settings and did not restore them (dont_write_bytecode, pycache_prefix) = (False, None) — change them with monkeypatch (or pytest.MonkeyPatch.context() in a wider fixture)
+E       assert (False, None) == (True, None)
+E         
+E         At index 0 diff: False != True
+E         Use -v to get more diff
+
+conftest.py:306: AssertionError
+=================================== FAILURES ===================================
+____________ test_test_bodies_run_with_the_pinned_bytecode_settings ____________
+
+    def test_test_bodies_run_with_the_pinned_bytecode_settings() -> None:
+>       assert sys.dont_write_bytecode is True
+E       assert False is True
+E        +  where False = sys.dont_write_bytecode
+
+tests/test_bytecode_settings_pinned.py:16: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_bytecode_settings_pinned.py::test_test_bodies_run_with_the_pinned_bytecode_settings
+ERROR tests/test_bytecode_settings_pinned.py::test_subprocesses_inherit_the_pinned_bytecode_settings
+1 failed, 36 passed, 1 error in 5.64s
+# exit=1

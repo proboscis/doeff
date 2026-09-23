@@ -1,0 +1,76 @@
+diff --git a/conftest.py b/conftest.py
+index f39e1bfc..ca057879 100644
+--- a/conftest.py
++++ b/conftest.py
+@@ -264,3 +264,38 @@ def pytest_collection_finish(session):
+         )
+         return
+     admission.collection_finish(session)
++
++
++# ---------------------------------------------------------------------------
++# Bytecode writing is off while tests run — the same as land and the daily run.
++#
++# The land tool starts every gate and the daily full run with
++# PYTHONDONTWRITEBYTECODE=1 (so the tree under test gets no __pycache__), and a
++# developer's run usually does not.  A test whose answer depends on bytecode
++# being written was therefore green on the author's machine and red only in the
++# daily run (measured 2026-09-24: the two @effectful cache tests of 46dcbfc7).
++# Pinning the same setting here makes the author's run give the daily's answer:
++# a test that needs bytecode writes must say so itself
++# (``monkeypatch.setattr(sys, "dont_write_bytecode", False)``).
++#
++# Session scope, so module- and session-scoped fixtures run under it too.  It
++# starts after collection, so collecting (and pytest's assertion rewrite) still
++# writes and reuses the bytecode cache on a developer's machine.  The env var is
++# set as well, so subprocesses started by tests inherit it.
++#
++# A fixture that sets the flag directly and never restores it turns the pin off
++# for everything after it — and hid both cache failures above in a run that
++# included packages/doeff-hy/tests (measured 2026-09-24).  So the run fails
++# when the flag is not back to True at the end.
++# ---------------------------------------------------------------------------
++@pytest.fixture(scope="session", autouse=True)
++def _bytecode_writing_off():
++    with pytest.MonkeyPatch.context() as patch:
++        patch.setattr(sys, "dont_write_bytecode", True)
++        patch.setenv("PYTHONDONTWRITEBYTECODE", "1")
++        yield
++        still_off = sys.dont_write_bytecode
++    assert still_off, (
++        "a test or fixture changed sys.dont_write_bytecode and did not restore it — "
++        "change it with monkeypatch (or pytest.MonkeyPatch.context() in a wider fixture)"
++    )
+diff --git a/tests/test_bytecode_writing_off.py b/tests/test_bytecode_writing_off.py
+new file mode 100644
+index 00000000..fb0d8306
+--- /dev/null
++++ b/tests/test_bytecode_writing_off.py
+@@ -0,0 +1,27 @@
++"""Tests run with bytecode writing off, as land and the daily full run do (root conftest.py).
++
++A developer's run and the daily run must give the same answer; the daily run sets
++PYTHONDONTWRITEBYTECODE=1, so the suite pins the same setting for test bodies, fixtures,
++and the subprocesses they start.
++"""
++
++from __future__ import annotations
++
++import os
++import subprocess
++import sys
++
++
++def test_test_bodies_run_with_bytecode_writing_off() -> None:
++    assert sys.dont_write_bytecode is True
++    assert os.environ["PYTHONDONTWRITEBYTECODE"] == "1"
++
++
++def test_subprocesses_inherit_bytecode_writing_off() -> None:
++    child = subprocess.run(
++        [sys.executable, "-c", "import sys; print(sys.dont_write_bytecode)"],
++        capture_output=True,
++        text=True,
++        check=True,
++    )
++    assert child.stdout.strip() == "True"

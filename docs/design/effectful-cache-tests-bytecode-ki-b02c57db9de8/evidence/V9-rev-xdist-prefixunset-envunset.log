@@ -1,0 +1,31 @@
+# label=V9-rev-xdist-prefixunset-envunset
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 worktree=/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design
+# PYTHONDONTWRITEBYTECODE=<unset> PYTHONPYCACHEPREFIX=<unset>
+# diff:  M conftest.py  M packages/doeff-hy/tests/test_none_type_contract.py  M packages/doeff-hy/tests/test_source_positions.py  M tests/test_effectful.py ?? docs/design/effectful-cache-tests-bytecode-ki-b02c57db9de8/ ?? tests/test_bytecode_settings_pinned.py 
+# diff sha256: 6bd0d1fbcdc8fa39
+# cmd: python -m pytest tests/test_effectful.py tests/test_bytecode_settings_pinned.py -q -n 4
+
+deadline scale x1.9 (load/core) — per test 113s, watchdog 169s
+
+
+deadline scale x1.9 (load/core) — per test 113s, watchdog 169s
+
+
+deadline scale x1.9 (load/core) — per test 113s, watchdog 169s
+
+
+deadline scale x1.9 (load/core) — per test 113s, watchdog 169s
+
+
+deadline scale x1.9 (load/core) — per test 113s, watchdog 169s
+
+test-admission: focused — 33 件(変更箇所の検証)
+test-admission: focused — 33 件(変更箇所の検証)
+test-admission: focused — 33 件(変更箇所の検証)
+test-admission: focused — 33 件(変更箇所の検証)
+bringing up nodes...
+bringing up nodes...
+
+.................................                                        [100%]
+33 passed in 6.11s
+# exit=0
