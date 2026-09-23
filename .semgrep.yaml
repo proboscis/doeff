@@ -5334,3 +5334,33 @@ rules:
         - /packages/doeff-agents/src/doeff_agents/sessionhost/**
       exclude:
         - "**/sessionhost/drivers.py"
+  - id: doeff-agents-driver-lookup-reads-only-the-path
+    languages:
+      - python
+    severity: ERROR
+    message: >
+      ADR-DOE-AGENTS-012 R61: inside sessionhost/drivers.py the env is read
+      only as the PATH that subprocess.Popen searches — handed to
+      os.get_exec_path or to driver_path_in, nothing else. The argv builders
+      take argv[0] from DRIVER_EXECUTABLE and never read the env, so a lookup
+      that takes the executable (or anything else) from another env variable
+      answers drivers.list for a file the launch never runs: the node declares
+      the kind while its turns die with `No such file or directory` (the
+      blind counterexample on card acp:kanban-issue:ki-f250d67a7157 —
+      AGENT_CODEX_EXECUTABLE read by driver_listing alone). Changing where the
+      executable comes from changes DRIVER_EXECUTABLE itself, so the launch and
+      the lookup move together.
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/sessionhost/drivers.py
+    pattern-either:
+      - pattern: os.environ
+      - pattern: os.getenv(...)
+      - patterns:
+          - pattern-inside: |
+              def $FUNC(..., $ENV: Mapping[str, str], ...):
+                  ...
+          - pattern: $ENV
+          - pattern-not-inside: os.get_exec_path(dict($ENV))
+          - pattern-not-inside: os.get_exec_path($ENV)
+          - pattern-not-inside: driver_path_in($WORD, $ENV)
