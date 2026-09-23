@@ -128,3 +128,6 @@ ORCH_PROMPT.md
 !docs/design/**
 # 書き込みロックだけは入れない(道具が作る一時 file — 打ち消しの後に置く)
 docs/design/*/.records.lock
+
+# Repository-owned Zenn article visuals (override global image ignores)
+!/images/zenn-use-cases-v0/*.png

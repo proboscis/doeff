@@ -1,0 +1,17 @@
+Use case: infographic-diagram
+Asset type: 日本語のdoeff入門記事の図。1536x1024横長。
+Style: 完全に白い不透明背景、淡いミント・水色・ラベンダーの平面的な角丸ボックス、濃紺の文字、ティールの方向が明確な矢印。印刷物の明快な図解。3D・写実・ガラス・立体アイコン・質感・陰影・装置のイラストは禁止。
+Typography: 日本語とPythonコードを正確に、大きく読みやすく配置。ASCIIの@、_、引用符、括弧を正確に。コードは等幅、改行やインデントを保持する。句読点や括弧だけの行以外のコードには指定の日本語コメントを付ける。
+
+Title exactly: Askを受け取り、値を渡して挨拶の続きを再開する
+
+白背景の平面シーケンス図。左レーンgreetの本文、中央Rust VM、右handle_ask_effect。1 Ask(name)をVMへ。2 VMが依頼effectと続きkをハンドラへ。3 ハンドラのyield Resume(k, 花子)をVMへ。4 VMがgreetへ花子を渡して再開、nameに花子が入る。5 greetの挨拶が最終runの結果になる。見出しの下にwith_handlers([handle_ask_effect], greet())という設置コードをコメント付きで表示。handler(program)、lazy_ask、envは描かない。kはyieldの後から先の続きという説明を添える。
+
+コード（flowではそれぞれ対応するレーンに配置）：
+name = yield Ask("name")  # 依頼して中断
+return (yield Resume(k, "花子"))  # 花子で続きを再開
+
+Layout: 上に見出しと設置コード、その下は左右3レーンのシーケンス図。縦方向に時が進む。ハンドラの定義ラベルには「@handler」「@do」「def handle_ask_effect(effect, k):」を表示して、本文に同名の定義があることを示す。継続kの説明は「中断した処理の続き」。右から左へ戻る矢印は必ずResume→VM→greetの順。最後の結果を下に大きく表示する。
+上の設置コード:
+with_handlers([handle_ask_effect], greet())  # ハンドラを設置
+最終結果：「run()の結果：こんにちは、花子さん」

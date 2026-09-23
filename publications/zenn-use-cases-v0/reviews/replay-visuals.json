@@ -1,0 +1,14 @@
+{
+  "concept": {
+    "title": "HTTPの取得と保存を、別のハンドラで合成する",
+    "code": "first = make_memo_rewriter(HttpRequest)(fetch_text(url))  # 再利用を判定\nfirst = sqlite_memo_handler(database)(first)  # 応答を保存\nfirst = fixed_http(first)  # 未保存時だけ取得",
+    "flow": "白背景の平面的ダイアグラム。写真・立体・写実的な装置は禁止。3行のコードを左側に大きく配置し、各行から右側の担当ボックスへ細い線を結ぶ。処理本体→HTTP依頼→メモ化の判定。判定からSQLite（MemoExists/Get/Put）へ照会する双方向矢印。保存ヒットの矢印はHTTP取得を迂回して応答→処理本体の続きへ。保存ミスの矢印だけHTTP取得担当へ届き、固定HttpResponse→SQLiteへ保存→応答を返す。HTTP取得担当の交換候補として固定応答と標準HTTPを同じ枠の選択肢で示す。二つを同時実行するように描かない。保存先・取得担当・判定の3つは独立した責務。HttpRequestに対して全ハンドラが順次処理する一本線にはしない。",
+    "caption": "メモ化の判定、保存先、保存ミス時の取得方法を独立に選びます。"
+  },
+  "flow": {
+    "title": "保存ヒットはHTTPを通らず、保存ミスだけ取得担当へ進む",
+    "code": "second = make_memo_rewriter(HttpRequest)(fetch_text(url))  # 同じ依頼\nsecond = sqlite_memo_handler(database)(second)  # 保存済み応答を照会\nsecond = reject_http(second)  # 未保存のHTTP依頼は失敗",
+    "flow": "白背景の平面的な処理図。写真・3Dは禁止。上部に正確な3行のコード、下部に保存あり/なしの分岐。開始「同じURLを取得」→「SQLiteに保存済み？」。はい→「MemoGet」→「本文を返す：記録した本文」。いいえ→「HttpRequestを外側へ委譲」→「reject_http」→「LookupError（未保存のURL）」。はいの経路からreject_httpへ矢印を引かない。二つの経路は条件によって一方だけ通る。右下に小さい注記「取得を許すなら、reject_httpをfixed_httpや標準HTTPに交換」と記載する。HTTP clientやMockTransport、client_factoryは図中に入れない。",
+    "caption": "保存ミス時の取得・拒否をHTTPハンドラで切り替え、得た応答の保存をMemoハンドラへ任せます。"
+  }
+}

@@ -1,0 +1,14 @@
+digraph figure {
+graph [bgcolor="#f8fafc", pad="0.4", nodesep="0.35", ranksep="0.45", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#152c43", labelloc="t", label="プロセスを終えても、完了した計算結果を再利用する"];
+node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#c3d2e0", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#152c43", margin="0.2,0.15"];
+edge [color="#087e8b", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#087e8b"];
+a [label="1回目：prepare\n本文を解析してSQLiteへ保存"];
+b [label="プロセスを終了"];
+c [label="2回目：finish\n本文解析は保存済みの結果を取得"];
+d [label="見出しの抽出を実行して保存"];
+e [label="3回目：finish\n本文解析・見出し抽出の両方を再利用"];
+a -> b [label=""];
+b -> c [label="同じ保存先・入力・バージョン"];
+c -> d [label="未完了の後続へ"];
+d -> e [label="プロセスを終了して再実行"];
+}

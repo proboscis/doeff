@@ -1,0 +1,1 @@
+この平面図の右下ノード内の関数呼び出しを brighten_cover(images, model) から brighten_cover(generated, model) へ正確に変更する。関数へ渡るのはImageResultで、そのimagesをImageEditへ渡す。矢印脇の images ラベルを generated.images へ変更する。左の完全な5行コード・日本語コメント・他の文字・配置・色・白背景を全て保持。他は変更しない。

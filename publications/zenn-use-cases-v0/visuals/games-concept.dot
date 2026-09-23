@@ -1,0 +1,16 @@
+digraph figure {
+graph [bgcolor="#122336", pad="0.45", nodesep="0.4", ranksep="0.58", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#f4f8fc", labelloc="t", label="ゲームのルールと、入力・表示を分ける\n"];
+node [shape=box, style="rounded,filled", fillcolor="#203951", color="#55748e", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#f4f8fc", margin="0.22,0.17"];
+edge [color="#79e4c4", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#79e4c4"];
+p [label="ゲームの進行\nカード・効果・ターン"];
+h [label="人間の入力"];
+a [label="AIの判断"];
+t [label="テスト・保存した入力列"];
+s [label="状態とイベント\nHP・カード・効果"];
+v [label="表示・演出"];
+h -> p [label="入力"];
+a -> p [label="入力"];
+t -> p [label="入力"];
+p -> s [label="更新・発行"];
+s -> v [label="観測"];
+}

@@ -1,0 +1,14 @@
+digraph figure {
+graph [bgcolor="#122336", pad="0.45", nodesep="0.4", ranksep="0.58", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#f4f8fc", labelloc="t", label="処理は同じ、実行戦略を差し替える\n"];
+node [shape=box, style="rounded,filled", fillcolor="#203951", color="#55748e", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#f4f8fc", margin="0.22,0.17"];
+edge [color="#79e4c4", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#79e4c4"];
+p [label="各要素の処理\nprocess(item)"];
+t [label="Traverse\nコレクションへの適用"];
+s [label="sequential\n一件ずつ"];
+c [label="parallel\n同時実行数を制限"];
+f [label="失敗時の戦略\n隔離・中断・代替値"];
+p -> t [label="処理を渡す"];
+t -> s [label="選ぶ"];
+t -> c [label="選ぶ"];
+f -> t [label="組み合わせる"];
+}

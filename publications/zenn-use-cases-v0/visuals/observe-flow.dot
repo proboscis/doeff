@@ -1,0 +1,16 @@
+digraph figure {
+graph [bgcolor="#f8fafc", pad="0.4", nodesep="0.35", ranksep="0.45", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#152c43", labelloc="t", label="処理のログをListenで受け取り、結果と一緒に検査する"];
+node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#c3d2e0", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#152c43", margin="0.2,0.15"];
+edge [color="#087e8b", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#087e8b"];
+a [label="Listenで処理を囲む"];
+b [label="Tell：変換を開始"];
+c [label="slog：変換が完了\npages=3"];
+d [label="処理の返り値「完了」"];
+e [label="結果と、収集した2件のログを返す"];
+f [label="返り値とログの件数をassert"];
+a -> b [label=""];
+b -> c [label=""];
+c -> d [label=""];
+d -> e [label=""];
+e -> f [label=""];
+}

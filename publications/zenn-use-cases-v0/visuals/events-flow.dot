@@ -1,0 +1,18 @@
+digraph figure {
+graph [bgcolor="#f8fafc", pad="0.45", nodesep="0.4", ranksep="0.58", rankdir="TB", fontname="Hiragino Sans", fontsize=25, fontcolor="#152c43", labelloc="t", label="待ち受けを登録してから、イベントを発行する\n"];
+node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#c3d2e0", penwidth=1.4, fontname="Hiragino Sans", fontsize=19, fontcolor="#152c43", margin="0.22,0.17"];
+edge [color="#087e8b", arrowsize=0.8, penwidth=1.7, fontname="Hiragino Sans", fontsize=14, fontcolor="#087e8b"];
+w [label="WaitForEventで購読を登録"];
+p [label="Promiseを作り、処理を待機"];
+e [label="別タスクがPublish"];
+m [label="一致する購読がある？", shape=diamond, margin="0.1", fillcolor="#e7f5f2"];
+r [label="Promiseを完了させる"];
+c [label="待っていた処理を再開"];
+n [label="配信先なし\nイベント履歴は保存しない"];
+w -> p [label=""];
+p -> e [label="ほかのタスクが動く"];
+e -> m [label=""];
+m -> r [label="ある"];
+r -> c [label=""];
+m -> n [label="ない"];
+}
