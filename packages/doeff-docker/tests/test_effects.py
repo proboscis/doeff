@@ -3,7 +3,7 @@
 import hy  # noqa: F401
 import pytest
 from doeff import run, Pure, do
-from doeff_core_effects import reader, writer, slog_handler
+from doeff_core_effects import reader, state, writer, slog_handler
 
 from doeff_docker.effects import (
     From, Run, Copy, Workdir, SetEnv, Expose,
@@ -16,7 +16,7 @@ from doeff_docker.handlers.dockerfile import (
 
 def _run_with_handlers(program):
     return run(
-        writer(slog_handler(reader(env={})(program)))
+        state()(writer(slog_handler(reader(env={})(program))))
     )
 
 

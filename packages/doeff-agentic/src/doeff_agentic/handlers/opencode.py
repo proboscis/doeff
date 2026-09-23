@@ -1093,7 +1093,7 @@ def opencode_handler(
         for effect_type, effect_handler in effect_handlers:
             if isinstance(effect, effect_type):
                 return (yield effect_handler(effect, k))
-        yield Pass()
+        yield Pass(effect, k)
 
     return _program_handler(protocol_handler)
 
