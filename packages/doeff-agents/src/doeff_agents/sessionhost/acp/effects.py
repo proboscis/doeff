@@ -1032,6 +1032,10 @@ CAPACITY_ENV = "DOEFF_AGENTD_CAPACITY"
 #: 段 12 lane 12j(agora-redesign #304 便 2): 停止(SIGTERM)の排水の上限(秒)。宣言 file の [agentd].drain_seconds から join が運ぶ。
 #: 0 / 無し = 今日どおり即座に走っている手番を閉じる(AgentdRestart)。
 DRAIN_SECONDS_ENV = "DOEFF_AGENTD_DRAIN_SECONDS"
+#: card acp:kanban-issue:ki-9b728780cfac(依頼 lt-3CXH09FC999PXC6D12RZ9EXZCG・2026-09-24): 同じ node で同時に走らせる
+#: verify の命令(charter.kind = verify)の上限。宣言 file の [agentd].verify_concurrency から join が運ぶ。
+#: 無し = AgentdSettings.verify_concurrency の既定(この file の 1 点 = 1)。1 未満は join が断る(参加しない)。
+VERIFY_CONCURRENCY_ENV = "DOEFF_AGENTD_VERIFY_CONCURRENCY"
 #: node の status.observations.transcripts に載せる件数の上限(card acp:kanban-issue:ki-95169e9e265d 便 1・
 #: ADR-DOE-AGENTS-012 R56)。宣言 file の [agentd].transcripts_observed_max から join が運ぶ。
 #: 無し = AgentdSettings.transcripts_observed_max の既定(この file の 1 点)。
@@ -1266,6 +1270,9 @@ class JoinSpec:
     allow_metered_billing: bool = False
     #: 停止(SIGTERM)の排水の上限(秒 — 宣言 file の [agentd].drain_seconds・段 12 lane 12j・agora-redesign #304 便 2)。0 = 排水しない(既定)。
     drain_seconds: int = 0
+    #: 同じ node で同時に走らせる verify の命令の上限(宣言 file の [agentd].verify_concurrency・
+    #: card acp:kanban-issue:ki-9b728780cfac)。1 = 既定(env に現れず、agentd は AgentdSettings の既定を使う)。1 未満は join が断る。
+    verify_concurrency: int = 1
     #: node の観測に載せる transcript の件数の上限(宣言 file の [agentd].transcripts_observed_max・
     #: ADR-DOE-AGENTS-012 R56)。None = 名乗らない(env に現れず、agentd は AgentdSettings の既定を使う)。
     transcripts_observed_max: int | None = None
@@ -1513,6 +1520,12 @@ class AgentdSettings:
     #: state_dir(record spool の親 = join の宣言 [agentd].state_dir)の下の VERIFY_RUNS_RELDIR に据える。verify の script の
     #: 置き場は home/VERIFY_SCRIPTS_RELDIR(judgment.verify-plan-of の 1 点)。
     verify_runs_dir: str = ""
+    #: card acp:kanban-issue:ki-9b728780cfac(依頼 lt-3CXH09FC999PXC6D12RZ9EXZCG・2026-09-24): 同じ node で同時に走らせる
+    #: verify の命令の上限 = node の宣言(agentd.toml の [agentd].verify_concurrency → join → VERIFY_CONCURRENCY_ENV)。
+    #: 数えるのは charter.kind = verify の命令すべて(agentd は script の中身を知らない — provenance-epoch-sync も 1 本)。
+    #: 判断は judgment.verify-claim-verdict の純関数 1 点・呼ぶのは agentd.receive-bound-jobs の側の 1 か所(claim-verify-candidates)
+    #: で拍ごとに 1 回・全候補で。verify の腕(claim-verify-job)はこの値を読まない。1 未満は join が断る(参加しない)。
+    verify_concurrency: int = 1
     #: 段 12 lane 12j(agora-redesign #233): 会話の履歴の段階つき要約の契機 = 手番の終わりに測った文脈の大きさ(token —
     #: DeltaBatch.context.tokens)がこの値を超えた(operator 2026-09-16「50 % を超えていたら(0.5M)」= 上限 1M の 50 %)。
     #: ACP agora-kinds.json conventions.stagedSummaries.triggerTokens はこの写し。0 = 契機を置かない(検体の値)。
@@ -1980,6 +1993,18 @@ class InFlightCommand:
     log_path: str
     rc_path: str
     pid_path: str
+
+
+@dataclass(frozen=True)
+class VerifyClaimVerdict:
+    """同じ node で今 claim してよい verify の行と、Bound のまま待たせる行(card acp:kanban-issue:ki-9b728780cfac・
+    依頼 lt-3CXH09FC999PXC6D12RZ9EXZCG)— judgment.verify-claim-verdict の純関数 1 点の答え。
+
+    不変条件: len(走っている ∪ claim) <= 上限・claim ∩ hold = ∅・claim ∪ hold = 候補・claim は (作成時刻 created_at_ms, 行の id)
+    の古い順の先頭から上限の空きの本数だけ。hold の行には何も書かない(呼び手は log と計器 verify-claim-held に 1 行ずつ)。"""
+
+    claim: tuple[AcpRow, ...]
+    hold: tuple[AcpRow, ...]
 
 
 @dataclass(frozen=True)
@@ -3001,6 +3026,10 @@ class AgentdState:
     #: 段 12 lane 12a(agora-redesign #230): 走らせている verify の命令(memory の写し — 正本は行の
     #: sessionHandle.verify と結末の file。再起動で消えても Running の行から組み直す: agentd.recover-command)。
     commands: tuple[InFlightCommand, ...] = ()
+    #: card acp:kanban-issue:ki-9b728780cfac: 前の拍に上限で待たせた(hold)verify の行の id。log と計器 verify-claim-held は
+    #: **待たせ始めた拍に 1 行ずつ**(毎拍は書かない — 1 本の全走は 1〜2 時間で、拍ごとに書くと log が待ちの行で埋まる)。
+    #: 行そのものには何も書かない(phase も condition も)。再起動で消えても次の拍が待ちを名乗り直すだけ(正本は行)。
+    held_verify_ids: frozenset[str] = frozenset()
     #: 段 12 lane 12j(agora-redesign #233): 走らせている summarize(memory の写し — 正本は行の sessionHandle.summarize と
     #: 結末の file。再起動で消えても Running の行から組み直す: agentd.recover-summarize)。
     summaries: tuple[InFlightSummarize, ...] = ()
