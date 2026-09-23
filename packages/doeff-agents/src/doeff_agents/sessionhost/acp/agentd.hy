@@ -4401,6 +4401,90 @@
   ended-count)
 
 
+;; ---------------------------------------------------------------------------
+;; 最小実験(依頼 lt-3CXH09FC999PXC6D12RZ9EXZCG・捨て worktree・着地しない)
+;; ---------------------------------------------------------------------------
+
+(defn verify-claim-verdict [in-flight candidates limit]
+  "純関数: 走っている verify の id(集合)・Bound の verify 候補・上限 → #(claim hold)。claim は作成時刻の古い順
+   (同時刻は id 順)に上限の空きだけ。"
+  (setv room (max 0 (- limit (len in-flight))))
+  (setv ordered (sorted candidates :key (fn [row] #(row.created-at-ms row.resource-id))))
+  #((tuple (cut ordered 0 room)) (tuple (cut ordered room None))))
+
+
+(defk verify-alive-pid-here [settings row]
+  {:pre [(: settings AgentdSettings) (: row AcpRow)] :post [(: % (| int None))]}
+  "この job の命令がこの機体で生きているか(pid の file が在り・その pid が生き・rc の file が無い)— 生きていれば pid。"
+  (<- planned (| VerifyPlan str) (verify-plan-of row settings.home settings.verify-runs-dir))
+  (when (isinstance planned str) (return None))
+  (<- pid-text (| str None) (FsReadText :path planned.pid-path))
+  (<- pid (| int None) (pid-of-text pid-text))
+  (when (is pid None) (return None))
+  (<- probe (| CommandRunning CommandExited CommandGone)
+      (CommandProbe :pid pid :pid-path planned.pid-path :rc-path planned.rc-path))
+  (if (isinstance probe CommandRunning) pid None))
+
+
+(defk adopt-verify-job [settings state row pid now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: row AcpRow) (: pid int) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "置き直された verify の行で、その命令がこの機体でまだ生きている: 起こし直さず Running + 手札を書いて観測を引き継ぐ。"
+  (<- planned (| VerifyPlan str) (verify-plan-of row settings.home settings.verify-runs-dir))
+  (when (isinstance planned str) (return state))
+  (<- handle dict (verify-handle-of planned settings.principal now-ms))
+  (<- running dict (verify-running-status-of row handle))
+  (<- claimed (| Written Conflict Refused) (AcpPutStatus :row row :status running))
+  (when (not (isinstance claimed Written))
+    (<- (LogLine :text f"agentd: adoption of verify job {row.resource-id} did not land ({claimed}); will re-list"))
+    (return state))
+  (<- (LogLine :text f"agentd: verify job {row.resource-id} was re-placed while its command (pid {pid}) still runs here — adopted, no second command"))
+  (<- command InFlightCommand (in-flight-command-of row planned pid now-ms))
+  (<- next AgentdState (with-command state command))
+  next)
+
+
+(defk claim-verify-candidates [settings state rows running candidates previously-deferred now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: rows tuple) (: running tuple) (: candidates list)
+         (: previously-deferred tuple) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "拍ごとに 1 回: 走っている verify(memory ∪ 自分の Running の verify の行 ∪ 引き取った命令)を数え、判定の 1 点で
+   claim と hold に分け、claim だけを claim-job へ。hold の行には書かない。"
+  (setv current state)
+  (<- memory-ids set (in-flight-command-ids current))
+  (setv in-flight (set memory-ids))
+  (for [row running]
+    (<- running-kind str (job-kind-of row))
+    (when (= running-kind CHARTER-KIND-VERIFY)
+      (.add in-flight row.resource-id)))
+  (setv fresh [])
+  (for [row candidates]
+    ;; 資格は上限の前(断る行は枠を使わず、この拍の claim-job で閉じる — 綴りの外・script の無い id)
+    (<- planned (| VerifyPlan str) (verify-plan-of row settings.home settings.verify-runs-dir))
+    (setv eligible (not (isinstance planned str)))
+    (when eligible
+      (<- present bool (FsFileExists :path planned.script-path))
+      (setv eligible present))
+    (if (not eligible)
+        (<- current AgentdState (claim-job settings current rows row previously-deferred now-ms))
+        (do
+          (<- alive (| int None) (verify-alive-pid-here settings row))
+          (if (is alive None)
+              (.append fresh row)
+              (do
+                (<- current AgentdState (adopt-verify-job settings current row alive now-ms))
+                (.add in-flight row.resource-id))))))
+  (setv [claim hold] (verify-claim-verdict (frozenset in-flight) (tuple fresh) settings.verify-concurrency))
+  (for [row hold]
+    (<- (LogLine :text (+ f"agentd: verify job {row.resource-id} held — {(len in-flight)} verify command(s) in flight on node "
+                          f"{settings.node-name} (limit {settings.verify-concurrency}); it stays Bound")))
+    (<- (MetricLine :fields {"metric" "verify-claim-held" "agentJobId" row.resource-id
+                             "inFlight" (len in-flight) "limit" settings.verify-concurrency "atMs" now-ms})))
+  (for [row claim]
+    (<- current AgentdState (claim-job settings current rows row previously-deferred now-ms)))
+  current)
+
+
 (defk receive-bound-jobs [settings state mode now-ms]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: mode str) (: now-ms int)]
    :post [(: % AgentdState)]}
@@ -4444,9 +4528,17 @@
         (when (not-in row.resource-id known)
           (<- (LogLine :text (+ f"agentd: draining for the stop of agentd — leaving Bound job {row.resource-id} unclaimed "
                                 "(capacity 0; the scheduler places it on another node)")))))
-      (for [row bound]
-        (when (not-in row.resource-id known)
-          (<- current AgentdState (claim-job settings current rows row previously-deferred now-ms)))))
+      (do
+        ;; 最小実験(lt-3CXH09FC999PXC6D12RZ9EXZCG): verify の Bound は判定の 1 点を拍ごとに 1 回通す。
+        (setv verify-candidates [])
+        (for [row bound]
+          (when (not-in row.resource-id known)
+            (<- bound-kind str (job-kind-of row))
+            (if (= bound-kind CHARTER-KIND-VERIFY)
+                (.append verify-candidates row)
+                (<- current AgentdState (claim-job settings current rows row previously-deferred now-ms)))))
+        (<- current AgentdState (claim-verify-candidates settings current rows running verify-candidates
+                                                         previously-deferred now-ms))))
   (for [row running]
     (when (not-in row.resource-id known)
       ;; 段 12 lane 12a: verify の Running は行と file から組み直す(session は無い)。
