@@ -38,6 +38,7 @@
 ;; 席の settings の鍵の家(card acp:kanban-issue:ki-7b52bb76aa6e): doeff が `--settings` に置く鍵の集合は argv の合流点
 ;; (impls/claude_code.hy)が 1 点で持ち、参加の門 (c) はそれを読む — 綴りを写さない。
 (import doeff_agents.sessionhost.impls.claude_code [CLAUDE-SETTINGS-OWNED-KEYS])
+(import doeff_agents.sessionhost.acp.host_slots [slot-name-of])
 
 (import doeff_agents.sessionhost.acp.effects [
   ACP-TOKEN-FILE-ENV
@@ -95,6 +96,7 @@
   JOIN-RECORD-SPOOL-DIR
   JOIN-SCHEMA
   JOIN-ROLE-BOTH
+  JOIN-ROLE-HOST
   JOIN-ROLES
   JOIN-SESSION-HOOKS-DEFAULT
   JOIN-SOCKET-FILE
@@ -200,6 +202,9 @@
 ;; (機体の宣言ではなく、その宿の unit / container がどちらの役で起きるかの宣言なので、1 枚の宣言 file を
 ;;  2 つの unit が読める形を保つ)。だから FLAG-KEYS には入れず、config-path-of と同じ流儀で別に読む。
 (setv FLAG-ROLE "--role")
+;; 器の区画(器の入れ替えの blue/green・host_slots)。`--role` と同じく**宣言 file の鍵ではない** — 区画は unit の
+;; 宣言(launchd の label ごとに 1 つ)で、1 枚の宣言 file を器の 2 つの unit と腕が読む形を保つ。役 host の時だけ受ける。
+(setv FLAG-HOST-SLOT "--host-slot")
 (setv FLAG-SERVER "--server")
 (setv FLAG-TOKEN-FILE "--token-file")
 (setv FLAG-NODE-NAME "--node-name")
@@ -251,6 +256,11 @@
         "control-plane node agent (it connects to the host over the socket); " "host"
         " runs only the session owner. Not a declaration-file key: one machine "
         "declaration feeds both units."))
+   #(FLAG-HOST-SLOT "<slot>"
+     (+ "Only with --role host: the slot this host keeps its store and socket in "
+        "(<state-dir>/hosts/<slot>/). Two slots let a new host start beside the old one "
+        "while the old one finishes its running turns (blue/green host swap). Default: the "
+        "state directory itself, exactly as before. Not a declaration-file key."))
    #(FLAG-SERVER "<URL>"
      (+ "Control-plane engine this node joins. Required (flag or ["
         TABLE-AGENTD "]." KEY-SERVER ")."))
@@ -349,17 +359,40 @@
   found)
 
 
+(defk host-slot-of [argv]
+  {:pre [(: argv JoinArgv)]
+   :post [(: % str)]}
+  "join の argv から器の区画(`--host-slot <slot>`)。無ければ \"\" = 根の区画(今日の置き場そのもの)。
+   区画の名の形の検めは host_slots.slot-name-of の 1 点(path に混ぜる語なので閉じた形)。役が host でない起動に
+   名乗られたら断る — 区画は器の store と socket の置き場で、腕は指し札を読む(host_slots)。"
+  (setv items argv.items)
+  (setv found "")
+  (setv index 0)
+  (while (< index (len items))
+    (when (= (get items index) FLAG-HOST-SLOT)
+      (when (>= (+ index 1) (len items))
+        (raise (ValueError f"{FLAG-HOST-SLOT} requires a value")))
+      (setv found (get items (+ index 1))))
+    (+= index 1))
+  (setv slot (slot-name-of found))
+  (<- role str (role-of argv))
+  (when (and (!= slot "") (!= role JOIN-ROLE-HOST))
+    (raise (ValueError (+ FLAG-HOST-SLOT " is only for " FLAG-ROLE " " JOIN-ROLE-HOST
+                          " (the agentd arm reads the active slot from the state directory), got role " (repr role)))))
+  slot)
+
+
 (defk flag-values-of [argv]
   {:pre [(: argv JoinArgv)]
    :post [(: % dict)]}
-  "join の argv → {表 {鍵 値}}(flag の値だけ・`--config` / `--role` は除く)。未知の flag・値の無い flag は断る。"
+  "join の argv → {表 {鍵 値}}(flag の値だけ・`--config` / `--role` / `--host-slot` は除く)。未知の flag・値の無い flag は断る。"
   (setv items argv.items)
   (setv values {TABLE-AGENTD {} TABLE-CUSTODY {} TABLE-RECORD {}})
   (setv index 0)
   (while (< index (len items))
     (setv arg (get items index))
     (cond
-      (in arg #(FLAG-CONFIG FLAG-ROLE))
+      (in arg #(FLAG-CONFIG FLAG-ROLE FLAG-HOST-SLOT))
       (do (+= index 1)
           (when (>= index (len items))
             (raise (ValueError f"{arg} requires a value"))))

@@ -35,7 +35,7 @@ from doeff_vm import PyVM, WithHandler
 from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.agentd_client import default_agentd_paths
 from doeff_agents.sessionhost import policy
-from doeff_agents.sessionhost.acp import join
+from doeff_agents.sessionhost.acp import host_slots, join
 from doeff_agents.sessionhost.acp.agentd import agentd_tick, close_jobs_for_stop, lease_heartbeat
 from doeff_agents.sessionhost.acp.effects import (
     ACP_TOKEN_FILE_ENV,
@@ -54,6 +54,8 @@ from doeff_agents.sessionhost.acp.effects import (
     DRAIN_SECONDS_ENV,
     TRANSCRIPTS_OBSERVED_MAX_ENV,
     HOMES_ROOT_ENV,
+    HOST_DB_FLAG,
+    HOST_SOCKET_FLAG,
     JOIN_DRAIN_FILE,
     JOIN_RECORD_SPOOL_DIR,
     JOIN_ROLE_AGENTD,
@@ -99,7 +101,7 @@ from doeff_agents.sessionhost.acp.handlers import (
     RecordHttp,
     RecordSpool,
     SessionEventWaker,
-    SessionRpc,
+    SessionRoutes,
     WakeQueue,
     read_secret_file,
     session_journal_poll,
@@ -909,7 +911,9 @@ def real_dispatchers(
         # 段 10 lane 10y: pod の ServiceAccount の token の file(宣言が在る時だけ・要求ごとに読む)
         (env.get(CUSTODY_SA_TOKEN_PATH_ENV) or "").strip() or None,
     )
-    sessions = SessionRpc(socket_path)
+    # 器の入れ替えの blue/green(host_slots): 器が 2 つ並ぶ間は新しい手番を指し札の器へ、古い器の session への
+    # 要求はその器へ送る。並んでいない間は起動の argv の socket 1 つへそのまま渡す(今日と同じ往復)。
+    sessions = SessionRoutes(socket_path)
     local = LocalIo()
     # 段 9f lane 9f-2: 本文の二重書き — 札は ACP と同じ名簿の agentd の札(新しい secret を持たない)。外側に置く
     # (Record* は拍に数回 — ACP / 器 / 時計の要求の手前で Pass の段を増やさない)。宛先は参加の門(9f-6)を
@@ -992,11 +996,14 @@ def start_agentd_thread(
     loop の途中で socket が消えるのは既存の backoff が吸収する — そこは変えない。"""
     settings = settings_from_env(env, host_argv)
     socket_path = host_socket_path(host_argv)
+    # 器の入れ替えの blue/green(host_slots): 出来事の journal と起動の待ちは**いま新しい手番を受ける器**の socket
+    # (指し札が無い機体は argv の socket そのもの)。journal の seq は器ごとなので、起動の拍に 1 度決める。
+    active_socket = SessionRoutes(socket_path).active_socket()
     # 段 12 lane 12b(agora-redesign #207 根 1): 拍を起こす合図の列は 1 本 — ACP の watch(SSE)と器の出来事の
     # journal(host の session.wait_events の long-poll)が同じ列に載り、tick の待ち(AcpWatchSse)の定義点は 1 つのまま。
     wakes = WakeQueue()
     dispatchers, close = real_dispatchers(env, socket_path, wakes)
-    waker = SessionEventWaker(session_journal_poll(socket_path), wakes, _stderr)
+    waker = SessionEventWaker(session_journal_poll(active_socket), wakes, _stderr)
     # card acp:kanban-issue:ki-d6cc49cbf33f 決定 D4 ③: 検めは**常に**撃つ — 門の条件は「所有を名乗ったか」
     # ではなく「特権の置き場(effects.PRIVILEGED_PLACES)を名乗ったか」で、その判定は join.ownership-verdict の
     # 1 点が持つ(ここは places と宣言を渡して答えを受けるだけ)。両欄が空でも places に company が在れば
@@ -1044,7 +1051,7 @@ def start_agentd_thread(
     heartbeat = threading.Thread(target=beat, name="sessionhost-agentd-heartbeat", daemon=True)
 
     def body() -> None:
-        if not wait_for_host_socket(socket_path, role, stop.is_set, _stderr):
+        if not wait_for_host_socket(active_socket, role, stop.is_set, _stderr):
             close_all()
             return
         _stderr(
@@ -1203,6 +1210,24 @@ def join_role(argv: Sequence[str]) -> str:
     if not isinstance(verdict, str):
         raise TypeError(f"role_of returned {type(verdict).__name__}")
     return verdict
+
+
+def join_host_slot(argv: Sequence[str], host_argv: Sequence[str]) -> list[str]:
+    """join の argv の ``--host-slot`` → 器の db と socket を区画へ移した host の argv(判断は join.host-slot-of と
+    host_slots.with-host-slot の 1 点ずつ)。名乗らない起動は host の argv をそのまま返す(今日と 1 byte も変わらない)。
+
+    ⚠ 区画も役と同じく **JoinPlan に入らない**(env にも宣言 file にも現れない): 器の 2 つの unit と腕が同じ
+    1 枚の宣言を読む。"""
+    try:
+        verdict: object = PyVM().run(join.host_slot_of(JoinArgv(items=tuple(argv))))
+    except ValueError as error:
+        raise AgentdPreflightError(f"join: {error}") from error
+    if not isinstance(verdict, str):
+        raise TypeError(f"host_slot_of returned {type(verdict).__name__}")
+    try:
+        return host_slots.with_host_slot(host_argv, verdict, HOST_DB_FLAG, HOST_SOCKET_FLAG)
+    except ValueError as error:
+        raise AgentdPreflightError(f"join: {error}") from error
 
 
 def run_agentd_only(host_argv: Sequence[str], env: Mapping[str, str]) -> None:
