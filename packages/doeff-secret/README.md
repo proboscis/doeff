@@ -34,28 +34,23 @@ def deploy_workflow():
 `doeff-secret` ships with an in-memory secret store for deterministic tests.
 
 ```python
-from doeff import WithHandler, default_handlers, run
+from doeff import run
 from doeff_secret.testing import in_memory_handlers
 
-handlers = in_memory_handlers(seed_data={"db-password": "mock-pass"})
-result = run(
-    WithHandler(handlers, deploy_workflow()),
-    handlers=default_handlers(),
-)
+handler = in_memory_handlers(seed_data={"db-password": "mock-pass"})
+result = run(handler(deploy_workflow()))
 ```
 
 ## Environment Variable Fallback
 
-Use `env_var_handler` when stacking `WithHandler` wrappers.
+Use `env_var_handler` when stacking handlers (it passes the effect outward when the
+variable is missing).
 
 ```python
-from doeff import WithHandler, default_handlers, run
+from doeff import run
 from doeff_secret.handlers import env_var_handler
 
-result = run(
-    WithHandler(env_var_handler(), deploy_workflow()),
-    handlers=default_handlers(),
-)
+result = run(env_var_handler()(deploy_workflow()))
 ```
 
 `GetSecret(secret_id="db-password")` resolves to environment key `DB_PASSWORD` by default.

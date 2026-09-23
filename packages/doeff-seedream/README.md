@@ -11,9 +11,9 @@ Helpers for invoking ByteDance's Seedream 4.0 image generation API from the [doe
 ## Quick start
 
 ```python
-import asyncio
-
-from doeff import async_run, default_handlers, do
+from doeff import do, run, with_handlers
+from doeff_core_effects.handlers import await_handler, lazy_ask, state, try_handler, writer
+from doeff_core_effects.scheduler import scheduled
 from doeff_seedream import edit_image__seedream4
 
 @do
@@ -23,16 +23,24 @@ def main():
     )
     image = result.images[0].to_pil_image()
     image.save("seedream.png")
+    return result
 
-async def run():
-    run_result = await async_run(
-        main(),
-        handlers=default_handlers(),
-        env={"seedream_api_key": "YOUR_ARK_KEY"},
+# edit_image__seedream4 performs Ask / Get / Put / Try / Tell / Await, so compose
+# the handlers for them explicitly (there is no implicit default stack).
+result = run(
+    scheduled(
+        with_handlers(
+            [
+                await_handler(),
+                lazy_ask({"seedream_api_key": "YOUR_ARK_KEY"}, strict=True),
+                try_handler,
+                state(),
+                writer,
+            ],
+            main(),
+        )
     )
-    return run_result.value  # SeedreamImageEditResult
-
-asyncio.run(run())
+)  # SeedreamImageEditResult
 ```
 
 Set `seedream_api_key` in the Reader environment (or provide a pre-configured `SeedreamClient` via `seedream_client`).
@@ -47,5 +55,5 @@ Consult [the official API docs](https://www.volcengine.com/docs/82379/1541523) f
 - `doeff_image.effects.ImageEdit`
 
 Use `seedream_image_handler` for model-routed protocol handling. It handles
-Seedream models and delegates unsupported models via `Delegate()`, so it can be
+Seedream models and passes unsupported models outward via `Pass(effect, k)`, so it can be
 stacked with other providers.
