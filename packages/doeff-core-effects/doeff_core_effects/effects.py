@@ -7,15 +7,13 @@ Handlers (reader, state, writer) handle them.
 from collections.abc import Awaitable
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-import doeff_hy as _doeff_hy  # noqa: F401  # registers Hy import hooks
 from doeff_vm import EffectBase
-
-from doeff_core_effects.http_effects import HttpError, HttpRequest, HttpResponse  # noqa: F401
 
 if TYPE_CHECKING:
     from doeff_vm import Err, Ok  # noqa: F401 - named in the string answer type of Try
 
     from doeff import Program
+    from doeff_core_effects.http_effects import HttpError, HttpRequest, HttpResponse  # noqa: F401
 
 # Answer types: each effect declares what its handler answers with (EffectBase[T]), so
 # ``x = yield from Get("k")`` is typed. Env and state values are dynamic (Any); use
@@ -160,6 +158,23 @@ class SlogEffect(EffectBase[None]):
 
 # Convenience alias
 Slog = SlogEffect
+
+_HTTP_EFFECTS = frozenset({"HttpError", "HttpRequest", "HttpResponse"})
+
+
+def __getattr__(name: str) -> object:
+    """HTTP effects are defined in Hy; load Hy only when they are asked for.
+
+    Importing them eagerly made ``import doeff`` load the Hy compiler for every
+    program (import floor +13 MiB, measured 2026-09-23).
+    """
+    if name not in _HTTP_EFFECTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from doeff_core_effects import http_effects  # a .hy module; loads Hy on first use
+
+    value = getattr(http_effects, name)
+    globals()[name] = value
+    return value
 
 
 def slog(msg: object, **kwargs: object) -> SlogEffect:

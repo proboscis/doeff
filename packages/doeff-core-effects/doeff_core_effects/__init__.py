@@ -7,13 +7,13 @@ This package provides:
 - Scheduler: Spawn, Wait, Gather, Race, Cancel, Promise, ExternalPromise, Semaphore
 """
 
+import importlib as _importlib
+
+from doeff_core_effects import _hy_submodules  # noqa: F401 - installs the lazy Hy finder first
 from doeff_core_effects.effects import (  # noqa: F401
     Ask,
     Await,
     Get,
-    HttpError,
-    HttpRequest,
-    HttpResponse,
     Listen,
     Local,
     Put,
@@ -37,10 +37,6 @@ from doeff_core_effects.handlers import (  # noqa: F401
     try_handler,
     writer,
     writer_log,
-)
-from doeff_core_effects.http_handlers import (  # noqa: F401
-    http_fixture_handler,
-    http_production_handler,
 )
 from doeff_core_effects.scheduler import (  # noqa: F401
     PRIORITY_HIGH,
@@ -68,3 +64,21 @@ from doeff_core_effects.scheduler import (  # noqa: F401
     Wait,
     scheduled,
 )
+
+# HTTP effects and handlers live in Hy and pull in httpx; load them on first use.
+_LAZY_EXPORTS = {
+    "HttpError": "doeff_core_effects.effects",
+    "HttpRequest": "doeff_core_effects.effects",
+    "HttpResponse": "doeff_core_effects.effects",
+    "http_fixture_handler": "doeff_core_effects.http_handlers",
+    "http_production_handler": "doeff_core_effects.http_handlers",
+}
+
+
+def __getattr__(name: str) -> object:
+    module_name = _LAZY_EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(_importlib.import_module(module_name), name)
+    globals()[name] = value
+    return value

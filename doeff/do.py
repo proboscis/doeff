@@ -299,6 +299,13 @@ def do(
 
             return Expand(Apply(Pure(VMCallable(thunk)), []))
 
+        # Installed as a handler, the VM calls `fn` directly and runs the generator as
+        # the handler's stream (same end state as evaluating the Expand above, without
+        # building it per effect) — doeff_vm._effect_types.handler_spec.
+        # @wraps copied fn.__dict__; a spec cached on fn (double @do) must not describe us.
+        wrapper.__dict__.pop("__doeff_handler_spec__", None)
+        wrapper.__doeff_generator_function__ = fn  # type: ignore[attr-defined]
+        wrapper.__doeff_tail_resume_lines__ = tail_resume_lines  # type: ignore[attr-defined]
         return wrapper
 
     if fn is None:

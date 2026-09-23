@@ -138,6 +138,20 @@ Key properties:
 - low-overhead tag-based dispatch in hot paths
 - effect payload fields stay opaque to VM core and are interpreted by handlers
 
+Cost of one effect (release build, Apple M-series, CPython 3.14t, 2026-09-23;
+a plain Python function call is 0.03 µs):
+
+| shape | µs per effect |
+|---|---|
+| `@do` handler answering with `Transfer` | 0.95 |
+| `@do` handler answering with `Resume` | 1.16 |
+| plain function handler returning `Resume(k, v)` (no generator) | 0.69 |
+| each typed handler skipped by its annotation | ~0.14 |
+| each handler that runs and yields `Pass` | ~0.9 |
+
+So: prefer `Transfer` when the handler is done after answering, and let the
+effect annotation skip handlers instead of an `isinstance` + `Pass` prologue.
+
 ## `run`
 
 `run(doexpr)` is the single entrypoint. It accepts one argument and returns
