@@ -773,6 +773,16 @@ CLAUDE_OAUTH_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 SESSION_TERMINAL_STATUSES: frozenset[str] = frozenset(
     {"done", "failed", "exited", "stopped", "cancelled"}
 )
+#: 生きている status(policy.hy ACTIVE-STATUSES の写し — 器の status の閉語彙は終端とこれの和ちょうど)。
+#: agentd が温かい session を読む時の絞り(SessionList.statuses)。写しの扱いは上と同じ。
+SESSION_LIVE_STATUSES: frozenset[str] = frozenset(
+    {"pending", "booting", "running", "blocked", "blocked_api"}
+)
+#: transcript の候補を探す終端の一覧の 1 頁の行数と、探す行数の天井(新しい順)。候補は会話ごとの
+#: 最新の終端 session を transcripts_observed_max 件で、ふつうは 1 頁で満ちる。天井は、帰属の無い
+#: 古い行ばかりの器でも 1 回の参加が読む量を履歴の長さに比例させないため(天井より古い会話は載せない)。
+TRANSCRIPT_SCAN_PAGE_ROWS: int = 64
+TRANSCRIPT_SCAN_ROWS_MAX: int = 1024
 #: 自分の Running の行の次の 1 手(judgment.job-step-of の閉語彙 — ADR-DOE-AGENTS-012 R7 / R10)。
 #: observe = 器が走っている(行から InFlightJob を組んで観測を続ける)/ record-end = 器が終端
 #: (記録の腕だけ: turn-record ended・result・phase Ended)/ fail-missing = 器に session が無い
@@ -3294,9 +3304,17 @@ class SessionGet(EffectBase):
 
 @dataclass(frozen=True)
 class SessionList(EffectBase):
-    """``session.list``(lifecycle で絞る)。結果 = tuple[SessionView, ...]。"""
+    """``session.list``(lifecycle で絞る)。結果 = tuple[SessionView, ...](新しい順)。
+
+    statuses = 器の status の集合で絞る(器は SQL で絞る — 終端の履歴を読まない)。None = 全 status。
+    limit / offset = 一致した行の頁(新しい順に offset 件飛ばして limit 件)。limit None = 全件。
+    2026-09-23 会社 Mac の実弾: 参加の腕が絞らずに一覧を読み、終端の履歴 6,087 行(15 MB)を毎回
+    受け取って器の読みの期限(10 秒)を越え続けた。呼び手は要る集合だけを名指す。"""
 
     lifecycle: str
+    statuses: tuple[str, ...] | None = None
+    limit: int | None = None
+    offset: int = 0
 
 
 @dataclass(frozen=True)

@@ -248,6 +248,7 @@
   JOB-STEP-TURN-END
   JobOutcome
   LIFECYCLE-MULTI-TURN
+  TRANSCRIPT-SCAN-PAGE-ROWS
   LIST-MODE-FULL
   LIST-MODE-NONE
   EPOCH-VERDICT-ADOPT
@@ -605,6 +606,9 @@
   stream-source-of
   turn-record-appended-status
   transcript-candidates-of
+  live-session-statuses
+  ended-session-statuses
+  transcript-scan-continues
   transcript-observation-of
   transcript-path-of
   turn-record-ended-status
@@ -659,7 +663,8 @@
    log して次の周期に撃ち直す — 揃えられなくても lease は書く(参加の生存を spec の書きの成否に結ばない)。"
   (<- rows tuple (AcpGet :kind NODE-KIND))
   (<- node (| AcpRow None) (node-row-named rows settings.node-name))
-  (<- views tuple (SessionList :lifecycle LIFECYCLE-MULTI-TURN))
+  ;; 温かい session は生きている status だけを読む(器が SQL で絞る — 終端の履歴は読まない)。
+  (<- views tuple (live-sessions))
   (setv next (replace state :last-heartbeat-ms now-ms))
   (if (is node None)
       (do
@@ -720,7 +725,7 @@
         (<- (retire-sessions expired f"idle past {settings.session-idle-ttl-seconds}s"))
         (setv kept (tuple (lfor view views :if (not-in view.session-id expired) view)))
         (<- observations list (session-observations-of kept))
-        (<- transcripts list (observe-transcripts settings views observations))
+        (<- transcripts list (observe-transcripts settings observations))
         ;; 段 12(agora-redesign #577): 観測の pane の半分 — この機体の pane の席が担っている会話の手番も
         ;; 同じ列に載せる(数える側は会話の担い手の路で 2 つの半分を分ける)。読めない拍は空で続ける。
         (<- panes tuple (observe-pane-seats observations state.pane-seats-note))
@@ -809,13 +814,46 @@
   "conflict")
 
 
-(defk observe-transcripts [settings views sessions]
-  {:pre [(: settings AgentdSettings) (: views tuple) (: sessions list)]
+(defk live-sessions []
+  {:pre []
+   :post [(: % tuple)]}
+  "器の温かい session のうち生きているもの(status が SESSION-LIVE-STATUSES)。器は status を SQL で絞るので、
+   終端の履歴がどれだけ積もっても読む量は生きている session の数に比例する(2026-09-23 会社 Mac の実弾: 絞らない
+   一覧が終端 6,087 行・15 MB を返し、読みの期限 10 秒を越えて参加の周期の 7 割以上が落ちていた)。"
+  (<- statuses tuple (live-session-statuses))
+  (<- views tuple (SessionList :lifecycle LIFECYCLE-MULTI-TURN :statuses statuses))
+  views)
+
+
+(defk terminal-sessions-for-transcripts [sessions limit]
+  {:pre [(: sessions list) (: limit int)]
+   :post [(: % tuple)]}
+  "transcript の候補を探す終端の session(新しい順)を頁で読む: 読んだ分で候補(judgment.transcript-candidates-of)が
+   limit 件に満ちたら止める(続けるかの判断は judgment.transcript-scan-continues の 1 点 — 頁が満ちない・
+   読んだ行が天井に達した・頁を知らない古い器が全件を返した、でも止まる)。"
+  (<- statuses tuple (ended-session-statuses))
+  (setv read [])
+  (setv offset 0)
+  (setv more True)
+  (while more
+    (<- page tuple (SessionList :lifecycle LIFECYCLE-MULTI-TURN :statuses statuses
+                                :limit TRANSCRIPT-SCAN-PAGE-ROWS :offset offset))
+    (.extend read page)
+    (setv offset (+ offset (len page)))
+    (<- found tuple (transcript-candidates-of (tuple read) sessions limit))
+    (<- more bool (transcript-scan-continues (len page) offset (len found) limit)))
+  (tuple read))
+
+
+(defk observe-transcripts [settings sessions]
+  {:pre [(: settings AgentdSettings) (: sessions list)]
    :post [(: % list)]}
   "node の observations.transcripts(段 8q・R20): 候補(judgment.transcript-candidates-of — 終端・帰属あり・
    生きた session の無い会話の最新・上限 AgentdSettings.transcripts_observed_max)のうち transcript の file が
-   この機体に在る(大きさ > 0)ものを {conversationId, sessionId, account} に写す。"
-  (<- candidates tuple (transcript-candidates-of views sessions settings.transcripts-observed-max))
+   この機体に在る(大きさ > 0)ものを {conversationId, sessionId, account} に写す。終端の session は
+   terminal-sessions-for-transcripts が要る分だけ頁で読む(履歴の全件は読まない)。"
+  (<- ended tuple (terminal-sessions-for-transcripts sessions settings.transcripts-observed-max))
+  (<- candidates tuple (transcript-candidates-of ended sessions settings.transcripts-observed-max))
   (setv out [])
   (for [view candidates]
     (<- canon str (FsCanonicalPath :path view.work-dir))
@@ -1543,7 +1581,7 @@
         ;; 段 12 lane 12j(agora-redesign #379 受入 2): 1 会話 1 温かい session — この手番の家と違う家に残る会話の温かい session を
         ;; 全部片付ける(候補 choice.retire だけでなく、行が回収された後も器に残る session を帰属で読む — 判断は
         ;; judgment.stale-conversation-sessions-of の 1 点)。残すと node の observations.sessions に 2 本載り、配置の親和が古い家を採る。
-        (<- warm tuple (SessionList :lifecycle LIFECYCLE-MULTI-TURN))
+        (<- warm tuple (live-sessions))
         (<- job-home dict (session-affinity-key-of plan))
         (<- stale tuple (stale-conversation-sessions-of warm subject job-home session-id))
         (setv stale-others (tuple (lfor sid stale :if (!= sid choice.retire) sid)))
