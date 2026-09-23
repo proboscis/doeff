@@ -1,10 +1,36 @@
 # SPEC: WithHandler Type Filtering — Annotation-Driven Effect Dispatch
 
-**Status**: DRAFT  
+**Status**: IMPLEMENTED (2026-09-23 — see "As implemented" below; the design sections that follow are the original draft)  
 **Date**: 2026-03-01  
 **Depends on**: VM-DEBT-008 (WithIntercept type filtering in Rust VM)
 
 ---
+
+## As implemented (2026-09-23)
+
+The draft below proposed a `types` field on `DoCtrl::WithHandler` and an
+isinstance walk inside handler lookup. SPEC-VM-020 later fixed the rule for
+typed handlers: "must not change perform/continue semantics — pattern-match
+after dispatch". The implementation follows that rule:
+
+- **Annotation → types** lives in one Python function,
+  `doeff_vm._effect_types.handler_effect_types(handler)` (rules in its module
+  docstring and in docs/02-core-concepts.md "Typed handlers"). It follows
+  `functools.partial`, bound methods, callable instances and `@do` wrappers, and
+  caches per underlying function.
+- **Capture**: when the Python bridge converts a `WithHandler` into
+  `DoCtrl::WithHandler`, it asks the resolver once and stores the tuple on the
+  handler's `PythonCallable` (`effect_types`). The IR is unchanged.
+- **Dispatch**: the core `Callable` trait has `accepts(&effect) -> bool`
+  (default `true`). The VM finds the handler exactly as before; if the handler
+  does not accept the effect it reperforms from the handler's parent with the
+  same continuation — the same state transition as the handler yielding `Pass`
+  first thing, but without calling Python. Both the perform path and the
+  Pass (reperform) path apply it.
+- Unresolvable annotations warn once and fall back to "every effect" (the
+  pre-existing behaviour), instead of failing the install.
+
+Tests: `tests/test_handler_effect_type_filter.py`.
 
 ## Summary
 

@@ -546,6 +546,13 @@ impl VM {
         let k = result.continuation;
         let handler_callable = result.handler_callable;
 
+        if !handler_callable.accepts(&effect) {
+            // Typed handler whose declared effect types exclude this effect:
+            // reperform from the handler's parent (current_segment already
+            // points there), as if the handler had yielded Pass first thing.
+            return self.eval_perform_with_k(effect, k, error_context);
+        }
+
         if handler_callable.is_generator_handler() {
             // Generator handler path (Python @do generators): wrap k in a
             // PyK Python object. The PyK is the single home for the chain
@@ -801,6 +808,12 @@ impl VM {
 
         // Switch to outer handler's parent
         self.current_segment = boundary_parent;
+
+        if !handler_callable.accepts(&effect) {
+            // Typed handler that does not take this effect — keep walking
+            // outward with the extended continuation (see eval_perform).
+            return self.eval_perform_with_k(effect, k, error_context);
+        }
 
         if handler_callable.is_generator_handler() {
             // Generator handler path — see eval_perform for rationale.
