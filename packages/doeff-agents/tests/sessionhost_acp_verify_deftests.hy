@@ -13,12 +13,18 @@
 ;;;   * 消えた(rc 無し・pid 死)= VerifyCommandLost / 期限超過 = CommandStop + VerifyDeadlineExceeded
 ;;;   * 取り下げ(Withdrawn)= CommandStop + Interrupted(phase は書かない)
 ;;;   * 純関数: verify-step-of の表・verify-argv-of の形・job-kind-of の既定
+;;;   * 同じ機体の verify は上限 N 本(card acp:kanban-issue:ki-9b728780cfac): 判定 verify-claim-verdict の性質(全組み合わせ)・
+;;;     09-23 の 4 本が作成時刻の古い順に 1 本ずつ起きる(鍵の順ではない)・上限 2 なら 2 本・再起動で Running の行を数える・
+;;;     置き直された行の生きている命令は引き取る(2 本目を起こさない)・判定の呼び手は受け口の 1 か所・上限は宣言の 1 点
 ;;; fake の handler で同じ program(agentd.hy)を一周させる。HTTP も subprocess も無い。
 
 (require doeff-hy.macros [deftest])
 
+(import os)
 (import dataclasses [replace])
 (import doeff [run])
+(import doeff_agents.sessionhost.acp.effects :as effects-module)
+(import doeff_agents.sessionhost.acp.join :as join)
 (import doeff_agents.sessionhost.acp.effects [
   AGENT-JOB-KIND
   AGENT-JOB-NAMESPACE
@@ -45,14 +51,21 @@
   VERIFY-STEP-LOST
   VERIFY-STEP-OBSERVE
   VERIFY-STEP-TIMED-OUT
+  VERIFY-CONCURRENCY-ENV
+  JoinArgv
+  JoinDeclaration
+  METRIC-VERIFY-CLAIM-HELD
+  METRIC-VERIFY-COMMAND-ADOPTED
+  VerifyClaimVerdict
   VerifyPlan])
 (import doeff_agents.sessionhost.acp.fake [FakeAcp FakeCustody FakeLocal FakeSessions])
 (import doeff_agents.sessionhost.acp.judgment [
   job-kind-of
   verify-argv-of
+  verify-claim-verdict
   verify-plan-of
   verify-step-of])
-(import doeff_agents.sessionhost.acp.runtime [initial-state run-tick])
+(import doeff_agents.sessionhost.acp.runtime [initial-state run-tick settings-from-env])
 
 
 (setv NODE "CA-20038667")
@@ -373,3 +386,308 @@
   (assert (in "echo $? > \"$3\"" (get argv 2)))
   ;; path は位置引数で運ぶ — 文字列に埋めない
   (assert (not-in SCRIPT (get argv 2))))
+
+
+;; ---------------------------------------------------------------------------
+;; 同じ機体の verify は上限 N 本(card acp:kanban-issue:ki-9b728780cfac・依頼 lt-A3ST0CMSHSTP2PBBBA38YVQTZD・設計
+;; agent-control-plane docs/design-checks/lt-3CXH09FC999PXC6D12RZ9EXZCG)
+;; ---------------------------------------------------------------------------
+;;
+;; 2026-09-23 08:16 の実弾の 4 本(runKey そのまま)。**鍵の順**は acp < mediagen < orch < proboscis-ema、**作成時刻(予定時刻)の順**は
+;; proboscis-ema 02:20 < acp 03:00 < mediagen 04:30 < orch 06:10 — 2 つの順を分けて置く(判定を行ごとに候補 1 本で呼ぶ形は
+;; 鍵の順で起きるので、下の振る舞いの検が「最古から 1 本だけ起こしていない」で赤になる — 設計 6.1 盲検 B・反例の実行は commit 本文)。
+
+(setv BURST #(#("land-verify-acp-29835000" "land-verify-acp" 1790103600000)
+              #("land-verify-mediagen-29835090" "land-verify-mediagen" 1790109000000)
+              #("land-verify-orch-29835190" "land-verify-orch" 1790115000000)
+              #("land-verify-proboscis-ema-29834960" "land-verify-proboscis-ema" 1790101200000)))
+(setv BURST-BY-CREATION ["land-verify-proboscis-ema-29834960" "land-verify-acp-29835000"
+                         "land-verify-mediagen-29835090" "land-verify-orch-29835190"])
+(setv BURST-SCRIPTS-BY-CREATION ["land-verify-proboscis-ema.sh" "land-verify-acp.sh" "land-verify-mediagen.sh" "land-verify-orch.sh"])
+
+
+(defn #^ AcpRow burst-row [#^ str run-key #^ str verify-id #^ int created-ms]
+  "実弾の 1 本: job の id = runKey(k8s の Job 名)・charter.jobId = script の名・created-at-ms = 予定時刻。"
+  (setv base (verify-row run-key verify-id 9000 PHASE-BOUND))
+  (setv spec (dict base.spec))
+  (setv (get spec "charter") (| (get spec "charter") {"jobId" verify-id "runKey" run-key}))
+  (replace base :spec spec :created-at-ms created-ms))
+
+
+(defn #^ None put-burst [world rows]
+  (for [[run-key verify-id created-ms] rows]
+    (.add world.local.existing-files f"{HOME}/{VERIFY-SCRIPTS-RELDIR}/{verify-id}.sh")
+    (.put-row world.acp (burst-row run-key verify-id created-ms)))
+  None)
+
+
+(defn #^ list started-scripts [world]
+  "起こした命令の script の名(argv の $1)— 起こした順。"
+  (lfor argv world.local.commands (get (.split (get argv 4) "/") -1)))
+
+
+(defn #^ list held-metrics [world]
+  (lfor m world.local.metrics :if (= (.get m "metric") METRIC-VERIFY-CLAIM-HELD) m))
+
+
+(defn #^ None re-place-as-bound [world #^ str job-id]
+  "配置(ACP Decide.lostRunner)の形: 走っていた行を Bound(attempt 2)に置き直す(sessionHandle は消える・binding は配置が書く)。"
+  (setv row (.job world job-id))
+  (setv status (dict row.status))
+  (setv (get status "phase") PHASE-BOUND)
+  (setv (get status "binding") {"node" NODE "attempt" 2 "at" 900})
+  (.pop status "sessionHandle" None)
+  (.put-row world.acp (replace row :status status :generation (+ row.generation 1)))
+  None)
+
+
+(deftest test-verify-claim-verdict-is-pure-and-orders-by-creation-time
+  ;; 性質: 候補 0〜6 本 × 走っている 0〜2 本 × 上限 1〜3 の全組み合わせで、上限を超えない・claim ∩ hold = ∅・claim ∪ hold = 候補・
+  ;; claim は (作成時刻, id) の順の先頭から。作成時刻は id の順と**逆**に置き、同時刻の対も入れる(同時刻は id の順)。
+  (for [n-candidates (range 0 7) n-running (range 0 3) limit (range 1 4)]
+    (setv in-flight (frozenset (gfor j (range n-running) f"running-{j}")))
+    (setv candidates (tuple (gfor i (range n-candidates)
+                                  (replace (verify-row f"cand-{i}" VERIFY-ID 9000 PHASE-BOUND)
+                                           :created-at-ms (* 1000 (// (- (+ n-candidates 1) i) 2))))))
+    (setv verdict (run (verify-claim-verdict in-flight candidates limit)))
+    (assert (isinstance verdict VerifyClaimVerdict))
+    (setv claim-ids (lfor row verdict.claim row.resource-id))
+    (setv hold-ids (lfor row verdict.hold row.resource-id))
+    (setv label f"候補 {n-candidates}・走行中 {n-running}・上限 {limit}")
+    (when (<= n-running limit)
+      (assert (<= (+ n-running (len claim-ids)) limit) f"{label}: 上限を超えて起こす {claim-ids}"))
+    (when (> n-running limit)
+      (assert (= claim-ids []) f"{label}: 上限を越えているのに起こす"))
+    (assert (= (& (set claim-ids) (set hold-ids)) (set)) f"{label}: claim ∩ hold ≠ ∅")
+    (assert (= (+ (len claim-ids) (len hold-ids)) n-candidates) f"{label}: 候補が増減した")
+    (assert (= (| (set claim-ids) (set hold-ids)) (sfor row candidates row.resource-id)) f"{label}: claim ∪ hold ≠ 候補")
+    (setv expected (lfor row (sorted candidates :key (fn [row] #(row.created-at-ms row.resource-id))) row.resource-id))
+    (setv room (max 0 (- limit n-running)))
+    (assert (= claim-ids (cut expected 0 room))
+            f"{label}: claim が (作成時刻, id) の順の先頭ではない: {claim-ids} ≠ {(cut expected 0 room)}")
+    (assert (= hold-ids (cut expected room None)) f"{label}: hold の順が作成時刻の順ではない")
+    ;; 純関数: 同じ入力は同じ答え・候補の並びに依らない
+    (assert (= (run (verify-claim-verdict in-flight candidates limit)) verdict))
+    (assert (= (run (verify-claim-verdict in-flight (tuple (reversed candidates)) limit)) verdict)
+            f"{label}: 候補の並びで答えが変わる")))
+
+
+(deftest test-burst-of-four-verify-rows-runs-one-at-a-time-oldest-first
+  ;; 09-23 08:16 の形: 停止の間に溜まった 4 本が同じ拍に Bound。1 拍目は**最古**(proboscis-ema — 鍵の順では最後)だけ起き、
+  ;; 他 3 本は Bound のまま・generation 不変・条件なし(hold の行には書かない)。log と計器 verify-claim-held は待たせ始めた拍に
+  ;; 1 行ずつ(次の拍は増えない)。終わらせると次に古い acp、以後 1 本ずつ。
+  (setv world (World))
+  (put-burst world BURST)
+  (setv before (dfor [run-key _ _] BURST run-key (. (.job world run-key) generation)))
+  (.tick world 0)
+  (assert (= (started-scripts world) ["land-verify-proboscis-ema.sh"]) f"最古から 1 本だけ起こしていない: {(started-scripts world)}")
+  (assert (= (get (.status world "land-verify-proboscis-ema-29834960") "phase") PHASE-RUNNING))
+  (for [run-key ["land-verify-acp-29835000" "land-verify-mediagen-29835090" "land-verify-orch-29835190"]]
+    (assert (= (get (.status world run-key) "phase") PHASE-BOUND) run-key)
+    (assert (= (. (.job world run-key) generation) (get before run-key)) f"hold の行に書いた: {run-key}")
+    (assert (= (.conditions world run-key) []) f"hold の行に条件を足した: {run-key}"))
+  (assert (= (sorted (lfor m (held-metrics world) (get m "agentJobId")))
+             ["land-verify-acp-29835000" "land-verify-mediagen-29835090" "land-verify-orch-29835190"]))
+  (assert (= (len (lfor line world.local.logs :if (in "held" line) line)) 3))
+  (assert (= world.state.held-verify-ids
+             (frozenset ["land-verify-acp-29835000" "land-verify-mediagen-29835090" "land-verify-orch-29835190"])))
+  ;; 2 拍目(まだ走っている): 起こさない・待ちの log と計器は増えない(待たせ始めた拍だけ)
+  (.tick world 1000)
+  (assert (= (len world.local.commands) 1) "走っている間に 2 本目を起こした")
+  (assert (= (len (held-metrics world)) 3) "待ちの計器を毎拍書いた")
+  (assert (= (len (lfor line world.local.logs :if (in "held" line) line)) 3) "待ちの log を毎拍書いた")
+  ;; 終わらせると次に古い acp(鍵の順では最初・作成時刻の順では 2 番目)
+  (.finish world "land-verify-proboscis-ema-29834960" 0)
+  (.tick world 1000)
+  (.tick world 1000)
+  (assert (= (started-scripts world) ["land-verify-proboscis-ema.sh" "land-verify-acp.sh"]) f"次に古い 1 本を起こしていない: {(started-scripts world)}")
+  (assert (= (get (.status world "land-verify-proboscis-ema-29834960") "phase") PHASE-ENDED))
+  (assert (= (get (.status world "land-verify-acp-29835000") "phase") PHASE-RUNNING))
+  (assert (= world.state.held-verify-ids (frozenset ["land-verify-mediagen-29835090" "land-verify-orch-29835190"])))
+  (assert (= (len (held-metrics world)) 3) "待ち続ける行に計器を書き直した")
+  ;; 全部終わるまで作成時刻の順に 1 本ずつ
+  (.finish world "land-verify-acp-29835000" 0)
+  (.tick world 1000)
+  (.tick world 1000)
+  (.finish world "land-verify-mediagen-29835090" 0)
+  (.tick world 1000)
+  (.tick world 1000)
+  (assert (= (started-scripts world) BURST-SCRIPTS-BY-CREATION) (started-scripts world))
+  (assert (= world.state.held-verify-ids (frozenset)))
+  (assert (= world.sessions.launches []) "verify の直列化が session を起こした(反例)")
+  (assert (= world.custody.borrowed []) "verify の直列化が札を借りた(反例)"))
+
+
+(deftest test-declared-verify-concurrency-two-runs-two-oldest-first
+  ;; 上限は node の宣言(AgentdSettings.verify-concurrency)の 1 値: 2 なら最古の 2 本(proboscis-ema と acp)が同じ拍に起き、
+  ;; 残り 2 本は Bound のまま。
+  (setv world (World))
+  (setv world.settings (replace world.settings :verify-concurrency 2))
+  (put-burst world BURST)
+  (.tick world 0)
+  (assert (= (started-scripts world) ["land-verify-proboscis-ema.sh" "land-verify-acp.sh"]) (started-scripts world))
+  (for [run-key ["land-verify-mediagen-29835090" "land-verify-orch-29835190"]]
+    (assert (= (get (.status world run-key) "phase") PHASE-BOUND) run-key))
+  (assert (= (len (held-metrics world)) 2))
+  (.finish world "land-verify-acp-29835000" 0)
+  (.tick world 1000)
+  (.tick world 1000)
+  (assert (= (started-scripts world) ["land-verify-proboscis-ema.sh" "land-verify-acp.sh" "land-verify-mediagen.sh"]))
+  (assert (= (len world.state.commands) 2)))
+
+
+(deftest test-restart-counts-the-running-verify-row-before-claiming
+  ;; 再起動(memory 空): 自分の Running の verify の行 1 本 + Bound 3 本 → 1 拍で CommandStart 0 回(拾い直しは claim の後に
+  ;; 走るので、行から数えないと 2 本目を起こす)。走っている 1 本が終われば作成時刻の順に 1 本ずつ。
+  (setv world (World))
+  (.put-row world.acp (verify-row "vj-1" VERIFY-ID 9000 PHASE-BOUND))
+  (.tick world 0)
+  (assert (= (len world.local.commands) 1))
+  (put-burst world (cut BURST 0 3))
+  (setv world.state (initial-state))
+  (.tick world 1000)
+  (assert (= (len world.local.commands) 1) "再起動の直後に 2 本目を起こした(Running の行を数えていない)")
+  (assert (= (lfor c world.state.commands c.job-id) ["vj-1"]) "Running の行を拾い直していない")
+  (for [[run-key _ _] (cut BURST 0 3)]
+    (assert (= (get (.status world run-key) "phase") PHASE-BOUND) run-key))
+  (assert (= (len (held-metrics world)) 3))
+  (.finish world "vj-1" 0)
+  (.tick world 1000)
+  (.tick world 1000)
+  (assert (= (started-scripts world) [f"{VERIFY-ID}.sh" "land-verify-acp.sh"]) (started-scripts world)))
+
+
+(deftest test-replaced-running-verify-is-adopted-not-started-again
+  ;; 化身の交代(設計 6.1 盲検 A): 走っている verify の process が生きたまま、配置がその行を Bound(attempt 2)に置き直し、memory の
+  ;; 無い新しい agentd が受ける → 起こし直さず Running + 手札を書いて観測を引き継ぐ(CommandStart 0 回・pid は古いもの)。
+  ;; 引き取った 1 本は走っている数に入る(同じ拍の別の Bound は Bound のまま)。
+  (setv world (World))
+  (.put-row world.acp (verify-row "vj-1" VERIFY-ID 9000 PHASE-BOUND))
+  (.tick world 0)
+  (setv pid (. (get world.state.commands 0) pid))
+  (assert (in pid world.local.alive-pids))
+  (setv world.state (initial-state))
+  (re-place-as-bound world "vj-1")
+  (put-burst world (cut BURST 0 1))
+  (.tick world 1000)
+  (assert (= (len world.local.commands) 1) "生きている命令の job に 2 本目を起こした")
+  (assert (= (get (.status world "vj-1") "phase") PHASE-RUNNING) (.status world "vj-1"))
+  (assert (= (lfor c world.state.commands c.pid) [pid]) "引き取った命令の pid が file の値ではない")
+  (setv handle (.verify-handle world "vj-1"))
+  (assert (isinstance handle dict))
+  (assert (= (get handle "jobId") VERIFY-ID))
+  (assert (= (get handle "pidPath") f"{RUNS}/vj-1.pid"))
+  (assert (= (get (.status world "vj-1") "binding") {"node" NODE "attempt" 2 "at" 900}) "binding を書き換えた(書き手は配置)")
+  (assert (= (get (.status world "land-verify-acp-29835000") "phase") PHASE-BOUND) "引き取った 1 本を数えずに別の日次を起こした")
+  (assert (any (gfor line world.local.logs (in "adopted, no second command" line))))
+  (assert (= (len (lfor m world.local.metrics :if (= (.get m "metric") METRIC-VERIFY-COMMAND-ADOPTED) m)) 1))
+  ;; 引き取った命令の結末は今日どおり(rc を result に写して Ended)、その次の拍で待っていた 1 本が起きる
+  (.finish world "vj-1" 0)
+  (.tick world 1000)
+  (assert (= (get (.status world "vj-1") "phase") PHASE-ENDED))
+  (assert (= (get (get (.status world "vj-1") "result") "rc") 0))
+  (.tick world 1000)
+  (assert (= (started-scripts world) [f"{VERIFY-ID}.sh" "land-verify-acp.sh"]))
+  ;; agentd の居ない間に**終わっていた**(rc の file が在る)置き直しの行も起こし直さず、その rc で閉じる(古い rc で 2 本目を閉じない)
+  (setv done (World))
+  (.put-row done.acp (verify-row "vj-2" VERIFY-ID 9000 PHASE-BOUND))
+  (.tick done 0)
+  (.finish done "vj-2" 3)
+  (setv done.state (initial-state))
+  (re-place-as-bound done "vj-2")
+  (.tick done 1000)
+  (assert (= (len done.local.commands) 1) "終わっていた命令の job を起こし直した")
+  (assert (= (get (.status done "vj-2") "phase") PHASE-ENDED) (.status done "vj-2"))
+  (assert (= (get (get (.status done "vj-2") "result") "rc") 3) "終わっていた命令の rc を結末に写していない")
+  (assert (= done.state.commands #()))
+  ;; pid が死んで rc も無い(消えた)置き直しの行は命令が無い — 今日どおり起こす(pid の file が在るだけでは引き取らない)
+  (setv gone (World))
+  (.put-row gone.acp (verify-row "vj-3" VERIFY-ID 9000 PHASE-BOUND))
+  (.tick gone 0)
+  (.discard gone.local.alive-pids (. (get gone.state.commands 0) pid))
+  (setv gone.state (initial-state))
+  (re-place-as-bound gone "vj-3")
+  (.tick gone 1000)
+  (assert (= (len gone.local.commands) 2) "消えた命令の job を起こし直していない")
+  (assert (= (get (.status gone "vj-3") "phase") PHASE-RUNNING)))
+
+
+(defn #^ list source-lines [#^ str name]
+  (setv acp-dir (os.path.dirname effects-module.__file__))
+  (with [f (open (os.path.join acp-dir name) :encoding "utf-8")]
+    (.splitlines (.read f))))
+
+
+(defn #^ list defk-body [#^ list lines #^ str head]
+  "(defk <head> … から次の最上位の (def… まで。"
+  (setv start (next (gfor [i line] (enumerate lines) :if (.startswith line f"(defk {head} ") i)))
+  (setv end (next (gfor [i line] (enumerate lines) :if (and (> i start) (.startswith line "(def")) i) (len lines)))
+  (cut lines start end))
+
+
+(deftest test-verify-claim-verdict-has-one-caller-and-the-arm-does-not-read-the-limit
+  ;; 構造: 判定は judgment の 1 点・呼び手は受け口の側(claim-verify-candidates)の 1 か所・受け口(receive-bound-jobs)が候補を
+  ;; そこへ渡す(verify の腕を直に呼ばない)・verify の腕(claim-verify-job)は上限を読まず判定も呼ばない・上限を読む行は全部
+  ;; claim-verify-candidates の中・verify の腕の呼び手は claim-job の 1 か所のまま(ADR-DOE-AGENTS-012 R36)。
+  (setv judgment-lines (source-lines "judgment.hy"))
+  (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk verify-claim-verdict ") line)) 1) "判定は judgment の 1 点")
+  (setv agentd-lines (source-lines "agentd.hy"))
+  (setv code-lines (lfor line agentd-lines :if (not (.startswith (.strip line) ";")) line))
+  (setv callers (lfor line code-lines :if (in "(verify-claim-verdict " line) line))
+  (assert (= (len callers) 1) f"判定の呼び手は受け口の側の 1 か所: {callers}")
+  (setv candidates-body (.join "\n" (defk-body agentd-lines "claim-verify-candidates")))
+  (assert (in "(verify-claim-verdict " candidates-body) "判定の呼び手が claim-verify-candidates ではない")
+  (setv receive-body (.join "\n" (defk-body agentd-lines "receive-bound-jobs")))
+  (assert (in "(claim-verify-candidates " receive-body) "受け口が verify の候補を判定へ渡していない")
+  (assert (not-in "(claim-verify-job " receive-body) "受け口が verify の腕を直に呼ぶ(判定を経ない経路)")
+  (setv arm-body (.join "\n" (defk-body agentd-lines "claim-verify-job")))
+  (assert (not-in "verify-concurrency" arm-body) "verify の腕が上限を読む(上限を知るのは受け口の側の 1 点)")
+  (assert (not-in "verify-claim-verdict" arm-body) "verify の腕が判定を呼ぶ(行ごとの判定 = 鍵の順で起きる形)")
+  (setv readers (lfor line code-lines :if (in "settings.verify-concurrency" line) line))
+  (assert readers "上限を読む行が無い")
+  (for [line readers]
+    (assert (in line candidates-body) f"上限を読むのは claim-verify-candidates だけ: {line}"))
+  (setv arm-callers (lfor line code-lines :if (in "(claim-verify-job " line) line))
+  (assert (= (len arm-callers) 1) f"verify の腕の呼び手は claim-job の 1 か所: {arm-callers}"))
+
+
+(deftest test-verify-concurrency-is-a-node-declaration-with-default-one
+  ;; 上限は node の宣言: 既定 1(effects.AgentdSettings の 1 点)・宣言 file の [agentd].verify_concurrency → JoinSpec → env
+  ;; DOEFF_AGENTD_VERIFY_CONCURRENCY → AgentdSettings。無し = 名乗らない(env に現れない)・1 未満と数でない値は参加 / 起動を断る。
+  (assert (= (. (AgentdSettings :node-name NODE) verify-concurrency) 1))
+  (assert (is (run (join.verify-concurrency-of None)) None))
+  (assert (is (run (join.verify-concurrency-of "  ")) None))
+  (assert (= (run (join.verify-concurrency-of "2")) 2))
+  (for [bad ["0" "-1" "two" "1.5"]]
+    (setv raised False)
+    (try
+      (run (join.verify-concurrency-of bad))
+      (except [ValueError]
+        (setv raised True)))
+    (assert raised f"1 未満・数でない宣言を断っていない: {bad !r}"))
+  (setv flags ["--server" "http://acp:8868" "--token-file" "/t/agentd.token" "--capacity" "1" "--places" "company"])
+  (setv bare (run (join.join-spec-of (JoinArgv :items (tuple flags)) (JoinDeclaration :tables {}) "/state")))
+  (assert (is bare.verify-concurrency None))
+  (assert (not-in VERIFY-CONCURRENCY-ENV (dict (. (run (join.join-plan-of bare)) env))) "既定を join が env に写した")
+  (setv declared (run (join.join-spec-of (JoinArgv :items (tuple flags))
+                                          (JoinDeclaration :tables {"schema" "doeff.agentd-join.v1" "agentd" {"verify_concurrency" "2"}})
+                                          "/state")))
+  (assert (= declared.verify-concurrency 2))
+  (assert (= (get (dict (. (run (join.join-plan-of declared)) env)) VERIFY-CONCURRENCY-ENV) "2"))
+  (setv refused-join False)
+  (try
+    (run (join.join-spec-of (JoinArgv :items (tuple flags))
+                            (JoinDeclaration :tables {"schema" "doeff.agentd-join.v1" "agentd" {"verify_concurrency" "0"}})
+                            "/state"))
+    (except [ValueError]
+      (setv refused-join True)))
+  (assert refused-join "上限 0 の宣言で参加した")
+  (setv env {"DOEFF_AGENTD_NODE_NAME" NODE "RECORD_SERVICE_URL" "http://record:8874" "DOEFF_AGENTD_CAPACITY" "1" "DOEFF_AGENTD_PLACES" "company"})
+  (assert (= (. (settings-from-env env #()) verify-concurrency) 1))
+  (assert (= (. (settings-from-env (| env {VERIFY-CONCURRENCY-ENV "3"}) #()) verify-concurrency) 3))
+  (setv refused False)
+  (try
+    (settings-from-env (| env {VERIFY-CONCURRENCY-ENV "0"}) #())
+    (except [ValueError]
+      (setv refused True)))
+  (assert refused "上限 0 の宣言で起動した"))

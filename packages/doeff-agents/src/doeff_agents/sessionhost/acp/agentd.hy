@@ -148,6 +148,9 @@
   VERIFY-STEP-OBSERVE
   VERIFY-STEP-TIMED-OUT
   VerifyPlan
+  VerifyClaimVerdict
+  METRIC-VERIFY-CLAIM-HELD
+  METRIC-VERIFY-COMMAND-ADOPTED
   AcpConversationMemories
   AcpConversationSummaries
   RecordBatch
@@ -380,6 +383,7 @@
   verify-running-status-of
   verify-started-ms-of-handle
   verify-step-of
+  verify-claim-verdict
   with-command
   withdrawn-command-rows-of
   without-command
@@ -4481,13 +4485,122 @@
   ended-count)
 
 
+;; ---------------------------------------------------------------------------
+;; 同じ機体の verify の命令の直列化(card acp:kanban-issue:ki-9b728780cfac・依頼 lt-A3ST0CMSHSTP2PBBBA38YVQTZD・設計
+;; agent-control-plane docs/design-checks/lt-3CXH09FC999PXC6D12RZ9EXZCG)
+;; ---------------------------------------------------------------------------
+;;
+;; 「同じ node で同時に走る verify は上限 N 本(AgentdSettings.verify-concurrency・既定 1)」の持ち主は**起こす側のこの 1 点**。
+;; 判断は judgment.verify-claim-verdict の純関数、呼ぶのは claim-verify-candidates の 1 か所で拍ごとに 1 回・全候補で
+;; (行ごとに呼ぶと順が行の鍵の順 = CronJob の名前の綴りで決まる — 設計 6.1 盲検 B)。verify の腕(claim-verify-job)は
+;; 上限を知らない。実弾 2026-09-23 08:16: 会社 Mac の agentd が 7 時間の停止の後に溜まった 4 本を 3 秒で全部起こし、
+;; 各 script の process 表の覗き(ai land verify --exclusive — この変更で退役)が互いを見て 4 本とも見送り = 日次が 1 本も
+;; 測られなかった。
+
+(defk verify-command-here [row plan now-ms]
+  {:pre [(: row AcpRow) (: plan VerifyPlan) (: now-ms int)]
+   :post [(: % (| InFlightCommand None))]}
+  "Bound の verify の行の命令が**この機体に既に在る**か(設計 6.2 改訂 2): pid の file(plan.pid-path)が数を持ち、その pid が
+   生きている(CommandRunning)か rc の file が既に在る(CommandExited — agentd の居ない間に終わった)なら、その命令の memory の形
+   (InFlightCommand・pid は file の値・起点はこの拍 = 期限はここから数え直す)。pid の file が無い・読めない・pid が死んで rc も無い
+   (CommandGone)= None(命令は無い — 起こしてよい)。
+   なぜ要るか: agentd が lease の猶予を超えて止まると node の行が新しい化身に替わり、配置(ACP Decide.lostRunner)は Running の
+   verify も失われた扱いで Bound(attempt 2)に置き直す。verify の process は自分の session で起きているので agentd の停止を越えて
+   走り続ける — 引き取らずに起こすと同じ job の 2 本目が走る(基準版 89b4285f で再現・設計 6.1)。rc が既に在る形も同じ理由で
+   起こし直さない(その rc が結末 — 2 本目を走らせて古い rc で閉じる形にしない)。"
+  (<- pid-text (| str None) (FsReadText :path plan.pid-path))
+  (<- pid (| int None) (pid-of-text pid-text))
+  (when (is pid None)
+    (return None))
+  (<- probe (| CommandRunning CommandExited CommandGone)
+      (CommandProbe :pid pid :pid-path plan.pid-path :rc-path plan.rc-path))
+  (when (isinstance probe CommandGone)
+    (return None))
+  (<- command InFlightCommand (in-flight-command-of row plan pid now-ms))
+  command)
+
+
+(defk adopt-verify-command [settings state row plan command]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: row AcpRow) (: plan VerifyPlan) (: command InFlightCommand)]
+   :post [(: % AgentdState)]}
+  "置き直された verify の行(Bound attempt N)で、その命令がこの機体に既に在る(verify-command-here): 起こし直さず Running +
+   sessionHandle{stream, verify} を CAS で書き、memory に置いて観測(observe-command)を引き継ぐ — CommandStart しない。
+   書けなかった拍(Conflict / Refused)は log 1 行で次の list へ(命令はこの機体で走っているので、呼び手は数には入れる)。"
+  (<- handle dict (verify-handle-of plan settings.principal command.started-ms))
+  (<- running dict (verify-running-status-of row handle))
+  (<- claimed (| Written Conflict Refused) (AcpPutStatus :row row :status running))
+  (when (not (isinstance claimed Written))
+    (<- (LogLine :text f"agentd: adoption of verify job {row.resource-id} (pid {command.pid}) did not land ({claimed}); will re-list"))
+    (return state))
+  (<- (LogLine :text (+ f"agentd: verify job {row.resource-id} ({plan.verify-id}) was re-placed while its command (pid {command.pid}) "
+                        f"is still here on node {settings.node-name} — adopted, no second command (ki-9b728780cfac)")))
+  (<- (MetricLine :fields {"metric" METRIC-VERIFY-COMMAND-ADOPTED "agentJobId" row.resource-id "jobId" plan.verify-id
+                           "runKey" plan.run-key "pid" command.pid "atMs" command.started-ms}))
+  (<- next AgentdState (with-command state command))
+  next)
+
+
+(defk claim-verify-candidates [settings state rows running candidates previously-deferred now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: rows tuple) (: running tuple) (: candidates tuple)
+         (: previously-deferred tuple) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "この拍に自分に結ばれた Bound の verify の候補(memory に無い行・行の順)を、上限 AgentdSettings.verify-concurrency の下で
+   受ける 1 点 — 判定 judgment.verify-claim-verdict の**唯一の呼び手**(拍ごとに 1 回・全候補で)。
+   (1) 資格は上限の前(設計 6.2 改訂 4): 置き場の不一致(place-mismatch)・id の綴りの外(verify-plan-of が文の答え)・script が
+       この機体に無い(FsFileExists)行は枠を使わず、この拍の claim-job がいつもの条件(PlaceMismatch / VerifyScriptMissing)で閉じる。
+   (2) この機体に既に在る自分の命令(verify-command-here)は起こし直さず引き取り(adopt-verify-command)、走っている数に入れる。
+   (3) 走っている数 = memory の verify の命令 ∪ 自分に結ばれた Running の verify の行(再起動の直後は拾い直しがこの後なので
+       行から数える)∪ 引き取った命令。
+   (4) claim は (作成時刻 created-at-ms, 行の id) の古い順に空きの本数だけ claim-job へ。hold の行には**何も書かない**(phase も
+       condition も — 行は node に Bound のまま残り、配置は live で capacity > 0 の node の未 claim の Bound を置き直さない)。
+       log と計器 verify-claim-held は待たせ始めた拍に 1 行ずつ(memory の held-verify-ids — 毎拍は書かない)。"
+  (setv current state)
+  (<- memory-ids set (in-flight-command-ids current))
+  (setv in-flight (set memory-ids))
+  (for [row running]
+    (<- running-kind str (job-kind-of row))
+    (when (= running-kind CHARTER-KIND-VERIFY)
+      (.add in-flight row.resource-id)))
+  (setv fresh [])
+  (for [row candidates]
+    (<- charter-place (| str None) (charter-place-of row))
+    (<- place-mismatched bool (place-mismatch settings.places charter-place))
+    (<- planned (| VerifyPlan str) (verify-plan-of row settings.home settings.verify-runs-dir))
+    (setv eligible (and (not place-mismatched) (isinstance planned VerifyPlan)))
+    (when eligible
+      (<- present bool (FsFileExists :path planned.script-path))
+      (setv eligible present))
+    (if (not eligible)
+        (<- current AgentdState (claim-job settings current rows row previously-deferred now-ms))
+        (do
+          (<- here (| InFlightCommand None) (verify-command-here row planned now-ms))
+          (if (is here None)
+              (.append fresh row)
+              (do
+                (.add in-flight row.resource-id)
+                (<- current AgentdState (adopt-verify-command settings current row planned here)))))))
+  (<- verdict VerifyClaimVerdict (verify-claim-verdict (frozenset in-flight) (tuple fresh) settings.verify-concurrency))
+  (for [row verdict.hold]
+    (when (not-in row.resource-id current.held-verify-ids)
+      (<- (LogLine :text (+ f"agentd: verify job {row.resource-id} held — {(len in-flight)} verify command(s) in flight on node "
+                            f"{settings.node-name} (limit {settings.verify-concurrency}); it stays Bound, nothing written (ki-9b728780cfac)")))
+      (<- (MetricLine :fields {"metric" METRIC-VERIFY-CLAIM-HELD "agentJobId" row.resource-id "inFlight" (len in-flight)
+                               "limit" settings.verify-concurrency "atMs" now-ms}))))
+  (setv current (replace current :held-verify-ids (frozenset (gfor row verdict.hold row.resource-id))))
+  (for [row verdict.claim]
+    (<- current AgentdState (claim-job settings current rows row previously-deferred now-ms)))
+  current)
+
+
 (defk receive-bound-jobs [settings state mode now-ms]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: mode str) (: now-ms int)]
    :post [(: % AgentdState)]}
   "行の cache を読み直し(mode = full | window — judgment.list-mode-for の 1 点)、自分に結ばれた
    Bound の行と自分が持つ Running の行のうち、まだ memory に無い行を行の順に受ける(Bound =
    claim・Running = 行からの拾い直し)。取り下げられた行は先に止める腕へ。claim を
-   持ち越した job(defer)は拍ごとに読み直す。"
+   持ち越した job(defer)は拍ごとに読み直す。
+   card acp:kanban-issue:ki-9b728780cfac: Bound の verify の行だけは行ごとに claim せず、この拍の全候補を
+   claim-verify-candidates(上限の判定の唯一の呼び手)へ 1 回で渡す。"
   (<- refreshed AgentdState (refresh-rows state mode))
   (setv rows refreshed.rows)
   (<- withdrawn-handled AgentdState (withdraw-jobs settings refreshed rows now-ms))
@@ -4524,9 +4637,18 @@
         (when (not-in row.resource-id known)
           (<- (LogLine :text (+ f"agentd: draining for the stop of agentd — leaving Bound job {row.resource-id} unclaimed "
                                 "(capacity 0; the scheduler places it on another node)")))))
-      (for [row bound]
-        (when (not-in row.resource-id known)
-          (<- current AgentdState (claim-job settings current rows row previously-deferred now-ms)))))
+      (do
+        ;; card acp:kanban-issue:ki-9b728780cfac: verify の Bound は同じ拍の全候補で上限の判定を 1 回通す(数える側 = 起こす側)。
+        ;; 手番と summarize の Bound は今日どおり行の順に 1 つずつ。
+        (setv verify-candidates [])
+        (for [row bound]
+          (when (not-in row.resource-id known)
+            (<- bound-kind str (job-kind-of row))
+            (if (= bound-kind CHARTER-KIND-VERIFY)
+                (.append verify-candidates row)
+                (<- current AgentdState (claim-job settings current rows row previously-deferred now-ms)))))
+        (<- current AgentdState (claim-verify-candidates settings current rows running (tuple verify-candidates)
+                                                         previously-deferred now-ms))))
   (for [row running]
     (when (not-in row.resource-id known)
       ;; 段 12 lane 12a: verify の Running は行と file から組み直す(session は無い)。
