@@ -37,6 +37,9 @@ class SemgrepSpec:
     pattern: str | None = None
     installed_rule_id: str | None = None
     config: str = ".semgrep.yaml"
+    # Directory a relative ``config`` is resolved against.  ``None`` keeps the
+    # legacy lookup: the nearest ancestor of pytest's cwd that carries ``config``.
+    config_base: str | None = None
     languages: tuple[str, ...] = ("generic",)
     message: str = "ADR Semgrep enforcement failed"
     severity: str = "ERROR"
@@ -156,6 +159,7 @@ def register_semgrep_enforcement(
     pattern: str | None = None,
     rule_id: str | None = None,
     config: str = ".semgrep.yaml",
+    declared_in: str | None = None,
     languages: list[str] | tuple[str, ...] | None = None,
     message: str = "ADR Semgrep enforcement failed",
     severity: str = "ERROR",
@@ -174,6 +178,7 @@ def register_semgrep_enforcement(
         pattern=pattern,
         installed_rule_id=rule_id,
         config=config,
+        config_base=None if declared_in is None else str(Path(declared_in).resolve().parent),
         languages=tuple(languages or ("generic",)),
         message=message,
         severity=severity,
@@ -316,7 +321,9 @@ def _assert_installed_semgrep_enforcement(semgrep: str, spec: SemgrepSpec) -> No
         raise AssertionError(f"{spec.id}: installed defsemgrep requires clean fixtures")
     if spec.installed_rule_id is None:
         raise AssertionError(f"{spec.id}: installed defsemgrep requires rule_id=")
-    config_path = _resolve_config_path(spec.config)
+    config_path = resolved_config_path(spec)
+    if not config_path.is_file():
+        raise AssertionError(f"{spec.id}: semgrep config does not exist: {config_path}")
     _ensure_installed_rule_exists(config_path, spec.installed_rule_id)
     hit_results = _run_installed_semgrep_fixture_set(
         semgrep,
@@ -476,6 +483,21 @@ def _run_semgrep(
             f"stdout:\n{proc.stdout[:2000]}\nstderr:\n{proc.stderr}"
         )
     return list(payload["results"])
+
+
+def resolved_config_path(spec: SemgrepSpec) -> Path:
+    """The Semgrep config file an installed ``defsemgrep`` reads.
+
+    ``config_base`` set (``defsemgrep … :config "x.yaml"``): a relative config is
+    taken from the declaring file's directory, so a rule file can live next to
+    the ADR that owns it.  Otherwise the legacy cwd-ancestor walk applies.
+    """
+    path = Path(spec.config)
+    if path.is_absolute():
+        return path
+    if spec.config_base is not None:
+        return (Path(spec.config_base) / path).resolve()
+    return _resolve_config_path(spec.config)
 
 
 def _resolve_config_path(config: str) -> Path:
