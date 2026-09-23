@@ -90,7 +90,12 @@
        ;; 組織 access 剥奪 / 文脈枯渇 / transport 障害)の durable latch。
        ;; api_limit_observed_at と同格の COALESCE first-write-wins 保護で、
        ;; 族名と初回観測時刻を対にして固定する。
-       "provider_failure_class" "provider_failure_observed_at"])
+       "provider_failure_class" "provider_failure_observed_at"
+       ;; ADR-DOE-AGENTS-007 R8(adopted 行 reconciler): 不在の持続の観測
+       ;; (since = streak 起点・checks = 観測回数)と後継行への紐づけ。
+       ;; 書き手は reconcile の guarded UPDATE のみ — upsert は運ばない。
+       "substrate_absent_since" "substrate_absent_checks"
+       "successor_session_id"])
 
 
 (defn make-snap [session-id #** overrides]

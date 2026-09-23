@@ -41,6 +41,7 @@
 (import doeff_agents.sessionhost.effects [
   TmuxNewSession
   TmuxHasSession
+  TmuxListSessions
   TmuxPaneCurrentCommand
   TmuxSessionPaneIds
   TmuxCapture
@@ -215,6 +216,26 @@
       (raise)))
   (get (get result "agent") "pane_id"))
 
+(deff herdr-list-sessions-io [socket-path]
+  {:pre [(: socket-path str)]
+   :post [(: % list)]}
+  "TmuxListSessions の実体: agent.list 1 RPC で全生存 agent(= pane)を
+   観測する(ADR-DOE-AGENTS-007 R8 の突合素材)。会話 ID は
+   agent_session の kind=\"id\" の value のみ採用(agmsg / ai_queue の
+   agent_sid と同一の導出 — 版ずれで別の導出を作らない)。socket 不達は
+   raise で伝播 — 呼び手(reconcile-cycle 側)が供給断として周期ごと
+   skip する。"
+  (setv result (herdr-call socket-path "agent.list" {}))
+  (lfor a (get result "agents")
+        :setv sess (.get a "agent_session")
+        {"session_name" (get a "name")
+         "pane_id" (get a "pane_id")
+         "conversation_id" (if (and (isinstance sess dict)
+                                    (= (.get sess "kind") "id")
+                                    (isinstance (.get sess "value") str))
+                               (get sess "value")
+                               None)}))
+
 (deff herdr-capture-io [socket-path pane-id lines]
   {:pre [(: socket-path str) (: pane-id str) (: lines int)]
    :post [(: % str)]}
@@ -351,6 +372,9 @@
 
   (TmuxHasSession [session-name]
     (resume (is-not (herdr-agent-pane-id-io socket-path session-name) None)))
+
+  (TmuxListSessions []
+    (resume (herdr-list-sessions-io socket-path)))
 
   (TmuxSessionPaneIds [session-name]
     ;; 宛先 pane の帰属観測(ADR-DOE-AGENTS-010 R4)。herdr は agent = pane の
