@@ -28,6 +28,7 @@
 (import doeff_agents.sessionhost.acp.effects [
   AGENT-JOB-KIND
   AGENT-JOB-NAMESPACE
+  AGENT-JOB-WORK-DIR-ENV
   AGORA-KINDS-NAMESPACE
   AcpRow
   AgentdSettings
@@ -38,6 +39,7 @@
   CONDITION-VERIFY-DEADLINE-EXCEEDED
   CONDITION-VERIFY-SCRIPT-MISSING
   CONDITION-VERIFY-START-FAILED
+  CONDITION-WORK-DIR-MISSING
   CommandExited
   CommandGone
   CommandRunning
@@ -61,8 +63,10 @@
 (import doeff_agents.sessionhost.acp.fake [FakeAcp FakeCustody FakeLocal FakeSessions])
 (import doeff_agents.sessionhost.acp.judgment [
   job-kind-of
+  plan-with-node-home
   verify-argv-of
   verify-claim-verdict
+  verify-env-of
   verify-plan-of
   verify-step-of])
 (import doeff_agents.sessionhost.acp.runtime [initial-state run-tick settings-from-env])
@@ -691,3 +695,102 @@
     (except [ValueError]
       (setv refused True)))
   (assert refused "上限 0 の宣言で起動した"))
+
+
+;; ---------------------------------------------------------------------------
+;; 測る作業場(card acp:kanban-issue:ki-0a50e47ac56d・依頼 lt-YVG7DDQ0N2M9J183B3KF8QPQX0・R36 (6))
+;; ---------------------------------------------------------------------------
+;;
+;; charter が work_dir(家からの相対 `~/repos/<区画>`)を名乗る verify は、手番と同じ作業場の門(R32 — plan-with-node-home の展開 →
+;; work-dir-step-of の段 → work-dir-ready)を通る。無ければ script を走らせず WorkDirMissing(配置は件名 × node × work_dir でこの
+;; node を外す)、在れば展開した絶対 path を env AGENT_JOB_WORK_DIR ちょうど 1 つで script に渡す。名乗らない verify は今日の形。
+;; 実弾 2026-09-24: 作業コピーの無い GCP の会社の機体に結ばれた proboscis-ema(rc 2)と mediagen(rc 1)が毎日即終了していた。
+
+(setv WORK-DIR "~/repos/mediagen")
+(setv EXPANDED-WORK-DIR f"{HOME}/repos/mediagen")
+
+
+(defn #^ AcpRow verify-row-at [#^ str job-id #^ (| str None) work-dir]
+  "work_dir を名乗る(None なら名乗らない)Bound の verify の行。"
+  (setv base (verify-row job-id VERIFY-ID 9000 PHASE-BOUND))
+  (setv spec (dict base.spec))
+  (when (is-not work-dir None)
+    (setv (get spec "charter") (| (get spec "charter") {"work_dir" work-dir})))
+  (replace base :spec spec))
+
+
+(deftest test-verify-job-whose-work-dir-is-missing-here-is-not-run
+  ;; 反例 = 作業コピーの無い機体で script を走らせる(09-24 の即終了)。無い → CommandStart 0 回・session も札も無し・
+  ;; Ended + 条件 WorkDirMissing(reason に node の名と展開した path)・無い作業場を作らない。
+  (setv world (World))
+  (.add world.local.missing-dirs EXPANDED-WORK-DIR)
+  (.put-row world.acp (verify-row-at "vj-wd-missing" WORK-DIR))
+  (.tick world 0)
+  (assert (= world.local.commands []) "作業場の無い機体で script を走らせた(反例)")
+  (assert (= world.sessions.launches []))
+  (assert (= world.custody.borrowed []))
+  (assert (in EXPANDED-WORK-DIR world.local.dir-checks) "この node の家で展開した path を読んでいない")
+  (assert (= (get (.status world "vj-wd-missing") "phase") PHASE-ENDED))
+  (setv conditions (.conditions world "vj-wd-missing"))
+  (assert (= (lfor c conditions (get c "type")) [CONDITION-WORK-DIR-MISSING])
+          f"条件が WorkDirMissing ちょうどではない: {conditions}")
+  (setv reason (get (get conditions 0) "reason"))
+  (assert (and (in NODE reason) (in EXPANDED-WORK-DIR reason)) f"reason が node と path を名指さない: {reason}")
+  (assert (not-in EXPANDED-WORK-DIR world.local.made-dirs) "無い作業場を作った(測る作業コピーを空の dir で偽装しない)")
+  (assert (= world.state.commands #()) "走らせていない命令を memory に置いた"))
+
+
+(deftest test-verify-job-whose-work-dir-is-here-gets-the-expanded-path-in-one-env
+  ;; 在る → 起こす・env は AGENT_JOB_WORK_DIR = 家で展開した絶対 path ちょうど 1 つ・argv と cwd は今日の形(path は argv に出ない)。
+  (setv world (World))
+  (.put-row world.acp (verify-row-at "vj-wd-here" WORK-DIR))
+  (.tick world 0)
+  (assert (= (len world.local.commands) 1) "作業場の在る機体で起こしていない")
+  (assert (= (get world.local.command-envs 0) {AGENT-JOB-WORK-DIR-ENV EXPANDED-WORK-DIR})
+          f"env が展開した作業場ちょうど 1 つではない: {(get world.local.command-envs 0)}")
+  (setv argv (get world.local.commands 0))
+  (assert (= (get argv 4) SCRIPT))
+  (assert (not-in EXPANDED-WORK-DIR argv) "作業場を argv に埋めた(env 1 つで渡す)")
+  (assert (= (get world.local.command-cwds 0) HOME))
+  (assert (= (get (.status world "vj-wd-here") "phase") PHASE-RUNNING))
+  (assert (= (.conditions world "vj-wd-here") [])))
+
+
+(deftest test-verify-job-without-a-work-dir-keeps-todays-shape
+  ;; 名乗らない verify(今日の charter)= 作業場を読まない・env を足さない・今日どおり起こす。
+  (setv world (World))
+  (.put-row world.acp (verify-row-at "vj-no-wd" None))
+  (.tick world 0)
+  (assert (= (len world.local.commands) 1))
+  (assert (= (get world.local.command-envs 0) {}) "名乗らない verify に env を足した")
+  (assert (= world.local.dir-checks []) f"名乗らない verify の作業場を読んだ: {world.local.dir-checks}")
+  (assert (= (get (.status world "vj-no-wd") "phase") PHASE-RUNNING)))
+
+
+(deftest test-verify-row-whose-work-dir-is-missing-does-not-take-the-slot
+  ;; 資格は上限の前(設計 6.2 改訂 4): 作業場の無い古い行は枠を使わず WorkDirMissing で閉じ、同じ拍に次の行が起きる(待たせない)。
+  (setv world (World))
+  (.add world.local.missing-dirs EXPANDED-WORK-DIR)
+  (.put-row world.acp (replace (verify-row-at "vj-old-missing" WORK-DIR) :created-at-ms 100))
+  (.put-row world.acp (replace (verify-row-at "vj-new-plain" None) :created-at-ms 200))
+  (.tick world 0)
+  (assert (= (get (.status world "vj-old-missing") "phase") PHASE-ENDED))
+  (assert (= (lfor c (.conditions world "vj-old-missing") (get c "type")) [CONDITION-WORK-DIR-MISSING]))
+  (assert (= (get (.status world "vj-new-plain") "phase") PHASE-RUNNING) "作業場の無い行が枠を使って次の行を待たせた")
+  (assert (= (len world.local.commands) 1))
+  (assert (= (held-metrics world) []) "作業場の無い行のために次の行を待たせた"))
+
+
+(deftest test-verify-plan-work-dir-is-expanded-at-the-one-point-and-carried-as-one-env
+  ;; 純関数: verify-plan-of は宣言の綴りのまま写す → plan-with-node-home(手番と同じ 1 点)が `~` だけを家で展開 → verify-env-of が
+  ;; env 1 つにする。絶対 path は触らない・名乗らない plan は env を持たない。
+  (setv planned (run (verify-plan-of (verify-row-at "vj-pure" WORK-DIR) HOME RUNS)))
+  (assert (= planned.work-dir WORK-DIR) "宣言の綴りのまま写していない(展開は plan-with-node-home の 1 点)")
+  (setv located (run (plan-with-node-home planned HOME)))
+  (assert (= located.work-dir EXPANDED-WORK-DIR))
+  (assert (= (run (verify-env-of located)) #(#(AGENT-JOB-WORK-DIR-ENV EXPANDED-WORK-DIR))))
+  (assert (= (. (run (plan-with-node-home (replace planned :work-dir "/srv/mediagen") HOME)) work-dir) "/srv/mediagen")
+          "絶対 path を書き換えた")
+  (setv bare (run (verify-plan-of (verify-row-at "vj-bare" None) HOME RUNS)))
+  (assert (is bare.work-dir None))
+  (assert (= (run (verify-env-of (run (plan-with-node-home bare HOME)))) #())))

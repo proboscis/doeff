@@ -439,6 +439,10 @@ VERIFY_SCRIPTS_RELDIR: str = "dotfiles/cron_management"
 #: 走らせ方 = sh の 1 行(judgment.verify-argv-of の 1 点)が pid を書き、script を走らせ、rc を書く — agentd が
 #: 再起動しても process は残り(自分の session)、結末は file から読める(R7: 正本は行と file)。
 VERIFY_RUNS_RELDIR: str = "verify-runs"
+#: card acp:kanban-issue:ki-0a50e47ac56d(ADR-DOE-AGENTS-012 R36 (6)): charter が work_dir(CHARTER_WORK_DIR_KEY)を名乗る verify は、
+#: 手番と同じ作業場の門(R32)を通った後、この node の家で展開した絶対 path をこの 1 つの env で script へ渡す(script は path を
+#: 書かず、受け取った値をそのまま使う)。名乗らない verify には足さない(今日の形)。verify に限らない agent-job の work_dir の展開値。
+AGENT_JOB_WORK_DIR_ENV: str = "AGENT_JOB_WORK_DIR"
 #: 段 12(card acp:kanban-issue:ki-f2747267e24d B2): 借りた錠の手元の記録(journal)の置き場 —
 #: AgentdSettings の state_dir(record spool の親)の下の 1 file。中身は {jobId: leaseId} の組ちょうどで、
 #: 借りた拍に足し返した拍に外す。読み手は**手番を閉じる腕**: 貸与の id は借りた process の memory にしか
@@ -2004,6 +2008,9 @@ class VerifyPlan:
     log_path: str
     rc_path: str
     pid_path: str
+    #: 測る作業場(charter.work_dir — 宣言の綴りのまま・judgment.plan-with-node-home がこの node の家で展開する)。None = 名乗らない
+    #: (作業場の門を歩かない今日の形)。card acp:kanban-issue:ki-0a50e47ac56d。
+    work_dir: str | None = None
 
 
 @dataclass(frozen=True)
