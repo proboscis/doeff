@@ -632,7 +632,9 @@ def drain_port(
         if drain_file is None:
             return False
         # 在否 1 点(中身は理由の 1 行 — log に出すだけで判断には使わない)。
-        present = os.path.exists(drain_file)
+        from doeff_agents.sessionhost.drain_marker import declared as _declared
+
+        present = _declared(drain_file)
         if present != marked:
             marked = present
             if present:
