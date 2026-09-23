@@ -274,7 +274,9 @@
 
 
 (deftest test-lost-command-and-exceeded-deadline-close-the-job-with-a-condition
-  ;; 消えた(rc 無し・pid 死)= VerifyCommandLost(result なし)/ 期限超過 = CommandStop + VerifyDeadlineExceeded。
+  ;; 消えた(rc 無し・pid 死)= VerifyCommandLost(結末 rc を発明しない — result は終端の cause だけ)/ 期限超過 = CommandStop +
+  ;; VerifyDeadlineExceeded。result の cause は ADR-DOE-AGENTS-012 R47(c39d033e — 全部の Ended の書きが result.cause を運ぶ・
+  ;; 命令の族は command-cause-of = failed / 先頭の条件の型)。
   (setv world (World))
   (.put-row world.acp (verify-row "vj-1" VERIFY-ID 9000 PHASE-BOUND))
   (.tick world 0)
@@ -283,7 +285,8 @@
   (.tick world 1000)
   (setv status (.status world "vj-1"))
   (assert (= (get status "phase") PHASE-ENDED))
-  (assert (not-in "result" status) "消えた命令に結末を発明した")
+  (assert (= (get status "result") {"cause" {"category" "failed" "reason" CONDITION-VERIFY-COMMAND-LOST}})
+          "消えた命令に結末を発明した(result は cause だけ)")
   (assert (= (get (get (.conditions world "vj-1") -1) "type") CONDITION-VERIFY-COMMAND-LOST))
   (assert (= world.state.commands #()))
   ;; 期限: deadlineSeconds 10・11 秒後の拍で止める

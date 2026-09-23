@@ -324,6 +324,8 @@ def _assert_launched_with_borrowed_token(world: World) -> None:
         "profile": "personal",
         "model": "claude-opus-5",
         "sessionId": "sid-1",
+        # card acp:kanban-issue:ki-90019f023e19(d9149af4): 結びの試みの回数 — 記録を続ける拍の揃え直しの単調性の物差し。
+        "attempt": 1,
         # card acp:kanban-issue:ki-4c0a0aa06b07: 引き継ぎ方の観測(温かい候補が無いので launch)。
         "reopen": {
             "mode": "launch",

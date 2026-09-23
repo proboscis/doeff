@@ -248,6 +248,7 @@ def test_commands_that_change_a_session_fail_loudly_when_agentd_unreachable(
 def test_observation_verbs_never_start_a_host(
     monkeypatch: pytest.MonkeyPatch,
     runner: CliRunner,
+    tmp_path: Path,
     command: list[str],
 ) -> None:
     """Reading reports "no observation"; it does not bring a host up.
@@ -256,7 +257,14 @@ def test_observation_verbs_never_start_a_host(
     starts a competitor split-brains the store (ADR-DOE-AGENTS-004 R10 (d)).
     The decision cannot hang off an interactive confirmation either, because
     these commands run unattended — so the default is structural.
+
+    The scene is "no host is running", so the default paths point into
+    tmp_path: on a machine whose own host listens on the XDG / ``/tmp``
+    default socket, the verbs would otherwise observe that real host.
     """
+    monkeypatch.delenv("DOEFF_AGENTD_SOCKET", raising=False)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "runtime"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
 
     def forbidden(*_args: object, **_kwargs: object) -> None:
         pytest.fail("an observation verb tried to start a host")

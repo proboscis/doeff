@@ -33,6 +33,9 @@ def _make_wrapper(deftest_fn: Any) -> Any:
 
     _wrapper.__name__ = deftest_fn.__name__
     _wrapper.__doc__ = deftest_fn.__doc__
+    # deftest の :skip-if / :marks は deftest_fn.pytestmark に乗る — 写さないと包みが印を落とし、前提の無い宿で
+    # skip されるはずの検が走って赤になる(zeus の herdr 不在で 8 本)。
+    _wrapper.__dict__["pytestmark"] = list(getattr(deftest_fn, "pytestmark", []))
     return _wrapper
 
 
