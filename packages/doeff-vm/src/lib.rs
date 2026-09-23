@@ -15,6 +15,7 @@ pub mod gc;
 pub mod python_generator_stream;
 pub mod pyvm;
 pub mod result;
+pub mod scheduler;
 pub mod typing_support;
 
 // Re-export VM core types
@@ -29,6 +30,7 @@ pub use doeff_vm_core::{
 #[pymodule]
 fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     pyvm::register_pyvm(m)?;
+    scheduler::register(m)?;
 
     /// Return (live_segments, live_continuations, live_ir_streams).
     #[pyfn(m)]

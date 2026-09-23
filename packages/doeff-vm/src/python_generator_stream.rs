@@ -720,6 +720,10 @@ fn continuation_boundaries_value(
 
 /// Wrap a handler callable as Value::Callable.
 fn wrap_handler(py: Python<'_>, handler: &Bound<'_, PyAny>) -> Result<Value, String> {
+    // A scheduler prompt (Rust handler) reinstalled from a captured stack.
+    if let Ok(prompt) = handler.downcast::<crate::scheduler::PySchedulerPrompt>() {
+        return Ok(Value::Callable(prompt.get().callable.clone()));
+    }
     let callable = PythonCallable::handler(py, handler)?;
     Ok(Value::Callable(
         std::sync::Arc::new(callable) as doeff_vm_core::value::CallableRef
@@ -1127,6 +1131,10 @@ pub fn python_to_value(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> Value {
         let callable = PythonCallable::new(inner);
         return Value::Callable(std::sync::Arc::new(callable) as doeff_vm_core::value::CallableRef);
     }
+    // Scheduler prompt → its Rust handler
+    if let Ok(prompt) = obj.downcast::<crate::scheduler::PySchedulerPrompt>() {
+        return Value::Callable(prompt.get().callable.clone());
+    }
     // PyK → Value::Continuation
     if let Ok(k) = obj.downcast::<doeff_vm_core::continuation::PyK>() {
         let mut k_borrowed = k.borrow_mut();
@@ -1174,6 +1182,10 @@ pub fn value_to_python(py: Python<'_>, value: Value) -> Bound<'_, PyAny> {
         Value::Callable(c) => {
             if let Some(pc) = c.as_any().downcast_ref::<PythonCallable>() {
                 pc.callable.bind(py).clone().into_any()
+            } else if crate::scheduler::PySchedulerPrompt::wraps(&c) {
+                Bound::new(py, crate::scheduler::PySchedulerPrompt { callable: c })
+                    .expect("allocate SchedulerPrompt")
+                    .into_any()
             } else {
                 "<callable>".into_pyobject(py).unwrap().into_any()
             }
