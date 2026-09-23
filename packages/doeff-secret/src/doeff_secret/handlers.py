@@ -5,10 +5,10 @@ import os
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from doeff import Delegate, Effect, Transfer, do
+from doeff import Effect, Pass, Transfer, do
 from doeff import handler as _program_handler
-
-from .effects import GetSecret
+from doeff.program import ProgramHandler
+from doeff_secret.effects import GetSecret
 
 ProtocolHandler = Callable[[Any, Any], Any]
 
@@ -54,7 +54,7 @@ def env_var_handler(
     environ: Mapping[str, str] | None = None,
     prefix: str = "",
     include_raw_secret_id: bool = True,
-) -> ProtocolHandler:
+) -> ProgramHandler:
     """Build a fallback handler that resolves GetSecret from environment variables.
 
     This handler delegates when the secret is not present.
@@ -69,8 +69,7 @@ def env_var_handler(
         # handler's own frame — a sub-@do that transfers would park this
         # frame forever (ADR-DOE-CORE-EFFECTS-002).
         if not isinstance(effect, GetSecret):
-            yield Delegate()
-            return None
+            return (yield Pass(effect, k))
         value = _resolve_env_secret(
             effect.secret_id,
             environ=active_environ,
@@ -78,8 +77,7 @@ def env_var_handler(
             include_raw_secret_id=include_raw_secret_id,
         )
         if value is None:
-            yield Delegate()
-            return None
+            return (yield Pass(effect, k))
         return (yield Transfer(k, value))
 
     return _program_handler(handler)
@@ -90,7 +88,7 @@ def env_var_handlers(
     environ: Mapping[str, str] | None = None,
     prefix: str = "",
     include_raw_secret_id: bool = True,
-) -> ProtocolHandler:
+) -> ProgramHandler:
     """Build strict env-var handlers that raise when the secret is missing.
 
     This variant raises ``KeyError`` when a requested secret is missing.
@@ -102,8 +100,7 @@ def env_var_handlers(
     @do
     def handler(effect: Effect, k: Any):
         if not isinstance(effect, GetSecret):
-            yield Delegate()
-            return None
+            return (yield Pass(effect, k))
         value = _resolve_env_secret(
             effect.secret_id,
             environ=active_environ,
@@ -116,9 +113,3 @@ def env_var_handlers(
 
     return _program_handler(handler)
 
-
-__all__ = [
-    "ProtocolHandler",
-    "env_var_handler",
-    "env_var_handlers",
-]

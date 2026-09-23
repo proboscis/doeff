@@ -13,8 +13,9 @@ from doeff_image.effects import ImageEdit, ImageGenerate
 from doeff_image.types import ImageResult
 from PIL import Image as PILImage
 
-from doeff import Delegate, Resume, do
+from doeff import Pass, Resume, do
 from doeff import handler as _program_handler
+from doeff.program import ProgramHandler
 from doeff_seedream.effects import SeedreamGenerate, SeedreamStructuredOutput
 from doeff_seedream.types import SeedreamImage, SeedreamImageEditResult
 
@@ -45,7 +46,7 @@ def _default_value_for_annotation(annotation: Any, field_name: str) -> Any:  # n
     return f"mock-{field_name}"
 
 
-def _color_from_digest(seed_text: str) -> tuple[int, int, int]:
+def _color_from_digest(seed_text: str) -> tuple[int, int, int]:  # noqa: DOEFF006 - PIL の色は (r, g, b) の tuple
     digest = hashlib.sha256(seed_text.encode("utf-8")).digest()
     return digest[0], digest[1], digest[2]
 
@@ -183,7 +184,7 @@ def mock_handlers(
     image_generate_responses: Mapping[str, ImageResult] | None = None,
     image_edit_responses: Mapping[str, ImageResult] | None = None,
     structured_responses: Mapping[type[Any], Any] | None = None,
-) -> ProtocolHandler:
+) -> ProgramHandler:
     """Build a deterministic mock protocol handler for Seedream domain effects."""
 
     active_handler = handler or MockSeedreamHandler(
@@ -195,7 +196,7 @@ def mock_handlers(
     )
 
     @do
-    def handler(effect: Effect, k: Any):
+    def dispatch(effect: Effect, k: Any):
         if isinstance(effect, SeedreamGenerate):
             return (yield Resume(k, active_handler.handle_generate(effect)))
         if isinstance(effect, ImageGenerate):
@@ -204,13 +205,7 @@ def mock_handlers(
             return (yield Resume(k, active_handler.handle_image_edit(effect)))
         if isinstance(effect, SeedreamStructuredOutput):
             return (yield Resume(k, active_handler.handle_structured(effect)))
-        yield Delegate()
+        return (yield Pass(effect, k))
 
-    return _program_handler(handler)
+    return _program_handler(dispatch)
 
-
-__all__ = [
-    "MockSeedreamHandler",
-    "ProtocolHandler",
-    "mock_handlers",
-]
