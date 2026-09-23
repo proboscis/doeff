@@ -296,7 +296,7 @@ elapsed("1")
 _MISTAKE_MARKER = "# ---- mistakes"
 
 
-def test_pyright_accepts_typed_code_and_catches_each_mistake(tmp_path: Path) -> None:
+def _pyright(tmp_path: Path, source: str) -> dict:
     root = Path(__file__).resolve().parents[1]
     original = json.loads((root / "pyrightconfig.json").read_text())
     config = tmp_path / "pyrightconfig.json"
@@ -305,13 +305,17 @@ def test_pyright_accepts_typed_code_and_catches_each_mistake(tmp_path: Path) -> 
         "extraPaths": [str(root), *(str(root / path) for path in original["extraPaths"])],
     }))
     sample = tmp_path / "typed_sample.py"
-    sample.write_text(_SAMPLE)
+    sample.write_text(source)
     result = subprocess.run(
         [sys.executable, "-m", "pyright", "--project", str(config),
          "--pythonpath", sys.executable, "--outputjson", str(sample)],
         cwd=root, capture_output=True, text=True, timeout=120, check=False,
     )
-    report = json.loads(result.stdout)
+    return json.loads(result.stdout)
+
+
+def test_pyright_accepts_typed_code_and_catches_each_mistake(tmp_path: Path) -> None:
+    report = _pyright(tmp_path, _SAMPLE)
     errors = [item for item in report["generalDiagnostics"] if item["severity"] == "error"]
     lines = _SAMPLE.splitlines()
     first_mistake = next(i for i, line in enumerate(lines) if line.startswith(_MISTAKE_MARKER))
@@ -335,3 +339,101 @@ def test_pyright_accepts_typed_code_and_catches_each_mistake(tmp_path: Path) -> 
 def test_packages_ship_py_typed(module: str) -> None:
     package = __import__(module)
     assert (Path(package.__file__).parent / "py.typed").is_file()
+
+
+# The lab's business code (agora-controllers controllers/worker/lab/typed_doeff/business.py)
+# rewritten against doeff's own types, with no hand-written typing layer: strict pyright is clean.
+_STRICT_SAMPLE = """\
+# pyright: strict, reportUnusedCallResult=true
+'''The agora-controllers lab business code, written with doeff's own types only.'''
+
+from collections.abc import Generator
+from dataclasses import dataclass
+from typing import Any, TypeVar
+
+from doeff import EffectBase, K, do, typed_resume
+from doeff_core_effects.effects import Ask
+from doeff_core_effects.scheduler import Gather, Spawn, Task, Wait
+
+T = TypeVar("T")
+Row = dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ReadShared(EffectBase[dict[str, Row]]):
+    prefix: str
+
+
+class WriteEffect(EffectBase[T]):
+    '''書きの effect の親。guard は注記でこれを受ける。'''
+
+
+@dataclass(frozen=True)
+class WriteShared(WriteEffect[bool]):
+    key: str
+    value: Row
+
+
+@dataclass(frozen=True)
+class SleepSeconds(EffectBase[None]):
+    seconds: float
+
+
+@do
+def summarize(conv: str) -> Generator[Ask, Any, Row]:
+    worker: str = yield from Ask("worker")
+    return {"conversation": conv, "ranOn": worker}
+
+
+@do
+def turn_runner(cycles: int) -> Generator[Ask | ReadShared | WriteShared | SleepSeconds, Any, int]:
+    ran = 0
+    for _ in range(cycles):
+        rows = yield from ReadShared("turn/")
+        for key, row in sorted(rows.items()):
+            if row.get("state") == "queued":
+                if (yield from WriteShared(key, {"state": "running"})):
+                    ran += 1
+        digest = yield from summarize("c1")
+        _ = yield from WriteShared("digest/c1", digest)
+        yield from SleepSeconds(1.0)
+    return ran
+
+
+@do
+def main() -> Generator[
+    Spawn[Any, Any] | Wait[int] | Gather[int] | Ask | ReadShared | WriteShared | SleepSeconds,
+    Any,
+    list[int],
+]:
+    tasks: list[Task[int]] = []
+    for _ in range(2):
+        tasks.append((yield from Spawn(turn_runner(2))))
+    return (yield from Gather(*tasks))
+
+
+def board(rows: dict[str, Row]):
+    @do
+    def handle(effect: ReadShared | WriteShared | SleepSeconds, k: K) -> Generator[Any, Any, Any]:
+        if isinstance(effect, ReadShared):
+            found = {key: v for key, v in rows.items() if key.startswith(effect.prefix)}
+            return (yield typed_resume(effect, k, found))
+        if isinstance(effect, WriteShared):
+            rows[effect.key] = effect.value
+            return (yield typed_resume(effect, k, True))
+        return (yield typed_resume(effect, k, None))
+
+    return handle
+
+
+@do
+def read_only_guard(effect: WriteEffect[Any], k: K) -> Generator[Any, Any, None]:
+    raise PermissionError(type(effect).__name__)
+    yield
+"""
+
+
+def test_lab_style_code_is_strict_clean_without_a_typing_layer(tmp_path: Path) -> None:
+    report = _pyright(tmp_path, _STRICT_SAMPLE)
+    problems = [d for d in report["generalDiagnostics"] if d["severity"] in {"error", "warning"}]
+    assert problems == [], problems

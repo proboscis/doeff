@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
 
 from doeff_vm import Callable as Callable
 from doeff_vm import Callable as _VmCallable
-from doeff_vm import EffectBase
+from doeff_vm import EffectBase as EffectBase
 from doeff_vm import K as K
 from doeff_vm import PyVM as PyVM
 from doeff_vm import UnhandledEffect as UnhandledEffect

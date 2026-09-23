@@ -3,11 +3,17 @@ run(doexpr) — execute a DoExpr program to completion.
 """
 
 import sys
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from doeff_vm import PyVM
 
+if TYPE_CHECKING:
+    from doeff import Program
 
-def run(doexpr):
+_T = TypeVar("_T")
+
+
+def run(doexpr: "Program[_T, Any]") -> _T:
     """Run a DoExpr program to completion and return the result.
 
     On error, enriches the exception with __doeff_traceback__ (from Python's

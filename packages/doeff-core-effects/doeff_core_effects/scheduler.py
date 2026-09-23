@@ -434,7 +434,7 @@ class ExternalPromise(Generic[_T]):
 # Scheduler
 # ---------------------------------------------------------------------------
 
-def scheduled(body_program):  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
+def scheduled(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
     """Wrap a program with the scheduler. Returns a DoExpr."""
     import heapq
     import queue as queue_mod

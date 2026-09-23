@@ -16,9 +16,11 @@ the ``state`` handler to be installed as an outer handler.
 """
 
 import threading as _threading
+from collections.abc import Mapping
+from typing import Any
 
 from doeff import do
-from doeff.program import Pass, Transfer, TransferThrow
+from doeff.program import Pass, ProgramHandler, Transfer, TransferThrow
 from doeff.program import handler as _program_handler
 from doeff_core_effects.effects import (
     Ask,
@@ -33,7 +35,7 @@ from doeff_core_effects.effects import (
 )
 
 
-def reader(env=None):
+def reader(env: Mapping[Any, Any] | None = None) -> ProgramHandler:
     """Reader handler: resolves Ask(key) from env dict.
 
     Args:
@@ -53,7 +55,7 @@ def reader(env=None):
     return _program_handler(handler)
 
 
-def state(initial=None):
+def state(initial: Mapping[Any, Any] | None = None) -> ProgramHandler:
     """State handler: resolves Get(key) and Put(key, value) from mutable dict.
 
     Args:
@@ -424,7 +426,7 @@ def _observe_await_bridge_future(future):
         )
 
 
-def await_handler():
+def await_handler() -> ProgramHandler:
     """Await handler: runs async coroutines via a background thread with asyncio.
 
     Uses ExternalPromise to bridge async into the scheduler.
@@ -510,7 +512,7 @@ def _missing_key_message(key):
     )
 
 
-def lazy_ask(env=None, *, strict=False):  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
+def lazy_ask(env: Mapping[Any, Any] | None = None, *, strict: bool = False) -> ProgramHandler:  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
     """Lazy Ask handler — replaces reader per SPEC-EFF-001.
 
     Handles Ask, Local, and lazy program evaluation. Takes env directly —
@@ -685,7 +687,7 @@ def lazy_ask(env=None, *, strict=False):  # noqa: PLR0915 - baseline cleanup kee
     return _make_handler(dict(env))
 
 
-def env_var_ask(*, prefix="DOEFF_"):
+def env_var_ask(*, prefix: str = "DOEFF_") -> ProgramHandler:
     """Ask handler backed by ``os.environ``.
 
     Contract
