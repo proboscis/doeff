@@ -8,12 +8,14 @@ test が状態を覗き、operator の代わりに行を置く(Bound の job・N
 # pyright: strict
 import hashlib
 import json
+from pathlib import Path
 from dataclasses import dataclass, replace
 from typing import assert_never
 
 from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.sessionhost.acp.cache_operation import AcpCacheOperations
 from doeff_agents.sessionhost.acp.effects import (
+    AGENTD_PRINCIPAL,
     CUSTODY_CONTRACT_VERSION,
     JSON,
     MEMORY_KIND,
@@ -134,6 +136,29 @@ from doeff_agents.sessionhost.acp.effects import (
 from doeff_agents.sessionhost.acp.io_types import AcpRows, ProfileHomes
 from doeff_agents.sessionhost.attachment import TurnAttachment
 from doeff_agents.sessionhost.drivers import DRIVER_EXECUTABLE
+
+
+#: pin された契約の写し(docs/contracts/agora-kinds.json)の kind ごとの writers.update — fake の門の材料。写しが無い置き場
+#: (repo の外へ install された package)では空 = 門なし(今日どおり)。
+#: <root>/packages/doeff-agents/src/doeff_agents/sessionhost/acp/fake.py → parents[6] = repo の root。⚠ 段の数を誤ると門が黙って
+#: 外れる(実測 2026-09-23: parents[5] で写しが見つからず 5 本が偽の緑) — 門が装着されていることは検(realignment の純関数の検)が
+#: `_SPEC_UPDATE_WRITERS` に turn-record が居ることで確かめる。
+_AGORA_KINDS_COPY = Path(__file__).resolve().parents[6] / "docs" / "contracts" / "agora-kinds.json"
+
+
+def _spec_update_writers() -> dict[str, tuple[str, ...]]:
+    if not _AGORA_KINDS_COPY.is_file():
+        return {}
+    kinds = json.loads(_AGORA_KINDS_COPY.read_text(encoding="utf-8")).get("kinds", {})
+    out: dict[str, tuple[str, ...]] = {}
+    for name, entry in kinds.items():
+        writers = entry.get("declaration", {}).get("writers")
+        if isinstance(writers, dict) and isinstance(writers.get("update"), list):
+            out[name] = tuple(str(x) for x in writers["update"])
+    return out
+
+
+_SPEC_UPDATE_WRITERS = _spec_update_writers()
 
 
 @dataclass(frozen=True)
@@ -429,6 +454,11 @@ class FakeAcp:
         existing = self.rows.get(row.key)
         if existing is None:
             return Refused(404, "no such row")
+        # card acp:kanban-issue:ki-90019f023e19: engine と同じ門 — 既存の行への spec の適用は update の動詞で、kind の宣言の
+        # writers.update に agentd が居なければ 403(Registry.WriterNotListed)。名簿は pin された契約の写しから(第 2 の語彙表は作らない)。
+        roster = _SPEC_UPDATE_WRITERS.get(row.kind)
+        if roster is not None and AGENTD_PRINCIPAL not in roster:
+            return Refused(403, f"writers: update of {row.kind} by {AGENTD_PRINCIPAL} is not listed ({roster})")
         queued = self.spec_refusals.get(row.key)
         if queued:
             return queued.pop(0)
