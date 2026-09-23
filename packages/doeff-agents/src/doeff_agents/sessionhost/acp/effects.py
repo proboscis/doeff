@@ -2129,6 +2129,60 @@ class MemoryBaseline:
 
 
 @dataclass(frozen=True)
+class MemoryHomeBaselines:
+    """置き場の基準の side car(``MEMORY.base.json``)から読んだ基準の集合 = **前回の組み直しが置き場へ渡した写し**の
+    claim check(card acp:kanban-issue:ki-554e364641e8 §10.2 B1)。
+
+    作り手は ``judgment.memory-baselines-of-text`` **ちょうど**(side car の本文から)。⚠ **行から作らない** —
+    ``memory-baseline-of-row`` は同じ ``MemoryBaseline`` を返すが、それは『行の claim check』で『渡した写しの claim check』
+    ではない。行は記録の頭の**遅れる投影**で、別の機体が頭を進めた拍には行の sha が手元の写しと違う ⇒ 行から prior を
+    作ると、席が 1 字も触っていない写しが『編集された』に見えて Hold に倒れ、次の書き戻しがその古い写しを頭に重ねる
+    (2026-09-21 の実弾: 触っていない古い写しで別の機体の版を巻き戻した)。この newtype は出自を型で分け、行から
+    prior を作るには明示の wrap が要る形にする(黙って通らない・review で見える)。
+
+    ``books`` = {name: MemoryBaseline}。書き戻し側の呼び手(``agentd.memory-baselines-of-home``)はこの dict を返して
+    今日の契約を保つ。"""
+
+    books: dict[str, MemoryBaseline]
+
+
+@dataclass(frozen=True)
+class MemoryLocalUnreadable:
+    """組み直しの拍に、作業ディレクトリに file は**在る**が digest を出せない冊(frontmatter が壊れている —
+    ``memory-book-of`` が ``MemoryMalformed`` を返した名)。『無い』とは別の語: 無いなら Hand(壊す物が無い)、
+    在るが読めないなら Hold(黙って消さない — 席が frontmatter を崩した拍の本文を上書きで消すのは、この card と
+    同じ族の消失)。母集団は書き戻し側と同じ ``memory-books-of-home`` の readings(§10.1 A3)。"""
+
+    name: str
+
+
+@dataclass(frozen=True)
+class MemoryHand:
+    """組み直しが**この冊を渡す**(書く / 掃除する)。基準はこの手番の値(渡した写しの claim check)。
+    judgment.memory-hydrate-verdict の答えの 1 つ(表 H0〜H3)。"""
+
+    name: str
+
+
+@dataclass(frozen=True)
+class MemoryHold:
+    """組み直しが**この冊に触らない**(書かない・掃除しない)。基準は前回の値を保つ = 手元だけが持つ編集を、
+    次の書き戻し(規則 3c / 3d・退役行なら 0d 復活)が届ける(card acp:kanban-issue:ki-554e364641e8 望む状態 (A))。
+
+    ``reason`` = H4 のどちらで立ったか(``edited`` = 手元の digest が前回渡した写しと違う / ``unreadable`` =
+    在るが digest 不明)。計器と log の材料で、**判断の第 2 点にしない**(呼び手は isinstance で読むだけ)。"""
+
+    name: str
+    reason: str
+
+
+#: 組み直しの 1 冊の扱い(judgment.memory-hydrate-verdict の答え)。突き合わせるのは 3 点 —
+#: 今回渡す本文の digest(head)・前回渡した写しの claim check(prior・MemoryHomeBaselines の項)・
+#: 作業ディレクトリに今ある file の digest(local)。書き戻しの 3 点比較(memory-write-verdict)の対。
+MemoryHydrateVerdict: TypeAlias = "MemoryHand | MemoryHold"
+
+
+@dataclass(frozen=True)
 class MemoryFold:
     """1 冊を畳み戻した結末(agentd.fold-one-memory の答え)。
 
@@ -2175,10 +2229,15 @@ class MemoryTurnFiles:
 
     ⚠ 2 つを 1 つの型で運ぶのは、**同じ拍・同じ書き手(器)で**置き場へ当てるため: 別の腕が掃除を
     持つと『冊は書けたが掃除は落ちた』が起き、退役した冊の file が残って次の畳み戻しが読む(控えを
-    冊と同じ列に載せたのと同じ理由 — judgment.memory-files-of の頭注)。"""
+    冊と同じ列に載せたのと同じ理由 — judgment.memory-files-of の頭注)。
+
+    ``held`` = 組み直しが**触らなかった**冊の名(judgment.memory-hydrate-verdict が MemoryHold を返した冊 —
+    card acp:kanban-issue:ki-554e364641e8)。files にも swept にも載らず、**wire にも載らない**(charter の欄は
+    足さない — §10.1 A2)。計器 ``agent-memory-hydrated`` の ``held`` と log 1 行の材料ちょうど。"""
 
     files: tuple[JSONObject, ...] = ()
     swept: tuple[str, ...] = ()
+    held: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -228,16 +228,24 @@
 (setv CLAUDE-MEMORY-FILE-SUFFIX ".md")
 
 
-(defk claude-baseline-kept [text written]
-  {:pre [(: text str) (: written list)]
+(defk claude-baseline-kept [text written declared]
+  {:pre [(: text str) (: written list) (: declared list)]
    :post [(: % str)]}
-  "畳み戻しの基準のうち、器が**現に書けた冊**の分だけを残す(純関数)。
+  "畳み戻しの基準から、**運ばれたのに書けなかった冊**の項だけを落とす(純関数)。残す条件 =
+   `名 ∈ written ∨ 名 ∉ declared`(declared = 運ばれた冊の列に載った file 名・written = 現に書けた file 名)。
 
-   ⚠ これが要るのは、下の loop が名の門で落ちた冊を黙って飛ばすから: 冊 A が飛ばされたのに基準 A が
+   ⚠ 落とす分が要るのは、下の loop が名の門で落ちた冊を黙って飛ばすから: 冊 A が飛ばされたのに基準 A が
    そのまま着くと、基準は『置き場の A は行と同じ姿』と嘘をつき、次の畳み戻しが**前の手番の古い写し**で
    行を supersede する(この便が直している壊れ方そのもの)。⇒ 基準の証拠は『用意した冊』ではなく
    『書けた冊』の側(依頼書 §5(b))。逆向き(起こす側が中身を確定して器は素通し)は同じ穴が開く —
    器が何を書けたかを起こす側は知らないから。
+
+   ⚠ 運ばれなかった名の項は**残す**(card acp:kanban-issue:ki-554e364641e8 §10.1 A2): 起こす側の judgment は
+   触らなかった冊(置き場だけが持つ編集を守った冊・本文を読めなかった冊)の項を**前回の値で据え置いて**運ぶ。
+   その項は『この手番に置き場へ書いた』の証拠ではなく『前回渡した写し』の証拠で、器はそれを検める材料
+   (行・記録・digest の式)を持たない ⇒ 検めずに残す。旧い絞り(書けた冊だけ残す)はこの据え置きを黙って壊し、
+   次の畳み戻しがその冊を 4b(基準なし・撃たない)に倒し、次の組み直しが編集を上書きしていた。
+   器が持つ判断は今日と同じ 1 つ — 自分が書けた冊か — で、それ以上は判じない。
 
    読めない基準(JSON でない・欄が無い)は**空の基準**へ倒す: 空 = 次の畳み戻しが 1 冊も撃たない
    (安全側)。"
@@ -248,11 +256,14 @@
   (setv books (if (isinstance parsed dict) (.get parsed "books") None))
   (when (not (isinstance books dict))
     (setv books {}))
-  (setv names (frozenset written))
+  (setv written-names (frozenset written))
+  (setv declared-names (frozenset declared))
   (setv kept {})
   (for [#(name entry) (.items books)]
-    (when (and (isinstance name str) (in f"{name}{CLAUDE-MEMORY-FILE-SUFFIX}" names))
-      (setv (get kept name) entry)))
+    (when (isinstance name str)
+      (setv file-name f"{name}{CLAUDE-MEMORY-FILE-SUFFIX}")
+      (when (or (in file-name written-names) (not-in file-name declared-names))
+        (setv (get kept name) entry))))
   (+ (json.dumps {"books" kept} :ensure-ascii False :sort-keys True :indent 2) "\n"))
 
 
@@ -556,10 +567,14 @@
           (do
             (<- _ (fs-write-text-atomic f"{memory-dir}/{book-name}" book-text ".agentd-tmp"))
             (.append written book-name)))))
-  ;; 畳み戻しの基準は**最後に・書けた冊へ絞って**置く(依頼書 §5(b): 席が書いた file が基準の証拠)。
+  ;; 畳み戻しの基準は**最後に・運ばれたのに書けなかった冊の項を落として**置く(依頼書 §5(b): 席が書いた
+  ;; file が基準の証拠)。運ばれなかった名の項は起こす側の据え置きなので残す(card ki-554e364641e8 §10.1 A2)。
+  (setv declared-names (lfor book declared
+                             :if (and (isinstance book dict) (isinstance (.get book "name") str))
+                             (.get book "name")))
   (setv base-written 0)
   (when (isinstance base-text str)
-    (<- kept str (claude-baseline-kept base-text written))
+    (<- kept str (claude-baseline-kept base-text written declared-names))
     (<- _ (fs-write-text-atomic f"{memory-dir}/{CLAUDE-MEMORY-BASE-FILE}" kept ".agentd-tmp"))
     (setv base-written 1))
   ;; 計器(card acp:kanban-issue:ki-a40292ed30d9 受入 3): **器が書いた数**を起動ごとに 1 行で名乗る。
