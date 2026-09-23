@@ -14,6 +14,8 @@ import os
 
 import hy.importer
 
+from doeff_hy.ast_unparse import install as _install_ast_unparse
+
 # Register .hyk and .hyp as Hy source extensions
 for _ext in (".hyk", ".hyp"):
     if _ext not in importlib.machinery.SOURCE_SUFFIXES:
@@ -29,3 +31,7 @@ def _could_be_hy_src(filename):
 
 
 hy.importer._could_be_hy_src = _could_be_hy_src
+
+# Hy の `ast.unparse` の差し替えが Python 3.14 の annotationlib と組むと止まらない再帰になる。
+# 定数の値を複製しない同じ変換へ置き換える(理由と上流の報告は doeff_hy/ast_unparse.py)。
+_install_ast_unparse()
