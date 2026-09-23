@@ -1506,6 +1506,8 @@ class AgentdSettings:
     #: state_dir(record spool の親 = join の宣言 [agentd].state_dir)の下の VERIFY_RUNS_RELDIR に据える。verify の script の
     #: 置き場は home/VERIFY_SCRIPTS_RELDIR(judgment.verify-plan-of の 1 点)。
     verify_runs_dir: str = ""
+    #: 最小実験(lt-3CXH09FC999PXC6D12RZ9EXZCG): 同じ node で同時に走らせる verify の命令の上限(node の宣言)。
+    verify_concurrency: int = 1
     #: 段 12 lane 12j(agora-redesign #233): 会話の履歴の段階つき要約の契機 = 手番の終わりに測った文脈の大きさ(token —
     #: DeltaBatch.context.tokens)がこの値を超えた(operator 2026-09-16「50 % を超えていたら(0.5M)」= 上限 1M の 50 %)。
     #: ACP agora-kinds.json conventions.stagedSummaries.triggerTokens はこの写し。0 = 契機を置かない(検体の値)。

@@ -370,3 +370,122 @@
   (assert (in "echo $? > \"$3\"" (get argv 2)))
   ;; path は位置引数で運ぶ — 文字列に埋めない
   (assert (not-in SCRIPT (get argv 2))))
+
+
+;; ---------------------------------------------------------------------------
+;; 設計段の最小実験(依頼 lt-3CXH09FC999PXC6D12RZ9EXZCG・捨て worktree・着地しない)— 基準版 89b4285f の今の振る舞いを測る
+;; ---------------------------------------------------------------------------
+
+(setv EXP-BURST #(#("land-verify-acp-29835000" "land-verify-acp" 1790103600000)
+                  #("land-verify-mediagen-29835090" "land-verify-mediagen" 1790109000000)
+                  #("land-verify-orch-29835190" "land-verify-orch" 1790115000000)
+                  #("land-verify-proboscis-ema-29834960" "land-verify-proboscis-ema" 1790101200000)))
+
+(defn #^ AcpRow exp-row [#^ str run-key #^ str verify-id #^ int created-ms]
+  (setv base (verify-row run-key verify-id 9000 PHASE-BOUND))
+  (setv spec (dict base.spec))
+  (setv (get spec "charter") (| (get spec "charter") {"jobId" verify-id "runKey" run-key}))
+  (replace base :spec spec :created-at-ms created-ms))
+
+(deftest test-exp-burst-of-four-bound-verify-rows
+  ;; 09-23 08:16 の形: 停止の間に溜まった 4 本が同じ拍に Bound。今の code は何本起こすか。
+  (setv world (World))
+  (for [[run-key verify-id created-ms] EXP-BURST]
+    (.add world.local.existing-files f"{HOME}/{VERIFY-SCRIPTS-RELDIR}/{verify-id}.sh")
+    (.put-row world.acp (exp-row run-key verify-id created-ms)))
+  (.tick world 0)
+  (print "EXP-BURST CommandStart =" (len world.local.commands)
+         "started =" (lfor argv world.local.commands (get argv 4)))
+  (assert (= (len world.local.commands) 4) "基準版の観測が想定(4 本同時)と違う"))
+
+(deftest test-exp-replaced-running-verify-starts-a-second-process
+  ;; 化身の交代の形: 走っている verify の process が生きたまま、配置がその行を置き直し(Bound attempt 2)、
+  ;; memory の無い新しい agentd が受ける。今の code は同じ job の 2 本目を起こすか。
+  (setv world (World))
+  (.put-row world.acp (verify-row "vj-1" VERIFY-ID 9000 PHASE-BOUND))
+  (.tick world 0)
+  (setv pid (. (get world.state.commands 0) pid))
+  (assert (in pid world.local.alive-pids))
+  (setv world.state (initial-state))
+  (setv row (.job world "vj-1"))
+  (setv status (dict row.status))
+  (setv (get status "phase") PHASE-BOUND)
+  (setv (get status "binding") {"node" NODE "attempt" 2 "at" 900})
+  (.pop status "sessionHandle" None)
+  (.put-row world.acp (replace row :status status))
+  (.tick world 1000)
+  (print "EXP-REPLACED CommandStart =" (len world.local.commands) "old pid alive =" (in pid world.local.alive-pids))
+  (assert (= (len world.local.commands) 2) "基準版の観測が想定(同じ job の 2 本目)と違う"))
+
+
+;; --- 直した設計のプロトタイプに対する検(proto) ---
+
+(defn #^ World exp-burst-world []
+  "09-23 の 4 本を鍵の順(acp < mediagen < orch < proboscis-ema)で置く。作成時刻は予定時刻 = 最古は proboscis-ema(鍵の順では最後)。"
+  (setv world (World))
+  (for [[run-key verify-id created-ms] EXP-BURST]
+    (.add world.local.existing-files f"{HOME}/{VERIFY-SCRIPTS-RELDIR}/{verify-id}.sh")
+    (.put-row world.acp (exp-row run-key verify-id created-ms)))
+  world)
+
+(defn #^ list exp-started [world]
+  (lfor argv world.local.commands (get (.split (get argv 4) "/") -1)))
+
+(deftest test-proto-burst-runs-one-at-a-time-oldest-first
+  (setv world (exp-burst-world))
+  (setv before (dfor [run-key _ _] EXP-BURST run-key (. (.job world run-key) generation)))
+  (.tick world 0)
+  (print "PROTO-BURST tick1 started =" (exp-started world))
+  (assert (= (exp-started world) ["land-verify-proboscis-ema.sh"]) "最古(鍵の順では最後)から 1 本だけ起こしていない")
+  (for [run-key ["land-verify-acp-29835000" "land-verify-mediagen-29835090" "land-verify-orch-29835190"]]
+    (assert (= (get (.status world run-key) "phase") PHASE-BOUND))
+    (assert (= (. (.job world run-key) generation) (get before run-key)) "hold の行に書いた"))
+  (assert (any (gfor line world.local.logs (in "held" line))))
+  (.finish world "land-verify-proboscis-ema-29834960" 0)
+  (.tick world 1000)
+  (.tick world 1000)
+  (print "PROTO-BURST after finish started =" (exp-started world))
+  (assert (= (exp-started world) ["land-verify-proboscis-ema.sh" "land-verify-acp.sh"]) "次に古い 1 本を起こしていない"))
+
+(deftest test-proto-declared-limit-two-runs-two
+  (setv world (exp-burst-world))
+  (setv world.settings (replace world.settings :verify-concurrency 2))
+  (.tick world 0)
+  (print "PROTO-LIMIT2 started =" (exp-started world))
+  (assert (= (exp-started world) ["land-verify-proboscis-ema.sh" "land-verify-acp.sh"])))
+
+(deftest test-proto-restart-counts-the-running-row
+  (setv world (World))
+  (.put-row world.acp (verify-row "vj-1" VERIFY-ID 9000 PHASE-BOUND))
+  (.tick world 0)
+  (for [[run-key verify-id created-ms] (cut EXP-BURST 0 3)]
+    (.add world.local.existing-files f"{HOME}/{VERIFY-SCRIPTS-RELDIR}/{verify-id}.sh")
+    (.put-row world.acp (exp-row run-key verify-id created-ms)))
+  (setv world.state (initial-state))
+  (.tick world 1000)
+  (print "PROTO-RESTART commands =" (len world.local.commands) "memory =" (lfor c world.state.commands c.job-id))
+  (assert (= (len world.local.commands) 1) "再起動の直後に 2 本目を起こした")
+  (assert (= (lfor c world.state.commands c.job-id) ["vj-1"])))
+
+(deftest test-proto-replaced-running-verify-is-adopted
+  (setv world (World))
+  (.put-row world.acp (verify-row "vj-1" VERIFY-ID 9000 PHASE-BOUND))
+  (.tick world 0)
+  (setv pid (. (get world.state.commands 0) pid))
+  (setv world.state (initial-state))
+  (setv row (.job world "vj-1"))
+  (setv status (dict row.status))
+  (setv (get status "phase") PHASE-BOUND)
+  (setv (get status "binding") {"node" NODE "attempt" 2 "at" 900})
+  (.pop status "sessionHandle" None)
+  (.put-row world.acp (replace row :status status))
+  (setv [run-key verify-id created-ms] (get EXP-BURST 0))
+  (.add world.local.existing-files f"{HOME}/{VERIFY-SCRIPTS-RELDIR}/{verify-id}.sh")
+  (.put-row world.acp (exp-row run-key verify-id created-ms))
+  (.tick world 1000)
+  (print "PROTO-REPLACED commands =" (len world.local.commands) "phase =" (get (.status world "vj-1") "phase")
+         "other =" (get (.status world run-key) "phase"))
+  (assert (= (len world.local.commands) 1) "生きている命令の job に 2 本目を起こした")
+  (assert (= (get (.status world "vj-1") "phase") PHASE-RUNNING))
+  (assert (= (. (get world.state.commands 0) pid) pid))
+  (assert (= (get (.status world run-key) "phase") PHASE-BOUND) "引き取った 1 本を数えずに別の日次を起こした"))
