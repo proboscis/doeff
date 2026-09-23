@@ -117,6 +117,29 @@ def test_core_effects_declare_their_answer_types() -> None:
     assert effect_result_type(Put) is None  # EffectBase[None]
 
 
+def test_scheduler_effects_run_with_yield_from() -> None:
+    from doeff_core_effects.scheduler import (
+        CompletePromise,
+        CreatePromise,
+        Gather,
+        Spawn,
+        Wait,
+        scheduled,
+    )
+
+    @do
+    def parent():
+        task = yield from Spawn(elapsed(400))
+        value = yield from Wait(task)
+        values = yield from Gather(task, task)
+        promise = yield from CreatePromise[str]()
+        yield from CompletePromise(promise, "done")
+        text = yield from Wait(promise.future)
+        return value, values, text
+
+    assert run(scheduled(with_handlers([board], parent()))) == (600, [600, 600], "done")
+
+
 def test_generic_effect_classes_are_subscriptable_at_runtime() -> None:
     assert EffectBase[int].__origin__ is EffectBase
     assert Expand[int, ReadClock].__args__ == (int, ReadClock)
@@ -162,6 +185,7 @@ from typing import Any, TypeVar, assert_type
 from doeff import EffectBase, Expand, Program, K, Pure, do, typed_resume
 from doeff_core_effects.effects import Ask, Get, Put, Try
 from doeff_vm import Ok, Err
+from doeff_core_effects.scheduler import CreatePromise, Gather, Promise, Spawn, Task, Wait
 
 T = TypeVar("T")
 
@@ -214,6 +238,19 @@ assert_type(job(), Expand[str, ReadClock | WriteShared | Ask | Get | Put | Try[i
 program: Program[str] = job()
 
 
+@do
+def parent() -> Generator[Spawn[Any, Any] | ReadClock | Wait[int] | Gather[int] | CreatePromise[str], Any, int]:
+    task = yield from Spawn(elapsed(1))
+    assert_type(task, Task[int])
+    value = yield from Wait(task)
+    assert_type(value, int)
+    values = yield from Gather(task, task)
+    assert_type(values, list[int])
+    promise = yield from CreatePromise[str]()
+    assert_type(promise, Promise[str])
+    return value
+
+
 def clock(effect: ReadClock, k: K) -> Generator[Any, Any, None]:
     yield typed_resume(effect, k, 1000)
 
@@ -241,6 +278,16 @@ def wrong_program_result() -> Generator[ReadClock, Any, None]:
 
 def wrong_handler_answer(effect: ReadClock, k: K) -> Generator[Any, Any, None]:
     yield typed_resume(effect, k, "now")
+
+
+@do
+def spawn_without_child_effects() -> Generator[Spawn[Any, Any], Any, None]:
+    yield from Spawn(elapsed(1))
+
+
+@do
+def wrong_wait_result(task: Task[int]) -> Generator[Wait[int], Any, None]:
+    text: str = yield from Wait(task)
 
 
 elapsed("1")
@@ -278,6 +325,8 @@ def test_pyright_accepts_typed_code_and_catches_each_mistake(tmp_path: Path) -> 
         "label: str = yield from elapsed(1)",
         'yield typed_resume(effect, k, "now")',
         'elapsed("1")',
+        "yield from Spawn(elapsed(1))",
+        "text: str = yield from Wait(task)",
     }
     assert flagged == expected, (flagged ^ expected, errors)
 

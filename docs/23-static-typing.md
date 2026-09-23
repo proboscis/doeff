@@ -59,6 +59,18 @@ To also catch a forgotten `yield from` on an effect whose value is not used
 (`SleepSeconds(1.0)` as a bare statement), enable `reportUnusedCallResult` in
 the business-code files.
 
+## Scheduler effects
+
+| effect | answer |
+|---|---|
+| `Spawn(p)` with `p: Program[T, E]` | `Task[T]`; `yield from Spawn(p)` also adds `E` to the caller's effects (the task runs under the caller's handlers) |
+| `Wait(task_or_future)` / `Race(*...)` | `T` |
+| `Gather(*tasks)` | `list[T]` |
+| `CreatePromise[T]()` | `Promise[T]` (`.future: Future[T]`) |
+| `CompletePromise(promise, value)` | `None`, `value` checked against `T` |
+| `Cancel`, `AcquireSemaphore`, `ReleaseSemaphore`, `FailPromise` | `None` |
+| `CreateSemaphore(n)` | `Semaphore` |
+
 ## Handler answers
 
 ```python
