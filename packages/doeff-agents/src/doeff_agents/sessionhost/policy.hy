@@ -419,7 +419,14 @@
                    :kind CARRIED-SOURCE-DIR-LINK
                    :home-name "skills"
                    :label "seat-skills"
-                   :absent-word "seat-skills-dir-absent")))
+                   :absent-word "seat-skills-dir-absent")
+    ;; 試作(設計検証 C1・lt-HAB5HD90W8K6H3BJBSX6MQ288C): subagent 定義 = 3 行目。
+    (CarriedSource :key "claude_agents_dir"
+                   :env "DOEFF_AGENTD_CLAUDE_AGENTS_DIR"
+                   :kind CARRIED-SOURCE-DIR-LINK
+                   :home-name "agents"
+                   :label "seat-agents"
+                   :absent-word "seat-agents-dir-absent")))
 
 
 ;: 起動の拍に読んだ物を器へ渡す params の欄(launch.hy → impls/claude_code.hy)。値は
