@@ -3,7 +3,7 @@
 # Centralized commands for development, testing, and linting.
 
 .PHONY: help install sync lint lint-ruff lint-pyright lint-semgrep lint-semgrep-docs lint-doeff lint-packages \
-        test test-unit test-e2e test-packages test-all test-spec-audit-sa002 bench-smoke format check check-repo-hygiene \
+        test test-unit test-e2e test-packages test-rust test-all test-spec-audit-sa002 bench-smoke format check check-repo-hygiene \
         pre-commit-install hooks-install clean install-opencode-spec-gap-tdd
 
 # Default target
@@ -31,7 +31,8 @@ help:
 	@echo "  make test-unit         Run unit tests only (exclude e2e)"
 	@echo "  make test-e2e          Run e2e tests only"
 	@echo "  make test-packages     Run tests in all subpackages"
-	@echo "  make test-all          Run ALL tests (core + packages)"
+	@echo "  make test-rust         Run cargo test in every Rust crate"
+	@echo "  make test-all          Run ALL tests (core + packages + Rust crates)"
 	@echo "  make test-spec-audit-sa002 Run SA-002 pytest + semgrep checks"
 	@echo "  make bench-smoke       Run benchmark smoke checks without performance gating"
 	@echo ""
@@ -168,8 +169,34 @@ test-packages:
 		fi; \
 	done
 
-# Run ALL tests: core + all subpackages
-test-all: test test-packages
+# Run cargo test in every Rust crate under packages/ (first red does not hide the rest — every crate
+# runs, the target fails at the end if any crate failed). doeff-vm / doeff-vm-core embed CPython in
+# their tests (pyo3 dev-dependency feature auto-initialize), so the test binary links libpython of the
+# uv environment: PYO3_PYTHON names that interpreter and the loader path names its LIBDIR (the uv
+# python is not installed system-wide — without it the binaries die with "libpython3.14t.so: cannot
+# open shared object file", 2026-09-24 zeus). doeff-vm-core additionally runs its invariant-checks
+# conformance oracle (test-vm-invariants) because dev builds always enable it (ADR-DOE-ENFORCE-001 R4).
+RUST_TEST_PYTHON = $$(uv run --no-sync python -c 'import sys; print(sys.executable)')
+RUST_TEST_LIBDIR = $$(uv run --no-sync python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')
+test-rust:
+	@py="$(RUST_TEST_PYTHON)"; libdir="$(RUST_TEST_LIBDIR)"; failed=""; \
+	for manifest in packages/*/Cargo.toml; do \
+		dir=$$(dirname "$$manifest"); \
+		echo ""; \
+		echo "=== cargo test $$(basename $$dir) ==="; \
+		(cd "$$dir" && PYO3_PYTHON="$$py" LD_LIBRARY_PATH="$$libdir$${LD_LIBRARY_PATH:+:$$LD_LIBRARY_PATH}" \
+			DYLD_FALLBACK_LIBRARY_PATH="$$libdir$${DYLD_FALLBACK_LIBRARY_PATH:+:$$DYLD_FALLBACK_LIBRARY_PATH}" \
+			cargo test) || failed="$$failed $$(basename $$dir)"; \
+	done; \
+	echo ""; \
+	echo "=== cargo test doeff-vm-core --features invariant-checks python_bridge ==="; \
+	(cd packages/doeff-vm-core && PYO3_PYTHON="$$py" LD_LIBRARY_PATH="$$libdir$${LD_LIBRARY_PATH:+:$$LD_LIBRARY_PATH}" \
+		DYLD_FALLBACK_LIBRARY_PATH="$$libdir$${DYLD_FALLBACK_LIBRARY_PATH:+:$$DYLD_FALLBACK_LIBRARY_PATH}" \
+		cargo test --features "invariant-checks python_bridge") || failed="$$failed doeff-vm-core[invariant-checks]"; \
+	if [ -n "$$failed" ]; then echo "cargo test failed:$$failed"; exit 1; fi
+
+# Run ALL tests: core + all subpackages + Rust crates
+test-all: test test-packages test-rust
 	@echo ""
 	@echo "All tests passed!"
 
