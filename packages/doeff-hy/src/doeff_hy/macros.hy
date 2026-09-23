@@ -487,10 +487,10 @@ defk {name}: :post type annotation cannot be an empty string.
    補助は `_install-guard-globals` が関数の globals へも入れる(class の本体で展開した
    defk の method からも見えるように)ので、import は pyright のための宣言を兼ねる
    (型は macros.pyi)。
-   型検査のための展開(`_static-view?`)では、加えて型付きの `do` と `_doeff_bound` を doeff_hy.static_types から取る(`_doeff_do` を上書きする)。"
+   型検査のための展開(`_static-view?`)では、加えて型付きの `do` と `_doeff_perform` を doeff_hy.static_types から取る(`_doeff_do` を上書きする)。"
   (if (_static-view?)
       `(do
-         (import doeff-hy.static-types [do :as _doeff_do _doeff-bound])
+         (import doeff-hy.static-types [do :as _doeff_do _doeff-perform])
          (import doeff-hy.macros [_install-guard-globals _guard-performed
                                   _guard-statement-value _doeff-check-program-return]))
       `(do
@@ -893,15 +893,18 @@ defk {name}: {{:post [...]}} is required.
      (<- name Type expr) → (do (setv name (yield expr))
                                (assert (isinstance name Type) \"expected Type, got <actual>\"))"
   (cond
-    ;; 型検査のための展開(doeff_hy/static_view.py): x の型 = expr の戻り値の型
-    ;; (`_doeff_bound` の宣言は static_types.pyi)。`(<- x T e)` は x に T を注記するので、
-    ;; e の戻り値の型が T に入らなければ pyright が赤にする。yield は残す(関数が生成器の
-    ;; ままであるため)。実行時の展開はこの枝を通らない。
+    ;; 型検査のための展開(doeff_hy/static_view.py): x の型 = expr の答えの型。
+    ;; Python の `@effectful` の `x = perform(e)`(docs/24-effectful-perform.md)と同じ形で、
+    ;; `_doeff_perform` の宣言は static_types.pyi。`(<- x T e)` は x に T を注記するので、
+    ;; e の答えの型が T に入らなければ pyright が赤にする。e は 1 回だけ現れる。
+    ;; yield は出さない(型は yield に頼らない — 2026-09-23 に agora-controllers の
+    ;; controllers/worker で yield を残した形と赤が同じ 57 件であることを確かめた)。
+    ;; 実行時の展開はこの枝を通らない(実行時の `(yield e)` は @effectful の書き換えの結果と同じ)。
     (_static-view?)
       ;; import を形の中に持つ(defhandler の節・利用者の defn など、`_helper-imports` を
       ;; 出さない所の `<-` でも名前が解けるように。静的な展開は実行しないので費用は無い)。
-      (let [bound `(do (import doeff-hy.static-types [_doeff-bound])
-                       (_doeff-bound ~expr (yield ~expr)))
+      (let [bound `(do (import doeff-hy.static-types [_doeff-perform])
+                       (_doeff-perform ~expr))
             source (when (is-not tp None) (_type-source tp))]
         (cond
           (is name None) bound

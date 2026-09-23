@@ -276,39 +276,50 @@ def do(
     """
 
     def decorate(fn: Callable[P, Generator[Any, Any, Any]]) -> Callable[P, Expand]:
-        tail_resume_lines = _analyze_resume_yields(fn, non_tail=non_tail)
-
-        from doeff_vm import Callable as VMCallable
-        from doeff_vm import IRStream
-
-        def _make_stream(result):
-            if inspect.isgenerator(result):
-                return IRStream(result, tail_resume_lines)
-
-            def value_gen():
-                if False:
-                    yield
-                return result
-
-            return IRStream(value_gen())
-
-        @wraps(fn)
-        def wrapper(*args: P.args, **kwargs: P.kwargs) -> Expand:
-            def thunk():
-                return _make_stream(fn(*args, **kwargs))
-
-            return Expand(Apply(Pure(VMCallable(thunk)), []))
-
-        # Installed as a handler, the VM calls `fn` directly and runs the generator as
-        # the handler's stream (same end state as evaluating the Expand above, without
-        # building it per effect) — doeff_vm._effect_types.handler_spec.
-        # @wraps copied fn.__dict__; a spec cached on fn (double @do) must not describe us.
-        wrapper.__dict__.pop("__doeff_handler_spec__", None)
-        wrapper.__doeff_generator_function__ = fn  # type: ignore[attr-defined]
-        wrapper.__doeff_tail_resume_lines__ = tail_resume_lines  # type: ignore[attr-defined]
-        return wrapper
+        return program_factory(fn, _analyze_resume_yields(fn, non_tail=non_tail))
 
     if fn is None:
         return decorate
 
     return decorate(fn)
+
+
+def program_factory(
+    fn: Callable[P, Any],
+    tail_resume_lines: tuple[int, ...],  # noqa: DOEFF006 - immutable line-number set for IRStream
+) -> Callable[P, Expand]:
+    """The runtime shape shared by ``@do`` and ``@effectful``.
+
+    Calling the result builds ``Expand(Apply(Pure(Callable(thunk)), []))``; the VM calls
+    the thunk, which calls ``fn`` and runs the generator it returns (a non-generator
+    result becomes the program's value).
+    """
+    from doeff_vm import Callable as VMCallable
+    from doeff_vm import IRStream
+
+    def _make_stream(result):
+        if inspect.isgenerator(result):
+            return IRStream(result, tail_resume_lines)
+
+        def value_gen():
+            if False:
+                yield
+            return result
+
+        return IRStream(value_gen())
+
+    @wraps(fn)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> Expand:
+        def thunk():
+            return _make_stream(fn(*args, **kwargs))
+
+        return Expand(Apply(Pure(VMCallable(thunk)), []))
+
+    # Installed as a handler, the VM calls `fn` directly and runs the generator as
+    # the handler's stream (same end state as evaluating the Expand above, without
+    # building it per effect) — doeff_vm._effect_types.handler_spec.
+    # @wraps copied fn.__dict__; a spec cached on fn (double @do) must not describe us.
+    wrapper.__dict__.pop("__doeff_handler_spec__", None)
+    wrapper.__doeff_generator_function__ = fn  # type: ignore[attr-defined]
+    wrapper.__doeff_tail_resume_lines__ = tail_resume_lines  # type: ignore[attr-defined]
+    return wrapper
