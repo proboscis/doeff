@@ -64,7 +64,7 @@ def log_handler(effect: Effect, k: Any):
         )
         return (yield Resume(k, False))
 
-    yield Pass()
+    return (yield Pass(effect, k))
 
 
 __all__ = ["log_handler"]
