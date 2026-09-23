@@ -808,8 +808,10 @@
           (counterexample "手番の外で動く process を monitor の拍(1 s)で見つけて殺す形(手番の外の tool_use を観測して止める): 手番の終わりから拍までの隙間に tool が撃たれ、止めた時には副作用が済んでいる。境界の所有者を正す(result の行で閉じる)のであって、逸脱を後から刈るのではない")
           (counterexample "job の phase を process の exit まで Running に保つ形(process が生きている間は手番が続いていると扱う): Monitor の上限(最大 1 時間)の間、会話が新しい郵便を受けられない。手番の終わりは host が読む result の行ちょうど")
           (counterexample "EOF を出すだけで梯子を持たない形: EOF で降りない CLI(background の子を待つ版・pipe を読まない版)が居座り、次の手番の spawn が『同じ名の生きた process』で断られる。EOF の猶予の後に SIGTERM → SIGKILL(器が守る・登記簿は梯子の途中の process を付き添い終えてから置き換える)")
-          (counterexample "手番の本文の後に stdin を閉じる形(段 8 lane 4x より前の 1 手番 1 process): 手番の途中の注入(R21)が書けない。閉じるのは手番の本文の後ではなく result の行(Dialogue の _end)")]
+          (counterexample "手番の本文の後に stdin を閉じる形(段 8 lane 4x より前の 1 手番 1 process): 手番の途中の注入(R21)が書けない。閉じるのは手番の本文の後ではなく result の行(Dialogue の _end)")
+          (counterexample "result の行で降ろすのに、CLI には background の仕事(Agent の run_in_background・Bash の background・Monitor)を持たせたままの形: model は subagent を background に回して『返答待ち』の WAIT で手番を終え、降ろした process と一緒に subagent が死ぬ — 完了の合図で起きるはずの続きは誰も起こさず、依頼は開いたまま担い手が静止する(実弾 2026-09-23: 計画の会話 c-SKD631B1SP… / c-3MZFCNDVHE… が盲検 A・B を background に回して手番を終えた)。⇒ headless の claude は --settings の env に CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 を持って起きる(impls/headless_argv.hy build-claude-headless の 1 点・全部の腕) — Agent は同期になり返答が同じ手番の tool の結果に返る")]
        :enforcement ["docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test-adr-doe-agents-012-claude-turn-end-is-process-end"
+                     "packages/doeff-agents/tests/test_sessionhost_headless.py::test_headless_claude_cannot_start_background_tasks_that_outlive_the_turn"
                      "packages/doeff-agents/tests/test_sessionhost_headless.py::test_claude_dialogue_reads_init_and_result"
                      "packages/doeff-agents/tests/test_sessionhost_headless.py::test_headless_process_claude_turn_writes_events_and_retires_at_the_result"
                      "packages/doeff-agents/tests/test_sessionhost_headless.py::test_headless_process_claude_result_closes_the_dialogue_before_the_cli_can_reenter"
