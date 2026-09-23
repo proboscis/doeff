@@ -51,6 +51,7 @@ import pytest
 from doeff_agents.agentd_client import AgentdClient
 from doeff_agents.effects import AgentSessionLifecycle
 from sessionhost_bin import resolve_sessionhost_bin
+from sessionhost_isolated_host import isolated_host, sessionhost_serve_argv
 
 RESULT_BLOCK_BEGIN = "DOEFF_AGENT_RESULT_BEGIN"
 RESULT_BLOCK_END = "DOEFF_AGENT_RESULT_END"
@@ -128,26 +129,22 @@ def _run_byte_faithful_e2e(tmp_path: Path) -> dict[str, Any]:
     agentd_log_path = runtime_dir / "agentd.log"
     command = f"{shlex.quote(sys.executable)} {shlex.quote(str(script_path))}"
 
+    # 宿から隔離する(sessionhost_isolated_host の頭注): 画面判定は無効・HOME / 資格の置き場 /
+    # tmux server は検の私設・PATH の先頭に本物の claude / codex の罠。
+    host = isolated_host(runtime_dir / "host")
     agentd_proc: subprocess.Popen[str] | None = None
     try:
         with agentd_log_path.open("w", encoding="utf-8") as agentd_log:
-            agentd_proc = subprocess.Popen(
-                [
-                    str(agentd_bin),
-                    "--db",
-                    str(db_path),
-                    "--socket",
-                    str(socket_path),
-                    "--monitor-interval-ms",
-                    "100",
-                    "--max-running",
-                    "2",
-                    "serve",
-                ],
+            agentd_proc = host.spawn_sessionhost(
+                sessionhost_serve_argv(
+                    agentd_bin,
+                    db_path=db_path,
+                    socket_path=socket_path,
+                    monitor_interval_ms=100,
+                    max_running=2,
+                ),
                 cwd=runtime_dir,
-                stdout=agentd_log,
-                stderr=subprocess.STDOUT,
-                text=True,
+                log=agentd_log,
             )
             client = AgentdClient(socket_path, timeout=2.0)
             _wait_for_agentd(client, agentd_proc, agentd_log_path)
@@ -164,6 +161,7 @@ def _run_byte_faithful_e2e(tmp_path: Path) -> dict[str, Any]:
                 prompt="Produce the byte-faithful structured result.",
                 lifecycle=AgentSessionLifecycle.RUN_TO_COMPLETION,
                 session_env={
+                    **host.session_env(),
                     "DOEFF_RESULT_SESSION_ID": session_id,
                     "DOEFF_AGENTD_SOCKET": str(socket_path),
                     "DOEFF_AGENTD_BIN": str(agentd_bin),
@@ -177,6 +175,7 @@ def _run_byte_faithful_e2e(tmp_path: Path) -> dict[str, Any]:
             pane_text = _capture_until_block(client, session_id, timeout_s=15.0)
             outcome = client.await_result(session_id, timeout_seconds=25.0)
 
+        host.assert_no_real_cli_invoked()
         db = _read_session_db_state(db_path, session_id)
         return {
             "await_status": outcome.status.name,
@@ -189,9 +188,9 @@ def _run_byte_faithful_e2e(tmp_path: Path) -> dict[str, Any]:
             ),
         }
     finally:
-        _cleanup_tmux_session(session_id)
         if agentd_proc is not None:
             _terminate_process(agentd_proc)
+        host.kill_tmux_server()
         shutil.rmtree(runtime_dir, ignore_errors=True)
 
 
@@ -326,17 +325,6 @@ def _read_text(path: Path) -> str:
     if not path.exists():
         return ""
     return path.read_text(encoding="utf-8", errors="replace")
-
-
-def _cleanup_tmux_session(session_name: str) -> None:
-    if shutil.which("tmux") is None:
-        return
-    subprocess.run(
-        ["tmux", "kill-session", "-t", session_name],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
 
 
 def _terminate_process(proc: subprocess.Popen[str]) -> None:

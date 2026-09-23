@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import NamedTuple
 import os
 import shutil
 import signal
@@ -28,6 +27,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import NamedTuple
 
 import hy  # noqa: F401  # registers the .hy importer
 import pytest
@@ -58,9 +58,10 @@ from doeff_agents.sessionhost.headless_protocol import (
     stop_verdict,
     turn_verdict,
 )
-from doeff_agents.sessionhost.impls import headless_argv, claude_code, fast_jev, otel_telemetry
+from doeff_agents.sessionhost.impls import claude_code, fast_jev, headless_argv, otel_telemetry
 from doeff_agents.sessionhost.store import StoreActor, terminal_cause_from_dict
 from sessionhost_bin import resolve_sessionhost_bin
+from sessionhost_isolated_host import isolated_host, sessionhost_serve_argv
 
 from doeff import run
 
@@ -2103,20 +2104,26 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _spawn_real_headless_host(root: Path) -> subprocess.Popen[str]:
-    """実 binary の headless の host を tmpdir で起こす(替え玉の claude・result の前で 30 秒待つ)。"""
-    env = dict(os.environ)
-    env["PATH"] = f"{STUBS}{os.pathsep}{env.get('PATH', '')}"
+    """実 binary の headless の host を tmpdir で起こす(替え玉の claude・result の前で 30 秒待つ)。
+
+    宿から隔離する(sessionhost_isolated_host の頭注): HOME / 資格の置き場は検の私設・画面判定は無効。
+    PATH の先頭は替え玉(tests/headless_stubs)で、その後ろに本物の CLI の罠が続く。
+    """
+    host = isolated_host(root / "host")
+    env = dict(host.env)
+    env["PATH"] = f"{STUBS}{os.pathsep}{env['PATH']}"
     env["DOEFF_SESSIONHOST_HEADLESS_DIR"] = str(root / "events")
     env["DOEFF_HEADLESS_STUB_DELAY"] = "30"
     env["XDG_STATE_HOME"] = str(root / "state")
     env.pop("DOEFF_AGENTD_ACP", None)
     with (root / "host.log").open("w", encoding="utf-8") as log:
         return subprocess.Popen(
-            [
-                str(resolve_sessionhost_bin()),
-                "--db", str(root / "agentd.sqlite"), "--socket", str(root / "agentd.sock"),
-                "--prompt-judge-cmd", "", "--backend", "headless", "serve",
-            ],
+            sessionhost_serve_argv(
+                resolve_sessionhost_bin(),
+                db_path=root / "agentd.sqlite",
+                socket_path=root / "agentd.sock",
+                extra_args=("--backend", "headless"),
+            ),
             cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT, text=True,
         )
 
@@ -2324,7 +2331,7 @@ def test_codex_injection_concatenation_keeps_both_texts_and_both_images() -> Non
 
 
 @pytest.mark.skipif(shutil.which("claude") is None, reason="claude binary is not installed here")
-def test_real_claude_accepts_the_headless_flags_help_only() -> None:
+def test_real_claude_accepts_the_headless_flags_help_only(tmp_path: Path) -> None:
     built = _build_claude_headless(
         {"work_dir": os.getcwd(), "session_hooks": "disabled"}
     )
@@ -2332,8 +2339,19 @@ def test_real_claude_accepts_the_headless_flags_help_only() -> None:
     assert isinstance(argv, list)
     binary = argv[0]
     assert isinstance(binary, str)
+    resolved = shutil.which(binary)
+    assert resolved is not None, binary
+    # 本物の binary は --help だけ撃つ(API を撃たない)が、HOME / CLAUDE_CONFIG_DIR は宿のものを
+    # 渡さない(sessionhost_isolated_host の頭注 — 検は宿の資格の置き場に触れない)。binary は
+    # 宿の PATH で先に解いてから、隔離した env(PATH の先頭は罠)で起こす。
+    host = isolated_host(tmp_path / "host")
     result = subprocess.run(
-        [binary, "--help"], capture_output=True, text=True, timeout=60, check=False
+        [resolved, "--help"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+        env=dict(host.env),
     )
     assert result.returncode == 0
     for flag in ("--output-format", "--include-partial-messages", "--session-id", "--resume"):

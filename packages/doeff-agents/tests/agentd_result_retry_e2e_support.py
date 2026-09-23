@@ -18,6 +18,7 @@ import pytest
 from doeff_agents.agentd_client import AgentdClient
 from doeff_agents.effects import AgentSessionLifecycle
 from sessionhost_bin import resolve_sessionhost_bin
+from sessionhost_isolated_host import isolated_host, sessionhost_serve_argv
 
 RESULT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -54,26 +55,22 @@ def run_agentd_deterministic_failure_no_retry_e2e(tmp_path: Path) -> dict[str, A
     command = f"{shlex.quote(sys.executable)} {shlex.quote(str(script_path))}"
 
     agentd_bin = resolve_sessionhost_bin()
+    # 宿から隔離する(sessionhost_isolated_host の頭注 — 2026-09-24 zeus で本物の claude が
+    # 画面判定として 3 回起き、宿の ~/.claude の資格を空で上書きした)。
+    host = isolated_host(runtime_dir / "host")
     agentd_proc: subprocess.Popen[str] | None = None
     try:
         with agentd_log_path.open("w", encoding="utf-8") as agentd_log:
-            agentd_proc = subprocess.Popen(
-                [
-                    str(agentd_bin),
-                    "--db",
-                    str(db_path),
-                    "--socket",
-                    str(socket_path),
-                    "--monitor-interval-ms",
-                    "100",
-                    "--max-running",
-                    "2",
-                    "serve",
-                ],
+            agentd_proc = host.spawn_sessionhost(
+                sessionhost_serve_argv(
+                    agentd_bin,
+                    db_path=db_path,
+                    socket_path=socket_path,
+                    monitor_interval_ms=100,
+                    max_running=2,
+                ),
                 cwd=runtime_dir,
-                stdout=agentd_log,
-                stderr=subprocess.STDOUT,
-                text=True,
+                log=agentd_log,
             )
             client = AgentdClient(socket_path, timeout=2.0)
             _wait_for_agentd(client, agentd_proc, agentd_log_path)
@@ -87,6 +84,7 @@ def run_agentd_deterministic_failure_no_retry_e2e(tmp_path: Path) -> dict[str, A
                 prompt="Produce the e2e structured result.",
                 lifecycle=AgentSessionLifecycle.RUN_TO_COMPLETION,
                 session_env={
+                    **host.session_env(),
                     "DOEFF_RESULT_SESSION_ID": session_id,
                     "DOEFF_AGENTD_SOCKET": str(socket_path),
                     "DOEFF_AGENTD_BIN": str(agentd_bin),
@@ -95,6 +93,7 @@ def run_agentd_deterministic_failure_no_retry_e2e(tmp_path: Path) -> dict[str, A
             )
             outcome = client.await_result(session_id, timeout_seconds=25.0)
 
+        host.assert_no_real_cli_invoked()
         db_snapshot = _read_session_db_state(db_path, session_id)
         fake_events = _read_jsonl(fake_log_path)
         return {
@@ -117,9 +116,9 @@ def run_agentd_deterministic_failure_no_retry_e2e(tmp_path: Path) -> dict[str, A
             "result_payload_json": db_snapshot["result_payload_json"],
         }
     finally:
-        _cleanup_tmux_session(session_id)
         if agentd_proc is not None:
             _terminate_process(agentd_proc)
+        host.kill_tmux_server()
         shutil.rmtree(runtime_dir, ignore_errors=True)
 
 
@@ -361,17 +360,6 @@ def _read_text(path: Path) -> str:
     if not path.exists():
         return ""
     return path.read_text(encoding="utf-8", errors="replace")
-
-
-def _cleanup_tmux_session(session_name: str) -> None:
-    if shutil.which("tmux") is None:
-        return
-    subprocess.run(
-        ["tmux", "kill-session", "-t", session_name],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
 
 
 def _terminate_process(proc: subprocess.Popen[str]) -> None:
