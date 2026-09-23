@@ -1,0 +1,4 @@
+dotfiles origin/master docs/coupling-core-watchlist.md: coupling-core-paths=119 fleet=1 ['.agents/land-queue.toml']
+touched: ['conftest.py', 'tests/test_effectful.py', 'tests/test_bytecode_writing_off.py', 'packages/doeff-hy/tests/test_source_positions.py', 'packages/doeff-hy/tests/test_none_type_contract.py']
+fleet hits: []
+(reference) dotfiles-core pattern hits by name only: []

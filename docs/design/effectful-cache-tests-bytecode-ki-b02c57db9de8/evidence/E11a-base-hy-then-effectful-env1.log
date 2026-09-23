@@ -1,0 +1,13 @@
+# label=E11a-base-hy-then-effectful-env1
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 worktree=/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design
+# PYTHONDONTWRITEBYTECODE=1
+# diff: 
+# diff sha256: e3b0c44298fc1c14
+# cmd: python -m pytest packages/doeff-hy/tests/test_source_positions.py tests/test_effectful.py -q
+
+deadline scale x1.6 (load/core) — per test 96s, watchdog 144s
+
+test-admission: focused — 34 件(変更箇所の検証)
+..................................                                       [100%]
+34 passed in 6.14s
+# exit=0

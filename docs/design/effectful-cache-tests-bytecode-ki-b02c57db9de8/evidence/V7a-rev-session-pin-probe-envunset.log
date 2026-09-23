@@ -1,0 +1,28 @@
+# label=V7a-rev-session-pin-probe-envunset
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 worktree=/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design
+# PYTHONDONTWRITEBYTECODE=<unset> PYTHONPYCACHEPREFIX=<unset>
+# diff:  M conftest.py  M packages/doeff-hy/tests/test_none_type_contract.py  M packages/doeff-hy/tests/test_source_positions.py  M tests/test_effectful.py ?? docs/design/effectful-cache-tests-bytecode-ki-b02c57db9de8/ ?? tests/test_bytecode_settings_pinned.py ?? tests/test_scratch_module_fixture_probe.py 
+# diff sha256: 6bd0d1fbcdc8fa39
+# cmd: python -m pytest tests/test_scratch_module_fixture_probe.py -q
+
+deadline scale x1.4 (load/core) — per test 86s, watchdog 128s
+
+test-admission: focused — 1 件(変更箇所の検証)
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______________________ test_pyc_written_by_module_fixture ______________________
+
+imported = PosixPath('/tmp/pytest-of-kento/pytest-357/probe0')
+
+    def test_pyc_written_by_module_fixture(imported):
+>       assert list((imported / "__pycache__").glob("probe_mod_ki.*.pyc"))
+E       AssertionError: assert []
+E        +  where [] = list(<map object at 0x3e5bcf09000>)
+E        +    where <map object at 0x3e5bcf09000> = glob('probe_mod_ki.*.pyc')
+E        +      where glob = (PosixPath('/tmp/pytest-of-kento/pytest-357/probe0') / '__pycache__').glob
+
+tests/test_scratch_module_fixture_probe.py:23: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_scratch_module_fixture_probe.py::test_pyc_written_by_module_fixture
+1 failed in 3.61s
+# exit=1

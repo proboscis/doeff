@@ -1,0 +1,120 @@
+=================== scratch_prefix_leak_probe.py.txt
+# Scratch probe (design experiment only, never committed): a module fixture that sets
+# sys.pycache_prefix directly and never restores it.
+import sys
+
+import pytest
+
+
+@pytest.fixture(scope="module")
+def prefixed():
+    sys.pycache_prefix = "/tmp/ki-b02c57db9de8/leaked-prefix"
+    return sys.pycache_prefix
+
+
+def test_uses_a_prefix(prefixed):
+    assert prefixed
+=================== V8a-rev-prefix-leak-envunset.log
+# label=V8a-rev-prefix-leak-envunset
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 worktree=/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design
+# PYTHONDONTWRITEBYTECODE=<unset> PYTHONPYCACHEPREFIX=<unset>
+# diff:  M conftest.py  M packages/doeff-hy/tests/test_none_type_contract.py  M packages/doeff-hy/tests/test_source_positions.py  M tests/test_effectful.py ?? docs/design/effectful-cache-tests-bytecode-ki-b02c57db9de8/ ?? tests/test_bytecode_settings_pinned.py ?? tests/test_scratch_prefix_leak_probe.py 
+# diff sha256: 6bd0d1fbcdc8fa39
+# cmd: python -m pytest tests/test_scratch_prefix_leak_probe.py -q
+
+deadline scale x1.6 (load/core) — per test 93s, watchdog 140s
+
+test-admission: focused — 1 件(変更箇所の検証)
+.E                                                                       [100%]
+==================================== ERRORS ====================================
+___________________ ERROR at teardown of test_uses_a_prefix ____________________
+
+    @pytest.fixture(scope="session", autouse=True)
+    def _bytecode_settings_pinned():
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(sys, "dont_write_bytecode", True)
+            patch.setattr(sys, "pycache_prefix", None)
+            patch.setenv("PYTHONDONTWRITEBYTECODE", "1")
+            patch.delenv("PYTHONPYCACHEPREFIX", raising=False)
+            yield
+            at_the_end = (sys.dont_write_bytecode, sys.pycache_prefix)
+>       assert at_the_end == (True, None), (
+            f"a test or fixture changed the bytecode settings and did not restore them "
+            f"(dont_write_bytecode, pycache_prefix) = {at_the_end} — change them with "
+            f"monkeypatch (or pytest.MonkeyPatch.context() in a wider fixture)"
+        )
+E       AssertionError: a test or fixture changed the bytecode settings and did not restore them (dont_write_bytecode, pycache_prefix) = (True, '/tmp/ki-b02c57db9de8/leaked-prefix') — change them with monkeypatch (or pytest.MonkeyPatch.context() in a wider fixture)
+E       assert (True, '/tmp/...eaked-prefix') == (True, None)
+E         
+E         At index 1 diff: '/tmp/ki-b02c57db9de8/leaked-prefix' != None
+E         Use -v to get more diff
+
+conftest.py:306: AssertionError
+=========================== short test summary info ============================
+ERROR tests/test_scratch_prefix_leak_probe.py::test_uses_a_prefix - Assertion...
+1 passed, 1 error in 0.21s
+# exit=1
+=================== V8b-rev-hy-leak-env1.log
+# label=V8b-rev-hy-leak-env1
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 worktree=/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design
+# PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=<unset>
+# diff:  M conftest.py  M tests/test_effectful.py ?? docs/design/effectful-cache-tests-bytecode-ki-b02c57db9de8/ ?? tests/test_bytecode_settings_pinned.py 
+# diff sha256: 9e9aa993dc538a96
+# cmd: python -m pytest packages/doeff-hy/tests/test_source_positions.py tests/test_effectful.py tests/test_bytecode_settings_pinned.py -q
+
+deadline scale x1.6 (load/core) — per test 93s, watchdog 140s
+
+test-admission: focused — 37 件(変更箇所の検証)
+...................................F.E                                   [100%]
+==================================== ERRORS ====================================
+_ ERROR at teardown of test_subprocesses_inherit_the_pinned_bytecode_settings __
+
+    @pytest.fixture(scope="session", autouse=True)
+    def _bytecode_settings_pinned():
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(sys, "dont_write_bytecode", True)
+            patch.setattr(sys, "pycache_prefix", None)
+            patch.setenv("PYTHONDONTWRITEBYTECODE", "1")
+            patch.delenv("PYTHONPYCACHEPREFIX", raising=False)
+            yield
+            at_the_end = (sys.dont_write_bytecode, sys.pycache_prefix)
+>       assert at_the_end == (True, None), (
+            f"a test or fixture changed the bytecode settings and did not restore them "
+            f"(dont_write_bytecode, pycache_prefix) = {at_the_end} — change them with "
+            f"monkeypatch (or pytest.MonkeyPatch.context() in a wider fixture)"
+        )
+E       AssertionError: a test or fixture changed the bytecode settings and did not restore them (dont_write_bytecode, pycache_prefix) = (False, None) — change them with monkeypatch (or pytest.MonkeyPatch.context() in a wider fixture)
+E       assert (False, None) == (True, None)
+E         
+E         At index 0 diff: False != True
+E         Use -v to get more diff
+
+conftest.py:306: AssertionError
+=================================== FAILURES ===================================
+____________ test_test_bodies_run_with_the_pinned_bytecode_settings ____________
+
+    def test_test_bodies_run_with_the_pinned_bytecode_settings() -> None:
+>       assert sys.dont_write_bytecode is True
+E       assert False is True
+E        +  where False = sys.dont_write_bytecode
+
+tests/test_bytecode_settings_pinned.py:16: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_bytecode_settings_pinned.py::test_test_bodies_run_with_the_pinned_bytecode_settings
+ERROR tests/test_bytecode_settings_pinned.py::test_subprocesses_inherit_the_pinned_bytecode_settings
+1 failed, 36 passed, 1 error in 5.64s
+# exit=1
+=================== E11a-base-hy-then-effectful-env1.log
+# label=E11a-base-hy-then-effectful-env1
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 worktree=/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design
+# PYTHONDONTWRITEBYTECODE=1
+# diff: 
+# diff sha256: e3b0c44298fc1c14
+# cmd: python -m pytest packages/doeff-hy/tests/test_source_positions.py tests/test_effectful.py -q
+
+deadline scale x1.6 (load/core) — per test 96s, watchdog 144s
+
+test-admission: focused — 34 件(変更箇所の検証)
+..................................                                       [100%]
+34 passed in 6.14s
+# exit=0

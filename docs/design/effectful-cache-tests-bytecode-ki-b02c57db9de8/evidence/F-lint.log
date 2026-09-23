@@ -1,0 +1,53 @@
+# base=5750826265f65e4e6727d6e00bebf76b97cb28b3 final-patch-sha256=506c6e5e8cd15860283e4eb72920e97797c033815d3fb92ec0a38068fd9aefbe
+# ruff check conftest.py tests/test_effectful.py tests/test_bytecode_writing_off.py packages/doeff-hy/tests/test_source_positions.py packages/doeff-hy/tests/test_none_type_contract.py
+All checks passed!
+# exit=0
+# ruff format --diff (changes only in lines this patch touches?)
+--- conftest.py
++++ conftest.py
+@@ -69,6 +69,7 @@
+     """
+     return int(max(base * scale, per_test_timeout * scale + 30.0))
+ 
++
+ # ---------------------------------------------------------------------------
+ # Memory guard: limit to 32GB to prevent OOM-killing tmux/codex
+ # ---------------------------------------------------------------------------
+@@ -135,9 +136,7 @@
+     scaled_per_test = per_test_base * _DEADLINE_SCALE
+     if per_test_base > 0:
+         config.option.timeout = scaled_per_test
+-    _WATCHDOG_TIMEOUT = scaled_watchdog_timeout(
+-        _WATCHDOG_BASE, per_test_base, _DEADLINE_SCALE
+-    )
++    _WATCHDOG_TIMEOUT = scaled_watchdog_timeout(_WATCHDOG_BASE, per_test_base, _DEADLINE_SCALE)
+ 
+     if _DEADLINE_SCALE > 1.0:
+         # Never scale silently: a stretched deadline is also the signal that
+
+--- packages/doeff-hy/tests/test_source_positions.py
++++ packages/doeff-hy/tests/test_source_positions.py
+@@ -119,5 +119,3 @@
+     with pytest.raises(RuntimeError, match="refused bad") as caught:
+         _run(mod.refusing(mod.in_do))
+     assert LINE_DO_BAD in [line for _, line in _hy_frames(caught.value, mod)]
+-
+-
+
+2 files would be reformatted, 3 files already formatted
+# pyright --pythonpath venv conftest.py tests/test_effectful.py tests/test_bytecode_writing_off.py packages/doeff-hy/tests/test_source_positions.py packages/doeff-hy/tests/test_none_type_contract.py
+/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design/packages/doeff-hy/tests/test_none_type_contract.py
+  /home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design/packages/doeff-hy/tests/test_none_type_contract.py:69:16 - error: Argument of type "object" cannot be assigned to parameter "doexpr" of type "Program[_T@run, Any]" in function "run"
+    "object" is incompatible with protocol "Program[_T@run, Any]"
+      "__iter__" is not present (reportArgumentType)
+/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design/packages/doeff-hy/tests/test_source_positions.py
+  /home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design/packages/doeff-hy/tests/test_source_positions.py:93:16 - error: Argument of type "object" cannot be assigned to parameter "doexpr" of type "Program[_T@run, Any]" in function "run"
+    "object" is incompatible with protocol "Program[_T@run, Any]"
+      "__iter__" is not present (reportArgumentType)
+/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design/tests/test_effectful.py
+  /home/kento/.worktrees/doeff-wt-ki-b02c57db9de8-design/tests/test_effectful.py:76:28 - error: Cannot access attribute "__doeff_generator_function__" for class "FunctionType"
+    Attribute "__doeff_generator_function__" is unknown (reportFunctionMemberAccess)
+3 errors, 0 warnings, 0 informations
+
+# semgrep --config .semgrep.yaml --error conftest.py tests/test_effectful.py tests/test_bytecode_writing_off.py packages/doeff-hy/tests/test_source_positions.py packages/doeff-hy/tests/test_none_type_contract.py
+# exit=0

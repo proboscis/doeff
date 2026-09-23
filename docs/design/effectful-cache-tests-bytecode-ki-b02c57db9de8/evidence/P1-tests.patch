@@ -1,0 +1,61 @@
+diff --git a/tests/test_effectful.py b/tests/test_effectful.py
+index 747e4c5f..8736d24c 100644
+--- a/tests/test_effectful.py
++++ b/tests/test_effectful.py
+@@ -7,7 +7,8 @@ What is checked here:
+   cloudpickle of an unrun program to another process);
+ - tracebacks point at the original source lines;
+ - the rewrite refuses ``perform`` where it cannot suspend the program, with file and line;
+-- the bytecode cache is named by the rewrite version and rebuilt when it changes;
++- the bytecode cache is named by the rewrite version and rebuilt when it changes, and is not
++  written while bytecode writing is off (``sys.dont_write_bytecode``);
+ - pyright: the answer types, and the 8 deliberate mistakes of tests/test_static_typing.py
+   written in the perform form, are all caught.
+ """
+@@ -322,6 +323,9 @@ def test_import_error_names_the_file_and_line(tmp_package: tuple[str, Path]) ->
+ def test_cache_is_named_by_the_rewrite_version_and_reused(
+     tmp_package: tuple[str, Path], monkeypatch: pytest.MonkeyPatch
+ ) -> None:
++    # The cache is only written where bytecode may be written (land / the daily run set
++    # PYTHONDONTWRITEBYTECODE=1), so this test states that precondition itself.
++    monkeypatch.setattr(sys, "dont_write_bytecode", False)
+     name, package = tmp_package
+     (package / "mod.py").write_text(_MODULE)
+     assert _run(_import_fresh(f"{name}.mod").twice()) == 2000
+@@ -342,6 +346,7 @@ def test_cache_is_named_by_the_rewrite_version_and_reused(
+ def test_a_new_rewrite_version_rebuilds_the_cache(
+     tmp_package: tuple[str, Path], monkeypatch: pytest.MonkeyPatch
+ ) -> None:
++    monkeypatch.setattr(sys, "dont_write_bytecode", False)
+     name, package = tmp_package
+     (package / "mod.py").write_text(_MODULE)
+     _import_fresh(f"{name}.mod")
+@@ -356,6 +361,28 @@ def test_a_new_rewrite_version_rebuilds_the_cache(
+     assert _run(module.twice()) == 2000
+ 
+ 
++def test_no_cache_is_written_while_bytecode_writing_is_off(
++    tmp_package: tuple[str, Path], monkeypatch: pytest.MonkeyPatch
++) -> None:
++    monkeypatch.setattr(sys, "dont_write_bytecode", True)
++    name, package = tmp_package
++    source = package / "mod.py"
++    source.write_text(_MODULE)
++    compiled: list[str] = []
++    compile_source = rewrite.compile_source
++
++    def counting_compile(source_bytes: bytes, filename: str) -> Any:
++        compiled.append(filename)
++        return compile_source(source_bytes, filename)
++
++    monkeypatch.setattr(rewrite, "compile_source", counting_compile)
++    assert _run(_import_fresh(f"{name}.mod").twice()) == 2000
++    assert _run(_import_fresh(f"{name}.mod").twice()) == 2000
++    assert not rewrite.cache_path(str(source)).exists()
++    assert not (package / "__pycache__").exists()
++    assert compiled.count(str(source)) == 2  # nothing was cached, so both imports compile
++
++
+ def test_modules_without_effectful_are_compiled_unchanged(tmp_package: tuple[str, Path]) -> None:
+     name, package = tmp_package
+     (package / "plain.py").write_text("VALUE = 1\n")
