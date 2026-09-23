@@ -14,7 +14,10 @@ from doeff_agents.sessionhost.cache_host_model import HostCacheRecord
 from doeff_agents.sessionhost.cache_host_store import cache_receipt_get, cache_receipt_put
 from doeff_agents.sessionhost.cache_process import identify_process
 from doeff_agents.sessionhost.impls.claude_code import CLAUDE_AUTO_MEMORY_DIR_SETTING
-from doeff_agents.sessionhost.impls.headless_argv import build_claude_headless
+from doeff_agents.sessionhost.impls.headless_argv import (
+    CLAUDE_HEADLESS_SETTINGS_ENV,
+    build_claude_headless,
+)
 from test_sessionhost_headless import Host, _launch_params, _pause, _wait_turn_end
 from test_sessionhost_headless import headless_host as headless_host
 
@@ -95,7 +98,14 @@ def test_cache_ping_keeps_model_and_settings_without_running_work_hooks() -> Non
     built = run(build_claude_headless(params))
     args = built["argv"]
     settings = json.loads(args[args.index("--settings") + 1])
-    assert settings == {CLAUDE_AUTO_MEMORY_DIR_SETTING: "/same-memory", "hooks": {}, "disableAllHooks": True}
+    # 44499910: headless の claude は腕を問わず background の仕事を持てない形で起きる(env は --settings に合流)。
+    # cache の ping も同じ env を運ぶ — 通常の手番と settings が揃っていることが cache を温める前提。
+    assert settings == {
+        CLAUDE_AUTO_MEMORY_DIR_SETTING: "/same-memory",
+        "hooks": {},
+        "disableAllHooks": True,
+        "env": dict(CLAUDE_HEADLESS_SETTINGS_ENV),
+    }
     assert args[args.index("--resume") + 1] == "same-session"
     assert args[args.index("--model") + 1] == "same-model"
     assert args[args.index("--max-turns") + 1] == "1"

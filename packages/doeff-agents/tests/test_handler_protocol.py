@@ -89,12 +89,10 @@ def test_agent_handlers_are_defhandler_program_wrappers() -> None:
 
 
 def test_scenario_handler_wrap_uses_defhandler_boundary() -> None:
-    source = (
-        Path("packages/doeff-agents/src/doeff_agents/handlers/testing.hy")
-        .read_text()
-    )
+    handlers_dir = Path(__file__).resolve().parents[1] / "src" / "doeff_agents" / "handlers"
+    source = (handlers_dir / "testing.hy").read_text()
 
-    assert not Path("packages/doeff-agents/src/doeff_agents/handlers/testing.py").exists()
+    assert not (handlers_dir / "testing.py").exists()
     assert "(defclass ScenarioAgentHandler" in source
     assert "(agent-handler-defhandler self)" in source
     assert "def handler(effect: Effect, k)" not in source
