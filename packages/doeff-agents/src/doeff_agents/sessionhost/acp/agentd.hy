@@ -161,6 +161,7 @@
   MemoryBaseline
   MemoryBook
   MemoryFold
+  MemoryHomeBaselines
   MemoryMalformed
   MemoryRetire
   MemoryRevive
@@ -419,6 +420,7 @@
   memory-book-of
   memory-book-of-row
   memory-files-of
+  memory-home-digests-of
   memory-home-of
   memory-material-of
   memory-name-of-row
@@ -1446,7 +1448,7 @@
         ;; card acp:kanban-issue:ki-9fc7d4bca4dc(法 ACP 575b1e): 会話の記憶は行が正本 — 起こす前に行から読み、
         ;; charter に載せる(器の側が置き場へ書き出す)。行を読むのは effect を持つこの層ちょうどで、
         ;; 器の kind module(substrate-clean)には ACP も記録の service も import しない。
-        (<- memory-turn MemoryTurnFiles (memory-files-for-turn subject choice.arm))
+        (<- memory-turn MemoryTurnFiles (memory-files-for-turn settings subject choice.arm))
         (<- charter dict (charter-with-memory-files charter memory-turn.files))
         ;; card acp:kanban-issue:ki-6b5c4b270ca0: 退役した行と同じ名前の file は同じ荷で取り除かせる
         ;; (書き出しと掃除は同じ拍・同じ書き手 — 別の腕が持つと掃除だけが落ちて退役が取り消される)。
@@ -1472,8 +1474,8 @@
               launched)))))
 
 
-(defk memory-files-for-turn [subject arm]
-  {:pre [(: subject str) (: arm str)]
+(defk memory-files-for-turn [settings subject arm]
+  {:pre [(: settings AgentdSettings) (: subject str) (: arm str)]
    :post [(: % MemoryTurnFiles)]}
   "手番の頭の水入れ(card acp:kanban-issue:ki-9fc7d4bca4dc・法 ACP 575b1e): この会話の記憶の行を 1 回引き、
    本文を記録の service の stream から読んで、置き場へ書き出す file の列にする。索引 MEMORY.md は
@@ -1481,6 +1483,14 @@
 
    ⚠ **水入れと畳み戻しは対で 1 便**(依頼書の禁止 1)。読めない行・本文の無い行は落として数だけ log に出す
    (黙って空の置き場を正としない — 空の dir を正として畳み戻すと記憶が消える)。
+
+   ⚠ **置き場だけが持つ編集を上書きしない**(card acp:kanban-issue:ki-554e364641e8 望む状態 (A)): 書き戻しが
+   記録の service に断られた編集は置き場の file にだけ残る。ここは置き場の**前回渡した写しの claim check**
+   (side car — memory-home-prior-of・型 MemoryHomeBaselines が出自を縛る)と**今ある file の digest**
+   (書き戻しと同じ readings — memory-home-digests-of)を読んで judgment.memory-files-of へ渡し、冊ごとの
+   渡す / 守るは judgment.memory-hydrate-verdict の 1 点が決める。この層は比べない(材料を運ぶだけ)。
+   守った冊は log 1 行ずつと計器 held で名乗る。置き場を読むのは行が在る拍だけ(記憶を使わない会話の
+   起動は 1 byte も変わらない)。
 
    帯域: 読みの窓は principal(agentd)ごとに 60 秒 / distinct 会話 200 / 268 MB で、1 手番 = 1 会話。
    艦隊の実測(2026-09-20・ACP の turn-record 全数の 60 秒の滑り窓)は distinct 会話の最大 30(門の 15.0%)・
@@ -1556,8 +1566,24 @@
   ;; ⚠ 掃除も撃たない: この拍は記録の service が答えなかっただけで、退役の端の状態を確かめられていない。
   (when (and (not books) (> unread 0))
     (return (MemoryTurnFiles)))
+  ;; card acp:kanban-issue:ki-554e364641e8: 置き場の**前回渡した写し**(side car)と**今ある file** を読む —
+  ;; 3 点比較の prior と local。置き場を名乗らない機体(memory-root 空・綴れない会話 id)は両方とも空 = 全冊 Hand
+  ;; (今日の挙動)。local の母集団は書き戻しと同じ memory-books-of-home(『file が在る』の定義を 1 つにする)。
+  (<- home (| str None) (memory-home-of settings.memory-root subject))
+  (setv prior (MemoryHomeBaselines :books {}))
+  (setv local {})
+  (when (is-not home None)
+    (<- read-prior MemoryHomeBaselines (memory-home-prior-of home))
+    (setv prior read-prior)
+    (<- readings tuple (memory-books-of-home home))
+    (<- digests dict (memory-home-digests-of readings))
+    (setv local digests))
   ;; 冊が 0 でも行が在って全部読めた(= 全部退役した)なら索引は書き直す — 腐った索引を残さない。
-  (<- turn-files MemoryTurnFiles (memory-files-of (tuple books) baselines (tuple swept)))
+  (<- turn-files MemoryTurnFiles (memory-files-of (tuple books) baselines (tuple swept) prior local))
+  ;; 守った冊は 1 冊ずつ名乗る(受入 R5)— 黙って守ると『編集が届かない』が log から読めない。
+  (for [name turn-files.held]
+    (<- (LogLine :text (+ f"agentd: memory {name} of conversation {subject} holds an edit the record has not taken; "
+                          "the home copy is kept and the next fold retries"))))
   (<- (MetricLine :fields {"metric" "agent-memory-hydrated" "conversationId" subject
                            "arm" arm "books" (len books) "based" (len baselines)
                            "unreadable" unread "retired" (len swept)
@@ -1565,7 +1591,9 @@
                            ;; retired と割れる拍 = 名の綴れない行(行は在るが名が読めない)。
                            "swept" (len turn-files.swept)
                            ;; 寄せた行の数(書けた数・据えた数と混ぜない — 法 575b1e 8d81)。
-                           "realigned" realigned}))
+                           "realigned" realigned
+                           ;; 置き場だけが持つ編集を守って触らなかった冊の数(card ki-554e364641e8 受入 R5)。
+                           "held" (len turn-files.held)}))
   turn-files)
 
 
@@ -1987,7 +2015,7 @@
   ;; 起こす腕は charter で同じ値を運んでいる ⇒ ここで行を読み直すのは送りの腕だけ(読みを 2 度撃たない)。
   (setv turn-charter {})
   (when (= arm NEXT-ARM-SEND)
-    (<- memory-turn MemoryTurnFiles (memory-files-for-turn subject arm))
+    (<- memory-turn MemoryTurnFiles (memory-files-for-turn settings subject arm))
     (<- carried-charter dict (turn-charter-of settings.memory-root subject memory-turn))
     (setv turn-charter carried-charter))
   ;; 段 10 lane 10o(agora-redesign #96・依頼者の追補): 添付は型つきのまま器へ渡す(綴りは Dialogue)。
@@ -2694,16 +2722,29 @@
   (tuple readings))
 
 
+(defk memory-home-prior-of [home]
+  {:pre [(: home str)]
+   :post [(: % MemoryHomeBaselines)]}
+  "置き場の基準の side car を読む(前回の組み直しが器に置かせた物 = **前回渡した写し**の claim check)。
+   無い・読めない = 空。戻りは newtype MemoryHomeBaselines で、作り手は judgment.memory-baselines-of-text
+   ちょうど(card acp:kanban-issue:ki-554e364641e8 §10.2 B1)— ここで dict を包み直さない。⚠ 行から作らない:
+   行は記録の頭の遅れる投影で、渡した写しの証拠ではない(MemoryHomeBaselines の頭注・2026-09-21 の実弾)。
+   読み手は 2 つ — 組み直し(memory-files-for-turn の prior)と書き戻し(memory-baselines-of-home)。"
+  (<- text (| str None) (FsReadText :path f"{home}/{MEMORY-BASE-FILE}" :max-chars MEMORY-BOOK-MAX-CHARS))
+  (when (not (isinstance text str))
+    (return (MemoryHomeBaselines :books {})))
+  (<- prior MemoryHomeBaselines (memory-baselines-of-text text))
+  prior)
+
+
 (defk memory-baselines-of-home [home]
   {:pre [(: home str)]
    :post [(: % dict)]}
   "置き場の基準の side car を読む(手番の頭に器が置いた物)。無い・読めない = 空 ⇒ 行の在る冊は
-   規則 3b(MemoryUnbased)で**撃たれない**(安全側)。判断は judgment.memory-baselines-of-text の 1 点。"
-  (<- text (| str None) (FsReadText :path f"{home}/{MEMORY-BASE-FILE}" :max-chars MEMORY-BOOK-MAX-CHARS))
-  (when (not (isinstance text str))
-    (return {}))
-  (<- baselines dict (memory-baselines-of-text text))
-  baselines)
+   規則 3b(MemoryUnbased)で**撃たれない**(安全側)。判断は judgment.memory-baselines-of-text の 1 点
+   (読みは memory-home-prior-of と同じ 1 本 — ここは書き戻し側の dict の契約を保つ口)。"
+  (<- prior MemoryHomeBaselines (memory-home-prior-of home))
+  prior.books)
 
 
 (defk write-memory-baselines [home baselines]

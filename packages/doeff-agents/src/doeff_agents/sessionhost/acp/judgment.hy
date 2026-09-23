@@ -124,6 +124,10 @@
   MemoryBaseline
   MemoryBook
   MemoryFold
+  MemoryHand
+  MemoryHold
+  MemoryHomeBaselines
+  MemoryLocalUnreadable
   MemoryMalformed
   MemoryRetire
   MemoryRevive
@@ -6917,19 +6921,24 @@
 
 (defk memory-baselines-of-text [text]
   {:pre [(: text str)]
-   :post [(: % dict)]}
-  "基準の file の本文 → {name: MemoryBaseline}。読めない**項だけ**を落とす(JSON でない・object でない・
-   欄が足りない・版が bool・名が綴れない)。file 全体を捨てないのは、1 項の腐りで全冊が 3b に倒れて
-   1 冊も書き戻せなくなるのを避けるため。読めない file は空 = 全冊 3b(安全側)。"
+   :post [(: % MemoryHomeBaselines)]}
+  "基準の file の本文 → MemoryHomeBaselines(books = {name: MemoryBaseline})。読めない**項だけ**を落とす
+   (JSON でない・object でない・欄が足りない・版が bool・名が綴れない)。file 全体を捨てないのは、1 項の腐りで
+   全冊が 3b に倒れて 1 冊も書き戻せなくなるのを避けるため。読めない file は空 = 全冊 3b(安全側)。
+
+   ⚠ この関数が newtype MemoryHomeBaselines の**唯一の作り手**(card acp:kanban-issue:ki-554e364641e8 §10.2 B1):
+   基準 = 『前回の組み直しが置き場へ渡した写し』の claim check で、その証拠は side car の本文にしか無い。
+   行(memory-baseline-of-row)から作ると、行は記録の頭の遅れる投影なので、席が触っていない写しが『編集された』に
+   見えて組み直しが Hold に倒れ、書き戻しが古い写しで頭を巻き戻す(2026-09-21 の実弾の形)。"
   (try
     (setv parsed (json.loads text))
     (except [Exception]
-      (return {})))
+      (return (MemoryHomeBaselines :books {}))))
   (when (not (isinstance parsed dict))
-    (return {}))
+    (return (MemoryHomeBaselines :books {})))
   (setv books (.get parsed MEMORY-BASE-BOOKS-KEY))
   (when (not (isinstance books dict))
-    (return {}))
+    (return (MemoryHomeBaselines :books {})))
   (setv baselines {})
   (for [#(name entry) (.items books)]
     (when (not (and (isinstance name str) (re.match MEMORY-NAME-PATTERN name) (isinstance entry dict)))
@@ -6942,7 +6951,7 @@
                (isinstance version int) (not (isinstance version bool)))
       (setv (get baselines name)
             (MemoryBaseline :name name :record-seq seq :sha256 sha256 :version version))))
-  baselines)
+  (MemoryHomeBaselines :books baselines))
 
 
 (defk memory-baseline-text-of [baselines]
@@ -7110,12 +7119,85 @@
   (+ (.join "\n" lines) "\n"))
 
 
-(defk memory-files-of [books baselines retired]
-  {:pre [(: books tuple) (: baselines dict) (: retired tuple)]
+(defk memory-hydrate-verdict [head prior local]
+  {:pre [(: head (| str None)) (: prior (| MemoryBaseline None)) (: local (| str MemoryLocalUnreadable None))]
+   :post [(: % (| MemoryHand MemoryHold))]}
+  "組み直しが 1 冊を**渡すか守るか**を決める **1 点**(card acp:kanban-issue:ki-554e364641e8 望む状態 (A)・
+   設計 lt-A5JQ5TRYBQ6GM8E4PTNQHPH0C4 §3.1)。書き戻しの 3 点比較(memory-write-verdict)の対で、座標も同じ 3 つ:
+
+     head  = 今回渡す本文の digest(= 今回の基準の sha256・記録の頭の本文から計算済み)。退役した行は本文を
+             読まないので None。
+     prior = **前回の組み直しが渡した写し**の claim check(置き場の side car の項 — MemoryHomeBaselines の 1 項)。
+             無ければ None。⚠ 行の claim check ではない(行は頭の遅れる投影 — MemoryHomeBaselines の頭注)。
+     local = 作業ディレクトリに**今ある** file の digest。None = file が無い。MemoryLocalUnreadable = 在るが
+             digest 不明(frontmatter が壊れている)。
+
+   直す欠陥: 書き戻しが記録の service に断られた(不通・応答なし)編集は、置き場の file にだけ残る。次の組み直しが
+   それを行の頭(古い本文)で無条件に上書きすると、手元 = 基準 = 記録が揃って検査は緑のまま、編集だけが永久に
+   消える(反例 (D)(a)・T1 で基準版 72c20802 に赤を実測)。書き戻し側は規則 3a で『触っていない写しは巻き戻さない』
+   を持つが、組み直し側にその対が無かった — この関数がその対。
+
+     H0  local = 無し                    → Hand(file が無いので壊す物が無い)
+     H1  head ≠ None ∧ local = head       → Hand(手元は既に頭と同じ — 置き換えは着いて答えだけ落ちた形も含む。
+                                                書きは冪等・基準を頭へ据えてよい)
+     H2  prior = None                     → Hand(前回の写しの証拠が無い = 基準の無い古い置き場・読めない基準。
+                                                **今日の挙動のまま** — Hold にすると規則 4b Unbased と組んで永久に
+                                                渡らない冊ができる。決定 D2: 二重障害 1 回きりの消失を受け入れる)
+     H3  local = prior.sha256             → Hand(席は前回の写しに触っていない ⇒ 頭で置き直してよい。別の機体が
+                                                頭を進めた S3 の正常例はここ — T4)
+     H4  それ以外                         → **Hold**(書かない・掃除しない・基準は prior を保つ)。手元だけが持つ
+                                                編集で、次の書き戻しが規則 3c / 3d(退役行なら 0d 復活)で届ける。
+                                                local が digest 不明の拍もここ(決定 D3: 席が frontmatter を崩した拍の
+                                                本文を黙って消さない — 席が直すまで頭は渡らない)
+
+   呼び手(memory-files-of)は答えを isinstance で読んで荷を組むだけで、sha を比べ直さない(memory-write-verdict
+   と fold-one-memory の関係と同じ形 — 判定点を 2 つにしない)。substrate(impls/claude_code.hy)はこの判断を
+   持たない: 比べる材料(行・記録・digest の式)を持てない層で、運ばれた荷を置くだけ。"
+  (setv name (cond (is-not prior None) prior.name
+                   (isinstance local MemoryLocalUnreadable) local.name
+                   True ""))
+  ;; H0: 無い file は壊せない。
+  (when (is local None)
+    (return (MemoryHand :name name)))
+  ;; H1: 手元は既に頭そのもの(冪等)。
+  (when (and (is-not head None) (isinstance local str) (= local head))
+    (return (MemoryHand :name name)))
+  ;; H2: 前回の写しの証拠が無い — 今日の挙動(決定 D2)。
+  (when (is prior None)
+    (return (MemoryHand :name name)))
+  ;; H3: 席は触っていない。
+  (when (and (isinstance local str) (= local prior.sha256))
+    (return (MemoryHand :name name)))
+  ;; H4: 手元だけが持つ編集(または digest 不明)— 守る。
+  (MemoryHold :name name :reason (if (isinstance local MemoryLocalUnreadable) "unreadable" "edited")))
+
+
+(defk memory-home-digests-of [readings]
+  {:pre [(: readings tuple)]
+   :post [(: % dict)]}
+  "作業ディレクトリの読み(memory-books-of-home の readings)→ {name: digest | MemoryLocalUnreadable}(純関数)。
+   組み直しの 3 点比較の **local** の座標。無い名は dict に無い(= None)。
+
+   ⚠ 母集団は書き戻し側と**同じ** readings(card acp:kanban-issue:ki-554e364641e8 §10.1 A3): 新しい listing の
+   effect を作らない — 『file が在る』の定義が組み直しと書き戻しで割れると、OSError の file が片側で撤回・片側で
+   Hold に割れる。digest の式は memory-sha256-of-text の 1 点(生の byte で比べない — 2026-09-21 の誤診)。
+   MemoryBook → digest / MemoryMalformed → MemoryLocalUnreadable(在るが digest 不明 = H4 Hold)。"
+  (setv digests {})
+  (for [reading readings]
+    (if (isinstance reading MemoryBook)
+        (do
+          (<- sha str (memory-sha256-of-text reading.text))
+          (setv (get digests reading.name) sha))
+        (setv (get digests reading.name) (MemoryLocalUnreadable :name reading.name))))
+  digests)
+
+
+(defk memory-files-of [books baselines retired prior local]
+  {:pre [(: books tuple) (: baselines dict) (: retired tuple) (: prior MemoryHomeBaselines) (: local dict)]
    :post [(: % MemoryTurnFiles)]}
-  "手番の頭に置き場へ当てる荷(純関数): 書き出す file の列(冊ごとに <name>.md、行から導いた索引
-   MEMORY.md、最後に畳み戻しの基準 MEMORY.base.json)と、**取り除く** file の名の列。冊が 0 でも索引と
-   基準は書く(前の手番の腐った写しを残さない)。
+  "手番の頭に置き場へ当てる荷(純関数): 書き出す file の列(渡す冊ごとに <name>.md、行から導いた索引
+   MEMORY.md、最後に畳み戻しの基準 MEMORY.base.json)と、**取り除く** file の名の列と、**触らなかった**冊の名。
+   冊が 0 でも索引と基準は書く(前の手番の腐った写しを残さない)。
 
    基準を**この列に載せる**のは、冊と同じ拍・同じ書き手(器)で置くため — 別の腕が置くと『冊は落ちたが
    基準は着いた』が起き、基準が嘘をつく。器は列を 1 つずつ書き、基準だけは書けた冊へ絞って最後に置く
@@ -7126,15 +7208,54 @@
    substrate-clean の層に生える。掃除も書き出しと**同じ荷**に載せるのは基準と同じ理由 — 別の腕が
    持つと『冊は書けたが掃除は落ちた』が起き、退役した冊の file が残って次の畳み戻しが読む。
    ⚠ 掃除の母集団は**行の名ちょうど**。置き場の file を走査して余りを消す形には**しない**: 手番の途中に
-   席が書いた新しい冊(まだ行が無い)を、その拍で消してしまう。"
-  (setv files (lfor book (sorted books :key (fn [b] b.name))
-                    {"name" f"{book.name}{MEMORY-FILE-SUFFIX}" "text" book.text}))
+   席が書いた新しい冊(まだ行が無い)を、その拍で消してしまう。
+
+   prior / local(card acp:kanban-issue:ki-554e364641e8): 前回渡した写しの claim check(side car — 型が出自を
+   縛る)と、置き場に今ある file の digest。冊ごとの渡す / 守るは **memory-hydrate-verdict の 1 点**で決め、
+   ここは答えを読んで 3 列に振るだけ(sha を比べ直さない)。渡す冊(Hand)だけが files / swept に載り、
+   守る冊(Hold)は held に名が載る(wire には載らない — 計器と log の材料)。
+
+   基準本文の合成(§10.1 A1): **prior の全項を出発点**に、Hand で書いた冊は今回の値へ置き換え、Hand で掃除した
+   名は落とす。**それ以外(Hold・本文が読めなかった冊・行の無い冊)の項は動かさない** — 項が動くのは、その冊を
+   現に書いたか掃除した時だけ(端の状態)。盲検 A の反例(T5): 組み直しの拍に 1 冊だけ記録から本文が読めないと、
+   その冊は books にも baselines にも入らず、旧い合成(baselines をそのまま書く)は基準の項を落としていた ⇒
+   同じ手番の編集が書き戻しで 4b Unbased(撃たない)→ 次の組み直しが H2 Hand で上書き → 編集が消える。
+   渡した冊に今回の基準が無い拍(呼び手が baselines を空で渡す検の形)は prior の項を落とす: 渡した写しは
+   もう前回の物ではないので、前回の claim check を残すと基準が嘘をつく(次の書き戻しは 4b で撃たない = 安全側)。
+
+   索引は行から導く(変えない): Hold の冊も行に在るので、索引の行数は冊の数のまま。"
+  (setv files [])
+  (setv swept [])
+  (setv held [])
+  (setv base (dict prior.books))
+  (for [book (sorted books :key (fn [b] b.name))]
+    (setv today (.get baselines book.name))
+    (<- verdict (| MemoryHand MemoryHold)
+        (memory-hydrate-verdict (if (is-not today None) today.sha256 None)
+                                (.get prior.books book.name)
+                                (.get local book.name)))
+    (if (isinstance verdict MemoryHand)
+        (do
+          (.append files {"name" f"{book.name}{MEMORY-FILE-SUFFIX}" "text" book.text})
+          (if (is-not today None)
+              (setv (get base book.name) today)
+              (.pop base book.name None)))
+        (.append held book.name)))
+  (for [name (sorted retired)]
+    (<- verdict (| MemoryHand MemoryHold)
+        (memory-hydrate-verdict None (.get prior.books name) (.get local name)))
+    (if (isinstance verdict MemoryHand)
+        (do
+          (.append swept f"{name}{MEMORY-FILE-SUFFIX}")
+          (.pop base name None))
+        (.append held name)))
   (<- index str (memory-index-of books))
-  (<- base str (memory-baseline-text-of baselines))
+  (<- base-text str (memory-baseline-text-of base))
   (MemoryTurnFiles
     :files (tuple (+ files [{"name" MEMORY-INDEX-FILE "text" index}
-                            {"name" MEMORY-BASE-FILE "text" base}]))
-    :swept (tuple (lfor name (sorted retired) f"{name}{MEMORY-FILE-SUFFIX}"))))
+                            {"name" MEMORY-BASE-FILE "text" base-text}]))
+    :swept (tuple swept)
+    :held (tuple (sorted held))))
 
 
 (defk memory-book-of-row [row text]

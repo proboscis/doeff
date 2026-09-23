@@ -40,6 +40,7 @@
   MEMORY-INDEX-FILE
   MemoryBaseline
   MemoryBook
+  MemoryHomeBaselines
   MemoryTurnFiles])
 (import doeff_agents.sessionhost.acp.judgment [
   memory-baseline-text-of
@@ -467,7 +468,7 @@
 (deftest test-the-index-the-agentd-derives-from-the-rows-reaches-the-seat
   ;; 索引 MEMORY.md は file としての正本を持たず、行から組み直される(memory-files-of)。
   ;; その索引も同じ 1 枚の名簿を渡る — 渡らないと置き場に索引だけが古いまま残る。
-  (<- turn MemoryTurnFiles (memory-files-of #() {} #()))
+  (<- turn MemoryTurnFiles (memory-files-of #() {} #() (MemoryHomeBaselines :books {}) {}))
   (assert (= (lfor f turn.files (get f "name")) [MEMORY-INDEX-FILE MEMORY-BASE-FILE]) turn))
 
 
@@ -555,7 +556,7 @@
   (setv baselines (dfor book books book.name
                         (MemoryBaseline :name book.name :record-seq (+ 3 (len book.name))
                                         :sha256 (* "a" 64) :version 2)))
-  (<- turn MemoryTurnFiles (memory-files-of books baselines #()))
+  (<- turn MemoryTurnFiles (memory-files-of books baselines #() (MemoryHomeBaselines :books {}) {}))
   (setv files turn.files)
   (setv charter {"session_id" "s1" "session_name" "doeff-s1" "agent_type" "claude"
                  "work_dir" "/work/dir" "lifecycle" "run_to_completion"
@@ -573,8 +574,8 @@
   (assert (= written (sorted ["book-0.md" "book-1.md" "book-2.md" MEMORY-INDEX-FILE MEMORY-BASE-FILE]))
           #("基準が名簿のどこかで落ちた" written))
   ;; 全冊が着いた拍の基準は 1 byte も変わらない(絞りが何も落とさない)。
-  (<- landed dict (memory-baselines-of-text (get world.fs f"{MEMORY-HOME}/{MEMORY-BASE-FILE}")))
-  (assert (= landed baselines) #("置き場の基準が起こす側の基準と違う" landed))
+  (<- landed MemoryHomeBaselines (memory-baselines-of-text (get world.fs f"{MEMORY-HOME}/{MEMORY-BASE-FILE}")))
+  (assert (= landed.books baselines) #("置き場の基準が起こす側の基準と違う" landed))
   ;; 器の名乗りは 冊・索引・基準を分けて数える。
   (setv line (get (memory-log-lines world) 0))
   (assert (in "books=3" line) line)
@@ -605,11 +606,13 @@
   (assert (= written (sorted ["book-0.md" "book-2.md" MEMORY-INDEX-FILE MEMORY-BASE-FILE]))
           #("門が落とした冊が置き場に在る / 基準が落ちた" written))
   ;; 基準は**書けた冊だけ**を名乗る(飛ばされた book-1 は基準から消える ⇒ 次の畳み戻しは規則 3b で撃たない)。
-  (<- landed dict (memory-baselines-of-text (get world.fs f"{MEMORY-HOME}/{MEMORY-BASE-FILE}")))
+  (<- landed-prior MemoryHomeBaselines (memory-baselines-of-text (get world.fs f"{MEMORY-HOME}/{MEMORY-BASE-FILE}")))
+  (setv landed landed-prior.books)
   (assert (= (sorted (.keys landed)) ["book-0" "book-2"])
           #("書けなかった冊の基準が置き場に着いた(基準が嘘をつく)" (sorted (.keys landed))))
   ;; 残った項は起こす側が渡した値そのもの(器は絞るだけで、値を作らない)。
-  (<- declared dict (memory-baselines-of-text baseline-text))
+  (<- declared-prior MemoryHomeBaselines (memory-baselines-of-text baseline-text))
+  (setv declared declared-prior.books)
   (for [name ["book-0" "book-2"]]
     (assert (= (get landed name) (get declared name)) #(name (get landed name))))
   ;; 計器: 書けた冊 2・用意した 5(この割れが log から読める)。
@@ -617,6 +620,54 @@
   (assert (in "books=2" line) line)
   (assert (in "declared=5" line) line)
   (assert (in "base=1" line) line))
+
+
+(deftest test-the-seat-keeps-the-baseline-entry-of-a-book-the-turn-did-not-carry
+  ;; T2(card acp:kanban-issue:ki-554e364641e8 §10.1 A2): 起こす側の judgment は、触らなかった冊(置き場だけが持つ
+  ;; 編集を守った冊・本文を読めなかった冊)の基準の項を**前回の値で据え置いて**運び、その冊は memory_files に
+  ;; **載せない**。器の絞りが『書けた冊だけ残す』のままだと、この据え置きが黙って落ち、次の畳み戻しがその冊を
+  ;; 4b(基準なし・撃たない)に倒し、次の組み直しが編集を上書きする。⇒ 器が落とすのは「運ばれたのに書けなかった
+  ;; 冊」の項ちょうど(残す条件 = 書けた ∨ 運ばれていない)。器は据え置きを**検めない**(検める材料が無い)。
+  (setv baseline-text (sample-baseline-text ["book-0" "book-1" "held-book"]))
+  ;; held-book は運ばれない(judgment が Hold にした冊)。book-1 は運ばれたが本文が str でない(器の門が飛ばす)。
+  (setv roster [{"name" "book-0.md" "text" "---\nname: book-0\ndescription: d\nmetadata:\n  type: project\n---\n\nbody 0\n"}
+                {"name" "book-1.md" "text" None}
+                {"name" MEMORY-INDEX-FILE "text" "# MEMORY\n"}
+                {"name" MEMORY-BASE-FILE "text" baseline-text}])
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["❯ {composer}"])
+  ;; 置き場には守られた冊の編集が既に在る(前の手番の書き戻しが届かなかった形)。
+  (setv held-text "---\nname: held-book\ndescription: d\nmetadata:\n  type: project\n---\n\n届かなかった編集。\n")
+  (setv (get world.fs f"{MEMORY-HOME}/held-book.md") held-text)
+  (<- row (run-launch world (launch-params
+                              :agent_type "claude"
+                              :binding {"kind" "claude-code" "config_dir" "/x/claude"}
+                              :memory_dir MEMORY-HOME
+                              :memory_files roster)))
+  ;; (a) 守られた冊の file は書かれず・消されず、本文はそのまま。
+  (setv written (books-in world MEMORY-HOME))
+  (assert (= written (sorted ["book-0.md" "held-book.md" MEMORY-INDEX-FILE MEMORY-BASE-FILE])) written)
+  (assert (= (get world.fs f"{MEMORY-HOME}/held-book.md") held-text) "運ばれていない冊の file が動いた")
+  (setv touched (lfor #(verb path) world.trace
+                      :if (and (in verb #{"fs-write" "fs-remove"}) (= path f"{MEMORY-HOME}/held-book.md"))
+                      verb))
+  (assert (= touched []) #("運ばれていない冊の path を器が触った" touched))
+  ;; (b) 着いた基準: 運ばれなかった held-book の項は**残る**(値は渡した本文そのもの)。運ばれたのに書けなかった
+  ;;     book-1 の項は**落ちる**(既存の絞りはそのまま)。書けた book-0 は残る。
+  (<- landed MemoryHomeBaselines (memory-baselines-of-text (get world.fs f"{MEMORY-HOME}/{MEMORY-BASE-FILE}")))
+  (assert (= (sorted (.keys landed.books)) ["book-0" "held-book"])
+          #("運ばれていない冊の項が落ちた / 書けなかった冊の項が残った" (sorted (.keys landed.books))))
+  (<- declared MemoryHomeBaselines (memory-baselines-of-text baseline-text))
+  (for [name ["book-0" "held-book"]]
+    (assert (= (get landed.books name) (get declared.books name)) #(name (get landed.books name))))
+  ;; (c) 計器の欄は変えない: books= と declared= の差で「運ばれたのに書けなかった」が読める。
+  (setv line (get (memory-log-lines world) 0))
+  (assert (in "books=1" line) line)
+  (assert (in "declared=4" line) line)
+  (assert (in "base=1" line) line)
+  ;; (d) 綴りの家は 2 つちょうど(acp/effects.py と器の写し)。
+  (assert (= CLAUDE-MEMORY-FILES-KEY CHARTER-MEMORY-FILES-KEY))
+  (assert (= CLAUDE-MEMORY-BASE-FILE MEMORY-BASE-FILE)))
 
 
 ;; ---------------------------------------------------------------------------

@@ -523,6 +523,35 @@ rules:
         - "**/sessionhost/acp/effects.py"
         - "**/sessionhost/impls/claude_code.hy"
 
+  - id: doeff-agents-substrate-does-not-import-acp
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      card acp:kanban-issue:ki-554e364641e8 / law
+      conversation-memory-lives-in-the-row (ACP 575b1e): the per-kind vessel
+      modules under sessionhost/impls/ are substrate-clean — they materialise
+      the charter the agentd built (memory_dir, memory_files,
+      memory_retired_files) with Fs* effects and decide NOTHING about it. Every
+      judgment about a memory book (hand it / hold it / retire it, which
+      version to aim at, what its digest is) lives in acp/judgment.hy and is
+      fed by acp/agentd.hy, which alone reads the ACP rows and the record
+      service. Importing doeff_agents.sessionhost.acp from a vessel copies the
+      identity formula (memory-material-of) or a verdict into a second home:
+      the two homes then drift and one silently rolls the other's decision
+      back (2026-09-21: a vessel-side byte comparison misdiagnosed 55/55
+      untouched copies as rolled back). Spell the wire keys as local
+      constants (CLAUDE-MEMORY-*-KEY, cross-checked by the seat tests) and
+      keep the vessel judgment-free.
+    patterns:
+      - pattern-regex: 'doeff_agents\.sessionhost\.acp'
+    paths:
+      include:
+        - /packages/doeff-agents/src/doeff_agents/sessionhost/impls/**
+        # hit / clean fixtures(tests/semgrep/test_substrate_does_not_import_acp_rule.py が撃つ)
+        - "**/sessionhost/impls/substrate_imports_acp_forbidden.hy"
+        - "**/sessionhost/impls/substrate_imports_only_substrate_effects_clean.hy"
+
   - id: doeff-agents-turn-carried-key-must-not-become-a-launch-flag
     languages:
       - generic

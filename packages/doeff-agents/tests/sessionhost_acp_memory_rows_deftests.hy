@@ -51,6 +51,10 @@
   MemoryAppend
   MemoryBaseline
   MemoryBook
+  MemoryHand
+  MemoryHold
+  MemoryHomeBaselines
+  MemoryLocalUnreadable
   MemoryMalformed
   MemoryRetire
   MemoryRevive
@@ -60,7 +64,8 @@
   MemoryUnchanged
   RecordEvent
   RecordSupersede
-  RecordSupersedeConflicted])
+  RecordSupersedeConflicted
+  RecordUnread])
 (import doeff_agents.sessionhost.acp.effects [Conflict])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeRecord FakeSessions])
 (import doeff_agents.sessionhost.acp.judgment [
@@ -70,6 +75,8 @@
   memory-body-of
   memory-book-of
   memory-files-of
+  memory-home-digests-of
+  memory-hydrate-verdict
   memory-name-of-row
   memory-retired-status-of
   memory-status-of
@@ -159,7 +166,9 @@
     ;; (裁定 (f) の窓)と、席が触っていない写しが行を巻き戻す実弾の形は、この形でしか作れない。
     (setv self.stale-seat False)
     ;; 席がこの手番で置き場へ起こす編集(水入れの**後**に落ちる — 本物の順序)。
-    (setv self.pending []))
+    (setv self.pending [])
+    ;; card ki-554e364641e8: この手番の**畳み戻しの拍だけ**記録の service が落ちる体(水入れは通る)。
+    (setv self.fold-outage False))
 
   (defn #^ list dispatchers [self]
     [self.record.dispatch self.acp.dispatch self.custody.dispatch self.sessions.dispatch self.local.dispatch])
@@ -251,7 +260,7 @@
   (defn #^ dict baseline-of-home [self]
     "置き場の基準(器が書いた物 / 畳み戻しが進めた物)。"
     (setv text (.get self.local.files f"{HOME}/{MEMORY-BASE-FILE}"))
-    (if (isinstance text str) (run (memory-baselines-of-text text)) {}))
+    (if (isinstance text str) (. (run (memory-baselines-of-text text)) books) {}))
 
   (defn #^ list metric-lines [self #^ str metric]
     (lfor line self.local.metrics :if (= (.get line "metric") metric) line))
@@ -298,7 +307,12 @@
     (setv (get self.local.transcripts path) (+ prior (claude-events (.sid self) "hello")))
     (.tick self 1000)
     (.finish-turn self.sessions (.sid self) (+ self.local.now-ms 100))
+    ;; card ki-554e364641e8: 終いの拍(settle-record = 畳み戻し)だけ記録の service を落とす。
+    (when self.fold-outage (setv self.record.unreachable True))
     (.tick self 1000)
+    (when self.fold-outage
+      (setv self.record.unreachable False)
+      (setv self.fold-outage False))
     None)
 
   (defn #^ dict charter [self]
@@ -527,14 +541,14 @@
   (setv baselines {"a-fact" (MemoryBaseline :name "a-fact" :record-seq 7 :sha256 (* "a" 64) :version 2)
                    "b-fact" (MemoryBaseline :name "b-fact" :record-seq 9 :sha256 (* "b" 64) :version 1)})
   (<- text str (memory-baseline-text-of baselines))
-  (<- back dict (memory-baselines-of-text text))
-  (assert (= back baselines) back)
+  (<- back MemoryHomeBaselines (memory-baselines-of-text text))
+  (assert (= back.books baselines) back)
   (for [spelling ["\"text\"" "\"body\"" "\"content\""]]
     (assert (not (in spelling text)) #("基準が本文を持っている" spelling text)))
   ;; file が丸ごと読めない形は空へ倒す(空 = 行の在る冊を 1 つも撃たない安全側)。
   (for [bad ["" "{" "[]" "null" "\"x\"" "{}" "{\"books\": []}" "{\"books\": null}"]]
-    (<- none dict (memory-baselines-of-text bad))
-    (assert (= none {}) #(bad none)))
+    (<- none MemoryHomeBaselines (memory-baselines-of-text bad))
+    (assert (= none.books {}) #(bad none)))
   ;; 項の単位で落とす(1 項の腐りで全冊を捨てない)。
   (setv mixed (json.dumps {"books" {"ok" {"recordSeq" 3 "sha256" (* "c" 64) "version" 1}
                                     "no-seq" {"sha256" (* "d" 64) "version" 1}
@@ -543,8 +557,8 @@
                                     "bool-seq" {"recordSeq" True "sha256" (* "e" 64) "version" 1}
                                     "Bad Name" {"recordSeq" 6 "sha256" (* "f" 64) "version" 1}
                                     "not-an-object" "x"}}))
-  (<- kept dict (memory-baselines-of-text mixed))
-  (assert (= (sorted (.keys kept)) ["ok"]) kept)
+  (<- kept MemoryHomeBaselines (memory-baselines-of-text mixed))
+  (assert (= (sorted (.keys kept.books)) ["ok"]) kept)
   ;; 行 → 基準は claim check の 4 欄が**全部**読める行だけ(半端な基準で撃つより撃たない)。
   (<- from-row (| MemoryBaseline None) (memory-baseline-of-row (memory-row "a-fact" (* "a" 64) 7 2)))
   (assert (= from-row (MemoryBaseline :name "a-fact" :record-seq 7 :sha256 (* "a" 64) :version 2)) from-row)
@@ -568,7 +582,7 @@
                     f"- [mid](mid.md) — mid の要旨"
                     f"- [zeta](zeta.md) — zeta の要旨"]) items)
   ;; 書き出す列は 冊 + 索引 で、索引は最後の 1 つ。
-  (<- turn MemoryTurnFiles (memory-files-of books {} #()))
+  (<- turn MemoryTurnFiles (memory-files-of books {} #() (MemoryHomeBaselines :books {}) {}))
   (setv files turn.files)
   (assert (= (len files) (+ (len books) 2)) files)
   (assert (= (get (get files -2) "name") MEMORY-INDEX-FILE) files)
@@ -577,11 +591,11 @@
   ;; 退役した行が無ければ掃除は 0 件(欄が立たない = charter は 1 byte も変わらない)。
   (assert (= turn.swept #()) turn)
   ;; 冊が 0 でも索引と基準は書く(前の手番の腐った写しを残さない)。
-  (<- empty MemoryTurnFiles (memory-files-of #() {} #()))
+  (<- empty MemoryTurnFiles (memory-files-of #() {} #() (MemoryHomeBaselines :books {}) {}))
   (assert (= (lfor f empty.files (get f "name")) [MEMORY-INDEX-FILE MEMORY-BASE-FILE]) empty)
   ;; card acp:kanban-issue:ki-6b5c4b270ca0: 退役した行の名は**取り除く file** の列になる(名の順)。
   ;; 器に名を組ませないための口 — file 名へ直すのはここちょうど。
-  (<- swept MemoryTurnFiles (memory-files-of #() {} #("zeta" "alpha")))
+  (<- swept MemoryTurnFiles (memory-files-of #() {} #("zeta" "alpha") (MemoryHomeBaselines :books {}) {}))
   (assert (= swept.swept #("alpha.md" "zeta.md")) swept)
   ;; 取り除く名は書き出す列に**入らない**(同じ file を消してから書き戻す形を作らない)。
   (assert (= (lfor f swept.files (get f "name")) [MEMORY-INDEX-FILE MEMORY-BASE-FILE]) swept))
@@ -845,7 +859,7 @@
   (.turn world :warm True)
   ;; (1) 送りが運んだ基準は**この手番に読んだ行**の claim check ちょうど。
   (setv by-name (dfor f (.hydrated world) (get f "name") (get f "text")))
-  (setv carried (run (memory-baselines-of-text (get by-name MEMORY-BASE-FILE))))
+  (setv carried (. (run (memory-baselines-of-text (get by-name MEMORY-BASE-FILE))) books))
   (setv base (.get carried "a-fact"))
   (assert (is-not base None) #("送りの腕が基準を 1 欄も運んでいない" (sorted (.keys carried))))
   (assert (= base.record-seq (get moved MEMORY-SPEC-RECORD-SEQ-KEY))
@@ -1072,7 +1086,7 @@
   ;; 器を旧い版にして置き場を凍らせる(手番の頭に写しが入れ替わると、席が『触っていない』形が作れない)。
   (setv world.stale-seat True)
   (setv before (get world.local.files f"{HOME}/{MEMORY-BASE-FILE}"))
-  (setv before-seq (. (get (run (memory-baselines-of-text before)) "mail-hold-has-two-exits") record-seq))
+  (setv before-seq (. (get (. (run (memory-baselines-of-text before)) books) "mail-hold-has-two-exits") record-seq))
   ;; 手番 2: 席は 1 字も触らず、別の機体が同じ冊へ濃い版を書く(= 規則 2a)。
   (.put-elsewhere world "mail-hold-has-two-exits"
                   (book-text "mail-hold-has-two-exits" "郵便の保留には出口が 2 つ"
@@ -1342,3 +1356,294 @@
   (assert (= (get folded "unchanged") 1) folded)
   (assert (in "別の機体が書いた濃い本文" (get (.head-event world "mail-hold-has-two-exits") "text"))
           (.head-event world "mail-hold-has-two-exits")))
+
+
+;; ---------------------------------------------------------------------------
+;; card acp:kanban-issue:ki-554e364641e8 望む状態 (A)・反例 (D)(a)
+;; 畳み戻しの拍だけ記録の service が落ち、席の編集が置き場にだけ残った。次の手番の水入れは
+;; その置き場を行の頭(古い本文)で上書きしてはならない — 上書きすると 3 点(手元・基準・記録)が
+;; 揃って検査は緑のまま、編集だけが永久に消える。
+;; ---------------------------------------------------------------------------
+
+(deftest test-an-edit-the-record-did-not-take-survives-the-next-hydration
+  (setv world (MemoryWorld))
+  (setv first (book-text "a-fact" "要旨" "1 手番目の本文。"))
+  (.put-file world "a-fact.md" first)
+  (.turn world)                                  ;; 行・記録・基準が揃う(v1)
+  (setv edited (book-text "a-fact" "要旨" "2 手番目に席が足した本文。"))
+  (.put-file world "a-fact.md" edited)
+  (setv world.fold-outage True)                  ;; 水入れは通り、畳み戻しの拍だけ記録の service が落ちる
+  (.turn world)
+  ;; 畳み戻しは落ちた: 記録は v1 のまま・条件が 1 つ立ち・置き場には編集が残っている。
+  (setv events (.events-of world.record CID (run (memory-stream-id-of "a-fact"))))
+  (assert (in "1 手番目の本文" (get (get events 0) "text")) events)
+  (assert (= (get world.local.files f"{HOME}/a-fact.md") edited) "畳み戻しの拍で置き場が動いた")
+  (setv conditions (lfor c (.job-conditions world) :if (= (get c "type") CONDITION-MEMORY-UNWRITABLE) c))
+  (assert (= (len conditions) 1) (.job-conditions world))
+  ;; 3 手番目の頭: 記録の service は戻っている。水入れが置き場を組み直す。
+  (.turn world)
+  ;; ★ 置き場の編集が生きている(いま: 1 手番目の本文へ戻る = 編集が消える)。
+  (assert (= (get world.local.files f"{HOME}/a-fact.md") edited)
+          #("水入れが届かなかった編集を古い本文で上書きした" (get world.local.files f"{HOME}/a-fact.md")))
+  ;; ★ 3 手番目の畳み戻しが編集を記録へ届け、行が v2 になる。
+  (setv events (.events-of world.record CID (run (memory-stream-id-of "a-fact"))))
+  (assert (in "2 手番目に席が足した本文" (get (get events 0) "text")) events)
+  (setv spec (. (get (.memory-rows world) 0) spec))
+  (assert (= (get spec MEMORY-SPEC-VERSION-KEY) 2) spec)
+  (setv folded (get (.metric-lines world "agent-memory-folded") -1))
+  (assert (= (get folded "written") 1) folded)
+  ;; 基準は届いた版へ進む。
+  (setv base (get (.baseline-of-home world) "a-fact"))
+  (assert (= base.sha256 (run (memory-sha256-of-text edited))) base)
+  ;; 水入れは『置き場だけが持つ編集を守った』と名乗る(agent-memory-hydrated の held)。
+  (setv hydrated (get (.metric-lines world "agent-memory-hydrated") -1))
+  (assert (= (.get hydrated "held") 1) hydrated))
+
+
+;; ---------------------------------------------------------------------------
+;; 盲検の反例を検にした 3 本(card ki-554e364641e8・設計検証 lt-A5JQ5TRYBQ6GM8E4PTNQHPH0C4)
+;; ---------------------------------------------------------------------------
+
+(defclass PartialRecord [FakeRecord]
+  "記録の service が**特定の stream だけ**読めない体(他の stream は答える)。冊ごとに独立の要求なので、
+   1 冊だけ timeout する形は機構上いつでも起きる。"
+  (defn __init__ [self]
+    (.__init__ (super))
+    (setv self.unread-streams (set)))
+  (defn _read-stream [self conversation-id stream-id]
+    (if (in stream-id self.unread-streams)
+        (RecordUnread 0 "unreachable: this stream only (fake)")
+        (._read-stream (super) conversation-id stream-id))))
+
+
+(deftest test-an-edit-the-record-did-not-take-survives-the-next-warm-hydration
+  ;; T1d: T1 と同じ筋書きを、2・3 手番目とも温かい腕(送り・after-start)で通す。組み直しの腕は 2 つ在り、
+  ;; 2 手番目以降の普段の手番はこちらしか通らない。⚠ 2 手番目を普通の腕にすると、書き戻しの不通のあと
+  ;; 3 手番目は温かくならず(arm = rebuild)、fake の substrate が何も書かないので検が空振りの緑になる(診断 2026-09-23)。
+  (setv world (MemoryWorld))
+  (setv first (book-text "a-fact" "要旨" "1 手番目の本文。"))
+  (.put-file world "a-fact.md" first)
+  (.turn world)
+  (setv edited (book-text "a-fact" "要旨" "2 手番目に席が足した本文。"))
+  (.put-file world "a-fact.md" edited)
+  (setv world.fold-outage True)
+  (.turn world :warm True)                       ;; 2 手番目も温かい腕(送り)で通す
+  (assert (= (get world.local.files f"{HOME}/a-fact.md") edited) "畳み戻しの拍で置き場が動いた")
+  (.turn world :warm True)
+  (assert (= (get world.local.files f"{HOME}/a-fact.md") edited)
+          #("温かい腕の水入れが届かなかった編集を古い本文で上書きした" (get world.local.files f"{HOME}/a-fact.md")))
+  (setv events (.events-of world.record CID (run (memory-stream-id-of "a-fact"))))
+  (assert (in "2 手番目に席が足した本文" (get (get events 0) "text")) events))
+
+
+(deftest test-a-copy-the-seat-never-touched-is-replaced-by-the-head-another-node-advanced
+  ;; T4(盲検 B の反例の否定形・S3 の正常例): 席が 1 字も触っていない写しの上で、別の機体が頭を進めた。
+  ;; 次の組み直しは**頭で置き直す**(H3 Hand)。prior を行の claim check から取る実装は、ここで Hold に倒れ、
+  ;; 書き戻しが古い写しで頭を巻き戻す(2026-09-21 の実弾の形)⇒ この検が赤になる。
+  (setv world (MemoryWorld))
+  (setv first (book-text "a-fact" "要旨" "1 手番目の本文。"))
+  (.put-file world "a-fact.md" first)
+  (.turn world)
+  (setv elsewhere (book-text "a-fact" "要旨" "別の機体が 2 手番目の途中で書いた濃い本文。"))
+  (.put-elsewhere world "a-fact" elsewhere)
+  (.turn world)                                  ;; 席は触らない ⇒ 3a Unchanged
+  (assert (= world.record.supersedes []) "触っていない写しで置き換えを撃った")
+  (.turn world)                                  ;; 3 手番目の組み直し
+  (assert (= (get world.local.files f"{HOME}/a-fact.md") elsewhere)
+          #("触っていない写しが頭で置き直されていない" (get world.local.files f"{HOME}/a-fact.md")))
+  (assert (= world.record.supersedes []) "3 手番目の書き戻しが頭を古い写しで巻き戻した")
+  (setv events (.events-of world.record CID (run (memory-stream-id-of "a-fact"))))
+  (assert (in "別の機体が 2 手番目の途中で書いた濃い本文" (get (get events 0) "text")) events)
+  (setv folded (get (.metric-lines world "agent-memory-folded") -1))
+  (assert (= (get folded "written") 0) folded)
+  (setv hydrated (get (.metric-lines world "agent-memory-hydrated") -1))
+  (assert (= (.get hydrated "held" 0) 0) hydrated))
+
+
+(deftest test-a-book-whose-body-could-not-be-read-at-hydration-keeps-its-baseline-and-its-edit
+  ;; T5(盲検 A の反例): 組み直しの拍に 1 冊だけ本文が読めなかった(他は読めた)。現状はその冊の基準の項が
+  ;; 落ち、同じ手番の編集は書き戻しで 4b(基準なし・撃たない)、次の組み直しが古い本文で上書きする。
+  ;; 期待: 触らなかった冊の基準の項は前回の値を保ち、編集は書き戻しで届く。
+  (setv world (MemoryWorld))
+  (setv world.record (PartialRecord))
+  (.put-file world "a-fact.md" (book-text "a-fact" "要旨 a" "a の 1 手番目。"))
+  (.put-file world "b-fact.md" (book-text "b-fact" "要旨 b" "b の 1 手番目。"))
+  (.turn world)
+  (assert (= (sorted (.keys (.baseline-of-home world))) ["a-fact" "b-fact"]) (.baseline-of-home world))
+  ;; 2 手番目の頭: a の stream だけ読めない。席は a を編集する。
+  (.add world.record.unread-streams (run (memory-stream-id-of "a-fact")))
+  (setv edited (book-text "a-fact" "要旨 a" "a を 2 手番目に編集。"))
+  (.put-file world "a-fact.md" edited)
+  (.turn world)
+  (.clear world.record.unread-streams)
+  ;; 1 手番目は行が無く計器を出さないので、2 手番目の後の hydrated の行は 1 本(その手番の物)。
+  (setv hydrated (get (.metric-lines world "agent-memory-hydrated") -1))
+  (assert (= (get hydrated "unreadable") 1) hydrated)
+  ;; ★ 触らなかった a の基準の項が残っている(現状: b だけになる)。
+  (assert (= (sorted (.keys (.baseline-of-home world))) ["a-fact" "b-fact"])
+          #("読めなかった冊の基準の項が落ちた" (sorted (.keys (.baseline-of-home world)))))
+  ;; 3 手番目: 記録は正常。編集が生きていて、記録の頭に届いている。
+  (.turn world)
+  (assert (= (get world.local.files f"{HOME}/a-fact.md") edited)
+          #("読めなかった手番の編集を次の水入れが上書きした" (get world.local.files f"{HOME}/a-fact.md")))
+  (setv events (.events-of world.record CID (run (memory-stream-id-of "a-fact"))))
+  (assert (in "a を 2 手番目に編集" (get (get events 0) "text")) events))
+
+
+(deftest test-a-held-edit-is-not-swept-when-another-node-retired-the-row
+  ;; T1b(決定 D5): 2 手番目の書き戻しが不通で編集が置き場にだけ残り、その間に別の機体が同じ行を退役させた。
+  ;; 3 手番目の組み直しは退役の掃除の候補にその名を載せるが、手元が前回渡した写しと違う(H4 Hold)ので**掃除しない**。
+  ;; 書き戻しの 0d 復活がその編集を頭に重ね、行は current へ戻る(card ki-6b5c4b270ca0 の「戻す 1 手はエージェント自身」)。
+  (setv world (MemoryWorld))
+  (.put-file world "a-fact.md" (book-text "a-fact" "要旨" "1 手番目の本文。"))
+  (.turn world)
+  (setv edited (book-text "a-fact" "要旨" "2 手番目に席が足した本文。"))
+  (.put-file world "a-fact.md" edited)
+  (setv world.fold-outage True)
+  (.turn world)
+  (assert (= (get world.local.files f"{HOME}/a-fact.md") edited) "畳み戻しの拍で置き場が動いた")
+  ;; 別の機体がこの行を退役させる(status だけ — 本文の版は 1 つも消えない)。
+  (setv row (get (.memory-rows world) 0))
+  (setv (get world.acp.rows row.key) (replace row :status (run (memory-retired-status-of NOW))))
+  (assert (run (memory-row-retired? (get (.memory-rows world) 0))))
+  (.turn world)
+  ;; ★ 掃除の荷にその名は載らず、置き場の編集は生きている。
+  (assert (= (.swept world) #()) #("守るべき編集の file を掃除の荷に載せた" (.swept world)))
+  (assert (= (get world.local.files f"{HOME}/a-fact.md") edited)
+          #("退役の掃除が届かなかった編集を消した" (get world.local.files f"{HOME}/a-fact.md")))
+  (setv hydrated (get (.metric-lines world "agent-memory-hydrated") -1))
+  (assert (= (.get hydrated "held") 1) hydrated)
+  (assert (= (get hydrated "swept") 0) hydrated)
+  ;; ★ 書き戻しの 0d が編集を頭に重ね、行は current へ戻る。
+  (setv back (get (.memory-rows world) 0))
+  (assert (= (get back.status "state") "current") #("復活していない" back.status))
+  (setv events (.events-of world.record CID (run (memory-stream-id-of "a-fact"))))
+  (assert (in "2 手番目に席が足した本文" (get (get events 0) "text")) events)
+  (setv folded (get (.metric-lines world "agent-memory-folded") -1))
+  (assert (= (get folded "revived") 1) folded)
+  (assert (= (get folded "written") 1) folded))
+
+
+(deftest test-a-hold-that-lasts-two-turns-still-delivers-on-the-third
+  ;; T1c: 2 手番目も 3 手番目も書き戻しの拍だけ不通。Hold は手番をまたいで続き(基準の項は前回の値で据え置き・
+  ;; 落ちない)、4 手番目で記録の service が戻れば届く。窓が閉じるのは同じ機体でこの会話の手番が終わる時点。
+  (setv world (MemoryWorld))
+  (setv first (book-text "a-fact" "要旨" "1 手番目の本文。"))
+  (.put-file world "a-fact.md" first)
+  (.turn world)
+  (setv first-base (get (.baseline-of-home world) "a-fact"))
+  (setv edited (book-text "a-fact" "要旨" "2 手番目に席が足した本文。"))
+  (.put-file world "a-fact.md" edited)
+  (setv world.fold-outage True)
+  (.turn world)
+  (setv world.fold-outage True)
+  (.turn world)
+  ;; 3 手番目: 守った・基準は据え置き・書き戻しはまた断られた。
+  (assert (= (get world.local.files f"{HOME}/a-fact.md") edited)
+          #("2 度目の不通の手番で編集が消えた" (get world.local.files f"{HOME}/a-fact.md")))
+  (setv hydrated (get (.metric-lines world "agent-memory-hydrated") -1))
+  (assert (= (.get hydrated "held") 1) hydrated)
+  (assert (= (get (.baseline-of-home world) "a-fact") first-base)
+          #("Hold の冊の基準が前回の値を保っていない" (.baseline-of-home world)))
+  (setv events (.events-of world.record CID (run (memory-stream-id-of "a-fact"))))
+  (assert (in "1 手番目の本文" (get (get events 0) "text")) events)
+  (setv conditions (lfor c (.job-conditions world) :if (= (get c "type") CONDITION-MEMORY-UNWRITABLE) c))
+  (assert (= (len conditions) 1) (.job-conditions world))
+  ;; 4 手番目: 戻った。組み直しはまだ守り(記録の頭は古いまま)、書き戻しが届ける。
+  (.turn world)
+  (setv hydrated (get (.metric-lines world "agent-memory-hydrated") -1))
+  (assert (= (.get hydrated "held") 1) hydrated)
+  (setv events (.events-of world.record CID (run (memory-stream-id-of "a-fact"))))
+  (assert (in "2 手番目に席が足した本文" (get (get events 0) "text")) events)
+  (setv folded (get (.metric-lines world "agent-memory-folded") -1))
+  (assert (= (get folded "written") 1) folded)
+  (setv base (get (.baseline-of-home world) "a-fact"))
+  (assert (= base.sha256 (run (memory-sha256-of-text edited))) base)
+  (assert (= (get (. (get (.memory-rows world) 0) spec) MEMORY-SPEC-VERSION-KEY) 2)))
+
+
+(deftest test-the-hydrate-verdict-hands-or-holds-from-the-head-the-prior-and-the-home
+  ;; T3(判定表 H0〜H4 × 退役 = head None の行): 判断は judgment の純関数 1 点。呼び手は答えを読むだけ。
+  (setv prior (MemoryBaseline :name "a" :record-seq 7 :sha256 "S0" :version 1))
+  (setv unreadable (MemoryLocalUnreadable :name "a"))
+  ;; H0: 置き場に file が無い → Hand(head の有無・prior の有無に依らない)。
+  (for [head ["S1" None]]
+    (for [p [prior None]]
+      (<- v (| MemoryHand MemoryHold) (memory-hydrate-verdict head p None))
+      (assert (isinstance v MemoryHand) #("H0" head p v))))
+  ;; H1: 手元は既に頭そのもの → Hand(prior と違っていても — 置き換えは着いて答えだけ落ちた形)。
+  (<- v (| MemoryHand MemoryHold) (memory-hydrate-verdict "S1" prior "S1"))
+  (assert (isinstance v MemoryHand) #("H1" v))
+  (<- v (| MemoryHand MemoryHold) (memory-hydrate-verdict "S1" None "S1"))
+  (assert (isinstance v MemoryHand) #("H1 prior なし" v))
+  ;; H2: 前回の写しの証拠が無い → Hand(今日の挙動・決定 D2)— digest 不明の file も上書きされる(二重障害)。
+  (<- v (| MemoryHand MemoryHold) (memory-hydrate-verdict "S1" None "S9"))
+  (assert (isinstance v MemoryHand) #("H2" v))
+  (<- v (| MemoryHand MemoryHold) (memory-hydrate-verdict "S1" None unreadable))
+  (assert (isinstance v MemoryHand) #("H2 unreadable" v))
+  (<- v (| MemoryHand MemoryHold) (memory-hydrate-verdict None None "S9"))
+  (assert (isinstance v MemoryHand) #("H2 退役" v))
+  ;; H3: 手元 = 前回渡した写し(席は触っていない)→ Hand。別の機体が頭を進めた S3 の正常例はここ。
+  (<- v (| MemoryHand MemoryHold) (memory-hydrate-verdict "S2" prior "S0"))
+  (assert (isinstance v MemoryHand) #("H3" v))
+  (<- v (| MemoryHand MemoryHold) (memory-hydrate-verdict None prior "S0"))
+  (assert (isinstance v MemoryHand) #("H3 退役 = 掃除してよい" v))
+  ;; H4: 手元だけが持つ編集 → Hold(理由 edited)。退役の行でも同じ(掃除しない → 0d 復活)。
+  (<- v (| MemoryHand MemoryHold) (memory-hydrate-verdict "S2" prior "S1"))
+  (assert (and (isinstance v MemoryHold) (= v.reason "edited") (= v.name "a")) #("H4" v))
+  (<- v (| MemoryHand MemoryHold) (memory-hydrate-verdict None prior "S1"))
+  (assert (and (isinstance v MemoryHold) (= v.reason "edited")) #("H4 退役" v))
+  ;; H4(決定 D3): 在るが digest 不明 ∧ prior 在り → Hold(理由 unreadable)— 黙って消さない。
+  (<- v (| MemoryHand MemoryHold) (memory-hydrate-verdict "S2" prior unreadable))
+  (assert (and (isinstance v MemoryHold) (= v.reason "unreadable")) #("H4 unreadable" v))
+  (<- v (| MemoryHand MemoryHold) (memory-hydrate-verdict None prior unreadable))
+  (assert (and (isinstance v MemoryHold) (= v.reason "unreadable")) #("H4 unreadable 退役" v))
+  ;; local の座標は書き戻しと同じ readings から: 冊 → digest(式は memory-sha256-of-text の 1 点)・読めない file → 在るが不明。
+  (setv text (book-text "a" "要旨" "本文。"))
+  (<- digests dict (memory-home-digests-of
+                     #((MemoryBook :name "a" :text text :type "project" :description "要旨" :links #())
+                       (MemoryMalformed :name "b" :reason "no frontmatter"))))
+  (assert (= (get digests "a") (run (memory-sha256-of-text text))) digests)
+  (assert (= (get digests "b") (MemoryLocalUnreadable :name "b")) digests)
+  (assert (= (sorted (.keys digests)) ["a" "b"]) digests))
+
+
+(deftest test-the-hydration-roster-moves-a-baseline-entry-only-for-a-book-it-hands
+  ;; 合成規則(§10.1 A1): 基準本文は prior の全項が出発点。Hand で書いた冊は今回の値へ・Hand で掃除した名は削除・
+  ;; それ以外(Hold・本文が読めなかった冊・行の無い冊)は**動かさない**。files / swept は Hand だけ、held は Hold の名。
+  (defn base-of [name sha seq] (MemoryBaseline :name name :record-seq seq :sha256 sha :version 1))
+  (defn book-of [name] (MemoryBook :name name :text (book-text name "要旨" f"{name} の本文。")
+                                   :type "project" :description "要旨" :links #()))
+  (setv handed (book-of "handed"))
+  (setv held (book-of "held"))
+  (setv books #(held handed))
+  ;; 今回渡す本文の claim check(head)。
+  (setv baselines {"handed" (base-of "handed" "H-new" 20) "held" (base-of "held" "K-new" 21)})
+  ;; 前回渡した写しの claim check(prior)— 5 項: 2 冊 + 退役 2 名 + 今回 books にも retired にも無い 1 名。
+  (setv prior (MemoryHomeBaselines
+                :books {"handed" (base-of "handed" "H-old" 10) "held" (base-of "held" "K-old" 11)
+                        "swept-away" (base-of "swept-away" "R1" 12) "kept-back" (base-of "kept-back" "R2" 13)
+                        "unread-this-turn" (base-of "unread-this-turn" "U" 14)}))
+  ;; 置き場の今: handed は前回の写しのまま(H3)・held は編集済み(H4)・swept-away は写しのまま(H3・掃除してよい)・
+  ;; kept-back は編集済み(H4・掃除しない)・unread-this-turn は前回の写しのまま。
+  (setv local {"handed" "H-old" "held" "K-edited" "swept-away" "R1" "kept-back" "R2-edited" "unread-this-turn" "U"})
+  (<- turn MemoryTurnFiles (memory-files-of books baselines #("swept-away" "kept-back") prior local))
+  (assert (= (lfor f turn.files (get f "name")) ["handed.md" MEMORY-INDEX-FILE MEMORY-BASE-FILE]) turn.files)
+  (assert (= turn.swept #("swept-away.md")) turn.swept)
+  (assert (= turn.held #("held" "kept-back")) turn.held)
+  ;; 索引は行から(Hold の冊も行に在るので載る)。
+  (setv index (get (get turn.files -2) "text"))
+  (assert (in "- [held](held.md)" index) index)
+  (assert (in "- [handed](handed.md)" index) index)
+  ;; 基準: handed は今回の値・held は prior・swept-away は削除・kept-back と unread-this-turn は prior。
+  (<- base MemoryHomeBaselines (memory-baselines-of-text (get (get turn.files -1) "text")))
+  (assert (= (sorted (.keys base.books)) ["handed" "held" "kept-back" "unread-this-turn"]) base.books)
+  (assert (= (get base.books "handed") (get baselines "handed")) base.books)
+  (assert (= (get base.books "held") (get prior.books "held")) base.books)
+  (assert (= (get base.books "kept-back") (get prior.books "kept-back")) base.books)
+  (assert (= (get base.books "unread-this-turn") (get prior.books "unread-this-turn")) base.books)
+  ;; 置き場が空(file 無し)なら全冊 Hand・全名 sweep — 今日の挙動(H0)。
+  (<- fresh MemoryTurnFiles (memory-files-of books baselines #("swept-away" "kept-back") prior {}))
+  (assert (= (lfor f fresh.files (get f "name")) ["handed.md" "held.md" MEMORY-INDEX-FILE MEMORY-BASE-FILE]) fresh.files)
+  (assert (= fresh.swept #("kept-back.md" "swept-away.md")) fresh.swept)
+  (assert (= fresh.held #()) fresh.held))
