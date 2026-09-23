@@ -53,6 +53,7 @@ from doeff_agents.sessionhost.acp.effects import (
     CAPACITY_ENV,
     DRAIN_SECONDS_ENV,
     AGENTD_BUILD_ENV,
+    CLAUDE_SETTINGS_FILE_ENV,
     AGENTD_BUILD_LOCAL,
     AGENTD_REVISION_ENV,
     AGENTD_REVISION_UNSTAMPED,
@@ -177,6 +178,8 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         # card acp:kanban-issue:ki-40021864e62f: None = 名乗らない(node の spec に欄を書かない)
         custody_borrower=custody_borrower,
         seat_env=seat_env,
+        # card acp:kanban-issue:ki-7b52bb76aa6e 受入 8: 席の settings file の絶対 path(join が据えた env の写し・None = 名指していない)
+        claude_settings_file=_claude_settings_file_of_env(env),
         # 段 10 lane 10y: charter の work_dir の `~` を展開する node の家(env HOME ちょうど・無ければ process の家)
         home=(env.get("HOME") or os.path.expanduser("~")).strip(),
         # 段 12 lane 12a(agora-redesign #230): verify の命令の結末の置き場 = join が導いた state_dir(spool の親)の下
@@ -328,6 +331,13 @@ def _declaration_sha256_of_env(env: Mapping[str, str]) -> str | None:
     if verdict is not None and not isinstance(verdict, str):
         raise TypeError(f"declaration_sha256_of returned {type(verdict).__name__}")
     return verdict
+
+
+def _claude_settings_file_of_env(env: Mapping[str, str]) -> str | None:
+    """席の settings file の絶対 path(card acp:kanban-issue:ki-7b52bb76aa6e)— join が CLAUDE_SETTINGS_FILE_ENV へ据えた綴りを
+    そのまま読む(`~` の展開と門は join_plan の 1 点・ここは第 2 の解釈を作らない)。無い / 空 = None(名指していない)。"""
+    word = (env.get(CLAUDE_SETTINGS_FILE_ENV) or "").strip()
+    return word or None
 
 
 def _seat_env_of_env(env: Mapping[str, str]) -> tuple[tuple[str, str], ...]:
@@ -837,9 +847,15 @@ def read_join_declaration(path: str | None) -> JoinDeclaration:
 
 def _admitted_claude_settings_file(spec: JoinSpec, home: str) -> str | None:
     """席の settings file の参加の門(card acp:kanban-issue:ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13)— composition root の側。
-    宣言の綴り(JoinSpec.claude_settings_file・`~` は agentd の HOME で展開)→ (a) file が読める(I/O はここ)→ (b)(c)(d) は
-    join.claude-settings-declaration-of の 1 点 → 通った**絶対 path**(env CLAUDE_SETTINGS_FILE_ENV に載せる値)。
-    None = 名乗らない(今日どおり)。外れは AgentdPreflightError(参加しない — 黙って hook 無しの席を起こさない)。
+    宣言の綴り(JoinSpec.claude_settings_file・`~` は agentd の HOME で展開)→ (a) 読み(I/O はここ)→ 在れば本文の門 (b)(c) は
+    join.claude-settings-declaration-of の 1 点 → **絶対 path**(env CLAUDE_SETTINGS_FILE_ENV に載せる値)。None = 名乗らない
+    (今日どおり)。(d) session_hooks = inherit は宣言の門で join-spec-of が先に撃つ。
+    倒れ方(依頼書 §10-2・2026-09-21 訂正・受入 3 / 8): **不在(ENOENT / ENOTDIR)は非致命** — path を据えたまま参加し、agentd が
+    node の行(observations.claudeSettingsFile)と起動の log で名乗り(agentd.observe-claude-settings-file)、席は hook 無しで起こる
+    (launch.hy claude-settings-declaration が起動の拍ごとに読んで名乗る)。pod の入口は先端で揃えられない日に image の下限へ戻して
+    立つ正規の degrade を持ち、その日の ~/dotfiles は file を持たない — そこで断ると pool 全体が capacity 0 に化ける(今日の欠陥
+    より悪い)。**在って読めない・壊れている**(EACCES / EISDIR / UTF-8 でない / JSON の object でない / doeff の鍵を含む)は致命 =
+    AgentdPreflightError(宣言そのものの誤り — 参加しない)。
     中身は据えない: launch / headless が起動の拍ごとに同じ path を読む(daemon の memory に写しを持たない)。"""
     declared = spec.claude_settings_file
     if declared is None:
@@ -849,13 +865,16 @@ def _admitted_claude_settings_file(spec: JoinSpec, home: str) -> str | None:
     try:
         with open(path, encoding="utf-8") as handle:
             text = handle.read()
+    except (FileNotFoundError, NotADirectoryError):
+        # 不在 = 非致命。名乗り(log と node の行)は agentd の拍の 1 点(observe-claude-settings-file)— ここに第 2 の log を置かない。
+        return path
     except (OSError, UnicodeDecodeError) as error:
         raise AgentdPreflightError(
-            f"join: {where} が名指す file {path} が読めない: {error} — 席に hook を届けられない agentd は参加しない"
-            "(file は dotfiles claude-hooks/seat-settings.json・名指しを消せば今日どおり hook 無しで参加する)"
+            f"join: {where} が名指す file {path} は在るが読めない: {error} — 宣言そのものの誤りなので参加しない"
+            "(不在なら参加して名乗る・名指しを消せば今日どおり hook 無しで参加する)"
         ) from error
     try:
-        verdict: object = PyVM().run(join.claude_settings_declaration_of(text, spec.session_hooks))
+        verdict: object = PyVM().run(join.claude_settings_declaration_of(text))
     except ValueError as error:
         raise AgentdPreflightError(f"join: {error}") from error
     if not isinstance(verdict, dict):
@@ -881,7 +900,8 @@ def join_plan(argv: Sequence[str], env: Mapping[str, str]) -> JoinPlan:
     # 追補(card acp:kanban-issue:ki-3bfe48a9d5dc): 名簿に綴れない根(~/.worktrees/)も同じく**実勢**から導く(在る dir だけ)。
     home = (env.get("HOME") or os.path.expanduser("~")).strip()
     spec = replace(spec, work_dirs=_held_work_dirs(home), work_dir_roots=_held_work_dir_roots(home))
-    # card acp:kanban-issue:ki-7b52bb76aa6e: 席の settings file は読めて門を通った時だけ(絶対 path で)env に載る(読みはここ・判断は join)。
+    # card acp:kanban-issue:ki-7b52bb76aa6e: 席の settings file は名指した時だけ(絶対 path で)env に載る — 在って壊れているは断り、
+    # 不在は据えたまま参加する(読みはここ・判断は join・名乗りは agentd の拍)。
     spec = replace(spec, claude_settings_file=_admitted_claude_settings_file(spec, home))
     plan: object = PyVM().run(join.join_plan_of(spec))
     if not isinstance(plan, JoinPlan):

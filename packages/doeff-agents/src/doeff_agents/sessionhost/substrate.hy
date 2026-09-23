@@ -17,6 +17,7 @@
 (import json)
 (import os)
 (import subprocess)
+(import sys)
 (import threading)
 (import time)
 
@@ -49,7 +50,8 @@
   FsFileExists
   FsFileMtime
   GitRun
-  EnvGet])
+  EnvGet
+  LogLine])
 (import doeff_agents.sessionhost.policy [ACTIVE-STATUSES
                                          PROVIDER-AUTH-ENV-KEYS
                                          env-offenders-against
@@ -500,7 +502,13 @@
     (resume (compose-home-view auth-file profile-dir view-root)))
 
   (EnvGet [name]
-    (resume (.get os.environ name))))
+    (resume (.get os.environ name)))
+
+  (LogLine [text]
+    ;; 運用 log(stderr)— host / agentd の log の流れに 1 行(buffer に残さない)。
+    (print text :file sys.stderr)
+    (.flush sys.stderr)
+    (resume None)))
 
 
 ;; ---------------------------------------------------------------------------

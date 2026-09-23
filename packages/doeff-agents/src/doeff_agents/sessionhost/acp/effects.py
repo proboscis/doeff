@@ -958,11 +958,20 @@ HEADLESS_DIR_ENV = "DOEFF_SESSIONHOST_HEADLESS_DIR"
 SESSION_HOOKS_ENV = "DOEFF_AGENTD_SESSION_HOOKS"
 #: card acp:kanban-issue:ki-7b52bb76aa6e(2026-09-21・ADR-DOE-AGENTS-004 R13・既知の形 = seat_env と同じ kubelet 型): 機体の参加の
 #: 宣言 [agentd].claude_settings_file が名指した「席の settings file」(dotfiles claude-hooks/seat-settings.json = hook の proxy
-#: 登録 1 枚)の**絶対 path**。join が 4 つの門(file が読める / JSON の object / doeff が置く鍵を含まない / session_hooks =
-#: inherit)を通してから据え、launch / headless が**起動の拍ごとに**読んで params claude_settings に載せ、impls/claude_code.hy
+#: 登録 1 枚)の**絶対 path**。join が門(宣言そのものの誤り = session_hooks ≠ inherit の名指し / 在って読めない / JSON の object
+#: でない / doeff が置く鍵を含む — は参加しない。**不在は非致命**: path を据えたまま参加し、agentd が node の行
+#: observations.claudeSettingsFile と log で名乗る — 依頼書 §10-2・2026-09-21 訂正)を通してから据え、launch / headless が
+#: **起動の拍ごとに**読んで(不在なら hook 無しで起こして名乗る)params claude_settings に載せ、impls/claude_code.hy
 #: build-claude-argv(`--settings` の唯一の合流点)が記憶の置き場の鍵(CLAUDE-AUTO-MEMORY-DIR-SETTING)と合わせて 1 つの JSON に合流する。
 #: 無い = 今日どおり(argv は 1 byte も変わらない)。inherit の委ね先(config-dir の持ち主)は doeff 自身なので、doeff が運ぶ。
 CLAUDE_SETTINGS_FILE_ENV = "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE"
+#: node の status.observations に agentd が書く「席の settings file の在否」の欄と state の閉語彙(契約 agora-kinds.json
+#: node.status.observations.claudeSettingsFile — card acp:kanban-issue:ki-7b52bb76aa6e 受入 8・2026-09-21)。名指した機体だけが
+#: 書く(欠落 = 名指していない)。不在は参加を断る理由にしない(pod の入口が image の下限へ戻して立つ正規の degrade の日に、
+#: 断ると pool 全体が capacity 0 に化ける — 依頼書 §10-2)ので、断りの代わりにここと起動の log で名乗る。
+NODE_OBSERVATIONS_CLAUDE_SETTINGS_FILE_KEY = "claudeSettingsFile"
+CLAUDE_SETTINGS_FILE_PRESENT = "present"
+CLAUDE_SETTINGS_FILE_ABSENT = "absent"
 OWNERSHIP_ENV = "DOEFF_AGENTD_OWNERSHIP"
 OWNERSHIP_PROOF_ENV = "DOEFF_AGENTD_OWNERSHIP_PROOF"
 #: host(oracle parse_args / host.hy parse-args)の argv の綴り(join が組む・valve が読む)。
@@ -1047,6 +1056,16 @@ class Ownership:
 
     grade: OwnershipGrade
     proof: str
+
+
+@dataclass(frozen=True)
+class ClaudeSettingsFileObservation:
+    """席の settings file の在否の観測(node の observations.claudeSettingsFile の写し — card acp:kanban-issue:ki-7b52bb76aa6e
+    受入 8)。path = 宣言 [agentd].claude_settings_file を agentd の HOME で展開した絶対 path(AgentdSettings.claude_settings_file)・
+    present = その拍に file が在るか(FsFileExists)。名指していない機体は観測を持たない(None — 欄を書かない)。"""
+
+    path: str
+    present: bool
 
 
 @dataclass(frozen=True)
@@ -1428,6 +1447,11 @@ class AgentdSettings:
     #: 1 度の書き(手番の終わりの end-turn-record)が着かなかった記録を level-triggered に閉じる腕の拍 —
     #: profile の観測と同じ「遅い周期」の族。起動の拍(AgentdState.last_turn_record_sweep_ms = None)は即。
     turn_record_sweep_seconds: int = 300
+    #: 席の settings file(card acp:kanban-issue:ki-7b52bb76aa6e — 宣言 file の [agentd].claude_settings_file を join が HOME で展開した
+    #: 絶対 path・env CLAUDE_SETTINGS_FILE_ENV の写し)。None = 名指していない(観測を書かない・起動は今日どおり)。在否は agentd が
+    #: 拍ごとに観測して node の行(observations.claudeSettingsFile)と log で名乗る(受入 8・agentd.observe-claude-settings-file)—
+    #: 中身はここに持たない(起動の拍ごとに launch.hy が読む)。
+    claude_settings_file: str | None = None
 
 
 # ------------------------------------------------------------------ ACP の値
@@ -2489,6 +2513,9 @@ class AgentdState:
     #: 段 12(agora-redesign #577): pane の席を読めなかった最後の理由(同じ理由は 1 度だけ log する印 —
     #: 読み口を持たない機体〔pool の pod〕が周期ごとに同じ行を吐かない)。読めた拍に "" へ戻る。
     pane_seats_note: str = ""
+    #: card acp:kanban-issue:ki-7b52bb76aa6e 受入 8: 席の settings file の在否を最後に名乗った語(CLAUDE_SETTINGS_FILE_PRESENT /
+    #: CLAUDE_SETTINGS_FILE_ABSENT・"" = まだ)。変わった拍だけ log する印(周期ごとに同じ行を吐かない)— 名指していない機体は "" のまま。
+    claude_settings_file_note: str = ""
     #: 段 10f 便 2(agora-redesign #82): session ごとの直前の手番の文脈の使用率(%・手番の終わりに材料の末尾から測る —
     #: judgment.context-percent-of)。次の手番の claim が会話の宣言 compactAt と比べる材料(judgment.compaction-due)。
     #: memory の cache — agentd の再起動で消え、次の手番の終わりに測り直す(turn-record に同等の欄が無い間の実測)。

@@ -183,6 +183,9 @@
   CONDITION-AGENT-SETTING-IGNORED
   AGENTD-PLACES
   NODE-CAPABILITIES-KEY
+  NODE-OBSERVATIONS-CLAUDE-SETTINGS-FILE-KEY
+  CLAUDE-SETTINGS-FILE-PRESENT
+  CLAUDE-SETTINGS-FILE-ABSENT
   NODE-LABEL-PLACES
   NODE-LABEL-PLACE-RETIRED
   NODE-SPEC-PLACES
@@ -199,6 +202,7 @@
   AgentdSettings
   AgentdState
   AcpRow
+  ClaudeSettingsFileObservation
   ArmChoice
   BACKEND-HEADLESS
   CLAUDE-OAUTH-TOKEN-ENV
@@ -3406,14 +3410,16 @@
   next)
 
 
-(defk node-status-with-observations [row settings sessions transcripts]
-  {:pre [(: row AcpRow) (: settings AgentdSettings) (: sessions list) (: transcripts list)]
+(defk node-status-with-observations [row settings sessions transcripts seat-file]
+  {:pre [(: row AcpRow) (: settings AgentdSettings) (: sessions list) (: transcripts list)
+         (: seat-file (| ClaudeSettingsFileObservation None))]
    :post [(: % dict)]}
   "tick の参加の腕が書く node の status: committed の status を写し(lease は写すだけ — 書くのは heartbeat の thread・
-   段 10 lane 10ba)、observations{streamCapability, sessions, transcripts, ownership?}(sessions = session-observations-of の列・
-   transcripts = 終端の session のうち transcript がこの機体に残る会話の列〔段 8q〕・
-   ownership = 起動の前に検めた所有の等級 {grade, proof} — 宣言が無ければ欄ごと書かない = 未観測・
-   段 6 lane 6f)と capabilities(能力の表 — 段 10 lane 10e・capabilities-of)を差し替える。state(scheduling の欄)は写すだけ。"
+   段 10 lane 10ba)、observations{streamCapability, sessions, transcripts, ownership?, claudeSettingsFile?}(sessions =
+   session-observations-of の列・transcripts = 終端の session のうち transcript がこの機体に残る会話の列〔段 8q〕・
+   ownership = 起動の前に検めた所有の等級 {grade, proof} — 宣言が無ければ欄ごと書かない = 未観測・段 6 lane 6f・
+   claudeSettingsFile = 席の settings file の在否 {path, state: present | absent} — 名指していない機体は欄ごと書かない・
+   card ki-7b52bb76aa6e 受入 8)と capabilities(能力の表 — 段 10 lane 10e・capabilities-of)を差し替える。state(scheduling の欄)は写すだけ。"
   (<- next dict (status-object-of row))
   (setv observations
         {"streamCapability" settings.stream-capability
@@ -3422,6 +3428,12 @@
   (when (is-not settings.ownership None)
     (setv (get observations "ownership")
           {"grade" settings.ownership.grade "proof" settings.ownership.proof}))
+  ;; card ki-7b52bb76aa6e 受入 8: 席の settings file の在否 — 名指した機体だけが書く(欠落 = 名指していない)。不在は参加を断る
+  ;; 理由にせず(依頼書 §10-2)、ここで名乗る。契約 agora-kinds.json node.status.observations.claudeSettingsFile の写し。
+  (when (is-not seat-file None)
+    (setv (get observations NODE-OBSERVATIONS-CLAUDE-SETTINGS-FILE-KEY)
+          {"path" seat-file.path
+           "state" (if seat-file.present CLAUDE-SETTINGS-FILE-PRESENT CLAUDE-SETTINGS-FILE-ABSENT)}))
   (setv (get next "observations") observations)
   ;; 段 10 lane 10e: 能力の表(受ける欄 / 作り直す欄)を lease と同じ拍に名乗る(契約の書き手 = agentd)。
   (<- table dict (capabilities-of))

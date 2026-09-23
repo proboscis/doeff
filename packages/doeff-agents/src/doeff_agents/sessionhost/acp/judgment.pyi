@@ -51,6 +51,7 @@ from doeff_agents.sessionhost.acp.effects import (
     TurnEntryHeadline,
     WatchAdvance,
     Written,
+    ClaudeSettingsFileObservation,
 )
 
 # 段 12 lane 12j(agora-redesign #321): 結びが自分を指すか = nodeRow(行の id)が在ればそれ・無ければ名前(1 点)
@@ -286,7 +287,11 @@ def node_spec_declared(spec: dict, settings: AgentdSettings) -> Program: ...
 def node_lease_of(settings: AgentdSettings, now_ms: int) -> Program: ...
 def node_status_with_renewed_lease(row: AcpRow, settings: AgentdSettings, now_ms: int) -> Program: ...
 def node_status_with_observations(
-    row: AcpRow, settings: AgentdSettings, sessions: list, transcripts: list
+    row: AcpRow,
+    settings: AgentdSettings,
+    sessions: list,
+    transcripts: list,
+    seat_file: ClaudeSettingsFileObservation | None,
 ) -> Program: ...
 def profile_key_of(profile: str) -> Program: ...
 def credential_from_custody(source: str) -> Program: ...
