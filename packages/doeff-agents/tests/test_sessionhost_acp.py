@@ -3871,6 +3871,36 @@ def test_charter_lifecycle_is_respected_when_declared() -> None:
     assert world.sessions.cleanups == []
 
 
+def test_next_arm_never_sends_to_a_warm_session_on_a_draining_host() -> None:
+    """器の入れ替えの blue/green(host_slots): 降りる途中の器(view.draining)の温かい session には新しい手番を
+    積まない — 同じ家なら候補を片付けて --resume で新しい器へ移す(cache は保つ)。手番の途中なら今日どおり待つ
+    (同じ会話の手番が 2 つの器で同時に走らない)。降りる途中でない同じ眺めは今日どおり send。"""
+    from dataclasses import replace
+
+    from doeff_agents.sessionhost.acp.effects import ArmChoice
+
+    plan = run(judgment.launch_plan_of(bound_job("a", inputs=[])))
+    home = run(judgment.session_affinity_key_of(plan))
+    stamp: JSONObject = {
+        "agentd": {
+            "conversationId": CONVERSATION,
+            "agentJobId": "a-0",
+            "account": "acct",
+            "home": {"account": "acct", "binding": None, "model": "claude-opus-5"},
+            "arm": "launch",
+        }
+    }
+    warm = replace(_view("p", "running", lifecycle="multi_turn", turn_ended_at_ms=10), launch_attribution=stamp)
+    busy = replace(_view("p", "running", lifecycle="multi_turn", turn_ended_at_ms=None), launch_attribution=stamp)
+    assert run(judgment.next_arm_for_job("p", warm, home, None, False)) == ArmChoice("send", "p", None)
+    assert run(judgment.next_arm_for_job("p", replace(warm, draining=True), home, None, False)) == ArmChoice(
+        "resume", "p", "p"
+    )
+    assert run(judgment.next_arm_for_job("p", replace(busy, draining=True), home, None, False)) == ArmChoice(
+        "defer", "p", None
+    )
+
+
 def test_next_arm_for_job_is_the_one_decision() -> None:
     """起こし方の判定は judgment.next-arm-for-job の 1 点(R10 / R20)。cache(温かい send / --resume)を保つのは
     同じ機体 ∧ 同じ家の時だけ(operator 決定 #54): 家が違えば温かい session を片付けて履歴からの再開、器に無い候補・
@@ -5246,10 +5276,10 @@ def test_join_flag_specs_cover_the_accepted_flags() -> None:
     """`join --help` の一覧は受け付ける flag と同じ 1 点から出る。
 
     usage(sessionhost/usage.py)は JOIN_FLAG_SPECS から組むので、表が受付
-    (FLAG_KEYS + FLAG_CONFIG)と乖離すると help が嘘を言う — 受け手が最初に撃つ
+    (FLAG_KEYS + FLAG_CONFIG + FLAG_ROLE + FLAG_HOST_SLOT)と乖離すると help が嘘を言う — 受け手が最初に撃つ
     面なので、集合の一致を針で押さえる。
     """
-    accepted = set(join.FLAG_KEYS) | {join.FLAG_CONFIG, join.FLAG_ROLE}
+    accepted = set(join.FLAG_KEYS) | {join.FLAG_CONFIG, join.FLAG_ROLE, join.FLAG_HOST_SLOT}
     listed = [flag for flag, _placeholder, _help in join.JOIN_FLAG_SPECS]
     assert len(listed) == len(set(listed)), "表に同じ flag が 2 度載っている"
     assert set(listed) == accepted

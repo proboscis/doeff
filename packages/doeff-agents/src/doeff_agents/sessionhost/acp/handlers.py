@@ -43,14 +43,15 @@ import tempfile
 import threading
 import time
 import urllib.parse
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from http.client import HTTPConnection, HTTPException, HTTPResponse, HTTPSConnection
 from typing import NamedTuple, TypeAlias, TypeGuard, assert_never, get_args
 
 from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.agentd_client import AgentdClient, AgentdClientError, launch_rpc_timeout_seconds
+from doeff_agents.sessionhost.acp import host_slots
 from doeff_agents.sessionhost.acp.cache_operation import (
     AcpCacheOperations,
     MaintenanceTransportUncertainError,
@@ -68,6 +69,7 @@ from doeff_agents.sessionhost.acp.effects import (
     OWNERSHIP_PROOF_GCE_PREFIX,
     RECORD_PAGE_MAX_LIMIT,
     RECORD_SPOOL_GIVEN_UP_DIR,
+    SESSION_LIVE_STATUSES,
     SESSION_OBSERVED_BUSY,
     SESSION_OBSERVED_IDLE,
     STREAM_SOURCE_HEADER,
@@ -1281,8 +1283,14 @@ class SessionRpc:
         self._client = AgentdClient(socket_path)
 
     def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
+        if not handles_session_effect(effect):
+            return Pass(effect, k)
+        return Resume(k, self.answer(effect))
+
+    def answer(self, effect: EffectBase) -> object:
+        """この器 1 つへ要求を撃った答え(dispatch の中身 — 経路 SessionRoutes も同じ口を通る)。"""
         if isinstance(effect, (SessionCachePing, SessionCacheProbe)):
-            return Resume(k, self._cache_operation(effect))
+            return self._cache_operation(effect)
         if isinstance(
             effect,
             (
@@ -1295,12 +1303,12 @@ class SessionRpc:
                 SessionCleanup,
             ),
         ):
-            return Resume(k, self._act(effect))
+            return self._act(effect)
         if isinstance(effect, (SessionGet, SessionList, SessionCapture)):
-            return Resume(k, self._look(effect))
+            return self._look(effect)
         if isinstance(effect, ListHostDrivers):
-            return Resume(k, self._drivers(effect))
-        return Pass(effect, k)
+            return self._drivers(effect)
+        raise TypeError(f"SessionRpc does not answer {type(effect).__name__}")
 
     def _drivers(self, effect: ListHostDrivers) -> HostDriversOutcome:
         """``drivers.list``(ADR-DOE-AGENTS-012 R61)→ 種類ごとの在否の列。host の断り(RPC の error 封筒 —
@@ -1491,6 +1499,181 @@ class SessionRpc:
         if view is None:
             return SessionRefused(f"{method} returned a malformed snapshot", None)
         return view
+
+
+_SESSION_EFFECTS = (
+    SessionCachePing,
+    SessionCacheProbe,
+    SessionLaunch,
+    SessionResume,
+    SessionSend,
+    SessionInterject,
+    SessionEscalate,
+    SessionInterrupt,
+    SessionCleanup,
+    SessionGet,
+    SessionList,
+    SessionCapture,
+    ListHostDrivers,
+)
+
+
+def handles_session_effect(effect: EffectBase) -> bool:
+    """器への要求か(SessionRpc / SessionRoutes が答える要求の閉じた集合)。"""
+    return isinstance(effect, _SESSION_EFFECTS)
+
+
+#: 区画の観測(指し札の読み・socket の応答の確かめ)を持ち回る秒数。器の入れ替えは分の単位の出来事で、
+#: 要求ごとに connect を撃たないための天井ちょうど(待ちの新設ではない)。
+HOST_LAYOUT_TTL_SECONDS = 5.0
+
+
+def _read_text_or_none(path: str) -> str | None:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return handle.read()
+    except FileNotFoundError:
+        return None
+
+
+class SessionRoutes:
+    """器が 2 つ並ぶ時(器の入れ替えの blue/green — ``host_slots``)の腕の経路。
+
+    新しい手番(launch / resume)は指し札の器へ。session id の要求は、その session が生きている器へ
+    (札の器で生きていなければ、降りる途中の器で生きているか確かめる — 古い器が抱えている手番を最後まで
+    見張り、割り込み、片付ける)。一覧は札の器 + 降りる途中の器の生きている行(頁で読む終端の一覧は札の器
+    だけ — 終端の行は ``host-slot seed`` が札の器へ写してある)。降りる途中の器から返した眺めには
+    ``draining=True`` を付ける(judgment.next-arm-for-job が send の腕を採らない — 古い器に新しい手番を
+    積まない)。降りる途中の器が無い間(ふつうの時)は札の器 1 つへそのまま渡す(要求を 1 つも増やさない)。
+    ⚠ 降りる途中の器が答えない(降りた・落ちた)拍は「そこでは生きていない」と読む — その器の session は
+    器と共に消えたので、札の器の答え(終端の写し)が正しい。"""
+
+    def __init__(
+        self,
+        socket_path: str,
+        *,
+        rpc_of: Callable[[str], SessionRpc] = SessionRpc,
+        listening: Callable[[str], bool] | None = None,
+        listdir: Callable[[str], list[str]] = os.listdir,
+        read_pointer: Callable[[str], str | None] = _read_text_or_none,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._configured = socket_path
+        self._state_dir = host_slots.state_dir_of_socket(socket_path)
+        self._rpc_of = rpc_of
+        self._listening = listening if listening is not None else socket_is_listening
+        self._listdir = listdir
+        self._read_pointer = read_pointer
+        self._clock = clock
+        self._rpcs: dict[str, SessionRpc] = {}
+        self._mut_layout: host_slots.HostLayout | None = None
+        self._mut_layout_at = 0.0
+        self._lock = threading.Lock()
+
+    def dispatch(self, effect: EffectBase, k: K) -> Resume | Pass:
+        if not handles_session_effect(effect):
+            return Pass(effect, k)
+        return Resume(k, self.answer(effect))
+
+    def layout(self) -> host_slots.HostLayout:
+        """いまの区画の役割(持ち回りは HOST_LAYOUT_TTL_SECONDS)。"""
+        now = self._clock()
+        with self._lock:
+            if self._mut_layout is not None and now - self._mut_layout_at < HOST_LAYOUT_TTL_SECONDS:
+                return self._mut_layout
+        pointer = self._read_pointer(host_slots.pointer_path(self._state_dir))
+        active = host_slots.active_socket_of(self._state_dir, pointer, self._configured)
+        observed = [
+            host_slots.HostSlot(slot, path, path != active and self._listening(path))
+            for slot in host_slots.slots_in(self._state_dir, self._listdir)
+            for path in (host_slots.slot_socket(self._state_dir, slot),)
+        ]
+        layout = host_slots.layout_of(active, observed)
+        with self._lock:
+            self._mut_layout = layout
+            self._mut_layout_at = now
+        return layout
+
+    def active_socket(self) -> str:
+        return self.layout().active
+
+    def _rpc(self, path: str) -> SessionRpc:
+        with self._lock:
+            found = self._rpcs.get(path)
+            if found is None:
+                found = self._rpc_of(path)
+                self._rpcs[path] = found
+            return found
+
+    def answer(self, effect: EffectBase) -> object:
+        layout = self.layout()
+        active = self._rpc(layout.active)
+        # 新しい手番と器の種類の在否(ADR-DOE-AGENTS-012 R61 — 新しい手番を起こす器の答え)は指し札の器へ。
+        if not layout.draining or isinstance(effect, (SessionLaunch, SessionResume, ListHostDrivers)):
+            return active.answer(effect)
+        if isinstance(effect, SessionList):
+            return self._list(effect, active, layout.draining)
+        session_id = _session_id_of(effect)
+        own = active.answer(SessionGet(session_id=session_id))
+        own_view = own if isinstance(own, SessionView) else None
+        others = [(path, self._draining_view(path, session_id)) for path in layout.draining]
+        owner = host_slots.owner_of(own_view, others)
+        if isinstance(effect, SessionGet):
+            if owner is None:
+                return own_view
+            found = dict(others)[owner]
+            return None if found is None else replace(found, draining=True)
+        if owner is None:
+            return active.answer(effect)
+        return self._rpc(owner).answer(effect)
+
+    def _draining_view(self, path: str, session_id: str) -> SessionView | None:
+        try:
+            found = self._rpc(path).answer(SessionGet(session_id=session_id))
+        except (OSError, AgentdClientError):
+            return None
+        return found if isinstance(found, SessionView) else None
+
+    def _list(
+        self, effect: SessionList, active: SessionRpc, draining: tuple[str, ...]
+    ) -> Sequence[SessionView]:
+        """一覧の答え(SessionList の結果の契約どおり tuple で返す)。"""
+        listed = active.answer(effect)
+        views: list[SessionView] = [view for view in listed if isinstance(view, SessionView)] if isinstance(
+            listed, tuple
+        ) else []
+        if effect.limit is not None:
+            return tuple(views)
+        wanted = SESSION_LIVE_STATUSES if effect.statuses is None else frozenset(effect.statuses) & SESSION_LIVE_STATUSES
+        if not wanted:
+            return tuple(views)
+        ask = replace(effect, statuses=tuple(sorted(wanted)))
+        index = {view.session_id: position for position, view in enumerate(views)}
+        for path in draining:
+            try:
+                theirs = self._rpc(path).answer(ask)
+            except (OSError, AgentdClientError):
+                continue
+            for view in theirs if isinstance(theirs, tuple) else ():
+                if not isinstance(view, SessionView) or not host_slots.session_live(view):
+                    continue
+                marked = replace(view, draining=True)
+                position = index.get(view.session_id)
+                if position is None:
+                    index[view.session_id] = len(views)
+                    views.append(marked)
+                elif not host_slots.session_live(views[position]):
+                    views[position] = marked
+        return tuple(views)
+
+
+def _session_id_of(effect: EffectBase) -> str:
+    if isinstance(effect, (SessionCachePing, SessionCacheProbe)):
+        return effect.operation.target.session
+    session_id = getattr(effect, "session_id", None)
+    if not isinstance(session_id, str):
+        raise TypeError(f"{type(effect).__name__} carries no session id")
+    return session_id
 
 
 # ------------------------------------------------------------------ 時計・計器・file の handler

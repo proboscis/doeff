@@ -1374,7 +1374,9 @@
    候補が生きていて idle でない ∧ backend が生きている → defer(手番の途中 — 圧縮も待つ)/
    compact ∧ 候補が在る → rehydrate(compacts — 温かい cache を捨てて記録の service の履歴から縮めて始めるのが圧縮の意味・
    生きている候補は片付ける。operator 2026-09-14 逐語 \"that routing agent should compact itself with some threshold\")/
-   候補が生きて idle ∧ 同じ家 ∧ 同じ effort → send(温かい)/
+   候補が生きて idle ∧ 同じ家 ∧ 同じ effort ∧ 候補が降りる途中の器に居ない → send(温かい)/
+   候補が生きて idle ∧ 同じ家 ∧ 候補が降りる途中の器に居る(view.draining — 器の入れ替えの blue/green)→ 候補を片付けて
+   resume(古い器に新しい手番を積まない・cache は保つ)/
    候補が生きて idle ∧ 同じ家 ∧ effort が違う → 候補を片付けて resume(段 10 lane 10e: effort は process の旗なので
    温かい process には届かない — 同じ session を新しい旗で --resume する。cache は保つ・session は作り直さない)/
    候補が生きて idle ∧ 家が違う → 候補を片付けて rehydrate(profile か model を変えた手番 — 失効した cache の器を残さない・
@@ -1394,16 +1396,20 @@
   (<- live-backend bool (backend-alive view))
   (setv same False)
   (setv same-effort True)
+  ;; 器の入れ替えの blue/green(host_slots): 降りる途中の器の温かい session には新しい手番を積まない — 同じ家なら
+  ;; 片付けて --resume で新しい器へ移す(cache は保つ・古い器は抱えている手番だけを終えて降りる)。
+  (setv draining False)
   (when (isinstance view SessionView)
     (<- in-home bool (session-in-home view home))
     (setv same in-home)
     (<- launched-effort (| str None) (session-effort-of view))
-    (setv same-effort (= launched-effort effort)))
+    (setv same-effort (= launched-effort effort))
+    (setv draining view.draining))
   (cond
     (is candidate None) (ArmChoice :arm NEXT-ARM-LAUNCH :source None :retire None)
     (and alive (not idle) live-backend) (ArmChoice :arm NEXT-ARM-DEFER :source candidate :retire None)
     compact (ArmChoice :arm NEXT-ARM-REHYDRATE :source None :retire (if alive candidate None) :compacts True)
-    (and idle same same-effort) (ArmChoice :arm NEXT-ARM-SEND :source candidate :retire None)
+    (and idle same same-effort (not draining)) (ArmChoice :arm NEXT-ARM-SEND :source candidate :retire None)
     (and idle same) (ArmChoice :arm NEXT-ARM-RESUME :source candidate :retire candidate)
     idle (ArmChoice :arm NEXT-ARM-REHYDRATE :source None :retire candidate)
     (and alive same) (ArmChoice :arm NEXT-ARM-RESUME :source candidate :retire candidate)

@@ -29,6 +29,7 @@
 
 (import datetime [datetime timezone timedelta])
 (import json)
+(import os)
 (import queue)
 (import sqlite3)
 (import threading)
@@ -1053,6 +1054,44 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
       (.execute conn "ROLLBACK")
       (raise)))
   released)
+
+
+;; 器の入れ替えの blue/green(acp/host_slots): 新しい器の区画の store を、いま手番を受けている器の store の写しで
+;; 始める。終端の行(会話の前の session)を新しい器が持っていないと `--resume` の元が引けず(resume-session の
+;; 実在の admission)、器を入れ替えるたびに cache を捨てて履歴から起こし直すことになる。
+(setv SEED-SIDECAR-SUFFIXES #("-journal" "-wal" "-shm"))
+
+(deff db-seed-from [source-path target-path]
+  {:pre [(: source-path str) (: target-path str)]
+   :post [(: % int)]}
+  "source の store の一貫した写し(sqlite の backup — 書き手が走っていても 1 つの読みの断面)を target に据える。
+   写しからは lease の行を消す(持ち主は source の器 — 残すと新しい器の db-acquire-lease が生きた lease として
+   断る)。据えは使い捨ての名に書いてから os.replace(途中で落ちても target は前のまま)。target の古い付属
+   file(-journal / -wal / -shm)は据える前に除く — 残った hot journal は開いた拍に**新しい写し**へ巻き戻しを
+   当てる。⚠ 呼び手(host-slot seed)は target の器が起きていないことを確かめてから呼ぶ(起きている器の
+   store を置き換えない)。戻り値 = 写した session の行数。"
+  (setv staged (+ target-path ".seeding"))
+  (for [path [staged (+ staged "-journal")]]
+    (when (os.path.exists path)
+      (os.remove path)))
+  (setv source (sqlite3.connect f"file:{source-path}?mode=ro" :uri True))
+  (try
+    (.execute source f"PRAGMA busy_timeout = {SQLITE-BUSY-TIMEOUT-MS}")
+    (setv target (sqlite3.connect staged))
+    (try
+      (.backup source target)
+      (.execute target "DELETE FROM agent_daemon_lease")
+      (.commit target)
+      (setv rows (get (.fetchone (.execute target "SELECT COUNT(*) FROM agent_sessions")) 0))
+      (finally
+        (.close target)))
+    (finally
+      (.close source)))
+  (for [suffix SEED-SIDECAR-SUFFIXES]
+    (when (os.path.exists (+ target-path suffix))
+      (os.remove (+ target-path suffix))))
+  (os.replace staged target-path)
+  rows)
 
 
 ;; ---------------------------------------------------------------------------

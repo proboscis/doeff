@@ -1861,6 +1861,10 @@ class SessionView:
     #: 「いつまで送信先として保つか」の判断は judgment.cache-resident-retention-of の 1 点
     #: (card acp:kanban-issue:ki-567f2dd6140f §3.1e: host は仕組みだけを持ち、判断を持たない)。
     cache_last_success_at_ms: int | None = None
+    #: この眺めを返したのが**降りる途中の器**(器の入れ替えの blue/green — host_slots)か。真なら
+    #: その器には新しい手番を送らない(judgment.next-arm-for-job が send の腕を採らない — 同じ家なら
+    #: 片付けて --resume で新しい器へ移す)。器の wire の欄ではない(腕の経路 SessionRoutes が付ける)。
+    draining: bool = False
 
 
 @dataclass(frozen=True)

@@ -48,6 +48,9 @@ from doeff_agents.sessionhost.hostmain import main as host_main
 from doeff_agents.sessionhost.relaymain import REPORT_RESULT_MCP_SUBCOMMAND
 from doeff_agents.sessionhost.usage import help_topic_of, usage_text
 
+#: 器の入れ替えの口の subcommand(綴りの定義点は host_slot_cli — ここは Hy を読まずに分岐するための写し)。
+HOST_SLOT_SUBCOMMAND = "host-slot"
+
 
 def main() -> None:
     argv = sys.argv[1:]
@@ -60,12 +63,18 @@ def main() -> None:
     if topic is not None:
         sys.stdout.write(usage_text(topic))
         return
+    if argv and argv[0] == HOST_SLOT_SUBCOMMAND:
+        # 器の入れ替えの blue/green の口(host_slot_cli — 据え付けの道具が撃つ)。
+        from doeff_agents.sessionhost.acp.host_slot_cli import main as host_slot_main
+
+        raise SystemExit(host_slot_main(argv[1:]))
     role = JOIN_ROLE_BOTH
     if argv and argv[0] == JOIN_SUBCOMMAND:
         # 1 命令の参加: 宣言 → env の束 + host の argv(join_plan の 1 点)→ 下の弁の経路と同じ。
         from doeff_agents.sessionhost.acp.runtime import (
             AgentdPreflightError,
             apply_join_env,
+            join_host_slot,
             join_plan,
             join_role,
         )
@@ -73,6 +82,8 @@ def main() -> None:
         try:
             plan = join_plan(argv[1:], os.environ)
             role = join_role(argv[1:])
+            # 器の区画(``--host-slot``・器の入れ替えの blue/green)— 役 host の時だけ db と socket を区画へ移す。
+            host_argv = join_host_slot(argv[1:], plan.host_argv)
         except AgentdPreflightError as error:
             sys.stderr.write(f"doeff-sessionhost: {error}\n")
             raise SystemExit(2) from error
@@ -80,7 +91,7 @@ def main() -> None:
             sys.stderr.write(f"doeff-sessionhost: {error}\n")
             raise SystemExit(2) from error
         apply_join_env(plan, os.environ.update)
-        argv = list(plan.host_argv)
+        argv = list(host_argv)
     verdict = acp_valve(argv, os.environ)
     # card acp:kanban-issue:ki-567f2dd6140f: 役が host なら agentd の thread を起こさない(弁が on でも —
     # join の env の束は 1 枚の宣言から両 unit へ同じものが渡るので、切るのは役の 1 点)。

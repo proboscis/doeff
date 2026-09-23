@@ -1,0 +1,217 @@
+"""器の入れ替えの blue/green(``host_slots``・``handlers.SessionRoutes``・``store.db_seed_from``)の検。
+
+器が 2 つ並ぶ間: 新しい手番は指し札の器へ、古い器の session への要求は古い器へ、古い器の温かい session の
+眺めには draining の印。並んでいない間は起動の argv の socket 1 つへそのまま渡す(往復を 1 つも増やさない)。
+"""
+
+from __future__ import annotations
+
+import os
+import sqlite3
+from collections.abc import Callable
+from pathlib import Path
+
+import pytest
+
+from doeff import EffectBase
+from doeff_agents.sessionhost.acp import host_slots
+from doeff_agents.sessionhost.acp.effects import (
+    ListHostDrivers,
+    SessionCleanup,
+    SessionGet,
+    SessionLaunch,
+    SessionList,
+    SessionResume,
+    SessionSend,
+    SessionView,
+)
+from doeff_agents.sessionhost.acp.handlers import SessionRoutes
+
+STATE = "/state"
+ROOT_SOCK = "/state/agentd.sock"
+B_SOCK = "/state/hosts/b/agentd.sock"
+
+
+def view(session_id: str, status: str = "running", turn_ended_at_ms: int | None = 10) -> SessionView:
+    return SessionView(
+        session_id=session_id,
+        agent_type="claude",
+        status=status,
+        work_dir="/w",
+        lifecycle="multi_turn",
+        conversation=None,
+        effective_identity=None,
+        result_payload=None,
+        terminal_cause=None,
+        turn_ended_at_ms=turn_ended_at_ms,
+    )
+
+
+# ---------------------------------------------------------------- 純関数
+
+
+def test_slot_paths_keep_the_root_slot_where_the_store_is_today() -> None:
+    assert host_slots.slot_socket(STATE, "") == ROOT_SOCK
+    assert host_slots.slot_db(STATE, "") == "/state/agentd.sqlite"
+    assert host_slots.slot_socket(STATE, "b") == B_SOCK
+    assert host_slots.state_dir_of_socket(B_SOCK) == STATE
+    assert host_slots.state_dir_of_socket(ROOT_SOCK) == STATE
+    for bad in ("B", "../x", "active", "a/b", "-a"):
+        with pytest.raises(ValueError):
+            host_slots.slot_name_of(bad)
+
+
+def test_host_argv_moves_into_the_slot_only_when_a_slot_is_named() -> None:
+    argv = ("--db", "/state/agentd.sqlite", "--socket", ROOT_SOCK, "serve")
+    assert host_slots.with_host_slot(argv, "", "--db", "--socket") == list(argv)
+    assert host_slots.with_host_slot(argv, "b", "--db", "--socket") == [
+        "--db", "/state/hosts/b/agentd.sqlite", "--socket", B_SOCK, "serve",
+    ]
+
+
+def test_the_active_host_is_the_pointer_or_the_configured_socket() -> None:
+    # 札が無い機体(pod・個人 Mac・区画を使っていない機体)は argv の socket ちょうど — 今日と同じ。
+    assert host_slots.active_socket_of(STATE, None, "/elsewhere/x.sock") == "/elsewhere/x.sock"
+    assert host_slots.active_socket_of(STATE, "", ROOT_SOCK) == ROOT_SOCK
+    assert host_slots.active_socket_of(STATE, "b\n", ROOT_SOCK) == B_SOCK
+    with pytest.raises(ValueError):
+        host_slots.active_socket_of(STATE, "../../etc", ROOT_SOCK)
+    observed = [host_slots.HostSlot("", ROOT_SOCK, True), host_slots.HostSlot("b", B_SOCK, True)]
+    assert host_slots.layout_of(B_SOCK, observed) == host_slots.HostLayout(B_SOCK, (ROOT_SOCK,))
+    silent = [host_slots.HostSlot("", ROOT_SOCK, False), host_slots.HostSlot("b", B_SOCK, True)]
+    assert host_slots.layout_of(B_SOCK, silent) == host_slots.HostLayout(B_SOCK, ())
+
+
+def test_the_owner_is_the_host_where_the_session_is_live() -> None:
+    assert host_slots.owner_of(view("s"), [(ROOT_SOCK, view("s"))]) is None
+    assert host_slots.owner_of(view("s", "exited"), [(ROOT_SOCK, view("s"))]) == ROOT_SOCK
+    assert host_slots.owner_of(None, [(ROOT_SOCK, view("s"))]) == ROOT_SOCK
+    assert host_slots.owner_of(view("s", "exited"), [(ROOT_SOCK, view("s", "stopped"))]) is None
+    assert host_slots.owner_of(None, [(ROOT_SOCK, None)]) is None
+
+
+# ---------------------------------------------------------------- 経路(偽の器)
+
+
+class FakeHost:
+    """偽の器(答えは sessions から・受けた要求は asked に積む)。go_down の後は socket の失敗で答える。"""
+
+    def __init__(self, sessions: dict[str, SessionView]) -> None:
+        self.sessions = sessions
+        self._mut_asked: list[EffectBase] = []
+        self._mut_down = False
+
+    @property
+    def asked(self) -> list[EffectBase]:
+        return self._mut_asked
+
+    @property
+    def down(self) -> bool:
+        return self._mut_down
+
+    def go_down(self) -> None:
+        self._mut_down = True
+
+    def answer(self, effect: EffectBase) -> object:
+        self._mut_asked.append(effect)
+        if self._mut_down:
+            raise OSError("connection refused")
+        if isinstance(effect, SessionGet):
+            return self.sessions.get(effect.session_id)
+        if isinstance(effect, SessionList):
+            wanted = effect.statuses
+            return tuple(v for v in self.sessions.values() if wanted is None or v.status in wanted)
+        return ("acted", effect)
+
+
+def routes(hosts: dict[str, FakeHost], pointer: str | None) -> SessionRoutes:
+    def rpc_of(path: str) -> FakeHost:
+        return hosts[path]
+
+    rpc_factory: Callable[[str], object] = rpc_of
+    return SessionRoutes(
+        ROOT_SOCK,
+        rpc_of=rpc_factory,  # type: ignore[arg-type]
+        listening=lambda path: path in hosts and not hosts[path].down,
+        listdir=lambda _path: ["active", "b"],
+        read_pointer=lambda _path: pointer,
+    )
+
+
+def test_a_single_host_is_passed_through_without_extra_round_trips() -> None:
+    root = FakeHost({"s": view("s")})
+    route = routes({ROOT_SOCK: root}, None)
+    assert route.answer(SessionSend(session_id="s", text="x", awaiting=True)) == (
+        "acted", SessionSend(session_id="s", text="x", awaiting=True),
+    )
+    assert len(root.asked) == 1
+
+
+def test_new_turns_go_to_the_pointed_host_and_old_sessions_to_the_old_host() -> None:
+    old = FakeHost({"old-busy": view("old-busy", turn_ended_at_ms=None), "old-warm": view("old-warm")})
+    new = FakeHost({"old-busy": view("old-busy", "exited"), "new": view("new")})
+    route = routes({ROOT_SOCK: old, B_SOCK: new}, "b")
+    launch = SessionLaunch(params={"session_id": "n2"})
+    assert route.answer(launch) == ("acted", launch)
+    assert new.asked[-1] == launch
+    resume = SessionResume(params={"session_id": "old-warm"})
+    assert route.answer(resume) == ("acted", resume) and new.asked[-1] == resume
+    # 種類の在否(新しい手番を起こす器の答え)も指し札の器へ。
+    drivers = ListHostDrivers(env=())
+    assert route.answer(drivers) == ("acted", drivers) and new.asked[-1] == drivers
+    # 古い器で生きている session の眺めは古い器から・draining の印つき。
+    seen = route.answer(SessionGet(session_id="old-busy"))
+    assert isinstance(seen, SessionView) and seen.status == "running" and seen.draining
+    # 新しい器で生きている session は新しい器から・印なし。
+    fresh = route.answer(SessionGet(session_id="new"))
+    assert isinstance(fresh, SessionView) and not fresh.draining
+    # 古い器の session を片付ける要求は古い器へ。
+    cleanup = SessionCleanup(session_id="old-warm")
+    assert route.answer(cleanup) == ("acted", cleanup) and old.asked[-1] == cleanup
+    # 生きている一覧は両方の器の和(古い器の行に印)・同じ id は生きている方。
+    listed = route.answer(SessionList(lifecycle="multi_turn", statuses=("running",)))
+    assert isinstance(listed, tuple)
+    by_id = {v.session_id: v for v in listed}
+    assert set(by_id) == {"old-busy", "old-warm", "new"}
+    assert by_id["old-busy"].draining and by_id["old-busy"].status == "running"
+    assert not by_id["new"].draining
+    # 頁で読む(終端の)一覧は新しい器だけ(終端の行は seed で写してある)。
+    asked_before = len(old.asked)
+    route.answer(SessionList(lifecycle="multi_turn", statuses=("exited",), limit=64))
+    assert len(old.asked) == asked_before
+
+
+def test_a_draining_host_that_went_away_is_read_as_holding_nothing() -> None:
+    old = FakeHost({"s": view("s")})
+    new = FakeHost({"s": view("s", "exited")})
+    route = routes({ROOT_SOCK: old, B_SOCK: new}, "b")
+    assert route.layout().draining == (ROOT_SOCK,)
+    old.go_down()
+    seen = route.answer(SessionGet(session_id="s"))
+    assert isinstance(seen, SessionView) and seen.status == "exited" and not seen.draining
+
+
+# ---------------------------------------------------------------- store の写し
+
+
+def test_seeding_copies_the_sessions_and_drops_the_old_hosts_lease(tmp_path: Path) -> None:
+    from doeff_agents.sessionhost.store import StoreActor, db_seed_from
+
+    source = tmp_path / "agentd.sqlite"
+    actor = StoreActor(str(source))
+    from doeff_agents.sessionhost.store import db_acquire_lease  # type: ignore[attr-defined]
+
+    actor.submit(lambda conn: db_acquire_lease(conn, os.getpid()))
+    with sqlite3.connect(source) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM agent_daemon_lease").fetchone()[0] == 1
+    target = tmp_path / "hosts" / "b" / "agentd.sqlite"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"stale")
+    (tmp_path / "hosts" / "b" / "agentd.sqlite-journal").write_bytes(b"hot journal of the stale store")
+    rows = db_seed_from(str(source), str(target))
+    actor.close()
+    assert rows == 0
+    assert not (tmp_path / "hosts" / "b" / "agentd.sqlite-journal").exists()
+    with sqlite3.connect(target) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM agent_daemon_lease").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM agent_sessions").fetchone()[0] == 0
