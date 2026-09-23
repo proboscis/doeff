@@ -6,8 +6,9 @@ from doeff_core_effects import Await
 from doeff_core_effects.scheduler import Spawn, Wait
 from doeff_events.effects import Publish, WaitForEvent
 from doeff_events.handlers import event_handler
+from events_test_support import run_scheduled
 
-from doeff import do, run
+from doeff import do
 
 
 @dataclass(frozen=True)
@@ -38,21 +39,11 @@ def test_publish_wakes_multiple_listeners_waiting_same_type() -> None:
         publish_status = yield Wait(publisher_task)
         return (result, publish_status)
 
-    first_result = run(
-        event_handler()(run_listener("a")),
-        handlers=default_handlers(),  # noqa: F821 - legacy removed API reference is intentionally preserved
-    )
+    first_result = run_scheduled(event_handler()(run_listener("a")))
+    second_result = run_scheduled(event_handler()(run_listener("b")))
 
-    second_result = run(
-        event_handler()(run_listener("b")),
-        handlers=default_handlers(),  # noqa: F821 - legacy removed API reference is intentionally preserved
-    )
-
-    assert first_result.is_ok()
-    assert second_result.is_ok()
-
-    result_a, publish_status_a = first_result.value
-    result_b, publish_status_b = second_result.value
+    result_a, publish_status_a = first_result
+    result_b, publish_status_b = second_result
 
     assert publish_status_a == "published"
     assert publish_status_b == "published"

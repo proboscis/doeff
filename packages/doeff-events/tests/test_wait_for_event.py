@@ -6,8 +6,9 @@ from doeff_core_effects import Await
 from doeff_core_effects.scheduler import Spawn, Wait
 from doeff_events.effects import Publish, WaitForEvent
 from doeff_events.handlers import event_handler
+from events_test_support import run_scheduled
 
-from doeff import do, run
+from doeff import do
 
 
 @dataclass(frozen=True)
@@ -32,12 +33,8 @@ def test_wait_for_event_receives_next_matching_event() -> None:
         publish_status = yield Wait(publisher_task)
         return (received_event, publish_status)
 
-    result = run(
-        event_handler()(program()),
-        handlers=default_handlers(),  # noqa: F821 - legacy removed API reference is intentionally preserved
-    )
+    result = run_scheduled(event_handler()(program()))
 
-    assert result.is_ok()
-    received_event, publish_status = result.value
+    received_event, publish_status = result
     assert received_event == published_event
     assert publish_status == "published"

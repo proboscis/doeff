@@ -48,7 +48,7 @@ def console_handler(effect: Effect, k: Any):
     if isinstance(effect, Acknowledge):
         return (yield Resume(k, False))
 
-    yield Pass()
+    return (yield Pass(effect, k))
 
 
 __all__ = ["console_handler"]

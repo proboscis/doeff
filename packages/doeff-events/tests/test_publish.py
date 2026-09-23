@@ -6,8 +6,9 @@ from doeff_core_effects import Await
 from doeff_core_effects.scheduler import Spawn, Wait
 from doeff_events.effects import Publish, WaitForEvent
 from doeff_events.handlers import event_handler
+from events_test_support import run_scheduled
 
-from doeff import do, run
+from doeff import do
 
 
 @dataclass(frozen=True)
@@ -27,13 +28,9 @@ def test_publish_with_no_listeners_is_noop() -> None:
         yield Publish(Heartbeat("alive"))
         return "ok"
 
-    result = run(
-        event_handler()(program()),
-        handlers=default_handlers(),  # noqa: F821 - legacy removed API reference is intentionally preserved
-    )
+    result = run_scheduled(event_handler()(program()))
 
-    assert result.is_ok()
-    assert result.value == "ok"
+    assert result == "ok"
 
 
 def test_composes_with_spawn_producer_consumer_pattern() -> None:
@@ -58,12 +55,8 @@ def test_composes_with_spawn_producer_consumer_pattern() -> None:
         producer_status = yield Wait(producer_task)
         return (processed, producer_status)
 
-    result = run(
-        event_handler()(program()),
-        handlers=default_handlers(),  # noqa: F821 - legacy removed API reference is intentionally preserved
-    )
+    result = run_scheduled(event_handler()(program()))
 
-    assert result.is_ok()
-    processed, producer_status = result.value
+    processed, producer_status = result
     assert processed == "Processed: AAPL x100"
     assert producer_status == "done"

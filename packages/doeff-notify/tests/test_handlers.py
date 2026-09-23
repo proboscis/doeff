@@ -6,6 +6,7 @@ from doeff import handler as _install_raw_handler
 
 import importlib
 import sys
+from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 
@@ -24,12 +25,7 @@ from doeff_notify.handlers import (
 )
 from doeff_notify.types import Channel, NotificationResult, Urgency
 
-from doeff import Effect, Pass, Resume, WriterTellEffect, default_handlers, do, run
-
-
-def _is_ok(run_result: Any) -> bool:
-    checker = run_result.is_ok
-    return bool(checker()) if callable(checker) else bool(checker)
+from doeff import Effect, Pass, Resume, Tell, WriterTellEffect, do, run
 
 
 def test_effect_exports() -> None:
@@ -59,16 +55,13 @@ def _console_program():
 
 
 def test_console_handler_prints_and_returns_notification_result(capsys) -> None:
-    result = run(
-        console_handler(_console_program()),
-        handlers=default_handlers(),
-    )
+    # The built-in handlers are raw ``(effect, k)`` dispatchers; install them
+    # with ``doeff.handler`` (the replacement of ``WithHandler(raw, program)``).
+    payload = run(_install_raw_handler(console_handler)(_console_program()))
 
     captured = capsys.readouterr()
-    assert _is_ok(result)
     assert "[ALERT] Deploy: Deployment failed" in captured.out
 
-    payload = result.value
     assert isinstance(payload, NotificationResult)
     assert payload.channel == Channel.CONSOLE
     assert payload.thread_id == payload.notification_id
@@ -89,13 +82,8 @@ def _testing_program():
 def test_testing_handler_collects_notifications_in_memory() -> None:
     handler, notifications = build_testing_handler(auto_acknowledge=True)
 
-    result = run(
-        handler(_testing_program()),
-        handlers=default_handlers(),
-    )
+    first, acknowledged = run(_install_raw_handler(handler)(_testing_program()))
 
-    assert _is_ok(result)
-    first, acknowledged = result.value
     assert isinstance(first, NotificationResult)
     assert first.channel == Channel.TESTING
     assert first.thread_id == first.notification_id
@@ -135,17 +123,16 @@ def test_log_handler_emits_tell_events() -> None:
     @do
     def capture_tell_handler(effect: Effect, k: Any):
         if isinstance(effect, WriterTellEffect):
-            logs.append(effect.message)
+            logs.append(effect.msg)
             return (yield Resume(k, None))
-        yield Pass()
+        return (yield Pass(effect, k))
 
-    result = run(
-        _install_raw_handler(capture_tell_handler)(log_handler(_logging_program())),
-        handlers=default_handlers(),
+    first, acknowledged = run(
+        _install_raw_handler(capture_tell_handler)(
+            _install_raw_handler(log_handler)(_logging_program())
+        )
     )
 
-    assert _is_ok(result)
-    first, acknowledged = result.value
     assert isinstance(first, NotificationResult)
     assert first.channel == Channel.LOG
     assert acknowledged is False
@@ -156,3 +143,28 @@ def test_log_handler_emits_tell_events() -> None:
     assert logs[0]["metadata"] == {"budget": "marketing"}
     assert logs[1]["event"] == "notify_thread"
     assert logs[2]["event"] == "acknowledge"
+
+
+@do
+def _tell_only_program() -> Generator[Any, Any, Any]:
+    return (yield Tell("not-a-notification"))
+
+
+@do
+def _outer_tell_handler(effect: Effect, k: Any) -> Generator[Any, Any, Any]:
+    """Resume Tell with a marker so the program returns proof that Tell reached here."""
+    if isinstance(effect, WriterTellEffect):
+        return (yield Resume(k, f"outer-saw:{effect.msg}"))
+    return (yield Pass(effect, k))
+
+
+def test_handlers_pass_non_notification_effects_outward() -> None:
+    """Unhandled effects must reach the outer handler through ``Pass(effect, k)``."""
+
+    for raw in (console_handler, log_handler, build_testing_handler()[0]):
+        result = run(
+            _install_raw_handler(_outer_tell_handler)(
+                _install_raw_handler(raw)(_tell_only_program())
+            )
+        )
+        assert result == "outer-saw:not-a-notification"
