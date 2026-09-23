@@ -41,6 +41,18 @@ pub struct PyPure {
 
 #[pymethods]
 impl PyPure {
+    /// `x = yield from node` ≡ `x = yield node` (see crate::typing_support).
+    fn __iter__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::bind_iter(slf.as_any())
+    }
+    #[classmethod]
+    fn __class_getitem__<'py>(
+        cls: &Bound<'py, pyo3::types::PyType>,
+        item: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::class_getitem(cls, item)
+    }
+
     #[new]
     fn new(value: Py<PyAny>) -> Self {
         Self { value }
@@ -70,6 +82,18 @@ pub struct PyPerform {
 
 #[pymethods]
 impl PyPerform {
+    /// `x = yield from node` ≡ `x = yield node` (see crate::typing_support).
+    fn __iter__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::bind_iter(slf.as_any())
+    }
+    #[classmethod]
+    fn __class_getitem__<'py>(
+        cls: &Bound<'py, pyo3::types::PyType>,
+        item: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::class_getitem(cls, item)
+    }
+
     #[new]
     fn new(effect: Py<PyAny>) -> Self {
         Self { effect }
@@ -101,6 +125,11 @@ pub struct PyResume {
 
 #[pymethods]
 impl PyResume {
+    /// `x = yield from node` ≡ `x = yield node` (see crate::typing_support).
+    fn __iter__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::bind_iter(slf.as_any())
+    }
+
     #[new]
     fn new(k: Py<PyK>, value: Py<PyAny>) -> Self {
         Self {
@@ -130,6 +159,11 @@ pub struct PyTransfer {
 
 #[pymethods]
 impl PyTransfer {
+    /// `x = yield from node` ≡ `x = yield node` (see crate::typing_support).
+    fn __iter__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::bind_iter(slf.as_any())
+    }
+
     #[new]
     fn new(k: Py<PyK>, value: Py<PyAny>) -> Self {
         Self {
@@ -159,6 +193,11 @@ pub struct PyApply {
 
 #[pymethods]
 impl PyApply {
+    /// `x = yield from node` ≡ `x = yield node` (see crate::typing_support).
+    fn __iter__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::bind_iter(slf.as_any())
+    }
+
     #[new]
     fn new(f: Py<PyAny>, args: Py<PyAny>) -> Self {
         Self { f, args }
@@ -188,6 +227,18 @@ pub struct PyExpand {
 
 #[pymethods]
 impl PyExpand {
+    /// `x = yield from node` ≡ `x = yield node` (see crate::typing_support).
+    fn __iter__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::bind_iter(slf.as_any())
+    }
+    #[classmethod]
+    fn __class_getitem__<'py>(
+        cls: &Bound<'py, pyo3::types::PyType>,
+        item: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::class_getitem(cls, item)
+    }
+
     #[new]
     fn new(expr: Py<PyAny>) -> Self {
         Self { expr }
@@ -218,6 +269,11 @@ pub struct PyPass {
 
 #[pymethods]
 impl PyPass {
+    /// `x = yield from node` ≡ `x = yield node` (see crate::typing_support).
+    fn __iter__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::bind_iter(slf.as_any())
+    }
+
     #[new]
     fn new(effect: Py<PyAny>, k: Py<PyK>) -> Self {
         Self {
@@ -247,6 +303,18 @@ pub struct PyWithHandler {
 
 #[pymethods]
 impl PyWithHandler {
+    /// `x = yield from node` ≡ `x = yield node` (see crate::typing_support).
+    fn __iter__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::bind_iter(slf.as_any())
+    }
+    #[classmethod]
+    fn __class_getitem__<'py>(
+        cls: &Bound<'py, pyo3::types::PyType>,
+        item: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::class_getitem(cls, item)
+    }
+
     #[new]
     fn new(handler: Py<PyAny>, body: Py<PyAny>) -> PyResult<Self> {
         Python::attach(|py| {
@@ -292,6 +360,11 @@ pub struct PyResumeThrow {
 
 #[pymethods]
 impl PyResumeThrow {
+    /// `x = yield from node` ≡ `x = yield node` (see crate::typing_support).
+    fn __iter__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::bind_iter(slf.as_any())
+    }
+
     #[new]
     fn new(k: Py<PyK>, exception: Py<PyAny>) -> Self {
         Self {
@@ -321,6 +394,11 @@ pub struct PyTransferThrow {
 
 #[pymethods]
 impl PyTransferThrow {
+    /// `x = yield from node` ≡ `x = yield node` (see crate::typing_support).
+    fn __iter__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::bind_iter(slf.as_any())
+    }
+
     #[new]
     fn new(k: Py<PyK>, exception: Py<PyAny>) -> Self {
         Self {
@@ -350,6 +428,18 @@ pub struct PyWithObserve {
 
 #[pymethods]
 impl PyWithObserve {
+    /// `x = yield from node` ≡ `x = yield node` (see crate::typing_support).
+    fn __iter__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::bind_iter(slf.as_any())
+    }
+    #[classmethod]
+    fn __class_getitem__<'py>(
+        cls: &Bound<'py, pyo3::types::PyType>,
+        item: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::class_getitem(cls, item)
+    }
+
     #[new]
     fn new(observer: Py<PyAny>, body: Py<PyAny>) -> Self {
         Self { observer, body }
@@ -379,6 +469,11 @@ pub struct PyGetTraceback {
 
 #[pymethods]
 impl PyGetTraceback {
+    /// `x = yield from node` ≡ `x = yield node` (see crate::typing_support).
+    fn __iter__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::bind_iter(slf.as_any())
+    }
+
     #[new]
     fn new(k: Py<PyK>) -> Self {
         Self { continuation: k }
@@ -404,6 +499,11 @@ pub struct PyGetExecutionContext;
 
 #[pymethods]
 impl PyGetExecutionContext {
+    /// `x = yield from node` ≡ `x = yield node` (see crate::typing_support).
+    fn __iter__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::bind_iter(slf.as_any())
+    }
+
     #[new]
     fn new() -> Self {
         Self
@@ -428,6 +528,11 @@ pub struct PyGetHandlers {
 
 #[pymethods]
 impl PyGetHandlers {
+    /// `x = yield from node` ≡ `x = yield node` (see crate::typing_support).
+    fn __iter__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::bind_iter(slf.as_any())
+    }
+
     #[new]
     fn new(k: Py<PyK>) -> Self {
         Self { continuation: k }
@@ -458,6 +563,11 @@ pub struct PyGetBoundaries {
 
 #[pymethods]
 impl PyGetBoundaries {
+    /// `x = yield from node` ≡ `x = yield node` (see crate::typing_support).
+    fn __iter__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::bind_iter(slf.as_any())
+    }
+
     #[new]
     fn new(k: Py<PyK>) -> Self {
         Self { continuation: k }
@@ -486,6 +596,11 @@ pub struct PyGetOuterHandlers {}
 
 #[pymethods]
 impl PyGetOuterHandlers {
+    /// `x = yield from node` ≡ `x = yield node` (see crate::typing_support).
+    fn __iter__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::bind_iter(slf.as_any())
+    }
+
     #[new]
     fn new() -> Self {
         Self {}
@@ -507,6 +622,11 @@ pub struct PyTailEval {
 
 #[pymethods]
 impl PyTailEval {
+    /// `x = yield from node` ≡ `x = yield node` (see crate::typing_support).
+    fn __iter__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::typing_support::bind_iter(slf.as_any())
+    }
+
     #[new]
     fn new(expr: Py<PyAny>) -> Self {
         Self { expr }
