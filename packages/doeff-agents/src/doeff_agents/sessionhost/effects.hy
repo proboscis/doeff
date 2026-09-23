@@ -19,7 +19,7 @@
 
 (require doeff-hy.macros [deff defk <-])
 
-(import dataclasses [dataclass])
+(import dataclasses [dataclass field])
 (import datetime [datetime])
 (import typing [Any])
 (import doeff [EffectBase])
@@ -196,7 +196,16 @@
   ;; (登録時武装 = started_at と同時刻)。solicitation の再武装で更新し、
   ;; 正の作業証拠で latch と同時に clear する。wire には載せない。
   #^ (| str None) awaiting-response-since
-  (setv awaiting-response-since None))
+  (setv awaiting-response-since None)
+  ;; 2026-09-23(実弾 18:41 JST・pod agentd-pool-0・手番 aj-0QCM2MSBX1C79PSM70GPQ255AD): この行を store から
+  ;; 読んだ時点の欄の写し(policy-row-patch の形)。store の読みが付け、replace で派生した行はそのまま運ぶ。
+  ;; store の merge はこの写しから**変わった欄だけ**を重ねる — 書き手は自分が導いた欄だけを書く。
+  ;; 旧形は読んだ行を全欄で書き戻したので、監視の読みと書きの間に着地した送信(新 pid・待機中の印)を
+  ;; 古い値へ戻し、agentd が生きた手番を session-lost に倒して完成した答えを捨てた。
+  ;; None = store から読んでいない行(launch が新しく作る行)— 今までどおり全欄を書く。
+  ;; 等価・表示の対象外(行の意味ではなく、書き戻しの基点の記録)。
+  #^ (| dict None) read-base
+  (setv read-base (field :default None :compare False :repr False)))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] PaneObservation []

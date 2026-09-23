@@ -27,6 +27,7 @@
 
 (import doeff [run])
 
+(import dataclasses [replace])
 (import datetime [datetime timezone timedelta])
 (import json)
 (import os)
@@ -1196,8 +1197,10 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
   {:pre [(: snap dict)]
    :post [(: % SessionRow)]}
   "store-of-record の行 → policy 可視 SessionRow(monitor はこれから毎 cycle
-   再導出する)。pr_url / retries_used(vestigial)は policy 契約外。"
-  (SessionRow
+   再導出する)。pr_url / retries_used(vestigial)は policy 契約外。
+   読んだ時点の欄の写し(read-base)を付ける — 書き戻しの merge はこの写しから
+   変わった欄だけを重ねる(db-merge-policy-row)。"
+  (setv row (SessionRow
     :session-id (get snap "session_id")
     :session-name (get snap "session_name")
     :pane-id (get snap "pane_id")
@@ -1239,6 +1242,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
     :provider-failure-observed-at (.get snap "provider_failure_observed_at")
     :turn-ended-at (.get snap "turn_ended_at")
     :turn-error (.get snap "turn_error")))
+  (replace row :read-base (policy-row-patch row)))
 
 (deff policy-row-patch [row]
   {:pre [(: row SessionRow)]
@@ -1304,6 +1308,18 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    ;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D2): 手番の失敗の文も monitor が唯一の writer(turn_ended_at と対)。
    "turn_error" row.turn-error})
 
+(deff changed-policy-patch [row]
+  {:pre [(: row SessionRow)]
+   :post [(: % dict)]}
+  "書き戻しで重ねる欄: store から読んだ行なら、読んだ時点の写し(read-base)から変わった欄だけ。
+   読んでいない行(read-base None — launch が作る行)は全欄。"
+  (setv patch (policy-row-patch row))
+  (if (is row.read-base None)
+      patch
+      (dfor [k v] (.items patch)
+            :if (or (not-in k row.read-base) (!= v (get row.read-base k)))
+            k v)))
+
 (deff snapshot-from-policy-row [row]
   {:pre [(: row SessionRow)]
    :post [(: % dict)]}
@@ -1322,14 +1338,18 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
   {:pre [(: conn sqlite3.Connection) (: row SessionRow)]
    :post [(: % "None")]}
   "SessionStoreUpsert の実体: 既存 full 行に policy patch を重ねて upsert
-   (actor 内で実行されるので read-modify-write が原子的)。COALESCE 2+1 列の
-   保護は SQL 側が持つ。"
+   (actor 内で実行されるので、この関数の中の read-modify-write は原子的)。COALESCE 2+1 列の
+   保護は SQL 側が持つ。
+   書き手が store から読んだ行(read-base を持つ)なら、重ねるのは読んだ値から変わった欄だけ
+   (changed-policy-patch)。書き手の読みと書きの間に別の書き手が着地しても、書き手が触らなかった
+   欄はその着地の値のまま残る — 書き手の読みから書きまでは actor の外なので、全欄を重ねると
+   古い読みで他人の書きを消す(2026-09-23 の実弾: 監視の書き戻しが送信の新 pid を旧 pid へ戻した)。"
   (setv existing (db-session-get conn row.session-id))
   (if (is existing None)
       (db-upsert-snapshot conn (snapshot-from-policy-row row))
       (do
         (setv merged (dict existing))
-        (.update merged (policy-row-patch row))
+        (.update merged (changed-policy-patch row))
         (db-upsert-snapshot conn merged)))
   None)
 
