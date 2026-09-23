@@ -10,6 +10,7 @@ from doeff_image.types import ImageResult
 
 from doeff import EffectGenerator, Pass, Resume, do
 from doeff import handler as _program_handler
+from doeff.program import ProgramHandler
 from doeff_seedream.effects import SeedreamGenerate, SeedreamStructuredOutput
 from doeff_seedream.structured_llm import _edit_image__seedream4_impl
 from doeff_seedream.types import SeedreamImageEditResult
@@ -109,32 +110,34 @@ def _image_edit_impl(effect: ImageEdit) -> EffectGenerator[ImageResult]:
     return _seedream_result_to_unified(seedream_result)
 
 
+def _route_seedream_image(effect: Effect) -> Callable[[Any], Any] | None:
+    """The implementation that serves ``effect``, or None when it is not ours.
+
+    Looked up at call time (module globals) so tests can monkeypatch the impls.
+    """
+    if not isinstance(effect, (SeedreamGenerate, ImageGenerate, ImageEdit)):
+        return None
+    if not _is_seedream_model(effect.model):
+        return None
+    if isinstance(effect, SeedreamGenerate):
+        return _generate_impl
+    if isinstance(effect, ImageGenerate):
+        return _image_generate_impl
+    return _image_edit_impl
+
+
 @do
 def seedream_image_handler(effect: Effect, k: Any):
-    """Protocol handler with model routing for unified image effects."""
-    if isinstance(effect, SeedreamGenerate):
-        if not _is_seedream_model(effect.model):
-            yield Pass()
-            return None
-        value = yield _generate_impl(effect)
-        return (yield Resume(k, value))
+    """Protocol handler with model routing for unified image effects.
 
-    if isinstance(effect, ImageGenerate):
-        if not _is_seedream_model(effect.model):
-            yield Pass()
-            return None
-        value = yield _image_generate_impl(effect)
-        return (yield Resume(k, value))
-
-    if isinstance(effect, ImageEdit):
-        if not _is_seedream_model(effect.model):
-            yield Pass()
-            return None
-        value = yield _image_edit_impl(effect)
-        return (yield Resume(k, value))
-
-    # No default structured output impl — delegate to outer handler
-    yield Pass()
+    Effects for non-Seedream models (and every other effect, including
+    structured output which has no default impl) pass to the outer handler.
+    """
+    impl = _route_seedream_image(effect)
+    if impl is None:
+        return (yield Pass(effect, k))
+    value = yield impl(effect)
+    return (yield Resume(k, value))
 
 
 def production_handlers(
@@ -144,7 +147,7 @@ def production_handlers(
     image_generate_impl: Callable[[ImageGenerate], EffectGenerator[ImageResult]] | None = None,
     image_edit_impl: Callable[[ImageEdit], EffectGenerator[ImageResult]] | None = None,
     structured_impl: Callable[[SeedreamStructuredOutput], EffectGenerator[Any]] | None = None,
-) -> ProtocolHandler:
+) -> ProgramHandler:
     """Build a protocol handler backed by Seedream production logic."""
 
     active_generate_impl = generate_impl or _generate_impl
@@ -155,33 +158,23 @@ def production_handlers(
     def handler(effect: Effect, k: Any):  # noqa: PLR0911
         if isinstance(effect, SeedreamGenerate):
             if not _is_seedream_model(effect.model):
-                yield Pass()
-                return None
+                return (yield Pass(effect, k))
             value = yield active_generate_impl(effect)
             return (yield Resume(k, value))
         if isinstance(effect, ImageGenerate):
             if not _is_seedream_model(effect.model):
-                yield Pass()
-                return None
+                return (yield Pass(effect, k))
             value = yield active_image_generate_impl(effect)
             return (yield Resume(k, value))
         if isinstance(effect, ImageEdit):
             if not _is_seedream_model(effect.model):
-                yield Pass()
-                return None
+                return (yield Pass(effect, k))
             value = yield active_image_edit_impl(effect)
             return (yield Resume(k, value))
         if isinstance(effect, SeedreamStructuredOutput) and structured_impl is not None:
             value = yield structured_impl(effect)
             return (yield Resume(k, value))
-        yield Pass()
+        return (yield Pass(effect, k))
 
     return _program_handler(handler)
 
-
-__all__ = [
-    "SEEDREAM_IMAGE_MODEL_PREFIXES",
-    "ProtocolHandler",
-    "production_handlers",
-    "seedream_image_handler",
-]

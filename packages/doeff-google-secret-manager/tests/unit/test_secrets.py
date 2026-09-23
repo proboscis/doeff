@@ -1,4 +1,4 @@
-"""WithHandler-based tests for the Secret Manager integration."""
+"""Handler-stack tests for the Secret Manager integration."""
 
 
 import sys
@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from doeff import handler as _install_raw_handler
+import pytest
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
@@ -19,6 +19,15 @@ if str(SECRET_PACKAGE_ROOT) not in sys.path:
 from doeff_core_effects.effects import (  # noqa: E402 - late import follows sys.path fixture setup
     EffectBase as Effect,
 )
+from doeff_core_effects.handlers import (  # noqa: E402
+    await_handler,
+    try_handler,
+    writer,
+)
+from doeff_core_effects.handlers import (  # noqa: E402
+    state as state_handler,
+)
+from doeff_core_effects.scheduler import scheduled  # noqa: E402
 from doeff_google_secret_manager import (  # noqa: E402
     SecretManagerClient,
     access_secret,
@@ -29,9 +38,9 @@ from doeff import (  # noqa: E402 - late import preserves existing import/setup 
     AskEffect,
     Pass,
     Resume,
-    default_handlers,
     do,
     run,
+    with_handlers,
 )
 from doeff import Get as StateGetEffect  # noqa: E402 - late import follows sys.path fixture setup
 from doeff import (  # noqa: E402 - late import preserves existing import/setup order
@@ -62,14 +71,21 @@ class FakeNotFound(Exception):  # noqa: N818 - public or fixture exception name 
     """Fake NotFound exception for error propagation tests."""
 
 
-def _is_ok(run_result: Any) -> bool:
-    checker = run_result.is_ok
-    return checker() if callable(checker) else bool(checker)
+def _run_with_mock(program, mock_handler):
+    """Run ``program`` under the mock Ask/Get/Put handler.
 
-
-def _is_err(run_result: Any) -> bool:
-    checker = run_result.is_err
-    return checker() if callable(checker) else bool(checker)
+    ``access_secret`` also performs ``Await`` (scheduler + await bridge),
+    ``Try`` and ``Tell`` (writer, whose log lives in an outer ``state``) —
+    the handlers the removed ``default_handlers()`` used to supply.
+    """
+    return run(
+        scheduled(
+            with_handlers(
+                [await_handler(), try_handler, state_handler(), writer, mock_handler],
+                program,
+            )
+        )
+    )
 
 
 def _build_handler(
@@ -96,7 +112,7 @@ def _build_handler(
             state[effect.key] = effect.value
             event_log.append(("put", effect.key, effect.value))
             return (yield Resume(k, None))
-        yield Pass()
+        return (yield Pass(effect, k))
 
     return mock_handler, state, event_log
 
@@ -106,13 +122,9 @@ def test_access_secret_returns_decoded_secret_with_mock_handler() -> None:
     mock_client = MockSecretManagerClient(project="my-project", async_client=mock_async_api)
     mock_handler, _, _ = _build_handler(ask_values={"secret_manager_client": mock_client})
 
-    result = run(
-        _install_raw_handler(mock_handler)(access_secret("db-password")),
-        handlers=default_handlers(),
-    )
+    result = _run_with_mock(access_secret("db-password"), mock_handler)
 
-    assert _is_ok(result)
-    assert result.value == "top-secret"
+    assert result == "top-secret"
     assert mock_async_api.requests == [
         {"name": "projects/my-project/secrets/db-password/versions/latest"}
     ]
@@ -123,14 +135,10 @@ def test_access_secret_can_return_bytes_with_decode_false() -> None:
     mock_client = MockSecretManagerClient(project="my-project", async_client=mock_async_api)
     mock_handler, _, _ = _build_handler(ask_values={"secret_manager_client": mock_client})
 
-    result = run(
-        _install_raw_handler(mock_handler)(access_secret("binary-secret", decode=False, project="other-project")),
-        handlers=default_handlers(),
-    )
+    result = _run_with_mock(access_secret("binary-secret", decode=False, project="other-project"), mock_handler)
 
-    assert _is_ok(result)
-    assert isinstance(result.value, bytes)
-    assert result.value == b"\x00\x01\x02"
+    assert isinstance(result, bytes)
+    assert result == b"\x00\x01\x02"
     assert mock_async_api.requests == [
         {"name": "projects/other-project/secrets/binary-secret/versions/latest"}
     ]
@@ -141,13 +149,9 @@ def test_access_secret_uses_explicit_version_in_request_path() -> None:
     mock_client = MockSecretManagerClient(project="my-project", async_client=mock_async_api)
     mock_handler, _, _ = _build_handler(ask_values={"secret_manager_client": mock_client})
 
-    result = run(
-        _install_raw_handler(mock_handler)(access_secret("api-key", version="42")),
-        handlers=default_handlers(),
-    )
+    result = _run_with_mock(access_secret("api-key", version="42"), mock_handler)
 
-    assert _is_ok(result)
-    assert result.value == "versioned-secret"
+    assert result == "versioned-secret"
     assert mock_async_api.requests == [{"name": "projects/my-project/secrets/api-key/versions/42"}]
 
 
@@ -157,14 +161,8 @@ def test_access_secret_propagates_not_found_error() -> None:
     mock_client = MockSecretManagerClient(project="my-project", async_client=mock_async_api)
     mock_handler, _, _ = _build_handler(ask_values={"secret_manager_client": mock_client})
 
-    result = run(
-        _install_raw_handler(mock_handler)(access_secret("missing-secret")),
-        handlers=default_handlers(),
-    )
-
-    assert _is_err(result)
-    assert isinstance(result.error, FakeNotFound)
-    assert "does not exist" in str(result.error)
+    with pytest.raises(FakeNotFound, match="does not exist"):
+        _run_with_mock(access_secret("missing-secret"), mock_handler)
 
 
 def test_get_secret_manager_client_initializes_and_caches_in_state() -> None:
@@ -179,16 +177,12 @@ def test_get_secret_manager_client_initializes_and_caches_in_state() -> None:
         events=events,
     )
 
-    result = run(
-        _install_raw_handler(mock_handler)(get_secret_manager_client()),
-        handlers=default_handlers(),
-    )
+    result = _run_with_mock(get_secret_manager_client(), mock_handler)
 
-    assert _is_ok(result)
-    assert isinstance(result.value, SecretManagerClient)
-    assert result.value.project == "fake-project-id"
-    assert result.value.credentials is credentials
-    assert state["secret_manager_client"] is result.value
+    assert isinstance(result, SecretManagerClient)
+    assert result.project == "fake-project-id"
+    assert result.credentials is credentials
+    assert state["secret_manager_client"] is result
     put_events = [e for e in event_log if e[0] == "put" and e[1] == "secret_manager_client"]
     assert len(put_events) == 1
 
@@ -205,13 +199,9 @@ def test_get_secret_manager_client_uses_cached_state_client_without_put() -> Non
         events=events,
     )
 
-    result = run(
-        _install_raw_handler(mock_handler)(get_secret_manager_client()),
-        handlers=default_handlers(),
-    )
+    result = _run_with_mock(get_secret_manager_client(), mock_handler)
 
-    assert _is_ok(result)
-    assert result.value is cached_client
+    assert result is cached_client
     put_events = [e for e in event_log if e[0] == "put" and e[1] == "secret_manager_client"]
     assert put_events == []
     get_events = [e for e in event_log if e[0] == "get" and e[1] == "secret_manager_client"]
