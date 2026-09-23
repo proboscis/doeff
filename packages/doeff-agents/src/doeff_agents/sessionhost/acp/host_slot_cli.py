@@ -30,7 +30,7 @@ from doeff_agents.sessionhost.acp.effects import (
     SESSION_LIVE_STATUSES,
     SessionView,
 )
-from doeff_agents.sessionhost.acp.handlers import session_view_of, socket_is_listening
+from doeff_agents.sessionhost.acp.handlers import session_view_of, socket_may_have_host
 from doeff_agents.sessionhost.acp.valve import socket_path_override
 
 HOST_SLOT_SUBCOMMAND = "host-slot"
@@ -101,7 +101,9 @@ def status(config: str) -> dict[str, object]:
     live: dict[str, int | None] = {}
     for slot in host_slots.slots_in(state_dir, os.listdir):
         path = host_slots.slot_socket(state_dir, slot)
-        listening = socket_is_listening(path)
+        # 「居ない」の証拠(file が無い・誰も listen していない)が在る時だけ偽 — 遅い connect を降りたと読まない
+        # (道具は応答の無い器を降ろすので、混んだ器を降ろして手番を切らない)。
+        listening = socket_may_have_host(path)
         observed.append(host_slots.HostSlot(slot, path, listening))
         if not listening:
             continue
@@ -124,7 +126,7 @@ def seed(config: str, slot: str) -> int:
     target_socket = host_slots.slot_socket(state_dir, target_slot)
     if target_socket == active:
         return _fail(f"slot {target_slot!r} is the active slot — nothing to seed from")
-    if socket_is_listening(target_socket):
+    if socket_may_have_host(target_socket):
         return _fail(f"the host of slot {target_slot!r} is up ({target_socket}) — its store is not replaced")
     source_db = os.path.join(os.path.dirname(active), JOIN_DB_FILE)
     if not os.path.exists(source_db):
