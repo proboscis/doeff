@@ -229,8 +229,8 @@
     (setv view (compose-home-view (get fx "auth") (get fx "profile")
                                   (get fx "view-root")))
     (assert (= view (os.path.join (get fx "view-root")
-                                  (compose-home-view-name (get fx "auth")
-                                                          (get fx "profile")))))
+                                  (! (compose-home-view-name (get fx "auth")
+                                                             (get fx "profile"))))))
     (assert (.startswith (os.path.basename view) "bundle--"))
     ;; auth.json は宣言 auth_file へ(bundle の legacy auth.json ではない)
     (assert (os.path.islink (os.path.join view "auth.json")))
@@ -372,24 +372,24 @@
     (os.makedirs new-target)
     (setv link (os.path.join d "home" "skills"))
     ;; 何も居ない → 張る(親 dir も作る)
-    (<- first (drive (fs-ensure-symlink link old-target)))
+    (<- first ((real-substrate "tmux") (fs-ensure-symlink link old-target)))
     (assert (= (. first state) FS-SYMLINK-LINKED) first)
     (assert (= (os.path.realpath link) old-target))
     ;; 同じ先 → 触らない(inode も mtime も動かさない = 走っている席の見張りを起こさない)
     (setv before (os.lstat link))
-    (<- second (drive (fs-ensure-symlink link old-target)))
+    (<- second ((real-substrate "tmux") (fs-ensure-symlink link old-target)))
     (assert (= (. second state) FS-SYMLINK-UNCHANGED) second)
     (setv after (os.lstat link))
     (assert (= before.st-ino after.st-ino))
     ;; 別の先 → 張り替える
-    (<- third (drive (fs-ensure-symlink link new-target)))
+    (<- third ((real-substrate "tmux") (fs-ensure-symlink link new-target)))
     (assert (= (. third state) FS-SYMLINK-LINKED) third)
     (assert (= (os.path.realpath link) new-target))
     ;; symlink でない実体が居る → 触らない(erosion guard)
     (setv occupied (os.path.join d "home" "real"))
     (with [f (open occupied "w" :encoding "utf-8")]
       (.write f "someone's real file"))
-    (<- fourth (drive (fs-ensure-symlink occupied new-target)))
+    (<- fourth ((real-substrate "tmux") (fs-ensure-symlink occupied new-target)))
     (assert (= (. fourth state) FS-SYMLINK-OCCUPIED) fourth)
     (assert (not (os.path.islink occupied)))
     (with [f (open occupied :encoding "utf-8")]
@@ -887,7 +887,7 @@
             (os.listdir (os.path.join d "home")))
     ;; 割りの正本は純関数 1 点(substrate.refusal-of)。表を syscall 間で共有すると
     ;; makedirs / symlink の EEXIST が「実体の居座り」に化けて受入 2 が赤くなる。
-    (assert (= (substrate.refusal-of "rename" errno.EISDIR) FS-SYMLINK-OCCUPIED))
+    (assert (= (! (substrate.refusal-of "rename" errno.EISDIR)) FS-SYMLINK-OCCUPIED))
     (for [#(syscall code) [#("rename" errno.EACCES)
                            #("rename" errno.EEXIST)
                            #("rename" errno.ENOTEMPTY)
@@ -895,7 +895,7 @@
                            #("makedirs" errno.EEXIST)
                            #("makedirs" errno.EACCES)
                            #("symlink" errno.EEXIST)]]
-      (assert (= (substrate.refusal-of syscall code) FS-SYMLINK-REFUSED)
+      (assert (= (! (substrate.refusal-of syscall code)) FS-SYMLINK-REFUSED)
               #(syscall code)))
     (finally
       (setv os.lstat real-lstat)
