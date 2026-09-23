@@ -142,6 +142,129 @@ def test_defsemgrep_installed_rule_allows_same_path_for_hit_and_clean(tmp_hy_dir
     mod.test_test_installed_agentd_result_key_rule_defsemgrep()
 
 
+_NEAR_RULES = """\
+rules:
+  - id: near-no-print
+    languages: [python]
+    severity: ERROR
+    message: print is banned by the rule file next to the ADR
+    pattern: print(...)
+"""
+
+
+def test_installed_defsemgrep_reads_config_next_to_the_declaring_file(tmp_hy_dir, monkeypatch):
+    # The rule file lives beside the ADR, not at any cwd ancestor: the cwd walk
+    # alone could never find it (pytest's cwd is elsewhere, and that tree has no
+    # such file).
+    (tmp_hy_dir / "rules").mkdir()
+    (tmp_hy_dir / "rules" / "near.semgrep.yaml").write_text(_NEAR_RULES, encoding="utf-8")
+    elsewhere = tmp_hy_dir / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    mod = _write_and_import(
+        tmp_hy_dir,
+        "test_near_config.hy",
+        """\
+        (require doeff-adr.macros [defsemgrep])
+
+        (defsemgrep near-rule
+          "near-no-print"
+          [{"relative-path" "pkg/bad.py" "source" "print('x')\\n"}]
+          [{"relative-path" "pkg/clean.py" "source" "value = 1\\n"}]
+          :config "rules/near.semgrep.yaml")
+        """,
+    )
+
+    spec = get_enforcement("near_rule")
+    assert isinstance(spec, SemgrepSpec)
+    assert doeff_adr.registry.resolved_config_path(spec) == (
+        tmp_hy_dir / "rules" / "near.semgrep.yaml"
+    ).resolve()
+    mod.test_near_rule_defsemgrep()
+
+
+def test_installed_defsemgrep_with_config_names_the_file_it_read(tmp_hy_dir):
+    (tmp_hy_dir / "near.semgrep.yaml").write_text(_NEAR_RULES, encoding="utf-8")
+    mod = _write_and_import(
+        tmp_hy_dir,
+        "test_near_config_missing_rule.hy",
+        """\
+        (require doeff-adr.macros [defsemgrep])
+
+        (defsemgrep near-missing-rule
+          "no-such-rule"
+          [{"relative-path" "pkg/bad.py" "source" "print('x')\\n"}]
+          [{"relative-path" "pkg/clean.py" "source" "value = 1\\n"}]
+          :config "near.semgrep.yaml")
+        """,
+    )
+
+    with pytest.raises(AssertionError, match="near.semgrep.yaml: no-such-rule"):
+        mod.test_near_missing_rule_defsemgrep()
+
+
+def test_installed_defsemgrep_accepts_an_absolute_config(tmp_hy_dir):
+    config = tmp_hy_dir / "abs.semgrep.yaml"
+    config.write_text(_NEAR_RULES, encoding="utf-8")
+    mod = _write_and_import(
+        tmp_hy_dir,
+        "test_abs_config.hy",
+        f"""\
+        (require doeff-adr.macros [defsemgrep])
+
+        (defsemgrep abs-rule
+          "near-no-print"
+          [{{"relative-path" "pkg/bad.py" "source" "print('x')\\n"}}]
+          [{{"relative-path" "pkg/clean.py" "source" "value = 1\\n"}}]
+          :config "{config}")
+        """,
+    )
+
+    mod.test_abs_rule_defsemgrep()
+
+
+def test_installed_defsemgrep_without_config_keeps_the_cwd_ancestor_walk(tmp_hy_dir, monkeypatch):
+    # Backward compatibility: no :config → the nearest `.semgrep.yaml` above cwd.
+    tree = tmp_hy_dir / "tree"
+    (tree / "deep").mkdir(parents=True)
+    (tree / ".semgrep.yaml").write_text(_NEAR_RULES, encoding="utf-8")
+    monkeypatch.chdir(tree / "deep")
+    mod = _write_and_import(
+        tmp_hy_dir,
+        "test_cwd_config.hy",
+        """\
+        (require doeff-adr.macros [defsemgrep])
+
+        (defsemgrep cwd-rule
+          "near-no-print"
+          [{"relative-path" "pkg/bad.py" "source" "print('x')\\n"}]
+          [{"relative-path" "pkg/clean.py" "source" "value = 1\\n"}])
+        """,
+    )
+
+    spec = get_enforcement("cwd_rule")
+    assert isinstance(spec, SemgrepSpec)
+    assert doeff_adr.registry.resolved_config_path(spec) == (tree / ".semgrep.yaml").resolve()
+    mod.test_cwd_rule_defsemgrep()
+
+
+def test_installed_defsemgrep_rejects_unknown_options(tmp_hy_dir):
+    with pytest.raises(Exception, match="unknown option :colour"):
+        _write_and_import(
+            tmp_hy_dir,
+            "test_unknown_option.hy",
+            """\
+            (require doeff-adr.macros [defsemgrep])
+
+            (defsemgrep unknown-option-rule
+              "near-no-print"
+              [{"relative-path" "pkg/bad.py" "source" "print('x')\\n"}]
+              [{"relative-path" "pkg/clean.py" "source" "value = 1\\n"}]
+              :colour "red")
+            """,
+        )
+
+
 def test_accepted_defadr_without_enforcement_fails_contract(tmp_hy_dir):
     mod = _write_and_import(
         tmp_hy_dir,
