@@ -35,6 +35,8 @@
 (require doeff-hy.macros [defk <-])
 
 (import doeff_agents.sessionhost.policy [seat-env-credential-shaped-offenders session-env-admission-error])
+;; 運ぶ物の名簿(card acp:kanban-issue:ki-62aa1f4e9c9c D11): 許す鍵・env の綴り・形の門は 1 つの名簿を回る。
+(import doeff_agents.sessionhost.policy [CARRIED-INSTRUCTION-SOURCES instruction-source-keys])
 ;; 席の settings の鍵の家(card acp:kanban-issue:ki-7b52bb76aa6e): doeff が `--settings` に置く鍵の集合は argv の合流点
 ;; (impls/claude_code.hy)が 1 点で持ち、参加の門 (c) はそれを読む — 綴りを写さない。
 (import doeff_agents.sessionhost.impls.claude_code [CLAUDE-SETTINGS-OWNED-KEYS])
@@ -177,10 +179,15 @@
 ;; `[record]` の鍵(札は [agentd].token_file の再利用 — 名簿の agentd が service の書き手なので鍵は宛先だけ)。
 (setv KEY-RECORD-URL "url")
 ;; 表 → 許す鍵(宣言に無い鍵は誤りとして名指す — 黙って読み飛ばさない)。
-(setv AGENTD-KEYS #{KEY-SERVER KEY-TOKEN-FILE KEY-NODE-NAME KEY-STATE-DIR KEY-BACKEND
-                    KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY KEY-PLACES KEY-WORK-ROOTS KEY-DRAIN-SECONDS
-                    KEY-ALLOW-METERED-BILLING KEY-REVISION KEY-BUILD KEY-SEAT-ENV
-                    KEY-CLAUDE-SETTINGS-FILE})
+;; 席の設定の家へ運ぶ共通の指示の鍵(card acp:kanban-issue:ki-62aa1f4e9c9c・任意・複数)。
+;; ⚠ **ここで数え直さない** — 綴りの正本は policy.CARRIED-INSTRUCTION-SOURCES の名簿ちょうどで、
+;; 許す鍵はそこから**導く**(名簿に 1 行足した拍から、その鍵は宣言できる)。
+;; この鍵を知らない agentd は「宣言に無い鍵」で参加を断る(fail-closed — 旧い機体は名指された正本を黙って落とさない)。
+(setv AGENTD-KEYS (| #{KEY-SERVER KEY-TOKEN-FILE KEY-NODE-NAME KEY-STATE-DIR KEY-BACKEND
+                       KEY-SESSION-HOOKS KEY-OWNERSHIP KEY-OWNERSHIP-PROOF KEY-CAPACITY KEY-PLACES KEY-WORK-ROOTS KEY-DRAIN-SECONDS
+                       KEY-ALLOW-METERED-BILLING KEY-REVISION KEY-BUILD KEY-SEAT-ENV
+                       KEY-CLAUDE-SETTINGS-FILE}
+                     (set (instruction-source-keys))))
 (setv CUSTODY-KEYS #{KEY-CUSTODY-URL KEY-BORROWER-KEY-FILE KEY-SERVICE-ACCOUNT-TOKEN-FILE})
 (setv RECORD-KEYS #{KEY-RECORD-URL})
 ;; flag の綴り(`--config` は composition root が先に読む — config-path-of)。
@@ -780,6 +787,39 @@
   word)
 
 
+(defk instruction-source-of [key text]
+  {:pre [(: key str) (: text (| str None))]
+   :post [(: % (| str None))]}
+  "席の設定の家へ運ぶ共通の指示の名指しの読み(card acp:kanban-issue:ki-62aa1f4e9c9c)。
+
+   `claude-settings-file-of` と**同じ形の門**(綴りを 2 つ持たない): 宣言 file の [agentd].<key> の文字列 →
+   綴り(strip)。無い・空 = None(名乗らない = 今日どおり)。形は絶対 path か `~` / `~/…`(agentd の HOME で
+   composition root が展開)— cwd に依る相対 path は断る(どの cwd で読むかを黙って決めない)。
+   **正本が読めないことは断る理由にしない**(D5・R13 の訂正と同じ理由): 宿の入口は「先端で揃えられない日は
+   image の下限へ戻して立つ」正規の degrade を持ち、その日の checkout に正本は無い。そこで参加を断ると
+   degrade が pool 全体の capacity 0 に化ける。不在は参加して名乗る(node の行の labels と起動の 1 行)。"
+  (setv word (if (is text None) "" (.strip text)))
+  (when (not word)
+    (return None))
+  (when (not (or (.startswith word "/") (= word "~") (.startswith word "~/")))
+    (raise (ValueError (+ f"[{TABLE-AGENTD}].{key} は絶対 path か ~/… であること"
+                          f"(cwd 相対は断る): {word !r}"))))
+  word)
+
+
+(defk instruction-sources-of [agentd]
+  {:pre [(: agentd dict)]
+   :post [(: % dict)]}
+  "宣言の表 → 名簿の鍵 → 綴り の表(名乗らない種は鍵ごと不在)。名簿を**回る** — 種を数え直さない。"
+  (setv out {})
+  (for [row CARRIED-INSTRUCTION-SOURCES]
+    (setv key (get row "key"))
+    (<- spelled (| str None) (instruction-source-of key (.get agentd key)))
+    (when (is-not spelled None)
+      (setv (get out key) spelled)))
+  out)
+
+
 (defk claude-settings-declaration-of [text session-hooks]
   {:pre [(: text (| str None)) (: session-hooks str)]
    :post [(: % (| dict None))]}
@@ -864,6 +904,9 @@
   ;; claude-settings-declaration-of(判断)で、**読めた日も読めない日も同じ**絶対 path が composition root からこの欄へ
   ;; 据え直される(不在は断らない — R13 の訂正・依頼書 §10-2)。
   (<- declared-settings-file (| str None) (claude-settings-file-of (.get agentd KEY-CLAUDE-SETTINGS-FILE)))
+  ;; 席の設定の家へ運ぶ共通の指示の名指し(card ki-62aa1f4e9c9c)— 綴りだけ。`~` の展開と在否の観測は
+  ;; composition root(runtime.join_plan)で、**在る日も無い日も同じ**絶対 path がこの欄へ据え直される。
+  (<- declared-instruction-sources dict (instruction-sources-of agentd))
   (JoinSpec
     :server server
     :token-file token-file
@@ -884,6 +927,7 @@
     ;; 席へ運ぶ env の対(agora-redesign #520)— 形と資格の締め出しは seat-env-of の 1 点(宣言しない = #())。
     :seat-env declared-seat-env.pairs
     :claude-settings-file declared-settings-file
+    :instruction-sources declared-instruction-sources
     :ownership ownership
     :capacity capacity
     :drain-seconds drain-seconds
@@ -964,6 +1008,12 @@
   ;; 読み手は launch.hy / headless.hy の起動の拍で、file をそのたびに読む。daemon の memory に中身を持たない)。
   (when (is-not spec.claude-settings-file None)
     (.append env #(CLAUDE-SETTINGS-FILE-ENV spec.claude-settings-file)))
+  ;; card ki-62aa1f4e9c9c: 共通の指示の正本も名指した種だけ env に現れる(名簿を回る — 綴りを数え直さない)。
+  ;; 読み手は launch.hy / headless.hy の**起動の拍**で、daemon の memory に中身を持たない(settings file と同じ流儀)。
+  (for [row CARRIED-INSTRUCTION-SOURCES]
+    (setv spelled (.get spec.instruction-sources (get row "key")))
+    (when (is-not spelled None)
+      (.append env #((get row "env") spelled))))
   ;; 段 12 lane 12j(#367): 版の刻印は名乗った時だけ env に現れる(無ければ agentd は unstamped / local を名乗る)。
   (when (is-not spec.revision None)
     (.append env #(AGENTD-REVISION-ENV spec.revision)))

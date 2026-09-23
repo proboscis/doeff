@@ -68,6 +68,13 @@
   log-line])
 (import dataclasses [replace])
 
+;; 運ぶ物の名簿(card ki-62aa1f4e9c9c D11): 起動の拍の読みも名簿を回る。
+;; 起動の拍に運ぶ欄の綴りの家は impls/claude_code.hy(据える側が持つ — 綴りを 2 か所に書かない)。
+(import doeff_agents.sessionhost.impls.claude_code [CLAUDE-INSTRUCTION-SOURCES-KEY
+                                                    CLAUDE-INSTRUCTION-EXCLUDES-KEY])
+(import doeff_agents.sessionhost.policy [CARRIED-INSTRUCTION-SOURCES
+                                         INSTRUCTION-SOURCE-KIND-FILE
+                                         INSTRUCTION-SOURCE-KIND-DIR])
 (import doeff_agents.sessionhost.policy [
   BILLING-METERED
   BINDING-OWNED-ENV-KEYS
@@ -768,10 +775,20 @@
           (in agent-type INTERACTIVE-AGENT-TYPES) agent-type
           (command-mentions-codex command-override) "codex"
           True None))
+  ;; --- 席の設定の家へ運ぶ共通の指示(card acp:kanban-issue:ki-62aa1f4e9c9c・D1)。
+  ;; 読みは**この 1 点**で、tui(launch-session)と headless(headless.launch)の両腕が通る
+  ;; (prepare-launch-workspace を共有しているのがその面)。据えるのは per-kind の
+  ;; PreLaunchSetup(claude-pre-launch)— 器の起動より前なので、その process が読む前に間に合う。
+  ;; 名指しの無い手番では欄を作らない = pre-launch へ渡る params が今日と 1 byte も同じ。
+  (<- instructions (instruction-source-declarations agent-type))
+  (setv prelaunch-params params)
+  (when (get instructions "sources")
+    (setv prelaunch-params (dict params))
+    (setv (get prelaunch-params CLAUDE-INSTRUCTION-SOURCES-KEY) (get instructions "sources")))
   (setv identity None)
   (setv minted-conversation None)
   (when (is-not prelaunch-kind None)
-    (<- resolved (pre-launch-setup prelaunch-kind params))
+    (<- resolved (pre-launch-setup prelaunch-kind prelaunch-params))
     ;; warnings は運用ログ向けの副産物(host が stderr へ出す)— 永続する
     ;; identity(S14 の effective_identity 列)は auth home の解決結果のみ。
     ;; conversation(ADR-006: claude が launch 時に鋳造する会話 identity)は
@@ -779,7 +796,10 @@
     (setv identity (dict resolved))
     (.pop identity "warnings" None)
     (setv minted-conversation (.pop identity "conversation" None)))
-  {"identity" identity "conversation" minted-conversation})
+  ;; 二重読みを外す path(D6)は argv の側が要るので、両腕へ**この戻り値で**渡す
+  ;; (env をもう一度読ませない = 起動の拍の読みは 1 回)。空 = 今日どおり。
+  {"identity" identity "conversation" minted-conversation
+   CLAUDE-INSTRUCTION-EXCLUDES-KEY (get instructions "excludes")})
 
 
 (defk session-hooks-mode []
@@ -849,6 +869,76 @@
   parsed)
 
 
+(defk instruction-source-declarations [agent-type]
+  {:pre [(: agent-type str)]
+   :post [(: % dict)]}
+  "席の設定の家へ運ぶ共通の指示の宣言(card acp:kanban-issue:ki-62aa1f4e9c9c)。
+
+   `claude-settings-declaration` と**同じ use-site の流儀**で、join が門を通して据えた env
+   (綴りの正本は policy.CARRIED-INSTRUCTION-SOURCES の名簿)を**起動の拍ごとに**読む。
+   daemon の memory に写しを持たない — 宿の checkout が後から追いついた日は、その拍から届く。
+   名簿を**回る**(種を数え直さない)。
+
+   戻り値 {\"sources\" [<据える 1 種>…] \"excludes\" [<二重読みを外す絶対 path>…]}:
+     sources の 1 要素 = {key, kind, home-name, source, text}
+       kind = \"file\" … text = 正本の本文(**実体 file として**家へ書く。D2 — 本体は user 層の
+              symlink / hard link を黙って捨てる枝を持つ)
+       kind = \"dir\"  … text = None(whole-dir symlink を張る。D3)
+     excludes … 実体 file を家へ据えた時だけ非空(D6): 実体は本体の realpath 重複排除を
+       すり抜けるので、Mac では同じ本文が user 層(家)と project 層($HOME の祖先の読み)で
+       2 度載る。外す path は席の $HOME から**導く** 1 本 — 宣言させない。
+
+     claude 以外の kind = 空(名簿は claude の設定の家の話)
+     名指しが無い = 空(今日どおり — 家も argv も 1 byte も変わらない)
+     **名指しが在って正本が無い = 非致命**(D5): その種だけ落として、名前つきの 1 行を log へ。
+       席は起きる(宿の入口の degrade を全席停止に化けさせない — seat-settings-file-absent と同じ理由)。"
+  (when (!= agent-type "claude")
+    (return {"sources" [] "excludes" []}))
+  (setv sources [])
+  (setv carries-a-file False)
+  (for [row CARRIED-INSTRUCTION-SOURCES]
+    (<- spelled (env-get (get row "env")))
+    (when (and (isinstance spelled str) (.strip spelled))
+      (setv source (.strip spelled))
+      (setv kind (get row "kind"))
+      (cond
+        (= kind INSTRUCTION-SOURCE-KIND-FILE)
+          (do
+            (<- text (fs-read-text source))
+            (if (is text None)
+                (<- _ (log-line
+                        (+ f"session.launch: seat-instruction-source-absent {(get row "key")}={source} — "
+                           "機体の参加の宣言が名指した共通の指示が無いので、この席はそれ無しで起こす"
+                           "(宿の checkout が追いつくまで・card acp:kanban-issue:ki-62aa1f4e9c9c)")))
+                (do
+                  (setv carries-a-file True)
+                  (.append sources {"key" (get row "key") "kind" kind
+                                    "home-name" (get row "home-name")
+                                    "source" source "text" text}))))
+        (= kind INSTRUCTION-SOURCE-KIND-DIR)
+          (do
+            (<- there (fs-dir-exists source))
+            (if there
+                (.append sources {"key" (get row "key") "kind" kind
+                                  "home-name" (get row "home-name")
+                                  "source" source "text" None})
+                (<- _ (log-line
+                        (+ f"session.launch: seat-instruction-source-absent {(get row "key")}={source} — "
+                           "機体の参加の宣言が名指した共通の指示が無いので、この席はそれ無しで起こす"
+                           "(宿の checkout が追いつくまで・card acp:kanban-issue:ki-62aa1f4e9c9c)")))))
+        True
+          (raise (RuntimeError
+                   (+ f"session.launch: 名簿の kind が閉語彙の外: {kind !r}"
+                      "(policy.CARRIED-INSTRUCTION-SOURCES — 据え方を黙って決めない)"))))))
+  ;; D6: 実体 file を据えた拍だけ、祖先の読みを外す 1 本を導く(席の $HOME から — 宣言させない)。
+  (setv excludes [])
+  (when carries-a-file
+    (<- home (env-get "HOME"))
+    (when (and (isinstance home str) (.strip home))
+      (.append excludes (+ (.rstrip (.strip home) "/") "/.claude/CLAUDE.md"))))
+  {"sources" sources "excludes" excludes})
+
+
 (defk launch-spawn-env [identity session-env]
   {:pre [(: identity (| dict None)) (: session-env dict)]
    :post [(: % dict)]}
@@ -906,6 +996,11 @@
     ;; card ki-7b52bb76aa6e: 名指しの無い手番は欄を作らない(argv の byte 同一の pin を保つ)。
     (when (is-not claude-settings None)
       (setv (get effective-params "claude_settings") claude-settings))
+    ;; card ki-62aa1f4e9c9c(D6): 実体 file を家へ据えた拍だけ、祖先の読みを外す path が載る
+    ;; (prepare-launch-workspace が起動の拍に導いた値 — ここで env を読み直さない)。
+    (when (.get prepared CLAUDE-INSTRUCTION-EXCLUDES-KEY)
+      (setv (get effective-params CLAUDE-INSTRUCTION-EXCLUDES-KEY)
+            (get prepared CLAUDE-INSTRUCTION-EXCLUDES-KEY)))
     (when (and (is-not expected-result None)
                (in agent-type INTERACTIVE-AGENT-TYPES))
       (<- channel (wire-result-channel agent-type session-id

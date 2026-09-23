@@ -53,8 +53,13 @@ def test_s12_claude_trust_preseeded_into_config_dir(tmp_path) -> None:
         project = state["projects"][trusted_dir]
         assert project["hasTrustDialogAccepted"] is True, state
         assert project["hasCompletedProjectOnboarding"] is True, state
-        # temp+rename discipline: no torn/leftover temp file
-        assert not (claude_config_dir / ".claude.json.agentd-tmp").exists()
+        # temp+rename discipline: no torn/leftover temp file.
+        # The tmp name is unique per writer (card acp:kanban-issue:ki-62aa1f4e9c9c D9:
+        # a fixed `path + suffix` makes two seats sharing one home race in os.replace),
+        # so this checks the whole family by glob rather than one spelling — pinning the
+        # old exact name would have gone quietly green the moment the name changed.
+        leftovers = sorted(claude_config_dir.glob(".claude.json.agentd-tmp*"))
+        assert not leftovers, leftovers
 
         # M1 really ran: the PATH shim was executed by the real launch
         # pipeline and the pasted prompt reached the fake's tty

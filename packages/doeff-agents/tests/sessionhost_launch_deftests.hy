@@ -1945,7 +1945,11 @@
   (setv world (LaunchWorld))
   (setv (get world.env "HOME") "/home/agentd")
   (for [r policy.CARRIED-INSTRUCTION-SOURCES]
-    (setv (get world.env (get r "env")) f"/home/agentd/dotfiles/{(get r "key")}"))
+    (setv (get world.env (get r "env")) f"/home/agentd/dotfiles/{(get r "key")}")
+    ;; ⚠ fake の FsDirExists の既定は「在る」なので、dir の種は明示で不在にする
+    ;; (既定のままだと degrade の日を測れず、この検が黙って緑になる)。
+    (when (= (get r "kind") policy.INSTRUCTION-SOURCE-KIND-DIR)
+      (.add world.missing-dirs f"/home/agentd/dotfiles/{(get r "key")}")))
   (setv world.capture-script ["❯ {composer}"])
   (<- _ (run-launch world (claude-launch-params)))
   (assert (in "new-session" (lfor t world.trace (get t 0))))

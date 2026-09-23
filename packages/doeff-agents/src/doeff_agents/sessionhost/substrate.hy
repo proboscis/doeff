@@ -19,6 +19,8 @@
 (import subprocess)
 (import sys)
 (import threading)
+(import tempfile)
+(import itertools)
 (import time)
 
 (import doeff_agents.sessionhost.effects [
@@ -45,6 +47,7 @@
   FsWriteTextAtomic
   FsMakeDirs
   FsLinkArtifact
+  FsEnsureSymlink
   FsListDir
   FsDirExists
   FsFileExists
@@ -272,6 +275,9 @@
 ;; 同一 binding の並行 launch が symlink の unlink/relink で race しないよう
 ;; view path で直列化する(trust upsert の read-modify-write は incumbent の
 ;; last-writer-wins のまま — 対象外、DOE-004 R5 v2 の記録参照)。
+;; 張り替えの一時名を thread 間で衝突させない連番(process 内で単調・GIL 下で不可分)。
+(setv _RELINK-COUNTER (itertools.count))
+
 (setv _COMPOSE-VIEW-LOCKS {})
 (setv _COMPOSE-VIEW-LOCKS-GUARD (threading.Lock))
 
@@ -437,11 +443,29 @@
         (resume None)))
 
   (FsWriteTextAtomic [path text tmp-suffix]
-    ;; write-new + rename(oracle: 並走 reader が torn state を読まない)
-    (setv tmp-path (+ path tmp-suffix))
-    (with [f (open tmp-path "w" :encoding "utf-8")]
-      (.write f text))
-    (os.replace tmp-path path)
+    ;; write-new + rename(oracle: 並走 reader が torn state を読まない)。
+    ;; ⚠ tmp の名は**書き手ごとに一意**(card acp:kanban-issue:ki-62aa1f4e9c9c D9)。
+    ;; 固定の `path + tmp-suffix` だと、同じ家を共有する 2 席が同拍で書いた時に
+    ;;   A: open(tmp) 書く → B: open(tmp) が truncate して書く
+    ;;   → A: os.replace(tmp, path) 成功 → B: os.replace(tmp, path) が tmp 不在で落ちる
+    ;; という競りが起きる(この便の実測 = 60×2 回で FileNotFoundError 28 件)。
+    ;; 共通の CLAUDE.md を**起動の拍ごとに**家へ書く便がこの競りを常態にするので、
+    ;; 家を共有する全ての書き(記憶の冊・trust の pre-seed も同じ口)をここで閉じる。
+    ;; tmp-suffix は prefix として残す — 呼び手が名乗った印(掃除の目印)を消さない。
+    (setv parent (or (os.path.dirname path) "."))
+    (os.makedirs parent :exist-ok True)
+    (setv [handle tmp-path]
+          (tempfile.mkstemp :dir parent
+                            :prefix (+ (os.path.basename path) tmp-suffix ".")
+                            :suffix ".part"))
+    (try
+      (with [f (os.fdopen handle "w" :encoding "utf-8")]
+        (.write f text))
+      (os.replace tmp-path path)
+      (except [error Exception]
+        ;; 自分の tmp だけを畳む(他の書き手の tmp は名が違うので触らない)。
+        (try (os.unlink tmp-path) (except [OSError]))
+        (raise error)))
     (resume None))
 
   (FsMakeDirs [path]
@@ -467,6 +491,36 @@
             (do
               (os.makedirs (os.path.dirname target-path) :exist-ok True)
               (os.symlink source-path target-path)
+              (setv outcome "linked"))))
+    (resume outcome))
+
+  (FsEnsureSymlink [link-path target-path]
+    ;; doeff が所有する家の link を宣言どおりに在らせる(card ki-62aa1f4e9c9c D8)。
+    ;; FsLinkArtifact との違い = **先が違う symlink は張り替える**。あちらは会話 artifact の
+    ;; 移植用で別実体を触らないのが正しいが、家の link では「正本が動いた日に古い先を
+    ;; 指したまま黙って残る」に化ける。所有の印 = symlink であること(実体は他人の物)。
+    ;; 張り替えは一時名 → os.rename で不可分に置く(同じ家を共有する席が同拍で起動しても、
+    ;; link が消えている窓を作らない)。先の実在は張る条件にしない(壊れた link は無害)。
+    (setv outcome None)
+    (if (os.path.islink link-path)
+        (if (= (os.readlink link-path) target-path)
+            (setv outcome "unchanged")
+            (do
+              ;; 別名で張ってから rename(POSIX の rename は同じ dir の symlink を不可分に置換する)
+              (setv staging (+ link-path f".agentd-relink-{(os.getpid)}-{(next _RELINK-COUNTER)}"))
+              (try (os.unlink staging) (except [OSError]))
+              (os.symlink target-path staging)
+              (os.rename staging link-path)
+              (setv outcome "linked")))
+        (if (os.path.exists link-path)
+            ;; symlink でない実体が居座っている = 他人の物。触らない・raise しない。
+            (setv outcome "occupied-by-real-entity")
+            (do
+              (os.makedirs (or (os.path.dirname link-path) ".") :exist-ok True)
+              ;; 壊れた link が残っている枝(islink False + exists False)は上で拾えないので、
+              ;; 既存の entry を畳んでから張る(FileExistsError を握り潰さない)。
+              (try (os.unlink link-path) (except [OSError]))
+              (os.symlink target-path link-path)
               (setv outcome "linked"))))
     (resume outcome))
 
