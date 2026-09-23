@@ -107,7 +107,9 @@
        "context_exhausted" False
        ;; host RPC(session.cancel / session.cleanup)所有 — oracle は
        ;; retryable=false を明示で渡す(:1985-1991)。
-       "cancelled" False})
+       "cancelled" False
+       ;; 設計 ki-b5e0d04de958 D1(probe の試作): 器の停止で切った・排水の宣言の下。別の器で同じ手番を走らせ直せる。
+       "host_drained" True})
 
 (setv TERMINAL-CAUSE-CATEGORIES (frozenset (.keys TERMINAL-CAUSE-RETRYABLE)))
 
