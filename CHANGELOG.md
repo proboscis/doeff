@@ -23,6 +23,9 @@
 
 ### Changed
 
+- `Cancel(task)` now throws `TaskCancelledError` into a started task at its suspension point, so
+  its `except` / `finally` blocks run (and may perform effects) before waiters observe the
+  cancellation. Previously the task's continuation was dropped and its cleanup never ran.
 - Updated `doeff-openai`, `doeff-gemini`, and `doeff-openrouter` handlers to support unified effects.
 - Added model-based delegation behavior for stacked handlers.
 - Added single-protocol handler entrypoints for Gemini and OpenRouter:

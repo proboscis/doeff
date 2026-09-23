@@ -267,10 +267,13 @@ def first_wins():
 
 ## Cancel / TaskCancelledError
 
-Cancellation is cooperative and non-blocking:
+Cancellation is non-blocking and delivered into the task:
 
 - `yield Cancel(task)` requests cancellation and returns immediately.
-- `Wait`, `Gather`, and `Race` raise `TaskCancelledError` when waiting on a cancelled task.
+- A started task receives `TaskCancelledError` where it is suspended; its `except` / `finally`
+  blocks run and may perform effects.
+- `Wait`, `Gather`, and `Race` raise `TaskCancelledError` once the cancelled task has finished
+  unwinding (see [Cancel and TaskCancelledError](04-async-effects.md#cancel-and-taskcancellederror)).
 
 ```python
 from doeff import Cancel, Try, Spawn, TaskCancelledError, Wait, do
