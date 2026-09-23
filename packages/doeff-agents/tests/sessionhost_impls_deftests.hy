@@ -45,7 +45,8 @@
   wire-result-channel])
 (import doeff_agents.sessionhost.impls.claude_code [claude-code-impl autocompact-arg-pair-ok])
 (import doeff_agents.sessionhost.impls.codex [codex-impl])
-(import doeff_agents.sessionhost.impls.markers [is-api-limit-refusal api-limit-names-a-model api-limit-resets-at])
+(import doeff_agents.sessionhost.impls.markers [is-api-limit-refusal api-limit-names-a-model api-limit-reading-of
+                                                  api-limit-resets-at ApiLimitReading])
 
 
 ;; ---------------------------------------------------------------------------
@@ -1057,23 +1058,45 @@
     (assert obs.has-api-limit-marker f"expected api-limit marker: {frame !r}")))
 
 
-(deftest test-api-limit-scope-is-the-account-unless-the-text-names-a-model
+(deftest test-api-limit-reading-names-the-range-and-the-reason-the-text-says
   ;; 2026-09-23(operator の規則 2026-09-17「profile が費用の上限で止まったら、種類を問わず口座が枯れた 1 事実」):
   ;; 実物の文 = 2026-09-23 08:00〜15:00 JST の agent-job の ProviderLimit の 8 件(3 種)と、過去の実物の文。
-  (for [said ["Your group's usage limit is set to $0 · ask your admin for a higher limit"
+  ;; 2026-09-24(card acp:kanban-issue:ki-5d4849d22a4e・受入 A6): 表は範囲と理由の対を返す。group の上限 $N の族は
+  ;; 範囲を名乗らないので unknown(器は決めない)・範囲を名乗る文は account / model のまま・理由は今日どれも rate-limited。
+  (setv org-cap "Your group's usage limit is set to $0 · ask your admin for a higher limit")
+  (setv org-cap-reading (run (api-limit-reading-of org-cap)))
+  (assert (isinstance org-cap-reading ApiLimitReading) org-cap-reading)
+  (assert (= #(org-cap-reading.scope org-cap-reading.reason) #("unknown" "rate-limited")) org-cap-reading)
+  ;; 主語と金額は可変(族の述部だけを当てる)。
+  (for [said ["Your organization's usage limit is set to $25 · ask your admin"
+              "Your team's usage limit is set to $100."]]
+    (assert (= (. (run (api-limit-reading-of said)) scope) "unknown") said))
+  ;; 範囲を名乗る文(所有格族)は account —— 同じ文に上限の額の文が並んでも、名乗った範囲が先。
+  (for [said ["You've hit your session limit · resets 7:10pm (Asia/Tokyo)"
               "You've hit your session limit · resets 6:20pm (Asia/Tokyo)"
               "You've hit your weekly limit · resets Sep 27 at 7pm (Asia/Tokyo)"
               "You've hit your individual spend limit · ask your admin to raise it"
               "You've hit your monthly spend limit. /model to switch models."
               "You've hit your usage limit. Upgrade to increase your limits."
+              "You've hit your session limit · Your group's usage limit is set to $0"
+              ;; 所有格族の外で範囲を名乗らない文・文の無い断り(429 だけ)は 2026-09-23 のまま account。
               "You're out of usage credits · buy more credits or upgrade your plan"
+              "Usage is paused for this workspace · ask your admin"
               ""]]
+    (setv reading (run (api-limit-reading-of said)))
+    (assert (= #(reading.scope reading.reason) #("account" "rate-limited")) #(said reading))
     (assert (not (run (api-limit-names-a-model said))) said))
+  ;; model の族を名乗る文だけが model。
   (for [said ["You've reached your Fable 5 limit. /model to switch models."
+              "You've reached your Fable 5 limit"
               "You've reached your Opus 4.5 weekly limit. /model to switch models."
               "You’ve reached your Fable limit."
               "You've reached your Sonnet limit"]]
-    (assert (run (api-limit-names-a-model said)) said)))
+    (setv reading (run (api-limit-reading-of said)))
+    (assert (= #(reading.scope reading.reason) #("model" "rate-limited")) #(said reading))
+    (assert (run (api-limit-names-a-model said)) said))
+  ;; group の上限 $N の文は model を名乗らない(範囲が unknown なのは model の族の語が無いから)。
+  (assert (not (run (api-limit-names-a-model org-cap))) org-cap))
 
 
 (deftest test-api-limit-resets-at-reads-the-named-instant-in-its-zone

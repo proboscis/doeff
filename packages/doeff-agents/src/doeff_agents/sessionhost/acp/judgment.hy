@@ -191,9 +191,12 @@
   PROVIDER-LIMIT-AT-KEY
   PROVIDER-LIMIT-ATTEMPT-KEY
   PROVIDER-LIMIT-PROFILE-KEY
+  PROVIDER-LIMIT-REASONS
   PROVIDER-LIMIT-SCOPE-KEY
   PROVIDER-LIMIT-SCOPE-ACCOUNT
   PROVIDER-LIMIT-SCOPE-MODEL
+  PROVIDER-LIMIT-SCOPE-UNKNOWN
+  PROVIDER-LIMIT-SCOPES
   PROVIDER-LIMIT-RESETS-AT-KEY
   MESSAGE-ATTACHMENTS-KEY
   NODE-CAPABILITY-ATTACHMENTS-KEY
@@ -788,12 +791,19 @@
 
    2026-09-23(operator の規則 2026-09-17「profile が費用の上限で止まったら、種類を問わず口座が枯れた 1 事実」):
    記録は**断りの範囲** scope を名乗る —— 文が model の族を名乗る断り(Fable 5 の限度の文)だけが
-   scope = model(model の欄 = 走らせた model)、それ以外(session / weekly / spend / group の上限 $0 / credit 切れ /
-   文の無い断り)は scope = account で **model の欄を書かない**(走っていた model の名を付けると、予算の係が model 別の
+   scope = model(model の欄 = 走らせた model)、それ以外(session / weekly / spend / credit 切れ / 文の無い断り —
+   group の上限 $0 は 2026-09-24 から unknown・下)は scope = account で **model の欄を書かない**(走っていた model の名を付けると、予算の係が model 別の
    枯れと書き、配置が『その model だけ使えない』と誤読する — 実弾 2026-09-23 の会話 c-N1ZW4ER08C6EEBQB0C5GETSTZ1 は
    Opus 5.5 の宣言のまま最初の手番が Fable に落ちた)。範囲を当てるのは器の側(headless.headless-turn-limit-cause が
-   表 impls/markers.api-limit-names-a-model を当てて cause の limit_scope に載せる)で、ここは欄を読むだけ(R33)。欄の無い
+   表 impls/markers.api-limit-reading-of を当てて cause の limit_scope に載せる)で、ここは欄を読むだけ(R33)。欄の無い
    cause は account。器が戻りの時刻を載せていれば(cause の limit_resets_at_ms — 文の「resets 6:20pm (Asia/Tokyo)」)resetsAt に写す。
+
+   2026-09-24(card acp:kanban-issue:ki-5d4849d22a4e・契約 scheduling.json providerRefusal.accountScope.fields の scope / reason):
+   記録は**範囲 scope と理由 reason の 2 軸**。scope = unknown(文が範囲を名乗らない — group の上限 $0 の族)は範囲を
+   決めずにそのまま写し、**model の欄も書く**(範囲と理由を窓の写しで決める予算の係が、どの model の手番が断られたかを
+   使う)。account の時に model を書かない規則はそのまま。reason は cause の欄 limit_reason(器の表が当てた理由の語)から
+   受け、effects.PROVIDER-LIMIT-REASONS に在る語だけを写す —— 欄の無い cause(旧い器・pane の路)と表の外の語は
+   rate-limited(今日の閉語彙はこの 1 語)。scope も同じ形で、effects.PROVIDER-LIMIT-SCOPES の外の語は account。
    until は書かない —— 期限を決めるのは予算の controller で、この条件は『断られた』の事実と文が名乗った事実ちょうど。⚠ status.result には書かない(result が在ることは『手番が結果を報告した』の
    意味で、await の終端の別〔Acp.App.Agent.AgentJob.awaitOutcomeOf〕が反転する)。"
   (when (not (isinstance cause dict))
@@ -804,16 +814,21 @@
   (setv line (if (and (isinstance reason str) (.strip reason))
                  (get (.splitlines (.strip reason)) 0)
                  CAUSE-CATEGORY-RATE-LIMITED))
-  (setv condition {"type" CONDITION-PROVIDER-LIMIT "status" "True" "reason" REASON-RATE-LIMITED
+  ;; 理由は器の cause の欄 limit_reason(当てたのは器の側の 1 点 — R33)。閉語彙の外・欄の無い cause は rate-limited。
+  (setv said-reason (.get cause "limit_reason"))
+  (setv condition {"type" CONDITION-PROVIDER-LIMIT "status" "True"
+                   "reason" (if (in said-reason PROVIDER-LIMIT-REASONS) said-reason REASON-RATE-LIMITED)
                    "message" line
                    PROVIDER-LIMIT-ATTEMPT-KEY attempt
                    PROVIDER-LIMIT-AT-KEY at-ms})
   ;; 範囲は器の cause の欄 limit_scope(当てたのは器の側の 1 点 — R33)。欄の無い cause(旧い器・pane の路)は
-  ;; account(operator の規則: 種類を問わず口座が枯れた)— model を名乗るのは器が model と言った時だけ。
-  (setv model-scoped (= (.get cause "limit_scope") PROVIDER-LIMIT-SCOPE-MODEL))
-  (setv (get condition PROVIDER-LIMIT-SCOPE-KEY)
-        (if model-scoped PROVIDER-LIMIT-SCOPE-MODEL PROVIDER-LIMIT-SCOPE-ACCOUNT))
-  (when (and model-scoped (isinstance model str) (.strip model) (!= model MODEL-UNDECLARED))
+  ;; account(operator の規則: 種類を問わず口座が枯れた)。model を名乗るのは器が model か unknown と言った時だけ
+  ;; (unknown は範囲を決めない — 予算の係が model と窓の写しで決める)。
+  (setv said-scope (.get cause "limit_scope"))
+  (setv scope (if (in said-scope PROVIDER-LIMIT-SCOPES) said-scope PROVIDER-LIMIT-SCOPE-ACCOUNT))
+  (setv (get condition PROVIDER-LIMIT-SCOPE-KEY) scope)
+  (when (and (in scope #(PROVIDER-LIMIT-SCOPE-MODEL PROVIDER-LIMIT-SCOPE-UNKNOWN))
+             (isinstance model str) (.strip model) (!= model MODEL-UNDECLARED))
     (setv (get condition "model") model))
   (setv resets-at (.get cause "limit_resets_at_ms"))
   (when (and (isinstance resets-at int) (not (isinstance resets-at bool)))

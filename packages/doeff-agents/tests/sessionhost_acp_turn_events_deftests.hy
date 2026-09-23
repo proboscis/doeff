@@ -456,6 +456,7 @@
   ;; 2026-09-23(operator の規則 2026-09-17「profile が費用の上限で止まったら、種類を問わず口座が枯れた 1 事実」):
   ;; 範囲は器の cause の欄 limit_scope(当てるのは器 — R33)。account と欄の無い cause は scope = account で model の欄を
   ;; 書かない(走っていた model の名を付けない)。器が model と言った時だけ scope = model(model = 走らせた model)。
+  ;; 器が範囲を名乗れない unknown(2026-09-24)は次の検が撃つ。
   (setv said "Your group's usage limit is set to $0 · ask your admin for a higher limit")
   (for [cause [{"category" "rate_limited" "reason" said "limit_scope" "account"}
                {"category" "rate_limited" "reason" said}
@@ -473,6 +474,56 @@
   (for [bad [None True "1790143200000"]]
     (assert (not-in "resetsAt" (run (provider-limit-condition-of {"category" "rate_limited" "reason" said "limit_resets_at_ms" bad}
                                                                  "claude-opus-5-5" "p10169" 1 AT))))))
+
+
+(deftest test-provider-limit-condition-carries-scope-and-reason-and-names-the-model-when-the-container-cannot-tell-the-range
+  ;; card acp:kanban-issue:ki-5d4849d22a4e(2026-09-24・受入 A6・契約 scheduling.json providerRefusal.accountScope.fields):
+  ;; 記録は範囲 scope と理由 reason の 2 軸。器が範囲を名乗れない断り(group の上限 $N の族 — cause の limit_scope unknown)は
+  ;; 範囲を決めずに unknown のまま写し、model の欄を**書く**(範囲と理由を窓の写しで決める予算の係が使う)。理由は cause の
+  ;; limit_reason から受ける(今日の閉語彙は rate-limited の 1 語)。材料の cause は器の永続の JSON の形ちょうど
+  ;; (store.terminal-cause-to-dict が書く鍵 — host の検 test_host_headless_turn_refused_by_the_group_cap_leaves_the_range_unknown
+  ;; が同じ文でこの形を器の側から撃つ)。
+  (setv org-cap "Your group's usage limit is set to $0 · ask your admin for a higher limit")
+  (setv unknown (run (provider-limit-condition-of {"category" "rate_limited" "reason" org-cap "retryable" False
+                                                   "observed_at" "2026-09-24T00:13:48+00:00"
+                                                   "limit_scope" "unknown" "limit_reason" "rate-limited"}
+                                                  "claude-fable-5-1" "p10173" 1 AT)))
+  (assert (= unknown {"type" "ProviderLimit" "status" "True" "reason" "rate-limited"
+                      "message" org-cap "scope" "unknown" "model" "claude-fable-5-1"
+                      "profile" "p10173" "attempt" 1 "at" AT})
+          unknown)
+  ;; 範囲を名乗る文は今日どおり: session の文 = account で model の欄を書かない・Fable の文 = model で model の欄を書く。
+  (setv session "You've hit your session limit · resets 7:10pm (Asia/Tokyo)")
+  (setv account (run (provider-limit-condition-of {"category" "rate_limited" "reason" session
+                                                   "limit_scope" "account" "limit_reason" "rate-limited"}
+                                                  "claude-opus-5-5" "p10184" 2 AT)))
+  (assert (= account {"type" "ProviderLimit" "status" "True" "reason" "rate-limited"
+                      "message" session "scope" "account"
+                      "profile" "p10184" "attempt" 2 "at" AT})
+          account)
+  (setv fable "You've reached your Fable 5 limit")
+  (setv scoped (run (provider-limit-condition-of {"category" "rate_limited" "reason" fable
+                                                  "limit_scope" "model" "limit_reason" "rate-limited"}
+                                                 "claude-fable-5-1" "btc" 1 AT)))
+  (assert (= #((get scoped "scope") (get scoped "model") (get scoped "reason")) #("model" "claude-fable-5-1" "rate-limited")) scoped)
+  ;; unknown でも宣言の無い手番(MODEL-UNDECLARED)・model 無しの手番は model の欄を落とす(発明しない)。
+  (for [none-model [MODEL-UNDECLARED None "  "]]
+    (setv bare (run (provider-limit-condition-of {"category" "rate_limited" "reason" org-cap "limit_scope" "unknown"}
+                                                 none-model "p10173" 1 AT)))
+    (assert (= (get bare "scope") "unknown") bare)
+    (assert (not-in "model" bare) bare))
+  ;; 理由の欄の無い cause(旧い器・pane の路)と閉語彙の外の語は rate-limited —— 契約の enum の外の語を行へ書かない。
+  (for [said-reason [None "model-not-enabled" "" 7]]
+    (setv cause {"category" "rate_limited" "reason" org-cap "limit_scope" "unknown"})
+    (when (is-not said-reason None)
+      (setv (get cause "limit_reason") said-reason))
+    (assert (= (get (run (provider-limit-condition-of cause "claude-fable-5-1" "p10173" 1 AT)) "reason") "rate-limited") cause))
+  ;; 範囲の閉語彙の外の語は account(model の欄を書かない)— 旧い器の欄の無い cause と同じ読み。
+  (for [said-scope ["global" "" 3]]
+    (setv odd (run (provider-limit-condition-of {"category" "rate_limited" "reason" org-cap "limit_scope" said-scope}
+                                                "claude-fable-5-1" "p10173" 1 AT)))
+    (assert (= (get odd "scope") "account") odd)
+    (assert (not-in "model" odd) odd)))
 
 
 (deftest test-tool-use-frame-carries-the-input-and-names-what-it-clipped
