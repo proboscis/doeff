@@ -651,6 +651,30 @@ def test_terminal_cause_from_dict_is_total_over_the_store() -> None:
     assert cause is not None
     assert cause.category == "vanished"
     assert cause.retryable is True
+    # 限度の断りの欄(2026-09-23 / 09-24): 範囲と理由は別の欄で往復する。理由の欄の無い旧い cause は None
+    # (rate-limited と読むのは条件を組む judgment.provider-limit-condition-of の 1 点 — typed の眺めで語を発明しない)
+    limited = terminal_cause_from_dict(
+        {
+            "category": "rate_limited",
+            "reason": "Your group's usage limit is set to $0 · ask your admin for a higher limit",
+            "retryable": True,
+            "observed_at": "2026-09-24T00:00:00+00:00",
+            "limit_scope": "unknown",
+            "limit_reason": "rate-limited",
+        }
+    )
+    assert limited is not None
+    assert (limited.limit_scope, limited.limit_reason) == ("unknown", "rate-limited")
+    old = terminal_cause_from_dict(
+        {
+            "category": "rate_limited",
+            "retryable": True,
+            "observed_at": "2026-09-24T00:00:00+00:00",
+            "limit_scope": "account",
+        }
+    )
+    assert old is not None
+    assert (old.limit_scope, old.limit_reason) == ("account", None)
 
 
 def test_headless_argv_is_print_mode_with_partial_messages() -> None:
@@ -1493,6 +1517,8 @@ def test_host_headless_turn_refused_by_the_provider_limit_fails_the_session_with
     assert limit_text in _text(cause, "reason"), cause
     # 2026-09-23: 文が model の族(Fable)を名乗る断りだけが limit_scope = model(器の側が当てて欄に載せる — R33)
     assert _text(cause, "limit_scope") == "model", cause
+    # 2026-09-24(card acp:kanban-issue:ki-5d4849d22a4e): 理由は範囲とは別の欄(文が名乗る理由 — 今日は 1 語)
+    assert _text(cause, "limit_reason") == "rate-limited", cause
     assert ended["awaiting_response"] is False
     # 手番の終わりの印も立つ(手番は終わっている — level-triggered の欄)
     assert _has(ended, "turn_ended_at")
@@ -1531,6 +1557,7 @@ def test_host_headless_turn_refused_with_api_status_429_is_a_limit_whatever_the_
     assert unknown_wording in _text(cause, "reason"), cause
     # 2026-09-23: model を名乗らない断りは口座全体(operator の規則「種類を問わず口座が枯れた」)
     assert _text(cause, "limit_scope") == "account", cause
+    assert _text(cause, "limit_reason") == "rate-limited", cause
     # limit の語を含む文でも 403 は限度ではない(構造が先 — 文は読まない)
     headless_host.stub_env["DOEFF_HEADLESS_STUB_LIMIT_TEXT"] = (
         "Your organization has disabled Claude subscription access · usage limit reached"

@@ -268,6 +268,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
   ;; 限度の断りの範囲と戻りの時刻(2026-09-23・在る時だけ — 凍結表の外の情報の欄)。
   (when (is-not cause.limit-scope None)
     (setv (get payload "limit_scope") cause.limit-scope))
+  ;; 限度の断りの理由(2026-09-24 card acp:kanban-issue:ki-5d4849d22a4e・在る時だけ — 範囲とは別の軸)。
+  (when (is-not cause.limit-reason None)
+    (setv (get payload "limit_reason") cause.limit-reason))
   (when (is-not cause.limit-resets-at-ms None)
     (setv (get payload "limit_resets_at_ms") cause.limit-resets-at-ms))
   payload)
@@ -292,6 +295,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
                      :retryable (bool (.get payload "retryable" False))
                      :observed-at observed-at
                      :limit-scope (let [scope (.get payload "limit_scope")] (if (isinstance scope str) scope None))
+                     ;; 欄の無い旧い cause は None(typed には『器が理由を名乗っていない』— rate-limited と読むのは
+                     ;; 条件を組む読み手 acp/judgment.provider-limit-condition-of の 1 点。ここで語を発明しない)。
+                     :limit-reason (let [reason (.get payload "limit_reason")] (if (isinstance reason str) reason None))
                      :limit-resets-at-ms (let [resets (.get payload "limit_resets_at_ms")]
                                            (if (and (isinstance resets int) (not (isinstance resets bool))) resets None)))
       None))

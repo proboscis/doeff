@@ -475,6 +475,43 @@
                                                                  "claude-opus-5-5" "p10169" 1 AT))))))
 
 
+(deftest test-provider-limit-condition-writes-the-model-when-the-container-cannot-name-the-scope
+  ;; card acp:kanban-issue:ki-5d4849d22a4e(2026-09-24): group の上限 $N の族の文はどの窓が枯れたかを言わない(Fable の週の
+  ;; 窓だけが枯れた拍にも同じ文)ので、器は limit_scope = unknown と名乗る。制御面は欄をそのまま scope に写し、**model の欄を
+  ;; 書く**(範囲を推定する予算の係が走らせた model を使う)。account は今日どおり model を書かない。
+  (setv said "Your group's usage limit is set to $0 · ask your admin for a higher limit")
+  (setv unknown (run (provider-limit-condition-of {"category" "rate_limited" "reason" said
+                                                   "limit_scope" "unknown" "limit_reason" "rate-limited"}
+                                                  "claude-fable-5-1" "p10184" 1 AT)))
+  (assert (= #((get unknown "scope") (get unknown "model") (get unknown "reason")) #("unknown" "claude-fable-5-1" "rate-limited"))
+          unknown)
+  ;; 宣言の無い手番(MODEL-UNDECLARED)・model の無い手番は unknown でも欄を落とす(発明しない)
+  (for [model [MODEL-UNDECLARED None "  "]]
+    (setv bare (run (provider-limit-condition-of {"category" "rate_limited" "reason" said "limit_scope" "unknown"}
+                                                 model "p10184" 1 AT)))
+    (assert (= (get bare "scope") "unknown") bare)
+    (assert (not-in "model" bare) bare))
+  ;; 閉語彙の外の範囲の語は欄の無い cause と同じ account(model を書かない)
+  (setv odd (run (provider-limit-condition-of {"category" "rate_limited" "reason" said "limit_scope" "window"}
+                                              "claude-fable-5-1" "p10184" 1 AT)))
+  (assert (= (get odd "scope") "account") odd)
+  (assert (not-in "model" odd) odd))
+
+
+(deftest test-provider-limit-condition-reason-is-the-containers-reason-axis
+  ;; card acp:kanban-issue:ki-5d4849d22a4e(2026-09-24): 範囲と理由は別の軸。条件の reason は器の cause の欄 limit_reason
+  ;; (文が名乗る理由)を閉語彙で読んで写す —— 欄の無い cause(旧い器・pane の路)と閉語彙の外の語は rate-limited。
+  (setv said "You've reached your Fable 5 limit")
+  (for [cause [{"category" "rate_limited" "reason" said "limit_scope" "model" "limit_reason" "rate-limited"}
+               {"category" "rate_limited" "reason" said "limit_scope" "model"}
+               {"category" "rate_limited" "reason" said "limit_scope" "model" "limit_reason" None}
+               {"category" "rate_limited" "reason" said "limit_scope" "model" "limit_reason" "not-a-reason"}]]
+    (setv condition (run (provider-limit-condition-of cause "claude-fable-5-1" "btc" 1 AT)))
+    (assert (= (get condition "reason") "rate-limited") condition)
+    ;; 理由の欄は範囲の欄を動かさない
+    (assert (= #((get condition "scope") (get condition "model")) #("model" "claude-fable-5-1")) condition)))
+
+
 (deftest test-tool-use-frame-carries-the-input-and-names-what-it-clipped
   ;; 段 10 lane 10j(agora-redesign #87 の裁定 問 7 / 8): 実況の道具の呼び出しは入力の object を**そのまま**運ぶ —
   ;; 表示のための whitelist は使わない(MultiEdit の edits も Read の offset / limit も落ちない)。

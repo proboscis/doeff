@@ -45,7 +45,15 @@
   wire-result-channel])
 (import doeff_agents.sessionhost.impls.claude_code [claude-code-impl autocompact-arg-pair-ok])
 (import doeff_agents.sessionhost.impls.codex [codex-impl])
-(import doeff_agents.sessionhost.impls.markers [is-api-limit-refusal api-limit-names-a-model api-limit-resets-at])
+(import doeff_agents.sessionhost.impls.markers [is-api-limit-refusal api-limit-scope-of api-limit-resets-at
+                                                  API-LIMIT-SCOPE-ACCOUNT API-LIMIT-SCOPE-MODEL API-LIMIT-SCOPE-UNKNOWN
+                                                  API-LIMIT-SCOPE-TABLE API-LIMIT-SCOPE-OTHERWISE])
+;; 器 → 制御面の一周(card acp:kanban-issue:ki-5d4849d22a4e): 器の側の 1 点が当てた cause を、制御面の 1 点が条件に組む。
+(import doeff_agents.sessionhost.headless [headless-turn-limit-cause])
+(import doeff_agents.sessionhost.headless_protocol [Verdict])
+(import doeff_agents.sessionhost.store [terminal-cause-to-dict])
+(import doeff_agents.sessionhost.acp.judgment [provider-limit-condition-of])
+(import doeff_agents.sessionhost.acp.effects [PROVIDER-LIMIT-SCOPES PROVIDER-LIMIT-REASONS])
 
 
 ;; ---------------------------------------------------------------------------
@@ -1060,20 +1068,91 @@
 (deftest test-api-limit-scope-is-the-account-unless-the-text-names-a-model
   ;; 2026-09-23(operator の規則 2026-09-17「profile が費用の上限で止まったら、種類を問わず口座が枯れた 1 事実」):
   ;; 実物の文 = 2026-09-23 08:00〜15:00 JST の agent-job の ProviderLimit の 8 件(3 種)と、過去の実物の文。
-  (for [said ["Your group's usage limit is set to $0 · ask your admin for a higher limit"
-              "You've hit your session limit · resets 6:20pm (Asia/Tokyo)"
+  ;; 2026-09-24(card acp:kanban-issue:ki-5d4849d22a4e): 分類の 1 点は api-limit-scope-of(#(範囲 理由))。
+  ;; group の上限 $N の族は下の検(unknown)へ移した — ここは account と model の 2 つの答え。
+  (for [said ["You've hit your session limit · resets 6:20pm (Asia/Tokyo)"
               "You've hit your weekly limit · resets Sep 27 at 7pm (Asia/Tokyo)"
               "You've hit your individual spend limit · ask your admin to raise it"
               "You've hit your monthly spend limit. /model to switch models."
               "You've hit your usage limit. Upgrade to increase your limits."
               "You're out of usage credits · buy more credits or upgrade your plan"
+              ;; 族の表に無い言い回し(429 の構造だけで限度と判じた断り)も口座全体 — 範囲を名乗らない文は今日どおり
+              "Usage is paused for this workspace · ask your admin"
               ""]]
-    (assert (not (run (api-limit-names-a-model said))) said))
+    (assert (= (api-limit-scope-of said) #("account" "rate-limited")) said))
   (for [said ["You've reached your Fable 5 limit. /model to switch models."
               "You've reached your Opus 4.5 weekly limit. /model to switch models."
               "You’ve reached your Fable limit."
               "You've reached your Sonnet limit"]]
-    (assert (run (api-limit-names-a-model said)) said)))
+    (assert (= (api-limit-scope-of said) #("model" "rate-limited")) said)))
+
+
+(deftest test-api-limit-scope-of-the-org-cap-family-is-unknown-because-the-text-names-no-window
+  ;; card acp:kanban-issue:ki-5d4849d22a4e(2026-09-24): 「Your group's usage limit is set to $0 · ask your admin for a
+  ;; higher limit」はどの窓が枯れたかを言わない(口座の 5 時間の窓が枯れた拍にも、Fable の週の窓だけが枯れた拍にも
+  ;; 同じ文)。器は口座全体と決めず unknown と名乗る(範囲の推定は窓を持つ予算の係の 1 点)。理由は rate-limited のまま —
+  ;; 範囲と理由は別の軸。実物の文(2026-09-17 p10174 ×18・2026-09-23 ×6・2026-09-24 00:13 JST p10173)と主語・金額の変種。
+  (for [said ["Your group's usage limit is set to $0 · ask your admin for a higher limit"
+              "Your organization’s usage limit is set to $25 · ask your admin for a higher limit"
+              "YOUR GROUP'S USAGE LIMIT IS SET TO $0"]]
+    (assert (= (api-limit-scope-of said) #("unknown" "rate-limited")) said))
+  ;; 陰性対照: 金額の無い設定の説明は族の外(口座全体の既定へ落ちる — 限度かどうかは is-api-limit-refusal が別に判じる)
+  (assert (= (api-limit-scope-of "Your usage limit is set to the plan default. See /usage.") #("account" "rate-limited")))
+  ;; 表は上から順: model の族を名乗る文は、同じ文に組織の上限の述部が在っても model(文が model を名乗った事実が先)
+  (assert (= (api-limit-scope-of "You've reached your Fable 5 limit. Your group's usage limit is set to $0.")
+             #("model" "rate-limited"))))
+
+
+(deftest test-the-containers-limit-words-stay-inside-the-condition-vocabulary
+  ;; 器の表(impls/markers.hy)が返す範囲と理由の語は、制御面が条件へ写す閉語彙(acp/effects.py の
+  ;; PROVIDER_LIMIT_SCOPES / PROVIDER_LIMIT_REASONS — 契約 ACP scheduling.json の写しの座)の中に在る。表に行を足して
+  ;; 語を増やしたのに閉語彙を足し忘れると、制御面は欄の無い cause と同じ既定(account / rate-limited)へ読み替える —
+  ;; その食い違いをここで赤にする(2 つの家の語は同じ綴り・同じ集合)。
+  (for [[scope reason] (+ (lfor [_matches scope reason] API-LIMIT-SCOPE-TABLE #(scope reason)) [API-LIMIT-SCOPE-OTHERWISE])]
+    (assert (in scope PROVIDER-LIMIT-SCOPES) scope)
+    (assert (in reason PROVIDER-LIMIT-REASONS) reason))
+  (assert (= (set #(API-LIMIT-SCOPE-ACCOUNT API-LIMIT-SCOPE-MODEL API-LIMIT-SCOPE-UNKNOWN)) (set PROVIDER-LIMIT-SCOPES))
+          PROVIDER-LIMIT-SCOPES))
+
+
+(deftest test-the-containers-limit-cause-becomes-a-condition-that-names-scope-reason-and-model
+  ;; card acp:kanban-issue:ki-5d4849d22a4e(2026-09-24): 器の側の 1 点(headless.headless-turn-limit-cause)が文に表を当てて
+  ;; cause の欄(limit_scope / limit_reason / limit_resets_at_ms)に載せ、永続の JSON(store.terminal-cause-to-dict)を
+  ;; 制御面の 1 点(acp/judgment.provider-limit-condition-of)が agent-job の条件 ProviderLimit に組む —— 一周の記録の欄の形。
+  ;; 文は 2026-09-23 16:3x JST の p10184 の実物 3 種(Fable の手番の $0・Opus の手番の session limit・Fable の限度)。
+  (setv observed-at "2026-09-23T07:33:00+00:00") ;; 16:33 JST
+  (setv at 1790148780000)                          ;; 同じ拍の agentd の時計(epoch ms)
+  (defn condition-of [said model]
+    (setv cause (run (headless-turn-limit-cause (Verdict "turn-ended" :ok False :detail said :api-error-status 429)
+                                                observed-at)))
+    (assert (is-not cause None) said)
+    (run (provider-limit-condition-of (terminal-cause-to-dict cause) model "p10184" 2 at)))
+  ;; group の上限 $0 → 範囲 unknown(器は決めない)・理由 rate-limited・model の欄 = 走らせた model(予算の係が推定に使う)
+  (setv org-cap "Your group's usage limit is set to $0 · ask your admin for a higher limit")
+  (assert (= (condition-of org-cap "claude-fable-5-1")
+             {"type" "ProviderLimit" "status" "True" "reason" "rate-limited" "message" org-cap
+              "scope" "unknown" "model" "claude-fable-5-1"
+              "profile" "p10184" "attempt" 2 "at" at}))
+  ;; session limit → 口座全体・model の欄を書かない・文が名乗る戻りの時刻(19:10 JST = 10:10Z)を resetsAt に
+  (setv session "You've hit your session limit · resets 7:10pm (Asia/Tokyo)")
+  (assert (= (condition-of session "claude-opus-5-5")
+             {"type" "ProviderLimit" "status" "True" "reason" "rate-limited" "message" session
+              "scope" "account" "resetsAt" 1790158200000
+              "profile" "p10184" "attempt" 2 "at" at}))
+  ;; Fable の限度 → その model だけの枯れ・model の欄 = 走らせた model
+  (setv fable "You've reached your Fable 5 limit")
+  (assert (= (condition-of fable "claude-fable-5-1")
+             {"type" "ProviderLimit" "status" "True" "reason" "rate-limited" "message" fable
+              "scope" "model" "model" "claude-fable-5-1"
+              "profile" "p10184" "attempt" 2 "at" at}))
+  ;; 器の cause の欄の形(永続の JSON)— 範囲と理由は別の欄
+  (setv persisted (terminal-cause-to-dict
+                    (run (headless-turn-limit-cause (Verdict "turn-ended" :ok False :detail org-cap :api-error-status 429)
+                                                    observed-at))))
+  (assert (= #((get persisted "category") (get persisted "limit_scope") (get persisted "limit_reason"))
+             #("rate_limited" "unknown" "rate-limited"))
+          persisted)
+  (assert (not-in "limit_resets_at_ms" persisted) persisted))
 
 
 (deftest test-api-limit-resets-at-reads-the-named-instant-in-its-zone

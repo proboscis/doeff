@@ -83,8 +83,7 @@
 ;; 1 点(ADR-DOE-AGENTS-008 R1 の観測形式の家・pane の路と同じ表)。ここは表を写さず、
 ;; 手番の終わりの文へ当てるだけ。
 (import doeff_agents.sessionhost.impls.fast_jev [fast-jev-compaction-enabled])
-(import doeff_agents.sessionhost.impls.markers [is-api-limit-refusal api-limit-names-a-model api-limit-resets-at
-                                                  API-LIMIT-SCOPE-ACCOUNT API-LIMIT-SCOPE-MODEL])
+(import doeff_agents.sessionhost.impls.markers [is-api-limit-refusal api-limit-scope-of api-limit-resets-at])
 (import doeff_agents.sessionhost.headless_protocol [
   BackendLiveness
   HeadlessObservation
@@ -677,11 +676,16 @@
                   (is-api-limit-refusal verdict.detail verdict.api-error-status)))
     (return None))
   ;; 2026-09-23: 枯らした範囲と文が名乗る戻りの時刻を cause の欄に載せる(当てるのはここ・表は markers・
-  ;; 制御面は欄を読む — ADR-DOE-AGENTS-012 R33)。文が model の族を名乗る時だけ model、他は全部 account。
+  ;; 制御面は欄を読む — ADR-DOE-AGENTS-012 R33)。
+  ;; 2026-09-24(card acp:kanban-issue:ki-5d4849d22a4e): 範囲と理由は markers の表の 1 点 api-limit-scope-of の
+  ;; 答えちょうど —— model の族を名乗る文は model・group の上限 $N の族は unknown(文が範囲を名乗らない — 器は
+  ;; 決めない)・他は account。理由は文が名乗る理由の語(今日は rate-limited の 1 語)。
   (setv cause (make-cause "rate_limited" verdict.detail observed-at))
   (<- at-ms (observed-at-epoch-ms observed-at))
+  (setv [scope reason] (api-limit-scope-of verdict.detail))
   (replace cause
-           :limit-scope (if (! (api-limit-names-a-model verdict.detail)) API-LIMIT-SCOPE-MODEL API-LIMIT-SCOPE-ACCOUNT)
+           :limit-scope scope
+           :limit-reason reason
            :limit-resets-at-ms (if (is None at-ms) None (! (api-limit-resets-at verdict.detail at-ms)))))
 
 

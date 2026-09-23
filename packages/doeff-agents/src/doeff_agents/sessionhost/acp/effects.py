@@ -259,7 +259,14 @@ CONDITION_INPUT_UNDELIVERED: ConditionType = "InputUndelivered"
 #: awaitOutcomeOf は result の有無ではなく cause の category で終端の意味を読む。
 CONDITION_PROVIDER_LIMIT: ConditionType = "ProviderLimit"
 #: CONDITION_PROVIDER_LIMIT の reason の閉語彙(今日は 1 語 — 族が増えたらここに足す)。
+#: 2026-09-24(card acp:kanban-issue:ki-5d4849d22a4e): **scope と reason は別の軸** —— scope = 文が名乗る範囲
+#: (PROVIDER_LIMIT_SCOPE_*)・reason = 文が名乗る理由。器の cause の欄 limit_reason(impls/markers.api-limit-scope-of が
+#: 範囲と対で当てる)を judgment.provider-limit-condition-of がこの閉語彙で読んで写す(欄の無い旧い cause は
+#: REASON_RATE_LIMITED)。将来 provider が権限の欠如を名乗る文(「Your plan does not include this model」)で断り始めたら、
+#: 器の表に 1 行(scope model・reason model-not-enabled)と、ここ(PROVIDER_LIMIT_REASONS)に 1 語を同じ便で足す。
+#: 契約 ACP scheduling.json profileExhaustion.providerRefusal.accountScope.reason はその写し。
 REASON_RATE_LIMITED: str = "rate-limited"
+PROVIDER_LIMIT_REASONS: tuple[str, ...] = (REASON_RATE_LIMITED,)
 #: agora-redesign #519(段 12): CONDITION_PROVIDER_LIMIT の記録が**自分で名乗る欄**(契約 ACP docs/contracts/scheduling.json
 #: profileExhaustion.providerRefusal.fields の写し・additive)。profile = 断られた口座(記録を書いた拍の行の binding.profile)・
 #: attempt = 断られた試み(行の binding.attempt・無ければ 1)・at = 断りの時刻(epoch ms)。読み手は 2 つ: 配置(ACP Scheduling)は
@@ -273,14 +280,27 @@ PROVIDER_LIMIT_PROFILE_KEY: str = "profile"
 PROVIDER_LIMIT_ATTEMPT_KEY: str = "attempt"
 PROVIDER_LIMIT_AT_KEY: str = "at"
 #: 2026-09-23(operator の規則 2026-09-17「profile が費用の上限で止まったら、種類を問わず口座が枯れた 1 事実」): 記録が名乗る
-#: **断りの範囲**。account = 口座全体の枯れ(session / weekly / spend / group の上限 $0 / credit 切れ — model の欄を**書かない**)・
+#: **断りの範囲**。account = 口座全体の枯れ(session / weekly / spend / credit 切れ — model の欄を**書かない**。group の上限 $0 は
+#: 2026-09-24 から unknown — 下)・
 #: model = 文が model を名乗る断り(「You've reached your Fable 5 limit」— model の欄 = 手番が走らせた model)。分類は文の物理の家
-#: impls/markers.api-limit-names-a-model の 1 点、欄を組むのは judgment.provider-limit-condition-of の 1 点。読み手 = 予算の係
+#: impls/markers.api-limit-scope-of の 1 点、欄を組むのは judgment.provider-limit-condition-of の 1 点。読み手 = 予算の係
 #: (account の記録は profile 全体の ProfileExhausted True{provider-refused} に、model の記録は model 別の行に畳む)。
 #: 実弾 2026-09-23: 8 時間の断り 8 件が全部口座全体の文なのに model 別に記録され、Opus 5.5 を宣言した会話の最初の手番が Fable に落ちた。
+#: 2026-09-24(card acp:kanban-issue:ki-5d4849d22a4e): 3 語目 unknown = 文が範囲も model も名乗らない断り
+#: (「Your group's usage limit is set to $0 · ask your admin for a higher limit」の族 — どの窓が枯れたかを言わない。
+#: Fable の週の窓だけが枯れた拍にも同じ文)。器は決めず、範囲の推定は窓を持つ予算の係(agora-controllers
+#: controllers/budget の refusal-scope-of)の 1 点。unknown の記録は model の欄 = 走らせた model を**書く**(係が推定に使う)。
+#: 分類は impls/markers.api-limit-scope-of の 1 点(旧 api-limit-names-a-model は表の 1 行に畳んだ)。
+#: 契約 ACP scheduling.json profileExhaustion.providerRefusal.accountScope.fields.scope.enum はその写し。
 PROVIDER_LIMIT_SCOPE_KEY: str = "scope"
 PROVIDER_LIMIT_SCOPE_ACCOUNT: str = "account"
 PROVIDER_LIMIT_SCOPE_MODEL: str = "model"
+PROVIDER_LIMIT_SCOPE_UNKNOWN: str = "unknown"
+PROVIDER_LIMIT_SCOPES: tuple[str, ...] = (
+    PROVIDER_LIMIT_SCOPE_ACCOUNT,
+    PROVIDER_LIMIT_SCOPE_MODEL,
+    PROVIDER_LIMIT_SCOPE_UNKNOWN,
+)
 #: 文が名乗る戻りの時刻(epoch ms・「resets 6:20pm (Asia/Tokyo)」— impls/markers.api-limit-resets-at)。読めない文では欄を落とす
 #: (予算の係は既定の期限 = 断りの後に来る最初の窓の戻り・上限 5 時間へ落ちる)。
 PROVIDER_LIMIT_RESETS_AT_KEY: str = "resetsAt"
