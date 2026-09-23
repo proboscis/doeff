@@ -22,6 +22,8 @@
 (require doeff-hy.macros [deff defk])
 
 (import re)
+(import datetime [datetime timedelta timezone])
+(import zoneinfo [ZoneInfo ZoneInfoNotFoundError])
 
 (import doeff_agents.sessionhost.effects [PaneObservation])
 (import doeff_agents.sessionhost.policy [tail-lower])
@@ -150,6 +152,97 @@
   (if (is api-error-status None)
       (has-api-limit-marker detail)
       (= api-error-status API-LIMIT-ERROR-STATUS)))
+
+
+;; ---------------------------------------------------------------------------
+;; 限度の断りが「どの範囲」を枯らしたか・「いつ戻る」と言ったか(2026-09-23)
+;; ---------------------------------------------------------------------------
+;; operator の規則(2026-09-17 逐語 "basically when a profile is stuck due to any financial limit the
+;; strategy is to switch profile"): 5 時間 / 週 / spend limit / group の上限 / credit 切れのどれも
+;; 「その口座が枯れた」の 1 事実。文が model を名乗る断り(「You've reached your Fable 5 limit」
+;; 「You've reached your Opus 4.5 weekly limit」)だけが、その model だけの枯れ(同じ口座で別の model は
+;; 走れる)。実測 2026-09-23 08:00〜15:00 JST: agent-job の ProviderLimit の文は 8 件とも口座全体
+;; (group の上限 $0 ×6・session ×1・weekly ×1)だったのに、走っていた model の名で記録され、予算の係が
+;; model 別の枯れと書いて、配置が「Opus 5.5 だけ使えない・Fable は使える」と誤読した。
+;; 分類は文の物理なのでここ(ADR-DOE-AGENTS-008 R1)に置き、判断の側(acp/judgment.hy)は答えを使うだけ。
+
+;; 文が名乗り得る model の族の語(小文字)。所有格族「you've hit/reached your … limit」の間の語に
+;; この語が在れば model の枯れ。無ければ(session / weekly / usage / monthly spend / individual spend …)
+;; 口座全体。所有格族の外の文(group の上限 $0・out of usage credits・rate limit exceeded …)も口座全体。
+(setv API-LIMIT-MODEL-FAMILY-WORDS #("fable" "opus" "sonnet" "haiku"))
+
+;; 範囲の語(TerminalCause.limit-scope の閉語彙 — 器の cause の欄。制御面は ACP の effects.py の
+;; PROVIDER_LIMIT_SCOPE_* で同じ綴りを条件へ写す)。
+(setv API-LIMIT-SCOPE-ACCOUNT "account")
+(setv API-LIMIT-SCOPE-MODEL "model")
+
+(setv API-LIMIT-POSSESSIVE-WORDS-RE
+  (re.compile
+    (+ "you['’]ve (?:hit|reached) your"
+       "((?: [a-z0-9][a-z0-9+&-]*(?:\\.[a-z0-9]+)*){0,4}) limit\\b")))
+
+;; 「resets 6:20pm (Asia/Tokyo)」「resets Sep 27 at 7pm (Asia/Tokyo)」「resets 2:50am (Asia/Tokyo)」
+;; (実物 2026-09-23 / 08-2x)。時間帯を名乗らない文(「resets Jul 26 at 6am」)は時刻を決められない
+;; ので読まない(None — 呼び手は既定の期限へ落ちる)。
+(setv API-LIMIT-RESETS-RE
+  (re.compile
+    (+ "\\bresets\\s+"
+       "(?:(?P<month>jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\.?\\s+(?P<day>\\d{1,2}),?\\s+at\\s+)?"
+       "(?P<hour>\\d{1,2})(?::(?P<minute>\\d{2}))?\\s*(?P<meridiem>am|pm)"
+       "\\s*\\((?P<zone>[A-Za-z_]+(?:/[A-Za-z0-9_+-]+)+|UTC)\\)")
+    re.IGNORECASE))
+
+(setv API-LIMIT-MONTHS #("jan" "feb" "mar" "apr" "may" "jun" "jul" "aug" "sep" "oct" "nov" "dec"))
+
+
+(deff api-limit-names-a-model [detail]
+  {:pre [(: detail str)] :post [(: % bool)]}
+  "限度の断りの文が model の族を名乗るか(True = その model だけの枯れ・False = 口座全体の枯れ)。
+   所有格族の間の語に API-LIMIT-MODEL-FAMILY-WORDS の語が在る時だけ True。それ以外の文
+   (session / weekly / spend / group の上限 $0 / credit 切れ / 文の無い断り)は全部 False。"
+  (for [found (.finditer API-LIMIT-POSSESSIVE-WORDS-RE (.lower detail))]
+    (setv words (.split (.group found 1)))
+    (when (any (gfor word words (in (get (.split word ".") 0) API-LIMIT-MODEL-FAMILY-WORDS)))
+      (return True)))
+  False)
+
+
+(deff api-limit-resets-at [detail at-ms]
+  {:pre [(: detail str) (: at-ms int)] :post [(: % (| int None))]}
+  "限度の断りの文が名乗る戻りの時刻(epoch ms)。時間帯つきの「resets <時刻>」だけを読む。
+   日付の無い形は at-ms 以後で最初のその時刻、日付の在る形は at-ms 以後で最初のその日付(年は
+   文が名乗らないので at-ms の年か翌年)。読めない・時間帯が無い・時間帯が未知なら None。"
+  (setv found (.search API-LIMIT-RESETS-RE detail))
+  (when (is found None)
+    (return None))
+  (setv zone-name (.group found "zone"))
+  (try
+    (setv zone (if (= (.upper zone-name) "UTC") timezone.utc (ZoneInfo zone-name)))
+    (except [[ZoneInfoNotFoundError ValueError]]
+      (return None)))
+  (setv hour (int (.group found "hour")))
+  (setv minute (int (or (.group found "minute") "0")))
+  (when (or (< hour 1) (> hour 12) (> minute 59))
+    (return None))
+  (setv hour24 (+ (% hour 12) (if (= (.lower (.group found "meridiem")) "pm") 12 0)))
+  (setv at (datetime.fromtimestamp (/ at-ms 1000) zone))
+  (setv month-word (.group found "month"))
+  (try
+    (if (is month-word None)
+        (do
+          (setv candidate (.replace at :hour hour24 :minute minute :second 0 :microsecond 0))
+          (when (< candidate at)
+            (setv candidate (.replace (+ candidate (timedelta :days 1)) :hour hour24 :minute minute))))
+        (do
+          (setv month (+ 1 (.index API-LIMIT-MONTHS (cut (.lower month-word) 3))))
+          (setv day (int (.group found "day")))
+          (setv candidate (datetime at.year month day hour24 minute :tzinfo zone))
+          ;; 年を名乗らない: at より 1 日以上前なら翌年(年の変わり目の「resets Jan 2」)。
+          (when (< candidate (- at (timedelta :days 1)))
+            (setv candidate (datetime (+ at.year 1) month day hour24 minute :tzinfo zone)))))
+    (except [ValueError]
+      (return None)))
+  (int (* (.timestamp candidate) 1000)))
 
 
 ;; ---------------------------------------------------------------------------

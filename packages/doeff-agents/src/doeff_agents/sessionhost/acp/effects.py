@@ -272,6 +272,18 @@ REASON_RATE_LIMITED: str = "rate-limited"
 PROVIDER_LIMIT_PROFILE_KEY: str = "profile"
 PROVIDER_LIMIT_ATTEMPT_KEY: str = "attempt"
 PROVIDER_LIMIT_AT_KEY: str = "at"
+#: 2026-09-23(operator の規則 2026-09-17「profile が費用の上限で止まったら、種類を問わず口座が枯れた 1 事実」): 記録が名乗る
+#: **断りの範囲**。account = 口座全体の枯れ(session / weekly / spend / group の上限 $0 / credit 切れ — model の欄を**書かない**)・
+#: model = 文が model を名乗る断り(「You've reached your Fable 5 limit」— model の欄 = 手番が走らせた model)。分類は文の物理の家
+#: impls/markers.api-limit-names-a-model の 1 点、欄を組むのは judgment.provider-limit-condition-of の 1 点。読み手 = 予算の係
+#: (account の記録は profile 全体の ProfileExhausted True{provider-refused} に、model の記録は model 別の行に畳む)。
+#: 実弾 2026-09-23: 8 時間の断り 8 件が全部口座全体の文なのに model 別に記録され、Opus 5.5 を宣言した会話の最初の手番が Fable に落ちた。
+PROVIDER_LIMIT_SCOPE_KEY: str = "scope"
+PROVIDER_LIMIT_SCOPE_ACCOUNT: str = "account"
+PROVIDER_LIMIT_SCOPE_MODEL: str = "model"
+#: 文が名乗る戻りの時刻(epoch ms・「resets 6:20pm (Asia/Tokyo)」— impls/markers.api-limit-resets-at)。読めない文では欄を落とす
+#: (予算の係は既定の期限 = 断りの後に来る最初の窓の戻り・上限 5 時間へ落ちる)。
+PROVIDER_LIMIT_RESETS_AT_KEY: str = "resetsAt"
 #: ⚠⚠ 2026-09-19 の追補: この記録を生む **409(錠の競合)は廃止された**(operator 裁定 19:2x・custody law
 #: lease-counts-no-hosts・本番 be81f6f 11:18Z 配備)。預かり所は宿を数えないので、同じ口座の 2 台目の借りは断られない。
 #: ⇒ **この腕は今日以降、原理的に発火しない**。残してあるのは (a) 提供側が同じ access token の同時利用を拒んだ場合に

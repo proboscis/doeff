@@ -48,9 +48,10 @@
 ;;; 器は引き受けず、host は型付きに断る(誰の job でもない手番を起こさない — 呼び手の agentd は
 ;;; 割り込みを行に残し、Messaging が queued へ積み直す)。
 
-(require doeff-hy.macros [defk <-])
+(require doeff-hy.macros [defk deff <-])
 
 (import dataclasses [replace])
+(import datetime [datetime timezone])
 (import os)
 
 (import doeff_agents.sessionhost.effects [
@@ -82,7 +83,8 @@
 ;; 1 点(ADR-DOE-AGENTS-008 R1 の観測形式の家・pane の路と同じ表)。ここは表を写さず、
 ;; 手番の終わりの文へ当てるだけ。
 (import doeff_agents.sessionhost.impls.fast_jev [fast-jev-compaction-enabled])
-(import doeff_agents.sessionhost.impls.markers [is-api-limit-refusal])
+(import doeff_agents.sessionhost.impls.markers [is-api-limit-refusal api-limit-names-a-model api-limit-resets-at
+                                                  API-LIMIT-SCOPE-ACCOUNT API-LIMIT-SCOPE-MODEL])
 (import doeff_agents.sessionhost.headless_protocol [
   BackendLiveness
   HeadlessObservation
@@ -671,10 +673,29 @@
    口座 × model のもので、同じ profile の次の手番も断られる(実弾 2026-09-15 13:2x: operator の
    会話が btc で 5 回続けて断られた)。配車は model 別の枯渇(段 11 lane 11m)で別の profile へ
    移り、profile が変われば器はどうせ作り直しになる(restartOn = model・profile)。"
-  (if (and (not verdict.ok) (isinstance verdict.detail str)
-           (is-api-limit-refusal verdict.detail verdict.api-error-status))
-      (make-cause "rate_limited" verdict.detail observed-at)
-      None))
+  (when (not (and (not verdict.ok) (isinstance verdict.detail str)
+                  (is-api-limit-refusal verdict.detail verdict.api-error-status)))
+    (return None))
+  ;; 2026-09-23: 枯らした範囲と文が名乗る戻りの時刻を cause の欄に載せる(当てるのはここ・表は markers・
+  ;; 制御面は欄を読む — ADR-DOE-AGENTS-012 R33)。文が model の族を名乗る時だけ model、他は全部 account。
+  (setv cause (make-cause "rate_limited" verdict.detail observed-at))
+  (setv at-ms (observed-at-epoch-ms observed-at))
+  (replace cause
+           :limit-scope (if (api-limit-names-a-model verdict.detail) API-LIMIT-SCOPE-MODEL API-LIMIT-SCOPE-ACCOUNT)
+           :limit-resets-at-ms (if (is None at-ms) None (api-limit-resets-at verdict.detail at-ms))))
+
+
+(deff observed-at-epoch-ms [observed-at]
+  {:pre [(: observed-at str)] :post [(: % (| int None))]}
+  "器の時刻(isoformat・UTC)→ epoch ms。読めない綴りは None(戻りの時刻を名乗らない — 発明しない)。
+   時間帯の無い綴りは UTC(器の時計は datetime.now timezone.utc の isoformat)。"
+  (try
+    (setv parsed (datetime.fromisoformat observed-at))
+    (except [ValueError]
+      (return None)))
+  (when (is parsed.tzinfo None)
+    (setv parsed (.replace parsed :tzinfo timezone.utc)))
+  (int (* (.timestamp parsed) 1000)))
 
 
 (defk observe-headless-row [row]

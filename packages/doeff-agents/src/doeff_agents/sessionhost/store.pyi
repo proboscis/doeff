@@ -9,6 +9,8 @@ class TerminalCause:
     reason: str | None
     retryable: bool
     observed_at: str
+    limit_scope: str | None
+    limit_resets_at_ms: int | None
 
 class StoreActor:
     #: 出来事の journal(agent_session_events)の先端 — actor が store を変えた op の後に読み直す(段 12 lane 12b)。

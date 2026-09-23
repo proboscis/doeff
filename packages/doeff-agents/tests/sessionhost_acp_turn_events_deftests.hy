@@ -415,10 +415,10 @@
   ;; **器が書いた終端の cause** を読む 1 点(族の表は器の側 = impls/markers.hy の 1 点で、
   ;; ここには無い — ADR-DOE-AGENTS-008 R1)。category = rate_limited だけが条件になる。
   (setv said "You've reached your Fable limit. /model to switch models.")
-  (setv condition (run (provider-limit-condition-of {"category" "rate_limited" "reason" said} "claude-fable-5-1" "personal" 2 AT)))
+  (setv condition (run (provider-limit-condition-of {"category" "rate_limited" "reason" said "limit_scope" "model"} "claude-fable-5-1" "personal" 2 AT)))
   ;; agora-redesign #519: 記録は口座・試み・時刻を自分で名乗る(契約 scheduling.json providerRefusal.fields)。
   (assert (= condition {"type" "ProviderLimit" "status" "True" "reason" "rate-limited"
-                        "message" said "model" "claude-fable-5-1"
+                        "message" said "model" "claude-fable-5-1" "scope" "model"
                         "profile" "personal" "attempt" 2 "at" AT}) condition)
   (assert (not-in "until" condition) "until は書かない(窓を知るのは予算の controller)")
   ;; 口座の名が無い手番(結ばれていない・空)は profile の欄を落とす(発明しない)。attempt / at は常に名乗る。
@@ -443,6 +443,29 @@
   ;; 改行のある理由は 1 行目だけを message に(行は人が読む 1 行)。
   (setv multi (run (provider-limit-condition-of {"category" "rate_limited" "reason" (+ said "\nTry later.")} "claude-fable-5-1" "personal" 1 AT)))
   (assert (= (get multi "message") said) multi))
+
+
+(deftest test-provider-limit-condition-names-the-whole-account-unless-the-container-says-model
+  ;; 2026-09-23(operator の規則 2026-09-17「profile が費用の上限で止まったら、種類を問わず口座が枯れた 1 事実」):
+  ;; 範囲は器の cause の欄 limit_scope(当てるのは器 — R33)。account と欄の無い cause は scope = account で model の欄を
+  ;; 書かない(走っていた model の名を付けない)。器が model と言った時だけ scope = model(model = 走らせた model)。
+  (setv said "Your group's usage limit is set to $0 · ask your admin for a higher limit")
+  (for [cause [{"category" "rate_limited" "reason" said "limit_scope" "account"}
+               {"category" "rate_limited" "reason" said}
+               {"category" "rate_limited" "reason" "You've reached your Fable 5 limit." "limit_scope" "account"}]]
+    (setv condition (run (provider-limit-condition-of cause "claude-opus-5-5" "p10169" 1 AT)))
+    (assert (= (get condition "scope") "account") condition)
+    (assert (not-in "model" condition) condition))
+  (setv scoped (run (provider-limit-condition-of {"category" "rate_limited" "reason" "You've reached your Fable 5 limit." "limit_scope" "model"}
+                                                 "claude-fable-5-1" "btc" 1 AT)))
+  (assert (= #((get scoped "scope") (get scoped "model")) #("model" "claude-fable-5-1")) scoped)
+  ;; 器が載せた戻りの時刻は resetsAt へ写す。載っていない・数でない欄は落とす(発明しない)。
+  (setv resets (run (provider-limit-condition-of {"category" "rate_limited" "reason" said "limit_scope" "account" "limit_resets_at_ms" (+ AT 5)}
+                                                 "claude-opus-5-5" "p10169" 1 AT)))
+  (assert (= (get resets "resetsAt") (+ AT 5)) resets)
+  (for [bad [None True "1790143200000"]]
+    (assert (not-in "resetsAt" (run (provider-limit-condition-of {"category" "rate_limited" "reason" said "limit_resets_at_ms" bad}
+                                                                 "claude-opus-5-5" "p10169" 1 AT))))))
 
 
 (deftest test-tool-use-frame-carries-the-input-and-names-what-it-clipped
