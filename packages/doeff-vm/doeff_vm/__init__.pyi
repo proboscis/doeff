@@ -7,6 +7,10 @@ from typing_extensions import Never, Self, TypeVar
 _T = TypeVar("_T")
 _T_co = TypeVar("_T_co", covariant=True)
 _E_co = TypeVar("_E_co", covariant=True, default=Any)
+# The answer type of an effect. Bare ``EffectBase`` (a handler's ``effect: EffectBase``,
+# "any effect") means ``EffectBase[Any]``, so code written before effects carried an
+# answer type stays fully known under strict checking.
+_Answer = TypeVar("_Answer", default=Any)
 
 # Static typing of effects and programs (runtime half: src/typing_support.rs).
 #
@@ -43,9 +47,9 @@ class IRStream:
 
 # --- EffectBase ---
 
-class EffectBase(Generic[_T]):
+class EffectBase(Generic[_Answer]):
     def __init__(self, *_args: Any, **_kwargs: Any) -> None: ...
-    def __iter__(self) -> Generator[Self, Any, _T]: ...
+    def __iter__(self) -> Generator[Self, Any, _Answer]: ...
     def __reduce_ex__(self, protocol: SupportsIndex) -> tuple[Any, ...]: ...
 
 # --- Result types ---

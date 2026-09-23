@@ -143,7 +143,7 @@ if TYPE_CHECKING:
 
     from typing_extensions import TypeVar as _DefaultedTypeVar
 
-    _ProgramResult = _DefaultedTypeVar("_ProgramResult", covariant=True)
+    _ProgramResult = _DefaultedTypeVar("_ProgramResult", covariant=True, default=Any)
     _ProgramEffects = _DefaultedTypeVar("_ProgramEffects", covariant=True, default=Any)
 
     @runtime_checkable
