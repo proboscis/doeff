@@ -15,6 +15,7 @@ from typing import (
     Protocol,
     TypeVar,
     cast,
+    overload,
     runtime_checkable,
 )
 
@@ -40,7 +41,7 @@ if TYPE_CHECKING:
     from doeff import Program
 
 
-ProgramHandler = Callable[[object], "Program"]
+ProgramHandler = Callable[[object], "Program[Any]"]
 
 
 @runtime_checkable
@@ -104,7 +105,20 @@ def handler(raw_handler: Callable[..., object]) -> ProgramHandler:
     return install
 
 
-def with_handlers(handlers: Iterable[ProgramHandler], program: object) -> object:
+_Result = TypeVar("_Result")
+
+
+@overload
+def with_handlers(
+    handlers: Iterable[Callable[..., object]], program: "Program[_Result, Any]"
+) -> "Program[_Result, Any]": ...
+
+
+@overload
+def with_handlers(handlers: Iterable[Callable[..., object]], program: object) -> "Program[Any]": ...
+
+
+def with_handlers(handlers: Iterable[Callable[..., object]], program: object) -> object:
     """Apply a handler stack to a Program.
 
     Handler order is scope order: the first handler is outermost, the last
