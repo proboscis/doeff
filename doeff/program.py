@@ -4,8 +4,10 @@ DoExpr nodes — Rust pyclasses re-exported for Python use.
 The VM classifies them via downcast (not tag-based getattr).
 """
 
+import functools
+import types
 from collections.abc import Callable, Iterable
-from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, Protocol, cast, runtime_checkable
 
 from doeff_vm import Apply as Apply
 from doeff_vm import Expand as Expand
@@ -41,22 +43,51 @@ class _InstalledHandler(Protocol):
     def __call__(self, body: object) -> "Program": ...
 
 
+class _HandlerLabel(NamedTuple):
+    name: str
+    qualname: str
+    doc: str | None
+
+
+def _handler_label(raw_handler: object) -> _HandlerLabel:
+    """Name, qualname and doc for an installer, for any callable handler.
+
+    Plain and ``@do`` functions carry their own names. ``functools.partial``
+    and callable instances do not have ``__name__``; they are labelled by the
+    function they call (partial) or by their class (callable instance), so
+    every callable is accepted as a handler — the VM only needs it callable.
+    """
+    if isinstance(raw_handler, functools.partial):
+        return _handler_label(raw_handler.func)
+    if isinstance(raw_handler, (types.FunctionType, types.BuiltinFunctionType)):
+        return _HandlerLabel(raw_handler.__name__, raw_handler.__qualname__, raw_handler.__doc__)
+    if isinstance(raw_handler, types.MethodType):
+        return _handler_label(raw_handler.__func__)
+    handler_type = type(raw_handler)
+    return _HandlerLabel(handler_type.__name__, handler_type.__qualname__, handler_type.__doc__)
+
+
 def handler(raw_handler: Callable[..., object]) -> ProgramHandler:
-    """Wrap a raw effect dispatcher as a Program -> Program handler."""
+    """Wrap a raw effect dispatcher as a Program -> Program handler.
+
+    ``raw_handler`` may be any callable ``(effect, k) -> Program``: a ``@do``
+    function, a plain function, a bound method, a ``functools.partial`` or a
+    callable instance.
+    """
     if not callable(raw_handler):
         raise TypeError(
             f"handler: raw_handler must be callable, got {type(raw_handler).__name__}"
         )
-    raw_handler_meta = cast(Any, raw_handler)
     if isinstance(raw_handler, _InstalledHandler) and raw_handler._doeff_is_handler_fn is True:
         return raw_handler
 
     def install(body: object) -> WithHandlerType:
         return WithHandlerType(raw_handler, body)
 
-    install.__name__ = raw_handler_meta.__name__
-    install.__qualname__ = raw_handler_meta.__qualname__
-    install.__doc__ = raw_handler_meta.__doc__
+    label = _handler_label(raw_handler)
+    install.__name__ = label.name
+    install.__qualname__ = label.qualname
+    install.__doc__ = label.doc
     install_meta = cast(Any, install)
     install_meta._doeff_is_handler_fn = True
     install_meta.__doeff_handler_data__ = raw_handler
