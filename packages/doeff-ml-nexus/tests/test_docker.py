@@ -3,7 +3,7 @@
 import hy  # noqa: F401 - activates Hy import hooks for test modules
 
 from doeff import run, do
-from doeff_core_effects import reader, writer, slog_handler
+from doeff_core_effects import reader, state, writer, slog_handler
 
 from doeff_docker.handlers.dockerfile import collect_dockerfile
 from doeff_ml_nexus.docker import uv_image, uv_gpu_image
@@ -11,7 +11,7 @@ from doeff_ml_nexus.docker import uv_image, uv_gpu_image
 
 def _run_with_handlers(program):
     return run(
-        writer(slog_handler(reader(env={})(program)))
+        state()(writer(slog_handler(reader(env={})(program))))
     )
 
 

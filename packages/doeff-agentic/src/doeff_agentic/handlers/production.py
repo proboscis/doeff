@@ -22,12 +22,10 @@ from doeff_agents import (
     AgentType,
     Capture,
     Launch,
-    LaunchConfig,
     Monitor,
     Send,
     SessionHandle,
     SessionStatus,
-    Sleep,
     Stop,
     TmuxAgentHandler,
 )
@@ -36,9 +34,9 @@ from doeff_agents.effects import (
     LaunchEffect,
     MonitorEffect,
     SendEffect,
-    SleepEffect,
     StopEffect,
 )
+from doeff_time import Delay
 
 from doeff import Effect, Pass, Resume, do
 from doeff import handler as _program_handler
@@ -52,8 +50,15 @@ from doeff_agentic.effects import (
     WaitForStatusEffect,
     WaitForUserInputEffect,
 )
+from doeff_agentic.exceptions import AgenticUnsupportedOperationError
 from doeff_agentic.state import StateManager, generate_workflow_id
-from doeff_agentic.types import AgentInfo, AgentStatus, WorkflowInfo, WorkflowStatus
+from doeff_agentic.types import (
+    AgentConfig,
+    AgentInfo,
+    AgentStatus,
+    WorkflowInfo,
+    WorkflowStatus,
+)
 
 
 def _agent_type_from_str(s: str) -> AgentType:
@@ -82,6 +87,30 @@ def _agent_status_from_session_status(s: SessionStatus) -> AgentStatus:
     return mapping.get(s, AgentStatus.RUNNING)
 
 
+
+def _launch_effect(session_name: str, config: AgentConfig, ready_timeout: float) -> LaunchEffect:
+    """Lower a legacy AgentConfig onto doeff-agents' flat Launch effect.
+
+    doeff-agents dropped the LaunchConfig wrapper together with its ``resume``
+    and ``profile`` fields (26db24dd); Launch has no way to express either, so a
+    config that asks for them is refused instead of launching something else.
+    """
+    if config.resume:
+        raise AgenticUnsupportedOperationError(
+            "resume", "tmux", "doeff-agents Launch no longer supports resuming a session"
+        )
+    if config.profile is not None:
+        raise AgenticUnsupportedOperationError(
+            "profile", "tmux", "doeff-agents Launch no longer takes a profile"
+        )
+    return Launch(
+        session_name,
+        agent_type=_agent_type_from_str(config.agent_type),
+        work_dir=Path(config.work_dir) if config.work_dir else Path.cwd(),
+        prompt=config.prompt,
+        ready_timeout=ready_timeout,
+    )
+
 @dataclass
 class WorkflowContext:
     """Context for a running workflow.
@@ -94,6 +123,9 @@ class WorkflowContext:
     state_manager: StateManager
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     sessions: dict[str, SessionHandle] = field(default_factory=dict)
+    # SessionHandle is opaque (session_id only) since doeff-agents 573fa5db, so
+    # the launch time the state files report is recorded here.
+    session_started_at: dict[str, datetime] = field(default_factory=dict)
     agent_counter: int = field(default=0)
 
 
@@ -154,6 +186,10 @@ class AgenticHandler:
         self._context.agent_counter += 1
         return f"doeff-{self.workflow_id}-agent-{self._context.agent_counter}"
 
+    def _register_session(self, name: str, handle: SessionHandle) -> None:
+        self._context.sessions[name] = handle
+        self._context.session_started_at[name] = datetime.now(timezone.utc)
+
     def _update_workflow_status(
         self,
         status: WorkflowStatus,
@@ -174,9 +210,10 @@ class AgenticHandler:
             agents.append(AgentInfo(
                 name=name,
                 status=agent_status,
-                session_name=handle.session_name,
-                pane_id=handle.pane_id,
-                started_at=handle.started_at,
+                session_name=handle.session_id,
+                started_at=self._context.session_started_at.get(
+                    name, self._context.started_at
+                ),
             ))
 
         workflow = WorkflowInfo(
@@ -202,23 +239,8 @@ class AgenticHandler:
         agent_name = effect.session_name or f"agent-{self._context.agent_counter + 1}"
         session_name = self._session_name_for(effect.session_name)
 
-        agent_type = _agent_type_from_str(config.agent_type)
-        work_dir = Path(config.work_dir) if config.work_dir else Path.cwd()
-
-        launch_config = LaunchConfig(
-            agent_type=agent_type,
-            work_dir=work_dir,
-            prompt=config.prompt,
-            resume=config.resume,
-            profile=config.profile,
-        )
-
-        handle = yield Launch(
-            session_name=session_name,
-            config=launch_config,
-            ready_timeout=effect.ready_timeout,
-        )
-        self._context.sessions[agent_name] = handle
+        handle = yield _launch_effect(session_name, config, effect.ready_timeout)
+        self._register_session(agent_name, handle)
 
         self._update_workflow_status(
             WorkflowStatus.RUNNING,
@@ -239,7 +261,7 @@ class AgenticHandler:
                 last_output = yield Capture(handle, lines=500)
                 break
 
-            yield Sleep(effect.poll_interval)
+            yield Delay(effect.poll_interval)
 
         self._update_workflow_status(WorkflowStatus.RUNNING, current_agent=None)
         return last_output
@@ -287,7 +309,7 @@ class AgenticHandler:
             if obs.is_terminal and obs.status not in session_targets:
                 return _agent_status_from_session_status(obs.status)
 
-            yield Sleep(effect.poll_interval)
+            yield Delay(effect.poll_interval)
 
         obs = yield Monitor(handle)
         return _agent_status_from_session_status(obs.status)
@@ -314,7 +336,7 @@ class AgenticHandler:
             return handle
 
         for name, candidate in self._context.sessions.items():
-            if session_name in (candidate.session_name, name):
+            if session_name in (candidate.session_id, name):
                 return candidate
 
         raise AgentNotRunningError(session_name, "not_found")
@@ -328,26 +350,10 @@ class AgenticHandler:
         agent_name = effect.session_name or f"agent-{self._context.agent_counter + 1}"
         session_name = self._session_name_for(effect.session_name)
 
-        # Convert to doeff-agents LaunchConfig
-        agent_type = _agent_type_from_str(config.agent_type)
-        work_dir = Path(config.work_dir) if config.work_dir else Path.cwd()
-
-        launch_config = LaunchConfig(
-            agent_type=agent_type,
-            work_dir=work_dir,
-            prompt=config.prompt,
-            resume=config.resume,
-            profile=config.profile,
-        )
-
         # Launch agent
-        launch_effect = Launch(
-            session_name=session_name,
-            config=launch_config,
-            ready_timeout=effect.ready_timeout,
-        )
+        launch_effect = _launch_effect(session_name, config, effect.ready_timeout)
         handle = self.tmux_handler.handle_launch(launch_effect)
-        self._context.sessions[agent_name] = handle
+        self._register_session(agent_name, handle)
 
         # Update workflow status
         self._update_workflow_status(
@@ -376,7 +382,7 @@ class AgenticHandler:
                 break
 
             # Poll
-            self.tmux_handler.handle_sleep(Sleep(effect.poll_interval))
+            time.sleep(effect.poll_interval)
 
         # Update workflow
         self._update_workflow_status(WorkflowStatus.RUNNING, current_agent=None)
@@ -390,7 +396,7 @@ class AgenticHandler:
         if handle is None:
             # Try full session name lookup
             for _name, h in self._context.sessions.items():
-                if h.session_name == effect.session_name:
+                if h.session_id == effect.session_name:
                     handle = h
                     break
 
@@ -443,7 +449,7 @@ class AgenticHandler:
             if obs.is_terminal and obs.status not in session_targets:
                 return _agent_status_from_session_status(obs.status)
 
-            self.tmux_handler.handle_sleep(Sleep(effect.poll_interval))
+            time.sleep(effect.poll_interval)
 
         # Timeout - return current status
         obs = self.tmux_handler.handle_monitor(Monitor(handle))
@@ -549,12 +555,14 @@ def agentic_effectful_handlers(  # noqa: PLR0915 - baseline cleanup keeps existi
     state_dir: Path | str | None = None,
     tmux_handler: TmuxAgentHandler | None = None,
 ) -> Any:
-    """Create a handler-protocol callable for legacy agentic effects.
+    """Create the Program -> Program installer for legacy agentic effects.
 
-    The returned handler follows doeff_vm's public handler protocol:
-    `(effect, k) -> DoExpr`.
+    It installs two `(effect, k)` handlers: the agentic handler (RunAgent,
+    SendMessage, ...) inside, and the tmux runtime (Launch, Monitor, Capture,
+    Send, Stop) outside it. Poll waits are yielded as doeff_time ``Delay``, so the
+    caller's stack needs a time handler outside both.
 
-    Call the returned Program -> Program handler to scope it to a specific program.
+    Call the returned installer to scope it to a specific program.
     See `with_agentic_effectful_handlers()` for the convenience wrapper.
     """
     handler = AgenticHandler(
@@ -565,7 +573,7 @@ def agentic_effectful_handlers(  # noqa: PLR0915 - baseline cleanup keeps existi
     )
 
     @do
-    def _handle(effect: Effect, k: Any):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
+    def _handle_runtime(effect: Effect, k: Any):
         if isinstance(effect, LaunchEffect):
             return (yield Resume(k, handler.tmux_handler.handle_launch(effect)))
         if isinstance(effect, MonitorEffect):
@@ -578,31 +586,17 @@ def agentic_effectful_handlers(  # noqa: PLR0915 - baseline cleanup keeps existi
         if isinstance(effect, StopEffect):
             handler.tmux_handler.handle_stop(effect)
             return (yield Resume(k, None))
-        if isinstance(effect, SleepEffect):
-            handler.tmux_handler.handle_sleep(effect)
-            return (yield Resume(k, None))
+        yield Pass(effect, k)
+
+    @do
+    def _handle(effect: Effect, k: Any):  # noqa: PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
         if isinstance(effect, RunAgentEffect):
             config = effect.config
             agent_name = effect.session_name or f"agent-{handler._context.agent_counter + 1}"
             session_name = handler._session_name_for(effect.session_name)
 
-            agent_type = _agent_type_from_str(config.agent_type)
-            work_dir = Path(config.work_dir) if config.work_dir else Path.cwd()
-
-            launch_config = LaunchConfig(
-                agent_type=agent_type,
-                work_dir=work_dir,
-                prompt=config.prompt,
-                resume=config.resume,
-                profile=config.profile,
-            )
-
-            handle = yield Launch(
-                session_name=session_name,
-                config=launch_config,
-                ready_timeout=effect.ready_timeout,
-            )
-            handler._context.sessions[agent_name] = handle
+            handle = yield _launch_effect(session_name, config, effect.ready_timeout)
+            handler._register_session(agent_name, handle)
 
             handler._update_workflow_status(
                 WorkflowStatus.RUNNING,
@@ -623,7 +617,7 @@ def agentic_effectful_handlers(  # noqa: PLR0915 - baseline cleanup keeps existi
                     last_output = yield Capture(handle, lines=500)
                     break
 
-                yield Sleep(effect.poll_interval)
+                yield Delay(effect.poll_interval)
 
             handler._update_workflow_status(WorkflowStatus.RUNNING, current_agent=None)
             value = last_output
@@ -671,7 +665,7 @@ def agentic_effectful_handlers(  # noqa: PLR0915 - baseline cleanup keeps existi
                     value = _agent_status_from_session_status(obs.status)
                     break
 
-                yield Sleep(effect.poll_interval)
+                yield Delay(effect.poll_interval)
             else:
                 obs = yield Monitor(handle)
                 value = _agent_status_from_session_status(obs.status)
@@ -690,9 +684,21 @@ def agentic_effectful_handlers(  # noqa: PLR0915 - baseline cleanup keeps existi
                 handler._update_workflow_status(WorkflowStatus.RUNNING)
             value = None
             return (yield Resume(k, value))
-        yield Pass()
+        yield Pass(effect, k)
 
-    return _program_handler(_handle)
+    # The agentic handler lowers its effects onto Launch / Monitor / Capture /
+    # Send / Stop by yielding them. Effects a handler yields go to the handlers
+    # *outside* it, never back to itself, so the tmux runtime has to be installed
+    # as a separate, outer handler. It also serves those effects when the
+    # program yields them directly. Delay (poll interval) goes further out, to
+    # the caller's time handler.
+    install_agentic = _program_handler(_handle)
+    install_runtime = _program_handler(_handle_runtime)
+
+    def _install(program: Any) -> Any:
+        return install_runtime(install_agentic(program))
+
+    return _install
 
 
 def with_agentic_effectful_handlers(
