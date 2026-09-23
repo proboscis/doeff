@@ -6,10 +6,11 @@ import json
 from typing import Any
 
 import pytest
+from _runner import run_program
 from doeff_openrouter.chat import chat_completion
 from pydantic import BaseModel
 
-from doeff import EffectGenerator, default_handlers, do, run
+from doeff import EffectGenerator, do
 
 structured_llm_module = importlib.import_module("doeff_openrouter.structured_llm")
 from doeff_openrouter.structured_llm import (  # noqa: E402 - late import preserves existing import/setup order
@@ -25,13 +26,6 @@ from doeff_openrouter.structured_llm import (  # noqa: E402 - late import preser
 class DemoModel(BaseModel):
     name: str
     value: int
-
-
-_HANDLERS = tuple(default_handlers())
-
-
-def run_program(program, *, env: dict[str, Any] | None = None, store: dict[str, Any] | None = None):
-    return run(program, handlers=_HANDLERS, env=env, store=store)
 
 
 def test_build_messages_text_only():
@@ -333,9 +327,8 @@ async def test_chat_completion_tracks_prompt_state():
             assert request_data["messages"] == messages
             return response_data, {}
 
-    result = run(
+    result = run_program(
         chat_completion(messages=messages, model="demo-model"),
-        handlers=_HANDLERS,
         env={"openrouter_client": FakeClient()},
         store={"openrouter_api_calls": []},
     )

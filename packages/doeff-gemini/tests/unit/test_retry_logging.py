@@ -5,6 +5,7 @@
 import asyncio
 import builtins
 import importlib
+import importlib.util
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,7 +22,10 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-if "pydantic" not in sys.modules:
+# Stub only when pydantic is really absent: checking sys.modules instead would
+# shadow the installed pydantic for every later test module (ImportError on
+# ConfigDict) whenever this file happens to be imported first.
+if "pydantic" not in sys.modules and importlib.util.find_spec("pydantic") is None:
     import types
 
     pydantic_stub = types.ModuleType("pydantic")
@@ -39,9 +43,10 @@ if "pydantic" not in sys.modules:
     pydantic_stub.ValidationError = ValidationError  # type: ignore[attr-defined]
     sys.modules["pydantic"] = pydantic_stub
 
+from _runner import async_run_program
 from doeff_gemini.structured_llm import edit_image__gemini, structured_llm__gemini
 
-from doeff import EffectGenerator, async_run, default_handlers, do
+from doeff import EffectGenerator, do
 
 structured_llm_module = importlib.import_module("doeff_gemini.structured_llm")
 
@@ -108,8 +113,8 @@ async def test_structured_llm_retry_failure_logs(monkeypatch: pytest.MonkeyPatch
             )
         )
 
-    result = await async_run(
-        flow(), handlers=default_handlers(), env={"gemini_client": mock_client}
+    result = await async_run_program(
+        flow(), env={"gemini_client": mock_client}
     )
 
     assert result.is_err()
@@ -121,7 +126,7 @@ async def test_structured_llm_retry_failure_logs(monkeypatch: pytest.MonkeyPatch
 
     structured_logs = [entry for entry in result.log if isinstance(entry, dict)]
     failure_logs = [
-        entry for entry in structured_logs if entry.get("event") == "gemini.retry_exhausted"
+        entry for entry in structured_logs if entry.get("msg") == "gemini.retry_exhausted"
     ]
     assert failure_logs, "Expected retry exhaustion log entry"
     failure_entry = failure_logs[-1]
@@ -176,8 +181,8 @@ async def test_edit_image_retry_failure_logs(monkeypatch: pytest.MonkeyPatch) ->
             )
         )
 
-    result = await async_run(
-        flow(), handlers=default_handlers(), env={"gemini_client": mock_client}
+    result = await async_run_program(
+        flow(), env={"gemini_client": mock_client}
     )
 
     assert result.is_err()
@@ -189,7 +194,7 @@ async def test_edit_image_retry_failure_logs(monkeypatch: pytest.MonkeyPatch) ->
 
     structured_logs = [entry for entry in result.log if isinstance(entry, dict)]
     failure_logs = [
-        entry for entry in structured_logs if entry.get("event") == "gemini.retry_exhausted"
+        entry for entry in structured_logs if entry.get("msg") == "gemini.retry_exhausted"
     ]
     assert failure_logs
     failure_entry = failure_logs[-1]

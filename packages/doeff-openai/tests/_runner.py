@@ -66,16 +66,20 @@ def _build_chain(program: Any, env: dict | None):
     ``slog_handler`` is positioned outside ``writer`` — writer captures
     the ``Tell`` stream and passes through; ``slog_handler`` handles
     structured ``slog`` calls.
+
+    ``state`` sits outside both: ``writer`` and ``slog_handler`` keep their
+    logs in state via lazy ``Get``/``Put`` (commit 0acce3a9), so the state
+    handler must be an *outer* handler of them.
     """
     wrapped = program
     wrapped = calculate_cost_handler(wrapped)
     wrapped = await_handler()(wrapped)
     wrapped = listen_handler(wrapped)
     wrapped = local_handler(wrapped)
-    wrapped = state()(wrapped)
     wrapped = try_handler(wrapped)
     wrapped = writer(wrapped)
     wrapped = slog_handler(wrapped)
+    wrapped = state()(wrapped)
     wrapped = lazy_ask(env=env or {})(wrapped)
     return scheduled(wrapped)
 
@@ -122,7 +126,7 @@ def openai_api_key_from_env_handler(effect, k):
     loud-fail contract for missing keys.
     """
     if isinstance(effect, AskEffect) and effect.key == "openai_api_key":
-        value = os.environ.get("OPENAI_API_KEY")
+        value = os.environ.get("OPENAI_API_KEY")  # noqa: DOEFF004 - the one test-only env bridge (pre-existing)
         if value is not None:
             return (yield Resume(k, value))
     yield Pass(effect, k)
@@ -170,12 +174,3 @@ def openai_api_key_from_doeff_py_handler(effect, k):
 def doeff_py_has_openai_key() -> bool:
     """True when ``~/.doeff.py`` has an ``openai_api_key__personal`` entry."""
     return bool(_load_doeff_py_env().get("openai_api_key__personal"))
-
-
-__all__ = [
-    "RunResult",
-    "doeff_py_has_openai_key",
-    "openai_api_key_from_doeff_py_handler",
-    "openai_api_key_from_env_handler",
-    "run_program",
-]

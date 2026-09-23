@@ -23,6 +23,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
+from _runner import async_run_program  # noqa: E402
 from doeff_core_effects.effects import (  # noqa: E402 - late import follows sys.path fixture setup
     EffectBase as Effect,
 )
@@ -34,8 +35,6 @@ from doeff import (  # noqa: E402
     EffectGenerator,
     Pass,
     Resume,
-    async_run,
-    default_handlers,
     do,
 )
 
@@ -78,7 +77,7 @@ def _make_structured_response(payload: FunFact) -> Any:
     )
 
 
-def _make_mock_client(response: Any) -> tuple[Any, Any]:
+def _make_mock_client(response: Any) -> tuple[Any, Any]:  # noqa: DOEFF006 - test fixture pair (pre-existing)
     async_models = SimpleNamespace(generate_content=AsyncMock(return_value=response))
     async_client = SimpleNamespace(models=async_models)
     return SimpleNamespace(async_client=async_client), async_models
@@ -93,13 +92,13 @@ def _with_mock_gemini_handler(program: Any, *, mock_client: Any, asked_keys: lis
                 return (yield Resume(k, mock_client))
             if effect.key == "gemini_api_key":
                 return (yield Resume(k, "fake-gemini-key"))
-        yield Pass()
+        yield Pass(effect, k)
 
     return _install_raw_handler(mock_handler)(program)
 
 
 def _get_live_gemini_env_or_skip() -> dict[str, Any]:
-    if os.getenv("DOEFF_GEMINI_RUN_E2E") != "1":
+    if os.getenv("DOEFF_GEMINI_RUN_E2E") != "1":  # noqa: DOEFF004 - live e2e opt-in gate (pre-existing)
         pytest.skip("Set DOEFF_GEMINI_RUN_E2E=1 to run the live Gemini e2e smoke test")
 
     pytest.importorskip("google.genai")
@@ -152,9 +151,9 @@ async def test_edit_image__nanobanana_pro() -> None:
             )
         )
 
-    result = await async_run(
+    result = await async_run_program(
         _with_mock_gemini_handler(flow(), mock_client=mock_client, asked_keys=asked_keys),
-        handlers=[default_gemini_cost_handler, *default_handlers()],
+        handlers=[default_gemini_cost_handler],
     )
 
     assert result.is_ok(), "\n".join(str(entry) for entry in result.log)
@@ -190,9 +189,9 @@ async def test_edit_image__gemini() -> None:
             )
         )
 
-    result = await async_run(
+    result = await async_run_program(
         _with_mock_gemini_handler(flow(), mock_client=mock_client, asked_keys=asked_keys),
-        handlers=[default_gemini_cost_handler, *default_handlers()],
+        handlers=[default_gemini_cost_handler],
     )
 
     assert result.is_ok(), "\n".join(str(entry) for entry in result.log)
@@ -230,9 +229,9 @@ async def test_structured_llm__gemini_with_pydantic() -> None:
             )
         )
 
-    result = await async_run(
+    result = await async_run_program(
         _with_mock_gemini_handler(flow(), mock_client=mock_client, asked_keys=asked_keys),
-        handlers=[default_gemini_cost_handler, *default_handlers()],
+        handlers=[default_gemini_cost_handler],
     )
 
     assert result.is_ok(), "\n".join(str(entry) for entry in result.log)
@@ -269,9 +268,9 @@ async def test_structured_llm__gemini_live_with_pydantic() -> None:
             )
         )
 
-    result = await async_run(
+    result = await async_run_program(
         flow(),
-        handlers=[default_gemini_cost_handler, *default_handlers()],
+        handlers=[default_gemini_cost_handler],
         env=env,
     )
 

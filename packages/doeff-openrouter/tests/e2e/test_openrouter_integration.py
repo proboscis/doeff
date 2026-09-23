@@ -7,6 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+from _runner import run_program
 from doeff_openrouter.chat import chat_completion
 from doeff_openrouter.client import OpenRouterClient
 from doeff_openrouter.structured_llm import (
@@ -23,9 +24,7 @@ from doeff import (
     EffectGenerator,
     Pass,
     Resume,
-    default_handlers,
     do,
-    run,
 )
 from doeff import handler as _program_handler
 
@@ -50,7 +49,7 @@ class MockOpenRouterClient:
         self.models_with_json_output = models_with_json_output
         self.calls: list[dict[str, Any]] = []
 
-    async def a_chat_completions(
+    async def a_chat_completions(  # noqa: DOEFF006 - mirrors OpenRouterClient.a_chat_completions (pre-existing)
         self,
         request_data: dict[str, Any],
         *,
@@ -105,29 +104,23 @@ def _build_mock_handler(client: MockOpenRouterClient) -> Callable[..., Any]:
             return (yield Resume(k, client))
         if isinstance(effect, AskEffect) and effect.key == "openrouter_api_key":
             return (yield Resume(k, "fake-key"))
-        yield Pass()
+        yield Pass(effect, k)
 
     return _program_handler(handler)
 
 
 @pytest.fixture(scope="module")
 def api_key() -> str:
-    key = os.environ.get("OPENROUTER_API_KEY")
+    key = os.environ.get("OPENROUTER_API_KEY")  # noqa: DOEFF004 - live e2e opt-in gate (pre-existing)
     if not key:
         pytest.skip("Set OPENROUTER_API_KEY to run the live OpenRouter e2e smoke test.")
     return key
-
-
-@pytest.fixture(scope="module")
-def handlers() -> tuple[Any, ...]:
-    return tuple(default_handlers())
 
 
 @pytest.mark.parametrize(("model", "expects_success"), MOCK_STRUCTURED_MODELS)
 def test_chat_completion_and_structured_response_with_handler_mock(
     model: str,
     expects_success: bool,
-    handlers: tuple[Any, ...],
 ):
     """Structured parsing should work without network calls via handler-based dependency injection."""
     mock_client = MockOpenRouterClient(MODELS_WITH_JSON_OUTPUT)
@@ -147,9 +140,8 @@ def test_chat_completion_and_structured_response_with_handler_mock(
         )
         return raw_response
 
-    raw_result = run(
+    raw_result = run_program(
         _build_mock_handler(mock_client)(flow()),
-        handlers=handlers,
         store={"openrouter_api_calls": []},
     )
 
@@ -177,7 +169,7 @@ def test_chat_completion_and_structured_response_with_handler_mock(
     def parse_flow() -> EffectGenerator[Any]:
         return (yield process_structured_response(raw, EchoPayload))
 
-    parse_result = run(parse_flow(), handlers=handlers, store=raw_result.raw_store)
+    parse_result = run_program(parse_flow(), store=raw_result.raw_store)
 
     if expects_success:
         assert parse_result.is_ok(), f"Structured parsing failed: {parse_result.error}"
@@ -191,8 +183,8 @@ def test_chat_completion_and_structured_response_with_handler_mock(
 
 
 @pytest.mark.e2e
-def test_chat_completion_live_smoke(api_key: str, handlers: tuple[Any, ...]) -> None:
-    """A minimal live OpenRouter smoke test using the current run()/default_handlers() runtime API."""
+def test_chat_completion_live_smoke(api_key: str) -> None:
+    """A minimal live OpenRouter smoke test using the test runner (core-effects handler chain)."""
 
     @do
     def flow() -> EffectGenerator[Any]:
@@ -206,9 +198,8 @@ def test_chat_completion_live_smoke(api_key: str, handlers: tuple[Any, ...]) -> 
             )
         )
 
-    result = run(
+    result = run_program(
         flow(),
-        handlers=handlers,
         env={
             "openrouter_api_key": api_key,
             "openrouter_client": OpenRouterClient(api_key=api_key),
