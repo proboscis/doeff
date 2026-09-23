@@ -16,7 +16,6 @@ from doeff_vm import K as K
 from doeff_vm import PyVM as PyVM
 from doeff_vm import UnhandledEffect as UnhandledEffect
 
-from doeff.cli.run_services import DoeffRunContext as DoeffRunContext
 from doeff.do import do as do
 from doeff.mcp import McpParamSchema as McpParamSchema
 from doeff.mcp import McpToolDef as McpToolDef
@@ -123,6 +122,9 @@ class _DoExprMeta(type):
     def __subclasscheck__(cls, subclass):
         return issubclass(subclass, _DOEXPR_TYPES)
 
+
+if TYPE_CHECKING:
+    from doeff.cli.run_services import DoeffRunContext as DoeffRunContext
 
 if TYPE_CHECKING:
     # 静的の読み手(pyright)にとって DoExpr は「program の node のどれか」の union。
@@ -237,3 +239,16 @@ default_async_handlers = _Removed(
 )
 
 __version__ = "0.4.1"
+
+
+def __getattr__(name: str) -> object:
+    """``DoeffRunContext`` belongs to the CLI (argparse, rich, Hy); load it on first use.
+
+    Importing it eagerly made every ``import doeff`` load the CLI stack.
+    """
+    if name == "DoeffRunContext":
+        from doeff.cli.run_services import DoeffRunContext
+
+        globals()[name] = DoeffRunContext
+        return DoeffRunContext
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

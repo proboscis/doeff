@@ -23,6 +23,7 @@ invariant-checks = ["doeff-vm-core/invariant-checks"]
 pyo3 = { version = "0.28", features = ["py-clone"] }
 doeff-vm-core = { path = "../doeff-vm-core", features = ["python_bridge"] }
 libc = "0.2"
+mimalloc = { version = "0.1", default-features = false }
 
 [dev-dependencies]
 pyo3 = { version = "0.28", features = ["auto-initialize", "py-clone"] }
