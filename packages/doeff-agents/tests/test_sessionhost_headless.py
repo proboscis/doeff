@@ -58,7 +58,7 @@ from doeff_agents.sessionhost.headless_protocol import (
     stop_verdict,
     turn_verdict,
 )
-from doeff_agents.sessionhost.impls import headless_argv, claude_code, fast_jev
+from doeff_agents.sessionhost.impls import headless_argv, claude_code, fast_jev, otel_telemetry
 from doeff_agents.sessionhost.store import StoreActor, terminal_cause_from_dict
 from sessionhost_bin import resolve_sessionhost_bin
 
@@ -2671,3 +2671,43 @@ def test_host_headless_launch_installs_the_compaction_plugin_into_the_borrowed_h
     assert sum(1 for line in log.read_text().splitlines() if line.startswith("plugin update")) == 1
     for sid in ("h-plug-off", "h-plug-missing", "h-plug-on", "h-plug-again", "h-plug-reconcile", "h-plug-outdated", "h-plug-current"):
         headless_host.ok("session.cleanup", {"session_id": sid})
+
+
+def test_otel_home_settings_merges_the_managed_env_and_keeps_the_rest() -> None:
+    """借りた家の settings.json に OTel の env を合流させる(純関数・冪等・所有外の env と他の欄は保つ)。
+    agora.tenant=personal を名乗るのは tenant が personal の時だけ(会社の行が個人用へ落ちる経路を作らない)。"""
+    before = json.dumps({"permissions": {"defaultMode": "auto"},
+                         "env": {"X": "1", "OTEL_LOGS_EXPORT_INTERVAL": "1", "OTEL_METRICS_EXPORTER": "old"}})
+    merged = json.loads(otel_telemetry.otel_home_settings(before, "http://c:4318", "personal", "agentd-pool-0"))
+    assert merged["permissions"] == {"defaultMode": "auto"}
+    assert merged["env"]["X"] == "1"
+    assert merged["env"]["OTEL_METRICS_EXPORTER"] == "otlp"
+    assert merged["env"]["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://c:4318"
+    assert merged["env"]["OTEL_RESOURCE_ATTRIBUTES"] == "agora.tenant=personal,agora.host=agentd-pool-0,agora.runner=agentd"
+    assert "OTEL_LOG_RAW_API_BODIES" not in merged["env"]
+    assert otel_telemetry.otel_home_settings(json.dumps(merged, indent=2, ensure_ascii=False), "http://c:4318", "personal", "agentd-pool-0") == json.dumps(merged, indent=2, ensure_ascii=False)
+    for tenant in ("", "company"):
+        attrs = json.loads(otel_telemetry.otel_home_settings(None, "http://c:4318", tenant, "h"))["env"]["OTEL_RESOURCE_ATTRIBUTES"]
+        assert "agora.tenant" not in attrs
+    assert json.loads(otel_telemetry.otel_home_settings("not json", "http://c:4318", "personal", ""))["env"]["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
+
+
+def test_host_headless_launch_writes_otel_env_into_the_borrowed_home_only_when_the_daemon_names_an_endpoint(
+    headless_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """手番の CLI は機体の env を継がないので、daemon の env CLAUDE_OTEL_ENDPOINT が在る時だけ、起動の前に
+    借りた家の settings.json の env へ OTel の組を書く。名乗りが無い機体では何も書かない。"""
+    home = headless_host.root / "claude-home"
+    monkeypatch.delenv(otel_telemetry.OTEL_ENDPOINT_ENV, raising=False)
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-otel-off", "claude"))
+    _wait_turn_end(headless_host, "h-otel-off")
+    settings = home / "settings.json"
+    assert not settings.exists() or "OTEL_EXPORTER_OTLP_ENDPOINT" not in settings.read_text()
+    monkeypatch.setenv(otel_telemetry.OTEL_ENDPOINT_ENV, "http://collector:4318")
+    monkeypatch.setenv(otel_telemetry.OTEL_TENANT_ENV, "personal")
+    monkeypatch.setenv(otel_telemetry.OTEL_HOST_ENV, "agentd-pool-1")
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-otel-on", "claude"))
+    _wait_turn_end(headless_host, "h-otel-on")
+    env = json.loads(settings.read_text())["env"]
+    assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://collector:4318"
+    assert env["OTEL_RESOURCE_ATTRIBUTES"] == "agora.tenant=personal,agora.host=agentd-pool-1,agora.runner=agentd"
