@@ -60,13 +60,12 @@ from pydantic import BaseModel
 
 from doeff import (
     Effect,
-    Delegate,
     EffectGenerator,
+    Pass,
     Resume,
-    default_handlers,
     do,
-    run,
 )
+from _runner import run_program
 from doeff_image.effects import ImageEdit
 from doeff_image.effects import ImageEdit as UnifiedImageEdit
 from doeff_image.effects import ImageGenerate as UnifiedImageGenerate
@@ -92,10 +91,7 @@ class FunFact(BaseModel):
 
 
 def _run_with_handler(program, handler):
-    return run(
-        handler(program),
-        handlers=default_handlers(),
-    )
+    return run_program(handler(program))
 
 
 @do
@@ -236,7 +232,7 @@ def test_gemini_handler_delegates_unsupported_models() -> None:
     def fallback_handler(effect: Effect, k: Any):
         if isinstance(effect, LLMChat):
             return (yield Resume(k, "fallback-chat"))
-        yield Delegate()
+        yield Pass(effect, k)
 
     @do
     def program() -> EffectGenerator[str]:
@@ -247,9 +243,8 @@ def test_gemini_handler_delegates_unsupported_models() -> None:
             )
         )
 
-    result = run(
-        _install_raw_handler(fallback_handler)(gemini_mock_handler(program())),
-        handlers=default_handlers(),
+    result = run_program(
+        _install_raw_handler(fallback_handler)(_install_raw_handler(gemini_mock_handler)(program()))
     )
 
     assert result.is_ok()

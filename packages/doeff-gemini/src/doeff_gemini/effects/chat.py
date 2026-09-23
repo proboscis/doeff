@@ -2,16 +2,18 @@
 
 
 import warnings
-from dataclasses import dataclass
 
 from doeff_llm.effects import LLMChat, LLMStreamingChat
 
 
-@dataclass(frozen=True, kw_only=True)
 class GeminiChat(LLMChat):
     """Deprecated alias of :class:`doeff_llm.effects.LLMChat`."""
 
-    def __post_init__(self) -> None:
+    def __init__(self, **kwargs):
+        # The doeff_llm base effects define an explicit ``__init__`` (they
+        # are not dataclasses); forward to it so the alias keeps the base
+        # constructor signature.
+        super().__init__(**kwargs)
         warnings.warn(
             "GeminiChat is deprecated; use doeff_llm.effects.LLMChat instead.",
             DeprecationWarning,
@@ -19,19 +21,16 @@ class GeminiChat(LLMChat):
         )
 
 
-@dataclass(frozen=True, kw_only=True)
 class GeminiStreamingChat(LLMStreamingChat):
     """Deprecated alias of :class:`doeff_llm.effects.LLMStreamingChat`."""
 
-    def __post_init__(self) -> None:
+    def __init__(self, **kwargs):
+        # The doeff_llm base effects define an explicit ``__init__`` (they
+        # are not dataclasses); forward to it so the alias keeps the base
+        # constructor signature.
+        super().__init__(**kwargs)
         warnings.warn(
             "GeminiStreamingChat is deprecated; use doeff_llm.effects.LLMStreamingChat instead.",
             DeprecationWarning,
             stacklevel=2,
         )
-
-
-__all__ = [
-    "GeminiChat",
-    "GeminiStreamingChat",
-]

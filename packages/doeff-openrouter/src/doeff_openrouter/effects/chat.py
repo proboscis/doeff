@@ -2,16 +2,18 @@
 
 
 import warnings
-from dataclasses import dataclass
 
 from doeff_llm.effects import LLMChat, LLMStreamingChat
 
 
-@dataclass(frozen=True, kw_only=True)
 class RouterChat(LLMChat):
     """Deprecated alias of :class:`doeff_llm.effects.LLMChat`."""
 
-    def __post_init__(self) -> None:
+    def __init__(self, **kwargs):
+        # The doeff_llm base effects define an explicit ``__init__`` (they
+        # are not dataclasses); forward to it so the alias keeps the base
+        # constructor signature.
+        super().__init__(**kwargs)
         warnings.warn(
             "RouterChat is deprecated; use doeff_llm.effects.LLMChat instead.",
             DeprecationWarning,
@@ -19,19 +21,16 @@ class RouterChat(LLMChat):
         )
 
 
-@dataclass(frozen=True, kw_only=True)
 class RouterStreamingChat(LLMStreamingChat):
     """Deprecated alias of :class:`doeff_llm.effects.LLMStreamingChat`."""
 
-    def __post_init__(self) -> None:
+    def __init__(self, **kwargs):
+        # The doeff_llm base effects define an explicit ``__init__`` (they
+        # are not dataclasses); forward to it so the alias keeps the base
+        # constructor signature.
+        super().__init__(**kwargs)
         warnings.warn(
             "RouterStreamingChat is deprecated; use doeff_llm.effects.LLMStreamingChat instead.",
             DeprecationWarning,
             stacklevel=2,
         )
-
-
-__all__ = [
-    "RouterChat",
-    "RouterStreamingChat",
-]

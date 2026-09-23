@@ -113,7 +113,7 @@ def _is_media_content_part(content: dict[str, Any]) -> bool:
     return False
 
 
-def _content_to_text_and_parts(content: Any) -> tuple[str, list[GeminiContentPart]]:  # noqa: PLR0911
+def _content_to_text_and_parts(content: Any) -> tuple[str, list[GeminiContentPart]]:  # noqa: PLR0911, DOEFF006 - private (text, parts) pair (pre-existing)
     if content is None:
         return "", []
     if isinstance(content, str):
@@ -141,7 +141,7 @@ def _content_to_text_and_parts(content: Any) -> tuple[str, list[GeminiContentPar
     return str(content), []
 
 
-def _messages_to_prompt_and_parts(
+def _messages_to_prompt_and_parts(  # noqa: DOEFF006 - private (prompt, parts) pair (pre-existing)
     messages: list[dict[str, Any]],
 ) -> tuple[str, list[GeminiContentPart]]:
     lines: list[str] = []
@@ -363,8 +363,8 @@ def _embedding_impl(effect: LLMEmbedding) -> Generator[Any, Any, list[float] | l
 
 
 @do
-def gemini_image_handler(effect: Any, k: Any):
-    """Protocol handler with model routing for unified image effects."""
+def _gemini_image_dispatch(effect: Any, k: Any):
+    """Raw ``(effect, k)`` dispatcher behind :data:`gemini_image_handler`."""
     if isinstance(effect, GeminiImageEdit):
         if not _is_gemini_image_model(effect.model):
             yield Pass(effect, k)
@@ -387,6 +387,13 @@ def gemini_image_handler(effect: Any, k: Any):
         return (yield Resume(k, value))
 
     yield Pass(effect, k)
+
+
+gemini_image_handler = _program_handler(_gemini_image_dispatch)
+"""Program -> Program handler with model routing for unified image effects.
+
+Compose by calling it on the program: ``gemini_image_handler(program)``.
+"""
 
 
 @do
@@ -480,8 +487,8 @@ def production_handlers(
 
 
 @do
-def gemini_production_handler(effect: Any, k: Any):
-    """Single protocol handler suitable for ``WithHandler`` usage."""
+def _gemini_production_dispatch(effect: Any, k: Any):
+    """Raw ``(effect, k)`` dispatcher behind :data:`gemini_production_handler`."""
     if isinstance(effect, GeminiCalculateCost):
         return (yield default_gemini_cost_handler(effect, k))
     if isinstance(effect, LLMStreamingChat | GeminiStreamingChat):
@@ -506,14 +513,8 @@ def gemini_production_handler(effect: Any, k: Any):
     yield Pass(effect, k)
 
 
-__all__ = [
-    "GEMINI_IMAGE_MODEL_PREFIXES",
-    "GEMINI_MODEL_EXACT",
-    "GEMINI_MODEL_PREFIXES",
-    "ProtocolHandler",
-    "_is_gemini_model",
-    "default_gemini_cost_handler",
-    "gemini_image_handler",
-    "gemini_production_handler",
-    "production_handlers",
-]
+gemini_production_handler = _program_handler(_gemini_production_dispatch)
+"""Program -> Program handler for real Gemini API execution.
+
+Compose by calling it on the program: ``gemini_production_handler(program)``.
+"""
