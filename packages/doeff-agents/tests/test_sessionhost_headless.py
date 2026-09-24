@@ -830,7 +830,7 @@ def test_headless_settings_env_merge_refuses_credential_shaped_names() -> None:
         with pytest.raises(RuntimeError, match="credential-shaped env is refused"):
             run(headless_argv.argv_with_settings_env(["claude"], {name: "x"}))
         # 既に --settings の env に居た名も合流の後の全体で断る
-        with pytest.raises(RuntimeError, match="claude.settings_env"):
+        with pytest.raises(RuntimeError, match=r"claude\.settings_env"):
             run(headless_argv.argv_with_settings_env(
                 ["claude", "--settings", json.dumps({"env": {name: "x"}})], {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"}))
     merged = run(headless_argv.argv_with_settings_env(["claude"], {"AGORA_IMAGE_TOOLS": "1"}))
