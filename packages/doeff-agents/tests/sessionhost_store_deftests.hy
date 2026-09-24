@@ -150,6 +150,23 @@
 
 
 ;; ---------------------------------------------------------------------------
+;; 書きの所要(card acp:kanban-issue:ki-e786e72e2ae7)
+;; ---------------------------------------------------------------------------
+
+(deftest test-open-conn-writes-without-a-sync-per-statement
+  ;; 実測 2026-09-24(pool の pod agentd-pool-1・store は longhorn の volume): fsync 1 回 p50 96 ms、
+  ;; 既定の rollback journal(DELETE)の autocommit の書き 1 文 p50 215 ms。store の actor は 1 本の thread で
+  ;; 読みも書きも順に通すので、書きが積もると session.get / session.list が 5〜12 秒待ち、agentd の読みの
+  ;; 期限 10 秒を越えた。WAL + synchronous NORMAL は commit で fsync を撃たない(checkpoint だけ)。
+  (defn check [conn]
+    (setv mode (get (.fetchone (.execute conn "PRAGMA journal_mode")) 0))
+    (assert (= (.lower mode) "wal") f"journal_mode = {mode}(wal でない)")
+    (setv sync (get (.fetchone (.execute conn "PRAGMA synchronous")) 0))
+    ;; 1 = NORMAL(2 = FULL は commit ごとに WAL を fsync する)
+    (assert (= sync 1) f"synchronous = {sync}(NORMAL = 1 でない)"))
+  (with-tmp-conn check))
+
+;; ---------------------------------------------------------------------------
 ;; migrate parity
 ;; ---------------------------------------------------------------------------
 
