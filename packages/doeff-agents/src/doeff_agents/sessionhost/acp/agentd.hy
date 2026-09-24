@@ -132,6 +132,7 @@
   CHARTER-KIND-VERIFY
   INTAKE-ROUTE-DEFER
   INTAKE-ROUTE-INLINE
+  INTAKE-ROUTE-SPAWN
   IntakeCollect
   IntakeReport
   IntakeStart
@@ -250,6 +251,7 @@
   CustodyLeaseRevoke
   DeltaBatch
   EVENT-WINDOW-LIMIT
+  RECEIVE-CHECKPOINT-MS
   EventWindow
   FsCanonicalPath
   FsDirectoryExists
@@ -406,7 +408,6 @@
   withdrawn-command-rows-of
   without-command
   claude-home-of
-  in-flight-summarize-ids
   in-flight-summarize-of
   record-body-bytes-of
   record-ref-of
@@ -663,6 +664,7 @@
   usage-by-row-name
   wait-seconds-for
   intake-ids-of
+  received-job-ids
   bound-at-ms-of
   intake-route-of
   merged-intake
@@ -5037,19 +5039,11 @@
   ;; (手番が終わった・取り下げ・置き直し・記録を持った行の項はここで消える — 漏れない 1 点 judgment.unanswered-borrows-kept)。
   ;; 残った項の行は claim が着いたまま session が無いので、拾い直し(recover-job — 器に無い = SessionFailed)に渡さない。
   (<- waiting tuple (unanswered-borrows-kept withdrawn-handled.unanswered-borrows running))
-  (<- known-jobs set (in-flight-ids withdrawn-handled))
-  (<- known-commands set (in-flight-command-ids withdrawn-handled))
-  (<- known-summaries set (in-flight-summarize-ids withdrawn-handled))
-  ;; 段 12 lane 12j(agora-redesign #402): 着かなかった Ended を持ち越している job の Bound(監督の置き直し)は claim しない —
-  ;; 手番は終わっている(record-unrecorded-ends が Ended を書いて試みを閉じる)。
-  (<- carried-ids set (unrecorded-end-ids withdrawn-handled))
-  (setv known (| known-jobs known-commands known-summaries carried-ids))
-  ;; card ki-fd0f3b234a38: 接続が答えない借りを待っている job も受け済み(claim は着いている — 拾い直しにも claim にも渡さない)。
-  (setv known (| known (set (gfor entry waiting entry.job-id))))
-  ;; card acp:kanban-issue:ki-e786e72e2ae7(I1): 拍の外の係で受け付け中の job も受け済み(claim も拾い直しもしない —
-  ;; 係が claim を着けた後の Running の行を、memory に無いからと recover-job に渡さない)。写しは拍の頭の引き取りが置いた値。
-  (<- intake-ids set (intake-ids-of withdrawn-handled))
-  (setv known (| known intake-ids))
+  ;; 受け済みの id の和は judgment.received-job-ids の 1 点(拍の途中の受け receive-fresh-bindings と同じ判断):
+  ;; memory の手番・verify・要約・着かなかった Ended の持ち越し(段 12 lane 12j・#402 — 監督の置き直しの Bound は claim しない)・
+  ;; 接続が答えない借りの待ち(card ki-fd0f3b234a38 — claim は着いている)・拍の外で受け付け中(card ki-e786e72e2ae7 I1 — 係が
+  ;; claim を着けた後の Running の行を recover-job に渡さない。写しは拍の頭の引き取りが置いた値)。借りの待ちはこの拍で残した項。
+  (<- known set (received-job-ids (replace withdrawn-handled :unanswered-borrows waiting)))
   (setv previously-deferred withdrawn-handled.deferred)
   (setv current (replace withdrawn-handled :deferred #() :unanswered-borrows waiting))
   ;; 段 12 lane 12j(agora-redesign #402): 監督が置き直した(Bound attempt N)行を自分が**いま走らせている** job = 新しい session を
@@ -5158,6 +5152,57 @@
                        :program (claim-job settings state rows row previously-deferred now-ms)))
       (<- collected AgentdState (collect-intakes settings (replace state :intakes (+ state.intakes #(#(job-id subject)))) False))
       collected)))
+
+
+(defk receive-fresh-bindings [settings state now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "拍の途中の受け(card acp:kanban-issue:ki-e786e72e2ae7): 走っている手番の観測の合間に、変わった行だけを読み直し
+   (refresh-rows の window — watch の合図は消費しない)、自分に**新しく**結ばれた会話の手番のうち受け付けの係へ渡せるもの
+   (受け方 spawn)だけを渡す(start-intake — 受けの腕と同じ入口)。
+
+   なぜ要るか: 拍は走っている手番の観測を 1 本ずつ直列に回し、受けの腕(receive-bound-jobs)は拍に 1 回。本番の pool の pod
+   (手番 10 本)では拍が 5〜12 秒かかり、結びの行の書きから拾うまでが拍の残りを待って 1.7〜1.9 秒(手番 1〜2 本では
+   30〜300 ms — 2026-09-25 の実測)。拾う点を観測の合間にも置けば、待ちは観測 1 本ぶんに縮む。
+
+   受けの腕の他の仕事(取り下げ・置き直しの引き継ぎ・拾い直し・verify・要約・memory に手番が居る会話の claim・持ち越し)は
+   拍の受けの腕のまま — ここは新しい結びの受け付けを先に始めるだけで、判断(受け済みの id・受け方・結びが自分を指すか)は
+   受けの腕と同じ 1 点を読む。排水の最中は受けない(受けの腕と同じ)。"
+  (if settings.draining
+      state
+      (do
+        (<- refreshed AgentdState (refresh-rows state LIST-MODE-WINDOW))
+        (<- bound tuple (job-rows-bound-to refreshed.rows settings.node-name refreshed.node-row-id))
+        (<- known set (received-job-ids refreshed))
+        (setv current refreshed)
+        (for [row bound]
+          (when (not-in row.resource-id known)
+            (<- kind str (job-kind-of row))
+            (when (and (!= kind CHARTER-KIND-VERIFY) (!= kind CHARTER-KIND-SUMMARIZE))
+              (<- route str (intake-route-of current (str (.get row.spec "subject" row.resource-id))))
+              (when (= route INTAKE-ROUTE-SPAWN)
+                (<- (LogLine :text f"agentd: job {row.resource-id} was bound mid-tick — its intake starts between job observations"))
+                (<- current AgentdState (start-intake settings current current.rows row current.deferred now-ms))))))
+        current)))
+
+
+(defk receive-checkpoint [settings state look-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: look-ms int)]
+   :post [(: % tuple)]}
+  "拍の途中の受けの 1 点(観測の合間に拍が呼ぶ): 最後に行を読み直してから RECEIVE-CHECKPOINT-MS 経っていれば
+   receive-fresh-bindings を撃つ。I/O の失敗は log して拍を続ける(受けの腕と同じ — 次の拍の受けの腕が拾う)。
+   戻り = #(状態 最後に行を読み直した刻)。"
+  (<- now-ms int (ClockNowMs))
+  (if (< (- now-ms look-ms) RECEIVE-CHECKPOINT-MS)
+      #(state look-ms)
+      (do
+        (setv current state)
+        (try
+          (<- received AgentdState (receive-fresh-bindings settings state now-ms))
+          (setv current received)
+          (except [e IO-FAILURES]
+            (<- (LogLine :text f"agentd: mid-tick receive failed: {(. (type e) __name__)}: {e}"))))
+        #(current now-ms))))
 
 
 (defk sweep-turn-records [settings state now-ms]
@@ -5286,6 +5331,8 @@
   (<- arm-ms int (ClockNowMs))
   (setv (get arms "receive") (- arm-ms mark))
   (setv mark arm-ms)
+  ;; 拍の途中の受け(receive-checkpoint)の間隔を測る起点 = 最後に行を読み直した刻(card acp:kanban-issue:ki-e786e72e2ae7)。
+  (setv #^ int look-ms arm-ms)
   ;; 段 12(agora-redesign #537 便 1): 走っている turn-record の終状態の巡回(遅い周期・memory なし)。受けの後に撃つので、
   ;; この拍に claim / 拾い直した手番は memory に居る = 巡回の相手にならない。I/O の失敗でも刻印は進める(洪水を避ける)。
   (<- sweep-due bool (due current.last-turn-record-sweep-ms now-ms settings.turn-record-sweep-seconds))
@@ -5341,7 +5388,10 @@
       (setv current (get pushed 0))
       (.append seen #(job.job-id (get pushed 1) (get pushed 2)))
       (except [e IO-FAILURES]
-        (<- (LogLine :text f"agentd: job {job.job-id} live tail failed: {(. (type e) __name__)}: {e}")))))
+        (<- (LogLine :text f"agentd: job {job.job-id} live tail failed: {(. (type e) __name__)}: {e}"))))
+    ;; 観測の合間の受け(拍の終わりを待たずに新しい結びを受け付けへ — 所要はこの腕に数える)。
+    (<- point tuple (receive-checkpoint settings current look-ms))
+    (setv current (get point 0) look-ms (get point 1)))
   (<- arm-ms int (ClockNowMs))
   (setv (get arms "jobs-fast") (- arm-ms mark))
   (setv mark arm-ms)
@@ -5355,7 +5405,9 @@
         (<- observed AgentdState (observe-job-slow settings current slow (get entry 1) (get entry 2) now-ms))
         (setv current observed)
         (except [e IO-FAILURES]
-          (<- (LogLine :text f"agentd: job {job-id} tick failed: {(. (type e) __name__)}: {e}"))))))
+          (<- (LogLine :text f"agentd: job {job-id} tick failed: {(. (type e) __name__)}: {e}")))))
+    (<- point tuple (receive-checkpoint settings current look-ms))
+    (setv current (get point 0) look-ms (get point 1)))
   (<- arm-ms int (ClockNowMs))
   (setv (get arms "jobs-slow") (- arm-ms mark))
   (setv mark arm-ms)
@@ -5379,6 +5431,9 @@
   (<- arm-ms int (ClockNowMs))
   (setv (get arms "summaries") (- arm-ms mark))
   (setv mark arm-ms)
+  ;; 記録の送り(flush)の前にも 1 度(本番で 0.5〜0.9 秒かかる腕)。所要は flush の腕に数える。
+  (<- point tuple (receive-checkpoint settings current look-ms))
+  (setv current (get point 0))
   ;; 段 9f lane 9f-2: この拍で spool に置いた本文(と前の拍に送れなかった残り)を会話の記録の service へ — 拍の終わりの 1 点。
   (when settings.record-enabled
     (<- flush bool (record-flush-due current now-ms settings))

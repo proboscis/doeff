@@ -1953,6 +1953,12 @@ LIST_MODE_WINDOW: ListMode = "window"
 LIST_MODE_NONE: ListMode = "none"
 #: 1 回の event-window の読みの上限(engine の maxEventWindowLimit = 2000)。
 EVENT_WINDOW_LIMIT = 2000
+#: 拍の途中の受け(agentd.receive-fresh-bindings・card acp:kanban-issue:ki-e786e72e2ae7)の間隔の下限(ms)。走っている手番の
+#: 観測の合間に、前の行の読み直しからこれだけ経っていれば変わった行だけを読み直し、新しく結ばれた会話の手番を受け付けの係へ渡す。
+#: 本番の拍は手番 10 本で 5〜12 秒かかり、受けの腕は拍に 1 回なので、結びの書きから拾うまでが拍の長さに比例していた
+#: (2026-09-25 の実測 1.7〜1.9 秒・手番 1〜2 本では 30〜300 ms)。250 ms は目標(結び → 拾う 500 ms 以内)の半分で、
+#: 窓の読みは pod の中で 10〜100 ms。
+RECEIVE_CHECKPOINT_MS = 250
 
 
 @dataclass(frozen=True)
