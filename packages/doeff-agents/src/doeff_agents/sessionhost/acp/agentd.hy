@@ -122,6 +122,10 @@
 (import hashlib)
 (import doeff_agents.sessionhost.acp.cache_observation [with-request-start-bound])
 (import doeff_agents.sessionhost.acp.response_usage [responses-status-of usage-of-responses])
+(import doeff_agents.sessionhost.acp.input_source [NoInputRow CarryInput SkipInput TakenInput])
+(import doeff_agents.sessionhost.acp.turn_input [carried-input-id-of input-key-of input-carry-verdict-of
+                                                 taken-status-of read-status-of
+                                                 READ-EVIDENCE-HANDED READ-EVIDENCE-INTERJECTED])
 
 (import doeff_agents.sessionhost.attachment [TurnAttachment])
 (import doeff_agents.sessionhost.acp.effects [
@@ -219,6 +223,7 @@
   SummaryRegion
   CONDITION-ATTACHMENT-IGNORED
   CONDITION-INPUT-UNDELIVERED
+  CONDITION-INPUT-WITHDRAWN
   AGENT-JOB-KIND
   AGORA-KINDS-NAMESPACE
   AcpConversationMail
@@ -1688,9 +1693,20 @@
   ;; 期限切れだけなら、認証の借用・sessionの破棄・起動の前に終了する。
   ;; 本文が同居する通常の郵便はそのまま運び、届いたidにも期限切れを混ぜない。
   ;; 続きの手番は案内文がその手番の入力なので、期限切れの郵便しか無くても閉じない(§3 の 8)。
-  (when (and (get mail 3) (not bodies) (not lead))
+  ;; 送信待ちの列(card acp:kanban-issue:ki-0bb4104cd8c2): 取り消された・別の郵便が取った入力の郵便(skipped)は本文から外れて
+  ;; いる。運ぶ郵便が 0 で案内文も無ければ CLI を起こさず閉じ、外した郵便は扱い済みとして配達報告に載せる(Messaging が
+  ;; 運び直さない — Decide.carrierEndedOf の neverHanded)。
+  (setv skipped (get mail 4))
+  (setv taken (get mail 5))
+  (when (and (get mail 3) (not bodies) (not lead) (not skipped))
     (<- (end-job-now settings row "InputExpired"
                      (+ "message delivery deadline passed: " (.join ", " (get mail 3))) #() now-ms))
+    (return state))
+  (when (and skipped (not bodies) (not lead))
+    (<- (end-job-owing settings row CONDITION-INPUT-WITHDRAWN
+                       (+ "every input of this turn was withdrawn or taken by another mail: " (.join ", " skipped)
+                          (if (get mail 3) (+ " (expired: " (.join ", " (get mail 3)) ")") ""))
+                       #() now-ms skipped))
     (return state))
   ;; 段 10 lane 10o: 郵便の添付(bodies と同じ並び)。畳む腕は 1 手番目に、送る腕は SessionSend に載る。
   (setv carried (get mail 1))
@@ -1800,7 +1816,8 @@
               (<- folds bool (first-turn-carries-inputs settings.backend-kind used.arm))
               (<- started AgentdState
                   (after-start settings state row plan outcome lease used.arm now-ms subject
-                               (if folds "" lead) (if folds #() bodies) (if folds #() carried) (get mail 2)))
+                               (if folds "" lead) (if folds #() bodies) (if folds #() carried) (get mail 2)
+                               skipped taken))
               (<- stage-done int (ClockNowMs))
               ;; 段の切れ目: 起こし方の解き(記録の在否の問い)→ 郵便の読み → 預かり所の借り → 温かい session の片付け →
               ;; 器の起動 / 送り(履歴の読みと組み直しを含む)→ 送った後の書き(turn-record・実況の頭・届いた証拠)。
@@ -2107,9 +2124,117 @@
   ;; 本文の読み出しが長引いた場合も含め、現在時刻で判定する。
   (<- now-ms int (ClockNowMs))
   (<- eligible tuple (unexpired-messages-of (tuple found) now-ms))
+  ;; 送信待ちの列(card acp:kanban-issue:ki-0bb4104cd8c2): 運搬郵便が名指す入力の行を取る(taken の CAS)。運ぶ郵便は本文を
+  ;; 最新の版に差し替え、運ばない郵便(取り消し・別の郵便が取った)は本文の並びから外して skipped に名乗る。
+  (<- taken-step tuple (take-carried-inputs row.resource-id (get eligible 0) now-ms))
+  (setv [carried-rows skipped taken] taken-step)
   ;; 段 10 lane 10o: 本文と添付は同じ 1 つの判断で inputs の順に並ぶ(並びがずれる第 2 の述語を置かない)。
-  (<- triple tuple (message-bodies-of (get eligible 0) inputs (get read 0) (get read 1)))
-  (+ triple #((get eligible 1))))
+  (<- triple tuple (message-bodies-of carried-rows inputs (get read 0) (get read 1)))
+  ;; 外した郵便は「見つからない」ではない(条件 InputUnavailable に混ぜない — 扱い済みとして別に運ぶ)。
+  (setv missing (tuple (lfor input-id (get triple 2) :if (not-in input-id skipped) input-id)))
+  #((get triple 0) (get triple 1) missing (get eligible 1) skipped taken))
+
+
+(defk mail-id-of-row [message]
+  {:pre [(: message AcpRow)]
+   :post [(: % str)]}
+  "郵便の行の id(identityKey = spec.id・無ければ行の resourceId — message-bodies-of と同じ読み)。"
+  (setv spec-id (.get message.spec "id"))
+  (if (isinstance spec-id str) spec-id message.resource-id))
+
+
+(defk take-carried-input [job-id message now-ms]
+  {:pre [(: job-id str) (: message AcpRow) (: now-ms int)]
+   :post [(: % tuple)]}
+  "1 通の運搬郵便が名指す入力の行を読み、運ぶかを turn_input.input-carry-verdict-of の 1 点で決め、運ぶなら taken を CAS で
+   書く(Conflict は読み直して最大 3 回)。戻り = #(verdict taken) — taken は取った印の在る入力(TakenInput)か None。
+   書きが 3 回とも負けた・断られた拍は取った印なしで最新の版を運ぶ(行の無い入力と同じ競合の窓 — 本文は落とさない)。"
+  (<- input-id (| str None) (carried-input-id-of message.spec))
+  (when (is input-id None)
+    (return #((NoInputRow) None)))
+  (<- mail-id str (mail-id-of-row message))
+  (<- key str (input-key-of message.namespace input-id))
+  (setv last None)
+  (for [_attempt (range 3)]
+    (<- input-row (| AcpRow None) (AcpGetRow :key key))
+    (<- verdict (| NoInputRow CarryInput SkipInput) (input-carry-verdict-of input-row mail-id))
+    (setv last verdict)
+    (when (not (isinstance verdict CarryInput))
+      (return #(verdict None)))
+    (setv status (if (isinstance input-row.status dict) input-row.status {}))
+    (<- image (| dict None) (taken-status-of status job-id mail-id verdict.rev now-ms))
+    (when (is image None)
+      (return #(verdict (TakenInput :mail-id mail-id :input-key key))))
+    (<- wrote (| Written Conflict Refused) (AcpPutStatus :row input-row :status image))
+    (when (isinstance wrote Written)
+      (return #(verdict (TakenInput :mail-id mail-id :input-key key))))
+    (when (isinstance wrote Refused)
+      (<- (LogLine :text (+ f"agentd: job {job-id} could not take input {input-id} carried by {mail-id} ({wrote}); "
+                            "carrying its latest revision without the taken mark")))
+      (return #(verdict None))))
+  (<- (LogLine :text (+ f"agentd: job {job-id} could not take input {input-id} carried by {mail-id} (the row kept moving); "
+                        "carrying its latest revision without the taken mark")))
+  #(last None))
+
+
+(defk take-carried-inputs [job-id rows now-ms]
+  {:pre [(: job-id str) (: rows tuple) (: now-ms int)]
+   :post [(: % tuple)]}
+  "手番が運ぶ郵便の行ごとに take-carried-input を撃つ。戻り = #(運ぶ行 外した郵便の id 取った入力):
+   運ぶ行は本文(spec.body)を入力の最新の版に差し替えた行(入力を名指さない郵便はそのまま)、外した郵便は
+   SkipInput の郵便(本文の並びから外し、配達報告には扱い済みとして載せる)。"
+  (setv kept [])
+  (setv skipped [])
+  (setv taken [])
+  (for [message rows]
+    (<- step tuple (take-carried-input job-id message now-ms))
+    (setv [verdict mark] step)
+    (cond
+      (isinstance verdict SkipInput)
+      (do
+        (<- mail-id str (mail-id-of-row message))
+        (<- (LogLine :text f"agentd: job {job-id} skips mail {mail-id} — its input is {verdict.reason}"))
+        (.append skipped mail-id))
+      (isinstance verdict CarryInput)
+      (do
+        (.append kept (replace message :spec (| message.spec {"body" verdict.text})))
+        (when (is-not mark None)
+          (.append taken mark)))
+      True
+      (.append kept message)))
+  #((tuple kept) (tuple skipped) (tuple taken)))
+
+
+(defk mark-inputs-read [taken handed evidence now-ms]
+  {:pre [(: taken tuple) (: handed tuple) (: evidence str) (: now-ms int)]
+   :post [(: % int)]}
+  "器へ渡せた郵便(handed)が取った入力の行へ read(readEvidence = evidence)を CAS で書く(E6)。Conflict は 1 度だけ
+   読み直す。書けなくても手番は止めない(log だけ — 入力は渡してあり、残るのは帯の表示)。戻り = 書けた数。"
+  (setv wrote-count 0)
+  (for [mark taken]
+    (when (in mark.mail-id handed)
+      (setv done False)
+      (for [_attempt (range 2)]
+        (when (not done)
+          (<- input-row (| AcpRow None) (AcpGetRow :key mark.input-key))
+          (if (is input-row None)
+              (setv done True)
+              (do
+                (setv status (if (isinstance input-row.status dict) input-row.status {}))
+                (<- image (| dict None) (read-status-of status mark.mail-id evidence now-ms))
+                (if (is image None)
+                    (setv done True)
+                    (do
+                      (<- wrote (| Written Conflict Refused) (AcpPutStatus :row input-row :status image))
+                      (cond
+                        (isinstance wrote Written) (do (setv done True) (setv wrote-count (+ wrote-count 1)))
+                        (isinstance wrote Refused)
+                        (do
+                          (setv done True)
+                          (<- (LogLine :text f"agentd: input {mark.input-key} was handed but its read mark was refused ({wrote})"))))))))))
+      (when (not done)
+        (<- (LogLine :text f"agentd: input {mark.input-key} was handed but its read mark kept conflicting")))))
+  wrote-count)
 
 
 (defk continuation-guidance-for [row]
@@ -2154,10 +2279,11 @@
   #(path start-offset from-head))
 
 
-(defk after-start [settings state row plan view lease arm now-ms subject lead bodies carried missing]
+(defk after-start [settings state row plan view lease arm now-ms subject lead bodies carried missing skipped taken]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: row AcpRow) (: plan LaunchPlan)
          (: view SessionView) (: lease (| LeaseGrant None)) (: arm str) (: now-ms int)
-         (: subject str) (: lead str) (: bodies tuple) (: carried tuple) (: missing tuple)]
+         (: subject str) (: lead str) (: bodies tuple) (: carried tuple) (: missing tuple)
+         (: skipped tuple) (: taken tuple)]
    :post [(: % AgentdState)]}
   "手番の始まり(session を起こした後・温かい session ならそのまま): 郵便の本文(bodies — headless の
    起こす腕では空: 本文は起こした prompt に畳んである)を送る(awaiting — 送った本文は owed。headless は
@@ -2168,7 +2294,9 @@
    claim が空で宣言した欄への 1 回の CAS)。これが『郵便が届いたか』の唯一の証拠で、ACP は手番の phase から
    推定しない。器が送りを断った拍は condition InputUndelivered(例外にしない)で、**1 通も渡せなかった手番は
    その場で Ended**(cause = failed / InputUndelivered・札は返す・session は残す)— Running のまま残すと
-   1 会話 1 手番の門がその会話の次の手番を全部塞ぐ。郵便の積み直しは ACP の配達の 1 点が担う。"
+   1 会話 1 手番の門がその会話の次の手番を全部塞ぐ。郵便の積み直しは ACP の配達の 1 点が担う。
+   送信待ちの列(card acp:kanban-issue:ki-0bb4104cd8c2): skipped = 運ばないと決めた郵便(取り消された・別の郵便が取った入力 —
+   本文の並びに居ない)は扱い済みとして配達報告に載せ、taken = 取った入力の行は器へ渡せた拍に read{handed-to-turn} を書く。"
   (setv job-id row.resource-id)
   (setv pending [])
   (<- start tuple (start-offset-of view arm))
@@ -2195,7 +2323,8 @@
   ;; card acp:kanban-issue:ki-3149aebbf675 A: この手番が運ぶ郵便の id と、送りの束の対応は judgment の 1 点
   ;; (mail-input-ids-of / send-parcels-of)。腕で並べ直すと、届いた id と行へ記帳する id がずれる。
   (<- asked tuple (inputs-of row))
-  (<- mail-ids tuple (mail-input-ids-of asked missing))
+  ;; 外した郵便(skipped)も本文の並びに居ない — 並びと id の対応(send-parcels-of)から外し、扱い済みとして別に記帳する。
+  (<- mail-ids tuple (mail-input-ids-of asked (+ missing skipped)))
   ;; card acp:kanban-issue:ki-06b286143c17: lead(続きの手番の再開の案内文)は郵便の前 — 畳むなら同じ 1 本の先頭、
   ;; 畳まないなら id を運ばない束 1 つ(案内文は郵便ではないので配達報告に載らない — I6)。並べるのも send-parcels-of の 1 点。
   (<- parcels tuple (send-parcels-of mail-ids bodies carried folds lead))
@@ -2293,10 +2422,17 @@
   ;; 頭への書き 1 往復(≈ 60〜100 ms)をその前に挟むと画面の最初の差分がその分遅れる。
   ;; card acp:kanban-issue:ki-06b286143c17 §3 の 9: 書きが着かなかった id は捨てない — job の欄に持ち越し、次の遅い拍
   ;; (stream-job-slow)が書き直し、それより先に手番が終わったら Ended の書きが同じ 1 回の書きに足す。
-  (when delivered
-    (<- recorded bool (record-inputs-delivered row.key job-id (tuple delivered)))
+  ;; 送信待ちの列: 外した郵便は扱い済み(運ぶ本文が無いので送りの成否に依らない)— 同じ 1 回の書きに載せる。
+  (setv handed-mail (tuple delivered))
+  (setv reported (+ (tuple delivered) (tuple (lfor input-id skipped :if (not-in input-id delivered) input-id))))
+  (when reported
+    (<- recorded bool (record-inputs-delivered row.key job-id reported))
     (when (not recorded)
-      (setv job (replace job :inputs-delivered-owed (tuple delivered)))))
+      (setv job (replace job :inputs-delivered-owed reported))))
+  ;; 取った入力の行へ「読まれた」(器へ渡せた郵便の分だけ・書けなくても手番は止めない)。
+  (when taken
+    (<- read-at int (ClockNowMs))
+    (<- (mark-inputs-read taken handed-mail READ-EVIDENCE-HANDED read-at)))
   (<- spec dict (turn-record-spec-of job))
   (<- created (| Written Conflict Refused)
       (AcpCreate :namespace AGORA-KINDS-NAMESPACE :kind TURN-RECORD-KIND :resource-id job-id :spec spec))
@@ -4052,6 +4188,9 @@
     (return job))
   (setv handed [])
   (setv unreadable [])
+  ;; 送信待ちの列: 入力を運ばないと決めた割り込み(注入しない・扱い済み)と、注入の前に取った入力の行。
+  (setv skipped [])
+  (setv marks [])
   (setv stopped False)
   (for [message-id pending]
     (when (not stopped)
@@ -4070,10 +4209,26 @@
             (setv body (.get (get read 0) fetch-key)))
           ;; 段 10 lane 10o: 割り込みの郵便の添付も型つきで運ぶ(綴りは Dialogue)。
           (setv carried (.get (get read 1) fetch-key #()))))
-      (if (or (is message None) (not (isinstance body str)))
+      ;; 送信待ちの列(card acp:kanban-issue:ki-0bb4104cd8c2・E5): 割り込みの運搬郵便も同じ判定の 1 点(take-carried-input)を通る —
+      ;; 運ぶなら taken を書いてから最新の版を注入し、運ばない(取り消し・別の郵便が既に取った)なら注入せず扱い済みにする。
+      (setv verdict (NoInputRow))
+      (setv mark None)
+      (when (and (is-not message None) (isinstance body str))
+        (<- step tuple (take-carried-input job.job-id message now-ms))
+        (setv [verdict mark] step)
+        (when (isinstance verdict CarryInput)
+          (setv body verdict.text)))
+      (cond
+        (isinstance verdict SkipInput)
+        (do
+          (<- (LogLine :text (+ f"agentd: interrupt {message-id} for job {job.job-id} is not injected — its input is "
+                                f"{verdict.reason}; recorded as handed")))
+          (.append skipped message-id))
+        (or (is message None) (not (isinstance body str)))
           (do
             (<- (LogLine :text f"agentd: interrupt {message-id} for job {job.job-id} has no readable Message; not delivered"))
             (.append unreadable message-id))
+        True
           (do
             ;; 段 10 lane 10n: 注入の行の名 = Message の id(CLI の command_lifecycle がこの綴りで運命を名乗る)。
             ;; 段 10 lane 10r 追補: 注入の文も郵便の見出し + 本文(judgment.mail-turn-text-of の 1 点)。
@@ -4085,6 +4240,8 @@
             (if (isinstance outcome Interjected)
                 (do
                   (.append handed message-id)
+                  (when (is-not mark None)
+                    (.append marks mark))
                   (<- (MetricLine :fields {"metric" "agent-job-interrupt"
                                                   "agentJobId" job.job-id
                                                   "sessionId" job.session-id
@@ -4094,7 +4251,14 @@
                   (<- (LogLine :text (+ f"agentd: interrupt {message-id} for job {job.job-id} not accepted by the session "
                                              f"({outcome.error}); left on the row")))
                   (setv stopped True)))))))
-  (setv next (replace job :interrupts-sent (+ job.interrupts-sent (tuple handed) (tuple unreadable))))
+  (setv next (replace job :interrupts-sent (+ job.interrupts-sent (tuple handed) (tuple skipped) (tuple unreadable))))
+  (when marks
+    ;; 送信待ちの列(E6): 注入できた入力の行へ「読まれた」(readEvidence = interjected)。
+    (<- (mark-inputs-read (tuple marks) (tuple handed) READ-EVIDENCE-INTERJECTED now-ms)))
+  (when skipped
+    ;; 注入しなかった割り込みも渡した印に載せる(載せないと Messaging が終わった手番の割り込みを積み直す —
+    ;; Decide.strandedInterruptOf)。注入の時刻は積まない(期限の停止の合図の材料にしない)。
+    (<- (record-interrupts-delivered next (tuple skipped))))
   (when handed
     ;; 段 10 lane 10n: 注入した時刻を memory に(期限の判断の材料)。
     (<- next InFlightJob (with-injected-interrupts next (tuple handed) now-ms))
