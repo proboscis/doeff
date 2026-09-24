@@ -186,8 +186,8 @@ def test_make_test_packages_visits_every_package_after_a_red(tmp_path: Path) -> 
     assert reached == set(expected), (
         f"make test-packages が訪ねた package が期待と違う: 欠け {sorted(set(expected) - reached)}"
         f" / 余り {sorted(reached - set(expected))}(runner が呼ばれた回数 {len(calls)}・"
-        f"最初の {first} だけを赤にした)— 1 package の赤が後ろの package を未実行にしている"
-        f" — ADR-DOE-ENFORCE-001 R8\n{output[-2000:]}"
+        f"最初の {first} だけを赤にした)— 欠けた package は日次で 1 本も走らない(赤の後で"
+        f"止めた・または母集団から外した)— ADR-DOE-ENFORCE-001 R8\n{output[-2000:]}"
     )
     assert proc.returncode != 0, (
         f"最初の package {first} を赤にしたのに make test-packages の rc が 0 — R8\n{output[-2000:]}"
