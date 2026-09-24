@@ -14,8 +14,6 @@ ADR-DOE-AGENTS-012 の針が静的に検める。
 ``acp/`` の外の module なので、host process(ACP 側の module を import しない)も import してよい。
 """
 
-from __future__ import annotations
-
 import os
 
 
