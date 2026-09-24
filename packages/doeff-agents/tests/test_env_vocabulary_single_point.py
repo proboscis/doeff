@@ -36,13 +36,13 @@ def test_admission_rejects_provider_auth_and_keeps_turn_auth() -> None:
     """受理は provider の鍵と binding 所有の名を全部落とし、手番の札は通す。"""
     forbidden = set(policy.PROVIDER_AUTH_ENV_KEYS) | set(policy.BINDING_OWNED_ENV_KEYS)
     for name in forbidden:
-        assert policy.session_env_admission_error({name: "x"}, "session.launch") is not None, name
+        assert policy.session_env_admission_error({name: "x"}, "session.launch", policy.ENV_ORIGIN_PER_TURN) is not None, name
 
     # 手番ごとの資格の札は「わざと運ぶ」(policy TURN-AUTH-ENV-KEYS / ADR 012 R5・R30)。
     # 3 集合を素朴に合併すると、ここが死ぬ。
     for name in policy.TURN_AUTH_ENV_KEYS:
-        assert policy.session_env_admission_error({name: "x"}, "session.launch") is None, name
+        assert policy.session_env_admission_error({name: "x"}, "session.launch", policy.ENV_ORIGIN_PER_TURN) is None, name
 
     # provider の差し替えの綴りも受理では通す(挙動は反例の分ちょうどに留める)。
     for name in policy.PROVIDER_ROUTING_ENV_KEYS:
-        assert policy.session_env_admission_error({name: "x"}, "session.launch") is None, name
+        assert policy.session_env_admission_error({name: "x"}, "session.launch", policy.ENV_ORIGIN_PER_TURN) is None, name

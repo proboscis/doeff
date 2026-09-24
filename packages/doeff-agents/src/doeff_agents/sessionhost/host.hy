@@ -69,6 +69,7 @@
   make-cause
   monitor-cycle
   session-env-admission-error
+  ENV-ORIGIN-PER-TURN
   tail-chars
   TURN-CARRIED-KEYS
   turn-stalled])
@@ -1648,7 +1649,7 @@
     (setv session-env (.get p "session_env" {}))
     (when (not (isinstance session-env dict))
       (raise (RuntimeError "cache ping session_env must be an object")))
-    (setv env-error (session-env-admission-error session-env method))
+    (setv env-error (session-env-admission-error session-env method ENV-ORIGIN-PER-TURN))
     (when env-error (raise (RuntimeError env-error)))
     (return (asdict (run-hosted config actor
       (cache-host-ping sid operation-id expires-at session-env)))))
@@ -1680,7 +1681,7 @@
     (when (not (isinstance session-env dict))
       (raise (RuntimeError
                f"invalid params for session.send: session_env must be an object (got: {session-env !r})")))
-    (setv send-env-error (session-env-admission-error session-env "session.send"))
+    (setv send-env-error (session-env-admission-error session-env "session.send" ENV-ORIGIN-PER-TURN))
     (when (is-not send-env-error None)
       (raise (RuntimeError send-env-error)))
     ;; 手番ごとの env を運べない組み合わせは黙って落とさず断る(落とすと誕生の札で手番が走る =

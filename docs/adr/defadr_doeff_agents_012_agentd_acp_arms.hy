@@ -170,7 +170,9 @@
 (import doeff_agents.sessionhost.acp.valve [ACP-VALVE-DEFAULT ACP-VALVE-ENV acp-valve])
 (import hy)
 (import doeff_agents.sessionhost.policy [SPAWN-INHERITED-ENV-KEYS SPAWN-INHERITED-ENV-PREFIXES
-                                         seat-env-credential-shaped-offenders session-env-admission-error])
+                                         CREDENTIAL-SHAPED-ENV-SEGMENT-SUFFIXES CREDENTIAL-SHAPED-ENV-WORDS
+                                         ENV-ORIGIN-DECLARED ENV-ORIGIN-PER-TURN
+                                         metered-credential-env-offenders session-env-admission-error])
 
 
 ;; ---------------------------------------------------------------------------
@@ -379,16 +381,35 @@
        "retire-reason-after-job" "手番の終わりの後にこの session を片付ける理由が在るか(返さず**読む**だけ)"
        "turn-output-condition-of" "終わった温かい手番の材料が出力について何を言っているか — 出した / 出さなかった / 材料がこの手番を覆っていないので測れていない(返さず**読む**だけ — turn-end でなければ何も言わない・依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB D1・card acp:kanban-issue:ki-ef537db05f7f)"})
 
-;; R30 (3) / R51 (1): policy.session-env-admission-error(家の関所)を呼ぶ口と、それぞれが名乗る動詞。
-;; 判断は policy の 1 点で、**運ぶ口が増えても並行実装しない**。針は呼びの第 2 引数(動詞)の
-;; 集合をこの名簿と突き合わせる —— 数ではなく**名前**で釘づける(口を足す便はここへ 1 行宣言する)。
+;; R30 (3) / R51 (1): policy.session-env-admission-error(agent に届く env の受け入れの検査)を呼ぶ口と、それぞれが
+;; 名乗る動詞と env の出自。判断は policy の 1 点で、**運ぶ口が増えても並行実装しない**。針は sessionhost の src の
+;; 全 file から呼びの (第 2 引数 = 動詞, 第 3 引数 = 出自) の組を集め、この名簿と突き合わせる —— 数ではなく**名前**で
+;; 釘づける(口を足す便はここへ 1 行宣言する)。出自は手番の例外の有無を決める(card acp:kanban-issue:ki-edeab28c7bee):
+;; per-turn = host がこの手番のために組んだ env(手番のトークンちょうどを通す)/ declared = 保存される宣言が運ぶ env(例外なし)。
 ;; ⚠ 呼び手を「囲む頂点の form の名」では釘づけない: host.hy の 2 つの口は同じ dispatch-method の
 ;; 中に在るので、form の名で数えると 2 つが 1 つに畳まれ、3 つ目が同じ form に生えても気づけない。
 (setv SESSION-ENV-ADMISSION-MOUTHS
-      {"\"session.launch\"" "起こす口(launch.hy admit-launch)"
-       "\"session.send\"" "温かい送りの口(host.hy dispatch-method)"
-       "\"join.seat_env\"" "機体の参加の宣言 [agentd].seat_env の口(join.hy seat-env-of・R51)"
-       "method" "cache ping の口(host.hy dispatch-method — 動詞は呼びの引数 method をそのまま運ぶ)"})
+      {#("\"session.launch\"" "ENV-ORIGIN-PER-TURN") "起こす口(launch.hy admit-launch)"
+       #("\"session.send\"" "ENV-ORIGIN-PER-TURN") "温かい送りの口(host.hy dispatch-method)"
+       #("method" "ENV-ORIGIN-PER-TURN") "cache ping の口(host.hy dispatch-method — 動詞は呼びの引数 method をそのまま運ぶ)"
+       #("\"join.seat_env\"" "ENV-ORIGIN-DECLARED") "機体の参加の宣言 [agentd].seat_env の口(join.hy seat-env-of・R51)"
+       #("\"join.claude_settings.env\"" "ENV-ORIGIN-DECLARED")
+       "機体の参加の宣言が名指す席の settings file の env の欄(join.hy claude-settings-declaration-of (e)・ADR-DOE-AGENTS-004 R13)"
+       #("\"claude_settings.env\"" "ENV-ORIGIN-DECLARED")
+       "起こす拍ごとに読み直した席の settings の env の欄を `--settings` へ合流する点(impls/claude_code.hy build-claude-argv)"
+       #("\"claude.settings_env\"" "ENV-ORIGIN-DECLARED")
+       "`--settings` の env を合流した後の全体(impls/headless_argv.hy argv-with-settings-env)"})
+
+;; card acp:kanban-issue:ki-edeab28c7bee(第 2 回の盲検 B): settings の env(`--settings` と借りた家の settings.json)も
+;; CLI の process に届く口。impls/ で文字列 "env" を持つ関数と、その関数の役をここに宣言する —— 外(呼び手・宣言)から来た名を
+;; 合流するなら "admits"(受け入れの検査を出自 declared で呼ぶ)、doeff の code が綴った定数の名だけを置くなら
+;; "doeff-constant-names"、読むだけなら "reads"。env に触る関数を足す便はここへ 1 行宣言する(針は impls/*.hy の読み取りと突き合わせる)。
+(setv IMPLS-SETTINGS-ENV-FORMS
+      {"argv-with-settings-env" #("admits" "argv の `--settings` の env へ合流する点 — 合流した後の全体を受け入れの検査に通す")
+       "build-claude-argv" #("admits" "席の settings の宣言を `--settings` へ合流する点 — 宣言の env の欄を受け入れの検査に通す")
+       "otel-home-settings" #("doeff-constant-names" "借りた家の settings.json の env へ OTel の名(otel_telemetry.hy の定数)を合流する")
+       "fast-jev-home-settings" #("doeff-constant-names" "借りた家の settings.json の env へ CLAUDE_CODE_ENABLE_FUNCTION_HOOKS を置く")
+       "fast-jev-compaction-enabled" #("reads" "家の settings.json の env を読んで plugin の有無を判じる")})
 
 ;; R9 / R18 / R21 / R36 / R37 / 段 9f lane 9f-2: agentd.hy の拍が I/O の失敗を切り離す縁。
 ;; 名は縁が自分で名乗る log の語(`agentd: <名> failed …`)で、値はその縁が何を隔てるか。
@@ -3710,7 +3731,7 @@
        (assert (any (gfor line policy-lines (.startswith line "(setv PROVIDER-ROUTING-ENV-KEYS")))
                "provider を差し替える綴りは policy の 1 点(R30)")
        (setv host-lines (code-lines (/ SESSIONHOST-DIR "host.hy")))
-       (assert (= (len (lfor line host-lines :if (in "(session-env-admission-error session-env \"session.send\")" line) line)) 1)
+       (assert (= (len (lfor line host-lines :if (in "(session-env-admission-error session-env \"session.send\" ENV-ORIGIN-PER-TURN)" line) line)) 1)
                "送りの口の関所は launch と同じ 1 点(R30)")
        ;; 段 10 lane 10o(R31): 同じ腕が郵便の添付も型つきで運ぶ(綴りは器の Dialogue)。
        ;; 引数の**役**で撃つ(並びと総数に依らない)。実弾 2026-09-21 a6b16d63: 正当に
@@ -3722,22 +3743,28 @@
                  (+ f"手番ごとの env / 添付が送りの腕へ渡っていない(R30・添付は R31): 役 {role} が "
                     f"{(get send-calls 0) !r} に無い")))
        (setv launch-lines (code-lines (/ SESSIONHOST-DIR "launch.hy")))
-       (assert (= (len (lfor line launch-lines :if (in "(session-env-admission-error session-env \"session.launch\")" line) line)) 1)
+       (assert (= (len (lfor line launch-lines :if (in "(session-env-admission-error session-env \"session.launch\" ENV-ORIGIN-PER-TURN)" line) line)) 1)
                "launch の関所も同じ 1 点(R30)")
        ;; 段 12(R51): 運ぶ口が 3 つ目(機体の参加の宣言 [agentd].seat_env)に増えても、判定は同じ 1 点。
        ;; 呼ぶ場所は **launch / session.send / join.seat-env-of の 3 か所ちょうど** —— 4 つ目の口が生えたら
        ;; ここも育てる(判定の写しを作らない側の針・policy.hy の docstring の逐語)。
        (setv join-lines (code-lines (/ ACP-DIR "join.hy")))
-       (assert (= (len (lfor line join-lines :if (in "(session-env-admission-error (dict pairs) \"join.seat_env\")" line) line)) 1)
+       (assert (= (len (lfor line join-lines :if (in "(session-env-admission-error (dict pairs) \"join.seat_env\" ENV-ORIGIN-DECLARED)" line) line)) 1)
                "宣言の口の関所も同じ 1 点(R30・R51 (1))")
        ;; 数ではなく**名前(呼びが名乗る動詞)の集合**で撃ち、名簿と突き合わせる。
        ;; 実弾 2026-09-21 2bcc4a40: cache ping の口が 4 つ目として生え(判断は再利用していた)、
        ;; 「3 か所ちょうど」の数の針が落ちた。数を 4 に直すだけでは次の口でまた同じ更新が要る。
-       (setv admission-calls (call-args-of (+ host-lines launch-lines join-lines) "session-env-admission-error"))
-       (setv admission-mouths (sfor call admission-calls :if (> (len call) 1) (get call 1)))
+       ;; 走査は sessionhost の src の**全 file**(口が judgment.hy などの新しい file に生えても名簿と突き合わせる)。
+       (setv admission-calls (call-args-of (sum (gfor path (sorted (.rglob SESSIONHOST-DIR "*.hy")) (code-lines path)) [])
+                                           "session-env-admission-error"))
+       (for [call admission-calls]
+         (assert (and (= (len call) 3) (in (get call 2) #{"ENV-ORIGIN-PER-TURN" "ENV-ORIGIN-DECLARED"}))
+                 (+ "受け入れの検査の呼びは env の出自を定数で名乗る(card ki-edeab28c7bee — 名乗らない呼びは既定で"
+                    f" 手番の例外を受けない形にしてある): {call !r}")))
+       (setv admission-mouths (sfor call admission-calls #((get call 1) (get call 2))))
        (assert (= admission-mouths (set (.keys SESSION-ENV-ADMISSION-MOUTHS)))
-               (+ "session_env の関所を呼ぶ口が名簿と違う(R30 (3)・R51 (1))—— 口を足した便は"
-                  " この冊の名簿 SESSION-ENV-ADMISSION-MOUTHS へ『動詞と、その口が何か』を 1 行宣言する"
+               (+ "受け入れの検査を呼ぶ口が名簿と違う(R30 (3)・R51 (1))—— 口を足した便は"
+                  " この冊の名簿 SESSION-ENV-ADMISSION-MOUTHS へ『動詞と出自と、その口が何か』を 1 行宣言する"
                   " (判断 policy.session-env-admission-error は並行実装しない): "
                   f"実測 {(sorted admission-mouths)} / 名簿 {(sorted (.keys SESSION-ENV-ADMISSION-MOUTHS))}"))
        (setv headless-lines (code-lines (/ SESSIONHOST-DIR "headless.hy")))
@@ -3778,16 +3805,17 @@
        (assert (< seat-at identity-at)
                "宣言の env は会話の身元より**前**に重ねる — 後なら宣言が身元を偽れる(R51 (2))")
        ;; R51 (1): 資格の判定は家の関所 1 点の**再利用**で、join.hy に第 2 の関所を写さない。
-       (assert (= (len (lfor line join-lines :if (in "(session-env-admission-error (dict pairs) \"join.seat_env\")" line) line)) 1)
+       (assert (= (len (lfor line join-lines :if (in "(session-env-admission-error (dict pairs) \"join.seat_env\" ENV-ORIGIN-DECLARED)" line) line)) 1)
                "宣言の口は家の関所を通す(R51 (1))")
-       ;; R51 (1)(b): この口の線は policy の defk の 1 点(ADR-DOE-HY-004 R1・deff を新設しない)で、join.hy が 1 度 bind する。
-       (setv policy-lines (code-lines (/ SESSIONHOST-DIR "policy.hy")))
-       (assert (= (len (lfor line policy-lines :if (.startswith line "(defk seat-env-credential-shaped-offenders ") line)) 1)
-               "この口の線の定義は policy に 1 つ(R51 (1)(b))")
-       (assert (= (len (lfor line join-lines :if (in "(seat-env-credential-shaped-offenders (dict pairs))" line) line)) 1)
-               "join.seat-env-of がその線を 1 度呼ぶ(R51 (1)(b))")
-       ;; 資格の形の規則は 1 点(card acp:kanban-issue:ki-edeab28c7bee): 関所(a)と口の線(b)が同じ本体を読み、
-       ;; 違いは「手番の札を通すか」だけ。針は行の窓ではなく Hy の読みで定義の形を撃つ(docstring の語に反応しない)。
+       ;; 資格の形の規則は 1 点(card acp:kanban-issue:ki-edeab28c7bee): 規則を読むのは受け入れの検査ちょうどで、口ごとの
+       ;; 第 2 の線(旧 seat-env-credential-shaped-offenders)を置かない。手番の例外の有無は呼びが名乗る出自で決まる。
+       (setv rule-readers (lfor path (sorted (.rglob SESSIONHOST-DIR "*.hy"))
+                                line (code-lines path)
+                                :if (in "(metered-credential-env-offenders " line)
+                                #(path.name (.strip line))))
+       (assert (= (lfor [name _] rule-readers name) ["policy.hy"])
+               f"資格の形の規則を読むのは受け入れの検査の 1 点だけ(口ごとの線を足さない): {rule-readers}")
+       ;; 針は行の窓ではなく Hy の読みで定義の形を撃つ(docstring の語に反応しない)。
        (setv policy-forms (list (hy.read-many (.read-text (/ SESSIONHOST-DIR "policy.hy") :encoding "utf-8"))))
        (defn body-of [head name]
          (setv found (lfor form policy-forms
@@ -3834,11 +3862,19 @@
        (assert (not (any (gfor node rule-nodes
                                (and (method-call? node "endswith") (= (str (get node 1)) "normalized")))))
                "資格の形の規則が名の末尾に錨を打っている —— `_KEY` の後ろに 1 語付いた綴りが通る")
-       ;; (iii) 口の線 = 規則そのもの(例外なし)。関所の例外は手番の札ちょうど(読む定数に他の名簿が無い・名の literal の集まりが無い)。
-       (setv seat-body (body-of "defk" "seat-env-credential-shaped-offenders"))
-       (assert (and (= (len seat-body) 1)
-                    (= (hy.repr (get seat-body 0)) (hy.repr (hy.read "(metered-credential-env-offenders seat-env)"))))
-               "席の宣言の線は資格の形の規則そのもの(R51 (1)(b)・第 2 の規則を置かない)")
+       ;; (iii) 受け入れの検査の例外は出自 per-turn の手番のトークンちょうど(読む定数に他の名簿が無い・名の literal の集まりが無い)。
+       ;; 出自は既定値の無い必須の引数で、閉語彙の外を :pre が断る(名乗り忘れた宣言の口が手番の例外を黙って受けない)。
+       (setv admission-def (next (gfor form policy-forms
+                                      :if (and (isinstance form hy.models.Expression) (> (len form) 4)
+                                               (= (str (get form 0)) "deff") (= (str (get form 1)) "session-env-admission-error"))
+                                      form)))
+       (assert (= (hy.repr (get admission-def 2)) (hy.repr (hy.read "[session-env verb origin]")))
+               f"受け入れの検査の引数は (env, 動詞, 出自) で、出自に既定値を置かない: {(hy.repr (get admission-def 2))}")
+       (setv contract (list (get admission-def 3)))
+       (setv pre-clauses (next (gfor [k v] (zip (cut contract 0 None 2) (cut contract 1 None 2))
+                                     :if (= k (hy.models.Keyword "pre")) v)))
+       (assert (in (hy.repr (hy.read "(in origin ENV-ORIGINS)")) (lfor node pre-clauses (hy.repr node)))
+               "受け入れの検査の :pre が出自を閉語彙 ENV-ORIGINS で確かめる")
        (setv admission-body (body-of "deff" "session-env-admission-error"))
        ;; 関所が規則の答えを絞る形は 1 つちょうど: 手番の札の名簿の 1 句(補助の関数や別の名簿を :if に足すと赤)。
        (setv admission-nodes (sum (gfor n admission-body (walk n)) []))
@@ -3848,14 +3884,15 @@
                                           (= (hy.repr (get node 2)) (hy.repr (hy.read "(metered-credential-env-offenders session-env)"))))
                                  (hy.repr node)))
        (assert (= shape-filters
-                  [(hy.repr (hy.read "(lfor key (metered-credential-env-offenders session-env) :if (not-in (policy-normalized-env-key key) TURN-AUTH-ENV-KEYS) key)"))])
-               f"関所の例外は手番の札ちょうど(R5・R30 — 例外の名簿や補助の判定を足さない): {shape-filters}")
+                  [(hy.repr (hy.read "(lfor key (metered-credential-env-offenders session-env) :if (not (and (= origin ENV-ORIGIN-PER-TURN) (in (policy-normalized-env-key key) TURN-AUTH-ENV-KEYS))) key)"))])
+               f"受け入れの検査の例外は出自 per-turn の手番のトークンちょうど(R5・R30 — 例外の名簿や補助の判定を足さない): {shape-filters}")
        (assert (= (len (lfor node admission-nodes
                              :if (and (isinstance node hy.models.Symbol) (= (str node) "metered-credential-env-offenders"))
                              node))
                   1)
                "関所は資格の形の規則を 1 度だけ読む(上の絞り込みの 1 か所)")
-       (assert (<= (constants-in admission-body) #{"TURN-AUTH-ENV-KEYS" "CREDENTIAL-SHAPED-ENV-RULE-TEXT"})
+       (assert (<= (constants-in admission-body) #{"TURN-AUTH-ENV-KEYS" "CREDENTIAL-SHAPED-ENV-RULE-TEXT"
+                                                    "ENV-ORIGIN-PER-TURN" "ENV-ORIGIN-DECLARED"})
                f"関所が手番の札の外の名簿で例外を作っている: {(sorted (constants-in admission-body))}")
        (assert (not (any (gfor node (sum (gfor n admission-body (walk n)) [])
                                (and (isinstance node (| hy.models.Set hy.models.List hy.models.Tuple))
@@ -3867,14 +3904,51 @@
                    "AWS_SECRET_ACCESS_KEY" "DB_PASSWORD" "GCP_CREDENTIALS_JSON" "SECRETARY_URL"])
        (setv misses ["ACP_BASE" "AGORA_BRAIN_URL" "HERDR_HUD_STATE_BACKEND" "KEYBOARD_LAYOUT" "TOKENIZER_URL"
                      "MAX_THINKING_TOKENS" "CLAUDE_CODE_MAX_OUTPUT_TOKENS"])
-       (assert (= (run (seat-env-credential-shaped-offenders (dfor name (+ hits misses) name "x"))) (sorted hits))
-               "資格の形の当たり外れ(R51 (1)(b))")
-       (for [name hits]
-         (assert (is-not (session-env-admission-error {name "x"} "session.launch") None) f"関所が {name} を通した"))
-       (assert (is (session-env-admission-error {"CLAUDE_CODE_OAUTH_TOKEN" "x"} "session.send") None)
-               "関所は手番の札を通す(R5・R30)")
-       (assert (= (run (seat-env-credential-shaped-offenders {"CLAUDE_CODE_OAUTH_TOKEN" "x"})) ["CLAUDE_CODE_OAUTH_TOKEN"])
-               "席の宣言の線は手番の札も断る(R30 (4))")
+       (assert (= (metered-credential-env-offenders (dfor name (+ hits misses) name "x")) (sorted hits))
+               "資格の形の当たり外れ(R51 (1))")
+       (for [name hits
+             origin [ENV-ORIGIN-PER-TURN ENV-ORIGIN-DECLARED]]
+         (assert (is-not (session-env-admission-error {name "x"} "probe" origin) None) f"受け入れの検査が {name} を通した({origin})"))
+       (assert (is (session-env-admission-error {"CLAUDE_CODE_OAUTH_TOKEN" "x"} "session.send" ENV-ORIGIN-PER-TURN) None)
+               "出自 per-turn は手番のトークンを通す(R5・R30)")
+       (assert (is-not (session-env-admission-error {"CLAUDE_CODE_OAUTH_TOKEN" "x"} "join.seat_env" ENV-ORIGIN-DECLARED) None)
+               "出自 declared は手番のトークンも断る(R30 (4))")
+       ;; (v) settings の env の口(第 2 回の盲検 B): impls で文字列 "env" を持つ関数 = 名簿 IMPLS-SETTINGS-ENV-FORMS ちょうどで、
+       ;; "admits" の関数は受け入れの検査を出自 declared で 1 度呼び、他の役の関数は呼ばない(名の出どころが違う)。
+       (setv impls-env-forms {})
+       (for [path (sorted (.glob (/ SESSIONHOST-DIR "impls") "*.hy"))
+             form (hy.read-many (.read-text path :encoding "utf-8"))]
+         (when (and (isinstance form hy.models.Expression) (> (len form) 1)
+                    (in (str (get form 0)) #{"defk" "deff" "defn" "defp"})
+                    (any (gfor node (walk form) (and (isinstance node hy.models.String) (= (str node) "env")))))
+           (setv (get impls-env-forms (str (get form 1))) form)))
+       (assert (= (set impls-env-forms) (set IMPLS-SETTINGS-ENV-FORMS))
+               (+ "impls で settings の env に触る関数が名簿 IMPLS-SETTINGS-ENV-FORMS と違う —— 足した便は役を宣言する"
+                  f"(外から来た名を合流するなら受け入れの検査を通す): 実測 {(sorted impls-env-forms)}"))
+       (for [[name [role _]] (.items IMPLS-SETTINGS-ENV-FORMS)]
+         (assert (in role #{"admits" "doeff-constant-names" "reads"}) f"役の語彙の外: {name} {role}")
+         (setv origins (lfor node (walk (get impls-env-forms name))
+                             :if (and (isinstance node hy.models.Expression) (= (len node) 4)
+                                      (= (str (get node 0)) "session-env-admission-error"))
+                             (str (get node 3))))
+         (assert (= origins (if (= role "admits") ["ENV-ORIGIN-DECLARED"] []))
+                 f"{name}(役 {role})の受け入れの検査の呼びが役と合わない: {origins}"))
+       ;; (vi) 第 2 の判定を置かない(口ごとに自前の規則を書く型 — 旧い席の線がそうだった): 語彙の語を文字列で綴るのは
+       ;; doeff_agents の src 全体で語彙の定数 2 つだけ。語は定数から読む(この検査に語彙の写しを置かない)。
+       (setv vocab-words (set (+ (list CREDENTIAL-SHAPED-ENV-SEGMENT-SUFFIXES) (list CREDENTIAL-SHAPED-ENV-WORDS))))
+       (setv vocab-pattern (re.compile (+ r"[\"']_?(" (.join "|" (sorted vocab-words)) r")[\"']")))
+       (setv spelled [])
+       (for [path (sorted (.rglob (. SESSIONHOST-DIR parent) "*.hy"))
+             form (hy.read-many (.read-text path :encoding "utf-8"))
+             node (walk form)]
+         (when (and (isinstance node hy.models.String) (in (.lstrip (str node) "_") vocab-words))
+           (.append spelled #(path.name (.lstrip (str node) "_")))))
+       (for [path (sorted (.rglob (. SESSIONHOST-DIR parent) "*.py"))
+             hit (.finditer vocab-pattern (.read-text path :encoding "utf-8"))]
+         (.append spelled #(path.name (.group hit 1))))
+       (assert (= (sorted spelled) (sorted (gfor word vocab-words #("policy.hy" word))))
+               (+ "資格の形の語彙を語彙の定数の外で綴っている(口ごとの第 2 の判定を置かない —— 判定は受け入れの検査 1 点): "
+                  f"{(sorted spelled)}"))
        ;; join.hy が docstring で線の中身を読み手へ書くのは可 —— 禁じているのは (a) の**判定を写すこと**で、
        ;; それは上の「呼びが 3 か所ちょうど」の針が撃つ。
        ;; R51 (3) / 訂正 1: R30 (4) の条文は「継承では届かない」と「宣言された名は charter を通って届く」の

@@ -1763,7 +1763,7 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; 資格の形の規則(card acp:kanban-issue:ki-edeab28c7bee)— 受理の関所と席の宣言の線が読む 1 点
+;; 資格の形の規則(card acp:kanban-issue:ki-edeab28c7bee)— 受け入れの検査が読む 1 点・例外は env の出自で決まる
 ;; ---------------------------------------------------------------------------
 
 (import doeff_agents.sessionhost.policy :as shape-policy)
@@ -1781,18 +1781,27 @@
                 "MAX_THINKING_TOKENS" "CLAUDE_CODE_MAX_OUTPUT_TOKENS" "MAX_MCP_OUTPUT_TOKENS" "ANTHROPIC_BASE_URL"
                 "ANTHROPIC_MODEL" "PATH"])
   (assert (= (shape-policy.metered-credential-env-offenders (dfor name (+ hits misses) name "x")) (sorted hits)))
-  ;; 受理の関所は手番の札ちょうどを通し、他の当たりは全部断る(断りは形の節 — 規則の文は定数から組む)。
+  ;; 出自 per-turn(launch / send / cache の ping)は手番の札ちょうどを通し、他の当たりは全部断る。
+  ;; 出自 declared(席の宣言・席の settings file の env)は手番の札も断る。断りは形の節 — 規則の文は定数から組む。
   (for [name hits]
-    (setv err (shape-policy.session-env-admission-error {name "x"} "session.launch"))
+    (setv per-turn (shape-policy.session-env-admission-error {name "x"} "session.launch" shape-policy.ENV-ORIGIN-PER-TURN))
+    (setv declared (shape-policy.session-env-admission-error {name "x"} "join.seat_env" shape-policy.ENV-ORIGIN-DECLARED))
     (if (= name "CLAUDE_CODE_OAUTH_TOKEN")
-        (assert (is err None) name)
-        (do (assert (in "credential-shaped env is refused" err) name)
-            (assert (in shape-policy.CREDENTIAL-SHAPED-ENV-RULE-TEXT err) name))))
+        (assert (is per-turn None) name)
+        (do (assert (in "credential-shaped env is refused" per-turn) name)
+            (assert (in shape-policy.CREDENTIAL-SHAPED-ENV-RULE-TEXT per-turn) name)))
+    (assert (in "credential-shaped env is refused" declared) name)
+    (assert (in "A declared env carries destinations only" declared) name))
   (for [name misses]
-    (assert (is (shape-policy.session-env-admission-error {name "x"} "session.launch") None) name))
-  ;; 席の宣言の線は同じ規則で、手番の札も断る(例外なし)。
-  (<- shaped (shape-policy.seat-env-credential-shaped-offenders (dfor name (+ hits misses) name "x")))
-  (assert (= shaped (sorted hits))))
+    (for [origin shape-policy.ENV-ORIGINS]
+      (assert (is (shape-policy.session-env-admission-error {name "x"} "probe" origin) None) #(name origin)))))
+
+(deftest test-credential-shaped-env-origin-is-a-closed-vocabulary
+  ;; 出自は呼び手が必ず名乗る閉語彙 — 名乗らない呼び・語彙の外は断る(既定で手番の例外を受けない)。
+  (with [(pytest.raises TypeError)]
+    (shape-policy.session-env-admission-error {"GITHUB_TOKEN" "x"} "probe"))
+  (with [(pytest.raises AssertionError)]
+    (shape-policy.session-env-admission-error {"GITHUB_TOKEN" "x"} "probe" "turn")))
 
 (deftest test-credential-shaped-env-vocabulary-is-read-from-the-constants
   ;; 語彙を 1 語足す変更(例: `PASS` — SMTP_PASS / PGPASS)は定数だけで効き、断りの文も同じ定数から組まれる。

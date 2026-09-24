@@ -13,7 +13,10 @@ PROVIDER_ROUTING_ENV_KEYS: set[str]
 TURN_AUTH_ENV_KEYS: set[str]
 BINDING_OWNED_ENV_KEYS: set[str]
 
-def session_env_admission_error(session_env: dict[str, str], verb: str) -> str | None: ...
+ENV_ORIGIN_PER_TURN: str
+ENV_ORIGIN_DECLARED: str
+ENV_ORIGINS: tuple[str, ...]
+def session_env_admission_error(session_env: dict[str, str], verb: str, origin: str) -> str | None: ...
 
 #: 席の家へ運ぶ共通の指示の**運び方**の閉語彙(card acp:kanban-issue:ki-62aa1f4e9c9c D11)。
 CARRIED_SOURCE_FILE_TEXT: str

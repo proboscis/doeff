@@ -29,6 +29,7 @@
 (import doeff_agents.sessionhost.impls.claude_code [build-claude-argv])
 (import doeff_agents.sessionhost.impls.codex [build-codex-argv])
 (import doeff_agents.sessionhost.drivers [DRIVER-EXECUTABLE])
+(import doeff_agents.sessionhost.policy [ENV-ORIGIN-DECLARED session-env-admission-error])
 
 
 ;; claude の print mode の旗(--verbose の後ろに --include-partial-messages: dotfiles
@@ -64,7 +65,9 @@
   {:pre [(: argv list) (: env dict)]
    :post [(: % list)]}
   "argv の 1 つの --settings の env へ env を合流した新しい argv(無ければ --settings を足す・純関数)。
-   既に在る env の鍵は env の値で上書きする(この宣言が headless の物理 — 席の settings は hook だけを持つ R13)。"
+   既に在る env の鍵は env の値で上書きする(この宣言が headless の物理 — 席の settings は hook だけを持つ R13)。
+   合流した後の env は受け入れの検査を出自 declared で通す(card acp:kanban-issue:ki-edeab28c7bee — `--settings` の
+   env は CLI の process に届く口なので、ここへ外から来た名の dict を足しても資格情報の形は通らない)。"
   (setv out (list argv))
   (if (in "--settings" out)
       (do
@@ -75,6 +78,11 @@
         (setv (get settings "env") merged)
         (setv (get out index) (json.dumps settings :separators #("," ":"))))
       (.extend out ["--settings" (json.dumps {"env" (dict env)} :separators #("," ":"))]))
+  (setv index (+ (.index out "--settings") 1))
+  (setv env-error (session-env-admission-error (get (json.loads (get out index)) "env") "claude.settings_env"
+                                               ENV-ORIGIN-DECLARED))
+  (when (is-not env-error None)
+    (raise (RuntimeError env-error)))
   out)
 (import doeff_agents.sessionhost.impls.fast_jev [fast-jev-compaction-enabled])
 

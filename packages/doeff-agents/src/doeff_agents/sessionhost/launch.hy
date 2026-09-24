@@ -99,6 +99,7 @@
   overlay-env-offenders
   overlay-without-turn-auth
   session-env-admission-error
+  ENV-ORIGIN-PER-TURN
   seconds-since])
 
 
@@ -692,7 +693,7 @@
   ;; 従量課金 credential は binding 所有キーと違い「正しい家」が無い — どの
   ;; 経路でも受けない(operator 裁定 2026-08-26。resume も本関所を通る)。
   ;; 判定は policy の 1 点(session.send の手番ごとの env も同じ関所を通る)。
-  (setv env-error (session-env-admission-error session-env "session.launch"))
+  (setv env-error (session-env-admission-error session-env "session.launch" ENV-ORIGIN-PER-TURN))
   (when (is-not env-error None)
     (raise (RuntimeError env-error)))
 
