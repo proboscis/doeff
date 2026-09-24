@@ -2755,6 +2755,11 @@ class DeltaBatch:
     #: 読み手は agentd の次の 1 手(judgment.job-step-of)—— 降りた process が結果を器へ出していたなら、その手番は
     #: 失われたのではなく終わっている。ここは**事実の写し**で、手番の終わりの判定ではない(判定点は job-step-of の 1 つ)。
     turn_result: bool = False
+    #: 設計検証 lt-1NE5PT2APB43S0HKKC2T2GAZZG(盲検 A): この読みの中に**手番の境界**(走行器の結末の記録、または
+    #: queued の注入を model が読む続行の開始 — claude = ``command_lifecycle`` started / codex = ``turn/started``)が在ったか。
+    #: 在れば ``turn_result`` はその読みの**最後の境界**の状態(result の後に続行が始まっていれば False)で、読み手(M2)は
+    #: or ではなく上書きで累積する。境界の無い読み(本文の差分だけ)は False で、前の値を保つ。
+    turn_boundary: bool = False
     #: 最後の主agentのAPI応答の時刻とキャッシュ利用。配達・poll時刻ではない。
     cache_observation: JSONObject | None = None
     #: card acp:kanban-issue:ki-c3ac5832a0bd: この材料の応答ごとの消費(最初に見た順・output は最終値 —

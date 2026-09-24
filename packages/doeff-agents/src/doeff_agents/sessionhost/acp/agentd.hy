@@ -2471,11 +2471,13 @@
   (<- batch DeltaBatch (deltas-of job.agent-type source chunk.text job.job-id job.delta-seq at job.open-tool-blocks))
   ;; 開いている道具の block の表(書きかけの引数を id と名に結ぶ — 読みをまたぐ)は判断の出力をそのまま持つ。
   ;; card acp:kanban-issue:ki-2bd49c68b042: 走行器がこの手番の結末を器の記録へ出したか(材料が名乗る事実 —
-  ;; 一度立ったら手番の終わりまで消えない。この手番の材料は start-offset から読んでいるので前の手番の結末は継がない)。
-  ;; 読み手は次の 1 手の 1 点(judgment.job-step-of)— ここでは腕を選ばない。
+  ;; 設計検証 lt-1NE5PT2APB43S0HKKC2T2GAZZG(盲検 A): 一度立ったら消えない or ではなく、手番の境界(結末の記録か続行の
+  ;; 開始)を見た読みで**上書き**する — queued の注入で result の後に続行が始まった手番は、続きの結末が出るまで
+  ;; 「結果が出た」を名乗らない。境界の無い読みは前の値を保つ。この手番の材料は start-offset から読んでいるので
+  ;; 前の手番の結末は継がない)。読み手は次の 1 手の 1 点(judgment.job-step-of)— ここでは腕を選ばない。
   (setv next (replace job :transcript-offset chunk.offset :delta-seq batch.next-seq
                           :open-tool-blocks batch.open-tool-blocks
-                          :turn-result-seen (or job.turn-result-seen batch.turn-result)))
+                          :turn-result-seen (if batch.turn-boundary batch.turn-result job.turn-result-seen)))
   ;; 開始を見ていない引数の差分は frame にしていない(id も名前も発明しない)— 黙って捨てず計器に数える。
   (when batch.orphan-input-deltas
     (<- (MetricLine :fields {"metric" "agent-job-orphan-input-deltas" "agentJobId" job.job-id

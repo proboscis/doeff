@@ -893,7 +893,10 @@
    ⚠ 生きている process の結果は手番の終わりの証拠にしない —— CLI は queued の注入が在れば result の後も
    手番を続ける(headless_protocol.ClaudeDialogue._on_result)。手番の終わりを名乗るのは器の monitor の
    1 点のままで、ここが読むのは「**降りた** process が結果を残したか」という、SessionLost と本物の死を
-   分ける事実ちょうど。result を出さずに exit した手番は今日どおり session-lost。"
+   分ける事実ちょうど。result を出さずに exit した手番は今日どおり session-lost。
+   設計検証 lt-1NE5PT2APB43S0HKKC2T2GAZZG(盲検 A): turn-result-seen はこの手番の材料の**最後の境界**の状態 ——
+   result の後に続行が始まった(queued の注入を model が読んだ)手番は、続きの結末が出るまで結果を持たない
+   (agentd.stream-push が境界を見た読みで上書きする)ので、続きの途中で降りた process は session-lost。"
   (<- live-backend bool (backend-alive view))
   (cond
     (is view None) JOB-STEP-FAIL-MISSING
@@ -5501,6 +5504,7 @@
   (setv reads [])
   (setv stopped-by-signal False)
   (setv turn-result False)
+  (setv turn-boundary False)
   (for [record records]
     (setv kind (.get record "type"))
     (setv message (.get record "message"))
@@ -5538,8 +5542,14 @@
         (setv seq (+ seq 1))))
     ;; card acp:kanban-issue:ki-2bd49c68b042: 走行器がこの手番の結末を名乗った行(CLI 自身の手番の result は
     ;; 本文の手番の終わりではない — 器と同じ 1 点の判定 cli-own-turn-result)。事実の写しで、判定ではない。
+    ;; 設計検証 lt-1NE5PT2APB43S0HKKC2T2GAZZG(盲検 A): queued の注入を model が読む拍 = 続行の開始。result の後に
+    ;; 続行が始まっていれば、この手番の結末はまだ出ていない(turn-result を戻す)。どちらも手番の境界(turn-boundary)。
+    (when (and streamed (= kind "command_lifecycle") (= (.get record "state") "started"))
+      (setv turn-result False)
+      (setv turn-boundary True))
     (when (and streamed (= kind "result") (not (cli-own-turn-result record)))
-      (setv turn-result True))
+      (setv turn-result True)
+      (setv turn-boundary True))
     (when (and streamed (= kind "result"))
       (<- failure (| str None) (claude-result-error record))
       (when (is-not failure None)
@@ -5685,7 +5695,7 @@
               :interrupt-reads (tuple reads)
               :open-tool-blocks (tuple (.values opened))
               :orphan-input-deltas orphan-input-deltas
-              :turn-result turn-result))
+              :turn-result turn-result :turn-boundary turn-boundary))
 
 
 (defk codex-context-of [last window]
@@ -5797,6 +5807,7 @@
   ;; turn/started が「積んであった注入を model が読む拍」— 名を運ぶ欄が無いので ref = None(未読を全部)。
   (setv reads [])
   (setv turn-result False)
+  (setv turn-boundary False)
   (for [record records]
     (setv method (.get record "method"))
     (setv params (.get record "params"))
@@ -5805,6 +5816,9 @@
       (cond
         (= method "turn/started")
         (do
+          ;; 設計検証 lt-1NE5PT2APB43S0HKKC2T2GAZZG(盲検 A): 続行の開始 = 手番の境界。前の turn/completed は結末ではなくなる。
+          (setv turn-result False)
+          (setv turn-boundary True)
           (<- started-body dict (note-body seq at ENTRY-KIND-SYSTEM "turn started"))
           (.append bodies started-body)
           (.append reads (InterruptRead :ref None :seq seq))
@@ -5848,6 +5862,7 @@
         (do
           ;; card acp:kanban-issue:ki-2bd49c68b042: 走行器がこの手番の結末を名乗った通知(事実の写し)。
           (setv turn-result True)
+          (setv turn-boundary True)
           ;; 手番の終わりの誤り(status ≠ completed)を kind error の entry に(判定は host — ここは記録だけ)。
           ;; 段 10 lane 10n: interrupted は止めた段の終わり(割り込みの本文を渡すため・取り下げ)で誤りではない → kind system。
           (setv turn (.get params "turn"))
@@ -5889,7 +5904,7 @@
   (<- entries tuple (entries-of-bodies (tuple bodies)))
   (DeltaBatch :frames (tuple frames) :entries entries :bodies (tuple bodies) :usage usage
               :next-seq seq :model None :context context :interrupt-reads (tuple reads)
-              :turn-result turn-result))
+              :turn-result turn-result :turn-boundary turn-boundary))
 
 
 (defk events-to-deltas [agent-type text job-id seq-start at open-blocks]
