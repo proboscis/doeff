@@ -1,0 +1,10 @@
+# F6(訂正後): git の名簿の test 名の file(test_*.py / *_test.py・fixtures を除く)のうち、root の testpaths にも packages/*/tests にも居ないもの
+# 対象版 9df950b5477f9456216ab447b1c37879981425ec
+合計 41 本
+    4  docs/design/
+    1  ide-plugins/pycharm/test_program_detection.py
+    1  packages/doeff-agentic/examples/test_event_logging.py
+    1  packages/doeff-agentic/examples/test_mock_workflow.py
+   32  packages/doeff-agents/conformance/
+    1  packages/doeff-test-target/src/doeff_test_target/effects/test_effects.py
+    1  tools/test_python_versions.py
