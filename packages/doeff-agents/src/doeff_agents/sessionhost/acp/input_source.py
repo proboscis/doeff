@@ -103,3 +103,45 @@ class TurnInputText:
 
     section: Section
     text: str
+
+
+# ---------------------------------------------------------------------------
+# 送信待ちの列(kind conversation-input)— 運搬郵便が運ぶ入力の行を運ぶかどうかの判定の型
+# (設計 herdr-hud docs/design-checks/direct-chat-2026-09-24/design.md 段 2〜3・card acp:kanban-issue:ki-0bb4104cd8c2)。
+# 判定は ``turn_input.hy`` の 1 点だけが持つ。ここは型だけ。
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class NoInputRow:
+    """郵便が入力の行を名指さない・名指した行が無い・行の形が読めない — 郵便の本文をそのまま運ぶ(旧い経路と競合の窓)。"""
+
+
+@dataclass(frozen=True)
+class CarryInput:
+    """入力を運ぶ: 行が pending、またはこの郵便が既に取った(taken / read で carrier.mail がこの郵便)。本文は最新の版。"""
+
+    text: str
+    rev: int
+
+
+#: 運ばない理由の閉語彙: 行の終わりの状態(withdrawn / answered / failed)か、別の郵便が取った(carried-by-another-mail)。
+SkipReason = Literal["withdrawn", "answered", "failed", "carried-by-another-mail"]
+
+
+@dataclass(frozen=True)
+class SkipInput:
+    """入力を運ばない(本文から外す)。郵便は「扱い済み」として配達報告に載せる(ACP の Messaging が運び直さないため)。"""
+
+    reason: SkipReason
+
+
+InputCarryVerdict = NoInputRow | CarryInput | SkipInput
+
+
+@dataclass(frozen=True)
+class TakenInput:
+    """この手番が取った(taken を書けた)入力の行 1 つ — 器へ渡せた拍に read を書く材料。"""
+
+    mail_id: str
+    input_key: str

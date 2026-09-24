@@ -27,6 +27,7 @@
 (import datetime [datetime timedelta timezone])
 (import doeff_agents.sessionhost.acp.input_source [OperatorChat OperatorAnswer Verdict Request Mail Notice
                                                    TurnInputText SECTION-ORDER])
+(import doeff_agents.sessionhost.acp.turn_input [input-ref?])
 
 ;; 契約 agora-kinds.json message.spec.from / kind の語(判定の材料 — 綴りはここ 1 点)。
 (setv FROM-OPERATOR "operator")
@@ -197,10 +198,18 @@
   (<- at-text str (at-text-of source.at))
   (cond
     (isinstance source OperatorChat)
-    (+ "(" source.message-id "・at=" at-text
-       (if (is source.in-reply-to None) "" (+ "・郵便 " source.in-reply-to " について"))
-       (if source.refs (+ "・参照 " (.join " " source.refs)) "")
-       ")")
+    (do
+      ;; 送信待ちの列(card acp:kanban-issue:ki-0bb4104cd8c2): 運搬郵便が運ぶ入力の行の id(`ci-…`)は agent に見せる参照ではない
+      ;; (agentd が本文を読む拍の印) — 「参照」の欄に出さない。
+      (setv shown [])
+      (for [ref source.refs]
+        (<- carried bool (input-ref? ref))
+        (when (not carried)
+          (.append shown ref)))
+      (+ "(" source.message-id "・at=" at-text
+         (if (is source.in-reply-to None) "" (+ "・郵便 " source.in-reply-to " について"))
+         (if shown (+ "・参照 " (.join " " shown)) "")
+         ")"))
     (isinstance source OperatorAnswer)
     (+ "(依頼書 " (if source.refs (.join " " source.refs) NONE-WORD)
        " の問い " (if (is source.question None) NONE-WORD source.question) " への答え・"

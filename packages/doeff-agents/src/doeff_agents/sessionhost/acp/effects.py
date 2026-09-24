@@ -164,6 +164,7 @@ ConditionType = Literal[
     "CredentialUnavailable",
     "InputUnavailable",
     "InputUndelivered",
+    "InputWithdrawn",
     "SessionFailed",
     "Interrupted",
     "RecordUnavailable",
@@ -256,6 +257,10 @@ CONDITION_ATTACHMENT_IGNORED: ConditionType = "AttachmentIgnored"
 #: 実測 2026-09-18: 断りは AgentdClientError のまま receive-bound-jobs の外まで抜けており、計器
 #: agent-job-to-send も turn-record の作成も走らなかった(失敗が最も見えない形)。
 CONDITION_INPUT_UNDELIVERED: ConditionType = "InputUndelivered"
+#: 送信待ちの列(card acp:kanban-issue:ki-0bb4104cd8c2): 手番の郵便がすべて、取り消された・別の郵便が既に取った入力
+#: (kind conversation-input)を運ぶもので、運ぶ本文が 1 つも残らなかった — CLI を起こさずに閉じた印。外した郵便は
+#: 扱い済みとして同じ書きで inputsDelivered に載る(Messaging が運び直さない)。判断は turn_input.input-carry-verdict-of の 1 点。
+CONDITION_INPUT_WITHDRAWN: ConditionType = "InputWithdrawn"
 #: 段 11 lane 11n 便 C(agora-redesign #179・依頼者の裁定 2026-09-15 問い 1 案 a): 手番が provider の
 #: 限度の断り(「You've reached your <model> limit」等)で終わった印。**閉語彙の座はここ 1 点**で、
 #: 契約 ACP docs/contracts/scheduling.json の profileExhaustion.providerRefusal はその写し。
