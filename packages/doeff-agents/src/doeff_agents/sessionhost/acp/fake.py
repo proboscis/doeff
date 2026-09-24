@@ -230,7 +230,9 @@ class FakeAcp:
         self.creates: dict[str, int] = {}
         #: 段 12(agora-redesign #537): status の書きを鍵ごとに断る列(先頭から消費 — 手番の終わりの 1 度の書きが
         #: 着かない拍の再現。conflict_once は「1 度だけ CAS が負ける」で、こちらは engine の断り 400 / 503 等)。
-        self.status_refusals: dict[str, list[Refused]] = {}
+        #: 項 None = その回の書きは通す(card acp:kanban-issue:ki-06b286143c17: claim の書きは通し、同じ拍の次の書き = 配達報告
+        #: だけを断る拍を宣言で組む口 — [None, Refused(…)])。
+        self.status_refusals: dict[str, list[Refused | None]] = {}
         #: 段 12(#537 便 1): 走っている記録の一覧(AcpRunningTurnRecords)を撃った回数(巡回の周期の検が数える)。
         self._mut_running_record_lists: int = 0
         #: 段 10 lane 10d: spec の書き(鍵・書いた spec)と、鍵ごとに spec の書きを断る列(先頭から消費)。
@@ -422,8 +424,9 @@ class FakeAcp:
         if existing is None:
             return Refused(404, "no such row")
         queued = self.status_refusals.get(row.key)
-        if queued:
-            return queued.pop(0)
+        refusal = queued.pop(0) if queued else None
+        if refusal is not None:
+            return refusal
         repeated = self.conflict_times.get(row.key)
         if repeated is not None and repeated[1] > 0:
             generation, remaining = repeated

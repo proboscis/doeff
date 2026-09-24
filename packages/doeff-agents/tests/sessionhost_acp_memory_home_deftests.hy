@@ -120,7 +120,7 @@
    agentd.incarnate の同じ 1 点を通り、器へは SessionLaunch の charter で届く(置き場の欄は腕で分かれない)。"
   (setv built (run (incarnation-charter-of
                      (plan-of) (ArmChoice :arm arm :source None :retire None)
-                     "s-new" #() "" {"conversationId" CONVERSATION} "headless" None "/homes"
+                     "s-new" "" #() "" {"conversationId" CONVERSATION} "headless" None "/homes"
                      MEMORY-ROOT None #())))
   (.get (get built 0) "memory_dir"))
 
