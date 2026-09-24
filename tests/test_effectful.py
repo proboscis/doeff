@@ -7,7 +7,8 @@ What is checked here:
   cloudpickle of an unrun program to another process);
 - tracebacks point at the original source lines;
 - the rewrite refuses ``perform`` where it cannot suspend the program, with file and line;
-- the bytecode cache is named by the rewrite version and rebuilt when it changes;
+- the bytecode cache is named by the rewrite version and rebuilt when it changes, and is not
+  written while bytecode writing is off (``sys.dont_write_bytecode``);
 - pyright: the answer types, and the 8 deliberate mistakes of tests/test_static_typing.py
   written in the perform form, are all caught.
 """
@@ -322,10 +323,17 @@ def test_import_error_names_the_file_and_line(tmp_package: tuple[str, Path]) -> 
 def test_cache_is_named_by_the_rewrite_version_and_reused(
     tmp_package: tuple[str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The cache is only written where bytecode may be written (land / the daily run set
+    # PYTHONDONTWRITEBYTECODE=1), so this test states that precondition itself.
+    monkeypatch.setattr(sys, "dont_write_bytecode", False)
     name, package = tmp_package
-    (package / "mod.py").write_text(_MODULE)
+    source = package / "mod.py"
+    source.write_text(_MODULE)
     assert _run(_import_fresh(f"{name}.mod").twice()) == 2000
-    cached = (
+    cached = rewrite.cache_path(str(source))
+    # The one place that pins where the cache lives and how it is named; the other cache
+    # tests ask cache_path() instead of spelling the location again.
+    assert cached == (
         package
         / "__pycache__"
         / (f"mod.{sys.implementation.cache_tag}-doeff-effectful-{rewrite.REWRITE_VERSION}.pyc")
@@ -342,18 +350,48 @@ def test_cache_is_named_by_the_rewrite_version_and_reused(
 def test_a_new_rewrite_version_rebuilds_the_cache(
     tmp_package: tuple[str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(sys, "dont_write_bytecode", False)
     name, package = tmp_package
-    (package / "mod.py").write_text(_MODULE)
+    source = package / "mod.py"
+    source.write_text(_MODULE)
     _import_fresh(f"{name}.mod")
     monkeypatch.setattr(rewrite, "REWRITE_VERSION", "next-version")
     module = _import_fresh(f"{name}.mod")
     assert module.__doeff_effectful__ == "next-version"
-    assert (
-        package
-        / "__pycache__"
-        / (f"mod.{sys.implementation.cache_tag}-doeff-effectful-next-version.pyc")
-    ).is_file()
+    rebuilt = rewrite.cache_path(str(source))
+    assert "next-version" in rebuilt.name
+    assert rebuilt.is_file()
     assert _run(module.twice()) == 2000
+
+
+def test_no_cache_is_written_while_bytecode_writing_is_off(
+    tmp_package: tuple[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    name, package = tmp_package
+    source = package / "mod.py"
+    source.write_text(_MODULE)
+    cached = rewrite.cache_path(str(source))
+    # Control: with writing on, this very location does get the cache — so its absence
+    # below means the loader chose not to write, not that it could not.
+    monkeypatch.setattr(sys, "dont_write_bytecode", False)
+    _import_fresh(f"{name}.mod")
+    assert cached.is_file()
+    cached.unlink()
+
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    compiled: list[str] = []
+    compile_source = rewrite.compile_source
+
+    def counting_compile(source_bytes: bytes, filename: str) -> Any:
+        compiled.append(filename)
+        return compile_source(source_bytes, filename)
+
+    monkeypatch.setattr(rewrite, "compile_source", counting_compile)
+    assert _run(_import_fresh(f"{name}.mod").twice()) == 2000
+    assert _run(_import_fresh(f"{name}.mod").twice()) == 2000
+    assert not cached.exists()
+    assert not list(cached.parent.glob(f"{cached.name}.*.tmp"))
+    assert compiled.count(str(source)) == 2  # nothing was cached, so both imports compile
 
 
 def test_modules_without_effectful_are_compiled_unchanged(tmp_package: tuple[str, Path]) -> None:
