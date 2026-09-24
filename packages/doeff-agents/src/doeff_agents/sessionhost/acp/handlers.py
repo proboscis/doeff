@@ -1600,6 +1600,13 @@ class SessionRoutes:
     def active_socket(self) -> str:
         return self.layout().active
 
+    def any_host(self) -> bool:
+        """器が 1 つでも居るかもしれないか(card acp:kanban-issue:ki-18d6c4851b21 — 停止の排水が待ちをやめる読み)。
+        偽は「どの区画にも居ない」の証拠が在る拍ちょうど: 指し札の器が socket_may_have_host で偽 ∧ 降りる途中の器も無い。
+        混んだ器の遅い connect は居る側に倒れる(socket_may_have_host の 1 点)。"""
+        layout = self.layout()
+        return bool(layout.draining) or self._listening(layout.active)
+
     def _rpc(self, path: str) -> SessionRpc:
         with self._lock:
             found = self._rpcs.get(path)

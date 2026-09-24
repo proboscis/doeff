@@ -27,7 +27,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import NamedTuple, TypeAlias
+from typing import Literal, NamedTuple, TypeAlias
 
 import tomllib
 from doeff_vm import PyVM, WithHandler
@@ -132,9 +132,15 @@ HomeEntries: TypeAlias = tuple[HomeEntry, ...]
 HomeRootEntries: TypeAlias = tuple[HomeRootEntry, ...]
 
 
+#: 排水の待ちが終わった理由(drain_until の答え): drained = 走っている手番が 0 / deadline = 宣言の上限に届いた /
+#: host-gone = 器が居ない証拠が在る(card acp:kanban-issue:ki-18d6c4851b21 — 読めない手番を上限まで待たない)。
+DrainEnd: TypeAlias = Literal["drained", "deadline", "host-gone"]
+
+
 class DrainOutcome(NamedTuple):
     remaining: int
     elapsed_seconds: float
+    ended: DrainEnd
 
 
 class HandlerBundle(NamedTuple):
@@ -762,15 +768,24 @@ def drain_until(
     now: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     poll: float = DRAIN_POLL_SECONDS,
+    host_gone: Callable[[], bool] | None = None,
 ) -> DrainOutcome:
     """排水の待ち(段 12 lane 12j・agora-redesign #304 便 2): 走っている手番の数が 0 になるか、期限(monotonic)に届くまで
-    poll ごとに読み直す。戻り = (残った手番の数, 待った秒)。判断はこの 1 点(停止の腕はこれを呼ぶだけ)。"""
+    poll ごとに読み直す。戻り = (残った手番の数, 待った秒, 終わった理由)。判断はこの 1 点(停止の腕はこれを呼ぶだけ)。
+
+    ``host_gone``(card acp:kanban-issue:ki-18d6c4851b21)= 器が居ない証拠が在るかの読み。真の拍に残りを持って
+    ``host-gone`` で戻る —— 器が居なければ腕は手番の結末を読めず(session の要求は socket の失敗で拍ごと落ちる)、
+    待っても 0 にならない。None = 問わない(期限まで待つ)。"""
     started = now()
     while True:
         left = running()
         current = now()
-        if left == 0 or current >= deadline:
-            return DrainOutcome(left, current - started)
+        if left == 0:
+            return DrainOutcome(left, current - started, "drained")
+        if current >= deadline:
+            return DrainOutcome(left, current - started, "deadline")
+        if host_gone is not None and host_gone():
+            return DrainOutcome(left, current - started, "host-gone")
         sleep(min(poll, max(0.0, deadline - current)))
 
 
@@ -788,6 +803,7 @@ class AgentdRun:
         thread: threading.Thread,
         close: Callable[[], None],
         heartbeat: threading.Thread,
+        host_present: Callable[[], bool] | None = None,
     ) -> None:
         self.settings = settings
         self.dispatchers = dispatchers
@@ -797,12 +813,17 @@ class AgentdRun:
         self.thread = thread
         self._close = close
         self.heartbeat = heartbeat
+        #: 器が居るかもしれないか(SessionRoutes.any_host — 偽は「居ない」の証拠が在る拍ちょうど)。排水はこれが偽になった拍に
+        #: 待ちをやめる。None = 問わない。
+        self.host_present = host_present
 
     def drain_for_stop(self, reason: str) -> int:
         """停止の前の排水(段 12 lane 12j・agora-redesign #304 便 2): 宣言 drain_seconds > 0 で走っている job が在れば、
         drain の合図を立て(次の拍から claim を止め・capacity 0 を名乗る — loop は回り続けて手番を観測する)、job が全部
-        終わるか上限に届くまで待つ。戻り = 残った job の数(0 = 全部終わった)。宣言 0 / job なしは待たない。
-        host の accept loop は生きたまま(hook は 1 度目の TERM の別 thread で走る — R26)なので手番の器は降りていない。"""
+        終わるか上限に届くか器が居なくなるまで待つ。戻り = 残った job の数(0 = 全部終わった)。宣言 0 / job なしは待たない。
+        役 both では host の accept loop は生きたまま(hook は 1 度目の TERM の別 thread で走る — R26)なので手番の器は降りていない。
+        役 agentd では器は別 process で、先に死ぬと手番の結末が読めなくなる — その証拠(host_present が偽)で待ちをやめ、
+        残りは閉じずに次の process へ渡す(card acp:kanban-issue:ki-18d6c4851b21)。"""
         limit = self.settings.drain_seconds
         running = len(self.holder.state.jobs)
         if limit <= 0 or running == 0:
@@ -812,12 +833,23 @@ class AgentdRun:
             f"agentd: stop ({reason}) — draining {running} running job(s): no new claims, capacity 0, "
             f"waiting up to {limit}s for the turns to end"
         )
-        left, waited = drain_until(lambda: len(self.holder.state.jobs), time.monotonic() + limit)
-        if left == 0:
-            _stderr(f"agentd: stop ({reason}) — drained: every running turn ended in {waited:.0f}s")
-        else:
+        present = self.host_present
+        outcome = drain_until(
+            lambda: len(self.holder.state.jobs),
+            time.monotonic() + limit,
+            host_gone=None if present is None else lambda: not present(),
+        )
+        left = outcome.remaining
+        if outcome.ended == "drained":
+            _stderr(f"agentd: stop ({reason}) — drained: every running turn ended in {outcome.elapsed_seconds:.0f}s")
+        elif outcome.ended == "deadline":
             _stderr(
                 f"agentd: stop ({reason}) — drain deadline of {limit}s reached with {left} running job(s) left"
+            )
+        else:
+            _stderr(
+                f"agentd: stop ({reason}) — the sessionhost is gone after {outcome.elapsed_seconds:.0f}s of draining; "
+                f"{left} running job(s) cannot be observed any more and are left to the next process"
             )
         return left
 
@@ -1023,7 +1055,8 @@ def start_agentd_thread(
     socket_path = host_socket_path(host_argv)
     # 器の入れ替えの blue/green(host_slots): 出来事の journal と起動の待ちは**いま新しい手番を受ける器**の socket
     # (指し札が無い機体は argv の socket そのもの)。journal の seq は器ごとなので、起動の拍に 1 度決める。
-    active_socket = SessionRoutes(socket_path).active_socket()
+    routes = SessionRoutes(socket_path)
+    active_socket = routes.active_socket()
     # 段 12 lane 12b(agora-redesign #207 根 1): 拍を起こす合図の列は 1 本 — ACP の watch(SSE)と器の出来事の
     # journal(host の session.wait_events の long-poll)が同じ列に載り、tick の待ち(AcpWatchSse)の定義点は 1 つのまま。
     wakes = WakeQueue()
@@ -1103,7 +1136,11 @@ def start_agentd_thread(
 
     thread = threading.Thread(target=body, name="sessionhost-agentd", daemon=True)
     thread.start()
-    return AgentdRun(settings, dispatchers, stop, drain, holder, thread, close_all, heartbeat)
+    # 排水は器が居ない証拠(どの区画にも器が居ない)で待ちをやめる — 判断は SessionRoutes.any_host の 1 点
+    # (card acp:kanban-issue:ki-18d6c4851b21)。
+    return AgentdRun(
+        settings, dispatchers, stop, drain, holder, thread, close_all, heartbeat, host_present=routes.any_host
+    )
 
 
 # ------------------------------------------------------------------ 1 命令の参加(join・段 6 lane 6f)
