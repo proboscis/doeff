@@ -12,7 +12,13 @@ from doeff_core_effects.scheduler import Wait as WaitTask
 
 from doeff import Pass, Transfer, do
 from doeff import handler as _program_handler
-from doeff_time.effects import DelayEffect, GetTimeEffect, ScheduleAtEffect, WaitUntilEffect
+from doeff_time.effects import (
+    DelayEffect,
+    GetMonotonicEffect,
+    GetTimeEffect,
+    ScheduleAtEffect,
+    WaitUntilEffect,
+)
 
 ProtocolHandler = Callable[[Any, Any], Any]
 
@@ -29,9 +35,11 @@ class SyncTimeRuntime:
         *,
         now: Callable[[], datetime],
         sleep: Callable[[float], None],
+        monotonic: Callable[[], float],
     ) -> None:
         self._now = now
         self._sleep = sleep
+        self._monotonic = monotonic
 
     @do
     def handle(self, effect: Any, k: Any):
@@ -48,6 +56,8 @@ class SyncTimeRuntime:
             return (yield Transfer(k, None))
         if isinstance(effect, GetTimeEffect):
             return (yield Transfer(k, self._now()))
+        if isinstance(effect, GetMonotonicEffect):
+            return (yield Transfer(k, float(self._monotonic())))
         if isinstance(effect, ScheduleAtEffect):
             wait_seconds = max(0.0, (effect.time - self._now()).total_seconds())
 
@@ -77,14 +87,10 @@ def sync_time_handler(
     *,
     now: Callable[[], datetime] = _utc_now,
     sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> ProtocolHandler:
     """Return a protocol handler for blocking wall-clock time semantics."""
 
-    runtime = SyncTimeRuntime(now=now, sleep=sleep)
+    runtime = SyncTimeRuntime(now=now, sleep=sleep, monotonic=monotonic)
     return _program_handler(runtime.handle)
 
-
-__all__ = [
-    "ProtocolHandler",
-    "sync_time_handler",
-]
