@@ -5,13 +5,18 @@
 * 借りの handler(``handlers.CustodyHttp._borrow``)の 2 つの腕を HTTP の fake で撃つ: 断りが処理ステージと本文の
   機械の語(code・why)を運ぶこと(設計 v2 §10.1 — 以前は error の文だけを写していた)と、引換に失敗した拍に
   master が出した貸与を返すこと(接続が答えない間のやり直しで貸与の行を積まない)。
+
+deftest は包み直さず、そのまま公開する。包むと ``pytestmark``(skipif /
+marks / parametrize)が関数の ``__dict__`` ごと落ち、書いた宣言が黙って
+効かなくなる(ADR-DOE-HY-002 law deftest-params-are-honored:
+``params_silently_dropped == 0``)。実行時の ``doeff_interpreter`` は
+conftest.py の fixture が供給する(同 R3)。
 """
 
 import importlib
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 
 import doeff_hy  # noqa: F401  # registers Hy import hooks for deftest modules
 import pytest
@@ -24,8 +29,6 @@ from doeff_agents.sessionhost.acp.effects import (
     LeaseRefused,
 )
 
-from doeff import run
-
 TESTS_DIR = Path(__file__).resolve().parent
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
@@ -33,26 +36,10 @@ if str(TESTS_DIR) not in sys.path:
 _deftests = importlib.import_module("sessionhost_acp_lender_deftests")
 
 
-def _deftest_interpreter(program: Any, *, env: dict[Any, Any] | None = None) -> Any:
-    if env is not None:
-        raise ValueError("sessionhost acp lender deftests do not use env overrides")
-    return run(program)
-
-
-def _make_wrapper(deftest_fn: Any) -> Any:
-    def _wrapper() -> None:
-        deftest_fn(_deftest_interpreter)
-
-    _wrapper.__name__ = deftest_fn.__name__
-    _wrapper.__doc__ = deftest_fn.__doc__
-    _wrapper.__dict__["pytestmark"] = list(getattr(deftest_fn, "pytestmark", []))
-    return _wrapper
-
-
 _names = [name for name in dir(_deftests) if name.startswith("test_")]
 assert _names, "sessionhost_acp_lender_deftests exposes no test_* deftests"
 for _name in _names:
-    globals()[_name] = _make_wrapper(getattr(_deftests, _name))
+    globals()[_name] = getattr(_deftests, _name)
 
 
 # ---------------------------------------------------------------------------
