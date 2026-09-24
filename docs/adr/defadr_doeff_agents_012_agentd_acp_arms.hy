@@ -168,8 +168,9 @@
                                                stream-capability-of-backend wait-seconds-for])
 (import doeff_agents.sessionhost.acp.runtime [AgentdPreflightError initial-state install run-heartbeat run-tick settings-from-env])
 (import doeff_agents.sessionhost.acp.valve [ACP-VALVE-DEFAULT ACP-VALVE-ENV acp-valve])
-(import doeff_agents.sessionhost.policy [SEAT-ENV-CREDENTIAL-SHAPED-SEGMENTS SPAWN-INHERITED-ENV-KEYS SPAWN-INHERITED-ENV-PREFIXES
-                                         seat-env-credential-shaped-offenders])
+(import hy)
+(import doeff_agents.sessionhost.policy [SPAWN-INHERITED-ENV-KEYS SPAWN-INHERITED-ENV-PREFIXES
+                                         seat-env-credential-shaped-offenders session-env-admission-error])
 
 
 ;; ---------------------------------------------------------------------------
@@ -3779,33 +3780,81 @@
        ;; R51 (1): 資格の判定は家の関所 1 点の**再利用**で、join.hy に第 2 の関所を写さない。
        (assert (= (len (lfor line join-lines :if (in "(session-env-admission-error (dict pairs) \"join.seat_env\")" line) line)) 1)
                "宣言の口は家の関所を通す(R51 (1))")
-       ;; R51 (1)(b): この口だけの線は policy の defk の 1 点(ADR-DOE-HY-004 R1・deff を新設しない)で、join.hy が 1 度 bind する。
+       ;; R51 (1)(b): この口の線は policy の defk の 1 点(ADR-DOE-HY-004 R1・deff を新設しない)で、join.hy が 1 度 bind する。
        (setv policy-lines (code-lines (/ SESSIONHOST-DIR "policy.hy")))
        (assert (= (len (lfor line policy-lines :if (.startswith line "(defk seat-env-credential-shaped-offenders ") line)) 1)
-               "この口だけの線の定義は policy に 1 つ(R51 (1)(b))")
+               "この口の線の定義は policy に 1 つ(R51 (1)(b))")
        (assert (= (len (lfor line join-lines :if (in "(seat-env-credential-shaped-offenders (dict pairs))" line) line)) 1)
                "join.seat-env-of がその線を 1 度呼ぶ(R51 (1)(b))")
-       ;; 末尾に錨を打たない(送り戻し lt-Y7XSNK0PK1N9706QZPMZDG0FNH の真因): 線の本体に `.endswith` が無く、区間で見る。
-       (setv shaped-at (next (gfor [i line] (enumerate policy-lines)
-                                   :if (.startswith line "(defk seat-env-credential-shaped-offenders ") i)))
-       (setv shaped-body (cut policy-lines shaped-at (+ shaped-at 12)))
-       (assert (any (gfor line shaped-body (in "(.split normalized \"_\")" line)))
-               "この口だけの線は正規化した名を `_` で割った区間で見る(R51 (1)(b))")
-       (for [line shaped-body]
-         (assert (not-in ".endswith" line)
-                 f"この口だけの線が末尾に錨を打っている —— `_KEY` の後ろに 1 語付いた綴りが通る(R51 (1)(b)): {line}"))
-       (assert (= SEAT-ENV-CREDENTIAL-SHAPED-SEGMENTS #{"KEY" "TOKEN"})
-               f"区間の語彙が動いた(R51 (1)(b)): {(sorted SEAT-ENV-CREDENTIAL-SHAPED-SEGMENTS) !r}")
-       ;; 挙動: CLAUDE.md が逐語で禁じる名・末尾に 1 語足した綴り・札の path は当たり、宛先の形と長い語の一部は当たらない。
-       (assert (= (run (seat-env-credential-shaped-offenders
-                    {"anthropic_api_key__personal" "x" "ANTHROPIC_API_KEY_PERSONAL" "x" "AGORA_BORROWER_KEY_PATH" "x"
-                     "SOME_TOKEN_FILE" "x" "SECRETARY_URL" "x" "SERVICE_URL" "x" "KEYBOARD_LAYOUT" "x" "TOKENIZER_URL" "x"}))
-                  ["AGORA_BORROWER_KEY_PATH" "ANTHROPIC_API_KEY_PERSONAL" "SECRETARY_URL" "SOME_TOKEN_FILE"
-                   "anthropic_api_key__personal"])
-               "この口だけの線の当たり外れ(R51 (1)(b))")
-       ;; ⚠ (a) の関所の線(metered-credential-env-offenders)は 1 語も動かさない —— それは launch / session.send の
-       ;;   判定を同時に変える出荷済みの不変条件(別 card)。join.hy が docstring で線の中身を読み手へ書くのは可 ——
-       ;;   禁じているのは (a) の**判定を写すこと**で、それは上の「呼びが 3 か所ちょうど」の針が撃つ。
+       ;; 資格の形の規則は 1 点(card acp:kanban-issue:ki-edeab28c7bee): 関所(a)と口の線(b)が同じ本体を読み、
+       ;; 違いは「手番の札を通すか」だけ。針は行の窓ではなく Hy の読みで定義の形を撃つ(docstring の語に反応しない)。
+       (setv policy-forms (list (hy.read-many (.read-text (/ SESSIONHOST-DIR "policy.hy") :encoding "utf-8"))))
+       (defn body-of [head name]
+         (setv found (lfor form policy-forms
+                           :if (and (isinstance form hy.models.Expression) (> (len form) 4)
+                                    (= (str (get form 0)) head) (= (str (get form 1)) name))
+                           form))
+         (assert (= (len found) 1) f"{head} {name} の定義が policy.hy に 1 つちょうどでない(実測 {(len found)})")
+         ;; (head name [params] {:pre …} "docstring" body…)— docstring までを落とした本体
+         (cut (get found 0) 5 None))
+       (defn walk [node]
+         (if (isinstance node (| hy.models.Expression hy.models.List hy.models.Set hy.models.Tuple hy.models.Dict))
+             (+ [node] (sum (gfor child node (walk child)) []))
+             [node]))
+       (defn method-call? [node method]
+         ;; Hy は `(.split x)` を `((. None split) x)` と読む。
+         (and (isinstance node hy.models.Expression) (>= (len node) 2)
+              (= (hy.repr (get node 0)) (hy.repr (hy.read f"(. None {method})")))))
+       (defn constants-in [nodes]
+         (set (gfor node (sum (gfor n nodes (walk n)) [])
+                    :if (and (isinstance node hy.models.Symbol)
+                             (re.fullmatch r"[A-Z][A-Z0-9]*(-[A-Z0-9]+)+" (str node)))
+                    (str node))))
+       (setv rule-body (body-of "deff" "metered-credential-env-offenders"))
+       (setv rule-nodes (sum (gfor n rule-body (walk n)) []))
+       ;; (i) 規則の本体が読む定数は語彙の 2 つちょうど —— 除外の名簿を足すと赤(死んだ語彙が黙って古びる形の再生を止める)。
+       (assert (= (constants-in rule-body) #{"CREDENTIAL-SHAPED-ENV-SEGMENT-SUFFIXES" "CREDENTIAL-SHAPED-ENV-WORDS"})
+               f"資格の形の規則が語彙の外の定数を読んでいる(除外の名簿を規則に足さない): {(sorted (constants-in rule-body))}")
+       (assert (not (any (gfor node rule-nodes (and (isinstance node hy.models.Symbol) (= (str node) "not-in")))))
+               "資格の形の規則の本体に除外(not-in)が在る —— 例外は口の判断(関所の手番の札ちょうど)で、規則は知らない")
+       (assert (<= (set (gfor node rule-nodes :if (isinstance node hy.models.String) (str node))) #{"_" "0123456789"})
+               "資格の形の規則の本体に名の literal が在る(語彙は定数 2 つだけが持つ)")
+       ;; (ii) 区間で見て、名の末尾に錨を打たない(送り戻し lt-Y7XSNK0PK1N9706QZPMZDG0FNH の真因)。
+       (assert (any (gfor node rule-nodes
+                          (and (method-call? node "split") (= (len node) 3) (= (str (get node 1)) "normalized")
+                               (isinstance (get node 2) hy.models.String) (= (str (get node 2)) "_"))))
+               "資格の形の規則は正規化した名を `_` で割った区間で見る")
+       (assert (not (any (gfor node rule-nodes
+                               (and (method-call? node "endswith") (= (str (get node 1)) "normalized")))))
+               "資格の形の規則が名の末尾に錨を打っている —— `_KEY` の後ろに 1 語付いた綴りが通る")
+       ;; (iii) 口の線 = 規則そのもの(例外なし)。関所の例外は手番の札ちょうど(読む定数に他の名簿が無い・名の literal の集まりが無い)。
+       (setv seat-body (body-of "defk" "seat-env-credential-shaped-offenders"))
+       (assert (and (= (len seat-body) 1)
+                    (= (hy.repr (get seat-body 0)) (hy.repr (hy.read "(metered-credential-env-offenders seat-env)"))))
+               "席の宣言の線は資格の形の規則そのもの(R51 (1)(b)・第 2 の規則を置かない)")
+       (setv admission-body (body-of "deff" "session-env-admission-error"))
+       (assert (<= (constants-in admission-body) #{"TURN-AUTH-ENV-KEYS" "CREDENTIAL-SHAPED-ENV-RULE-TEXT"})
+               f"関所が手番の札の外の名簿で例外を作っている: {(sorted (constants-in admission-body))}")
+       (assert (not (any (gfor node (sum (gfor n admission-body (walk n)) [])
+                               (and (isinstance node (| hy.models.Set hy.models.List hy.models.Tuple))
+                                    (any (gfor child node (isinstance child hy.models.String)))))))
+               "関所の本体に名の literal の集まりが在る(例外の名簿を関所に足さない)")
+       ;; (iv) 挙動の代表: 語彙の各項に 1 つ以上の当たり(語彙を狭めると赤)・宛先と数の上限は外れ・手番の札は関所を通り線で断る。
+       (setv hits ["ANTHROPIC_API_KEY" "anthropic_api_key__personal" "ANTHROPIC_API_KEY_PERSONAL" "OPENAI_API_KEY_2"
+                   "GEMINI_API_KEYS" "GITHUB_TOKEN" "AGORA_BORROWER_KEY_PATH" "SOME_TOKEN_FILE"
+                   "AWS_SECRET_ACCESS_KEY" "DB_PASSWORD" "GCP_CREDENTIALS_JSON" "SECRETARY_URL"])
+       (setv misses ["ACP_BASE" "AGORA_BRAIN_URL" "HERDR_HUD_STATE_BACKEND" "KEYBOARD_LAYOUT" "TOKENIZER_URL"
+                     "MAX_THINKING_TOKENS" "CLAUDE_CODE_MAX_OUTPUT_TOKENS"])
+       (assert (= (run (seat-env-credential-shaped-offenders (dfor name (+ hits misses) name "x"))) (sorted hits))
+               "資格の形の当たり外れ(R51 (1)(b))")
+       (for [name hits]
+         (assert (is-not (session-env-admission-error {name "x"} "session.launch") None) f"関所が {name} を通した"))
+       (assert (is (session-env-admission-error {"CLAUDE_CODE_OAUTH_TOKEN" "x"} "session.send") None)
+               "関所は手番の札を通す(R5・R30)")
+       (assert (= (run (seat-env-credential-shaped-offenders {"CLAUDE_CODE_OAUTH_TOKEN" "x"})) ["CLAUDE_CODE_OAUTH_TOKEN"])
+               "席の宣言の線は手番の札も断る(R30 (4))")
+       ;; join.hy が docstring で線の中身を読み手へ書くのは可 —— 禁じているのは (a) の**判定を写すこと**で、
+       ;; それは上の「呼びが 3 か所ちょうど」の針が撃つ。
        ;; R51 (3) / 訂正 1: R30 (4) の条文は「継承では届かない」と「宣言された名は charter を通って届く」の
        ;; 2 文に分かれている —— 分けないと、この便が直しに来た『宣言が偽になる』病を条文で再発させる。
        ;; ⚠ 継承の検(test_sessionhost_headless.py)は seat_env を宣言しないので**緑のまま**落ちない。

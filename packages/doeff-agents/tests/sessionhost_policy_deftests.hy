@@ -1760,3 +1760,52 @@
   (assert (= row.awaiting-response True))
   (assert (= row.awaiting-response-since (iso-at world 0)))
   (assert (in #("s1" "session_sent") world.events)))
+
+
+;; ---------------------------------------------------------------------------
+;; 資格の形の規則(card acp:kanban-issue:ki-edeab28c7bee)— 受理の関所と席の宣言の線が読む 1 点
+;; ---------------------------------------------------------------------------
+
+(import doeff_agents.sessionhost.policy :as shape-policy)
+
+(deftest test-credential-shaped-env-rule-is-position-free
+  ;; 位置に依らない: 区間のどれかが語彙の綴りで終わるか、名が語を含めば当たり。
+  ;; 表の当たりは語彙の各項に 1 つ以上(語彙を狭めると赤)、外れは宛先・数の上限・長い語の一部。
+  (setv hits ["ANTHROPIC_API_KEY" "anthropic_api_key__personal" "ANTHROPIC_API_KEY_PERSONAL" "anthropic-api-key-personal"
+              "OPENAI_API_KEY_OLD" "GEMINI_API_KEY_2" "OPENAI_APIKEY" "GEMINI_API_KEYS" "OPENAI_KEY" "GOOGLE_GENAI_KEY"
+              "ANTHROPIC_AUTH_TOKEN" "GITHUB_TOKEN" "NGROK_AUTHTOKEN" "SOME_TOKEN_FILE" "AGORA_BORROWER_KEY_PATH"
+              "ACP_BEARER_TOKEN_FILE" "AWS_SECRET_ACCESS_KEY" "CLIENTSECRET" "DB_PASSWORD" "GCP_CREDENTIALS_JSON"
+              "SECRETARY_URL" "CLAUDE_CODE_OAUTH_TOKEN"])
+  (setv misses ["ACP_BASE" "AGORA_BRAIN_URL" "HERDR_HUD_STATE_BACKEND" "AGORA_CUSTODY_URL" "AGORA_IMAGE_TOOLS"
+                "AGORA_CONVERSATION_ID" "AGORA_SEAT_OPENER" "KEYBOARD_LAYOUT" "TOKENIZER_URL" "TOKENIZERS_PARALLELISM"
+                "MAX_THINKING_TOKENS" "CLAUDE_CODE_MAX_OUTPUT_TOKENS" "MAX_MCP_OUTPUT_TOKENS" "ANTHROPIC_BASE_URL"
+                "ANTHROPIC_MODEL" "PATH"])
+  (assert (= (shape-policy.metered-credential-env-offenders (dfor name (+ hits misses) name "x")) (sorted hits)))
+  ;; 受理の関所は手番の札ちょうどを通し、他の当たりは全部断る(断りは形の節 — 規則の文は定数から組む)。
+  (for [name hits]
+    (setv err (shape-policy.session-env-admission-error {name "x"} "session.launch"))
+    (if (= name "CLAUDE_CODE_OAUTH_TOKEN")
+        (assert (is err None) name)
+        (do (assert (in "credential-shaped env is refused" err) name)
+            (assert (in shape-policy.CREDENTIAL-SHAPED-ENV-RULE-TEXT err) name))))
+  (for [name misses]
+    (assert (is (shape-policy.session-env-admission-error {name "x"} "session.launch") None) name))
+  ;; 席の宣言の線は同じ規則で、手番の札も断る(例外なし)。
+  (<- shaped (shape-policy.seat-env-credential-shaped-offenders (dfor name (+ hits misses) name "x")))
+  (assert (= shaped (sorted hits))))
+
+(deftest test-credential-shaped-env-vocabulary-is-read-from-the-constants
+  ;; 語彙を 1 語足す変更(例: `PASS` — SMTP_PASS / PGPASS)は定数だけで効き、断りの文も同じ定数から組まれる。
+  ;; 定数を差し替えて規則の本体を撃つ(本体が語彙を別に持っていないことの挙動の確かめ)。
+  (setv saved shape-policy.CREDENTIAL-SHAPED-ENV-SEGMENT-SUFFIXES)
+  (try
+    (setv shape-policy.CREDENTIAL-SHAPED-ENV-SEGMENT-SUFFIXES (+ saved #("PASS")))
+    (assert (= (shape-policy.metered-credential-env-offenders {"SMTP_PASS" "x" "PGPASS" "x" "ACP_BASE" "x"})
+               ["PGPASS" "SMTP_PASS"]))
+    (finally
+      (setv shape-policy.CREDENTIAL-SHAPED-ENV-SEGMENT-SUFFIXES saved)))
+  (assert (= (shape-policy.metered-credential-env-offenders {"SMTP_PASS" "x"}) []))
+  (for [suffix shape-policy.CREDENTIAL-SHAPED-ENV-SEGMENT-SUFFIXES]
+    (assert (in suffix shape-policy.CREDENTIAL-SHAPED-ENV-RULE-TEXT) suffix))
+  (for [word shape-policy.CREDENTIAL-SHAPED-ENV-WORDS]
+    (assert (in word shape-policy.CREDENTIAL-SHAPED-ENV-RULE-TEXT) word)))

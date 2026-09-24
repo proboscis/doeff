@@ -1222,10 +1222,10 @@
 
 
 (deftest test-launch-rejects-personal-api-key-alias-in-overlay
-  ;; 反例(card acp:kanban-issue:ki-2a061da56ca9): 個人鍵の別名 3 綴りは形
-  ;; (`*_API_KEY`)に当たらないので従量課金の節を素通りし、受理の層では
-  ;; 通っていた(spawn の砦だけが拾う = 呼び手へ返る断りが遅い)。語彙を
-  ;; policy の 1 点(PROVIDER-AUTH-ENV-KEYS)へ寄せた後は**受理で**落ちる。
+  ;; 反例(card acp:kanban-issue:ki-2a061da56ca9): 個人鍵の別名 3 綴りは旧い形
+  ;; (名の末尾が `_API_KEY`)に当たらず、受理の層を素通りしていた(spawn の砦だけが
+  ;; 拾う = 呼び手へ返る断りが遅い)。資格の形の規則が区間で見るようになってから
+  ;; (card acp:kanban-issue:ki-edeab28c7bee)は形の節で**受理で**落ちる。
   ;; 副作用ゼロ(行も tmux も生まれない)= spawn まで行っていない証拠。
   (for [bad-env [{"ANTHROPIC_API_KEY__PERSONAL" "sk-ant-x"}
                  {"ANTHROPIC_API_KEY_PERSONAL" "sk-ant-x"}
@@ -1236,7 +1236,7 @@
       (<- row (run-launch world (launch-params :session_env bad-env)))
       (except [e RuntimeError] (setv raised e)))
     (assert (is-not raised None) f"expected reject for {bad-env}")
-    (assert (in "provider auth env is forbidden" (str raised)))
+    (assert (in "credential-shaped env is refused" (str raised)))
     (assert (= world.trace []))
     (assert (= world.rows {}))))
 

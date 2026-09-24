@@ -621,25 +621,46 @@
 ;; API キーを利用してはならない。従量課金を利用してはならない」。音声モードは
 ;; 唯一の例外だが、この host を通らない)。binding 所有キーと違い「正しい家」が
 ;; 存在しない — agent 席の認証は定額(subscription/OAuth)profile のみで、
-;; API キーはどの経路でも運ばれてはならない。判定は綴りの列挙でなく形
-;; (`*_API_KEY`)+ 少数の既知別名 — 新 provider の SOMETHING_API_KEY も
-;; 語彙改訂なしで弾く(過剰包摂側へ倒す fail-closed: 課金でない `FOO_API_KEY`
-;; が誤って弾かれたら loud に見えて直せるが、逆は黙って課金される)。
+;; API キーはどの経路でも運ばれてはならない。判定は綴りの列挙でなく**資格の形**
+;; — 新 provider の鍵も語彙改訂なしで弾く(過剰包摂側へ倒す fail-closed: 資格でない
+;; 名が誤って弾かれたら起動の門で loud に見えて直せるが、逆は黙って課金される・札が届く)。
 ;; ⚠ 2026-09 の追補(下の BINDING-KIND-BILLING): 2026-08-26 の裁定が縛るのは
 ;; 「旗を立てていない host」ちょうどで、この env の締め出しは **旗の有無に関わらず
 ;; 不変** — 従量課金は kind(型)で宣言し host の旗(起動時の方針)で許す経路だけを
 ;; 通り、env の 1 語では決して許されない。
-(setv METERED-CREDENTIAL-ENV-ALIASES
-      #{"ANTHROPIC_AUTH_TOKEN" "OPENAI_KEY" "GOOGLE_GENAI_KEY"})
+;;
+;; 資格の形の規則(card acp:kanban-issue:ki-edeab28c7bee)— 定義はこの 2 つの定数と下の本体の 1 点。
+;; 受理(session-env-admission-error)と席の宣言の線(seat-env-credential-shaped-offenders)が同じ本体を読む。
+;; 正規化した名を `_` で割り、**区間のどれか**(末尾の数字は落とす)が下の綴りで終わるか、名が下の語を
+;; 含めば当たり。⚠ **名の末尾に錨を打たない** — `_API_KEY` で終わる形で判じると、後ろに 1 語付いた綴り
+;; (`ANTHROPIC_API_KEY_PERSONAL` / `anthropic_api_key__personal` = CLAUDE.md が逐語で禁じる名)が通る。
+;; 語彙は区間の末尾の綴りを**そのまま**並べる(複数形を自動で畳む処理を挟まない — 挟むと `PASS` のように
+;; S で終わる語を足しても当たらない)。`TOKENS` はわざと外す: env の名で `*_TOKENS` は数の上限
+;; (Claude Code の MAX_THINKING_TOKENS / CLAUDE_CODE_MAX_OUTPUT_TOKENS)で資格ではない。
+;; 形に当たるが資格ではない名は**ここで除外しない** — 除外の名簿は「死んだ語彙が黙って古びる」形そのもの。
+;; そういう名は宣言の側で改名するか、kind の型つきの欄(charter の effort / model・impls の settings の env)で運ぶ。
+;; SECRET / PASSWORD / CREDENTIAL は名のどこでも部分一致(複合語 `CLIENTSECRET` や複数形 `CREDENTIALS` も拾う・
+;; `SECRETARY_…` も当たるのは過剰包摂側で許す)。
+(setv CREDENTIAL-SHAPED-ENV-SEGMENT-SUFFIXES #("KEY" "KEYS" "TOKEN"))
+(setv CREDENTIAL-SHAPED-ENV-WORDS #("SECRET" "PASSWORD" "CREDENTIAL"))
+;; 断りの文が名乗る規則(定数から組む — 語彙を文字列へ写さない)。
+(setv CREDENTIAL-SHAPED-ENV-RULE-TEXT
+      (+ "a `_` segment ending in " (.join " / " CREDENTIAL-SHAPED-ENV-SEGMENT-SUFFIXES)
+         ", or " (.join " / " CREDENTIAL-SHAPED-ENV-WORDS) " anywhere in the name"))
 
 (deff metered-credential-env-offenders [session-env]
   {:pre [(: session-env dict)]
    :post [(: % list)]}
-  "session_env に居てはならない従量課金 credential 形のキーの列挙(純粋の 1 点)。"
+  "env のうち資格の形の名の列挙(純粋の 1 点・例外なし)。名は 2026-08-26 の従量課金の裁定に由来するが、
+   規則は資格の形そのもの。手番の札(TURN-AUTH-ENV-KEYS)も当たる — それを通すかは口の判断
+   (受理は通し、席の宣言の線は断る)で、この本体は知らない。"
   (sorted (lfor key (.keys session-env)
                 :if (do (setv normalized (policy-normalized-env-key key))
-                        (or (.endswith normalized "_API_KEY")
-                            (in normalized METERED-CREDENTIAL-ENV-ALIASES)))
+                        (or (any (gfor segment (.split normalized "_")
+                                       suffix CREDENTIAL-SHAPED-ENV-SEGMENT-SUFFIXES
+                                       (.endswith (.rstrip segment "0123456789") suffix)))
+                            (any (gfor word CREDENTIAL-SHAPED-ENV-WORDS
+                                       (in word normalized)))))
                 key)))
 
 
@@ -656,13 +677,13 @@
 ;; 和を取ると手番の札の経路が死ぬ。だから「どの層が何を禁じるか」は下の表の
 ;; とおり名指しで、集合の和ではない:
 ;;
-;;   受理  BINDING-OWNED ∪ metered(形 + 別名)∪ PROVIDER-AUTH
+;;   受理  BINDING-OWNED ∪ (資格の形 − TURN-AUTH)∪ PROVIDER-AUTH
 ;;   spawn PROVIDER-AUTH
 ;;   shell PROVIDER-AUTH ∪ PROVIDER-ROUTING ∪ TURN-AUTH
 
 ;; provider の鍵・札の綴り(= どの層でも agent process へ運ばせない)。
-;; 形(`*_API_KEY`)の判定と重なる名も在るが、重なりは無害 — 形だけでは拾えない
-;; 別名(*_API_KEY で終わらない個人鍵・AUTH_TOKEN 系)を綴りで塞ぐのがこの名簿の役。
+;; 受理の層では資格の形の規則が先に全部を拾う(重なりは無害)。この名簿の役は spawn と shell の層 —
+;; そこは形ではなく名指しで禁じる(substrate / shell が読む)。
 (setv PROVIDER-AUTH-ENV-KEYS
       #{"ANTHROPIC_API_KEY"
         "ANTHROPIC_API_KEY_PERSONAL"
@@ -683,38 +704,18 @@
   "session_env に居てはならない provider の鍵・札の綴りの列挙(純粋の 1 点)。"
   (env-offenders-against session-env PROVIDER-AUTH-ENV-KEYS))
 
-;; ⚠ この線は上の 3 層の名簿の族**ではない**(rebase の拍の判断・2026-09-19):族は「正規化した名が集合に在るか」
-;; で、こちらは「綴りがどんな形か」— env-offenders-against は集合しか取れないので畳めない。層も 4 つ目の口
-;; (機体の参加の宣言 = join.seat-env-of)で、受理 / spawn / shell のどれでもない。⇒ 並べて置き、畳まない。
 ;; 席へ運ぶ宣言の env(agora-redesign #520 — join の [agentd].seat_env)が **資格の輸送路に化けない**
-;; ための、この口だけの線。上の関所(session-env-admission-error)を通した**上に**重ねる — 関所の線は
-;; 1 語も動かさない(出荷済みの不変条件・広げると launch / session.send の判定が同時に変わる)。
-;; 判定は語彙ではなく**形**: doeff は ACP_BASE も AGORA_BRAIN_URL も知らないまま(宛先の綴りの定義点は
-;; 宣言の側)、「これは鍵・札・秘密だ」と読める綴りだけを構造で塞ぐ。根 = ADR-DOE-AGENTS-012 R30 (4) / R51 (1)。
-;; 札は **file の mount** で家の既定の置き場に置くのが唯一の形で、宣言の env は宛先だけを運ぶ。
-;; ⚠ **末尾に錨を打たない**: `_KEY` / `_TOKEN` で**終わる**名で判じると、後ろに 1 語付いた綴り
-;; (`ANTHROPIC_API_KEY_PERSONAL` / `anthropic_api_key__personal` = この repo の CLAUDE.md が逐語で禁じる名 /
-;; `_2` / `_OLD` …)が全部通る(送り戻し lt-Y7XSNK0PK1N9706QZPMZDG0FNH の実測)。⇒ 正規化した名を `_` で
-;; 割り、**区間のどれか**が KEY / TOKEN なら当たり(`_KEY_FILE` / `_KEY_PATH` / `_TOKEN_FILE` も区間に持つ)。
-;; SECRET / PASSWORD / CREDENTIAL は**部分一致のまま**(区間にすると `SECRETARY_…` が通って今より弱くなる)。
-;; 過剰包摂側へ倒す fail-closed: 資格でない `SECRETARY_URL` が弾かれたら起動の門で loud に見えて直せるが、
-;; 逆は黙って札が会話へ届く。
-(setv SEAT-ENV-CREDENTIAL-SHAPED-SEGMENTS #{"KEY" "TOKEN"})
-(setv SEAT-ENV-CREDENTIAL-SHAPED-WORDS #("SECRET" "PASSWORD" "CREDENTIAL"))
-
+;; ための、この口の線。上の関所(session-env-admission-error)を通した**上に**重ねる。判定は関所と
+;; **同じ資格の形の規則**(metered-credential-env-offenders の 1 点 — ここに第 2 の規則を置かない)で、
+;; 違いは例外の有無だけ: 関所は手番の札(TURN-AUTH-ENV-KEYS)を通すが、この線は通さない —
+;; 札は **file の mount** で家の既定の置き場に置くか手番ごとに host が注ぐのが唯一の形で、宣言の env は
+;; 宛先だけを運ぶ(根 = ADR-DOE-AGENTS-012 R30 (4) / R51 (1))。doeff は ACP_BASE も AGORA_BRAIN_URL も
+;; 知らないまま(宛先の綴りの定義点は宣言の側)、「これは鍵・札・秘密だ」と読める綴りだけを構造で塞ぐ。
 (defk seat-env-credential-shaped-offenders [seat-env]
   {:pre [(: seat-env dict)]
    :post [(: % list)]}
-  "席へ運ぶ宣言の env に居てはならない『資格の形』の名の列挙(純粋の 1 点・綴りの正規化は
-   policy-normalized-env-key と同規約)。区間(`_` で割った語)が KEY / TOKEN か、SECRET / PASSWORD /
-   CREDENTIAL を含む名 — 位置には依らない。"
-  (sorted (lfor key (.keys seat-env)
-                :if (do (setv normalized (policy-normalized-env-key key))
-                        (or (any (gfor segment (.split normalized "_")
-                                       (in segment SEAT-ENV-CREDENTIAL-SHAPED-SEGMENTS)))
-                            (any (gfor word SEAT-ENV-CREDENTIAL-SHAPED-WORDS
-                                       (in word normalized)))))
-                key)))
+  "席へ運ぶ宣言の env に居てはならない『資格の形』の名の列挙(資格の形の規則そのもの・例外なし)。"
+  (metered-credential-env-offenders seat-env))
 
 ;; ---------------------------------------------------------------------------
 ;; billing class(2026-09: 従量課金の資格を「宣言して」受ける経路 —
@@ -846,17 +847,20 @@
                f"carry binding-owned auth env (offending: {(.join ", " offenders) }). "
                "Declare the auth profile through the typed `binding` field "
                "(ADR-DOE-AGENTS-004 R7).")))
-  (setv metered (metered-credential-env-offenders session-env))
+  ;; 資格の形(1 点の規則)。受理の口の例外は手番の札ちょうど — host が手番ごとに注ぐ唯一の資格
+  ;; (ADR 012 R5・R30)で、行には残さない(overlay-without-turn-auth)。例外をここに足さない。
+  (setv metered (lfor key (metered-credential-env-offenders session-env)
+                      :if (not-in (policy-normalized-env-key key) TURN-AUTH-ENV-KEYS)
+                      key))
   (when metered
-    (return (+ f"{verb}: metered-billing credentials are forbidden in "
-               f"agent sessions (offending: {(.join ", " metered) }). "
-               "Agent seats authenticate with subscription profiles via the "
-               "typed `binding` field only (operator ruling 2026-08-26).")))
-  ;; ⚠ この節は metered の節より**後**でなければならない。ANTHROPIC_API_KEY は
-  ;; 両方に当たるので、前に置くと断りの文言が変わり、逐語で撃っている既存の検
-  ;; (sessionhost_launch_deftests / sessionhost_resume_deftests /
-  ;; test_sessionhost_headless)が赤くなる。ここが拾うのは「形では拾えない綴り」
-  ;; ちょうど — 個人鍵の別名など(card acp:kanban-issue:ki-2a061da56ca9)。
+    (return (+ f"{verb}: credential-shaped env is refused in agent sessions "
+               f"(offending: {(.join ", " metered) }; rule: {CREDENTIAL-SHAPED-ENV-RULE-TEXT}). "
+               "metered-billing credentials are forbidden in agent sessions — agent seats "
+               "authenticate with subscription profiles via the typed `binding` field only "
+               "(operator ruling 2026-08-26); the turn's credential is poured by the host per turn, "
+               "and other credentials reach a seat as files in its home, never as env.")))
+  ;; ⚠ この節は資格の形の節より**後**。受理の層では形が PROVIDER-AUTH を全部先に拾うので、ここは
+  ;; 名簿が形の外の綴りを持った日の砦(card acp:kanban-issue:ki-2a061da56ca9)。
   (setv provider-auth (provider-auth-env-offenders session-env))
   (when provider-auth
     (return (+ f"{verb}: provider auth env is forbidden in agent sessions "
