@@ -67,6 +67,9 @@
 ;; card acp:kanban-issue:ki-567f2dd6140f §3.1e: 保持の予算は ACP 側の 1 点(host は 1 度も読まない)。
 (import doeff_agents.sessionhost.acp.cache_operation [CACHE-RESIDENT-IDLE-MS])
 (import doeff_agents.sessionhost.acp.effects [
+  INTAKE-ROUTE-DEFER
+  INTAKE-ROUTE-INLINE
+  INTAKE-ROUTE-SPAWN
   CHARTER-KIND-KEY
   CHARTER-KIND-TURN
   CHARTER-KIND-VERIFY
@@ -5982,7 +5985,8 @@
     (if (= settings.stream-capability STREAM-CAPABILITY-EVENTS)
         (float settings.events-poll-seconds)
         (float settings.frame-interval-seconds))
-    state.jobs (float settings.transcript-poll-seconds)
+    ;; card acp:kanban-issue:ki-e786e72e2ae7: 受け付けが走っている間も手番の周期 — 引き取りを idle の上限まで待たせない。
+    (or state.jobs state.intakes) (float settings.transcript-poll-seconds)
     True (float settings.idle-wait-seconds)))
 
 
@@ -6163,6 +6167,63 @@
   "同じ job_id の行を置き換える(無ければ足す)。"
   (setv kept (lfor existing state.jobs :if (!= existing.job-id job.job-id) existing))
   (replace state :jobs (tuple (+ kept [job]))))
+
+
+(defk intake-ids-of [state]
+  {:pre [(: state AgentdState)]
+   :post [(: % set)]}
+  "拍の外の係で受け付け中の job の id(card acp:kanban-issue:ki-e786e72e2ae7・I1 — 受けの腕にとって受け済み)。"
+  (set (gfor pair state.intakes (get pair 0))))
+
+
+(defk intake-route-of [state subject]
+  {:pre [(: state AgentdState) (: subject str)]
+   :post [(: % str)]}
+  "Bound の会話の手番をどう受けるか(閉語彙 effects.INTAKE-ROUTE-* — card acp:kanban-issue:ki-e786e72e2ae7):
+   その会話の受け付けが係で走っている → defer(I2: 同じ会話の 2 本目を並べない)/ memory にその会話の手番が居る →
+   inline(拍の中の claim-job — その session の手番の途中なら持ち越す、の判断を今日のまま claim-job に置く)/ それ以外 → spawn。"
+  (cond
+    (any (gfor pair state.intakes (= (get pair 1) subject))) INTAKE-ROUTE-DEFER
+    (any (gfor job state.jobs (= job.subject subject))) INTAKE-ROUTE-INLINE
+    True INTAKE-ROUTE-SPAWN))
+
+
+(defk merged-intake [state job-id after]
+  {:pre [(: state AgentdState) (: job-id str) (: after AgentdState)]
+   :post [(: % AgentdState)]}
+  "終わった受け付けが返した状態(after — 始めた拍の写しから claim-job が進めた状態)から、その job の id の項**だけ**を
+   今の状態へ写す(card acp:kanban-issue:ki-e786e72e2ae7・I3): 手番(jobs)・verify(commands)・要約(summaries)・
+   持ち越した Ended(unrecorded-ends)・借りの待ち(unanswered-borrows)は id の項を置き換え、持ち越し(deferred)は
+   after に在れば足す。それ以外の欄(行の cache・刻印・session の文脈の使用率など)は拍の側が持ち主で、写さない —
+   受け付けの間に拍が進めた値を古い写しで戻さない。"
+  (defn keep [items]
+    (tuple (gfor item items :if (!= item.job-id job-id) item)))
+  (defn take [items]
+    (tuple (gfor item items :if (= item.job-id job-id) item)))
+  (setv deferred (tuple (gfor item state.deferred :if (!= item job-id) item)))
+  (replace state
+           :jobs (+ (keep state.jobs) (take after.jobs))
+           :commands (+ (keep state.commands) (take after.commands))
+           :summaries (+ (keep state.summaries) (take after.summaries))
+           :unrecorded-ends (+ (keep state.unrecorded-ends) (take after.unrecorded-ends))
+           :unanswered-borrows (+ (keep state.unanswered-borrows) (take after.unanswered-borrows))
+           :deferred (if (in job-id after.deferred) (+ deferred #(job-id)) deferred)))
+
+
+(defk retirable-outside-intakes [views session-ids intakes]
+  {:pre [(: views tuple) (: session-ids tuple) (: intakes tuple)]
+   :post [(: % tuple)]}
+  "idle の片付けの候補(session-ids)から、受け付け中の会話(intakes の会話の id)に帰属する session を外す
+   (card acp:kanban-issue:ki-e786e72e2ae7・I4 — 係がいま送る相手かもしれない)。帰属は器の眺めの 1 点(attribution-of-view)。"
+  (setv busy (set (gfor pair intakes (get pair 1))))
+  (when (not busy)
+    (return session-ids))
+  (setv held #{})
+  (for [view views]
+    (<- mine (| dict None) (attribution-of-view view))
+    (when (and (is-not mine None) (in (.get mine "conversationId") busy))
+      (.add held view.session-id)))
+  (tuple (gfor sid session-ids :if (not-in sid held) sid)))
 
 
 (defk job-in-flight [state job-id]

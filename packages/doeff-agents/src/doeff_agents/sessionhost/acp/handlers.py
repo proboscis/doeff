@@ -468,7 +468,10 @@ class HttpConnections:
     ``agentd-watch``(長く開いたままの SSE 1 本で、この口には載せない — WatchReader._loop の註)/
     ``agentd-session-wake``(器の unix socket の ``session.wait_events`` — HTTP を 1 発も撃たない)で、
     1 つの HttpConnections を 2 つの thread が共有しない。``_keep`` の押し出しはその日の備えで、
-    上の値段がその拍の代価。"""
+    上の値段がその拍の代価。
+    ⚠ card acp:kanban-issue:ki-e786e72e2ae7 から、受け付けの係(claim から送信まで — ``intake.spawned-intake``)が
+    拍と同じ口を同じ VM の別の task から使う(async-dispatch が要求ごとに thread へ出す)。受け付けと拍が同じ宛先を
+    同時に撃った拍は、後から来た方が上の値段(名引き + 握手)を払う — 受け付けの数秒に比べて小さい。"""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()

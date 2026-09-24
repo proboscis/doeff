@@ -3310,6 +3310,83 @@ class AgentdState:
     #: card acp:kanban-issue:ki-fd0f3b234a38(設計 v2 §10.1): 預かり所への借りの接続が答えず、窓の中で借りのやり直しを
     #: 待っている手番(UnansweredBorrow — job ごとに 1 つ)。行には何も書かない(正本は memory だけ — 再起動で消える)。
     unanswered_borrows: tuple[UnansweredBorrow, ...] = ()
+    #: card acp:kanban-issue:ki-e786e72e2ae7: 拍の外の係で走っている受け付け(claim から送信まで)の (job の id, 会話の id)。
+    #: 正本は受け付けの係(IntakeCollect の答えの pending)で、ここは最後に聞いた写し — 拍の中の判断(同じ job を 2 度受けない・
+    #: 同じ会話の受け付けを 2 本走らせない・その会話の温かい session を片付けない)が読む。再起動で消える(係ごと消える)。
+    intakes: tuple[tuple[str, str], ...] = ()
+
+
+# ------------------------------------------------------------------ 受け付けの係(card acp:kanban-issue:ki-e786e72e2ae7)
+#
+# 受け付け = Bound の手番の行を受けてから器へ送るまで(claim の CAS・郵便と履歴の読み・預かり所からの借り・器の起動と送り)。
+# 本番の pool の pod で 1 本 5.5〜34 秒かかり、拍の中で直列に走らせると、その間は他の job の claim も、走っている手番の実況も、
+# 器の観測も止まっていた(2026-09-24 の実測)。受け付けは拍の外の係(job ごとの作業)で走らせ、拍は毎回終わったものを引き取る。
+#
+# 不変量(agentd.receive-bound-jobs と judgment.merged-intake が守る):
+#   I1 1 つの job の id は同時に 1 か所にしか居ない — 受け付け中(係の pending)・memory の手番(jobs)・verify(commands)・
+#      要約(summaries)・持ち越し(unrecorded_ends)・借りの待ち(unanswered_borrows)。受け付け中の id は受けの腕にとって
+#      「受け済み」で、claim も拾い直し(recover-job)もしない。
+#   I2 1 つの会話の受け付けは同時に 1 本まで。受け付け中の会話の Bound は claim せず持ち越す(deferred)。memory に手番が
+#      居る会話の Bound は今日どおり拍の中で claim-job に渡す(その会話の session の手番の途中 = 持ち越し の判断を変えない)。
+#   I3 受け付けが返した状態からは、その job の id の項だけを今の状態へ写す(他の項は拍の側が持ち主)。
+#   I4 受け付け中の会話の温かい session は、idle の片付け(参加の腕)の対象にしない。
+#   I5 停止の拍は走っている受け付けを待って引き取ってから降りる(memory に載せずに降りない)。
+#   I6 機体の disk の貸与の journal の読み・書きは SerialSection の中だけ(拍と受け付けが同時に read-modify-write しない)。
+
+
+@dataclass(frozen=True)
+class IntakeStart(EffectBase):
+    """受け付けを 1 本始める(program = その job の claim から送信まで・答え = AgentdState)。結果 = None。
+    拍の外で走らせる係(worker_loop の spawned-intake)と、その場で走らせる係(intake.inline-intake — 検と 1 拍の入口)の 2 つ。"""
+
+    job_id: str
+    subject: str
+    program: object
+
+
+@dataclass(frozen=True)
+class IntakeCollect(EffectBase):
+    """終わった受け付けを引き取る。wait = 走っているものの終わりを待つ(停止の拍だけ)。結果 = IntakeReport。"""
+
+    wait: bool = False
+
+
+@dataclass(frozen=True)
+class IntakeOutcome:
+    """終わった受け付けの 1 本: state = 受け付けが返した状態(失敗 = None)・error = 失敗の文(成功 = "")。"""
+
+    job_id: str
+    subject: str
+    state: AgentdState | None
+    error: str
+
+
+@dataclass(frozen=True)
+class IntakeReport:
+    """IntakeCollect の答え: done = 前の引き取りの後に終わったもの・pending = まだ走っている (job の id, 会話の id)。"""
+
+    done: tuple[IntakeOutcome, ...]
+    pending: tuple[tuple[str, str], ...]
+
+
+#: Bound の手番の行をどう受けるか(judgment.intake-route-of の閉語彙): spawn = 拍の外の係で受け付ける /
+#: inline = 拍の中で claim-job に渡す(memory にその会話の手番が居る — 持ち越しの判断は今日どおり claim-job)/
+#: defer = 受けずに持ち越す(その会話の受け付けが走っている — I2)。
+INTAKE_ROUTE_SPAWN = "spawn"
+INTAKE_ROUTE_INLINE = "inline"
+INTAKE_ROUTE_DEFER = "defer"
+
+#: 貸与の journal(ADR-DOE-AGENTS-012 R51)の read-modify-write を 1 本ずつにする区間の名。
+SERIAL_LEASE_JOURNAL = "lease-journal"
+
+
+@dataclass(frozen=True)
+class SerialSection(EffectBase):
+    """program を、同じ名の区間と重ならずに走らせる(結果 = program の答え)。拍と受け付けが同じ機体の file を
+    read-modify-write する所だけに使う(I6)。1 本の拍しか無い入口では何もせずに走らせる。"""
+
+    name: str
+    program: object
 
 
 # ------------------------------------------------------------------ 要求(ACP)

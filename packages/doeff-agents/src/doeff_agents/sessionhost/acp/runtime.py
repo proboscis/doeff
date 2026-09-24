@@ -108,6 +108,7 @@ from doeff_agents.sessionhost.acp.handlers import (
     session_journal_poll,
     socket_is_listening,
 )
+from doeff_agents.sessionhost.acp.intake import with_inline_intake
 from doeff_agents.sessionhost.acp.io_types import NodePlaces, Paths, SeatEnvPairs
 from doeff_agents.sessionhost.acp.judgment import stream_capability_of_backend
 from doeff_agents.sessionhost.acp.loop_model import LoopPorts
@@ -622,7 +623,8 @@ def run_tick(
     settings: AgentdSettings, state: AgentdState, dispatchers: Sequence[Dispatcher]
 ) -> AgentdState:
     """1 tick を handler の下で走らせる(test も同じ入口を使う)。"""
-    result: object = PyVM().run(install(agentd_tick(settings, state), dispatchers))
+    # card acp:kanban-issue:ki-e786e72e2ae7: 1 拍の入口は受け付けをその場で走らせる(今日の直列の拍と同じ順・同じ結果)。
+    result: object = PyVM().run(install(with_inline_intake(agentd_tick(settings, state)), dispatchers))
     if not isinstance(result, AgentdState):
         raise TypeError(f"agentd tick returned {type(result).__name__}, expected AgentdState")
     return result
@@ -755,7 +757,7 @@ def run_close_for_stop(
     turn-record ended・Ended(AgentdRestart)にした state を返す。"""
     now_ms = int(time.time() * 1000)
     result: object = PyVM().run(
-        install(close_jobs_for_stop(settings, state, now_ms, reason), dispatchers)
+        install(with_inline_intake(close_jobs_for_stop(settings, state, now_ms, reason)), dispatchers)
     )
     if not isinstance(result, AgentdState):
         raise TypeError(f"agentd stop returned {type(result).__name__}, expected AgentdState")
