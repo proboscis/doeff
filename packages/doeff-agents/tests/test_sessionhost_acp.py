@@ -450,10 +450,12 @@ def test_failed_session_ends_the_job_with_a_condition_and_a_failed_cause() -> No
     assert job.status["result"] == {"cause": {"category": "failed", "reason": "SessionFailed"}}  # #349 行 3 粒 3a
     conditions = job.status["conditions"]
     assert isinstance(conditions, list)
+    # card acp:kanban-issue:ki-6f222893d6b6: agentd が足す条件は立てた試みの番号を名乗る(欄の無い結び = 1)。
     assert conditions[-1] == {
         "type": "SessionFailed",
         "status": "True",
         "reason": "session failed: run_failed (failed)",
+        "attempt": 1,
     }
 
 
@@ -2759,8 +2761,9 @@ def test_a_carried_ended_lands_on_the_re_placed_row_instead_of_claiming_it() -> 
     placed = bound_job("j-9", inputs=["m-9"], node_row=NODE)
     placed.status["binding"]["attempt"] = 2
     world.acp.put_row(placed)
+    # 持ち越しの条件は settle-record が組んだ形(立てた試みの番号を名乗る — card acp:kanban-issue:ki-6f222893d6b6)。
     carried = UnrecordedEnd(job_key=key, job_id="j-9", session_id="sid-lost", result={"ok": True}, cause={"category": "failed", "reason": "SessionFailed"},
-                            conditions=({"type": "SessionFailed", "status": "True", "reason": "x"},), at_ms=world.local.now_ms)
+                            conditions=({"type": "SessionFailed", "status": "True", "reason": "x", "attempt": 1},), at_ms=world.local.now_ms)
     world.carry_unrecorded_ends((carried,))
     world.tick(advance_ms=1_000)
     assert len(world.sessions.launches) == 0, "持ち越し中の job の Bound を claim した(#402)"

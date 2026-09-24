@@ -12,10 +12,18 @@ from pathlib import Path
 from dataclasses import dataclass, replace
 from typing import assert_never
 
+from jsonschema import Draft202012Validator, ValidationError, validate
+
 from doeff import EffectBase, K, Pass, Resume
 from doeff_agents.sessionhost.acp.cache_operation import AcpCacheOperations
 from doeff_agents.sessionhost.acp.effects import (
+    AGENT_JOB_KIND,
+    AGENTD_CONDITION_TYPES,
     AGENTD_PRINCIPAL,
+    CONDITION_ATTEMPT_KEY,
+    TURN_RECORD_CONDITIONS_DROPPED_KEY,
+    TURN_RECORD_CONDITIONS_KEY,
+    TURN_RECORD_ENDED,
     CUSTODY_CONTRACT_VERSION,
     JSON,
     MEMORY_KIND,
@@ -170,8 +178,88 @@ class Birth:
     initial: str
 
 
+#: 偽の ACP の書き込み口が見た、agentd の書き手の契約の破れ(card acp:kanban-issue:ki-6f222893d6b6)。本番の関数では例外に
+#: しない(例外で止めると Ended が書けず手番が Running のまま残る — 設計検証の実測)ので、偽の ACP の status の書き込み口
+#: (すべての fake の test の経路)で検めてここに積み、tests/conftest.py の autouse fixture が後片付けで空を検める。例外で
+#: 投げないのは、agentd の囲い(腕は I/O の失敗で止まらない)に吸われて赤の理由が見えなくなるから(同じ実測)。
+FAKE_ACP_CONTRACT_VIOLATIONS: list[str] = []
+
+
+@dataclass(frozen=True)
+class TurnRecordStatusContract:
+    """turn-record の status の契約(pin した写し docs/contracts/agora-kinds.json の kinds.turn-record)— 偽の ACP の
+    書き込み口が turn-record の status の書きを検める物差し。repo の path を fake が持たないように、写しを読むのは
+    tests/conftest.py で、ここへ置く(FakeAcp.turn_record_contract)。"""
+
+    schema: JSONObject
+    byte_budget: int
+
+
+def writer_contract_violations(
+    kind: str,
+    key: str,
+    before: JSONObject,
+    status: JSONObject,
+    turn_record_contract: TurnRecordStatusContract | None,
+) -> list[str]:
+    """1 回の status の書きが破る agentd の書き手の契約(card ki-6f222893d6b6)の文の列(空 = 守っている)。
+
+    (a) agent-job に**新しく足された**条件(書く前の行に同じ項が無い項)の type は agentd の語(AGENTD_CONDITION_TYPES)。
+    (b) その項は立てた試みの番号 attempt(1 以上の整数)を名乗る(judgment.conditions-of-runner / conditions-of-binding)。
+    (c) turn-record の ended でない書き(走っている間の追記)は conditions / conditionsDropped を運ばない。
+    (d) turn-record の status 全体が契約の写しの schema を満たし、compact JSON(UTF-8)が statusByteBudget 以下。
+    """
+    found: list[str] = []
+    if kind == AGENT_JOB_KIND:
+        prior = before.get("conditions")
+        known = prior if isinstance(prior, list) else []
+        written = status.get("conditions")
+        for condition in written if isinstance(written, list) else []:
+            if condition in known:
+                continue
+            if not isinstance(condition, dict):
+                found.append(f"agentd wrote a condition that is not an object on {key}: {condition!r}")
+                continue
+            condition_type = condition.get("type")
+            if condition_type not in AGENTD_CONDITION_TYPES:
+                found.append(f"agentd wrote condition type {condition_type!r} outside ConditionType on {key}")
+            attempt = condition.get(CONDITION_ATTEMPT_KEY)
+            if not (isinstance(attempt, int) and not isinstance(attempt, bool) and attempt >= 1):
+                found.append(
+                    f"agentd added condition {condition_type!r} without its attempt "
+                    f"({CONDITION_ATTEMPT_KEY} = {attempt!r}) on {key}"
+                )
+    if kind == TURN_RECORD_KIND:
+        if status.get("state") != TURN_RECORD_ENDED:
+            carried = [
+                field
+                for field in (TURN_RECORD_CONDITIONS_KEY, TURN_RECORD_CONDITIONS_DROPPED_KEY)
+                if field in status
+            ]
+            if carried:
+                found.append(f"agentd wrote {carried} on a turn-record write that is not the end ({key})")
+        if turn_record_contract is not None:
+            try:
+                validate(status, turn_record_contract.schema, cls=Draft202012Validator)
+            except ValidationError as error:
+                path = "/".join(str(part) for part in error.absolute_path)
+                found.append(f"turn-record status on {key} breaks the contract at /{path}: {error.message}")
+            size = len(
+                json.dumps(status, ensure_ascii=False, separators=(",", ":")).encode("utf-8", "surrogatepass")
+            )
+            if size > turn_record_contract.byte_budget:
+                found.append(
+                    f"turn-record status on {key} is {size} bytes, over the contract's "
+                    f"statusByteBudget {turn_record_contract.byte_budget}"
+                )
+    return found
+
+
 class FakeAcp:
     """ACP の資源の store・watch の sequence・中継(購読者の数は test が置く)。"""
+
+    #: turn-record の status の書きを検める契約の写し(card ki-6f222893d6b6 — tests/conftest.py が置く。None = 検めない)。
+    turn_record_contract: TurnRecordStatusContract | None = None
 
     @property
     def sequence(self) -> int:
@@ -436,6 +524,12 @@ class FakeAcp:
             return Conflict(self.conflict_once.pop(row.key))
         if existing.generation != row.generation:
             return Conflict(existing.generation)
+        # card ki-6f222893d6b6: 書き手の契約はこの書き込み口(すべての fake の test の経路)で検めて積む(上の定義の説明)。
+        FAKE_ACP_CONTRACT_VIOLATIONS.extend(
+            writer_contract_violations(
+                existing.kind, row.key, existing.status or {}, status, self.turn_record_contract
+            )
+        )
         self.rows[row.key] = AcpRow(
             namespace=existing.namespace,
             key=existing.key,
