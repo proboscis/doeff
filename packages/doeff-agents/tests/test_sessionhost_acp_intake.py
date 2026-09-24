@@ -212,3 +212,67 @@ def test_a_sent_turn_names_the_intake_stage_by_stage() -> None:
     # 結ばれてから拍が拾うまで(結びの刻の無い行は None)・拾ってから起こし始めるまで。
     assert line["pickupMs"] is None, line
     assert isinstance(line["claimMs"], int) and line["claimMs"] >= 0, line
+
+
+def test_a_binding_that_lands_mid_tick_is_picked_up_between_job_observations() -> None:
+    """結びが拍の途中に着いても、拍の終わりを待たずに受け付けへ渡す(card acp:kanban-issue:ki-e786e72e2ae7)。
+
+    本番の実測(2026-09-25 00:30 JST・pool の pod agentd-pool-1・手番 10 本): 拍は走っている手番の観測を 1 本ずつ直列に回すので
+    5〜12 秒かかり、受けの腕は拍に 1 回だけ — 結びの行の書きから agentd が拾うまで 1.7〜1.9 秒(手番 1〜2 本の時は 30〜300 ms)。
+    ここでは走っている 4 本の観測(器の眺めの読み)を 1 本 0.6 秒に遅らせ、1 本目の観測の最中に別の会話の手番を結ぶ。
+    その手番は拍の残り(2 秒ほど)を待たずに 1 秒以内に送られる。"""
+    from doeff_agents.sessionhost.acp.effects import ClockNowMs, SessionGet
+
+    world = World()
+    running = [f"r-{n}" for n in range(4)]
+    for n, job_id in enumerate(running):
+        _mail(world, f"lt-r{n}", f"hello {n}")
+        world.acp.put_row(
+            bound_job(job_id, inputs=[f"lt-r{n}"], subject=f"c-01ARZ3NDEKTSV4RRFFQ69G5R{n:02d}")
+        )
+
+    started = time.monotonic()
+    slow = threading.Event()
+    in_first_look = threading.Event()
+
+    def clock(effect: EffectBase, k: K) -> Resume | Pass:
+        # 実時間で進む時計(拍の途中の受けは時計で間隔を測る)。
+        if isinstance(effect, ClockNowMs):
+            return Resume(k, 1_000 + int((time.monotonic() - started) * 1000))
+        return world.local.dispatch(effect, k)
+
+    def sessions(effect: EffectBase, k: K) -> Resume | Pass:
+        if slow.is_set() and isinstance(effect, SessionGet):
+            in_first_look.set()
+            # 器の眺めの読みが 0.6 秒かかる(本番の手番 10 本の pod の jobs-fast の 1 本ぶん)。解く合図は無い — 待つだけ。
+            threading.Event().wait(0.6)
+        return world.sessions.dispatch(effect, k)
+
+    stop = threading.Event()
+    holder = StateHolder()
+    errors: list[str] = []
+
+    def loop() -> None:
+        run_loop(world.settings, [world.acp.dispatch, world.custody.dispatch, sessions, clock], stop, errors.append, holder)
+
+    thread = threading.Thread(target=loop, daemon=True)
+    thread.start()
+    try:
+        assert _wait_until(lambda: sorted(job.job_id for job in holder.state.jobs) == running, 10.0), [
+            job.job_id for job in holder.state.jobs
+        ]
+        slow.set()
+        assert in_first_look.wait(5), "走っている手番の観測が始まらない"
+        _mail(world, "lt-new", "new hello")
+        world.acp.put_row(bound_job("n-new", inputs=["lt-new"], subject=FAST_CONVERSATION))
+        bound_at = time.monotonic()
+        assert _wait_until(lambda: _sent_to_job(world, "n-new"), 1.0), (
+            "拍の途中に結ばれた手番が 1 秒以内に送られない(拍の終わりまで受けを待っている)"
+        )
+        assert time.monotonic() - bound_at < 1.0
+    finally:
+        slow.clear()
+        stop.set()
+        thread.join(10)
+    assert not thread.is_alive()
+    assert errors == [], errors

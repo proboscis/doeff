@@ -6202,6 +6202,20 @@
   (set (gfor pair state.intakes (get pair 0))))
 
 
+(defk received-job-ids [state]
+  {:pre [(: state AgentdState)]
+   :post [(: % set)]}
+  "受けの腕にとって「受け済み」の job の id の和(I1 — 1 つの id は同時に 1 か所にしか居ない): memory の手番・verify・要約・
+   着かなかった Ended の持ち越し・接続が答えない借りの待ち・拍の外で受け付け中。拍の受けの腕(agentd.receive-bound-jobs)と
+   拍の途中の受け(agentd.receive-fresh-bindings)が同じ 1 点で判じる。"
+  (<- jobs set (in-flight-ids state))
+  (<- commands set (in-flight-command-ids state))
+  (<- summaries set (in-flight-summarize-ids state))
+  (<- carried set (unrecorded-end-ids state))
+  (<- intakes set (intake-ids-of state))
+  (| jobs commands summaries carried (set (gfor entry state.unanswered-borrows entry.job-id)) intakes))
+
+
 (defk intake-route-of [state subject]
   {:pre [(: state AgentdState) (: subject str)]
    :post [(: % str)]}
