@@ -67,6 +67,13 @@ def _system_env_names():
                   if name.startswith(("ACP_", "DOEFF_", "AGORA_", "RECORD_SERVICE_")))
 
 
+def _echoed_env():
+    """DOEFF_HEADLESS_STUB_ECHO_ENV(, 区切りの名)が名指した env の**値**(無ければ None)— 起こした process に届いた
+    宛先を byte で比べる点(card acp:kanban-issue:ki-e930b8506201 の検)。宛先の名だけを名指す(資格の名は名指さない)。"""
+    names = [name for name in os.environ.get("DOEFF_HEADLESS_STUB_ECHO_ENV", "").split(",") if name]
+    return {name: os.environ.get(name) for name in names}
+
+
 def _emit(obj):
     sys.stdout.write(json.dumps(obj) + "\n")
     sys.stdout.flush()
@@ -170,7 +177,7 @@ def _turn(sid, prompt, uuid, resumed, carried=False):
     _lifecycle(sid, uuid, "started")
     _emit({"type": "system", "subtype": "init", "session_id": sid, "model": "stub-model",
            "cwd": os.getcwd(), "resumed": resumed, "auth_digest": _auth_digest(),
-           "system_env_names": _system_env_names(),
+           "system_env_names": _system_env_names(), "echoed_env": _echoed_env(),
            # 実物 2.1.270 の名乗り(段 10 lane 10n)— DOEFF_HEADLESS_STUB_NO_LIFECYCLE=1 で旧い CLI(名乗らない)を真似る
            "capabilities": [] if os.environ.get("DOEFF_HEADLESS_STUB_NO_LIFECYCLE") else
            ["interrupt_receipt_v1", "interrupt_cancel_queued_v1", "msg_lifecycle_v1"]})
@@ -299,7 +306,7 @@ def _cli_own_turn(sid, orphans):
                "session_id": sid})
     _emit({"type": "system", "subtype": "init", "session_id": sid, "model": "stub-model",
            "cwd": os.getcwd(), "resumed": True, "auth_digest": _auth_digest(),
-           "system_env_names": _system_env_names(),
+           "system_env_names": _system_env_names(), "echoed_env": _echoed_env(),
            "capabilities": [] if os.environ.get("DOEFF_HEADLESS_STUB_NO_LIFECYCLE") else
            ["interrupt_receipt_v1", "interrupt_cancel_queued_v1", "msg_lifecycle_v1"]})
     zero = {"input_tokens": 0, "output_tokens": 0, "cache_creation_input_tokens": 0,
