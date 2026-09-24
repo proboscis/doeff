@@ -1,0 +1,4 @@
+== (i) 今の本線(1 本の文字列・今の loop)— 偽の runner の照合を直して撃ち直し
+   pin1: 赤 gate.full が処理ステージの列でない(str)— 1 つの母集団の赤が後ろの母集団を未実行にする
+   pin2: 赤 repo の根から package の tests を渡して訪ねた集合が期待と違う: 欠け ['doeff-adr', 'doeff-agentic', 'doeff-agents', 'doeff-conductor', 'doeff-docker', 'doeff-domain', 'doeff-effect-analyzer', 'doeff-events', 'doeff-flow', 'doeff-gemini', 'doeff-git', 'doeff-google-secret-manager', 'doeff-hy', 'doeff-image', 'doeff-jev', 'doeff-ml-nexus', 'doeff-notify', 'doeff-openai', 'doeff-openrouter', 'doeff-secret', 'doeff-seedream', 'doeff-system-one', 'doeff-test-target', 'doeff-time', 'doeff-traverse', 'doeff-vm', 'doeff-vm-core'] 余り [](呼ばれた回数 1・cwd の例 /tmp/ki08ec-proto/tree/packages/doeff-adr) / 最後に失敗の package doeff-adr を名指していない
+   pin3: 緑

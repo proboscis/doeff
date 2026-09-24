@@ -1,0 +1,16 @@
+PACKAGE_UV_RUN ?= uv run
+test-packages:
+	@echo "Running tests in subpackages..."
+	@for dir in packages/*/; do \
+		if [ -d "$$dir/tests" ]; then \
+			if [ -z "$$(find "$$dir/tests" -name 'test_*.py' -not -path '*/fixtures/*' | head -1)" ]; then \
+				echo ""; \
+				echo "=== Skipping $$(basename $$dir) (no Python tests — Rust tests run under cargo) ==="; \
+				continue; \
+			fi; \
+			echo ""; \
+			echo "=== Testing $$(basename $$dir) ==="; \
+			(cd "$$dir" && $(PACKAGE_UV_RUN) pytest tests/ -m "not e2e") || exit 1; \
+		fi; \
+	done
+

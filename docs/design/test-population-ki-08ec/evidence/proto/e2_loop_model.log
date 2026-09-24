@@ -1,0 +1,13 @@
+== Makefile.current: rc=2
+=== Testing a ===
+FAILED tests/test_cli.py::test_fail - assert False
+   日次の道具が読む失敗名: (1, ['tests/test_cli.py::test_fail'])
+== Makefile.proposed: rc=2
+=== Testing a ===
+FAILED packages/a/tests/test_cli.py::test_fail - assert False
+=== Testing b ===
+FAILED packages/b/tests/test_cli.py::test_fail - assert False
+=== Testing c ===
+=== Skipping r (no Python tests — Rust tests run under cargo) ===
+test-packages failed: a b
+   日次の道具が読む失敗名: (2, ['packages/a/tests/test_cli.py::test_fail', 'packages/b/tests/test_cli.py::test_fail'])

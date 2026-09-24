@@ -1,0 +1,11 @@
+# 固定のテスト 3 番の実現性: repo 全体の Makefile(提案の loop を当てた写し)を模型の木に -C で掛け、本物の pytest で走らせる
+# make -s -f /tmp/ki08ec-proto/tree/Makefile.proposed -C /tmp/ki08ec-proto/e2/repo test-packages PACKAGE_UV_RUN='/home/kento/repos/doeff/.venv/bin/python -m'
+rc=2
+=== Testing a ===
+FAILED packages/a/tests/test_cli.py::test_fail - assert False
+=== Testing b ===
+FAILED packages/b/tests/test_cli.py::test_fail - assert False
+=== Testing c ===
+=== Skipping r (no Python tests — Rust tests run under cargo) ===
+test-packages failed: a b
+make: *** [/tmp/ki08ec-proto/tree/Makefile.proposed:159: test-packages] Error 1

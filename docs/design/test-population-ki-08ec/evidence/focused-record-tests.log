@@ -1,0 +1,4 @@
+# F1: card が名指した 3 本を含む file の焦点実行(この会話の出力からの転記)
+# 実行: cd /home/kento/repos/doeff/packages/doeff-agents && timeout 170 uv run --no-sync pytest tests/test_sessionhost_acp_record.py -q -p no:cacheprovider
+# 対象版: 4da6ca4a3dd83bdf8bc57e5ecf799365721167be(主 checkout の detached HEAD)・機体 = この pod
+19 passed, 1 warning in 67.79s (0:01:07)

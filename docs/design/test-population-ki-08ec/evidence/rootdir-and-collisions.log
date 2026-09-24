@@ -1,0 +1,9 @@
+# F7 の元の測り方(収集の node id)と、package をまたぐ同名の test file
+## package の dir からの --collect-only(node id は repo の根からの相対)
+packages/doeff-agents/tests/test_sessionhost_acp_record.py::test_a_batch_the_service_refuses_by_its_data_is_given_up_and_the_spool_moves_on  (4da6ca4a・cd packages/doeff-agents && pytest tests/test_sessionhost_acp_record.py --collect-only -q の先頭行・転記)
+## package をまたいで同じ basename の test file(packages/*/tests/test_*.py)
+test_cli.py
+test_effect_handlers.py
+test_effects.py
+test_types.py
+## ⚠ 盲検 A で誤りと分かった点: 要約の FAILED / PASSED 行は収集の node id ではなく cwd からの相対 → evidence/A-real-repo-summary-path.log
