@@ -1656,6 +1656,8 @@
   ;; card ki-fd0f3b234a38: claim の拍に決めた起こし方(下の解きの前)— 接続が答えない借りのやり直しは同じ解きを
   ;; もう 1 度通すので、memory には解く前のこの値を覚える。
   (setv claimed-choice choice)
+  ;; card acp:kanban-issue:ki-e786e72e2ae7: 受け付けの段ごとの所要(計器 agent-job-intake-stages — 送れた手番だけ 1 行)。
+  (<- stage-entry int (ClockNowMs))
   ;; 段 12 lane 12j 追補 4 / 7(agora-redesign #233 / #176・実弾 2026-09-16 17:29 aj-545JP9E9ZMZHPM11ZW99KM51AC): 候補が無い = 新しい会話、ではない。
   ;; 宣言を変えた手番は Messaging の lineageFor(段 12 lane 12k)が predecessor を空にし、前の手番の agent-job の行は終了 300 s で回収されるので、
   ;; 記録の在る会話が「候補なし → launch」で全履歴を失って始まった。launch で claim が着いた job だけ、記録の service に「原文の出来事が
@@ -1675,7 +1677,9 @@
   ;; (判断は judgment.rebuild-arm-of の 1 点)。組み立てか起動前の検査が通らない拍は incarnate が同じ拍で rehydrate に戻す。
   (<- rebuilt-choice ArmChoice (rebuild-arm-of choice settings (str (.get plan.charter "agent_type" ""))))
   (setv choice rebuilt-choice)
+  (<- stage-resolved int (ClockNowMs))
   (<- mail tuple (mail-of settings row))
+  (<- stage-mail int (ClockNowMs))
   (setv bodies (get mail 0))
   ;; card acp:kanban-issue:ki-06b286143c17: 続きの手番(spec.continuation)は、途中で終わった手番が渡した郵便を渡し直さず、
   ;; 再開の案内文(judgment.continuation-guidance-of の 1 点)で指すだけ。案内文は郵便の前置き(lead)として、畳む器では
@@ -1692,6 +1696,7 @@
   (setv carried (get mail 1))
   (<- exclude tuple (inputs-of row))
   (<- borrowed tuple (borrow-lease settings job-id plan f"agent-job {job-id}"))
+  (<- stage-borrow int (ClockNowMs))
   (setv lease (get borrowed 0))
   (setv refusal (get borrowed 1))
   (if (is-not refusal None)
@@ -1771,6 +1776,7 @@
         (when stale-others
           (<- (retire-sessions stale-others
                                f"job {job-id} runs in another home — the conversation keeps one warm session (#379)")))
+        (<- stage-warm int (ClockNowMs))
         (<- attempted (| SessionView SessionRefused)
             (incarnate settings plan choice view session-id lease lead bodies carried job-id subject exclude opener))
         (setv outcome attempted)
@@ -1790,10 +1796,24 @@
               (<- (end-job-now settings row "LaunchFailed" outcome.error #() now-ms))
               state)
             (do
+              (<- stage-incarnate int (ClockNowMs))
               (<- folds bool (first-turn-carries-inputs settings.backend-kind used.arm))
               (<- started AgentdState
                   (after-start settings state row plan outcome lease used.arm now-ms subject
                                (if folds "" lead) (if folds #() bodies) (if folds #() carried) (get mail 2)))
+              (<- stage-done int (ClockNowMs))
+              ;; 段の切れ目: 起こし方の解き(記録の在否の問い)→ 郵便の読み → 預かり所の借り → 温かい session の片付け →
+              ;; 器の起動 / 送り(履歴の読みと組み直しを含む)→ 送った後の書き(turn-record・実況の頭・届いた証拠)。
+              (<- sent (| InFlightJob None) (job-in-flight started job-id))
+              (when (is-not sent None)
+               (<- (MetricLine :fields {"metric" "agent-job-intake-stages" "agentJobId" job-id "arm" used.arm
+                                       "resolveMs" (- stage-resolved stage-entry)
+                                       "mailMs" (- stage-mail stage-resolved)
+                                       "borrowMs" (- stage-borrow stage-mail)
+                                       "warmMs" (- stage-warm stage-borrow)
+                                       "incarnateMs" (- stage-incarnate stage-warm)
+                                       "afterStartMs" (- stage-done stage-incarnate)
+                                       "totalMs" (- stage-done stage-entry)})))
               started)))))
 
 

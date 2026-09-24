@@ -194,3 +194,18 @@ def test_to_send_metric_names_the_wait_since_the_binding() -> None:
     plain.tick()
     line = [m for m in plain.local.metrics if m["metric"] == "agent-job-to-send"][-1]
     assert "boundAtMs" not in line and "boundToSendMs" not in line, line
+
+
+def test_a_sent_turn_names_the_intake_stage_by_stage() -> None:
+    """送れた手番は受け付けの段ごとの所要を 1 行名乗る(起こし方の解き・郵便・借り・温かい session の片付け・
+    器の起動 / 送り・送った後の書き)— どの段が 2 秒を食っているかを本番の log から読むため。"""
+    world = World()
+    _mail(world, "lt-1", "hello")
+    world.acp.put_row(bound_job("s-1", inputs=["lt-1"]))
+    world.tick()
+    stages = [m for m in world.local.metrics if m["metric"] == "agent-job-intake-stages"]
+    assert len(stages) == 1, world.local.metrics
+    line = stages[0]
+    parts = ["resolveMs", "mailMs", "borrowMs", "warmMs", "incarnateMs", "afterStartMs"]
+    assert all(isinstance(line[name], int) and line[name] >= 0 for name in parts), line
+    assert sum(line[name] for name in parts) == line["totalMs"], line
