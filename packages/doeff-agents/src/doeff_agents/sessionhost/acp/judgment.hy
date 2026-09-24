@@ -50,7 +50,7 @@
 (import re)
 
 (import doeff_agents.sessionhost.attachment [TurnAttachment attachment-wire])
-(import doeff_agents.sessionhost.policy [CARRIED-INSTRUCTION-SOURCES])
+(import doeff_agents.sessionhost.policy [CARRIED-INSTRUCTION-SOURCES TURN-ENV-PARAM])
 ;; card acp:kanban-issue:ki-2bd49c68b042: 「その result の行は CLI 自身の手番のものか」を名乗る表は器と
 ;; **同じ 1 点**(headless_protocol.cli-own-turn-result — origin.kind の閉語彙)。純関数で I/O を持たない。
 ;; 2 つ目の表を持つと、孤児の background task の報せ(実測 2026-09-19 07:28 JST aj-9AHT…)で本文の手番が
@@ -3623,7 +3623,7 @@
   ;; 実弾 2026-09-15 09:5x(operator): 段 10 lane 10o の attachments を名簿に入れ忘れたので、
   ;; **腕が resume の手番だけ**画像が黙って落ちていた(誤りも条件も出ないまま model が画像を見ない)。
   ;; 起こす腕は launch / resume / rehydrate の 3 つ — 検が launch しか通っていなかったのが見落としの根。
-  (for [key (+ #("prompt" "model" "effort" "mcp_servers" "session_env" "binding"
+  (for [key (+ #("prompt" "model" "effort" "mcp_servers" "session_env" TURN-ENV-PARAM "binding"
                  "expected_result" "context_file" "launch_attribution"
                  MESSAGE-ATTACHMENTS-KEY)
                ;; 席へ運ぶ欄(閾値・記憶の置き場・記憶の本文)は**名前をここで数えない** —
@@ -3654,10 +3654,10 @@
   (cond
     (= lease-kind "claude")
     (do
-      (setv env (dict (or (.get charter "session_env") {})))
+      ;; 札は session_env に畳まず、手番の欄 turn_env ちょうどで運ぶ(card acp:kanban-issue:ki-edeab28c7bee — 起こす口の
+      ;; session_env は宣言の env として例外なしで検める)。
       (when (is-not grant-token None)
-        (setv (get env CLAUDE-OAUTH-TOKEN-ENV) grant-token))
-      (setv (get next "session_env") env)
+        (setv (get next TURN-ENV-PARAM) {CLAUDE-OAUTH-TOKEN-ENV grant-token}))
       (setv (get next "binding")
             {"kind" "claude-code" "config_dir" f"{homes-root}/claude/{safe-account}"})
       #(next None))

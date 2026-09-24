@@ -99,7 +99,9 @@
   overlay-env-offenders
   overlay-without-turn-auth
   session-env-admission-error
-  ENV-ORIGIN-PER-TURN
+  turn-env-admission-error
+  ENV-ORIGIN-DECLARED
+  TURN-ENV-PARAM
   seconds-since])
 
 
@@ -666,6 +668,7 @@
   (setv lifecycle (get params "lifecycle"))
   (setv binding (.get params "binding"))
   (setv session-env (.get params "session_env" {}))
+  (setv turn-env (.get params TURN-ENV-PARAM {}))
 
   ;; --- R7 admission(純粋検査 — 全副作用より前): auth は typed binding で
   ;; 運び、session_env は非 auth overlay。binding 所有キーの overlay 混入は
@@ -693,9 +696,16 @@
   ;; 従量課金 credential は binding 所有キーと違い「正しい家」が無い — どの
   ;; 経路でも受けない(operator 裁定 2026-08-26。resume も本関所を通る)。
   ;; 判定は policy の 1 点(session.send の手番ごとの env も同じ関所を通る)。
-  (setv env-error (session-env-admission-error session-env "session.launch" ENV-ORIGIN-PER-TURN))
+  ;; 起こす口の session_env は宣言の env を畳んだもの(ACP の charter・機体の宣言・会話の身元)— 出自 declared で例外なく
+  ;; 検める。手番のトークンは型つきの欄 turn_env ちょうどが運ぶ(card acp:kanban-issue:ki-edeab28c7bee)。
+  (setv env-error (session-env-admission-error session-env "session.launch" ENV-ORIGIN-DECLARED))
   (when (is-not env-error None)
     (raise (RuntimeError env-error)))
+  (when (not (isinstance turn-env dict))
+    (raise (RuntimeError f"session.launch: {TURN-ENV-PARAM} must be an object")))
+  (<- turn-error (turn-env-admission-error turn-env "session.launch"))
+  (when (is-not turn-error None)
+    (raise (RuntimeError turn-error)))
 
   ;; --- admission(oracle 順序: lifecycle → 重複 → 既存 tmux)。
   (when (not-in lifecycle LIFECYCLES)
@@ -1048,7 +1058,7 @@
 
   ;; --- tmux session 作成(禁止 env reject は substrate 所有)+ 起動。
   ;; 実効 env は launch-spawn-env の 1 点(tui と headless で同じ組み方)。
-  (<- effective-env (launch-spawn-env identity session-env))
+  (<- effective-env (launch-spawn-env identity (| session-env (.get params TURN-ENV-PARAM {}))))
   (<- pane-id (tmux-new-session session-name (get params "work_dir") effective-env))
 
   ;; --- booting 行の登録(tmux-new-session 直後・ready 待ちの前 — issue
@@ -1281,6 +1291,8 @@
       ;; ⚠ 置き場(memory_dir)と手番の冊(memory_files)は**ここに書かない** —
       ;; policy.TURN-CARRIED-KEYS の 1 点から上の carry-charter-fields が写す。
       "session_env" overlay-env
+      ;; 手番のトークンは行に残らないので、再開の呼びが運ぶ欄をそのまま起こす腕へ渡す(card ki-edeab28c7bee)。
+      TURN-ENV-PARAM (or (.get params TURN-ENV-PARAM) {})
       "expected_result" effective-expected
       "socket_path" (.get params "socket_path" "")
       "max_running" (.get params "max_running")

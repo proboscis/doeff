@@ -105,6 +105,7 @@
   prepare-launch-workspace
   session-hooks-mode])
 (import doeff_agents.sessionhost.policy [
+  TURN-ENV-PARAM
   carry-charter-fields
   carry-launch-flags
   cause-if-absent
@@ -279,7 +280,7 @@
                                   (.get params "socket_path" "")
                                   session-id))
   (setv argv (get built "argv"))
-  (<- effective-env (launch-spawn-env identity session-env))
+  (<- effective-env (launch-spawn-env identity (| session-env (.get params TURN-ENV-PARAM {}))))
   (<- events-path (headless-events-path events-root session-id))
   ;; 冷えた再開の前の圧縮(2026-09-22 追補・実測 06:36 pool -1): 会話を**この家で初めて**続ける起動
   ;; (session.resume・pod の入れ替え後の続き)は冷えた再開そのもの — 続きの手番の腕と同じ 1 点を、
