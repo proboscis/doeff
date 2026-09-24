@@ -6104,6 +6104,17 @@
     True row.created-at-ms))
 
 
+(defk bound-at-ms-of [row]
+  {:pre [(: row AcpRow)]
+   :post [(: % (| int None))]}
+  "配置がこの行を結んだ時刻(status.binding.at・epoch ms — card acp:kanban-issue:ki-e786e72e2ae7 の計器 agent-job-to-send の
+   boundToSendMs の始点)。欄が無い・数でない行は None(発明しない)。"
+  (setv status (if (isinstance row.status dict) row.status {}))
+  (setv binding (.get status "binding"))
+  (setv at (if (isinstance binding dict) (.get binding "at") None))
+  (if (and (isinstance at int) (not (isinstance at bool))) at None))
+
+
 (defk message-key-of [message-id]
   {:pre [(: message-id str)]
    :post [(: % str)]}

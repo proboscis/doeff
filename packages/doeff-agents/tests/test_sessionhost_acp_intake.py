@@ -168,3 +168,29 @@ def test_a_second_turn_of_the_same_conversation_waits_for_the_first_intake() -> 
     world.acp.put_row(bound_job("s-1", inputs=["lt-1"], subject=FAST_CONVERSATION))
     world.tick()
     assert run(intake_route_of(world.state, FAST_CONVERSATION)) == INTAKE_ROUTE_INLINE
+
+
+def test_to_send_metric_names_the_wait_since_the_binding() -> None:
+    """計器 agent-job-to-send は生まれからの所要(配置の待ちを含む)に加えて、結ばれてから送るまで(受け付けの所要)を
+    名乗る — 配置の待ちと受け付けを 1 行で分ける(card acp:kanban-issue:ki-e786e72e2ae7 の「段ごとに測る計器」)。
+    結びの時刻は配置が書く status.binding.at(epoch ms)。欄の無い行は今日の欄だけ。"""
+    from dataclasses import replace
+
+    world = World()
+    _mail(world, "lt-1", "hello")
+    job = bound_job("s-1", inputs=["lt-1"])
+    assert job.status is not None
+    binding = dict(job.status["binding"])  # type: ignore[arg-type]
+    binding["at"] = 700
+    world.acp.put_row(replace(job, status={**job.status, "binding": binding}))
+    world.tick()
+    line = [m for m in world.local.metrics if m["metric"] == "agent-job-to-send"][-1]
+    assert line["boundAtMs"] == 700, line
+    assert line["boundToSendMs"] == line["sentAtMs"] - 700, line
+
+    plain = World()
+    _mail(plain, "lt-1", "hello")
+    plain.acp.put_row(bound_job("s-1", inputs=["lt-1"]))
+    plain.tick()
+    line = [m for m in plain.local.metrics if m["metric"] == "agent-job-to-send"][-1]
+    assert "boundAtMs" not in line and "boundToSendMs" not in line, line

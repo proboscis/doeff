@@ -658,6 +658,7 @@
   usage-by-row-name
   wait-seconds-for
   intake-ids-of
+  bound-at-ms-of
   intake-route-of
   merged-intake
   retirable-outside-intakes
@@ -2238,13 +2239,19 @@
   ;; 始点 = 行の生まれの着地(generation 1 の image の landed_at・ns 精度 — 秒の粒度の
   ;; createdAt ではない。判断は birth-ms-of の 1 点・欄が無ければ今日の値)。
   (<- born-ms int (birth-ms-of row state.births))
-  (<- (MetricLine :fields {"metric" "agent-job-to-send"
-                                  "agentJobId" job-id
-                                  "sessionId" view.session-id
-                                  "arm" arm
-                                  "createdAtMs" born-ms
-                                  "sentAtMs" sent-ms
-                                  "ms" (- sent-ms born-ms)}))
+  ;; card acp:kanban-issue:ki-e786e72e2ae7: 生まれからの所要(ms)は配置の待ちを含む。結ばれてから送るまで(受け付けの所要)を
+  ;; 同じ行に名乗り、配置の待ちと受け付けを分ける(結びの時刻が無い行は今日の欄だけ)。
+  (<- bound-ms (| int None) (bound-at-ms-of row))
+  (setv to-send {"metric" "agent-job-to-send"
+                 "agentJobId" job-id
+                 "sessionId" view.session-id
+                 "arm" arm
+                 "createdAtMs" born-ms
+                 "sentAtMs" sent-ms
+                 "ms" (- sent-ms born-ms)})
+  (when (is-not bound-ms None)
+    (.update to-send {"boundAtMs" bound-ms "boundToSendMs" (- sent-ms bound-ms)}))
+  (<- (MetricLine :fields to-send))
   (<- job InFlightJob
       ;; 手番の始まりに取った offset なので、材料はこの手番を覆う(covers = True・腕に依らない —
       ;; card acp:kanban-issue:ki-ef537db05f7f)。
