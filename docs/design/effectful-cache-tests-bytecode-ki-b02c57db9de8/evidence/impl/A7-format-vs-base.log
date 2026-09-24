@@ -1,0 +1,12 @@
+# ruff format --diff の +/- 行: 今の木 と 本線 15a7c05e の同じ file(同じなら、残る差分は基準版から在る行だけ)
+## conftest.py
++
+-    _WATCHDOG_TIMEOUT = scaled_watchdog_timeout(
+-        _WATCHDOG_BASE, per_test_base, _DEADLINE_SCALE
+-    )
++    _WATCHDOG_TIMEOUT = scaled_watchdog_timeout(_WATCHDOG_BASE, per_test_base, _DEADLINE_SCALE)
+=> same as base
+## packages/doeff-hy/tests/test_source_positions.py
+-
+-
+=> same as base

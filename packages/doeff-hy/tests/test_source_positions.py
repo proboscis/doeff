@@ -70,12 +70,13 @@ def mod(tmp_path_factory: pytest.TempPathFactory) -> ModuleType:
     root: Path = tmp_path_factory.mktemp("doeff_hy_positions")
     (root / "positions_probe.hy").write_text(SOURCE, encoding="utf-8")
     sys.path.insert(0, str(root))
+    dont_write_before = sys.dont_write_bytecode
     sys.dont_write_bytecode = True
     try:
         return importlib.import_module("positions_probe")
     finally:
         sys.path.remove(str(root))
-        sys.dont_write_bytecode = False
+        sys.dont_write_bytecode = dont_write_before
 
 
 def _hy_frames(error: BaseException, mod: ModuleType) -> list[tuple[str, int]]:
