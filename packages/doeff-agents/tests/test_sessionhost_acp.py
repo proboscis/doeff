@@ -4408,6 +4408,123 @@ def test_headless_next_turn_does_not_inherit_the_previous_turns_result() -> None
     assert second.status["result"] == {"cause": {"category": "failed", "reason": "SessionLost"}}
 
 
+def _continuation_after_result(session_id: str) -> str:
+    """queued の注入で result の後に続いた手番の材料(headless_protocol.ClaudeDialogue._on_result — queued の注入が
+    在れば CLI は result の後も手番を続ける): 1 つ目の本文と result → 注入を model が読む拍(command_lifecycle
+    started = 続行の開始)→ 続きの本文の途中(result はまだ無い)。"""
+    return (
+        _claude_events(session_id, "first answer")
+        + _stream_line({"type": "command_lifecycle", "state": "started", "command_uuid": "m-2"})
+        + _stream_line(
+            {
+                "type": "stream_event",
+                "event": {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "second"},
+                },
+            }
+        )
+    )
+
+
+class PastFirstResult(NamedTuple):
+    """1 つ目の result を agentd が読んだ拍まで進めた世界と、その session の id・events の path。"""
+
+    world: HeadlessWorld
+    session_id: str
+    events_path: str
+
+
+def _headless_world_past_the_first_result() -> PastFirstResult:
+    """1 つ目の result を agentd が読んだ拍(process は生きている・monitor はまだ刻まない)まで進めた世界。"""
+    world = HeadlessWorld()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400))
+    world.tick()
+    sid = world.sid("j-1")
+    path = f"/events/{sid}.events.jsonl"
+    world.local.transcripts[path] = _claude_events(sid, "first answer")
+    world.tick(advance_ms=1_000)
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["phase"] != PHASE_ENDED, (
+        "生きている process の result は手番の終わりの証拠にしない"
+    )
+    return PastFirstResult(world=world, session_id=sid, events_path=path)
+
+
+def test_headless_death_in_a_continuation_after_the_result_is_a_lost_session() -> None:
+    """設計検証 lt-1NE5PT2APB43S0HKKC2T2GAZZG の盲検 A(card acp:kanban-issue:ki-2bd49c68b042 の残る細い形):
+    queued の注入で result の後に手番が続き、その続きの途中で process が降りた(monitor はまだ刻んでいない)。
+    旧形は turn-result-seen を or で累積したので 1 つ目の result が立ったまま残り、本物の死を completed で閉じた ——
+    作り直されず、続きの答えが消える。続行の開始の後は、続きの結末が出るまで「結果が出た」を名乗らない。"""
+    world, sid, path = _headless_world_past_the_first_result()
+    world.local.transcripts[path] = _continuation_after_result(sid)
+    world.sessions.kill_backend(sid)
+    assert world.sessions.views[sid].turn_ended_at_ms is None
+    world.tick(advance_ms=1_000)
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_ENDED
+    assert job.status["result"] == {"cause": {"category": "failed", "reason": "SessionLost"}}
+
+
+def test_headless_continuation_that_wrote_its_own_result_then_died_ends_the_turn() -> None:
+    """盲検 A の対の正常例: 続きも自分の結末(result)を器の記録へ出してから process が降りた → turn-end(completed)。"""
+    world, sid, path = _headless_world_past_the_first_result()
+    world.local.transcripts[path] = _continuation_after_result(sid) + _stream_line(
+        {"type": "result", "subtype": "success", "is_error": False, "num_turns": 2}
+    )
+    world.sessions.kill_backend(sid)
+    world.tick(advance_ms=1_000)
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_ENDED
+    assert job.status["result"] == {"cause": {"category": "completed"}}
+
+
+class TurnBoundary(NamedTuple):
+    """1 回の読みの判断(M1)が名乗る手番の境界の 2 つの欄(DeltaBatch の turn_result / turn_boundary)。"""
+
+    turn_result: bool
+    turn_boundary: bool
+
+
+def _turn_boundary_of(agent_type: str, text: str) -> TurnBoundary:
+    batch = run(judgment.deltas_of(agent_type, "events", text, "j", 0, 1, ()))
+    return TurnBoundary(turn_result=batch.turn_result, turn_boundary=batch.turn_boundary)
+
+
+def test_the_material_names_its_last_turn_boundary_and_is_silent_without_one() -> None:
+    """判断(M1)は読みの中の**最後の手番の境界**を名乗る: 走行器の結末の記録(claude = CLI 自身の手番でない
+    result / codex = turn/completed)は (turn_result True, turn_boundary True)、その後の続行の開始(claude =
+    command_lifecycle started / codex = turn/started)は (False, True)。境界の無い読み(本文の差分だけ)は
+    (False, False) — 読み手(agentd.stream-push)は境界を見た読みで上書きし、境界の無い読みでは前の値を保つ。"""
+    ended = _claude_events("s-1", "a")
+    started = _stream_line({"type": "command_lifecycle", "state": "started", "command_uuid": "m-2"})
+    assert _turn_boundary_of("claude", ended) == TurnBoundary(True, True)
+    assert _turn_boundary_of("claude", ended + started) == TurnBoundary(False, True)
+    assert _turn_boundary_of("claude", started + ended) == TurnBoundary(True, True)
+    only_delta = _stream_line(
+        {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "x"},
+            },
+        }
+    )
+    assert _turn_boundary_of("claude", only_delta) == TurnBoundary(False, False)
+    codex_started = _stream_line(
+        {"method": "turn/started", "params": {"threadId": "t-1", "turn": {"id": "t2"}}}
+    )
+    codex_ended = _codex_events("t-1", "a")
+    assert _turn_boundary_of("codex", codex_ended) == TurnBoundary(True, True)
+    assert _turn_boundary_of("codex", codex_ended + codex_started) == TurnBoundary(False, True)
+
+
 def test_headless_codex_turn_streams_deltas_and_records_command_execution() -> None:
     world = HeadlessWorld(agent_type="codex")
     world.acp.put_row(message("m-1", "first"))
@@ -7986,6 +8103,19 @@ def test_continuation_guidance_is_built_from_the_continuation_and_the_handed_mai
     assert isinstance(unreadable, str)
     assert "理由の読めない終わり方" in unreadable
     assert "既に渡ったメッセージはありません" in unreadable
+
+
+def test_continuation_of_carries_handed_verbatim_even_when_it_overlaps_the_inputs() -> None:
+    """不変条件 I4(設計検証 lt-1NE5PT2APB43S0HKKC2T2GAZZG の盲検 B): agentd は handed を spec.inputs と突き合わせて
+    足し引きしない — 振り分け(渡し直すか・続きとして指すか)は ACP の Messaging.Decide.carrierEndedOf の 1 点。
+    契約の上では handed と spec.inputs は重ならないが、重なった行が来ても continuation-of は handed を写すだけで、
+    『重なりを削る』実装(第 2 の判断点)はこの検で赤になる。"""
+    row = continued_job("j-2", inputs=["m-1", "m-2"], handed=["m-1"])
+    continuation = run(judgment.continuation_of(row))
+    assert continuation is not None
+    assert continuation.handed == ("m-1",), (
+        "agentd が handed を spec.inputs と突き合わせて削った(I4 違反)"
+    )
 
 
 def test_a_continued_turn_on_a_headless_session_points_at_the_handed_mail_in_the_one_prompt() -> None:
