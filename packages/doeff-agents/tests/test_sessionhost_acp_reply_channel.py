@@ -84,7 +84,7 @@ def test_each_source_is_shown_with_its_own_way_to_reply() -> None:
     )
     assert item({"kind": "ask", "from": "operator", "class": "dev"}) == TurnInputText(
         "request",
-        f"[依頼 lt-1・class=dev・依頼者=operator・parent=無し・at={AT_TEXT}・完了は ai reply lt-1 --kind report]\n本文",
+        f"[依頼 lt-1・class=dev・from=operator・parent=無し・at={AT_TEXT}・完了は ai reply lt-1 --kind report]\n本文",
     )
     assert item({"kind": "note", "from": "c-X"}) == TurnInputText(
         "mail",

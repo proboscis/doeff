@@ -191,7 +191,7 @@
   "出どころ → 項の見出し 1 行(本文の前に付ける)。綴りはここ 1 点。
    - operator の文: `(<id>・at=<JST>)` と、添えた参照(`・郵便 <id> について`・`・参照 <refs>`)。返し方は区切りの見出しが言う。
    - 依頼書への答え: `(依頼書 <refs> の問い <問いの id> への答え・<id>・at=…)`。
-   - 依頼: `[依頼 <id>・class=…・依頼者=…・parent=…・at=…・完了は ai reply <id> --kind report]`。
+   - 依頼: `[依頼 <id>・class=…・from=…・parent=…・at=…・完了は ai reply <id> --kind report]`。
    - 他の会話からの郵便: `[郵便 <id>・kind=…・from=…・inReplyTo=…・at=…・返事は ai tell --to <from> --in-reply-to <id> --kind note]`。
    - 報せ: `[報せ <id>・理由=…・from=…・at=…・返事は要りません]`。"
   (<- at-text str (at-text-of source.at))
@@ -214,7 +214,7 @@
     (isinstance source Request)
     (+ "[依頼 " source.message-id
        "・class=" (if (is source.served-class None) NONE-WORD source.served-class)
-       "・依頼者=" source.requester
+       "・from=" source.requester
        "・parent=" (if (is source.parent None) NONE-WORD source.parent)
        "・at=" at-text
        "・完了は ai reply " source.message-id " --kind report]")
