@@ -659,6 +659,18 @@ JOB_INTERRUPTS_DELIVERED_KEY: str = "interruptsDelivered"
 #: 実測 2026-09-18: 相乗り 10 通のうち agent に届いたのは 1 通なのに、台帳は 10 通とも handedAt だった —
 #: 手番が始まったこと(phase)を「郵便が届いた」の証拠に使っていたため。
 JOB_INPUTS_DELIVERED_KEY: str = "inputsDelivered"
+#: card acp:kanban-issue:ki-06b286143c17(依頼 lt-9Q3EH9WYRHPSXR3MZQHB1ASRS7): agent-job の spec.continuation = この手番が
+#: **実行環境の障害で途中で終わった手番の続き**であることの印(任意の欄・無い = 続きの手番ではない)。形は
+#: {of: 途中で終わった手番の id, cause: その手番の result.cause の写し, handed: その連鎖の途中で終わった手番が既に
+#: 会話の session へ渡した郵便の id の並び(spec.inputs と重ならない)}。書き手 = ACP の配達の 1 点
+#: (Acp.App.Messaging.Decide.carrierEndedOf が振り分け、Plan.jobSpecFor が書く)・agentd は**読むだけ**で、
+#: 振り分けをやり直さない(handed を spec.inputs と突き合わせて足し引きしない)。契約 = ACP docs/contracts/messaging.json
+#: delivery.agentJob.continuation(agent-job は engine の kind なので、この repo の契約の写し agora-kinds.json の外)。
+#: 読むのは judgment.continuation-of の 1 点、案内文を組むのは judgment.continuation-guidance-of の 1 点。
+JOB_CONTINUATION_KEY: str = "continuation"
+JOB_CONTINUATION_OF_KEY: str = "of"
+JOB_CONTINUATION_CAUSE_KEY: str = "cause"
+JOB_CONTINUATION_HANDED_KEY: str = "handed"
 #: 段 10 lane 10n(agora-redesign #93): 割り込みの観測の 2 欄(書き手 agentd・additive・append-only の map)。
 #: interruptsRead = {Message の id: model がその本文を読んだ証拠の出来事の seq}(claude = 注入の行の
 #: command_lifecycle started・codex = 止めた後の turn/started)/ interruptsEscalated = {Message の id: 停止の合図を
@@ -1085,7 +1097,11 @@ TRANSCRIPTS_OBSERVED_MAX_CEILING = 64
 #: 2 = 段 12 lane 12k(agora-redesign #349 行 3 粒 3a): Ended の行は必ず status.result.cause を運ぶ(契約 scheduling.json resultCause)。
 #: 読み手(kanban-health の不変条件 ended-jobs-carry-a-cause)は protocol >= 2 の node に結ばれた Ended だけを数える —
 #: 「版が新しい agentd」を sha の順ではなく wire の整数で言う(依頼者の裁定 2026-09-17 00:5x「protocol の整数で比べる」)。
-AGENTD_PROTOCOL = 2
+#: 3 = card acp:kanban-issue:ki-06b286143c17: agent-job の spec.continuation を読む(続きの手番は途中で終わった手番が渡した郵便を
+#: 渡し直さず、再開の案内文で指すだけ・spec.inputs が空で continuation だけを持つ手番は案内文がその手番の入力)。
+#: ⚠ 出荷の順: この版を全機体へ配った後に ACP の配置の床 agentdProtocolFloor を 3 へ上げ、その後で ACP の配達が
+#: continuation を書き始める — 逆にすると、protocol 2 の agentd が inputs = [] の続きの手番を charter だけの prompt で走らせる。
+AGENTD_PROTOCOL = 3
 AGENTD_REVISION_ENV = "DOEFF_AGENTD_REVISION"
 AGENTD_BUILD_ENV = "DOEFF_AGENTD_BUILD"
 AGENTD_REVISION_UNSTAMPED = "unstamped"
@@ -2310,6 +2326,21 @@ class ArmChoice:
     compacts: bool = False
 
 
+@dataclass(frozen=True)
+class TurnContinuation:
+    """agent-job の spec.continuation の型つきの写し(card acp:kanban-issue:ki-06b286143c17・読みは judgment.continuation-of の
+    1 点)。この手番は、実行環境の障害で途中で終わった手番 ``of`` の続き。``handed`` の郵便はその連鎖の途中で終わった手番が
+    既に会話の session へ渡したもので、この手番は**渡し直さない** — 再開の案内文(judgment.continuation-guidance-of)で指すだけ。
+
+    ⚠ agentd は handed を spec.inputs と突き合わせて足し引きしない(振り分けは ACP の carrierEndedOf の 1 点 — 不変条件 I4)。
+    欠けた欄は発明しない: of が読めなければ空文字・cause が object でなければ空・handed の項は文字列だけ。"""
+
+    of: str
+    #: 途中で終わった手番の result.cause の写し({category, reason} — 契約 scheduling.json resultCause)。
+    cause: JSONObject
+    handed: tuple[str, ...]
+
+
 #: 組み直しを見送る理由の閉語彙(card ki-c3aace97d825)。
 #: no-history      = 記録に写せる出来事が 1 つも無い(履歴の無い会話は launch / rehydrate のまま)
 #: thin-record     = 記録の service に届かず見出しだけ(本文が無いので transcript にならない)
@@ -2513,6 +2544,10 @@ class UnrecordedEnd:
     cause: JSONObject
     conditions: tuple[JSONObject, ...]
     at_ms: int
+    #: card acp:kanban-issue:ki-06b286143c17(§3 の 9): 器へ渡せたのに行の inputsDelivered へまだ書けていない郵便の id
+    #: (InFlightJob.inputs_delivered_owed の写し — judgment.unrecorded-end-of が job から運ぶ)。持ち越した Ended の書きが
+    #: judgment.owed-inputs-delivered-status-of で同じ 1 回の書きに足す。
+    inputs_delivered_owed: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -2941,6 +2976,13 @@ class InFlightJob:
     #: 立っている間は、次に行を鍵で読む拍(append-entries・end-turn-record)が同じ判断(agentd.realign-record-spec)を
     #: もう 1 度掛ける。単調性(spec.attempt)があるので追記の拍に掛けても古い試みと新しい試みが書き合わない。
     record_spec_dirty: bool = False
+    #: card acp:kanban-issue:ki-06b286143c17(§3 の 9): 器へ渡せたのに、配達報告の書き(agentd.record-inputs-delivered)が
+    #: 着かなかった郵便の id(行の順)。捨てない — 次の遅い拍(agentd.stream-job-slow)が書き直し、それより先に手番が
+    #: 終わった時は Ended の書き(settle-record・end-job-now・持ち越しの UnrecordedEnd)が同じ 1 回の書きに足す
+    #: (judgment.owed-inputs-delivered-status-of の 1 点)。欠けたまま Ended になると ACP の配達はその郵便を
+    #: 「渡っていない」と読んで次の手番へ渡し直す(同じ郵便が 2 度届く — 不変条件 I1)。memory の写しなので
+    #: agentd の再起動をまたいでは残らない(拾い直し recover-job は渡したかを知らない — 報告に残す限界)。
+    inputs_delivered_owed: tuple[str, ...] = ()
     #: 手番の記録(turn-record)の行の最後に知った image(段 8 lane 4u — 出来事の追記の CAS の相手)。
     #: None = まだ読んでいない(最初の追記で鍵から読む)。書けた拍に generation + 1 と書いた status で
     #: 差し替え、Conflict は読み直して積み直す。正本は行(R7)— 再起動で消えても鍵から戻る。

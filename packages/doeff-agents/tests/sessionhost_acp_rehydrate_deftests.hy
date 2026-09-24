@@ -26,6 +26,7 @@
 (require doeff-hy.macros [deftest])
 
 (import base64)
+(import dataclasses [replace])
 (import hashlib)
 (import json)
 (import doeff [run])
@@ -70,6 +71,8 @@
   record-history-satisfied
   record-page-advances
   attachment-of
+  continuation-guidance-of
+  continuation-of
   first-turn-attachments-of
   launch-charter-with-attachments
   mail-text-of
@@ -810,6 +813,105 @@
   (assert (.endswith prompt (+ "\n\n" (mailed asked))) "郵便の見出しと本文は最後(headless の 1 手番目)")
   (assert (= world.sessions.sends []))
   (assert (any (gfor line world.local.logs (in f"rehydrates conversation {CONVERSATION} from the record service" line))) world.local.logs))
+
+
+;; ---------------------------------------------------------------------------
+;; 続きの手番(card acp:kanban-issue:ki-06b286143c17・依頼 lt-9Q3EH9WYRHPSXR3MZQHB1ASRS7 §3 の 7・§4 の 2 本目): 実行環境の障害で
+;; 途中で終わった手番が既に渡した郵便(spec.continuation.handed)は spec.inputs に居ないので、新しい session を履歴から起こす腕
+;; (rehydrate / rebuild)では「これまでの会話」(rebuild では組み直した transcript)に普段どおり 1 回入り、入力には 0 回。
+;; 再開の案内文は履歴の後ろ・渡し直す郵便の前(除外の規則は変えない)。温かい session へ続ける腕(send / resume)の検は
+;; test_sessionhost_acp.py に在る。
+;; ---------------------------------------------------------------------------
+
+(defn #^ AcpRow continued-row [#^ str job-id #^ list inputs #^ str account #^ (| str None) predecessor #^ list handed]
+  "ACP の配達が書く続きの手番(spec.continuation = {of, cause, handed}・handed は spec.inputs と重ならない —
+   契約 ACP docs/contracts/messaging.json delivery.agentJob.continuation)。"
+  (setv base (bound-row job-id inputs account predecessor))
+  (replace base :spec (| base.spec {"continuation" {"of" "j-1"
+                                                    "cause" {"category" "failed" "reason" "SessionFailed"}
+                                                    "handed" handed}})))
+
+
+(defn #^ str guidance-of [#^ AcpRow job #^ AcpRow handed]
+  "その手番の再開の案内文(期待値は judgment の同じ 1 点から — 材料は continuation と handed の郵便の行の spec だけ)。"
+  (run (continuation-guidance-of (run (continuation-of job)) {(str (get handed.spec "id")) handed.spec})))
+
+
+(deftest test-a-continued-turn-rehydrated-headless-has-the-handed-mail-in-the-history-once-and-not-in-the-input
+  ;; headless は 1 手番 = 1 prompt: charter → これまでの会話(handed の本文が 1 回)→ 案内文 → 渡し直す郵便(見出し + 本文)。
+  ;; handed の郵便の見出し `[郵便 m-1・` は 0 回(入力として渡し直していない)・送りは無い・配達報告は spec.inputs だけ。
+  (setv world (World "headless" True))
+  (setv handed (message-row "m-1" CONVERSATION "operator" "合言葉は ひまわり" (- AT 9000)))
+  (.put-row world.acp handed)
+  (.put-row world.acp (record-row "j-0" CONVERSATION [{"seq" 0 "at" (- AT 8000) "kind" "text" "bytes" 20 "sha256" "0"}] (- AT 8500)))
+  (setv (get world.record-service.stored #(CONVERSATION "j-0#a1" 0)) {"producerSeq" 0 "at" (- AT 8000) "kind" "text" "text" "覚えました"})
+  (setv asked (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (- AT 100)))
+  (.put-row world.acp asked)
+  (setv job (continued-row "j-2" ["m-2"] "acct" "sid-on-another-node" ["m-1"]))
+  (.put-row world.acp job)
+  (.tick world 0)
+  (assert (= world.sessions.resumes []))
+  (assert (= (len world.sessions.launches) 1) world.local.logs)
+  (setv launch (get world.sessions.launches 0))
+  (assert (= (str-at (dict-at (dict-at launch "launch_attribution") "agentd") "arm") "rehydrate") launch)
+  (setv prompt (str-at launch "prompt"))
+  (setv guidance (guidance-of job handed))
+  (assert (.startswith prompt "start\n\nこれまでの会話") prompt)
+  (assert (= (.count prompt "合言葉は ひまわり") 1) "handed の本文は履歴に 1 回だけ")
+  (assert (= (.count prompt "[郵便 m-1・") 0) "handed の郵便を入力として渡し直した")
+  (assert (.endswith prompt (+ "\n\n" guidance "\n\n" (mailed asked))) "案内文は履歴の後ろ・渡し直す郵便の前")
+  (assert (= world.sessions.sends []))
+  (assert (= (get (.job-status world "j-2") "inputsDelivered") ["m-2"])))
+
+
+(deftest test-a-continued-turn-rehydrated-on-tui-sends-the-guidance-before-the-mail
+  ;; 畳まない器(tui): 起こす prompt は charter → これまでの会話(handed の本文が 1 回・見出しは 0 回)。案内文は id を運ばない
+  ;; 送り 1 つで、渡し直す郵便の送りの前に届く(配達報告に載らない)。
+  (setv world (World "tmux" True))
+  (setv warm (run-first-turn world))
+  (setv handed (get world.acp.rows f"{AGORA-KINDS-NAMESPACE}:{MESSAGE-KIND}:m-1"))
+  (setv asked (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (+ world.local.now-ms 100)))
+  (.put-row world.acp asked)
+  (setv job (continued-row "j-2" ["m-2"] "other" warm ["m-1"]))
+  (.put-row world.acp job)
+  (setv before (len world.sessions.sends))
+  (.tick world 1000)
+  (assert (= world.sessions.cleanups [warm]) world.local.logs)
+  (setv launch (get world.sessions.launches -1))
+  (assert (= (str-at (dict-at (dict-at launch "launch_attribution") "agentd") "arm") "rehydrate") launch)
+  (setv prompt (str-at launch "prompt"))
+  (assert (.startswith prompt "start\n\nこれまでの会話") prompt)
+  (assert (= (.count prompt "合言葉は ひまわり") 1) "handed の本文は履歴に 1 回だけ")
+  (assert (= (.count prompt "[郵便 m-1・") 0) "handed の郵便を入力として渡し直した")
+  (setv fresh (.sid world "j-2"))
+  (assert (= (cut world.sessions.sends before None)
+             [#(fresh (guidance-of job handed) True) #(fresh (mailed asked) True)])
+          world.sessions.sends)
+  (assert (= (get (.job-status world "j-2") "inputsDelivered") ["m-2"])))
+
+
+(deftest test-a-continued-turn-rebuilt-on-tui-keeps-the-handed-mail-in-the-transcript-only
+  ;; 組み直しの腕(rebuild): 履歴は組み直した transcript に畳み、起こす prompt は charter のまま。handed の本文は transcript に
+  ;; 1 回・送りには 0 回。案内文は渡し直す郵便の送りの前。
+  (setv world (World "tmux" True :rebuild True))
+  (setv warm (run-first-turn world))
+  (setv handed (get world.acp.rows f"{AGORA-KINDS-NAMESPACE}:{MESSAGE-KIND}:m-1"))
+  (setv asked (message-row "m-2" CONVERSATION "operator" "合言葉は何でしたか" (+ world.local.now-ms 100)))
+  (.put-row world.acp asked)
+  (setv job (continued-row "j-2" ["m-2"] "other" warm ["m-1"]))
+  (.put-row world.acp job)
+  (setv before (len world.sessions.sends))
+  (.tick world 1000)
+  (setv launch (get world.sessions.launches -1))
+  (assert (= (str-at (dict-at (dict-at launch "launch_attribution") "agentd") "arm") "rebuild") launch)
+  (assert (= (str-at launch "prompt") "start") launch)
+  (setv whole (str-at (dict-at launch "rebuilt_transcript") "text"))
+  (assert (= (.count whole "合言葉は ひまわり") 1) "handed の本文は組み直した transcript に 1 回だけ")
+  (setv fresh (.sid world "j-2"))
+  (setv sent (cut world.sessions.sends before None))
+  (assert (= sent [#(fresh (guidance-of job handed) True) #(fresh (mailed asked) True)]) sent)
+  (assert (not (any (gfor item sent (in "合言葉は ひまわり" (get item 1))))) "handed の本文を送りで渡し直した")
+  (assert (= (get (.job-status world "j-2") "inputsDelivered") ["m-2"])))
 
 
 (deftest test-unreachable-record-service-rehydrates-thinly-from-acp-headlines

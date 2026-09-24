@@ -46,6 +46,16 @@ def end_job_now(
     pending: tuple,
     now_ms: int,
 ) -> Program: ...
+# card acp:kanban-issue:ki-06b286143c17: end-job-now の本体に、書けていない配達報告の id(owed)を同じ書きで足す口。
+def end_job_owing(
+    settings: AgentdSettings,
+    row: AcpRow,
+    reason_type: str,
+    reason: str,
+    pending: tuple,
+    now_ms: int,
+    owed: tuple,
+) -> Program: ...
 def borrow_lease(plan: LaunchPlan, purpose: str) -> Program: ...
 def headline_turns_for(subject: str, reason: str) -> Program: ...
 def record_turns_for(settings: AgentdSettings, subject: str, floor: int | None) -> Program: ...
@@ -57,6 +67,7 @@ def incarnate(
     view: SessionView | None,
     session_id: str,
     lease: LeaseGrant | None,
+    lead: str,
     bodies: tuple,
     carried: tuple,
     job_id: str,
@@ -87,6 +98,8 @@ def claim_job(
 ) -> Program: ...
 def mail_bodies_by_ref(settings: AgentdSettings, messages: tuple) -> Program: ...
 def mail_of(settings: AgentdSettings, row: AcpRow) -> Program: ...
+# card acp:kanban-issue:ki-06b286143c17: 続きの手番の再開の案内文(行の spec.continuation と handed の郵便の行の spec だけを読む)。
+def continuation_guidance_for(row: AcpRow) -> Program: ...
 def start_offset_of(view: SessionView, arm: str) -> Program: ...
 def after_start(
     settings: AgentdSettings,
@@ -98,6 +111,7 @@ def after_start(
     arm: str,
     now_ms: int,
     subject: str,
+    lead: str,
     bodies: tuple,
     carried: tuple,
     missing: tuple,
@@ -166,6 +180,7 @@ def fail_missing_arm(
     pending: tuple,
     lease_id: str | None,
     now_ms: int,
+    owed: tuple,
 ) -> Program: ...
 def settle_known(
     settings: AgentdSettings,
