@@ -586,6 +586,8 @@
   message-key-of
   ignored-settings-of
   next-arm-for-job
+  node-seat-env-of
+  node-seat-env-digest-of
   conversation-recorded-of
   fresh-start-asks-record
   charter-with-rebuilt-transcript
@@ -1518,10 +1520,13 @@
             ;; 段 11 lane 11v(agora-redesign #55・R34): 落とした区間の見出しは log にも 1 行(受入の証拠 = 最初の本文に入った行)。
             (when (is-not fold.dropped-headline None)
               (<- (LogLine :text f"agentd: job {job-id} rehydrate headline: {fold.dropped-headline}")))))
-        (<- attribution dict (session-attribution-of plan job-id subject choice.arm))
+        ;; card acp:kanban-issue:ki-e930b8506201 C5: 機体が席へ渡す env(宣言の seat_env + 記録の宛先)を 1 度だけ組み、
+        ;; 同じ組を charter に書かせ、その指紋を帰属に刻む(組と指紋が別々の名簿を持たない)。
+        (<- node-env tuple (node-seat-env-of settings))
+        (<- attribution dict (session-attribution-of plan job-id subject choice.arm node-env))
         (<- built tuple (incarnation-charter-of plan choice session-id lead bodies history attribution
                                                 settings.backend-kind lease settings.homes-root
-                                                settings.memory-root opener settings.seat-env))
+                                                settings.memory-root opener node-env))
         (setv charter (get built 0))
         (setv auth-file (get built 1))
         ;; card acp:kanban-issue:ki-9fc7d4bca4dc(法 ACP 575b1e): 会話の記憶は行が正本 — 起こす前に行から読み、
@@ -1782,7 +1787,12 @@
         (<- settled tuple (unanswered-borrows-without state.unanswered-borrows job-id))
         (setv state (replace state :unanswered-borrows settled))
         (when (is-not choice.retire None)
-          (<- why str (retire-reason-of choice view job-id))
+          ;; 理由の文は起こし方の判断と同じ材料(effort と機体が席へ渡す env の指紋)から — 片付けの 1 行が
+          ;; 「effort が違う」と「機体の env が変わった」を取り違えない(card acp:kanban-issue:ki-e930b8506201)。
+          (<- retire-effort (| str None) (effort-of-plan plan))
+          (<- retire-node-env tuple (node-seat-env-of settings))
+          (<- retire-digest str (node-seat-env-digest-of retire-node-env))
+          (<- why str (retire-reason-of choice view job-id retire-effort retire-digest))
           (<- (retire-sessions #(choice.retire) why)))
         ;; 段 12 lane 12j(agora-redesign #379 受入 2): 1 会話 1 温かい session — この手番の家と違う家に残る会話の温かい session を
         ;; 全部片付ける(候補 choice.retire だけでなく、行が回収された後も器に残る session を帰属で読む — 判断は
@@ -2001,9 +2011,13 @@
     (<- percent (| int None) (context-percent-for state candidate))
     (<- due bool (compaction-due compact-at percent))
     (setv compact due))
+  ;; card acp:kanban-issue:ki-e930b8506201 C5: 今の agentd が席へ渡す env の指紋(材料は判断の層に運んだ settings —
+  ;; 起こす腕が charter に書く組と同じ node-seat-env-of の出力)。温かい session の刻みと違えば send を選ばない。
+  (<- node-env tuple (node-seat-env-of settings))
+  (<- node-env-digest str (node-seat-env-digest-of node-env))
   ;; 段 12 lane 12j 追補 4 / 7(agora-redesign #233 / #176): 候補が無い job は launch(新しい始まり)で claim し、記録の在否の問い
   ;; (launch → rehydrate の解き)は claim が着いた後の start-claimed で 1 度だけ(Conflict のたびに読みと log を繰り返さない)。
-  (<- choice ArmChoice (next-arm-for-job candidate view home effort compact))
+  (<- choice ArmChoice (next-arm-for-job candidate view home effort compact node-env-digest))
   (when choice.compacts
     (<- (LogLine :text (+ f"agentd: job {job-id} of conversation {subject} starts compacted — the last turn of session "
                           f"{candidate} used {(context-percent-for state candidate)}% of the context window, "

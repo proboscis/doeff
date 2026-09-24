@@ -2027,6 +2027,16 @@ def test_the_spawned_turn_inherits_no_agentd_env(
     headless_host.ok("session.cleanup", {"session_id": "h-11"})
 
 
+def _seed_claude_transcript(host: Host, launched: JSONObject) -> None:
+    """resume の admission が要る transcript(実物の CLI が書く projects/<mangled cwd>/<conv>.jsonl — 替え玉は書かない)を置く。"""
+    conversation = _text(_obj(launched, "conversation"), "session_id")
+    mangled = "".join(ch if ch.isalnum() else "-" for ch in os.path.realpath(_text(launched, "work_dir")))
+    transcript = host.root / "claude-home" / "projects" / mangled / f"{conversation}.jsonl"
+    transcript.parent.mkdir(parents=True, exist_ok=True)
+    if not transcript.exists():
+        transcript.write_text("{}\n", encoding="utf-8")
+
+
 def test_the_seat_reads_the_record_destination_of_the_agentd_that_woke_it(
     headless_host: Host, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2041,7 +2051,12 @@ def test_the_seat_reads_the_record_destination_of_the_agentd_that_woke_it(
     from dataclasses import replace
 
     from doeff_agents.sessionhost.acp import judgment
-    from doeff_agents.sessionhost.acp.effects import RECORD_URL_ENV, AgentdSettings, ArmChoice, LaunchPlan
+    from doeff_agents.sessionhost.acp.effects import (
+        RECORD_URL_ENV,
+        AgentdSettings,
+        ArmChoice,
+        LaunchPlan,
+    )
     from doeff_agents.sessionhost.acp.handlers import session_view_of
 
     monkeypatch.setenv(RECORD_URL_ENV, "http://machine-env.invalid:1")
@@ -2103,6 +2118,7 @@ def test_the_seat_reads_the_record_destination_of_the_agentd_that_woke_it(
     choice = next_arm("k1-a", settings_b)
     assert choice == ArmChoice("resume", "k1-a", "k1-a")
     headless_host.ok("session.cleanup", {"session_id": "k1-a"})
+    _seed_claude_transcript(headless_host, launched)
     resumed = headless_host.ok(
         "session.resume", run(judgment.resume_params_of("k1-a", woken(settings_b, "resume", "k1-b", "k1-a")))
     )

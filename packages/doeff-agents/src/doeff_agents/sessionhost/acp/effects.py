@@ -1053,6 +1053,11 @@ NEXT_ARM_DEFER: NextArm = "defer"
 #: home, arm}: session の会話・手番・家は session の行に刻む事実で、終端の後に回収される agent-job の
 #: 行から導かない(判断 = judgment.session-attribution-of / attribution-of-view の 2 点)。
 ATTRIBUTION_AGENTD_KEY = "agentd"
+#: card acp:kanban-issue:ki-e930b8506201 C5: agentd の欄の中で「機体が席へ渡した env の指紋」を運ぶ鍵(値 = sha256 の小文字 hex・
+#: 不透明)。刻むのは judgment.session-attribution-of・読むのは judgment.session-node-env-of の 1 点ずつ。温かい session の続きの
+#: 手番は host の行に保存した生まれた時の env を再生するので、起こし方の判断(next-arm-for-job)はこの指紋が今の agentd の指紋と
+#: 違う・無い session に send を選ばない。
+ATTRIBUTION_NODE_ENV_KEY = "nodeEnv"
 #: node の status.observations.sessions の state(段 3 の契約の追補で閉語彙になる予定 —
 #: それまで agentd 側の語: idle = 手番の間 / busy = 手番の途中)。
 SessionObservationState = Literal["idle", "busy"]
@@ -1074,6 +1079,8 @@ ACP_TOKEN_FILE_ENV = "ACP_AGENTD_TOKEN_FILE"
 #: 会話の記録の service(段 9f lane 9f-2・agora-redesign #59)の URL — 本文の二重書きの宛先(runtime.settings_from_env の
 #: 1 点)。無ければ参加を断る(段 9f lane 9f-6・join.record-sink-of の 1 点 — 本文の行き先を持たない agentd は走らない)。
 #: 札は ACP_TOKEN_FILE_ENV の再利用(名簿の agentd = service の書き手・契約 record-service.json auth.principals.writers)。
+#: card acp:kanban-issue:ki-e930b8506201: 同じ名・同じ値を、agentd は起こす手番の env にも置く(走行者が持つ名 — RUNNER_OWNED_SEAT_ENV)。
+#: 席の道具(dotfiles tell.py)は上限を超える本文をこの宛先へ置く。
 RECORD_URL_ENV = "RECORD_SERVICE_URL"
 #: 本文の batch の spool(送る前の outbox)の置き場。join は state_dir の下(JOIN_RECORD_SPOOL_DIR)を導く。
 RECORD_SPOOL_DIR_ENV = "DOEFF_AGENTD_RECORD_SPOOL_DIR"
@@ -1288,6 +1295,15 @@ DECLARATION_FINGERPRINT_HEADER = "x-declaration-sha256"
 #: 置く点は judgment.charter-with-conversation-env の 1 点(incarnation-charter-of が呼ぶ — launch / resume / rehydrate)。
 CONVERSATION_ID_ENV = "AGORA_CONVERSATION_ID"
 SEAT_OPENER_ENV = "AGORA_SEAT_OPENER"
+#: card acp:kanban-issue:ki-e930b8506201(ADR-DOE-AGENTS-012 R-the-agentd-puts-its-own-record-destination-on-the-seat-1601): **走行者が持つ名**
+#: — 値を agentd 自身が席の env に置く名の集合(定義点はここ 1 つ)。会話の身元 2 語(手番ごとの judgment.charter-with-conversation-env)と、
+#: agentd 自身が追記に使う記録の service の宛先(参加の門 join.record-sink-of を通った値 — judgment.node-seat-env-of が置く・
+#: 既知の形 = kubelet が全 pod に API server の所在を自分の設定から注入する形)。読み手は 3 つで、別々の名簿を持たない:
+#: 参加の門 join.seat-env-of (c)(宣言の seat_env に 1 つでも在れば断る)・席の settings file の env ブロックの門
+#: (join.claude-settings-declaration-of)・charter を組む側(judgment.node-seat-env-of は宣言の同じ名を落としてから置く)。
+#: ⚠ 宛先の名 RECORD_URL_ENV は agentd 自身の env と同じ 1 つの綴り(dotfiles tell.py も同じ名を読む)— 名も値も doeff が持つ
+#: (値 = 宣言の schema の [record].url)ので、R51 (4) の「席向けの名を綴らない」の病(第 2 の既定)は起きない。
+RUNNER_OWNED_SEAT_ENV: tuple[str, ...] = (CONVERSATION_ID_ENV, SEAT_OPENER_ENV, RECORD_URL_ENV)
 #: agora-redesign #520(段 12・既知の形 = kubelet が node 局所の宣言の表を workload の env へ具現化する): 機体の参加の宣言
 #: (join の [agentd].seat_env — 改行区切りの `NAME=value` の行)が名乗った、席へ運ぶ env の対。join が解いて JoinSpec →
 #: この env(同じ改行区切りの形)→ AgentdSettings.seat_env → charter.session_env(judgment.charter-with-seat-env の 1 点)。
@@ -1850,11 +1866,13 @@ class AgentdSettings:
     #: 席の枠(capacity)より小さいと、器の死んだ行が transcripts へ移った拍(R25 の改訂)に上限で落ちて、
     #: 配置が affinity.predecessor を名指せない会話が出る。
     transcripts_observed_max: int = 16
-    #: 会話の記録の service への本文の二重書き(段 9f lane 9f-2・設計 §2.4)。composition root(runtime.settings_from_env)が
-    #: RECORD_URL_ENV の在否から導く 1 点 — False の間 agentd は Record* の要求を 1 つも撃たない(ACP の追記は今日どおり)。
-    #: 実運転では常に True(段 9f lane 9f-6: 宛先を持たない agentd は参加の門 join.record-sink-of が理由つきで断る —
-    #: 本文の行き先が無いまま見出しだけを書く形は存在しない)。False は test の対照(二重書きの有無で見出しが一致する検)だけ。
-    record_enabled: bool = False
+    #: 会話の記録の service の宛先(段 9f lane 9f-2・設計 §2.4)— composition root(runtime.settings_from_env)が参加の門
+    #: join.record-sink-of を通した値ちょうど(前後の空白を落とした値 = agentd 自身が RecordHttp に渡す値と同じ)。
+    #: card acp:kanban-issue:ki-e930b8506201 C1: agentd はこの値を起こす手番の env にも置く(judgment.node-seat-env-of)。
+    #: None = 記録が無効(Record* の要求を 1 つも撃たず、席の env にも名を置かない)。実運転では常に在る(段 9f lane 9f-6:
+    #: 宛先を持たない agentd は参加の門が理由つきで断る)。None は test の対照(二重書きの有無で見出しが一致する検)だけ。
+    #: 記録が有効か(record_enabled)はこの欄から導く — 「有効なのに宛先が無い」状態を作れない形(欄を 2 つに割らない)。
+    record_url: str | None = None
     #: spool の再送の周期(送れなかった拍の後 — 送れている間は出来事を読んだ拍の終わりに送る)。届かない service へ拍ごとに
     #: 撃って loop を塞がないための有界の backoff(judgment.record-flush-due)。
     record_retry_seconds: float = 15.0
@@ -1875,6 +1893,12 @@ class AgentdSettings:
     #: 1 度の書き(手番の終わりの end-turn-record)が着かなかった記録を level-triggered に閉じる腕の拍 —
     #: profile の観測と同じ「遅い周期」の族。起動の拍(AgentdState.last_turn_record_sweep_ms = None)は即。
     turn_record_sweep_seconds: int = 300
+
+    @property
+    def record_enabled(self) -> bool:
+        """会話の記録の service への本文の二重書きが有効か — record_url の在否から導く 1 点(False の間 agentd は
+        Record* の要求を 1 つも撃たない)。"""
+        return self.record_url is not None
 
 
 # ------------------------------------------------------------------ ACP の値

@@ -112,7 +112,7 @@
   (defn #^ None __init__ [self]
     (setv self.settings (AgentdSettings :node-name NODE :homes-root "/homes" :home HOME :summarize-runs-dir RUNS
                                         :node-capacity 6 :custody-declared True :places #("company" "personal")
-                                        :record-enabled True))
+                                        :record-url "http://record.test:8874"))
     (setv self.acp (FakeAcp :births {}))
     (.put-row self.acp (AcpRow :namespace AGORA-KINDS-NAMESPACE
                                :key f"{AGORA-KINDS-NAMESPACE}:{NODE-KIND}:{NODE}"

@@ -26,7 +26,8 @@
 ;;;                    宣言された状態で断り、推測しない。宛先が在って届かないのは spool が受ける。
 ;;;   * claude-settings-file-of / claude-settings-declaration-of  席の settings file(card acp:kanban-issue:
 ;;;                    ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13): 宣言 [agentd].claude_settings_file の綴りの読みと、
-;;;                    参加の門 (d)(b)(c)(session_hooks = inherit / JSON の object / doeff の鍵を含まない)。
+;;;                    参加の門 (d)(b)(c)(e)(session_hooks = inherit / JSON の object / doeff の鍵を含まない /
+;;;                    env ブロックに走行者が持つ名を含まない — card acp:kanban-issue:ki-e930b8506201)。
 ;;;                    file の読みは composition root(runtime.join_plan)で、**読めない = 断らない**(不在は参加して
 ;;;                    名乗る — 依頼書 §10-2 の訂正)。断るのは宣言そのものの誤りだけ。
 ;;; wire の綴り(env の名・host の flag・schema・閉語彙)は effects.py だけが持ち、ここは import する。
@@ -46,8 +47,7 @@
   ACP-VALVE-ENV
   BORROWER-KEY-PATH-ENV
   CUSTODY-SA-TOKEN-PATH-ENV
-  CONVERSATION-ID-ENV
-  SEAT-OPENER-ENV
+  RUNNER-OWNED-SEAT-ENV
   SEAT-ENV-ENV
   SEAT-ENV-SEPARATOR
   CLAUDE-SETTINGS-FILE-ENV
@@ -853,8 +853,10 @@
          (a) の線は 1 語も動かさない — 広げると launch / session.send の判定が同時に変わる(別 card)。
          札の path の綴り(`*_TOKEN_FILE` / `AGORA_BORROWER_KEY_PATH`)もここで断る: 札は家の既定の置き場への
          file の mount が唯一の形で、この口が運ぶのは宛先ちょうど。
-     (c) 会話の身元が所有する名(effects.CONVERSATION-ID-ENV / SEAT-OPENER-ENV)は断る
-         (置く点は手番ごとの judgment.charter-with-conversation-env の 1 点)。"
+     (c) **走行者が持つ名**(effects.RUNNER-OWNED-SEAT-ENV — 会話の身元 2 語と記録の service の宛先)は断る
+         (card acp:kanban-issue:ki-e930b8506201: 値を置くのは走行者の 1 点 — 会話の身元は手番ごとの
+         judgment.charter-with-conversation-env、記録の宛先は judgment.node-seat-env-of が [record].url を通った値で置く。
+         宣言に写しを書かせると同じ値が 2 か所になり、片方だけが更新される)。"
   (setv where f"[{TABLE-AGENTD}].{KEY-SEAT-ENV}")
   (setv pairs [])
   (setv seen [])
@@ -884,10 +886,11 @@
     (raise (ValueError (+ f"{where} は宛先を運ぶ口で、資格の輸送路ではない(資格の形の名: "
                           f"{(.join ", " shaped)})。札は家の既定の置き場への file の mount で置き、"
                           "env では渡さない(ADR-DOE-AGENTS-012 R30 (4) / R51 (1))"))))
-  (setv owned (sorted (lfor name seen :if (in name #{CONVERSATION-ID-ENV SEAT-OPENER-ENV}) name)))
+  (setv owned (sorted (lfor name seen :if (in name RUNNER-OWNED-SEAT-ENV) name)))
   (when owned
-    (raise (ValueError (+ f"{where} は会話の身元の名を宣言できない({(.join ", " owned)})— "
-                          "置く点は手番ごとの judgment.charter-with-conversation-env の 1 点"))))
+    (raise (ValueError (+ f"{where} は走行者が持つ名を宣言できない({(.join ", " owned)})— "
+                          "値を置く点は走行者の 1 点(会話の身元 = judgment.charter-with-conversation-env・"
+                          "記録の宛先 = [record].url を judgment.node-seat-env-of が置く)。宣言から消す"))))
   (SeatEnv :pairs (tuple pairs)))
 
 
@@ -945,6 +948,9 @@
      (b) JSON の object であること(配列・数・文字列は settings ではない)
      (c) doeff が置く鍵(impls/claude_code.hy CLAUDE-SETTINGS-OWNED-KEYS = disableAllHooks と記憶の置き場の鍵)を
          **含まない**こと — 含むと argv の合流で衝突し、黙って後勝ちにすれば hook か記憶の置き場のどちらかが無音で消える
+     (e) `env` ブロック(claude が起動の後に席の env へ重ねる表)が**走行者が持つ名**(effects.RUNNER-OWNED-SEAT-ENV)を
+         含まないこと(card acp:kanban-issue:ki-e930b8506201 K7)— 含むと宣言の seat_env の門 (c) を通らない第 2 の定義点になり、
+         席の会話の身元や記録の宛先を黙って上書きする
    ⚠ **file が無い(text = None)は断らない**(R13 の訂正・依頼書 §10-2): 宿の入口は「先端で揃えられない日は image の
    下限へ戻して立つ」正規の degrade を持ち、その日の checkout に file は無い。そこで参加を断ると degrade が
    **pool 全体の capacity 0** に化ける(今日の欠陥より悪い)。不在は参加して名乗る = None を返し、名乗りは
@@ -971,6 +977,14 @@
     (raise (ValueError (+ f"{where} が名指す file は doeff が置く鍵を持てない({(.join ", " owned)})— "
                           "hook の無効化と記憶の置き場は doeff が `--settings` の合流点で自分で置く"
                           "(ADR-DOE-AGENTS-004 R13・衝突は黙って後勝ちにしない)"))))
+  ;; (e) env ブロックの走行者の名(card acp:kanban-issue:ki-e930b8506201 K7)。
+  (setv declared-env (.get parsed "env"))
+  (setv runner-named (if (isinstance declared-env dict)
+                         (sorted (lfor name declared-env :if (in name RUNNER-OWNED-SEAT-ENV) name))
+                         []))
+  (when runner-named
+    (raise (ValueError (+ f"{where} が名指す file の env は走行者が持つ名を置けない({(.join ", " runner-named)})— "
+                          "値を置く点は走行者の 1 点(会話の身元・記録の宛先 [record].url)。file の env から消す"))))
   parsed)
 
 

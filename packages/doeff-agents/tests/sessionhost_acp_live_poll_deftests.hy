@@ -103,7 +103,7 @@
   (defn #^ None __init__ [self [job-ids #("j-1")] [clock-step-ms 0] [record False] [flush-max 0]]
     (setv self.settings (AgentdSettings :node-name NODE :homes-root "/homes"
                                         :backend-kind "headless" :stream-capability "events"
-                                        :record-enabled record))
+                                        :record-url (when record "http://record.test:8874")))
     (when flush-max
       (setv self.settings (replace self.settings :record-flush-max-batches flush-max)))
     (setv self.job-ids (tuple job-ids))

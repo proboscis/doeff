@@ -196,7 +196,8 @@
     ;; 現に走り続ける道なので、この冊はその道を撃ち続ける。組み直しの腕そのものの検は
     ;; test-another-home-rebuilds-the-transcript-and-resumes 以下(rebuild True)。
     (setv self.settings (AgentdSettings :node-name NODE :homes-root "/homes" :backend-kind backend
-                                        :record-enabled record :transcript-rebuild-enabled rebuild))
+                                        :record-url (when record "http://record.test:8874")
+                                        :transcript-rebuild-enabled rebuild))
     (setv self.record-service (FakeRecord))
     (setv self.acp (FakeAcp :births {TURN-RECORD-KIND (Birth "state" "running")}))
     (.put-row self.acp (AcpRow :namespace AGORA-KINDS-NAMESPACE
@@ -1036,7 +1037,7 @@
              [True True False False False False]))
   (setv world (World "headless" True))
   (setv world.settings (AgentdSettings :node-name NODE :homes-root "/homes" :backend-kind "headless"
-                                       :record-enabled True :rehydrate-history-byte-budget 4000
+                                       :record-url "http://record.test:8874" :rehydrate-history-byte-budget 4000
                                        ;; card ki-c3aace97d825: この検が撃つのは畳み直しの頁送り(組み直しは別の冊)
                                        :transcript-rebuild-enabled False))
   (.put-row world.acp (message-row "m-1" CONVERSATION "operator" "はじめの郵便" (- AT 90000)))
@@ -1055,7 +1056,7 @@
   ;; 上限が大きければ次の頁を before = 頁の最初の recordSeq で読み、最初まで読めたら止める。
   (setv wide (World "headless" True))
   (setv wide.settings (AgentdSettings :node-name NODE :homes-root "/homes" :backend-kind "headless"
-                                      :record-enabled True :rehydrate-history-byte-budget 200000))
+                                      :record-url "http://record.test:8874" :rehydrate-history-byte-budget 200000))
   (setv wide.record-service.stored (dict world.record-service.stored))
   (.put-row wide.acp (message-row "m-2" CONVERSATION "operator" "つづき" (- AT 100)))
   (.put-row wide.acp (bound-row "j-9" ["m-2"] "acct" "sid-on-another-node"))
