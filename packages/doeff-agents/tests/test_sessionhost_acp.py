@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import inspect
 import json
 import os
 import threading
@@ -25,6 +26,7 @@ from doeff_agents.agentd_client import AgentdClient, AgentdClientError
 from doeff_agents.sessionhost.acp import handlers, join, judgment
 from doeff_agents.sessionhost.acp.effects import (
     AGENTD_PRINCIPAL,
+    AGENTD_PROTOCOL,
     AGENT_JOB_KIND,
     AGENT_JOB_NAMESPACE,
     AGORA_KINDS_NAMESPACE,
@@ -56,6 +58,7 @@ from doeff_agents.sessionhost.acp.effects import (
     PROFILE_KIND,
     PaneSeat,
     PaneSeatsUnavailable,
+    Refused,
     SessionRefused,
     SessionSend,
     SESSION_LIVE_STATUSES,
@@ -65,6 +68,7 @@ from doeff_agents.sessionhost.acp.effects import (
     TRANSCRIPT_SCAN_ROWS_MAX,
     TURN_RECORD_ENTRIES_BYTE_BUDGET,
     TURN_RECORD_KIND,
+    TurnContinuation,
     WatchAdvance,
 )
 from doeff_agents.sessionhost.acp.fake import Birth, FakeAcp, FakeCustody, FakeLocal, FakeSessions
@@ -201,7 +205,7 @@ class World:
                 AGORA_KINDS_NAMESPACE,
                 NODE_KIND,
                 NODE,
-                {"name": NODE, "labels": {}, "capacity": 1, "streamCapability": "frames", "agentd": {"protocol": 2, "revision": "unstamped", "build": "local"}},
+                {"name": NODE, "labels": {}, "capacity": 1, "streamCapability": "frames", "agentd": {"protocol": AGENTD_PROTOCOL, "revision": "unstamped", "build": "local"}},
                 {"state": "joined"},
             )
         )
@@ -712,7 +716,7 @@ def test_missing_node_row_is_registered_from_the_declaration_and_joined_on_the_n
     # 行が無い拍の heartbeat は書かない(行を作るのは tick の参加の腕)
     assert world.heartbeat() == "no-node-row"
     world.tick()
-    assert world.acp.rows[key].spec == {"name": NODE, "labels": {}, "capacity": 1, "streamCapability": "frames", "agentd": {"protocol": 2, "revision": "unstamped", "build": "local"}}
+    assert world.acp.rows[key].spec == {"name": NODE, "labels": {}, "capacity": 1, "streamCapability": "frames", "agentd": {"protocol": AGENTD_PROTOCOL, "revision": "unstamped", "build": "local"}}
     assert [line for line in world.local.logs if "node row" in line] == [
         f"agentd: registered node row {NODE!r} from the declaration (capacity 1, streamCapability frames)"
     ]
@@ -917,7 +921,7 @@ def test_node_spec_is_aligned_to_the_declaration_keeping_labels_and_the_lease_is
         replace(seeded, spec={"name": NODE, "labels": labels, "capacity": 0, "streamCapability": "frames"})  # 旧い agentd の行(版の欄なし)
     )
     world.tick()
-    aligned = {"name": NODE, "labels": labels, "capacity": 2, "streamCapability": "frames", "agentd": {"protocol": 2, "revision": "unstamped", "build": "local"}}
+    aligned = {"name": NODE, "labels": labels, "capacity": 2, "streamCapability": "frames", "agentd": {"protocol": AGENTD_PROTOCOL, "revision": "unstamped", "build": "local"}}
     assert world.acp.spec_writes == [(key, aligned)]
     now_row = world.acp.rows[key]
     assert now_row.spec == aligned
@@ -1089,7 +1093,7 @@ def test_node_spec_of_and_node_spec_declared_are_one_judgment() -> None:
         "capacity": 2,
         "streamCapability": "events",
         # 段 12 lane 12j(agora-redesign #367): 参加時に名乗る自分の版(protocol は effects.AGENTD_PROTOCOL の 1 点・刻印が無ければ unstamped / local)
-        "agentd": {"protocol": 2, "revision": "unstamped", "build": "local"},
+        "agentd": {"protocol": AGENTD_PROTOCOL, "revision": "unstamped", "build": "local"},
     }
     # 段 11 lane 11u(agora-redesign #224・依頼者の裁定 2026-09-16): 宣言した置き場の**集合**は型つきの欄 spec.places
     # (語の list・宣言の順)に名乗る(配車の絞りが読む 1 点・契約 v4)。labels.places は読み手が残る間の写し(deprecated・
@@ -1114,15 +1118,15 @@ def test_node_spec_of_and_node_spec_declared_are_one_judgment() -> None:
     assert kept["places"] == ["company", "personal"], "揃える時に型つきの欄を名乗っていない"
     assert "place" not in kept, "旧い agentd が書いた 1 値の place を揃えの写しに残している(配車が行を断る)"
     hand = {"name": "pool-1", "labels": {"boundary": "company"}, "capacity": 0, "streamCapability": "events"}
-    assert run(judgment.node_spec_declared(hand, settings)) == {**hand, "capacity": 2, "agentd": {"protocol": 2, "revision": "unstamped", "build": "local"}}
-    assert run(judgment.node_spec_declared({**hand, "capacity": 2}, settings)) == {**hand, "capacity": 2, "agentd": {"protocol": 2, "revision": "unstamped", "build": "local"}}
+    assert run(judgment.node_spec_declared(hand, settings)) == {**hand, "capacity": 2, "agentd": {"protocol": AGENTD_PROTOCOL, "revision": "unstamped", "build": "local"}}
+    assert run(judgment.node_spec_declared({**hand, "capacity": 2}, settings)) == {**hand, "capacity": 2, "agentd": {"protocol": AGENTD_PROTOCOL, "revision": "unstamped", "build": "local"}}
     bare = {"name": "pool-1", "capacity": 2, "streamCapability": "frames"}
     assert run(judgment.node_spec_declared(bare, settings)) == {
         "name": "pool-1",
         "labels": {},
         "capacity": 2,
         "streamCapability": "events",
-        "agentd": {"protocol": 2, "revision": "unstamped", "build": "local"},
+        "agentd": {"protocol": AGENTD_PROTOCOL, "revision": "unstamped", "build": "local"},
     }
 
 
@@ -5725,6 +5729,7 @@ def _incarnation_charter(seat_env: tuple[tuple[str, str], ...], charter: JSONObj
             ),
             ArmChoice(arm=NEXT_ARM_LAUNCH, source=None, retire=None),
             "s-1",
+            "",
             (),
             "",
             {"conversationId": CONVERSATION},
@@ -7863,3 +7868,322 @@ def test_session_live_statuses_are_the_host_active_statuses() -> None:
     assert frozenset(policy.ACTIVE_STATUSES) == SESSION_LIVE_STATUSES
     assert frozenset(policy.TERMINAL_STATUSES) == SESSION_TERMINAL_STATUSES
     assert not SESSION_LIVE_STATUSES & SESSION_TERMINAL_STATUSES
+
+
+# ---------------------------------------------------------------- card acp:kanban-issue:ki-06b286143c17: 続きの手番(spec.continuation)
+# 実行環境の障害(SIGTERM・SessionLost 等)で途中で終わった手番の続きを ACP の配達が立てる時、その手番が既に会話の session へ
+# 渡した郵便は spec.inputs に載らず spec.continuation.handed に載る。agentd はそれを渡し直さず、再開の案内文(judgment.
+# continuation-guidance-of の 1 点)で指すだけ(依頼 lt-9Q3EH9WYRHPSXR3MZQHB1ASRS7 §3 の 6〜10・§4 の doeff の焦点の検)。
+# 履歴から新しい session を起こす腕(rehydrate / rebuild)の検は sessionhost_acp_rehydrate_deftests.hy に在る。
+
+CONTINUED_CAUSE: JSONObject = {"category": "failed", "reason": "SessionFailed"}
+
+
+def continued_job(
+    job_id: str,
+    *,
+    inputs: list[str],
+    handed: list[str],
+    dead: str = "j-dead",
+    predecessor: str | None = None,
+    created_at_ms: int = 500,
+) -> AcpRow:
+    """ACP の配達が書く続きの手番(契約 ACP docs/contracts/messaging.json delivery.agentJob.continuation の形 —
+    {of, cause, handed}・handed は spec.inputs と重ならない)。"""
+    base = bound_job(job_id, inputs=inputs, predecessor=predecessor, created_at_ms=created_at_ms)
+    continuation: JSONObject = {"of": dead, "cause": dict(CONTINUED_CAUSE), "handed": list(handed)}
+    return replace(base, spec={**base.spec, "continuation": continuation})
+
+
+def guidance_for(world: World, job_row: AcpRow) -> str:
+    """その手番の再開の案内文。期待値は同じ judgment の 1 点から取る(検が文面の第 2 の写しを持たない — 文面そのものは
+    test_continuation_guidance_is_built_from_the_continuation_and_the_handed_mail_spec_only が撃つ)。材料は
+    spec.continuation と、handed の郵便の行の spec だけ。"""
+    continuation = run(judgment.continuation_of(job_row))
+    assert isinstance(continuation, TurnContinuation)
+    specs: dict[str, JSONObject] = {}
+    for message_id in continuation.handed:
+        found = world.acp.rows.get(f"{AGORA_KINDS_NAMESPACE}:{MESSAGE_KIND}:{message_id}")
+        if found is not None:
+            specs[message_id] = dict(found.spec)
+    guidance = run(judgment.continuation_guidance_of(continuation, specs))
+    assert isinstance(guidance, str)
+    assert guidance
+    return guidance
+
+
+def _status_of(world: World, job_id: str) -> JSONObject:
+    status = world.job(job_id).status
+    assert isinstance(status, dict)
+    return status
+
+
+def _finish_headless_turn(world: HeadlessWorld, sid: str, text: str) -> None:
+    """headless の手番を 1 つ終わらせる(出来事を書き、器が手番の終わりを刻み、job が Ended になる)。"""
+    path = f"/events/{sid}.events.jsonl"
+    world.local.transcripts[path] = world.local.transcripts.get(path, "") + _claude_events(sid, text)
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(sid, world.local.now_ms + 100)
+    world.tick(advance_ms=1_000)
+    assert world.state.jobs == ()
+
+
+def test_continuation_guidance_is_built_from_the_continuation_and_the_handed_mail_spec_only() -> None:
+    """§4 の 6 本目(不変条件 I3): 案内文の組み立ては spec.continuation と handed の郵便の行の **spec** だけを読む —
+    郵便の行の status(delivery.handedAt)を引数に取らない形(『渡したか』の判断は ACP の振り分けの 1 点 — I4)。
+    本文は載せず、郵便は id と kind / from で指すだけ。指す綴りは手番へ渡る郵便の見出し `[郵便 <id>・…]` と違う形 —
+    受入の測りは transcript の見出しを数えて本文が 1 回だけ届いたかを判じるので、案内文が同じ綴りを使うと、
+    正しく渡し直さなかった手番が 2 回と数えられる。"""
+    job_row = continued_job("j-2", inputs=["m-2"], handed=["m-1", "m-gone"])
+    continuation = run(judgment.continuation_of(job_row))
+    assert continuation == TurnContinuation(of="j-dead", cause=CONTINUED_CAUSE, handed=("m-1", "m-gone"))
+    spec: JSONObject = {"id": "m-1", "kind": "note", "from": "operator", "body": "合言葉は ひまわり"}
+    guidance = run(judgment.continuation_guidance_of(continuation, {"m-1": spec}))
+    assert isinstance(guidance, str)
+    assert "前のターン(j-dead)" in guidance
+    assert "failed / SessionFailed" in guidance
+    assert guidance.count("郵便 m-1") == 1
+    assert "・郵便 m-1(kind=note・from=operator)" in guidance
+    # 読めなかった(回収された)郵便の行は kind / from を発明しない
+    assert "・郵便 m-gone(kind=無し・from=無し)" in guidance
+    assert "合言葉は ひまわり" not in guidance, "本文を載せた"
+    assert "[郵便 " not in guidance, "手番へ渡る郵便の見出しの綴りで指した(受入の数えが 2 回になる)"
+    assert "既に出した返事は出し直さないでください" in guidance
+    # 材料の口は 2 つだけ — 郵便の行の status を受ける引数が無い
+    assert list(inspect.signature(judgment.continuation_guidance_of).parameters) == ["continuation", "handed"]
+    # 続きの手番でない行: 印は None・案内文は空(呼び手は今日と 1 byte も変わらない)
+    assert run(judgment.continuation_of(bound_job("j-3", inputs=["m-3"]))) is None
+    assert run(judgment.continuation_guidance_of(None, {})) == ""
+    # 形の崩れた欄は発明しない(of が文字列でない・cause が object でない・handed の項が文字列でない)
+    broken = replace(job_row, spec={**job_row.spec, "continuation": {"of": 7, "cause": "x", "handed": ["m-1", 3]}})
+    assert run(judgment.continuation_of(broken)) == TurnContinuation(of="", cause={}, handed=("m-1",))
+    not_an_object = replace(job_row, spec={**job_row.spec, "continuation": ["m-1"]})
+    assert run(judgment.continuation_of(not_an_object)) is None
+    unreadable = run(judgment.continuation_guidance_of(TurnContinuation(of="", cause={}, handed=()), {}))
+    assert isinstance(unreadable, str)
+    assert "理由の読めない終わり方" in unreadable
+    assert "既に渡ったメッセージはありません" in unreadable
+
+
+def test_a_continued_turn_on_a_headless_session_points_at_the_handed_mail_in_the_one_prompt() -> None:
+    """§4 の 1 本目(headless の send / resume・§3 の 6): 前の手番の transcript を持つ session へ続ける腕は、handed の郵便の
+    本文を 0 回送り、案内文がその郵便を 1 回指す。headless は 1 手番 = 1 prompt なので案内文は渡し直す郵便の前に同じ
+    1 本へ畳む(send は 1 回・resume は起こす prompt に畳んで send は 0 回)。配達報告は spec.inputs の id だけ(I6)。"""
+    world = HeadlessWorld()
+    world.acp.put_row(message("m-1", "合言葉は ひまわり"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400))
+    world.tick()
+    sid = world.sid("j-1")
+    _finish_headless_turn(world, sid, "hello")
+    # send の腕: 温かい session へ、案内文 + 渡し直す郵便を 1 回の送りに畳む
+    world.acp.put_row(message("m-2", "second"))
+    second = continued_job(
+        "j-2", inputs=["m-2"], handed=["m-1"], dead="j-1", created_at_ms=world.local.now_ms + 700
+    )
+    world.acp.put_row(second)
+    world.tick(advance_ms=1_000)
+    assert world.sessions.sends == [(sid, guidance_for(world, second) + "\n\n" + mailed("m-2", "second"), True)]
+    sent = world.sessions.sends[0][1]
+    assert "合言葉は ひまわり" not in sent, "handed の郵便の本文を渡し直した"
+    assert sent.count("郵便 m-1") == 1
+    assert "[郵便 m-1・" not in sent
+    assert _status_of(world, "j-2")["phase"] == PHASE_RUNNING
+    assert _status_of(world, "j-2")[JOB_INPUTS_DELIVERED_KEY] == ["m-2"]
+    _finish_headless_turn(world, sid, "again")
+    # resume の腕: 終端の session を --resume で起こす prompt に charter → 案内文 → 渡し直す郵便の順で畳む(送りは無い)
+    world.sessions.finish(sid, "exited")
+    world.acp.put_row(message("m-3", "third"))
+    third = continued_job("j-3", inputs=["m-3"], handed=["m-2"], dead="j-2", predecessor=sid)
+    world.acp.put_row(third)
+    world.tick(advance_ms=1_000)
+    assert len(world.sessions.resumes) == 1
+    prompt = world.sessions.resumes[0]["prompt"]
+    assert prompt == "start\n\n" + guidance_for(world, third) + "\n\n" + mailed("m-3", "third")
+    assert isinstance(prompt, str)
+    assert "second" not in prompt, "handed の郵便の本文を渡し直した"
+    assert len(world.sessions.sends) == 1, "resume の腕が送った"
+    assert _status_of(world, "j-3")[JOB_INPUTS_DELIVERED_KEY] == ["m-3"]
+
+
+def test_a_continued_turn_on_a_tui_session_sends_the_guidance_as_one_send_carrying_no_id() -> None:
+    """§4 の 1 本目(tui の send / resume・§3 の 6): 畳まない器は案内文を **id を運ばない送り 1 つ**として、渡し直す郵便の
+    送りの前に撃つ(案内文は郵便ではないので配達報告に載らない — I6)。handed の郵便の本文は 0 回・起こす prompt は
+    charter のまま(案内文は送りで届く)。"""
+    world = World()
+    _run_first_turn(world)
+    first = world.sid("j-1")
+    # send の腕(温かい session)
+    world.acp.put_row(message("m-2", "second"))
+    second = continued_job("j-2", inputs=["m-2"], handed=["m-1"], dead="j-1")
+    world.acp.put_row(second)
+    before = len(world.sessions.sends)
+    world.tick(advance_ms=1_000)
+    assert world.sessions.sends[before:] == [
+        (first, guidance_for(world, second), True),
+        (first, mailed("m-2", "second"), True),
+    ]
+    assert all("[郵便 m-1・" not in text for _sid, text, _awaiting in world.sessions.sends[before:])
+    assert _status_of(world, "j-2")[JOB_INPUTS_DELIVERED_KEY] == ["m-2"]
+    assert _status_of(world, "j-2")["conditions"] == []
+    world.sessions.finish_turn(first, world.local.now_ms + 100)
+    path = f"{HOMES}/claude/acct/projects/-work/{first}.jsonl"
+    world.local.transcripts[path] += transcript_line("assistant", [{"type": "text", "text": "two"}])
+    world.tick(advance_ms=1_000)
+    world.sessions.finish_turn(first, world.local.now_ms + 100)
+    world.tick(advance_ms=1_000)
+    assert world.state.jobs == ()
+    # resume の腕(idle の寿命で片付いた同じ家の session)
+    world.tick(advance_ms=601_000)
+    assert world.sessions.cleanups == [first]
+    world.acp.put_row(message("m-3", "third"))
+    third = continued_job("j-3", inputs=["m-3"], handed=["m-2"], dead="j-2")
+    world.acp.put_row(third)
+    before = len(world.sessions.sends)
+    world.tick(advance_ms=1_000)
+    assert [resumed["session_id"] for resumed in world.sessions.resumes] == [first]
+    fresh = world.sid("j-3")
+    guidance = guidance_for(world, third)
+    assert guidance not in str(world.sessions.resumes[-1].get("prompt", "")), "tui の起こす prompt に案内文を畳んだ"
+    assert world.sessions.sends[before:] == [(fresh, guidance, True), (fresh, mailed("m-3", "third"), True)]
+    assert all("second" not in text for _sid, text, _awaiting in world.sessions.sends[before:])
+    assert _status_of(world, "j-3")[JOB_INPUTS_DELIVERED_KEY] == ["m-3"]
+
+
+def test_a_turn_with_only_a_continuation_is_started_by_the_guidance_and_not_closed() -> None:
+    """§4 の 3 本目(§3 の 8): spec.inputs が空で continuation だけを持つ手番(途中で終わった手番の郵便が全部渡っていた)は
+    InputUndelivered で閉じない — 案内文がその手番の入力で、send の腕は案内文を 1 回送る。配達報告は空のまま。
+    反例の側: 器が案内文の送りも断ったら器は何も受け取っていないので、今までどおりその場で閉じる。期限切れの郵便しか
+    無くても、案内文があれば InputExpired で閉じない(期限切れの郵便は渡さない・報告にも載らない)。"""
+    world = World()
+    _run_first_turn(world)
+    first = world.sid("j-1")
+    lone = continued_job("j-2", inputs=[], handed=["m-1"], dead="j-1")
+    world.acp.put_row(lone)
+    before = len(world.sessions.sends)
+    world.tick(advance_ms=1_000)
+    assert world.sessions.sends[before:] == [(first, guidance_for(world, lone), True)]
+    status = _status_of(world, "j-2")
+    assert status["phase"] == PHASE_RUNNING
+    assert status["conditions"] == []
+    assert status[JOB_INPUTS_DELIVERED_KEY] == []
+    assert len(world.state.jobs) == 1
+    # 案内文の送りも断られた手番は、器が何も受け取っていない — その場で Ended(InputUndelivered)
+    refused = World()
+    _run_first_turn(refused)
+    refused.sessions.refuse_send = SessionRefused("session is busy", "-32002")
+    refused.acp.put_row(continued_job("j-2", inputs=[], handed=["m-1"], dead="j-1"))
+    refused.tick(advance_ms=1_000)
+    ended = _status_of(refused, "j-2")
+    assert ended["phase"] == PHASE_ENDED
+    result = ended["result"]
+    assert isinstance(result, dict)
+    assert result["cause"] == {"category": "failed", "reason": "InputUndelivered"}
+    conditions = ended["conditions"]
+    assert isinstance(conditions, list)
+    last = conditions[-1]
+    assert isinstance(last, dict)
+    assert "nor the continuation guidance" in str(last["reason"])
+    # 期限切れの郵便しか無い続きの手番も、案内文があれば起こす(InputExpired で閉じない)
+    expired = HeadlessWorld()
+    late_mail = message("m-late", "late")
+    expired.acp.put_row(replace(late_mail, spec={**late_mail.spec, "deliverBy": 999}))
+    late = continued_job("j-late", inputs=["m-late"], handed=["m-0"], dead="j-0")
+    expired.acp.put_row(late)
+    expired.tick()
+    assert len(expired.sessions.launches) == 1
+    assert expired.sessions.launches[0]["prompt"] == "start\n\n" + guidance_for(expired, late)
+    late_status = _status_of(expired, "j-late")
+    assert late_status["phase"] == PHASE_RUNNING
+    assert late_status[JOB_INPUTS_DELIVERED_KEY] == [], "期限切れで渡していない郵便を報告した"
+
+
+def test_the_delivery_report_names_only_the_turns_own_inputs() -> None:
+    """§4 の 5 本目(不変条件 I6): 配達報告 inputsDelivered に入るのはその手番の spec.inputs の id だけ。書きの 1 点
+    judgment.inputs-delivered-status-of は spec.inputs を引数に取り、外の id を足す呼びは例外にする(黙って落とさない —
+    『見やすさのために続きの郵便も報告へ引き継ぐ』実装が、どの挙動の検も通ったまま ACP の振り分けを壊すのを止める)。
+    続きの手番の claim(running-status-of)と配達報告の書きの後も ⊆ spec.inputs。"""
+    assert run(judgment.inputs_delivered_status_of({}, ("m-2",), ("m-2", "m-3"))) == {JOB_INPUTS_DELIVERED_KEY: ["m-2"]}
+    with pytest.raises(AssertionError, match="inputs-delivered-status-of: pre-condition failed"):
+        run(judgment.inputs_delivered_status_of({}, ("m-1",), ("m-2",)))
+    # 持ち越しの足し直しも同じ 1 点を通る(空なら status を 1 byte も変えない・欄を作らない)
+    assert run(judgment.owed_inputs_delivered_status_of({"phase": PHASE_RUNNING}, (), ("m-2",))) == {
+        "phase": PHASE_RUNNING
+    }
+    with pytest.raises(AssertionError, match="inputs-delivered-status-of: pre-condition failed"):
+        run(judgment.owed_inputs_delivered_status_of({}, ("m-1",), ("m-2",)))
+    # agentd を一周: 続きの手番の書きは、claim の宣言(空)から配達報告の後まで spec.inputs の中だけ(handed の m-1 は載らない)
+    world = HeadlessWorld()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400))
+    world.tick()
+    _finish_headless_turn(world, world.sid("j-1"), "hello")
+    world.acp.put_row(message("m-2", "second"))
+    world.acp.put_row(
+        continued_job("j-2", inputs=["m-2"], handed=["m-1"], dead="j-1", created_at_ms=world.local.now_ms + 700)
+    )
+    written_before = len(world.acp.writes)
+    world.tick(advance_ms=1_000)
+    key = f"{AGENT_JOB_NAMESPACE}:{AGENT_JOB_KIND}:j-2"
+    reports = [status.get(JOB_INPUTS_DELIVERED_KEY) for at, status in world.acp.writes[written_before:] if at == key]
+    assert reports[0] == [], "claim の拍に空で宣言していない"
+    assert reports[-1] == ["m-2"]
+    assert all(isinstance(report, list) and set(report) <= {"m-2"} for report in reports), reports
+
+
+def test_a_delivery_report_that_did_not_land_is_written_again_and_rides_the_ended_write() -> None:
+    """§4 の 4 本目(§3 の 9): 配達報告の書きが断られても id を捨てない — job の欄(InFlightJob.inputs_delivered_owed)に
+    持ち越し、(a) 拍の遅い腕が書けるまで毎拍書き直す(claim の拍の遅い腕を含む)、(b) それより先に手番が終わったら
+    Ended の書きが同じ 1 回の書きに足す、
+    (c) Ended の書きも着かずに持ち越した(UnrecordedEnd)なら、持ち越しの書きが足す。欠けたまま Ended になると ACP の
+    配達はその郵便を『渡っていない』と読んで次の手番へ渡し直す(同じ郵便が 2 度届く — I1)。"""
+    unavailable = Refused(503, "unavailable")
+    key = f"{AGENT_JOB_NAMESPACE}:{AGENT_JOB_KIND}:j-1"
+
+    def launched(refusals: list[Refused | None]) -> tuple[HeadlessWorld, str]:
+        world = HeadlessWorld()
+        world.acp.put_row(message("m-0", "zero"))
+        world.acp.put_row(bound_job("j-1", inputs=["m-0"], created_at_ms=world.local.now_ms - 400))
+        # claim の書きは通し、同じ拍の配達報告の書きと、同じ拍の遅い腕の書き直しを断る(列は先頭から消費)
+        world.acp.status_refusals[key] = refusals
+        world.tick()
+        assert _status_of(world, "j-1")[JOB_INPUTS_DELIVERED_KEY] == [], "断られた報告が行に着いている"
+        assert [job.inputs_delivered_owed for job in world.state.jobs] == [("m-0",)]
+        return world, world.sid("j-1")
+
+    # (a) 同じ拍の遅い腕が書き直す(断りが 1 度なら claim の拍のうちに着く)
+    same_tick = HeadlessWorld()
+    same_tick.acp.put_row(message("m-0", "zero"))
+    same_tick.acp.put_row(bound_job("j-1", inputs=["m-0"], created_at_ms=same_tick.local.now_ms - 400))
+    same_tick.acp.status_refusals[key] = [None, unavailable]
+    same_tick.tick()
+    assert _status_of(same_tick, "j-1")[JOB_INPUTS_DELIVERED_KEY] == ["m-0"]
+    assert [job.inputs_delivered_owed for job in same_tick.state.jobs] == [()]
+    # 書き直しも断られたら、次の拍の遅い腕がもう 1 度書き直す(書けるまで毎拍)
+    retried, _sid = launched([None, unavailable, unavailable])
+    retried.tick(advance_ms=1_000)
+    assert _status_of(retried, "j-1")[JOB_INPUTS_DELIVERED_KEY] == ["m-0"]
+    assert [job.inputs_delivered_owed for job in retried.state.jobs] == [()]
+    # (b) 書き直しが着く前に手番が終わる — Ended の書きが同じ 1 回の書きに足す
+    ended, sid = launched([None, unavailable, unavailable])
+    ended.local.transcripts[f"/events/{sid}.events.jsonl"] = _claude_events(sid, "hello")
+    ended.sessions.finish_turn(sid, ended.local.now_ms + 100)
+    ended.tick(advance_ms=1_000)
+    final = _status_of(ended, "j-1")
+    assert final["phase"] == PHASE_ENDED
+    assert final[JOB_INPUTS_DELIVERED_KEY] == ["m-0"]
+    landed = [status for at, status in ended.acp.writes if at == key]
+    assert [status.get(JOB_INPUTS_DELIVERED_KEY) for status in landed if status.get("phase") != PHASE_ENDED] == [
+        [] for status in landed if status.get("phase") != PHASE_ENDED
+    ], "手番の途中に報告が着いた(この検は Ended の書きが運ぶ形を撃てていない)"
+    # (c) Ended の書きも着かない — 持ち越し(UnrecordedEnd)が id を運び、次の拍の書きが足す
+    carried, sid = launched([None, unavailable, unavailable, unavailable, unavailable])
+    carried.local.transcripts[f"/events/{sid}.events.jsonl"] = _claude_events(sid, "hello")
+    carried.sessions.finish_turn(sid, carried.local.now_ms + 100)
+    carried.tick(advance_ms=1_000)
+    assert [end.inputs_delivered_owed for end in carried.state.unrecorded_ends] == [("m-0",)]
+    assert _status_of(carried, "j-1")[JOB_INPUTS_DELIVERED_KEY] == []
+    carried.tick(advance_ms=1_000)
+    settled = _status_of(carried, "j-1")
+    assert settled["phase"] == PHASE_ENDED
+    assert settled[JOB_INPUTS_DELIVERED_KEY] == ["m-0"]
+    assert carried.state.unrecorded_ends == ()

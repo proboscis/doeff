@@ -226,6 +226,7 @@
   AgentdSettings
   AgentdState
   ArmChoice
+  TurnContinuation
   CaptureFrame
   CaptureGone
   ClockNowMs
@@ -494,6 +495,9 @@
   send-parcels-of
   mail-input-ids-of
   inputs-delivered-status-of
+  owed-inputs-delivered-status-of
+  continuation-of
+  continuation-guidance-of
   frame-lines-of
   session-affinity-key-of
   provider-limit-condition-of
@@ -1069,10 +1073,25 @@
    :post [(: % bool)]}
   "session の結末なしに job を Ended + condition で閉じる(fresh な行の generation で書く)。
    pending = 手番の途中で判った事実(inputs の欠け等)を condition に添える。
+   戻り = Ended の書きが着地したか。受けの拍の門(郵便をまだ 1 通も器へ渡していない)の閉じ方で、
+   配達報告の持ち越しは無い — 持ち越しを運ぶ閉じ方は end-job-owing(card acp:kanban-issue:ki-06b286143c17)。"
+  (<- landed bool (end-job-owing settings row reason-type reason pending now-ms #()))
+  landed)
+
+
+(defk end-job-owing [settings row reason-type reason pending now-ms owed]
+  {:pre [(: settings AgentdSettings) (: row AcpRow) (: reason-type str) (: reason str)
+         (: pending tuple) (: now-ms int) (: owed tuple)]
+   :post [(: % bool)]}
+  "end-job-now の本体(session なしで Ended + condition)に、器へ渡せたのに配達報告がまだ書けていない郵便の id
+   (owed = InFlightJob.inputs-delivered-owed — card acp:kanban-issue:ki-06b286143c17 §3 の 9)を同じ 1 回の書きで足す
+   (judgment.owed-inputs-delivered-status-of)。走っていた手番を閉じる腕(fail-missing-arm)が memory の持ち越しを渡す。
    戻り = Ended の書きが着地したか。"
   (<- fresh (| AcpRow None) (AcpGetRow :key row.key))
   (setv target (if (is fresh None) row fresh))
-  (<- status dict (status-object-of target))
+  (<- inputs tuple (inputs-of target))
+  (<- read-status dict (status-object-of target))
+  (<- status dict (owed-inputs-delivered-status-of read-status owed inputs))
   (<- condition dict (condition-of reason-type reason))
   ;; #349 行 3 粒 3a: session なしで閉じる終端の cause = failed / <条件の型>
   (<- cause dict (terminal-cause-of CAUSE-CATEGORY-FAILED reason-type))
@@ -1389,17 +1408,18 @@
       False)))
 
 
-(defk incarnate [settings plan choice view session-id lease bodies carried job-id subject exclude opener]
+(defk incarnate [settings plan choice view session-id lease lead bodies carried job-id subject exclude opener]
   {:pre [(: settings AgentdSettings) (: plan LaunchPlan) (: choice ArmChoice)
          (: view (| SessionView None)) (: session-id str) (: lease (| LeaseGrant None))
-         (: bodies tuple) (: carried tuple) (: job-id str) (: subject str) (: exclude tuple)
+         (: lead str) (: bodies tuple) (: carried tuple) (: job-id str) (: subject str) (: exclude tuple)
          (: opener (| str None))]
    :post [(: % (| SessionView SessionRefused))]}
   "起こし方の腕を器に写す: send = 既存の session(眺めはそのまま)/ resume = 会話の前の session
    (choice.source)から同じ家で cold に起こし直す(cache を保つ)/
    launch・rehydrate = charter で起こす(rehydrate は ACP の会話の記録を最初の本文に畳む)。charter は
    judgment.incarnation-charter-of の 1 点で組み(帰属 = session-attribution-of を刻む)、codex の借りた
-   auth.json はここで家の中へ書く。"
+   auth.json はここで家の中へ書く。lead = 続きの手番の再開の案内文(card acp:kanban-issue:ki-06b286143c17 —
+   畳む器では 1 手番目の本文の郵便の前に入る・畳むかの判断は incarnation-charter-of の中の 1 点のまま)。"
   (if (and (= choice.arm NEXT-ARM-SEND) (isinstance view SessionView))
       view
       (do
@@ -1447,7 +1467,7 @@
             (when (is-not fold.dropped-headline None)
               (<- (LogLine :text f"agentd: job {job-id} rehydrate headline: {fold.dropped-headline}")))))
         (<- attribution dict (session-attribution-of plan job-id subject choice.arm))
-        (<- built tuple (incarnation-charter-of plan choice session-id bodies history attribution
+        (<- built tuple (incarnation-charter-of plan choice session-id lead bodies history attribution
                                                 settings.backend-kind lease settings.homes-root
                                                 settings.memory-root opener settings.seat-env))
         (setv charter (get built 0))
@@ -1609,9 +1629,14 @@
   (setv choice rebuilt-choice)
   (<- mail tuple (mail-of settings row))
   (setv bodies (get mail 0))
+  ;; card acp:kanban-issue:ki-06b286143c17: 続きの手番(spec.continuation)は、途中で終わった手番が渡した郵便を渡し直さず、
+  ;; 再開の案内文(judgment.continuation-guidance-of の 1 点)で指すだけ。案内文は郵便の前置き(lead)として、畳む器では
+  ;; 1 手番目の本文に、畳まない器では id を運ばない送り 1 つで郵便の前に届く。続きの手番でなければ空(今日と同じ)。
+  (<- lead str (continuation-guidance-for row))
   ;; 期限切れだけなら、認証の借用・sessionの破棄・起動の前に終了する。
   ;; 本文が同居する通常の郵便はそのまま運び、届いたidにも期限切れを混ぜない。
-  (when (and (get mail 3) (not bodies))
+  ;; 続きの手番は案内文がその手番の入力なので、期限切れの郵便しか無くても閉じない(§3 の 8)。
+  (when (and (get mail 3) (not bodies) (not lead))
     (<- (end-job-now settings row "InputExpired"
                      (+ "message delivery deadline passed: " (.join ", " (get mail 3))) #() now-ms))
     (return state))
@@ -1666,7 +1691,7 @@
           (<- (retire-sessions stale-others
                                f"job {job-id} runs in another home — the conversation keeps one warm session (#379)")))
         (<- attempted (| SessionView SessionRefused)
-            (incarnate settings plan choice view session-id lease bodies carried job-id subject exclude opener))
+            (incarnate settings plan choice view session-id lease lead bodies carried job-id subject exclude opener))
         (setv outcome attempted)
         (setv used choice)
         (when (isinstance attempted SessionRefused)
@@ -1675,7 +1700,7 @@
             (<- (LogLine :text (+ f"agentd: resume of session {choice.source} for job {job-id} refused "
                                        f"({attempted.error-code}): {attempted.error}; rehydrating")))
             (<- retried (| SessionView SessionRefused)
-                (incarnate settings plan fallback None session-id lease bodies carried job-id subject exclude opener))
+                (incarnate settings plan fallback None session-id lease lead bodies carried job-id subject exclude opener))
             (setv outcome retried)
             (setv used fallback)))
         (if (isinstance outcome SessionRefused)
@@ -1687,7 +1712,7 @@
               (<- folds bool (first-turn-carries-inputs settings.backend-kind used.arm))
               (<- started AgentdState
                   (after-start settings state row plan outcome lease used.arm now-ms subject
-                               (if folds #() bodies) (if folds #() carried) (get mail 2)))
+                               (if folds "" lead) (if folds #() bodies) (if folds #() carried) (get mail 2)))
               started)))))
 
 
@@ -1958,6 +1983,26 @@
   (+ triple #((get eligible 1))))
 
 
+(defk continuation-guidance-for [row]
+  {:pre [(: row AcpRow)]
+   :post [(: % str)]}
+  "続きの手番の再開の案内文(card acp:kanban-issue:ki-06b286143c17): 行の spec.continuation を読み(judgment.continuation-of)、
+   handed の郵便の行を鍵で 1 行ずつ読んで **spec だけ**を案内文の 1 点(judgment.continuation-guidance-of)へ渡す(見出しの
+   kind / from のため — 行の status〔delivery.handedAt 等〕は渡さない)。続きの手番でなければ郵便の行を 1 行も読まず空文字。
+   読めなかった行(回収された郵便)は表に載せない — 案内文がその郵便を id だけで名指す。"
+  (<- continuation (| TurnContinuation None) (continuation-of row))
+  (when (is continuation None)
+    (return ""))
+  (setv handed {})
+  (for [message-id continuation.handed]
+    (<- key str (message-key-of message-id))
+    (<- message (| AcpRow None) (AcpGetRow :key key))
+    (when (is-not message None)
+      (setv (get handed message-id) (dict message.spec))))
+  (<- guidance str (continuation-guidance-of continuation handed))
+  guidance)
+
+
 (defk start-offset-of [view arm]
   {:pre [(: view SessionView) (: arm str)]
    :post [(: % tuple)]}
@@ -1980,10 +2025,10 @@
   #(path start-offset from-head))
 
 
-(defk after-start [settings state row plan view lease arm now-ms subject bodies carried missing]
+(defk after-start [settings state row plan view lease arm now-ms subject lead bodies carried missing]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: row AcpRow) (: plan LaunchPlan)
          (: view SessionView) (: lease (| LeaseGrant None)) (: arm str) (: now-ms int)
-         (: subject str) (: bodies tuple) (: carried tuple) (: missing tuple)]
+         (: subject str) (: lead str) (: bodies tuple) (: carried tuple) (: missing tuple)]
    :post [(: % AgentdState)]}
   "手番の始まり(session を起こした後・温かい session ならそのまま): 郵便の本文(bodies — headless の
    起こす腕では空: 本文は起こした prompt に畳んである)を送る(awaiting — 送った本文は owed。headless は
@@ -2022,7 +2067,9 @@
   ;; (mail-input-ids-of / send-parcels-of)。腕で並べ直すと、届いた id と行へ記帳する id がずれる。
   (<- asked tuple (inputs-of row))
   (<- mail-ids tuple (mail-input-ids-of asked missing))
-  (<- parcels tuple (send-parcels-of mail-ids bodies carried folds))
+  ;; card acp:kanban-issue:ki-06b286143c17: lead(続きの手番の再開の案内文)は郵便の前 — 畳むなら同じ 1 本の先頭、
+  ;; 畳まないなら id を運ばない束 1 つ(案内文は郵便ではないので配達報告に載らない — I6)。並べるのも send-parcels-of の 1 点。
+  (<- parcels tuple (send-parcels-of mail-ids bodies carried folds lead))
   ;; 起こす腕(headless の launch / resume / rehydrate)は郵便を 1 手番目の prompt に畳んであり、
   ;; ここへは空の bodies で来る — その拍は器を起こせた時点で郵便は届いている(法 R16
   ;; headless-first-turn-carries-the-mail)。畳んだかの判断は first-turn-carries-inputs の 1 点で、
@@ -2030,6 +2077,10 @@
   (<- rode-launch bool (first-turn-carries-inputs settings.backend-kind arm))
   (setv delivered (if rode-launch (list mail-ids) []))
   (setv refused None)
+  ;; 器へ着いた送りが 1 つでも在るか(id を運ばない案内文の送りを含む)。1 通も渡せなかった手番を閉じる判断は
+  ;; 「器が何も受け取らなかった」で、「記帳する id が無い」ではない — spec.inputs が空で continuation だけを持つ
+  ;; 手番は id を 1 つも運ばないが、案内文が着けば手番は始まっている(card acp:kanban-issue:ki-06b286143c17 §3 の 8)。
+  (setv landed-any rode-launch)
   (for [parcel parcels]
     (<- answer (| str None SessionRefused)
         (SessionSend :session-id view.session-id :text (get parcel 0) :awaiting True
@@ -2037,7 +2088,9 @@
                      :attachments (get parcel 1)))
     (if (isinstance answer SessionRefused)
         (setv refused answer)
-        (.extend delivered (get parcel 2)))
+        (do
+          (setv landed-any True)
+          (.extend delivered (get parcel 2))))
     (when (and (isinstance answer str) answer)
       (<- condition dict (condition-of CONDITION-ATTACHMENT-IGNORED answer))
       (.append pending condition)))
@@ -2047,10 +2100,13 @@
   (setv undelivered-reason
         (if (is refused None)
             ""
-            (+ refused.error " — messages not delivered: " (.join ", " undelivered))))
+            (+ refused.error " — messages not delivered: " (.join ", " undelivered)
+               (if (and (.strip lead) (not landed-any)) " (nor the continuation guidance)" ""))))
   ;; 1 通も渡せなかった拍は下で手番ごと閉じる — その条件は end-job-now が終端の cause と一緒に書くので、
-  ;; ここでは足さない(同じ型の条件を 2 度載せない)。
-  (setv refused-all (and (is-not refused None) (not delivered)))
+  ;; ここでは足さない(同じ型の条件を 2 度載せない)。「1 通も」= 器が送りを 1 つも受け取らなかった(landed-any —
+  ;; 続きの手番の案内文が着いたなら手番は始まっているので閉じない・card acp:kanban-issue:ki-06b286143c17 §3 の 8)。
+  ;; 案内文の無い手番では landed-any と「渡せた id が在る」は同じ答え(今日と同じ)。
+  (setv refused-all (and (is-not refused None) (not landed-any)))
   (when (and (is-not refused None) (not refused-all))
     (<- condition dict (condition-of CONDITION-INPUT-UNDELIVERED undelivered-reason))
     (.append pending condition))
@@ -2100,8 +2156,12 @@
   ;; card acp:kanban-issue:ki-3149aebbf675 A: 渡せた郵便の id を行へ(1 回の CAS・append-only)。
   ;; ここは frame の押しの**後ろ**: 最初の frame は送った拍に押すのが 段 10 lane 10s 追補 3 の規律で、
   ;; 頭への書き 1 往復(≈ 60〜100 ms)をその前に挟むと画面の最初の差分がその分遅れる。
+  ;; card acp:kanban-issue:ki-06b286143c17 §3 の 9: 書きが着かなかった id は捨てない — job の欄に持ち越し、次の遅い拍
+  ;; (stream-job-slow)が書き直し、それより先に手番が終わったら Ended の書きが同じ 1 回の書きに足す。
   (when delivered
-    (<- (record-inputs-delivered row.key job-id (tuple delivered))))
+    (<- recorded bool (record-inputs-delivered row.key job-id (tuple delivered)))
+    (when (not recorded)
+      (setv job (replace job :inputs-delivered-owed (tuple delivered)))))
   (<- spec dict (turn-record-spec-of job))
   (<- created (| Written Conflict Refused)
       (AcpCreate :namespace AGORA-KINDS-NAMESPACE :kind TURN-RECORD-KIND :resource-id job-id :spec spec))
@@ -2640,6 +2700,9 @@
   ;; 段 10 lane 10n: 割り込みの約束(期限の判断・停止の合図・印の書き)— 材料を読んだ後の同じ拍。
   (when (or current.interrupts-injected current.interrupt-marks-dirty)
     (<- current InFlightJob (settle-interrupts current now-ms)))
+  ;; card acp:kanban-issue:ki-06b286143c17 §3 の 9: 手番の始まりに書けなかった配達報告を書き直す(書けるまで毎拍)。
+  (when current.inputs-delivered-owed
+    (<- current InFlightJob (settle-owed-inputs current)))
   (<- renew bool (lease-renew-due current now-ms settings))
   (when (and renew (is-not current.lease-kind None) (is-not current.lease-account None))
     (<- lease (| LeaseGrant LeaseRefused)
@@ -3190,6 +3253,12 @@
   ;; 行を先に読む(試みの回数は行の欄)。
   (<- fresh (| AcpRow None) (AcpGetRow :key job.job-key))
   (<- fresh-status dict (if (is fresh None) {} (status-object-of fresh)))
+  ;; card acp:kanban-issue:ki-06b286143c17 §3 の 9: 配達報告の書けていない郵便の id は、この手番の最後の書き(Ended /
+  ;; 断られた試みの記録)に同じ 1 回の書きで足す — 書き直しの拍より先に手番が終わった形(SIGTERM の停止の腕を含む)。
+  (when (is-not fresh None)
+    (<- fresh-inputs tuple (inputs-of fresh))
+    (<- owed-status dict (owed-inputs-delivered-status-of fresh-status job.inputs-delivered-owed fresh-inputs))
+    (setv fresh-status owed-status))
   (<- attempt int (binding-attempt-of fresh-status))
   (<- limit (| dict None) (provider-limit-condition-of
                             (if (isinstance view SessionView) view.terminal-cause None)
@@ -3254,7 +3323,9 @@
                 (<- again (| AcpRow None) (AcpGetRow :key job.job-key))
                 (<- verdict str (end-retry-verdict again job.session-id settings.principal now-ms now-ms UNRECORDED-END-TTL-MS))
                 (when (and (= verdict END-RETRY-WRITE) (isinstance again AcpRow))
-                  (<- again-status dict (status-object-of again))
+                  (<- again-read dict (status-object-of again))
+                  (<- again-inputs tuple (inputs-of again))
+                  (<- again-status dict (owed-inputs-delivered-status-of again-read job.inputs-delivered-owed again-inputs))
                   (<- ended-again dict (ended-status-of again-status outcome.result evidenced.cause ended-conditions))
                   (<- wrote-again (| Written Conflict Refused) (AcpPutStatus :row again :status ended-again))
                   (setv landed (isinstance wrote-again Written))
@@ -3353,19 +3424,20 @@
   current)
 
 
-(defk fail-missing-arm [settings job-key job-id pending lease-id now-ms]
+(defk fail-missing-arm [settings job-key job-id pending lease-id now-ms owed]
   {:pre [(: settings AgentdSettings) (: job-key str) (: job-id str) (: pending tuple)
-         (: lease-id (| str None)) (: now-ms int)]
+         (: lease-id (| str None)) (: now-ms int) (: owed tuple)]
    :post [(: % bool)]}
   "器に session が無い job の腕: 記録が在れば ended に、job は SessionFailed で Ended、
-   借りていた札は返す。戻り = Ended の書きが着地したか。"
+   借りていた札は返す。戻り = Ended の書きが着地したか。owed = 配達報告の書けていない郵便の id
+   (memory の job から — 拾い直しの腕は memory を持たないので空・card acp:kanban-issue:ki-06b286143c17 §3 の 9)。"
   (<- (end-turn-record job-id None #() None))
   (<- fresh (| AcpRow None) (AcpGetRow :key job-key))
   (setv landed False)
   (if (is fresh None)
       (<- (LogLine :text f"agentd: agent-job {job-id} vanished before Ended"))
-      (<- landed bool (end-job-now settings fresh "SessionFailed"
-                                   "session is not registered in the host" pending now-ms)))
+      (<- landed bool (end-job-owing settings fresh "SessionFailed"
+                                     "session is not registered in the host" pending now-ms owed)))
   ;; R51: 拾い直しの腕は memory を持たない(lease-id = None)— 機体の journal が握りを名乗る。
   (<- (return-lease settings job-id lease-id))
   landed)
@@ -3380,7 +3452,8 @@
   (cond
     (= step JOB-STEP-FAIL-MISSING)
     (do
-      (<- (fail-missing-arm settings job.job-key job.job-id job.pending-conditions job.lease-id now-ms))
+      (<- (fail-missing-arm settings job.job-key job.job-id job.pending-conditions job.lease-id now-ms
+                            job.inputs-delivered-owed))
       (<- dropped AgentdState (without-job state job.job-id))
       dropped)
     (and (in step #{JOB-STEP-RECORD-END JOB-STEP-TURN-END JOB-STEP-SESSION-LOST}) (isinstance view SessionView))
@@ -3478,7 +3551,7 @@
   (<- session-id (| str None) (session-id-of-handle row))
   (if (is session-id None)
       (do
-        (<- (fail-missing-arm settings row.key row.resource-id #() None now-ms))
+        (<- (fail-missing-arm settings row.key row.resource-id #() None now-ms #()))
         state)
       (do
         (<- view (| SessionView None) (SessionGet :session-id session-id))
@@ -3489,7 +3562,7 @@
         (<- step str (job-step-of view row.created-at-ms True False))
         (if (not (isinstance view SessionView))
             (do
-              (<- (fail-missing-arm settings row.key row.resource-id #() None now-ms))
+              (<- (fail-missing-arm settings row.key row.resource-id #() None now-ms #()))
               state)
             (do
               (<- plan LaunchPlan (launch-plan-of row))
@@ -3666,7 +3739,10 @@
           (<- dropped AgentdState (without-unrecorded-end current end.job-id))
           (setv current dropped))
         (do
-          (<- status dict (status-object-of row))
+          (<- read-status dict (status-object-of row))
+          (<- inputs tuple (inputs-of row))
+          ;; card acp:kanban-issue:ki-06b286143c17 §3 の 9: 持ち越した配達報告も同じ 1 回の書きに足す。
+          (<- status dict (owed-inputs-delivered-status-of read-status end.inputs-delivered-owed inputs))
           (<- ended dict (ended-status-of status end.result end.cause end.conditions))
           (<- wrote (| Written Conflict Refused) (AcpPutStatus :row row :status ended))
           (if (isinstance wrote Written)
@@ -3790,23 +3866,39 @@
   "渡せた inputs の郵便を行へ写す(card acp:kanban-issue:ki-3149aebbf675 A): 鍵で読み直した行に CAS で
    inputsDelivered へ足す(1 回の書き・append-only)。Conflict は 1 度だけ読み直して撃ち直す。
    戻り = 着地したか(しなければ ACP は次の拍まで『まだ渡していない』と読む — 欄は claim の拍から在るので
-   旧い推定〔phase = Running〕には落ちない)。⚠ この欄の書き手は agentd だけ・消す腕は無い。"
+   旧い推定〔phase = Running〕には落ちない)。⚠ この欄の書き手は agentd だけ・消す腕は無い。
+   card acp:kanban-issue:ki-06b286143c17: 足せる id は読んだ行の spec.inputs の中だけ(judgment.inputs-delivered-status-of の
+   事前条件 I6)。着かなかった id は呼び手が InFlightJob.inputs-delivered-owed に持ち越す(捨てない — §3 の 9)。"
   (<- fresh (| AcpRow None) (AcpGetRow :key job-key))
   (when (is fresh None)
     (<- (LogLine :text f"agentd: agent-job {job-id} vanished before its delivered inputs could be recorded"))
     (return False))
   (<- status dict (status-object-of fresh))
-  (<- delivered dict (inputs-delivered-status-of status ids))
+  (<- inputs tuple (inputs-of fresh))
+  (<- delivered dict (inputs-delivered-status-of status ids inputs))
   (<- wrote (| Written Conflict Refused) (AcpPutStatus :row fresh :status delivered))
   (when (isinstance wrote Conflict)
     (<- again (| AcpRow None) (AcpGetRow :key job-key))
     (when (is-not again None)
       (<- status-again dict (status-object-of again))
-      (<- delivered-again dict (inputs-delivered-status-of status-again ids))
+      (<- inputs-again tuple (inputs-of again))
+      (<- delivered-again dict (inputs-delivered-status-of status-again ids inputs-again))
       (<- wrote (| Written Conflict Refused) (AcpPutStatus :row again :status delivered-again))))
   (when (not (isinstance wrote Written))
-    (<- (LogLine :text f"agentd: inputs of job {job-id} delivered but not recorded ({wrote}); the delivery reads them as not handed until a later write")))
+    (<- (LogLine :text f"agentd: inputs of job {job-id} delivered but not recorded ({wrote}); carried to the next write of this turn (the next tick or its Ended)")))
   (isinstance wrote Written))
+
+
+(defk settle-owed-inputs [job]
+  {:pre [(: job InFlightJob)]
+   :post [(: % InFlightJob)]}
+  "配達報告の書けていない郵便の id(job.inputs-delivered-owed)の書き直し(card acp:kanban-issue:ki-06b286143c17 §3 の 9・
+   遅い拍ごと・level-triggered): 書きの座は record-inputs-delivered の 1 点のまま。着けば欄を空にし、着かなければ
+   持ち越す(手番の終わりの Ended の書きが同じ id を足す — judgment.owed-inputs-delivered-status-of)。"
+  (<- recorded bool (record-inputs-delivered job.job-key job.job-id job.inputs-delivered-owed))
+  (if recorded
+      (replace job :inputs-delivered-owed #())
+      job))
 
 
 (defk deliver-interrupts-of [settings job row now-ms]
