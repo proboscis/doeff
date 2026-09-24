@@ -4692,7 +4692,11 @@ def test_headless_launch_folds_the_mail_into_the_first_turn_and_does_not_send() 
     sid = world.sid("j-1")
     assert world.sessions.launches[-1]["prompt"] == PREAMBLE + "\n\n" + mailed("m-1", "first")
     assert world.sessions.sends == []
-    assert [m["metric"] for m in metrics_other_than_the_tick_line(world)] == ["agent-job-to-send"]
+    # card acp:kanban-issue:ki-e786e72e2ae7: 送れた手番は受け付けの段ごとの所要も 1 行名乗る。
+    assert [m["metric"] for m in metrics_other_than_the_tick_line(world)] == [
+        "agent-job-to-send",
+        "agent-job-intake-stages",
+    ]
     assert last_metric(world, "agent-job-to-send")["arm"] == "launch"
     record = world.turn_record("j-1")
     assert record is not None
