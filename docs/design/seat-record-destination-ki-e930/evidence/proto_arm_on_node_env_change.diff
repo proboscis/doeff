@@ -1,0 +1,54 @@
+diff --git a/packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy b/packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy
+index ca5cb2cd..013f111a 100644
+--- a/packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy
++++ b/packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy
+@@ -261,6 +261,7 @@
+   CONDITION-RECORD-UNAVAILABLE
+   CONDITION-SESSION-LOST
+   CONVERSATION-ID-ENV
++  RECORD-URL-ENV
+   CONVERSATION-KIND
+   CREDENTIAL-SOURCE-HOME
+   CREDENTIAL-SOURCE-LEASE
+@@ -1340,6 +1341,21 @@
+   (if (and (isinstance mine dict) (isinstance (.get mine "conversationId") str)) mine None))
+ 
+ 
++(defk node-seat-env-of [seat-env record-url]
++  {:pre [(: seat-env tuple) (: record-url (| str None))]
++   :post [(: % tuple)]}
++  "PROTOTYPE(ki-e930 設計検証・commit しない): 機体が席へ渡す env = 宣言の seat_env + 走行者の宛先。"
++  (if (is record-url None) seat-env (+ seat-env #(#(RECORD-URL-ENV record-url)))))
++
++
++(defk node-seat-env-digest-of [pairs]
++  {:pre [(: pairs tuple)]
++   :post [(: % str)]}
++  "PROTOTYPE: 機体が席へ渡す env の指紋。"
++  (setv canonical (json.dumps (lfor #(n v) pairs [n v]) :ensure-ascii False :separators #("," ":")))
++  (.hexdigest (hashlib.sha256 (.encode canonical "utf-8"))))
++
++
+ (defk session-attribution-of [plan job-id subject arm]
+   {:pre [(: plan LaunchPlan) (: job-id str) (: subject str) (: arm str)]
+    :post [(: % dict)]}
+@@ -1556,8 +1572,8 @@
+     True (bool probe.events)))
+ 
+ 
+-(defk next-arm-for-job [candidate view home effort compact]
+-  {:pre [(: candidate (| str None)) (: view (| SessionView None)) (: home dict) (: effort (| str None)) (: compact bool)]
++(defk next-arm-for-job [candidate view home effort compact node-env-digest]
++  {:pre [(: candidate (| str None)) (: view (| SessionView None)) (: home dict) (: effort (| str None)) (: compact bool) (: node-env-digest str)]
+    :post [(: % ArmChoice)]}
+   "Bound の job の起こし方(閉語彙 effects.NextArm)— 判断はここ 1 点(R10 / R20)。candidate = 会話の前の
+    session(affinity.predecessor か会話の最後の手番の session — warm-candidate-of)、view = その器の眺め、
+@@ -1605,6 +1621,8 @@
+     (setv same in-home)
+     (<- launched-effort (| str None) (session-effort-of view))
+     (setv same-effort (= launched-effort effort))
++    (<- mine-attr (| dict None) (attribution-of-view view))
++    (setv same-effort (and same-effort (is-not mine-attr None) (= (.get mine-attr "nodeEnv") node-env-digest)))
+     (setv draining view.draining))
+   (cond
+     (is candidate None) (ArmChoice :arm NEXT-ARM-LAUNCH :source None :retire None)

@@ -1,0 +1,28 @@
+# 実測 pool pod(hostname agentd-pool-0)・2026-09-24T15:48:45Z・会話 c-GZ6PP4BMTNRQ96T4FZJEHN512H のターン
+## 1. ターンの env(記録サービスの宛先が無い)
+$ env | grep -E "^(RECORD_SERVICE_URL|AGORA_|ACP_BASE|HERDR_HUD)" | cut -c1-80
+ACP_BASE=http://acp-control.acp-control.svc.cluster.local.:8868
+AGORA_BRAIN_URL=http://agora-1.herdr-hud.svc.cluster.local:8300
+AGORA_CONVERSATION_ID=c-GZ6PP4BMTNRQ96T4FZJEHN512H
+AGORA_CUSTODY_URL=http://custodian.agora-custody.svc.cluster.local.:8320
+AGORA_IMAGE_TOOLS=acp agentcli ai bash cabal cc chop claude curl gcc gh ghc ghc-
+AGORA_SEAT_OPENER=machine
+HERDR_HUD_STATE_BACKEND=pg
+(RECORD_SERVICE_URL の行: 0 行)
+## 2. 同じ pod の agentd の宣言 file(/etc/agentd/agentd.toml)の [record] と seat_env の名
+$ sed -n "/^\[record\]/,\$p" /etc/agentd/agentd.toml
+[record]
+url = "http://agora-record.herdr-hud.svc.cluster.local.:8874"
+$ seat_env の名(値は ACP_BASE 等の宛先)
+['ACP_BASE', 'AGORA_BRAIN_URL', 'HERDR_HUD_STATE_BACKEND', 'AGORA_CUSTODY_URL', 'AGORA_IMAGE_TOOLS']
+## 3. agentd の process(pid 265 = join --role agentd)
+    PID COMMAND
+    265 /home/kento/repos/doeff/.venv/bin/python /home/kento/repos/doeff/.venv/bin/doeff-sessionhost join --role agentd --config /etc/agentd/agentd.toml
+## 4. 34,077 byte の本文の ai tell(宛先 = この会話自身・kind note)
+- env なし: requestId ai-tell:35926257f67548bd8355827e66d10bdc → 断り「記録の service に本文を置けない … 記録の service の宛先が宣言されていない(env RECORD_SERVICE_URL)(段 record)」(郵便 lt-W0XWGR5E56V8WJVHACFHRC2RV7 は作られていない)
+- RECORD_SERVICE_URL=http://agora-record.herdr-hud.svc.cluster.local.:8874(= [record].url と byte 同一)を明示: 「本文は記録の service に置いて見出し(bodyRef)で投函した — 郵便 lt-SAGPVFCCQ31D6D2W5746B1STXA」
+$ ai tell status lt-W0XWGR5E56V8WJVHACFHRC2RV7
+lt-W0XWGR5E56V8WJVHACFHRC2RV7: 行が無い(default:message:lt-W0XWGR5E56V8WJVHACFHRC2RV7)
+$ ai tell status lt-SAGPVFCCQ31D6D2W5746B1STXA
+lt-SAGPVFCCQ31D6D2W5746B1STXA: 配達 delivered — agent-job aj-SAGPVFCCQ31D6D2W5746B1STXA(この動詞が測るのは配達だけ)
+⇒ pod の席の札(家の既定の置き場の mount)で記録サービスは追記を受けた。欠けているのは宛先の値だけ。
