@@ -197,7 +197,28 @@ ConditionType = Literal[
     "SummarizeDeadlineExceeded",
     "SummarizeOutputUnreadable",
     "SummaryUnwritable",
+    "InputExpired",
 ]
+#: agentd が agent-job に書く語の集合(定義点は上の Literal ちょうど — 導くだけで列挙しない)。card
+#: acp:kanban-issue:ki-6f222893d6b6: turn-record の status.conditions へ写すのはこの語の項だけ(配置など他の書き手の語を
+#: agentd の記録に名乗らない — judgment.turn-record-conditions-of)。偽の ACP の書き込み口もこの集合で書き手の契約を検める。
+AGENTD_CONDITION_TYPES: frozenset[str] = frozenset(get_args(ConditionType))
+#: turn-record の status.conditions の書き手の上限(契約 conventions.turnRecordConditions の写し — maxItems / textMax /
+#: byteBudget。schema の maxItems / maxLength と同じ値)。書き手の上限 ≤ 契約なので、写しが契約を越えることは無い。
+#: 上限で落とした項の数は status.conditionsDropped が名乗る。書くのは手番の終わりの書きだけ(追記の書きには載せない)。
+TURN_RECORD_CONDITIONS_MAX = 16
+TURN_RECORD_CONDITION_TEXT_MAX = 512
+TURN_RECORD_CONDITIONS_BYTE_BUDGET = 8_192
+#: turn-record の status の欄の綴り(契約 kinds.turn-record … status.properties の conditions / conditionsDropped)。
+TURN_RECORD_CONDITIONS_KEY = "conditions"
+TURN_RECORD_CONDITIONS_DROPPED_KEY = "conditionsDropped"
+#: 出所の欄(card ki-6f222893d6b6): agentd が agent-job に新しく足す条件は、立てた試みの番号を名乗る
+#: (judgment.conditions-of-runner / conditions-of-binding が刻む)。置き直された手番の記録に前の試みの条件が並ぶ時の見分けの欄。
+CONDITION_ATTEMPT_KEY = "attempt"
+#: 条件の status の語(契約 turn-record の status.conditions.items.status の enum の写し)。写しは外の値を Unknown に倒す。
+ConditionStatus = Literal["True", "False", "Unknown"]
+CONDITION_STATUS_WORDS: frozenset[str] = frozenset(get_args(ConditionStatus))
+CONDITION_STATUS_UNKNOWN: ConditionStatus = "Unknown"
 CONDITION_INTERRUPTED: ConditionType = "Interrupted"
 #: 段 10 lane 10n(agora-redesign #93・依頼者の追補 2026-09-14): 割り込みを注入したが、この job の charter に
 #: interruptEscalationSeconds(期限 — 方策の行の値を Messaging が会話の宣言で重ねて charter に写す)が無いので、

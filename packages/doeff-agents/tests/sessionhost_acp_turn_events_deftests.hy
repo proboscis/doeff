@@ -76,6 +76,7 @@
   tool-use-frame
   record-create-verdict
   turn-record-appended-status
+  turn-record-conditions-of
   turn-record-ended-status])
 (import doeff_agents.sessionhost.acp.runtime [initial-state run-tick])
 
@@ -784,12 +785,12 @@
   ;; 手番の終わり: 残りを追記した上で ended・usage。行の entries は落とさない(旧の形 = 置換 を作らない)。
   (setv error-head (run (headline-of-body {"producerSeq" 2 "at" AT "kind" "error" "text" "boom"})))
   (setv ended (run (turn-record-ended-status appended {"input" 1 "output" 2 "cacheWrite" 0 "cacheRead" 0}
-                                             #(error-head))))
+                                             #(error-head) #())))
   (assert (= (get ended "state") "ended"))
   (assert (= (lfor entry (get ended "entries") (get entry "kind")) ["text" "text" "error"]))
   (assert (= (get ended "usage") {"input" 1 "output" 2 "cacheWrite" 0 "cacheRead" 0}))
   ;; 残りが無い終わりは entries をそのまま(空で置換しない)。
-  (setv quiet (run (turn-record-ended-status ended None #())))
+  (setv quiet (run (turn-record-ended-status ended None #() #())))
   (assert (= (len (get quiet "entries")) 3))
   ;; 追記は行の上限を守る(TURN-RECORD-ENTRIES-BYTE-BUDGET)— 行に既に在る大きな entries の上に見出しを積む。
   (setv flood {"state" "running" "entries" (lfor seq (range 3) (big-entry seq (// TURN-RECORD-ENTRIES-BYTE-BUDGET 2)))})
@@ -1355,7 +1356,9 @@
                     {"conversationId" CONVERSATION "agentJobId" "j-1" "node" "mac-0" "profile" "personal"
                      "model" "claude-opus-5" "sessionId" "sid-attempt-1"
                      "cacheContext" {"nodeRow" "mac-0-2" "account" "old-acct" "declarationGeneration" 0}}
-                    {"state" "running" "entries" [{"seq" 0 "at" 900 "kind" "system" "bytes" 1 "sha256" "x"}]}))
+                    ;; 見出しは契約の形(sha256 = 64 桁の 16 進)— 偽の ACP の書き込み口が turn-record の status を契約の写しで検める
+                    ;; (card acp:kanban-issue:ki-6f222893d6b6)ので、agentd が書き戻す行の見出しも契約の中に置く。
+                    {"state" "running" "entries" [{"seq" 0 "at" 900 "kind" "system" "bytes" 1 "sha256" (* "0" 64)}]}))
   (place-job-again world PHASE-BOUND {"node" NODE "nodeRow" NODE "profile" "second" "account" "acct"
                                       "attempt" 2 "at" 7000 "declarationGeneration" 1} [])
   world)
@@ -1524,3 +1527,142 @@
   ;; 掛け直した(継続の拍 + 追記 + 終わり = 3 回の書き)が、log は 1 行。
   (assert (= (len (get world.acp.spec-refusals key)) 5) (get world.acp.spec-refusals key))
   (assert (= (len (lfor line world.local.logs :if (in "could not be realigned" line) line)) 1) world.local.logs))
+
+
+;; ---------------------------------------------------------------------------
+;; card acp:kanban-issue:ki-6f222893d6b6: 手番の条件を耐久の turn-record へ写す
+;; ---------------------------------------------------------------------------
+;;
+;; agent-job は Ended から猶予の後に刈られるので、手番を落とさない失敗の理由は turn-record の status.conditions にだけ
+;; 耐久に残る。turn-record へ写す列は記録の書きの前に組む(行の条件 + この試みが出所を刻んだ条件)。Ended の列は記録の腕の
+;; 後の最新の写しから組む(記録の行が無い時だけ立つ RecordUnavailable を落とさない)。写しの形は
+;; judgment.turn-record-conditions-of の 1 点。
+
+(defn #^ None note-pending [#^ World world #^ dict condition]
+  "走っている手番(memory の j-1)の途中で軟らかい条件が 1 つ立った形(添付を器へ渡せなかった等 — 腕が pending に足す形)。"
+  (setv world.state (dataclasses.replace world.state
+                      :jobs (tuple (gfor job world.state.jobs
+                                     (if (= job.job-id "j-1")
+                                         (dataclasses.replace job :pending-conditions (+ job.pending-conditions #(condition)))
+                                         job)))))
+  None)
+
+
+(defn #^ list agentd-items-of [#^ list conditions]
+  "条件の列の写し(agentd の語の項だけ・上限の内)— turn-record の列と比べる材料。"
+  (list (get (run (turn-record-conditions-of (tuple conditions))) 0)))
+
+
+(defn #^ list typed-attempts [#^ list conditions]
+  (lfor c conditions #((get c "type") (.get c "attempt"))))
+
+
+(deftest test-a-missing-record-that-could-not-be-re-created-still-names-record-unavailable-on-ended
+  ;; Verification 2(盲検 B の回帰): 手番の終わりに記録の行が消えていて、作り直しも断られた手番の agent-job の Ended に
+  ;; RecordUnavailable が残る。Ended の列を記録の書きの前に組むと、記録の腕が足すこの条件が落ちる(基準版は緑・
+  ;; 「計算を前へ移すだけ」の並べ替えで赤 — 設計検証の実測)。条件は立てた試みの番号を名乗る。
+  (setv world (World))
+  (.tick world 0)
+  (setv sid (.sid world))
+  (setv (get world.local.transcripts f"/events/{sid}.events.jsonl") (claude-events sid "hello"))
+  (.tick world 1000)
+  (assert (= (. (in-flight world) record-create) RECORD-CREATE-CREATED))
+  (.delete-row world.acp (record-key-of "j-1"))
+  (setv (get world.acp.create-refusals (record-key-of "j-1")) [(Refused 503 "restarting")])
+  (.finish world.sessions sid "done" {"ok" True} None)
+  (.tick world 1000)
+  (assert (not-in (record-key-of "j-1") world.acp.rows) "記録の行が作り直された(検体が弱い)")
+  (assert (= (get (job-status world) "phase") PHASE-ENDED) (job-status world))
+  (setv missing (lfor c (job-conditions world) :if (= (get c "type") "RecordUnavailable") c))
+  (assert (= (len missing) 1) (job-conditions world))
+  (assert (= (get (get missing 0) "attempt") 1) missing))
+
+
+(deftest test-conditions-of-an-earlier-attempt-name-their-attempt-on-the-record-of-the-later-attempt
+  ;; Verification 3(盲検 A の回帰): 試み 1 が口座の限度で断られ(記録は running のまま・行に ProviderLimit)、試み 2 で
+  ;; 終わった手番。turn-record は試み 2 の spec(attempt 2)を名乗り、試み 1 の軟らかい条件と ProviderLimit を attempt 1 で
+  ;; 運ぶ(番号が無いと、試み 2 の記録に並んだ試み 1 の事実を見分けられない)。列は Ended の agentd の項の写しに等しい。
+  (setv world (World))
+  (.tick world 0)
+  (setv sid (.sid world))
+  (setv said "You've hit your individual spend limit · ask your admin to raise it")
+  (setv events (+ (stream-line {"type" "system" "subtype" "init" "session_id" sid "model" "claude-opus-5"})
+                  (stream-line {"type" "result" "subtype" "error_during_execution" "is_error" True "result" said})))
+  (setv (get world.local.transcripts f"/events/{sid}.events.jsonl") events)
+  (.tick world 1000)
+  (note-pending world {"type" "AttachmentIgnored" "status" "True" "reason" "attempt-1 attachment"})
+  (.finish world.sessions sid "failed" None {"category" "rate_limited" "reason" said})
+  (.tick world 1000)
+  (assert (= (get (.record-status world) "state") "running") "断られた試みで記録が閉じた(記録は次の試みが続ける)")
+  (setv soft (lfor c (job-conditions world) :if (= (get c "type") "AttachmentIgnored") c))
+  (assert (= (lfor c soft (.get c "attempt")) [1]) (job-conditions world))
+  (place-job-again world PHASE-BOUND {"node" NODE "profile" "second" "account" "acct" "attempt" 2 "at" 7000} [])
+  (.tick world 1000)
+  (setv second-sid (.sid world))
+  (setv (get world.local.transcripts f"/events/{second-sid}.events.jsonl") (claude-events second-sid "hello again"))
+  (.tick world 1000)
+  (.finish world.sessions second-sid "done" {"ok" True} None)
+  (.tick world 1000)
+  (setv rec (.record-status world))
+  (assert (= (get rec "state") "ended") rec)
+  (assert (= (get (. (.record world) spec) "attempt") 2) (. (.record world) spec))
+  (setv carried (typed-attempts (.get rec "conditions" [])))
+  (assert (in #("AttachmentIgnored" 1) carried) carried)
+  (assert (in #("ProviderLimit" 1) carried) carried)
+  (assert (= (get rec "conditions") (agentd-items-of (job-conditions world))) #(rec (job-conditions world))))
+
+
+(deftest test-an-interrupted-turn-carries-its-soft-conditions-and-interrupted-on-both-rows
+  ;; Verification 4: 取り下げ(interrupt-job)で終わった手番。turn-record と agent-job の両方に、手番の途中の軟らかい条件と
+  ;; Interrupted が載る(前は agent-job に Interrupted だけを書き、途中の事実を捨てていた)。どちらも立てた試みの番号を名乗る。
+  (setv world (World))
+  (.tick world 0)
+  (setv sid (.sid world))
+  (setv (get world.local.transcripts f"/events/{sid}.events.jsonl") (claude-events sid "hello"))
+  (.tick world 1000)
+  (note-pending world {"type" "AttachmentIgnored" "status" "True" "reason" "an attachment the seat could not take"})
+  (setv row (get world.acp.rows (job-key-of "j-1")))
+  (place-job-again world PHASE-WITHDRAWN (get row.status "binding") [])
+  (.tick world 1000)
+  (assert (= world.state.jobs #()) world.state.jobs)
+  (setv rec (.record-status world))
+  (assert (= (get rec "state") "ended") rec)
+  (assert (= (typed-attempts (get rec "conditions")) [#("AttachmentIgnored" 1) #("Interrupted" 1)]) rec)
+  (assert (= (typed-attempts (job-conditions world)) [#("AttachmentIgnored" 1) #("Interrupted" 1)]) (job-conditions world))
+  (assert (= (get rec "conditions") (agentd-items-of (job-conditions world))) #(rec (job-conditions world)))
+  (assert (= (get (job-status world) "phase") PHASE-WITHDRAWN) (job-status world)))
+
+
+(deftest test-the-sweep-copies-the-conditions-of-the-pair-and-writes-none-without-one
+  ;; Verification 5(巡回): 取り残しの記録を閉じる巡回は、対の agent-job の行が在ればその条件(agentd の語の項だけ — 配置の
+  ;; 語は写さない)を写し、対が刈られて無ければ条件の欄を書かない(写す材料が無い)。
+  (setv world (World))
+  (setv soft {"type" "AgentMemoryUnwritable" "status" "True" "reason" "record service unreachable" "attempt" 1})
+  (setv placement {"type" "Unschedulable" "status" "False" "reason" "placed"})
+  (.put-row world.acp (running-record-row "j-2" NODE))
+  (setv pair (job-row-in-phase "j-2" PHASE-ENDED NODE))
+  (.put-row world.acp (dataclasses.replace pair :status (| pair.status {"conditions" [placement soft]})))
+  (.put-row world.acp (running-record-row "j-3" NODE))          ;; 対の行ごと無い(刈られた)
+  (.tick world 0)
+  (setv with-pair (. (get world.acp.rows (record-key-of "j-2")) status))
+  (assert (= (get with-pair "state") "ended") with-pair)
+  (assert (= (get with-pair "conditions") [soft]) with-pair)
+  (setv without-pair (. (get world.acp.rows (record-key-of "j-3")) status))
+  (assert (= (get without-pair "state") "ended") without-pair)
+  (assert (not-in "conditions" without-pair) without-pair)
+  (assert (not-in "conditionsDropped" without-pair) without-pair))
+
+
+(deftest test-a-retired-turn-record-carries-the-conditions-of-its-refused-attempts
+  ;; Verification 5(退役): 配置が試みの上限で退役させた手番の記録を閉じる腕は、退役した agent-job の行の条件(断られた
+  ;; 試みの ProviderLimit)を写す。配置の語(Unschedulable)は写さない。
+  (setv world (refused-world))
+  (place-job-again world PHASE-WITHDRAWN {"node" NODE "profile" "personal" "account" "acct" "attempt" 3 "at" 9000}
+                   [{"type" "Unschedulable" "status" "True" "reason" "retry-budget-exhausted" "rescues" []}])
+  (.tick world 1000)
+  (setv rec (.record-status world))
+  (assert (= (get rec "state") "ended") rec)
+  (setv carried (typed-attempts (get rec "conditions")))
+  (assert (in #("ProviderLimit" 1) carried) carried)
+  (assert (not-in "Unschedulable" (lfor c (get rec "conditions") (get c "type"))) rec)
+  (assert (= (get rec "conditions") (agentd-items-of (job-conditions world))) #(rec (job-conditions world))))

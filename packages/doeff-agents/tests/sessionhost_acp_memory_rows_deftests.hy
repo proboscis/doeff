@@ -47,6 +47,7 @@
   NODE-KIND
   PHASE-BOUND
   RECORD-STREAM-MEMORY
+  TURN-RECORD-CONDITION-TEXT-MAX
   TURN-RECORD-KIND
   MemoryAppend
   MemoryBaseline
@@ -63,6 +64,7 @@
   RecordSupersedeConflicted])
 (import doeff_agents.sessionhost.acp.effects [Conflict])
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeRecord FakeSessions])
+(import doeff_agents.sessionhost.acp [fake])
 (import doeff_agents.sessionhost.acp.judgment [
   memory-baseline-of-row
   memory-baseline-text-of
@@ -82,7 +84,8 @@
   memory-sha256-of-text
   memory-spec-of
   memory-stream-id-of
-  memory-write-verdict])
+  memory-write-verdict
+  turn-record-conditions-of])
 (import doeff_agents.sessionhost.acp.runtime [initial-state install run-tick])
 
 
@@ -1342,3 +1345,81 @@
   (assert (= (get folded "unchanged") 1) folded)
   (assert (in "別の機体が書いた濃い本文" (get (.head-event world "mail-hold-has-two-exits") "text"))
           (.head-event world "mail-hold-has-two-exits")))
+
+
+;; ---------------------------------------------------------------------------
+;; card acp:kanban-issue:ki-6f222893d6b6: 記憶が書けなかった理由は、agent-job が刈られても turn-record に残る
+;; ---------------------------------------------------------------------------
+;;
+;; 記憶が書けないことは手番の失敗ではない(条件 AgentMemoryUnwritable を 1 つ立てるだけ)。その条件は agent-job の行にしか
+;; 立たず、行は Ended から猶予の後に刈られる — 実弾: 記憶の畳み戻しが 90 分で 29 件失敗し、ACP からは 1 件も読めなかった。
+;; 手番の終わりに turn-record の status.conditions へ写す(写しの形は judgment.turn-record-conditions-of の 1 点)。
+
+(defn #^ str turn-record-key-of [#^ MemoryWorld world]
+  f"{AGORA-KINDS-NAMESPACE}:{TURN-RECORD-KIND}:{(.job-id world)}")
+
+
+(defn #^ dict turn-record-status-of [#^ MemoryWorld world]
+  (setv status (. (get world.acp.rows (turn-record-key-of world)) status))
+  (assert (isinstance status dict))
+  status)
+
+
+(deftest test-a-book-the-record-service-refused-stays-named-on-the-turn-record-after-the-job-is-reaped
+  ;; Verification 1(I2)と 6: 記録の service が落ちている手番 — turn-record は ended で AgentMemoryUnwritable{reason, attempt 1} を
+  ;; 運び、その列は agent-job の Ended の agentd の項の写しに等しい。agent-job を刈った後も turn-record から読める。
+  ;; 走っている間の追記の書きは条件の欄を運ばない(終わりの書き 1 回だけ)。
+  (setv world (MemoryWorld))
+  (.put-file world "a-fact.md" (book-text "a-fact" "要旨" "本文。"))
+  (setv world.record.unreachable True)
+  (.turn world)
+  (setv ended-conditions (.job-conditions world))
+  (setv soft (lfor c ended-conditions :if (= (get c "type") CONDITION-MEMORY-UNWRITABLE) c))
+  (assert (= (len soft) 1) ended-conditions)
+  (assert (= (get (get soft 0) "attempt") 1) soft)
+  ;; I2: turn-record の列 = Ended の列の写し(agentd の語だけ・上限の内)。
+  (setv projected (get (run (turn-record-conditions-of (tuple ended-conditions))) 0))
+  (setv record-status (turn-record-status-of world))
+  (assert (= (get record-status "state") "ended") record-status)
+  (assert (= (.get record-status "conditions") (list projected)) #(projected record-status))
+  (assert (not-in "conditionsDropped" record-status) record-status)
+  ;; agent-job を刈る(ACP が Ended から猶予の後にする削除の替え玉)— 理由は turn-record に残る。
+  (setv job-key f"{AGENT-JOB-NAMESPACE}:{AGENT-JOB-KIND}:{(.job-id world)}")
+  (.delete-row world.acp job-key)
+  (assert (not-in job-key world.acp.rows))
+  (setv carried (lfor c (.get (turn-record-status-of world) "conditions" [])
+                      :if (= (get c "type") CONDITION-MEMORY-UNWRITABLE) c))
+  (assert (= (len carried) 1) carried)
+  (assert (= (get (get carried 0) "attempt") 1) carried)
+  (assert (= (get (get carried 0) "reason") (cut (get (get soft 0) "reason") TURN-RECORD-CONDITION-TEXT-MAX)) carried)
+  ;; Verification 6: 追記の書き(ended でない書き)は条件の欄を運ばない。
+  (setv running-writes (lfor [key status] world.acp.writes
+                             :if (and (= key (turn-record-key-of world)) (!= (.get status "state") "ended"))
+                             status))
+  (assert running-writes "追記の書きが 1 本も無い(検体が弱い)")
+  (for [status running-writes]
+    (assert (not-in "conditions" status) status)
+    (assert (not-in "conditionsDropped" status) status)))
+
+
+(deftest test-the-fake-acp-names-a-condition-word-outside-the-vocabulary-that-agentd-wrote
+  ;; Verification 8(実経路の対照): 偽の ACP の書き込み口は、agentd が agent-job に新しく足した条件の語を語彙で検める。
+  ;; 正の対照 = 語彙のまま同じ手番を回すと破れは 0。負の対照 = 検めの語彙から AgentMemoryUnwritable を外すと、同じ手番の
+  ;; Ended の書きがその語を名乗る破れを積む(tests/conftest.py の後片付けがこの列を赤にする — ここでは読んで空に戻す)。
+  (setv full fake.AGENTD-CONDITION-TYPES)
+  (setv kept (MemoryWorld))
+  (.put-file kept "a-fact.md" (book-text "a-fact" "要旨" "本文。"))
+  (setv kept.record.unreachable True)
+  (.turn kept)
+  (assert (= fake.FAKE-ACP-CONTRACT-VIOLATIONS []) fake.FAKE-ACP-CONTRACT-VIOLATIONS)
+  (setv dropped (MemoryWorld))
+  (.put-file dropped "a-fact.md" (book-text "a-fact" "要旨" "本文。"))
+  (setv dropped.record.unreachable True)
+  (setv fake.AGENTD-CONDITION-TYPES (- full #{CONDITION-MEMORY-UNWRITABLE}))
+  (try
+    (.turn dropped)
+    (finally
+      (setv fake.AGENTD-CONDITION-TYPES full)))
+  (setv named (list fake.FAKE-ACP-CONTRACT-VIOLATIONS))
+  (.clear fake.FAKE-ACP-CONTRACT-VIOLATIONS)
+  (assert (any (gfor line named (in f"'{CONDITION-MEMORY-UNWRITABLE}' outside ConditionType" line))) named))
