@@ -1,0 +1,7 @@
+== 新しい宣言(この branch): 段の数 4・読めない理由 ''
+   build     blocks_rest=True  run の末尾 …ut 900 --run-timeout 3600 --fallback-local -- sh -c "UV_CACHE_DIR=\$HOME/.cache/uv-lanes/land-doeff make sync"
+   root      blocks_rest=False  run の末尾 … && UV_CACHE_DIR=\$HOME/.cache/uv-lanes/land-doeff PYTHONUNBUFFERED=1 uv run --no-sync pytest -q -m 'not e2e'"
+   packages  blocks_rest=False  run の末尾 …DIR=\$HOME/.cache/uv-lanes/land-doeff PYTHONUNBUFFERED=1 make test-packages PACKAGE_UV_RUN='uv run --no-sync'"
+   rust      blocks_rest=False  run の末尾 …=\$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\$HOME/.cache/uv-lanes/land-doeff make test-rust"
+== 対照(origin/main の宣言): 段の数 1・名前 ['full']・読めない理由 ''
+dotfiles 107431f07

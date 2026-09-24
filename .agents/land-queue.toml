@@ -53,7 +53,28 @@ name = "doeff"
 # 2026-09-24 追補(同じ判断の続き): Rust crate 6 つの cargo test(make test-rust)も足す。それまで CI は cargo build だけで
 # cargo test を走らせる場所が無く、doeff-effect-analyzer の 6 本の赤と、doeff-vm / vm-core の検の binary が libpython を
 # 見つけられない形が見えていなかった。戻すには末尾の && make test-rust を外す。
-full = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff PYTHONUNBUFFERED=1 uv run --no-sync pytest -q -m 'not e2e' && UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff PYTHONUNBUFFERED=1 make test-packages PACKAGE_UV_RUN='uv run --no-sync' && UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make test-rust\""
+# 2026-09-25(card acp:kanban-issue:ki-08ec2d7c901f・計画と決定 = 会話 c-3S6FSS1P9KAKHCTCZZ6724P3ZX・依頼 lt-HQ3E81PXS63W6AEWT540VDEQQ5・
+# two-way door の決定・ADR-DOE-ENFORCE-001 R8): 上の 3 つの母集団(root の pytest・make test-packages・make test-rust)を
+# && でつないだ 1 本の命令から、build / root / packages / rust の 4 つの処理ステージの列へ分けた。
+# ⇒ なぜ段に分けるか: && の 1 本では 1 つの母集団の赤が後ろの母集団を未実行にする。実弾 = 2026-09-24 の日次(断面 f271ae39)は
+#   root の赤 3 本で止まり、make test-packages と make test-rust は 1 本も走らないまま、台帳は処理ステージ full の 1 つだけで
+#   coverage = complete と記録した。日次の道具(ai land verify)は列の宣言なら全段を最後まで走らせて段ごとに記録し、後ろを止めるのは
+#   blocks_rest = true の段(build)だけ。build が壊れた日は build が赤 1 つ・残り 3 段が「前提が成功しなかった」の未実行になる。
+# ⇒ なぜ各段で make sync をやり直すか: remote_check の同期は段ごとに走り、git の名簿に無い packages/doeff-vm/target を遠隔から
+#   消す。段は 1 つずつ手元へ倒れ得る(--fallback-local)し、同じ label の作業 dir は段の合間に別の走行へ渡り得る。前の段の build を
+#   前提にすると別の木の build でテストする形になるので、テストの段はどれも自分で make sync から始める(費用 = 成功の日に Rust の
+#   build 3 回分)。timeout_s は全段の合計の上限(日次の道具が残りを各段へ渡す)。
+# ⇒ 形の固定: docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy の deftest
+#   test-adr-doe-enforce-001-daily-populations-are-separate-stages(母集団ごとにちょうど 1 段・build だけが blocks_rest・
+#   テストの段は make sync から)と tests/test_daily_test_population.py(package の loop の網羅・失敗名の形・test file の置き場)。
+# ⇒ 戻し方: 4 段の列を、build の make sync の後ろへ root・packages・rust の命令を && でつないだ 1 本の文字列へ戻し、上の R8 の
+#   deftest を外す(設計 = docs/design/test-population-ki-08ec/design.md §3.2)。
+full = [
+  { name = "build", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync\"", blocks_rest = true },
+  { name = "root", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff PYTHONUNBUFFERED=1 uv run --no-sync pytest -q -m 'not e2e'\"" },
+  { name = "packages", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff PYTHONUNBUFFERED=1 make test-packages PACKAGE_UV_RUN='uv run --no-sync'\"" },
+  { name = "rust", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\$HOME/.cache/uv-lanes/land-doeff make test-rust\"" }
+]
 # 門の走行の持ち時間 2700→7200(2026-08-17)。実測 = L32 が 2713.4s で時間切れ
 # (4 連敗・Mac 飽和帯)。ADR-DOE-ENFORCE-001 R6 の第 3 の締切の宣言先行便。
 timeout_s = 7200
@@ -165,4 +186,7 @@ window_s = 1800
 # 日次の全体検証(ai land verify)が [gate] full で撃つ pytest の走行の数 = 1 本
 # (remote_check の中の `uv run --no-sync pytest -q -m 'not e2e'`。遠隔が使えない拍は
 #  同じ 1 本をこの機体で走らせる — どちらでも走行は 1 つ)。
+# ⚠ 2026-09-25 時点で古い値: gate.full は root の 1 本 + package ごとに 1 本(make test-packages)を撃つ(R8)。
+#   受付(broad_run_admission.py)は 2026-09-21 から POLICY_KEYS = ("per_run_max",) だけを読み、この鍵は読まない。
 full_sessions = 1
+

@@ -153,10 +153,18 @@ test-e2e:
 # - 実 API / 実 CLI を撃つ e2e は日次の門(.agents/land-queue.toml gate.full)と同じく除く(-m "not e2e")。
 # - PACKAGE_UV_RUN: 日次の門は make sync の直後に `uv run --no-sync` で呼ぶ(素の uv run の暗黙の再 sync が
 #   invariant-checks の build を上書きしないように — gate.full の頭注と同じ理由)。
+# - package の dir へ cd せず、repo の根から `pytest packages/<p>/tests` を呼ぶ。pytest の要約の FAILED 行は
+#   cwd からの相対なので、package の dir から走らせると `tests/test_cli.py::…` の形になり、同名の test file を
+#   持つ package どうしで失敗名が衝突する(日次の道具は失敗名を repo の根から pytest へそのまま渡す)。
+#   session は package ごとに独立のまま(1 session に畳むと同名の test file が衝突する)。
+# - 1 package の赤で止めず全 package を走らせ、最後に失敗の package を名指して 0 以外で終わる(test-rust と
+#   同じ形)。赤で止めると後ろの package が 1 本も走らないまま日次に見えない(ADR-DOE-ENFORCE-001 R8・
+#   tests/test_daily_test_population.py・card acp:kanban-issue:ki-08ec2d7c901f)。
 PACKAGE_UV_RUN ?= uv run
 test-packages:
 	@echo "Running tests in subpackages..."
-	@for dir in packages/*/; do \
+	@failed=""; \
+	for dir in packages/*/; do \
 		if [ -d "$$dir/tests" ]; then \
 			if [ -z "$$(find "$$dir/tests" -name 'test_*.py' -not -path '*/fixtures/*' | head -1)" ]; then \
 				echo ""; \
@@ -165,9 +173,10 @@ test-packages:
 			fi; \
 			echo ""; \
 			echo "=== Testing $$(basename $$dir) ==="; \
-			(cd "$$dir" && $(PACKAGE_UV_RUN) pytest tests/ -m "not e2e") || exit 1; \
+			$(PACKAGE_UV_RUN) pytest "$${dir}tests" -m "not e2e" || failed="$$failed $$(basename $$dir)"; \
 		fi; \
-	done
+	done; \
+	if [ -n "$$failed" ]; then echo ""; echo "test-packages failed:$$failed"; exit 1; fi
 
 # Run cargo test in every Rust crate under packages/ (first red does not hide the rest — every crate
 # runs, the target fails at the end if any crate failed). doeff-vm / doeff-vm-core embed CPython in
