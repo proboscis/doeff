@@ -1,0 +1,4 @@
+=== coupling-core 突合(dotfiles docs/coupling-core-watchlist.md の 2 fence) ===
+当たり合計 = 0
+自分の名簿(dotfiles の fence) 語数: {'coupling-core-paths': 80, 'coupling-core-fleet-paths': 1}
+艦隊の区画の中身: ['.agents/land-queue.toml']
