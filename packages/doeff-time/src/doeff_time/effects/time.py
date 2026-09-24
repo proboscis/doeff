@@ -48,6 +48,18 @@ class GetTimeEffect(EffectBase):
 
 
 @dataclass(frozen=True)
+class GetMonotonicEffect(EffectBase):
+    """Read monotonic seconds as a float.
+
+    Only the difference between two readings is meaningful (durations,
+    deadlines inside one process). Unlike ``GetTime`` it never jumps backwards
+    with wall-clock adjustments. The origin is handler-defined: wall-clock
+    handlers answer ``time.monotonic()``; ``sim_time_handler`` answers the
+    virtual clock's POSIX timestamp.
+    """
+
+
+@dataclass(frozen=True)
 class ScheduleAtEffect(EffectBase):
     """Schedule a program for execution at a specific timezone-aware datetime."""
 
@@ -80,6 +92,10 @@ def get_time() -> GetTimeEffect:
     return GetTimeEffect()
 
 
+def get_monotonic() -> GetMonotonicEffect:
+    return GetMonotonicEffect()
+
+
 def schedule_at(time: datetime, program: Any) -> ScheduleAtEffect:
     return ScheduleAtEffect(time=time, program=program)
 
@@ -100,6 +116,10 @@ def GetTime() -> EffectBase:  # noqa: N802
     return GetTimeEffect()
 
 
+def GetMonotonic() -> EffectBase:  # noqa: N802
+    return GetMonotonicEffect()
+
+
 def ScheduleAt(time: datetime, program: Any) -> EffectBase:  # noqa: N802
     return ScheduleAtEffect(time=time, program=program)
 
@@ -107,21 +127,3 @@ def ScheduleAt(time: datetime, program: Any) -> EffectBase:  # noqa: N802
 def SetTime(time: datetime) -> EffectBase:  # noqa: N802
     return SetTimeEffect(time=time)
 
-
-__all__ = [
-    "Delay",
-    "DelayEffect",
-    "GetTime",
-    "GetTimeEffect",
-    "ScheduleAt",
-    "ScheduleAtEffect",
-    "SetTime",
-    "SetTimeEffect",
-    "WaitUntil",
-    "WaitUntilEffect",
-    "delay",
-    "get_time",
-    "schedule_at",
-    "set_time",
-    "wait_until",
-]

@@ -2,6 +2,7 @@
 
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -11,7 +12,13 @@ from doeff_core_effects.scheduler import Spawn
 
 from doeff import Pass, Transfer, do
 from doeff import handler as _program_handler
-from doeff_time.effects import DelayEffect, GetTimeEffect, ScheduleAtEffect, WaitUntilEffect
+from doeff_time.effects import (
+    DelayEffect,
+    GetMonotonicEffect,
+    GetTimeEffect,
+    ScheduleAtEffect,
+    WaitUntilEffect,
+)
 
 ProtocolHandler = Callable[[Any, Any], Any]
 
@@ -28,9 +35,11 @@ class AsyncTimeRuntime:
         *,
         now: Callable[[], datetime],
         sleep: Callable[[float], Awaitable[Any]],
+        monotonic: Callable[[], float],
     ) -> None:
         self._now = now
         self._sleep = sleep
+        self._monotonic = monotonic
 
     @do
     def handle(self, effect: Any, k: Any):
@@ -48,6 +57,8 @@ class AsyncTimeRuntime:
             return (yield Transfer(k, None))
         if isinstance(effect, GetTimeEffect):
             return (yield Transfer(k, self._now()))
+        if isinstance(effect, GetMonotonicEffect):
+            return (yield Transfer(k, float(self._monotonic())))
         if isinstance(effect, ScheduleAtEffect):
             wait_seconds = max(0.0, (effect.time - self._now()).total_seconds())
             sleep = self._sleep
@@ -70,14 +81,10 @@ def async_time_handler(
     *,
     now: Callable[[], datetime] = _utc_now,
     sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> ProtocolHandler:
     """Return a protocol handler for wall-clock async time semantics."""
 
-    runtime = AsyncTimeRuntime(now=now, sleep=sleep)
+    runtime = AsyncTimeRuntime(now=now, sleep=sleep, monotonic=monotonic)
     return _program_handler(runtime.handle)
 
-
-__all__ = [
-    "ProtocolHandler",
-    "async_time_handler",
-]
