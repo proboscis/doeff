@@ -3630,8 +3630,14 @@
                "置き場の閉語彙に cluster が無い(card ki-d13566f4d5eb の供給の 1 語)")
        (assert (any (gfor line judgment-lines (in "(and (bool places) (is-not place None) (not-in place places))" line)))
                "要求の突合が『charter.place が集合に無い』の形でない(card ki-d13566f4d5eb)")
-       (assert (= (len (lfor line agentd-lines :if (in "(place-mismatch settings.places charter-place)" line) line)) 1)
+       ;; 閉じる門は claim-job の中の 1 か所。数えるのは claim-job の本体 — file 全体で数えると、verify の枠の篩
+       ;; (claim-verify-candidates・f9ac1b1f)が同じ述語を『枠を使わせずに claim-job へ回す』ために読む行まで門と数える。
+       ;; 篩の側は閉じない(閉じるのは回った先の claim-job の門)ことを下で検める。
+       (assert (= (len (lfor line (defk-body agentd-lines "claim-job") :if (in "(place-mismatch settings.places charter-place)" line) line)) 1)
                "charter の要求の突合は claim の腕で 1 度(card ki-d13566f4d5eb)")
+       (setv sieve-body (defk-body agentd-lines "claim-verify-candidates"))
+       (assert (not (any (gfor line sieve-body (in "CONDITION-PLACE-MISMATCH" line))))
+               "verify の枠の篩が置き場の不一致で自分で閉じている — 閉じるのは claim-job の門の 1 点(card ki-d13566f4d5eb)")
        ;; 門が種類の分岐より**前**に在る(verify / summarize が素通りしない)— 行の順で撃つ。
        (setv claim-at (.index agentd-lines "(defk claim-job [settings state rows row previously-deferred now-ms]"))
        (setv gate-at (next (gfor [i line] (enumerate agentd-lines)
