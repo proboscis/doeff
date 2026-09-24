@@ -12,6 +12,7 @@
 (require doeff-hy.macros [defk])
 
 (import json)
+(import math)
 
 (setv FAST-JEV-PLUGIN-ID "fast-jev-compaction@fast-jev-compaction")
 (setv FAST-JEV-MARKETPLACE-NAME "fast-jev-compaction")
@@ -34,6 +35,78 @@
 ;; 「前の応答からの経過」が残り、温かい cache を「記録が無い = 冷えた」と誤って圧縮しない。既定の
 ;; `~/.cache/fast-jev-compaction` は持ち越されない(実測 2026-09-22 08:1x: 07:4x の入れ替えで journal ごと消えた)。
 (setv FAST-JEV-STATE-DIR-SUFFIX ".local/state/fast-jev-compaction")
+
+
+;; plugin の TTL の既定(分)— options に cacheTtlMinutes が無い家で plugin が使う値(hooks/fast-jev.ts の
+;; HOOK_DEFAULTS.cacheTtlMinutes)。借りた家は options に FAST-JEV-CACHE-TTL-MINUTES を必ず書く。
+(setv FAST-JEV-PLUGIN-DEFAULT-TTL-MINUTES 5)
+;; 「確かに温かい」と読む時の余白(ms): 読んでから手番の最初の model 呼び出しまでの数秒で TTL を跨がないよう、
+;; TTL の終わりの 60 秒は温かいと読まない(その拍は今日どおり圧縮の process を起こし、plugin 自身に決めさせる)。
+(setv FAST-JEV-WARM-MARGIN-MS 60000)
+
+
+(defk fast-jev-plugin-options [settings-text]
+  {:pre [(: settings-text (| str None))]
+   :post [(: % dict)]}
+  "profile の settings.json の本文から plugin の options(pluginConfigs[plugin].options)を読む(純関数)。
+   読めない・無い時は {}。"
+  (setv parsed None)
+  (when (isinstance settings-text str)
+    (try
+      (setv parsed (json.loads settings-text))
+      (except [Exception]
+        (setv parsed None))))
+  (setv configs (when (isinstance parsed dict) (.get parsed "pluginConfigs")))
+  (setv entry (when (isinstance configs dict) (.get configs FAST-JEV-PLUGIN-ID)))
+  (setv options (when (isinstance entry dict) (.get entry "options")))
+  (if (isinstance options dict) options {}))
+
+
+(defk fast-jev-session-state-path [settings-text session-id]
+  {:pre [(: settings-text (| str None)) (: session-id str)]
+   :post [(: % (| str None))]}
+  "会話(claude の session id)ごとの plugin の状態 file の path(純関数・plugin hooks/cold.ts の statePath と同じ綴り:
+   id の [A-Za-z0-9._-] 以外を _ に置き、<stateDir>/<id>.json)。options に stateDir を宣言していない家は None
+   (plugin の既定の置き場は plugin の process の HOME 次第なので、ここでは導かない — 読めない = 温かいと言わない)。"
+  (import re)
+  (setv state-dir (.get (! (fast-jev-plugin-options settings-text)) "stateDir"))
+  (if (or (not (isinstance state-dir str)) (= (.strip state-dir) "") (= (.strip session-id) ""))
+      None
+      (+ (.rstrip state-dir "/") "/" (re.sub r"[^A-Za-z0-9._-]" "_" session-id) ".json")))
+
+
+(defk fast-jev-cache-surely-warm [settings-text state-text config-dir model now-ms]
+  {:pre [(: settings-text (| str None)) (: state-text (| str None)) (: config-dir str) (: model (| str None))
+         (: now-ms int)]
+   :post [(: % bool)]}
+  "続きの手番の前の `/compact fast-jev-if-cold` が**何もしない**と確かに言えるか(純関数)。
+   plugin の温冷の判断(hooks/cold.ts の coldReason — 状態 file の前回の {at, configDir, model} と今の値)と
+   同じ規則: 状態が在り、configDir(= CLAUDE_CONFIG_DIR)と model が前回と同じで、前回からの経過が TTL 以内なら
+   温かい(plugin は 'cache warm; untouched' で何も書かずに終わる)。ここは**温かいと確かに言える時だけ** True を返す:
+   状態が読めない・壊れている・model が分からない・TTL の終わりの余白(FAST-JEV-WARM-MARGIN-MS)に入っている時は
+   False(= 今日どおり圧縮の process を起こし、判断は plugin 自身がする)。冷えた再開(別の機体・別の口座・別の
+   model・TTL 切れ)は必ず False なので、「別の機体で続ける時は手番の前に必ず圧縮」を壊さない。"
+  (setv parsed None)
+  (when (isinstance state-text str)
+    (try
+      (setv parsed (json.loads state-text))
+      (except [Exception]
+        (setv parsed None))))
+  (setv ttl-minutes (.get (! (fast-jev-plugin-options settings-text)) "cacheTtlMinutes"
+                          FAST-JEV-PLUGIN-DEFAULT-TTL-MINUTES))
+  (when (or (isinstance ttl-minutes bool) (not (isinstance ttl-minutes #(int float))))
+    (setv ttl-minutes FAST-JEV-PLUGIN-DEFAULT-TTL-MINUTES))
+  (if (not (isinstance parsed dict))
+      False
+      (do
+        (setv at (.get parsed "at"))
+        (bool (and (isinstance at #(int float))
+                   (not (isinstance at bool))
+                   (math.isfinite at)
+                   (isinstance model str) (!= model "")
+                   (= (.get parsed "configDir") config-dir)
+                   (= (.get parsed "model") model)
+                   (<= (- now-ms at) (- (* ttl-minutes 60000) FAST-JEV-WARM-MARGIN-MS)))))))
 
 
 (defk fast-jev-state-dir [home]
