@@ -585,6 +585,23 @@
 (setv ENV-ORIGIN-DECLARED "declared")
 (setv ENV-ORIGINS #(ENV-ORIGIN-PER-TURN ENV-ORIGIN-DECLARED))
 
+;; 起こす口(session.launch / session.resume)で手番のトークンを運ぶ型つきの欄(card acp:kanban-issue:ki-edeab28c7bee・
+;; 第 2 回の盲検 A)。起こす口の session_env は宣言の env(ACP の charter・機体の宣言・会話の身元)を畳んだもので、入口では
+;; 出自を判別できない — トークンを同じ dict に畳むと、宣言に紛れたトークンが手番の例外を借りて通る。⇒ トークンはこの欄
+;; だけが運び、起こす口の session_env は出自 declared(例外なし)で検める。欄は行に残さない(LAUNCH-FLAG-KEYS に入れない)。
+(setv TURN-ENV-PARAM "turn_env")
+
+(defk turn-env-admission-error [turn-env verb]
+  {:pre [(: turn-env dict) (: verb str)]
+   :post [(: % (| str None))]}
+  "起こす口の手番の欄(TURN-ENV-PARAM)の検査(None = 適合): 名は手番のトークン(TURN-AUTH-ENV-KEYS)ちょうど。
+   宛先や他の資格をこの欄で運ばせない(欄の型そのもの — 例外の経路を広げない)。"
+  (setv stray (sorted (lfor key turn-env :if (not-in (policy-normalized-env-key key) TURN-AUTH-ENV-KEYS) key)))
+  (if stray
+      (+ f"{verb}: {TURN-ENV-PARAM} carries the turn's credential only (offending: {(.join ", " stray)}) — "
+         "destinations ride session_env (ADR-DOE-AGENTS-012 R30)")
+      None))
+
 (defk overlay-without-turn-auth [env]
   {:pre [(: env (| dict None))]
    :post [(: % dict)]}
@@ -648,7 +665,9 @@
 ;; S で終わる語を足しても当たらない)。`TOKENS` はわざと外す: env の名で `*_TOKENS` は数の上限
 ;; (Claude Code の MAX_THINKING_TOKENS / CLAUDE_CODE_MAX_OUTPUT_TOKENS)で資格ではない。
 ;; 形に当たるが資格ではない名は**ここで除外しない** — 除外の名簿は「死んだ語彙が黙って古びる」形そのもの。
-;; そういう名は宣言の側で改名するか、kind の型つきの欄(charter の effort / model・impls の settings の env)で運ぶ。
+;; そういう名は宣言の側で改名するか、kind の型つきの欄(charter の effort / model)で運ぶか、doeff の code が名を
+;; 綴る種類ごとの settings の env(headless の CLAUDE-HEADLESS-SETTINGS-ENV の形)に足す。外から来た名の dict は
+;; settings の env へ合流しても受け入れの検査を通る(impls の合流点 — 出口を作らない)。
 ;; SECRET / PASSWORD / CREDENTIAL は名のどこでも部分一致(複合語 `CLIENTSECRET` や複数形 `CREDENTIALS` も拾う・
 ;; `SECRETARY_…` も当たるのは過剰包摂側で許す)。
 (setv CREDENTIAL-SHAPED-ENV-SEGMENT-SUFFIXES #("KEY" "KEYS" "TOKEN"))

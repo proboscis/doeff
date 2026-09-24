@@ -1932,19 +1932,39 @@ def _init_digests(events_path: Path) -> list[str]:
     return [str(record.get("auth_digest", "")) for record in _init_records(events_path)]
 
 
+
+def test_host_launch_refuses_a_token_folded_into_the_declared_env(headless_host: Host) -> None:
+    """card acp:kanban-issue:ki-edeab28c7bee(第 2 回の盲検 A の手順 A): 起こす口の session_env は宣言の env(ACP の charter・
+    機体の宣言・会話の身元)を畳んだもの — そこに紛れた手番のトークンは例外を借りられず断られる(貸与の無い機体でも、
+    宣言に書かれたトークンは席へ届かない)。トークンは型つきの欄 turn_env ちょうどが運び、その欄は手番のトークンの名しか運ばない。"""
+    params = _launch_params(headless_host.root, "h-12", "claude")
+    params["session_env"] = {"AGORA_JOB_LABEL": "x", "CLAUDE_CODE_OAUTH_TOKEN": "declared-in-acp-db"}
+    refused = headless_host.call("session.launch", params)
+    assert refused["ok"] is False
+    assert "credential-shaped env is refused" in refused["error"]
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in refused["error"]
+    stray = _launch_params(headless_host.root, "h-13", "claude")
+    stray["turn_env"] = {"CLAUDE_CODE_OAUTH_TOKEN": "tok", "ACP_BASE": "http://acp"}
+    refused = headless_host.call("session.launch", stray)
+    assert refused["ok"] is False
+    assert "turn_env carries the turn's credential only" in refused["error"]
+    assert "ACP_BASE" in refused["error"]
+
 def test_host_headless_resume_starts_with_the_token_the_turn_carries(headless_host: Host) -> None:
     """段 10 lane 10d 便 2 の追補 2(実弾 #92 — 預かり所が口座を更新した拍に、温かい session の
     再開の手番が誕生時の access token を使い回して 401 revoked)。降りた process の起こし直しは
     **その手番の送りが運ぶ env** で起き、行には札を残さない(検は指紋だけを読む)。"""
     headless_host.stub_env["DOEFF_HEADLESS_STUB_TURNS_BEFORE_EXIT"] = "1"
     params = _launch_params(headless_host.root, "h-9", "claude")
-    params["session_env"] = {"CLAUDE_CODE_OAUTH_TOKEN": "tok-birth"}
+    # card acp:kanban-issue:ki-edeab28c7bee: 起こす口の札は型つきの欄 turn_env が運ぶ(session_env は宣言の env)
+    params["turn_env"] = {"CLAUDE_CODE_OAUTH_TOKEN": "tok-birth"}
     launched = headless_host.ok("session.launch", params)
     assert isinstance(launched, dict)
     events_path = Path(_text(_obj(launched, "backend_ref"), "events_path"))
     # 行に残る launch の意図(再開の材料)から手番ごとの札は落ちている — 非 auth の宣言は残る
     overlay = _obj(_obj(launched, "launch_overlay"), "session_env")
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in overlay
+    assert "turn_env" not in _obj(launched, "launch_overlay")
     assert overlay["DOEFF_HEADLESS_STUB_TURNS_BEFORE_EXIT"] == "1"
     # 誕生の process はその手番の札(= launch の charter の札)で起きた
     _wait_until(lambda: _init_digests(events_path) == [_digest("tok-birth")])

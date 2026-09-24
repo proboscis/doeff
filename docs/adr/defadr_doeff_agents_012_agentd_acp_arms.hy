@@ -389,7 +389,8 @@
 ;; ⚠ 呼び手を「囲む頂点の form の名」では釘づけない: host.hy の 2 つの口は同じ dispatch-method の
 ;; 中に在るので、form の名で数えると 2 つが 1 つに畳まれ、3 つ目が同じ form に生えても気づけない。
 (setv SESSION-ENV-ADMISSION-MOUTHS
-      {#("\"session.launch\"" "ENV-ORIGIN-PER-TURN") "起こす口(launch.hy admit-launch)"
+      {#("\"session.launch\"" "ENV-ORIGIN-DECLARED")
+       "起こす口(launch.hy admit-launch)— session_env は宣言の env を畳んだもの。手番のトークンは型つきの欄 turn_env が運び、policy.turn-env-admission-error が名を手番のトークンちょうどに限る"
        #("\"session.send\"" "ENV-ORIGIN-PER-TURN") "温かい送りの口(host.hy dispatch-method)"
        #("method" "ENV-ORIGIN-PER-TURN") "cache ping の口(host.hy dispatch-method — 動詞は呼びの引数 method をそのまま運ぶ)"
        #("\"join.seat_env\"" "ENV-ORIGIN-DECLARED") "機体の参加の宣言 [agentd].seat_env の口(join.hy seat-env-of・R51)"
@@ -1955,7 +1956,9 @@
        (.put-row world.acp (bound-row "s-cl" "mac-1" "acct" "claude" PHASE-BOUND))
        (.tick world 0)
        (setv launch (get world.sessions.launches 0))
-       (assert (= (get (object-at launch "session_env") "CLAUDE_CODE_OAUTH_TOKEN") "sk-ant-oat01-secret"))
+       ;; card acp:kanban-issue:ki-edeab28c7bee: 札は起こす口の型つきの欄 turn_env ちょうどで運ぶ(session_env は宣言の env)。
+       (assert (= (object-at launch "turn_env") {"CLAUDE_CODE_OAUTH_TOKEN" "sk-ant-oat01-secret"}))
+       (assert (not-in "CLAUDE_CODE_OAUTH_TOKEN" (.get launch "session_env" {})))
        (assert (= world.local.files {}))
        (for [line world.local.logs]
          (assert (not-in "sk-ant-oat01-secret" line)))
@@ -3743,7 +3746,7 @@
                  (+ f"手番ごとの env / 添付が送りの腕へ渡っていない(R30・添付は R31): 役 {role} が "
                     f"{(get send-calls 0) !r} に無い")))
        (setv launch-lines (code-lines (/ SESSIONHOST-DIR "launch.hy")))
-       (assert (= (len (lfor line launch-lines :if (in "(session-env-admission-error session-env \"session.launch\" ENV-ORIGIN-PER-TURN)" line) line)) 1)
+       (assert (= (len (lfor line launch-lines :if (in "(session-env-admission-error session-env \"session.launch\" ENV-ORIGIN-DECLARED)" line) line)) 1)
                "launch の関所も同じ 1 点(R30)")
        ;; 段 12(R51): 運ぶ口が 3 つ目(機体の参加の宣言 [agentd].seat_env)に増えても、判定は同じ 1 点。
        ;; 呼ぶ場所は **launch / session.send / join.seat-env-of の 3 か所ちょうど** —— 4 つ目の口が生えたら

@@ -59,6 +59,7 @@
                                          resume-session
                                          ResumeRejected])
 (import doeff_agents.sessionhost.policy [
+  TURN-ENV-PARAM
   ACTIVE-STATUSES
   binding-kind-advertisement
   carry-charter-fields
@@ -989,6 +990,7 @@
    "lifecycle" (or (.get params "lifecycle") "run_to_completion")
    "binding" (.get params "binding")
    "session_env" (or (.get params "session_env") {})
+   TURN-ENV-PARAM (or (.get params TURN-ENV-PARAM) {})
    "expected_result" (.get params "expected_result")
    ;; ⚠ 自動記憶の置き場(memory_dir)と手番の頭に置き場へ書き出す冊(memory_files)は
    ;; **ここに書かない** — policy.TURN-CARRIED-KEYS の 1 点から carry-charter-fields が写す
@@ -1043,6 +1045,7 @@
      "effort" (.get p "effort")
      "mcp_servers" (or (.get p "mcp_servers") {})
      "session_env" (or (.get p "session_env") {})
+     TURN-ENV-PARAM (or (.get p TURN-ENV-PARAM) {})
      "binding" (.get p "binding")
      ;; ⚠ 置き場(memory_dir)と手番の冊(memory_files)は**ここに書かない** —
      ;; policy.TURN-CARRIED-KEYS の 1 点から carry-charter-fields が写す。

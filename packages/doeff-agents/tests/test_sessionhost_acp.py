@@ -309,9 +309,11 @@ def _assert_joined_and_claimed(world: World) -> None:
 def _assert_launched_with_borrowed_token(world: World) -> None:
     assert world.custody.borrowed == [("claude", "acct", "agent-job s-1")]
     launch = world.sessions.launches[0]
-    env = launch["session_env"]
-    assert isinstance(env, dict)
-    assert env[CLAUDE_OAUTH_TOKEN_ENV] == TOKEN
+    # card acp:kanban-issue:ki-edeab28c7bee: 札は起こす口の型つきの欄 turn_env ちょうどで運ぶ(session_env は宣言の env)
+    env = launch["turn_env"]
+    assert env == {CLAUDE_OAUTH_TOKEN_ENV: TOKEN}
+    declared = launch.get("session_env", {})
+    assert isinstance(declared, dict) and CLAUDE_OAUTH_TOKEN_ENV not in declared
     assert launch["binding"] == {"kind": "claude-code", "config_dir": f"{HOMES}/claude/acct"}
     assert launch["prompt"] == PREAMBLE
     assert launch["session_id"] == "sid-1"
@@ -607,9 +609,11 @@ def test_custody_declared_node_borrows_the_account_and_launches_in_the_borrowed_
     world.tick()
     assert world.custody.borrowed == [("claude", "acct", "agent-job s-5")]
     launch = world.sessions.launches[0]
-    env = launch["session_env"]
-    assert isinstance(env, dict)
-    assert env[CLAUDE_OAUTH_TOKEN_ENV] == TOKEN
+    # card acp:kanban-issue:ki-edeab28c7bee: 札は起こす口の型つきの欄 turn_env ちょうどで運ぶ(session_env は宣言の env)
+    env = launch["turn_env"]
+    assert env == {CLAUDE_OAUTH_TOKEN_ENV: TOKEN}
+    declared = launch.get("session_env", {})
+    assert isinstance(declared, dict) and CLAUDE_OAUTH_TOKEN_ENV not in declared
     assert launch["binding"] == {"kind": "claude-code", "config_dir": f"{HOMES}/claude/acct"}
     job = world.job("s-5")
     assert job.status is not None
@@ -1196,7 +1200,9 @@ def test_charter_with_grant_claude_rides_env_not_disk() -> None:
         judgment.charter_with_grant(charter, "claude", "me@x", TOKEN, None, HOMES)
     )
     assert auth_file is None
-    assert rebuilt["session_env"] == {"X": "1", CLAUDE_OAUTH_TOKEN_ENV: TOKEN}
+    # card acp:kanban-issue:ki-edeab28c7bee: 札は session_env に畳まず、手番の欄 turn_env ちょうどで運ぶ
+    assert rebuilt["session_env"] == {"X": "1"}
+    assert rebuilt["turn_env"] == {CLAUDE_OAUTH_TOKEN_ENV: TOKEN}
     assert rebuilt["binding"] == {"kind": "claude-code", "config_dir": f"{HOMES}/claude/me_x"}
     assert charter == {"session_id": "s", "agent_type": "claude", "session_env": {"X": "1"}}
 
