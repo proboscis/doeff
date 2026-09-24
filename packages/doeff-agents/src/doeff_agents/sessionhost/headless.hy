@@ -73,6 +73,7 @@
   headless-run-once
   headless-spawn
   hydrate-memory-home
+  log-line
   session-store-get
   session-store-list-active
   session-store-list-cleanup-pending
@@ -82,7 +83,8 @@
 ;; 段 11 lane 11n 便 C(agora-redesign #179): provider の限度の族の表は impls/markers.hy の
 ;; 1 点(ADR-DOE-AGENTS-008 R1 の観測形式の家・pane の路と同じ表)。ここは表を写さず、
 ;; 手番の終わりの文へ当てるだけ。
-(import doeff_agents.sessionhost.impls.fast_jev [fast-jev-compaction-enabled])
+(import doeff_agents.sessionhost.impls.fast_jev [fast-jev-compaction-enabled fast-jev-session-state-path
+                                                 fast-jev-cache-surely-warm])
 (import doeff_agents.sessionhost.impls.markers [is-api-limit-refusal api-limit-reading-of api-limit-resets-at])
 (import doeff_agents.sessionhost.headless_protocol [
   BackendLiveness
@@ -388,10 +390,31 @@
         (if (not (! (fast-jev-compaction-enabled settings)))
             None
             (do
-              (<- res (headless-run-once session-name work-dir effective-env argv))
-              (when (and (!= res.exit-code 0) (is-not row None))
-                (<- _ (session-store-record-event row.session-id "cold_compaction_failed" row)))
-              res)))))
+              ;; 確かに温かい続き(card acp:kanban-issue:ki-e786e72e2ae7・2026-09-24): plugin の状態 file が
+              ;; 「同じ口座・同じ model・TTL 以内」を名乗るなら、圧縮の process は 'cache warm; untouched' で何もせずに
+              ;; 降りる — それでも claude を 1 回起こす費用(pool の pod で 2〜2.5 秒・手番の送りの前に直列)を払っていた。
+              ;; 読みは plugin と同じ規則の写し(fast-jev-cache-surely-warm)で、温かいと**確かに**言える時だけ起こさない。
+              ;; 読めない・冷えた・余白に入った拍は今日どおり起こし、判断は plugin 自身がする(冷えた再開の前の圧縮は保つ)。
+              (setv conv-id (when (and (>= (len argv) 2) (= (get argv -2) "--resume")) (get argv -1)))
+              (setv model (when (and (in "--model" argv) (< (+ (.index argv "--model") 1) (len argv)))
+                            (get argv (+ (.index argv "--model") 1))))
+              (setv state-path (when (isinstance conv-id str) (! (fast-jev-session-state-path settings conv-id))))
+              (setv state-text None)
+              (when (isinstance state-path str)
+                (<- read (fs-read-text state-path))
+                (setv state-text read))
+              (<- now (clock-now))
+              (setv warm (! (fast-jev-cache-surely-warm settings state-text config-dir model
+                                                        (int (* (.timestamp now) 1000)))))
+              (if warm
+                  (do
+                    (<- _ (log-line f"session.cold-compaction: skipped session={session-name} conversation={conv-id} — plugin state says the cache is warm"))
+                    None)
+                  (do
+                    (<- res (headless-run-once session-name work-dir effective-env argv))
+                    (when (and (!= res.exit-code 0) (is-not row None))
+                      (<- _ (session-store-record-event row.session-id "cold_compaction_failed" row)))
+                    res)))))))
 
 
 (defk headless-cold-compaction [row effective-env built]
