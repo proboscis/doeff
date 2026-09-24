@@ -4463,7 +4463,7 @@ def test_mail_heading_names_the_message_id_kind_class_sender_parent_and_jst_time
     }
     # 設計 direct-chat-2026-09-24 §3: 依頼(kind ask)は [依頼 <id>・…] の見出しと完了の返し方を持つ
     assert run(judgment.mail_heading_of("lt-K9864EF53HXFBYAV4SN5WWEV7W", spec)) == (
-        "[依頼 lt-K9864EF53HXFBYAV4SN5WWEV7W・class=operate・依頼者=c-01M2GAP7BAT2ARSAPFJBBTQ0DQ"
+        "[依頼 lt-K9864EF53HXFBYAV4SN5WWEV7W・class=operate・from=c-01M2GAP7BAT2ARSAPFJBBTQ0DQ"
         "・parent=lt-01M2GAP7BAT2ARSAPFJBBTQ0DP・at=2026-09-15 13:21:22 JST"
         "・完了は ai reply lt-K9864EF53HXFBYAV4SN5WWEV7W --kind report]"
     )
@@ -4483,7 +4483,7 @@ def test_the_mail_heading_names_the_served_class_when_the_delivery_table_rewrote
     spec: JSONObject = {"id": "lt-1", "kind": "ask", "class": "dev", "from": "operator", "at": 1789446082000}
     rewritten = {"state": "routed", "routing": {"servedClass": "kanban", "decidedBy": "machine"}}
     assert run(judgment.mail_heading_of("lt-1", spec, rewritten)) == (
-        "[依頼 lt-1・class=kanban(名乗り dev)・依頼者=operator・parent=無し・at=2026-09-15 13:21:22 JST"
+        "[依頼 lt-1・class=kanban(名乗り dev)・from=operator・parent=無し・at=2026-09-15 13:21:22 JST"
         "・完了は ai reply lt-1 --kind report]"
     )
     # 読み替えが起きていない拍は今日と 1 文字も変わらない(欄が無い・同じ語・status ごと無い・形が違う)
@@ -4498,16 +4498,16 @@ def test_the_mail_heading_names_the_served_class_when_the_delivery_table_rewrote
         {"routing": {"servedClass": 3}},
     ]:
         assert run(judgment.mail_heading_of("lt-1", spec, status)) == (
-            "[依頼 lt-1・class=dev・依頼者=operator・parent=無し・at=2026-09-15 13:21:22 JST・完了は ai reply lt-1 --kind report]"
+            "[依頼 lt-1・class=dev・from=operator・parent=無し・at=2026-09-15 13:21:22 JST・完了は ai reply lt-1 --kind report]"
         ), status
     # 名乗りの無い郵便(class を綴らずに送った拍)も、扱う class が在れば行き先を名乗る
     assert run(judgment.mail_heading_of("lt-2", {"kind": "ask", "from": "operator"}, rewritten)) == (
-        "[依頼 lt-2・class=kanban(名乗り 無し)・依頼者=operator・parent=無し・at=無し・完了は ai reply lt-2 --kind report]"
+        "[依頼 lt-2・class=kanban(名乗り 無し)・from=operator・parent=無し・at=無し・完了は ai reply lt-2 --kind report]"
     )
     # 手番へ渡る文も同じ 1 点を通る(区切り + 見出し 1 行 + 本文)
     assert run(judgment.mail_turn_text_of("lt-1", spec, "本文", rewritten)) == (
         reply_channel.SECTION_HEADINGS["request"] + "\n\n"
-        "[依頼 lt-1・class=kanban(名乗り dev)・依頼者=operator・parent=無し・at=2026-09-15 13:21:22 JST"
+        "[依頼 lt-1・class=kanban(名乗り dev)・from=operator・parent=無し・at=2026-09-15 13:21:22 JST"
         "・完了は ai reply lt-1 --kind report]\n本文"
     )
 
@@ -4525,7 +4525,7 @@ def test_the_first_turn_fold_and_the_warm_send_carry_the_same_mail_heading() -> 
 
     def heading(message_id: str) -> str:
         return (reply_channel.SECTION_HEADINGS["request"] + "\n\n"
-                f"[依頼 {message_id}・class=operate・依頼者=operator・parent=無し・at=2026-09-15 13:21:22 JST"
+                f"[依頼 {message_id}・class=operate・from=operator・parent=無し・at=2026-09-15 13:21:22 JST"
                 f"・完了は ai reply {message_id} --kind report]")
 
     world = HeadlessWorld()
