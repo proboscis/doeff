@@ -511,17 +511,26 @@
   (WorkDirs :dirs (tuple dirs)))
 
 
-(defk held-work-dirs-of [entries]
-  {:pre [(: entries tuple)]
+(defk held-work-dirs-of [entries self-source]
+  {:pre [(: entries tuple) (: self-source (| str None))]
    :post [(: % WorkDirs)]}
   "家の一覧 → 持つ作業場(段 12 lane 12j・agora-redesign #575 便 2)。entries = composition root(runtime.join_plan)が読んだ
    #(親 名 .git の有無) の列(親 = \"\" が ~ の直下・\"repos\" が ~/repos の直下 — effects.WORK-DIRS-SCAN-PARENTS)。.git を持つ
-   dir だけを `~/<名>` / `~/repos/<名>` で名乗り、隠し dir(.worktrees 等)は数えない。判断はここ 1 点で I/O は無い。"
+   dir だけを `~/<名>` / `~/repos/<名>` で名乗り、隠し dir(.worktrees 等)は数えない。
+   self-source = **この process が走らせている code の置き場**(runtime.self_source_relative が読む — 家からの相対の綴り・
+   家の外 = None・card acp:kanban-issue:ki-1c6a62a0198c): それと同じ作業場と、その祖先の作業場(境界は `/` — `~/repos/doe` は
+   `~/repos/doeff/…` の祖先ではない)は名乗らない。自分の実体を作業場として貸すと、そこへ置かれた手番の checkout / 編集が
+   走っている agentd と同じ pod の code をその場で変え、行の版(spec.agentd.revision = 据え付けの刻印)は動かないまま残る
+   (pool の pod = editable の venv・実測 2026-09-24)。写しで据えた機体(Mac の uv tool)の置き場は隠し dir `~/.local` の下で、
+   名簿のどの作業場の下にも無いので 1 つも外れない(今日と同じ名簿)。判断はここ 1 点で I/O は無い。"
   (setv found [])
   (for [[parent name has-git] entries]
     (when (or (not has-git) (.startswith name "."))
       (continue))
     (setv held (if parent (+ "~/" parent "/" name) (+ "~/" name)))
+    (when (and (is-not self-source None)
+               (or (= self-source held) (.startswith self-source (+ held "/"))))
+      (continue))
     (when (not-in held found)
       (.append found held)))
   (WorkDirs :dirs (tuple (sorted found))))
