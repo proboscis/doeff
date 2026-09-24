@@ -19,6 +19,8 @@
           "packages/doeff-vm-core/Cargo.toml"
           "scripts/check_enforcement_ledger.py"
           "scripts/git-hooks/pre-commit"
+          ".agents/land-queue.toml"
+          "tests/test_daily_test_population.py"
           "docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy"]
   :problem
     [(fact
@@ -51,6 +53,7 @@
      (rule R5 "anti-drop ratchet: enforcement 台帳(defadr 数・law 数・defsemgrep 数・deftest enforcement 数)が黙って減ったら fail するメタテストを既定収集に置く(orch SpecInventorySpec の pytest 版)。台帳の意図的な削減は台帳ファイルの明示的更新を伴う。")
      [removed]
      [removed]
+     (rule R8 "日次の全体検証の母集団は root の pytest(testpaths)・package ごとの pytest(make test-packages)・Rust crate ごとの cargo test(make test-rust)の 3 つで、.agents/land-queue.toml の gate.full の別々の処理ステージに置く(2026-09-25 追加 — card acp:kanban-issue:[id])。後ろを止めてよいのは先頭の build の段(make sync)だけで、テストの段はどれも自分で make sync からやり直す(遠隔の同期は段ごとに target/ を消し、段は 1 つずつ手元へ倒れ得る)。1 つの母集団の赤は他の母集団を未実行にしない。package の母集団は packages/<p>/tests に fixtures 以外の test_*.py を持つ全 package を訪ね、1 package の赤で止まらず、最後に失敗の package を名指して 0 以外で終わる。失敗名は repo の根からの相対で出す(日次の道具は失敗名を要約の行から逐語で取り、repo の根から pytest へそのまま渡す)。repo の test 名の file(test_*.py / *_test.py・fixtures の下を除く)は母集団の根の下か、tests/test_daily_test_population.py の理由つきの除外の表に在る。package は自分の pytest の設定を持たない(持つと root の ini と conftest が package の母集団に効かなくなる)。宣言の形はこの ADR の deftest、挙動の本体は tests/test_daily_test_population.py が固定し、どちらも root の段 = 日次で毎回走る。")]
   :laws
     [(law default-pytest-sees-all-enforcement
        :statement "for_all declared_enforcement e: collected_by(default_pytest, e) AND (missing_dependency(e) => hard_fail, not skip)"
@@ -85,7 +88,20 @@
           (counterexample
              "勘定の第 2 定義点(hook が独自の regex を持つ)— test と hook の regex が乖離した日から hook 緑 = verify 緑が成立しなくなり、hook は偽の安心を配る装置になる")
           (counterexample
-             "作り直し(rebase / replay)中も判定する hook — 着地の窓の基底追随が、当便と無関係な中間断面の不一致で塞がれ、land queue が jam する")])]
+             "作り直し(rebase / replay)中も判定する hook — 着地の窓の基底追随が、当便と無関係な中間断面の不一致で塞がれ、land queue が jam する")])
+     (law daily-populations-are-independent-and-complete
+       :statement "for_all population p in {root_pytest, package_pytest, rust_cargo_test}: count(stages s in gate.full where invokes(s, p)) == 1 AND blocks_rest(s) => s == build AND (red(p) => executed(q) for_all q != p); visited(make_test_packages) == { pkg : exists test_*.py in packages/pkg/tests outside fixtures } regardless of red(pkg); failure_names(package_pytest) are repo_root_relative; for_all test-named file f: under(f, population_roots) OR f in excluded_with_reason"
+       :counterexamples
+         [(counterexample
+             "2026-09-24 の日次(断面 f271ae39): gate.full が root の pytest・make test-packages・make test-rust を && でつないだ 1 本の命令で、root の赤 3 本(test_effectful 2・test_semgrep_gate 1)で止まり、package と Rust の母集団は 1 本も走らなかった。台帳の処理ステージは full の 1 つだけで coverage = {complete: true, unexecuted: []} と記録した — 走っていない母集団が在るのに『全部測った』と名乗った")
+          (counterexample
+             "card acp:kanban-issue:[id] の記憶の行: 読み手を見落とした変更が、日次の呼び手の無い木(packages/doeff-agents/tests)の緑のまま着地した — その木の赤は誰の日次にも載らない")
+          (counterexample
+             "make test-packages の loop の `|| exit 1`: 名前順の先頭の package が赤の日は、後ろの 26 package が 1 本も走らない(偽の runner で最初の package だけを赤にした実測 — 呼ばれた回数 1)")
+          (counterexample
+             "package の dir から pytest を走らせた失敗名: 要約の行は cwd からの相対なので `FAILED tests/test_cli.py::…` になり、同名の test file を持つ 4 組(test_cli・test_effect_handlers・test_effects・test_types)が package をまたいで衝突し、日次の道具が repo の根から撃ち直せない")
+          (counterexample
+             "期待する package の集合を Makefile の実走から取る固定のテスト: Makefile が root の testpaths に在る package を飛ばすと、訪ねた集合と期待が一緒に縮んで緑のまま残る(盲検 B)")])]
   :enforcement
     [(deftest test-adr-doe-enforce-001-docs-adr-in-default-testpaths
        ;; RED(2026-07-14): pyproject testpaths は docs/adr を含まない。R2 実装で green。
@@ -175,5 +191,79 @@
        ;; 既定 pytest の R5 検査が同じ家を消費していること。
        (setv r5-test (.read-text (/ root "tests/test_enforcement_ledger.py") :encoding "utf-8"))
        (assert (in "check_enforcement_ledger" r5-test)
-               "R5 検査が勘定の家を消費していない — 第 2 定義点への退行"))]
+               "R5 検査が勘定の家を消費していない — 第 2 定義点への退行"))
+     (deftest test-adr-doe-enforce-001-daily-populations-are-separate-stages
+       ;; R8 + law daily-populations-are-independent-and-complete: 宣言の形の pin。
+       ;; 挙動の本体は tests/test_daily_test_population.py(package の loop の網羅・
+       ;; 失敗名が repo の根からの相対・test file の置き場・package の pytest の設定)。
+       ;; 段の run の中の命令は、遠隔の前置き(remote_check … -- sh -c "…")の内側を
+       ;; && / || / ; で区切って 1 命令ずつ判じる — run の文字列全体の部分一致で判じると、
+       ;; 2 つの母集団を 1 段に畳んだ宣言を正しい文言で赤にできない(設計段の試作の欠陥)。
+       (import re shlex tomllib)
+       (import pathlib [Path])
+       (setv root (get (. (Path __file__) parents) 2))
+       (setv land-cfg (tomllib.loads (.read-text (/ root ".agents/land-queue.toml")
+                                                 :encoding "utf-8")))
+       (setv full (get land-cfg "gate" "full"))
+       (assert (isinstance full list)
+               f"gate.full が処理ステージの列でない({(. (type full) __name__)})— 1 本の命令では 1 つの母集団の赤が後ろの母集団を未実行にする(2026-09-24 断面 f271ae39)— ADR-DOE-ENFORCE-001 R8")
+       (defn stage-commands [run]
+         (setv words (shlex.split run)
+               script run)
+         (for [i (range (- (len words) 2))]
+           (when (and (= (get words i) "sh") (= (get words (+ i 1)) "-c"))
+             (setv script (get words (+ i 2)))
+             (break)))
+         (lfor part (re.split r"&&|\|\||;" script)
+               :if (.strip part)
+               (.strip part)))
+       (defn command-kind [command]
+         (setv words (list (shlex.split command)))
+         (while (and words (re.fullmatch r"[A-Za-z_][A-Za-z0-9_]*=.*" (get words 0)))
+           (.pop words 0))
+         (cond (not words) None
+               (= (cut words 0 2) ["make" "sync"]) "sync"
+               (and (= (get words 0) "make") (in "test-packages" words)) "packages"
+               (and (= (get words 0) "make") (in "test-rust" words)) "rust"
+               (and (!= (get words 0) "make") (in "pytest" words)) "root"
+               True None))
+       (setv populations ["root" "packages" "rust"])
+       (setv names (lfor stage full (get stage "name")))
+       (assert (= (len (set names)) (len names))
+               f"gate.full の処理ステージの名前が重複している: {names} — R8")
+       (setv kinds-by-stage
+             (dfor stage full
+                   (get stage "name")
+                   (lfor command (stage-commands (get stage "run")) (command-kind command))))
+       ;; 先頭は後ろを止める build の段で、母集団を呼ばない。
+       (setv build (get full 0)
+             build-name (get build "name"))
+       (assert (and (= build-name "build") (is (.get build "blocks_rest") True))
+               f"gate.full の先頭が blocks_rest = true の build の段でない: {build-name} — R8")
+       (assert (in "sync" (get kinds-by-stage "build"))
+               "build の段が make sync を呼ばない — R8")
+       (setv build-pops (lfor k (get kinds-by-stage "build") :if (in k populations) k))
+       (assert (not build-pops)
+               f"build の段(後ろを止める段)が母集団 {build-pops} を呼ぶ — その赤が他の母集団を未実行にする — R8")
+       ;; build の後ろの段は後ろを止めない。
+       (setv blocking (lfor stage (cut full 1 None) :if (.get stage "blocks_rest") (get stage "name")))
+       (assert (not blocking)
+               f"build 以外の段 {blocking} が blocks_rest を立てている — その赤が後ろの母集団を未実行にする — R8")
+       ;; 各母集団はちょうど 1 つの段が呼ぶ・1 つの段は 2 つの母集団を呼ばない。
+       (for [pop populations]
+         (setv owners (lfor #(name kinds) (.items kinds-by-stage) :if (in pop kinds) name))
+         (assert (= (len owners) 1)
+                 f"母集団 {pop} を呼ぶ処理ステージが {owners}(ちょうど 1 つでない)— R8"))
+       (for [#(name kinds) (.items kinds-by-stage)]
+         (setv pops (sorted (set (lfor k kinds :if (in k populations) k))))
+         (assert (<= (len pops) 1)
+                 f"処理ステージ {name} が 2 つ以上の母集団 {pops} を呼ぶ — 前の母集団の赤が後ろを未実行にする — R8")
+         ;; テストの段は自己完結: 母集団の命令より前に make sync を持つ。
+         (when pops
+           (setv first-pop (min (lfor #(i k) (enumerate kinds) :if (in k populations) i)))
+           (assert (in "sync" (cut kinds 0 first-pop))
+                   f"処理ステージ {name} が母集団の命令の前に make sync を持たない — 遠隔の同期は段ごとに target/ を消し、段は 1 つずつ手元へ倒れ得る — R8")))
+       ;; 挙動本体の現存 pin(削除退行を loud にする)。
+       (assert (.exists (/ root "tests/test_daily_test_population.py"))
+               "R8 の挙動本体 tests/test_daily_test_population.py が消えている"))]
   :plans ["docs/doeff-2026-07-14-agent-first-investment-architecture-plan.md"])
