@@ -126,6 +126,13 @@
 (import doeff_agents.sessionhost.attachment [TurnAttachment])
 (import doeff_agents.sessionhost.acp.effects [
   CHARTER-KIND-VERIFY
+  INTAKE-ROUTE-DEFER
+  INTAKE-ROUTE-INLINE
+  IntakeCollect
+  IntakeReport
+  IntakeStart
+  SERIAL-LEASE-JOURNAL
+  SerialSection
   CONDITION-INTERRUPTED
   CONDITION-SESSION-LOST
   CONDITION-VERIFY-COMMAND-LOST
@@ -650,6 +657,10 @@
   observed-window-of
   usage-by-row-name
   wait-seconds-for
+  intake-ids-of
+  intake-route-of
+  merged-intake
+  retirable-outside-intakes
   stale-conversation-sessions-of
   warm-candidate-of
   with-job
@@ -759,7 +770,9 @@
                                         f"and could not be aligned ({why}); the lease is still written"))))
                 (setv spec-refusal-logged True))))
         ;; 片付けてから観測を書く(観測 = 片付けた後の現況)。
-        (<- expired tuple (sessions-to-retire views now-ms settings.session-idle-ttl-seconds))
+        (<- idle-past tuple (sessions-to-retire views now-ms settings.session-idle-ttl-seconds))
+        ;; card acp:kanban-issue:ki-e786e72e2ae7(I4): 受け付け中の会話の温かい session は片付けない(係がいま送る相手かもしれない)。
+        (<- expired tuple (retirable-outside-intakes views idle-past state.intakes))
         (<- (retire-sessions expired f"idle past {settings.session-idle-ttl-seconds}s"))
         (setv kept (tuple (lfor view views :if (not-in view.session-id expired) view)))
         (<- observations list (session-observations-of kept))
@@ -1139,11 +1152,33 @@
   {:pre [(: settings AgentdSettings) (: job-id str) (: lease-id str)]
    :post [(: % bool)]}
   "借りた錠を手元に記す(ADR-DOE-AGENTS-012 R51): 次の process(入れ替え・再起動・排水の後)が
-   『自分の機体が何を握っているか』を disk から組み直せるようにする。戻り = disk に置いたか。"
+   『自分の機体が何を握っているか』を disk から組み直せるようにする。戻り = disk に置いたか。
+   card acp:kanban-issue:ki-e786e72e2ae7(I6): 読みから書きまでを直列の区間の中で行う — 受け付けは拍の外の係でも走るので、
+   拍の返却(return-lease)と同時に read-modify-write すると片方の項が消える。"
+  (<- kept bool (SerialSection :name SERIAL-LEASE-JOURNAL :program (journal-remember settings job-id lease-id)))
+  kept)
+
+
+(defk journal-remember [settings job-id lease-id]
+  {:pre [(: settings AgentdSettings) (: job-id str) (: lease-id str)]
+   :post [(: % bool)]}
+  "remember-lease の区間の中身(読む → 足す → 書く)。直列の区間の外から呼ばない。"
   (<- journal dict (read-lease-journal settings))
   (<- next dict (lease-journal-with journal job-id lease-id))
   (<- kept bool (write-lease-journal settings next))
   kept)
+
+
+(defk journal-forget [settings job-id]
+  {:pre [(: settings AgentdSettings) (: job-id str)]
+   :post [(: % bool)]}
+  "return-lease の区間の中身(読み直す → 在れば外す → 書く)。直列の区間の外から呼ばない。戻り = 外したか。"
+  (<- journal dict (read-lease-journal settings))
+  (when (not-in job-id journal)
+    (return False))
+  (<- dropped dict (lease-journal-without journal job-id))
+  (<- (write-lease-journal settings dropped))
+  True)
 
 
 (defk return-lease [settings job-id lease-id]
@@ -1155,8 +1190,10 @@
    返せなかった拍(預かり所が 200 で答えない・不達)は黙って捨てず log 1 行(B3): 錠は hold の期限まで残り、
    その口座の借りはその間ずっと 409 で断られる — 見えない失敗にしない。
    記録は返した後に外す(返せなかった拍も外す — この job はもう閉じていて、握りを繰り返し読む主体が無い)。
-   戻り = 預かり所が返却を受けたか(返す物が無かった拍は True — 握っていないのは失敗ではない)。"
-  (<- journal dict (read-lease-journal settings))
+   戻り = 預かり所が返却を受けたか(返す物が無かった拍は True — 握っていないのは失敗ではない)。
+   card acp:kanban-issue:ki-e786e72e2ae7(I6): journal の読みと書きはそれぞれ直列の区間の中(返却の往復は区間の外 — 区間を
+   network の往復の間じゅう握らない)。外す書きは区間の中で読み直してから行う。"
+  (<- journal dict (SerialSection :name SERIAL-LEASE-JOURNAL :program (read-lease-journal settings)))
   (<- held (| str None) (lease-to-return-of lease-id journal job-id))
   (when (is held None)
     (return True))
@@ -1167,8 +1204,7 @@
                           "expires; since 2026-09-19 the custody counts no hosts (law lease-counts-no-hosts), "
                           "so this blocks nobody else's borrow — it only leaves a stale record behind"))))
   (when (in job-id journal)
-    (<- dropped dict (lease-journal-without journal job-id))
-    (<- (write-lease-journal settings dropped)))
+    (<- (SerialSection :name SERIAL-LEASE-JOURNAL :program (journal-forget settings job-id))))
   returned)
 
 
@@ -4812,6 +4848,10 @@
   (setv known (| known-jobs known-commands known-summaries carried-ids))
   ;; card ki-fd0f3b234a38: 接続が答えない借りを待っている job も受け済み(claim は着いている — 拾い直しにも claim にも渡さない)。
   (setv known (| known (set (gfor entry waiting entry.job-id))))
+  ;; card acp:kanban-issue:ki-e786e72e2ae7(I1): 拍の外の係で受け付け中の job も受け済み(claim も拾い直しもしない —
+  ;; 係が claim を着けた後の Running の行を、memory に無いからと recover-job に渡さない)。写しは拍の頭の引き取りが置いた値。
+  (<- intake-ids set (intake-ids-of withdrawn-handled))
+  (setv known (| known intake-ids))
   (setv previously-deferred withdrawn-handled.deferred)
   (setv current (replace withdrawn-handled :deferred #() :unanswered-borrows waiting))
   ;; 段 12 lane 12j(agora-redesign #402): 監督が置き直した(Bound attempt N)行を自分が**いま走らせている** job = 新しい session を
@@ -4839,9 +4879,15 @@
         (for [row bound]
           (when (not-in row.resource-id known)
             (<- bound-kind str (job-kind-of row))
-            (if (= bound-kind CHARTER-KIND-VERIFY)
-                (.append verify-candidates row)
-                (<- current AgentdState (claim-job settings current rows row previously-deferred now-ms)))))
+            (cond
+              (= bound-kind CHARTER-KIND-VERIFY)
+              (.append verify-candidates row)
+              ;; 要約は今日どおり拍の中(会話の手番ではない — 送る相手の居ない job)。
+              (= bound-kind CHARTER-KIND-SUMMARIZE)
+              (<- current AgentdState (claim-job settings current rows row previously-deferred now-ms))
+              ;; card acp:kanban-issue:ki-e786e72e2ae7: 会話の手番は受け付けの係へ(拍を塞がない)。
+              True
+              (<- current AgentdState (start-intake settings current rows row previously-deferred now-ms)))))
         (<- current AgentdState (claim-verify-candidates settings current rows running (tuple verify-candidates)
                                                          previously-deferred now-ms))))
   (for [row running]
@@ -4863,6 +4909,57 @@
       (when (= row.resource-id entry.job-id)
         (<- current AgentdState (retry-unanswered-borrow settings current row entry now-ms)))))
   (replace current :last-resync-ms now-ms))
+
+
+(defk collect-intakes [settings state wait]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: wait bool)]
+   :post [(: % AgentdState)]}
+  "拍の外の係で終わった受け付けを引き取る(card acp:kanban-issue:ki-e786e72e2ae7): 終わった 1 本ごとに、その job の項だけを
+   今の状態へ写し(judgment.merged-intake — I3)、まだ走っているものの写しを state.intakes に置く(I1 / I2 / I4 の材料)。
+   失敗した受け付けは log 1 行 — 行は claim が着いていれば Running のまま残り、次の受けの拍に拾い直しの腕が組み直す
+   (今日の受けの腕の失敗と同じ)。wait = 走っているものの終わりを待ってから引き取る(停止の拍だけ — I5)。"
+  (<- report IntakeReport (IntakeCollect :wait wait))
+  (setv current state)
+  (for [outcome report.done]
+    (if (is outcome.state None)
+        (<- (LogLine :text (+ f"agentd: intake of job {outcome.job-id} (conversation {outcome.subject}) failed: "
+                              f"{outcome.error}; its row is picked up again by the next receive")))
+        (do
+          (<- merged AgentdState (merged-intake current outcome.job-id outcome.state))
+          (setv current merged))))
+  (replace current :intakes report.pending))
+
+
+(defk start-intake [settings state rows row previously-deferred now-ms]
+  {:pre [(: settings AgentdSettings) (: state AgentdState) (: rows tuple) (: row AcpRow)
+         (: previously-deferred tuple) (: now-ms int)]
+   :post [(: % AgentdState)]}
+  "Bound の会話の手番を 1 つ受ける入口(card acp:kanban-issue:ki-e786e72e2ae7): 受け方は judgment.intake-route-of の 1 点。
+   spawn = claim-job(claim の CAS・郵便と履歴の読み・借り・器の起動と送り)を拍の外の係で走らせる(IntakeStart)/
+   inline = memory にその会話の手番が居る — 今日どおり拍の中の claim-job(その session の手番の途中なら持ち越す判断を変えない)/
+   defer = その会話の受け付けが走っている — 受けずに持ち越す(I2: 同じ会話の 2 本目を並べて走らせない)。
+   係はこの拍の状態の写しで claim-job を走らせ、引き取る時はその job の項だけを写す(I3)。受け付けの係がその場で走らせる
+   入口(1 拍の入口・検)は、ここで引き取るので今日の直列の拍と同じ順・同じ結果になる。"
+  (setv job-id row.resource-id)
+  (setv subject (str (.get row.spec "subject" job-id)))
+  (<- route str (intake-route-of state subject))
+  (cond
+    (= route INTAKE-ROUTE-DEFER)
+    (do
+      (when (not-in job-id previously-deferred)
+        (<- (LogLine :text (+ f"agentd: claim of job {job-id} deferred — conversation {subject} has an intake in progress; "
+                              "re-listing"))))
+      (replace state :deferred (+ state.deferred #(job-id))))
+    (= route INTAKE-ROUTE-INLINE)
+    (do
+      (<- claimed AgentdState (claim-job settings state rows row previously-deferred now-ms))
+      claimed)
+    True
+    (do
+      (<- (IntakeStart :job-id job-id :subject subject
+                       :program (claim-job settings state rows row previously-deferred now-ms)))
+      (<- collected AgentdState (collect-intakes settings (replace state :intakes (+ state.intakes #(#(job-id subject)))) False))
+      collected)))
 
 
 (defk sweep-turn-records [settings state now-ms]
@@ -4887,7 +4984,9 @@
   (<- listed tuple (AcpRunningTurnRecords))
   (<- known set (in-flight-ids state))
   (<- carried set (unrecorded-end-ids state))
-  (setv mine (| known carried))
+  ;; card acp:kanban-issue:ki-e786e72e2ae7(I1): 受け付け中の手番の記録も自分が書いている。
+  (<- intake-ids set (intake-ids-of state))
+  (setv mine (| known carried intake-ids))
   ;; 自分が**いま書いている**手番の記録は読み直さない(判断でも必ず skip になる — ここは腕の I/O の絞りちょうど)。
   (setv candidates [])
   (for [row listed]
@@ -4974,6 +5073,10 @@
   (<- arm-ms int (ClockNowMs))
   (setv (get arms "profiles") (- arm-ms mark))
   (setv mark arm-ms)
+  ;; card acp:kanban-issue:ki-e786e72e2ae7: 拍の外の係で終わった受け付けを毎拍引き取る(受けの拍でなくても — 引き取った
+  ;; 手番はこの拍の観測から実況に乗る)。所要は受けの腕に数える(腕の名の集合は変えない)。
+  (<- collected AgentdState (collect-intakes settings current False))
+  (setv current collected)
   (<- mode str (list-mode-for signal current now-ms settings))
   (when (!= mode LIST-MODE-NONE)
     (try

@@ -248,6 +248,19 @@ def record_unrecorded_ends(settings: AgentdSettings, state: AgentdState, now_ms:
 def withdraw_jobs(
     settings: AgentdSettings, state: AgentdState, rows: tuple, now_ms: int
 ) -> Program: ...
+# card acp:kanban-issue:ki-e786e72e2ae7: 受け付けの係(拍の外で claim から送信まで)の入口と引き取り
+def collect_intakes(settings: AgentdSettings, state: AgentdState, wait: bool) -> Program: ...
+def start_intake(
+    settings: AgentdSettings,
+    state: AgentdState,
+    rows: tuple,
+    row: AcpRow,
+    previously_deferred: tuple,
+    now_ms: int,
+) -> Program: ...
+# I6: 貸与の journal の read-modify-write(直列の区間の中身)
+def journal_remember(settings: AgentdSettings, job_id: str, lease_id: str) -> Program: ...
+def journal_forget(settings: AgentdSettings, job_id: str) -> Program: ...
 def receive_bound_jobs(
     settings: AgentdSettings, state: AgentdState, mode: str, now_ms: int
 ) -> Program: ...

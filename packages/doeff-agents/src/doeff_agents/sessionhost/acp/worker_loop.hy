@@ -7,12 +7,14 @@
 (import doeff [Program])
 (import doeff_core_effects.effects [Await])
 (import doeff_core_effects.handlers [await-handler])
-(import doeff_core_effects.scheduler [scheduled Spawn Gather])
+(import doeff_core_effects.scheduler [scheduled Spawn Gather CreateSemaphore])
+(import collections.abc [Callable])
 (import .async_dispatch [async-dispatch])
 (import .loop_model [LoopControl LoopPorts ReadLoopControl PublishLoopState LoopDelay LoopLog])
 (import .effects [AgentdSettings AgentdState AcpGet AcpRow NODE-KIND SessionSend SessionRefused])
 (import ..cache_host_model [CACHE-MAINTENANCE-ACTIVE])
-(import .agentd [agentd-tick cache-credential-handler])
+(import .agentd [agentd-tick cache-credential-handler collect-intakes])
+(import .intake [IntakeBook spawned-intake serial-sections])
 (import .judgment [node-row-named])
 (import .cache_live [cache-live-handler maintain-node-cache])
 
@@ -39,7 +41,15 @@
   (setv backoff 1.0)
   (while True
     (<- control LoopControl (ReadLoopControl))
-    (when control.stopping (return None))
+    (when control.stopping
+      ;; card acp:kanban-issue:ki-e786e72e2ae7(I5): 走っている受け付けを待って引き取ってから降りる — 停止の腕
+      ;; (runtime.run_close_for_stop)が読む最後の状態に、係が起こした手番を必ず載せる。
+      (try
+        (<- drained AgentdState (collect-intakes settings state True))
+        (<- (PublishLoopState drained))
+        (except [error Exception]
+          (<- (LoopLog f"agentd: intakes were not collected before the stop: {(. (type error) __name__)}: {error}"))))
+      (return None))
     (try
       (<- state AgentdState (agentd-tick (replace settings :draining control.draining) state))
       (<- (PublishLoopState state))
@@ -74,12 +84,15 @@
     (setv program ((async-dispatch dispatcher "doeff_agents.sessionhost.acp.") program)))
   program)
 
-(defk run-worker-programs [normal maintenance]
-  {:pre [(: normal Program) (: maintenance (| Program None))] :post [(: % NoneType)]}
-  (<- worker (Spawn normal))
-  (if maintenance
+(defk run-worker-programs [make-normal make-maintenance]
+  {:pre [(: make-normal Callable) (: make-maintenance (| Callable None))] :post [(: % NoneType)]}
+  ;; card acp:kanban-issue:ki-e786e72e2ae7(I6): 直列の区間の semaphore は task を起こす前に 1 つだけ作り、通常処理
+  ;; (拍と受け付けの係)と専用操作の両方に渡す。
+  (<- semaphore (CreateSemaphore 1))
+  (<- worker (Spawn (make-normal semaphore)))
+  (if make-maintenance
     (do
-      (<- cache (Spawn maintenance))
+      (<- cache (Spawn (make-maintenance semaphore)))
       (<- (Gather worker cache)))
     (<- (Gather worker)))
   None)
@@ -87,9 +100,15 @@
 (defk concurrent-worker [settings state normal-dispatchers cache-dispatchers ports]
   {:pre [(: settings AgentdSettings) (: state AgentdState) (: normal-dispatchers tuple)
          (: cache-dispatchers tuple) (: ports LoopPorts)] :post [(: % NoneType)]}
-  (setv normal (async-stack normal-dispatchers
-    ((cache-send-serialization) (normal-worker-loop settings state))))
-  (setv maintenance (if cache-dispatchers
-    (async-stack cache-dispatchers (cache-worker-loop settings)) None))
-  (<- (scheduled ((await-handler) ((loop-control ports) (run-worker-programs normal maintenance)))))
+  ;; card acp:kanban-issue:ki-e786e72e2ae7: 受け付けの係(spawned-intake)は拍の program のすぐ外 — 係が起こす task は
+  ;; 起こした所の handler の列(直列の区間・送りの直列化・I/O の async-dispatch)の下で走る。
+  (defn make-normal [semaphore]
+    (async-stack normal-dispatchers
+      ((cache-send-serialization)
+        ((serial-sections semaphore)
+          ((spawned-intake (IntakeBook)) (normal-worker-loop settings state))))))
+  (defn make-maintenance [semaphore]
+    (async-stack cache-dispatchers ((serial-sections semaphore) (cache-worker-loop settings))))
+  (<- (scheduled ((await-handler) ((loop-control ports)
+    (run-worker-programs make-normal (if cache-dispatchers make-maintenance None))))))
   None)
