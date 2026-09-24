@@ -1,0 +1,61 @@
+## 1 (after)
+A1-after-env1: exit=0 :: 3 passed, 28 deselected, 1 warning in 0.44s
+A1-after-envunset: exit=0 :: 3 passed, 28 deselected, 1 warning in 0.39s
+## 2
+A2-dwb1-prefixset: exit=0 :: 41 passed, 1 warning in 9.05s
+A2-dwb1-prefixunset: exit=0 :: 41 passed, 1 warning in 8.55s
+A2-dwbunset-prefixset: exit=0 :: 41 passed, 1 warning in 8.43s
+A2-dwbunset-prefixunset: exit=0 :: 41 passed, 1 warning in 7.34s
+## 3 (M1)
+A3-M1-dwb1-prefixset: exit=1 :: 1 failed, 40 passed, 1 warning in 8.88s
+FAILED tests/test_effectful.py::test_no_cache_is_written_while_bytecode_writing_is_off
+A3-M1-dwb1-prefixunset: exit=1 :: 1 failed, 40 passed, 1 warning in 9.05s
+FAILED tests/test_effectful.py::test_no_cache_is_written_while_bytecode_writing_is_off
+A3-M1-dwbunset-prefixset: exit=1 :: 1 failed, 40 passed, 1 warning in 8.56s
+FAILED tests/test_effectful.py::test_no_cache_is_written_while_bytecode_writing_is_off
+A3-M1-dwbunset-prefixunset: exit=1 :: 1 failed, 40 passed, 1 warning in 8.94s
+FAILED tests/test_effectful.py::test_no_cache_is_written_while_bytecode_writing_is_off
+doeff/ clean
+## 4 (M3)
+A4-M3-dwb1-prefixset: exit=0 :: 41 passed, 1 warning in 12.17s
+A4-M3-dwb1-prefixunset: exit=0 :: 41 passed, 1 warning in 8.12s
+A4-M3-dwbunset-prefixset: exit=0 :: 41 passed, 1 warning in 9.86s
+A4-M3-dwbunset-prefixunset: exit=0 :: 41 passed, 1 warning in 11.71s
+doeff/ clean
+## 5 (D1 の行を消す)
+A5-minusD1-named-envunset: exit=1 :: 1 failed, 2 passed, 28 deselected, 1 warning in 0.43s
+FAILED tests/test_effectful.py::test_cache_is_named_by_the_rewrite_version_and_reused
+A5-minusD1-rebuild-envunset: exit=1 :: 1 failed, 2 passed, 28 deselected, 1 warning in 1.19s
+FAILED tests/test_effectful.py::test_a_new_rewrite_version_rebuilds_the_cache
+tests/test_effectful.py restored
+## 6 (D4 を戻す)
+A6-minusD4-dwbunset: exit=1 :: 1 failed, 5 passed, 1 warning, 1 error in 4.79s
+E       AssertionError: a test or fixture changed the bytecode settings and did not restore them (dont_write_bytecode, pycache_prefix) = (False, None) — change them with monkeypatch (or pytest.MonkeyPatch.context() in a wider fixture)
+FAILED tests/test_bytecode_settings_pinned.py::test_test_bodies_run_with_the_pinned_bytecode_settings
+ERROR tests/test_bytecode_settings_pinned.py::test_subprocesses_inherit_the_pinned_bytecode_settings
+A6-minusD4-dwb1: exit=1 :: 1 failed, 5 passed, 1 warning, 1 error in 4.79s
+E       AssertionError: a test or fixture changed the bytecode settings and did not restore them (dont_write_bytecode, pycache_prefix) = (False, None) — change them with monkeypatch (or pytest.MonkeyPatch.context() in a wider fixture)
+FAILED tests/test_bytecode_settings_pinned.py::test_test_bodies_run_with_the_pinned_bytecode_settings
+ERROR tests/test_bytecode_settings_pinned.py::test_subprocesses_inherit_the_pinned_bytecode_settings
+## 7 (lint)
+## ruff check
+All checks passed!
+exit=0
+## ruff format --check
+Would reformat: conftest.py
+Would reformat: packages/doeff-hy/tests/test_source_positions.py
+exit=1
+## semgrep --config .semgrep.yaml --error
+exit=0
+## pyright
+  /home/kento/.worktrees/doeff-wt-ki-b02c57db9de8/packages/doeff-hy/tests/test_none_type_contract.py:69:16 - error: Argument of type "object" cannot be assigned to parameter "doexpr" of type "Program[_T@run, Any]" in function "run"
+  /home/kento/.worktrees/doeff-wt-ki-b02c57db9de8/packages/doeff-hy/tests/test_source_positions.py:93:16 - error: Argument of type "object" cannot be assigned to parameter "doexpr" of type "Program[_T@run, Any]" in function "run"
+  /home/kento/.worktrees/doeff-wt-ki-b02c57db9de8/tests/test_effectful.py:76:28 - error: Cannot access attribute "__doeff_generator_function__" for class "FunctionType"
+exit=1
+## 8
+doeff/ clean
+## final worktree diff
+ conftest.py                                        | 47 ++++++++++++++++++++++
+ packages/doeff-hy/tests/test_none_type_contract.py |  3 +-
+ packages/doeff-hy/tests/test_source_positions.py   |  3 +-
+ 3 files changed, 51 insertions(+), 2 deletions(-)
