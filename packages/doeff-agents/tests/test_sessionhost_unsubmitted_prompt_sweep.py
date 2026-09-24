@@ -4,6 +4,12 @@ Every ``test_*`` deftest in ``sessionhost_unsubmitted_prompt_sweep_deftests.hy``
 is exposed dynamically instead of hand-written one-by-one: a deftest added to
 the Hy module but forgotten here would otherwise silently never run, which is
 the exact failure mode an enforcement suite must not have.
+
+deftest は包み直さず、そのまま公開する。包むと ``pytestmark``(skipif /
+marks / parametrize)が関数の ``__dict__`` ごと落ち、書いた宣言が黙って
+効かなくなる(ADR-DOE-HY-002 law deftest-params-are-honored:
+``params_silently_dropped == 0``)。実行時の ``doeff_interpreter`` は
+conftest.py の fixture が供給する(同 R3)。
 """
 
 from __future__ import annotations
@@ -11,11 +17,8 @@ from __future__ import annotations
 import importlib
 import sys
 from pathlib import Path
-from typing import Any
 
 import doeff_hy  # noqa: F401  # registers Hy import hooks for deftest modules
-
-from doeff import run
 
 TESTS_DIR = Path(__file__).resolve().parent
 if str(TESTS_DIR) not in sys.path:
@@ -24,25 +27,7 @@ if str(TESTS_DIR) not in sys.path:
 _deftests = importlib.import_module("sessionhost_unsubmitted_prompt_sweep_deftests")
 
 
-def _deftest_interpreter(program: Any, *, env: dict[Any, Any] | None = None) -> Any:
-    if env is not None:
-        raise ValueError("issue #568 deftests do not use env overrides")
-    return run(program)
-
-
-def _make_wrapper(deftest_fn: Any) -> Any:
-    def _wrapper() -> None:
-        deftest_fn(_deftest_interpreter)
-
-    _wrapper.__name__ = deftest_fn.__name__
-    _wrapper.__doc__ = deftest_fn.__doc__
-    # deftest の :skip-if / :marks は deftest_fn.pytestmark に乗る — 写さないと包みが印を落とし、前提の無い宿で
-    # skip されるはずの検が走って赤になる(zeus の herdr 不在で 8 本)。
-    _wrapper.__dict__["pytestmark"] = list(getattr(deftest_fn, "pytestmark", []))
-    return _wrapper
-
-
 _names = [name for name in dir(_deftests) if name.startswith("test_")]
 assert _names, "sessionhost_unsubmitted_prompt_sweep_deftests exposes no test_* deftests"
 for _name in _names:
-    globals()[_name] = _make_wrapper(getattr(_deftests, _name))
+    globals()[_name] = getattr(_deftests, _name)
