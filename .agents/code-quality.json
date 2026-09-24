@@ -135,8 +135,26 @@
         "acp-live-row",
         "sessionhost-headless-protocol",
         "agentd-cache-observation",
-        "agentd-response-usage"
+        "agentd-response-usage",
+        "agentd-reply-channel"
       ],
+      "typed": true
+    },
+    {
+      "name": "agentd-reply-channel",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/reply_channel.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/reply_channel.pyi",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/input_source.py"
+      ],
+      "responsibility": "届いた 1 通の出どころの判定(operator の chat / 依頼書への答え / 検収 / 依頼 / 他の会話からの郵便 / 機械の報せ)と、agent に見せる区切り・項の見出し・返し方の 1 点(設計 herdr-hud docs/design-checks/direct-chat-2026-09-24 §3)。I/O を持たない",
+      "layer": "pure",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/reply_channel.hy",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/reply_channel.pyi",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/input_source.py"
+      ],
+      "allow": [],
       "typed": true
     },
     {
@@ -348,7 +366,8 @@
         "packages/doeff-agents/tests/sessionhost_acp_compact_deftests.hy",
         "packages/doeff-agents/tests/sessionhost_acp_live_poll_deftests.hy",
         "packages/doeff-agents/tests/sessionhost_acp_record_deftests.hy",
-        "packages/doeff-agents/tests/sessionhost_acp_memory_rows_deftests.hy"
+        "packages/doeff-agents/tests/sessionhost_acp_memory_rows_deftests.hy",
+        "packages/doeff-agents/tests/test_sessionhost_acp_reply_channel.py"
       ],
       "responsibility": "agentd の焦点の検(fake の handler の e2e・判断の純関数・弁)と、profile の残量の観測の deftest(段 7 lane 7d-3)と、手番の出来事の耐久化の deftest(段 8 lane 4u・agora-redesign #49)と、実況の push の周期(購読者が居る間の events の読み ≤ 50 ms)の deftest(段 8 lane 4aa・agora-redesign #63)。収集の wrapper test_sessionhost_acp_profile.py / test_sessionhost_acp_turn_events.py / test_sessionhost_acp_live_poll.py は他の *_deftests.hy の wrapper と同じ足場で契約の外。自己圧縮(会話の宣言 compactAt と直前の手番の文脈の実測)の deftest sessionhost_acp_compact_deftests.hy(段 10f 便 2・agora-redesign #82)— wrapper test_sessionhost_acp_compact.py は同じ足場で契約の外。器の終端の cause(場面ごとの category / reason)の焦点の検 test_sessionhost_acp_ended_cause.py は同じ World を借りるので同じ module",
       "layer": "runtime",
@@ -363,7 +382,8 @@
         "agentd-valve",
         "agentd-client",
         "sessionhost-attachment",
-        "sessionhost-claude-code"
+        "sessionhost-claude-code",
+        "agentd-reply-channel"
       ],
       "typed": true
     },

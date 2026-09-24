@@ -23,7 +23,7 @@ from typing import NamedTuple, NoReturn, get_args
 import hy  # noqa: F401  # registers the .hy importer
 import pytest
 from doeff_agents.agentd_client import AgentdClient, AgentdClientError
-from doeff_agents.sessionhost.acp import handlers, join, judgment
+from doeff_agents.sessionhost.acp import handlers, join, judgment, reply_channel
 from doeff_agents.sessionhost.acp.effects import (
     AGENTD_PRINCIPAL,
     AGENTD_PROTOCOL,
@@ -71,6 +71,7 @@ from doeff_agents.sessionhost.acp.effects import (
     TurnContinuation,
     WatchAdvance,
 )
+from doeff_agents.sessionhost.acp.input_source import TurnInputText
 from doeff_agents.sessionhost.acp.fake import Birth, FakeAcp, FakeCustody, FakeLocal, FakeSessions
 from doeff_agents.sessionhost.acp.runtime import (
     initial_state,
@@ -312,7 +313,7 @@ def _assert_launched_with_borrowed_token(world: World) -> None:
     assert isinstance(env, dict)
     assert env[CLAUDE_OAUTH_TOKEN_ENV] == TOKEN
     assert launch["binding"] == {"kind": "claude-code", "config_dir": f"{HOMES}/claude/acct"}
-    assert launch["prompt"] == "start"
+    assert launch["prompt"] == PREAMBLE
     assert launch["session_id"] == "sid-1"
     assert launch["session_name"] == "sid-1"
     assert world.sessions.sends == [("sid-1", mailed("lt-1", "hello agent"), True)]
@@ -1704,10 +1705,25 @@ def test_running_on_me_needs_phase_node_and_stream_owner() -> None:
 # ---------------------------------------------------------------- 温かい session(段 2・設計 17.4・lane 2b-3)
 
 
+#: 設計 direct-chat-2026-09-24 §3: 前置き(charter の prompt)は区切り【前置き】で囲まれる。
+PREAMBLE = "【前置き】\nstart"
+
+
+def mail_item(message_id: str, body: str) -> str:
+    """段 10 lane 10r 追補(agora-redesign #99)+ 設計 direct-chat-2026-09-24 §3: 他の会話からの郵便の 1 項 = 見出し 1 行
+    (返し方つき)+ 本文。検体の郵便(message)は kind / from / inReplyTo / at を持たないので、その欄は「無し」。"""
+    return (f"[郵便 {message_id}・kind=無し・from=無し・inReplyTo=無し・at=無し"
+            f"・返事は ai tell --to 無し --in-reply-to {message_id} --kind note]\n{body}")
+
+
+def mailed_all(*pairs: tuple[str, str]) -> str:
+    """郵便の項を区切り【他の会話からの郵便】の下に束ねた文(区切りの見出しは 1 回)。"""
+    return "\n\n".join([reply_channel.SECTION_HEADINGS["mail"], *(mail_item(i, b) for i, b in pairs)])
+
+
 def mailed(message_id: str, body: str) -> str:
-    """段 10 lane 10r 追補(agora-redesign #99): 手番へ渡る郵便の文 = 見出し 1 行 + 本文。検体の郵便
-    (message)は kind / class / from / parent / at を持たないので、その欄は「無し」。"""
-    return f"[郵便 {message_id}・kind=無し・class=無し・from=無し・parent=無し・at=無し]\n{body}"
+    """1 通だけの文(区切りの見出し + 項)。"""
+    return mailed_all((message_id, body))
 
 
 def message(message_id: str, body: str) -> AcpRow:
@@ -4224,7 +4240,7 @@ def test_headless_claude_turn_streams_text_deltas_and_records_entries() -> None:
     world.tick()
     sid = world.sid("j-1")
     # headless の 1 手番目: 郵便は launch の prompt に畳む(send は撃たない — 追補 2026-09-12)
-    assert world.sessions.launches[-1]["prompt"] == "start\n\n" + mailed("m-1", "first")
+    assert world.sessions.launches[-1]["prompt"] == PREAMBLE + "\n\n" + mailed("m-1", "first")
     assert world.sessions.sends == []
     node = world.acp.rows[f"{AGORA_KINDS_NAMESPACE}:{NODE_KIND}:{NODE}"]
     assert node.status is not None
@@ -4445,16 +4461,16 @@ def test_mail_heading_names_the_message_id_kind_class_sender_parent_and_jst_time
         "at": 1789446082000,
         "body": "b",
     }
+    # 設計 direct-chat-2026-09-24 §3: 依頼(kind ask)は [依頼 <id>・…] の見出しと完了の返し方を持つ
     assert run(judgment.mail_heading_of("lt-K9864EF53HXFBYAV4SN5WWEV7W", spec)) == (
-        "[郵便 lt-K9864EF53HXFBYAV4SN5WWEV7W・kind=ask・class=operate・from=c-01M2GAP7BAT2ARSAPFJBBTQ0DQ"
-        "・parent=lt-01M2GAP7BAT2ARSAPFJBBTQ0DP・at=2026-09-15 13:21:22 JST]"
+        "[依頼 lt-K9864EF53HXFBYAV4SN5WWEV7W・class=operate・依頼者=c-01M2GAP7BAT2ARSAPFJBBTQ0DQ"
+        "・parent=lt-01M2GAP7BAT2ARSAPFJBBTQ0DP・at=2026-09-15 13:21:22 JST"
+        "・完了は ai reply lt-K9864EF53HXFBYAV4SN5WWEV7W --kind report]"
     )
-    # 欠けた欄は「無し」(発明しない)・operator の郵便は from=operator
-    assert run(judgment.mail_heading_of("lt-1", {"kind": "note", "from": "operator"})) == (
-        "[郵便 lt-1・kind=note・class=無し・from=operator・parent=無し・at=無し]"
-    )
+    # 欠けた欄は「無し」(発明しない)・operator の chat は郵便の見出しを持たず【operator の発言】の区切りの下に置く
+    assert run(judgment.mail_heading_of("lt-1", {"kind": "note", "from": "operator"})) == "(lt-1・at=無し)"
     assert run(judgment.mail_turn_text_of("lt-1", {"kind": "note", "from": "operator"}, "本文")) == (
-        "[郵便 lt-1・kind=note・class=無し・from=operator・parent=無し・at=無し]\n本文"
+        reply_channel.SECTION_HEADINGS["operator"] + "\n\n(lt-1・at=無し)\n本文"
     )
 
 
@@ -4467,7 +4483,8 @@ def test_the_mail_heading_names_the_served_class_when_the_delivery_table_rewrote
     spec: JSONObject = {"id": "lt-1", "kind": "ask", "class": "dev", "from": "operator", "at": 1789446082000}
     rewritten = {"state": "routed", "routing": {"servedClass": "kanban", "decidedBy": "machine"}}
     assert run(judgment.mail_heading_of("lt-1", spec, rewritten)) == (
-        "[郵便 lt-1・kind=ask・class=kanban(名乗り dev)・from=operator・parent=無し・at=2026-09-15 13:21:22 JST]"
+        "[依頼 lt-1・class=kanban(名乗り dev)・依頼者=operator・parent=無し・at=2026-09-15 13:21:22 JST"
+        "・完了は ai reply lt-1 --kind report]"
     )
     # 読み替えが起きていない拍は今日と 1 文字も変わらない(欄が無い・同じ語・status ごと無い・形が違う)
     for status in [
@@ -4481,15 +4498,17 @@ def test_the_mail_heading_names_the_served_class_when_the_delivery_table_rewrote
         {"routing": {"servedClass": 3}},
     ]:
         assert run(judgment.mail_heading_of("lt-1", spec, status)) == (
-            "[郵便 lt-1・kind=ask・class=dev・from=operator・parent=無し・at=2026-09-15 13:21:22 JST]"
+            "[依頼 lt-1・class=dev・依頼者=operator・parent=無し・at=2026-09-15 13:21:22 JST・完了は ai reply lt-1 --kind report]"
         ), status
     # 名乗りの無い郵便(class を綴らずに送った拍)も、扱う class が在れば行き先を名乗る
     assert run(judgment.mail_heading_of("lt-2", {"kind": "ask", "from": "operator"}, rewritten)) == (
-        "[郵便 lt-2・kind=ask・class=kanban(名乗り 無し)・from=operator・parent=無し・at=無し]"
+        "[依頼 lt-2・class=kanban(名乗り 無し)・依頼者=operator・parent=無し・at=無し・完了は ai reply lt-2 --kind report]"
     )
-    # 手番へ渡る文も同じ 1 点を通る(見出し 1 行 + 本文)
+    # 手番へ渡る文も同じ 1 点を通る(区切り + 見出し 1 行 + 本文)
     assert run(judgment.mail_turn_text_of("lt-1", spec, "本文", rewritten)) == (
-        "[郵便 lt-1・kind=ask・class=kanban(名乗り dev)・from=operator・parent=無し・at=2026-09-15 13:21:22 JST]\n本文"
+        reply_channel.SECTION_HEADINGS["request"] + "\n\n"
+        "[依頼 lt-1・class=kanban(名乗り dev)・依頼者=operator・parent=無し・at=2026-09-15 13:21:22 JST"
+        "・完了は ai reply lt-1 --kind report]\n本文"
     )
 
 
@@ -4505,14 +4524,16 @@ def test_the_first_turn_fold_and_the_warm_send_carry_the_same_mail_heading() -> 
         )
 
     def heading(message_id: str) -> str:
-        return f"[郵便 {message_id}・kind=ask・class=operate・from=operator・parent=無し・at=2026-09-15 13:21:22 JST]"
+        return (reply_channel.SECTION_HEADINGS["request"] + "\n\n"
+                f"[依頼 {message_id}・class=operate・依頼者=operator・parent=無し・at=2026-09-15 13:21:22 JST"
+                f"・完了は ai reply {message_id} --kind report]")
 
     world = HeadlessWorld()
     world.acp.put_row(asked("lt-a1", "first"))
     world.acp.put_row(bound_job("j-1", inputs=["lt-a1"], created_at_ms=world.local.now_ms - 400))
     world.tick()
     sid = world.sid("j-1")
-    assert world.sessions.launches[-1]["prompt"] == "start\n\n" + heading("lt-a1") + "\nfirst"
+    assert world.sessions.launches[-1]["prompt"] == PREAMBLE + "\n\n" + heading("lt-a1") + "\nfirst"
     world.local.transcripts[f"/events/{sid}.events.jsonl"] = _claude_events(sid, "hello")
     world.tick(advance_ms=1_000)
     world.sessions.finish_turn(sid, world.local.now_ms + 100)
@@ -4526,10 +4547,14 @@ def test_the_first_turn_fold_and_the_warm_send_carry_the_same_mail_heading() -> 
 def test_first_turn_prompt_of_joins_the_charter_and_the_mail_with_blank_lines() -> None:
     """純関数: 1 手番目の本文 = charter の prompt(前置き)+ 空行 + 郵便の本文(inputs の順)。
     郵便が無ければ charter だけ・空の部分は入れない。畳むのは headless の器だけ(判定 1 点)。"""
-    assert run(judgment.first_turn_prompt_of("start", ("a", "b"))) == "start\n\na\n\nb"
-    assert run(judgment.first_turn_prompt_of("start", ())) == "start"
-    assert run(judgment.first_turn_prompt_of("", ("only",))) == "only"
-    assert run(judgment.first_turn_prompt_of("start", ("", "  "))) == "start"
+    a = TurnInputText("mail", "a")
+    b = TurnInputText("mail", "b")
+    mail_head = reply_channel.SECTION_HEADINGS["mail"]
+    assert run(judgment.first_turn_prompt_of("start", "", (a, b))) == f"start\n\n{mail_head}\n\na\n\nb"
+    assert run(judgment.first_turn_prompt_of("start", "", ())) == "start"
+    assert run(judgment.first_turn_prompt_of("", "", (a,))) == f"{mail_head}\n\na"
+    assert run(judgment.first_turn_prompt_of("start", "  ", ())) == "start"
+    assert run(judgment.first_turn_prompt_of("start", "lead", (a,))) == f"start\n\nlead\n\n{mail_head}\n\na"
     assert run(judgment.first_turn_carries_inputs("headless", "launch")) is True
     assert run(judgment.first_turn_carries_inputs("headless", "resume")) is True
     assert run(judgment.first_turn_carries_inputs("headless", "send")) is False
@@ -4548,7 +4573,7 @@ def test_headless_launch_folds_the_mail_into_the_first_turn_and_does_not_send() 
     world.acp.put_row(bound_job("j-1", inputs=["m-1"], created_at_ms=world.local.now_ms - 400))
     world.tick()
     sid = world.sid("j-1")
-    assert world.sessions.launches[-1]["prompt"] == "start\n\n" + mailed("m-1", "first")
+    assert world.sessions.launches[-1]["prompt"] == PREAMBLE + "\n\n" + mailed("m-1", "first")
     assert world.sessions.sends == []
     assert [m["metric"] for m in metrics_other_than_the_tick_line(world)] == ["agent-job-to-send"]
     assert last_metric(world, "agent-job-to-send")["arm"] == "launch"
@@ -4582,7 +4607,7 @@ def test_headless_launch_folds_the_mail_into_the_first_turn_and_does_not_send() 
     world.acp.put_row(bound_job("j-3", inputs=["m-3"], predecessor=sid))
     world.tick(advance_ms=1_000)
     assert len(world.sessions.resumes) == 1
-    assert world.sessions.resumes[0]["prompt"] == "start\n\n" + mailed("m-3", "third")
+    assert world.sessions.resumes[0]["prompt"] == PREAMBLE + "\n\n" + mailed("m-3", "third")
     assert world.sessions.sends == [(sid, mailed("m-2", "second"), True)]
     assert last_metric(world, "agent-job-to-send")["arm"] == "resume"
 
@@ -4610,12 +4635,12 @@ def test_headless_launch_without_mail_or_with_missing_mail_uses_the_charter_alon
     # 郵便が無い job は charter だけ
     world.acp.put_row(bound_job("j-4", inputs=[], subject="c-quiet"))
     world.tick()
-    assert world.sessions.launches[-1]["prompt"] == "start"
+    assert world.sessions.launches[-1]["prompt"] == PREAMBLE
     assert world.sessions.sends == []
     # 郵便が見つからない id は畳めない — condition InputUnavailable は今日どおり
     world.acp.put_row(bound_job("j-5", inputs=["m-missing"], subject="c-missing"))
     world.tick(advance_ms=1_000)
-    assert world.sessions.launches[-1]["prompt"] == "start"
+    assert world.sessions.launches[-1]["prompt"] == PREAMBLE
     assert world.sessions.sends == []
     in_flight = [job for job in world.state.jobs if job.job_id == "j-5"]
     assert len(in_flight) == 1
@@ -4649,9 +4674,7 @@ def test_headless_warm_send_folds_every_input_into_one_prompt() -> None:
     assert len(world.sessions.sends) == 1, world.sessions.sends
     assert world.sessions.sends[0] == (
         sid,
-        "\n\n".join(
-            [mailed("m-1", "first"), mailed("m-2", "second"), mailed("m-3", "third")]
-        ),
+        mailed_all(("m-1", "first"), ("m-2", "second"), ("m-3", "third")),
         True,
     )
     # 添付の列も 1 度きり(fake.sends は添付を持たないので、畳みの添付側はこちらで読む —
@@ -4839,7 +4862,7 @@ def test_tui_launch_still_sends_the_mail_after_the_launch() -> None:
     world.acp.put_row(bound_job("j-1", inputs=["m-1"]))
     world.tick()
     sid = world.sid("j-1")
-    assert world.sessions.launches[-1]["prompt"] == "start"
+    assert world.sessions.launches[-1]["prompt"] == PREAMBLE
     assert world.sessions.sends == [(sid, mailed("m-1", "first"), True)]
 
 
@@ -7998,7 +8021,7 @@ def test_a_continued_turn_on_a_headless_session_points_at_the_handed_mail_in_the
     world.tick(advance_ms=1_000)
     assert len(world.sessions.resumes) == 1
     prompt = world.sessions.resumes[0]["prompt"]
-    assert prompt == "start\n\n" + guidance_for(world, third) + "\n\n" + mailed("m-3", "third")
+    assert prompt == PREAMBLE + "\n\n" + guidance_for(world, third) + "\n\n" + mailed("m-3", "third")
     assert isinstance(prompt, str)
     assert "second" not in prompt, "handed の郵便の本文を渡し直した"
     assert len(world.sessions.sends) == 1, "resume の腕が送った"
@@ -8091,7 +8114,7 @@ def test_a_turn_with_only_a_continuation_is_started_by_the_guidance_and_not_clos
     expired.acp.put_row(late)
     expired.tick()
     assert len(expired.sessions.launches) == 1
-    assert expired.sessions.launches[0]["prompt"] == "start\n\n" + guidance_for(expired, late)
+    assert expired.sessions.launches[0]["prompt"] == PREAMBLE + "\n\n" + guidance_for(expired, late)
     late_status = _status_of(expired, "j-late")
     assert late_status["phase"] == PHASE_RUNNING
     assert late_status[JOB_INPUTS_DELIVERED_KEY] == [], "期限切れで渡していない郵便を報告した"
@@ -8139,7 +8162,11 @@ def test_a_delivery_report_that_did_not_land_is_written_again_and_rides_the_ende
     unavailable = Refused(503, "unavailable")
     key = f"{AGENT_JOB_NAMESPACE}:{AGENT_JOB_KIND}:j-1"
 
-    def launched(refusals: list[Refused | None]) -> tuple[HeadlessWorld, str]:
+    class Launched(NamedTuple):
+        world: HeadlessWorld
+        sid: str
+
+    def launched(refusals: list[Refused | None]) -> Launched:
         world = HeadlessWorld()
         world.acp.put_row(message("m-0", "zero"))
         world.acp.put_row(bound_job("j-1", inputs=["m-0"], created_at_ms=world.local.now_ms - 400))
@@ -8148,7 +8175,7 @@ def test_a_delivery_report_that_did_not_land_is_written_again_and_rides_the_ende
         world.tick()
         assert _status_of(world, "j-1")[JOB_INPUTS_DELIVERED_KEY] == [], "断られた報告が行に着いている"
         assert [job.inputs_delivered_owed for job in world.state.jobs] == [("m-0",)]
-        return world, world.sid("j-1")
+        return Launched(world, world.sid("j-1"))
 
     # (a) 同じ拍の遅い腕が書き直す(断りが 1 度なら claim の拍のうちに着く)
     same_tick = HeadlessWorld()
