@@ -652,6 +652,10 @@
   transcript-observation-of
   transcript-path-of
   turn-record-ended-status
+  conditions-of-binding
+  conditions-of-runner
+  interrupted-condition-of
+  row-conditions-of
   turn-record-sweep-verdict
   turn-record-key-of
   turn-record-marked-status
@@ -1122,9 +1126,11 @@
   (<- read-status dict (status-object-of target))
   (<- status dict (owed-inputs-delivered-status-of read-status owed inputs))
   (<- condition dict (condition-of reason-type reason))
+  ;; card acp:kanban-issue:ki-6f222893d6b6: runner の無い閉じの条件は行の binding.attempt を名乗る。
+  (<- closing tuple (conditions-of-binding (+ pending #(condition)) read-status))
   ;; #349 行 3 粒 3a: session なしで閉じる終端の cause = failed / <条件の型>
   (<- cause dict (terminal-cause-of CAUSE-CATEGORY-FAILED reason-type))
-  (<- ended dict (ended-status-of status None cause (+ pending #(condition))))
+  (<- ended dict (ended-status-of status None cause closing))
   (<- outcome (| Written Conflict Refused) (AcpPutStatus :row target :status ended))
   (when (not (isinstance outcome Written))
     (<- (LogLine :text f"agentd: could not end job {row.resource-id}: {outcome}")))
@@ -2998,8 +3004,8 @@
 ;; 記録(turn-record)と手番の終わり
 ;; ---------------------------------------------------------------------------
 
-(defk end-turn-record [job-id usage entries mark [cache-observation None] [responses #()] [job None]]
-  {:pre [(: job-id str) (: usage (| dict None)) (: entries tuple) (: mark (| tuple None)) (: cache-observation (| dict None))
+(defk end-turn-record [job-id usage entries mark conditions [cache-observation None] [responses #()] [job None]]
+  {:pre [(: job-id str) (: usage (| dict None)) (: entries tuple) (: mark (| tuple None)) (: conditions tuple) (: cache-observation (| dict None))
          (: responses tuple) (: job (| InFlightJob None))]
    :post [(: % bool)]}
   "turn-record を ended に(usage・残りの entries を行の entries に追記)。行は鍵で読み直す
@@ -3008,6 +3014,8 @@
    (InFlightJob.recorded-mark — 無ければ None): この書きに同乗させる(mark-recorded の docstring)。
    responses = 手番の応答ごとの消費(turn-batch-of の読み直しの DeltaBatch.responses)— 行の status.responses へ写すのは
    この書きちょうど(card acp:kanban-issue:ki-c3ac5832a0bd)。空なら欄を書かない(codex の手番・材料の無い手番)。
+   conditions = その手番の agent-job の条件の列(行の条件 + この試みが出所を刻んだ条件 — card acp:kanban-issue:ki-6f222893d6b6)。
+   既定値の無い引数で、写しの形は judgment.turn-record-ended-status の中の 1 点が決める(腕は材料を渡すだけ)。
    job = 終わる手番(在れば): 継続の拍に spec を揃えられなかった印(record-spec-dirty)が立っていれば、ended の書きの前に
    同じ判断をもう 1 度掛ける(card acp:kanban-issue:ki-90019f023e19 — 記録は手番の後も残る唯一の身元なので最後に 1 度)。"
   (<- key str (turn-record-key-of job-id))
@@ -3022,7 +3030,7 @@
         (setv shaped None)
         (when responses
           (<- shaped dict (responses-status-of responses)))
-        (<- ended-record dict (turn-record-ended-status record-status usage entries cache-observation shaped))
+        (<- ended-record dict (turn-record-ended-status record-status usage entries conditions cache-observation shaped))
         (<- ended-record dict (turn-record-marked-status ended-record mark))
         (<- wrote (| Written Conflict Refused) (AcpPutStatus :row record :status ended-record))
         (when (not (isinstance wrote Written))
@@ -3541,8 +3549,25 @@
   (setv carried measured)
   (if (is limit None)
       (do
+        ;; #349 行 3 粒 3a: 限度の断りは cause にも写す(failed / ProviderLimit・取り消しの cause は上書きしない — judgment.outcome-with-limit の 1 点)
+        (<- limited JobOutcome (outcome-with-limit outcome limit))
+        ;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D1): 温かい手番の終わりで本文のための model の出力が 1 本も無ければ completed を
+        ;; 名乗らない — failed / TurnProducedNothing + 根拠の条件(判断は judgment.turn-output-condition-of /
+        ;; outcome-with-output-condition の 1 点・材料は上で読み直した batch と器が名乗った手番の失敗の文 turn-error〔D2〕)。ACP の
+        ;; Messaging はこの reason を一過性として有界に組み直す(郵便を黙って消費しない)。
+        ;; card acp:kanban-issue:ki-6f222893d6b6: 結末と条件の材料は記録の書きの前に揃うので、ここで組む(turn-record へ写すため)。
+        (<- nothing (| dict None) (turn-output-condition-of
+                                    step source path batch
+                                    (if (isinstance view SessionView) view.turn-error None)
+                                    drained.materials-cover-the-turn))
+        (<- evidenced JobOutcome (outcome-with-output-condition limited nothing))
+        ;; card ki-6f222893d6b6: turn-record へ写す列 = 行に在る条件(前の試みの記録・手番の途中の書き)+ この試みの条件
+        ;; (立てた試みの番号を刻む — judgment.conditions-of-runner の 1 点)。写しの形は turn-record-ended-status の中の 1 点。
+        (<- turn-conditions tuple (conditions-of-runner (+ drained.pending-conditions evidenced.conditions) job))
+        (<- row-conditions tuple (row-conditions-of fresh-status))
+        (setv record-conditions (+ row-conditions turn-conditions))
         ;; turn-record → ended(追記できずに持ち越した出来事があれば最後の書きに乗せる)
-        (<- recorded bool (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark batch.cache-observation batch.responses drained))
+        (<- recorded bool (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark record-conditions batch.cache-observation batch.responses drained))
         ;; agora-redesign #537 H2: 終わりの書きが着かなかった拍は、鍵で行の在否を確かめる(正本は行 — 戻りの False は
         ;; 「行が無い」と「書きが断られた」の両方を含む)。行が**無い**なら、その拍に 1 度だけ作り直して ended まで書く —
         ;; 記録なしで Ended にしない(ACP Messaging の turnlessOf は turn-record の行の在否で読み、無ければ
@@ -3566,28 +3591,19 @@
                                                                f"re-created ({remade.status}: {remade.error})")))
                       (setv drained noted))
                     (do
-                      (<- again bool (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark batch.cache-observation batch.responses drained))
+                      (<- again bool (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark record-conditions batch.cache-observation batch.responses drained))
                       (setv recorded again)))
                 (<- (LogLine :text (+ f"agentd: turn-record for job {job.job-id} was missing at turn end; re-created -> "
                                       f"{remade} (ended: {recorded}) (#537)"))))))
         (when (not recorded)
           (<- (LogLine :text f"agentd: turn-record for job {job.job-id} is missing at turn end")))
-        ;; #349 行 3 粒 3a: 限度の断りは cause にも写す(failed / ProviderLimit・取り消しの cause は上書きしない — judgment.outcome-with-limit の 1 点)
-        (<- limited JobOutcome (outcome-with-limit outcome limit))
-        ;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D1): 温かい手番の終わりで本文のための model の出力が 1 本も無ければ completed を
-        ;; 名乗らない — failed / TurnProducedNothing + 根拠の条件(判断は judgment.turn-output-condition-of /
-        ;; outcome-with-output-condition の 1 点・材料は上で読み直した batch と器が名乗った手番の失敗の文 turn-error〔D2〕)。ACP の
-        ;; Messaging はこの reason を一過性として有界に組み直す(郵便を黙って消費しない)。
-        (<- nothing (| dict None) (turn-output-condition-of
-                                    step source path batch
-                                    (if (isinstance view SessionView) view.turn-error None)
-                                    drained.materials-cover-the-turn))
-        (<- evidenced JobOutcome (outcome-with-output-condition limited nothing))
         ;; agent-job → Ended(段 12 lane 12j・agora-redesign #402: 着かなければ行を 1 度読み直して書き直し〔監督が Pending へ戻した /
         ;; Bound attempt N に置き直した行にも Ended を書く — 手番は終わっている〕、それでも着かなければ持ち越す〔毎拍の
         ;; record-unrecorded-ends が書き直す・その id の Bound は claim しない〕。判断は judgment.end-retry-verdict の 1 点。)
-        ;; conditions は最新の写し(drained — 段 9p の given-up の RecordUnavailable を含む)から。
-        (setv ended-conditions (+ drained.pending-conditions evidenced.conditions))
+        ;; conditions は記録の腕の**後**の最新の写し(drained — 段 9p の given-up の RecordUnavailable と、上の作り直しが断られた
+        ;; 時の RecordUnavailable を含む)から組む。card ki-6f222893d6b6: turn-record へ写した列との差は、記録の行が無い時だけ立つ
+        ;; RecordUnavailable ちょうど(Ended の列を記録の書きの前に組むと、それが落ちる)。
+        (<- ended-conditions tuple (conditions-of-runner (+ drained.pending-conditions evidenced.conditions) job))
         (if (is fresh None)
             (<- (LogLine :text f"agentd: agent-job {job.job-id} vanished before Ended"))
             (do
@@ -3629,8 +3645,10 @@
         (if (is fresh None)
             (<- (LogLine :text f"agentd: agent-job {job.job-id} vanished before its refusal could be recorded"))
             (do
-              (<- refused dict (refused-attempt-status-of fresh-status
-                                                          (+ drained.pending-conditions #(limit))))
+              ;; card ki-6f222893d6b6: この試みの条件は試みの番号を名乗る — 次の試みの手番の終わりに、行の条件として turn-record へ
+              ;; 写る(置き直された手番の記録に並んでも、どの試みの事実か読める)。
+              (<- stamped tuple (conditions-of-runner (+ drained.pending-conditions #(limit)) job))
+              (<- refused dict (refused-attempt-status-of fresh-status stamped))
               (<- wrote-job (| Written Conflict Refused) (AcpPutStatus :row fresh :status refused))
               (when (not (isinstance wrote-job Written))
                 (<- (LogLine :text f"agentd: refusal of job {job.job-id} attempt {attempt} not recorded ({wrote-job})")))))))
@@ -3699,6 +3717,10 @@
   current)
 
 
+;; 器に session の無い手番を閉じる条件 SessionFailed の理由の文(turn-record へ写す列と Ended の書きで同じ文)。
+(setv SESSION-MISSING-REASON "session is not registered in the host")
+
+
 (defk fail-missing-arm [settings job-key job-id pending lease-id now-ms owed]
   {:pre [(: settings AgentdSettings) (: job-key str) (: job-id str) (: pending tuple)
          (: lease-id (| str None)) (: now-ms int) (: owed tuple)]
@@ -3706,13 +3728,18 @@
   "器に session が無い job の腕: 記録が在れば ended に、job は SessionFailed で Ended、
    借りていた札は返す。戻り = Ended の書きが着地したか。owed = 配達報告の書けていない郵便の id
    (memory の job から — 拾い直しの腕は memory を持たないので空・card acp:kanban-issue:ki-06b286143c17 §3 の 9)。"
-  (<- (end-turn-record job-id None #() None))
+  ;; card acp:kanban-issue:ki-6f222893d6b6: turn-record へ写す列 = 行の条件 + 受けた pending + SessionFailed(runner の無い閉じ
+  ;; なので出所は行の binding.attempt — end-job-owing が Ended に書く列と同じ刻み方)。行を先に読む(列の材料)。
   (<- fresh (| AcpRow None) (AcpGetRow :key job-key))
+  (<- fresh-status dict (if (is fresh None) {} (status-object-of fresh)))
+  (<- failed dict (condition-of "SessionFailed" SESSION-MISSING-REASON))
+  (<- closing tuple (conditions-of-binding (+ pending #(failed)) fresh-status))
+  (<- row-conditions tuple (row-conditions-of fresh-status))
+  (<- (end-turn-record job-id None #() None (+ row-conditions closing)))
   (setv landed False)
   (if (is fresh None)
       (<- (LogLine :text f"agentd: agent-job {job-id} vanished before Ended"))
-      (<- landed bool (end-job-owing settings fresh "SessionFailed"
-                                     "session is not registered in the host" pending now-ms owed)))
+      (<- landed bool (end-job-owing settings fresh "SessionFailed" SESSION-MISSING-REASON pending now-ms owed)))
   ;; R51: 拾い直しの腕は memory を持たない(lease-id = None)— 機体の journal が握りを名乗る。
   (<- (return-lease settings job-id lease-id))
   landed)
@@ -3913,11 +3940,19 @@
   ;; 段 10f 便 2: 割り込みで終わる手番も文脈の実測を session の cache に置く(settle-record と同じ 1 点の判断)。
   (<- percent (| int None) (context-percent-of batch.context))
   (<- measured AgentdState (with-context-percent state job.session-id percent))
-  (<- (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark batch.cache-observation batch.responses drained))
+  ;; card acp:kanban-issue:ki-6f222893d6b6: この試みの条件 = 手番の途中で判った事実(pending)+ Interrupted(立てた試みの番号を
+  ;; 刻む)。turn-record へは行の条件 + この列、agent-job へは同じ列を足す(前は Interrupted だけを書き、pending を捨てていた)。
+  (<- interrupted-now dict (interrupted-condition-of))
+  (<- interrupt-conditions tuple (conditions-of-runner (+ drained.pending-conditions #(interrupted-now)) job))
+  (<- row-status dict (status-object-of row))
+  (<- row-conditions tuple (row-conditions-of row-status))
+  (<- (end-turn-record drained.job-id batch.usage drained.pending-entries drained.recorded-mark
+                       (+ row-conditions interrupt-conditions)
+                       batch.cache-observation batch.responses drained))
   (<- fresh (| AcpRow None) (AcpGetRow :key row.key))
   (setv target (if (is fresh None) row fresh))
   (<- status dict (status-object-of target))
-  (<- interrupted dict (interrupted-status-of status))
+  (<- interrupted dict (interrupted-status-of status interrupt-conditions))
   (<- wrote (| Written Conflict Refused) (AcpPutStatus :row target :status interrupted))
   (when (not (isinstance wrote Written))
     (<- (LogLine :text f"agentd: Interrupted condition of job {job.job-id} not written ({wrote})")))
@@ -4105,7 +4140,10 @@
   (if (is job.interrupt-escalation-seconds None)
       (do
         (<- reason str (interrupt-escalation-undeclared-reason job))
-        (<- with-condition dict (status-with-condition delivered CONDITION-INTERRUPT-ESCALATION-UNDECLARED reason))
+        (<- undeclared dict (condition-of CONDITION-INTERRUPT-ESCALATION-UNDECLARED reason))
+        ;; card acp:kanban-issue:ki-6f222893d6b6: 手番の途中の書きも立てた試みの番号を名乗る(終わりに行の条件として turn-record へ写る)。
+        (<- stamped tuple (conditions-of-runner #(undeclared) job))
+        (<- with-condition dict (status-with-condition delivered (get stamped 0)))
         with-condition)
       delivered))
 
@@ -4393,7 +4431,9 @@
     (return False))
   (<- status dict (status-object-of fresh))
   (<- cause dict (command-cause-of conditions))
-  (<- ended dict (ended-status-of status result cause conditions))
+  ;; card acp:kanban-issue:ki-6f222893d6b6: runner の無い書きの条件は行の binding.attempt を名乗る。
+  (<- closing tuple (conditions-of-binding conditions status))
+  (<- ended dict (ended-status-of status result cause closing))
   (<- wrote (| Written Conflict Refused) (AcpPutStatus :row fresh :status ended))
   (when (not (isinstance wrote Written))
     (<- (LogLine :text f"agentd: summarize job {job-id} not ended ({wrote}); retrying next tick")))
@@ -4697,7 +4737,10 @@
   (<- fresh (| AcpRow None) (AcpGetRow :key row.key))
   (setv target (if (is fresh None) row fresh))
   (<- status dict (status-object-of target))
-  (<- interrupted dict (interrupted-status-of status))
+  ;; card acp:kanban-issue:ki-6f222893d6b6: runner の無い書きの条件は行の binding.attempt を名乗る。
+  (<- interrupted-now dict (interrupted-condition-of))
+  (<- stamped tuple (conditions-of-binding #(interrupted-now) status))
+  (<- interrupted dict (interrupted-status-of status stamped))
   (<- wrote (| Written Conflict Refused) (AcpPutStatus :row target :status interrupted))
   (when (not (isinstance wrote Written))
     (<- (LogLine :text f"agentd: Interrupted condition of summarize job {command.job-id} not written ({wrote})")))
@@ -4779,7 +4822,9 @@
     (return False))
   (<- status dict (status-object-of fresh))
   (<- cause dict (command-cause-of conditions))
-  (<- ended dict (ended-status-of status result cause conditions))
+  ;; card acp:kanban-issue:ki-6f222893d6b6: runner の無い書きの条件は行の binding.attempt を名乗る。
+  (<- closing tuple (conditions-of-binding conditions status))
+  (<- ended dict (ended-status-of status result cause closing))
   (<- wrote (| Written Conflict Refused) (AcpPutStatus :row fresh :status ended))
   (when (not (isinstance wrote Written))
     (<- (LogLine :text f"agentd: verify job {command.job-id} not ended ({wrote}); retrying next tick")))
@@ -4870,7 +4915,10 @@
   (<- fresh (| AcpRow None) (AcpGetRow :key row.key))
   (setv target (if (is fresh None) row fresh))
   (<- status dict (status-object-of target))
-  (<- interrupted dict (interrupted-status-of status))
+  ;; card acp:kanban-issue:ki-6f222893d6b6: runner の無い書きの条件は行の binding.attempt を名乗る。
+  (<- interrupted-now dict (interrupted-condition-of))
+  (<- stamped tuple (conditions-of-binding #(interrupted-now) status))
+  (<- interrupted dict (interrupted-status-of status stamped))
   (<- wrote (| Written Conflict Refused) (AcpPutStatus :row target :status interrupted))
   (when (not (isinstance wrote Written))
     (<- (LogLine :text f"agentd: Interrupted condition of verify job {command.job-id} not written ({wrote})")))
@@ -4895,7 +4943,10 @@
     (when (is-not record None)
       (<- record-status dict (status-object-of record))
       (when (!= (.get record-status "state") TURN-RECORD-ENDED)
-        (<- ended dict (turn-record-ended-status record-status None #()))
+        ;; card acp:kanban-issue:ki-6f222893d6b6: 退役した agent-job の行の条件(断られた試みそれぞれの記録)を写す。
+        (<- retired-status dict (status-object-of row))
+        (<- retired-conditions tuple (row-conditions-of retired-status))
+        (<- ended dict (turn-record-ended-status record-status None #() retired-conditions))
         (<- wrote (| Written Conflict Refused) (AcpPutStatus :row record :status ended))
         (when (isinstance wrote Written)
           (setv ended-count (+ ended-count 1)))
@@ -5251,12 +5302,16 @@
         (if (= verdict TURN-RECORD-SWEEP-END)
             (do
               (setv pair-phase "gone")
+              ;; card acp:kanban-issue:ki-6f222893d6b6: 対の agent-job の行が在ればその条件を写す(刈られていれば材料が無い —
+              ;; 欄を書かない)。
+              (setv pair-conditions #())
               (when (isinstance pair AcpRow)
                 (<- pair-status dict (status-object-of pair))
-                (setv pair-phase (str (.get pair-status "phase"))))
+                (setv pair-phase (str (.get pair-status "phase")))
+                (<- pair-conditions tuple (row-conditions-of pair-status)))
               (<- record-status dict (status-object-of record))
               ;; usage は書かない(開始 offset は memory にしか無く、0 から数え直すと温かい session の前の手番を足す発明になる)。
-              (<- ended dict (turn-record-ended-status record-status None #()))
+              (<- ended dict (turn-record-ended-status record-status None #() pair-conditions))
               (<- wrote (| Written Conflict Refused) (AcpPutStatus :row record :status ended))
               (when (isinstance wrote Written)
                 (setv ended-count (+ ended-count 1)))

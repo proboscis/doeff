@@ -117,9 +117,9 @@ def test_the_first_response_is_kept_even_when_it_alone_exceeds_the_budget() -> N
 
 def test_ended_status_carries_responses_only_when_given() -> None:
     shaped = {"count": 1, "items": [{"n": 1, "at": 1, "input": 1, "output": 1, "cacheWrite": 0, "cacheRead": 0}]}
-    ended = run(judgment.turn_record_ended_status({"state": "running"}, None, (), None, shaped))
+    ended = run(judgment.turn_record_ended_status({"state": "running"}, None, (), (), None, shaped))
     assert ended["state"] == "ended" and ended["responses"] == shaped
-    assert "responses" not in run(judgment.turn_record_ended_status({"state": "running"}, None, ()))
+    assert "responses" not in run(judgment.turn_record_ended_status({"state": "running"}, None, (), ()))
 
 
 def test_budget_and_fields_match_the_contract_copy() -> None:

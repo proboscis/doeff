@@ -67,6 +67,15 @@
 ;; card acp:kanban-issue:ki-567f2dd6140f §3.1e: 保持の予算は ACP 側の 1 点(host は 1 度も読まない)。
 (import doeff_agents.sessionhost.acp.cache_operation [CACHE-RESIDENT-IDLE-MS])
 (import doeff_agents.sessionhost.acp.effects [
+  AGENTD-CONDITION-TYPES
+  CONDITION-ATTEMPT-KEY
+  CONDITION-STATUS-UNKNOWN
+  CONDITION-STATUS-WORDS
+  TURN-RECORD-CONDITIONS-BYTE-BUDGET
+  TURN-RECORD-CONDITIONS-DROPPED-KEY
+  TURN-RECORD-CONDITIONS-KEY
+  TURN-RECORD-CONDITIONS-MAX
+  TURN-RECORD-CONDITION-TEXT-MAX
   INTAKE-ROUTE-DEFER
   INTAKE-ROUTE-INLINE
   INTAKE-ROUTE-SPAWN
@@ -1818,21 +1827,33 @@
       INTERRUPT-ARM-NONE))
 
 
-(defk interrupted-status-of [status]
-  {:pre [(: status dict)]
+(defk interrupted-condition-of []
+  {:pre []
+   :post [(: % dict)]}
+  "取り下げで止めた手番の条件 Interrupted の 1 項。出所(attempt)は呼び手が刻む(走っている手番 = conditions-of-runner・
+   runner の無い要約 / 検証の job = conditions-of-binding)。"
+  (<- condition dict (condition-of CONDITION-INTERRUPTED "agent-job withdrawn while the turn was running"))
+  condition)
+
+
+(defk interrupted-status-of [status conditions]
+  {:pre [(: status dict) (: conditions tuple)]
    :post [(: % dict)]}
   "取り下げで止めた手番の agent-job の status: phase は書かない(Withdrawn のまま — 書き手は
-   作った側)、conditions に Interrupted を 1 つ足す(既に在れば足さない)。段 12 lane 12k(agora-redesign #349 行 3 粒 3a):
+   作った側)、conditions(呼び手が出所を刻んだ列 — Interrupted〔interrupted-condition-of〕と、手番の途中で判った事実)を
+   末尾に足す。Interrupted が既に在る行には Interrupted を重ねない(書き直しは冪等)。段 12 lane 12k(agora-redesign #349 行 3 粒 3a):
    終端の理由も result.cause {category: interrupted, reason: withdrawn} に載せる(Withdrawn の行の result は agentd の欄 — 既に
-   在る結末は保つ・cause は同じ値なので書き直しは冪等)。"
+   在る結末は保つ・cause は同じ値なので書き直しは冪等)。card acp:kanban-issue:ki-6f222893d6b6: 手番の途中の事実(pending)を
+   捨てていた(Interrupted しか書かなかった)のを、turn-record へ写す列と同じ列を足す形にした。"
   (setv next (dict status))
   (setv existing (.get status "conditions"))
-  (setv conditions (if (isinstance existing list) (list existing) []))
-  (when (not (any (gfor item conditions
-                        (and (isinstance item dict) (= (.get item "type") CONDITION-INTERRUPTED)))))
-    (<- condition dict (condition-of CONDITION-INTERRUPTED "agent-job withdrawn while the turn was running"))
-    (.append conditions condition))
-  (setv (get next "conditions") conditions)
+  (setv kept (if (isinstance existing list) (list existing) []))
+  (setv interrupted-already (any (gfor item kept
+                                       (and (isinstance item dict) (= (.get item "type") CONDITION-INTERRUPTED)))))
+  (setv added (lfor item conditions
+                    :if (not (and interrupted-already (= (.get item "type") CONDITION-INTERRUPTED)))
+                    item))
+  (setv (get next "conditions") (+ kept added))
   (<- cause dict (terminal-cause-of CAUSE-CATEGORY-INTERRUPTED CAUSE-REASON-WITHDRAWN))
   (<- carried dict (result-with-cause (.get status "result") cause))
   (setv (get next "result") carried)
@@ -2303,16 +2324,17 @@
   next)
 
 
-(defk status-with-condition [status condition-type reason]
-  {:pre [(: status dict) (: condition-type str) (: reason str)]
+(defk status-with-condition [status condition]
+  {:pre [(: status dict) (: condition dict)]
    :post [(: % dict)]}
-  "status の conditions に type の条件を 1 つ足す(既に在れば足さない・他の欄は写す)。"
+  "status の conditions に条件を 1 つ足す(同じ type が既に在れば足さない・他の欄は写す)。condition は呼び手が出所を刻んだ項
+   (card acp:kanban-issue:ki-6f222893d6b6 — conditions-of-runner)。"
   (setv next (dict status))
   (setv existing (.get status "conditions"))
   (setv conditions (if (isinstance existing list) (list existing) []))
+  (setv condition-type (.get condition "type"))
   (when (not (any (gfor item conditions
                         (and (isinstance item dict) (= (.get item "type") condition-type)))))
-    (<- condition dict (condition-of condition-type reason))
     (.append conditions condition))
   (setv (get next "conditions") conditions)
   next)
@@ -4796,14 +4818,109 @@
   next)
 
 
-(defk turn-record-ended-status [status usage entries [cache-observation None] [responses None]]
-  {:pre [(: status dict) (: usage (| dict None)) (: entries tuple) (: cache-observation (| dict None))
+;; card acp:kanban-issue:ki-6f222893d6b6: 手番を落とさない失敗(記憶が書けない・設定を無視した・添付を渡せなかった等)の
+;; 条件は agent-job の行にだけ立ち、その行は Ended から猶予の後に刈られる。耐久に残す置き場は turn-record の status.conditions
+;; (契約 conventions.turnRecordConditions)。出所(どの試みが立てたか)は条件が作られた拍にしか判らないので、ここの 2 つ
+;; (conditions-of-runner / conditions-of-binding)が刻み、写しの形(語の絞り・上限)は turn-record-conditions-of の 1 点が持つ。
+
+(defk conditions-of-runner [conditions job]
+  {:pre [(: conditions tuple) (: job InFlightJob)]
+   :post [(: % tuple)]}
+  "手番を走らせた runner(この試み)が agent-job に足す条件に出所を刻む: attempt = その試みの番号(InFlightJob.attempt =
+   受けた拍の binding.attempt)。項が既に名乗る欄はそのまま(ProviderLimit・CredentialLeaseHeld は自分で attempt を名乗る)。
+   出所の欄を知るのはこの関数と兄弟の conditions-of-binding だけ — 腕は手番を渡すだけ(欄を足す変更が腕へ波及しない)。"
+  (setv provenance {CONDITION-ATTEMPT-KEY job.attempt})
+  (tuple (gfor condition conditions (| provenance condition))))
+
+
+(defk conditions-of-binding [conditions status]
+  {:pre [(: conditions tuple) (: status dict)]
+   :post [(: % tuple)]}
+  "runner の無い書き(起こす前の閉じ end-job-owing・器に session の無い手番の閉じ・要約 / 検証の job の終わりと取り下げ)が
+   agent-job に足す条件に出所を刻む: attempt = 行の binding.attempt(binding-attempt-of — 欄の無い結びは 1)。形は
+   conditions-of-runner と同じ(既に名乗る欄はそのまま)。"
+  (<- attempt int (binding-attempt-of status))
+  (setv provenance {CONDITION-ATTEMPT-KEY attempt})
+  (tuple (gfor condition conditions (| provenance condition))))
+
+
+(defk row-conditions-of [status]
+  {:pre [(: status dict)]
+   :post [(: % tuple)]}
+  "行の status.conditions の項(dict の項だけ・欄が無い / 列でない行は空)。手番の終わりに turn-record へ写す列の頭 —
+   前の試みの条件と手番の途中で行へ書いた条件はここにしか無い。"
+  (setv existing (.get status "conditions"))
+  (if (isinstance existing list)
+      (tuple (gfor item existing :if (isinstance item dict) item))
+      #()))
+
+
+(defk condition-copy-size [item]
+  {:pre [(: item dict)]
+   :post [(: % int)]}
+  "写しの 1 項の compact JSON(UTF-8)の byte 数。対のない surrogate は 3 byte と数える(engine は U+FFFD に置き換える —
+   同じ 3 byte)。"
+  (len (.encode (json.dumps item :ensure-ascii False :separators #("," ":")) "utf-8" "surrogatepass")))
+
+
+(defk turn-record-conditions-of [conditions]
+  {:pre [(: conditions tuple)]
+   :post [(: % tuple)]}
+  "agent-job の条件の列 → #(turn-record の status.conditions の項の列  上限で落とした項の数)。写しの形の定義点
+   (契約 kinds.turn-record … status.conditions と conventions.turnRecordConditions の写し):
+     * 写すのは agentd の語(AGENTD-CONDITION-TYPES)の項だけ — 配置など他の書き手が agent-job に立てた語は agentd の記録に
+       名乗らない。dict でない項も写さない。
+     * 項の欄は type / status / reason? / message? / at? / attempt? だけ。status は 3 語(True / False / Unknown)で、外の値は
+       Unknown に倒す。reason / message は文字列だけを TURN-RECORD-CONDITION-TEXT-MAX 字で切る。at は 0 以上・attempt は 1 以上の
+       整数だけ(bool は数でない)。
+     * 同じ項(欄と値がすべて等しい)は 1 つ。
+     * 先頭から足し、件数が TURN-RECORD-CONDITIONS-MAX に届いた後の項と、列の compact JSON が TURN-RECORD-CONDITIONS-BYTE-BUDGET を
+       超える項は落として数える(大きい項を落とした後の小さい項は入る)。
+   どんな入力でも出力は契約の schema と byte の上限を満たす(書き手の上限 ≤ 契約)。本番では例外を投げない — 語彙の外の語は
+   黙って落ちる(テストの偽の ACP の書き込み口が書き手の側で検める — fake.FAKE-ACP-CONTRACT-VIOLATIONS)。"
+  (setv kept [])
+  (setv seen (set))
+  (setv dropped 0)
+  ;; 列の括弧 2 byte から数え、項ごとに区切りの 1 byte を足す(最後の区切りの 1 byte ぶん控えめに数える)。
+  (setv used 2)
+  (for [condition conditions]
+    (setv condition-type (if (isinstance condition dict) (.get condition "type") None))
+    (when (and (isinstance condition-type str) (in condition-type AGENTD-CONDITION-TYPES))
+      (setv status (.get condition "status"))
+      (setv item {"type" condition-type
+                  "status" (if (in status CONDITION-STATUS-WORDS) status CONDITION-STATUS-UNKNOWN)})
+      (for [key #("reason" "message")]
+        (setv text (.get condition key))
+        (when (isinstance text str)
+          (setv (get item key) (cut text TURN-RECORD-CONDITION-TEXT-MAX))))
+      (for [#(key floor) #(#("at" 0) #(CONDITION-ATTEMPT-KEY 1))]
+        (setv number (.get condition key))
+        (when (and (isinstance number int) (not (isinstance number bool)) (>= number floor))
+          (setv (get item key) number)))
+      (setv identity (frozenset (.items item)))
+      (when (not-in identity seen)
+        (.add seen identity)
+        (<- size int (condition-copy-size item))
+        (if (and (< (len kept) TURN-RECORD-CONDITIONS-MAX)
+                 (<= (+ used size 1) TURN-RECORD-CONDITIONS-BYTE-BUDGET))
+            (do
+              (.append kept item)
+              (setv used (+ used size 1)))
+            (setv dropped (+ dropped 1))))))
+  #((tuple kept) dropped))
+
+
+(defk turn-record-ended-status [status usage entries conditions [cache-observation None] [responses None]]
+  {:pre [(: status dict) (: usage (| dict None)) (: entries tuple) (: conditions tuple) (: cache-observation (| dict None))
          (: responses (| dict None))]
    :post [(: % dict)]}
   "手番の終わりの turn-record の status: 残りの見出し(entries — TurnEntryHeadline の列)を行の entries に**追記**
    した上で state = ended・usage(素材があれば)。行の entries は落とさない(手番の間に追記した見出しが正本)。
    responses = 応答ごとの消費(card acp:kanban-issue:ki-c3ac5832a0bd — response_usage.responses-status-of の形)は
-   **この終わりの書きでだけ**置く(走っている間の追記の書きに載せると、追記のたびに status の全体を書き戻して記録簿が育つ)。"
+   **この終わりの書きでだけ**置く(走っている間の追記の書きに載せると、追記のたびに status の全体を書き戻して記録簿が育つ)。
+   conditions = その手番の agent-job の条件の列(card acp:kanban-issue:ki-6f222893d6b6)— **既定値の無い引数**で、ここで写しの
+   1 点(turn-record-conditions-of)を通してから置く(写さずに書く道を作らない)。写す項が在れば status.conditions、落とした項が
+   在れば status.conditionsDropped。どちらも responses と同じく終わりの書きでだけ置く。空の列(材料が無い)は欄を書かない。"
   (<- next dict (turn-record-appended-status status entries))
   (setv (get next "state") TURN-RECORD-ENDED)
   (when (is-not usage None)
@@ -4812,6 +4929,15 @@
     (setv (get next "cacheObservation") cache-observation))
   (when (is-not responses None)
     (setv (get next "responses") responses))
+  (<- projected tuple (turn-record-conditions-of conditions))
+  (setv #(items dropped) projected)
+  ;; 欄は渡された材料ちょうどで決める(行に前の値が在っても持ち越さない)。
+  (.pop next TURN-RECORD-CONDITIONS-KEY None)
+  (.pop next TURN-RECORD-CONDITIONS-DROPPED-KEY None)
+  (when items
+    (setv (get next TURN-RECORD-CONDITIONS-KEY) (list items)))
+  (when (> dropped 0)
+    (setv (get next TURN-RECORD-CONDITIONS-DROPPED-KEY) dropped))
   next)
 
 
