@@ -421,6 +421,20 @@
        "end-turn-record" "手番の終わりの ended の書きの前(record-spec-dirty の時だけ — 記録は手番の後に残る唯一の身元)"})
 
 
+;; R-a-continued-turn-points-at-the-mail-it-already-handed-4ff4 (6): 配達報告の書けていない郵便の id(InFlightJob.inputs_delivered_owed)を
+;; Ended の書きに足し直す点(郵便を運ぶ手番の Ended の書き手)と、それぞれがいつ書くか。書き直しの座は record-inputs-delivered の
+;; 1 点のまま(遅い腕の settle-owed-inputs が呼ぶ)。郵便を運ばない命令の族の Ended の書き手は下の名簿に分けて宣言する —
+;; Ended の書き手を足す便は、どちらかへ 1 行宣言する(針は ended-status-of の読み手の集合をこの 2 つの和と突き合わせる)。
+(setv OWED-INPUTS-CARRIERS
+      {"end-job-owing" "session なしで閉じる Ended の本体(end-job-now は持ち越し無しでここを呼ぶ・器に session が無い手番を閉じる fail-missing-arm が memory の持ち越しを渡す)"
+       "settle-record" "手番の終わりの Ended と断られた試みの記録(書き直しの拍より先に手番が終わった形・停止の排水を含む)"
+       "record-unrecorded-ends" "着かなかった Ended の持ち越しの書き(UnrecordedEnd が id を運ぶ)"})
+
+(setv ENDED-WRITERS-WITHOUT-MAIL
+      {"end-summarize-job" "summarize の命令(郵便を運ばない — inputs は要約の区間)"
+       "end-command" "verify の命令(郵便を運ばない — 機体の script を 1 つ走らせる)"})
+
+
 (defn #^ list source-files []
   (sorted (+ (list (.rglob SESSIONHOST-DIR "*.hy"))
              (list (.rglob SESSIONHOST-DIR "*.py")))))
@@ -769,7 +783,8 @@
      (rule R62 "**既に在る turn-record を続ける拍に、記録が名乗る配置と session は今の手番のもの(turn-record-spec-of)へ揃える**(card acp:kanban-issue:ki-90019f023e19・本番の実測 2026-09-23: 結び直された attempt > 1 の 7 本すべてが 1 回目の node と口座を名乗り、keepalive が古い機体・古い口座を温めていた — agentd は create の Conflict を受けて記録を続けるだけで spec に触らず、契約の writers.update も [] だった)。(1) 継続の腕は agentd.adopt-existing-record の 1 つ — 呼ぶ点は名簿 TURN-RECORD-CONTINUATION-POINTS(after-start の create の Conflict・ensure-turn-record の再試行の Conflict・recover-job の拾い直し)ちょうどで、第 4 の継続点を作らない。本文の stream の番と採番の下限(recovered-record-of)もこの腕の中で拾う。(2) 判断は judgment.turn-record-spec-realignment-of の純関数 1 点: identity(conversationId・agentJobId)が違えば書かない・行の spec.attempt が今の手番の試みより**新しければ**書かない(失われたと判じられて生きていた古い試みの agentd は、新しい試みの記録を書き戻せない — 所有は継続の時機ではなく試みの回数の単調性で決める)・揃えた結果が行と等しければ書かない(冪等)。置き換えるのは TURN-RECORD-PLACEMENT-FIELDS(turn-record-spec-of が identity の外に書く欄の全部 — node・profile・model・sessionId・cacheContext・attempt・reopen。欄を足す時は turn-record-spec-of とこの集合の 2 か所で、2 つの一致は検が確かめる)だけで、この版の agentd が書かない欄(traceparent 等・版の混在する配備で別の版が書いた欄)は行の値を保つ。wanted に無い配置の欄は行からも消す(前の試みの値を今の試みの値として残さない)。spec.attempt の読みは turn-record-spec-attempt-of の 1 点(欄の無い行 = 1・bool は数でない)で、値は InFlightJob.attempt(status.binding.attempt の写し)。(3) 書きは agentd.realign-record-spec の AcpPutSpec の CAS の 1 点(Conflict は読み直して 1 回だけ判断し直す)。書けなかった拍は InFlightJob.record_spec_dirty の印を持ち、次に行を鍵で読む拍(名簿 TURN-RECORD-REALIGN-POINTS の append-entries・end-turn-record)が同じ判断を掛け直す — 単調性があるので追記の拍に掛けても古い試みと新しい試みが書き合わない。log と計器(turn-record-spec-realigned)は書けた拍と、印の立っていない job が初めて書けなかった拍だけ。揃え直しが書けないことは手番の失敗ではない(agent-job に条件は足さない・記録は今日どおり ended まで進む)。(4) 書き手の名簿は契約 docs/contracts/agora-kinds.json の kinds.turn-record.declaration.writers.update = [agentd] の 1 点で、fake の門(FakeAcp._put_spec)は pin された写しを読む(第 2 の名簿を作らない)。読み手(keepalive・Messaging・scheduling の履歴)は変えない。")
      (rule R-the-host-only-reads-the-drain-marker-once-002c "**host process は排水の印を停止の拍に 1 回読むだけで、切った行の語はその答えから 1 点で決まる**(card acp:kanban-issue:ki-b5e0d04de958 D1・設計の改訂 1a / 1b・既知の形 = k8s Job の podFailurePolicy の DisruptionTarget → Ignore〔宣言は外が立て、容器の中の process が自分で『計画された』と判じない〕・本番の実測 = 09-22 の agent-job-carrier-retries-exhausted 6 通は全部 host の SIGTERM の切断で、行の語が RPC の取り消しと同じ cancelled だったので配達は運び手の失敗として数えた): (1) 印の path は env `DOEFF_SESSIONHOST_DRAIN_FILE` から parse-args が 1 度だけ読んで HostConfig.drain-file に置く(CLI の語彙は凍結 — argv に flag を足さない・無し = None = 印を読まない起動)。(2) 読むのは TERM の handler(host.term-handler)の **1 度目の拍に 1 回**だけ — drain_marker.declared と reason_line の答えを値のまま停止の腕(graceful-stop)へ渡し、2 度目の TERM(撃ち直し・停止中の再送)は SystemExit だけで読み直さない(hook の排水が長くても、その間に立った・消えた印で語は変わらない)。(3) 切った行の cause の語は headless_protocol.stop_cause_category の 1 点(印あり = host_drained・無し = cancelled — 今日の語のまま・行の読み手に変化を起こさない)。stop-headless-row は答えを値で受けるだけで、cancelled の逐語を持たない。印の 1 行目は行の散文と停止の log の尾に足すだけで判断には使わない。停止の log の数える語も行の語から導く(固定の文字列で書かない)。(4) **host process は印を書かない**(作らない・上書きしない・消さない)— 『停止中に新しい手番が結ばれないように』という動機で host が自分で印を作ると、その直後の読みは必ず真になり、印の無い SIGTERM が計画された停止の予算へ移る(盲検 B の反例・受入 2 に反する)。1 層目 = 実 binary の対の検査(印なしで停止の後も file が無い・印ありで中身が前後で同じ)、2 層目 = 針(host の source で印の path が現れてよいのは HostConfig の欄・parse-args の env の読みと受け渡し・term-handler の 2 つの読みへの引数だけ・headless.hy と headless_protocol.py は印を知らない)。限界: env を別の綴りで読み直す形や path を文字列で組み直す形は静的に閉じない — そこは 1 層目が止める。")
      (rule R-the-drain-marker-path-env-is-spelled-at-two-points-c530 "**印の path を host へ運ぶ env の綴りは 2 点だけで、立てるのは役 host の起動だけ**(card acp:kanban-issue:ki-b5e0d04de958 D1・設計の改訂 1c): 綴りは host.hy の ENV-DRAIN-FILE(読み手の定義点)と acp/entry.py の HOST_DRAIN_FILE_ENV(Hy を読まずに立てるための写し — HOST_SLOT_SUBCOMMAND と同じ扱い)の 2 つで、2 つの値は同じ(検が撃つ)。entry は `join --role host` の時だけ apply_join_env の後にこの env を runtime.drain_file_path(os.environ) で立てる(置き場の定義点は 1 つのまま = ACP 側の process の drain_port が読む file と同じ)。役 both(`--role` 無し)の起動には立てない — env の束も host の argv も今日と 1 byte 差なく同じ(join_role の約束・役 both では停止の hook が行より先に job を {agentd-stopped, drain-deadline} で閉じるので行の語は ACP に届かない)。JoinPlan にも入れない(役は plan に入らない)。")
-     (rule R-drain-marker-has-no-writer-7de2 "**印の解釈の module は読みだけを持ち、書きの API を持たない**(card acp:kanban-issue:ki-b5e0d04de958 D1・設計の改訂 1a / 1b): `sessionhost/drain_marker.py` の公開は declared(path) と reason_line(path) の 2 つだけで、file を開いて書く・作る・消す・名を変える呼び(open の書きの mode・write_text / write_bytes / touch / unlink / remove / rename / replace / mkdir / os.open)を 1 つも持たない。印の書き手は doeff の外(pool の pod の preStop が待ちの前に `pool-prestop <pod> <uid> <UTC> pod termination` を書き、次の pod の入口が自分の印の file だけを消す — ACP の deploy/acp-control/acpcluster.yaml・Mac の入れ替えの道具)。書きの口を doeff に 1 つでも置くと、host process か ACP 側の process が印を作る路が開き、R-the-host-only-reads-the-drain-marker-once-002c の (4) が型の外で崩れる。`acp/` の外の module なので host process(ACP 側の module を import しない)も import してよい。")]
+     (rule R-drain-marker-has-no-writer-7de2 "**印の解釈の module は読みだけを持ち、書きの API を持たない**(card acp:kanban-issue:ki-b5e0d04de958 D1・設計の改訂 1a / 1b): `sessionhost/drain_marker.py` の公開は declared(path) と reason_line(path) の 2 つだけで、file を開いて書く・作る・消す・名を変える呼び(open の書きの mode・write_text / write_bytes / touch / unlink / remove / rename / replace / mkdir / os.open)を 1 つも持たない。印の書き手は doeff の外(pool の pod の preStop が待ちの前に `pool-prestop <pod> <uid> <UTC> pod termination` を書き、次の pod の入口が自分の印の file だけを消す — ACP の deploy/acp-control/acpcluster.yaml・Mac の入れ替えの道具)。書きの口を doeff に 1 つでも置くと、host process か ACP 側の process が印を作る路が開き、R-the-host-only-reads-the-drain-marker-once-002c の (4) が型の外で崩れる。`acp/` の外の module なので host process(ACP 側の module を import しない)も import してよい。")
+     (rule R-a-continued-turn-points-at-the-mail-it-already-handed-4ff4 "**続きの手番は、途中で終わった手番が既に渡した郵便を渡し直さず、再開の案内文で指すだけ**(card acp:kanban-issue:ki-06b286143c17・依頼 lt-9Q3EH9WYRHPSXR3MZQHB1ASRS7 §3 の 6〜10・実測 2026-09-23 の全 37,405 通: 渡した後に再投入されて 2 度目の handedAt が付いた郵便が 478 通・113 会話 — 1 本目の手番は実行環境の障害〔SIGTERM の SessionFailed・SessionLost・TurnProducedNothing〕で終わっていて、その配達報告にはその郵便が入っていた。同じ会話の session は 1 度目の本文を履歴に持っているので、本文が 2 度届き、同じ内容への返事が 2 回出た郵便が 11 通)。(1) 印は agent-job の spec.continuation = {of, cause, handed}(任意の欄・無い = 続きの手番ではない・綴りは effects.JOB_CONTINUATION_KEY と 3 つの子の鍵の 1 点)。書き手は ACP の配達だけで、振り分け(渡し直すか・続きとして指すか)は ACP の Messaging.Decide.carrierEndedOf の 1 点(終わった手番の inputsDelivered ∩ spec.inputs と、その手番自身の continuation.handed が続き・それ以外が渡し直し)— agentd は handed を spec.inputs と突き合わせて足し引きせず、運ぶだけ。読むのは judgment.continuation-of の 1 点(型 TurnContinuation・欠けた欄は発明しない)。(2) 案内文を組むのは judgment.continuation-guidance-of の 1 点で、材料は continuation と handed の郵便の行の **spec**(見出しの kind / from)だけ — 郵便の行の status(delivery.handedAt)は引数に取らない(『渡したか』を agentd が別の証拠で読み直すと第 2 の判断点になる)。文面は前の手番とその終わり方(cause)・handed の郵便は既に渡っていて本文は上の履歴にあること・続きから進めること・既に出した返事を出し直さないこと。本文は載せず、郵便は `・郵便 <id>(kind=…・from=…)` で指す — 手番へ渡る郵便の見出し `[郵便 <id>・…]`(mail-heading-of)とは違う綴り(受入の測りは transcript の見出しを数えて本文が 1 回だけ届いたかを判じる)。(3) 案内文は郵便の前置き(lead)として既存の 1 点を通る: 起こす腕は charter-with-first-turn(charter → これまでの会話 → 案内文 → 郵便)・送りは send-parcels-of(畳む器 = 同じ 1 本の先頭・畳まない器 = **id を運ばない送り 1 つ**を郵便の送りの前)。畳むかの判断は first-turn-carries-inputs / send-folds-bodies のまま(腕では分岐しない)。新しい session を履歴から起こす腕(rehydrate / rebuild)では handed の郵便は spec.inputs に居ないので「これまでの会話」に普段どおり 1 回入る(除外の規則は変えない)。(4) spec.inputs が空で continuation だけを持つ手番は閉じない — 案内文がその手番の入力。1 通も渡せなかった手番を閉じる判断(R50)は『器が送りを 1 つも受け取らなかった』で読み、期限切れの郵便しか無い手番も案内文があれば起こす。(5) 配達報告 inputsDelivered には、その手番の spec.inputs の id だけが入る(不変条件 I6)— 書きの 1 点 judgment.inputs-delivered-status-of が spec.inputs を引数に取り、事前条件(ids ⊆ inputs)の違反は例外(黙って落とさない)。案内文の送りは id を運ばないので報告に載らない。(6) 配達報告の書きが着かなかった id は捨てない: InFlightJob.inputs_delivered_owed に持ち越し、拍の遅い腕(settle-owed-inputs — 書きの座は record-inputs-delivered の 1 点のまま)が書けるまで書き直し、それより先に手番が終わったら Ended の書き(session なしで閉じる end-job-owing〔end-job-now の本体・fail-missing-arm が持ち越しを渡す〕・settle-record・持ち越しの UnrecordedEnd を書く record-unrecorded-ends)が judgment.owed-inputs-delivered-status-of で同じ 1 回の書きに足す(引数の既定値で持ち越しを省かせない — 受けの拍の門は end-job-now が空で呼ぶ)。欠けたまま Ended になると ACP はその郵便を『渡っていない』と読み、次の手番へ渡し直す(同じ郵便が 2 度届く)。限界: 持ち越しは memory なので agentd の再起動をまたがない(拾い直しの recover-job は渡したかを知らない)。(7) この版は agentd の protocol を 3 に上げる(effects.AGENTD_PROTOCOL)。出荷の順は doeff の配備 → 全機体が 3 を名乗った後に ACP の配置の床 agentdProtocolFloor を 3 へ → ACP の配達が continuation を書き始める(逆にすると protocol 2 の agentd が inputs = [] の続きの手番を charter だけの prompt で走らせる)。")]
   :laws
     [(law a-dead-backend-is-not-a-live-session
        :statement "for_all headless session row r in this host's store at start: ¬terminal(r) ∧ ¬backend_alive(observe(r)) ⇒ r is folded to exited with cause vanished (reason = the observation) before accept opens, independently of whether r was mid-turn; hence node.status.observations.sessions names only rows whose backend process this host owns, every folded row whose transcript is still on disk is named by observations.transcripts instead, and the conversation's next turn takes the resume arm (terminal candidate ∧ same home) so the provider cache is kept"
@@ -964,7 +979,7 @@
           (counterexample "開いている block の表を index だけで引く — index は message ごとの番号なので、下請けの agent の message(parent_tool_use_id つき)の同じ番号の差分が親の道具の書きかけに混ざる")
           (counterexample "streamCapability を値の宣言の literal に固定する — headless の node が frames を名乗り、画面が端末の眺めで chat の block を描けない")])
      (law mail-delivery-is-evidenced-by-the-row-not-by-the-phase
-       :statement "for_all agent-job j this agentd claims: the claim's status write (judgment.running-status-of) declares status.inputsDelivered, keeping any list already there and writing [] when there is none — so the field is present from the instant the row is Running, never only after the send lands; and for_all turn of j, mail-ids(j) = judgment.mail-input-ids-of(spec.inputs, missing) (the inputs whose body was read, in the row's order) and the sends are judgment.send-parcels-of(mail-ids, bodies, carried, send-folds-bodies(backend)) — one parcel carrying every id when the backend folds, one parcel per id when it does not, none when bodies is empty; the ids agentd appends to status.inputsDelivered (agentd.record-inputs-delivered — ONE CAS on the row read fresh, append-only, retried once on Conflict) are exactly: mail-ids(j) when the arm folded the mail into the first-turn prompt (first-turn-carries-inputs), plus the ids of every parcel whose SessionSend did NOT answer SessionRefused — and nothing when it did; a turn that delivered NO id ends there (end-job-now with condition InputUndelivered, result.cause = {failed, InputUndelivered}, the lease revoked, the session left alive) and writes no turn-record, no agent-job-to-send metric and no in-flight registration; agentd never re-delivers a mail and holds no second judgement about re-delivery"
+       :statement "for_all agent-job j this agentd claims: the claim's status write (judgment.running-status-of) declares status.inputsDelivered, keeping any list already there and writing [] when there is none — so the field is present from the instant the row is Running, never only after the send lands; and for_all turn of j, mail-ids(j) = judgment.mail-input-ids-of(spec.inputs, missing) (the inputs whose body was read, in the row's order) and the sends are judgment.send-parcels-of(mail-ids, bodies, carried, send-folds-bodies(backend), lead(j)) — one parcel carrying every id when the backend folds, one parcel per id when it does not (preceded by one parcel carrying NO id holding lead(j) when lead(j) ≠ ''), none when bodies is empty and lead(j) = '' (lead(j) = the continuation guidance of law a-continued-turn-points-at-the-mail-it-already-handed); the ids agentd appends to status.inputsDelivered (agentd.record-inputs-delivered — ONE CAS on the row read fresh, append-only, retried once on Conflict; a write that does not land is carried and re-applied as that law states) are exactly: mail-ids(j) when the arm folded the mail into the first-turn prompt (first-turn-carries-inputs), plus the ids of every parcel whose SessionSend did NOT answer SessionRefused — and nothing when it did; a turn in which NO parcel landed (every SessionSend answered SessionRefused and the arm did not fold into the first-turn prompt — for a turn without spec.continuation, exactly: it delivered NO id) ends there (end-job-now with condition InputUndelivered, result.cause = {failed, InputUndelivered}, the lease revoked, the session left alive) and writes no turn-record, no agent-job-to-send metric and no in-flight registration; agentd never re-delivers a mail and holds no second judgement about re-delivery"
        :counterexamples
          [(counterexample "『手番が始まった』(phase = Running / turn-record が在る)を『郵便が届いた』の証拠に使う — 相乗り 10 通のうち agent に届いたのは 1 通なのに台帳は 10 通とも handedAt(実測 2026-09-18)。届かなかった 9 通は誰からも見えず、差出人は永久に返事を待つ")
           (counterexample "inputsDelivered を送りが着地した拍に初めて書く(claim では宣言しない)— claim から送りまでは器を起こす数秒あり、その窓の配達の拍は『欄が無い = 旧い agentd』と読んで phase = Running の推定に落ち、handedAt が先に立つ(直そうとしている取り違えがその窓にそのまま残る)")
@@ -975,7 +990,7 @@
           (counterexample "断られた手番を閉じる時に turn-record を作る / 計器 agent-job-to-send を撃つ — 始まっていない手番の始まりの証拠を偽り、ACP の turnlessEndOf が『手番は在った』と読む")
           (counterexample "agentd が断られた郵便を自分で送り直す(再配達の腕を持つ)— 再配達の判断点が ACP の配達(Messaging.Decide.carrierEndedOf)と 2 つになり、上限(carrierRetryLimit)の外で無限に撃てる")])
      (law headless-first-turn-carries-the-mail
-       :statement "for_all Bound job j claimed by launch or resume on a host whose backend is headless (AgentdSettings.backend_kind = headless): the prompt of session.launch / session.resume = first-turn-prompt-of(charter.prompt, bodies(inputs(j))) (blank-line joined・charter only when inputs are empty) ∧ no SessionSend is issued for j; on a tui host the launch prompt = charter.prompt ∧ SessionSend(bodies) follows; the send arm sends bodies only (never the charter prompt) on every host, and on a headless host it folds them into exactly one SessionSend(first-turn-prompt-of(empty prefix, bodies), first-turn-attachments-of(carried)) — zero sends when bodies is empty; the two decisions are judgment.first-turn-carries-inputs (charter, backend ∧ arm) and judgment.send-folds-bodies (after-start, backend alone) and nothing else"
+       :statement "for_all Bound job j claimed by launch or resume on a host whose backend is headless (AgentdSettings.backend_kind = headless): the prompt of session.launch / session.resume = first-turn-prompt-of(charter.prompt, (lead(j),) + bodies(inputs(j))) (blank-line joined・charter only when inputs are empty and lead(j) is empty) ∧ no SessionSend is issued for j; on a tui host the launch prompt = charter.prompt ∧ SessionSend(lead(j)) (when lead(j) ≠ '') then SessionSend(bodies) follow; the send arm sends lead(j) and bodies only (never the charter prompt) on every host, and on a headless host it folds them into exactly one SessionSend(first-turn-prompt-of(lead(j), bodies), first-turn-attachments-of(carried)) — zero sends when bodies is empty and lead(j) = ''; lead(j) = the continuation guidance of law a-continued-turn-points-at-the-mail-it-already-handed ('' for every j without spec.continuation, so for them this law reads as before); the two decisions are judgment.first-turn-carries-inputs (charter, backend ∧ arm) and judgment.send-folds-bodies (after-start, backend alone) and nothing else"
        :counterexamples
          [(counterexample "headless の launch の後に郵便を session.send する — claude は 1 手番 1 process なので host が同じ名で --resume を spawn し `headless session already exists` で tick が落ちる(実弾 2026-09-12 agentd-4.log)・codex は走っている turn に turn/start を積む")
           (counterexample "agentd.hy が backend の語を自分で比較して畳む / 畳まないを分ける — 判定点が judgment と 2 つになり、backend の語彙が増えた日に片方だけ直る")
@@ -1350,7 +1365,29 @@
                      "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-a-realignment-that-did-not-land-is-retried-when-the-row-is-next-read"
                      "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-a-realignment-refused-every-time-names-itself-once-and-still-ends-the-record"
                      "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-the-next-attempt-of-a-refused-turn-continues-the-same-turn-record"
-                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_agentd_values_copied_from_agora_kinds_match_the_copy"])]
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_agentd_values_copied_from_agora_kinds_match_the_copy"])
+     (law a-continued-turn-points-at-the-mail-it-already-handed
+       :statement "for_all agent-job j claimed by this agentd, with c = judgment.continuation-of(j) (the typed copy of j.spec.continuation — None when the field is absent or not an object; of / cause / handed never invented) and lead(j) = judgment.continuation-guidance-of(c, {m ↦ spec(message m) | m ∈ c.handed, the row of m readable}) ('' iff c = None): (a) the guidance reads c and the handed rows' spec only — never a message row's status (delivery.handedAt) — names every m ∈ c.handed by the spelling `・郵便 <m>(kind=…・from=…)` and never by the turn heading `[郵便 <m>・…]` (mail-heading-of), carries no body of any handed message, and asks the agent to continue and not to repeat a reply it already gave; (b) no message m ∈ c.handed is ever carried as a turn input of j (it reaches the session only through the history a new session is rebuilt from — rehydrate: the 「これまでの会話」 block, rebuild: the rebuilt transcript — exactly as before, because m ∉ j.spec.inputs), and agentd never compares c.handed with j.spec.inputs (the split is ACP Messaging.Decide.carrierEndedOf alone); (c) lead(j) rides the existing single points: judgment.charter-with-first-turn places it after the charter prompt and the history and before the mail bodies when first-turn-carries-inputs(backend, arm), and otherwise judgment.send-parcels-of places it first — inside the one folded parcel when send-folds-bodies(backend), else as one parcel carrying NO message id; (d) a turn whose spec.inputs is empty (or holds only expired mail) but whose lead(j) ≠ '' is started, not closed with InputUndelivered / InputExpired; it closes with InputUndelivered only when no parcel landed; (e) for_all write w of status.inputsDelivered on j by this agentd: the ids w adds ⊆ j.spec.inputs — enforced by the :pre of judgment.inputs-delivered-status-of(status, ids, inputs), whose violation raises, so a guidance parcel adds nothing; (f) the ids of a delivery report that did not land are kept in InFlightJob.inputs_delivered_owed and added again by judgment.owed-inputs-delivered-status-of — on every later slow tick through agentd.settle-owed-inputs (the write point stays agentd.record-inputs-delivered) until it lands, and in the same write as j's Ended status (end-job-owing — the body of end-job-now, given the job's owed ids by fail-missing-arm —, settle-record, and record-unrecorded-ends through UnrecordedEnd.inputs_delivered_owed; roster OWED-INPUTS-CARRIERS) when the turn ends first; hence Ended(j) names every id the session received; (g) effects.AGENTD_PROTOCOL = 3 names the first agentd that reads spec.continuation"
+       :counterexamples
+         [(counterexample "続きの手番の spec.inputs に handed の郵便を戻して本文ごと渡し直す(旧の形・実測 2026-09-23: 478 通・113 会話で 2 度目の handedAt・同じ内容への返事が 2 回出た郵便が 11 通)— 前の transcript を続ける session は同じ本文を 2 度読む")
+          (counterexample "案内文が郵便の行の delivery.handedAt を読んで『渡したか』を確かめ直す — ACP の振り分け(carrierEndedOf)と agentd の 2 か所で判断が割れ、片方だけ直った日に同じ郵便が 2 度届くか 1 度も届かない")
+          (counterexample "案内文が handed の郵便を見出しの綴り `[郵便 <id>・…]` で指す — 受入の測り(transcript の見出しを数えて本文が 1 回だけ届いたか)が、正しく渡し直さなかった手番を 2 回と数える")
+          (counterexample "案内文に handed の郵便の本文を写す(『念のため』)— 本文が 2 度届く形がそのまま残る")
+          (counterexample "見やすさのために続きの郵便も配達報告 inputsDelivered へ引き継ぐ — 同じ id が 2 つの手番の報告に現れ、ACP の振り分けはどちらの手番が渡したかを読めない(反例探し B で、旧い書きの関数が spec.inputs の外の id をそのまま足すと確認済み)。事前条件で例外にする")
+          (counterexample "tui で案内文を渡し直す郵便と同じ送りに混ぜる / 案内文の送りに郵便の id を載せる — 本文と id の対応(send-parcels-of の 1 点)がずれ、案内文が着いただけで郵便を渡したと報告する")
+          (counterexample "spec.inputs が空の続きの手番を『渡す郵便が無い』として InputUndelivered で閉じる(または送りを撃たずに待つ)— 案内文がその手番の唯一の入力で、閉じると途中までの作業が続かない")
+          (counterexample "配達報告の書きが断られた id を log 1 行で捨てる(旧の形)— 手番がそのまま Ended になると ACP はその郵便を『渡っていない』と読み、次の手番へ渡し直す(同じ郵便が 2 度届く)")
+          (counterexample "protocol を上げずに出す / ACP の配達が continuation を書き始めた後に配る — protocol 2 の agentd は continuation を知らず、inputs = [] の続きの手番を charter だけの prompt で走らせる")]
+       :enforcement ["docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test-adr-doe-agents-012-a-continued-turn-points-at-the-handed-mail"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_continuation_guidance_is_built_from_the_continuation_and_the_handed_mail_spec_only"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_a_continued_turn_on_a_headless_session_points_at_the_handed_mail_in_the_one_prompt"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_a_continued_turn_on_a_tui_session_sends_the_guidance_as_one_send_carrying_no_id"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_a_turn_with_only_a_continuation_is_started_by_the_guidance_and_not_closed"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_the_delivery_report_names_only_the_turns_own_inputs"
+                     "packages/doeff-agents/tests/test_sessionhost_acp.py::test_a_delivery_report_that_did_not_land_is_written_again_and_rides_the_ended_write"
+                     "packages/doeff-agents/tests/sessionhost_acp_rehydrate_deftests.hy::test-a-continued-turn-rehydrated-headless-has-the-handed-mail-in-the-history-once-and-not-in-the-input"
+                     "packages/doeff-agents/tests/sessionhost_acp_rehydrate_deftests.hy::test-a-continued-turn-rehydrated-on-tui-sends-the-guidance-before-the-mail"
+                     "packages/doeff-agents/tests/sessionhost_acp_rehydrate_deftests.hy::test-a-continued-turn-rebuilt-on-tui-keeps-the-handed-mail-in-the-transcript-only"])]
   :enforcement
     [(deftest test-adr-doe-agents-012-history-thins-tool-items-before-dropping-turns
        ;; R35 の針(構造): 薄くする点は judgment の 1 点ずつ(history-event-body / history-event-line-of / history-thin-body /
@@ -3110,7 +3147,8 @@
        ;; R41 の針(構造): protocol の定義点は effects の 1 点・版の判断は judgment.agentd-version-of の 1 点で node-spec-of と
        ;; node-spec-declared が読む・読みの規則は join の 1 点ずつ・env の綴りは effects・契約の読む欄・反例の検が在る。
        (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
-       (for [needle ["AGENTD_PROTOCOL = 2" "AGENTD_REVISION_ENV = \"DOEFF_AGENTD_REVISION\"" "AGENTD_BUILD_ENV = \"DOEFF_AGENTD_BUILD\"" "AGENTD_REVISION_UNSTAMPED = \"unstamped\"" "NODE_SPEC_AGENTD_KEY = \"agentd\""]]
+       ;; protocol 3 = card acp:kanban-issue:ki-06b286143c17(agent-job の spec.continuation を読む版 — R-a-continued-turn-points-at-the-mail-it-already-handed-4ff4)。
+       (for [needle ["AGENTD_PROTOCOL = 3" "AGENTD_REVISION_ENV = \"DOEFF_AGENTD_REVISION\"" "AGENTD_BUILD_ENV = \"DOEFF_AGENTD_BUILD\"" "AGENTD_REVISION_UNSTAMPED = \"unstamped\"" "NODE_SPEC_AGENTD_KEY = \"agentd\""]]
          (assert (= (len (lfor line effects-lines :if (.startswith line needle) line)) 1) f"版の定義点と綴りは effects の 1 点(R41): {needle}"))
        (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
        (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk agentd-version-of [settings]") line)) 1) "版の判断は 1 点(R41)")
@@ -3164,7 +3202,17 @@
                      "CAUSE_REASON_HOST_DRAINED: str = \"host-drained\"" "CAUSE_CATEGORY_HOST_DRAINED: str = \"host_drained\""
                      "    cause: JSONObject | None"]]
          (assert (= (len (lfor line effects-lines :if (.startswith line needle) line)) 1) f"終端の cause の綴りは effects の 1 点(R47): {needle}"))
-       (assert (= (len (lfor line effects-lines :if (= (.rstrip line) "    cause: JSONObject") line)) 1) "持ち越し(UnrecordedEnd)の cause の欄が effects の 1 点でない(R47)")
+       ;; 持ち越しの cause の欄は UnrecordedEnd の class の中で数える — 別の型が同じ綴りの欄を持つこと
+       ;; (TurnContinuation.cause = 途中で終わった手番の result.cause の写し・card acp:kanban-issue:ki-06b286143c17)は
+       ;; この性質(持ち越しが cause を型の欄で運ぶ)を変えない。file 全体の字面の数で撃つと、その型を足しただけで落ちる。
+       (setv unrecorded-body [])
+       (setv inside-unrecorded False)
+       (for [line effects-lines]
+         (cond
+           (.startswith line "class UnrecordedEnd:") (setv inside-unrecorded True)
+           (and inside-unrecorded (not (.startswith line " "))) (break)
+           inside-unrecorded (.append unrecorded-body line)))
+       (assert (= (len (lfor line unrecorded-body :if (= (.rstrip line) "    cause: JSONObject") line)) 1) "持ち越し(UnrecordedEnd)の cause の欄が effects の 1 点でない(R47)")
        (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
        (for [needle ["(defk ended-status-of [status result cause conditions]" "(defk terminal-cause-of [category reason]"
                      "(defk command-cause-of [conditions]" "(defk outcome-with-limit [outcome limit]"
@@ -4442,6 +4490,94 @@
                    "test-a-realignment-that-did-not-land-is-retried-when-the-row-is-next-read"
                    "test-a-realignment-refused-every-time-names-itself-once-and-still-ends-the-record"]]
          (assert (in (+ "(def" "test " name) tests) f"R62 の反例の検が無い: {name}")))
+     (deftest test-adr-doe-agents-012-a-continued-turn-points-at-the-handed-mail
+       ;; R-a-continued-turn-points-at-the-mail-it-already-handed-4ff4 の針(構造): 印の綴りと型は effects の 1 点・読みと案内文は
+       ;; judgment の 1 点ずつで、案内文の組み立ては郵便の行の status も見出しの綴りも読まない・agentd は印の欄を自分で読まない
+       ;; (口は continuation-guidance-for の 1 つで、郵便の行の spec だけを渡す)・案内文は郵便の前置き(lead)として既存の
+       ;; 1 点(charter-with-first-turn / send-parcels-of)を通る・閉じる判断は『器が何も受け取らなかった』・配達報告の書きは
+       ;; spec.inputs を引数に取り事前条件 ids ⊆ inputs を持つ・書けなかった id を足し直す点は名簿 OWED-INPUTS-CARRIERS ちょうど・
+       ;; protocol は 3。反例(挙動)は law a-continued-turn-points-at-the-mail-it-already-handed の :enforcement に並べた検。
+       (setv root (. (Path __file__) parent parent parent))
+       (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
+       (for [needle ["JOB_CONTINUATION_KEY: str = \"continuation\"" "JOB_CONTINUATION_OF_KEY: str = \"of\""
+                     "JOB_CONTINUATION_CAUSE_KEY: str = \"cause\"" "JOB_CONTINUATION_HANDED_KEY: str = \"handed\""
+                     "class TurnContinuation:" "AGENTD_PROTOCOL = 3"]]
+         (assert (= (len (lfor line effects-lines :if (.startswith line needle) line)) 1)
+                 f"続きの手番の綴りと型は effects の 1 点(R-…-4ff4): {needle}"))
+       (assert (= (.count (lfor line effects-lines (.strip line)) "inputs_delivered_owed: tuple[str, ...] = ()") 2)
+               "書けなかった配達報告の持ち越しの欄は InFlightJob と UnrecordedEnd の 2 つ(R-…-4ff4)")
+       (setv judgment-path (/ ACP-DIR "judgment.hy"))
+       (setv judgment-lines (code-lines judgment-path))
+       (for [needle ["(defk continuation-of [row]" "(defk continuation-guidance-of [continuation handed]"
+                     "(defk inputs-delivered-status-of [status ids inputs]" "(defk owed-inputs-delivered-status-of [status owed inputs]"
+                     "(defk send-parcels-of [ids bodies carried folds lead]" "(defk charter-with-first-turn [charter lead bodies]"]]
+         (assert (= (len (lfor line judgment-lines :if (.startswith line needle) line)) 1)
+                 f"判断は judgment の 1 点(R-…-4ff4): {needle}"))
+       ;; 印の欄を読むのは continuation-of の 1 点(judgment の中でも 1 つ)・agentd は欄の綴りを知らない
+       (assert (= (set (readers-of [judgment-path] "JOB-CONTINUATION-KEY")) #{"continuation-of"})
+               "spec.continuation を読む点が continuation-of の 1 つでない(R-…-4ff4)")
+       (setv agentd-path (/ ACP-DIR "agentd.hy"))
+       (assert (not (any (gfor line (bare-code-lines agentd-path) (in "JOB-CONTINUATION" line))))
+               "agentd が spec.continuation の欄を自分で読んでいる(読みは judgment.continuation-of の 1 点)")
+       (for [[word readers] [["(continuation-of " #{"continuation-guidance-for"}]
+                             ["(continuation-guidance-of " #{"continuation-guidance-for"}]
+                             ["(continuation-guidance-for " #{"start-claimed"}]]]
+         (assert (= (set (readers-of [agentd-path] word)) readers) f"案内文の口は 1 つ(R-…-4ff4): {word}"))
+       ;; 材料は郵便の行の spec だけ: 組み立ての 1 点は status・handedAt・見出しの綴りを読まず、agentd の口は行の spec だけを渡す
+       (setv guidance-body (defk-body (bare-code-lines judgment-path) "continuation-guidance-of"))
+       (assert guidance-body "continuation-guidance-of が見つからない")
+       (for [word ["status" "handedAt" "delivery" "mail-heading-of"]]
+         (assert (not (any (gfor line guidance-body (in word line))))
+                 f"案内文の組み立てが {word} を読んでいる(I3 — 『渡したか』は ACP の振り分けの 1 点)"))
+       (setv mouth-body (defk-body (bare-code-lines agentd-path) "continuation-guidance-for"))
+       (assert (any (gfor line mouth-body (in "(dict message.spec)" line))) "案内文の口が handed の郵便の行の spec を渡していない")
+       (assert (not (any (gfor line mouth-body (in "status" line)))) "案内文の口が郵便の行の status を読んでいる(I3)")
+       ;; 配達報告の書きは spec.inputs を引数に取り、事前条件 ids ⊆ inputs を持つ(I6 — 違反は例外)
+       (assert (any (gfor line (defk-body judgment-lines "inputs-delivered-status-of") (in "(.issubset (set ids) (set inputs))" line)))
+               "配達報告の書きに事前条件 ids ⊆ inputs が無い(I6)")
+       (setv agentd-lines (code-lines agentd-path))
+       (setv report-calls (+ (call-args-of agentd-lines "inputs-delivered-status-of") (call-args-of judgment-lines "inputs-delivered-status-of")))
+       (assert (and report-calls (all (gfor args report-calls (and (= (len args) 3) (in "inputs" (get args 2))))))
+               f"配達報告の書きの呼びが第 3 引数で spec.inputs を運んでいない(I6): {report-calls}")
+       ;; 案内文は既存の 1 点を通る(腕で並べ直さない)
+       (setv parcels (call-args-of agentd-lines "send-parcels-of"))
+       (assert (and parcels (all (gfor args parcels (and (= (len args) 5) (in "lead" (get args 4))))))
+               f"送りの束の 1 点が案内文(lead)を運んでいない: {parcels}")
+       (setv folded (call-args-of judgment-lines "charter-with-first-turn"))
+       (assert (and folded (all (gfor args folded (and (= (len args) 3) (in "lead" (get args 1))))))
+               f"1 手番目の本文の 1 点が案内文(lead)を運んでいない: {folded}")
+       ;; 1 通も渡せなかった手番を閉じる判断は『器が送りを 1 つも受け取らなかった』(§3 の 8)
+       (assert (any (gfor line (defk-body agentd-lines "after-start") (in "(setv refused-all (and (is-not refused None) (not landed-any)))" line)))
+               "閉じる判断が『記帳する id が無い』のまま — continuation だけの手番が閉じる(§3 の 8)")
+       ;; 書けなかった id を足し直す点(名簿)と、Ended の書き手の全部がどちらかの名簿に在ること
+       (assert (= (set (readers-of [agentd-path] "(owed-inputs-delivered-status-of ")) (set OWED-INPUTS-CARRIERS))
+               "書けなかった配達報告を Ended の書きへ足す点が名簿と違う(R-…-4ff4 — 足すなら名簿へ宣言する)")
+       (assert (= (set (readers-of [agentd-path] "(ended-status-of "))
+                  (| (set OWED-INPUTS-CARRIERS) (set ENDED-WRITERS-WITHOUT-MAIL)))
+               "Ended の書き手がどちらの名簿にも無い — 郵便を運ぶ手番なら持ち越しを足し、運ばないなら名簿へ宣言する")
+       ;; 持ち越しは引数の既定値で省けない(走っていた手番を閉じる腕は必ず渡す — 省けると黙って空になる)
+       (for [needle ["(defk end-job-owing [settings row reason-type reason pending now-ms owed]"
+                     "(defk fail-missing-arm [settings job-key job-id pending lease-id now-ms owed]"]]
+         (assert (= (len (lfor line agentd-lines :if (.startswith line needle) line)) 1)
+                 f"持ち越しを運ぶ閉じ方の引数が既定値つき、または無い(R-…-4ff4): {needle}"))
+       (assert (= (set (readers-of [agentd-path] "(record-inputs-delivered ")) #{"after-start" "settle-owed-inputs"})
+               "配達報告の書きの呼び手は受けの拍と書き直しの 2 つ")
+       (assert (= (set (readers-of [agentd-path] "(settle-owed-inputs ")) #{"stream-job-slow"})
+               "書き直しは拍の遅い腕の 1 点")
+       ;; 反例の検が在る(字の分割は台帳の数え方への配慮 — 文字列の中の検の開始の綴りを数えさせない)
+       (setv tests (.read-text (/ root "packages" "doeff-agents" "tests" "test_sessionhost_acp.py") :encoding "utf-8"))
+       (for [name ["test_continuation_guidance_is_built_from_the_continuation_and_the_handed_mail_spec_only"
+                   "test_a_continued_turn_on_a_headless_session_points_at_the_handed_mail_in_the_one_prompt"
+                   "test_a_continued_turn_on_a_tui_session_sends_the_guidance_as_one_send_carrying_no_id"
+                   "test_a_turn_with_only_a_continuation_is_started_by_the_guidance_and_not_closed"
+                   "test_the_delivery_report_names_only_the_turns_own_inputs"
+                   "test_a_delivery_report_that_did_not_land_is_written_again_and_rides_the_ended_write"]]
+         (assert (in (+ "def " name "(") tests) f"R-…-4ff4 の反例の検が無い: {name}"))
+       (setv rehydrate (.read-text (/ root "packages" "doeff-agents" "tests" "sessionhost_acp_rehydrate_deftests.hy") :encoding "utf-8"))
+       (for [name ["test-a-continued-turn-rehydrated-headless-has-the-handed-mail-in-the-history-once-and-not-in-the-input"
+                   "test-a-continued-turn-rehydrated-on-tui-sends-the-guidance-before-the-mail"
+                   "test-a-continued-turn-rebuilt-on-tui-keeps-the-handed-mail-in-the-transcript-only"]]
+         (assert (in (+ "(def" "test " name) rehydrate) f"R-…-4ff4 の反例の検が無い: {name}")))
      ;; R61 の直書きの禁止(installed rule・.semgrep.yaml): argv の先頭の名・agentd が起こす実行ファイルの既定・探し方の置き場。
      (defsemgrep r61-agent-argv-head-names-the-driver-executable
        "doeff-agents-agent-argv-head-names-the-driver-executable"
@@ -4496,4 +4632,5 @@
           "agora-redesign docs/impl-requests/stage11-lane-prompts/lane-12a-company-repo-verify.md(agora-redesign #230・追補 R36: charter.kind = verify の job は機体の script を 1 つ走らせる命令 — claude / codex を起こさず札も借りない・結末は Ended の result)"
           "agora-redesign の盤 card acp:kanban-issue:ki-f250d67a7157(追補 R61: node が申告する agent の種類は起動する全 process の実行ファイルの観測の積・起動前の門 AgentKindUnavailable — ACP 側の対は 304a083d)"
           "agora-redesign の盤 card acp:kanban-issue:ki-90019f023e19(追補 R62: 既に在る turn-record を続ける拍に配置と session の欄を今の binding へ揃える・spec.attempt で単調・継続の腕は 1 つ — 設計 = herdr-hud docs/design-checks/lt-A9WN4PP64G9SHR2KH554932K7F・ACP 側の対 = 契約 agora-kinds.json の turn-record の writers.update = [agentd] と spec.attempt)"
-          "agora-redesign の盤 card acp:kanban-issue:ki-b5e0d04de958(追補 R-the-host-only-reads-the-drain-marker-once-002c / R-the-drain-marker-path-env-is-spelled-at-two-points-c530 / R-drain-marker-has-no-writer-7de2 と R47 / R58 / R59 の追補: 排水の印の下の host の停止で切った行は host_drained → agentd-stopped/host-drained・条件 HostDrained — 設計と実装依頼書は ACP docs/design-checks/ki-b5e0d04de958/ と docs/impl-requests/planned-disruption-uncounted-ki-b5e0d04de958.md)"])
+          "agora-redesign の盤 card acp:kanban-issue:ki-b5e0d04de958(追補 R-the-host-only-reads-the-drain-marker-once-002c / R-the-drain-marker-path-env-is-spelled-at-two-points-c530 / R-drain-marker-has-no-writer-7de2 と R47 / R58 / R59 の追補: 排水の印の下の host の停止で切った行は host_drained → agentd-stopped/host-drained・条件 HostDrained — 設計と実装依頼書は ACP docs/design-checks/ki-b5e0d04de958/ と docs/impl-requests/planned-disruption-uncounted-ki-b5e0d04de958.md)"
+          "agora-redesign の盤 card acp:kanban-issue:ki-06b286143c17(追補 R-a-continued-turn-points-at-the-mail-it-already-handed-4ff4 と R16 / R50 の law の追補・依頼 lt-9Q3EH9WYRHPSXR3MZQHB1ASRS7: 実行環境の障害で途中で終わった手番の続きは、既に渡した郵便を渡し直さず再開の案内文で指す・配達報告は spec.inputs の id だけで書けなかった id は Ended まで持ち越す・protocol 3 — ACP 側の対 = Messaging.Decide.carrierEndedOf の振り分けと契約 messaging.json delivery.agentJob.continuation・設計の記録 = lt-6466GKEDS1EZG59ANK2637PDA5 の design-checks)"])

@@ -302,6 +302,11 @@
   BINDING-ACCOUNT-KEY
   BINDING-NODE-ROW-KEY
   JOB-INPUTS-DELIVERED-KEY
+  JOB-CONTINUATION-KEY
+  JOB-CONTINUATION-OF-KEY
+  JOB-CONTINUATION-CAUSE-KEY
+  JOB-CONTINUATION-HANDED-KEY
+  TurnContinuation
   JOB-INTERRUPTS-DELIVERED-KEY
   JOB-INTERRUPTS-ESCALATED-KEY
   JOB-INTERRUPTS-KEY
@@ -1916,9 +1921,12 @@
 (defk unrecorded-end-of [job result cause conditions now-ms]
   {:pre [(: job InFlightJob) (: result (| dict list str int float bool None)) (: cause dict) (: conditions tuple) (: now-ms int)]
    :post [(: % UnrecordedEnd)]}
-  "着かなかった Ended の持ち越しの材料(結末・cause・条件はそのまま・at = 手番の終わりの拍)。"
+  "着かなかった Ended の持ち越しの材料(結末・cause・条件はそのまま・at = 手番の終わりの拍)。
+   card acp:kanban-issue:ki-06b286143c17(§3 の 9): 配達報告の書けていない郵便の id(job.inputs-delivered-owed)も運ぶ —
+   持ち越した Ended の書きが同じ 1 回の書きに足す(Ended の後には、この手番の行への書きがもう無い)。"
   (UnrecordedEnd :job-key job.job-key :job-id job.job-id :session-id job.session-id
-                 :result result :cause cause :conditions conditions :at-ms now-ms))
+                 :result result :cause cause :conditions conditions :at-ms now-ms
+                 :inputs-delivered-owed job.inputs-delivered-owed))
 
 
 (defk end-retry-verdict [row session-id principal at-ms now-ms ttl-ms]
@@ -2026,18 +2034,37 @@
   next)
 
 
-(defk inputs-delivered-status-of [status ids]
-  {:pre [(: status dict) (: ids tuple)]
+(defk inputs-delivered-status-of [status ids inputs]
+  {:pre [(: status dict) (: ids tuple) (: inputs tuple)
+         ;; card acp:kanban-issue:ki-06b286143c17 I6: 配達報告に足せるのはこの手番の spec.inputs の id だけ。
+         ;; 外の id(続きの手番の continuation.handed・前の手番の郵便)を足す呼びは、黙って落とさず例外にする —
+         ;; 「見やすさのために続きの郵便も報告へ引き継ぐ」実装は、どの挙動の検も通ったまま ACP の振り分けを壊す
+         ;; (その id が 2 つの手番の報告に現れ、どちらの手番が渡したかが読めなくなる)。
+         (.issubset (set ids) (set inputs))]
    :post [(: % dict)]}
   "器へ渡せた inputs の郵便を行に写した status(card acp:kanban-issue:ki-3149aebbf675 A・同じ 1 回の書き):
    inputsDelivered の末尾に ids を足す(既に在る id は足さない・順は保つ)。他の欄は写す。
    append-only ちょうど — 消す腕は無い(割り込みの interrupts → interruptsDelivered のような移し替えも無い:
-   inputs は spec の欄で agentd は書かない)。"
+   inputs は spec の欄で agentd は書かない)。inputs = その行の spec.inputs(judgment.inputs-of)— 事前条件
+   ids ⊆ inputs が不変条件 I6 の座(card acp:kanban-issue:ki-06b286143c17)。"
   (setv next (dict status))
   (<- delivered tuple (string-list-of status JOB-INPUTS-DELIVERED-KEY))
   (setv (get next JOB-INPUTS-DELIVERED-KEY)
         (+ (list delivered) (lfor message-id ids :if (not-in message-id delivered) message-id)))
   next)
+
+
+(defk owed-inputs-delivered-status-of [status owed inputs]
+  {:pre [(: status dict) (: owed tuple) (: inputs tuple)]
+   :post [(: % dict)]}
+  "配達報告の書きが着かなかった郵便の id(InFlightJob.inputs-delivered-owed)を、その手番の後の status の書き
+   (遅い拍の書き直し・Ended の書き)へ足した status(card acp:kanban-issue:ki-06b286143c17 §3 の 9)。owed が空なら
+   status を 1 byte も変えない(欄を作らない)。足す規則と事前条件 I6 は inputs-delivered-status-of の 1 点のまま。"
+  (if owed
+      (do
+        (<- carried dict (inputs-delivered-status-of status owed inputs))
+        carried)
+      status))
 
 
 (defk escalation-seconds-of-charter [charter]
@@ -2505,14 +2532,17 @@
   (.join "\n\n" (lfor part (+ [charter-prompt] (list bodies)) :if (.strip part) part)))
 
 
-(defk charter-with-first-turn [charter bodies]
-  {:pre [(: charter dict) (: bodies tuple)]
+(defk charter-with-first-turn [charter lead bodies]
+  {:pre [(: charter dict) (: lead str) (: bodies tuple)]
    :post [(: % dict)]}
   "charter の prompt を 1 手番目の本文(first-turn-prompt-of)に据える。launch も resume
-   (resume-params-of が charter の prompt を運ぶ)も同じ 1 点を通る。"
+   (resume-params-of が charter の prompt を運ぶ)も同じ 1 点を通る。
+   card acp:kanban-issue:ki-06b286143c17: lead = 郵便の前に置く前置き(続きの手番の再開の案内文 —
+   continuation-guidance-of)。charter の prompt(と rehydrate の「これまでの会話」)の後・郵便の本文の前に空行で入る。
+   空なら今日と 1 byte も変わらない(first-turn-prompt-of は空白だけの部分を入れない)。"
   (setv next (dict charter))
   (setv prompt (.get charter "prompt"))
-  (<- folded str (first-turn-prompt-of (if (isinstance prompt str) prompt "") bodies))
+  (<- folded str (first-turn-prompt-of (if (isinstance prompt str) prompt "") (+ #(lead) bodies)))
   (setv (get next "prompt") folded)
   next)
 
@@ -2660,17 +2690,18 @@
           next)))
 
 
-(defk incarnation-charter-of [plan choice session-id bodies history attribution backend-kind lease homes-root
+(defk incarnation-charter-of [plan choice session-id lead bodies history attribution backend-kind lease homes-root
                               memory-root opener seat-env]
-  {:pre [(: plan LaunchPlan) (: choice ArmChoice) (: session-id str) (: bodies tuple) (: history str)
+  {:pre [(: plan LaunchPlan) (: choice ArmChoice) (: session-id str) (: lead str) (: bodies tuple) (: history str)
          (: attribution dict) (: backend-kind str) (: lease (| LeaseGrant None)) (: homes-root str)
          (: memory-root str) (: opener (| str None)) (: seat-env tuple)]
    :post [(: % tuple)]}
   "起こす session の charter を組む 1 点(launch / resume / rehydrate / rebuild — send は起こさない): 鋳造した id →
    機体の宣言の env(段 12・agora-redesign #520)→ 会話の身元の env(段 10f 便 2 追補 3 — 会話の id は帰属の
-   conversationId・opener は会話の行から)→ (rehydrate)これまでの会話 → (headless の起こす腕)郵便の本文 →
+   conversationId・opener は会話の行から)→ (rehydrate)これまでの会話 → (headless の起こす腕)前置き lead と郵便の本文 →
    借りた札の家 → 帰属。戻り = #(charter auth-file-or-None)(codex の借りた auth.json の置き場 — 書くのは
-   呼び手の effect)。
+   呼び手の effect)。lead = 続きの手番の再開の案内文(card acp:kanban-issue:ki-06b286143c17 — 空 = 続きの手番ではない)。
+   畳まない器(tui)は lead を charter に入れない(after-start が id を運ばない送り 1 つで先に送る)。
 
    ⚠ 順序は契約: 宣言の env(charter-with-seat-env)は会話の身元(charter-with-conversation-env)の**前**
    ちょうど — 身元が必ず勝つので、機体の宣言は会話の名乗りを偽れない(agora-redesign #520)。"
@@ -2687,7 +2718,7 @@
     (setv charter with-history))
   (<- folds bool (first-turn-carries-inputs backend-kind choice.arm))
   (when folds
-    (<- folded dict (charter-with-first-turn charter bodies))
+    (<- folded dict (charter-with-first-turn charter lead bodies))
     (setv charter folded))
   (setv auth-file None)
   (when (and (is-not lease None) (is-not plan.lease-kind None) (is-not plan.account None))
@@ -3661,6 +3692,71 @@
      "・at=" at-text "]"))
 
 
+(defk continuation-of [row]
+  {:pre [(: row AcpRow)]
+   :post [(: % (| TurnContinuation None))]}
+  "agent-job の spec.continuation → 型つきの写し(card acp:kanban-issue:ki-06b286143c17・読みはこの 1 点)。欄が無い・
+   object でない = 続きの手番ではない(None)。欠けた欄は発明しない: of が文字列でなければ空・cause が object でなければ空・
+   handed は文字列の項だけ(順は保つ)。⚠ handed を spec.inputs と突き合わせて足し引きしない — 振り分けは ACP の
+   carrierEndedOf の 1 点(不変条件 I4)で、agentd は運ぶだけ。"
+  (setv raw (.get row.spec JOB-CONTINUATION-KEY))
+  (when (not (isinstance raw dict))
+    (return None))
+  (setv dead-job (.get raw JOB-CONTINUATION-OF-KEY))
+  (setv cause (.get raw JOB-CONTINUATION-CAUSE-KEY))
+  (setv handed (.get raw JOB-CONTINUATION-HANDED-KEY))
+  (TurnContinuation :of (if (isinstance dead-job str) dead-job "")
+                    :cause (if (isinstance cause dict) (dict cause) {})
+                    :handed (if (isinstance handed list)
+                                (tuple (lfor item handed :if (isinstance item str) item))
+                                #())))
+
+
+(defk continuation-guidance-of [continuation handed]
+  {:pre [(: continuation (| TurnContinuation None)) (: handed dict)]
+   :post [(: % str)]}
+  "続きの手番の**再開の案内文**を組む 1 点(card acp:kanban-issue:ki-06b286143c17 §3 の 6 / 7・不変条件 I3)。
+   材料は spec.continuation(continuation-of の写し)と、handed の郵便の行の **spec** だけ(郵便の id → spec —
+   見出しの kind / from を読む)。郵便の行の status(delivery.handedAt 等)は引数に取らない — 『渡したか』の判断は
+   ACP の振り分けが済ませて continuation.handed に書いてあり、agentd が別の証拠で読み直すと第 2 の判断点になる。
+   continuation が None なら空文字(続きの手番ではない — 呼び手は今日と 1 byte も変わらない)。
+
+   文面(agent と、agora で会話を読む人が読む — 内部の語を使わず「ターン」「メッセージ」で書く): 前のターン <of> が
+   <cause> で途中で終わったこと・handed のメッセージはそのターンで既に渡っていて本文は上の履歴にあること(1 通 1 行
+   `・郵便 <id>(kind=…・from=…)` — id の綴りは見出しと同じ「郵便 <id>」で名指す)・続きから進めること・既に出した返事を
+   出し直さないこと。
+   本文は載せない。⚠ 郵便を指す綴りは手番へ渡る郵便の見出し `[郵便 <id>・…]`(mail-heading-of)と**違う形**にする —
+   受入の測り(依頼書 §5 の 3)は transcript の `[郵便 <id>・` を数えて本文が 1 回だけ届いたかを判じるので、
+   案内文が同じ綴りを使うと、正しく渡し直さなかった手番が 2 回と数えられる。
+   読めなかった郵便の行(回収された)は kind / from を「無し」と名乗る(発明しない)。"
+  (when (is continuation None)
+    (return ""))
+  (setv none "無し")
+  (setv category (.get continuation.cause CAUSE-CATEGORY-KEY))
+  (setv reason (.get continuation.cause CAUSE-REASON-KEY))
+  (setv cause-text
+        (cond
+          (and (isinstance category str) (isinstance reason str)) (+ category " / " reason)
+          (isinstance category str) category
+          True "理由の読めない終わり方"))
+  (setv of-text (if continuation.of (+ "前のターン(" continuation.of ")") "前のターン"))
+  (setv lines [(+ "[再開の案内] このターンは、" of-text "の続きです。そのターンは " cause-text
+                  " で途中で終わりました(実行環境の都合による終了で、あなたの判断で終えたものではありません)。")])
+  (if continuation.handed
+      (do
+        (.append lines "次のメッセージはそのターンで既に渡っています。本文は上の履歴にあるので、ここには載せません:")
+        (for [message-id continuation.handed]
+          (setv spec (.get handed message-id))
+          (setv words {})
+          (for [key ["kind" "from"]]
+            (setv value (if (isinstance spec dict) (.get spec key) None))
+            (setv (get words key) (if (and (isinstance value str) (.strip value)) value none)))
+          (.append lines (+ "・郵便 " message-id "(kind=" (get words "kind") "・from=" (get words "from") ")"))))
+      (.append lines "そのターンで既に渡ったメッセージはありません。"))
+  (.append lines "途中まで進めた作業の続きから進めてください。既に出した返事は出し直さないでください。")
+  (.join "\n" lines))
+
+
 (defk mail-input-ids-of [asked missing]
   {:pre [(: asked tuple) (: missing tuple)]
    :post [(: % tuple)]}
@@ -3671,26 +3767,32 @@
   (tuple (lfor input-id asked :if (not-in input-id missing) input-id)))
 
 
-(defk send-parcels-of [ids bodies carried folds]
-  {:pre [(: ids tuple) (: bodies tuple) (: carried tuple) (: folds bool)]
+(defk send-parcels-of [ids bodies carried folds lead]
+  {:pre [(: ids tuple) (: bodies tuple) (: carried tuple) (: folds bool) (: lead str)]
    :post [(: % tuple)]}
   "after-start が撃つ送りの束(card acp:kanban-issue:ki-3149aebbf675 B / A の 1 点): 各項は
    #(本文 添付 その送りが運ぶ郵便の id の組)。畳む(headless)なら 1 通の束 1 つ — 1 手番 = 1 prompt なので
    相乗りした N 通は 1 回の send に畳み、その 1 回の成否が N 通ぜんぶの成否(判断は send-folds-bodies)。
    畳まない(tui)なら 1 通 1 束で、i 番の束は i 番の郵便ちょうど。bodies が空なら束も空(起こす腕は
    1 手番目の prompt に畳んであるので送りは無い)。⚠ 本文と id の対応を知るのはこの 1 点 — 呼び手が
-   並びを組み直すと、届いた id と記帳する id がずれる。"
-  (when (not bodies)
+   並びを組み直すと、届いた id と記帳する id がずれる。
+
+   card acp:kanban-issue:ki-06b286143c17: lead = 郵便の前に置く前置き(続きの手番の再開の案内文)。畳むなら同じ 1 本の
+   先頭(空行で区切る)、畳まないなら **id を運ばない束 1 つ**として先頭に置く(案内文は郵便ではないので配達報告に
+   載らない — 不変条件 I6)。lead が空なら今日と 1 byte も変わらない。bodies が空でも lead があれば束はその 1 つ
+   (spec.inputs が空で continuation だけを持つ手番の入力は案内文 — §3 の 8)。"
+  (when (and (not bodies) (not (.strip lead)))
     (return #()))
   (if folds
       (do
-        (<- text str (first-turn-prompt-of "" bodies))
+        (<- text str (first-turn-prompt-of lead bodies))
         (<- attachments tuple (first-turn-attachments-of carried))
         #(#(text attachments ids)))
-      (tuple (lfor [index body] (enumerate bodies)
-                   #(body
-                     (if (< index (len carried)) (get carried index) #())
-                     (if (< index (len ids)) #((get ids index)) #()))))))
+      (tuple (+ (if (.strip lead) [#(lead #() #())] [])
+                (lfor [index body] (enumerate bodies)
+                      #(body
+                        (if (< index (len carried)) (get carried index) #())
+                        (if (< index (len ids)) #((get ids index)) #())))))))
 
 
 (defk mail-turn-text-of [message-id spec body [status None]]
