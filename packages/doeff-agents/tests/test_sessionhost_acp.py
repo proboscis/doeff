@@ -7067,8 +7067,14 @@ def test_entry_main_hands_the_drain_marker_path_to_the_host_role_only(monkeypatc
         def close_for_stop(self, reason: str) -> int:
             return 0
 
-    def drive(argv: list[str]) -> tuple[dict[str, str], tuple[str, ...]]:
-        seen: list[tuple[dict[str, str], tuple[str, ...]]] = []
+    class HostStart(NamedTuple):
+        """entry が器(host_main)を起こした拍の env と argv。"""
+
+        env: dict[str, str]
+        argv: tuple[str, ...]
+
+    def drive(argv: list[str]) -> HostStart:
+        seen: list[HostStart] = []
 
         def fake_apply(p: JoinPlan, _apply: object) -> None:
             for key, value in p.env:
@@ -7078,7 +7084,7 @@ def test_entry_main_hands_the_drain_marker_path_to_the_host_role_only(monkeypatc
         monkeypatch.setattr(runtime, "apply_join_env", fake_apply)
         monkeypatch.setattr(runtime, "start_agentd_thread", lambda _argv, _env, *, role: Run())
         monkeypatch.setattr(host_module, "register_shutdown_hook", lambda _hook: None)
-        monkeypatch.setattr(entry, "host_main", lambda: seen.append((dict(os.environ), tuple(sys.argv[1:]))))
+        monkeypatch.setattr(entry, "host_main", lambda: seen.append(HostStart(dict(os.environ), tuple(sys.argv[1:]))))
         monkeypatch.setattr(sys, "argv", ["doeff-sessionhost", *argv])
         # entry は os.environ に直に書くので、元の不在を monkeypatch に覚えさせてから消す(teardown で不在へ戻る)。
         monkeypatch.setenv(entry.HOST_DRAIN_FILE_ENV, "sentinel")
@@ -7126,16 +7132,27 @@ def test_drain_until_returns_when_the_turns_end_or_the_deadline_passes() -> None
         slept.append(seconds)
         clock["now"] += seconds
 
-    left, waited = drain_until(lambda: next(counts), deadline=100.0 + 30.0, now=now, sleep=sleep, poll=1.0)
-    assert (left, waited) == (0, 2.0)
+    outcome = drain_until(lambda: next(counts), deadline=100.0 + 30.0, now=now, sleep=sleep, poll=1.0)
+    assert outcome == (0, 2.0, "drained")
     assert slept == [1.0, 1.0]
     # 期限: 手番が終わらなければ期限で残りを返す(待ちは期限を越えない)
     clock["now"] = 200.0
     slept.clear()
-    left, waited = drain_until(lambda: 3, deadline=200.0 + 2.5, now=now, sleep=sleep, poll=1.0)
-    assert left == 3
-    assert waited == 2.5
+    outcome = drain_until(lambda: 3, deadline=200.0 + 2.5, now=now, sleep=sleep, poll=1.0)
+    assert outcome == (3, 2.5, "deadline")
     assert slept == [1.0, 1.0, 0.5]
+    # 器が居ない証拠(card acp:kanban-issue:ki-18d6c4851b21): 真になった拍に残りを持って戻る(期限まで待たない)
+    clock["now"] = 300.0
+    slept.clear()
+    gone = iter([False, False, True])
+    outcome = drain_until(
+        lambda: 2, deadline=300.0 + 14400.0, now=now, sleep=sleep, poll=1.0, host_gone=lambda: next(gone)
+    )
+    assert outcome == (2, 2.0, "host-gone")
+    assert slept == [1.0, 1.0]
+    # 0 は器の不在より先に読む(終わった手番は drained — 器が降りた拍と重なっても理由は取り違えない)
+    outcome = drain_until(lambda: 0, deadline=400.0, now=now, sleep=sleep, poll=1.0, host_gone=lambda: True)
+    assert outcome.ended == "drained"
 
 
 def test_close_for_stop_drains_before_closing_when_the_node_declares_drain_seconds() -> None:
@@ -7381,6 +7398,101 @@ def test_exit_after_drain_waits_for_the_turns_by_the_declaration_and_closes_none
     assert closed3 == ["closed"]
     kept = world3.job("j-1")
     assert kept.status is not None and kept.status["phase"] == PHASE_RUNNING
+
+
+def test_exit_after_drain_stops_waiting_when_the_host_is_gone_and_closes_none() -> None:
+    """役 agentd の排水は、器が居ない証拠(``host_present`` が偽)で待ちをやめる(card acp:kanban-issue:ki-18d6c4851b21)。
+
+    器は別 process で、先に死ぬと session の要求は socket の失敗で拍ごと落ち、手番の結末は読めない —— 待っても 0 に
+    ならず、pod は宣言の上限(pool では 14400 秒)まで居残る。器の不在を見た拍に降り、残りの job は**閉じない**
+    (R58 — 次の process が行を拾い直して閉じる)。器が居る間は今日どおり手番の終わりを待つ。
+    """
+    import threading
+    import time
+    from dataclasses import replace
+
+    from doeff_agents.sessionhost.acp.runtime import AgentdRun, StateHolder
+
+    def started(name: str) -> threading.Thread:
+        thread = threading.Thread(target=lambda: None, name=name)
+        thread.start()
+        thread.join()
+        return thread
+
+    world = World()
+    world.acp.put_row(message("m-1", "first"))
+    world.acp.put_row(bound_job("j-1", inputs=["m-1"]))
+    world.tick()
+    holder = StateHolder()
+    holder.state = world.state
+    drain = threading.Event()
+    closed: list[str] = []
+    # 排水の最初の 2 回の読みでは器が居て、その後に降りる(pool の pod で器の容器が先に落ちた形)
+    reads: list[bool] = []
+
+    def host_present() -> bool:
+        reads.append(drain.is_set())
+        return len(reads) <= 2
+
+    dispatchers = [world.acp.dispatch, world.custody.dispatch, world.sessions.dispatch, world.local.dispatch]
+    run_obj = AgentdRun(
+        replace(world.settings, drain_seconds=14400), dispatchers, threading.Event(), drain,
+        holder, started("loop"), lambda: closed.append("closed"), started("heartbeat"),
+        host_present=host_present,
+    )
+    began = time.monotonic()
+    assert run_obj.exit_after_drain("SIGTERM") == 1
+    assert time.monotonic() - began < 5.0  # 期限(14400 秒)まで待たない
+    assert reads == [True, True, True]  # 器が居る間は待ち続け、居ない証拠の拍に降りる(読みは排水の合図の後だけ)
+    assert drain.is_set()
+    assert run_obj.stop.is_set()
+    assert closed == ["closed"]
+    job = world.job("j-1")
+    assert job.status is not None
+    assert job.status["phase"] == PHASE_RUNNING, job.status
+    assert len(holder.state.jobs) == 1
+
+
+def test_session_routes_any_host_is_false_only_on_the_evidence_of_absence() -> None:
+    """``SessionRoutes.any_host``(card acp:kanban-issue:ki-18d6c4851b21)= 器が 1 つでも居るかもしれないか。偽は「居ない」の
+    証拠が在る拍ちょうど(socket の file が無い・file はあるが誰も listen していない — socket_may_have_host の 1 点)。
+    指し札の器が居なくても、降りる途中の器が答えていれば居る側。"""
+    import shutil
+    import socket as socket_mod
+    import tempfile
+
+    from doeff_agents.sessionhost.acp import host_slots
+    from doeff_agents.sessionhost.acp.effects import JOIN_SOCKET_FILE
+    from doeff_agents.sessionhost.acp.handlers import SessionRoutes
+
+    # unix socket の path は短く(macOS の上限 104 byte — pytest の tmp_path は長い)
+    state_dir = Path(tempfile.mkdtemp(prefix="anyhost-", dir="/tmp"))
+    root = str(state_dir / JOIN_SOCKET_FILE)
+    listener = socket_mod.socket(socket_mod.AF_UNIX, socket_mod.SOCK_STREAM)
+    try:
+        # file が無い → 居ない
+        assert SessionRoutes(root).any_host() is False
+        # listen している → 居る
+        listener.bind(root)
+        listener.listen(1)
+        assert SessionRoutes(root).any_host() is True
+        # file はあるが誰も listen していない(器が落ちて file が残った)→ 居ない
+        listener.close()
+        assert os.path.exists(root)
+        assert SessionRoutes(root).any_host() is False
+        # 指し札の器(区画 b)は居ないが、降りる途中の根の器が答えている → 居る側
+        os.unlink(root)
+        os.makedirs(host_slots.slot_dir(str(state_dir), "b"), exist_ok=True)
+        Path(host_slots.pointer_path(str(state_dir))).write_text("b\n")
+        listening = {root}
+        routes = SessionRoutes(root, listening=lambda path: path in listening)
+        assert routes.active_socket() == host_slots.slot_socket(str(state_dir), "b")
+        assert routes.any_host() is True
+        listening.clear()
+        assert SessionRoutes(root, listening=lambda path: path in listening).any_host() is False
+    finally:
+        listener.close()
+        shutil.rmtree(state_dir, ignore_errors=True)
 
 
 def test_join_spec_reads_drain_seconds_and_settings_carry_it() -> None:
