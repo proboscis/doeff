@@ -1960,6 +1960,21 @@ def test_host_headless_resume_starts_with_the_token_the_turn_carries(headless_ho
     headless_host.ok("session.cleanup", {"session_id": "h-9"})
 
 
+def test_host_headless_send_refuses_credential_shaped_env_at_any_position(headless_host: Host) -> None:
+    """card acp:kanban-issue:ki-edeab28c7bee: 送りの口(session.send)の関所も launch と同じ資格の形の規則 1 点 —
+    名の末尾に錨を打たないので、CLAUDE.md が逐語で禁じる個人鍵の別名(後ろに 1 語付いた綴り)も断る。
+    手番の札(CLAUDE_CODE_OAUTH_TOKEN)は送りの口がわざと運ぶので通す。"""
+    headless_host.ok("session.launch", _launch_params(headless_host.root, "h-12", "claude"))
+    _wait_turn_end(headless_host, "h-12")
+    for name in ("ANTHROPIC_API_KEY_PERSONAL", "anthropic_api_key__personal", "GEMINI_API_KEY_2", "GITHUB_TOKEN"):
+        refused = headless_host.call(
+            "session.send", {"session_id": "h-12", "message": "x", "session_env": {name: "k"}}
+        )
+        assert refused["ok"] is False, name
+        assert "credential-shaped env is refused" in json.dumps(refused), name
+    headless_host.ok("session.cleanup", {"session_id": "h-12"})
+
+
 def test_host_headless_send_refuses_the_env_it_cannot_carry(headless_host: Host) -> None:
     """手番ごとの env の関所は launch と同じ 1 点(binding 所有キー・従量課金 credential は
     送りの口でも受けない)。運べない組み合わせ(割り込みの送り)は黙って落とさず断る —
