@@ -137,7 +137,7 @@
   (defn #^ None __init__ [self #^ bool record]
     (setv self.settings (AgentdSettings :node-name NODE :homes-root "/homes"
                                         :backend-kind "headless" :stream-capability "events"
-                                        :record-enabled record))
+                                        :record-url (when record "http://record.test:8874")))
     (setv self.acp (FakeAcp :births {TURN-RECORD-KIND (Birth "state" "running")}))
     (.put-row self.acp (row-of AGORA-KINDS-NAMESPACE NODE-KIND NODE
                                {"name" NODE "labels" {} "capacity" 1 "streamCapability" "events"}

@@ -249,6 +249,7 @@
   AGENTD-PRINCIPAL
   AGORA-KINDS-NAMESPACE
   ATTRIBUTION-AGENTD-KEY
+  ATTRIBUTION-NODE-ENV-KEY
   AgentdSettings
   AgentdState
   AcpRow
@@ -404,6 +405,8 @@
   TranscriptBuilt
   TranscriptRefused
   Refused
+  RECORD-URL-ENV
+  RUNNER-OWNED-SEAT-ENV
   SEAT-OPENER-ENV
   SESSION-OBSERVED-BUSY
   SESSION-OBSERVED-IDLE
@@ -1340,19 +1343,67 @@
   (if (and (isinstance mine dict) (isinstance (.get mine "conversationId") str)) mine None))
 
 
-(defk session-attribution-of [plan job-id subject arm]
-  {:pre [(: plan LaunchPlan) (: job-id str) (: subject str) (: arm str)]
+;; ---------------------------------------------------------------------------
+;; 機体が席へ渡す env(card acp:kanban-issue:ki-e930b8506201・ADR-DOE-AGENTS-012
+;; R-the-agentd-puts-its-own-record-destination-on-the-seat-1601)
+;; ---------------------------------------------------------------------------
+;;
+;; 席の env は 3 つの出所を持つ: (1) 機体の宣言 [agentd].seat_env(R51)・(2) 走行者の宛先 = agentd 自身が追記に使う
+;; 記録の service の宛先・(3) 会話の身元(手番ごとの charter-with-conversation-env)。(1)(2) は**機体**の値で、
+;; session の途中で変わりうる(宣言を変えて agentd だけを起こし直す)。温かい session の続きの手番は host の行に保存した
+;; 生まれた時の env を再生するので、(1)(2) を組む点を 1 つにし、その組の指紋を帰属に刻んで起こし方の判断で比べる。
+
+(defk node-seat-env-of [settings]
+  {:pre [(: settings AgentdSettings)]
+   :post [(: % tuple)]}
+  "機体が席へ渡す env の組を作る 1 点: 宣言の seat_env(宣言の順)→ 走行者の宛先(記録が有効な時だけ RECORD-URL-ENV =
+   settings.record-url — 参加の門 join.record-sink-of を通った値ちょうど)。宣言の側に走行者が持つ名(RUNNER-OWNED-SEAT-ENV)が
+   在っても**落としてから**置く(参加の門 join.seat-env-of の (c) が断るので実運転では来ない — 門を迂回した呼びでも走行者の値が
+   勝ち、記録が無効なら名ごと無い)。会話の身元と手番の札は含まない(前者は会話ごと・後者は手番ごとの値で、機体の値ではない)。
+   読み手は 2 つで、同じ出力を使う: charter を組む incarnation-charter-of(この組を書く)と、帰属の指紋
+   (session-attribution-of → node-seat-env-digest-of)。"
+  (setv declared (tuple (gfor #(name value) settings.seat-env :if (not-in name RUNNER-OWNED-SEAT-ENV) #(name value))))
+  (if (is settings.record-url None)
+      declared
+      (+ declared #(#(RECORD-URL-ENV settings.record-url)))))
+
+
+(defk node-seat-env-digest-of [pairs]
+  {:pre [(: pairs tuple)]
+   :post [(: % str)]}
+  "機体が席へ渡す env の組(node-seat-env-of の出力)の指紋 — 組の順を保った JSON の sha256(小文字 hex)。不透明な値で、
+   比べる以外に使わない(値を log や行へ写さないための形 — 宛先は秘密ではないが、読み手に値の語彙を持たせない)。"
+  (setv canonical (json.dumps (lfor #(name value) pairs [name value]) :ensure-ascii False :separators #("," ":")))
+  (.hexdigest (hashlib.sha256 (.encode canonical "utf-8"))))
+
+
+(defk session-node-env-of [view]
+  {:pre [(: view SessionView)]
+   :post [(: % (| str None))]}
+  "session を起こした時に機体が席へ渡した env の指紋(帰属の ATTRIBUTION-NODE-ENV-KEY の欄 — session-attribution-of が刻む)。
+   欄が無い(この欄より前の agentd・他の起こし手が起こした session)= None = 分からない(起こし方の判断は違うと読む)。"
+  (<- mine (| dict None) (attribution-of-view view))
+  (setv digest (if (is mine None) None (.get mine ATTRIBUTION-NODE-ENV-KEY)))
+  (if (and (isinstance digest str) digest) digest None))
+
+
+(defk session-attribution-of [plan job-id subject arm node-env]
+  {:pre [(: plan LaunchPlan) (: job-id str) (: subject str) (: arm str) (: node-env tuple)]
    :post [(: % dict)]}
   "起こす session に刻む帰属(段 8q・R20): 会話・手番・家の account と鍵・起こし方。session の会話と家は
-   session の行が覚える事実で、終端の後に回収される agent-job の行から導かない。"
+   session の行が覚える事実で、終端の後に回収される agent-job の行から導かない。
+   card acp:kanban-issue:ki-e930b8506201 C5: node-env = この session の charter が書く機体の env の組(node-seat-env-of の出力 —
+   呼び手は同じ値を incarnation-charter-of にも渡す)。その指紋を ATTRIBUTION-NODE-ENV-KEY に刻む。"
   (<- home dict (session-affinity-key-of plan))
   (<- effort (| str None) (effort-of-plan plan))
+  (<- node-env-digest str (node-seat-env-digest-of node-env))
   {"conversationId" subject
    "agentJobId" job-id
    "account" plan.account
    "home" home
    "arm" arm
-   "effort" effort})
+   "effort" effort
+   ATTRIBUTION-NODE-ENV-KEY node-env-digest})
 
 
 (defk charter-with-attribution [charter attribution]
@@ -1556,8 +1607,9 @@
     True (bool probe.events)))
 
 
-(defk next-arm-for-job [candidate view home effort compact]
-  {:pre [(: candidate (| str None)) (: view (| SessionView None)) (: home dict) (: effort (| str None)) (: compact bool)]
+(defk next-arm-for-job [candidate view home effort compact node-env-digest]
+  {:pre [(: candidate (| str None)) (: view (| SessionView None)) (: home dict) (: effort (| str None)) (: compact bool)
+         (: node-env-digest str)]
    :post [(: % ArmChoice)]}
   "Bound の job の起こし方(閉語彙 effects.NextArm)— 判断はここ 1 点(R10 / R20)。candidate = 会話の前の
    session(affinity.predecessor か会話の最後の手番の session — warm-candidate-of)、view = その器の眺め、
@@ -1580,6 +1632,11 @@
    resume(古い器に新しい手番を積まない・cache は保つ)/
    候補が生きて idle ∧ 同じ家 ∧ effort が違う → 候補を片付けて resume(段 10 lane 10e: effort は process の旗なので
    温かい process には届かない — 同じ session を新しい旗で --resume する。cache は保つ・session は作り直さない)/
+   候補が生きて idle ∧ 同じ家 ∧ 機体が席へ渡す env の指紋が違う・無い(card acp:kanban-issue:ki-e930b8506201 C5 —
+   node-env-digest = 今の agentd の node-seat-env-digest-of(node-seat-env-of settings)、比べる相手は帰属の刻み
+   session-node-env-of)→ effort と同じく候補を片付けて resume(send の続きは host の行に保存した**生まれた時の env** を
+   再生するので、宣言か記録の宛先を変えて agentd だけを起こし直した後に send を選ぶと、席は古い値のまま走る。resume は
+   charter を組み直す。送りの手番の env〔turn-session-env-of〕に機体の値を足す第 2 の書き手は作らない)/
    候補が生きて idle ∧ 家が違う → 候補を片付けて rehydrate(profile か model を変えた手番 — 失効した cache の器を残さない・
    新しい session は charter.model で起きる)/
    候補が生きていて idle でない ∧ backend が生きている(host の観測)→ defer(手番の途中 — 走っている手番に本文を
@@ -1597,6 +1654,7 @@
   (<- live-backend bool (backend-alive view))
   (setv same False)
   (setv same-effort True)
+  (setv same-node-env True)
   ;; 器の入れ替えの blue/green(host_slots): 降りる途中の器の温かい session には新しい手番を積まない — 同じ家なら
   ;; 片付けて --resume で新しい器へ移す(cache は保つ・古い器は抱えている手番だけを終えて降りる)。
   (setv draining False)
@@ -1605,12 +1663,14 @@
     (setv same in-home)
     (<- launched-effort (| str None) (session-effort-of view))
     (setv same-effort (= launched-effort effort))
+    (<- launched-node-env (| str None) (session-node-env-of view))
+    (setv same-node-env (= launched-node-env node-env-digest))
     (setv draining view.draining))
   (cond
     (is candidate None) (ArmChoice :arm NEXT-ARM-LAUNCH :source None :retire None)
     (and alive (not idle) live-backend) (ArmChoice :arm NEXT-ARM-DEFER :source candidate :retire None)
     compact (ArmChoice :arm NEXT-ARM-REHYDRATE :source None :retire (if alive candidate None) :compacts True)
-    (and idle same same-effort (not draining)) (ArmChoice :arm NEXT-ARM-SEND :source candidate :retire None)
+    (and idle same same-effort same-node-env (not draining)) (ArmChoice :arm NEXT-ARM-SEND :source candidate :retire None)
     (and idle same) (ArmChoice :arm NEXT-ARM-RESUME :source candidate :retire candidate)
     idle (ArmChoice :arm NEXT-ARM-REHYDRATE :source None :retire candidate)
     (and alive same) (ArmChoice :arm NEXT-ARM-RESUME :source candidate :retire candidate)
@@ -1638,20 +1698,32 @@
       choice))
 
 
-(defk retire-reason-of [choice view job-id]
-  {:pre [(: choice ArmChoice) (: view (| SessionView None)) (: job-id str)]
+(defk retire-reason-of [choice view job-id effort node-env-digest]
+  {:pre [(: choice ArmChoice) (: view (| SessionView None)) (: job-id str) (: effort (| str None)) (: node-env-digest str)]
    :post [(: % str)]}
-  "候補を片付ける理由の文(log の 1 行 — 判断は next-arm-for-job と同じ観測から): rehydrate = 家が違う /
-   resume ∧ 候補が idle = effort が違う(温かい process を新しい旗で起こし直す)/ resume ∧ 候補が手番の途中 =
-   backend が死んでいる(段 10 lane 10h — 手番は終わらないので待たない)。"
+  "候補を片付ける理由の文(log の 1 行 — 判断は next-arm-for-job と同じ観測から・effort と node-env-digest も同じ材料):
+   rehydrate = 家が違う / resume ∧ 候補が idle = effort が違う(温かい process を新しい旗で起こし直す)か、機体が席へ渡す env の
+   指紋が違う・無い(card acp:kanban-issue:ki-e930b8506201 — 新しい env で起こし直す)か、候補が降りる途中の器に居る /
+   resume ∧ 候補が手番の途中 = backend が死んでいる(段 10 lane 10h — 手番は終わらないので待たない)。"
   (<- idle bool (session-idle view))
+  (setv launched-effort None)
+  (setv launched-node-env None)
+  (when (isinstance view SessionView)
+    (<- read-effort (| str None) (session-effort-of view))
+    (<- read-node-env (| str None) (session-node-env-of view))
+    (setv launched-effort read-effort)
+    (setv launched-node-env read-node-env))
   (cond
     choice.compacts
     f"job {job-id} starts compacted — the conversation's context passed its compactAt threshold, so the warm session is dropped and the conversation is rehydrated from the record service (段 10f 便 2)"
     (= choice.arm NEXT-ARM-REHYDRATE)
     f"job {job-id} runs in another home (account, binding or model) — the session cache is dropped and the conversation is rehydrated"
-    idle
+    (and idle (!= launched-effort effort))
     f"job {job-id} declares another effort — the warm process is replaced by a --resume of the same session with the new flags (cache kept)"
+    (and idle (!= launched-node-env node-env-digest))
+    f"job {job-id} runs on a node whose seat env (declared seat_env or record destination) differs from the one the warm session was launched with — the session is resumed with the node's current env (cache kept)"
+    idle
+    f"job {job-id} found the conversation's warm session on a draining host — the session is resumed on the serving host (cache kept)"
     True
     f"job {job-id} found the conversation's session mid-turn with a dead backend process — the row is retired and the same session is resumed (cache kept)"))
 
@@ -2784,10 +2856,10 @@
 (defk charter-with-seat-env [charter seat-env]
   {:pre [(: charter dict) (: seat-env tuple)]
    :post [(: % dict)]}
-  "段 12(agora-redesign #520・既知の形 = kubelet): 機体の**参加の宣言**が名乗った env の対
-   (AgentdSettings.seat-env — 読みと参加の門は join.seat-env-of の 1 点)を、手番の process の env
-   (charter.session_env — 非 auth の overlay)へ宣言の順で重ねる 1 点。呼び手が置いた他の欄は残す。
-   宣言しない機体(空の tuple)は charter を 1 bit も変えない。
+  "段 12(agora-redesign #520・既知の形 = kubelet): 機体が席へ渡す env の組(node-seat-env-of の出力 = **参加の宣言**が
+   名乗った対〔AgentdSettings.seat-env — 読みと参加の門は join.seat-env-of の 1 点〕の後に、走行者の宛先〔記録の service —
+   card acp:kanban-issue:ki-e930b8506201〕)を、手番の process の env(charter.session_env — 非 auth の overlay)へ組の順で
+   重ねる 1 点。呼び手が置いた他の欄は残す。宣言も記録も無い機体(空の tuple)は charter を 1 bit も変えない。
 
    ⚠ 席は機体の env を**継がない**(policy.SPAWN-INHERITED-ENV-KEYS は 1 語も開かない・実弾 #95)。
    届くのは宣言されたこの対ちょうどで、第 2 の口(容器の env・shell の export)は作らない。
@@ -2859,22 +2931,24 @@
 
 
 (defk incarnation-charter-of [plan choice session-id lead bodies history attribution backend-kind lease homes-root
-                              memory-root opener seat-env]
+                              memory-root opener node-env]
   {:pre [(: plan LaunchPlan) (: choice ArmChoice) (: session-id str) (: lead str) (: bodies tuple) (: history str)
          (: attribution dict) (: backend-kind str) (: lease (| LeaseGrant None)) (: homes-root str)
-         (: memory-root str) (: opener (| str None)) (: seat-env tuple)]
+         (: memory-root str) (: opener (| str None)) (: node-env tuple)]
    :post [(: % tuple)]}
   "起こす session の charter を組む 1 点(launch / resume / rehydrate / rebuild — send は起こさない): 鋳造した id →
-   機体の宣言の env(段 12・agora-redesign #520)→ 会話の身元の env(段 10f 便 2 追補 3 — 会話の id は帰属の
+   機体が席へ渡す env(段 12・agora-redesign #520 の宣言の env と、card acp:kanban-issue:ki-e930b8506201 の記録の宛先 —
+   node-env = node-seat-env-of の出力。呼び手は同じ組を session-attribution-of にも渡し、帰属に指紋が刻まれる)→
+   会話の身元の env(段 10f 便 2 追補 3 — 会話の id は帰属の
    conversationId・opener は会話の行から)→ (rehydrate)これまでの会話 → (headless の起こす腕)前置き lead と郵便の本文 →
    借りた札の家 → 帰属。戻り = #(charter auth-file-or-None)(codex の借りた auth.json の置き場 — 書くのは
    呼び手の effect)。lead = 続きの手番の再開の案内文(card acp:kanban-issue:ki-06b286143c17 — 空 = 続きの手番ではない)。
    畳まない器(tui)は lead を charter に入れない(after-start が id を運ばない送り 1 つで先に送る)。
 
-   ⚠ 順序は契約: 宣言の env(charter-with-seat-env)は会話の身元(charter-with-conversation-env)の**前**
-   ちょうど — 身元が必ず勝つので、機体の宣言は会話の名乗りを偽れない(agora-redesign #520)。"
+   ⚠ 順序は契約: 機体の env(charter-with-seat-env — 組の中は宣言 → 走行者の宛先)は会話の身元
+   (charter-with-conversation-env)の**前**ちょうど — 身元が必ず勝つので、機体の宣言は会話の名乗りを偽れない(agora-redesign #520)。"
   (<- with-id dict (charter-with-session-id plan.charter session-id))
-  (<- with-seat dict (charter-with-seat-env with-id seat-env))
+  (<- with-seat dict (charter-with-seat-env with-id node-env))
   (<- with-env dict (charter-with-conversation-env with-seat (str (get attribution "conversationId")) opener))
   ;; 自動記憶の置き場は会話に従う(ADR-DOE-AGENTS-006 R11)— 起こす 4 つの腕(rebuild を含む)すべてで据える 1 点。
   ;; 借りた札の家(下)より前に据えるのは、記憶が資格ではなく会話の durable な状態だから。

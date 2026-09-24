@@ -215,7 +215,7 @@
   "backend = headless の器(events file が実況の正本)+ 記録の service の fake で agentd を一周させる最小の世界。"
   (defn #^ None __init__ [self #^ (| dict None) agent]
     (setv self.settings (AgentdSettings :node-name NODE :homes-root "/homes" :backend-kind "headless"
-                                        :stream-capability "events" :record-enabled True))
+                                        :stream-capability "events" :record-url "http://record.test:8874"))
     (setv self.record-service (FakeRecord))
     (setv self.acp (FakeAcp :births {TURN-RECORD-KIND (Birth "state" "running")}))
     (.put-row self.acp (row-of AGORA-KINDS-NAMESPACE NODE-KIND NODE

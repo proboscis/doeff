@@ -5139,6 +5139,31 @@ rules:
       include:
         - "/packages/doeff-agents/src/**"
 
+  - id: doeff-agents-runner-owned-seat-env-spelled-once
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      The seat env names the runner owns — the conversation identity
+      (AGORA_CONVERSATION_ID, AGORA_SEAT_OPENER) and the record destination
+      (RECORD_SERVICE_URL, value = the `[record].url` that passed the join
+      gate) — are spelled once, in sessionhost/acp/effects.py
+      (CONVERSATION_ID_ENV / SEAT_OPENER_ENV / RECORD_URL_ENV, gathered in
+      RUNNER_OWNED_SEAT_ENV). The join gate that refuses them in
+      `[agentd].seat_env` and in the seat settings file, and the charter
+      writer that places them, both read that one set
+      (ADR-DOE-AGENTS-012 R-the-agentd-puts-its-own-record-destination-on-the-seat-1601,
+      card acp:kanban-issue:ki-e930b8506201). A second spelling lets the
+      gate and the writer drift apart: the gate stops refusing a name the
+      writer still places, and a node declaration silently overrides the
+      runner's value. Import the constant from effects instead.
+    pattern-regex: '["''](RECORD_SERVICE_URL|AGORA_CONVERSATION_ID|AGORA_SEAT_OPENER)["'']'
+    paths:
+      include:
+        - "/packages/doeff-agents/src/**"
+      exclude:
+        - "/packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py"
+
   - id: doeff-agents-claude-md-excludes-spelling-has-one-home
     languages:
       - generic

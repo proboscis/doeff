@@ -232,7 +232,9 @@ def settings_from_env(env: Mapping[str, str], host_argv: Sequence[str] = ()) -> 
         backend_kind=backend,
         stream_capability=_stream_capability(backend),
         ownership=ownership,
-        record_enabled=bool(record_sink),
+        # card acp:kanban-issue:ki-e930b8506201: 参加の門を通った宛先ちょうど(RecordHttp に渡す値と同じ)— 判断の層は
+        # これを起こす手番の env にも置く(judgment.node-seat-env-of)。記録が有効かはこの欄から導く。
+        record_url=record_sink,
         # 段 10c(agora-redesign #80・R23): 預かり所を宣言した node か — join の [custody].url / --custody が CUSTODY_URL_ENV に
         # 据わる 1 点。宣言した node は account の無い job を起こさない(judgment.credential-source-of)。
         custody_declared=bool((env.get(CUSTODY_URL_ENV) or "").strip()),
