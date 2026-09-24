@@ -121,7 +121,7 @@ def test_cache_metadata_is_persisted_with_turn_end_and_other_status_is_retained(
         "cacheWrite": 20,
     }
     result = run(
-        judgment.turn_record_ended_status({"recordRef": "record:c/stream"}, None, (), cache)
+        judgment.turn_record_ended_status({"recordRef": "record:c/stream"}, None, (), (), cache)
     )
     assert result["cacheObservation"] == cache
     assert result["recordRef"] == "record:c/stream"
