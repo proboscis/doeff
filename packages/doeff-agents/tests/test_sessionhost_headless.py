@@ -821,6 +821,21 @@ def test_headless_claude_cannot_start_background_tasks_that_outlive_the_turn() -
     assert json.loads(merged[2]) == {"env": {"A": "x", key: "1"}}
 
 
+
+def test_headless_settings_env_merge_refuses_credential_shaped_names() -> None:
+    """card acp:kanban-issue:ki-edeab28c7bee(第 2 回の盲検 B の反例 B〜D): `--settings` の env は CLI の process に届く口。
+    合流点 argv-with-settings-env は合流した後の env を受け入れの検査に出自 declared で通す — 外から来た名の dict
+    (例: charter の欄を足して合流させる変更)を足しても、資格情報の形は手番のトークンも含めて通らない。"""
+    for name in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_API_KEY_HELPER_TTL_MS"):
+        with pytest.raises(RuntimeError, match="credential-shaped env is refused"):
+            run(headless_argv.argv_with_settings_env(["claude"], {name: "x"}))
+        # 既に --settings の env に居た名も合流の後の全体で断る
+        with pytest.raises(RuntimeError, match="claude.settings_env"):
+            run(headless_argv.argv_with_settings_env(
+                ["claude", "--settings", json.dumps({"env": {name: "x"}})], {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"}))
+    merged = run(headless_argv.argv_with_settings_env(["claude"], {"AGORA_IMAGE_TOOLS": "1"}))
+    assert json.loads(merged[2]) == {"env": {"AGORA_IMAGE_TOOLS": "1"}}
+
 def test_headless_claude_declares_the_compaction_threshold_on_both_arms() -> None:
     """会話の圧縮の閾値(設計記録 docs/design/auto-compact-window): ACP の本番の腕は headless backend なので、閾値が
     **この経路で**載ることを固定する。実弾 2026-09-18: 稼働中の claude 席 43 本のうち

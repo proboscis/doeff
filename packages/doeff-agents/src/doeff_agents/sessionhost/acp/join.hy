@@ -34,7 +34,7 @@
 
 (require doeff-hy.macros [defk <-])
 
-(import doeff_agents.sessionhost.policy [CARRIED-INSTRUCTION-SOURCES seat-env-credential-shaped-offenders session-env-admission-error])
+(import doeff_agents.sessionhost.policy [CARRIED-INSTRUCTION-SOURCES ENV-ORIGIN-DECLARED session-env-admission-error])
 ;; 席の settings の鍵の家(card acp:kanban-issue:ki-7b52bb76aa6e): doeff が `--settings` に置く鍵の集合は argv の合流点
 ;; (impls/claude_code.hy)が 1 点で持ち、参加の門 (c) はそれを読む — 綴りを写さない。
 (import doeff_agents.sessionhost.impls.claude_code [CLAUDE-SETTINGS-OWNED-KEYS])
@@ -874,16 +874,11 @@
       (raise (ValueError f"{where} に同じ名が 2 度: {name !r}(どちらが勝つかを黙って決めない)")))
     (.append seen name)
     (.append pairs #(name value)))
-  ;; (a) 資格の関所は家の 1 点(policy)— ここに判定を写さない(R30 (4)・R51 (1))。
-  (setv admission (session-env-admission-error (dict pairs) "join.seat_env"))
+  ;; 資格の検査は受け入れの検査の 1 点を出自 declared で呼ぶ — ここに判定を写さない(R30 (4)・R51 (1))。
+  ;; 宣言の env は宛先だけを運ぶので、手番の札も例外なく断る(例外は出自 per-turn の入口だけ)。
+  (setv admission (session-env-admission-error (dict pairs) "join.seat_env" ENV-ORIGIN-DECLARED))
   (when (is-not admission None)
     (raise (ValueError admission)))
-  ;; (b) この口だけの線(policy の純粋の 1 点)— 区間 KEY / TOKEN と SECRET / PASSWORD / CREDENTIAL の部分一致。
-  (<- shaped list (seat-env-credential-shaped-offenders (dict pairs)))
-  (when shaped
-    (raise (ValueError (+ f"{where} は宛先を運ぶ口で、資格の輸送路ではない(資格の形の名: "
-                          f"{(.join ", " shaped)})。札は家の既定の置き場への file の mount で置き、"
-                          "env では渡さない(ADR-DOE-AGENTS-012 R30 (4) / R51 (1))"))))
   (setv owned (sorted (lfor name seen :if (in name #{CONVERSATION-ID-ENV SEAT-OPENER-ENV}) name)))
   (when owned
     (raise (ValueError (+ f"{where} は会話の身元の名を宣言できない({(.join ", " owned)})— "
@@ -971,6 +966,14 @@
     (raise (ValueError (+ f"{where} が名指す file は doeff が置く鍵を持てない({(.join ", " owned)})— "
                           "hook の無効化と記憶の置き場は doeff が `--settings` の合流点で自分で置く"
                           "(ADR-DOE-AGENTS-004 R13・衝突は黙って後勝ちにしない)"))))
+  ;; (e) env の欄は `--settings` を通って CLI の process に届く宣言の env — seat_env と同じく受け入れの検査を
+  ;; 出自 declared で通す(card acp:kanban-issue:ki-edeab28c7bee・資格情報の第 2 の口にしない)。
+  (setv settings-env (.get parsed "env" {}))
+  (when (not (isinstance settings-env dict))
+    (raise (ValueError f"{where} が名指す file の env の欄は object であること: {(. (type settings-env) __name__)}")))
+  (setv env-error (session-env-admission-error settings-env "join.claude_settings.env" ENV-ORIGIN-DECLARED))
+  (when (is-not env-error None)
+    (raise (ValueError env-error)))
   parsed)
 
 

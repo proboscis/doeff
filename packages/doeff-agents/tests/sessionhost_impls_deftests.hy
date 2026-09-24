@@ -434,6 +434,25 @@
     (assert (in "claude_settings" (str raised)) #(label (str raised)))))
 
 
+
+(deftest test-claude-argv-refuses-credential-shaped-env-in-seat-settings
+  ;; card acp:kanban-issue:ki-edeab28c7bee(第 2 回の盲検 B の反例 E): 席の settings の宣言の env の欄は `--settings` を通って
+  ;; CLI の process に届く宣言の env — 起こす拍の合流点でも受け入れの検査を出自 declared で通す(手番のトークンも断る)。
+  ;; 宛先の名は通り、`--settings` の env にそのまま載る。
+  (setv world (ImplWorld))
+  (for [name ["ANTHROPIC_API_KEY" "GITHUB_TOKEN" "CLAUDE_CODE_OAUTH_TOKEN"]]
+    (setv raised None)
+    (try
+      (<- _ (run-claude world (build-launch "claude" (base-params :agent_type "claude" :session_hooks "inherit"
+                                                                  :claude_settings {"hooks" {} "env" {name "x"}}))))
+      (except [e RuntimeError] (setv raised e)))
+    (assert (is-not raised None) name)
+    (assert (in "credential-shaped env is refused" (str raised)) #(name (str raised)))
+    (assert (in "claude_settings.env" (str raised)) #(name (str raised))))
+  (<- argv (run-claude world (build-launch "claude" (base-params :agent_type "claude" :session_hooks "inherit"
+                                                                 :claude_settings {"hooks" {} "env" {"AGORA_IMAGE_TOOLS" "1"}}))))
+  (assert (= (get (json.loads (get argv (+ (.index argv "--settings") 1))) "env") {"AGORA_IMAGE_TOOLS" "1"}) argv))
+
 (deftest test-claude-argv-without-declared-seat-settings-is-byte-identical
   ;; R13: 宣言の無い機体(欄なし・None・空の {})の argv は今日と 1 byte も変わらない — 既定と inherit の両方で。
   (setv world (ImplWorld))

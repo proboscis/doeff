@@ -575,6 +575,16 @@
 ;; 再開の process は「その手番の送りが運ぶ env」で起きる(host の session.send の session_env)。
 (setv TURN-AUTH-ENV-KEYS #{"CLAUDE_CODE_OAUTH_TOKEN"})
 
+;; env の出自(閉語彙・card acp:kanban-issue:ki-edeab28c7bee)— 受け入れの検査の例外は**出自**で決まり、名では決まらない。
+;;   per-turn = host がこの手番のために組んだ env(launch / session.send / cache の ping)。手番のトークンを
+;;              host が注ぐ唯一の経路なので、TURN-AUTH-ENV-KEYS だけは通す。
+;;   declared = 保存される宣言が運ぶ env(機体の参加の宣言 [agentd].seat_env・席の settings file の env の欄)。
+;;              宛先だけを運ぶ — 資格情報の形は例外なく断る(手番のトークンも)。
+;; 入口は呼ぶ時に必ず出自を名乗る(既定値を置かない — 名乗り忘れた宣言の入口が手番の例外を黙って受けないように)。
+(setv ENV-ORIGIN-PER-TURN "per-turn")
+(setv ENV-ORIGIN-DECLARED "declared")
+(setv ENV-ORIGINS #(ENV-ORIGIN-PER-TURN ENV-ORIGIN-DECLARED))
+
 (defk overlay-without-turn-auth [env]
   {:pre [(: env (| dict None))]
    :post [(: % dict)]}
@@ -630,7 +640,7 @@
 ;; 通り、env の 1 語では決して許されない。
 ;;
 ;; 資格の形の規則(card acp:kanban-issue:ki-edeab28c7bee)— 定義はこの 2 つの定数と下の本体の 1 点。
-;; 受理(session-env-admission-error)と席の宣言の線(seat-env-credential-shaped-offenders)が同じ本体を読む。
+;; 読むのは受け入れの検査(session-env-admission-error)だけで、例外は env の出自(ENV-ORIGINS)で決まる。
 ;; 正規化した名を `_` で割り、**区間のどれか**(末尾の数字は落とす)が下の綴りで終わるか、名が下の語を
 ;; 含めば当たり。⚠ **名の末尾に錨を打たない** — `_API_KEY` で終わる形で判じると、後ろに 1 語付いた綴り
 ;; (`ANTHROPIC_API_KEY_PERSONAL` / `anthropic_api_key__personal` = CLAUDE.md が逐語で禁じる名)が通る。
@@ -652,8 +662,8 @@
   {:pre [(: session-env dict)]
    :post [(: % list)]}
   "env のうち資格の形の名の列挙(純粋の 1 点・例外なし)。名は 2026-08-26 の従量課金の裁定に由来するが、
-   規則は資格の形そのもの。手番の札(TURN-AUTH-ENV-KEYS)も当たる — それを通すかは口の判断
-   (受理は通し、席の宣言の線は断る)で、この本体は知らない。"
+   規則は資格の形そのもの。手番の札(TURN-AUTH-ENV-KEYS)も当たる — それを通すかは env の出自の判断
+   (受け入れの検査が ENV-ORIGINS で決める)で、この本体は知らない。"
   (sorted (lfor key (.keys session-env)
                 :if (do (setv normalized (policy-normalized-env-key key))
                         (or (any (gfor segment (.split normalized "_")
@@ -704,18 +714,11 @@
   "session_env に居てはならない provider の鍵・札の綴りの列挙(純粋の 1 点)。"
   (env-offenders-against session-env PROVIDER-AUTH-ENV-KEYS))
 
-;; 席へ運ぶ宣言の env(agora-redesign #520 — join の [agentd].seat_env)が **資格の輸送路に化けない**
-;; ための、この口の線。上の関所(session-env-admission-error)を通した**上に**重ねる。判定は関所と
-;; **同じ資格の形の規則**(metered-credential-env-offenders の 1 点 — ここに第 2 の規則を置かない)で、
-;; 違いは例外の有無だけ: 関所は手番の札(TURN-AUTH-ENV-KEYS)を通すが、この線は通さない —
-;; 札は **file の mount** で家の既定の置き場に置くか手番ごとに host が注ぐのが唯一の形で、宣言の env は
-;; 宛先だけを運ぶ(根 = ADR-DOE-AGENTS-012 R30 (4) / R51 (1))。doeff は ACP_BASE も AGORA_BRAIN_URL も
-;; 知らないまま(宛先の綴りの定義点は宣言の側)、「これは鍵・札・秘密だ」と読める綴りだけを構造で塞ぐ。
-(defk seat-env-credential-shaped-offenders [seat-env]
-  {:pre [(: seat-env dict)]
-   :post [(: % list)]}
-  "席へ運ぶ宣言の env に居てはならない『資格の形』の名の列挙(資格の形の規則そのもの・例外なし)。"
-  (metered-credential-env-offenders seat-env))
+;; 宣言の env(agora-redesign #520 — join の [agentd].seat_env・席の settings file の env の欄)が **資格の輸送路に
+;; 化けない**ための線は、受け入れの検査を出自 ENV-ORIGIN-DECLARED で呼ぶことちょうど(第 2 の規則も第 2 の検査も
+;; 置かない)。札は **file の mount** で家の既定の置き場に置くか手番ごとに host が注ぐのが唯一の形で、宣言の env は
+;; 宛先だけを運ぶ(根 = ADR-DOE-AGENTS-012 R30 (4) / R51 (1))。doeff は ACP_BASE も AGORA_BRAIN_URL も知らないまま
+;; (宛先の綴りの定義点は宣言の側)、「これは鍵・札・秘密だ」と読める綴りだけを構造で塞ぐ。
 
 ;; ---------------------------------------------------------------------------
 ;; billing class(2026-09: 従量課金の資格を「宣言して」受ける経路 —
@@ -834,23 +837,24 @@
   #(HOME-READING-READ (declared-nonempty? auth CODEX-AUTH-API-KEY-FIELD)))
 
 
-(deff session-env-admission-error [session-env verb]
-  {:pre [(: session-env dict) (: verb str)]
+(deff session-env-admission-error [session-env verb origin]
+  {:pre [(: session-env dict) (: verb str) (: origin str) (in origin ENV-ORIGINS)]
    :post [(: % (| str None))]}
-  "session_env の関所(None = 適合・文字列 = reject 理由)。launch の口と
-   session.send の口(段 10 lane 10d 便 2 追補 2 の手番ごとの env)と、機体の参加の
-   宣言の口(段 12・agora-redesign #520 の [agentd].seat_env — join.seat-env-of)が
-   同じ 1 点を通る — 運ぶ口が増えても判定を並行実装しない。verb は名乗る動詞名。"
+  "agent に届く env の受け入れの検査(None = 適合・文字列 = reject 理由)。env を運ぶ入口はすべてこの 1 点を
+   通る — launch の口・session.send の口・cache の ping(出自 per-turn)と、機体の参加の宣言
+   [agentd].seat_env(join.seat-env-of)・席の settings file の env の欄(出自 declared)。運ぶ口が増えても
+   判定を並行実装しない。verb は名乗る動詞名、origin は env の出自(ENV-ORIGINS — 呼び手が必ず名乗る)。"
   (setv offenders (overlay-env-offenders session-env))
   (when offenders
     (return (+ f"{verb}: session_env is a non-auth overlay and may not "
                f"carry binding-owned auth env (offending: {(.join ", " offenders) }). "
                "Declare the auth profile through the typed `binding` field "
                "(ADR-DOE-AGENTS-004 R7).")))
-  ;; 資格の形(1 点の規則)。受理の口の例外は手番の札ちょうど — host が手番ごとに注ぐ唯一の資格
+  ;; 資格の形(1 点の規則)。例外は出自 per-turn の手番の札ちょうど — host が手番ごとに注ぐ唯一の資格
   ;; (ADR 012 R5・R30)で、行には残さない(overlay-without-turn-auth)。例外をここに足さない。
   (setv metered (lfor key (metered-credential-env-offenders session-env)
-                      :if (not-in (policy-normalized-env-key key) TURN-AUTH-ENV-KEYS)
+                      :if (not (and (= origin ENV-ORIGIN-PER-TURN)
+                                    (in (policy-normalized-env-key key) TURN-AUTH-ENV-KEYS)))
                       key))
   (when metered
     (return (+ f"{verb}: credential-shaped env is refused in agent sessions "
@@ -858,7 +862,10 @@
                "metered-billing credentials are forbidden in agent sessions — agent seats "
                "authenticate with subscription profiles via the typed `binding` field only "
                "(operator ruling 2026-08-26); the turn's credential is poured by the host per turn, "
-               "and other credentials reach a seat as files in its home, never as env.")))
+               "and other credentials reach a seat as files in its home, never as env."
+               (if (= origin ENV-ORIGIN-DECLARED)
+                   " A declared env carries destinations only (ADR-DOE-AGENTS-012 R30 (4) / R51 (1))."
+                   ""))))
   ;; ⚠ この節は資格の形の節より**後**。受理の層では形が PROVIDER-AUTH を全部先に拾うので、ここは
   ;; 名簿が形の外の綴りを持った日の砦(card acp:kanban-issue:ki-2a061da56ca9)。
   (setv provider-auth (provider-auth-env-offenders session-env))

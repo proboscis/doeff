@@ -70,6 +70,8 @@
   HOME-READING-ABSENT
   HOME-READING-MALFORMED
   binding-billing-class
+  ENV-ORIGIN-DECLARED
+  session-env-admission-error
   claude-home-metered-reading])
 (import doeff_agents.sessionhost.impls.channel [
   REPORT-RESULT-MCP-SERVER
@@ -372,6 +374,17 @@
                (+ "claude_settings(席の settings の宣言)は session_hooks=inherit の手番にだけ合流する — "
                   f"{CLAUDE-DISABLE-ALL-HOOKS-SETTING} と同居させると宣言した hook が黙って死ぬ"
                   "(ADR-DOE-AGENTS-004 R13・参加の門 (d) が断るはずの形)"))))
+    ;; 宣言の env の欄は `--settings` を通って CLI の process に届く — 受け入れの検査を出自 declared で通す
+    ;; (card acp:kanban-issue:ki-edeab28c7bee・settings の env を資格情報の第 2 の口にしない)。起こす拍ごとに
+    ;; 読み直した宣言がここを通るので、参加の門 (e) の後に書き換えられた file も同じく断る。
+    (setv declared-env (.get declared "env" {}))
+    (when (not (isinstance declared-env dict))
+      (raise (RuntimeError
+               (+ "claude_settings(席の settings の宣言)の env の欄は JSON の object であること: "
+                  (. (type declared-env) __name__)))))
+    (setv env-error (session-env-admission-error declared-env "claude_settings.env" ENV-ORIGIN-DECLARED))
+    (when (is-not env-error None)
+      (raise (RuntimeError env-error)))
     (for [[key value] (.items declared)]
       (when (or (in key settings) (in key CLAUDE-SETTINGS-OWNED-KEYS))
         (raise (RuntimeError

@@ -6058,6 +6058,21 @@ def test_join_claude_settings_declaration_gates_are_one_pure_point() -> None:
             run(join.claude_settings_declaration_of(text, "disabled"))
 
 
+
+def test_join_claude_settings_env_passes_the_admission_check_as_declared() -> None:
+    """card acp:kanban-issue:ki-edeab28c7bee(第 2 回の盲検 B の反例 E): 席の settings file の env の欄は `--settings` を通って
+    CLI の process に届く宣言の env — seat_env と同じ受け入れの検査を出自 declared で通す(手番のトークンも断る)。
+    宛先の名は通る。"""
+    ok = run(join.claude_settings_declaration_of(json.dumps({"hooks": {}, "env": {"AGORA_IMAGE_TOOLS": "1"}}), "inherit"))
+    assert ok == {"hooks": {}, "env": {"AGORA_IMAGE_TOOLS": "1"}}
+    for name in ("ANTHROPIC_API_KEY", "anthropic_api_key__personal", "GITHUB_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"):
+        with pytest.raises(ValueError, match="credential-shaped env is refused") as refused:
+            run(join.claude_settings_declaration_of(json.dumps({"hooks": {}, "env": {name: "x"}}), "inherit"))
+        assert "join.claude_settings.env" in str(refused.value)
+        assert "A declared env carries destinations only" in str(refused.value)
+    with pytest.raises(ValueError, match="env の欄は object"):
+        run(join.claude_settings_declaration_of(json.dumps({"hooks": {}, "env": ["X=1"]}), "inherit"))
+
 def test_join_plan_admits_the_seat_settings_file_and_joins_when_it_is_absent(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
