@@ -1,0 +1,363 @@
+{
+  "version": 1,
+  "task_id": "lt-HQ3E81PXS63W6AEWT540VDEQQ5",
+  "base_revision": "9df950b5477f9456216ab447b1c37879981425ec",
+  "author": {
+    "conversation_id": "c-3S6FSS1P9KAKHCTCZZ6724P3ZX",
+    "model": "claude-opus-5-5",
+    "effort": "未確認(自己申告)"
+  },
+  "requirements": "Q1〜Q5(design.md §2): 日次の 3 つの母集団は段ごとに独立・package の loop は全部を訪ね失敗を名指す・失敗名は repo の根から渡せて衝突しない・test 名の file は母集団か理由つきの除外・root の既定 pytest で固定・testpaths の元案は採らない",
+  "design": {
+    "path": "design.md",
+    "sha256": "42d8a57fdfbba8a1f962031cf6ea95a538c64fc3da1437f22f44114693315f88"
+  },
+  "modules": [
+    {
+      "id": "gate-full-stages",
+      "responsibility": "日次が測る母集団を段の列で持つ",
+      "owns": "母集団の一覧・順序・build の前提(blocks_rest)・各段の実行場所",
+      "hides": "各母集団の中身の列挙と走らせ方",
+      "interface": ".agents/land-queue.toml [gate].full(land_config.full_stages の閉じた鍵 name / run / blocks_rest / layers)",
+      "effects": "なし、宣言(実行は日次の道具が行う)",
+      "lifetime": "宣言の版。日次の走行ごとに読まれる",
+      "invariants": "各母集団をちょうど 1 段が呼ぶ・build だけが後ろを止める・各テストの段は make sync から始まる"
+    },
+    {
+      "id": "make-test-packages",
+      "responsibility": "package の母集団を全部走らせる",
+      "owns": "package の母集団の規則・package ごとの独立 session・赤の後も続ける・失敗の一覧・失敗名は repo の根からの相対",
+      "hides": "日次の存在・他の母集団の中身",
+      "interface": "make test-packages [PACKAGE_UV_RUN=…]・rc(0 = 全部緑)・出力の FAILED 行と test-packages failed: の行",
+      "effects": "pytest の子 process を package ごとに起こす(repo の根で)",
+      "lifetime": "1 回の make の実行",
+      "invariants": "期待の集合をちょうど訪ねる・1 つの赤が後ろを隠さない・失敗名は衝突しない"
+    },
+    {
+      "id": "make-test-rust",
+      "responsibility": "crate の母集団を全部走らせる(変更なし)",
+      "owns": "crate の母集団・失敗の一覧",
+      "hides": "日次の存在",
+      "interface": "make test-rust・rc",
+      "effects": "cargo test の子 process",
+      "lifetime": "1 回の make の実行",
+      "invariants": "1 つの赤が後ろを隠さない(既存)"
+    },
+    {
+      "id": "root-testpaths",
+      "responsibility": "root の母集団と共通の pytest 設定(変更なし)",
+      "owns": "testpaths・ini(package の母集団にも効く)",
+      "hides": "日次の存在",
+      "interface": "pyproject.toml [tool.pytest.ini_options]",
+      "effects": "なし、設定",
+      "lifetime": "設定の版",
+      "invariants": "package は自前の pytest 設定を持たない(持つと root の ini と conftest が効かなくなる)"
+    },
+    {
+      "id": "population-pin",
+      "responsibility": "Q1〜Q3 を固定する",
+      "owns": "期待の集合(実装から独立に数える)・除外の表・宣言の形の検め",
+      "hides": "各母集団の走らせ方の細部(cwd 等)",
+      "interface": "ADR-DOE-ENFORCE-001 R8 の deftest・tests/test_daily_test_population.py",
+      "effects": "make と pytest を tmp の模型と偽の runner で起こす(実テストは起こさない)",
+      "lifetime": "root の既定 pytest の 1 回",
+      "invariants": "赤になるべき形(今の本線・盲検 B の反例)を赤にする"
+    },
+    {
+      "id": "land-mechanism",
+      "responsibility": "段の読み替え・全段を走らせる方策・段ごとの記録・遠隔同期(外部・変更しない)",
+      "owns": "full_stages / run_full_stages / remote_check",
+      "hides": "doeff の母集団の中身",
+      "interface": "land_config.FullStage・日次の台帳 verify.stages",
+      "effects": "段の命令の実行・台帳への記帳",
+      "lifetime": "日次の走行",
+      "invariants": "stop_on_first_failure=False(日次)"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S0",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "root の pytest が赤(2026-09-24 の日次と同じ)",
+      "claim": "packages と rust の段は実行され、段ごとの結果が残る。宣言以外は変えない",
+      "expected_scope": "変更なし(設計の効果)",
+      "actual_scope": "変更なし — 偽の命令の 4 段で root が赤でも packages・rust は pass として実行・記録された(e3)。今の 1 本の文字列の台帳は full の 1 段で coverage complete と記録(daily-f271ae39.json)",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "gate-full-stages",
+        "make-test-packages",
+        "make-test-rust",
+        "root-testpaths",
+        "population-pin",
+        "land-mechanism"
+      ],
+      "reason": "日次の道具の既定の方策(全段を走らせる)に一本化したため",
+      "revision": "不要"
+    },
+    {
+      "id": "S1",
+      "axis": "hardware",
+      "applicability": "applicable",
+      "change": "日次の宿を zeus から別の node へ",
+      "claim": "gate-full-stages の各段の前置きだけが変わる",
+      "expected_scope": "gate-full-stages のみ",
+      "actual_scope": "gate-full-stages のみ — 全段の --node を hera にした宣言で宣言の pin は緑(e5)",
+      "changed_modules": [
+        "gate-full-stages"
+      ],
+      "unchanged_modules": [
+        "make-test-packages",
+        "make-test-rust",
+        "root-testpaths",
+        "population-pin",
+        "land-mechanism"
+      ],
+      "reason": "固定のテストは node 名を検めない。4 段の前置きの繰り返しは同じ file の中の繰り返しで知識の漏洩ではない",
+      "revision": "不要"
+    },
+    {
+      "id": "S2",
+      "axis": "storage",
+      "applicability": "excluded",
+      "reason": "結果の保存(台帳の段ごとの記録・log の置き場)は dotfiles の着地の道具が持ち、doeff の側に保存の判断は無い"
+    },
+    {
+      "id": "S3",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "(a) 新しい package を足す (b) conformance/ を日次へ入れる (c) 母集団の外にテストを置く",
+      "claim": "(a) 編集なしで入る (b) 段を 1 つ足し除外の表の行を消すだけ (c) 完全性のテストが赤",
+      "expected_scope": "(a) なし (b) gate-full-stages・population-pin・Makefile に target (c) なし(赤で止まる)",
+      "actual_scope": "(a) 網羅・完全性とも緑(e5)(b) 未実験(後続の card ki-2832a04913cc)(c) 完全性が 1 本を名指して赤(e5)。除外の表から conformance/ を外すと 32 本で赤(e4 iv)",
+      "changed_modules": [
+        "gate-full-stages",
+        "population-pin",
+        "make-test-packages"
+      ],
+      "unchanged_modules": [
+        "make-test-rust",
+        "root-testpaths",
+        "land-mechanism"
+      ],
+      "reason": "(b) は母集団の一覧という公開の宣言の拡張で、漏洩ではない。make-test-packages は (b) で新しい target を足す時だけ(既存の loop は変えない)",
+      "revision": "盲検 B を受け、期待の集合を file system から独立に数える形へ(counterexamples.md)"
+    },
+    {
+      "id": "S4",
+      "axis": "distribution",
+      "applicability": "applicable",
+      "change": "rust の段だけ別の node で走らせる",
+      "claim": "その段の前置きだけが変わる。各段が自己完結なので他の段の build に依存しない",
+      "expected_scope": "gate-full-stages のみ",
+      "actual_scope": "gate-full-stages のみ — rust の段だけ hera にした宣言で pin 緑。make sync を抜いて build の段に頼らせると pin が赤(e5)",
+      "changed_modules": [
+        "gate-full-stages"
+      ],
+      "unchanged_modules": [
+        "make-test-packages",
+        "make-test-rust",
+        "root-testpaths",
+        "population-pin",
+        "land-mechanism"
+      ],
+      "reason": "自己完結(各段の make sync)を宣言の pin が守る",
+      "revision": "不要"
+    },
+    {
+      "id": "S5",
+      "axis": "concurrency",
+      "applicability": "applicable",
+      "change": "段の合間に同じ label の遠隔 dir が別の走行に使われる / 一部の段だけ手元へ倒れる",
+      "claim": "各段が木の同期と make sync からやり直すので、測るのは常に宣言した木。どの module も変えない",
+      "expected_scope": "変更なし",
+      "actual_scope": "宣言の pin が make sync を抜いた段を赤にする(e5)。実際の取り合いは zeus に届かず未実験(unresolved)",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "gate-full-stages",
+        "make-test-packages",
+        "make-test-rust",
+        "root-testpaths",
+        "population-pin",
+        "land-mechanism"
+      ],
+      "reason": "remote_check は呼ばれるたびに木を同期し、錠が取れなければ木ごとの一意の dir へ退避する(註の読解)",
+      "revision": "不要"
+    },
+    {
+      "id": "S6",
+      "axis": "simulation",
+      "applicability": "applicable",
+      "change": "母集団の振る舞いを実テストなしで決定的に確かめる",
+      "claim": "偽の runner と模型の木で数秒で確かめられる。試験の口は既存の PACKAGE_UV_RUN",
+      "expected_scope": "変更なし",
+      "actual_scope": "模型の木で今の loop と提案の loop を実 pytest で比べた(e2)・偽の runner で実際の木の網羅を検めた(e4)。盲検 A を受け、失敗名の契約は cwd ではなく出力の FAILED 行で検める形へ",
+      "changed_modules": [
+        "population-pin"
+      ],
+      "unchanged_modules": [
+        "gate-full-stages",
+        "make-test-packages",
+        "make-test-rust",
+        "root-testpaths",
+        "land-mechanism"
+      ],
+      "reason": "盲検 A: 偽の runner が cwd で package を見分けると Makefile の細部(cd)が固定のテストへ漏れる",
+      "revision": "失敗名の契約を make-test-packages の公開契約にし、模型の木で本物の Makefile と本物の pytest の出力を読む形へ(evidence/proto/pin3_real_makefile_on_model_tree.log)"
+    }
+  ],
+  "checks": [
+    {
+      "id": "chk-s0-stages-run-after-root-red",
+      "scenarios": [
+        "S0"
+      ],
+      "control": "positive",
+      "expectation": "提案の宣言を full_stages が受け付け、root が赤でも packages・rust の段が実行される",
+      "observation": "full_stages OK・4 段・build だけ blocks_rest。root red の時 build pass / root red / packages pass / rust pass",
+      "evidence": {
+        "path": "evidence/proto/e3_stages.log",
+        "sha256": "2e8f6b31f8f381a0cb1cf371f00ed76c5093eac17b98feaad47718655b5da8fe"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "chk-s0-current-shape-refused",
+      "scenarios": [
+        "S0"
+      ],
+      "control": "negative",
+      "expectation": "今の 1 本の文字列の宣言を宣言の pin が赤にし、今の loop は最初の package で止まる",
+      "observation": "pin1 赤(列でない)・loop の網羅も赤(最初の package の 1 回で止まる)",
+      "evidence": {
+        "path": "evidence/proto/e4_pins_i_rerun.log",
+        "sha256": "1f5bfe325ed9defff12a5307fbebec377cfc6a2ce30f724daf745fa35fec675f"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "chk-s1-s4-node-change",
+      "scenarios": [
+        "S1",
+        "S4"
+      ],
+      "control": "positive",
+      "expectation": "全段 / rust の段だけの --node を変えても宣言の pin は緑",
+      "observation": "どちらも緑",
+      "evidence": {
+        "path": "evidence/proto/e5_scenarios.log",
+        "sha256": "df572cc23cb8eb595acc6d66e34055f7e8d6acb8ae4cb9dd6e8748330bb502fa"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "chk-s1-s4-s5-no-self-sufficiency",
+      "scenarios": [
+        "S1",
+        "S4",
+        "S5"
+      ],
+      "control": "negative",
+      "expectation": "rust の段から make sync を抜くと宣言の pin が赤",
+      "observation": "赤「rust が母集団の命令の前に make sync を持たない」",
+      "evidence": {
+        "path": "evidence/proto/e5_scenarios.log",
+        "sha256": "df572cc23cb8eb595acc6d66e34055f7e8d6acb8ae4cb9dd6e8748330bb502fa"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "chk-s5-declaration-self-sufficient",
+      "scenarios": [
+        "S5"
+      ],
+      "control": "positive",
+      "expectation": "提案の宣言の各テストの段は make sync から始まり、pin が緑",
+      "observation": "(ii) で 3 つの pin とも緑",
+      "evidence": {
+        "path": "evidence/proto/e4_pins.log",
+        "sha256": "0219a0143313e3fa3d47370fd16ffac2ac59d42a2b89fc2995323db1c6184788"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "chk-s3-new-package",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "新しい package は編集なしで網羅・完全性とも緑",
+      "observation": "どちらも緑",
+      "evidence": {
+        "path": "evidence/proto/e5_scenarios.log",
+        "sha256": "df572cc23cb8eb595acc6d66e34055f7e8d6acb8ae4cb9dd6e8748330bb502fa"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "chk-s3-outside-file-and-cex-B",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "母集団の外のテスト file・除外の表の欠け・盲検 B の反例(root の testpaths の package を飛ばす loop)を赤にする",
+      "observation": "(iii) 網羅が 5 package の欠けで赤・(iv) 32 本で赤・(v) 4 本で赤",
+      "evidence": {
+        "path": "evidence/proto/e4_pins.log",
+        "sha256": "0219a0143313e3fa3d47370fd16ffac2ac59d42a2b89fc2995323db1c6184788"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "chk-s6-names-contract-model",
+      "scenarios": [
+        "S6"
+      ],
+      "control": "positive",
+      "expectation": "提案の loop は全 package を訪ね、失敗名は packages/<p>/tests/… の形で衝突しない(本物の Makefile・本物の pytest)",
+      "observation": "a・b・c を訪問・FAILED packages/a/tests/test_cli.py::test_fail と packages/b/… の 2 行・test-packages failed: a b",
+      "evidence": {
+        "path": "evidence/proto/pin3_real_makefile_on_model_tree.log",
+        "sha256": "906b55946f032acba7d72f91a799b27d8bba63dfaeee04c8996dee84bc3d6231"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "chk-s6-current-loop-collapses",
+      "scenarios": [
+        "S6"
+      ],
+      "control": "negative",
+      "expectation": "今の loop は a で止まり、日次の道具の抽出で失敗名が tests/test_cli.py::test_fail の 1 つに畳まれる",
+      "observation": "rc 2・a だけ・(1, ['tests/test_cli.py::test_fail'])。提案の loop は (2, [packages/a/…, packages/b/…])",
+      "evidence": {
+        "path": "evidence/proto/e2_loop_model.log",
+        "sha256": "a38064dc14566741e634c8d5cdd7618e577904a59bb0751cf9e773dd68cadcc8"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "chk-a-real-repo-summary-path",
+      "scenarios": [
+        "S6"
+      ],
+      "control": "negative",
+      "expectation": "実際の repo でも package の dir から走らせた要約の path は cwd 相対",
+      "observation": "package の dir から PASSED tests/test_get_time.py::…・repo の根から PASSED packages/doeff-time/tests/test_get_time.py::…",
+      "evidence": {
+        "path": "evidence/A-real-repo-summary-path.log",
+        "sha256": "81b8c85a4c6ce968e489e9ea60d5a94a0df244dcdc7da77481cb727f597a505e"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": [
+    "cwd を package の dir から repo の根へ変えた影響の全数での確認(静的な候補 25 行は cwd に頼らない)— 次の日次が最初の実測",
+    "S5 の実際の遠隔 dir の取り合いは zeus に届かず未実験(remote_check の註の読解のみ)",
+    "S3(b) conformance/ の配線は後続の card acp:kanban-issue:ki-2832a04913cc",
+    "受付の 60 秒の上限が日次の package の段に掛かる件(F11)は後続の card acp:kanban-issue:ki-31fc80403050",
+    "4 段で build が 4 回になった時の所要が timeout_s 7200 に収まるか — 次の日次で読む",
+    "実装(Makefile・宣言・ADR R8・固定のテスト)は dev の依頼で未実施 — ここの checks は設計段の試作の実行だけ",
+    "盲検の実際の model と effort は起動口が名乗らないので未確認(要求 = opus / xhigh・優先 1 の gpt-6-astra は 2026-09-24 の operator の決定で使わず)"
+  ]
+}
