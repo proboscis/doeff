@@ -2027,6 +2027,104 @@ def test_the_spawned_turn_inherits_no_agentd_env(
     headless_host.ok("session.cleanup", {"session_id": "h-11"})
 
 
+def test_the_seat_reads_the_record_destination_of_the_agentd_that_woke_it(
+    headless_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """card acp:kanban-issue:ki-e930b8506201 C1 / C5(K1'): 起こした process の env の RECORD_SERVICE_URL は、その手番を起こした
+    agentd の記録の宛先(参加の門を通った値)と byte 同一。agentd の判断(node-seat-env-of → session-attribution-of →
+    incarnation-charter-of → next-arm-for-job)を本物のまま撃ち、本物の host(backend=headless)が替え玉の CLI を起こす。
+    - launch と、同じ agentd の次の手番(send → 降りた process の続き — 行に保存した生まれた時の env)は A の値。
+    - 手番の間に agentd を宛先 B で起こし直すと、腕は send ではなく resume(候補を片付けて同じ家で --resume)で、
+      起こした process は B の値(盲検 A・B の反例: 送りを選ぶと続きの process は行の A を再生する)。
+    - 差し替えない agentd B の次の手番は send で B のまま(cache を捨てない)。
+    - 記録が無効な agentd の席には名が無く、機体の env の値も継がない(R30 (4))。"""
+    from dataclasses import replace
+
+    from doeff_agents.sessionhost.acp import judgment
+    from doeff_agents.sessionhost.acp.effects import RECORD_URL_ENV, AgentdSettings, ArmChoice, LaunchPlan
+    from doeff_agents.sessionhost.acp.handlers import session_view_of
+
+    monkeypatch.setenv(RECORD_URL_ENV, "http://machine-env.invalid:1")
+    url_a, url_b = "http://record-a.example:8874", "http://record-b.example:8874"
+    declared = _launch_params(headless_host.root, "unused", "claude")
+    charter: JSONObject = {k: v for k, v in declared.items() if k not in ("session_id", "session_name")}
+    charter["session_env"] = {"DOEFF_HEADLESS_STUB_ECHO_ENV": RECORD_URL_ENV}
+    plan = LaunchPlan(
+        charter=charter, predecessor=None, lease_kind=None, account=None, profile="personal-1", model="stub-model"
+    )
+    home = run(judgment.session_affinity_key_of(plan))
+    settings_a = AgentdSettings(node_name="mac-1", record_url=url_a, seat_env=(("ACP_BASE", "http://acp:8868"),))
+    settings_b = replace(settings_a, record_url=url_b)
+
+    def woken(settings: AgentdSettings, arm: str, sid: str, source: str | None = None) -> JSONObject:
+        node_env = run(judgment.node_seat_env_of(settings))
+        attribution = run(judgment.session_attribution_of(plan, "aj-1", "c-1", arm, node_env))
+        built = run(
+            judgment.incarnation_charter_of(
+                plan, ArmChoice(arm=arm, source=source, retire=None), sid, "", (), "", attribution, "headless",
+                None, str(headless_host.root / "homes"), "", "operator", node_env,
+            )
+        )
+        assert isinstance(built, tuple)
+        woke = built[0]
+        assert isinstance(woke, dict)
+        return woke
+
+    def next_arm(sid: str, settings: AgentdSettings) -> object:
+        view = session_view_of(headless_host.snap(sid))
+        digest = run(judgment.node_seat_env_digest_of(run(judgment.node_seat_env_of(settings))))
+        return run(judgment.next_arm_for_job(sid, view, home, None, False, digest))
+
+    def echoed(events_path: Path) -> list[object]:
+        return [_obj(record, "echoed_env").get(RECORD_URL_ENV) for record in _init_records(events_path)]
+
+    def turn_over(sid: str) -> None:
+        _wait_turn_end(headless_host, sid)
+        _wait_until(lambda: headless_host.snap(sid)["backend_alive"] is False)
+
+    def send(sid: str, message: str) -> None:
+        headless_host.ok(
+            "session.send",
+            {"session_id": sid, "message": message, "awaiting": True, "session_env": run(judgment.turn_session_env_of(None))},
+        )
+
+    # agentd A が起こす(launch)→ A の値
+    launched = headless_host.ok("session.launch", woken(settings_a, "launch", "k1-a"))
+    assert isinstance(launched, dict)
+    events_a = Path(_text(_obj(launched, "backend_ref"), "events_path"))
+    _wait_until(lambda: echoed(events_a) == [url_a])
+    turn_over("k1-a")
+    # 同じ agentd A の次の手番: send(降りた process の続き)→ 行の生まれた時の env = A
+    assert next_arm("k1-a", settings_a) == ArmChoice("send", "k1-a", None)
+    send("k1-a", "second turn")
+    _wait_until(lambda: echoed(events_a) == [url_a, url_a])
+    turn_over("k1-a")
+    # agentd を B で起こし直した後の手番: send を選ばず resume → 起こした process は B
+    choice = next_arm("k1-a", settings_b)
+    assert choice == ArmChoice("resume", "k1-a", "k1-a")
+    headless_host.ok("session.cleanup", {"session_id": "k1-a"})
+    resumed = headless_host.ok(
+        "session.resume", run(judgment.resume_params_of("k1-a", woken(settings_b, "resume", "k1-b", "k1-a")))
+    )
+    assert isinstance(resumed, dict)
+    events_b = Path(_text(_obj(resumed, "backend_ref"), "events_path"))
+    _wait_until(lambda: echoed(events_b) == [url_b])
+    turn_over("k1-b")
+    # 差し替えない agentd B の次の手番は send のまま(cache を捨てない)で B
+    assert next_arm("k1-b", settings_b) == ArmChoice("send", "k1-b", None)
+    send("k1-b", "third turn")
+    _wait_until(lambda: echoed(events_b) == [url_b, url_b])
+    turn_over("k1-b")
+    headless_host.ok("session.cleanup", {"session_id": "k1-b"})
+    # 記録が無効な agentd(試験の対照だけ)の席には名が無い — 機体の env の値も継がない
+    off = headless_host.ok("session.launch", woken(replace(settings_a, record_url=None), "launch", "k1-off"))
+    assert isinstance(off, dict)
+    events_off = Path(_text(_obj(off, "backend_ref"), "events_path"))
+    _wait_until(lambda: echoed(events_off) == [None])
+    turn_over("k1-off")
+    headless_host.ok("session.cleanup", {"session_id": "k1-off"})
+
+
 def test_host_headless_codex_round_trip_is_warm(headless_host: Host) -> None:
     launched = headless_host.ok(
         "session.launch", _launch_params(headless_host.root, "h-3", "codex")

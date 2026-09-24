@@ -46,6 +46,7 @@ from doeff_agents.sessionhost.acp.effects import (
     JSON,
     JOB_INPUTS_DELIVERED_KEY,
     JSONObject,
+    LaunchPlan,
     LeaseGrant,
     LeaseRefused,
     MESSAGE_KIND,
@@ -1671,6 +1672,14 @@ def test_job_step_of_is_the_one_decision_for_a_running_row() -> None:
     # run_to_completion の器は turn_ended_at が付いても turn-end にはならない(終端で record-end)。
     cold = _view("s", "running", turn_ended_at_ms=5_000)
     assert run(judgment.job_step_of(cold, 0, True, False)) == "observe"
+
+
+def _node_env_digest(pairs: tuple[tuple[str, str], ...] = ()) -> str:
+    """機体が席へ渡す env の指紋(card acp:kanban-issue:ki-e930b8506201 C5 — judgment.node-seat-env-digest-of の 1 点)。
+    起こし方の判断の検は、帰属に刻んだ指紋と今の agentd の指紋を同じ関数で作る。"""
+    digest = run(judgment.node_seat_env_digest_of(pairs))
+    assert isinstance(digest, str)
+    return digest
 
 
 def _view(
@@ -3710,6 +3719,7 @@ def test_backend_liveness_is_read_from_the_observation_not_the_status_word() -> 
     plan = run(judgment.launch_plan_of(bound_job("a", inputs=[])))
     home = run(judgment.session_affinity_key_of(plan))
     other = {**home, "account": "other"}
+    node_env = _node_env_digest()
     stamp: JSONObject = {
         "agentd": {
             "conversationId": CONVERSATION,
@@ -3717,6 +3727,7 @@ def test_backend_liveness_is_read_from_the_observation_not_the_status_word() -> 
             "account": "acct",
             "home": home,
             "arm": "launch",
+            "nodeEnv": node_env,
         }
     }
     busy_alive = replace(
@@ -3737,11 +3748,11 @@ def test_backend_liveness_is_read_from_the_observation_not_the_status_word() -> 
     assert run(judgment.job_step_of(replace(busy_dead, status="exited"), 0, True, False)) == "record-end"
     assert run(judgment.job_step_of(idle_dead, 0, True, False)) == "turn-end"
     assert run(judgment.job_step_of(idle_dead, 20, True, False)) == "session-lost"
-    assert run(judgment.next_arm_for_job("p", busy_alive, home, None, False)) == ArmChoice("defer", "p", None)
-    assert run(judgment.next_arm_for_job("p", busy_unobserved, home, None, False)) == ArmChoice("defer", "p", None)
-    assert run(judgment.next_arm_for_job("p", busy_dead, home, None, False)) == ArmChoice("resume", "p", "p")
-    assert run(judgment.next_arm_for_job("p", busy_dead, other, None, False)) == ArmChoice("rehydrate", None, "p")
-    assert run(judgment.next_arm_for_job("p", idle_dead, home, None, False)) == ArmChoice("send", "p", None)
+    assert run(judgment.next_arm_for_job("p", busy_alive, home, None, False, node_env)) == ArmChoice("defer", "p", None)
+    assert run(judgment.next_arm_for_job("p", busy_unobserved, home, None, False, node_env)) == ArmChoice("defer", "p", None)
+    assert run(judgment.next_arm_for_job("p", busy_dead, home, None, False, node_env)) == ArmChoice("resume", "p", "p")
+    assert run(judgment.next_arm_for_job("p", busy_dead, other, None, False, node_env)) == ArmChoice("rehydrate", None, "p")
+    assert run(judgment.next_arm_for_job("p", idle_dead, home, None, False, node_env)) == ArmChoice("send", "p", None)
     condition = run(judgment.session_lost_condition_of(replace(busy_dead, backend_kind="headless", backend_ref={"pid": 22663}), 1_789_365_000_000))
     assert condition["type"] == "SessionLost"
     assert "pid 22663" in condition["reason"]
@@ -3909,6 +3920,7 @@ def test_next_arm_never_sends_to_a_warm_session_on_a_draining_host() -> None:
 
     plan = run(judgment.launch_plan_of(bound_job("a", inputs=[])))
     home = run(judgment.session_affinity_key_of(plan))
+    node_env = _node_env_digest()
     stamp: JSONObject = {
         "agentd": {
             "conversationId": CONVERSATION,
@@ -3916,15 +3928,16 @@ def test_next_arm_never_sends_to_a_warm_session_on_a_draining_host() -> None:
             "account": "acct",
             "home": {"account": "acct", "binding": None, "model": "claude-opus-5"},
             "arm": "launch",
+            "nodeEnv": node_env,
         }
     }
     warm = replace(_view("p", "running", lifecycle="multi_turn", turn_ended_at_ms=10), launch_attribution=stamp)
     busy = replace(_view("p", "running", lifecycle="multi_turn", turn_ended_at_ms=None), launch_attribution=stamp)
-    assert run(judgment.next_arm_for_job("p", warm, home, None, False)) == ArmChoice("send", "p", None)
-    assert run(judgment.next_arm_for_job("p", replace(warm, draining=True), home, None, False)) == ArmChoice(
+    assert run(judgment.next_arm_for_job("p", warm, home, None, False, node_env)) == ArmChoice("send", "p", None)
+    assert run(judgment.next_arm_for_job("p", replace(warm, draining=True), home, None, False, node_env)) == ArmChoice(
         "resume", "p", "p"
     )
-    assert run(judgment.next_arm_for_job("p", replace(busy, draining=True), home, None, False)) == ArmChoice(
+    assert run(judgment.next_arm_for_job("p", replace(busy, draining=True), home, None, False, node_env)) == ArmChoice(
         "defer", "p", None
     )
 
@@ -3945,6 +3958,7 @@ def test_next_arm_for_job_is_the_one_decision() -> None:
     assert other != home
     # 段 9o lane 9o-3: model だけが違う手番も違う家(温かい session に送らない・片付いた session を --resume しない)。
     other_model = {**home, "model": "claude-sonnet-5"}
+    node_env = _node_env_digest()
     stamp: JSONObject = {
         "agentd": {
             "conversationId": CONVERSATION,
@@ -3952,6 +3966,7 @@ def test_next_arm_for_job_is_the_one_decision() -> None:
             "account": "acct",
             "home": {"account": "acct", "binding": None, "model": "claude-opus-5"},
             "arm": "launch",
+            "nodeEnv": node_env,
         }
     }
     warm = replace(
@@ -3974,7 +3989,7 @@ def test_next_arm_for_job_is_the_one_decision() -> None:
         effort: str | None = None,
         compact: bool = False,
     ) -> ArmChoice:
-        choice = run(judgment.next_arm_for_job(candidate, view, at, effort, compact))
+        choice = run(judgment.next_arm_for_job(candidate, view, at, effort, compact, node_env))
         assert isinstance(choice, ArmChoice)
         return choice
 
@@ -4035,6 +4050,64 @@ def test_next_arm_for_job_is_the_one_decision() -> None:
     assert run(judgment.fallback_arm_of(ArmChoice("rehydrate", None, None))) is None
     assert run(judgment.launch_lifecycle_of({})) == "multi_turn"
     assert run(judgment.launch_lifecycle_of({"lifecycle": "interactive"})) == "interactive"
+
+
+def test_next_arm_resumes_a_warm_session_launched_with_another_node_env() -> None:
+    """card acp:kanban-issue:ki-e930b8506201 C5(K6・盲検 A・B の反例): 温かい session の続きの手番は、host が行に保存した
+    **生まれた時の env** を再生する(headless.continue-headless-process)。だから機体が席へ渡す env(宣言の seat_env + 記録の宛先)が
+    変わった後の agentd が send を選ぶと、席は古い宛先のまま走る。判断は next-arm-for-job の 1 点: 帰属に刻んだ指紋が今の agentd の
+    指紋と同じ → send / 違う → effort が違う時と同じ resume(候補を片付け、同じ家で --resume・cache は保つ)/ 指紋が無い
+    (配備前に生まれた)→ resume。手番の途中・家が違う・圧縮は今日どおり。"""
+    from doeff_agents.sessionhost.acp.effects import ArmChoice
+
+    plan = run(judgment.launch_plan_of(bound_job("a", inputs=[])))
+    home = run(judgment.session_affinity_key_of(plan))
+    other = {**home, "account": "other"}
+    before = _node_env_digest((("ACP_BASE", "http://acp:8868"), ("RECORD_SERVICE_URL", "http://record-1:8874")))
+    after = _node_env_digest((("ACP_BASE", "http://acp:8868"), ("RECORD_SERVICE_URL", "http://record-2:8874")))
+    assert before != after
+    born: JSONObject = {
+        "conversationId": CONVERSATION,
+        "agentJobId": "a-0",
+        "account": "acct",
+        "home": home,
+        "arm": "launch",
+        "effort": None,
+        "nodeEnv": before,
+    }
+    unstamped = {key: value for key, value in born.items() if key != "nodeEnv"}
+    warm = replace(
+        _view("p", "running", lifecycle="multi_turn", turn_ended_at_ms=10),
+        launch_attribution={"agentd": born},
+    )
+    old = replace(warm, launch_attribution={"agentd": unstamped})
+    busy = replace(warm, turn_ended_at_ms=None, backend_alive=True)
+
+    def arm(view: SessionView, at: JSONObject, digest: str, compact: bool = False) -> ArmChoice:
+        choice = run(judgment.next_arm_for_job("p", view, at, None, compact, digest))
+        assert isinstance(choice, ArmChoice)
+        return choice
+
+    # 同じ指紋 → 温かい send(cache を捨てない)
+    assert arm(warm, home, before) == ArmChoice("send", "p", None)
+    # 指紋が変わった → 候補を片付けて同じ家で resume(charter を組み直す腕 — 新しい env の process で起きる)
+    assert arm(warm, home, after) == ArmChoice("resume", "p", "p")
+    # 指紋の無い session(配備前に生まれた)→ 1 度だけ resume(その session の env には宛先が無い)
+    assert arm(old, home, after) == ArmChoice("resume", "p", "p")
+    # 手番の途中は今日どおり待つ・家が違えば今日どおり rehydrate・圧縮は今日どおり
+    assert arm(busy, home, after) == ArmChoice("defer", "p", None)
+    assert arm(warm, other, after) == ArmChoice("rehydrate", None, "p")
+    assert arm(warm, home, after, True) == ArmChoice("rehydrate", None, "p", True)
+    # 片付ける理由の 1 行は「機体の env が変わった」を名乗る(effort の違いと読み違えない)
+    resumed = arm(warm, home, after)
+    why = run(judgment.retire_reason_of(resumed, warm, "j-1", None, after))
+    assert isinstance(why, str)
+    assert "env" in why
+    assert "effort" not in why
+    stamped_high = replace(warm, launch_attribution={"agentd": {**born, "effort": "high"}})
+    why_effort = run(judgment.retire_reason_of(resumed, stamped_high, "j-1", None, before))
+    assert isinstance(why_effort, str)
+    assert "effort" in why_effort
 
 
 # ---------------------------------------------------------------- headless backend(events の実況・agora-redesign #37)
@@ -5858,6 +5931,148 @@ def test_join_refuses_seat_env_that_names_conversation_identity() -> None:
             run(join.seat_env_of(f"{name}=spoofed"))
 
 
+# ---------------------------------------------------------------- card acp:kanban-issue:ki-e930b8506201: 走行者が持つ名(記録の宛先)
+
+#: 記録の service の宛先(見本)— 機体の宣言 [record].url が参加の門 join.record-sink-of を通った値。
+RECORD_A = "http://agora-record.herdr-hud.svc.cluster.local.:8874"
+RECORD_B = "http://agora-record.taildd050.ts.net:8874"
+SEAT_PAIRS = (("ACP_BASE", "http://acp-control.acp-control.svc.cluster.local:8868"), ("HERDR_HUD_STATE_BACKEND", "pg"))
+
+
+def _runner_plan() -> LaunchPlan:
+    return LaunchPlan(
+        charter={"prompt": "hi", "session_env": {}},
+        predecessor=None,
+        lease_kind=None,
+        account="acct",
+        profile="personal-1",
+        model="claude-opus-5",
+    )
+
+
+class WokenCharter(NamedTuple):
+    """agentd が起こす腕で組んだ物: charter・帰属・機体が席へ渡す env の組。"""
+
+    charter: JSONObject
+    attribution: JSONObject
+    node_env: tuple[tuple[str, str], ...]
+
+
+def _charter_for(settings: AgentdSettings, arm: str = "launch") -> WokenCharter:
+    """agentd が起こす腕の charter を組む本物の順路(agentd.incarnate と同じ 3 つの関数): 機体が席へ渡す env(node-seat-env-of)→
+    帰属(session-attribution-of — 指紋を刻む)→ charter(incarnation-charter-of — 同じ組を書く)。"""
+    from doeff_agents.sessionhost.acp.effects import ArmChoice
+
+    plan = _runner_plan()
+    node_env = run(judgment.node_seat_env_of(settings))
+    assert isinstance(node_env, tuple)
+    attribution = run(judgment.session_attribution_of(plan, "aj-1", CONVERSATION, arm, node_env))
+    assert isinstance(attribution, dict)
+    source = None if arm in ("launch", "rehydrate") else "s-0"
+    built = run(
+        judgment.incarnation_charter_of(
+            plan, ArmChoice(arm=arm, source=source, retire=None), "s-1", "", (), "", attribution,
+            "headless", None, HOMES, "", "operator", node_env,
+        )
+    )
+    assert isinstance(built, tuple)
+    charter = built[0]
+    assert isinstance(charter, dict)
+    return WokenCharter(charter, attribution, node_env)
+
+
+def test_join_refuses_seat_env_that_copies_the_record_destination() -> None:
+    """card acp:kanban-issue:ki-e930b8506201 C2(K2): 記録の service の宛先は agentd 自身が席の env に置く(値の置き場は宣言 file の
+    [record].url の 1 か所)。seat_env に RECORD_SERVICE_URL の写しを書いた宣言は参加しない — 2 か所に同じ値を置くと片方だけが
+    更新される(Mac には byte 一致を突き合わせる検が無い)。断りの文は置く点が走行者の 1 点であることを名乗る。"""
+    with pytest.raises(ValueError, match="seat_env"):
+        run(join.seat_env_of(f"ACP_BASE=http://a\nRECORD_SERVICE_URL={RECORD_A}"))
+    with pytest.raises(ValueError, match="走行者"):
+        run(join.seat_env_of(f"RECORD_SERVICE_URL={RECORD_A}"))
+
+
+def test_settings_carry_the_record_destination_that_passed_the_join_gate() -> None:
+    """C1 の材料: 参加の門 join.record-sink-of を通った値(前後の空白を落とした値 — agentd 自身が RecordHttp に渡す値と同じ)を
+    AgentdSettings が判断の層へ運ぶ。欄は宛先 1 つで、記録が有効かはそこから導く(「有効なのに宛先が無い」を作れない)。"""
+    from doeff_agents.sessionhost.acp.runtime import settings_from_env
+
+    settings = settings_from_env(
+        {
+            "DOEFF_AGENTD_NODE_NAME": NODE,
+            "RECORD_SERVICE_URL": f"  {RECORD_A}  ",
+            "DOEFF_AGENTD_CAPACITY": "1",
+            "DOEFF_AGENTD_PLACES": "personal",
+        },
+        (),
+    )
+    assert settings.record_url == RECORD_A
+    assert settings.record_enabled is True
+    bare = AgentdSettings(node_name=NODE)
+    assert bare.record_url is None
+    assert bare.record_enabled is False
+    assert AgentdSettings(node_name=NODE, record_url=RECORD_B).record_enabled is True
+
+
+def test_runner_owned_seat_env_names_have_one_home() -> None:
+    """C2 / C5 の契約(K3): 走行者が持つ名の集合は effects の 1 か所で、(1) 参加の門 (c) はその集合の名を 1 つ残らず断る、
+    (2) charter が走行者として書く名はその集合ちょうど、(3) 帰属の指紋の材料は charter が書く組と同じ関数の出力、
+    (4) 送りの手番の env(turn-session-env-of)には走行者の名が 1 つも無い(第 2 の書き手を作らない)。
+    C1: 起こす 4 つの腕(launch / resume / rehydrate / rebuild)のどれでも charter の宛先は参加の門を通った値と byte 同一。"""
+    from doeff_agents.sessionhost.acp.effects import RUNNER_OWNED_SEAT_ENV
+
+    assert set(RUNNER_OWNED_SEAT_ENV) == {"AGORA_CONVERSATION_ID", "AGORA_SEAT_OPENER", "RECORD_SERVICE_URL"}
+    # (1) 門 (c) は集合を読む
+    for name in RUNNER_OWNED_SEAT_ENV:
+        with pytest.raises(ValueError, match="seat_env"):
+            run(join.seat_env_of(f"{name}=declared"))
+    # (2) 宣言の無い機体の charter が書く名 = 走行者の名ちょうど
+    recorded = AgentdSettings(node_name=NODE, homes_root=HOMES, record_url=RECORD_A)
+    bare_charter, _, _ = _charter_for(recorded)
+    assert set(bare_charter["session_env"]) == set(RUNNER_OWNED_SEAT_ENV)
+    # (3) 指紋の材料 = charter が書く組(会話の身元を除いた部分)= node-seat-env-of の出力
+    seated = replace(recorded, seat_env=SEAT_PAIRS)
+    charter, attribution, node_env = _charter_for(seated)
+    assert node_env == (*SEAT_PAIRS, ("RECORD_SERVICE_URL", RECORD_A))
+    env = charter["session_env"]
+    assert isinstance(env, dict)
+    identity = {"AGORA_CONVERSATION_ID", "AGORA_SEAT_OPENER"}
+    assert {name: value for name, value in env.items() if name not in identity} == dict(node_env)
+    assert attribution["nodeEnv"] == _node_env_digest(node_env)
+    stamped = charter["launch_attribution"]
+    assert isinstance(stamped, dict)
+    assert stamped["agentd"]["nodeEnv"] == attribution["nodeEnv"]
+    # 宛先が変われば指紋も変わる(起こし方の判断が差を読める)
+    _, moved, _ = _charter_for(replace(seated, record_url=RECORD_B))
+    assert moved["nodeEnv"] != attribution["nodeEnv"]
+    # C1: 4 つの腕とも同じ値(byte 同一)
+    for arm in ("launch", "resume", "rehydrate", "rebuild"):
+        armed, _, _ = _charter_for(seated, arm)
+        assert armed["session_env"]["RECORD_SERVICE_URL"] == RECORD_A, arm
+    # 記録が無効な settings(試験の対照だけ)では名が現れない
+    off_charter, _, off_env = _charter_for(replace(seated, record_url=None))
+    assert "RECORD_SERVICE_URL" not in off_charter["session_env"]
+    assert off_env == SEAT_PAIRS
+    # (4) 送りの手番の env は札だけ
+    grant = LeaseGrant(lease_id="l-1", kind="claude", renewed=False, hold_expires_at_ms=0, access_token="tok", auth_json=None)
+    for lease in (None, grant):
+        turn_env = run(judgment.turn_session_env_of(lease))
+        assert isinstance(turn_env, dict)
+        assert not set(turn_env) & set(RUNNER_OWNED_SEAT_ENV), turn_env
+
+
+def test_the_runner_record_destination_wins_over_a_seat_env_that_bypassed_the_gate() -> None:
+    """C3(K4): 順序は seat_env → 走行者の名(後に勝つ)。参加の門を迂回して seat_env に RECORD_SERVICE_URL を直接渡しても、
+    席に届くのは agentd 自身の宛先。記録が無効な agentd では、迂回した写しも届かない(名は走行者のもの)。"""
+    bogus = (("ACP_BASE", "http://acp:8868"), ("RECORD_SERVICE_URL", "http://bogus"))
+    charter, _, node_env = _charter_for(AgentdSettings(node_name=NODE, homes_root=HOMES, record_url=RECORD_A, seat_env=bogus))
+    assert charter["session_env"]["RECORD_SERVICE_URL"] == RECORD_A
+    assert dict(node_env)["RECORD_SERVICE_URL"] == RECORD_A
+    assert [name for name, _ in node_env].count("RECORD_SERVICE_URL") == 1
+    off, _, _ = _charter_for(AgentdSettings(node_name=NODE, homes_root=HOMES, seat_env=bogus))
+    assert "RECORD_SERVICE_URL" not in off["session_env"]
+    assert off["session_env"]["ACP_BASE"] == "http://acp:8868"
+
+
 def _incarnation_charter(seat_env: tuple[tuple[str, str], ...], charter: JSONObject) -> JSONObject:
     from doeff_agents.sessionhost.acp.effects import NEXT_ARM_LAUNCH, ArmChoice, LaunchPlan
 
@@ -6060,6 +6275,20 @@ def test_join_claude_settings_declaration_gates_are_one_pure_point() -> None:
     for text in (SEAT_SETTINGS_JSON, None):
         with pytest.raises(ValueError, match="inherit"):
             run(join.claude_settings_declaration_of(text, "disabled"))
+
+
+def test_join_refuses_seat_settings_whose_env_block_names_a_runner_owned_name() -> None:
+    """card acp:kanban-issue:ki-e930b8506201(K7・盲検 B の指摘): 席の settings file の `env` ブロックは claude が起動の後に
+    席の env へ重ねる — そこに走行者の名(会話の身元・記録の宛先)を書くと、宣言の seat_env の門を通らない第 2 の定義点になる。
+    参加の門(claude-settings-declaration-of の同じ点)が断る。走行者の名でない env の鍵は今日どおり通る。"""
+    from doeff_agents.sessionhost.acp.effects import RUNNER_OWNED_SEAT_ENV
+
+    for name in RUNNER_OWNED_SEAT_ENV:
+        declared = json.dumps({"hooks": {}, "env": {"KEEP": "1", name: "declared"}})
+        with pytest.raises(ValueError, match=name):
+            run(join.claude_settings_declaration_of(declared, "inherit"))
+    allowed = run(join.claude_settings_declaration_of(json.dumps({"hooks": {}, "env": {"KEEP": "1"}}), "inherit"))
+    assert allowed == {"hooks": {}, "env": {"KEEP": "1"}}
 
 
 def test_join_plan_admits_the_seat_settings_file_and_joins_when_it_is_absent(
