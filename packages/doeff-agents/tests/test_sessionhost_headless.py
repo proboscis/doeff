@@ -2345,7 +2345,14 @@ def test_real_host_sigterm_closes_the_running_turn_before_exit() -> None:
 _POOL_MARKER = "pool-prestop agentd-pool-1 0f3c-uid 2026-09-24T00:00:00Z pod termination\n"
 
 
-def _term_one_running_turn(root: Path, drain_file: Path | None) -> tuple[_StoredRow, str]:
+class _TermedTurn(NamedTuple):
+    """TERM で切った手番の行と host の log(_term_one_running_turn の答え)。"""
+
+    stored: _StoredRow
+    host_log: str
+
+
+def _term_one_running_turn(root: Path, drain_file: Path | None) -> _TermedTurn:
     """実 binary の host を起こし、手番 1 本の途中で TERM を 1 度送って降りるのを待つ(切った行と host の log)。"""
     from doeff_agents.agentd_client import AgentdClient
 
@@ -2366,7 +2373,7 @@ def _term_one_running_turn(root: Path, drain_file: Path | None) -> tuple[_Stored
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=5.0)
-    return _stored_row(root, "h-drain"), (root / "host.log").read_text(encoding="utf-8")
+    return _TermedTurn(_stored_row(root, "h-drain"), (root / "host.log").read_text(encoding="utf-8"))
 
 
 def test_real_host_sigterm_under_the_drain_marker_cuts_the_turn_as_host_drained_and_leaves_the_marker_alone() -> None:
@@ -2781,6 +2788,82 @@ def test_host_headless_send_runs_the_cold_compaction_prompt_before_the_resumed_t
     assert first and all("/compact" not in line for line in first), first
     for sid in ("h-cold-off", "h-cold-on"):
         headless_host.ok("session.cleanup", {"session_id": sid})
+
+
+def test_fast_jev_cache_surely_warm_mirrors_the_plugin_cold_reason_and_only_says_warm_when_certain() -> None:
+    """確かに温かい続きの読み(card acp:kanban-issue:ki-e786e72e2ae7): plugin の coldReason と同じ規則
+    (状態が在り・configDir と model が同じ・経過が TTL 以内)で、温かいと**確かに**言える時だけ True。
+    状態なし・壊れた状態・別の口座・別の model・TTL 切れ・TTL の終わりの余白・model 不明はすべて False。"""
+    settings = json.dumps({"pluginConfigs": {"fast-jev-compaction@fast-jev-compaction": {
+        "options": {"cacheTtlMinutes": 60, "stateDir": "/state/"}}}})
+    now = 1_790_000_000_000
+    state = json.dumps({"at": now - 10_000, "configDir": "/home/a", "model": "m"})
+    warm = fast_jev.fast_jev_cache_surely_warm
+    assert run(warm(settings, state, "/home/a", "m", now)) is True
+    assert run(warm(settings, None, "/home/a", "m", now)) is False
+    assert run(warm(settings, "not json", "/home/a", "m", now)) is False
+    assert run(warm(settings, json.dumps({"at": "x", "configDir": "/home/a", "model": "m"}), "/home/a", "m", now)) is False
+    assert run(warm(settings, state, "/home/b", "m", now)) is False
+    assert run(warm(settings, state, "/home/a", "other", now)) is False
+    assert run(warm(settings, state, "/home/a", None, now)) is False
+    assert run(warm(settings, state, "/home/a", "m", now + 2 * 3_600_000)) is False
+    # TTL の終わりの 60 秒の余白は温かいと読まない
+    edge = json.dumps({"at": now - (60 * 60_000 - 30_000), "configDir": "/home/a", "model": "m"})
+    assert run(warm(settings, edge, "/home/a", "m", now)) is False
+    # options に TTL が無い家は plugin の既定(5 分)
+    bare = json.dumps({"pluginConfigs": {"fast-jev-compaction@fast-jev-compaction": {"options": {"stateDir": "/s"}}}})
+    six_minutes = json.dumps({"at": now - 6 * 60_000, "configDir": "/home/a", "model": "m"})
+    assert run(warm(bare, six_minutes, "/home/a", "m", now)) is False
+    assert run(fast_jev.fast_jev_session_state_path(settings, "sid/1")) == "/state/sid_1.json"
+    assert run(fast_jev.fast_jev_session_state_path(bare, "sid")) == "/s/sid.json"
+    assert run(fast_jev.fast_jev_session_state_path(None, "sid")) is None
+
+
+def test_host_headless_send_skips_the_cold_compaction_process_only_when_the_plugin_state_says_warm(
+    headless_host: Host,
+) -> None:
+    """確かに温かい続き(card acp:kanban-issue:ki-e786e72e2ae7): plugin の状態 file が同じ口座・同じ model・TTL 以内を
+    名乗る続きの手番では、`claude -p "/compact fast-jev-if-cold"` の process を起こさない(起こしても plugin は
+    'cache warm; untouched' で何もしない — 費用は claude の起動 1 回ぶんの待ちだけ)。状態が古い(TTL 切れ)・
+    別の口座の続きは今日どおり手番の前に 1 回走る(冷えた再開の前の圧縮は保つ)。"""
+    log = headless_host.root / "argv.log"
+    headless_host.stub_env["DOEFF_HEADLESS_STUB_ARGV_LOG"] = str(log)
+    state_dir = headless_host.root / "fast-jev-state"
+    state_dir.mkdir()
+    home = headless_host.root / "claude-home"
+    home.mkdir(exist_ok=True)
+    (home / "settings.json").write_text(json.dumps({
+        "enabledPlugins": {"fast-jev-compaction@fast-jev-compaction": True},
+        "env": {"CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1"},
+        "pluginConfigs": {"fast-jev-compaction@fast-jev-compaction": {
+            "options": {"cacheTtlMinutes": 60, "stateDir": str(state_dir)}}},
+    }))
+    sid = "h-cold-warm"
+    headless_host.ok("session.launch", _launch_params(headless_host.root, sid, "claude"))
+    _wait_turn_end(headless_host, sid)
+    conversation = _text(_obj(headless_host.snap(sid), "conversation"), "session_id")
+
+    def _send_and_count(state: JSONObject | None) -> int:
+        path = state_dir / f"{conversation}.json"
+        if state is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_text(json.dumps(state))
+        before = len(log.read_text().splitlines())
+        headless_host.ok("session.send", {"session_id": sid, "message": "again", "awaiting": True})
+        ended = _wait_turn_end(headless_host, sid)
+        assert _text(ended, "status") == "running", ended
+        lines = log.read_text().splitlines()[before:]
+        assert [line for line in lines if "--input-format stream-json" in line and "--resume " in line], lines
+        return len([line for line in lines if f"-p /compact fast-jev-if-cold --resume {conversation}" in line])
+
+    now_ms = int(time.time() * 1000)
+    same = {"configDir": str(home), "model": "stub-model"}
+    assert _send_and_count({"at": now_ms - 5_000, **same}) == 0
+    assert _send_and_count({"at": now_ms - 2 * 3_600_000, **same}) == 1
+    assert _send_and_count({"at": now_ms - 5_000, "configDir": "/elsewhere", "model": "stub-model"}) == 1
+    assert _send_and_count(None) == 1
+    headless_host.ok("session.cleanup", {"session_id": sid})
 
 
 def test_host_headless_resume_launch_runs_the_cold_compaction_prompt_before_the_first_resumed_turn(
