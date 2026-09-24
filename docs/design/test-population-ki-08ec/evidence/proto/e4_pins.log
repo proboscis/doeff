@@ -1,0 +1,20 @@
+== (i) 今の本線(1 本の文字列・今の loop)
+   pin1: 赤 gate.full が処理ステージの列でない(str)— 1 つの母集団の赤が後ろの母集団を未実行にする
+   pin2: 赤 repo の根から package の tests を渡して訪ねた集合が期待と違う: 欠け ['doeff-adr', 'doeff-agentic', 'doeff-agents', 'doeff-conductor', 'doeff-docker', 'doeff-domain', 'doeff-effect-analyzer', 'doeff-events', 'doeff-flow', 'doeff-gemini', 'doeff-git', 'doeff-google-secret-manager', 'doeff-hy', 'doeff-image', 'doeff-jev', 'doeff-ml-nexus', 'doeff-notify', 'doeff-openai', 'doeff-openrouter', 'doeff-secret', 'doeff-seedream', 'doeff-system-one', 'doeff-test-target', 'doeff-time', 'doeff-traverse', 'doeff-vm', 'doeff-vm-core'] 余り [](呼ばれた回数 27・cwd の例 /tmp/ki08ec-proto/tree/packages/doeff-adr) / 最初の package doeff-adr を赤にしたのに rc 0 / 最後に失敗の package doeff-adr を名指していない
+   pin3: 緑
+== (ii) 提案(4 段の宣言・直した loop)
+   pin1: 緑
+   pin2: 緑
+   pin3: 緑
+== (iii) 盲検 B の反例(提案 + root の testpaths の package を飛ばす loop)
+   pin1: 緑
+   pin2: 赤 repo の根から package の tests を渡して訪ねた集合が期待と違う: 欠け ['doeff-adr', 'doeff-domain', 'doeff-time', 'doeff-vm', 'doeff-vm-core'] 余り [](呼ばれた回数 22・cwd の例 /tmp/ki08ec-proto/tree) / 最初の package doeff-adr を赤にしたのに rc 0 / 最後に失敗の package doeff-adr を名指していない
+   pin3: 緑
+== (iv) 提案 + 除外の表から conformance を外す
+   pin1: 緑
+   pin2: 緑
+   pin3: 赤 どの母集団にも除外の表にも無い test 名の file 32 本: ['packages/doeff-agents/conformance/test_harness_resolution.py', 'packages/doeff-agents/conformance/test_s10_payload_durability.py', 'packages/doeff-agents/conformance/test_s11_auth_profile_gate.py', 'packages/doeff-agents/conformance/test_s12_claude_trust_preseed.py', 'packages/doeff-agents/conformance/test_s13_argv_wiring.py']…
+== (v) 提案 + 除外の表から docs/design/ を外す(盲検 B の副次 2)
+   pin1: 緑
+   pin2: 緑
+   pin3: 赤 どの母集団にも除外の表にも無い test 名の file 4 本: ['docs/design/seat-home-common-instructions-AJ8C0B/model/test_chain.py', 'docs/design/seat-home-common-instructions-AJ8C0B/model/test_counterexamples.py', 'docs/design/seat-home-common-instructions-AJ8C0B/model/test_scenario_checks.py', 'docs/design/seat-home-common-instructions-AJ8C0B/model/test_violations_are_rejected.py']…

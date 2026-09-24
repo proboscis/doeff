@@ -1,0 +1,9 @@
+# A の再現(実際の repo・9df950b5477f9456216ab447b1c37879981425ec)— 要約の path の形
+## (1) package の dir から: cd packages/doeff-time && pytest tests/test_get_time.py -rA -q -p no:cacheprovider
+PASSED tests/test_get_time.py::test_get_time_sync_handler_returns_current_time
+1 passed, 1 warning in 0.30s
+rc=0
+## (2) repo の根から: pytest packages/doeff-time/tests/test_get_time.py -rA -q -p no:cacheprovider
+PASSED packages/doeff-time/tests/test_get_time.py::test_get_time_sync_handler_returns_current_time
+1 passed, 1 warning in 0.23s
+rc=0

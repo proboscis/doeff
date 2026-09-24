@@ -1,0 +1,39 @@
+{
+  "source": "ai acp get land-partition doeff --json(2026-09-24 16:5xZ に取得)の resourceSpecJson.verify から抜粋",
+  "sha": "f271ae390b506307a1d05b32c56d596b38ab6b9f",
+  "outcome": "red",
+  "exit": 1,
+  "at": 1790188212.0443583,
+  "failed": [
+    "tests/test_effectful.py::test_a_new_rewrite_version_rebuilds_the_cache",
+    "tests/test_effectful.py::test_cache_is_named_by_the_rewrite_version_and_reused",
+    "tests/test_semgrep_gate.py::test_semgrep_findings_match_baseline_ratchet"
+  ],
+  "stages": [
+    {
+      "elapsed_s": 1693.8,
+      "exit": 1,
+      "failed": [
+        "tests/test_effectful.py::test_a_new_rewrite_version_rebuilds_the_cache",
+        "tests/test_effectful.py::test_cache_is_named_by_the_rewrite_version_and_reused",
+        "tests/test_semgrep_gate.py::test_semgrep_findings_match_baseline_ratchet"
+      ],
+      "layers": [],
+      "name": "full",
+      "outcome": "red",
+      "unexecuted": null
+    }
+  ],
+  "coverage": {
+    "complete": true,
+    "unexecuted": []
+  },
+  "host": {
+    "cluster": true,
+    "name": "land-verify-doeff-29836470-2t5tm",
+    "os": "linux",
+    "place": null,
+    "version": "491d0fe743d5"
+  },
+  "log": "/Users/s22625/.local/state/ai/land-runs/doeff-verify-20260924-033008.log"
+}
