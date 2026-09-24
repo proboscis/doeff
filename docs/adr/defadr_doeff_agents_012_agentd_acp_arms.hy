@@ -3819,6 +3819,13 @@
                "資格の形の規則の本体に除外(not-in)が在る —— 例外は口の判断(関所の手番の札ちょうど)で、規則は知らない")
        (assert (<= (set (gfor node rule-nodes :if (isinstance node hy.models.String) (str node))) #{"_" "0123456789"})
                "資格の形の規則の本体に名の literal が在る(語彙は定数 2 つだけが持つ)")
+       ;; 本体が使う記号は閉じた集合 —— 補助の関数(例 `(cli-knob? normalized)`)で例外を足しても赤。本体を変える便はここも改める。
+       (setv rule-symbols (set (gfor node rule-nodes :if (isinstance node hy.models.Symbol) (str node))))
+       (assert (<= rule-symbols
+                   #{"." "None" "any" "do" "endswith" "gfor" "in" "key" "keys" "lfor" "normalized" "or"
+                     "policy-normalized-env-key" "rstrip" "segment" "session-env" "setv" "sorted" "split" "suffix" "word"
+                     "CREDENTIAL-SHAPED-ENV-SEGMENT-SUFFIXES" "CREDENTIAL-SHAPED-ENV-WORDS"})
+               f"資格の形の規則の本体に語彙の外の記号が在る(例外や別の判定を規則に足さない): {(sorted rule-symbols)}")
        ;; (ii) 区間で見て、名の末尾に錨を打たない(送り戻し lt-Y7XSNK0PK1N9706QZPMZDG0FNH の真因)。
        (assert (any (gfor node rule-nodes
                           (and (method-call? node "split") (= (len node) 3) (= (str (get node 1)) "normalized")
@@ -3833,6 +3840,21 @@
                     (= (hy.repr (get seat-body 0)) (hy.repr (hy.read "(metered-credential-env-offenders seat-env)"))))
                "席の宣言の線は資格の形の規則そのもの(R51 (1)(b)・第 2 の規則を置かない)")
        (setv admission-body (body-of "deff" "session-env-admission-error"))
+       ;; 関所が規則の答えを絞る形は 1 つちょうど: 手番の札の名簿の 1 句(補助の関数や別の名簿を :if に足すと赤)。
+       (setv admission-nodes (sum (gfor n admission-body (walk n)) []))
+       (setv shape-filters (lfor node admission-nodes
+                                 :if (and (isinstance node hy.models.Expression) (> (len node) 2)
+                                          (= (str (get node 0)) "lfor")
+                                          (= (hy.repr (get node 2)) (hy.repr (hy.read "(metered-credential-env-offenders session-env)"))))
+                                 (hy.repr node)))
+       (assert (= shape-filters
+                  [(hy.repr (hy.read "(lfor key (metered-credential-env-offenders session-env) :if (not-in (policy-normalized-env-key key) TURN-AUTH-ENV-KEYS) key)"))])
+               f"関所の例外は手番の札ちょうど(R5・R30 — 例外の名簿や補助の判定を足さない): {shape-filters}")
+       (assert (= (len (lfor node admission-nodes
+                             :if (and (isinstance node hy.models.Symbol) (= (str node) "metered-credential-env-offenders"))
+                             node))
+                  1)
+               "関所は資格の形の規則を 1 度だけ読む(上の絞り込みの 1 か所)")
        (assert (<= (constants-in admission-body) #{"TURN-AUTH-ENV-KEYS" "CREDENTIAL-SHAPED-ENV-RULE-TEXT"})
                f"関所が手番の札の外の名簿で例外を作っている: {(sorted (constants-in admission-body))}")
        (assert (not (any (gfor node (sum (gfor n admission-body (walk n)) [])
