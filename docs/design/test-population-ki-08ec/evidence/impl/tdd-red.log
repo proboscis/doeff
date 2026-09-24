@@ -1,0 +1,249 @@
+FF....F.....                                                             [100%]
+=================================== FAILURES ===================================
+___________ test_make_test_packages_visits_every_package_after_a_red ___________
+
+tmp_path = PosixPath('/tmp/pytest-of-kento/pytest-213/test_make_test_packages_visits0')
+
+    def test_make_test_packages_visits_every_package_after_a_red(tmp_path: Path) -> None:
+        """期待の集合の名前順で最初の package だけを赤にしても、loop は全部を訪ねて最後に名指す。
+    
+        偽の runner は受け取った引数を記録し、最初の package の tests を受けた時だけ 1 を返す
+        (引数は runner の cwd から解くので、package の dir から走らせる形でも同じ package と数える)。
+        """
+        expected = _expected_packages(REPO_ROOT)
+        assert expected, "packages/*/tests に Python のテストを持つ package が 1 つも見つからない"
+        first = expected[0]
+        runner = tmp_path / "fake_runner.py"
+        runner.write_text(_FAKE_RUNNER, encoding="utf-8")
+        record = tmp_path / "calls.jsonl"
+        env = {
+            **os.environ,
+            "DOEFF_FAKE_RUNNER_RECORD": str(record),
+            "DOEFF_FAKE_RUNNER_FAIL": str(REPO_ROOT / "packages" / first / "tests"),
+        }
+        proc = subprocess.run(
+            [
+                "make",
+                "-s",
+                "-C",
+                str(REPO_ROOT),
+                "test-packages",
+                f"PACKAGE_UV_RUN={sys.executable} {runner}",
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        output = proc.stdout + proc.stderr
+        calls = (
+            [json.loads(line) for line in record.read_text(encoding="utf-8").splitlines()]
+            if record.exists()
+            else []
+        )
+    
+        packages_dir = (REPO_ROOT / "packages").resolve()
+        reached: set[str] = set()
+        for call in calls:
+            for arg in call["argv"]:
+                resolved = Path(call["cwd"], arg).resolve()
+                if resolved.parent.parent == packages_dir and resolved.name == "tests":
+                    reached.add(resolved.parent.name)
+    
+>       assert reached == set(expected), (
+            f"make test-packages が訪ねた package が期待と違う: 欠け {sorted(set(expected) - reached)}"
+            f" / 余り {sorted(reached - set(expected))}(runner が呼ばれた回数 {len(calls)}・"
+            f"最初の {first} だけを赤にした)— 1 package の赤が後ろの package を未実行にしている"
+            f" — ADR-DOE-ENFORCE-001 R8\n{output[-2000:]}"
+        )
+E       AssertionError: make test-packages が訪ねた package が期待と違う: 欠け ['doeff-agentic', 'doeff-agents', 'doeff-conductor', 'doeff-docker', 'doeff-domain', 'doeff-effect-analyzer', 'doeff-events', 'doeff-flow', 'doeff-gemini', 'doeff-git', 'doeff-google-secret-manager', 'doeff-hy', 'doeff-image', 'doeff-jev', 'doeff-ml-nexus', 'doeff-notify', 'doeff-openai', 'doeff-openrouter', 'doeff-secret', 'doeff-seedream', 'doeff-system-one', 'doeff-test-target', 'doeff-time', 'doeff-traverse', 'doeff-vm', 'doeff-vm-core'] / 余り [](runner が呼ばれた回数 1・最初の doeff-adr だけを赤にした)— 1 package の赤が後ろの package を未実行にしている — ADR-DOE-ENFORCE-001 R8
+E         Running tests in subpackages...
+E         
+E         === Testing doeff-adr ===
+E         make: *** [Makefile:159: test-packages] Error 1
+E         
+E       assert {'doeff-adr'} == {'doeff-adr',...-domain', ...}
+E         
+E         Extra items in the right set:
+E         'doeff-agentic'
+E         'doeff-google-secret-manager'
+E         'doeff-vm-core'
+E         'doeff-conductor'
+E         'doeff-openrouter'...
+E         
+E         ...Full output truncated (22 lines hidden), use '-vv' to show
+
+tests/test_daily_test_population.py:186: AssertionError
+______________ test_package_failure_names_are_repo_root_relative _______________
+
+tmp_path = PosixPath('/tmp/pytest-of-kento/pytest-213/test_package_failure_names_are0')
+
+    def test_package_failure_names_are_repo_root_relative(tmp_path: Path) -> None:
+        """模型の木で本物の Makefile と本物の pytest を走らせ、失敗名が repo の根からの相対であることを見る。
+    
+        package a・b が同名の失敗 tests/test_cli.py::test_fail を持ち、c は緑。package の dir から
+        走らせる形では 2 つとも `FAILED tests/test_cli.py::test_fail` になって衝突する。
+        """
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.pytest.ini_options]\nmarkers = ["e2e: model marker"]\n', encoding="utf-8"
+        )
+        for package in ("a", "b"):
+            test_file = tmp_path / "packages" / package / "tests" / "test_cli.py"
+            test_file.parent.mkdir(parents=True)
+            test_file.write_text("def test_fail():\n    assert False\n", encoding="utf-8")
+        green = tmp_path / "packages" / "c" / "tests" / "test_ok.py"
+        green.parent.mkdir(parents=True)
+        green.write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    
+        # 模型の木は root の conftest も外の plugin も持たない — 外の走行の設定を持ち込まない。
+        env = {
+            **os.environ,
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+            "PYTEST_ADDOPTS": "-p no:cacheprovider",
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+        proc = subprocess.run(
+            [
+                "make",
+                "-s",
+                "-f",
+                str(REPO_ROOT / "Makefile"),
+                "-C",
+                str(tmp_path),
+                "test-packages",
+                f"PACKAGE_UV_RUN={sys.executable} -m",
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        output = proc.stdout + proc.stderr
+        lines = output.splitlines()
+        failed = sorted(line.split(" - ")[0] for line in lines if line.startswith("FAILED "))
+    
+>       assert failed == [
+            "FAILED packages/a/tests/test_cli.py::test_fail",
+            "FAILED packages/b/tests/test_cli.py::test_fail",
+        ], (
+            f"package の失敗名が repo の根からの相対でない / package をまたいで衝突する: {failed}"
+            f" — 日次の道具は失敗名を repo の根から pytest へ渡す — ADR-DOE-ENFORCE-001 R8\n{output}"
+        )
+E       AssertionError: package の失敗名が repo の根からの相対でない / package をまたいで衝突する: ['FAILED tests/test_cli.py::test_fail'] — 日次の道具は失敗名を repo の根から pytest へ渡す — ADR-DOE-ENFORCE-001 R8
+E         Running tests in subpackages...
+E         
+E         === Testing a ===
+E         ============================= test session starts ==============================
+E         platform linux -- Python 3.14.3, pytest-9.1.1, pluggy-1.6.0
+E         rootdir: /tmp/pytest-of-kento/pytest-213/test_package_failure_names_are0
+E         configfile: pyproject.toml
+E         collected 1 item
+E         
+E         tests/test_cli.py F                                                      [100%]
+E         
+E         =================================== FAILURES ===================================
+E         __________________________________ test_fail ___________________________________
+E         
+E             def test_fail():
+E         >       assert False
+E         E       assert False
+E         
+E         tests/test_cli.py:2: AssertionError
+E         =========================== short test summary info ============================
+E         FAILED tests/test_cli.py::test_fail - assert False
+E         ============================== 1 failed in 0.05s ===============================
+E         make: *** [/home/kento/.worktrees/doeff-wt-ki08ec-population/Makefile:159: test-packages] Error 1
+E         
+E       assert ['FAILED test...y::test_fail'] == ['FAILED pack...y::test_fail']
+E         
+E         At index 0 diff: 'FAILED tests/test_cli.py::test_fail' != 'FAILED packages/a/tests/test_cli.py::test_fail'
+E         Right contains one more item: 'FAILED packages/b/tests/test_cli.py::test_fail'
+E         Use -v to get more diff
+
+tests/test_daily_test_population.py:247: AssertionError
+_ .doeff-wt-ki08ec-population.docs.adr.defadr_doeff_enforce_001_pytest_canonical_gate.hy.test_adr_doe_enforce_001_daily_populations_are_separate_stages _
+
+doeff_interpreter = <function doeff_interpreter.<locals>.run_program at 0x35f8e8abc40>
+
+    (deftest test-adr-doe-enforce-001-daily-populations-are-separate-stages
+      ;; R8 + law daily-populations-are-independent-and-complete: 宣言の形の pin。
+      ;; 挙動の本体は tests/test_daily_test_population.py(package の loop の網羅・
+      ;; 失敗名が repo の根からの相対・test file の置き場・package の pytest の設定)。
+      ;; 段の run の中の命令は、遠隔の前置き(remote_check … -- sh -c "…")の内側を
+      ;; && / || / ; で区切って 1 命令ずつ判じる — run の文字列全体の部分一致で判じると、
+      ;; 2 つの母集団を 1 段に畳んだ宣言を正しい文言で赤にできない(設計段の試作の欠陥)。
+>     (import re shlex tomllib)
+
+docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy:202: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+docs/adr/conftest.py:23: in run_program
+    return run(program)
+           ^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+doeff/do.py:314: in thunk
+    return _make_stream(fn(*args, **kwargs))
+                        ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    (import re shlex tomllib)
+    (import pathlib [Path])
+    (setv root (get (. (Path __file__) parents) 2))
+    (setv land-cfg (tomllib.loads (.read-text (/ root ".agents/land-queue.toml")
+                                              :encoding "utf-8")))
+    (setv full (get land-cfg "gate" "full"))
+>   (assert (isinstance full list)
+              ^^^^^^^^^^^^^^^^^^^
+E   AssertionError: gate.full が処理ステージの列でない(str)— 1 本の命令では 1 つの母集団の赤が後ろの母集団を未実行にする(2026-09-24 断面 f271ae39)— ADR-DOE-ENFORCE-001 R8
+
+docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy:208: AssertionError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  _hy_anon_7()  docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy:208
+    (assert (isinstance full list)
+
+AssertionError: gate.full が処理ステージの列でない(str)— 1 本の命令では 1 つの母集団の赤が後ろの母集団を未実行にする(2026-09-24 断面 f271ae39)— ADR-DOE-ENFORCE-001 R8
+
+=============================== warnings summary ===============================
+../../repos/doeff/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:155
+  /home/kento/repos/doeff/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:155: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_daily_test_population.py::test_make_test_packages_visits_every_package_after_a_red
+FAILED tests/test_daily_test_population.py::test_package_failure_names_are_repo_root_relative
+FAILED docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy::test_adr_doe_enforce_001_daily_populations_are_separate_stages
+3 failed, 9 passed, 1 warning in 1.40s
