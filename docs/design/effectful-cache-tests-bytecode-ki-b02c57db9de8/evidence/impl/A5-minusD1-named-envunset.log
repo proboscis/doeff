@@ -1,0 +1,79 @@
+# label: A5-minusD1-named-envunset
+# HEAD: 8639b2b7a3af59f86cb7b7ddfd3fb362ab92f569
+# worktree diff sha256 (tracked): 6042c234b0c47a8f
+# git diff --stat HEAD:  4 files changed, 51 insertions(+), 3 deletions(-)
+# PYTHONDONTWRITEBYTECODE=<unset> PYTHONPYCACHEPREFIX=<unset>
+# command: uv run --no-sync pytest tests/test_effectful.py -q -k cache or rebuild
+
+
+deadline scale x1.4 (load/core) — per test 84s, watchdog 126s
+
+test-admission: focused — 3 件(変更箇所の検証)
+F..                                                                      [100%]
+=================================== FAILURES ===================================
+____________ test_cache_is_named_by_the_rewrite_version_and_reused _____________
+
+tmp_package = ('effectful_tmp_test_cache_is_named_by_the_rew0', PosixPath('/tmp/pytest-of-kento/pytest-426/test_cache_is_named_by_the_rew0/effectful_tmp_test_cache_is_named_by_the_rew0'))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x481309d08d0>
+
+    def test_cache_is_named_by_the_rewrite_version_and_reused(
+        tmp_package: tuple[str, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The cache is only written where bytecode may be written (land / the daily run set
+        # PYTHONDONTWRITEBYTECODE=1), so this test states that precondition itself.
+        name, package = tmp_package
+        source = package / "mod.py"
+        source.write_text(_MODULE)
+        assert _run(_import_fresh(f"{name}.mod").twice()) == 2000
+        cached = rewrite.cache_path(str(source))
+        # The one place that pins where the cache lives and how it is named; the other cache
+        # tests ask cache_path() instead of spelling the location again.
+        assert cached == (
+            package
+            / "__pycache__"
+            / (f"mod.{sys.implementation.cache_tag}-doeff-effectful-{rewrite.REWRITE_VERSION}.pyc")
+        )
+>       assert cached.is_file()
+E       AssertionError: assert False
+E        +  where False = is_file()
+E        +    where is_file = PosixPath('/tmp/pytest-of-kento/pytest-426/test_cache_is_named_by_the_rew0/effectful_tmp_test_cache_is_named_by_the_rew0/__pycache__/mod.cpython-314-doeff-effectful-7e231a352a8d11c0.pyc').is_file
+
+tests/test_effectful.py:340: AssertionError
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:155
+  /home/kento/.worktrees/doeff-wt-ki-b02c57db9de8/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:155: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_effectful.py::test_cache_is_named_by_the_rewrite_version_and_reused
+1 failed, 2 passed, 28 deselected, 1 warning in 0.43s
+# exit: 1

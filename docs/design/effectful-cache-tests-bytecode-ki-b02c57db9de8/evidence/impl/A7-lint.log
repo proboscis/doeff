@@ -1,0 +1,28 @@
+# HEAD: 8639b2b7a3af59f86cb7b7ddfd3fb362ab92f569  worktree diff:  3 files changed, 51 insertions(+), 2 deletions(-)
+## ruff check
+All checks passed!
+exit=0
+## ruff format --check
+Would reformat: conftest.py
+Would reformat: packages/doeff-hy/tests/test_source_positions.py
+2 files would be reformatted, 3 files already formatted
+exit=1
+## semgrep --config .semgrep.yaml --error
+exit=0
+## pyright
+/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8/packages/doeff-hy/tests/test_none_type_contract.py
+  /home/kento/.worktrees/doeff-wt-ki-b02c57db9de8/packages/doeff-hy/tests/test_none_type_contract.py:69:16 - error: Argument of type "object" cannot be assigned to parameter "doexpr" of type "Program[_T@run, Any]" in function "run"
+    "object" is incompatible with protocol "Program[_T@run, Any]"
+      "__iter__" is not present (reportArgumentType)
+/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8/packages/doeff-hy/tests/test_source_positions.py
+  /home/kento/.worktrees/doeff-wt-ki-b02c57db9de8/packages/doeff-hy/tests/test_source_positions.py:93:16 - error: Argument of type "object" cannot be assigned to parameter "doexpr" of type "Program[_T@run, Any]" in function "run"
+    "object" is incompatible with protocol "Program[_T@run, Any]"
+      "__iter__" is not present (reportArgumentType)
+/home/kento/.worktrees/doeff-wt-ki-b02c57db9de8/tests/test_effectful.py
+  /home/kento/.worktrees/doeff-wt-ki-b02c57db9de8/tests/test_effectful.py:76:28 - error: Cannot access attribute "__doeff_generator_function__" for class "FunctionType"
+    Attribute "__doeff_generator_function__" is unknown (reportFunctionMemberAccess)
+3 errors, 0 warnings, 0 informations
+WARNING: there is a new pyright version available (v1.1.411 -> v1.1.414).
+Please install the new version or set PYRIGHT_PYTHON_FORCE_VERSION to `latest`
+
+exit=1

@@ -1,0 +1,84 @@
+# label: A6-minusD4-dwbunset
+# HEAD: 8639b2b7a3af59f86cb7b7ddfd3fb362ab92f569
+# worktree diff sha256 (tracked): 16c02ad7d2a92333
+# git diff --stat HEAD:  2 files changed, 49 insertions(+), 1 deletion(-)
+# PYTHONDONTWRITEBYTECODE=<unset> PYTHONPYCACHEPREFIX=<unset>
+# command: uv run --no-sync pytest packages/doeff-hy/tests/test_source_positions.py tests/test_bytecode_settings_pinned.py -q
+
+
+deadline scale x1.5 (load/core) — per test 89s, watchdog 133s
+
+test-admission: focused — 6 件(変更箇所の検証)
+....F.E                                                                  [100%]
+==================================== ERRORS ====================================
+_ ERROR at teardown of test_subprocesses_inherit_the_pinned_bytecode_settings __
+
+    @pytest.fixture(scope="session", autouse=True)
+    def _bytecode_settings_pinned():
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(sys, "dont_write_bytecode", True)
+            patch.setattr(sys, "pycache_prefix", None)
+            patch.setenv("PYTHONDONTWRITEBYTECODE", "1")
+            patch.delenv("PYTHONPYCACHEPREFIX", raising=False)
+            yield
+            at_the_end = (sys.dont_write_bytecode, sys.pycache_prefix)
+>       assert at_the_end == (True, None), (
+            f"a test or fixture changed the bytecode settings and did not restore them "
+            f"(dont_write_bytecode, pycache_prefix) = {at_the_end} — change them with "
+            f"monkeypatch (or pytest.MonkeyPatch.context() in a wider fixture)"
+        )
+E       AssertionError: a test or fixture changed the bytecode settings and did not restore them (dont_write_bytecode, pycache_prefix) = (False, None) — change them with monkeypatch (or pytest.MonkeyPatch.context() in a wider fixture)
+E       assert (False, None) == (True, None)
+E         
+E         At index 0 diff: False != True
+E         Use -v to get more diff
+
+conftest.py:309: AssertionError
+=================================== FAILURES ===================================
+____________ test_test_bodies_run_with_the_pinned_bytecode_settings ____________
+
+    def test_test_bodies_run_with_the_pinned_bytecode_settings() -> None:
+>       assert sys.dont_write_bytecode is True
+E       assert False is True
+E        +  where False = sys.dont_write_bytecode
+
+tests/test_bytecode_settings_pinned.py:16: AssertionError
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:155
+  /home/kento/.worktrees/doeff-wt-ki-b02c57db9de8/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:155: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_bytecode_settings_pinned.py::test_test_bodies_run_with_the_pinned_bytecode_settings
+ERROR tests/test_bytecode_settings_pinned.py::test_subprocesses_inherit_the_pinned_bytecode_settings
+1 failed, 5 passed, 1 warning, 1 error in 4.79s
+# exit: 1
