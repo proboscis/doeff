@@ -313,7 +313,8 @@ def _assert_launched_with_borrowed_token(world: World) -> None:
     env = launch["turn_env"]
     assert env == {CLAUDE_OAUTH_TOKEN_ENV: TOKEN}
     declared = launch.get("session_env", {})
-    assert isinstance(declared, dict) and CLAUDE_OAUTH_TOKEN_ENV not in declared
+    assert isinstance(declared, dict)
+    assert CLAUDE_OAUTH_TOKEN_ENV not in declared
     assert launch["binding"] == {"kind": "claude-code", "config_dir": f"{HOMES}/claude/acct"}
     assert launch["prompt"] == PREAMBLE
     assert launch["session_id"] == "sid-1"
@@ -613,7 +614,8 @@ def test_custody_declared_node_borrows_the_account_and_launches_in_the_borrowed_
     env = launch["turn_env"]
     assert env == {CLAUDE_OAUTH_TOKEN_ENV: TOKEN}
     declared = launch.get("session_env", {})
-    assert isinstance(declared, dict) and CLAUDE_OAUTH_TOKEN_ENV not in declared
+    assert isinstance(declared, dict)
+    assert CLAUDE_OAUTH_TOKEN_ENV not in declared
     assert launch["binding"] == {"kind": "claude-code", "config_dir": f"{HOMES}/claude/acct"}
     job = world.job("s-5")
     assert job.status is not None
