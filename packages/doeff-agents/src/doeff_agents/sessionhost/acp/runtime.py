@@ -441,9 +441,22 @@ def home_entries(home: str) -> HomeEntries:
     return tuple(found)
 
 
+def self_source_relative(home: str, here: str | None = None) -> str | None:
+    """この process が走らせている code の置き場(card acp:kanban-issue:ki-1c6a62a0198c — この軸の I/O はここ 1 点): この module の
+    file の dir(here = 検のための差し替え口・既定はこの file)を実体の path(realpath)で読み、家(realpath)からの相対 `~/…` で
+    返す。家の外(venv が家の外に在る機体・家が読めない)は None。判断(どの作業場を名乗らないか)は join.held-work-dirs-of。"""
+    where = os.path.realpath(here if here is not None else os.path.dirname(os.path.abspath(__file__)))
+    root = os.path.realpath(home).rstrip(os.sep) or os.sep
+    if where == root:
+        return "~"
+    if not where.startswith(root + os.sep):
+        return None
+    return "~/" + where[len(root) + 1 :].replace(os.sep, "/")
+
+
 def _held_work_dirs(home: str) -> Paths:
-    """家の一覧 → 持つ作業場(判断は join.held-work-dirs-of の 1 点)。"""
-    verdict: object = PyVM().run(join.held_work_dirs_of(home_entries(home)))
+    """家の一覧 → 持つ作業場(判断は join.held-work-dirs-of の 1 点)。自分の code の置き場は名乗らない(self_source_relative)。"""
+    verdict: object = PyVM().run(join.held_work_dirs_of(home_entries(home), self_source_relative(home)))
     if not isinstance(verdict, WorkDirs):
         raise TypeError(f"held_work_dirs_of returned {type(verdict).__name__}")
     return verdict.dirs

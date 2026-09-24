@@ -7740,8 +7740,25 @@ def test_join_derives_the_held_work_dirs_from_the_home_listing_and_carries_them_
     from doeff_agents.sessionhost.acp.runtime import home_entries, join_plan, settings_from_env
 
     entries = (("", "Desktop", False), ("", ".worktrees", True), ("", "dotfiles", True), ("repos", "doeff", True), ("repos", "notes", False))
-    assert run(join.held_work_dirs_of(entries)) == WorkDirs(dirs=("~/dotfiles", "~/repos/doeff"))
-    assert run(join.held_work_dirs_of(())) == WorkDirs(dirs=())
+    assert run(join.held_work_dirs_of(entries, None)) == WorkDirs(dirs=("~/dotfiles", "~/repos/doeff"))
+    assert run(join.held_work_dirs_of((), None)) == WorkDirs(dirs=())
+    # card acp:kanban-issue:ki-1c6a62a0198c: 自分の code の置き場と同じ作業場・その祖先の作業場は名乗らない(境界は `/`)。
+    # pool の pod(editable の venv — 置き場は ~/repos/doeff の中)は ~/repos/doeff を貸さない。
+    editable = "~/repos/doeff/packages/doeff-agents/src/doeff_agents/sessionhost/acp"
+    assert run(join.held_work_dirs_of(entries, editable)) == WorkDirs(dirs=("~/dotfiles",))
+    assert run(join.held_work_dirs_of(entries, "~/repos/doeff")) == WorkDirs(dirs=("~/dotfiles",))
+    # 綴りの境界: ~/repos/doeff は ~/repos/doeffx/… の祖先ではない
+    assert run(join.held_work_dirs_of(entries, "~/repos/doeffx/src/doeff_agents")) == WorkDirs(dirs=("~/dotfiles", "~/repos/doeff"))
+    # 写しで据えた機体(Mac の uv tool)の置き場は隠し dir の下 — 名簿は今日と同じ
+    copied = "~/.local/share/uv/tools/doeff-agents/lib/python3.14/site-packages/doeff_agents/sessionhost/acp"
+    assert run(join.held_work_dirs_of(entries, copied)) == WorkDirs(dirs=("~/dotfiles", "~/repos/doeff"))
+    # 置き場の読み(I/O の 1 点・runtime.self_source_relative): 家からの相対・家の外 = None・家そのもの = "~"
+    from doeff_agents.sessionhost.acp.runtime import self_source_relative
+
+    assert self_source_relative(str(tmp_path / "h"), here=str(tmp_path / "h" / "repos" / "doeff" / "packages" / "x")) == "~/repos/doeff/packages/x"
+    assert self_source_relative(str(tmp_path / "h"), here=str(tmp_path / "elsewhere" / "x")) is None
+    assert self_source_relative(str(tmp_path / "h"), here=str(tmp_path / "h")) == "~"
+    assert self_source_relative(str(tmp_path / "h"), here=str(tmp_path / "hx" / "y")) is None
     # 家の一覧の読み(I/O の 1 点)— 名の順・.git は dir でも file(worktree)でもよい
     home = tmp_path / "home"
     for rel, git in (("dotfiles", "dir"), ("Desktop", None), (".worktrees", "dir"), ("repos/doeff", "dir"), ("repos/agora", "file"), ("repos/notes", None)):
@@ -7753,7 +7770,7 @@ def test_join_derives_the_held_work_dirs_from_the_home_listing_and_carries_them_
             (d / ".git").write_text("gitdir: /elsewhere\n")
     listed = home_entries(str(home))
     assert listed == (("", ".worktrees", True), ("", "Desktop", False), ("", "dotfiles", True), ("", "repos", False), ("repos", "agora", True), ("repos", "doeff", True), ("repos", "notes", False))
-    assert run(join.held_work_dirs_of(listed)) == WorkDirs(dirs=("~/dotfiles", "~/repos/agora", "~/repos/doeff"))
+    assert run(join.held_work_dirs_of(listed, None)) == WorkDirs(dirs=("~/dotfiles", "~/repos/agora", "~/repos/doeff"))
     assert home_entries(str(tmp_path / "nowhere")) == ()
     # join の計画: 導いた列が env に載る(空の tuple は "" で運ぶ・None は載らない)
     base = ["--server", "http://acp:8868", "--token-file", "/t", "--capacity", "2", "--places", "personal"]
