@@ -1,0 +1,8 @@
+== S1 陽性: 全段の --node を hera へ(宣言の pin): 緑
+== S4 陽性: rust の段だけ --node hera(宣言の pin): 緑
+== S1/S4/S5 陰性: rust の段から make sync を抜く(宣言の pin): 赤 rust が母集団の命令の前に make sync を持たない(自己完結でない)
+== S0 陰性: root の段に make test-packages も載せる(宣言の pin): 赤 母集団 root を呼ぶ処理ステージが [](ちょうど 1 つでない) / 母集団 packages を呼ぶ処理ステージが ['root', 'packages'](ちょうど 1 つでない)
+== S3(a) 陽性: 新しい package doeff-newpkg(網羅): 緑
+== S3(a) 陽性: 新しい package doeff-newpkg(完全性): 緑
+== S3(c) 陰性: packages/doeff-agents/scripts/test_x.py を足す(完全性): 赤 どの母集団にも除外の表にも無い test 名の file 1 本: ['packages/doeff-agents/scripts/test_x.py']…
+== A 副次 陰性: doeff-time が [tool.pytest.ini_options] を持つ(完全性): 赤 自分の pytest 設定を持つ package(root の ini と conftest が効かなくなる): ['packages/doeff-time/pyproject.toml']
