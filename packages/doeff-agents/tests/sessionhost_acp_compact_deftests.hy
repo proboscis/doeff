@@ -275,7 +275,7 @@
   (setv launch (get world.sessions.launches -1))
   (setv prompt (get launch "prompt"))
   (assert (isinstance prompt str))
-  (assert (.startswith prompt "start\n\nこれまでの会話(会話の記録の service と ACP の郵便から") prompt)
+  (assert (.startswith prompt "【前置き】\nstart\n\n【これまでの会話】(会話の記録の service と ACP の郵便から") prompt)
   (assert (in "agent: 覚えました" prompt) prompt)
   ;; 段 10 lane 10r 追補: 郵便は見出し 1 行 + 本文(judgment.mail-turn-text-of の 1 点)。
   (assert (.endswith prompt (+ "\n\n" (run (mail-turn-text-of "m-2" asked.spec "合言葉は何でしたか")))) "郵便の見出しと本文は最後(headless の 1 手番目)")

@@ -2652,8 +2652,18 @@
        ;; 3 引数の字面を凍結していた針 2 本が落ちた(合成点は 1 度も 2 つになっていない)。
        (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk mail-turn-text-of ") line)) 1)
                "手番の文を組む座は judgment の 1 点(R16)")
-       (for [#(name lines) [#("judgment.hy" judgment-lines) #("agentd.hy" (code-lines (/ ACP-DIR "agentd.hy")))]]
-         (setv calls (call-args-of lines "mail-turn-text-of"))
+       ;; 設計 herdr-hud docs/design-checks/direct-chat-2026-09-24 §3(2026-09-24): 出どころの判定と項の見出しの綴りは
+       ;; reply_channel の 1 点(input-source-of → item-heading-of → turn-input-text-of)。judgment で項を組む座は
+       ;; mail-turn-item-of の 1 点(turn-input-text-of を 1 度だけ呼ぶ — message-bodies-of と mail-turn-text-of がそれを呼ぶ)、
+       ;; agentd.hy の割り込みの腕は mail-turn-text-of を 1 度だけ呼ぶ。
+       (setv reply-lines (code-lines (/ ACP-DIR "reply_channel.hy")))
+       (for [head ["(defk input-source-of " "(defk item-heading-of " "(defk turn-input-text-of " "(defk inputs-text-of "]]
+         (assert (= (len (lfor line reply-lines :if (.startswith line head) line)) 1) f"reply_channel の 1 点が無い: {head}"))
+       (assert (= (len (lfor line judgment-lines :if (.startswith line "(defk mail-turn-item-of ") line)) 1)
+               "項を組む judgment の座は 1 点(R16)")
+       (for [#(name lines composer) [#("judgment.hy" judgment-lines "turn-input-text-of")
+                                     #("agentd.hy" (code-lines (/ ACP-DIR "agentd.hy")) "mail-turn-text-of")]]
+         (setv calls (call-args-of lines composer))
          (assert (= (len calls) 1) f"{name} は手番の文を 1 度だけ組む(R16): 実測 {(len calls)}")
          (assert (in "body" (get calls 0))
                  f"{name} の合成の呼びに本文の役が渡っていない(R16): {(get calls 0) !r}")
@@ -2670,7 +2680,7 @@
          (for [line lines]
            (when (and (.startswith line "(") (is-not (.search TOP-FORM-RE line) None))
              (setv bound None))
-           (setv hit (re.search r"\(<-\s+(\S+)\s+\S+\s+\(mail-turn-text-of " line))
+           (setv hit (re.search (+ r"\(<-\s+(\S+)\s+\S+\s+\(" (re.escape composer) " ") line))
            (cond
              (is-not hit None) (setv bound (.group hit 1))
              (and (is-not bound None)
@@ -2678,7 +2688,7 @@
                (.append rebinds (.strip line))))
          (assert (= rebinds [])
                  (+ f"{name} が合成した文を呼びの後で作り直している —— 手番の文を組む座は "
-                    f"judgment.mail-turn-text-of の 1 点(R16): {rebinds !r}")))
+                    f"judgment.mail-turn-item-of / agentd の mail-turn-text-of の 1 点(R16): {rebinds !r}")))
        (for [line (code-lines (/ ACP-DIR "agentd.hy"))]
          (assert (not-in "BACKEND-HEADLESS" line) f"agentd.hy は backend の語を比較しない(R16): {line}")
          (assert (not-in "\"headless\"" line) f"agentd.hy は backend の語を比較しない(R16): {line}"))
@@ -2688,7 +2698,7 @@
        (.put-row headless.acp (message-row "m-f" "hello"))
        (.put-row headless.acp (turn-row "f-1" "conv-f" "m-f" 500))
        (.tick headless 0)
-       (assert (= (get (get headless.sessions.launches -1) "prompt") (+ "go\n\n" (mailed "m-f" "hello"))))
+       (assert (= (get (get headless.sessions.launches -1) "prompt") (+ "【前置き】\ngo\n\n" (mailed "m-f" "hello"))))
        (assert (= headless.sessions.sends []))
        (assert (is-not (.get headless.acp.rows "default:turn-record:f-1") None))
        (assert (= (len headless.state.jobs) 1))
@@ -2696,7 +2706,7 @@
        (.put-row tui.acp (message-row "m-t" "hello"))
        (.put-row tui.acp (turn-row "t-1" "conv-t" "m-t" 500))
        (.tick tui 0)
-       (assert (= (get (get tui.sessions.launches -1) "prompt") "go"))
+       (assert (= (get (get tui.sessions.launches -1) "prompt") "【前置き】\ngo"))
        (assert (= tui.sessions.sends [#((sid-of tui "t-1") (mailed "m-t" "hello") True)])))
      (deftest test-adr-doe-agents-012-join-is-one-command-and-one-decision-point
        ;; R17 の針: 宣言 → env の束の写像点は join.hy の join-plan-of ちょうど。entry.py / runtime.py

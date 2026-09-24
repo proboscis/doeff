@@ -59,6 +59,9 @@
 ;; 段 12 lane 12j(agora-redesign #320): 名前が指す「生きている行」を解く 3 値の判断は ACP の client library の写し
 ;; (live_row.hy・contracts.lock の kind = code)の 1 点 — ここに名前の索引を持たない。
 (import doeff_agents.sessionhost.acp.live_row [resolve-live-row])
+(import doeff_agents.sessionhost.acp.input_source [TurnInputText])
+(import doeff_agents.sessionhost.acp.reply_channel [turn-input-text-of inputs-text-of preamble-text-of
+                                                    item-heading-of input-source-of])
 (import doeff_agents.sessionhost.acp.cache_observation [cache-observation-of cache-context-of])
 (import doeff_agents.sessionhost.acp.response_usage [response-usages-of])
 ;; card acp:kanban-issue:ki-567f2dd6140f §3.1e: 保持の予算は ACP 側の 1 点(host は 1 度も読まない)。
@@ -2524,12 +2527,14 @@
   (= backend-kind BACKEND-HEADLESS))
 
 
-(defk first-turn-prompt-of [charter-prompt bodies]
-  {:pre [(: charter-prompt str) (: bodies tuple)]
+(defk first-turn-prompt-of [charter-prompt lead bodies]
+  {:pre [(: charter-prompt str) (: lead str) (: bodies tuple)]
    :post [(: % str)]}
-  "1 手番目の本文: charter の prompt(前置き)と郵便の本文(inputs の順)を空行で区切って 1 つに。
-   郵便が無ければ charter だけ・空白だけの部分は入れない。"
-  (.join "\n\n" (lfor part (+ [charter-prompt] (list bodies)) :if (.strip part) part)))
+  "1 手番目の本文: charter の prompt(前置き — 区切りの見出しは charter-with-preamble が付けてある)・lead(続きの手番の再開の
+   案内文)・届いた項(bodies = TurnInputText の列 — 区切りと見出しは reply_channel.inputs-text-of の 1 点)を空行で区切って 1 つに。
+   空白だけの部分は入れない(項が無ければ charter だけ)。"
+  (<- inputs str (inputs-text-of bodies))
+  (.join "\n\n" (lfor part [charter-prompt lead inputs] :if (.strip part) part)))
 
 
 (defk charter-with-first-turn [charter lead bodies]
@@ -2542,8 +2547,23 @@
    空なら今日と 1 byte も変わらない(first-turn-prompt-of は空白だけの部分を入れない)。"
   (setv next (dict charter))
   (setv prompt (.get charter "prompt"))
-  (<- folded str (first-turn-prompt-of (if (isinstance prompt str) prompt "") (+ #(lead) bodies)))
+  (<- folded str (first-turn-prompt-of (if (isinstance prompt str) prompt "") lead bodies))
   (setv (get next "prompt") folded)
+  next)
+
+
+(defk charter-with-preamble [charter]
+  {:pre [(: charter dict)]
+   :post [(: % dict)]}
+  "charter の prompt(前置き)を区切りの見出し【前置き】で囲む(設計 herdr-hud docs/design-checks/direct-chat-2026-09-24 §3 —
+   前置き・これまでの会話・各入力をすべて区切りの見出しで囲み、見出しの無い文を残さない)。起こす腕の 1 点
+   (incarnation-charter-of)が最初に 1 回だけ呼ぶ。prompt が空・文字列でなければ charter を変えない。"
+  (setv prompt (.get charter "prompt"))
+  (when (not (and (isinstance prompt str) (.strip prompt)))
+    (return charter))
+  (setv next (dict charter))
+  (<- wrapped str (preamble-text-of prompt))
+  (setv (get next "prompt") wrapped)
   next)
 
 
@@ -2712,7 +2732,8 @@
   ;; 借りた札の家(下)より前に据えるのは、記憶が資格ではなく会話の durable な状態だから。
   (<- with-memory dict (charter-with-memory-home with-env memory-root
                                                  (str (get attribution "conversationId"))))
-  (setv charter with-memory)
+  (<- with-preamble dict (charter-with-preamble with-memory))
+  (setv charter with-preamble)
   (when (= choice.arm NEXT-ARM-REHYDRATE)
     (<- with-history dict (charter-with-history charter history))
     (setv charter with-history))
@@ -2933,9 +2954,9 @@
    (上限で落とした要約は数えない)を名乗る。"
   (setv summarized (if (> kept-summaries 0) f"・古い区間 {kept-summaries} つは要約(記録の service の recordSeq の区間を名乗る)で、原文はその後" ""))
   (if (isinstance source HeadlineTurns)
-      (+ f"これまでの会話(薄い再開・会話 {conversation-id}・古い順{summarized}): 会話の記録の service に届かなかった"
+      (+ f"【これまでの会話】(薄い再開・会話 {conversation-id}・古い順{summarized}): 会話の記録の service に届かなかった"
          f"({source.reason})ため、手番の本文は無く ACP の見出し(出来事の数)だけです。郵便の本文は在ります。")
-      (+ f"これまでの会話(会話の記録の service と ACP の郵便から組んだ写し・会話 {conversation-id}・古い順{summarized}"
+      (+ f"【これまでの会話】(会話の記録の service と ACP の郵便から組んだ写し・会話 {conversation-id}・古い順{summarized}"
          (if source.complete "" "・会話の最初までは読んでいない") "):")))
 
 
@@ -3640,56 +3661,16 @@
       charter))
 
 
-(defk mail-served-class-of [status]
-  {:pre [(: status (| dict None))]
-   :post [(: % (| str None))]}
-  "郵便の行の status → **扱う class**(`status.routing.servedClass` の逐語・無ければ None)。
-
-   card acp:kanban-issue:ki-fa719b70d37c(設計 agora-redesign docs/design/kanban-class-route/README.md §D2c-4):
-   配送表は 1 つの class を**別の class として配る**行(投函の身元の名簿 `postedBy` + 扱う class の宣言 `as`)を
-   持てる。読み替えが起きた拍だけ ACP の純関数 `Acp.App.Messaging.Decide.servedClassOf` が 1 回この欄へ書く。
-   ⚠ **素通しちょうどで、第 2 の導出を置かない** — 方策の受付の表をここで読み直して同じ答えを組み直すと、
-     表が動いた日に 2 つの答えが割れる。⚠ 欄が無い = 読み替えが起きていない(「無い」を名乗りで埋めない)。"
-  (when (not (isinstance status dict))
-    (return None))
-  (setv routing (.get status "routing"))
-  (when (not (isinstance routing dict))
-    (return None))
-  (setv value (.get routing "servedClass"))
-  (if (and (isinstance value str) (.strip value)) value None))
-
-
 (defk mail-heading-of [message-id spec [status None]]
   {:pre [(: message-id str) (: spec dict) (: status (| dict None))]
    :post [(: % str)]}
-  "郵便の見出し 1 行(段 10 lane 10r 追補・agora-redesign #99・依頼者の裁定 2026-09-15 案 A): 郵便の身元は配達の封筒の一部で、
-   CLI へ渡す係 = agentd が本文の前に付ける — 手番の agent は郵便を id で名指せる(受付の `ai forward <id> <担い手>` は
-   id が要る)。綴りはこの 1 点: `[郵便 <id>・kind=<kind>・class=<class か 無し>・from=<会話 id か operator>・
-   parent=<id か 無し>・at=<JST>]`。欠けた欄は「無し」(発明しない)。at は契約の時計(epoch ms)を JST で。
-
-   card acp:kanban-issue:ki-fa719b70d37c(設計 §D2c-4): `class=` が名乗るのは**扱う class** —— 配送表が読み替えて
-   配った拍は `class=kanban(名乗り dev)` の形で両方を出す。担い手は「自分がどの class の担当として開かれたか」を
-   この 1 行で読むので、名乗りだけを出すと**前置きの段落と食い違う**(kanban の担い手が dev の手順を読む)。
-   読み替えの無い拍は今日と 1 文字も変わらない。読みは行の `status.routing.servedClass` ちょうど(上の 1 点)。"
-  (setv none "無し")
-  (setv words {})
-  (for [key ["kind" "class" "from" "parent"]]
-    (setv value (.get spec key))
-    (setv (get words key) (if (and (isinstance value str) (.strip value)) value none)))
-  ;; 扱う class が名乗りと違う拍だけ、名乗りを括弧に落として扱う class を主にする。
-  (<- served (| str None) (mail-served-class-of status))
-  (when (and (is-not served None) (!= served (get words "class")))
-    (setv (get words "class") (+ served "(名乗り " (get words "class") ")")))
-  (setv at (.get spec "at"))
-  (setv at-text (if (and (isinstance at int) (not (isinstance at bool)))
-                    (.strftime (datetime.fromtimestamp (/ at 1000) :tz (timezone (timedelta :hours 9) "JST")) "%Y-%m-%d %H:%M:%S JST")
-                    none))
-  (+ "[郵便 " message-id
-     "・kind=" (get words "kind")
-     "・class=" (get words "class")
-     "・from=" (get words "from")
-     "・parent=" (get words "parent")
-     "・at=" at-text "]"))
+  "届いた 1 通の項の見出し 1 行(段 10 lane 10r 追補・agora-redesign #99 — 郵便の身元は配達の封筒の一部で、CLI へ渡す係 = agentd が
+   本文の前に付ける)。出どころの判定と見出しの綴りは reply_channel の 1 点(input-source-of → item-heading-of — 設計 herdr-hud
+   docs/design-checks/direct-chat-2026-09-24 §3)で、ここは写すだけ。class は**扱う class**(card ki-fa719b70d37c・
+   status.routing.servedClass)。"
+  (<- source (input-source-of message-id spec status))
+  (<- heading str (item-heading-of source))
+  heading)
 
 
 (defk continuation-of [row]
@@ -3785,23 +3766,37 @@
     (return #()))
   (if folds
       (do
-        (<- text str (first-turn-prompt-of lead bodies))
+        (<- text str (first-turn-prompt-of "" lead bodies))
         (<- attachments tuple (first-turn-attachments-of carried))
         #(#(text attachments ids)))
-      (tuple (+ (if (.strip lead) [#(lead #() #())] [])
-                (lfor [index body] (enumerate bodies)
-                      #(body
-                        (if (< index (len carried)) (get carried index) #())
-                        (if (< index (len ids)) #((get ids index)) #())))))))
+      (do
+        ;; 畳まない器(tui)は 1 通 1 送り — 各送りの文は区切りの見出しを持つ 1 項(reply_channel.inputs-text-of の 1 点)。
+        (setv parcels (if (.strip lead) [#(lead #() #())] []))
+        (for [[index body] (enumerate bodies)]
+          (<- text str (inputs-text-of #(body)))
+          (.append parcels #(text
+                             (if (< index (len carried)) (get carried index) #())
+                             (if (< index (len ids)) #((get ids index)) #()))))
+        (tuple parcels))))
 
 
 (defk mail-turn-text-of [message-id spec body [status None]]
   {:pre [(: message-id str) (: spec dict) (: body str) (: status (| dict None))]
    :post [(: % str)]}
-  "手番へ渡す郵便の文 = 見出し(mail-heading-of)1 行 + 本文。1 手番目に畳む腕(first-turn-prompt-of)・温かい session への
-   send・割り込みの注入の 3 つの路が同じ文を運ぶ(郵便の手番の文を組む点はここだけ — message-bodies-of と割り込みの腕が呼ぶ)。"
-  (<- heading str (mail-heading-of message-id spec status))
-  (+ heading "\n" body))
+  "手番へ渡す 1 通だけの文 = 区切りの見出し + 項の見出し 1 行 + 本文(割り込みの注入の路 — 1 通ずつ注入する)。項を組むのは
+   mail-turn-item-of、区切りを付けるのは reply_channel.inputs-text-of の 1 点(1 手番目の畳み・温かい session への send も同じ 2 点を通る)。"
+  (<- item TurnInputText (mail-turn-item-of message-id spec body status))
+  (<- text str (inputs-text-of #(item)))
+  text)
+
+
+(defk mail-turn-item-of [message-id spec body [status None]]
+  {:pre [(: message-id str) (: spec dict) (: body str) (: status (| dict None))]
+   :post [(: % TurnInputText)]}
+  "手番へ渡す 1 項(区切り + 項の見出し 1 行 + 本文)を組む judgment の 1 点(R16 — message-bodies-of と mail-turn-text-of が呼ぶ)。
+   出どころの判定と綴りは reply_channel.turn-input-text-of(設計 herdr-hud docs/design-checks/direct-chat-2026-09-24 §3)。"
+  (<- item TurnInputText (turn-input-text-of message-id spec body status))
+  item)
 
 
 (defk unexpired-messages-of [rows now-ms]
@@ -3841,8 +3836,9 @@
         (do
           ;; 段 10 lane 10r 追補: 本文の前に郵便の見出し(1 手番目の畳みと温かい send は同じ bodies を読む)。
           ;; card ki-fa719b70d37c: 見出しの class は**扱う class**(行の status.routing.servedClass)。
-          (<- text str (mail-turn-text-of input-id row.spec body row.status))
-          (.append bodies text)
+          ;; 設計 direct-chat-2026-09-24 §3: 項は出どころの判定つき(区切り + 見出し + 本文 — reply_channel の 1 点)。
+          (<- item TurnInputText (mail-turn-item-of input-id row.spec body row.status))
+          (.append bodies item)
           ;; 読めなかった添付は carried に載っていない = 空(呼び手が条件 AttachmentIgnored に写す)。
           (.append attachments (.get carried input-id #())))
         (.append missing input-id)))
