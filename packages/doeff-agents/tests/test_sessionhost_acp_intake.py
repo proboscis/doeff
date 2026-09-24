@@ -209,3 +209,6 @@ def test_a_sent_turn_names_the_intake_stage_by_stage() -> None:
     parts = ["resolveMs", "mailMs", "borrowMs", "warmMs", "incarnateMs", "afterStartMs"]
     assert all(isinstance(line[name], int) and line[name] >= 0 for name in parts), line
     assert sum(line[name] for name in parts) == line["totalMs"], line
+    # 結ばれてから拍が拾うまで(結びの刻の無い行は None)・拾ってから起こし始めるまで。
+    assert line["pickupMs"] is None, line
+    assert isinstance(line["claimMs"], int) and line["claimMs"] >= 0, line
