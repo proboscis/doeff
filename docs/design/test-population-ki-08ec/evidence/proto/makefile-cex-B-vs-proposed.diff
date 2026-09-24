@@ -1,0 +1,8 @@
+156a157
+> ROOT_TESTPATHS = $$(python3 -c 'import tomllib; print(" ".join(tomllib.load(open("pyproject.toml","rb"))["tool"]["pytest"]["ini_options"]["testpaths"]))')
+159c160
+< 	@failed=""; \
+---
+> 	@roots=" $(ROOT_TESTPATHS) "; failed=""; \
+166a168
+> 			case "$$roots" in *" $${dir}tests "*) echo "=== Skipping $$(basename $$dir) (collected by root pytest testpaths) ==="; continue;; esac; \

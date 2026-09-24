@@ -1,0 +1,15 @@
+full_stages: OK
+  stage name=build blocks_rest=True run_has_make_sync=True pop=-
+  stage name=root blocks_rest=False run_has_make_sync=True pop=root
+  stage name=packages blocks_rest=False run_has_make_sync=True pop=packages
+  stage name=rust blocks_rest=False run_has_make_sync=True pop=rust
+== root が赤(F3 の形): 畳んだ結果 outcome=red
+   build: outcome=pass rc=0 unexecuted=None
+   root: outcome=red rc=1 unexecuted=None
+   packages: outcome=pass rc=0 unexecuted=None
+   rust: outcome=pass rc=0 unexecuted=None
+== build が赤: 畳んだ結果 outcome=red
+   build: outcome=red rc=2 unexecuted=None
+   root: outcome=unexecuted rc=97 unexecuted='premise-unmet: 前提の処理ステージ build が成功で終わらなかったので撃っていない'
+   packages: outcome=unexecuted rc=97 unexecuted='premise-unmet: 前提の処理ステージ build が成功で終わらなかったので撃っていない'
+   rust: outcome=unexecuted rc=97 unexecuted='premise-unmet: 前提の処理ステージ build が成功で終わらなかったので撃っていない'
