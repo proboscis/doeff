@@ -218,6 +218,17 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
   (setv conn (sqlite3.connect db-path :check-same-thread False
                               :isolation-level None))
   (.execute conn f"PRAGMA busy_timeout = {SQLITE-BUSY-TIMEOUT-MS}")
+  ;; card acp:kanban-issue:ki-e786e72e2ae7: WAL + synchronous NORMAL — commit で fsync を撃たない(checkpoint の時だけ)。
+  ;; 既定の rollback journal は autocommit の 1 文ごとに fsync を 3 度前後撃つ。pool の pod の store は network の block
+  ;; volume(longhorn)で fsync 1 回 p50 96 ms・書き 1 文 p50 215 ms(実測 2026-09-24)。actor は 1 本の thread で読みも
+  ;; 書きも順に通すので、書きが積もると session.get / session.list が 5〜12 秒待ち、agentd の読みの期限 10 秒を越えて
+  ;; 観測・参加の腕が落ちていた(Mac の SSD では同じ書きが数 ms で、差が見えなかった)。
+  ;; NORMAL が失うのは OS ごと落ちた時の最後の commit だけ(process が落ちても失わない・壊れない)。
+  ;; busy_timeout を先に置く(他の接続が開いている拍の切り替えは待って通す)。切り替えられなかった拍は既定の journal と
+  ;; FULL のまま(WAL でない journal に NORMAL を当てない)。
+  (setv mode (get (.fetchone (.execute conn "PRAGMA journal_mode=WAL")) 0))
+  (when (= (.lower (str mode)) "wal")
+    (.execute conn "PRAGMA synchronous=NORMAL"))
   conn)
 
 (deff db-migrate [conn]
