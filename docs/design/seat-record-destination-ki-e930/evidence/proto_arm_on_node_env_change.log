@@ -1,0 +1,9 @@
+# base 4da6ca4a + evidence/proto_arm_on_node_env_change.diff・2026-09-24T16:12:41Z
+$ PYTHONPYCACHEPREFIX=/tmp/ki-e930-proto-pyc /home/kento/repos/doeff/.venv/bin/python evidence/proto_arm_on_node_env_change.py
+OK  同じ宛先(URL1 で生まれ・今も URL1): arm=send retire=None (期待 send)
+OK  宛先が変わった(URL1 で生まれ・今は URL2): arm=resume retire=s-1 (期待 resume)
+OK  指紋の無い古い session(配備前に生まれた): arm=resume retire=s-1 (期待 resume)
+OK  resume で組み直した charter の RECORD_SERVICE_URL = http://record-2.example:8874(期待 http://record-2.example:8874)
+OK  記録が無効な settings では置かない: ['ACP_BASE']
+ALL OK
+exit=0

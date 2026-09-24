@@ -1,0 +1,299 @@
+{
+  "version": 1,
+  "task_id": "lt-R6BA55GFR7NZG4P7F6F9A0XXDG",
+  "base_revision": "4da6ca4a3dd83bdf8bc57e5ecf799365721167be",
+  "author": {
+    "conversation_id": "c-GZ6PP4BMTNRQ96T4FZJEHN512H",
+    "model": "claude-opus-5-5",
+    "effort": "xhigh(自己申告・未確認)"
+  },
+  "requirements": "Q1〜Q5(design.md §1): 全手番の env に RECORD_SERVICE_URL = agentd 自身の記録の宛先(byte 同一)・Mac と pool で 32KB 超の ai tell が通る・上限内は不変・tell.py 不変・値の置き場は [record].url の 1 か所・継承を開けない",
+  "design": {
+    "path": "design.md",
+    "sha256": "5202d9b9aaeaf32c6e3cfcbc61367e67f31f841ad757cf8a6a425b3022bc2547"
+  },
+  "modules": [
+    {
+      "id": "host-declaration",
+      "responsibility": "機体の宣言 file の [record].url を持つ(値の唯一の置き場)",
+      "owns": "記録サービスの宛先の値",
+      "hides": "席がその値を使うこと",
+      "interface": "宣言 file の [record].url(doeff の join schema)",
+      "effects": "なし、宣言 file は join が読むだけ",
+      "lifetime": "機体の設定。変えたら agentd を起こし直す",
+      "invariants": "席向けの写しを持たない(seat_env に RECORD_SERVICE_URL を書かない)"
+    },
+    {
+      "id": "join-gate",
+      "responsibility": "宣言の解釈と参加の門",
+      "owns": "record-sink-of・seat-env-of の門 (a)(b)(c)・claude-settings-file-of の検",
+      "hides": "席の道具の語彙",
+      "interface": "join.hy の defk(ValueError で参加しない)",
+      "effects": "なし、純粋な検め(file を読むのは composition root)",
+      "lifetime": "agentd の起動時に 1 度",
+      "invariants": "走行者が持つ名を seat_env と席の settings file の env から断る"
+    },
+    {
+      "id": "runner-env-names",
+      "responsibility": "走行者が持つ名の集合の 1 定義点",
+      "owns": "{AGORA_CONVERSATION_ID, AGORA_SEAT_OPENER, RECORD_SERVICE_URL} と各名の綴り",
+      "hides": "—(公開の語彙)",
+      "interface": "effects.py の定数",
+      "effects": "なし、定数",
+      "lifetime": "コードの版",
+      "invariants": "名の綴りは effects.py の定義行だけ(K5)"
+    },
+    {
+      "id": "agentd-settings",
+      "responsibility": "参加の門を通った記録の宛先を判断の層へ運ぶ",
+      "owns": "AgentdSettings の記録の欄",
+      "hides": "env の読み方",
+      "interface": "effects.AgentdSettings・runtime.settings_from_env",
+      "effects": "なし、値の運搬(env を読むのは composition root)",
+      "lifetime": "agentd の process の寿命・不変",
+      "invariants": "record_enabled が真なのに URL が無い状態を作れない"
+    },
+    {
+      "id": "charter-assembly",
+      "responsibility": "席の env を組む",
+      "owns": "incarnation-charter-of と charter-with-* の順序",
+      "hides": "宛先の由来",
+      "interface": "judgment.hy の純粋な defk",
+      "effects": "なし、純粋",
+      "lifetime": "手番の起こしごと",
+      "invariants": "seat_env → 走行者の名(後勝ち)・機体の env の組は 1 つの関数の出力"
+    },
+    {
+      "id": "arm-decision",
+      "responsibility": "次の手番を send / resume / rehydrate のどれで起こすか",
+      "owns": "next-arm-for-job・session-attribution-of・帰属の nodeEnv",
+      "hides": "host の行の形",
+      "interface": "judgment.hy の純粋な defk",
+      "effects": "なし、純粋",
+      "lifetime": "手番ごと",
+      "invariants": "帰属の指紋が今の指紋と違う・無い温かい session には send しない"
+    },
+    {
+      "id": "spawn-policy",
+      "responsibility": "席の process が機体から継ぐ env の名簿",
+      "owns": "policy.SPAWN-INHERITED-ENV-KEYS / headless-spawn-env",
+      "hides": "—",
+      "interface": "policy.hy",
+      "effects": "なし、この変更で触らない",
+      "lifetime": "コードの版",
+      "invariants": "1 語も開けない(R30 (4))"
+    },
+    {
+      "id": "seat-tool",
+      "responsibility": "上限を超える本文を記録サービスに置く",
+      "owns": "tell.py record_appender",
+      "hides": "—",
+      "interface": "env RECORD_SERVICE_URL",
+      "effects": "記録サービスへの HTTP の追記(この変更で触らない)",
+      "lifetime": "手番の中の 1 命令",
+      "invariants": "宛先が無ければ fail-closed で断る"
+    },
+    {
+      "id": "record-service",
+      "responsibility": "出来事の追記の受理と認証",
+      "owns": "追記の口と認証",
+      "hides": "—",
+      "interface": "契約 record-service.json",
+      "effects": "保存(この変更で触らない)",
+      "lifetime": "常駐",
+      "invariants": "席の札で追記を受ける(実測)"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S1",
+      "axis": "hardware",
+      "applicability": "applicable",
+      "change": "機体を 1 台足す",
+      "claim": "触るのは新しい機体の [record].url 1 行だけ",
+      "expected_scope": "host-declaration",
+      "actual_scope": "未実験(読解のみ・unresolved に記載)",
+      "changed_modules": [
+        "host-declaration"
+      ],
+      "unchanged_modules": [
+        "join-gate",
+        "runner-env-names",
+        "agentd-settings",
+        "charter-assembly",
+        "arm-decision",
+        "spawn-policy",
+        "seat-tool",
+        "record-service"
+      ],
+      "reason": "参加に必須の鍵なので書き忘れは門が断る",
+      "revision": "不要(未実験のため主張のまま)"
+    },
+    {
+      "id": "S2",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "記録サービスの所在が変わる",
+      "claim": "各機体の [record].url 1 行で、agentd と席が同時に新しい値を使う",
+      "expected_scope": "host-declaration",
+      "actual_scope": "原設計では成立せず: 温かい session の send が host の行の生まれた時の env を再生し、席は古い値(盲検 A・B・設計者の再現)。C5 の後は host-declaration 1 行 + agentd の起こし直しで、次の手番が resume になり新しい値(試作で確認)",
+      "changed_modules": [
+        "host-declaration"
+      ],
+      "unchanged_modules": [
+        "join-gate",
+        "runner-env-names",
+        "agentd-settings",
+        "charter-assembly",
+        "arm-decision",
+        "spawn-policy",
+        "seat-tool",
+        "record-service"
+      ],
+      "reason": "原設計は値の寿命の区分(会話ごとに一定か・機体の設定か)を見落とし、起こし方の判断に漏れていた = 知識の漏洩",
+      "revision": "C5 を足した(arm-decision)。修正後の波及は host-declaration だけ"
+    },
+    {
+      "id": "S3",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "走行者が運ぶ宛先が 1 つ増える(例 AGORA_CUSTODY_URL)",
+      "claim": "runner-env-names・agentd-settings・charter-assembly だけが変わり、join-gate のコードは変わらない",
+      "expected_scope": "runner-env-names, agentd-settings, charter-assembly(+ 移行時の host-declaration)",
+      "actual_scope": "未実験(読解のみ)。C5 の後は指紋が組から自動で導かれるので arm-decision も変わらない見込み",
+      "changed_modules": [
+        "runner-env-names",
+        "agentd-settings",
+        "charter-assembly"
+      ],
+      "unchanged_modules": [
+        "host-declaration",
+        "join-gate",
+        "arm-decision",
+        "spawn-policy",
+        "seat-tool",
+        "record-service"
+      ],
+      "reason": "意図した公開契約の拡張",
+      "revision": "不要(未実験)"
+    },
+    {
+      "id": "S4",
+      "axis": "distribution",
+      "applicability": "applicable",
+      "change": "席のネットワークの見え方が agentd と違う配置",
+      "claim": "P1 の外で C1 の適用範囲外。拡張は host-declaration・join-gate・agentd-settings",
+      "expected_scope": "host-declaration, join-gate, agentd-settings",
+      "actual_scope": "未実験(読解のみ)",
+      "changed_modules": [
+        "host-declaration",
+        "join-gate",
+        "agentd-settings"
+      ],
+      "unchanged_modules": [
+        "runner-env-names",
+        "charter-assembly",
+        "arm-decision",
+        "spawn-policy",
+        "seat-tool",
+        "record-service"
+      ],
+      "reason": "前提 P1 を変える契約の拡張",
+      "revision": "不要(未実験)"
+    },
+    {
+      "id": "S5",
+      "axis": "concurrency",
+      "applicability": "excluded",
+      "reason": "宛先は agentd の起動時に読む不変の値で、並行の書き手も共有の可変状態も無い"
+    },
+    {
+      "id": "S6",
+      "axis": "simulation",
+      "applicability": "applicable",
+      "change": "決定的な試験で席の env と起こし方を検める",
+      "claim": "charter-assembly と arm-decision は純粋で、settings を組むだけで検められる",
+      "expected_scope": "試験の file だけ",
+      "actual_scope": "試作の実験で本物の next-arm-for-job と charter-with-seat-env を env も network も触らずに呼べた",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "host-declaration",
+        "join-gate",
+        "runner-env-names",
+        "agentd-settings",
+        "charter-assembly",
+        "arm-decision",
+        "spawn-policy",
+        "seat-tool",
+        "record-service"
+      ],
+      "reason": "—",
+      "revision": "不要"
+    }
+  ],
+  "checks": [
+    {
+      "id": "chk-root-pod-negative",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "env に RECORD_SERVICE_URL が無い手番の 34KB の ai tell は段 record で断られる",
+      "observation": "断られた(requestId ai-tell:35926257…・郵便は作られない)",
+      "evidence": {
+        "path": "evidence/pod-measurement.log",
+        "sha256": "06534a375ab4d07390f6f1905650b0c8fab5ff50ceed31c4f87e0ccbbdbcdcb7"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "chk-root-pod-positive",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "[record].url と同じ値を明示すれば通り delivered",
+      "observation": "lt-SAGPVFCCQ31D6D2W5746B1STXA delivered",
+      "evidence": {
+        "path": "evidence/pod-measurement.log",
+        "sha256": "06534a375ab4d07390f6f1905650b0c8fab5ff50ceed31c4f87e0ccbbdbcdcb7"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "chk-B-witness-stale",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "原設計(C5 なし)では宛先を変えた後の send の手番が古い値で起きる(反例の成立)",
+      "observation": "spawned RECORD_SERVICE_URL = URL1・byte-identical to agentd B: False",
+      "evidence": {
+        "path": "counterexamples/B_witness_continue.log",
+        "sha256": "6e5cc6a30e3e125a43dc1ee1b8582b6fdf07e1b9431bd596ff1605ca3c282e67"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "chk-proto-arm",
+      "scenarios": [
+        "S2",
+        "S6"
+      ],
+      "control": "positive",
+      "expectation": "C5 の試作で 同じ指紋→send / 違う→resume+retire / 指紋なし→resume / 組み直した charter = 新しい値 / 記録無効なら置かない",
+      "observation": "5 件 OK・exit 0",
+      "evidence": {
+        "path": "evidence/proto_arm_on_node_env_change.log",
+        "sha256": "38074400ac88078faccfd1b1d762904da9f98f520823b2ef76de60555cb80d65"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": [
+    "S1・S3・S4 の主張は読解のみで実験していない(設計の段の範囲外として残す)",
+    "K1'(settings を差し替えた端から端までの試験)と K2〜K7 は実装の段の予定で未実行",
+    "会社 Mac の手番の env と追記は card 本文の 2026-09-21 の実測に依る(この会話は pool pod で走っていて Mac に入れない)",
+    "盲検の実際の model と effort は起動口が名乗らないので未確認(要求 = opus / xhigh・codex の起動口が無く優先 1 は撃てていない)"
+  ]
+}

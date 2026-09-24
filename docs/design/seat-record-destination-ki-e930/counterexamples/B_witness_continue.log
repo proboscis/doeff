@@ -1,0 +1,8 @@
+# 盲検 B の反例の再現(設計者が走らせた)・base 4da6ca4a(無改変の器)・2026-09-24T16:0xZ
+$ PYTHONPYCACHEPREFIX=/tmp/ki-e930-blindB/pycache /home/kento/repos/doeff/.venv/bin/python counterexamples/B_witness_continue.py
+turn_env from agentd B: {}
+row overlay session_env: {'AGORA_CONVERSATION_ID': 'c-1', 'AGORA_SEAT_OPENER': 'operator', 'RECORD_SERVICE_URL': 'http://record-1.example:8874'}
+spawned RECORD_SERVICE_URL: http://record-1.example:8874
+agentd B destination     : http://record-2.example:8874
+byte-identical to agentd B: False
+exit=0

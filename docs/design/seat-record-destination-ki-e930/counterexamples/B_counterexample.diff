@@ -1,0 +1,131 @@
+diff -ru base_acp/agentd.hy tree/packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy
+--- base_acp/agentd.hy	2026-09-24 16:05:39.130543544 +0000
++++ tree/packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy	2026-09-24 16:05:40.287267061 +0000
+@@ -1519,7 +1519,7 @@
+         (<- attribution dict (session-attribution-of plan job-id subject choice.arm))
+         (<- built tuple (incarnation-charter-of plan choice session-id lead bodies history attribution
+                                                 settings.backend-kind lease settings.homes-root
+-                                                settings.memory-root opener settings.seat-env))
++                                                settings.memory-root opener settings.seat-env settings.record-url))
+         (setv charter (get built 0))
+         (setv auth-file (get built 1))
+         ;; card acp:kanban-issue:ki-9fc7d4bca4dc(法 ACP 575b1e): 会話の記憶は行が正本 — 起こす前に行から読み、
+diff -ru base_acp/effects.py tree/packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py
+--- base_acp/effects.py	2026-09-24 16:05:39.128989593 +0000
++++ tree/packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py	2026-09-24 16:05:39.194275263 +0000
+@@ -1288,6 +1288,8 @@
+ #: 置く点は judgment.charter-with-conversation-env の 1 点(incarnation-charter-of が呼ぶ — launch / resume / rehydrate)。
+ CONVERSATION_ID_ENV = "AGORA_CONVERSATION_ID"
+ SEAT_OPENER_ENV = "AGORA_SEAT_OPENER"
++#: 走行者(agentd)が手番の env に自分で置く名(card ki-e930)。宣言(seat_env)は名乗れない(join.seat-env-of の門 (c))。
++RUNNER_SEAT_ENV_NAMES: frozenset[str] = frozenset({CONVERSATION_ID_ENV, SEAT_OPENER_ENV, RECORD_URL_ENV})
+ #: agora-redesign #520(段 12・既知の形 = kubelet が node 局所の宣言の表を workload の env へ具現化する): 機体の参加の宣言
+ #: (join の [agentd].seat_env — 改行区切りの `NAME=value` の行)が名乗った、席へ運ぶ env の対。join が解いて JoinSpec →
+ #: この env(同じ改行区切りの形)→ AgentdSettings.seat_env → charter.session_env(judgment.charter-with-seat-env の 1 点)。
+@@ -1854,7 +1856,8 @@
+     #: RECORD_URL_ENV の在否から導く 1 点 — False の間 agentd は Record* の要求を 1 つも撃たない(ACP の追記は今日どおり)。
+     #: 実運転では常に True(段 9f lane 9f-6: 宛先を持たない agentd は参加の門 join.record-sink-of が理由つきで断る —
+     #: 本文の行き先が無いまま見出しだけを書く形は存在しない)。False は test の対照(二重書きの有無で見出しが一致する検)だけ。
+-    record_enabled: bool = False
++    #: 参加の門(join.record-sink-of)を通った記録の service の宛先。None = 二重書きをしない(試験の対照だけ)。
++    record_url: str | None = None
+     #: spool の再送の周期(送れなかった拍の後 — 送れている間は出来事を読んだ拍の終わりに送る)。届かない service へ拍ごとに
+     #: 撃って loop を塞がないための有界の backoff(judgment.record-flush-due)。
+     record_retry_seconds: float = 15.0
+@@ -1876,6 +1879,10 @@
+     #: profile の観測と同じ「遅い周期」の族。起動の拍(AgentdState.last_turn_record_sweep_ms = None)は即。
+     turn_record_sweep_seconds: int = 300
+ 
++    @property
++    def record_enabled(self) -> bool:
++        return self.record_url is not None
++
+ 
+ # ------------------------------------------------------------------ ACP の値
+ 
+diff -ru base_acp/join.hy tree/packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.hy
+--- base_acp/join.hy	2026-09-24 16:05:39.129275751 +0000
++++ tree/packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.hy	2026-09-24 16:05:39.209419208 +0000
+@@ -48,6 +48,7 @@
+   CUSTODY-SA-TOKEN-PATH-ENV
+   CONVERSATION-ID-ENV
+   SEAT-OPENER-ENV
++  RUNNER-SEAT-ENV-NAMES
+   SEAT-ENV-ENV
+   SEAT-ENV-SEPARATOR
+   CLAUDE-SETTINGS-FILE-ENV
+@@ -884,7 +885,7 @@
+     (raise (ValueError (+ f"{where} は宛先を運ぶ口で、資格の輸送路ではない(資格の形の名: "
+                           f"{(.join ", " shaped)})。札は家の既定の置き場への file の mount で置き、"
+                           "env では渡さない(ADR-DOE-AGENTS-012 R30 (4) / R51 (1))"))))
+-  (setv owned (sorted (lfor name seen :if (in name #{CONVERSATION-ID-ENV SEAT-OPENER-ENV}) name)))
++  (setv owned (sorted (lfor name seen :if (in name RUNNER-SEAT-ENV-NAMES) name)))
+   (when owned
+     (raise (ValueError (+ f"{where} は会話の身元の名を宣言できない({(.join ", " owned)})— "
+                           "置く点は手番ごとの judgment.charter-with-conversation-env の 1 点"))))
+diff -ru base_acp/judgment.hy tree/packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy
+--- base_acp/judgment.hy	2026-09-24 16:05:39.129268261 +0000
++++ tree/packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy	2026-09-24 16:05:40.246267368 +0000
+@@ -405,6 +405,7 @@
+   TranscriptRefused
+   Refused
+   SEAT-OPENER-ENV
++  RECORD-URL-ENV
+   SESSION-OBSERVED-BUSY
+   SESSION-OBSERVED-IDLE
+   SESSION-LIVE-STATUSES
+@@ -2817,6 +2818,19 @@
+   next)
+ 
+ 
++(defk charter-with-record-env [charter record-url]
++  {:pre [(: charter dict) (: record-url (| str None))]
++   :post [(: % dict)]}
++  "走行者が持つ名のうち記録の service の宛先(card ki-e930): 参加の門を通った値を手番の env に置く。None = 置かない。"
++  (when (is record-url None)
++    (return charter))
++  (setv next (dict charter))
++  (setv env (dict (or (.get charter "session_env") {})))
++  (setv (get env RECORD-URL-ENV) record-url)
++  (setv (get next "session_env") env)
++  next)
++
++
+ (defk memory-home-of [memory-root conversation-id]
+   {:pre [(: memory-root str) (: conversation-id str)]
+    :post [(: % (| str None))]}
+@@ -2859,10 +2873,10 @@
+ 
+ 
+ (defk incarnation-charter-of [plan choice session-id lead bodies history attribution backend-kind lease homes-root
+-                              memory-root opener seat-env]
++                              memory-root opener seat-env record-url]
+   {:pre [(: plan LaunchPlan) (: choice ArmChoice) (: session-id str) (: lead str) (: bodies tuple) (: history str)
+          (: attribution dict) (: backend-kind str) (: lease (| LeaseGrant None)) (: homes-root str)
+-         (: memory-root str) (: opener (| str None)) (: seat-env tuple)]
++         (: memory-root str) (: opener (| str None)) (: seat-env tuple) (: record-url (| str None))]
+    :post [(: % tuple)]}
+   "起こす session の charter を組む 1 点(launch / resume / rehydrate / rebuild — send は起こさない): 鋳造した id →
+    機体の宣言の env(段 12・agora-redesign #520)→ 会話の身元の env(段 10f 便 2 追補 3 — 会話の id は帰属の
+@@ -2878,7 +2892,8 @@
+   (<- with-env dict (charter-with-conversation-env with-seat (str (get attribution "conversationId")) opener))
+   ;; 自動記憶の置き場は会話に従う(ADR-DOE-AGENTS-006 R11)— 起こす 4 つの腕(rebuild を含む)すべてで据える 1 点。
+   ;; 借りた札の家(下)より前に据えるのは、記憶が資格ではなく会話の durable な状態だから。
+-  (<- with-memory dict (charter-with-memory-home with-env memory-root
++  (<- with-runner dict (charter-with-record-env with-env record-url))
++  (<- with-memory dict (charter-with-memory-home with-runner memory-root
+                                                  (str (get attribution "conversationId"))))
+   (<- with-preamble dict (charter-with-preamble with-memory))
+   (setv charter with-preamble)
+diff -ru base_acp/runtime.py tree/packages/doeff-agents/src/doeff_agents/sessionhost/acp/runtime.py
+--- base_acp/runtime.py	2026-09-24 16:05:39.130324642 +0000
++++ tree/packages/doeff-agents/src/doeff_agents/sessionhost/acp/runtime.py	2026-09-24 16:05:39.196518421 +0000
+@@ -232,7 +232,7 @@
+         backend_kind=backend,
+         stream_capability=_stream_capability(backend),
+         ownership=ownership,
+-        record_enabled=bool(record_sink),
++        record_url=record_sink,
+         # 段 10c(agora-redesign #80・R23): 預かり所を宣言した node か — join の [custody].url / --custody が CUSTODY_URL_ENV に
+         # 据わる 1 点。宣言した node は account の無い job を起こさない(judgment.credential-source-of)。
+         custody_declared=bool((env.get(CUSTODY_URL_ENV) or "").strip()),
