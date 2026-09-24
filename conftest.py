@@ -264,3 +264,50 @@ def pytest_collection_finish(session):
         )
         return
     admission.collection_finish(session)
+
+
+# ---------------------------------------------------------------------------
+# One bytecode setting for every test run: no writes, standard location.
+#
+# The land tool starts every gate and the daily full run with
+# PYTHONDONTWRITEBYTECODE=1 (so the tree under test gets no __pycache__), and a
+# developer's run usually does not.  A test whose answer depends on bytecode
+# being written was therefore green on the author's machine and red only in the
+# daily run (measured 2026-09-24: the two @effectful cache tests of 46dcbfc7).
+# Pinning the setting here makes every run give the same answer: a test that
+# needs bytecode writes must say so itself
+# (``monkeypatch.setattr(sys, "dont_write_bytecode", False)``).
+#
+# Python has exactly two settings for bytecode files — whether they are written
+# (sys.dont_write_bytecode / PYTHONDONTWRITEBYTECODE) and where they go
+# (sys.pycache_prefix / PYTHONPYCACHEPREFIX) — and both are pinned, so neither a
+# machine's environment nor a later change that honours the prefix can split
+# the answer again.
+#
+# Session scope, so module- and session-scoped fixtures run under it too.  It
+# starts after collection, so collecting (and pytest's assertion rewrite) still
+# writes and reuses the bytecode cache on a developer's machine.  The env vars
+# are set as well, so subprocesses started by tests inherit them.  Package
+# suites are covered too: `make test-packages` runs `pytest packages/<p>/tests`
+# from the repo root, whose pyproject.toml makes it the rootdir, so this
+# conftest is loaded for them as well.
+#
+# A fixture that changes a setting directly and never restores it turns the pin
+# off for everything after it — and hid both cache failures above in a run that
+# included packages/doeff-hy/tests (measured 2026-09-24).  So the run fails
+# when the settings are not back at the end.
+# ---------------------------------------------------------------------------
+@pytest.fixture(scope="session", autouse=True)
+def _bytecode_settings_pinned():
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(sys, "dont_write_bytecode", True)
+        patch.setattr(sys, "pycache_prefix", None)
+        patch.setenv("PYTHONDONTWRITEBYTECODE", "1")
+        patch.delenv("PYTHONPYCACHEPREFIX", raising=False)
+        yield
+        at_the_end = (sys.dont_write_bytecode, sys.pycache_prefix)
+    assert at_the_end == (True, None), (
+        f"a test or fixture changed the bytecode settings and did not restore them "
+        f"(dont_write_bytecode, pycache_prefix) = {at_the_end} — change them with "
+        f"monkeypatch (or pytest.MonkeyPatch.context() in a wider fixture)"
+    )
