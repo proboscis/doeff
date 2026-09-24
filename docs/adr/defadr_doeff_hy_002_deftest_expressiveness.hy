@@ -15,7 +15,8 @@
   :scope ["packages/doeff-hy/src/doeff_hy"
           "packages/doeff-adr/src/doeff_adr/pytest_plugin.py"
           "docs/adr/conftest.py"
-          "docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy"]
+          "docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy"
+          "packages/doeff-agents/tests"]
   :problem
     [(fact
        "最大級の Python 消費者 mediagen は conftest で doeff_interpreter fixture を配線済みにもかかわらず、260 のテスト関数中 deftest 使用は 0。代わりに tests/support/run_test.py が interpreter スタックの一部を再実装し、手動 with_handlers 差し替えを行う。fixture の :env 経路は NotImplementedError(『deftest :env override is not wired to mediagen_interpreter yet』)のまま。"
@@ -37,7 +38,8 @@
        :statement "for_all deftest t: env_declared(t, k, v) => Ask(k) == v under_fixture; params_silently_dropped == 0"
        :counterexamples
          [(counterexample "fixture が :env を受け取りながら反映せず、テストが本番 env で走って偶然 green になる")
-          (counterexample "deftest を回避した自前シムが interpreter スタックの一部を再実装し、スタック合成の変更(handler 順序等)への追従が漏れる")])]
+          (counterexample "deftest を回避した自前シムが interpreter スタックの一部を再実装し、スタック合成の変更(handler 順序等)への追従が漏れる")
+          (counterexample "消費側が deftest を包み直した関数を pytest へ公開し、pytestmark(skipif / marks / parametrize)が __dict__ ごと落ちる — 書いてあるのに効かず、tmux の無いマシンで赤になる(2026-09-21 doeff-agents の 25 file・:skip-if 12 件。検 = packages/doeff-agents/tests/test_deftest_declaration_band.py と test_deftest_skip_canary.py)")])]
   :enforcement
     [(deftest test-adr-doe-hy-002-env-roundtrip
        {:env {"adr.doe.hy.002.probe" 42}}
