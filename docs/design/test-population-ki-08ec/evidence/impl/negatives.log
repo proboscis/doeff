@@ -1,0 +1,6 @@
+== 陰性: 2 つの母集団(root と packages)を root の段に畳む: 赤 — 処理ステージ root が 2 つ以上の母集団 ['packages', 'root'] を呼ぶ — 前の母集団の赤が後ろを未実行にする — R8
+== 陰性: rust の段から make sync を抜く: 赤 — 処理ステージ rust が母集団の命令の前に make sync を持たない — 遠隔の同期は段ごとに target/ を消し、段は 1 つずつ手元へ倒れ得る — R8
+== 陰性: root の段が blocks_rest を立てる: 赤 — build 以外の段 ['root'] が blocks_rest を立てている — その赤が後ろの母集団を未実行にする — R8
+== 陰性: build の段が root の pytest も撃つ: 赤 — build の段(後ろを止める段)が母集団 ['root'] を呼ぶ — その赤が他の母集団を未実行にする — R8
+== 陽性: 全段の --node を hera へ: 緑
+== 陰性: Makefile が root の testpaths の 5 package を飛ばす(盲検 B): 赤 — make test-packages が訪ねた package が期待と違う: 欠け ['doeff-adr', 'doeff-domain', 'doeff-time', 'doeff-vm', 'doeff-vm-core'] / 余り [](runner が呼ばれた回数 22・最初の doeff-adr だけを赤にした)— 欠けた package は日次で 1 本も走らない(赤の後で止めた・または母集団から外した)— ADR-DOE-ENFORCE-001 R8

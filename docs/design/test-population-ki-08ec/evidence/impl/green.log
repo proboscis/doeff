@@ -1,0 +1,58 @@
+============================= test session starts ==============================
+platform linux -- Python 3.14.3, pytest-9.1.1, pluggy-1.6.0 -- /home/kento/repos/doeff/.venv/bin/python
+rootdir: /home/kento/.worktrees/doeff-wt-ki08ec-population
+configfile: pyproject.toml
+plugins: xdist-3.8.0, anyio-4.14.2, timeout-2.4.0, doeff-adr-0.1.0, doeff-hy-0.1.0, asyncio-1.4.0
+timeout: 60.0s
+timeout method: thread
+timeout func_only: False
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 12 items
+
+tests/test_daily_test_population.py::test_make_test_packages_visits_every_package_after_a_red PASSED [  8%]
+tests/test_daily_test_population.py::test_package_failure_names_are_repo_root_relative PASSED [ 16%]
+tests/test_daily_test_population.py::test_every_test_file_belongs_to_a_daily_population PASSED [ 25%]
+tests/test_daily_test_population.py::test_exclusion_table_has_no_stale_rows PASSED [ 33%]
+tests/test_daily_test_population.py::test_no_package_declares_its_own_pytest_ini PASSED [ 41%]
+docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy::test_ADR_DOE_ENFORCE_001_adr_contract PASSED [ 50%]
+docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy::test_adr_doe_enforce_001_daily_populations_are_separate_stages PASSED [ 58%]
+docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy::test_adr_doe_enforce_001_deadlines_are_load_scaled PASSED [ 66%]
+docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy::test_adr_doe_enforce_001_docs_adr_in_default_testpaths PASSED [ 75%]
+docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy::test_adr_doe_enforce_001_ledger_authoring_guard_wired PASSED [ 83%]
+docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy::test_adr_doe_enforce_001_vm_oracle_wired PASSED [ 91%]
+tests/test_enforcement_ledger.py::test_enforcement_inventory_matches_ledger PASSED [100%]
+
+=============================== warnings summary ===============================
+../../repos/doeff/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:155
+  /home/kento/repos/doeff/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:155: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 12 passed, 1 warning in 4.79s =========================
