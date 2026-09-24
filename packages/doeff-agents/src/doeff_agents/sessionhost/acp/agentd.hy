@@ -1806,7 +1806,12 @@
               ;; 器の起動 / 送り(履歴の読みと組み直しを含む)→ 送った後の書き(turn-record・実況の頭・届いた証拠)。
               (<- sent (| InFlightJob None) (job-in-flight started job-id))
               (when (is-not sent None)
+               (<- bound-ms (| int None) (bound-at-ms-of row))
                (<- (MetricLine :fields {"metric" "agent-job-intake-stages" "agentJobId" job-id "arm" used.arm
+                                       ;; 拍が受けた刻(now-ms)から: 結ばれてから拍が拾うまで(pickupMs・結びの刻が在る行だけ)と、
+                                       ;; 拾ってから claim が着いて起こし始めるまで(claimMs — 門・会話の行・claim の CAS)。
+                                       "pickupMs" (if (is bound-ms None) None (- now-ms bound-ms))
+                                       "claimMs" (- stage-entry now-ms)
                                        "resolveMs" (- stage-resolved stage-entry)
                                        "mailMs" (- stage-mail stage-resolved)
                                        "borrowMs" (- stage-borrow stage-mail)
