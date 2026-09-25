@@ -1347,6 +1347,46 @@
   (assert (= (get (job-status world) "phase") PHASE-ENDED)))
 
 
+(defclass RacingAcp [FakeAcp]
+  "走っている記録の一覧を答えた直後に、別の書き手(手番の終わり・別の agentd の巡回)の status を 1 度だけ記録へ着地させる
+   FakeAcp。巡回の一覧と鍵での読み直しの間の競合を作る(R49・盲検 B・依頼 lt-N23MQ5ZMSM6KCDKCB0G2RTFCAH)。"
+  (defn #^ None __init__ [self #^ dict births #^ str racer-key #^ dict racer-status]
+    (.__init__ (super) births)
+    (setv self.racer-key racer-key)
+    (setv self.racer-status racer-status)
+    (setv self.raced False))
+
+  (defn #^ tuple _running-turn-records [self]
+    (setv listed (._running-turn-records (super)))
+    (when (and (not self.raced) (in self.racer-key self.rows))
+      (setv self.raced True)
+      (._put-status self (get self.rows self.racer-key) self.racer-status))
+    listed))
+
+
+(deftest test-a-sweep-that-loses-the-race-to-another-writer-neither-writes-twice-nor-erases-usage
+  ;; R49(盲検 B・依頼 lt-N23MQ5ZMSM6KCDKCB0G2RTFCAH): 巡回が一覧を読んだ後・記録を鍵で読み直す前に、別の書き手の ended が
+  ;; 着地する(usage つき = 手番の終わりの書き・usage なし = 別の agentd の巡回)。巡回は読み直した行で判じるので ended の記録に
+  ;; 2 度目を書かず、手番の終わりが書いた usage を消さない。一覧の行で判断して status を組む巡回は、この競合で 2 度目を書き
+  ;; usage を消した(docs/design-checks/lt-N23MQ5ZMSM6KCDKCB0G2RTFCAH/evidence/race-B-double-write-and-usage-erasure.txt)。
+  (for [other [{"state" "ended" "usage" {"input" 10 "output" 5 "cacheWrite" 0 "cacheRead" 0}}
+               {"state" "ended"}]]
+    (setv world (World))
+    (setv racing (RacingAcp world.acp.births (record-key-of "j-2") other))
+    (for [row (.values world.acp.rows)]
+      (.put-row racing row))
+    (setv world.acp racing)
+    (.put-row racing (running-record-row "j-2" NODE))
+    (.put-row racing (job-row-in-phase "j-2" PHASE-ENDED NODE))
+    (.tick world 0)
+    (assert racing.raced "競合が起きていない(検体が弱い)")
+    (setv writes (record-writes-of world "j-2"))
+    (assert (= writes [other]) #("ended の記録に巡回が 2 度目を書いた" writes))
+    (assert (= (. (get racing.rows (record-key-of "j-2")) status) other) "先に着地した書き手の status が残っていない")
+    (setv swept (lfor m world.local.metrics :if (= (get m "metric") "agentd_turn_record_sweep_ended") (get m "agentJobId")))
+    (assert (= swept []) #("負けた巡回が閉じたと数えた" swept))))
+
+
 (defn #^ World rebound-world []
   "card acp:kanban-issue:ki-90019f023e19: attempt 1 が別の node(mac-0)・別の口座で記録を書き、attempt 2 がこの node に結ばれた世界
    (まだ tick していない)。"
