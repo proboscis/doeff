@@ -24,11 +24,15 @@ locator(行の ``backend_ref.events_path`` の値): 出来事の流れの名。�
 # pyright: strict
 import os
 import threading
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from typing import Literal, Protocol
+from datetime import datetime
+from typing import Any, Literal, Protocol
 
-from doeff import EffectBase
+from doeff_core_effects.scheduler import scheduled
+from doeff_time import GetTime, sync_time_handler
+
+from doeff import EffectBase, do, run
 
 EVENTS_SUFFIX = ".events.jsonl"
 CACHE_MARK = ".cache-"
@@ -95,11 +99,15 @@ class EventChunk:
 
 @dataclass(frozen=True)
 class HeadlessEventAppend(EffectBase):
-    """出来事の 1 行を置き場へ積む。答え = 振られた seq(file の置き場は 0 — 振らない)。"""
+    """出来事の 1 行を置き場へ積む。答え = 振られた seq(file の置き場は 0 — 振らない)。
+
+    ``at`` = 行を読んだ時刻(ISO 8601)。**呼び手が doeff-time の ``GetTime`` から取って渡す** — 置き場の handler は
+    OS の時計を読まない(模擬環境の仮想の時計で ``at`` が決まり、順序を不変条件に使えるように)。"""
 
     locator: str
     stream: Stream
     line: str
+    at: str
 
 
 @dataclass(frozen=True)
@@ -124,8 +132,36 @@ class HeadlessEventStore(Protocol):
     def head(self, locator: str) -> int: ...
 
 
-def now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+#: 出来事の時刻の口: doeff-time の ``GetTime`` を、組んだ時間の handler で 1 度読んで ISO 8601 で返す。
+#: 本番 = sync_time_handler(壁時計)・模擬環境 = sim_time_handler(仮想の時計)。時計は doeff-time だけ。
+EventClock = Callable[[], str]
+
+
+#: 時間の handler(doeff-time の sync_time_handler() / sim_time_handler() の答え — program を包む関数)。
+TimeHandler = Callable[..., Any]
+
+
+@do
+def _read_time() -> Generator[Any, Any, datetime]:
+    now: datetime = yield GetTime()
+    return now
+
+
+def time_handler_clock(time_handler: TimeHandler) -> EventClock:
+    """時間の handler(doeff-time の sync / sim)→ EventClock。読むたびに GetTime を 1 度その handler で解く。"""
+
+    def clock() -> str:
+        value: object = run(scheduled(time_handler(_read_time())))
+        if not isinstance(value, datetime):
+            raise TypeError(f"GetTime answered {type(value).__name__}, not datetime")
+        return value.isoformat()
+
+    return clock
+
+
+def wall_clock() -> EventClock:
+    """本番の時計(doeff-time の sync_time_handler)。"""
+    return time_handler_clock(sync_time_handler())
 
 
 def strip_newline(line: str) -> str:
@@ -164,7 +200,7 @@ class MemoryEventStore:
                     stream=effect.stream,
                     op=key.op,
                     line=strip_newline(effect.line),
-                    at=now_iso(),
+                    at=effect.at,
                     turn=self.turns.get(key.session_id, 0),
                 )
             )

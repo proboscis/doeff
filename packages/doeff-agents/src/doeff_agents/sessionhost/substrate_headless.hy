@@ -109,8 +109,8 @@
                             :stderr f"process timed out after {HEADLESS-RUN-ONCE-TIMEOUT-SECONDS}s")))))
 
   ;; 出来事の置き場(headless_events — 置き場は登記簿が持つ handler: 本番の pod = 送り待ちの表・Mac = file・検 = memory)。
-  (HeadlessEventAppend [locator stream line]
-    (resume (.append registry.event-store (HeadlessEventAppend locator stream line))))
+  (HeadlessEventAppend [locator stream line at]
+    (resume (.append registry.event-store (HeadlessEventAppend locator stream line at))))
 
   (HeadlessEventsSince [locator cursor]
     (resume (.since registry.event-store (HeadlessEventsSince locator cursor))))
