@@ -90,6 +90,7 @@ doeff-domain = { workspace = true }
 doeff-system-one = { workspace = true }
 doeff-jev = { workspace = true }
 doeff-cluster = { workspace = true }
+doeff-validation = { workspace = true }
 doeff-claude-code = { workspace = true }
 doeff-records = { workspace = true }
 
@@ -177,6 +178,7 @@ dev = [
     "doeff-system-one",
     "doeff-jev",
     "doeff-cluster",
+    "doeff-validation",
     "doeff-claude-code",
     "doeff-records",
     "doeff-docker",

@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "doeff-validation"
+version = "0.1.0"
+description = "独立した検査の項目を全部走らせ、落ちた項目の失敗を全部集めて ValidationException で返す doeff の検証(doeff-traverse の上の薄い層)(Hy の validate / check マクロは doeff-hy が持つ)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "doeff>=0.2.0",
+    "doeff-traverse",
+    "doeff-core-effects",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/doeff_validation"]
+
+[tool.uv.sources]
+doeff = { workspace = true }
+doeff-traverse = { workspace = true }
+doeff-core-effects = { workspace = true }

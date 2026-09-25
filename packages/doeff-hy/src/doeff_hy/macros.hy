@@ -3,7 +3,8 @@
 ;;; Usage:
 ;;;   (require doeff-hy.macros [do! defk deff fnk <- ! <-> set! defp defpp deftest
 ;;;                             defpipeline traverse for/do
-;;;                             defhandler handle with-handler defmcp-tool])
+;;;                             defhandler handle with-handler defmcp-tool
+;;;                             validate check])   ; validate / check は doeff-validation を入れて使う
 ;;;   (import doeff [do :as _doeff-do])
 ;;;
 ;;; Core effects are imported from doeff_core_effects:
@@ -375,6 +376,32 @@ defk {name}: :post type annotation cannot be an empty string.
                           (. (type ~target) __name__))))))
       `(assert ~check ~(+ (str fn-name) ": " phase " failed: " (str check)))))
 
+(defn _is-validation-check [form]
+  "契約の 1 条件が doeff-validation の (check …) の形か。"
+  (and (isinstance form hy.models.Expression)
+       (> (len form) 0)
+       (isinstance (get form 0) hy.models.Symbol)
+       (= (str (get form 0)) "check")))
+
+(defn _contract-code [checks fn-name phase kleisli?]
+  "契約(:pre / :post)の条件の列を、関数の中に置く文の列にする。
+
+   - 型の (: x T) と真偽の式: 今までどおり 1 つずつ assert(最初の失敗で止まる — 既存の契約の意味を
+     変えない)。
+   - (check 演算子 引数 … :reason 理由): doeff-validation の意味で評価する — 全部を評価して失敗を
+     集め、1 つでもあれば ValidationException(関数名と事前 / 事後・各失敗の式と値と理由)を投げる。
+     引数の (! …) はその場で実行する。defk / do!(生成器)だけが受ける。
+   assert の後に check を置く: 型が合っていることを check の式が前提にできる。"
+  (setv checks (or checks []))
+  (setv code (lfor c checks :if (not (_is-validation-check c)) (_expand-check c fn-name phase)))
+  (setv validation-checks (lfor c checks :if (_is-validation-check c) c))
+  (when validation-checks
+    (when (not kleisli?)
+      (raise (SyntaxError (+ (str fn-name) ": " phase " の (check …) は defk / do! の契約にだけ書けます"
+                             "(効果を使う検査を評価するので、生成器の本体が要る)— defk で定義してください"))))
+    (.extend code (_validation-contract-block validation-checks fn-name phase)))
+  code)
+
 (defn _guard-performed [result label]
   "Raise if a kleisli (defk/do!) last expression evaluated to an unperformed
    effect. A bare EffectBase as the final form is RETURNED as a value, never
@@ -523,9 +550,8 @@ defk {name}: :post type annotation cannot be an empty string.
              (isinstance (get real-body 0) hy.models.String))
     (setv docstring-forms [(get real-body 0)])
     (setv real-body (cut real-body 1 None)))
-  (setv pre-code (lfor check (or pre-checks [])
-                   (_expand-check check name "pre-condition")))
   (setv kleisli? (any (gfor d decorators (= (str d) "_doeff_do"))))
+  (setv pre-code (_contract-code pre-checks name "pre-condition" kleisli?))
   ;; 契約の型を注記へ(引数・deff の戻り値)。defk は生成器なので戻り値そのものには
   ;; 注記せず、結果を入れる局所変数 `_contract_result` に T を注記する(`_result-binding`)
   ;; — 生成器かどうか(本体に yield が在るか)を macro が判定せずに、最後の式の型を T と
@@ -540,8 +566,7 @@ defk {name}: :post type annotation cannot be an empty string.
         `(_guard-performed _contract_result ~(str name))
         `(do)))
   (if post-checks
-      (let [post-asserts (lfor check post-checks
-                           (_expand-check check name "post-condition"))
+      (let [post-asserts (_contract-code post-checks name "post-condition" kleisli?)
             ;; ADR-DOE-HY-001: kleisli 本体の statement 位置を guard(最終式=返り値は対象外)
             init-forms (if kleisli?
                            (lfor f (cut real-body 0 -1) (_wrap-statement-guard f name))
@@ -793,8 +818,7 @@ defk {name}: {{:post [...]}} is required.
   ;; Expand bangs in each form — in-place (yield ...) rewrite [ADR-DOE-HY-003]
   (setv expanded-forms (lfor form real-forms (_expand-bangs form "do!")))
   (setv #(bindings body-expr) (_parse-do-body expanded-forms "do!"))
-  (setv pre-code (lfor check (or pre-checks [])
-                   (_expand-check check "do!" "pre-condition"))
+  (setv pre-code (_contract-code pre-checks "do!" "pre-condition" True)
         expanded (lfor bind bindings
                    (if (and (isinstance bind tuple) (= (get bind 0) "__plain__"))
                        ;; Plain statement — ADR-DOE-HY-001 guard(式形のみラップ)
@@ -803,8 +827,7 @@ defk {name}: {{:post [...]}} is required.
                        (let [#(name tp expr) (_bind-parts bind)]
                          (_bind-yield name tp expr)))))
   (locate-synthesized (if post-checks
-      (let [post-asserts (lfor check post-checks
-                           (_expand-check check "do!" "post-condition"))]
+      (let [post-asserts (_contract-code post-checks "do!" "post-condition" True)]
         `(do ~(_helper-imports)
              ((_install-guard-globals
                 (_doeff-do (fn []
@@ -1080,7 +1103,10 @@ defk {name}: {{:post [...]}} is required.
 (setv _BANG-OPAQUE-HEADS
   #{"for/do" "traverse" "fnk" "do!" "defhandler"
     "defk" "deff" "defp" "defpp" "deftest" "defmcp-tool"
-    "defmacro" "quote" "quasiquote"})
+    "defmacro" "quote" "quasiquote"
+    ;; doeff-validation の validate: 各 check を別々の小さな Program に包み、check の引数の (! …) を
+    ;; その項目の中で実行する(外側の本体で先に実行すると、項目の独立と失敗の収集が崩れる)。
+    "validate"})
 
 ;; Python compiles comprehensions to a separate scope where yield is illegal
 ;; (SyntaxError since 3.8). A bang here cannot preserve its written position.
@@ -1850,3 +1876,235 @@ defmcp-tool {name}: third argument must be a parameter list [...].
   `(do
      (setv ~name ~val)
      (<- (Put ~key-var (Some ~name)))))
+
+
+;; ---------------------------------------------------------------------------
+;; validate / check — 独立した検査を全部走らせて失敗を集める(doeff-validation の Hy の面)
+;; ---------------------------------------------------------------------------
+;;
+;; 実行時の部分(CheckSpec・validate・ValidationException)は doeff-validation が持ち、ここは
+;; 展開だけを持つ(ADR-DOE-HY-005 R5 — macro は doeff-hy にだけ置く)。展開した code は
+;; doeff_validation を import するので、使う側は doeff-validation を入れる。
+;;
+;;   (require doeff-hy.macros [defk validate check])
+;;
+;;   (defk ensure-placement-matches [job request]
+;;     {:pre [(: job AgentJob) (: request PlacementRequest)] :post [(: % NoneType)]}
+;;     (! (validate
+;;          (check = job.phase Phase.PENDING :reason PlacementMismatch.PHASE)
+;;          (check is-not (! (LookupConversation request.conversation)) None
+;;                 :reason PlacementMismatch.CONVERSATION))))
+;;
+;; - validate: 直下に並べるのは独立した項目 — check と Program(defk の呼び出し)の 2 種類。
+;;   項目を全部走らせ(逐次・並行・fail-fast は doeff-traverse の handler で選ぶ)、落ちた項目の失敗を
+;;   全部集めて、1 つでもあれば ValidationException を投げる Program になる。defk の本体では
+;;   (! (validate …)) か (<- _ (validate …)) で実行する。直下の裸の (<- …) / (! …) は展開の時点で誤り。
+;; - check: validate の直下と、defk / do! の :pre / :post の中にだけ書ける。
+;;   (check 演算子 引数 … :reason 理由) か (check 式 :reason 理由)。各引数は左から評価し、(! …) の
+;;   印の付いた引数だけを効果として実行して、結果の値で比べる。式の字面と評価した値を記録する
+;;   (and / or などの短絡・制御の形は分解しない)。それ以外の所の check は展開の時点で誤り。
+;; - この節の関数は defn: マクロの展開の時(compile の時)に呼ばれ、Program を実行する場が無いので
+;;   defk にできない。
+;;
+;; 設計の記録: docs/design/doeff-validation/design.md。
+
+;; 引数を先に評価すると意味が変わる形(短絡・制御・束縛)。括弧の形なら分解せず式と真偽だけを
+;; 記録し、平たい形の演算子に置いたら展開の時点で誤りにする。
+(setv _VALIDATION-NOT-DECOMPOSABLE
+  #{"and" "or" "if" "when" "unless" "cond" "let" "do" "fn" "lfor" "sfor" "dfor" "gfor"
+    "->" "->>" "doto" "match" "setv" "quote" "quasiquote" "!"})
+
+
+(defn _validation-head-name [form]
+  "形の先頭の名前を返す(validate の直下の形・契約の check を見分けるため)。"
+  (when (and (isinstance form hy.models.Expression) (> (len form) 0) (isinstance (get form 0) hy.models.Symbol))
+    (str (get form 0))))
+
+
+(defn _validation-is-check-form [form]
+  "form が (check …) か — doeff-hy の defk / do! が契約の中の check を見分けるために使う。"
+  (= (_validation-head-name form) "check"))
+
+
+(defn _validation-source [form]
+  "失敗の記録に残す、書いたままの字面。"
+  (setv text (hy.repr form))
+  (if (.startswith text "'") (cut text 1 None) text))
+
+
+(defn _validation-split-reason [args]
+  "check の引数から :reason 理由 を取り出す。"
+  (setv positional [] reason 'None i 0)
+  (while (< i (len args))
+    (setv arg (get args i))
+    (cond
+      (and (isinstance arg hy.models.Keyword) (= (str arg) ":reason"))
+        (do (when (>= (+ i 1) (len args))
+              (raise (SyntaxError "check: :reason の後に理由を書いてください")))
+            (setv reason (get args (+ i 1)))
+            (+= i 2))
+      (isinstance arg hy.models.Keyword)
+        (raise (SyntaxError (+ "check: 知らない keyword " (str arg) " — 使えるのは :reason だけです")))
+      True (do (.append positional arg) (+= i 1))))
+  #(positional reason))
+
+
+(defn _validation-parse-check [args]
+  "check の引数を #(式の字面 演算子か-None 引数の列 理由) に解く(validate と契約の共通の解析)。
+
+   演算子が None の時は、引数の列の 1 つの式そのものの真偽で判定する(分解しない形)。"
+  (setv #(positional reason) (_validation-split-reason args))
+  (cond
+    (= (len positional) 0)
+      (raise (SyntaxError "check: (check 演算子 引数 …) か (check 式) の形で書いてください"))
+    (= (len positional) 1)
+      (let [expr (get positional 0)
+            head (_validation-head-name expr)]
+        (if (and head (not-in head _VALIDATION-NOT-DECOMPOSABLE) (> (len expr) 1))
+            #((_validation-source expr) (get expr 0) (list (cut expr 1 None)) reason)
+            #((_validation-source expr) None [expr] reason)))
+    True
+      (let [op (get positional 0)
+            operands (list (cut positional 1 None))]
+        (when (and (isinstance op hy.models.Symbol) (in (str op) _VALIDATION-NOT-DECOMPOSABLE))
+          (raise (SyntaxError (+ "check: " (str op) " は引数を先に評価すると意味が変わります — "
+                                 "(check (" (str op) " …)) の括弧の形で書いてください"))))
+        #((_validation-source (hy.models.Expression [op #* operands])) op operands reason))))
+
+
+(defn _validation-contains-bang [form]
+  "引数の式の中に (! …) の印があるか(印のある引数だけを効果として実行する)。"
+  (cond
+    (= (_validation-head-name form) "!") True
+    (in (_validation-head-name form) #{"quote" "quasiquote"}) False
+    (isinstance form hy.models.Sequence) (any (gfor sub form (_validation-contains-bang sub)))
+    True False))
+
+
+(defn _validation-imports []
+  "展開した code が参照する doeff-validation と doeff の do の import(pyright が型を追えるように)。"
+  ;; 別名は validate / check の展開だけが使う名前にする: defk の本体の中で import すると関数の局所名に
+  ;; なるので、defk が使う _doeff_do などと同じ名前を import すると、それより前の参照が未束縛になる。
+  (if (_static-view?)
+      `(do (import doeff-hy.static-types [do :as _doeff_validation_do])
+           (import doeff-validation :as _doeff_validation)
+           (import doeff-validation.api :as _doeff_validation_api))
+      `(do (import doeff.do [do :as _doeff_validation_do])
+           (import doeff-validation :as _doeff_validation)
+           (import doeff-validation.api :as _doeff_validation_api))))
+
+
+(defn _validation-predicate [op params]
+  "判定の関数の式: 演算子があれば (fn [a b] (op a b))、無ければ 1 つの値そのもの。"
+  (if (is op None)
+      `(fn [~@params] ~(get params 0))
+      `(fn [~@params] (~op ~@params))))
+
+
+;; ---------------------------------------------------------------------------
+;; validate の直下の check — 項目(CheckSpec)にする
+;; ---------------------------------------------------------------------------
+
+(defn _validation-argument [form]
+  "引数 1 つを、字面と、項目の中で評価する thunk の組にする(評価の失敗をその項目の失敗にするため)。
+
+   (! …) の印がある引数は、印を doeff-hy の規則(ADR-DOE-HY-003)で yield に書き換えた小さな Program を
+   thunk が作り、項目の中で実行する。印の無い引数は普通の値として評価する(Program の値もそのまま比べる)。"
+  (if (_validation-contains-bang form)
+      `(_doeff_validation.CheckArgument
+         ~(_validation-source form)
+         (fn [] ((_doeff_validation_do (fn [] (return ~(_expand-bangs form "check"))))))
+         True)
+      `(_doeff_validation.CheckArgument ~(_validation-source form) (fn [] ~form) False)))
+
+
+(defn _validation-check-spec [args]
+  "validate の直下の check を CheckSpec の構築の式にする。"
+  (setv #(expression op operands reason) (_validation-parse-check args))
+  (setv params (lfor _ operands (hy.gensym "arg")))
+  `(_doeff_validation.CheckSpec
+     ~expression
+     ~(_validation-predicate op params)
+     #(~@(lfor o operands (_validation-argument o)))
+     ~reason))
+
+
+(defn _validation-item [form]
+  "validate の直下の形を項目にする — check は検査の指定に、それ以外は Program としてそのまま。"
+  (setv head (_validation-head-name form))
+  (cond
+    (in head #{"<-" "!"})
+      (raise (SyntaxError (+ "validate: 直下に (" head " …) は書けません — " (_validation-source form) "\n\n"
+                             "  validate の直下に並べるのは独立した項目(check か Program)です。\n"
+                             "  Program の項目は (! …) を付けずにそのまま置きます(validate が実行する)。\n"
+                             "  前の値に依る処理は validate の前で済ませるか、helper の defk の中に\n"
+                             "  自分の validate を持たせてください。")))
+    (= head "check") (_validation-check-spec (list (cut form 1 None)))
+    True form))
+
+
+;; ---------------------------------------------------------------------------
+;; defk / do! の契約の中の check — その場で評価する文の列にする
+;; ---------------------------------------------------------------------------
+
+(defn _validation-contract-block [checks fn-name phase]
+  "契約(:pre / :post)の check の列を、全部を評価して失敗を集め、1 つでもあれば ValidationException
+   を投げる文の列にする。doeff-hy の defk / do! が契約の組み立てで呼ぶ。
+
+   各 check の引数は左から評価し、(! …) の印の付いた引数はその場で実行する(defk / do! の本体は
+   生成器なので yield が書ける)。引数か判定の評価が例外なら CheckError として集める。"
+  (setv failures (hy.gensym "failures"))
+  (setv owner (+ (str fn-name) " " phase))
+  (setv per-check
+    (lfor form checks
+      (let [#(expression op operands reason) (_validation-parse-check (list (cut form 1 None)))
+            params (lfor _ operands (hy.gensym "arg"))
+            evaluated (hy.gensym "evaluated")
+            error (hy.gensym "error")]
+        `(do
+           (setv ~evaluated [])
+           (try
+             ~@(lfor #(p o) (zip params operands)
+                 `(do
+                    (setv ~p ~(if (_validation-contains-bang o) (_expand-bangs o owner) o))
+                    (.append ~evaluated (_doeff_validation.EvaluatedArgument ~(_validation-source o) ~p))))
+             (when (not (_doeff_validation_api.judge (~(_validation-predicate op params) ~@params)))
+               (.append ~failures
+                        (_doeff_validation.CheckFailure ~expression (tuple ~evaluated) ~reason)))
+             (except [~error Exception]
+               (.append ~failures
+                        (_doeff_validation.CheckError ~expression (tuple ~evaluated) ~error
+                                                          ~reason))))))))
+  [(_validation-imports)
+   `(setv ~failures [])
+   #* per-check
+   `(when ~failures
+      (raise (_doeff_validation.ValidationException (tuple ~failures) :context ~owner)))])
+
+
+;; ---------------------------------------------------------------------------
+;; マクロ
+;; ---------------------------------------------------------------------------
+
+(defmacro validate [#* forms]
+  "独立した項目(check と Program)を全部走らせ、落ちた項目の失敗を全部集める Program を作る。
+
+   defk の本体では (! (validate …)) か (<- _ (validate …)) で実行する。
+
+   (! (validate
+        (check = (! (CountSeats node)) 0 :reason Reason.SEATS-LEFT)
+        (check = job.phase Phase.PENDING :reason Reason.PHASE)))"
+  `(do ~(_validation-imports)
+       (_doeff_validation.validate ~@(lfor form forms (_validation-item form)))))
+
+
+(defmacro check [#* args]
+  "check は validate の直下と defk / do! の :pre / :post にだけ書ける。それ以外の所で展開されたら誤り。"
+  (raise (SyntaxError (+ "check: validate の直下と、defk / do! の :pre / :post にだけ書けます"
+                         "(defk の本体・fn・内包表記の中は不可)\n\n"
+                         "    (! (validate\n"
+                         "         (check = job.phase Phase.PENDING :reason PlacementMismatch.PHASE)\n"
+                         "         (check is-not (! (LookupConversation request.conversation)) None\n"
+                         "                :reason PlacementMismatch.CONVERSATION)))\n\n"
+                         "  検査のまとまりを使い回すなら、helper の defk の中に自分の validate を持たせて、\n"
+                         "  その defk の呼び出しを外の validate に並べてください。"))))
