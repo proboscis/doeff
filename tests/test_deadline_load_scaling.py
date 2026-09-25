@@ -17,6 +17,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import pytest_timeout
+
+pytest_plugins = ["pytester"]
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -130,3 +133,64 @@ def test_explicit_caller_deadline_is_scaled_not_replaced(
 
     _Config.option.timeout = None
     assert conftest._per_test_base_seconds(_Config) == pytest.approx(60.0)
+
+
+DECLARED_DEADLINES = """
+import pytest
+
+
+@pytest.mark.timeout(10)
+def test_declared():
+    pass
+
+
+@pytest.mark.timeout(10, "thread")
+def test_declared_with_a_method():
+    pass
+
+
+@pytest.mark.timeout(timeout=10)
+def test_declared_by_keyword():
+    pass
+"""
+
+
+def test_a_declared_deadline_is_scaled_where_pytest_timeout_reads_it(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Counterexample: adding the scaled marker behind the declared one.
+
+    pytest-timeout reads only the closest (first) timeout marker, so a scaled
+    marker appended after ``@pytest.mark.timeout(10)`` was never read: at load
+    x1.4 the markers were [(10,), (14.19,)] and pytest-timeout enforced 10 s
+    (measured 2026-09-26; unnoticed since 2026-08-17 — agora-redesign#639).
+    The enforced deadline is read here through pytest-timeout's own resolution,
+    with the load factor fixed so the answer does not depend on this machine.
+    """
+    conftest = _root_conftest()
+    monkeypatch.setattr(conftest, "_DEADLINE_SCALE", 2.0)
+    monkeypatch.setattr(conftest, "_WATCHDOG_TIMEOUT", 90)
+    items = pytester.getitems(DECLARED_DEADLINES)
+
+    conftest.pytest_collection_modifyitems(items[0].config, items)
+
+    for item in items:
+        enforced = pytest_timeout._get_item_settings(item).timeout
+        assert enforced == pytest.approx(20.0), f"{item.name}: pytest-timeout enforces {enforced}"
+        # The root conftest's own reading is the number pytest-timeout enforces...
+        assert conftest.enforced_deadline(item) == pytest.approx(enforced)
+        # ...and the watchdog stays at least 30 s above it.
+        assert conftest._watchdog_timeout_for_item(item) >= enforced + 30.0
+    # The scaled marker keeps the declared method.
+    assert pytest_timeout._get_item_settings(items[1]).method == "thread"
+
+
+@pytest.mark.timeout(123)
+def test_a_test_reads_the_deadline_pytest_timeout_enforces_on_it(
+    request: pytest.FixtureRequest, per_test_deadline: float | None
+) -> None:
+    """The root conftest's per_test_deadline fixture — what a test budgets a subprocess
+    from — is the deadline pytest-timeout enforces on that very test, at this run's load."""
+    enforced = pytest_timeout._get_item_settings(request.node).timeout
+    assert per_test_deadline == pytest.approx(enforced)
+    assert enforced >= 123

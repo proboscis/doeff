@@ -16,8 +16,11 @@ crossed the per-test deadline, whose thread method then ended the whole suite at
 run reuses another run's bytecode, and the root conftest fails the run if bytecode appears
 inside the checkout.
 
-A subprocess gets 15 s less than the test's own deadline, so a slow import is reported by
-this test with the statement it ran instead of by the per-test timeout.
+A cold import of the sessionhost's Hy stack is slow on the daily machine, so the import
+tests declare their own deadline from what was measured there (below); the root conftest
+scales it with the machine's load. A subprocess gets 15 s less than the test's own
+deadline, so a slow import is reported by this test with the statement it ran instead of
+by the per-test timeout.
 """
 
 from __future__ import annotations
@@ -79,6 +82,14 @@ PUBLIC_STATEMENTS = [
 ]
 
 
+# The deadline of one import test, before the root conftest scales it with load. Measured
+# on the daily machine (zeus, 36 cores, 2026-09-26, load about 1.0, bytecode off as in the
+# daily run): importing doeff_agents.sessionhost.acp.runtime alone from cold took 157 s;
+# with one shared cache, host_slot_cli took 73 s and runtime after it 78 s. The same imports
+# take 19-35 s on a Mac, which is why the ini's 60 s held there and failed on the daily
+# machine (agora-redesign#639).
+_COLD_IMPORT_DEADLINE_SECONDS = 240
+
 # Room left inside the test's own deadline for starting the subprocess and reporting it.
 _REPORTING_MARGIN_SECONDS = 15.0
 
@@ -90,13 +101,13 @@ def private_bytecode_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture
-def child_deadline(request: pytest.FixtureRequest) -> float | None:
-    """How long one subprocess may run: the test's deadline (already load-scaled by the root
-    conftest) less the reporting margin; no deadline when per-test timeouts are off."""
-    per_test = float(request.config.option.timeout or 0)
-    if per_test <= 0:
+def child_deadline(per_test_deadline: float | None) -> float | None:
+    """How long one subprocess may run: the deadline pytest-timeout enforces on this test
+    (root conftest — marker first, load-scaled) less the reporting margin; no deadline when
+    the test has none."""
+    if per_test_deadline is None:
         return None
-    return max(per_test - _REPORTING_MARGIN_SECONDS, _REPORTING_MARGIN_SECONDS)
+    return max(per_test_deadline - _REPORTING_MARGIN_SECONDS, _REPORTING_MARGIN_SECONDS)
 
 
 def _fresh_import(
@@ -129,6 +140,7 @@ def test_the_scan_finds_the_importers() -> None:
     assert "doeff_agents.claude_home" in IMPORTERS
 
 
+@pytest.mark.timeout(_COLD_IMPORT_DEADLINE_SECONDS)
 @pytest.mark.parametrize("module", IMPORTERS)
 def test_python_module_importing_hy_imports_in_a_fresh_interpreter(
     module: str, private_bytecode_dir: Path, child_deadline: float | None
@@ -137,6 +149,7 @@ def test_python_module_importing_hy_imports_in_a_fresh_interpreter(
     assert result.returncode == 0, result.stderr[-2000:]
 
 
+@pytest.mark.timeout(_COLD_IMPORT_DEADLINE_SECONDS)
 @pytest.mark.parametrize("statement", PUBLIC_STATEMENTS)
 def test_public_names_import_in_a_fresh_interpreter(
     statement: str, private_bytecode_dir: Path, child_deadline: float | None
