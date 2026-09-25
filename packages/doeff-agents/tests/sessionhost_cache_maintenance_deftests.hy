@@ -146,18 +146,23 @@
   (assert (is uncertain.reply None))
   (assert (= (get state "starts") 1)))
 
-;; 時間・ファイル・receiptだけを差し替え、実際の応答処理とidle回収を組み合わせる。
+;; 時間・receiptだけを差し替え、実際の応答処理とidle回収を組み合わせる。
+;; 出来事の読み(HeadlessEventsSince — 094424fc)は package の headless-substrate に memory の置き場
+;; (MemoryEventStore — 検・fake の handler)を持たせた登記簿で受ける。provider の応答は本番の書き手
+;; (子 process の読み手 = headless_process)と同じく置き場へ直接積む。
 (import datetime [datetime timezone])
 (import json)
 (import doeff_agents.sessionhost.cache_host [cache-last-success-at cache-host-probe])
 (import doeff_agents.sessionhost.cache_host_model [HostCacheLastSuccessAt HostCacheWrite])
-(import doeff_agents.sessionhost.effects [ClockNow FsReadText HeadlessKill])
+(import doeff_agents.sessionhost.effects [ClockNow HeadlessKill])
+(import doeff_agents.sessionhost.headless_events [HeadlessEventAppend MemoryEventStore])
+(import doeff_agents.sessionhost.headless_process [HeadlessRegistry])
+(import doeff_agents.sessionhost.substrate_headless [headless-substrate])
 (import doeff_agents.sessionhost.acp.handlers [session-view-of])
 (import doeff_agents.sessionhost.acp.judgment [sessions-to-retire cache-resident-retention-of])
 
 (defhandler residency-world [#^ dict state]
   (ClockNow [] (resume (datetime.fromtimestamp (/ (get state "now") 1000) timezone.utc)))
-  (FsReadText [path] (resume (get state "events")))
   (HeadlessKill [session-name] (resume True))
   (HostCacheWrite [record]
     (.append (get state "receipts") record)
@@ -172,7 +177,9 @@
     (resume (if completions (max completions) None))))
 
 (deftest test-clock-swapped-idle-cleanup-ping-and-next-cycle
-  (setv state {"now" 0 "events" "" "receipts" []}
+  (setv store (MemoryEventStore)
+        hosted (headless-substrate (HeadlessRegistry store))
+        state {"now" 0 "receipts" []}
         wire {"session_id" "resident" "agent_type" "claude" "backend_kind" "headless"
               "status" "running" "work_dir" "/same" "lifecycle" "multi_turn"
               "conversation" {"session_id" "provider-session"}
@@ -185,16 +192,19 @@
     (<- retired tuple (sessions-to-retire #(view) now 600))
     (assert (= retired #()))
     (when (in now #(3300000 6600000))
-      ;; provider応答をleaf handlerで与える。成功判定・保持の判断は実Program。
-      (setv (get state "events") (+
-        (json.dumps {"type" "assistant" "timestamp" (.isoformat (datetime.fromtimestamp (/ now 1000) timezone.utc))
-          "message" {"id" f"response-{now}" "model" "model" "usage"
-            {"cache_read_input_tokens" 64000 "cache_creation_input_tokens" 42
-             "cache_creation" {"ephemeral_1h_input_tokens" 42}}}})
-        "\n" (json.dumps {"type" "result" "is_error" False})))
+      ;; provider応答は本番の書き手(子processの読み手)と同じく置き場へ積む。成功判定・保持の判断は実Program。
+      ;; locatorは本番の綴り(行のevents-path + ".cache-" + 操作id — cache-host-ping)。
+      (setv at (.isoformat (datetime.fromtimestamp (/ now 1000) timezone.utc))
+            locator f"/state/resident.events.jsonl.cache-ping-{now}")
+      (for [line #((json.dumps {"type" "assistant" "timestamp" at
+                                "message" {"id" f"response-{now}" "model" "model" "usage"
+                                  {"cache_read_input_tokens" 64000 "cache_creation_input_tokens" 42
+                                   "cache_creation" {"ephemeral_1h_input_tokens" 42}}}})
+                   (json.dumps {"type" "result" "is_error" False}))]
+        (.append store (HeadlessEventAppend locator "stdout" line at)))
       (setv pending (HostCacheRecord f"ping-{now}" "resident" (+ now 300000)
-        "process" "events" :state MaintenanceState.RUNNING :started-at now))
-      (<- completed HostCacheRecord ((residency-world state) (cache-host-probe pending)))
+        "process" locator :state MaintenanceState.RUNNING :started-at now))
+      (<- completed HostCacheRecord (hosted ((residency-world state) (cache-host-probe pending))))
       (assert (= completed.state MaintenanceState.SUCCEEDED))))
   ;; handlerを作り直しても永続receiptが同じなら同じ期限。新しい応答なしでは有限で回収。
   (<- observed (| int None) ((residency-world state) (cache-last-success-at (get wire "session_id"))))
