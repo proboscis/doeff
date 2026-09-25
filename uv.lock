@@ -43,6 +43,7 @@ members = [
     "doeff-test-target",
     "doeff-time",
     "doeff-traverse",
+    "doeff-validation",
     "doeff-vm",
     "doeff-vm-core",
 ]
@@ -449,6 +450,7 @@ dev = [
     { name = "doeff-system-one" },
     { name = "doeff-time" },
     { name = "doeff-traverse" },
+    { name = "doeff-validation" },
     { name = "doeff-vm" },
     { name = "httpx" },
     { name = "hy" },
@@ -493,6 +495,7 @@ dev = [
     { name = "doeff-system-one", editable = "packages/doeff-system-one" },
     { name = "doeff-time", editable = "packages/doeff-time" },
     { name = "doeff-traverse", editable = "packages/doeff-traverse" },
+    { name = "doeff-validation", editable = "packages/doeff-validation" },
     { name = "doeff-vm", editable = "packages/doeff-vm" },
     { name = "httpx", specifier = ">=0.25.0" },
     { name = "hy", specifier = ">=1.2.0" },
@@ -1292,6 +1295,23 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 test = [{ name = "doeff-time", editable = "packages/doeff-time" }]
+
+[[package]]
+name = "doeff-validation"
+version = "0.1.0"
+source = { editable = "packages/doeff-validation" }
+dependencies = [
+    { name = "doeff" },
+    { name = "doeff-core-effects" },
+    { name = "doeff-traverse" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "doeff", editable = "." },
+    { name = "doeff-core-effects", editable = "packages/doeff-core-effects" },
+    { name = "doeff-traverse", editable = "packages/doeff-traverse" },
+]
 
 [[package]]
 name = "doeff-vm"
