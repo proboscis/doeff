@@ -1,0 +1,33 @@
+code-quality: passed (scope=changed)
+code-quality-base: {'revision': '294aac38e5708f400f0fba951a608ca3bf7a8e4a', 'repo': '/Users/kento/.worktrees/doeff-wt-herdr-argv0'}
+code-quality-stage: fast(触った file ちょうど・速い規則だけ)— 型検査(pyright / hy / cabal / tsc)はこの段では撃たない = 型は日次(--stage full --grant)と手の名指しだけ。この passed は型を含まない
+code-quality-registration: conftest.py: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は札つきの手か日次)
+code-quality-registration: docs/design/daily-red-639/herdr-argv0/evidence/blind_a_repro.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は札つきの手か日次)
+code-quality-registration: docs/design/daily-red-639/herdr-argv0/evidence/blind_b_violation.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は札つきの手か日次)
+code-quality-registration: docs/design/daily-red-639/herdr-argv0/evidence/experiments_scenarios-72da0ff1.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は札つきの手か日次)
+code-quality-registration: docs/design/daily-red-639/herdr-argv0/evidence/experiments_scenarios.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は札つきの手か日次)
+code-quality-registration: docs/design/daily-red-639/herdr-argv0/evidence/order_probe.py: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は札つきの手か日次)
+code-quality-registration: packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は札つきの手か日次)
+code-quality-registration: packages/doeff-agents/tests/sessionhost_cache_maintenance_deftests.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は札つきの手か日次)
+code-quality-registration: packages/doeff-agents/tests/sessionhost_policy_deftests.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は札つきの手か日次)
+code-quality-registration: packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は札つきの手か日次)
+code-quality-registration: packages/doeff-agents/tests/test_sessionhost_acp_custody_lender_copy.py: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は札つきの手か日次)
+code-quality-registration: tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/sessionhost/idle_shell_vocabulary_outside_policy_forbidden.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は札つきの手か日次)
+code-quality-registration: tests/semgrep/test_vm_failfast_semgrep_rules.py: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は札つきの手か日次)
+code-quality-registration: tests/test_machine_premise.py: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は札つきの手か日次)
+code-quality-timing: prepare 0.537s inventory=1515 scoped=71 sources=15 changed=46 selected=14
+code-quality-timing: verdict-lookup 0.0s hit=False key=ffee42a97811
+code-quality-timing: candidate.sources 0.034s sources=15 selected=16 analyzed={'hy': 1} by_language={'hy': 0.03} cache_hits=1 cache_misses=0
+code-quality-timing: candidate.closure 0.0s affected=16 languages={'?': 2, 'hy': 9, 'python': 5} touched_languages=[]
+code-quality-timing: base.workspace 0.833s paths=2607
+code-quality-timing: base.read 0.083s inventory=1508 sources=9
+code-quality-timing: base.sources 0.001s sources=9 selected=16 analyzed={'hy': 1} by_language={'hy': 0.0} cache_hits=1 cache_misses=0
+code-quality-timing: base.closure 0.0s affected=16 languages={'?': 8, 'hy': 4, 'python': 4} touched_languages=['hy', 'python']
+code-quality-timing: base.unprojectable 0.0s paths=0
+code-quality-timing: base.boundary 0.001s modules=54 paths=1508
+code-quality-timing: base.policy 0.0s dependencies=1 findings=0
+code-quality-timing: observe-baseline 1.178s needed=True
+code-quality-timing: compare-observed 0.0s candidate=0 base=0 by_budget=0
+code-quality-timing: compare-guarantees 0.048s
+code-quality-coverage: partial / 対象 71 / 全体 1515 / 未導入 {'executable-unknown': 1, 'hy': 316, 'javascript': 1, 'lua': 17, 'python': 985, 'rust': 107, 'shell': 12, 'typescript': 5} / typed:true だが include に無い 5(型は日次(fast の段は compiler を撃たない)) / include の重複 0 / 基底の鍵の重複 0
+code-quality-baseline: 今回観測した既存違反 0 / 登録 3 件（自動増加しない）

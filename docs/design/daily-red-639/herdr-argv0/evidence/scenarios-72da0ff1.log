@@ -1,0 +1,70 @@
+# scenario experiments S1-S4 @ 72da0ff1195a8078909228ac8d1115c28daddeae
+
+doeff Traceback (most recent call last):
+
+  herdr_substrate.<locals>._hy_anon_61()  packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr.hy:631
+    (<- command (herdr-pane-current-command-io socket-path pane-id))
+  herdr_pane_current_command_io()  packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr.hy:505
+    (<- command (herdr-foreground-command result))
+  _hy_anon_61()  packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr.hy:631
+    (<- command (herdr-pane-current-command-io socket-path pane-id))
+  herdr_foreground_command()  packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr.hy:479
+    (raise (HerdrContractError
+
+HerdrContractError: herdr pane.process_info process is outside the API contract: {'pid': 100, 'name': 'zsh', 'argv0': 5}
+
+
+doeff Traceback (most recent call last):
+
+  herdr_pane_current_command_io()  packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr.hy:499
+    (setv result (herdr-call socket-path "pane.process_info"
+  herdr_call()  packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr.hy:191
+    (raise (HerdrApiError (.get err "code" "unknown") (.get err "message" ""))))
+
+HerdrApiError: herdr api error pane_exited: pane exited
+
+
+doeff Traceback (most recent call last):
+
+  herdr_pane_current_command_io()  packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr.hy:505
+    (<- command (herdr-foreground-command result))
+  herdr_foreground_command()  packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr.hy:479
+    (raise (HerdrContractError
+
+HerdrContractError: herdr pane.process_info process is outside the API contract: {'pid': 100, 'name': 'zsh', 'argv0': 5}
+
+
+doeff Traceback (most recent call last):
+
+  herdr_pane_current_command_io()  packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr.hy:505
+    (<- command (herdr-foreground-command result))
+  herdr_foreground_command()  packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr.hy:479
+    (raise (HerdrContractError
+
+HerdrContractError: herdr pane.process_info process is outside the API contract: {'pid': 100, 'name': 'zsh', 'argv0': 5}
+
+== S1 hardware
+観測: M2 zeus(Linux・argv0 無し) → 'zsh'
+観測: M2 Mac(argv0 有り・name は version) → 'claude'
+観測: M2 Linux が argv0 を埋め始めた版 → 'zsh'
+観測: M2 argv も無い(WSL の agent・zombie) → 'bash'
+観測: M2 login shell の argv[0] → 'bash'
+観測: effect TmuxPaneCurrentCommand(zeus の答え)→ 'zsh'・idle shell = True
+観測: effect TmuxPaneCurrentCommand(argv0 = 5 の答え)→ ('HerdrContractError', None)
+観測: 語 "foreground_processes" の出現 — M2 の中 3・M2 の外 0
+観測: 語 "argv0" の出現 — M2 の中 1・M2 の外 0
+観測: 語 "argv" の出現 — M2 の中 1・M2 の外 0
+観測: 語 PurePosixPath の出現 — M2 の中 1・M2 の外 0
+観測: 語 removeprefix の出現 — M2 の中 1・M2 の外 0
+観測: substrate_herdr.hy の外で process_info を読む source = []
+== S2 effects
+観測: (a) 未知の欄を足した答え → 'claude'(未知の欄は読まず、既存の保証欄で読める)
+観測: (b) pane_not_found → ('value', None)
+観測: (b) 未知の code pane_exited → ('HerdrApiError', 'pane_exited')(None に畳まれない — 足すなら M3 の except の 1 点)
+== S3 simulation
+観測: 記録した zeus の答えの再生(実 herdr なし)→ ('value', 'zsh')
+観測: 契約の外の答えの再生 → ('HerdrContractError', None)
+== S4 concurrency
+観測: 16 並行・全部 zeus の答え → 16 件・値 ["('value', 'zsh')"]
+観測: 16 並行・1 通だけ契約の外 → zsh 15 件・HerdrContractError 1 件
+exit=0

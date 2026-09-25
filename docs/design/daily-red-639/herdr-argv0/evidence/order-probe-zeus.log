@@ -1,0 +1,5 @@
+# Linux(zeus)・herdr 0.9.1
+観測: linux command='sleep 30 | cat' pgid=1551228 並び(pid, name, argv0, argv[0])=[(1551228, 'sleep', None, 'sleep'), (1551232, 'cat', None, 'cat')]
+観測: linux command="bash -c 'sleep 30; true'" pgid=1552013 並び(pid, name, argv0, argv[0])=[(1552013, 'bash', None, 'bash'), (1552028, 'sleep', None, 'sleep')]
+後片付け: workspace w1N(doeff-design-order-probe-1550692)を閉じた
+exit=0

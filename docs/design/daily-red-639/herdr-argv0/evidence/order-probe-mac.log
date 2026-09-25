@@ -1,0 +1,5 @@
+# Mac(proboscis-mbp)・herdr herdr 0.9.1
+観測: darwin command='sleep 30 | cat' pgid=22627 並び(pid, name, argv0, argv[0])=[(22629, 'cat', 'cat', 'cat'), (22627, 'sleep', 'sleep', 'sleep')]
+観測: darwin command="bash -c 'sleep 30; true'" pgid=22746 並び(pid, name, argv0, argv[0])=[(22747, 'sleep', 'sleep', 'sleep'), (22746, 'bash', 'bash', 'bash')]
+後片付け: workspace w2P(doeff-design-order-probe-22374)を閉じた
+exit=0

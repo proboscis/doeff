@@ -1,0 +1,10 @@
+# 基底 72da0ff1195a8078909228ac8d1115c28daddeae + evidence/blind-b-diff.patch
+観測: 入力 A(wrapper の bash と claude)→ claude(先頭の process は bash)
+観測: 入力 B(nu と git)→ policy の語彙を変える前 nu・後 git(herdr の答えは同じ)
+exit=0
+## 静的: IDLE-SHELL-COMMANDS の出現(sessionhost の src)
+packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy:915:(setv IDLE-SHELL-COMMANDS #{"zsh" "bash" "sh" "dash" "fish" "ksh"})
+packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy:1484:               (in current-command IDLE-SHELL-COMMANDS))
+packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr.hy:88:(import doeff_agents.sessionhost.policy [IDLE-SHELL-COMMANDS])
+packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr.hy:443:   IDLE-SHELL-COMMANDS)でない最初の process の command 名。全部が shell なら先頭。(盲検 B の差分)"
+packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr.hy:469:  (match (lfor command commands :if (not-in command IDLE-SHELL-COMMANDS) command)

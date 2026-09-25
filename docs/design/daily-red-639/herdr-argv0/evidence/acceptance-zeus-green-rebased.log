@@ -1,0 +1,429 @@
+uv sync --group dev
+cd packages/doeff-vm && maturin develop --release --features invariant-checks
+✏️ Setting installed package as editable
+....................                                                     [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156
+  /home/kento/ai-remote-check/herdr-argv0/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+20 passed, 1 warning in 36.47s
+Resolved 162 packages in 7ms
+Uninstalled 1 package in 0.73ms
+Installed 1 package in 8ms
+ ~ doeff-vm==0.2.0 (from file:///home/kento/ai-remote-check/herdr-argv0/packages/doeff-vm)
+🍹 Building a mixed python/rust project
+🐍 Found CPython 3.14t at /home/kento/ai-remote-check/herdr-argv0/.venv/bin/python
+🔗 Found pyo3 bindings
+   Compiling target-lexicon v0.13.5
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.45
+   Compiling shlex v2.0.1
+   Compiling libc v0.2.183
+   Compiling find-msvc-tools v0.1.13
+   Compiling heck v0.5.0
+   Compiling once_cell v1.21.4
+   Compiling cc v1.4.7
+   Compiling pyo3-build-config v0.28.2
+   Compiling syn v2.0.117
+   Compiling libmimalloc-sys v0.1.49
+   Compiling pyo3-ffi v0.28.2
+   Compiling pyo3-macros-backend v0.28.2
+   Compiling pyo3 v0.28.2
+   Compiling mimalloc v0.1.52
+   Compiling pyo3-macros v0.28.2
+   Compiling doeff-vm-core v0.1.0 (/home/kento/ai-remote-check/herdr-argv0/packages/doeff-vm-core)
+warning: unused import: `SegmentId`
+ --> /home/kento/ai-remote-check/herdr-argv0/packages/doeff-vm-core/src/frame.rs:7:35
+  |
+7 | use crate::ids::{FiberId, Marker, SegmentId, VarId};
+  |                                   ^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `crate::effect::DispatchEffect`
+ --> /home/kento/ai-remote-check/herdr-argv0/packages/doeff-vm-core/src/vm/handler.rs:5:5
+  |
+5 | use crate::effect::DispatchEffect;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::error::VMError`
+ --> /home/kento/ai-remote-check/herdr-argv0/packages/doeff-vm-core/src/vm/handler.rs:6:5
+  |
+6 | use crate::error::VMError;
+  |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `FiberId`
+ --> /home/kento/ai-remote-check/herdr-argv0/packages/doeff-vm-core/src/vm/handler.rs:7:18
+  |
+7 | use crate::ids::{FiberId, Marker, SegmentId};
+  |                  ^^^^^^^
+
+warning: unused import: `FiberId`
+ --> /home/kento/ai-remote-check/herdr-argv0/packages/doeff-vm-core/src/vm/var_store.rs:6:18
+  |
+6 | use crate::ids::{FiberId, SegmentId, VarId};
+  |                  ^^^^^^^
+
+warning: unused variable: `args`
+  --> /home/kento/ai-remote-check/herdr-argv0/packages/doeff-vm-core/src/value.rs:24:28
+   |
+24 |     fn call_handler(&self, args: Vec<Value>) -> Result<crate::do_ctrl::DoCtrl, VMError> {
+   |                            ^^^^ help: if this is intentional, prefix it with an underscore: `_args`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `effect`
+   --> /home/kento/ai-remote-check/herdr-argv0/packages/doeff-vm-core/src/vm/dispatch.rs:251:9
+    |
+251 |         effect: &DispatchEffect,
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_effect`
+
+warning: method `metadata` is never used
+   --> /home/kento/ai-remote-check/herdr-argv0/packages/doeff-vm-core/src/frame.rs:168:19
+    |
+167 | impl EvalReturnContinuation {
+    | --------------------------- method in this implementation
+168 |     pub(crate) fn metadata(&self) -> Option<&CallMetadata> {
+    |                   ^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `record_in_place_reentry` is never used
+  --> /home/kento/ai-remote-check/herdr-argv0/packages/doeff-vm-core/src/memory_stats.rs:52:15
+   |
+52 | pub(crate) fn record_in_place_reentry() {
+   |               ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `record_abandoned_transfer_branch_free` is never used
+  --> /home/kento/ai-remote-check/herdr-argv0/packages/doeff-vm-core/src/memory_stats.rs:56:15
+   |
+56 | pub(crate) fn record_abandoned_transfer_branch_free() {
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `find_next_boundary` and `find_fiber_before` are never used
+   --> /home/kento/ai-remote-check/herdr-argv0/packages/doeff-vm-core/src/vm/dispatch.rs:228:19
+    |
+ 20 | impl VM {
+    | ------- methods in this implementation
+...
+228 |     pub(crate) fn find_next_boundary(
+    |                   ^^^^^^^^^^^^^^^^^^
+...
+267 |     pub(crate) fn find_fiber_before(&self, start: FiberId, target: FiberId) -> Option<FiberId> {
+    |                   ^^^^^^^^^^^^^^^^^
+
+warning: fields `marker`, `prompt_seg_id`, and `types` are never read
+  --> /home/kento/ai-remote-check/herdr-argv0/packages/doeff-vm-core/src/vm/handler.rs:15:9
+   |
+14 | pub(crate) struct HandlerChainEntry {
+   |                   ----------------- fields in this struct
+15 |     pub marker: Marker,
+   |         ^^^^^^
+16 |     pub prompt_seg_id: SegmentId,
+   |         ^^^^^^^^^^^^^
+17 |     pub handler: CallableRef,
+18 |     pub types: Option<Arc<Vec<PyShared>>>,
+   |         ^^^^^
+   |
+   = note: `HandlerChainEntry` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: methods `handler_marker_in_caller_chain`, `find_prompt_boundary_in_caller_chain`, `find_prompt_boundary_by_marker`, `current_handler_chain`, and `handler_index_in_caller_chain` are never used
+   --> /home/kento/ai-remote-check/herdr-argv0/packages/doeff-vm-core/src/vm/handler.rs:23:19
+    |
+ 21 | impl VM {
+    | ------- methods in this implementation
+ 22 |     /// Find the first prompt boundary marker walking up from start_seg_id.
+ 23 |     pub(super) fn handler_marker_in_caller_chain(&self, start_seg_id: SegmentId) -> Option<Marker> {
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 64 |     pub(super) fn find_prompt_boundary_in_caller_chain(
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 83 |     pub(super) fn find_prompt_boundary_by_marker(
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 98 |     pub(super) fn current_handler_chain(&self) -> Vec<HandlerChainEntry> {
+    |                   ^^^^^^^^^^^^^^^^^^^^^
+...
+106 |     pub(super) fn handler_index_in_caller_chain(
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `doeff-vm-core` (lib) generated 13 warnings (run `cargo fix --lib -p doeff-vm-core` to apply 7 suggestions)
+   Compiling doeff-vm v0.2.0 (/home/kento/ai-remote-check/herdr-argv0/packages/doeff-vm)
+warning: use of deprecated constant `doeff_vm::PYFN_ATTRIBUTE`: `pyfn` will be removed in a future PyO3 version, use declarative `#[pymodule]` with `mod` instead
+  --> src/lib.rs:36:7
+   |
+36 |     #[pyfn(m)]
+   |       ^^^^
+   |
+   = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated constant `doeff_vm::PYFN_ATTRIBUTE`: `pyfn` will be removed in a future PyO3 version, use declarative `#[pymodule]` with `mod` instead
+  --> src/lib.rs:45:7
+   |
+45 |     #[pyfn(m)]
+   |       ^^^^
+
+warning: use of deprecated constant `doeff_vm::PYFN_ATTRIBUTE`: `pyfn` will be removed in a future PyO3 version, use declarative `#[pymodule]` with `mod` instead
+  --> src/lib.rs:65:7
+   |
+65 |     #[pyfn(m)]
+   |       ^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:153:22
+    |
+153 |                     .downcast::<pyo3::types::PyTuple>()
+    |                      ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:582:9
+    |
+582 |     obj.downcast::<PyResume>().is_ok() || obj.downcast::<PyResumeThrow>().is_ok()
+    |         ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:582:47
+    |
+582 |     obj.downcast::<PyResume>().is_ok() || obj.downcast::<PyResumeThrow>().is_ok()
+    |                                               ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:600:24
+    |
+600 |     if let Ok(r) = obj.downcast::<PyResume>() {
+    |                        ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:607:25
+    |
+607 |     if let Ok(rt) = obj.downcast::<PyResumeThrow>() {
+    |                         ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:724:33
+    |
+724 |     if let Ok(prompt) = handler.downcast::<crate::scheduler::PySchedulerPrompt>() {
+    |                                 ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:755:24
+    |
+755 |     if let Ok(p) = obj.downcast::<PyPure>() {
+    |                        ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:759:24
+    |
+759 |     if let Ok(p) = obj.downcast::<PyPerform>() {
+    |                        ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:764:24
+    |
+764 |     if let Ok(r) = obj.downcast::<PyResume>() {
+    |                        ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:770:24
+    |
+770 |     if let Ok(t) = obj.downcast::<PyTransfer>() {
+    |                        ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:776:24
+    |
+776 |     if let Ok(a) = obj.downcast::<PyApply>() {
+    |                        ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:781:35
+    |
+781 |         if let Ok(seq) = args_obj.downcast::<pyo3::types::PyList>() {
+    |                                   ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:794:24
+    |
+794 |     if let Ok(e) = obj.downcast::<PyExpand>() {
+    |                        ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:800:24
+    |
+800 |     if let Ok(p) = obj.downcast::<PyPass>() {
+    |                        ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:806:25
+    |
+806 |     if let Ok(wh) = obj.downcast::<PyWithHandler>() {
+    |                         ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:816:25
+    |
+816 |     if let Ok(rt) = obj.downcast::<PyResumeThrow>() {
+    |                         ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:822:25
+    |
+822 |     if let Ok(tt) = obj.downcast::<PyTransferThrow>() {
+    |                         ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:828:25
+    |
+828 |     if let Ok(wo) = obj.downcast::<PyWithObserve>() {
+    |                         ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:838:25
+    |
+838 |     if let Ok(gt) = obj.downcast::<PyGetTraceback>() {
+    |                         ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:842:12
+    |
+842 |     if obj.downcast::<PyGetExecutionContext>().is_ok() {
+    |            ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:845:25
+    |
+845 |     if let Ok(gh) = obj.downcast::<PyGetHandlers>() {
+    |                         ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:849:25
+    |
+849 |     if let Ok(gb) = obj.downcast::<PyGetBoundaries>() {
+    |                         ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:853:12
+    |
+853 |     if obj.downcast::<crate::do_expr::PyGetOuterHandlers>().is_ok() {
+    |            ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:856:25
+    |
+856 |     if let Ok(te) = obj.downcast::<crate::do_expr::PyTailEval>() {
+    |                         ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:916:40
+    |
+916 |             if let Ok(seq) = args_list.downcast::<pyo3::types::PyList>() {
+    |                                        ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+   --> src/python_generator_stream.rs:964:18
+    |
+964 |                 .downcast::<doeff_vm_core::continuation::PyK>()
+    |                  ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+    --> src/python_generator_stream.rs:1014:18
+     |
+1014 |                 .downcast::<doeff_vm_core::continuation::PyK>()
+     |                  ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+    --> src/python_generator_stream.rs:1049:10
+     |
+1049 |         .downcast::<doeff_vm_core::continuation::PyK>()
+     |          ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+    --> src/python_generator_stream.rs:1079:10
+     |
+1079 |         .downcast::<doeff_vm_core::continuation::PyK>()
+     |          ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+    --> src/python_generator_stream.rs:1101:10
+     |
+1101 |         .downcast::<doeff_vm_core::continuation::PyK>()
+     |          ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+    --> src/python_generator_stream.rs:1129:25
+     |
+1129 |     if let Ok(pc) = obj.downcast::<PythonCallable>() {
+     |                         ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+    --> src/python_generator_stream.rs:1135:29
+     |
+1135 |     if let Ok(prompt) = obj.downcast::<crate::scheduler::PySchedulerPrompt>() {
+     |                             ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+    --> src/python_generator_stream.rs:1139:24
+     |
+1139 |     if let Ok(k) = obj.downcast::<doeff_vm_core::continuation::PyK>() {
+     |                        ^^^^^^^^
+
+warning: use of deprecated method `pyo3::types::PyAnyMethods::downcast`: use `Bound::cast` instead
+    --> src/python_generator_stream.rs:1148:24
+     |
+1148 |     if let Ok(s) = obj.downcast::<PyIRStream>() {
+     |                        ^^^^^^^^
+
+warning: unused variable: `py`
+    --> src/python_generator_stream.rs:1093:5
+     |
+1093 |     py: Python<'_>,
+     |     ^^ help: if this is intentional, prefix it with an underscore: `_py`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `DoctrlStream` is never constructed
+   --> src/pyvm.rs:358:8
+    |
+358 | struct DoctrlStream {
+    |        ^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `doeff-vm` (lib) generated 39 warnings (run `cargo fix --lib -p doeff-vm` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 41.03s
+📦 Built wheel for CPython 3.14t to /tmp/.tmpS2PVPk/doeff_vm-0.2.0-cp314-cp314t-linux_x86_64.whl
+🛠 Installed doeff-vm-0.2.0
+test-admission: focused — 20 件(変更箇所の検証)
+remote-check: ran=remote node=zeus rc=0 remote_s=81.6 dir=ai-remote-check/herdr-argv0

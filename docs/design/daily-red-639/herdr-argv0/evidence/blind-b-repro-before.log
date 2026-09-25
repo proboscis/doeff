@@ -1,0 +1,14 @@
+# 盲検 B の差分を当てた作業樹(基底 72da0ff1195a8078909228ac8d1115c28daddeae + evidence/blind-b-diff.patch)で、B が挙げた検査を走らせる
+## 1. pytest -k process_info_contract or without_argv0
+2 passed, 18 deselected in 9.29s
+exit=0
+## 2. pytest test_sessionhost_policy.py -k zombie
+1 passed, 74 deselected in 28.34s
+exit=0
+## 3. pytest defadr_doeff_hy_004_defk_only.hy -k deff_ratchet
+1 passed, 2 deselected in 1.88s
+exit=0
+## 4. semgrep(.semgrep.yaml・変更した 2 file)
+ • Findings: 0 (0 blocking)
+Ran 29 rules on 2 files: 0 findings.
+exit=0

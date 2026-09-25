@@ -1,0 +1,153 @@
+
+deadline scale x2.5 (load/core) — per test 149s, watchdog 222s
+
+test-admission: focused — 2 件(変更箇所の検証)
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_______ test_herdr_foreground_command_follows_the_process_info_contract ________
+
+doeff_interpreter = <function doeff_interpreter.<locals>.run_program at 0x3eeae3096c0>
+
+    (deftest test-herdr-foreground-command-follows-the-process-info-contract
+      ;; pane.process_info の答え → 前面の command 名(純関数)。herdr の契約
+      ;; (0.9.1 の公開 schema と source)に沿って、保証された欄から読む:
+      ;;   argv0(省略・null あり)→ argv の先頭(省略・null あり)→ name(必須)。
+>     (import doeff_agents.sessionhost.substrate_herdr [herdr-foreground-command
+
+packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy:279: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/doeff-agents/tests/conftest.py:68: in run_program
+    return run(program)
+           ^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+>   (import doeff_agents.sessionhost.substrate_herdr [herdr-foreground-command
+E   ImportError: cannot import name 'herdr_foreground_command' from 'doeff_agents.sessionhost.substrate_herdr' (/Users/kento/.worktrees/doeff-wt-herdr-argv0/packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr.hy)
+
+packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy:279: ImportError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  test_herdr_foreground_command_follows_the_process_info_contract.<locals>._hy_anon_24()  packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy:279
+    (import doeff_agents.sessionhost.substrate_herdr [herdr-foreground-command
+  _hy_anon_24()  packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy:279
+    (import doeff_agents.sessionhost.substrate_herdr [herdr-foreground-command
+
+ImportError: cannot import name 'herdr_foreground_command' from 'doeff_agents.sessionhost.substrate_herdr' (/Users/kento/.worktrees/doeff-wt-herdr-argv0/packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr.hy)
+
+_________ test_herdr_pane_current_command_reads_answers_without_argv0 __________
+
+doeff_interpreter = <function doeff_interpreter.<locals>.run_program at 0x3eeae309900>
+
+    (deftest test-herdr-pane-current-command-reads-answers-without-argv0
+      ;; 日次の機体 zeus の赤の回帰 pin(2026-09-26・agora-redesign#639 依頼書 H):
+      ;; herdr 0.9.1 の公開 schema(protocol 22)で PaneProcessInfoProcess の必須欄は
+      ;; pid と name だけで、argv0 / argv は省かれうる。旧実装は argv0 を必ず在る前提で
+      ;; 読み、zeus の答えで KeyError: 'argv0' を出して観測ごと落ちた。
+>     (setv answers
+
+packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy:236: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/doeff-agents/tests/conftest.py:68: in run_program
+    return run(program)
+           ^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy:265: in _hy_anon_21
+    (<- requests (run-against-fake-herdr answers observe))
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy:207: in run_against_fake_herdr
+    (<- _ (body sock-path))
+            ^^^^^^^^^^^^^
+packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy:254: in observe
+    (<- zsh (herdr-pane-current-command-io sock-path "w7:p1"))
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/do.py:314: in thunk
+    return _make_stream(fn(*args, **kwargs))
+                        ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+socket_path = '/var/folders/qn/m1xwvyvj6nj3hbz4rwy3641m0000gn/T/tmpb4wbupux/herdr.sock'
+pane_id = 'w7:p1'
+
+    (defk herdr-pane-current-command-io [socket-path pane-id]
+      {:pre [(: socket-path str) (: pane-id str)]
+       :post [(: % (| str None))]}
+      "TmuxPaneCurrentCommand の実体: pane.process_info の
+       foreground_processes[0].argv0(実測: name は version 文字列のことがある —
+       claude で '2.1.201' — ため argv0 を使う)。pane 不在・foreground 不明は
+       None(tmux display-message 失敗時の None と同 parity)。"
+      (try
+        (setv result (herdr-call socket-path "pane.process_info"
+                                 {"pane_id" pane-id}))
+        (except [HerdrApiError]
+          (return None)))
+      (setv procs (get (get result "process_info") "foreground_processes"))
+      (if procs
+>         (get (get procs 0) "argv0")
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+E         KeyError: 'argv0'
+
+packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr.hy:444: KeyError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  test_herdr_pane_current_command_reads_answers_without_argv0.<locals>._hy_anon_21()  packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy:265
+    (<- requests (run-against-fake-herdr answers observe))
+  run_against_fake_herdr()  packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy:207
+    (<- _ (body sock-path))
+  test_herdr_pane_current_command_reads_answers_without_argv0.<locals>._hy_anon_21.<locals>.observe()  packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy:254
+    (<- zsh (herdr-pane-current-command-io sock-path "w7:p1"))
+  _hy_anon_21()  packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy:265
+    (<- requests (run-against-fake-herdr answers observe))
+  observe()  packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy:254
+    (<- zsh (herdr-pane-current-command-io sock-path "w7:p1"))
+  herdr_pane_current_command_io()  packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr.hy:444
+    (get (get procs 0) "argv0")
+
+KeyError: 'argv0'
+
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156
+  /Users/kento/.worktrees/doeff-wt-herdr-argv0/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-agents/tests/test_sessionhost_substrate_herdr.py::test_herdr_foreground_command_follows_the_process_info_contract
+FAILED packages/doeff-agents/tests/test_sessionhost_substrate_herdr.py::test_herdr_pane_current_command_reads_answers_without_argv0
+2 failed, 18 deselected, 1 warning in 11.92s
