@@ -1,0 +1,22 @@
+# patch: /home/kento/.worktrees/doeff-wt-639-adr012-roles/docs/design-checks/lt-N23MQ5ZMSM6KCDKCB0G2RTFCAH/evidence/P1-model-usage-declared-not-passed.patch
+# tree: baa00ba4fd768fe391ffea9f8df1cc48eba1c4c6 + 作業樹の差分:
+ packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py  | 1 +
+ packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy | 6 ++++--
+ 2 files changed, 5 insertions(+), 2 deletions(-)
+# command: uv run pytest docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_turn_records_are_not_left_to_one_write -v -p no:cacheprovider -W ignore::pytest.PytestWarning
+============================= test session starts ==============================
+platform linux -- Python 3.14.3, pytest-9.1.1, pluggy-1.6.0 -- /home/kento/.worktrees/doeff-wt-639-adr012-roles/.venv/bin/python3
+rootdir: /home/kento/.worktrees/doeff-wt-639-adr012-roles
+configfile: pyproject.toml
+plugins: timeout-2.4.0, doeff-hy-0.1.0, asyncio-1.4.0, doeff-adr-0.1.0, anyio-4.14.2, xdist-3.8.0
+timeout: 60.0s
+timeout method: signal
+timeout func_only: False
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... test-admission: focused — 1 件(変更箇所の検証)
+collected 1 item
+
+docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_turn_records_are_not_left_to_one_write PASSED [100%]
+
+======================== 1 passed in 127.30s (0:02:07) =========================
+# rc: 0

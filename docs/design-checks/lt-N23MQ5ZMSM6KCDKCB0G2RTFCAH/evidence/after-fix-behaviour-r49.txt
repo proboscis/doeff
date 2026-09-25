@@ -1,0 +1,28 @@
+# R49 の振る舞いの検 7 本(既存 6 + 競合の検)
+# tree: baa00ba4fd768fe391ffea9f8df1cc48eba1c4c6 + 作業樹の差分(下の stat・空 = なし):
+# command: uv run pytest -v -p no:cacheprovider -W ignore::pytest.PytestWarning packages/doeff-agents/tests/test_sessionhost_acp_turn_events.py::test_a_turn_record_left_running_by_a_refused_write_is_ended_by_the_sweep packages/doeff-agents/tests/test_sessionhost_acp_turn_events.py::test_the_sweep_closes_the_leftovers_of_a_restart_and_leaves_the_live_ones_alone packages/doeff-agents/tests/test_sessionhost_acp_turn_events.py::test_turn_record_sweep_verdict_reads_the_end_state_of_the_pair_and_the_node packages/doeff-agents/tests/test_sessionhost_acp_turn_events.py::test_a_recovered_turn_without_a_record_row_re_creates_it_before_the_end packages/doeff-agents/tests/test_sessionhost_acp_turn_events.py::test_a_turn_that_ends_inside_the_deadline_still_names_the_missing_record packages/doeff-agents/tests/test_sessionhost_acp_turn_events.py::test_a_turn_record_that_vanished_before_the_end_is_re_created_and_ended packages/doeff-agents/tests/test_sessionhost_acp_turn_events.py::test_a_sweep_that_loses_the_race_to_another_writer_neither_writes_twice_nor_erases_usage
+
+deadline scale x1.1 (load/core) — per test 66s, watchdog 98s
+
+============================= test session starts ==============================
+platform linux -- Python 3.14.3, pytest-9.1.1, pluggy-1.6.0 -- /home/kento/.worktrees/doeff-wt-639-adr012-roles/.venv/bin/python3
+rootdir: /home/kento/.worktrees/doeff-wt-639-adr012-roles
+configfile: pyproject.toml
+plugins: timeout-2.4.0, doeff-hy-0.1.0, asyncio-1.4.0, doeff-adr-0.1.0, anyio-4.14.2, xdist-3.8.0
+timeout: 65.51839192708334s
+timeout method: signal
+timeout func_only: False
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... test-admission: focused — 7 件(変更箇所の検証)
+collected 7 items
+
+packages/doeff-agents/tests/test_sessionhost_acp_turn_events.py::test_a_turn_record_left_running_by_a_refused_write_is_ended_by_the_sweep PASSED [ 14%]
+packages/doeff-agents/tests/test_sessionhost_acp_turn_events.py::test_the_sweep_closes_the_leftovers_of_a_restart_and_leaves_the_live_ones_alone PASSED [ 28%]
+packages/doeff-agents/tests/test_sessionhost_acp_turn_events.py::test_turn_record_sweep_verdict_reads_the_end_state_of_the_pair_and_the_node PASSED [ 42%]
+packages/doeff-agents/tests/test_sessionhost_acp_turn_events.py::test_a_recovered_turn_without_a_record_row_re_creates_it_before_the_end PASSED [ 57%]
+packages/doeff-agents/tests/test_sessionhost_acp_turn_events.py::test_a_turn_that_ends_inside_the_deadline_still_names_the_missing_record PASSED [ 71%]
+packages/doeff-agents/tests/test_sessionhost_acp_turn_events.py::test_a_turn_record_that_vanished_before_the_end_is_re_created_and_ended PASSED [ 85%]
+packages/doeff-agents/tests/test_sessionhost_acp_turn_events.py::test_a_sweep_that_loses_the_race_to_another_writer_neither_writes_twice_nor_erases_usage PASSED [100%]
+
+============================== 7 passed in 2.42s ===============================
+# rc: 0

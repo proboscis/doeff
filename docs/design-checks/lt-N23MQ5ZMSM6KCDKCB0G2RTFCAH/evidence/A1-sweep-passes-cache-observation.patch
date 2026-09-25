@@ -1,0 +1,12 @@
+--- a/packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy
++++ b/packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy
+@@ -5329,7 +5329,8 @@
+                 (<- pair-conditions tuple (row-conditions-of pair-status)))
+               (<- record-status dict (status-object-of record))
+               ;; usage は書かない(開始 offset は memory にしか無く、0 から数え直すと温かい session の前の手番を足す発明になる)。
+-              (<- ended dict (turn-record-ended-status record-status None #() pair-conditions))
++              (<- swept-cache-observation (| dict None) (cache-observation-of-record record))
++              (<- ended dict (turn-record-ended-status record-status None #() pair-conditions :cache-observation swept-cache-observation))
+               (<- wrote (| Written Conflict Refused) (AcpPutStatus :row record :status ended))
+               (when (isinstance wrote Written)
+                 (setv ended-count (+ ended-count 1)))

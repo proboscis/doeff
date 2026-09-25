@@ -1,0 +1,17 @@
+# 盲検 B の反例の責務違反の再現(設計者の実測)。probe = evidence/race_b_probe.py(sha256 cdd537958c79a84a271b441f2618d07ea2a7267c02b2cba1cfbb113076fb0489)
+# rc は probe の python の終了状態(pipefail)
+# 1. 今の巡回(patch なし)
+# tree: baa00ba4fd768fe391ffea9f8df1cc48eba1c4c6 + 作業樹の差分(下の stat・空 = なし):
+# command: uv run python evidence/race_b_probe.py
+S1(usage つきの ended が先に着地): 記録への書き 1 回・最終 status {'state': 'ended', 'usage': {'input': 10, 'output': 5, 'cacheWrite': 0, 'cacheRead': 0}}・generation 2・巡回の ended の計器 0・usage が残る True
+S2(usage なしの ended が先に着地): 記録への書き 1 回・最終 status {'state': 'ended'}・generation 2・巡回の ended の計器 0・usage が残る False
+# rc: 0
+# 2. patch B(evidence/B-listed-image.patch)を当てた巡回
+# tree: baa00ba4fd768fe391ffea9f8df1cc48eba1c4c6 + 作業樹の差分(下の stat・空 = なし):
+ .../src/doeff_agents/sessionhost/acp/agentd.hy        | 19 ++++++++++---------
+ 1 file changed, 10 insertions(+), 9 deletions(-)
+# command: uv run python evidence/race_b_probe.py
+S1(usage つきの ended が先に着地): 記録への書き 2 回・最終 status {'state': 'ended', 'entries': []}・generation 3・巡回の ended の計器 1・usage が残る False
+S2(usage なしの ended が先に着地): 記録への書き 2 回・最終 status {'state': 'ended', 'entries': []}・generation 3・巡回の ended の計器 1・usage が残る False
+# rc: 0
+## 3. patch を逆に当てた後の差分(空 = 戻った)

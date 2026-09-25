@@ -1,0 +1,485 @@
+{
+ "version": 1,
+ "task_id": "lt-N23MQ5ZMSM6KCDKCB0G2RTFCAH",
+ "base_revision": "b7f836b01e7a473e5469d2dbb3c65114b4268ec7",
+ "implementation_revision": "1e4e10be3131c652551a4cbb35ff1cac100ac9c9",
+ "evidence_revision": "baa00ba4fd768fe391ffea9f8df1cc48eba1c4c6",
+ "author": {
+  "conversation_id": "c-8BAPWDRY030PD23FVYYNH57Y0A",
+  "model": "claude-opus-5-5",
+  "effort": "unspecified"
+ },
+ "requirements": [
+  "ADR-DOE-AGENTS-012 の test_adr_doe_agents_012_turn_records_are_not_left_to_one_write が本線で緑",
+  "巡回の本体の検査を行の字面ではなく呼び先の定義から導いた引数の役で読み、失敗文は役の名で言う",
+  "反例の検が正常例(引数の追加・註・keyword の既定値つき引数)で緑、違反例(usage に値・keyword で responses・entries に値・呼びを消す)で意図した文の赤",
+  "agentd.hy の巡回の呼びを一時的に usage-total に変えると赤"
+ ],
+ "design": {
+  "path": "design.md",
+  "sha256": "e3a433641c41d205d9a1f018ed8cb8003aba94db1138063f37390b8f4712050c"
+ },
+ "pre_blind_design": {
+  "path": "design-before-blind.md",
+  "sha256": "62beca27d0d8b5a9be0b32542c058b98d3693e49f30880e01aff1dcd57059b43"
+ },
+ "blind": {
+  "meta": {
+   "path": "blind/blind-meta.md",
+   "sha256": "0aac44f79e18cab1f683476548175e6b9aefe26e861308638bc4d46ceab8b9d1"
+  },
+  "A": {
+   "input": {
+    "path": "blind/blind-a-input.md",
+    "sha256": "a2543eb93aa20af207ac745d414aef04098a3b11a117debe9b3fd730b5456c58"
+   },
+   "return": {
+    "path": "blind/blind-a-return.md",
+    "sha256": "1e90517b88622e7075b5e0f972d62276ca1b81626d6e723b81de12f103019785"
+   },
+   "agent_id": "a2665bab7e0e91556",
+   "model": "opus(claude-opus-5-5 と読める・実 model の観測は未確認)",
+   "effort": "未指定(起動口が受け付けない)",
+   "machine": "agentd-pool-1(pod)",
+   "profile": "この会話の Claude の資格(個人)",
+   "launched": "2026-09-25T22:03:42Z 以後",
+   "duration_seconds": 1107.9,
+   "fallback": "第 1 候補 gpt-6-astra / low は、この pod の cx が会社階級の宿名の宣言なしで provider を呼ばないと断ったため第 2 候補へ"
+  },
+  "B": {
+   "input": {
+    "path": "blind/blind-b-input.md",
+    "sha256": "53cabfdc3893307ca51971e89afac3c8fc07a2f9b17232dda456ade129148738"
+   },
+   "return": {
+    "path": "blind/blind-b-return.md",
+    "sha256": "a57d91681de82c0c061fe121755085934871ea63cbd2ea09f5493055323ac2fb"
+   },
+   "agent_id": "ad763b1869c58ca52",
+   "model": "opus(同上)",
+   "effort": "未指定(同上)",
+   "machine": "agentd-pool-1(pod)",
+   "profile": "同上",
+   "launched": "A と同じ拍",
+   "duration_seconds": 957.7,
+   "fallback": "A と同じ"
+  }
+ },
+ "intermediate_evidence": [
+  {
+   "path": "evidence/at-5a8cf796/after-fix-A1-sweep-passes-cache-observation.txt",
+   "sha256": "8e4db73a61f4509c621933812eca0023ba065e9ac357ea12b1d23bfa848aa600"
+  },
+  {
+   "path": "evidence/at-5a8cf796/after-fix-A2-model-usage-role.txt",
+   "sha256": "455ea5ca3b0378900ab5d56d8b558992b778458cfa88e90ba9523148edb1b36f"
+  },
+  {
+   "path": "evidence/at-5a8cf796/after-fix-A2d-model-usage-declared-and-passed.txt",
+   "sha256": "127094cccd52b5b6286f909237c60ec76d6ce332921a516960ad676612574dca"
+  },
+  {
+   "path": "evidence/at-5a8cf796/after-fix-B-listed-image.txt",
+   "sha256": "c6e07e9dac00ff3dcd995a6126ed2345ec0e8e978224db10dffd3afe1983a858"
+  },
+  {
+   "path": "evidence/at-5a8cf796/after-fix-P1-model-usage-declared-not-passed.txt",
+   "sha256": "109bc4b4f9b6b09a8a73c25baeeeecac7c4147690addeff2757f7af58c8ef47f"
+  },
+  {
+   "path": "evidence/at-5a8cf796/after-fix-U-usage-total.txt",
+   "sha256": "ce5ea55681aa1bbc316163573f1cce0527daf6dd23bfe03fb6855a8d499048b9"
+  },
+  {
+   "path": "evidence/at-5a8cf796/after-fix-named-two.txt",
+   "sha256": "f4224da4bb4b08f0a19e35698ebf26056065cf90639185f3539478d1f146530b"
+  }
+ ],
+ "modules": [
+  {
+   "id": "D",
+   "responsibility": "turn-record-ended-status の引数の材料の分類の宣言(手番の終わりの書きだけが中身を渡す材料 / 行から読める材料)",
+   "owns": "どの引数が手番の memory(開始 offset・要求の時刻)からしか数えられないか・材料を持たない書き手が渡す空の値・その理由",
+   "hides": "検の読み方・書き手の本体の形",
+   "interface": "effects.TURN_RECORD_END_ONLY_MATERIALS(役 → TurnEndOnlyMaterial)と effects.TURN_RECORD_ROW_MATERIALS(frozenset)",
+   "effects": "なし、import 時に作る不変の値のため",
+   "lifetime": "process の寿命(module の定数)",
+   "invariants": "呼び先の全ての引数がちょうど 1 つの分類に在り、分類に在る役は全て呼び先の引数に在る(M1 が確かめる)"
+  },
+  {
+   "id": "M1",
+   "responsibility": "ADR-DOE-AGENTS-012 R49 の書き手の構造の検査(巡回 sweep-turn-records・退役の書き end-retired-records)",
+   "owns": "呼び先の defk の引数の並びと effect の dataclass の欄から役を導く読み方・束ねを辿って値の出所を読む読み方",
+   "hides": "呼びの行の字面・折れ方・註・局所変数の名・引数の数・材料の分類(D を読む)",
+   "interface": "sweep-violations callees materials sweep-body resolve / end-only-violations ended-roles materials forms writer → 失敗文の列(空 = 緑)",
+   "effects": "なし、defk が残した form と dataclass の欄を読むだけの検査のため",
+   "lifetime": "検査 1 回",
+   "invariants": "材料を持たない書き手は手番の終わりだけの材料に D の空の値ちょうどを渡す・巡回は鍵で読み直した行で判断し、その行から status を組み、組んだ答えちょうどをその行へ書く・巡回が呼ぶ補助の defk は書かない"
+  },
+  {
+   "id": "M1c",
+   "responsibility": "M1 の反例の検(作り物の呼び先・分類・本体の 28 例)",
+   "owns": "正常例 8・違反例 20 の作り物の入力と期待する失敗文",
+   "hides": "本物の綴りと本物の宣言",
+   "interface": "deftest test-adr-doe-agents-012-sweep-roles-are-read-from-the-callee-not-the-spelling",
+   "effects": "なし、form を作って M1 に渡すだけのため",
+   "lifetime": "検査 1 回",
+   "invariants": "各例の失敗文の列が期待とちょうど一致する"
+  },
+  {
+   "id": "R",
+   "responsibility": "巡回の一覧と鍵での読み直しの間の競合の振る舞いの検",
+   "owns": "一覧の答えの直後に別の書き手の status を 1 度着地させる偽の ACP(RacingAcp)",
+   "hides": "巡回の本体の形",
+   "interface": "deftest test-a-sweep-that-loses-the-race-to-another-writer-neither-writes-twice-nor-erases-usage",
+   "effects": "偽の ACP・偽の local の上で agentd の拍を 1 回実行する(本物の I/O なし)",
+   "lifetime": "検査 1 回(世界は検の中で作って捨てる)",
+   "invariants": "競合に負けた巡回は ended の記録に 2 度目を書かず、先に着地した status(usage)を残し、閉じたと数えない"
+  },
+  {
+   "id": "W",
+   "responsibility": "巡回 sweep-turn-records と退役の書き end-retired-records(agentd.hy)",
+   "owns": "一覧 → 鍵で読み直す → 判断 → 閉じる status を組む → CAS で書く の順序と名乗り",
+   "hides": "閉じる status の中身の組み方(J)",
+   "interface": "拍が呼ぶ defk",
+   "effects": "AcpRunningTurnRecords・AcpGetRow・AcpGet・AcpPutStatus・LogLine・計器",
+   "lifetime": "agentd の拍ごと(memory を持たない)",
+   "invariants": "ended の記録に 2 度書かない・usage を書かない(R49)"
+  },
+  {
+   "id": "J",
+   "responsibility": "turn-record-ended-status(judgment.hy)— 手番の終わりの turn-record の status の組み方",
+   "owns": "entries の追記・usage・cache の観測・responses・conditions の欄の組み方",
+   "hides": "欄の綴り",
+   "interface": "defk の引数の並び(材料の分類は D に宣言する)",
+   "effects": "なし、値を組むだけのため",
+   "lifetime": "呼び 1 回",
+   "invariants": "渡された材料ちょうどで欄を決める"
+  },
+  {
+   "id": "E",
+   "responsibility": "effect AcpGetRow / AcpPutStatus(effects.py)",
+   "owns": "要求の欄(key・row・status)",
+   "hides": "実 I/O",
+   "interface": "dataclass の欄",
+   "effects": "なし、要求の値のため(実 I/O は handler)",
+   "lifetime": "要求 1 回",
+   "invariants": "欄の名が M1 の読む役の名"
+  }
+ ],
+ "scenarios": [
+  {
+   "id": "S1",
+   "axis": "effects",
+   "applicability": "applicable",
+   "change": "巡回・退役の書きが turn-record に書く材料が変わる: 呼び先が引数を足す(手番の終わりだけの材料・行から読める材料)・呼びが引数を足す・keyword の既定値・註・改名、または巡回の読み方を変える(一覧の行で判断して組む性能改善)",
+   "claim": "(盲検の前の主張・design-before-blind.md の S1)M1 を変えずに緑。usage・entries・responses に材料を渡す変更、呼びを消す変更、一覧の image で書く変更、記録ではない鍵で読む変更、呼び先の役を改名する変更だけが、役の名を言う失敗文で赤",
+   "expected_scope": "W か J だけ(M1・M1c は変えない)",
+   "actual_scope": "修正前: 盲検 A の変更(手番の終わりだけの材料を足す)は J・W に加えて M1 の禁止の表と M1c の並びも直さないと緑のまま(before-fix-A1/A2)。盲検 B の変更(一覧の行で判断して組む)は W だけが変わり M1 は緑のまま責務違反を見逃した(before-fix-B)。退役の書きはどの検の範囲にも無かった(before-fix-R1)。修正後: A の変更は J と D だけが変わり M1・M1c は変わらない(P1 緑・A2 は D の宣言漏れで赤・A2d は巡回が渡すと赤)。B・U・R1 は M1 が意図した文で赤",
+   "changed_modules": [
+    "J",
+    "D",
+    "W"
+   ],
+   "unchanged_modules": [
+    "M1",
+    "M1c",
+    "E",
+    "R"
+   ],
+   "reason": "修正前の波及は知識の漏れだった: 材料の分類が材料の出所を知る側ではなく M1 の表に在り(A)、M1 は判断と組みの出所を読まず(B)、材料を持たない書き手の片方だけを読んでいた(A)。修正後の D の変更は公開契約(J の引数)の拡張に伴う共同の不変条件で、宣言を忘れると M1 が赤で名乗る",
+   "revision": "5a8cf796: 分類を D(effects の宣言)へ移し M1 は宣言を読む・判断の record と status の材料と書く status の出所を読み直した行まで辿る・束ねの読みを広げる・補助の defk の中の書きを赤に。baa00ba4: 材料の口 end-only-violations を切り出して退役の書きにも当てる。どちらの後も正常例と違反例を名指しの実行で確かめた(after-fix-*)"
+  },
+  {
+   "id": "S5",
+   "axis": "concurrency",
+   "applicability": "applicable",
+   "change": "複数の agentd(と手番の終わりの書き)が同じ turn-record を閉じる競合の中で、巡回の読み方を変える(一覧の行で判断して組み、鍵での読み直しは書く直前の generation だけ)",
+   "claim": "(盲検の前の主張・design-before-blind.md の S5 — 適用外とした理由の文)M1 は並行の性質を持たない。検査が読む対象の巡回の並行の性質は ifGeneration の CAS で、振る舞いの検 packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy が持つ",
+   "expected_scope": "M1 の外。振る舞いの検が競合の違反を拒む",
+   "actual_scope": "修正前: 盲検 B の巡回は既存の振る舞いの検 7 本を通り(盲検 B の実測)、設計者の probe で一覧と読み直しの間に別の書き手の ended を着地させると ended の記録へ 2 度目を書き usage を消した(race-B-double-write-and-usage-erasure.txt)。修正後: 競合の振る舞いの検 R が今の巡回で緑・B の巡回で意図した文の赤。M1 も B の形を赤にする",
+   "changed_modules": [
+    "W"
+   ],
+   "unchanged_modules": [
+    "M1",
+    "M1c",
+    "D",
+    "J",
+    "E",
+    "R"
+   ],
+   "reason": "盲検の前の『振る舞いの検が持つ』は誤りだった。競合を直接作る検が 1 本も無く、ifGeneration は判断の後に取った generation では何も守らない。盲検の前は並行の軸を適用外としたが、主張の文は変えずに適用に改めた",
+   "revision": "baa00ba4: 振る舞いの検 R(RacingAcp と deftest)を足し、R49 の law の :enforcement と対象の検の名の一覧に載せた"
+  },
+  {
+   "id": "S2",
+   "axis": "distribution",
+   "applicability": "excluded",
+   "reason": "M1 は source の form を読む静的な検査で、機体の数や配置に依らない。複数の agentd が同じ記録を閉じる競合は S5 で扱った"
+  },
+  {
+   "id": "S3",
+   "axis": "hardware",
+   "applicability": "excluded",
+   "reason": "静的な検査と偽の ACP の上の振る舞いの検で、機体の資源や OS に依る部分を持たない"
+  },
+  {
+   "id": "S4",
+   "axis": "storage",
+   "applicability": "excluded",
+   "reason": "保存の方式は effect(AcpGetRow・AcpPutStatus)の handler の裏に在り、M1 は effect の欄の名だけを読む。保存を変えても巡回と退役の書きの形は変わらない"
+  },
+  {
+   "id": "S6",
+   "axis": "simulation",
+   "applicability": "excluded",
+   "reason": "決定的な模擬は既に偽の ACP(FakeAcp)で行っていて、R もその上の検。模擬の方式を変える要求は無い"
+  }
+ ],
+ "checks": [
+  {
+   "id": "C01",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "positive",
+   "expectation": "対象の検が今の巡回と退役の書きで緑・反例の検の正常例 8 件(巡回 7・退役 1)が緑",
+   "observation": "2 passed rc 0。正常例 8 件が → 緑",
+   "evidence": {
+    "path": "evidence/after-fix-named-two.txt",
+    "sha256": "bf3f2effd95721067ceebf79310b17b688ad7c76444bff63179ea4bceb863a70"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C02",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "positive",
+   "expectation": "本物の源で呼び先が手番の終わりだけの材料 model-usage を足して D に宣言し、巡回は渡さない変更で対象の検が緑(M1・M1c を変えない)",
+   "observation": "1 passed rc 0",
+   "evidence": {
+    "path": "evidence/after-fix-P1-model-usage-declared-not-passed.txt",
+    "sha256": "f2a5d15ba47c6aee32824f4543ffd00cba6ea1e37022f7f15173d266ce032452"
+   },
+   "status": "passed",
+   "supporting_evidence": [
+    {
+     "path": "evidence/P1-model-usage-declared-not-passed.patch",
+     "sha256": "000c61315fbc9fb45f590bf1f58ec438ab9148940602b4f720f206c3b7082d0f"
+    }
+   ]
+  },
+  {
+   "id": "C03",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "反例の検の違反例 20 件(巡回 17・退役 3)がそれぞれ期待した失敗文ちょうどで赤",
+   "observation": "2 passed rc 0(各例の失敗文の列を期待と完全一致で比べる assert が通った)",
+   "evidence": {
+    "path": "evidence/after-fix-named-two.txt",
+    "sha256": "bf3f2effd95721067ceebf79310b17b688ad7c76444bff63179ea4bceb863a70"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C04",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "盲検 A1: 巡回が cache-observation を渡すと『巡回が cache_observation に swept-cache-observation を渡している』で赤",
+   "observation": "1 failed rc 1・AssertionError が期待の文",
+   "evidence": {
+    "path": "evidence/after-fix-A1-sweep-passes-cache-observation.txt",
+    "sha256": "c17a278037eeb1be999c6f5e4fedf232006b780e8b9b73f9d8b80d2dc7b9d1fb"
+   },
+   "status": "passed",
+   "supporting_evidence": [
+    {
+     "path": "evidence/A1-sweep-passes-cache-observation.patch",
+     "sha256": "9c82db94cbe758fc22e63fb8562c51a19245de9500cadc0d79052cab2c84b99e"
+    },
+    {
+     "path": "evidence/before-fix-A1-sweep-passes-cache-observation.txt",
+     "sha256": "e42f60cfc93cde13856584eb3787570ee1be10aca725adbc6c8bce9d79bc8e69"
+    }
+   ]
+  },
+  {
+   "id": "C05",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "盲検 A2: 呼び先が model-usage を足し D に宣言しないと『役 model_usage に材料の分類が無い』で赤",
+   "observation": "1 failed rc 1・AssertionError が期待の文",
+   "evidence": {
+    "path": "evidence/after-fix-A2-model-usage-role.txt",
+    "sha256": "074986b25860909cd47edb279e7655aa1e8b4c3e753f44fa8682909ea387402f"
+   },
+   "status": "passed",
+   "supporting_evidence": [
+    {
+     "path": "evidence/A2-model-usage-role.patch",
+     "sha256": "689e180d36368585b7b926520fce5e8309bdaf7f659f4ab0693e593cca2194b5"
+    },
+    {
+     "path": "evidence/before-fix-A2-model-usage-role.txt",
+     "sha256": "33273fdde640e273ad4ce29c7431c5ca1a27cffcce6c66e11c6defdcbaf73703"
+    }
+   ]
+  },
+  {
+   "id": "C06",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "盲検 A2 の変形: D に宣言したうえで巡回が渡すと『巡回が model_usage に swept-model-usage を渡している』で赤",
+   "observation": "1 failed rc 1・AssertionError が期待の文",
+   "evidence": {
+    "path": "evidence/after-fix-A2d-model-usage-declared-and-passed.txt",
+    "sha256": "765383a39cd5e436495ed2ba0d16de35d74a9e94cce38e3c20b9ab86ff638e09"
+   },
+   "status": "passed",
+   "supporting_evidence": [
+    {
+     "path": "evidence/A2d-model-usage-declared-and-passed.patch",
+     "sha256": "f9501be3cc7e5922690ca195503095881598cf1258771dfe9537c6bbba7fee53"
+    }
+   ]
+  },
+  {
+   "id": "C07",
+   "scenarios": [
+    "S1",
+    "S5"
+   ],
+   "control": "negative",
+   "expectation": "盲検 B: 一覧の行で判断して組む巡回が『読み直した行から組んでいない』『読み直した行で判断していない』で赤",
+   "observation": "1 failed rc 1・AssertionError が期待の 2 文",
+   "evidence": {
+    "path": "evidence/after-fix-B-listed-image.txt",
+    "sha256": "a3f117e1435692d91f671d03e0fe02b082778ee3ac4e622beb15e78b0a5dd6d7"
+   },
+   "status": "passed",
+   "supporting_evidence": [
+    {
+     "path": "evidence/B-listed-image.patch",
+     "sha256": "98271be1bc6a70808073508716bbe36835b8d41649679f0f2308855d0f2e01b8"
+    },
+    {
+     "path": "evidence/before-fix-B-listed-image.txt",
+     "sha256": "9134d6be2c9fe88b201c5e95acf9593af1748ddc2a7f3a9ec9cd51afb67ab805"
+    }
+   ]
+  },
+  {
+   "id": "C08",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "受入条件 3: 巡回の呼びの usage を usage-total にすると『巡回が usage に usage-total を渡している』で赤",
+   "observation": "1 failed rc 1・AssertionError が期待の文",
+   "evidence": {
+    "path": "evidence/after-fix-U-usage-total.txt",
+    "sha256": "0a4fba25dcd27a9982841ab312496f67af3ae88cbd3c0c967975734be22d0bfd"
+   },
+   "status": "passed",
+   "supporting_evidence": [
+    {
+     "path": "evidence/U-usage-total.patch",
+     "sha256": "2b323d2511815a9d3094a95d63823c710bba070f466840337d83d886bdab8006"
+    }
+   ]
+  },
+  {
+   "id": "C09",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "退役の書きが usage に値を渡すと『退役の書きが usage に usage-total を渡している』で赤(修正前は緑)",
+   "observation": "1 failed rc 1・AssertionError が期待の文",
+   "evidence": {
+    "path": "evidence/after-fix-R1-retire-passes-usage.txt",
+    "sha256": "25570416e61afd622cbc8a41d415465b1e83c65fa8f6efc998f752b953dc8358"
+   },
+   "status": "passed",
+   "supporting_evidence": [
+    {
+     "path": "evidence/R1-retire-passes-usage.patch",
+     "sha256": "21c43b35440f7d040a0e85650805f8a9ecc5346d8fbdd412bbd033f059e9a209"
+    },
+    {
+     "path": "evidence/before-fix-R1-retire-passes-usage.txt",
+     "sha256": "8c79ab66ee29cd29f906eb4f513273e2e84e86a6503aeaeff1ac8ac593966c1d"
+    }
+   ]
+  },
+  {
+   "id": "C10",
+   "scenarios": [
+    "S5"
+   ],
+   "control": "positive",
+   "expectation": "R49 の振る舞いの検 7 本(既存 6 + 競合の検)が今の巡回で緑",
+   "observation": "7 passed rc 0",
+   "evidence": {
+    "path": "evidence/after-fix-behaviour-r49.txt",
+    "sha256": "fea113f9c92db064613152a007af608ec83479b601c021e87551427a3d079a93"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C11",
+   "scenarios": [
+    "S5"
+   ],
+   "control": "negative",
+   "expectation": "競合の検を盲検 B の巡回に当てると『ended の記録に巡回が 2 度目を書いた』で赤",
+   "observation": "1 failed rc 1・2 度目の書きが usage の無い status で usage を消した",
+   "evidence": {
+    "path": "evidence/after-fix-race-test-with-B.txt",
+    "sha256": "b381c9ab0ae42a911a342dbc2ce04b04f673945347088842e8607d0b345ae1db"
+   },
+   "status": "passed",
+   "supporting_evidence": [
+    {
+     "path": "evidence/B-listed-image.patch",
+     "sha256": "98271be1bc6a70808073508716bbe36835b8d41649679f0f2308855d0f2e01b8"
+    },
+    {
+     "path": "evidence/race-B-double-write-and-usage-erasure.txt",
+     "sha256": "b2c1810dfb8a68a1bc0d2e52a78f70afa09941f1914db7d1c5f291659db93de0"
+    },
+    {
+     "path": "evidence/race_b_probe.py",
+     "sha256": "cdd537958c79a84a271b441f2618d07ea2a7267c02b2cba1cfbb113076fb0489"
+    }
+   ]
+  },
+  {
+   "id": "C12",
+   "scenarios": [
+    "S1",
+    "S5"
+   ],
+   "control": "positive",
+   "expectation": "本線の先端へ rebase した後の版(range-diff が 4 本とも同一)でも冊の 2 本と R49 の振る舞いの検 7 本が緑・台帳が一致",
+   "observation": "9 passed rc 0・台帳の突合 rc 0",
+   "evidence": {
+    "path": "evidence/after-rebase-named.txt",
+    "sha256": "6fd50effa1d98c9e123788caf1056da58ae4161ca28ddb8b9f3a0d881600f2ea"
+   },
+   "status": "passed"
+  }
+ ],
+ "unresolved": []
+}

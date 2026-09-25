@@ -1,0 +1,51 @@
+# 修正後の検査の正常例と反例の検(-s で各例の結果)
+# tree: baa00ba4fd768fe391ffea9f8df1cc48eba1c4c6 + 作業樹の差分(下の stat・空 = なし):
+# command: uv run pytest -v -p no:cacheprovider -W ignore::pytest.PytestWarning -s "docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_turn_records_are_not_left_to_one_write" "docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_sweep_roles_are_read_from_the_callee_not_the_spelling"
+
+deadline scale x1.2 (load/core) — per test 69s, watchdog 104s
+
+============================= test session starts ==============================
+platform linux -- Python 3.14.3, pytest-9.1.1, pluggy-1.6.0 -- /home/kento/.worktrees/doeff-wt-639-adr012-roles/.venv/bin/python3
+rootdir: /home/kento/.worktrees/doeff-wt-639-adr012-roles
+configfile: pyproject.toml
+plugins: timeout-2.4.0, doeff-hy-0.1.0, asyncio-1.4.0, doeff-adr-0.1.0, anyio-4.14.2, xdist-3.8.0
+timeout: 69.33837890625s
+timeout method: signal
+timeout func_only: False
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... test-admission: focused — 2 件(変更箇所の検証)
+collected 2 items
+
+docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_turn_records_are_not_left_to_one_write PASSED
+docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_sweep_roles_are_read_from_the_callee_not_the_spelling 正常例 今日の巡回 → 緑
+正常例 呼び先が行から読める役を足し(分類を宣言し)、呼びが渡す → 緑
+正常例 呼び先が usage の前に役を足す(役の位置は呼び先の定義から導く) → 緑
+正常例 呼び先が手番の終わりだけの材料を足し(分類を宣言し)、巡回は渡さない → 緑
+正常例 呼びの中の註と折れ方 → 緑
+正常例 keyword の既定値つき引数 → 緑
+正常例 読み直した行の局所変数の改名 → 緑
+違反例 usage に値 → 赤: 巡回が usage に usage-total を渡している(R49 — 消費の和は手番の終わりの 1 回)
+違反例 keyword で responses → 赤: 巡回が responses に shaped を渡している(R49 — 応答ごとの消費は手番の終わりの 1 回)
+違反例 entries に値 → 赤: 巡回が entries に entries を渡している(R49 — 手番の出来事の見出しは手番の中の追記と終わりの書きだけが持つ)
+違反例 keyword で cache-observation → 赤: 巡回が cache_observation に swept-cache を渡している(R49 — cache の観測は手番の終わりの 1 回)
+違反例 呼び先が手番の終わりだけの材料を足し(分類を宣言し)、巡回が渡す → 赤: 巡回が model_usage に swept-model-usage を渡している(R49 — model ごとの消費は手番の終わりの 1 回)
+違反例 呼び先に分類の無い役を足す → 赤: 呼び先 turn-record-ended-status の役 model_usage に材料の分類が無い(effects.TURN_RECORD_END_ONLY_MATERIALS か TURN_RECORD_ROW_MATERIALS に宣言する)
+違反例 呼び先の役の改名(usage → consumption) → 赤: 材料の宣言の役 usage が呼び先 turn-record-ended-status の定義に無い(契約の変更 — 宣言と検査も直す) / 呼び先 turn-record-ended-status の役 consumption に材料の分類が無い(effects.TURN_RECORD_END_ONLY_MATERIALS か TURN_RECORD_ROW_MATERIALS に宣言する)
+違反例 呼びを消す → 赤: 巡回が turn-record-ended-status を呼んでいない(R49 — 閉じる記録の status を組まない) / 巡回が書く status に ended を渡している(R49 — turn-record-ended-status の答えちょうどではない)
+違反例 一覧の行で書く → 赤: 巡回が読み直した image で書いていない(R49 — AcpPutStatus の row に row を渡している — 鍵で読んだ AcpGetRow の答えではない) / 巡回が閉じる status を読み直した行から組んでいない(R49 — turn-record-ended-status の status に record-status を渡している — 書く行の status-object-of の答えではない) / 巡回が読み直した行で判断していない(R49 — turn-record-sweep-verdict の record に record を渡している — 書く行ではない)
+違反例 記録ではない鍵で読む → 赤: 巡回が鍵で読み直していない(R49 — 書く行を読む AcpGetRow の key に job-id を渡している — turn-record-key-of の答えではない)
+違反例 一覧の行で判断する → 赤: 巡回が読み直した行で判断していない(R49 — turn-record-sweep-verdict の record に row を渡している — 書く行ではない)
+違反例 一覧の行から閉じる status を組む → 赤: 巡回が閉じる status を読み直した行から組んでいない(R49 — turn-record-ended-status の status に record-status を渡している — 書く行の status-object-of の答えではない)
+違反例 組んだ status に書く前に足す → 赤: 巡回が書く status に (| ended {"usage" usage-total}) を渡している(R49 — turn-record-ended-status の答えちょうどではない)
+違反例 組んだ status を書く前に書き換える → 赤: 巡回が組んだ status ended を書く前に (get ended "usage") で使っている(R49 — 書くのは turn-record-ended-status の答えちょうど)
+違反例 分割で束ねた行で書く → 赤: 巡回が読み直した image で書いていない(R49 — AcpPutStatus の row に copied を渡している — 鍵で読んだ AcpGetRow の答えではない) / 巡回が閉じる status を読み直した行から組んでいない(R49 — turn-record-ended-status の status に record-status を渡している — 書く行の status-object-of の答えではない) / 巡回が読み直した行で判断していない(R49 — turn-record-sweep-verdict の record に copied を渡している — 書く行ではない)
+違反例 巡回が呼ぶ補助の defk の中で書く → 赤: 巡回が組んだ status ended を書く前に (sweep-case-close record ended) で使っている(R49 — 書くのは turn-record-ended-status の答えちょうど) / 巡回が呼ぶ sweep-case-close の中で AcpPutStatus を撃っている(R49 — 記録を閉じる書きは巡回の本体に置く — 検が読めるのは巡回の本体だけ)
+違反例 盲検 B の形(一覧の行で判断して status を組み、読み直しは書く直前の generation だけ) → 赤: 巡回が閉じる status を読み直した行から組んでいない(R49 — turn-record-ended-status の status に record-status を渡している — 書く行の status-object-of の答えではない) / 巡回が読み直した行で判断していない(R49 — turn-record-sweep-verdict の record に row を渡している — 書く行ではない)
+正常例 今日の退役の書き → 緑
+違反例 退役の書きが usage に値 → 赤: 退役の書きが usage に usage-total を渡している(R49 — 消費の和は手番の終わりの 1 回)
+違反例 退役の書きが keyword で cache-observation → 赤: 退役の書きが cache_observation に retired-cache を渡している(R49 — cache の観測は手番の終わりの 1 回)
+違反例 退役の書きが呼びを消す → 赤: 退役の書きが turn-record-ended-status を呼んでいない(R49 — 閉じる記録の status を組まない)
+PASSED
+
+========================= 2 passed in 72.53s (0:01:12) =========================
+# rc: 0

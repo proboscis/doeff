@@ -1,0 +1,96 @@
+# patch: /home/kento/.worktrees/doeff-wt-639-adr012-roles/docs/design-checks/lt-N23MQ5ZMSM6KCDKCB0G2RTFCAH/evidence/U-usage-total.patch
+# tree: 5a8cf7966d94876169cbbb693ca078a86ff4078b + 作業樹の差分:
+ packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+# command: uv run pytest docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_turn_records_are_not_left_to_one_write -v -p no:cacheprovider -W ignore::pytest.PytestWarning
+
+deadline scale x1.2 (load/core) — per test 73s, watchdog 109s
+
+============================= test session starts ==============================
+platform linux -- Python 3.14.3, pytest-9.1.1, pluggy-1.6.0 -- /home/kento/.worktrees/doeff-wt-639-adr012-roles/.venv/bin/python3
+rootdir: /home/kento/.worktrees/doeff-wt-639-adr012-roles
+configfile: pyproject.toml
+plugins: timeout-2.4.0, doeff-hy-0.1.0, asyncio-1.4.0, doeff-adr-0.1.0, anyio-4.14.2, xdist-3.8.0
+timeout: 72.99072265625s
+timeout method: signal
+timeout func_only: False
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... test-admission: focused — 1 件(変更箇所の検証)
+collected 1 item
+
+docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_turn_records_are_not_left_to_one_write FAILED [100%]
+
+=================================== FAILURES ===================================
+________ test_adr_doe_agents_012_turn_records_are_not_left_to_one_write ________
+
+doeff_interpreter = <function doeff_interpreter.<locals>.run_program at 0x28331523000>
+
+    (deftest test-adr-doe-agents-012-turn-records-are-not-left-to-one-write
+      ;; R49 の針(構造): field selector の綴りと閉語彙と周期の宣言は effects の 1 点ずつ・判断(閉じるか / 生きている node)は
+      ;; judgment の 1 点ずつ・巡回の腕は agentd の 1 点で拍が 1 度撃つ・記録なしで Ended にしない 3 つの腕(H1 / H2 / H3)が
+      ;; 1 行ずつ在る・反例の検が在る。
+>     (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
+
+docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy:2218: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+docs/adr/conftest.py:23: in run_program
+    return run(program)
+           ^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
+    (for [needle ["TURN_RECORD_RUNNING_SELECTOR = f\"status.state={TURN_RECORD_RUNNING}\""
+                  "TURN_RECORD_SWEEP_END: TurnRecordSweepVerdict = \"end\""
+                  "TURN_RECORD_SWEEP_SKIP: TurnRecordSweepVerdict = \"skip\""
+                  "METRIC_TURN_RECORD_SWEEP_ENDED = \"agentd_turn_record_sweep_ended\""
+                  "    turn_record_sweep_seconds: int = 300"
+                  "    last_turn_record_sweep_ms: int | None = None"
+                  "class AcpRunningTurnRecords(EffectBase):"]]
+      (assert (= (len (lfor line effects-lines :if (.startswith line needle) line)) 1)
+              f"綴り・閉語彙・周期の宣言は effects の 1 点(R49): {needle}"))
+    (setv judgment-lines (code-lines (/ ACP-DIR "judgment.hy")))
+    (for [needle ["(defk turn-record-sweep-verdict [record pair node-name live-nodes in-flight-ids]"
+                  "(defk live-node-names-of [rows]"
+                  "(defk record-create-verdict [outcome started-ms now-ms deadline-seconds final]"]]
+      (assert (= (len (lfor line judgment-lines :if (.startswith line needle) line)) 1)
+              f"判断は judgment の 1 点(R49): {needle}"))
+    (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
+    (assert (= (len (lfor line agentd-lines :if (.startswith line "(defk sweep-turn-records [settings state now-ms]") line)) 1)
+            "巡回の腕が無い(R49)")
+    (assert (= (len (lfor line agentd-lines :if (in "(<- swept int (sweep-turn-records settings current now-ms))" line) line)) 1)
+            "拍が巡回を撃っていない(R49)")
+    (assert (= (len (lfor line agentd-lines :if (in "(<- listed tuple (AcpRunningTurnRecords))" line) line)) 1)
+            "巡回の入口は走っている記録の一覧の 1 点(R49)")
+    ;; 巡回は記録の鍵で読み直した行で判断し、その行から閉じる status を組み、その行へ書く(一覧の image で判断も書きもしない)。
+    ;; 閉じる status に手番の終わりだけの材料(effects の宣言 — usage・entries・cache-observation・responses)を置かない。
+    ;; 行の字面ではなく、巡回の本体の form を呼び先(turn-record-ended-status・AcpGetRow・AcpPutStatus・status-object-of・
+    ;; turn-record-sweep-verdict)の定義から導いた引数の役で読む(sweep-violations・反例の検
+    ;; test-adr-doe-agents-012-sweep-roles-are-read-from-the-callee-not-the-spelling)。
+    (<- callees SweepCallees (real-sweep-callees))
+    (setv materials (MaterialClasses :end-only (dict TURN-RECORD-END-ONLY-MATERIALS) :row TURN-RECORD-ROW-MATERIALS))
+    (<- sweep-forms list (defk-forms sweep-turn-records))
+    (<- sweep-globals dict (module-globals-of sweep-turn-records))
+    (<- sweep-wrongs list (sweep-violations callees materials sweep-forms sweep-globals))
+>   (assert (= sweep-wrongs []) (.join " / " sweep-wrongs))
+              ^^^^^^^^^^^^^
+E   AssertionError: 巡回が usage に usage-total を渡している(R49 — 消費の和は手番の終わりの 1 回)
+
+docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy:2251: AssertionError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  test_adr_doe_agents_012_turn_records_are_not_left_to_one_write.<locals>._hy_anon_74()  docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy:2251
+    (assert (= sweep-wrongs []) (.join " / " sweep-wrongs))
+  _hy_anon_74()  docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy:2251
+    (assert (= sweep-wrongs []) (.join " / " sweep-wrongs))
+
+AssertionError: 巡回が usage に usage-total を渡している(R49 — 消費の和は手番の終わりの 1 回)
+
+=========================== short test summary info ============================
+FAILED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_turn_records_are_not_left_to_one_write
+========================= 1 failed in 72.37s (0:01:12) =========================
+# rc: 1

@@ -1,0 +1,37 @@
+diff --git a/packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py b/packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py
+index 2cd4d627..ed258814 100644
+--- a/packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py
++++ b/packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py
+@@ -238,6 +238,7 @@ TURN_RECORD_END_ONLY_MATERIALS: Mapping[str, TurnEndOnlyMaterial] = {
+         empty=None, reason="cache の観測は手番の開始 offset と要求の時刻(memory)から測る — 手番の終わりの 1 回"
+     ),
+     "responses": TurnEndOnlyMaterial(empty=None, reason="応答ごとの消費は手番の終わりの 1 回"),
++    "model_usage": TurnEndOnlyMaterial(empty=None, reason="model ごとの消費は手番の終わりの 1 回"),
+ }
+ TURN_RECORD_ROW_MATERIALS: frozenset[str] = frozenset({"status", "conditions"})
+ #: 出所の欄(card ki-6f222893d6b6): agentd が agent-job に新しく足す条件は、立てた試みの番号を名乗る
+diff --git a/packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy b/packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy
+index e593b4e0..4d8a3dc6 100644
+--- a/packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy
++++ b/packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy
+@@ -4942,9 +4942,9 @@
+   #((tuple kept) dropped))
+ 
+ 
+-(defk turn-record-ended-status [status usage entries conditions [cache-observation None] [responses None]]
++(defk turn-record-ended-status [status usage entries conditions [cache-observation None] [responses None] [model-usage None]]
+   {:pre [(: status dict) (: usage (| dict None)) (: entries tuple) (: conditions tuple) (: cache-observation (| dict None))
+-         (: responses (| dict None))]
++         (: responses (| dict None)) (: model-usage (| dict None))]
+    :post [(: % dict)]}
+   "手番の終わりの turn-record の status: 残りの見出し(entries — TurnEntryHeadline の列)を行の entries に**追記**
+    した上で state = ended・usage(素材があれば)。行の entries は落とさない(手番の間に追記した見出しが正本)。
+@@ -4963,6 +4963,8 @@
+     (setv (get next "cacheObservation") cache-observation))
+   (when (is-not responses None)
+     (setv (get next "responses") responses))
++  (when (is-not model-usage None)
++    (setv (get next "modelUsage") model-usage))
+   (<- projected tuple (turn-record-conditions-of conditions))
+   (setv #(items dropped) projected)
+   ;; 欄は渡された材料ちょうどで決める(行に前の値が在っても持ち越さない)。

@@ -1,0 +1,42 @@
+--- a/packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy
++++ b/packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy
+@@ -5304,19 +5304,17 @@
+   (for [row listed]
+     (setv listed-id (.get row.spec "agentJobId"))
+     (when (and (isinstance listed-id str) (not-in listed-id mine))
+-      (.append candidates listed-id)))
++      (.append candidates row)))
+   (setv ended-count 0)
+   (when candidates
+     (<- node-rows tuple (AcpGet :kind NODE-KIND))
+     (<- live-nodes frozenset (live-node-names-of node-rows))
+-    (for [job-id candidates]
+-      ;; 正本は行(R7): 一覧の image では書かない — 鍵で読み直してから判じ、読んだ image で CAS する。
+-      (<- key str (turn-record-key-of job-id))
+-      (<- record (| AcpRow None) (AcpGetRow :key key))
++    (for [listed-row candidates]
++      (setv job-id (.get listed-row.spec "agentJobId"))
+       (<- pair (| AcpRow None) (AcpGetRow :key f"{AGENT-JOB-NAMESPACE}:{AGENT-JOB-KIND}:{job-id}"))
+-      (when (isinstance record AcpRow)
+-        (<- verdict str (turn-record-sweep-verdict record pair settings.node-name live-nodes mine))
+-        (setv record-node (.get record.spec "node"))
++      (when True
++        (<- verdict str (turn-record-sweep-verdict listed-row pair settings.node-name live-nodes mine))
++        (setv record-node (.get listed-row.spec "node"))
+         (if (= verdict TURN-RECORD-SWEEP-END)
+             (do
+               (setv pair-phase "gone")
+@@ -5327,9 +5325,12 @@
+                 (<- pair-status dict (status-object-of pair))
+                 (setv pair-phase (str (.get pair-status "phase")))
+                 (<- pair-conditions tuple (row-conditions-of pair-status)))
+-              (<- record-status dict (status-object-of record))
++              (<- record-status dict (status-object-of listed-row))
+               ;; usage は書かない(開始 offset は memory にしか無く、0 から数え直すと温かい session の前の手番を足す発明になる)。
+               (<- ended dict (turn-record-ended-status record-status None #() pair-conditions))
++              ;; CAS は鍵で読み直した行の generation で(一覧の generation は古く Conflict が続く)
++              (<- key str (turn-record-key-of job-id))
++              (<- record (| AcpRow None) (AcpGetRow :key key))
+               (<- wrote (| Written Conflict Refused) (AcpPutStatus :row record :status ended))
+               (when (isinstance wrote Written)
+                 (setv ended-count (+ ended-count 1)))
