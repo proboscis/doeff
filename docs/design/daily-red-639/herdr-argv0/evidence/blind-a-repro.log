@@ -1,0 +1,5 @@
+# 盲検 A の再現 @ 7feba2c5755df61fdedb69bc2d1d08530f7e377e
+観測: schema(protocol 22)に server.live_handoff の expected_protocol がある = True
+観測: PaneProcessInfo の欄 = ['foreground_process_group_id', 'foreground_processes', 'pane_id', 'shell_pid', 'tty'](版の欄は無い)
+観測: M2(X)= 'zsh'(protocol 22 の server でも仮の protocol 23 の server でも入力は同じ X)
+exit=0

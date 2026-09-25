@@ -1,0 +1,372 @@
+{
+ "version": 1,
+ "task_id": "lt-8BDJEXK2W793EAYX11SYS9JQXN",
+ "base_revision": "294aac38e5708f400f0fba951a608ca3bf7a8e4a",
+ "author": {
+  "conversation_id": "c-DDDFCJNFJX7VJ1YMB13DPQYPCY",
+  "model": "claude-opus-5-5",
+  "effort": "xhigh"
+ },
+ "requirements": "agora-redesign#639 実装依頼書 H: sessionhost/substrate_herdr.hy の herdr-pane-current-command-io が herdr 0.9.1(zeus)の argv0 の無い答えで KeyError: 'argv0' に落ちる。(1) herdr の契約(source か API 定義)で保証された欄を確かめ、保証欄から読む — argv0 が保証されないなら argv から導く。(2) KeyError にも黙った既定値にもせず、契約の外は型のある失敗で名指す。name が version 文字列になる実測は docstring に残し理由を更新する。(3) argv0 の無い答えの単体の検を足し、直す前の形で赤を示す。受入: その検が緑で直す前は赤、test_sessionhost_substrate_herdr.py 全体が Mac と zeus で緑(zeus で test_herdr_lifecycle_smoke が実走)。結合核 K1・K2 に触れない。完了の範囲 = 実装完了まで(本線 6fdccb9e・72da0ff1・b57fe3dc・7feba2c5)",
+ "design": {
+  "path": "design.md",
+  "sha256": "10d52456c0c61d51b758c5ea419021329d3f57ced278384ad2554a3116740e06"
+ },
+ "modules": [
+  {
+   "id": "M1",
+   "responsibility": "herdr socket への 1 回の RPC と error 封筒の型づけ(substrate_herdr.hy の herdr-call)",
+   "owns": "newline-JSON の request line の形・1 call = 1 接続・error 封筒 → HerdrApiError(code)",
+   "hides": "socket の扱い(接続・読み切り・閉じ)",
+   "interface": "(herdr-call socket-path method params) → result の dict。error 封筒は HerdrApiError(code・message)",
+   "effects": "unix socket の IO だけ。doeff の effect は出さない",
+   "lifetime": "call ごとに接続を張って閉じる。状態を持たない",
+   "invariants": "1 call は 1 接続・1 request line・1 response line。error 封筒を値として返さない"
+  },
+  {
+   "id": "M2",
+   "responsibility": "pane.process_info の答え → 前面の process group の leader の command 名(herdr-foreground-command・defk の純関数)",
+   "owns": "herdr の契約で保証された欄(pid・name 必須、argv0・argv は省略と null あり)・leader = pid が foreground_process_group_id と同じ process・読む順 argv0 → argv の先頭(basename と先頭の '-' を 1 つ外す)→ name・鍵の省略と空の配列 = 前面不明 = None・leader 不在 / group id 無し = None・契約の外 = HerdrContractError・対応する版の和集合として読む",
+   "hides": "platform の差(Linux は argv0 を埋めず pid の昇順・macOS は argv0 を埋め降順)・serde の省略の規則",
+   "interface": "(herdr-foreground-command result) → str | None。:pre (: result dict)・:post (: % (| str None))。契約の外は HerdrContractError(HerdrApiError の子ではない)",
+   "effects": "なし。純関数(defk の Program で包むだけ)で IO も effect も出さない",
+   "lifetime": "状態を持たない。呼び出しごとに完結し、解放するものが無い",
+   "invariants": "同じ job から並び順によらず同じ名前・名前で process を選ばない(idle shell の判断は M5)・KeyError を出さず黙った既定値も作らない"
+  },
+  {
+   "id": "M3",
+   "responsibility": "1 pane の前面の command の観測(herdr-pane-current-command-io・defk)",
+   "owns": "pane_not_found = pane 不在 = None(tmux の display-message の失敗と同じ写像)・ほかの error code は送出",
+   "hides": "答えの欄の読み方(M2 に委ねる)",
+   "interface": "(herdr-pane-current-command-io socket-path pane-id) → str | None。ほかの HerdrApiError と HerdrContractError は送出",
+   "effects": "M1 経由の socket IO 1 回だけ",
+   "lifetime": "call ごとに 1 RPC。状態を持たない",
+   "invariants": "契約の外の答えを None に畳まない・不在の写像は pane_not_found ちょうど"
+  },
+  {
+   "id": "M4",
+   "responsibility": "effect TmuxPaneCurrentCommand を M3 へ束縛する(herdr-substrate の腕)",
+   "owns": "effect と IO の対応",
+   "hides": "herdr の API(method の名・socket の path)",
+   "interface": "effect TmuxPaneCurrentCommand の答え = str | None",
+   "effects": "M3 を呼ぶだけ",
+   "lifetime": "handler の寿命は substrate の組み立て点が持つ。この変更では触らない",
+   "invariants": "tmux の substrate(M6)と同じ effect に同じ意味(前面の group leader の名前)で答える"
+  },
+  {
+   "id": "M5",
+   "responsibility": "前面が idle shell に戻った running の行を exited/vanished で終える判断(policy.hy の zombie reaper)",
+   "owns": "idle shell の語彙 IDLE-SHELL-COMMANDS #{zsh bash sh dash fish ksh}・None は判断しない",
+   "hides": "substrate が tmux か herdr か",
+   "interface": "tmux-pane-current-command effect を読むだけ",
+   "effects": "TmuxPaneCurrentCommand を出し、store の effect で行を書く",
+   "lifetime": "監視の周回が停止・再開・キャンセルを持つ。この変更では触らない",
+   "invariants": "idle shell の語彙と判断は M5 だけが持つ(semgrep 規則 doeff-agents-idle-shell-vocabulary-is-policy-owned)"
+  },
+  {
+   "id": "M6",
+   "responsibility": "tmux での同じ観測(substrate.hy の #{pane_current_command})",
+   "owns": "tmux の format",
+   "hides": "tmux の CLI",
+   "interface": "effect TmuxPaneCurrentCommand の答え = str | None",
+   "effects": "tmux の display-message を撃つだけ",
+   "lifetime": "call ごとに 1 回。状態を持たない",
+   "invariants": "前面の process group の leader(tcgetpgrp)の名前を返す — tmux の定義"
+  }
+ ],
+ "scenarios": [
+  {
+   "id": "S1",
+   "axis": "hardware",
+   "applicability": "applicable",
+   "change": "別の platform の herdr で動かす(Linux は argv0 を埋めない・将来の Linux 版が argv0 を埋め始める・argv を返さない版・macOS)",
+   "claim": "答えが herdr の契約の中にある限り M2 の読みで吸収し、M3・M4・M5 は変わらない。正規化の規則を変える必要が出たら変わるのは M2 の 1 定義だけ。前提 = platform の差は pane.process_info の欄の有無と値の形にだけ現れる",
+   "expected_scope": "M2 のみ(契約の中なら 0 箇所)(design-before-blind.md S1)",
+   "actual_scope": "前提は偽だった: 前面の job の並び順も platform で逆(実測 order-probe-mac.log・order-probe-zeus.log)。並びの先頭を読む 72da0ff1 の M2 は同じ job から Linux と Mac で違う名前を返した。直しは M2 の 1 定義(group leader を読む)で済み、M1・M3・M4・M5・M6 は変わらなかった。盲検 B は M2 が M5 の語彙を import して名前で process を選ぶ差分が既存の検査を全部通ることを示した(blind-b-repro-before.log)",
+   "changed_modules": [
+    "M2"
+   ],
+   "unchanged_modules": [
+    "M1",
+    "M3",
+    "M4",
+    "M5",
+    "M6"
+   ],
+   "reason": "並び順は M2 が隠す platform の知識で、直しは M2 に閉じた(漏れではない)。盲検 B の差分は M5 の判断を M2 へ移す漏れで、それを拒否する静的な規則が無かった",
+   "revision": "b57fe3dc で検を先行(並び順の両方・wrapper の job・leader 不在・group id 無し)と semgrep 規則 doeff-agents-idle-shell-vocabulary-is-policy-owned・検体・台帳 275。7feba2c5 で M2 を group leader の読みに直した。再検証: 72da0ff1 の M2 は新しい検で赤(tests-red-leader.log)、7feba2c5 で Mac・zeus とも 21 passed、盲検 B の M2 は semgrep 3 件と検の赤で拒否(blind-b-repro-after.log)"
+  },
+  {
+   "id": "S2",
+   "axis": "effects",
+   "applicability": "applicable",
+   "change": "herdr の新版が (a) 前面の command の保証欄を足す(例: command)、または (b) pane 不在に新しい error code を足す(例: pane_exited)",
+   "claim": "(a) は M2 だけ。(b) は M3 だけ。M5 は変わらない。M1 は変わらない。前提 = RPC の封筒の形(result / error)は変わらない",
+   "expected_scope": "(a) M2・(b) M3(design-before-blind.md S2)",
+   "actual_scope": "(a) 未知の欄を足した答えを今の M2 がそのまま読む。欄の名と正規化の語は M2 の定義の中にしか無い(走査)ので、読む欄を足すなら M2 の 1 点。(b) 未知の code pane_exited は M3 から HerdrApiError のまま送出され、None に畳むなら M3 の except の 1 点(scenarios-after.log)。盲検 A: 版ごとに厳しく読む(protocol 23 では argv0 の欠けを名指す)要求を足すと、答えに版が載らないので M2 の公開の形(版の引数)と M3 の配線(版の取り寄せ)も変わる(blind-a-repro.log)",
+   "changed_modules": [
+    "M2",
+    "M3"
+   ],
+   "unchanged_modules": [
+    "M1",
+    "M4",
+    "M5",
+    "M6"
+   ],
+   "reason": "(a)(b) は予想どおり。盲検 A の波及は公開契約の意図した変更(版を入力に足す)と配線で、M2 が隠す欄の読み方の漏れではない。事前の主張は「版ごとには読み分けない」前提を書き漏らしていた(前提の書き漏れとして design.md 3 節に記録し、予想範囲は広げていない)",
+   "revision": "7feba2c5 で M2 の docstring に「対応する herdr の版の和集合として読む」を明記し、表の検に argv0 を埋める版と埋めない版の両方を読む行を足した。版ごとの厳しさは要件 H の外とし、版の追随は ADR-DOE-AGENTS-004 R12 の再実測が持つ"
+  },
+  {
+   "id": "S3",
+   "axis": "simulation",
+   "applicability": "applicable",
+   "change": "実 herdr の無い機体(cluster の pod・CI)で、実機で採った答えを使って前面の読みと zombie 判定を決定的に試す",
+   "claim": "記録した答えは M2 に dict のまま渡すか、偽の socket から M3 に返すだけで再現でき、M1 と M2 の本体を変えない",
+   "expected_scope": "検の側だけ(本体 0 箇所)(design-before-blind.md S3)",
+   "actual_scope": "記録した zeus の答えを偽の socket から再生して 'zsh'・契約の外の答えは HerdrContractError。本体は無改変。修正前の本体では同じ記録で KeyError: 'argv0' の赤を決定的に再現した(acceptance-red-before-fix.log)",
+   "changed_modules": [],
+   "unchanged_modules": [
+    "M1",
+    "M2",
+    "M3",
+    "M4",
+    "M5",
+    "M6"
+   ],
+   "reason": "M1 は socket の path を、M2 は dict を入力に取るので、記録の再生に本体の変更が要らない",
+   "revision": "不要 — 予想どおり本体 0 箇所で、検(sessionhost_substrate_herdr_deftests.hy の偽の socket と表)がこの形で入った"
+  },
+  {
+   "id": "S4",
+   "axis": "concurrency",
+   "applicability": "applicable",
+   "change": "監視の周回が複数の session の前面を並行に読む(thread で同時に M3 を呼ぶ)",
+   "claim": "M2 は状態を持たない純関数、M1 は call ごとに接続を張るので、M1・M2・M3 は変わらない",
+   "expected_scope": "0 箇所(呼び手の並行化だけ)(design-before-blind.md S4)",
+   "actual_scope": "16 並行で 16 件 'zsh'。1 通だけ契約の外を混ぜると HerdrContractError 1 件と 'zsh' 15 件で、失敗が他の呼び出しへ漏れない。本体は無改変(scenarios-after.log)",
+   "changed_modules": [],
+   "unchanged_modules": [
+    "M1",
+    "M2",
+    "M3",
+    "M4",
+    "M5",
+    "M6"
+   ],
+   "reason": "共有する状態が無い(M1 は接続を call ごとに持ち、M2 は純関数)",
+   "revision": "不要 — 予想どおり 0 箇所"
+  },
+  {
+   "id": "STORAGE",
+   "axis": "storage",
+   "applicability": "excluded",
+   "reason": "前面の command はその周回で観測して M5 が判断に使うだけで、この経路は保存しない。行の状態の保存は M5 と store の責務で、この変更は触れない"
+  },
+  {
+   "id": "DIST",
+   "axis": "distribution",
+   "applicability": "excluded",
+   "reason": "herdr は機体ごとの端末の多重化で、substrate は同じ機体の socket を読む。機体をまたぐ配置は ACP の責務で、substrate が遠くの herdr を読む要求は無い。遠くを読むことになっても変わるのは M1 の接続先だけで、M2 は dict の上の純関数のまま"
+  }
+ ],
+ "checks": [
+  {
+   "id": "K01-S1-positive",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "positive",
+   "expectation": "修正後の M2 が zeus(argv0 無し)・Mac(argv0 有り・name は version)・argv0 を埋め始めた Linux・argv も無い・login shell の各形を読み、同じ job を Linux と Mac の並びで渡して同じ名前を返す。effect TmuxPaneCurrentCommand を M4 → M3 → M1 → M2 と通して zeus の答えが 'zsh' で M5 の語彙で idle shell と判定できる",
+   "observation": "zsh・claude・zsh・bash・bash。同じ job の Linux の並び → 'bash'・Mac の並び → 'bash'。effect の答え 'zsh'・idle shell = True。欄の名と正規化の語の出現は M2 の外 0 件・substrate_herdr.hy の外で process_info を読む source = []",
+   "evidence": {
+    "path": "evidence/scenarios-after.log",
+    "sha256": "c2a1730ace89f97512ec4821ca5ebfce8f9352272f4c154b5c2a307085f465fb"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "K02-S1-negative",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "並びの先頭を読む実装(72da0ff1 の M2)は、並び順の platform 差を突く新しい検(pipe の job の Linux と Mac の並び)で赤になる",
+   "observation": "test_herdr_foreground_command_follows_the_process_info_contract が sessionhost_substrate_herdr_deftests.hy:331 の (assert (= #(pipe-linux pipe-mac) #(\"sleep\" \"sleep\"))) で AssertionError。1 failed, 1 passed",
+   "evidence": {
+    "path": "evidence/tests-red-leader.log",
+    "sha256": "8973b07baa2653b83fdf97372775ff91741c778bfd7f6b88723af7e75743644a"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "K03-S1-negative",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "盲検 B の M2(policy の IDLE-SHELL-COMMANDS を import して shell でない process を選ぶ)を修正後の検と規則の上に当てると、semgrep の新しい規則が ERROR で拒否し、表の検も意図した理由(並び順の行)で赤になる",
+   "observation": "semgrep doeff-agents-idle-shell-vocabulary-is-policy-owned が 88・443・469 行の 3 件 blocking で exit=1。pytest は :331 の並び順の assert で 1 failed・exit=1",
+   "evidence": {
+    "path": "evidence/blind-b-repro-after.log",
+    "sha256": "42c6b5edd5d93f3101402c29514c2dd3819fb7ea92db3dedc8ba591c5b18f235"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "K04-S1-negative",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "semgrep の新しい規則の検体(policy.hy の外で語彙を import して lfor で使う)で、規則が意図した 2 行ちょうどで発火し、本線の src には発火しない",
+   "observation": "検体の検 2 passed(期待 = 9 行目・13 行目)。規則を src へ当てて 0 findings(81 規則・82 file)",
+   "evidence": {
+    "path": "evidence/semgrep-rule.log",
+    "sha256": "8076263051a6551f5fbe82dc681b7e8325d7953e09b99f618374741cf6e7695e"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "K05-S1-positive",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "positive",
+   "expectation": "Linux の機体 zeus(実 herdr 0.9.1・argv0 を埋めない)で test_sessionhost_substrate_herdr.py 全体と semgrep 検体の検が skip なしで緑(herdr の smoke を含む)",
+   "observation": "remote-check node=zeus rc=0・21 passed(skip の行なし)",
+   "evidence": {
+    "path": "evidence/acceptance-zeus-leader.log",
+    "sha256": "f74ffb2c2e747137cf0f33cabec310c153d97b30b5ce21400ee61bf2bcd5b84f"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "K06-S1-positive",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "positive",
+   "expectation": "Mac(実 herdr 0.9.1・argv0 を埋める)で同じ 2 つが緑",
+   "observation": "21 passed",
+   "evidence": {
+    "path": "evidence/acceptance-green-mac-leader.log",
+    "sha256": "d8d291bddd1f0f804fe8b0e247787119e432e238d156165058a0ffabb681781f"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "K07-S2-positive",
+   "scenarios": [
+    "S2"
+   ],
+   "control": "positive",
+   "expectation": "(a) 未知の欄(command・exe)を足した答えを M2 が変更なしに読む。(b) pane_not_found は M3 で None",
+   "observation": "(a) → 'claude'。(b) pane_not_found → ('value', None)",
+   "evidence": {
+    "path": "evidence/scenarios-after.log",
+    "sha256": "c2a1730ace89f97512ec4821ca5ebfce8f9352272f4c154b5c2a307085f465fb"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "K08-S2-negative",
+   "scenarios": [
+    "S2"
+   ],
+   "control": "negative",
+   "expectation": "未知の error code(pane_exited)は M3 で None に畳まれず HerdrApiError のまま送出される(不在の写像を広げるなら M3 の except の 1 点)",
+   "observation": "('HerdrApiError', 'pane_exited')",
+   "evidence": {
+    "path": "evidence/scenarios-after.log",
+    "sha256": "c2a1730ace89f97512ec4821ca5ebfce8f9352272f4c154b5c2a307085f465fb"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "K09-S2-positive",
+   "scenarios": [
+    "S2"
+   ],
+   "control": "positive",
+   "expectation": "盲検 A の再現: protocol 22 の API 定義の PaneProcessInfo に版の欄が無く server.live_handoff に expected_protocol があること、和集合の契約の M2 が同じ答えを版によらず同じに読むこと",
+   "observation": "live_handoff の expected_protocol = True。PaneProcessInfo の欄 = foreground_process_group_id・foreground_processes・pane_id・shell_pid・tty。M2(X) = 'zsh'",
+   "evidence": {
+    "path": "evidence/blind-a-repro.log",
+    "sha256": "fd5d047258c00e1bc4510e12502b4cf3828c0e3f177c6f3510501424d7f77de7"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "K10-S3-positive",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "positive",
+   "expectation": "記録した zeus の答えを偽の socket から再生し、実 herdr なしで M3 が 'zsh' を返す(本体は無改変)",
+   "observation": "('value', 'zsh')",
+   "evidence": {
+    "path": "evidence/scenarios-after.log",
+    "sha256": "c2a1730ace89f97512ec4821ca5ebfce8f9352272f4c154b5c2a307085f465fb"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "K11-S3-negative",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "negative",
+   "expectation": "記録した zeus の答えを偽の socket から再生すると、修正前の本体(substrate_herdr.hy は 294aac38 と同じ・検だけ先に足した 6fdccb9e)は日次の赤と同じ KeyError: 'argv0' で落ちる(記録で決定的に赤を再現できる)",
+   "observation": "test_herdr_pane_current_command_reads_answers_without_argv0 が substrate_herdr.hy:444 の KeyError: 'argv0' で赤。同じ走行のもう 1 本(M2 の表の検)は M2 が未定義の ImportError で赤だが、狙った検出には数えない。2 failed",
+   "evidence": {
+    "path": "evidence/acceptance-red-before-fix.log",
+    "sha256": "f35fe8f5de921851b8758ceff8268ccf5722f49495078827902800a7cf5fd327"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "K12-S3-negative",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "negative",
+   "expectation": "契約の外の答え(argv0 = 5)の再生は HerdrContractError で名指され、None にも KeyError にもならない",
+   "observation": "('HerdrContractError', None)",
+   "evidence": {
+    "path": "evidence/scenarios-after.log",
+    "sha256": "c2a1730ace89f97512ec4821ca5ebfce8f9352272f4c154b5c2a307085f465fb"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "K13-S4-positive",
+   "scenarios": [
+    "S4"
+   ],
+   "control": "positive",
+   "expectation": "16 thread で同時に M3 を呼び、全部 'zsh'",
+   "observation": "16 件・値 [\"('value', 'zsh')\"]",
+   "evidence": {
+    "path": "evidence/scenarios-after.log",
+    "sha256": "c2a1730ace89f97512ec4821ca5ebfce8f9352272f4c154b5c2a307085f465fb"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "K14-S4-negative",
+   "scenarios": [
+    "S4"
+   ],
+   "control": "negative",
+   "expectation": "16 並行のうち 1 通だけ契約の外の答えを混ぜると、その 1 件だけが HerdrContractError になり、ほかへ漏れない",
+   "observation": "zsh 15 件・HerdrContractError 1 件",
+   "evidence": {
+    "path": "evidence/scenarios-after.log",
+    "sha256": "c2a1730ace89f97512ec4821ca5ebfce8f9352272f4c154b5c2a307085f465fb"
+   },
+   "status": "passed"
+  }
+ ],
+ "unresolved": []
+}

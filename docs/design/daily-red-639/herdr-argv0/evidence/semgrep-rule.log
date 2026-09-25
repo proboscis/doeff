@@ -1,0 +1,6 @@
+# semgrep 規則の検体の検 @ 72da0ff1195a8078909228ac8d1115c28daddeae + 作業樹の規則・検体
+2 passed in 7.45s
+## 規則を本線の src 全体へ(正常例 = 違反 0 件の見込み)
+ • Findings: 0 (0 blocking)
+Ran 81 rules on 82 files: 0 findings.
+exit=0

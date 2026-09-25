@@ -1,0 +1,15 @@
+# 検の先行(M2 は 72da0ff1 のまま)@ 72da0ff1195a8078909228ac8d1115c28daddeae + 作業樹の検の変更
+    (assert (= claude "claude"))
+    (assert (= zeus "zsh"))
+    (assert (= login "bash"))
+    (assert (= null-argv0 "zsh"))
+    (assert (= comm-only "codex"))
+    (assert (= dash-only "zsh"))
+>   (assert (= #(pipe-linux pipe-mac) #("sleep" "sleep")))
+E   AssertionError
+packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy:331: AssertionError
+    (assert (= #(pipe-linux pipe-mac) #("sleep" "sleep")))
+    (assert (= #(pipe-linux pipe-mac) #("sleep" "sleep")))
+AssertionError: 
+FAILED packages/doeff-agents/tests/test_sessionhost_substrate_herdr.py::test_herdr_foreground_command_follows_the_process_info_contract
+1 failed, 1 passed, 20 deselected in 10.21s

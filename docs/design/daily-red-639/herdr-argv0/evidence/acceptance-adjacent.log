@@ -1,0 +1,39 @@
+
+deadline scale x2.1 (load/core) — per test 127s, watchdog 189s
+
+test-admission: focused — 2 件(変更箇所の検証)
+..                                                                       [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156
+  /Users/kento/.worktrees/doeff-wt-herdr-argv0/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2 passed, 74 deselected, 1 warning in 29.38s

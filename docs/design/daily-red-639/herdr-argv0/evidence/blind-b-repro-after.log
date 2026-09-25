@@ -1,0 +1,19 @@
+# 本線 72da0ff1 + b57fe3dc(検と規則・M2 は 72da0ff1 のまま)の作業樹で、M2 を盲検 B の M2 に置き換える(evidence/blind-b-diff-after.patch = b57fe3dc からの差分)。B の差分は M2 の定義を丸ごと置き換えるので、M2 の修正の有無はこの判定に効かない
+## semgrep(pre-commit と同じ設定・変更した file)
+ • Findings: 3 (3 blocking)
+│ 3 Code Findings │
+   ❯❯❱ doeff-agents-idle-shell-vocabulary-is-policy-owned
+           88┆ (import doeff_agents.sessionhost.policy [IDLE-SHELL-COMMANDS])
+            ⋮┆----------------------------------------
+          443┆ IDLE-SHELL-COMMANDS)でない最初の process の command 名。全部が shell なら先頭。(盲検 B の差分)"
+            ⋮┆----------------------------------------
+          469┆ (match (lfor command commands :if (not-in command IDLE-SHELL-COMMANDS) command)
+exit=1
+## pytest M2 の表の検
+>     (import doeff_agents.sessionhost.substrate_herdr [herdr-foreground-command])
+>   (assert (= #(pipe-linux pipe-mac) #("sleep" "sleep")))
+E   AssertionError
+packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy:331: AssertionError
+AssertionError: 
+1 failed, 19 deselected in 11.15s
+exit=1
