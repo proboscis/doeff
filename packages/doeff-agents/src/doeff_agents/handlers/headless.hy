@@ -70,12 +70,14 @@
           self.context-id context-id
           self.fresh fresh
           self.lifecycle lifecycle
-          self.turn None
-          self.cursor -1
-          self.waiting []
-          self.events []
-          self.last-end None
-          self.stopped False)))
+          self.stopped False)
+    (setv #^ (| ClaudeTurn None) self.turn None)
+    (setv #^ int self.cursor -1)
+    (setv #^ (get list TurnInput) self.waiting [])
+    (setv #^ (get list (| AgentTextEvent AgentTextDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent
+                          AgentTurnEndEvent))
+          self.events [])
+    (setv #^ (| AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost None) self.last-end None)))
 
 (defclass HeadlessState []
   "handler の状態: session の名 → HeadlessSession(composition root が 1 つ作って渡す)。"

@@ -14,7 +14,7 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_claude_code.values [ClaudeTurn FreshSession ResumeSession ForkSession Rebuilt LinkFromHome IMAGE-MIMES])
 (import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage ToolResult InputFate PermissionRequested
-                                 TaskEvent TurnResult Completed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd])
+                                 TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus
                                    TurnStarted InputQueued InterruptRequested TurnEventPage Answered SessionClosed
@@ -48,23 +48,26 @@
 
 
 (defclass FakeTurn []
-  (defn __init__ [self #^ int seq #^ float started-at reply refs]
-    (setv self.seq seq
-          self.started-at started-at
-          self.reply reply
-          self.refs (list refs)
-          self.phase "quick"
-          self.due-at (+ started-at QUICK-TURN-SECONDS)
-          self.injections []
-          self.permission None
-          self.lines []
-          self.end None)))
+  "fake の手番 1 つ: phase = quick / tool / permission / done・permission = 答え待ちの許可の問いの id(無ければ None)・
+   end = 手番の終わり(まだなら None)。"
+  (defn __init__ [self #^ int seq #^ float started-at #^ FakeReply reply #^ (get tuple #(str ...)) refs]
+    (setv #^ int self.seq seq)
+    (setv #^ float self.started-at started-at)
+    (setv #^ FakeReply self.reply reply)
+    (setv #^ (get list str) self.refs (list refs))
+    (setv #^ str self.phase "quick")
+    (setv #^ float self.due-at (+ started-at QUICK-TURN-SECONDS))
+    (setv #^ (get list FakeInjection) self.injections [])
+    (setv #^ (| str None) self.permission None)
+    (setv #^ (get list ClaudeStreamLine) self.lines [])
+    (setv #^ (| Completed Failed Interrupted BackendLost None) self.end None)))
 
 
 (defclass FakeSession []
   (defn __init__ [self #^ str session-id home #^ str cwd]
     (setv self.session-id session-id self.home home self.cwd cwd
-          self.turns {} self.current-seq 0 self.next-line-seq 0 self.closed False))
+          self.current-seq 0 self.next-line-seq 0 self.closed False)
+    (setv #^ (get dict #(int FakeTurn)) self.turns {}))
 
   (defn running [self]
     (setv turn (.get self.turns self.current-seq))
@@ -143,9 +146,10 @@
   (cond
     reply.needs-permission
       (do
-        (setv turn.phase "permission" turn.permission (str (uuid.uuid4)))
+        (setv request-id (str (uuid.uuid4)))
+        (setv turn.phase "permission" turn.permission request-id)
         (<- (emit-all session turn [(AssistantMessage :tool-names #("Bash"))
-                                    (PermissionRequested turn.permission "Bash" (FrozenMap {"command" "fake"}))])))
+                                    (PermissionRequested request-id "Bash" (FrozenMap {"command" "fake"}))])))
     (> reply.tool-seconds 0)
       (do
         (setv turn.phase "tool" turn.due-at (+ now reply.tool-seconds))
@@ -186,7 +190,10 @@
   (setv session-id (if (isinstance origin ForkSession) (str (uuid.uuid4)) target))
   (setv key (.transcript-key world spec.home spec.cwd session-id))
   (when (isinstance origin ForkSession)
-    (setv (get world.transcripts key) (list (transcript-of world spec.home spec.cwd target))))
+    (setv parent (transcript-of world spec.home spec.cwd target))
+    (when (is parent None)
+      (raise (RuntimeError (.format "枝分かれの元の会話 {} の transcript が無い(在ることは上で確かめた)" target))))
+    (setv (get world.transcripts key) (list parent)))
   (when (isinstance origin FreshSession) (setv (get world.transcripts key) []))
   (setv session (or existing (FakeSession session-id spec.home spec.cwd)))
   (setv session.closed False)
@@ -236,7 +243,8 @@
 (defk fake-read-events [#^ FakeClaudeWorld world #^ ClaudeReadTurnEvents request]
   {:pre [(: world FakeClaudeWorld) (: request ClaudeReadTurnEvents)] :post [(: % (| TurnEventPage UnknownTurn))]}
   (setv session (.get world.sessions request.turn.session-id))
-  (setv turn (if (is session None) None (.get session.turns request.turn.turn-seq)))
+  (when (is session None) (return (UnknownTurn request.turn)))
+  (setv turn (.get session.turns request.turn.turn-seq))
   (when (is turn None) (return (UnknownTurn request.turn)))
   (<- started (GetMonotonic))
   (setv deadline (+ started (float request.wait-up-to)))
@@ -286,7 +294,8 @@
 (defk fake-drop [#^ FakeClaudeWorld world #^ str session-id]
   {:pre [(: world FakeClaudeWorld) (: session-id str)] :post [(: % bool)]}
   (setv session (.get world.sessions session-id))
-  (setv running (if (is session None) None (.running session)))
+  (when (is session None) (return False))
+  (setv running (.running session))
   (when (is running None) (return False))
   (<- (finish session running (BackendLost "process killed (fake)")))
   True)

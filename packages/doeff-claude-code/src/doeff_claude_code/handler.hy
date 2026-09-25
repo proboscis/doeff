@@ -21,7 +21,7 @@
 (import doeff_time [Delay GetMonotonic])
 (import doeff_claude_code.values [ClaudeTurn ClaudeHome ClaudeSessionSpec TurnInput FreshSession ResumeSession ForkSession
                                   LinkFromHome Rebuilt IMAGE-MIMES])
-(import doeff_claude_code.lines [ClaudeStreamLine Interrupted parse-record classify-record])
+(import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost parse-record classify-record])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus
                                    TurnStarted InputQueued InterruptRequested TurnEventPage Answered SessionClosed
@@ -44,14 +44,24 @@
 ;; --- 状態 ---------------------------------------------------------------------------------------
 
 (defclass TurnLog []
-  "1 つの手番の行と終わり。"
+  "1 つの手番の行と終わり(まだ終わっていなければ end は None)。"
   (defn __init__ [self]
-    (setv self.lines [] self.end None)))
+    (setv #^ (get list ClaudeStreamLine) self.lines [])
+    (setv #^ (| Completed Failed Interrupted BackendLost None) self.end None)))
 
 (defclass Binding []
-  "1 つの process と、その process が今走らせている手番の番号(生き残った入力の手番へ進む)。"
+  "1 つの process と、その process が今走らせている手番の番号(生き残った入力の手番へ進む)。
+   process は起こすまで None。"
   (defn __init__ [self #^ int turn-seq]
-    (setv self.process None self.turn-seq turn-seq)))
+    (setv #^ (| ClaudeProcess None) self.process None)
+    (setv #^ int self.turn-seq turn-seq)))
+
+(defn #^ ClaudeProcess process-of [#^ Binding binding]
+  "binding の process。起こす前に読むのは handler の実装の誤り(RuntimeError)。"
+  (setv process binding.process)
+  (when (is process None)
+    (raise (RuntimeError (.format "手番 {} の process をまだ起こしていない" binding.turn-seq))))
+  process)
 
 (defclass SessionRuntime []
   "1 つの会話の状態(handler の中だけ)。session-id は ForkSession の init を読むまで空。"
@@ -61,18 +71,31 @@
           self.canonical-cwd canonical-cwd
           self.lock (threading.Lock)
           self.state (DialogueState :session-id session-id)
-          self.binding None
-          self.turns {}
           self.current-seq 0
           self.next-line-seq 0
           self.init-seen False
-          self.closed False))
+          self.closed False)
+    (setv #^ (| Binding None) self.binding None)
+    (setv #^ (get dict #(int TurnLog)) self.turns {}))
 
-  (defn [property] process [self]
+  (defn [property] #^ (| ClaudeProcess None) process [self]
     (if (is self.binding None) None self.binding.process))
 
-  (defn current-log [self]
+  (defn #^ ClaudeProcess bound-process [self]
+    "今の binding の process。binding も process も無いのは handler の実装の誤り(RuntimeError)。"
+    (when (is self.binding None)
+      (raise (RuntimeError (.format "会話 {} に process の binding が無い" self.session-id))))
+    (process-of self.binding))
+
+  (defn #^ (| TurnLog None) current-log [self]
     (.get self.turns self.current-seq))
+
+  (defn #^ TurnLog open-log [self]
+    "今の手番の TurnLog。手番を開く前に読むのは handler の実装の誤り(RuntimeError)。"
+    (setv log (.current-log self))
+    (when (is log None)
+      (raise (RuntimeError (.format "会話 {} の手番 {} の記録が無い" self.session-id self.current-seq))))
+    log)
 
   (defn running-turn [self]
     "走っている手番(無ければ None)。"
@@ -119,9 +142,8 @@
   "遷移の答えを運ぶ: 状態を差し替え、stdin へ書き、SIGINT を送り、手番の終わりを記し、close なら process を降ろし始める。
    runtime.lock の中で呼ぶ。"
   (setv runtime.state transition.state)
-  (setv process binding.process)
-  (for [line transition.sends] (.send process line))
-  (when transition.signal (.interrupt process))
+  (for [line transition.sends] (.send (process-of binding) line))
+  (when transition.signal (.interrupt (process-of binding)))
   (when (is-not transition.session-id None)
     (setv runtime.init-seen True)
     (when (not runtime.session-id) (setv runtime.session-id transition.session-id)))
@@ -134,7 +156,7 @@
       (setv end (replace end :continued-by (ClaudeTurn runtime.session-id next-seq))))
     (when (and (is-not log None) (is log.end None))
       (setv log.end end)))
-  (when transition.close (.retire process)))
+  (when transition.close (.retire (process-of binding))))
 
 (defn on-line [#^ SessionRuntime runtime #^ Binding binding clock #^ str raw]
   (setv record (parse-record raw))
@@ -251,7 +273,7 @@
                            (fn [code tail] (on-exit runtime binding code tail))))
       (except [error OSError]
         (setv runtime.binding None)
-        (setv (. (.current-log runtime) end) (Interrupted))
+        (setv (. (.open-log runtime) end) (Interrupted))
         (return (LaunchFailed :stderr-tail (str error)))))
     (apply-transition runtime binding transition)
     turn-seq))
@@ -260,7 +282,7 @@
   {:pre [(: host ClaudeCodeHost) (: runtime SessionRuntime) (: turn-seq int) (: fresh-runtime bool)]
    :post [(: % (| TurnStarted LaunchFailed))]}
   "init の行(か process の終わり)まで待つ。init の前に降りた・期限を過ぎた = LaunchFailed(新しく作った会話の記録は忘れる)。"
-  (setv process runtime.process)
+  (setv process (.bound-process runtime))
   (<- seen (wait-until (fn [] (or runtime.init-seen (not (.alive process)))) host.launch-timeout))
   (with [runtime.lock]
     (setv started runtime.init-seen))
@@ -270,10 +292,10 @@
         (TurnStarted (ClaudeTurn runtime.session-id turn-seq) runtime.session-id))
       (do
         (when seen
-          (<- (wait-until (fn [] (is-not (. (.get runtime.turns turn-seq) end) None)) 2.0)))
+          (<- (wait-until (fn [] (is-not (. (get runtime.turns turn-seq) end) None)) 2.0)))
         (.drop process)
         (with [runtime.lock]
-          (setv log (.get runtime.turns turn-seq))
+          (setv log (get runtime.turns turn-seq))
           (when (is log.end None) (setv log.end (Interrupted))))
         (when fresh-runtime (.forget host runtime.session-id runtime))
         (LaunchFailed :exit-code (.exit-code process)
@@ -295,7 +317,9 @@
                                  (is-not spec.cold-resume-prompt None)))
   (when (isinstance decision Refuse) (return decision.outcome))
   (when decision.wait-retire
-    (setv old runtime.process)
+    (when (is runtime None)
+      (raise (RuntimeError (.format "降りるのを待つ会話 {} の状態が無い(start-decision の誤り)" target-id))))
+    (setv old (.bound-process runtime))
     (<- down (wait-until (fn [] (not (.alive old))) RETIRE-WAIT-SECONDS))
     (when (not down)
       (return (LaunchFailed :stderr-tail "the previous process of this session did not go down"))))
@@ -349,7 +373,7 @@
     (apply-transition runtime runtime.binding transition))
   (Answered))
 
-(defn page-of [runtime #^ ClaudeTurn turn #^ int after-seq]
+(defn #^ (| TurnEventPage None) page-of [#^ SessionRuntime runtime #^ ClaudeTurn turn #^ int after-seq]
   "名指した手番の after-seq より後の行と終わり(知らない手番は None)。"
   (with [runtime.lock]
     (setv log (.get runtime.turns turn.turn-seq))
@@ -363,10 +387,12 @@
   (setv runtime (.runtime host turn.session-id))
   (when (or (is runtime None) (is (page-of runtime turn request.after-seq) None))
     (return (UnknownTurn turn)))
+  ;; 待つ間に古い手番として刈られた手番は、知らない手番と同じに答える。
   (<- (wait-until (fn [] (setv page (page-of runtime turn request.after-seq))
-                         (or page.lines (is-not page.end None)))
+                         (or (is page None) (bool page.lines) (is-not page.end None)))
                   (float request.wait-up-to)))
-  (page-of runtime turn request.after-seq))
+  (setv page (page-of runtime turn request.after-seq))
+  (if (is page None) (UnknownTurn turn) page))
 
 (defk close-session [#^ ClaudeCodeHost host #^ ClaudeCloseSession request]
   {:pre [(: host ClaudeCodeHost) (: request ClaudeCloseSession)] :post [(: % (| SessionClosed ProcessStillAlive))]}
@@ -377,7 +403,7 @@
     (setv transition (dialogue.close-session runtime.state))
     (setv runtime.state transition.state)
     (when (is-not transition.end None)
-      (setv (. (.current-log runtime) end) transition.end))
+      (setv (. (.open-log runtime) end) transition.end))
     (setv runtime.closed True)
     (setv process runtime.process))
   (when (and (is-not process None) (.alive process))

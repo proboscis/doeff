@@ -133,16 +133,20 @@
   ;; -- 読み手 ----------------------------------------------------------------------------------
 
   (defn read-stderr [self]
-    (for [raw self.process.stderr]
+    (setv stream self.process.stderr)
+    (when (is stream None) (raise (RuntimeError "claude の process の stderr を pipe で開いていない")))
+    (for [raw stream]
       (.append self.stderr-lines raw)))
 
   (defn read-stdout [self]
+    (setv stream self.process.stdout)
+    (when (is stream None) (raise (RuntimeError "claude の process の stdout を pipe で開いていない")))
     (try
-      (for [raw self.process.stdout]
+      (for [raw stream]
         (self.on-line raw))
       (finally
         (with [(contextlib.suppress OSError)]
-          (.close self.process.stdout))
+          (.close stream))
         (setv code (.wait self.process))
         (.join self.stderr-reader 2.0)
         (self.on-exit code (.stderr-tail self))))))
