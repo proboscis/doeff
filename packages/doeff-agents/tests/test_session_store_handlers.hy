@@ -27,6 +27,7 @@
   COLUMN-NAMES
   POSTGRES
   QUERY-COLUMNS
+  QueryColumn
   SQLITE
   checked-table-name
   select-many-statement
@@ -169,8 +170,9 @@
   ;; 欄が増えて写しが無いと SQL の答えが黙って広がる。import の時の検めの反例も確かめる。
   (import dataclasses [fields])
   (assert (= (sfor field (fields AgentSessionQuery) field.name) (set QUERY-COLUMNS)))
-  (for [#(column _) (.values QUERY-COLUMNS)]
-    (assert (in column COLUMN-NAMES) f"query の列が表に無い: {column}"))
+  (for [mapping (.values QUERY-COLUMNS)]
+    (assert (isinstance mapping QueryColumn))
+    (assert (in mapping.column COLUMN-NAMES) f"query の列が表に無い: {mapping.column}"))
   None)
 
 
