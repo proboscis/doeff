@@ -92,13 +92,18 @@ def check_layer() -> ModuleType | None:
     return module
 
 
-def _stand_in_bin(directory: Path, codex: str | None) -> Path:
-    """A PATH directory holding only the stand-in ``codex`` (or nothing, when None)."""
+def _stand_in_bin(directory: Path, codex: str | None, *, git: str | None = None) -> Path:
+    """A PATH directory holding only the stand-in ``codex`` (or nothing, when None).
+
+    ``git`` links this machine's git in as well, for the runs that ask for a checkout.
+    """
     directory.mkdir(parents=True, exist_ok=True)
     if codex is not None:
         tool = directory / "codex"
         tool.write_text(codex, encoding="utf-8")
         tool.chmod(0o755)
+    if git is not None:
+        (directory / "git").symlink_to(git)
     return directory
 
 
@@ -119,9 +124,14 @@ def _probes(home: Path) -> int:
 
 
 def _run_pytest(
-    tmp_path: Path, cwd: Path, home: Path, path_dir: Path, *args: str
+    tmp_path: Path,
+    cwd: Path,
+    home: Path,
+    path_dir: Path,
+    *args: str,
+    env: dict[str, str] | None = None,
 ) -> pytest.RunResult:
-    """Run pytest in a new process that sees only the stand-in HOME and PATH.
+    """Run pytest in a new process that sees only the stand-in HOME and PATH (and ``env``).
 
     The stand-ins go to the child's environment alone: this process keeps its own
     PATH (its memory guard thread starts ``ps``), and a real codex further down a
@@ -139,7 +149,7 @@ def _run_pytest(
             *args,
         ],
         cwd=cwd,
-        env={**os.environ, "HOME": str(home), "PATH": str(path_dir)},
+        env={**os.environ, **(env or {}), "HOME": str(home), "PATH": str(path_dir)},
         capture_output=True,
         text=True,
         timeout=120,
@@ -154,16 +164,53 @@ def _run_pytest(
 
 
 def _sample_machine(
-    tmp_path: Path, *, codex: str | None, with_check_layer: bool
+    tmp_path: Path,
+    *,
+    codex: str | None,
+    with_check_layer: bool,
+    sample: str = SAMPLE_TEST,
+    git: str | None = None,
 ) -> tuple[pytest.RunResult, Path]:
-    """Run two tests that need ``codex`` under the root conftest on a stand-in machine."""
+    """Run ``sample`` (by default two tests that need ``codex``) under the root conftest."""
     project = tmp_path / "project"
     project.mkdir()
     (project / "conftest.py").write_text(ROOT_CONFTEST.read_text(encoding="utf-8"), "utf-8")
-    (project / "test_premise.py").write_text(SAMPLE_TEST, encoding="utf-8")
+    (project / "test_premise.py").write_text(sample, encoding="utf-8")
     home = _home(tmp_path / "home", with_check_layer=with_check_layer)
-    path_dir = _stand_in_bin(tmp_path / "bin", codex)
+    path_dir = _stand_in_bin(tmp_path / "bin", codex, git=git)
     return _run_pytest(tmp_path, project, home, path_dir, "-q", "test_premise.py"), home
+
+
+def _checkout_sample(checkout: Path, commit: str) -> str:
+    """A test that needs ``checkout`` holding ``commit`` — the shape of the custody copy test."""
+    return (
+        "from pathlib import Path\n\n\n"
+        "def test_reads_the_pinned_contract(machine_checkout):\n"
+        f"    checkout = machine_checkout(Path({str(checkout)!r}), {commit!r})\n"
+        '    assert (checkout / "contract.json").exists()\n'
+    )
+
+
+def _git_checkout(directory: Path, git: str) -> tuple[Path, str]:
+    """A fresh git checkout with one commit; returns its path and the commit."""
+    directory.mkdir(parents=True)
+    quiet = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+
+    def run(*args: str) -> str:
+        """Run git in the checkout without this machine's own git config or hooks."""
+        return subprocess.run(
+            [git, "-C", str(directory), *args],
+            env=quiet,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+    run("init", "-q")
+    (directory / "contract.json").write_text("{}\n", encoding="utf-8")
+    run("add", "contract.json")
+    run("-c", "user.name=premise", "-c", "user.email=premise@example.invalid", "commit", "-qm", "c")
+    return directory, run("rev-parse", "HEAD")
 
 
 def _declarations(check_layer: ModuleType, result: pytest.RunResult) -> tuple:
@@ -286,3 +333,155 @@ def test_real_codex_worker_test_names_a_codex_that_does_not_start(
     assert [declaration.kind for declaration in declarations] == ["tool-absent"]
     assert declarations[0].reason.startswith(f"{CODEX_TEST}: codex")
     assert "exits 127: codex: router entry point" in declarations[0].reason
+
+
+# --- A premise other than a tool: a git checkout holding a pinned commit (依頼書 K) ----------
+
+CHECKOUT_NODEID = "test_premise.py::test_reads_the_pinned_contract"
+CUSTODY_FILE = "packages/doeff-agents/tests/test_sessionhost_acp_custody_lender_copy.py"
+CUSTODY_TEST = f"{CUSTODY_FILE}::test_the_copy_is_the_custody_contract_at_the_pinned_commit"
+
+
+def _assert_declared(
+    result: pytest.RunResult, check_layer: ModuleType | None, kind: str, nodeid: str, said: str
+) -> None:
+    """One test skipped and named not-executed under ``kind`` (or in the summary on a bare clone)."""
+    if check_layer is None:
+        result.stdout.fnmatch_lines(
+            [f"1 test(s) {SUMMARY_WITHOUT_CHECK_LAYER}: {nodeid}: *{said}*"]
+        )
+        return
+    declarations = _declarations(check_layer, result)
+    assert [declaration.kind for declaration in declarations] == [kind]
+    assert declarations[0].reason.startswith(f"{nodeid}: ")
+    assert said in declarations[0].reason
+    # Machine-bound: the land tool looks for another machine instead of retrying this one.
+    assert declarations[0].kind in check_layer.MACHINE_BOUND_UNEXECUTED_KINDS
+
+
+def test_missing_checkout_is_skipped_and_named_premise_unmet(
+    tmp_path: Path, check_layer: ModuleType | None, machine_tool
+) -> None:
+    """zeus's shape: no custody checkout — skipped and named premise-unmet, not red."""
+    missing = tmp_path / "no-checkout"
+    result, _ = _sample_machine(
+        tmp_path,
+        codex=None,
+        with_check_layer=True,
+        sample=_checkout_sample(missing, "0" * 40),
+        git=machine_tool("git"),
+    )
+
+    result.assert_outcomes(skipped=1)
+    assert result.ret == 0
+    _assert_declared(result, check_layer, "premise-unmet", CHECKOUT_NODEID, f"checkout {missing}")
+
+
+def test_checkout_without_the_pinned_commit_is_premise_unmet(
+    tmp_path: Path, check_layer: ModuleType | None, machine_tool
+) -> None:
+    """A checkout that has not fetched the pinned commit is a machine premise, not red."""
+    git = machine_tool("git")
+    checkout, _ = _git_checkout(tmp_path / "checkout", git)
+    result, _ = _sample_machine(
+        tmp_path,
+        codex=None,
+        with_check_layer=True,
+        sample=_checkout_sample(checkout, "1" * 40),
+        git=git,
+    )
+
+    result.assert_outcomes(skipped=1)
+    assert result.ret == 0
+    _assert_declared(
+        result, check_layer, "premise-unmet", CHECKOUT_NODEID, f"does not hold commit {'1' * 40}"
+    )
+
+
+def test_checkout_holding_the_pinned_commit_runs_the_test(
+    tmp_path: Path, check_layer: ModuleType | None, machine_tool
+) -> None:
+    """When the premise holds the test runs (and whatever it finds is its own answer)."""
+    git = machine_tool("git")
+    checkout, commit = _git_checkout(tmp_path / "checkout", git)
+    result, _ = _sample_machine(
+        tmp_path,
+        codex=None,
+        with_check_layer=True,
+        sample=_checkout_sample(checkout, commit),
+        git=git,
+    )
+
+    result.assert_outcomes(passed=1)
+    assert SUMMARY_WITHOUT_CHECK_LAYER not in result.stdout.str()
+    if check_layer is not None:
+        assert _declarations(check_layer, result) == ()
+
+
+def test_checkout_premise_on_a_machine_without_git_names_the_tool(
+    tmp_path: Path, check_layer: ModuleType | None
+) -> None:
+    """git itself is a tool premise: without it the checkout cannot be read (tool-absent)."""
+    result, _ = _sample_machine(
+        tmp_path,
+        codex=None,
+        with_check_layer=True,
+        sample=_checkout_sample(tmp_path / "checkout", "0" * 40),
+    )
+
+    result.assert_outcomes(skipped=1)
+    _assert_declared(result, check_layer, "tool-absent", CHECKOUT_NODEID, "git is not on PATH")
+
+
+def test_each_unmet_premise_is_named_under_its_own_word(
+    tmp_path: Path, check_layer: ModuleType | None, machine_tool
+) -> None:
+    """A tool and a checkout unmet in one run: one not-executed line per check-layer word."""
+    missing = tmp_path / "no-checkout"
+    sample = (
+        SAMPLE_TEST
+        + "\n\n"
+        + _checkout_sample(missing, "0" * 40).replace(
+            "from pathlib import Path\n\n\n", "from pathlib import Path\n"
+        )
+    )
+    result, _ = _sample_machine(
+        tmp_path,
+        codex=ROUTER_WITHOUT_BINARY,
+        with_check_layer=True,
+        sample=sample,
+        git=machine_tool("git"),
+    )
+
+    result.assert_outcomes(skipped=3)
+    assert result.ret == 0
+    if check_layer is None:
+        result.stdout.fnmatch_lines([f"3 test(s) {SUMMARY_WITHOUT_CHECK_LAYER}: *"])
+        return
+    declarations = {d.kind: d.reason for d in _declarations(check_layer, result)}
+    assert sorted(declarations) == ["premise-unmet", "tool-absent"]
+    assert declarations["tool-absent"].startswith(f"{FIRST_NODEID}: codex")
+    assert CHECKOUT_NODEID not in declarations["tool-absent"]
+    assert declarations["premise-unmet"] == f"{CHECKOUT_NODEID}: checkout {missing} is missing"
+
+
+def test_custody_copy_test_names_a_machine_without_the_custody_checkout(
+    tmp_path: Path, check_layer: ModuleType | None, machine_tool
+) -> None:
+    """The real custody copy test on a machine without the checkout: rc 0, skipped, premise-unmet."""
+    missing = tmp_path / "no-custody"
+    result = _run_pytest(
+        tmp_path,
+        REPO_ROOT,
+        _home(tmp_path / "home", with_check_layer=True),
+        _stand_in_bin(tmp_path / "bin", None, git=machine_tool("git")),
+        "-q",
+        "-m",
+        "not e2e",
+        CUSTODY_FILE,
+        env={"CUSTODY_CHECKOUT": str(missing)},
+    )
+
+    assert result.ret == 0, result.stdout.str() + result.stderr.str()
+    result.assert_outcomes(passed=6, skipped=1)
+    _assert_declared(result, check_layer, "premise-unmet", CUSTODY_TEST, f"checkout {missing}")
