@@ -17,6 +17,8 @@
 ;;;                        時計で書き・判じる — semaphore_model.lease-op・2026-09-25)。答え {"ok" "reason" "ttlMs"}
 ;;;   GET    /workers/<名>                      worker の生存・世代・drain の進み(ready = 生きていて drain 中でない)
 ;;;   POST   /workers/<名>/drain {"ttlSeconds"?}  drain を頼む(何度でも同じ意味・期限だけ延びる)。DELETE で取り消す(drain_policy)
+;;;   PUT /detached/<key> · GET /detached/<key> · POST /detached/<key>/cancel · DELETE /detached/<key>
+;;;                        切り離した task(呼び手と寿命を切り離した task — 送る・読む・取り消す・保持を解く。detached_policy)
 ;;; 書きには header X-Actor(依頼の主体の id・作業係の名・worker の名)が要る。盤と task は無ければ送り元の番地で記録する。
 ;;; 旧い口(PUT /jobs・/heartbeat・/board・/tasks)は残す。PUT /jobs は資源ごとの compare-and-set に写す(resource_policy)。
 (import dataclasses [replace])
@@ -29,6 +31,7 @@
                           list-resources get-resource events-view create-resource update-resource delete-resource
                           legacy-put-jobs COORDINATOR])
 (import .drain_policy [advance-drains request-drain cancel-drain worker-view drains-view])
+(import .detached_policy [submit-detached detached-view cancel-detached release-detached])
 (import .rollout_policy [rollout-step target-key deployment-owners drift-status action-due shift-clocks TERMINAL-PHASES])
 
 (setv OBSERVATION-STALE-MS 15000)   ; これより古い k8s の観測は Unknown
@@ -281,6 +284,18 @@
         #((settle state (replace state :tasks (dfor #(k v) (.items state.tasks) :if (!= k (get parts 1)) k v))
                   (loose-actor request) now timing)
           200 {"dropped" True})
+      ;; --- 切り離した task(2026-09-25 — detached_policy)---
+      (and (= method "PUT") (= head "detached") (= (len parts) 2))
+        (do (setv #(after status reply) (submit-detached state (get parts 1) body now))
+            #((if (is after state) state (settle state after (loose-actor request) now timing)) status reply))
+      (and (= method "GET") (= head "detached") (= (len parts) 2))
+        #(state 200 (detached-view state (get parts 1)))
+      (and (= method "POST") (= head "detached") (= (len parts) 3) (= (get parts 2) "cancel"))
+        (do (setv #(after reply) (cancel-detached state (get parts 1) now))
+            #((if (is after state) state (settle state after (loose-actor request) now timing)) 200 reply))
+      (and (= method "DELETE") (= head "detached") (= (len parts) 2))
+        (do (setv #(after status reply) (release-detached state (get parts 1)))
+            #((if (is after state) state (settle state after (loose-actor request) now timing)) status reply))
       True #(state 404 {"error" (.format "知らない要求: {} {}" method request.path)}))
     (except [refused Refused]
       #(state refused.status refused.body))
