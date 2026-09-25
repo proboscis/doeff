@@ -160,7 +160,7 @@
 (import hy)
 (import doeff [run])
 (import doeff_hy.sexpr [args-of body-of])
-(import doeff_agents.sessionhost.acp.agentd [sweep-turn-records])
+(import doeff_agents.sessionhost.acp.agentd [end-retired-records sweep-turn-records])
 (import doeff_agents.sessionhost.acp.effects
         [AGENT-JOB-KIND AGENT-JOB-NAMESPACE AGORA-KINDS-NAMESPACE AcpGetRow AcpPutStatus AcpRow AgentdSettings
          AgentdState CONVERSATION-ID-ENV CaptureGone InFlightJob JSONObject JoinArgv JoinDeclaration JoinPlan JoinSpec
@@ -849,12 +849,37 @@
   out)
 
 
+(defk end-only-violations [ended-roles materials forms writer]
+  {:pre [(: ended-roles CalleeRoles) (: materials MaterialClasses) (: forms list) (: writer str)]
+   :post [(: % list)]}
+  "材料を持たない書き手(巡回・退役 — 手番の memory を持たない)の本体の turn-record-ended-status の全ての呼びで、手番の終わり
+   だけの材料の役に宣言の空の値ちょうどを渡しているか(呼びが 1 つ以上在るか)を確かめ、違反を失敗文の列で返すため。
+   writer = 失敗文で名乗る書き手の名(盲検 A: 同じ規則の要る退役の書きが検の外だった)。"
+  (setv out [])
+  (<- ended-calls list (calls-in forms "turn-record-ended-status"))
+  (when (not ended-calls)
+    (.append out f"{writer}が turn-record-ended-status を呼んでいない(R49 — 閉じる記録の status を組まない)"))
+  (for [call ended-calls]
+    (<- passed dict (call-roles ended-roles call))
+    (for [[role material] (.items materials.end-only)]
+      (when (in role ended-roles.names)
+        (setv form (.get passed role (.get ended-roles.defaults role)))
+        (if (is form None)
+            (do (<- call-shown str (form-text call))
+                (.append out f"{writer}が {role} を渡していない(呼びが呼び先の定義に合わない: {call-shown})"))
+            (do (<- form-shown str (form-text form))
+                (when (!= form-shown (.removeprefix (hy.repr material.empty) "'"))
+                  (.append out f"{writer}が {role} に {form-shown} を渡している(R49 — {material.reason})")))))))
+  out)
+
+
 (defk sweep-violations [callees materials sweep-body resolve]
   {:pre [(: callees SweepCallees) (: materials MaterialClasses) (: sweep-body list) (: resolve dict)]
    :post [(: % list)]}
   "R49 の巡回の本体(form の列)を呼び先と引数の役で読み、違反を失敗文の列で返す(空 = 緑)。確かめること:
    (1) turn-record-ended-status の引数が全て材料の分類(effects の宣言)に在る
-   (2) 巡回の中の全ての turn-record-ended-status の呼びで、手番の終わりだけの材料の役には宣言の空の値ちょうど(呼びが 1 つ以上)
+   (2) 巡回の中の全ての turn-record-ended-status の呼びで、手番の終わりだけの材料の役には宣言の空の値ちょうど(呼びが 1 つ以上・
+       end-only-violations — 退役の書きにも同じ口を当てる)
    (3) AcpPutStatus の row は AcpGetRow の答え(読み直した行)で、その key は turn-record-key-of の答え(記録の鍵)
    (4) AcpPutStatus の status は turn-record-ended-status の答えちょうどで、書く前に他の式で使わない
    (5) turn-record-ended-status の status は、書く行の status-object-of の答え
@@ -873,20 +898,9 @@
   (when missing-roles
     (return out))
   ;; (2) 手番の終わりだけの材料。
+  (<- end-only-wrongs list (end-only-violations callees.ended materials sweep-body "巡回"))
+  (.extend out end-only-wrongs)
   (<- ended-calls list (calls-in sweep-body "turn-record-ended-status"))
-  (when (not ended-calls)
-    (.append out "巡回が turn-record-ended-status を呼んでいない(R49 — 閉じる記録の status を組まない)"))
-  (for [call ended-calls]
-    (<- passed dict (call-roles callees.ended call))
-    (for [[role material] (.items materials.end-only)]
-      (when (in role callees.ended.names)
-        (setv form (.get passed role (.get callees.ended.defaults role)))
-        (if (is form None)
-            (do (<- call-shown str (form-text call))
-                (.append out f"巡回が {role} を渡していない(呼びが呼び先の定義に合わない: {call-shown})"))
-            (do (<- form-shown str (form-text form))
-                (when (!= form-shown (.removeprefix (hy.repr material.empty) "'"))
-                  (.append out f"巡回が {role} に {form-shown} を渡している(R49 — {material.reason})")))))))
   ;; (3)(4) 書く行と書く status。
   (<- put-calls list (calls-in sweep-body "AcpPutStatus"))
   (when (not put-calls)
@@ -1145,6 +1159,42 @@
                       :verdict-row "row" :status-row "row"
                       :expected #("巡回が閉じる status を読み直した行から組んでいない(R49 — turn-record-ended-status の status に record-status を渡している — 書く行の status-object-of の答えではない)"
                                   "巡回が読み直した行で判断していない(R49 — turn-record-sweep-verdict の record に row を渡している — 書く行ではない)"))])
+
+
+;; 退役の書き(agentd.end-retired-records)の反例: 材料を持たない書き手の口(end-only-violations)を、今日の退役と同じ骨組みの
+;; 作り物の本体で撃つ。
+(setv RETIRE-CASE-TEMPLATE "(for [row retired]
+  (<- key str (turn-record-key-of row.resource-id))
+  (<- record (| AcpRow None) (AcpGetRow :key key))
+  (when (is-not record None)
+    (<- record-status dict (status-object-of record))
+    (<- retired-status dict (status-object-of row))
+    (<- retired-conditions tuple (row-conditions-of retired-status))
+    %ENDED-CALL%
+    (<- wrote (| Written Conflict Refused) (AcpPutStatus :row record :status ended))))")
+
+
+(defclass [(dataclasses.dataclass :frozen True)] RetireRoleCase []
+  "退役の書きの反例の 1 例: 名・turn-record-ended-status の呼びの差し替え・期待する失敗文の列(空 = 緑)。材料を持たない
+   書き手の口が、巡回だけでなく退役の書きでも意図した文で赤になることを確かめるため。"
+  #^ str label
+  #^ str ended-call
+  #^ tuple expected)
+
+
+(setv RETIRE-ROLE-CASES
+      [(RetireRoleCase :label "正常例 今日の退役の書き"
+                       :ended-call "(<- ended dict (turn-record-ended-status record-status None #() retired-conditions))"
+                       :expected #())
+       (RetireRoleCase :label "違反例 退役の書きが usage に値"
+                       :ended-call "(<- ended dict (turn-record-ended-status record-status usage-total #() retired-conditions))"
+                       :expected #("退役の書きが usage に usage-total を渡している(R49 — 消費の和は手番の終わりの 1 回)"))
+       (RetireRoleCase :label "違反例 退役の書きが keyword で cache-observation"
+                       :ended-call (+ "(<- ended dict (turn-record-ended-status record-status None #() retired-conditions"
+                                      " :cache-observation retired-cache))")
+                       :expected #("退役の書きが cache_observation に retired-cache を渡している(R49 — cache の観測は手番の終わりの 1 回)"))
+       (RetireRoleCase :label "違反例 退役の書きが呼びを消す" :ended-call "(setv ended {})"
+                       :expected #("退役の書きが turn-record-ended-status を呼んでいない(R49 — 閉じる記録の status を組まない)"))])
 
 
 (defclass World []
@@ -1594,7 +1644,8 @@
           (counterexample "終端の書きが cause を運ぶことを、**呼びの 1 行の字面**で pin する針で守る形: 局所変数を 1 つ改名した正当な便(job-status → fresh-status・6401d1d5 2026-09-17)だけで『cause を渡していない』と赤くなり、しかも 2 本の針が同じ 1 文字列を共有していて同時に落ちた(実弾 2026-09-17〜19 の日次)。渡っている cause は 1 度も欠けていない。守るべきは綴りではなく**役**なので、呼び先と引数の役(4 引数・第 3 が cause を運ぶ式)で撃つ")
           (counterexample "巡回が閉じる記録に usage を書かないことを、**呼びの字面** \"(turn-record-ended-status record-status None #())\" の部分一致で守る形: 巡回が対の agent-job の条件を写すために引数 pair-conditions を 1 つ足した正当な便(f3858b94)だけで、usage を書いていないのに『巡回が usage を書いている』と赤くなった(日次の赤 2026-09-26・agora-redesign#639)。usage・entries・responses の位置は呼び先 turn-record-ended-status の defk の引数の並びから導き、巡回の本体の form の呼びを役へ写して確かめる(sweep-violations)")
           (counterexample "どの引数が『手番の終わりにしか数えられない材料』かの表を**検の側**に持つ形: 表に無い材料(cache-observation)を巡回が渡しても緑で、呼び先が材料を 1 つ足す(model ごとの消費)たびに検も直さないと黙って緑になる(盲検 A・依頼 lt-N23MQ5ZMSM6KCDKCB0G2RTFCAH)。分類は材料の出所を知る呼び先の側の宣言(effects.TURN-RECORD-END-ONLY-MATERIALS / TURN-RECORD-ROW-MATERIALS)に置き、検は宣言を読んで全ての引数が分類されていることを確かめる")
-          (counterexample "巡回が一覧の行で判断して閉じる status を組み、鍵での読み直しは書く直前の generation を得るためだけに使う形: 『書く行は AcpGetRow の答え』だけを見る検は緑だが、別の書き手と競合すると ended の記録へ二重に書き、手番の終わりが書いた usage を古い image の status で消す(盲検 B・依頼 lt-N23MQ5ZMSM6KCDKCB0G2RTFCAH)。判断の record・status の材料・書く status の出所を、書く行と同じ読み直した行まで辿る")]
+          (counterexample "巡回が一覧の行で判断して閉じる status を組み、鍵での読み直しは書く直前の generation を得るためだけに使う形: 『書く行は AcpGetRow の答え』だけを見る検は緑だが、別の書き手と競合すると ended の記録へ二重に書き、手番の終わりが書いた usage を古い image の status で消す(盲検 B・依頼 lt-N23MQ5ZMSM6KCDKCB0G2RTFCAH)。判断の record・status の材料・書く status の出所を、書く行と同じ読み直した行まで辿る(形の検)。競合そのものは振る舞いの検(一覧と読み直しの間に別の書き手を着地させる)で撃つ")
+          (counterexample "材料の検を巡回の本体だけに当てる形: 同じく手番の memory を持たない退役の書き(end-retired-records・#519)が usage や cache-observation を渡しても、どの検も読まない(盲検 A)。材料を持たない書き手の口(end-only-violations)を退役の書きにも当てる")]
        :enforcement ["docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test-adr-doe-agents-012-turn-records-are-not-left-to-one-write"
                      "docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test-adr-doe-agents-012-sweep-roles-are-read-from-the-callee-not-the-spelling"
                      "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-a-turn-record-left-running-by-a-refused-write-is-ended-by-the-sweep"
@@ -1602,7 +1653,8 @@
                      "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-turn-record-sweep-verdict-reads-the-end-state-of-the-pair-and-the-node"
                      "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-a-recovered-turn-without-a-record-row-re-creates-it-before-the-end"
                      "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-a-turn-that-ends-inside-the-deadline-still-names-the-missing-record"
-                     "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-a-turn-record-that-vanished-before-the-end-is-re-created-and-ended"])
+                     "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-a-turn-record-that-vanished-before-the-end-is-re-created-and-ended"
+                     "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-a-sweep-that-loses-the-race-to-another-writer-neither-writes-twice-nor-erases-usage"])
      (law agentd-exits-only-to-acp-and-custody
        :statement "for_all source_file f in sessionhost/: agora_ledger_words(code_lines(f)) = ∅ — agentd(sessionhost)が話す相手は ACP と custody だけ"
        :counterexamples
@@ -2249,6 +2301,10 @@
        (<- sweep-globals dict (module-globals-of sweep-turn-records))
        (<- sweep-wrongs list (sweep-violations callees materials sweep-forms sweep-globals))
        (assert (= sweep-wrongs []) (.join " / " sweep-wrongs))
+       ;; 退役の書き(end-retired-records・#519)も手番の memory を持たない書き手 — 同じ材料の口で読む(盲検 A)。
+       (<- retire-forms list (defk-forms end-retired-records))
+       (<- retire-wrongs list (end-only-violations callees.ended materials retire-forms "退役の書き"))
+       (assert (= retire-wrongs []) (.join " / " retire-wrongs))
        ;; H1 / H2 / H3: 記録なしで Ended にしない 3 つの腕。
        (assert (= (len (lfor line agentd-lines :if (in ":record-create RECORD-CREATE-PENDING :record-create-last-ms 0" line) line)) 1)
                "拾い直しが行の無い記録を段 9p の網へ戻していない(R49 H1)")
@@ -2263,7 +2319,8 @@
                    "test-turn-record-sweep-verdict-reads-the-end-state-of-the-pair-and-the-node"
                    "test-a-recovered-turn-without-a-record-row-re-creates-it-before-the-end"
                    "test-a-turn-that-ends-inside-the-deadline-still-names-the-missing-record"
-                   "test-a-turn-record-that-vanished-before-the-end-is-re-created-and-ended"]]
+                   "test-a-turn-record-that-vanished-before-the-end-is-re-created-and-ended"
+                   "test-a-sweep-that-loses-the-race-to-another-writer-neither-writes-twice-nor-erases-usage"]]
          (assert (in (+ "(deftest " name) tests) f"R49 の反例の検が無い: {name}")))
      (deftest test-adr-doe-agents-012-sweep-roles-are-read-from-the-callee-not-the-spelling
        ;; R49 の針の反例(針そのものの検): 巡回の読み(sweep-violations)が、材料を足す正当な変更(呼び先が役を足して分類を
@@ -2275,6 +2332,17 @@
          (<- inputs tuple (synthetic-case-inputs case))
          (setv #(callees materials forms resolve) inputs)
          (<- got list (sweep-violations callees materials forms resolve))
+         (setv verdict (if got (+ "赤: " (.join " / " got)) "緑"))
+         (print f"{case.label} → {verdict}")
+         (assert (= (tuple got) case.expected) f"{case.label}: 期待 {case.expected} ・実際 {got}"))
+       ;; 退役の書き: 同じ材料の口(end-only-violations)を、今日の退役と同じ骨組みの作り物の本体で撃つ。
+       (<- today-roles CalleeRoles (roles-of-params (hy.read SWEEP-CASE-ENDED-PARAMS)))
+       (setv today-materials (MaterialClasses :end-only (dfor role #("usage" "entries" "cache_observation" "responses")
+                                                              role (get SWEEP-CASE-END-ONLY role))
+                                              :row (frozenset #("status" "conditions"))))
+       (for [case RETIRE-ROLE-CASES]
+         (setv forms (list (hy.read-many (.replace RETIRE-CASE-TEMPLATE "%ENDED-CALL%" case.ended-call))))
+         (<- got list (end-only-violations today-roles today-materials forms "退役の書き"))
          (setv verdict (if got (+ "赤: " (.join " / " got)) "緑"))
          (print f"{case.label} → {verdict}")
          (assert (= (tuple got) case.expected) f"{case.label}: 期待 {case.expected} ・実際 {got}")))
