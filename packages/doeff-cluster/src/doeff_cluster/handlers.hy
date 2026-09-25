@@ -331,7 +331,7 @@
   (JobSpec (+ "task/" id) JOB-ENTRY
            #("task" "--blob" (str (/ task-dir f"{id}.blob")) "--result" (str (/ task-dir f"{id}.result"))
              "--env" (get task "env") "--versions" (json.dumps (get task "versions") :sort-keys True))
-           (get task "revision") :once True))
+           (get task "revision") :once True :detached (bool (.get task "detached" False))))
 
 
 (defclass CoordinatorLink []
@@ -347,8 +347,9 @@
           self.task-dir (Path (or task-dir "tasks")) self.versions (or versions {})
           ;; 起動した時点を最後の連絡とみなす: 一度も届かない worker は fence の後に何も動かさない。
           self.last-ok (time.monotonic)
-          ;; 最後に受け取った job の宣言(途絶の間も動かす書き手を選ぶ — worker_policy.kept-when-cut-off)。
+          ;; 最後に受け取った job と task の宣言(途絶の間も動かす書き手と切り離した task を選ぶ — worker_policy.kept-when-cut-off)。
           self.last-jobs #()
+          self.last-tasks #()
           ;; この process の世代(heartbeat の boot)。coordinator は drain を頼まれた時の世代に付け、別の世代(Pod を作り直した後の
           ;; worker)の heartbeat で drain を解く(cluster_policy.absorb-boot・2026-09-25)。
           self.boot (. (uuid.uuid4) hex))
@@ -401,13 +402,15 @@
                                                  :once (.get job "once" False) :placement (.get job "placement")
                                                  :base (.get job "base") :handoff (bool (.get job "handoff" False))
                                                  :ready-instance (.get job "readyInstance")))))
-      (DesiredJobs (+ self.last-jobs (.accept-tasks self (.get body "tasks" []))))
+      (setv self.last-tasks (.accept-tasks self (.get body "tasks" [])))
+      (DesiredJobs (+ self.last-jobs self.last-tasks))
       (except [error Exception]
         (setv silent-ms (int (* 1000 (- (time.monotonic) self.last-ok))))
         ;; 連絡が fence を超えて途絶えたら、lease を持たない job と task を止める(coordinator は後で他へ移す)。書き手(入れ替えを
-        ;; 宣言した job)は動かし続ける — 書きは lease の柵だけが守る(worker_policy.kept-when-cut-off・2026-09-25)。
+        ;; 宣言した job)と切り離した task は動かし続ける — 書きは lease の柵だけが守り、切り離した task の lease はこの worker の
+        ;; heartbeat が延ばす(worker_policy.kept-when-cut-off・2026-09-25)。
         (if (> silent-ms self.fence-ms)
-          (DesiredJobs (kept-when-cut-off self.last-jobs))
+          (DesiredJobs (kept-when-cut-off (+ self.last-jobs self.last-tasks)))
           (DesiredUnreadable f"coordinator に届かない({silent-ms} ms): {(repr error)}"))))))
 
 (defn #^ None write-ready-file [#^ (| str None) path #^ bool draining]

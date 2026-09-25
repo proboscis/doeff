@@ -122,8 +122,15 @@
                 name)))
 
 
+(defn #^ list detached-rows [#^ ClusterState state #^ str worker]
+  "worker に置いた、まだ終わっていない切り離した task の名(task/<id>)。drain はこれが 0 になるまで Drained にしない
+   (RemoteJob の task は数えない — 呼び手と寿命を共にし、drain で止まってよい)。"
+  (sorted (gfor t (.values state.tasks) :if (and t.detached (= t.phase "assigned") (= t.worker worker)) (+ "task/" t.id))))
+
+
 (defn #^ (| dict None) drain-view [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]
-  "drain の進み。remaining = まだこの worker に置かれている job と、この worker の上でまだ動いている job(両方が 0 で drained)。
+  "drain の進み。remaining = まだこの worker に置かれている job と、この worker の上でまだ動いている job と、この worker に置いた
+   終わっていない切り離した task(全部が 0 で drained)。
    moving = 並べた先の worker(Ready 待ち)。blocked = 移せない job と理由。drain が無ければ None。"
   (setv d (.get state.drains name))
   (when (or (is d None) (<= d.until-ms now)) (return None))
@@ -131,7 +138,8 @@
         jobs (dfor j state.jobs j.spec.name j)
         load (load-of state state.placements)
         placed (sorted (gfor #(n a) (.items state.placements) :if (= a.worker name) n))
-        remaining (sorted (| (set placed) (set (live-rows state name))))
+        ;; 切り離した task(2026-09-25)は移せない(走らせ直さない)ので、この worker の上で終わるまで drain を待たせる。
+        remaining (sorted (| (set placed) (set (live-rows state name)) (set (detached-rows state name))))
         moving (dfor n placed :if (in n state.surges) n (. (get state.surges n) worker))
         blocked {})
   (for [n placed]
