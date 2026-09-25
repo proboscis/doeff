@@ -312,6 +312,12 @@ no sqlite: `doeff-claude-code`'s production handler and the headless adapter
 `doeff-claude-code`'s fake). Callers need not import `doeff-claude-code`; they
 install a doeff-time handler and the scheduler outside the pair.
 
+Callers that must not name a substrate (agora keeps the substrate the
+library's concern) use `claude_agent_runtime_handlers(config_dir=..., env=...)`
+and `fake_claude_agent_runtime_handlers(responder=...)`: the same pairs under
+names that say "the Claude agent runtime" and leave the choice of substrate
+to doeff-agents.
+
 | Public effect | What the headless handler does |
 |---|---|
 | `Launch(..., resume_from=None)` | starts the first turn when `prompt` is given; `resume_from` continues an earlier context (`ResumeTargetNotFoundError` when it is not here) |
