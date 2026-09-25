@@ -91,6 +91,7 @@ doeff-system-one = { workspace = true }
 doeff-jev = { workspace = true }
 doeff-cluster = { workspace = true }
 doeff-claude-code = { workspace = true }
+doeff-records = { workspace = true }
 
 [tool.pytest.ini_options]
 timeout = 60
@@ -177,6 +178,7 @@ dev = [
     "doeff-jev",
     "doeff-cluster",
     "doeff-claude-code",
+    "doeff-records",
     "doeff-docker",
     "doeff-ml-nexus",
     "cloudpickle>=3.0",

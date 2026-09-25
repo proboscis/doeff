@@ -1,0 +1,188 @@
+;;; memory の handler — 公開 effect 6 つに dict と番号の列で答える(模擬環境・手元の 1 process・単体の検)。
+;;;
+;;; 判断(期待・書きの許可・保持・索引・頁)は admission.hy の純関数ちょうど 1 つ。ここは置き場の data と番号の採り方だけを持つ。
+;;; 時刻は doeff-time の GetTime(仮想の時計の下では保持の期限も一瞬で来る)、WatchChanges の待ちは Delay。
+;;; 書き手の身元は handler を組む時の引数 writer(effect の欄にしない)。同じ MemoryStore を別の writer の handler で包めば、
+;;; 1 つの置き場を複数の書き手が使う形になる。
+(require doeff-hy.macros [defhandler])
+(import doeff [Pure])
+(import doeff_time [GetTime])
+(import doeff_records.watching [wait-for-changes])
+(import doeff_records.values [RecordsSchema Row Missing Page Written RowChanged RowRemoved Changes Appended Event Events
+                              Reset WatchCursor ListCursor Refused])
+(import doeff_records.effects [ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents])
+(import doeff_records.faults [AdvanceStoreEpoch])
+(import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-append row-expired?
+                                 event-expired? where-refusal row-matches? listed-row key-text next-watch-sequence
+                                 refuse-every-approval epoch-ms])
+
+(setv DEFAULT-POLL-SECONDS 0.05)
+
+
+(defclass StoredRow []
+  "置き場の行 1 つ: row = 答えに出す Row / updated-ms = 最後に書かれた刻。"
+  (defn __init__ [self #^ Row row #^ int updated-ms]
+    (setv self.row row self.updated-ms updated-ms)))
+
+
+(defclass MemoryStore []
+  "memory の置き場: schema = 宣言 / approval-check = 承認の確かめ方 / poll-seconds = WatchChanges が変更を待つ間の眠りの刻み。"
+  (defn __init__ [self #^ RecordsSchema schema * [approval-check refuse-every-approval] [poll-seconds DEFAULT-POLL-SECONDS]]
+    (setv self.schema schema
+          self.approval-check approval-check
+          self.poll-seconds poll-seconds
+          self.epoch 1
+          self.floor 0
+          self.head 0
+          self.rows (dfor name schema.tables name {})
+          self.changes []
+          self.event-head 0
+          self.events []
+          self.by-idempotency {})))
+
+
+(defn #^ Row copied [#^ Row row]
+  (Row row.key (dict row.value) row.version))
+
+
+;; --- 保持 ------------------------------------------------------------------------------------------------
+
+(defn #^ None purge-expired [#^ MemoryStore store #^ int now-ms]
+  "保持の期限を過ぎた行を消して RowRemoved を積み、期限を過ぎた出来事を捨てる(どの操作の前にも呼ぶ — 読みに期限切れが見えない)。"
+  (for [#(name decl) (sorted (.items store.schema.tables))]
+    (setv table (get store.rows name))
+    (for [text (sorted (lfor #(text stored) (.items table)
+                             :if (row-expired? decl stored.row.value stored.updated-ms now-ms)
+                             text))]
+      (setv stored (.pop table text))
+      (+= store.head 1)
+      (.append store.changes (RowRemoved name stored.row.key store.head))))
+  (setv kept (lfor event store.events
+                   :if (not (event-expired? (store.schema.stream event.stream) event.at now-ms))
+                   event))
+  (for [event store.events]
+    (when (event-expired? (store.schema.stream event.stream) event.at now-ms)
+      (.pop store.by-idempotency #(event.stream event.idempotency-key) None)))
+  (setv store.events kept)
+  None)
+
+
+;; --- 行 --------------------------------------------------------------------------------------------------
+
+(defn #^ (| Row Missing) memory-read-row [#^ MemoryStore store #^ ReadRow ask]
+  (store.schema.table ask.table)
+  (setv stored (.get (get store.rows ask.table) (key-text ask.key)))
+  (if (is stored None) (Missing) (copied stored.row)))
+
+
+(defn #^ object memory-list-rows [#^ MemoryStore store #^ ListRows ask]
+  (setv decl (store.schema.table ask.table))
+  (when (and (is-not ask.cursor None) (!= ask.cursor.epoch store.epoch))
+    (return (Reset store.epoch)))
+  (setv refusal (where-refusal decl ask.where))
+  (when refusal (return refusal))
+  (setv after (if (is ask.cursor None) None ask.cursor.after-key)
+        table (get store.rows ask.table)
+        matching (lfor text (sorted table)
+                       :if (and (or (is after None) (> text after)) (row-matches? ask.where (. (get table text) row value)))
+                       text)
+        taken (cut matching ask.limit)
+        rows (tuple (gfor text taken (listed-row decl ask.fields (. (get table text) row)))))
+  (Page rows
+        (if (> (len matching) ask.limit) (ListCursor store.epoch (get taken -1)) None)
+        store.epoch
+        store.head))
+
+
+(defn #^ object memory-put-row [#^ MemoryStore store #^ str writer #^ PutRow ask #^ int now-ms]
+  (setv decl (store.schema.table ask.table)
+        table (get store.rows ask.table)
+        text (key-text ask.key)
+        stored (.get table text)
+        current (if (is stored None) None stored.row))
+  (setv conflict (judge-expect ask.expect current))
+  (when conflict (return conflict))
+  (setv verdict (judge-put decl writer current ask.key ask.value ask.approval store.approval-check))
+  (when (isinstance verdict Refused) (return verdict))
+  (setv version (if (is current None) 1 (+ current.version 1))
+        row (Row ask.key verdict.value version))
+  (setv (get table text) (StoredRow row now-ms))
+  (+= store.head 1)
+  (.append store.changes (RowChanged ask.table ask.key version (dict verdict.value) store.head))
+  (Written version (dict verdict.value)))
+
+
+(defn #^ object memory-watch-scan [#^ MemoryStore store #^ WatchChanges ask]
+  "今ある変更から 1 回ぶんの答え(待たない)。位置が今の版の外なら Reset。"
+  (for [name ask.tables] (store.schema.table name))
+  (setv cursor ask.cursor)
+  (when (or (!= cursor.epoch store.epoch) (< cursor.sequence store.floor) (> cursor.sequence store.head))
+    (return (Reset store.epoch)))
+  (setv items (tuple (cut (lfor change store.changes
+                                :if (and (> change.sequence cursor.sequence) (in change.table ask.tables))
+                                change)
+                          ask.limit)))
+  (Changes items (WatchCursor store.epoch (next-watch-sequence items ask.limit store.head))))
+
+
+;; --- 追記の列 --------------------------------------------------------------------------------------------
+
+(defn #^ object memory-append [#^ MemoryStore store #^ str writer #^ AppendEvent ask #^ int now-ms]
+  (setv decl (store.schema.stream ask.stream)
+        slot #(ask.stream ask.idempotency-key)
+        verdict (judge-append decl writer ask.body (.get store.by-idempotency slot)))
+  (cond
+    (isinstance verdict Refused) verdict
+    (isinstance verdict AppendReplay) (Appended verdict.sequence)
+    True (do (+= store.event-head 1)
+             (setv event (Event ask.stream store.event-head ask.idempotency-key ask.body writer now-ms))
+             (.append store.events event)
+             (setv (get store.by-idempotency slot) event)
+             (Appended event.sequence))))
+
+
+(defn #^ Events memory-read-events [#^ MemoryStore store #^ ReadEvents ask]
+  (store.schema.stream ask.stream)
+  (setv items (tuple (cut (lfor event store.events
+                                :if (and (= event.stream ask.stream) (> event.sequence ask.after))
+                                event)
+                          ask.limit)))
+  (Events items (if items (. (get items -1) sequence) ask.after)))
+
+
+(defn #^ int memory-advance-epoch [#^ MemoryStore store]
+  (+= store.epoch 1)
+  (setv store.floor store.head
+        store.changes [])
+  store.epoch)
+
+
+;; --- handler ------------------------------------------------------------------------------------------------
+
+(defhandler memory-records-handler [store writer]
+  (ReadRow [table key]
+    (<- now (GetTime))
+    (purge-expired store (epoch-ms now))
+    (resume (memory-read-row store effect)))
+  (ListRows [table where fields cursor limit]
+    (<- now (GetTime))
+    (purge-expired store (epoch-ms now))
+    (resume (memory-list-rows store effect)))
+  (PutRow [table key value expect approval]
+    (<- now (GetTime))
+    (purge-expired store (epoch-ms now))
+    (resume (memory-put-row store writer effect (epoch-ms now))))
+  (WatchChanges [tables cursor timeout limit]
+    (<- answer (wait-for-changes (fn [now-ms] (purge-expired store now-ms) (Pure (memory-watch-scan store effect)))
+                                 store.poll-seconds timeout))
+    (resume answer))
+  (AppendEvent [stream idempotency-key body]
+    (<- now (GetTime))
+    (purge-expired store (epoch-ms now))
+    (resume (memory-append store writer effect (epoch-ms now))))
+  (ReadEvents [stream after limit]
+    (<- now (GetTime))
+    (purge-expired store (epoch-ms now))
+    (resume (memory-read-events store effect)))
+  (AdvanceStoreEpoch []
+    (resume (memory-advance-epoch store))))

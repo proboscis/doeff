@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "doeff-records"
+version = "0.1.0"
+description = "記録の仕組み: 版つきの行・変更の列・追記の列の effect と、memory / PostgreSQL の handler と適合の筋書き"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "doeff>=0.2.0",
+    "doeff-core-effects",
+    "doeff-hy",
+    "doeff-time",
+    "hy>=1.3",
+]
+
+[project.optional-dependencies]
+# PostgreSQL の handler は接続を composition root から受ける。接続を開く側だけが psycopg を持つ。
+pg = ["psycopg>=3.1"]
+
+[tool.hatch.build.targets.wheel]
+# import 名 doeff_records は Hy の module だけの namespace package(__init__ を持たない — hy を読み込んだ process が import する)。
+packages = ["src/doeff_records"]
+# editable の install は .py の無い dir を sys.path に載せない — src を明示して載せる。
+dev-mode-dirs = ["src"]
+
+[tool.uv.sources]
+doeff = { workspace = true }
+doeff-core-effects = { workspace = true }
+doeff-hy = { workspace = true }
+doeff-time = { workspace = true }
