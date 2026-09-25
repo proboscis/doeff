@@ -1,6 +1,6 @@
-;;; defsystem の宣言から coordinator に渡す宣言(b)を出す。
+;;; 系の宣言(System の値)から coordinator に渡す宣言(b)を出す。
 ;;;
-;;;   hy -m doeff_cluster.declare <module>:<defsystem の名> --revision <commit> [--pin 'service=commit,…']
+;;;   hy -m doeff_cluster.declare <module>:<System の値の名> --revision <commit> [--pin 'service=commit,…']
 ;;;       [--config '{"service": {"鍵": 値}}'] [--only 'service,…'] [--apply URL --actor <送り手>] [--replicas 0|1]
 ;;;
 ;;; --pin は service ごとに commit を差し替える(1 つだけ新しい commit にする時に使う。他の行は同じ形のまま = 止まらない)。
@@ -56,8 +56,8 @@
 
 
 (defn main []
-  (setv parser (argparse.ArgumentParser :description "defsystem の宣言 → coordinator の宣言"))
-  (.add-argument parser "system" :help "module:attr(defsystem の名)")
+  (setv parser (argparse.ArgumentParser :description "系の宣言(System の値)→ coordinator の宣言"))
+  (.add-argument parser "system" :help "module:attr(System の値の名)")
   (.add-argument parser "--revision" :required True)
   (.add-argument parser "--pin" :default "")
   (.add-argument parser "--config" :default "{}")

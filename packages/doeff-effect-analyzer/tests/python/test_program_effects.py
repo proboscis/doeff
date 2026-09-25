@@ -58,7 +58,7 @@ class WriteAudit(WriteFamily):
 
 MACROS_HY = """\
 (defmacro defservice [name params #* body]
-  ;; A project macro that wraps defk, like agora's worker `defservice`.
+  ;; A project macro that wraps defk (the shape of the former doeff-cluster `defservice`).
   (setv program-name (hy.models.Symbol (+ (str name) "-program")))
   `(do
      (require doeff-hy.macros [defk <-])
