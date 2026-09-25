@@ -61,6 +61,7 @@ from doeff_agents.effects import (
     SessionNotFoundError,
     StopEffect,
     StopSessionEffect,
+    refuse_turn_capabilities,
 )
 from doeff_agents.monitor import (
     MonitorState,
@@ -588,6 +589,7 @@ class TmuxAgentHandler(AgentHandler):
         If ``effect.mcp_tools`` is non-empty, the Hy doeff handler must already
         have started an in-VM MCP server and passed its URL in ``mcp_servers``.
         """
+        refuse_turn_capabilities(effect, handler="TmuxAgentHandler")
         adapter = get_adapter(effect.agent_type)
 
         if not self._io(adapter.available()):
@@ -1101,6 +1103,7 @@ class TmuxAgentHandler(AgentHandler):
 
     def handle_follow_up(self, effect: FollowUpEffect) -> L2SessionHandle:
         """Send validation feedback into the live session."""
+        refuse_turn_capabilities(effect, handler="TmuxAgentHandler")
         self.handle_send(
             SendEffect(
                 handle=effect.handle,

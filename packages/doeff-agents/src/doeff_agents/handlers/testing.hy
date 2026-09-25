@@ -4,6 +4,7 @@
 (import json)
 
 (import doeff_agents.adapters.base [AgentType])
+(import doeff_agents.effects.agent [refuse-turn-capabilities])
 (import doeff_agents.effects [
   AgentSessionLifecycle
   AgentSessionSnapshot
@@ -91,6 +92,7 @@
 
   (defn handle-launch [self effect [mcp-servers None]]
     "Create a testing session, optionally writing MCP server config."
+    (refuse-turn-capabilities effect :handler "MockAgentHandler")
     (when (in effect.session-name self._handles)
       (raise (SessionAlreadyExistsError
                f"Session {effect.session-name} already exists")))
@@ -389,6 +391,7 @@
       :continuable step.continuable))
 
   (defn handle-follow-up [self effect]
+    (refuse-turn-capabilities effect :handler "ScenarioAgentHandler")
     (.setdefault self._follow-ups effect.handle.session-id [])
     (.append (get self._follow-ups effect.handle.session-id) effect.message)
     effect.handle)

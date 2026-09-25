@@ -573,6 +573,7 @@ source = { editable = "packages/doeff-agents" }
 dependencies = [
     { name = "click" },
     { name = "doeff" },
+    { name = "doeff-claude-code" },
     { name = "doeff-hy" },
     { name = "doeff-time" },
     { name = "jsonschema" },
@@ -591,6 +592,7 @@ dev = [
 requires-dist = [
     { name = "click", specifier = ">=8.0.0" },
     { name = "doeff", editable = "." },
+    { name = "doeff-claude-code", editable = "packages/doeff-claude-code" },
     { name = "doeff-hy", editable = "packages/doeff-hy" },
     { name = "doeff-hy", marker = "extra == 'dev'", editable = "packages/doeff-hy" },
     { name = "doeff-time", editable = "packages/doeff-time" },
