@@ -52,7 +52,8 @@
 
 
 (defclass [(dataclass :frozen True)] PutRow [EffectBase]
-  "行を書く。value = 欄の差分(書く欄 → 値。書かない欄は今の値のまま)/ expect = ExpectAbsent | ExpectVersion | ExpectAny /
+  "行を書く。value = 欄の差分(書く欄 → 値。書かない欄は今の値のまま・値 None = その欄を消す〔JSON merge patch の null と同じ〕)/
+   expect = ExpectAbsent | ExpectVersion | ExpectAny /
    approval = 承認の欄を書く時の印(任意)。答え = Written | Conflict | Refused | Unreachable。"
   (#^ str table)
   (#^ tuple key)
