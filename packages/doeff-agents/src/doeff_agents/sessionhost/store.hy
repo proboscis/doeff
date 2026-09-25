@@ -25,7 +25,7 @@
 
 (require doeff-hy.macros [deff defk <- defhandler])
 
-(import doeff [Program run])
+(import doeff [EffectBase Program run])
 
 (import dataclasses [replace])
 (import datetime [datetime timezone timedelta])
@@ -1011,6 +1011,11 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
             #(LEASE-NAME owner-pid (.isoformat now) (.isoformat expires)))
   None)
 
+;; 本体が transaction を自分で閉じた時の文(db-immediate-transaction の成功の路の例外と、失敗の路の note)。
+(setv BODY-CLOSED-TRANSACTION
+      (+ "db-immediate-transaction: the body closed the transaction itself (commit / rollback / executescript)"
+         " — the writes before that point are already committed; only db-immediate-transaction may close it"))
+
 (defk db-immediate-transaction [conn body]
   {:pre [(: conn sqlite3.Connection) (: body Program)]
    :post [(: % "body の値")]}
@@ -1024,19 +1029,31 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    その後に無条件の ROLLBACK を撃つと `cannot rollback - no transaction is active` が元の `database or disk is full`
    を隠す(実弾 2026-09-25: k3s の agentd-pool-0 / -1 の agentd-state volume が 100% になり、lease の 3 関数の
    log が全部 rollback の文になって本当の原因が読めなかった)。巻き戻しそのものが失敗した時も元の例外を出し、
-   巻き戻しの失敗は note として添える(第 2 の例外で第 1 の例外を上書きしない)。"
+   巻き戻しの失敗は note として添える(第 2 の例外で第 1 の例外を上書きしない)。
+   transaction を閉じるのもここだけ。本体(の中の helper)が commit / rollback / executescript で閉じると、
+   そこまでの書き込みは確定して原子性が無い — 成功の路は閉じた本体を名指して落とし(COMMIT の失敗に化けさせない)、
+   失敗の路は元の例外に note を添える。SQLite が自分で巻き戻すのは SQLite の失敗の時だけなので、それ以外の
+   失敗で transaction が無いのは本体が閉じたから(依頼 lt-A5KGD83R9HQJ2K172V61A6VMG9 の盲検 A の反例)。"
   (.execute conn "BEGIN IMMEDIATE")
+  (setv closed-by-body False)
   (try
     (<- value body)
-    (.execute conn "COMMIT")
+    (if conn.in-transaction
+        (.execute conn "COMMIT")
+        (setv closed-by-body True))
     (except [e Exception]
-      (when conn.in-transaction
-        (try
-          (.execute conn "ROLLBACK")
-          (except [rollback-error sqlite3.Error]
-            (when (hasattr e "add_note")
-              (.add-note e f"rollback after the failure also failed: {rollback-error}")))))
+      (cond
+        conn.in-transaction
+          (try
+            (.execute conn "ROLLBACK")
+            (except [rollback-error sqlite3.Error]
+              (when (hasattr e "add_note")
+                (.add-note e f"rollback after the failure also failed: {rollback-error}"))))
+        (and (not (isinstance e sqlite3.Error)) (hasattr e "add_note"))
+          (.add-note e BODY-CLOSED-TRANSACTION))
       (raise)))
+  (when closed-by-body
+    (raise (RuntimeError BODY-CLOSED-TRANSACTION)))
   value)
 
 (defk db-acquire-lease-body [conn owner-pid]
@@ -1217,7 +1234,15 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
       (setv failure None)
       (setv detail "")
       (try
-        (setv (get box "value") (op self.conn))
+        (setv value (op self.conn))
+        ;; op の戻りは値。Program / effect のまま返すと、それは actor の thread の外で actor の connection を
+        ;; 使って走り、この actor の直列化・書き込みの健康の数え・journal の合図を素通りする(依頼
+        ;; lt-A5KGD83R9HQJ2K172V61A6VMG9 の盲検 B の反例)。op の中で run して値にするよう断る。
+        (when (isinstance value #(Program EffectBase))
+          (raise (TypeError (+ "StoreActor op returned an unexecuted doeff "
+                               (. (type value) __name__)
+                               " — run it inside the op; the actor's connection must not leave the actor thread"))))
+        (setv (get box "value") value)
         (except [e Exception]
           (setv failure (storage-failure-name e))
           (setv detail (str e))
