@@ -1,0 +1,5 @@
+case=C04-responses-keyword
+call: (<- ended dict (turn-record-ended-status record-status None #() pair-conditions :responses shaped))
+cmd: uv run --no-sync hy docs/design/daily-red-639/proto/m1_roles.hy /tmp/wt639/m1/C04-responses-keyword
+RED: 巡回が responses に 'shaped を渡している(R49)
+rc=1

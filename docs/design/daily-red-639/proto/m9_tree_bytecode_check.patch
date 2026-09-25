@@ -1,0 +1,57 @@
+diff --git a/conftest.py b/conftest.py
+index 7c84d192..c4dac3bd 100644
+--- a/conftest.py
++++ b/conftest.py
+@@ -4,6 +4,7 @@ import resource
+ import signal
+ import sys
+ import threading
++import time
+ from contextlib import suppress
+ from pathlib import Path
+ 
+@@ -296,9 +297,34 @@ def pytest_collection_finish(session):
+ # off for everything after it — and hid both cache failures above in a run that
+ # included packages/doeff-hy/tests (measured 2026-09-24).  So the run fails
+ # when the settings are not back at the end.
++#
++# The settings only reach this process and the subprocesses that inherit its
++# environment; a test can still hand a subprocess its own bytecode directory
++# inside the checkout, and the land tool keeps ignored files of a checkout from
++# one run to the next — so bytecode written there is read by later runs of other
++# commits.  The run therefore also fails when a bytecode file under the checkout
++# was written during the run (a test that needs bytecode gives its subprocess a
++# directory under pytest's temporary directory instead).
+ # ---------------------------------------------------------------------------
++_CHECKOUT = Path(__file__).resolve().parent
++
++
++def _bytecode_written_since(root: Path, since: float) -> list[str]:
++    written = []
++    for directory, subdirectories, files in os.walk(root):
++        subdirectories[:] = [name for name in subdirectories if name != ".git"]
++        for name in files:
++            if name.endswith(".pyc"):
++                path = Path(directory, name)
++                with suppress(FileNotFoundError):
++                    if path.stat().st_mtime >= since:
++                        written.append(str(path.relative_to(root)))
++    return sorted(written)
++
++
+ @pytest.fixture(scope="session", autouse=True)
+ def _bytecode_settings_pinned():
++    started = time.time()
+     with pytest.MonkeyPatch.context() as patch:
+         patch.setattr(sys, "dont_write_bytecode", True)
+         patch.setattr(sys, "pycache_prefix", None)
+@@ -311,3 +337,9 @@ def _bytecode_settings_pinned():
+         f"(dont_write_bytecode, pycache_prefix) = {at_the_end} — change them with "
+         f"monkeypatch (or pytest.MonkeyPatch.context() in a wider fixture)"
+     )
++    written = _bytecode_written_since(_CHECKOUT, started)
++    assert written == [], (
++        f"{len(written)} bytecode file(s) were written under the checkout during this run "
++        f"(first: {written[:5]}) — a subprocess that needs bytecode gets a directory under "
++        f"pytest's temporary directory (tmp_path_factory), never one inside the checkout"
++    )

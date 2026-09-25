@@ -1,0 +1,30 @@
+import ast
+import signal
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+
+def test_quiet_run_has_no_session_header(pytestconfig):
+    reporter = pytestconfig.pluginmanager.getplugin('terminalreporter')
+    assert reporter is not None
+    assert reporter.showheader is False
+
+
+def test_watchdog_message_has_no_test_identity(capsys):
+    source = Path('conftest.py').read_text()
+    node = next(n for n in ast.parse(source).body
+                if isinstance(n, ast.FunctionDef) and n.name == '_watchdog_kill')
+    calls = []
+    namespace = {
+        'sys': sys, 'signal': signal,
+        'os': SimpleNamespace(getpid=lambda: 12345,
+                              kill=lambda pid, sig: calls.append((pid, sig))),
+    }
+    exec(compile(ast.Module(body=[node], type_ignores=[]), 'conftest.py', 'exec'), namespace)
+    namespace['_watchdog_kill'](90)
+    assert calls == [(12345, signal.SIGKILL)]
+    assert capsys.readouterr().err == (
+        '\n\nWATCHDOG: Test hung for 90s beyond all timeouts. '
+        'Killing process with SIGKILL.\n\n'
+    )

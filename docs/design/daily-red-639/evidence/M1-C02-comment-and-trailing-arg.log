@@ -1,0 +1,7 @@
+case=C02-comment-and-trailing-arg
+call: (<- ended dict (turn-record-ended-status record-status ; usage は書かない(開始 offset は memory にしか無い)
+                                                   None #() pair-conditions
+                                                   :cache-observation None))
+cmd: uv run --no-sync hy docs/design/daily-red-639/proto/m1_roles.hy /tmp/wt639/m1/C02-comment-and-trailing-arg
+GREEN
+rc=0

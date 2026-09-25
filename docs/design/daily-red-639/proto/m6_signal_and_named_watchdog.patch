@@ -1,0 +1,120 @@
+diff --git a/conftest.py b/conftest.py
+index 7c84d192..50176e42 100644
+--- a/conftest.py
++++ b/conftest.py
+@@ -1,7 +1,6 @@
+ import importlib.util
+ import os
+ import resource
+-import signal
+ import sys
+ import threading
+ from contextlib import suppress
+@@ -77,14 +76,20 @@ with suppress(OSError, ValueError):
+     resource.setrlimit(resource.RLIMIT_AS, (_MAX_RSS_BYTES, _MAX_RSS_BYTES))
+ 
+ # ---------------------------------------------------------------------------
+-# Hard watchdog: kill the process if a single test hangs beyond timeout.
++# Hard watchdog: end the process if a single test hangs beyond timeout.
+ #
+-# pytest-timeout uses signal or thread method, but neither can reliably
+-# interrupt code stuck inside C extensions (like the Rust VM). This watchdog
+-# is the last resort — it kills the entire process with SIGKILL.
++# pytest-timeout runs with the signal method (pyproject.toml): a test over its
++# deadline fails as one named test and the run goes on.  A signal cannot
++# interrupt code stuck inside a C extension (like the Rust VM), so this
++# watchdog is the last resort.  It names the test that was running in the
++# form of pytest's own short summary line and ends the process with exit
++# status 1: a run killed by a signal is read by the land tool as "killed
++# from outside" rather than as a red test, and a run that ends without a
++# name leaves the daily record with no failed test at all (2026-09-25/26:
++# 94% of doeff-agents unmeasured, no name recorded).
+ #
+ # The watchdog resets at the start of each test (via the pytest hook).
+-# If no test starts within WATCHDOG_TIMEOUT seconds, the process dies.
++# If no test starts within WATCHDOG_TIMEOUT seconds, the process ends.
+ # ---------------------------------------------------------------------------
+ _WATCHDOG_BASE = float(os.environ.get("PYTEST_WATCHDOG_TIMEOUT", "90"))
+ _DEADLINE_SCALE = deadline_scale()
+@@ -94,23 +99,40 @@ _WATCHDOG_TIMEOUT = int(_WATCHDOG_BASE * _DEADLINE_SCALE)
+ _watchdog_timer: threading.Timer | None = None
+ 
+ 
+-def _watchdog_kill(timeout: int):
+-    """Last resort: kill the process if a test hangs beyond all timeouts."""
+-    print(
+-        f"\n\nWATCHDOG: Test hung for {timeout}s beyond all timeouts. "
+-        f"Killing process with SIGKILL.\n",
+-        file=sys.stderr,
+-        flush=True,
+-    )
+-    os.kill(os.getpid(), signal.SIGKILL)
+-
+-
+-def _reset_watchdog(timeout: int | None = None):
++def _watchdog_kill(config, timeout: int, nodeid: str):
++    """Last resort: end the process if a test hangs beyond all timeouts."""
++    try:
++        # The test's output is being captured; the line must reach the terminal
++        # (the same steps as pytest-timeout's thread method).
++        capman = config.pluginmanager.getplugin("capturemanager") if config else None
++        if capman is not None:
++            capman.suspend_global_capture(in_=True)
++        terminal = config.get_terminal_writer() if config else None
++        text = (
++            f"FAILED {nodeid} - WATCHDOG: no progress for {timeout}s beyond all timeouts; "
++            f"the process was ended and the tests after it did not run"
++        )
++        if terminal is not None:
++            terminal.line("")
++            terminal.sep("=", "short test summary info")
++            terminal.line(text)
++            terminal.flush()
++        else:
++            print(text, flush=True)
++    finally:
++        sys.stdout.flush()
++        sys.stderr.flush()
++        os._exit(1)
++
++
++def _reset_watchdog(timeout: int | None = None, nodeid: str = "(between tests)", config=None):
+     global _watchdog_timer  # noqa: PLW0603
+     if _watchdog_timer is not None:
+         _watchdog_timer.cancel()
+     active_timeout = timeout or _WATCHDOG_TIMEOUT
+-    _watchdog_timer = threading.Timer(active_timeout, _watchdog_kill, args=(active_timeout,))
++    _watchdog_timer = threading.Timer(
++        active_timeout, _watchdog_kill, args=(config, active_timeout, nodeid)
++    )
+     _watchdog_timer.daemon = True
+     _watchdog_timer.start()
+ 
+@@ -191,12 +213,12 @@ def pytest_collection_modifyitems(config, items):
+ 
+ def pytest_runtest_setup(item):
+     """Reset watchdog at the start of each test."""
+-    _reset_watchdog(_watchdog_timeout_for_item(item))
++    _reset_watchdog(_watchdog_timeout_for_item(item), item.nodeid, item.config)
+ 
+ 
+ def pytest_runtest_teardown(item, nextitem):
+     """Reset watchdog after each test (covers slow teardown)."""
+-    _reset_watchdog()
++    _reset_watchdog(nodeid=f"{item.nodeid} (teardown)", config=item.config)
+ 
+ 
+ def pytest_sessionfinish(session, exitstatus):
+diff --git a/pyproject.toml b/pyproject.toml
+index 8bb2e5cc..b81cd3d4 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -95,7 +95,7 @@ doeff-records = { workspace = true }
+ 
+ [tool.pytest.ini_options]
+ timeout = 60
+-timeout_method = "thread"
++timeout_method = "signal"
+ timeout_func_only = false
+ asyncio_mode = "strict"
+ asyncio_default_fixture_loop_scope = "function"

@@ -1,0 +1,4 @@
+test-admission: focused — 3 件(変更箇所の検証)
+.
+=========================== short test summary info ============================
+FAILED tests/_wt639_probe/test_watchdog_probe.py::test_blocks_signals_and_hangs - WATCHDOG: no progress for 33s beyond all timeouts; the process was ended and the tests after it did not run

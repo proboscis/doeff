@@ -1,0 +1,776 @@
+{
+ "version": 1,
+ "task_id": "lt-FPBECBQ3W22ESC92VAMCENR5JR",
+ "base_revision": "7ef0fa772afca54684d5b75b51f286e6e1bb367d",
+ "author": {
+  "conversation_id": "c-8JYPFZ9T1AFVA8C10W51M547JW",
+  "model": "claude-opus-5-5",
+  "effort": "unspecified"
+ },
+ "requirements": [
+  "日次の記録で ADR 3 本・release の区分・wiring とその内側の ERROR が失敗名の一覧から消える",
+  "ADR-DOE-AGENTS-012 の検査が註や正当な引数の追加で赤にならず、同じ族の検査が同じ理由で赤にならないことを反例で示す",
+  "codex worker の検は環境が無い機体で赤ではなく未実行として名乗る(agent-control-plane #629 の依頼 A と同じ形)",
+  "日次の判定が green か、unexecuted の理由が環境の欠けだけになる",
+  "日次で測られていない範囲が測った・赤なしの顔をしない"
+ ],
+ "design": {
+  "path": "design.md",
+  "sha256": "4bc1a97366558390420d6c1feb43a2e56933942fdc76ea8bbec4f39b5f81105e"
+ },
+ "pre_blind_design": {
+  "path": "design-before-blind.md",
+  "sha256": "b7768500c08aadd8ce3671830ee48392b0219e99f1e8d3cee1384010b22cc77f"
+ },
+ "blind": {
+  "A": {
+   "input": {
+    "path": "/Users/kento/.local/state/design-check/lt-FPBECBQ3W22ESC92VAMCENR5JR/blind/blind-a-input.md",
+    "sha256": "db745988b767500a6ddb1b419fe702cb12208633488eabd1fc0c7a36fc752cd5"
+   },
+   "return": {
+    "path": "blind/blind-a-return.md",
+    "sha256": "dad68526da895b5fc8ed7ae622a8b2c88606ef1528a21cac4b4cc3756b27c74a"
+   },
+   "session": "01a0da40-b6e8-7690-a03c-6417aba2eeca",
+   "model": "gpt-6-astra",
+   "effort": "low",
+   "profile": "cx personal",
+   "machine": "proboscis-mbp",
+   "launched": "2026-09-25T20:27:48Z",
+   "returned": "2026-09-25T20:29:48Z",
+   "observed_model": "gpt-6-astra (reasoning effort low, provider openai)",
+   "fallback": "none",
+   "launcher": {
+    "path": "blind/launch_blind.py",
+    "sha256": "5683e51875a66173b15a68f18e239fe59ad0dd2cc94a7058693de35009ef6098"
+   },
+   "log": {
+    "path": "/Users/kento/.local/state/design-check/lt-FPBECBQ3W22ESC92VAMCENR5JR/blind/blind-a-codex.log",
+    "sha256": "fb916e611d97d9e31c9eb4ab5933bab4c79d3eff08fb8092787fb8d4eb88a2d3"
+   }
+  },
+  "B": {
+   "input": {
+    "path": "/Users/kento/.local/state/design-check/lt-FPBECBQ3W22ESC92VAMCENR5JR/blind/blind-b-input.md",
+    "sha256": "6619fb6644e569c566c086dcd88f17143240e0db40789db9ec0edb901ca0cb09"
+   },
+   "return": {
+    "path": "blind/blind-b-return.md",
+    "sha256": "ccc05e4201be397759c3ec0e44634c946f447831582d14107c07688e64c3727b"
+   },
+   "session": "01a0da40-b67c-7da1-883e-8ebc5276699d",
+   "model": "gpt-6-astra",
+   "effort": "low",
+   "profile": "cx personal",
+   "machine": "proboscis-mbp",
+   "launched": "2026-09-25T20:27:48Z",
+   "returned": "2026-09-25T20:31:08Z",
+   "observed_model": "gpt-6-astra (reasoning effort low, provider openai)",
+   "fallback": "none",
+   "launcher": {
+    "path": "blind/launch_blind.py",
+    "sha256": "5683e51875a66173b15a68f18e239fe59ad0dd2cc94a7058693de35009ef6098"
+   },
+   "log": {
+    "path": "/Users/kento/.local/state/design-check/lt-FPBECBQ3W22ESC92VAMCENR5JR/blind/blind-b-codex.log",
+    "sha256": "abd6b46ff0d0b08a74d4a382ebdad42187d5b3c43eee8a6bb8bc5e63d82bf484"
+   }
+  }
+ },
+ "modules": [
+  {
+   "id": "M1",
+   "responsibility": "ADR-DOE-AGENTS-012 R49 の巡回の構造の検査(巡回が usage・entries・responses を書かない)",
+   "owns": "usage・entries・responses の役を持つ引数を呼び先 turn-record-ended-status の defk の引数の並びから導く読み方",
+   "hides": "呼びの行の字面・折れ方・註・局所変数の名",
+   "interface": "Hy の reader で巡回の中の呼びを読み、役ごとに値を確かめる。失敗文はどの役に何が渡っているかを言う",
+   "effects": "なし、file を読むだけの検査のため",
+   "lifetime": "検査 1 回",
+   "invariants": "巡回の中の全ての呼びで usage は None・entries は #()・responses は渡さないか None。呼びが 1 つ以上ある"
+  },
+  {
+   "id": "M2",
+   "responsibility": "新しい pytest の process が package の下の Hy の検をどう import するかを示す検",
+   "owns": "内側の run を別の process で走らせること",
+   "hides": "外側の process の sys.modules",
+   "interface": "pytester.runpytest_subprocess。外側に tests を先に置いても緑になることを自分で示す",
+   "effects": "一時 dir の子 process",
+   "lifetime": "検 1 回",
+   "invariants": "内側の結果が外側の import の履歴に依らない"
+  },
+  {
+   "id": "M3",
+   "responsibility": "検の前提(起動できる道具)がこの機体に無いことを判じ、skip にしつつ未実行として名乗る(根の conftest)",
+   "owns": "前提の観測(道具を 1 回起こして終了コード 0 か)と、申告行の書式の持ち主(dotfiles remote_check)を file-path で読むこと",
+   "hides": "申告行の綴りと未実行の語彙の値(dotfiles が持つ)",
+   "interface": "fixture machine_tool(name, *probe) → 起動できた道具の path か skip(接頭辞 machine premise unmet:)。pytest_terminal_summary が検査層の unexecuted_line(['tool-absent'], …) で 1 行書く。検査層の無い機体では skip の理由の要約だけ",
+   "effects": "stdout へ申告行 1 行・道具の起動 1 回",
+   "lifetime": "pytest の session",
+   "invariants": "前提の欠けは赤にならず黙った skip にもならない。前提が在る時の検の失敗は赤のまま"
+  },
+  {
+   "id": "M4",
+   "responsibility": "本物の codex worker の schema つきの答えを確かめる検(doeff-conductor)",
+   "owns": "e2e の母集団であること",
+   "hides": "道具の有無の判じ方(M3 が持つ)",
+   "interface": "@pytest.mark.e2e と machine_tool('codex')",
+   "effects": "本物のモデルの呼び出し(e2e の実行の時だけ)",
+   "lifetime": "検 1 回",
+   "invariants": "日次(-m 'not e2e')は本物のモデルを呼ばない"
+  },
+  {
+   "id": "M5",
+   "responsibility": "Hy を import する Python の module が新しい interpreter でも import できることを確かめる検(doeff-agents)",
+   "owns": "子の bytecode の置き場(tmp_path_factory の下の module の走行だけの dir)と、子の期限(検 1 本の期限 − 15 秒)",
+   "hides": "走行全体の bytecode の設定(M9 の固定)",
+   "interface": "module scope の fixture private_bytecode_dir と child_deadline。子の env だけ PYTHONDONTWRITEBYTECODE を外し PYTHONPYCACHEPREFIX をその dir へ。子の期限切れは pytest.fail で module 名を言う",
+   "effects": "一時 dir への bytecode の書き込み・子 process",
+   "lifetime": "module の走行(一時 dir は pytest が消す)",
+   "invariants": "子の超過はその検の赤で process を殺さない。checkout に bytecode を書かない"
+  },
+  {
+   "id": "M6",
+   "responsibility": "1 本の時間切れを 1 本の赤にして走行を続け、signal の届かない停止は watchdog が名前を書いて終える",
+   "owns": "pytest-timeout の方式 = signal と、watchdog が見張っている検の nodeid",
+   "hides": "なし、方式と名乗りの形が公開の契約そのもののため",
+   "interface": "pyproject の timeout_method = signal。watchdog は捕獲を外して 'FAILED <nodeid> - WATCHDOG: …' を short test summary の形で書き、終了コード 1 で終える",
+   "effects": "信号の handler・process の終了",
+   "lifetime": "pytest の session",
+   "invariants": "時間切れの 1 本の後の検も走る。watchdog で終わった走行は止まった検の名前つきの赤"
+  },
+  {
+   "id": "M7",
+   "responsibility": "日次の出力から落ちた検の名前を読む(dotfiles land.py)",
+   "owns": "pytest の session の区切り(開始の見出し・集計行)と short test summary の区画",
+   "hides": "doeff の検の中身と実行順",
+   "interface": "集計行の無い session は最後の進捗の行より後の FAILED/ERROR 行、無ければ最後に進捗を出した file の path を名前にする。閉じた session は最後の short test summary の区画だけを読む。pytest の出力でない処理ステージには当てない",
+   "effects": "なし、log の文字列を読む純関数のため",
+   "lifetime": "log の読み 1 回",
+   "invariants": "測れなかった範囲が名前 0 本にならない。内側の run の行を外側の失敗名に数えない"
+  },
+  {
+   "id": "M8",
+   "responsibility": "未実行の語彙と申告行の書式の単一定義点(dotfiles remote_check・変えない)",
+   "owns": "UNEXECUTED_MARK・UNEXECUTED_KINDS・unexecuted_line・parse_unexecuted_all",
+   "hides": "読み手・書き手ごとの綴り",
+   "interface": "既存のまま",
+   "effects": "なし、語彙と書式の定義だけのため",
+   "lifetime": "なし、module の定義のため",
+   "invariants": "読み手・書き手が綴りの写しを持たない"
+  },
+  {
+   "id": "M9",
+   "responsibility": "走行が checkout の中に bytecode を書かないことを走行の終わりに実物で確かめる(根の conftest・新規)",
+   "owns": "走行の開始時刻と checkout の根",
+   "hides": "子 process がどう設定されたか(見るのは結果の file だけ)",
+   "interface": "既存の session fixture _bytecode_settings_pinned の終わりに、開始時刻より新しい *.pyc を checkout(.git を除く)から探し、在れば path を挙げて失敗",
+   "effects": "木を読むだけ(Mac で約 0.2 秒)",
+   "lifetime": "pytest の session",
+   "invariants": "走行の後の checkout に、その走行が書いた bytecode が無い"
+  }
+ ],
+ "scenarios": [
+  {
+   "applicability": "applicable",
+   "id": "S1",
+   "axis": "effects",
+   "change": "巡回が turn-record に書く材料が増える(引数の追加・既定値つきの引数・並べ替え)、または註が呼びの中に入る",
+   "claim": "M1 は変えずに緑のまま。usage・entries・responses のどれかに材料を渡す変更だけが赤",
+   "expected_scope": "なし",
+   "actual_scope": "なし(C01・C02 緑、C03〜C06 赤)",
+   "changed_modules": [],
+   "unchanged_modules": [
+    "M1",
+    "M8"
+   ],
+   "reason": "役の位置を呼び先の定義から読むので、字面・註・引数の追加は検査に届かない",
+   "revision": "不要。主張どおり(C01〜C06)"
+  },
+  {
+   "applicability": "applicable",
+   "id": "S2",
+   "axis": "concurrency",
+   "change": "検の実行順・同じ process で走る他の検の集合が変わる(根の母集団に package の検が足される)",
+   "claim": "M2 の答えは順に依らない",
+   "expected_scope": "なし",
+   "actual_scope": "なし(C07 緑・C08 で旧形の赤を再現)",
+   "changed_modules": [],
+   "unchanged_modules": [
+    "M2"
+   ],
+   "reason": "内側の run が別の process で外側の sys.modules を共有しない",
+   "revision": "不要"
+  },
+  {
+   "applicability": "applicable",
+   "id": "S3",
+   "axis": "hardware",
+   "change": "日次の機体が変わる(codex の実体が無い・router の入口だけ在る・codex が在る)",
+   "claim": "道具が無い機体では codex の検は赤ではなく未実行の申告 1 行(tool-absent)。在る機体では本物の経路を走り、失敗は赤",
+   "expected_scope": "なし(機体の差は M3 の観測の答えだけが吸収)",
+   "actual_scope": "なし(C19・C20・C22)",
+   "changed_modules": [],
+   "unchanged_modules": [
+    "M3",
+    "M4",
+    "M8"
+   ],
+   "reason": "前提の観測が M3 の 1 点で、書式は M8 から読む",
+   "revision": "不要。検査層の無い機体で申告を見送る形も実測で確かめた(C22)"
+  },
+  {
+   "applicability": "applicable",
+   "id": "S4",
+   "axis": "effects",
+   "change": "本物の外部サービスを呼ぶ検を増やす",
+   "claim": "日次は本物を呼ばない。新しい検は e2e の印と M3 の前提を付けるだけ",
+   "expected_scope": "新しい検の file だけ",
+   "actual_scope": "同じ(C21 で母集団から外れる・C26 で旧形が母集団に入って赤)",
+   "changed_modules": [
+    "M4"
+   ],
+   "unchanged_modules": [
+    "M3",
+    "M7",
+    "M8"
+   ],
+   "reason": "母集団の規則(e2e の印)と前提の観測(M3)が 1 点ずつ",
+   "revision": "不要"
+  },
+  {
+   "applicability": "applicable",
+   "id": "S5",
+   "axis": "storage",
+   "change": "日次の bytecode の設定が変わる(PYTHONDONTWRITEBYTECODE・PYTHONPYCACHEPREFIX の有無)/子の compile を速くしたい",
+   "claim": "M5 の所要は設定に依らず cache 無しの compile 1 回分 + 小さな読み込み × 19。木に __pycache__ を作らない",
+   "expected_scope": "なし",
+   "actual_scope": "M5 と新しい M9(盲検 B)",
+   "changed_modules": [
+    "M5",
+    "M9"
+   ],
+   "unchanged_modules": [
+    "M6",
+    "M3"
+   ],
+   "reason": "盲検 B: 子の保存先を checkout の中の固定 dir に向ける変更が既存の検を通りながら走行をまたぐ共有の状態を木に作った。木を汚さないことは M5 の約束だっただけで検査が無かった — 知識の漏れではなく強制の欠け",
+   "revision": "M9 を足した。B の候補は M9 で赤(C18)、改訂の M5 は緑(C16・C17)。旧形の冷えた所要は C15"
+  },
+  {
+   "applicability": "applicable",
+   "id": "S6",
+   "axis": "hardware",
+   "change": "日次の機体が遅い(負荷・free-threaded の Python)・速い",
+   "claim": "遅い機体で上限を超えた検はその 1 本の赤になり、package の残りは走る",
+   "expected_scope": "なし(M5・M6 の設計どおり)",
+   "actual_scope": "M6 の watchdog の終わり方も変えた",
+   "changed_modules": [
+    "M6"
+   ],
+   "unchanged_modules": [
+    "M5",
+    "M7"
+   ],
+   "reason": "盲検 A と F7: signal の届かない停止は watchdog の SIGKILL で終わり、根の処理ステージでは外乱と読まれて赤にならない",
+   "revision": "watchdog を名前の行 + 終了コード 1 に変えた(C23)。signal 方式の 1 本の赤は C12・C24"
+  },
+  {
+   "applicability": "applicable",
+   "id": "S7",
+   "axis": "distribution",
+   "change": "日次がどの機体・どの処理ステージで走っても、出力の読み取りは同じ(pod と Mac・遠隔と手元)",
+   "claim": "中断した session は必ず名前が出る。内側の run の行は数えない",
+   "expected_scope": "M7 だけ",
+   "actual_scope": "M7 と M6(盲検 A)",
+   "changed_modules": [
+    "M7",
+    "M6"
+   ],
+   "unchanged_modules": [
+    "M8",
+    "M3"
+   ],
+   "reason": "盲検 A: 根は -q で見出しも file 名も出ず、watchdog の文言に検の名が無い。いま走っている検を知るのは実行側で、実行側が名前を出すのは公開の契約の正当な拡張(読み手が推し量るなら知識の漏れ)",
+   "revision": "M6 が pytest の失敗行の形で名前を出し、M7 は集計行の無い session でその行を読む。09-25・09-26 の実際の log で確かめた(C25)"
+  },
+  {
+   "applicability": "applicable",
+   "id": "S8",
+   "axis": "simulation",
+   "change": "本物の codex の代わりに替え玉の実行子で決定的に確かめる",
+   "claim": "M3・M4 の振る舞いは替え玉(壊れた入口・誤った答え)で全部確かめられる",
+   "expected_scope": "なし",
+   "actual_scope": "なし(C19・C20・C21・C22 は全部替え玉)",
+   "changed_modules": [],
+   "unchanged_modules": [
+    "M3",
+    "M4"
+   ],
+   "reason": "前提の観測が道具を起こして終了コードを見るだけで、替え玉を PATH に置けば同じ経路を通る",
+   "revision": "不要"
+  }
+ ],
+ "checks": [
+  {
+   "id": "C01",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "positive",
+   "expectation": "今の巡回の呼び(引数 4 つ)を役の検査で読むと緑",
+   "observation": "GREEN rc 0",
+   "evidence": {
+    "path": "evidence/M1-C01-base.log",
+    "sha256": "57d4135362b77b98e03ac3e5028a98f1db981b06c54106ba968727c8c3d19550"
+   },
+   "status": "passed",
+   "supporting_evidence": [
+    {
+     "path": "proto/m1_roles.hy",
+     "sha256": "0773c510ec93e5e526005ca9db537872553a4197f81841637b5ead600641684f"
+    }
+   ]
+  },
+  {
+   "id": "C02",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "positive",
+   "expectation": "呼びの中の註・keyword の既定値の引数では赤にならない",
+   "observation": "GREEN rc 0",
+   "evidence": {
+    "path": "evidence/M1-C02-comment-and-trailing-arg.log",
+    "sha256": "ad8b136bfe90c8d576ef570b1e9ef4232b2c63a1d7f62da441bf17474441eabf"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C03",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "usage に値を渡すと役の名で赤",
+   "observation": "RED usage に 'usage-total を渡している rc 1",
+   "evidence": {
+    "path": "evidence/M1-C03-usage-value.log",
+    "sha256": "67fb7318f1022117a689562759f9e336daa3fa370ed38303f5fcff6da9167ab5"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C04",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "keyword で responses を渡すと赤",
+   "observation": "RED responses に 'shaped rc 1",
+   "evidence": {
+    "path": "evidence/M1-C04-responses-keyword.log",
+    "sha256": "9e3d48e98b7a5ab3667bf800ad77cdcc8226fba3dc88fe7aae1ab42daf484854"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C05",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "entries に値を渡すと赤",
+   "observation": "RED entries rc 1",
+   "evidence": {
+    "path": "evidence/M1-C05-entries-value.log",
+    "sha256": "b3e8e9f43d139a34bb8fc483f3095ddfa0ffb59be0f59e173f077c38ba3ae6fa"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C06",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "呼びを消すと赤",
+   "observation": "RED 呼んでいない rc 1",
+   "evidence": {
+    "path": "evidence/M1-C06-call-removed.log",
+    "sha256": "efd3405f2c045e108f5d4fb6fe85de07a33ca618bc6135b42daa4b2bdda54f2d"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C07",
+   "scenarios": [
+    "S2"
+   ],
+   "control": "positive",
+   "expectation": "内側を別 process にすると外側に根の検が先に居ても緑",
+   "observation": "6 passed rc 0",
+   "evidence": {
+    "path": "evidence/M2-C07-subprocess-with-root-tests.log",
+    "sha256": "e20592ef52ac30ab02fa44ac1e786c3593b0b04064f13334b0341d6a54c77de9"
+   },
+   "status": "passed",
+   "supporting_evidence": [
+    {
+     "path": "proto/m2_wiring.patch",
+     "sha256": "bb5276f674562e5f507c3a91bf5d74435cf51d9188c6f053f25cbd2b54d78d8a"
+    }
+   ]
+  },
+  {
+   "id": "C08",
+   "scenarios": [
+    "S2"
+   ],
+   "control": "negative",
+   "expectation": "旧形(同じ process)は外側に tests が先に居ると赤",
+   "observation": "1 failed ModuleNotFoundError tests.helper",
+   "evidence": {
+    "path": "evidence/M2-C08-inprocess-standin-red.log",
+    "sha256": "b6fe4e306a7b24c84eff4c74bf49acbd331b5300c03569ea708dcdfb2c0d30c4"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C12a",
+   "scenarios": [
+    "S6"
+   ],
+   "control": "positive",
+   "expectation": "signal 方式は遅い 1 本だけ赤で後の検が走る",
+   "observation": "1 failed 1 passed",
+   "evidence": {
+    "path": "evidence/M6-C12-method-signal.log",
+    "sha256": "17759e30206a55eded6d22edeeeb185a774d31f249190f21da23df59b7722873"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C12b",
+   "scenarios": [
+    "S6"
+   ],
+   "control": "negative",
+   "expectation": "thread 方式は process を終え後の検が走らない(今の設定の欠陥の再現)",
+   "observation": "集計行なし・後の検が走らない rc 1",
+   "evidence": {
+    "path": "evidence/M6-C12-method-thread.log",
+    "sha256": "b5c2c7b4dfcbd06e11f66203e44c318d437a51b8249cbfddb2bca637cd0826e5"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C14",
+   "scenarios": [
+    "S6"
+   ],
+   "control": "positive",
+   "expectation": "自前の SIGALRM を使う根の 5 file は signal 方式でも緑",
+   "observation": "15 passed rc 0",
+   "evidence": {
+    "path": "evidence/M6-C14-sigalrm-tests-under-signal.log",
+    "sha256": "fb68f80626aea9516224f120a6571866bdc9d0338ddca12a90333048cc586d6f"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C15",
+   "scenarios": [
+    "S5"
+   ],
+   "control": "negative",
+   "expectation": "旧形の M5 は冷えた bytecode で手元の予算を超える(欠陥の再現)",
+   "observation": "60 秒で打ち切り・runtime 単独 38.8 秒",
+   "evidence": {
+    "path": "evidence/M5-C15-baseline-cold.log",
+    "sha256": "3b9668f2dfbd9e7f079effd99fe0ddeca8a6bd8b873a060139ade09a25e34927"
+   },
+   "status": "passed",
+   "supporting_evidence": [
+    {
+     "path": "evidence/M5-C15-baseline-cold-per-item.log",
+     "sha256": "2fe69991132a83a5a0e85a76dd04b9e0252cbf30baade6cff6ccd49c718fd38f"
+    }
+   ]
+  },
+  {
+   "id": "C16",
+   "scenarios": [
+    "S5"
+   ],
+   "control": "positive",
+   "expectation": "改訂の M5 は冷えた bytecode でも予算内で木に書かない",
+   "observation": "22 passed 42 秒・木の新しい .pyc 0",
+   "evidence": {
+    "path": "evidence/M5-C16-shared-private-cache.log",
+    "sha256": "10bb19bb9bba29501149e243b7d1dd5483c71e582053335c472e42bacdef3026"
+   },
+   "status": "passed",
+   "supporting_evidence": [
+    {
+     "path": "proto/m5_fresh_interpreter.patch",
+     "sha256": "69dbde5aca3e2b69d577be7f1c702024a17a12801fa863a2818451de1dde6781"
+    }
+   ]
+  },
+  {
+   "id": "C17",
+   "scenarios": [
+    "S5"
+   ],
+   "control": "positive",
+   "expectation": "M9 の下で改訂の M5 は緑",
+   "observation": "22 passed",
+   "evidence": {
+    "path": "evidence/M9-C17-positive-private-dir.log",
+    "sha256": "04fb3d874180f9c3f4d8814da0632c3a3d3ced09de7482bb5b4ac08ab0b382bc"
+   },
+   "status": "passed",
+   "supporting_evidence": [
+    {
+     "path": "proto/m9_tree_bytecode_check.patch",
+     "sha256": "636fe55b42933f95101b84685ca9381e307e1a2e4a1e164cf162d05dd1d6a7db"
+    }
+   ]
+  },
+  {
+   "id": "C18",
+   "scenarios": [
+    "S5"
+   ],
+   "control": "negative",
+   "expectation": "M9 の下で盲検 B の候補(木の中の固定 dir)は赤で path を名指す",
+   "observation": "1 error 131 bytecode file(s) were written under the checkout",
+   "evidence": {
+    "path": "evidence/M9-C18-negative-in-tree-cache.log",
+    "sha256": "6610a328ae45e4f25b19d9570d3cb421565027eb01b54ab67179b5b443d7dd10"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C28",
+   "scenarios": [
+    "S5"
+   ],
+   "control": "negative",
+   "expectation": "M9 の無い旧形では盲検 B の候補が検を通り木に 131 個を残す(反例の成立の確認)",
+   "observation": "基準 0→0・候補 0→131→131・どれも rc 0",
+   "evidence": {
+    "path": "evidence/blindB/candidate.diff",
+    "sha256": "88e0d539bd40cd9051967b7d42bc523620df68fa16f887e3201ed3ce8ace49a8"
+   },
+   "status": "passed",
+   "supporting_evidence": [
+    {
+     "path": "evidence/blindB/candidate-1.log",
+     "sha256": "2a74d4cbf27a1a6a0a9c568bfc97cab76e4c84323efda870673a6da213031347"
+    },
+    {
+     "path": "evidence/blindB/candidate-2.log",
+     "sha256": "8184965aac9a1997c7705f660110959fe657f85c9b43636d6d9de1af3b07ca92"
+    },
+    {
+     "path": "evidence/blindB/baseline.log",
+     "sha256": "9f1b0586a1c15c3dd2f52f71fa7dca8746040ababb2453353114f1de4faf3a91"
+    },
+    {
+     "path": "evidence/blindB/reproduce.py.txt",
+     "sha256": "fd71d8a0906064be0c9c4afdfa154ae96a6ec5143c1cfec893da3814d4390a80"
+    },
+    {
+     "path": "blind/blind-b-return.md",
+     "sha256": "ccc05e4201be397759c3ec0e44634c946f447831582d14107c07688e64c3727b"
+    }
+   ]
+  },
+  {
+   "id": "C19",
+   "scenarios": [
+    "S3",
+    "S8"
+   ],
+   "control": "positive",
+   "expectation": "終了コード 127 の替え玉の入口では skip と tool-absent の申告 1 行、検査層の読み手で読み戻せる",
+   "observation": "1 skipped・check-unexecuted: kind=tool-absent・parse_unexecuted_all と gate_unexecuted_declarations が 1 件",
+   "evidence": {
+    "path": "evidence/M3-C19-shim-exit-127.log",
+    "sha256": "aaa7898bd9408b1784af7751938a591831ddedc3a1efbc60c7ac52599a591718"
+   },
+   "status": "passed",
+   "supporting_evidence": [
+    {
+     "path": "evidence/M3-C19-readback.log",
+     "sha256": "55ea7772a128219f95569a80670260cf68401292e60ce27bb0de9f9cdd353a0b"
+    },
+    {
+     "path": "proto/m3_m4_machine_premise.patch",
+     "sha256": "f708792571bed604253e237b0643fe7f52da3ea3f9d9fc7edddeb1146209c286"
+    }
+   ]
+  },
+  {
+   "id": "C20",
+   "scenarios": [
+    "S3",
+    "S8"
+   ],
+   "control": "negative",
+   "expectation": "起動はするが壊れた答えを返す替え玉では赤で申告なし",
+   "observation": "1 failed・申告 0",
+   "evidence": {
+    "path": "evidence/M3-C20-fake-bad-json.log",
+    "sha256": "339cbe09c58c9473f2e068fc3428de1c6761b5102090c098f7c831b03d2c4eea"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C21",
+   "scenarios": [
+    "S4"
+   ],
+   "control": "positive",
+   "expectation": "日次の母集団では本物のモデルを呼ぶ検が選ばれない",
+   "observation": "4 passed 1 deselected",
+   "evidence": {
+    "path": "evidence/M4-C21-daily-population.log",
+    "sha256": "b2f716a2d52cbe0b63cd346e4f3b4c325943c38f49b09aa6cc3c8412bfbfb73f"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C22",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "positive",
+   "expectation": "検査層の無い機体では申告を見送り skip の理由だけ",
+   "observation": "申告行なし・要約 1 行",
+   "evidence": {
+    "path": "evidence/M3-C22-no-check-layer.log",
+    "sha256": "4e2a1e64a4965049a015e7657a7f7831cabf060f6b9f1bdccbc40397135e4943"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C23",
+   "scenarios": [
+    "S6",
+    "S7"
+   ],
+   "control": "positive",
+   "expectation": "signal を遮って止まる検で watchdog が名前の行を書き終了コード 1",
+   "observation": "rc 1・FAILED …::test_blocks_signals_and_hangs - WATCHDOG",
+   "evidence": {
+    "path": "evidence/M6-C23-watchdog-names-hung-test.log",
+    "sha256": "6a064af4efdef8d8ba25f667b11fc565a4dd1074ff67e61f20240f475521d92b"
+   },
+   "status": "passed",
+   "supporting_evidence": [
+    {
+     "path": "proto/m6_signal_and_named_watchdog.patch",
+     "sha256": "bf0ec4c767673bbc29eac3b64b6089322342ea8a6505818a7bf0aad225e8ac0d"
+    }
+   ]
+  },
+  {
+   "id": "C24",
+   "scenarios": [
+    "S6"
+   ],
+   "control": "positive",
+   "expectation": "signal 方式で遅い検の後の検が走る",
+   "observation": "1 failed 1 passed",
+   "evidence": {
+    "path": "evidence/M6-C24-signal-one-red-run-continues.log",
+    "sha256": "260515206c8c0c8b004d534486418c2a45df51be292b12e054eb9272840a0f91"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C25a",
+   "scenarios": [
+    "S7"
+   ],
+   "control": "positive",
+   "expectation": "M7 の試作が 09-25・09-26 の日次で止まった doeff-agents の session と watchdog の log を名指す",
+   "observation": "session 2: ended without a summary: packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py(2 日とも)・watchdog の log を名指し",
+   "evidence": {
+    "path": "/Users/kento/.local/state/design-check/lt-FPBECBQ3W22ESC92VAMCENR5JR/evidence/M7-C25-real-logs.log",
+    "sha256": "a876b6c92cb47accc9b1256b250e2b0654d83be1db4e85f225cc11cb6e2d540c"
+   },
+   "status": "passed",
+   "supporting_evidence": [
+    {
+     "path": "/Users/kento/.local/state/design-check/lt-FPBECBQ3W22ESC92VAMCENR5JR/proto/m7_session_names.py",
+     "sha256": "7b18e0039fa4a370185d55931c1fe0f78e814b282be6a3851f53c6a5363c29ce"
+    },
+    {
+     "path": "/Users/kento/.local/state/design-check/lt-FPBECBQ3W22ESC92VAMCENR5JR/evidence/daily-20260926-033008.log",
+     "sha256": "e32d7f6b65e9969543cee6f3eed1f299bd6bb00fd37875e7bace1747b2e26697"
+    },
+    {
+     "path": "/Users/kento/.local/state/design-check/lt-FPBECBQ3W22ESC92VAMCENR5JR/evidence/daily-20260925.log",
+     "sha256": "5d3469d91a0c52ef47711500e80cd5a4ad821ed859f3d34ffb14011b7bd758d1"
+    }
+   ]
+  },
+  {
+   "id": "C25b",
+   "scenarios": [
+    "S7"
+   ],
+   "control": "negative",
+   "expectation": "M7 の試作は根の入れ子の ERROR packages/doeff-x/tests/test_y.hy を数えない(今の読み取りは数える)",
+   "observation": "今の読み取り 6 名・session の読み取り 5 名",
+   "evidence": {
+    "path": "/Users/kento/.local/state/design-check/lt-FPBECBQ3W22ESC92VAMCENR5JR/evidence/M7-C25-real-logs.log",
+    "sha256": "a876b6c92cb47accc9b1256b250e2b0654d83be1db4e85f225cc11cb6e2d540c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C26",
+   "scenarios": [
+    "S4"
+   ],
+   "control": "negative",
+   "expectation": "基準の版では本物のモデルを呼ぶ検が母集団に入り、終了コード 127 の入口で赤(欠陥の再現)",
+   "observation": "1 failed 4 passed",
+   "evidence": {
+    "path": "evidence/M4-C26-base-population-includes-real-model.log",
+    "sha256": "676b820b7853c146994d54413d4a576117e9280fe81cb8de6995d8bab68e3d5b"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C27",
+   "scenarios": [
+    "S7"
+   ],
+   "control": "negative",
+   "expectation": "旧形の watchdog の文言に検の識別子が無く、-q では見出しも出ない(盲検 A の再現)",
+   "observation": "2 passed(識別子なし・見出しなし)",
+   "evidence": {
+    "path": "evidence/A-repro.log",
+    "sha256": "cd4c80c432c112461fb5b53f01ce02b5ed8934f6c49c948e92c624d93f545111"
+   },
+   "status": "passed",
+   "supporting_evidence": [
+    {
+     "path": "evidence/blindA-test_m7_evidence.py.txt",
+     "sha256": "b5cb76575839d3c5c2f70309e46ca96698542ed58630b75a19bb8cd857c150f8"
+    },
+    {
+     "path": "blind/blind-a-return.md",
+     "sha256": "dad68526da895b5fc8ed7ae622a8b2c88606ef1528a21cac4b4cc3756b27c74a"
+    }
+   ]
+  }
+ ],
+ "unresolved": []
+}

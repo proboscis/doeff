@@ -1,0 +1,4 @@
+cmd (設計者が再実行・盲検 A の作業場 /tmp/wt639-blind-A/tree): uv run --no-sync pytest -q -p no:cacheprovider .blind639/test_m7_evidence.py
+2 passed, 1 warning in 0.07s
+rc=0
+日次の全文の log(09-26)の root 処理ステージの 'test session starts' の数: 0・packages 処理ステージ: 30

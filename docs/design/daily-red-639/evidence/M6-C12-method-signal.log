@@ -1,0 +1,13 @@
+cmd: (cd /tmp/wt639/m6proj && .venv/bin/pytest -q -p no:cacheprovider -o timeout_method=signal test_two.py)
+F.                                                                       [100%]
+=================================== FAILURES ===================================
+_______________________________ test_a_slow_one ________________________________
+
+>       time.sleep(5)
+E       Failed: Timeout (>1.0s) from pytest-timeout.
+
+test_two.py:6: Failed
+=========================== short test summary info ============================
+FAILED test_two.py::test_a_slow_one - Failed: Timeout (>1.0s) from pytest-tim...
+1 failed, 1 passed in 1.19s
+pytest rc=1

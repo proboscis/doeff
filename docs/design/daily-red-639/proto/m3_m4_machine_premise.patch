@@ -1,0 +1,167 @@
+diff --git a/conftest.py b/conftest.py
+index 7c84d192..a830b855 100644
+--- a/conftest.py
++++ b/conftest.py
+@@ -1,7 +1,9 @@
+ import importlib.util
+ import os
+ import resource
++import shutil
+ import signal
++import subprocess
+ import sys
+ import threading
+ from contextlib import suppress
+@@ -266,6 +268,97 @@ def pytest_collection_finish(session):
+     admission.collection_finish(session)
+ 
+ 
++# ---------------------------------------------------------------------------
++# Machine premises: a test that needs a tool this machine may not have.
++#
++# A tool on PATH is not a working tool: the daily run's pod has the router's
++# entry point for `codex` on PATH but no binary behind it (exit 127, measured
++# 2026-09-26), so `shutil.which` said "present" and the test went red for a
++# machine fact.  `machine_tool` runs the tool once and skips the test when it
++# does not start.  A skip alone would be silent, so the session also names
++# every unmet premise as "not executed" in the check layer's own line format
++# (dotfiles agentcli remote_check — the land tool records the line as missing
++# coverage, not as a red).  The format is read from the check layer, never
++# copied here.  On a machine with only a clone of this repository there is no
++# check layer, and the skip reasons are all that is printed.
++# A test whose premise holds and then fails is red as usual.
++# ---------------------------------------------------------------------------
++_CHECK_LAYER = Path.home() / "dotfiles" / "agentcli" / "src" / "agentcli" / "remote_check.py"
++_CHECK_LAYER_MODULE = "doeff_check_layer_remote_check"
++_PREMISE_UNMET = "machine premise unmet:"
++_PREMISE_KIND = "tool-absent"
++
++
++def _check_layer():
++    """Load the check layer's vocabulary, or None when this machine has none."""
++    module = sys.modules.get(_CHECK_LAYER_MODULE)
++    if module is not None:
++        return module
++    if not _CHECK_LAYER.exists():
++        return None
++    spec = importlib.util.spec_from_file_location(_CHECK_LAYER_MODULE, _CHECK_LAYER)
++    if spec is None or spec.loader is None:
++        return None
++    module = importlib.util.module_from_spec(spec)
++    sys.modules[_CHECK_LAYER_MODULE] = module  # dataclass reads sys.modules
++    spec.loader.exec_module(module)
++    return module
++
++
++@pytest.fixture(scope="session")
++def machine_tool():
++    """``machine_tool("codex")`` → the path of a tool that starts on this machine, or skip."""
++    started: dict[tuple[str, ...], str] = {}
++
++    def require(name: str, *probe: str) -> str:
++        key = (name, *probe)
++        if key in started:
++            return started[key]
++        path = shutil.which(name)
++        if path is None:
++            pytest.skip(f"{_PREMISE_UNMET} {name} is not on PATH")
++        try:
++            result = subprocess.run(
++                [path, *(probe or ("--version",))], capture_output=True, text=True, timeout=30
++            )
++        except (OSError, subprocess.TimeoutExpired) as error:
++            pytest.skip(f"{_PREMISE_UNMET} {name} ({path}) does not start: {error}")
++        if result.returncode != 0:
++            tail = (result.stderr or result.stdout).strip().splitlines()[-1:]
++            pytest.skip(
++                f"{_PREMISE_UNMET} {name} ({path}) exits {result.returncode}: {' '.join(tail)}"
++            )
++        started[key] = path
++        return path
++
++    return require
++
++
++def _unmet_premises(terminalreporter) -> list[str]:
++    reasons = []
++    for report in terminalreporter.stats.get("skipped", []):
++        longrepr = report.longrepr
++        if isinstance(longrepr, tuple) and len(longrepr) == 3:
++            reason = str(longrepr[2]).removeprefix("Skipped: ")
++            if reason.startswith(_PREMISE_UNMET):
++                reasons.append(f"{report.nodeid}: {reason.removeprefix(_PREMISE_UNMET).strip()}")
++    return reasons
++
++
++def pytest_terminal_summary(terminalreporter, exitstatus, config):
++    reasons = _unmet_premises(terminalreporter)
++    if not reasons:
++        return
++    layer = _check_layer()
++    if layer is None:
++        terminalreporter.write_line(
++            f"{len(reasons)} test(s) skipped for a machine premise (no check layer here): "
++            + "; ".join(reasons)
++        )
++        return
++    terminalreporter.write(layer.unexecuted_line([_PREMISE_KIND], "; ".join(reasons)))
++
++
+ # ---------------------------------------------------------------------------
+ # One bytecode setting for every test run: no writes, standard location.
+ #
+diff --git a/packages/doeff-conductor/tests/test_agent_effect_c1.py b/packages/doeff-conductor/tests/test_agent_effect_c1.py
+index fbe4b2f3..422069f9 100644
+--- a/packages/doeff-conductor/tests/test_agent_effect_c1.py
++++ b/packages/doeff-conductor/tests/test_agent_effect_c1.py
+@@ -4,11 +4,10 @@ from __future__ import annotations
+ 
+ import ast
+ import json
+-import shutil
+ import subprocess
+ from datetime import datetime, timezone
+ from pathlib import Path
+-from typing import Any
++from typing import Any, Callable
+ 
+ import pytest
+ from doeff_agents import AgentSessionLifecycle, AgentSessionSnapshot, AgentType, SessionStatus
+@@ -53,11 +52,8 @@ def _run_real_codex_agent(
+     effect: AgentEffect,
+     tmp_path: Path,
+     runtime: MockConductorRuntime,
++    codex_bin: str,
+ ) -> dict[str, Any]:
+-    codex_bin = shutil.which("codex")
+-    if codex_bin is None:
+-        pytest.skip("codex CLI is not installed")
+-
+     schema_path = tmp_path / "codex-agent.schema.json"
+     output_path = tmp_path / "codex-agent-output.json"
+     schema_path.write_text(json.dumps(effect.task.result_schema), encoding="utf-8")
+@@ -181,7 +177,12 @@ def test_schema_invalid_retry_exhaustion_fails_typed(tmp_path: Path) -> None:
+     assert "files_changed" in result.error.last_error.message
+ 
+ 
+-def test_real_codex_worker_returns_schema_valid_json_through_agent(tmp_path: Path) -> None:
++@pytest.mark.e2e
++def test_real_codex_worker_returns_schema_valid_json_through_agent(
++    tmp_path: Path, machine_tool: Callable[..., str]
++) -> None:
++    # Calls a real model through the codex CLI, so it belongs to the e2e population.
++    codex_bin = machine_tool("codex")
+     runtime = MockConductorRuntime(tmp_path)
+ 
+     @do
+@@ -208,7 +209,9 @@ def test_real_codex_worker_returns_schema_valid_json_through_agent(tmp_path: Pat
+         scheduled_handlers=mock_handlers(
+             runtime=runtime,
+             overrides={
+-                AgentEffect: lambda effect: _run_real_codex_agent(effect, tmp_path, runtime),
++                AgentEffect: lambda effect: _run_real_codex_agent(
++                    effect, tmp_path, runtime, codex_bin
++                ),
+             },
+         ),
+     )
