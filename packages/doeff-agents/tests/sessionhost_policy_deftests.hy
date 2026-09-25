@@ -1524,6 +1524,10 @@
   ;; additive で後方安全: 未知 category に対する下流の既定は
   ;; 「CommandNonZeroExit + causeRetryable 由来の retry 意味論」
   ;; (ACP Observed.hs failureKindForCause の `_` 分岐)。
+  ;; ADR-DOE-AGENTS-012 R47 の改訂・R-the-host-only-reads-the-drain-marker-once-002c
+  ;; (f271ae39・card acp:kanban-issue:ki-b5e0d04de958 D1): host の停止(TERM)の拍に排水の印が
+  ;; 在った行は host_drained(retryable=true — 計画された入れ替えで、別の host で走らせ直せる)。
+  ;; 印の無い停止は cancelled(false)のまま。
   (assert (= TERMINAL-CAUSE-RETRYABLE
              {"rate_limited" True
               "timed_out" True
@@ -1536,7 +1540,8 @@
               "protocol_error" False
               "run_failed" False
               "interactive_prompt_blocked" False
-              "cancelled" False})))
+              "cancelled" False
+              "host_drained" True})))
 
 
 ;; ---------------------------------------------------------------------------

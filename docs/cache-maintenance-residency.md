@@ -38,8 +38,10 @@ pingが止まれば保持期限は有限で尽き、従来のidle条件も満た
   110分の次回ping、失敗時の期限切れ、明示cancel、Codexの従来の回収を検証する。
   SQLite接続を開き直す試験で永続記録からの復元も検証する。
 - `sessionhost_cache_maintenance_deftests.hy`の
-  `test-clock-swapped-idle-cleanup-ping-and-next-cycle`: 時計、ファイル、receiptの
-  handlerを差し替え、実際の`cache-host-probe`、`cache-resident-retention-of`による
+  `test-clock-swapped-idle-cleanup-ping-and-next-cycle`: 時計とreceiptの
+  handlerを差し替え、出来事の読み(`HeadlessEventsSince`)はpackageの
+  `headless-substrate`にmemoryの置き場(`MemoryEventStore`)を持たせて受ける。
+  実際の`cache-host-probe`、`cache-resident-retention-of`による
   保持期限の導出、`sessions-to-retire`を組み合わせて55分・110分の成功と、
   その後に応答がない場合の回収を検証する。
 - 既存の専用ping試験: 通常sendとの排他、通常sessionの状態を変えないこと、
