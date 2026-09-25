@@ -21,7 +21,7 @@
 (import doeff_time [Delay GetMonotonic])
 (import doeff_claude_code.values [ClaudeTurn ClaudeHome ClaudeSessionSpec TurnInput FreshSession ResumeSession ForkSession
                                   LinkFromHome Rebuilt IMAGE-MIMES])
-(import doeff_claude_code.lines [ClaudeStreamLine PermissionRequested Interrupted parse-record classify-record])
+(import doeff_claude_code.lines [ClaudeStreamLine Interrupted parse-record classify-record])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus
                                    TurnStarted InputQueued InterruptRequested TurnEventPage Answered SessionClosed
@@ -147,9 +147,7 @@
       (.append log.lines (ClaudeStreamLine :seq runtime.next-line-seq :at at :kind kind :raw (.rstrip raw "\n")))
       (+= runtime.next-line-seq 1))
     (when (is runtime.binding binding)
-      (apply-transition runtime binding
-                        (dialogue.on-record runtime.state record
-                                            (if (isinstance kind PermissionRequested) kind None))))))
+      (apply-transition runtime binding (dialogue.on-record runtime.state kind)))))
 
 (defn on-exit [#^ SessionRuntime runtime #^ Binding binding exit-code #^ str stderr-tail]
   (with [runtime.lock]

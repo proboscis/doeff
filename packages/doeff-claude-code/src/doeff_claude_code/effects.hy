@@ -7,6 +7,7 @@
 (import doeff [EffectBase])
 (import doeff_claude_code.values [ClaudeSessionSpec ClaudeHome ClaudeTurn TurnInput Allow Deny
                                   FreshSession ResumeSession ForkSession])
+(import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost])
 
 
 ;; --- effect ----------------------------------------------------------------------------------
@@ -14,7 +15,7 @@
 (defclass [(dataclass :frozen True)] ClaudeStartTurn [EffectBase]
   "手番を始める。死んだ(降りた)process の起こし直しの判断はこの effect の handler の中の 1 か所だけ(設計 7 節)。
    答え = TurnStarted | SessionNotFound | SessionIdInUse | TurnInFlight | CarryRefused | LaunchFailed | AttachmentRefused。"
-  (#^ object origin)
+  (#^ (| FreshSession ResumeSession ForkSession) origin)
   (#^ ClaudeSessionSpec spec)
   (#^ TurnInput input)
   (defn __post_init__ [self]
@@ -41,7 +42,7 @@
   "許可の問いに答える。答え = Answered | NoSuchRequest。"
   (#^ ClaudeTurn turn)
   (#^ str request-id)
-  (#^ object answer)
+  (#^ (| Allow Deny) answer)
   (defn __post_init__ [self]
     (when (not (isinstance self.answer #(Allow Deny)))
       (raise (TypeError "ClaudeAnswerPermission.answer は Allow / Deny")))))
@@ -72,9 +73,9 @@
 
 (defclass [(dataclass :frozen True)] TurnEventPage []
   "lines = after-seq より後の行(重複も欠落もなく)・next-seq = 次に渡す after-seq・end = 手番の終わり(まだなら None)。"
-  (#^ tuple lines)
+  (#^ (get tuple #(ClaudeStreamLine ...)) lines)
   (#^ int next-seq)
-  (#^ object end))
+  (#^ (| Completed Failed Interrupted BackendLost None) end))
 
 (defclass [(dataclass :frozen True)] Answered [])
 
@@ -93,8 +94,8 @@
 (setv TranscriptState (| TranscriptPresent TranscriptAbsent))
 
 (defclass [(dataclass :frozen True)] SessionStatus []
-  (#^ object state)
-  (#^ object transcript))
+  (#^ (| Idle TurnRunning Closed) state)
+  (#^ (| TranscriptPresent TranscriptAbsent) transcript))
 
 
 ;; --- 失敗の戻り値 ---------------------------------------------------------------------------------

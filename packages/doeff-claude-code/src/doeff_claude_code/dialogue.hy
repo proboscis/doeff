@@ -14,11 +14,16 @@
 ;;;   terminal_reason つき)。
 ;;; - 手番の終わり = process を降ろす(close)。手番の境界の所有者は host — CLI に result の後の手番を持たせない(#517)。
 ;;;   control_request で止めて注入が生き残った時だけ、process は生き残った入力の手番を走らせてから降りる(continues)。
+;;;
+;;; stdout の行は lines.hy が分類した型(ClaudeLineKind)で受ける — JSON の読みは lines.hy の 1 か所だけ。
+;;; stdin へ書く行の綴り(JSON へ書く境界)はこの file の dumps の 1 か所。
 (import dataclasses [dataclass replace])
 (import json)
+(import typing [NamedTuple])
+(import doeff_hy.frozen [thaw-json])
 (import doeff_claude_code.values [TurnInput Allow Deny])
-(import doeff_claude_code.lines [Completed Failed Interrupted BackendLost INPUT-FATES INPUT-FATE-TERMINAL
-                                 object-at text-at strings-at int-at])
+(import doeff_claude_code.lines [Completed Failed Interrupted BackendLost Init InputFate ControlResponse PermissionRequested
+                                 TurnResult INPUT-FATES INPUT-FATE-TERMINAL])
 
 ;; CLI が system/init の capabilities で名乗る能力(実測 2.1.282)。
 (setv LIFECYCLE-CAPABILITY "msg_lifecycle_v1")
@@ -29,6 +34,11 @@
 
 ;; --- 状態 ---------------------------------------------------------------------------------------
 
+(defclass Injection [NamedTuple]
+  "足した入力 1 つ: ref = 入力の行の名 / fate = CLI が名乗った運命(INPUT-FATES の語)。"
+  (#^ str ref)
+  (#^ str fate))
+
 (defclass [(dataclass :frozen True)] NoStop [])
 
 (defclass [(dataclass :frozen True)] StopSignal []
@@ -37,31 +47,32 @@
 (defclass [(dataclass :frozen True)] StopControl []
   "control_request interrupt を書いた。still-queued = 答えが名指した生き残る注入(None = まだ答えを読んでいない)。"
   (#^ str request-id)
-  (setv #^ (| tuple None) still-queued None))
+  (setv #^ (| (get tuple #(str ...)) None) still-queued None))
 
 (defclass [(dataclass :frozen True)] DialogueState []
   "session-id = init で知った会話の id / in-flight = host の手番の途中 / cli-turn-open = CLI の手番が開いている
    (入力を書いてから、か init から result まで)/ lifecycle・interrupt-receipt = CLI が名乗った能力 /
-   turn-refs = この host の手番に入れた入力の ref / injections = 足した入力の ref と運命の対の列 /
-   stop = 止めるの求め / deferred-result = 注入を待って飲んだ result の行 / permissions = 答え待ちの許可の問い(PermissionRequested)。"
+   turn-refs = この host の手番に入れた入力の ref / injections = 足した入力(Injection)の列 /
+   stop = 止めるの求め / deferred-result = 注入を待って飲んだ result の行(TurnResult)/
+   permissions = 答え待ちの許可の問い(PermissionRequested)。"
   (setv #^ str session-id "")
   (setv #^ bool in-flight False)
   (setv #^ bool cli-turn-open False)
   (setv #^ bool lifecycle False)
   (setv #^ bool interrupt-receipt False)
-  (setv #^ tuple turn-refs #())
-  (setv #^ tuple injections #())
-  (setv #^ object stop (NoStop))
-  (setv #^ (| dict None) deferred-result None)
-  (setv #^ tuple permissions #()))
+  (setv #^ (get tuple #(str ...)) turn-refs #())
+  (setv #^ (get tuple #(Injection ...)) injections #())
+  (setv #^ (| NoStop StopSignal StopControl) stop (NoStop))
+  (setv #^ (| TurnResult None) deferred-result None)
+  (setv #^ (get tuple #(PermissionRequested ...)) permissions #()))
 
 (defclass [(dataclass :frozen True)] Transition []
   "遷移の答え: 次の状態・stdin へ書く行・host の手番の終わり(無ければ None)・close(この行で process を降ろす)・
    continues(終わった手番の後に、生き残った入力の手番が同じ process で続く)・signal(SIGINT を送る)・
    session-id(この行で知った会話の id)。"
   (#^ DialogueState state)
-  (setv #^ tuple sends #())
-  (setv #^ object end None)
+  (setv #^ (get tuple #(str ...)) sends #())
+  (setv #^ (| Completed Failed Interrupted BackendLost None) end None)
   (setv #^ bool close False)
   (setv #^ bool continues False)
   (setv #^ bool signal False)
@@ -71,7 +82,8 @@
 ;; --- stdin の行の綴り(この package でここ 1 か所) ----------------------------------------------------
 
 (defn #^ str dumps [#^ dict value]
-  (json.dumps value :ensure-ascii False :separators #("," ":")))
+  "stdin の 1 行の綴り。凍らせた値(道具の入力など)はここで JSON の形へ戻す。"
+  (json.dumps (thaw-json value) :ensure-ascii False :separators #("," ":")))
 
 (defn #^ dict image-block [attachment]
   "添付 1 つ = Messages API と同じ image の block(実測 2026-09-14・doeff-agents conformance/attachment-physics.md)。"
@@ -99,39 +111,33 @@
 
 (defn #^ tuple queued-refs [#^ DialogueState state]
   "まだ model に読まれていない注入の ref(足した順)。"
-  (tuple (gfor #(ref fate) state.injections :if (= fate "queued") ref)))
+  (tuple (gfor injection state.injections :if (= injection.fate "queued") injection.ref)))
 
 (defn #^ tuple set-fate [#^ tuple injections #^ str ref #^ str fate]
-  (tuple (gfor #(known old) injections (if (= known ref) #(known fate) #(known old)))))
+  (tuple (gfor injection injections (if (= injection.ref ref) (Injection ref fate) injection))))
 
 (defn #^ bool knows-injection [#^ DialogueState state #^ str ref]
-  (any (gfor #(known _) state.injections (= known ref))))
+  (any (gfor injection state.injections (= injection.ref ref))))
 
 
 ;; --- 手番の終わりの組み立て --------------------------------------------------------------------------
 
-(defn #^ tuple result-input-refs [#^ dict record #^ DialogueState state]
+(defn #^ tuple result-input-refs [#^ TurnResult result #^ DialogueState state]
   "result が名乗る入力の ref(user_message_uuids)。名乗らない版ではこの手番に入れた ref。"
-  (setv named (strings-at record "user_message_uuids"))
-  (if named named state.turn-refs))
+  (if result.input-refs result.input-refs state.turn-refs))
 
-(defn end-of-result [#^ dict record #^ DialogueState state]
+(defn end-of-result [#^ TurnResult result #^ DialogueState state]
   "result の行 → Completed | Failed。誤りの detail は CLI が名乗った文ちょうど(無ければ subtype)。"
-  (setv is-error (is (.get record "is_error") True))
-  (setv refs (result-input-refs record state))
-  (if is-error
-      (do
-        (setv said (.strip (text-at record "result")))
-        (Failed :detail (or said (text-at record "subtype") "error")
-                :api-error-status (int-at record "api_error_status")
-                :terminal-reason (text-at record "terminal_reason")
-                :input-refs refs))
-      (do
-        (setv cost (.get record "total_cost_usd"))
-        (Completed :result-text (text-at record "result")
-                   :usage (object-at record "usage")
-                   :cost-usd (if (and (isinstance cost #(int float)) (not (isinstance cost bool))) (float cost) None)
-                   :input-refs refs))))
+  (setv refs (result-input-refs result state))
+  (if result.is-error
+      (Failed :detail (or (.strip result.result-text) result.subtype "error")
+              :api-error-status result.api-error-status
+              :terminal-reason result.terminal-reason
+              :input-refs refs)
+      (Completed :result-text result.result-text
+                 :usage result.usage
+                 :cost-usd result.cost-usd
+                 :input-refs refs)))
 
 (defn #^ DialogueState closed-turn [#^ DialogueState state]
   "host の手番を閉じた状態(会話の id と CLI の能力は保つ)。"
@@ -154,7 +160,7 @@
    (書くと誰のでもない手番になる)。運命を追うのは CLI が msg_lifecycle_v1 を名乗った時だけ
    (名乗らない CLI で追うと queued のままの注入が result を飲み続けて手番が終わらない)。"
   (when (not state.in-flight) (return None))
-  (setv tracked (if state.lifecycle (+ state.injections #(#(input.ref "queued"))) state.injections))
+  (setv tracked (if state.lifecycle (+ state.injections #((Injection input.ref "queued"))) state.injections))
   (Transition :state (replace state :injections tracked :turn-refs (+ state.turn-refs #(input.ref)))
               :sends #((user-line input))))
 
@@ -206,20 +212,20 @@
 
 ;; --- 遷移(stdout の 1 行) ------------------------------------------------------------------------
 
-(defn on-init [#^ DialogueState state #^ dict record]
-  (setv capabilities (strings-at record "capabilities"))
-  (setv session-id (text-at record "session_id"))
+(defn on-init [#^ DialogueState state #^ Init init]
+  (setv capabilities init.capabilities)
+  (setv session-id init.session-id)
   (Transition :state (replace state :cli-turn-open True
                               :session-id (or session-id state.session-id)
                               :lifecycle (in LIFECYCLE-CAPABILITY capabilities)
                               :interrupt-receipt (in INTERRUPT-RECEIPT-CAPABILITY capabilities))
               :session-id (or session-id None)))
 
-(defn on-lifecycle [#^ DialogueState state #^ dict record]
+(defn on-lifecycle [#^ DialogueState state #^ InputFate input-fate]
   "足した入力の運命を写す。注入を待って result を飲んだ後に、その注入が走らずに終わり(cancelled / discarded / refused)、
    ほかに読まれていない注入も無ければ、手番は飲んだ result で終わる。"
-  (setv ref (text-at record "command_uuid"))
-  (setv fate (text-at record "state"))
+  (setv ref input-fate.ref)
+  (setv fate input-fate.state)
   (when (or (not ref) (not-in fate INPUT-FATES) (not (knows-injection state ref)))
     (return (Transition :state state)))
   (setv moved (replace state :injections (set-fate state.injections ref fate)))
@@ -231,23 +237,21 @@
                        (Failed :detail (.format "injected input {} was {}" ref fate) :input-refs moved.turn-refs)))
       (Transition :state moved)))
 
-(defn on-control-response [#^ DialogueState state #^ dict record]
+(defn on-control-response [#^ DialogueState state #^ ControlResponse response]
   "止めるの答え: success なら still_queued を覚える。error なら control_request は効かなかった — SIGINT へ倒す。"
-  (setv response (object-at record "response"))
-  (when (not (and (isinstance state.stop StopControl)
-                  (= (text-at response "request_id") state.stop.request-id)))
+  (setv stop state.stop)
+  (when (not (and (isinstance stop StopControl) (= response.request-id stop.request-id)))
     (return (Transition :state state)))
-  (if (= (text-at response "subtype") "success")
-      (Transition :state (replace state :stop (replace state.stop :still-queued
-                                                       (strings-at (object-at response "response") "still_queued"))))
+  (if (= response.subtype "success")
+      (Transition :state (replace state :stop (replace stop :still-queued response.still-queued)))
       (Transition :state (replace state :stop (StopSignal)) :signal True)))
 
-(defn on-permission-request [#^ DialogueState state request]
+(defn on-permission-request [#^ DialogueState state #^ PermissionRequested request]
   (Transition :state (replace state :permissions (+ state.permissions #(request)))))
 
-(defn on-result [#^ DialogueState state #^ dict record]
+(defn on-result [#^ DialogueState state #^ TurnResult result]
   "result の行(規則は冒頭)。"
-  (when (or (in (text-at (object-at record "origin") "kind") CLI-OWN-TURN-ORIGINS) (not state.in-flight))
+  (when (or (in result.origin-kind CLI-OWN-TURN-ORIGINS) (not state.in-flight))
     (return (Transition :state state)))
   (setv open-closed (replace state :cli-turn-open False))
   (setv queued (queued-refs open-closed))
@@ -262,22 +266,21 @@
         (setv dropped (tuple (gfor ref queued :if (not-in ref survivors) ref)))
         (if survivors
             (Transition :state (replace (closed-turn open-closed) :in-flight True :turn-refs survivors
-                                        :injections (tuple (gfor ref survivors #(ref "queued"))))
+                                        :injections (tuple (gfor ref survivors (Injection ref "queued"))))
                         :end (Interrupted :surviving-refs survivors :dropped-refs dropped)
                         :continues True)
             (ended open-closed (Interrupted :dropped-refs dropped))))
     queued
-      (Transition :state (replace open-closed :deferred-result record))
+      (Transition :state (replace open-closed :deferred-result result))
     True
-      (ended open-closed (end-of-result record open-closed))))
+      (ended open-closed (end-of-result result open-closed))))
 
-(defn on-record [#^ DialogueState state #^ dict record permission-request]
-  "stdout の 1 行(JSON の object)を読んだ遷移。permission-request = この行の分類が PermissionRequested ならその値(無ければ None)。"
-  (setv kind (text-at record "type"))
+(defn on-record [#^ DialogueState state kind]
+  "stdout の 1 行を読んだ遷移。kind = lines.hy が分類した行の型(ClaudeLineKind)— 状態機械が読む型の外は何もしない。"
   (cond
-    (and (= kind "system") (= (text-at record "subtype") "init")) (on-init state record)
-    (= kind "command_lifecycle") (on-lifecycle state record)
-    (= kind "control_response") (on-control-response state record)
-    (is-not permission-request None) (on-permission-request state permission-request)
-    (= kind "result") (on-result state record)
+    (isinstance kind Init) (on-init state kind)
+    (isinstance kind InputFate) (on-lifecycle state kind)
+    (isinstance kind ControlResponse) (on-control-response state kind)
+    (isinstance kind PermissionRequested) (on-permission-request state kind)
+    (isinstance kind TurnResult) (on-result state kind)
     True (Transition :state state)))

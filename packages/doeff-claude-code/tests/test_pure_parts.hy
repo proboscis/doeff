@@ -8,7 +8,8 @@
 (import doeff_claude_code.decision [SessionView Refuse Launch start-decision])
 (import doeff_claude_code.effects [SessionIdInUse SessionNotFound TurnInFlight])
 (import doeff_claude_code.lines [classify-record Init AssistantMessage ToolResult InputFate PermissionRequested TaskEvent
-                                 RateLimit TurnResult PartialMessage Other])
+                                 RateLimit TurnResult PartialMessage Other ControlResponse Usage])
+(import doeff_claude_code.values [Allow])
 
 (setv SID "560828de-2992-4635-ab21-c6e06b0c6eb8")
 (setv HOME (ClaudeHome "/h/.claude" {"PATH" "/bin"}))
@@ -110,4 +111,40 @@
              (TurnResult "error_during_execution" True "aborted_streaming" "")))
   (assert (= (classify-record {"type" "stream_event" "event" {"delta" {"type" "text_delta" "text" "x"}}})
              (PartialMessage "x")))
-  (assert (= (classify-record {"type" "brand_new" "subtype" "s"}) (Other "brand_new" "s"))))
+  (assert (= (classify-record {"type" "brand_new" "subtype" "s"}) (Other "brand_new" "s")))
+  (assert (= (classify-record {"type" "control_response"
+                               "response" {"subtype" "success" "request_id" "rid" "response" {"still_queued" ["i1"]}}})
+             (ControlResponse "rid" "success" #("i1"))))
+  (assert (= (classify-record {"type" "result" "subtype" "success" "is_error" False "result" "ok" "total_cost_usd" 1
+                               "api_error_status" None "user_message_uuids" ["m1"]
+                               "usage" {"input_tokens" 3 "output_tokens" 5 "cache_creation_input_tokens" 11
+                                        "cache_read_input_tokens" 13 "service_tier" "standard"
+                                        "cache_creation" {"ephemeral_5m_input_tokens" 2 "ephemeral_1h_input_tokens" 9}
+                                        "server_tool_use" {"web_search_requests" 1} "unknown_field" 99}})
+             (TurnResult "success" False :result-text "ok" :cost-usd 1.0 :input-refs #("m1")
+                         :usage (Usage :input-tokens 3 :output-tokens 5 :cache-creation-input-tokens 11
+                                       :cache-read-input-tokens 13 :cache-creation-5m-input-tokens 2
+                                       :cache-creation-1h-input-tokens 9 :web-search-requests 1
+                                       :service-tier "standard")))))
+
+
+(deftest test-open-maps-are-frozen-when-built
+  ;; 鍵の集合が開いた写像(env・settings・道具の入力)は作る時に写し取って凍らせる — 作った後に中身が変わらない。
+  (setv env {"PATH" "/bin"})
+  (setv home (ClaudeHome "/h" env))
+  (setv (get env "PATH") "/changed")
+  (assert (= (get home.env "PATH") "/bin"))
+  (with [(pytest.raises TypeError)] (setv (get home.env "X") "1"))
+  (with [(pytest.raises TypeError)] (ClaudeHome "/h" {"PATH" 1}))
+  (with [(pytest.raises TypeError)] (McpStdio "cmd" :env {"A" 1}))
+  (setv spec (ClaudeSessionSpec :home HOME :cwd "/w" :settings {"env" {"A" "1"} "list" [1 2]}
+                                :mcp-servers {"s" (McpStdio "cmd" :env {"B" "2"})}))
+  (with [(pytest.raises TypeError)] (setv (get spec.settings "env" "A") "2"))
+  (assert (= (get spec.settings "list") #(1 2)))
+  (with [(pytest.raises TypeError)] (setv (get spec.mcp-servers "t") (McpSse "http://x")))
+  (setv mcp (json.loads (get (setx argv (launch-argv #("claude") spec (FreshSession SID))) (+ (.index argv "--mcp-config") 1))))
+  (assert (= mcp {"mcpServers" {"s" {"type" "stdio" "command" "cmd" "args" [] "env" {"B" "2"}}}}))
+  (setv asked (PermissionRequested "q" "Bash" {"command" {"nested" ["a"]}}))
+  (with [(pytest.raises TypeError)] (setv (get asked.input "command" "nested") "b"))
+  (assert (= (. (Allow {"command" "x"}) updated-input) {"command" "x"}))
+  (with [(pytest.raises TypeError)] (setv (get (. (Allow {"command" "x"}) updated-input) "command") "y")))

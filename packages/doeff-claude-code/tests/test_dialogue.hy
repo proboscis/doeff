@@ -1,8 +1,9 @@
 ;; 状態機械(dialogue.hy)の検 — 純関数だけ。行は実物の形(claude 2.1.282 の実測 = #602 の layer2-cli-capabilities.md)。
+;; 状態機械は lines.hy が分類した型を読む — 検は実物の形の行を classify-record に通してから渡す(本番の handler と同じ道)。
 (require doeff-hy.macros [deftest])
 (import json)
 (import doeff_claude_code.values [TurnInput ImageAttachment Allow Deny])
-(import doeff_claude_code.lines [Completed Failed Interrupted BackendLost PermissionRequested])
+(import doeff_claude_code.lines [Completed Failed Interrupted BackendLost Usage classify-record])
 (import doeff_claude_code.dialogue :as dialogue)
 (import doeff_claude_code.dialogue [DialogueState StopSignal StopControl NoStop])
 
@@ -19,10 +20,14 @@
                       "user_message_uuids" ["msg-1"] "session_id" SID})
 
 
+(defn read-record [state #^ dict record]
+  "実物の形の 1 行を分類して状態機械へ渡す(handler の on-line と同じ道)。"
+  (dialogue.on-record state (classify-record record)))
+
 (defn started []
   "init を読んだ後の手番の途中の状態。"
   (setv begun (dialogue.begin-turn (DialogueState) (TurnInput "hello" "msg-1")))
-  (. (dialogue.on-record begun.state INIT None) state))
+  (. (read-record begun.state INIT) state))
 
 (defn lifecycle [ref state]
   {"type" "command_lifecycle" "command_uuid" ref "state" state "session_id" SID})
@@ -34,7 +39,7 @@
   (assert plan.signal)
   (assert (= plan.sends #()))
   (assert (isinstance plan.state.stop StopSignal))
-  (setv read (dialogue.on-record plan.state SIGINT-RESULT None))
+  (setv read (read-record plan.state SIGINT-RESULT))
   (assert (= read.end (Interrupted)) (repr read.end))
   (assert read.close)
   (assert (not read.state.in-flight)))
@@ -42,22 +47,22 @@
 
 (deftest test-an-aborted-streaming-result-without-an-interrupt-stays-a-failure
   ;; 止めるを求めていない aborted_streaming(誰かが外から SIGINT を送った)は Failed のまま、terminal_reason を運ぶ。
-  (setv read (dialogue.on-record (started) SIGINT-RESULT None))
+  (setv read (read-record (started) SIGINT-RESULT))
   (assert (isinstance read.end Failed) (repr read.end))
   (assert (= read.end.terminal-reason "aborted_streaming"))
   (assert (= read.end.detail "error_during_execution")))
 
 
 (deftest test-a-success-result-completes-the-turn-and-closes-the-process
-  (setv read (dialogue.on-record (started) SUCCESS-RESULT None))
-  (assert (= read.end (Completed :result-text "OKAPI-77" :usage {"output_tokens" 7} :cost-usd 0.04 :input-refs #("msg-1"))))
+  (setv read (read-record (started) SUCCESS-RESULT))
+  (assert (= read.end (Completed :result-text "OKAPI-77" :usage (Usage :output-tokens 7) :cost-usd 0.04 :input-refs #("msg-1"))))
   (assert read.close))
 
 
 (deftest test-a-failed-result-carries-the-cli-text-and-the-api-status
   (setv limit {"type" "result" "subtype" "success" "is_error" True "result" "You've reached your limit."
                "api_error_status" 429 "terminal_reason" "api_error"})
-  (setv read (dialogue.on-record (started) limit None))
+  (setv read (read-record (started) limit))
   (assert (= read.end (Failed :detail "You've reached your limit." :api-error-status 429 :terminal-reason "api_error"
                               :input-refs #("msg-1")))))
 
@@ -70,35 +75,35 @@
   (setv plan (dialogue.interrupt injected.state "rid-2"))
   (assert (not plan.signal))
   (assert (= plan.sends #((dialogue.interrupt-request-line "rid-2"))))
-  (setv answered (dialogue.on-record plan.state {"type" "control_response"
+  (setv answered (read-record plan.state {"type" "control_response"
                                                  "response" {"subtype" "success" "request_id" "rid-2"
-                                                             "response" {"still_queued" ["inj-1"]}}} None))
+                                                             "response" {"still_queued" ["inj-1"]}}}))
   (assert (= answered.state.stop (StopControl "rid-2" #("inj-1"))))
-  (setv aborted (dialogue.on-record answered.state {"type" "result" "subtype" "error_during_execution" "is_error" True
-                                                    "terminal_reason" "aborted_tools"} None))
+  (setv aborted (read-record answered.state {"type" "result" "subtype" "error_during_execution" "is_error" True
+                                                    "terminal_reason" "aborted_tools"}))
   (assert (= aborted.end (Interrupted :surviving-refs #("inj-1"))) (repr aborted.end))
   (assert aborted.continues)
   (assert (not aborted.close))
   (assert aborted.state.in-flight)
-  (setv running (. (dialogue.on-record aborted.state (lifecycle "inj-1" "started") None) state))
-  (setv finished (dialogue.on-record running (| SUCCESS-RESULT {"user_message_uuids" ["inj-1"]}) None))
+  (setv running (. (read-record aborted.state (lifecycle "inj-1" "started")) state))
+  (setv finished (read-record running (| SUCCESS-RESULT {"user_message_uuids" ["inj-1"]})))
   (assert (= finished.end.input-refs #("inj-1")))
   (assert finished.close))
 
 
 (deftest test-a-refused-control-request-falls-back-to-sigint
   (setv plan (dialogue.interrupt (. (dialogue.inject (started) (TurnInput "x" "inj-1")) state) "rid-3"))
-  (setv refused (dialogue.on-record plan.state {"type" "control_response"
-                                                "response" {"subtype" "error" "request_id" "rid-3"}} None))
+  (setv refused (read-record plan.state {"type" "control_response"
+                                                "response" {"subtype" "error" "request_id" "rid-3"}}))
   (assert refused.signal)
   (assert (isinstance refused.state.stop StopSignal)))
 
 
 (deftest test-the-cli-own-turn-result-is-not-the-end
   ;; ResumeSession の直後に CLI が孤児の task の報せを自分の手番として走らせた result(origin task-notification)。
-  (setv read (dialogue.on-record (started) {"type" "result" "subtype" "success" "is_error" False "result" ""
-                                            "origin" {"kind" "task-notification"}} None))
-  (assert (is read.end None))
+  (setv read (read-record (started) {"type" "result" "subtype" "success" "is_error" False "result" ""
+                                            "origin" {"kind" "task-notification"}}))
+  (assert (is read.end))
   (assert read.state.in-flight))
 
 
@@ -106,10 +111,10 @@
   ;; result の時点で読まれていない注入 → CLI が次の手番として走らせる(中間の result)。その注入が走らずに終われば、
   ;; 飲んだ result で手番を閉じる。
   (setv injected (dialogue.inject (started) (TurnInput "late" "inj-1")))
-  (setv swallowed (dialogue.on-record injected.state SUCCESS-RESULT None))
-  (assert (is swallowed.end None))
-  (assert (= swallowed.state.deferred-result SUCCESS-RESULT))
-  (setv cancelled (dialogue.on-record swallowed.state (lifecycle "inj-1" "cancelled") None))
+  (setv swallowed (read-record injected.state SUCCESS-RESULT))
+  (assert (is swallowed.end))
+  (assert (= swallowed.state.deferred-result (classify-record SUCCESS-RESULT)))
+  (setv cancelled (read-record swallowed.state (lifecycle "inj-1" "cancelled")))
   (assert (isinstance cancelled.end Completed) (repr cancelled.end))
   (assert (= cancelled.end.result-text "OKAPI-77")))
 
@@ -120,25 +125,26 @@
   (setv stopped (dialogue.on-exit (. (dialogue.interrupt (started) "rid") state) 0 ""))
   (assert (= stopped.end (Interrupted)))
   (setv idle (dialogue.on-exit (DialogueState) 0 ""))
-  (assert (is idle.end None)))
+  (assert (is idle.end)))
 
 
 (deftest test-a-permission-question-is-answered-once
-  (setv request (PermissionRequested "req-1" "Bash" {"command" "touch x"}))
-  (setv asked (dialogue.on-record (started) {"type" "control_request" "request_id" "req-1"} request))
+  (setv asked (read-record (started) {"type" "control_request" "request_id" "req-1"
+                               "request" {"subtype" "can_use_tool" "tool_name" "Bash" "input" {"command" "touch x"}}}))
+  (assert (= (len asked.state.permissions) 1))
   (setv allowed (dialogue.answer-permission asked.state "req-1" (Allow)))
   (setv line (json.loads (get allowed.sends 0)))
   (assert (= line {"type" "control_response"
                    "response" {"subtype" "success" "request_id" "req-1"
                                "response" {"behavior" "allow" "updatedInput" {"command" "touch x"}}}}))
-  (assert (is (dialogue.answer-permission allowed.state "req-1" (Allow)) None))
+  (assert (is (dialogue.answer-permission allowed.state "req-1" (Allow))))
   (setv denied (dialogue.answer-permission asked.state "req-1" (Deny "no")))
   (assert (= (get (json.loads (get denied.sends 0)) "response" "response") {"behavior" "deny" "message" "no"})))
 
 
 (deftest test-input-outside-a-turn-is-not-written
-  (assert (is (dialogue.inject (DialogueState) (TurnInput "x" "r")) None))
-  (assert (is (dialogue.interrupt (DialogueState) "rid") None)))
+  (assert (is (dialogue.inject (DialogueState) (TurnInput "x" "r"))))
+  (assert (is (dialogue.interrupt (DialogueState) "rid"))))
 
 
 (deftest test-the-user-line-spelling
