@@ -212,6 +212,34 @@ TURN_RECORD_CONDITIONS_BYTE_BUDGET = 8_192
 #: turn-record の status の欄の綴り(契約 kinds.turn-record … status.properties の conditions / conditionsDropped)。
 TURN_RECORD_CONDITIONS_KEY = "conditions"
 TURN_RECORD_CONDITIONS_DROPPED_KEY = "conditionsDropped"
+
+
+@dataclass(frozen=True)
+class TurnEndOnlyMaterial:
+    """手番の終わりの turn-record の status の材料のうち、手番の中の memory(開始 offset・要求の時刻)からしか
+    数えられない物の宣言。材料を持たない書き手(巡回・退役)は ``empty`` を渡し、中身を渡すのは手番の終わりの書き
+    (agentd.end-turn-record)だけ。``reason`` はその理由(ADR-DOE-AGENTS-012 R49 の検が失敗文で言う)。"""
+
+    empty: tuple[()] | None
+    reason: str
+
+
+#: judgment.turn-record-ended-status の引数の**材料の分類**(R49・agora-redesign#639)。引数は全てどちらか一方に宣言する:
+#: TURN_RECORD_END_ONLY_MATERIALS = 手番の終わりの書きだけが中身を渡す材料(巡回・退役は empty を渡す)・
+#: TURN_RECORD_ROW_MATERIALS = 行から読めるので、材料を持たない書き手も渡してよい材料。鍵は引数の Python の名。
+#: 分類は材料の出所を知る側の知識なので、引数を足す便は同じ便でここへ分類を足す(ADR-DOE-AGENTS-012 の検は
+#: この宣言を読み、分類の無い引数・引数の無い分類を赤にする — 検の側に役の名の表を持たない)。
+TURN_RECORD_END_ONLY_MATERIALS: Mapping[str, TurnEndOnlyMaterial] = {
+    "usage": TurnEndOnlyMaterial(empty=None, reason="消費の和は手番の終わりの 1 回"),
+    "entries": TurnEndOnlyMaterial(
+        empty=(), reason="手番の出来事の見出しは手番の中の追記と終わりの書きだけが持つ"
+    ),
+    "cache_observation": TurnEndOnlyMaterial(
+        empty=None, reason="cache の観測は手番の開始 offset と要求の時刻(memory)から測る — 手番の終わりの 1 回"
+    ),
+    "responses": TurnEndOnlyMaterial(empty=None, reason="応答ごとの消費は手番の終わりの 1 回"),
+}
+TURN_RECORD_ROW_MATERIALS: frozenset[str] = frozenset({"status", "conditions"})
 #: 出所の欄(card ki-6f222893d6b6): agentd が agent-job に新しく足す条件は、立てた試みの番号を名乗る
 #: (judgment.conditions-of-runner / conditions-of-binding が刻む)。置き直された手番の記録に前の試みの条件が並ぶ時の見分けの欄。
 CONDITION_ATTEMPT_KEY = "attempt"
