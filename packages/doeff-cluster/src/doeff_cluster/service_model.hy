@@ -6,7 +6,7 @@
 ;;; service どうしは戻り値でやり取りしない。共有の状態を読み書きする effect を通してだけつながる。
 ;;; 宣言の durable な形は「関数の参照(module:attr)+ commit」。実行先はその commit のコードを準備してから参照を解く。
 ;;;
-;;; 宣言は値と関数で書く(macro は置かない — ADR-DOE-HY-005 R5・agora-redesign #639):
+;;; 宣言は値と関数で書く(macro は置かない — ADR-DOE-HY-005 R5):
 ;;;
 ;;;   (defk turn-placer-program [interval]
 ;;;     {:pre [(: interval float)] :post [(: % int)]}
