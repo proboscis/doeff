@@ -232,8 +232,8 @@ def _watchdog_timeout_for_item(item) -> int:
 # skips the test when it does not start.
 #
 # A skip alone is silent: the run would read "measured, nothing red" for a
-# test that never ran.  So at the end of the session every unmet premise is
-# named as "not executed" in the check layer's own line format (dotfiles
+# test that never ran.  So at the end of the session the unmet premises are
+# named, on one line, as "not executed" in the check layer's own format (dotfiles
 # agentcli remote_check — the file the land tool reads; it records the line as
 # missing coverage, not as a red).  The format is read from the check layer on
 # every run and never copied here: a copy keeps agreeing with itself on the
@@ -288,11 +288,10 @@ def _probe_tool(name: str, probe: Sequence[str]) -> _ToolStarts | _ToolDoesNotSt
     except OSError as error:
         return _ToolDoesNotStart(f"{name} ({path}) cannot be started: {error}")
     if answer.returncode != 0:
+        # The last line is the tool's final word (a router's "no binary behind it").
         said = (answer.stderr.strip() or answer.stdout.strip()).splitlines()
-        first_line = said[0] if said else "no output"
-        return _ToolDoesNotStart(
-            f"{name} ({path}) exits {answer.returncode} on `{asked}`: {first_line}"
-        )
+        last_line = said[-1] if said else "no output"
+        return _ToolDoesNotStart(f"{name} ({path}) exits {answer.returncode}: {last_line}")
     return _ToolStarts(path)
 
 
@@ -350,23 +349,22 @@ def _unmet_premises(skipped: Sequence[pytest.TestReport]) -> list[tuple[str, str
 
 
 def pytest_terminal_summary(terminalreporter):
-    """Name every unmet machine premise as not executed (check layer format)."""
+    """Name the unmet machine premises as not executed, on one line (check layer format)."""
     unmet = _unmet_premises(terminalreporter.stats.get("skipped", []))
     if not unmet:
         return
+    named = "; ".join(f"{nodeid}: {detail}" for nodeid, detail in unmet)
     terminalreporter.ensure_newline()
     layer = _check_layer()
     if layer is not None and _PREMISE_KIND in layer.UNEXECUTED_KINDS:
-        for nodeid, detail in unmet:
-            terminalreporter.write(layer.unexecuted_line([_PREMISE_KIND], f"{nodeid}: {detail}"))
+        terminalreporter.write(layer.unexecuted_line([_PREMISE_KIND], named))
         return
     if layer is None:
         where = "no check layer here"
     else:
         where = f"the check layer at {_CHECK_LAYER} does not know the kind {_PREMISE_KIND}"
     terminalreporter.write_line(
-        f"{len(unmet)} test(s) skipped for a machine premise ({where}): "
-        + "; ".join(f"{nodeid}: {detail}" for nodeid, detail in unmet)
+        f"{len(unmet)} test(s) skipped for a machine premise ({where}): {named}"
     )
 
 
