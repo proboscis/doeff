@@ -19,7 +19,7 @@
 
 (import doeff_agents.sessionhost.policy [parse-iso])
 
-(import doeff [EffectBase])
+(import doeff [EffectBase run])
 
 (import doeff_agents.sessionhost.effects [
   SessionRow
@@ -490,6 +490,17 @@
     (setv i (+ i 1))))
 
 
+(defk transaction-probe-body [conn runs fail]
+  {:pre [(: conn sqlite3.Connection) (: runs list) (: fail bool)]
+   :post [(: % int)]}
+  "db-immediate-transaction の型を直に撃つ検の本体。走るたびに「その時 transaction の中だったか」を runs に
+   残すので、検は本体が BEGIN の後にちょうど 1 度走ったことを確かめられる。fail なら例外で終わる。"
+  (.append runs conn.in-transaction)
+  (when fail
+    (raise (RuntimeError "body failed")))
+  42)
+
+
 (deftest test-lease-transaction-surfaces-disk-full-not-the-rollback
   ;; 実弾 2026-09-25(k3s agentd-pool-0 / -1 の agentd-state が 100%): lease の 3 関数は except で無条件に
   ;; ROLLBACK し、SQLite が自分で巻き戻した後の `cannot rollback - no transaction is active` が元の
@@ -506,14 +517,27 @@
     (assert (in "database or disk is full" (str raised)) (repr raised))
     (assert (not conn.in-transaction))
     ;; 型そのもの: body の失敗で transaction が残っていれば巻き戻し、元の例外を出す(disk full ではない失敗)。
+    ;; body は BEGIN の後の transaction の中でちょうど 1 度走る(束ね忘れると 0 回 = 黙った no-op、
+    ;; 束ね直すと 2 回、BEGIN の前に走らせると False が残る)。
+    (setv runs [])
     (setv raised None)
     (try
-      (db-immediate-transaction conn (fn [c] (raise (RuntimeError "body failed"))))
+      (run (db-immediate-transaction conn (transaction-probe-body conn runs True)))
       (except [e RuntimeError] (setv raised e)))
     (assert (= (str raised) "body failed"))
+    (assert (= runs [True]))
     (assert (not conn.in-transaction))
     ;; 成功した body の値は返る。
-    (assert (= (db-immediate-transaction conn (fn [c] 42)) 42))
+    (setv runs [])
+    (assert (= (run (db-immediate-transaction conn (transaction-probe-body conn runs False))) 42))
+    (assert (= runs [True]))
+    (assert (not conn.in-transaction))
+    ;; Program でない body は入口で断り、transaction を張らない。
+    (setv raised None)
+    (try
+      (run (db-immediate-transaction conn 42))
+      (except [e AssertionError] (setv raised e)))
+    (assert (is-not raised None))
     (assert (not conn.in-transaction)))
   (with-tmp-conn check))
 

@@ -1334,7 +1334,7 @@
                f"no session with id '{session-id}'")))))
 
 
-(deff store-write-failure-limit []
+(defk store-write-failure-limit []
   {:pre [True]
    :post [(: % int) (>= % 1)]}
   "readiness を落とす「続けた書き込みの失敗」の回数。knob は use-site 読み
@@ -1353,7 +1353,7 @@
     ;; readiness(store_health.readiness-of の 1 点): 保管の書き込みが続けて失敗していれば ready = False。
     ;; `doeff-sessionhost ready --socket <path>` がこの欄を読んで終了 code に写す(probe の口)。
     (setv health actor.write-health)
-    (setv readiness (readiness-of health (store-write-failure-limit)))
+    (setv readiness (readiness-of health (run (store-write-failure-limit))))
     (return {"state" "running"
              "ready" readiness.ready
              "not_ready_reason" readiness.reason
