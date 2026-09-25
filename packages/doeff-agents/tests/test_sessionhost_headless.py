@@ -41,6 +41,7 @@ from doeff_agents.sessionhost.headless_process import (
     HeadlessProcessStillAliveError,
     HeadlessRegistry,
 )
+from doeff_agents.sessionhost.headless_outbox import OutboxEventStore
 from doeff_agents.sessionhost.headless_protocol import (
     JSON,
     BackendLiveness,
@@ -3177,3 +3178,37 @@ def test_host_headless_launch_writes_otel_env_into_the_borrowed_home_only_when_t
     env = json.loads(settings.read_text())["env"]
     assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://collector:4318"
     assert env["OTEL_RESOURCE_ATTRIBUTES"] == "agora.tenant=personal,agora.host=agentd-pool-1,agora.runner=agentd"
+
+
+def test_host_headless_events_go_to_the_outbox_and_are_read_through_the_host(
+    headless_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-DOE-AGENTS-012 R-headless-events-go-to-the-tiered-store / R-headless-events-are-read-through-the-host:
+    置き場が送り待ちの表の host(pod の本番)は、子の stdout / stderr の行を 1 つも file に書かない。実況の読み
+    (session.events_since / session.events_head)と capture は同じ置き場から読む — 呼び手は置き場を知らない。"""
+    registry = HeadlessRegistry(OutboxEventStore(headless_host.actor.submit))
+    monkeypatch.setattr(host, "HEADLESS_REGISTRY", registry)
+    try:
+        launched = headless_host.ok("session.launch", _launch_params(headless_host.root, "h-ev", "claude"))
+        assert isinstance(launched, dict)
+        locator = _text(_obj(launched, "backend_ref"), "events_path")
+        _wait_turn_end(headless_host, "h-ev")
+        assert not Path(locator).exists()
+        assert not Path(locator + ".stderr").exists()
+        read = headless_host.ok("session.events_since", {"locator": locator, "cursor": 0, "session_id": "h-ev"})
+        assert isinstance(read, dict)
+        text = _text(read, "text")
+        kinds = [json.loads(line).get("type") for line in text.splitlines()]
+        assert "result" in kinds, kinds
+        head = headless_host.ok("session.events_head", {"locator": locator, "session_id": "h-ev"})
+        assert isinstance(head, dict)
+        assert head["cursor"] == read["cursor"]
+        again = headless_host.ok(
+            "session.events_since", {"locator": locator, "cursor": read["cursor"], "session_id": "h-ev"}
+        )
+        assert again == {"text": "", "cursor": read["cursor"]}
+        captured = headless_host.ok("session.capture", {"session_id": "h-ev", "lines": 50})
+        assert isinstance(captured, dict) and "\"type\": \"result\"" in _text(captured, "text")
+        headless_host.ok("session.cleanup", {"session_id": "h-ev"})
+    finally:
+        registry.kill_all()

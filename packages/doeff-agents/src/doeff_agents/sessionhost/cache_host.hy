@@ -8,9 +8,10 @@
   CacheProcessIdentity HostCacheIdentifyProcess HostCacheStopProcess HostCacheLastSuccessAt])
 (import .acp.cache_operation [MaintenanceState CacheReply PING-TEXT])
 (import .acp.cache_observation [cache-observation-of])
-(import .effects [clock-now fs-read-text headless-has-session headless-spawn
+(import .effects [clock-now headless-has-session headless-spawn
                   headless-deliver headless-kill])
 (import .headless [require-headless-row headless-launch-args events-path-of-row])
+(import .headless_events [HeadlessEventsSince])
 (import .headless_protocol [CLI-OWN-TURN-ORIGINS])
 (import .launch [launch-spawn-env])
 (import .policy [carry-launch-flags is-terminal-status])
@@ -47,7 +48,8 @@
       (<- (HostCacheWrite record)))
     (return record))
   (when (!= record.state MaintenanceState.RUNNING) (return record))
-  (<- text (| str None) (fs-read-text record.events-path))
+  (<- chunk (HeadlessEventsSince record.events-path 0))
+  (setv text chunk.text)
   (setv records [] ended None)
   (for [line (.splitlines (or text ""))]
     (try (setv item (json.loads line))

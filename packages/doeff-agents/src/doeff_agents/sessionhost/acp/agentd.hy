@@ -369,6 +369,7 @@
   SessionCleanup
   SessionEscalate
   SessionEvents
+  SessionEventsHead
   SessionGet
   SessionInterject
   SessionInterrupt
@@ -2296,8 +2297,12 @@
   (<- from-head bool (stream-starts-at-head arm))
   (setv start-offset 0)
   (when (and (not from-head) (is-not path None))
-    (<- size int (FsFileSize :path path))
-    (setv start-offset size))
+    ;; 出来事(headless)の先端は host の口で読む(置き場を知らない — file の大きさを測らない)。
+    (if (= (get source 0) STREAM-SOURCE-EVENTS)
+        (do (<- head int (SessionEventsHead :path path :session-id view.session-id))
+            (setv start-offset head))
+        (do (<- size int (FsFileSize :path path))
+            (setv start-offset size))))
   #(path start-offset from-head))
 
 
@@ -2571,13 +2576,13 @@
                :capturing (and (not job.stream-gone) (= verdict "continue"))))
 
 
-(defk read-stream [source path offset]
-  {:pre [(: source str) (: path str) (: offset int)]
+(defk read-stream [source path offset session-id]
+  {:pre [(: source str) (: path str) (: offset int) (: session-id str)]
    :post [(: % TranscriptChunk)]}
-  "実況の材料の追記を offset から読む(events = headless の stdout の行の file・transcript =
-   tui の transcript)。どちらも完全な行だけ。"
+  "実況の材料の追記を offset から読む(events = headless の器の出来事 — host の口 session.events_since・
+   transcript = tui の transcript の file)。どちらも完全な行だけ。"
   (if (= source STREAM-SOURCE-EVENTS)
-      (do (<- events TranscriptChunk (SessionEvents :path path :offset offset))
+      (do (<- events TranscriptChunk (SessionEvents :path path :offset offset :session-id session-id))
           events)
       (do (<- lines TranscriptChunk (SessionTranscript :path path :offset offset))
           lines)))
@@ -2650,7 +2655,7 @@
    turn-record への CAS をここに置くと、job k の生の frame が job k−1 の頭への 1 往復の後ろに並び、
    手番 20 本の agentd で同じ拍の中の job 間のずれが p50 0.453 秒(max 1.432)になる。
    at = **この job の**時計読み(押す frame の at はこれ 1 つ — 拍の頭の 1 度の読みを全 job に貼らない)。"
-  (<- chunk TranscriptChunk (read-stream source path job.transcript-offset))
+  (<- chunk TranscriptChunk (read-stream source path job.transcript-offset job.session-id))
   (<- batch DeltaBatch (deltas-of job.agent-type source chunk.text job.job-id job.delta-seq at job.open-tool-blocks))
   ;; 開いている道具の block の表(書きかけの引数を id と名に結ぶ — 読みをまたぐ)は判断の出力をそのまま持つ。
   ;; card acp:kanban-issue:ki-2bd49c68b042: 走行器がこの手番の結末を器の記録へ出したか(材料が名乗る事実 —
@@ -3077,7 +3082,7 @@
   (if (or (is path None) (is source None))
       (DeltaBatch :frames #() :entries #() :usage None :next-seq 0 :model None)
       (do
-        (<- chunk TranscriptChunk (read-stream source path job.start-offset))
+        (<- chunk TranscriptChunk (read-stream source path job.start-offset job.session-id))
         (<- whole DeltaBatch (deltas-of job.agent-type source chunk.text job.job-id 0 now-ms #()))
         (<- bounded (| dict None) (with-request-start-bound whole.cache-observation
                                     job.request-start-lower-bound-ms job.materials-cover-the-turn))

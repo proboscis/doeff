@@ -646,6 +646,8 @@
           "packages/doeff-agents/src/doeff_agents/sessionhost/headless.hy"
           "packages/doeff-agents/src/doeff_agents/sessionhost/headless_protocol.py"
           "packages/doeff-agents/src/doeff_agents/sessionhost/headless_process.py"
+          "packages/doeff-agents/src/doeff_agents/sessionhost/headless_events.py"
+          "packages/doeff-agents/src/doeff_agents/sessionhost/headless_outbox.py"
           "packages/doeff-agents/src/doeff_agents/sessionhost/drain_marker.py"
           "packages/doeff-agents/src/doeff_agents/sessionhost/substrate_headless.hy"
           "packages/doeff-agents/src/doeff_agents/sessionhost/impls/headless_argv.hy"
@@ -991,6 +993,32 @@
           (counterexample "書きかけの frame を束ねるために新しい時間の定数(例: 100 ms の窓)や第 2 の字数の上限を agentd に置く — 束ねる粒は材料の読みの周期そのもの・字数の上限は DELTA_INPUT_STRING_LIMIT の 1 点")
           (counterexample "開いている block の表を index だけで引く — index は message ごとの番号なので、下請けの agent の message(parent_tool_use_id つき)の同じ番号の差分が親の道具の書きかけに混ざる")
           (counterexample "streamCapability を値の宣言の literal に固定する — headless の node が frames を名乗り、画面が端末の眺めで chat の block を描けない")])
+     (law headless-events-go-to-the-tiered-store
+       :statement "for_all headless host h whose env names DOEFF_AGENTD_EVENTS_OTLP_URL (the pool pods): every stdout and stderr line of every child process of h (sessions and cache pings) is written through the event store handler that host.install-event-store installed (headless_events.HeadlessEventStore — the outbox table headless_event_outbox of h's store) and no line is written to a file; each line is one row (session_id, seq, op, stream, line, at, turn) with seq strictly increasing per session; the shipper (headless_outbox.OtlpShipper) sends unshipped rows as OTLP log records (resource service.name = doeff-agentd, host.name = the node; body = the verbatim line; attributes session_id, seq, stream, op, conversation_id, agent_job_id, turn — conversation_id / agent_job_id from the agentd block of the row's launch_attribution, empty when absent) to <url>/v1/logs, the collector routes them to agentd_records.headless_events (agora-controllers effect-telemetry: hot → warm → cold by TTL MOVE), and marks shipped_at only on a 2xx answer; a row leaves the outbox only by headless_outbox.prune-shipped, i.e. iff shipped_at is set ∧ its session is terminal ∧ the session ended before now − DOEFF_AGENTD_EVENTS_PRUNE_GRACE_SECS (default 3600); without the env the handler stays the file store (Mac, operator ruling 2026-09-25 — no unauthenticated receiver on the tailnet)"
+       :counterexamples
+         [(counterexample "出来事を生の file に追記し続ける(2026-09-25 まで): 消す係も移す係も無く、pool の agentd-state(2Gi)が 555 file・1.9 GiB で満杯になり、sqlite の書き込みが全部落ちた")
+          (counterexample "古い file を期限で消す — operator の訂正(逐語 \"deletion is not the root fix\")。記録は段の DB へ移してから、送れたと確かめた写しだけをローカルから外す")
+          (counterexample "file を後から段の DB へ移す — operator の原則(逐語 \"we never want to use raw jsonl file for anything\")。出来事は最初から置き場の handler へ書く")
+          (counterexample "送りの 2xx を待たずに shipped を刻む / 送れていない行を期限で外す — collector が落ちている間の出来事が段の DB にも手元にも残らない")
+          (counterexample "動いている session の行を外す — 実況の読み手(agentd)が読み切る前に材料が消え、手番の出力が欠ける")
+          (counterexample "Mac からも認証の無い OTLP の口へ送る — tailnet の誰でも段の DB へ書ける。Mac は認証つきの口ができるまで file の置き場のまま")]
+       :enforcement ["packages/doeff-agents/tests/test_sessionhost_headless.py::test_host_headless_events_go_to_the_outbox_and_are_read_through_the_host"
+                     "packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_outbox_store_writes_no_file"
+                     "packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_outbox_numbers_turns_and_sequences_per_session"
+                     "packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_shipper_sends_the_tiered_row_shape_and_marks_only_what_the_collector_took"
+                     "packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_prune_removes_only_shipped_rows_of_sessions_ended_before_the_cutoff"
+                     "packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_the_composition_root_swaps_in_the_outbox_only_when_the_tiered_store_is_named"])
+     (law headless-events-are-read-through-the-host
+       :statement "for_all reader r of the headless events of session s — agentd's live stream and turn material (SessionEvents / SessionEventsHead), the host's session.capture and the cache ping probe (HeadlessEventsSince): r reads through the host (RPC session.events_since {locator, cursor} → {text, cursor} and session.events_head {locator} → {cursor}, answered by the installed event store handler) and never opens backend_ref.events_path itself; the cursor is opaque to r (outbox and memory: last seq; file: byte offset) and r only hands back the cursor it received; SessionEvents and SessionEventsHead belong to the closed set of session requests (handles_session_effect) so SessionRoutes sends them to the host that owns s, and the agentd LocalIo handler does not answer them; every handler (outbox, memory, file) answers the same contract (only complete stdout lines, stderr and other ops never mixed into a session's stream); --resume reads the CLI's own transcript and the screen history reads the record service, so neither depends on where the events are kept"
+       :counterexamples
+         [(counterexample "agentd が events_path の file を直に読む(2026-09-25 まで): 置き場を送り待ちの表へ変えた日に実況が空になる。読みは置き場を持つ host の 1 口")
+          (counterexample "send / resume の手番の始まりを file の大きさ(FsFileSize)で測る — 送り待ちの表の置き場では 0 になり、前の手番の出力が今の手番に混ざる。先端は session.events_head")
+          (counterexample "cursor を byte の offset と決め打つ — 置き場ごとに意味が違う。呼び手は受け取った cursor を返すだけ")
+          (counterexample "cache ping の結果の読みだけ file に残す — 置き場が 2 つに割れ、pod では cache の結果が永久に読めない")]
+       :enforcement ["packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_agentd_reads_events_only_through_the_host_rpc"
+                     "packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_every_store_reads_back_stdout_lines_after_a_cursor"
+                     "packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_the_file_store_is_todays_physics_for_the_mac"
+                     "packages/doeff-agents/tests/test_sessionhost_headless.py::test_host_headless_events_go_to_the_outbox_and_are_read_through_the_host"])
      (law mail-delivery-is-evidenced-by-the-row-not-by-the-phase
        :statement "for_all agent-job j this agentd claims: the claim's status write (judgment.running-status-of) declares status.inputsDelivered, keeping any list already there and writing [] when there is none — so the field is present from the instant the row is Running, never only after the send lands; and for_all turn of j, mail-ids(j) = judgment.mail-input-ids-of(spec.inputs, missing) (the inputs whose body was read, in the row's order) and the sends are judgment.send-parcels-of(mail-ids, bodies, carried, send-folds-bodies(backend), lead(j)) — one parcel carrying every id when the backend folds, one parcel per id when it does not (preceded by one parcel carrying NO id holding lead(j) when lead(j) ≠ ''), none when bodies is empty and lead(j) = '' (lead(j) = the continuation guidance of law a-continued-turn-points-at-the-mail-it-already-handed); the ids agentd appends to status.inputsDelivered (agentd.record-inputs-delivered — ONE CAS on the row read fresh, append-only, retried once on Conflict; a write that does not land is carried and re-applied as that law states) are exactly: mail-ids(j) when the arm folded the mail into the first-turn prompt (first-turn-carries-inputs), plus the ids of every parcel whose SessionSend did NOT answer SessionRefused — and nothing when it did; a turn in which NO parcel landed (every SessionSend answered SessionRefused and the arm did not fold into the first-turn prompt — for a turn without spec.continuation, exactly: it delivered NO id) ends there (end-job-now with condition InputUndelivered, result.cause = {failed, InputUndelivered}, the lease revoked, the session left alive) and writes no turn-record, no agent-job-to-send metric and no in-flight registration; agentd never re-delivers a mail and holds no second judgement about re-delivery"
        :counterexamples

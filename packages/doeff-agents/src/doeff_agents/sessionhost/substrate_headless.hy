@@ -38,6 +38,7 @@
   HeadlessSpawn
   ProcResult])
 (import doeff_agents.sessionhost.headless_process [HeadlessRegistry pid-exists])
+(import doeff_agents.sessionhost.headless_events [HeadlessEventAppend HeadlessEventsSince])
 (import doeff_agents.sessionhost.headless_protocol [BackendLiveness])
 (import doeff_agents.sessionhost.cache_host_model [HostCacheIdentifyProcess HostCacheStopProcess])
 (import doeff_agents.sessionhost.cache_process [identify-process stop-identified-process])
@@ -106,6 +107,13 @@
         (resume (ProcResult :exit-code 124
                             :stdout ""
                             :stderr f"process timed out after {HEADLESS-RUN-ONCE-TIMEOUT-SECONDS}s")))))
+
+  ;; 出来事の置き場(headless_events — 置き場は登記簿が持つ handler: 本番の pod = 送り待ちの表・Mac = file・検 = memory)。
+  (HeadlessEventAppend [locator stream line]
+    (resume (.append registry.event-store (HeadlessEventAppend locator stream line))))
+
+  (HeadlessEventsSince [locator cursor]
+    (resume (.since registry.event-store (HeadlessEventsSince locator cursor))))
 
   (HeadlessDeliver [session-name text attachments]
     (setv process (.get registry session-name))

@@ -113,6 +113,20 @@ CREATE TABLE IF NOT EXISTS agent_daemon_lease (
   expires_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS headless_event_outbox (
+  session_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  op TEXT NOT NULL,
+  stream TEXT NOT NULL,
+  line TEXT NOT NULL,
+  at TEXT NOT NULL,
+  turn INTEGER NOT NULL,
+  shipped_at TEXT,
+  PRIMARY KEY (session_id, seq)
+);
+
+CREATE INDEX IF NOT EXISTS idx_headless_event_outbox_unshipped
+  ON headless_event_outbox(at) WHERE shipped_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_status
   ON agent_sessions(status);
 CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
