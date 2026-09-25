@@ -3866,11 +3866,24 @@ class SessionTranscript(EffectBase):
 
 @dataclass(frozen=True)
 class SessionEvents(EffectBase):
-    """headless の events file(host が stdout の行を 1 行 1 event で追記する実況の正本)を
-    ``offset`` から読む。結果 = TranscriptChunk(完全な行だけ・不在は空文字と同じ offset)。"""
+    """headless の器の出来事(子の stdout の行 — 実況の正本)を ``offset`` の後から読む。結果 = TranscriptChunk
+    (完全な行だけ・無ければ空文字と同じ offset)。``path`` は行の backend_ref.events_path(出来事の流れの名)で、
+    読みは host の口 ``session.events_since`` を通る(置き場 = 送り待ちの表 / file を agentd は知らない・
+    ADR-DOE-AGENTS-012 R-headless-events-are-read-through-the-host)。offset は host が返す opaque な cursor。
+    ``session_id`` は器の経路(SessionRoutes)が宛先の器を選ぶ鍵。"""
 
     path: str
     offset: int
+    session_id: str = ""
+
+
+@dataclass(frozen=True)
+class SessionEventsHead(EffectBase):
+    """出来事の流れの今の先端の cursor(send / resume の手番の材料の始まり — 前の手番の行を混ぜない)。
+    結果 = int(無ければ 0)。読みは host の口 ``session.events_head``。"""
+
+    path: str
+    session_id: str = ""
 
 
 # ------------------------------------------------------------------ 要求(時計・計器・file)

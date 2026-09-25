@@ -180,6 +180,7 @@ from doeff_agents.sessionhost.acp.effects import (
     SessionCleanup,
     SessionEscalate,
     SessionEvents,
+    SessionEventsHead,
     SessionGet,
     SessionInterject,
     SessionInterrupt,
@@ -1334,7 +1335,30 @@ class SessionRpc:
             return self._look(effect)
         if isinstance(effect, ListHostDrivers):
             return self._drivers(effect)
+        if isinstance(effect, SessionEvents | SessionEventsHead):
+            return self._events(effect)
         raise TypeError(f"SessionRpc does not answer {type(effect).__name__}")
+
+    def _events(self, effect: SessionEvents | SessionEventsHead) -> TranscriptChunk | int:
+        """器の出来事の読み(ADR-DOE-AGENTS-012 R-headless-events-are-read-through-the-host): host の口
+        ``session.events_since`` / ``session.events_head`` を 1 往復する。置き場(送り待ちの表 / file)は host が持ち、
+        agentd は file を直に読まない。"""
+        if isinstance(effect, SessionEventsHead):
+            head: JSON = self._client.request("session.events_head", {"locator": effect.path, "session_id": effect.session_id})
+            cursor = _int_field(_as_object(head), "cursor")
+            if cursor is None:
+                raise AgentdClientError(f"session.events_head answered without an integer cursor: {head!r}")
+            return cursor
+        answer: JSON = self._client.request(
+            "session.events_since",
+            {"locator": effect.path, "cursor": effect.offset, "session_id": effect.session_id},
+        )
+        fields = _as_object(answer)
+        text = fields.get("text")
+        cursor = _int_field(fields, "cursor")
+        if not isinstance(text, str) or cursor is None:
+            raise AgentdClientError(f"session.events_since answered without text / cursor: {answer!r}")
+        return TranscriptChunk(text, cursor)
 
     def _drivers(self, effect: ListHostDrivers) -> HostDriversOutcome:
         """``drivers.list``(ADR-DOE-AGENTS-012 R61)→ 種類ごとの在否の列。host の断り(RPC の error 封筒 —
@@ -1540,6 +1564,8 @@ _SESSION_EFFECTS = (
     SessionGet,
     SessionList,
     SessionCapture,
+    SessionEvents,
+    SessionEventsHead,
     ListHostDrivers,
 )
 
@@ -1744,7 +1770,7 @@ class LocalIo:
             return Resume(k, mint_ulid(int(time.time() * 1000), os.urandom(10)))
         if isinstance(effect, CommandStart | CommandProbe | CommandStop):
             return self._command_dispatch(effect, k)
-        if isinstance(effect, FsFileExists | FsReadText | FsCanonicalPath | FsFileSize | FsWritePrivateText | SessionTranscript | SessionEvents | FsDirectoryExists | FsListDirectory | FsMakeDirectories):
+        if isinstance(effect, FsFileExists | FsReadText | FsCanonicalPath | FsFileSize | FsWritePrivateText | SessionTranscript | FsDirectoryExists | FsListDirectory | FsMakeDirectories):
             return self._filesystem_dispatch(effect, k)
         if isinstance(effect, OwnershipProbe | ListProfileHomes | ListPaneSeats | ReadProfileUsage | PublishWorker):
             return self._profile_dispatch(effect, k)
@@ -1756,14 +1782,14 @@ class LocalIo:
             return Resume(k, driver_path_in(effect.word, dict(os.environ)))
         return Pass(effect, k)
 
-    def _filesystem_dispatch(self, effect: FsFileExists | FsReadText | FsCanonicalPath | FsFileSize | FsWritePrivateText | SessionTranscript | SessionEvents | FsDirectoryExists | FsListDirectory | FsMakeDirectories, k: K) -> Resume | Pass:
+    def _filesystem_dispatch(self, effect: FsFileExists | FsReadText | FsCanonicalPath | FsFileSize | FsWritePrivateText | SessionTranscript | FsDirectoryExists | FsListDirectory | FsMakeDirectories, k: K) -> Resume | Pass:
         if isinstance(effect, FsFileExists):
             return Resume(k, os.path.isfile(effect.path))
         if isinstance(effect, FsReadText):
             return Resume(k, read_small_text(effect.path, effect.max_chars))
         if isinstance(
             effect,
-            (FsCanonicalPath, FsFileSize, FsWritePrivateText, SessionTranscript, SessionEvents),
+            (FsCanonicalPath, FsFileSize, FsWritePrivateText, SessionTranscript),
         ):
             return Resume(k, self._file(effect))
         if isinstance(effect, FsDirectoryExists):
@@ -1817,8 +1843,7 @@ class LocalIo:
         effect: FsCanonicalPath
         | FsFileSize
         | FsWritePrivateText
-        | SessionTranscript
-        | SessionEvents,
+        | SessionTranscript,
     ) -> object:
         if isinstance(effect, FsCanonicalPath):
             return os.path.realpath(effect.path)

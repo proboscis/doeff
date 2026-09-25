@@ -127,6 +127,7 @@ from doeff_agents.sessionhost.acp.effects import (
     SessionCleanup,
     SessionEscalate,
     SessionEvents,
+    SessionEventsHead,
     SessionGet,
     SessionInterject,
     SessionInterrupt,
@@ -1096,7 +1097,7 @@ class FakeLocal:
             return Resume(k, self.executables.get(effect.word))
         if isinstance(effect, CommandStart | CommandProbe | CommandStop):
             return self._command_dispatch(effect, k)
-        if isinstance(effect, FsFileExists | FsListDirectory | FsReadText | FsCanonicalPath | FsFileSize | FsWritePrivateText | SessionTranscript | SessionEvents | FsDirectoryExists | FsMakeDirectories):
+        if isinstance(effect, FsFileExists | FsListDirectory | FsReadText | FsCanonicalPath | FsFileSize | FsWritePrivateText | SessionTranscript | SessionEvents | SessionEventsHead | FsDirectoryExists | FsMakeDirectories):
             return self._filesystem_dispatch(effect, k)
         if isinstance(effect, OwnershipProbe | ListProfileHomes | ListPaneSeats | ReadProfileUsage | PublishWorker):
             return self._profile_dispatch(effect, k)
@@ -1104,7 +1105,7 @@ class FakeLocal:
             return Resume(k, self._observe(effect))
         return Pass(effect, k)
 
-    def _filesystem_dispatch(self, effect: FsFileExists | FsListDirectory | FsReadText | FsCanonicalPath | FsFileSize | FsWritePrivateText | SessionTranscript | SessionEvents | FsDirectoryExists | FsMakeDirectories, k: K) -> Resume | Pass:
+    def _filesystem_dispatch(self, effect: FsFileExists | FsListDirectory | FsReadText | FsCanonicalPath | FsFileSize | FsWritePrivateText | SessionTranscript | SessionEvents | SessionEventsHead | FsDirectoryExists | FsMakeDirectories, k: K) -> Resume | Pass:
         if isinstance(effect, FsFileExists):
             return Resume(k, effect.path in self.existing_files)
         if isinstance(effect, FsListDirectory):
@@ -1126,7 +1127,7 @@ class FakeLocal:
             return Resume(k, None if text is None else text[: effect.max_chars])
         if isinstance(
             effect,
-            (FsCanonicalPath, FsFileSize, FsWritePrivateText, SessionTranscript, SessionEvents),
+            (FsCanonicalPath, FsFileSize, FsWritePrivateText, SessionTranscript, SessionEvents, SessionEventsHead),
         ):
             return Resume(k, self._file(effect))
         if isinstance(effect, FsDirectoryExists):
@@ -1223,11 +1224,13 @@ class FakeLocal:
         | FsFileSize
         | FsWritePrivateText
         | SessionTranscript
-        | SessionEvents,
+        | SessionEvents
+        | SessionEventsHead,
     ) -> object:
         if isinstance(effect, FsCanonicalPath):
             return effect.path
-        if isinstance(effect, FsFileSize):
+        # 器の出来事の置き場の fake(host の file の置き場と同じ意味 — cursor は byte の offset)。
+        if isinstance(effect, FsFileSize | SessionEventsHead):
             return len(self.transcripts.get(effect.path, "").encode("utf-8"))
         if isinstance(effect, FsWritePrivateText):
             self.files[effect.path] = effect.text

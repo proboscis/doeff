@@ -86,6 +86,7 @@
 (import doeff_agents.sessionhost.impls.fast_jev [fast-jev-compaction-enabled fast-jev-session-state-path
                                                  fast-jev-cache-surely-warm])
 (import doeff_agents.sessionhost.impls.markers [is-api-limit-refusal api-limit-reading-of api-limit-resets-at])
+(import doeff_agents.sessionhost.headless_events [HeadlessEventsSince])
 (import doeff_agents.sessionhost.headless_protocol [
   BackendLiveness
   HeadlessObservation
@@ -650,8 +651,9 @@
   (<- path (events-path-of-row row))
   (setv text "")
   (when (is-not path None)
-    (<- raw (fs-read-text path))
-    (<- text (tail-lines (or raw "") lines)))
+    ;; 出来事の置き場の読み(headless_events — 置き場を知らない: 本番は送り待ちの表・Mac は file)。
+    (<- chunk (HeadlessEventsSince path 0))
+    (<- text (tail-lines chunk.text lines)))
   (<- now (clock-now))
   (setv updated (replace row
                          :output-snippet (tail-chars (or text " ") 500)

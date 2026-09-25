@@ -28,12 +28,18 @@ import os
 import queue
 import signal
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
-from typing import IO
+from typing import IO, Literal
 
 from doeff_agents.sessionhost.attachment import TurnAttachment, TurnContent
+from doeff_agents.sessionhost.headless_events import (
+    FileEventStore,
+    HeadlessEventAppend,
+    HeadlessEventStore,
+)
 from doeff_agents.sessionhost.headless_protocol import (
     Dialogue,
     HeadlessObservation,
@@ -45,7 +51,6 @@ from doeff_agents.sessionhost.headless_protocol import (
 #: stdin を閉じた後・SIGTERM の後に process が自分で降りるのを待つ猶予(秒)。
 EOF_GRACE_SECONDS = 5.0
 TERM_GRACE_SECONDS = 5.0
-STDERR_SUFFIX = ".stderr"
 
 
 class HeadlessProcessStillAliveError(RuntimeError):
@@ -114,6 +119,7 @@ class HeadlessProcess:
         events_path: str,
         dialogue: Dialogue,
         on_turn_ended: Callable[[str], None] | None = None,
+        events: HeadlessEventStore | None = None,
     ) -> None:
         self.name = name
         self.argv = tuple(argv)
@@ -123,11 +129,10 @@ class HeadlessProcess:
         #: 手番の終わりを読んだ拍に、この名で呼ぶ(登記簿の待ち手 = host の monitor を起こす)。判断は増えない —
         #: 境界を決めるのは今日どおり Dialogue の 1 点で、ここはその答えを合図にするだけ。None = 合図なし。
         self._on_turn_ended = on_turn_ended
-        directory = os.path.dirname(events_path)
-        if directory:
-            os.makedirs(directory, mode=0o700, exist_ok=True)
-        self._events = open(events_path, "a", encoding="utf-8")  # noqa: SIM115 — 読み手 thread が閉じる
-        self._stderr = open(events_path + STDERR_SUFFIX, "a", encoding="utf-8")  # noqa: SIM115
+        #: 出来事の置き場の handler(headless_events — 本番の pod = 送り待ちの表・Mac = file・検 = memory)。
+        #: events_path は置き場の名(locator)で、file の置き場だけがそれを path として読む。
+        self._store: HeadlessEventStore = events if events is not None else FileEventStore()
+        self._store.open_stream(events_path)
         self._lock = threading.Lock()
         self._records: list[JSONObject] = []
         self._ended: list[TurnEnded] = []
@@ -143,7 +148,7 @@ class HeadlessProcess:
             env=dict(env),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=self._stderr,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
@@ -151,14 +156,19 @@ class HeadlessProcess:
         )
         stdin = self._process.stdin
         stdout = self._process.stdout
-        if stdin is None or stdout is None:
-            raise RuntimeError("headless process was spawned without stdin / stdout pipes")
+        stderr = self._process.stderr
+        if stdin is None or stdout is None or stderr is None:
+            raise RuntimeError("headless process was spawned without stdin / stdout / stderr pipes")
         self._writer = _StdinWriter(stdin)
         self._writer.start()
         self._reader = threading.Thread(
             target=self._read, args=(stdout,), name="headless-stdout", daemon=True
         )
         self._reader.start()
+        self._stderr_reader = threading.Thread(
+            target=self._read_stderr, args=(stderr,), name="headless-stderr", daemon=True
+        )
+        self._stderr_reader.start()
         for line in dialogue.opening():
             self._writer.send(line)
 
@@ -179,6 +189,7 @@ class HeadlessProcess:
         綴りは Dialogue が組む(段 10 lane 10o の追補・法 012 R21)— ここは運ぶだけ。"""
         if not self.alive() or self._writer.closed:
             return False
+        self._store.begin_turn(self.events_path)
         plan = self.dialogue.turn(TurnContent(text=prompt, attachments=attachments))
         for line in plan.sends:
             self._writer.send(line)
@@ -353,14 +364,25 @@ class HeadlessProcess:
         """書き手と読み手の thread に合流する(降りた後)。"""
         self._writer.join(timeout)
         self._reader.join(timeout)
+        self._stderr_reader.join(timeout)
 
     # -- 読み手 -----------------------------------------------------------------------
+
+    def _append(self, stream: Literal["stdout", "stderr"], raw: str) -> None:
+        """出来事の 1 行を置き場へ(handler の失敗は log して読みを止めない — 止めると子の pipe が詰まる)。"""
+        try:
+            self._store.append(HeadlessEventAppend(self.events_path, stream, raw))
+        except Exception as error:
+            sys.stderr.write(f"doeff-sessionhost headless {self.name}: events append failed: {error}\n")
+
+    def _read_stderr(self, stderr: IO[str]) -> None:
+        for raw in stderr:
+            self._append("stderr", raw)
 
     def _read(self, stdout: IO[str]) -> None:
         try:
             for raw in stdout:
-                self._events.write(raw if raw.endswith("\n") else raw + "\n")
-                self._events.flush()
+                self._append("stdout", raw)
                 record = parse_record(raw)
                 if record is None:
                     continue
@@ -384,9 +406,7 @@ class HeadlessProcess:
                     self._on_turn_ended(self.name)
         finally:
             with contextlib.suppress(OSError):
-                self._events.close()
-            with contextlib.suppress(OSError):
-                self._stderr.close()
+                stdout.close()
 
 
 def pid_exists(pid: int) -> bool:
@@ -405,14 +425,25 @@ def pid_exists(pid: int) -> bool:
 class HeadlessRegistry:
     """session の名 → 生きている(か降りたばかりの)process。host の process に 1 つ。"""
 
-    def __init__(self) -> None:
+    def __init__(self, events: HeadlessEventStore | None = None) -> None:
         self._processes: dict[str, HeadlessProcess] = {}
         self._lock = threading.Lock()
+        #: 出来事の置き場の handler(既定 = file — Mac の当面の形)。host の composition root が
+        #: ``use_event_store`` で差し替える(pod = 送り待ちの表・検 = memory)。
+        self._mut_events: HeadlessEventStore = events if events is not None else FileEventStore()
         #: 手番の終わりの合図(段 12 lane 12b・agora-redesign #207 根 1): 登記した process の読み手が手番の終わりを
         #: 読むたびに 1 つ進む数と、それを待つ条件変数。host の monitor は拍の合間をこの待ちで過ごし(上限 =
         #: monitor の周期 — 周期は保険に退く)、手番が終わった拍に即座に観測して turn_ended_at を刻む。
         self._turn_ends = threading.Condition()
         self._turn_end_count = 0
+
+    @property
+    def event_store(self) -> HeadlessEventStore:
+        return self._mut_events
+
+    def use_event_store(self, store: HeadlessEventStore) -> None:
+        """出来事の置き場の handler を差し替える(起動時・process を 1 つも起こす前に 1 度)。"""
+        self._mut_events = store
 
     def _turn_ended(self, name: str) -> None:
         """process の読み手からの合図(名は診断のため — 待ち手は名を選ばず、拍を 1 回起こす)。"""
@@ -448,7 +479,9 @@ class HeadlessRegistry:
                 existing.join_io(1.0)
             if existing is not None and existing.alive():
                 raise RuntimeError(f"headless session already exists: {name}")
-            process = HeadlessProcess(name, argv, cwd, env, events_path, dialogue, self._turn_ended)
+            process = HeadlessProcess(
+                name, argv, cwd, env, events_path, dialogue, self._turn_ended, self._mut_events
+            )
             self._processes[name] = process
             return process
 

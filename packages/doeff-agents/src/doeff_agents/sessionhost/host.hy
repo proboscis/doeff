@@ -103,6 +103,9 @@
   recover-headless-rows
   stop-headless-rows])
 (import doeff_agents.sessionhost.store_health [DEFAULT-STORE-WRITE-FAILURE-LIMIT readiness-of])
+(import doeff_agents.sessionhost.headless_events [HeadlessEventsSince])
+(import doeff_agents.sessionhost.headless_outbox [OutboxEventStore OtlpShipper PRUNE-GRACE-SECONDS-DEFAULT
+                                                 prune-shipped run-forever])
 (import doeff_agents.sessionhost.store [
   HISTORY-PRUNE-BATCH-ROWS
   LEASE-TTL-SECONDS
@@ -1512,6 +1515,26 @@
     (setv wait (min (float wait-raw) WAIT-EVENTS-MAX-SECONDS))
     (return {"seq" (.wait-journal actor after wait)}))
 
+  ;; 出来事の読み(headless_events・ADR-DOE-AGENTS-012 R-headless-events-are-read-through-the-host):
+  ;; locator = 行の backend_ref.events_path(出来事の流れの名)・cursor = 前の答えの cursor(初回 0)。
+  ;; 答え = {"text": stdout の完全な行, "cursor": 次の cursor}。置き場(送り待ちの表 / file / memory)は
+  ;; 登記簿の handler が持ち、呼び手(agentd)は置き場を知らない — file を直に読まない。
+  (when (= method "session.events_since")
+    (setv p (params-object params "session.events_since"))
+    (setv locator (required-str-param p "locator" "session.events_since"))
+    (setv cursor (.get p "cursor" 0))
+    (when (or (isinstance cursor bool) (not (isinstance cursor int)) (< cursor 0))
+      (raise (RuntimeError
+               f"invalid params for session.events_since: `cursor` must be a non-negative integer (got: {cursor !r})")))
+    (setv chunk (.since HEADLESS-REGISTRY.event-store (HeadlessEventsSince locator cursor)))
+    (return {"text" chunk.text "cursor" chunk.cursor}))
+
+  ;; 出来事の流れの今の先端(send / resume の手番の材料の始まり)。答え = {"cursor": 先端}。
+  (when (= method "session.events_head")
+    (setv p (params-object params "session.events_head"))
+    (setv locator (required-str-param p "locator" "session.events_head"))
+    (return {"cursor" (.head HEADLESS-REGISTRY.event-store locator)}))
+
   ;; 波 1-S1(ADR-007 R7): 会話 ID → 行の probe なし行引き口。応答 = wire
   ;; snapshot + stalled 導出のみ(substrate_present は意図的に不在 — law
   ;; conversation-lookup-never-probes。読み手は自分の substrate 観測と合成
@@ -1997,6 +2020,37 @@
   (.isoformat (- (datetime.now timezone.utc) (timedelta :days days))))
 
 
+(setv ENV-EVENTS-OTLP-URL "DOEFF_AGENTD_EVENTS_OTLP_URL")
+
+(defn install-event-store [actor shutdown-event]
+  "出来事の置き場の handler を組む(composition root の 1 点・process を 1 つも起こす前)。
+   env DOEFF_AGENTD_EVENTS_OTLP_URL が在れば送り待ちの表 + 段の DB への送り手(pod の本番)、
+   無ければ登記簿の既定(file — Mac の当面の形・operator 裁定 2026-09-25)のまま。戻り = 送り手 or None。"
+  (setv url (.strip (.get os.environ ENV-EVENTS-OTLP-URL "")))
+  (when (not url)
+    (return None))
+  (.use-event-store HEADLESS-REGISTRY (OutboxEventStore actor.submit))
+  (setv shipper (OtlpShipper :submit actor.submit :url url :node (socket.gethostname)))
+  (run-forever shipper shutdown-event)
+  (print f"doeff-sessionhost events: outbox → {url}/v1/logs (node {shipper.node})" :file sys.stderr)
+  shipper)
+
+
+(defn events-prune-tick [actor]
+  "送れた出来事の行のうち、session が終わって猶予が過ぎた物を送り待ちの表から外す(置き場が送り待ちの表の
+   時だけ・毎時)。猶予は DOEFF_AGENTD_EVENTS_PRUNE_GRACE_SECS(既定 1 時間)。"
+  (when (not (isinstance HEADLESS-REGISTRY.event-store OutboxEventStore))
+    (return 0))
+  (setv grace (or (env-positive-i64 "DOEFF_AGENTD_EVENTS_PRUNE_GRACE_SECS")
+                  PRUNE-GRACE-SECONDS-DEFAULT))
+  (setv cutoff (.isoformat (- (datetime.now timezone.utc) (timedelta :seconds grace))))
+  (setv removed (.submit actor (fn [conn] (prune-shipped conn cutoff))))
+  (when (> removed 0)
+    (print f"doeff-sessionhost events prune: {removed} shipped rows of sessions ended before {cutoff}"
+           :file sys.stderr))
+  removed)
+
+
 (defn prune-history-tick [actor]
   "監査履歴 prune の 1 pass(起動時 + 毎時)。削除があったときだけ log。"
   (setv cutoff (history-retention-cutoff-iso))
@@ -2066,6 +2120,7 @@
                              (monitor-cycle (build-monitor-knobs config))))))
     (when (>= (time.monotonic) next-prune)
       (run-worker-tick "history-prune" (fn [] (prune-history-tick actor)))
+      (run-worker-tick "events-prune" (fn [] (events-prune-tick actor)))
       (setv next-prune (+ (time.monotonic) HISTORY-PRUNE-INTERVAL-SECONDS)))
     (if (headless-backend? config)
         (setv seen-turn-ends (.wait-turn-end HEADLESS-REGISTRY seen-turn-ends
@@ -2241,6 +2296,7 @@
   ;; KeepAlive の即 spawn 後継が lease-conflict で敗死しない(issue #565)。
   ;; SIGKILL / crash は従来どおり TTL 失効がバックストップ。
   (setv shutdown-event (threading.Event))
+  (install-event-store actor shutdown-event)
   ;; 段 10 lane 10h 便 2: lease を取った後は TERM を graceful に(走っている手番を閉じてから finally へ)。
   (install-graceful-stop config actor)
   (try
