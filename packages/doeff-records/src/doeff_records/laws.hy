@@ -4,15 +4,16 @@
 ;;; 順に並べた transcript(list)を返す。2 つの handler の組で同じ筋書きを回し、transcript が等しいこと(= 答えが同じ)も確かめられる。
 ;;;
 ;;; 組み立ては呼び手: LAW-SCHEMA の宣言で置き場を作り、LawHarness の as-writer(書き手の名・Program → その書き手の handler で包んだ
-;;; Program)を渡す。書き手の名は宣言の writers の名(maker / painter / closer)と、どこにも載らない stranger。
+;;; Program)を渡す。書き手の名は宣言の欄の書き手の名(maker / painter / closer)と、どこにも載らない stranger。
 ;;; 保持の法(law-transient-rows-expire)は doeff-time の Delay で時間を進めるので、仮想の時計(sim-time-handler)の下で回す。
 ;;; 待ちの法(law-watch-waits-for-a-change)は doeff の scheduler の Spawn を使う。
 (require doeff-hy.macros [defk <-])
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
+(import doeff_hy.frozen [FrozenMap])
 (import doeff_core_effects.scheduler [Spawn Wait])
 (import doeff_time [Delay])
-(import doeff_records.values [TableDecl StreamDecl RecordsSchema KeepFor KeepForever ExpectAbsent ExpectVersion ExpectAny
+(import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor KeepForever ExpectAbsent ExpectVersion ExpectAny
                               Approval WatchCursor ListCursor Row Missing Page Written Conflict Refused NotIndexed Reset
                               Changes RowChanged RowRemoved Appended Events])
 (import doeff_records.effects [ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents])
@@ -24,18 +25,20 @@
 
 (setv LAW-SCHEMA
   (RecordsSchema
-    :tables {"parts" (TableDecl :name "parts" :key-fields #("id")
-                                :writers {"id" #(MAKER) "label" #(MAKER) "color" #(MAKER PAINTER) "state" #(MAKER CLOSER)
-                                          "note" #(MAKER) "grant" #(MAKER)}
+    :tables (FrozenMap {"parts" (TableDecl :name "parts" :key-fields #("id")
+                                :fields #((FieldDecl "id" #(MAKER)) (FieldDecl "label" #(MAKER))
+                                          (FieldDecl "color" #(MAKER PAINTER)) (FieldDecl "state" #(MAKER CLOSER))
+                                          (FieldDecl "note" #(MAKER)) (FieldDecl "grant" #(MAKER)))
                                 :indexes #("color" "label")
                                 :states #("open" "held" "closed") :terminal #("closed") :initial "open"
                                 :operator-paths #("grant") :size-budget 400)
              "tickets" (TableDecl :name "tickets" :key-fields #("group" "id")
-                                  :writers {"group" #(MAKER) "id" #(MAKER) "state" #(MAKER) "owner" #(MAKER)}
+                                  :fields #((FieldDecl "group" #(MAKER)) (FieldDecl "id" #(MAKER))
+                                            (FieldDecl "state" #(MAKER)) (FieldDecl "owner" #(MAKER)))
                                   :indexes #("owner")
                                   :states #("open" "done") :terminal #("done") :initial "open"
-                                  :retention (KeepFor TICKET-KEEP-SECONDS))}
-    :streams {"journal" (StreamDecl :name "journal" :writers #(MAKER) :size-budget 200)}))
+                                  :retention (KeepFor TICKET-KEEP-SECONDS))})
+    :streams (FrozenMap {"journal" (StreamDecl :name "journal" :writers #(MAKER) :size-budget 200)})))
 
 
 (defclass LawBroken [AssertionError]
@@ -67,8 +70,8 @@
     (when (not answer.items) (return #(answers at)))))
 
 
-(defk collect-pages [#^ LawHarness harness #^ str table #^ dict where #^ int limit]
-  {:pre [(: harness LawHarness) (: table str) (: where dict) (: limit int)] :post [(: % list)]}
+(defk collect-pages [#^ LawHarness harness #^ str table #^ FrozenMap where #^ int limit]
+  {:pre [(: harness LawHarness) (: table str) (: where FrozenMap) (: limit int)] :post [(: % list)]}
   "next-cursor が尽きるまで ListRows の頁を読み、頁を全部並べる。"
   (setv pages [] cursor None)
   (while True
@@ -83,22 +86,22 @@
 (defk law-stale-put-conflicts [#^ LawHarness harness]
   {:pre [(: harness LawHarness)] :post [(: % list)]}
   (setv law "古い版の PutRow は Conflict" t [])
-  (<- born (as-writer harness MAKER (PutRow "parts" #("p1") {"label" "a"} (ExpectAbsent))))
-  (require-law (= born (Written 1 {"id" "p1" "label" "a" "state" "open"})) law (.format "生まれる行: {!r}" born))
-  (<- second (as-writer harness MAKER (PutRow "parts" #("p1") {"label" "b"} (ExpectVersion 1))))
+  (<- born (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent))))
+  (require-law (= born (Written 1 (FrozenMap {"id" "p1" "label" "a" "state" "open"}))) law (.format "生まれる行: {!r}" born))
+  (<- second (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "b"}) (ExpectVersion 1))))
   (require-law (and (isinstance second Written) (= second.version 2)) law (.format "版 1 への書き: {!r}" second))
-  (setv now (Row #("p1") {"id" "p1" "label" "b" "state" "open"} 2))
-  (<- stale (as-writer harness MAKER (PutRow "parts" #("p1") {"label" "c"} (ExpectVersion 1))))
+  (setv now (Row #("p1") (FrozenMap {"id" "p1" "label" "b" "state" "open"}) 2))
+  (<- stale (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "c"}) (ExpectVersion 1))))
   (require-law (= stale (Conflict now)) law (.format "古い版 1 への書き: {!r}" stale))
-  (<- absent (as-writer harness MAKER (PutRow "parts" #("p1") {"label" "d"} (ExpectAbsent))))
+  (<- absent (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "d"}) (ExpectAbsent))))
   (require-law (= absent (Conflict now)) law (.format "在る行への ExpectAbsent: {!r}" absent))
-  (<- missing (as-writer harness MAKER (PutRow "parts" #("p-none") {"label" "d"} (ExpectVersion 3))))
+  (<- missing (as-writer harness MAKER (PutRow "parts" #("p-none") (FrozenMap {"label" "d"}) (ExpectVersion 3))))
   (require-law (= missing (Conflict (Missing))) law (.format "無い行への ExpectVersion: {!r}" missing))
   (<- read (as-writer harness MAKER (ReadRow "parts" #("p1"))))
   (require-law (= read now) law (.format "衝突は行を変えない: {!r}" read))
   (<- nothing (as-writer harness MAKER (ReadRow "parts" #("p-none"))))
   (require-law (= nothing (Missing)) law (.format "衝突は行を作らない: {!r}" nothing))
-  (<- blind (as-writer harness MAKER (PutRow "parts" #("p1") {"label" "e"} (ExpectAny))))
+  (<- blind (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "e"}) (ExpectAny))))
   (require-law (and (isinstance blind Written) (= blind.version 3)) law (.format "ExpectAny: {!r}" blind))
   [born second stale absent missing read nothing blind])
 
@@ -111,13 +114,13 @@
   (<- start (as-writer harness MAKER (ListRows "parts" :limit 1)))
   (require-law (isinstance start Page) law (.format "最初の一覧: {!r}" start))
   (setv cursor (WatchCursor start.epoch start.sequence))
-  (<- w1 (as-writer harness MAKER (PutRow "parts" #("p1") {"label" "x"} (ExpectAbsent))))
-  (<- w2 (as-writer harness MAKER (PutRow "tickets" #("g1" "t1") {"owner" "o1"} (ExpectAbsent))))
-  (<- refused (as-writer harness STRANGER (PutRow "parts" #("p1") {"label" "y"} (ExpectAny))))
-  (<- conflict (as-writer harness MAKER (PutRow "parts" #("p1") {"label" "y"} (ExpectAbsent))))
-  (<- w3 (as-writer harness PAINTER (PutRow "parts" #("p1") {"color" "red"} (ExpectVersion 1))))
-  (<- w4 (as-writer harness MAKER (PutRow "parts" #("p2") {"label" "z"} (ExpectAbsent))))
-  (<- w5 (as-writer harness MAKER (PutRow "tickets" #("g1" "t1") {"state" "done"} (ExpectVersion 1))))
+  (<- w1 (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "x"}) (ExpectAbsent))))
+  (<- w2 (as-writer harness MAKER (PutRow "tickets" #("g1" "t1") (FrozenMap {"owner" "o1"}) (ExpectAbsent))))
+  (<- refused (as-writer harness STRANGER (PutRow "parts" #("p1") (FrozenMap {"label" "y"}) (ExpectAny))))
+  (<- conflict (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "y"}) (ExpectAbsent))))
+  (<- w3 (as-writer harness PAINTER (PutRow "parts" #("p1") (FrozenMap {"color" "red"}) (ExpectVersion 1))))
+  (<- w4 (as-writer harness MAKER (PutRow "parts" #("p2") (FrozenMap {"label" "z"}) (ExpectAbsent))))
+  (<- w5 (as-writer harness MAKER (PutRow "tickets" #("g1" "t1") (FrozenMap {"state" "done"}) (ExpectVersion 1))))
   (require-law (and (isinstance refused Refused) (isinstance conflict Conflict)) law
                (.format "断る書きと衝突する書き: {!r} {!r}" refused conflict))
   (setv committed [#("parts" #("p1") w1) #("tickets" #("g1" "t1") w2) #("parts" #("p1") w3) #("parts" #("p2") w4)
@@ -150,7 +153,7 @@
   {:pre [(: harness LawHarness)] :post [(: % list)]}
   (setv law "epoch が変わると Reset")
   (<- first (as-writer harness MAKER (ListRows "parts")))
-  (<- w1 (as-writer harness MAKER (PutRow "parts" #("p1") {"label" "a"} (ExpectAbsent))))
+  (<- w1 (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent))))
   (<- epoch (as-writer harness MAKER (AdvanceStoreEpoch)))
   (require-law (and (isinstance epoch int) (!= epoch first.epoch)) law (.format "新しい epoch: {!r}" epoch))
   (<- watched (as-writer harness MAKER (WatchChanges #("parts") (WatchCursor first.epoch first.sequence))))
@@ -160,7 +163,7 @@
   (<- again (as-writer harness MAKER (ListRows "parts")))
   (require-law (and (isinstance again Page) (= again.epoch epoch) (= (lfor row again.rows row.key) [#("p1")]))
                law (.format "読み直した一覧(行は残る): {!r}" again))
-  (<- w2 (as-writer harness MAKER (PutRow "parts" #("p2") {"label" "b"} (ExpectAbsent))))
+  (<- w2 (as-writer harness MAKER (PutRow "parts" #("p2") (FrozenMap {"label" "b"}) (ExpectAbsent))))
   (<- fresh (as-writer harness MAKER (WatchChanges #("parts") (WatchCursor again.epoch again.sequence))))
   (require-law (and (isinstance fresh Changes) (= (lfor item fresh.items item.key) [#("p2")]))
                law (.format "新しい位置からの変更: {!r}" fresh))
@@ -172,7 +175,7 @@
 (defk law-undeclared-writes-are-refused [#^ LawHarness harness]
   {:pre [(: harness LawHarness)] :post [(: % list)]}
   (setv law "宣言が許さない書きは Refused で、行を変えない")
-  (<- born (as-writer harness MAKER (PutRow "parts" #("p1") {"label" "a"} (ExpectAbsent))))
+  (<- born (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent))))
   (setv refusals [])
   (for [#(writer table key diff approval) [#(STRANGER "parts" #("p1") {"label" "z"} None)
                                            #(PAINTER "parts" #("p1") {"label" "z"} None)
@@ -188,17 +191,17 @@
     (require-law (isinstance answer Refused) law (.format "{} の {!r} {!r}: {!r}" writer key diff answer))
     (.append refusals answer))
   (<- untouched (as-writer harness MAKER (ReadRow "parts" #("p1"))))
-  (require-law (= untouched (Row #("p1") {"id" "p1" "label" "a" "state" "open"} 1)) law
+  (require-law (= untouched (Row #("p1") (FrozenMap {"id" "p1" "label" "a" "state" "open"}) 1)) law
                (.format "断った書きが行を変えた: {!r}" untouched))
   (<- nobody (as-writer harness MAKER (ReadRow "parts" #("p9"))))
   (require-law (= nobody (Missing)) law (.format "作ってよくない書き手が行を作った: {!r}" nobody))
-  (<- painted (as-writer harness PAINTER (PutRow "parts" #("p1") {"color" "blue"} (ExpectVersion 1))))
+  (<- painted (as-writer harness PAINTER (PutRow "parts" #("p1") (FrozenMap {"color" "blue"}) (ExpectVersion 1))))
   (require-law (and (isinstance painted Written) (= painted.version 2)) law (.format "名簿に在る書き手: {!r}" painted))
-  (<- same (as-writer harness PAINTER (PutRow "parts" #("p1") {"color" "blue" "label" "a"} (ExpectVersion 2))))
+  (<- same (as-writer harness PAINTER (PutRow "parts" #("p1") (FrozenMap {"color" "blue" "label" "a"}) (ExpectVersion 2))))
   (require-law (and (isinstance same Written) (= same.version 3)) law (.format "値の変わらない欄は照らさない: {!r}" same))
-  (<- closed (as-writer harness CLOSER (PutRow "parts" #("p1") {"state" "closed"} (ExpectVersion 3))))
+  (<- closed (as-writer harness CLOSER (PutRow "parts" #("p1") (FrozenMap {"state" "closed"}) (ExpectVersion 3))))
   (require-law (and (isinstance closed Written) (= (get closed.value "state") "closed")) law (.format "終端へ: {!r}" closed))
-  (<- frozen (as-writer harness MAKER (PutRow "parts" #("p1") {"label" "after"} (ExpectVersion 4))))
+  (<- frozen (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "after"}) (ExpectVersion 4))))
   (require-law (isinstance frozen Refused) law (.format "終端の行への書き: {!r}" frozen))
   (<- final (as-writer harness MAKER (ReadRow "parts" #("p1"))))
   (require-law (and (isinstance final Row) (= final.version 4)) law (.format "終端の行が変わった: {!r}" final))
@@ -210,10 +213,10 @@
 (defk law-transient-rows-expire [#^ LawHarness harness]
   {:pre [(: harness LawHarness)] :post [(: % list)]}
   (setv law "transient の行は期限で消え、record の行は消えない")
-  (<- t1 (as-writer harness MAKER (PutRow "tickets" #("g1" "t1") {"owner" "o1"} (ExpectAbsent))))
-  (<- t2 (as-writer harness MAKER (PutRow "tickets" #("g1" "t2") {"owner" "o2"} (ExpectAbsent))))
-  (<- p1 (as-writer harness MAKER (PutRow "parts" #("p1") {"state" "closed"} (ExpectAbsent))))
-  (<- done (as-writer harness MAKER (PutRow "tickets" #("g1" "t1") {"state" "done"} (ExpectVersion 1))))
+  (<- t1 (as-writer harness MAKER (PutRow "tickets" #("g1" "t1") (FrozenMap {"owner" "o1"}) (ExpectAbsent))))
+  (<- t2 (as-writer harness MAKER (PutRow "tickets" #("g1" "t2") (FrozenMap {"owner" "o2"}) (ExpectAbsent))))
+  (<- p1 (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"state" "closed"}) (ExpectAbsent))))
+  (<- done (as-writer harness MAKER (PutRow "tickets" #("g1" "t1") (FrozenMap {"state" "done"}) (ExpectVersion 1))))
   (<- start (as-writer harness MAKER (ListRows "tickets")))
   (<- (Delay (- TICKET-KEEP-SECONDS 1)))
   (<- before (as-writer harness MAKER (ReadRow "tickets" #("g1" "t1"))))
@@ -238,16 +241,16 @@
 
 (setv COLORS #("red" "blue" "green"))
 (setv LABELS #("a" "b"))
-(setv WHERES [{} {"color" "red"} {"label" "a"} {"color" "blue" "label" "b"} {"id" "p03"} {"color" "none"}])
+(setv WHERES (lfor where [{} {"color" "red"} {"label" "a"} {"color" "blue" "label" "b"} {"id" "p03"} {"color" "none"}] (FrozenMap where)))
 
 (defk law-indexed-list-equals-filtered-scan [#^ LawHarness harness]
   {:pre [(: harness LawHarness)] :post [(: % list)]}
   (setv law "索引の ListRows は全件を読んで絞った結果と同じ" transcript [])
   (for [n (range 1 13)]
     (<- written (as-writer harness MAKER (PutRow "parts" #((.format "p{:02d}" n))
-                                                 {"color" (get COLORS (% n 3)) "label" (get LABELS (% n 2))} (ExpectAbsent))))
+                                                 (FrozenMap {"color" (get COLORS (% n 3)) "label" (get LABELS (% n 2))}) (ExpectAbsent))))
     (.append transcript written))
-  (<- everything (collect-pages harness "parts" {} 500))
+  (<- everything (collect-pages harness "parts" (FrozenMap) 500))
   (setv all-rows (lfor page everything row page.rows row))
   (require-law (= (len all-rows) 12) law (.format "全件: {!r}" everything))
   (for [where WHERES]
@@ -258,9 +261,9 @@
                  (.format "{!r} の索引の答えが全件を絞った答えと違う: {!r}" where paged))
     (require-law (all (gfor page pages (<= (len page.rows) 5))) law (.format "頁の上限を越えた: {!r}" pages))
     (.extend transcript pages))
-  (<- narrow (as-writer harness MAKER (ListRows "parts" :where {"color" "red"} :fields #("color") :limit 2)))
+  (<- narrow (as-writer harness MAKER (ListRows "parts" :where (FrozenMap {"color" "red"}) :fields #("color") :limit 2)))
   (require-law (all (gfor row narrow.rows (= (set row.value) #{"id" "color"}))) law (.format "欄の絞り: {!r}" narrow))
-  (<- loose (as-writer harness MAKER (ListRows "parts" :where {"note" "x" "color" "red"})))
+  (<- loose (as-writer harness MAKER (ListRows "parts" :where (FrozenMap {"note" "x" "color" "red"}))))
   (require-law (= loose (NotIndexed #("note"))) law (.format "索引の無い欄: {!r}" loose))
   (+ transcript [everything narrow loose]))
 
@@ -294,7 +297,7 @@
 (defk late-write [#^ LawHarness harness]
   {:pre [(: harness LawHarness)] :post [(: % Written)]}
   (<- (Delay 5))
-  (<- written (as-writer harness MAKER (PutRow "parts" #("late") {"label" "l"} (ExpectAbsent))))
+  (<- written (as-writer harness MAKER (PutRow "parts" #("late") (FrozenMap {"label" "l"}) (ExpectAbsent))))
   written)
 
 (defk law-watch-waits-for-a-change [#^ LawHarness harness]
@@ -317,22 +320,22 @@
 (defk law-none-removes-a-field [#^ LawHarness harness]
   {:pre [(: harness LawHarness)] :post [(: % list)]}
   (setv law "PutRow の差分の値 None はその欄を消し、行の値は None を持たない")
-  (<- born (as-writer harness MAKER (PutRow "parts" #("p1") {"label" "a" "color" "red"} (ExpectAbsent))))
-  (require-law (= born (Written 1 {"id" "p1" "label" "a" "color" "red" "state" "open"})) law (.format "生まれる行: {!r}" born))
-  (<- uncolored (as-writer harness PAINTER (PutRow "parts" #("p1") {"color" None} (ExpectVersion 1))))
-  (require-law (= uncolored (Written 2 {"id" "p1" "label" "a" "state" "open"})) law (.format "欄を消す書き: {!r}" uncolored))
+  (<- born (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a" "color" "red"}) (ExpectAbsent))))
+  (require-law (= born (Written 1 (FrozenMap {"id" "p1" "label" "a" "color" "red" "state" "open"}))) law (.format "生まれる行: {!r}" born))
+  (<- uncolored (as-writer harness PAINTER (PutRow "parts" #("p1") (FrozenMap {"color" None}) (ExpectVersion 1))))
+  (require-law (= uncolored (Written 2 (FrozenMap {"id" "p1" "label" "a" "state" "open"}))) law (.format "欄を消す書き: {!r}" uncolored))
   (<- read (as-writer harness MAKER (ReadRow "parts" #("p1"))))
-  (require-law (= read (Row #("p1") {"id" "p1" "label" "a" "state" "open"} 2)) law (.format "消した欄が読める: {!r}" read))
-  (<- not-yours (as-writer harness PAINTER (PutRow "parts" #("p1") {"label" None} (ExpectVersion 2))))
+  (require-law (= read (Row #("p1") (FrozenMap {"id" "p1" "label" "a" "state" "open"}) 2)) law (.format "消した欄が読める: {!r}" read))
+  (<- not-yours (as-writer harness PAINTER (PutRow "parts" #("p1") (FrozenMap {"label" None}) (ExpectVersion 2))))
   (require-law (isinstance not-yours Refused) law (.format "書き手でない欄を消せた: {!r}" not-yours))
-  (<- keyless (as-writer harness MAKER (PutRow "parts" #("p1") {"id" None} (ExpectVersion 2))))
+  (<- keyless (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"id" None}) (ExpectVersion 2))))
   (require-law (isinstance keyless Refused) law (.format "鍵の欄を消せた: {!r}" keyless))
-  (<- stateless (as-writer harness MAKER (PutRow "parts" #("p1") {"state" None} (ExpectVersion 2))))
+  (<- stateless (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"state" None}) (ExpectVersion 2))))
   (require-law (isinstance stateless Refused) law (.format "状態の欄を消せた: {!r}" stateless))
-  (<- nothing (as-writer harness MAKER (PutRow "parts" #("p1") {"note" None} (ExpectVersion 2))))
-  (require-law (= nothing (Written 3 {"id" "p1" "label" "a" "state" "open"})) law (.format "無い欄を消す書き: {!r}" nothing))
-  (<- fresh (as-writer harness MAKER (PutRow "parts" #("p2") {"label" "b" "color" None} (ExpectAbsent))))
-  (require-law (= fresh (Written 1 {"id" "p2" "label" "b" "state" "open"})) law (.format "None の欄を持って生まれる行: {!r}" fresh))
+  (<- nothing (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"note" None}) (ExpectVersion 2))))
+  (require-law (= nothing (Written 3 (FrozenMap {"id" "p1" "label" "a" "state" "open"}))) law (.format "無い欄を消す書き: {!r}" nothing))
+  (<- fresh (as-writer harness MAKER (PutRow "parts" #("p2") (FrozenMap {"label" "b" "color" None}) (ExpectAbsent))))
+  (require-law (= fresh (Written 1 (FrozenMap {"id" "p2" "label" "b" "state" "open"}))) law (.format "None の欄を持って生まれる行: {!r}" fresh))
   (<- listed (as-writer harness MAKER (ListRows "parts")))
   (require-law (and (isinstance listed Page) (not (any (gfor row listed.rows v (.values row.value) (is v None)))))
                law (.format "一覧の行が None を持つ: {!r}" listed))

@@ -1149,6 +1149,7 @@ dependencies = [
     { name = "doeff-hy" },
     { name = "doeff-time" },
     { name = "hy" },
+    { name = "pydantic" },
 ]
 
 [package.optional-dependencies]
@@ -1164,6 +1165,7 @@ requires-dist = [
     { name = "doeff-time", editable = "packages/doeff-time" },
     { name = "hy", specifier = ">=1.3" },
     { name = "psycopg", marker = "extra == 'pg'", specifier = ">=3.1" },
+    { name = "pydantic", specifier = ">=2.6" },
 ]
 provides-extras = ["pg"]
 

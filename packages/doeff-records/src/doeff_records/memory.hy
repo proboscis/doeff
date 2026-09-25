@@ -1,4 +1,5 @@
-;;; memory の handler — 公開 effect 6 つに dict と番号の列で答える(模擬環境・手元の 1 process・単体の検)。
+;;; memory の handler — 公開 effect 6 つに手元の表と番号の列で答える(模擬環境・手元の 1 process・単体の検)。
+;;; 行の値は凍らせた写像なので、答えに出す Row は置き場の Row そのもの(写し取らなくても呼び手は変えられない)。
 ;;;
 ;;; 判断(期待・書きの許可・保持・索引・頁)は admission.hy の純関数ちょうど 1 つ。ここは置き場の data と番号の採り方だけを持つ。
 ;;; 時刻は doeff-time の GetTime(仮想の時計の下では保持の期限も一瞬で来る)、WatchChanges の待ちは Delay。
@@ -41,10 +42,6 @@
           self.by-idempotency {})))
 
 
-(defn #^ Row copied [#^ Row row]
-  (Row row.key (dict row.value) row.version))
-
-
 ;; --- 保持 ------------------------------------------------------------------------------------------------
 
 (defn #^ None purge-expired [#^ MemoryStore store #^ int now-ms]
@@ -72,7 +69,7 @@
 (defn #^ (| Row Missing) memory-read-row [#^ MemoryStore store #^ ReadRow ask]
   (store.schema.table ask.table)
   (setv stored (.get (get store.rows ask.table) (key-text ask.key)))
-  (if (is stored None) (Missing) (copied stored.row)))
+  (if (is stored None) (Missing) stored.row))
 
 
 (defn #^ object memory-list-rows [#^ MemoryStore store #^ ListRows ask]
@@ -108,8 +105,8 @@
         row (Row ask.key verdict.value version))
   (setv (get table text) (StoredRow row now-ms))
   (+= store.head 1)
-  (.append store.changes (RowChanged ask.table ask.key version (dict verdict.value) store.head))
-  (Written version (dict verdict.value)))
+  (.append store.changes (RowChanged ask.table ask.key version verdict.value store.head))
+  (Written version verdict.value))
 
 
 (defn #^ object memory-watch-scan [#^ MemoryStore store #^ WatchChanges ask]

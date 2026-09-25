@@ -8,7 +8,9 @@
 (import importlib)
 (import json)
 (import socket)
+(import typing [NamedTuple])
 (import doeff [Pure])
+(import doeff_hy.frozen [FrozenMap frozen-json-object])
 (import doeff_time [GetTime])
 (import doeff_records.values [RecordsSchema KeepFor Row Missing Page Written RowChanged RowRemoved Changes Appended Event
                               Events Reset WatchCursor ListCursor Refused Unreachable])
@@ -69,14 +71,32 @@
   None)
 
 
-(defn #^ tuple store-head [#^ PgRecordsHost host]
-  "#(epoch floor head)。"
-  (tuple (host.fetch-one (store-head-statement host.prefix))))
+(defclass StoreHead [NamedTuple]
+  "置き場の頭: epoch = 置き場の版 / floor = 変更の列の最も古い番号の手前(これより前の位置は Reset)/ head = 最新の変更の番号。"
+  (#^ int epoch)
+  (#^ int floor)
+  (#^ int head))
+
+
+(defclass ExpiredRow [NamedTuple]
+  "保持の期限を過ぎた行 1 つ: table = 表の名 / record = state_rows の行(key payload version updated_ms)。"
+  (#^ str table)
+  (#^ tuple record))
+
+
+(defn #^ StoreHead store-head [#^ PgRecordsHost host]
+  (setv #(epoch floor head) (host.fetch-one (store-head-statement host.prefix)))
+  (StoreHead (int epoch) (int floor) (int head)))
+
+
+(defn #^ FrozenMap decoded-value [#^ str payload]
+  "state_rows / row_changes の payload(JSON の綴り)→ 行の値(深く凍らせた写像)。DB から読む境界はここ 1 か所。"
+  (frozen-json-object (json.loads payload) "state_rows の payload"))
 
 
 (defn #^ Row row-of [record]
   "state_rows の行(key payload version …)→ Row。"
-  (Row (key-from-text (get record 0)) (json.loads (get record 1)) (int (get record 2))))
+  (Row (key-from-text (get record 0)) (decoded-value (get record 1)) (int (get record 2))))
 
 
 (defn guarded [#^ PgRecordsHost host action]
@@ -90,12 +110,12 @@
 ;; --- 保持 ------------------------------------------------------------------------------------------------
 
 (defn #^ list expired-rows [#^ PgRecordsHost host #^ int now-ms]
-  "期限を過ぎた行 #(表の名 行の record) の列(表の名の順・鍵の順)。判断は admission.row-expired?。"
+  "期限を過ぎた行(ExpiredRow)の列(表の名の順・鍵の順)。判断は admission.row-expired?。"
   (lfor #(name decl) (sorted (.items host.schema.tables))
         :if (isinstance decl.retention KeepFor)
         record (host.fetch-all (terminal-rows-statement host.prefix name decl.state-field decl.terminal))
-        :if (row-expired? decl (json.loads (get record 1)) (int (get record 3)) now-ms)
-        #(name record)))
+        :if (row-expired? decl (decoded-value (get record 1)) (int (get record 3)) now-ms)
+        (ExpiredRow name (tuple record))))
 
 
 (defn #^ None purge-expired [#^ PgRecordsHost host #^ int now-ms]
@@ -103,10 +123,11 @@
   (when (expired-rows host now-ms)
     (with [(.transaction host.connection)]
       (host.execute (lock-statement host.prefix))
-      (setv #(epoch _ _) (store-head host))
-      (for [#(name record) (expired-rows host now-ms)]
-        (host.execute (delete-row-statement host.prefix name (get record 0) (int (get record 2))))
-        (host.execute (append-change-statement host.prefix name (get record 0) (int (get record 2)) None now-ms epoch)))))
+      (setv epoch (. (store-head host) epoch))
+      (for [expired (expired-rows host now-ms)]
+        (setv #(text _ version) (cut expired.record 3))
+        (host.execute (delete-row-statement host.prefix expired.table text (int version)))
+        (host.execute (append-change-statement host.prefix expired.table text (int version) None now-ms epoch)))))
   (for [#(name decl) (sorted (.items host.schema.streams))]
     (when (isinstance decl.retention KeepFor)
       (host.execute (expire-events-statement host.prefix name (- now-ms (int (* 1000 decl.retention.seconds)))))))
@@ -145,7 +166,7 @@
         text (key-text ask.key))
   (with [(.transaction host.connection)]
     (host.execute (lock-statement host.prefix))
-    (setv #(epoch _ _) (store-head host)
+    (setv epoch (. (store-head host) epoch)
           record (host.fetch-one (lock-row-statement host.prefix ask.table text))
           current (if (is record None) None (row-of record))
           conflict (judge-expect ask.expect current))
@@ -156,7 +177,7 @@
           payload (canonical-json verdict.value))
     (host.execute (upsert-row-statement host.prefix ask.table text payload version now-ms writer host.origin-host epoch))
     (host.execute (append-change-statement host.prefix ask.table text version payload now-ms epoch)))
-  (Written version (dict verdict.value)))
+  (Written version verdict.value))
 
 
 (defn #^ object change-of [record]
@@ -164,7 +185,7 @@
   (setv #(seq table text version payload) record)
   (if (is payload None)
       (RowRemoved table (key-from-text text) (int seq))
-      (RowChanged table (key-from-text text) (int version) (json.loads payload) (int seq))))
+      (RowChanged table (key-from-text text) (int version) (decoded-value payload) (int seq))))
 
 
 (defn #^ object pg-watch-scan [#^ PgRecordsHost host #^ WatchChanges ask]
@@ -190,7 +211,7 @@
   (setv decl (host.schema.stream ask.stream))
   (with [(.transaction host.connection)]
     (host.execute (lock-statement host.prefix))
-    (setv #(epoch _ _) (store-head host)
+    (setv epoch (. (store-head host) epoch)
           found (host.fetch-one (find-event-statement host.prefix ask.stream ask.idempotency-key))
           verdict (judge-append decl writer ask.body (if (is found None) None (event-of ask.stream found))))
     (when (isinstance verdict Refused) (return verdict))
