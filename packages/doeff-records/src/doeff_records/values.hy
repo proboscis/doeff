@@ -4,7 +4,7 @@
 ;;; (宣言に無い表・列を読む — UndeclaredTable)と、handler の実装の誤りだけ。
 ;;;
 ;;; 行の鍵は key-fields の順の文字列の tuple。行の値(value)は欄の名 → JSON の値の dict で、鍵の欄も値に含む
-;;; (行を作る時に handler が鍵の欄を値に置く)。
+;;; (行を作る時に handler が鍵の欄を値に置く)。値は None を持たない — PutRow の差分の None は「その欄を消す」(JSON merge patch の null)。
 (import dataclasses [dataclass field])
 (import re)
 

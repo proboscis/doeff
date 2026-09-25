@@ -3,7 +3,8 @@
 (require doeff-hy.macros [deftest <-])
 (import doeff_records.laws [law-stale-put-conflicts law-committed-changes-appear-once-in-order law-epoch-change-resets
                             law-undeclared-writes-are-refused law-transient-rows-expire
-                            law-indexed-list-equals-filtered-scan law-append-is-idempotent law-watch-waits-for-a-change])
+                            law-indexed-list-equals-filtered-scan law-append-is-idempotent law-watch-waits-for-a-change
+                            law-none-removes-a-field])
 (import tests.interpreters [LawSetup])
 
 
@@ -53,4 +54,10 @@
   {:interpreters ["memory" "pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-watch-waits-for-a-change harness))
+  (assert transcript))
+
+(deftest test-none-removes-a-field
+  {:interpreters ["memory" "pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-none-removes-a-field harness))
   (assert transcript))

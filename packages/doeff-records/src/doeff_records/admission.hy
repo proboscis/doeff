@@ -82,13 +82,22 @@
   (and (bool decl.terminal) (in (state-of decl value) decl.terminal)))
 
 
+(defn #^ bool field-changes? [#^ (| Row None) current #^ str name #^ object value]
+  "差分の 1 欄が行を変えるか: None(欄を消す)は欄が在る時だけ・他の値は今の値と違う時だけ。"
+  (when (is current None) (return (is-not value None)))
+  (setv present (in name current.value))
+  (if (is value None)
+      present
+      (not (and present (json-equal? (get current.value name) value)))))
+
+
 (defn #^ tuple changed-fields [#^ TableDecl decl #^ (| Row None) current #^ dict diff]
-  "書きが変える欄(書き手の名簿で照らす欄): 生まれる行 = 鍵の欄と差分の全部 / 在る行 = 値の変わる差分の欄。"
+  "書きが変える欄(書き手の名簿で照らす欄): 生まれる行 = 鍵の欄と、値が None でない差分の全部 / 在る行 = 値の変わる差分の欄
+   (None = 欄を消す — 在る欄を消す書きも、その欄の書き手で照らす)。"
   (if (is current None)
-      (tuple (+ (list decl.key-fields) (sorted (gfor name diff :if (not-in name decl.key-fields) name))))
-      (tuple (sorted (gfor #(name value) (.items diff)
-                           :if (not (and (in name current.value) (json-equal? (get current.value name) value)))
-                           name)))))
+      (tuple (+ (list decl.key-fields)
+                (sorted (gfor #(name value) (.items diff) :if (and (not-in name decl.key-fields) (is-not value None)) name))))
+      (tuple (sorted (gfor #(name value) (.items diff) :if (field-changes? current name value) name)))))
 
 
 (defn #^ (| Refused None) shape-refusal [#^ TableDecl decl #^ (| Row None) current #^ tuple key #^ dict diff]
@@ -108,9 +117,10 @@
 
 
 (defn #^ dict landed-value [#^ TableDecl decl #^ (| Row None) current #^ tuple key #^ dict diff]
-  "確定する行の値: 今の値(無ければ鍵の欄)に差分を重ね、生まれる行で状態の語が無ければ initial を置く。"
+  "確定する行の値: 今の値(無ければ鍵の欄)に差分を重ね、差分の値が None の欄は消し(JSON merge patch〔RFC 7396〕の null と同じ)、
+   生まれる行で状態の語が無ければ initial を置く。行の値は None を持たない。"
   (setv base (if (is current None) (dict (zip decl.key-fields key)) (dict current.value)))
-  (setv value (| base diff))
+  (setv value (dfor #(name v) (.items (| base diff)) :if (is-not v None) name v))
   (when (and (is current None) decl.states (not-in decl.state-field diff))
     (setv (get value decl.state-field) decl.initial))
   value)

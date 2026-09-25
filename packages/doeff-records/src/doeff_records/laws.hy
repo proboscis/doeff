@@ -312,6 +312,33 @@
   [start idle woke written])
 
 
+;; --- 法 9: 差分の None はその欄を消す(JSON merge patch の null)------------------------------------------------
+
+(defk law-none-removes-a-field [#^ LawHarness harness]
+  {:pre [(: harness LawHarness)] :post [(: % list)]}
+  (setv law "PutRow の差分の値 None はその欄を消し、行の値は None を持たない")
+  (<- born (as-writer harness MAKER (PutRow "parts" #("p1") {"label" "a" "color" "red"} (ExpectAbsent))))
+  (require-law (= born (Written 1 {"id" "p1" "label" "a" "color" "red" "state" "open"})) law (.format "生まれる行: {!r}" born))
+  (<- uncolored (as-writer harness PAINTER (PutRow "parts" #("p1") {"color" None} (ExpectVersion 1))))
+  (require-law (= uncolored (Written 2 {"id" "p1" "label" "a" "state" "open"})) law (.format "欄を消す書き: {!r}" uncolored))
+  (<- read (as-writer harness MAKER (ReadRow "parts" #("p1"))))
+  (require-law (= read (Row #("p1") {"id" "p1" "label" "a" "state" "open"} 2)) law (.format "消した欄が読める: {!r}" read))
+  (<- not-yours (as-writer harness PAINTER (PutRow "parts" #("p1") {"label" None} (ExpectVersion 2))))
+  (require-law (isinstance not-yours Refused) law (.format "書き手でない欄を消せた: {!r}" not-yours))
+  (<- keyless (as-writer harness MAKER (PutRow "parts" #("p1") {"id" None} (ExpectVersion 2))))
+  (require-law (isinstance keyless Refused) law (.format "鍵の欄を消せた: {!r}" keyless))
+  (<- stateless (as-writer harness MAKER (PutRow "parts" #("p1") {"state" None} (ExpectVersion 2))))
+  (require-law (isinstance stateless Refused) law (.format "状態の欄を消せた: {!r}" stateless))
+  (<- nothing (as-writer harness MAKER (PutRow "parts" #("p1") {"note" None} (ExpectVersion 2))))
+  (require-law (= nothing (Written 3 {"id" "p1" "label" "a" "state" "open"})) law (.format "無い欄を消す書き: {!r}" nothing))
+  (<- fresh (as-writer harness MAKER (PutRow "parts" #("p2") {"label" "b" "color" None} (ExpectAbsent))))
+  (require-law (= fresh (Written 1 {"id" "p2" "label" "b" "state" "open"})) law (.format "None の欄を持って生まれる行: {!r}" fresh))
+  (<- listed (as-writer harness MAKER (ListRows "parts")))
+  (require-law (and (isinstance listed Page) (not (any (gfor row listed.rows v (.values row.value) (is v None)))))
+               law (.format "一覧の行が None を持つ: {!r}" listed))
+  [born uncolored read not-yours keyless stateless nothing fresh listed])
+
+
 ;; 全部の法(名 → 法)。SHARED-LAWS = 時間を進めない法(仮想の時計を持たない組でも回せる・答えの比べに使う)。
 (setv LAWS {"stale-put-conflicts" law-stale-put-conflicts
             "committed-changes-appear-once-in-order" law-committed-changes-appear-once-in-order
@@ -320,6 +347,8 @@
             "transient-rows-expire" law-transient-rows-expire
             "indexed-list-equals-filtered-scan" law-indexed-list-equals-filtered-scan
             "append-is-idempotent" law-append-is-idempotent
-            "watch-waits-for-a-change" law-watch-waits-for-a-change})
+            "watch-waits-for-a-change" law-watch-waits-for-a-change
+            "none-removes-a-field" law-none-removes-a-field})
 (setv SHARED-LAWS #("stale-put-conflicts" "committed-changes-appear-once-in-order" "epoch-change-resets"
-                    "undeclared-writes-are-refused" "indexed-list-equals-filtered-scan" "append-is-idempotent"))
+                    "undeclared-writes-are-refused" "indexed-list-equals-filtered-scan" "append-is-idempotent"
+                    "none-removes-a-field"))
