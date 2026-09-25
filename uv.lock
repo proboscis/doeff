@@ -14,6 +14,7 @@ members = [
     "doeff-agentic",
     "doeff-agentic-cli",
     "doeff-agents",
+    "doeff-cluster",
     "doeff-conductor",
     "doeff-core-effects",
     "doeff-docker",
@@ -430,6 +431,7 @@ dev = [
     { name = "cloudpickle" },
     { name = "doeff-adr" },
     { name = "doeff-agents" },
+    { name = "doeff-cluster" },
     { name = "doeff-conductor" },
     { name = "doeff-docker" },
     { name = "doeff-domain", extra = ["dogfood"] },
@@ -471,6 +473,7 @@ dev = [
     { name = "cloudpickle", specifier = ">=3.0" },
     { name = "doeff-adr", editable = "packages/doeff-adr" },
     { name = "doeff-agents", editable = "packages/doeff-agents" },
+    { name = "doeff-cluster", editable = "packages/doeff-cluster" },
     { name = "doeff-conductor", editable = "packages/doeff-conductor" },
     { name = "doeff-docker", editable = "packages/doeff-docker" },
     { name = "doeff-domain", extras = ["dogfood"], editable = "packages/doeff-domain" },
@@ -595,6 +598,31 @@ requires-dist = [
     { name = "rich", specifier = ">=13.0.0" },
 ]
 provides-extras = ["dev"]
+
+[[package]]
+name = "doeff-cluster"
+version = "0.1.0"
+source = { editable = "packages/doeff-cluster" }
+dependencies = [
+    { name = "cloudpickle" },
+    { name = "doeff" },
+    { name = "doeff-core-effects" },
+    { name = "doeff-hy" },
+    { name = "doeff-time" },
+    { name = "httpx" },
+    { name = "hy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cloudpickle", specifier = ">=3.0" },
+    { name = "doeff", editable = "." },
+    { name = "doeff-core-effects", editable = "packages/doeff-core-effects" },
+    { name = "doeff-hy", editable = "packages/doeff-hy" },
+    { name = "doeff-time", editable = "packages/doeff-time" },
+    { name = "httpx", specifier = ">=0.25.0" },
+    { name = "hy", specifier = ">=1.3" },
+]
 
 [[package]]
 name = "doeff-conductor"

@@ -89,6 +89,7 @@ doeff-adr = { workspace = true }
 doeff-domain = { workspace = true }
 doeff-system-one = { workspace = true }
 doeff-jev = { workspace = true }
+doeff-cluster = { workspace = true }
 
 [tool.pytest.ini_options]
 timeout = 60
@@ -173,6 +174,7 @@ dev = [
     "doeff-domain[dogfood]",
     "doeff-system-one",
     "doeff-jev",
+    "doeff-cluster",
     "doeff-docker",
     "doeff-ml-nexus",
     "cloudpickle>=3.0",

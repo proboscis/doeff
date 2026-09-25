@@ -6,6 +6,7 @@ import importlib.util
 import os
 import sys
 import warnings
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -215,11 +216,11 @@ def _should_collect_hy_file(path: Path, config: pytest.Config) -> bool:
     return _matches_file_patterns(path, root, patterns)
 
 
-def _file_patterns(config: pytest.Config) -> tuple[str, ...]:
-    return (*DEFAULT_FILE_PATTERNS, *config.getini("doeff_adr_hy_files"))
+def _file_patterns(config: pytest.Config) -> list[str]:
+    return [*DEFAULT_FILE_PATTERNS, *config.getini("doeff_adr_hy_files")]
 
 
-def _matches_file_patterns(path: Path, root: Path, patterns: tuple[str, ...]) -> bool:
+def _matches_file_patterns(path: Path, root: Path, patterns: Sequence[str]) -> bool:
     rel = _relative_posix(path, root)
     candidates = {path.name, rel, path.as_posix()}
     return any(
@@ -305,7 +306,7 @@ def _wiring_verdict(
     return WiringVerified(frozenset(executable_adrs))
 
 
-def _norecurse_dir_patterns(config: pytest.Config) -> tuple[str, ...]:
+def _norecurse_dir_patterns(config: pytest.Config) -> list[str]:
     """Directory-name globs pytest itself refuses to collect into (norecursedirs).
 
     Wiring discovery must stay consistent with what pytest collection *could*
@@ -313,13 +314,13 @@ def _norecurse_dir_patterns(config: pytest.Config) -> tuple[str, ...]:
     includes ``.*`` — e.g. ``.claude/worktrees`` checkout copies) can never be
     collected, so reporting it as mis-wired is a false positive by construction.
     """
-    return tuple(config.getini("norecursedirs"))
+    return list(config.getini("norecursedirs"))
 
 
 def _discover_executable_adrs(
     root: Path,
-    patterns: tuple[str, ...],
-    norecurse: tuple[str, ...] = (),
+    patterns: Sequence[str],
+    norecurse: Sequence[str] = (),
     max_dirs: int = DEFAULT_WIRING_MAX_DIRS,
 ) -> set[Path]:
     executable_adrs: set[Path] = set()
@@ -373,7 +374,7 @@ def _relative_posix(path: Path, root: Path) -> str:
 
 
 def _import_hy_file(path: Path, root: Path) -> Any:
-    root = root.resolve()
+    root = _import_base_for_path(path.resolve(), root.resolve())
     path = path.resolve()
     module_name = _module_name_for_path(path, root)
     root_text = str(root)
@@ -409,6 +410,32 @@ def _ensure_macro_module_loaded() -> None:
     module = importlib.util.module_from_spec(spec)
     sys.modules["doeff_adr.macros"] = module
     loader.exec_module(module)
+
+
+def _import_base_for_path(path: Path, root: Path) -> Path:
+    """The directory an executable Hy file is imported relative to.
+
+    The rootdir, as long as every rootdir-relative part of the path is an
+    identifier (the long-standing rule: ``controllers/kanban/tests/test_x.hy``
+    becomes ``controllers.kanban.tests.test_x``). A workspace package directory
+    such as ``packages/doeff-cluster`` cannot be part of a module name, so for
+    those paths the base falls back to pytest's own ``prepend`` rule: the first
+    ancestor that is not a package (has neither ``__init__.py`` nor
+    ``__init__.hy``). ``packages/doeff-cluster/tests/test_x.hy`` with a
+    ``tests/__init__.py`` is then imported as ``tests.test_x`` from
+    ``packages/doeff-cluster``. Paths outside the rootdir keep the rootdir so
+    ``_module_name_for_path`` reports them.
+    """
+    try:
+        parts = path.with_suffix("").relative_to(root).parts
+    except ValueError:
+        return root
+    if all(part.isidentifier() for part in parts):
+        return root
+    base = path.parent
+    while (base / "__init__.py").exists() or (base / "__init__.hy").exists():
+        base = base.parent
+    return base
 
 
 def _module_name_for_path(path: Path, root: Path) -> str:
