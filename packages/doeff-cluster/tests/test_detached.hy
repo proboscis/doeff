@@ -21,7 +21,8 @@
 (import doeff_core_effects.scheduler [Spawn Cancel TaskCancelledError])
 (import doeff_time [Delay SimClock sim-time-handler async-time-handler])
 (import tests.clock_fixtures [clock-ms])
-(import doeff_cluster.cluster_model [ClusterState ClusterTiming Request])
+(import doeff_cluster.cluster_model [ClusterState ClusterTiming Request Requirement ComponentVersion])
+(import doeff_cluster.detached_policy [Reply submit-detached])
 (import doeff_cluster.api_policy [respond tick])
 (import doeff_cluster.handlers [CoordinatorLink])
 (import doeff_cluster.job_entry [RunContext env-handlers])
@@ -426,6 +427,34 @@
 (on-every-rig test-same-key-for-other-work-is-refused same-key-other-work)
 
 
+(defk same-key-other-requires [rig]
+  {:pre [(: rig Rig)] :post [(: % bool)]}
+  ;; 同じ key で実行先の条件(Requirement)だけが違う送り直しも別の仕事 — 409。
+  (<- (SubmitDetached (slow-add (* rig.slow 10) 1) :env ENV :key "k-requires" :requires #((Requirement "role" "a"))
+                      :lease-seconds rig.lease))
+  (setv refused None)
+  (try
+    (<- (SubmitDetached (slow-add 0.0 1) :env ENV :key "k-requires" :requires #((Requirement "role" "b"))
+                        :lease-seconds rig.lease))
+    (except [error DetachedRefused] (setv refused error)))
+  (assert (and refused (= refused.status 409)) refused)
+  (<- (CancelDetached "k-requires"))
+  True)
+
+(on-every-rig test-same-key-for-other-requires-is-refused same-key-other-requires)
+
+
+(deftest test-submit-detached-requires-is-a-tuple-of-requirement
+  ;; 対の生の tuple は受けない(欄の名 label・value を型が持つ)。
+  (setv raised None)
+  (try
+    (SubmitDetached (slow-add 0.0 1) :env ENV :key "k" :requires #(#("kind" "k3s")))
+    (except [error TypeError] (setv raised error)))
+  (assert (is-not raised None))
+  (assert (= (. (SubmitDetached (slow-add 0.0 1) :env ENV :key "k" :requires #((Requirement "kind" "k3s"))) requires)
+             #((Requirement :label "kind" :value "k3s")))))
+
+
 ;; --- coordinator の判断(純粋な関数)と worker の途絶 -------------------------------------------------------------
 
 (import doeff_cluster.durable_kv [full-kv state-from-kv])
@@ -555,6 +584,23 @@
   (setv link (CoordinatorLink "http://127.0.0.1:9" "w" {} 1 60000))
   (setv link.last-tasks #(detached remote) link.fence-ms 0 link.last-ok (- (time.monotonic) 1))
   (assert (= (.poll link) (DesiredJobs #(detached)))))
+
+
+(deftest test-detached-task-keeps-typed-requirements-and-versions-through-the-saved-state
+  ;; 口の答えは Reply(状態・status・本文)。task の行は条件を Requirement・版を ComponentVersion で持ち、保存と読み直しの後も同じ型。
+  (setv #(s _ _) (beat (ClusterState) "w" 0))
+  (setv reply (submit-detached s "job-typed" {"env" "m:e" "blob" "B" "versions" V "revision" "r" "requires" {"role" "x" "kind" "k3s"}}
+                               100))
+  (assert (isinstance reply Reply))
+  (assert (= #(reply.status (get reply.body "created")) #(200 True)))
+  (setv task (get reply.state.tasks (get reply.body "task")))
+  (assert (= task.requires #((Requirement "kind" "k3s") (Requirement "role" "x"))))
+  (assert (all (gfor item task.requires (isinstance item Requirement))))
+  (assert (= task.versions #((ComponentVersion "doeff" "1") (ComponentVersion "python" "3.14.0"))))
+  (assert (all (gfor item task.versions (isinstance item ComponentVersion))))
+  (setv again (get (. (state-from-kv (full-kv reply.state) 0) tasks) task.id))
+  (assert (= again task))
+  (assert (all (gfor item (+ again.requires again.versions) (isinstance item #(Requirement ComponentVersion))))))
 
 
 (deftest test-submit-refusals

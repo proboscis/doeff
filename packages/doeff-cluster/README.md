@@ -156,14 +156,16 @@ worker は業務の repo の commit を展開して子 process の cwd にしま
 ```hy
 (import doeff_cluster.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached
                                       DetachedSucceeded DetachedFailed DetachedLost])
-(<- submitted (SubmitDetached (summarize rows) :env "myapp.envs:board_env" :key job-id :lease-seconds 60.0))
+(import doeff_cluster.cluster_model [Requirement])
+(<- submitted (SubmitDetached (summarize rows) :env "myapp.envs:board_env" :key job-id
+                              :requires #((Requirement "kind" "k3s")) :lease-seconds 60.0))
 ;; ... 呼び手が消えてもよい。別の process から同じ key で待てる ...
 (<- outcome (AwaitDetached job-id))
 ```
 
 | effect | 答え | 意味 |
 |---|---|---|
-| `SubmitDetached` | `DetachedSubmitted(key, created)` | job id(`key`)で冪等に送る。同じ key がまだ在れば何も作らない(`created` = False)。同じ key で env・name・requires が違えば `DetachedRefused`(409) |
+| `SubmitDetached` | `DetachedSubmitted(key, created)` | job id(`key`)で冪等に送る。同じ key がまだ在れば何も作らない(`created` = False)。同じ key で env・name・requires が違えば `DetachedRefused`(409)。`requires` は `Requirement(label, value)` の tuple(対の生の tuple は `TypeError`) |
 | `AwaitDetached` | 答えの型か `DetachedPending` | 終わるまで待つ(`timeout-seconds` を過ぎたら `DetachedPending`)。抜けても task は落ちない |
 | `CancelDetached` | `bool` | 終わっていなければ取り消して True。終わっていれば何もせず False(結果は保持) |
 | `ReleaseDetached` | `bool` | 終わった task の保持を解く。以後その key は `DetachedUnknown` で、同じ key で送り直せる |
