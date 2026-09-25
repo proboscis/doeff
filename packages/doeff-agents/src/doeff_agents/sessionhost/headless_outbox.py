@@ -22,19 +22,20 @@ import threading
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import NamedTuple, TypeVar, cast
 
 from doeff_agents.sessionhost.headless_events import (
     EventChunk,
+    EventClock,
     HeadlessEvent,
     HeadlessEventAppend,
     HeadlessEventsSince,
     Stream,
     key_of_locator,
-    now_iso,
     strip_newline,
+    wall_clock,
 )
 
 T = TypeVar("T")
@@ -58,6 +59,7 @@ class OutboxEventStore:
 
     def __init__(self, submit: Submit[object]) -> None:
         self._submit = submit
+        # 時刻は呼び手が HeadlessEventAppend.at で渡す(doeff-time の GetTime)— ここは時計を読まない。
         self._lock = threading.Lock()
         self._turns: dict[str, int] = {}
 
@@ -86,7 +88,7 @@ class OutboxEventStore:
             raise ValueError(f"not a headless events locator: {effect.locator!r}")
         turn = self._turn_of(key.session_id)
         line = strip_newline(effect.line)
-        at = now_iso()
+        at = effect.at
 
         def insert(conn: sqlite3.Connection) -> int:
             row = conn.execute(
@@ -236,6 +238,11 @@ class OutboxCounts:
     shipped: int
 
 
+def prune_cutoff(now: str, grace_seconds: int) -> str:
+    """prune の境界 = 時計の今(doeff-time の GetTime の ISO)から猶予を引いた時刻。純関数(時計を読まない)。"""
+    return (datetime.fromisoformat(now) - timedelta(seconds=grace_seconds)).isoformat()
+
+
 def prune_shipped(conn: sqlite3.Connection, cutoff_iso: str) -> int:
     """送れた ∧ session が終端 ∧ 終端が cutoff より前 の行だけを外す(唯一の外す点)。"""
     marks = ",".join("?" for _ in TERMINAL_STATUSES)
@@ -304,8 +311,8 @@ MAX_BODY_BYTES_DEFAULT = 8 * 1024 * 1024
 HTTP_PAYLOAD_TOO_LARGE = 413
 
 
-def encoded_body(events: list[HeadlessEvent], node: str) -> bytes:
-    return json.dumps(otlp_body(events, node, now_iso()), ensure_ascii=False).encode("utf-8")
+def encoded_body(events: list[HeadlessEvent], node: str, observed: str) -> bytes:
+    return json.dumps(otlp_body(events, node, observed), ensure_ascii=False).encode("utf-8")
 
 
 @dataclass(frozen=True)
@@ -327,9 +334,11 @@ class OtlpShipper:
     post: Post = urllib_post
     batch_rows: int = SHIP_BATCH_ROWS
     max_body_bytes: int = MAX_BODY_BYTES_DEFAULT
+    #: 送った時刻・留めた時刻の時計(doeff-time — 本番は壁時計・模擬環境は仮想の時計)。
+    clock: EventClock = field(default_factory=wall_clock)
 
     def _hold(self, event: HeadlessEvent, reason: str) -> None:
-        at = now_iso()
+        at = self.clock()
         self.submit(lambda conn: mark_held(conn, event, at, reason))
         sys.stderr.write(
             f"doeff-sessionhost events shipper: held {event.session_id}#{event.seq} ({len(event.line.encode('utf-8'))} bytes): {reason}\n"
@@ -337,9 +346,9 @@ class OtlpShipper:
 
     def _send(self, events: list[HeadlessEvent]) -> int:
         """1 つの POST。戻り = HTTP status。2xx なら送れた印を刻む。"""
-        status = self.post(self.url.rstrip("/") + "/v1/logs", encoded_body(events, self.node))
+        status = self.post(self.url.rstrip("/") + "/v1/logs", encoded_body(events, self.node, self.clock()))
         if 200 <= status < 300:
-            at = now_iso()
+            at = self.clock()
             self.submit(lambda conn: mark_shipped(conn, events, at))
         return status
 
@@ -359,7 +368,7 @@ class OtlpShipper:
         chunk_bytes = 0
         chunks: list[list[HeadlessEvent]] = []
         for event in events:
-            size = len(encoded_body([event], self.node))
+            size = len(encoded_body([event], self.node, event.at))
             if size > self.max_body_bytes:
                 self._hold(event, f"one OTLP body of {size} bytes exceeds the tiered store's limit {self.max_body_bytes}")
                 held += 1

@@ -36,9 +36,11 @@ from typing import IO, Literal
 
 from doeff_agents.sessionhost.attachment import TurnAttachment, TurnContent
 from doeff_agents.sessionhost.headless_events import (
+    EventClock,
     FileEventStore,
     HeadlessEventAppend,
     HeadlessEventStore,
+    wall_clock,
 )
 from doeff_agents.sessionhost.headless_protocol import (
     Dialogue,
@@ -120,8 +122,11 @@ class HeadlessProcess:
         dialogue: Dialogue,
         on_turn_ended: Callable[[str], None] | None = None,
         events: HeadlessEventStore | None = None,
+        clock: EventClock | None = None,
     ) -> None:
         self.name = name
+        #: 行を読んだ時刻の時計(doeff-time の GetTime — 登記簿が組んだ handler)。OS の時計を直に読まない。
+        self._clock: EventClock = clock if clock is not None else wall_clock()
         self.argv = tuple(argv)
         self.events_path = events_path
         self.dialogue = dialogue
@@ -371,7 +376,7 @@ class HeadlessProcess:
     def _append(self, stream: Literal["stdout", "stderr"], raw: str) -> None:
         """出来事の 1 行を置き場へ(handler の失敗は log して読みを止めない — 止めると子の pipe が詰まる)。"""
         try:
-            self._store.append(HeadlessEventAppend(self.events_path, stream, raw))
+            self._store.append(HeadlessEventAppend(self.events_path, stream, raw, self._clock()))
         except Exception as error:
             sys.stderr.write(f"doeff-sessionhost headless {self.name}: events append failed: {error}\n")
 
@@ -425,12 +430,14 @@ def pid_exists(pid: int) -> bool:
 class HeadlessRegistry:
     """session の名 → 生きている(か降りたばかりの)process。host の process に 1 つ。"""
 
-    def __init__(self, events: HeadlessEventStore | None = None) -> None:
+    def __init__(self, events: HeadlessEventStore | None = None, clock: EventClock | None = None) -> None:
         self._processes: dict[str, HeadlessProcess] = {}
         self._lock = threading.Lock()
         #: 出来事の置き場の handler(既定 = file — Mac の当面の形)。host の composition root が
         #: ``use_event_store`` で差し替える(pod = 送り待ちの表・検 = memory)。
         self._mut_events: HeadlessEventStore = events if events is not None else FileEventStore()
+        #: 出来事の時刻の時計(doeff-time)。本番 = 壁時計・模擬環境 = 仮想の時計(sim_time_handler)。
+        self._clock: EventClock = clock if clock is not None else wall_clock()
         #: 手番の終わりの合図(段 12 lane 12b・agora-redesign #207 根 1): 登記した process の読み手が手番の終わりを
         #: 読むたびに 1 つ進む数と、それを待つ条件変数。host の monitor は拍の合間をこの待ちで過ごし(上限 =
         #: monitor の周期 — 周期は保険に退く)、手番が終わった拍に即座に観測して turn_ended_at を刻む。
@@ -440,6 +447,11 @@ class HeadlessRegistry:
     @property
     def event_store(self) -> HeadlessEventStore:
         return self._mut_events
+
+    @property
+    def clock(self) -> EventClock:
+        """出来事の時刻の時計(doeff-time の GetTime を組んだ handler で読む)— 送り手と prune も同じ時計を使う。"""
+        return self._clock
 
     def use_event_store(self, store: HeadlessEventStore) -> None:
         """出来事の置き場の handler を差し替える(起動時・process を 1 つも起こす前に 1 度)。"""
@@ -480,7 +492,7 @@ class HeadlessRegistry:
             if existing is not None and existing.alive():
                 raise RuntimeError(f"headless session already exists: {name}")
             process = HeadlessProcess(
-                name, argv, cwd, env, events_path, dialogue, self._turn_ended, self._mut_events
+                name, argv, cwd, env, events_path, dialogue, self._turn_ended, self._mut_events, self._clock
             )
             self._processes[name] = process
             return process

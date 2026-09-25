@@ -33,6 +33,8 @@ from doeff_agents.sessionhost.headless_outbox import (
 )
 from doeff_agents.sessionhost.store import StoreActor  # type: ignore[attr-defined]
 
+AT = "2026-09-25T00:00:00+00:00"
+
 
 @pytest.fixture
 def root() -> Iterator[Path]:
@@ -78,19 +80,19 @@ def test_every_store_reads_back_stdout_lines_after_a_cursor(root: Path, actor: S
     locator = _loc(root, "s-1")
     store.open_stream(locator)
     assert store.since(HeadlessEventsSince(locator, 0)).text == ""
-    store.append(HeadlessEventAppend(locator, "stdout", '{"type":"system"}\n'))
-    store.append(HeadlessEventAppend(locator, "stderr", "warn: x\n"))
-    store.append(HeadlessEventAppend(locator, "stdout", '{"type":"result"}'))
+    store.append(HeadlessEventAppend(locator, "stdout", '{"type":"system"}\n', AT))
+    store.append(HeadlessEventAppend(locator, "stderr", "warn: x\n", AT))
+    store.append(HeadlessEventAppend(locator, "stdout", '{"type":"result"}', AT))
     first = store.since(HeadlessEventsSince(locator, 0))
     assert first.text == '{"type":"system"}\n{"type":"result"}\n'
     assert store.head(locator) == first.cursor
-    store.append(HeadlessEventAppend(locator, "stdout", '{"type":"assistant"}\n'))
+    store.append(HeadlessEventAppend(locator, "stdout", '{"type":"assistant"}\n', AT))
     second = store.since(HeadlessEventsSince(locator, first.cursor))
     assert second.text == '{"type":"assistant"}\n'
     assert store.since(HeadlessEventsSince(locator, second.cursor)).text == ""
     # cache ping の流れは session の流れと混ざらない
     cache = _loc(root, "s-1", "ab")
-    store.append(HeadlessEventAppend(cache, "stdout", '{"type":"cache"}\n'))
+    store.append(HeadlessEventAppend(cache, "stdout", '{"type":"cache"}\n', AT))
     assert store.since(HeadlessEventsSince(cache, 0)).text == '{"type":"cache"}\n'
     assert "cache" not in store.since(HeadlessEventsSince(locator, 0)).text
 
@@ -99,8 +101,8 @@ def test_outbox_store_writes_no_file(root: Path, actor: StoreActor) -> None:
     store = OutboxEventStore(actor.submit)
     locator = _loc(root, "s-1")
     store.open_stream(locator)
-    store.append(HeadlessEventAppend(locator, "stdout", "{}\n"))
-    store.append(HeadlessEventAppend(locator, "stderr", "e\n"))
+    store.append(HeadlessEventAppend(locator, "stdout", "{}\n", AT))
+    store.append(HeadlessEventAppend(locator, "stderr", "e\n", AT))
     assert not (root / "events").exists()
 
 
@@ -108,9 +110,9 @@ def test_outbox_numbers_turns_and_sequences_per_session(root: Path, actor: Store
     store = OutboxEventStore(actor.submit)
     locator = _loc(root, "s-1")
     store.begin_turn(locator)
-    assert store.append(HeadlessEventAppend(locator, "stdout", "a")) == 1
+    assert store.append(HeadlessEventAppend(locator, "stdout", "a", AT)) == 1
     store.begin_turn(locator)
-    assert store.append(HeadlessEventAppend(locator, "stderr", "b")) == 2
+    assert store.append(HeadlessEventAppend(locator, "stderr", "b", AT)) == 2
     rows = actor.submit(lambda conn: conn.execute("SELECT seq, turn, stream FROM headless_event_outbox ORDER BY seq").fetchall())
     assert rows == [(1, 1, "stdout"), (2, 2, "stderr")]
 
@@ -129,8 +131,8 @@ def test_shipper_sends_the_tiered_row_shape_and_marks_only_what_the_collector_to
     actor.submit(lambda conn: _session_row(conn, "s-1", "running", None, "c-ABC"))
     locator = _loc(root, "s-1")
     store.begin_turn(locator)
-    store.append(HeadlessEventAppend(locator, "stdout", '{"type":"system"}'))
-    store.append(HeadlessEventAppend(locator, "stderr", "warn"))
+    store.append(HeadlessEventAppend(locator, "stdout", '{"type":"system"}', AT))
+    store.append(HeadlessEventAppend(locator, "stderr", "warn", AT))
     posted: list[tuple[str, dict[str, object]]] = []
     status = {"code": 503}
 
@@ -179,7 +181,7 @@ def test_prune_removes_only_shipped_rows_of_sessions_ended_before_the_cutoff(roo
 
     actor.submit(seed)
     for sid in ("old-done", "live", "recent-done", "old-unshipped"):
-        store.append(HeadlessEventAppend(_loc(root, sid), "stdout", f"line of {sid}"))
+        store.append(HeadlessEventAppend(_loc(root, sid), "stdout", f"line of {sid}", AT))
     actor.submit(
         lambda conn: conn.execute(
             "UPDATE headless_event_outbox SET shipped_at = '2026-09-25T00:00:00+00:00' WHERE session_id != 'old-unshipped'"
@@ -204,8 +206,8 @@ def test_the_file_store_is_todays_physics_for_the_mac(root: Path) -> None:
     store.open_stream(locator)
     assert Path(locator).exists()
     assert Path(locator + ".stderr").exists()
-    store.append(HeadlessEventAppend(locator, "stdout", "a\n"))
-    store.append(HeadlessEventAppend(locator, "stderr", "b\n"))
+    store.append(HeadlessEventAppend(locator, "stdout", "a\n", AT))
+    store.append(HeadlessEventAppend(locator, "stderr", "b\n", AT))
     assert Path(locator).read_text() == "a\n"
     assert Path(locator + ".stderr").read_text() == "b\n"
     assert store.head(locator) == os.path.getsize(locator)
@@ -315,9 +317,9 @@ def test_a_line_the_tiered_store_cannot_take_is_held_locally_and_does_not_block_
     store = OutboxEventStore(actor.submit)
     actor.submit(lambda conn: _session_row(conn, "s-1", "done", "2026-09-01T00:00:00+00:00", "c-1"))
     locator = _loc(root, "s-1")
-    store.append(HeadlessEventAppend(locator, "stdout", "small-1"))
-    store.append(HeadlessEventAppend(locator, "stdout", "x" * 6000))
-    store.append(HeadlessEventAppend(locator, "stdout", "small-2"))
+    store.append(HeadlessEventAppend(locator, "stdout", "small-1", AT))
+    store.append(HeadlessEventAppend(locator, "stdout", "x" * 6000, AT))
+    store.append(HeadlessEventAppend(locator, "stdout", "small-2", AT))
     bodies: list[bytes] = []
 
     def post(url: str, body: bytes) -> int:
@@ -350,8 +352,8 @@ def test_batches_are_split_by_body_bytes_and_a_413_is_narrowed_to_the_one_line(r
     store = OutboxEventStore(actor.submit)
     locator = _loc(root, "s-1")
     for index in range(6):
-        store.append(HeadlessEventAppend(locator, "stdout", f"line-{index}-" + "y" * 300))
-    store.append(HeadlessEventAppend(locator, "stdout", "REFUSED"))
+        store.append(HeadlessEventAppend(locator, "stdout", f"line-{index}-" + "y" * 300, AT))
+    store.append(HeadlessEventAppend(locator, "stdout", "REFUSED", AT))
     posts: list[list[str]] = []
 
     def post(url: str, body: bytes) -> int:
@@ -372,7 +374,7 @@ def test_batches_are_split_by_body_bytes_and_a_413_is_narrowed_to_the_one_line(r
 
 def test_other_refusals_keep_the_rows_unshipped_for_the_next_tick(root: Path, actor: StoreActor) -> None:
     store = OutboxEventStore(actor.submit)
-    store.append(HeadlessEventAppend(_loc(root, "s-1"), "stdout", "a"))
+    store.append(HeadlessEventAppend(_loc(root, "s-1"), "stdout", "a", AT))
     shipper = OtlpShipper(submit=actor.submit, url="http://c:4318", node="n", post=lambda _url, _body: 500)
     with pytest.raises(RuntimeError, match="HTTP 500"):
         shipper.ship_once()
@@ -380,3 +382,71 @@ def test_other_refusals_keep_the_rows_unshipped_for_the_next_tick(root: Path, ac
 
     assert actor.submit(outbox_counts).unshipped == 1
     assert actor.submit(outbox_counts).held == 0
+
+
+def test_event_times_come_from_the_doeff_time_clock_not_the_os(root: Path, actor: StoreActor) -> None:
+    """出来事の at・送れた時刻・留めた時刻は doeff-time の GetTime(組んだ時間の handler)から取る — 置き場も器も
+    OS の時計を読まない。模擬環境の仮想の時計(sim_time_handler)で組めば、どの行の時刻も仮想の時刻ちょうどになり、
+    順序を不変条件に使える(移行の会話の区画 H の指摘 2026-09-25)。"""
+    from datetime import UTC, datetime
+
+    from doeff_agents.sessionhost.headless_events import time_handler_clock
+    from doeff_agents.sessionhost.headless_process import HeadlessRegistry
+    from doeff_agents.sessionhost.headless_protocol import ClaudeDialogue
+    from doeff_time import sim_time_handler
+
+    virtual = datetime(2031, 1, 2, 3, 4, 5, tzinfo=UTC)
+    clock = time_handler_clock(sim_time_handler(start_time=virtual))
+    assert clock() == virtual.isoformat()
+    memory = MemoryEventStore()
+    registry = HeadlessRegistry(memory, clock)
+    locator = _loc(root, "s-clock")
+    process = registry.spawn(
+        "s-clock",
+        ["sh", "-c", 'echo \'{"type":"system"}\'; echo warn >&2; echo \'{"type":"result"}\''],
+        str(root),
+        dict(os.environ),
+        locator,
+        ClaudeDialogue(),
+    )
+    process.join_io(10.0)
+    registry.kill_all()
+    assert len(memory.events) == 3
+    assert {event.at for event in memory.events} == {virtual.isoformat()}
+    # 送り手も同じ時計: 送れた時刻は仮想の時刻
+    outbox = OutboxEventStore(actor.submit)
+    outbox.append(HeadlessEventAppend(_loc(root, "s-2"), "stdout", "a", clock()))
+    shipper = OtlpShipper(submit=actor.submit, url="http://c:4318", node="n", post=lambda _u, _b: 200, clock=clock)
+    assert shipper.ship_once().shipped == 1
+    shipped_at = actor.submit(lambda conn: conn.execute("SELECT at, shipped_at FROM headless_event_outbox").fetchone())
+    assert tuple(shipped_at) == (virtual.isoformat(), virtual.isoformat())
+
+
+def test_prune_reads_the_same_doeff_time_clock(root: Path, actor: StoreActor, monkeypatch: pytest.MonkeyPatch) -> None:
+    """prune の境界も登記簿の時計(doeff-time)から — 仮想の時計の今から猶予を引いた時刻で外す行が決まる。"""
+    from datetime import UTC, datetime
+
+    from doeff_agents.sessionhost import host  # type: ignore[attr-defined]
+    from doeff_agents.sessionhost.headless_events import time_handler_clock
+    from doeff_agents.sessionhost.headless_outbox import prune_cutoff
+    from doeff_agents.sessionhost.headless_process import HeadlessRegistry
+    from doeff_time import sim_time_handler
+
+    assert prune_cutoff("2031-01-02T03:00:00+00:00", 3600) == "2031-01-02T02:00:00+00:00"
+    virtual = datetime(2031, 1, 2, 3, 0, 0, tzinfo=UTC)
+    store = OutboxEventStore(actor.submit)
+    registry = HeadlessRegistry(store, time_handler_clock(sim_time_handler(start_time=virtual)))
+    monkeypatch.setattr(host, "HEADLESS_REGISTRY", registry)
+    monkeypatch.delenv("DOEFF_AGENTD_EVENTS_PRUNE_GRACE_SECS", raising=False)
+
+    def seed(conn: sqlite3.Connection) -> None:
+        _session_row(conn, "ended-early", "done", "2031-01-02T01:59:00+00:00", "c-1")
+        _session_row(conn, "ended-late", "done", "2031-01-02T02:30:00+00:00", "c-2")
+
+    actor.submit(seed)
+    for sid in ("ended-early", "ended-late"):
+        store.append(HeadlessEventAppend(_loc(root, sid), "stdout", sid, AT))
+    actor.submit(lambda conn: conn.execute("UPDATE headless_event_outbox SET shipped_at = ?", (AT,)))
+    assert host.events_prune_tick(actor) == 1
+    left = actor.submit(lambda conn: [r[0] for r in conn.execute("SELECT session_id FROM headless_event_outbox")])
+    assert left == ["ended-late"]

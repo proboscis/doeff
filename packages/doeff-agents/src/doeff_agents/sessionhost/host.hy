@@ -105,7 +105,7 @@
 (import doeff_agents.sessionhost.store_health [DEFAULT-STORE-WRITE-FAILURE-LIMIT readiness-of])
 (import doeff_agents.sessionhost.headless_events [HeadlessEventsSince])
 (import doeff_agents.sessionhost.headless_outbox [MAX-BODY-BYTES-DEFAULT OutboxEventStore OtlpShipper
-                                                 PRUNE-GRACE-SECONDS-DEFAULT outbox-counts prune-shipped
+                                                 PRUNE-GRACE-SECONDS-DEFAULT outbox-counts prune-cutoff prune-shipped
                                                  run-forever])
 (import doeff_agents.sessionhost.store [
   HISTORY-PRUNE-BATCH-ROWS
@@ -2037,6 +2037,7 @@
     (return None))
   (.use-event-store HEADLESS-REGISTRY (OutboxEventStore actor.submit))
   (setv shipper (OtlpShipper :submit actor.submit :url url :node (socket.gethostname)
+                             :clock HEADLESS-REGISTRY.clock
                              :max-body-bytes (or (env-positive-i64 "DOEFF_AGENTD_EVENTS_MAX_BODY_BYTES")
                                                  MAX-BODY-BYTES-DEFAULT)))
   (run-forever shipper shutdown-event)
@@ -2051,7 +2052,8 @@
     (return 0))
   (setv grace (or (env-positive-i64 "DOEFF_AGENTD_EVENTS_PRUNE_GRACE_SECS")
                   PRUNE-GRACE-SECONDS-DEFAULT))
-  (setv cutoff (.isoformat (- (datetime.now timezone.utc) (timedelta :seconds grace))))
+  ;; 時計は登記簿の時計(doeff-time の GetTime)— 送り手・出来事の at と同じ 1 つ。
+  (setv cutoff (prune-cutoff ((. HEADLESS-REGISTRY clock)) grace))
   (setv removed (.submit actor (fn [conn] (prune-shipped conn cutoff))))
   (when (> removed 0)
     (print f"doeff-sessionhost events prune: {removed} shipped rows of sessions ended before {cutoff}"
