@@ -2,7 +2,6 @@ import importlib.util
 import os
 import resource
 import shutil
-import signal
 import subprocess
 import sys
 import threading
@@ -37,14 +36,15 @@ import pytest
 # BOTH deadlines scale together, and the watchdog stays strictly above the
 # per-test deadline.  Scaling only one is worse than scaling neither: raising
 # pytest-timeout alone moves the failure into the watchdog, which does not
-# fail the test — it SIGKILLs the whole process and the entire run's results
-# are lost (observed 2026-08-17 while diagnosing this: PYTEST_TIMEOUT=600
-# turned a red test into a dead process at 45% of the battery).
+# fail one test and go on — it ends the whole process and every test after
+# the hung one goes unrun (observed 2026-08-17 while diagnosing this, when the
+# watchdog still used SIGKILL: PYTEST_TIMEOUT=600 turned a red test into a
+# dead process at 45% of the battery).
 #
 #   PYTEST_DEADLINE_SCALE=off   disable scaling (CI, where load is controlled)
 #   PYTEST_DEADLINE_SCALE_CAP   max factor (default 8)
 # ---------------------------------------------------------------------------
-_DEADLINE_SCALE_CAP = max(1.0, float(os.environ.get("PYTEST_DEADLINE_SCALE_CAP", "8")))
+_DEADLINE_SCALE_CAP = max(1.0, float(os.environ.get("PYTEST_DEADLINE_SCALE_CAP", "8")))  # noqa: DOEFF004 - a deadline setting given by whoever starts the run (pre-existing)
 
 
 def _oversubscription() -> float:
@@ -58,7 +58,7 @@ def _oversubscription() -> float:
 
 def deadline_scale() -> float:
     """The factor every wall-clock test deadline is multiplied by."""
-    if os.environ.get("PYTEST_DEADLINE_SCALE", "").strip().lower() == "off":
+    if os.environ.get("PYTEST_DEADLINE_SCALE", "").strip().lower() == "off":  # noqa: DOEFF004 - a deadline setting given by whoever starts the run (pre-existing)
         return 1.0
     return min(_oversubscription(), _DEADLINE_SCALE_CAP)
 
@@ -69,7 +69,8 @@ def scaled_watchdog_timeout(base: float, per_test_timeout: float, scale: float) 
     The watchdog is the last resort for code stuck inside a C extension, where
     pytest-timeout cannot interrupt.  It must therefore fire strictly AFTER
     pytest-timeout has had its chance — otherwise a merely-slow test is
-    answered with SIGKILL (whole run lost) instead of one red test.
+    answered by ending the process (the rest of the run lost) instead of one
+    red test.
     """
     return int(max(base * scale, per_test_timeout * scale + 30.0))
 
@@ -81,16 +82,26 @@ with suppress(OSError, ValueError):
     resource.setrlimit(resource.RLIMIT_AS, (_MAX_RSS_BYTES, _MAX_RSS_BYTES))
 
 # ---------------------------------------------------------------------------
-# Hard watchdog: kill the process if a single test hangs beyond timeout.
+# Hard watchdog: end the process if a single test hangs beyond all timeouts.
 #
-# pytest-timeout uses signal or thread method, but neither can reliably
-# interrupt code stuck inside C extensions (like the Rust VM). This watchdog
-# is the last resort — it kills the entire process with SIGKILL.
+# pytest-timeout runs with the signal method (pyproject.toml): a test over its
+# deadline fails as one test and the run goes on.  (The thread method ended the
+# whole process instead — on 2026-09-25 and 09-26 the doeff-agents suite
+# stopped at about 6% on one slow test and the rest went unmeasured.)  A signal
+# cannot interrupt code stuck inside a C extension (like the Rust VM), so this
+# watchdog is the last resort.
 #
-# The watchdog resets at the start of each test (via the pytest hook).
-# If no test starts within WATCHDOG_TIMEOUT seconds, the process dies.
+# When it fires it names the test it was watching, in the form of pytest's own
+# short-summary line, and ends the process with exit status 1.  Both matter to
+# the land tool: it reads the failed-test names from those lines, and it reads
+# a process ended by a signal as "killed from outside", not as a red run — the
+# SIGKILL this watchdog used before made a hang look like an outside kill with
+# no test named.
+#
+# The watchdog resets at the start and at the teardown of each test (via the
+# pytest hooks), so it measures one test's setup-call-teardown at a time.
 # ---------------------------------------------------------------------------
-_WATCHDOG_BASE = float(os.environ.get("PYTEST_WATCHDOG_TIMEOUT", "90"))
+_WATCHDOG_BASE = float(os.environ.get("PYTEST_WATCHDOG_TIMEOUT", "90"))  # noqa: DOEFF004 - a deadline setting given by whoever starts the run (pre-existing)
 _DEADLINE_SCALE = deadline_scale()
 # Provisional until pytest_configure reads the real per-test deadline out of
 # the ini — there is exactly one home for that number and it is pyproject.toml.
@@ -98,23 +109,42 @@ _WATCHDOG_TIMEOUT = int(_WATCHDOG_BASE * _DEADLINE_SCALE)
 _watchdog_timer: threading.Timer | None = None
 
 
-def _watchdog_kill(timeout: int):
-    """Last resort: kill the process if a test hangs beyond all timeouts."""
-    print(
-        f"\n\nWATCHDOG: Test hung for {timeout}s beyond all timeouts. "
-        f"Killing process with SIGKILL.\n",
-        file=sys.stderr,
-        flush=True,
+def _watchdog_expired(config: pytest.Config, timeout: int, nodeid: str) -> None:
+    """Last resort: name the hung test and end the process with exit status 1."""
+    line = (
+        f"FAILED {nodeid} - WATCHDOG: no progress for {timeout}s beyond all timeouts; "
+        f"the process was ended and the tests after it did not run"
     )
-    os.kill(os.getpid(), signal.SIGKILL)
+    try:
+        # The hung test's output is being captured and would be lost with the
+        # line; release the capture first (the same steps as pytest-timeout's
+        # thread method).
+        capman = config.pluginmanager.getplugin("capturemanager")
+        if capman is not None:
+            capman.suspend_global_capture(in_=True)
+        if config.pluginmanager.getplugin("terminalreporter") is None:
+            print(line, flush=True)
+        else:
+            terminal = config.get_terminal_writer()
+            terminal.line("")
+            terminal.sep("=", "short test summary info")
+            terminal.line(line)
+            terminal.flush()
+    finally:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(1)
 
 
-def _reset_watchdog(timeout: int | None = None):
+def _reset_watchdog(config: pytest.Config, nodeid: str, timeout: int | None = None) -> None:
+    """Start watching one test phase, so a hang there is ended under that test's name."""
     global _watchdog_timer  # noqa: PLW0603
     if _watchdog_timer is not None:
         _watchdog_timer.cancel()
     active_timeout = timeout or _WATCHDOG_TIMEOUT
-    _watchdog_timer = threading.Timer(active_timeout, _watchdog_kill, args=(active_timeout,))
+    _watchdog_timer = threading.Timer(
+        active_timeout, _watchdog_expired, args=(config, active_timeout, nodeid)
+    )
     _watchdog_timer.daemon = True
     _watchdog_timer.start()
 
@@ -195,12 +225,12 @@ def pytest_collection_modifyitems(config, items):
 
 def pytest_runtest_setup(item):
     """Reset watchdog at the start of each test."""
-    _reset_watchdog(_watchdog_timeout_for_item(item))
+    _reset_watchdog(item.config, item.nodeid, _watchdog_timeout_for_item(item))
 
 
 def pytest_runtest_teardown(item, nextitem):
     """Reset watchdog after each test (covers slow teardown)."""
-    _reset_watchdog()
+    _reset_watchdog(item.config, f"{item.nodeid} (teardown)")
 
 
 def pytest_sessionfinish(session, exitstatus):
