@@ -197,6 +197,44 @@ def fake_headless_claude_agent_handlers(
     return _hy_headless_compose_module().fake_headless_claude_handlers(responder, config_dir)
 
 
+def claude_agent_runtime_handlers(
+    *,
+    config_dir: str,
+    env: dict[str, str],
+    settings: dict[str, Any] | None = None,
+    cold_resume_prompt: str | None = None,
+) -> list[Any]:
+    """The agent runtime for Claude, as doeff-agents chooses it (agora-redesign #606).
+
+    Callers that must not know the substrate (agora: "the agent runtime's
+    substrate is the library's concern", operator decision O5) ask for the
+    Claude agent runtime by this name; which substrate answers the public
+    effects is decided here. Today it is the print-mode adapter over
+    ``doeff-claude-code`` (the same pair as ``headless_claude_agent_handlers``).
+    ``config_dir`` / ``env`` are the Claude home (credentials are placed by the
+    composition root). Install a doeff-time handler and the scheduler outside.
+    """
+    return headless_claude_agent_handlers(
+        config_dir=config_dir,
+        env=env,
+        settings=settings,
+        cold_resume_prompt=cold_resume_prompt,
+    )
+
+
+def fake_claude_agent_runtime_handlers(
+    *,
+    responder: Any,
+    config_dir: str = "fake-claude-home",
+) -> list[Any]:
+    """The fake counterpart of ``claude_agent_runtime_handlers`` (no process, no API).
+
+    ``responder(text, memory) -> FakeReply`` scripts each turn
+    (``doeff_agents.handlers.headless_compose.FakeReply``).
+    """
+    return fake_headless_claude_agent_handlers(responder=responder, config_dir=config_dir)
+
+
 _mock_effect_handler = MockAgentHandler()
 
 
@@ -382,6 +420,8 @@ __all__ = [  # noqa: RUF022 - grouped by category for readability
     "agent_effectful_handler",
     "agent_effectful_handlers",
     "codex_agent_handler",
+    "claude_agent_runtime_handlers",
+    "fake_claude_agent_runtime_handlers",
     "fake_headless_claude_agent_handlers",
     "headless_claude_agent_handlers",
     "configure_mock_session",
