@@ -220,6 +220,8 @@ scenario 専用 `ZDOTDIR` の rc で shim dir を再 prepend して決定化)。
 | interactive-prompt stall(latch なし) | InteractivePromptBlocked | **false** |
 | その他 failed + provider 失敗観測(latch。既存の名前つき分類 TimedOut / RunnerUnavailable / ProtocolError が先に当たる場合はそちらが勝つ) | 族による(上と同じ写像) | 同上 |
 | その他 failed | RunFailed | **false** |
+| host RPC の取り消し(session.cancel / session.cleanup)・host の停止(TERM)の拍に排水の印が**無い**(印の無い停止は今までどおり) | Cancelled | **false** |
+| host の停止(TERM)の拍に排水の宣言の印 `<state_dir>/drain` が在った(計画された入れ替え — 印は 1 度目の TERM の拍に 1 回だけ読む。別の host で同じ手番を走らせ直せる) | **HostDrained** | **true**(ADR-DOE-AGENTS-012 R47 の改訂・R-the-host-only-reads-the-drain-marker-once-002c — f271ae39) |
 
 **ACP ADR 0049 R9 第 3 改訂(2026-08-12)の読み方**: 上の 3 行が足されたのは
 「provider 由来の失敗を席の落ち度として恒久 gate にしない」という 1 つの法
