@@ -192,13 +192,17 @@ def wiring_failure_message(
     return _walk_budget_message(root, verdict.dirs_walked, verdict.max_dirs, mode)
 
 
-class DoeffAdrHyFile(pytest.File):
-    def collect(self) -> Any:
-        module = _import_hy_file(self.path, self.config.rootpath)
-        for name in sorted(attr for attr in dir(module) if attr.startswith("test_")):
-            callobj = getattr(module, name)
-            if callable(callobj):
-                yield pytest.Function.from_parent(self, name=name, callobj=callobj)
+class DoeffAdrHyFile(pytest.Module):
+    """Hy の file の検の収集。module の取り込みだけを Hy の loader に替え、項目の生成は pytest の Module に任せる。
+
+    以前は ``pytest.Function.from_parent`` で関数を 1 つずつ直に作っていたので、deftest の ``:interpreters`` /
+    ``:params`` が付ける ``pytest.mark.parametrize`` が展開されず、parametrize の fixture は既定の値のまま 1 本だけ
+    走っていた(ADR-DOE-HY-002 R2「deftest の params を fixture へ忠実に受け渡す」の違反・2026-09-25 の
+    doeff-claude-code の検で発覚)。Module の収集は parametrize を callspec に展開する。
+    """
+
+    def _getobj(self) -> Any:
+        return _import_hy_file(self.path, self.config.rootpath)
 
 
 def _coerce_path(path: Any) -> Path:

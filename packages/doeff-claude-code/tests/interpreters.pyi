@@ -1,0 +1,9 @@
+# interpreters.hy(Hy)の型の宣言 — conftest.py が読む 3 つの口だけ(Hy の module は型検査器が読めない)。
+from collections.abc import Callable
+from pathlib import Path
+
+from doeff import Program
+
+def real_marker_needed(name: object) -> bool: ...
+def skip_reason(name: str) -> str: ...
+def build_interpreter(name: str, tmp_path: Path) -> Callable[[Program], object]: ...
