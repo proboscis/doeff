@@ -1,4 +1,4 @@
-;; service の宣言は値と関数で書く(agora-redesign #639・ADR-DOE-HY-005 R5 — doeff-cluster に macro を置かない)。
+;; service の宣言は値と関数で書く(ADR-DOE-HY-005 R5 — doeff-cluster に macro を置かない)。
 ;; 関数の参照(module:attr)は Program を作る関数から導き、同じ関数へ解けること・宣言の項目が coordinator へ渡る形に残ること・
 ;; テスト用の main が宣言の持つ関数そのもので Program を作ることを確かめる。
 (require doeff-hy.macros [defk deftest <-])
