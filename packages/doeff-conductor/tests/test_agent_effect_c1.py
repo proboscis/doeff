@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import ast
 import json
-import shutil
 import subprocess
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -53,11 +53,8 @@ def _run_real_codex_agent(
     effect: AgentEffect,
     tmp_path: Path,
     runtime: MockConductorRuntime,
+    codex_bin: str,
 ) -> dict[str, Any]:
-    codex_bin = shutil.which("codex")
-    if codex_bin is None:
-        pytest.skip("codex CLI is not installed")
-
     schema_path = tmp_path / "codex-agent.schema.json"
     output_path = tmp_path / "codex-agent-output.json"
     schema_path.write_text(json.dumps(effect.task.result_schema), encoding="utf-8")
@@ -181,7 +178,13 @@ def test_schema_invalid_retry_exhaustion_fails_typed(tmp_path: Path) -> None:
     assert "files_changed" in result.error.last_error.message
 
 
-def test_real_codex_worker_returns_schema_valid_json_through_agent(tmp_path: Path) -> None:
+@pytest.mark.e2e
+def test_real_codex_worker_returns_schema_valid_json_through_agent(
+    tmp_path: Path, machine_tool: Callable[..., str]
+) -> None:
+    # Calls a real model through the codex CLI, so it belongs to the e2e population; a machine
+    # whose codex does not start names the test as not executed (root conftest, machine_tool).
+    codex_bin = machine_tool("codex")
     runtime = MockConductorRuntime(tmp_path)
 
     @do
@@ -208,7 +211,9 @@ def test_real_codex_worker_returns_schema_valid_json_through_agent(tmp_path: Pat
         scheduled_handlers=mock_handlers(
             runtime=runtime,
             overrides={
-                AgentEffect: lambda effect: _run_real_codex_agent(effect, tmp_path, runtime),
+                AgentEffect: lambda effect: _run_real_codex_agent(
+                    effect, tmp_path, runtime, codex_bin
+                ),
             },
         ),
     )
