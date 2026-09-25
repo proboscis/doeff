@@ -43,7 +43,6 @@ packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy
 packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.pyi
 packages/doeff-agents/src/doeff_agents/sessionhost/acp/live_row.hy
 packages/doeff-agents/src/doeff_agents/sessionhost/acp/loop_model.py
-packages/doeff-agents/src/doeff_agents/sessionhost/acp/memory_fold_census.py
 packages/doeff-agents/src/doeff_agents/sessionhost/acp/response_usage.hy
 packages/doeff-agents/src/doeff_agents/sessionhost/acp/response_usage.pyi
 packages/doeff-agents/src/doeff_agents/sessionhost/acp/worker_loop.hy

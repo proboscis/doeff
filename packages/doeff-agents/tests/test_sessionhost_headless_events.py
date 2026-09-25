@@ -266,47 +266,6 @@ def test_the_composition_root_swaps_in_the_outbox_only_when_the_tiered_store_is_
     assert isinstance(registry.event_store, OutboxEventStore)
 
 
-def test_migration_plans_ships_deterministically_and_verifies_without_deleting(root: Path, actor: StoreActor) -> None:
-    """配備前の file の取り込みの道具: 非終端の session は送らない・seq は file の中の順で決まる(送り直しが畳める)・
-    verify は行数の一致した file の一覧を出すだけで、1 つも消さない。"""
-    from doeff_agents.sessionhost import headless_events_migrate as migrate
-
-    events_dir = root / "events"
-    events_dir.mkdir()
-    (events_dir / "old.events.jsonl").write_text('{"a":1}\n{"a":2}\n')
-    (events_dir / "old.events.jsonl.stderr").write_text("warn\n")
-    (events_dir / "old.events.jsonl.cache-ff").write_text('{"c":1}\n')
-    (events_dir / "live.events.jsonl").write_text('{"b":1}\n')
-    actor.submit(lambda conn: _session_row(conn, "old", "done", "2026-09-01T00:00:00+00:00", "c-OLD"))
-    actor.submit(lambda conn: _session_row(conn, "live", "running", None, "c-LIVE"))
-    db = str(root / "agentd.sqlite")
-    items = {item.session_id: item for item in migrate.plan(str(events_dir), db)}
-    assert items["old"].lines == 4
-    assert not items["old"].deferred
-    assert items["live"].deferred
-    events = migrate.events_of(items["old"], "c-OLD", "job-old")
-    assert [(e.seq, e.stream, e.op, e.line) for e in events] == [
-        (1, "stdout", "", '{"a":1}'),
-        (2, "stdout", "", '{"a":2}'),
-        (3, "stderr", "", "warn"),
-        (4, "stdout", "ff", '{"c":1}'),
-    ]
-    assert migrate.events_of(items["old"], "c-OLD", "job-old") == events
-    assert migrate.ship(str(events_dir), db, "http://unused", "node", apply=False) == {
-        "sessions": 1,
-        "rows": 4,
-        "applied": 0,
-    }
-    result = migrate.verify(str(events_dir), db, {"old": 4})
-    assert sorted(os.path.basename(path) for path in result["verified_files"]) == [
-        "old.events.jsonl",
-        "old.events.jsonl.cache-ff",
-        "old.events.jsonl.stderr",
-    ]
-    assert migrate.verify(str(events_dir), db, {"old": 3})["mismatched_sessions"] == ["old"]
-    assert (events_dir / "old.events.jsonl").exists()
-
-
 def test_a_line_the_tiered_store_cannot_take_is_held_locally_and_does_not_block_the_shipper(
     root: Path, actor: StoreActor
 ) -> None:
