@@ -14,6 +14,8 @@ dependencies = [
     "doeff-hy",
     "doeff-time",
     "hy>=1.3",
+    # 表ごとの行の型(typed.hy)の写し — 行の型 ↔ 行の値の検めと dump は pydantic の TypeAdapter。
+    "pydantic>=2.6",
 ]
 
 [project.optional-dependencies]

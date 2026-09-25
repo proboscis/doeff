@@ -1,6 +1,6 @@
 ;; 宣言の検めと判断の純関数の反例(handler を通さない)。
 (require doeff-hy.macros [deftest])
-(import doeff_records.values [TableDecl StreamDecl RecordsSchema KeepFor Row Missing Conflict Refused NotIndexed UndeclaredTable
+(import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor Row Missing Conflict Refused NotIndexed UndeclaredTable
                               ExpectAbsent ExpectVersion ExpectAny])
 (import doeff_records.effects [PutRow ListRows])
 (import doeff_records.admission [json-equal? key-text judge-expect judge-put where-refusal row-expired? refuse-every-approval
@@ -13,11 +13,13 @@
 
 
 (deftest test-a-declaration-that-cannot-hold-is-refused-at-construction
-  (setv base {"name" "t" "key_fields" #("id") "writers" {"id" #("w") "state" #("w")}})
+  (setv base {"name" "t" "key_fields" #("id") "fields" #((FieldDecl "id" #("w")) (FieldDecl "state" #("w")))})
   (assert (TableDecl #** base))
-  ;; 鍵の欄の書き手が無い(誰も行を作れない)・宣言の外の索引・initial が語彙の外・終端の語が語彙の外・終端の無い KeepFor・
-  ;; 鍵の欄を承認の欄にする・表の名の綴りの外。
-  (for [broken [{"writers" {"state" #("w")}}
+  ;; 鍵の欄の書き手が無い(誰も行を作れない)・同じ名の欄が 2 つ・欄の宣言でない物・宣言の外の索引・initial が語彙の外・
+  ;; 終端の語が語彙の外・終端の無い KeepFor・鍵の欄を承認の欄にする・表の名の綴りの外。
+  (for [broken [{"fields" #((FieldDecl "state" #("w")))}
+                {"fields" #((FieldDecl "id" #("w")) (FieldDecl "id" #("v")))}
+                {"fields" {"id" #("w")}}
                 {"indexes" #("color")}
                 {"states" #("open") "initial" "gone"}
                 {"states" #("open") "initial" "open" "terminal" #("done")}
@@ -27,6 +29,7 @@
     (setv args (| base (dfor #(k v) (.items broken) (.replace k "-" "_") v)))
     (assert (refuses? (fn [] (TableDecl #** args)) #(ValueError TypeError)) broken))
   (assert (refuses? (fn [] (StreamDecl "s" #())) ValueError) "誰も積めない追記の列")
+  (assert (refuses? (fn [] (FieldDecl "x" #())) ValueError) "誰も書けない欄")
   (assert (refuses? (fn [] (LAW-SCHEMA.table "nope")) UndeclaredTable))
   (assert (refuses? (fn [] (PutRow "parts" #("p1") {} "any")) TypeError))
   (assert (refuses? (fn [] (ListRows "parts" :limit 0)) ValueError)))
