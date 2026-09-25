@@ -44,14 +44,6 @@
   (#^ tuple services))
 
 
-(setv REGISTRY {})
-
-
-(defn #^ ServiceDef register-service [#^ ServiceDef service]
-  (setv (get REGISTRY service.name) service)
-  service)
-
-
 (setv UPDATE-FORMS #("recreate" "handoff"))
 
 
@@ -80,7 +72,7 @@
                              #^ (| dict None) [readiness None]
                              #^ str [update "recreate"]
                              #^ (| dict None) [base-from None]]
-  "名前付きの常駐 job(service)を 1 つ宣言して登録する。
+  "名前付きの常駐 job(service)を 1 つ宣言する。
    program = Program を作る module の最上位の関数(設定の鍵を引数に受ける)。env = 実行先で組む handler の組を返す関数の import path。
    requires = 置き場の条件・config = 設定(どちらも文字列の鍵の dict)。
    readiness {\"windowSeconds\" n} = 本体が ReportReady で報告する「準備できた」が直近 n 秒以内にある時だけ Ready(Rollout が見る)。
@@ -90,16 +82,15 @@
    image の版へ追わせる(coordinator の base_follow_policy)。"
   (when (not-in update UPDATE-FORMS)
     (raise (ValueError (.format "service {} の :update は {} のどれか: {!r}" name UPDATE-FORMS update))))
-  (register-service
-    (ServiceDef name
-                (program-reference program)
-                env
-                (tuple (sorted (.items (string-keyed name "requires" (or requires {})))))
-                (tuple (sorted (.items (string-keyed name "config" (or config {})))))
-                program
-                (if (is readiness None) None (string-keyed name "readiness" readiness))
-                update
-                (if (is base-from None) None (string-keyed name "base-from" base-from)))))
+  (ServiceDef name
+              (program-reference program)
+              env
+              (tuple (sorted (.items (string-keyed name "requires" (or requires {})))))
+              (tuple (sorted (.items (string-keyed name "config" (or config {})))))
+              program
+              (if (is readiness None) None (string-keyed name "readiness" readiness))
+              update
+              (if (is base-from None) None (string-keyed name "base-from" base-from))))
 
 
 (defn resolve [#^ str path]
