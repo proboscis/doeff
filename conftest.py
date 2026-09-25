@@ -10,6 +10,7 @@ from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 
@@ -294,55 +295,76 @@ def _watchdog_timeout_for_item(item) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Machine premises: a test that needs a tool this machine may not have
+# Machine premises: a test that needs something this machine may not have
 # (agora-redesign #639, 2026-09-26).
+#
+# Two premises are asked through here, and each is named with its own word of
+# the check layer:
+#
+#   machine_tool(name, *probe)      a tool that starts               tool-absent
+#   machine_checkout(path, commit)  a git checkout holding a commit  premise-unmet
 #
 # A tool on PATH is not a working tool.  The daily run's pod has the router's
 # entry point for `codex` on PATH but no binary behind it, so `shutil.which`
 # said "present" and the real-codex test went red (exit 127) for a fact about
-# the machine, not about the code.  `machine_tool` starts the tool once and
-# skips the test when it does not start.
+# the machine, not about the code.  Likewise the daily run's machine (zeus)
+# has no custody checkout, and the test that compares the custody contract
+# copy with its source at the pinned commit went red for the same kind of
+# fact.  Each premise is observed once per session, and the test is skipped
+# when it does not hold.
 #
 # A skip alone is silent: the run would read "measured, nothing red" for a
 # test that never ran.  So at the end of the session the unmet premises are
-# named, on one line, as "not executed" in the check layer's own format (dotfiles
-# agentcli remote_check — the file the land tool reads; it records the line as
-# missing coverage, not as a red).  The format is read from the check layer on
-# every run and never copied here: a copy keeps agreeing with itself on the
-# day the layer changes its spelling.  On a machine with only a clone of this
-# repository there is no check layer, and the skip reasons are all that is
-# printed.
+# named as "not executed" in the check layer's own format — one line per word
+# (dotfiles agentcli remote_check — the file the land tool reads; it records
+# the line as missing coverage, not as a red).  The format is read from the
+# check layer on every run and never copied here: a copy keeps agreeing with
+# itself on the day the layer changes its spelling.  Only the word is chosen
+# here, by the side that observed the premise, and the layer is asked whether
+# it knows the word.  On a machine with only a clone of this repository there
+# is no check layer, and the skip reasons are all that is printed.
 #
-# Only "does the tool start" is a premise.  A tool that starts and then fails
-# (a wrong answer, a missing login) is the test's own red.
+# Only the premise itself is asked here.  Once it holds, whatever the test
+# finds is the test's own red: a tool that starts and then answers wrong (or
+# lacks a login), a checkout whose content differs from what the test expects.
 # ---------------------------------------------------------------------------
 _CHECK_LAYER = Path.home() / "dotfiles" / "agentcli" / "src" / "agentcli" / "remote_check.py"
 _CHECK_LAYER_MODULE = "doeff_check_layer_remote_check"
 _PREMISE_UNMET = "machine premise unmet:"
 #: The check layer's word for "the command's executable cannot be started here".
-_PREMISE_KIND = "tool-absent"
+_TOOL_ABSENT = "tool-absent"
+#: The check layer's word for "a premise of the check does not hold on this machine".
+_CHECKOUT_ABSENT = "premise-unmet"
+#: Which check-layer word names each unmet premise, by its skip detail.
+_UNMET_WORDS = pytest.StashKey[dict[str, str]]()
 _PROBE_TIMEOUT_S = 30.0
 
 
 @dataclass(frozen=True)
-class _ToolStarts:
-    """The probe answered with exit 0: the test may use the tool at ``path``."""
+class _PremiseHolds:
+    """The premise holds: the test may use the tool or checkout at ``path``."""
 
     path: str
 
 
 @dataclass(frozen=True)
-class _ToolDoesNotStart:
-    """The probe could not start the tool: ``detail`` becomes the skip reason."""
+class _PremiseUnmet:
+    """The premise does not hold here: ``detail`` becomes the skip reason."""
 
     detail: str
 
 
-def _probe_tool(name: str, probe: Sequence[str]) -> _ToolStarts | _ToolDoesNotStart:
+def _premise_unmet(config: pytest.Config, word: str, detail: str) -> NoReturn:
+    """Skip the test for an unmet machine premise, remembering the check-layer word for it."""
+    config.stash.setdefault(_UNMET_WORDS, {})[detail] = word
+    pytest.skip(f"{_PREMISE_UNMET} {detail}")
+
+
+def _probe_tool(name: str, probe: Sequence[str]) -> _PremiseHolds | _PremiseUnmet:
     """Start ``name`` once with ``probe`` and read whether it answered with exit 0."""
     path = shutil.which(name)
     if path is None:
-        return _ToolDoesNotStart(f"{name} is not on PATH")
+        return _PremiseUnmet(f"{name} is not on PATH")
     asked = " ".join(probe)
     try:
         answer = subprocess.run(
@@ -354,27 +376,52 @@ def _probe_tool(name: str, probe: Sequence[str]) -> _ToolStarts | _ToolDoesNotSt
             check=False,
         )
     except subprocess.TimeoutExpired:
-        return _ToolDoesNotStart(
+        return _PremiseUnmet(
             f"{name} ({path}) did not answer `{asked}` within {_PROBE_TIMEOUT_S:.0f}s"
         )
     except OSError as error:
-        return _ToolDoesNotStart(f"{name} ({path}) cannot be started: {error}")
+        return _PremiseUnmet(f"{name} ({path}) cannot be started: {error}")
     if answer.returncode != 0:
         # The last line is the tool's final word (a router's "no binary behind it").
         said = (answer.stderr.strip() or answer.stdout.strip()).splitlines()
         last_line = said[-1] if said else "no output"
-        return _ToolDoesNotStart(f"{name} ({path}) exits {answer.returncode}: {last_line}")
-    return _ToolStarts(path)
+        return _PremiseUnmet(f"{name} ({path}) exits {answer.returncode}: {last_line}")
+    return _PremiseHolds(path)
+
+
+def _probe_checkout(git: str, path: Path, commit: str) -> _PremiseHolds | _PremiseUnmet:
+    """Read whether ``path`` is a git checkout that already holds ``commit`` (fetches nothing)."""
+    if not path.is_dir():
+        return _PremiseUnmet(f"checkout {path} is missing")
+    try:
+        answer = subprocess.run(
+            [git, "-C", str(path), "cat-file", "-e", f"{commit}^{{commit}}"],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=_PROBE_TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return _PremiseUnmet(f"checkout {path} did not answer within {_PROBE_TIMEOUT_S:.0f}s")
+    except OSError as error:
+        return _PremiseUnmet(f"checkout {path} cannot be read: {error}")
+    if answer.returncode != 0:
+        said = answer.stderr.strip().splitlines()
+        return _PremiseUnmet(
+            f"checkout {path} does not hold commit {commit}" + (f": {said[-1]}" if said else "")
+        )
+    return _PremiseHolds(str(path))
 
 
 @pytest.fixture(scope="session")
-def machine_tool() -> Callable[..., str]:
+def machine_tool(request: pytest.FixtureRequest) -> Callable[..., str]:
     """``machine_tool("codex")`` → the path of a tool that starts on this machine, or skip.
 
     Extra arguments replace the probe (default ``--version``).  Each tool is
-    probed once per session.
+    probed once per session.  An unmet one is named tool-absent.
     """
-    answers: dict[tuple[str, ...], _ToolStarts | _ToolDoesNotStart] = {}
+    answers: dict[tuple[str, ...], _PremiseHolds | _PremiseUnmet] = {}
 
     def require(name: str, *probe: str) -> str:
         """Give the test a tool that starts, or skip it as an unmet machine premise."""
@@ -383,10 +430,37 @@ def machine_tool() -> Callable[..., str]:
         if key not in answers:
             answers[key] = _probe_tool(name, asked)
         match answers[key]:
-            case _ToolStarts(path=path):
+            case _PremiseHolds(path=path):
                 return path
-            case _ToolDoesNotStart(detail=detail):
-                pytest.skip(f"{_PREMISE_UNMET} {detail}")
+            case _PremiseUnmet(detail=detail):
+                _premise_unmet(request.config, _TOOL_ABSENT, detail)
+
+    return require
+
+
+@pytest.fixture(scope="session")
+def machine_checkout(
+    request: pytest.FixtureRequest, machine_tool: Callable[..., str]
+) -> Callable[[Path, str], Path]:
+    """``machine_checkout(path, commit)`` → a git checkout at ``path`` holding ``commit``, or skip.
+
+    git itself is a tool premise (asked through ``machine_tool``).  A missing
+    checkout, or one that has not fetched ``commit``, is named premise-unmet.
+    Each (path, commit) is probed once per session.
+    """
+    answers: dict[tuple[Path, str], _PremiseHolds | _PremiseUnmet] = {}
+
+    def require(path: Path, commit: str) -> Path:
+        """Give the test a checkout that holds ``commit``, or skip it as an unmet premise."""
+        git = machine_tool("git")
+        key = (path, commit)
+        if key not in answers:
+            answers[key] = _probe_checkout(git, path, commit)
+        match answers[key]:
+            case _PremiseHolds(path=held):
+                return Path(held)
+            case _PremiseUnmet(detail=detail):
+                _premise_unmet(request.config, _CHECKOUT_ABSENT, detail)
 
     return require
 
@@ -407,36 +481,47 @@ def _check_layer():
     return module
 
 
-def _unmet_premises(skipped: Sequence[pytest.TestReport]) -> list[tuple[str, str]]:
-    """(nodeid, detail) of every test skipped because a machine premise was unmet."""
-    unmet: list[tuple[str, str]] = []
+def _unmet_premises(
+    skipped: Sequence[pytest.TestReport], words: dict[str, str]
+) -> dict[str, list[str]]:
+    """``"<nodeid>: <detail>"`` of every test skipped for an unmet premise, by check-layer word."""
+    unmet: dict[str, list[str]] = {}
     for report in skipped:
         longrepr = report.longrepr
         if not (isinstance(longrepr, tuple) and len(longrepr) == 3):
             continue
         reason = str(longrepr[2]).removeprefix("Skipped: ")
-        if reason.startswith(_PREMISE_UNMET):
-            unmet.append((report.nodeid, reason.removeprefix(_PREMISE_UNMET).strip()))
+        detail = reason.removeprefix(_PREMISE_UNMET).strip()
+        if reason.startswith(_PREMISE_UNMET) and detail in words:
+            unmet.setdefault(words[detail], []).append(f"{report.nodeid}: {detail}")
     return unmet
 
 
 def pytest_terminal_summary(terminalreporter):
-    """Name the unmet machine premises as not executed, on one line (check layer format)."""
-    unmet = _unmet_premises(terminalreporter.stats.get("skipped", []))
+    """Name the unmet machine premises as not executed: one line per check-layer word."""
+    unmet = _unmet_premises(
+        terminalreporter.stats.get("skipped", []),
+        terminalreporter.config.stash.get(_UNMET_WORDS, {}),
+    )
     if not unmet:
         return
-    named = "; ".join(f"{nodeid}: {detail}" for nodeid, detail in unmet)
     terminalreporter.ensure_newline()
     layer = _check_layer()
-    if layer is not None and _PREMISE_KIND in layer.UNEXECUTED_KINDS:
-        terminalreporter.write(layer.unexecuted_line([_PREMISE_KIND], named))
+    unknown: dict[str, list[str]] = {}
+    for word, named in unmet.items():
+        if layer is not None and word in layer.UNEXECUTED_KINDS:
+            terminalreporter.write(layer.unexecuted_line([word], "; ".join(named)))
+        else:
+            unknown[word] = named
+    if not unknown:
         return
     if layer is None:
         where = "no check layer here"
     else:
-        where = f"the check layer at {_CHECK_LAYER} does not know the kind {_PREMISE_KIND}"
+        where = f"the check layer at {_CHECK_LAYER} does not know {', '.join(unknown)}"
+    named = [entry for entries in unknown.values() for entry in entries]
     terminalreporter.write_line(
-        f"{len(unmet)} test(s) skipped for a machine premise ({where}): {named}"
+        f"{len(named)} test(s) skipped for a machine premise ({where}): {'; '.join(named)}"
     )
 
 
