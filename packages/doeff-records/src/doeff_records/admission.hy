@@ -6,7 +6,8 @@
 (import dataclasses [dataclass])
 (import datetime [datetime timezone])
 (import json)
-(import collections.abc [Callable])
+(import collections.abc [Callable Mapping])
+(import doeff_hy.frozen [FrozenMap frozen-json-object thaw-json])
 (import doeff_records.values [TableDecl StreamDecl KeepFor Row Missing Conflict Refused NotIndexed Event
                               ExpectAbsent ExpectVersion ExpectAny Approval])
 
@@ -14,8 +15,9 @@
 ;; --- JSON の値 ------------------------------------------------------------------------------------------------
 
 (defn #^ str canonical-json [#^ object value]
-  "値の正規の綴り(鍵の昇順・空白なし・UTF-8 のまま)。上限の byte と冪等キーの本文の比べはこの綴りで測る。"
-  (json.dumps value :sort-keys True :separators #("," ":") :ensure-ascii False))
+  "値の正規の綴り(鍵の昇順・空白なし・UTF-8 のまま)。上限の byte と冪等キーの本文の比べはこの綴りで測る。
+   凍らせた値(FrozenMap・tuple)は thaw-json で JSON の形へ戻してから綴る — 置き場へ書く JSON もこの綴り。"
+  (json.dumps (thaw-json value) :sort-keys True :separators #("," ":") :ensure-ascii False))
 
 
 (defn #^ int json-bytes [#^ object value]
@@ -27,7 +29,7 @@
   (cond
     (or (isinstance a bool) (isinstance b bool)) (and (isinstance a bool) (isinstance b bool) (= a b))
     (and (isinstance a #(int float)) (isinstance b #(int float))) (= a b)
-    (and (isinstance a dict) (isinstance b dict))
+    (and (isinstance a Mapping) (isinstance b Mapping))
       (and (= (set (.keys a)) (set (.keys b))) (all (gfor k a (json-equal? (get a k) (get b k)))))
     (and (isinstance a #(list tuple)) (isinstance b #(list tuple)))
       (and (= (len a) (len b)) (all (gfor #(x y) (zip a b) (json-equal? x y))))
@@ -64,8 +66,8 @@
 ;; --- 書きの許可 ----------------------------------------------------------------------------------------------
 
 (defclass [(dataclass :frozen True)] Admitted []
-  "書きを許した: value = 確定する行の値(鍵の欄と、生まれる行なら状態の initial を含む)。"
-  (#^ dict value))
+  "書きを許した: value = 確定する行の値の凍らせた写像(鍵の欄と、生まれる行なら状態の initial を含む)。"
+  (#^ FrozenMap value))
 
 
 (defn #^ (| str None) refuse-every-approval [#^ Approval approval #^ str table #^ tuple key #^ tuple fields]
@@ -73,12 +75,12 @@
   "承認を確かめる口が組まれていない")
 
 
-(defn #^ (| str None) state-of [#^ TableDecl decl #^ dict value]
+(defn #^ (| str None) state-of [#^ TableDecl decl #^ FrozenMap value]
   (setv word (.get value decl.state-field))
   (if (isinstance word str) word None))
 
 
-(defn #^ bool terminal-row? [#^ TableDecl decl #^ dict value]
+(defn #^ bool terminal-row? [#^ TableDecl decl #^ FrozenMap value]
   (and (bool decl.terminal) (in (state-of decl value) decl.terminal)))
 
 
@@ -91,7 +93,7 @@
       (not (and present (json-equal? (get current.value name) value)))))
 
 
-(defn #^ tuple changed-fields [#^ TableDecl decl #^ (| Row None) current #^ dict diff]
+(defn #^ tuple changed-fields [#^ TableDecl decl #^ (| Row None) current #^ FrozenMap diff]
   "書きが変える欄(書き手の名簿で照らす欄): 生まれる行 = 鍵の欄と、値が None でない差分の全部 / 在る行 = 値の変わる差分の欄
    (None = 欄を消す — 在る欄を消す書きも、その欄の書き手で照らす)。"
   (if (is current None)
@@ -100,9 +102,9 @@
       (tuple (sorted (gfor #(name value) (.items diff) :if (field-changes? current name value) name)))))
 
 
-(defn #^ (| Refused None) shape-refusal [#^ TableDecl decl #^ (| Row None) current #^ tuple key #^ dict diff]
+(defn #^ (| Refused None) shape-refusal [#^ TableDecl decl #^ (| Row None) current #^ tuple key #^ FrozenMap diff]
   "鍵の形・宣言の外の欄・終端の行・鍵の欄の書き換え。"
-  (setv unknown (sorted (gfor name diff :if (not-in name decl.writers) name)))
+  (setv unknown (sorted (gfor name diff :if (not (decl.declares name)) name)))
   (cond
     (!= (len key) (len decl.key-fields))
       (Refused (.format "表 {} の鍵は {} 欄 {!r}: {!r}" decl.name (len decl.key-fields) decl.key-fields key))
@@ -116,25 +118,27 @@
           (if moved (Refused (.format "表 {} の鍵の欄 {!r} は鍵と違う値にできない" decl.name moved)) None))))
 
 
-(defn #^ dict landed-value [#^ TableDecl decl #^ (| Row None) current #^ tuple key #^ dict diff]
+(defn #^ FrozenMap landed-value [#^ TableDecl decl #^ (| Row None) current #^ tuple key #^ FrozenMap diff]
   "確定する行の値: 今の値(無ければ鍵の欄)に差分を重ね、差分の値が None の欄は消し(JSON merge patch〔RFC 7396〕の null と同じ)、
-   生まれる行で状態の語が無ければ initial を置く。行の値は None を持たない。"
-  (setv base (if (is current None) (dict (zip decl.key-fields key)) (dict current.value)))
-  (setv value (dfor #(name v) (.items (| base diff)) :if (is-not v None) name v))
-  (when (and (is current None) decl.states (not-in decl.state-field diff))
-    (setv (get value decl.state-field) decl.initial))
-  value)
+   生まれる行で状態の語が無ければ(差分に無いか None — 生まれる行に消す欄は無い)initial を置く。行の値は None を持たない。答えは深く凍らせた写像。"
+  (setv base (if (is current None) (dict (zip decl.key-fields key)) (dict current.value))
+        merged (| base (dict diff))
+        born-state (if (and (is current None) decl.states (is (.get diff decl.state-field) None))
+                       {decl.state-field decl.initial}
+                       {}))
+  (frozen-json-object (dfor #(name v) (.items (| merged born-state)) :if (is-not v None) name v) "確定する行の値"))
 
 
 (defn #^ (| Refused None) writer-refusal [#^ TableDecl decl #^ str writer #^ tuple changed]
   (for [name changed]
-    (when (not-in writer (get decl.writers name))
+    (setv writers (decl.writers-of name))
+    (when (not-in writer writers)
       (return (Refused (.format "表 {} の欄 {} を書いてよいのは {!r} で、{!r} はその中に無い"
-                                decl.name name (get decl.writers name) writer)))))
+                                decl.name name writers writer)))))
   None)
 
 
-(defn #^ (| Refused None) state-refusal [#^ TableDecl decl #^ dict value]
+(defn #^ (| Refused None) state-refusal [#^ TableDecl decl #^ FrozenMap value]
   (when (not decl.states) (return None))
   (setv word (.get value decl.state-field))
   (if (and (isinstance word str) (in word decl.states))
@@ -152,7 +156,7 @@
              (if (is reason None) None (Refused (.format "表 {} の欄 {!r} の承認が通らない: {}" decl.name guarded reason))))))
 
 
-(defn #^ (| Refused None) size-refusal [#^ TableDecl decl #^ dict value]
+(defn #^ (| Refused None) size-refusal [#^ TableDecl decl #^ FrozenMap value]
   (when (is decl.size-budget None) (return None))
   (setv size (json-bytes value))
   (if (> size decl.size-budget)
@@ -160,7 +164,7 @@
       None))
 
 
-(defn #^ (| Admitted Refused) judge-put [#^ TableDecl decl #^ str writer #^ (| Row None) current #^ tuple key #^ dict diff
+(defn #^ (| Admitted Refused) judge-put [#^ TableDecl decl #^ str writer #^ (| Row None) current #^ tuple key #^ FrozenMap diff
                                          #^ (| Approval None) approval #^ Callable approval-check]
   "書きを許すか: Admitted(確定する値)か Refused(理由)。期待(judge-expect)は呼び手が先に見る。"
   (setv shape (shape-refusal decl current key diff))
@@ -176,7 +180,7 @@
 
 ;; --- 保持 ------------------------------------------------------------------------------------------------
 
-(defn #^ bool row-expired? [#^ TableDecl decl #^ dict value #^ int updated-ms #^ int now-ms]
+(defn #^ bool row-expired? [#^ TableDecl decl #^ FrozenMap value #^ int updated-ms #^ int now-ms]
   "保持の期限を過ぎた行か: KeepFor の表で、終端の状態の行が終端になってから seconds 秒以上経った。
    終端の行は書けない(shape-refusal)ので、最後に書かれた刻 = 終端になった刻。"
   (and (isinstance decl.retention KeepFor)
@@ -190,20 +194,21 @@
 
 ;; --- 索引と頁 --------------------------------------------------------------------------------------------
 
-(defn #^ (| NotIndexed None) where-refusal [#^ TableDecl decl #^ dict where]
+(defn #^ (| NotIndexed None) where-refusal [#^ TableDecl decl #^ FrozenMap where]
   (setv loose (tuple (sorted (gfor name where :if (not (or (in name decl.key-fields) (in name decl.indexes))) name))))
   (if loose (NotIndexed loose) None))
 
 
-(defn #^ bool row-matches? [#^ dict where #^ dict value]
+(defn #^ bool row-matches? [#^ FrozenMap where #^ FrozenMap value]
   (all (gfor #(name wanted) (.items where) (and (in name value) (json-equal? (get value name) wanted)))))
 
 
-(defn #^ dict projected [#^ TableDecl decl #^ (| tuple None) fields #^ dict value]
+(defn #^ FrozenMap projected [#^ TableDecl decl #^ (| tuple None) fields #^ FrozenMap value]
   "返す欄だけの値(fields = None は全部・鍵の欄は常に残す)。"
   (if (is fields None)
-      (dict value)
-      (dfor #(name v) (.items value) :if (or (in name fields) (in name decl.key-fields)) name v)))
+      (frozen-json-object value "一覧の行の値")
+      (frozen-json-object (dfor #(name v) (.items value) :if (or (in name fields) (in name decl.key-fields)) name v)
+                          "一覧の行の値")))
 
 
 (defn #^ Row listed-row [#^ TableDecl decl #^ (| tuple None) fields #^ Row row]

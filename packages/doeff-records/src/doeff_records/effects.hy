@@ -1,10 +1,12 @@
 ;;; 記録の仕組みの公開 effect 6 つ(lease は既存の doeff-cluster の LeaseOp / HeldLease を使い、ここには作らない)。
 ;;;
 ;;; 書き手の身元は effect の引数にしない — handler を組む時(composition root)に渡す。答えの型は values.hy。
+;;; 欄 → 値の写像(PutRow.value・ListRows.where)と出来事の本文(AppendEvent.body)は、作る時に深く凍らせる(dict を渡してもよい)。
 (import dataclasses [dataclass field])
 (import doeff [EffectBase])
+(import doeff_hy.frozen [FrozenMap freeze-json])
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny Approval WatchCursor ListCursor checked-table-name
-                              checked-field-name])
+                              checked-field-name freeze-field])
 
 (setv DEFAULT-LIST-LIMIT 500)
 (setv DEFAULT-WATCH-LIMIT 1000)
@@ -33,16 +35,16 @@
 
 
 (defclass [(dataclass :frozen True)] ListRows [EffectBase]
-  "表の行を鍵の綴りの順に 1 頁読む。where = 欄 → 値(索引の欄の等号の AND)/ fields = 返す欄(None = 全部。鍵の欄は常に返す)/
+  "表の行を鍵の綴りの順に 1 頁読む。where = 欄 → 値の凍らせた写像(索引の欄の等号の AND)/ fields = 返す欄(None = 全部。鍵の欄は常に返す)/
    cursor = 前の頁の next-cursor(None = 最初から)/ limit = 頁の行数の上限。答え = Page | Reset | Unreachable | NotIndexed。"
   (#^ str table)
-  (setv #^ dict where (field :default-factory dict))
+  (setv #^ FrozenMap where (field :default-factory FrozenMap))
   (setv #^ (| tuple None) fields None)
   (setv #^ (| ListCursor None) cursor None)
   (setv #^ int limit DEFAULT-LIST-LIMIT)
   (defn __post_init__ [self]
     (checked-table-name self.table "ListRows.table")
-    (when (not (isinstance self.where dict)) (raise (TypeError "ListRows.where は dict")))
+    (freeze-field self "where" "ListRows.where")
     (for [name self.where] (checked-field-name name "ListRows.where の欄"))
     (when (is-not self.fields None)
       (for [name self.fields] (checked-field-name name "ListRows.fields の欄")))
@@ -52,18 +54,18 @@
 
 
 (defclass [(dataclass :frozen True)] PutRow [EffectBase]
-  "行を書く。value = 欄の差分(書く欄 → 値。書かない欄は今の値のまま・値 None = その欄を消す〔JSON merge patch の null と同じ〕)/
+  "行を書く。value = 欄の差分の凍らせた写像(書く欄 → 値。書かない欄は今の値のまま・値 None = その欄を消す〔JSON merge patch の null と同じ〕)/
    expect = ExpectAbsent | ExpectVersion | ExpectAny /
    approval = 承認の欄を書く時の印(任意)。答え = Written | Conflict | Refused | Unreachable。"
   (#^ str table)
   (#^ tuple key)
-  (#^ dict value)
+  (#^ FrozenMap value)
   (#^ object expect)
   (setv #^ (| Approval None) approval None)
   (defn __post_init__ [self]
     (checked-table-name self.table "PutRow.table")
     (checked-key self.key "PutRow.key")
-    (when (not (isinstance self.value dict)) (raise (TypeError "PutRow.value は dict(欄 → 値)")))
+    (freeze-field self "value" "PutRow.value")
     (for [name self.value] (checked-field-name name "PutRow.value の欄"))
     (when (not (isinstance self.expect #(ExpectAbsent ExpectVersion ExpectAny)))
       (raise (TypeError "PutRow.expect は ExpectAbsent | ExpectVersion | ExpectAny")))
@@ -88,12 +90,13 @@
 
 
 (defclass [(dataclass :frozen True)] AppendEvent [EffectBase]
-  "追記の列に出来事を 1 つ積む。同じ冪等キーの再送は前の sequence を返す(本文が違えば Refused)。
-   答え = Appended | Refused | Unreachable。"
+  "追記の列に出来事を 1 つ積む。body = JSON の値(作る時に深く凍らせる — object は FrozenMap・array は tuple)。
+   同じ冪等キーの再送は前の sequence を返す(本文が違えば Refused)。答え = Appended | Refused | Unreachable。"
   (#^ str stream)
   (#^ str idempotency-key)
   (#^ object body)
   (defn __post_init__ [self]
+    (object.__setattr__ self "body" (freeze-json self.body))
     (checked-table-name self.stream "AppendEvent.stream")
     (when (not (and (isinstance self.idempotency-key str) self.idempotency-key))
       (raise (ValueError "AppendEvent.idempotency_key は空でない文字列")))))

@@ -22,7 +22,10 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
 
 型は `doeff_records.values`(定義・期待・答え)と `doeff_records.effects`(effect)にある。
 
-- 行のキーは定義の `key_fields` の順の文字列の tuple。行の値は欄 → JSON の値の dict で、キーの欄を含む。
+- 行のキーは定義の `key_fields` の順の文字列の tuple。行の値は欄 → JSON の値の凍らせた写像(doeff-hy の `FrozenMap` —
+  中の object も `FrozenMap`・array は tuple まで深く凍らせる)で、キーの欄を含む。`Row` / `Written` / `RowChanged` の `value`、
+  `PutRow.value`・`ListRows.where`、出来事の本文は、作る時に受けた写像を凍らせる(作った後に変えられない)。JSON へ書く所は
+  `doeff_hy.frozen.thaw_json` で dict / list へ戻す。
 - 版(`version`)は生まれた行が 1 で、書くたびに 1 増える。
 - `ListRows` の頁はキーの綴り(`admission.key_text`)の順。最初の頁の `epoch` と `sequence` から `WatchChanges` を始めると、
   一覧の後の変更を取りこぼさない。
@@ -32,20 +35,39 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
 
 ## 表の定義
 
-`TableDecl(name, key_fields, writers, indexes, state_field, states, terminal, initial, operator_paths, retention, size_budget)`
+`TableDecl(name, key_fields, fields, indexes, state_field, states, terminal, initial, operator_paths, retention, size_budget)`
 
-- `writers`: 欄 → その欄を書いてよい書き手の名の tuple。定義した欄はこれで全部(載っていない欄への書きは断る)。
-  行を作ることはキーの欄を書くことなので、キーの欄の書き手が行を作ってよい書き手になる。値の変わらない欄は照らさない。
-- `states` / `terminal` / `initial` / `state_field`: 状態の語彙。生まれる行で状態の欄が無ければ `initial` を置く。終端の行はもう書けない。
+- `fields`: 欄の定義 `FieldDecl(name, writers)`(欄の名と、その欄を書いてよい書き手の名の tuple)の tuple。定義した欄はこれで全部
+  (載っていない欄への書きは断る)。行を作ることはキーの欄を書くことなので、キーの欄の書き手が行を作ってよい書き手になる。
+  値の変わらない欄は照らさない。定義を尋ねる口は `decl.declares(name)`・`decl.writers_of(name)`・`decl.field_names()`。
+- `states` / `terminal` / `initial` / `state_field`: 状態の語彙。生まれる行で状態の欄が無ければ(差分に無いか None なら)`initial` を置く。
+  終端の行はもう書けない。
 - `operator_paths`: 書くのに承認の要る欄。承認の確かめ方は handler を組む時に渡す(既定はどの承認も認めない)。
 - `retention`: `KeepForever()`(消さない)か `KeepFor(seconds)`(終端になってから秒の後に消し、変更の列に `RowRemoved` を出す)。
 - `size_budget`: 行の値の JSON(正規の綴り・UTF-8)の byte の上限。
 
 追記の列は `StreamDecl(name, writers, retention, size_budget)`(`KeepFor` は積んでから秒の後に消す)。
+置き場 1 つの定義は `RecordsSchema(tables, streams)`(表の名 → `TableDecl`・列の名 → `StreamDecl` の凍らせた写像)。
+
+## 表ごとの行の型で読み書きする(`doeff_records.typed`)
+
+業務の Program は欄 → 値の写像を見ずに、表ごとの行の型(pydantic の `BaseModel` か dataclass)で読み書きする。
+上の汎用の effect の上の Program なので、handler は増えない(memory・PostgreSQL・写しのどの handler の上でも同じに動く)。
+
+| 口 | 答え |
+|---|---|
+| `RowType(table, model)` | 表 1 つの行の型(欄の名 = 表の定義の欄の名・alias が在れば alias。写しは pydantic の `TypeAdapter`) |
+| `read_typed(row_type, key)` | `TypedRow(key, value, version)` か `Missing`・`Unreachable` |
+| `list_typed(row_type, where=, cursor=, limit=)` | `TypedPage(rows, next_cursor, epoch, sequence)` か `Reset`・`Unreachable`・`NotIndexed` |
+| `put_typed(row_type, key, value, expect, approval=)` | `TypedWritten(version, value)` か `TypedConflict(current)`・`Refused`・`Unreachable` |
+| `typed_change(row_type, change)` | `RowChanged` → `TypedRowChanged`(`RowRemoved` はそのまま) |
+
+`put_typed` は行の全体の像を書く: 行の型の欄を全部載せ、値が None の欄は消す。値の変わらない欄は書き手の名簿で照らさないので、
+読んだ行の自分の欄だけを変えた値(`model_copy(update=...)` / `dataclasses.replace`)を書けばよい。
 
 ## handler
 
-- `doeff_records.memory.memory_records_handler(store, writer)` — `MemoryStore(schema)` の dict の上で答える。模擬環境・手元の
+- `doeff_records.memory.memory_records_handler(store, writer)` — `MemoryStore(schema)` の手元の表の上で答える。模擬環境・手元の
   1 process・単体の検に使う。同じ `MemoryStore` を別の `writer` の handler で包めば、1 つの置き場を複数の書き手が使う形になる。
 - `doeff_records.pg.pg_records_handler(host, writer)` — `PgRecordsHost(connection, schema, prefix=...)` の PostgreSQL の表で答える。
   接続(psycopg 3・自動 commit)は composition root が開いて渡す(psycopg は extra `pg`)。表は状態の行の表(`state_rows`)と
