@@ -201,7 +201,8 @@
                         {})}))
   (for [t (.values state.tasks)]
     (setv (get out (key-of "Task" t.id))
-          {"spec" {"name" t.name "env" t.env "revision" t.revision "requires" (dict t.requires)}
+          {"spec" (| {"name" t.name "env" t.env "revision" t.revision "requires" (dict t.requires)}
+                     (if t.detached {"key" t.key} {}))
            "status" {"phase" t.phase "worker" t.worker "detail" t.detail}}))
   (for [#(name r) (.items state.rollouts)]
     (setv (get out (key-of "Rollout" name)) {"spec" (get r "spec") "status" (get r "status")}))

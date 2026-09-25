@@ -31,6 +31,9 @@
   ;; 名前付きの lease で書きを 1 つに絞る service だけが使う。どちらも比べない欄(値が変わっても process を起こし直さない)。
   (setv #^ bool handoff (field :default False :compare False))
   (setv #^ (| str None) ready-instance (field :default None :compare False))
+  ;; 切り離した task(2026-09-25・once と組)。coordinator との連絡が途絶えても止めない(担い手の heartbeat が lease を延ばし、途絶が
+  ;; lease より長ければ coordinator が lost にして、再接続の返事から外れた時に止める — worker_policy.kept-when-cut-off)。比べない欄。
+  (setv #^ bool detached (field :default False :compare False))
 
   (defn __post-init__ [self]
     (when (or (not self.name) (not self.entry) (not self.revision))
