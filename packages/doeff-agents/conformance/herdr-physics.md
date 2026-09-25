@@ -35,7 +35,15 @@ herdr backend で観測した物理・tmux との差分・fixture の backend �
   `agent_target_ambiguous`、片方の pane close 後は残る 1 つに解決される。
 - `agent.start` の `focus: false` を渡しても応答は `"focused": true` を返す
   ことがある(実害なし、外観のみ)。
-- zombie 検知は `pane.process_info` → `foreground_processes[0]` の command 名を使う。
+- zombie 検知は `pane.process_info` → 前面の process group の leader(`pid` が
+  `foreground_process_group_id` と一致する要素)の command 名を使う。
+  **追補(2026-09-26・herdr 0.9.1)**: `foreground_processes` の並び順は platform で違う —
+  Linux(zeus)は pid の昇順、macOS は降順(`sleep 30 | cat` の先頭は Linux = sleep・Mac = cat、
+  `bash -c 'sleep 30; true'` の先頭は Linux = bash・Mac = sleep。記録 =
+  `docs/design/daily-red-639/herdr-argv0/evidence/order-probe-{mac,zeus}.log`)。
+  並びの先頭を読むと同じ job から機体ごとに違う名前が出るので、tmux の
+  `#{pane_current_command}`(tcgetpgrp の process)と同じ leader を読む。leader が答えに
+  居ない・group id が無い時は前面不明(None)。
   `name` は claude で version 文字列(`2.1.201`)になる実測があるため先には読まない。
   **追補(2026-09-26・herdr 0.9.1 / protocol 22)**: `argv0` は契約で保証される欄では
   ない。公開 schema の `PaneProcessInfoProcess` の必須欄は `pid` と `name` だけで、
