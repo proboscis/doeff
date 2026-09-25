@@ -16,7 +16,7 @@
  ],
  "design": {
   "path": "design.md",
-  "sha256": "437a270118366964e220bb59f660ef9c28240ee6ed6129babeb7d77335a0a7dc"
+  "sha256": "acfc53a7e909872a7187346eeaa1d877ba38286d6fd70faf64b554a356f9be8e"
  },
  "pre_blind_design": {
   "path": "design-before-blind.md",
@@ -122,7 +122,7 @@
   {
    "id": "M5",
    "responsibility": "Hy を import する Python の module が新しい interpreter でも import できることを確かめる検(doeff-agents)",
-   "owns": "子の bytecode の置き場(tmp_path_factory の下の module の走行だけの dir)と、検の予算(日次の機体の実測から timeout の印で宣言・追補)と、子の期限(その検自身の実効の期限 − 15 秒)",
+   "owns": "子の bytecode の置き場(tmp_path_factory の下の module の走行だけの dir)と、検の予算(Linux の機体 zeus の実測と日次の pod の上限の見積もりから timeout の印で宣言・追補)と、子の期限(その検自身の実効の期限 − 15 秒)",
    "hides": "走行全体の bytecode の設定(M9 の固定)",
    "interface": "module scope の fixture private_bytecode_dir と child_deadline・検の timeout の印(240 秒・根拠を隣に書く)。子の env だけ PYTHONDONTWRITEBYTECODE を外し PYTHONPYCACHEPREFIX をその dir へ。子の期限切れは pytest.fail で module 名を言う",
    "effects": "一時 dir への bytecode の書き込み・子 process",
@@ -324,7 +324,7 @@
    "applicability": "applicable",
    "id": "S9",
    "axis": "hardware",
-   "change": "日次の機体が開発機より同じ負荷率でも数倍遅い(zeus は Mac の約 2.5〜4 倍)。検の所要が負荷の係数では説明されない分だけ機体に依る(追補)",
+   "change": "日次の実行環境(cluster の pod)や Linux の機体が開発機より同じ負荷率でも数倍遅い(zeus は Mac の約 2.5〜4 倍・pod は zeus の約 1.15 倍以内)。検の所要が負荷の係数では説明されない分だけ機体に依る(追補)",
    "claim": "(S5・S6 の主張)共有の置き場で M5 の所要は compile 1 回分、期限は負荷で伸びるので既定の期限で足りる",
    "expected_scope": "なし",
    "actual_scope": "M5 と M10(依頼書 T の検収の後、zeus で 2 failed)",
@@ -337,7 +337,7 @@
     "M9"
    ],
    "reason": "設計の誤り: M5 の予算を Mac の実測だけで確かめた。検が所要を宣言する口(timeout の印)は在ったが、印が負荷で伸びていなかった(R6 の強制の欠け — 実効の値を確かめる検が無かった)",
-   "revision": "M10 を直し(C31 旧形の実効 10.0・C32 試作で 21.2)、M5 が日次の機体の実測から予算 240 秒を宣言。試作を zeus で 22 passed・runtime 単独 passed(C33)。本実装は依頼書 T2"
+   "revision": "M10 を直し(C31 旧形の実効 10.0・C32 試作で 21.2)、M5 が zeus の実測と pod の見積もり(C34)から予算 240 秒を宣言。試作を zeus で 22 passed・runtime 単独 passed(C33)。本実装は依頼書 T2"
   }
  ],
  "checks": [
@@ -782,7 +782,7 @@
     "S9"
    ],
    "control": "negative",
-   "expectation": "本線 5eef352d(依頼書 T の実装)の fresh interpreter の検は日次の機体 zeus で期限切れ(欠陥の再現)",
+   "expectation": "本線 5eef352d(依頼書 T の実装)の fresh interpreter の検は Linux の機体 zeus で期限切れ(欠陥の再現)",
    "observation": "2 failed 20 passed・host_slot_cli と runtime が did not finish within 59s",
    "evidence": {
     "path": "/Users/kento/.local/state/design-check/lt-FPBECBQ3W22ESC92VAMCENR5JR/evidence/M5-C29-zeus-5eef352d.log",
@@ -863,6 +863,20 @@
      "sha256": "65d4fd81897480988e5023dd0d99b2b6f26545bd594f3bd33a0b4a5fb02527fc"
     }
    ]
+  },
+  {
+   "id": "C34",
+   "scenarios": [
+    "S9"
+   ],
+   "control": "negative",
+   "expectation": "日次の実行環境は cluster の pod(zeus への ssh が断られ手元の実行に倒れる)。直す前の形で host_slot_cli の子は 90 秒の内に通り runtime の子が 90 秒を超えた(pod の所要の上限の根拠)",
+   "observation": "remote-check ran=local node=zeus Permission denied (publickey)・負荷 x1.5 の検 1 本の期限 90 秒で 15 本目まで通り 16 本目(runtime)が Timeout",
+   "evidence": {
+    "path": "/Users/kento/.local/state/design-check/lt-FPBECBQ3W22ESC92VAMCENR5JR/evidence/daily-20260926-033008.log",
+    "sha256": "e32d7f6b65e9969543cee6f3eed1f299bd6bb00fd37875e7bace1747b2e26697"
+   },
+   "status": "passed"
   },
   {
    "id": "C27",
