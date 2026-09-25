@@ -35,8 +35,18 @@ herdr backend で観測した物理・tmux との差分・fixture の backend �
   `agent_target_ambiguous`、片方の pane close 後は残る 1 つに解決される。
 - `agent.start` の `focus: false` を渡しても応答は `"focused": true` を返す
   ことがある(実害なし、外観のみ)。
-- zombie 検知は `pane.process_info` → `foreground_processes[0].argv0` を使う。
-  `name` は claude で version 文字列(`2.1.201`)になる実測があるため使わない。
+- zombie 検知は `pane.process_info` → `foreground_processes[0]` の command 名を使う。
+  `name` は claude で version 文字列(`2.1.201`)になる実測があるため先には読まない。
+  **追補(2026-09-26・herdr 0.9.1 / protocol 22)**: `argv0` は契約で保証される欄では
+  ない。公開 schema の `PaneProcessInfoProcess` の必須欄は `pid` と `name` だけで、
+  `argv0` / `argv` / `cmdline` / `cwd` は省略・null がありうる。Linux の herdr は
+  `argv0` を一度も埋めない(`src/platform/linux.rs`)— 日次の機体 zeus の実物は
+  `{"pid", "name": "zsh", "argv": ["/usr/bin/zsh"], "cmdline", "cwd"}` だけを返し、
+  `argv0` を前提にした読みは `KeyError: 'argv0'` で落ちた。また
+  `foreground_processes` は空なら鍵ごと省かれる(`PaneProcessInfo` の必須欄は
+  `pane_id` だけ)。読む順は `argv0` → `argv` の先頭(herdr の macOS の `argv0` と
+  同じ正規化 = basename・先頭の `-` を 1 つ外す)→ `name`。契約の外の答えは
+  `HerdrContractError`(`substrate_herdr.hy` の `herdr-foreground-command`)。
 - herdr の agent 状態は **5 値**(idle/working/blocked/**done**/unknown、
   `blocked_api` 区別なし)。Phase 0 では 4 値と記録していたが、
   `herdr agent wait --status` の語彙と実イベントで done を確認

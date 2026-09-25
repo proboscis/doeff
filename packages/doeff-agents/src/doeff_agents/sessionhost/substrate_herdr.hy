@@ -59,9 +59,11 @@
 
 (import json)
 (import os)
+(import pathlib)
 (import re)
 (import socket)
 (import time)
+(import types [NoneType])
 
 (import doeff_agents.sessionhost.effects [
   TmuxNewSession
@@ -143,6 +145,11 @@
   (defn __init__ [self code message]
     (.__init__ RuntimeError self f"herdr api error {code}: {message}")
     (setv self.code code)))
+
+(defclass HerdrContractError [RuntimeError]
+  "herdr の答えが herdr の API 契約(公開 schema)の外にある。error 封筒の
+   HerdrApiError とは別の型にする — 呼び手が不在系の error code
+   (pane_not_found 等)を値へ落とす捕捉に、契約の外の答えを巻き込まないため。")
 
 
 (deff herdr-request-line [method params]
@@ -427,22 +434,76 @@
                               "format" "ansi"}))
   (normalize-ansi-read (get (get fallback "read") "text")))
 
+(defk herdr-foreground-command [result]
+  {:pre [(: result dict)]
+   :post [(: % (| str None))]}
+  "pane.process_info の答え → 前面の job の先頭の process の command 名
+   (純関数)。前面の job が分からなければ None。
+
+   herdr の契約(0.9.1 / protocol 22 の公開 schema と source)で保証される欄:
+     - process_info の必須欄は pane_id だけ。foreground_processes は空なら
+       鍵ごと省かれる(skip_serializing_if Vec::is_empty)— 省略 = 空 = 不明。
+     - 各 process の必須欄は pid と name だけ。argv0 / argv / cmdline / cwd は
+       省略も null もありうる。Linux の herdr は argv0 を一度も埋めない
+       (src/platform/linux.rs が argv0: None)— 日次の機体 zeus の実物
+       (2026-09-26)は argv・cmdline・cwd・name・pid だけを返す。
+   読む順は argv0 → argv の先頭 → name:
+     - argv0 は herdr(macOS)が argv[0] から正規化した名前(basename を取り、
+       login shell の先頭の '-' を 1 つ外す — process_argv0_name)。
+     - argv0 が無ければ argv の先頭を同じ規則で正規化する。規則を揃えるので、
+       Linux と macOS で同じ前面から同じ名前が出る。
+     - argv も無ければ必須欄の name(comm)。これが起きるのは Linux で cmdline が
+       読めない時(zombie 等)と、WSL で comm から agent と分かる時で、herdr 自身も
+       その時は comm を身元に使う。
+   name を先に読まないのは実測による: name は process title で、claude では
+   version 文字列('2.1.201' — 2026-07-07 の Phase 0)になり、argv0 / argv の
+   先頭は 'claude' のまま。
+   答えが契約の外(process_info が dict でない・foreground_processes が配列でない・
+   要素が dict でない・name が文字列でない・argv0 / argv の型が違う)なら、
+   KeyError にも黙った既定値にもせず HerdrContractError で名指す。"
+  (setv proc
+        (match result
+          {"process_info" {"foreground_processes" [(dict) :as first #* _rest]}} first
+          {"process_info" {"foreground_processes" []}} (return None)
+          {"process_info" (dict) :as info} :if (not-in "foreground_processes" info)
+          (return None)
+          _ (raise (HerdrContractError
+                     f"herdr pane.process_info answer is outside the API contract: {result !r}"))))
+  (setv argv0 (.get proc "argv0"))
+  (setv argv (.get proc "argv"))
+  (when (not (and (isinstance (.get proc "name") str)
+                  (isinstance argv0 #(str NoneType))
+                  (or (is argv None)
+                      (and (isinstance argv list)
+                           (all (gfor part argv (isinstance part str)))))))
+    (raise (HerdrContractError
+             f"herdr pane.process_info process is outside the API contract: {proc !r}")))
+  (setv from-argv (when argv
+                    (.removeprefix (. (pathlib.PurePosixPath (get argv 0)) name) "-")))
+  (match #(argv0 from-argv)
+    #((str) :as named _) :if named named
+    #(_ (str) :as derived) :if derived derived
+    _ (get proc "name")))
+
 (defk herdr-pane-current-command-io [socket-path pane-id]
   {:pre [(: socket-path str) (: pane-id str)]
    :post [(: % (| str None))]}
-  "TmuxPaneCurrentCommand の実体: pane.process_info の
-   foreground_processes[0].argv0(実測: name は version 文字列のことがある —
-   claude で '2.1.201' — ため argv0 を使う)。pane 不在・foreground 不明は
-   None(tmux display-message 失敗時の None と同 parity)。"
+  "TmuxPaneCurrentCommand の実体: pane.process_info の前面の job の先頭の
+   process の command 名(読み方と herdr の契約は herdr-foreground-command)。
+   実測: name は version 文字列のことがある(claude で '2.1.201')ので、
+   argv0 か argv の先頭を使う。argv0 は herdr の契約で保証されない欄で、
+   Linux の herdr は返さない(2026-09-26 に日次の機体 zeus で KeyError: 'argv0')。
+   pane 不在(pane_not_found)・foreground 不明は None(tmux display-message
+   失敗時の None と同 parity)。それ以外の error 封筒は None に畳まず送出する。"
   (try
     (setv result (herdr-call socket-path "pane.process_info"
                              {"pane_id" pane-id}))
-    (except [HerdrApiError]
+    (except [e HerdrApiError]
+      (when (!= e.code "pane_not_found")
+        (raise))
       (return None)))
-  (setv procs (get (get result "process_info") "foreground_processes"))
-  (if procs
-      (get (get procs 0) "argv0")
-      None))
+  (<- command (herdr-foreground-command result))
+  command)
 
 (deff chunked-send-texts [text]
   {:pre [(: text str)]
