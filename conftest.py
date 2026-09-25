@@ -1,10 +1,14 @@
 import importlib.util
 import os
 import resource
+import shutil
 import signal
+import subprocess
 import sys
 import threading
+from collections.abc import Callable, Sequence
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -215,6 +219,155 @@ def _watchdog_timeout_for_item(item) -> int:
     # The marker was already scaled at collection time, so this only has to
     # keep the watchdog clear of it.
     return int(max(_WATCHDOG_TIMEOUT, timeout + 30.0))
+
+
+# ---------------------------------------------------------------------------
+# Machine premises: a test that needs a tool this machine may not have
+# (agora-redesign #639, 2026-09-26).
+#
+# A tool on PATH is not a working tool.  The daily run's pod has the router's
+# entry point for `codex` on PATH but no binary behind it, so `shutil.which`
+# said "present" and the real-codex test went red (exit 127) for a fact about
+# the machine, not about the code.  `machine_tool` starts the tool once and
+# skips the test when it does not start.
+#
+# A skip alone is silent: the run would read "measured, nothing red" for a
+# test that never ran.  So at the end of the session every unmet premise is
+# named as "not executed" in the check layer's own line format (dotfiles
+# agentcli remote_check — the file the land tool reads; it records the line as
+# missing coverage, not as a red).  The format is read from the check layer on
+# every run and never copied here: a copy keeps agreeing with itself on the
+# day the layer changes its spelling.  On a machine with only a clone of this
+# repository there is no check layer, and the skip reasons are all that is
+# printed.
+#
+# Only "does the tool start" is a premise.  A tool that starts and then fails
+# (a wrong answer, a missing login) is the test's own red.
+# ---------------------------------------------------------------------------
+_CHECK_LAYER = Path.home() / "dotfiles" / "agentcli" / "src" / "agentcli" / "remote_check.py"
+_CHECK_LAYER_MODULE = "doeff_check_layer_remote_check"
+_PREMISE_UNMET = "machine premise unmet:"
+#: The check layer's word for "the command's executable cannot be started here".
+_PREMISE_KIND = "tool-absent"
+_PROBE_TIMEOUT_S = 30.0
+
+
+@dataclass(frozen=True)
+class _ToolStarts:
+    """The probe answered with exit 0: the test may use the tool at ``path``."""
+
+    path: str
+
+
+@dataclass(frozen=True)
+class _ToolDoesNotStart:
+    """The probe could not start the tool: ``detail`` becomes the skip reason."""
+
+    detail: str
+
+
+def _probe_tool(name: str, probe: Sequence[str]) -> _ToolStarts | _ToolDoesNotStart:
+    """Start ``name`` once with ``probe`` and read whether it answered with exit 0."""
+    path = shutil.which(name)
+    if path is None:
+        return _ToolDoesNotStart(f"{name} is not on PATH")
+    asked = " ".join(probe)
+    try:
+        answer = subprocess.run(
+            [path, *probe],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=_PROBE_TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return _ToolDoesNotStart(
+            f"{name} ({path}) did not answer `{asked}` within {_PROBE_TIMEOUT_S:.0f}s"
+        )
+    except OSError as error:
+        return _ToolDoesNotStart(f"{name} ({path}) cannot be started: {error}")
+    if answer.returncode != 0:
+        said = (answer.stderr.strip() or answer.stdout.strip()).splitlines()
+        first_line = said[0] if said else "no output"
+        return _ToolDoesNotStart(
+            f"{name} ({path}) exits {answer.returncode} on `{asked}`: {first_line}"
+        )
+    return _ToolStarts(path)
+
+
+@pytest.fixture(scope="session")
+def machine_tool() -> Callable[..., str]:
+    """``machine_tool("codex")`` → the path of a tool that starts on this machine, or skip.
+
+    Extra arguments replace the probe (default ``--version``).  Each tool is
+    probed once per session.
+    """
+    answers: dict[tuple[str, ...], _ToolStarts | _ToolDoesNotStart] = {}
+
+    def require(name: str, *probe: str) -> str:
+        """Give the test a tool that starts, or skip it as an unmet machine premise."""
+        asked = probe or ("--version",)
+        key = (name, *asked)
+        if key not in answers:
+            answers[key] = _probe_tool(name, asked)
+        match answers[key]:
+            case _ToolStarts(path=path):
+                return path
+            case _ToolDoesNotStart(detail=detail):
+                pytest.skip(f"{_PREMISE_UNMET} {detail}")
+
+    return require
+
+
+def _check_layer():
+    """Load the check layer's vocabulary, or None when this machine has none."""
+    module = sys.modules.get(_CHECK_LAYER_MODULE)
+    if module is not None:
+        return module
+    if not _CHECK_LAYER.exists():
+        return None
+    spec = importlib.util.spec_from_file_location(_CHECK_LAYER_MODULE, _CHECK_LAYER)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[_CHECK_LAYER_MODULE] = module  # dataclass reads sys.modules
+    spec.loader.exec_module(module)
+    return module
+
+
+def _unmet_premises(skipped: Sequence[pytest.TestReport]) -> list[tuple[str, str]]:
+    """(nodeid, detail) of every test skipped because a machine premise was unmet."""
+    unmet: list[tuple[str, str]] = []
+    for report in skipped:
+        longrepr = report.longrepr
+        if not (isinstance(longrepr, tuple) and len(longrepr) == 3):
+            continue
+        reason = str(longrepr[2]).removeprefix("Skipped: ")
+        if reason.startswith(_PREMISE_UNMET):
+            unmet.append((report.nodeid, reason.removeprefix(_PREMISE_UNMET).strip()))
+    return unmet
+
+
+def pytest_terminal_summary(terminalreporter):
+    """Name every unmet machine premise as not executed (check layer format)."""
+    unmet = _unmet_premises(terminalreporter.stats.get("skipped", []))
+    if not unmet:
+        return
+    terminalreporter.ensure_newline()
+    layer = _check_layer()
+    if layer is not None and _PREMISE_KIND in layer.UNEXECUTED_KINDS:
+        for nodeid, detail in unmet:
+            terminalreporter.write(layer.unexecuted_line([_PREMISE_KIND], f"{nodeid}: {detail}"))
+        return
+    if layer is None:
+        where = "no check layer here"
+    else:
+        where = f"the check layer at {_CHECK_LAYER} does not know the kind {_PREMISE_KIND}"
+    terminalreporter.write_line(
+        f"{len(unmet)} test(s) skipped for a machine premise ({where}): "
+        + "; ".join(f"{nodeid}: {detail}" for nodeid, detail in unmet)
+    )
 
 
 # ---------------------------------------------------------------------------
