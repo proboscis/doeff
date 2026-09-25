@@ -79,6 +79,12 @@ def cache_receipt_active(conn: sqlite3.Connection, session_id: str) -> HostCache
 
 
 def cache_receipt_put(conn: sqlite3.Connection, record: HostCacheRecord) -> None:
+    """専用操作の記録を 1 件書く(未送信へ戻す・送信先を変える・完了後に変える書きは断る)。
+
+    確定は呼び手の connection に任せ、ここでは commit しない。store の actor の connection は
+    autocommit で、明示の transaction の中で呼ばれた時に閉じてよいのは db-immediate-transaction
+    だけ(ADR-DOE-AGENTS-004 R15・test_sessionhost_transaction_owner.py)。
+    """
     _table(conn)
     existing = cache_receipt_get(conn, record.operation_id)
     if existing is not None and (
@@ -103,4 +109,3 @@ def cache_receipt_put(conn: sqlite3.Connection, record: HostCacheRecord) -> None
         "state=excluded.state,receipt_json=excluded.receipt_json",
         (record.operation_id, record.session_id, record.state, json.dumps(asdict(record))),
     )
-    conn.commit()
