@@ -11,7 +11,7 @@
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.laws [LAW-SCHEMA LawHarness LawBroken law-stale-put-conflicts law-committed-changes-appear-once-in-order
                             law-epoch-change-resets law-undeclared-writes-are-refused law-transient-rows-expire
-                            law-indexed-list-equals-filtered-scan law-append-is-idempotent])
+                            law-indexed-list-equals-filtered-scan law-append-is-idempotent law-none-removes-a-field])
 
 
 (defhandler ignore-expectation []
@@ -37,6 +37,12 @@
 (defhandler ignore-where []
   (ListRows [table where fields cursor limit]
     (<- answer (ListRows table :fields fields :cursor cursor :limit limit))
+    (resume answer)))
+
+(defhandler ignore-removals []
+  ;; 欄を消せない handler の顔: 差分の None の欄を捨てて書く。
+  (PutRow [table key value expect approval]
+    (<- answer (PutRow table key (dfor #(k v) (.items value) :if (is-not v None) k v) expect :approval approval))
     (resume answer)))
 
 (defhandler forget-idempotency []
@@ -65,7 +71,8 @@
                       #(law-committed-changes-appear-once-in-order (repeat-changes))
                       #(law-epoch-change-resets (hide-reset))
                       #(law-indexed-list-equals-filtered-scan (ignore-where))
-                      #(law-append-is-idempotent (forget-idempotency))]]
+                      #(law-append-is-idempotent (forget-idempotency))
+                      #(law-none-removes-a-field (ignore-removals))]]
     (assert (breaks? law (broken-harness (MemoryStore LAW-SCHEMA) inner)) law.__name__))
   ;; 書き手を問わない handler(誰の書きも maker として通す)。
   (assert (breaks? law-undeclared-writes-are-refused (broken-harness (MemoryStore LAW-SCHEMA) None (fn [_] "maker"))))
