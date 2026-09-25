@@ -1,0 +1,10 @@
+import pytest
+import pytest_timeout
+
+
+@pytest.mark.timeout(10)
+def test_effective_timeout(request):
+    marks = [m.args for m in request.node.iter_markers("timeout")]
+    closest = request.node.get_closest_marker("timeout").args
+    print(f"\nMARKS={marks} CLOSEST={closest}")
+    print(f"EFFECTIVE={pytest_timeout._get_item_settings(request.node).timeout}")

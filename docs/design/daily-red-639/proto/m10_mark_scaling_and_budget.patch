@@ -1,0 +1,41 @@
+diff --git a/conftest.py b/conftest.py
+index ed72275e..5628efa4 100644
+--- a/conftest.py
++++ b/conftest.py
+@@ -221,7 +221,9 @@ def pytest_collection_modifyitems(config, items):
+         if marker is None or not marker.args:
+             continue
+         with suppress(TypeError, ValueError):
+-            item.add_marker(pytest.mark.timeout(float(marker.args[0]) * _DEADLINE_SCALE))
++            item.add_marker(
++                pytest.mark.timeout(float(marker.args[0]) * _DEADLINE_SCALE), append=False
++            )
+ 
+ 
+ def pytest_runtest_setup(item):
+diff --git a/packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py b/packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py
+index aa000c64..76ccc8d3 100644
+--- a/packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py
++++ b/packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py
+@@ -71,6 +71,9 @@ def _python_importers_of_hy_modules() -> list[str]:
+ 
+ IMPORTERS = _python_importers_of_hy_modules()
+ 
++# PROTOTYPE (agora-redesign#639 T2): zeus 2026-09-26, runtime alone cold = 157 s.
++pytestmark = pytest.mark.timeout(240)
++
+ # The public names are resolved lazily by doeff_agents.__getattr__; they reach
+ # adapters.base, which imports the Hy I/O effect vocabulary.
+ PUBLIC_STATEMENTS = [
+@@ -93,7 +96,10 @@ def private_bytecode_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+ def child_deadline(request: pytest.FixtureRequest) -> float | None:
+     """How long one subprocess may run: the test's deadline (already load-scaled by the root
+     conftest) less the reporting margin; no deadline when per-test timeouts are off."""
+-    per_test = float(request.config.option.timeout or 0)
++    if float(request.config.option.timeout or 0) <= 0:
++        return None
++    marker = request.node.get_closest_marker("timeout")
++    per_test = float(marker.args[0]) if marker is not None and marker.args else float(request.config.option.timeout)
+     if per_test <= 0:
+         return None
+     return max(per_test - _REPORTING_MARGIN_SECONDS, _REPORTING_MARGIN_SECONDS)

@@ -16,7 +16,7 @@
  ],
  "design": {
   "path": "design.md",
-  "sha256": "4bc1a97366558390420d6c1feb43a2e56933942fdc76ea8bbec4f39b5f81105e"
+  "sha256": "437a270118366964e220bb59f660ef9c28240ee6ed6129babeb7d77335a0a7dc"
  },
  "pre_blind_design": {
   "path": "design-before-blind.md",
@@ -122,9 +122,9 @@
   {
    "id": "M5",
    "responsibility": "Hy を import する Python の module が新しい interpreter でも import できることを確かめる検(doeff-agents)",
-   "owns": "子の bytecode の置き場(tmp_path_factory の下の module の走行だけの dir)と、子の期限(検 1 本の期限 − 15 秒)",
+   "owns": "子の bytecode の置き場(tmp_path_factory の下の module の走行だけの dir)と、検の予算(日次の機体の実測から timeout の印で宣言・追補)と、子の期限(その検自身の実効の期限 − 15 秒)",
    "hides": "走行全体の bytecode の設定(M9 の固定)",
-   "interface": "module scope の fixture private_bytecode_dir と child_deadline。子の env だけ PYTHONDONTWRITEBYTECODE を外し PYTHONPYCACHEPREFIX をその dir へ。子の期限切れは pytest.fail で module 名を言う",
+   "interface": "module scope の fixture private_bytecode_dir と child_deadline・検の timeout の印(240 秒・根拠を隣に書く)。子の env だけ PYTHONDONTWRITEBYTECODE を外し PYTHONPYCACHEPREFIX をその dir へ。子の期限切れは pytest.fail で module 名を言う",
    "effects": "一時 dir への bytecode の書き込み・子 process",
    "lifetime": "module の走行(一時 dir は pytest が消す)",
    "invariants": "子の超過はその検の赤で process を殺さない。checkout に bytecode を書かない"
@@ -168,6 +168,16 @@
    "effects": "木を読むだけ(Mac で約 0.2 秒)",
    "lifetime": "pytest の session",
    "invariants": "走行の後の checkout に、その走行が書いた bytecode が無い"
+  },
+  {
+   "id": "M10",
+   "responsibility": "検が印で宣言した期限を ini の期限と同じ負荷の係数で伸ばし、pytest-timeout と watchdog がその値を読むようにする(根の conftest・ADR-DOE-ENFORCE-001 R6・追補で改訂)",
+   "owns": "負荷の係数(deadline_scale の 1 点)と、pytest-timeout・watchdog が印を読む規則(最も近い印)",
+   "hides": "検ごとに宣言した期限の元の値の持ち方",
+   "interface": "収集の時に伸ばした印を最も近い印として置く(先頭に足す)。_watchdog_timeout_for_item は同じ印の 30 秒以上上",
+   "effects": "なし、収集の時に item へ印を足すだけのため",
+   "lifetime": "収集 1 回",
+   "invariants": "印つきの検の実効の期限 = 宣言 × 係数。watchdog は常にその上"
   }
  ],
  "scenarios": [
@@ -309,6 +319,25 @@
    ],
    "reason": "前提の観測が道具を起こして終了コードを見るだけで、替え玉を PATH に置けば同じ経路を通る",
    "revision": "不要"
+  },
+  {
+   "applicability": "applicable",
+   "id": "S9",
+   "axis": "hardware",
+   "change": "日次の機体が開発機より同じ負荷率でも数倍遅い(zeus は Mac の約 2.5〜4 倍)。検の所要が負荷の係数では説明されない分だけ機体に依る(追補)",
+   "claim": "(S5・S6 の主張)共有の置き場で M5 の所要は compile 1 回分、期限は負荷で伸びるので既定の期限で足りる",
+   "expected_scope": "なし",
+   "actual_scope": "M5 と M10(依頼書 T の検収の後、zeus で 2 failed)",
+   "changed_modules": [
+    "M5",
+    "M10"
+   ],
+   "unchanged_modules": [
+    "M6",
+    "M9"
+   ],
+   "reason": "設計の誤り: M5 の予算を Mac の実測だけで確かめた。検が所要を宣言する口(timeout の印)は在ったが、印が負荷で伸びていなかった(R6 の強制の欠け — 実効の値を確かめる検が無かった)",
+   "revision": "M10 を直し(C31 旧形の実効 10.0・C32 試作で 21.2)、M5 が日次の機体の実測から予算 240 秒を宣言。試作を zeus で 22 passed・runtime 単独 passed(C33)。本実装は依頼書 T2"
   }
  ],
  "checks": [
@@ -746,6 +775,94 @@
     "sha256": "676b820b7853c146994d54413d4a576117e9280fe81cb8de6995d8bab68e3d5b"
    },
    "status": "passed"
+  },
+  {
+   "id": "C29",
+   "scenarios": [
+    "S9"
+   ],
+   "control": "negative",
+   "expectation": "本線 5eef352d(依頼書 T の実装)の fresh interpreter の検は日次の機体 zeus で期限切れ(欠陥の再現)",
+   "observation": "2 failed 20 passed・host_slot_cli と runtime が did not finish within 59s",
+   "evidence": {
+    "path": "/Users/kento/.local/state/design-check/lt-FPBECBQ3W22ESC92VAMCENR5JR/evidence/M5-C29-zeus-5eef352d.log",
+    "sha256": "058ac0a613647e4af6768b0925239a0d5c85c5238c31e07dd6235ca321544fc7"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C30",
+   "scenarios": [
+    "S9"
+   ],
+   "control": "negative",
+   "expectation": "zeus で期限なしの import の所要が既定の予算を超える(予算の根拠)",
+   "observation": "host_slot_cli 73.0 秒・続く runtime 78.2 秒・runtime 単独で冷えた状態から 156.8 秒",
+   "evidence": {
+    "path": "/Users/kento/.local/state/design-check/lt-FPBECBQ3W22ESC92VAMCENR5JR/evidence/M5-C30-zeus-import-timing.log",
+    "sha256": "994ea19c51ca6475a2ac06420fd9caf02896c355a24cafe9db404e27504a16fd"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C31",
+   "scenarios": [
+    "S9"
+   ],
+   "control": "negative",
+   "expectation": "本線 5eef352d では timeout(10) の印の実効の期限が負荷で伸びない(R6 の欠け)",
+   "observation": "負荷 x2.0 で印 [(10,), (20.2,)]・実効 10.0",
+   "evidence": {
+    "path": "/Users/kento/.local/state/design-check/lt-FPBECBQ3W22ESC92VAMCENR5JR/evidence/M10-C31-mark-scaling-before.log",
+    "sha256": "3060cd12d3953656d60a08de0f875b1f4fe6eca5ef46b6c2d1b2d9449e1a71b6"
+   },
+   "status": "passed",
+   "supporting_evidence": [
+    {
+     "path": "proto/m10_mark_probe.py.txt",
+     "sha256": "756014e8c8f3730f913a051e95331afc4e0d88a3891dca19b22384fdd7dbe460"
+    }
+   ]
+  },
+  {
+   "id": "C32",
+   "scenarios": [
+    "S9"
+   ],
+   "control": "positive",
+   "expectation": "伸ばした印を先頭に足す試作では実効の期限が係数倍",
+   "observation": "印 [(21.2,), (10,)]・実効 21.2",
+   "evidence": {
+    "path": "/Users/kento/.local/state/design-check/lt-FPBECBQ3W22ESC92VAMCENR5JR/evidence/M10-C32-mark-scaling-after.log",
+    "sha256": "cda201fa96c901eb283d75f1a1eb90923b7265a4922f8b65c5616f61df8ec4eb"
+   },
+   "status": "passed",
+   "supporting_evidence": [
+    {
+     "path": "proto/m10_mark_scaling_and_budget.patch",
+     "sha256": "65d4fd81897480988e5023dd0d99b2b6f26545bd594f3bd33a0b4a5fb02527fc"
+    }
+   ]
+  },
+  {
+   "id": "C33",
+   "scenarios": [
+    "S9"
+   ],
+   "control": "positive",
+   "expectation": "試作(M10 + M5 の予算 240 秒 + 子の期限を実効の期限から)は zeus で緑",
+   "observation": "22 passed in 164 秒・-k runtime 単独 1 passed 171 秒",
+   "evidence": {
+    "path": "/Users/kento/.local/state/design-check/lt-FPBECBQ3W22ESC92VAMCENR5JR/evidence/M10-zeus-prototype.log",
+    "sha256": "8ca011c77017563ab8334f86d0208143052e7c353d2b19ccce90fea528dd8c59"
+   },
+   "status": "passed",
+   "supporting_evidence": [
+    {
+     "path": "proto/m10_mark_scaling_and_budget.patch",
+     "sha256": "65d4fd81897480988e5023dd0d99b2b6f26545bd594f3bd33a0b4a5fb02527fc"
+    }
+   ]
   },
   {
    "id": "C27",
