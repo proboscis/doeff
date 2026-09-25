@@ -86,6 +86,10 @@ class AwaitOutcome:
     has already spent the contract retries and reaped the pane, so a
     failure is final and ``continuable`` is False.  Local/scenario
     sessions stay alive across an invalid result, so the default holds.
+
+    ``turn_end`` is the typed end of the turn the await observed, for
+    handlers that see turns (the headless handler); terminal handlers
+    leave it ``None``.
     """
 
     status: AwaitStatus
@@ -93,6 +97,161 @@ class AwaitOutcome:
     validation_error: str | None = None
     exit_code: int | None = None
     continuable: bool = True
+    turn_end: "AgentTurnEnd | None" = None
+
+
+# =============================================================================
+# Turn events — backend-neutral events of an agent runtime's turns
+# (agora-redesign #604).  Handlers translate their CLI's own lines into these;
+# callers never see stream-json lines, JSON-RPC messages, pids or argv.
+# =============================================================================
+
+
+class TurnInputMode(Enum):
+    """How a follow-up input reaches the session.
+
+    ``NEXT_TURN``: run it as the next turn (after the running turn ends).
+    ``INJECT``: add it to the running turn (the agent reads it at its next
+    boundary); refused with ``NoTurnInFlightError`` when no turn runs.
+    """
+
+    NEXT_TURN = "next-turn"
+    INJECT = "inject"
+
+
+class InputFateState(Enum):
+    """What became of one input (named by its ``input_ref``)."""
+
+    QUEUED = "queued"
+    STARTED = "started"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+    DISCARDED = "discarded"
+    REFUSED = "refused"
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentTurnCompleted:
+    """The turn finished.  ``resume_from`` continues this agent's context."""
+
+    result_text: str
+    input_refs: tuple[str, ...] = ()
+    resume_from: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentTurnFailed:
+    """The agent runtime ended the turn with an error."""
+
+    detail: str
+    input_refs: tuple[str, ...] = ()
+    resume_from: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentTurnInterrupted:
+    """The turn was stopped (``Interrupt`` / ``Stop``); the context stays.
+
+    ``surviving_refs`` inputs run on as the next turn of the same session;
+    ``dropped_refs`` inputs were never read.
+    """
+
+    surviving_refs: tuple[str, ...] = ()
+    dropped_refs: tuple[str, ...] = ()
+    resume_from: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentTurnLost:
+    """The runtime went away before the turn's end was read.
+
+    The context is kept: the next turn continues from ``resume_from``.
+    """
+
+    detail: str
+    resume_from: str
+
+
+AgentTurnEnd = AgentTurnCompleted | AgentTurnFailed | AgentTurnInterrupted | AgentTurnLost
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentTextEvent:
+    """A finished piece of the agent's text."""
+
+    seq: int
+    at: datetime
+    text: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentTextDeltaEvent:
+    """A partial piece of text while the agent is still writing it."""
+
+    seq: int
+    at: datetime
+    text: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentToolUseEvent:
+    """The agent called tools (by name)."""
+
+    seq: int
+    at: datetime
+    tool_names: tuple[str, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentToolResultEvent:
+    """Tool results went back to the agent."""
+
+    seq: int
+    at: datetime
+    tool_use_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentInputFateEvent:
+    """An input changed state (``input_ref`` names the input)."""
+
+    seq: int
+    at: datetime
+    input_ref: str
+    state: InputFateState
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentTurnEndEvent:
+    """A turn of the session ended (exactly one per turn)."""
+
+    seq: int
+    at: datetime
+    end: AgentTurnEnd
+
+
+AgentEvent = (
+    AgentTextEvent
+    | AgentTextDeltaEvent
+    | AgentToolUseEvent
+    | AgentToolResultEvent
+    | AgentInputFateEvent
+    | AgentTurnEndEvent
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentEventPage:
+    """Events after ``after_seq`` in seq order, without gaps or repeats.
+
+    ``next_seq`` is the ``after_seq`` for the next read.  ``end`` is the end of
+    the last turn when the session has no turn running and no input waiting;
+    ``None`` while work is in flight.
+    """
+
+    events: tuple[AgentEvent, ...]
+    next_seq: int
+    end: AgentTurnEnd | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -406,6 +565,11 @@ class LaunchEffect(AgentEffectBase):
     The claude_resolver_handler converts this to ClaudeLaunchEffect
     when agent_type is CLAUDE.
 
+    ``resume_from`` continues an earlier context of the agent runtime (the
+    value an earlier turn end carried as ``resume_from``; opaque to callers).
+    Handlers that cannot continue a context refuse it with
+    ``AgentCapabilityUnsupportedError`` rather than starting fresh.
+
     Yields: SessionHandle
     """
 
@@ -422,6 +586,7 @@ class LaunchEffect(AgentEffectBase):
     # Cold-start budget: matches the doeff-agentd oracle's 120s REPL-idle wait.
     ready_timeout: float = 120.0
     session_env: dict[str, str] | None = None
+    resume_from: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -478,11 +643,21 @@ class AwaitResultEffect(AgentEffectBase):
 class FollowUpEffect(AgentEffectBase):
     """L2 FollowUp: continue an existing session or adapter-private retry.
 
+    ``mode`` chooses next turn or injection into the running turn;
+    ``input_ref`` names the input in ``AgentInputFateEvent`` (the handler
+    names it when ``None``).  Handlers without turns refuse ``INJECT`` with
+    ``AgentCapabilityUnsupportedError`` (and do not report fates for
+    ``input_ref``).  A ``NEXT_TURN`` input that waits behind a running turn
+    starts at the next effect that touches the session after that turn ends
+    (handlers act only when an effect arrives).
+
     Yields: L2SessionHandle
     """
 
     handle: L2SessionHandle
     message: str
+    mode: TurnInputMode = TurnInputMode.NEXT_TURN
+    input_ref: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -563,6 +738,37 @@ class StopEffect(AgentEffectBase):
     """
 
     handle: SessionHandle
+
+
+@dataclass(frozen=True, kw_only=True)
+class InterruptEffect(AgentEffectBase):
+    """Stop the running turn only; the session and its context stay.
+
+    The turn's end arrives as ``AgentTurnInterrupted`` through ``Events`` /
+    ``AwaitResult``.  Handlers without turns refuse it with
+    ``AgentCapabilityUnsupportedError``.
+
+    Yields: bool (True = a turn was running and was asked to stop)
+    """
+
+    handle: SessionHandle
+
+
+@dataclass(frozen=True, kw_only=True)
+class EventsEffect(AgentEffectBase):
+    """Read the session's turn events after ``after_seq``.
+
+    Waits up to ``wait_seconds`` for a new event or for the session to go
+    idle; reading also advances the session (a waiting input starts once the
+    running turn's end is read).  Handlers without turns refuse it with
+    ``AgentCapabilityUnsupportedError``.
+
+    Yields: AgentEventPage
+    """
+
+    handle: SessionHandle
+    after_seq: int = -1
+    wait_seconds: float = 0.0
 
 
 # =============================================================================
@@ -683,6 +889,7 @@ def Launch(  # noqa: N802
     lifecycle: AgentSessionLifecycle = AgentSessionLifecycle.RUN_TO_COMPLETION,
     ready_timeout: float = 120.0,
     session_env: dict[str, str] | None = None,
+    resume_from: str | None = None,
 ) -> LaunchEffect:
     """Create a Launch effect with flat fields."""
     return LaunchEffect(
@@ -698,6 +905,7 @@ def Launch(  # noqa: N802
         lifecycle=lifecycle,
         ready_timeout=ready_timeout,
         session_env=session_env,
+        resume_from=resume_from,
     )
 
 
@@ -713,8 +921,14 @@ def AwaitResult(  # noqa: N802
     return AwaitResultEffect(handle=handle, timeout_seconds=timeout_seconds)
 
 
-def FollowUp(handle: L2SessionHandle, message: str) -> FollowUpEffect:  # noqa: N802
-    return FollowUpEffect(handle=handle, message=message)
+def FollowUp(  # noqa: N802
+    handle: L2SessionHandle,
+    message: str,
+    *,
+    mode: TurnInputMode = TurnInputMode.NEXT_TURN,
+    input_ref: str | None = None,
+) -> FollowUpEffect:
+    return FollowUpEffect(handle=handle, message=message, mode=mode, input_ref=input_ref)
 
 
 def StopSession(  # noqa: N802
@@ -754,6 +968,19 @@ def Send(  # noqa: N802
 
 def Stop(handle: SessionHandle) -> StopEffect:  # noqa: N802
     return StopEffect(handle=handle)
+
+
+def Interrupt(handle: SessionHandle) -> InterruptEffect:  # noqa: N802
+    return InterruptEffect(handle=handle)
+
+
+def Events(  # noqa: N802
+    handle: SessionHandle,
+    *,
+    after_seq: int = -1,
+    wait_seconds: float = 0.0,
+) -> EventsEffect:
+    return EventsEffect(handle=handle, after_seq=after_seq, wait_seconds=wait_seconds)
 
 
 def GetAgentSession(session_id: str) -> GetAgentSessionEffect:  # noqa: N802
@@ -834,6 +1061,56 @@ class SessionAlreadyExistsError(AgentError):
     """Session already exists."""
 
 
+class AgentCapabilityUnsupportedError(AgentError):
+    """The installed handler cannot do what the effect asks.
+
+    Raised instead of silently doing something else (for example a terminal
+    handler asked to continue a context, or the headless handler asked for
+    pane output).
+    """
+
+    def __init__(self, *, capability: str, handler: str) -> None:
+        self.capability = capability
+        self.handler = handler
+        super().__init__(f"{handler} does not support {capability}")
+
+
+class NoTurnInFlightError(AgentError):
+    """An input was to be injected into the running turn, but none runs."""
+
+    def __init__(self, *, session_id: str) -> None:
+        self.session_id = session_id
+        super().__init__(f"session {session_id} has no turn in flight")
+
+
+def refuse_turn_capabilities(effect: AgentEffectBase, *, handler: str) -> None:
+    """Refuse the turn-level fields a turn-less (terminal) handler cannot honour.
+
+    Terminal handlers call this before acting on ``LaunchEffect`` /
+    ``FollowUpEffect``, so ``resume_from`` never silently starts a fresh
+    context and ``TurnInputMode.INJECT`` never silently becomes a keystroke.
+    """
+    if isinstance(effect, LaunchEffect) and effect.resume_from is not None:
+        raise AgentCapabilityUnsupportedError(
+            capability="LaunchEffect.resume_from", handler=handler
+        )
+    if isinstance(effect, FollowUpEffect) and effect.mode is not TurnInputMode.NEXT_TURN:
+        raise AgentCapabilityUnsupportedError(
+            capability=f"FollowUpEffect.mode={effect.mode.value}", handler=handler
+        )
+
+
+class ResumeTargetNotFoundError(AgentLaunchError):
+    """``resume_from`` names a context the runtime cannot find here.
+
+    The caller decides: bring the context over, or start a fresh one.
+    """
+
+    def __init__(self, *, resume_from: str) -> None:
+        self.resume_from = resume_from
+        super().__init__(f"no context to resume from: {resume_from}")
+
+
 class AgentAttemptExhaustedError(AgentError):
     """Raised when ``agent`` exhausts its schema-retry budget."""
 
@@ -880,9 +1157,13 @@ class AgentDeadlineExceededError(AgentError):
 
 __all__ = [
     "AgentAttemptExhaustedError",
+    "AgentCapabilityUnsupportedError",
     "AgentDeadlineExceededError",
     "AgentEffect",
     "AgentError",
+    "AgentEvent",
+    "AgentEventPage",
+    "AgentInputFateEvent",
     "AgentLaunchError",
     "AgentNotAvailableError",
     "AgentReadyTimeoutError",
@@ -890,6 +1171,16 @@ __all__ = [
     "AgentSessionSnapshot",
     "AgentSpec",
     "AgentTask",
+    "AgentTextDeltaEvent",
+    "AgentTextEvent",
+    "AgentToolResultEvent",
+    "AgentToolUseEvent",
+    "AgentTurnCompleted",
+    "AgentTurnEnd",
+    "AgentTurnEndEvent",
+    "AgentTurnFailed",
+    "AgentTurnInterrupted",
+    "AgentTurnLost",
     "AgentValidationErrorKind",
     "AgentValidationFailure",
     "AttachAgentSession",
@@ -905,10 +1196,15 @@ __all__ = [
     "ClaudeLaunchEffect",
     "CleanupAgentSession",
     "CleanupAgentSessionEffect",
+    "Events",
+    "EventsEffect",
     "FollowUp",
     "FollowUpEffect",
     "GetAgentSession",
     "GetAgentSessionEffect",
+    "InputFateState",
+    "Interrupt",
+    "InterruptEffect",
     "JSONSchema",
     "L2SessionHandle",
     "Launch",
@@ -919,6 +1215,7 @@ __all__ = [
     "ListAgentSessionsEffect",
     "Monitor",
     "MonitorEffect",
+    "NoTurnInFlightError",
     "Observation",
     "ObserveAgentSession",
     "ObserveAgentSessionEffect",
@@ -926,6 +1223,7 @@ __all__ = [
     "PutAgentSessionEffect",
     "ReleaseSession",
     "ReleaseSessionEffect",
+    "ResumeTargetNotFoundError",
     "Send",
     "SendEffect",
     "SessionAlreadyExistsError",
@@ -936,7 +1234,9 @@ __all__ = [
     "StopSession",
     "StopSessionEffect",
     "TranscriptRef",
+    "TurnInputMode",
     "TurnRef",
     "agent",
     "deterministic_session_id",
+    "refuse_turn_capabilities",
 ]

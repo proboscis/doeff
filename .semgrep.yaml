@@ -67,6 +67,13 @@ rules:
         # files (argv builder / stdin-stdout protocol / process container /
         # program / substrate) and their tests; the ban stays in force for every
         # tui adapter (law print-mode-has-one-home-the-headless-backend).
+        # 2026-09-25 (agora-redesign #604): outside the session host the print
+        # mode argv lives in doeff-claude-code (doeff_claude_code/argv.hy — it
+        # never names the CLI on the flag line, so it needs no exclusion). The
+        # doeff-agents headless handler (handlers/headless.hy) is an adapter
+        # onto doeff-claude-code's effects and is NOT excluded: it must hold no
+        # argv. The sessionhost files below stay only until the agent runtime
+        # switch (deletion plan (b), step 5-1).
         - '**/sessionhost/impls/headless_argv.hy'
         - '**/sessionhost/headless_protocol.py'
         - '**/sessionhost/headless_process.py'

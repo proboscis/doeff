@@ -16,6 +16,7 @@
 (import doeff_agents.effects.agent [
   LaunchEffect MonitorEffect CaptureEffect
   SendEffect StopEffect SessionHandle Observation])
+(import doeff_agents.effects.agent [refuse-turn-capabilities])
 (import doeff_agents.adapters.base [AgentType LaunchParams])
 (import doeff_agents.adapters.claude [ClaudeAdapter])
 (import doeff_agents.session-backend [SessionBackend])
@@ -99,6 +100,7 @@
 
   (LaunchEffect [session-name agent-type work-dir prompt model mcp-tools mcp-server-name effort bare ready-timeout session-env]
     :when (= agent-type AgentType.CLAUDE)
+    (refuse-turn-capabilities effect :handler "claude-handler")
     ;; R9: session-env は非 auth overlay(binding 所有キーは loud 拒否)。
     (assert-session-env-is-non-auth-overlay session-env
       :context "LaunchEffect.session_env (claude-handler)")
