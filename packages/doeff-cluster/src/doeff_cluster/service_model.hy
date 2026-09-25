@@ -5,7 +5,17 @@
 ;;;
 ;;; service どうしは戻り値でやり取りしない。共有の状態を読み書きする effect を通してだけつながる。
 ;;; 宣言の durable な形は「関数の参照(module:attr)+ commit」。実行先はその commit のコードを準備してから参照を解く。
+;;;
+;;; 宣言は値と関数で書く(macro は置かない — ADR-DOE-HY-005 R5・agora-redesign #639):
+;;;
+;;;   (defk turn-placer-program [interval]
+;;;     {:pre [(: interval float)] :post [(: % int)]}
+;;;     …)
+;;;   (setv turn-placer (service "turn-placer" turn-placer-program
+;;;                              :env "myapp.envs:board_env" :requires {"kind" "k3s"} :config {"interval" 1.0}))
+;;;   (setv lab (System "lab" #(turn-placer)))
 (require doeff-hy.macros [defk <-])
+(import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import importlib)
 (import json)
@@ -40,6 +50,56 @@
 (defn #^ ServiceDef register-service [#^ ServiceDef service]
   (setv (get REGISTRY service.name) service)
   service)
+
+
+(setv UPDATE-FORMS #("recreate" "handoff"))
+
+
+(defn #^ str program-reference [#^ Callable program]  ; defk にできない: 宣言の値は module の読み込みの時に組む
+  "Program を作る関数の参照 `module:attr`。module の最上位の名でない関数(入れ子の関数・lambda)は実行先で import しても
+   引けないので、宣言の時点で断る。"
+  (setv qualname program.__qualname__)
+  (when (or (in "." qualname) (in "<" qualname))
+    (raise (ValueError (+ "service の Program を作る関数は module の最上位に置く(module:attr で引けない): "
+                          program.__module__ "." qualname))))
+  (+ program.__module__ ":" qualname))
+
+
+(defn #^ dict string-keyed [#^ str name #^ str option #^ dict mapping]  ; defk にできない: 宣言の値は module の読み込みの時に組む
+  "鍵が全部文字列の dict だけを通す(宣言は JSON で coordinator へ渡る)。"
+  (for [key mapping]
+    (when (not (isinstance key str))
+      (raise (TypeError (.format "service {} の :{} の鍵は文字列で書く: {!r}" name option key)))))
+  mapping)
+
+
+(defn #^ ServiceDef service [#^ str name #^ Callable program *  ; defk にできない: 宣言の値は module の読み込みの時に組む
+                             #^ str env
+                             #^ (| dict None) [requires None]
+                             #^ (| dict None) [config None]
+                             #^ (| dict None) [readiness None]
+                             #^ str [update "recreate"]
+                             #^ (| dict None) [base-from None]]
+  "名前付きの常駐 job(service)を 1 つ宣言して登録する。
+   program = Program を作る module の最上位の関数(設定の鍵を引数に受ける)。env = 実行先で組む handler の組を返す関数の import path。
+   requires = 置き場の条件・config = 設定(どちらも文字列の鍵の dict)。
+   readiness {\"windowSeconds\" n} = 本体が ReportReady で報告する「準備できた」が直近 n 秒以内にある時だけ Ready(Rollout が見る)。
+   update \"handoff\" = 版や設定が変わった時、新の process を旧と並べて起こし、新が Ready と数えられてから旧を止める(名前付きの lease で
+   書きを 1 つに絞り、lease を待つ間も待機の拍で Ready を報告する service だけが使う)。既定は \"recreate\"(旧を止めてから新)。
+   base-from {\"kind\" \"Deployment\" \"namespace\" … \"name\" … \"container\" …} = 業務コードの版(土台の commit)をその Deployment の
+   image の版へ追わせる(coordinator の base_follow_policy)。"
+  (when (not-in update UPDATE-FORMS)
+    (raise (ValueError (.format "service {} の :update は {} のどれか: {!r}" name UPDATE-FORMS update))))
+  (register-service
+    (ServiceDef name
+                (program-reference program)
+                env
+                (tuple (sorted (.items (string-keyed name "requires" (or requires {})))))
+                (tuple (sorted (.items (string-keyed name "config" (or config {})))))
+                program
+                (if (is readiness None) None (string-keyed name "readiness" readiness))
+                update
+                (if (is base-from None) None (string-keyed name "base-from" base-from)))))
 
 
 (defn resolve [#^ str path]
