@@ -148,15 +148,20 @@
 ;;; 履歴からの再開は kind summary の行を先に読み(要約 = 原文の前・区間の順)、原文は要約の区間より新しい出来事だけ(record-turns-for の floor)。
 
 (require doeff-adr.macros [defadr defsemgrep rule law])
-(require doeff-hy.macros [deftest])
+(require doeff-hy.macros [deftest defk <-])
 (import doeff-adr.macros [fact interpretation counterexample])
 (import json)
 (import re)
+(import dataclasses)
 (import dataclasses [replace])
 (import pathlib [Path])
+(import types)
+(import hy)
 (import doeff [run])
+(import doeff_hy.sexpr [args-of body-of])
+(import doeff_agents.sessionhost.acp.agentd [sweep-turn-records])
 (import doeff_agents.sessionhost.acp.effects
-        [AGENT-JOB-KIND AGENT-JOB-NAMESPACE AGORA-KINDS-NAMESPACE AcpRow AgentdSettings
+        [AGENT-JOB-KIND AGENT-JOB-NAMESPACE AGORA-KINDS-NAMESPACE AcpGetRow AcpPutStatus AcpRow AgentdSettings
          AgentdState CONVERSATION-ID-ENV CaptureGone InFlightJob JSONObject JoinArgv JoinDeclaration JoinPlan JoinSpec
          RECORD-URL-ENV RUNNER-OWNED-SEAT-ENV SEAT-OPENER-ENV
          MESSAGE-ATTACHMENTS-KEY MESSAGE-KIND
@@ -166,7 +171,7 @@
 (import doeff_agents.sessionhost.acp.fake [Birth FakeAcp FakeCustody FakeLocal FakeSessions])
 (import doeff_agents.sessionhost.acp.join [join-plan-of join-spec-of ownership-preflight ownership-verdict])
 (import doeff_agents.sessionhost.acp.judgment [capture-verdict job-step-of mail-turn-text-of node-seat-env-of record-due resume-params-of
-                                               stream-capability-of-backend wait-seconds-for])
+                                               stream-capability-of-backend turn-record-ended-status wait-seconds-for])
 (import doeff_agents.sessionhost.acp.runtime [AgentdPreflightError initial-state install run-heartbeat run-tick settings-from-env])
 (import doeff_agents.sessionhost.acp.valve [ACP-VALVE-DEFAULT ACP-VALVE-ENV acp-valve])
 (import doeff_agents.sessionhost.policy [SEAT-ENV-CREDENTIAL-SHAPED-SEGMENTS SPAWN-INHERITED-ENV-KEYS SPAWN-INHERITED-ENV-PREFIXES
@@ -460,6 +465,325 @@
       (and inside (.startswith line "(")) (break)
       inside (.append out line)))
   out)
+
+
+;; ---------------------------------------------------------------------------
+;; 呼び先と引数の役で読む口(form で読む — 行の字面・折れ方・註・引数の追加に依らない)
+;;
+;; 実弾 2026-09-26(日次の赤・agora-redesign#639): f3858b94 が巡回 sweep-turn-records の
+;; turn-record-ended-status の呼びに引数 pair-conditions を 1 つ足しただけで、呼びの字面
+;; "(turn-record-ended-status record-status None #())" を部分一致で探していた R49 の針が
+;; 「巡回が usage を書いている」と赤になった(巡回が usage を書かない性質は保たれていた)。
+;; 上の spelling-pins-proxy-for-shape の族そのもの。defk は書いたままの引数の並びと本体を form で
+;; 残す(doeff-hy の defk が __doeff_args__ / __doeff_body__ に置く・読み口 doeff_hy.sexpr)ので、
+;; 役の位置は**呼び先の定義から**導き、呼びの引数を役の名へ写してから確かめる。
+;; 反例の検 = test-adr-doe-agents-012-sweep-roles-are-read-from-the-callee-not-the-spelling。
+;; ---------------------------------------------------------------------------
+
+(defclass [(dataclasses.dataclass :frozen True)] CalleeRoles []
+  "呼び先の役: 位置で渡せる役の並び・keyword で渡せる役の全て・既定値の form(既定値の無い役は載らない)。
+   呼びの引数をどの役へ写すかを呼び先の定義から決めるための値。役の名は Python の名(hy.mangle —
+   defk の引数 cache-observation と keyword の :cache-observation が同じ名になる)。"
+  #^ tuple positional
+  #^ frozenset names
+  #^ dict defaults)
+
+
+(defk form-text [form]
+  {:pre [(: form hy.models.Object)]
+   :post [(: % str)]}
+  "失敗文に form を読める綴りで書くため(hy.repr の先頭の quote を落とす)。"
+  (.removeprefix (hy.repr form) "'"))
+
+
+(defk roles-of-params [params]
+  {:pre [(: params hy.models.Object)]
+   :post [(: % CalleeRoles)]}
+  "defk の引数の並びの form([a b [c None] * d])から呼び先の役を決める。既定値つきの引数 [name default] と型の註
+   #^ T name は名だけを役にし、`*` の後の役は keyword でしか渡せない。読めない形(#* / #** の展開)は赤 — 役の
+   分からない呼び先を緑にしない。反例の検が作り物の呼び先を渡すので、kleisli ではなく form を受ける。"
+  (<- params-shown str (form-text params))
+  (assert (isinstance params hy.models.List) f"引数の並びの form ではない: {params-shown}")
+  (setv positional [])
+  (setv names [])
+  (setv defaults {})
+  (setv keyword-only False)
+  (for [param params]
+    (<- param-shown str (form-text param))
+    (setv target (if (isinstance param hy.models.List) (get param 0) param))
+    (when (and (isinstance target hy.models.Expression) (= (len target) 3)
+               (= (get target 0) (hy.models.Symbol "annotate")))
+      (setv target (get target 1)))
+    (assert (isinstance target hy.models.Symbol) f"引数の形 {param-shown} を役の名へ読めない — 役の読み口を広げる")
+    (cond
+      (= target (hy.models.Symbol "*")) (setv keyword-only True)
+      (= target (hy.models.Symbol "/")) None
+      True (do (setv name (hy.mangle target))
+               (.append names name)
+               (when (not keyword-only) (.append positional name))
+               (when (isinstance param hy.models.List)
+                 (assert (= (len param) 2) f"既定値つきの引数の形 {param-shown} を読めない")
+                 (setv (get defaults name) (get param 1))))))
+  (CalleeRoles :positional (tuple positional) :names (frozenset names) :defaults defaults))
+
+
+(defk defk-roles [kleisli]
+  {:pre [(: kleisli types.FunctionType)]
+   :post [(: % CalleeRoles)]}
+  "本物の defk の役を、defk が残した引数の並び(doeff_hy.sexpr.args-of)から決めるため。"
+  (setv params (args-of kleisli))
+  (assert (is-not params None) f"{kleisli} は引数の並びの form を残す defk ではない — 役を読めない")
+  (<- roles CalleeRoles (roles-of-params params))
+  roles)
+
+
+(defk defk-forms [kleisli]
+  {:pre [(: kleisli types.FunctionType)]
+   :post [(: % list)]}
+  "本物の defk の本体を、defk が残した form の列(doeff_hy.sexpr.body-of)で読むため。"
+  (setv body (body-of kleisli))
+  (assert (is-not body None) f"{kleisli} は本体の form を残す defk ではない — 呼びを読めない")
+  (list body))
+
+
+(defk effect-roles [cls]
+  {:pre [(: cls type)]
+   :post [(: % CalleeRoles)]}
+  "effect の型の役を、その dataclass の欄の並びから決めるため。"
+  (assert (dataclasses.is-dataclass cls) f"{cls} は欄を持つ effect の型ではない — 役を読めない")
+  (setv fields (lfor f (dataclasses.fields cls) :if f.init f))
+  (CalleeRoles :positional (tuple (gfor f fields :if (not f.kw-only) f.name))
+               :names (frozenset (gfor f fields f.name))
+               :defaults {}))
+
+
+(defk call-of? [form callee]
+  {:pre [(: form hy.models.Object) (: callee str)]
+   :post [(: % bool)]}
+  "form が `(callee …)` の呼びかを判じるため(呼びを拾う・束ねた式の出所を呼び先の名で確かめる)。"
+  (and (isinstance form hy.models.Expression) (bool form) (= (get form 0) (hy.models.Symbol callee))))
+
+
+(defk calls-in [forms callee]
+  {:pre [(: forms list) (: callee str)]
+   :post [(: % list)]}
+  "form の列(defk の本体)の中の `(callee …)` の呼びを、入れ子の呼びの引数の中まで全部拾うため(書いた順)。"
+  (setv out [])
+  (setv pending (list (reversed forms)))
+  (while pending
+    (setv node (.pop pending))
+    (<- hit bool (call-of? node callee))
+    (when hit
+      (.append out node))
+    (when (isinstance node hy.models.Sequence)
+      (.extend pending (reversed (list node)))))
+  out)
+
+
+(defk bindings-of [forms name]
+  {:pre [(: forms list) (: name hy.models.Symbol)]
+   :post [(: % list)]}
+  "名 name の値がどの式から来たかを確かめるため、form の列の中で name を束ねる式を全部返す:
+   (<- name expr) / (<- name T expr) の expr と (setv name expr …) の expr。"
+  (setv out [])
+  (<- binds list (calls-in forms "<-"))
+  (for [bind binds]
+    (when (and (in (len bind) #(3 4)) (= (get bind 1) name))
+      (.append out (get bind -1))))
+  (<- setv-forms list (calls-in forms "setv"))
+  (for [setv-form setv-forms]
+    (for [i (range 1 (- (len setv-form) 1) 2)]
+      (when (= (get setv-form i) name)
+        (.append out (get setv-form (+ i 1))))))
+  out)
+
+
+(defk all-calls-of? [forms callee]
+  {:pre [(: forms list) (: callee str)]
+   :post [(: % bool)]}
+  "束ねた式が 1 つ以上在り、その全てが `(callee …)` の呼びかを判じるため(束ねの無い名 = 出所の分からない名は偽)。"
+  (setv verdict (bool forms))
+  (for [form forms]
+    (<- hit bool (call-of? form callee))
+    (setv verdict (and verdict hit)))
+  verdict)
+
+
+(defk call-roles [roles call]
+  {:pre [(: roles CalleeRoles) (: call hy.models.Expression)]
+   :post [(: % dict)]}
+  "呼び (callee a b :k v) の引数を役の名 → 渡した form へ写すため(位置の引数は呼び先の並び・keyword は名)。
+   写せない呼び(位置の引数が多すぎる・呼び先に無い keyword・#* / #** の展開)は赤。"
+  (<- shown str (form-text call))
+  (setv out {})
+  (setv args (list (cut call 1 None)))
+  (setv i 0)
+  (setv pos 0)
+  (while (< i (len args))
+    (setv arg (get args i))
+    (<- spread-iterable bool (call-of? arg "unpack-iterable"))
+    (<- spread-mapping bool (call-of? arg "unpack-mapping"))
+    (assert (not (or spread-iterable spread-mapping)) f"呼び {shown} は #* / #** で引数を展開している — 役を読めない")
+    (if (isinstance arg hy.models.Keyword)
+        (do (setv role (hy.mangle arg.name))
+            (assert (in role roles.names) f"呼び {shown} の :{arg.name} は呼び先の役に無い")
+            (assert (< (+ i 1) (len args)) f"呼び {shown} の :{arg.name} に値が無い")
+            (setv (get out role) (get args (+ i 1)))
+            (setv i (+ i 2)))
+        (do (assert (< pos (len roles.positional)) f"呼び {shown} の位置の引数が呼び先の役({(len roles.positional)} 個)より多い")
+            (setv (get out (get roles.positional pos)) arg)
+            (setv pos (+ pos 1))
+            (setv i (+ i 1)))))
+  out)
+
+
+;; R49: 巡回が閉じる記録の status に置いてはならない材料の役(judgment.turn-record-ended-status の引数の名 → 規則)。
+(defclass [(dataclasses.dataclass :frozen True)] ForbiddenMaterial []
+  "巡回が役に渡してよい form ちょうど(allowed — form-text の綴り)と、それ以外を渡した時に失敗文で言う理由。"
+  #^ str allowed
+  #^ str reason)
+
+(setv SWEEP-FORBIDDEN-MATERIAL
+      {"usage" (ForbiddenMaterial :allowed "None" :reason "消費の和は手番の終わりの 1 回")
+       "entries" (ForbiddenMaterial :allowed "#()" :reason "巡回は手番の出来事を持たない — 見出しの追記は手番の中だけ")
+       "responses" (ForbiddenMaterial :allowed "None" :reason "応答ごとの消費は手番の終わりの 1 回")})
+
+
+(defk sweep-violations [ended-roles get-roles put-roles sweep-body]
+  {:pre [(: ended-roles CalleeRoles) (: get-roles CalleeRoles) (: put-roles CalleeRoles) (: sweep-body list)]
+   :post [(: % list)]}
+  "R49 の巡回の本体(form の列)を呼び先と引数の役で読み、違反を失敗文の列で返す(空 = 緑)。
+   ended-roles = judgment.turn-record-ended-status の役・get-roles / put-roles = effect AcpGetRow / AcpPutStatus の役。
+   確かめること: (1) 巡回の中の全ての turn-record-ended-status の呼びで usage = None・entries = #()・responses は
+   渡さないか None(呼びが 1 つ以上)(2) AcpPutStatus の row は AcpGetRow の答え = 読み直した image(一覧の image ではない)
+   (3) その AcpGetRow の key は turn-record-key-of の答え = 記録の鍵。"
+  (setv out [])
+  (setv missing (lfor role SWEEP-FORBIDDEN-MATERIAL :if (not-in role ended-roles.names) role))
+  (for [role missing]
+    (.append out f"呼び先の定義に役 {role} が無い(契約の変更 — 検査も直す)"))
+  (<- ended-calls list (calls-in sweep-body "turn-record-ended-status"))
+  (when (not ended-calls)
+    (.append out "巡回が turn-record-ended-status を呼んでいない(R49 — 閉じる記録の status を組まない)"))
+  (when (not missing)
+    (for [call ended-calls]
+      (<- passed dict (call-roles ended-roles call))
+      (for [[role rule] (.items SWEEP-FORBIDDEN-MATERIAL)]
+        (setv form (.get passed role (.get ended-roles.defaults role)))
+        (if (is form None)
+            (do (<- call-shown str (form-text call))
+                (.append out f"巡回が {role} を渡していない(呼びが呼び先の定義に合わない: {call-shown})"))
+            (do (<- form-shown str (form-text form))
+                (when (!= form-shown rule.allowed)
+                  (.append out f"巡回が {role} に {form-shown} を渡している(R49 — {rule.reason})")))))))
+  (<- put-calls list (calls-in sweep-body "AcpPutStatus"))
+  (when (not put-calls)
+    (.append out "巡回が AcpPutStatus を撃っていない(R49 — 記録を閉じない)"))
+  (for [call put-calls]
+    (<- put-passed dict (call-roles put-roles call))
+    (setv row (.get put-passed "row"))
+    (<- row-shown str (form-text row))
+    (setv row-sources [])
+    (when (isinstance row hy.models.Symbol)
+      (<- row-sources list (bindings-of sweep-body row)))
+    (<- row-is-read bool (all-calls-of? row-sources "AcpGetRow"))
+    (if (not row-is-read)
+        (.append out (+ f"巡回が読み直した image で書いていない(R49 — AcpPutStatus の row に {row-shown} を渡している"
+                        " — 鍵で読んだ AcpGetRow の答えではない)"))
+        (for [read row-sources]
+          (<- get-passed dict (call-roles get-roles read))
+          (setv key (.get get-passed "key"))
+          (<- key-shown str (form-text key))
+          (setv key-sources [key])
+          (when (isinstance key hy.models.Symbol)
+            (<- key-sources list (bindings-of sweep-body key)))
+          (<- key-is-record bool (all-calls-of? key-sources "turn-record-key-of"))
+          (when (not key-is-record)
+            (.append out (+ f"巡回が鍵で読み直していない(R49 — 書く行を読む AcpGetRow の key に {key-shown} を渡している"
+                            " — turn-record-key-of の答えではない)"))))))
+  out)
+
+
+;; 反例の検(test-adr-doe-agents-012-sweep-roles-are-read-from-the-callee-not-the-spelling)の材料: 作り物の呼び先の
+;; 引数の並びと、作り物の巡回の本体。本物の綴りを書き換えて作らない — 本物の呼びの字面が変わっても反例の検が
+;; 黙って別の物を撃たないように、形は全部ここに書く。
+(setv SWEEP-ENDED-PARAMS "[status usage entries conditions [cache-observation None] [responses None]]")
+
+(defk synthetic-sweep-forms [ended-call row key]
+  {:pre [(: ended-call str) (: row str) (: key str)]
+   :post [(: % list)]}
+  "反例の検が役の読みを試すため、今日の巡回と同じ骨組み(一覧 → 鍵で読み直す → 閉じる status を組む → 書く)の
+   本体を form の列で作る。ended-call = 閉じる status を組む式・row = 書く行の名・key = 読み直す鍵の名。"
+  (list (hy.read-many (+ "(<- listed tuple (AcpRunningTurnRecords))
+(for [row listed]
+  (setv job-id (.get row.spec \"agentJobId\"))
+  (<- key str (turn-record-key-of job-id))
+  (<- record (| AcpRow None) (AcpGetRow :key " key "))
+  (<- pair (| AcpRow None) (AcpGetRow :key f\"{AGENT-JOB-NAMESPACE}:{AGENT-JOB-KIND}:{job-id}\"))
+  (when (isinstance record AcpRow)
+    (<- record-status dict (status-object-of record))
+    " ended-call "
+    (<- wrote (| Written Conflict Refused) (AcpPutStatus :row " row " :status ended))))"))))
+
+(defclass [(dataclasses.dataclass :frozen True)] SweepRoleCase []
+  "反例の検の 1 例: 名・作り物の呼び先の引数の並び・閉じる status を組む式・書く行の名・読み直す鍵の名・期待する失敗文の列
+   (空 = 緑)。役の読みが正常例を緑に、違反例を意図した文の赤にすることを 1 例ずつ確かめるため。"
+  #^ str label
+  #^ str params
+  #^ str ended-call
+  #^ str row
+  #^ str key
+  #^ tuple expected)
+
+(setv SWEEP-ROLE-CASES
+      [(SweepRoleCase :label "正常例 今日の呼び" :params SWEEP-ENDED-PARAMS
+                      :ended-call "(<- ended dict (turn-record-ended-status record-status None #() pair-conditions))"
+                      :row "record" :key "key" :expected #())
+       (SweepRoleCase :label "正常例 引数の追加(呼び先が役を足し、呼びが渡す)"
+                      :params "[status usage entries conditions [cache-observation None] [responses None] [trace None]]"
+                      :ended-call "(<- ended dict (turn-record-ended-status record-status None #() pair-conditions :trace sweep-trace))"
+                      :row "record" :key "key" :expected #())
+       (SweepRoleCase :label "正常例 呼び先が usage の前に役を足す(役の位置は呼び先の定義から導く)"
+                      :params "[status node usage entries conditions [cache-observation None] [responses None]]"
+                      :ended-call "(<- ended dict (turn-record-ended-status record-status record-node None #() pair-conditions))"
+                      :row "record" :key "key" :expected #())
+       (SweepRoleCase :label "正常例 呼びの中の註と折れ方" :params SWEEP-ENDED-PARAMS
+                      :ended-call "(<- ended dict (turn-record-ended-status record-status
+                                     None   ; usage は書かない
+                                     #()    ; entries は無い
+                                     pair-conditions))"
+                      :row "record" :key "key" :expected #())
+       (SweepRoleCase :label "正常例 keyword の既定値つき引数" :params SWEEP-ENDED-PARAMS
+                      :ended-call (+ "(<- ended dict (turn-record-ended-status record-status :usage None :entries #()"
+                                     " :conditions pair-conditions :cache-observation None :responses None))")
+                      :row "record" :key "key" :expected #())
+       (SweepRoleCase :label "違反例 usage に値" :params SWEEP-ENDED-PARAMS
+                      :ended-call "(<- ended dict (turn-record-ended-status record-status usage-total #() pair-conditions))"
+                      :row "record" :key "key"
+                      :expected #("巡回が usage に usage-total を渡している(R49 — 消費の和は手番の終わりの 1 回)"))
+       (SweepRoleCase :label "違反例 keyword で responses" :params SWEEP-ENDED-PARAMS
+                      :ended-call "(<- ended dict (turn-record-ended-status record-status None #() pair-conditions :responses shaped))"
+                      :row "record" :key "key"
+                      :expected #("巡回が responses に shaped を渡している(R49 — 応答ごとの消費は手番の終わりの 1 回)"))
+       (SweepRoleCase :label "違反例 entries に値" :params SWEEP-ENDED-PARAMS
+                      :ended-call "(<- ended dict (turn-record-ended-status record-status None entries pair-conditions))"
+                      :row "record" :key "key"
+                      :expected #("巡回が entries に entries を渡している(R49 — 巡回は手番の出来事を持たない — 見出しの追記は手番の中だけ)"))
+       (SweepRoleCase :label "違反例 呼びを消す" :params SWEEP-ENDED-PARAMS :ended-call "(setv ended {})"
+                      :row "record" :key "key"
+                      :expected #("巡回が turn-record-ended-status を呼んでいない(R49 — 閉じる記録の status を組まない)"))
+       (SweepRoleCase :label "違反例 呼び先の役の改名(usage → consumption)"
+                      :params "[status consumption entries conditions [cache-observation None] [responses None]]"
+                      :ended-call "(<- ended dict (turn-record-ended-status record-status None #() pair-conditions))"
+                      :row "record" :key "key"
+                      :expected #("呼び先の定義に役 usage が無い(契約の変更 — 検査も直す)"))
+       (SweepRoleCase :label "違反例 一覧の image で書く" :params SWEEP-ENDED-PARAMS
+                      :ended-call "(<- ended dict (turn-record-ended-status record-status None #() pair-conditions))"
+                      :row "row" :key "key"
+                      :expected #("巡回が読み直した image で書いていない(R49 — AcpPutStatus の row に row を渡している — 鍵で読んだ AcpGetRow の答えではない)"))
+       (SweepRoleCase :label "違反例 記録ではない鍵で読む" :params SWEEP-ENDED-PARAMS
+                      :ended-call "(<- ended dict (turn-record-ended-status record-status None #() pair-conditions))"
+                      :row "record" :key "job-id"
+                      :expected #("巡回が鍵で読み直していない(R49 — 書く行を読む AcpGetRow の key に job-id を渡している — turn-record-key-of の答えではない)"))])
 
 
 (defclass World []
@@ -906,8 +1230,10 @@
           (counterexample "手番の終わりの最後の create が断られた時に期限(turn_record_create_deadline_seconds)の内なら pending のままにする形: 次の拍が来ないので条件が 1 つも乗らず『Ended・記録なし・理由なし』になる。短い手番(20 秒)が頭の答えない拍に当たると必ずこれ")
           (counterexample "行が在って書きだけ断られた拍に create を撃ち直す形: 409 が返るだけで記録は閉じず、断りが続く間ずっと撃ち続ける。行の在否を鍵で確かめ、在れば巡回に任せる")
           (counterexample "ACP の turnlessOf や契約の lifecycle の宣言を変えて『記録の無い Ended』を通す形: 郵便の側の語の問題(#589)と agentd の側の取り残し(#537)を混ぜ、どちらも直らない。agentd の側の不変条件で閉じる")
-          (counterexample "終端の書きが cause を運ぶことを、**呼びの 1 行の字面**で pin する針で守る形: 局所変数を 1 つ改名した正当な便(job-status → fresh-status・6401d1d5 2026-09-17)だけで『cause を渡していない』と赤くなり、しかも 2 本の針が同じ 1 文字列を共有していて同時に落ちた(実弾 2026-09-17〜19 の日次)。渡っている cause は 1 度も欠けていない。守るべきは綴りではなく**役**なので、呼び先と引数の役(4 引数・第 3 が cause を運ぶ式)で撃つ")]
+          (counterexample "終端の書きが cause を運ぶことを、**呼びの 1 行の字面**で pin する針で守る形: 局所変数を 1 つ改名した正当な便(job-status → fresh-status・6401d1d5 2026-09-17)だけで『cause を渡していない』と赤くなり、しかも 2 本の針が同じ 1 文字列を共有していて同時に落ちた(実弾 2026-09-17〜19 の日次)。渡っている cause は 1 度も欠けていない。守るべきは綴りではなく**役**なので、呼び先と引数の役(4 引数・第 3 が cause を運ぶ式)で撃つ")
+          (counterexample "巡回が閉じる記録に usage を書かないことを、**呼びの字面** \"(turn-record-ended-status record-status None #())\" の部分一致で守る形: 巡回が対の agent-job の条件を写すために引数 pair-conditions を 1 つ足した正当な便(f3858b94)だけで、usage を書いていないのに『巡回が usage を書いている』と赤くなった(日次の赤 2026-09-26・agora-redesign#639)。usage・entries・responses の位置は呼び先 turn-record-ended-status の defk の引数の並びから導き、巡回の本体の form の呼びを役へ写して確かめる(sweep-violations)")]
        :enforcement ["docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test-adr-doe-agents-012-turn-records-are-not-left-to-one-write"
+                     "docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test-adr-doe-agents-012-sweep-roles-are-read-from-the-callee-not-the-spelling"
                      "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-a-turn-record-left-running-by-a-refused-write-is-ended-by-the-sweep"
                      "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-the-sweep-closes-the-leftovers-of-a-restart-and-leaves-the-live-ones-alone"
                      "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy::test-turn-record-sweep-verdict-reads-the-end-state-of-the-pair-and-the-node"
@@ -1549,14 +1875,15 @@
                "拍が巡回を撃っていない(R49)")
        (assert (= (len (lfor line agentd-lines :if (in "(<- listed tuple (AcpRunningTurnRecords))" line) line)) 1)
                "巡回の入口は走っている記録の一覧の 1 点(R49)")
-       ;; 巡回は書く前に鍵で読み直す(一覧の image で PutStatus を撃たない)。
-       (setv sweep-body (defk-body agentd-lines "sweep-turn-records"))
-       (assert (any (gfor line sweep-body (in "(<- record (| AcpRow None) (AcpGetRow :key key))" line)))
-               "巡回が鍵で読み直していない(R49)")
-       (assert (any (gfor line sweep-body (in "(AcpPutStatus :row record :status ended)" line)))
-               "巡回が読み直した image で書いていない(R49)")
-       (assert (any (gfor line sweep-body (in "(turn-record-ended-status record-status None #())" line)))
-               "巡回が usage を書いている(R49 — 消費の和は手番の終わりの 1 回)")
+       ;; 巡回は書く前に記録の鍵で読み直し(一覧の image で PutStatus を撃たない)、閉じる status に usage・entries・responses を
+       ;; 置かない。行の字面ではなく、巡回の本体の form を呼び先(turn-record-ended-status・AcpGetRow・AcpPutStatus)の定義から
+       ;; 導いた引数の役で読む(sweep-violations・反例の検 test-adr-doe-agents-012-sweep-roles-are-read-from-the-callee-not-the-spelling)。
+       (<- ended-roles CalleeRoles (defk-roles turn-record-ended-status))
+       (<- get-roles CalleeRoles (effect-roles AcpGetRow))
+       (<- put-roles CalleeRoles (effect-roles AcpPutStatus))
+       (<- sweep-forms list (defk-forms sweep-turn-records))
+       (<- sweep-wrongs list (sweep-violations ended-roles get-roles put-roles sweep-forms))
+       (assert (= sweep-wrongs []) (.join " / " sweep-wrongs))
        ;; H1 / H2 / H3: 記録なしで Ended にしない 3 つの腕。
        (assert (= (len (lfor line agentd-lines :if (in ":record-create RECORD-CREATE-PENDING :record-create-last-ms 0" line) line)) 1)
                "拾い直しが行の無い記録を段 9p の網へ戻していない(R49 H1)")
@@ -1573,6 +1900,20 @@
                    "test-a-turn-that-ends-inside-the-deadline-still-names-the-missing-record"
                    "test-a-turn-record-that-vanished-before-the-end-is-re-created-and-ended"]]
          (assert (in (+ "(deftest " name) tests) f"R49 の反例の検が無い: {name}")))
+     (deftest test-adr-doe-agents-012-sweep-roles-are-read-from-the-callee-not-the-spelling
+       ;; R49 の針の反例(針そのものの検): 巡回の読み(sweep-violations)が、材料を足す正当な変更(呼び先が役を足す・
+       ;; 呼びが引数を足す・註・折れ方・keyword の既定値つき引数)では緑のまま、usage・entries・responses に材料を渡す変更・
+       ;; 呼びを消す変更・一覧の image で書く変更・記録ではない鍵で読む変更・呼び先の役の改名では、意図した失敗文ちょうどで
+       ;; 赤になる。作り物の呼び先と巡回の本体(SWEEP-ROLE-CASES)で撃つ — 本物の綴りを書き換えて作らない。
+       (<- get-roles CalleeRoles (effect-roles AcpGetRow))
+       (<- put-roles CalleeRoles (effect-roles AcpPutStatus))
+       (for [case SWEEP-ROLE-CASES]
+         (<- ended-roles CalleeRoles (roles-of-params (hy.read case.params)))
+         (<- forms list (synthetic-sweep-forms case.ended-call case.row case.key))
+         (<- got list (sweep-violations ended-roles get-roles put-roles forms))
+         (setv verdict (if got (+ "赤: " (.join " / " got)) "緑"))
+         (print f"{case.label} → {verdict}")
+         (assert (= (tuple got) case.expected) f"{case.label}: 期待 {case.expected} ・実際 {got}")))
      (deftest test-adr-doe-agents-012-dropped-history-turns-leave-a-headline
        ;; R34 の針(構造): 畳みは rehydrate-history-of の 1 点・落とした区間の見出しは history-dropped-headline の 1 点・数の綴りは
        ;; history-counts-note の 1 点(turn-record の見出しと同じ)・黙って落とす旧の断り(footer)が無い・答えは見出しと切った byte を
