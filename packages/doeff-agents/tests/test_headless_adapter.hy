@@ -1,0 +1,405 @@
+;; headless の handler(handlers/headless.hy)の検 — doeff-agents の公開 effect だけを撃つ Program を、層 2 の handler の組だけ替えて走らせる
+;; (agora-redesign #604)。
+;;
+;;   fake  doeff-claude-code の fake の handler + 仮想の時計。API も process も使わない。
+;;   stub  doeff-claude-code の本番の handler + 替え玉の CLI(packages/doeff-claude-code/tests/stub_cli/claude.hy)+ 壁の時計。
+;;   real  doeff-claude-code の本番の handler + 本物の claude(個人の profile・model haiku)。env DOEFF_CLAUDE_CODE_REAL_CONFIG_DIR が
+;;         無ければ skip・印 e2e(日次と着地の門は -m "not e2e" で除く)。会社の profile は使わない。
+;;
+;; 筋書きの Program は session host の socket を開かず、doeff_claude_code も doeff_agents.sessionhost も import しない(公開 effect だけ)。
+(require doeff-hy.macros [deftest defk <-])
+(import collections.abc [Callable])
+(import dataclasses [dataclass])
+(import os)
+(import pathlib [Path])
+(import re)
+(import sys)
+(import pytest)
+(import doeff [run with_handlers])
+(import doeff_core_effects.scheduler [scheduled Spawn Wait])
+;; 故障の注入の口だけは層 2 の検の effect を使う(公開 effect ではない — process の死を起こす手が公開面に無いため)。
+(import doeff_claude_code.faults [ClaudeDropProcess])
+(import doeff_time [Delay GetMonotonic SimClock sim-time-handler sync-time-handler])
+(import doeff_agents.adapters.base [AgentType AgentSessionLifecycle])
+(import doeff_agents.effects [
+  Launch FollowUp Interrupt Events AwaitResult Monitor Capture Stop ReleaseSession
+  SessionHandle AgentEventPage AwaitStatus TurnInputMode InputFateState
+  AgentTextEvent AgentToolUseEvent AgentInputFateEvent AgentTurnEndEvent
+  AgentTurnCompleted AgentTurnInterrupted AgentTurnLost
+  AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError])
+(import doeff_agents.monitor [SessionStatus])
+;; 層 2 の handler との対は doeff-agents の組み立ての部品で作る(この検も doeff_claude_code を import しない)。
+(import doeff_agents.handlers.headless_compose [FakeReply headless-claude-handlers fake-headless-claude-handlers])
+
+(setv FAKE "fake" STUB "stub" REAL "real")
+(setv REAL-CONFIG-ENV "DOEFF_CLAUDE_CODE_REAL_CONFIG_DIR")
+(setv REPO-PACKAGES (. (Path __file__) (resolve) parent parent parent))
+(setv STUB-PATH (str (/ REPO-PACKAGES "doeff-claude-code" "tests" "stub_cli" "claude.hy")))
+(setv ADAPTER-PATH (/ REPO-PACKAGES "doeff-agents" "src" "doeff_agents" "handlers" "headless.hy"))
+;; 子の claude に親の会話の印・hook の socket を継がせない(doeff-claude-code の検と同じ)。
+(setv INHERITED-PREFIXES #("CLAUDECODE" "CLAUDE_CODE_" "CLAUDE_CONFIG_DIR" "AI_AGENT" "CLAUDE_PID"
+                           "CLAUDE_EFFORT" "DOEFF_CLAUDE_CODE_"))
+(setv CODEWORD "OKAPI-77" EXTRA-WORD "EXTRA-9" PAGE-WAIT 5.0 MAX-PAGES 2000)
+
+
+;; --- 筋書きの言葉(替え玉の CLI の規則 scenario_rules.hy と同じ言葉 — 本物もこの言葉どおりに振る舞う) ---------------
+
+;; 本物の model が「覚えて・思い出して」を注入の試みと読んで断った実測(2026-09-25)があるので、検の文脈を先に名乗る。
+(defn #^ str remember-prompt [#^ str word]
+  (.format "This is a test of conversation resume. Remember the codeword {}. Reply with exactly: {}" CODEWORD word))
+(defn #^ str recall-prompt [] "Same resume test. What was the codeword I asked you to remember? Reply with only the codeword.")
+(defn #^ str reply-prompt [#^ str word] (.format "Reply with exactly: {}" word))
+(defn #^ str sleep-prompt [#^ int seconds #^ str word]
+  (.format "Use the Bash tool to run exactly this command: sleep {} . When it finishes, reply with exactly: {}" seconds word))
+(defn #^ str extra-prompt [] (.format "Also include the word {} in your final reply." EXTRA-WORD))
+
+(defn fake-responder [#^ str text #^ tuple memory]
+  "fake の返事(scenario_rules.hy の reply-for と同じ規則の写し — 型の違う 2 つ目の規則を作らない範囲で最小)。"
+  (setv sleep (re.search r"sleep (\d+)" text)
+        exact (re.search r"[Rr]eply with exactly: (\S+)" text)
+        extra (re.search r"include the word (\S+)" text))
+  (setv word (cond
+               (in "What was the codeword" text)
+                 (next (gfor earlier memory :setv found (re.search r"codeword (\S+?)\." earlier) :if found (.group found 1))
+                       "UNKNOWN")
+               exact (.group exact 1)
+               extra (.group extra 1)
+               True "OK"))
+  (FakeReply word :tool-seconds (if sleep (float (.group sleep 1)) 0.0)))
+
+
+;; --- 解釈器(composition root) --------------------------------------------------------------------
+
+(defclass [(dataclass :frozen True)] Setting []
+  "筋書きの宣言: work-dir = 作業 dir / model = 手番の model / timeout = 1 手番の終わりを待つ上限(秒)/ sleep = 道具の秒数。"
+  (#^ Path work-dir)
+  (#^ (| str None) model)
+  (#^ float timeout)
+  (#^ int sleep))
+
+(defn child-env []
+  (dfor #(key value) (.items os.environ) :if (not (.startswith key INHERITED-PREFIXES)) key value))
+
+(defn handlers-for [#^ str backend #^ str home-dir]
+  "解釈器の handler の組(先頭が外側): 時間の handler → 層 2 の handler → headless の adapter。"
+  (setv settings {"disableAllHooks" True})
+  (cond
+    (= backend FAKE) (+ [(sim-time-handler :clock (SimClock))] (fake-headless-claude-handlers fake-responder home-dir))
+    (= backend STUB) (+ [(sync-time-handler)]
+                        (headless-claude-handlers home-dir (child-env) :settings settings
+                                                  :command #(sys.executable "-m" "hy" STUB-PATH)))
+    (= backend REAL) (+ [(sync-time-handler)] (headless-claude-handlers home-dir (child-env) :settings settings))
+    True (raise (ValueError backend))))
+
+(defn run-on [#^ str backend #^ Path tmp-path #^ Callable scenario]
+  "scenario(Setting) → Program を、層 2 の handler の組 + headless の handler の下で走らせる。"
+  (setv work (/ tmp-path "work"))
+  (.mkdir work :parents True :exist-ok True)
+  (setv home-dir (if (= backend REAL) (get os.environ REAL-CONFIG-ENV) (str (/ tmp-path "home"))))
+  (setv setting (Setting work (if (= backend REAL) "haiku" None) (if (= backend REAL) 180.0 60.0) (if (= backend FAKE) 8 3)))
+  (run (scheduled (with_handlers (handlers-for backend home-dir) (scenario setting)))))
+
+
+;; --- 筋書きの部品(公開 effect だけ) ----------------------------------------------------------------
+
+(defclass [(dataclass :frozen True)] Read []
+  (#^ tuple events)
+  (#^ object end)
+  (#^ int after))
+
+(defk read-until [#^ SessionHandle handle #^ Callable stop #^ float timeout #^ int after]
+  {:pre [(: handle SessionHandle) (: stop Callable) (: timeout float) (: after int)] :post [(: % Read)]}
+  "stop(出来事の列 終わり) が真になるまで Events で読む。seq は after から欠落も重複もなく 1 つずつ増える。"
+  (<- started (GetMonotonic))
+  (setv seen [] end None pages 0)
+  (while True
+    ;; 仮想の時計は待ちが無いと進まない — 待たずに空の頁を返し続ける壊れ方を、時刻ではなく頁の数で止める。
+    (+= pages 1)
+    (assert (< pages MAX-PAGES) (.format "{} 頁を読んでも終わらない: {!r}" MAX-PAGES seen))
+    (<- page (Events handle :after-seq after :wait-seconds PAGE-WAIT))
+    (assert (isinstance page AgentEventPage) (repr page))
+    (for [event page.events]
+      (assert (= event.seq (+ after 1)) (.format "seq {} after {}" event.seq after))
+      (setv after event.seq)
+      (.append seen event))
+    (setv end page.end)
+    (when (stop (tuple seen) end) (return (Read (tuple seen) end after)))
+    (<- now (GetMonotonic))
+    (assert (< (- now started) timeout) (.format "{} 秒の内に読み終わらない: {!r}" timeout seen))))
+
+(defn ends-of [#^ tuple events] (lfor event events :if (isinstance event AgentTurnEndEvent) event.end))
+(defn tool-started [#^ tuple events end]
+  (or (any (gfor event events (and (isinstance event AgentToolUseEvent) (in "Bash" event.tool-names))))
+      (is-not end None)))
+
+(defk launch [#^ Setting s #^ str name #^ (| str None) prompt #^ (| str None) resume-from]
+  {:pre [(: s Setting) (: name str) (: prompt (| str None)) (: resume-from (| str None))] :post [(: % SessionHandle)]}
+  (<- handle (Launch name :agent-type AgentType.CLAUDE :work-dir s.work-dir :prompt prompt :model s.model
+                     :lifecycle AgentSessionLifecycle.MULTI-TURN :resume-from resume-from))
+  handle)
+
+
+;; --- 筋書き ------------------------------------------------------------------------------------
+
+(defk one-turn-then-resume [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % dict)]}
+  "1 手番を公開 effect だけで最後まで読み、その終わりの resume_from で別の session を起こして文脈が続くことを見る。"
+  (<- first (launch s "adapter-one" (remember-prompt "ALPHA-1") None))
+  (<- one (read-until first (fn [events end] (is-not end None)) s.timeout -1))
+  (<- outcome (AwaitResult first :timeout-seconds 1.0))
+  (<- status (Monitor first))
+  (<- (Stop first))
+  (<- after-stop (Monitor first))
+  (<- second (launch s "adapter-two" (recall-prompt) one.end.resume-from))
+  (<- two (read-until second (fn [events end] (is-not end None)) s.timeout -1))
+  (<- (ReleaseSession second))
+  {"one" one "outcome" outcome "status" status.status "after-stop" after-stop.status "two" two})
+
+(defk next-turn-input-waits-for-the-running-turn [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)]}
+  "走っている手番に NEXT_TURN の入力を届けると、その手番の終わりの後に次の手番として走る(終わりは 2 つ)。"
+  (<- handle (launch s "adapter-next" (sleep-prompt 1 "FIRST") None))
+  (<- _ (FollowUp handle (reply-prompt "SECOND") :input-ref "ref-second"))
+  (<- record (read-until handle (fn [events end] (and (is-not end None) (= (len (ends-of events)) 2))) s.timeout -1))
+  (<- (Stop handle))
+  record)
+
+(defk injected-input-joins-the-running-turn [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)]}
+  (<- handle (launch s "adapter-inject" (sleep-prompt s.sleep "SLEPT") None))
+  (<- started (read-until handle tool-started s.timeout -1))
+  (assert (is started.end None) (repr started.end))
+  (<- _ (FollowUp handle (extra-prompt) :mode TurnInputMode.INJECT :input-ref "ref-inject"))
+  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout started.after))
+  (<- (Stop handle))
+  done)
+
+(defk interrupt-keeps-the-session [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % dict)]}
+  (<- handle (launch s "adapter-interrupt" (sleep-prompt 40 "NEVER") None))
+  (<- started (read-until handle tool-started s.timeout -1))
+  (<- asked (Interrupt handle))
+  (<- stopped (read-until handle (fn [events end] (is-not end None)) s.timeout started.after))
+  (<- idle-ask (Interrupt handle))
+  (<- _ (FollowUp handle (reply-prompt "AFTER")))
+  (<- after (read-until handle (fn [events end] (and (is-not end None) (= (len (ends-of events)) 1))) s.timeout stopped.after))
+  (<- (Stop handle))
+  {"asked" asked "stopped" stopped "idle-ask" idle-ask "after" after})
+
+(defk stop-discards-waiting-inputs [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % dict)]}
+  (<- handle (launch s "adapter-stop" (sleep-prompt 40 "NEVER") None))
+  (<- started (read-until handle tool-started s.timeout -1))
+  (<- _ (FollowUp handle (reply-prompt "LATER") :input-ref "ref-waiting"))
+  (<- (Stop handle))
+  (<- page (Events handle :after-seq started.after))
+  (setv refused None)
+  (try
+    (<- (FollowUp handle (reply-prompt "TOO-LATE")))
+    (except [error SessionNotFoundError] (setv refused error)))
+  {"page" page "refused" refused})
+
+(defk refusals [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % dict)]}
+  "できないことは黙って別の事をせず、型で断る。"
+  (<- handle (launch s "adapter-refusals" None None))
+  (setv found {})
+  (try (<- (Capture handle)) (except [error AgentCapabilityUnsupportedError] (setv (get found "capture") error)))
+  (try (<- (FollowUp handle (extra-prompt) :mode TurnInputMode.INJECT))
+       (except [error NoTurnInFlightError] (setv (get found "inject") error)))
+  (try (<- (launch s "adapter-missing" None "0b7a3e8e-2d0c-4a55-9d3f-6c1a3b7a0f11"))
+       (except [error ResumeTargetNotFoundError] (setv (get found "resume") error)))
+  (try (<- (launch s "adapter-malformed" (reply-prompt "X") "not-a-uuid"))
+       (except [error ResumeTargetNotFoundError] (setv (get found "malformed") error)))
+  (<- page (Events handle))
+  (setv (get found "idle-page") page)
+  (<- (Stop handle))
+  found)
+
+
+(defk lost-turn-continues [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % dict)]}
+  "手番の途中に runtime が消えると AgentTurnLost で終わり、次の手番は同じ session のまま続く(起こし直しは層 2 の中)。"
+  (<- handle (launch s "adapter-lost" (reply-prompt "FIRST") None))
+  (<- first (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- _ (FollowUp handle (sleep-prompt 40 "NEVER")))
+  (<- started (read-until handle tool-started s.timeout first.after))
+  (<- dropped (ClaudeDropProcess first.end.resume-from))
+  (<- lost (read-until handle (fn [events end] (is-not end None)) s.timeout started.after))
+  (<- _ (FollowUp handle (reply-prompt "AGAIN")))
+  (<- again (read-until handle (fn [events end] (is-not end None)) s.timeout lost.after))
+  (<- (Stop handle))
+  {"dropped" dropped "lost" lost "again" again "context" first.end.resume-from})
+
+(defk reader [#^ SessionHandle handle #^ float timeout]
+  {:pre [(: handle SessionHandle) (: timeout float)] :post [(: % Read)]}
+  (<- record (read-until handle (fn [events end] (is-not end None)) timeout -1))
+  record)
+
+(defk concurrent-reader-and-interrupt [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % dict)]}
+  "1 つの task が Events で待つ間に別の task が割り込み・入力を届けても、出来事は欠落も重複もなく終わりは手番ごとに 1 つ。"
+  (<- handle (launch s "adapter-concurrent" (sleep-prompt 40 "NEVER") None))
+  (<- _ (read-until handle tool-started s.timeout -1))
+  (<- task (Spawn (reader handle s.timeout)))
+  ;; 読み手が層 2 の待ちに入るまで譲る → その間に割り込み、Monitor で先に終わりを読む(読み手は同じ行と終わりを持って戻る)。
+  (<- (Delay 0.5))
+  (<- _ (FollowUp handle (reply-prompt "NEXT") :input-ref "ref-next"))
+  (<- asked (Interrupt handle))
+  (<- _ (Monitor handle))
+  (<- record (Wait task))
+  (<- all (Events handle :after-seq -1))
+  (<- (Stop handle))
+  {"asked" asked "record" record "all" all})
+
+
+;; --- 検 -----------------------------------------------------------------------------------------
+
+(defn check-lost [#^ dict seen]
+  (assert (is (get seen "dropped") True))
+  (setv lost (. (get seen "lost") end) again (. (get seen "again") end))
+  (assert (isinstance lost AgentTurnLost) (repr lost))
+  (assert (= lost.resume-from (get seen "context")))
+  (assert (isinstance again AgentTurnCompleted) (repr again))
+  (assert (in "AGAIN" again.result-text) again.result-text))
+
+(defn check-concurrent [#^ dict seen]
+  (assert (is (get seen "asked") True))
+  (setv events (. (get seen "all") events))
+  (assert (= (lfor event events event.seq) (list (range (len events)))) (repr events))
+  (setv ends (ends-of events))
+  (assert (= (len ends) 2) (repr ends))
+  (assert (isinstance (get ends 0) AgentTurnInterrupted) (repr ends))
+  (assert (isinstance (get ends 1) AgentTurnCompleted) (repr ends))
+  (assert (in "ref-next" (. (get ends 1) input-refs)) (repr ends)))
+
+
+(defn check-one-turn-then-resume [#^ dict seen]
+  (setv one (get seen "one") two (get seen "two"))
+  (assert (isinstance one.end AgentTurnCompleted) (repr one.end))
+  (assert (in "ALPHA-1" one.end.result-text) one.end.result-text)
+  (assert (any (gfor event one.events (isinstance event AgentTextEvent))) (repr one.events))
+  (assert (= (ends-of one.events) [one.end]))
+  (assert (= (. (get seen "outcome") turn-end) one.end) (repr (get seen "outcome")))
+  (assert (= (. (get seen "outcome") status) AwaitStatus.AWAITING-INPUT))
+  (assert (= (get seen "status") SessionStatus.BLOCKED))
+  (assert (= (get seen "after-stop") SessionStatus.STOPPED))
+  (assert (isinstance two.end AgentTurnCompleted) (repr two.end))
+  (assert (in CODEWORD two.end.result-text) two.end.result-text)
+  (assert (= two.end.resume-from one.end.resume-from)))
+
+(defn check-next-turn [#^ Read record]
+  (setv ends (ends-of record.events))
+  (assert (= (len ends) 2) (repr ends))
+  (assert (all (gfor end ends (isinstance end AgentTurnCompleted))) (repr ends))
+  (assert (in "SECOND" (. (get ends 1) result-text)) (repr ends))
+  (assert (in "ref-second" (. (get ends 1) input-refs)) (repr ends)))
+
+(defn check-inject [#^ Read done]
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  (assert (in EXTRA-WORD done.end.result-text) done.end.result-text)
+  (assert (in #("ref-inject" InputFateState.STARTED)
+              (lfor event done.events :if (isinstance event AgentInputFateEvent) #(event.input-ref event.state)))
+          (repr done.events)))
+
+(defn check-interrupt [#^ dict seen]
+  (assert (is (get seen "asked") True))
+  (assert (isinstance (. (get seen "stopped") end) AgentTurnInterrupted) (repr (get seen "stopped")))
+  (assert (is (get seen "idle-ask") False))
+  (setv after (. (get seen "after") end))
+  (assert (isinstance after AgentTurnCompleted) (repr after))
+  (assert (in "AFTER" after.result-text) after.result-text))
+
+(defn check-stop [#^ dict seen]
+  (setv events (. (get seen "page") events))
+  (assert (any (gfor end (ends-of events) (isinstance end AgentTurnInterrupted))) (repr events))
+  (assert (in #("ref-waiting" InputFateState.DISCARDED)
+              (lfor event events :if (isinstance event AgentInputFateEvent) #(event.input-ref event.state)))
+          (repr events))
+  (assert (is-not (get seen "refused") None)))
+
+(defn check-refusals [#^ dict found]
+  (assert (= (sorted found) ["capture" "idle-page" "inject" "malformed" "resume"]) (repr found))
+  (assert (= (. (get found "resume") resume-from) "0b7a3e8e-2d0c-4a55-9d3f-6c1a3b7a0f11"))
+  (setv page (get found "idle-page"))
+  (assert (= page (AgentEventPage :events #() :next-seq -1 :end None)) (repr page)))
+
+
+(deftest test-headless-one-turn-and-resume-fake [tmp-path]
+  (check-one-turn-then-resume (run-on FAKE tmp-path one-turn-then-resume)))
+
+(deftest test-headless-one-turn-and-resume-stub [tmp-path]
+  (check-one-turn-then-resume (run-on STUB tmp-path one-turn-then-resume)))
+
+(deftest test-headless-one-turn-and-resume-real [tmp-path]
+  {:marks ["e2e" "slow"]
+   :skip-if (not (.get os.environ "DOEFF_CLAUDE_CODE_REAL_CONFIG_DIR"))
+   :skip-reason "本物の claude の筋書きは env DOEFF_CLAUDE_CODE_REAL_CONFIG_DIR に個人の profile の CLAUDE_CONFIG_DIR を置いた時だけ走る"}
+  (check-one-turn-then-resume (run-on REAL tmp-path one-turn-then-resume)))
+
+(deftest test-headless-next-turn-input-waits-fake [tmp-path]
+  (check-next-turn (run-on FAKE tmp-path next-turn-input-waits-for-the-running-turn)))
+
+(deftest test-headless-next-turn-input-waits-stub [tmp-path]
+  (check-next-turn (run-on STUB tmp-path next-turn-input-waits-for-the-running-turn)))
+
+(deftest test-headless-inject-fake [tmp-path]
+  (check-inject (run-on FAKE tmp-path injected-input-joins-the-running-turn)))
+
+(deftest test-headless-inject-stub [tmp-path]
+  (check-inject (run-on STUB tmp-path injected-input-joins-the-running-turn)))
+
+(deftest test-headless-interrupt-fake [tmp-path]
+  (check-interrupt (run-on FAKE tmp-path interrupt-keeps-the-session)))
+
+(deftest test-headless-interrupt-stub [tmp-path]
+  (check-interrupt (run-on STUB tmp-path interrupt-keeps-the-session)))
+
+(deftest test-headless-stop-discards-waiting-fake [tmp-path]
+  (check-stop (run-on FAKE tmp-path stop-discards-waiting-inputs)))
+
+(deftest test-headless-refusals-fake [tmp-path]
+  (check-refusals (run-on FAKE tmp-path refusals)))
+
+(deftest test-headless-refusals-stub [tmp-path]
+  (check-refusals (run-on STUB tmp-path refusals)))
+
+(deftest test-headless-stop-discards-waiting-stub [tmp-path]
+  (check-stop (run-on STUB tmp-path stop-discards-waiting-inputs)))
+
+(deftest test-headless-lost-turn-continues-fake [tmp-path]
+  (check-lost (run-on FAKE tmp-path lost-turn-continues)))
+
+(deftest test-headless-lost-turn-continues-stub [tmp-path]
+  (check-lost (run-on STUB tmp-path lost-turn-continues)))
+
+(deftest test-headless-concurrent-reader-and-interrupt-fake [tmp-path]
+  (check-concurrent (run-on FAKE tmp-path concurrent-reader-and-interrupt)))
+
+
+(deftest test-headless-adapter-knows-no-process-and-no-session-host []
+  ;; O7 / O5 の構造の検: adapter は process の寿命も session host も知らない。子 process・socket・信号・起動の引数の綴り・
+  ;; sessionhost の import が adapter の code に無い(註は数えない)。
+  (setv code (lfor line (.splitlines (.read-text ADAPTER-PATH :encoding "utf-8"))
+                   :setv stripped (.strip line)
+                   :if (and stripped (not (.startswith stripped ";")))
+                   stripped))
+  (setv text (.join "\n" code))
+  (for [needle ["subprocess" "socket" "Popen" "signal" "os.kill" "doeff_agents.sessionhost" "--resume" "--session-id"
+                "stream-json" "\"-p\"" ".pid" "doeff_claude_code.handler" "doeff_claude_code.fake" "ClaudeCodeHost"]]
+    (assert (not-in needle text) (.format "adapter の code に {!r} が在る" needle))))
+
+
+(deftest test-terminal-handlers-refuse-turn-fields [tmp-path]
+  ;; resume_from と INJECT を持たない端末の handler は、黙って新しく始めたり keys にしたりせずに断る。
+  (import doeff_agents.effects [LaunchEffect FollowUpEffect refuse-turn-capabilities])
+  (setv launch-effect (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :resume-from "abc"))
+  (with [(pytest.raises AgentCapabilityUnsupportedError)]
+    (refuse-turn-capabilities launch-effect :handler "t"))
+  (with [(pytest.raises AgentCapabilityUnsupportedError)]
+    (refuse-turn-capabilities (FollowUpEffect :handle (SessionHandle "x") :message "m" :mode TurnInputMode.INJECT) :handler "t"))
+  (refuse-turn-capabilities (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path) :handler "t")
+  (refuse-turn-capabilities (FollowUpEffect :handle (SessionHandle "x") :message "m") :handler "t")
+  (import doeff_agents.handlers.testing [MockAgentHandler])
+  (with [(pytest.raises AgentCapabilityUnsupportedError)]
+    (.handle-launch (MockAgentHandler) launch-effect)))

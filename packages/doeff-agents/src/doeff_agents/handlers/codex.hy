@@ -10,6 +10,7 @@
 (import doeff_agents.effects.agent [
   LaunchEffect MonitorEffect CaptureEffect
   SendEffect StopEffect SessionHandle Observation])
+(import doeff_agents.effects.agent [refuse-turn-capabilities])
 (import doeff_agents.adapters.base [AgentType LaunchParams])
 (import doeff_agents.adapters.codex [CodexAdapter])
 (import doeff_agents.session-backend [SessionBackend])
@@ -33,6 +34,7 @@
 
   (LaunchEffect [session-name agent-type work-dir prompt model mcp-tools mcp-server-name effort bare ready-timeout session-env]
     :when (= agent-type AgentType.CODEX)
+    (refuse-turn-capabilities effect :handler "codex-handler")
     (assert-session-env-is-non-auth-overlay session-env
       :context "LaunchEffect.session_env (codex-handler)")
     (setv launch-env (dict (or session-env {})))

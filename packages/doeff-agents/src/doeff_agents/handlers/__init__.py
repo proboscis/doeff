@@ -157,6 +157,46 @@ def codex_agent_handler(*, backend=None):
     return codex_handler(backend=backend)
 
 
+def _hy_headless_compose_module() -> Any:
+    import hy  # noqa: F401, F811  # activate Hy import hook (intentionally re-imported per call site)
+
+    return import_module("doeff_agents.handlers.headless_compose")
+
+
+def headless_claude_agent_handlers(
+    *,
+    config_dir: str,
+    env: dict[str, str],
+    settings: dict[str, Any] | None = None,
+    cold_resume_prompt: str | None = None,
+    command: tuple[str, ...] = ("claude",),
+) -> list[Any]:
+    """Headless Claude handlers: the public effects as an adapter onto doeff-claude-code.
+
+    Returns ``[doeff-claude-code production handler, headless adapter]`` in
+    ``with_handlers`` order (outer first). ``config_dir`` / ``env`` are the
+    Claude home (credentials are placed in ``env`` by the composition root).
+    Install a doeff-time handler and the scheduler outside them. No
+    session-host socket is opened (agora-redesign #604).
+    """
+    return _hy_headless_compose_module().headless_claude_handlers(
+        config_dir, dict(env), settings, cold_resume_prompt, tuple(command)
+    )
+
+
+def fake_headless_claude_agent_handlers(
+    *,
+    responder: Any,
+    config_dir: str = "fake-claude-home",
+) -> list[Any]:
+    """The same adapter over doeff-claude-code's fake handler (no process, no API).
+
+    ``responder(text, memory) -> FakeReply`` scripts each turn
+    (``doeff_agents.handlers.headless_compose.FakeReply``).
+    """
+    return _hy_headless_compose_module().fake_headless_claude_handlers(responder, config_dir)
+
+
 _mock_effect_handler = MockAgentHandler()
 
 
@@ -342,6 +382,8 @@ __all__ = [  # noqa: RUF022 - grouped by category for readability
     "agent_effectful_handler",
     "agent_effectful_handlers",
     "codex_agent_handler",
+    "fake_headless_claude_agent_handlers",
+    "headless_claude_agent_handlers",
     "configure_mock_session",
     "daemon_agent_handler",
     "daemon_agent_handlers",

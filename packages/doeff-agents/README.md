@@ -296,6 +296,38 @@ Print mode has exactly one home: the headless backend.
   and nowhere else under `sessionhost/`, and every RPC arm selects it through the
   single `headless-backend?` predicate. The semgrep rule
   `doeff-agents-no-claude-print-mode` keeps the ban in force everywhere else.
+- Outside the session host, the print-mode argv lives in the
+  `doeff-claude-code` package, which owns the process lifetime. The headless
+  handler below is an adapter onto its effects and holds no argv, no child
+  process and no pid. The session host's headless files stay only while the
+  production agentd still runs through them.
+
+## Headless handler without the session host
+
+`doeff_agents.handlers.headless_claude_agent_handlers(config_dir=..., env=...)`
+returns the handler pair that answers the public effects for Claude by
+translating them into `doeff-claude-code`'s effects — no session-host socket,
+no sqlite: `doeff-claude-code`'s production handler and the headless adapter
+(`fake_headless_claude_agent_handlers(responder=...)` puts the same adapter over
+`doeff-claude-code`'s fake). Callers need not import `doeff-claude-code`; they
+install a doeff-time handler and the scheduler outside the pair.
+
+| Public effect | What the headless handler does |
+|---|---|
+| `Launch(..., resume_from=None)` | starts the first turn when `prompt` is given; `resume_from` continues an earlier context (`ResumeTargetNotFoundError` when it is not here) |
+| `FollowUp(handle, text, mode=NEXT_TURN)` / `Send` | runs it as the next turn — waits behind a running turn |
+| `FollowUp(handle, text, mode=INJECT)` | adds it to the running turn (`NoTurnInFlightError` when none runs) |
+| `Interrupt(handle)` | stops the running turn only; the session and its context stay |
+| `Events(handle, after_seq=..., wait_seconds=...)` | turn events (`AgentTextEvent`, `AgentToolUseEvent`, `AgentInputFateEvent`, `AgentTurnEndEvent`, ...) and the last turn end (`AgentTurnCompleted` / `Failed` / `Interrupted` / `Lost`, each carrying `resume_from`) |
+| `AwaitResult` / `Monitor` | the end of the running turn / the session status, read from the same events |
+| `Stop` / `StopSession` / `ReleaseSession` | closes the session; inputs still waiting end as `discarded` |
+| `Capture` / `AttachAgentSession` | refused with `AgentCapabilityUnsupportedError` (no screen) |
+
+Terminal handlers refuse `resume_from` and `mode=INJECT` with
+`AgentCapabilityUnsupportedError` instead of silently starting fresh or typing
+keys. Tests: `tests/test_headless_adapter.hy` runs the same programs over the
+fake, the production handler with a stand-in CLI, and (marked `e2e`) the real
+CLI.
 
 The statement of record is ADR-DOE-AGENTS-012 R11, law
 `print-mode-has-one-home-the-headless-backend`

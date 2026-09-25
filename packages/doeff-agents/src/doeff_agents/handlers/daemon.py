@@ -39,6 +39,7 @@ from doeff_agents.effects import (
     SessionNotFoundError,
     StopEffect,
     StopSessionEffect,
+    refuse_turn_capabilities,
 )
 from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
 from doeff_agents.shell import (
@@ -123,6 +124,7 @@ class DaemonAgentHandler(AgentHandler):
         mcp_servers: dict[str, str] | None = None,
     ) -> SessionHandle:
         """Build the launch command and register it with doeff-agentd."""
+        refuse_turn_capabilities(effect, handler="DaemonAgentHandler")
         if effect.mcp_tools:
             raise AgentLaunchError(
                 "doeff-agentd does not manage MCP lifecycle; prepare MCP with defmcp"
@@ -355,6 +357,7 @@ class DaemonAgentHandler(AgentHandler):
 
     def handle_follow_up(self, effect: FollowUpEffect) -> L2SessionHandle:
         """Continue a daemon-owned session."""
+        refuse_turn_capabilities(effect, handler="DaemonAgentHandler")
         self._client.send_session(effect.handle.session_id, effect.message)
         return effect.handle
 

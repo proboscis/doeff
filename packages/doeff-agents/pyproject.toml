@@ -24,6 +24,8 @@ dependencies = [
     "doeff>=0.1.0",
     "doeff-time",
     "doeff-hy",
+    # the headless handler is an adapter onto doeff-claude-code's effects (agora-redesign #604)
+    "doeff-claude-code",
     "click>=8.0.0",
     "rich>=13.0.0",
     "psutil>=6.0",
@@ -58,3 +60,4 @@ packages = ["src/doeff_agents"]
 [tool.uv.sources]
 doeff = { workspace = true }
 doeff-hy = { workspace = true }
+doeff-claude-code = { workspace = true }
