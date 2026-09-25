@@ -190,3 +190,20 @@ window_s = 1800
 #   受付(broad_run_admission.py)は 2026-09-21 から POLICY_KEYS = ("per_run_max",) だけを読み、この鍵は読まない。
 full_sessions = 1
 
+
+# 追随と揃えの後の作り直し(dotfiles ADR-DOTFILES-017 の [follow]・agora-redesign #650 B15)。
+# この機体の主 checkout(~/repos/doeff)を本線へ fast-forward した**直後**に、その checkout で撃つ sh の 1 文。
+# 撃つ場面は 2 つで、同じ宣言を読む: (1) この repo の着地の窓の追随(pod の共有 checkout)(2) 他の区画の runner が
+# 便を取る前に、門が読む doeff の checkout を揃える時(zeus・Mac・pod — 依存する区画の [land-queue] reads と --depends-on)。
+# ⇒ なぜこの命令か:
+#   - `uv sync --frozen` = uv.lock を書き換えない(揃えた checkout を dirty にしない)。agent/venv-run.sh が uv.lock の
+#     変化で撃つ同期と同じ形(`--all-packages` を足すと、その同期が次に余りの package を外し、2 つが打ち消し合う)。
+#   - `--reinstall-package doeff-vm` = Rust の VM の拡張を今の source から作り直す(uv は .rs の変化を見ないので、
+#     素の uv sync は古い .so を残す — AGENTS.md の Stale Rust VM builds と同じ理由。2026-09-23 22:42〜23:17 の pod の実弾)。
+#     `make sync` にしないのは、uv.lock を書き換え得る `uv sync --group dev`(--frozen なし)と、venv-run の次の同期が
+#     上書きする maturin develop の組だから(invariant-checks の build はこの repo の門が自分の worktree で作る)。
+#   - venv-run の `--exclusive` = 同じ venv の読み手(門・常駐の controller)と排他して作り直す。
+# 上限 1800 秒 = 門の build の段の --sync-timeout 900 の 2 倍(Rust の release build と飽和帯の機体)。
+[follow]
+install = "sh $HOME/dotfiles/agent/venv-run.sh --exclusive . -- uv sync --frozen --reinstall-package doeff-vm"
+install_timeout_s = 1800
