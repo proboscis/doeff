@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
@@ -477,9 +478,45 @@ def pytest_collection_finish(session):
 # off for everything after it — and hid both cache failures above in a run that
 # included packages/doeff-hy/tests (measured 2026-09-24).  So the run fails
 # when the settings are not back at the end.
+#
+# The settings reach only this process and the subprocesses that inherit its
+# environment; a test can still hand a subprocess a bytecode directory of its
+# own inside the checkout, and every test above it stays green (agora-redesign
+# #639, blind review B: 0 -> 131 files left in the tree).  The land tool keeps
+# the ignored files of its checkout from one candidate to the next, so bytecode
+# left there is read by later runs of other commits.  The run therefore also
+# fails when a bytecode file under the checkout was written during the run —
+# judged by the files themselves, not by how a subprocess was configured.  A
+# subprocess that needs bytecode gets a directory under pytest's temporary
+# directory (tmp_path_factory) instead.
 # ---------------------------------------------------------------------------
+_CHECKOUT = Path(__file__).resolve().parent
+
+
+def bytecode_written_since(root: Path, since: float) -> list[str]:
+    """Find the bytecode files a run left under ``root`` (paths relative to it, sorted).
+
+    A file counts when its modification time is ``since`` or later; ``.git`` is not
+    searched.
+    """
+    written = []
+    for directory, subdirectories, files in os.walk(root):
+        subdirectories[:] = [name for name in subdirectories if name != ".git"]
+        for name in files:
+            if not name.endswith(".pyc"):
+                continue
+            path = Path(directory, name)
+            # A file another process removes between the listing and the stat was
+            # not left behind.
+            with suppress(FileNotFoundError):
+                if path.stat().st_mtime >= since:
+                    written.append(str(path.relative_to(root)))
+    return sorted(written)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _bytecode_settings_pinned():
+    started = time.time()
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(sys, "dont_write_bytecode", True)
         patch.setattr(sys, "pycache_prefix", None)
@@ -491,4 +528,10 @@ def _bytecode_settings_pinned():
         f"a test or fixture changed the bytecode settings and did not restore them "
         f"(dont_write_bytecode, pycache_prefix) = {at_the_end} — change them with "
         f"monkeypatch (or pytest.MonkeyPatch.context() in a wider fixture)"
+    )
+    written = bytecode_written_since(_CHECKOUT, started)
+    assert written == [], (
+        f"{len(written)} bytecode file(s) were written under the checkout during this run "
+        f"(first: {written[:5]}) — a subprocess that needs bytecode gets a directory under "
+        f"pytest's temporary directory (tmp_path_factory), never one inside the checkout"
     )

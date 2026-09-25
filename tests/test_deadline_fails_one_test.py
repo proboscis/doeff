@@ -11,25 +11,20 @@ was watching and ends the process with exit status 1 — the land tool reads fai
 from those lines, and reads a process ended by a signal (the SIGKILL the watchdog used
 before) as an outside kill rather than a red run.
 
-Each test below runs an inner pytest in a temporary directory with a copy of the root
-conftest.py and the root pyproject.toml's pytest settings (``-c``), so what is checked is the
-repository's own deadline setup.  The inner run leaves out plugin autoloading (only
-pytest-timeout is loaded) and gets HOME in the temporary directory, so it neither pays for
-unrelated plugins on a machine without bytecode nor asks the agora toolchain to admit it.
+Each test below runs a probe as its own pytest session under the root conftest and the root
+pytest settings (tests/_root_conftest_runs.py), so what is checked is the repository's own
+deadline setup.
 """
 
 from __future__ import annotations
 
-import os
-import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 import tomllib
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+from tests._root_conftest_runs import REPO_ROOT, run_under_root_conftest
 
 # The inner watchdog is at least 30 s above the inner per-test deadline
 # (scaled_watchdog_timeout in the root conftest, ADR-DOE-ENFORCE-001 R6), so the
@@ -69,46 +64,15 @@ def test_after():
 """
 
 
-def _run_inner_pytest(directory: Path, test_source: str) -> subprocess.CompletedProcess[str]:
-    """Run one probe file under the repository's own conftest and pytest settings."""
-    shutil.copyfile(REPO_ROOT / "conftest.py", directory / "conftest.py")
-    (directory / "test_probe.py").write_text(test_source, encoding="utf-8")
-    env = {
-        name: value
-        for name, value in os.environ.items()
-        if name not in {"PYTEST_ADDOPTS", "PYTEST_TIMEOUT", "PYTEST_DEADLINE_SCALE_CAP"}
-    }
-    env |= {
-        "HOME": str(directory),
-        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
-        "PYTEST_DEADLINE_SCALE": "off",
-        "PYTEST_WATCHDOG_TIMEOUT": "1",
-    }
-    # --confcutdir: with -c the default is the ini file's directory, and a probe outside
-    # it made pytest list every sibling of every parent directory from / down (about
-    # 120,000 entries under the macOS temporary directory — 20 s per inner run).
-    command = [
-        sys.executable, "-m", "pytest",
-        "-c", str(REPO_ROOT / "pyproject.toml"),
-        "--rootdir", str(directory), "--confcutdir", str(directory),
-        "-p", "pytest_timeout", "-p", "no:cacheprovider",
-        "-q", "--timeout=1", "test_probe.py",
-    ]  # fmt: skip
-    try:
-        return subprocess.run(
-            command,
-            cwd=directory,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=_INNER_RUN_BUDGET,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as expired:
-        pytest.fail(
-            f"the inner run did not end within {_INNER_RUN_BUDGET:.0f}s — neither pytest-timeout "
-            f"nor the watchdog ended the hung test; output so far:\n{expired.stdout!r}"
-        )
+def _run_inner_pytest(directory: Path, probe_source: str) -> subprocess.CompletedProcess[str]:
+    """Run a probe with a 1 s per-test deadline, so its watchdog fires 31 s into a hang."""
+    return run_under_root_conftest(
+        directory,
+        probe_source,
+        pytest_args=["--timeout=1"],
+        env={"PYTEST_DEADLINE_SCALE": "off", "PYTEST_WATCHDOG_TIMEOUT": "1"},
+        budget=_INNER_RUN_BUDGET,
+    )
 
 
 def test_the_per_test_deadline_uses_the_signal_method() -> None:
