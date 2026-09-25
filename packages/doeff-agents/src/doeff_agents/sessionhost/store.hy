@@ -23,9 +23,9 @@
 ;;; (CODEX_HOME / CLAUDE_CONFIG_DIR)を行に永続化する。書き込みは launch の
 ;;; 一度きりなので COALESCE 保護(後続 upsert が識別情報を消さない)。
 
-(require doeff-hy.macros [deff defk defhandler])
+(require doeff-hy.macros [deff defk <- defhandler])
 
-(import doeff [run])
+(import doeff [Program run])
 
 (import dataclasses [replace])
 (import datetime [datetime timezone timedelta])
@@ -34,7 +34,7 @@
 (import queue)
 (import sqlite3)
 (import threading)
-(import collections.abc [Callable])
+(import types [NoneType])
 (import doeff_agents.sessionhost.store_health [StoreWriteHealth next-health storage-failure-name])
 (import doeff_agents.sessionhost.cache_host_model [HostCacheRead HostCacheActive HostCacheWrite HostCacheLastSuccessAt])
 (import doeff_agents.sessionhost.cache_host_store [cache-receipt-get cache-receipt-active cache-receipt-put cache-last-success-at])
@@ -1011,10 +1011,14 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
             #(LEASE-NAME owner-pid (.isoformat now) (.isoformat expires)))
   None)
 
-(deff db-immediate-transaction [conn body]
-  {:pre [(: conn sqlite3.Connection) (: body Callable)]
+(defk db-immediate-transaction [conn body]
+  {:pre [(: conn sqlite3.Connection) (: body Program)]
    :post [(: % "body の値")]}
-  "BEGIN IMMEDIATE の下で body(conn)を走らせ COMMIT する、明示の transaction の唯一の型。戻り値 = body の値。
+  "BEGIN IMMEDIATE の下で body(transaction の本体の Program)を走らせ COMMIT する、明示の transaction の唯一の型。
+   戻り値 = body の値。body はここで 1 度だけ <- で束ねる。defk の Program は束ねられるまで走らないので、
+   (db-immediate-transaction conn (db-acquire-lease-body conn pid)) と書けば本体は BEGIN の後に走る。
+   Program でない値は :pre で断る(作っただけで走らせない no-op にしない)。body の中で出た例外は束ねの位置へ
+   そのまま届くので、下の巻き戻しの規則は body の失敗にも COMMIT の失敗にも同じに効く。
    失敗した時は **transaction が残っている時だけ** ROLLBACK し、元の例外をそのまま出す。
    SQLite は SQLITE_FULL / SQLITE_IOERR 等で transaction を自分で巻き戻すことがあり(文の失敗でも COMMIT の失敗でも)、
    その後に無条件の ROLLBACK を撃つと `cannot rollback - no transaction is active` が元の `database or disk is full`
@@ -1023,7 +1027,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    巻き戻しの失敗は note として添える(第 2 の例外で第 1 の例外を上書きしない)。"
   (.execute conn "BEGIN IMMEDIATE")
   (try
-    (setv value (body conn))
+    (<- value body)
     (.execute conn "COMMIT")
     (except [e Exception]
       (when conn.in-transaction
@@ -1035,6 +1039,23 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
       (raise)))
   value)
 
+(defk db-acquire-lease-body [conn owner-pid]
+  {:pre [(: conn sqlite3.Connection) (: owner-pid int)]
+   :post [(: % NoneType)]}
+  "db-acquire-lease の transaction の本体(db-immediate-transaction が 1 度だけ束ねる)。
+   未失効の lease が在れば二重 host として raise し、無ければ自分の名義で書く。"
+  (setv existing (db-read-lease conn))
+  (when (is-not existing None)
+    (setv expires (parse-iso (get existing "expires_at")))
+    (when (and (is-not expires None)
+               (> expires (datetime.now timezone.utc)))
+      (setv owner (get existing "owner_pid"))
+      (setv expires-raw (get existing "expires_at"))
+      (raise (RuntimeError
+               (+ "doeff-agentd lease is active: "
+                  f"owner_pid={owner} expires_at={expires-raw}")))))
+  (db-upsert-lease conn owner-pid))
+
 (deff db-acquire-lease [conn owner-pid]
   {:pre [(: conn sqlite3.Connection) (: owner-pid int)]
    :post [(: % "None — 生存 lease は raise")]}
@@ -1044,20 +1065,29 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    かかるのは SIGKILL / crash の残骸(TTL 失効待ち)か生きた二重 host のみ。
    conformance restart() の TTL retry はその crash-path バックストップ
    (harness.py)。"
-  (defn acquire [conn]
-    (setv existing (db-read-lease conn))
-    (when (is-not existing None)
-      (setv expires (parse-iso (get existing "expires_at")))
-      (when (and (is-not expires None)
-                 (> expires (datetime.now timezone.utc)))
-        (setv owner (get existing "owner_pid"))
-        (setv expires-raw (get existing "expires_at"))
-        (raise (RuntimeError
-                 (+ "doeff-agentd lease is active: "
-                    f"owner_pid={owner} expires_at={expires-raw}")))))
-    (db-upsert-lease conn owner-pid))
-  (db-immediate-transaction conn acquire)
+  ;; 呼び手は StoreActor の thread へ渡す素の関数なので、transaction の Program は thread の中で run して
+  ;; 値にする(Program を thread の向こうへ渡すと書きが黙って消える — db-merge-policy-row と同じ境界)。
+  (run (db-immediate-transaction conn (db-acquire-lease-body conn owner-pid)))
   None)
+
+(defk db-heartbeat-lease-body [conn owner-pid]
+  {:pre [(: conn sqlite3.Connection) (: owner-pid int)]
+   :post [(: % NoneType)]}
+  "db-heartbeat-once の transaction の本体(db-immediate-transaction が 1 度だけ束ねる)。
+   lease の消失と未失効の他人名義は raise し、自分か失効した他人の名義なら自分の名義で書き直す。"
+  (setv current (db-read-lease conn))
+  (when (is current None)
+    (raise (RuntimeError
+             "doeff-agentd lease disappeared while daemon was running")))
+  (when (!= (get current "owner_pid") owner-pid)
+    (setv expires (parse-iso (get current "expires_at")))
+    (when (and (is-not expires None)
+               (> expires (datetime.now timezone.utc)))
+      (setv got (get current "owner_pid"))
+      (raise (RuntimeError
+               (+ "doeff-agentd lease owner changed: "
+                  f"expected {owner-pid} got {got}")))))
+  (db-upsert-lease conn owner-pid))
 
 (deff db-heartbeat-once [conn owner-pid]
   {:pre [(: conn sqlite3.Connection) (: owner-pid int)]
@@ -1072,22 +1102,23 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
      これは生きた二重 host(別 socket 同一 DB の誤構成)の検出面なので残す。
    判定と upsert は BEGIN IMMEDIATE で原子化(read→upsert の隙間に競合の
    acquire が挟まると未失効 lease を盗むため)。"
-  (defn heartbeat [conn]
-    (setv current (db-read-lease conn))
-    (when (is current None)
-      (raise (RuntimeError
-               "doeff-agentd lease disappeared while daemon was running")))
-    (when (!= (get current "owner_pid") owner-pid)
-      (setv expires (parse-iso (get current "expires_at")))
-      (when (and (is-not expires None)
-                 (> expires (datetime.now timezone.utc)))
-        (setv got (get current "owner_pid"))
-        (raise (RuntimeError
-                 (+ "doeff-agentd lease owner changed: "
-                    f"expected {owner-pid} got {got}")))))
-    (db-upsert-lease conn owner-pid))
-  (db-immediate-transaction conn heartbeat)
+  (run (db-immediate-transaction conn (db-heartbeat-lease-body conn owner-pid)))
   None)
+
+(defk db-release-lease-body [conn owner-pid]
+  {:pre [(: conn sqlite3.Connection) (: owner-pid int)]
+   :post [(: % bool)]}
+  "db-release-lease の transaction の本体(db-immediate-transaction が 1 度だけ束ねる)。
+   自分の名義の行だけを消し、消したかを返す。"
+  (setv current (db-read-lease conn))
+  (when (and (is-not current None)
+             (= (get current "owner_pid") owner-pid))
+    (.execute conn
+              (+ "DELETE FROM agent_daemon_lease "
+                 "WHERE lease_name = ? AND owner_pid = ?")
+              #(LEASE-NAME owner-pid))
+    (return True))
+  False)
 
 (deff db-release-lease [conn owner-pid]
   {:pre [(: conn sqlite3.Connection) (: owner-pid int)]
@@ -1098,17 +1129,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    二重 host の検出面(acquire / heartbeat の fail-loud)を release が
    壊さないため。TTL は SIGKILL / crash 経路のバックストップとして残る。
    戻り値 = 釈放したか。"
-  (defn release [conn]
-    (setv current (db-read-lease conn))
-    (when (and (is-not current None)
-               (= (get current "owner_pid") owner-pid))
-      (.execute conn
-                (+ "DELETE FROM agent_daemon_lease "
-                   "WHERE lease_name = ? AND owner_pid = ?")
-                #(LEASE-NAME owner-pid))
-      (return True))
-    False)
-  (db-immediate-transaction conn release))
+  (run (db-immediate-transaction conn (db-release-lease-body conn owner-pid))))
 
 
 ;; 器の入れ替えの blue/green(acp/host_slots): 新しい器の区画の store を、いま手番を受けている器の store の写しで
