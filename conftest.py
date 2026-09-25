@@ -213,15 +213,64 @@ def pytest_collection_modifyitems(config, items):
     pytest-timeout gives a marker precedence over the ini, so scaling the ini
     alone would leave exactly the tests that declared themselves slow — the
     ones most likely to spawn a subprocess — on an unscaled deadline.
+
+    pytest-timeout reads only the closest marker — the first one found — so the
+    scaled marker goes in front of the declared one.  Appended behind it (as
+    from 2026-08-17 to 2026-09-26) it was never read: a test's declared
+    deadline stayed unscaled at every load (agora-redesign#639).
     """
     if _DEADLINE_SCALE <= 1.0:
         return
     for item in items:
         marker = item.get_closest_marker("timeout")
-        if marker is None or not marker.args:
+        declared = None if marker is None else _declared_seconds(marker)
+        if declared is None:
             continue
-        with suppress(TypeError, ValueError):
-            item.add_marker(pytest.mark.timeout(float(marker.args[0]) * _DEADLINE_SCALE))
+        item.add_marker(_scaled_marker(marker, declared), append=False)
+
+
+def _declared_seconds(marker: pytest.Mark) -> float | None:
+    """The deadline a ``timeout`` marker declares, read the way pytest-timeout reads it.
+
+    None when the marker leaves the deadline to the run (``timeout=None``).
+    """
+    declared = marker.args[0] if marker.args else marker.kwargs.get("timeout")
+    if declared is None:
+        return None
+    try:
+        return float(declared)
+    except (TypeError, ValueError):
+        # Not a number: pytest-timeout fails that test with its own message, so
+        # there is nothing to scale.
+        return None
+
+
+def _scaled_marker(marker: pytest.Mark, declared: float) -> pytest.MarkDecorator:
+    """The declared marker with its deadline scaled and its other settings (method) kept."""
+    others = {name: value for name, value in marker.kwargs.items() if name != "timeout"}
+    return pytest.mark.timeout(declared * _DEADLINE_SCALE, *marker.args[1:], **others)
+
+
+def enforced_deadline(item: pytest.Item) -> float:
+    """The per-test deadline pytest-timeout enforces on ``item``, in seconds (0 = none).
+
+    The one home for pytest-timeout's precedence — the closest marker (already
+    scaled at collection), else the run's deadline (already scaled in
+    pytest_configure) — so the watchdog and a test that budgets its own
+    subprocess read the number that is actually enforced.
+    """
+    marker = item.get_closest_marker("timeout")
+    declared = None if marker is None else _declared_seconds(marker)
+    if declared is not None:
+        return declared
+    return float(item.config.getoption("timeout", None) or 0)
+
+
+@pytest.fixture
+def per_test_deadline(request: pytest.FixtureRequest) -> float | None:
+    """The deadline pytest-timeout enforces on the requesting test (None = no deadline)."""
+    deadline = enforced_deadline(request.node)
+    return deadline if deadline > 0 else None
 
 
 def pytest_runtest_setup(item):
@@ -240,16 +289,8 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 def _watchdog_timeout_for_item(item) -> int:
-    marker = item.get_closest_marker("timeout")
-    if marker is None or not marker.args:
-        return _WATCHDOG_TIMEOUT
-    try:
-        timeout = float(marker.args[0])
-    except (TypeError, ValueError):
-        return _WATCHDOG_TIMEOUT
-    # The marker was already scaled at collection time, so this only has to
-    # keep the watchdog clear of it.
-    return int(max(_WATCHDOG_TIMEOUT, timeout + 30.0))
+    """The watchdog for one test: clear of the deadline pytest-timeout enforces on it."""
+    return int(max(_WATCHDOG_TIMEOUT, enforced_deadline(item) + 30.0))
 
 
 # ---------------------------------------------------------------------------
