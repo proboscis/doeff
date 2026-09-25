@@ -78,12 +78,13 @@ def test_scaling_can_be_turned_off(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_watchdog_never_fires_before_the_per_test_deadline() -> None:
     """Counterexample: scaling one deadline and not the other.
 
-    The watchdog is SIGKILL — it does not fail a test, it destroys the run and
-    every result in it.  If the per-test deadline is raised past the watchdog,
-    a merely-slow test stops producing one red test and starts producing a
-    dead process (observed 2026-08-17: PYTEST_TIMEOUT=600 against the unscaled
-    90 s watchdog killed the battery at 45%).  The watchdog must therefore
-    always sit above the per-test deadline, at every scale.
+    The watchdog does not fail one test and go on — it ends the process, and
+    every test after the hung one goes unrun.  If the per-test deadline is
+    raised past the watchdog, a merely-slow test stops producing one red test
+    and starts producing an ended run (observed 2026-08-17, when the watchdog
+    still used SIGKILL: PYTEST_TIMEOUT=600 against the unscaled 90 s watchdog
+    killed the battery at 45%).  The watchdog must therefore always sit above
+    the per-test deadline, at every scale.
     """
     conftest = _root_conftest()
 
