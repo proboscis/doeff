@@ -437,17 +437,35 @@
 (defk herdr-foreground-command [result]
   {:pre [(: result dict)]
    :post [(: % (| str None))]}
-  "pane.process_info の答え → 前面の job の先頭の process の command 名
-   (純関数)。前面の job が分からなければ None。
+  "pane.process_info の答え → pane の前面の command 名(純関数)。zombie 判定
+   (policy の持ち物)が pane の前面が idle shell に戻ったかを読むための観測で、
+   前面が分からなければ None。
+
+   前面の command = 前面の process group の leader(pid が
+   foreground_process_group_id と一致する process)の名前。tmux の
+   #{pane_current_command} も tcgetpgrp の process を読むので、同じ effect に
+   tmux と herdr が同じ意味で答える。並びの先頭は読まない — herdr は前面の
+   job を platform で違う順に並べる(実測 2026-09-26・0.9.1: Linux は pid の
+   昇順、macOS は降順。`bash -c 'sleep 30; true'` の先頭は Linux = bash・
+   Mac = sleep)。leader が答えに居ない(leader が先に終わった)・group id が
+   無い時は、前面の command が分からないので None。名前で process を選ばない
+   (idle shell の語彙は policy の持ち物 — semgrep
+   doeff-agents-idle-shell-vocabulary-is-policy-owned)。
 
    herdr の契約(0.9.1 / protocol 22 の公開 schema と source)で保証される欄:
      - process_info の必須欄は pane_id だけ。foreground_processes は空なら
-       鍵ごと省かれる(skip_serializing_if Vec::is_empty)— 省略 = 空 = 不明。
+       鍵ごと省かれる(skip_serializing_if Vec::is_empty・serde の default)—
+       省略 = 空 = 不明。foreground_process_group_id も省略・null がありうる。
      - 各 process の必須欄は pid と name だけ。argv0 / argv / cmdline / cwd は
        省略も null もありうる。Linux の herdr は argv0 を一度も埋めない
        (src/platform/linux.rs が argv0: None)— 日次の機体 zeus の実物
        (2026-09-26)は argv・cmdline・cwd・name・pid だけを返す。
-   読む順は argv0 → argv の先頭 → name:
+   契約は doeff が対応する herdr の版の和集合として読む: 答えには答えた版が
+   載らず、Mac と Linux の herdr は別々に上がる(同じ socket の下で版を替える
+   server.live_handoff もある)。版ごとの厳しさ(新版で必須になった欄の欠けを
+   名指す)は持たない — 持つには版の取り寄せ(M1 / M3 の契約の拡張)が要る。
+   版の追随は ADR-DOE-AGENTS-004 R12 の再実測(conformance/herdr-physics.md)。
+   leader の読む順は argv0 → argv の先頭 → name:
      - argv0 は herdr(macOS)が argv[0] から正規化した名前(basename を取り、
        login shell の先頭の '-' を 1 つ外す — process_argv0_name)。
      - argv0 が無ければ argv の先頭を同じ規則で正規化する。規則を揃えるので、
@@ -458,17 +476,28 @@
    name を先に読まないのは実測による: name は process title で、claude では
    version 文字列('2.1.201' — 2026-07-07 の Phase 0)になり、argv0 / argv の
    先頭は 'claude' のまま。
-   答えが契約の外(process_info が dict でない・foreground_processes が配列でない・
-   要素が dict でない・name が文字列でない・argv0 / argv の型が違う)なら、
-   KeyError にも黙った既定値にもせず HerdrContractError で名指す。"
-  (setv proc
-        (match result
-          {"process_info" {"foreground_processes" [(dict) :as first #* _rest]}} first
-          {"process_info" {"foreground_processes" []}} (return None)
-          {"process_info" (dict) :as info} :if (not-in "foreground_processes" info)
-          (return None)
-          _ (raise (HerdrContractError
-                     f"herdr pane.process_info answer is outside the API contract: {result !r}"))))
+   検めるのは読む欄: process_info が dict・foreground_processes が配列で要素が
+   dict・各要素の pid が整数・group id が整数か無し・leader の name が文字列・
+   leader の argv0 / argv の型。外れたら KeyError にも黙った既定値にもせず
+   HerdrContractError で名指す。"
+  (setv info (match result
+               {"process_info" (dict) :as info} info
+               _ (raise (HerdrContractError
+                          f"herdr pane.process_info answer is outside the API contract: {result !r}"))))
+  ;; 鍵の省略は herdr の契約で空の配列と同じ(serde の default)— 既定値の捏造ではない。
+  (setv procs (.get info "foreground_processes" []))
+  (setv pgid (.get info "foreground_process_group_id"))
+  (when (not (and (isinstance procs list)
+                  (all (gfor proc procs (and (isinstance proc dict)
+                                             (isinstance (.get proc "pid") int))))
+                  (isinstance pgid #(int NoneType))))
+    (raise (HerdrContractError
+             f"herdr pane.process_info answer is outside the API contract: {result !r}")))
+  (setv proc (match (lfor proc procs :if (= (get proc "pid") pgid) proc)
+               [] (return None)
+               [leader] leader
+               _ (raise (HerdrContractError
+                          f"herdr pane.process_info lists the group leader twice: {result !r}"))))
   (setv argv0 (.get proc "argv0"))
   (setv argv (.get proc "argv"))
   (when (not (and (isinstance (.get proc "name") str)
@@ -488,8 +517,8 @@
 (defk herdr-pane-current-command-io [socket-path pane-id]
   {:pre [(: socket-path str) (: pane-id str)]
    :post [(: % (| str None))]}
-  "TmuxPaneCurrentCommand の実体: pane.process_info の前面の job の先頭の
-   process の command 名(読み方と herdr の契約は herdr-foreground-command)。
+  "TmuxPaneCurrentCommand の実体: pane.process_info の前面の process group の
+   leader の command 名(読み方と herdr の契約は herdr-foreground-command)。
    実測: name は version 文字列のことがある(claude で '2.1.201')ので、
    argv0 か argv の先頭を使う。argv0 は herdr の契約で保証されない欄で、
    Linux の herdr は返さない(2026-09-26 に日次の機体 zeus で KeyError: 'argv0')。
