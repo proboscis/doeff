@@ -16,7 +16,7 @@
 ;;;   detached-local   … 同じ VM の scheduler の task として走らせる(fake・模擬環境。外側の handler をそのまま継承する)
 ;;;   detached-cluster … coordinator の /detached の口へ出し、worker がその commit のコードを準備した子 process で走らせる
 (import dataclasses [dataclass])
-(import doeff [EffectBase])
+(import doeff [EffectBase Program])
 (import .remote_model [TaskSucceeded TaskFailed decode-outcome])
 (import .cluster_model [Requirement])
 
@@ -30,7 +30,7 @@
   "program = 未実行の Program(値)・env = 実行先で組む handler の組の import path・key = 呼び手の決めた job id(冪等の単位)・
    requires = 実行先の条件(Requirement の tuple — worker の label の名と値)・lease-seconds = 担い手の worker が沈黙してから消失とみなすまで・retain-seconds = 結果の保持。
    答え = DetachedSubmitted。同じ key がまだ在れば何も作らない(created = False)。"
-  (#^ object program)
+  (#^ Program program)
   (#^ str env)
   (#^ str key)
   (setv #^ (get tuple #(Requirement ...)) requires #())

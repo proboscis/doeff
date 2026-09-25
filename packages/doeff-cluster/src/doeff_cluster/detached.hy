@@ -7,7 +7,7 @@
 ;;;   - 版の不一致 = DetachedVersionMismatch
 (require doeff-hy.macros [defhandler defk <-])
 (import urllib.parse [quote :as url-quote])
-(import doeff_core_effects.scheduler [Spawn Cancel TaskCancelledError])
+(import doeff_core_effects.scheduler [Spawn Cancel Task TaskCancelledError])
 (import doeff [Program])
 (import doeff_time [Delay])
 (import .coordinator_http [CoordinatorEndpoint send-idempotent REPLY-SECONDS])
@@ -22,9 +22,11 @@
 ;; --- handler A: 同じ VM の scheduler の task として走らせる(fake・模擬環境) -------------------------
 
 (defclass LocalRecord []
-  "fake の task 1 本。outcome = 終わりの答え(まだなら None)。handle = scheduler の task。"
+  "fake の task 1 本。outcome = 終わりの答え(まだなら None)。handle = scheduler の task(走らせ始めるまで None)。"
   (defn __init__ [self #^ str key #^ str env #^ str name #^ (get tuple #(Requirement ...)) requires]
-    (setv self.key key self.env env self.name name self.requires requires self.handle None self.outcome None)))
+    (setv self.key key self.env env self.name name self.requires requires)
+    (setv #^ (| Task None) self.handle None)
+    (setv #^ (| DetachedOutcome None) self.outcome None)))
 
 
 (defclass DetachedLocalStore []
