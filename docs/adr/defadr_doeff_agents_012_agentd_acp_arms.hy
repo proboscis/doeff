@@ -397,6 +397,7 @@
       {"heartbeat" "参加の lease の打刻(拍の I/O が塞がっても lease を切らさない独立の縁・段 10 lane 10ba)"
        "profile observation" "この機体が持つ資格の profile の残量の観測(R18・遅い周期)"
        "receive" "行の受け(list / event-window)"
+       "mid-tick receive" "拍の途中の受け = 走っている手番の観測の合間に新しい結びを受け付けへ渡す読み直し(card acp:kanban-issue:ki-e786e72e2ae7 — 窓の読みが落ちても観測と次の拍の受けの腕は進む)"
        "turn-record sweep" "走っている turn-record の終状態の巡回(遅い周期・memory なし)"
        "interrupt delivery" "走っている自分の job に載った割り込みの配達(R21)"
        "cancel handling" "取り消しの合図(spec.cancel)の 3 段"
@@ -407,6 +408,14 @@
        "summarize job {} tick" "走らせている summarize の区間ごとの観測(R37)"
        "record spool for job {}" "拍の途中に本文を spool へ置く書き(段 9f lane 9f-2)"
        "record flush" "拍の終わりに spool を会話の記録の service へ送る(段 9f lane 9f-2)"})
+
+;; R39 / R46: 自分に結ばれた Bound の行を受けて claim(受け付け)へ渡す入口。入口はどれも
+;; (a) 排水の最中は受けない(R39 — `(if settings.draining` を自分で持つ)・(b) 受け済みの id を judgment.received-job-ids の
+;; 1 点で判じる(R46 — 持ち越した Ended の id を受け済みに数え、置き直しの Bound を claim しない・同じ手番を 2 つの session で
+;; 走らせない)。入口を足す便はここへ 1 行宣言する(針は入口の数を知らない — 名前の集合で撃つ)。
+(setv CLAIM-ENTRY-POINTS
+      {"receive-bound-jobs" "拍の受けの腕(拍に 1 回・取り下げ・置き直しの引き継ぎ・拾い直し・verify・要約・claim)"
+       "receive-fresh-bindings" "拍の途中の受け(観測の合間に新しく結ばれた会話の手番だけを受け付けの係へ — card acp:kanban-issue:ki-e786e72e2ae7)"})
 
 ;; R62: 既に在る turn-record を続ける点(継続の腕 adopt-existing-record を呼ぶ頂点の form)と、それぞれがいつ続けるか。
 ;; 継続の腕は 1 つで、続ける点を足す便はここへ 1 行宣言する(card acp:kanban-issue:ki-90019f023e19)。
@@ -3188,7 +3197,13 @@
        (assert (= (len (lfor line judgment-lines :if (in "(<- capacity int (declared-capacity-of settings))" line) line)) 2) "node-spec-of と node-spec-declared が同じ 1 点を読む(R39)")
        (assert (not (any (gfor line judgment-lines (in "\"capacity\" settings.node-capacity" line)))) "spec の capacity を宣言から直に写す第 2 の点が残っている(R39)")
        (setv agentd-lines (code-lines (/ ACP-DIR "agentd.hy")))
-       (assert (= (len (lfor line agentd-lines :if (in "(if settings.draining" line) line)) 1) "排水の最中の受けは claim しない(R39)")
+       ;; 入口の集合(受け付けへ渡す form)= 名簿 CLAIM-ENTRY-POINTS ちょうど、そしてどの入口も排水の最中は受けない。
+       (setv entries (set (.keys CLAIM-ENTRY-POINTS)))
+       (setv callers (set (.keys (readers-of [(/ ACP-DIR "agentd.hy")] "(start-intake settings"))))
+       (assert (= callers entries)
+               f"受け付けへ渡す入口が名簿 CLAIM-ENTRY-POINTS と違う(R39・R46)— 入口を足した便は名簿へ宣言する: 実測 {(sorted callers)}")
+       (setv guarded (set (.keys (readers-of [(/ ACP-DIR "agentd.hy")] "(if settings.draining"))))
+       (assert (<= entries guarded) f"排水の最中も受ける入口が在る(R39): {(sorted (- entries guarded))}")
        (assert (any (gfor line agentd-lines (in "leaving Bound job {row.resource-id} unclaimed" line))) "claim しない行は log に名乗る(R39)")
        (setv effects-lines (code-lines (/ ACP-DIR "effects.py")))
        (for [needle ["DRAIN_SECONDS_ENV = \"DOEFF_AGENTD_DRAIN_SECONDS\"" "    drain_seconds: int = 0" "    draining: bool = False"]]
@@ -3383,7 +3398,12 @@
        (assert (= (len (lfor line agentd-lines :if (in "(<- verdict str (end-retry-verdict again job.session-id settings.principal now-ms now-ms UNRECORDED-END-TTL-MS))" line) line)) 1) "手番の終わりが読み直して書き直していない(R46)")
        (assert (= (len (lfor line agentd-lines :if (.startswith line "(defk record-unrecorded-ends [settings state now-ms]") line)) 1) "持ち越しの腕が無い(R46)")
        (assert (= (len (lfor line agentd-lines :if (in "(<- recorded-ends AgentdState (record-unrecorded-ends settings current now-ms))" line) line)) 1) "拍が持ち越しの腕を撃っていない(R46)")
-       (assert (= (len (lfor line agentd-lines :if (in "(setv known (| known-jobs known-commands known-summaries carried-ids))" line) line)) 1) "claim の門が持ち越しの id を受けている(R46)")
+       ;; claim の門の受け済みの判断は judgment.received-job-ids の 1 点で、それは持ち越しの id(unrecorded-end-ids)を数え、
+       ;; 受けの入口(名簿 CLAIM-ENTRY-POINTS)はどれもそれを読む。
+       (assert (= (set (.keys (readers-of [(/ ACP-DIR "agentd.hy")] "(received-job-ids "))) (set (.keys CLAIM-ENTRY-POINTS)))
+               "受けの入口が受け済みの判断(received-job-ids)を読んでいない(R46)")
+       (assert (in "received-job-ids" (readers-of [(/ ACP-DIR "judgment.hy")] "(unrecorded-end-ids state)"))
+               "受け済みの判断が持ち越しの id を数えていない(R46)")
        (setv tests (.read-text (/ (. (Path __file__) parent parent parent) "packages" "doeff-agents" "tests" "test_sessionhost_acp.py") :encoding "utf-8"))
        (for [needle ["def test_a_job_re_placed_while_its_session_still_runs_here_is_adopted_not_relaunched"
                      "def test_an_ended_write_that_conflicts_is_rewritten_on_the_fresh_row"
