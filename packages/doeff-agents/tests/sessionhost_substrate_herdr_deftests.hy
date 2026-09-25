@@ -29,6 +29,7 @@
   DEFAULT-HERDR-SOCKET
   REQUEST-LINE-BYTE-LIMIT
   HerdrApiError
+  HerdrContractError
   herdr-substrate
   herdr-call
   herdr-key-name
@@ -247,7 +248,14 @@
           "error" {"code" "pane_not_found" "message" "pane not found"}}
          ;; それ以外の error 封筒は「pane が無い」ではないので None に畳まない。
          {"id" "doeff-substrate"
-          "error" {"code" "invalid_request" "message" "missing field `pane_id`"}}])
+          "error" {"code" "invalid_request" "message" "missing field `pane_id`"}}
+         ;; 契約の外の答え(argv0 が文字列でない)は観測の口でも None に畳まない。
+         {"id" "doeff-substrate"
+          "result" {"type" "pane_process_info"
+                    "process_info" {"pane_id" "w7:p1"
+                                    "foreground_process_group_id" 1643746
+                                    "foreground_processes"
+                                    [{"pid" 1643746 "name" "zsh" "argv0" 5}]}}}])
   (setv observed {})
   (defk observe [sock-path]
     {:pre [(: sock-path str)] :post [(: % "None")]}
@@ -261,53 +269,89 @@
       (<- _ (herdr-pane-current-command-io sock-path "w7:p1"))
       (except [e HerdrApiError]
         (setv (get observed "other-error") e.code)))
+    (try
+      (<- _ (herdr-pane-current-command-io sock-path "w7:p1"))
+      (except [e HerdrContractError]
+        (setv (get observed "contract-error") (type e))))
     None)
   (<- requests (run-against-fake-herdr answers observe))
   (assert (= (get observed "zsh") "zsh") observed)
   (assert (is (get observed "unknown") None) observed)
   (assert (is (get observed "gone") None) observed)
   (assert (= (.get observed "other-error") "invalid_request") observed)
+  (assert (is (.get observed "contract-error") HerdrContractError) observed)
   (assert (= (lfor r requests #((get r "method") (get r "params")))
-             (* [#("pane.process_info" {"pane_id" "w7:p1"})] 4))
+             (* [#("pane.process_info" {"pane_id" "w7:p1"})] 5))
           requests))
 
 
 (deftest test-herdr-foreground-command-follows-the-process-info-contract
   ;; pane.process_info の答え → 前面の command 名(純関数)。herdr の契約
   ;; (0.9.1 の公開 schema と source)に沿って、保証された欄から読む:
+  ;;   前面の job の group leader(pid = foreground_process_group_id)の
   ;;   argv0(省略・null あり)→ argv の先頭(省略・null あり)→ name(必須)。
-  (import doeff_agents.sessionhost.substrate_herdr [herdr-foreground-command
-                                                   HerdrContractError])
-  (setv answer (fn [processes]
+  (import doeff_agents.sessionhost.substrate_herdr [herdr-foreground-command])
+  (setv answer (fn [pgid processes]
                  {"type" "pane_process_info"
-                  "process_info" {"pane_id" "w1:p1" "foreground_processes" processes}}))
+                  "process_info" (| {"pane_id" "w1:p1" "foreground_processes" processes}
+                                    (if (is pgid None) {} {"foreground_process_group_id" pgid}))}))
   ;; macOS の実測(2026-07-07 の Phase 0): name は process title で、claude では
   ;; version 文字列になる。herdr が argv[0] から正規化した argv0 を使う。
   (<- claude (herdr-foreground-command
-               (answer [{"pid" 7 "name" "2.1.201" "argv0" "claude"
-                         "argv" ["claude" "--resume"]}])))
+               (answer 7 [{"pid" 7 "name" "2.1.201" "argv0" "claude"
+                           "argv" ["claude" "--resume"]}])))
   (assert (= claude "claude"))
   ;; zeus の実物(Linux): argv0 が無い → argv の先頭を herdr の argv0 と同じ規則で
   ;; 正規化する(basename・login shell の先頭の '-' を 1 つ外す)。
   (<- zeus (herdr-foreground-command (get ZEUS-PROCESS-INFO-ANSWER "result")))
   (assert (= zeus "zsh"))
   (<- login (herdr-foreground-command
-              (answer [{"pid" 8 "name" "bash" "argv" ["-bash"]}])))
+              (answer 8 [{"pid" 8 "name" "bash" "argv" ["-bash"]}])))
   (assert (= login "bash"))
   ;; schema は argv0 に null を許す — 省略と同じに読む。
   (<- null-argv0 (herdr-foreground-command
-                   (answer [{"pid" 9 "name" "zsh" "argv0" None "argv" ["/bin/zsh" "-l"]}])))
+                   (answer 9 [{"pid" 9 "name" "zsh" "argv0" None "argv" ["/bin/zsh" "-l"]}])))
   (assert (= null-argv0 "zsh"))
   ;; argv まで無い(Linux で cmdline が読めない zombie・WSL で comm から agent と
   ;; 分かる時 — herdr 自身もこの時は comm を身元に使う)→ 必須欄 name。
-  (<- comm-only (herdr-foreground-command (answer [{"pid" 10 "name" "codex"}])))
+  (<- comm-only (herdr-foreground-command (answer 10 [{"pid" 10 "name" "codex"}])))
   (assert (= comm-only "codex"))
   ;; argv の先頭が正規化で空になる(herdr の macOS 実装は argv0 を省く形)→ name。
   (<- dash-only (herdr-foreground-command
-                  (answer [{"pid" 11 "name" "zsh" "argv" ["-"]}])))
+                  (answer 11 [{"pid" 11 "name" "zsh" "argv" ["-"]}])))
   (assert (= dash-only "zsh"))
+  ;; 前面の job の並び順は platform で違う(実測 2026-09-26・herdr 0.9.1: Linux は
+  ;; pid の昇順、macOS は降順)。読むのは並びの先頭ではなく group leader — tmux の
+  ;; #{pane_current_command} と同じ定義(tcgetpgrp の process)。同じ job から
+  ;; Linux と Mac で違う名前が出ないこと。
+  (setv sleep-leader {"pid" 40 "name" "sleep" "argv" ["sleep" "30"]})
+  (setv cat-member {"pid" 41 "name" "cat" "argv" ["cat"]})
+  (<- pipe-linux (herdr-foreground-command (answer 40 [sleep-leader cat-member])))
+  (<- pipe-mac (herdr-foreground-command (answer 40 [cat-member sleep-leader])))
+  (assert (= #(pipe-linux pipe-mac) #("sleep" "sleep")))
+  ;; leader が shell で子が agent の job(`bash -c '…'` の wrapper)も leader を返す。
+  ;; idle shell かどうかの判断は policy(zombie reaper)の持ち物で、ここは名前で
+  ;; process を選ばない。
+  (setv bash-leader {"pid" 50 "name" "bash" "argv" ["bash" "-c" "claude; true"]})
+  (setv claude-child {"pid" 51 "name" "2.1.201" "argv0" "claude" "argv" ["claude"]})
+  (<- wrap-linux (herdr-foreground-command (answer 50 [bash-leader claude-child])))
+  (<- wrap-mac (herdr-foreground-command (answer 50 [claude-child bash-leader])))
+  (assert (= #(wrap-linux wrap-mac) #("bash" "bash")))
+  ;; leader が答えに居ない(leader が先に終わり子だけが残る)・group id が無い →
+  ;; 前面の command は分からない(tmux も leader の名前を読めない時は名前を返さない)。
+  (<- leaderless (herdr-foreground-command (answer 60 [{"pid" 61 "name" "sleep"}])))
+  (assert (is leaderless None))
+  (<- no-pgid (herdr-foreground-command (answer None [{"pid" 70 "name" "zsh"}])))
+  (assert (is no-pgid None))
+  ;; 対応する herdr の版の和集合として読む: argv0 を埋める版(macOS)と埋めない版
+  ;; (Linux)の両方の答えを読み、版ごとの厳しさ(argv0 の欠けを名指す)は持たない。
+  (<- with-argv0 (herdr-foreground-command
+                   (answer 80 [{"pid" 80 "name" "zsh" "argv0" "zsh" "argv" ["/usr/bin/zsh"]}])))
+  (<- without-argv0 (herdr-foreground-command
+                      (answer 80 [{"pid" 80 "name" "zsh" "argv" ["/usr/bin/zsh"]}])))
+  (assert (= #(with-argv0 without-argv0) #("zsh" "zsh")))
   ;; 前面の job が不明(空の配列・鍵ごと省略)→ None。
-  (<- empty (herdr-foreground-command (answer [])))
+  (<- empty (herdr-foreground-command (answer None [])))
   (assert (is empty None))
   (<- omitted (herdr-foreground-command
                 {"type" "pane_process_info" "process_info" {"pane_id" "w1:p1"}}))
@@ -316,11 +360,14 @@
   (for [bad [{}
              {"process_info" None}
              {"process_info" {"pane_id" "w1:p1" "foreground_processes" None}}
-             (answer [["zsh"]])
-             (answer [{"pid" 12 "argv" ["/usr/bin/zsh"]}])
-             (answer [{"pid" 13 "name" "zsh" "argv0" 5}])
-             (answer [{"pid" 14 "name" "zsh" "argv" "/usr/bin/zsh"}])
-             (answer [{"pid" 15 "name" "zsh" "argv" [5]}])]]
+             (answer 12 [["zsh"]])
+             (answer 12 [{"pid" 12 "argv" ["/usr/bin/zsh"]}])
+             (answer 13 [{"pid" 13 "name" "zsh" "argv0" 5}])
+             (answer 14 [{"pid" 14 "name" "zsh" "argv" "/usr/bin/zsh"}])
+             (answer 15 [{"pid" 15 "name" "zsh" "argv" [5]}])
+             (answer 16 [{"name" "zsh"}])
+             (answer 17 [{"pid" "17" "name" "zsh"}])
+             (answer "18" [{"pid" 18 "name" "zsh"}])]]
     (setv raised None)
     (try
       (<- _ (herdr-foreground-command bad))
