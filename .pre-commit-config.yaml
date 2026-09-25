@@ -8,6 +8,9 @@ repos:
         types: [python]
         # 変更fileだけを検査する。全体走査は既存の日次lint/pytest側が担う。
         pass_filenames: true
+        # 規則の検体(違反をわざと書いた file)は tests/semgrep の検体の検が極性つきで
+        # 検める。ここで検めると、発火すべき検体を足す commit が毎回止まる(2026-09-26)。
+        exclude: &semgrep-fixtures '^tests/semgrep/fixtures/'
 
       # identifyにHyのtype tagは無い。Python専用linterへ渡さず、既存generic規則で検査する。
       - id: semgrep-hy
@@ -17,6 +20,7 @@ repos:
         types: [file]
         files: '\.hy[pk]?$'
         pass_filenames: true
+        exclude: *semgrep-fixtures
 
       - id: doeff-linter
         name: doeff-linter
