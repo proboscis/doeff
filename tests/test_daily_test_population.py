@@ -74,7 +74,7 @@ EXCLUDED: dict[str, str] = {
 
 
 def _expected_packages(repo: Path) -> list[str]:
-    """package の母集団の期待 — `packages/<p>/tests` の下に fixtures 以外の test_*.py が在る p の全部。
+    """package の母集団の期待 — `packages/<p>/tests` の下に fixtures 以外の test_*.py か test_*.hy が在る p の全部。
 
     Makefile の実走からは取らない: 期待を実装から取ると、Makefile が母集団を縮めた時に
     訪ねた集合と期待が一緒に縮んで緑のまま残る(盲検 B の反例)。
@@ -85,7 +85,8 @@ def _expected_packages(repo: Path) -> list[str]:
         if tests_dir.is_dir()
         and any(
             "fixtures" not in path.relative_to(tests_dir).parts
-            for path in tests_dir.rglob("test_*.py")
+            for pattern in ("test_*.py", "test_*.hy")
+            for path in tests_dir.rglob(pattern)
         )
     )
 
