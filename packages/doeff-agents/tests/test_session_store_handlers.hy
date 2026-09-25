@@ -76,7 +76,7 @@
 
 
 (defn drop-table [connection table]
-  (.execute connection f"DROP TABLE IF EXISTS {(checked-table-name table)}")
+  (.execute connection f"DROP TABLE IF EXISTS {(run (checked-table-name table))}")
   (.commit connection))
 
 
@@ -177,11 +177,11 @@
 
 
 (deftest test-list-statement-filters-only-the-fields-the-query-sets
-  (setv statement (select-many-statement POSTGRES "agent_runtime_sessions"
-                                         (AgentSessionQuery :caller-ref "agent-01" :node "node-a")))
+  (<- statement (select-many-statement POSTGRES "agent_runtime_sessions"
+                                       (AgentSessionQuery :caller-ref "agent-01" :node "node-a")))
   (assert (in "WHERE caller_ref = %s AND node = %s" statement.text) statement.text)
   (assert (= statement.params #("agent-01" "node-a")))
-  (setv everything (select-many-statement SQLITE "agent_runtime_sessions" None))
+  (<- everything (select-many-statement SQLITE "agent_runtime_sessions" None))
   (assert (not (in "WHERE" everything.text)) everything.text)
   (assert (= everything.params #()))
   None)
@@ -190,11 +190,11 @@
 (deftest test-table-name-is-checked-before-it-reaches-sql
   (for [bad ["Sessions" "x; DROP TABLE y" "" "1abc" "a-b"]]
     (try
-      (checked-table-name bad)
+      (run (checked-table-name bad))
       (raise (AssertionError f"通ってはいけない表の名が通った: {bad !r}"))
       (except [ValueError] None)))
   (try
-    (session-table-ddl SQLITE "bad name")
+    (run (session-table-ddl SQLITE "bad name"))
     (raise (AssertionError "DDL が不正な表の名を通した"))
     (except [ValueError] None))
   None)
@@ -205,7 +205,7 @@
   (import datetime [datetime])
   (setv naive (.with-update (minimal-snapshot "s-naive") :started-at (datetime 2026 9 25 12 0 0)))
   (try
-    (upsert-statement SQLITE "agent_runtime_sessions" naive "put" {})
+    (run (upsert-statement SQLITE "agent_runtime_sessions" naive "put" {}))
     (raise (AssertionError "時差の無い時刻が通った"))
     (except [ValueError] None))
   None)
