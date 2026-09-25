@@ -4952,7 +4952,9 @@
    **この終わりの書きでだけ**置く(走っている間の追記の書きに載せると、追記のたびに status の全体を書き戻して記録簿が育つ)。
    conditions = その手番の agent-job の条件の列(card acp:kanban-issue:ki-6f222893d6b6)— **既定値の無い引数**で、ここで写しの
    1 点(turn-record-conditions-of)を通してから置く(写さずに書く道を作らない)。写す項が在れば status.conditions、落とした項が
-   在れば status.conditionsDropped。どちらも responses と同じく終わりの書きでだけ置く。空の列(材料が無い)は欄を書かない。"
+   在れば status.conditionsDropped。どちらも responses と同じく終わりの書きでだけ置く。空の列(材料が無い)は欄を書かない。
+   引数は全て材料の分類(effects.TURN-RECORD-END-ONLY-MATERIALS = 手番の終わりの書きだけが中身を渡す /
+   TURN-RECORD-ROW-MATERIALS = 行から読める)に宣言する — 引数を足す便は同じ便で分類を足す(R49・agora-redesign#639)。"
   (<- next dict (turn-record-appended-status status entries))
   (setv (get next "state") TURN-RECORD-ENDED)
   (when (is-not usage None)
