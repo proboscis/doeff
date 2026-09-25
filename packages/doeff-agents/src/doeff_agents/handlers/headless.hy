@@ -16,8 +16,11 @@
 ;;;   CaptureEffect / AttachAgentSessionEffect → 画面が無いので AgentCapabilityUnsupportedError
 ;;; この handler が起こしていない session の effect と、CLAUDE 以外の LaunchEffect は外側の handler へ回す。
 (require doeff-hy.macros [defhandler defk <-])
+(import collections.abc [Callable])
 (import dataclasses [dataclass field])
+(import datetime [datetime])
 (import uuid)
+(import doeff_hy.frozen [FrozenMap frozen-json-object])
 (import doeff_time [GetMonotonic GetTime])
 (import doeff_agents.adapters.base [AgentType AgentSessionLifecycle])
 (import doeff_agents.monitor [SessionStatus])
@@ -47,12 +50,14 @@
 
 (defclass [(dataclass :frozen True)] HeadlessClaudeConfig []
   "composition root が渡す宣言: home = claude の家(資格は root が custody から借りて env に置く — この handler は読むだけ)/
-   settings = CLI の settings に合流する宣言 / cold-resume-prompt = 冷えた続きの前に 1 回だけ走らせる命令(None = 走らせない)/
+   settings = CLI の settings に合流する宣言(JSON — 深く凍らせた写像)/ cold-resume-prompt = 冷えた続きの前に 1 回だけ走らせる命令(None = 走らせない)/
    page-wait = 層 2 へ 1 回に待つ秒数の上限(長い待ちはこの刻みで読む)。"
   (#^ ClaudeHome home)
-  (setv #^ dict settings (field :default-factory dict))
+  (setv #^ FrozenMap settings (field :default-factory FrozenMap))
   (setv #^ (| str None) cold-resume-prompt None)
-  (setv #^ float page-wait 5.0))
+  (setv #^ float page-wait 5.0)
+  (defn __post_init__ [self]
+    (object.__setattr__ self "settings" (frozen-json-object self.settings "HeadlessClaudeConfig.settings"))))
 
 (defclass HeadlessSession []
   "1 つの session(handle)の agent の寿命の状態。process の状態は持たない。
@@ -91,26 +96,27 @@
                      :cwd (str effect.work-dir)
                      :model effect.model
                      :effort effect.effort
-                     :settings (dict config.settings)
+                     :settings config.settings
                      :cold-resume-prompt config.cold-resume-prompt))
+
+(defn #^ list event-builders-of [kind #^ datetime at]
+  "層 2 の行の型 → 層 3 の出来事を作る関数(seq → 出来事)の列。出来事はその型の欄で直接作る(語彙の外の行は空)。"
+  (cond
+    (isinstance kind AssistantMessage)
+      (+ (if kind.text [(fn [seq] (AgentTextEvent :seq seq :at at :text kind.text))] [])
+         (if kind.tool-names [(fn [seq] (AgentToolUseEvent :seq seq :at at :tool-names kind.tool-names))] []))
+    (and (isinstance kind PartialMessage) kind.text-delta)
+      [(fn [seq] (AgentTextDeltaEvent :seq seq :at at :text kind.text-delta))]
+    (isinstance kind ToolResult)
+      [(fn [seq] (AgentToolResultEvent :seq seq :at at :tool-use-ids kind.tool-use-ids))]
+    (isinstance kind InputFate)
+      [(fn [seq] (AgentInputFateEvent :seq seq :at at :input-ref kind.ref :state (InputFateState kind.state)))]
+    True []))
 
 (defn #^ list events-of [line #^ int first-seq]
   "層 2 の 1 行 → 層 3 の出来事の列(語彙の外の行は空 — 生の行は上へ渡さない)。seq は first-seq から続けて振る。"
-  (setv kind line.kind at line.at)
-  (setv made
-        (cond
-          (isinstance kind AssistantMessage)
-            (+ (if kind.text [#(AgentTextEvent {"text" kind.text})] [])
-               (if kind.tool-names [#(AgentToolUseEvent {"tool_names" kind.tool-names})] []))
-          (and (isinstance kind PartialMessage) kind.text-delta)
-            [#(AgentTextDeltaEvent {"text" kind.text-delta})]
-          (isinstance kind ToolResult)
-            [#(AgentToolResultEvent {"tool_use_ids" kind.tool-use-ids})]
-          (isinstance kind InputFate)
-            [#(AgentInputFateEvent {"input_ref" kind.ref "state" (InputFateState kind.state)})]
-          True []))
-  (lfor #(index #(cls fields)) (enumerate made)
-        (cls :seq (+ first-seq index) :at at #** fields)))
+  (lfor #(index build) (enumerate (event-builders-of line.kind line.at))
+        (build (+ first-seq index))))
 
 (defn end-of [end #^ str context-id]
   "層 2 の手番の終わり → 層 3 の手番の終わり(続きの身元 resume-from を載せる)。"
@@ -187,10 +193,15 @@
   (setv session.fresh False session.turn outcome.turn session.cursor -1)
   outcome.turn)
 
-(defk append-event [#^ HeadlessSession session cls #^ dict fields]
-  {:pre [(: session HeadlessSession) (: cls type) (: fields dict)] :post [(: % (type None))]}
+(defn #^ Callable turn-end-builder [#^ AgentTurnFailed end]
+  "手番の終わりの出来事を作る関数((seq at) → AgentTurnEndEvent)。"
+  (fn [seq at] (AgentTurnEndEvent :seq seq :at at :end end)))
+
+(defk append-event [#^ HeadlessSession session #^ Callable build]
+  {:pre [(: session HeadlessSession) (: build Callable)] :post [(: % (type None))]}
+  "出来事を 1 つ置く。build = (seq at) → 出来事(呼び手がその型の欄で直接作る)。"
   (<- at (GetTime))
-  (.append session.events (cls :seq (len session.events) :at at #** fields))
+  (.append session.events (build (len session.events) at))
   None)
 
 (defk start-waiting [#^ HeadlessSession session]
@@ -203,7 +214,7 @@
       (except [error AgentError]
         (setv failure (AgentTurnFailed :detail (str error) :input-refs #(input.ref) :resume-from session.context-id))))
     (when (is-not failure None)
-      (<- (append-event session AgentTurnEndEvent {"end" failure}))
+      (<- (append-event session (turn-end-builder failure)))
       (setv session.last-end failure)))
   None)
 
@@ -349,7 +360,8 @@
   (setv session.stopped True)
   (<- (pull session 0.0))
   (for [input session.waiting]
-    (<- (append-event session AgentInputFateEvent {"input_ref" input.ref "state" InputFateState.DISCARDED})))
+    (<- (append-event session (fn [seq at] (AgentInputFateEvent :seq seq :at at :input-ref input.ref
+                                                                :state InputFateState.DISCARDED)))))
   (setv session.waiting [] session.turn None)
   None)
 
