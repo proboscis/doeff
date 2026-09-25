@@ -19,6 +19,7 @@ import json
 import sqlite3
 import sys
 import threading
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -178,7 +179,7 @@ def unshipped(conn: sqlite3.Connection, limit: int) -> list[HeadlessEvent]:
     rows = conn.execute(
         "SELECT o.session_id, o.seq, o.stream, o.op, o.line, o.at, o.turn, s.launch_attribution_json "
         "FROM headless_event_outbox o LEFT JOIN agent_sessions s ON s.session_id = o.session_id "
-        "WHERE o.shipped_at IS NULL ORDER BY o.at, o.session_id, o.seq LIMIT ?",
+        "WHERE o.shipped_at IS NULL AND o.held_at IS NULL ORDER BY o.at, o.session_id, o.seq LIMIT ?",
         (limit,),
     ).fetchall()
     events: list[HeadlessEvent] = []
@@ -206,6 +207,33 @@ def mark_shipped(conn: sqlite3.Connection, events: list[HeadlessEvent], at: str)
         [(at, event.session_id, event.seq) for event in events],
     )
     return len(events)
+
+
+def mark_held(conn: sqlite3.Connection, event: HeadlessEvent, at: str, reason: str) -> None:
+    """段の DB が受けない行を手元に留める(送らない・外さない — 記録は消さない)。"""
+    conn.execute(
+        "UPDATE headless_event_outbox SET held_at = ?, held_reason = ? WHERE session_id = ? AND seq = ?",
+        (at, reason, event.session_id, event.seq),
+    )
+
+
+def outbox_counts(conn: sqlite3.Connection) -> "OutboxCounts":
+    """送り待ちの表の数(daemon.status の観測): 送っていない・留めた・送れた。"""
+    row = conn.execute(
+        "SELECT "
+        "COALESCE(SUM(CASE WHEN shipped_at IS NULL AND held_at IS NULL THEN 1 ELSE 0 END), 0), "
+        "COALESCE(SUM(CASE WHEN held_at IS NOT NULL THEN 1 ELSE 0 END), 0), "
+        "COALESCE(SUM(CASE WHEN shipped_at IS NOT NULL THEN 1 ELSE 0 END), 0) "
+        "FROM headless_event_outbox"
+    ).fetchone()
+    return OutboxCounts(unshipped=int(row[0]), held=int(row[1]), shipped=int(row[2]))
+
+
+@dataclass(frozen=True)
+class OutboxCounts:
+    unshipped: int
+    held: int
+    shipped: int
 
 
 def prune_shipped(conn: sqlite3.Connection, cutoff_iso: str) -> int:
@@ -260,9 +288,33 @@ def otlp_body(events: list[HeadlessEvent], node: str, observed_iso: str) -> dict
 
 
 def urllib_post(url: str, body: bytes) -> int:
+    """POST して HTTP status を返す(2xx 以外も値で返す — 413 を送り手が読むため)。"""
     request = urllib.request.Request(url, data=body, method="POST", headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=10) as response:
-        return int(response.status)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return int(response.status)
+    except urllib.error.HTTPError as error:
+        return int(error.code)
+
+
+#: 1 回の POST の body の上限(byte)。段の DB の受け(collector の OTLP/HTTP の max_request_body_size)に合わせる —
+#: 値の正本は agora-controllers の effect-telemetry の collector の設定で、ここは env で揃える
+#: (DOEFF_AGENTD_EVENTS_MAX_BODY_BYTES)。1 行でこれを超える行は送らずに手元に留める。
+MAX_BODY_BYTES_DEFAULT = 8 * 1024 * 1024
+HTTP_PAYLOAD_TOO_LARGE = 413
+
+
+def encoded_body(events: list[HeadlessEvent], node: str) -> bytes:
+    return json.dumps(otlp_body(events, node, now_iso()), ensure_ascii=False).encode("utf-8")
+
+
+@dataclass(frozen=True)
+class ShipOutcome:
+    """1 束の結末: 読んだ行・送れた行・留めた行の数。"""
+
+    fetched: int
+    shipped: int
+    held: int
 
 
 @dataclass
@@ -274,27 +326,75 @@ class OtlpShipper:
     node: str
     post: Post = urllib_post
     batch_rows: int = SHIP_BATCH_ROWS
+    max_body_bytes: int = MAX_BODY_BYTES_DEFAULT
 
-    def ship_once(self) -> int:
-        """送っていない行を 1 束送る。戻り = 送れた行の数(0 = 送る物が無い)。2xx 以外・例外は raise
-        (行は送っていないまま残り、次の拍で送り直す — collector 側は session_id + seq で畳む)。"""
+    def _hold(self, event: HeadlessEvent, reason: str) -> None:
+        at = now_iso()
+        self.submit(lambda conn: mark_held(conn, event, at, reason))
+        sys.stderr.write(
+            f"doeff-sessionhost events shipper: held {event.session_id}#{event.seq} ({len(event.line.encode('utf-8'))} bytes): {reason}\n"
+        )
+
+    def _send(self, events: list[HeadlessEvent]) -> int:
+        """1 つの POST。戻り = HTTP status。2xx なら送れた印を刻む。"""
+        status = self.post(self.url.rstrip("/") + "/v1/logs", encoded_body(events, self.node))
+        if 200 <= status < 300:
+            at = now_iso()
+            self.submit(lambda conn: mark_shipped(conn, events, at))
+        return status
+
+    def ship_once(self) -> ShipOutcome:
+        """送っていない行を 1 束送る。
+
+        - 1 行だけで body の上限を超える行は送らずに留める(held_at と理由 — 送り手を詰まらせない・消さない)。
+        - 残りは body が上限に収まる束に分けて送る。
+        - 受けが 413 を返した束は 1 行ずつ送り直し、それでも 413 の行だけを留める。
+        - それ以外の 2xx でない答え・例外は raise(行は送っていないまま残り、次の拍で送り直す — 表は
+          session_id + seq で畳む)。"""
         batch_rows = self.batch_rows
         events = cast(list[HeadlessEvent], self.submit(lambda conn: unshipped(conn, batch_rows)))
-        if not events:
-            return 0
-        body = json.dumps(otlp_body(events, self.node, now_iso()), ensure_ascii=False).encode("utf-8")
-        status = self.post(self.url.rstrip("/") + "/v1/logs", body)
-        if not 200 <= status < 300:
-            raise RuntimeError(f"OTLP collector answered HTTP {status}; {len(events)} events stay unshipped")
-        at = now_iso()
-        return cast(int, self.submit(lambda conn: mark_shipped(conn, events, at)))
+        shipped = 0
+        held = 0
+        chunk: list[HeadlessEvent] = []
+        chunk_bytes = 0
+        chunks: list[list[HeadlessEvent]] = []
+        for event in events:
+            size = len(encoded_body([event], self.node))
+            if size > self.max_body_bytes:
+                self._hold(event, f"one OTLP body of {size} bytes exceeds the tiered store's limit {self.max_body_bytes}")
+                held += 1
+                continue
+            if chunk and chunk_bytes + size > self.max_body_bytes:
+                chunks.append(chunk)
+                chunk, chunk_bytes = [], 0
+            chunk.append(event)
+            chunk_bytes += size
+        if chunk:
+            chunks.append(chunk)
+        for part in chunks:
+            status = self._send(part)
+            if 200 <= status < 300:
+                shipped += len(part)
+                continue
+            if status != HTTP_PAYLOAD_TOO_LARGE:
+                raise RuntimeError(f"OTLP collector answered HTTP {status}; {len(part)} events stay unshipped")
+            for event in part:
+                single = self._send([event])
+                if 200 <= single < 300:
+                    shipped += 1
+                elif single == HTTP_PAYLOAD_TOO_LARGE:
+                    self._hold(event, "the collector answered HTTP 413 for this line alone")
+                    held += 1
+                else:
+                    raise RuntimeError(f"OTLP collector answered HTTP {single}; events stay unshipped")
+        return ShipOutcome(fetched=len(events), shipped=shipped, held=held)
 
     def drain(self) -> int:
         total = 0
         while True:
-            shipped = self.ship_once()
-            total += shipped
-            if shipped < self.batch_rows:
+            outcome = self.ship_once()
+            total += outcome.shipped
+            if outcome.fetched < self.batch_rows:
                 return total
 
     def loop(self, stop: threading.Event, interval: float = SHIP_INTERVAL_SECONDS) -> None:

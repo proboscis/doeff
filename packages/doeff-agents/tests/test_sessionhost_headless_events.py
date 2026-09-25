@@ -145,7 +145,7 @@ def test_shipper_sends_the_tiered_row_shape_and_marks_only_what_the_collector_to
     assert unshipped == 2
     status["code"] = 200
     assert shipper.drain() == 2
-    assert shipper.ship_once() == 0
+    assert shipper.ship_once().fetched == 0
     url, body = posted[-1]
     assert url == "http://collector:4318/v1/logs"
     resource_logs = body["resourceLogs"]
@@ -303,3 +303,80 @@ def test_migration_plans_ships_deterministically_and_verifies_without_deleting(r
     ]
     assert migrate.verify(str(events_dir), db, {"old": 3})["mismatched_sessions"] == ["old"]
     assert (events_dir / "old.events.jsonl").exists()
+
+
+def test_a_line_the_tiered_store_cannot_take_is_held_locally_and_does_not_block_the_shipper(
+    root: Path, actor: StoreActor
+) -> None:
+    """段の DB の受けの上限(1 POST の body)を 1 行だけで超える行は送らずに手元に留める(held_at と理由)。
+    後ろの行は送れ、留めた行は prune でも外れない(記録は消さない)。実測の最大の行は 5.4 MB(2026-09-25)。"""
+    from doeff_agents.sessionhost.headless_outbox import outbox_counts
+
+    store = OutboxEventStore(actor.submit)
+    actor.submit(lambda conn: _session_row(conn, "s-1", "done", "2026-09-01T00:00:00+00:00", "c-1"))
+    locator = _loc(root, "s-1")
+    store.append(HeadlessEventAppend(locator, "stdout", "small-1"))
+    store.append(HeadlessEventAppend(locator, "stdout", "x" * 6000))
+    store.append(HeadlessEventAppend(locator, "stdout", "small-2"))
+    bodies: list[bytes] = []
+
+    def post(url: str, body: bytes) -> int:
+        bodies.append(body)
+        return 200
+
+    shipper = OtlpShipper(submit=actor.submit, url="http://c:4318", node="n", post=post, max_body_bytes=4000)
+    outcome = shipper.ship_once()
+    assert (outcome.shipped, outcome.held) == (2, 1)
+    assert all(len(body) <= 4000 for body in bodies)
+    sent = [r["body"]["stringValue"] for b in bodies for r in json.loads(b)["resourceLogs"][0]["scopeLogs"][0]["logRecords"]]
+    assert sent == ["small-1", "small-2"]
+    # 留めた行は次の拍で読み直されない(送り手が詰まらない)
+    assert shipper.ship_once().fetched == 0
+    held = actor.submit(
+        lambda conn: conn.execute("SELECT seq, held_reason FROM headless_event_outbox WHERE held_at IS NOT NULL").fetchall()
+    )
+    assert [seq for seq, _ in held] == [2]
+    assert "exceeds the tiered store's limit 4000" in held[0][1]
+    counts = actor.submit(outbox_counts)
+    assert (counts.unshipped, counts.held, counts.shipped) == (0, 1, 2)
+    # 送れた行だけが外れ、留めた行は残る
+    assert actor.submit(lambda conn: prune_shipped(conn, "2026-09-25T00:00:00+00:00")) == 2
+    assert actor.submit(outbox_counts).held == 1
+    # 実況の読みは留めた行も読む(手元の写しは生きている)
+    assert "x" * 6000 in store.since(HeadlessEventsSince(locator, 0)).text
+
+
+def test_batches_are_split_by_body_bytes_and_a_413_is_narrowed_to_the_one_line(root: Path, actor: StoreActor) -> None:
+    store = OutboxEventStore(actor.submit)
+    locator = _loc(root, "s-1")
+    for index in range(6):
+        store.append(HeadlessEventAppend(locator, "stdout", f"line-{index}-" + "y" * 300))
+    store.append(HeadlessEventAppend(locator, "stdout", "REFUSED"))
+    posts: list[list[str]] = []
+
+    def post(url: str, body: bytes) -> int:
+        lines = [r["body"]["stringValue"] for r in json.loads(body)["resourceLogs"][0]["scopeLogs"][0]["logRecords"]]
+        posts.append(lines)
+        return 413 if "REFUSED" in lines else 200
+
+    shipper = OtlpShipper(submit=actor.submit, url="http://c:4318", node="n", post=post, max_body_bytes=2500)
+    outcome = shipper.ship_once()
+    assert (outcome.fetched, outcome.shipped, outcome.held) == (7, 6, 1)
+    assert max(len(lines) for lines in posts) < 7  # 束は body の上限で割れた
+    assert ["REFUSED"] in posts  # 413 の束は 1 行ずつ送り直した
+    reason = actor.submit(
+        lambda conn: conn.execute("SELECT held_reason FROM headless_event_outbox WHERE held_at IS NOT NULL").fetchone()[0]
+    )
+    assert "413" in reason
+
+
+def test_other_refusals_keep_the_rows_unshipped_for_the_next_tick(root: Path, actor: StoreActor) -> None:
+    store = OutboxEventStore(actor.submit)
+    store.append(HeadlessEventAppend(_loc(root, "s-1"), "stdout", "a"))
+    shipper = OtlpShipper(submit=actor.submit, url="http://c:4318", node="n", post=lambda _url, _body: 500)
+    with pytest.raises(RuntimeError, match="HTTP 500"):
+        shipper.ship_once()
+    from doeff_agents.sessionhost.headless_outbox import outbox_counts
+
+    assert actor.submit(outbox_counts).unshipped == 1
+    assert actor.submit(outbox_counts).held == 0
