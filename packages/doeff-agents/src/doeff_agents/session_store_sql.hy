@@ -20,6 +20,7 @@
 (import json)
 (import re)
 (import pathlib [Path])
+(import typing [NamedTuple Callable])
 
 (import doeff_agents.adapters.base [AgentSessionLifecycle AgentType])
 (import doeff_agents.monitor [SessionStatus])
@@ -58,31 +59,36 @@
 ;; 列(順番がそのまま INSERT と SELECT の並び)
 ;; ---------------------------------------------------------------------------
 
-;; 列の種類: "text" / "integer" / "time" / "json"。NOT NULL の列は印 True。
-(setv COLUMNS
-  #(#("session_id" "text" True)
-    #("session_name" "text" True)
-    #("agent_type" "text" True)
-    #("work_dir" "text" True)
-    #("status" "text" True)
-    #("lifecycle" "text" True)
-    #("backend_kind" "text" True)
-    #("backend_ref" "json" True)
-    #("started_at" "time" True)
-    #("last_observed_at" "time" False)
-    #("finished_at" "time" False)
-    #("cleaned_at" "time" False)
-    #("output_snippet" "text" False)
-    #("caller_ref" "text" False)
-    #("node" "text" False)
-    #("last_turn_id" "text" False)
-    #("last_turn_attempt" "integer" False)
-    #("transcript_node" "text" False)
-    #("transcript_path" "text" False)
-    #("last_event" "text" True)
-    #("last_event_details" "json" True)))
+(defclass Column [NamedTuple]
+  "表の列 1 つ: name = 列の名 / kind = 列の種類(\"text\" / \"integer\" / \"time\" / \"json\")/ notnull = NOT NULL の列か。"
+  (#^ str name)
+  (#^ str kind)
+  (#^ bool notnull))
 
-(setv COLUMN-NAMES (tuple (gfor column COLUMNS (get column 0))))
+(setv COLUMNS
+  #((Column "session_id" "text" True)
+    (Column "session_name" "text" True)
+    (Column "agent_type" "text" True)
+    (Column "work_dir" "text" True)
+    (Column "status" "text" True)
+    (Column "lifecycle" "text" True)
+    (Column "backend_kind" "text" True)
+    (Column "backend_ref" "json" True)
+    (Column "started_at" "time" True)
+    (Column "last_observed_at" "time" False)
+    (Column "finished_at" "time" False)
+    (Column "cleaned_at" "time" False)
+    (Column "output_snippet" "text" False)
+    (Column "caller_ref" "text" False)
+    (Column "node" "text" False)
+    (Column "last_turn_id" "text" False)
+    (Column "last_turn_attempt" "integer" False)
+    (Column "transcript_node" "text" False)
+    (Column "transcript_path" "text" False)
+    (Column "last_event" "text" True)
+    (Column "last_event_details" "json" True)))
+
+(setv COLUMN-NAMES (tuple (gfor column COLUMNS column.name)))
 (setv COLUMN-LIST (.join ", " COLUMN-NAMES))
 
 ;; 索引を張る列(呼び手の識別子で引く・機体で引く・状態で引く)。
@@ -93,13 +99,23 @@
 (defn _enum-value [value] value.value)
 (defn _same [value] value)
 
+(defclass QueryColumn [NamedTuple]
+  "query の欄 1 つの写し先: column = 条件にする列の名 / encode = 欄の値を列の綴りへ写す関数。"
+  (#^ str column)
+  (#^ Callable encode))
+
+(defclass QueryCondition [NamedTuple]
+  "読みの条件 1 つ: column = 列の名 / value = 列の綴りに写した値(文の値の並びに入る)。"
+  (#^ str column)
+  (#^ object value))
+
 (setv QUERY-COLUMNS
-  {"status" #("status" _enum-value)
-   "agent_type" #("agent_type" _enum-value)
-   "backend_kind" #("backend_kind" _same)
-   "lifecycle" #("lifecycle" _enum-value)
-   "caller_ref" #("caller_ref" _same)
-   "node" #("node" _same)})
+  {"status" (QueryColumn "status" _enum-value)
+   "agent_type" (QueryColumn "agent_type" _enum-value)
+   "backend_kind" (QueryColumn "backend_kind" _same)
+   "lifecycle" (QueryColumn "lifecycle" _enum-value)
+   "caller_ref" (QueryColumn "caller_ref" _same)
+   "node" (QueryColumn "node" _same)})
 
 (setv _UNMAPPED-QUERY-FIELDS
   (- (sfor field (fields AgentSessionQuery) field.name) (set QUERY-COLUMNS)))
@@ -127,12 +143,11 @@
         True kind))
 
 
-(defn _column-definition [dialect column]
-  (setv #(name kind required) column)
-  (setv suffix (cond (= name "session_id") " PRIMARY KEY"
-                     required " NOT NULL"
+(defn _column-definition [dialect #^ Column column]
+  (setv suffix (cond (= column.name "session_id") " PRIMARY KEY"
+                     column.notnull " NOT NULL"
                      True ""))
-  f"{name} {(_column-type dialect kind)}{suffix}")
+  f"{column.name} {(_column-type dialect column.kind)}{suffix}")
 
 
 (deff session-table-ddl [dialect table]
@@ -206,7 +221,7 @@
    :post [(: % SqlStatement)]}
   "同じ session id の行を置き換える書き(無ければ足す)。"
   (setv name (checked-table-name table))
-  (setv placeholders (.join ", " (gfor #(_ kind _) COLUMNS (_placeholder dialect kind))))
+  (setv placeholders (.join ", " (gfor column COLUMNS (_placeholder dialect column.kind))))
   (setv updates (.join ", " (gfor column (cut COLUMN-NAMES 1 None)
                                   f"{column} = excluded.{column}")))
   (SqlStatement
@@ -230,14 +245,14 @@
 
 
 (defn _query-conditions [query]
-  "query の決まった欄ごとに (列, 値)。"
+  "query の決まった欄ごとに QueryCondition(列と、列の綴りに写した値)。"
   (if (is query None)
       #()
       (tuple (gfor field (fields AgentSessionQuery)
                    :setv expected (getattr query field.name)
                    :if (is-not expected None)
                    :setv mapping (get QUERY-COLUMNS field.name)
-                   #((get mapping 0) ((get mapping 1) expected))))))
+                   (QueryCondition mapping.column (mapping.encode expected))))))
 
 
 (deff select-many-statement [dialect table query]
@@ -247,12 +262,12 @@
   (setv name (checked-table-name table))
   (setv conditions (_query-conditions query))
   (setv where (if conditions
-                  (+ " WHERE " (.join " AND " (gfor #(column _) conditions
-                                                    f"{column} = {dialect.placeholder}")))
+                  (+ " WHERE " (.join " AND " (gfor condition conditions
+                                                    f"{condition.column} = {dialect.placeholder}")))
                   ""))
   (SqlStatement
     :text f"SELECT {COLUMN-LIST} FROM {name}{where} ORDER BY session_id"
-    :params (tuple (gfor #(_ value) conditions value))))
+    :params (tuple (gfor condition conditions condition.value))))
 
 
 ;; ---------------------------------------------------------------------------
