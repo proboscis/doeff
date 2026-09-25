@@ -352,3 +352,37 @@ def test_verify_wiring_cli_runs_strict_collection(
             "--doeff-adr-wiring=strict",
         ]
     ]
+
+
+def test_hy_file_under_a_workspace_package_dir_imports_from_its_package_base(
+    pytester: pytest.Pytester,
+) -> None:
+    """``packages/doeff-x/tests/test_y.hy`` cannot be named from the rootdir (``doeff-x``
+    is not an identifier). It is imported the way pytest's ``prepend`` mode imports a
+    Python test: from the first ancestor that is not a package, so ``tests/__init__.py``
+    makes it ``tests.test_y`` and its sibling module ``tests.helper`` importable."""
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        doeff_adr_hy_files = ["packages/*/tests/test_*.hy"]
+        """
+    )
+    pytester.mkdir("packages")
+    pytester.mkdir("packages/doeff-x")
+    pytester.mkdir("packages/doeff-x/tests")
+    pytester.makefile(".py", **{"packages/doeff-x/tests/__init__": ""})
+    pytester.makefile(".hy", **{"packages/doeff-x/tests/helper": "(setv VALUE 42)\n"})
+    pytester.makefile(
+        ".hy",
+        **{
+            "packages/doeff-x/tests/test_y": """\
+                (import tests.helper [VALUE])
+                (defn test-sibling-import [] (assert (= VALUE 42)))
+                (defn test-module-name [] (assert (= __name__ "tests.test_y")))
+                """,
+        },
+    )
+
+    result: pytest.RunResult = pytester.runpytest("-q", "packages/doeff-x/tests")
+
+    result.assert_outcomes(passed=2)
