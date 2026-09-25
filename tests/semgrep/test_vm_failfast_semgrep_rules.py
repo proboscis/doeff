@@ -246,6 +246,23 @@ def test_herdr_label_holders_indexed_rule_detects_arbitrary_holder_pick() -> Non
     ) == {12}
 
 
+def test_idle_shell_vocabulary_rule_detects_substrate_side_judgement() -> None:
+    # Design check 2026-09-26 (agora-redesign#639 request H, blind B): the
+    # herdr substrate picking "the first non-idle-shell process" passed every
+    # other check while moving part of the zombie judgement out of policy.hy.
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-agents/src/doeff_agents/sessionhost/"
+        "idle_shell_vocabulary_outside_policy_forbidden.hy",
+        cwd=fixture_root,
+    )
+
+    assert _rule_start_lines(
+        results, "doeff-agents-idle-shell-vocabulary-is-policy-owned"
+    ) == {9, 13}
+
+
 def test_defhandler_must_be_top_level_rule_detects_nested_handler() -> None:
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     results = _semgrep_results(

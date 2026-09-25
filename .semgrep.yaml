@@ -308,6 +308,32 @@ rules:
         - "**/doeff-agents/conformance/harness.py"
         - "**/sessionhost/herdr_label_holders_indexed_forbidden.hy"
 
+  - id: doeff-agents-idle-shell-vocabulary-is-policy-owned
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      IDLE-SHELL-COMMANDS is the zombie reaper's vocabulary: policy.hy owns the
+      judgement "the pane's foreground returned to an idle shell" (effects.hy
+      TmuxPaneCurrentCommand — the idle-shell enumeration is policy-owned). A
+      substrate answers TmuxPaneCurrentCommand with the pane's foreground
+      command as the multiplexer defines it — tmux #{pane_current_command} and
+      herdr alike report the foreground process group leader — and must not
+      pick, skip or rename processes by this vocabulary. Doing so moves part of
+      the zombie judgement into one substrate, makes tmux and herdr answer the
+      same effect differently, and lets a change to the policy vocabulary
+      silently change what the substrate reports (design check 2026-09-26,
+      blind counterexample B — agora-redesign#639 request H). Keep the
+      judgement in policy.hy; if the reaper needs the job's composition, widen
+      the effect for both substrates instead.
+    patterns:
+      - pattern-regex: 'IDLE-SHELL-COMMANDS|IDLE_SHELL_COMMANDS'
+    paths:
+      include:
+        - "**/doeff_agents/sessionhost/**"
+      exclude:
+        - "**/doeff_agents/sessionhost/policy.hy"
+
   - id: doeff-agents-provider-failure-verbatim-forbidden
     languages:
       - generic
