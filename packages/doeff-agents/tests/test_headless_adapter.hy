@@ -403,3 +403,19 @@
   (import doeff_agents.handlers.testing [MockAgentHandler])
   (with [(pytest.raises AgentCapabilityUnsupportedError)]
     (.handle-launch (MockAgentHandler) launch-effect)))
+
+
+(deftest test-claude-agent-runtime-names-leave-the-substrate-to-doeff-agents [tmp-path]
+  ;; 土台を名指さない名(agora-redesign #606): claude_agent_runtime_handlers / fake_claude_agent_runtime_handlers は、今日の土台
+  ;; (print mode の adapter)の組と同じ種類の handler を同じ順で返し、fake の名で同じ筋書きが通る。
+  (import doeff_agents [claude-agent-runtime-handlers fake-claude-agent-runtime-handlers])
+  (setv home (str (/ tmp-path "home")))
+  (assert (= (lfor h (claude-agent-runtime-handlers :config-dir home :env {}) (. (type h) __name__))
+             (lfor h (headless-claude-handlers home {}) (. (type h) __name__))))
+  (setv work (/ tmp-path "work"))
+  (.mkdir work :parents True :exist-ok True)
+  (setv setting (Setting work None 60.0 8))
+  (check-one-turn-then-resume
+    (run (scheduled (with_handlers (+ [(sim-time-handler :clock (SimClock))]
+                                      (fake-claude-agent-runtime-handlers :responder fake-responder :config-dir home))
+                                   (one-turn-then-resume setting))))))

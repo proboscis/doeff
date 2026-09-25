@@ -123,6 +123,8 @@ _LAZY_EXPORTS = {
     "agent_effectful_handler": ".handlers",
     "agent_effectful_handlers": ".handlers",
     "codex_agent_handler": ".handlers",
+    "claude_agent_runtime_handlers": ".handlers",
+    "fake_claude_agent_runtime_handlers": ".handlers",
     "fake_headless_claude_agent_handlers": ".handlers",
     "headless_claude_agent_handlers": ".handlers",
     "configure_mock_session": ".handlers",
