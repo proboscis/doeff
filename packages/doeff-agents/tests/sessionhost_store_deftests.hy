@@ -20,6 +20,7 @@
 (import doeff_agents.sessionhost.policy [parse-iso])
 
 (import doeff [EffectBase run])
+(import types [NoneType])
 
 (import doeff_agents.sessionhost.effects [
   SessionRow
@@ -564,6 +565,68 @@
     (db-release-lease conn 111)
     (assert (= (get (db-read-lease conn) "owner_pid") 222)))
   (with-tmp-conn check))
+
+
+(defk transaction-closing-body [conn fail]
+  {:pre [(: conn sqlite3.Connection) (: fail bool)]
+   :post [(: % NoneType)]}
+  "transaction を閉じる本体の検のための本体。書いた後に helper が自分で commit する形(依頼
+   lt-A5KGD83R9HQJ2K172V61A6VMG9 の盲検 A の反例 — cache_receipt_put の conn.commit())を作る。"
+  (db-upsert-lease conn 111)
+  (.commit conn)
+  (when fail
+    (raise (RuntimeError "body failed after closing")))
+  None)
+
+
+(deftest test-transaction-refuses-a-body-that-closes-the-transaction
+  ;; 盲検 A の反例: 本体の中の helper が commit すると、transaction は本体の途中で終わり、それまでの書き込みは
+  ;; 確定する(原子性が無い)。成功の路は COMMIT の失敗(`cannot commit - no transaction is active`)に化け、
+  ;; 失敗の路は元の例外だけが出て確定した書き込みが黙って残っていた。transaction を閉じるのは
+  ;; db-immediate-transaction だけなので、閉じた本体を名指して落とす(失敗の路は元の例外に note を添える)。
+  (import doeff_agents.sessionhost.store [db-immediate-transaction])
+  (defn check [conn]
+    (setv raised None)
+    (try
+      (run (db-immediate-transaction conn (transaction-closing-body conn False)))
+      (except [e RuntimeError] (setv raised e)))
+    (assert (is-not raised None))
+    (assert (in "closed the transaction" (str raised)) (repr raised))
+    (assert (not conn.in-transaction))
+    (setv raised None)
+    (try
+      (run (db-immediate-transaction conn (transaction-closing-body conn True)))
+      (except [e RuntimeError] (setv raised e)))
+    (assert (= (str raised) "body failed after closing"))
+    (assert (any (gfor note raised.__notes__ (in "closed the transaction" note))) (repr raised))
+    (assert (not conn.in-transaction)))
+  (with-tmp-conn check))
+
+
+(deftest test-store-actor-refuses-an-op-that-returns-a-program
+  ;; 盲検 B の反例: op が transaction の Program を実行せずに返すと、Program は actor の thread の外で
+  ;; actor の connection を使って走り、単一 connection の直列化・書き込みの健康の数え・journal の合図を
+  ;; 素通りする。actor は op の戻りが Program / effect なら型の誤りとして断り、何も書かない。
+  (import doeff_agents.sessionhost.store [db-immediate-transaction db-acquire-lease-body])
+  (setv d (tempfile.mkdtemp))
+  (try
+    (setv actor (StoreActor (os.path.join d "agentd.sqlite")))
+    (try
+      (setv raised None)
+      (try
+        (.submit actor (fn [conn] (db-immediate-transaction conn (db-acquire-lease-body conn 111))))
+        (except [e TypeError] (setv raised e)))
+      (assert (is-not raised None))
+      (assert (in "run it inside the op" (str raised)) (repr raised))
+      (assert (is (.submit actor db-read-lease) None))
+      (assert (= actor.write-health.consecutive-failures 0))
+      ;; 正常例: op の中で run すれば actor の thread の中で値になり、書かれる。
+      (.submit actor (fn [conn] (run (db-immediate-transaction conn (db-acquire-lease-body conn 111)))))
+      (assert (= (get (.submit actor db-read-lease) "owner_pid") 111))
+      (finally
+        (.close actor)))
+    (finally
+      (shutil.rmtree d))))
 
 
 ;; ---------------------------------------------------------------------------
