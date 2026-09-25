@@ -2,6 +2,7 @@
 
 import subprocess
 import sys
+import types
 from collections.abc import Sequence
 
 import pytest
@@ -356,11 +357,20 @@ def test_verify_wiring_cli_runs_strict_collection(
 
 def test_hy_file_under_a_workspace_package_dir_imports_from_its_package_base(
     pytester: pytest.Pytester,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``packages/doeff-x/tests/test_y.hy`` cannot be named from the rootdir (``doeff-x``
     is not an identifier). It is imported the way pytest's ``prepend`` mode imports a
     Python test: from the first ancestor that is not a package, so ``tests/__init__.py``
-    makes it ``tests.test_y`` and its sibling module ``tests.helper`` importable."""
+    makes it ``tests.test_y`` and its sibling module ``tests.helper`` importable.
+
+    The claim is about a fresh pytest process, so the inner run is a separate process:
+    an in-process run shares this process's ``sys.modules``, and a ``tests`` package
+    imported earlier by another test (the root ``tests/`` does
+    ``from tests._run_helpers import …``) hid ``tests.helper`` from the inner run
+    (the daily of 2026-09-26, agora-redesign#639).  A stand-in ``tests`` is put into this
+    process first so the independence is proven on every run, not only in some orders."""
+    monkeypatch.setitem(sys.modules, "tests", types.ModuleType("tests"))
     pytester.makepyprojecttoml(
         """\
         [tool.pytest.ini_options]
@@ -383,7 +393,7 @@ def test_hy_file_under_a_workspace_package_dir_imports_from_its_package_base(
         },
     )
 
-    result: pytest.RunResult = pytester.runpytest("-q", "packages/doeff-x/tests")
+    result: pytest.RunResult = pytester.runpytest_subprocess("-q", "packages/doeff-x/tests")
 
     result.assert_outcomes(passed=2)
 
