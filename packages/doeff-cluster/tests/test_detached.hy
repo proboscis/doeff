@@ -10,11 +10,13 @@
 ;;         lease は担い手が延ばす / 取り消し / Program の例外 / 知らない key と解放 / timeout / 版の不一致 / key の衝突。
 ;; その後に coordinator の判断(純粋な関数)と worker の途絶の検。
 (require doeff-hy.macros [deftest defk defhandler <-])
+(import collections.abc [Callable])
 (import json)
 (import time)
 (import urllib.parse [urlsplit parse-qsl])
 (import pathlib [Path])
 (import httpx)
+(import pytest)
 (import doeff [with_handlers Program])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [reader await-handler])
@@ -179,8 +181,25 @@
        worker 1.0 2.5 0.2 :runs runs))
 
 
-(defn #^ Rig make-rig [#^ str kind #^ Path tmp-path [runner-versions None]]
-  (if (= kind "fake") (fake-rig runner-versions) (coordinator-rig tmp-path runner-versions)))
+(defn #^ Rig open-fake-rig [#^ Path tmp-path request [runner-versions None]]
+  (fake-rig runner-versions))
+
+
+(defn #^ Rig open-coordinator-rig [#^ Path tmp-path request [runner-versions None]]
+  (coordinator-rig tmp-path runner-versions))
+
+
+(defn #^ Rig open-served-rig [#^ Path tmp-path request [runner-versions None]]
+  ;; 本物の coordinator の process(conftest の served_coordinator・session で共有)は served の組の検が
+  ;; 走る時にだけ起こす(fake と coordinator の組だけを走らせる時は起動の数秒を払わない)。
+  (served-rig (.getfixturevalue request "served_coordinator") tmp-path runner-versions))
+
+
+;; 筋書き 1 つを 3 つの組で回す: 各 deftest は `:params {"open_rig" RIGS}` で組ごとの検に展開される
+;; (検の名 = `<筋書きの検>[fake]` / `[coordinator]` / `[served]`)。組を開く関数は (tmp-path request [runner-versions]) を受ける。
+(setv RIGS [(pytest.param open-fake-rig :id "fake")
+            (pytest.param open-coordinator-rig :id "coordinator")
+            (pytest.param open-served-rig :id "served")])
 
 
 (defk with-worker [rig scenario]
@@ -208,19 +227,11 @@
 
 
 
-
-(defmacro on-every-rig [name scenario #* rig-args]
-  "筋書き 1 つを 3 つの組(fake・coordinator・served)の deftest にする。"
-  (setv test-name (fn [kind] (hy.models.Symbol (+ (str name) "-on-" kind))))
-  `(do ~@(lfor kind ["fake" "coordinator"]
-               `(deftest ~(test-name kind) [tmp-path]
-                  (setv rig (make-rig ~kind tmp-path ~@rig-args))
-                  (<- ok (run-on rig (~scenario rig)))
-                  (assert ok)))
-       (deftest ~(test-name "served") [tmp-path served-coordinator]
-         (setv rig (served-rig served-coordinator tmp-path ~@rig-args))
-         (<- ok (run-on rig (~scenario rig)))
-         (assert ok))))
+(defk run-scenario [rig scenario]
+  {:pre [(: rig Rig) (: scenario Callable)] :post [(: % bool)]}
+  "筋書き(Rig を受けて Program を返す関数)を組の上で回す。"
+  (<- ok (run-on rig (scenario rig)))
+  ok)
 
 
 ;; --- 筋書き ---------------------------------------------------------------------------------------------------
@@ -233,7 +244,10 @@
   (assert (= outcome (DetachedSucceeded 101)) outcome)
   True)
 
-(on-every-rig test-submit-and-await-returns-the-value submit-and-await)
+(deftest test-submit-and-await-returns-the-value [open-rig tmp-path request]
+  {:params {"open_rig" RIGS}}
+  (<- ok (run-scenario (open-rig tmp-path request) submit-and-await))
+  (assert ok))
 
 
 (defk resubmit-same-key [rig]
@@ -249,7 +263,10 @@
   (assert (= (rig.runs "k-idem") 1))
   True)
 
-(on-every-rig test-resubmitting-the-same-key-runs-once resubmit-same-key)
+(deftest test-resubmitting-the-same-key-runs-once [open-rig tmp-path request]
+  {:params {"open_rig" RIGS}}
+  (<- ok (run-scenario (open-rig tmp-path request) resubmit-same-key))
+  (assert ok))
 
 
 (defk submit-then-wait [key seconds lease]
@@ -266,7 +283,10 @@
   (assert (= outcome (DetachedSucceeded 111)) outcome)
   True)
 
-(on-every-rig test-the-runner-extends-the-lease-of-a-long-task task-longer-than-the-lease)
+(deftest test-the-runner-extends-the-lease-of-a-long-task [open-rig tmp-path request]
+  {:params {"open_rig" RIGS}}
+  (<- ok (run-scenario (open-rig tmp-path request) task-longer-than-the-lease))
+  (assert ok))
 
 
 (defk caller-vanishes-and-reconnects [rig]
@@ -282,7 +302,10 @@
   (assert (= outcome (DetachedSucceeded 103)) outcome)
   True)
 
-(on-every-rig test-task-survives-the-caller-and-a-new-caller-reconnects caller-vanishes-and-reconnects)
+(deftest test-task-survives-the-caller-and-a-new-caller-reconnects [open-rig tmp-path request]
+  {:params {"open_rig" RIGS}}
+  (<- ok (run-scenario (open-rig tmp-path request) caller-vanishes-and-reconnects))
+  (assert ok))
 
 
 (defk result-outlives-the-runner [rig]
@@ -298,7 +321,10 @@
   (assert (= again (DetachedSucceeded 104)) again)
   True)
 
-(on-every-rig test-result-is-kept-after-the-runner-dies result-outlives-the-runner)
+(deftest test-result-is-kept-after-the-runner-dies [open-rig tmp-path request]
+  {:params {"open_rig" RIGS}}
+  (<- ok (run-scenario (open-rig tmp-path request) result-outlives-the-runner))
+  (assert ok))
 
 
 (defk runner-dies-mid-run [rig]
@@ -316,7 +342,10 @@
   (assert (isinstance still DetachedLost) still)
   True)
 
-(on-every-rig test-runner-death-loses-the-task-without-rerunning runner-dies-mid-run)
+(deftest test-runner-death-loses-the-task-without-rerunning [open-rig tmp-path request]
+  {:params {"open_rig" RIGS}}
+  (<- ok (run-scenario (open-rig tmp-path request) runner-dies-mid-run))
+  (assert ok))
 
 
 (defk cancel-open-and-finished [rig]
@@ -341,7 +370,10 @@
   (assert (not unknown))
   True)
 
-(on-every-rig test-cancel-stops-an-open-task-and-keeps-a-finished-result cancel-open-and-finished)
+(deftest test-cancel-stops-an-open-task-and-keeps-a-finished-result [open-rig tmp-path request]
+  {:params {"open_rig" RIGS}}
+  (<- ok (run-scenario (open-rig tmp-path request) cancel-open-and-finished))
+  (assert ok))
 
 
 (defk program-raises [rig]
@@ -354,7 +386,10 @@
   (assert (isinstance outcome.error ValueError))
   True)
 
-(on-every-rig test-program-exception-is-a-failed-outcome program-raises)
+(deftest test-program-exception-is-a-failed-outcome [open-rig tmp-path request]
+  {:params {"open_rig" RIGS}}
+  (<- ok (run-scenario (open-rig tmp-path request) program-raises))
+  (assert ok))
 
 
 (defk unknown-and-release [rig]
@@ -385,7 +420,10 @@
   (<- (CancelDetached "k-open"))
   True)
 
-(on-every-rig test-unknown-key-and-release unknown-and-release)
+(deftest test-unknown-key-and-release [open-rig tmp-path request]
+  {:params {"open_rig" RIGS}}
+  (<- ok (run-scenario (open-rig tmp-path request) unknown-and-release))
+  (assert ok))
 
 
 (defk await-times-out [rig]
@@ -397,7 +435,10 @@
   (assert (= outcome (DetachedSucceeded 110)) outcome)
   True)
 
-(on-every-rig test-await-with-a-timeout-returns-pending await-times-out)
+(deftest test-await-with-a-timeout-returns-pending [open-rig tmp-path request]
+  {:params {"open_rig" RIGS}}
+  (<- ok (run-scenario (open-rig tmp-path request) await-times-out))
+  (assert ok))
 
 
 (defk versions-differ [rig]
@@ -409,7 +450,10 @@
   (assert (in "python" outcome.detail) outcome.detail)
   True)
 
-(on-every-rig test-version-mismatch-is-a-typed-outcome versions-differ OTHER-VERSIONS)
+(deftest test-version-mismatch-is-a-typed-outcome [open-rig tmp-path request]
+  {:params {"open_rig" RIGS}}
+  (<- ok (run-scenario (open-rig tmp-path request OTHER-VERSIONS) versions-differ))
+  (assert ok))
 
 
 (defk same-key-other-work [rig]
@@ -424,7 +468,10 @@
   (assert (= outcome (DetachedSucceeded 101)))
   True)
 
-(on-every-rig test-same-key-for-other-work-is-refused same-key-other-work)
+(deftest test-same-key-for-other-work-is-refused [open-rig tmp-path request]
+  {:params {"open_rig" RIGS}}
+  (<- ok (run-scenario (open-rig tmp-path request) same-key-other-work))
+  (assert ok))
 
 
 (defk same-key-other-requires [rig]
@@ -441,7 +488,10 @@
   (<- (CancelDetached "k-requires"))
   True)
 
-(on-every-rig test-same-key-for-other-requires-is-refused same-key-other-requires)
+(deftest test-same-key-for-other-requires-is-refused [open-rig tmp-path request]
+  {:params {"open_rig" RIGS}}
+  (<- ok (run-scenario (open-rig tmp-path request) same-key-other-requires))
+  (assert ok))
 
 
 (deftest test-submit-detached-requires-is-a-tuple-of-requirement
