@@ -34,6 +34,8 @@
 (import queue)
 (import sqlite3)
 (import threading)
+(import collections.abc [Callable])
+(import doeff_agents.sessionhost.store_health [StoreWriteHealth next-health storage-failure-name])
 (import doeff_agents.sessionhost.cache_host_model [HostCacheRead HostCacheActive HostCacheWrite HostCacheLastSuccessAt])
 (import doeff_agents.sessionhost.cache_host_store [cache-receipt-get cache-receipt-active cache-receipt-put cache-last-success-at])
 
@@ -991,6 +993,30 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
             #(LEASE-NAME owner-pid (.isoformat now) (.isoformat expires)))
   None)
 
+(deff db-immediate-transaction [conn body]
+  {:pre [(: conn sqlite3.Connection) (: body Callable)]
+   :post [(: % "body の値")]}
+  "BEGIN IMMEDIATE の下で body(conn)を走らせ COMMIT する、明示の transaction の唯一の型。戻り値 = body の値。
+   失敗した時は **transaction が残っている時だけ** ROLLBACK し、元の例外をそのまま出す。
+   SQLite は SQLITE_FULL / SQLITE_IOERR 等で transaction を自分で巻き戻すことがあり(文の失敗でも COMMIT の失敗でも)、
+   その後に無条件の ROLLBACK を撃つと `cannot rollback - no transaction is active` が元の `database or disk is full`
+   を隠す(実弾 2026-09-25: k3s の agentd-pool-0 / -1 の agentd-state volume が 100% になり、lease の 3 関数の
+   log が全部 rollback の文になって本当の原因が読めなかった)。巻き戻しそのものが失敗した時も元の例外を出し、
+   巻き戻しの失敗は note として添える(第 2 の例外で第 1 の例外を上書きしない)。"
+  (.execute conn "BEGIN IMMEDIATE")
+  (try
+    (setv value (body conn))
+    (.execute conn "COMMIT")
+    (except [e Exception]
+      (when conn.in-transaction
+        (try
+          (.execute conn "ROLLBACK")
+          (except [rollback-error sqlite3.Error]
+            (when (hasattr e "add_note")
+              (.add-note e f"rollback after the failure also failed: {rollback-error}")))))
+      (raise)))
+  value)
+
 (deff db-acquire-lease [conn owner-pid]
   {:pre [(: conn sqlite3.Connection) (: owner-pid int)]
    :post [(: % "None — 生存 lease は raise")]}
@@ -1000,8 +1026,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    かかるのは SIGKILL / crash の残骸(TTL 失効待ち)か生きた二重 host のみ。
    conformance restart() の TTL retry はその crash-path バックストップ
    (harness.py)。"
-  (.execute conn "BEGIN IMMEDIATE")
-  (try
+  (defn acquire [conn]
     (setv existing (db-read-lease conn))
     (when (is-not existing None)
       (setv expires (parse-iso (get existing "expires_at")))
@@ -1012,11 +1037,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
         (raise (RuntimeError
                  (+ "doeff-agentd lease is active: "
                     f"owner_pid={owner} expires_at={expires-raw}")))))
-    (db-upsert-lease conn owner-pid)
-    (.execute conn "COMMIT")
-    (except [e Exception]
-      (.execute conn "ROLLBACK")
-      (raise)))
+    (db-upsert-lease conn owner-pid))
+  (db-immediate-transaction conn acquire)
   None)
 
 (deff db-heartbeat-once [conn owner-pid]
@@ -1032,8 +1054,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
      これは生きた二重 host(別 socket 同一 DB の誤構成)の検出面なので残す。
    判定と upsert は BEGIN IMMEDIATE で原子化(read→upsert の隙間に競合の
    acquire が挟まると未失効 lease を盗むため)。"
-  (.execute conn "BEGIN IMMEDIATE")
-  (try
+  (defn heartbeat [conn]
     (setv current (db-read-lease conn))
     (when (is current None)
       (raise (RuntimeError
@@ -1046,11 +1067,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
         (raise (RuntimeError
                  (+ "doeff-agentd lease owner changed: "
                     f"expected {owner-pid} got {got}")))))
-    (db-upsert-lease conn owner-pid)
-    (.execute conn "COMMIT")
-    (except [e Exception]
-      (.execute conn "ROLLBACK")
-      (raise)))
+    (db-upsert-lease conn owner-pid))
+  (db-immediate-transaction conn heartbeat)
   None)
 
 (deff db-release-lease [conn owner-pid]
@@ -1062,9 +1080,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    二重 host の検出面(acquire / heartbeat の fail-loud)を release が
    壊さないため。TTL は SIGKILL / crash 経路のバックストップとして残る。
    戻り値 = 釈放したか。"
-  (.execute conn "BEGIN IMMEDIATE")
-  (setv released False)
-  (try
+  (defn release [conn]
     (setv current (db-read-lease conn))
     (when (and (is-not current None)
                (= (get current "owner_pid") owner-pid))
@@ -1072,12 +1088,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
                 (+ "DELETE FROM agent_daemon_lease "
                    "WHERE lease_name = ? AND owner_pid = ?")
                 #(LEASE-NAME owner-pid))
-      (setv released True))
-    (.execute conn "COMMIT")
-    (except [e Exception]
-      (.execute conn "ROLLBACK")
-      (raise)))
-  released)
+      (return True))
+    False)
+  (db-immediate-transaction conn release))
 
 
 ;; 器の入れ替えの blue/green(acp/host_slots): 新しい器の区画の store を、いま手番を受けている器の store の写しで
@@ -1148,6 +1161,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
     (db-migrate self.conn)
     (setv self._journal (threading.Condition))
     (setv self.journal-seq (run (db-journal-seq self.conn)))
+    ;; 書き込みの健康(store_health.next-health の 1 点で進める)。actor thread だけが書き、読み手は値ごと読む。
+    (setv self.write-health (StoreWriteHealth))
     (setv self._queue (queue.Queue))
     (setv self._thread (threading.Thread :target self._run :daemon True
                                          :name "sessionhost-store"))
@@ -1160,12 +1175,21 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
         (break))
       (setv #(op box event) item)
       (setv before self.conn.total-changes)
+      (setv failure None)
+      (setv detail "")
       (try
         (setv (get box "value") (op self.conn))
         (except [e Exception]
+          (setv failure (storage-failure-name e))
+          (setv detail (str e))
           (setv (get box "error") e)))
+      (setv wrote (!= self.conn.total-changes before))
+      ;; 保管の書き込みの失敗が続いたら host の readiness を落とす(実弾 2026-09-25: volume が満杯でも
+      ;; socket は答え続け、書けない host が手番を受け続けた)。数える点はこの actor の 1 点。
+      (setv self.write-health (next-health self.write-health failure detail wrote
+                                           (.isoformat (datetime.now timezone.utc))))
       (.set event)
-      (when (!= self.conn.total-changes before)
+      (when wrote
         (self._advance-journal)))
     ;; 降りる時は待ち手を全部起こす(上限まで待たせない — 答えは今の先端)。
     (with [self._journal]

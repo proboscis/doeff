@@ -102,6 +102,7 @@
   headless-send-program
   recover-headless-rows
   stop-headless-rows])
+(import doeff_agents.sessionhost.store_health [DEFAULT-STORE-WRITE-FAILURE-LIMIT readiness-of])
 (import doeff_agents.sessionhost.store [
   HISTORY-PRUNE-BATCH-ROWS
   LEASE-TTL-SECONDS
@@ -1329,6 +1330,14 @@
                f"no session with id '{session-id}'")))))
 
 
+(deff store-write-failure-limit []
+  {:pre [True]
+   :post [(: % int) (>= % 1)]}
+  "readiness を落とす「続けた書き込みの失敗」の回数。knob は use-site 読み
+   (DOEFF_AGENTD_STORE_WRITE_FAILURE_LIMIT、他 knob と同じ流儀)。"
+  (or (env-positive-i64 "DOEFF_AGENTD_STORE_WRITE_FAILURE_LIMIT")
+      DEFAULT-STORE-WRITE-FAILURE-LIMIT))
+
 (deff dispatch-method [method params config actor]
   {:pre [(: method str) (: params JsonValue) (: config HostConfig)
          (: actor StoreActor)]
@@ -1337,7 +1346,16 @@
    session.report_result は C3-impl-4 — それまで not-implemented で loud。
    契約外 method は oracle と同文言の unknown method。"
   (when (= method "daemon.status")
+    ;; readiness(store_health.readiness-of の 1 点): 保管の書き込みが続けて失敗していれば ready = False。
+    ;; `doeff-sessionhost ready --socket <path>` がこの欄を読んで終了 code に写す(probe の口)。
+    (setv health actor.write-health)
+    (setv readiness (readiness-of health (store-write-failure-limit)))
     (return {"state" "running"
+             "ready" readiness.ready
+             "not_ready_reason" readiness.reason
+             "store_write_health" {"consecutive_failures" health.consecutive-failures
+                                   "last_error" health.last-error
+                                   "failing_since" health.failing-since}
              "pid" (os.getpid)
              "db_path" config.db-path
              "socket_path" config.socket-path

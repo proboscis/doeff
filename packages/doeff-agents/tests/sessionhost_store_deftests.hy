@@ -472,6 +472,52 @@
   (with-tmp-conn check))
 
 
+(defn fill-lease-table-until-full [conn]
+  "max_page_count を今の page 数に止め、lease の表へ小さな行を入れて空きを使い切る(SQLITE_FULL を起こす
+   足場)。本物の lease の行(名前・pid・時刻 2 つ)は詰めた行より大きいので、次の upsert は新しい page を要し、
+   文の段で `database or disk is full` になる — その時 SQLite は transaction を自分で巻き戻す。"
+  (setv pages (get (.fetchone (.execute conn "PRAGMA page_count")) 0))
+  (.execute conn f"PRAGMA max_page_count = {pages}")
+  (setv i 0)
+  (while True
+    (try
+      (.execute conn
+                "INSERT INTO agent_daemon_lease (lease_name, owner_pid, heartbeat_at, expires_at) VALUES (?, 0, '', '')"
+                #(f"f{i}"))
+      (except [e sqlite3.OperationalError]
+        (assert (in "full" (str e)) f"足場は SQLITE_FULL で止まるはず: {e}")
+        (break)))
+    (setv i (+ i 1))))
+
+
+(deftest test-lease-transaction-surfaces-disk-full-not-the-rollback
+  ;; 実弾 2026-09-25(k3s agentd-pool-0 / -1 の agentd-state が 100%): lease の 3 関数は except で無条件に
+  ;; ROLLBACK し、SQLite が自分で巻き戻した後の `cannot rollback - no transaction is active` が元の
+  ;; `database or disk is full` を隠していた。出る例外は disk full で、接続は transaction の外に戻っている。
+  (import doeff_agents.sessionhost.store [db-immediate-transaction])
+  (defn check [conn]
+    (fill-lease-table-until-full conn)
+    (setv raised None)
+    (try
+      (db-acquire-lease conn 111)
+      (except [e Exception] (setv raised e)))
+    (assert (is-not raised None))
+    (assert (isinstance raised sqlite3.OperationalError) (repr raised))
+    (assert (in "database or disk is full" (str raised)) (repr raised))
+    (assert (not conn.in-transaction))
+    ;; 型そのもの: body の失敗で transaction が残っていれば巻き戻し、元の例外を出す(disk full ではない失敗)。
+    (setv raised None)
+    (try
+      (db-immediate-transaction conn (fn [c] (raise (RuntimeError "body failed"))))
+      (except [e RuntimeError] (setv raised e)))
+    (assert (= (str raised) "body failed"))
+    (assert (not conn.in-transaction))
+    ;; 成功した body の値は返る。
+    (assert (= (db-immediate-transaction conn (fn [c] 42)) 42))
+    (assert (not conn.in-transaction)))
+  (with-tmp-conn check))
+
+
 (deftest test-lease-release-owner-idempotent-and-successor
   ;; issue #565: graceful shutdown は自 lease を釈放し、後継は TTL 待ちなしで
   ;; 即 acquire できる。fail-loud acquire(未失効他人名義の拒否)は不変。
