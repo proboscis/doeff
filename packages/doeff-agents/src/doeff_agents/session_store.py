@@ -219,13 +219,8 @@ def _matches_query(
     snapshot: AgentSessionSnapshot,
     query: AgentSessionQuery | None,
 ) -> bool:
-    if query is None:
-        return True
-    if query.status is not None and snapshot.status != query.status:
-        return False
-    if query.agent_type is not None and snapshot.agent_type != query.agent_type:
-        return False
-    return query.backend_kind is None or snapshot.backend_kind == query.backend_kind
+    # The filter has one definition point: AgentSessionQuery.matches (#608).
+    return query is None or query.matches(snapshot)
 
 
 def _safe_session_id(session_id: str) -> str:

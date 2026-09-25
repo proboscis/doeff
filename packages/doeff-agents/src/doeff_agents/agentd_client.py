@@ -1253,6 +1253,10 @@ def resolve_agentd_binary_program() -> IoGenerator[str]:
 def _query_to_params(query: AgentSessionQuery | None) -> dict[str, Any]:
     if query is None:
         return {}
+    if query.caller_ref is not None or query.node is not None:
+        # agentd's session.list has no such filter; dropping it would widen
+        # the answer silently (#608 added the fields for the session store).
+        raise ValueError("agentd session.list cannot filter by caller_ref or node")
     params: dict[str, Any] = {}
     if query.status is not None:
         params["status"] = [query.status.value]
