@@ -1,0 +1,91 @@
+diff --git a/packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py b/packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py
+index b77acb7e..8dda3284 100644
+--- a/packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py
++++ b/packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py
+@@ -6,11 +6,19 @@ module of this package must therefore declare ``import hy`` (or reach it through
+ parent package that does); otherwise it imports only when some earlier import happened
+ to load Hy. ``tests/conftest.py`` imports hy, so this can only be observed in a fresh
+ interpreter — each module below is imported in its own subprocess.
++
++The subprocesses share one bytecode directory that belongs to this module's run
++(pytest's temporary directory, outside the checkout): the land tool and the daily
++run set PYTHONDONTWRITEBYTECODE=1, and without a shared cache every subprocess
++compiled the whole Hy stack again (39 s for one import on a cold Mac, measured
++2026-09-26) until one crossed the per-test deadline. The directory is deleted with
++pytest's temporary directories, so no run reuses another run's bytecode.
+ """
+ 
+ from __future__ import annotations
+ 
+ import ast
++import os
+ import subprocess
+ import sys
+ from pathlib import Path
+@@ -66,16 +74,41 @@ PUBLIC_STATEMENTS = [
+ ]
+ 
+ 
+-def _fresh_import(statement: str) -> subprocess.CompletedProcess[str]:
++@pytest.fixture(scope="module")
++def private_bytecode_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
++    return tmp_path_factory.mktemp("fresh-interpreter-bytecode")
++
++
++@pytest.fixture
++def child_deadline(request: pytest.FixtureRequest) -> float:
++    """The subprocess must end before this test's own deadline, so a slow import is
++    reported by this test with its module name instead of by the per-test timeout."""
++    item_deadline = float(request.config.option.timeout or 0)
++    return max(item_deadline - 15.0, 15.0) if item_deadline > 0 else 120.0
++
++
++def _fresh_import(
++    statement: str, bytecode_dir: Path, deadline: float
++) -> subprocess.CompletedProcess[str]:
++    env = {k: v for k, v in os.environ.items() if k != "PYTHONDONTWRITEBYTECODE"}
++    env["PYTHONPYCACHEPREFIX"] = str(bytecode_dir)
+     probe = (
+         "import sys\n"
+         "import doeff\n"
+         "assert 'hy' not in sys.modules, 'import doeff loaded hy; this probe needs a Hy-free start'\n"
+         f"{statement}\n"
+     )
+-    return subprocess.run(
+-        [sys.executable, "-c", probe], capture_output=True, text=True, timeout=120, check=False
+-    )
++    try:
++        return subprocess.run(
++            [sys.executable, "-c", probe],
++            capture_output=True,
++            text=True,
++            timeout=deadline,
++            check=False,
++            env=env,
++        )
++    except subprocess.TimeoutExpired:
++        pytest.fail(f"{statement!r} did not finish within {deadline:.0f}s in a fresh interpreter")
+ 
+ 
+ def test_the_scan_finds_the_importers() -> None:
+@@ -85,12 +118,16 @@ def test_the_scan_finds_the_importers() -> None:
+ 
+ 
+ @pytest.mark.parametrize("module", IMPORTERS)
+-def test_python_module_importing_hy_imports_in_a_fresh_interpreter(module: str) -> None:
+-    result = _fresh_import(f"import {module}")
++def test_python_module_importing_hy_imports_in_a_fresh_interpreter(
++    module: str, private_bytecode_dir: Path, child_deadline: float
++) -> None:
++    result = _fresh_import(f"import {module}", private_bytecode_dir, child_deadline)
+     assert result.returncode == 0, result.stderr[-2000:]
+ 
+ 
+ @pytest.mark.parametrize("statement", PUBLIC_STATEMENTS)
+-def test_public_names_import_in_a_fresh_interpreter(statement: str) -> None:
+-    result = _fresh_import(statement)
++def test_public_names_import_in_a_fresh_interpreter(
++    statement: str, private_bytecode_dir: Path, child_deadline: float
++) -> None:
++    result = _fresh_import(statement, private_bytecode_dir, child_deadline)
+     assert result.returncode == 0, result.stderr[-2000:]

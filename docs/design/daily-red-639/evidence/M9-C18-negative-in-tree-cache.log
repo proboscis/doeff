@@ -1,0 +1,70 @@
+test-admission: focused — 1 件(変更箇所の検証)
+.E                                                                       [100%]
+==================================== ERRORS ====================================
+_ ERROR at teardown of test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.adapters.base] _
+
+    @pytest.fixture(scope="session", autouse=True)
+    def _bytecode_settings_pinned():
+        started = time.time()
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(sys, "dont_write_bytecode", True)
+            patch.setattr(sys, "pycache_prefix", None)
+            patch.setenv("PYTHONDONTWRITEBYTECODE", "1")
+            patch.delenv("PYTHONPYCACHEPREFIX", raising=False)
+            yield
+            at_the_end = (sys.dont_write_bytecode, sys.pycache_prefix)
+        assert at_the_end == (True, None), (
+            f"a test or fixture changed the bytecode settings and did not restore them "
+            f"(dont_write_bytecode, pycache_prefix) = {at_the_end} — change them with "
+            f"monkeypatch (or pytest.MonkeyPatch.context() in a wider fixture)"
+        )
+        written = _bytecode_written_since(_CHECKOUT, started)
+>       assert written == [], (
+            f"{len(written)} bytecode file(s) were written under the checkout during this run "
+            f"(first: {written[:5]}) — a subprocess that needs bytecode gets a directory under "
+            f"pytest's temporary directory (tmp_path_factory), never one inside the checkout"
+        )
+E       AssertionError: 131 bytecode file(s) were written under the checkout during this run (first: ['packages/doeff-agents/.hy-import-cache/Users/kento/.local/share/uv/python/cpython-3.14.3+freethreaded-macos-aarch64-none/lib/python3.14t/__future__.cpython-314.pyc', 'packages/doeff-agents/.hy-import-cache/Users/kento/.local/share/uv/python/cpython-3.14.3+freethreaded-macos-aarch64-none/lib/python3.14t/_ast_unparse.cpython-314.pyc', 'packages/doeff-agents/.hy-import-cache/Users/kento/.local/share/uv/python/cpython-3.14.3+freethreaded-macos-aarch64-none/lib/python3.14t/_colorize.cpython-314.pyc', 'packages/doeff-agents/.hy-import-cache/Users/kento/.local/share/uv/python/cpython-3.14.3+freethreaded-macos-aarch64-none/lib/python3.14t/_opcode_metadata.cpython-314.pyc', 'packages/doeff-agents/.hy-import-cache/Users/kento/.local/share/uv/python/cpython-3.14.3+freethreaded-macos-aarch64-none/lib/python3.14t/_py_warnings.cpython-314.pyc']) — a subprocess that needs bytecode gets a directory under pytest's temporary directory (tmp_path_factory), never one inside the checkout
+E       assert ['packages/do...314.pyc', ...] == []
+E         
+E         Left contains 131 more items, first extra item: 'packages/doeff-agents/.hy-import-cache/Users/kento/.local/share/uv/python/cpython-3.14.3+freethreaded-macos-aarch64-none/lib/python3.14t/__future__.cpython-314.pyc'
+E         Use -v to get more diff
+
+conftest.py:341: AssertionError
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156
+  /Users/kento/.worktrees/doeff-wt-639-m5/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+ERROR packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py::test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.adapters.base]
+1 passed, 21 deselected, 1 warning, 1 error in 1.96s

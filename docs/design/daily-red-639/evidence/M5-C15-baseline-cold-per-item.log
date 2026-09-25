@@ -1,0 +1,15 @@
+== acp.runtime
+38.76s call     packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py::test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.sessionhost.acp.runtime]
+1 passed, 21 deselected, 1 warning in 38.98s
+== hostmain
+0.12s call     packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py::test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.sessionhost.hostmain]
+1 passed, 21 deselected, 1 warning in 0.34s
+== sessionhost.usage
+0.20s call     packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py::test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.sessionhost.usage]
+1 passed, 21 deselected, 1 warning in 0.42s
+== shell
+0.07s call     packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py::test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.shell]
+1 passed, 21 deselected, 1 warning in 0.28s
+== tmux
+1.19s call     packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py::test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.tmux]
+1 passed, 21 deselected, 1 warning in 1.43s

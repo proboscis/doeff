@@ -1,0 +1,3 @@
+cmd: uv run --no-sync pytest -q -p no:cacheprovider tests/test_finally_doctrl.py packages/doeff-adr/tests/test_wiring.py::test_hy_file_under_a_workspace_package_dir_imports_from_its_package_base  (試作 proto/m2_wiring.patch を当てた木)
+6 passed, 1 warning in 0.48s
+rc=0

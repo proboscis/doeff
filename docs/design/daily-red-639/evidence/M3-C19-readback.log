@@ -1,0 +1,4 @@
+parse_unexecuted_all: [('tool-absent', None, 'packages/doeff-conductor/tests/test_agent_effect_c1.py::test')]
+gate_unexecuted_declarations: ({'kind': 'tool-absent', 'layer': None, 'reason': 'packages/doeff-conductor/tests/test_agent_effect_c1.py::test_real_codex_worker_returns_schema_valid_json_through_agent: codex (/tmp/wt639/fake127/codex) exits 127: codex: router entry point, no binary behind it'},)
+machine-bound kinds contain tool-absent: True
+C20 declarations (must be empty): ()

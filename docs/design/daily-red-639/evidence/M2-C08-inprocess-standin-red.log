@@ -1,0 +1,20 @@
+cmd: 外側に代わりの tests を置いたまま内側を in-process(基準の runpytest)に戻した木で packages/doeff-adr/tests/test_wiring.py::test_hy_file_under_a_workspace_package_dir_imports_from_its_package_base を単独で実行
++    monkeypatch: pytest.MonkeyPatch,
+-    makes it ``tests.test_y`` and its sibling module ``tests.helper`` importable."""
++    makes it ``tests.test_y`` and its sibling module ``tests.helper`` importable.
++    The claim is about a fresh pytest process, so the inner run is a separate process:
++    an in-process run shares this process's ``sys.modules``, and a ``tests`` package
++    imported earlier by another test (the root ``tests/`` does
++    ``from tests._run_helpers import …``) hid ``tests.helper`` from the inner run
++    (the daily of 2026-09-26, agora-redesign#639).  A stand-in ``tests`` is put into this
++    process first so the independence is proven on every run, not only in some orders."""
++    import types
++    monkeypatch.setitem(sys.modules, "tests", types.ModuleType("tests"))
+>       result.assert_outcomes(passed=2)
+E       AssertionError: assert {'passed': 0,...rors': 1, ...} == {'passed': 2,...rors': 0, ...}
+E         {'errors': 1} != {'errors': 0}
+E         {'passed': 0} != {'passed': 2}
+E   ModuleNotFoundError: No module named 'tests.helper'; 'tests' is not a package
+ERROR packages/doeff-x/tests/test_y.hy - ModuleNotFoundError: No module named...
+1 failed, 2 warnings in 0.33s
+rc=1

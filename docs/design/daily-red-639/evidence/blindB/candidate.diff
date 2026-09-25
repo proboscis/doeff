@@ -1,0 +1,24 @@
+--- a/packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py
++++ b/packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py
+@@ -11,6 +11,7 @@
+ from __future__ import annotations
+ 
+ import ast
++import os
+ import subprocess
+ import sys
+ from pathlib import Path
+@@ -73,8 +74,12 @@
+         "assert 'hy' not in sys.modules, 'import doeff loaded hy; this probe needs a Hy-free start'\n"
+         f"{statement}\n"
+     )
++    # Reuse compiled Hy modules across focused runs to reduce cold-start cost.
++    child_env = os.environ.copy()
++    child_env.pop("PYTHONDONTWRITEBYTECODE", None)
++    child_env["PYTHONPYCACHEPREFIX"] = str(SRC.parent / ".hy-import-cache")
+     return subprocess.run(
+-        [sys.executable, "-c", probe], capture_output=True, text=True, timeout=120, check=False
++        [sys.executable, "-c", probe], capture_output=True, text=True, timeout=120, check=False, env=child_env
+     )
+ 
+ 

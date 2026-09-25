@@ -1,0 +1,25 @@
+from pathlib import Path
+import os
+import subprocess
+
+ROOT = Path(__file__).resolve().parent.parent
+EXPERIMENT = ROOT / "blind_b_experiment"
+CACHE = EXPERIMENT / "packages/doeff-agents/.hy-import-cache"
+NODE = "test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.adapters.base]"
+FILE = "packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py"
+env = os.environ.copy()
+env["PYTHONDONTWRITEBYTECODE"] = "1"
+env["UV_CACHE_DIR"] = str(EXPERIMENT / "uv-cache")
+for label, path in (("baseline", FILE), ("candidate-1", "blind_b_experiment/" + FILE), ("candidate-2", "blind_b_experiment/" + FILE)):
+    before = set(CACHE.rglob("*.pyc"))
+    result = subprocess.run(
+        ["uv", "run", "--no-sync", "pytest", "-q", "-p", "no:cacheprovider", path + "::" + NODE],
+        cwd=ROOT, env=env, text=True, capture_output=True, timeout=60,
+    )
+    (EXPERIMENT / (label + ".log")).write_text(result.stdout + result.stderr)
+    after = set(CACHE.rglob("*.pyc"))
+    print(f"{label}: exit={result.returncode}, cached_before={len(before)}, cached_after={len(after)}, shared={len(before & after)}")
+    assert result.returncode == 0, result.stdout + result.stderr
+assert CACHE.is_relative_to(ROOT)
+assert list(CACHE.rglob("*.pyc"))
+print("Cache remains inside the repository after independent pytest sessions.")

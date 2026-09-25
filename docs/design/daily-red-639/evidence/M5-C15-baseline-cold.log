@@ -1,0 +1,57 @@
+test-admission: focused — 22 件(変更箇所の検証)
+...............
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156
+  /Users/kento/.worktrees/doeff-wt-639-m5/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================== slowest durations ===============================
+19.72s call     packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py::test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.sessionhost.acp.host_slot_cli]
+1.55s call     packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py::test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.handlers]
+1.50s call     packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py::test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.handlers.production]
+1.49s call     packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py::test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.handlers.daemon]
+1.34s call     packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py::test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.session]
+1.33s call     packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py::test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.session_store]
+1.28s call     packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py::test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.agentd_client]
+1.26s call     packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py::test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.adapters.claude]
+1.25s call     packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py::test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.adapters.codex]
+1.24s call     packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py::test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.adapters.base]
+1.22s call     packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py::test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.session_backend]
+1.19s call     packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py::test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.io_root]
+1.15s call     packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py::test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.claude_home]
+0.18s call     packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py::test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.sessionhost.acp.entry]
+0.01s teardown packages/doeff-agents/tests/test_hy_loader_declared_by_importers.py::test_python_module_importing_hy_imports_in_a_fresh_interpreter[doeff_agents.session]
+
+(31 durations < 0.005s hidden.  Use -vv to show these durations.)
+!!!!!!!!!!!! _pytest.outcomes.Exit: 変更箇所の検証が時間上限 60 秒に達したため中断しました。 !!!!!!!!!!!!!
+15 passed, 1 warning in 60.54s (0:01:00)
+変更箇所の検証が時間上限 60 秒に達したため中断しました。 ⚠ 直上の集計行はこの走行の結末ではない — 収集した 22 本を走り切っていない(集計の passed は打ち切りまでの部分計・failed 0 は「1 本も落ちなかった」ではない)

@@ -1,0 +1,5 @@
+cmd: (cd /tmp/wt639/m6proj && .venv/bin/pytest -q -p no:cacheprovider -o timeout_method=thread test_two.py)
++++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+~~~~~~~~~~~~~~~~~~~~~~~ Stack of MainThread (8363630976) ~~~~~~~~~~~~~~~~~~~~~~~
++++++++++++++++++++++++++++++++++++ Timeout ++++++++++++++++++++++++++++++++++++
+pytest rc=1
