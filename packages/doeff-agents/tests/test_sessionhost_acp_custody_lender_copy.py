@@ -7,14 +7,17 @@ runner の断りの分類の表(``CUSTODY_LENDER_TRANSIENT``)と接続が答え�
 * 正本(``source.commit`` の ``docs/contracts/custody-api.json#/lenderAvailability``)と JSON として一致し、
 * 分類が読む値がこの写しの導出ちょうどである
 
-ことを撃つ。正本の checkout は env ``CUSTODY_CHECKOUT``(無ければ ``~/repos/custody``)。checkout が無い・pin の commit が
-読めない機体では名指しで赤(黙って skip しない — 写しの腐敗を隠さない)。写しを進める = 正本の新しい commit の節で
-file を書き直し ``source.commit`` を進める(手で節を直さない)。
+ことを撃つ。正本の checkout は env ``CUSTODY_CHECKOUT``(無ければ ``~/repos/custody``)。checkout が無い・pin の commit を
+持たない機体は、根の conftest の ``machine_checkout`` に聞いて機体の前提の欠けとして skip し、走行の終わりに未実行
+(``premise-unmet``)として名指す(黙った skip にしない — 写しの腐敗を隠さない・agora-redesign #639)。前提が在って
+写しと正本が食い違う時は赤。写しを進める = 正本の新しい commit の節で file を書き直し ``source.commit`` を進める
+(手で節を直さない)。
 """
 
 import json
 import os
 import subprocess
+from collections.abc import Callable
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -76,27 +79,25 @@ def test_the_copy_has_the_shared_form() -> None:
     assert set(document) == {"schema", "source", "copy"}, sorted(document)
 
 
-def test_the_copy_is_the_custody_contract_at_the_pinned_commit() -> None:
-    """正本との一致: pin の commit の custody-api.json の lenderAvailability の節と JSON として一致(手で直した写しは赤)。"""
+def test_the_copy_is_the_custody_contract_at_the_pinned_commit(
+    machine_tool: Callable[..., str], machine_checkout: Callable[[Path, str], Path]
+) -> None:
+    """正本との一致: pin の commit の custody-api.json の lenderAvailability の節と JSON として一致(手で直した写しは赤)。
+
+    checkout の在処と pin の commit を持つかは機体の前提(env ``CUSTODY_CHECKOUT`` で ``proboscis/custody`` の checkout を名指す)。
+    """
     document = _copy_document()
     commit = document["source"]["commit"]
-    checkout = _custody_checkout()
-    if not (checkout / ".git").exists():
-        pytest.fail(
-            f"預かり所の契約の正本の checkout が無い: {checkout}(env CUSTODY_CHECKOUT で {CANON_REPO} の checkout を名指す)"
-            " — 写しと正本の一致を検められない"
-        )
+    checkout = machine_checkout(_custody_checkout(), commit)
     shown = subprocess.run(
-        ["git", "-C", str(checkout), "show", f"{commit}:{CANON_PATH}"],
+        [machine_tool("git"), "-C", str(checkout), "show", f"{commit}:{CANON_PATH}"],
         capture_output=True,
         text=True,
         check=False,
         timeout=30,
     )
     if shown.returncode != 0:
-        pytest.fail(
-            f"{checkout} で pin の commit {commit} の {CANON_PATH} が読めない(git fetch が要る?): {shown.stderr.strip()}"
-        )
+        pytest.fail(f"{checkout} の pin の commit {commit} に {CANON_PATH} が無い: {shown.stderr.strip()}")
     canon = _pointer_value(json.loads(shown.stdout), CANON_POINTER)
     copied = document["copy"]
     differing = sorted(key for key in set(canon) | set(copied) if canon.get(key) != copied.get(key))
