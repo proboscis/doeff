@@ -198,7 +198,11 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        ;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D2): 温かい session の手番が**失敗で**終わった時に走行器が
        ;; 名乗った文(headless の turn_verdict の detail)。turn_ended_at と対の level-triggered の欄
        ;; (成功の終わり・次の手番の送りで NULL)・単一 writer = monitor・素の last-write-wins。
-       #("agent_sessions" "turn_error" "TEXT")])
+       #("agent_sessions" "turn_error" "TEXT")
+       ;; 出来事の送り待ちの表: 段の DB の 1 行の上限を超える行は送らずに手元に留める(held_at と理由)。
+       ;; 留めた行は送らない・外さない(prune は shipped_at の在る行だけ)— 記録は消さない。
+       #("headless_event_outbox" "held_at" "TEXT")
+       #("headless_event_outbox" "held_reason" "TEXT")])
 
 (setv SNAPSHOT-SELECT
       (+ "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status, "

@@ -104,8 +104,9 @@
   stop-headless-rows])
 (import doeff_agents.sessionhost.store_health [DEFAULT-STORE-WRITE-FAILURE-LIMIT readiness-of])
 (import doeff_agents.sessionhost.headless_events [HeadlessEventsSince])
-(import doeff_agents.sessionhost.headless_outbox [OutboxEventStore OtlpShipper PRUNE-GRACE-SECONDS-DEFAULT
-                                                 prune-shipped run-forever])
+(import doeff_agents.sessionhost.headless_outbox [MAX-BODY-BYTES-DEFAULT OutboxEventStore OtlpShipper
+                                                 PRUNE-GRACE-SECONDS-DEFAULT outbox-counts prune-shipped
+                                                 run-forever])
 (import doeff_agents.sessionhost.store [
   HISTORY-PRUNE-BATCH-ROWS
   LEASE-TTL-SECONDS
@@ -1356,6 +1357,11 @@
     (return {"state" "running"
              "ready" readiness.ready
              "not_ready_reason" readiness.reason
+             ;; 出来事の送り待ちの表の数(置き場が送り待ちの表の時だけ・無ければ None)— 留めた行(段の DB が
+             ;; 受けない大きさ)と送れていない行の滞留を外から読む口。
+             "events_outbox" (when (isinstance HEADLESS-REGISTRY.event-store OutboxEventStore)
+                               (setv counts (.submit actor outbox-counts))
+                               {"unshipped" counts.unshipped "held" counts.held "shipped" counts.shipped})
              "store_write_health" {"consecutive_failures" health.consecutive-failures
                                    "last_error" health.last-error
                                    "failing_since" health.failing-since}
@@ -2030,7 +2036,9 @@
   (when (not url)
     (return None))
   (.use-event-store HEADLESS-REGISTRY (OutboxEventStore actor.submit))
-  (setv shipper (OtlpShipper :submit actor.submit :url url :node (socket.gethostname)))
+  (setv shipper (OtlpShipper :submit actor.submit :url url :node (socket.gethostname)
+                             :max-body-bytes (or (env-positive-i64 "DOEFF_AGENTD_EVENTS_MAX_BODY_BYTES")
+                                                 MAX-BODY-BYTES-DEFAULT)))
   (run-forever shipper shutdown-event)
   (print f"doeff-sessionhost events: outbox → {url}/v1/logs (node {shipper.node})" :file sys.stderr)
   shipper)
