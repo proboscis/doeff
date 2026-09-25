@@ -31,7 +31,7 @@
                           list-resources get-resource events-view create-resource update-resource delete-resource
                           legacy-put-jobs COORDINATOR])
 (import .drain_policy [advance-drains request-drain cancel-drain worker-view drains-view])
-(import .detached_policy [submit-detached detached-view cancel-detached release-detached])
+(import .detached_policy [Reply submit-detached detached-view cancel-detached release-detached])
 (import .rollout_policy [rollout-step target-key deployment-owners drift-status action-due shift-clocks TERMINAL-PHASES])
 
 (setv OBSERVATION-STALE-MS 15000)   ; これより古い k8s の観測は Unknown
@@ -208,6 +208,12 @@
   (or (valid-actor request.actor) (+ "anonymous@" (or request.peer "?"))))
 
 
+(defn #^ tuple detached-reply [#^ ClusterState state #^ Reply reply #^ Request request #^ int now #^ ClusterTiming timing]
+  "切り離した task の口の答え(detached_policy の Reply)→ respond の返り値 #(次の状態 status 本文)。状態を変えた答えだけ
+   settle(版と出来事の記録)を通す。"
+  #((if (is reply.state state) state (settle state reply.state (loose-actor request) now timing)) reply.status reply.body))
+
+
 (defn #^ tuple respond [#^ ClusterState state #^ Request request #^ int now #^ ClusterTiming timing]
   "要求 1 件 → #(次の状態 status 本文)。"
   (setv method request.method
@@ -286,16 +292,13 @@
           200 {"dropped" True})
       ;; --- 切り離した task(2026-09-25 — detached_policy)---
       (and (= method "PUT") (= head "detached") (= (len parts) 2))
-        (do (setv #(after status reply) (submit-detached state (get parts 1) body now))
-            #((if (is after state) state (settle state after (loose-actor request) now timing)) status reply))
+        (detached-reply state (submit-detached state (get parts 1) body now) request now timing)
       (and (= method "GET") (= head "detached") (= (len parts) 2))
         #(state 200 (detached-view state (get parts 1)))
       (and (= method "POST") (= head "detached") (= (len parts) 3) (= (get parts 2) "cancel"))
-        (do (setv #(after reply) (cancel-detached state (get parts 1) now))
-            #((if (is after state) state (settle state after (loose-actor request) now timing)) 200 reply))
+        (detached-reply state (cancel-detached state (get parts 1) now) request now timing)
       (and (= method "DELETE") (= head "detached") (= (len parts) 2))
-        (do (setv #(after status reply) (release-detached state (get parts 1)))
-            #((if (is after state) state (settle state after (loose-actor request) now timing)) status reply))
+        (detached-reply state (release-detached state (get parts 1)) request now timing)
       True #(state 404 {"error" (.format "知らない要求: {} {}" method request.path)}))
     (except [refused Refused]
       #(state refused.status refused.body))
