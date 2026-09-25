@@ -119,10 +119,15 @@
         :setv a (.get state.placements job.spec.name)
         :if (and a (= a.worker worker) job.spec.handoff)
         job.spec.name
-        (do (setv proc (running-process state job.spec.name now timing))
-            (if (and (get proc "ok") (= (get (service-readiness state job.spec.name now timing) "state") "Ready"))
-                (get proc "instance")
-                None))))
+        (ready-instance state job.spec.name now timing)))
+
+
+(defn #^ (| str None) ready-instance [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]
+  "Service name の走っている process の世代の名(Service が Ready と数えられている時だけ・そうでなければ None)。"
+  (setv proc (running-process state name now timing))
+  (if (and (get proc "ok") (= (get (service-readiness state name now timing) "state") "Ready"))
+      (get proc "instance")
+      None))
 
 
 (defn #^ list deployments-to-observe [#^ ClusterState state #^ int now]
@@ -214,13 +219,23 @@
   #((if (is reply.state state) state (settle state reply.state (loose-actor request) now timing)) reply.status reply.body))
 
 
+(defn #^ dict request-object [#^ Request request]
+  "要求の本文(JSON の値)→ JSON の object。本文が無ければ空の object。object でない本文は 400 で断る
+   (口はどれも object の本文を読む — 型の外の本文を読み進めない)。"
+  (setv raw request.body)
+  (cond
+    (not raw) {}
+    (isinstance raw dict) raw
+    True (raise (Refused 400 {"error" (.format "本文は JSON の object: {}" (. (type raw) __name__))}))))
+
+
 (defn #^ tuple respond [#^ ClusterState state #^ Request request #^ int now #^ ClusterTiming timing]
   "要求 1 件 → #(次の状態 status 本文)。"
   (setv method request.method
         parts (lfor p (.split (.strip request.path "/") "/") (url-unquote p))
-        head (get parts 0)
-        body (or request.body {}))
+        head (get parts 0))
   (try
+    (setv body (request-object request))
     (cond
       ;; --- 資源の口 ---
       (and (= head "resources") (= (len parts) 2) (= method "GET"))
