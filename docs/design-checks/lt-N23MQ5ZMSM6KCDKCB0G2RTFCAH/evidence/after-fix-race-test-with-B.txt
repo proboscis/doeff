@@ -1,0 +1,77 @@
+# 競合の検を patch B(一覧の行で判断して組む巡回)に当てる
+# tree: baa00ba4fd768fe391ffea9f8df1cc48eba1c4c6 + 作業樹の差分(下の stat・空 = なし):
+ .../src/doeff_agents/sessionhost/acp/agentd.hy        | 19 ++++++++++---------
+ 1 file changed, 10 insertions(+), 9 deletions(-)
+# command: uv run pytest -v -p no:cacheprovider -W ignore::pytest.PytestWarning "packages/doeff-agents/tests/test_sessionhost_acp_turn_events.py::test_a_sweep_that_loses_the_race_to_another_writer_neither_writes_twice_nor_erases_usage"
+
+deadline scale x1.1 (load/core) — per test 68s, watchdog 102s
+
+============================= test session starts ==============================
+platform linux -- Python 3.14.3, pytest-9.1.1, pluggy-1.6.0 -- /home/kento/.worktrees/doeff-wt-639-adr012-roles/.venv/bin/python3
+rootdir: /home/kento/.worktrees/doeff-wt-639-adr012-roles
+configfile: pyproject.toml
+plugins: timeout-2.4.0, doeff-hy-0.1.0, asyncio-1.4.0, doeff-adr-0.1.0, anyio-4.14.2, xdist-3.8.0
+timeout: 68.27962239583334s
+timeout method: signal
+timeout func_only: False
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... test-admission: focused — 1 件(変更箇所の検証)
+collected 1 item
+
+packages/doeff-agents/tests/test_sessionhost_acp_turn_events.py::test_a_sweep_that_loses_the_race_to_another_writer_neither_writes_twice_nor_erases_usage FAILED [100%]
+
+=================================== FAILURES ===================================
+_ test_a_sweep_that_loses_the_race_to_another_writer_neither_writes_twice_nor_erases_usage _
+
+doeff_interpreter = <function doeff_interpreter.<locals>.run_program at 0x53109ed93c0>
+
+    (deftest test-a-sweep-that-loses-the-race-to-another-writer-neither-writes-twice-nor-erases-usage
+      ;; R49(盲検 B・依頼 lt-N23MQ5ZMSM6KCDKCB0G2RTFCAH): 巡回が一覧を読んだ後・記録を鍵で読み直す前に、別の書き手の ended が
+      ;; 着地する(usage つき = 手番の終わりの書き・usage なし = 別の agentd の巡回)。巡回は読み直した行で判じるので ended の記録に
+      ;; 2 度目を書かず、手番の終わりが書いた usage を消さない。一覧の行で判断して status を組む巡回は、この競合で 2 度目を書き
+      ;; usage を消した(docs/design-checks/lt-N23MQ5ZMSM6KCDKCB0G2RTFCAH/evidence/race-B-double-write-and-usage-erasure.txt)。
+>     (for [other [{"state" "ended" "usage" {"input" 10 "output" 5 "cacheWrite" 0 "cacheRead" 0}}
+
+packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy:1372: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/doeff-agents/tests/conftest.py:68: in run_program
+    return run(program)
+           ^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+doeff/do.py:314: in thunk
+    return _make_stream(fn(*args, **kwargs))
+                        ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    (for [other [{"state" "ended" "usage" {"input" 10 "output" 5 "cacheWrite" 0 "cacheRead" 0}}
+                 {"state" "ended"}]]
+      (setv world (World))
+      (setv racing (RacingAcp world.acp.births (record-key-of "j-2") other))
+      (for [row (.values world.acp.rows)]
+        (.put-row racing row))
+      (setv world.acp racing)
+      (.put-row racing (running-record-row "j-2" NODE))
+      (.put-row racing (job-row-in-phase "j-2" PHASE-ENDED NODE))
+      (.tick world 0)
+      (assert racing.raced "競合が起きていない(検体が弱い)")
+      (setv writes (record-writes-of world "j-2"))
+>     (assert (= writes [other]) #("ended の記録に巡回が 2 度目を書いた" writes))
+                ^^^^^^^^^^^^^^
+E     AssertionError: ('ended の記録に巡回が 2 度目を書いた', [{'state': 'ended', 'usage': {'input': 10, 'output': 5, 'cacheWrite': 0, 'cacheRead': 0}}, {'state': 'ended', 'entries': []}])
+
+packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy:1384: AssertionError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  _hy_anon_36()  packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy:1384
+    (assert (= writes [other]) #("ended の記録に巡回が 2 度目を書いた" writes))
+
+AssertionError: ('ended の記録に巡回が 2 度目を書いた', [{'state': 'ended', 'usage': {'input': 10, 'output': 5, 'cacheWrite': 0, 'cacheRead': 0}}, {'state': 'ended', 'entries': []}])
+
+=========================== short test summary info ============================
+FAILED packages/doeff-agents/tests/test_sessionhost_acp_turn_events.py::test_a_sweep_that_loses_the_race_to_another_writer_neither_writes_twice_nor_erases_usage
+========================= 1 failed in 69.93s (0:01:09) =========================
+# rc: 1

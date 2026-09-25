@@ -1,0 +1,13 @@
+diff --git a/packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy b/packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy
+index 2f35f264..ae1703d3 100644
+--- a/packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy
++++ b/packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy
+@@ -4964,7 +4964,7 @@
+         ;; card acp:kanban-issue:ki-6f222893d6b6: 退役した agent-job の行の条件(断られた試みそれぞれの記録)を写す。
+         (<- retired-status dict (status-object-of row))
+         (<- retired-conditions tuple (row-conditions-of retired-status))
+-        (<- ended dict (turn-record-ended-status record-status None #() retired-conditions))
++        (<- ended dict (turn-record-ended-status record-status usage-total #() retired-conditions))
+         (<- wrote (| Written Conflict Refused) (AcpPutStatus :row record :status ended))
+         (when (isinstance wrote Written)
+           (setv ended-count (+ ended-count 1)))

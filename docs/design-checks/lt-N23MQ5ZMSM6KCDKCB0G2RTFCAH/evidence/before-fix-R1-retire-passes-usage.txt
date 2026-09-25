@@ -1,0 +1,21 @@
+# 修正前の版で退役の書きが usage を渡しても対象の検が緑(盲検 A の指摘の実測)
+# tree: b7f836b01e7a473e5469d2dbb3c65114b4268ec7 + 作業樹の差分:
+ packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+# command: uv run pytest -v -p no:cacheprovider -W ignore::pytest.PytestWarning "docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_turn_records_are_not_left_to_one_write"
+============================= test session starts ==============================
+platform linux -- Python 3.14.3, pytest-9.1.1, pluggy-1.6.0 -- /home/kento/.worktrees/doeff-wt-639-adr012-blind-a/.venv/bin/python
+rootdir: /home/kento/.worktrees/doeff-wt-639-adr012-blind-a
+configfile: pyproject.toml
+plugins: doeff-adr-0.1.0, xdist-3.8.0, timeout-2.4.0, anyio-4.14.2, asyncio-1.4.0, doeff-hy-0.1.0
+timeout: 60.0s
+timeout method: signal
+timeout func_only: False
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... test-admission: focused — 1 件(変更箇所の検証)
+collected 1 item
+
+docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_turn_records_are_not_left_to_one_write PASSED [100%]
+
+======================== 1 passed in 138.33s (0:02:18) =========================
+# rc: 0

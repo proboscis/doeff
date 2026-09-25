@@ -1,0 +1,35 @@
+--- a/packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy
++++ b/packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy
+@@ -4942,9 +4942,9 @@
+   #((tuple kept) dropped))
+ 
+ 
+-(defk turn-record-ended-status [status usage entries conditions [cache-observation None] [responses None]]
++(defk turn-record-ended-status [status usage entries conditions [cache-observation None] [responses None] [model-usage None]]
+   {:pre [(: status dict) (: usage (| dict None)) (: entries tuple) (: conditions tuple) (: cache-observation (| dict None))
+-         (: responses (| dict None))]
++         (: responses (| dict None)) (: model-usage (| dict None))]
+    :post [(: % dict)]}
+   "手番の終わりの turn-record の status: 残りの見出し(entries — TurnEntryHeadline の列)を行の entries に**追記**
+    した上で state = ended・usage(素材があれば)。行の entries は落とさない(手番の間に追記した見出しが正本)。
+@@ -4961,6 +4961,8 @@
+     (setv (get next "cacheObservation") cache-observation))
+   (when (is-not responses None)
+     (setv (get next "responses") responses))
++  (when (is-not model-usage None)
++    (setv (get next "modelUsage") model-usage))
+   (<- projected tuple (turn-record-conditions-of conditions))
+   (setv #(items dropped) projected)
+   ;; 欄は渡された材料ちょうどで決める(行に前の値が在っても持ち越さない)。
+--- a/packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy
++++ b/packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy
+@@ -5329,7 +5329,8 @@
+                 (<- pair-conditions tuple (row-conditions-of pair-status)))
+               (<- record-status dict (status-object-of record))
+               ;; usage は書かない(開始 offset は memory にしか無く、0 から数え直すと温かい session の前の手番を足す発明になる)。
+-              (<- ended dict (turn-record-ended-status record-status None #() pair-conditions))
++              (<- swept-model-usage (| dict None) (model-usage-of-session record))
++              (<- ended dict (turn-record-ended-status record-status None #() pair-conditions :model-usage swept-model-usage))
+               (<- wrote (| Written Conflict Refused) (AcpPutStatus :row record :status ended))
+               (when (isinstance wrote Written)
+                 (setv ended-count (+ ended-count 1)))
