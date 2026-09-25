@@ -1,0 +1,55 @@
+# scenario experiments S1/S2/S4 @ 7d397f239efe363dbf70ff35ddb75c058b04e521
+
+doeff Traceback (most recent call last):
+
+  db_immediate_transaction()  packages/doeff-agents/src/doeff_agents/sessionhost/store.hy:1040
+    (<- value body)
+  acquire_with_clock_body()  .scratch/design-check/lt-A5KGD83R9HQJ2K172V61A6VMG9/experiments_scenarios.hy:105
+    (<- now datetime (clock-now))
+
+UnhandledEffect: unhandled effect: ClockNow (ClockNow()) (no handlers in scope)
+
+
+doeff Traceback (most recent call last):
+
+  db_immediate_transaction()  packages/doeff-agents/src/doeff_agents/sessionhost/store.hy:1040
+    (<- value body)
+  acquire_with_clock_body()  .scratch/design-check/lt-A5KGD83R9HQJ2K172V61A6VMG9/experiments_scenarios.hy:111
+    (raise (RuntimeError f"doeff-agentd lease is active: owner_pid={owner}"))))
+    handlers:
+      fixed_clock ↗
+
+RuntimeError: doeff-agentd lease is active: owner_pid=111
+
+
+doeff Traceback (most recent call last):
+
+  db_immediate_transaction()  packages/doeff-agents/src/doeff_agents/sessionhost/store.hy:1040
+    (<- value body)
+  acquire_with_clock_body()  .scratch/design-check/lt-A5KGD83R9HQJ2K172V61A6VMG9/experiments_scenarios.hy:111
+    (raise (RuntimeError f"doeff-agentd lease is active: owner_pid={owner}"))))
+    handlers:
+      fixed_clock ↗
+
+RuntimeError: doeff-agentd lease is active: owner_pid=111
+
+
+doeff Traceback (most recent call last):
+
+  db_immediate_transaction()  packages/doeff-agents/src/doeff_agents/sessionhost/store.hy:1040
+    (<- value body)
+  acquire_with_clock_body()  .scratch/design-check/lt-A5KGD83R9HQJ2K172V61A6VMG9/experiments_scenarios.hy:111
+    (raise (RuntimeError f"doeff-agentd lease is active: owner_pid={owner}"))))
+    handlers:
+      fixed_clock ↗
+
+RuntimeError: doeff-agentd lease is active: owner_pid=111
+
+観測: S1 正常例 acquire 後の owner = 111 / release の戻り = True /  release 後の lease = None / in_transaction = False
+観測: S1 正常例 やり直し: 本体が走った回数 = 2 / probe の行 = 1 (1 回目の書きは巻き戻り、同じ Program の 2 度目の束ねで本体が最初から走った)
+観測: S1 反例 本体の中に BEGIN EXCLUSIVE を書いた写しの走査 =  ['store.hy:4 (db-acquire-lease-body)']
+観測: S2 正常例 本体の ClockNow は M1 の <- を通って外の handler へ届いた — owner = 222 /  in_transaction = False
+観測: S2 反例 handler が無い: 出た例外 = UnhandledEffect / in_transaction = False /  lease = None(巻き戻って何も残らない)
+観測: S4 正常例 失効の 1 秒後(3 回) = [('returned', 222, False), ('returned', 222, False), ('returned', 222, False)]
+観測: S4 反例 失効の 1 秒前(3 回) = [('RuntimeError: doeff-agentd lease is active: owner_pid=111', 111, False), ('RuntimeError: doeff-agentd lease is active: owner_pid=111', 111, False), ('RuntimeError: doeff-agentd lease is active: owner_pid=111', 111, False)]
+EXIT=0

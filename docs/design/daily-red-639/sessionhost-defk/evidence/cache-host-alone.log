@@ -1,0 +1,5 @@
+# cache_host test alone x3 WITH the fix
+1 passed, 1 warning in 4.49s
+1 passed, 1 warning in 1.21s
+1 passed, 1 warning in 1.31s
+EXIT=0

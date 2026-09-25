@@ -1,0 +1,15 @@
+# repro after fix @ 7d397f239efe363dbf70ff35ddb75c058b04e521
+
+doeff Traceback (most recent call last):
+
+  db_immediate_transaction()  packages/doeff-agents/src/doeff_agents/sessionhost/store.hy:1040
+    (<- value body)
+  fence_body()  .scratch/design-check/lt-A5KGD83R9HQJ2K172V61A6VMG9/repro_counterexamples.hy:23
+    (raise (RuntimeError "body failed after the helper")))
+
+RuntimeError: body failed after the helper
+
+観測: A(fail=False) 結果 = returned / in_transaction = False /  記録が残ったか = True
+観測: A(fail=True) 結果 = RuntimeError: body failed after the helper / in_transaction = False /  記録が残ったか = False
+観測: B 結果 = TypeError: StoreActor op returned an unexecuted doeff Expand — run it inside the op; the actor's connection must not leave the actor thread
+EXIT=0

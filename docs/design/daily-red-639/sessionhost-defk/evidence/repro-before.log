@@ -1,0 +1,25 @@
+# repro before fix @ 32a7cf1d1806507ec41cf6d08a32fd4e41c11325
+
+doeff Traceback (most recent call last):
+
+  db_immediate_transaction()  packages/doeff-agents/src/doeff_agents/sessionhost/store.hy:1031
+    (.execute conn "COMMIT")
+
+OperationalError: cannot commit - no transaction is active
+
+
+doeff Traceback (most recent call last):
+
+  db_immediate_transaction()  packages/doeff-agents/src/doeff_agents/sessionhost/store.hy:1030
+    (<- value body)
+  fence_body()  .scratch/design-check/lt-A5KGD83R9HQJ2K172V61A6VMG9/repro_counterexamples.hy:23
+    (raise (RuntimeError "body failed after the helper")))
+
+RuntimeError: body failed after the helper
+
+観測: A(fail=False) 結果 = OperationalError: cannot commit - no transaction is active / in_transaction = False /  記録が残ったか = True
+観測: A(fail=True) 結果 = RuntimeError: body failed after the helper / in_transaction = False /  記録が残ったか = True
+観測: B actor の op の直後の lease = None(actor の thread では何も書かれていない)
+観測: B 呼び手の thread で実行した後の lease = {'lease_name': 'doeff-agentd', 'owner_pid': 111, 'heartbeat_at': '2026-09-25T21:29:42.673550+00:00', 'expires_at': '2026-09-25T21:29:52.673550+00:00'} /  書き込みの健康 = 0
+観測: B 結果 = op の戻り = Expand
+EXIT=0

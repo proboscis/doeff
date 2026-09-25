@@ -1,0 +1,92 @@
+# the 2 failing tests on HEAD 7b0fd26af03297f44724e6ff155036ff902c6b08 WITHOUT the fix
+test-admission: focused — 2 件(変更箇所の検証)
+.F                                                                       [100%]
+=================================== FAILURES ===================================
+__________________ test_terminal_cause_retryable_frozen_table __________________
+
+doeff_interpreter = <function doeff_interpreter.<locals>.run_program at 0x22a790678c0>
+
+    (deftest test-terminal-cause-retryable-frozen-table
+      ;; conformance README「TerminalCause 凍結表」の wire 値(serde snake_case)
+      ;; での転記 — S3 が cause["category"] == "run_failed" を wire で assert する
+      ;; とおり、category は snake_case が真(README の CamelCase はラベル)。
+      ;; cancelled は host RPC(session.cancel / cleanup)所有で oracle が
+      ;; retryable=false を明示(:1985-1991)。
+      ;; ADR-DOE-AGENTS-009 R3(2026-07-28): lost は表から除去(観測断は terminal
+      ;; cause として構築されない)。証拠つき死亡は vanished(retryable=true)。
+      ;; ADR-DOE-AGENTS-011 R-undelivered-first-class-b5e8(2026-08-12):
+      ;; prompt_undelivered を追加(retryable=true)— 起動段で prompt が一度も
+      ;; 届かなかった attempt は timed_out の一形ではなく独立の分類。
+      ;; ACP ADR 0049 R9 第 3 改訂(2026-08-12): provider 由来の非上限終端を 3 つ
+      ;; 追加。auth_failed / transport_failed は retryable=true(identity・転送の
+      ;; 一時状態 = 席の判断ではない)、context_exhausted は **retryable=false の
+      ;; まま**(同じ封筒での再試行は同じ地点で死ぬ — hard rule 7)。追加は
+      ;; additive で後方安全: 未知 category に対する下流の既定は
+      ;; 「CommandNonZeroExit + causeRetryable 由来の retry 意味論」
+      ;; (ACP Observed.hs failureKindForCause の `_` 分岐)。
+>     (assert (= TERMINAL-CAUSE-RETRYABLE
+
+packages/doeff-agents/tests/sessionhost_policy_deftests.hy:1527: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/doeff-agents/tests/conftest.py:68: in run_program
+    return run(program)
+           ^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+doeff/do.py:314: in thunk
+    return _make_stream(fn(*args, **kwargs))
+                        ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+>   (assert (= TERMINAL-CAUSE-RETRYABLE
+E   AssertionError
+
+packages/doeff-agents/tests/sessionhost_policy_deftests.hy:1527: AssertionError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  _hy_anon_88()  packages/doeff-agents/tests/sessionhost_policy_deftests.hy:1527
+    (assert (= TERMINAL-CAUSE-RETRYABLE
+
+AssertionError: 
+
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156
+  /home/kento/.worktrees/doeff-wt-639-sessionhost-defk/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-agents/tests/test_sessionhost_policy.py::test_terminal_cause_retryable_frozen_table
+1 failed, 1 passed, 1 warning in 4.72s
+EXIT=1

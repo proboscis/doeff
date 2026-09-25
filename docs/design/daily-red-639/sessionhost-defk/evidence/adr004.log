@@ -1,0 +1,5 @@
+# ADR-004 collect + ledger check @ 7b0fd26af03297f44724e6ff155036ff902c6b08 + working tree fix
+  /home/kento/.worktrees/doeff-wt-639-sessionhost-defk/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+11 tests collected in 0.92s
+2 passed, 1 warning in 0.99s
+EXIT=0

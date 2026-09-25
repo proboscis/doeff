@@ -1,0 +1,346 @@
+{
+  "version": 1,
+  "task_id": "lt-A5KGD83R9HQJ2K172V61A6VMG9",
+  "base_revision": "7ef0fa772afca54684d5b75b51f286e6e1bb367d",
+  "author": {
+    "conversation_id": "c-H7GK32T2PAMKR2TH41P5B1N834",
+    "model": "claude-opus-5-5",
+    "effort": "xhigh"
+  },
+  "requirements": "agora-redesign#639 実装依頼書 3: host.hy の store-write-failure-limit と store.hy の db-immediate-transaction を deff から defk へ変え、呼び出し側を直す(ADR-DOE-HY-004 R1・R3)。DEFF-ROSTER は増やさない(host.hy 35・store.hy 35)。db-immediate-transaction は本体を 1 度だけ実行し、ROLLBACK が元の失敗を隠さない(ADR-DOE-AGENTS-004 R15 の法 store-transactions-surface-the-original-failure)。受入: test_adr_doe_hy_004_deff_ratchet の違反から host.hy・store.hy が消え、R15 の法 2 本のテストと 331af8e2 の SQLITE_FULL のテストが緑。完了の範囲 = 実装完了まで(本線 a3f34bb6・d6fa0e04・7d397f23)",
+  "design": {
+    "path": "design.md",
+    "sha256": "d883a865a44eb87008cf5b1d4f91bc6ee43b768cf84f46a42e0f973bf9e49b91"
+  },
+  "modules": [
+    {
+      "id": "M1",
+      "responsibility": "store の connection の上で明示の transaction を開き、閉じる唯一の点(store.hy db-immediate-transaction・defk)",
+      "owns": "BEGIN IMMEDIATE・COMMIT・transaction が残る時だけ ROLLBACK・元の例外をそのまま出す・巻き戻しの失敗は note・本体が閉じた時の名指し",
+      "hides": "SQLite が SQLITE_FULL 等で自分で巻き戻す事情",
+      "interface": "(db-immediate-transaction conn body) — conn: sqlite3.Connection・body: Program。戻り = body の値。Program でない body は :pre で断る。本体が transaction を閉じたら成功の路は RuntimeError、失敗の路は元の例外に note",
+      "effects": "body が出す effect はそのまま外の handler へ通す。自分は effect を出さない(SQL の実行だけ)",
+      "lifetime": "呼び出し 1 回で transaction を 1 つ開いて閉じる。connection の持ち主は M4",
+      "invariants": "例外が出た後は in_transaction = False・外へ出る例外は本体の元の例外・本体は BEGIN の後に 1 度だけ走る"
+    },
+    {
+      "id": "M2",
+      "responsibility": "lease の判定(未失効の他人名義を拒否・失効の奪還・自分名義だけ釈放)(store.hy db-*-lease-body・defk)",
+      "owns": "lease の行の形・TTL・owner の比べ方",
+      "hides": "transaction の開き方・閉じ方",
+      "interface": "(db-acquire-lease-body conn owner-pid) / (db-heartbeat-lease-body conn owner-pid) / (db-release-lease-body conn owner-pid) → Program(値 = None / None / bool)",
+      "effects": "なし(今は SQL だけ)。S2・S4 では時刻の effect を出す形へ変えられる",
+      "lifetime": "なし、M1 の transaction の中で 1 回走るだけ",
+      "invariants": "transaction を自分で開閉しない"
+    },
+    {
+      "id": "M3",
+      "responsibility": "StoreActor の thread の中で transaction の Program を値にする境界(store.hy db-acquire-lease / db-heartbeat-once / db-release-lease・deff)",
+      "owns": "run を実行する位置(本体が effect を出す時は handler を差す位置)",
+      "hides": "本体の判定・transaction の開き方",
+      "interface": "名前・引数・戻り・例外は変更前と同じ(host.hy と検が呼ぶ)",
+      "effects": "run の中で本体の effect を処理する。外へは値か例外だけを返す",
+      "lifetime": "なし、StoreActor の op として 1 回呼ばれる",
+      "invariants": "Program を actor の thread の外へ返さない"
+    },
+    {
+      "id": "M4",
+      "responsibility": "単一の書き込み connection の直列化と書き込みの健康の数え(store.hy StoreActor)",
+      "owns": "queue・thread・total_changes・書き込みの健康",
+      "hides": "SQL の中身",
+      "interface": ".submit actor op — op は connection を取る callable。戻りは値。Program / effect を返す op は TypeError で断る(何も書かず、保管の失敗に数えない)",
+      "effects": "thread 1 本と connection 1 本を持つ",
+      "lifetime": "host の起動から close まで。close で thread と connection を解放する",
+      "invariants": "connection は actor の thread の外で使われない"
+    },
+    {
+      "id": "M5",
+      "responsibility": "書き込みの失敗が続いた時に readiness を落とす(host.hy store-write-failure-limit・defk と daemon.status)",
+      "owns": "上限の設定(env DOEFF_AGENTD_STORE_WRITE_FAILURE_LIMIT)",
+      "hides": "数え方(store_health)",
+      "interface": "daemon.status の ready / not_ready_reason",
+      "effects": "env を読むだけ",
+      "lifetime": "なし、status の問い合わせごと",
+      "invariants": "続いた失敗が上限に達したら ready = False"
+    },
+    {
+      "id": "M6",
+      "responsibility": "関数の語彙を defk へ寄せる台帳(docs/adr/defadr_doeff_hy_004_defk_only.hy)",
+      "owns": "DEFF-ROSTER と走査",
+      "hides": "なし、台帳は公開の一覧",
+      "interface": "file ごとの deff の本数 <= 台帳",
+      "effects": "なし、source を読むだけ",
+      "lifetime": "なし、検の実行ごと",
+      "invariants": "deff を増やさない"
+    },
+    {
+      "id": "M7",
+      "responsibility": "専用操作(cache ping)の記録の読み書き(cache_host_store.py cache_receipt_put 等)",
+      "owns": "記録の状態遷移の規則",
+      "hides": "確定(commit)の時機 — 呼び手の connection に任せる",
+      "interface": "cache_receipt_put(conn, record) -> None。commit しない",
+      "effects": "渡された connection へ SQL を書くだけ",
+      "lifetime": "なし、呼び出しごと",
+      "invariants": "transaction を開閉しない"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S1",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "transaction の開き方を変える(BEGIN IMMEDIATE を BEGIN EXCLUSIVE にし、SQLITE_BUSY の時に同じ本体を 1 度やり直す)",
+      "claim": "変わるのは M1 の 1 定義だけ。M2・M3・M4・M5 は変わらない",
+      "expected_scope": "M1 のみ(design-before-blind.md S1)",
+      "actual_scope": "M1 の写しだけで足りた。M2 の本体 3 つを変えずに渡せ、やり直しでは同じ Program の 2 度目の束ねで本体が最初から走った(evidence/scenarios.log)",
+      "changed_modules": [
+        "M1"
+      ],
+      "unchanged_modules": [
+        "M2",
+        "M3",
+        "M4",
+        "M5",
+        "M6",
+        "M7"
+      ],
+      "reason": "開き方は M1 だけが持つ知識。本体は開き方を知らない Program として渡るので波及しない",
+      "revision": "盲検 A を受けて「閉じる」側も M1 だけに寄せ、走査のテストで M1 の外の開閉の綴りを赤にした(開き方の変更を本体へ書く誤りも同じテストが捉える)"
+    },
+    {
+      "id": "S2",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "lease の本体が doeff の effect を出す(時刻を ClockNow effect で読む)",
+      "claim": "変わるのは M2(本体)と M3(run の位置に handler を差す)。M1 は変わらない。本体の失敗(handler が無い時の UnhandledEffect を含む)は同じ規則で巻き戻る",
+      "expected_scope": "M2・M3(design-before-blind.md S2)",
+      "actual_scope": "M2(本体が ClockNow を出す)と M3(handler を差す)。M1 は変えずに effect が外の handler へ届き、handler が無い時は UnhandledEffect のまま巻き戻った(evidence/scenarios.log)",
+      "changed_modules": [
+        "M2",
+        "M3"
+      ],
+      "unchanged_modules": [
+        "M1",
+        "M4",
+        "M5",
+        "M6",
+        "M7"
+      ],
+      "reason": "正当な契約の変更(本体が新しい effect を出す・入口が handler を用意する)。M1 は body を <- で束ねるだけなので effect を通す",
+      "revision": "不要。予想どおりの範囲で、handler の無い反例も元の例外と巻き戻りを観測した"
+    },
+    {
+      "id": "S3",
+      "axis": "concurrency",
+      "applicability": "applicable",
+      "change": "transaction の操作を新しく足し、StoreActor の thread から呼ぶ(盲検 A: lease の持ち主の確認と専用操作の記録を 1 つの transaction で書く・盲検 B: lease を後継へ渡す RPC)",
+      "claim": "足すのは M2 に本体 1 つと M3 に入口 1 つ。M1・M4 は変わらない。Program は actor の thread の中で値になり、thread の外へ Program のまま出ない",
+      "expected_scope": "M2・M3(追加)(design-before-blind.md S3)",
+      "actual_scope": "修正前(a3f34bb6): 盲検 A の本体は M7 の cache_receipt_put の conn.commit() に途中で閉じられ、M7 の契約を変えないと作れなかった。盲検 B の Program を返す op を M4 が受け取り、Program が呼び手の thread で actor の connection を使って走った。修正後(7d397f23): 同じ本体が M2・M3 の追加だけで原子的に確定・巻き戻りし、Program を返す op は M4 が TypeError で断った(evidence/repro-before.log・evidence/repro-after.log)",
+      "changed_modules": [
+        "M2",
+        "M3",
+        "M7"
+      ],
+      "unchanged_modules": [
+        "M1",
+        "M4",
+        "M5",
+        "M6"
+      ],
+      "reason": "隠すはずの知識の漏洩(確定の時機が M7 に在った — 盲検 A)と、M4 が op の戻りを見ていない強制の欠け(盲検 B)。どちらも正当な契約の変更ではない",
+      "revision": "境界を直して再検証した: M7 の commit を除く・M1 が本体の閉じを名指す・M4 が Program / effect を返す op を断る・走査のテストで開閉の綴りの持ち主を固定・R15 の法の文と :enforcement を更新(d6fa0e04 テスト先行・7d397f23 修正)。修正後は同じ要求が M2・M3 の追加だけで済むことを再現の検体で確かめた"
+    },
+    {
+      "id": "S4",
+      "axis": "simulation",
+      "applicability": "applicable",
+      "change": "lease の失効判定を決定的に試す(時刻を ClockNow effect から読み、固定の時刻の handler で判定を再現する)",
+      "claim": "S2 と同じ路。変わるのは M2・M3 で、M1 は変わらない",
+      "expected_scope": "M2・M3(design-before-blind.md S4)",
+      "actual_scope": "M2・M3。固定の時刻の handler で、失効の 1 秒後は奪還・1 秒前は元の RuntimeError で拒否を 3 回とも同じ答えで再現した(evidence/scenarios.log)",
+      "changed_modules": [
+        "M2",
+        "M3"
+      ],
+      "unchanged_modules": [
+        "M1",
+        "M4",
+        "M5",
+        "M6",
+        "M7"
+      ],
+      "reason": "正当な契約の変更(時刻の読み口を effect にする)",
+      "revision": "不要。予想どおりの範囲"
+    },
+    {
+      "id": "HW",
+      "axis": "hardware",
+      "applicability": "excluded",
+      "reason": "store は Python の sqlite3 で 1 つの file を開くだけで、機体の種類で分かれる判断を持たない。volume の容量は storage と R15(b) の健康の数えの範囲"
+    },
+    {
+      "id": "DIST",
+      "axis": "distribution",
+      "applicability": "excluded",
+      "reason": "store は host ごとに 1 file・1 connection(M4)で、機体をまたいで共有しない。機体をまたぐ排他は socket の bind と lease の影(ADR-DOE-AGENTS-004 R10)と配置側の責務で、この変更は触れない"
+    }
+  ],
+  "checks": [
+    {
+      "status": "passed",
+      "id": "K01-S1-positive",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "開き方だけ変えた M1 の写し(BEGIN EXCLUSIVE・SQLITE_BUSY で 1 度やり直す)へ、変えていない M2 の本体を渡して acquire / heartbeat / release が通る。やり直しでは本体が最初から走り、1 回目の書きは巻き戻る",
+      "observation": "acquire 後の owner = 111・release の戻り = True・release 後の lease = None・in_transaction = False。やり直し: 本体が走った回数 = 2・probe の行 = 1",
+      "evidence": {
+        "path": "evidence/scenarios.log",
+        "sha256": "1999f669a087c4f78a243ea5dde5b3a46e29eb5f441e57aec271d2556ee0cd2b"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K02-S1-negative",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "開き方の変更を本体の中に書く(db-acquire-lease-body に BEGIN EXCLUSIVE)と、走査のテストの関数がその行を名指す。走査器の自己テストも緑",
+      "observation": "走査の結果 = ['store.hy:4 (db-acquire-lease-body)']。test_scanner_finds_each_spelling を含む 31 本が緑(evidence/postrebase-1.log)",
+      "evidence": {
+        "path": "evidence/scenarios.log",
+        "sha256": "1999f669a087c4f78a243ea5dde5b3a46e29eb5f441e57aec271d2556ee0cd2b"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K03-S2-positive",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "本体が出す ClockNow が M1 の <- を通って run の位置に差した handler へ届き、lease が確定する",
+      "observation": "owner = 222・in_transaction = False",
+      "evidence": {
+        "path": "evidence/scenarios.log",
+        "sha256": "1999f669a087c4f78a243ea5dde5b3a46e29eb5f441e57aec271d2556ee0cd2b"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K04-S2-negative",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "handler が無い時は UnhandledEffect がそのまま出て、transaction は巻き戻り、lease は残らない",
+      "observation": "出た例外 = UnhandledEffect・in_transaction = False・lease = None",
+      "evidence": {
+        "path": "evidence/scenarios.log",
+        "sha256": "1999f669a087c4f78a243ea5dde5b3a46e29eb5f441e57aec271d2556ee0cd2b"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K05-S3-negative-before-fix",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "修正前の断面(32a7cf1d)で、足したテストが盲検 A・B の違反を拒否する: 走査のテストが cache_host_store.py:106 を名指し、本体が閉じた transaction と Program を返す op のテストが赤",
+      "observation": "3 failed, 2 passed。test_only_the_transaction_type_opens_and_closes_transactions・test_transaction_refuses_a_body_that_closes_the_transaction・test_store_actor_refuses_an_op_that_returns_a_program が赤、走査器の自己テストと許しの行の実在のテストは緑",
+      "evidence": {
+        "path": "evidence/tests-red.log",
+        "sha256": "e71abe34e3a89336b6d737c8019e83081738457799551cb0dede5951270d5317"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K06-S3-negative-after-fix",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "修正後(7d397f23)、盲検 A の本体が失敗したら元の例外が出て記録は巻き戻る。盲検 B の Program を返す op は TypeError で断られる",
+      "observation": "A(fail=True) = RuntimeError: body failed after the helper・in_transaction = False・記録は残らない。B = TypeError: StoreActor op returned an unexecuted doeff Expand(修正前は evidence/repro-before.log のとおり、記録が残り、op が Expand を返した)",
+      "evidence": {
+        "path": "evidence/repro-after.log",
+        "sha256": "10dd31262e9d20538b8d75f405dea9f176609f0f4e4270f5857f2bf3565db5ae"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K07-S3-positive-after-fix",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "修正後、盲検 A の本体(M2 に 1 つ・M3 に 1 つの追加だけ)が 1 つの transaction の中で確定する",
+      "observation": "A(fail=False) = 戻った・記録は確定した(修正前は OperationalError: cannot commit - no transaction is active)",
+      "evidence": {
+        "path": "evidence/repro-after.log",
+        "sha256": "10dd31262e9d20538b8d75f405dea9f176609f0f4e4270f5857f2bf3565db5ae"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K08-S3-positive-named-tests",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "本線へ rebase した後の断面(40378572 + d6fa0e04 + 7d397f23)で、受入の deff の本数のテスト・R15 のテスト・SQLITE_FULL のテスト・新しいテスト 5 本が緑",
+      "observation": "31 passed(deff の本数のテスト・test_sessionhost_store.py・test_sessionhost_transaction_owner.py)。host 側は evidence/postrebase-2.log で 45 passed",
+      "evidence": {
+        "path": "evidence/postrebase-1.log",
+        "sha256": "4e3fb0bbde9d83ef66ee668826990918c081f0b0c3dc7d8a13a13dc2e2bd38db"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K09-S3-positive-host",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "host の readiness(M5)と lease の実際の host の process での取得・heartbeat・釈放のテストが修正後も緑",
+      "observation": "45 passed(test_sessionhost_host.py・test_sessionhost_host_slots.py)",
+      "evidence": {
+        "path": "evidence/postrebase-2.log",
+        "sha256": "f8f10700019b08c0c646b68ee029db64eb2ef05705242b22b01624d8011b14bc"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K10-S4-positive",
+      "scenarios": [
+        "S4"
+      ],
+      "control": "positive",
+      "expectation": "固定の時刻を失効の 1 秒後にすると、他人名義の lease を決定的に奪還する(3 回とも同じ)",
+      "observation": "3 回とも ('returned', 222, False)",
+      "evidence": {
+        "path": "evidence/scenarios.log",
+        "sha256": "1999f669a087c4f78a243ea5dde5b3a46e29eb5f441e57aec271d2556ee0cd2b"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K11-S4-negative",
+      "scenarios": [
+        "S4"
+      ],
+      "control": "negative",
+      "expectation": "固定の時刻を失効の 1 秒前にすると、元の RuntimeError で拒否し、lease は元の owner のまま(3 回とも同じ)",
+      "observation": "3 回とも ('RuntimeError: doeff-agentd lease is active: owner_pid=111', 111, False)",
+      "evidence": {
+        "path": "evidence/scenarios.log",
+        "sha256": "1999f669a087c4f78a243ea5dde5b3a46e29eb5f441e57aec271d2556ee0cd2b"
+      }
+    }
+  ],
+  "unresolved": []
+}

@@ -1,0 +1,81 @@
+# batch 4 after fix @ 7b0fd26af03297f44724e6ff155036ff902c6b08 + working tree fix: packages/doeff-agents/tests/test_sessionhost_headless.py packages/doeff-agents/tests/test_sessionhost_headless_events.py packages/doeff-agents/tests/test_sessionhost_headless_row_race.py
+test-admission: focused — 113 件(変更箇所の検証)
+..............................................F......................... [ 63%]
+.......................
+=================================== FAILURES ===================================
+_________ test_headless_process_claude_inject_reaches_the_running_turn _________
+
+tmp_path = PosixPath('/tmp/pytest-of-kento/pytest-105/test_headless_process_claude_i0')
+
+    def test_headless_process_claude_inject_reaches_the_running_turn(tmp_path: Path) -> None:
+        """段 8 lane 4x: 走っている手番へ書いた user の行は、その手番の中で反応され(result の前)、
+        手番は 1 つのまま終わる。"""
+        registry = HeadlessRegistry()
+        events = str(tmp_path / "s3.events.jsonl")
+        process = registry.spawn(
+            "s3",
+            ["claude", "-p", "--input-format", "stream-json", "--session-id", "sid-3"],
+            str(tmp_path),
+            _stub_env({"DOEFF_HEADLESS_STUB_DELAY": "5"}),
+            events,
+            ClaudeDialogue(),
+        )
+        assert process.deliver("slow work") is True
+>       _wait_until(lambda: len(process.peek_records()) >= 4)
+
+packages/doeff-agents/tests/test_sessionhost_headless.py:1203: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+predicate = <function test_headless_process_claude_inject_reaches_the_running_turn.<locals>.<lambda> at 0x24948ae2dc0>
+timeout = 5.0
+
+    def _wait_until(predicate: Callable[[], bool], timeout: float = 5.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return
+            _pause(0.02)
+>       raise AssertionError("condition did not hold in time")
+E       AssertionError: condition did not hold in time
+
+packages/doeff-agents/tests/test_sessionhost_headless.py:964: AssertionError
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156
+  /home/kento/.worktrees/doeff-wt-639-sessionhost-defk/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-agents/tests/test_sessionhost_headless.py::test_headless_process_claude_inject_reaches_the_running_turn
+!!!!!!!!!!!! _pytest.outcomes.Exit: 変更箇所の検証が時間上限 60 秒に達したため中断しました。 !!!!!!!!!!!!!
+1 failed, 94 passed, 1 warning in 62.95s (0:01:02)
+変更箇所の検証が時間上限 60 秒に達したため中断しました。 ⚠ 直上の集計行はこの走行の結末ではない — 収集した 113 本を走り切っていない(集計の passed は打ち切りまでの部分計・failed 0 は「1 本も落ちなかった」ではない)
+EXIT=2

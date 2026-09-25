@@ -1,0 +1,13 @@
+# cache_host file alternating without/with fix x6 (HEAD 7b0fd26af03297f44724e6ff155036ff902c6b08)
+without #1: 6 passed, 1 warning in 11.93s 
+with    #1: FAILED packages/doeff-agents/tests/test_sessionhost_cache_host.py::test_cache_ping_and_normal_send_never_write_same_history_together 1 failed, 5 passed, 1 warning in 19.65s 
+without #2: 6 passed, 1 warning in 12.81s 
+with    #2: 6 passed, 1 warning in 15.83s 
+without #3: FAILED packages/doeff-agents/tests/test_sessionhost_cache_host.py::test_cache_ping_and_normal_send_never_write_same_history_together 1 failed, 5 passed, 1 warning in 13.47s 
+with    #3: 6 passed, 1 warning in 15.37s 
+without #4: 6 passed, 1 warning in 15.54s 
+with    #4: 6 passed, 1 warning in 14.03s 
+without #5: 6 passed, 1 warning in 12.58s 
+with    #5: 6 passed, 1 warning in 11.81s 
+without #6: FAILED packages/doeff-agents/tests/test_sessionhost_cache_host.py::test_cache_ping_and_normal_send_never_write_same_history_together 1 failed, 5 passed, 1 warning in 11.56s 
+with    #6: FAILED packages/doeff-agents/tests/test_sessionhost_cache_host.py::test_host_cache_ping_expiry_never_changes_the_normal_session 1 failed, 5 passed, 1 warning in 11.30s 

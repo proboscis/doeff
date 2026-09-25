@@ -1,0 +1,9 @@
+1 個の .hy を検めた: error 7 件
+doeff_agents/sessionhost/store.hy:52:9 - error: "ACTIVE_STATUSES" is unknown import symbol (reportAttributeAccessIssue)
+doeff_agents/sessionhost/store.hy:52:9 - error: "TERMINAL_STATUSES" is unknown import symbol (reportAttributeAccessIssue)
+doeff_agents/sessionhost/store.hy:52:9 - error: "parse_iso" is unknown import symbol (reportAttributeAccessIssue)
+doeff_agents/sessionhost/store.hy:297:14 - error: Argument of type "bool" cannot be assigned to parameter "value" of type "str" in function "__setitem__" (reportArgumentType)
+doeff_agents/sessionhost/store.hy:306:16 - error: Argument of type "int" cannot be assigned to parameter "value" of type "str" in function "__setitem__" (reportArgumentType)
+doeff_agents/sessionhost/store.hy:904:20 - error: Operator "+" not supported for types "Unknown | Literal[0]" and "Unknown | None" (reportOperatorIssue)
+doeff_agents/sessionhost/store.hy:1281:14 - error: Argument missing for parameter "read_base" (reportCallIssue)
+EXIT=1

@@ -1,0 +1,7 @@
+# flaky suspects alone x3 WITH the fix @ 7b0fd26af03297f44724e6ff155036ff902c6b08 + working tree fix
+test_host_cache_ping_expiry_never_changes_the_normal_session #1: 1 passed, 1 warning in 10.93s
+test_host_cache_ping_expiry_never_changes_the_normal_session #2: 1 passed, 1 warning in 1.84s
+test_host_cache_ping_expiry_never_changes_the_normal_session #3: 1 passed, 1 warning in 1.64s
+test_headless_process_claude_inject_reaches_the_running_turn #1: 1 passed, 1 warning in 1.75s
+test_headless_process_claude_inject_reaches_the_running_turn #2: 1 passed, 1 warning in 1.46s
+test_headless_process_claude_inject_reaches_the_running_turn #3: 1 passed, 1 warning in 1.24s
