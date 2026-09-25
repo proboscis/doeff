@@ -12,6 +12,8 @@
 ;;;   GET    /board?prefix=[&withVersions=1]   盤の行(鍵が prefix で始まる物)
 ;;;   PUT    /board/<鍵>     {"value": …, "expect"?: …, "expectVersion"?: …} compare-and-set。合わなければ 409
 ;;;   POST   /tasks · GET /tasks/<id> · DELETE /tasks/<id>   task を出す・問い合わせる(lease を延ばす)・落とす
+;;;   PUT /detached/<key> · GET /detached/<key> · POST /detached/<key>/cancel · DELETE /detached/<key>
+;;;                           切り離した task を送る(job id で冪等)・読む(lease に触らない)・取り消す・保持を解く(detached_policy)
 ;;;   GET    /livez · /readyz   k8s の probe。調停ループを通さず、HTTP の受付(handler)が「ループが最後に要求を取りに来た時刻」だけで
 ;;;                             答える(probe-verdict)。fsync・k8s の API・registry の読みでループが数秒遅れても落ちない(2026-09-25)。
 ;;;
@@ -107,12 +109,13 @@
   ;; 返り値 = #(次の状態 まとまりの要求の数)。
   (<- batch list (NextRequests 1.0))
   (<- now int (now-epoch-ms))
-  (setv next state replies [])
-  (if (not batch)
-      (setv next (tick next now timing))
-      (for [request batch]
-        (setv #(next status body) (respond next request now timing))
-        (.append replies #(request status body))))
+  ;; 期限の経過(worker の沈黙・task の lease・readiness の window)は、まとまりの有無と無関係に毎拍調停する(2026-09-25)。
+  ;; 以前は要求の無い拍だけだったので、読みの要求(GET)が 1 秒より短い間隔で続く間は調停が走らず、担い手の死んだ切り離した task が
+  ;; lost にならなかった(読みは状態を変えないので調停しない)。書きの要求は今までどおり要求ごとに調停する(api_policy.settle)。
+  (setv next (tick state now timing) replies [])
+  (for [request batch]
+    (setv #(next status body) (respond next request now timing))
+    (.append replies #(request status body)))
   (when (>= (- now next.rollout-tick-ms) ROLLOUT-TICK-MS)
     (<- next ClusterState (rollout-tick next timing naming now)))
   (setv next (mark-alive next now))
