@@ -17,10 +17,12 @@
 ;; (coordinator は 45 秒で他へ移すので、同じ job が 2 つ動かないように)。ただし書き手(入れ替え handoff を宣言した job)は、旧と新が
 ;; 並んで動く前提で作られていて、外への書きは名前付きの lease の柵(semaphore_handlers.lease-fence)だけが守る。その柵は coordinator の
 ;; 時計の期限で締まるので、途絶で止める必要が無い — 止めると coordinator の作り直し(版の更新)のたびに書き手が止まった。
-;; 書き手の停止は lease に一本化し、自己停止は lease を持たない job と task にだけ当てる。
+;; 書き手の停止は lease に一本化し、自己停止は lease を持たない job と task にだけ当てる。切り離した task(2026-09-25)も止めない
+;; (lease は担い手の worker の heartbeat が延ばし、途絶が lease より長ければ coordinator がその task を lost にする)。
 (defn #^ tuple kept-when-cut-off [#^ tuple jobs]
-  "純粋: coordinator に届かない間も動かし続ける job(入れ替えを宣言した書き手)。task は含まない(呼び手が lease を持つ)。"
-  (tuple (gfor job jobs :if (and job.handoff (not job.once)) job)))
+  "純粋: coordinator に届かない間も動かし続ける job(入れ替えを宣言した書き手と、切り離した task)。RemoteJob の task は含まない
+   (呼び手が lease を持つ)。切り離した task は担い手の heartbeat が lease を延ばすので、途絶で止めない(2026-09-25)。"
+  (tuple (gfor job jobs :if (or (and job.handoff (not job.once)) (and job.once job.detached)) job)))
 
 (defn #^ (| ProcessView None) process-of [#^ WorldView world #^ str name]
   (for [process world.processes]

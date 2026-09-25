@@ -21,6 +21,8 @@ doeff の Program を、k8s の Deployment のように「定義がある限り�
   持たない担当を止め、coordinator は 45 秒連絡の無い worker の担当を他へ移します(同じ service が 2 か所で動かないための順序)。
 - **service** は名前付きで動き続ける Program です(`defservice` で書く)。落ちたら 2・4・8…60 秒の間隔で起動し直されます。
 - **task** は呼び手に寿命が縛られる短い Program です(effect `RemoteJob` で送る)。
+- **切り離した task** は呼び手と寿命を切り離した Program です(effect `SubmitDetached` で送り、`AwaitDetached` で待つ)。呼び手の決めた
+  job id で冪等に送り、呼び手が消えても続き、後から同じ job id で結果を受け取れます(下の「切り離した task」)。
 
 ## 用語
 
@@ -46,7 +48,7 @@ doeff の Program を、k8s の Deployment のように「定義がある限り�
 | coordinator の状態と耐久 | `cluster_model`・`durable_kv`・`wal_store` |
 | worker(composition root・判断・I/O) | `main`・`worker`・`worker_policy`・`worker_model`・`handlers`・`code_prepare`・`job_entry`・`shim.py` |
 | drain と readiness の口 | `drain_client`・`drain_main`・`readiness_*`・`report_client` |
-| effect と handler | `shared_*`(盤)・`semaphore_*`(lease)・`metrics_*`・`kube_*`・`image_*`・`remote*`(task) |
+| effect と handler | `shared_*`(盤)・`semaphore_*`(lease)・`metrics_*`・`kube_*`・`image_*`・`remote*`(task)・`detached*`(切り離した task) |
 | effect の記録と再生 | `effect_codec`・`record_model`・`record_handlers`・`record_store*`・`replay_main` |
 | 宣言 | `macros`(`defservice`・`defsystem`)・`service_model`・`declare` |
 | 時計の換算 | `clock`(epoch ミリ秒。時計の語彙は doeff-time ちょうど 1 つ) |
@@ -143,7 +145,49 @@ worker は業務の repo の commit を展開して子 process の cwd にしま
 - 書き換えは版つきです。`GET` で読んだ `resourceVersion` を付けて `PUT` します。読んだ後に誰かが書いていれば 409 で何も書かれません。
 - Service を消すのは所有者の `DELETE` だけです(所有者でなければ `?force=true`)。進行中の Rollout が扱っている Service は消せません。
 - 盤の行に `"ttlSeconds": n` を付けると n 秒後に消えます。上限: 1 行 1 MiB・20,000 行・合計 64 MiB(越える書きは 507)。
-  task は終わっていない物が 2,000 本まで(429)・lease は 1 時間まで。
+  task は終わっていない物が 2,000 本まで(429)・lease は 1 時間まで。切り離した task の行(終わって結果を保持している物を含む)は
+  10,000 本まで(429)。
+
+## 切り離した task
+
+`RemoteJob` の task は呼び手の問い合わせが lease を延ばし、呼び手が抜けると落ちます。呼び手より長く生きる仕事(呼び手の process が
+入れ替わっても続けたい仕事)は、切り離した task として送ります。
+
+```hy
+(import doeff_cluster.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached
+                                      DetachedSucceeded DetachedFailed DetachedLost])
+(<- submitted (SubmitDetached (summarize rows) :env "myapp.envs:board_env" :key job-id :lease-seconds 60.0))
+;; ... 呼び手が消えてもよい。別の process から同じ key で待てる ...
+(<- outcome (AwaitDetached job-id))
+```
+
+| effect | 答え | 意味 |
+|---|---|---|
+| `SubmitDetached` | `DetachedSubmitted(key, created)` | job id(`key`)で冪等に送る。同じ key がまだ在れば何も作らない(`created` = False)。同じ key で env・name・requires が違えば `DetachedRefused`(409) |
+| `AwaitDetached` | 答えの型か `DetachedPending` | 終わるまで待つ(`timeout-seconds` を過ぎたら `DetachedPending`)。抜けても task は落ちない |
+| `CancelDetached` | `bool` | 終わっていなければ取り消して True。終わっていれば何もせず False(結果は保持) |
+| `ReleaseDetached` | `bool` | 終わった task の保持を解く。以後その key は `DetachedUnknown` で、同じ key で送り直せる |
+
+答えの型(失敗は例外ではなく値): `DetachedSucceeded`(値)・`DetachedFailed`(Program の例外)・`DetachedLost`(担い手の worker が
+死んだ — 走らせ直さない)・`DetachedCancelled`・`DetachedVersionMismatch`(送り手と受け側の版が違う)・`DetachedUnrunnable`(label の合う
+worker が無い・コードを準備できない)・`DetachedUnknown`(知らない key)。
+
+- **lease は担い手が延ばす**: 担い手の worker の heartbeat が lease を延ばします。呼び手の問い合わせは lease に触りません。worker が
+  `lease-seconds` の間沈黙するか、同じ名の worker が別の process の世代で名乗ったら、その task は `DetachedLost` です。
+- **結果の後の消失**: 結果を受け取った後に worker が死んでも、結果は変わりません。結果は `retain-seconds`(既定 24 時間・30 日まで)か
+  `ReleaseDetached` まで持ちます。
+- **途絶**: worker は coordinator と途絶えても切り離した task を止めません(途絶が lease より長ければ coordinator が消失とし、再接続の
+  返事から外れた時に止めます)。
+- **drain**: drain は worker の上の切り離した task が 0 になるまで `Drained` になりません(task は移せないので終わるのを待つ)。
+- handler: `detached-cluster`(coordinator の `/detached` の口と話す — `DetachedClient`)と `detached-local`(同じ VM の scheduler の
+  task で走らせる fake。`SimulateRunnerLoss` で担い手の死を起こせる)。
+
+| HTTP | 意味 |
+|---|---|
+| `PUT /detached/<key>` | 送る `{env blob versions revision requires name leaseSeconds retainSeconds}` → `{key task created phase}` |
+| `GET /detached/<key>` | 読む(lease に触らない)→ `{key phase detail result worker}`。知らない key は `phase` = `unknown` |
+| `POST /detached/<key>/cancel` | 取り消す → `{key cancelled phase}` |
+| `DELETE /detached/<key>` | 終わった task の保持を解く → `{key released}`。まだ終わっていなければ 409 |
 
 ## Rollout
 

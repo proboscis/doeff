@@ -120,7 +120,7 @@
 
 
 (defclass [(dataclass :frozen True)] TaskRecord []
-  "task 1 本。phase = queued | assigned | finished | code-failed | failed。
+  "task 1 本。phase = queued | assigned | finished | code-failed | failed(切り離した task は + version-mismatch | lost | cancelled)。
    result = worker が返した結果の blob(TaskSucceeded / TaskFailed の cloudpickle)。finished で None なら結果なし。"
   (#^ str id)
   (#^ str name)
@@ -137,7 +137,16 @@
   (setv #^ (| str None) result None)
   (setv #^ str detail "")
   (setv #^ (| int None) started-ms None)
-  (setv #^ (| int None) finished-ms None))
+  (setv #^ (| int None) finished-ms None)
+  ;; --- 切り離した task(2026-09-25・SubmitDetached — detached_model.hy)---
+  ;; detached = 呼び手の問い合わせと寿命を切り離した task。key = 呼び手の決めた job id(送り直しても同じ行)。
+  ;; lease は担い手の worker の heartbeat が延ばし、切れたら(worker の死)phase = lost。boot = 置いた時の worker の process の世代
+  ;; (違う世代の heartbeat が来たら lost — 走らせ直さない)。retain-ms = 終わった後に結果を持っておく長さ。
+  ;; 切り離した task だけが使う phase: version-mismatch | lost | cancelled。
+  (setv #^ bool detached False)
+  (setv #^ (| str None) key None)
+  (setv #^ (| str None) boot None)
+  (setv #^ int retain-ms 0))
 
 
 (defclass [(dataclass :frozen True)] ClusterState []

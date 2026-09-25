@@ -110,10 +110,12 @@
 
 
 (defn #^ dict task-summary [#^ TaskRecord task]
-  "状態表示と保存に使う形(blob と結果は大きいので保存の時だけ別に足す)。"
-  {"id" task.id "name" task.name "env" task.env "revision" task.revision "phase" task.phase
-   "worker" task.worker "detail" task.detail "submittedMs" task.submitted-ms
-   "startedMs" task.started-ms "finishedMs" task.finished-ms "leaseUntilMs" task.lease-until-ms})
+  "状態表示と保存に使う形(blob と結果は大きいので保存の時だけ別に足す)。切り離した task だけ呼び手の job id を足す
+   (RemoteJob の task の形は以前と同じ)。"
+  (| {"id" task.id "name" task.name "env" task.env "revision" task.revision "phase" task.phase
+      "worker" task.worker "detail" task.detail "submittedMs" task.submitted-ms
+      "startedMs" task.started-ms "finishedMs" task.finished-ms "leaseUntilMs" task.lease-until-ms}
+     (if task.detached {"detached" True "key" task.key} {})))
 
 
 (defn #^ dict state-to-json [#^ ClusterState state]
@@ -360,11 +362,43 @@
           True "置ける worker に空きが無い")))
 
 
+(setv DETACHED-TERMINAL #("finished" "code-failed" "failed" "version-mismatch" "lost" "cancelled"))
+
+
+(defn #^ TaskRecord end-detached [#^ TaskRecord task #^ str phase #^ int now #^ str detail #^ (| str None) [result None]]
+  "純粋: 切り離した task を終わりの phase にする(終わりの phase は二度と変わらない)。blob は捨てて結果だけ持つ。"
+  (replace task :phase phase :finished-ms now :detail detail :result result :blob ""))
+
+
+(defn #^ (| TaskRecord None) settle-detached [#^ TaskRecord task #^ int now]
+  "純粋: 切り離した task 1 本の期限の判断。保持の期限を過ぎた終わりの行は None(消す)。
+   置いた task の lease(担い手の worker の heartbeat が延ばす)が切れた = worker の死 = lost(走らせ直さない)。
+   呼び手の問い合わせは lease に触らない(呼び手が消えても task は続く)。"
+  (cond
+    (in task.phase DETACHED-TERMINAL)
+      (if (> now (+ (or task.finished-ms now) task.retain-ms)) None task)
+    (and (= task.phase "assigned") (> now task.lease-until-ms))
+      (end-detached task "lost" now
+                    (.format "担い手の worker {} の lease が切れた(worker の死とみなす — task は走らせ直さない)" task.worker))
+    True task))
+
+
+(defn #^ str unplaceable-phase [#^ TaskRecord task #^ ClusterState state #^ int now #^ ClusterTiming timing]
+  "置ける worker が無い切り離した task の終わりの phase。label の合う生きた worker はいるのに版だけが違う = version-mismatch。"
+  (if (any (gfor w (.values state.workers)
+                 (and (alive now w timing.lease-ms) (labels-satisfy task.requires w) (tolerates task.requires w))))
+      "version-mismatch"
+      "failed"))
+
+
 (defn #^ dict place-tasks [#^ int now #^ ClusterState state #^ dict placements #^ ClusterTiming timing]
-  "task の期限切れを落とし、担い手が沈黙した task を失敗にし、待っている task を置く。"
+  "task の期限切れを落とし、担い手が沈黙した task を失敗にし、待っている task を置く。切り離した task は settle-detached の規則。"
   (setv tasks {})
   (for [#(id task) (.items state.tasks)]
     (cond
+      task.detached
+        (do (setv kept (settle-detached task now))
+            (when (is-not kept None) (setv (get tasks id) kept)))
       ;; 呼び手が問い合わせを止めた(止まった)= task も要らない。担い手は次の heartbeat で子 process を止める。
       (> now task.lease-until-ms) None
       (and (= task.phase "assigned")
@@ -387,29 +421,57 @@
       (cond
         free (do (setv chosen (get free 0))
                  (+= (get load chosen.name) 1)
-                 (setv (get tasks id) (replace task :phase "assigned" :worker chosen.name :started-ms now)))
+                 ;; 切り離した task は置いた worker の process の世代を覚え、lease を置いた時から数える。
+                 (setv (get tasks id) (if task.detached
+                                          (replace task :phase "assigned" :worker chosen.name :started-ms now
+                                                   :boot chosen.boot :lease-until-ms (+ now task.lease-ms))
+                                          (replace task :phase "assigned" :worker chosen.name :started-ms now))))
+        (and (not able) task.detached)
+          (setv (get tasks id) (end-detached task (unplaceable-phase task state now timing) now
+                                             (versions-note task state now timing)))
         (not able) (setv (get tasks id) (replace task :phase "failed" :finished-ms now
                                                  :detail (versions-note task state now timing))))))
   tasks)
 
 
+(defn #^ bool same-boot [#^ TaskRecord task #^ (| str None) boot]
+  "切り離した task の担い手の process の世代が、置いた時と同じか(どちらかを知らなければ同じとみなす)。"
+  (or (not task.detached) (is task.boot None) (is boot None) (= task.boot boot)))
+
+
 (defn #^ list tasks-for [#^ ClusterState state #^ str worker]
+  ;; 切り離した task は、置いた時と同じ process の世代の worker にだけ送る(作り直した worker の process で走らせ直さない)。
+  (setv boot (. (.get state.workers worker (WorkerInfo worker #() 0 0)) boot))
   (lfor task (sorted (.values state.tasks) :key (fn [t] t.id))
-        :if (and (= task.phase "assigned") (= task.worker worker))
-        {"id" task.id "name" task.name "env" task.env "revision" task.revision
-         "versions" (dict task.versions) "blob" task.blob}))
+        :if (and (= task.phase "assigned") (= task.worker worker) (same-boot task boot))
+        (| {"id" task.id "name" task.name "env" task.env "revision" task.revision
+            "versions" (dict task.versions) "blob" task.blob}
+           (if task.detached {"detached" True} {}))))
 
 
-(defn #^ dict absorb-task-reports [#^ ClusterState state #^ str worker #^ list statuses #^ int now]
-  "worker の状態の報告のうち、task の終わりを task の記録へ写す。"
+(defn #^ TaskRecord absorb-detached-report [#^ TaskRecord task #^ dict status #^ int now]
+  "切り離した task の終わりの報告 → 終わりの phase。結果を書かずに終わった子 process は lost(結果が無い = 消失)。"
+  (setv phase (.get status "phase") detail (.get status "detail" ""))
+  (cond
+    (and (= phase "finished") (is-not (.get status "result") None))
+      (end-detached task "finished" now detail (get status "result"))
+    (= phase "finished")
+      (end-detached task "lost" now (.format "子 process が結果を書かずに終わった({})" detail))
+    (= phase "code-failed") (end-detached task "code-failed" now detail)
+    True task))
+
+
+(defn #^ dict absorb-task-reports [#^ ClusterState state #^ str worker #^ list statuses #^ int now #^ (| str None) [boot None]]
+  "worker の状態の報告のうち、task の終わりを task の記録へ写す。切り離した task は置いた時と同じ process の世代の報告だけ。"
   (setv tasks (dict state.tasks))
   (for [status statuses]
     (setv name (.get status "name" ""))
     (when (.startswith name "task/")
       (setv id (cut name 5 None) task (.get tasks id))
-      (when (and task (= task.phase "assigned") (= task.worker worker))
+      (when (and task (= task.phase "assigned") (= task.worker worker) (same-boot task boot))
         (setv phase (.get status "phase"))
         (cond
+          task.detached (setv (get tasks id) (absorb-detached-report task status now))
           (= phase "finished")
             (setv (get tasks id) (replace task :phase "finished" :finished-ms now :result (.get status "result")
                                           :detail (.get status "detail" "")))
@@ -417,6 +479,18 @@
             (setv (get tasks id) (replace task :phase "code-failed" :finished-ms now
                                           :detail (.get status "detail" "")))))))
   tasks)
+
+
+(defn #^ dict renew-detached [#^ dict tasks #^ str worker #^ (| str None) boot #^ int now]
+  "担い手の heartbeat: その worker に置いた切り離した task の lease を延ばす(lease は worker が延ばす)。置いた時と違う process の
+   世代の heartbeat なら lost(worker の process が作り直された = その上の task は消えた・走らせ直さない)。"
+  (dfor #(id t) (.items tasks)
+        id (cond
+             (not (and t.detached (= t.phase "assigned") (= t.worker worker))) t
+             (not (same-boot t boot))
+               (end-detached t "lost" now
+                             (.format "担い手の worker {} の process が作り直された(task は走らせ直さない)" worker))
+             True (replace t :lease-until-ms (+ now t.lease-ms)))))
 
 
 ;; --- 盤 --------------------------------------------------------------------------------
@@ -447,7 +521,8 @@
 (defn #^ ClusterState forget-silent-workers [#^ ClusterState state #^ int now]
   "純粋: WORKER-FORGET-MS より長く沈黙し、置き先も task も持たない worker を忘れた状態(忘れる物が無ければ同じ object)。"
   (setv busy (| (sfor a (+ (list (.values state.placements)) (list (.values state.surges))) a.worker)
-                (sfor t (.values state.tasks) :if t.worker t.worker))
+                ;; 終わって結果を持っているだけの切り離した task は worker を引き留めない。
+                (sfor t (.values state.tasks) :if (and t.worker (not (and t.detached (in t.phase DETACHED-TERMINAL)))) t.worker))
         gone (lfor #(n w) (.items state.workers) :if (and (> (- now w.last-seen-ms) WORKER-FORGET-MS) (not-in n busy)) n))
   (if (not gone)
       state
@@ -517,7 +592,7 @@
                 :workers (| state.workers {name info})
                 :statuses (| state.statuses {name {"at" now "endpoint" (.get body "endpoint")
                                                   "jobs" (lfor s statuses (dfor #(k v) (.items s) :if (!= k "result") k v))}})))
-  (replace state :tasks (absorb-task-reports state name statuses now)))
+  (replace state :tasks (renew-detached (absorb-task-reports state name statuses now (.get body "boot")) name (.get body "boot") now)))
 
 
 (defn #^ dict heartbeat-reply [#^ ClusterState state #^ str name #^ ClusterTiming timing [ready-instances None]]
