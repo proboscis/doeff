@@ -80,12 +80,12 @@ guard の method 不足・読みだけの job の書き)に当てると、Hy で
 
 ## 捕まえないもの・その直し先
 
-- **env と effect の集合**(6・7・8): `defservice` の `:env` と `RemoteJob` の `:env` は import path
+- **env と effect の集合**(6・7・8): service の宣言(`doeff_cluster.service_model.service`)の `:env` と `RemoteJob` の `:env` は import path
   の文字列で、Program が出す effect の集合も Hy では宣言しない。doeff core の `@do` は
   `Generator[E, Any, T]` の E を「出してよい effect」と読む(docs/23-static-typing.md)ので、残る仕事は
   Hy 側に E を書く口を作ること(例: defk の契約に effect の並びを書き、型検査のための展開で生成器の
   注記にし、`<-` を `yield from` にして呼んだ Program の E を足す)と、agora-controllers の
-  `defservice` の env を型で表すこと。
+  service の宣言の env を型で表すこと。
 - **答えの型を宣言していない effect**: `(<- x T (Eff …))` の突き合わせと handler の答えの突き合わせは、
   effect が `EffectBase[T]` の T を持つ時だけ効く。宣言の無い effect の答えは Any として通す。
 

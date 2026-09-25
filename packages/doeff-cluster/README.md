@@ -3,7 +3,7 @@
 doeff の Program を、k8s の Deployment のように「定義がある限り動かし続ける」ための実行基盤です。業務のコードは git の commit で
 指定し、worker がその版の木を展開して子 process で動かすので、業務のコードを入れ替えるのに image の build は要りません。
 
-この package は業務を知りません。業務の側(アプリの repo)は `defservice` で service を書き、handler の組(env)と effect の記録の登録を
+この package は業務を知りません。業務の側(アプリの repo)は service を宣言の値(`service_model.service`)で書き、handler の組(env)と effect の記録の登録を
 自分の module に置き、この package の coordinator と worker を自分の manifest で動かします。
 
 ## 全体の形
@@ -19,7 +19,7 @@ doeff の Program を、k8s の Deployment のように「定義がある限り�
 - **coordinator** は定義(Service・Rollout)と割り当てを持ちます。書き込みは永続化してから返事をします(group commit)。
 - **worker** は heartbeat の返事で自分の担当を受け取り、子 process を起動・停止します。20 秒 coordinator に届かなければ lease を
   持たない担当を止め、coordinator は 45 秒連絡の無い worker の担当を他へ移します(同じ service が 2 か所で動かないための順序)。
-- **service** は名前付きで動き続ける Program です(`defservice` で書く)。落ちたら 2・4・8…60 秒の間隔で起動し直されます。
+- **service** は名前付きで動き続ける Program です(Program を作る関数 `defk` と、それを名指す宣言の値 `service` で書く)。落ちたら 2・4・8…60 秒の間隔で起動し直されます。
 - **task** は呼び手に寿命が縛られる短い Program です(effect `RemoteJob` で送る)。
 - **切り離した task** は呼び手と寿命を切り離した Program です(effect `SubmitDetached` で送り、`AwaitDetached` で待つ)。呼び手の決めた
   job id で冪等に送り、呼び手が消えても続き、後から同じ job id で結果を受け取れます(下の「切り離した task」)。
@@ -50,7 +50,7 @@ doeff の Program を、k8s の Deployment のように「定義がある限り�
 | drain と readiness の口 | `drain_client`・`drain_main`・`readiness_*`・`report_client` |
 | effect と handler | `shared_*`(盤)・`semaphore_*`(lease)・`metrics_*`・`kube_*`・`image_*`・`remote*`(task)・`detached*`(切り離した task) |
 | effect の記録と再生 | `effect_codec`・`record_model`・`record_handlers`・`record_store*`・`replay_main` |
-| 宣言 | `macros`(`defservice`・`defsystem`)・`service_model`・`declare` |
+| 宣言 | `service_model`(宣言の値 `service`・`System`)・`declare` |
 | 時計の換算 | `clock`(epoch ミリ秒。時計の語彙は doeff-time ちょうど 1 つ) |
 | 配備の材料 | `deploy/boot.sh`・`deploy/Dockerfile` |
 
@@ -59,20 +59,27 @@ doeff の Program を、k8s の Deployment のように「定義がある限り�
 ### service を書く
 
 ```hy
-(require doeff-cluster.macros [defservice defsystem])
+(require doeff-hy.macros [defk <-])
+(import doeff_cluster.service_model [service System])
 
-(defservice my-writer {:env "myapp.envs:my_writer_env"       ; handler の組を返す関数の import path
-                       :requires {:kind "k3s"}                 ; worker の label の条件
-                       :readiness {"windowSeconds" 30}         ; ReportReady をこの秒数以内に出し続ける
-                       :update "handoff"                       ; 版や設定の変更は新旧を並べて入れ替える
-                       :base-from {"kind" "Deployment" "namespace" "prod" "name" "my-writer" "container" "my-writer"}
-                       :config {:poll 5.0 :apply False}}
-  [poll apply]
+(defk my-writer-program [poll apply]
   {:pre [(: poll float) (: apply bool)] :post [(: % int)]}
   ...)
 
-(defsystem my-system [my-writer])
+(setv my-writer (service "my-writer" my-writer-program
+                         :env "myapp.envs:my_writer_env"         ; handler の組を返す関数の import path
+                         :requires {"kind" "k3s"}                ; worker の label の条件
+                         :readiness {"windowSeconds" 30}         ; ReportReady をこの秒数以内に出し続ける
+                         :update "handoff"                       ; 版や設定の変更は新旧を並べて入れ替える
+                         :base-from {"kind" "Deployment" "namespace" "prod" "name" "my-writer" "container" "my-writer"}
+                         :config {"poll" 5.0 "apply" False}))
+
+(setv my-system (System "my-system" #(my-writer)))
 ```
+
+- 宣言は値と関数で書きます(macro は置かない — ADR-DOE-HY-005 R5)。関数の参照(`module:attr`)は `service` が Program を作る関数から
+  導くので、その関数は module の最上位に置きます(入れ子の関数・lambda は宣言の時点で断る)。`:requires`・`:config`・`:readiness`・
+  `:base-from` の鍵は文字列で書きます(宣言は JSON で coordinator へ渡る)。
 
 - 業務の Program は file・lock・通信を effect を通してだけ触ります。共有の状態は `ReadShared` / `WriteShared`、排他は
   `CreateNamedSemaphore`、時計は doeff-time の `GetTime` / `GetMonotonic` / `Delay`、実行先の値は `Ask` で受けます。
