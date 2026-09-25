@@ -1083,3 +1083,73 @@
   ;; 集合の宣言は 1 点で、wire(ACP の charter)の綴りと同じ語であること。
   (assert (in AUTOCOMPACT-PARAM-KEY LAUNCH-FLAG-KEYS))
   (assert (= AUTOCOMPACT-PARAM-KEY CHARTER-AUTO-COMPACT-WINDOW-KEY)))
+
+
+;; ---------------------------------------------------------------------------
+;; readiness: 保管の書き込みが続けて失敗したら ready = False(実弾 2026-09-25 — agentd-state が 100% でも
+;; socket は答え続け、書けない host が手番を受け続けた)
+;; ---------------------------------------------------------------------------
+
+(deftest test-daemon-status-drops-readiness-when-store-writes-keep-failing
+  (import doeff_agents.sessionhost.ready_probe [ready-verdict])
+  (setv d (tempfile.mkdtemp))
+  (try
+    (setv db (os.path.join d "agentd.sqlite"))
+    (setv config (parse-args ["--db" db "--socket" (os.path.join d "a.sock") "serve"]))
+    (setv actor (StoreActor db))
+    (defn status []
+      (get (json.loads (dispatch-line "{\"id\": 1, \"method\": \"daemon.status\"}" config actor)) "result"))
+    (try
+      (assert (is (get (status) "ready") True))
+      ;; 容量を使い切る: max_page_count を今の page 数に止め、lease の表を小さな行で埋める。
+      (.submit actor (fn [conn]
+                       (setv pages (get (.fetchone (.execute conn "PRAGMA page_count")) 0))
+                       (.execute conn f"PRAGMA max_page_count = {pages}")
+                       (setv i 0)
+                       (while True
+                         (try
+                           (.execute conn "INSERT INTO agent_daemon_lease VALUES (?, 0, '', '')" #(f"f{i}"))
+                           (except [sqlite3.OperationalError] (break)))
+                         (setv i (+ i 1)))))
+      (for [_ (range 3)]
+        (try
+          (.submit actor (fn [conn] (db-acquire-lease conn 111)))
+          (except [sqlite3.OperationalError])))
+      (setv down (status))
+      (assert (is (get down "ready") False) down)
+      (assert (in "SQLITE_FULL" (get down "not_ready_reason")) down)
+      (assert (= (get (get down "store_write_health") "consecutive_failures") 3))
+      ;; probe の口の読み(純関数)も同じ答えを名乗る。
+      (assert (= (. (ready-verdict {"id" 1 "result" down}) ready) False))
+      ;; 読みだけの op は数えも戻しもしない。
+      (.submit actor (fn [conn] (.fetchall (.execute conn "SELECT 1"))))
+      (assert (is (get (status) "ready") False))
+      ;; 容量が戻って書き込みが 1 度通れば自分で ready に戻る(level-triggered)。
+      (.submit actor (fn [conn] (.execute conn "PRAGMA max_page_count = 1000000")))
+      (.submit actor (fn [conn] (db-acquire-lease conn 111)))
+      (setv up (status))
+      (assert (is (get up "ready") True) up)
+      (assert (= (get (get up "store_write_health") "consecutive_failures") 0))
+      (finally (.close actor)))
+    (finally (shutil.rmtree d :ignore-errors True))))
+
+
+(deftest test-store-health-counts-only-storage-failures
+  (import doeff_agents.sessionhost.store_health [StoreWriteHealth next-health readiness-of storage-failure-name])
+  ;; 制約違反・program の誤り・lock の待ちは store の健康ではない(readiness を落としても直らない)。
+  (setv conn (sqlite3.connect ":memory:"))
+  (.execute conn "CREATE TABLE t (k TEXT PRIMARY KEY)")
+  (.execute conn "INSERT INTO t VALUES ('a')")
+  (setv integrity None)
+  (try (.execute conn "INSERT INTO t VALUES ('a')") (except [e sqlite3.IntegrityError] (setv integrity e)))
+  (assert (is (storage-failure-name integrity) None))
+  (assert (is (storage-failure-name (RuntimeError "x")) None))
+  (setv h (StoreWriteHealth))
+  (setv h (next-health h "SQLITE_FULL" "database or disk is full" False "t1"))
+  (setv h (next-health h "SQLITE_FULL" "database or disk is full" False "t2"))
+  (assert (= h.consecutive-failures 2))
+  (assert (= h.failing-since "t1"))
+  (assert (. (readiness-of h 3) ready))
+  (assert (not (. (readiness-of h 2) ready)))
+  (assert (= (next-health h None "" False "t3") h))
+  (assert (= (. (next-health h None "" True "t3") consecutive-failures) 0)))

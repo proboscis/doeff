@@ -46,6 +46,8 @@ from doeff_agents.sessionhost.acp.effects import (
 )
 from doeff_agents.sessionhost.acp.valve import acp_valve
 from doeff_agents.sessionhost.hostmain import main as host_main
+from doeff_agents.sessionhost.ready_probe import READY_SUBCOMMAND
+from doeff_agents.sessionhost.ready_probe import main as ready_main
 from doeff_agents.sessionhost.relaymain import REPORT_RESULT_MCP_SUBCOMMAND
 from doeff_agents.sessionhost.usage import help_topic_of, usage_text
 
@@ -61,6 +63,9 @@ def main() -> None:
     if argv and argv[0] == REPORT_RESULT_MCP_SUBCOMMAND:
         host_main()
         return
+    if argv and argv[0] == READY_SUBCOMMAND:
+        # host の readiness の probe の口(ready_probe — Hy も agentd も import しない)。
+        raise SystemExit(ready_main(argv[1:]))
     # `--help` は usage を stdout に出して exit 0(題目の判定 = usage.help_topic_of の
     # 1 点)。一覧は実装の宣言から導くので、手で写した flag の表はどこにも無い。
     topic = help_topic_of(argv)
