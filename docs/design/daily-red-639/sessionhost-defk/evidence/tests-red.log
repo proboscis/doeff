@@ -1,0 +1,192 @@
+# tests-first (red expected) @ 32a7cf1d1806507ec41cf6d08a32fd4e41c11325 + uncommitted tests
+test-admission: focused — 5 件(変更箇所の検証)
+F..FF                                                                    [100%]
+=================================== FAILURES ===================================
+_________ test_only_the_transaction_type_opens_and_closes_transactions _________
+
+    def test_only_the_transaction_type_opens_and_closes_transactions() -> None:
+        violations = transaction_control_outside_owners(SESSIONHOST)
+>       assert violations == [], (
+            "store の connection の上で transaction を開閉するのは db-immediate-transaction だけ"
+            "(ADR-DOE-AGENTS-004 R15)。helper は commit / rollback を撃たず、明示の transaction が要るなら"
+            f"本体を defk にして db-immediate-transaction に渡す: {violations}"
+        )
+E       AssertionError: store の connection の上で transaction を開閉するのは db-immediate-transaction だけ(ADR-DOE-AGENTS-004 R15)。helper は commit / rollback を撃たず、明示の transaction が要るなら本体を defk にして db-immediate-transaction に渡す: ['cache_host_store.py:106 (cache_receipt_put)']
+E       assert ['cache_host_...receipt_put)'] == []
+E         
+E         Left contains one more item: 'cache_host_store.py:106 (cache_receipt_put)'
+E         Use -v to get more diff
+
+packages/doeff-agents/tests/test_sessionhost_transaction_owner.py:99: AssertionError
+_________ test_transaction_refuses_a_body_that_closes_the_transaction __________
+
+doeff_interpreter = <function doeff_interpreter.<locals>.run_program at 0x3331e394b00>
+
+    (deftest test-transaction-refuses-a-body-that-closes-the-transaction
+      ;; 盲検 A の反例: 本体の中の helper が commit すると、transaction は本体の途中で終わり、それまでの書き込みは
+      ;; 確定する(原子性が無い)。成功の路は COMMIT の失敗(`cannot commit - no transaction is active`)に化け、
+      ;; 失敗の路は元の例外だけが出て確定した書き込みが黙って残っていた。transaction を閉じるのは
+      ;; db-immediate-transaction だけなので、閉じた本体を名指して落とす(失敗の路は元の例外に note を添える)。
+>     (import doeff_agents.sessionhost.store [db-immediate-transaction])
+
+packages/doeff-agents/tests/sessionhost_store_deftests.hy:587: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/doeff-agents/tests/conftest.py:68: in run_program
+    return run(program)
+           ^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+doeff/do.py:314: in thunk
+    return _make_stream(fn(*args, **kwargs))
+                        ^^^^^^^^^^^^^^^^^^^
+packages/doeff-agents/tests/sessionhost_store_deftests.hy:603: in _hy_anon_39
+    (with-tmp-conn check))
+      ^^^^^^^^^^^^^^^^^^
+packages/doeff-agents/tests/sessionhost_store_deftests.hy:148: in with_tmp_conn
+    (thunk conn)
+     ^^^^^^^^^^^
+packages/doeff-agents/tests/sessionhost_store_deftests.hy:591: in check
+    (run (db-immediate-transaction conn (transaction-closing-body conn False)))
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+conn = <sqlite3.Connection object at 0x3331d45ed00>, body = Expand(...)
+
+    (defk db-immediate-transaction [conn body]
+      {:pre [(: conn sqlite3.Connection) (: body Program)]
+       :post [(: % "body の値")]}
+      "BEGIN IMMEDIATE の下で body(transaction の本体の Program)を走らせ COMMIT する、明示の transaction の唯一の型。
+       戻り値 = body の値。body はここで 1 度だけ <- で束ねる。defk の Program は束ねられるまで走らないので、
+       (db-immediate-transaction conn (db-acquire-lease-body conn pid)) と書けば本体は BEGIN の後に走る。
+       Program でない値は :pre で断る(作っただけで走らせない no-op にしない)。body の中で出た例外は束ねの位置へ
+       そのまま届くので、下の巻き戻しの規則は body の失敗にも COMMIT の失敗にも同じに効く。
+       失敗した時は **transaction が残っている時だけ** ROLLBACK し、元の例外をそのまま出す。
+       SQLite は SQLITE_FULL / SQLITE_IOERR 等で transaction を自分で巻き戻すことがあり(文の失敗でも COMMIT の失敗でも)、
+       その後に無条件の ROLLBACK を撃つと `cannot rollback - no transaction is active` が元の `database or disk is full`
+       を隠す(実弾 2026-09-25: k3s の agentd-pool-0 / -1 の agentd-state volume が 100% になり、lease の 3 関数の
+       log が全部 rollback の文になって本当の原因が読めなかった)。巻き戻しそのものが失敗した時も元の例外を出し、
+       巻き戻しの失敗は note として添える(第 2 の例外で第 1 の例外を上書きしない)。"
+      (.execute conn "BEGIN IMMEDIATE")
+      (try
+        (<- value body)
+>       (.execute conn "COMMIT")
+          ^^^^^^^^^^^^^^^^^^^^^
+E       sqlite3.OperationalError: cannot commit - no transaction is active
+
+packages/doeff-agents/src/doeff_agents/sessionhost/store.hy:1031: OperationalError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  db_immediate_transaction()  packages/doeff-agents/src/doeff_agents/sessionhost/store.hy:1031
+    (.execute conn "COMMIT")
+
+OperationalError: cannot commit - no transaction is active
+
+
+doeff Traceback (most recent call last):
+
+  db_immediate_transaction()  packages/doeff-agents/src/doeff_agents/sessionhost/store.hy:1031
+    (.execute conn "COMMIT")
+  _hy_anon_39()  packages/doeff-agents/tests/sessionhost_store_deftests.hy:603
+    (with-tmp-conn check))
+  with_tmp_conn()  packages/doeff-agents/tests/sessionhost_store_deftests.hy:148
+    (thunk conn)
+  check()  packages/doeff-agents/tests/sessionhost_store_deftests.hy:591
+    (run (db-immediate-transaction conn (transaction-closing-body conn False)))
+
+OperationalError: cannot commit - no transaction is active
+
+____________ test_store_actor_refuses_an_op_that_returns_a_program _____________
+
+doeff_interpreter = <function doeff_interpreter.<locals>.run_program at 0x3331e395580>
+
+    (deftest test-store-actor-refuses-an-op-that-returns-a-program
+      ;; 盲検 B の反例: op が transaction の Program を実行せずに返すと、Program は actor の thread の外で
+      ;; actor の connection を使って走り、単一 connection の直列化・書き込みの健康の数え・journal の合図を
+      ;; 素通りする。actor は op の戻りが Program / effect なら型の誤りとして断り、何も書かない。
+>     (import doeff_agents.sessionhost.store [db-immediate-transaction db-acquire-lease-body])
+
+packages/doeff-agents/tests/sessionhost_store_deftests.hy:610: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/doeff-agents/tests/conftest.py:68: in run_program
+    return run(program)
+           ^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+doeff/do.py:314: in thunk
+    return _make_stream(fn(*args, **kwargs))
+                        ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    (import doeff_agents.sessionhost.store [db-immediate-transaction db-acquire-lease-body])
+    (setv d (tempfile.mkdtemp))
+    (try
+      (setv actor (StoreActor (os.path.join d "agentd.sqlite")))
+      (try
+        (setv raised None)
+        (try
+          (.submit actor (fn [conn] (db-immediate-transaction conn (db-acquire-lease-body conn 111))))
+          (except [e TypeError] (setv raised e)))
+>       (assert (is-not raised None))
+                  ^^^^^^^^^^^^^^^^^
+E       AssertionError
+
+packages/doeff-agents/tests/sessionhost_store_deftests.hy:619: AssertionError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  _hy_anon_44()  packages/doeff-agents/tests/sessionhost_store_deftests.hy:619
+    (assert (is-not raised None))
+
+AssertionError: 
+
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156
+  /home/kento/.worktrees/doeff-wt-639-sessionhost-defk/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED packages/doeff-agents/tests/test_sessionhost_transaction_owner.py::test_every_owner_still_exists
+PASSED packages/doeff-agents/tests/test_sessionhost_transaction_owner.py::test_scanner_finds_each_spelling
+FAILED packages/doeff-agents/tests/test_sessionhost_transaction_owner.py::test_only_the_transaction_type_opens_and_closes_transactions
+FAILED packages/doeff-agents/tests/test_sessionhost_store.py::test_transaction_refuses_a_body_that_closes_the_transaction
+FAILED packages/doeff-agents/tests/test_sessionhost_store.py::test_store_actor_refuses_an_op_that_returns_a_program
+3 failed, 2 passed, 1 warning in 22.69s
+EXIT=1
