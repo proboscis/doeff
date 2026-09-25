@@ -5,13 +5,10 @@
 ;;; モジュールだけ。oracle: agentd-rust-final:src/main.rs の
 ;;; tmux_* / run_judge_command / fs 物理を verbatim 移植。
 ;;;
-;;; SessionStore の実体(SQLite 単一 writer actor)は host の外部性で C3 所有 —
-;;; ここには直接束縛用の in-memory store のみ置く(呼び手 process 内で
-;;; policy / launch を回すための最小の真実置き場)。
+;;; SessionStore の実体(SQLite 単一 writer actor)は host の外部性で C3 所有。
 
 (require doeff-hy.macros [deff defk defhandler])
 
-(import dataclasses [replace])
 (import doeff [run])
 (import datetime [datetime timezone])
 (import errno)
@@ -28,11 +25,6 @@
 (import doeff_agents.sessionhost.effects [
   ProcResult
   SessionRow
-  SessionStoreListActive
-  SessionStoreGet
-  SessionStoreUpsert
-  SessionStoreResultPayload
-  SessionStoreRecordEvent
   TmuxNewSession
   TmuxHasSession
   TmuxPaneCurrentCommand
@@ -66,8 +58,7 @@
   GitRun
   EnvGet
   LogLine])
-(import doeff_agents.sessionhost.policy [ACTIVE-STATUSES
-                                         PROVIDER-AUTH-ENV-KEYS
+(import doeff_agents.sessionhost.policy [PROVIDER-AUTH-ENV-KEYS
                                          env-offenders-against
                                          policy-normalized-env-key])
 
@@ -720,45 +711,3 @@
 
   (EnvGet [name]
     (resume (.get os.environ name))))
-
-
-;; ---------------------------------------------------------------------------
-;; in-memory SessionStore(直接束縛用 — host の SQLite writer actor は C3)
-;; ---------------------------------------------------------------------------
-
-(defclass MemorySessionStore []
-  "直接束縛の真実置き場: 呼び手 process 内で policy / launch を回すための
-   最小 store。寿命の外部性(reap 生存・呼び手死後の継続)は提供しない —
-   それは C3 host の存在理由(daemon-owns-only-exteriority)。"
-  (defn __init__ [self]
-    (setv self.rows {})
-    (setv self.result-payloads {})
-    (setv self.events [])))
-
-
-(defhandler memory-session-store [store]
-  (SessionStoreListActive []
-    (resume (lfor r (list (.values store.rows))
-                  :if (in r.status ACTIVE-STATUSES)
-                  r)))
-
-  (SessionStoreGet [session-id]
-    (resume (.get store.rows session-id)))
-
-  (SessionStoreUpsert [row]
-    ;; COALESCE 規律(main.rs:2339): 永続化済み result-payload を upsert が
-    ;; 消すことは禁止
-    (setv existing (.get store.rows row.session-id))
-    (when (and (is-not existing None)
-               (is-not existing.result-payload None)
-               (is None row.result-payload))
-      (setv row (replace row :result-payload existing.result-payload)))
-    (setv (get store.rows row.session-id) row)
-    (resume None))
-
-  (SessionStoreResultPayload [session-id]
-    (resume (.get store.result-payloads session-id)))
-
-  (SessionStoreRecordEvent [session-id event-type row]
-    (.append store.events #(session-id event-type))
-    (resume None)))

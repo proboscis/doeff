@@ -1128,17 +1128,6 @@
        (is-not view.turn-ended-at-ms None)))
 
 
-(defk session-busy [view]
-  {:pre [(: view (| SessionView None))]
-   :post [(: % bool)]}
-  "温かい session が手番の途中(生きている ∧ multi_turn ∧ 手番の終わりが刻まれていない)。"
-  (<- alive bool (session-alive view))
-  (and alive
-       (isinstance view SessionView)
-       (= view.lifecycle LIFECYCLE-MULTI-TURN)
-       (is view.turn-ended-at-ms None)))
-
-
 (defk handle-owned-by [row node-name node-row-id principal]
   {:pre [(: row AcpRow) (: node-name str) (: node-row-id (| str None)) (: principal str)]
    :post [(: % (| str None))]}
@@ -1850,21 +1839,6 @@
                (or (is retained None)
                    (>= now-ms retained)))
       (.append out view.session-id)))
-  (tuple out))
-
-
-(defk withdrawn-session-ids-of [rows node-name node-row-id principal]
-  {:pre [(: rows tuple) (: node-name str) (: node-row-id (| str None)) (: principal str)]
-   :post [(: % tuple)]}
-  "Withdrawn の行のうち自分が claim していた行の session の id(手番の取り下げ — 走っている
-   session を片付ける対象)。"
-  (setv out [])
-  (for [row rows]
-    (setv status row.status)
-    (when (and (isinstance status dict) (= (.get status "phase") PHASE-WITHDRAWN))
-      (<- sid (| str None) (handle-owned-by row node-name node-row-id principal))
-      (when (and (is-not sid None) (not-in sid out))
-        (.append out sid))))
   (tuple out))
 
 
@@ -4415,15 +4389,6 @@
   (tuple out))
 
 
-(defk profile-kind-of [row]
-  {:pre [(: row AcpRow)]
-   :post [(: % str)]}
-  "行の口座の種類 = spec.kind(claude / codex — 配置の観測の腕が預かり所の在庫から写す)。欄の無い行は
-   PROFILE-USAGE-KIND(claude)と読む(段 12 lane 12c・agora-redesign #479 より前の行は全部 claude)。"
-  (setv kind (.get row.spec "kind"))
-  (if (and (isinstance kind str) kind) kind PROFILE-USAGE-KIND))
-
-
 (defk profile-rows-of-kind [active kind]
   {:pre [(: active tuple) (: kind str)]
    :post [(: % tuple)]}
@@ -4665,13 +4630,6 @@
     :last-probe-ms 0
     :pending-conditions pending
     :interrupt-escalation-seconds escalation-seconds))
-
-
-;; 引き継ぎ方が **前の手番の prompt cache を次の手番へ続けるか** — 判断はこの 1 点(card
-;; acp:kanban-issue:ki-4c0a0aa06b07)。send = 前の手番の生きた実行体へそのまま渡す / resume = 同じ
-;; 実行体を同じ文脈で起こし直す(どちらも先頭が残る)。launch は文脈が無く、rehydrate は履歴を
-;; 最初の入力へ組み直すので先頭が別物になる。
-(setv CACHE-CONTINUING-ARMS #{NEXT-ARM-SEND NEXT-ARM-RESUME})
 
 
 (defk turn-reopen-of [plan arm]
@@ -6224,14 +6182,6 @@
       (>= (- now-ms last-ms) (* 1000 period-seconds))))
 
 
-(defk resync-due [signal state now-ms settings]
-  {:pre [(: signal WatchAdvance) (: state AgentdState) (: now-ms int) (: settings AgentdSettings)]
-   :post [(: % bool)]}
-  "list を読み直す拍: sequence が進んだ・gap・接続の張り直し・周期の保険。"
-  (<- periodic bool (due state.last-resync-ms now-ms settings.watch-resync-seconds))
-  (or (in signal.kind #{"changed" "gap" "closed"}) periodic))
-
-
 (defk list-mode-for [signal state now-ms settings]
   {:pre [(: signal WatchAdvance) (: state AgentdState) (: now-ms int) (: settings AgentdSettings)]
    :post [(: % str)]}
@@ -6654,15 +6604,6 @@
   {:pre [(: text (| str None))]
    :post [(: % (| int None))]}
   "pid の file の中身 → pid(数字の行 1 つ・それ以外は None)。"
-  (if (and (isinstance text str) (re.match r"^\s*\d+\s*$" text))
-      (int (.strip text))
-      None))
-
-
-(defk rc-of-text [text]
-  {:pre [(: text (| str None))]
-   :post [(: % (| int None))]}
-  "rc の file の中身 → 終了コード(数字の行 1 つ・それ以外は None = まだ書かれていない / 壊れている)。"
   (if (and (isinstance text str) (re.match r"^\s*\d+\s*$" text))
       (int (.strip text))
       None))
