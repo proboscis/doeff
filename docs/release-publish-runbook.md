@@ -62,6 +62,9 @@ the same PR.
 | Package | Class | Reason |
 | --- | --- | --- |
 | `doeff-agentic-cli` | native helper | distributed with the agentic CLI workflow, not a public PyPI package |
+| `doeff-claude-code` | agent backend effects package (owns the `claude -p` process lifetime) | new 2026-09-25 (d25172ad); no public install contract yet |
+| `doeff-cluster` | cluster runtime package (coordinator, worker, lease, rollout) | new 2026-09-25 (eae6a774); no public install contract yet |
+| `doeff-records` | record storage effects package (versioned rows, change and append logs) | new 2026-09-26 (12f92505); no public install contract yet |
 | `doeff-docker` | experimental runtime adapter | no public install contract yet |
 | `doeff-jev` | judgment provider package (TypeSafe Jev handlers for `doeff-system-one`) | new 2026-09-22 (e190a8c6); no public install contract yet |
 | `doeff-system-one` | judgment effects package | new 2026-09-22 (e190a8c6); no public install contract yet |

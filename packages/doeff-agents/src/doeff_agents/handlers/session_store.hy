@@ -22,6 +22,8 @@
 
 (import threading)
 
+(import doeff [run])
+
 (import doeff_agents.effects [
   AgentSessionQuery
   AgentSessionSnapshot
@@ -49,34 +51,37 @@
    connection は DB-API 2 の接続(psycopg 3 の `Connection` か `sqlite3.Connection`)で、
    開く・閉じるは composition root が持つ。操作ごとに 1 取引で流して commit し、
    失敗は rollback してから投げ直す。1 つの接続を lock で直列に使う。
-   作る時に表と索引を用意する(何度でも同じ)。"
+   作る時に表と索引を用意する(何度でも同じ)。
+
+   文と行の写しは `doeff_agents.session_store_sql` の defk(bind の無い純粋な Program)が決め、
+   この class は DB-API の接続を持つ Python の境界なので、それを `run` で値にしてから流す。"
 
   (defn __init__ [self connection dialect [table DEFAULT-TABLE]]
     (when (not (isinstance dialect SqlDialect))
       (raise (TypeError f"dialect は SqlDialect: {dialect !r}")))
     (setv self.connection connection)
     (setv self.dialect dialect)
-    (setv self.table (checked-table-name table))
+    (setv self.table (run (checked-table-name table)))
     (setv self._lock (threading.Lock))
-    (._transact self (session-table-ddl dialect self.table))
+    (._transact self (run (session-table-ddl dialect self.table)))
     None)
 
   (defn record-snapshot [self event-type snapshot * [details None]]
     (when (not (isinstance snapshot AgentSessionSnapshot))
       (raise (TypeError f"snapshot は AgentSessionSnapshot: {snapshot !r}")))
-    (._transact self #((upsert-statement self.dialect self.table snapshot event-type
-                                         (dict (or details {})))))
+    (._transact self #((run (upsert-statement self.dialect self.table snapshot event-type
+                                              (dict (or details {}))))))
     snapshot)
 
   (defn get-session [self session-id]
-    (setv rows (._transact self #((select-one-statement self.dialect self.table session-id))))
-    (if rows (row-to-snapshot (get rows 0)) None))
+    (setv rows (._transact self #((run (select-one-statement self.dialect self.table session-id)))))
+    (if rows (run (row-to-snapshot (get rows 0))) None))
 
   (defn list-sessions [self [query None]]
     (when (not (isinstance query (| AgentSessionQuery None)))
       (raise (TypeError f"query は AgentSessionQuery か None: {query !r}")))
-    (setv rows (._transact self #((select-many-statement self.dialect self.table query))))
-    (tuple (gfor row rows (row-to-snapshot row))))
+    (setv rows (._transact self #((run (select-many-statement self.dialect self.table query)))))
+    (tuple (gfor row rows (run (row-to-snapshot row)))))
 
   (defn _transact [self statements]
     "文の並びを 1 取引で流し、最後の文が返した行を返す。"

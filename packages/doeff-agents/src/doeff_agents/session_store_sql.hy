@@ -13,7 +13,7 @@
 ;;; 語彙: library の語だけを使う。呼び手の識別子(`caller_ref`)・最後の手番
 ;;; (`last_turn`)・transcript の所在(`transcript_ref`)は library にとって不透明な値。
 
-(require doeff-hy.macros [deff])
+(require doeff-hy.macros [defk <-])
 
 (import dataclasses [dataclass fields])
 (import datetime [datetime timezone])
@@ -128,7 +128,7 @@
 ;; 表の定義
 ;; ---------------------------------------------------------------------------
 
-(deff checked-table-name [table]
+(defk checked-table-name [table]
   {:pre [(: table str)]
    :post [(: % str)]}
   "表の名を検める。文に直に埋めるので、小文字・数字・下線だけを通す。"
@@ -150,11 +150,11 @@
   f"{column.name} {(_column-type dialect column.kind)}{suffix}")
 
 
-(deff session-table-ddl [dialect table]
+(defk session-table-ddl [dialect table]
   {:pre [(: dialect SqlDialect) (: table str)]
    :post [(: % tuple)]}
   "表と索引を作る文の並び。何度流しても同じ(IF NOT EXISTS)。"
-  (setv name (checked-table-name table))
+  (<- name (checked-table-name table))
   (setv columns (.join ", " (gfor column COLUMNS (_column-definition dialect column))))
   (+ #((SqlStatement :text f"CREATE TABLE IF NOT EXISTS {name} ({columns})" :params #()))
      (tuple (gfor column INDEXED-COLUMNS
@@ -167,7 +167,7 @@
 ;; 値の写し(snapshot → 列の値)
 ;; ---------------------------------------------------------------------------
 
-(deff encode-time [value]
+(defk encode-time [value]
   {:pre [(: value (| datetime None))]
    :post [(: % (| str None))]}
   "時刻を ISO 8601 の綴りへ。時差の無い時刻は置き場所ごとに意味が変わるので断る。"
@@ -186,12 +186,16 @@
         True dialect.placeholder))
 
 
-(deff snapshot-row-values [snapshot event-type details]
+(defk snapshot-row-values [snapshot event-type details]
   {:pre [(: snapshot AgentSessionSnapshot) (: event-type str) (: details dict)]
    :post [(: % tuple) (= (len %) (len COLUMNS))]}
   "snapshot 1 つを列の順の値へ。"
   (setv turn snapshot.last-turn)
   (setv transcript snapshot.transcript-ref)
+  (<- started-at (encode-time snapshot.started-at))
+  (<- last-observed-at (encode-time snapshot.last-observed-at))
+  (<- finished-at (encode-time snapshot.finished-at))
+  (<- cleaned-at (encode-time snapshot.cleaned-at))
   #(snapshot.session-id
     snapshot.session-name
     snapshot.agent-type.value
@@ -200,10 +204,10 @@
     snapshot.lifecycle.value
     snapshot.backend-kind
     (_encode-json (dict snapshot.backend-ref))
-    (encode-time snapshot.started-at)
-    (encode-time snapshot.last-observed-at)
-    (encode-time snapshot.finished-at)
-    (encode-time snapshot.cleaned-at)
+    started-at
+    last-observed-at
+    finished-at
+    cleaned-at
     snapshot.output-snippet
     snapshot.caller-ref
     snapshot.node
@@ -215,30 +219,31 @@
     (_encode-json details)))
 
 
-(deff upsert-statement [dialect table snapshot event-type details]
+(defk upsert-statement [dialect table snapshot event-type details]
   {:pre [(: dialect SqlDialect) (: table str) (: snapshot AgentSessionSnapshot)
          (: event-type str) (: details dict)]
    :post [(: % SqlStatement)]}
   "同じ session id の行を置き換える書き(無ければ足す)。"
-  (setv name (checked-table-name table))
+  (<- name (checked-table-name table))
+  (<- params (snapshot-row-values snapshot event-type details))
   (setv placeholders (.join ", " (gfor column COLUMNS (_placeholder dialect column.kind))))
   (setv updates (.join ", " (gfor column (cut COLUMN-NAMES 1 None)
                                   f"{column} = excluded.{column}")))
   (SqlStatement
     :text (+ f"INSERT INTO {name} ({COLUMN-LIST}) VALUES ({placeholders}) "
              f"ON CONFLICT (session_id) DO UPDATE SET {updates}")
-    :params (snapshot-row-values snapshot event-type details)))
+    :params params))
 
 
 ;; ---------------------------------------------------------------------------
 ;; 読みの文
 ;; ---------------------------------------------------------------------------
 
-(deff select-one-statement [dialect table session-id]
+(defk select-one-statement [dialect table session-id]
   {:pre [(: dialect SqlDialect) (: table str) (: session-id str)]
    :post [(: % SqlStatement)]}
   "session id で 1 行を読む。"
-  (setv name (checked-table-name table))
+  (<- name (checked-table-name table))
   (SqlStatement
     :text f"SELECT {COLUMN-LIST} FROM {name} WHERE session_id = {dialect.placeholder}"
     :params #(session-id)))
@@ -255,11 +260,11 @@
                    (QueryCondition mapping.column (mapping.encode expected))))))
 
 
-(deff select-many-statement [dialect table query]
+(defk select-many-statement [dialect table query]
   {:pre [(: dialect SqlDialect) (: table str) (: query (| AgentSessionQuery None))]
    :post [(: % SqlStatement)]}
   "query に合う行を session id の順に読む。決めていない欄は条件にしない。"
-  (setv name (checked-table-name table))
+  (<- name (checked-table-name table))
   (setv conditions (_query-conditions query))
   (setv where (if conditions
                   (+ " WHERE " (.join " AND " (gfor condition conditions
@@ -274,7 +279,7 @@
 ;; 値の写し(列の値 → snapshot)
 ;; ---------------------------------------------------------------------------
 
-(deff decode-time [value]
+(defk decode-time [value]
   {:pre [(: value (| datetime str None))]
    :post [(: % (| datetime None))]}
   "driver が返す時刻(PostgreSQL は datetime・SQLite は綴り)を UTC の datetime へ。"
@@ -283,11 +288,11 @@
         True (.astimezone (datetime.fromisoformat value) timezone.utc)))
 
 
-(deff decode-required-time [value]
+(defk decode-required-time [value]
   {:pre [(: value (| datetime str))]
    :post [(: % datetime)]}
   "NOT NULL の時刻の列を読む。"
-  (setv decoded (decode-time value))
+  (<- decoded (decode-time value))
   (when (is decoded None)
     (raise (ValueError "NOT NULL の時刻の列が空")))
   decoded)
@@ -305,11 +310,15 @@
   (if (is node None) None (TranscriptRef :node node :path path)))
 
 
-(deff row-to-snapshot [row]
+(defk row-to-snapshot [row]
   {:pre [(: row (| tuple list)) (= (len row) (len COLUMNS))]
    :post [(: % AgentSessionSnapshot)]}
   "列の順の 1 行を snapshot へ。"
   (setv values (dict (zip COLUMN-NAMES row)))
+  (<- started-at (decode-required-time (get values "started_at")))
+  (<- last-observed-at (decode-time (get values "last_observed_at")))
+  (<- finished-at (decode-time (get values "finished_at")))
+  (<- cleaned-at (decode-time (get values "cleaned_at")))
   (AgentSessionSnapshot
     :session-id (get values "session_id")
     :session-name (get values "session_name")
@@ -319,10 +328,10 @@
     :lifecycle (AgentSessionLifecycle (get values "lifecycle"))
     :backend-kind (get values "backend_kind")
     :backend-ref (dict (_decode-json (get values "backend_ref")))
-    :started-at (decode-required-time (get values "started_at"))
-    :last-observed-at (decode-time (get values "last_observed_at"))
-    :finished-at (decode-time (get values "finished_at"))
-    :cleaned-at (decode-time (get values "cleaned_at"))
+    :started-at started-at
+    :last-observed-at last-observed-at
+    :finished-at finished-at
+    :cleaned-at cleaned-at
     :output-snippet (get values "output_snippet")
     :caller-ref (get values "caller_ref")
     :node (get values "node")
