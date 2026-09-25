@@ -393,7 +393,6 @@
   in-flight-command-of
   job-kind-of
   pid-of-text
-  rc-of-text
   turn-charter-of
   verify-argv-of
   verify-env-of
