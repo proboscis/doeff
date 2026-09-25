@@ -7,11 +7,13 @@
 
 (require doeff-hy.macros [deftest defk deff <-])
 
+(import collections.abc [Callable])
 (import json)
 (import os)
 (import shutil)
 (import socket :as socket-mod)
 (import tempfile)
+(import threading)
 (import time)
 (import doeff [EffectBase run])
 
@@ -33,6 +35,7 @@
   herdr-label-holders
   herdr-registry-agent-pane-id
   herdr-request-line
+  herdr-pane-current-command-io
   chunked-send-texts
   normalize-ansi-read])
 
@@ -165,6 +168,169 @@
 
 
 ;; ---------------------------------------------------------------------------
+;; herdr の答えの契約(偽の socket — 実 herdr server に依らず決定的に走る)
+;; ---------------------------------------------------------------------------
+
+(defn answer-herdr-requests [server answers requests]  ; defk にできない: threading.Thread の target に渡す callback
+  "偽の herdr server の本体: 1 接続ごとに 1 行の request を読んで記録し、
+   answers の次の 1 通を 1 行で返す(herdr-call の 1 call = 1 接続と同じ形)。"
+  (for [answer answers]
+    (setv #(conn _addr) (.accept server))
+    (with [conn conn]
+      (setv buf b"")
+      (while (not-in b"\n" buf)
+        (setv data (.recv conn 65536))
+        (when (= data b"")
+          (break))
+        (+= buf data))
+      (.append requests (json.loads buf))
+      (.sendall conn (.encode (+ (json.dumps answer) "\n") "utf-8")))))
+
+(defk run-against-fake-herdr [answers body]
+  {:pre [(: answers list) (: body Callable)]
+   :post [(: % list)]}
+  "answers を順に返す偽の herdr socket を立て、(body socket-path)の Program を
+   走らせて、server が受けた request の列を返す。server の thread は answers を
+   返し切るか、accept の期限(10 秒)で終わる。"
+  (setv d (tempfile.mkdtemp))
+  (setv sock-path (os.path.join d "herdr.sock"))
+  (setv server (socket-mod.socket socket-mod.AF-UNIX socket-mod.SOCK-STREAM))
+  (setv requests [])
+  (try
+    (.bind server sock-path)
+    (.listen server (len answers))
+    (.settimeout server 10.0)
+    (setv thread (threading.Thread :target answer-herdr-requests
+                                   :args #(server answers requests)
+                                   :daemon True))
+    (.start thread)
+    (<- _ (body sock-path))
+    (.join thread 10.0)
+    (finally
+      (.close server)
+      (shutil.rmtree d :ignore-errors True)))
+  requests)
+
+(setv ZEUS-PROCESS-INFO-ANSWER
+      ;; 日次の機体 zeus(Linux・herdr 0.9.1・protocol 22)の pane.process_info の
+      ;; 実物(2026-09-26 採取)。argv0 の欄が無い — herdr の Linux 実装は argv0 を
+      ;; 一度も埋めない(src/platform/linux.rs の ForegroundProcess が argv0: None)。
+      {"id" "doeff-substrate"
+       "result" {"type" "pane_process_info"
+                 "process_info" {"pane_id" "w7:p1"
+                                 "shell_pid" 1643746
+                                 "foreground_process_group_id" 1643746
+                                 "foreground_processes"
+                                 [{"pid" 1643746
+                                   "name" "zsh"
+                                   "argv" ["/usr/bin/zsh"]
+                                   "cmdline" "/usr/bin/zsh"
+                                   "cwd" "/home/kento"}]}}})
+
+
+(deftest test-herdr-pane-current-command-reads-answers-without-argv0
+  ;; 日次の機体 zeus の赤の回帰 pin(2026-09-26・agora-redesign#639 依頼書 H):
+  ;; herdr 0.9.1 の公開 schema(protocol 22)で PaneProcessInfoProcess の必須欄は
+  ;; pid と name だけで、argv0 / argv は省かれうる。旧実装は argv0 を必ず在る前提で
+  ;; 読み、zeus の答えで KeyError: 'argv0' を出して観測ごと落ちた。
+  (setv answers
+        [ZEUS-PROCESS-INFO-ANSWER
+         ;; 前面の job が分からない時、herdr は foreground_processes を鍵ごと省く
+         ;; (schema の必須欄は pane_id だけ・serde の skip_serializing_if Vec::is_empty)。
+         ;; 旧実装はここでも KeyError になっていた。
+         {"id" "doeff-substrate"
+          "result" {"type" "pane_process_info"
+                    "process_info" {"pane_id" "w7:p1" "shell_pid" 1643746}}}
+         ;; pane が無い = pane_not_found の error 封筒(process_info が返す誤りはこれだけ)。
+         ;; tmux display-message の失敗と同じく None。
+         {"id" "doeff-substrate"
+          "error" {"code" "pane_not_found" "message" "pane not found"}}
+         ;; それ以外の error 封筒は「pane が無い」ではないので None に畳まない。
+         {"id" "doeff-substrate"
+          "error" {"code" "invalid_request" "message" "missing field `pane_id`"}}])
+  (setv observed {})
+  (defk observe [sock-path]
+    {:pre [(: sock-path str)] :post [(: % "None")]}
+    (<- zsh (herdr-pane-current-command-io sock-path "w7:p1"))
+    (setv (get observed "zsh") zsh)
+    (<- unknown (herdr-pane-current-command-io sock-path "w7:p1"))
+    (setv (get observed "unknown") unknown)
+    (<- gone (herdr-pane-current-command-io sock-path "w7:p1"))
+    (setv (get observed "gone") gone)
+    (try
+      (<- _ (herdr-pane-current-command-io sock-path "w7:p1"))
+      (except [e HerdrApiError]
+        (setv (get observed "other-error") e.code)))
+    None)
+  (<- requests (run-against-fake-herdr answers observe))
+  (assert (= (get observed "zsh") "zsh") observed)
+  (assert (is (get observed "unknown") None) observed)
+  (assert (is (get observed "gone") None) observed)
+  (assert (= (.get observed "other-error") "invalid_request") observed)
+  (assert (= (lfor r requests #((get r "method") (get r "params")))
+             (* [#("pane.process_info" {"pane_id" "w7:p1"})] 4))
+          requests))
+
+
+(deftest test-herdr-foreground-command-follows-the-process-info-contract
+  ;; pane.process_info の答え → 前面の command 名(純関数)。herdr の契約
+  ;; (0.9.1 の公開 schema と source)に沿って、保証された欄から読む:
+  ;;   argv0(省略・null あり)→ argv の先頭(省略・null あり)→ name(必須)。
+  (import doeff_agents.sessionhost.substrate_herdr [herdr-foreground-command
+                                                   HerdrContractError])
+  (setv answer (fn [processes]
+                 {"type" "pane_process_info"
+                  "process_info" {"pane_id" "w1:p1" "foreground_processes" processes}}))
+  ;; macOS の実測(2026-07-07 の Phase 0): name は process title で、claude では
+  ;; version 文字列になる。herdr が argv[0] から正規化した argv0 を使う。
+  (<- claude (herdr-foreground-command
+               (answer [{"pid" 7 "name" "2.1.201" "argv0" "claude"
+                         "argv" ["claude" "--resume"]}])))
+  (assert (= claude "claude"))
+  ;; zeus の実物(Linux): argv0 が無い → argv の先頭を herdr の argv0 と同じ規則で
+  ;; 正規化する(basename・login shell の先頭の '-' を 1 つ外す)。
+  (<- zeus (herdr-foreground-command (get ZEUS-PROCESS-INFO-ANSWER "result")))
+  (assert (= zeus "zsh"))
+  (<- login (herdr-foreground-command
+              (answer [{"pid" 8 "name" "bash" "argv" ["-bash"]}])))
+  (assert (= login "bash"))
+  ;; schema は argv0 に null を許す — 省略と同じに読む。
+  (<- null-argv0 (herdr-foreground-command
+                   (answer [{"pid" 9 "name" "zsh" "argv0" None "argv" ["/bin/zsh" "-l"]}])))
+  (assert (= null-argv0 "zsh"))
+  ;; argv まで無い(Linux で cmdline が読めない zombie・WSL で comm から agent と
+  ;; 分かる時 — herdr 自身もこの時は comm を身元に使う)→ 必須欄 name。
+  (<- comm-only (herdr-foreground-command (answer [{"pid" 10 "name" "codex"}])))
+  (assert (= comm-only "codex"))
+  ;; argv の先頭が正規化で空になる(herdr の macOS 実装は argv0 を省く形)→ name。
+  (<- dash-only (herdr-foreground-command
+                  (answer [{"pid" 11 "name" "zsh" "argv" ["-"]}])))
+  (assert (= dash-only "zsh"))
+  ;; 前面の job が不明(空の配列・鍵ごと省略)→ None。
+  (<- empty (herdr-foreground-command (answer [])))
+  (assert (is empty None))
+  (<- omitted (herdr-foreground-command
+                {"type" "pane_process_info" "process_info" {"pane_id" "w1:p1"}}))
+  (assert (is omitted None))
+  ;; 契約の外の答えは KeyError にも黙った既定値にもせず、型のある失敗で名指す。
+  (for [bad [{}
+             {"process_info" None}
+             {"process_info" {"pane_id" "w1:p1" "foreground_processes" None}}
+             (answer [["zsh"]])
+             (answer [{"pid" 12 "argv" ["/usr/bin/zsh"]}])
+             (answer [{"pid" 13 "name" "zsh" "argv0" 5}])
+             (answer [{"pid" 14 "name" "zsh" "argv" "/usr/bin/zsh"}])
+             (answer [{"pid" 15 "name" "zsh" "argv" [5]}])]]
+    (setv raised None)
+    (try
+      (<- _ (herdr-foreground-command bad))
+      (except [e HerdrContractError]
+        (setv raised e)))
+    (assert (is-not raised None) f"out-of-contract answer must be named: {bad}")
+    (assert (in "pane.process_info" (str raised)) (str raised))))
+
+
+;; ---------------------------------------------------------------------------
 ;; herdr smoke(実 herdr server — 不在時 skip)
 ;; ---------------------------------------------------------------------------
 
@@ -207,6 +373,10 @@
               (tmux-has-session session-name)))
     (assert (not gone))
     (finally
+      ;; 途中で落ちても live herdr に workspace を残さない(2026-09-26: zeus で
+      ;; current-command の KeyError が kill の手前で落ち、doeff-herdr-smoke-* の
+      ;; workspace が 2 つ残っていた)。
+      (run (close-workspaces-with-label session-name))
       (shutil.rmtree d :ignore-errors True))))
 
 
