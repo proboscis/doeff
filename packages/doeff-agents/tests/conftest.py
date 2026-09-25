@@ -29,6 +29,20 @@ from doeff_agents.sessionhost.acp.effects import TURN_RECORD_KIND
 _AGORA_KINDS_COPY = Path(__file__).resolve().parents[3] / "docs" / "contracts" / "agora-kinds.json"
 
 
+def pytest_collect_file(file_path: Path, parent: pytest.Collector) -> pytest.Collector | None:
+    """Hy の ``test_*.hy`` をこの dir の中だけで直に集める(doeff-cluster の tests と同じ形)。
+
+    Python の包み直しの file を足さずに Hy の deftest を公開する(agora-redesign #608)。
+    ``*_deftests.hy`` は従来どおり ``test_*.py`` が公開する — 名が ``test_`` で始まらない
+    ので、ここでは集めない。
+    """
+    if file_path.suffix == ".hy" and file_path.name.startswith("test_"):
+        from doeff_adr.pytest_plugin import DoeffAdrHyFile
+
+        return DoeffAdrHyFile.from_parent(parent, path=file_path)
+    return None
+
+
 @pytest.fixture
 def doeff_interpreter(request: pytest.FixtureRequest):
     """deftest を走らせる実行時 interpreter(ADR-DOE-HY-002 R3 の参照実装と同じ形)。

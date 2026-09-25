@@ -173,8 +173,34 @@ class Observation:
 
 
 @dataclass(frozen=True, kw_only=True)
+class TurnRef:
+    """The caller's reference to the last turn run on a session.
+
+    Opaque to the library: ``turn_id`` is the caller's turn identifier and
+    ``attempt`` its attempt number (agora-redesign #608).
+    """
+
+    turn_id: str
+    attempt: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class TranscriptRef:
+    """Where the CLI's transcript for a session lives (node and path, opaque)."""
+
+    node: str
+    path: str
+
+
+@dataclass(frozen=True, kw_only=True)
 class AgentSessionSnapshot:
-    """Persistent, backend-neutral snapshot of an agent session."""
+    """Persistent, backend-neutral snapshot of an agent session.
+
+    ``caller_ref`` is the caller's identifier for whoever owns the session
+    (agora puts its agent id here); the library never interprets it.
+    ``node`` is the machine the session lives on, ``last_turn`` the caller's
+    last turn on it, and ``transcript_ref`` where the CLI transcript is kept.
+    """
 
     session_id: str
     session_name: str
@@ -189,6 +215,10 @@ class AgentSessionSnapshot:
     finished_at: datetime | None = None
     cleaned_at: datetime | None = None
     output_snippet: str | None = None
+    caller_ref: str | None = None
+    node: str | None = None
+    last_turn: TurnRef | None = None
+    transcript_ref: TranscriptRef | None = None
 
     @classmethod
     def from_handle(
@@ -254,6 +284,18 @@ class AgentSessionSnapshot:
             "finished_at": self.finished_at.isoformat() if self.finished_at is not None else None,
             "cleaned_at": self.cleaned_at.isoformat() if self.cleaned_at is not None else None,
             "output_snippet": self.output_snippet,
+            "caller_ref": self.caller_ref,
+            "node": self.node,
+            "last_turn": (
+                {"turn_id": self.last_turn.turn_id, "attempt": self.last_turn.attempt}
+                if self.last_turn is not None
+                else None
+            ),
+            "transcript_ref": (
+                {"node": self.transcript_ref.node, "path": self.transcript_ref.path}
+                if self.transcript_ref is not None
+                else None
+            ),
         }
 
     @classmethod
@@ -275,17 +317,42 @@ class AgentSessionSnapshot:
             finished_at=_parse_optional_datetime(data.get("finished_at")),
             cleaned_at=_parse_optional_datetime(data.get("cleaned_at")),
             output_snippet=data.get("output_snippet"),
+            caller_ref=_parse_optional_str(data.get("caller_ref")),
+            node=_parse_optional_str(data.get("node")),
+            last_turn=_parse_turn_ref(data.get("last_turn")),
+            transcript_ref=_parse_transcript_ref(data.get("transcript_ref")),
         )
 
 
 @dataclass(frozen=True, kw_only=True)
 class AgentSessionQuery:
-    """Read-only filter for persistent agent session snapshots."""
+    """Read-only filter for persistent agent session snapshots.
+
+    Every field left ``None`` matches anything; the set fields are ANDed.
+    ``matches`` is the single definition of the filter — every repository
+    and store handler answers ``ListAgentSessions`` by it.
+    """
 
     status: SessionStatus | None = None
     agent_type: AgentType | None = None
     backend_kind: str | None = None
     lifecycle: AgentSessionLifecycle | None = None
+    caller_ref: str | None = None
+    node: str | None = None
+
+    def matches(self, snapshot: "AgentSessionSnapshot") -> bool:
+        """Whether ``snapshot`` satisfies every field this query sets."""
+        return all(
+            expected is None or getattr(snapshot, name) == expected
+            for name, expected in (
+                ("status", self.status),
+                ("agent_type", self.agent_type),
+                ("backend_kind", self.backend_kind),
+                ("lifecycle", self.lifecycle),
+                ("caller_ref", self.caller_ref),
+                ("node", self.node),
+            )
+        )
 
 
 def _parse_datetime(value: str) -> datetime:
@@ -296,6 +363,24 @@ def _parse_optional_datetime(value: Any) -> datetime | None:
     if value is None:
         return None
     return datetime.fromisoformat(str(value))
+
+
+def _parse_optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _parse_turn_ref(value: Any) -> TurnRef | None:
+    if value is None:
+        return None
+    return TurnRef(turn_id=str(value["turn_id"]), attempt=int(value["attempt"]))
+
+
+def _parse_transcript_ref(value: Any) -> TranscriptRef | None:
+    if value is None:
+        return None
+    return TranscriptRef(node=str(value["node"]), path=str(value["path"]))
 
 
 # =============================================================================
@@ -506,6 +591,20 @@ class ListAgentSessionsEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
+class PutAgentSessionEffect(AgentEffectBase):
+    """Persist a session snapshot, replacing the row with the same session id.
+
+    The write half of the session store (agora-redesign #608). The handler is
+    chosen by the deployment: memory for tests, a SQL table (PostgreSQL in the
+    cluster, SQLite locally) for real runs.
+
+    Yields: AgentSessionSnapshot (the stored snapshot)
+    """
+
+    snapshot: AgentSessionSnapshot
+
+
+@dataclass(frozen=True, kw_only=True)
 class ObserveAgentSessionEffect(AgentEffectBase):
     """Observe a session by id and persist the resulting snapshot.
 
@@ -666,14 +765,24 @@ def ListAgentSessions(  # noqa: N802
     status: SessionStatus | None = None,
     agent_type: AgentType | None = None,
     backend_kind: str | None = None,
+    lifecycle: AgentSessionLifecycle | None = None,
+    caller_ref: str | None = None,
+    node: str | None = None,
 ) -> ListAgentSessionsEffect:
     return ListAgentSessionsEffect(
         query=AgentSessionQuery(
             status=status,
             agent_type=agent_type,
             backend_kind=backend_kind,
+            lifecycle=lifecycle,
+            caller_ref=caller_ref,
+            node=node,
         )
     )
+
+
+def PutAgentSession(snapshot: AgentSessionSnapshot) -> PutAgentSessionEffect:  # noqa: N802
+    return PutAgentSessionEffect(snapshot=snapshot)
 
 
 def ObserveAgentSession(  # noqa: N802
@@ -813,6 +922,8 @@ __all__ = [
     "Observation",
     "ObserveAgentSession",
     "ObserveAgentSessionEffect",
+    "PutAgentSession",
+    "PutAgentSessionEffect",
     "ReleaseSession",
     "ReleaseSessionEffect",
     "Send",
@@ -824,6 +935,8 @@ __all__ = [
     "StopEffect",
     "StopSession",
     "StopSessionEffect",
+    "TranscriptRef",
+    "TurnRef",
     "agent",
     "deterministic_session_id",
 ]
