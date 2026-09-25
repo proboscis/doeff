@@ -8,9 +8,10 @@
 ;;; FreshSession の id の重複と ResumeSession の不在の断り・手番の外の足す / 止めるの断り・止めた後は Interrupted・閉じるは冪等・
 ;;; process の死の注入で BackendLost・次の ResumeSession は通る)を同じ筋書きの検で確かめる。
 (require doeff-hy.macros [defhandler defk <-])
-(import dataclasses [dataclass])
+(import dataclasses [dataclass replace])
 (import uuid)
 (import doeff_time [Delay GetMonotonic GetTime])
+(import doeff_hy.frozen [FrozenMap])
 (import doeff_claude_code.values [ClaudeTurn FreshSession ResumeSession ForkSession Rebuilt LinkFromHome IMAGE-MIMES])
 (import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage ToolResult InputFate PermissionRequested
                                  TaskEvent TurnResult Completed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd])
@@ -36,6 +37,14 @@
   (#^ str text)
   (setv #^ float tool-seconds 0.0)
   (setv #^ bool needs-permission False))
+
+
+(defclass [(dataclass :frozen True)] FakeInjection []
+  "手番に足した入力 1 つ: ref = 入力の行の名 / text = 本文 / fate = 運命(queued → started → completed)。
+   運命が進む時は replace で作り直して差し替える。"
+  (#^ str ref)
+  (#^ str text)
+  (setv #^ str fate "queued"))
 
 
 (defclass FakeTurn []
@@ -98,15 +107,15 @@
   "道具の境界(か手番の終わり)で、読まれていない注入を読み、本文の返事で手番を終える。"
   (setv memory (tuple (.get world.transcripts (.transcript-key world session.home session.cwd session.session-id) [])))
   (setv extra [])
-  (for [injection turn.injections]
-    (when (= (get injection 2) "queued")
-      (setv (get injection 2) "started")
-      (<- (emit session turn (InputFate (get injection 0) "started")))
-      (.append extra (. (world.responder (get injection 1) memory) text))))
+  (for [#(index injection) (enumerate turn.injections)]
+    (when (= injection.fate "queued")
+      (setv (get turn.injections index) (replace injection :fate "started"))
+      (<- (emit session turn (InputFate injection.ref "started")))
+      (.append extra (. (world.responder injection.text memory) text))))
   (setv text (.join " " (+ [turn.reply.text] extra)))
   (<- (emit-all session turn [(AssistantMessage :text text) (TurnResult "success" False :terminal-reason "completed")]))
   (for [injection turn.injections]
-    (<- (emit session turn (InputFate (get injection 0) "completed"))))
+    (<- (emit session turn (InputFate injection.ref "completed"))))
   (<- (finish session turn (Completed :result-text text :input-refs (tuple turn.refs))))
   None)
 
@@ -136,7 +145,7 @@
       (do
         (setv turn.phase "permission" turn.permission (str (uuid.uuid4)))
         (<- (emit-all session turn [(AssistantMessage :tool-names #("Bash"))
-                                    (PermissionRequested turn.permission "Bash" {"command" "fake"})])))
+                                    (PermissionRequested turn.permission "Bash" (FrozenMap {"command" "fake"}))])))
     (> reply.tool-seconds 0)
       (do
         (setv turn.phase "tool" turn.due-at (+ now reply.tool-seconds))
@@ -198,7 +207,7 @@
   {:pre [(: world FakeClaudeWorld) (: request ClaudeInjectInput)] :post [(: % (| InputQueued NoTurnInFlight))]}
   (setv turn (running-turn-of world request.turn))
   (when (is turn None) (return (NoTurnInFlight request.turn.session-id)))
-  (.append turn.injections [request.input.ref request.input.text "queued"])
+  (.append turn.injections (FakeInjection request.input.ref request.input.text))
   (.append turn.refs request.input.ref)
   (<- (emit (get world.sessions request.turn.session-id) turn (InputFate request.input.ref "queued")))
   (InputQueued request.input.ref))
@@ -210,13 +219,13 @@
   (setv turn (running-turn-of world request.turn))
   (when (is turn None) (return (NoTurnInFlight request.turn.session-id)))
   (setv session (get world.sessions request.turn.session-id))
-  (setv survivors (lfor injection turn.injections :if (= (get injection 2) "queued") injection))
+  (setv survivors (lfor injection turn.injections :if (= injection.fate "queued") injection))
   (if survivors
       (do
         (<- (emit session turn (TurnResult "error_during_execution" True :terminal-reason "aborted_tools")))
         (setv memory (tuple (get world.transcripts (.transcript-key world session.home session.cwd session.session-id))))
-        (setv reply (world.responder (.join "\n" (lfor injection survivors (get injection 1))) memory))
-        (<- next-turn (begin-fake-turn world session (FakeReply reply.text) (tuple (lfor injection survivors (get injection 0))) False))
+        (setv reply (world.responder (.join "\n" (lfor injection survivors injection.text)) memory))
+        (<- next-turn (begin-fake-turn world session (FakeReply reply.text) (tuple (lfor injection survivors injection.ref)) False))
         (<- (finish session turn (Interrupted :surviving-refs (tuple next-turn.refs)
                                               :continued-by (ClaudeTurn session.session-id next-turn.seq)))))
       (do
@@ -256,8 +265,8 @@
   (setv running (.running session))
   (when (is-not running None)
     (<- (finish session running (Interrupted :dropped-refs (tuple (gfor injection running.injections
-                                                                       :if (= (get injection 2) "queued")
-                                                                       (get injection 0)))))))
+                                                                       :if (= injection.fate "queued")
+                                                                       injection.ref))))))
   (setv session.closed True)
   (SessionClosed (is-not running None)))
 
