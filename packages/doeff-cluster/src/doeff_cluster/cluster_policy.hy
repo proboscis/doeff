@@ -5,7 +5,8 @@
 (import json)
 
 (import .worker_model [JobSpec])
-(import .cluster_model [ClusterJob WorkerInfo Placement ClusterTiming ClusterState TaskRecord Request Drain])
+(import .cluster_model [ClusterJob WorkerInfo Placement ClusterTiming ClusterState TaskRecord Request Drain
+                        requirements-of component-versions-of task-record-to-json task-record-from-json])
 (import .semaphore_model [SEMAPHORE-PREFIX lease-op semaphore-write-refusal semaphore-key])
 (import .base_follow_policy [FULL-SHA])
 
@@ -125,7 +126,7 @@
    "placements" (dfor #(k v) (.items state.placements) k (asdict v))
    "workers" (lfor w (.values state.workers)
                    {"name" w.name "labels" (dict w.labels) "capacity" w.capacity "versions" (dict w.versions)})
-   "tasks" (lfor t (.values state.tasks) (| (asdict t) {"versions" (dict t.versions) "requires" (dict t.requires)}))
+   "tasks" (lfor t (.values state.tasks) (task-record-to-json t))
    "nextTask" state.next-task
    "meta" state.meta
    "revision" state.revision
@@ -147,13 +148,12 @@
     :workers (dfor w (.get data "workers" [])
                    (get w "name")
                    (WorkerInfo (get w "name") (tuple (sorted (.items (get w "labels")))) (get w "capacity") now
-                               (tuple (sorted (.items (.get w "versions" {}))))))
+                               (component-versions-of (.get w "versions" {}))))
     ;; 改名の前の file は置き先を旧い名の欄に持つ(durable_kv.LEGACY-PLACEMENT と同じ改名)。両方を読み、新しい欄が勝つ。
     :placements (dfor #(k v) (.items (| (.get data "assignments" {}) (.get data "placements" {}))) k (Placement #** v))
     :tasks (dfor t (.get data "tasks" [])
                  (get t "id")
-                 (TaskRecord #** (| t {"versions" (tuple (sorted (.items (get t "versions"))))
-                                       "requires" (tuple (sorted (.items (get t "requires"))))})))
+                 (task-record-from-json t))
     :next-task (.get data "nextTask" 1)
     :board (if (is board None) (.get data "board" {}) board)
     :board-versions (or board-versions (dfor k (.get data "board" {}) k 1))
@@ -585,7 +585,7 @@
   (setv name (get body "name")
         info (WorkerInfo name (tuple (sorted (.items (.get body "labels" {}))))
                          (int (.get body "capacity" 10)) now
-                         (tuple (sorted (.items (.get body "versions" {}))))
+                         (component-versions-of (.get body "versions" {}))
                          (.get body "boot"))
         statuses (.get body "statuses" [])
         state (replace (absorb-boot state name (.get body "boot"))
@@ -632,8 +632,8 @@
   (setv id (.format "t{}" state.next-task)
         lease-ms (int (* 1000 lease-seconds))
         task (TaskRecord id (.get body "name" "") (get body "env") (get body "blob") (get body "revision")
-                         (tuple (sorted (.items (.get body "versions" {}))))
-                         (tuple (sorted (.items (.get body "requires" {}))))
+                         (component-versions-of (.get body "versions" {}))
+                         (requirements-of (.get body "requires" {}))
                          lease-ms (+ now lease-ms) now))
   #((replace state :tasks (| state.tasks {id task}) :next-task (+ state.next-task 1)) 200 {"task" id}))
 

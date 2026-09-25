@@ -52,7 +52,7 @@
 
 ;; --- label と専用の印(dedicated = k8s の taint に当たる) -------------------------------------------
 
-(import doeff_cluster.cluster_model [TaskRecord])
+(import doeff_cluster.cluster_model [TaskRecord Requirement ComponentVersion])
 (import doeff_cluster.cluster_policy [place-tasks unplaced-jobs])
 
 (setv AGENT #("role" "agent") MARK #("dedicated" "role=agent"))
@@ -93,16 +93,16 @@
   (assert (= (. (get (place-jobs 2000 stopped T) "placer") worker) "atlas")))
 
 (defn task [id requires]
-  (TaskRecord id "digest" "m:e" "blob" "rev" #(#("python" "3")) requires 15000 20000 0))
+  (TaskRecord id "digest" "m:e" "blob" "rev" #((ComponentVersion "python" "3")) requires 15000 20000 0))
 
 (deftest test-task-follows-the-same-dedicated-rule
-  (setv workers {"mac" (replace (mac "mac") :versions #(#("python" "3")))
-                 "atlas" (replace (pod "atlas") :versions #(#("python" "3")))})
-  (setv state (ClusterState #() workers {} {"t1" (task "t1" #()) "t2" (task "t2" #(AGENT))}))
+  (setv workers {"mac" (replace (mac "mac") :versions #((ComponentVersion "python" "3")))
+                 "atlas" (replace (pod "atlas") :versions #((ComponentVersion "python" "3")))})
+  (setv state (ClusterState #() workers {} {"t1" (task "t1" #()) "t2" (task "t2" #((Requirement #* AGENT)))}))
   (setv placed (place-tasks 1000 state {} T))
   (assert (= #((. (get placed "t1") worker) (. (get placed "t2") worker)) #("atlas" "mac")))
   ;; agent の task で Mac が居なければ、送らずに失敗(理由に求める label)
-  (setv only-pod (ClusterState #() {"atlas" (get workers "atlas")} {} {"t3" (task "t3" #(AGENT))}))
+  (setv only-pod (ClusterState #() {"atlas" (get workers "atlas")} {} {"t3" (task "t3" #((Requirement #* AGENT)))}))
   (setv failed (get (place-tasks 1000 only-pod {} T) "t3"))
   (assert (= failed.phase "failed"))
   (assert (in "role" failed.detail)))

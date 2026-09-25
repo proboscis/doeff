@@ -12,6 +12,7 @@
 (import doeff_time [Delay])
 (import .coordinator_http [CoordinatorEndpoint send-idempotent REPLY-SECONDS])
 (import .remote_model [encode-program current-versions version-mismatch failed-from])
+(import .cluster_model [Requirement])
 (import .detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached SimulateRunnerLoss
                          DetachedSubmitted DetachedSucceeded DetachedLost DetachedCancelled DetachedVersionMismatch
                          DetachedPending DetachedUnknown DetachedRefused DetachedOutcome DetachedAwaited
@@ -22,7 +23,7 @@
 
 (defclass LocalRecord []
   "fake の task 1 本。outcome = 終わりの答え(まだなら None)。handle = scheduler の task。"
-  (defn __init__ [self #^ str key #^ str env #^ str name #^ tuple requires]
+  (defn __init__ [self #^ str key #^ str env #^ str name #^ (get tuple #(Requirement ...)) requires]
     (setv self.key key self.env env self.name name self.requires requires self.handle None self.outcome None)))
 
 
@@ -68,7 +69,7 @@
     (+= waited poll-seconds)))
 
 
-(defn #^ None refuse-conflict [#^ LocalRecord record #^ str env #^ str name #^ tuple requires]
+(defn #^ None refuse-conflict [#^ LocalRecord record #^ str env #^ str name #^ (get tuple #(Requirement ...)) requires]
   (when (!= #(record.env record.name record.requires) #(env name (tuple (sorted requires))))
     (raise (DetachedRefused 409 (.format "key {} は別の仕事(env {}・name {!r})に使われている" record.key record.env record.name)))))
 
@@ -139,7 +140,8 @@
     (.raise-for-status response)
     (.json response))
 
-  (defn #^ dict submit [self #^ str key #^ str blob #^ str env #^ tuple requires #^ str name #^ float lease-seconds
+  (defn #^ dict submit [self #^ str key #^ str blob #^ str env #^ (get tuple #(Requirement ...)) requires #^ str name
+                        #^ float lease-seconds
                         #^ float retain-seconds]
     (setv body {"env" env "blob" blob "versions" (current-versions) "revision" self.revision "requires" (dict requires)
                 "name" name "leaseSeconds" lease-seconds "retainSeconds" retain-seconds})

@@ -12,9 +12,34 @@
 ;;; 各資源は resourceVersion(coordinator 全体で単調に増える番号)と generation(spec が変わるたびに増える)を持ち、
 ;;; 書きは資源 1 つずつの compare-and-set。誰が・いつ・何を・前後の版は出来事の記録(audit)に残る。
 ;;; 版と記録は「前の状態と後の状態の差」から 1 か所(resource_policy.stamp)で付けるので、どの経路の変化も漏れない。
-(import dataclasses [dataclass field])
+(import dataclasses [dataclass field asdict])
+(import typing [NamedTuple])
 (import doeff [EffectBase])
 (import .worker_model [JobSpec])
+
+
+;; --- 実行先の条件と版(task・切り離した task・worker が共に使う) -------------------------------------
+
+(defclass Requirement [NamedTuple]
+  "実行先の条件 1 つ: worker の label の名と、その label に要る値(例 = (Requirement \"kind\" \"k3s\"))。"
+  (#^ str label)
+  (#^ str value))
+
+
+(defclass ComponentVersion [NamedTuple]
+  "版 1 つ: 部品の名(python・cloudpickle・doeff)とその版の綴り。task を送れる worker を選ぶのに、送り手と worker の組を比べる。"
+  (#^ str component)
+  (#^ str version))
+
+
+(defn #^ (get tuple #(Requirement ...)) requirements-of [#^ dict labels]
+  "JSON の object(label の名 → 値)→ 名の順の Requirement の tuple(比べる時に順が揃う)。JSON から読む境界で使う。"
+  (tuple (sorted (gfor #(label value) (.items labels) (Requirement label value)))))
+
+
+(defn #^ (get tuple #(ComponentVersion ...)) component-versions-of [#^ dict versions]
+  "JSON の object(部品の名 → 版)→ 名の順の ComponentVersion の tuple。JSON から読む境界で使う。"
+  (tuple (sorted (gfor #(component version) (.items versions) (ComponentVersion component version)))))
 
 
 (defclass [(dataclass :frozen True)] ClusterJob []
@@ -44,7 +69,7 @@
   (#^ tuple labels)
   (#^ int capacity)
   (#^ int last-seen-ms)
-  (setv #^ tuple versions #())        ; worker の Python / cloudpickle / doeff の版(task を送れる相手を選ぶ)
+  (setv #^ (get tuple #(ComponentVersion ...)) versions #())        ; worker の Python / cloudpickle / doeff の版(task を送れる相手を選ぶ)
   ;; worker の process の世代(起動のたびに新しく振る・heartbeat の boot)。drain は頼まれた時の世代に付き、別の世代の heartbeat
   ;; (Pod を作り直した後の worker)が来たら解ける(2026-09-25)。保存しない(読み直しの後は次の heartbeat で埋まる)。旧い worker は None。
   (setv #^ (| str None) boot None))
@@ -127,8 +152,8 @@
   (#^ str env)
   (#^ str blob)
   (#^ str revision)
-  (#^ tuple versions)
-  (#^ tuple requires)
+  (#^ (get tuple #(ComponentVersion ...)) versions)   ; 送り手の版(名の順)
+  (#^ (get tuple #(Requirement ...)) requires)        ; 実行先の条件(label の名の順)
   (#^ int lease-ms)
   (#^ int lease-until-ms)
   (#^ int submitted-ms)
@@ -147,6 +172,17 @@
   (setv #^ (| str None) key None)
   (setv #^ (| str None) boot None)
   (setv #^ int retain-ms 0))
+
+
+(defn #^ dict task-record-to-json [#^ TaskRecord task]
+  "TaskRecord → 保存の JSON の形(版と条件は名 → 値の object)。保存の 2 つの形(state file と durable の KV)はここだけを使う。"
+  (| (asdict task) {"versions" (dict task.versions) "requires" (dict task.requires)}))
+
+
+(defn #^ TaskRecord task-record-from-json [#^ dict data]
+  "保存の JSON の形 → TaskRecord(task-record-to-json の逆)。"
+  (TaskRecord #** (| data {"versions" (component-versions-of (get data "versions"))
+                           "requires" (requirements-of (get data "requires"))})))
 
 
 (defclass [(dataclass :frozen True)] ClusterState []
