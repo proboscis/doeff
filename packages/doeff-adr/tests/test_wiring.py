@@ -386,3 +386,42 @@ def test_hy_file_under_a_workspace_package_dir_imports_from_its_package_base(
     result: pytest.RunResult = pytester.runpytest("-q", "packages/doeff-x/tests")
 
     result.assert_outcomes(passed=2)
+
+
+def test_parametrize_marks_on_hy_tests_expand_into_items(
+    pytester: pytest.Pytester,
+) -> None:
+    """deftest の ``:interpreters`` / ``:params`` は ``pytest.mark.parametrize`` を付ける。Hy の file の収集がそれを
+    展開せずに関数を 1 つだけ作ると、parametrize の fixture は既定の値のまま 1 本だけ走る(ADR-DOE-HY-002 R2 の違反・
+    2026-09-25)。展開されれば値ごとに 1 本ずつ走り、値は関数の引数に届く。"""
+    pytester.makepyprojecttoml(
+        """\
+        [tool.pytest.ini_options]
+        doeff_adr_hy_files = ["tests/test_*.hy"]
+        """
+    )
+    pytester.mkdir("tests")
+    pytester.makeconftest(
+        """\
+        import pytest
+
+        @pytest.fixture
+        def flavor():
+            return "default"
+        """
+    )
+    pytester.makefile(
+        ".hy",
+        **{
+            "tests/test_params": """\
+                (import pytest)
+                (defn [(pytest.mark.parametrize "flavor" ["a" "b" "c"])] test-flavor [flavor]
+                  (assert (in flavor ["a" "b" "c"])))
+                """,
+        },
+    )
+
+    result: pytest.RunResult = pytester.runpytest("-v", "tests")
+
+    result.assert_outcomes(passed=3)
+    result.stdout.fnmatch_lines(["*test_flavor?a?*", "*test_flavor?b?*", "*test_flavor?c?*"])
