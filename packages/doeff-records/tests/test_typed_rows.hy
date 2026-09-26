@@ -83,4 +83,5 @@
   (assert (isinstance changes Changes) changes)
   (setv typed (lfor change changes.items (typed-change PARTS change)))
   (assert (and typed (all (gfor change typed (isinstance change TypedRowChanged)))) typed)
+  (assert (= (lfor change typed change.at) (lfor change changes.items change.at)) "確定の刻 at を行の型へ運ぶ")
   (assert (= (. (get typed -1) value) cleared.value)))
