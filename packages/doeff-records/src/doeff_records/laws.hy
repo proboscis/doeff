@@ -13,14 +13,14 @@
 (import collections.abc [Callable])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_core_effects.scheduler [Spawn Wait])
-(import doeff_time [Delay])
+(import doeff_time [Delay GetTime])
 (import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor KeepForever ExpectAbsent ExpectVersion ExpectAny
                               WatchCursor ListCursor Row Missing Page Written WrittenRows Conflict Refused NotIndexed Reset
                               Changes RowChanged RowRemoved Appended Events RowsConflict RowsRefused])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents])
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
-(import doeff_records.admission [row-matches?])
+(import doeff_records.admission [row-matches? epoch-ms])
 
 ;; OVERSEER = operator の主体(宣言の operators に入る唯一の書き手)— 法の中で operator の宣言の欄 grant を書ける。
 (setv MAKER "maker" PAINTER "painter" CLOSER "closer" STRANGER "stranger" OVERSEER "overseer")
@@ -380,10 +380,18 @@
   {:pre [(: harness LawHarness)] :post [(: % list)]}
   (setv law "刈った変更より前の位置は Reset・floor の位置からは続けられ・行は消えない。回収は期限切れの行だけを 1 回消す")
   (<- start (as-writer harness MAKER (ListRows "parts")))
+  (<- before (GetTime))
   (<- w1 (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent))))
   (<- middle (as-writer harness MAKER (ListRows "parts")))
   (<- (Delay 100))
   (<- w2 (as-writer harness MAKER (PutRow "parts" #("p2") (FrozenMap {"label" "b"}) (ExpectAbsent))))
+  (<- after (GetTime))
+  ;; 変更の確定の刻 at は書いた時の時計: 2 つの書きの間の 100 秒が刻の差に出る(刈り取りの判定と同じ刻)。
+  (<- written (as-writer harness MAKER (WatchChanges #("parts") (WatchCursor start.epoch start.sequence))))
+  (setv ats (if (isinstance written Changes) (lfor item written.items item.at) []))
+  (require-law (and (= (len ats) 2) (<= (epoch-ms before) (get ats 0)) (<= (get ats 1) (epoch-ms after))
+                    (>= (- (get ats 1) (get ats 0)) 100000))
+               law (.format "変更の確定の刻が書いた時の時計でない: {!r}" written))
   (<- pruned (as-writer harness MAKER (PruneChanges 50)))
   (require-law (= pruned (Pruned middle.sequence 1)) law (.format "50 秒より古い変更 1 つを刈る: {!r}" pruned))
   (<- old (as-writer harness MAKER (WatchChanges #("parts") (WatchCursor start.epoch start.sequence))))
@@ -407,7 +415,7 @@
                     (= (lfor item removed.items #((. (type item) __name__) item.key))
                        [#("RowChanged" #("g1" "t1")) #("RowChanged" #("g1" "t1")) #("RowRemoved" #("g1" "t1"))]))
                law (.format "回収した行が変更の列に RowRemoved で出ない: {!r}" removed))
-  [start w1 middle w2 pruned old kept again listed t1 done swept idle removed])
+  [start w1 middle w2 written pruned old kept again listed t1 done swept idle removed])
 
 
 ;; --- 法 11: PutRows は全部か 0 ----------------------------------------------------------------------------------

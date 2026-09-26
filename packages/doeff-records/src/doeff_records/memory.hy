@@ -115,7 +115,7 @@
   (setv (get (get store.rows table) (key-text key)) (StoredRow (Row key value version) now-ms))
   (+= store.head 1)
   (setv (get store.changed-at store.head) now-ms)
-  (.append store.changes (RowChanged table key version value store.head))
+  (.append store.changes (RowChanged table key version value store.head now-ms))
   (Written version value))
 
 

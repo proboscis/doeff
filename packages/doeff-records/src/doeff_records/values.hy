@@ -268,12 +268,14 @@
       (raise (TypeError (.format "WrittenRows.items は Written の tuple: {!r}" self.items))))))
 
 (defclass [(dataclass :frozen True)] RowChanged []
-  "変更 1 つ: 行が書かれた(作られた・更新された)。value(凍らせた写像)と version は確定した後の値。"
+  "変更 1 つ: 行が書かれた(作られた・更新された)。value(凍らせた写像)と version は確定した後の値 /
+   at = その変更が置き場に確定した刻(epoch ミリ秒)。"
   (#^ str table)
   (#^ tuple key)
   (#^ int version)
   (#^ FrozenMap value)
   (#^ int sequence)
+  (#^ int at)
   (defn #^ None __post_init__ [self] (freeze-field self "value" "RowChanged.value")))
 
 (defclass [(dataclass :frozen True)] RowRemoved []
