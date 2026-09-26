@@ -49,6 +49,7 @@
    "packages/doeff-agents/src/doeff_agents/sessionhost/impls/codex.hy" 5
    "packages/doeff-agents/src/doeff_agents/sessionhost/impls/markers.hy" 30
    "packages/doeff-agents/src/doeff_agents/sessionhost/launch.hy" 5
+   ;; 29 → 25(agora-redesign #708): 境界の env の語彙の 4 本を agent_env.hy へ defn で出した(R1 の Python との境界 — deff の焼却ではない)。
    "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy" 25
    "packages/doeff-agents/src/doeff_agents/sessionhost/schema.hy" 3
    "packages/doeff-agents/src/doeff_agents/sessionhost/store.hy" 35

@@ -37,22 +37,54 @@ def test_policy_reexports_the_single_home() -> None:
         assert getattr(policy, name) is getattr(agent_env, name), name
 
 
-def _imported_modules_of_hy(path: Path) -> set[str]:
-    """Hy の file が import / require する module の名(先頭の点も残す)。"""
+def _module_name(item: object) -> str | None:
+    """import の式の 1 項を module の綴りへ(名の list・keyword は None)。
+
+    Hy の reader は点つきの名 ``a.b`` を ``(. a b)``、相対の ``.a`` / ``..a.b`` を ``(. None a)`` / ``(.. None a b)``
+    の Expression に読む — Symbol だけを拾うと点つきの名を全部見落とす(#708 の構成レビューの指摘 H1)。
+    """
+    if isinstance(item, hy.models.Symbol):
+        return str(item)
+    if isinstance(item, hy.models.Expression) and len(item) >= 3 and str(item[0]).strip(".") == "":
+        head = str(item[0])
+        parts = [str(part) for part in item[1:]]
+        if parts[0] == "None":
+            return head + ".".join(parts[1:])
+        return ".".join(parts)
+    return None
+
+
+def _imported_modules_of_hy(text: str) -> set[str]:
+    """Hy の本文が import / require する module の名(相対は先頭の点を残す)。"""
     names: set[str] = set()
-    for form in hy.read_many(path.read_text(encoding="utf-8"), filename=str(path)):
+    for form in hy.read_many(text):
         if isinstance(form, hy.models.Expression) and form and str(form[0]) in {"import", "require"}:
             for item in form[1:]:
-                if isinstance(item, hy.models.Symbol):
-                    names.add(str(item))
+                name = _module_name(item)
+                if name is not None:
+                    names.add(name)
     return names
+
+
+def _reaches_session_host(names: set[str]) -> bool:
+    return any(name.startswith(("doeff_agents.sessionhost", ".sessionhost")) for name in names)
+
+
+def test_the_hy_import_reader_sees_dotted_and_relative_names() -> None:
+    """読みの赤の証人: 点つきの名・相対の名・require も session host として見える(空振りしない)。"""
+    for text in (
+        "(import doeff_agents.sessionhost.effects [SessionRow])",
+        "(import .sessionhost [policy])",
+        "(import json doeff_agents.sessionhost.policy :as p)",
+    ):
+        assert _reaches_session_host(_imported_modules_of_hy(text)), text
+    assert not _reaches_session_host(_imported_modules_of_hy("(require doeff-hy.macros [deff])\n(import json)"))
 
 
 def test_home_does_not_import_the_session_host() -> None:
     """家は session host を import しない(#708 — shell → 家 の鎖に session host が入らない)。"""
-    home = Path(agent_env.__file__)
-    imported = _imported_modules_of_hy(home)
-    assert not any(name.startswith(("doeff_agents.sessionhost", ".sessionhost")) for name in imported), imported
+    imported = _imported_modules_of_hy(Path(agent_env.__file__).read_text(encoding="utf-8"))
+    assert not _reaches_session_host(imported), imported
     shell_imports = {
         node.module or ""
         for node in ast.walk(ast.parse(Path(shell.__file__).read_text(encoding="utf-8")))
@@ -66,7 +98,7 @@ def test_home_does_not_import_the_session_host() -> None:
     assert not any(name.startswith("doeff_agents.sessionhost") for name in shell_imports), shell_imports
 
 
-def test_layer_sets_are_derived_from_policy() -> None:
+def test_layer_sets_are_derived_from_agent_env() -> None:
     """層ごとの名簿は agent_env の語彙の合成ちょうど(literal の写しが無い)。"""
     provider_auth = set(agent_env.PROVIDER_AUTH_ENV_KEYS)
     provider_routing = set(agent_env.PROVIDER_ROUTING_ENV_KEYS)

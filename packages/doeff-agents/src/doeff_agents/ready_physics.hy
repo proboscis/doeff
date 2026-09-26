@@ -1,7 +1,7 @@
 ;;; readiness gate 物理の家(ADR-DOE-AGENTS-008 R1)— doeff-free leaf。
 ;;;
 ;;; ここは gate 形式(単発判定: pattern 文字列と純テキスト述語)の唯一の
-;;; 定義箇所。observation 形式(has-idle-prompt / dialog 検出)は同 package の
+;;; 定義箇所。observation 形式(has-idle-prompt / dialog 検出)は sessionhost/impls/
 ;;; markers.hy が家で、codex の両形式の一致は
 ;;; tests/test_ready_physics_single_home.py の parity 検定が執行する。
 ;;;

@@ -1225,7 +1225,7 @@
   ;; 反例(card acp:kanban-issue:ki-2a061da56ca9): 個人鍵の別名 3 綴りは形
   ;; (`*_API_KEY`)に当たらないので従量課金の節を素通りし、受理の層では
   ;; 通っていた(spawn の砦だけが拾う = 呼び手へ返る断りが遅い)。語彙を
-  ;; policy の 1 点(PROVIDER-AUTH-ENV-KEYS)へ寄せた後は**受理で**落ちる。
+  ;; 語彙の 1 点(PROVIDER-AUTH-ENV-KEYS・#708 から doeff_agents/agent_env.hy)へ寄せた後は**受理で**落ちる。
   ;; 副作用ゼロ(行も tmux も生まれない)= spawn まで行っていない証拠。
   (for [bad-env [{"ANTHROPIC_API_KEY__PERSONAL" "sk-ant-x"}
                  {"ANTHROPIC_API_KEY_PERSONAL" "sk-ant-x"}
