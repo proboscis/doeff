@@ -120,11 +120,14 @@
 
 (defk git-environment [key-file]
   {:pre [(: key-file str)] :post [(: % dict)]}
-  "git を起こす環境変数(許可表の deploy key を使い、対話の問いを出さない)。"
+  "git を起こす環境変数(許可表の deploy key を使い、対話の問いを出さない)。
+   worker が ssh の命令を持っていれば(起動の script が url ごとの Host の別名を書いた `ssh -F <設定>`)、鍵をそれに足す —
+   置き換えると別名が解けなくなる。"
+  (val ssh (.get os.environ "GIT_SSH_COMMAND" "ssh"))
   (| (dict os.environ)
      {"GIT_TERMINAL_PROMPT" "0"}
      (if key-file
-         {"GIT_SSH_COMMAND" (.format "ssh -i {} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o BatchMode=yes" key-file)}
+         {"GIT_SSH_COMMAND" (.format "{} -i {} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o BatchMode=yes" ssh key-file)}
          {})))
 
 

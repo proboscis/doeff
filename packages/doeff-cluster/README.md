@@ -52,7 +52,7 @@ doeff の Program を、k8s の Deployment のように「定義がある限り�
 | effect の記録と再生 | `effect_codec`・`record_model`・`record_handlers`・`record_store*`・`replay_main` |
 | 宣言 | `service_model`(宣言の値 `service`・`System`)・`declare` |
 | 時計の換算 | `clock`(epoch ミリ秒。時計の語彙は doeff-time ちょうど 1 つ) |
-| 配備の材料 | `deploy/boot.sh`・`deploy/Dockerfile` |
+| 配備の材料 | `deploy/boot.sh`・`deploy/Dockerfile`・`deploy/base/Dockerfile`(土台だけの image)・`image_contract`(土台の image の約束の検査) |
 
 ## 業務の側から使う
 
@@ -234,6 +234,11 @@ service の設定(`run.config`)に `record` 欄を足すと、`job_entry` が ha
   (readinessProbe)。worker は `CODE_REPO_URL` の bare mirror を用意してその版を展開します。env は script の先頭の註。
 - `deploy/Dockerfile` — 業務の image(doeff の venv を持つ物・この package を含む)に git と ssh を足し、`boot.sh` を置くだけの image。
   `--build-arg BASE=<業務の image>`。
+- `deploy/base/Dockerfile` — 土台だけの image(OS・git・ssh・uv・Rust の toolchain・tini・`boot.sh`)。doeff も Python も持たず、
+  `boot.sh` が `WORKER_DOEFF_COMMIT` の doeff を展開して `uv sync --locked --package doeff-cluster` した venv から coordinator / worker を
+  起こします(自己起動)。worker の code を変える時は commit を変えて入れ替え、image は作り直しません。作り直す理由は頭の註の 2 種類
+  だけで、それ以外の変更は `hy -m doeff_cluster.image_contract <Dockerfile>`(と `tests/test_base_image_contract.hy`)が赤にします。
+  非公開の repo は `WORKER_REPOS`(url ごとの読み取り専用の deploy key)で読みます。`ROLE=access` で書かれる設定だけを確かめられます。
 
 manifest(namespace・node・Secret・Role)は配備する側の repo が持ちます。
 
