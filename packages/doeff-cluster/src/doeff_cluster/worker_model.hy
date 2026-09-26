@@ -35,9 +35,13 @@
   ;; 切り離した task(2026-09-25・once と組)。coordinator との連絡が途絶えても止めない(担い手の heartbeat が lease を延ばし、途絶が
   ;; lease より長ければ coordinator が lost にして、再接続の返事から外れた時に止める — worker_policy.kept-when-cut-off)。比べない欄。
   (setv #^ bool detached (field :default False :compare False))
-  ;; 実行環境の宣言(runtime_env_model の RuntimeEnv の JSON を正規化した文字列・2026-09-26)。在れば revision は env のキーの名
-  ;; ("env-<キー>")で、worker は木を展開せずに env の root を準備し(PrepareEnv)、root の venv で子を起こす。比べる欄。
+  ;; 実行環境の宣言(runtime_env_model の RuntimeEnv の JSON を正規化した文字列・2026-09-26)。在れば worker は木を展開せずに env の
+  ;; root を準備し(PrepareEnv)、root の venv で子を起こす。比べる欄。
   (setv #^ (| str None) runtime-env None)
+  ;; env のキー(この worker の platform で宣言から計算した値・"env-" を付けない)。root の置き場の鍵と子の DOEFF_RUNTIME_ENV_KEY に使う。
+  ;; worker の中だけで決まる値なので比べない欄 — 版(revision)は宣言のまま運び、coordinator が同じ宣言から計算する版と指紋(spec-hash)
+  ;; に合わせる(版を env のキーに置き換えると、coordinator は「版が違う」で env の service を Ready と数えない)。
+  (setv #^ (| str None) env-key (field :default None :compare False))
 
   (defn __post-init__ [self]
     (when (or (not self.name) (not self.entry) (not self.revision))
@@ -86,9 +90,9 @@
 (defn #^ str code-key [#^ JobSpec spec]
   "展開する木の鍵(cache の dir の名前・完成の印の版)。base が無い・base と revision が同じ commit(版の組 — 2026-09-25)なら
    revision そのもの(重ねない木)、違えば \"<base>~<revision>\"(base の木に revision の重ねる dir を重ねる)。
-   実行環境の job は revision(\"env-<キー>\")がそのまま root の鍵。"
+   実行環境の job は \"env-<キー>\"(worker が宣言から計算した env-key)が root の鍵。"
   (cond
-    spec.runtime-env spec.revision
+    spec.runtime-env (+ ENV-KEY-PREFIX (or spec.env-key (raise (ValueError (+ "実行環境の job に env-key が無い: " spec.name)))))
     (and spec.base (!= spec.base spec.revision)) (+ spec.base CODE-KEY-SEPARATOR spec.revision)
     True spec.revision))
 
