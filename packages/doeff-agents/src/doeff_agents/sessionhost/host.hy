@@ -78,7 +78,7 @@
 (import doeff_agents.sessionhost.substrate_headless [HEADLESS-REGISTRY headless-spawn-env headless-substrate])
 (import doeff_agents.sessionhost.drivers [driver-listing])
 (import doeff_agents.sessionhost.impls.headless_argv [headless-argv-impl])
-(import doeff_agents.sessionhost.effects [headless-kill headless-liveness])
+(import doeff_agents.sessionhost.headless_effects [headless-kill headless-liveness])
 (import doeff_agents.sessionhost.headless_protocol [backend-alive stop-cause-category])
 (import doeff_agents.sessionhost.drain_marker [declared :as drain-declared reason-line :as drain-reason-line])
 (import doeff_agents.sessionhost.cache_host [cache-host-ping cache-host-probe cache-host-guard-normal-send cache-host-cancel cache-last-success-at])

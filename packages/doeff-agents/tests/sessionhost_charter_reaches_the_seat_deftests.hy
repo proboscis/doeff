@@ -47,21 +47,22 @@
   memory-files-of
   resume-params-of])
 (import doeff_agents.sessionhost.effects [
-  BuildHeadlessLaunch
   ClockNow
   EnvGet
   FsMakeDirs
   FsReadText
   FsRemoveFile
   FsWriteTextAtomic
-  HeadlessDeliver
-  HeadlessPoll
-  HeadlessSpawn
   LogLine
   SessionRow
   SessionStoreGet
   SessionStoreRecordEvent
   SessionStoreUpsert])
+(import doeff_agents.sessionhost.headless_effects [
+  BuildHeadlessLaunch
+  HeadlessDeliver
+  HeadlessPoll
+  HeadlessSpawn])
 (import doeff_agents.sessionhost.headless [headless-send-program])
 (import doeff_agents.sessionhost.impls.headless_argv [build-headless])
 (import doeff_agents.sessionhost.impls.claude_code [claude-code-impl])

@@ -25,6 +25,8 @@
 (import subprocess)
 
 (import doeff_agents.sessionhost.effects [
+  ProcResult])
+(import doeff_agents.sessionhost.headless_effects [
   HeadlessDeliver
   HeadlessEscalate
   HeadlessHasSession
@@ -35,8 +37,7 @@
   HeadlessLiveness
   HeadlessPoll
   HeadlessRunOnce
-  HeadlessSpawn
-  ProcResult])
+  HeadlessSpawn])
 (import doeff_agents.sessionhost.headless_process [HeadlessRegistry pid-exists])
 (import doeff_agents.sessionhost.headless_events [HeadlessEventAppend HeadlessEventsSince])
 (import doeff_agents.sessionhost.headless_protocol [BackendLiveness])

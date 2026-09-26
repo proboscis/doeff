@@ -8,8 +8,8 @@
   CacheProcessIdentity HostCacheIdentifyProcess HostCacheStopProcess HostCacheLastSuccessAt])
 (import .acp.cache_operation [MaintenanceState CacheReply PING-TEXT])
 (import .acp.cache_observation [cache-observation-of])
-(import .effects [clock-now headless-has-session headless-spawn
-                  headless-deliver headless-kill])
+(import .effects [clock-now])
+(import .headless_effects [headless-has-session headless-spawn headless-deliver headless-kill])
 (import .headless [require-headless-row headless-launch-args events-path-of-row])
 (import .headless_events [HeadlessEventsSince])
 (import .headless_protocol [CLI-OWN-TURN-ORIGINS])

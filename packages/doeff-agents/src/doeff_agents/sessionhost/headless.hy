@@ -58,9 +58,18 @@
   ProcResult
   SessionRow
   TerminalCause
-  build-headless-launch
   clock-now
   fs-read-text
+  hydrate-memory-home
+  log-line
+  session-store-get
+  session-store-list-active
+  session-store-list-cleanup-pending
+  session-store-record-event
+  session-store-upsert
+  wire-result-channel])
+(import doeff_agents.sessionhost.headless_effects [
+  build-headless-launch
   headless-deliver
   headless-escalate
   headless-has-session
@@ -71,15 +80,7 @@
   headless-liveness
   headless-poll
   headless-run-once
-  headless-spawn
-  hydrate-memory-home
-  log-line
-  session-store-get
-  session-store-list-active
-  session-store-list-cleanup-pending
-  session-store-record-event
-  session-store-upsert
-  wire-result-channel])
+  headless-spawn])
 ;; 段 11 lane 11n 便 C(agora-redesign #179): provider の限度の族の表は impls/markers.hy の
 ;; 1 点(ADR-DOE-AGENTS-008 R1 の観測形式の家・pane の路と同じ表)。ここは表を写さず、
 ;; 手番の終わりの文へ当てるだけ。
