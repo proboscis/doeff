@@ -141,6 +141,7 @@ main 席(依頼の文)が決めた項目:
 | 10 | defhandler の旧い形の警告は `DeprecationWarning`(展開の時・`(pass)` の廃止の警告と同じ仕組み)と doeff-hy-check の警告の両方。setv の警告は doeff-hy-check だけ | 旧い lazy は 115 節・set! は 61 節で数が少ない。setv は本体だけで 3 万 6 千件あり、展開ごとの Python の警告にすると出力が埋まる | `_extract-lazy-clauses` と `set!` の `warnings.warn` を外す |
 | 11 | handle / defhandler の節は外の defk の lazy を参照できない(先に val で取り出す) | 節の本体は handle の macro が別に書き換える。外の書き換えは届かない | 節の書き換えに外の lazy の名前を渡す |
 | 12 | module の直下の lazy val は、同じ module の defn・deff・module の直下の式の裸の参照からは使えない(NameError) | 書き換えが届くのは doeff-hy の macro の本体だけ。他の module からは PEP 562 で引ける | deff の macro にも本体の書き換えを通す |
+| 13 | 節の `:when` の番が読む session の値(session val / var・旧い lazy-val / lazy-var)は、番の前に取り出す。番が読まない名前は今までどおり番が通った後(本体が使う節でだけ) | 番も「使う所」なので、lazy の意味(初めて使った時に作る)のまま番の前で作るのが正しい。誤りにして案内する案は、handler の状態で番を掛ける普通の書き方(`:when (< used limit)`)を禁じるので採らない。直す前は取り出しが番の後にあり、番の中の名前は節の関数の局所変数として未定義(UnboundLocalError)だった(2026-09-26・main 席の依頼・席が決定) | `handle.hy` `_build-clause` の guard-prefix を lazy-prefix へ戻す |
 
 module の直下の lazy val の経緯: いったん「効果を使わない lazy の利点は import の時の計算を遅らせるだけ」として外したが、
 operator の指示 "nonono have lazyval"(2026-09-26)で、効果を使わない式に限って許す形へ戻した。外した時の原文 = "hmm, but this makes me feel that
