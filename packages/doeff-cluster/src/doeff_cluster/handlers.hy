@@ -221,7 +221,9 @@
           self.min-free-bytes min-free-bytes self.limits limits self.max-parallel max-parallel
           self.tool tool self.code-prepare code-prepare self.sweep-floor-bytes sweep-floor-bytes
           self.pending {} self.failed {} self.waiting {} self.started 0
-          self.pinned (frozenset) self.swept-at 0.0 self.views None))
+          self.pinned (frozenset) self.swept-at 0.0 self.views None
+          ;; 走っている uv の cache の prune(待たない — 下の sweep)。
+          self.pruning None))
 
   (defn #^ Path root-of [self #^ str key]
     (/ self.state "roots" (cut key (len ENV-KEY-PREFIX) None)))
@@ -413,10 +415,16 @@
       (for [entry (.iterdir wheels)]
         (when (and (.is-dir entry) (> (- now (. (.stat entry) st-mtime)) WHEEL-UNUSED-SECONDS))
           (shutil.rmtree entry :ignore-errors True))))
-    ;; まだ下限を切っていれば uv の cache を prune する(venv の中の file は hardlink なので残る)。
-    (when (< (. (.disk-view self) free) disk.floor)
-      (subprocess.run [self.uv "cache" "prune"] :env (| (dict os.environ) {"UV_CACHE_DIR" (str (/ self.state "uv-cache"))})
-                      :stdout subprocess.DEVNULL :stderr subprocess.DEVNULL :check False)))
+    ;; まだ下限を切っていれば uv の cache を prune する(venv の中の file は hardlink なので残る)。prune は uv の cache の lock を取るので、
+    ;; 待つと root の準備の uv run が終わるまで worker のループ(heartbeat)が止まる — 別の process として起こして待たない。前の prune が
+    ;; 走っている間と、root の準備が走っている間は起こさない(準備と lock を競わない)。
+    (when (and (is-not self.pruning None) (is-not (.poll self.pruning) None))
+      (setv self.pruning None))
+    (when (and (< (. (.disk-view self) free) disk.floor) (is self.pruning None) (not self.pending) (not self.waiting))
+      (setv self.pruning (subprocess.Popen [self.uv "cache" "prune"]
+                                           :env (| (dict os.environ) {"UV_CACHE_DIR" (str (/ self.state "uv-cache"))})
+                                           :stdin subprocess.DEVNULL :stdout subprocess.DEVNULL :stderr subprocess.DEVNULL
+                                           :start-new-session True))))
 
   (defn #^ dict report [self]
     "heartbeat で名乗る root の姿(coordinator の置き先と温める表の読みが使う): 準備済み・準備中・失敗のキー(env- を外した物)と
