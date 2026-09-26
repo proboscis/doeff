@@ -917,7 +917,8 @@
       "layer": "domain",
       "typed": true,
       "macros": {
-        "defrecord": "template"
+        "defrecord": "template",
+        "defenum": "fixed"
       }
     },
     {
