@@ -42,12 +42,15 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
   値の変わらない欄は照らさない。定義を尋ねる口は `decl.declares(name)`・`decl.writers_of(name)`・`decl.field_names()`。
 - `states` / `terminal` / `initial` / `state_field`: 状態の語彙。生まれる行で状態の欄が無ければ(差分に無いか None なら)`initial` を置く。
   終端の行はもう書けない。
-- `operator_paths`: 書くのに承認の要る欄。承認の確かめ方は handler を組む時に渡す(既定はどの承認も認めない)。
+- `operator_paths`: operator の宣言の欄。書けるのは、その欄の書き手(`writers`)であり、かつ `RecordsSchema.operators` に入る書き手だけ。
+  書き手の名は handler を組む時に身元から入る値なので、effect の中身で operator を名乗ることはできない。
 - `retention`: `KeepForever()`(消さない)か `KeepFor(seconds)`(終端になってから秒の後に消し、変更の列に `RowRemoved` を出す)。
 - `size_budget`: 行の値の JSON(正規の綴り・UTF-8)の byte の上限。
 
 追記の列は `StreamDecl(name, writers, retention, size_budget)`(`KeepFor` は積んでから秒の後に消す)。
-置き場 1 つの定義は `RecordsSchema(tables, streams)`(表の名 → `TableDecl`・列の名 → `StreamDecl` の凍らせた写像)。
+置き場 1 つの定義は `RecordsSchema(tables, streams, operators)`(表の名 → `TableDecl`・列の名 → `StreamDecl` の凍らせた写像・
+operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の欄を書けない。`operator_paths` の欄の書き手に operator の主体が
+1 人も居ない宣言は、作る時に `ValueError`)。
 
 ## 表ごとの行の型で読み書きする(`doeff_records.typed`)
 
@@ -144,6 +147,7 @@ SIGTERM / SIGINT で口を閉じて接続を返す。
 | `law_committed_changes_appear_once_in_order` | 確定した変更は `WatchChanges` にちょうど 1 回・順序どおり |
 | `law_epoch_change_resets` | 置き場の版が変わると `Reset`・読み直した一覧から続けられる |
 | `law_undeclared_writes_are_refused` | 定義に無い書き手・欄・状態・上限・承認・終端の行・キーの書き換えは `Refused` で、行を変えない |
+| `law_operator_paths_need_an_operator` | `operator_paths` の欄は operator の主体の書き手だけが書ける(欄の書き手でも operator でなければ `Refused`・operator でも欄の書き手でない欄は `Refused`)・他の欄は欄の書き手の定義どおり |
 | `law_transient_rows_expire` | `KeepFor` の終端の行は期限で消え、`KeepForever` の行は消えない |
 | `law_indexed_list_equals_filtered_scan` | 索引の `ListRows` は全件を読んで絞った結果と同じ |
 | `law_append_is_idempotent` | 同じ冪等キーの再送は前の番号・別の本文は `Refused` |

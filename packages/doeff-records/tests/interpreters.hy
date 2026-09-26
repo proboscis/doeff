@@ -80,7 +80,7 @@
 
 
 ;; 法の書き手の名 → 身元の token(検だけの値 — 名簿には sha256 だけを載せる)。
-(setv LAW-TOKENS (dfor writer ["maker" "painter" "closer" "stranger"] writer (+ "law-token-" writer)))
+(setv LAW-TOKENS (dfor writer ["maker" "painter" "closer" "stranger" "overseer"] writer (+ "law-token-" writer)))
 (setv HTTP-POLL-SECONDS 0.05)
 
 

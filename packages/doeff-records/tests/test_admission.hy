@@ -66,6 +66,33 @@
   (assert (= (where-refusal decl {"id" "p1" "color" "red" "note" "n"}) (NotIndexed #("note")))))
 
 
+(deftest test-operator-paths-are-judged-by-the-writer-principal
+  ;; operator の宣言の欄は、欄の書き手かつ operator の主体の書き手だけ。書き手の名は handler の組み立ての値で、
+  ;; judge-put の答えは同じ差分でも書き手の名だけで変わる(effect の中身で operator を名乗る口は無い)。
+  (setv decl (LAW-SCHEMA.table "parts")
+        row (Row #("p1") {"id" "p1" "state" "open"} 1))
+  ;; maker は grant の欄の書き手だが operator の主体でない → operator の段で断る。stranger・painter は欄の書き手の段で先に断る。
+  (setv maker (judge-put decl "maker" row #("p1") {"grant" "yes"} :operators LAW-SCHEMA.operators))
+  (assert (and (isinstance maker Refused) (in "operator の宣言の欄" maker.reason)) maker)
+  (for [writer ["stranger" "painter"]]
+    (assert (isinstance (judge-put decl writer row #("p1") {"grant" "yes"} :operators LAW-SCHEMA.operators) Refused) writer))
+  (assert (= (judge-put decl "overseer" row #("p1") {"grant" "yes"} :operators LAW-SCHEMA.operators)
+             (Admitted {"id" "p1" "state" "open" "grant" "yes"})))
+  ;; operator の主体でも欄の書き手でなければ断る(何でも書ける主体ではない)・operator の欄の外は主体を問わない。
+  (assert (isinstance (judge-put decl "overseer" row #("p1") {"label" "x"} :operators LAW-SCHEMA.operators) Refused))
+  (assert (isinstance (judge-put decl "maker" row #("p1") {"label" "x"} :operators LAW-SCHEMA.operators) Admitted))
+  ;; operator の一覧が空の置き場では、operator の欄は誰も書けない(安全側の既定)。
+  (assert (isinstance (judge-put decl "overseer" row #("p1") {"grant" "yes"} :operators #()) Refused)))
+
+
+(deftest test-a-schema-whose-operator-path-no-operator-can-write-is-refused-at-construction
+  (setv parts (LAW-SCHEMA.table "parts"))
+  ;; grant の書き手(maker・overseer)に operator の主体が居ない一覧・空の一覧・綴りの外の名は、宣言の時に止める。
+  (for [operators [#("someone-else") #() #("") #("a:b") ["overseer"]]]
+    (assert (refuses? (fn [] (RecordsSchema :tables {"parts" parts} :operators operators)) #(ValueError TypeError)) operators))
+  (assert (RecordsSchema :tables {"parts" parts} :operators #("overseer"))))
+
+
 (deftest test-only-terminal-rows-of-keep-for-tables-expire
   (setv tickets (LAW-SCHEMA.table "tickets") parts (LAW-SCHEMA.table "parts"))
   (assert (row-expired? tickets {"state" "done"} 0 60000))
