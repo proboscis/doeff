@@ -18,7 +18,7 @@
 (import doeff [Program])
 (import doeff_time [Delay GetTime])
 (import .clock [epoch-ms-of])
-(import .coordinator_http [CoordinatorEndpoint send-idempotent REPLY-SECONDS])
+(import .coordinator_http [CoordinatorEndpoint send-idempotent REPLY-SECONDS IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff [run :as run-program])
 (import .cluster_model [PROTOCOL-FORMAT WorkerInfo])
 (import .runtime_env_model [RuntimeEnv EnvFailure runtime-env->json env-key current-platform])
@@ -33,7 +33,7 @@
                          DetachedSubmitted DetachedSucceeded DetachedLost DetachedCancelled DetachedVersionMismatch
                          DetachedEnvUnavailable DetachedUnrunnable
                          DetachedPending DetachedUnknown DetachedRefused DetachedOutcome DetachedAwaited
-                         RunnerFact RunnersUnreachable RunnersAnswer
+                         RunnerFact RunnersUnreachable RunnersAnswer DetachedUnreachable DetachedSubmitAnswer
                          outcome-from-task-outcome outcome-of-view])
 
 
@@ -238,13 +238,14 @@
 
 
 (defn #^ (| DetachedAwaited None) local-answer [#^ (| LocalRecord None) record #^ str key #^ bool reachable #^ bool timed-out]
-  "純粋: 待ちの 1 拍の答え(まだ待つなら None)。coordinator に届かない間は終わりを読めない(まだ終わっていない答え)— 途絶を task の
-   死とみなさない。"
+  "純粋: 待ちの 1 拍の答え(まだ待つなら None)。coordinator に届かない間は終わりを読めない — 待ちの期限を決めた呼び手には
+   DetachedUnreachable(本物の client と同じ値)、期限の無い待ちは届くまで待つ。途絶を task の死とみなさない。"
   (cond
     (and reachable (is record None)) (DetachedUnknown key)
     (and reachable (is-not record None) (is-not record.outcome None)) record.outcome
     (not timed-out) None
-    (or (not reachable) (is record None)) (DetachedPending key "assigned")
+    (not reachable) (DetachedUnreachable :detail "coordinator に届かない(模擬の途絶)")
+    (is record None) (DetachedUnknown key)
     (is record.runner None) (DetachedPending key "queued")
     True (DetachedPending key "assigned" :runner record.runner)))
 
@@ -260,16 +261,6 @@
     (when (is-not answer None) (return answer))
     (<- (Delay poll-seconds))
     (:= waited (+ waited poll-seconds))))
-
-
-(defk wait-reachable [store poll-seconds]
-  {:pre [(: store DetachedLocalStore) (: poll-seconds float)] :post [(: % None)]}
-  "coordinator に届くまで待つ(送りは key で冪等なので、本物の送り手も届くまで送り直す)。"
-  (while True
-    (<- at datetime (GetTime))
-    (when (>= (epoch-ms-of at) store.cut-until)
-      (return None))
-    (<- (Delay (min poll-seconds (/ (- store.cut-until (epoch-ms-of at)) 1000.0))))))
 
 
 (defn #^ None refuse-conflict [#^ LocalRecord record #^ str env #^ str name #^ (get tuple #(Requirement ...)) requires]
@@ -322,6 +313,19 @@
   (<- answer WarmState (local-warm-state store key))
   answer)
 
+(defk submit-reachable [store program env key requires name now]
+  {:pre [(: store DetachedLocalStore) (: program Program) (: env str) (: key str) (: requires tuple) (: name str) (: now int)]
+   :post [(: % DetachedSubmitAnswer)]}
+  "送る(coordinator に届く時だけ — 途絶の間は DetachedUnreachable)。同じ key の別の仕事は断る。"
+  (when (< now store.cut-until)
+    (return (DetachedUnreachable :detail "coordinator に届かない(模擬の途絶)")))
+  (val existing (.get store.records key))
+  (when (is-not existing None)
+    (refuse-conflict existing env name requires))
+  (<- submitted (submit-local store program env key requires name))
+  submitted)
+
+
 (defk lose-runners [store runner]
   {:pre [(: store DetachedLocalStore) (: runner (| str None))] :post [(: % int)]}
   "担い手の死: 走っている task は消え(走らせ直さない)、終わった task の結果はそのまま。runner = None は全部の task(担い手の process の
@@ -346,12 +350,10 @@
     (<- state (local-warm-state store key))
     (resume state))
   (SubmitDetached [program env key requires name lease-seconds retain-seconds]
-    (<- (wait-reachable store poll-seconds))
-    (val existing (.get store.records key))
-    (when (is-not existing None)
-      (refuse-conflict existing env name requires))
-    (<- submitted (submit-local store program env key requires name))
-    (resume submitted))
+    ;; 途絶の間の送りは届かない(本物の client と同じ値で答える — 送れたかは分からないが、key で冪等なので呼び手が送り直す)。
+    (<- at datetime (GetTime))
+    (<- answer (submit-reachable store program env key requires name (epoch-ms-of at)))
+    (resume answer))
   (AwaitDetached [key timeout-seconds]
     (<- outcome (await-local store key timeout-seconds poll-seconds))
     (resume outcome))
@@ -403,9 +405,14 @@
    runtime-env = 実行環境の宣言(在れば worker は env の root を準備して、その中の子 process で走らせる — revision は使わない)。
    送る PUT は key で冪等なので、読みと同じく通信の失敗を越えて送り直す(送り直しで作られていれば created = False が返る)。"
   (defn __init__ [self #^ str url #^ str revision [timeout REPLY-SECONDS] [transport None]
-                  #^ (| RuntimeEnv None) [runtime-env None]]
-    (setv self.revision revision self.runtime-env runtime-env
+                  #^ (| RuntimeEnv None) [runtime-env None] #^ float [deadline-seconds IDEMPOTENT-DEADLINE-SECONDS]]
+    ;; deadline-seconds = 通信の失敗を越えて送り直す期限(過ぎたら「届かない」の答え — 検は短くする)。
+    (setv self.revision revision self.runtime-env runtime-env self.deadline-seconds deadline-seconds
           self.endpoint (CoordinatorEndpoint url timeout 4 :transport transport)))
+
+  (defn #^ httpx.Response resend [self send]
+    "何度送っても同じ意味の要求を、期限まで送り直す(期限を過ぎた通信の失敗は httpx.TransportError のまま投げる)。"
+    (send-idempotent send :deadline-seconds self.deadline-seconds))
 
   (defn #^ str path [self #^ str key #^ str [suffix ""]]
     (+ "/detached/" (url-quote key :safe "") suffix))
@@ -422,22 +429,22 @@
     (setv body (| {"env" env "blob" blob "versions" (current-versions) "revision" self.revision "requires" (dict requires)
                    "name" name "leaseSeconds" lease-seconds "retainSeconds" retain-seconds "format" PROTOCOL-FORMAT}
                   (if (is self.runtime-env None) {} {"runtimeEnv" (run-program (runtime-env->json self.runtime-env))})))
-    (.answer self (send-idempotent (fn [] (.request self.endpoint "PUT" (.path self key) :json body)))))
+    (.answer self (.resend self (fn [] (.request self.endpoint "PUT" (.path self key) :json body)))))
 
   (defn #^ dict read [self #^ str key]
-    (.answer self (send-idempotent (fn [] (.request self.endpoint "GET" (.path self key))))))
+    (.answer self (.resend self (fn [] (.request self.endpoint "GET" (.path self key))))))
 
   (defn #^ bool cancel [self #^ str key]
     ;; 取り消しは何度送っても同じ意味(終わりの phase は変わらない)。
-    (get (.answer self (send-idempotent (fn [] (.request self.endpoint "POST" (.path self key "/cancel"))))) "cancelled"))
+    (get (.answer self (.resend self (fn [] (.request self.endpoint "POST" (.path self key "/cancel"))))) "cancelled"))
 
   (defn #^ bool release [self #^ str key]
-    (get (.answer self (send-idempotent (fn [] (.request self.endpoint "DELETE" (.path self key))))) "released"))
+    (get (.answer self (.resend self (fn [] (.request self.endpoint "DELETE" (.path self key))))) "released"))
 
   (defn #^ RunnersAnswer runners [self]
     "担い手の名簿(coordinator の GET /state の workers — live と draining は coordinator の判断)。届かなければ RunnersUnreachable。"
     (try
-      (setv response (send-idempotent (fn [] (.request self.endpoint "GET" "/state"))))
+      (setv response (.resend self (fn [] (.request self.endpoint "GET" "/state"))))
       (except [error httpx.TransportError]
         (return (RunnersUnreachable :detail (.format "coordinator に届かない: {}" error)))))
     (.raise-for-status response)
@@ -456,10 +463,16 @@
    :post [(: % DetachedAwaited)]}
   ;; 終わるまで問い合わせる。問い合わせは lease に触らず、抜けても(呼び手の Cancel・process の消失)何も落とさない。
   ;; 眠りは Delay(外側の doeff-time の handler)なので同じ VM の他の task を塞がない。
+  ;; coordinator に届かない読みは、期限を決めた待ちなら DetachedUnreachable で返し、期限の無い待ちは届くまで待つ(task の死とみなさない)。
   (var waited 0.0)
   (while True
-    (setv view (.read client key)
-          outcome (outcome-of-view view))
+    (setv view (try (.read client key) (except [error httpx.TransportError] error)))
+    (when (isinstance view httpx.TransportError)
+      (when (is-not timeout-seconds None)
+        (return (DetachedUnreachable :detail (.format "coordinator に届かない: {}" view))))
+      (<- (Delay poll-seconds))
+      (continue))
+    (setv outcome (outcome-of-view view))
     (when (is-not outcome None) (return outcome))
     (when (and (is-not timeout-seconds None) (>= waited timeout-seconds)) (return (DetachedPending key (get view "phase") :runner (or (.get view "worker") ""))))
     (<- (Delay poll-seconds))
@@ -469,8 +482,10 @@
 (defhandler detached-cluster [#^ DetachedClient client [poll-seconds 1.0]]
   (SubmitDetached [program env key requires name lease-seconds retain-seconds]
     ;; 送れない値は送る前に断る(encode-program が UnsendableProgram を投げ、呼び手へ届く)。
-    (setv reply (.submit client key (encode-program program) env requires name (float lease-seconds) (float retain-seconds)))
-    (resume (DetachedSubmitted key (get reply "created"))))
+    (setv blob (encode-program program))
+    (resume (try (DetachedSubmitted key (get (.submit client key blob env requires name (float lease-seconds) (float retain-seconds)) "created"))
+                 (except [error httpx.TransportError]
+                   (DetachedUnreachable :detail (.format "coordinator に届かない(送れたかは分からない — key で冪等): {}" error))))))
   (AwaitDetached [key timeout-seconds]
     (<- outcome (await-cluster client key timeout-seconds poll-seconds))
     (resume outcome))
