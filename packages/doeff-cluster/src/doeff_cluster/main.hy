@@ -2,7 +2,9 @@
 ;;;
 ;;;   hy -m doeff_cluster.main --desired desired.json --repo . --state-dir DIR
 ;;;   hy -m doeff_cluster.main --coordinator URL --name NAME [--labels k=v,…] --repo REPO --state-dir DIR
+(require doeff-hy.macros [defk val])
 (import argparse)
+(import os)
 (import signal)
 (import sys)
 (import pathlib [Path])
@@ -20,6 +22,18 @@
 
 (defclass StopState []
   (defn __init__ [self] (setv self.requested False)))
+
+
+(defk passed-environment [names environ]
+  {:pre [(: names str) (: environ dict)] :post [(: % dict)]}
+  "子 process へ渡す worker の環境変数(名を `,` で並べる)— 機体の設定(家や作業場所の path・預かり所の URL)を job に届けるため。
+   実行環境の job の子は worker の環境を許可表でしか継がない(handlers.child-environment)ので、機体の設定は worker が名で宣言する。
+   名乗った名が worker の環境に無ければ起動を止める(黙って欠いたまま job を走らせない)。資格の値そのものは渡さない(file の path を渡す)。"
+  (val wanted (lfor n (.split names ",") :if (.strip n) (.strip n)))
+  (val missing (lfor n wanted :if (not-in n environ) n))
+  (when missing
+    (raise (ValueError (+ "--pass-env の名が worker の環境に無い: " (.join "," missing)))))
+  (dfor n wanted n (get environ n)))
 
 
 (defn #^ dict parse-labels [#^ str text]
@@ -51,6 +65,8 @@
   (.add-argument parser "--uv" :default "uv" :help "実行環境の準備と子の起動に使う uv の命令")
   (.add-argument parser "--env-min-free" :type int :default 0 :help "実行環境の準備を始める空きの下限(byte)")
   (.add-argument parser "--tools" :default "" :help "この worker が名乗る道具(名=版,… — 実行環境の宣言の tools と照らす)")
+  (.add-argument parser "--pass-env" :default ""
+                 :help "子 process へ渡す worker の環境変数の名(`,` で並べる — 機体の設定の path や URL。無い名は起動を止める)")
   (setv args (.parse-args parser))
   (setv layout (CodeLayout :import-roots (tuple (gfor r (.split args.import-roots ",") :if r r))
                            :overlay-path (or args.overlay-path None)
@@ -62,8 +78,9 @@
         codes (CodeStore args.repo (str (/ state-dir "code")) (if args.no-warm None hy-command) :layout layout)
         ;; 子 process(service の env)が coordinator と自分の名を知る口。資格は渡さない。
         host (ProcessHost (str (/ state-dir "logs")) hy-command
-                          {"DOEFF_WORKER_NAME" (or args.name "local")
-                           "DOEFF_WORKER_COORDINATOR" (or args.coordinator "")}
+                          (| (run (passed-environment args.pass-env (dict os.environ)))
+                             {"DOEFF_WORKER_NAME" (or args.name "local")
+                              "DOEFF_WORKER_COORDINATOR" (or args.coordinator "")})
                           :layout layout :uv args.uv)
         ;; 実行環境(runtime env)の root の準備(別の process・worker は再起動しない)。
         envs (EnvStore (str state-dir) hy-command :repo-keys args.repo-keys :uv args.uv :min-free-bytes args.env-min-free)
