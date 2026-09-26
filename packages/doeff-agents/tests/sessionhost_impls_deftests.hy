@@ -394,7 +394,7 @@
   (<- bare-argv (run-claude world (build-launch "claude" bare)))
   (assert (= (.count bare-argv "--settings") 1) bare-argv)
   (assert (= (json.loads (get bare-argv (+ (.index bare-argv "--settings") 1))) seat-hooks) bare-argv)
-  ;; 蘇生の argv も同じ 1 点(build-claude-argv)を通る — headless_argv も同じ点を借りる。
+  ;; 蘇生の argv も同じ 1 点(build-claude-argv)を通る。
   (<- resume-argv (run-claude world (build-resume "claude"
                                                    (base-params :agent_type "claude"
                                                                 :session_hooks "inherit"

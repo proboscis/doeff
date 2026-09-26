@@ -210,20 +210,20 @@
 ;; 定義点はこの 1 つ(綴りの家はこの file — .semgrep.yaml doeff-agents の autoMemoryDirectory の規則)。
 (setv CLAUDE-SETTINGS-OWNED-KEYS #{CLAUDE-DISABLE-ALL-HOOKS-SETTING CLAUDE-AUTO-MEMORY-DIR-SETTING
                                   CLAUDE-MD-EXCLUDES-SETTING})
-;; charter が運ぶ記憶の冊の欄(card acp:kanban-issue:ki-9fc7d4bca4dc)。綴りの正本は
-;; sessionhost/acp/effects.py の CHARTER_MEMORY_FILES_KEY で、ここはその写し(検が突き合わせる)。
+;; charter が運ぶ記憶の冊の欄(card acp:kanban-issue:ki-9fc7d4bca4dc)。綴りの家はここ(写しの元だった
+;; agentd の CHARTER_MEMORY_FILES_KEY は agora-redesign #668 で退いた)。
 ;; この層は行を読まない — 運ばれてきた {name, text} を置き場へ書くだけ。
 (setv CLAUDE-MEMORY-FILES-KEY "memory_files")
-;; charter が運ぶ**取り除く file の名**(card acp:kanban-issue:ki-6b5c4b270ca0)。綴りの家は
-;; sessionhost/acp/effects.py の CHARTER_MEMORY_RETIRED_FILES_KEY で、ここはその写し(検が突き合わせる)。
+;; charter が運ぶ**取り除く file の名**(card acp:kanban-issue:ki-6b5c4b270ca0)。綴りの家はここ(写しの元だった
+;; agentd の CHARTER_MEMORY_RETIRED_FILES_KEY は agora-redesign #668 で退いた)。
 ;; ⚠ この層は名を**組まない**: 運ばれてきた名をそのまま置き場の 1 節として使うだけで、行も読まない。
 (setv CLAUDE-MEMORY-RETIRED-FILES-KEY "memory_retired_files")
-;: 索引の file 名(計器が冊と索引を分けて数えるための綴り)。綴りの家は
-;: sessionhost/acp/effects.py の MEMORY_INDEX_FILE で、ここはその写し(検が突き合わせる)。
+;: 索引の file 名(計器が冊と索引を分けて数えるための綴り)。綴りの家はここ(写しの元だった agentd の
+;: MEMORY_INDEX_FILE は agora-redesign #668 で退いた)。
 (setv CLAUDE-MEMORY-INDEX-FILE "MEMORY.md")
-;: 畳み戻しの基準の file 名と冊の接尾辞。綴りの家は sessionhost/acp/effects.py の MEMORY_BASE_FILE /
-;: MEMORY_FILE_SUFFIX で、ここはその写し(検 test-the-index-spelling-has-one-home が突き合わせ、
-;: .semgrep.yaml の doeff-agents-memory-baseline-spelling-has-one-home が第 3 の座を断る)。
+;: 畳み戻しの基準の file 名と冊の接尾辞。綴りの家はここ(写しの元だった agentd の MEMORY_BASE_FILE /
+;: MEMORY_FILE_SUFFIX は agora-redesign #668 で退いた。.semgrep.yaml の
+;: doeff-agents-memory-baseline-spelling-has-one-home が第 2 の座を断る)。
 (setv CLAUDE-MEMORY-BASE-FILE "MEMORY.base.json")
 (setv CLAUDE-MEMORY-FILE-SUFFIX ".md")
 
@@ -256,8 +256,8 @@
   (+ (json.dumps {"books" kept} :ensure-ascii False :sort-keys True :indent 2) "\n"))
 
 
-;; charter が運ぶ**組み直した transcript**の欄(card acp:kanban-issue:ki-c3aace97d825)。綴りの家は
-;; sessionhost/acp/effects.py の CHARTER_REBUILT_TRANSCRIPT_KEY で、ここはその写し(検が突き合わせる)。
+;; charter が運ぶ**組み直した transcript**の欄(card acp:kanban-issue:ki-c3aace97d825)。綴りの家はここ
+;; (写しの元だった agentd の CHARTER_REBUILT_TRANSCRIPT_KEY は agora-redesign #668 で退いた)。
 ;; ⚠ この層は中身を**組まない**: 運ばれてきた jsonl を家の中の正しい場所へ置くだけで、記録の service も
 ;; ACP の行も読まない(記憶の冊 memory_files と同じ規律)。
 (setv CLAUDE-REBUILT-TRANSCRIPT-KEY "rebuilt_transcript")

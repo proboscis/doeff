@@ -36,8 +36,6 @@
 (import threading)
 (import types [NoneType])
 (import doeff_agents.sessionhost.store_health [StoreWriteHealth next-health storage-failure-name])
-(import doeff_agents.sessionhost.cache_host_model [HostCacheRead HostCacheActive HostCacheWrite HostCacheLastSuccessAt])
-(import doeff_agents.sessionhost.cache_host_store [cache-receipt-get cache-receipt-active cache-receipt-put cache-last-success-at])
 
 (import doeff_agents.sessionhost.effects [
   SessionRow
@@ -113,20 +111,6 @@ CREATE TABLE IF NOT EXISTS agent_daemon_lease (
   expires_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS headless_event_outbox (
-  session_id TEXT NOT NULL,
-  seq INTEGER NOT NULL,
-  op TEXT NOT NULL,
-  stream TEXT NOT NULL,
-  line TEXT NOT NULL,
-  at TEXT NOT NULL,
-  turn INTEGER NOT NULL,
-  shipped_at TEXT,
-  PRIMARY KEY (session_id, seq)
-);
-
-CREATE INDEX IF NOT EXISTS idx_headless_event_outbox_unshipped
-  ON headless_event_outbox(at) WHERE shipped_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_status
   ON agent_sessions(status);
 CREATE INDEX IF NOT EXISTS idx_agent_session_events_session
@@ -186,11 +170,6 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        ;; first-write-wins 保護 — 観測した事実を後続の書き戻しが消さない。
        #("agent_sessions" "provider_failure_class" "TEXT")
        #("agent_sessions" "provider_failure_observed_at" "TEXT")
-       ;; 発注者(ACP scheduler)申告の帰属 metadata(opaque verbatim —
-       ;; conversation_json と同型)。launch の一度きりの書きを COALESCE
-       ;; first-write-wins が守る。消費者は Mac 側の利用帰属台帳
-       ;; (json_extract '$.action_id' の expression index が読みを支える)。
-       #("agent_sessions" "launch_attribution_json" "TEXT")
        ;; 温かい session(lifecycle multi_turn — agentd 段 2 lane 2b-3・ADR-DOE-AGENTS-012
        ;; R10): monitor が手番の終わりを最初に観測した時刻。level-triggered(次の手番
        ;; で NULL)・単一 writer = monitor・素の last-write-wins。
@@ -198,11 +177,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        ;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D2): 温かい session の手番が**失敗で**終わった時に走行器が
        ;; 名乗った文(headless の turn_verdict の detail)。turn_ended_at と対の level-triggered の欄
        ;; (成功の終わり・次の手番の送りで NULL)・単一 writer = monitor・素の last-write-wins。
-       #("agent_sessions" "turn_error" "TEXT")
-       ;; 出来事の送り待ちの表: 段の DB の 1 行の上限を超える行は送らずに手元に留める(held_at と理由)。
-       ;; 留めた行は送らない・外さない(prune は shipped_at の在る行だけ)— 記録は消さない。
-       #("headless_event_outbox" "held_at" "TEXT")
-       #("headless_event_outbox" "held_reason" "TEXT")])
+       #("agent_sessions" "turn_error" "TEXT")])
 
 (setv SNAPSHOT-SELECT
       (+ "SELECT session_id, session_name, pane_id, agent_type, work_dir, lifecycle, status, "
@@ -218,7 +193,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
          "api_limit_observed_at, observation_gap_at, "
          "paste_resubmit_attempts, awaiting_response_since, "
          "provider_failure_class, provider_failure_observed_at, "
-         "launch_attribution_json, turn_ended_at, turn_error "
+         "turn_ended_at, turn_error "
          "FROM agent_sessions"))
 
 
@@ -265,11 +240,6 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
   (.execute conn
             (+ "CREATE INDEX IF NOT EXISTS idx_agent_sessions_conversation "
                "ON agent_sessions(json_extract(conversation_json, '$.session_id'))"))
-  ;; 帰属列の読み口(Mac 側の利用帰属台帳が「この action の走行」を引く鍵)。
-  ;; conversation index と同じ理由で ensure-column の後。
-  (.execute conn
-            (+ "CREATE INDEX IF NOT EXISTS idx_agent_sessions_launch_attribution_action "
-               "ON agent_sessions(json_extract(launch_attribution_json, '$.action_id'))"))
   None)
 
 (deff ensure-column [conn table column definition]
@@ -388,11 +358,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    "awaiting_response_since" (get db-row 38)
    "provider_failure_class" (get db-row 39)
    "provider_failure_observed_at" (get db-row 40)
-   "launch_attribution" (if (is (get db-row 41) None)
-                            None
-                            (json.loads (get db-row 41)))
-   "turn_ended_at" (get db-row 42)
-   "turn_error" (get db-row 43)})
+   "turn_ended_at" (get db-row 41)
+   "turn_error" (get db-row 42)})
 
 (deff snapshot-to-wire-dict [snap]
   {:pre [(: snap dict)]
@@ -447,10 +414,6 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
           (get snap "forked_from_session_id")))
   (when (is-not (.get snap "launch_overlay") None)
     (setv (get wire "launch_overlay") (get snap "launch_overlay")))
-  ;; 帰属 metadata も None のとき field ごと省略(未申告を wire で null と
-  ;; 区別しない — launch_overlay と同じ規律)。
-  (when (is-not (.get snap "launch_attribution") None)
-    (setv (get wire "launch_attribution") (get snap "launch_attribution")))
   ;; ADR-007: adopted は常在 bool(ownership marker は不在と false を区別
   ;; しない)、turn_* は None のとき field ごと省略(未打刻は不可視 — R6 の
   ;; 既知限界を wire でも正直に)。
@@ -514,8 +477,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        "api_limit_observed_at, observation_gap_at, "
        "paste_resubmit_attempts, awaiting_response_since, "
        "provider_failure_class, provider_failure_observed_at, "
-       "launch_attribution_json, turn_ended_at, turn_error"
-       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+       "turn_ended_at, turn_error"
+       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
        "ON CONFLICT(session_id) DO UPDATE SET "
        "session_name = excluded.session_name, "
        "pane_id = excluded.pane_id, "
@@ -573,10 +536,6 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        ;; 意味を持つので、同じ COALESCE 規律を両方に掛ける。
        "provider_failure_class = COALESCE(agent_sessions.provider_failure_class, excluded.provider_failure_class), "
        "provider_failure_observed_at = COALESCE(agent_sessions.provider_failure_observed_at, excluded.provider_failure_observed_at), "
-       ;; 帰属は launch の一度きりの申告 — 後続 upsert(monitor の書き戻し
-       ;; を含む)が消しても上書きしてもいけない。conversation_json /
-       ;; effective_identity_json と同格の first-write-wins。
-       "launch_attribution_json = COALESCE(agent_sessions.launch_attribution_json, excluded.launch_attribution_json), "
        ;; 温かい session(multi_turn): 手番の終わりの刻印は level-triggered — None の
        ;; 書きは「次の手番が走り出した」の事実なので COALESCE 保護を持たない
        ;; (単一 writer = monitor・merge 経路が existing を再読して重ねる)。
@@ -650,11 +609,6 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
       ;; ACP ADR 0049 R9 第 3 改訂以前の snapshot dict にも additive に振る舞う。
       (.get snap "provider_failure_class")
       (.get snap "provider_failure_observed_at")
-      ;; 帰属 metadata(opaque verbatim — conversation と同じ直列化規律)。
-      (if (is (.get snap "launch_attribution") None)
-          None
-          (json.dumps (get snap "launch_attribution") :sort-keys True
-                      :separators #("," ":")))
       ;; lane 2b-3 以前の snapshot dict にも additive に振る舞う。
       (.get snap "turn_ended_at")
       (.get snap "turn_error")))
@@ -1149,44 +1103,6 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
   (run (db-immediate-transaction conn (db-release-lease-body conn owner-pid))))
 
 
-;; 器の入れ替えの blue/green(acp/host_slots): 新しい器の区画の store を、いま手番を受けている器の store の写しで
-;; 始める。終端の行(会話の前の session)を新しい器が持っていないと `--resume` の元が引けず(resume-session の
-;; 実在の admission)、器を入れ替えるたびに cache を捨てて履歴から起こし直すことになる。
-(setv SEED-SIDECAR-SUFFIXES #("-journal" "-wal" "-shm"))
-
-(deff db-seed-from [source-path target-path]
-  {:pre [(: source-path str) (: target-path str)]
-   :post [(: % int)]}
-  "source の store の一貫した写し(sqlite の backup — 書き手が走っていても 1 つの読みの断面)を target に据える。
-   写しからは lease の行を消す(持ち主は source の器 — 残すと新しい器の db-acquire-lease が生きた lease として
-   断る)。据えは使い捨ての名に書いてから os.replace(途中で落ちても target は前のまま)。target の古い付属
-   file(-journal / -wal / -shm)は据える前に除く — 残った hot journal は開いた拍に**新しい写し**へ巻き戻しを
-   当てる。⚠ 呼び手(host-slot seed)は target の器が起きていないことを確かめてから呼ぶ(起きている器の
-   store を置き換えない)。戻り値 = 写した session の行数。"
-  (setv staged (+ target-path ".seeding"))
-  (for [path [staged (+ staged "-journal")]]
-    (when (os.path.exists path)
-      (os.remove path)))
-  (setv source (sqlite3.connect f"file:{source-path}?mode=ro" :uri True))
-  (try
-    (.execute source f"PRAGMA busy_timeout = {SQLITE-BUSY-TIMEOUT-MS}")
-    (setv target (sqlite3.connect staged))
-    (try
-      (.backup source target)
-      (.execute target "DELETE FROM agent_daemon_lease")
-      (.commit target)
-      (setv rows (get (.fetchone (.execute target "SELECT COUNT(*) FROM agent_sessions")) 0))
-      (finally
-        (.close target)))
-    (finally
-      (.close source)))
-  (for [suffix SEED-SIDECAR-SUFFIXES]
-    (when (os.path.exists (+ target-path suffix))
-      (os.remove (+ target-path suffix))))
-  (os.replace staged target-path)
-  rows)
-
-
 ;; ---------------------------------------------------------------------------
 ;; writer actor(単一 write connection の直列化点)
 ;; ---------------------------------------------------------------------------
@@ -1335,7 +1251,6 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
     :resumed-from-session-id (.get snap "resumed_from_session_id")
     :forked-from-session-id (.get snap "forked_from_session_id")
     :launch-overlay (.get snap "launch_overlay")
-    :launch-attribution (.get snap "launch_attribution")
     :adopted (bool (.get snap "adopted" False))
     :api-limit-observed-at (.get snap "api_limit_observed_at")
     :observation-gap-at (.get snap "observation_gap_at")
@@ -1382,10 +1297,6 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    "resumed_from_session_id" row.resumed-from-session-id
    "forked_from_session_id" row.forked-from-session-id
    "launch_overlay" row.launch-overlay
-   ;; 帰属 metadata は launch が一度だけ書く出自申告。SQL 側 COALESCE
-   ;; first-write-wins が最終防衛する(monitor の書き戻しは None を運ぶ
-   ;; だけなので消えない)。
-   "launch_attribution" row.launch-attribution
    ;; ADR-007: adopted は行ごとに不変(adopt が作った行だけ true)なので
    ;; patch に含めて安全。turn_* は policy 契約外 — patch に含めない
    ;; (merge 経路では existing の打刻が保存され、新規行は
@@ -1458,15 +1369,6 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
 
 
 (defhandler sqlite-session-store [actor]
-  (HostCacheLastSuccessAt [session-id]
-    (resume (.submit actor (fn [conn] (cache-last-success-at conn session-id)))))
-  (HostCacheRead [operation-id]
-    (resume (.submit actor (fn [conn] (cache-receipt-get conn operation-id)))))
-  (HostCacheActive [session-id]
-    (resume (.submit actor (fn [conn] (cache-receipt-active conn session-id)))))
-  (HostCacheWrite [record]
-    (.submit actor (fn [conn] (cache-receipt-put conn record)))
-    (resume None))
   ;; SessionStore substrate effect の host 束縛(DOE-004 R1)。すべて actor
   ;; 経由 = 直列化済み。oracle monitor は backend_kind="tmux" も filter する
   ;; (:3486)が、Hy host の行は launch 経路しか作らないので常に tmux —

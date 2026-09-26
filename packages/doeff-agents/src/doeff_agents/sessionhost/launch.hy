@@ -1095,10 +1095,6 @@
                                "model" (.get params "model")
                                "effort" (.get params "effort")
                                "mcp_servers" (or (.get params "mcp_servers") {})}
-              ;; 発注者申告の帰属 metadata(opaque verbatim — 解釈しない)。
-              ;; overlay(launch 意図 = resume 復元源)とは別欄: これは
-              ;; 「この走行がどの機能の仕事か」の出自申告で復元には使わない。
-              :launch-attribution (.get params "launch_attribution")
               :conversation row-conversation
               :generation (if (is resume-context None)
                               1
@@ -1263,10 +1259,6 @@
       ;; 並行実装を作らない(R3)。workspace_seed は素通ししない(resume の
       ;; 宿り先は再割当でなく蘇生元 dir — seed 対応は宿り先意味論の設計後)
       "context_file" (.get params "context_file")
-      ;; 帰属 metadata の resume 面(one law, both faces): 新 incarnation は
-      ;; 新しい invocation を宿すので、帰属も呼び手の申告を素通しする
-      ;; (蘇生元行からの復元はしない — 帰属は復元源ではなく出自申告)。
-      "launch_attribution" (.get params "launch_attribution")
       "command" None
       "prompt" (.get params "prompt")
       "model" (or (.get params "model") (.get overlay "model"))
@@ -1288,10 +1280,6 @@
       "allow_metered_billing" (.get params "allow_metered_billing" False)
       "repl_idle_max_wait_seconds" (.get params "repl_idle_max_wait_seconds")
       "backend_kind" (.get params "backend_kind" "tmux")
-      ;; headless の実況の正本の置き場(host の config が program-params に運ぶ — 段 10 lane 10h・
-      ;; agora-redesign #84: 運んでいなかったので headless の session.resume は headless-launch-session の
-      ;; (get params "events_root") で KeyError になり、本番の --resume が全部 rehydrate に落ちていた)。
-      "events_root" (.get params "events_root")
       ;; 段 10 lane 10o(実弾 2026-09-15 09:5x): 1 手番目に畳む郵便の添付。運ばないと
       ;; headless-launch-session が空の並びを読み、**腕が resume の手番だけ**画像が黙って落ちる。
       "attachments" (.get params "attachments" #())
@@ -1512,16 +1500,7 @@
   (<- launch-params dict
       (resume-launch-params-of params source overlay overlay-env binding conv mode
                                new-sid new-name source-sid gen effective-expected))
-  ;; 宿しは backend ごと(host の config が params に運ぶ backend_kind の 1 点):
-  ;; headless は tui の ready gate / paste を持たない別の program(headless.hy —
-  ;; admission と identity の準備は上の 2 つの defk を共有する)。
-  (setv incarnate launch-session)
-  (when (= (.get launch-params "backend_kind") "headless")
-    ;; headless.hy はこの module の admit-launch / prepare-launch-workspace を import する
-    ;; ので、module の頭で import すると循環する — 宿しの拍に引く。
-    (import doeff_agents.sessionhost.headless [headless-launch-session])
-    (setv incarnate headless-launch-session))
-  (<- row (incarnate launch-params))
+  (<- row (launch-session launch-params))
   (<- _ (session-store-record-event row.session-id
                                     (if (= mode "resume")
                                         "session_resumed"
