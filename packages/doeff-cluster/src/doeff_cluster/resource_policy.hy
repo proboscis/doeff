@@ -14,6 +14,7 @@
 (import .cluster_policy [job-from-json job-to-json alive still-live-somewhere unplaced-jobs task-summary])
 (import .rollout_policy [validate-rollout-spec rollout-targets target-key TERMINAL-PHASES])
 (import .base_follow_policy [base-observation])
+(import .readiness_model [handoff-timeout-ms])
 
 (setv LEGACY-OWNER "legacy:jobs")        ; 旧い PUT /jobs の頃からの宣言の所有者(誰でも 1 度だけ引き取れる)
 (setv COORDINATOR "coordinator")          ; 調停(割り当て・task の置き先)の送り手
@@ -191,6 +192,11 @@
                        ;; drain で並べた置き先(2026-09-25)。在る間だけ載せる(無い Service の status の形・版は以前と同じ)。
                        (if (in job.spec.name state.surges)
                            {"surge" (. (get state.surges job.spec.name) worker)}
+                           {})
+                       ;; 入れ替えの期限の見張り(2026-09-26 — handoff_policy)。Ready を待つ間と諦めた間だけ載せる: 段・起点・期限、
+                       ;; 諦めたなら時刻と理由(期限と最後の NotReady の理由)と新の世代の最後の ReportReady(偽)の reason。
+                       (if (in job.spec.name state.handoffs)
+                           {"handoff" (.status-json (get state.handoffs job.spec.name) (handoff-timeout-ms job.readiness))}
                            {}))}))
   (for [w (.values state.workers)]
     (setv (get out (key-of "Worker" w.name))

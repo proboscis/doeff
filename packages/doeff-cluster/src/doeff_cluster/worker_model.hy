@@ -32,6 +32,10 @@
   ;; 名前付きの lease で書きを 1 つに絞る service だけが使う。どちらも比べない欄(値が変わっても process を起こし直さない)。
   (setv #^ bool handoff (field :default False :compare False))
   (setv #^ (| str None) ready-instance (field :default None :compare False))
+  ;; 入れ替えの諦め(2026-09-26)。coordinator が「新の世代が期限の間 Ready にならなかった」と記録した handoff の job(heartbeat の返事の
+  ;; handoffAbandoned)。worker は新の process を止めて起こし直さず、退いた旧を動かし続ける(worker_policy.plan-job)。宣言が変われば
+  ;; coordinator が記録を捨てて偽に戻る。比べない欄。
+  (setv #^ bool handoff-abandoned (field :default False :compare False))
   ;; 切り離した task(2026-09-25・once と組)。coordinator との連絡が途絶えても止めない(担い手の heartbeat が lease を延ばし、途絶が
   ;; lease より長ければ coordinator が lost にして、再接続の返事から外れた時に止める — worker_policy.kept-when-cut-off)。比べない欄。
   (setv #^ bool detached (field :default False :compare False))
@@ -232,6 +236,7 @@
         STOP-UNCONFIRMED "stop-unconfirmed"  ; KILL の後も終了を確認できない。置き換えは起動しない
         PROBE-FAILED "probe-failed"    ; 木は揃ったが、実行環境で入口の module を読み込めない(起動しない)
         ENV-FAILED "env-failed"        ; 実行環境(runtime env)の root を準備できない(子 process を起こしていない)
+        HANDOFF-ABANDONED "handoff-abandoned"  ; 入れ替えを諦めた(新は起こさない・退いた旧が動いている — 宣言が変わるまで)
         FINISHED "finished"            ; task が終わった(起動し直さない)
         STOPPED "stopped"))
 
