@@ -192,6 +192,18 @@ what's the point of having lazy val if it can't use effects... but yeah you are 
 今回 code-quality に入れたもの: 新しい構文の投影(`quality/hy_bindings.py` — 宣言と `:=` を setv に写す。入れないと `(val x …)` が
 未定義の `val(x, …)` の呼び出しとして偽の赤になる)と、deftest の本体の `!` の投影(macro は展開するのに投影が展開していなかった)。
 
+**門へつないだ(2026-09-26 の続きの便)**: 推奨どおり code-quality の Hy の投影に規則 `hy-rebind`(subject `hy:rebind`)を足した
+(code-quality `aa2cbcc`・`quality/hy_rebind.py` = `binding_forms._Walker` の束縛の数え方と `module_findings` の赤の写し)。
+実 repo 6 つで `rewrite_body` と同じ本体に当てた件数を突き合わせて差 0。既存の件数は各 repo の基底へ先に登記した(doeff 100・
+agora-controllers 1,590・agent-control-plane 489・argus 70・herdr-hud 73・ai-cli 104・merge-queue 118・pr-review 177・custody 21・
+kubeacp 14・dotfiles 131 — code-quality の投影で数え、module 契約の在る検査対象の file だけ)。その後に dotfiles の code-quality の
+pin を上げた(dotfiles `de88c0b0f`)。変更の走行では触った行に足した束縛し直しだけが赤、日次の全体検査は登記の件数で緑。
+
+- `doeff-hy-setv`(setv の警告)は code-quality に載せない: 所見に警告の段が無く、載せれば全部が赤になる。案内は doeff-hy-check が出す。
+- 登記だけを増やす便は fast の段で基底を測るようにした(code-quality `registration.grown_entry_paths`)— 測らないと増量の規則が
+  「実観測 0 件を超える」と読んで断った(#411 と同じ形の穴)。
+- 2 段目(旧い書き方どうしも展開の誤りにする)の条件の測り方は、各 repo の基底の `hy-rebind` の登記が 0 になったこと、で読める。
+
 ## 9. 検
 
 - `packages/doeff-hy/tests/test_val_var_lazy.py`: val の 2 回目は誤り / var と `:=` / `!(f)` と `(! (f))` が同じ(reader の実測を含む) /
