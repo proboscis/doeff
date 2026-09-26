@@ -105,7 +105,7 @@
 
 (defhandler unreachable-store []
   (ReadRow [table key] (resume (Unreachable "置き場が落ちている(検の代役)")))
-  (PutRow [table key value expect approval] (resume (Unreachable "置き場が落ちている(検の代役)"))))
+  (PutRow [table key value expect] (resume (Unreachable "置き場が落ちている(検の代役)"))))
 
 
 (deftest test-an-unreachable-store-answers-503-and-the-client-sees-unreachable

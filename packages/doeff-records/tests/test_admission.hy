@@ -3,7 +3,7 @@
 (import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor Row Missing Conflict Refused NotIndexed UndeclaredTable
                               ExpectAbsent ExpectVersion ExpectAny])
 (import doeff_records.effects [PutRow ListRows])
-(import doeff_records.admission [json-equal? key-text judge-expect judge-put where-refusal row-expired? refuse-every-approval
+(import doeff_records.admission [json-equal? key-text judge-expect judge-put where-refusal row-expired?
                                  Admitted])
 (import doeff_records.laws [LAW-SCHEMA])
 
@@ -58,10 +58,10 @@
   (assert (= (judge-expect (ExpectVersion 1) None) (Conflict (Missing))))
   (assert (is (judge-expect (ExpectAny) row) None))
   ;; 終端の行は書き手を問う前に断る(誰の書きでも同じ理由)。
-  (setv frozen (judge-put decl "stranger" row #("p1") {"label" "x"} None refuse-every-approval))
+  (setv frozen (judge-put decl "stranger" row #("p1") {"label" "x"} :operators LAW-SCHEMA.operators))
   (assert (and (isinstance frozen Refused) (in "終端" frozen.reason)) frozen)
   ;; 生まれる行は initial を持ち、鍵の欄を値に置く。
-  (setv born (judge-put decl "maker" None #("p2") {"label" "x"} None refuse-every-approval))
+  (setv born (judge-put decl "maker" None #("p2") {"label" "x"} :operators LAW-SCHEMA.operators))
   (assert (= born (Admitted {"id" "p2" "label" "x" "state" "open"})))
   (assert (= (where-refusal decl {"id" "p1" "color" "red" "note" "n"}) (NotIndexed #("note")))))
 

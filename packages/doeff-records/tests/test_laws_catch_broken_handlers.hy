@@ -19,8 +19,8 @@
 
 
 (defhandler ignore-expectation []
-  (PutRow [table key value expect approval]
-    (<- answer (PutRow table key value (ExpectAny) :approval approval))
+  (PutRow [table key value expect]
+    (<- answer (PutRow table key value (ExpectAny)))
     (resume answer)))
 
 (defhandler repeat-changes []
@@ -45,8 +45,8 @@
 
 (defhandler ignore-removals []
   ;; 欄を消せない handler の顔: 差分の None の欄を捨てて書く。
-  (PutRow [table key value expect approval]
-    (<- answer (PutRow table key (dfor #(k v) (.items value) :if (is-not v None) k v) expect :approval approval))
+  (PutRow [table key value expect]
+    (<- answer (PutRow table key (dfor #(k v) (.items value) :if (is-not v None) k v) expect))
     (resume answer)))
 
 (defhandler skip-pruning []

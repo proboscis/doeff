@@ -12,7 +12,7 @@ composition root で渡す。書き手の名は effect の引数ではなく、h
 |---|---|---|---|
 | `ReadRow(table, key)` | 表・キー | `Row(key, value, version)` か `Missing()` | `Unreachable` |
 | `ListRows(table, where, fields, cursor, limit)` | 表・索引の欄の等号の AND・返す欄・前の頁の位置・上限 | `Page(rows, next_cursor, epoch, sequence)` | `Reset`・`Unreachable`・`NotIndexed` |
-| `PutRow(table, key, value, expect, approval)` | 表・キー・欄の差分・期待(`ExpectAbsent` / `ExpectVersion(n)` / `ExpectAny`)・承認(任意) | `Written(version, value)` | `Conflict(current)`・`Refused(reason)`・`Unreachable` |
+| `PutRow(table, key, value, expect)` | 表・キー・欄の差分・期待(`ExpectAbsent` / `ExpectVersion(n)` / `ExpectAny`)。書き手の名は欄に無く、handler を組む時に身元から入る | `Written(version, value)` | `Conflict(current)`・`Refused(reason)`・`Unreachable` |
 | `WatchChanges(tables, cursor, timeout, limit)` | 表の列・位置・待つ秒 | `Changes(items, cursor)` | `Reset(epoch)`・`Unreachable` |
 | `AppendEvent(stream, idempotency_key, body)` | 追記の列・冪等キー・本文 | `Appended(sequence)`(同じキーの再送は前の番号) | `Refused`・`Unreachable` |
 | `ReadEvents(stream, after, limit)` | 追記の列・この番号より後・上限 | `Events(items, last_sequence)` | `Unreachable` |
@@ -62,7 +62,7 @@ operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の�
 | `RowType(table, model)` | 表 1 つの行の型(欄の名 = 表の定義の欄の名・alias が在れば alias。写しは pydantic の `TypeAdapter`) |
 | `read_typed(row_type, key)` | `TypedRow(key, value, version)` か `Missing`・`Unreachable` |
 | `list_typed(row_type, where=, cursor=, limit=)` | `TypedPage(rows, next_cursor, epoch, sequence)` か `Reset`・`Unreachable`・`NotIndexed` |
-| `put_typed(row_type, key, value, expect, approval=)` | `TypedWritten(version, value)` か `TypedConflict(current)`・`Refused`・`Unreachable` |
+| `put_typed(row_type, key, value, expect)` | `TypedWritten(version, value)` か `TypedConflict(current)`・`Refused`・`Unreachable` |
 | `typed_change(row_type, change)` | `RowChanged` → `TypedRowChanged`(`RowRemoved` はそのまま) |
 
 `put_typed` は行の全体の像を書く: 行の型の欄を全部載せ、値が None の欄は消す。値の変わらない欄は書き手の名簿で照らさないので、
@@ -91,7 +91,7 @@ operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の�
 |---|---|---|
 | `POST /v1/records/read-row` | `{table, key}` | `row` / `missing` |
 | `POST /v1/records/list-rows` | `{table, where?, fields?, cursor?, limit?}` | `page` / `reset` / `notIndexed` |
-| `POST /v1/records/put-row` | `{table, key, value, expect, approval?}` | `written` / `conflict` / `refused` |
+| `POST /v1/records/put-row` | `{table, key, value, expect}`(`approval` は廃止 — null だけ読み飛ばし、値があれば 400) | `written` / `conflict` / `refused` |
 | `POST /v1/records/watch-changes` | `{tables, cursor, timeout?, limit?}` | `changes` / `reset` |
 | `POST /v1/records/append-event` | `{stream, idempotencyKey, body}` | `appended` / `refused` |
 | `POST /v1/records/read-events` | `{stream, after?, limit?}` | `events` |
@@ -146,7 +146,7 @@ SIGTERM / SIGINT で口を閉じて接続を返す。
 | `law_stale_put_conflicts` | 古い版の `PutRow` は `Conflict`・衝突は行を変えない |
 | `law_committed_changes_appear_once_in_order` | 確定した変更は `WatchChanges` にちょうど 1 回・順序どおり |
 | `law_epoch_change_resets` | 置き場の版が変わると `Reset`・読み直した一覧から続けられる |
-| `law_undeclared_writes_are_refused` | 定義に無い書き手・欄・状態・上限・承認・終端の行・キーの書き換えは `Refused` で、行を変えない |
+| `law_undeclared_writes_are_refused` | 定義に無い書き手・欄・状態・上限・operator の欄・終端の行・キーの書き換えは `Refused` で、行を変えない |
 | `law_operator_paths_need_an_operator` | `operator_paths` の欄は operator の主体の書き手だけが書ける(欄の書き手でも operator でなければ `Refused`・operator でも欄の書き手でない欄は `Refused`)・他の欄は欄の書き手の定義どおり |
 | `law_transient_rows_expire` | `KeepFor` の終端の行は期限で消え、`KeepForever` の行は消えない |
 | `law_indexed_list_equals_filtered_scan` | 索引の `ListRows` は全件を読んで絞った結果と同じ |
