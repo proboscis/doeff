@@ -3,12 +3,13 @@
 ;;; 判断(期待・書きの許可・保持・索引・頁)は admission.hy の純関数ちょうど 1 つ(memory の handler と同じ関数)。
 ;;; 文は pg_sql.hy(純粋)で、流すのはこの file の PgRecordsHost だけ。接続は composition root が開いて渡す(psycopg 3・
 ;;; 自動 commit の接続 — 書きは host が transaction を開く)。psycopg はこの package の依存に無い(extra "pg")。
-;;; 接続の失敗(psycopg の OperationalError / InterfaceError)は Unreachable の答えに写す。それ以外の例外は実装の誤りとして上がる。
-(require doeff-hy.macros [defhandler])
-(import importlib)
+;;; 接続の失敗(composition root が渡す型 — psycopg なら OperationalError / InterfaceError)は Unreachable の答えに写す。
+;;; それ以外の例外は実装の誤りとして上がる。
+(require doeff-hy.macros [defhandler defk <-])
 (import json)
 (import socket)
-(import typing [NamedTuple])
+(import collections.abc [Callable])
+(import typing [NamedTuple Protocol TypeVar])
 (import doeff [Pure])
 (import doeff_hy.frozen [FrozenMap frozen-json-object])
 (import doeff_time [GetTime])
@@ -16,32 +17,40 @@
                               Events Reset WatchCursor ListCursor Refused Unreachable])
 (import doeff_records.effects [ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents])
 (import doeff_records.faults [AdvanceStoreEpoch])
+(import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.admission [AppendReplay judge-expect judge-put judge-append row-expired? where-refusal listed-row
                                  key-text key-from-text canonical-json next-watch-sequence refuse-every-approval epoch-ms])
 (import doeff_records.watching [wait-for-changes])
-(import doeff_records.pg_sql [DEFAULT-PREFIX checked-prefix schema-statements drop-statements lock-statement
+(import doeff_records.pg_sql [Statement DEFAULT-PREFIX checked-prefix schema-statements drop-statements lock-statement
                               store-head-statement read-row-statement lock-row-statement list-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
-                              changes-statement advance-epoch-statement forget-changes-statement find-event-statement
+                              changes-statement advance-epoch-statement forget-changes-statement prune-changes-statement find-event-statement
                               insert-event-statement read-events-statement expire-events-statement])
 
 (setv DEFAULT-POLL-SECONDS 0.2)
+(setv T (TypeVar "T"))
 
 
-(defn #^ tuple unreachable-errors []
-  "接続の失敗の型(psycopg を読み込めない process では空 — その時は接続も無い)。"
-  (try
-    (setv psycopg (importlib.import-module "psycopg"))
-    #(psycopg.OperationalError psycopg.InterfaceError)
-    (except [ImportError] #())))
+(defclass PgConnection [Protocol]
+  "PgRecordsHost が使う接続の面(psycopg 3 の Connection がこれを満たす — psycopg はこの package の依存に無いので型で名指さない)。"
+  (#^ bool autocommit)
+  (#^ bool closed)
+  (#^ bool broken)
+  (defn #^ object execute [self #^ str query #^ tuple params] "文を流し、cursor を返す。" ...)
+  (defn #^ object transaction [self] "with で使う transaction を開く。" ...)
+  (defn #^ None close [self] "接続を閉じる。" ...))
 
 
 (defclass PgRecordsHost []
-  "PostgreSQL の置き場 1 つ: connection = 自動 commit の psycopg の接続 / schema = 宣言 / prefix = 表の名の接頭辞 /
+  "PostgreSQL の置き場 1 つ: connection = 自動 commit の psycopg の接続 / schema = 宣言 /
+   unreachable-errors = 接続の失敗の例外の型(接続を開いた composition root が渡す — psycopg なら
+   #(psycopg.OperationalError psycopg.InterfaceError))/ prefix = 表の名の接頭辞 /
    origin-host = 行に刻む機体の名 / approval-check = 承認の確かめ方 / poll-seconds = WatchChanges の読み直しの間隔。
    作る時に表を用意する(何度でも同じ)。"
-  (defn __init__ [self connection #^ RecordsSchema schema * [prefix DEFAULT-PREFIX] [origin-host None]
-                  [approval-check refuse-every-approval] [poll-seconds DEFAULT-POLL-SECONDS]]
+  (defn #^ None __init__ [self #^ PgConnection connection #^ RecordsSchema schema * #^ tuple unreachable-errors
+                          #^ str [prefix DEFAULT-PREFIX]
+                          #^ (| str None) [origin-host None] #^ Callable [approval-check refuse-every-approval]
+                          #^ float [poll-seconds DEFAULT-POLL-SECONDS]]
     (when (not (getattr connection "autocommit" False))
       (raise (ValueError "PgRecordsHost の接続は自動 commit(psycopg.connect(..., autocommit=True))— 書きの transaction は host が開く")))
     (setv self.connection connection
@@ -50,17 +59,17 @@
           self.origin-host (or origin-host (socket.gethostname))
           self.approval-check approval-check
           self.poll-seconds poll-seconds
-          self.errors (unreachable-errors))
+          self.errors unreachable-errors)
     (for [statement (schema-statements self.prefix schema)]
       (self.execute statement)))
 
-  (defn execute [self statement]
+  (defn #^ object execute [self #^ Statement statement]
     (.execute self.connection statement.text statement.params))
 
-  (defn fetch-all [self statement]
+  (defn #^ list fetch-all [self #^ Statement statement]
     (.fetchall (self.execute statement)))
 
-  (defn fetch-one [self statement]
+  (defn #^ (| tuple None) fetch-one [self #^ Statement statement]
     (.fetchone (self.execute statement))))
 
 
@@ -94,12 +103,12 @@
   (frozen-json-object (json.loads payload) "state_rows の payload"))
 
 
-(defn #^ Row row-of [record]
+(defn #^ Row row-of [#^ tuple record]
   "state_rows の行(key payload version …)→ Row。"
   (Row (key-from-text (get record 0)) (decoded-value (get record 1)) (int (get record 2))))
 
 
-(defn guarded [#^ PgRecordsHost host action]
+(defn #^ (| T Unreachable) guarded [#^ PgRecordsHost host #^ (get Callable [] T) action]
   "action() を流し、接続の失敗を Unreachable の答えに写す。"
   (try
     (action)
@@ -118,8 +127,10 @@
         (ExpiredRow name (tuple record))))
 
 
-(defn #^ None purge-expired [#^ PgRecordsHost host #^ int now-ms]
-  "期限を過ぎた行を消して変更の列に「消えた」を積み、期限を過ぎた出来事を捨てる。候補が無ければ lock を取らない。"
+(defn #^ int purge-expired [#^ PgRecordsHost host #^ int now-ms]
+  "期限を過ぎた行を消して変更の列に「消えた」を積み、期限を過ぎた出来事を捨てる。候補が無ければ lock を取らない。
+   答え = 消した行の数。"
+  (setv removed 0)
   (when (expired-rows host now-ms)
     (with [(.transaction host.connection)]
       (host.execute (lock-statement host.prefix))
@@ -127,11 +138,12 @@
       (for [expired (expired-rows host now-ms)]
         (setv #(text _ version) (cut expired.record 3))
         (host.execute (delete-row-statement host.prefix expired.table text (int version)))
-        (host.execute (append-change-statement host.prefix expired.table text (int version) None now-ms epoch)))))
+        (host.execute (append-change-statement host.prefix expired.table text (int version) None now-ms epoch))
+        (+= removed 1))))
   (for [#(name decl) (sorted (.items host.schema.streams))]
     (when (isinstance decl.retention KeepFor)
       (host.execute (expire-events-statement host.prefix name (- now-ms (int (* 1000 decl.retention.seconds)))))))
-  None)
+  removed)
 
 
 ;; --- 行 --------------------------------------------------------------------------------------------------
@@ -180,7 +192,7 @@
   (Written version verdict.value))
 
 
-(defn #^ object change-of [record]
+(defn #^ (| RowChanged RowRemoved) change-of [#^ tuple record]
   "row_changes の行(seq ledger key version payload)→ RowChanged | RowRemoved。"
   (setv #(seq table text version payload) record)
   (if (is payload None)
@@ -201,7 +213,7 @@
 
 ;; --- 追記の列 --------------------------------------------------------------------------------------------
 
-(defn #^ Event event-of [#^ str stream record]
+(defn #^ Event event-of [#^ str stream #^ tuple record]
   (setv #(seq at payload) record
         decoded (json.loads payload))
   (Event stream (int seq) (get decoded "idempotencyKey") (get decoded "body") (get decoded "writer") (int at)))
@@ -237,9 +249,20 @@
   epoch)
 
 
+;; --- 手入れ ------------------------------------------------------------------------------------------------
+
+(defk pg-prune-changes [host ask now-ms]
+  {:pre [(: host PgRecordsHost) (: ask PruneChanges) (: now-ms int)] :post [(: % Pruned)]}
+  "変更の列が際限なく伸びないように、keep-seconds より古い変更を消して floor を上げる(書きの lock の中 — 読み手の断面と揃える)。"
+  (with [(.transaction host.connection)]
+    (host.execute (lock-statement host.prefix))
+    (setv #(floor removed) (host.fetch-one (prune-changes-statement host.prefix (- now-ms (int (* 1000 ask.keep-seconds)))))))
+  (Pruned (int floor) (int removed)))
+
+
 ;; --- handler ------------------------------------------------------------------------------------------------
 
-(defhandler pg-records-handler [host writer]
+(defhandler pg-records-handler [#^ PgRecordsHost host #^ str writer]
   (ReadRow [table key]
     (<- now (GetTime))
     (resume (guarded host (fn [] (purge-expired host (epoch-ms now)) (pg-read-row host effect)))))
@@ -260,4 +283,14 @@
     (<- now (GetTime))
     (resume (guarded host (fn [] (purge-expired host (epoch-ms now)) (pg-read-events host effect)))))
   (AdvanceStoreEpoch []
-    (resume (pg-advance-epoch host))))
+    (resume (pg-advance-epoch host)))
+  (SweepExpired []
+    (<- now (GetTime))
+    (resume (guarded host (fn [] (Swept (purge-expired host (epoch-ms now)))))))
+  (PruneChanges [keep-seconds]
+    (<- now (GetTime))
+    (try
+      (<- pruned (pg-prune-changes host effect (epoch-ms now)))
+      (except [error host.errors]
+        (setv pruned (Unreachable (.format "PostgreSQL に届かない: {}" error)))))
+    (resume pruned)))

@@ -154,6 +154,20 @@
              #()))
 
 
+(defn #^ Statement prune-changes-statement [#^ str prefix #^ int before-at]
+  "刻が before-at 以下の変更のうち最大の番号までを変更の列から消し(刈る範囲は番号の前方の連なり — 刻が番号の順と揃わなくても
+   floor の下に取り残しを作らない)、floor をそこまで上げ、#(floor 消した数) を返す(書きの lock の中で流す —
+   lock の外だと、消した後・floor を上げる前に読んだ読み手が消えた変更を黙って飛ばす)。"
+  (Statement (.format "WITH removed AS (DELETE FROM {p}row_changes
+                                        WHERE seq <= (SELECT coalesce(max(seq), 0) FROM {p}row_changes WHERE at <= %s)
+                                        RETURNING seq),
+                            raised AS (UPDATE {p}store_epoch
+                                       SET floor = greatest(floor, (SELECT coalesce(max(seq), 0) FROM removed))
+                                       WHERE id = 1 RETURNING floor)
+                       SELECT (SELECT floor FROM raised), (SELECT count(*) FROM removed)" :p prefix)
+             #(before-at)))
+
+
 (defn #^ Statement forget-changes-statement [#^ str prefix]
   (Statement (.format "DELETE FROM {p}row_changes" :p prefix) #()))
 

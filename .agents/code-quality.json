@@ -72,7 +72,15 @@
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_wire.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_maintenance.hy",
     "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_live.hy",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/cache_host_model.py"
+    "packages/doeff-agents/src/doeff_agents/sessionhost/cache_host_model.py",
+    "packages/doeff-records/src/doeff_records/wire.hy",
+    "packages/doeff-records/src/doeff_records/principals.hy",
+    "packages/doeff-records/src/doeff_records/service.hy",
+    "packages/doeff-records/src/doeff_records/http_client.hy",
+    "packages/doeff-records/src/doeff_records/http_server.hy",
+    "packages/doeff-records/src/doeff_records/maintenance.hy",
+    "packages/doeff-records/src/doeff_records/pg_pool.hy",
+    "packages/doeff-records/src/doeff_records/main.hy"
   ],
   "exclude": [],
   "baseline": ".agents/code-quality-baseline.json",
@@ -85,7 +93,8 @@
   ],
   "source_roots": {
     "python": [
-      "packages/doeff-agents/src"
+      "packages/doeff-agents/src",
+      "packages/doeff-records/src"
     ]
   },
   "modules": [
@@ -1221,6 +1230,269 @@
       ],
       "allow": [
         "agentd-cache-operation"
+      ],
+      "typed": true
+    },
+    {
+      "name": "records-wire",
+      "paths": [
+        "packages/doeff-records/src/doeff_records/wire.hy"
+      ],
+      "responsibility": "記録の service の wire の綴りの唯一の置き場: 公開 effect 6 つの要求と答えを JSON の値へ写し、JSON の値から契約の形で読む(知らない鍵・足りない鍵・型の違いは WireMalformed)。I/O なし",
+      "layer": "pure",
+      "public": [
+        "packages/doeff-records/src/doeff_records/wire.hy"
+      ],
+      "allow": [
+        "records-values",
+        "records-effects"
+      ],
+      "typed": true
+    },
+    {
+      "name": "records-principals",
+      "paths": [
+        "packages/doeff-records/src/doeff_records/principals.hy"
+      ],
+      "responsibility": "記録の service の呼び手の身元: principals.json を厳しく読み、Bearer の token を定時間の比べで書き手の名へ引く。I/O なし(file は composition root が読む)",
+      "layer": "pure",
+      "public": [
+        "packages/doeff-records/src/doeff_records/principals.hy"
+      ],
+      "allow": [],
+      "typed": true
+    },
+    {
+      "name": "records-maintenance",
+      "paths": [
+        "packages/doeff-records/src/doeff_records/maintenance.hy"
+      ],
+      "responsibility": "置き場の手入れの effect(期限切れの回収・変更の列の刈り取り — 公開 effect ではない)と、それを間隔ごとに撃つ Program。I/O は handler(memory・PostgreSQL)",
+      "layer": "effects",
+      "public": [
+        "packages/doeff-records/src/doeff_records/maintenance.hy"
+      ],
+      "allow": [
+        "records-values"
+      ],
+      "typed": true
+    },
+    {
+      "name": "records-service",
+      "paths": [
+        "packages/doeff-records/src/doeff_records/service.hy"
+      ],
+      "responsibility": "記録の service の HTTP の口の流れ: 要求 1 つ → 身元 → 本文の読み → 宣言に在る表か → 呼び手の書き手の handler の下で公開 effect を撃つ → 答え。判断は持たない(綴り = records-wire・身元 = records-principals・書きの判断 = 記録の handler)",
+      "layer": "effects",
+      "public": [
+        "packages/doeff-records/src/doeff_records/service.hy"
+      ],
+      "allow": [
+        "records-wire",
+        "records-principals",
+        "records-values"
+      ],
+      "typed": true
+    },
+    {
+      "name": "records-http-client",
+      "paths": [
+        "packages/doeff-records/src/doeff_records/http_client.hy"
+      ],
+      "responsibility": "公開 effect 6 つに記録の service の HTTP の口越しで答える client の handler(HTTP の I/O はここだけ・綴りは records-wire)。401 を書きは Refused・読みは Unreachable に、503 と届かない時を Unreachable に写す",
+      "layer": "io",
+      "public": [
+        "packages/doeff-records/src/doeff_records/http_client.hy"
+      ],
+      "allow": [
+        "records-wire",
+        "records-values",
+        "records-effects",
+        "records-watching"
+      ],
+      "typed": true
+    },
+    {
+      "name": "records-http-server",
+      "paths": [
+        "packages/doeff-records/src/doeff_records/http_server.hy"
+      ],
+      "responsibility": "標準の http.server で記録の service の口を開く I/O の配線: 見出しと本文を要求の値にし、要求ごとに handler の組を借りて respond の Program を runner で走らせ、答えを書く",
+      "layer": "io",
+      "public": [
+        "packages/doeff-records/src/doeff_records/http_server.hy"
+      ],
+      "allow": [
+        "records-service",
+        "records-wire",
+        "records-principals",
+        "records-values"
+      ],
+      "typed": true
+    },
+    {
+      "name": "records-pg-pool",
+      "paths": [
+        "packages/doeff-records/src/doeff_records/pg_pool.hy"
+      ],
+      "responsibility": "PostgreSQL の置き場の接続の貸し出し: 要求 1 つ = 接続 1 本(同時の要求の transaction を 1 本の接続に混ぜない)・切れた接続を捨てる",
+      "layer": "io",
+      "public": [
+        "packages/doeff-records/src/doeff_records/pg_pool.hy"
+      ],
+      "allow": [
+        "records-values",
+        "records-pg",
+        "records-pg-sql"
+      ],
+      "typed": true
+    },
+    {
+      "name": "records-main",
+      "paths": [
+        "packages/doeff-records/src/doeff_records/main.hy"
+      ],
+      "responsibility": "記録の service の composition root: env と Secret の file を読み、身元の名簿・置き場の宣言・接続の貸し出し・HTTP の口・手入れの係を組んで立てる(判断を持たない)",
+      "layer": "runtime",
+      "public": [
+        "packages/doeff-records/src/doeff_records/main.hy"
+      ],
+      "allow": [
+        "records-principals",
+        "records-pg-pool",
+        "records-maintenance",
+        "records-http-server",
+        "records-values",
+        "records-pg",
+        "records-pg-sql"
+      ],
+      "typed": true
+    },
+    {
+      "name": "records-values",
+      "paths": [
+        "packages/doeff-records/src/doeff_records/values.hy"
+      ],
+      "responsibility": "記録の仕組みの値の型: 表と追記の列の宣言・書きの期待・位置・effect の答え(成功と失敗の判別可能な union)。data だけで I/O なし",
+      "layer": "domain",
+      "public": [
+        "packages/doeff-records/src/doeff_records/values.hy"
+      ],
+      "allow": [],
+      "typed": true
+    },
+    {
+      "name": "records-effects",
+      "paths": [
+        "packages/doeff-records/src/doeff_records/effects.hy"
+      ],
+      "responsibility": "記録の公開 effect 6 つ(ReadRow・ListRows・PutRow・WatchChanges・AppendEvent・ReadEvents)の宣言。書き手の身元は引数にしない",
+      "layer": "effects",
+      "public": [
+        "packages/doeff-records/src/doeff_records/effects.hy"
+      ],
+      "allow": [
+        "records-values"
+      ],
+      "typed": true
+    },
+    {
+      "name": "records-faults",
+      "paths": [
+        "packages/doeff-records/src/doeff_records/faults.hy"
+      ],
+      "responsibility": "検の口の effect(置き場の版を進める AdvanceStoreEpoch — 公開 effect ではない)",
+      "layer": "effects",
+      "public": [
+        "packages/doeff-records/src/doeff_records/faults.hy"
+      ],
+      "allow": [],
+      "typed": true
+    },
+    {
+      "name": "records-admission",
+      "paths": [
+        "packages/doeff-records/src/doeff_records/admission.hy"
+      ],
+      "responsibility": "書きの許可・期待・保持・索引・頁の判断の唯一の置き場(純関数)。memory・PostgreSQL・写しの handler が全部これを呼ぶ",
+      "layer": "pure",
+      "public": [
+        "packages/doeff-records/src/doeff_records/admission.hy"
+      ],
+      "allow": [
+        "records-values"
+      ],
+      "typed": true
+    },
+    {
+      "name": "records-watching",
+      "paths": [
+        "packages/doeff-records/src/doeff_records/watching.hy"
+      ],
+      "responsibility": "WatchChanges の待ちの Program(変更が来るか timeout まで poll する・doeff-time の時計)— handler の組が共有する 1 つ",
+      "layer": "effects",
+      "public": [
+        "packages/doeff-records/src/doeff_records/watching.hy"
+      ],
+      "allow": [
+        "records-values",
+        "records-admission"
+      ],
+      "typed": true
+    },
+    {
+      "name": "records-pg-sql",
+      "paths": [
+        "packages/doeff-records/src/doeff_records/pg_sql.hy"
+      ],
+      "responsibility": "PostgreSQL の handler の文(純粋 — 接続に触らない)と表の形",
+      "layer": "pure",
+      "public": [
+        "packages/doeff-records/src/doeff_records/pg_sql.hy"
+      ],
+      "allow": [
+        "records-values"
+      ],
+      "typed": true
+    },
+    {
+      "name": "records-pg",
+      "paths": [
+        "packages/doeff-records/src/doeff_records/pg.hy"
+      ],
+      "responsibility": "公開 effect と手入れの effect に PostgreSQL の表で答える handler(接続の失敗は Unreachable の答え)",
+      "layer": "io",
+      "public": [
+        "packages/doeff-records/src/doeff_records/pg.hy"
+      ],
+      "allow": [
+        "records-values",
+        "records-effects",
+        "records-faults",
+        "records-maintenance",
+        "records-admission",
+        "records-watching",
+        "records-pg-sql"
+      ],
+      "typed": true
+    },
+    {
+      "name": "records-memory",
+      "paths": [
+        "packages/doeff-records/src/doeff_records/memory.hy"
+      ],
+      "responsibility": "公開 effect と手入れの effect に手元の表と番号の列で答える handler(模擬・手元の 1 process・単体の検)",
+      "layer": "io",
+      "public": [
+        "packages/doeff-records/src/doeff_records/memory.hy"
+      ],
+      "allow": [
+        "records-values",
+        "records-effects",
+        "records-faults",
+        "records-maintenance",
+        "records-admission",
+        "records-watching"
       ],
       "typed": true
     }
