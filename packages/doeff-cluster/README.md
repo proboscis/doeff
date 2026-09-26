@@ -236,7 +236,8 @@ service の設定(`run.config`)に `record` 欄を足すと、`job_entry` が ha
   `--build-arg BASE=<業務の image>`。
 - `deploy/base/Dockerfile` — 土台だけの image(OS・git・ssh・uv・Rust の toolchain・tini・`boot.sh`)。doeff も Python も持たず、
   `boot.sh` が `WORKER_DOEFF_COMMIT` の doeff を展開して `uv sync --locked --package doeff-cluster` した venv から coordinator / worker を
-  起こします(自己起動)。worker の code を変える時は commit を変えて入れ替え、image は作り直しません。作り直す理由は頭の註の 2 種類
+  起こします(自己起動)。worker の code を変える時は commit を変えて入れ替え、image は作り直しません。root を用意した後は、起動の
+  script も root の中の同じ commit の `deploy/boot.sh` へ引き継ぐので、起動の script を直した時も image は作り直しません。作り直す理由は頭の註の 2 種類
   だけで、それ以外の変更は `hy -m doeff_cluster.image_contract <Dockerfile>`(と `tests/test_base_image_contract.hy`)が赤にします。
   非公開の repo は `WORKER_REPOS`(url ごとの読み取り専用の deploy key)で読みます。`ROLE=access` で書かれる設定だけを確かめられます。
 
