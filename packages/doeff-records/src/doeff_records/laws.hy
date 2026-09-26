@@ -15,7 +15,7 @@
 (import doeff_core_effects.scheduler [Spawn Wait])
 (import doeff_time [Delay])
 (import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor KeepForever ExpectAbsent ExpectVersion ExpectAny
-                              Approval WatchCursor ListCursor Row Missing Page Written Conflict Refused NotIndexed Reset
+                              WatchCursor ListCursor Row Missing Page Written Conflict Refused NotIndexed Reset
                               Changes RowChanged RowRemoved Appended Events])
 (import doeff_records.effects [ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents])
 (import doeff_records.faults [AdvanceStoreEpoch])
@@ -174,24 +174,23 @@
   [first w1 epoch watched listed again w2 fresh])
 
 
-;; --- 法 4: 宣言に無い書き手・欄・状態・上限・承認・終端は Refused -------------------------------------------
+;; --- 法 4: 宣言に無い書き手・欄・状態・上限・operator の欄・終端は Refused -------------------------------------------
 
 (defk law-undeclared-writes-are-refused [#^ LawHarness harness]
   {:pre [(: harness LawHarness)] :post [(: % list)]}
   (setv law "宣言が許さない書きは Refused で、行を変えない")
   (<- born (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent))))
   (setv refusals [])
-  (for [#(writer table key diff approval) [#(STRANGER "parts" #("p1") {"label" "z"} None)
-                                           #(PAINTER "parts" #("p1") {"label" "z"} None)
-                                           #(PAINTER "parts" #("p9") {"color" "red"} None)
-                                           #(MAKER "parts" #("p1") {"size" 1} None)
-                                           #(MAKER "parts" #("p1") {"state" "weird"} None)
-                                           #(MAKER "parts" #("p1") {"grant" "yes"} None)
-                                           #(MAKER "parts" #("p1") {"grant" "yes"} (Approval "forged"))
-                                           #(MAKER "parts" #("p1") {"note" (* "n" 500)} None)
-                                           #(MAKER "parts" #("p1") {"id" "p-other"} None)
-                                           #(MAKER "tickets" #("only-one") {"owner" "o"} None)]]
-    (<- answer (as-writer harness writer (PutRow table key diff (ExpectAny) :approval approval)))
+  (for [#(writer table key diff) [#(STRANGER "parts" #("p1") {"label" "z"})
+                                  #(PAINTER "parts" #("p1") {"label" "z"})
+                                  #(PAINTER "parts" #("p9") {"color" "red"})
+                                  #(MAKER "parts" #("p1") {"size" 1})
+                                  #(MAKER "parts" #("p1") {"state" "weird"})
+                                  #(MAKER "parts" #("p1") {"grant" "yes"})
+                                  #(MAKER "parts" #("p1") {"note" (* "n" 500)})
+                                  #(MAKER "parts" #("p1") {"id" "p-other"})
+                                  #(MAKER "tickets" #("only-one") {"owner" "o"})]]
+    (<- answer (as-writer harness writer (PutRow table key diff (ExpectAny))))
     (require-law (isinstance answer Refused) law (.format "{} の {!r} {!r}: {!r}" writer key diff answer))
     (.append refusals answer))
   (<- untouched (as-writer harness MAKER (ReadRow "parts" #("p1"))))

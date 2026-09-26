@@ -7,10 +7,10 @@
 (import dataclasses [dataclass])
 (import datetime [datetime timezone])
 (import json)
-(import collections.abc [Callable Mapping])
+(import collections.abc [Mapping])
 (import doeff_hy.frozen [FrozenMap frozen-json-object thaw-json])
 (import doeff_records.values [TableDecl StreamDecl KeepFor Row Missing Conflict Refused NotIndexed Event
-                              ExpectAbsent ExpectVersion ExpectAny Approval])
+                              ExpectAbsent ExpectVersion ExpectAny])
 
 
 ;; --- JSON の値 ------------------------------------------------------------------------------------------------
@@ -69,11 +69,6 @@
 (defclass [(dataclass :frozen True)] Admitted []
   "書きを許した: value = 確定する行の値の凍らせた写像(鍵の欄と、生まれる行なら状態の initial を含む)。"
   (#^ FrozenMap value))
-
-
-(defn #^ (| str None) refuse-every-approval [#^ Approval approval #^ str table #^ tuple key #^ tuple fields]
-  "承認の確かめ方の既定: どの承認も認めない(承認を確かめる口を組んでいない置き場で、承認の欄は書けない)。"
-  "承認を確かめる口が組まれていない")
 
 
 (defn #^ (| str None) state-of [#^ TableDecl decl #^ FrozenMap value]
@@ -147,16 +142,6 @@
       (Refused (.format "表 {} の状態の語 {!r} は宣言 {!r} の外" decl.name word decl.states))))
 
 
-(defn #^ (| Refused None) approval-refusal [#^ TableDecl decl #^ tuple key #^ tuple changed #^ (| Approval None) approval
-                                            #^ Callable approval-check]
-  (setv guarded (tuple (gfor name changed :if (in name decl.operator-paths) name)))
-  (cond
-    (not guarded) None
-    (is approval None) (Refused (.format "表 {} の欄 {!r} を書くには承認が要る" decl.name guarded))
-    True (do (setv reason (approval-check approval decl.name key guarded))
-             (if (is reason None) None (Refused (.format "表 {} の欄 {!r} の承認が通らない: {}" decl.name guarded reason))))))
-
-
 (defn #^ (| Refused None) operator-refusal [#^ TableDecl decl #^ str writer #^ tuple changed #^ tuple operators] ; defk にできない: handler(memory・PG・写し)が同期に呼ぶ judge-put の 1 段(この file の判断はすべて純関数の defn)
   "operator の宣言の欄を agent が書かないようにする: 変わる欄に operator-paths の欄があれば、書き手が operator の主体の一覧
    (RecordsSchema.operators)に入っていること。書き手の名は handler を組む時に身元から入る値で、effect の引数には無い —
@@ -177,22 +162,16 @@
 
 
 (defn #^ (| Admitted Refused) judge-put [#^ TableDecl decl #^ str writer #^ (| Row None) current #^ tuple key #^ FrozenMap diff
-                                         #^ (| Approval None) [approval None] #^ (| Callable None) [approval-check None]
-                                         * #^ (| tuple None) [operators None]]
+                                         * #^ tuple operators]
   "書きを許すか: Admitted(確定する値)か Refused(理由)。期待(judge-expect)は呼び手が先に見る。
-   operators = operator の主体の一覧(置き場の宣言の RecordsSchema.operators)— operator の宣言の欄の書きはこれで判定する。
-   ⚠ 移行の間だけ: operators を渡さない呼び手(外の系の写しの handler)は、今までの承認の印(approval /
-   approval-check)で判定する。写しが operators を渡すようになったら、承認の引数・approval-refusal・refuse-every-approval・
-   Approval をまとめて消す。"
+   operators = operator の主体の一覧(置き場の宣言の RecordsSchema.operators)— operator の宣言の欄の書きはこれで判定する。"
   (setv shape (shape-refusal decl current key diff))
   (when shape (return shape))
   (setv changed (changed-fields decl current diff)
         value (landed-value decl current key diff))
   (or (writer-refusal decl writer changed)
       (state-refusal decl value)
-      (if (is operators None)
-          (approval-refusal decl key changed approval (or approval-check refuse-every-approval))
-          (operator-refusal decl writer changed operators))
+      (operator-refusal decl writer changed operators)
       (size-refusal decl value)
       (Admitted value)))
 

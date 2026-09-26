@@ -268,7 +268,7 @@
   (ListRows [table where fields cursor limit]
     (<- now (GetTime))
     (resume (guarded host (fn [] (purge-expired host (epoch-ms now)) (pg-list-rows host effect)))))
-  (PutRow [table key value expect approval]
+  (PutRow [table key value expect]
     (<- now (GetTime))
     (resume (guarded host (fn [] (purge-expired host (epoch-ms now)) (pg-put-row host writer effect (epoch-ms now))))))
   (WatchChanges [tables cursor timeout limit]
