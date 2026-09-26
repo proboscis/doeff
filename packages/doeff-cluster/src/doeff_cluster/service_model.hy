@@ -12,8 +12,13 @@
 ;;;     {:pre [(: interval float)] :post [(: % int)]}
 ;;;     …)
 ;;;   (setv turn-placer (service "turn-placer" turn-placer-program
-;;;                              :env "myapp.envs:board_env" :requires {"kind" "k3s"} :config {"interval" 1.0}))
+;;;                              :env "myapp.envs:board_env" :requires {"kind" "k3s"} :config {"interval" 1.0}
+;;;                              :env-config {"token-file" "/etc/myapp/token"}))
 ;;;   (setv lab (System "lab" #(turn-placer)))
+;;;
+;;; 設定は持ち主で 2 つに分けて書く: :config = 本体の引数(鍵と引数が 1 対 1)・:env-config = env だけが読む設定(置き場・資格の file・
+;;; lease の時間等 — 本体の公開の契約に入れない)。coordinator へは 2 つを重ねた平たい run.config が渡り、実行先は本体へ本体の引数の名の
+;;; 設定だけを、env へは全体を渡す。
 (require doeff-hy.macros [defk <-])
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
@@ -36,7 +41,8 @@
   (setv #^ object program-factory None)
   (setv #^ (| dict None) readiness None)    ; {"windowSeconds": n}(ReportReady で Ready を報告する service だけ)
   (setv #^ str update "recreate")          ; 入れ替えの形 recreate | handoff(worker_model.JobSpec の handoff)
-  (setv #^ (| dict None) base-from None))  ; 土台の commit を追う Deployment(base_follow_policy)
+  (setv #^ (| dict None) base-from None)   ; 土台の commit を追う Deployment(base_follow_policy)
+  (setv #^ tuple env-config #()))           ; env だけが読む設定(鍵の順の (鍵 値) の組)。本体の引数にしない
 
 
 (defclass [(dataclass :frozen True)] System []
@@ -53,10 +59,31 @@
 (setv ASSEMBLY-KEYS #(RECORD-KEY))
 
 
-(defn #^ dict program-arguments [#^ dict config]  ; defk にできない: 宣言の時点の検め(check-program-arguments)も使う
-  "run.config から本体の keyword 引数を作る唯一の場所。組み立て側の欄(ASSEMBLY-KEYS)を外し、JSON の鍵(kebab / snake)を
-   Hy の引数名へ mangle する。1 process の main(service-program)・実行先(job_entry service)・再生(replay_main)が使う。"
-  (dfor #(k v) (.items config) :if (not-in k ASSEMBLY-KEYS) (hy.mangle k) v))
+(defn #^ (| frozenset None) argument-names [#^ Callable program]  ; defk にできない: 宣言の値は module の読み込みの時に組む
+  "本体が名で受ける引数の名(Hy の引数名 = mangle 済み)。**kwargs を受ける本体は None(どの鍵も受ける)。"
+  (setv parameters (list (.values (. (inspect.signature program) parameters))))
+  (if (any (gfor p parameters (= p.kind inspect.Parameter.VAR_KEYWORD)))
+      None
+      (frozenset (gfor p parameters
+                       :if (in p.kind #(inspect.Parameter.POSITIONAL_OR_KEYWORD inspect.Parameter.KEYWORD_ONLY))
+                       p.name))))
+
+
+(defn #^ dict program-arguments [#^ Callable program #^ dict config]  ; defk にできない: 宣言の時点の検め(check-program-arguments)も使う
+  "run.config から本体の keyword 引数を作る唯一の場所。本体の引数の名の設定だけを渡し(env だけが読む設定と組み立て側の欄
+   ASSEMBLY-KEYS は渡さない)、JSON の鍵(kebab / snake)を Hy の引数名へ mangle する。1 process の main(service-program)・
+   実行先(job_entry service)・再生(replay_main)が使う。"
+  (setv names (argument-names program))
+  (dfor #(k v) (.items config)
+        :if (and (not-in k ASSEMBLY-KEYS) (or (is names None) (in (hy.mangle k) names)))
+        (hy.mangle k) v))
+
+
+(defn #^ list settings-left-to-env [#^ Callable program #^ dict config]  ; defk にできない: 実行先の入口(job_entry)が呼ぶ
+  "本体へ渡さない設定の鍵(組み立て側の欄を除く — env だけが読む設定)。実行先が起動の時に印字する(手で書き換えた設定の綴りの
+   違いを見つける手がかり — 宣言した設定は宣言の時点で検めてある)。"
+  (setv given (program-arguments program config))
+  (sorted (gfor k config :if (and (not-in k ASSEMBLY-KEYS) (not-in (hy.mangle k) given)) k)))
 
 
 (defn #^ str program-reference [#^ Callable program]  ; defk にできない: 宣言の値は module の読み込みの時に組む
@@ -77,25 +104,31 @@
   mapping)
 
 
-(defn #^ None check-program-arguments [#^ str name #^ Callable program #^ dict config]  ; defk にできない: 宣言の値は module の読み込みの時に組む
-  "宣言の設定が本体の引数と合うかを宣言の時点で検める(食い違いは実行先で走らせた時に初めて落ち、coordinator が起こし直し続ける)。
-   設定の鍵(組み立て側の欄を除く)は本体の引数にある・既定値の無い引数は設定にある・本体は組み立て側の欄の名を引数に取らない。"
-  (setv parameters (.values (. (inspect.signature program) parameters))
+(defn #^ None check-program-arguments [#^ str name #^ Callable program #^ dict config #^ dict env-config]  ; defk にできない: 宣言の値は module の読み込みの時に組む
+  "宣言の設定の持ち主が本体の引数と合うかを宣言の時点で検める(食い違いは実行先で走らせた時に初めて落ち、coordinator が起こし直し
+   続ける)。:config の鍵(組み立て側の欄を除く)は本体の引数にある・既定値の無い引数は :config にある・:env-config の鍵は本体の
+   引数の名でも :config の鍵でも組み立て側の欄でもない・本体は組み立て側の欄の名を引数に取らない。"
+  (setv names (argument-names program)
         reserved (sfor k ASSEMBLY-KEYS (hy.mangle k))
-        given (program-arguments config))
-  (setv takes-any (any (gfor p parameters (= p.kind inspect.Parameter.VAR_KEYWORD)))
-        named (lfor p parameters
-                    :if (in p.kind #(inspect.Parameter.POSITIONAL_OR_KEYWORD inspect.Parameter.KEYWORD_ONLY))
-                    p))
+        given (sfor k config :if (not-in k ASSEMBLY-KEYS) (hy.mangle k))
+        required (lfor p (.values (. (inspect.signature program) parameters))
+                       :if (and (in p.kind #(inspect.Parameter.POSITIONAL_OR_KEYWORD inspect.Parameter.KEYWORD_ONLY))
+                                (is p.default inspect.Parameter.empty))
+                       p.name))
   (setv problems
-        (+ (lfor p named :if (in p.name reserved)
-                 (.format "引数 {} は組み立て側の欄の名で、どの実行の道でも本体へ渡らない" p.name))
-           (if takes-any
+        (+ (lfor n (sorted (or names #())) :if (in n reserved)
+                 (.format "引数 {} は組み立て側の欄の名で、どの実行の道でも本体へ渡らない" n))
+           (if (is names None)
                []
-               (lfor k (sorted given) :if (not-in k (sfor p named p.name))
-                     (.format "設定の鍵 {} は本体の引数に無い" k)))
-           (lfor p named :if (and (is p.default inspect.Parameter.empty) (not-in p.name given) (not-in p.name reserved))
-                 (.format "引数 {} が設定に無い" p.name))))
+               (lfor k (sorted config) :if (and (not-in k ASSEMBLY-KEYS) (not-in (hy.mangle k) names))
+                     (.format "設定の鍵 {} は本体の引数に無い(env だけが読む設定なら :env-config に書く)" k)))
+           (lfor n required :if (and (not-in n given) (not-in n reserved))
+                 (.format "引数 {} が :config に無い" n))
+           (lfor k (sorted env-config)
+                 :if (or (in k ASSEMBLY-KEYS) (in k config) (and (is-not names None) (in (hy.mangle k) names)))
+                 (cond (in k ASSEMBLY-KEYS) (.format "env の設定 {} は組み立て側の欄の名" k)
+                       (in k config) (.format "鍵 {} を :config と :env-config の両方に書いている" k)
+                       True (.format "env の設定 {} は本体の引数の名(本体の設定なら :config に書く)" k)))))
   (when problems
     (raise (TypeError (.format "service {} の設定が本体 {} の引数と合わない: {}" name program.__qualname__ (.join "・" problems))))))
 
@@ -104,12 +137,13 @@
                              #^ str env
                              #^ (| dict None) [requires None]
                              #^ (| dict None) [config None]
+                             #^ (| dict None) [env-config None]
                              #^ (| dict None) [readiness None]
                              #^ str [update "recreate"]
                              #^ (| dict None) [base-from None]]
   "名前付きの常駐 job(service)を 1 つ宣言する。
    program = Program を作る module の最上位の関数(設定の鍵を引数に受ける — 食い違いはここで TypeError)。env = 実行先で組む handler の組を返す関数の import path。
-   requires = 置き場の条件・config = 設定(どちらも文字列の鍵の dict)。
+   requires = 置き場の条件・config = 本体の引数の設定・env-config = env だけが読む設定(どれも文字列の鍵の dict)。
    readiness {\"windowSeconds\" n} = 本体が ReportReady で報告する「準備できた」が直近 n 秒以内にある時だけ Ready(Rollout が見る)。
    update \"handoff\" = 版や設定が変わった時、新の process を旧と並べて起こし、新が Ready と数えられてから旧を止める(名前付きの lease で
    書きを 1 つに絞り、lease を待つ間も待機の拍で Ready を報告する service だけが使う)。既定は \"recreate\"(旧を止めてから新)。
@@ -118,8 +152,9 @@
   (when (not-in update UPDATE-FORMS)
     (raise (ValueError (.format "service {} の :update は {} のどれか: {!r}" name UPDATE-FORMS update))))
   (setv reference (program-reference program)
-        settings (string-keyed name "config" (or config {})))
-  (check-program-arguments name program settings)
+        settings (string-keyed name "config" (or config {}))
+        env-settings (string-keyed name "env-config" (or env-config {})))
+  (check-program-arguments name program settings env-settings)
   (ServiceDef name
               reference
               env
@@ -128,7 +163,8 @@
               program
               (if (is readiness None) None (string-keyed name "readiness" readiness))
               update
-              (if (is base-from None) None (string-keyed name "base-from" base-from))))
+              (if (is base-from None) None (string-keyed name "base-from" base-from))
+              :env-config (tuple (sorted (.items env-settings)))))
 
 
 (defn resolve [#^ str path]
@@ -140,14 +176,19 @@
 
 
 (defn #^ dict config-of [#^ ServiceDef service [overrides None]]
-  "宣言の設定に上書き(テストで周期を有限にする等)を重ねた dict。"
-  (| (dict service.config) (or overrides {})))
+  "coordinator へ渡る平たい設定: 本体の引数の設定と env だけが読む設定に、上書き(テストで周期を有限にする等)を重ねた dict。
+   上書きは宣言した鍵と組み立て側の欄だけを変える — 宣言に無い鍵は TypeError(綴りの違う鍵を黙って足さない)。"
+  (setv declared (| (dict service.config) (dict service.env-config))
+        unknown (sorted (gfor k (or overrides {}) :if (and (not-in k declared) (not-in k ASSEMBLY-KEYS)) k)))
+  (when unknown
+    (raise (TypeError (.format "service {} の上書きに宣言に無い設定の鍵がある: {}" service.name (.join "・" unknown)))))
+  (| declared (or overrides {})))
 
 
 (defn #^ Program service-program [#^ ServiceDef service [overrides None]]
   "設定を引数として Program を作る(program-arguments — 実行先と同じ引数)。"
   (setv factory (or service.program-factory (resolve service.factory)))
-  (factory #** (program-arguments (config-of service overrides))))
+  (factory #** (program-arguments factory (config-of service overrides))))
 
 
 (defn #^ (| ServiceDef None) service-named [#^ System system #^ str name]
