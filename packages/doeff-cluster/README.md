@@ -187,7 +187,11 @@ worker は業務の repo の commit を展開して子 process の cwd にしま
 worker が無い・コードを準備できない)・`DetachedUnknown`(知らない key)。
 
 - **lease は担い手が延ばす**: 担い手の worker の heartbeat が lease を延ばします。呼び手の問い合わせは lease に触りません。worker が
-  `lease-seconds` の間沈黙するか、同じ名の worker が別の process の世代で名乗ったら、その task は `DetachedLost` です。
+  `lease-seconds` の間沈黙したら、その task は `DetachedLost` です。
+- **世代**: task は置いた時の worker の process の世代(heartbeat の `boot`)に付きます。lease を延ばすのは置いた世代の heartbeat だけで、
+  置いた世代の heartbeat が lease の間止まったら `DetachedLost` です。同じ名の別の世代(Pod を作り直した後の新しい process・preStop の
+  間の旧い process)の heartbeat は、その task の lease を延ばしも lost にもしません。coordinator は初めて見た順を世代の順とし、
+  退いた世代の heartbeat は worker の名乗り(生存・label・容量・drain)として受けず、その世代に置いた task の報告と lease だけを受けます。
 - **結果の後の消失**: 結果を受け取った後に worker が死んでも、結果は変わりません。結果は `retain-seconds`(既定 24 時間・30 日まで)か
   `ReleaseDetached` まで持ちます。
 - **途絶**: worker は coordinator と途絶えても切り離した task を止めません(途絶が lease より長ければ coordinator が消失とし、再接続の
@@ -242,6 +246,17 @@ service の設定(`run.config`)に `record` 欄を足すと、`job_entry` が ha
   非公開の repo は `WORKER_REPOS`(url ごとの読み取り専用の deploy key)で読みます。`ROLE=access` で書かれる設定だけを確かめられます。
 
 manifest(namespace・node・Secret・Role)は配備する側の repo が持ちます。
+
+### 配備の順
+
+coordinator を先に上げ、その後に worker を入れ替えます。worker の preStop(`ROLE=drain`)は drain の頼みに自分の process の世代
+(`boot`)を載せ、coordinator は今の世代でない頼み(退いた世代・一度も見ていない世代)を同じ名の今の世代に付けません。古い版の
+coordinator はこの欄を読まないので、先に worker だけを上げても効きません。
+
+- 同じ名の Pod が並ぶ worker(node の dir の lock を持たない Deployment の worker)では、新しい coordinator を上げた後の最初の入れ替え
+  だけ、新しい Pod が旧い Pod の preStop が終わってから最長 150 秒 NotReady のままになり得ます。旧い版の preStop は `boot` を載せないので、
+  その頼みが新しい世代に drain を付けるためです(期限 = preStop の上限 90 秒 + 余裕 60 秒)。
+- 急ぐ時は、旧い Pod が終わった後に `DELETE /workers/<名>/drain` を撃って drain を解きます。
 
 ## テスト
 

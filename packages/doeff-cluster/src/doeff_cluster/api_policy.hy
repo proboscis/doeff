@@ -29,7 +29,7 @@
 (import .cluster_model [ClusterState ClusterTiming ClusterNaming Request PlainText format-refusal])
 (import .metrics_policy [record-metrics metrics-text])
 (import .cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task board-write lease-write
-                         still-live-somewhere superseded-boot])
+                         still-live-somewhere other-generation-boot])
 (import .resource_policy [Refused refuse stamp require-actor valid-actor service-readiness record-readiness running-process
                           list-resources get-resource events-view create-resource update-resource delete-resource
                           legacy-put-jobs COORDINATOR])
@@ -285,7 +285,7 @@
         (do (setv name (get body "name"))
             (setv after (settle state (register-heartbeat state body now) name now timing))
             #(after 200 (heartbeat-reply after name timing (ready-instances after name now timing) :now now
-                                         :boot (.get body "boot"))))
+                                         :boot (.get body "boot") :statuses (.get body "statuses" []))))
       (and (= method "GET") (= parts ["state"]))
         #(state 200 (| (state-view state now timing) {"audit" (list (cut state.audit -30 None))
                                                       "drains" (drains-view state now timing)}))
@@ -295,8 +295,8 @@
       (and (= head "workers") (= (len parts) 3) (= (get parts 2) "drain") (= method "POST"))
         (do (setv actor (require-actor request.actor))
             (setv after (settle state (request-drain state (get parts 1) body actor now) actor now timing))
-            ;; 退いた世代(旧い Pod の preStop)の頼みには、その世代の待ちの答え(drain_policy.superseded-worker-view)。
-            #(after 200 (if (superseded-boot after (get parts 1) (.get body "boot"))
+            ;; 今の世代でない頼み(退いた世代・見ていない世代の preStop)には、その世代の待ちの答え(drain_policy.superseded-worker-view)。
+            #(after 200 (if (other-generation-boot after (get parts 1) (.get body "boot"))
                             (superseded-worker-view after (get parts 1) (get body "boot") now timing)
                             (worker-view after (get parts 1) now timing))))
       (and (= head "workers") (= (len parts) 3) (= (get parts 2) "drain") (= method "DELETE"))

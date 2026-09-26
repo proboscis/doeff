@@ -269,6 +269,49 @@
   (assert (= #((. (get c.state.tasks "t1") phase) (. (get c.state.tasks "t1") worker)) #("assigned" "zeus"))))
 
 
+(deftest test-the-old-generation-gets-only-its-running-handoff-jobs-and-its-own-detached-tasks
+  ;; 退いた世代への返事は、動いている物を安全に畳ませるだけ: 入れ替えの job はその世代が running の物だけ(lease を持ったまま
+  ;; Pod の停止まで)・recreate の job は載せない(止めて lease を返す)・退いた後に置かれた job と RemoteJob の task は載せない。
+  (setv c (Coord #("atlas")))
+  (c.beat "atlas" :boot "old")
+  (c.call "POST" "/resources/Service" {"name" "w" "spec" (service)} :expect 201)
+  (c.call "POST" "/resources/Service" {"name" "r" "spec" (service {"update" "recreate"})} :expect 201)
+  (assert (= #((c.placed "w") (c.placed "r")) #("atlas" "atlas")))
+  (c.call "PUT" "/detached/job-own" {"env" "m:e" "blob" "B" "versions" {} "revision" "r" "requires" K3S "leaseSeconds" 60}
+          :actor "c-test")
+  (c.beat "atlas" ["w" "r"] :boot "old")
+  (c.advance 1)
+  (c.beat "atlas" :boot "new")
+  ;; 退いた後に置かれた入れ替えの job と RemoteJob の task(どちらも名 atlas へ置かれる)。
+  (c.call "POST" "/resources/Service" {"name" "w2" "spec" (service)} :expect 201)
+  (c.call "POST" "/tasks" {"env" "m:e" "blob" "x" "revision" "r1" "versions" {} "requires" K3S} :actor "c-test")
+  (setv remote (next (gfor t (.values c.state.tasks) :if (not t.detached) t))
+        own (next (gfor t (.values c.state.tasks) :if t.detached t)))
+  (assert (= #((c.placed "w2") remote.worker own.boot) #("atlas" "atlas" "old")))
+  (setv old-reply (c.beat "atlas" ["w" "r"] :boot "old"))
+  (assert (get old-reply "superseded"))
+  (assert (= (lfor j (get old-reply "jobs") (get j "name")) ["w"]) (get old-reply "jobs"))
+  (assert (= (lfor t (get old-reply "tasks") (get t "id")) [own.id]) (get old-reply "tasks"))
+  ;; 今の世代への返事は名の置き先の job と RemoteJob の task を全部持つ(退いた世代の task は持たない)。
+  (setv new-reply (c.beat "atlas" :boot "new"))
+  (assert (= (sorted (lfor j (get new-reply "jobs") (get j "name"))) ["r" "w" "w2"]))
+  (assert (= (lfor t (get new-reply "tasks") (get t "id")) [remote.id])))
+
+
+(deftest test-a-prestop-of-a-never-seen-generation-does-not-drain-the-live-generation
+  ;; 新しい Pod が最初の heartbeat の前に消された: その preStop の世代を coordinator は一度も見ていない。生きている今の世代を
+  ;; drain させず、その世代の task は無い = drained で終わる。boot の無い頼み(旧い版の preStop)だけ今の世代に付く。
+  (setv c (Coord #("zeus")))
+  (c.beat "zeus" :boot "live")
+  (setv view (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 150 "boot" "never-seen"} :actor "drain@zeus"))
+  (assert (not-in "zeus" c.state.drains) "見ていない世代の drain の頼みが今の世代に drain を付けた")
+  (assert (get view "drain" "superseded") view)
+  (assert (get view "drain" "drained") view)
+  (assert (get (c.call "GET" "/workers/zeus") "ready"))
+  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 150} :actor "drain@zeus")
+  (assert (= (. (get c.state.drains "zeus") boot) "live")))
+
+
 (deftest test-the-old-pod-drain-waits-for-the-detached-tasks-of-its-own-generation
   ;; 退いた世代の preStop は、その世代に置いた切り離した task が終わるまで待つ(走らせ直さない task を途中で殺さない)。
   (setv c (Coord #("zeus")))
