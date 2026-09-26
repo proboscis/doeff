@@ -1,30 +1,4 @@
 rules:
-  - id: cache-process-no-unfenced-signals
-    languages: [python]
-    severity: ERROR
-    message: 専用pingの復旧ではPIDの再利用を検査してください。PIDだけのsignal送信は禁止です。
-    pattern-either:
-      - pattern: os.kill(...)
-      - pattern: os.killpg(...)
-    paths:
-      include:
-        - '**/sessionhost/cache_process.py'
-      exclude:
-        - /tests/semgrep/fixtures/**
-  - id: cache-maintenance-never-becomes-normal-turn
-    languages: [generic]
-    severity: ERROR
-    message: >
-      キャッシュ維持は専用操作です。通常turnの送信・状態更新・event記録へ変換せず、
-      HostCacheの専用記録とSessionCachePingのeffectを使ってください。
-    pattern-regex: '\b(SessionSend|SessionLaunch|AcpCreate|SessionStoreUpsert|SessionStoreRecordEvent|session-store-upsert|session-store-record-event|headless-send-program)\b'
-    paths:
-      include:
-        - '**/sessionhost/cache_host.hy'
-        - '**/sessionhost/acp/cache_maintenance.hy'
-        - '**/sessionhost/acp/cache_live.hy'
-      exclude:
-        - /tests/semgrep/fixtures/**
   # =============================================================================
   # DOEFF ARCHITECTURAL ENFORCEMENT RULES
   # =============================================================================
@@ -60,27 +34,6 @@ rules:
         # with justification — the judge is an adjudicator subprocess, not
         # an agent session launch.
         - '**/*.md'
-        # The sessionhost headless backend (agora-redesign #37, ADR-DOE-AGENTS-012
-        # R11) is the ONE sanctioned print-mode launch site: `claude -p
-        # --output-format stream-json` with the turn end read from the result
-        # line and the next turn resumed by `--resume`. Its home is exactly these
-        # files (argv builder / stdin-stdout protocol / process container /
-        # program / substrate) and their tests; the ban stays in force for every
-        # tui adapter (law print-mode-has-one-home-the-headless-backend).
-        # 2026-09-25 (agora-redesign #604): outside the session host the print
-        # mode argv lives in doeff-claude-code (doeff_claude_code/argv.hy — it
-        # never names the CLI on the flag line, so it needs no exclusion). The
-        # doeff-agents headless handler (handlers/headless.hy) is an adapter
-        # onto doeff-claude-code's effects and is NOT excluded: it must hold no
-        # argv. The sessionhost files below stay only until the agent runtime
-        # switch (deletion plan (b), step 5-1).
-        - '**/sessionhost/impls/headless_argv.hy'
-        - '**/sessionhost/headless_protocol.py'
-        - '**/sessionhost/headless_process.py'
-        - '**/sessionhost/headless.hy'
-        - '**/sessionhost/substrate_headless.hy'
-        - '**/tests/test_sessionhost_headless.py'
-        - '**/tests/headless_stubs/**'
 
   - id: doeff-agents-no-anthropic-api-key-agent-env
     languages:
@@ -561,11 +514,10 @@ rules:
     message: >
       card acp:kanban-issue:ki-9fc7d4bca4dc / law
       conversation-memory-lives-in-the-row: the fold-back BASELINE file
-      (`MEMORY.base.json`) has exactly two homes — the wire spelling in
-      acp/effects.py (MEMORY_BASE_FILE, next to MEMORY_INDEX_FILE) and the
-      seat's copy in sessionhost/impls/claude_code.hy
-      (CLAUDE-MEMORY-BASE-FILE, which the substrate-clean vessel may not import
-      from acp). A third site that spells the file builds a side car nobody
+      (`MEMORY.base.json`) has exactly one home — the seat's copy in
+      sessionhost/impls/claude_code.hy (CLAUDE-MEMORY-BASE-FILE). The wire
+      spelling in acp/effects.py retired with agentd (agora-redesign #668).
+      A second site that spells the file builds a side car nobody
       reads: the fold-back then sees no baseline, writes NO book back (verdict
       rule 3b) and the memory silently stops moving. Import the constant
       instead. The baseline is not a record of truth — it must never be written
@@ -576,7 +528,6 @@ rules:
       include:
         - /packages/doeff-agents/**
       exclude:
-        - "**/sessionhost/acp/effects.py"
         - "**/sessionhost/impls/claude_code.hy"
 
   - id: doeff-agents-turn-carried-key-must-not-become-a-launch-flag
@@ -2792,15 +2743,6 @@ rules:
     paths:
       include:
         - tests/
-      exclude:
-        # The headless stubs are not tests — they are MODELS OF THE EXTERNAL
-        # PROCESS a test launches (fake `claude` / `codex` executables on the
-        # test PATH). Their job is to reproduce the real CLI's behaviour,
-        # including the one that only a wait can express: a CLI that does not
-        # exit on EOF and must be taken down by a signal. Loitering is the
-        # spec there, not a slow test. Same tree, same reason as
-        # doeff-agents-no-claude-print-mode's exclude above.
-        - '**/tests/headless_stubs/**'
     message: |
       Avoid time.sleep() or asyncio.sleep() in tests. Use SimulationRuntime
       with controlled time for deterministic testing.
@@ -5008,78 +4950,6 @@ rules:
       include:
         - "**/sessionhost/turn.hy"
 
-  - id: doeff-agents-job-step-reads-the-stream-before-the-step
-    languages:
-      - generic
-    severity: ERROR
-    message: >
-      card acp:kanban-issue:ki-2bd49c68b042: agentd's tick must read this
-      turn's stream (stream-job-read) BEFORE it asks judgment.job-step-of
-      for the next step. One of the facts the step needs — whether the
-      runner already put this turn's result into the vessel's record
-      (turn-result-seen) — is carried by the material itself, so a step
-      decided from the previous tick's read is stale exactly in the window
-      that matters. Since #517 ("the end of the turn is the end of the
-      process") the CLI writes its result and exits, and a tick that lands
-      before the host monitor stamps turn_ended_at would fall through to
-      (not live-backend) and close the job as SessionLost — discarding a
-      finished answer. ACP then re-runs the same input (carrierRetryLimit
-      2): the 2026-09-19 census, measured on the artifacts the turns
-      actually sent, found 302 re-runs, 10 of 123 pairs answering the same
-      letter twice, and 75 of 123 killed sides whose answer had already
-      reached the world. Keep the read first; do not add a second
-      decision point.
-    pattern-regex: '(?s)\(defk observe-job-fast(?:(?!stream-job-read).)*?\(job-step-of'
-    paths:
-      include:
-        - "**/sessionhost/acp/agentd.hy"
-        - "**/sessionhost/acp/job_step_before_stream_read_forbidden.hy"
-
-  - id: doeff-agents-recovered-turns-do-not-claim-unread-output
-    languages:
-      - generic
-    severity: ERROR
-    message: >
-      card acp:kanban-issue:ki-ef537db05f7f: recover-job must carry the
-      coverage that start-offset-of returns — #(path offset from-head) — into
-      the InFlightJob it rebuilds from the row. A turn picked up after a
-      restart starts its read at the file's size AT THAT MOMENT, so every
-      byte the turn wrote before the restart is unreadable; claiming the
-      material covers the turn makes "0 output headlines" mean "the model was
-      never called" when it only means "not measured". agentd then ends the
-      turn failed/TurnProducedNothing, ACP's delivery treats that reason as
-      transient and re-runs the same letter: on 2026-09-19 the turn
-      aj-6EKERTYDCD4MC666PGPVA9R9HA had already sent two `ai tell` letters and
-      exited with result success, was recorded with 0 entries, and its retry
-      aj-7EKG2XCJT01XJK9WXPDRPG04XQ answered the same letter a second time.
-      Pass (get start 2) — do not substitute a literal.
-    pattern-regex: '(?s)\(defk recover-job(?:(?!\n\(defk ).)*?\(in-flight-job-of(?:(?!\(get start 2\)).)*?\)\)\n'
-    paths:
-      include:
-        - "**/sessionhost/acp/agentd.hy"
-        - "**/sessionhost/acp/recovered_turn_output_unmeasured_forbidden.hy"
-
-  - id: doeff-agents-turn-output-judgment-reads-the-materials-coverage
-    languages:
-      - generic
-    severity: ERROR
-    message: >
-      card acp:kanban-issue:ki-ef537db05f7f: the turn-end judgment
-      judgment.turn-output-condition-of is three-valued — produced output /
-      produced nothing / UNMEASURED — and the third answer exists only
-      because the caller tells it whether the material it read covers the
-      turn. settle-record must pass the job's own
-      drained.materials-cover-the-turn, never a literal: a hard-coded True
-      re-opens the double-answer bug (a turn recovered after a restart reads
-      an empty window and is then reported as a turn that never ran), and a
-      hard-coded False silences the real TurnProducedNothing signal that
-      catches a runner which consumed the letter without calling the model.
-    pattern-regex: '(?s)\(turn-output-condition-of(?:(?!materials-cover-the-turn).)*?\)\)\n'
-    paths:
-      include:
-        - "**/sessionhost/acp/agentd.hy"
-        - "**/sessionhost/acp/recovered_turn_output_unmeasured_forbidden.hy"
-
   - id: doeff-agents-no-lost-terminal-cause
     languages:
       - generic
@@ -5153,26 +5023,6 @@ rules:
       include:
         - "**/doeff_adr/**"
 
-  - id: ban-urlopen-in-agentd-handlers
-    languages:
-      - python
-    severity: ERROR
-    message: >
-      agentd の外向きの HTTP は host ごとに保った接続で撃つ
-      (handlers.HttpConnections — 壊れたら 1 度だけ張り直す)。
-      urllib.request.urlopen は呼び毎に TCP を張り直す = 1 発ごとに名前を引き直す
-      ので、その名引きがそのまま拍の周期になる。実射(2026-09-19・同じ宿・n=9・
-      中央値): この宿は ndots:5 + search 4 つで、点で終わらない綴りは探索の列を歩き
-      名引きだけで 23.61 ms・全体 25.20 ms の 94 %(server 側の処理は 0.17 ms)。
-      保った接続は名引きを接続 1 本につき 1 度に畳んで 1 発 0.46 ms —— 1 拍 約 35 往復で
-      0.882 秒 → 0.016 秒。手番 20 本の agentd で拍の周期 p50 1.243 秒・frame の at から
-      面の着まで p50 0.554 秒
-      (card acp:kanban-issue:ki-6eb745f6d528・ADR-DOE-AGENTS-012 R22)。
-    patterns:
-      - pattern: urllib.request.urlopen(...)
-    paths:
-      include:
-        - "**/sessionhost/acp/handlers.py"
   - id: doeff-agents-does-not-spell-seat-facing-env
     languages:
       - generic
@@ -5194,31 +5044,6 @@ rules:
     paths:
       include:
         - "/packages/doeff-agents/src/**"
-
-  - id: doeff-agents-runner-owned-seat-env-spelled-once
-    languages:
-      - generic
-    severity: ERROR
-    message: >
-      The seat env names the runner owns — the conversation identity
-      (AGORA_CONVERSATION_ID, AGORA_SEAT_OPENER) and the record destination
-      (RECORD_SERVICE_URL, value = the `[record].url` that passed the join
-      gate) — are spelled once, in sessionhost/acp/effects.py
-      (CONVERSATION_ID_ENV / SEAT_OPENER_ENV / RECORD_URL_ENV, gathered in
-      RUNNER_OWNED_SEAT_ENV). The join gate that refuses them in
-      `[agentd].seat_env` and in the seat settings file, and the charter
-      writer that places them, both read that one set
-      (ADR-DOE-AGENTS-012 R-the-agentd-puts-its-own-record-destination-on-the-seat-1601,
-      card acp:kanban-issue:ki-e930b8506201). A second spelling lets the
-      gate and the writer drift apart: the gate stops refusing a name the
-      writer still places, and a node declaration silently overrides the
-      runner's value. Import the constant from effects instead.
-    pattern-regex: '["''](RECORD_SERVICE_URL|AGORA_CONVERSATION_ID|AGORA_SEAT_OPENER)["'']'
-    paths:
-      include:
-        - "/packages/doeff-agents/src/**"
-      exclude:
-        - "/packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py"
 
   - id: doeff-agents-claude-md-excludes-spelling-has-one-home
     languages:

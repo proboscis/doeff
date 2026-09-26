@@ -124,7 +124,5 @@
           "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy(capability 広告 + admission + 共有 incarnation program)"
           "packages/doeff-agents/src/doeff_agents/sessionhost/launch.hy(resume-session の binding / new_session_id / expected_result 拡張 + ResumeRejected)"
           "packages/doeff-agents/src/doeff_agents/sessionhost/substrate.hy(FsLinkArtifact — share.py link_session_artifact の意味移植)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy(R11: memory-home-of = 置き場を決める 1 点 + charter-with-memory-home + resume-params-of の名簿)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py(R11: AgentdSettings.memory_root = 値の宣言 1 欄 + MEMORY_ROOT_ENV)"
-          "packages/doeff-agents/tests/sessionhost_acp_memory_home_deftests.hy(R11: 鍵が会話 id ちょうどであること + 起こす 3 つの腕の固定)"
+          "agora-controllers controllers/agent_task(R11 の新しい持ち主: 置き場を会話 id で決める 1 点と、その検。agora-redesign #668 で agentd〔sessionhost/acp/judgment.hy・acp/effects.py・sessionhost_acp_memory_home_deftests.hy〕と一緒に doeff から退いた)"
           "packages/doeff-agents/conformance(偽 CLI の resume / fork 契約 + loud 失敗整合 + S21 cross-binding シナリオ + resume-physics Phase 0 プローブ文書)"])

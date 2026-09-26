@@ -20,7 +20,6 @@
 (import time)
 
 (import doeff_agents.sessionhost.policy [AUTOCOMPACT-PARAM-KEY LAUNCH-FLAG-KEYS])
-(import doeff_agents.sessionhost.acp.effects [CHARTER-AUTO-COMPACT-WINDOW-KEY])
 (import doeff_agents.sessionhost.host [
   HostConfig
   CMD-SERVE
@@ -152,7 +151,7 @@
   (assert (is config.allow-metered-billing True))
   ;; 他の旗と混ざっても順序に依らない
   (setv config2 (parse-args ["--max-running" "4" "--allow-metered-billing"
-                             "--backend" "headless" "serve"]))
+                             "--backend" "herdr" "serve"]))
   (assert (is config2.allow-metered-billing True))
   (assert (= config2.max-running 4))
   ;; 値を取らない旗 — 後ろの値は unknown argument
@@ -388,85 +387,6 @@
   (with-skeleton check))
 
 
-;; ---------------------------------------------------------------------------
-;; drivers.list(ADR-DOE-AGENTS-012 R61・card acp:kanban-issue:ki-f250d67a7157): 種類ごとの実行ファイルが
-;; host の子 process の実効 env で見つかるか — 本物の host(parse-args → dispatch-line)に、一時 dir を
-;; PATH にして問う。問うたびに探す(起動時に 1 度だけ探して固定する実装は 1 回だけ問う検を通るが、稼働中に
-;; 消えた codex を申告し続ける — その形を落とすのが下の 2 本)。
-;; ---------------------------------------------------------------------------
-
-(defn place-executable [directory name mode]
-  "directory/name に sh の 1 行を置き、mode を与える(0o755 = 実行できる・0o644 = 実行できない)。"
-  (setv path (os.path.join directory name))
-  (with [handle (open path "w" :encoding "utf-8")]
-    (.write handle "#!/bin/sh\nexit 0\n"))
-  (os.chmod path mode)
-  path)
-
-
-(defn ask-drivers [config actor env]
-  "本物の dispatch に drivers.list を 1 行で問い、{agent_type: path} を返す(env = None は params.env を送らない)。"
-  (setv params (if (is env None) {} {"env" env}))
-  (setv response (json.loads (dispatch-line (json.dumps {"id" 1 "method" "drivers.list" "params" params})
-                                            config actor)))
-  (assert (= (get response "ok") True) response)
-  (setv drivers (get (get response "result") "drivers"))
-  (assert (= (lfor item drivers #((get item "agent_type") (get item "executable")))
-             [#("claude" "claude") #("codex" "codex")])
-          drivers)
-  (dfor item drivers (get item "agent_type") (get item "path")))
-
-
-(deftest test-dispatch-drivers-list-sees-an-executable-vanish-without-a-restart
-  ;; (a) claude と codex を置いて起動 → 両方 path あり → codex の file を消す → 同じ host の次の問いで codex = null。
-  (setv bin (tempfile.mkdtemp))
-  (try
-    (setv claude (place-executable bin "claude" 0o755))
-    (setv codex (place-executable bin "codex" 0o755))
-    (defn check [config actor]
-      (assert (= (ask-drivers config actor None) {"claude" claude "codex" codex}))
-      (os.remove codex)
-      (assert (= (ask-drivers config actor None) {"claude" claude "codex" None})))
-    (with-env {"PATH" bin} (fn [] (with-skeleton check)))
-    (finally (shutil.rmtree bin :ignore-errors True))))
-
-
-(deftest test-dispatch-drivers-list-sees-an-executable-placed-after-the-start
-  ;; (b) claude だけで起動 → 起動の後に codex を置く → 次の問いで codex を申告する(再起動なし)。
-  (setv bin (tempfile.mkdtemp))
-  (try
-    (setv claude (place-executable bin "claude" 0o755))
-    (defn check [config actor]
-      (assert (= (ask-drivers config actor None) {"claude" claude "codex" None}))
-      (setv codex (place-executable bin "codex" 0o755))
-      (assert (= (ask-drivers config actor None) {"claude" claude "codex" codex})))
-    (with-env {"PATH" bin} (fn [] (with-skeleton check)))
-    (finally (shutil.rmtree bin :ignore-errors True))))
-
-
-(deftest test-dispatch-drivers-list-searches-the-path-the-caller-overlays
-  ;; (c) 機体の PATH には claude だけ・params.env.PATH に codex だけの dir を重ねる → 重ねた PATH で探す
-  ;; (claude = null・codex = path)。重ねなければ機体の PATH(Popen と同じ手順 — 実行権の無い file は見つからない)。
-  (setv host-bin (tempfile.mkdtemp))
-  (setv seat-bin (tempfile.mkdtemp))
-  (try
-    (setv claude (place-executable host-bin "claude" 0o755))
-    (setv codex (place-executable seat-bin "codex" 0o755))
-    (place-executable seat-bin "claude" 0o644)
-    (defn check [config actor]
-      (assert (= (ask-drivers config actor {"PATH" seat-bin}) {"claude" None "codex" codex}))
-      (assert (= (ask-drivers config actor None) {"claude" claude "codex" None}))
-      ;; 形の違う env は断る(推し量らない)。
-      (setv refused (json.loads (dispatch-line (json.dumps {"id" 2 "method" "drivers.list" "params" {"env" {"PATH" 1}}})
-                                               config actor)))
-      (assert (= (get refused "ok") False) refused)
-      (assert (in "invalid params for drivers.list" (get refused "error")) refused))
-    (with-env {"PATH" host-bin} (fn [] (with-skeleton check)))
-    (finally
-      (shutil.rmtree host-bin :ignore-errors True)
-      (shutil.rmtree seat-bin :ignore-errors True))))
-
-
 (deftest test-dispatch-skeleton-loud
   (defn check [config actor]
     ;; await: 不在 session は -32001 を error_code 付きで返す(oracle
@@ -646,43 +566,6 @@
       (except [e RuntimeError] (setv raised e)))
     (assert (is-not raised None) f"expected reject for {bad}")
     (assert (in "context_file" (str raised)))))
-
-
-(deftest test-launch-program-params-attribution-admission
-  ;; ACP 帰属便(usage-attribution-two-axes 便 2): launch_attribution は
-  ;; 器だけ検める(JSON object)— 中身は launcher 所有の opaque な id 群で
-  ;; host は解釈しない。合格形は素通し、省略は None、非 object は loud。
-  (setv config (HostConfig :db-path "/tmp/x.db" :socket-path "/tmp/x.sock"
-                           :tmux-bin "tmux" :monitor-interval-seconds 1.0
-                           :max-running 4 :result-solicitation-limit 3
-                           :prompt-stall-seconds 90 :prompt-unblock-limit 3
-                           :prompt-judge-cmd DEFAULT-PROMPT-JUDGE-CMD))
-  (setv base {"session_id" "s1" "session_name" "doeff-s1"
-              "agent_type" "codex" "work_dir" "/w"})
-  ;; 合格: 素通し(verbatim)
-  (setv ok (dict base))
-  (setv (get ok "launch_attribution")
-        {"work_item_id" "wi_attr" "invocation_id" "inv_wi_attr_a1"
-         "action_id" "argus-sensor-run"
-         "resource_key" "default:agent-responsibility:argus-loop"
-         "namespace" "default"})
-  (setv params (build-launch-program-params ok config))
-  (assert (= (get params "launch_attribution")
-             (get ok "launch_attribution")))
-  ;; 省略: None(旧 caller 無傷)
-  (assert (is None (get (build-launch-program-params (dict base) config)
-                        "launch_attribution")))
-  ;; reject: 非 object(綴り違いの scalar が黙って列に入ると json_extract の
-  ;; 読み口が静かに空を返す)
-  (for [bad ["wi_attr" 42 ["wi_attr"]]]
-    (setv wire (dict base))
-    (setv (get wire "launch_attribution") bad)
-    (setv raised None)
-    (try
-      (build-launch-program-params wire config)
-      (except [e RuntimeError] (setv raised e)))
-    (assert (is-not raised None) f"expected reject for {bad}")
-    (assert (in "launch_attribution" (str raised)))))
 
 
 (deftest test-launch-program-params-workspace-seed-admission
@@ -1029,31 +912,6 @@
   (with-skeleton check))
 
 
-(deftest test-dispatch-fork-rejects-launch-attribution
-  ;; 帰属も invocation 簿記 — fork(新しい仕事)への持ち込みは context_file
-  ;; と同じ fail-closed(黙殺は誤帰属を隠す)。
-  (defn check [config actor]
-    (setv req {"id" 1 "method" "session.fork"
-               "params" {"session_id" "s1"
-                         "launch_attribution" {"action_id" "x"}}})
-    (setv response (json.loads (dispatch-line (json.dumps req) config actor)))
-    (assert (= (get response "ok") False))
-    (assert (in "resume-only" (get response "error"))))
-  (with-skeleton check))
-
-
-(deftest test-dispatch-resume-admits-launch-attribution-shape
-  ;; resume の launch_attribution は launch と同じ admission(JSON object)を
-  ;; 通る — 非 object は store へ触る前に loud。
-  (defn check [config actor]
-    (setv req {"id" 1 "method" "session.resume"
-               "params" {"session_id" "s1"
-                         "launch_attribution" "not-an-object"}})
-    (setv response (json.loads (dispatch-line (json.dumps req) config actor)))
-    (assert (= (get response "ok") False))
-    (assert (in "launch_attribution must be an object" (get response "error"))))
-  (with-skeleton check))
-
 ;; ---------------------------------------------------------------------------
 ;; 起こす旗は wire の受理形を通り抜ける(設計記録 docs/design/auto-compact-window)
 ;; ---------------------------------------------------------------------------
@@ -1080,9 +938,8 @@
   (setv bare {"session_id" "s1" "session_name" "doeff-s1"
               "agent_type" "claude" "work_dir" "/w"})
   (assert (not-in "auto_compact_window" (build-launch-program-params bare config)))
-  ;; 集合の宣言は 1 点で、wire(ACP の charter)の綴りと同じ語であること。
-  (assert (in AUTOCOMPACT-PARAM-KEY LAUNCH-FLAG-KEYS))
-  (assert (= AUTOCOMPACT-PARAM-KEY CHARTER-AUTO-COMPACT-WINDOW-KEY)))
+  ;; 集合の宣言は 1 点であること。
+  (assert (in AUTOCOMPACT-PARAM-KEY LAUNCH-FLAG-KEYS)))
 
 
 ;; ---------------------------------------------------------------------------
@@ -1091,7 +948,6 @@
 ;; ---------------------------------------------------------------------------
 
 (deftest test-daemon-status-drops-readiness-when-store-writes-keep-failing
-  (import doeff_agents.sessionhost.ready_probe [ready-verdict])
   (setv d (tempfile.mkdtemp))
   (try
     (setv db (os.path.join d "agentd.sqlite"))
@@ -1119,8 +975,6 @@
       (assert (is (get down "ready") False) down)
       (assert (in "SQLITE_FULL" (get down "not_ready_reason")) down)
       (assert (= (get (get down "store_write_health") "consecutive_failures") 3))
-      ;; probe の口の読み(純関数)も同じ答えを名乗る。
-      (assert (= (. (ready-verdict {"id" 1 "result" down}) ready) False))
       ;; 読みだけの op は数えも戻しもしない。
       (.submit actor (fn [conn] (.fetchall (.execute conn "SELECT 1"))))
       (assert (is (get (status) "ready") False))

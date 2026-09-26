@@ -18,7 +18,7 @@
 
 (require doeff-hy.macros [deff defk <-])
 
-(import dataclasses [dataclass replace asdict])
+(import dataclasses [dataclass replace])
 (import datetime [datetime timedelta timezone])
 (import json)
 (import os)
@@ -27,6 +27,7 @@
 (import re)
 (import sqlite3)
 (import sys)
+(import textwrap)
 (import threading)
 (import doeff_agents.sessionhost.attachment [TurnAttachment attachment-of-wire])
 (import time)
@@ -68,45 +69,14 @@
   iso-format
   make-cause
   monitor-cycle
-  session-env-admission-error
   tail-chars
   TURN-CARRIED-KEYS
   turn-stalled])
 (import doeff_agents.sessionhost.schema [validate-against-schema schema-admission-error])
 (import doeff_agents.sessionhost.substrate [real-substrate])
 (import doeff_agents.sessionhost.substrate_herdr [DEFAULT-HERDR-SOCKET herdr-substrate])
-(import doeff_agents.sessionhost.substrate_headless [HEADLESS-REGISTRY headless-spawn-env headless-substrate])
-(import doeff_agents.sessionhost.drivers [driver-listing])
-(import doeff_agents.sessionhost.impls.headless_argv [headless-argv-impl])
-(import doeff_agents.sessionhost.headless_effects [headless-kill headless-liveness])
-(import doeff_agents.sessionhost.headless_protocol [backend-alive stop-cause-category])
-(import doeff_agents.sessionhost.drain_marker [declared :as drain-declared reason-line :as drain-reason-line])
-(import doeff_agents.sessionhost.cache_host [cache-host-ping cache-host-probe cache-host-guard-normal-send cache-host-cancel cache-last-success-at])
-(import doeff_agents.sessionhost.cache_host_model [CacheMaintenanceActiveError CACHE-MAINTENANCE-ACTIVE])
-(import doeff_agents.sessionhost.cache_host_model [HostCacheRead])
-(import doeff_agents.sessionhost.cache_host_store [session-mutation-lock])
-(import doeff_agents.sessionhost.headless [
-  HEADLESS-BACKEND-KIND
-  EVENT-SESSION-INTERRUPTED
-  headless-cancel-program
-  headless-capture-program
-  headless-cleanup-program
-  SEND-MODE-INTERRUPT
-  SEND-MODE-TURN
-  SEND-MODES
-  headless-escalate-program
-  headless-inject-program
-  headless-interrupt-program
-  headless-launch-session
-  headless-monitor-cycle
-  headless-send-program
-  recover-headless-rows
-  stop-headless-rows])
+(import doeff_agents.sessionhost.relaymain [REPORT-RESULT-MCP-SUBCOMMAND])
 (import doeff_agents.sessionhost.store_health [DEFAULT-STORE-WRITE-FAILURE-LIMIT readiness-of])
-(import doeff_agents.sessionhost.headless_events [HeadlessEventsSince])
-(import doeff_agents.sessionhost.headless_outbox [MAX-BODY-BYTES-DEFAULT OutboxEventStore OtlpShipper
-                                                 PRUNE-GRACE-SECONDS-DEFAULT outbox-counts prune-cutoff prune-shipped
-                                                 run-forever])
 (import doeff_agents.sessionhost.store [
   HISTORY-PRUNE-BATCH-ROWS
   LEASE-TTL-SECONDS
@@ -136,9 +106,6 @@
 ;; ---------------------------------------------------------------------------
 
 (setv DEFAULT-MONITOR-INTERVAL-MS 1000)
-;; session.wait_events(出来事の journal の long-poll・段 12 lane 12b・agora-redesign #207 根 1)の
-;; 1 回の待ちの上限(秒)。呼び手(agentd)はこれより短い上限を名乗って張り直す。
-(setv WAIT-EVENTS-MAX-SECONDS 60.0)
 (setv DEFAULT-MAX-RUNNING-SESSIONS 10)
 (setv LAUNCH-TIMEOUT-SECONDS 60)
 (setv STALE-OBSERVATION-THRESHOLD-SECONDS 300)
@@ -236,19 +203,10 @@
   (setv backend "tmux")
   #^ str herdr-socket
   (setv herdr-socket DEFAULT-HERDR-SOCKET)
-  ;; backend=headless の実況の正本(events file)の置き場。既定は
-  ;; $XDG_STATE_HOME/doeff/headless(store DB と同じ解決系)。
-  #^ str headless-events-root
-  (setv headless-events-root "")
   ;; out-of-band 寿命境界(opt-in): spawn 元の死で自己終了 + launch 済み
   ;; session の reap。conformance harness が常時立てる(S28)。
   #^ bool exit-when-orphaned
-  (setv exit-when-orphaned False)
-  ;; 排水の印の path(card acp:kanban-issue:ki-b5e0d04de958 D1・env-only)。None = 印を読まない起動
-  ;; (役 both・join を通らない serve)= 停止で切った行は今日どおり cancelled。host は印を**読むだけ**で、
-  ;; 読みは TERM の handler が 1 度目の拍に drain_marker で 1 回(書く腕を持たない — ADR-DOE-AGENTS-012)。
-  #^ (| str None) drain-file
-  (setv drain-file None))
+  (setv exit-when-orphaned False))
 
 
 ;; ---------------------------------------------------------------------------
@@ -304,13 +262,6 @@
   "$XDG_STATE_HOME/doeff/agentd.sqlite(oracle default_db_path :718-720)。"
   (os.path.join (xdg-state-home) "doeff" "agentd.sqlite"))
 
-(defk default-headless-events-root []
-  {:pre [True]
-   :post [(: % str)]}
-  "$XDG_STATE_HOME/doeff/headless(headless backend の events file の置き場 —
-   env knob DOEFF_SESSIONHOST_HEADLESS_DIR で上書き)。"
-  (os.path.join (xdg-state-home) "doeff" "headless"))
-
 (deff default-socket-path []
   {:pre [True]
    :post [(: % str)]}
@@ -328,7 +279,7 @@
 ;; ---------------------------------------------------------------------------
 
 ;; flag・command・env knob の綴りの座(この 1 点)。parse-args の分岐も
-;; `--help` の usage の組み立て(sessionhost/usage.py)も同じ値を読む —
+;; `--help` の usage の組み立て(下の serve-usage-text)も同じ値を読む —
 ;; 綴りを手で写した一覧をどこにも作らない(一覧が実装から静かに乖離する形を
 ;; 作らない)。
 (setv CMD-SERVE "serve")
@@ -350,11 +301,7 @@
 (setv ENV-PROMPT-JUDGE-CMD "DOEFF_AGENTD_PROMPT_JUDGE_CMD")
 (setv ENV-BACKEND "DOEFF_SESSIONHOST_BACKEND")
 (setv ENV-HERDR-SOCKET "DOEFF_SESSIONHOST_HERDR_SOCKET")
-(setv ENV-HEADLESS-DIR "DOEFF_SESSIONHOST_HEADLESS_DIR")
 (setv ENV-EXIT-WHEN-ORPHANED "DOEFF_SESSIONHOST_EXIT_WHEN_ORPHANED")
-;; 排水の印の path(card acp:kanban-issue:ki-b5e0d04de958 D1): 立てるのは役 host の起動の組み立て
-;; (acp/entry.py — 値は runtime.drain_file_path の 1 点)だけ。綴りはここと entry の 2 か所(ADR-DOE-AGENTS-012 の針)。
-(setv ENV-DRAIN-FILE "DOEFF_SESSIONHOST_DRAIN_FILE")
 
 ;; serve の flag の一覧 = usage の生成元(並びがそのまま help の並び)。
 ;;   #(flag 値の見出し env の名 説明)
@@ -367,7 +314,7 @@
    #(FLAG-SOCKET "<path>" None
      (+ "RPC socket to bind. Default: $XDG_RUNTIME_DIR/doeff/agentd.sock, "
         "else /tmp/doeff-agentd-$USER.sock"))
-   #(FLAG-BACKEND "<tmux|herdr|headless>" ENV-BACKEND
+   #(FLAG-BACKEND "<tmux|herdr>" ENV-BACKEND
      "Substrate that carries sessions. Default: tmux")
    #(FLAG-TMUX "<bin>" None
      "tmux binary (tmux backend only). Default: tmux")
@@ -396,16 +343,60 @@
 
 ;; flag を持たない env knob(usage は別枠で出す — 読みは parse-args の同じ 1 点)。
 (setv SERVE-ENV-ONLY-SPECS
-  [#(ENV-HEADLESS-DIR
-     (+ "Directory holding the headless backend's event files. Default: "
-        "$XDG_STATE_HOME/doeff/headless"))
-   #(ENV-EXIT-WHEN-ORPHANED
+  [#(ENV-EXIT-WHEN-ORPHANED
      (+ "Set to 1 to make the host exit when its parent goes away "
-        "(opt-in lifetime boundary)."))
-   #(ENV-DRAIN-FILE
-     (+ "Path of the drain marker (set by `join --role host`). Read once at the "
-        "first SIGTERM: turns cut while it exists end as host_drained (a planned "
-        "stop), otherwise as cancelled. The host never writes it."))])
+        "(opt-in lifetime boundary)."))])
+
+;; `--help` / `-h` の usage(agora-redesign #668: 旧い入口の usage.py が agentd の join / 弁の説明と
+;; 一緒に持っていた serve の部分を、表の持ち主のここへ移した)。flag の一覧は上の 2 つの表から導く —
+;; 手で写した一覧を作らない。折り返しは語の境界だけ(command 名や path をハイフンで割らない)。
+(setv HELP-FLAGS #("--help" "-h"))
+(setv USAGE-WIDTH 79)
+(setv USAGE-INDENT "      ")
+
+(defk serve-usage-text []
+  {:pre [True]
+   :post [(: % str)]}
+  "serve の usage(末尾に改行を含む 1 つの文字列)。"
+  (setv paragraph (fn [text] (textwrap.wrap text :width USAGE-WIDTH :break-on-hyphens False
+                                            :break-long-words False)))
+  (setv entry (fn [head body]
+                (+ [f"  {head}"]
+                   (textwrap.wrap body :width USAGE-WIDTH :initial-indent USAGE-INDENT
+                                  :subsequent-indent USAGE-INDENT :break-on-hyphens False
+                                  :break-long-words False))))
+  (setv flag-lines
+        (lfor [flag placeholder env help-text] SERVE-FLAG-SPECS
+              line (entry (if (is placeholder None) flag f"{flag} {placeholder}")
+                          (if (is env None) help-text f"{help-text} [env: {env}]"))
+              line))
+  (setv env-lines
+        (lfor [env-name help-text] SERVE-ENV-ONLY-SPECS
+              line (entry env-name help-text)
+              line))
+  (+ (.join "\n"
+            [f"usage: doeff-sessionhost [{CMD-SERVE}] [<flags>]"
+             f"       doeff-sessionhost {REPORT-RESULT-MCP-SUBCOMMAND}"
+             ""
+             #* (paragraph
+                  (+ "The agent session host: it owns the RPC socket, the session ledger, and"
+                     " the substrate that carries agent sessions."))
+             ""
+             #* (paragraph
+                  (+ f"`{CMD-SERVE}` is the default and only host command, and may be omitted."
+                     f" `{REPORT-RESULT-MCP-SUBCOMMAND}` is the agent-facing result channel and"
+                     " is not run by hand."))
+             ""
+             f"{CMD-SERVE} flags:"
+             #* flag-lines
+             ""
+             f"{CMD-SERVE} environment:"
+             #* env-lines
+             ""
+             #* (paragraph
+                  (+ "Unknown arguments are rejected, and so is any command other than"
+                     f" `{CMD-SERVE}`."))])
+     "\n"))
 
 (deff arg-at [args index]
   {:pre [(: args list) (: index int)]
@@ -455,15 +446,10 @@
   (setv backend (.get os.environ ENV-BACKEND "tmux"))
   (setv herdr-socket (.get os.environ ENV-HERDR-SOCKET
                            DEFAULT-HERDR-SOCKET))
-  ;; headless backend(agora-redesign #37): events file の置き場も env knob。
-  (setv headless-events-root (.get os.environ ENV-HEADLESS-DIR
-                                   (run (default-headless-events-root))))
   ;; out-of-band 寿命境界(opt-in、env-only — CLI 語彙は oracle parse_args の
   ;; 凍結物理なので足さない。backend knob と同じ搬送経路)。
   (setv exit-when-orphaned
         (= (.get os.environ ENV-EXIT-WHEN-ORPHANED "") "1"))
-  ;; 排水の印の path も env-only(同じ理由 — CLI の語彙は凍結)。空 = 無し。
-  (setv drain-file (or (.get os.environ ENV-DRAIN-FILE "") None))
   (setv command CMD-SERVE)
   (setv index 0)
   (while (< index (len args))
@@ -544,8 +530,8 @@
     (+= index 1))
   (when (!= command CMD-SERVE)
     (raise (ValueError f"unsupported command: {command}")))
-  (when (not-in backend #{"tmux" "herdr" HEADLESS-BACKEND-KIND})
-    (raise (ValueError f"unsupported backend: {backend} (expected tmux|herdr|headless)")))
+  (when (not-in backend #{"tmux" "herdr"})
+    (raise (ValueError f"unsupported backend: {backend} (expected tmux|herdr)")))
   (HostConfig
     :db-path (or db-path (default-db-path))
     :socket-path (or socket-path (default-socket-path))
@@ -559,9 +545,7 @@
     :prompt-judge-cmd prompt-judge-cmd
     :backend backend
     :herdr-socket herdr-socket
-    :headless-events-root headless-events-root
-    :exit-when-orphaned exit-when-orphaned
-    :drain-file drain-file))
+    :exit-when-orphaned exit-when-orphaned))
 
 
 ;; ---------------------------------------------------------------------------
@@ -621,22 +605,9 @@
                 program)))
   (when (= config.backend "herdr")
     (setv inner ((herdr-substrate config.herdr-socket) inner)))
-  ;; backend=headless(agora-redesign #37): headless の substrate(子 process)と
-  ;; kind 別の headless argv(print mode の唯一の家)を real-substrate の内側に挿す。
-  ;; Tmux* effect は headless の program からは出ない(非 headless の substrate は素通し)。
-  (when (= config.backend HEADLESS-BACKEND-KIND)
-    (setv inner ((headless-substrate HEADLESS-REGISTRY)
-                 ((headless-argv-impl) inner))))
   (run ((sqlite-session-store actor)
         ((real-substrate config.tmux-bin)
          inner))))
-
-
-(deff headless-backend? [config]
-  {:pre [(: config HostConfig)]
-   :post [(: % bool)]}
-  "この host が headless backend を話すか(RPC の program の選択の 1 点)。"
-  (= config.backend HEADLESS-BACKEND-KIND))
 
 
 (defk require-session-row [session-id]
@@ -702,23 +673,6 @@
                                       now-str)))
   (<- _ (session-store-upsert updated))
   (<- _ (session-store-record-event session-id "session_cancelled" updated))
-  updated)
-
-(defk interrupt-program [session-id]
-  {:pre [(: session-id str)]
-   :post [(: % SessionRow)]}
-  "session.interrupt(tmux / herdr): 走っている手番だけを止める(Escape の送出 — claude /
-   codex の tui は Escape で今の手番を中断して idle に戻る)。session は残す: 手番の終わりは
-   monitor の turn-end の連言が turn_ended_at に刻む(温かい session — ADR-DOE-AGENTS-012
-   R10)。session.cancel(終端)とは別の動詞(agora-redesign #37: withdraw = 中断の合図)。"
-  (<- row (require-session-row session-id))
-  (<- exists (tmux-has-session row.session-name))
-  (when exists
-    (<- _ (tmux-send-keys row.pane-id "Escape" False False)))
-  (<- now (clock-now))
-  (setv updated (replace row :last-observed-at (iso-format now)))
-  (<- _ (session-store-upsert updated))
-  (<- _ (session-store-record-event session-id EVENT-SESSION-INTERRUPTED updated))
   updated)
 
 (defk cleanup-program [session-id]
@@ -852,24 +806,6 @@
              f"invalid params for {method}: context_file.content is required")))
   None)
 
-(defk admit-launch-attribution [params method]
-  {:pre [(: params dict) (: method str)]
-   :post [(: % "None — 不適合は raise")]}
-  "launch_attribution(発注者 = ACP scheduler が申告する帰属 metadata)の
-   admission。器だけ検める(JSON object であること)— 中身は launcher 所有の
-   opaque な id 群で、host は解釈しない(素通し verbatim 保存)。器の検査を
-   落とすと綴り違いの scalar が黙って列に入り、json_extract の読み口が
-   静かに空を返す。ADR-DOE-HY-004 R1(関数語彙は defk のみ)により program
-   として綴るため、ふつうの関数から呼ぶ側は run で実行する — 呼びっぱなしは
-   program を作るだけで検査が走らない。"
-  (setv attribution (.get params "launch_attribution"))
-  (when (is attribution None)
-    (return None))
-  (when (not (isinstance attribution dict))
-    (raise (RuntimeError
-             f"invalid params for {method}: launch_attribution must be an object")))
-  None)
-
 (deff admit-workspace-seed [params method]
   {:pre [(: params dict) (: method str)]
    :post [(: % "None — 不適合は raise")]}
@@ -977,7 +913,6 @@
   (admit-expected-result params "session.launch")
   (admit-context-file params "session.launch")
   (admit-workspace-seed params "session.launch")
-  (run (admit-launch-attribution params "session.launch"))
   (carry-charter-fields
     params
     {"session_id" (get params "session_id")
@@ -1003,9 +938,6 @@
    ;; ACP W2(law resolved-materialization): 実体化は launch program の
    ;; materialize-workspace-seed(work_dir 検証の前)
    "workspace_seed" (.get params "workspace_seed")
-   ;; 帰属 metadata(opaque — 上の admit-launch-attribution 参照): 保存は
-   ;; launch program が SessionRow に載せ、store が verbatim 永続化する
-   "launch_attribution" (.get params "launch_attribution")
    "socket_path" config.socket-path
    "max_running" config.max-running
    ;; 課金の階級の方針(host 所有値 — launch.hy の admission が読む 1 点)。
@@ -1014,9 +946,7 @@
    ;; 未設定なら None → launch.hy が oracle 定数 120s に fallback)。
    "repl_idle_max_wait_seconds" (env-positive-i64
                                   "DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS")
-   "backend_kind" config.backend
-   ;; headless backend の実況の正本の置き場(headless.hy が events file を作る)。
-   "events_root" config.headless-events-root}
+   "backend_kind" config.backend}
   ;; 席へ運ぶ charter の欄(policy.CHARTER-CARRIED-KEYS = 旗 + 手番の荷)を素通しする。
   ;; ⚠ ここは wire の受理形 = **閉じた名簿**なので、欄を名簿に書き忘れると会話が名乗った
   ;; 値が席の導出点に 1 度も届かない(盲検の反例 A で閾値・2026-09-21 で記憶の本文を実測)。
@@ -1041,7 +971,6 @@
      "mode" mode
      "attachments" attachments
      "context_file" (.get p "context_file")
-     "launch_attribution" (.get p "launch_attribution")
      "prompt" (.get p "prompt")
      "model" (.get p "model")
      "effort" (.get p "effort")
@@ -1058,8 +987,7 @@
      "allow_metered_billing" config.allow-metered-billing
      "repl_idle_max_wait_seconds" (env-positive-i64
                                     "DOEFF_AGENTD_REPL_IDLE_MAX_WAIT_SECS")
-     "backend_kind" config.backend
-     "events_root" config.headless-events-root}))
+     "backend_kind" config.backend}))
 
 
 (deff wire-snapshot [actor session-id]
@@ -1092,24 +1020,14 @@
   (<- present (tmux-has-session session-name))
   (bool present))
 
-(defk backend-alive-program [backend-kind session-name pane-id backend-ref]
-  {:pre [(: backend-kind str) (: session-name str) (: pane-id str) (: backend-ref (| dict None))]
+(defk backend-alive-program [session-name pane-id]
+  {:pre [(: session-name str) (: pane-id str)]
    :post [(: % bool)]}
   "wire の backend_alive(段 10 lane 10h・agora-redesign #84): 行の backend が今この host で生きて
-   いるかの観測 — headless = 子 process の pid の存在 ∧ registry の所有(HeadlessLiveness・判断は
-   headless_protocol.backend_alive)、tmux / herdr = 行の pane が session の pane の集合に在る
+   いるかの観測 — tmux / herdr = 行の pane が session の pane の集合に在る
    (TmuxSessionPaneIds — monitor の帰属検証と同じ観測)。status の語からは導かない(推測しない)。"
-  (if (= backend-kind HEADLESS-BACKEND-KIND)
-      (do
-        (setv pid (.get (or backend-ref {}) "pid"))
-        (<- liveness (headless-liveness session-name
-                                        (if (and (isinstance pid int) (not (isinstance pid bool)))
-                                            pid
-                                            None)))
-        (backend-alive liveness))
-      (do
-        (<- pane-ids (tmux-session-pane-ids session-name))
-        (in pane-id pane-ids))))
+  (<- pane-ids (tmux-session-pane-ids session-name))
+  (in pane-id pane-ids))
 
 (deff wire-with-stalled [wire]
   {:pre [(: wire dict)]
@@ -1133,26 +1051,18 @@
    - substrate_present / substrate_checked_at: 免除行(adopted または
      interactive)かつ非終端の行だけに載る突合表示(条項 3 — 消滅 pane を
      exited と裁定せず、乖離として見せる)。
-   - backend_alive: 行の backend(headless の子 process / tmux の pane)が今この host で
-     生きているかの観測(段 10 lane 10h — agentd の recover-job / next-arm-for-job が
-     status の語ではなくこれで判断する)。終端の行は観測せず false(host が既に終端と
-     裁定した行の backend は片付けの対象で、次の手番を受ける器ではない)。"
+   - backend_alive: 行の backend(tmux の pane)が今この host で生きているかの観測
+     (段 10 lane 10h — status の語ではなくこれで判断する)。終端の行は観測せず false
+     (host が既に終端と裁定した行の backend は片付けの対象で、次の手番を受ける器ではない)。"
   (setv wire (wire-with-stalled wire))
-  ;; card acp:kanban-issue:ki-567f2dd6140f §3.1e: host が載せるのは**観測した事実**ちょうど
-  ;; (最後に成功した専用操作の完了時刻)。「いつまで保持するか」は ACP 側の判断
-  ;; (judgment.cache-resident-retention-of)で、host はその式も予算も 1 つも持たない。
-  (setv (get wire "cache_last_success_at_ms")
-        (run-hosted config actor (cache-last-success-at (get wire "session_id"))))
   (setv now (datetime.now timezone.utc))
   (setv (get wire "backend_alive")
         (if (is-terminal-status (get wire "status"))
             False
             (bool (run-hosted config actor
                               (backend-alive-program
-                                (get wire "backend_kind")
                                 (get wire "session_name")
-                                (get wire "pane_id")
-                                (.get wire "backend_ref"))))))
+                                (get wire "pane_id"))))))
   (setv exempt (or (bool (.get wire "adopted"))
                    (= (get wire "lifecycle") "interactive")))
   (when (and exempt (not (is-terminal-status (get wire "status"))))
@@ -1297,9 +1207,6 @@
   (<- row (require-session-row session-id))
   (when (not (is-run-to-completion row.lifecycle))
     (return False))
-  (when (= row.backend-kind HEADLESS-BACKEND-KIND)
-    (<- killed (headless-kill row.session-name))
-    (return (bool killed)))
   (<- exists (tmux-has-session row.session-name))
   (when exists
     (<- _ (tmux-kill-session row.session-name)))
@@ -1357,11 +1264,6 @@
     (return {"state" "running"
              "ready" readiness.ready
              "not_ready_reason" readiness.reason
-             ;; 出来事の送り待ちの表の数(置き場が送り待ちの表の時だけ・無ければ None)— 留めた行(段の DB が
-             ;; 受けない大きさ)と送れていない行の滞留を外から読む口。
-             "events_outbox" (when (isinstance HEADLESS-REGISTRY.event-store OutboxEventStore)
-                               (setv counts (.submit actor outbox-counts))
-                               {"unshipped" counts.unshipped "held" counts.held "shipped" counts.shipped})
              "store_write_health" {"consecutive_failures" health.consecutive-failures
                                    "last_error" health.last-error
                                    "failing_since" health.failing-since}
@@ -1382,25 +1284,13 @@
   (when (= method "kinds.list")
     (return {"kinds" (binding-kind-advertisement)}))
 
-  ;; ADR-DOE-AGENTS-012 R61(card acp:kanban-issue:ki-f250d67a7157): 種類ごとの実行ファイルが、この host が
-  ;; 子 process を起こす実効 env(headless-spawn-env — 呼び手の重ねる env を機体の継承の名簿の上に重ねた 1 点)で
-  ;; 見つかるか。params.env = 呼び手が重ねる env(無ければ {})。問われるたびに探す(host は結果を持たない)・
-  ;; 起動の試しはしない。kinds.list(binding の種類の広告)には混ぜない。
-  (when (= method "drivers.list")
-    (setv overlay (if (is params None) {} (.get (params-object params "drivers.list") "env" {})))
-    (when (not (and (isinstance overlay dict)
-                    (all (gfor [key value] (.items overlay) (and (isinstance key str) (isinstance value str))))))
-      (raise (RuntimeError "invalid params for drivers.list: `env` must be an object of strings")))
-    (return {"drivers" (driver-listing (headless-spawn-env overlay))}))
-
   (when (= method "session.launch")
     (setv wire-params (params-object params "session.launch"))
     (setv program-params (build-launch-program-params wire-params config))
     ;; 段 10 lane 10o(agora-redesign #96): 起こす腕は郵便を 1 手番目に畳むので、その郵便の添付も
-    ;; この launch に載る。型つきに解いて器へ渡す(綴りは器の Dialogue)— 添付の段を持たない器
-    ;; (tui)には渡さず、断りを答えに名乗る。
+    ;; この launch に載る。添付の段を持たない器(tui)には渡さず、断りを答えに名乗る。
     (setv launch-attachments (run (turn-attachments-of wire-params "session.launch")))
-    (setv launch-ignored (if (and launch-attachments (not (headless-backend? config)))
+    (setv launch-ignored (if launch-attachments
                              ATTACHMENTS-UNSUPPORTED-REASON
                              ""))
     (setv (get program-params "attachments")
@@ -1418,10 +1308,7 @@
                 "enforcement follows once callers migrate)")
              :file sys.stderr)
       (.flush sys.stderr))
-    (setv row (run-hosted config actor
-                          (if (headless-backend? config)
-                              (headless-launch-session program-params)
-                              (launch-session program-params))))
+    (setv row (run-hosted config actor (launch-session program-params)))
     (setv sid row.session-id)
     (setv wire (wire-snapshot actor sid))
     (record-command actor sid "session.launch" wire)
@@ -1451,7 +1338,7 @@
       ;; 手で並べると、族に欄を足した便がこの断りを落とし、fork が親の値をそのまま持って行く
       ;; (memory_retired_files ならば、親の退役した名で**新しい会話の置き場の file を消す**)。
       (for [banned (+ #("binding" "new_session_id" "expected_result"
-                        "context_file" "launch_attribution")
+                        "context_file")
                       TURN-CARRIED-KEYS)]
         (when (in banned p)
           (raise (RuntimeError
@@ -1468,14 +1355,11 @@
       ;; law context-file-rides-the-wire の resume 面 — 形の admission は
       ;; launch と共有(裸ファイル名 + content 必須)。fork は上の banned で
       ;; fail-closed(新会話に前会話の invocation 簿記を持ち込まない)。
-      (admit-context-file p "session.resume")
-      ;; 帰属 metadata の resume 面(one law, both faces)— 形の admission は
-      ;; launch と共有。fork は banned(帰属も invocation 簿記)。
-      (run (admit-launch-attribution p "session.resume")))
+      (admit-context-file p "session.resume"))
     ;; 段 10 lane 10o(実弾 2026-09-15 09:5x): 起こす腕は launch だけではない — resume も 1 手番目に
     ;; 郵便を畳むので、添付は同じ 1 点で型つきに解いて運ぶ(添付の段を持たない器は断りを名乗る)。
     (setv resume-attachments (run (turn-attachments-of p method)))
-    (setv resume-ignored (if (and resume-attachments (not (headless-backend? config)))
+    (setv resume-ignored (if resume-attachments
                              ATTACHMENTS-UNSUPPORTED-REASON
                              ""))
     (setv program-params
@@ -1502,44 +1386,6 @@
     (return (if (is snap None)
                 None
                 (augment-wire-snapshot config actor (snapshot-to-wire-dict snap)))))
-
-  ;; 段 12 lane 12b(agora-redesign #207 根 1): 出来事の journal(agent_session_events)の long-poll。
-  ;; after = 呼び手が最後に知った先端(int ≥ 0)・wait_seconds = 待ちの上限(0 = 今の先端を返す・
-  ;; 上限は WAIT-EVENTS-MAX-SECONDS に畳む)。答え = {"seq": 先端}。進んだ出来事の中身は運ばない —
-  ;; 呼び手(agentd)は自分の眺め(session.get)を読み直して判じる(level-triggered の観測の合図)。
-  ;; 待ちは actor の条件変数(接続ごとの thread が眠る — actor thread も他の RPC も塞がない)。
-  (when (= method "session.wait_events")
-    (setv p (params-object params "session.wait_events"))
-    (setv after (.get p "after" 0))
-    (when (or (isinstance after bool) (not (isinstance after int)) (< after 0))
-      (raise (RuntimeError
-               f"invalid params for session.wait_events: `after` must be a non-negative integer (got: {after !r})")))
-    (setv wait-raw (.get p "wait_seconds" 0))
-    (when (or (isinstance wait-raw bool) (not (isinstance wait-raw #(int float))) (< wait-raw 0))
-      (raise (RuntimeError
-               f"invalid params for session.wait_events: `wait_seconds` must be a non-negative number (got: {wait-raw !r})")))
-    (setv wait (min (float wait-raw) WAIT-EVENTS-MAX-SECONDS))
-    (return {"seq" (.wait-journal actor after wait)}))
-
-  ;; 出来事の読み(headless_events・ADR-DOE-AGENTS-012 R-headless-events-are-read-through-the-host):
-  ;; locator = 行の backend_ref.events_path(出来事の流れの名)・cursor = 前の答えの cursor(初回 0)。
-  ;; 答え = {"text": stdout の完全な行, "cursor": 次の cursor}。置き場(送り待ちの表 / file / memory)は
-  ;; 登記簿の handler が持ち、呼び手(agentd)は置き場を知らない — file を直に読まない。
-  (when (= method "session.events_since")
-    (setv p (params-object params "session.events_since"))
-    (setv locator (required-str-param p "locator" "session.events_since"))
-    (setv cursor (.get p "cursor" 0))
-    (when (or (isinstance cursor bool) (not (isinstance cursor int)) (< cursor 0))
-      (raise (RuntimeError
-               f"invalid params for session.events_since: `cursor` must be a non-negative integer (got: {cursor !r})")))
-    (setv chunk (.since HEADLESS-REGISTRY.event-store (HeadlessEventsSince locator cursor)))
-    (return {"text" chunk.text "cursor" chunk.cursor}))
-
-  ;; 出来事の流れの今の先端(send / resume の手番の材料の始まり)。答え = {"cursor": 先端}。
-  (when (= method "session.events_head")
-    (setv p (params-object params "session.events_head"))
-    (setv locator (required-str-param p "locator" "session.events_head"))
-    (return {"cursor" (.head HEADLESS-REGISTRY.event-store locator)}))
 
   ;; 波 1-S1(ADR-007 R7): 会話 ID → 行の probe なし行引き口。応答 = wire
   ;; snapshot + stalled 導出のみ(substrate_present は意図的に不在 — law
@@ -1669,36 +1515,8 @@
     (setv p (params-object params "session.capture"))
     (setv sid (required-str-param p "session_id" "session.capture"))
     (setv lines (int (.get p "lines" 100)))
-    (setv text (run-hosted config actor
-                           (if (headless-backend? config)
-                               (headless-capture-program sid lines)
-                               (capture-program sid lines))))
+    (setv text (run-hosted config actor (capture-program sid lines)))
     (return {"text" text}))
-
-  (when (in method #("session.cache-ping" "session.cache-ping-status"))
-    (setv p (params-object params method))
-    (setv sid (required-str-param p "session_id" method))
-    (setv operation-id (required-str-param p "operation_id" method))
-    (when (not (headless-backend? config))
-      (raise (RuntimeError "cache ping requires the headless backend")))
-    (when (= method "session.cache-ping-status")
-      (setv receipt (run-hosted config actor (HostCacheRead operation-id)))
-      (when (is receipt None) (return None))
-      (when (!= receipt.session-id sid)
-        (raise (RuntimeError "cache operation session mismatch")))
-      (return (asdict (run-hosted config actor (cache-host-probe receipt)))))
-    (when (- (set p) #{"session_id" "operation_id" "expires_at" "session_env"})
-      (raise (RuntimeError "cache ping accepts no prompt, priority or turn parameters")))
-    (setv expires-at (.get p "expires_at"))
-    (when (not (and (= (type expires-at) int) (>= expires-at 0)))
-      (raise (RuntimeError "cache ping expires_at must be a nonnegative integer")))
-    (setv session-env (.get p "session_env" {}))
-    (when (not (isinstance session-env dict))
-      (raise (RuntimeError "cache ping session_env must be an object")))
-    (setv env-error (session-env-admission-error session-env method))
-    (when env-error (raise (RuntimeError env-error)))
-    (return (asdict (run-hosted config actor
-      (cache-host-ping sid operation-id expires-at session-env)))))
 
   (when (= method "session.send")
     (setv p (params-object params "session.send"))
@@ -1707,110 +1525,29 @@
     (setv enter (bool (.get p "enter" True)))
     (setv literal (bool (.get p "literal" True)))
     (setv awaiting (bool (.get p "awaiting" False)))
-    ;; 段 8 lane 4x(agora-redesign #56): mode = turn(既定・次の手番の本文)| interrupt(割り込みの
-    ;; 本文 — 走っている手番へ即座に。headless は器へ注入し、走っている手番が無ければ型付きに
-    ;; 断る。tmux の tui は同じキー配送 — Claude Code / codex の tui は作業中の入力を自分で
-    ;; 走っている手番に読ませる)。語彙の外は断る(黙って turn にしない)。
-    (setv mode (.get p "mode" SEND-MODE-TURN))
-    (when (not-in mode SEND-MODES)
-      (raise (RuntimeError (+ "invalid params for session.send: mode must be one of "
-                            (.join " / " (sorted SEND-MODES)) f" (got: {mode !r})"))))
-    ;; 段 10 lane 10n: ref = 注入の行の名(headless の claude は user の行の uuid — CLI の
-    ;; command_lifecycle がこの綴りで運命を名乗る)。無ければ器が鋳造。
-    (setv ref (.get p "ref" ""))
-    (when (not (isinstance ref str))
-      (raise (RuntimeError f"invalid params for session.send: ref must be a string (got: {ref !r})")))
-    ;; 段 10 lane 10d 便 2 追補 2(実弾 #92): session_env = **この手番の** env(預かり所の貸与の札は
-    ;; 手番ごとに回る)。降りた process を起こし直す時、行に残った誕生の env ではなくこの値を重ねる。
-    ;; admission は launch と同じ 1 点(binding 所有キー・従量課金 credential は送りの口でも受けない)。
+    ;; 段 10 lane 10d 便 2 追補 2(実弾 #92): 手番ごとの env を運べる器はもう無い(tmux / herdr の
+    ;; 器には手番ごとの env が無い)。黙って落とさず断る(落とすと誕生の札で手番が走る = #92 の形)。
     (setv session-env (or (.get p "session_env") {}))
-    (when (not (isinstance session-env dict))
-      (raise (RuntimeError
-               f"invalid params for session.send: session_env must be an object (got: {session-env !r})")))
-    (setv send-env-error (session-env-admission-error session-env "session.send"))
-    (when (is-not send-env-error None)
-      (raise (RuntimeError send-env-error)))
-    ;; 手番ごとの env を運べない組み合わせは黙って落とさず断る(落とすと誕生の札で手番が走る =
-    ;; まさに #92 の形): tmux の器には手番ごとの env が無く、mode = interrupt は走っている手番へ
-    ;; 本文を注ぐだけで process を起こさない。
     (when session-env
-      (when (not (headless-backend? config))
-        (raise (RuntimeError
-                 (+ "session.send: session_env is only carried by the headless backend "
-                    f"(backend: {config.backend}). The tmux container has no per-turn env."))))
-      (when (= mode SEND-MODE-INTERRUPT)
-        (raise (RuntimeError
-                 (+ "session.send: session_env belongs to mode = " SEND-MODE-TURN
-                    " — an interrupt is poured into the turn already in flight and starts no process.")))))
-    ;; card acp:kanban-issue:ki-a40292ed30d9(4 つ目の腕): turn_charter = **この手番の荷**
-    ;; (policy.TURN-CARRIED-KEYS = 記憶の置き場と冊)。降りた process を起こし直す腕は行の
-    ;; launch_overlay しか読まないので、行に残さない欄はこの口で来る。session_env とは別の口:
-    ;; あちらは資格(秘密)の袋で、こちらは file に落ちる値 — 同じ袋に入れると、冊の本文が
-    ;; 「log にも argv にも出さない」規律の側へ紛れる。
-    (setv turn-charter (or (.get p "turn_charter") {}))
-    (when (not (isinstance turn-charter dict))
       (raise (RuntimeError
-               f"invalid params for session.send: turn_charter must be an object (got: {turn-charter !r})")))
-    ;; 段 10 lane 10o(agora-redesign #96・依頼者の追補): 郵便の添付は**型つき**で受け取り、そのまま
-    ;; 器へ渡す(CLI の綴りは kind ごとの Dialogue が組む — この module に画像の綴りは無い)。
-    ;; 添付の段を持たない器(tui = tmux / herdr)は断りを名乗る — 本文は届く・添付だけ落ちる。
+               (+ "session.send: session_env is not carried "
+                  f"(backend: {config.backend}). The tmux container has no per-turn env."))))
+    ;; 段 10 lane 10o(agora-redesign #96): 添付の段を持たない器(tui = tmux / herdr)は断りを名乗る —
+    ;; 本文は届く・添付だけ落ちる。
     (setv attachments (run (turn-attachments-of p "session.send")))
-    (setv ignored (if (and attachments (not (headless-backend? config)))
+    (setv ignored (if attachments
                       ATTACHMENTS-UNSUPPORTED-REASON
                       ""))
-    (when ignored
-      (setv attachments #()))
-    (when (headless-backend? config)
-      (try
-        (run-hosted config actor (cache-host-guard-normal-send sid))
-        (except [error CacheMaintenanceActiveError]
-          (raise (RpcHostError CACHE-MAINTENANCE-ACTIVE (str error))))))
-    (run-hosted config actor
-                (cond
-                  (and (headless-backend? config) (= mode SEND-MODE-INTERRUPT))
-                  (headless-inject-program sid message ref attachments)
-                  (headless-backend? config)
-                  (headless-send-program sid message awaiting session-env turn-charter attachments)
-                  True
-                  (send-program sid message literal enter awaiting)))
+    (run-hosted config actor (send-program sid message literal enter awaiting))
     (record-command actor sid "session.send" message)
     (if ignored
         (return {"sent" True "attachmentsIgnored" ignored})
         (return {"sent" True})))
 
-  ;; agora-redesign #37: 走っている手番だけを止め、session は残す(withdraw = 中断の
-  ;; 合図)。cancel(終端)とは別の動詞 — 1 つの動詞に「終端」と「残す」を同居させない。
-  (when (= method "session.interrupt")
-    (setv p (params-object params "session.interrupt"))
-    (setv sid (required-str-param p "session_id" "session.interrupt"))
-    (run-hosted config actor
-                (if (headless-backend? config)
-                    (headless-interrupt-program sid)
-                    (interrupt-program sid)))
-    (setv wire (wire-snapshot actor sid))
-    (record-command actor sid "session.interrupt" wire)
-    (return wire))
-
-  ;; 段 10 lane 10n(agora-redesign #93): 注入した本文を model が期限まで読まなかった時の停止の合図
-  ;; (headless の claude = control_request interrupt・codex は出す物が無い)。tui の backend には
-  ;; 注入の段が無い(キー配送は作業中の入力を model が自分で読む)ので断る。
-  (when (= method "session.escalate")
-    (setv p (params-object params "session.escalate"))
-    (setv sid (required-str-param p "session_id" "session.escalate"))
-    (when (not (headless-backend? config))
-      (raise (RuntimeError "session.escalate is only supported by the headless backend")))
-    (run-hosted config actor (headless-escalate-program sid))
-    (setv wire (wire-snapshot actor sid))
-    (record-command actor sid "session.escalate" wire)
-    (return wire))
-
   (when (= method "session.cancel")
     (setv p (params-object params "session.cancel"))
     (setv sid (required-str-param p "session_id" "session.cancel"))
-    (run-hosted config actor
-                (if (headless-backend? config)
-                    (headless-cancel-program sid)
-                    (cancel-program sid)))
+    (run-hosted config actor (cancel-program sid))
     (setv wire (wire-snapshot actor sid))
     (record-command actor sid "session.cancel" wire)
     (return wire))
@@ -1818,10 +1555,7 @@
   (when (= method "session.cleanup")
     (setv p (params-object params "session.cleanup"))
     (setv sid (required-str-param p "session_id" "session.cleanup"))
-    (run-hosted config actor
-                (if (headless-backend? config)
-                    (headless-cleanup-program sid)
-                    (cleanup-program sid)))
+    (run-hosted config actor (cleanup-program sid))
     (setv wire (wire-snapshot actor sid))
     (record-command actor sid "session.cleanup" wire)
     (return wire))
@@ -1876,16 +1610,7 @@
     (return (err-response None "invalid request: missing field `method`" None)))
   (setv params (.get request "params"))
   (try
-    ;; 一つのsessionの通常sendと専用pingを同時に開始させない。API完了までの短い区間だけ。
-    ;; await_result等の長い待ちはこのlockを取得しない。
-    (if (and (in method #("session.send" "session.cache-ping" "session.cache-ping-status"
-                          "session.cancel" "session.cleanup" "session.interrupt" "session.escalate"))
-             (isinstance params dict) (isinstance (.get params "session_id") str))
-      (with [(session-mutation-lock (get params "session_id"))]
-        (when (and (headless-backend? config) (in method #("session.cancel" "session.cleanup")))
-          (run-hosted config actor (cache-host-cancel (get params "session_id"))))
-        (setv value (dispatch-method method params config actor)))
-      (setv value (dispatch-method method params config actor)))
+    (setv value (dispatch-method method params config actor))
     (ok-response id value)
     (except [e RpcHostError]
       (err-response id e.message e.code))
@@ -1983,10 +1708,7 @@
     (when (not (.get snap "adopted" False))
       (setv sid (get snap "session_id"))
       (run-worker-tick f"orphan-reap[{sid}]"
-                       (fn [] (run-hosted config actor
-                                          (if (headless-backend? config)
-                                              (headless-cleanup-program sid)
-                                              (cleanup-program sid))))))))
+                       (fn [] (run-hosted config actor (cleanup-program sid)))))))
 
 
 (defn orphan-watch-loop [config actor initial-ppid]
@@ -2024,41 +1746,6 @@
   (setv days (or (env-positive-i64 "DOEFF_AGENTD_HISTORY_RETENTION_DAYS")
                  HISTORY-RETENTION-DAYS-DEFAULT))
   (.isoformat (- (datetime.now timezone.utc) (timedelta :days days))))
-
-
-(setv ENV-EVENTS-OTLP-URL "DOEFF_AGENTD_EVENTS_OTLP_URL")
-
-(defn install-event-store [actor shutdown-event]
-  "出来事の置き場の handler を組む(composition root の 1 点・process を 1 つも起こす前)。
-   env DOEFF_AGENTD_EVENTS_OTLP_URL が在れば送り待ちの表 + 段の DB への送り手(pod の本番)、
-   無ければ登記簿の既定(file — Mac の当面の形・operator 裁定 2026-09-25)のまま。戻り = 送り手 or None。"
-  (setv url (.strip (.get os.environ ENV-EVENTS-OTLP-URL "")))
-  (when (not url)
-    (return None))
-  (.use-event-store HEADLESS-REGISTRY (OutboxEventStore actor.submit))
-  (setv shipper (OtlpShipper :submit actor.submit :url url :node (socket.gethostname)
-                             :clock HEADLESS-REGISTRY.clock
-                             :max-body-bytes (or (env-positive-i64 "DOEFF_AGENTD_EVENTS_MAX_BODY_BYTES")
-                                                 MAX-BODY-BYTES-DEFAULT)))
-  (run-forever shipper shutdown-event)
-  (print f"doeff-sessionhost events: outbox → {url}/v1/logs (node {shipper.node})" :file sys.stderr)
-  shipper)
-
-
-(defn events-prune-tick [actor]
-  "送れた出来事の行のうち、session が終わって猶予が過ぎた物を送り待ちの表から外す(置き場が送り待ちの表の
-   時だけ・毎時)。猶予は DOEFF_AGENTD_EVENTS_PRUNE_GRACE_SECS(既定 1 時間)。"
-  (when (not (isinstance HEADLESS-REGISTRY.event-store OutboxEventStore))
-    (return 0))
-  (setv grace (or (env-positive-i64 "DOEFF_AGENTD_EVENTS_PRUNE_GRACE_SECS")
-                  PRUNE-GRACE-SECONDS-DEFAULT))
-  ;; 時計は登記簿の時計(doeff-time の GetTime)— 送り手・出来事の at と同じ 1 つ。
-  (setv cutoff (prune-cutoff ((. HEADLESS-REGISTRY clock)) grace))
-  (setv removed (.submit actor (fn [conn] (prune-shipped conn cutoff))))
-  (when (> removed 0)
-    (print f"doeff-sessionhost events prune: {removed} shipped rows of sessions ended before {cutoff}"
-           :file sys.stderr))
-  removed)
 
 
 (defn prune-history-tick [actor]
@@ -2116,26 +1803,15 @@
    tick 隔離より強い)。run-worker-tick は backstop。監査履歴の毎時 prune も
    ここが持つ(retention 反故 = 無限成長は 2026-07-27 wedge の根)。"
   (setv next-prune (+ (time.monotonic) HISTORY-PRUNE-INTERVAL-SECONDS))
-  ;; 段 12 lane 12b(agora-redesign #207 根 1): headless の器は手番の終わりを読み手が読んだ拍に
-  ;; 登記簿へ合図する(HeadlessRegistry.wait-turn-end)。拍の合間はその合図を待つ — 上限が
-  ;; monitor の周期(周期は保険に退く)。合図が来れば即座に次の拍が観測して turn_ended_at を刻む。
-  ;; tui の器(tmux / herdr)に合図は無く、今日どおり周期で眠る。
-  (setv seen-turn-ends 0)
   (while True
     (run-worker-tick
       "monitor"
       (fn [] (run-hosted config actor
-                         (if (headless-backend? config)
-                             (headless-monitor-cycle)
-                             (monitor-cycle (build-monitor-knobs config))))))
+                         (monitor-cycle (build-monitor-knobs config)))))
     (when (>= (time.monotonic) next-prune)
       (run-worker-tick "history-prune" (fn [] (prune-history-tick actor)))
-      (run-worker-tick "events-prune" (fn [] (events-prune-tick actor)))
       (setv next-prune (+ (time.monotonic) HISTORY-PRUNE-INTERVAL-SECONDS)))
-    (if (headless-backend? config)
-        (setv seen-turn-ends (.wait-turn-end HEADLESS-REGISTRY seen-turn-ends
-                                             config.monitor-interval-seconds))
-        (time.sleep config.monitor-interval-seconds))))
+    (time.sleep config.monitor-interval-seconds)))
 
 
 (deff bind-listener [socket-path]
@@ -2195,93 +1871,16 @@
 ;; entry(oracle main :566-598)
 ;; ---------------------------------------------------------------------------
 
-;; ---------------------------------------------------------------------------
-;; 停止の作法(段 10 lane 10h 便 2・agora-redesign #84): TERM で子を黙って道連れにしない
-;; ---------------------------------------------------------------------------
-;;
-;; launchd の bootout / kickstart は process group ごと殺すので、headless の子 process(pipe の子)は
-;; host と共に死ぬ。手番の途中の行と agent-job をそのまま残すと、次の起動の復帰(recover-headless-rows・
-;; agentd の recover-job)が「死んだ」と観測して閉じるまで会話が「動いている」のままになる。TERM の
-;; 1 度目は accept loop を生かしたまま別 thread で (1) 登録された停止の hook(entry.py が agentd の
-;; close_for_stop を登録する — 器の眺めを host の RPC で読むので accept が要る)(2) headless の行の
-;; 停止の腕(stop-headless-rows — 手番の途中の行を stopped に・全 process を並列の猶予で降ろす)を
-;; 走らせ、済んだら自分に同じ信号を撃ち直す = 2 度目は SystemExit(0) で finally(lease の
-;; 釈放)へ。判断は headless_protocol.stop_verdict の 1 点。SIGKILL(kickstart -k の即時)には手が
-;; 無い — その時は次の起動の復帰が拾う(便 1)。
-
-;; entry.py が登録する停止の hook(agentd の close_for_stop)— host は中身を知らない。
-(setv SHUTDOWN-HOOKS [])
-
-(defn register-shutdown-hook [hook]
-  "host の停止(TERM)の前に走らせる hook を登録する(agentd 等 — 引数なし・戻り値は読まない)。"
-  (.append SHUTDOWN-HOOKS hook)
-  None)
-
-(defn graceful-stop [config actor signum declared marker]
-  "TERM の 1 度目の腕(別 thread): hook → headless の行の停止 → 自分に同じ信号を撃ち直す。
-   hook / 腕の例外は log して次へ(停止を止めない)。declared / marker = TERM の handler が停止の拍に 1 度だけ読んだ
-   排水の印の答えと中身の 1 行目(card acp:kanban-issue:ki-b5e0d04de958 D1 — ここでは読み直さない)。切った行の語は
-   stop_cause_category の 1 点で決まり、marker は行の散文と log に足すだけ(判断には使わない)。"
-  (setv name (. (signal.Signals signum) name))
-  (setv reason (if declared
-                   (+ name "; drain declared" (if marker f": {marker}" ""))
-                   name))
-  (print f"doeff-sessionhost stop ({name}): closing running turns before exit" :file sys.stderr)
-  (for [hook (list SHUTDOWN-HOOKS)]
-    (try
-      (hook)
-      (except [e Exception]
-        (print f"doeff-sessionhost stop: hook failed: {(. (type e) __name__)}: {e}" :file sys.stderr))))
-  (when (headless-backend? config)
-    (try
-      (setv outcomes (run-hosted config actor (stop-headless-rows reason declared)))
-      (setv cut (lfor [sid status] (.items outcomes) :if (and (!= sid "killed") (= status "stopped")) sid))
-      ;; 数える語は行の語から導く(固定の文字列で書かない — 印の有無が log から読める)。
-      (print (+ f"doeff-sessionhost stop ({reason}): {(.get outcomes "killed" 0)} headless process(es) terminated, "
-                f"{(len cut)} mid-turn row(s) ended as stopped/{(stop-cause-category declared)}"
-                (if cut f": {(.join ", " cut)}" ""))
-             :file sys.stderr)
-      (except [e Exception]
-        (print f"doeff-sessionhost stop: headless rows not settled: {(. (type e) __name__)}: {e}" :file sys.stderr))))
-  (.flush sys.stderr)
-  ;; 実の信号で撃ち直す(_thread.interrupt_main は accept の blocking syscall を起こさない — main thread は
-  ;; 次の接続まで handler に来ない。実の TERM は EINTR で accept を抜け、2 度目の handler が SystemExit を投げる)。
-  (os.kill (os.getpid) signum)
-  None)
-
-(defn term-handler [config start-stop]
-  "TERM の handler(install-graceful-stop が据える): 1 度目 = 排水の印を**この拍に 1 回**読み(drain_marker の
-   答えと中身の 1 行目 — card acp:kanban-issue:ki-b5e0d04de958 D1)、値のまま start-stop [signum declared marker] へ
-   渡す / 2 度目(撃ち直し・停止中の再送)= SystemExit(0)で、印は読み直さない(語は停止の拍の事実で決まる —
-   hook の排水が長くても、その間に立った・消えた印で語は変わらない)。"
-  (setv stopping (threading.Event))
-  (defn on-term [signum frame]
-    (if (.is-set stopping)
-        (raise (SystemExit 0))
-        (do
-          (.set stopping)
-          (start-stop signum (drain-declared config.drain-file) (drain-reason-line config.drain-file)))))
-  on-term)
-
-(defn install-graceful-stop [config actor]
-  "TERM の handler を据える(lease を取った後・serve の前): 1 度目は graceful-stop の thread、2 度目
-   (撃ち直し・停止中の再送)は SystemExit(0)(term-handler の 1 点)。"
-  (defn start-stop [signum declared marker]
-    (setv worker (threading.Thread :target graceful-stop
-                                   :args #(config actor signum declared marker)
-                                   :daemon True
-                                   :name "sessionhost-graceful-stop"))
-    (.start worker))
-  (signal.signal signal.SIGTERM (term-handler config start-stop))
-  None)
-
-
 (defn main []
   "serve entry(console script doeff-sessionhost の serve 経路 — subcommand
    dispatch は hostmain.py 所有で、report-result-mcp は relaymain.py へ
    Hy import より先に分岐済み)。SIGTERM(launchctl bootout の標準経路)は
    SystemExit(0) に変換し、finally の lease 釈放へ落とす(issue #565)。"
   (setv raw (list (cut sys.argv 1 None)))
+  ;; `--help` / `-h` は usage を stdout に出して exit 0(表は SERVE-FLAG-SPECS の 1 点)。
+  (when (any (gfor arg raw (in arg HELP-FLAGS)))
+    (.write sys.stdout (run (serve-usage-text)))
+    (return None))
   (setv config (parse-args raw))
   (for [parent [(os.path.dirname config.db-path)
                 (os.path.dirname config.socket-path)]]
@@ -2306,20 +1905,7 @@
   ;; KeepAlive の即 spawn 後継が lease-conflict で敗死しない(issue #565)。
   ;; SIGKILL / crash は従来どおり TTL 失効がバックストップ。
   (setv shutdown-event (threading.Event))
-  (install-event-store actor shutdown-event)
-  ;; 段 10 lane 10h 便 2: lease を取った後は TERM を graceful に(走っている手番を閉じてから finally へ)。
-  (install-graceful-stop config actor)
   (try
-    ;; 段 10 lane 10h(agora-redesign #84): headless の host は latch の clear より前・accept より前に
-    ;; 復帰を 1 度走らせる — 手番の途中のまま残った行の backend を観測し、死んでいれば exited +
-    ;; vanished に倒す(判断は headless_protocol.recovery_verdict の 1 点)。log に数を 1 行。
-    (when (headless-backend? config)
-      (setv recovered (run-hosted config actor (recover-headless-rows)))
-      (setv dead (lfor [sid status] (.items recovered) :if (= status "exited") sid))
-      (print (+ f"doeff-sessionhost startup recovery: {(len recovered)} headless rows observed, "
-                f"{(len dead)} ended as exited/vanished (backend process dead)"
-                (if dead f": {(.join ", " dead)}" ""))
-             :file sys.stderr))
     (.submit actor (fn [conn] (db-clear-awaiting-latches conn)))
     ;; 監査履歴の retention + 物理回収(2026-07-27 wedge 根治)。VACUUM は
     ;; 全書き換えなので accept 開始前のここでだけ走る(serve 中は禁止 —
