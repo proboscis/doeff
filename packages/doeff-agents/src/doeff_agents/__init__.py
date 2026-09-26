@@ -103,6 +103,7 @@ _LAZY_EXPORTS = {
     "AgentTurnLost": ".effects",
     "Events": ".effects",
     "EventsEffect": ".effects",
+    "ExportContextEffect": ".effects",
     "InputFateState": ".effects",
     "Interrupt": ".effects",
     "InterruptEffect": ".effects",

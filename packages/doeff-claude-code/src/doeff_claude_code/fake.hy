@@ -7,7 +7,7 @@
 ;;; 本番と共通の不変条件(1 つの会話に走る手番は多くとも 1 つ・StartTurn 1 回に終わりちょうど 1 つ・seq の単調増加・
 ;;; FreshSession の id の重複と ResumeSession の不在の断り・手番の外の足す / 止めるの断り・止めた後は Interrupted・閉じるは冪等・
 ;;; process の死の注入で BackendLost・次の ResumeSession は通る)を同じ筋書きの検で確かめる。
-(require doeff-hy.macros [defhandler defk <-])
+(require doeff-hy.macros [defhandler defk <- val])
 (import dataclasses [dataclass replace])
 (import uuid)
 (import doeff_time [Delay GetMonotonic GetTime])
@@ -16,9 +16,9 @@
 (import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage ToolResult InputFate PermissionRequested
                                  TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
-                                   ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus
+                                   ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
                                    TurnStarted InputQueued InterruptRequested TurnEventPage Answered SessionClosed
-                                   SessionStatus Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
+                                   SessionStatus SessionExported Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
                                    SessionNotFound SessionIdInUse TurnInFlight AttachmentRefused NoTurnInFlight
                                    UnknownTurn NoSuchRequest])
 (import doeff_claude_code.faults [ClaudeDropProcess])
@@ -291,6 +291,13 @@
                    True (Idle))
                  transcript))
 
+(defk fake-export [#^ FakeClaudeWorld world #^ ClaudeExportSession request]
+  {:pre [(: world FakeClaudeWorld) (: request ClaudeExportSession)] :post [(: % (| SessionExported SessionNotFound))]}
+  "transcript の写し: 行を改行で結んだ本文(carry-into の Rebuilt が同じ行の列へ読み戻す形)。無い・空 = SessionNotFound。"
+  (val lines (transcript-of world request.home request.cwd request.session-id))
+  (val text (if (is lines None) "" (.join "" (gfor line lines (+ line "\n")))))
+  (if (.strip text) (SessionExported text) (SessionNotFound request.session-id)))
+
 (defk fake-drop [#^ FakeClaudeWorld world #^ str session-id]
   {:pre [(: world FakeClaudeWorld) (: session-id str)] :post [(: % bool)]}
   (setv session (.get world.sessions session-id))
@@ -324,6 +331,9 @@
     (resume closed))
   (ClaudeSessionStatus [home cwd session-id]
     (resume (fake-status world effect)))
+  (ClaudeExportSession [home cwd session-id]
+    (<- exported (fake-export world effect))
+    (resume exported))
   (ClaudeDropProcess [session-id]
     (<- dropped (fake-drop world session-id))
     (resume dropped)))

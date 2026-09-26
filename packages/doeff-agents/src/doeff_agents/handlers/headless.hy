@@ -8,6 +8,8 @@
 ;;;
 ;;; 写し(layer2-effects-design.md 10 節):
 ;;;   LaunchEffect(CLAUDE)            → ClaudeStartTurn(FreshSession か、resume_from なら ResumeSession)— prompt が無ければ手番を始めない
+;;;   LaunchEffect.resume_snapshot     → その session の最初の ClaudeStartTurn の ResumeSession の carry = Rebuilt(写し)(2 手番目からは無し)
+;;;   ExportContextEffect(CLAUDE)      → ClaudeExportSession(SessionExported → 写しの本文・SessionNotFound → None)
 ;;;   SendEffect / FollowUpEffect      → 手番が走っていなければ ClaudeStartTurn(ResumeSession)、走っていれば待たせて終わりの後に始める
 ;;;   FollowUpEffect(mode = INJECT)    → ClaudeInjectInput(走っている手番に足す)
 ;;;   InterruptEffect                  → ClaudeInterruptTurn(手番だけを止める。待たせた入力は次の手番で走る)
@@ -15,7 +17,7 @@
 ;;;   StopEffect / StopSessionEffect / ReleaseSessionEffect → ClaudeCloseSession(待たせた入力は discarded の運命で閉じる)
 ;;;   CaptureEffect / AttachAgentSessionEffect → 画面が無いので AgentCapabilityUnsupportedError
 ;;; この handler が起こしていない session の effect と、CLAUDE 以外の LaunchEffect は外側の handler へ回す。
-(require doeff-hy.macros [defhandler defk <-])
+(require doeff-hy.macros [defhandler defk <- val])
 (import collections.abc [Callable])
 (import dataclasses [dataclass field])
 (import datetime [datetime])
@@ -27,19 +29,19 @@
 (import doeff_agents.shell [assert-no-forbidden-agent-env assert-session-env-is-non-auth-overlay])
 (import doeff_agents.effects.agent [
   LaunchEffect SendEffect FollowUpEffect InterruptEffect EventsEffect AwaitResultEffect MonitorEffect CaptureEffect
-  StopEffect StopSessionEffect ReleaseSessionEffect AttachAgentSessionEffect
+  StopEffect StopSessionEffect ReleaseSessionEffect AttachAgentSessionEffect ExportContextEffect
   SessionHandle Observation AwaitOutcome AwaitStatus TurnInputMode InputFateState
   AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent
   AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost
   AgentError AgentLaunchError AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError
   SessionAlreadyExistsError SessionNotFoundError])
-(import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn TurnInput FreshSession ResumeSession
+(import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn TurnInput FreshSession ResumeSession Rebuilt
                                   checked-session-id])
 (import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate
                                  Completed Failed Interrupted BackendLost])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
-                                   ClaudeCloseSession ClaudeSessionStatus
-                                   TurnStarted InterruptRequested TurnEventPage
+                                   ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
+                                   TurnStarted InterruptRequested TurnEventPage SessionExported
                                    SessionNotFound SessionIdInUse TurnInFlight CarryRefused LaunchFailed AttachmentRefused
                                    NoTurnInFlight UnknownTurn ProcessStillAlive TranscriptAbsent])
 
@@ -67,13 +69,16 @@
   "1 つの session(handle)の agent の寿命の状態。process の状態は持たない。
    context-id = 続きに使う agent runtime の文脈の id(claude の会話の id)/ fresh = 次の手番を新しい文脈として始めるか /
    turn = 走っている層 2 の手番(無ければ None)/ cursor = その手番の読んだ所 / waiting = 走っている手番の後に回す入力 /
-   events = 層 3 の出来事(seq = 添字)/ last-end = 最後の手番の終わり / stopped = 止めた。"
-  (defn __init__ [self #^ str name #^ ClaudeSessionSpec spec #^ str context-id #^ bool fresh lifecycle]
+   events = 層 3 の出来事(seq = 添字)/ last-end = 最後の手番の終わり / stopped = 止めた /
+   carry = 次に始める手番で文脈へ持ち込む写し(LaunchEffect.resume_snapshot — 最初の手番を始めたら None)。"
+  (defn __init__ [self #^ str name #^ ClaudeSessionSpec spec #^ str context-id #^ bool fresh lifecycle
+                  #^ (| Rebuilt None) [carry None]]
     (setv self.name name
           self.spec spec
           self.context-id context-id
           self.fresh fresh
           self.lifecycle lifecycle
+          self.carry carry
           self.stopped False)
     (setv #^ (| ClaudeTurn None) self.turn None)
     (setv #^ int self.cursor -1)
@@ -194,12 +199,15 @@
 (defk start-turn [#^ HeadlessSession session #^ TurnInput input]
   {:pre [(: session HeadlessSession) (: input TurnInput)] :post [(: % ClaudeTurn)]}
   "次の手番を始める。1 度も手番を始めていない新しい文脈は FreshSession、ほかは ResumeSession
-   (降りた process を起こし直すかは層 2 の判断 — ここは続けるとだけ言う)。断りは例外で名乗る。"
-  (setv origin (if session.fresh (FreshSession session.context-id) (ResumeSession session.context-id)))
+   (降りた process を起こし直すかは層 2 の判断 — ここは続けるとだけ言う)。持ち込む写し(carry)が在れば、始められた手番で
+   使い切る(層 2 は既に在る transcript を上書きしない)。断りは例外で名乗る。"
+  (val origin (if session.fresh
+                  (FreshSession session.context-id)
+                  (ResumeSession session.context-id :carry session.carry)))
   (<- outcome (ClaudeStartTurn origin session.spec input))
   (when (not (isinstance outcome TurnStarted))
     (raise (start-refusal outcome session)))
-  (setv session.fresh False session.turn outcome.turn session.cursor -1)
+  (setv session.fresh False session.turn outcome.turn session.cursor -1 session.carry None)
   outcome.turn)
 
 (defn #^ Callable turn-end-builder [#^ AgentTurnFailed end]
@@ -305,7 +313,8 @@
 
 (defk launch [#^ HeadlessClaudeConfig config #^ HeadlessState state #^ LaunchEffect request]
   {:pre [(: config HeadlessClaudeConfig) (: state HeadlessState) (: request LaunchEffect)] :post [(: % SessionHandle)]}
-  "session を起こす。prompt が在れば最初の手番を始める。resume_from は前の文脈の続き(手元に無ければ ResumeTargetNotFoundError)。"
+  "session を起こす。prompt が在れば最初の手番を始める。resume_from は前の文脈の続き(手元に無ければ ResumeTargetNotFoundError)。
+   resume_snapshot が在れば、最初の手番の前にその写しを文脈として持ち込む(手元に無くても続けられる)。"
   (setv name request.session-name)
   (when (in name state.sessions)
     (raise (SessionAlreadyExistsError (.format "Session {} already exists" name))))
@@ -320,8 +329,11 @@
       (except [#(ValueError TypeError)]
         (raise (ResumeTargetNotFoundError :resume-from (str request.resume-from))))))
   (setv spec (spec-of config request))
-  (setv session (HeadlessSession name spec (or request.resume-from (new-ref)) (is request.resume-from None) request.lifecycle))
-  (when (and (is-not request.resume-from None) (is request.prompt None))
+  (val carry (if (is request.resume-snapshot None) None (Rebuilt request.resume-snapshot)))
+  (val session (HeadlessSession name spec (or request.resume-from (new-ref)) (is request.resume-from None) request.lifecycle
+                                carry))
+  ;; 写しを持ち込む時は、最初の手番で在るようになるので手元の在否を確かめない。
+  (when (and (is-not request.resume-from None) (is request.prompt None) (is carry None))
     (<- status (ClaudeSessionStatus spec.home spec.cwd request.resume-from))
     (when (isinstance status.transcript TranscriptAbsent)
       (raise (ResumeTargetNotFoundError :resume-from request.resume-from))))
@@ -374,6 +386,20 @@
   (setv session.waiting [] session.turn None)
   None)
 
+(defk export-context [#^ HeadlessClaudeConfig config #^ ExportContextEffect request]
+  {:pre [(: config HeadlessClaudeConfig) (: request ExportContextEffect)] :post [(: % (| str None))]}
+  "文脈の写しを層 2 から取り出す(cwd は spec-of と同じ綴り)。答え = 写しの本文か、この家に無ければ None
+   (文脈の id の綴りでない値もこの家には無い)。"
+  (try
+    (checked-session-id request.context-id "ExportContextEffect.context_id")
+    (except [#(ValueError TypeError)]
+      (return None)))
+  (<- outcome (ClaudeExportSession config.home (str request.work-dir) request.context-id))
+  (cond
+    (isinstance outcome SessionExported) outcome.jsonl-text
+    (isinstance outcome SessionNotFound) None
+    True (raise (AgentError (.format "文脈 {} の写し: 層 2 の答えが閉語彙の外: {!r}" request.context-id outcome)))))
+
 (defn refuse-keys [#^ bool literal #^ bool enter]
   (when (or (not literal) (not enter))
     (raise (AgentCapabilityUnsupportedError :capability "SendEffect keys (literal=False / enter=False)" :handler HANDLER-NAME))))
@@ -386,6 +412,11 @@
     :when (= agent-type AgentType.CLAUDE)
     (<- handle (launch config state effect))
     (resume handle))
+
+  (ExportContextEffect [agent-type]
+    :when (= agent-type AgentType.CLAUDE)
+    (<- copied (export-context config effect))
+    (resume copied))
 
   (SendEffect [handle message enter literal]
     :when (in handle.session-id state.sessions)

@@ -1,4 +1,4 @@
-;;; 本番の handler — 公開 effect 7 つ(と検の口 ClaudeDropProcess)に、claude の print mode の子 process で答える。
+;;; 本番の handler — 公開 effect 8 つ(と検の口 ClaudeDropProcess)に、claude の print mode の子 process で答える。
 ;;;
 ;;; 方針 = 手番ごとに process を起こす(手番の終わりの result の行で stdin に EOF を出して降ろす — #517)。次の手番は
 ;;; `--resume <id>` の新しい process。起こし直しの判断は ClaudeStartTurn の中の 1 か所(decision.start-decision)だけで、
@@ -11,11 +11,12 @@
 ;;; 状態は ClaudeCodeHost(composition root が 1 つ作って handler に渡す)が持つ。読み手の thread と handler の節は
 ;;; 会話ごとの lock で状態機械(dialogue.hy)の値を差し替える。待つ所(init・出来事・降りるの待ち)は doeff-time の
 ;;; GetMonotonic / Delay で刻む(VM の thread を眠らせない)。
-(require doeff-hy.macros [defhandler defk <-])
+(require doeff-hy.macros [defhandler defk <- val])
 (import collections.abc [Callable])
 (import dataclasses [replace])
 (import os)
 (import os.path)
+(import pathlib [Path])
 (import threading)
 (import uuid)
 (import doeff_time [Delay GetMonotonic])
@@ -23,9 +24,9 @@
                                   LinkFromHome Rebuilt IMAGE-MIMES])
 (import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost parse-record classify-record])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
-                                   ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus
+                                   ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
                                    TurnStarted InputQueued InterruptRequested TurnEventPage Answered SessionClosed
-                                   SessionStatus Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
+                                   SessionStatus SessionExported SessionNotFound Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
                                    CarryRefused LaunchFailed AttachmentRefused NoTurnInFlight UnknownTurn NoSuchRequest
                                    ProcessStillAlive])
 (import doeff_claude_code.faults [ClaudeDropProcess])
@@ -429,6 +430,14 @@
                 True (Idle)))))
   (SessionStatus state transcript))
 
+(defk export-session [#^ ClaudeExportSession request]
+  {:pre [(: request ClaudeExportSession)] :post [(: % (| SessionExported SessionNotFound))]}
+  "transcript の jsonl 1 つを utf-8 で読む(置き場は session-status と同じ規則)。無い・空 = SessionNotFound。"
+  (val path (Path (transcript-path request.home.config-dir (os.path.realpath request.cwd) request.session-id)))
+  (when (not (.is-file path)) (return (SessionNotFound request.session-id)))
+  (val text (.read-text path :encoding "utf-8"))
+  (if (.strip text) (SessionExported text) (SessionNotFound request.session-id)))
+
 (defn drop-process [#^ ClaudeCodeHost host #^ str session-id]
   (setv runtime (.runtime host session-id))
   (setv process (if (is runtime None) None runtime.process))
@@ -455,5 +464,8 @@
     (resume closed))
   (ClaudeSessionStatus [home cwd session-id]
     (resume (session-status host effect)))
+  (ClaudeExportSession [home cwd session-id]
+    (<- exported (export-session effect))
+    (resume exported))
   (ClaudeDropProcess [session-id]
     (resume (drop-process host session-id))))

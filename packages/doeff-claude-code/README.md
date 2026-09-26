@@ -16,6 +16,9 @@
 | `ClaudeAnswerPermission(turn, request-id, answer)` | 道具の許可の問いに答える | `Answered` | `NoSuchRequest` |
 | `ClaudeCloseSession(session-id, reason)` | 会話を閉じる(冪等) | `SessionClosed` | `ProcessStillAlive` |
 | `ClaudeSessionStatus(home, cwd, session-id)` | 会話の状態と transcript の在否を読む | `SessionStatus` | — |
+| `ClaudeExportSession(home, cwd, session-id)` | transcript の jsonl の写しを取り出す(`ResumeSession(carry=Rebuilt(写し))` で別の家へ持ち込める) | `SessionExported` | `SessionNotFound` |
+
+`ClaudeExportSession` が写すのは transcript の jsonl 1 つだけ。`<session-id>/` の下の subagent の記録と `memory/` は写さない(残りの設計)。
 
 型は `doeff_claude_code.values`(欄の値)・`doeff_claude_code.lines`(行の種類と手番の終わり)・`doeff_claude_code.effects`
 (effect と答え)にある。手番の終わり(`ClaudeTurnEnd`)は手番ごとにちょうど 1 つ:

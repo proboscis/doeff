@@ -7,7 +7,7 @@
 ;;         無ければ skip・印 e2e(日次と着地の門は -m "not e2e" で除く)。会社の profile は使わない。
 ;;
 ;; 筋書きの Program は session host の socket を開かず、doeff_claude_code も doeff_agents.sessionhost も import しない(公開 effect だけ)。
-(require doeff-hy.macros [deftest defk <-])
+(require doeff-hy.macros [deftest defk <- val])
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import os)
@@ -22,7 +22,7 @@
 (import doeff_time [Delay GetMonotonic SimClock sim-time-handler sync-time-handler])
 (import doeff_agents.adapters.base [AgentType AgentSessionLifecycle])
 (import doeff_agents.effects [
-  Launch FollowUp Interrupt Events AwaitResult Monitor Capture Stop ReleaseSession
+  Launch FollowUp Interrupt Events AwaitResult Monitor Capture Stop ReleaseSession ExportContextEffect
   SessionHandle AgentEventPage AwaitStatus TurnInputMode InputFateState
   AgentTextEvent AgentToolUseEvent AgentInputFateEvent AgentTurnEndEvent
   AgentTurnCompleted AgentTurnInterrupted AgentTurnLost
@@ -91,11 +91,12 @@
     (= backend REAL) (+ [(sync-time-handler)] (headless-claude-handlers home-dir (child-env) :settings settings))
     True (raise (ValueError backend))))
 
-(defn run-on [#^ str backend #^ Path tmp-path #^ Callable scenario]
-  "scenario(Setting) → Program を、層 2 の handler の組 + headless の handler の下で走らせる。"
+(defn run-on [#^ str backend #^ Path tmp-path #^ Callable scenario [home-name "home"]]
+  "scenario(Setting) → Program を、層 2 の handler の組 + headless の handler の下で走らせる。
+   home-name = claude の家の dir の名(別の名 = 空の別の家 — fake は run ごとに新しい世界)。"
   (setv work (/ tmp-path "work"))
   (.mkdir work :parents True :exist-ok True)
-  (setv home-dir (if (= backend REAL) (get os.environ REAL-CONFIG-ENV) (str (/ tmp-path "home"))))
+  (setv home-dir (if (= backend REAL) (get os.environ REAL-CONFIG-ENV) (str (/ tmp-path home-name))))
   (setv setting (Setting work (if (= backend REAL) "haiku" None) (if (= backend REAL) 180.0 60.0) (if (= backend FAKE) 8 3)))
   (run (scheduled (with_handlers (handlers-for backend home-dir) (scenario setting)))))
 
@@ -132,10 +133,11 @@
   (or (any (gfor event events (and (isinstance event AgentToolUseEvent) (in "Bash" event.tool-names))))
       (is-not end None)))
 
-(defk launch [#^ Setting s #^ str name #^ (| str None) prompt #^ (| str None) resume-from]
-  {:pre [(: s Setting) (: name str) (: prompt (| str None)) (: resume-from (| str None))] :post [(: % SessionHandle)]}
+(defk launch [#^ Setting s #^ str name #^ (| str None) prompt #^ (| str None) resume-from #^ (| str None) [snapshot None]]
+  {:pre [(: s Setting) (: name str) (: prompt (| str None)) (: resume-from (| str None)) (: snapshot (| str None))]
+   :post [(: % SessionHandle)]}
   (<- handle (Launch name :agent-type AgentType.CLAUDE :work-dir s.work-dir :prompt prompt :model s.model
-                     :lifecycle AgentSessionLifecycle.MULTI-TURN :resume-from resume-from))
+                     :lifecycle AgentSessionLifecycle.MULTI-TURN :resume-from resume-from :resume-snapshot snapshot))
   handle)
 
 
@@ -230,6 +232,82 @@
   (<- again (read-until handle (fn [events end] (is-not end None)) s.timeout lost.after))
   (<- (Stop handle))
   {"dropped" dropped "lost" lost "again" again "context" first.end.resume-from})
+
+(defk export-after-one-turn [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % dict)]}
+  "手番 1 を走らせ、その文脈の写しを ExportContextEffect で取り出す(agora-redesign #731)。手元に無い文脈・綴りの外の id は None。"
+  (<- handle (launch s "memory-one" (remember-prompt "ALPHA-1") None))
+  (<- one (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- (Stop handle))
+  (val first-end one.end)
+  (assert (isinstance first-end AgentTurnCompleted) (repr first-end))
+  (val context first-end.resume-from)
+  (<- copied (ExportContextEffect :agent-type AgentType.CLAUDE :work-dir s.work-dir :context-id context))
+  (<- missing (ExportContextEffect :agent-type AgentType.CLAUDE :work-dir s.work-dir
+                                   :context-id "0b7a3e8e-2d0c-4a55-9d3f-6c1a3b7a0f11"))
+  (<- malformed (ExportContextEffect :agent-type AgentType.CLAUDE :work-dir s.work-dir :context-id "../not-a-uuid"))
+  {"context" context "copied" copied "missing" missing "malformed" malformed})
+
+(defk continue-from-copy [#^ Setting s #^ str context #^ (| str None) copied #^ bool prompt-first]
+  {:pre [(: s Setting) (: context str) (: copied (| str None)) (: prompt-first bool)] :post [(: % dict)]}
+  "空の家で、写しを持ち込んで文脈を続ける。prompt-first = Launch に prompt を載せる(偽なら prompt なしで起こして FollowUp で頼む
+   — 手元の在否の事前の確かめは写しが在る時は飛ぶ)。手番 2 つ目(持ち込みなし)も続く。"
+  (<- handle (launch s "memory-two" (if prompt-first (recall-prompt) None) context copied))
+  (when (not prompt-first)
+    (<- (FollowUp handle (recall-prompt))))
+  (<- two (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- (FollowUp handle (reply-prompt "AGAIN")))
+  (<- three (read-until handle (fn [events end] (and (is-not end None) (= (len (ends-of events)) 1))) s.timeout two.after))
+  (<- (Stop handle))
+  {"two" two "three" three})
+
+(defn check-carried [#^ dict found #^ str context]
+  (setv ends (+ (ends-of (. (get found "two") events)) (ends-of (. (get found "three") events))))
+  (assert (= (len ends) 2) (repr ends))
+  (setv #(recalled again) ends)
+  (assert (and (isinstance recalled AgentTurnCompleted) (isinstance again AgentTurnCompleted)) (repr ends))
+  (assert (in CODEWORD recalled.result-text) (repr ends))
+  (assert (in "AGAIN" again.result-text) (repr ends))
+  (assert (= recalled.resume-from again.resume-from context) (repr ends)))
+
+(defn check-memory-carry [#^ str backend #^ Path tmp-path]
+  (setv out (run-on backend tmp-path export-after-one-turn))
+  (setv context (get out "context") copied (get out "copied"))
+  (assert (and (isinstance copied str) (.strip copied)) (repr out))
+  (assert (is (get out "missing") None) (repr out))
+  (assert (is (get out "malformed") None) (repr out))
+  ;; 写しなしでは、空の家に文脈が無い — 黙って新しく始めずに断る。
+  (with [info (pytest.raises ResumeTargetNotFoundError)]
+    (run-on backend tmp-path (fn [s] (continue-from-copy s context None True)) "home-without-copy"))
+  (assert (= info.value.resume-from context))
+  (check-carried (run-on backend tmp-path (fn [s] (continue-from-copy s context copied True)) "home-with-copy") context)
+  (check-carried (run-on backend tmp-path (fn [s] (continue-from-copy s context copied False)) "home-with-copy-no-prompt")
+                 context))
+
+(deftest test-headless-memory-carried-into-an-empty-home-fake [tmp-path]
+  ;; agora-redesign #731: agent の記憶(文脈の transcript)を runtime の家の外へ写して、空の家で続ける。
+  (check-memory-carry FAKE tmp-path))
+
+(deftest test-headless-memory-carried-into-an-empty-home-stub [tmp-path]
+  (check-memory-carry STUB tmp-path))
+
+(deftest test-resume-snapshot-is-a-typed-field-and-turnless-handlers-refuse-it [tmp-path]
+  ;; resume_snapshot は resume_from の文脈の写し: resume_from なし・空は作れない。持ち込めない handler は黙って捨てずに断る。
+  (import doeff_agents.effects [LaunchEffect refuse-turn-capabilities])
+  (import doeff_agents.handlers.codex [codex-handler])
+  (for [#(resume-from snapshot) [#(None "x") #("0b7a3e8e-2d0c-4a55-9d3f-6c1a3b7a0f11" "") #("0b7a3e8e-2d0c-4a55-9d3f-6c1a3b7a0f11" "  ")]]
+    (with [(pytest.raises ValueError)]
+      (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :resume-from resume-from
+                    :resume-snapshot snapshot)))
+  (with [info (pytest.raises AgentCapabilityUnsupportedError)]
+    (refuse-turn-capabilities (LaunchEffect :session-name "x" :agent-type AgentType.CODEX :work-dir tmp-path
+                                            :resume-from "abc" :resume-snapshot "copy")
+                              :handler "t"))
+  (assert (in "resume_from" info.value.capability) info.value.capability)
+  (with [info (pytest.raises AgentCapabilityUnsupportedError)]
+    (run (scheduled (with_handlers [(codex-handler)]
+                                   (ExportContextEffect :agent-type AgentType.CODEX :work-dir tmp-path :context-id "abc")))))
+  (assert (= info.value.capability "ExportContextEffect") info.value.capability))
 
 (defk reader [#^ SessionHandle handle #^ float timeout]
   {:pre [(: handle SessionHandle) (: timeout float)] :post [(: % Read)]}
