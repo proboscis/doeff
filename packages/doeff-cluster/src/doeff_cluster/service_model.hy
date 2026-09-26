@@ -18,6 +18,7 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import importlib)
+(import inspect)
 (import json)
 (import hy)
 (import doeff [Program])
@@ -46,6 +47,17 @@
 
 (setv UPDATE-FORMS #("recreate" "handoff"))
 
+;; run.config のうち本体の引数ではなく、実行先の組み立て側が読む欄(record = effect の記録係の設定・job_entry の recording-layer)。
+;; 本体へは渡さない — 1 process の main・実行先・再生の 3 つとも、program-arguments を通して同じ引数を作る。
+(setv RECORD-KEY "record")
+(setv ASSEMBLY-KEYS #(RECORD-KEY))
+
+
+(defn #^ dict program-arguments [#^ dict config]  ; defk にできない: 宣言の時点の検め(check-program-arguments)も使う
+  "run.config から本体の keyword 引数を作る唯一の場所。組み立て側の欄(ASSEMBLY-KEYS)を外し、JSON の鍵(kebab / snake)を
+   Hy の引数名へ mangle する。1 process の main(service-program)・実行先(job_entry service)・再生(replay_main)が使う。"
+  (dfor #(k v) (.items config) :if (not-in k ASSEMBLY-KEYS) (hy.mangle k) v))
+
 
 (defn #^ str program-reference [#^ Callable program]  ; defk にできない: 宣言の値は module の読み込みの時に組む
   "Program を作る関数の参照 `module:attr`。module の最上位の名でない関数(入れ子の関数・lambda)は実行先で import しても
@@ -65,6 +77,29 @@
   mapping)
 
 
+(defn #^ None check-program-arguments [#^ str name #^ Callable program #^ dict config]  ; defk にできない: 宣言の値は module の読み込みの時に組む
+  "宣言の設定が本体の引数と合うかを宣言の時点で検める(食い違いは実行先で走らせた時に初めて落ち、coordinator が起こし直し続ける)。
+   設定の鍵(組み立て側の欄を除く)は本体の引数にある・既定値の無い引数は設定にある・本体は組み立て側の欄の名を引数に取らない。"
+  (setv parameters (.values (. (inspect.signature program) parameters))
+        reserved (sfor k ASSEMBLY-KEYS (hy.mangle k))
+        given (program-arguments config))
+  (setv takes-any (any (gfor p parameters (= p.kind inspect.Parameter.VAR_KEYWORD)))
+        named (lfor p parameters
+                    :if (in p.kind #(inspect.Parameter.POSITIONAL_OR_KEYWORD inspect.Parameter.KEYWORD_ONLY))
+                    p))
+  (setv problems
+        (+ (lfor p named :if (in p.name reserved)
+                 (.format "引数 {} は組み立て側の欄の名で、どの実行の道でも本体へ渡らない" p.name))
+           (if takes-any
+               []
+               (lfor k (sorted given) :if (not-in k (sfor p named p.name))
+                     (.format "設定の鍵 {} は本体の引数に無い" k)))
+           (lfor p named :if (and (is p.default inspect.Parameter.empty) (not-in p.name given) (not-in p.name reserved))
+                 (.format "引数 {} が設定に無い" p.name))))
+  (when problems
+    (raise (TypeError (.format "service {} の設定が本体 {} の引数と合わない: {}" name program.__qualname__ (.join "・" problems))))))
+
+
 (defn #^ ServiceDef service [#^ str name #^ Callable program *  ; defk にできない: 宣言の値は module の読み込みの時に組む
                              #^ str env
                              #^ (| dict None) [requires None]
@@ -73,7 +108,7 @@
                              #^ str [update "recreate"]
                              #^ (| dict None) [base-from None]]
   "名前付きの常駐 job(service)を 1 つ宣言する。
-   program = Program を作る module の最上位の関数(設定の鍵を引数に受ける)。env = 実行先で組む handler の組を返す関数の import path。
+   program = Program を作る module の最上位の関数(設定の鍵を引数に受ける — 食い違いはここで TypeError)。env = 実行先で組む handler の組を返す関数の import path。
    requires = 置き場の条件・config = 設定(どちらも文字列の鍵の dict)。
    readiness {\"windowSeconds\" n} = 本体が ReportReady で報告する「準備できた」が直近 n 秒以内にある時だけ Ready(Rollout が見る)。
    update \"handoff\" = 版や設定が変わった時、新の process を旧と並べて起こし、新が Ready と数えられてから旧を止める(名前付きの lease で
@@ -82,11 +117,14 @@
    image の版へ追わせる(coordinator の base_follow_policy)。"
   (when (not-in update UPDATE-FORMS)
     (raise (ValueError (.format "service {} の :update は {} のどれか: {!r}" name UPDATE-FORMS update))))
+  (setv reference (program-reference program)
+        settings (string-keyed name "config" (or config {})))
+  (check-program-arguments name program settings)
   (ServiceDef name
-              (program-reference program)
+              reference
               env
               (tuple (sorted (.items (string-keyed name "requires" (or requires {})))))
-              (tuple (sorted (.items (string-keyed name "config" (or config {})))))
+              (tuple (sorted (.items settings)))
               program
               (if (is readiness None) None (string-keyed name "readiness" readiness))
               update
@@ -107,9 +145,9 @@
 
 
 (defn #^ Program service-program [#^ ServiceDef service [overrides None]]
-  "設定を引数として Program を作る。JSON の鍵(kebab / snake)は Hy の引数名へ mangle する。"
+  "設定を引数として Program を作る(program-arguments — 実行先と同じ引数)。"
   (setv factory (or service.program-factory (resolve service.factory)))
-  (factory #** (dfor #(k v) (.items (config-of service overrides)) (hy.mangle k) v)))
+  (factory #** (program-arguments (config-of service overrides))))
 
 
 (defn #^ (| ServiceDef None) service-named [#^ System system #^ str name]
