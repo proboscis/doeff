@@ -21,7 +21,7 @@
 (import doeff_cluster.remote_model [current-versions])
 (import doeff_cluster.detached_model [SubmitDetached AwaitDetached ReadRunners SimulateRunnerLoss SimulateRunnerDrain
                                       SimulateRunnerReturn SimulateCoordinatorOutage
-                                      DetachedSucceeded DetachedLost DetachedUnrunnable DetachedPending
+                                      DetachedSucceeded DetachedLost DetachedUnrunnable DetachedPending DetachedUnreachable
                                       RunnerFact RunnersUnreachable])
 (import doeff_cluster.detached [detached-local DetachedLocalStore detached-cluster DetachedClient DetachedEvent])
 (import tests.detached_rig [ENV slow-add RigWorker MemoryCoordinator worker-tick worker-loop])
@@ -230,9 +230,12 @@
     (<- (SimulateCoordinatorOutage (* SLOW 2)))
     (<- roster (ReadRunners))
     (assert (isinstance roster RunnersUnreachable) roster)
-    ;; 途絶の間は終わりを読めない(死んだとみなさない)。明けた後に、途絶の間に終わった結果が読める。
+    ;; 途絶の間は終わりを読めない(死んだとみなさない — 期限を決めた待ちは「届かない」)・送りも届かない。明けた後に、途絶の間に
+    ;; 終わった結果が読める。
     (<- during (AwaitDetached "k-cut" :timeout-seconds (* SLOW 1.5)))
-    (assert (isinstance during DetachedPending) during)
+    (assert (isinstance during DetachedUnreachable) during)
+    (<- refused (SubmitDetached (slow-add 0.0 1) :env ENV :key "k-during" :requires ON-X :lease-seconds LEASE))
+    (assert (isinstance refused DetachedUnreachable) refused)
     (<- after (AwaitDetached "k-cut"))
     (assert (= after (DetachedSucceeded 106)) after)
     (<- back (ReadRunners))
@@ -243,3 +246,23 @@
   (assert (= (lfor e store.events #(e.key e.op e.runner))
              [#("k-cut" "submitted" "") #("k-cut" "started" "a") #("k-cut" "succeeded" "a")])
           store.events))
+
+
+;; --- 本物の client: coordinator に届かない送りと待ちは値で答える -------------------------------------------------------------
+
+(defn cut-off [request]
+  "coordinator に届かない transport(接続が断られる)。"
+  (raise (httpx.ConnectError "connection refused" :request request)))
+
+(deftest test-the-real-client-answers-unreachable-as-a-value
+  ;; 送り直しの期限(deadline-seconds)を過ぎた通信の失敗は、送りも期限を決めた待ちも DetachedUnreachable(fake の途絶と同じ値)。
+  (val client (DetachedClient "http://coordinator" "r" :transport (httpx.MockTransport cut-off) :deadline-seconds 0.2))
+  (defk scenario []
+    {:pre [] :post [(: % bool)]}
+    (<- sent (SubmitDetached (slow-add 0.0 1) :env ENV :key "k-cut-real"))
+    (assert (isinstance sent DetachedUnreachable) sent)
+    (<- awaited (AwaitDetached "k-cut-real" :timeout-seconds 1.0))
+    (assert (isinstance awaited DetachedUnreachable) awaited)
+    True)
+  (<- ok bool (with-handlers [(sim-time-handler :clock (SimClock)) (detached-cluster client :poll-seconds POLL)] (scenario)))
+  (assert ok))
