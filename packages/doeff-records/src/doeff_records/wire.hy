@@ -346,7 +346,7 @@
     (Conflict :current current) {"kind" "conflict" "current" (! (encode-answer current))}
     (Refused :reason reason) {"kind" "refused" "reason" reason}
     (NotIndexed :fields fields) {"kind" "notIndexed" "fields" (list fields)}
-    (Reset :epoch epoch) {"kind" "reset" "epoch" epoch}
+    (Reset :epoch epoch :floor floor) {"kind" "reset" "epoch" epoch "floor" floor}
     (Changes :items items :cursor cursor)
       (do (setv encoded [])
           (for [item items] (.append encoded (! (change-json item))))
@@ -458,7 +458,8 @@
         (do (<- (object-of value "notIndexed" #("kind" "fields") #()))
             (NotIndexed (! (strings-of (get value "fields") "notIndexed.fields"))))
       {"kind" "reset"}
-        (do (<- (object-of value "reset" #("kind" "epoch") #())) (Reset (! (integer-of (get value "epoch") "reset.epoch"))))
+        (do (<- (object-of value "reset" #("kind" "epoch" "floor") #()))
+            (Reset (! (integer-of (get value "epoch") "reset.epoch")) (! (integer-of (get value "floor") "reset.floor"))))
       {"kind" "changes"}
         (do (<- (object-of value "changes" #("kind" "items" "cursor") #()))
             (setv items [])

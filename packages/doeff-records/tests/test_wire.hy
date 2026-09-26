@@ -32,7 +32,7 @@
    #("read-row" (Missing))
    #("list-rows" (Page #(ROW) (ListCursor 1 "[\"g1\",\"t1\"]") 1 9))
    #("list-rows" (Page #() None 2 0))
-   #("list-rows" (Reset 3))
+   #("list-rows" (Reset 3 0))
    #("list-rows" (NotIndexed #("note")))
    #("put-row" (Written 2 {"id" "p1"}))
    #("put-row" (Conflict ROW))
@@ -40,7 +40,7 @@
    #("put-row" (Refused "書き手でない"))
    #("watch-changes" (Changes #((RowChanged "parts" #("p1") 1 {"id" "p1"} 5 1700000000123) (RowRemoved "tickets" #("g1" "t1") 6))
                               (WatchCursor 1 6)))
-   #("watch-changes" (Reset 2))
+   #("watch-changes" (Reset 2 41))
    #("append-event" (Appended 7))
    #("append-event" (Refused "別の本文"))
    #("read-events" (Events #((Event "journal" 1 "k1" {"n" 1} "maker" 1000)) 1))
@@ -113,7 +113,10 @@
                            ;; 確定の刻 at の無い変更は、刻を黙って既定に倒さず断る。
                            #("watch-changes" {"kind" "changes" "cursor" {"epoch" 1 "sequence" 5}
                                               "items" [{"kind" "rowChanged" "table" "parts" "key" ["p1"] "version" 1
-                                                        "value" {} "sequence" 5}]})]]
+                                                        "value" {} "sequence" 5}]})
+                           ;; 読める最も古い位置 floor の無い Reset は、floor を黙って 0 に倒さず断る。
+                           #("watch-changes" {"kind" "reset" "epoch" 2})
+                           #("list-rows" {"kind" "reset" "epoch" 2 "floor" "0"})]]
     (try
       (run (decode-answer operation body))
       (assert False (.format "形の違う答えを読んだ: {} {!r}" operation body))

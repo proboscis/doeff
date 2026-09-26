@@ -156,9 +156,9 @@
 
 (defn #^ object pg-list-rows [#^ PgRecordsHost host #^ ListRows ask]
   (setv decl (host.schema.table ask.table)
-        #(epoch _ head) (store-head host))
+        #(epoch floor head) (store-head host))
   (when (and (is-not ask.cursor None) (!= ask.cursor.epoch epoch))
-    (return (Reset epoch)))
+    (return (Reset epoch floor)))
   (setv refusal (where-refusal decl ask.where))
   (when refusal (return refusal))
   (setv records (host.fetch-all (list-rows-statement host.prefix ask.table
@@ -233,7 +233,7 @@
   (setv #(epoch floor head) (store-head host)
         cursor ask.cursor)
   (when (or (!= cursor.epoch epoch) (< cursor.sequence floor) (> cursor.sequence head))
-    (return (Reset epoch)))
+    (return (Reset epoch floor)))
   (setv items (tuple (gfor record (host.fetch-all (changes-statement host.prefix cursor.sequence head ask.tables ask.limit))
                            (change-of record))))
   (Changes items (WatchCursor epoch (next-watch-sequence items ask.limit head))))
