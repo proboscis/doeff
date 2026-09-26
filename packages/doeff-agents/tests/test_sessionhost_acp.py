@@ -5639,7 +5639,7 @@ def test_entry_main_splits_the_halves_by_role_and_keeps_the_default_whole(
         monkeypatch.setattr(runtime, "start_agentd_thread", fake_thread)
         monkeypatch.setattr(runtime, "run_agentd_only", lambda host_argv, _env: seen["only"].append(tuple(host_argv)))
         monkeypatch.setattr(host_module, "register_shutdown_hook", seen["hooks"].append)
-        monkeypatch.setattr(entry, "host_main", lambda: seen["hosts"].append(tuple(sys.argv[1:])))
+        monkeypatch.setattr(entry, "run_host", lambda: seen["hosts"].append(tuple(sys.argv[1:])))
         monkeypatch.setattr(sys, "argv", ["doeff-sessionhost", *argv])
         monkeypatch.delenv(ACP_VALVE_ENV, raising=False)
         entry.main()
@@ -7429,6 +7429,38 @@ def test_the_drain_port_and_the_host_read_the_same_answer_from_drain_marker(tmp_
     assert flipped == [str(marker), str(marker)]
 
 
+def test_the_console_script_entry_hands_only_the_agentd_arm_to_the_old_entry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """agora-redesign #668: console script の入口は hostmain((c) の側)。join / host-slot と、agentd の弁が on の serve だけを
+    旧い入口(acp/entry.py)へ渡し、素の serve は振り分けない run_host で器を起こす(旧い入口も器は run_host で起こす — hostmain.main を
+    呼ぶと弁の判定でまた旧い入口へ戻り、堂々巡りになる)。"""
+    import sys
+
+    from doeff_agents.sessionhost import hostmain
+    from doeff_agents.sessionhost.acp import entry
+
+    seen: list[str] = []
+    monkeypatch.setattr(entry, "main", lambda: seen.append("arm"))
+    monkeypatch.setattr(hostmain, "run_host", lambda: seen.append("host"))
+    cases = [
+        (["join", "--server", "http://x", "--token-file", "/t"], {}, "arm"),
+        (["host-slot", "status"], {}, "arm"),
+        (["--acp", "--socket", "/tmp/s"], {}, "arm"),
+        (["--socket", "/tmp/s"], {"DOEFF_AGENTD_ACP": "on"}, "arm"),
+        (["--socket", "/tmp/s", "serve"], {}, "host"),
+        (["--socket", "/tmp/s"], {"DOEFF_AGENTD_ACP": "off"}, "host"),
+    ]
+    for argv, env, want in cases:
+        seen.clear()
+        monkeypatch.delenv("DOEFF_AGENTD_ACP", raising=False)
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+        monkeypatch.setattr(sys, "argv", ["doeff-sessionhost", *argv])
+        hostmain.main()
+        assert seen == [want], (argv, env, seen)
+    # 旧い入口の終わりは振り分けない run_host を呼ぶ(hostmain.main を呼ぶと上の判定でまた旧い入口へ戻る)。
+    assert "\n    run_host()\n" in inspect.getsource(entry)
+
+
 def test_entry_main_hands_the_drain_marker_path_to_the_host_role_only(monkeypatch: pytest.MonkeyPatch) -> None:
     """card acp:kanban-issue:ki-b5e0d04de958(受入 3・設計の改訂 1c): 役 host の起動だけ、器の env に
     DOEFF_SESSIONHOST_DRAIN_FILE = runtime.drain_file_path(env)(置き場の定義点は 1 つ・ACP 側の drain_port と同じ file)。
@@ -7465,7 +7497,7 @@ def test_entry_main_hands_the_drain_marker_path_to_the_host_role_only(monkeypatc
         monkeypatch.setattr(runtime, "apply_join_env", fake_apply)
         monkeypatch.setattr(runtime, "start_agentd_thread", lambda _argv, _env, *, role: Run())
         monkeypatch.setattr(host_module, "register_shutdown_hook", lambda _hook: None)
-        monkeypatch.setattr(entry, "host_main", lambda: seen.append(HostStart(dict(os.environ), tuple(sys.argv[1:]))))
+        monkeypatch.setattr(entry, "run_host", lambda: seen.append(HostStart(dict(os.environ), tuple(sys.argv[1:]))))
         monkeypatch.setattr(sys, "argv", ["doeff-sessionhost", *argv])
         # entry は os.environ に直に書くので、元の不在を monkeypatch に覚えさせてから消す(teardown で不在へ戻る)。
         monkeypatch.setenv(entry.HOST_DRAIN_FILE_ENV, "sentinel")
