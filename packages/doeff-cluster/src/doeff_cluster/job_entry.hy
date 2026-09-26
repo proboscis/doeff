@@ -26,50 +26,8 @@
 (import .remote_model [current-versions version-mismatch version-diffs decode-program encode-outcome
                        TaskSucceeded TaskFailed failed-from VersionMismatch RemoteJobFailed])
 (import .runtime_env_model [RuntimeEnv runtime-env-of-json])
-
-
-(defclass [(dataclass :frozen True)] RunContext []
-  "実行先の文脈(worker が環境変数で渡す)。env の組み立てだけが読む。"
-  (#^ str coordinator-url)
-  (#^ str worker)
-  (#^ str revision)
-  (#^ str job)
-  ;; この process の世代(worker が起こした時に振った名・試行の番号・起こした spec の指紋・割り当ての世代)。
-  ;; readiness と計器の報告に載せ、coordinator は今の宣言で今動いている process の報告だけを数える。
-  (setv #^ str instance "")
-  (setv #^ str attempt "")
-  (setv #^ str spec-hash "")
-  (setv #^ str placement "")
-  ;; 実行環境の宣言(JSON の文字列)とキー。env の task でなければ空。子がさらに task を送る時の既定の env になる。
-  (setv #^ str runtime-env "")
-  (setv #^ str env-key "")
-
-  (defn #^ dict identity [self]
-    "報告に載せる process の世代(coordinator の resource_policy.report-matches が比べる欄)。"
-    {"instance" self.instance "attempt" self.attempt "specHash" self.spec-hash
-     "placement" (if self.placement (int self.placement) None)}))
-
-
-(defn #^ RunContext context-from-env []
-  (RunContext (os.environ.get "DOEFF_WORKER_COORDINATOR" "")
-              (os.environ.get "DOEFF_WORKER_NAME" "")
-              (os.environ.get "DOEFF_WORKER_REVISION" "")
-              (os.environ.get "DOEFF_WORKER_JOB" "")
-              :instance (os.environ.get "DOEFF_WORKER_INSTANCE" "")
-              :attempt (os.environ.get "DOEFF_WORKER_ATTEMPT" "")
-              :spec-hash (os.environ.get "DOEFF_WORKER_SPEC_HASH" "")
-              :placement (os.environ.get "DOEFF_WORKER_PLACEMENT" "")
-              :runtime-env (os.environ.get "DOEFF_RUNTIME_ENV" "")
-              :env-key (os.environ.get "DOEFF_RUNTIME_ENV_KEY" "")))
-
-
-(defk runtime-env-of-context [ctx]
-  {:pre [(: ctx RunContext)] :post [(: % (| RuntimeEnv None))]}
-  ;; この process が走っている実行環境の宣言(無ければ None)— env の組み立てが送り手(TaskClient・DetachedClient)へ渡し、
-  ;; service や task がさらに送る task を同じ env で走らせるため(2026-09-26 — 送り手の版が image に固定されない)。
-  (if ctx.runtime-env
-      (do (<- env RuntimeEnv (runtime-env-of-json (json.loads ctx.runtime-env))) env)
-      None))
+;; 子の文脈の型と読みは入口でない module に 1 つだけ置く(job_context の頭の註 — ここは import して、今の名を引けるように残す)。
+(import .job_context [RunContext context-from-env runtime-env-of-context])
 
 
 (defn #^ list env-handlers [#^ str env #^ dict config #^ RunContext ctx]
