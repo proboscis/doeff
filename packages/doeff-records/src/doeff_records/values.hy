@@ -57,7 +57,7 @@
 (defclass [(dataclass :frozen True)] KeepFor []
   "表: 終端の状態になった行を seconds 秒の後に消す(transient)。追記の列: 積んでから seconds 秒の後に消す。"
   (#^ float seconds)
-  (defn __post_init__ [self]
+  (defn #^ None __post_init__ [self]
     (when (or (isinstance self.seconds bool) (not (isinstance self.seconds #(int float))) (<= self.seconds 0))
       (raise (ValueError (.format "KeepFor.seconds は正の数: {!r}" self.seconds))))))
 
@@ -70,7 +70,7 @@
   "表の欄 1 つの宣言: name = 欄の名 / writers = その欄を書いてよい書き手の名(空でない文字列の空でない tuple)。"
   (#^ str name)
   (#^ tuple writers)
-  (defn __post_init__ [self]
+  (defn #^ None __post_init__ [self]
     (checked-field-name self.name "FieldDecl.name")
     (when (not (and (isinstance self.writers tuple) self.writers (all (gfor n self.writers (and (isinstance n str) n)))))
       (raise (ValueError (.format "FieldDecl.writers[{!r}] は空でない文字列の空でない tuple: {!r}" self.name self.writers))))))
@@ -82,7 +82,7 @@
    (宣言した欄はこれで全部。行を作る = 鍵の欄を書く、なので鍵の欄の書き手 = 行を作ってよい書き手)/
    indexes = ListRows の where に使える欄(鍵の欄は常に使える)/
    state-field = 状態の語を持つ欄(states が空なら使わない)/ states・terminal・initial = 状態の語彙・終端の語・生まれる行の語 /
-   operator-paths = 書くのに承認の要る欄 / retention = KeepForever | KeepFor / size-budget = 行の値の JSON の byte の上限(None = 無し)。"
+   operator-paths = operator の宣言の欄(書けるのは RecordsSchema.operators に入る書き手だけ)/ retention = KeepForever | KeepFor / size-budget = 行の値の JSON の byte の上限(None = 無し)。"
   (#^ str name)
   (#^ tuple key-fields)
   (#^ tuple fields)
@@ -94,7 +94,7 @@
   (setv #^ tuple operator-paths #())
   (setv #^ object retention (KeepForever))
   (setv #^ (| int None) size-budget None)
-  (defn __post_init__ [self]
+  (defn #^ None __post_init__ [self]
     (checked-table-name self.name "TableDecl.name")
     (checked-names self.key-fields "TableDecl.key_fields")
     (when (not self.key-fields) (raise (ValueError "TableDecl.key_fields は 1 つ以上")))
@@ -155,7 +155,7 @@
   (#^ tuple writers)
   (setv #^ object retention (KeepForever))
   (setv #^ (| int None) size-budget None)
-  (defn __post_init__ [self]
+  (defn #^ None __post_init__ [self]
     (checked-table-name self.name "StreamDecl.name")
     (when (not (and (isinstance self.writers tuple) self.writers (all (gfor n self.writers (and (isinstance n str) n)))))
       (raise (ValueError (.format "StreamDecl.writers は空でない文字列の空でない tuple: {!r}" self.writers))))
@@ -168,15 +168,26 @@
 
 (defclass [(dataclass :frozen True)] RecordsSchema []
   "置き場 1 つの宣言の全部: tables = 表の名 → TableDecl・streams = 列の名 → StreamDecl(どちらも凍らせた写像 —
-   作る時に受けた写像を写し取る)。"
+   作る時に受けた写像を写し取る)/ operators = operator の主体の名(身元の名簿の名 = 書き手の名)の tuple。
+   表の operator-paths の欄は、欄の書き手(FieldDecl.writers)であり、かつこの一覧に入る書き手だけが書ける —
+   operator の宣言を agent が書かないように、許可の根拠を書き手の主体に置く。空 = 誰も書けない。"
   (setv #^ (get FrozenMap TableDecl) tables (field :default-factory FrozenMap))
   (setv #^ (get FrozenMap StreamDecl) streams (field :default-factory FrozenMap))
-  (defn __post_init__ [self]
+  (setv #^ tuple operators #())
+  (defn #^ None __post_init__ [self]
     (object.__setattr__ self "tables" (frozen-map-of self.tables "RecordsSchema.tables"))
     (object.__setattr__ self "streams" (frozen-map-of self.streams "RecordsSchema.streams"))
+    (when (not (and (isinstance self.operators tuple)
+                    (all (gfor n self.operators (and (isinstance n str) n (not-in ":" n))))))
+      (raise (ValueError (.format "RecordsSchema.operators は「:」を含まない空でない文字列の tuple: {!r}" self.operators))))
     (for [#(name decl) (.items self.tables)]
       (when (not (and (isinstance decl TableDecl) (= decl.name name)))
-        (raise (ValueError (.format "RecordsSchema.tables[{!r}] は同じ名の TableDecl" name)))))
+        (raise (ValueError (.format "RecordsSchema.tables[{!r}] は同じ名の TableDecl" name))))
+      ;; operator の欄の書き手に operator の主体が 1 人も居ない宣言は、誰も書けない欄を黙って作る — 宣言の時に止める。
+      (for [path decl.operator-paths]
+        (when (not (& (set (decl.writers-of path)) (set self.operators)))
+          (raise (ValueError (.format "表 {} の operator の欄 {!r} の書き手 {!r} に operator の主体 {!r} が居ない"
+                                      name path (decl.writers-of path) self.operators))))))
     (for [#(name decl) (.items self.streams)]
       (when (not (and (isinstance decl StreamDecl) (= decl.name name)))
         (raise (ValueError (.format "RecordsSchema.streams[{!r}] は同じ名の StreamDecl" name))))))
@@ -198,7 +209,7 @@
 (defclass [(dataclass :frozen True)] ExpectVersion []
   "行の版が version の時だけ書く。"
   (#^ int version)
-  (defn __post_init__ [self]
+  (defn #^ None __post_init__ [self]
     (when (or (isinstance self.version bool) (not (isinstance self.version int)) (< self.version 1))
       (raise (ValueError (.format "ExpectVersion.version は 1 以上の整数: {!r}" self.version))))))
 
@@ -233,7 +244,7 @@
   (#^ tuple key)
   (#^ FrozenMap value)
   (#^ int version)
-  (defn __post_init__ [self] (freeze-field self "value" "Row.value")))
+  (defn #^ None __post_init__ [self] (freeze-field self "value" "Row.value")))
 
 (defclass [(dataclass :frozen True)] Missing []
   "行が無い。")
@@ -250,7 +261,7 @@
   "PutRow が確定した: version = 新しい版・value = 確定した行の値(凍らせた写像)。"
   (#^ int version)
   (#^ FrozenMap value)
-  (defn __post_init__ [self] (freeze-field self "value" "Written.value")))
+  (defn #^ None __post_init__ [self] (freeze-field self "value" "Written.value")))
 
 (defclass [(dataclass :frozen True)] RowChanged []
   "変更 1 つ: 行が書かれた(作られた・更新された)。value(凍らせた写像)と version は確定した後の値。"
@@ -259,7 +270,7 @@
   (#^ int version)
   (#^ FrozenMap value)
   (#^ int sequence)
-  (defn __post_init__ [self] (freeze-field self "value" "RowChanged.value")))
+  (defn #^ None __post_init__ [self] (freeze-field self "value" "RowChanged.value")))
 
 (defclass [(dataclass :frozen True)] RowRemoved []
   "変更 1 つ: 行が保持の期限で消えた。"
@@ -284,7 +295,7 @@
   (#^ object body)
   (#^ str writer)
   (#^ int at)
-  (defn __post_init__ [self] (object.__setattr__ self "body" (freeze-json self.body))))
+  (defn #^ None __post_init__ [self] (object.__setattr__ self "body" (freeze-json self.body))))
 
 (defclass [(dataclass :frozen True)] Events []
   "ReadEvents の答え: items = after より後の出来事(sequence の昇順)/ last-sequence = 次に渡す after。"
