@@ -84,7 +84,7 @@ PUBLIC_STATEMENTS = [
 
 # The deadline of one import test, before the root conftest scales it with load. Measured
 # on the daily machine (zeus, 36 cores, 2026-09-26, load about 1.0, bytecode off as in the
-# daily run): importing doeff_agents.sessionhost.acp.runtime alone from cold took 157 s;
+# daily run): importing the agentd runtime module (retired in agora-redesign#668) alone from cold took 157 s;
 # with one shared cache, host_slot_cli took 73 s and runtime after it 78 s. The same imports
 # take 19-35 s on a Mac, which is why the ini's 60 s held there and failed on the daily
 # machine (agora-redesign#639).

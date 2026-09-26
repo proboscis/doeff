@@ -14,9 +14,6 @@
 ;;;
 ;;; 各 effect の構築子が契約面: :pre が引数型を fail-fast 検査し、
 ;;; docstring が凍結物理(F-* マーカー・TerminalCause 表・knob 表)への束縛を書く。
-;;; headless の backend の effect(BuildHeadlessLaunch・Headless* と、defk の構築子)は
-;;; sessionhost/headless_effects.hy に在る(agora-redesign #624 で移した — 旧い headless の器の
-;;; 語彙を、この共有の語彙から外す)。
 
 (require doeff-hy.macros [deff defk <-])
 
@@ -125,14 +122,6 @@
   ;; admission が session_env から締め出すため構造的に混入しない。
   #^ (| dict None) launch-overlay
   (setv launch-overlay None)
-  ;; 発注者(ACP scheduler)が申告する帰属 metadata({work_item_id,
-  ;; invocation_id, action_id, resource_key, namespace})。launch_overlay
-  ;; (launch 意図 = resume の復元源)とは意味が別 — これは「この走行が
-  ;; どの機能の仕事か」の出自申告で、host は解釈せず verbatim 保存のみ。
-  ;; 消費者は Mac 側の利用帰属台帳(agentd.sqlite を直接 SELECT)。
-  ;; policy は読まない。first-write-wins(store は COALESCE 保護)。
-  #^ (| dict None) launch-attribution
-  (setv launch-attribution None)
   ;; --- koine session surface v0(ADR-DOE-AGENTS-007): adopt 起点の登記か。
   ;; 安全条項 1 の ownership marker — policy の刈り取り免除判定(reap-exempt)
   ;; が読む唯一の追加 field。turn_holder / turn_since / turn_wait は policy

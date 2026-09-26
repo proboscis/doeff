@@ -68,8 +68,7 @@ project's handover notes — not something to work around here.
 
 Three pieces stack up: the control-plane **engine** schedules work, the
 **client** (`doeff-agent-haskell`) talks to it, and **this package** is the host
-that actually runs the agent on a machine. The host joins a cluster with
-`doeff-sessionhost join` (below).
+that actually runs the agent on a machine.
 
 Which revisions of the three go together is declared by the consuming project,
 typically in its `pyproject.toml` (for this package) plus a small pin file such
@@ -156,11 +155,11 @@ doeff-agents stop <session>
 
 All of these resolve the socket from the environment: `DOEFF_AGENTD_SOCKET` when it is
 set, else `$XDG_RUNTIME_DIR/doeff/agentd.sock`, else
-`/tmp/doeff-agentd-$USER.sock`. A host started by `join` listens under its state
-directory (below), which the defaults never name, so point the CLI at it:
+`/tmp/doeff-agentd-$USER.sock`. A host started with `--socket` elsewhere is not
+found by the defaults, so point the CLI at it:
 
 ```bash
-export DOEFF_AGENTD_SOCKET="${XDG_STATE_HOME:-$HOME/.local/state}/doeff/acp-agentd/agentd.sock"
+export DOEFF_AGENTD_SOCKET=/path/to/agentd.sock
 doeff-agents agentd kinds
 doeff-agents ps
 ```
@@ -199,55 +198,29 @@ doeff-sessionhost --db "$AGENTD_DB" --socket "$AGENTD_SOCKET" --max-running 10 s
 
 `serve` is the only command, and it may be omitted; unknown arguments are
 rejected. Run `doeff-sessionhost --help` for the flags, the environment
-variables that shadow them, and the two env-only knobs. That listing is
+variables that shadow them, and the env-only knob. That listing is
 generated from the flag vocabulary of record — `parse-args` in
 `src/doeff_agents/sessionhost/host.hy` — so it cannot drift from what the host
 accepts. Two flags are easy to get wrong: `--max-running none` (or `unlimited`)
 means no limit, and `--max-running 0` is refused at startup because it would
-reject every launch. `--acp` (or `DOEFF_AGENTD_ACP=on`, off by default)
-additionally runs the agentd thread that joins a control-plane cluster.
+reject every launch.
 
 `LazyAgentdClient` connects only to that expected socket. It does not probe
 per-run temporary sockets or fall back to direct worker execution; if no host is
 reachable, it raises an actionable error containing the exact start command.
 
-### Joining a cluster: `doeff-sessionhost join`
-
-Adding a machine to an agent control plane is one command, and it is the same
-command on macOS (launchd), Linux (systemd), a GCP node, and a runner pod:
-
-```bash
-doeff-sessionhost join --server <URL> --token-file <file> [--config <agentd.toml>]
-```
-
-The plan is derived at one point from the declaration — flags override the
-`--config` file, which overrides the defaults — and then the host runs as above.
-
-- Declaration schema: `doeff.agentd-join.v1`. A file declaring anything else is
-  refused.
-- Default state directory: `$XDG_STATE_HOME/doeff/acp-agentd`, holding
-  `agentd.sqlite`, `agentd.sock`, `headless-events/`, and `record-spool/`.
-- Further flags name the node, its ownership and custody, capacity, places (the
-  comma-separated set of `company` / `personal` this machine serves — the
-  placement binds a profile only to a node whose set holds its boundary), work
-  roots, backend, session hooks, borrowed credentials, and the record sink: run
-  `doeff-sessionhost join --help`, which is generated from the flag table at the
-  top of `src/doeff_agents/sessionhost/acp/join.hy`. `--capacity`, `--places` and
-  `--record` are required alongside `--server` and `--token-file`; a node that
-  does not declare them refuses to join rather than guessing.
-
 ## What each backend supports
 
-The backend vocabulary is `{tmux, herdr, headless}`. The default is `tmux`;
+The backend vocabulary is `{tmux, herdr}`. The default is `tmux`;
 `DOEFF_SESSIONHOST_BACKEND` selects another one and `--backend` overrides that.
 
-| Operation | tmux | herdr | headless |
-|---|---|---|---|
-| Start — host RPC `session.launch` | yes | yes | yes |
-| Resume — host RPC `session.resume` | yes | yes | yes |
-| Stop — `doeff-agents stop` | yes | yes | yes |
-| Start — `doeff-agents run` (direct, not via the host) | yes | **no** | **no** |
-| Attach — `doeff-agents attach` | yes | **no** | **no** |
+| Operation | tmux | herdr |
+|---|---|---|
+| Start — host RPC `session.launch` | yes | yes |
+| Resume — host RPC `session.resume` | yes | yes |
+| Stop — `doeff-agents stop` | yes | yes |
+| Start — `doeff-agents run` (direct, not via the host) | yes | **no** |
+| Attach — `doeff-agents attach` | yes | **no** |
 
 `stop` is backend-blind because the host's `session.cancel` is: whichever
 substrate is installed answers the same kill effect, so the CLI does not branch
@@ -260,9 +233,9 @@ narrower and worth stating separately. On 2026-09-15, against herdr 0.8.2
 created, so doeff owns its workspace label — stopped in 0.25s: exit 0, row
 `stopped` with cause `cancelled` and `finished_at` stamped, the label's holder
 set empty, `pane.list` answering `workspace_not_found`, and the pane's child
-process gone. The headless and tmux launched sessions were measured the same way
-on the same day and the same base — exit 0, substrate gone, row `stopped` with
-cause `cancelled`. A herdr seat that only lives in herdr's **agent registry**, with
+process gone. The tmux launched sessions were measured the same way on the same
+day and the same base — exit 0, substrate gone, row `stopped` with cause
+`cancelled`. A herdr seat that only lives in herdr's **agent registry**, with
 no doeff-owned workspace label (an interactive seat some other tool named), is a
 deliberately different case: the host observes it and `agentd adopt` accepts it
 with `substrate_present: true`, but `stop` refuses it — exit 1, `herdr
@@ -273,13 +246,11 @@ not close a seat it did not create (ADR-DOE-AGENTS-004 R12, law
 The one CLI limitation left, stated as it is rather than as it should be:
 
 - `attach` is tmux-only. It refuses a non-tmux session explicitly, naming the
-  backend it found. A herdr session is reachable through herdr's own attach; a
-  headless session has no terminal to attach to by construction — follow it with
-  `doeff-agents watch` / `output` instead.
+  backend it found. A herdr session is reachable through herdr's own attach.
 
 ## Agent Launch Invariant
 
-Print mode has exactly one home: the headless backend.
+The session host never launches an agent in print mode.
 
 - On the terminal backends (`tmux`, `herdr`), agents are launched as live
   terminal sessions. The initial task prompt and every follow-up prompt are
@@ -291,16 +262,12 @@ Print mode has exactly one home: the headless backend.
   or positional prompt arguments are banned. This keeps the agent process alive
   so doeff-agents can validate structured results and send correction prompts in
   the same session.
-- The headless backend is the one sanctioned print-mode launch site. The
-  spelling of Claude's print mode appears in `sessionhost/impls/headless_argv.hy`
-  and nowhere else under `sessionhost/`, and every RPC arm selects it through the
-  single `headless-backend?` predicate. The semgrep rule
-  `doeff-agents-no-claude-print-mode` keeps the ban in force everywhere else.
-- Outside the session host, the print-mode argv lives in the
-  `doeff-claude-code` package, which owns the process lifetime. The headless
-  handler below is an adapter onto its effects and holds no argv, no child
-  process and no pid. The session host's headless files stay only while the
-  production agentd still runs through them.
+- The print-mode argv lives in the `doeff-claude-code` package, which owns the
+  process lifetime. The headless handler below is an adapter onto its effects
+  and holds no argv, no child process and no pid. The session host's own
+  headless backend was retired with agentd (agora-redesign #668). The semgrep
+  rule `doeff-agents-no-claude-print-mode` keeps the ban in force everywhere in
+  this package.
 
 ## Headless handler without the session host
 
@@ -335,9 +302,7 @@ keys. Tests: `tests/test_headless_adapter.hy` runs the same programs over the
 fake, the production handler with a stand-in CLI, and (marked `e2e`) the real
 CLI.
 
-The statement of record is ADR-DOE-AGENTS-012 R11, law
-`print-mode-has-one-home-the-headless-backend`
-(`docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy`). Related contracts —
+Related contracts —
 what the host owns and does not own, how exclusivity is decided, and why the
 public launch surface is auth-blind — are stated in ADR-DOE-AGENTS-004; launch
 readiness and prompt delivery in ADR-DOE-AGENTS-011; resume and fork in

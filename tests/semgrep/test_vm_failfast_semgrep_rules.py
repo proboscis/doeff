@@ -389,75 +389,11 @@ def test_koine_interactive_terminalize_rule_is_clean_on_fixed_policy() -> None:
     )
 
 
-def test_job_step_stream_read_ordering_rule_detects_the_pre_fix_shape() -> None:
-    """card acp:kanban-issue:ki-2bd49c68b042: the ordering guard fires on the
-    pre-fix shape of agentd's tick — job-step-of asked for the next step
-    before this tick read the turn's material, so "did the runner already put
-    this turn's result into the vessel?" was answered from the previous
-    tick's read and a CLI that wrote its result and exited was closed as
-    SessionLost."""
-    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
-    results = _semgrep_results(
-        REPO_ROOT / ".semgrep.yaml",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/job_step_before_stream_read_forbidden.hy",
-        cwd=fixture_root,
-    )
-    assert _rule_start_lines(
-        results, "doeff-agents-job-step-reads-the-stream-before-the-step"
-    ) == {7}
-
-
-def test_job_step_stream_read_ordering_rule_is_clean_on_shipped_agentd() -> None:
-    """The ordering rule must NOT fire on the shipped agentd.hy (the tick reads
-    the material before it decides) — guards against the rule rotting into an
-    always-on false positive."""
-    results = _semgrep_results(
-        REPO_ROOT / ".semgrep.yaml",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy",
-        cwd=REPO_ROOT,
-    )
-    assert (
-        _rule_start_lines(results, "doeff-agents-job-step-reads-the-stream-before-the-step")
-        == set()
-    )
-
-
-def test_recovered_turn_output_rules_detect_the_pre_fix_shape() -> None:
-    """card acp:kanban-issue:ki-ef537db05f7f: both guards fire on the pre-fix
-    shape — recover-job rebuilding the InFlightJob without the coverage that
-    start-offset-of returns, and settle-record asking the turn-end judgment
-    for "did it produce nothing" with a literal instead of the job's own
-    reading of whether the material covers the turn."""
-    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
-    target = (
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/"
-        "recovered_turn_output_unmeasured_forbidden.hy"
-    )
-    results = _semgrep_results(REPO_ROOT / ".semgrep.yaml", target, cwd=fixture_root)
-    assert _rule_start_lines(
-        results, "doeff-agents-recovered-turns-do-not-claim-unread-output"
-    ) == {10}
-    assert _rule_start_lines(
-        results, "doeff-agents-turn-output-judgment-reads-the-materials-coverage"
-    ) == {23}
-
-
-def test_recovered_turn_output_rules_are_clean_on_shipped_agentd() -> None:
-    """Both guards must stay silent on the shipped agentd.hy (recover-job
-    carries (get start 2) and settle-record reads
-    drained.materials-cover-the-turn) — otherwise they rot into always-on
-    false positives."""
-    results = _semgrep_results(
-        REPO_ROOT / ".semgrep.yaml",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy",
-        cwd=REPO_ROOT,
-    )
-    for rule in (
-        "doeff-agents-recovered-turns-do-not-claim-unread-output",
-        "doeff-agents-turn-output-judgment-reads-the-materials-coverage",
-    ):
-        assert _rule_start_lines(results, rule) == set(), rule
-
+# agora-redesign #668(手順 5-1): agentd の tick の順序と、再開した手番の出力の測りの
+# 3 規則(doeff-agents-job-step-reads-the-stream-before-the-step・
+# doeff-agents-recovered-turns-do-not-claim-unread-output・
+# doeff-agents-turn-output-judgment-reads-the-materials-coverage)は、対象の
+# sessionhost/acp/agentd.hy と一緒に rule・fixture・発火 assert ごと退役した。
 
 # issue #575 M2: doeff-agentd-repl-ready-wait-must-not-discard-readiness の
 # 発火 assert は rule・fixture(tests/semgrep/fixtures/rust/packages/

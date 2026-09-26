@@ -705,33 +705,6 @@
   (assert (not-in "/work/dir/.acp-context.json" world.fs)))
 
 
-;; ---------------------------------------------------------------------------
-;; launch_attribution の resume 面(one law, both faces)
-;; ---------------------------------------------------------------------------
-
-
-(deftest test-resume-stores-attribution-verbatim
-  ;; ACP 帰属便(usage-attribution-two-axes 便 2): 新 incarnation は新しい
-  ;; invocation を宿すので、帰属も呼び手の申告が verbatim で新行に載る
-  ;; (蘇生元行の帰属を復元しない — 帰属は復元源ではなく出自申告)。
-  ;; 実装は launch-params への素通し 1 点(context_file と同律・R3)。
-  (setv world (LaunchWorld))
-  (seed-source world :launch_attribution {"work_item_id" "wi_old"
-                                          "invocation_id" "inv_wi_old_a1"
-                                          "action_id" "old-action"})
-  (setv world.capture-script ["› {composer}"])
-  (setv attribution {"work_item_id" "wi_attr"
-                     "invocation_id" "inv_wi_attr_a2"
-                     "action_id" "argus-sensor-run"
-                     "resource_key" "default:agent-responsibility:argus-loop"
-                     "namespace" "default"})
-  (<- row (run-resume world (resume-params :launch_attribution attribution)))
-  (assert (= (. (get world.rows "s1~g2") launch-attribution) attribution))
-  ;; 蘇生元行の帰属は不変
-  (assert (= (get (. (get world.rows "s1") launch-attribution) "action_id")
-             "old-action")))
-
-
 (deftest test-resume-rejects-metered-credential-in-overlay
   ;; 従量課金 credential の締め出しは resume 面でも同じ関所(launch-session)を
   ;; 通る — 呼び手の session_env にも、蘇生元行の overlay 由来の合成にも効く。
@@ -747,16 +720,6 @@
   (assert (in "metered-billing credentials are forbidden" (str raised)))
   ;; 新 incarnation の行は生まれない
   (assert (not-in "s1~g2" world.rows)))
-
-
-(deftest test-resume-without-attribution-stays-none
-  ;; 未申告の resume は新行の帰属 None(蘇生元からの黙った複写をしない —
-  ;; 旧 caller 無傷 + 帰属の偽装なし)。
-  (setv world (LaunchWorld))
-  (seed-source world :launch_attribution {"action_id" "old-action"})
-  (setv world.capture-script ["› {composer}"])
-  (<- row (run-resume world (resume-params)))
-  (assert (is (. (get world.rows "s1~g2") launch-attribution) None)))
 
 
 ;; ---------------------------------------------------------------------------
