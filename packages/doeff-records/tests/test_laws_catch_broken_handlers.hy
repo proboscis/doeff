@@ -11,7 +11,9 @@
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.laws [LAW-SCHEMA LawHarness LawBroken law-stale-put-conflicts law-committed-changes-appear-once-in-order
                             law-epoch-change-resets law-undeclared-writes-are-refused law-transient-rows-expire
-                            law-indexed-list-equals-filtered-scan law-append-is-idempotent law-none-removes-a-field])
+                            law-indexed-list-equals-filtered-scan law-append-is-idempotent law-none-removes-a-field
+                            law-maintenance-prunes-and-sweeps])
+(import doeff_records.maintenance [PruneChanges Pruned])
 
 
 (defhandler ignore-expectation []
@@ -45,6 +47,11 @@
     (<- answer (PutRow table key (dfor #(k v) (.items value) :if (is-not v None) k v) expect :approval approval))
     (resume answer)))
 
+(defhandler skip-pruning []
+  ;; 刈り取りをしない handler の顔: 変更の列を消さず floor も上げないまま「刈った」と答える。
+  (PruneChanges [keep-seconds]
+    (resume (Pruned 0 0))))
+
 (defhandler forget-idempotency []
   (AppendEvent [stream idempotency-key body]
     (<- answer (AppendEvent stream (. (uuid.uuid4) hex) body))
@@ -72,7 +79,8 @@
                       #(law-epoch-change-resets (hide-reset))
                       #(law-indexed-list-equals-filtered-scan (ignore-where))
                       #(law-append-is-idempotent (forget-idempotency))
-                      #(law-none-removes-a-field (ignore-removals))]]
+                      #(law-none-removes-a-field (ignore-removals))
+                      #(law-maintenance-prunes-and-sweeps (skip-pruning))]]
     (assert (breaks? law (broken-harness (MemoryStore LAW-SCHEMA) inner)) law.__name__))
   ;; 書き手を問わない handler(誰の書きも maker として通す)。
   (assert (breaks? law-undeclared-writes-are-refused (broken-harness (MemoryStore LAW-SCHEMA) None (fn [_] "maker"))))
