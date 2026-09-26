@@ -1,17 +1,17 @@
 ;; 入口の検め(probe・2026-09-25): service の job は、木が揃った後に worker の実行環境で入口(factory と env)を読み込めるかを試し、
 ;; 通るまで起こさない・入れ替えの旧を外さない。純粋な判断(worker_policy)・実の子 process(handlers.ProbeStore)・入口(job_entry probe)。
-(require doeff-hy.macros [deftest])
+(require doeff-hy.macros [deftest val])
 (import dataclasses [replace])
 (import os)
 (import sys)
 (import time)
 (import pathlib [Path])
-(import doeff_cluster.worker_model [JobSpec CodeState CodeView ProcessView WorldView ProbeState ProbeView JobPhase JobRecord WorkerPolicy
-                        PrepareCode StartJob RetireJob ProbeEntry spec-hash probed-job probe-args])
+(import doeff_cluster.worker_model [JobSpec CodeState CodeView ProcessView WorldView ProbeState ProbeView ProbeStatus JobPhase JobRecord
+                        WorkerPolicy PrepareCode StartJob RetireJob ProbeEntry spec-hash probed-job probe-args])
 (import doeff_cluster.worker_policy [plan statuses])
-(import doeff_cluster.handlers [ProbeStore probe-reason])
+(import doeff_cluster.handlers [ProbeStore probe-reason status-row])
 (import doeff_cluster.job_entry [probe-problem])
-(import doeff_cluster.cluster_policy [JOB-ENTRY spec-of-declaration])
+(import doeff_cluster.cluster_policy [JOB-ENTRY LIVE-PHASES spec-of-declaration])
 
 (setv POLICY (WorkerPolicy :code-retry-ms 30000)
       RUN {"kind" "service" "factory" "m.f:program" "env" "m.e:handlers" "config" {}}
@@ -121,6 +121,112 @@
   (setv v (observed store slow))
   (assert (= v.state ProbeState.FAILED))
   (assert (in "終わらない" v.detail) v.detail))
+
+
+;; --- 反例(2026-09-27 の本番: 同じ worker に 7 つの service を新しい root で宣言し直し、17 分 starting のまま起きなかった)------
+
+(defn #^ bool process-alive [#^ int pid]
+  "pid の process が生きているか(終わって回収を待つだけの zombie は生きていない)。"
+  (setv stat (Path (.format "/proc/{}/stat" pid)))
+  (try
+    (setv text (.read-text stat))
+    (except [OSError] (return False)))
+  ;; 「pid (名前) 状態 …」— 名前に空白と括弧が入りうるので、最後の「)」の後を読む。
+  (!= (get (.split (.strip (cut text (+ (.rindex text ")") 1) None))) 0) "Z"))
+
+
+(defn #^ None test-a-timed-out-probe-leaves-no-child-process [#^ Path tmp-path]
+  ;; 反例 (a): 時間切れで止めた検めの子(import の途中で起こした孫 process)が残らない。以前は Popen の直の子だけを kill し、
+  ;; 孫(実行環境の job では uv の下の hy)が孤児として CPU を使い続け、撃ち直しのたびに積み上がった(最大 47 本)。
+  (probe-tree tmp-path)
+  (.write-text (/ tmp-path "probe_forks.hy")
+               (.join "\n" ["(import subprocess time pathlib [Path])"
+                            "(setv child (subprocess.Popen [\"sleep\" \"60\"]))"
+                            "(.write-text (Path \"child.pid\") (str child.pid))"
+                            "(time.sleep 60)"
+                            "(defn program [] None)"])
+               :encoding "utf-8")
+  (setv store (ProbeStore HY :timeout-seconds 3)
+        forks (service-spec "probe_forks:program" "probe_ok:handlers")
+        pid-file (/ tmp-path "child.pid"))
+  (.start store (ProbeEntry forks (str tmp-path)))
+  (setv v (observed store forks))
+  (assert (= v.state ProbeState.FAILED))
+  (assert (in "終わらない" v.detail) v.detail)
+  (assert (.exists pid-file) "検めが孫を起こす前に時間切れになった(検の前提が崩れた)")
+  (setv child (int (.read-text pid-file)) deadline (+ (time.monotonic) 5))
+  (try
+    (while (and (process-alive child) (< (time.monotonic) deadline)) (time.sleep 0.05))
+    (assert (not (process-alive child)) (.format "時間切れの検めの孫 {} が生き残った" child))
+    (finally
+      (when (process-alive child)
+        (os.kill child 9)))))
+
+
+(defn #^ None test-probes-on-the-same-tree-run-as-one-process [#^ Path tmp-path]
+  ;; 反例 (c): 同じ木に 7 つの service が同時に来ても、検めの process を 7 本並べない(同じ木の検めは 1 本にまとめる)。
+  ;; 以前は spec ごとに 1 本ずつ起こし、同じ import の閉包を 7 本が同時に compile して CPU の上限 4 の Pod を締め付けた。
+  ;; まとめても、読み込めない入口の理由はその入口の spec にだけ付く。
+  (probe-tree tmp-path)
+  (for [i (range 6)]
+    (.write-text (/ tmp-path (.format "probe_m{}.hy" i))
+                 (.join "\n" ["(import os time pathlib [Path])"
+                              "(with [f (open (Path \"pids.txt\") \"a\")] (.write f (.format \"{}\\n\" (os.getpid))))"
+                              "(time.sleep 0.3)"
+                              "(defn program [] None)"])
+                 :encoding "utf-8"))
+  (setv store (ProbeStore HY)
+        specs (+ (lfor i (range 6) (replace (service-spec (.format "probe_m{}:program" i) "probe_ok:handlers") :name (.format "w{}" i)))
+                 [(replace (service-spec "probe_broken:program" "probe_ok:handlers") :name "w6")]))
+  (for [spec specs] (.start store (ProbeEntry spec (str tmp-path))))
+  (setv views (lfor spec specs (observed store spec)))
+  (assert (= (lfor v (cut views 0 6) v.state) (* [ProbeState.PASSED] 6)) views)
+  (assert (= (. (get views 6) state) ProbeState.FAILED) views)
+  (assert (in "NoSuchClockName" (. (get views 6) detail)) (. (get views 6) detail))
+  (setv pids (set (.split (.read-text (/ tmp-path "pids.txt")))))
+  (assert (= (len pids) 1) (.format "同じ木の検めが {} 本の process で走った" (len pids))))
+
+
+(deftest test-a-running-probe-is-shown-as-probing-with-its-reason
+  ;; 反例 (d): 検めの間の状態が starting ではなく検めの段(probing)で、経過の秒・回数・直前の失敗の理由を持つ。
+  ;; 以前は検めの間を starting と出し、理由(probe-failed)は FAILED から撃ち直すまでの 30 秒しか見えなかった。
+  (val plain (world :codes #(READY1) :probes #((ProbeView (spec-hash S1) ProbeState.RUNNING))))
+  (val first (get (statuses 0 #(S1) plain {} POLICY) 0))
+  (assert (= first.phase JobPhase.PROBING) first.phase)
+  ;; 撃ち直しの間: 直前の失敗の理由・回数・経過の秒が状態に残る。
+  (val again (world :codes #(READY1)
+                     :probes #((ProbeView (spec-hash S1) ProbeState.RUNNING :started-ms 1000 :attempts 2
+                                          :last-failure "ImportError: cannot import name 'GetMonotonic'"))))
+  (val status (get (statuses 46000 #(S1) again {} POLICY) 0))
+  (assert (= status.phase JobPhase.PROBING))
+  (assert (= status.probe (ProbeStatus :state "running" :elapsed-seconds 45 :attempts 2
+                                       :last-failure "ImportError: cannot import name 'GetMonotonic'"))
+          status.probe)
+  (assert (in "GetMonotonic" status.detail) status.detail)
+  ;; 状態の JSON(heartbeat と status の file)にも載る。
+  (val row (status-row status))
+  (assert (= (get row "phase") "probing"))
+  (assert (= (get row "probe") {"state" "running" "elapsedSeconds" 45 "attempts" 2
+                                "lastFailure" "ImportError: cannot import name 'GetMonotonic'"})
+          row)
+  ;; 検めの行は coordinator から見て「その worker で起こしかけている」(他へ置かない)。
+  (assert (in "probing" LIVE-PHASES)))
+
+
+(defn #^ None test-a-refired-probe-keeps-the-last-failure [#^ Path tmp-path]
+  ;; 反例 (d) の観測の側: FAILED の後に撃ち直した検めの観測は、走っている間も直前の失敗の理由と回数を持つ。
+  (setv tree (probe-tree tmp-path) store (ProbeStore HY)
+        broken (service-spec "probe_broken:program" "probe_ok:handlers"))
+  (.start store (ProbeEntry broken tree))
+  (setv first (observed store broken))
+  (assert (= first.state ProbeState.FAILED))
+  (.start store (ProbeEntry broken tree))
+  (setv #(running) (lfor v (.observe store) :if (= v.spec-hash (spec-hash broken)) v))
+  (assert (in running.state #(ProbeState.QUEUED ProbeState.RUNNING)) running)
+  (assert (= running.attempts 2) running)
+  (assert (= running.last-failure first.detail) running)
+  (setv second (observed store broken))
+  (assert (= second.attempts 2) second))
 
 
 (defn #^ None test-job-entry-probe-resolves-without-calling []

@@ -13,7 +13,8 @@
 ;;;   6 依存      SyncProject                                uv sync --locked(lock-stale・sync-failed・python-unavailable)
 ;;;   7 wheel     InstallWheels                              native の wheel を入れる
 ;;;   8 根        WriteImportRoots                           venv に import の根の .pth を置く(宣言の順)
-;;;   9 bytecode  CompileTree                                root の venv の interpreter で作る(引き継ぎ元は lock と Python が同じ root)
+;;;   9 bytecode  ReadEditableRoots / CompileTree            root の venv の interpreter で作る(引き継ぎ元は lock と Python が同じ root)。
+;;;                                                          焼く範囲 = 宣言の import の根 + venv に editable で入る root の中の dir
 ;;;  10 確かめ    ProbeImports                               子の約束の版・根の最上位の名の解け先(env-incompatible)
 ;;;  11 完成      WriteEnvMarker                             完成マーカーを最後に置く(無い root は使わない)
 ;;;
@@ -205,6 +206,13 @@
   (#^ tuple roots))
 
 
+(defclass [(dataclass :frozen True)] ReadEditableRoots [EffectBase]
+  "project の venv に editable で入る package の dir のうち、root の中に在る物(2026-09-27)。答え = root からの相対 path
+   \"<repo の名>/<repo の中の相対の dir>\"(repo の根そのものは \"<repo の名>\")の tuple(venv の .pth の名の順・import の根の .pth は除く)。"
+  (#^ str project-dir)
+  (#^ str root))
+
+
 (defclass [(dataclass :frozen True)] CompileTree [EffectBase]
   "tree の bytecode を root の venv の interpreter で作る(project-dir = その venv の project・roots = tree の中の import の根・
    carry-from = 引き継ぎ元の同じ repo のツリーか None・entries = 焼く範囲の入口の module(空 = 根の下を全部 — 宣言の
@@ -258,6 +266,27 @@
     (<- parts tuple (root-split r))
     (when (= (get parts 0) name) (.append out (get parts 1))))
   (tuple out))
+
+
+(defk editable-repo-roots [editable name]
+  {:pre [(: editable tuple) (: name str)] :post [(: % tuple)]}
+  "ReadEditableRoots の答えのうち repo name の中の dir(repo の中の相対の dir・repo の根は \".\"・答えの順)。"
+  (var out [])
+  (for [path editable]
+    (val parts (.split path "/" 1))
+    (when (= (get parts 0) name)
+      (.append out (if (= (len parts) 1) "." (get parts 1)))))
+  (tuple out))
+
+
+(defk bytecode-roots [env editable name]
+  {:pre [(: env RuntimeEnv) (: editable tuple) (: name str)] :post [(: % tuple)]}
+  "repo name の中の焼く根: 宣言の import の根(宣言の順)の後に、venv に editable で入る dir のうち宣言に無い物(2026-09-27 —
+   宣言の根は業務の repo だけなので、editable で入る依存の package(doeff の各 package の Hy)が焼かれず、子と入口の検めが毎回
+   source から compile した)。"
+  (<- declared tuple (repo-roots env name))
+  (<- extra tuple (editable-repo-roots editable name))
+  (+ declared (tuple (gfor r extra :if (not-in r declared) r))))
 
 
 (defk reuse-tree [known repo]
@@ -413,16 +442,21 @@
 
 (defk stage-bytecode [request state]
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % (| PrepareState EnvFailure))]}
-  "import の根を持つ repo ごとに、root の venv の interpreter で bytecode を作る(worker の Hy で作ると macro の展開が違い得るため)。"
+  "焼く根(宣言の import の根と、venv に editable で入る dir)を持つ repo ごとに、root の venv の interpreter で bytecode を作る
+   (worker の Hy で作ると macro の展開が違い得るため)。焼く範囲の入口(bytecode-entries)は宣言の根を持つ repo にだけ当てる —
+   editable で入るだけの依存の repo には入口の module が無く、閉包が空になるので、その根の下を全部焼く。"
   (<- pdir str (project-dir request.env request.root))
+  (<- editable tuple (ReadEditableRoots pdir request.root))
   (var interpreter "")
   (var failure None)
   (for [repo request.env.repos]
-    (<- roots tuple (repo-roots request.env repo.name))
+    (<- roots tuple (bytecode-roots request.env editable repo.name))
+    (<- declared tuple (repo-roots request.env repo.name))
     (when (and roots (is failure None))
       (<- carry (carry-source request.known request.env repo.name))
       (<- report (| BytecodeReport EnvFailure)
-          (CompileTree pdir (.format "{}/{}" request.root repo.name) roots carry :entries request.env.bytecode-entries))
+          (CompileTree pdir (.format "{}/{}" request.root repo.name) roots carry
+                       :entries (if declared request.env.bytecode-entries #())))
       (match report
         (EnvFailure) (:= failure report)
         (BytecodeReport :interpreter used) (:= interpreter used))))
