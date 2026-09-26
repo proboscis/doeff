@@ -1,10 +1,12 @@
 ;; 反例: 同じ MemoryStore を 2 つの thread が使う(書き手の thread と、実況の読みの thread)— この系の Python は GIL の無い
 ;; free-threaded なので、置き場の読み書きが錠で 1 つずつになっていないと、期限つきの列の刈り(purge-expired の列の作り直し)の間に
 ;; 他方が積んだ出来事が消え、行の番号(store.head)の採りが重なる。積んだ出来事と行の変更が 1 つも欠けず、番号が重ならないことを確かめる。
-;; 出自 = agora-redesign #741(agora-controllers の test_turn_tail が 3 回に 1 回、30 行のうち 1 行を失った)。
+;; 出自 = 使い手の実況の検が 3 回に 1 回、30 行のうち 1 行を失った(書き手と読み手の 2 つの thread が同じ置き場を使う形)。
 (require doeff-hy.macros [deftest defk <- val var])
 (import dataclasses)
 (import threading)
+(import copy)
+(import pickle)
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler])
@@ -104,3 +106,28 @@
     (assert (= (len store.changes) (* 2 ROW-COUNT)) (.format "変更が欠けた: {} 個" (len store.changes)))
     (assert (= (sorted numbers) (list (range 1 (+ (* 2 ROW-COUNT) 1)))) "変更の番号が重なった")
     (assert (= store.head (* 2 ROW-COUNT)))))
+
+
+;; --- 錠は pickle と copy を壊さない ---------------------------------------------------------------------------------------------
+;; 置き場を含む値は pickle される(使い手の worker の結果の file・状態の保存)。錠(RLock)は pickle できないので、
+;; 錠を除いた中身を運び、戻した側で新しい錠を作る。反例 = 錠を __dict__ のまま運ぶ置き場は pickle で TypeError。
+
+(defn #^ MemoryStore store-with-a-row []
+  "行を 1 つ書いた置き場を作るため(pickle と copy の前後で中身が同じかを見る材料)。"
+  (setv store (MemoryStore LAW-SCHEMA))
+  (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (memory-records-handler store MAKER)]
+                                 (PutRow "parts" #("p1") {"id" "p1" "label" "a"} (ExpectAbsent)))))
+  store)
+
+(defn #^ dict rows-of [#^ MemoryStore store]
+  "置き場の行の中身(表 → 鍵 → Row)を比べられる形で取り出すため。"
+  (dfor [table rows] (.items store.rows) table (dfor [key stored] (.items rows) key stored.row)))
+
+(deftest test-a-store-survives-pickle-and-copy-with-a-fresh-lock
+  (setv store (store-with-a-row))
+  (for [back [(pickle.loads (pickle.dumps store)) (copy.deepcopy store) (copy.copy store)]]
+    (assert (= (rows-of back) (rows-of store)) (rows-of back))
+    (assert (= back.head store.head))
+    (assert (is-not back.lock store.lock))
+    ;; 戻した置き場の錠は使える(入れ子も通る RLock)。
+    (with [back.lock] (with [back.lock] None))))

@@ -51,7 +51,16 @@
           self.changed-at {}
           self.event-head 0
           self.events []
-          self.by-idempotency {})))
+          self.by-idempotency {}))
+  ;; 錠は置き場の中身ではなく、この process の thread の間の取り決め — pickle と copy は錠を除いた中身だけを運び、戻した側で新しい錠を
+  ;; 作る(置き場を含む値を pickle する使い手 — worker の結果の file・coordinator の状態 — を錠の導入で壊さないため)。
+  (defn #^ dict __getstate__ [self]
+    "pickle / copy が運ぶ中身を返すため(錠を除く)。"
+    (dfor [name value] (.items self.__dict__) :if (!= name "lock") name value))
+  (defn #^ None __setstate__ [self #^ dict state]
+    "pickle / copy から戻す時に中身を入れ、新しい錠を作るため。"
+    (.update self.__dict__ state)
+    (setv self.lock (threading.RLock))))
 
 
 ;; --- 保持 ------------------------------------------------------------------------------------------------
