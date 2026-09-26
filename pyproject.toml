@@ -85,6 +85,7 @@ doeff-traverse = { workspace = true }
 doeff-docker = { workspace = true }
 doeff-ml-nexus = { workspace = true }
 doeff-hy = { workspace = true }
+doeff-hy-pytest = { workspace = true }
 doeff-adr = { workspace = true }
 doeff-domain = { workspace = true }
 doeff-system-one = { workspace = true }
