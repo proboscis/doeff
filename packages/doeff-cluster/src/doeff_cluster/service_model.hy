@@ -26,7 +26,8 @@
 (import inspect)
 (import json)
 (import hy)
-(import doeff [Program])
+(import doeff [Program run])
+(import .runtime_env_model [RuntimeEnv runtime-env->json])
 (import doeff_core_effects.scheduler [Spawn Gather Task])
 
 
@@ -214,8 +215,17 @@
   (system-main-program system (or overrides {})))
 
 
-(defn #^ list system-declaration [#^ System system #^ str revision [overrides None]]
-  "(b) coordinator に渡す宣言。job の名前 = service の名前。config は JSON の object。"
+(defn #^ list system-declaration [#^ System system #^ str revision [overrides None] #^ (| RuntimeEnv None) [runtime-env None]]
+  "(b) coordinator に渡す宣言。job の名前 = service の名前。config は JSON の object。
+   runtime-env = 実行環境の宣言(在れば全 service を env の root で起こす — worker は image の venv ではなく宣言の repo の commit と
+   uv の lock から準備した root の venv を使う・2026-09-26)。env を持つ宣言は image の版を追う base-from を持てない(commit が 2 つに
+   なる — 持つ service があれば ValueError)。"
+  (when (is-not runtime-env None)
+    (setv following (lfor service system.services :if service.base-from service.name))
+    (when following
+      (raise (ValueError (.format "runtime-env を持つ宣言は base-from の service を含めない(commit は宣言の repos が決める): {}"
+                                  (.join "・" following))))))
+  (setv env-json (if (is runtime-env None) None (run (runtime-env->json runtime-env))))
   (lfor service system.services
     (| {"name" service.name
         "revision" revision
@@ -226,4 +236,5 @@
                "config" (config-of service (.get (or overrides {}) service.name))}}
        (if service.readiness {"readiness" (dict service.readiness)} {})
        (if (= service.update "recreate") {} {"update" service.update})
-       (if service.base-from {"baseFrom" (dict service.base-from)} {}))))
+       (if service.base-from {"baseFrom" (dict service.base-from)} {})
+       (if (is env-json None) {} {"runtimeEnv" env-json}))))
