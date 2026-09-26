@@ -438,6 +438,31 @@
       (TurnCredential bad))))
 
 
+(defk launch-with-credential [#^ Path work #^ str token]
+  {:pre [(: work Path) (: token str)] :post [(: % SessionHandle)]}
+  ;; 借りた token を持って 1 手番を起こす(起きない CLI の筋書きで、失敗の文に token が写らないかを見るため)。
+  (import doeff_agents.effects [LaunchEffect TurnCredential])
+  (<- handle SessionHandle (LaunchEffect :session-name "cred-fail" :agent-type AgentType.CLAUDE :work-dir work :prompt "x"
+                                         :lifecycle AgentSessionLifecycle.MULTI-TURN :turn-credential (TurnCredential token)))
+  handle)
+
+(deftest test-a-launch-failure-does-not-carry-the-borrowed-token [tmp-path]
+  ;; agora-redesign #665(cry-w8 の独立レビューの指摘): CLI が起きない時の失敗の文・repr・traceback は worker の log に入る。借りた
+  ;; token(子の env の CLAUDE_CODE_OAUTH_TOKEN)の値がそこへ写らない。
+  (import traceback)
+  (setv token "sk-ant-oat01-must-not-leak-665" work (/ tmp-path "work"))
+  (.mkdir work :parents True :exist-ok True)
+  (setv handlers (+ [(sync-time-handler)]
+                    (headless-claude-handlers (str (/ tmp-path "home")) (child-env)
+                                              :command #((str (/ tmp-path "no-such-claude"))))))
+  (with [info (pytest.raises Exception)]
+    (run (scheduled (with_handlers handlers (launch-with-credential work token)))))
+  (setv shown (.join "" (traceback.format-exception info.value)))
+  (assert (in "no-such-claude" shown) shown)
+  (for [text [(str info.value) (repr info.value) shown]]
+    (assert (not-in token text))))
+
+
 (deftest test-claude-agent-runtime-names-leave-the-substrate-to-doeff-agents [tmp-path]
   ;; 土台を名指さない名(agora-redesign #606): claude_agent_runtime_handlers / fake_claude_agent_runtime_handlers は、今日の土台
   ;; (print mode の adapter)の組と同じ種類の handler を同じ順で返し、fake の名で同じ筋書きが通る。
