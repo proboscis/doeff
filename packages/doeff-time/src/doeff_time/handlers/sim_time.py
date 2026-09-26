@@ -29,6 +29,24 @@ from doeff_time.effects import (
 ProtocolHandler = Callable[[Any, Any], Any]
 LogFormatter = Callable[[datetime, Any], str]
 EPOCH_UTC = datetime(1970, 1, 1, tzinfo=timezone.utc)
+#: The virtual clock's resolution (datetime keeps microseconds).
+CLOCK_TICK = timedelta(microseconds=1)
+
+
+def _delay_span(seconds: float) -> timedelta:
+    """How far a Delay moves the virtual clock: a positive delay moves it by at least one tick.
+
+    ``timedelta(seconds=s)`` rounds to whole microseconds, so a positive delay below half a
+    microsecond became zero and the clock did not move. A wait loop that sleeps "the rest of
+    its timeout" (e.g. doeff_records.watching.wait-for-changes) then slept the same sub-tick
+    remainder forever without advancing virtual time (agora-redesign #675, 2026-09-26: the
+    remainder 7.2e-08 s after float drift). A real sleep of a positive duration always lets at
+    least that much time pass, so the sim rounds such a delay up to one tick.
+    """
+    span = timedelta(seconds=seconds)
+    if seconds > 0 and span <= timedelta(0):
+        return CLOCK_TICK
+    return span
 
 
 class SimTimeRuntime:
@@ -104,7 +122,7 @@ class SimTimeRuntime:
                 self._mut_forwarding_tell = False
             return (yield Transfer(k, result))
         if isinstance(effect, DelayEffect):
-            target_time = self._clock.current_time + timedelta(seconds=effect.seconds)
+            target_time = self._clock.current_time + _delay_span(effect.seconds)
             _ = yield self._wait_for_time(target_time)
             return (yield Transfer(k, None))
         if isinstance(effect, WaitUntilEffect):
