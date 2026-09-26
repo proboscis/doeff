@@ -7,7 +7,8 @@
 #   ROLE=worker      … worker(COORDINATOR_URL = URL を `,` で並べると前から順に試す・WORKER_NAME・WORKER_LABELS・WORKER_CAPACITY・
 #                      CODE_REPO_URL = 業務のコードの git の clone 元(空 = 版の木の job を受けない)・CODE_IMPORT_ROOTS = 木の中の
 #                      import の根(`,` で並べる・既定 .)・CODE_OVERLAY_PATH = overlay の口で重ねる dir(既定 空 = 重ねない)・
-#                      WORKER_TOOLS = 名乗る道具に足す物(名=版,…))
+#                      WORKER_TOOLS = 名乗る道具に足す物(名=版,…)・WORKER_PASS_ENV = job の子へ渡す worker の環境変数の名
+#                      (`,` で並べる — 実行環境の job の子は worker の環境を許可表でしか継がないので、機体の設定の path や URL を名で渡す))
 #   ROLE=drain       … worker の Pod の preStop: coordinator に drain を頼み、この worker の上の job が他へ移るまで
 #                      (上限 DRAIN_DEADLINE 秒・既定 90)待つ。結末は container の log(PID 1 の stderr)へ 1 行
 #   ROLE=access      … 読み取りの許可表(WORKER_REPOS)の git / ssh の設定と許可表の JSON だけを書き、JSON の path を出す
@@ -191,4 +192,4 @@ exec hy -m doeff_cluster.main --coordinator "$COORDINATOR_URL" --name "$WORKER_N
   --labels "${WORKER_LABELS:-}" --capacity "${WORKER_CAPACITY:-10}" \
   --repo "$repo" --state-dir "$WORK_DIR/state" --stop-grace 10 \
   --import-roots "${CODE_IMPORT_ROOTS:-.}" --overlay-path "${CODE_OVERLAY_PATH:-}" \
-  --repo-keys "$repo_keys" --tools "$tools"
+  --repo-keys "$repo_keys" --tools "$tools" --pass-env "${WORKER_PASS_ENV:-}"
