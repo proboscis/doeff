@@ -10,7 +10,7 @@
 (import doeff_core_effects.handlers [await-handler slog-handler])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [async-time-handler])
-(import .handlers [CodeStore CoordinatorLink ProcessHost ProbeStore coordinator-desired desired-file local-host
+(import .handlers [CodeStore EnvStore CoordinatorLink ProcessHost ProbeStore coordinator-desired desired-file local-host
                    status-file status-to-coordinator stop-flag lease-release-coordinator lease-release-none])
 (import .remote_model [current-versions])
 (import .cluster_model [ClusterTiming])
@@ -46,6 +46,11 @@
                  :help "土台の import の路(機体の絶対 path を `,` で並べる・木の根の後ろ)— worker_model.CodeLayout(pod は空)")
   (.add-argument parser "--overlay-path" :default ""
                  :help "「<base>~<revision>」の木で revision の物を重ねる dir(空 = 重ねない)— worker_model.CodeLayout")
+  (.add-argument parser "--repo-keys" :default ""
+                 :help "実行環境の task の許可表(JSON の file — clone してよい URL → deploy key の file。空 = どの URL も断る)")
+  (.add-argument parser "--uv" :default "uv" :help "実行環境の準備と子の起動に使う uv の命令")
+  (.add-argument parser "--env-min-free" :type int :default 0 :help "実行環境の準備を始める空きの下限(byte)")
+  (.add-argument parser "--tools" :default "" :help "この worker が名乗る道具(名=版,… — 実行環境の宣言の tools と照らす)")
   (setv args (.parse-args parser))
   (setv layout (CodeLayout :import-roots (tuple (gfor r (.split args.import-roots ",") :if r r))
                            :overlay-path (or args.overlay-path None)
@@ -59,7 +64,9 @@
         host (ProcessHost (str (/ state-dir "logs")) hy-command
                           {"DOEFF_WORKER_NAME" (or args.name "local")
                            "DOEFF_WORKER_COORDINATOR" (or args.coordinator "")}
-                          :layout layout)
+                          :layout layout :uv args.uv)
+        ;; 実行環境(runtime env)の root の準備(別の process・worker は再起動しない)。
+        envs (EnvStore (str state-dir) hy-command :repo-keys args.repo-keys :uv args.uv :min-free-bytes args.env-min-free)
         ;; 入口の検め(service の job の木を worker の実行環境で読み込めるか — 起こす前に試す)。
         probes (ProbeStore hy-command :layout layout)
         policy (WorkerPolicy :stop-grace-ms (int (* args.stop-grace 1000)))
@@ -71,11 +78,12 @@
     (if args.coordinator
         (do (setv link (CoordinatorLink args.coordinator args.name (parse-labels args.labels) args.capacity
                                         (int (* args.fence 1000))
-                                        :task-dir (str (/ state-dir "tasks")) :versions (current-versions)))
+                                        :task-dir (str (/ state-dir "tasks")) :versions (current-versions)
+                                        :tools (parse-labels args.tools)))
             [(coordinator-desired link) (status-to-coordinator link) (lease-release-coordinator link)])
         [(desired-file args.desired) lease-release-none]))
   (setv program (run-worker policy))
-  (for [h [(local-host codes host probes) #* source-handlers (status-file (str (/ state-dir "status.json")) codes)
+  (for [h [(local-host codes host probes envs) #* source-handlers (status-file (str (/ state-dir "status.json")) codes)
            (stop-flag stop) slog-handler (async-time-handler) (await-handler)]]
     (setv program (h program)))
   (print "worker: 起動します" :file sys.stderr :flush True)

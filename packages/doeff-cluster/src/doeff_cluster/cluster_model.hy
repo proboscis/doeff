@@ -72,7 +72,9 @@
   (setv #^ (get tuple #(ComponentVersion ...)) versions #())        ; worker の Python / cloudpickle / doeff の版(task を送れる相手を選ぶ)
   ;; worker の process の世代(起動のたびに新しく振る・heartbeat の boot)。drain は頼まれた時の世代に付き、別の世代の heartbeat
   ;; (Pod を作り直した後の worker)が来たら解ける(2026-09-25)。保存しない(読み直しの後は次の heartbeat で埋まる)。旧い worker は None。
-  (setv #^ (| str None) boot None))
+  (setv #^ (| str None) boot None)
+  ;; worker が名乗る道具(外部の CLI・OS の library — 名と版・2026-09-26)。実行環境の宣言の tools と照らして置き先を選ぶ。
+  (setv #^ (get tuple #(ComponentVersion ...)) tools #()))
 
 
 (defclass [(dataclass :frozen True)] Placement []

@@ -1,7 +1,7 @@
 ;; worker の実 I/O。宣言の file・コードの展開(git archive)・子 process・状態の file・停止信号。
 ;; どれもループを塞がない: 展開と子 process は Popen で起動し、結果は ObserveWorld で観測する。
 (require doeff-hy.macros [defhandler <-])
-(import json os signal subprocess sys time uuid)
+(import json os shutil signal subprocess sys time uuid)
 (import dataclasses [replace])
 (import pathlib [Path])
 (import urllib.parse [quote :as url-quote])
@@ -9,12 +9,13 @@
 (import .code_prepare [MARKER MARKER-FORMAT marker-problem scan])
 (import doeff [run])
 (import .cluster_model [PROTOCOL-FORMAT])
-(import .runtime_env_model [runtime-env-of-json env-key current-platform])
+(import .runtime_env_model [runtime-env-of-json env-key current-platform EnvFailure EnvFailureKind])
+(import .env_prepare [ENV-MARKER])
 (import .semaphore_model [SEMAPHORE-PREFIX drop-holders])
 (import .worker_policy [kept-when-cut-off])
 (import .worker_model [JobSpec CodeState CodeView ProcessView WorldView StopStage ProbeState ProbeView
   DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus JobPhase
-  PrepareCode StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry spec-hash split-code-key probe-args CodeLayout
+  PrepareCode PrepareEnv StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry spec-hash split-code-key probe-args CodeLayout
   ENV-KEY-PREFIX])
 
 (defn #^ (| DesiredJobs DesiredUnreadable) parse-desired [#^ str text]
@@ -169,6 +170,142 @@
         (.append views (CodeView entry.name CodeState.READY :path (str entry)))))
     (tuple views)))
 
+(setv ENV-TOOL "doeff_cluster.env_handlers")   ; 準備の process の入口(worker 自身の環境の module — root の路は worker に足さない)
+(setv ENV-PREPARE-SECONDS 1800)   ; 準備 1 本の時間の上限(冷たい node の既定 30 分 — 設計 U10。超えたら止めて prepare-timeout)
+
+
+(defclass EnvStore []
+  "実行環境(runtime env)の root を env のキーごとに準備する(2026-09-26)。準備は worker 自身の code の env_handlers.hy を別の
+   process として起こし(worker のループは待たない)、完成マーカーの在る root だけを READY として観測する。
+   root は state/roots/<キー> の最終の path に作る(venv が絶対 path を持つので rename しない)。マーカーの無い root は次に
+   求められた時に脇へ退けて作り直す。準備は同時に max-parallel 本まで・同じキーは 1 本。
+   repo-keys = 許可表の JSON の file(clone してよい URL → deploy key)・uv = uv の命令・min-free-bytes = 準備を始める空きの下限。"
+  (defn __init__ [self #^ str state-dir #^ str hy-command #^ str [repo-keys ""] #^ str [uv "uv"] #^ int [min-free-bytes 0]
+                  #^ (| int float) [timeout-seconds ENV-PREPARE-SECONDS] #^ int [max-parallel 2] #^ str [tool ENV-TOOL]
+                  #^ str [code-prepare TOOL]]
+    (setv self.state (Path state-dir) self.hy-command hy-command self.repo-keys repo-keys self.uv uv
+          self.min-free-bytes min-free-bytes self.timeout-seconds timeout-seconds self.max-parallel max-parallel
+          self.tool tool self.code-prepare code-prepare
+          self.pending {} self.failed {} self.waiting {} self.started 0))
+
+  (defn #^ Path root-of [self #^ str key]
+    (/ self.state "roots" (cut key (len ENV-KEY-PREFIX) None)))
+
+  (defn #^ (| dict None) marker [self #^ Path root]
+    "root の完成マーカーの中身(無い・読めなければ None)。"
+    (setv path (/ root ENV-MARKER))
+    (when (not (.is-file path)) (return None))
+    (try (json.loads (.read-text path :encoding "utf-8")) (except [ValueError] None)))
+
+  (defn #^ list known [self]
+    "完成した root の列(展開の複製と bytecode の引き継ぎの元)— 要求の JSON の形。"
+    (setv roots (/ self.state "roots"))
+    (when (not (.is-dir roots)) (return []))
+    (lfor e (sorted (.iterdir roots)) :if (and (.is-dir e) (not (.startswith e.name ".")))
+          :setv m (self.marker e) :if (is-not m None)
+          {"env" (get m "env") "root" (str e)}))
+
+  (defn start [self #^ str key #^ str runtime-env]
+    (when (or (in key self.pending) (in key self.waiting)) (return))
+    (setv root (self.root-of key))
+    (when (is-not (self.marker root) None) (return))
+    (.pop self.failed key None)
+    (setv (get self.waiting key) runtime-env)
+    (self.launch-waiting))
+
+  (defn launch-waiting [self]
+    ;; 同時の準備を max-parallel 本に絞る(走っている手番の CPU を奪わない)。
+    (for [key (list self.waiting)]
+      (when (>= (len self.pending) self.max-parallel) (break))
+      (setv runtime-env (.pop self.waiting key) root (self.root-of key))
+      (when (.exists root)
+        ;; マーカーの無い root(途中で止まった準備)は脇へ退ける。名は . で始まるので完成品としては読まれない。
+        (os.rename root (/ root.parent (.format ".{}.broken.{}" root.name (time.time-ns)))))
+      (setv requests (/ self.state "env-requests"))
+      (.mkdir requests :parents True :exist-ok True)
+      (setv request (/ requests (+ key ".json")) result (/ requests (+ key ".result.json")))
+      (.unlink result :missing-ok True)
+      (.write-text request (json.dumps {"env" (json.loads runtime-env) "key" (cut key (len ENV-KEY-PREFIX) None)
+                                        "platform" (current-platform) "root" (str root) "known" (self.known)
+                                        "minFreeBytes" self.min-free-bytes}
+                                       :ensure-ascii False)
+                   :encoding "utf-8")
+      (+= self.started 1)
+      (setv log (open (/ requests (+ key ".log")) "ab"))
+      (try
+        (setv process (subprocess.Popen ["nice" "-n" "10" self.hy-command "-m" self.tool "--request" (str request)
+                                         "--result" (str result) "--state" (str self.state)
+                                         "--repo-keys" self.repo-keys "--code-prepare" self.code-prepare "--uv" self.uv]
+                                        :stdout log :stderr subprocess.STDOUT :stdin subprocess.DEVNULL))
+        (finally (.close log)))
+      (setv (get self.pending key) #(process (time.monotonic) result))))
+
+  (defn #^ tuple observe [self]
+    (setv views [] now-ms (int (* (time.time) 1000)))
+    (for [#(key #(process started result)) (list (.items self.pending))]
+      (setv code (.poll process))
+      (cond
+        (is-not code None)
+          (do (del (get self.pending key))
+              (setv answer (try (json.loads (.read-text result :encoding "utf-8")) (except [[OSError ValueError]] None)))
+              (cond
+                (and answer (in "failure" answer))
+                  (do (setv f (get answer "failure"))
+                      (setv (get self.failed key)
+                            #((EnvFailure :kind (EnvFailureKind (get f "kind")) :detail (get f "detail")
+                                          :retryable (get f "retryable"))
+                              now-ms)))
+                (and answer (in "ready" answer)) None
+                True
+                  (setv (get self.failed key)
+                        #((EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :retryable False
+                                      :detail (.format "準備の process が答えを書かずに終わった(終了 {})— log: {}"
+                                                       code (/ self.state "env-requests" (+ key ".log"))))
+                          now-ms))))
+        (> (- (time.monotonic) started) self.timeout-seconds)
+          (do (.kill process)
+              (.wait process)
+              (del (get self.pending key))
+              (setv (get self.failed key)
+                    #((EnvFailure :kind EnvFailureKind.PREPARE-TIMEOUT :retryable True
+                                  :detail (.format "準備が {} 秒で終わらない(止めた)" self.timeout-seconds))
+                      now-ms)))))
+    (self.launch-waiting)
+    (for [key (+ (list self.pending) (list self.waiting))]
+      (.append views (CodeView key CodeState.PREPARING)))
+    (for [#(key #(failure failed-ms)) (.items self.failed)]
+      (.append views (CodeView key CodeState.FAILED :detail failure.detail :failed-ms failed-ms :failure failure)))
+    (setv roots (/ self.state "roots"))
+    (when (.is-dir roots)
+      (for [entry (sorted (.iterdir roots))]
+        (setv key (+ ENV-KEY-PREFIX entry.name))
+        (when (and (.is-dir entry) (not (.startswith entry.name ".")) (not-in key self.pending) (not-in key self.failed)
+                   (is-not (self.marker entry) None))
+          (.append views (CodeView key CodeState.READY :path (str entry))))))
+    (tuple views)))
+
+
+;; 子 process へ継ぐ worker の環境変数の許可表(実行環境の job — 2026-09-26)。これ以外(PYTHON*・HY_*・UV_* の他・LD_*・VIRTUAL_ENV・
+;; 資格を運ぶ変数)は継がない。宣言の env-vars と worker が組む DOEFF_WORKER_*・DOEFF_RUNTIME_ENV* を足す。
+(setv CHILD-ENV-ALLOWED (frozenset #("PATH" "HOME" "USER" "LOGNAME" "SHELL" "LANG" "LANGUAGE" "TZ" "TMPDIR" "TERM"
+                                     "SSL_CERT_FILE" "SSL_CERT_DIR" "UV_CACHE_DIR" "UV_PYTHON_INSTALL_DIR")))
+
+
+(defn #^ dict child-environment [#^ dict base #^ dict extra #^ dict declared #^ dict worker]  ; defk にできない: ProcessHost(Program の外の I/O の道具)が呼ぶ
+  "実行環境の job の子の環境変数: base(worker の環境)のうち許可表の物と LC_* だけ → worker の文脈(extra)→ 宣言の env-vars(declared)
+   → worker が組む DOEFF_*(worker)の順に重ねる。PYTHONPATH は置かない(import の解け先は root の venv と .pth だけ)。"
+  (| (dfor #(k v) (.items base) :if (or (in k CHILD-ENV-ALLOWED) (.startswith k "LC_")) k v)
+     extra declared worker))
+
+
+(defn #^ str env-project-dir [#^ str root #^ dict declared]  ; defk にできない: ProcessHost(Program の外の I/O の道具)が呼ぶ
+  "root と宣言の JSON → uv の --project に渡す project の dir(env_prepare.project-dir と同じ規則)。"
+  (setv project (get declared "project"))
+  (if (= (get project "path") ".")
+      (.format "{}/{}" root (get project "repo"))
+      (.format "{}/{}/{}" root (get project "repo") (get project "path"))))
+
+
 (setv PROBE-SECONDS 60)   ; 入口の検め 1 回の時間の上限(業務の module の import に掛かる時間の十分上)
 (setv PROBE-DETAIL-CHARS 480)
 
@@ -241,10 +378,43 @@
 
 (defclass ProcessHost []
   "job ごとに子 process を 1 本、専用の process group で起動する。extra-env = 子へ渡す worker の文脈(名前・coordinator)。
-   layout = 業務の repo の木の形(子の PYTHONPATH — worker_model.CodeLayout)。"
-  (defn __init__ [self #^ str log-dir #^ str hy-command [extra-env None] #^ CodeLayout [layout (CodeLayout)]]
+   layout = 業務の repo の木の形(子の PYTHONPATH — worker_model.CodeLayout)。
+   実行環境の job(spec.runtime-env)は、env の root の venv で `uv run --no-sync --frozen --project <root の project> hy -m …` として
+   起こす(PYTHONPATH を置かない・子の環境変数は許可表で組む・cwd = 空の作業 dir <jobs-dir>/<job の名>)。uv = uv の命令。"
+  (defn __init__ [self #^ str log-dir #^ str hy-command [extra-env None] #^ CodeLayout [layout (CodeLayout)]
+                  #^ str [uv "uv"] #^ (| str None) [jobs-dir None]]
     (setv self.log-dir (Path log-dir) self.hy-command hy-command self.table {} self.extra-env (or extra-env {})
-          self.layout layout))
+          self.layout layout self.uv uv
+          self.jobs-dir (if jobs-dir (Path jobs-dir) (/ (. (Path log-dir) parent) "jobs"))))
+
+  (defn #^ Path work-dir [self #^ str name]
+    "実行環境の job の子の cwd(job の名ごとの空の dir)。"
+    (/ self.jobs-dir (.replace name "/" "_")))
+
+  (defn #^ tuple launch [self #^ JobSpec spec #^ str code-path #^ str instance #^ int attempt]
+    "子の #(argv cwd 環境変数)。実行環境の job は root の venv の uv run、それ以外は今の形(木の PYTHONPATH)。"
+    (setv worker-env {"DOEFF_WORKER_JOB" spec.name
+                      "DOEFF_WORKER_REVISION" spec.revision
+                      "DOEFF_WORKER_ATTEMPT" (str attempt)
+                      "DOEFF_WORKER_INSTANCE" instance
+                      "DOEFF_WORKER_SPEC_HASH" (spec-hash spec)
+                      "DOEFF_WORKER_PLACEMENT" (if (is spec.placement None) "" (str spec.placement))
+                      "DOEFF_WORKER_PID" (str (os.getpid))})
+    (if spec.runtime-env
+        (do (setv declared (json.loads spec.runtime-env)
+                  work (self.work-dir spec.name))
+            (when (.exists work) (shutil.rmtree work))
+            (.mkdir work :parents True)
+            #([sys.executable "-m" "doeff_cluster.shim" "10" "--" self.uv "run" "--no-sync" "--frozen"
+               "--project" (env-project-dir code-path declared) "hy" "-m" spec.entry #* spec.args]
+              (str work)
+              (child-environment (dict os.environ) self.extra-env
+                                 (dfor v (.get declared "envVars" []) (get v "name") (get v "value"))
+                                 (| worker-env {"DOEFF_RUNTIME_ENV" spec.runtime-env
+                                                "DOEFF_RUNTIME_ENV_KEY" (cut spec.revision (len ENV-KEY-PREFIX) None)}))))
+        #([sys.executable "-m" "doeff_cluster.shim" "10" "--" self.hy-command "-m" spec.entry #* spec.args]
+          code-path
+          (| (dict os.environ) self.extra-env {"PYTHONPATH" (.pythonpath self.layout code-path)} worker-env))))
 
   (defn start [self #^ StartJob action]
     (setv spec action.spec)
@@ -254,21 +424,12 @@
     (setv log (open (/ self.log-dir f"{log-name}.{action.attempt}.log") "ab"))
     ;; process の世代の名: 起こすたびに新しく振る(試行の番号は worker の再起動で 1 に戻るので、それだけでは前の process と重なる)。
     (setv instance f"{action.attempt}-{(cut (. (uuid.uuid4) hex) 0 12)}")
-    (setv env (| (dict os.environ) self.extra-env
-                 {"PYTHONPATH" (.pythonpath self.layout action.code-path)
-                  "DOEFF_WORKER_JOB" spec.name
-                  "DOEFF_WORKER_REVISION" spec.revision
-                  "DOEFF_WORKER_ATTEMPT" (str action.attempt)
-                  "DOEFF_WORKER_INSTANCE" instance
-                  "DOEFF_WORKER_SPEC_HASH" (spec-hash spec)
-                  "DOEFF_WORKER_PLACEMENT" (if (is spec.placement None) "" (str spec.placement))}))
+    (setv #(argv cwd env) (.launch self spec action.code-path instance action.attempt))
     (try
       ;; shim を group の先頭に置き、stdin のパイプを worker が握る。worker が死ぬとパイプが閉じ、
       ;; shim が job の group を止める(kill -9 された worker の job が残って二重に動くのを防ぐ)。
-      (setv process (subprocess.Popen
-        [sys.executable "-m" "doeff_cluster.shim" "10" "--" self.hy-command "-m" spec.entry #* spec.args]
-        :cwd action.code-path :env env :stdout log :stderr subprocess.STDOUT
-        :stdin subprocess.PIPE :start-new-session True))
+      (setv process (subprocess.Popen argv :cwd cwd :env env :stdout log :stderr subprocess.STDOUT
+                                      :stdin subprocess.PIPE :start-new-session True))
       (finally (.close log)))
     ;; 起こした job の記録(2026-09-26 — 「新しい版の job は worker を再起動せず、worker が展開した版の木の子 process で走る」を
     ;; worker の記録で示すため): job の名・版・木の path・子の pid・worker の pid を 1 行。env と引数の値は書かない(資格を運びうる)。
@@ -297,6 +458,9 @@
       ;; 本体の終了後も同じ group の孫が残っていれば KILL で回収する。
       (try (os.killpg action.pid signal.SIGKILL) (except [ProcessLookupError] None))
       (.close (. (get entry 0) stdin))
+      ;; 実行環境の job の作業 dir(worker が作った物だけ)は、終わった後に消す。
+      (when (. (get entry 1) spec runtime-env)
+        (shutil.rmtree (self.work-dir action.name) :ignore-errors True))
       (del (get self.table action.name))))
 
   (defn #^ tuple observe [self]
@@ -305,9 +469,16 @@
           (if (is code None) view
               (replace view :exit-code code)))))))
 
-(defhandler local-host [#^ CodeStore codes #^ ProcessHost host #^ ProbeStore probes]
-  (ObserveWorld [] (resume (WorldView (.observe codes) (.observe host) (.observe probes))))
+(defhandler local-host [#^ CodeStore codes #^ ProcessHost host #^ ProbeStore probes #^ (| EnvStore None) [envs None]]
+  ;; 引数に残す理由: 4 つとも worker の process が持つ I/O の資源(子 process と準備の process の表)で、同じ組が観測と action の
+  ;; 両方に答える。envs = 実行環境の root の準備(None = 実行環境の job を扱わない worker — PrepareEnv は断る)。
+  (ObserveWorld [] (resume (WorldView (+ (.observe codes) (if (is envs None) #() (.observe envs))) (.observe host) (.observe probes))))
   (PrepareCode [revision] (.start codes revision) (resume None))
+  (PrepareEnv [key runtime-env]
+    (when (is envs None)
+      (raise (RuntimeError "この worker は実行環境の job を扱えない(EnvStore が無い)")))
+    (.start envs key runtime-env)
+    (resume None))
   (ProbeEntry [spec code-path] (.start probes (ProbeEntry spec code-path)) (resume None))
   (StartJob [spec attempt code-path]
     (.start host (StartJob spec attempt code-path)) (resume None))
@@ -352,8 +523,9 @@
   "coordinator との連絡。heartbeat で生存・版・状態(終わった task の結果を含む)を送り、自分に割り当てられた job と task を受け取る。
    task の blob は task-dir の file に置き、宣言から外れた task の file は消す(この worker が書いた物だけ)。"
   (defn __init__ [self #^ str url #^ str name #^ dict labels #^ int capacity #^ int fence-ms
-                  [task-dir None] [versions None] [transport None]]
-    (setv self.name name self.labels labels self.capacity capacity
+                  [task-dir None] [versions None] [transport None] #^ (| dict None) [tools None]]
+    ;; tools = この worker が名乗る道具(名 → 版 — 実行環境の宣言の tools と照らして置き先を選ぶ)。
+    (setv self.name name self.labels labels self.capacity capacity self.tools (or tools {})
           self.fence-ms fence-ms self.statuses []
           ;; 宛先は `,` で並べた物(前ほど優先)。毎拍やり直すので一巡以上は送り直さない(拍を塞がない)・接続は使い回す。
           ;; 自己停止を数える last-ok は宛先と無関係にこの link が持つので、宛先を替えても途絶の数え方は続く。
@@ -402,7 +574,8 @@
     (try
       (setv response (.request self.endpoint "POST" "/heartbeat"
         :json {"name" self.name "labels" self.labels "capacity" self.capacity "versions" self.versions
-               "statuses" self.statuses "endpoint" self.endpoint.url "boot" self.boot "format" PROTOCOL-FORMAT}))
+               "statuses" self.statuses "endpoint" self.endpoint.url "boot" self.boot "format" PROTOCOL-FORMAT
+               "tools" self.tools}))
       (.raise-for-status response)
       (setv self.last-ok (time.monotonic))
       (setv body (.json response))

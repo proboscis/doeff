@@ -335,13 +335,22 @@
 
 ;; --- task ----------------------------------------------------------------------------
 
+(defn #^ bool tools-satisfy [#^ TaskRecord task #^ WorkerInfo worker]
+  "実行環境の宣言の道具(tools)を worker が全部名乗っているか。版が空の要求は名だけ、版の在る要求は同じ版を求める。"
+  (setv named (dict worker.tools))
+  (all (gfor tool (.get (or task.runtime-env {}) "tools" [])
+             (and (in (get tool "name") named)
+                  (or (not (.get tool "version" "")) (= (.get tool "version") (get named (get tool "name"))))))))
+
+
 (defn #^ bool can-run-task [#^ TaskRecord task #^ WorkerInfo worker]
   "版が同じ worker にだけ送る(cloudpickle は版をまたいで復元できる保証が無い)。実行環境の task は worker の版と比べない —
    子 process は worker の venv ではなく env の root で走り、版の突き合わせは子 process が env の版と行う。準備に一時の失敗をした
    worker(avoid)には置き直さない。"
   (and (or (is-not task.runtime-env None) (= task.versions worker.versions))
        (labels-satisfy task.requires worker) (tolerates task.requires worker)
-       (not-in worker.name task.avoid)))
+       (not-in worker.name task.avoid)
+       (tools-satisfy task worker)))
 
 
 (defn #^ str versions-note [#^ TaskRecord task #^ ClusterState state #^ int now #^ ClusterTiming timing]
@@ -437,6 +446,15 @@
         ;; 準備の一時の失敗の後に、置き直せる別の worker が無い: 最後の失敗で終える。
         (and (not able) task.failure-kind)
           (setv (get tasks id) (end-env-failed task now task.detail))
+        ;; label の合う生きた worker はいるが、宣言の道具を名乗る worker が無い。
+        (and (not able) (is-not task.runtime-env None)
+             (any (gfor w (.values state.workers)
+                        (and (alive now w timing.lease-ms) (labels-satisfy task.requires w) (tolerates task.requires w)))))
+          (setv (get tasks id)
+                (end-env-failed (replace task :failure-kind "tool-missing" :retryable False) now
+                                (.format "宣言の道具 {} を名乗る worker が無い"
+                                         (lfor t (.get task.runtime-env "tools" []) (.format "{}{}" (get t "name")
+                                                                                             (if (.get t "version") (+ "=" (get t "version")) ""))))))
         (and (not able) task.detached)
           (setv (get tasks id) (end-detached task (unplaceable-phase task state now timing) now
                                              (versions-note task state now timing)))
@@ -618,7 +636,8 @@
         info (WorkerInfo name (tuple (sorted (.items (.get body "labels" {}))))
                          (int (.get body "capacity" 10)) now
                          (component-versions-of (.get body "versions" {}))
-                         (.get body "boot"))
+                         (.get body "boot")
+                         (component-versions-of (.get body "tools" {})))
         statuses (.get body "statuses" [])
         state (replace (absorb-boot state name (.get body "boot"))
                 :workers (| state.workers {name info})
