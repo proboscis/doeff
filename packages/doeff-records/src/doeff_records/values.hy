@@ -344,8 +344,11 @@
   (#^ tuple fields))
 
 (defclass [(dataclass :frozen True)] Reset []
-  "位置の epoch が置き場の版と違う(置き場が作り直された・変更の列が刈られた)— 一覧から読み直す。"
-  (#^ int epoch))
+  "位置の epoch が置き場の版と違う(置き場が作り直された・変更の列が刈られた)— 一覧から読み直す。
+   epoch = 置き場の今の版 / floor = その置き場で読める最も古い変更の位置(変更の列を保持の期限で刈った位置)。
+   WatchCursor(epoch, floor) から読めば、残っている変更を頭から全部読める。"
+  (#^ int epoch)
+  (#^ int floor))
 
 
 (setv ReadRowAnswer (| Row Missing Unreachable))

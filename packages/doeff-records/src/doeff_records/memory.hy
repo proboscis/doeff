@@ -86,7 +86,7 @@
 (defn #^ object memory-list-rows [#^ MemoryStore store #^ ListRows ask]
   (setv decl (store.schema.table ask.table))
   (when (and (is-not ask.cursor None) (!= ask.cursor.epoch store.epoch))
-    (return (Reset store.epoch)))
+    (return (Reset store.epoch store.floor)))
   (setv refusal (where-refusal decl ask.where))
   (when refusal (return refusal))
   (setv after (if (is ask.cursor None) None ask.cursor.after-key)
@@ -144,7 +144,7 @@
   (for [name ask.tables] (store.schema.table name))
   (setv cursor ask.cursor)
   (when (or (!= cursor.epoch store.epoch) (< cursor.sequence store.floor) (> cursor.sequence store.head))
-    (return (Reset store.epoch)))
+    (return (Reset store.epoch store.floor)))
   (setv items (tuple (cut (lfor change store.changes
                                 :if (and (> change.sequence cursor.sequence) (in change.table ask.tables))
                                 change)

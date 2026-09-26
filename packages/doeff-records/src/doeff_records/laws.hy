@@ -161,9 +161,10 @@
   (<- epoch (as-writer harness MAKER (AdvanceStoreEpoch)))
   (require-law (and (isinstance epoch int) (!= epoch first.epoch)) law (.format "新しい epoch: {!r}" epoch))
   (<- watched (as-writer harness MAKER (WatchChanges #("parts") (WatchCursor first.epoch first.sequence))))
-  (require-law (= watched (Reset epoch)) law (.format "古い epoch の位置の WatchChanges: {!r}" watched))
+  ;; 版を上げた置き場の floor は上げた時の頭(w1 の変更の番号)— 新しい版の変更はその後から積まれる。
+  (require-law (= watched (Reset epoch (+ first.sequence 1))) law (.format "古い epoch の位置の WatchChanges: {!r}" watched))
   (<- listed (as-writer harness MAKER (ListRows "parts" :cursor (ListCursor first.epoch "[\"p0\"]"))))
-  (require-law (= listed (Reset epoch)) law (.format "古い epoch の位置の ListRows: {!r}" listed))
+  (require-law (= listed (Reset epoch (+ first.sequence 1))) law (.format "古い epoch の位置の ListRows: {!r}" listed))
   (<- again (as-writer harness MAKER (ListRows "parts")))
   (require-law (and (isinstance again Page) (= again.epoch epoch) (= (lfor row again.rows row.key) [#("p1")]))
                law (.format "読み直した一覧(行は残る): {!r}" again))
@@ -171,7 +172,9 @@
   (<- fresh (as-writer harness MAKER (WatchChanges #("parts") (WatchCursor again.epoch again.sequence))))
   (require-law (and (isinstance fresh Changes) (= (lfor item fresh.items item.key) [#("p2")]))
                law (.format "新しい位置からの変更: {!r}" fresh))
-  [first w1 epoch watched listed again w2 fresh])
+  (<- resumed (as-writer harness MAKER (WatchChanges #("parts") (WatchCursor watched.epoch watched.floor))))
+  (require-law (= resumed fresh) law (.format "Reset の (epoch, floor) から読み直した変更: {!r}" resumed))
+  [first w1 epoch watched listed again w2 fresh resumed])
 
 
 ;; --- 法 4: 宣言に無い書き手・欄・状態・上限・operator の欄・終端は Refused -------------------------------------------
@@ -395,10 +398,11 @@
   (<- pruned (as-writer harness MAKER (PruneChanges 50)))
   (require-law (= pruned (Pruned middle.sequence 1)) law (.format "50 秒より古い変更 1 つを刈る: {!r}" pruned))
   (<- old (as-writer harness MAKER (WatchChanges #("parts") (WatchCursor start.epoch start.sequence))))
-  (require-law (= old (Reset start.epoch)) law (.format "刈った変更より前の位置: {!r}" old))
-  (<- kept (as-writer harness MAKER (WatchChanges #("parts") (WatchCursor middle.epoch middle.sequence))))
+  (require-law (= old (Reset start.epoch middle.sequence)) law (.format "刈った変更より前の位置(floor = 刈った位置): {!r}" old))
+  ;; 読み手は Reset の (epoch, floor) だけで、刈り残った変更を頭から全部読める。
+  (<- kept (as-writer harness MAKER (WatchChanges #("parts") (WatchCursor old.epoch old.floor))))
   (require-law (and (isinstance kept Changes) (= (lfor item kept.items #(item.key item.version)) [#(#("p2") 1)]))
-               law (.format "floor の位置から続ける: {!r}" kept))
+               law (.format "Reset の floor の位置から残った変更を全部読む: {!r}" kept))
   (<- again (as-writer harness MAKER (PruneChanges 50)))
   (require-law (= again (Pruned middle.sequence 0)) law (.format "2 度目の刈り取りは何も消さない: {!r}" again))
   (<- listed (as-writer harness MAKER (ListRows "parts")))
