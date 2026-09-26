@@ -63,7 +63,8 @@
   (#^ tuple key)
   (#^ int version)
   (#^ M value)
-  (#^ int sequence))
+  (#^ int sequence)
+  (#^ int at))
 
 
 ;; --- 写し(純関数)------------------------------------------------------------------------------------------
@@ -103,7 +104,8 @@
   (when (!= change.table row-type.table)
     (raise (ValueError (.format "表 {} の変更を表 {} の行の型で読もうとした" change.table row-type.table))))
   (if (isinstance change RowChanged)
-      (TypedRowChanged change.table change.key change.version (value-of-fields row-type change.value) change.sequence)
+      (TypedRowChanged change.table change.key change.version (value-of-fields row-type change.value) change.sequence
+                       change.at)
       change))
 
 
