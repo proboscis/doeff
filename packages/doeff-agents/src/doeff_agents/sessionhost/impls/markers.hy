@@ -2,7 +2,7 @@
 ;;;
 ;;; observation 形式の readiness/idle 物理の家(ADR-DOE-AGENTS-008 R1)。
 ;;; gate 形式(単発判定の pattern 文字列・screen-reader trust prompt)は
-;;; doeff-free leaf の ready_physics.hy が家 — codex の両形式の一致は
+;;; doeff-free leaf の doeff_agents/ready_physics.hy が家 — codex の両形式の一致は
 ;;; tests/test_ready_physics_single_home.py の parity 検定が執行する。
 ;;;
 ;;; 出自: 退役 Rust 実装 agentd-rust-final:src/main.rs の output_has_*

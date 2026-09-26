@@ -14,6 +14,16 @@
 (import dataclasses [dataclass replace])
 (import datetime [datetime])
 (import json)
+;; agent の境界の env の語彙の家(#708)。名はここで再輸出する — substrate・launch・検が
+;; `policy.<名>` で読む形は変えない。
+(import doeff_agents.agent_env [BINDING-OWNED-ENV-KEYS
+                                PROVIDER-AUTH-ENV-KEYS
+                                PROVIDER-ROUTING-ENV-KEYS
+                                TURN-AUTH-ENV-KEYS
+                                env-offenders-against
+                                overlay-env-offenders
+                                policy-normalized-env-key
+                                provider-auth-env-offenders])
 (import doeff_agents.sessionhost.effects [
   SessionRow
   TerminalCause
@@ -470,8 +480,6 @@
   (carry-keys CHARTER-CARRIED-KEYS src dst))
 
 
-(setv BINDING-OWNED-ENV-KEYS #{"CODEX_HOME" "CLAUDE_CONFIG_DIR"})
-
 ;; wire binding kind → agent_type(ACP bindingAgentType と同写像)。
 (setv BINDING-KIND-AGENT-TYPE {"codex" "codex" "claude-code" "claude"
                                "codex-metered" "codex" "claude-code-metered" "claude"})
@@ -540,41 +548,9 @@
          "resumable" (get BINDING-KIND-RESUMABLE kind)
          "forkable" (get BINDING-KIND-FORKABLE kind)}))
 
-(deff policy-normalized-env-key [key]
-  {:pre [(: key str)]
-   :post [(: % str)]}
-  "env key の正規化(substrate normalized-env-key と同規約: `-`→`_`・大文字化)。"
-  (.upper (.replace key "-" "_")))
-
-(deff env-offenders-against [env names]
-  {:pre [(: env dict) (: names (| set frozenset))]
-   :post [(: % list)]}
-  "env のうち names(正規化済みの綴りの集合)に当たるキーの列挙(判定の 1 点)。
-
-   agent の境界で「運ばせない env」を判じる層は 3 つ在る — 受理
-   (session-env-admission-error)・spawn(substrate ensure-no-forbidden-agent-env)・
-   shell の起動(shell.assert-no-forbidden-agent-env)。層ごとに違うのは
-   **どの集合を禁じるか**だけで、正規化と突合はこの 1 つを通る
-   (card acp:kanban-issue:ki-2a061da56ca9: 3 写しの正規化が別々に古びるのを止める)。
-   返るのは呼び手が書いた綴りのまま(正規化後の名ではない — 断りの文が
-   『あなたが載せた名』を指せるように)。"
-  (sorted (lfor key (.keys env)
-                :if (in (policy-normalized-env-key key) names)
-                key)))
-
-
-(deff overlay-env-offenders [session-env]
-  {:pre [(: session-env dict)]
-   :post [(: % list)]}
-  "session_env(非 auth overlay)に居てはならない binding 所有キーの列挙。"
-  (env-offenders-against session-env BINDING-OWNED-ENV-KEYS))
-
-;; 手番ごとの資格の env(段 10 lane 10d 便 2 の追補 2・実弾 #92 = 預かり所が口座を更新した後、
-;; 誕生の札で再開した手番が 401 を食った)。預かり所の貸与の札はこの名で運ぶ。判定点はここ 1 つ。
+;; 手番ごとの資格の env の名(TURN-AUTH-ENV-KEYS)は doeff_agents/agent_env.hy の 1 点(#708)。
 ;; **行には残さない** — 行に残った誕生の env で再開すると、更新で回った(revoke 済みの)札で起こす。
 ;; 再開の process は「その手番の送りが運ぶ env」で起きる(host の session.send の session_env)。
-(setv TURN-AUTH-ENV-KEYS #{"CLAUDE_CODE_OAUTH_TOKEN"})
-
 (defk overlay-without-turn-auth [env]
   {:pre [(: env (| dict None))]
    :post [(: % dict)]}
@@ -643,45 +619,9 @@
                 key)))
 
 
-;; ---------------------------------------------------------------------------
-;; agent の境界で運ばせない env の語彙(card acp:kanban-issue:ki-2a061da56ca9)
-;; ---------------------------------------------------------------------------
-;;
-;; 綴りの家はここ 1 点。層(受理 / spawn / shell)は「どの集合を禁じるか」を
-;; 名指すだけで、literal の名簿を持たない — 2026-09-19 の実測では 3 つの写しが
-;; すべて違う中身で、個人鍵の別名 3 綴りは受理を素通りしていた。
-;;
-;; ⚠ 3 集合を素朴に合併してはいけない。TURN-AUTH-ENV-KEYS(:403 手番の札)は
-;; shell の層だけが禁じ、受理と spawn は**わざと運ぶ**(ADR 012 R5・R30)。
-;; 和を取ると手番の札の経路が死ぬ。だから「どの層が何を禁じるか」は下の表の
-;; とおり名指しで、集合の和ではない:
-;;
-;;   受理  BINDING-OWNED ∪ metered(形 + 別名)∪ PROVIDER-AUTH
-;;   spawn PROVIDER-AUTH
-;;   shell PROVIDER-AUTH ∪ PROVIDER-ROUTING ∪ TURN-AUTH
-
-;; provider の鍵・札の綴り(= どの層でも agent process へ運ばせない)。
-;; 形(`*_API_KEY`)の判定と重なる名も在るが、重なりは無害 — 形だけでは拾えない
-;; 別名(*_API_KEY で終わらない個人鍵・AUTH_TOKEN 系)を綴りで塞ぐのがこの名簿の役。
-(setv PROVIDER-AUTH-ENV-KEYS
-      #{"ANTHROPIC_API_KEY"
-        "ANTHROPIC_API_KEY_PERSONAL"
-        "ANTHROPIC_API_KEY__PERSONAL"
-        "ANTHROPIC_AUTH_TOKEN"
-        "CLAUDE_API_KEY"
-        "OPENAI_API_KEY"
-        "OPENROUTER_API_KEY"})
-
-;; 鍵ではないが provider を差し替える綴り(宛先のすり替え)。shell の層だけが禁じる
-;; — 受理に足すと挙動が反例の分を越える(2026-09-19 の便の範囲外)。
-(setv PROVIDER-ROUTING-ENV-KEYS #{"ANTHROPIC_BASE_URL" "ANTHROPIC_MODEL"})
-
-
-(deff provider-auth-env-offenders [session-env]
-  {:pre [(: session-env dict)]
-   :post [(: % list)]}
-  "session_env に居てはならない provider の鍵・札の綴りの列挙(純粋の 1 点)。"
-  (env-offenders-against session-env PROVIDER-AUTH-ENV-KEYS))
+;; agent の境界で運ばせない env の語彙(PROVIDER-AUTH / PROVIDER-ROUTING / TURN-AUTH / BINDING-OWNED と
+;; 正規化・突合)は doeff_agents/agent_env.hy の 1 点(agora-redesign #708 — session host を import しない家)。
+;; ここは上の import で名を受けて再輸出するだけ(層の表もそちらの頭の註)。
 
 ;; ⚠ この線は上の 3 層の名簿の族**ではない**(rebase の拍の判断・2026-09-19):族は「正規化した名が集合に在るか」
 ;; で、こちらは「綴りがどんな形か」— env-offenders-against は集合しか取れないので畳めない。層も 4 つ目の口

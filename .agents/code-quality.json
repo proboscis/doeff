@@ -281,6 +281,23 @@
       "public": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy"
       ],
+      "allow": [
+        "agent-env-vocabulary"
+      ],
+      "typed": false
+    },
+    {
+      "name": "agent-env-vocabulary",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/agent_env.hy",
+        "packages/doeff-agents/src/doeff_agents/agent_env.pyi"
+      ],
+      "responsibility": "agent の process へ env で運ばせない名の語彙(provider の資格・provider の宛先・手番の資格・binding が持つ名)と、正規化・突合の 1 点。受理(sessionhost/policy)・spawn(sessionhost/substrate)・shell の起動(shell.py)の 3 層が名指す。session host を import しない — headless の手番の経路が session host を引きずらないため(agora-redesign #708)",
+      "layer": "pure",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/agent_env.hy",
+        "packages/doeff-agents/src/doeff_agents/agent_env.pyi"
+      ],
       "allow": [],
       "typed": false
     },
