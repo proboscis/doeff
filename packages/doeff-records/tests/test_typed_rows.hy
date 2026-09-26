@@ -7,7 +7,7 @@
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny Refused Missing WatchCursor Changes])
 (import doeff_records.effects [WatchChanges])
 (import doeff_records.typed [RowType TypedRow TypedPage TypedWritten TypedConflict TypedRowChanged read-typed list-typed put-typed
-                             typed-change fields-of-value])
+                             typed-change fields-of-value value-of-fields])
 (import doeff_records.laws [MAKER PAINTER])
 (import tests.interpreters [LawSetup])
 
@@ -29,6 +29,11 @@
   (setv #^ (| str None) state None)
   (setv #^ (| str None) owner None))
 
+(defclass [(dataclass :frozen True)] Strict []
+  "既定値の無い None を許す欄を持つ行の型(書きで None の欄は消えるので、読みは無い欄を None と読む)。"
+  (#^ str id)
+  (#^ (| str None) note))
+
 (setv PARTS (RowType "parts" Part)
       TICKETS (RowType "tickets" Ticket))
 
@@ -37,6 +42,12 @@
   (assert (= (fields-of-value PARTS (Part :id "p1" :label "a"))
              {"id" "p1" "label" "a" "color" None "state" None "note" None "grant" None}))
   (assert (= (fields-of-value TICKETS (Ticket "g" "t" :owner "o")) {"group" "g" "id" "t" "state" None "owner" "o"})))
+
+
+(deftest test-a-field-removed-by-a-none-write-reads-back-as-none
+  ;; 値 None の書きは欄を消す — 既定値の無い None を許す欄も、置き場に無ければ None と読んで行の型に戻る。
+  (assert (= (value-of-fields (RowType "strict" Strict) (FrozenMap {"id" "s1"})) (Strict "s1" None)))
+  (assert (= (value-of-fields (RowType "strict" Strict) (FrozenMap {"id" "s1" "note" "n"})) (Strict "s1" "n"))))
 
 
 (deftest test-typed-rows-round-trip-through-the-generic-effects

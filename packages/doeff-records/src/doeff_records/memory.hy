@@ -9,7 +9,7 @@
 (import doeff [Pure])
 (import doeff_time [GetTime])
 (import doeff_records.watching [wait-for-changes])
-(import doeff_records.values [RecordsSchema Row Missing Page Written RowChanged RowRemoved Changes Appended Event Events
+(import doeff_records.values [KeepFor RecordsSchema Row Missing Page Written RowChanged RowRemoved Changes Appended Event Events
                               Reset WatchCursor ListCursor Refused])
 (import doeff_records.effects [ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents])
 (import doeff_records.faults [AdvanceStoreEpoch])
@@ -50,7 +50,9 @@
   "保持の期限を過ぎた行を消して RowRemoved を積み、期限を過ぎた出来事を捨てる(どの操作の前にも呼ぶ — 読みに期限切れが見えない)。
    答え = 消した行の数。"
   (setv removed 0)
-  (for [#(name decl) (sorted (.items store.schema.tables))]
+  ;; 期限を持つ(KeepFor の)表と列だけを走査する — 期限の無い置き場で操作ごとに全部の行と出来事を読み直すと、出来事の数の 2 乗で
+  ;; 遅くなる(2026-09-26 の実測: 出来事 1 万で 1 筋書きが 1 分を越えた)。
+  (for [#(name decl) (sorted (.items store.schema.tables)) :if (isinstance decl.retention KeepFor)]
     (setv table (get store.rows name))
     (for [text (sorted (lfor #(text stored) (.items table)
                              :if (row-expired? decl stored.row.value stored.updated-ms now-ms)
@@ -60,6 +62,8 @@
       (+= removed 1)
       (setv (get store.changed-at store.head) now-ms)
       (.append store.changes (RowRemoved name stored.row.key store.head))))
+  (when (not (any (gfor s (.values store.schema.streams) (isinstance s.retention KeepFor))))
+    (return removed))
   (setv kept (lfor event store.events
                    :if (not (event-expired? (store.schema.stream event.stream) event.at now-ms))
                    event))
