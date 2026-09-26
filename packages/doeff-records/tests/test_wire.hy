@@ -34,7 +34,7 @@
    #("put-row" (Conflict ROW))
    #("put-row" (Conflict (Missing)))
    #("put-row" (Refused "書き手でない"))
-   #("watch-changes" (Changes #((RowChanged "parts" #("p1") 1 {"id" "p1"} 5) (RowRemoved "tickets" #("g1" "t1") 6))
+   #("watch-changes" (Changes #((RowChanged "parts" #("p1") 1 {"id" "p1"} 5 1700000000123) (RowRemoved "tickets" #("g1" "t1") 6))
                               (WatchCursor 1 6)))
    #("watch-changes" (Reset 2))
    #("append-event" (Appended 7))
@@ -88,7 +88,11 @@
   (for [#(operation body) [#("read-row" {"kind" "written" "version" 1 "value" {}})
                            #("put-row" {"kind" "written" "version" 1})
                            #("put-row" {"kind" "conflict" "current" {"kind" "refused" "reason" "x"}})
-                           #("list-rows" {"kind" "page" "rows" {} "nextCursor" None "epoch" 1 "sequence" 0})]]
+                           #("list-rows" {"kind" "page" "rows" {} "nextCursor" None "epoch" 1 "sequence" 0})
+                           ;; 確定の刻 at の無い変更は、刻を黙って既定に倒さず断る。
+                           #("watch-changes" {"kind" "changes" "cursor" {"epoch" 1 "sequence" 5}
+                                              "items" [{"kind" "rowChanged" "table" "parts" "key" ["p1"] "version" 1
+                                                        "value" {} "sequence" 5}]})]]
     (try
       (run (decode-answer operation body))
       (assert False (.format "形の違う答えを読んだ: {} {!r}" operation body))

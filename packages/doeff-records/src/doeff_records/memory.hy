@@ -116,7 +116,7 @@
   (setv (get table text) (StoredRow row now-ms))
   (+= store.head 1)
   (setv (get store.changed-at store.head) now-ms)
-  (.append store.changes (RowChanged ask.table ask.key version verdict.value store.head))
+  (.append store.changes (RowChanged ask.table ask.key version verdict.value store.head now-ms))
   (Written version verdict.value))
 
 
