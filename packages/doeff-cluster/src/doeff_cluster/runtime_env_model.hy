@@ -21,6 +21,7 @@
 (import enum [StrEnum])
 (import hashlib)
 (import json)
+(import platform)
 (import re)
 
 (val RUNTIME-ENV-FORMAT 1)
@@ -227,6 +228,11 @@
   "import の根 \"<repo>/<相対の dir>\" → #(repo の名 相対の dir)。"
   (val parts (.partition root "/"))
   #((get parts 0) (get parts 2)))
+
+
+(defn #^ str current-platform []  ; defk にできない: worker と送り手の composition(Program の外)が読む
+  "この機体の platform の名(env のキーの材料 — 例 linux-x86_64)。root の中の native の wheel と venv は platform ごとに違う。"
+  (.format "{}-{}" (.lower (platform.system)) (.lower (platform.machine))))
 
 
 (defk key-material [env platform]

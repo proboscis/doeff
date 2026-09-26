@@ -5,16 +5,22 @@
 ;;;   - 終わった結果は解放か保持の期限まで持つ・終わった後の取り消しは False で結果はそのまま
 ;;;   - 担い手の死 = DetachedLost(走らせ直さない)・結果の後の担い手の死では結果は変わらない
 ;;;   - 版の不一致 = DetachedVersionMismatch
-(require doeff-hy.macros [defhandler defk <-])
+(require doeff-hy.macros [defhandler defk <- val var])
 (import urllib.parse [quote :as url-quote])
-(import doeff_core_effects.scheduler [Spawn Cancel Task TaskCancelledError])
+(import doeff_core_effects.scheduler [Spawn Wait Cancel Task TaskCancelledError])
 (import doeff [Program])
 (import doeff_time [Delay])
 (import .coordinator_http [CoordinatorEndpoint send-idempotent REPLY-SECONDS])
+(import doeff [run :as run-program])
+(import .cluster_model [PROTOCOL-FORMAT])
+(import .runtime_env_model [RuntimeEnv EnvFailure runtime-env->json env-key current-platform])
+(import .env_prepare [PrepareRequest KnownRoot EnvReady prepare-env])
+(import .cluster_policy [ENV-RETRIES])
 (import .remote_model [encode-program current-versions version-mismatch failed-from])
 (import .cluster_model [Requirement])
 (import .detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached SimulateRunnerLoss
                          DetachedSubmitted DetachedSucceeded DetachedLost DetachedCancelled DetachedVersionMismatch
+                         DetachedEnvUnavailable
                          DetachedPending DetachedUnknown DetachedRefused DetachedOutcome DetachedAwaited
                          outcome-from-task-outcome outcome-of-view])
 
@@ -22,18 +28,27 @@
 ;; --- handler A: 同じ VM の scheduler の task として走らせる(fake・模擬環境) -------------------------
 
 (defclass LocalRecord []
-  "fake の task 1 本。outcome = 終わりの答え(まだなら None)。handle = scheduler の task(走らせ始めるまで None)。"
-  (defn __init__ [self #^ str key #^ str env #^ str name #^ (get tuple #(Requirement ...)) requires]
-    (setv self.key key self.env env self.name name self.requires requires)
+  "fake の task 1 本。outcome = 終わりの答え(まだなら None)。handle = scheduler の task(走らせ始めるまで None)。
+   runtime-env = 送った時の実行環境の宣言(None = 今の commit だけの task)・root = 走らせた env の root(準備の後に在る)。"
+  (defn __init__ [self #^ str key #^ str env #^ str name #^ (get tuple #(Requirement ...)) requires
+                  #^ (| RuntimeEnv None) [runtime-env None]]
+    (setv self.key key self.env env self.name name self.requires requires self.runtime-env runtime-env)
+    (setv #^ (| str None) self.root None)
     (setv #^ (| Task None) self.handle None)
     (setv #^ (| DetachedOutcome None) self.outcome None)))
 
 
 (defclass DetachedLocalStore []
   "fake の置き場(key → LocalRecord)。runner-versions = 模擬の担い手の版(None = 送り手と同じ。違えば版の不一致を返す)。
-   runs = 走らせ始めた回数(冪等の検に使う)。"
-  (defn __init__ [self [runner-versions None]]
-    (setv self.records {} self.runner-versions runner-versions self.runs 0))
+   runs = 走らせ始めた回数(冪等の検に使う)。
+   runtime-env = 送り手の実行環境の宣言(在れば、task を走らせる前に env の root を準備する — 準備の I/O は外側の handler、速い模擬
+   では env_fake の fake-env)。envs = env のキー → 準備中の scheduler の task か答え(同じキーの準備は 1 本)・known = 完成した root・
+   prepares = 準備を起こした回数。"
+  (defn __init__ [self [runner-versions None] #^ (| RuntimeEnv None) [runtime-env None] #^ str [state-root "/state/roots"]
+                  #^ int [min-free-bytes 0]]
+    (setv self.records {} self.runner-versions runner-versions self.runs 0
+          self.runtime-env runtime-env self.state-root state-root self.min-free-bytes min-free-bytes
+          self.envs {} self.known [] self.prepares 0))
 
   (defn #^ bool finish [self #^ str key outcome]
     "終わりの答えを置く。既に終わっていれば(取り消し・消失の後)何もしない — 終わりの答えは二度と変わらない。"
@@ -46,9 +61,51 @@
     (lfor r (.values self.records) :if (is r.outcome None) r)))
 
 
+(defk prepared-env [store env]
+  {:pre [(: store DetachedLocalStore) (: env RuntimeEnv)] :post [(: % (| EnvReady EnvFailure))]}
+  "env の root を 1 度だけ準備する(同じキーの準備が走っていればそれを待つ・済んでいれば使い回す — worker の EnvStore と同じ規則)。"
+  (<- env-id str (env-key env (current-platform)))
+  (setv entry (.get store.envs env-id))
+  (cond
+    (isinstance entry EnvReady) entry
+    (isinstance entry Task) (do (<- waited (Wait entry)) waited)
+    True (do (+= store.prepares 1)
+             (<- started (Spawn (prepare-env (PrepareRequest :env env :key env-id :platform (current-platform)
+                                                             :root (.format "{}/{}" store.state-root env-id)
+                                                             :known (tuple store.known)
+                                                             :min-free-bytes store.min-free-bytes))))
+             (setv (get store.envs env-id) started)
+             (<- result (Wait started))
+             (setv (get store.envs env-id) result)
+             (when (isinstance result EnvReady)
+               (.append store.known (KnownRoot :env env :root result.root)))
+             result)))
+
+
+(defk env-for-task [store env]
+  {:pre [(: store DetachedLocalStore) (: env RuntimeEnv)] :post [(: % (| EnvReady EnvFailure))]}
+  "task の env を準備する。一時の失敗は、本物の coordinator が別の worker へ置き直すのと同じ回数(ENV-RETRIES)だけ準備し直す。"
+  (<- first (prepared-env store env))
+  (var result first)
+  (var tries 0)
+  (while (and (isinstance result EnvFailure) result.retryable (< tries ENV-RETRIES))
+    (:= tries (+ tries 1))
+    (<- again (prepared-env store env))
+    (:= result again))
+  result)
+
+
 (defk run-local [store key program]
   {:pre [(: store DetachedLocalStore) (: key str) (: program Program)] :post [(: % bool)]}
   ;; 模擬の担い手の上の 1 本。取り消し(Cancel)は投げ直す — 答えは取り消した側(CancelDetached・SimulateRunnerLoss)が置く。
+  ;; 実行環境の task は、先に env の root を準備する(失敗は Program を走らせずに DetachedEnvUnavailable)。
+  (setv record (get store.records key))
+  (when (is-not record.runtime-env None)
+    (<- ready (env-for-task store record.runtime-env))
+    (when (isinstance ready EnvFailure)
+      (.finish store key (DetachedEnvUnavailable ready.kind.value ready.detail ready.retryable))
+      (return False))
+    (setv record.root ready.root))
   (try
     (<- value program)
     (.finish store key (DetachedSucceeded value))
@@ -61,14 +118,14 @@
 (defk await-local [store key timeout-seconds poll-seconds]
   {:pre [(: store DetachedLocalStore) (: key str) (: timeout-seconds (| float int None)) (: poll-seconds float)]
    :post [(: % DetachedAwaited)]}
-  (setv waited 0.0)
+  (var waited 0.0)
   (while True
     (setv record (.get store.records key))
     (when (is record None) (return (DetachedUnknown key)))
     (when (is-not record.outcome None) (return record.outcome))
     (when (and (is-not timeout-seconds None) (>= waited timeout-seconds)) (return (DetachedPending key "assigned")))
     (<- (Delay poll-seconds))
-    (+= waited poll-seconds)))
+    (:= waited (+ waited poll-seconds))))
 
 
 (defn #^ None refuse-conflict [#^ LocalRecord record #^ str env #^ str name #^ (get tuple #(Requirement ...)) requires]
@@ -81,7 +138,7 @@
   ;; 同じ key がまだ在れば何も作らない。送れない値は本物と同じく送り手で断る(UnsendableProgram)。
   (when (in key store.records) (return (DetachedSubmitted key False)))
   (encode-program program)
-  (setv record (LocalRecord key env name (tuple (sorted requires)))
+  (setv record (LocalRecord key env name (tuple (sorted requires)) :runtime-env store.runtime-env)
         (get store.records key) record
         mismatch (if (is store.runner-versions None) None (version-mismatch (current-versions) store.runner-versions)))
   (if (is-not mismatch None)
@@ -129,9 +186,12 @@
 
 (defclass DetachedClient []
   "coordinator の /detached との連絡(I/O)。revision = 送り手の commit(受け側はこの版のコードを準備してから復元する)。
+   runtime-env = 実行環境の宣言(在れば worker は env の root を準備して、その中の子 process で走らせる — revision は使わない)。
    送る PUT は key で冪等なので、読みと同じく通信の失敗を越えて送り直す(送り直しで作られていれば created = False が返る)。"
-  (defn __init__ [self #^ str url #^ str revision [timeout REPLY-SECONDS] [transport None]]
-    (setv self.revision revision self.endpoint (CoordinatorEndpoint url timeout 4 :transport transport)))
+  (defn __init__ [self #^ str url #^ str revision [timeout REPLY-SECONDS] [transport None]
+                  #^ (| RuntimeEnv None) [runtime-env None]]
+    (setv self.revision revision self.runtime-env runtime-env
+          self.endpoint (CoordinatorEndpoint url timeout 4 :transport transport)))
 
   (defn #^ str path [self #^ str key #^ str [suffix ""]]
     (+ "/detached/" (url-quote key :safe "") suffix))
@@ -145,8 +205,9 @@
   (defn #^ dict submit [self #^ str key #^ str blob #^ str env #^ (get tuple #(Requirement ...)) requires #^ str name
                         #^ float lease-seconds
                         #^ float retain-seconds]
-    (setv body {"env" env "blob" blob "versions" (current-versions) "revision" self.revision "requires" (dict requires)
-                "name" name "leaseSeconds" lease-seconds "retainSeconds" retain-seconds})
+    (setv body (| {"env" env "blob" blob "versions" (current-versions) "revision" self.revision "requires" (dict requires)
+                   "name" name "leaseSeconds" lease-seconds "retainSeconds" retain-seconds "format" PROTOCOL-FORMAT}
+                  (if (is self.runtime-env None) {} {"runtimeEnv" (run-program (runtime-env->json self.runtime-env))})))
     (.answer self (send-idempotent (fn [] (.request self.endpoint "PUT" (.path self key) :json body)))))
 
   (defn #^ dict read [self #^ str key]
@@ -165,14 +226,14 @@
    :post [(: % DetachedAwaited)]}
   ;; 終わるまで問い合わせる。問い合わせは lease に触らず、抜けても(呼び手の Cancel・process の消失)何も落とさない。
   ;; 眠りは Delay(外側の doeff-time の handler)なので同じ VM の他の task を塞がない。
-  (setv waited 0.0)
+  (var waited 0.0)
   (while True
     (setv view (.read client key)
           outcome (outcome-of-view view))
     (when (is-not outcome None) (return outcome))
     (when (and (is-not timeout-seconds None) (>= waited timeout-seconds)) (return (DetachedPending key (get view "phase"))))
     (<- (Delay poll-seconds))
-    (+= waited poll-seconds)))
+    (:= waited (+ waited poll-seconds))))
 
 
 (defhandler detached-cluster [#^ DetachedClient client [poll-seconds 1.0]]
