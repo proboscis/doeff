@@ -7,7 +7,8 @@
 ;;;   uv-failure  = uv の失敗を 1 つ起こす(sync の失敗は sync で・native の build の失敗は build で返る)。
 ;;;   disk-free   = 空き(byte)。child-protocol = root の中の子の入口の約束の版。
 ;;; 模擬の uv.lock の書き方: 1 行 1 package で `名==版`、第三者の package の最上位の import の名は ` top=a,b` で添える
-;;; (処理ステージ 10 の名前の影を起こすため)。`#` で始まる行は読まない。
+;;; (処理ステージ 10 の名前の影を起こすため)。editable で入る package は ` editable=<project の dir からの相対 path>` を添える
+;;; (sync が venv に本物の uv と同じ形の .pth — 中身は dir の絶対 path 1 行 — を置く)。`#` で始まる行は読まない。
 ;;;
 ;;; 観測: ReadFakeEnvLog(clone・fetch・展開・複製・sync・download・build・bytecode の回数)と ListFakeFiles(prefix の下の file)。
 ;;; 時間: cache に無い package を取りに行く sync と native の build は冷たい秒(既定 60)、それ以外の sync は温い秒(既定 5)だけ眠る。
@@ -16,11 +17,12 @@
 (import dataclasses [dataclass replace])
 (import hashlib)
 (import json)
+(import os)
 (import doeff [EffectBase])
 (import doeff_time [Delay])
 (import .runtime_env_model [EnvFailure EnvFailureKind CHILD-PROTOCOL])
 (import .env_prepare [StageStarted DiskFree EnsureMirror FetchCommit MaterializeTree FileSha256 TreeHash EnsureNativeWheel SyncProject
-                      InstallWheels WriteImportRoots CompileTree ProbeImports WriteEnvMarker env-marker->json
+                      InstallWheels WriteImportRoots ReadEditableRoots CompileTree ProbeImports WriteEnvMarker env-marker->json
                       MirrorReady FetchState WheelReady SyncReport BytecodeReport ProbeReport ENV-MARKER ROOTS-PTH])
 
 (val SOURCE-SUFFIXES #(".py" ".hy"))
@@ -73,7 +75,9 @@
   (setv #^ int carried 0)
   ;; 始めた処理ステージの名(順)と、最後の bytecode の焼く範囲の入口。
   (setv #^ tuple stages #())
-  (setv #^ tuple entries #()))
+  (setv #^ tuple entries #())
+  ;; bytecode を焼いた木と、その木の中の import の根(#(木 根の tuple) の列・焼いた順)。
+  (setv #^ tuple compiled-trees #()))
 
 
 ;; --- 観測の effect(fake だけが答える) ----------------------------------------------------
@@ -104,6 +108,20 @@
       (val parts (.split body))
       (val tops (lfor p (cut parts 1 None) :if (.startswith p "top=") t (.split (cut p 4 None) ",") :if t t))
       (.append out #((get parts 0) (tuple tops)))))
+  (tuple out))
+
+
+(defk lock-editables [text]
+  {:pre [(: text str)] :post [(: % tuple)]}
+  "模擬の uv.lock の行のうち editable で入る物 → #(package の名 project の dir からの相対 path) の列。"
+  (var out [])
+  (for [line (.splitlines text)]
+    (val body (.strip line))
+    (when (and body (not (.startswith body "#")))
+      (val parts (.split body))
+      (for [p (cut parts 1 None)]
+        (when (.startswith p "editable=")
+          (.append out #((get (.split (get parts 0) "==") 0) (cut p (len "editable=") None)))))))
   (tuple out))
 
 
@@ -217,6 +235,11 @@
             (.update cache missing)
             (<- (Delay (if missing world.cold-seconds world.warm-seconds)))
             (setv (get files (+ project-dir "/.venv/pyvenv.cfg")) (.format "python = {}\n" python))
+            ;; editable の package は、本物の uv と同じく venv に dir の絶対 path 1 行の .pth を置く。
+            (<- editables tuple (lock-editables (.get files (+ project-dir "/uv.lock") "")))
+            (for [#(name rel) editables]
+              (setv (get files (.format "{}/.venv/_editable_impl_{}.pth" project-dir (.replace name "-" "_")))
+                    (os.path.normpath (os.path.join project-dir rel))))
             (:= log (replace log :syncs (+ log.syncs 1) :downloads (+ log.downloads (len missing))))
             (resume (SyncReport :downloaded (len missing))))))
   (InstallWheels [project-dir wheels]
@@ -226,12 +249,24 @@
   (WriteImportRoots [project-dir roots]
     (setv (get files (.format "{}/.venv/{}" project-dir ROOTS-PTH)) (.join "\n" roots))
     (resume None))
+  (ReadEditableRoots [project-dir root]
+    ;; venv の .pth(import の根の .pth を除く・名の順)の dir のうち root の中の物。
+    (val prefix (+ project-dir "/.venv/"))
+    (var out [])
+    (for [p (sorted files)]
+      (when (and (.startswith p prefix) (.endswith p ".pth") (not (.endswith p (+ "/" ROOTS-PTH))))
+        (val target (get files p))
+        (when (.startswith target (+ root "/"))
+          (val rel (cut target (+ (len root) 1) None))
+          (when (not-in rel out) (.append out rel)))))
+    (resume (tuple out)))
   (CompileTree [project-dir tree roots carry-from entries]
     (val prefix (+ tree "/"))
     (val sources (lfor p files :if (and (.startswith p prefix) (.endswith p SOURCE-SUFFIXES)
                                         (not (any (gfor n NOT-COPIED (in n p)))))
                        p))
     (:= log (replace log :compiles (+ log.compiles 1) :entries entries
+                         :compiled-trees (+ log.compiled-trees #(#(tree roots)))
                          :carried (+ log.carried (if (is carry-from None) 0 (len sources)))))
     (resume (BytecodeReport :interpreter (.format "{}/.venv/bin/python" project-dir)
                             :compiled (if (is carry-from None) (len sources) 0)

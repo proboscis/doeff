@@ -258,7 +258,8 @@
        (tolerates job.requires worker)))
 
 
-(setv LIVE-PHASES #{"preparing" "starting" "backoff" "running" "stopping" "stop-unconfirmed"})
+;; probing(2026-09-27)= starting の手前の入口の検めの間(その worker で起こしかけている — 他へ置かない)。
+(setv LIVE-PHASES #{"preparing" "probing" "starting" "backoff" "running" "stopping" "stop-unconfirmed"})
 
 
 (defn #^ bool still-live-somewhere [#^ int now #^ ClusterState state #^ str name #^ ClusterTiming timing]

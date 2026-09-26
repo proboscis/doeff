@@ -8,8 +8,11 @@
 ;; 先に試し(ProbeEntry)、PASSED になるまで起こさない(StartJob)・旧を名から外さない(RetireJob)。業務コード・定義・実行環境の組が崩れた
 ;; 木(例: 定義だけ進んで実行環境の doeff に無い名を import する)は、起こしては import で落ちる backoff を繰り返す代わりに、
 ;; 理由つきの probe-failed で止まる。入れ替えの旧は止めない(書き手の空白を作らない)。FAILED は code-retry-ms の後に撃ち直す。
+;; 検めの間(走っている・同じ木の検めの終わりを待っている)は starting ではなく probing と出し、状態の行の probe に経過の秒・回数・
+;; 直前の失敗の理由を載せる(2026-09-27 — 以前は 17 分 starting のままで、理由は FAILED から撃ち直すまでの 30 秒しか見えなかった)。
+;; 同じ木の検めを 1 本にまとめる・時間切れで process group ごと止めるのは検めの process の持ち主(handlers.ProbeStore)。
 (import dataclasses [replace])
-(import .worker_model [JobSpec CodeState CodeView ProcessView WorldView StopStage StopProgress ProbeState ProbeView
+(import .worker_model [JobSpec CodeState CodeView ProcessView WorldView StopStage StopProgress ProbeState ProbeView ProbeStatus
   Outcome JobRecord WorkerPolicy JobPhase JobStatus PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases
   ProbeEntry spec-hash code-key probed-job retired-name RETIRED-MARK ENV-KEY-PREFIX])
 
@@ -50,7 +53,7 @@
   (cond
     (is probe None) #((ProbeEntry spec code.path))
     (= probe.state ProbeState.PASSED) None
-    (= probe.state ProbeState.RUNNING) #()
+    (in probe.state #(ProbeState.RUNNING ProbeState.QUEUED)) #()
     (>= (- now (or probe.failed-ms 0)) policy.code-retry-ms) #((ProbeEntry spec code.path))
     True #()))
 
@@ -58,6 +61,32 @@
   "spec の入口の検めが FAILED なら、その観測(状態表示の理由)。"
   (setv probe (if (probed-job spec) (probe-of world spec) None))
   (if (and (is-not probe None) (= probe.state ProbeState.FAILED)) probe None))
+
+(defn #^ (| ProbeView None) probe-in-flight [#^ WorldView world #^ JobSpec spec]  ; defk にできない: 純粋な判断の phase-of(Program の外の関数)が呼ぶ
+  "spec の入口の検めが走っている・同じ木の検めの終わりを待っているなら、その観測(2026-09-27 — 状態の probing)。"
+  (setv probe (if (probed-job spec) (probe-of world spec) None))
+  (if (and (is-not probe None) (in probe.state #(ProbeState.RUNNING ProbeState.QUEUED))) probe None))
+
+(defn #^ (| ProbeStatus None) probe-status [#^ int now #^ WorldView world #^ JobSpec spec]  ; defk にできない: 純粋な判断の statuses(Program の外の関数)が呼ぶ
+  "状態の報告の検めの姿: 宣言の spec の検めが通っていない間(走っている・待っている・失敗した)だけ。経過の秒は今の検めを起こしてから
+   (失敗した後は、その回を起こしてから失敗までではなく 0 — 次の撃ち直しまでの間は failed の理由で読む)。"
+  (setv probe (if (probed-job spec) (probe-of world spec) None))
+  (if (or (is probe None) (= probe.state ProbeState.PASSED))
+      None
+      (ProbeStatus :state probe.state.value
+                   :elapsed-seconds (if (and (= probe.state ProbeState.RUNNING) (is-not probe.started-ms None))
+                                        (max 0 (// (- now probe.started-ms) 1000))
+                                        0)
+                   :attempts probe.attempts
+                   ;; 失敗した回の理由は、失敗の間は detail、撃ち直した後は last-failure が運ぶ。
+                   :last-failure (if (= probe.state ProbeState.FAILED) probe.detail probe.last-failure))))
+
+(defn #^ str probing-detail [#^ ProbeStatus probe]  ; defk にできない: 純粋な判断の statuses(Program の外の関数)が呼ぶ
+  "検めの間の状態の 1 行(何回目か・何秒か・直前の失敗の理由)。"
+  (+ (if (= probe.state ProbeState.QUEUED.value)
+         (.format "入口の検めの順番待ち(同じ木の検めが走っている・{} 回目)" probe.attempts)
+         (.format "入口の検め中({} 秒・{} 回目)" probe.elapsed-seconds probe.attempts))
+     (if probe.last-failure (.format " — 前回: {}" probe.last-failure) "")))
 
 (defn #^ (| JobSpec None) desired-of [#^ tuple desired #^ str name]
   (for [spec desired]
@@ -258,6 +287,7 @@
           (and (= code.state CodeState.FAILED) (is-not code.failure None)) JobPhase.ENV-FAILED
           (= code.state CodeState.FAILED) JobPhase.CODE-FAILED
           (is-not (probe-failure world want) None) JobPhase.PROBE-FAILED
+          (is-not (probe-in-flight world want) None) JobPhase.PROBING
           (in-backoff now record policy) JobPhase.BACKOFF
           True JobPhase.STARTING))))
 
@@ -268,6 +298,7 @@
     :setv record (.get records name (JobRecord name))
     :setv code (if (is want None) None (code-of world (code-key want)))
     :setv probe (if (is want None) None (probe-failure world want))
+    :setv probing (if (is want None) None (probe-status now world want))
     :setv handing-off (and (is-not process None) (is-not want None) want.handoff (!= process.spec want) (is record.stopping None))
     :setv abandoned (and (is-not want None) want.handoff want.handoff-abandoned)
     (JobStatus name (phase-of now want process world record policy)
@@ -282,6 +313,9 @@
         ;; 新の入口を読み込めない(入口の検めの理由)。入れ替えの途中なら旧が動いていることも示す。
         (and (is-not probe None) handing-off) (.format "入れ替えを待つ(旧は動かしたまま)— 新の入口を読み込めない: {}" probe.detail)
         (is-not probe None) (.format "新の入口を読み込めない: {}" probe.detail)
+        ;; 入口の検めの間(撃ち直しの間も直前の失敗の理由を出す — 2026-09-27)。入れ替えの途中なら旧が動いていることも示す。
+        (and (is-not probing None) handing-off) (.format "入れ替えを待つ(旧は動かしたまま)— {}" (probing-detail probing))
+        (is-not probing None) (probing-detail probing)
         ;; 入れ替えの途中(新のコードの準備・新の Ready 待ち)は、旧が動いていることを示す。
         handing-off
           (.format "入れ替えを待つ(新のコード {})" (if (is code None) "未準備" code.state.value))
@@ -296,4 +330,6 @@
       :placement (if (is process None) None process.spec.placement)
       :retired-from (if (is process None) None process.retired-from)
       ;; 実行環境の root の準備の失敗(動いている process が無い時だけ — 動いていれば準備は済んでいる)。
-      :failure (if (and (is process None) (is-not code None) (= code.state CodeState.FAILED)) code.failure None)))))
+      :failure (if (and (is process None) (is-not code None) (= code.state CodeState.FAILED)) code.failure None)
+      ;; 宣言の spec の入口の検めの姿(走っている・待っている・失敗した間 — 入れ替えで旧が動いている行も)。
+      :probe probing))))

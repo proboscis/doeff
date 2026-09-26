@@ -5,6 +5,7 @@
 ;;; (JobRecord)は再起動で失われてよい一時的なもので、job の正本は宣言の側にある。
 ;;;
 ;;; job は 2 種類: service(once=False・終われば起動し直す常駐)と task(once=True・1 度だけ走らせて結果を返す)。
+(require doeff-hy.record [defrecord])
 (import dataclasses [dataclass field])
 (import enum [Enum])
 (import hashlib)
@@ -157,16 +158,31 @@
 
 
 (defclass ProbeState [Enum]
-  (setv RUNNING "running" PASSED "passed" FAILED "failed"))
+  ;; QUEUED = 同じ木の検めの process が走っているので、その終わりを待っている(同じ木の検めは 1 本ずつ — 2026-09-27)。
+  (setv QUEUED "queued" RUNNING "running" PASSED "passed" FAILED "failed"))
 
 
 (defclass [(dataclass :frozen True)] ProbeView []
   "入口の検め(probe)1 回の観測(2026-09-25)。鍵 = 検めた job の spec-hash(版・入口・引数の指紋)。FAILED の detail は理由の 1 行、
-   failed-ms = FAILED になった時刻(epoch ms — 撃ち直すまでの間を数える)。"
+   failed-ms = FAILED になった時刻(epoch ms — 撃ち直すまでの間を数える)。
+   started-ms = 今の(RUNNING)または最後の検めの process を起こした時刻(epoch ms・まだ起こしていなければ None)・
+   attempts = この spec を検めた回数(撃ち直すたびに 1 増える)・last-failure = 前の回の失敗の理由(撃ち直しの間も消さない — 2026-09-27)。"
   (#^ str spec-hash)
   (#^ ProbeState state)
   (setv #^ str detail "")
-  (setv #^ (| int None) failed-ms None))
+  (setv #^ (| int None) failed-ms None)
+  (setv #^ (| int None) started-ms None)
+  (setv #^ int attempts 1)
+  (setv #^ str last-failure ""))
+
+
+(defrecord ProbeStatus
+  "状態の報告に載せる入口の検めの姿(2026-09-27): state = ProbeState の値・elapsed-seconds = 今の検めを起こしてからの秒
+   (まだ起こしていなければ 0)・attempts = 回数・last-failure = 直前の失敗の理由(無ければ空)。"
+  (#^ str state)
+  (#^ int elapsed-seconds)
+  (#^ int attempts)
+  (#^ str last-failure))
 
 
 (defn #^ bool probed-job [#^ JobSpec spec]
@@ -252,6 +268,7 @@
   (setv PREPARING "preparing"
         CODE-FAILED "code-failed"
         STARTING "starting"            ; コードは揃い、次の拍で起動する
+        PROBING "probing"              ; コードは揃い、入口の検め(probe)が走っている・同じ木の検めの終わりを待っている
         BACKOFF "backoff"              ; 予期せず終了した後の再起動待ち
         RUNNING "running"
         STOPPING "stopping"
@@ -278,7 +295,9 @@
   ;; 入れ替えで退いた process の行だけ: 元の job の名(coordinator は、その job がまだどこかで動いていると数える)。
   (setv #^ (| str None) retired-from None)
   ;; ENV-FAILED の行だけ: 準備の失敗の kind と一時か(coordinator が置き直すか・答えの型を決める)。
-  (setv #^ (| EnvFailure None) failure None))
+  (setv #^ (| EnvFailure None) failure None)
+  ;; 宣言の spec の入口の検めが通っていない間(走っている・待っている・失敗した)だけ: その姿(入れ替えの途中で旧が動いている行も含む)。
+  (setv #^ (| ProbeStatus None) probe None))
 
 
 ;; --- 宣言の読み取り -------------------------------------------------------------

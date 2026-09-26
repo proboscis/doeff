@@ -36,7 +36,7 @@
 (import doeff_time [sync-time-handler])
 (import .runtime_env_model [EnvFailure EnvFailureKind RuntimeEnv runtime-env-of-json])
 (import .env_prepare [StageStarted DiskFree EnsureMirror FetchCommit MaterializeTree FileSha256 TreeHash EnsureNativeWheel SyncProject
-                      InstallWheels WriteImportRoots CompileTree ProbeImports WriteEnvMarker
+                      InstallWheels WriteImportRoots ReadEditableRoots CompileTree ProbeImports WriteEnvMarker
                       MirrorReady FetchState WheelReady SyncReport BytecodeReport ProbeReport
                       PrepareRequest KnownRoot EnvReady prepare-env env-marker->json ENV-MARKER ROOTS-PTH])
 
@@ -195,6 +195,25 @@
   (if found (get found 0) None))
 
 
+(defk editable-dirs [site root]
+  {:pre [(: site str) (: root str)] :post [(: % tuple)]}
+  "site-packages の .pth(import の根の .pth を除く・名の順)が sys.path に足す dir のうち root の中に在る物 → root からの相対 path の
+   tuple(editable で入る package の dir — bytecode を焼く範囲に足すため)。symlink は両側を解いて比べる。"
+  (val base (os.path.realpath root))
+  (var out [])
+  (for [pth (sorted (glob.glob (os.path.join site "*.pth")))]
+    (when (!= (os.path.basename pth) ROOTS-PTH)
+      (for [line (.splitlines (.read-text (Path pth) :encoding "utf-8" :errors "replace"))]
+        (val entry (.strip line))
+        ;; site の規則: 空行と # の行は読まない・import で始まる行は実行される code(dir ではない)。
+        (when (and entry (not (.startswith entry "#")) (not (.startswith entry #("import " "import\t"))))
+          (val real (os.path.realpath (if (os.path.isabs entry) entry (os.path.join site entry))))
+          (when (and (os.path.isdir real) (.startswith real (+ base os.sep)))
+            (val rel (os.path.relpath real base))
+            (when (not-in rel out) (.append out rel)))))))
+  (tuple out))
+
+
 (defk sync-failure [result]
   {:pre [(: result CommandResult)] :post [(: % EnvFailure)]}
   "uv sync の失敗を kind に分ける: lock が古い = lock-stale・Python を取れない = python-unavailable・network = 一時の sync-failed・
@@ -319,6 +338,13 @@
     (val target (/ (Path site) ROOTS-PTH))
     (.write-text target (+ (.join "\n" roots) "\n") :encoding "utf-8")
     (resume None))
+
+  (ReadEditableRoots [project-dir root]
+    (<- site (| str None) (site-packages project-dir))
+    (if (is site None)
+        (resume #())
+        (do (<- found tuple (editable-dirs site root))
+            (resume found))))
 
   (CompileTree [project-dir tree roots carry-from entries]
     (<- env dict (uv-environment state-dir))

@@ -18,7 +18,7 @@
 (import doeff_cluster.runtime_env_model [RepoCheckout PythonProject RuntimeEnv runtime-env->json env-key current-platform])
 (import doeff_cluster.service_model [service System system-declaration])
 (import doeff_cluster.cluster_policy [job-from-json job-to-json spec-json])
-(import doeff_cluster.handlers [declared-job-spec ProbeStore])
+(import doeff_cluster.handlers [declared-job-spec ProbeStore probe-targets])
 (import doeff_cluster.job_entry [RunContext runtime-env-of-context])
 (import doeff_cluster.worker_model [JobSpec ProbeEntry ProbeState StartJob ReapJob Outcome CodeState ENV-KEY-PREFIX code-key spec-hash])
 (import tests.careful_rig [Rig make-rig push-commit app-files declare prepare LOCK HY DEADLINE-SECONDS])
@@ -124,7 +124,7 @@
                      "env-k" :runtime-env (json.dumps env-json :sort-keys True)))
   ;; probe-dir は既に在る dir(mkdir が何も作らない — argv の形だけを見る)。
   (val probes (ProbeStore "/worker/bin/hy" :uv "/bin/uv" :probe-dir (str tmp-path)))
-  (val command (.command probes (ProbeEntry spec "/state/roots/env-k")))
+  (val command (.command probes "/state/roots/env-k" spec.runtime-env (probe-targets spec)))
   (val argv (get command 0))
   (val cwd (get command 1))
   (val environment (get command 2))

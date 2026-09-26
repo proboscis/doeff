@@ -13,7 +13,9 @@
 (import hashlib)
 (import json)
 (import pytest)
-(import doeff [Program])
+(import pathlib [Path])
+(import doeff [Program run])
+(import doeff_cluster.env_handlers [editable-dirs])
 (import doeff_core_effects.handlers [state])
 (import doeff_time [SimClock sim-time-handler GetMonotonic])
 (import doeff_cluster.runtime_env_model [RepoCheckout NativeWheel PythonProject ToolRequirement EnvVar RuntimeEnv
@@ -142,6 +144,49 @@
 (deftest test-a-cold-root-is-prepared-and-marked
   (<- world FakeEnvWorld (base-world))
   (<- ok bool (run-in-world world (cold-scenario)))
+  (assert ok))
+
+
+;; 反例(2026-09-27 の本番): 宣言の import の根は業務の repo だけで、venv に editable で入る依存の package(lib の木の中)は焼かれず、
+;; 子と入口の検めが毎回 source から compile した(Hy の macro の展開で import が壁時計 240 秒)。editable の .pth が root の中の
+;; repo を指すなら、その dir も焼く範囲に入る。
+(val EDITABLE-LOCK (+ LOCK "lib==0.1.0 editable=../lib\nlib-extra==0.1.0 editable=../lib/extra/src\n"))
+
+
+(defk editable-scenario []
+  {:pre [] :post [(: % bool)]}
+  "editable で入る依存の repo の木も、root の venv の interpreter で焼かれる(宣言の import の根に無くても)。"
+  (<- env RuntimeEnv (env-of "app-editable" "lib-1" EDITABLE-LOCK))
+  (<- ready (prepare env #()))
+  (assert (isinstance ready EnvReady) ready)
+  (<- log FakeEnvLog (ReadFakeEnvLog))
+  (val trees (dfor #(tree roots) log.compiled-trees tree roots))
+  (assert (= (get trees (.format "{}/app" ready.root)) #("." "vendor")) trees)
+  (assert (= (.get trees (.format "{}/lib" ready.root)) #("." "extra/src"))
+          (.format "editable の依存の木が焼かれていない: {}" trees))
+  True)
+
+
+(defn #^ None test-the-editable-dirs-are-read-from-the-venv-pth-files [#^ Path tmp-path]
+  ;; 本物の handler の読み: uv が editable の package ごとに置く .pth(dir の絶対 path 1 行)のうち root の中の dir だけ・import の根の
+  ;; .pth と import の行と root の外の dir は除く。
+  (setv root (/ tmp-path "root") site (/ root "app" ".venv" "lib" "python3.14" "site-packages"))
+  (for [d ["lib" "lib/packages/core/src" "app"]] (.mkdir (/ root d) :parents True :exist-ok True))
+  (.mkdir site :parents True)
+  (.mkdir (/ tmp-path "outside"))
+  (.write-text (/ site "_editable_impl_lib.pth") (str (/ root "lib")))
+  (.write-text (/ site "_editable_impl_lib_core.pth") (+ (str (/ root "lib/packages/core/src")) "\n"))
+  (.write-text (/ site "_other.pth") (+ "import sys\n# note\n" (str (/ tmp-path "outside")) "\n"))
+  (.write-text (/ site ROOTS-PTH) (str (/ root "app")))
+  (assert (= (run (editable-dirs (str site) (str root))) #("lib" "lib/packages/core/src"))))
+
+
+(deftest test-editable-dependencies-in-the-root-are-compiled-too
+  (<- world FakeEnvWorld (base-world))
+  (<- app FakeCommit (app-commit "app-editable" EDITABLE-LOCK "V = 5\n"))
+  (<- ok bool (run-in-world (replace world :remotes (tuple (gfor r world.remotes
+                                                                 (if (= r.url APP-URL) (replace r :commits (+ r.commits #(app))) r))))
+                            (editable-scenario)))
   (assert ok))
 
 

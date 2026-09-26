@@ -1,8 +1,9 @@
 ;; worker の実 I/O。宣言の file・コードの展開(git archive)・子 process・状態の file・停止信号。
 ;; どれもループを塞がない: 展開と子 process は Popen で起動し、結果は ObserveWorld で観測する。
 (require doeff-hy.macros [defhandler <-])
-(import json os re shutil signal subprocess sys time uuid)
-(import dataclasses [replace])
+(require doeff-hy.record [defrecord])
+(import json os re shutil signal subprocess sys tempfile time uuid)
+(import dataclasses [dataclass replace])
 (import pathlib [Path])
 (import urllib.parse [quote :as url-quote])
 (import .coordinator_http [CoordinatorEndpoint REPLY-SECONDS])
@@ -474,8 +475,14 @@
       (.format "{}/{}/{}" root (get project "repo") (get project "path"))))
 
 
-(setv PROBE-SECONDS 60)   ; 入口の検め 1 回の時間の上限(業務の module の import に掛かる時間の十分上)
+;; 入口の検め 1 回(同じ木の束 1 本)の時間の上限(2026-09-27 に 60 → 300)。上限は import の速さを測る物ではなく、import の途中で
+;; 固まった入口(module の直下の待ち等)を止めるための物。bytecode の無い冷えた root では、込んでいない Pod でも doeff と業務の Hy の
+;; compile に壁時計 60 秒前後かかる(本番の実測 = CPU 60 秒)ので、60 秒は冷えた root で必ず切れて撃ち直しを繰り返した。検めは木ごとに
+;; 1 本(ProbeStore)・時間切れは process group ごと止める(孫を残さない)ので、上限を広げても重なって積み上がらない。
+(setv PROBE-SECONDS 300)
 (setv PROBE-DETAIL-CHARS 480)
+;; 検めの process を包む shim の猶予(秒)。worker が消えた時(kill -9 を含む)に shim が検めの group を止める — job の子と同じ仕組み。
+(setv PROBE-STOP-GRACE "5")
 
 
 (defn #^ str probe-reason [#^ int code #^ str stderr]
@@ -485,15 +492,17 @@
 
 
 ;; 検めの本体(木の中の道具に依らない — 木の job_entry に probe の口が無い古い commit も同じく検められる)。引数 = 検める import path の列
-;; (「module」か「module:attr」)。各々を import し attr の在否を見る。最初に失敗した物の理由を stderr の 1 行にして 1 で終わる。
+;; (「module」か「module:attr」)。各々を import し attr の在否を見る(同じ木の束の対象を 1 つの process で — 2026-09-27)。
+;; 出力 = 最後の行に JSON 1 行 {対象: 読み込めない理由 | null}。どれが読めなくても 0 で終わる(理由は対象ごとに JSON が運ぶ)。
 (setv PROBE-PROGRAM (.join "\n" [
-  "(import importlib sys)"
+  "(import importlib json sys)"
+  "(setv results {})"
   "(for [path (cut sys.argv 1 None)]"
   "  (setv #(module _ attr) (.partition path \":\"))"
-  "  (try (setv m (importlib.import-module module)) (when attr (getattr m attr))"
+  "  (try (setv m (importlib.import-module module)) (when attr (getattr m attr)) (setv (get results path) None)"
   "    (except [e Exception]"
-  "      (print (.format \"{} を読み込めない: {}: {}\" path (. (type e) __name__) (.join \" \" (.split (str e)))) :file sys.stderr :flush True)"
-  "      (sys.exit 1))))"]))
+  "      (setv (get results path) (.format \"{} を読み込めない: {}: {}\" path (. (type e) __name__) (.join \" \" (.split (str e))))))))"
+  "(print (json.dumps results :ensure-ascii False) :flush True)"]))
 
 
 (defn #^ list probe-targets [#^ JobSpec spec]
@@ -502,64 +511,157 @@
   (+ [spec.entry] (lfor flag ["--factory" "--env"] :if (in flag args) :setv v (get args (+ (.index args flag) 1)) :if v v)))
 
 
+(defn #^ tuple probe-launches [#^ list waiting #^ frozenset busy]  ; defk にできない: ProbeStore(Program の外の I/O の道具)が呼ぶ純粋な判断
+  "純粋: 待っている検めの束の鍵(#(木 実行環境の宣言の JSON か None) — 来た順)と、検めの process が走っている木 → 今起こす束の鍵
+   (木ごとに 1 つ・来た順)。同じ木(root)の検めは import の閉包の大半が同じなので、並べると同じ compile を本数ぶん撃つ(2026-09-27 の
+   本番: 7 本が並んで CPU の上限 4 の Pod を締め付けた)— 1 本ずつにし、同じ拍に来た物は 1 本の束にまとめる。"
+  (setv chosen [] trees (set busy))
+  (for [key waiting]
+    (when (not-in (get key 0) trees)
+      (.append chosen key)
+      (.add trees (get key 0))))
+  (tuple chosen))
+
+
+(defn #^ (| str None) probe-verdict [#^ list targets #^ dict results]  ; defk にできない: ProbeStore(Program の外の I/O の道具)が呼ぶ純粋な判断
+  "純粋: spec の検める対象と、束の結果(対象 → 読み込めない理由か None)→ 最初に読み込めなかった対象の理由(全部読めたら None)。
+   結果に無い対象は、検めの本体が答えなかった物として読み込めない扱いにする。"
+  (for [target targets]
+    (cond
+      (not-in target results) (return (.format "{} の検めの答えが無い" target))
+      (is-not (get results target) None) (return (cut (str (get results target)) 0 PROBE-DETAIL-CHARS))))
+  None)
+
+
+(defn #^ (| dict None) probe-results [#^ str stdout]  ; defk にできない: ProbeStore(Program の外の I/O の道具)が呼ぶ
+  "検めの process の標準出力 → 対象ごとの結果(最後の JSON の行)。読めなければ None(本体が答える前に終わった)。"
+  (for [line (reversed (.splitlines stdout))]
+    (when (.startswith (.strip line) "{")
+      (try
+        (setv value (json.loads line))
+        (except [ValueError] (return None)))
+      (return (if (isinstance value dict) value None))))
+  None)
+
+
+(defrecord ProbeRun
+  "走っている検めの束 1 本(木ごとに 1 本): shim の process(process group の先頭)・束の spec・起こした時刻(単調時計と epoch ms)・
+   標準出力と標準エラーを受ける無名の一時 file(pipe は溜まると子が止まるので使わない)。"
+  (#^ subprocess.Popen process)
+  (#^ tuple specs)
+  (#^ float started)
+  (#^ int started-ms)
+  (#^ object out)
+  (#^ object err))
+
+
 (defclass ProbeStore []
   "入口の検め(2026-09-25): service の job の木で、worker の実行環境が入口(factory と env)を読み込めるかを子 process で試す。
-   CodeStore と同じく Popen で起動し、結果は observe で拾う(ループを塞がない)。実行は ProcessHost と同じ hy・同じ PYTHONPATH
-   (layout の import の根)・cwd = 木。実行環境の job(spec.runtime-env — 2026-09-26)は子と同じ起こし方で検める: root の venv の
+   結果は observe で拾う(ループを塞がない)。実行は ProcessHost と同じ hy・同じ PYTHONPATH(layout の import の根)・cwd = 木。
+   実行環境の job(spec.runtime-env — 2026-09-26)は子と同じ起こし方で検める: root の venv の
    `uv run --no-sync --frozen --project <root の project> hy -c …`・環境変数は子と同じ許可表・PYTHONPATH を置かない・cwd = 空の dir
    (probe-dir)。worker の venv で検めると、env の root に無い module を worker の venv が読めて誤って通る。
-   timeout-seconds を越えた検めは止めて FAILED(理由 = 時間切れ)。結果の鍵は spec-hash(同じ spec の検めは撃ち直されるまで答えを使い回す)。"
+   子と同じく bytecode を書く(PYTHONDONTWRITEBYTECODE を置かない — 置くと撃つたびに同じ Hy を source から compile し直した)。
+
+   process の寿命(2026-09-27): 検めは job の子と同じ shim(doeff_cluster.shim)を新しい process group の先頭にして起こす。時間切れは
+   group ごと KILL し(以前は Popen の直の子 = uv だけを kill し、孫の hy が孤児として CPU を使い続けた)、worker が消えれば shim が
+   stdin の EOF で group を止める。
+   並べ方(2026-09-27): 同じ木の検めは 1 本ずつ(probe-launches)。start は束に積むだけで、process は observe の頭で起こす —
+   同じ拍に来た同じ木の spec は 1 本の process にまとめて検め、読み込めない対象の理由はその対象を持つ spec にだけ付ける。
+   timeout-seconds を越えた束は止めて、束の spec を全部 FAILED(理由 = 時間切れ)。結果の鍵は spec-hash(同じ spec の検めは
+   撃ち直されるまで答えを使い回す)。回数と前の回の失敗の理由は撃ち直しの間も持つ(状態の報告の probing)。"
   (defn #^ None __init__ [self #^ str hy-command #^ (| int float) [timeout-seconds PROBE-SECONDS] #^ CodeLayout [layout (CodeLayout)]
                           #^ str [uv "uv"] #^ (| str None) [probe-dir None]]
-    (setv self.hy-command hy-command self.timeout-seconds timeout-seconds self.layout layout self.pending {} self.done {}
-          self.uv uv self.probe-dir (Path (or probe-dir "probe"))))
+    (setv self.hy-command hy-command self.timeout-seconds timeout-seconds self.layout layout
+          self.uv uv self.probe-dir (Path (or probe-dir "probe"))
+          ;; 束の鍵 #(木 実行環境の宣言) → 待っている spec の列(dict の順 = 来た順)・木 → 走っている束・spec-hash → 答え。
+          self.waiting {} self.runs {} self.done {}
+          ;; spec-hash → 検めた回数・前の回の失敗の理由。
+          self.attempts {} self.last-failure {}))
 
-  (defn #^ list command [self #^ ProbeEntry action]
+  (defn #^ list command [self #^ str code-path #^ (| str None) runtime-env #^ list targets]
     "検めの子の #(argv cwd 環境変数)— 実行環境の job は子と同じ root の venv、それ以外は worker の hy と木の PYTHONPATH。"
-    (setv targets (probe-targets action.spec))
-    (if action.spec.runtime-env
-        (do (setv declared (json.loads action.spec.runtime-env))
+    (if runtime-env
+        (do (setv declared (json.loads runtime-env))
             (.mkdir self.probe-dir :parents True :exist-ok True)
-            [[self.uv "run" "--no-sync" "--frozen" "--project" (env-project-dir action.code-path declared)
+            [[self.uv "run" "--no-sync" "--frozen" "--project" (env-project-dir code-path declared)
               "hy" "-c" PROBE-PROGRAM #* targets]
              (str self.probe-dir)
              (child-environment (dict os.environ) {}
                                 (dfor v (.get declared "envVars" []) (get v "name") (get v "value"))
-                                {"PYTHONDONTWRITEBYTECODE" "1"})])
+                                {})])
         [[self.hy-command "-c" PROBE-PROGRAM #* targets]
-         action.code-path
-         (| (dict os.environ) {"PYTHONPATH" (.pythonpath self.layout action.code-path) "PYTHONDONTWRITEBYTECODE" "1"})]))
+         code-path
+         (| (dict os.environ) {"PYTHONPATH" (.pythonpath self.layout code-path)})]))
+
+  (defn #^ bool in-flight [self #^ str key]
+    (or (any (gfor specs (.values self.waiting) spec specs (= (spec-hash spec) key)))
+        (any (gfor run (.values self.runs) spec run.specs (= (spec-hash spec) key)))))
 
   (defn #^ None start [self #^ ProbeEntry action]
     (setv key (spec-hash action.spec))
-    (when (in key self.pending) (return))
-    (.pop self.done key None)
-    (setv #(argv cwd env) (.command self action))
-    (setv (get self.pending key)
-      #((subprocess.Popen argv :cwd cwd :env env
-          :stdin subprocess.DEVNULL :stdout subprocess.DEVNULL :stderr subprocess.PIPE)
-        (time.monotonic))))
+    (when (.in-flight self key) (return))
+    (setv prior (.pop self.done key None))
+    (when (and (is-not prior None) (= prior.state ProbeState.FAILED))
+      (setv (get self.last-failure key) prior.detail))
+    (setv (get self.attempts key) (+ (.get self.attempts key 0) 1))
+    (.append (.setdefault self.waiting #(action.code-path action.spec.runtime-env) []) action.spec))
+
+  (defn #^ None launch [self #^ tuple batch #^ list specs]
+    "束 1 本を起こす: 束の spec の対象を重ねずに並べ、shim を group の先頭にして 1 つの process で検める。"
+    (setv #(code-path runtime-env) batch
+          targets (list (dict.fromkeys (gfor spec specs target (probe-targets spec) target)))
+          #(argv cwd env) (.command self code-path runtime-env targets)
+          out (tempfile.TemporaryFile) err (tempfile.TemporaryFile))
+    (setv process (subprocess.Popen [sys.executable "-m" "doeff_cluster.shim" PROBE-STOP-GRACE "--" #* argv]
+                                    :cwd cwd :env env :stdin subprocess.PIPE :stdout out :stderr err
+                                    :start-new-session True))
+    (setv (get self.runs code-path)
+          (ProbeRun :process process :specs (tuple specs) :started (time.monotonic)
+                    :started-ms (int (* (time.time) 1000)) :out out :err err)))
+
+  (defn #^ ProbeView view [self #^ JobSpec spec #^ ProbeState state #^ (| int None) started-ms #^ str [detail ""] #^ (| int None) [failed-ms None]]
+    (setv key (spec-hash spec))
+    (ProbeView key state :detail detail :failed-ms failed-ms :started-ms started-ms
+               :attempts (.get self.attempts key 1) :last-failure (.get self.last-failure key "")))
+
+  (defn #^ None finish [self #^ str tree #^ ProbeRun run #^ (| int None) code]
+    "束を片づけて答えを置く。code = 終了の番号(None = 時間切れで group ごと止めた)。"
+    (when (is code None)
+      (try (os.killpg run.process.pid signal.SIGKILL) (except [ProcessLookupError] None))
+      (.wait run.process))
+    (.close run.process.stdin)
+    (.seek run.out 0)
+    (.seek run.err 0)
+    (setv stdout (.decode (.read run.out) "utf-8" "replace")
+          stderr (.decode (.read run.err) "utf-8" "replace")
+          results (if (is code None) None (probe-results stdout))
+          now-ms (int (* (time.time) 1000)))
+    (.close run.out)
+    (.close run.err)
+    (del (get self.runs tree))
+    (for [spec run.specs]
+      (setv reason (cond
+                     (is code None) (.format "入口の検めが {} 秒で終わらない(process group ごと止めた)" self.timeout-seconds)
+                     (is results None) (probe-reason code stderr)
+                     True (probe-verdict (probe-targets spec) results)))
+      (setv (get self.done (spec-hash spec))
+            (if (is reason None)
+                (.view self spec ProbeState.PASSED run.started-ms)
+                (.view self spec ProbeState.FAILED run.started-ms :detail reason :failed-ms now-ms)))))
 
   (defn #^ tuple observe [self]
-    (setv now-ms (int (* (time.time) 1000)))
-    (for [#(key #(process started)) (list (.items self.pending))]
-      (setv code (.poll process))
+    ;; 待っている束を起こす(木ごとに 1 本 — 走っている木の束は、その終わりを待つ)。
+    (for [batch (probe-launches (list self.waiting) (frozenset self.runs))]
+      (.launch self batch (.pop self.waiting batch)))
+    (for [#(tree run) (list (.items self.runs))]
+      (setv code (.poll run.process))
       (cond
-        (is-not code None)
-          (do (del (get self.pending key))
-              (setv stderr (.decode (.read process.stderr) "utf-8" "replace"))
-              (setv (get self.done key)
-                    (if (= code 0)
-                        (ProbeView key ProbeState.PASSED)
-                        (ProbeView key ProbeState.FAILED :detail (probe-reason code stderr) :failed-ms now-ms))))
-        (> (- (time.monotonic) started) self.timeout-seconds)
-          (do (.kill process)
-              (.wait process)
-              (del (get self.pending key))
-              (setv (get self.done key)
-                    (ProbeView key ProbeState.FAILED :failed-ms now-ms
-                               :detail (.format "入口の検めが {} 秒で終わらない(止めた)" self.timeout-seconds))))))
-    (tuple (+ (lfor key self.pending (ProbeView key ProbeState.RUNNING)) (list (.values self.done))))))
+        (is-not code None) (.finish self tree run code)
+        (> (- (time.monotonic) run.started) self.timeout-seconds) (.finish self tree run None)))
+    (tuple (+ (lfor specs (.values self.waiting) spec specs (.view self spec ProbeState.QUEUED None))
+              (lfor run (.values self.runs) spec run.specs (.view self spec ProbeState.RUNNING run.started-ms))
+              (list (.values self.done))))))
 
 
 (defclass ProcessHost []
@@ -829,7 +931,10 @@
    ;; 動いている process の世代(coordinator の readiness と計器はこれと一致する報告だけを数える)。
    "instance" s.instance "specHash" s.spec-hash "placement" s.placement "retiredFrom" s.retired-from
    ;; 実行環境の準備の失敗(ENV-FAILED の行だけ): coordinator が置き直すか・答えの型を決める。
-   #** (if (is s.failure None) {} {"failureKind" s.failure.kind.value "retryable" s.failure.retryable})})
+   #** (if (is s.failure None) {} {"failureKind" s.failure.kind.value "retryable" s.failure.retryable})
+   ;; 入口の検めの姿(検めが通っていない間だけ — 2026-09-27): 状態・今の検めの経過の秒・回数・直前の失敗の理由。
+   #** (if (is s.probe None) {} {"probe" {"state" s.probe.state "elapsedSeconds" s.probe.elapsed-seconds
+                                          "attempts" s.probe.attempts "lastFailure" s.probe.last-failure}})})
 
 (defhandler status-to-coordinator [#^ CoordinatorLink link]
   ;; 状態は次の heartbeat で送る。file にも書くので、外側の status-file へ渡す。
