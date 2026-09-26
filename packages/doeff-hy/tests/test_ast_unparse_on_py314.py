@@ -90,7 +90,7 @@ def test_pytest_plugin_protects_a_conftest_that_imports_hy_first(tmp_path: Path)
         """
         import sys
         import pytest
-        sys.exit(pytest.main(["-q", "-p", "doeff_hy.pytest_plugin", "-p", "no:doeff_hy",
+        sys.exit(pytest.main(["-q", "-p", "doeff_hy_pytest", "-p", "no:doeff_hy",
                               "--rootdir", ".", "-c", "/dev/null", "test_probe.py"]))
         """,
         tmp_path,
