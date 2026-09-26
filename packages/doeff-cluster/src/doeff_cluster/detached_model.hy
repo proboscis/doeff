@@ -31,7 +31,8 @@
 (defclass [(dataclass :frozen True)] SubmitDetached [EffectBase]
   "program = 未実行の Program(値)・env = 実行先で組む handler の組の import path・key = 呼び手の決めた job id(冪等の単位)・
    requires = 実行先の条件(Requirement の tuple — worker の label の名と値)・lease-seconds = 担い手の worker が沈黙してから消失とみなすまで・retain-seconds = 結果の保持。
-   答え = DetachedSubmitted。同じ key がまだ在れば何も作らない(created = False)。"
+   答え = DetachedSubmitted か DetachedUnreachable(coordinator に届かなかった — 送れたかは分からない。key で冪等なので送り直してよい)。
+   同じ key がまだ在れば何も作らない(created = False)。"
   (#^ Program program)
   (#^ str env)
   (#^ str key)
@@ -45,7 +46,8 @@
 
 
 (defclass [(dataclass :frozen True)] AwaitDetached [EffectBase]
-  "答え = DetachedOutcome(終わった)か DetachedPending(timeout-seconds を過ぎてもまだ終わらない)。呼び手が抜けても task は続く。
+  "答え = DetachedOutcome(終わった)か DetachedPending(timeout-seconds を過ぎてもまだ終わらない)か DetachedUnreachable(timeout-seconds
+   を決めた待ちで coordinator に届かなかった — task の生死は分からない。死んだとみなさない。timeout-seconds = None の待ちは届くまで待つ)。呼び手が抜けても task は続く。
    timeout-seconds = None なら終わるまで待つ。timeout は問い合わせの間隔の積算で数える。"
   (#^ str key)
   (setv #^ (| float None) timeout-seconds None))
@@ -176,7 +178,13 @@
 
 (setv DetachedOutcome (| DetachedSucceeded DetachedFailed DetachedLost DetachedCancelled DetachedVersionMismatch
                          DetachedUnrunnable DetachedEnvUnavailable DetachedUnknown))
-(setv DetachedAwaited (| DetachedOutcome DetachedPending))
+;; DetachedUnreachable = coordinator に届かなかった(作り直しの最中・網の途絶)。送りも待ちも同じ値で答え、fake と本物が同じ形を返す —
+;; 呼び手は「届かない」を例外でなく値で受け、task の死と取り違えない(2026-09-26)。
+(defrecord DetachedUnreachable
+  #^ str detail)
+
+(setv DetachedAwaited (| DetachedOutcome DetachedPending DetachedUnreachable))
+(setv DetachedSubmitAnswer (| DetachedSubmitted DetachedUnreachable))
 
 
 (defclass DetachedRefused [Exception]
