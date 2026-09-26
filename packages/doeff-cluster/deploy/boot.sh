@@ -149,8 +149,9 @@ case "$role" in
     exit 0 ;;
   drain)
     # preStop の出力は kubelet が捨てるので、container の log(PID 1 = worker の stderr)へ出す。
+    # 世代の file(worker が起動の時に書く — 下の DOEFF_WORKER_BOOT_FILE と同じ path)を渡し、頼みに世代を載せる。
     exec hy -m doeff_cluster.drain_main drain --coordinator "$COORDINATOR_URL" --name "$WORKER_NAME" \
-      --deadline "${DRAIN_DEADLINE:-90}" 2>>/proc/1/fd/2 ;;
+      --deadline "${DRAIN_DEADLINE:-90}" --boot-file "${DOEFF_WORKER_BOOT_FILE:-/tmp/doeff-worker-boot}" 2>>/proc/1/fd/2 ;;
   coordinator)
     mkdir -p "$WORK_DIR/coord"
     naming=${CLUSTER_NAMING:-}

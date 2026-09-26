@@ -10,6 +10,7 @@
 ;;;   handoff/<名>(2026-09-26 — 入れ替えの期限の見張り HandoffWatch。無い置き場は空として読む)
 ;;;   board/<盤のキー> = {"value" … "resourceVersion" …}
 ;;; worker/<名> は最後の連絡の時刻 lastSeenMs を持つ(2026-09-25 — heartbeat ごとではなく api_policy.mark-alive の拍ごとの写し)。
+;;; 世代の順 boot・retired(2026-09-27 — cluster_policy.superseded-boot)も持つ(無い鍵は世代を知らない)。
 ;;; 保存しない物(状態の報告・readiness・k8s の観測)は入れない。
 ;;;
 ;;; 置き先の鍵の改名(2026-09-25): 置き先(job をどの worker に置いたか)の鍵は placement/<名>。改名の前に書いた置き場には
@@ -19,7 +20,8 @@
 (import dataclasses [asdict replace])
 (import .cluster_model [ClusterState WorkerInfo Placement Drain component-versions-of task-record-to-json
                         task-record-from-json handoff-watch-from-json])
-(import .cluster_policy [job-to-json job-from-json board-changes value-size warm-entry-to-json warm-entry-from-json])
+(import .cluster_policy [job-to-json job-from-json board-changes value-size warm-entry-to-json warm-entry-from-json
+                         worker-generations-json worker-generations-from-json])
 
 (setv BOARD "board/")
 (setv PLACEMENT "placement/")
@@ -44,6 +46,7 @@
   (for [w (.values state.workers)]
     (setv seen (.get state.seen-marks w.name))
     (setv (get kv (+ "worker/" w.name)) (| {"name" w.name "labels" (dict w.labels) "capacity" w.capacity "versions" (dict w.versions)}
+                                           (worker-generations-json w)
                                            (if (is seen None) {} {"lastSeenMs" seen}))))
   (for [t (.values state.tasks)]
     (setv (get kv (+ "task/" t.id)) (task-record-to-json t)))
@@ -93,7 +96,8 @@
     :workers (dfor #(k w) (part "worker/")
                    k (WorkerInfo (get w "name") (tuple (sorted (.items (get w "labels")))) (get w "capacity")
                                  (.get w "lastSeenMs" unknown-seen)
-                                 (component-versions-of (.get w "versions" {}))))
+                                 (component-versions-of (.get w "versions" {}))
+                                 #** (worker-generations-from-json w)))
     :seen-marks (dfor #(k w) (part "worker/") :if (in "lastSeenMs" w) k (get w "lastSeenMs"))
     :tasks (dfor #(k t) (part "task/")
                  k (task-record-from-json t))

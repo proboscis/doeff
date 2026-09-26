@@ -17,7 +17,7 @@
 ;;; (cluster_policy.absorb-boot — Pod を作り直した後の worker は空けない)。取り消しは DELETE /workers/<名>/drain。
 (import dataclasses [replace])
 (import .cluster_model [ClusterState ClusterTiming Drain Placement])
-(import .cluster_policy [alive eligible can-take draining-workers load-of LIVE-PHASES MAX-EVENTS])
+(import .cluster_policy [alive eligible can-take draining-workers load-of superseded-boot LIVE-PHASES MAX-EVENTS])
 (import .resource_policy [refuse service-readiness])
 
 (setv DRAIN-DEFAULT-TTL-SECONDS 300)          ; 頼み直さない drain が消えるまで(preStop は数秒ごとに頼み直す)
@@ -29,10 +29,16 @@
 (defn #^ ClusterState request-drain [#^ ClusterState state #^ str name #^ dict body #^ str actor #^ int now]
   "POST /workers/<名>/drain {\"ttlSeconds\"?}。何度頼んでも同じ意味(始めた時刻と世代は最初の頼みのまま・期限だけ延びる)。"
   (setv worker (.get state.workers name)
-        ttl (.get body "ttlSeconds" DRAIN-DEFAULT-TTL-SECONDS))
+        ttl (.get body "ttlSeconds" DRAIN-DEFAULT-TTL-SECONDS)
+        boot (.get body "boot"))
   (when (is worker None) (refuse 404 (+ "知らない worker: " name)))
   (when (not (and (isinstance ttl #(int float)) (not (isinstance ttl bool)) (< 0 ttl (+ DRAIN-MAX-TTL-SECONDS 1))))
     (refuse 400 (.format "ttlSeconds は 0 より大きく {} 以下: {!r}" DRAIN-MAX-TTL-SECONDS ttl)))
+  (when (not (or (is boot None) (isinstance boot str)))
+    (refuse 400 (.format "boot は頼み手の worker の process の世代の文字列: {!r}" boot)))
+  ;; 退いた世代の頼み(旧い Pod の preStop)は、同じ名の今の世代に drain を付けない(2026-09-27)。
+  ;; 答えは superseded-worker-view(その世代に置いた task が終わるまで待たせる)。
+  (when (superseded-boot state name boot) (return state))
   (setv until (+ now (int (* 1000 ttl)))
         current (.get state.drains name))
   (replace state :drains (| state.drains
@@ -169,6 +175,22 @@
   {"name" name "alive" live "silentMs" (- now w.last-seen-ms) "boot" w.boot "labels" (dict w.labels)
    "draining" (is-not drain None) "drain" drain
    "ready" (and live (is drain None))})
+
+
+(defn #^ dict superseded-worker-view [#^ ClusterState state #^ str name #^ str boot #^ int now #^ ClusterTiming timing]
+  "退いた世代の process(旧い Pod の preStop)が drain を頼んだ時の答え(2026-09-27)。名の置き先と drain は今の
+   世代の物なので、退いた世代が待つのは、その世代に置いてまだ終わっていない切り離した task だけ(0 で drained — preStop が終わる)。
+   形は worker-view と同じ(drain_client.drain-outcome が drain.drained を読む)。"
+  (setv w (get state.workers name)
+        remaining (sorted (gfor t (.values state.tasks)
+                                :if (and t.detached (in t.phase #("assigned" "preparing")) (= t.worker name) (= t.boot boot))
+                                (+ "task/" t.id))))
+  {"name" name "alive" (alive now w timing.lease-ms) "silentMs" (- now w.last-seen-ms) "boot" w.boot "labels" (dict w.labels)
+   "draining" True "superseded" True
+   "drain" {"worker" name "boot" boot "superseded" True
+            "phase" (if remaining "Draining" "Drained") "drained" (not remaining) "remaining" remaining
+            "moving" {} "blocked" {} "movingReady" {}}
+   "ready" False})
 
 
 (defn #^ dict drains-view [#^ ClusterState state #^ int now #^ ClusterTiming timing]

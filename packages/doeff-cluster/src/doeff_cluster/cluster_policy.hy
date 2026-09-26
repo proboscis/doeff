@@ -148,7 +148,8 @@
    "jobs" (lfor j state.jobs (job-to-json j))
    "placements" (dfor #(k v) (.items state.placements) k (asdict v))
    "workers" (lfor w (.values state.workers)
-                   {"name" w.name "labels" (dict w.labels) "capacity" w.capacity "versions" (dict w.versions)})
+                   (| {"name" w.name "labels" (dict w.labels) "capacity" w.capacity "versions" (dict w.versions)}
+                      (worker-generations-json w)))
    "tasks" (lfor t (.values state.tasks) (task-record-to-json t))
    "nextTask" state.next-task
    "meta" state.meta
@@ -160,6 +161,18 @@
    "surges" (dfor #(k v) (.items state.surges) k (asdict v))
    "warms" (dfor #(k v) (.items state.warms) k (warm-entry-to-json v))
    "handoffs" (dfor #(k w) (.items state.handoffs) k (.to-json w))})
+
+
+(defn #^ dict worker-generations-json [#^ WorkerInfo worker]
+  "worker の世代の順(今の世代と退いた世代)を保存の形へ写すため(state file と durable の KV が使う)。読み直した後も、退いた世代の
+   heartbeat を新しい世代と取り違えない。世代を知らない worker は欄を持たない(2026-09-27 より前の形と同じ)。"
+  (| (if (is worker.boot None) {} {"boot" worker.boot})
+     (if worker.retired {"retired" (list worker.retired)} {})))
+
+
+(defn #^ dict worker-generations-from-json [#^ dict data]
+  "保存の形 → WorkerInfo の世代の欄(worker-generations-json の逆)。欄の無い旧い形は世代を知らない。"
+  {"boot" (.get data "boot") "retired" (tuple (.get data "retired" []))})
 
 
 (defn #^ dict warm-entry-to-json [#^ WarmEntry entry]
@@ -183,7 +196,8 @@
     :workers (dfor w (.get data "workers" [])
                    (get w "name")
                    (WorkerInfo (get w "name") (tuple (sorted (.items (get w "labels")))) (get w "capacity") now
-                               (component-versions-of (.get w "versions" {}))))
+                               (component-versions-of (.get w "versions" {}))
+                               #** (worker-generations-from-json w)))
     ;; 改名の前の file は置き先を旧い名の欄に持つ(durable_kv.LEGACY-PLACEMENT と同じ改名)。両方を読み、新しい欄が勝つ。
     :placements (dfor #(k v) (.items (| (.get data "assignments" {}) (.get data "placements" {}))) k (Placement #** v))
     :tasks (dfor t (.get data "tasks" [])
@@ -277,9 +291,36 @@
        (< (.get load w.name 0) w.capacity)))
 
 
+;; --- 同じ名の process の世代(2026-09-27) ------------------------------------------------
+;; worker の Pod を作り直すと、旧い Pod は preStop の drain の間も worker の process を動かし、新しい Pod の worker は同じ名で名乗る。
+;; 2 つの process が交互に heartbeat を送ると、worker の名乗り(世代・生存・label・容量)と drain の印が拍ごとに入れ替わり、新しい
+;; 世代に置いた切り離した task を旧い世代の heartbeat が割り当ての 0.05〜0.12 秒後に lost にした(実測 2026-09-27 04:44 JST)。
+;; boot の id には順が無いので、coordinator が初めて見た順を世代の順とする: 今の世代でも退いた世代でもない boot の
+;; heartbeat = 新しい世代(今の世代を退かせる)・退いた世代の heartbeat = 古い世代(worker の名乗りとしては断る)。
+;; 断るのは名乗りだけ: 退いた世代の上でまだ走っている切り離した task の終わりの報告と lease の延長は、その世代に置いた task に
+;; 限って受ける(走らせ直さない task を途中で失わない — 旧い世代が消えたら lease 切れで lost)。
+(setv RETIRED-BOOTS-KEPT 8)   ; 覚えておく退いた世代の数(1 回の作り直しで 1 つ増える — 旧い Pod が生きている間だけ要る)
+
+
+(defn #^ bool superseded-boot [#^ ClusterState state #^ str name #^ (| str None) boot]
+  "純粋: name の worker の heartbeat・drain の頼みの boot が、この名の退いた世代か(boot を名乗らない旧い worker は退かない)。"
+  (setv worker (.get state.workers name))
+  (and (is-not boot None) (is-not worker None) (in boot worker.retired)))
+
+
+(defn #^ tuple retired-after [#^ (| WorkerInfo None) previous #^ (| str None) boot]
+  "純粋: 退いていない世代 boot の heartbeat の後の、name の退いた世代の列(新しい順)。今の世代と違う boot = 新しい世代なので、
+   今の世代を列の頭へ足す。"
+  (cond
+    (is previous None) #()
+    (or (is boot None) (is previous.boot None) (= previous.boot boot)) previous.retired
+    True (tuple (cut (+ #(previous.boot) previous.retired) RETIRED-BOOTS-KEPT))))
+
+
 (defn #^ ClusterState absorb-boot [#^ ClusterState state #^ str name #^ (| str None) boot]
   "heartbeat の worker の process の世代を drain へ写す: 頼まれた時の世代と違う世代(Pod を作り直した後の worker)が来たら drain を解く。
-   世代を知らずに頼まれた drain(読み直しの直後など)は、最初に来た世代を持つ。"
+   世代を知らずに頼まれた drain(読み直しの直後など)は、最初に来た世代を持つ。退いた世代の heartbeat はここへ来ない
+   (register-heartbeat が先に分ける — 旧い世代の heartbeat が新しい世代の drain を解かず、旧い世代の drain を付け直さない)。"
   (setv d (.get state.drains name))
   (cond
     (or (is d None) (is boot None)) state
@@ -559,9 +600,10 @@
       (end-env-failed failed now detail)))
 
 
-(defn #^ list tasks-for [#^ ClusterState state #^ str worker]
-  ;; 切り離した task は、置いた時と同じ process の世代の worker にだけ送る(作り直した worker の process で走らせ直さない)。
-  (setv boot (. (.get state.workers worker (WorkerInfo worker #() 0 0)) boot))
+(defn #^ list tasks-for [#^ ClusterState state #^ str worker #^ (| str None) [boot None]]
+  "heartbeat の返事で worker の process へ走らせる task を渡すため。切り離した task は、置いた時と同じ process の世代にだけ送る
+   (作り直した worker の process で走らせ直さない)。boot = 返事を受ける process の世代(渡さなければ coordinator の見る今の世代)。"
+  (setv boot (if (is boot None) (. (.get state.workers worker (WorkerInfo worker #() 0 0)) boot) boot))
   (lfor task (sorted (.values state.tasks) :key (fn [t] t.id))
         :if (and (in task.phase PLACED-PHASES) (= task.worker worker) (same-boot task boot))
         (| {"id" task.id "name" task.name "env" task.env "revision" task.revision
@@ -604,15 +646,14 @@
 
 
 (defn #^ dict renew-detached [#^ dict tasks #^ str worker #^ (| str None) boot #^ int now]
-  "担い手の heartbeat: その worker に置いた切り離した task の lease を延ばす(lease は worker が延ばす)。置いた時と違う process の
-   世代の heartbeat なら lost(worker の process が作り直された = その上の task は消えた・走らせ直さない)。"
+  "担い手の heartbeat: その worker に置いた切り離した task の lease を延ばす(lease は worker が延ばす)。延ばすのは置いた時と同じ
+   process の世代の heartbeat だけ。別の世代の heartbeat では何もしない — 置いた世代の process が消えていれば lease 切れで lost
+   (settle-detached・走らせ直さない)。以前は別の世代の heartbeat が来た拍に lost にしていたが、同じ名の 2 つの世代が並んで
+   動く間(旧い Pod の preStop の drain)は、旧い世代の heartbeat が新しい世代に置いた task を失わせた。"
   (dfor #(id t) (.items tasks)
-        id (cond
-             (not (and t.detached (in t.phase PLACED-PHASES) (= t.worker worker))) t
-             (not (same-boot t boot))
-               (end-detached t "lost" now
-                             (.format "担い手の worker {} の process が作り直された(task は走らせ直さない)" worker))
-             True (replace t :lease-until-ms (+ now t.lease-ms)))))
+        id (if (and t.detached (in t.phase PLACED-PHASES) (= t.worker worker) (same-boot t boot))
+               (replace t :lease-until-ms (+ now t.lease-ms))
+               t)))
 
 
 ;; --- 盤 --------------------------------------------------------------------------------
@@ -704,7 +745,8 @@
       (!= (set before.workers) (set after.workers))
       (any (gfor #(n w) (.items after.workers)
                  :setv b (.get before.workers n)
-                 (or (is b None) (!= #(b.labels b.capacity b.versions) #(w.labels w.capacity w.versions)))))))
+                 (or (is b None) (!= #(b.labels b.capacity b.versions b.boot b.retired)
+                                     #(w.labels w.capacity w.versions w.boot w.retired)))))))
 
 
 (defn #^ list board-changes [#^ ClusterState before #^ ClusterState after]
@@ -720,13 +762,16 @@
 
 (defn #^ ClusterState register-heartbeat [#^ ClusterState state #^ dict body #^ int now]
   "heartbeat の中身(worker の label・容量・版と、各 job / task の状態)を状態へ写す。割り当ての調停はしない(呼び手が別の送り手
-   = coordinator として調停する)。"
-  (setv name (get body "name")
-        envs (.get body "envs" {})
+   = coordinator として調停する)。退いた世代の heartbeat(superseded-boot)は名乗りとして受けず、その世代に置いた task の
+   終わりの報告と lease の延長だけを写す(absorb-superseded-heartbeat)。"
+  (setv name (get body "name") boot (.get body "boot"))
+  (when (superseded-boot state name boot)
+    (return (absorb-superseded-heartbeat state name boot (.get body "statuses" []) now)))
+  (setv envs (.get body "envs" {})
         info (WorkerInfo name (tuple (sorted (.items (.get body "labels" {}))))
                          (int (.get body "capacity" 10)) now
                          (component-versions-of (.get body "versions" {}))
-                         (.get body "boot")
+                         boot
                          (component-versions-of (.get body "tools" {}))
                          :platform (.get body "platform" "")
                          :env-ready (frozenset (.get envs "ready" []))
@@ -734,15 +779,21 @@
                          :env-failed (tuple (gfor f (.get envs "failed" [])
                                                   (EnvFailed (get f "key") (get f "kind") (.get f "detail" "")
                                                              (bool (.get f "retryable" False)))))
-                         :env-capacity (.get body "envCapacity" "ok"))
+                         :env-capacity (.get body "envCapacity" "ok")
+                         :retired (retired-after (.get state.workers name) boot))
         statuses (.get body "statuses" [])
-        state (replace (absorb-boot state name (.get body "boot"))
+        state (replace (absorb-boot state name boot)
                 :workers (| state.workers {name info})
                 :statuses (| state.statuses {name {"at" now "endpoint" (.get body "endpoint")
                                                   "jobs" (lfor s statuses (dfor #(k v) (.items s) :if (!= k "result") k v))}})))
-  (replace state :tasks (promote-prepared (renew-detached (absorb-task-reports state name statuses now (.get body "boot"))
-                                                         name (.get body "boot") now)
+  (replace state :tasks (promote-prepared (renew-detached (absorb-task-reports state name statuses now boot) name boot now)
                                          info)))
+
+
+(defn #^ ClusterState absorb-superseded-heartbeat [#^ ClusterState state #^ str name #^ str boot #^ list statuses #^ int now]
+  "退いた世代の process がまだ走らせている切り離した task を最後まで見届けるため: その世代に置いた task の終わりの報告と
+   lease の延長だけを写す。worker の名乗り(生存・label・容量・版・世代)・job の状態の報告・drain は今の世代の物なので触らない。"
+  (replace state :tasks (renew-detached (absorb-task-reports state name statuses now boot) name boot now)))
 
 
 (defn #^ dict promote-prepared [#^ dict tasks #^ WorkerInfo worker]
@@ -764,9 +815,14 @@
             {"key" w.key "runtimeEnv" w.runtime-env})))
 
 
-(defn #^ dict heartbeat-reply [#^ ClusterState state #^ str name #^ ClusterTiming timing [ready-instances None] #^ int [now 0]]
+(defn #^ dict heartbeat-reply [#^ ClusterState state #^ str name #^ ClusterTiming timing [ready-instances None] #^ int [now 0]
+                               #^ (| str None) [boot None]]
+  "heartbeat を送った process に、動かす job・task・温める表・時間の設定・drain の印を返すため。boot = 送った process の世代。
+   退いた世代(superseded-boot)への返事は superseded-reply。"
+  (when (superseded-boot state name boot)
+    (return (superseded-reply state name boot timing ready-instances)))
   {"jobs" (lfor s (jobs-for state name ready-instances) (spec-json s))
-   "tasks" (tasks-for state name)
+   "tasks" (tasks-for state name boot)
    ;; 温める表のうち、この worker に合う行(2026-09-26 — worker は job の準備より低い優先度で準備する)。
    "warm" (warms-for state name now)
    "timing" (asdict timing)
@@ -774,6 +830,19 @@
    ;; (hy を起こす probe は込んだ node で 10 秒の timeout を越え、両方の Pod が同時に NotReady → DaemonSet が 2 台を同時に消した)。
    "draining" (in name state.drains)
    ;; 受け入れる本文の形の版(2026-09-26 — cluster_model.ACCEPTED-FORMATS)。
+   "formats" (list ACCEPTED-FORMATS)})
+
+
+(defn #^ dict superseded-reply [#^ ClusterState state #^ str name #^ str boot #^ ClusterTiming timing [ready-instances None]]
+  "退いた世代の process への heartbeat の返事(2026-09-27)。その世代に置いた切り離した task は載せて最後まで
+   走らせ、job は今までどおり名の置き先の物を載せる(退いた process は Pod の停止で止まる — 書き手の重なりは lease の柵が守る)。
+   温める表は載せない(退く process に準備させない)。draining = 真(ready の file を draining にする)・superseded = 真(退いた印)。"
+  {"jobs" (lfor s (jobs-for state name ready-instances) (spec-json s))
+   "tasks" (tasks-for state name boot)
+   "warm" []
+   "timing" (asdict timing)
+   "draining" True
+   "superseded" True
    "formats" (list ACCEPTED-FORMATS)})
 
 

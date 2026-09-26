@@ -45,13 +45,16 @@
     True None))
 
 
-(defk await-drained [name deadline interval]
-  {:pre [(: name str) (: deadline float) (: interval float)] :post [(: % dict)]}
+(defk await-drained [name deadline interval [own-boot None]]
+  {:pre [(: name str) (: deadline float) (: interval float) (: own-boot (| str None))] :post [(: % dict)]}
   ;; 結果 = {"outcome" 結末 "elapsed" 秒 "last" 最後の答え}。
+  ;; own-boot = この Pod の worker の process の世代(ready-of と同じ file)。頼みに載せると、同じ名の新しい Pod の worker が名乗った
+  ;; 後の頼み(退いた世代の頼み)は新しい世代に drain を付けず、この世代に置いた task が終わるのを待つ答えになる(2026-09-27)。
   (<- started float (GetMonotonic))
-  (setv ttl (+ deadline DRAIN-TTL-MARGIN-SECONDS))
+  (setv ttl (+ deadline DRAIN-TTL-MARGIN-SECONDS)
+        body (| {"ttlSeconds" ttl} (if own-boot {"boot" own-boot} {})))
   (while True
-    (<- answer dict (CoordinatorCall "POST" (+ (worker-path name) "/drain") {"ttlSeconds" ttl}))
+    (<- answer dict (CoordinatorCall "POST" (+ (worker-path name) "/drain") body))
     (<- at float (GetMonotonic))
     (setv outcome (drain-outcome answer (- at started) deadline))
     (when (is-not outcome None)
