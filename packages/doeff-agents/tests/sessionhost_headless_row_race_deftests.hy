@@ -26,20 +26,21 @@
 (import tempfile)
 
 (import doeff_agents.sessionhost.effects [
-  BuildHeadlessLaunch
   ClockNow
   EnvGet
   FsMakeDirs
   FsReadText
   FsRemoveFile
   FsWriteTextAtomic
-  HeadlessDeliver
-  HeadlessPoll
-  HeadlessSpawn
   LogLine
   SessionRow
   session-store-get
   session-store-upsert])
+(import doeff_agents.sessionhost.headless_effects [
+  BuildHeadlessLaunch
+  HeadlessDeliver
+  HeadlessPoll
+  HeadlessSpawn])
 (import doeff_agents.sessionhost.headless [headless-send-program observe-headless-row])
 (import doeff_agents.sessionhost.headless_protocol [HeadlessObservation])
 (import doeff_agents.sessionhost.impls.headless_argv [build-headless])
