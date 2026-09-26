@@ -1,5 +1,5 @@
 ;; argv の組み立て・「手番を始める」の判断・行の分類の検 — 純関数だけ。
-(require doeff-hy.macros [deftest])
+(require doeff-hy.macros [deftest val])
 (import json)
 (import pytest)
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn BypassAll AskHost DenyUnlisted McpSse McpStdio
@@ -33,6 +33,21 @@
   (assert (= (cut argv -2 None) ["--session-id" SID]))
   (assert (= (cut (launch-argv #("claude") spec (ResumeSession SID)) -2 None) ["--resume" SID]))
   (assert (= (cut (launch-argv #("claude") spec (ForkSession SID)) -3 None) ["--resume" SID "--fork-session"])))
+
+
+(deftest test-the-launch-argv-never-inherits-home-mcp
+  ;; 手番の MCP は宣言の 1 点が正: 宣言が無い時も --strict-mcp-config を付け(家の MCP と claude.ai の connector を
+  ;; 継がせない — 起動が約 0.6〜0.8 秒縮む)、--mcp-config は付けない。宣言が有る時は宣言した server だけを渡して同じ旗を付ける。
+  (val bare (launch-argv #("claude") (ClaudeSessionSpec :home HOME :cwd "/w") (FreshSession SID)))
+  (val declared (launch-argv #("claude") (ClaudeSessionSpec :home HOME :cwd "/w" :mcp-servers {"s" (McpSse "http://x")})
+                              (FreshSession SID)))
+  (assert (= (.count bare "--strict-mcp-config") 1) bare)
+  (assert (not-in "--mcp-config" bare) bare)
+  (assert (= (.count declared "--strict-mcp-config") 1) declared)
+  (assert (= (json.loads (get declared (+ (.index declared "--mcp-config") 1))) {"mcpServers" {"s" {"type" "sse" "url" "http://x"}}})
+          declared)
+  ;; 冷えた続きの前の 1 回きりの process も同じ基礎の旗を通る。
+  (assert (in "--strict-mcp-config" (cold-resume-argv #("claude") (ClaudeSessionSpec :home HOME :cwd "/w" :cold-resume-prompt "/x") SID))))
 
 
 (deftest test-permission-flags

@@ -70,11 +70,14 @@
       {"type" "stdio" "command" server.command "args" (list server.args) "env" (dict server.env)}))
 
 (defn #^ list mcp-flags [#^ FrozenMap servers]
+  "MCP の旗: 手番の MCP は宣言の 1 点が正 — 宣言した server だけを渡し、どちらの場合も --strict-mcp-config で家(configDir)の MCP の
+   設定と claude.ai の connector を継がせない。宣言が無い時も付ける: 付けないと子の CLI は家の MCP と connector を読んでから init を
+   出し、起動が約 0.6〜0.8 秒遅れる(2026-09-26 の実測)。"
   (if servers
       ["--mcp-config" (json.dumps {"mcpServers" (dfor #(name server) (.items servers) name (mcp-entry server))}
                                   :separators #("," ":") :sort-keys True)
        "--strict-mcp-config"]
-      []))
+      ["--strict-mcp-config"]))
 
 (defn #^ list base-flags [#^ ClaudeSessionSpec spec #^ FrozenMap settings]
   "起動の基礎の旗(許可・settings・effort・model・圧縮・MCP・system prompt の追記)。"
