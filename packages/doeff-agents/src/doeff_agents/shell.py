@@ -6,8 +6,12 @@ from types import ModuleType
 from typing import Any
 
 
-def _policy() -> ModuleType:
-    """sessionhost/policy.hy — the single home of the agent-boundary env vocabulary.
+def _agent_env() -> ModuleType:
+    """agent_env.hy — the single home of the agent-boundary env vocabulary.
+
+    Not ``sessionhost/policy.hy``: that module drags the session host's effect
+    vocabulary (tmux / fs / store) into every importer, and the headless turn
+    route reaches this file (agora-redesign #708).
 
     Imported lazily inside the functions that need it, never at module import:
     the Hy module costs ~0.3s to compile and ``doeff_agents.shell`` is on the
@@ -16,14 +20,14 @@ def _policy() -> ModuleType:
     """
     import hy  # noqa: F401 -- installs the .hy import hook
 
-    from doeff_agents.sessionhost import policy
+    from doeff_agents import agent_env
 
-    return policy
+    return agent_env
 
 
 @functools.cache
 def _forbidden_agent_env_keys() -> frozenset[str]:
-    """The env names this layer refuses, named (not copied) from policy.
+    """The env names this layer refuses, named (not copied) from agent_env.
 
     The tmux launch layer is the widest of the three boundaries: on top of the
     provider keys it also refuses the routing spellings (which swap the
@@ -34,11 +38,11 @@ def _forbidden_agent_env_keys() -> frozenset[str]:
     deliberately carry TURN_AUTH (ADR-DOE-AGENTS-012 R5/R30), so the union
     belongs to this layer only (card acp:kanban-issue:ki-2a061da56ca9).
     """
-    policy = _policy()
+    vocabulary = _agent_env()
     return frozenset(
-        set(policy.PROVIDER_AUTH_ENV_KEYS)
-        | set(policy.PROVIDER_ROUTING_ENV_KEYS)
-        | set(policy.TURN_AUTH_ENV_KEYS)
+        set(vocabulary.PROVIDER_AUTH_ENV_KEYS)
+        | set(vocabulary.PROVIDER_ROUTING_ENV_KEYS)
+        | set(vocabulary.TURN_AUTH_ENV_KEYS)
     )
 
 
@@ -46,7 +50,7 @@ def __getattr__(name: str) -> Any:
     """PEP 562: keep ``FORBIDDEN_AGENT_ENV_KEYS`` readable without paying the import.
 
     The spelling is quoted as evidence by ADR-DOE-AGENTS-004 R7, so the name
-    stays even though the set now lives in policy.hy.
+    stays even though the set now lives in agent_env.hy.
     """
     if name == "FORBIDDEN_AGENT_ENV_KEYS":
         return _forbidden_agent_env_keys()
@@ -56,7 +60,7 @@ def __getattr__(name: str) -> Any:
 def forbidden_agent_env_keys(env: dict[str, str] | None) -> list[str]:
     if not env:
         return []
-    return _policy().env_offenders_against(dict(env), _forbidden_agent_env_keys())
+    return _agent_env().env_offenders_against(dict(env), _forbidden_agent_env_keys())
 
 
 def assert_no_forbidden_agent_env(
@@ -86,12 +90,12 @@ def assert_session_env_is_non_auth_overlay(
     Binding-owned auth keys (CODEX_HOME / CLAUDE_CONFIG_DIR) may not ride
     the per-launch env dict — auth belongs to the handler binder
     (runtime policy locally, the typed ``binding`` field on the wire).
-    The ownership set lives in ONE place, sessionhost/policy.hy, so the
+    The ownership set lives in ONE place, agent_env.hy, so the
     local guard and the host admission can never drift.
     """
     if not env:
         return
-    offenders = _policy().overlay_env_offenders(dict(env))
+    offenders = _agent_env().overlay_env_offenders(dict(env))
     if offenders:
         joined = ", ".join(offenders)
         raise ValueError(

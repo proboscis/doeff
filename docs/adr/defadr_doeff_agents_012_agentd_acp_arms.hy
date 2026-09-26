@@ -4607,17 +4607,23 @@
                                line))
                     1)
                  name))
-       (assert (any (gfor line policy-lines (.startswith line "(setv TURN-AUTH-ENV-KEYS")))
-               "手番ごとの資格の env の名は policy の 1 点(R30)")
+       ;; agora-redesign #708: env の語彙の家は doeff_agents/agent_env.hy(session host を import しない)。
+       ;; policy.hy は名を再輸出するだけ — 定義(setv)は家の 1 点で、policy には写しが無い。
+       (setv env-home-lines (code-lines (/ (. SESSIONHOST-DIR parent) "agent_env.hy")))
+       (assert (any (gfor line env-home-lines (.startswith line "(setv TURN-AUTH-ENV-KEYS")))
+               "手番ごとの資格の env の名は agent_env の 1 点(R30)")
+       (for [name ["TURN-AUTH-ENV-KEYS" "PROVIDER-AUTH-ENV-KEYS" "PROVIDER-ROUTING-ENV-KEYS" "BINDING-OWNED-ENV-KEYS"]]
+         (assert (not (any (gfor line policy-lines (.startswith line f"(setv {name}"))))
+                 f"{name} の定義が policy.hy にも在る — 家は agent_env.hy の 1 点(#708)"))
        (assert (any (gfor line policy-lines (.startswith line "(setv SPAWN-INHERITED-ENV-KEYS")))
                "継ぐ env は許可の名簿(R30)")
        ;; 2026-09-19(card acp:kanban-issue:ki-2a061da56ca9): agent の境界で「運ばせない」
-       ;; env の綴りも policy の 1 点。受理 / spawn / shell の 3 層は集合を名指すだけで、
+       ;; env の綴りも 1 点(#708 から agent_env.hy)。受理 / spawn / shell の 3 層は集合を名指すだけで、
        ;; 層ごとに literal の名簿を持たない(3 つの写しが別々に古びるのを止める)。
-       (assert (any (gfor line policy-lines (.startswith line "(setv PROVIDER-AUTH-ENV-KEYS")))
-               "provider の鍵・札の綴りは policy の 1 点(R30)")
-       (assert (any (gfor line policy-lines (.startswith line "(setv PROVIDER-ROUTING-ENV-KEYS")))
-               "provider を差し替える綴りは policy の 1 点(R30)")
+       (assert (any (gfor line env-home-lines (.startswith line "(setv PROVIDER-AUTH-ENV-KEYS")))
+               "provider の鍵・札の綴りは agent_env の 1 点(R30)")
+       (assert (any (gfor line env-home-lines (.startswith line "(setv PROVIDER-ROUTING-ENV-KEYS")))
+               "provider を差し替える綴りは agent_env の 1 点(R30)")
        (setv host-lines (code-lines (/ SESSIONHOST-DIR "host.hy")))
        (assert (= (len (lfor line host-lines :if (in "(session-env-admission-error session-env \"session.send\")" line) line)) 1)
                "送りの口の関所は launch と同じ 1 点(R30)")

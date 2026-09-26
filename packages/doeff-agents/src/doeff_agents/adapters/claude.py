@@ -15,7 +15,7 @@ from doeff_agents.io_effects import (
     write_text,
 )
 from doeff_agents.io_root import IoGenerator, as_bool, as_optional_str, as_str
-from doeff_agents.sessionhost.impls.ready_physics import CLAUDE_SCREEN_READER_READY_PATTERN
+from doeff_agents.ready_physics import CLAUDE_SCREEN_READER_READY_PATTERN
 
 from .base import AgentType, InjectionMethod, LaunchParams, cli_available
 
@@ -108,7 +108,7 @@ class ClaudeAdapter:
 
     @property
     def ready_pattern(self) -> str | None:
-        # Physics home: sessionhost/impls/ready_physics.hy (ADR-DOE-AGENTS-008
+        # Physics home: doeff_agents/ready_physics.hy (ADR-DOE-AGENTS-008
         # R1) — readiness in screen-reader mode is the permission-mode footer.
         return CLAUDE_SCREEN_READER_READY_PATTERN
 
