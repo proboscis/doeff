@@ -21,7 +21,7 @@
 (import doeff [EffectBase])
 (import doeff_time [Delay])
 (import .runtime_env_model [EnvFailure EnvFailureKind CHILD-PROTOCOL])
-(import .env_prepare [StageStarted DiskFree EnsureMirror FetchCommit MaterializeTree FileSha256 TreeHash EnsureNativeWheel SyncProject
+(import .env_prepare [StageStarted PrepareNote DiskFree EnsureMirror FetchCommit MaterializeTree FileSha256 TreeHash EnsureNativeWheel SyncProject
                       InstallWheels WriteImportRoots ReadEditableRoots CompileTree ProbeImports WriteEnvMarker env-marker->json
                       MirrorReady FetchState WheelReady SyncReport BytecodeReport ProbeReport ENV-MARKER ROOTS-PTH])
 
@@ -77,7 +77,9 @@
   (setv #^ tuple stages #())
   (setv #^ tuple entries #())
   ;; bytecode を焼いた木と、その木の中の import の根(#(木 根の tuple) の列・焼いた順)。
-  (setv #^ tuple compiled-trees #()))
+  (setv #^ tuple compiled-trees #())
+  ;; 準備が残した記録の行(PrepareNote — 焼けなかった editable だけの repo 等)。
+  (setv #^ tuple notes #()))
 
 
 ;; --- 観測の effect(fake だけが答える) ----------------------------------------------------
@@ -165,6 +167,9 @@
     (:= uv-failure failure)
     (resume None))
 
+  (PrepareNote [text]
+    (:= log (replace log :notes (+ log.notes #(text))))
+    (resume None))
   (StageStarted [name]
     (:= log (replace log :stages (+ log.stages #(name))))
     (resume None))
@@ -265,12 +270,20 @@
     (val sources (lfor p files :if (and (.startswith p prefix) (.endswith p SOURCE-SUFFIXES)
                                         (not (any (gfor n NOT-COPIED (in n p)))))
                        p))
-    (:= log (replace log :compiles (+ log.compiles 1) :entries entries
-                         :compiled-trees (+ log.compiled-trees #(#(tree roots)))
-                         :carried (+ log.carried (if (is carry-from None) 0 (len sources)))))
-    (resume (BytecodeReport :interpreter (.format "{}/.venv/bin/python" project-dir)
-                            :compiled (if (is carry-from None) (len sources) 0)
-                            :carried (if (is carry-from None) 0 (len sources)))))
+    ;; 本物の道具(code_prepare)と同じく、根の下に焼く source が 1 つも無い木は失敗で返す。
+    (val under-roots (lfor p sources
+                           :if (any (gfor r roots (or (= r ".") (.startswith p (.format "{}{}/" prefix r)))))
+                           p))
+    (if (not under-roots)
+        (do (:= log (replace log :compiled-trees (+ log.compiled-trees #(#(tree roots)))))
+            (resume (EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :retryable False
+                                :detail "root の interpreter で bytecode を作れない: 木に焼くべき source が 1 つも無い")))
+        (do (:= log (replace log :compiles (+ log.compiles 1) :entries entries
+                                 :compiled-trees (+ log.compiled-trees #(#(tree roots)))
+                                 :carried (+ log.carried (if (is carry-from None) 0 (len sources)))))
+            (resume (BytecodeReport :interpreter (.format "{}/.venv/bin/python" project-dir)
+                                    :compiled (if (is carry-from None) (len sources) 0)
+                                    :carried (if (is carry-from None) 0 (len sources)))))))
   (ProbeImports [project-dir roots]
     (<- lines tuple (lock-lines (.get files (+ project-dir "/uv.lock") "")))
     (val third (frozenset (gfor #(_ tops) lines t tops t)))

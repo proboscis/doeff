@@ -35,7 +35,7 @@
 (import doeff_core_effects.handlers [reader state])
 (import doeff_time [sync-time-handler])
 (import .runtime_env_model [EnvFailure EnvFailureKind RuntimeEnv runtime-env-of-json])
-(import .env_prepare [StageStarted DiskFree EnsureMirror FetchCommit MaterializeTree FileSha256 TreeHash EnsureNativeWheel SyncProject
+(import .env_prepare [StageStarted PrepareNote DiskFree EnsureMirror FetchCommit MaterializeTree FileSha256 TreeHash EnsureNativeWheel SyncProject
                       InstallWheels WriteImportRoots ReadEditableRoots CompileTree ProbeImports WriteEnvMarker
                       MirrorReady FetchState WheelReady SyncReport BytecodeReport ProbeReport
                       PrepareRequest KnownRoot EnvReady prepare-env env-marker->json ENV-MARKER ROOTS-PTH])
@@ -198,7 +198,9 @@
 (defk editable-dirs [site root]
   {:pre [(: site str) (: root str)] :post [(: % tuple)]}
   "site-packages の .pth(import の根の .pth を除く・名の順)が sys.path に足す dir のうち root の中に在る物 → root からの相対 path の
-   tuple(editable で入る package の dir — bytecode を焼く範囲に足すため)。symlink は両側を解いて比べる。"
+   tuple(editable で入る package の dir — bytecode を焼く範囲に足すため)。symlink は両側を解いて比べる。
+   拾うのは dir の path を書いた .pth(uv・hatchling・maturin の editable の形)だけ。setuptools の finder 型の editable(.pth が
+   import の行で finder を入れる形)は dir を書かないので拾えない(その package は焼かれず、import の時に作られる)。"
   (val base (os.path.realpath root))
   (var out [])
   (for [pth (sorted (glob.glob (os.path.join site "*.pth")))]
@@ -337,6 +339,10 @@
       (raise (RuntimeError (.format "{} の venv に site-packages が無い" project-dir))))
     (val target (/ (Path site) ROOTS-PTH))
     (.write-text target (+ (.join "\n" roots) "\n") :encoding "utf-8")
+    (resume None))
+
+  (PrepareNote [text]
+    (print (.format "env: {}" text) :file sys.stderr :flush True)
     (resume None))
 
   (ReadEditableRoots [project-dir root]

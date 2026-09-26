@@ -91,7 +91,7 @@
   (setv key (spec-hash spec) deadline (+ (time.monotonic) 60))
   (while (< (time.monotonic) deadline)
     (for [view (.observe store)]
-      (when (and (= view.spec-hash key) (!= view.state ProbeState.RUNNING)) (return view)))
+      (when (and (= view.spec-hash key) (not-in view.state #(ProbeState.RUNNING ProbeState.QUEUED))) (return view)))
     (time.sleep 0.05))
   (raise (AssertionError "検めが 60 秒で終わらない")))
 
@@ -185,6 +185,99 @@
   (assert (in "NoSuchClockName" (. (get views 6) detail)) (. (get views 6) detail))
   (setv pids (set (.split (.read-text (/ tmp-path "pids.txt")))))
   (assert (= (len pids) 1) (.format "同じ木の検めが {} 本の process で走った" (len pids))))
+
+
+(defn #^ int wait-pid [#^ Path path]
+  "検めの子が書いた pid の file を待って読む(上限 30 秒)。"
+  (setv deadline (+ (time.monotonic) 30))
+  (while (< (time.monotonic) deadline)
+    (when (and (.exists path) (.strip (.read-text path)))
+      (return (int (.read-text path))))
+    (time.sleep 0.05))
+  (raise (AssertionError (.format "{} が書かれない" path))))
+
+
+(defn #^ None assert-gone [#^ int pid #^ str what]
+  "pid の process が 5 秒の内に消えることを確かめる(残っていれば止めてから赤にする)。"
+  (setv deadline (+ (time.monotonic) 5))
+  (while (and (process-alive pid) (< (time.monotonic) deadline)) (time.sleep 0.05))
+  (when (process-alive pid)
+    (os.kill pid 9)
+    (raise (AssertionError (.format "{} {} が生き残った" what pid)))))
+
+
+(defn #^ None test-a-passed-probe-leaves-no-child-process [#^ Path tmp-path]
+  ;; 反例(構成レビュー 2026-09-27 の必須 2 (a)): import の途中で孫を起こして返った検め(通る)の後にも、孫が残らない。
+  ;; 以前は process group を止めるのが時間切れの時だけで、通った検め・失敗した検めの孫は孤児として残った。
+  (probe-tree tmp-path)
+  (.write-text (/ tmp-path "probe_spawns.hy")
+               (.join "\n" ["(import subprocess pathlib [Path])"
+                            "(setv child (subprocess.Popen [\"sleep\" \"60\"]))"
+                            "(.write-text (Path \"spawned.pid\") (str child.pid))"
+                            "(defn program [] None)"])
+               :encoding "utf-8")
+  (setv store (ProbeStore HY :timeout-seconds 30)
+        spawns (service-spec "probe_spawns:program" "probe_ok:handlers"))
+  (.start store (ProbeEntry spawns (str tmp-path)))
+  (assert (= (. (observed store spawns) state) ProbeState.PASSED))
+  (assert-gone (wait-pid (/ tmp-path "spawned.pid")) "通った検めの孫"))
+
+
+(defn #^ None test-a-probe-whose-shim-dies-first-leaves-no-child-process [#^ Path tmp-path]
+  ;; 反例(必須 2 (b)): 検めの group の先頭(shim)だけが先に kill -9 で死んでも、検めの本体(hy)が残らない。
+  (probe-tree tmp-path)
+  (.write-text (/ tmp-path "probe_sleeps.hy")
+               (.join "\n" ["(import os time pathlib [Path])"
+                            "(.write-text (Path \"sleeper.pid\") (str (os.getpid)))"
+                            "(time.sleep 20)"
+                            "(defn program [] None)"])
+               :encoding "utf-8")
+  (setv store (ProbeStore HY :timeout-seconds 30)
+        sleeps (service-spec "probe_sleeps:program" "probe_ok:handlers"))
+  (.start store (ProbeEntry sleeps (str tmp-path)))
+  (.observe store)
+  (setv sleeper (wait-pid (/ tmp-path "sleeper.pid"))
+        shim (. (next (iter (.values store.runs))) process pid))
+  (os.kill shim 9)
+  (assert (= (. (observed store sleeps) state) ProbeState.FAILED))
+  (assert-gone sleeper "shim の死んだ検めの本体"))
+
+
+(defn #^ None test-a-hanging-entry-does-not-take-down-its-batch [#^ Path tmp-path]
+  ;; 反例(必須 1): 同じ木の束に固まる入口が 1 つあっても、ほかの入口は結果どおり(PASSED)になり、時間切れで FAILED になるのは固まった
+  ;; 入口を持つ spec だけ。撃ち直しでは、直前に時間切れになった spec を束に混ぜず単独で起こす(同じ束で全部が道連れを繰り返さない)。
+  (probe-tree tmp-path)
+  (setv store (ProbeStore HY :timeout-seconds 3)
+        ok-specs (lfor i (range 6) (replace (service-spec "probe_ok:program" "probe_ok:handlers")
+                                            :name (.format "w{}" i) :args #("service" "--factory" (.format "probe_ok:program{}" i)
+                                                                             "--env" "probe_ok:handlers")))
+        hang (replace (service-spec "probe_slow:program" "probe_ok:handlers") :name "hang")
+        ;; 固まる入口を束の中ほどに置く(前の対象は結果が出ている・後の対象は結果が出ていない)。
+        specs (+ (cut ok-specs 0 3) [hang] (cut ok-specs 3 None)))
+  (for [i (range 6)]
+    (.write-text (/ tmp-path "probe_ok.hy")
+                 (+ (.read-text (/ tmp-path "probe_ok.hy")) (.format "(defn program{} [] None)\n" i))))
+  (for [spec specs] (.start store (ProbeEntry spec (str tmp-path))))
+  (setv hung (observed store hang))
+  (assert (= hung.state ProbeState.FAILED) hung)
+  (assert (in "終わらない" hung.detail) hung.detail)
+  (for [spec ok-specs]
+    (setv v (observed store spec))
+    (assert (= v.state ProbeState.PASSED) (.format "{} が固まった入口の道連れになった: {}" spec.name v))
+    (assert (= v.attempts 1) v))
+  ;; 撃ち直し: 時間切れだった spec は単独の束で起こす。
+  (.start store (ProbeEntry hang (str tmp-path)))
+  (.start store (ProbeEntry (get ok-specs 0) (str tmp-path)))
+  (.observe store)
+  (setv runs (list (.values store.runs)))
+  (try
+    (assert (= (len runs) 1) runs)
+    (assert (= (. (get runs 0) specs) #(hang)) (. (get runs 0) specs))
+    (finally
+      ;; 検の後始末: 走っている撃ち直しの group を止める。
+      (for [run runs]
+        (try (os.killpg run.process.pid 9) (except [ProcessLookupError] None))
+        (.wait run.process)))))
 
 
 (deftest test-a-running-probe-is-shown-as-probing-with-its-reason

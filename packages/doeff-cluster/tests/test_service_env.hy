@@ -181,8 +181,9 @@
   (var probed None)
   (while (is probed None)
     (when (> (time.monotonic) deadline) (raise (AssertionError "入口の検めが終わらない")))
+    ;; この spec の検めだけを見る(同じ ProbeStore の前の spec の答えを取り違えない)・待ち(QUEUED)も終わっていない。
     (for [p (.observe probes)]
-      (when (!= p.state ProbeState.RUNNING) (:= probed p)))
+      (when (and (= p.spec-hash (spec-hash spec)) (not-in p.state #(ProbeState.RUNNING ProbeState.QUEUED))) (:= probed p)))
     (when (is probed None) (time.sleep 0.1)))
   (assert (= probed.state ProbeState.PASSED) probed)
   (.start rig.host (StartJob spec 1 view.path))

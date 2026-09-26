@@ -181,6 +181,32 @@
   (assert (= (run (editable-dirs (str site) (str root))) #("lib" "lib/packages/core/src"))))
 
 
+;; 反例(構成レビュー 2026-09-27): editable で入るだけの依存の repo の bytecode は最適化で、焼けなくても env は作れる(子は import の時に
+;; compile する)。source を持たない editable の根(native だけの package の dir)しか持たない repo で、焼く道具の「焼く物が無い」を
+;; env の失敗にしない。宣言の根を持つ repo の失敗は今までどおり env の失敗(展開の失敗を捕まえるため)。
+(val NATIVE-ONLY-LOCK (+ LOCK "lib-native-only==0.1.0 editable=../lib/native/core\n"))
+
+
+(defk native-only-editable-scenario []
+  {:pre [] :post [(: % bool)]}
+  "source の無い editable の根だけの repo でも env は完成し、焼けなかったことは記録に残る。"
+  (<- env RuntimeEnv (env-of "app-native-only" "lib-1" NATIVE-ONLY-LOCK))
+  (<- ready (prepare env #()))
+  (assert (isinstance ready EnvReady) (.format "editable だけの repo の焼きの失敗で env が失敗した: {}" ready))
+  (<- log FakeEnvLog (ReadFakeEnvLog))
+  (assert (any (gfor n log.notes (in "lib" n))) log.notes)
+  True)
+
+
+(deftest test-an-editable-only-repo-that-cannot-be-compiled-does-not-fail-the-env
+  (<- world FakeEnvWorld (base-world))
+  (<- app FakeCommit (app-commit "app-native-only" NATIVE-ONLY-LOCK "V = 6\n"))
+  (<- ok bool (run-in-world (replace world :remotes (tuple (gfor r world.remotes
+                                                                 (if (= r.url APP-URL) (replace r :commits (+ r.commits #(app))) r))))
+                            (native-only-editable-scenario)))
+  (assert ok))
+
+
 (deftest test-editable-dependencies-in-the-root-are-compiled-too
   (<- world FakeEnvWorld (base-world))
   (<- app FakeCommit (app-commit "app-editable" EDITABLE-LOCK "V = 5\n"))

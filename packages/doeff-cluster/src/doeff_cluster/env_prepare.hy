@@ -140,6 +140,11 @@
   (#^ str name))
 
 
+(defclass [(dataclass :frozen True)] PrepareNote [EffectBase]
+  "準備を止めない所見を 1 行記録する(例: editable で入るだけの依存の repo の bytecode を焼けなかった — 2026-09-27)。答え = None。"
+  (#^ str text))
+
+
 (defclass [(dataclass :frozen True)] DiskFree [EffectBase]
   "path を含む volume の空き(byte)。答え = int。"
   (#^ str path))
@@ -444,7 +449,10 @@
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % (| PrepareState EnvFailure))]}
   "焼く根(宣言の import の根と、venv に editable で入る dir)を持つ repo ごとに、root の venv の interpreter で bytecode を作る
    (worker の Hy で作ると macro の展開が違い得るため)。焼く範囲の入口(bytecode-entries)は宣言の根を持つ repo にだけ当てる —
-   editable で入るだけの依存の repo には入口の module が無く、閉包が空になるので、その根の下を全部焼く。"
+   editable で入るだけの依存の repo には入口の module が無く、閉包が空になるので、その根の下を全部焼く(repo の根を指す editable
+   — flat layout の package — も根の下を全部焼く: tests や docs も焼くが、冷えた root で 1 回だけ・以後は引き継ぐ)。
+   editable で入るだけの repo の bytecode は最適化(子は import の時に compile する)なので、焼けない(焼く物が無い・全部焼けない)
+   時は PrepareNote に記録して続ける。宣言の根を持つ repo の失敗は今までどおり env の失敗(展開の失敗を捕まえるため)。"
   (<- pdir str (project-dir request.env request.root))
   (<- editable tuple (ReadEditableRoots pdir request.root))
   (var interpreter "")
@@ -458,7 +466,10 @@
           (CompileTree pdir (.format "{}/{}" request.root repo.name) roots carry
                        :entries (if declared request.env.bytecode-entries #())))
       (match report
-        (EnvFailure) (:= failure report)
+        (EnvFailure) (if declared
+                         (:= failure report)
+                         (<- (PrepareNote (.format "editable で入るだけの repo {} の bytecode を焼けない(import の時に作られる): {}"
+                                                   repo.name report.detail))))
         (BytecodeReport :interpreter used) (:= interpreter used))))
   (if (is failure None) (replace state :interpreter interpreter) failure))
 

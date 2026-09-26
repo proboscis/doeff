@@ -257,6 +257,8 @@ coordinator はこの欄を読まないので、先に worker だけを上げて
   だけ、新しい Pod が旧い Pod の preStop が終わってから最長 150 秒 NotReady のままになり得ます。旧い版の preStop は `boot` を載せないので、
   その頼みが新しい世代に drain を付けるためです(期限 = preStop の上限 90 秒 + 余裕 60 秒)。
 - 急ぐ時は、旧い Pod が終わった後に `DELETE /workers/<名>/drain` を撃って drain を解きます。
+- worker は入口の検めの間の job を phase `probing` で報告します。coordinator はこの phase を「その worker で起こしかけている」と
+  数えます(他へ置かない)。旧い版の coordinator はこの phase を知らないので、ここでも coordinator を先に上げます。
 
 ## テスト
 
