@@ -88,7 +88,7 @@
    runtime-env = 送り手の実行環境の宣言(在れば、task を走らせる前に env の root を準備する — 準備の I/O は外側の handler、速い模擬
    では env_fake の fake-env)。envs = env のキー → 準備中の scheduler の task か答え(同じキーの準備は 1 本)・known = 完成した root・
    prepares = 準備を起こした回数。
-   warms = 温める表(行のキー → #(宣言 期限の仮想の秒))・cold-starts = 準備の済んでいない env の task を走らせた回数(冷たい起動 —
+   warms = 温める表(行のキー → #(宣言 requires 期限の仮想の秒))・cold-starts = 準備の済んでいない env の task を走らせた回数(冷たい起動 —
    本物の coordinator の計器 doeff_worker_env_cold_start_total と同じ意味)。"
   (defn __init__ [self [runner-versions None] #^ (| RuntimeEnv None) [runtime-env None] #^ str [state-root "/state/roots"]
                   #^ int [min-free-bytes 0] #^ (| tuple None) [runners None]]
@@ -292,22 +292,33 @@
   (DetachedSubmitted key True))
 
 
+(defk warm-runners [store requires]
+  {:pre [(: store DetachedLocalStore) (: requires tuple)] :post [(: % tuple)]}
+  "温める表の行に数える担い手の名(名の順): 生きていて drain 中でなく、行の requires に合う担い手 — 本物の coordinator の warm-view と同じ
+   規則(置き先の選び方 place-local と同じ述語 labels-satisfy / tolerates)。合う担い手が居なければ空(その行は温まらない)。"
+  (tuple (sorted (gfor r (.values store.runners)
+                       :if (and r.live (not r.draining) (labels-satisfy requires (worker-of r)) (tolerates requires (worker-of r)))
+                       r.name))))
+
+
 (defk local-warm-state [store key]
   {:pre [(: store DetachedLocalStore) (: key str)] :post [(: % WarmState)]}
-  "模擬の温める表の行の今の姿(担い手は 1 つ — 名は local)。本物の coordinator の warm-view と同じ形で答えるため。"
+  "模擬の温める表の行の今の姿。本物の coordinator の warm-view と同じ形で答えるため: 準備済み / 準備中 / 失敗を、行の requires に合う
+   生きた drain 中でない担い手ごとに数える(模擬の root は同じ VM に 1 つなので、合う担い手は皆同じ root の状態を名乗る)。"
   (setv row (.get store.warms key))
   (if (is row None)
       (WarmState :key key :ready #() :preparing #() :failed #() :until-ms 0)
-      (do (setv #(env until) row)
+      (do (setv #(env requires until) row)
+          (<- names tuple (warm-runners store requires))
           (<- env-id str (env-key env (current-platform)))
           (setv entry (.get store.envs env-id) until-ms (int (* 1000 until)))
           (cond
-            (isinstance entry EnvReady) (WarmState :key key :ready #("local") :preparing #() :failed #() :until-ms until-ms)
+            (isinstance entry EnvReady) (WarmState :key key :ready names :preparing #() :failed #() :until-ms until-ms)
             (isinstance entry EnvFailure)
               (WarmState :key key :ready #() :preparing #() :until-ms until-ms
-                         :failed #((WarmFailure :worker "local" :kind entry.kind.value :detail entry.detail
-                                                :retryable entry.retryable)))
-            True (WarmState :key key :ready #() :preparing #("local") :failed #() :until-ms until-ms)))))
+                         :failed (tuple (gfor n names (WarmFailure :worker n :kind entry.kind.value :detail entry.detail
+                                                                   :retryable entry.retryable))))
+            True (WarmState :key key :ready #() :preparing names :failed #() :until-ms until-ms)))))
 
 
 (defk warm-local [store env requires ttl-seconds]
@@ -315,7 +326,7 @@
   "模擬の先読み: 表に行を書き、env の root の準備を別の task で起こす(送り手を待たせない)。同じ行の頼み直しは期限だけ延ばす。"
   (<- key str (warm-key env requires))
   (<- now float (GetMonotonic))
-  (setv (get store.warms key) #(env (+ now ttl-seconds)))
+  (setv (get store.warms key) #(env requires (+ now ttl-seconds)))
   (<- env-id str (env-key env (current-platform)))
   (when (not-in env-id store.envs)
     (<- (Spawn (prepared-env store env) :daemon True)))
