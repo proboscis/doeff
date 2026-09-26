@@ -301,21 +301,21 @@ class TestLazyHandlerHyIntegration:
 # ═══════════════════════════════════════════════════════════════════
 
 class TestLazyDefk:
-    """Test lazy clause in defk."""
+    """defk の中の旧い lazy は廃止(ADR-DOE-HY-006): 旧い形はセッションをまたぐ隠れた状態で、
+    新しい (lazy val …)(その呼び出しの中で初めて使った時に 1 回)と意味が衝突するので展開の時点で誤り。
+    新しい形の動きの検は tests/test_val_var_lazy.py。"""
 
     def test_defk_lazy_basic(self):
-        """(defk name [x] (lazy val ...) body) should compile and run."""
+        """(defk … (lazy name …) …) は展開の誤りになり、新しい形を案内する。"""
         import types
 
         import doeff_hy  # noqa: F401 - registers Hy macros/import hooks for inline eval
         import hy
+        from hy.errors import HyMacroExpansionError
 
         code = """
-(require doeff-hy.macros [defk defp <-])
-(import doeff [do :as _doeff-do EffectBase run :as doeff-run])
-(import doeff_core_effects [Ask Get Put state])
-(import doeff_core_effects.handlers [lazy-ask])
-(import doeff_core_effects.scheduler [scheduled])
+(require doeff-hy.macros [defk <-])
+(import doeff_core_effects [Ask])
 
 (defk add-prefix [text]
   {:pre [(: text str)] :post [(: % str)]}
@@ -323,27 +323,12 @@ class TestLazyDefk:
     (<- p (Ask "prefix"))
     (+ p ":"))
   (+ pfx text))
-
-(defp body {:post [(: % list)]}
-  (<- r1 (add-prefix "hello"))
-  (<- r2 (add-prefix "world"))
-  [r1 r2])
-
-(setv wrapped body)
-(for [h (reversed [(lazy-ask :env {"prefix" "X"}) (state)])]
-  (setv wrapped (h wrapped)))
-(setv wrapped (scheduled wrapped))
-(setv __test_result__ (doeff-run wrapped))
 """
         mod = types.ModuleType("_test_lazy_defk")
-        mod.__file__ = "<test>"
-        import sys
-        sys.modules["_test_lazy_defk"] = mod
-        try:
+        with pytest.raises(HyMacroExpansionError) as caught:
             hy.eval(hy.read_many(code), module=mod)
-            assert mod.__test_result__ == ["X:hello", "X:world"]
-        finally:
-            del sys.modules["_test_lazy_defk"]
+        assert "(lazy val pfx 式)" in str(caught.value)
+        assert "(session val pfx 式)" in str(caught.value)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -633,35 +618,23 @@ class TestLazyValVar:
             hy.eval(hy.read_many(code))
 
     def test_lazy_var_in_defk(self):
-        """lazy-var + set! should work in defk context too."""
-        import sys
+        """defk の lazy-var + set! は展開の誤り(ADR-DOE-HY-006)— (lazy var …) と (:= …) を案内する。"""
+        import doeff_hy  # noqa: F401 - registers Hy macros/import hooks for inline eval
+        import hy
+        from hy.errors import HyMacroExpansionError
+
         code = """
-(require doeff-hy.macros [defk defp <- set!])
-(import doeff [do :as _doeff-do EffectBase run :as doeff-run])
-(import doeff_core_effects [Get Put state])
-(import doeff_core_effects.scheduler [scheduled])
+(require doeff-hy.macros [defk <- set!])
 
 (defk accumulate [item]
   {:pre [(: item str)] :post [(: % list)]}
   (lazy-var items [])
   (set! items (+ items [item]))
   items)
-
-(defp body {:post [(: % list)]}
-  (<- r1 (accumulate "a"))
-  (<- r2 (accumulate "b"))
-  [r1 r2])
-
-(setv wrapped body)
-(setv wrapped ((state) wrapped))
-(setv wrapped (scheduled wrapped))
-(setv __test_result__ (doeff-run wrapped))
 """
-        mod = _hy_eval_in_module(code, "_test_lazy_var_defk")
-        try:
-            assert mod.__test_result__ == [["a"], ["a", "b"]]
-        finally:
-            del sys.modules["_test_lazy_var_defk"]
+        with pytest.raises(HyMacroExpansionError) as caught:
+            hy.eval(hy.read_many(code))
+        assert "(lazy var items 式)" in str(caught.value)
 
     def test_lazy_val_referenced_inside_tuple(self):
         """Lazy init must fire when the name only appears inside a tuple

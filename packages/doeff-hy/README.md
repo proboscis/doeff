@@ -82,6 +82,51 @@ Python-native `lfor`/`gfor`/`sfor`/`dfor` comprehensions and plain nested
 `ADR-DOE-HY-003` `SyntaxError` with a rewrite: use `for/do` plus `<-` for
 effectful iteration, and `fnk` or `defk` for an effectful function.
 
+### val / var / lazy val / lazy var / session val / session var(ADR-DOE-HY-006)
+
+defk・deftest・defhandler の節の本体では、名前の束縛を次の形で書きます(setv は doeff-hy-check が「val か var を使う」と警告します)。
+
+| 形 | 意味 |
+|---|---|
+| `(val x 式)` | 一度だけ束縛する。同じ名前をもう一度束縛すると展開の時の誤り |
+| `(var x 式)` | 書き換えられる。書き換えは `(:= x 新しい値)` |
+| `(lazy val x 式)` | その呼び出しの中で x を初めて使った時にだけ評価して覚える。使わなければ評価しない。初回が例外なら次にもう一度評価する |
+| `(lazy var x 式)` | lazy val と同じく初めて使った時に評価し、`:=` で書き換えられる。使う前に書き換えたら初期値の式は評価しない |
+| `(session val x 式)` | defhandler の直下だけ。セッションの間、初めて使った時に 1 回だけ作って共有する |
+| `(session var x 式)` | defhandler の直下だけ。セッションで持ち越す書き換えられる状態。書き換えは `(:= x v)` |
+
+```hy
+(defk quote-price [ticker]
+  {:pre [(: ticker str)] :post [(: % float)]}
+  (lazy val table !(LoadPriceTable))      ; 使った時にだけ効果を実行する
+  (var price 0.0)
+  (when (in ticker table)
+    (:= price (get table ticker)))
+  price)
+
+(defhandler price-client
+  (session val client (make-client (! (Ask "endpoint"))))
+  (session var calls 0)
+  (FetchPrice [ticker]
+    (:= calls (+ calls 1))
+    (resume (.fetch client ticker))))
+```
+
+- 値の式は `!(効果の式)` と書けます(Hy の reader は `!(f)` を `!` と `(f)` の 2 つに読むので、宣言と `:=` の中では `(! (f))` と同じに受けます)。
+- val が禁じるのは名前の束縛し直しだけで、値の中身の書き換え(`(setv (get x k) v)`・`(.append x v)`)は対象外です。`(<- x 効果)` は val の別の書き方です。
+- lazy の参照は裸の名前です。fn・内包表記(lfor など)・handle / defhandler の節の中では参照できない(効果を実行できない)ので、先に `(val v x)` で取り出します。
+- session の値は状態の効果(Get / Put)を通して読み書きします。キーは `doeff_hy.session.session_key(module, handler, name)` =
+  `"<module の __name__>/<handler の名>/<変数の名>"` で、外側の handler はこのキーの `Get` に値を答えれば初期化の式を走らせずに値を差し替え、
+  `Put` を受ければ書き込みを観測できます。
+- module の直下でも `(require doeff-hy.macros [val var lazy])` で `(val x 式)`・`(var x 式)`・`(lazy val x 式)` を書けます。
+  module の直下の lazy val は効果を使わない式だけです(module には handler が無いので、効果で作る資源は defhandler の session val に置きます)。
+  module の直下の `(:= …)` は Hy では macro を通らないので効かず、module の var は module の直下の setv で書き換えます。
+- 旧い `(lazy …)` / `(lazy-val …)` / `(lazy-var …)` / `(set! …)` は defhandler では動きを変えず、展開の時の `DeprecationWarning` で
+  `session val` / `session var` / `:=` への移行を案内します(キーは同じなので値は引き継がれます)。defk・deftest では展開の時の誤りです。
+- 旧い書き方どうしの同じ名前の束縛し直し(setv を 2 回など)は doeff-hy-check の赤(`doeff-hy-rebind`)です。for の変数と、互いに排他な if の枝どうしは数えません。
+
+設計の記録: `docs/design/defk-val-var-lazy/design.md`。
+
 ## Testing with deftest
 
 `deftest` generates pytest-compatible test functions. Tests use `<-` for effect binding and `assert` for validation.

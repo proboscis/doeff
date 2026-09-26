@@ -159,3 +159,34 @@ def test_static_view_does_not_leak_into_the_runtime_expansion() -> None:
     # 実行時にも型の注記は付く(文字列 = 定義の時に評価しない)
     assert "def f(x: 'int')" in runtime
     assert "_contract_result: 'int' = y" in runtime
+
+
+BINDINGS = """(require doeff-hy.macros [defk <-])
+
+(defk rebinds [x]
+  {:pre [(: x int)] :post [(: % int)]}
+  (setv y x)
+  (setv y (+ y 1))
+  (val z (* y 2))
+  z)
+"""
+
+
+@needs_pyright
+def test_binding_findings_are_reported_on_their_lines(tmp_path: Path) -> None:
+    """setv の使用は警告・束縛し直しは赤として、書いた行に出る(ADR-DOE-HY-006)。"""
+    import contextlib
+    import io
+
+    from doeff_hy.static_check import main
+
+    (tmp_path / "bindings.hy").write_text(BINDINGS, encoding="utf-8")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = main(["--root", str(tmp_path), "--json", str(tmp_path / "bindings.hy")])
+    found = {(d["rule"], d["severity"], d["line"]) for d in json.loads(out.getvalue())}
+    assert ("doeff-hy-setv", "warning", 5) in found
+    assert ("doeff-hy-setv", "warning", 6) in found
+    assert ("doeff-hy-rebind", "error", 6) in found
+    assert not any(rule == "doeff-hy-rebind" and line != 6 for rule, _, line in found)
+    assert code == 1

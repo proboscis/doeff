@@ -588,6 +588,79 @@ defk {name}: :post type annotation cannot be an empty string.
 
 
 ;; ---------------------------------------------------------------------------
+;; val / var / lazy val / lazy var / session val / session var と := (ADR-DOE-HY-006)
+;; ---------------------------------------------------------------------------
+;;
+;; 本体の書き換えの定義点は doeff_hy/binding_forms.py の rewrite-body 1 つ。defk・deftest・defhandler の
+;; 節(handle.hy)がここを通す。展開を止める誤りは SyntaxError、止めない所見(setv の使用・束縛し直し・
+;; 旧い lazy)は doeff-hy-check が集める(static_view.report-findings)。
+
+(import doeff-hy.binding-forms [rewrite-body BodyKind ModuleBindings ModuleNames module-declaration])
+(import doeff-hy.static-view [report-findings])
+(import hy.scoping [ScopeGlobal])
+
+(defn _module-bindings [compiler]
+  "この file の compile の間だけ生きる、module の直下の val / var / lazy val の名簿(Hy の compiler に付ける)。
+   compiler が無い展開(hy.macroexpand など)では、その場かぎりの空の名簿。"
+  (if (is compiler None)
+      (ModuleBindings)
+      (do
+        (setv found (getattr compiler "_doeff_module_bindings" None))
+        (when (is found None)
+          (setv found (ModuleBindings))
+          (setattr compiler "_doeff_module_bindings" found))
+        found)))
+
+(defn _module-names [compiler]
+  "defk・deftest・defhandler の本体へ渡す、同じ file で前に宣言した module の lazy val / var の名前。"
+  (if (is compiler None) (ModuleNames) (.names (_module-bindings compiler))))
+
+(defn _rewrite-bindings [forms owner kind params [sessions #()] [module None]]
+  "本体の宣言・:=・lazy の参照を書き換え、所見を doeff-hy-check へ渡して、書き換えた本体を返す。
+   展開の時に呼ぶ helper なので defn(defk にできない)。"
+  (setv rewritten (rewrite-body forms
+                                :owner owner
+                                :kind kind
+                                :params params
+                                :sessions sessions
+                                :module (if (is module None) (ModuleNames) module)
+                                :static (_static-view?)
+                                :expand-bangs _expand-bangs))
+  (report-findings (. rewritten findings))
+  (list (. rewritten forms)))
+
+(defn _module-level [compiler head args]
+  "module の直下の (val …) / (var …) / (lazy val …) を展開する(lazy var / session は案内つきの誤り)。defk・deftest・defhandler の
+   本体の中の宣言は本体の macro が先に書き換えるので、ここへ来るのは module の直下か、書き換えの届かない
+   defn / fn / class の中(誤り)。"
+  (setv form (if (is compiler None)
+                 (hy.models.Expression [(hy.models.Symbol head) #* args])
+                 (. compiler this)))
+  (when (and (is-not compiler None) (not (isinstance (. compiler scope) ScopeGlobal)))
+    (raise (SyntaxError (+ "\n(" head " …) (line " (str (getattr form "start_line" "?")) "): "
+                           "defk・deftest・defhandler の節の本体か、module の直下にだけ書けます"
+                           "(defn・fn・class・let の中には書けません — 関数は defk で書きます)。"
+                           " [ADR-DOE-HY-006]\n"))))
+  (module-declaration (_module-bindings compiler) form (_static-view?)))
+
+(defmacro val [_hy-compiler #* args]
+  "module の直下の一度だけの束縛 (val 名前 式)。defk・deftest・defhandler の節の本体の中では本体の macro が扱う。"
+  (_module-level _hy-compiler "val" args))
+
+(defmacro var [_hy-compiler #* args]
+  "module の直下の書き換えられる束縛 (var 名前 式)。module の直下の書き換えは setv(Hy では := が macro を通らない)。"
+  (_module-level _hy-compiler "var" args))
+
+(defmacro lazy [_hy-compiler #* args]
+  "module の直下の (lazy val 名前 式) — 効果を使わない式だけ。初めて使った時に 1 回だけ評価して覚える。"
+  (_module-level _hy-compiler "lazy" args))
+
+(defmacro session [_hy-compiler #* args]
+  "(session val …) / (session var …) は defhandler の直下にだけ書ける(ここへ来たら誤りの案内)。"
+  (_module-level _hy-compiler "session" args))
+
+
+;; ---------------------------------------------------------------------------
 ;; deff — defn with :pre/:post contracts
 ;; ---------------------------------------------------------------------------
 
@@ -643,7 +716,7 @@ deff {name}: {{:post [...]}} is required.
 ;; defk — kleisli with :pre/:post contracts + bang expansion
 ;; ---------------------------------------------------------------------------
 
-(defmacro defk [name params #* body]
+(defmacro defk [_hy-compiler name params #* body]
   "Define a kleisli function (@do decorator) with :pre/:post contracts.
    Supports ! (bang) inline bind: (! expr) is rewritten IN PLACE to
    (yield expr), preserving the written evaluation position (conditionality,
@@ -703,61 +776,21 @@ defk {name}: {{:post [...]}} is required.
   ;; Validate type coverage: every param needs (: param Type), post needs (: % Type)
   (_validate-pre-type-checks name params pre-checks)
   (_validate-post-type-check name post-checks)
-  ;; Extract lazy clauses from real-body
-  (import doeff-hy.handle [_is-lazy-clause _parse-lazy _references-symbol
-                           _check-set-bang-violations])
-  (setv lazy-defs [])
-  (setv body-without-lazy [])
-  (for [form real-body]
-    (if (_is-lazy-clause form)
-        (.append lazy-defs (_parse-lazy form))
-        (.append body-without-lazy form)))
-  ;; Check set! violations on lazy-val names
-  (when lazy-defs
-    (_check-set-bang-violations lazy-defs body-without-lazy))
-  ;; Build lazy init forms (using <- syntax for defk context)
-  (setv lazy-init-forms [])
-  (when lazy-defs
-    (for [#(lname lbody _mut) lazy-defs]
-      ;; Symbol scan: only inject if body references this lazy name
-      (when (any (gfor form body-without-lazy
-                   (_references-symbol form (str lname))))
-        (setv key-suffix (+ "/" (str name) "/" (str lname)))
-        (setv key-expr `(+ __name__ ~key-suffix))
-        (setv key-var (hy.models.Symbol (+ "_lazy_" (str lname) "_key")))
-        (setv cached-var (hy.models.Symbol (+ "_lazy_" (str lname) "_cached")))
-        (setv val-var (hy.models.Symbol (+ "_lazy_" (str lname) "_val")))
-        ;; init body: all forms except last are setup, last is value
-        (setv init-setup (list (cut lbody 0 -1)))
-        (setv init-value (get lbody -1))
-        (.append lazy-init-forms `(setv ~key-var ~key-expr))
-        (.append lazy-init-forms `(<- ~cached-var (Get ~key-var)))
-        (.append lazy-init-forms
-          `(if (isinstance ~cached-var Some)
-               (setv ~(hy.models.Symbol (str lname)) (. ~cached-var value))
-               (do
-                 ~@init-setup
-                 (setv ~val-var ~init-value)
-                 (<- (Put ~key-var (Some ~val-var)))
-                 (setv ~(hy.models.Symbol (str lname)) ~val-var)))))))
-  ;; Prepend lazy init to body
-  (setv real-body (+ lazy-init-forms body-without-lazy))
+  ;; val / var / lazy val / lazy var / := の書き換えと、旧い lazy / lazy-val / lazy-var / set! の拒否
+  ;; (ADR-DOE-HY-006)。__doeff_body__ には書いたままの本体を残す。
+  (setv written-body real-body)
+  (setv real-body (_rewrite-bindings real-body (+ "defk " (str name)) BodyKind.DEFK
+                                     (_extract-param-names params)
+                                     :module (_module-names _hy-compiler)))
   ;; Expand bangs in the real body — in-place (yield ...) rewrite [ADR-DOE-HY-003]
   (setv expanded-forms
     (lfor form real-body (_expand-bangs form (+ "defk " (str name)))))
   (setv fn-form (_build-fn-with-contracts ['_doeff_do] name params pre-checks post-checks expanded-forms))
-  ;; Extra imports for lazy
-  (setv lazy-imports
-    (if lazy-defs
-        `(do (import doeff [Some])
-             (import doeff_core_effects.effects [Get Put]))
-        `(do)))
   (locate-synthesized `(do
      ~(_helper-imports)
-     ~lazy-imports
      ~fn-form
      (_install-guard-globals ~name)
-     (setattr ~name "__doeff_body__" '~real-body)
+     (setattr ~name "__doeff_body__" '~written-body)
      (setattr ~name "__doeff_args__" '~params)
      (setattr ~name "__doeff_name__" ~(str name)))))
 
@@ -1451,7 +1484,7 @@ the effect in the enclosing do-context.
         (setv skip-reason v))))
   #(interpreters params-dict env-dict marks skip-if-expr skip-reason real-body))
 
-(defmacro deftest [name #* args]
+(defmacro deftest [_hy-compiler name #* args]
   "Define an effectful test that expands to a pytest-compatible function.
    The test body uses <- for effect binding, same as defk/defp.
    No :pre/:post contracts — use assert for validation.
@@ -1504,6 +1537,11 @@ the effect in the enclosing do-context.
   ;; Parse optional metadata dict
   (setv #(interpreters params-dict env-dict marks skip-if-expr skip-reason real-body)
     (_extract-test-meta body))
+
+  ;; val / var / lazy val / lazy var / := の書き換え(ADR-DOE-HY-006)
+  (setv real-body (_rewrite-bindings real-body (+ "deftest " (str name)) BodyKind.DEFTEST
+                                     (sfor p fixture-params (str p))
+                                     :module (_module-names _hy-compiler)))
 
   ;; Expand bangs in the body — in-place (yield ...) rewrite [ADR-DOE-HY-003]
   (setv expanded-forms
@@ -1872,6 +1910,12 @@ defmcp-tool {name}: third argument must be a parameter list [...].
 
    Requires a lazy-var in scope (the _lazy_{name}_key variable must exist).
    Using set! on a lazy-val raises a compile-time SyntaxError in defhandler/defk."
+  (import warnings)
+  (warnings.warn
+    (+ "(set! " (str name) " …) は (:= " (str name) " 新しい値) へ移してください(意味は同じ)"
+       " [ADR-DOE-HY-006]")
+    DeprecationWarning
+    :stacklevel 2)
   (setv key-var (hy.models.Symbol (+ "_lazy_" (str name) "_key")))
   `(do
      (setv ~name ~val)

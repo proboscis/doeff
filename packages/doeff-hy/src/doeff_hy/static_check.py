@@ -42,7 +42,8 @@ import hy
 from hy.compiler import hy_compile
 from hy.errors import HyLanguageError
 
-from doeff_hy.static_view import static_view
+from doeff_hy.binding_forms import Finding, module_findings
+from doeff_hy.static_view import collect_findings, static_view
 
 _SKIP_DIRS = frozenset({".git", ".venv", "venv", "__pycache__", "node_modules", ".exp"})
 
@@ -77,6 +78,8 @@ class Projection:
     module: str
     text: str
     spans: tuple[Span, ...]
+    # macro が展開の時に出した所見(val / var の検査 — ADR-DOE-HY-006)を Hy の位置の診断にした物。
+    findings: tuple[Diagnostic, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -172,7 +175,7 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
     module.__file__ = str(source)
     relative = str(source.relative_to(root))
     try:
-        with static_view():
+        with static_view(), collect_findings() as found:
             compiled = hy_compile(
                 hy.read_many(text, filename=str(source)), module, filename=str(source), source=text
             )
@@ -190,7 +193,27 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
     rendered = ast.unparse(tree)
     reparsed = ast.parse(rendered)
     spans = [span for pair in _child_pairs(reparsed, tree) if (span := _span(*pair)) is not None]
-    return Projection(source, name, rendered, tuple(spans))
+    # module の直下の setv は macro の外なので、source の一番外の並びを別に読む(ADR-DOE-HY-006)。
+    top_level = module_findings(hy.read_many(text, filename=str(source)))
+    return Projection(
+        source,
+        name,
+        rendered,
+        tuple(spans),
+        tuple(_finding_diagnostic(relative, f) for f in (*found, *top_level)),
+    )
+
+
+def _finding_diagnostic(relative: str, finding: Finding) -> Diagnostic:
+    """macro の所見(binding_forms.Finding)を、この道具の診断の形にする(赤か警告か・規則の名・文言)。"""
+    return Diagnostic(
+        relative,
+        max(finding.line, 1),
+        max(finding.column, 1),
+        finding.severity.value,
+        finding.rule,
+        finding.message,
+    )
 
 
 def _module_candidates(roots: list[Path], name: str) -> list[Path]:
@@ -499,8 +522,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"doeff-hy-check: 走れなかった: {error}", file=sys.stderr)
         return 2
     compile_errors = [f.diagnostic for f in closure.failures if f.source in report]
+    # val / var の検査の所見(setv の使用 = 警告・束縛し直し = 赤・旧い lazy = 警告 — ADR-DOE-HY-006)。
+    binding_findings = [
+        d for p in closure.projections.values() if p.source in report for d in p.findings
+    ]
     settled = settle(
-        sorted(compile_errors + checked.diagnostics, key=lambda d: (d.path, d.line, d.column))
+        sorted(
+            compile_errors + binding_findings + checked.diagnostics,
+            key=lambda d: (d.path, d.line, d.column),
+        )
     )
     diagnostics = settled.diagnostics
     notes = checked.notes + settled.notes
@@ -512,7 +542,11 @@ def main(argv: list[str] | None = None) -> int:
         for note in notes:
             print(f"note: {note}", file=sys.stderr)
         errors = sum(1 for d in diagnostics if d.severity == "error")
-        print(f"{len(report)} 個の .hy を検めた: error {errors} 件", file=sys.stderr)
+        warnings = sum(1 for d in diagnostics if d.severity == "warning")
+        print(
+            f"{len(report)} 個の .hy を検めた: error {errors} 件・warning {warnings} 件",
+            file=sys.stderr,
+        )
     return 1 if any(d.severity == "error" for d in diagnostics) else 0
 
 
