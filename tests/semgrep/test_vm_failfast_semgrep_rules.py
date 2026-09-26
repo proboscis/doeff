@@ -246,6 +246,23 @@ def test_herdr_label_holders_indexed_rule_detects_arbitrary_holder_pick() -> Non
     ) == {12}
 
 
+def test_program_arguments_rule_detects_a_second_config_to_arguments_copy() -> None:
+    # Design check 2026-09-26 (agora-redesign#639 request 2, blind A): three
+    # copies turned run.config into program arguments and only two of them
+    # dropped the assembly field "record", so the single-process main and the
+    # worker disagreed on the same declaration.
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-cluster/src/doeff_cluster/program_arguments_copy_forbidden.hy",
+        cwd=fixture_root,
+    )
+
+    assert _rule_start_lines(
+        results, "doeff-cluster-program-arguments-are-built-in-one-place"
+    ) == {8, 12}
+
+
 def test_idle_shell_vocabulary_rule_detects_substrate_side_judgement() -> None:
     # Design check 2026-09-26 (agora-redesign#639 request H, blind B): the
     # herdr substrate picking "the first non-idle-shell process" passed every
