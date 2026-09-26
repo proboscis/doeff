@@ -20,8 +20,8 @@
 (import doeff_cluster.cluster_policy [job-from-json job-to-json spec-json])
 (import doeff_cluster.handlers [declared-job-spec ProbeStore])
 (import doeff_cluster.job_entry [RunContext runtime-env-of-context])
-(import doeff_cluster.worker_model [JobSpec ProbeEntry ProbeState StartJob ReapJob Outcome CodeState ENV-KEY-PREFIX])
-(import tests.test_env_careful [Rig make-rig push-commit app-files declare prepare LOCK HY DEADLINE-SECONDS])
+(import doeff_cluster.worker_model [JobSpec ProbeEntry ProbeState StartJob ReapJob Outcome CodeState ENV-KEY-PREFIX code-key spec-hash])
+(import tests.careful_rig [Rig make-rig push-commit app-files declare prepare LOCK HY DEADLINE-SECONDS])
 
 (val SHA-A (* "a" 40))
 (val SHA-B (* "b" 40))
@@ -89,10 +89,30 @@
   (val wire {"name" "quiet" "entry" "doeff_cluster.job_entry" "args" ["service"] "revision" "rev-1" "once" False
              "runtimeEnv" env-json})
   (val spec (declared-job-spec wire))
-  (assert (= spec.revision (+ ENV-KEY-PREFIX key)) spec)
+  ;; 版は宣言のまま(coordinator の版と同じ)・root の置き場の鍵は worker が計算した env のキー。
+  (assert (= spec.revision "rev-1") spec)
+  (assert (= spec.env-key key) spec)
+  (assert (= (code-key spec) (+ ENV-KEY-PREFIX key)) spec)
   (assert (= (json.loads spec.runtime-env) env-json) spec)
   (val plain (declared-job-spec (| wire {"runtimeEnv" None})))
   (assert (and (= plain.revision "rev-1") (is plain.runtime-env None)) plain))
+
+
+(deftest test-the-coordinator-and-the-worker-agree-on-the-env-service
+  ;; coordinator は今の宣言から計算した版と指紋(spec-hash)で、worker の報告が今の宣言の process の物かを判じる(readiness・handoff の
+  ;; ready-instance)。worker が版を env のキーへ置き換えると両者が食い違い、env の service は Ready と数えられない(2026-09-26 の構成
+  ;; レビューで見つけた欠陥)。版と指紋は両側で同じ・root の鍵だけが worker の中の値。
+  (<- declared-env RuntimeEnv (sample-env))
+  (val row (get (system-declaration (System "lab" #((service "quiet" quiet-program :env "tests.test_service_env:env"
+                                                             :config {"interval" 1.0} :update "handoff"
+                                                             :readiness {"windowSeconds" 30})))
+                                    "rev-1" :runtime-env declared-env)
+                0))
+  (val coordinator-spec (. (job-from-json row) spec))
+  (val worker-spec (declared-job-spec (spec-json coordinator-spec)))
+  (assert (= worker-spec.revision coordinator-spec.revision) #(worker-spec coordinator-spec))
+  (assert (= (spec-hash worker-spec) (spec-hash coordinator-spec)) "指紋が同じ(coordinator が worker の報告を今の宣言の物と数える)")
+  (assert (= worker-spec coordinator-spec) "比べる欄が同じ(worker が同じ宣言で process を起こし直さない)"))
 
 
 (deftest test-the-entry-probe-of-an-env-job-runs-in-the-root-venv [tmp-path]
@@ -155,7 +175,7 @@
   (val spec (declared-job-spec (spec-json (. (job-from-json row) spec))))
   (<- view (prepare rig env))
   (assert (= view.state CodeState.READY) view)
-  (assert (= spec.revision view.revision) "worker の置き場の鍵は準備した root と同じ env のキー")
+  (assert (= (code-key spec) view.revision) "worker の置き場の鍵は準備した root と同じ env のキー")
   (.start probes (ProbeEntry spec view.path))
   (val deadline (+ (time.monotonic) DEADLINE-SECONDS))
   (var probed None)

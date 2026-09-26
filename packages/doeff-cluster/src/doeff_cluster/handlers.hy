@@ -20,21 +20,22 @@
   ENV-KEY-PREFIX])
 
 (defn #^ tuple env-placement [#^ (| dict None) declared #^ str revision]  ; defk にできない: 宣言の読み(Program の外の I/O の道具)が呼ぶ
-  "job の宣言の runtimeEnv(在れば)と版 → #(置き場の鍵の版 宣言の JSON の正規化した文字列)。実行環境の job(task も service も —
-   2026-09-26)は、版の代わりに env のキー(この worker の platform で計算)を置き場の鍵にする。無ければ版のまま。"
+  "job の宣言の runtimeEnv(在れば)と版 → #(版 宣言の JSON の正規化した文字列 env のキー)。実行環境の job(task も service も —
+   2026-09-26)は、env のキー(この worker の platform で計算)を root の置き場の鍵にする。版は宣言のまま運ぶ — coordinator が同じ
+   宣言から計算する版と指紋に合わせるため(版を持たない task だけは \"env-<キー>\" を版の代わりにする)。無ければ版のまま。"
   (if (is declared None)
-      #(revision None)
-      #((+ ENV-KEY-PREFIX (run (env-key (run (runtime-env-of-json declared)) (current-platform))))
-        (json.dumps declared :sort-keys True :ensure-ascii False))))
+      #(revision None None)
+      (do (setv key (run (env-key (run (runtime-env-of-json declared)) (current-platform))))
+          #((or revision (+ ENV-KEY-PREFIX key)) (json.dumps declared :sort-keys True :ensure-ascii False) key))))
 
 
 (defn #^ JobSpec declared-job-spec [#^ dict job]  ; defk にできない: 宣言の読み(Program の外の I/O の道具)が呼ぶ
   "宣言の file の 1 行・heartbeat の返事の job 1 本 → worker が起動する形(runtimeEnv を持つ service は env の root で起こす)。"
-  (setv #(revision runtime) (env-placement (.get job "runtimeEnv") (get job "revision")))
+  (setv #(revision runtime key) (env-placement (.get job "runtimeEnv") (get job "revision")))
   (JobSpec (get job "name") (get job "entry") (tuple (.get job "args" [])) revision
            :once (.get job "once" False) :placement (.get job "placement")
            :base (.get job "base") :handoff (bool (.get job "handoff" False))
-           :ready-instance (.get job "readyInstance") :runtime-env runtime))
+           :ready-instance (.get job "readyInstance") :runtime-env runtime :env-key key))
 
 
 (defn #^ (| DesiredJobs DesiredUnreadable) parse-desired [#^ str text]
@@ -584,7 +585,7 @@
               (child-environment (dict os.environ) self.extra-env
                                  (dfor v (.get declared "envVars" []) (get v "name") (get v "value"))
                                  (| worker-env {"DOEFF_RUNTIME_ENV" spec.runtime-env
-                                                "DOEFF_RUNTIME_ENV_KEY" (cut spec.revision (len ENV-KEY-PREFIX) None)}))))
+                                                "DOEFF_RUNTIME_ENV_KEY" spec.env-key}))))
         #([sys.executable "-m" "doeff_cluster.shim" "10" "--" self.hy-command "-m" spec.entry #* spec.args]
           code-path
           (| (dict os.environ) self.extra-env {"PYTHONPATH" (.pythonpath self.layout code-path)} worker-env))))
@@ -684,13 +685,13 @@
 
 (defn #^ JobSpec task-spec [#^ dict task #^ Path task-dir]
   "coordinator が割り当てた task 1 本 → 1 度だけ走らせる job。blob と結果はこの worker の file(名前は task の id で決まる)。
-   実行環境の task(runtimeEnv を持つ)は、版の代わりに env のキー(この worker の platform で計算)を置き場の鍵にする。"
+   実行環境の task(runtimeEnv を持つ)は、env のキー(この worker の platform で計算)を root の置き場の鍵にする(env-placement)。"
   (setv id (get task "id"))
-  (setv #(revision runtime) (env-placement (.get task "runtimeEnv") (get task "revision")))
+  (setv #(revision runtime key) (env-placement (.get task "runtimeEnv") (get task "revision")))
   (JobSpec (+ "task/" id) JOB-ENTRY
            #("task" "--blob" (str (/ task-dir f"{id}.blob")) "--result" (str (/ task-dir f"{id}.result"))
              "--env" (get task "env") "--versions" (json.dumps (get task "versions") :sort-keys True))
-           revision :once True :detached (bool (.get task "detached" False)) :runtime-env runtime))
+           revision :once True :detached (bool (.get task "detached" False)) :runtime-env runtime :env-key key))
 
 
 (defclass CoordinatorLink []
