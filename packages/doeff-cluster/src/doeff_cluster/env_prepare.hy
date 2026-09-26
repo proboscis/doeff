@@ -171,11 +171,11 @@
 
 
 (defclass [(dataclass :frozen True)] EnsureNativeWheel [EffectBase]
-  "キーの native の wheel を用意する(無ければ project-dir の workspace で build・キーごとに排他)。
+  "キーの native の wheel を用意する(無ければ source-dir — 宣言の paths の先頭の dir — から build・キーごとに排他)。
    答え = WheelReady か EnvFailure(native-build-failed)。"
   (#^ str key)
   (#^ str package)
-  (#^ str project-dir))
+  (#^ str source-dir))
 
 
 (defclass [(dataclass :frozen True)] SyncProject [EffectBase]
@@ -354,7 +354,6 @@
   "native の package を、source の tree hash をキーにした wheel で用意する(source が同じなら build し直さないため)。"
   (val mirrors (dfor m state.mirrors m.name m.mirror))
   (val commits (dfor r request.env.repos r.name r.commit))
-  (<- pdir str (project-dir request.env request.root))
   (var wheels [])
   (var built 0)
   (var failure None)
@@ -365,7 +364,8 @@
         (<- h str (TreeHash (get mirrors wheel.repo) (get commits wheel.repo) path))
         (.append hashes h))
       (<- key str (native-key wheel (tuple hashes) request.env.project.python request.platform))
-      (<- ready (| WheelReady EnvFailure) (EnsureNativeWheel key wheel.package pdir))
+      (<- ready (| WheelReady EnvFailure)
+          (EnsureNativeWheel key wheel.package (.format "{}/{}/{}" request.root wheel.repo (get wheel.paths 0))))
       (match ready
         (EnvFailure) (:= failure ready)
         (WheelReady :path path :built b) (do (.append wheels path) (when b (:= built (+ built 1)))))))

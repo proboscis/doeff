@@ -192,7 +192,7 @@
     (val prefix (+ path "/"))
     (val parts (lfor f (sorted tree.files :key (fn [f] f.path)) :if (.startswith f.path prefix) (+ f.path "\0" f.text)))
     (resume (.hexdigest (hashlib.sha1 (.encode (.join "\n" parts))))))
-  (EnsureNativeWheel [key package project-dir]
+  (EnsureNativeWheel [key package source-dir]
     (cond
       (in key wheels) (resume (WheelReady :path (get wheels key) :built False))
       (and uv-failure (= uv-failure.kind EnvFailureKind.NATIVE-BUILD-FAILED)) (resume uv-failure)
