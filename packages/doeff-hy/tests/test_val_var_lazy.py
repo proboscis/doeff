@@ -640,3 +640,74 @@ def test_module_level_setv_is_warned_and_rebinding_a_module_val_is_red() -> None
     assert setv == [2, 8]
     red = sorted(f.line for f in found if f.rule == RULE_REBIND)
     assert red == [6, 7]  # val の size の setv・効かない :=
+
+
+# ---------------------------------------------------------------------------
+# 節の :when の番と session の値(番は session の値を取り出した後に評価する)
+# ---------------------------------------------------------------------------
+
+GUARDED = """
+(defclass [(dataclass :frozen True)] Take [EffectBase] #^ int n)
+(defclass [(dataclass :frozen True)] Ping [EffectBase])
+
+;; limit(session val)と used(session var)を :when の番で読む。番が外れた効果は外の handler へ渡る。
+(defhandler budget-handler [made]
+  (session val limit (do (.append made "limit") 2))
+  (session var used 0)
+  (Take [n]
+    :when (<= (+ used n) limit)
+    (:= used (+ used n))
+    (resume used))
+  (Ping [] (resume "pong")))
+
+(defhandler legacy-budget-handler [made]
+  (lazy-val limit (do (.append made "limit") 2))
+  (lazy-var used 0)
+  (Take [n]
+    :when (<= (+ used n) limit)
+    (set! used (+ used n))
+    (resume used)))
+
+;; 番が外れた Take を受ける外の handler(-1 を返す)。
+(defhandler overflow []
+  (Take [n] (resume -1)))
+
+(defp takes {:post [(: % list)]}
+  (<- a (Take 1))
+  (<- b (Take 1))
+  (<- c (Take 1))
+  [a b c])
+
+(defp pings {:post [(: % str)]}
+  (<- p (Ping))
+  p)
+"""
+
+
+def test_when_guard_reads_session_values_taken_before_the_guard() -> None:
+    """:when の番が session val / session var を読めば、番の前に取り出す(旧い形は取り出す前に番を評価し、
+    番の名前は未定義 = UnboundLocalError だった)。3 回目は番が外れて外の handler へ渡る。"""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        module = _module(
+            GUARDED
+            + """
+(setv made-new [])
+(setv made-old [])
+(setv new-result (run-state ((overflow) ((budget-handler made-new) takes))))
+(setv old-result (run-state ((overflow) ((legacy-budget-handler made-old) takes))))
+""",
+            "_vvl_guard_session",
+        )
+    assert module.new_result == module.old_result == [1, 2, -1]
+    assert module.made_new == module.made_old == ["limit"]
+
+
+def test_session_value_used_only_in_another_clause_is_not_initialised_by_the_guard() -> None:
+    """番が読まない session の値は、今までどおり本体が使う節でだけ初めて作る(番の前には取り出さない)。"""
+    module = _module(
+        GUARDED + "(setv made [])\n(setv result (run-state ((budget-handler made) pings)))\n",
+        "_vvl_guard_untouched",
+    )
+    assert module.result == "pong"
+    assert module.made == []
