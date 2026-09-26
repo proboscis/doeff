@@ -16,3 +16,9 @@
                      :config {"step" 2 "base" 1}))
 
 (setv tally-system (System "tally-system" #(tally)))
+
+
+;; 本体の引数に、実行先が本体へ渡さない組み立て側の欄の名(record)を使う関数(宣言の時点で断られる見本)。
+(defk flagged-program [record step]
+  {:pre [(: record bool) (: step int)] :post [(: % int)]}
+  (if record (+ step 100) step))
