@@ -781,9 +781,11 @@
   {"now" now
    "jobs" (lfor j state.jobs (| (job-to-json j)
                                 {"resourceVersion" (.get (.get state.meta (+ "Service/" j.spec.name) {}) "resourceVersion")}))
+   ;; live = heartbeat が lease の内・draining = 期限の内の drain(担い手の名簿の読み ReadRunners の正本 — 2026-09-26)。
    "workers" (dfor #(n w) (.items state.workers)
                    n {"labels" (dict w.labels) "capacity" w.capacity "silentMs" (- now w.last-seen-ms)
-                      "versions" (dict w.versions)})
+                      "versions" (dict w.versions) "live" (alive now w timing.lease-ms)
+                      "draining" (in n (draining-workers state now))})
    "placements" (dfor #(k v) (.items state.placements) k (asdict v))
    "unplaced" (unplaced-jobs now state timing)
    ;; 沈黙した worker の最後の報告は「いま動いている」の証拠にならない。古さを付けて返す。
