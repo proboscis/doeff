@@ -1,20 +1,20 @@
 ;; 反例: 法は壊れた handler で赤になる — 法ごとに、その法だけを破る包みを memory の handler の内側に被せて回し、LawBroken を確かめる
 ;; (法が何も確かめずに緑になる形を外す)。
-(require doeff-hy.macros [deftest defhandler <-])
+(require doeff-hy.macros [deftest defhandler defk <- val])
 (import dataclasses)
 (import datetime [datetime timezone])
 (import uuid)
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler GetTimeEffect])
-(import doeff_records.values [ExpectAny Changes Reset])
-(import doeff_records.effects [PutRow WatchChanges ListRows AppendEvent])
+(import doeff_records.values [ExpectAny Changes Reset Written WrittenRows Conflict RowsConflict RowsRefused])
+(import doeff_records.effects [PutRow PutRows WatchChanges ListRows AppendEvent])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.laws [LAW-SCHEMA LawHarness LawBroken law-stale-put-conflicts law-committed-changes-appear-once-in-order
                             law-epoch-change-resets law-undeclared-writes-are-refused law-operator-paths-need-an-operator
                             law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-append-is-idempotent law-none-removes-a-field
-                            law-maintenance-prunes-and-sweeps])
+                            law-maintenance-prunes-and-sweeps law-put-rows-is-all-or-nothing])
 (import doeff_records.maintenance [PruneChanges Pruned])
 
 
@@ -54,6 +54,23 @@
   (PruneChanges [keep-seconds]
     (resume (Pruned 0 0))))
 
+(defk put-each-row [writes]
+  {:pre [(: writes tuple)] :post [(: % (| WrittenRows RowsConflict RowsRefused))]}
+  "束を 1 行ずつの PutRow で書く(1 transaction でない handler の顔)— 途中の行が通らなくても、前の行は書いたまま残る。"
+  (val written [])
+  (for [#(index write) (enumerate writes)]
+    (.append written (! (PutRow write.table write.key write.value write.expect)))
+    (match (get written -1)
+      (Conflict :current current) (return (RowsConflict index write.table write.key current))
+      (Written) None
+      other (return (RowsRefused index write.table write.key other.reason))))
+  (WrittenRows (tuple written)))
+
+(defhandler put-rows-one-by-one []
+  (PutRows [writes]
+    (<- answer (put-each-row writes))
+    (resume answer)))
+
 (defhandler forget-idempotency []
   (AppendEvent [stream idempotency-key body]
     (<- answer (AppendEvent stream (. (uuid.uuid4) hex) body))
@@ -82,7 +99,8 @@
                       #(law-indexed-list-equals-filtered-scan (ignore-where))
                       #(law-append-is-idempotent (forget-idempotency))
                       #(law-none-removes-a-field (ignore-removals))
-                      #(law-maintenance-prunes-and-sweeps (skip-pruning))]]
+                      #(law-maintenance-prunes-and-sweeps (skip-pruning))
+                      #(law-put-rows-is-all-or-nothing (put-rows-one-by-one))]]
     (assert (breaks? law (broken-harness (MemoryStore LAW-SCHEMA) inner)) law.__name__))
   ;; 書き手を問わない handler(誰の書きも maker として通す)。
   (assert (breaks? law-undeclared-writes-are-refused (broken-harness (MemoryStore LAW-SCHEMA) None (fn [_] "maker"))))
