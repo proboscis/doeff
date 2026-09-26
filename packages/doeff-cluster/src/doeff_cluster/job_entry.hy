@@ -16,7 +16,7 @@
 (import sys)
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
-(import .service_model [resolve])
+(import .service_model [resolve program-arguments RECORD-KEY])
 (import .remote_model [current-versions version-mismatch decode-program encode-outcome
                        TaskSucceeded TaskFailed failed-from VersionMismatch RemoteJobFailed])
 
@@ -75,12 +75,11 @@
 
 (defn run-service [args]
   (setv config (json.loads args.config))
-  ;; record 欄は業務の Program の引数ではなく、組み立て側(記録係を足すか)の設定。factory には渡さない。
-  (setv record (.pop config "record" None))
+  ;; record 欄は業務の Program の引数ではなく、組み立て側(記録係を足すか)の設定。引数は program-arguments が作る(外す)。
+  (setv record (.pop config RECORD-KEY None))
   (setv ctx (context-from-env))
   (setv factory (resolve args.factory))
-  (import hy)
-  (setv program (factory #** (dfor #(k v) (.items config) (hy.mangle k) v)))
+  (setv program (factory #** (program-arguments config)))
   (print (.format "service: {} を起動({}・commit {})" ctx.job args.factory ctx.revision) :file sys.stderr :flush True)
   (setv handlers (+ (env-handlers args.env config ctx) (recording-layer record config ctx args)))
   (setv result (run (scheduled (with-handlers handlers program))))

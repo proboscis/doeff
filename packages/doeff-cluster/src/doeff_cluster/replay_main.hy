@@ -10,7 +10,7 @@
 (import time)
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_cluster.service_model [resolve])
+(import doeff_cluster.service_model [resolve program-arguments RECORD-KEY])
 (import doeff_cluster.record_model [read-recording ReplayFinished ReplayDiverged])
 (import doeff_cluster.record_handlers [ReplayState effect-replayer replay-report])
 
@@ -31,14 +31,13 @@
   (setv rec (read-recording (read-lines args.recording) :until-ms args.to-ms))
   (setv header rec.header)
   (setv config (| (dict (.get header "config" {})) (json.loads args.config)))
-  (.pop config "record" None)
-  (import hy)
+  (.pop config RECORD-KEY None)
   ;; env の module は handler を組まない(再生は記録だけが答える)が、import はする — 業務の effect の型の記録の登録
   ;; (effect_codec.register)は業務の側の env の module が import の時に足すので、読まないと業務の型が登録の無い型になる。
   (when (.get header "env")
     (resolve (get header "env")))
   (setv factory (resolve (get header "factory")))
-  (setv program (factory #** (dfor #(k v) (.items config) (hy.mangle k) v)))
+  (setv program (factory #** (program-arguments config)))
   (setv state (ReplayState rec :from-ms args.from-ms :to-ms args.to-ms))
   (setv started (time.monotonic) end "program-returned" failure None)
   (try
