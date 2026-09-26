@@ -278,8 +278,9 @@
   {:pre [(: change (| RowChanged RowRemoved))] :post [(: % dict)]}
   "変更 1 つを wire の object(kind = rowChanged | rowRemoved)にする。"
   (match change
-    (RowChanged :table table :key key :version version :value value :sequence sequence)
-      {"kind" "rowChanged" "table" table "key" (list key) "version" version "value" (thaw-json value) "sequence" sequence}
+    (RowChanged :table table :key key :version version :value value :sequence sequence :at at)
+      {"kind" "rowChanged" "table" table "key" (list key) "version" version "value" (thaw-json value) "sequence" sequence
+       "at" at}
     (RowRemoved :table table :key key :sequence sequence)
       {"kind" "rowRemoved" "table" table "key" (list key) "sequence" sequence}))
 
@@ -332,10 +333,10 @@
   "wire の object から変更 1 つを読む。"
   (match value
     {"kind" "rowChanged"}
-      (do (<- (object-of value "rowChanged" #("kind" "table" "key" "version" "value" "sequence") #()))
+      (do (<- (object-of value "rowChanged" #("kind" "table" "key" "version" "value" "sequence" "at") #()))
           (RowChanged (! (string-of (get value "table") "table")) (! (strings-of (get value "key") "key"))
                       (! (integer-of (get value "version") "version")) (! (json-object-in (get value "value") "value"))
-                      (! (integer-of (get value "sequence") "sequence"))))
+                      (! (integer-of (get value "sequence") "sequence")) (! (integer-of (get value "at") "at"))))
     {"kind" "rowRemoved"}
       (do (<- (object-of value "rowRemoved" #("kind" "table" "key" "sequence") #()))
           (RowRemoved (! (string-of (get value "table") "table")) (! (strings-of (get value "key") "key"))

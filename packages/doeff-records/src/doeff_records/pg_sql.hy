@@ -142,7 +142,7 @@
 
 
 (defn #^ Statement changes-statement [#^ str prefix #^ int after #^ int head #^ tuple tables #^ int limit]
-  (Statement (.format "SELECT seq, ledger, key, version, payload FROM {p}row_changes
+  (Statement (.format "SELECT seq, ledger, key, version, payload, at FROM {p}row_changes
                        WHERE seq > %s AND seq <= %s AND ledger = ANY(%s) ORDER BY seq LIMIT %s" :p prefix)
              #(after head (list tables) limit)))
 

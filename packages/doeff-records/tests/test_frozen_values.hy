@@ -26,7 +26,7 @@
   (assert (= (get row.value "tags") #("a" "b")))
   (assert (refuses? (fn [] (setv (get row.value "id") "x")) TypeError) "行の値に書けない")
   (assert (isinstance (hash row) int) "凍らせた行は hash できる")
-  (for [built [(Written 1 {"a" 1}) (RowChanged "parts" #("p1") 1 {"a" 1} 1) (PutRow "parts" #("p1") {"a" 1} (ExpectAbsent))
+  (for [built [(Written 1 {"a" 1}) (RowChanged "parts" #("p1") 1 {"a" 1} 1 1000) (PutRow "parts" #("p1") {"a" 1} (ExpectAbsent))
                (ListRows "parts" :where {"color" "red"})]]
     (assert (isinstance (or (getattr built "value" None) (getattr built "where" None)) FrozenMap) built))
   (setv event (AppendEvent "journal" "k1" {"list" [1 {"x" 2}]}))

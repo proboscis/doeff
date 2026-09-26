@@ -192,11 +192,11 @@
 
 
 (defn #^ (| RowChanged RowRemoved) change-of [#^ tuple record]
-  "row_changes の行(seq ledger key version payload)→ RowChanged | RowRemoved。"
-  (setv #(seq table text version payload) record)
+  "row_changes の行(seq ledger key version payload at)→ RowChanged | RowRemoved。"
+  (setv #(seq table text version payload at) record)
   (if (is payload None)
       (RowRemoved table (key-from-text text) (int seq))
-      (RowChanged table (key-from-text text) (int version) (decoded-value payload) (int seq))))
+      (RowChanged table (key-from-text text) (int version) (decoded-value payload) (int seq) (int at))))
 
 
 (defn #^ object pg-watch-scan [#^ PgRecordsHost host #^ WatchChanges ask]
