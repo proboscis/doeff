@@ -56,3 +56,21 @@
   (.sweep store (frozenset))
   (time.sleep 0.5)
   (assert (not (.exists (/ tmp-path "uv-calls"))) "準備の間は prune を起こさない"))
+
+
+(deftest test-a-finished-prune-is-not-restarted-within-the-interval [tmp-path]
+  ;; node の disk を他の物が使っていると、worker が消せる量では下限に戻らない(atlas 2026-09-26 — 掃除の拍 30 秒ごとに prune が
+  ;; 起き続けた)。前の prune が終わっていても、PRUNE-EVERY-SECONDS の間は起こし直さない。
+  (val script (/ tmp-path "fake-uv"))
+  (.write-text script (.format "#!/bin/sh\necho \"$@\" >> {}\n" (/ tmp-path "uv-calls")) :encoding "utf-8")
+  (os.chmod script 0o755)
+  (val store (EnvStore (str (/ tmp-path "state")) "hy" :uv (str script) :sweep-floor-bytes (** 10 18)))
+  (.sweep store (frozenset))
+  (<- first list (calls tmp-path))
+  (assert (= first ["cache prune"]) first)
+  (.wait store.pruning)
+  ;; 固定の集合を変えて、すぐの掃除を起こす(prune は終わっている)。
+  (.sweep store (frozenset #("env-other")))
+  (time.sleep 0.3)
+  (<- again list (calls tmp-path))
+  (assert (= again ["cache prune"]) again))
