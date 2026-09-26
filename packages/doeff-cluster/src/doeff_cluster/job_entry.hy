@@ -12,6 +12,7 @@
 ;;; root の中の doeff-cluster(送り手の版)なので、worker と子の約束の版は runtime_env_model.CHILD-PROTOCOL(worker が準備の確かめで
 ;;; 読む)。
 ;;; 0 以外で終わった = 結果を書けなかった(worker はそれを「結果なし」として報告する)。
+(require doeff-hy.macros [defk <-])
 (import argparse)
 (import dataclasses [dataclass])
 (import json)
@@ -24,6 +25,7 @@
 (import .service_model [resolve program-arguments settings-left-to-env RECORD-KEY])
 (import .remote_model [current-versions version-mismatch version-diffs decode-program encode-outcome
                        TaskSucceeded TaskFailed failed-from VersionMismatch RemoteJobFailed])
+(import .runtime_env_model [RuntimeEnv runtime-env-of-json])
 
 
 (defclass [(dataclass :frozen True)] RunContext []
@@ -59,6 +61,15 @@
               :placement (os.environ.get "DOEFF_WORKER_PLACEMENT" "")
               :runtime-env (os.environ.get "DOEFF_RUNTIME_ENV" "")
               :env-key (os.environ.get "DOEFF_RUNTIME_ENV_KEY" "")))
+
+
+(defk runtime-env-of-context [ctx]
+  {:pre [(: ctx RunContext)] :post [(: % (| RuntimeEnv None))]}
+  ;; この process が走っている実行環境の宣言(無ければ None)— env の組み立てが送り手(TaskClient・DetachedClient)へ渡し、
+  ;; service や task がさらに送る task を同じ env で走らせるため(2026-09-26 — 送り手の版が image に固定されない)。
+  (if ctx.runtime-env
+      (do (<- env RuntimeEnv (runtime-env-of-json (json.loads ctx.runtime-env))) env)
+      None))
 
 
 (defn #^ list env-handlers [#^ str env #^ dict config #^ RunContext ctx]
