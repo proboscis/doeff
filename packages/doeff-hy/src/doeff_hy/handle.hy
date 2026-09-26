@@ -431,6 +431,7 @@
 
   ;; Extract :when guard
   (setv #(guard cbody) (_parse-guard raw-body))
+  (setv cbody-written cbody)
 
   ;; Termination check BEFORE rewriting (on original body)
   (_check-clause-terminates (str etype) cbody)
@@ -467,13 +468,22 @@
 
   ;; Inject lazy init for referenced lazy names (after bind expansion,
   ;; before rewrite-ops — lazy init forms are already in yield IR)
+  ;; session の値(session val / var・旧い lazy-val / lazy-var)の取り出しは、その名前を使う所の前に置く:
+  ;; :when の番が読む名前は番の前(guard-prefix)、本体だけが読む名前は番が通った後(lazy-prefix)。
+  ;; 番も「使う所」なので、番で初めて使えばそこで作る(lazy の意味のまま)。番の前に置かないと番の中の名前は
+  ;; 未定義(節の関数の局所変数 = UnboundLocalError)だった。番が読まない名前は今までどおり番が外れた効果では作らない。
+  (setv guard-prefix [])
   (setv lazy-prefix [])
   (when (and lazy-defs handler-name)
     (for [#(lname lbody _mut legacy?) lazy-defs]
       ;; Symbol scan: only inject if clause body references this lazy name
-      (when (any (gfor form raw-body (_references-symbol form (str lname))))
-        (.extend lazy-prefix
-          (_build-lazy-init-forms handler-name lname lbody legacy?)))))
+      (cond
+        (and (is-not guard None) (_references-symbol guard (str lname)))
+          (.extend guard-prefix
+            (_build-lazy-init-forms handler-name lname lbody legacy?))
+        (any (gfor form cbody-written (_references-symbol form (str lname))))
+          (.extend lazy-prefix
+            (_build-lazy-init-forms handler-name lname lbody legacy?)))))
 
   ;; Field bindings: (setv field (. effect field))
   (setv bindings
@@ -489,6 +499,7 @@
     (if (is guard None)
         `(do ~@bindings ~@rewritten)
         `(do ~@bindings
+             ~@guard-prefix
              (if (not ~guard)
                  (yield (Pass effect k))
                  (do ~@rewritten)))))
