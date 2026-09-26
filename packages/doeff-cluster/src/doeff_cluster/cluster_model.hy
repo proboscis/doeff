@@ -12,7 +12,9 @@
 ;;; 各資源は resourceVersion(coordinator 全体で単調に増える番号)と generation(spec が変わるたびに増える)を持ち、
 ;;; 書きは資源 1 つずつの compare-and-set。誰が・いつ・何を・前後の版は出来事の記録(audit)に残る。
 ;;; 版と記録は「前の状態と後の状態の差」から 1 か所(resource_policy.stamp)で付けるので、どの経路の変化も漏れない。
+(require doeff-hy.record [defenum defrecord])
 (import dataclasses [dataclass field asdict])
+(import enum [StrEnum])
 (import typing [NamedTuple])
 (import doeff [EffectBase])
 (import .worker_model [JobSpec])
@@ -122,6 +124,48 @@
   (#^ int until-ms)
   (setv #^ (| str None) boot None)
   (setv #^ str actor ""))
+
+
+(defenum HandoffPhase
+  (WAITING "WaitingReady")
+  (ABANDONED "Abandoned"))
+;; 入れ替え(handoff)の見張りの段。WAITING = 新の世代が動き出し、Ready を待っている(旧は退いて動いている)・
+;; ABANDONED = 期限の間 Ready にならず、入れ替えを諦めた(worker は新を止めて起こし直さず、旧を動かし続ける)。
+
+
+(defrecord HandoffWatch
+  "入れ替え(update = handoff)の Service 1 つの期限の見張り(2026-09-26 — handoff_policy)。coordinator の状態に Service の名ごとに持ち、
+   保存する(durable_kv の handoff/<名>)— 作り直しの後も諦めを保ち、止まっていた時間は期限に数えない(resume-after-downtime)。
+   declaration = 見張りを始めた時の宣言の指紋(handoff_policy.declaration-fingerprint)。宣言が変われば見張りを捨てる(諦めも解ける)。
+   since-ms = 新の世代(今の宣言の spec の process)を担い手の報告に初めて見た coordinator の時刻(期限の起点)。
+   abandoned-ms・reason・last-report = 諦めた時だけ: 時刻・期限と最後の NotReady の理由・新の世代の最後の ReportReady(偽)の reason。"
+  (#^ str declaration)
+  (#^ int since-ms)
+  (setv #^ HandoffPhase phase HandoffPhase.WAITING)
+  (setv #^ (| int None) abandoned-ms None)
+  (setv #^ str reason "")
+  (setv #^ (| str None) last-report None)
+
+  (defn #^ dict to-json [self]  ; defk にできない: 保存の形へ写す dataclass の口(coordinator の純粋な関数が呼ぶ)
+    "保存の形(durable_kv と state-to-json が使う)。"
+    {"declaration" self.declaration "sinceMs" self.since-ms "phase" self.phase.value
+     "abandonedMs" self.abandoned-ms "reason" self.reason "lastReport" self.last-report})
+
+  (defn #^ dict status-json [self #^ int timeout-ms]  ; defk にできない: 資源の表示の形へ写す dataclass の口(coordinator の純粋な関数が呼ぶ)
+    "Service の資源の status.handoff に載せる形(段が変わる時だけ変わる — 拍ごとに版と出来事の記録を進めない)。"
+    (| {"phase" self.phase.value "sinceMs" self.since-ms "timeoutSeconds" (/ timeout-ms 1000)}
+       (if (= self.phase HandoffPhase.ABANDONED)
+           {"abandonedMs" self.abandoned-ms "reason" self.reason "lastNotReadyReport" self.last-report}
+           {}))))
+
+
+(defn #^ HandoffWatch handoff-watch-from-json [#^ dict data]  ; defk にできない: 保存の読み(coordinator の起動の純粋な関数)が呼ぶ
+  "保存の形 → HandoffWatch(HandoffWatch.to-json の逆)。知らない段は読めない(ValueError — 黙って待ちに戻さない)。"
+  (HandoffWatch :declaration (get data "declaration") :since-ms (get data "sinceMs")
+                :phase (HandoffPhase (get data "phase"))
+                :abandoned-ms (.get data "abandonedMs")
+                :reason (.get data "reason" "")
+                :last-report (.get data "lastReport")))
 
 
 (defclass [(dataclass :frozen True)] ClusterTiming []
@@ -293,7 +337,10 @@
   (setv #^ dict warms (field :default-factory dict))
   ;; 冷たい起動の数(実行環境の task を、準備済みの worker が 1 つも無いまま置いた回数 — 計器 doeff_worker_env_cold_start_total)。
   ;; 保存しない(counter は process の世代ごとに 0 から数える)。
-  (setv #^ int env-cold-starts 0))
+  (setv #^ int env-cold-starts 0)
+  ;; 入れ替え(handoff)の期限の見張り(2026-09-26): Service の名 → HandoffWatch。新の世代が動き出してから期限の間 Ready にならなければ
+  ;; 諦めを記録し、heartbeat の返事の job に載せる(worker は新を止めて旧を残す — handoff_policy)。保存する(durable_kv)。
+  (setv #^ dict handoffs (field :default-factory dict)))
 
 
 ;; --- HTTP の要求と返事 ----------------------------------------------------------
