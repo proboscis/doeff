@@ -1,0 +1,371 @@
+$ git rev-parse HEAD
+0fed5c44b1fb41e91dbb4c4a075f089a09918e72
+$ PYTHONDONTWRITEBYTECODE=1 uv run --no-sync pytest -q -m 'not e2e' -p no:warnings -rA docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy tests/test_enforcement_ledger.py packages/doeff-agents/tests/test_sessionhost_policy.py packages/doeff-agents/tests/test_sessionhost_cache_maintenance.py packages/doeff-agents/tests/test_sessionhost_acp_ended_cause.py packages/doeff-agents/tests/test_sessionhost_headless_events.py
+
+deadline scale x2.4 (load/core) — per test 141s, watchdog 211s
+
+test-admission: focused — 186 件(変更箇所の検証)
+/Users/kento/.worktrees/doeff-wt-639-P/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+  - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+  - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+  - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+  - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+  - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+  - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+  - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+  - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+  - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+  - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+  - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+  - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+  - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+  - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+  - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+  - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+  - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+  - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+  - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+  - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+  - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+  - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+  - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+  - docs/adr/defadr_doeff_hy_004_defk_only.hy
+  - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+  - docs/adr/defadr_doeff_preset_001_retirement.hy
+Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+  warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+........................................................................ [ 38%]
+........................................................................ [ 77%]
+..........................................                               [100%]
+==================================== PASSES ====================================
+_ test_adr_doe_agents_012_sweep_roles_are_read_from_the_callee_not_the_spelling _
+----------------------------- Captured stdout call -----------------------------
+正常例 今日の巡回 → 緑
+正常例 呼び先が行から読める役を足し(分類を宣言し)、呼びが渡す → 緑
+正常例 呼び先が usage の前に役を足す(役の位置は呼び先の定義から導く) → 緑
+正常例 呼び先が手番の終わりだけの材料を足し(分類を宣言し)、巡回は渡さない → 緑
+正常例 呼びの中の註と折れ方 → 緑
+正常例 keyword の既定値つき引数 → 緑
+正常例 読み直した行の局所変数の改名 → 緑
+違反例 usage に値 → 赤: 巡回が usage に usage-total を渡している(R49 — 消費の和は手番の終わりの 1 回)
+違反例 keyword で responses → 赤: 巡回が responses に shaped を渡している(R49 — 応答ごとの消費は手番の終わりの 1 回)
+違反例 entries に値 → 赤: 巡回が entries に entries を渡している(R49 — 手番の出来事の見出しは手番の中の追記と終わりの書きだけが持つ)
+違反例 keyword で cache-observation → 赤: 巡回が cache_observation に swept-cache を渡している(R49 — cache の観測は手番の終わりの 1 回)
+違反例 呼び先が手番の終わりだけの材料を足し(分類を宣言し)、巡回が渡す → 赤: 巡回が model_usage に swept-model-usage を渡している(R49 — model ごとの消費は手番の終わりの 1 回)
+違反例 呼び先に分類の無い役を足す → 赤: 呼び先 turn-record-ended-status の役 model_usage に材料の分類が無い(effects.TURN_RECORD_END_ONLY_MATERIALS か TURN_RECORD_ROW_MATERIALS に宣言する)
+違反例 呼び先の役の改名(usage → consumption) → 赤: 材料の宣言の役 usage が呼び先 turn-record-ended-status の定義に無い(契約の変更 — 宣言と検査も直す) / 呼び先 turn-record-ended-status の役 consumption に材料の分類が無い(effects.TURN_RECORD_END_ONLY_MATERIALS か TURN_RECORD_ROW_MATERIALS に宣言する)
+違反例 呼びを消す → 赤: 巡回が turn-record-ended-status を呼んでいない(R49 — 閉じる記録の status を組まない) / 巡回が書く status に ended を渡している(R49 — turn-record-ended-status の答えちょうどではない)
+違反例 一覧の行で書く → 赤: 巡回が読み直した image で書いていない(R49 — AcpPutStatus の row に row を渡している — 鍵で読んだ AcpGetRow の答えではない) / 巡回が閉じる status を読み直した行から組んでいない(R49 — turn-record-ended-status の status に record-status を渡している — 書く行の status-object-of の答えではない) / 巡回が読み直した行で判断していない(R49 — turn-record-sweep-verdict の record に record を渡している — 書く行ではない)
+違反例 記録ではない鍵で読む → 赤: 巡回が鍵で読み直していない(R49 — 書く行を読む AcpGetRow の key に job-id を渡している — turn-record-key-of の答えではない)
+違反例 一覧の行で判断する → 赤: 巡回が読み直した行で判断していない(R49 — turn-record-sweep-verdict の record に row を渡している — 書く行ではない)
+違反例 一覧の行から閉じる status を組む → 赤: 巡回が閉じる status を読み直した行から組んでいない(R49 — turn-record-ended-status の status に record-status を渡している — 書く行の status-object-of の答えではない)
+違反例 組んだ status に書く前に足す → 赤: 巡回が書く status に (| ended {"usage" usage-total}) を渡している(R49 — turn-record-ended-status の答えちょうどではない)
+違反例 組んだ status を書く前に書き換える → 赤: 巡回が組んだ status ended を書く前に (get ended "usage") で使っている(R49 — 書くのは turn-record-ended-status の答えちょうど)
+違反例 分割で束ねた行で書く → 赤: 巡回が読み直した image で書いていない(R49 — AcpPutStatus の row に copied を渡している — 鍵で読んだ AcpGetRow の答えではない) / 巡回が閉じる status を読み直した行から組んでいない(R49 — turn-record-ended-status の status に record-status を渡している — 書く行の status-object-of の答えではない) / 巡回が読み直した行で判断していない(R49 — turn-record-sweep-verdict の record に copied を渡している — 書く行ではない)
+違反例 巡回が呼ぶ補助の defk の中で書く → 赤: 巡回が組んだ status ended を書く前に (sweep-case-close record ended) で使っている(R49 — 書くのは turn-record-ended-status の答えちょうど) / 巡回が呼ぶ sweep-case-close の中で AcpPutStatus を撃っている(R49 — 記録を閉じる書きは巡回の本体に置く — 検が読めるのは巡回の本体だけ)
+違反例 盲検 B の形(一覧の行で判断して status を組み、読み直しは書く直前の generation だけ) → 赤: 巡回が閉じる status を読み直した行から組んでいない(R49 — turn-record-ended-status の status に record-status を渡している — 書く行の status-object-of の答えではない) / 巡回が読み直した行で判断していない(R49 — turn-record-sweep-verdict の record に row を渡している — 書く行ではない)
+正常例 今日の退役の書き → 緑
+違反例 退役の書きが usage に値 → 赤: 退役の書きが usage に usage-total を渡している(R49 — 消費の和は手番の終わりの 1 回)
+違反例 退役の書きが keyword で cache-observation → 赤: 退役の書きが cache_observation に retired-cache を渡している(R49 — cache の観測は手番の終わりの 1 回)
+違反例 退役の書きが呼びを消す → 赤: 退役の書きが turn-record-ended-status を呼んでいない(R49 — 閉じる記録の status を組まない)
+______ test_adr_doe_agents_012_join_is_one_command_and_one_decision_point ______
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  join_spec_of()  packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.hy:1014
+    (ownership-of (or (.get agentd KEY-OWNERSHIP) None) (or (.get agentd KEY-OWNERSHIP-PROOF) None)))
+  ownership_of()  packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.hy:460
+    (raise (ValueError (+ f"{FLAG-OWNERSHIP} {grade} には {FLAG-OWNERSHIP-PROOF} が要る "
+
+ValueError: --ownership company には --ownership-proof が要る (gce-project:<project-id> か file:<path>=<value> か declared)
+
+
+doeff Traceback (most recent call last):
+
+  ownership_preflight()  packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.hy:1306
+    (<- verdict (| Ownership None) (ownership-verdict places ownership answer))))
+  ownership_verdict()  packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.hy:1263
+    (raise (ValueError (+ f"ownership {ownership.grade} claims {ownership.proof} but the GCE metadata "
+    handlers:
+      FakeLocal.dispatch ↗
+
+ValueError: ownership company claims gce-project:p-1 but the GCE metadata project-id is 'p-2' (expected 'p-1')
+
+
+doeff Traceback (most recent call last):
+
+  ownership_preflight()  packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.hy:1306
+    (<- verdict (| Ownership None) (ownership-verdict places ownership answer))))
+  ownership_verdict()  packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.hy:1274
+    (raise (ValueError (+ f"ownership {ownership.grade} claims {ownership.proof} but the file "
+    handlers:
+      FakeLocal.dispatch ↗
+
+ValueError: ownership company claims file:/state/agora/host-id=mac but the file /state/agora/host-id holds 'proboscis-mbp' (expected 'mac')
+
+_ test_adr_doe_agents_012_a_privileged_place_needs_evidence_not_a_copied_declaration _
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  ownership_preflight()  packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.hy:1303
+    (<- verdict (| Ownership None) (ownership-verdict places ownership (ProbeAnswer :value None)))
+  ownership_verdict()  packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.hy:1249
+    (raise (ValueError (+ how fix)))))
+    handlers:
+      FakeLocal.dispatch ↗
+
+ValueError: [agentd].places が特権の置き場 company を名乗っているのに所有の証拠が無い(いま [agentd].ownership も [agentd].ownership_proof も空)。特権の置き場を名乗る宣言は [agentd].ownership_proof に `file:<絶対 path>=<値>` か `gce-project:<project-id>` が要る。この 1 手で直る: dotfiles の checkout で `sh agent/venv-run.sh "$PWD/agentcli" hy cron_management/acp_single_mac.hy --declaration <この機体の宣言> install --only agentd`(証拠は据え付けの側が描く。宣言 file は機体ごと — 他機体の宣言 file で参加しない)。
+
+
+doeff Traceback (most recent call last):
+
+  ownership_preflight()  packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.hy:1303
+    (<- verdict (| Ownership None) (ownership-verdict places ownership (ProbeAnswer :value None)))
+  ownership_verdict()  packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.hy:1249
+    (raise (ValueError (+ how fix)))))
+    handlers:
+      FakeLocal.dispatch ↗
+
+ValueError: [agentd].places が特権の置き場 company を名乗っているのに所有の証拠が無い(いま [agentd].ownership_proof = 'declared' = 検なし)。特権の置き場を名乗る宣言は [agentd].ownership_proof に `file:<絶対 path>=<値>` か `gce-project:<project-id>` が要る。この 1 手で直る: dotfiles の checkout で `sh agent/venv-run.sh "$PWD/agentcli" hy cron_management/acp_single_mac.hy --declaration <この機体の宣言> install --only agentd`(証拠は据え付けの側が描く。宣言 file は機体ごと — 他機体の宣言 file で参加しない)。
+
+
+doeff Traceback (most recent call last):
+
+  ownership_preflight()  packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.hy:1303
+    (<- verdict (| Ownership None) (ownership-verdict places ownership (ProbeAnswer :value None)))
+  ownership_verdict()  packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.hy:1249
+    (raise (ValueError (+ how fix)))))
+    handlers:
+      FakeLocal.dispatch ↗
+
+ValueError: [agentd].ownership が company を名乗っているのに所有の証拠が無い(いま [agentd].ownership_proof = 'declared' = 検なし)。特権の置き場を名乗る宣言は [agentd].ownership_proof に `file:<絶対 path>=<値>` か `gce-project:<project-id>` が要る。この 1 手で直る: dotfiles の checkout で `sh agent/venv-run.sh "$PWD/agentcli" hy cron_management/acp_single_mac.hy --declaration <この機体の宣言> install --only agentd`(証拠は据え付けの側が描く。宣言 file は機体ごと — 他機体の宣言 file で参加しない)。
+
+_ test_the_terminal_write_refuses_a_missing_or_foreign_cause_and_composes_the_result _
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  terminal_cause_of()  packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy:1983
+    (raise (ValueError f"result.cause.category {(repr category)} is outside {CAUSE-CATEGORIES}")))
+
+ValueError: result.cause.category 'exploded' is outside ('completed', 'cancelled', 'failed', 'interrupted', 'agentd-stopped')
+
+
+doeff Traceback (most recent call last):
+
+  ended_status_of()  packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy:2632
+    (raise (ValueError f"Ended without a contract cause: {(repr cause)} (category must be one of {CAUSE-CATEGORIES})")))
+
+ValueError: Ended without a contract cause: {'category': 'exploded'} (category must be one of ('completed', 'cancelled', 'failed', 'interrupted', 'agentd-stopped'))
+
+
+doeff Traceback (most recent call last):
+
+  ended_status_of()  packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy:2632
+    (raise (ValueError f"Ended without a contract cause: {(repr cause)} (category must be one of {CAUSE-CATEGORIES})")))
+
+ValueError: Ended without a contract cause: {} (category must be one of ('completed', 'cancelled', 'failed', 'interrupted', 'agentd-stopped'))
+
+_ test_the_composition_root_swaps_in_the_outbox_only_when_the_tiered_store_is_named _
+----------------------------- Captured stderr call -----------------------------
+doeff-sessionhost events: outbox → http://127.0.0.1:9/v1/logs (node Proboscis-MBP.local)
+_ test_a_line_the_tiered_store_cannot_take_is_held_locally_and_does_not_block_the_shipper _
+----------------------------- Captured stderr call -----------------------------
+doeff-sessionhost events shipper: held s-1#2 (6000 bytes): one OTLP body of 6766 bytes exceeds the tiered store's limit 4000
+__ test_batches_are_split_by_body_bytes_and_a_413_is_narrowed_to_the_one_line __
+----------------------------- Captured stderr call -----------------------------
+doeff-sessionhost events shipper: held s-1#7 (7 bytes): the collector answered HTTP 413 for this line alone
+__________________ test_prune_reads_the_same_doeff_time_clock __________________
+----------------------------- Captured stderr call -----------------------------
+doeff-sessionhost events prune: 1 shipped rows of sessions ended before 2031-01-02T02:00:00+00:00
+=========================== short test summary info ============================
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_history_thins_tool_items_before_dropping_turns
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_turn_records_are_not_left_to_one_write
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_sweep_roles_are_read_from_the_callee_not_the_spelling
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_dropped_history_turns_leave_a_headline
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_provider_limit_is_the_containers_cause_read_as_a_field
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_work_dir_is_one_judgment_on_this_node
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_verify_command_runs_a_script_not_a_session
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_summarize_runs_claude_print_under_the_conversation_lease
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_summaries_are_triggered_at_turn_end_and_folded_first_on_rehydrate
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_no_agora_ledger_words_in_sessionhost
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_bound_to_me_is_the_only_job_selection
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_valve_defaults_off
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_capture_stops_at_zero_subscribers
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_borrowed_credentials_not_on_disk_in_plain
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_running_jobs_settle_from_rows
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_capture_gone_is_terminal_and_ticks_do_not_share_failure
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_recovered_turns_do_not_claim_unread_output
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_warm_session_send_instead_of_launch
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_session_id_is_minted_by_agentd
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_print_mode_has_one_home
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_headless_events_are_the_live_stream
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_conversation_cache_only_on_the_same_node_and_home
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_turn_events_are_durable_mid_turn
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_record_body_fields_are_read_from_one_declaration
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_live_events_are_polled_within_50ms_while_watched
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_withdraw_is_an_interrupt_signal
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_watch_wake_reads_the_window_and_birth_landing
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_mail_delivery_is_evidenced_by_the_row
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_headless_first_turn_carries_the_mail
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_join_is_one_command_and_one_decision_point
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_a_privileged_place_needs_evidence_not_a_copied_declaration
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_profile_observed_is_written_from_one_usage_point
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_turn_credential_source_is_one_judgment
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_capability_table_and_agent_setting_ignored_are_one_judgment
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_backend_liveness_is_observed
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_stop_drains_declared_nodes_before_closing
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_node_names_its_agentd_version
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_cancel_is_signal_grace_force_and_the_terminal_write_is_last
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_every_terminal_write_carries_a_cause
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_every_session_category_pins_its_retryable_next_to_its_job_outcome
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_own_node_row_is_the_live_row_of_the_library
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_bindings_name_the_node_by_its_row_id
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_one_conversation_keeps_one_warm_session
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_a_turn_never_runs_in_two_sessions
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_profile_observation_has_a_slot_per_node
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_stop_closes_running_turns
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_conversations_compact_at_their_threshold
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_node_row_is_named_by_the_machine
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_interrupts_are_read_within_the_deadline
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_turn_credential_rides_the_turn
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_seat_facing_env_is_declared_once_and_loses_to_the_conversation
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_attachment_spelling_lives_in_the_dialogue
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_fake_clis_freeze_the_attachment_spelling
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_interrupts_ride_the_running_turn
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_the_process_that_closes_a_turn_returns_the_lease
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_a_held_credential_lease_is_a_lost_attempt
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_a_custody_refusal_names_who_can_answer
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_a_lender_outage_is_judged_by_the_custody_contract
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_claude_turn_end_is_process_end
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_the_halves_split_without_a_second_declaration
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_the_control_plane_process_exits_without_closing_turns
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_draining_is_one_signal_read_from_outside
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_the_host_only_reads_the_drain_marker_once
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_the_drain_marker_path_env_is_spelled_at_two_points
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_the_drain_marker_module_only_reads
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_the_node_declares_only_the_agent_kinds_it_can_launch
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_a_continued_turn_record_is_realigned_at_one_point
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_a_continued_turn_points_at_the_handed_mail
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_the_agentd_puts_its_own_record_destination_on_the_seat
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_runner_owned_seat_env_spelled_once_defsemgrep
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_r61_agent_argv_head_names_the_driver_executable_defsemgrep
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_r61_agent_binary_default_names_the_driver_executable_defsemgrep
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_r61_executable_lookup_has_one_home_defsemgrep
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_r61_driver_lookup_reads_only_the_path_defsemgrep
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_ADR_DOE_AGENTS_012_adr_contract
+PASSED tests/test_enforcement_ledger.py::test_enforcement_inventory_matches_ledger
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_api_limit_blocked_api_non_terminal
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_api_limit_latch_outranks_provider_failure_latch
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_api_limit_observation_latches_durably
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_awaiting_cleared_by_conversation_progress
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_awaiting_not_cleared_by_delivery_write
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_blocked_quiescent_tick_records_no_event
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_blocked_transition_records_single_event_across_cycles
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_classification_failure_beats_api_limit
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_effect_vocabulary_contracts
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_failed_output_cause_frozen_table
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_failed_output_with_latch_rate_limited
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_failed_output_with_provider_failure_latch_is_not_run_failed
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_golden_result_first_done
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_healthy_frames_never_latch_a_provider_failure
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_interactive_turn_end_noop
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_judge_before_solicitation
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_judge_disabled_degrades_to_solicitation
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_judge_error_turn_end_degrades_to_solicitation
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_judge_inconclusive_turn_end_falls_to_solicitation
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_latch_blocks_turn_end_until_active
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_latch_clears_on_turn_activity
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_launch_timeout_disarmed_after_startup
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_launch_timeout_fires_from_gap_base
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_launch_timeout_watchdog
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_launch_timeout_window_restarts_after_gap
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_managed_dialog_fast_path
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_monitor_discovers_conversation
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_monitor_discovery_absent_defers
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_monitor_discovery_skips_known_conversation
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_monitor_knobs_frozen_defaults
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_monitor_leaves_booting_row_to_launch_pipeline
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_monitor_reaps_booting_row_after_boot_timeout
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_multi_turn_is_monitored_but_not_stall_reaped
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_multi_turn_turn_end_not_stamped_while_awaiting_or_fresh
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_multi_turn_turn_end_stamps_turn_ended_at_and_keeps_the_session
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_per_session_isolation
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_provider_failure_does_not_override_transient_defaults
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_provider_failure_observation_latches_durably
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_result_first_wins_at_turn_end
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_rtc_without_contract_turn_end_done
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_running_quiescent_tick_records_no_observed_event
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_send_program_arms_the_awaiting_latch_only_when_asked
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_solicitation_exhaustion_live_fable_wording_rate_limited
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_solicitation_exhaustion_live_marker_rate_limited
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_solicitation_exhaustion_live_reauth_wording_is_auth_failed
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_solicitation_exhaustion_runfailed
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_solicitation_exhaustion_with_access_revoked_is_auth_failed
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_solicitation_exhaustion_with_context_exhausted_stays_deterministic
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_solicitation_exhaustion_with_latch_rate_limited
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_solicitation_exhaustion_with_reauth_latch_is_auth_failed
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_solicitation_verbatim_latch_counter
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_stale_observation_gap_event_is_rate_bounded
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_stale_observation_holds_and_records_gap
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_stale_observation_with_dead_session_vanishes
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_stall_judge_blocked_sends_keys
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_stall_judge_bounded_then_exhausted_failure
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_stall_judge_error_typed_failure
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_stall_no_judge_immediate_typed_failure
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_stall_unblock_vetoed_on_fresh_busy_capture
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_stall_with_latch_rate_limited
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_taxonomy_first_write_wins
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_terminal_cause_retryable_frozen_table
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_tmux_gone_result_first_done
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_tmux_gone_without_result_vanished
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_turn_activity_residue_does_not_mask_blocked
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_turn_end_fires_when_conversation_quiescent
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_turn_end_not_declared_while_conversation_fresh
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_turn_end_not_declared_while_queued_messages
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_turn_end_requires_stable_tail
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_unblock_keys_vetoed_on_fresh_active_capture
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_unblock_keys_vetoed_on_queued_messages
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_unsubmitted_paste_resubmit
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_waiting_marker_blocked
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_working_pane_with_waiting_footer_stays_running
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_zombie_reaper_idle_shell
+PASSED packages/doeff-agents/tests/test_sessionhost_cache_maintenance.py::test_cache_maintenance_program[test_cache_probe_answers_the_same_on_every_event_store]
+PASSED packages/doeff-agents/tests/test_sessionhost_cache_maintenance.py::test_cache_maintenance_program[test_claim_loser_and_terminal_replay_never_send]
+PASSED packages/doeff-agents/tests/test_sessionhost_cache_maintenance.py::test_cache_maintenance_program[test_clock_swapped_idle_cleanup_ping_and_next_cycle]
+PASSED packages/doeff-agents/tests/test_sessionhost_cache_maintenance.py::test_cache_maintenance_program[test_expired_request_never_starts_and_lost_running_result_is_unknown]
+PASSED packages/doeff-agents/tests/test_sessionhost_cache_maintenance.py::test_cache_maintenance_program[test_live_handler_composition_runs_with_zero_normal_capacity]
+PASSED packages/doeff-agents/tests/test_sessionhost_cache_maintenance.py::test_cache_maintenance_program[test_response_loss_and_worker_restart_probe_instead_of_resending]
+PASSED packages/doeff-agents/tests/test_sessionhost_cache_maintenance.py::test_cache_maintenance_program[test_special_operation_does_not_request_a_turn_or_read_queue_capacity]
+PASSED packages/doeff-agents/tests/test_sessionhost_cache_maintenance.py::test_cache_maintenance_program[test_wrong_node_profile_and_company_boundary_cannot_be_bypassed]
+PASSED packages/doeff-agents/tests/test_sessionhost_acp_ended_cause.py::test_the_closed_categories_are_the_contracts_five_words
+PASSED packages/doeff-agents/tests/test_sessionhost_acp_ended_cause.py::test_a_naturally_ended_turn_carries_completed_with_or_without_a_value
+PASSED packages/doeff-agents/tests/test_sessionhost_acp_ended_cause.py::test_a_failed_session_carries_failed_with_the_condition_type
+PASSED packages/doeff-agents/tests/test_sessionhost_acp_ended_cause.py::test_a_provider_limit_refusal_is_not_a_terminal_and_carries_no_result
+PASSED packages/doeff-agents/tests/test_sessionhost_acp_ended_cause.py::test_a_turn_closed_without_a_session_carries_failed_with_the_closing_condition
+PASSED packages/doeff-agents/tests/test_sessionhost_acp_ended_cause.py::test_a_withdrawn_running_turn_carries_interrupted_withdrawn_on_the_withdrawn_row
+PASSED packages/doeff-agents/tests/test_sessionhost_acp_ended_cause.py::test_the_stop_of_agentd_carries_agentd_stopped_drain_deadline
+PASSED packages/doeff-agents/tests/test_sessionhost_acp_ended_cause.py::test_a_host_drained_row_carries_agentd_stopped_host_drained_with_the_host_drained_condition
+PASSED packages/doeff-agents/tests/test_sessionhost_acp_ended_cause.py::test_job_outcome_of_maps_only_the_host_drained_row_to_the_planned_stop
+PASSED packages/doeff-agents/tests/test_sessionhost_acp_ended_cause.py::test_the_terminal_write_refuses_a_missing_or_foreign_cause_and_composes_the_result
+PASSED packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_locator_names_the_session_and_the_cache_op
+PASSED packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_every_store_reads_back_stdout_lines_after_a_cursor[outbox]
+PASSED packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_every_store_reads_back_stdout_lines_after_a_cursor[memory]
+PASSED packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_every_store_reads_back_stdout_lines_after_a_cursor[file]
+PASSED packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_outbox_store_writes_no_file
+PASSED packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_outbox_numbers_turns_and_sequences_per_session
+PASSED packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_shipper_sends_the_tiered_row_shape_and_marks_only_what_the_collector_took
+PASSED packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_prune_removes_only_shipped_rows_of_sessions_ended_before_the_cutoff
+PASSED packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_attribution_reads_only_the_agentd_block
+PASSED packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_the_file_store_is_todays_physics_for_the_mac
+PASSED packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_agentd_reads_events_only_through_the_host_rpc
+PASSED packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_the_composition_root_swaps_in_the_outbox_only_when_the_tiered_store_is_named
+PASSED packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_a_line_the_tiered_store_cannot_take_is_held_locally_and_does_not_block_the_shipper
+PASSED packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_batches_are_split_by_body_bytes_and_a_413_is_narrowed_to_the_one_line
+PASSED packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_other_refusals_keep_the_rows_unshipped_for_the_next_tick
+PASSED packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_event_times_come_from_the_doeff_time_clock_not_the_os
+PASSED packages/doeff-agents/tests/test_sessionhost_headless_events.py::test_prune_reads_the_same_doeff_time_clock
+186 passed in 110.27s (0:01:50)
+exit=0

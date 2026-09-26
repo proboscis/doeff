@@ -1,0 +1,375 @@
+{
+  "version": 1,
+  "task_id": "lt-8VE8M7SAMSXSDVCRVWS033AGJD",
+  "base_revision": "72da0ff1195a8078909228ac8d1115c28daddeae",
+  "author": {
+    "conversation_id": "c-H1T2C9QC9RY2X86MFDJ0356MV4",
+    "model": "claude-opus-5-5",
+    "effort": "xhigh"
+  },
+  "requirements": "agora-redesign#639 実装依頼書 P: (1) conformance/README.md の「TerminalCause 凍結表」に host_drained(HostDrained・retryable true・根拠 ADR-DOE-AGENTS-012 R47 の改訂 f271ae39)の行と、印の無い停止が cancelled(false)のままである行を足し、test-terminal-cause-retryable-frozen-table の表に \"host_drained\" True を足す(ADR の改訂が先に在ることを確かめてから)。(2) sessionhost_cache_maintenance_deftests.hy のテストの世界が HeadlessEventsSince を受けるようにする(package が出す同じ契約の fake の handler を組む形を第一とする)。(3) 同じ file の他のテストが同じ理由で赤でないことを file 全体で確かめる。受入: 2 本のテストが Mac と Linux の機体の両方で緑・直す前の断面で固定の表のテストが赤だったこと。完了の範囲 = 実装完了まで(本体は本線 c98fd834・branch wt/639-P-design-check の検の commit で盲検の反例を受けたテスト 2 本とテストの世界の直しを足し、記録の commit でこの記録を置く)",
+  "design": {
+    "path": "design.md",
+    "sha256": "3c11e58b887feba8812db543d98cef2422048fda081c25be17e122377418a079"
+  },
+  "modules": [
+    {
+      "id": "M1",
+      "responsibility": "行の終端の語(category)と retryable の対応の実装の 1 点(sessionhost/policy.hy TERMINAL-CAUSE-RETRYABLE・make-cause)",
+      "owns": "category → retryable の表(session の wire の値)・表に無い語を断ること",
+      "hides": "なし、公開の表",
+      "interface": "dict(wire の snake_case の語 → bool)。make-cause は表に無い語を precondition で断る",
+      "effects": "なし、定数と純関数",
+      "lifetime": "なし、module の定数",
+      "invariants": "表の語の集合 = TERMINAL-CAUSE-CATEGORIES・retryable は語から一意"
+    },
+    {
+      "id": "M2",
+      "responsibility": "事象 → category → retryable の契約の文(conformance/README.md「TerminalCause 凍結表」)",
+      "owns": "各行の事象の意味・改訂の規則(Hy 実装がこの表を変える場合は ADR 改訂が先)",
+      "hides": "なし、公開の文書",
+      "interface": "人が読む表(category は CamelCase のラベル)",
+      "effects": "なし、文書",
+      "lifetime": "なし、文書",
+      "invariants": "M1 の語と retryable を全部載せる"
+    },
+    {
+      "id": "M3",
+      "responsibility": "M2 を wire の語で写した固定の表と M1 の完全一致を検める(tests/sessionhost_policy_deftests.hy test-terminal-cause-retryable-frozen-table)",
+      "owns": "M2 の写し",
+      "hides": "なし、テスト",
+      "interface": "pytest のテスト 1 本(dict の完全一致)",
+      "effects": "なし、定数を読むだけ",
+      "lifetime": "なし、テストの実行ごと",
+      "invariants": "M1 の黙った変更で赤"
+    },
+    {
+      "id": "M4",
+      "responsibility": "表を変える理由と時機の記録(docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy R47・R-the-host-only-reads-the-drain-marker-once-002c とその deftest)",
+      "owns": "host_drained の意味(印ありの停止)・印の読みの規則",
+      "hides": "なし、公開の記録",
+      "interface": "法の文・deftest(host_drained が retryable で表に在る)",
+      "effects": "なし、source を読むだけ",
+      "lifetime": "なし、テストの実行ごと",
+      "invariants": "M1 の改訂の前に法の改訂が在る"
+    },
+    {
+      "id": "M5",
+      "responsibility": "出来事の effect の語彙と置き場の口・置き場の実装 3 つ(sessionhost/headless_events.py・headless_outbox.py)",
+      "owns": "HeadlessEventAppend / HeadlessEventsSince / EventChunk / HeadlessEventStore / key_of_locator / MemoryEventStore / FileEventStore / OutboxEventStore",
+      "hides": "置き場の物理(file / sqlite の送り待ち / memory)と cursor の意味",
+      "interface": "effect 2 つ・Protocol HeadlessEventStore(open_stream / append / begin_turn / since / head)",
+      "effects": "置き場ごと: file = file の書き読み・送り待ちの表 = StoreActor への submit・memory = process の中の list",
+      "lifetime": "置き場は登記簿が持つ。memory は GC・file は file が残る・送り待ちの表は送れた後に prune",
+      "invariants": "since は stdout の完全な行だけを返す・at は呼び手が渡す"
+    },
+    {
+      "id": "M6",
+      "responsibility": "HeadlessEventsSince / HeadlessEventAppend を登記簿が持つ置き場へ渡す(sessionhost/substrate_headless.hy headless-substrate + headless_process.py HeadlessRegistry)",
+      "owns": "登記簿 → 置き場の対応",
+      "hides": "置き場の種類",
+      "interface": "defhandler(registry を引数に取る)・HeadlessRegistry(events, clock)",
+      "effects": "Headless* effect を子 process と置き場へ渡す(cache の読みの路では置き場だけ)",
+      "lifetime": "登記簿は host の process に 1 つ(テストではテストごとに作る)",
+      "invariants": "ClockNow に答えない(時刻は外の handler)"
+    },
+    {
+      "id": "M7",
+      "responsibility": "cache ping の結果を出来事から読み、成功・失敗・不明を決める(sessionhost/cache_host.hy cache-host-probe)",
+      "owns": "行の JSON の読み方・成功の判定・期限",
+      "hides": "置き場(HeadlessEventsSince だけで読む)",
+      "interface": "defk (cache-host-probe record) → HostCacheRecord",
+      "effects": "ClockNow・HeadlessEventsSince・HeadlessKill・HostCacheWrite",
+      "lifetime": "なし、呼び出しごと",
+      "invariants": "同じ出来事なら置き場に依らず同じ答え"
+    },
+    {
+      "id": "M8",
+      "responsibility": "仮想の時計・receipt・応答の台本を与え、本物の Program(M7 と ACP 側の判断)を走らせる(tests/sessionhost_cache_maintenance_deftests.hy のテストの世界)",
+      "owns": "時刻(ClockNow)・receipt・応答の行",
+      "hides": "置き場の物理(package の M6 に M5 の fake を組み、locator は M5 の定数で組む)",
+      "interface": "テスト(deftest)",
+      "effects": "ClockNow・HeadlessKill・HostCacheWrite・HostCacheLastSuccessAt に答える",
+      "lifetime": "テストごと。子 process を起こさない",
+      "invariants": "登記簿の時計は読まれない(落ちる時計)"
+    },
+    {
+      "id": "M9",
+      "responsibility": "行の終端を agent-job の結末(R47 の 5 語 + reason + condition)へ写す(sessionhost/acp/judgment.hy job-outcome-of)",
+      "owns": "done → completed・host_drained → agentd-stopped/host-drained + HostDrained・それ以外 → failed/SessionFailed の分け方",
+      "hides": "ACP の配達の予算の分け方(計画された停止と運び手の失敗)",
+      "interface": "defk (job-outcome-of view) → JobOutcome",
+      "effects": "なし、純粋な判断(defk)",
+      "lifetime": "なし、呼び出しごと",
+      "invariants": "retryable を読まない・語ごとの結末は T-A(ADR-012 の検)の表と一致"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S1",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "終端の語を 1 つ足す、または既存の語の retryable を変える(例: 機体の退役で切った手番の語・context_exhausted を true に)",
+      "claim": "変わるのは M1・M2・M3・M4 の 4 か所で共同の不変条件。M5〜M8 は変わらない(doeff 側が持つのは語の表だけ)",
+      "expected_scope": "M1・M2・M3・M4(design-before-blind.md S1)",
+      "actual_scope": "盲検 A の再現(evidence/repro-a.log): M1・M2・M3 を揃えて retryable を反転しても agentd の路の結末は変わらない — M9 が行の語を読んで結末を決め、retryable を読まない。T-A を足した後は、語を足す・retryable を変える変更で T-A が赤になり(evidence/negative-a.log)、M9 の結末をその場で決めることになる。結末を変えるなら M9 と R47(ACP の契約)も変わる",
+      "changed_modules": [
+        "M1",
+        "M2",
+        "M3",
+        "M4",
+        "M9"
+      ],
+      "unchanged_modules": [
+        "M5",
+        "M6",
+        "M7",
+        "M8"
+      ],
+      "reason": "前提「doeff 側が持つのは語の表だけ」が偽だった。M9 の分岐は『計画された停止か』という M1 と別の判断で、retryable の写しではない(漏洩ではない)。ただし 2 つの契約を結ぶテストが無く、M1 だけの変更が agentd の路で黙って効かない強制の穴があった。M9 と R47 を変えるのは正当な契約の拡張",
+      "revision": "T-A docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test-adr-doe-agents-012-every-session-category-pins-its-retryable-next-to-its-job-outcome(R47 (3) の針・台帳 137 → 138)を足し、A-1(retryable の反転)・A-2(新しい語)の両方で T-A だけが赤になることを確かめた。agentd の路に retryable を運ぶべきかは R47 の持ち主の判断として依頼者へ引き継ぐ(design.md 10 節)"
+    },
+    {
+      "id": "S2",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "出来事の置き場を替える(Mac も送り待ちの表へ・FileEventStore を退役・段の DB へ直接書く置き場を足す)",
+      "claim": "変わるのは M5(と host の組み立て)だけ。M7 と M8 は置き場を知らない",
+      "expected_scope": "M5(design-before-blind.md S2)",
+      "actual_scope": "盲検 B の再現(evidence/repro-b.log): M7 が HeadlessEventsSince(locator + STDERR-SUFFIX) で stderr を読む実装が焦点の 3 file を 100 passed で通り、file の置き場だけ答えが変わった = 置き場を替えると M7 の答えが変わる形を止める検査が無かった。T-B を足した後は同じ実装が T-B で赤になる(evidence/negative-b.log)。正しい実装では置き場 3 つで同じ答え(evidence/positive-after.log)",
+      "changed_modules": [
+        "M5"
+      ],
+      "unchanged_modules": [
+        "M1",
+        "M2",
+        "M3",
+        "M4",
+        "M6",
+        "M7",
+        "M8",
+        "M9"
+      ],
+      "reason": "B の形は隠すはずの知識の漏洩(M5 の file の物理が M7 へ)で、正当な契約の変更ではない。根は locator が型の無い文字列で、置き場ごとに解き方が違うこと",
+      "revision": "T-B sessionhost_cache_maintenance_deftests.hy::test-cache-probe-answers-the-same-on-every-event-store を足し、M8 の locator を M5 の定数で組むように直した。locator を閉じた型にする根の修正(M5・094424fc の契約)は依頼者へ引き継ぐ(design.md 10 節)"
+    },
+    {
+      "id": "S3",
+      "axis": "simulation",
+      "applicability": "applicable",
+      "change": "仮想の時計で cache 維持を決定的に回す(模擬環境や別のテストで cache 維持の周期を再現する)",
+      "claim": "時刻は M8 の ClockNow と積む行の at だけから決まる。M6 の登記簿の時計は probe の路で読まれない",
+      "expected_scope": "なし(M8 の世界だけで決まる)(design-before-blind.md S3)",
+      "actual_scope": "なし。落ちる時計を持つ登記簿で probe と clock-swapped のテストが通り、M8 の ClockNow を外すと UnhandledEffect(ClockNow) で止まった(evidence/experiment-s3.log)",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "M1",
+        "M2",
+        "M3",
+        "M4",
+        "M5",
+        "M6",
+        "M7",
+        "M8",
+        "M9"
+      ],
+      "reason": "予想どおり。M6 は ClockNow に答えず、登記簿の時計は子 process の出来事の刻みにだけ使われる",
+      "revision": "盲検は反例を出さなかったので実験で確かめ、clock-swapped のテストの登記簿を落ちる時計にして以後の変更でも赤になるようにした"
+    },
+    {
+      "id": "HW",
+      "axis": "hardware",
+      "applicability": "excluded",
+      "reason": "この 2 本のテストと足したテストは機体の種類で分かれる判断を持たない。Mac と Linux(zeus)の両方で同じ結果を確かめた。herdr の版で欄が違う件は別の依頼書 H"
+    },
+    {
+      "id": "DIST",
+      "axis": "distribution",
+      "applicability": "excluded",
+      "reason": "host_drained の手番を別の host で走らせ直す判断は ACP 側で、doeff 側が持つのは語の表と M9 の写しだけ。出来事の置き場の cluster 化は S2(storage)で扱った"
+    },
+    {
+      "id": "CONC",
+      "axis": "concurrency",
+      "applicability": "excluded",
+      "reason": "テストの世界は応答の行を積み終えてから読む(単一の thread)。append と since の並行は M5 の契約で、その検(test_sessionhost_headless_events.py)はこの変更で触れていない(焦点の実行で緑)"
+    }
+  ],
+  "checks": [
+    {
+      "id": "K01-S1-negative-before-fix",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "直す前の断面(294aac38)で、M1 に host_drained が在り M3 の写しに無いことを M3 が拒否する(AssertionError)",
+      "observation": "test_terminal_cause_retryable_frozen_table が AssertionError(sessionhost_policy_deftests.hy:1527)。2 failed, 80 passed",
+      "evidence": {
+        "path": "evidence/before-fix.log",
+        "sha256": "15d6388956752ac6771c3b67d4394f7024d25eef2b824863016a30483c56916b"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "K02-S1-positive",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "M2・M3 に host_drained を足した後、M3 と T-A が緑(Mac)",
+      "observation": "PASSED test_terminal_cause_retryable_frozen_table・PASSED test_adr_doe_agents_012_every_session_category_pins_its_retryable_next_to_its_job_outcome・PASSED test_enforcement_inventory_matches_ledger。焦点の 6 file で 186 passed",
+      "evidence": {
+        "path": "evidence/positive-after.log",
+        "sha256": "747dfa00af07c0e9eaff8e51783e63b30a15a175dc6e95aa4afe8b7d306eb45e"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "K03-S1-negative-retryable-flip",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "盲検 A の形(M1 と M3 を揃えて context_exhausted を true に)を、M3 は通しても T-A が拒否する",
+      "observation": "A-1: 1 failed(T-A: 行の終端の語の retryable と agentd の路の結末の表が食い違う)・2 passed(M3 を含む)",
+      "evidence": {
+        "path": "evidence/negative-a.log",
+        "sha256": "e8c717eb7b852e0268610da1b2e3fdb0a83e9ec2dd7b4f0b6d73b9adb6576a27"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "K04-S1-negative-new-category",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "M1 と M3 に新しい語を足し M9 の結末を決めない変更を、T-A が拒否する",
+      "observation": "A-2: 1 failed(T-A: 同じ文 — host_retired の行が固定の表に無い)・2 passed。戻すと 3 passed",
+      "evidence": {
+        "path": "evidence/negative-a.log",
+        "sha256": "e8c717eb7b852e0268610da1b2e3fdb0a83e9ec2dd7b4f0b6d73b9adb6576a27"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "K05-S2-negative-before-fix",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "直す前の断面(294aac38)で、テストの世界が HeadlessEventsSince を受けないことが UnhandledEffect で表に出る(黙って空を返さない)",
+      "observation": "test_clock_swapped_idle_cleanup_ping_and_next_cycle が doeff_vm.UnhandledEffect: HeadlessEventsSince(locator='events', cursor=0)",
+      "evidence": {
+        "path": "evidence/before-fix.log",
+        "sha256": "15d6388956752ac6771c3b67d4394f7024d25eef2b824863016a30483c56916b"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "K06-S2-positive",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "M8 が M6 に M5 の MemoryEventStore を組んだ形で clock-swapped のテストが緑。T-B で置き場 3 つの答えが同じ",
+      "observation": "PASSED test_clock_swapped_idle_cleanup_ping_and_next_cycle・PASSED test_cache_probe_answers_the_same_on_every_event_store(Mac・焦点の 6 file で 186 passed)",
+      "evidence": {
+        "path": "evidence/positive-after.log",
+        "sha256": "747dfa00af07c0e9eaff8e51783e63b30a15a175dc6e95aa4afe8b7d306eb45e"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "K07-S2-negative-blind-b",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "盲検 B の差分(M7 が locator + STDERR-SUFFIX で stderr を読む)を T-B が拒否する(差分だけなら焦点の 3 file は 100 passed で通った — evidence/repro-b.log)",
+      "observation": "1 failed(T-B: 置き場で答えが変わった(failed) — file だけ 'provider-error: API Error: 529 overloaded')・7 passed",
+      "evidence": {
+        "path": "evidence/negative-b.log",
+        "sha256": "a169f31dacd62bb30e098d5b8432700acc462d223f716ac6b049a494fe48a161"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "K08-S3-positive",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "読まれたら落ちる時計を持つ登記簿で、テストの世界の ClockNow だけを時刻にして probe が成功する",
+      "observation": "positive: state=succeeded reply.completed_at=3300000。clock-swapped のテストも落ちる時計で PASSED",
+      "evidence": {
+        "path": "evidence/experiment-s3.log",
+        "sha256": "680fce10dfbf0c463b7d5dbe93d7d0e6d63c17c112b988a985ef73edcf10fdaa"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "K09-S3-negative",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "テストの世界を外すと、package の handler は壁時計で黙って答えず、ClockNow が未処理で止まる",
+      "observation": "negative: UnhandledEffect: no handler found for effect: ClockNow (ClockNow())",
+      "evidence": {
+        "path": "evidence/experiment-s3.log",
+        "sha256": "680fce10dfbf0c463b7d5dbe93d7d0e6d63c17c112b988a985ef73edcf10fdaa"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "K10-linux-positive",
+      "scenarios": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "同じ変更で、焦点の 6 file が Linux の機体(zeus)でも緑",
+      "observation": "remote-check: ran=remote node=zeus rc=0 remote_s=389.2・186 passed(T-A・T-B・M3・clock-swapped・台帳の検の PASSED を含む)",
+      "evidence": {
+        "path": "evidence/zeus-after.out",
+        "sha256": "689bdb5a465fde08ba05c0801fdafa04a4f31a4aa59d61ce4c86f57584556776"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "K11-rebased-positive-mac",
+      "scenarios": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "本線 a492bd01 の上へ載せ直した検の commit 0fed5c44(台帳の衝突を semgrep 275・deftest 138 で解いた)で、焦点の 6 file が Mac で緑",
+      "observation": "186 passed・exit=0(T-A・T-B・M3・clock-swapped・台帳の検を含む)",
+      "evidence": {
+        "path": "evidence/positive-after-rebase.out",
+        "sha256": "0728a314b536f49040ba86a7846a6d247650ed18b1488d66df053a366f1a9b65"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "K12-rebased-positive-linux",
+      "scenarios": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "同じ 0fed5c44 で、焦点の 6 file が Linux の機体(zeus)でも緑",
+      "observation": "remote-check: ran=remote node=zeus rc=0 remote_s=410.3・186 passed(T-A・T-B・M3・clock-swapped・台帳の検の PASSED を含む。出力に本線 1e4e10be の R49 の検の文が出る)",
+      "evidence": {
+        "path": "evidence/zeus-after-rebase.out",
+        "sha256": "572e5fb79c42e8e9e44922d1d79d4030b168b86eb31d8a17fc11dc1343270bf8"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": []
+}

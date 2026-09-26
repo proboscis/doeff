@@ -1,0 +1,8 @@
+# 2026-09-26T08:37:53+0900 基底 72da0ff1195a8078909228ac8d1115c28daddeae + 作業樹の変更 — S3 の実験(script sha256 8b8ca722cde7a4110034ab530425f831aea81671309408582a4293eb7ec3fa47)
+$ PYTHONDONTWRITEBYTECODE=1 uv run --no-sync python docs/design/daily-red-639/frozen-table-cache/evidence/experiment_s3.py
+UnhandledEffect: no handler found for effect: ClockNow (ClockNow())
+  handlers in scope (innermost→outermost): headless_substrate
+
+positive: world answers ClockNow, registry clock raises -> state=succeeded reply.completed_at=3300000
+negative: without the world's ClockNow -> UnhandledEffect: no handler found for effect: ClockNow (ClockNow())
+exit=0

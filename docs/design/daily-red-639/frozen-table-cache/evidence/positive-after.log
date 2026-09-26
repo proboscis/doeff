@@ -1,0 +1,10 @@
+# 2026-09-26T08:49:30+0900 基底 72da0ff1195a8078909228ac8d1115c28daddeae + この commit の変更(T-A = ADR-012 の検・T-B・locator を定数から・登記簿の時計を落ちる時計に・台帳 137→138)— 正常例(Mac)
+$ PYTHONDONTWRITEBYTECODE=1 uv run --no-sync pytest -q -m 'not e2e' -p no:warnings -rA docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy tests/test_enforcement_ledger.py packages/doeff-agents/tests/test_sessionhost_policy.py packages/doeff-agents/tests/test_sessionhost_cache_maintenance.py packages/doeff-agents/tests/test_sessionhost_acp_ended_cause.py packages/doeff-agents/tests/test_sessionhost_headless_events.py
+pytest exit=0
+PASSED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_every_session_category_pins_its_retryable_next_to_its_job_outcome
+PASSED tests/test_enforcement_ledger.py::test_enforcement_inventory_matches_ledger
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_failed_output_cause_frozen_table
+PASSED packages/doeff-agents/tests/test_sessionhost_policy.py::test_terminal_cause_retryable_frozen_table
+PASSED packages/doeff-agents/tests/test_sessionhost_cache_maintenance.py::test_cache_maintenance_program[test_cache_probe_answers_the_same_on_every_event_store]
+PASSED packages/doeff-agents/tests/test_sessionhost_cache_maintenance.py::test_cache_maintenance_program[test_clock_swapped_idle_cleanup_ping_and_next_cycle]
+186 passed in 136.40s (0:02:16)

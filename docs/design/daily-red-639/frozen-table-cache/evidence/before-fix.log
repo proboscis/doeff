@@ -1,0 +1,11 @@
+# 2026-09-26T08:33:31+0900 直す前の断面 294aac38e5708f400f0fba951a608ca3bf7a8e4a(作業樹 doeff-wt-639-P-blind)— 依頼書 P の 2 本の検の赤
+$ PYTHONDONTWRITEBYTECODE=1 uv run --no-sync pytest -q -m 'not e2e' -p no:warnings -rf --tb=line packages/doeff-agents/tests/test_sessionhost_policy.py packages/doeff-agents/tests/test_sessionhost_cache_maintenance.py
+pytest exit=1
+E   AssertionError
+/Users/kento/.worktrees/doeff-wt-639-P-blind/packages/doeff-agents/tests/sessionhost_policy_deftests.hy:1527: AssertionError
+E   doeff_vm.UnhandledEffect: no handler found for effect: HeadlessEventsSince (HeadlessEventsSince(locator='events', cursor=0))
+UnhandledEffect: no handler found for effect: HeadlessEventsSince (HeadlessEventsSince(locator='events', cursor=0))
+/Users/kento/.worktrees/doeff-wt-639-P-blind/packages/doeff-agents/src/doeff_agents/sessionhost/cache_host.hy:51: doeff_vm.UnhandledEffect: no handler found for effect: HeadlessEventsSince (HeadlessEventsSince(locator='events', cursor=0))
+FAILED packages/doeff-agents/tests/test_sessionhost_policy.py::test_terminal_cause_retryable_frozen_table
+FAILED packages/doeff-agents/tests/test_sessionhost_cache_maintenance.py::test_cache_maintenance_program[test_clock_swapped_idle_cleanup_ping_and_next_cycle]
+2 failed, 80 passed in 45.71s

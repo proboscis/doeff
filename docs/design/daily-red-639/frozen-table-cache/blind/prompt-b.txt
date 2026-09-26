@@ -1,0 +1,116 @@
+あなたは静的検査を通過する責務違反の反例を生成してください。
+合理的な機能追加・修正として実装されそうで、提示した検査をそのまま実行しても通るのに、
+知識・判断・状態・effectsの所有者や公開契約を侵す実装を1つ具体化してください。
+一般的な設計レビューや承認判定は求めていません。
+
+検査の無効化、baselineの改変、対象除外、as any、ignoreやlint抑制、根拠のないcast、
+動的importによる回避は使わないでください。小さい既存例に対する抜け道だけでなく、
+通常の実装者が機能を実現しようとして書きそうなコードで示してください。
+
+返答には次を含めてください。
+1. 現実的な機能要求と、提案する具体的なコードまたは最小差分。
+2. 本来の責務所有者と、違反する契約。何の判断・知識がどこへ移るか。
+3. 提示された各検査がそのコードを拒否しない理由。未提示の検査は推測しないこと。
+4. 同じ設定で検査通過と責務違反の両方を確かめる最小の入力・手順・期待結果。
+5. 未確認の前提、不足する情報。推測と実測を明確に区別すること。
+
+共有ソースを変更せず、全数検査や他会話への連絡を行わず、日本語で返してください。
+実行していない検査を通ったと断定しないでください。反例が見つからない場合は探索した範囲と
+不足を述べ、合格・安全とは結論しないでください。
+
+以下が固定済みの要件・責務・公開契約・将来変更についての主張・検査の実体と実行方法と、読む材料です。作業 dir はその repo の作業樹です(読み取りだけ)。
+
+# 盲検に渡す材料(依頼書 P の変更の設計)
+
+依頼: lt-8VE8M7SAMSXSDVCRVWS033AGJD(agora-redesign#639 実装依頼書 P)
+完了の範囲: 実装完了まで。実装は本線 c98fd834913104c2026ef8e78f309b1c3ab90b30 に着地済み(land L392)。
+基準の版: 変更前の本線 294aac38e5708f400f0fba951a608ca3bf7a8e4a。
+
+## 1. 固定した要件(受入条件)
+
+1. `packages/doeff-agents/conformance/README.md` の「TerminalCause 凍結表」に host_drained の行を足す
+   (host の停止の拍に排水の宣言の印が在った・HostDrained・retryable = true・根拠 = ADR-DOE-AGENTS-012 R47 の改訂 f271ae39)。
+   印の無い停止は今までどおり cancelled(false)であることも書く。
+   `tests/sessionhost_policy_deftests.hy` の `test-terminal-cause-retryable-frozen-table` の表に `"host_drained" True` を足す。
+   ADR の改訂が先に在ることを確かめてから直す。
+2. `tests/sessionhost_cache_maintenance_deftests.hy` の検の世界が `HeadlessEventsSince` を受けるようにする。
+   package が出す同じ契約の fake の handler を組む形を第一とし、検の中に effect の答えを手で書くのは fake が無い時だけ。
+3. 同じ file の他の検が同じ理由で赤でないことを file 全体を走らせて確かめる。
+4. 受入: 2 本の検が Mac と Linux の機体の両方で緑(file 全体)。直す前の断面で固定の表の検が赤だったこと。
+
+## 2. 責務(module)
+
+| id | 実体 | 責務 | 持つ知識 | 隠す知識 | 公開の形 |
+| --- | --- | --- | --- | --- | --- |
+| M1 terminal-vocabulary | `sessionhost/policy.hy` `TERMINAL-CAUSE-RETRYABLE`・`make-cause` | 終端の語(category)と再試行の可否の対応の実装の 1 点 | category → retryable の表・表に無い語を断ること | なし(公開の表) | dict(wire の snake_case の語 → bool)・`make-cause` は表に無い語を precondition で断る |
+| M2 contract-document | `conformance/README.md`「TerminalCause 凍結表」 | 事象 → category → retryable の契約の文 | 各行の事象の意味・改訂の規則(「Hy 実装がこの表を変える場合は ADR 改訂が先」) | なし | 人が読む表(category は CamelCase のラベル) |
+| M3 frozen-pin | `tests/sessionhost_policy_deftests.hy` `test-terminal-cause-retryable-frozen-table` | M2 を wire の語で写した固定の表と M1 の完全一致を検める | M2 の写し | なし | pytest の検 1 本(dict の完全一致) |
+| M4 adr-record | `docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy` R47・R-the-host-only-reads-the-drain-marker-once-002c とその deftest | 表を変える理由と時機の記録 | host_drained の意味(印ありの停止)・印の読みの規則 | なし | 法の文・deftest(host_drained が retryable で表に在る) |
+| M5 event-contract | `sessionhost/headless_events.py`(`HeadlessEventAppend` / `HeadlessEventsSince` / `EventChunk` / `HeadlessEventStore` / `key_of_locator` / `MemoryEventStore` / `FileEventStore`)と `headless_outbox.py` `OutboxEventStore` | 出来事の effect の語彙と置き場の口・置き場の実装 3 つ | locator の綴り・cursor の意味(置き場ごと)・行の形 | 置き場の物理(file / sqlite の送り待ち / memory)を読み手から隠す | effect 2 つ・Protocol `HeadlessEventStore`(open_stream / append / begin_turn / since / head) |
+| M6 event-handler | `sessionhost/substrate_headless.hy` `headless-substrate` + `headless_process.py` `HeadlessRegistry` | `HeadlessEventsSince` / `HeadlessEventAppend` を登記簿が持つ置き場へ渡す | 登記簿 → 置き場の対応 | 置き場の種類 | defhandler(registry を引数に取る) |
+| M7 cache-reader | `sessionhost/cache_host.hy` `cache-host-probe` | 専用操作(cache ping)の結果を出来事から読み、成功・失敗・不明を決める | 行の JSON の読み方・成功の判定・期限 | 置き場を知らない(`HeadlessEventsSince` だけで読む) | defk `(cache-host-probe record)` → HostCacheRecord |
+| M8 test-world | `tests/sessionhost_cache_maintenance_deftests.hy` の `residency-world` と、`test-clock-swapped-idle-cleanup-ping-and-next-cycle` の組み立て | 仮想の時計・receipt・provider の応答の台本を与え、本物の Program(M7 と ACP 側の判断)を走らせる | 時刻(ClockNow)・receipt・応答の行 | 置き場の物理を持たない(package の M6 に M5 の `MemoryEventStore` を組む) | 検 1 本 |
+
+停止・再開・解放: M5 の `MemoryEventStore` は process の中の list で解放は GC。M6 の登記簿は検ごとに作る(検の間で共有しない)。
+M8 は子 process を起こさない(`HeadlessKill` は M8 の世界が受ける)。
+
+## 3. 変更シナリオと事前の主張
+
+### S1(axis = effects・適用): 終端の語を 1 つ足す、または既存の語の retryable を変える
+
+- 変更の例: ACP 側の要求で新しい category を足す(例: 機体の退役で切った手番の語)、または context_exhausted を true にする。
+- 主張: 変わるのは M1(表)・M2(契約の文)・M3(写し)・M4(改訂の記録)の 4 か所で、これは**共同の不変条件**
+  (契約所有の表を実装・文書・写しの 3 か所に置き、黙った変更を赤にする意図した形)。M5〜M8 は変わらない。
+- 予想する波及: M1・M2・M3・M4。
+- 前提: 表の語は wire の snake_case。M3 は dict の完全一致で比べる。
+
+### S2(axis = storage・適用): 出来事の置き場を替える
+
+- 変更の例: Mac も送り待ちの表(`OutboxEventStore`)へ移す・`FileEventStore` を退役する・段の DB へ直接書く置き場を足す。
+- 主張: 変わるのは M5(置き場の実装)と host の組み立ての 1 点だけ。M7(cache の読み手)と M8(検の世界)は変わらない。
+  M8 は置き場の物理を持たず、M5 の Protocol を満たす memory の置き場を M6 に渡すだけなので、本番の置き場の選び方に依らない。
+- 予想する波及: M5(と host.hy の組み立て)。
+- 前提: 置き場はどれも `HeadlessEventStore` の契約(since が stdout の完全な行を返す)を守る。
+
+### S3(axis = simulation・適用): 仮想の時計で cache 維持を決定的に回す
+
+- 変更の例: 模擬環境(agora_sim)や別の検で、時刻を仮想の時計にして cache 維持の周期を再現する。
+- 主張: M8 の時刻は `ClockNow`(M8 の世界が答える)と、応答の行を積む時に M8 が渡す `at` だけから決まる。
+  M6 の登記簿の時計(既定は壁時計)は `cache-host-probe` の路では読まれない。M5 の `MemoryEventStore` は OS の時計を読まない。
+- 予想する波及: なし(M8 の世界だけで決まる)。
+- 前提: `HeadlessEventAppend.at` は呼び手が渡す(M5 の docstring の契約)。
+
+### 不適用
+
+- hardware: この 2 本の検は機体の種類で分かれる判断を持たない(herdr の版の違いは別の依頼書 H)。
+- distribution: host_drained の手番を別の host で走らせ直す判断は ACP 側で、doeff 側が持つのは語の表だけ。
+  出来事の置き場の cluster 化は S2(storage)で扱う。
+- concurrency: M8 は応答の行を積み終えてから読む(単一の thread)。append と since の並行は M5 の契約で、
+  その検(`test_sessionhost_headless_events.py`)はこの変更で触れない。
+## 4. 強制の方法(設計者の主張)
+
+| 守る責務 | 強制方法 | 実装箇所 | 実行経路 |
+| --- | --- | --- | --- |
+| M1 の黙った変更を赤にする | M3 の dict の完全一致 | `packages/doeff-agents/tests/sessionhost_policy_deftests.hy::test-terminal-cause-retryable-frozen-table`(`packages/doeff-agents/tests/test_sessionhost_policy.py` が集める) | 日次の `make test-packages`・焦点の pytest |
+| host_drained の意味と retryable | M4 の deftest(`TERMINAL-CAUSE-RETRYABLE` の host_drained が True) | `docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy` | ADR の検の収集 |
+| M7 が置き場を知らない | ADR-012 法 `headless-events-are-read-through-the-host` の :enforcement の検 4 本 | `packages/doeff-agents/tests/test_sessionhost_headless_events.py`・`packages/doeff-agents/tests/test_sessionhost_headless.py` | 焦点・日次 |
+| M8 が置き場の物理を持たない | M8 は M6(package の handler)と M5(package の fake)を組む。検の世界の handler は `HeadlessEventsSince` を受けない | `packages/doeff-agents/tests/sessionhost_cache_maintenance_deftests.hy` | 焦点・日次 |
+
+## 5. 読む材料(repo = この作業樹・版 = origin/main 72da0ff1)
+
+- 変更の差分: `git show c98fd834`(README・2 本の検の file・docs/cache-maintenance-residency.md)
+- M1: `packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy`(`TERMINAL-CAUSE-RETRYABLE` 付近・`make-cause`)
+- M2: `packages/doeff-agents/conformance/README.md` の節「TerminalCause 凍結表」
+- M3: `packages/doeff-agents/tests/sessionhost_policy_deftests.hy`(`test-terminal-cause-retryable-frozen-table`)
+- M4: `docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy`(rule R47・R-the-host-only-reads-the-drain-marker-once-002c・`CAUSE-CATEGORY-HOST-DRAINED` を検める deftest)
+- M5: `packages/doeff-agents/src/doeff_agents/sessionhost/headless_events.py`・`headless_outbox.py`
+- M6: `packages/doeff-agents/src/doeff_agents/sessionhost/substrate_headless.hy`・`headless_process.py`(`HeadlessRegistry`)
+- M7: `packages/doeff-agents/src/doeff_agents/sessionhost/cache_host.hy`
+- M8: `packages/doeff-agents/tests/sessionhost_cache_maintenance_deftests.hy`
+- 検の集め方: `packages/doeff-agents/tests/test_sessionhost_policy.py`・`test_sessionhost_cache_maintenance.py`(deftest の file を pytest へ渡す)
+
+## 6. 検の実行方法
+
+repo の根で `PYTHONDONTWRITEBYTECODE=1 uv run --no-sync pytest -q -m 'not e2e' -p no:warnings <file>`。
+対象: `packages/doeff-agents/tests/test_sessionhost_policy.py`・`packages/doeff-agents/tests/test_sessionhost_cache_maintenance.py`・
+`packages/doeff-agents/tests/test_sessionhost_headless_events.py`。source の変更と全数の実行はしない。

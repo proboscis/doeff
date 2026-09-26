@@ -1,0 +1,12 @@
+context_exhausted  before retryable=False -> {'category': 'failed', 'reason': 'SessionFailed'} ('SessionFailed',)
+                   after  retryable=True  -> {'category': 'failed', 'reason': 'SessionFailed'} ('SessionFailed',)
+                   job outcome changed: False
+run_failed         before retryable=False -> {'category': 'failed', 'reason': 'SessionFailed'} ('SessionFailed',)
+                   after  retryable=True  -> {'category': 'failed', 'reason': 'SessionFailed'} ('SessionFailed',)
+                   job outcome changed: False
+host_drained       before retryable=True  -> {'category': 'agentd-stopped', 'reason': 'host-drained'} ('HostDrained',)
+                   after  retryable=False -> {'category': 'agentd-stopped', 'reason': 'host-drained'} ('HostDrained',)
+                   job outcome changed: False
+cancelled          before retryable=False -> {'category': 'failed', 'reason': 'SessionFailed'} ('SessionFailed',)
+                   after  retryable=True  -> {'category': 'failed', 'reason': 'SessionFailed'} ('SessionFailed',)
+                   job outcome changed: False

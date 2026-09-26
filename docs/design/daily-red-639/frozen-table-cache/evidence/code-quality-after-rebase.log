@@ -1,0 +1,30 @@
+# 2026-09-26T09:06:59+0900 変更箇所の品質検査(本線 a492bd01916264bf40c84e3dbb05d9ed2bdae6ec の上へ載せ直した commit 0fed5c44・基底 a492bd01916264bf40c84e3dbb05d9ed2bdae6ec)
+$ sh agent/venv-run.sh agentcli code-quality --repo /Users/kento/.worktrees/doeff-wt-639-P --scope changed --base a492bd01916264bf40c84e3dbb05d9ed2bdae6ec  (dotfiles の根で)
+rc=1
+code-quality: failed (scope=changed)
+code-quality-base: {'revision': 'a492bd01916264bf40c84e3dbb05d9ed2bdae6ec', 'repo': '/Users/kento/.worktrees/doeff-wt-639-P'}
+code-quality-stage: fast(指定範囲・変更範囲の拡張なし・速い規則だけ)— 型検査(pyright / hy / cabal / tsc)はこの段では撃たない = 型は日次(--stage full)と手の名指しだけ。この passed は型を含まない
+code-quality-registration: packages/doeff-agents/tests/sessionhost_cache_maintenance_deftests.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy:5323: untyped-boundary: 公開関数の型注釈がない: source, return
+docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy:163: dependency-not-allowed: allow にない module への依存
+docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy:163: dependency-not-allowed: allow にない module への依存
+docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy:5254: dependency-not-allowed: allow にない module への依存
+docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy:5299: dependency-not-allowed: allow にない module への依存
+docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy:5300: dependency-not-allowed: allow にない module への依存
+docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy:5363: dependency-uncontracted: 内部の依存先に module 契約がない
+code-quality-timing: prepare 0.449s inventory=1519 scoped=71 sources=3 changed=3 selected=2
+code-quality-timing: verdict-lookup 0.001s hit=False key=9110dfc580f9
+code-quality-timing: candidate.sources 2.612s sources=3 selected=3 analyzed={'hy': 2} by_language={'hy': 2.61} cache_hits=1 cache_misses=1
+code-quality-timing: candidate.closure 0.0s affected=3 languages={'?': 1, 'hy': 2} touched_languages=['hy']
+code-quality-timing: base.workspace 1.048s paths=2681
+code-quality-timing: base.read 0.087s inventory=1514 sources=3
+code-quality-timing: base.sources 2.569s sources=3 selected=3 analyzed={'hy': 2} by_language={'hy': 2.57} cache_hits=1 cache_misses=1
+code-quality-timing: base.closure 0.0s affected=3 languages={'?': 1, 'hy': 2} touched_languages=['hy']
+code-quality-timing: base.unprojectable 0.0s paths=0
+code-quality-timing: base.boundary 0.001s modules=54 paths=1514
+code-quality-timing: base.policy 0.0s dependencies=116 findings=6
+code-quality-timing: observe-baseline 3.939s needed=True
+code-quality-timing: compare-observed 0.0s candidate=7 base=7 by_budget=0
+code-quality-timing: compare-guarantees 0.042s
+code-quality-coverage: partial / 対象 71 / 全体 1519 / 未導入 {'executable-unknown': 1, 'hy': 315, 'javascript': 1, 'lua': 17, 'python': 990, 'rust': 107, 'shell': 12, 'typescript': 5} / typed:true だが include に無い 5(型は日次(fast の段は compiler を撃たない)) / include の重複 0 / 基底の鍵の重複 0
+code-quality-baseline: 今回観測した既存違反 0 / 登録 3 件（自動増加しない）
