@@ -260,8 +260,9 @@
   (setv #^ (| int None) finished-ms None)
   ;; --- 切り離した task(2026-09-25・SubmitDetached — detached_model.hy)---
   ;; detached = 呼び手の問い合わせと寿命を切り離した task。key = 呼び手の決めた job id(送り直しても同じ行)。
-  ;; lease は担い手の worker の heartbeat が延ばし、切れたら(worker の死)phase = lost。boot = 置いた時の worker の process の世代
-  ;; (違う世代の heartbeat が来たら lost — 走らせ直さない)。retain-ms = 終わった後に結果を持っておく長さ。
+  ;; boot = 置いた時の worker の process の世代。lease は置いた世代の heartbeat だけが延ばし、置いた世代の heartbeat が lease の間
+  ;; 止まったら phase = lost(走らせ直さない)。同じ名の別の世代の heartbeat は延ばしも lost にもしない(2026-09-27)。
+  ;; retain-ms = 終わった後に結果を持っておく長さ。
   ;; 切り離した task だけが使う phase: version-mismatch | lost | cancelled。
   (setv #^ bool detached False)
   (setv #^ (| str None) key None)

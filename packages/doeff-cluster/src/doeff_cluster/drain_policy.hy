@@ -17,7 +17,7 @@
 ;;; (cluster_policy.absorb-boot — Pod を作り直した後の worker は空けない)。取り消しは DELETE /workers/<名>/drain。
 (import dataclasses [replace])
 (import .cluster_model [ClusterState ClusterTiming Drain Placement])
-(import .cluster_policy [alive eligible can-take draining-workers load-of superseded-boot LIVE-PHASES MAX-EVENTS])
+(import .cluster_policy [alive eligible can-take draining-workers load-of other-generation-boot LIVE-PHASES MAX-EVENTS])
 (import .resource_policy [refuse service-readiness])
 
 (setv DRAIN-DEFAULT-TTL-SECONDS 300)          ; 頼み直さない drain が消えるまで(preStop は数秒ごとに頼み直す)
@@ -36,9 +36,10 @@
     (refuse 400 (.format "ttlSeconds は 0 より大きく {} 以下: {!r}" DRAIN-MAX-TTL-SECONDS ttl)))
   (when (not (or (is boot None) (isinstance boot str)))
     (refuse 400 (.format "boot は頼み手の worker の process の世代の文字列: {!r}" boot)))
-  ;; 退いた世代の頼み(旧い Pod の preStop)は、同じ名の今の世代に drain を付けない(2026-09-27)。
-  ;; 答えは superseded-worker-view(その世代に置いた task が終わるまで待たせる)。
-  (when (superseded-boot state name boot) (return state))
+  ;; 今の世代でない頼み(退いた世代 = 旧い Pod の preStop・一度も見ていない世代 = 最初の heartbeat の前に消された新しい Pod の
+  ;; preStop)は、同じ名の今の世代に drain を付けない(2026-09-27)。答えは superseded-worker-view(その世代に置いた task が
+  ;; 終わるまで待たせる — 見ていない世代には task が無いので drained)。boot の無い頼み(旧い版の preStop・手の頼み)だけ今の世代に付ける。
+  (when (other-generation-boot state name boot) (return state))
   (setv until (+ now (int (* 1000 ttl)))
         current (.get state.drains name))
   (replace state :drains (| state.drains
