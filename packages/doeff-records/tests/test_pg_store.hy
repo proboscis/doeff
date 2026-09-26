@@ -1,5 +1,6 @@
 ;; PostgreSQL の置き場だけの性質: 別の接続からの同時の ExpectAbsent は 1 つだけ通る・接続を開き直しても行と番号が続く・
 ;; 接続の失敗は Unreachable の答え・自動 commit でない接続は組み立てで断る。env DOEFF_RECORDS_TEST_PG_DSN が無ければ skip。
+;; 反例: 置き場の書きの lock を流さない host では、同時の ExpectAbsent が 2 つとも通る(「1 つだけ通る」の判定が赤になる)。
 (require doeff-hy.macros [deftest])
 (import os)
 (import threading)
@@ -11,12 +12,43 @@
 (import doeff_records.effects [PutRow ReadRow ListRows])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
 (import doeff_records.pg [PgRecordsHost pg-records-handler drop-records-tables])
-(import tests.interpreters [PG-DSN-VARIABLE open-postgres])
+(import tests.interpreters [PG-DSN-VARIABLE open-postgres pg-errors])
 
 (setv PG-DSN (.get os.environ PG-DSN-VARIABLE))
 
 
 (defn fresh-prefix [] (+ "t" (cut (. (uuid.uuid4) hex) 12) "_"))
+
+(defn #^ bool admitted-exactly-one? [#^ list answers]
+  "同時の ExpectAbsent 2 つの答えが「1 つだけ通り、1 つは衝突」か(lock の検と反例が同じ判定を使う)。"
+  (= (sorted (lfor a answers (. (type a) __name__))) ["Conflict" "Written"]))
+
+
+(defclass LocklessHost [PgRecordsHost]
+  "反例の host: 置き場の書きの lock を流さず、行の読み(FOR UPDATE)の後で 2 本の書きを揃える(両方が「行が無い」を読んでから書く)。"
+  (defn __init__ [self connection schema barrier * prefix]
+    (setv self.barrier barrier)
+    (.__init__ (super) connection schema :unreachable-errors (pg-errors) :prefix prefix))
+  (defn execute [self statement]
+    (when (.startswith statement.text "SELECT pg_advisory_xact_lock")
+      (return None))
+    (setv cursor (.execute (super) statement))
+    (when (.endswith (.rstrip statement.text) "FOR UPDATE")
+      (.wait self.barrier))
+    cursor))
+
+
+(defn race-absent-writes [hosts #^ str key]
+  "2 つの host から同じ鍵へ同時に ExpectAbsent を撃ち、答えを返す。"
+  (setv start (threading.Barrier 2) found [])
+  (defn attempt [host label]
+    (.wait start)
+    (.append found (run-on host (PutRow "parts" #(key) {"label" label} (ExpectAbsent)))))
+  (setv threads (lfor #(i host) (enumerate hosts) (threading.Thread :target attempt :args #(host (str i)))))
+  (for [t threads] (.start t))
+  (for [t threads] (.join t))
+  found)
+
 
 (defn run-on [host program]
   (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) (pg-records-handler host MAKER)] program))))
@@ -27,19 +59,29 @@
   ;; 行が無い時の期待は、無い行に鍵が掛からない(READ COMMITTED に述語の鍵は無い)ので、置き場の lock が無いと 2 つとも通る。
   (setv prefix (fresh-prefix)
         connections [(open-postgres) (open-postgres)]
-        hosts (lfor c connections (PgRecordsHost c LAW-SCHEMA :prefix prefix))
+        hosts (lfor c connections (PgRecordsHost c LAW-SCHEMA :unreachable-errors (pg-errors) :prefix prefix))
         answers {})
   (try
     (for [round (range 20)]
-      (setv key #((.format "race-{}" round)) barrier (threading.Barrier 2) found [])
-      (defn attempt [host label]
-        (.wait barrier)
-        (.append found (run-on host (PutRow "parts" key {"label" label} (ExpectAbsent)))))
-      (setv threads (lfor #(i host) (enumerate hosts) (threading.Thread :target attempt :args #(host (str i)))))
-      (for [t threads] (.start t))
-      (for [t threads] (.join t))
+      (setv found (race-absent-writes hosts (.format "race-{}" round)))
       (setv (get answers round) found)
-      (assert (= (sorted (lfor a found (. (type a) __name__))) ["Conflict" "Written"]) (repr found)))
+      (assert (admitted-exactly-one? found) (repr found)))
+    (finally
+      (drop-records-tables (get hosts 0))
+      (for [c connections] (.close c)))))
+
+
+(deftest test-without-the-store-lock-two-absent-writes-both-pass
+  {:skip-if (not PG-DSN) :skip-reason "DOEFF_RECORDS_TEST_PG_DSN が無い(PostgreSQL の検は走っていない)"}
+  ;; 反例: 上の検の判定(admitted-exactly-one?)が、lock を外した host では赤になる — 判定が何も確かめずに緑になる形を外す。
+  (setv prefix (fresh-prefix)
+        barrier (threading.Barrier 2 :timeout 10)
+        connections [(open-postgres) (open-postgres)]
+        hosts (lfor c connections (LocklessHost c LAW-SCHEMA barrier :prefix prefix)))
+  (try
+    (setv found (race-absent-writes hosts "race-lockless"))
+    (assert (= (lfor a found (. (type a) __name__)) ["Written" "Written"]) (repr found))
+    (assert (not (admitted-exactly-one? found)) (repr found))
     (finally
       (drop-records-tables (get hosts 0))
       (for [c connections] (.close c)))))
@@ -48,13 +90,13 @@
 (deftest test-rows-and-numbers-survive-reconnect
   {:skip-if (not PG-DSN) :skip-reason "DOEFF_RECORDS_TEST_PG_DSN が無い(PostgreSQL の検は走っていない)"}
   (setv prefix (fresh-prefix) first (open-postgres))
-  (setv host (PgRecordsHost first LAW-SCHEMA :prefix prefix))
+  (setv host (PgRecordsHost first LAW-SCHEMA :unreachable-errors (pg-errors) :prefix prefix))
   (setv written (run-on host (PutRow "parts" #("p1") {"label" "a"} (ExpectAbsent))))
   (setv page (run-on host (ListRows "parts")))
   (.close first)
   (setv second (open-postgres))
   ;; 2 度目の host は同じ表をもう一度用意する(IF NOT EXISTS / ON CONFLICT DO NOTHING で何も壊さない — 版と番号が続く)。
-  (setv again (PgRecordsHost second LAW-SCHEMA :prefix prefix))
+  (setv again (PgRecordsHost second LAW-SCHEMA :unreachable-errors (pg-errors) :prefix prefix))
   (try
     (assert (= (run-on again (ReadRow "parts" #("p1"))) (Row #("p1") written.value 1)))
     (setv later (run-on again (ListRows "parts")))
@@ -67,7 +109,7 @@
 (deftest test-a-lost-connection-answers-unreachable
   {:skip-if (not PG-DSN) :skip-reason "DOEFF_RECORDS_TEST_PG_DSN が無い(PostgreSQL の検は走っていない)"}
   (setv prefix (fresh-prefix) connection (open-postgres))
-  (setv host (PgRecordsHost connection LAW-SCHEMA :prefix prefix))
+  (setv host (PgRecordsHost connection LAW-SCHEMA :unreachable-errors (pg-errors) :prefix prefix))
   (drop-records-tables host)
   (.close connection)
   (setv answer (run-on host (ReadRow "parts" #("p1"))))
@@ -82,7 +124,7 @@
   (setv connection (psycopg.connect (get os.environ PG-DSN-VARIABLE)))
   (try
     (try
-      (PgRecordsHost connection LAW-SCHEMA :prefix (fresh-prefix))
+      (PgRecordsHost connection LAW-SCHEMA :unreachable-errors (pg-errors) :prefix (fresh-prefix))
       (assert False "自動 commit でない接続を受けた")
       (except [ValueError] None))
     (finally (.close connection))))
