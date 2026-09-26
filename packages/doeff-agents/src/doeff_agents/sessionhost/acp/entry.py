@@ -45,10 +45,9 @@ from doeff_agents.sessionhost.acp.effects import (
     JOIN_SUBCOMMAND,
 )
 from doeff_agents.sessionhost.acp.valve import acp_valve
-from doeff_agents.sessionhost.hostmain import main as host_main
 from doeff_agents.sessionhost.ready_probe import READY_SUBCOMMAND
 from doeff_agents.sessionhost.ready_probe import main as ready_main
-from doeff_agents.sessionhost.relaymain import REPORT_RESULT_MCP_SUBCOMMAND
+from doeff_agents.sessionhost.relaymain import REPORT_RESULT_MCP_SUBCOMMAND, run_report_result_mcp
 from doeff_agents.sessionhost.usage import help_topic_of, usage_text
 
 #: 器の入れ替えの口の subcommand(綴りの定義点は host_slot_cli — ここは Hy を読まずに分岐するための写し)。
@@ -61,7 +60,7 @@ HOST_DRAIN_FILE_ENV = "DOEFF_SESSIONHOST_DRAIN_FILE"
 def main() -> None:
     argv = sys.argv[1:]
     if argv and argv[0] == REPORT_RESULT_MCP_SUBCOMMAND:
-        host_main()
+        run_report_result_mcp(argv[1:])
         return
     if argv and argv[0] == READY_SUBCOMMAND:
         # host の readiness の probe の口(ready_probe — Hy も agentd も import しない)。
@@ -143,4 +142,15 @@ def main() -> None:
         #   からこそ「走っている手番を閉じる」が正しい。役を分けた後の ACP 側の停止は手番を閉じない。
         register_shutdown_hook(lambda: run.close_for_stop("SIGTERM"))
     sys.argv = [sys.argv[0], *verdict.host_argv]
-    host_main()
+    # 器を起こすのは振り分けない run_host(console script の入口 hostmain.main は弁の判定でこの入口へ戻るので呼ばない —
+    # この module は hostmain を import しない・agora-redesign #668)。
+    run_host()
+
+
+def run_host() -> None:
+    """Hy の session host を起こす(sys.argv を host の引数として読む・振り分けない)。"""
+    import hy  # noqa: F401  # registers the .hy importer
+
+    from doeff_agents.sessionhost import host
+
+    host.main()
