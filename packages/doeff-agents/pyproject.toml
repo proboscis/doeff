@@ -44,7 +44,8 @@ dev = [
 
 [project.scripts]
 doeff-agents = "doeff_agents.cli:cli"
-doeff-sessionhost = "doeff_agents.sessionhost.acp.entry:main"
+# agora-redesign #668: 入口は (c) の library の側(hostmain)。join / host-slot / 弁の serve は hostmain が旧い入口(acp/entry.py)へ渡す。
+doeff-sessionhost = "doeff_agents.sessionhost.hostmain:main"
 
 [project.urls]
 Homepage = "https://github.com/proboscis/doeff"

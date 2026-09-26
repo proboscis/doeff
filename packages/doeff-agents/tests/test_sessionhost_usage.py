@@ -29,14 +29,14 @@ from doeff_agents.sessionhost.relaymain import REPORT_RESULT_MCP_SUBCOMMAND
 
 _ENTRY_SCRIPT = (
     "import sys;"
-    "from doeff_agents.sessionhost.acp.entry import main;"
+    "from doeff_agents.sessionhost.hostmain import main;"
     "sys.argv = ['doeff-sessionhost', *sys.argv[1:]];"
     "main()"
 )
 
 
 def _run(*args: str) -> subprocess.CompletedProcess[str]:
-    """console script と同じ入口を別 process で撃つ(host は起こさない経路)。"""
+    """console script と同じ入口(hostmain — agora-redesign #668)を別 process で撃つ(host は起こさない経路)。"""
     return subprocess.run(
         [sys.executable, "-c", _ENTRY_SCRIPT, *args],
         capture_output=True,
