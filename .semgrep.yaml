@@ -308,6 +308,29 @@ rules:
         - "**/doeff-agents/conformance/harness.py"
         - "**/sessionhost/herdr_label_holders_indexed_forbidden.hy"
 
+  - id: doeff-cluster-program-arguments-are-built-in-one-place
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      A service's run.config becomes the program's keyword arguments in exactly
+      one place: service_model.program-arguments. It leaves out the assembly
+      fields the worker reads itself (record — the effect recorder) and mangles
+      the JSON keys into Hy argument names. The single-process main
+      (service-program), the worker entry (job_entry service) and the replay
+      entry (replay_main) must all call it. A second copy drifted: the worker
+      and the replay dropped record while the single-process main passed it to
+      the program, so one declaration ran on one path and crashed on the other
+      (design check 2026-09-26, blind counterexample A — agora-redesign#639
+      request 2). Call program-arguments instead of mangling config keys here.
+    patterns:
+      - pattern-regex: 'hy\.mangle'
+    paths:
+      include:
+        - "**/doeff_cluster/**"
+      exclude:
+        - "**/doeff_cluster/service_model.hy"
+
   - id: doeff-agents-idle-shell-vocabulary-is-policy-owned
     languages:
       - generic
