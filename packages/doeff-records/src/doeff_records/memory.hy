@@ -188,7 +188,7 @@
     (<- now (GetTime))
     (purge-expired store (epoch-ms now))
     (resume (memory-list-rows store effect)))
-  (PutRow [table key value expect approval]
+  (PutRow [table key value expect]
     (<- now (GetTime))
     (purge-expired store (epoch-ms now))
     (resume (memory-put-row store writer effect (epoch-ms now))))

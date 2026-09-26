@@ -5,7 +5,7 @@
 (import dataclasses [dataclass field])
 (import doeff [EffectBase])
 (import doeff_hy.frozen [FrozenMap freeze-json])
-(import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny Approval WatchCursor ListCursor checked-table-name
+(import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor checked-table-name
                               checked-field-name freeze-field])
 
 (setv DEFAULT-LIST-LIMIT 500)
@@ -29,7 +29,7 @@
   "行を鍵で 1 つ読む。答え = Row | Missing | Unreachable。"
   (#^ str table)
   (#^ tuple key)
-  (defn __post_init__ [self]
+  (defn #^ None __post_init__ [self]
     (checked-table-name self.table "ReadRow.table")
     (checked-key self.key "ReadRow.key")))
 
@@ -42,7 +42,7 @@
   (setv #^ (| tuple None) fields None)
   (setv #^ (| ListCursor None) cursor None)
   (setv #^ int limit DEFAULT-LIST-LIMIT)
-  (defn __post_init__ [self]
+  (defn #^ None __post_init__ [self]
     (checked-table-name self.table "ListRows.table")
     (freeze-field self "where" "ListRows.where")
     (for [name self.where] (checked-field-name name "ListRows.where の欄"))
@@ -55,22 +55,19 @@
 
 (defclass [(dataclass :frozen True)] PutRow [EffectBase]
   "行を書く。value = 欄の差分の凍らせた写像(書く欄 → 値。書かない欄は今の値のまま・値 None = その欄を消す〔JSON merge patch の null と同じ〕)/
-   expect = ExpectAbsent | ExpectVersion | ExpectAny /
-   approval = 承認の欄を書く時の印(任意)。答え = Written | Conflict | Refused | Unreachable。"
+   expect = ExpectAbsent | ExpectVersion | ExpectAny。答え = Written | Conflict | Refused | Unreachable。
+   書き手の名は欄に無い — handler を組む時に身元から入る(operator の宣言の欄の許可もその名で判じる)。"
   (#^ str table)
   (#^ tuple key)
   (#^ FrozenMap value)
   (#^ object expect)
-  (setv #^ (| Approval None) approval None)
-  (defn __post_init__ [self]
+  (defn #^ None __post_init__ [self]
     (checked-table-name self.table "PutRow.table")
     (checked-key self.key "PutRow.key")
     (freeze-field self "value" "PutRow.value")
     (for [name self.value] (checked-field-name name "PutRow.value の欄"))
     (when (not (isinstance self.expect #(ExpectAbsent ExpectVersion ExpectAny)))
-      (raise (TypeError "PutRow.expect は ExpectAbsent | ExpectVersion | ExpectAny")))
-    (when (not (or (is self.approval None) (isinstance self.approval Approval)))
-      (raise (TypeError "PutRow.approval は Approval か None")))))
+      (raise (TypeError "PutRow.expect は ExpectAbsent | ExpectVersion | ExpectAny")))))
 
 
 (defclass [(dataclass :frozen True)] WatchChanges [EffectBase]
@@ -80,7 +77,7 @@
   (#^ WatchCursor cursor)
   (setv #^ float timeout 0.0)
   (setv #^ int limit DEFAULT-WATCH-LIMIT)
-  (defn __post_init__ [self]
+  (defn #^ None __post_init__ [self]
     (when (not (and (isinstance self.tables tuple) self.tables)) (raise (TypeError "WatchChanges.tables は空でない tuple")))
     (for [name self.tables] (checked-table-name name "WatchChanges.tables の表"))
     (when (not (isinstance self.cursor WatchCursor)) (raise (TypeError "WatchChanges.cursor は WatchCursor")))
@@ -95,7 +92,7 @@
   (#^ str stream)
   (#^ str idempotency-key)
   (#^ object body)
-  (defn __post_init__ [self]
+  (defn #^ None __post_init__ [self]
     (object.__setattr__ self "body" (freeze-json self.body))
     (checked-table-name self.stream "AppendEvent.stream")
     (when (not (and (isinstance self.idempotency-key str) self.idempotency-key))
@@ -107,7 +104,7 @@
   (#^ str stream)
   (setv #^ int after 0)
   (setv #^ int limit DEFAULT-READ-EVENTS-LIMIT)
-  (defn __post_init__ [self]
+  (defn #^ None __post_init__ [self]
     (checked-table-name self.stream "ReadEvents.stream")
     (when (or (isinstance self.after bool) (not (isinstance self.after int)) (< self.after 0))
       (raise (ValueError (.format "ReadEvents.after は 0 以上の整数: {!r}" self.after))))
