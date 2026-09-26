@@ -28,7 +28,9 @@
 
 ;; 手番ごとの資格の env(段 10 lane 10d 便 2 の追補 2・実弾 #92 = 預かり所が口座を更新した後、
 ;; 誕生の札で再開した手番が 401 を食った)。預かり所の貸与の札はこの名で運ぶ。判定点はここ 1 つ。
-(setv TURN-AUTH-ENV-KEYS #{"CLAUDE_CODE_OAUTH_TOKEN"})
+;; claude の手番の資格の env の名(headless の adapter が借りた access token を置く・agentd の貸与の札も同じ名)。
+(setv CLAUDE-TURN-CREDENTIAL-ENV "CLAUDE_CODE_OAUTH_TOKEN")
+(setv TURN-AUTH-ENV-KEYS #{CLAUDE-TURN-CREDENTIAL-ENV})
 
 ;; provider の鍵・札の綴り(= どの層でも agent process へ運ばせない)。
 ;; 形(`*_API_KEY`)の判定と重なる名も在るが、重なりは無害 — 形だけでは拾えない
@@ -47,11 +49,11 @@
 (setv PROVIDER-ROUTING-ENV-KEYS #{"ANTHROPIC_BASE_URL" "ANTHROPIC_MODEL"})
 
 
-(defn #^ str policy-normalized-env-key [#^ str key]
+(defn #^ str policy-normalized-env-key [#^ str key]  ; defk にできない: Python(shell.py)が同期で呼ぶ境界(ADR-DOE-HY-004 R1)
   "env key の正規化(substrate normalized-env-key と同規約: `-`→`_`・大文字化)。"
   (.upper (.replace key "-" "_")))
 
-(defn #^ list env-offenders-against [#^ dict env #^ (| set frozenset) names]
+(defn #^ list env-offenders-against [#^ dict env #^ (| set frozenset) names]  ; defk にできない: Python(shell.py)が同期で呼ぶ境界(ADR-DOE-HY-004 R1)
   "env のうち names(正規化済みの綴りの集合)に当たるキーの列挙(判定の 1 点)。
 
    agent の境界で「運ばせない env」を判じる層は 3 つ在る — 受理
@@ -66,11 +68,11 @@
                 key)))
 
 
-(defn #^ list overlay-env-offenders [#^ dict session-env]
+(defn #^ list overlay-env-offenders [#^ dict session-env]  ; defk にできない: Python(shell.py)が同期で呼ぶ境界(ADR-DOE-HY-004 R1)
   "session_env(非 auth overlay)に居てはならない binding 所有キーの列挙。"
   (env-offenders-against session-env BINDING-OWNED-ENV-KEYS))
 
 
-(defn #^ list provider-auth-env-offenders [#^ dict session-env]
+(defn #^ list provider-auth-env-offenders [#^ dict session-env]  ; defk にできない: Python(shell.py)が同期で呼ぶ境界(ADR-DOE-HY-004 R1)
   "session_env に居てはならない provider の鍵・札の綴りの列挙(純粋の 1 点)。"
   (env-offenders-against session-env PROVIDER-AUTH-ENV-KEYS))

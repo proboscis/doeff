@@ -7,6 +7,7 @@
 PROVIDER_AUTH_ENV_KEYS: set[str]
 PROVIDER_ROUTING_ENV_KEYS: set[str]
 TURN_AUTH_ENV_KEYS: set[str]
+CLAUDE_TURN_CREDENTIAL_ENV: str
 BINDING_OWNED_ENV_KEYS: set[str]
 
 def policy_normalized_env_key(key: str) -> str: ...

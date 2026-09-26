@@ -45,10 +45,9 @@
 
 (setv HANDLER-NAME "headless-claude-handler")
 
-;; 借りた access token(LaunchEffect.turn_credential)を置く env の名(agora-redesign #665)。手番の資格の env の語彙
-;; (sessionhost/policy.hy の TURN-AUTH-ENV-KEYS — 本番の agentd が貸与の札を運ぶ名と同じ)の 1 つであることは検
-;; (tests/test_headless_adapter.hy の test-headless-places-the-borrowed-access-token)が見る — adapter は session host を import しない。
-(setv TURN-CREDENTIAL-ENV "CLAUDE_CODE_OAUTH_TOKEN")
+;; 借りた access token(LaunchEffect.turn_credential)を置く env の名(agora-redesign #665)。綴りの家は境界の env の語彙
+;; doeff_agents/agent_env.hy の 1 点(TURN-AUTH-ENV-KEYS の要素・#708 — 家は session host を import しない)。
+(import doeff_agents.agent_env [CLAUDE-TURN-CREDENTIAL-ENV :as TURN-CREDENTIAL-ENV])
 
 
 ;; --- 設定と状態 ---------------------------------------------------------------------------------

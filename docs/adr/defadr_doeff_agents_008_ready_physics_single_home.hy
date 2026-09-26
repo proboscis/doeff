@@ -11,6 +11,7 @@
   :status "accepted"
   :scope ["packages/doeff-agents/src/doeff_agents/adapters"
           "packages/doeff-agents/src/doeff_agents/session.py"
+          "packages/doeff-agents/src/doeff_agents/ready_physics.hy"
           "packages/doeff-agents/src/doeff_agents/sessionhost"]
   :problem
     [(fact
