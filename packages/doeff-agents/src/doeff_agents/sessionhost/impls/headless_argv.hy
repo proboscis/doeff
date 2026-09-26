@@ -20,7 +20,7 @@
 (import json)
 (import json)
 
-(import doeff_agents.sessionhost.effects [BuildHeadlessLaunch])
+(import doeff_agents.sessionhost.headless_effects [BuildHeadlessLaunch])
 
 (import doeff_agents.sessionhost.headless_protocol [
   ClaudeDialogue

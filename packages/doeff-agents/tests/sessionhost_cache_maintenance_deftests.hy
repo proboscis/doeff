@@ -154,7 +154,8 @@
 (import json)
 (import doeff_agents.sessionhost.cache_host [cache-last-success-at cache-host-probe])
 (import doeff_agents.sessionhost.cache_host_model [HostCacheLastSuccessAt HostCacheWrite])
-(import doeff_agents.sessionhost.effects [ClockNow HeadlessKill])
+(import doeff_agents.sessionhost.effects [ClockNow])
+(import doeff_agents.sessionhost.headless_effects [HeadlessKill])
 (import doeff_agents.sessionhost.headless_events [HeadlessEventAppend MemoryEventStore FileEventStore
                                                   EVENTS-SUFFIX CACHE-MARK])
 (import doeff_agents.sessionhost.headless_outbox [OutboxEventStore])
