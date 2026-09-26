@@ -10,7 +10,7 @@
 ;; 理由つきの probe-failed で止まる。入れ替えの旧は止めない(書き手の空白を作らない)。FAILED は code-retry-ms の後に撃ち直す。
 (import dataclasses [replace])
 (import .worker_model [JobSpec CodeState CodeView ProcessView WorldView StopStage StopProgress ProbeState ProbeView
-  Outcome JobRecord WorkerPolicy JobPhase JobStatus PrepareCode StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry
+  Outcome JobRecord WorkerPolicy JobPhase JobStatus PrepareCode PrepareEnv StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry
   spec-hash code-key probed-job retired-name RETIRED-MARK])
 
 ;; 自己停止(2026-09-25): coordinator との連絡が fence(ClusterTiming.fence-ms)を越えて途絶えた worker は、自分の job を止めてきた
@@ -93,13 +93,19 @@
     ;; KILL 後は待つだけ。確認できないまま置き換えを起動しない。
     True #()))
 
+(defn #^ (| PrepareCode PrepareEnv) prepare-action [#^ JobSpec spec]
+  "spec の置き場を用意する action: 実行環境の job は env の root(PrepareEnv)、それ以外は commit の木(PrepareCode)。"
+  (if spec.runtime-env
+      (PrepareEnv (code-key spec) spec.runtime-env)
+      (PrepareCode (code-key spec))))
+
 (defn #^ tuple prepare-actions [#^ int now #^ JobSpec spec #^ WorldView world #^ WorkerPolicy policy]
   "spec のコードの木を用意する action(用意できていれば空)。準備に失敗した版は、間を置いてから作り直す。"
   (setv code (code-of world (code-key spec)))
   (cond
-    (is code None) #((PrepareCode (code-key spec)))
+    (is code None) #((prepare-action spec))
     (and (= code.state CodeState.FAILED)
-         (>= (- now (or code.failed-ms 0)) policy.code-retry-ms)) #((PrepareCode (code-key spec)))
+         (>= (- now (or code.failed-ms 0)) policy.code-retry-ms)) #((prepare-action spec))
     True #()))
 
 (defn #^ tuple start-actions [#^ int now #^ JobSpec spec #^ WorldView world #^ JobRecord record #^ WorkerPolicy policy]
@@ -209,6 +215,7 @@
         (setv code (code-of world (code-key want)))
         (cond
           (or (is code None) (= code.state CodeState.PREPARING)) JobPhase.PREPARING
+          (and (= code.state CodeState.FAILED) (is-not code.failure None)) JobPhase.ENV-FAILED
           (= code.state CodeState.FAILED) JobPhase.CODE-FAILED
           (is-not (probe-failure world want) None) JobPhase.PROBE-FAILED
           (in-backoff now record policy) JobPhase.BACKOFF
@@ -244,4 +251,6 @@
       :instance (if (is process None) None process.instance)
       :spec-hash (if (is process None) None (spec-hash process.spec))
       :placement (if (is process None) None process.spec.placement)
-      :retired-from (if (is process None) None process.retired-from)))))
+      :retired-from (if (is process None) None process.retired-from)
+      ;; 実行環境の root の準備の失敗(動いている process が無い時だけ — 動いていれば準備は済んでいる)。
+      :failure (if (and (is process None) (is-not code None) (= code.state CodeState.FAILED)) code.failure None)))))

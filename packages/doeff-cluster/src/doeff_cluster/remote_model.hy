@@ -25,6 +25,7 @@
 (import pathlib [Path])
 (import sys)
 (import traceback)
+(import os)
 (import cloudpickle)
 (import doeff [EffectBase])
 (import doeff.do)
@@ -47,8 +48,27 @@
   "送れない値(lock・file・socket・生の thread 等)を捕まえた Program。送り手の側で、送る前に断る。")
 
 
+(defclass [(dataclass :frozen True)] VersionDiff []
+  "版の辞書の食い違い 1 欄: field = 欄の名・sender = 送り手の値・env = 実行する側(env の root)の値(無い欄は None)。"
+  (#^ str field)
+  (#^ (| str None) sender)
+  (#^ (| str None) env))
+
+
 (defclass VersionMismatch [RemoteJobFailed]
-  "送り手と受け側の Python / cloudpickle / doeff の版が違う。受け側は復元せずに断る。")
+  "送り手と受け側の Python / cloudpickle / doeff の版が違う。受け側は復元せずに断る。
+   diffs = 食い違った欄(VersionDiff の tuple)・env-key = 実行する側の env のキー(env の task でなければ空)。"
+  (defn __init__ [self #^ str message #^ tuple [diffs #()] #^ str [env-key ""]]  ; defk にできない: 例外の class の初期化
+    (.__init__ (super) message)
+    (setv self.diffs diffs self.env-key env-key)))
+
+
+(defclass EnvUnavailable [RemoteJobFailed]
+  "実行環境(runtime env)を準備できなかった(子 process を起こす前 — 同じ task を 2 度実行していない)。
+   kind = runtime_env_model.EnvFailureKind の値・detail = 理由。"
+  (defn __init__ [self #^ str kind #^ str detail]  ; defk にできない: 例外の class の初期化
+    (.__init__ (super) (.format "実行環境を準備できない({}): {}" kind detail))
+    (setv self.kind kind self.detail detail)))
 
 
 (defclass [(dataclass :frozen True)] TaskSucceeded []
@@ -69,8 +89,10 @@
 (defn #^ str _source-fingerprint [#^ str module-name]
   ;; 同じ dist の版でも source が違えば cloudpickle が値として運ぶ内部の関数(doeff.do の thunk 等)は食い違う。
   ;; 版の名だけでは足りないので、その file の hash も添える。
-  (setv module (importlib.import-module module-name))
-  (setv path (Path module.__file__))
+  (setv module (importlib.import-module module-name) file module.__file__)
+  (when (is file None)
+    (raise (RemoteJobFailed (.format "{} の source の file が無い(版の識別を作れない)" module-name))))
+  (setv path (Path file))
   (cut (.hexdigest (hashlib.sha256 (.read-bytes path))) 0 12))
 
 
@@ -81,15 +103,29 @@
    "cloudpickle" cloudpickle.__version__
    "doeff" (importlib.metadata.version "doeff")
    "doeff-vm" (importlib.metadata.version "doeff-vm")
-   "doeff-do" (_source-fingerprint "doeff.do")})
+   "doeff-do" (_source-fingerprint "doeff.do")
+   ;; env の root の中の子 process は、その env のキーを名乗る(worker が DOEFF_RUNTIME_ENV_KEY で渡す)。送り手が env の中で動いていれば
+   ;; 送り手も名乗る。両方が名乗る時だけ比べる(version-diffs)。
+   #** (let [key (os.environ.get "DOEFF_RUNTIME_ENV_KEY" "")] (if key {"envKey" key} {}))})
 
 
-(defn #^ (| str None) version-mismatch [#^ dict expected #^ dict actual]
+(defn #^ tuple version-diffs [#^ dict expected #^ dict actual]  ; defk にできない: 子の入口と coordinator の純粋な判断(Program の外)が呼ぶ
+  "送り手の版(expected)と受け側の版(actual)の食い違った欄(VersionDiff の tuple・欄の名の順)。env のキー(envKey)は両方が名乗る
+   時だけ比べて先頭に置く(送り手が env の外 — 開発の checkout — で動く時は、残りの欄と宣言の組み立ての「汚れたツリーを断る」が
+   source の一致を保つ)。"
+  (setv both-keyed (and (in "envKey" expected) (in "envKey" actual))
+        keys (sorted (lfor k (| (set expected) (set actual)) :if (or both-keyed (!= k "envKey")) k)
+                     :key (fn [k] #((!= k "envKey") k))))
+  (tuple (gfor key keys :if (!= (.get expected key) (.get actual key))
+               (VersionDiff key (.get expected key) (.get actual key)))))
+
+
+(defn #^ (| str None) version-mismatch [#^ dict expected #^ dict actual]  ; defk にできない: 子の入口と coordinator の純粋な判断(Program の外)が呼ぶ
   "違いを 1 行で名指す。同じなら None。"
-  (setv diffs (lfor key (sorted (| (set expected) (set actual)))
-                    :if (!= (.get expected key) (.get actual key))
-                    (.format "{}: 送り手 {} / 受け側 {}" key (.get expected key) (.get actual key))))
-  (if diffs (.join "・" diffs) None))
+  (setv diffs (version-diffs expected actual))
+  (if diffs
+      (.join "・" (gfor d diffs (.format "{}: 送り手 {} / 受け側 {}" d.field d.sender d.env)))
+      None))
 
 
 (defn _refuse-file [value]

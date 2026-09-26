@@ -6,7 +6,10 @@
 (import .coordinator_http [CoordinatorEndpoint send-idempotent REPLY-SECONDS])
 (import doeff_core_effects.scheduler [Spawn Wait])
 (import doeff_time [Delay])
-(import .remote_model [RemoteJob RemoteJobFailed TaskSucceeded TaskFailed
+(import doeff [run])
+(import .cluster_model [PROTOCOL-FORMAT])
+(import .runtime_env_model [RuntimeEnv runtime-env->json])
+(import .remote_model [RemoteJob RemoteJobFailed EnvUnavailable TaskSucceeded TaskFailed
                        encode-program decode-outcome current-versions])
 
 
@@ -21,14 +24,16 @@
 
 ;; --- handler B: coordinator へ出し、worker の子 process で走らせる ------------------------------
 (defclass TaskClient []
-  "coordinator の /tasks との連絡(I/O)。revision = 送り手の commit(受け側はこの版のコードを準備してから復元する)。"
-  (defn __init__ [self #^ str url #^ str revision [timeout REPLY-SECONDS]]
-    (setv self.revision revision self.endpoint (CoordinatorEndpoint url timeout 4)))
+  "coordinator の /tasks との連絡(I/O)。revision = 送り手の commit(受け側はこの版のコードを準備してから復元する)。
+   runtime-env = 実行環境の宣言(在れば worker は env の root を準備して、その中の子 process で走らせる — revision は使わない)。"
+  (defn __init__ [self #^ str url #^ str revision [timeout REPLY-SECONDS] #^ (| RuntimeEnv None) [runtime-env None]]
+    (setv self.revision revision self.runtime-env runtime-env self.endpoint (CoordinatorEndpoint url timeout 4)))
 
   (defn #^ str submit [self #^ str blob #^ str env #^ tuple requires #^ dict versions #^ str name #^ float lease-seconds]
     (setv response (.request self.endpoint "POST" "/tasks"
-      :json {"env" env "blob" blob "versions" versions "revision" self.revision
-             "requires" (dict requires) "name" name "leaseSeconds" lease-seconds}))
+      :json (| {"env" env "blob" blob "versions" versions "revision" self.revision
+                "requires" (dict requires) "name" name "leaseSeconds" lease-seconds "format" PROTOCOL-FORMAT}
+               (if (is self.runtime-env None) {} {"runtimeEnv" (run (runtime-env->json self.runtime-env))}))))
     (.raise-for-status response)
     (get (.json response) "task"))
 
@@ -53,6 +58,8 @@
           (decode-outcome (get view "result")))
     (= phase "code-failed")
       (raise (RemoteJobFailed (.format "実行先で commit {} のコードを準備できない: {}" revision (.get view "detail"))))
+    (= phase "env-failed")
+      (raise (EnvUnavailable (.get view "failureKind" "") (.get view "detail" "")))
     ;; 送る先が無い(版と label が合う worker が無い)・担い手が沈黙した。業務の例外ではない。
     (= phase "failed")
       (raise (RemoteJobFailed (.format "task {} を走らせられない: {}" task (.get view "detail"))))

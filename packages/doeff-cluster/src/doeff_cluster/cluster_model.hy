@@ -144,6 +144,21 @@
                  :version-labels (tuple (gfor #(k v) (.items (.get data "versionLabels" {})) #(k v)))))
 
 
+;; HTTP の本文(/tasks・/detached・/heartbeat)の形の版(2026-09-26)。送り手・coordinator・worker は別々の版になり得るので、本文に
+;; format を置き、coordinator は受け入れる範囲を heartbeat の返事と /livez で名乗り、範囲の外の送り手を 400 で断る。format の無い
+;; 本文(この版より前の送り手)は 1 として受ける。
+(setv PROTOCOL-FORMAT 1)
+(setv ACCEPTED-FORMATS #(1))
+
+
+(defn #^ (| str None) format-refusal [#^ dict body]  ; defk にできない: coordinator の純粋な判断(Program の外)が呼ぶ
+  "本文の format が受け入れる範囲の外なら理由の文。"
+  (setv form (.get body "format" 1))
+  (if (in form ACCEPTED-FORMATS)
+      None
+      (.format "本文の形の版 {!r} を受け入れない(受け入れる版 = {})" form (list ACCEPTED-FORMATS))))
+
+
 (defclass [(dataclass :frozen True)] TaskRecord []
   "task 1 本。phase = queued | assigned | finished | code-failed | failed(切り離した task は + version-mismatch | lost | cancelled)。
    result = worker が返した結果の blob(TaskSucceeded / TaskFailed の cloudpickle)。finished で None なら結果なし。"
@@ -171,7 +186,16 @@
   (setv #^ bool detached False)
   (setv #^ (| str None) key None)
   (setv #^ (| str None) boot None)
-  (setv #^ int retain-ms 0))
+  (setv #^ int retain-ms 0)
+  ;; --- 実行環境(runtime env・2026-09-26)---
+  ;; runtime-env = 宣言の JSON(runtime_env_model の runtime-env->json の形)。在れば worker の版と比べずに置き(版の突き合わせは
+  ;; env の root の中の子 process が行う)、worker は env の root を準備してから走らせる。準備の失敗(phase env-failed)は
+  ;; failure-kind と retryable を持つ。一時の失敗は、試した worker(avoid)を避けて env-attempts が ENV-RETRIES になるまで置き直す。
+  (setv #^ (| dict None) runtime-env None)
+  (setv #^ int env-attempts 0)
+  (setv #^ tuple avoid #())
+  (setv #^ str failure-kind "")
+  (setv #^ bool retryable False))
 
 
 (defn #^ dict task-record-to-json [#^ TaskRecord task]
@@ -182,7 +206,8 @@
 (defn #^ TaskRecord task-record-from-json [#^ dict data]
   "保存の JSON の形 → TaskRecord(task-record-to-json の逆)。"
   (TaskRecord #** (| data {"versions" (component-versions-of (get data "versions"))
-                           "requires" (requirements-of (get data "requires"))})))
+                           "requires" (requirements-of (get data "requires"))
+                           "avoid" (tuple (.get data "avoid" []))})))
 
 
 (defclass [(dataclass :frozen True)] ClusterState []

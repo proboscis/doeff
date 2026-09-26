@@ -6,9 +6,11 @@
 
 (import .worker_model [JobSpec])
 (import .cluster_model [ClusterJob WorkerInfo Placement ClusterTiming ClusterState TaskRecord Request Drain
-                        requirements-of component-versions-of task-record-to-json task-record-from-json])
+                        requirements-of component-versions-of task-record-to-json task-record-from-json ACCEPTED-FORMATS format-refusal])
 (import .semaphore_model [SEMAPHORE-PREFIX lease-op semaphore-write-refusal semaphore-key])
 (import .base_follow_policy [FULL-SHA])
+(import doeff [run])
+(import .runtime_env_model [runtime-env-of-json RuntimeEnvInvalid])
 
 (setv JOB-ENTRY "doeff_cluster.job_entry")
 (setv MAX-EVENTS 200)
@@ -334,8 +336,12 @@
 ;; --- task ----------------------------------------------------------------------------
 
 (defn #^ bool can-run-task [#^ TaskRecord task #^ WorkerInfo worker]
-  "版が同じ worker にだけ送る(cloudpickle は版をまたいで復元できる保証が無い)。"
-  (and (= task.versions worker.versions) (labels-satisfy task.requires worker) (tolerates task.requires worker)))
+  "版が同じ worker にだけ送る(cloudpickle は版をまたいで復元できる保証が無い)。実行環境の task は worker の版と比べない —
+   子 process は worker の venv ではなく env の root で走り、版の突き合わせは子 process が env の版と行う。準備に一時の失敗をした
+   worker(avoid)には置き直さない。"
+  (and (or (is-not task.runtime-env None) (= task.versions worker.versions))
+       (labels-satisfy task.requires worker) (tolerates task.requires worker)
+       (not-in worker.name task.avoid)))
 
 
 (defn #^ str versions-note [#^ TaskRecord task #^ ClusterState state #^ int now #^ ClusterTiming timing]
@@ -362,7 +368,9 @@
           True "置ける worker に空きが無い")))
 
 
-(setv DETACHED-TERMINAL #("finished" "code-failed" "failed" "version-mismatch" "lost" "cancelled"))
+(setv DETACHED-TERMINAL #("finished" "code-failed" "env-failed" "failed" "version-mismatch" "lost" "cancelled"))
+;; 実行環境の準備の一時の失敗を、別の worker へ置き直す回数の上限(起動前なので同じ task を 2 度実行しない)。
+(setv ENV-RETRIES 2)
 
 
 (defn #^ TaskRecord end-detached [#^ TaskRecord task #^ str phase #^ int now #^ str detail #^ (| str None) [result None]]
@@ -426,6 +434,9 @@
                                           (replace task :phase "assigned" :worker chosen.name :started-ms now
                                                    :boot chosen.boot :lease-until-ms (+ now task.lease-ms))
                                           (replace task :phase "assigned" :worker chosen.name :started-ms now))))
+        ;; 準備の一時の失敗の後に、置き直せる別の worker が無い: 最後の失敗で終える。
+        (and (not able) task.failure-kind)
+          (setv (get tasks id) (end-env-failed task now task.detail))
         (and (not able) task.detached)
           (setv (get tasks id) (end-detached task (unplaceable-phase task state now timing) now
                                              (versions-note task state now timing)))
@@ -439,6 +450,25 @@
   (or (not task.detached) (is task.boot None) (is boot None) (= task.boot boot)))
 
 
+(defn #^ TaskRecord end-env-failed [#^ TaskRecord task #^ int now #^ str detail]
+  "純粋: 実行環境を準備できなかった task を終える(切り離した task は終わりの phase・blob を捨てる)。"
+  (if task.detached
+      (replace (end-detached task "env-failed" now detail) :failure-kind task.failure-kind :retryable task.retryable)
+      (replace task :phase "env-failed" :finished-ms now :detail detail)))
+
+
+(defn #^ TaskRecord absorb-env-failure [#^ TaskRecord task #^ str worker #^ dict status #^ int now]
+  "純粋: worker の「実行環境を準備できない」の報告 → 一時の失敗で置き直しの回数が残れば、その worker を避けて待ちへ戻す。
+   それ以外は終える。どちらも子 process を起こす前(Program は走っていない)。"
+  (setv kind (.get status "failureKind" "") retryable (bool (.get status "retryable" False))
+        detail (.format "worker {} で実行環境を準備できない({}): {}" worker kind (.get status "detail" ""))
+        failed (replace task :failure-kind kind :retryable retryable :detail detail))
+  (if (and retryable (< task.env-attempts ENV-RETRIES))
+      (replace failed :phase "queued" :worker None :boot None :started-ms None
+               :avoid (+ task.avoid #(worker)) :env-attempts (+ task.env-attempts 1))
+      (end-env-failed failed now detail)))
+
+
 (defn #^ list tasks-for [#^ ClusterState state #^ str worker]
   ;; 切り離した task は、置いた時と同じ process の世代の worker にだけ送る(作り直した worker の process で走らせ直さない)。
   (setv boot (. (.get state.workers worker (WorkerInfo worker #() 0 0)) boot))
@@ -446,7 +476,8 @@
         :if (and (= task.phase "assigned") (= task.worker worker) (same-boot task boot))
         (| {"id" task.id "name" task.name "env" task.env "revision" task.revision
             "versions" (dict task.versions) "blob" task.blob}
-           (if task.detached {"detached" True} {}))))
+           (if task.detached {"detached" True} {})
+           (if (is-not task.runtime-env None) {"runtimeEnv" task.runtime-env} {}))))
 
 
 (defn #^ TaskRecord absorb-detached-report [#^ TaskRecord task #^ dict status #^ int now]
@@ -471,6 +502,7 @@
       (when (and task (= task.phase "assigned") (= task.worker worker) (same-boot task boot))
         (setv phase (.get status "phase"))
         (cond
+          (= phase "env-failed") (setv (get tasks id) (absorb-env-failure task worker status now))
           task.detached (setv (get tasks id) (absorb-detached-report task status now))
           (= phase "finished")
             (setv (get tasks id) (replace task :phase "finished" :finished-ms now :result (.get status "result")
@@ -601,7 +633,9 @@
    "timing" (asdict timing)
    ;; この worker が drain 中か(2026-09-25): worker は返事ごとに Pod の中の ready の file へ写し、readinessProbe は sh でそれを読む
    ;; (hy を起こす probe は込んだ node で 10 秒の timeout を越え、両方の Pod が同時に NotReady → DaemonSet が 2 台を同時に消した)。
-   "draining" (in name state.drains)})
+   "draining" (in name state.drains)
+   ;; 受け入れる本文の形の版(2026-09-26 — cluster_model.ACCEPTED-FORMATS)。
+   "formats" (list ACCEPTED-FORMATS)})
 
 
 (defn #^ dict state-view [#^ ClusterState state #^ int now #^ ClusterTiming timing]
@@ -622,7 +656,19 @@
    "revision" state.revision})
 
 
+(defn #^ (| str None) runtime-env-refusal [#^ dict body]
+  "本文の runtimeEnv(在れば)が宣言として読めなければ理由の文(送り手の誤り — 400)。"
+  (setv value (.get body "runtimeEnv"))
+  (cond
+    (is value None) None
+    (not (isinstance value dict)) (.format "runtimeEnv は JSON の object: {!r}" (type value))
+    True (try (do (run (runtime-env-of-json value)) None)
+              (except [error RuntimeEnvInvalid] (.format "runtimeEnv が誤っている: {}" error)))))
+
+
 (defn #^ tuple submit-task [#^ ClusterState state #^ dict body #^ int now [owner None]]
+  (setv refusal (or (format-refusal body) (runtime-env-refusal body)))
+  (when refusal (return #(state 400 {"error" refusal})))
   (setv lease-seconds (float (.get body "leaseSeconds" 15.0))
         open-count (len (lfor t (.values state.tasks) :if (in t.phase #("queued" "assigned")) t)))
   (when (not (< 0 lease-seconds (+ TASK-MAX-LEASE-SECONDS 1)))
@@ -634,7 +680,8 @@
         task (TaskRecord id (.get body "name" "") (get body "env") (get body "blob") (get body "revision")
                          (component-versions-of (.get body "versions" {}))
                          (requirements-of (.get body "requires" {}))
-                         lease-ms (+ now lease-ms) now))
+                         lease-ms (+ now lease-ms) now
+                         :runtime-env (.get body "runtimeEnv")))
   #((replace state :tasks (| state.tasks {id task}) :next-task (+ state.next-task 1)) 200 {"task" id}))
 
 
@@ -645,7 +692,8 @@
     (return #(state 200 {"phase" "missing"})))
   (setv task (replace task :lease-until-ms (+ now task.lease-ms)))
   #((replace state :tasks (| state.tasks {id task})) 200
-    {"phase" task.phase "worker" task.worker "detail" task.detail "result" task.result}))
+    {"phase" task.phase "worker" task.worker "detail" task.detail "result" task.result
+     "failureKind" task.failure-kind "retryable" task.retryable}))
 
 
 (defn #^ tuple lease-write [#^ ClusterState state #^ str name #^ dict body #^ int now]

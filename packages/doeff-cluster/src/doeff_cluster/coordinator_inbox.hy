@@ -12,7 +12,7 @@
 (import time)
 (import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
 (import urllib.parse [urlsplit parse-qsl])
-(import .cluster_model [Request NextRequests Reply CoordinatorStopRequested PlainText])
+(import .cluster_model [Request NextRequests Reply CoordinatorStopRequested PlainText ACCEPTED-FORMATS])
 
 ;; probe の閾値(秒)。ループは要求が無くても 1 秒ごとに NextRequests を出すので、ふだんの「最後に取りに来てから」は 1 秒 + 1 まとまりの
 ;; 処理(fsync の実測の最大 2.9〜3.6 秒・longhorn の詰まりで最長 13 秒・k8s と registry の読みは各 3 秒で打ち切り)。
@@ -55,7 +55,9 @@
 
   (defn #^ tuple probe [self #^ str path]
     "k8s の probe(/livez・/readyz)の答え。HTTP の thread が直に答える — 調停ループの遅れ(fsync・k8s の API)に巻き込まれない。"
-    (probe-verdict path (if (is self.last-take None) None (- (self.clock) self.last-take))))
+    ;; 本文の形の版の受け入れる範囲も名乗る(送り手と worker が自分の版を合わせられるように — cluster_model.ACCEPTED-FORMATS)。
+    (setv #(status body) (probe-verdict path (if (is self.last-take None) None (- (self.clock) self.last-take))))
+    #(status (| body {"formats" (list ACCEPTED-FORMATS)})))
 
   (defn #^ None start [self]
     (setv inbox self)

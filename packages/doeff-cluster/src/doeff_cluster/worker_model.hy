@@ -10,6 +10,7 @@
 (import hashlib)
 (import json)
 (import doeff [EffectBase])
+(import .runtime_env_model [EnvFailure])
 
 
 (defclass [(dataclass :frozen True)] JobSpec []
@@ -34,6 +35,9 @@
   ;; 切り離した task(2026-09-25・once と組)。coordinator との連絡が途絶えても止めない(担い手の heartbeat が lease を延ばし、途絶が
   ;; lease より長ければ coordinator が lost にして、再接続の返事から外れた時に止める — worker_policy.kept-when-cut-off)。比べない欄。
   (setv #^ bool detached (field :default False :compare False))
+  ;; 実行環境の宣言(runtime_env_model の RuntimeEnv の JSON を正規化した文字列・2026-09-26)。在れば revision は env のキーの名
+  ;; ("env-<キー>")で、worker は木を展開せずに env の root を準備し(PrepareEnv)、root の venv で子を起こす。比べる欄。
+  (setv #^ (| str None) runtime-env None)
 
   (defn __post-init__ [self]
     (when (or (not self.name) (not self.entry) (not self.revision))
@@ -77,10 +81,16 @@
 
 (setv CODE-KEY-SEPARATOR "~")
 
+(setv ENV-KEY-PREFIX "env-")
+
 (defn #^ str code-key [#^ JobSpec spec]
   "展開する木の鍵(cache の dir の名前・完成の印の版)。base が無い・base と revision が同じ commit(版の組 — 2026-09-25)なら
-   revision そのもの(重ねない木)、違えば \"<base>~<revision>\"(base の木に revision の重ねる dir を重ねる)。"
-  (if (and spec.base (!= spec.base spec.revision)) (+ spec.base CODE-KEY-SEPARATOR spec.revision) spec.revision))
+   revision そのもの(重ねない木)、違えば \"<base>~<revision>\"(base の木に revision の重ねる dir を重ねる)。
+   実行環境の job は revision(\"env-<キー>\")がそのまま root の鍵。"
+  (cond
+    spec.runtime-env spec.revision
+    (and spec.base (!= spec.base spec.revision)) (+ spec.base CODE-KEY-SEPARATOR spec.revision)
+    True spec.revision))
 
 (defn #^ tuple split-code-key [#^ str key]
   "code-key の逆: #(土台の commit  重ねる commit)。重ねない木は #(key key)(木の全体が同じ commit)。"
@@ -95,7 +105,8 @@
    割り当ての世代(placement)・入れ替えの形(handoff・ready-instance)は含めない(比べない欄)。base は在る時だけ足す(base の無い
    宣言の指紋は以前と同じ)。定義点はこの 1 つ。"
   (cut (.hexdigest (hashlib.sha256 (.encode (json.dumps (+ [spec.name spec.entry (list spec.args) spec.revision spec.once]
-                                                           (if spec.base [spec.base] []))
+                                                           (if spec.base [spec.base] [])
+                                                           (if spec.runtime-env [spec.runtime-env] []))
                                                         :ensure-ascii False :separators #("," ":"))
                                             "utf-8")))
        0 16))
@@ -111,7 +122,9 @@
   (#^ CodeState state)
   (setv #^ (| str None) path None)
   (setv #^ str detail "")
-  (setv #^ (| int None) failed-ms None))
+  (setv #^ (| int None) failed-ms None)
+  ;; 実行環境の root の準備の失敗(env の job だけ)。kind と一時かを coordinator へ運ぶ(置き直しと答えの型)。
+  (setv #^ (| EnvFailure None) failure None))
 
 
 (defclass [(dataclass :frozen True)] ProcessView []
@@ -218,6 +231,7 @@
         STOPPING "stopping"
         STOP-UNCONFIRMED "stop-unconfirmed"  ; KILL の後も終了を確認できない。置き換えは起動しない
         PROBE-FAILED "probe-failed"    ; 木は揃ったが、実行環境で入口の module を読み込めない(起動しない)
+        ENV-FAILED "env-failed"        ; 実行環境(runtime env)の root を準備できない(子 process を起こしていない)
         FINISHED "finished"            ; task が終わった(起動し直さない)
         STOPPED "stopped"))
 
@@ -235,7 +249,9 @@
   (setv #^ (| str None) spec-hash None)
   (setv #^ (| int None) placement None)
   ;; 入れ替えで退いた process の行だけ: 元の job の名(coordinator は、その job がまだどこかで動いていると数える)。
-  (setv #^ (| str None) retired-from None))
+  (setv #^ (| str None) retired-from None)
+  ;; ENV-FAILED の行だけ: 準備の失敗の kind と一時か(coordinator が置き直すか・答えの型を決める)。
+  (setv #^ (| EnvFailure None) failure None))
 
 
 ;; --- 宣言の読み取り -------------------------------------------------------------
@@ -273,6 +289,13 @@
 (defclass [(dataclass :frozen True)] PrepareCode [EffectBase]
   "revision のコードを展開し始める。完了は ObserveWorld の CodeView で観測する。"
   (#^ str revision))
+
+
+(defclass [(dataclass :frozen True)] PrepareEnv [EffectBase]
+  "実行環境(runtime env)の root を準備し始める(key = \"env-<キー>\"・runtime-env = 宣言の JSON の文字列)。完了は ObserveWorld の
+   CodeView(鍵 = key・READY の path = root)で観測する。worker のループは待たない。"
+  (#^ str key)
+  (#^ str runtime-env))
 
 
 (defclass [(dataclass :frozen True)] StartJob [EffectBase]
@@ -314,7 +337,7 @@
    次の担い手が取れるようにする。届かなければ何もしない(期限で切れる)。"
   (#^ str instance))
 
-(setv Action (| PrepareCode StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry))
+(setv Action (| PrepareCode PrepareEnv StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry))
 
 
 (defclass [(dataclass :frozen True)] WorkerState []

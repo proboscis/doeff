@@ -97,13 +97,27 @@
 
 
 (defclass [(dataclass :frozen True)] DetachedVersionMismatch []
-  "送り手と受け側の Python / cloudpickle / doeff の版が合わない(合う worker が無い・子 process が復元の前に断った)。"
-  (#^ str detail))
+  "送り手と受け側の Python / cloudpickle / doeff の版が合わない(合う worker が無い・子 process が復元の前に断った)。
+   diffs = 食い違った欄(remote_model.VersionDiff の tuple — 欄の名・送り手の値・env の値)・env-key = 実行した env のキー
+   (子 process が断った時だけ在る)。"
+  (#^ str detail)
+  (setv #^ tuple diffs #())
+  (setv #^ str env-key ""))
 
 
 (defclass [(dataclass :frozen True)] DetachedUnrunnable []
-  "版は合うが走らせられない(label の合う worker が無い・その commit のコードを準備できない・Program を復元できない)。"
+  "版は合うが走らせられない(label の合う worker が無い・その commit のコードを準備できない・Program を復元できない)。
+   実行環境(runtime env)を準備できない時は DetachedEnvUnavailable。"
   (#^ str detail))
+
+
+(defclass [(dataclass :frozen True)] DetachedEnvUnavailable []
+  "実行環境(runtime env)を準備できなかった。kind = runtime_env_model.EnvFailureKind の値(repo-denied・commit-missing・
+   lock-mismatch 等)・retryable = 一時の失敗だった(coordinator は起動前の task を別の worker へ 2 回まで置き直した上での答え)。
+   どれも子 process を起こす前に起きるので、Program は 1 度も走っていない。"
+  (#^ str kind)
+  (#^ str detail)
+  (#^ bool retryable))
 
 
 (defclass [(dataclass :frozen True)] DetachedUnknown []
@@ -118,7 +132,7 @@
 
 
 (setv DetachedOutcome (| DetachedSucceeded DetachedFailed DetachedLost DetachedCancelled DetachedVersionMismatch
-                         DetachedUnrunnable DetachedUnknown))
+                         DetachedUnrunnable DetachedEnvUnavailable DetachedUnknown))
 (setv DetachedAwaited (| DetachedOutcome DetachedPending))
 
 
@@ -139,7 +153,10 @@
   "子 process の結果(remote_model の TaskSucceeded / TaskFailed)→ 答えの型。子 process が版の違いで復元を断ったら版の不一致。"
   (cond
     (isinstance outcome TaskSucceeded) (DetachedSucceeded outcome.value)
-    (= outcome.kind "VersionMismatch") (DetachedVersionMismatch outcome.message)
+    (= outcome.kind "VersionMismatch")
+      (DetachedVersionMismatch outcome.message
+                               :diffs (getattr outcome.error "diffs" #())
+                               :env-key (getattr outcome.error "env_key" ""))
     True (DetachedFailed outcome.kind outcome.message outcome.traceback outcome.error)))
 
 
@@ -164,5 +181,6 @@
     (= phase "lost") (DetachedLost detail)
     (= phase "cancelled") (DetachedCancelled)
     (= phase "version-mismatch") (DetachedVersionMismatch detail)
+    (= phase "env-failed") (DetachedEnvUnavailable (.get view "failureKind" "") detail (bool (.get view "retryable" False)))
     (in phase #("failed" "code-failed")) (DetachedUnrunnable detail)
     True (raise (ValueError (.format "知らない phase: {!r}" phase)))))
