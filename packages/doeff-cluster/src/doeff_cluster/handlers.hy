@@ -18,12 +18,28 @@
   PrepareCode PrepareEnv StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry spec-hash split-code-key probe-args CodeLayout
   ENV-KEY-PREFIX])
 
+(defn #^ tuple env-placement [#^ (| dict None) declared #^ str revision]  ; defk にできない: 宣言の読み(Program の外の I/O の道具)が呼ぶ
+  "job の宣言の runtimeEnv(在れば)と版 → #(置き場の鍵の版 宣言の JSON の正規化した文字列)。実行環境の job(task も service も —
+   2026-09-26)は、版の代わりに env のキー(この worker の platform で計算)を置き場の鍵にする。無ければ版のまま。"
+  (if (is declared None)
+      #(revision None)
+      #((+ ENV-KEY-PREFIX (run (env-key (run (runtime-env-of-json declared)) (current-platform))))
+        (json.dumps declared :sort-keys True :ensure-ascii False))))
+
+
+(defn #^ JobSpec declared-job-spec [#^ dict job]  ; defk にできない: 宣言の読み(Program の外の I/O の道具)が呼ぶ
+  "宣言の file の 1 行・heartbeat の返事の job 1 本 → worker が起動する形(runtimeEnv を持つ service は env の root で起こす)。"
+  (setv #(revision runtime) (env-placement (.get job "runtimeEnv") (get job "revision")))
+  (JobSpec (get job "name") (get job "entry") (tuple (.get job "args" [])) revision
+           :once (.get job "once" False) :placement (.get job "placement")
+           :base (.get job "base") :handoff (bool (.get job "handoff" False))
+           :ready-instance (.get job "readyInstance") :runtime-env runtime))
+
+
 (defn #^ (| DesiredJobs DesiredUnreadable) parse-desired [#^ str text]
   (try
     (setv data (json.loads text))
-    (DesiredJobs (tuple (gfor job (get data "jobs")
-      (JobSpec (get job "name") (get job "entry") (tuple (.get job "args" [])) (get job "revision")
-               :base (.get job "base") :handoff (bool (.get job "handoff" False))))))
+    (DesiredJobs (tuple (gfor job (get data "jobs") (declared-job-spec job))))
     (except [error Exception]
       (DesiredUnreadable f"宣言を読めません: {(repr error)}"))))
 
@@ -337,20 +353,38 @@
 (defclass ProbeStore []
   "入口の検め(2026-09-25): service の job の木で、worker の実行環境が入口(factory と env)を読み込めるかを子 process で試す。
    CodeStore と同じく Popen で起動し、結果は observe で拾う(ループを塞がない)。実行は ProcessHost と同じ hy・同じ PYTHONPATH
-   (layout の import の根)・cwd = 木。timeout-seconds を越えた検めは止めて FAILED(理由 = 時間切れ)。
-   結果の鍵は spec-hash(同じ spec の検めは撃ち直されるまで答えを使い回す)。"
-  (defn #^ None __init__ [self #^ str hy-command #^ (| int float) [timeout-seconds PROBE-SECONDS] #^ CodeLayout [layout (CodeLayout)]]
-    (setv self.hy-command hy-command self.timeout-seconds timeout-seconds self.layout layout self.pending {} self.done {}))
+   (layout の import の根)・cwd = 木。実行環境の job(spec.runtime-env — 2026-09-26)は子と同じ起こし方で検める: root の venv の
+   `uv run --no-sync --frozen --project <root の project> hy -c …`・環境変数は子と同じ許可表・PYTHONPATH を置かない・cwd = 空の dir
+   (probe-dir)。worker の venv で検めると、env の root に無い module を worker の venv が読めて誤って通る。
+   timeout-seconds を越えた検めは止めて FAILED(理由 = 時間切れ)。結果の鍵は spec-hash(同じ spec の検めは撃ち直されるまで答えを使い回す)。"
+  (defn #^ None __init__ [self #^ str hy-command #^ (| int float) [timeout-seconds PROBE-SECONDS] #^ CodeLayout [layout (CodeLayout)]
+                          #^ str [uv "uv"] #^ (| str None) [probe-dir None]]
+    (setv self.hy-command hy-command self.timeout-seconds timeout-seconds self.layout layout self.pending {} self.done {}
+          self.uv uv self.probe-dir (Path (or probe-dir "probe"))))
+
+  (defn #^ list command [self #^ ProbeEntry action]
+    "検めの子の #(argv cwd 環境変数)— 実行環境の job は子と同じ root の venv、それ以外は worker の hy と木の PYTHONPATH。"
+    (setv targets (probe-targets action.spec))
+    (if action.spec.runtime-env
+        (do (setv declared (json.loads action.spec.runtime-env))
+            (.mkdir self.probe-dir :parents True :exist-ok True)
+            [[self.uv "run" "--no-sync" "--frozen" "--project" (env-project-dir action.code-path declared)
+              "hy" "-c" PROBE-PROGRAM #* targets]
+             (str self.probe-dir)
+             (child-environment (dict os.environ) {}
+                                (dfor v (.get declared "envVars" []) (get v "name") (get v "value"))
+                                {"PYTHONDONTWRITEBYTECODE" "1"})])
+        [[self.hy-command "-c" PROBE-PROGRAM #* targets]
+         action.code-path
+         (| (dict os.environ) {"PYTHONPATH" (.pythonpath self.layout action.code-path) "PYTHONDONTWRITEBYTECODE" "1"})]))
 
   (defn #^ None start [self #^ ProbeEntry action]
     (setv key (spec-hash action.spec))
     (when (in key self.pending) (return))
     (.pop self.done key None)
+    (setv #(argv cwd env) (.command self action))
     (setv (get self.pending key)
-      #((subprocess.Popen [self.hy-command "-c" PROBE-PROGRAM #* (probe-targets action.spec)]
-          :cwd action.code-path
-          :env (| (dict os.environ) {"PYTHONPATH" (.pythonpath self.layout action.code-path)
-                                     "PYTHONDONTWRITEBYTECODE" "1"})
+      #((subprocess.Popen argv :cwd cwd :env env
           :stdin subprocess.DEVNULL :stdout subprocess.DEVNULL :stderr subprocess.PIPE)
         (time.monotonic))))
 
@@ -508,11 +542,8 @@
 (defn #^ JobSpec task-spec [#^ dict task #^ Path task-dir]
   "coordinator が割り当てた task 1 本 → 1 度だけ走らせる job。blob と結果はこの worker の file(名前は task の id で決まる)。
    実行環境の task(runtimeEnv を持つ)は、版の代わりに env のキー(この worker の platform で計算)を置き場の鍵にする。"
-  (setv id (get task "id") declared (.get task "runtimeEnv"))
-  (setv #(revision runtime) (if (is declared None)
-                                #((get task "revision") None)
-                                #((+ ENV-KEY-PREFIX (run (env-key (run (runtime-env-of-json declared)) (current-platform))))
-                                  (json.dumps declared :sort-keys True :ensure-ascii False))))
+  (setv id (get task "id"))
+  (setv #(revision runtime) (env-placement (.get task "runtimeEnv") (get task "revision")))
   (JobSpec (+ "task/" id) JOB-ENTRY
            #("task" "--blob" (str (/ task-dir f"{id}.blob")) "--result" (str (/ task-dir f"{id}.result"))
              "--env" (get task "env") "--versions" (json.dumps (get task "versions") :sort-keys True))
@@ -584,11 +615,7 @@
       (setv timing (.get body "timing"))
       (when (and timing (in "fence_ms" timing))
         (setv self.fence-ms (int (get timing "fence_ms"))))
-      (setv self.last-jobs (tuple (gfor job (get body "jobs")
-                                        (JobSpec (get job "name") (get job "entry") (tuple (get job "args")) (get job "revision")
-                                                 :once (.get job "once" False) :placement (.get job "placement")
-                                                 :base (.get job "base") :handoff (bool (.get job "handoff" False))
-                                                 :ready-instance (.get job "readyInstance")))))
+      (setv self.last-jobs (tuple (gfor job (get body "jobs") (declared-job-spec job))))
       (setv self.last-tasks (.accept-tasks self (.get body "tasks" [])))
       (DesiredJobs (+ self.last-jobs self.last-tasks))
       (except [error Exception]
