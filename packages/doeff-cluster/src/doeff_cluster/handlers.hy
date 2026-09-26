@@ -7,11 +7,15 @@
 (import urllib.parse [quote :as url-quote])
 (import .coordinator_http [CoordinatorEndpoint REPLY-SECONDS])
 (import .code_prepare [MARKER MARKER-FORMAT marker-problem scan])
+(import doeff [run])
+(import .cluster_model [PROTOCOL-FORMAT])
+(import .runtime_env_model [runtime-env-of-json env-key current-platform])
 (import .semaphore_model [SEMAPHORE-PREFIX drop-holders])
 (import .worker_policy [kept-when-cut-off])
 (import .worker_model [JobSpec CodeState CodeView ProcessView WorldView StopStage ProbeState ProbeView
   DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus JobPhase
-  PrepareCode StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry spec-hash split-code-key probe-args CodeLayout])
+  PrepareCode StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry spec-hash split-code-key probe-args CodeLayout
+  ENV-KEY-PREFIX])
 
 (defn #^ (| DesiredJobs DesiredUnreadable) parse-desired [#^ str text]
   (try
@@ -331,12 +335,17 @@
 
 
 (defn #^ JobSpec task-spec [#^ dict task #^ Path task-dir]
-  "coordinator が割り当てた task 1 本 → 1 度だけ走らせる job。blob と結果はこの worker の file(名前は task の id で決まる)。"
-  (setv id (get task "id"))
+  "coordinator が割り当てた task 1 本 → 1 度だけ走らせる job。blob と結果はこの worker の file(名前は task の id で決まる)。
+   実行環境の task(runtimeEnv を持つ)は、版の代わりに env のキー(この worker の platform で計算)を置き場の鍵にする。"
+  (setv id (get task "id") declared (.get task "runtimeEnv"))
+  (setv #(revision runtime) (if (is declared None)
+                                #((get task "revision") None)
+                                #((+ ENV-KEY-PREFIX (run (env-key (run (runtime-env-of-json declared)) (current-platform))))
+                                  (json.dumps declared :sort-keys True :ensure-ascii False))))
   (JobSpec (+ "task/" id) JOB-ENTRY
            #("task" "--blob" (str (/ task-dir f"{id}.blob")) "--result" (str (/ task-dir f"{id}.result"))
              "--env" (get task "env") "--versions" (json.dumps (get task "versions") :sort-keys True))
-           (get task "revision") :once True :detached (bool (.get task "detached" False))))
+           revision :once True :detached (bool (.get task "detached" False)) :runtime-env runtime))
 
 
 (defclass CoordinatorLink []
@@ -393,7 +402,7 @@
     (try
       (setv response (.request self.endpoint "POST" "/heartbeat"
         :json {"name" self.name "labels" self.labels "capacity" self.capacity "versions" self.versions
-               "statuses" self.statuses "endpoint" self.endpoint.url "boot" self.boot}))
+               "statuses" self.statuses "endpoint" self.endpoint.url "boot" self.boot "format" PROTOCOL-FORMAT}))
       (.raise-for-status response)
       (setv self.last-ok (time.monotonic))
       (setv body (.json response))
@@ -435,7 +444,9 @@
   {"name" s.name "phase" s.phase.value "desiredRevision" s.desired-revision
    "runningRevision" s.running-revision "pid" s.pid "attempts" s.attempts "detail" s.detail
    ;; 動いている process の世代(coordinator の readiness と計器はこれと一致する報告だけを数える)。
-   "instance" s.instance "specHash" s.spec-hash "placement" s.placement "retiredFrom" s.retired-from})
+   "instance" s.instance "specHash" s.spec-hash "placement" s.placement "retiredFrom" s.retired-from
+   ;; 実行環境の準備の失敗(ENV-FAILED の行だけ): coordinator が置き直すか・答えの型を決める。
+   #** (if (is s.failure None) {} {"failureKind" s.failure.kind.value "retryable" s.failure.retryable})})
 
 (defhandler status-to-coordinator [#^ CoordinatorLink link]
   ;; 状態は次の heartbeat で送る。file にも書くので、外側の status-file へ渡す。

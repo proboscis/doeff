@@ -10,8 +10,8 @@
 ;;; renew-detached・absorb-detached-report)。ここは要求 1 件 → Reply(次の状態・status・本文)だけ。
 (import dataclasses [replace])
 (import typing [NamedTuple])
-(import .cluster_model [ClusterState TaskRecord requirements-of component-versions-of])
-(import .cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached])
+(import .cluster_model [ClusterState TaskRecord requirements-of component-versions-of format-refusal])
+(import .cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-refusal])
 (import .detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS])
 
 (setv DETACHED-MAX-LEASE-SECONDS 3600)
@@ -54,14 +54,17 @@
   (setv lease (.get body "leaseSeconds" DETACHED-DEFAULT-LEASE-SECONDS)
         retain (.get body "retainSeconds" DETACHED-DEFAULT-RETAIN-SECONDS)
         requires (requirements-of (.get body "requires" {}))
-        refusal (or (key-refusal key)
+        refusal (or (format-refusal body)
+                    (runtime-env-refusal body)
+                    (key-refusal key)
                     (seconds-refusal "leaseSeconds" lease DETACHED-MAX-LEASE-SECONDS)
                     (seconds-refusal "retainSeconds" retain DETACHED-MAX-RETAIN-SECONDS)))
   (when refusal (return (Reply state 400 {"error" refusal})))
   (setv existing (task-by-key state key))
   (when (is-not existing None)
     (return
-      (if (= #(existing.env existing.name existing.requires) #((get body "env") (.get body "name" "") requires))
+      (if (= #(existing.env existing.name existing.requires existing.runtime-env)
+             #((get body "env") (.get body "name" "") requires (.get body "runtimeEnv")))
           (Reply state 200 {"key" key "task" existing.id "created" False "phase" existing.phase})
           (Reply state 409 {"error" (.format "key {} は別の仕事(env {}・name {!r}・requires {})に使われている"
                                         key existing.env existing.name (dict existing.requires))}))))
@@ -77,7 +80,8 @@
         task (TaskRecord id (.get body "name" "") (get body "env") (get body "blob") (get body "revision")
                          (component-versions-of (.get body "versions" {}))
                          requires lease-ms (+ now lease-ms) now
-                         :detached True :key key :retain-ms (int (* 1000 retain))))
+                         :detached True :key key :retain-ms (int (* 1000 retain))
+                         :runtime-env (.get body "runtimeEnv")))
   (Reply (replace state :tasks (| state.tasks {id task}) :next-task (+ state.next-task 1))
          200 {"key" key "task" id "created" True "phase" task.phase}))
 
@@ -87,7 +91,8 @@
   (setv task (task-by-key state key))
   (if (is task None)
       {"key" key "phase" "unknown"}
-      {"key" key "task" task.id "phase" task.phase "detail" task.detail "result" task.result "worker" task.worker}))
+      {"key" key "task" task.id "phase" task.phase "detail" task.detail "result" task.result "worker" task.worker
+       "failureKind" task.failure-kind "retryable" task.retryable}))
 
 
 (defn #^ Reply cancel-detached [#^ ClusterState state #^ str key #^ int now]

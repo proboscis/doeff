@@ -6,6 +6,11 @@
 ;;;
 ;;; env = handler の組を組み立てる関数の import path。(config ctx) を受けて handler の list(外側が先)を返す。
 ;;; task は結果(TaskSucceeded / TaskFailed)を必ず --result の file に書いてから 0 で終わる。
+;;;
+;;; 実行環境(runtime env)の task: worker は env の root の venv で `uv run --no-sync --frozen --project <root の project> hy -m
+;;; doeff_cluster.job_entry task …` として起こし、宣言の JSON を DOEFF_RUNTIME_ENV、キーを DOEFF_RUNTIME_ENV_KEY で渡す。この入口は
+;;; root の中の doeff-cluster(送り手の版)なので、worker と子の約束の版は runtime_env_model.CHILD-PROTOCOL(worker が準備の確かめで
+;;; 読む)。
 ;;; 0 以外で終わった = 結果を書けなかった(worker はそれを「結果なし」として報告する)。
 (import argparse)
 (import dataclasses [dataclass])
@@ -17,7 +22,7 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import .service_model [resolve program-arguments settings-left-to-env RECORD-KEY])
-(import .remote_model [current-versions version-mismatch decode-program encode-outcome
+(import .remote_model [current-versions version-mismatch version-diffs decode-program encode-outcome
                        TaskSucceeded TaskFailed failed-from VersionMismatch RemoteJobFailed])
 
 
@@ -33,6 +38,9 @@
   (setv #^ str attempt "")
   (setv #^ str spec-hash "")
   (setv #^ str placement "")
+  ;; 実行環境の宣言(JSON の文字列)とキー。env の task でなければ空。子がさらに task を送る時の既定の env になる。
+  (setv #^ str runtime-env "")
+  (setv #^ str env-key "")
 
   (defn #^ dict identity [self]
     "報告に載せる process の世代(coordinator の resource_policy.report-matches が比べる欄)。"
@@ -48,7 +56,9 @@
               :instance (os.environ.get "DOEFF_WORKER_INSTANCE" "")
               :attempt (os.environ.get "DOEFF_WORKER_ATTEMPT" "")
               :spec-hash (os.environ.get "DOEFF_WORKER_SPEC_HASH" "")
-              :placement (os.environ.get "DOEFF_WORKER_PLACEMENT" "")))
+              :placement (os.environ.get "DOEFF_WORKER_PLACEMENT" "")
+              :runtime-env (os.environ.get "DOEFF_RUNTIME_ENV" "")
+              :env-key (os.environ.get "DOEFF_RUNTIME_ENV_KEY" "")))
 
 
 (defn #^ list env-handlers [#^ str env #^ dict config #^ RunContext ctx]
@@ -63,9 +73,13 @@
   "設定の record 欄(effect の記録 — record_handlers.hy)が在れば、env の一番内側に足す記録係を 1 つ返す。無ければ空。"
   (when (not (isinstance record dict)) (return []))
   (import doeff_cluster.record_handlers [recording-handler])
+  ;; code のキー: env の task は env のキー(DOEFF_RUNTIME_ENV_KEY — cwd は空の作業 dir で、名は何も言わない)。
   ;; 版の組: worker は木を「<base>~<重ねる commit>」の名の dir に作って cwd にする(DOEFF_WORKER_REVISION は宣言の revision だけ)。
   (setv here (. (Path.cwd) name))
-  (setv code-key (if (re.fullmatch r"[0-9a-f]{40}(~[0-9a-f]{40})?" here) here ctx.revision))
+  (setv code-key (cond
+                   ctx.env-key (+ "env-" ctx.env-key)
+                   (re.fullmatch r"[0-9a-f]{40}(~[0-9a-f]{40})?" here) here
+                   True ctx.revision))
   (setv #(base _ overlay) (.partition code-key "~"))
   [(recording-handler record ctx.job
                       {"worker" ctx.worker "pid" (os.getpid) "instance" ctx.instance "attempt" ctx.attempt
@@ -91,10 +105,12 @@
 
 (defn #^ (| TaskSucceeded TaskFailed) task-outcome [args #^ RunContext ctx]
   ;; 版 → 復元 → 実行の順に、どこで断ったか分かる失敗を返す。
-  (setv expected (json.loads args.versions))
-  (setv mismatch (version-mismatch expected (current-versions)))
+  (setv expected (json.loads args.versions) actual (current-versions))
+  (setv mismatch (version-mismatch expected actual))
   (when (is-not mismatch None)
-    (return (failed-from (VersionMismatch (+ "版が違うので復元しない: " mismatch)))))
+    (return (failed-from (VersionMismatch (+ "版が違うので復元しない: " mismatch
+                                             (if ctx.env-key (.format "(env {})" ctx.env-key) ""))
+                                          (version-diffs expected actual) ctx.env-key))))
   (try
     (setv program (decode-program (.read-text (Path args.blob) :encoding "ascii")))
     (except [error Exception]

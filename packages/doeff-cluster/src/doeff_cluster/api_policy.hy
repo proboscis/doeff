@@ -23,7 +23,7 @@
 ;;; 旧い口(PUT /jobs・/heartbeat・/board・/tasks)は残す。PUT /jobs は資源ごとの compare-and-set に写す(resource_policy)。
 (import dataclasses [replace])
 (import urllib.parse [unquote :as url-unquote])
-(import .cluster_model [ClusterState ClusterTiming ClusterNaming Request PlainText])
+(import .cluster_model [ClusterState ClusterTiming ClusterNaming Request PlainText format-refusal])
 (import .metrics_policy [record-metrics metrics-text])
 (import .cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task board-write lease-write
                          still-live-somewhere])
@@ -269,6 +269,8 @@
         (do (setv actor (require-actor (or request.actor (.get body "actor"))))
             (setv #(after status reply) (legacy-put-jobs state (get body "jobs") actor))
             #((if (is after state) state (settle state after actor now timing)) status reply))
+      (and (= method "POST") (= parts ["heartbeat"]) (is-not (format-refusal body) None))
+        #(state 400 {"error" (format-refusal body)})
       (and (= method "POST") (= parts ["heartbeat"]))
         (do (setv name (get body "name"))
             (setv after (settle state (register-heartbeat state body now) name now timing))
