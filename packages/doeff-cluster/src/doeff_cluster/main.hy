@@ -79,7 +79,7 @@
         (do (setv link (CoordinatorLink args.coordinator args.name (parse-labels args.labels) args.capacity
                                         (int (* args.fence 1000))
                                         :task-dir (str (/ state-dir "tasks")) :versions (current-versions)
-                                        :tools (parse-labels args.tools)))
+                                        :tools (parse-labels args.tools) :envs envs))
             [(coordinator-desired link) (status-to-coordinator link) (lease-release-coordinator link)])
         [(desired-file args.desired) lease-release-none]))
   (setv program (run-worker policy))

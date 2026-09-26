@@ -74,7 +74,34 @@
   ;; (Pod を作り直した後の worker)が来たら解ける(2026-09-25)。保存しない(読み直しの後は次の heartbeat で埋まる)。旧い worker は None。
   (setv #^ (| str None) boot None)
   ;; worker が名乗る道具(外部の CLI・OS の library — 名と版・2026-09-26)。実行環境の宣言の tools と照らして置き先を選ぶ。
-  (setv #^ (get tuple #(ComponentVersion ...)) tools #()))
+  (setv #^ (get tuple #(ComponentVersion ...)) tools #())
+  ;; 実行環境の root の名乗り(2026-09-26・heartbeat の platform・envs・envCapacity)。保存しない(次の heartbeat で埋まる)。
+  ;; platform = root のキーの材料(runtime_env_model.current-platform)・env-ready / env-preparing = 準備済み / 準備中の root のキー・
+  ;; env-failed = 準備に失敗した root(EnvFailed の tuple)・env-capacity = "ok" か "exhausted"(準備を始める空きが無い)。
+  (setv #^ str platform "")
+  (setv #^ frozenset env-ready (frozenset))
+  (setv #^ frozenset env-preparing (frozenset))
+  (setv #^ tuple env-failed #())
+  (setv #^ str env-capacity "ok"))
+
+
+(defclass [(dataclass :frozen True)] EnvFailed []
+  "worker が名乗った root の準備の失敗 1 つ(キー・EnvFailureKind の値の綴り・理由・一時か)。"
+  (#^ str key)
+  (#^ str kind)
+  (#^ str detail)
+  (#^ bool retryable))
+
+
+(defclass [(dataclass :frozen True)] WarmEntry []
+  "温める表の行 1 つ(2026-09-26・WarmRuntimeEnv)。key = 宣言(platform を含まない)と requires の組のキー・runtime-env = 宣言の JSON・
+   requires = 準備してほしい worker の条件・until-ms = 期限(過ぎた行は調停が消す)・holder = 頼んだ主体(記録と表示だけ)。
+   label の合う worker は heartbeat の返事で行を受け取り、job の準備より低い優先度で準備する。行の期限の内は掃除がその root を消さない。"
+  (#^ str key)
+  (#^ dict runtime-env)
+  (#^ tuple requires)
+  (#^ int until-ms)
+  (#^ str holder))
 
 
 (defclass [(dataclass :frozen True)] Placement []
@@ -162,7 +189,9 @@
 
 
 (defclass [(dataclass :frozen True)] TaskRecord []
-  "task 1 本。phase = queued | assigned | finished | code-failed | failed(切り離した task は + version-mismatch | lost | cancelled)。
+  "task 1 本。phase = queued | preparing | assigned | finished | code-failed | failed(切り離した task は + version-mismatch | lost | cancelled)。
+   preparing = 実行環境の task を、その env を準備済みでない worker に置いた(worker が準備してから走る・冷たい起動)。worker が準備済みを
+   名乗った拍に assigned へ進む。担い手の数・送る task・報告の吸い上げでは assigned と同じに扱う(PLACED-PHASES)。
    result = worker が返した結果の blob(TaskSucceeded / TaskFailed の cloudpickle)。finished で None なら結果なし。"
   (#^ str id)
   (#^ str name)
@@ -198,6 +227,10 @@
   (setv #^ tuple avoid #())
   (setv #^ str failure-kind "")
   (setv #^ bool retryable False))
+
+
+;; 担い手の worker に置いた task の phase(担い手の数・送る task・報告の吸い上げ・lease の延長で同じに扱う)。
+(setv PLACED-PHASES (frozenset #("assigned" "preparing")))
 
 
 (defn #^ dict task-record-to-json [#^ TaskRecord task]
@@ -255,7 +288,12 @@
   ;; (job の名 → Placement・surge)。surge の担い手は process を起こし(standby で待つ)、coordinator がそれを Ready と数えたら
   ;; placements をその置き先へ付け替える(旧い担い手は宣言から外れて止め、lease を返す)。どちらも保存する(durable_kv)。
   (setv #^ dict drains (field :default-factory dict))
-  (setv #^ dict surges (field :default-factory dict)))
+  (setv #^ dict surges (field :default-factory dict))
+  ;; 温める表(2026-09-26): 行のキー → WarmEntry。保存する(durable_kv の warm/<キー>)。
+  (setv #^ dict warms (field :default-factory dict))
+  ;; 冷たい起動の数(実行環境の task を、準備済みの worker が 1 つも無いまま置いた回数 — 計器 doeff_worker_env_cold_start_total)。
+  ;; 保存しない(counter は process の世代ごとに 0 から数える)。
+  (setv #^ int env-cold-starts 0))
 
 
 ;; --- HTTP の要求と返事 ----------------------------------------------------------

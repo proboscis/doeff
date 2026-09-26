@@ -17,6 +17,8 @@
 ;;;                        時計で書き・判じる — semaphore_model.lease-op・2026-09-25)。答え {"ok" "reason" "ttlMs"}
 ;;;   GET    /workers/<名>                      worker の生存・世代・drain の進み(ready = 生きていて drain 中でない)
 ;;;   POST   /workers/<名>/drain {"ttlSeconds"?}  drain を頼む(何度でも同じ意味・期限だけ延びる)。DELETE で取り消す(drain_policy)
+;;;   POST   /warm {"runtimeEnv" "requires" "ttlSeconds" "holder"} · GET /warm/<キー>
+;;;                        実行環境の温める表(2026-09-26 — warm_policy。答えは WarmState)
 ;;;   PUT /detached/<key> · GET /detached/<key> · POST /detached/<key>/cancel · DELETE /detached/<key>
 ;;;                        切り離した task(呼び手と寿命を切り離した task — 送る・読む・取り消す・保持を解く。detached_policy)
 ;;; 書きには header X-Actor(依頼の主体の id・作業係の名・worker の名)が要る。盤と task は無ければ送り元の番地で記録する。
@@ -33,6 +35,7 @@
 (import .drain_policy [advance-drains request-drain cancel-drain worker-view drains-view])
 (import .detached_policy [Reply submit-detached detached-view cancel-detached release-detached])
 (import .rollout_policy [rollout-step target-key deployment-owners drift-status action-due shift-clocks TERMINAL-PHASES])
+(import .warm_policy [warm-write warm-read])
 
 (setv OBSERVATION-STALE-MS 15000)   ; これより古い k8s の観測は Unknown
 (setv ROLLOUT-ACTOR "rollout-controller")
@@ -274,7 +277,7 @@
       (and (= method "POST") (= parts ["heartbeat"]))
         (do (setv name (get body "name"))
             (setv after (settle state (register-heartbeat state body now) name now timing))
-            #(after 200 (heartbeat-reply after name timing (ready-instances after name now timing))))
+            #(after 200 (heartbeat-reply after name timing (ready-instances after name now timing) :now now)))
       (and (= method "GET") (= parts ["state"]))
         #(state 200 (| (state-view state now timing) {"audit" (list (cut state.audit -30 None))
                                                       "drains" (drains-view state now timing)}))
@@ -307,6 +310,12 @@
         #((settle state (replace state :tasks (dfor #(k v) (.items state.tasks) :if (!= k (get parts 1)) k v))
                   (loose-actor request) now timing)
           200 {"dropped" True})
+      ;; --- 実行環境の温める表(2026-09-26 — warm_policy)---
+      (and (= method "POST") (= parts ["warm"]))
+        (do (setv actor (loose-actor request)
+                  #(after status reply) (warm-write state body now actor timing))
+            #((if (is after state) state (settle state after actor now timing)) status reply))
+      (and (= method "GET") (= head "warm") (= (len parts) 2)) (warm-read state (get parts 1) now timing)
       ;; --- 切り離した task(2026-09-25 — detached_policy)---
       (and (= method "PUT") (= head "detached") (= (len parts) 2))
         (detached-reply state (submit-detached state (get parts 1) body now) request now timing)

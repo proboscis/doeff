@@ -18,6 +18,8 @@
 (import .cluster_policy [ENV-RETRIES])
 (import .remote_model [encode-program current-versions version-mismatch failed-from])
 (import .cluster_model [Requirement])
+(import .warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmFailure warm-key warm-state-of-json])
+(import doeff_time [GetMonotonic])
 (import .detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached SimulateRunnerLoss
                          DetachedSubmitted DetachedSucceeded DetachedLost DetachedCancelled DetachedVersionMismatch
                          DetachedEnvUnavailable
@@ -34,6 +36,8 @@
                   #^ (| RuntimeEnv None) [runtime-env None]]
     (setv self.key key self.env env self.name name self.requires requires self.runtime-env runtime-env)
     (setv #^ (| str None) self.root None)
+    ;; 通った phase の列(preparing = 走る前に env の root を準備した — 冷たい起動・running = Program が走り出した)。
+    (setv #^ list self.phases [])
     (setv #^ (| Task None) self.handle None)
     (setv #^ (| DetachedOutcome None) self.outcome None)))
 
@@ -43,12 +47,14 @@
    runs = 走らせ始めた回数(冪等の検に使う)。
    runtime-env = 送り手の実行環境の宣言(在れば、task を走らせる前に env の root を準備する — 準備の I/O は外側の handler、速い模擬
    では env_fake の fake-env)。envs = env のキー → 準備中の scheduler の task か答え(同じキーの準備は 1 本)・known = 完成した root・
-   prepares = 準備を起こした回数。"
+   prepares = 準備を起こした回数。
+   warms = 温める表(行のキー → #(宣言 期限の仮想の秒))・cold-starts = 準備の済んでいない env の task を走らせた回数(冷たい起動 —
+   本物の coordinator の計器 doeff_worker_env_cold_start_total と同じ意味)。"
   (defn __init__ [self [runner-versions None] #^ (| RuntimeEnv None) [runtime-env None] #^ str [state-root "/state/roots"]
                   #^ int [min-free-bytes 0]]
     (setv self.records {} self.runner-versions runner-versions self.runs 0
           self.runtime-env runtime-env self.state-root state-root self.min-free-bytes min-free-bytes
-          self.envs {} self.known [] self.prepares 0))
+          self.envs {} self.known [] self.prepares 0 self.warms {} self.cold-starts 0))
 
   (defn #^ bool finish [self #^ str key outcome]
     "終わりの答えを置く。既に終わっていれば(取り消し・消失の後)何もしない — 終わりの答えは二度と変わらない。"
@@ -101,11 +107,17 @@
   ;; 実行環境の task は、先に env の root を準備する(失敗は Program を走らせずに DetachedEnvUnavailable)。
   (setv record (get store.records key))
   (when (is-not record.runtime-env None)
+    ;; 準備の済んでいない env の task は、走る前に準備を待つ(冷たい起動 — 先読みで避ける)。
+    (<- env-id str (env-key record.runtime-env (current-platform)))
+    (when (not (isinstance (.get store.envs env-id) EnvReady))
+      (.append record.phases "preparing")
+      (+= store.cold-starts 1))
     (<- ready (env-for-task store record.runtime-env))
     (when (isinstance ready EnvFailure)
       (.finish store key (DetachedEnvUnavailable ready.kind.value ready.detail ready.retryable))
       (return False))
     (setv record.root ready.root))
+  (.append record.phases "running")
   (try
     (<- value program)
     (.finish store key (DetachedSucceeded value))
@@ -149,7 +161,45 @@
   (DetachedSubmitted key True))
 
 
+(defk local-warm-state [store key]
+  {:pre [(: store DetachedLocalStore) (: key str)] :post [(: % WarmState)]}
+  "模擬の温める表の行の今の姿(担い手は 1 つ — 名は local)。本物の coordinator の warm-view と同じ形で答えるため。"
+  (setv row (.get store.warms key))
+  (if (is row None)
+      (WarmState :key key :ready #() :preparing #() :failed #() :until-ms 0)
+      (do (setv #(env until) row)
+          (<- env-id str (env-key env (current-platform)))
+          (setv entry (.get store.envs env-id) until-ms (int (* 1000 until)))
+          (cond
+            (isinstance entry EnvReady) (WarmState :key key :ready #("local") :preparing #() :failed #() :until-ms until-ms)
+            (isinstance entry EnvFailure)
+              (WarmState :key key :ready #() :preparing #() :until-ms until-ms
+                         :failed #((WarmFailure :worker "local" :kind entry.kind.value :detail entry.detail
+                                                :retryable entry.retryable)))
+            True (WarmState :key key :ready #() :preparing #("local") :failed #() :until-ms until-ms)))))
+
+
+(defk warm-local [store env requires ttl-seconds]
+  {:pre [(: store DetachedLocalStore) (: env RuntimeEnv) (: requires tuple) (: ttl-seconds float)] :post [(: % WarmState)]}
+  "模擬の先読み: 表に行を書き、env の root の準備を別の task で起こす(送り手を待たせない)。同じ行の頼み直しは期限だけ延ばす。"
+  (<- key str (warm-key env requires))
+  (<- now float (GetMonotonic))
+  (setv (get store.warms key) #(env (+ now ttl-seconds)))
+  (<- env-id str (env-key env (current-platform)))
+  (when (not-in env-id store.envs)
+    (<- (Spawn (prepared-env store env) :daemon True)))
+  (<- answer WarmState (local-warm-state store key))
+  answer)
+
+
 (defhandler detached-local [#^ DetachedLocalStore store [poll-seconds 0.1]]
+  ;; 引数に残す理由: store は模擬の担い手の置き場そのもの(検の筋書きが中を読む)で、設定ではない。
+  (WarmRuntimeEnv [env requires ttl-seconds holder]
+    (<- state (warm-local store env requires (float ttl-seconds)))
+    (resume state))
+  (ReadWarmState [key]
+    (<- state (local-warm-state store key))
+    (resume state))
   (SubmitDetached [program env key requires name lease-seconds retain-seconds]
     (setv existing (.get store.records key))
     (when (is-not existing None)
@@ -246,3 +296,37 @@
     (resume outcome))
   (CancelDetached [key] (resume (.cancel client key)))
   (ReleaseDetached [key] (resume (.release client key))))
+
+
+;; --- 温める表(2026-09-26): coordinator の /warm の口 -------------------------------------------------
+
+(defclass WarmClient []
+  "coordinator の /warm との連絡(I/O)。書きは同じ行への頼み直しが同じ意味なので、通信の失敗を越えて送り直す。"
+  (defn __init__ [self #^ str url [timeout REPLY-SECONDS] [transport None] #^ str [actor ""]]
+    (setv self.endpoint (CoordinatorEndpoint url timeout 4 :transport transport :actor (or actor None))))
+
+  (defn #^ WarmState write [self #^ RuntimeEnv env #^ tuple requires #^ float ttl-seconds #^ str holder]
+    "行を書いて今の姿を読む。"
+    (setv body {"runtimeEnv" (run-program (runtime-env->json env)) "requires" (dict requires) "ttlSeconds" ttl-seconds
+                "holder" holder "format" PROTOCOL-FORMAT}
+          response (send-idempotent (fn [] (.request self.endpoint "POST" "/warm" :json body))))
+    (when (= response.status-code 400)
+      (raise (DetachedRefused 400 (.get (.json response) "error" ""))))
+    (.raise-for-status response)
+    (warm-state-of-json (.json response)))
+
+  (defn #^ WarmState read [self #^ str key]
+    "行の今の姿を読む(表に無い行は ready も preparing も空・期限 0)。"
+    (setv response (send-idempotent (fn [] (.request self.endpoint "GET" (+ "/warm/" (url-quote key :safe ""))))))
+    (if (= response.status-code 404)
+        (WarmState :key key :ready #() :preparing #() :failed #() :until-ms 0)
+        (do (.raise-for-status response)
+            (warm-state-of-json (.json response))))))
+
+
+(defhandler warm-cluster [#^ WarmClient client]
+  ;; 引数に残す理由: client は coordinator への接続(I/O の資源)で、composition root が url から 1 つ作る。
+  (WarmRuntimeEnv [env requires ttl-seconds holder]
+    (resume (.write client env requires (float ttl-seconds) holder)))
+  (ReadWarmState [key]
+    (resume (.read client key))))
