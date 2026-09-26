@@ -72,14 +72,19 @@ doeff の Program を、k8s の Deployment のように「定義がある限り�
                          :readiness {"windowSeconds" 30}         ; ReportReady をこの秒数以内に出し続ける
                          :update "handoff"                       ; 版や設定の変更は新旧を並べて入れ替える
                          :base-from {"kind" "Deployment" "namespace" "prod" "name" "my-writer" "container" "my-writer"}
-                         :config {"poll" 5.0 "apply" False}))
+                         :config {"poll" 5.0 "apply" False}      ; 本体の引数(鍵と引数が 1 対 1)
+                         :env-config {"token-file" "/etc/my-writer/token"}))  ; env だけが読む設定(本体の引数にしない)
 
 (setv my-system (System "my-system" #(my-writer)))
 ```
 
 - 宣言は値と関数で書きます(macro は置かない — ADR-DOE-HY-005 R5)。関数の参照(`module:attr`)は `service` が Program を作る関数から
-  導くので、その関数は module の最上位に置きます(入れ子の関数・lambda は宣言の時点で断る)。`:requires`・`:config`・`:readiness`・
-  `:base-from` の鍵は文字列で書きます(宣言は JSON で coordinator へ渡る)。
+  導くので、その関数は module の最上位に置きます(入れ子の関数・lambda は宣言の時点で断る)。`:requires`・`:config`・`:env-config`・
+  `:readiness`・`:base-from` の鍵は文字列で書きます(宣言は JSON で coordinator へ渡る)。
+- 設定は持ち主で分けます。`:config` は本体の引数で、鍵と引数が 1 対 1 です(本体の引数に無い鍵・`:config` に無い引数は宣言の時点で
+  `TypeError`)。`:env-config` は env だけが読む設定(資格の file・lease の時間・HTTP の timeout 等)で、本体の引数にしません。
+  coordinator へは 2 つを重ねた平たい `run.config` が渡り、実行先は本体へ本体の引数の名の設定だけを、env へは全体を渡します。
+  テスト用の main と `declare --config` の上書きは宣言した鍵(と `record`)だけを変えられます。
 
 - 業務の Program は file・lock・通信を effect を通してだけ触ります。共有の状態は `ReadShared` / `WriteShared`、排他は
   `CreateNamedSemaphore`、時計は doeff-time の `GetTime` / `GetMonotonic` / `Delay`、実行先の値は `Ask` で受けます。
@@ -217,8 +222,9 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
 
 ## effect の記録と再生(backtest)
 
-service の設定(`run.config`)に `record` 欄を足すと、`job_entry` がそれを業務の Program の引数から外し、handler の組の一番内側に記録係を
-足します(`{"otlp": "<collector の URL>", "chunkSeconds": 3600, "flushSeconds": 2.0}`)。記録の 1 行は OpenTelemetry の log record 1 件です。
+service の設定(`run.config`)に `record` 欄を足すと、`job_entry` が handler の組の一番内側に記録係を足します。`record` は組み立て側の欄で、
+業務の Program の引数には入りません(テスト用の main・実行先・再生のどれも `program-arguments` で外す — 宣言の `:config` に書いてもよく、
+本体の引数に `record` という名は使えない)(`{"otlp": "<collector の URL>", "chunkSeconds": 3600, "flushSeconds": 2.0}`)。記録の 1 行は OpenTelemetry の log record 1 件です。
 再生は `hy -m doeff_cluster.replay_main --recording FILE --out FILE` を業務コードの版の木の中で撃ちます(外の I/O をする handler は組まず、
 記録か本物の scheduler だけが答える)。記録の形は `record_model.hy` の先頭、型ごとの扱いは上の表。
 
