@@ -9,6 +9,9 @@
 ;;   5 native の source を変える: native の build が 1 回だけ増え、次の root は wheel を使い回す
 ;;   6 同じ env の task を 2 本同時に: 準備は 1 本・2 本とも走る
 ;;   7 repo を 3 つに: 3 つのツリーが兄弟に並ぶ・import の根の順が宣言どおり
+;;   8 先読み: 温める表の env を worker が job の前に準備し、task が来た最初の拍で子を起こす(準備を待たない)
+;;   9 固定された root がある時に空きが下限を切る: 固定された root・project ごとの最新・worker が作っていない dir は残り、
+;;     固定されていない古い root が消える
 ;; 反例: 子に PYTHONPATH を残す / worker の再起動で走らせる実装 / 根と同じ最上位の名の第三者の package / 送り手の版の doeff をずらす /
 ;;       節 3.6 の失敗の組(許可表に無い URL・push していない commit・lock の hash の 1 文字・fake の uv の失敗・空きが足りない)。
 (require doeff-hy.macros [deftest defk <- val var])
@@ -28,7 +31,9 @@
 (import doeff_cluster.runtime_env [LocalCheckout ProjectOfCheckout runtime-env-of-checkouts local-checkouts])
 (import doeff_cluster.env_prepare [ENV-MARKER ROOTS-PTH])
 (import doeff_cluster.handlers [EnvStore ProcessHost task-spec])
-(import doeff_cluster.worker_model [CodeState CodeView StartJob ReapJob Outcome])
+(import doeff_cluster.worker_model [CodeState CodeView StartJob ReapJob Outcome WorldView WorkerPolicy PrepareEnv WarmEnv
+                                    code-key])
+(import doeff_cluster.worker_policy [plan])
 (import doeff_cluster.remote_model [encode-program decode-outcome current-versions TaskSucceeded TaskFailed])
 
 (val FIXTURES (/ (. (Path __file__) (resolve) parent) "fixtures"))
@@ -448,3 +453,85 @@
   (assert (isinstance answer DetachedVersionMismatch) answer)
   (assert (= (lfor d answer.diffs d.field) ["doeff"]) answer.diffs)
   (assert (= answer.env-key key) answer))
+
+
+;; --- 筋書き 8・9(先読みと掃除) --------------------------------------------------------------------
+
+(defk wait-ready [rig key]
+  {:pre [(: rig Rig) (: key str)] :post [(: % CodeView)]}
+  "EnvStore の観測で key が READY か FAILED になるまで待つ(準備は起こさない)。"
+  (val deadline (+ (time.monotonic) DEADLINE-SECONDS))
+  (var found None)
+  (while (is found None)
+    (when (> (time.monotonic) deadline) (raise (AssertionError (.format "準備が {} 秒で終わらない" DEADLINE-SECONDS))))
+    (for [view (.observe rig.envs)]
+      (when (and (= view.revision key) (in view.state #(CodeState.READY CodeState.FAILED)))
+        (:= found view)))
+    (when (is found None) (time.sleep 0.2)))
+  found)
+
+
+(deftest test-careful-scenario-8-a-warmed-root-starts-the-task-on-the-first-tick [tmp-path monkeypatch]
+  (.setenv monkeypatch "PYTHONDONTWRITEBYTECODE" "1")
+  (<- rig Rig (make-rig tmp-path))
+  (<- a1 str (push-commit rig.app (! (app-files 1 LOCK)) "app 1"))
+  (<- l1 str (push-commit rig.lib {"native/core/lib.rs" "fn a() {}\n"} "lib 1"))
+  (.insert sys.path 0 (str rig.app))
+  (<- env RuntimeEnv (declare rig a1 l1 LOCK))
+  (<- key str (env-key env (current-platform)))
+  (<- declared dict (runtime-env->json env))
+  (val warm (WarmEnv :key (+ "env-" key) :runtime-env (json.dumps declared :sort-keys True :ensure-ascii False)))
+  (val policy (WorkerPolicy))
+  ;; 温める表を受けた worker は、job が無くても準備を起こす(先読み)
+  (val warming (plan 0 #() (WorldView (.observe rig.envs) #()) {} policy :warm #(warm)))
+  (assert (= warming #((PrepareEnv warm.key warm.runtime-env :warm True))) warming)
+  (.start rig.envs warm.key warm.runtime-env :warm True)
+  (<- view (wait-ready rig warm.key))
+  (assert (= view.state CodeState.READY) view)
+  ;; task が来た最初の拍で子を起こす(PrepareEnv を挟まない = 準備が task の待ちに入らない)
+  (val tasks (/ rig.state "tasks"))
+  (val spec (task-spec {"id" "t8" "env" JOB-ENV "revision" "" "versions" (current-versions) "blob" "" "runtimeEnv" declared}
+                       tasks))
+  (val first (plan 1 #(spec) (WorldView (.observe rig.envs) #()) {} policy :warm #(warm)))
+  (assert (= first #((StartJob spec 1 view.path))) first)
+  (<- outcome (run-task rig env "t8"))
+  (assert (= (get outcome.value 0) 1) outcome)
+  ;; 反例: 温めていない env の task は、最初の拍で準備を起こす(準備が task の待ちに入る)
+  (<- a2 str (push-commit rig.app (! (app-files 2 LOCK)) "app 2"))
+  (<- cold RuntimeEnv (declare rig a2 l1 LOCK))
+  (<- cold-declared dict (runtime-env->json cold))
+  (val cold-spec (task-spec {"id" "t9" "env" JOB-ENV "revision" "" "versions" (current-versions) "blob" ""
+                             "runtimeEnv" cold-declared}
+                            tasks))
+  (val cold-first (plan 2 #(cold-spec) (WorldView (.observe rig.envs) #()) {} policy :warm #(warm)))
+  (assert (= cold-first #((PrepareEnv (code-key cold-spec) cold-spec.runtime-env))) cold-first))
+
+
+(deftest test-careful-scenario-9-the-sweep-keeps-pinned-latest-and-foreign-dirs [tmp-path monkeypatch]
+  (.setenv monkeypatch "PYTHONDONTWRITEBYTECODE" "1")
+  (<- rig Rig (make-rig tmp-path))
+  ;; 空きの下限を空きより上に置く(下限を切った状態を作る)
+  (setv rig.envs.sweep-floor-bytes (** 2 62))
+  (<- l1 str (push-commit rig.lib {"native/core/lib.rs" "fn a() {}\n"} "lib 1"))
+  (var views [])
+  (for [n [1 2 3]]
+    (<- sha str (push-commit rig.app (! (app-files n LOCK)) (.format "app {}" n)))
+    (<- view (prepare rig (! (declare rig sha l1 LOCK))))
+    (assert (= view.state CodeState.READY) view)
+    (.append views view))
+  (val #(a b c) (lfor v views (Path v.path)))
+  ;; 使った時刻: a(固定)が最も古く・b・c(最後に作った = project の最新)の順
+  (for [#(root at) [#(a 1000) #(b 2000) #(c 3000)]]
+    (.write-text (/ root ".last-used") "")
+    (os.utime (/ root ".last-used") #(at at)))
+  ;; worker が作っていない dir(キーの形の名で完成マーカーの無い dir と、別の名の dir)
+  (val foreign (/ rig.state "roots" "0123456789abcdef01234567"))
+  (.mkdir foreign)
+  (.write-text (/ foreign "keep.txt") "not ours\n")
+  (val notes (/ rig.state "roots" "notes"))
+  (.mkdir notes)
+  (.sweep rig.envs (frozenset #((+ "env-" a.name))))
+  (assert (.exists a) "固定された root は残る")
+  (assert (not (.exists b)) "固定されていない古い root は消える")
+  (assert (.exists c) "project ごとの最新の root(bytecode の引き継ぎ元)は残る")
+  (assert (and (.exists foreign) (.exists notes)) "worker が作っていない dir は消さない"))
