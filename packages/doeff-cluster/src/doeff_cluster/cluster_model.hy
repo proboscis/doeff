@@ -73,7 +73,10 @@
   (#^ int last-seen-ms)
   (setv #^ (get tuple #(ComponentVersion ...)) versions #())        ; worker の Python / cloudpickle / doeff の版(task を送れる相手を選ぶ)
   ;; worker の process の世代(起動のたびに新しく振る・heartbeat の boot)。drain は頼まれた時の世代に付き、別の世代の heartbeat
-  ;; (Pod を作り直した後の worker)が来たら解ける(2026-09-25)。保存しない(読み直しの後は次の heartbeat で埋まる)。旧い worker は None。
+  ;; (Pod を作り直した後の worker)が来たら解ける(2026-09-25)。旧い worker は None。
+  ;; 世代の順(2026-09-27): boot の id(uuid)には順が無いので、coordinator が初めて見た順を世代の順とする。
+  ;; boot = この名の今の世代・retired = この名の退いた世代(新しい順・cluster_policy.RETIRED-BOOTS-KEPT まで)。退いた世代の
+  ;; heartbeat は worker の名乗りとして受けない(cluster_policy.superseded-boot)。どちらも保存する(読み直しの後も順を保つ)。
   (setv #^ (| str None) boot None)
   ;; worker が名乗る道具(外部の CLI・OS の library — 名と版・2026-09-26)。実行環境の宣言の tools と照らして置き先を選ぶ。
   (setv #^ (get tuple #(ComponentVersion ...)) tools #())
@@ -84,7 +87,9 @@
   (setv #^ frozenset env-ready (frozenset))
   (setv #^ frozenset env-preparing (frozenset))
   (setv #^ tuple env-failed #())
-  (setv #^ str env-capacity "ok"))
+  (setv #^ str env-capacity "ok")
+  ;; 退いた世代(boot の欄の説明 — 位置で渡す欄の後ろに置く)。
+  (setv #^ (get tuple #(str ...)) retired #()))
 
 
 (defclass [(dataclass :frozen True)] EnvFailed []

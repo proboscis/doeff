@@ -52,7 +52,8 @@
   (.add-argument parser "--deadline" :type float :default DRAIN-DEADLINE-SECONDS)
   (.add-argument parser "--interval" :type float :default DRAIN-INTERVAL-SECONDS)
   (.add-argument parser "--boot-file" :default None
-                 :help "ready: この Pod の worker が起動の時に世代を書く file(無い・読めない = まだ起動していない = Ready でない)")
+                 :help (+ "この Pod の worker が起動の時に世代を書く file。ready: 無い・読めない = まだ起動していない = Ready でない。"
+                          "drain: 頼みに世代を載せる(同じ名の新しい Pod の worker が名乗った後は、この世代の task だけを待つ)"))
   (setv args (.parse-args parser))
   (setv endpoint (CoordinatorEndpoint args.coordinator (if (= args.mode "ready") PROBE-CALL-SECONDS CALL-SECONDS) 0
                                       :actor (.format "drain@{}" args.name)))
@@ -61,7 +62,7 @@
       (do (setv program (worker-ready args.name (read-boot args.boot-file)))
           (for [h handlers] (setv program (h program)))
           (sys.exit (if (run program) 0 1)))
-      (do (setv program (await-drained args.name args.deadline args.interval))
+      (do (setv program (await-drained args.name args.deadline args.interval (read-boot args.boot-file)))
           (for [h handlers] (setv program (h program)))
           (setv result (run program))
           (print (+ "drain: " (json.dumps result :ensure-ascii False)) :file sys.stderr :flush True)

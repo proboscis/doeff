@@ -16,7 +16,8 @@
 ;;;   POST   /leases/<名>  {"op" claim|renew|release|drop, "token", "permits", "ttlMs"}  名前付きの lease の操作(期限は coordinator の
 ;;;                        時計で書き・判じる — semaphore_model.lease-op・2026-09-25)。答え {"ok" "reason" "ttlMs"}
 ;;;   GET    /workers/<名>                      worker の生存・世代・drain の進み(ready = 生きていて drain 中でない)
-;;;   POST   /workers/<名>/drain {"ttlSeconds"?}  drain を頼む(何度でも同じ意味・期限だけ延びる)。DELETE で取り消す(drain_policy)
+;;;   POST   /workers/<名>/drain {"ttlSeconds"? "boot"?}  drain を頼む(何度でも同じ意味・期限だけ延びる)。DELETE で取り消す(drain_policy)。
+;;;                                      boot = 頼み手の process の世代。退いた世代の頼みは今の世代に drain を付けない(2026-09-27)
 ;;;   POST   /warm {"runtimeEnv" "requires" "ttlSeconds" "holder"} · GET /warm/<キー>
 ;;;                        実行環境の温める表(2026-09-26 — warm_policy。答えは WarmState)
 ;;;   PUT /detached/<key> · GET /detached/<key> · POST /detached/<key>/cancel · DELETE /detached/<key>
@@ -28,11 +29,11 @@
 (import .cluster_model [ClusterState ClusterTiming ClusterNaming Request PlainText format-refusal])
 (import .metrics_policy [record-metrics metrics-text])
 (import .cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task board-write lease-write
-                         still-live-somewhere])
+                         still-live-somewhere superseded-boot])
 (import .resource_policy [Refused refuse stamp require-actor valid-actor service-readiness record-readiness running-process
                           list-resources get-resource events-view create-resource update-resource delete-resource
                           legacy-put-jobs COORDINATOR])
-(import .drain_policy [advance-drains request-drain cancel-drain worker-view drains-view])
+(import .drain_policy [advance-drains request-drain cancel-drain worker-view superseded-worker-view drains-view])
 (import .handoff_policy [watch-handoffs])
 (import .cluster_model [HandoffPhase])
 (import .detached_policy [Reply submit-detached detached-view cancel-detached release-detached])
@@ -283,7 +284,8 @@
       (and (= method "POST") (= parts ["heartbeat"]))
         (do (setv name (get body "name"))
             (setv after (settle state (register-heartbeat state body now) name now timing))
-            #(after 200 (heartbeat-reply after name timing (ready-instances after name now timing) :now now)))
+            #(after 200 (heartbeat-reply after name timing (ready-instances after name now timing) :now now
+                                         :boot (.get body "boot"))))
       (and (= method "GET") (= parts ["state"]))
         #(state 200 (| (state-view state now timing) {"audit" (list (cut state.audit -30 None))
                                                       "drains" (drains-view state now timing)}))
@@ -293,7 +295,10 @@
       (and (= head "workers") (= (len parts) 3) (= (get parts 2) "drain") (= method "POST"))
         (do (setv actor (require-actor request.actor))
             (setv after (settle state (request-drain state (get parts 1) body actor now) actor now timing))
-            #(after 200 (worker-view after (get parts 1) now timing)))
+            ;; 退いた世代(旧い Pod の preStop)の頼みには、その世代の待ちの答え(drain_policy.superseded-worker-view)。
+            #(after 200 (if (superseded-boot after (get parts 1) (.get body "boot"))
+                            (superseded-worker-view after (get parts 1) (get body "boot") now timing)
+                            (worker-view after (get parts 1) now timing))))
       (and (= head "workers") (= (len parts) 3) (= (get parts 2) "drain") (= method "DELETE"))
         (do (setv actor (require-actor request.actor))
             (setv after (settle state (cancel-drain state (get parts 1)) actor now timing))

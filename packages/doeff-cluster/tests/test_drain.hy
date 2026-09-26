@@ -236,6 +236,62 @@
   (assert (any (gfor e c.state.audit (and (= (get e "kind") "Worker") (= (get e "actor") "drain@zeus"))))))
 
 
+(deftest test-the-old-pod-drain-does-not-drain-the-new-generation-of-the-same-name
+  ;; 2026-09-27 04:44 JST の実測: Deployment の worker の Pod を消すと、旧 Pod は preStop で drain を頼み直し
+  ;; ながら heartbeat を送り続け、新 Pod の worker は同じ名で名乗る。drain の印が約 2 秒ごとに付いて(旧の drain)消えた(新の
+  ;; heartbeat)。旧い世代の頼みと heartbeat は、新しい世代の置き場を止めない。
+  (setv c (running-writer))
+  (c.beat "zeus" :boot "old")
+  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@zeus")
+  (assert (= (. (get c.state.drains "zeus") boot) "old"))
+  ;; 新 Pod の worker が名乗る → 旧い世代の drain は解ける(今までの規則)。
+  (c.advance 11)
+  (c.beat "zeus" :boot "new")
+  (assert (not-in "zeus" c.state.drains))
+  ;; 旧 Pod は drain を頼み直し、heartbeat を送り続ける。どちらも新しい世代に drain を付け直さない。
+  (for [_ (range 3)]
+    (c.advance 1)
+    (setv view (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@zeus"))
+    (assert (not-in "zeus" c.state.drains) "旧い世代の drain の頼みが新しい世代に drain を付けた")
+    (setv old-reply (c.beat "zeus" :boot "old"))
+    (assert (not-in "zeus" c.state.drains) c.state.drains)
+    ;; 旧 Pod への答え: 退いた世代で、その世代に置いた task は無い = 空いた(preStop はここで終わる)。
+    (assert (get view "drain" "superseded") view)
+    (assert (get view "drain" "drained") view)
+    (assert (get old-reply "superseded"))
+    (assert (get old-reply "draining"))
+    (setv new-reply (c.beat "zeus" :boot "new"))
+    (assert (not (get new-reply "draining")))
+    (assert (get (c.call "GET" "/workers/zeus") "ready")))
+  ;; 新しい世代には新しい task を置ける。
+  (c.call "POST" "/tasks" {"env" "m:e" "blob" "x" "revision" "r1" "versions" {} "requires" {"kind" "k3s"}}
+          :actor "c-test")
+  (assert (= #((. (get c.state.tasks "t1") phase) (. (get c.state.tasks "t1") worker)) #("assigned" "zeus"))))
+
+
+(deftest test-the-old-pod-drain-waits-for-the-detached-tasks-of-its-own-generation
+  ;; 退いた世代の preStop は、その世代に置いた切り離した task が終わるまで待つ(走らせ直さない task を途中で殺さない)。
+  (setv c (Coord #("zeus")))
+  (c.beat "zeus" :boot "old")
+  (c.call "PUT" "/detached/job-24" {"env" "m:e" "blob" "B" "versions" {} "revision" "r" "requires" K3S "leaseSeconds" 60}
+          :actor "c-test")
+  (setv task (next (gfor t (.values c.state.tasks) :if (= t.key "job-24") t)))
+  (assert (= #(task.worker task.boot) #("zeus" "old")))
+  (c.advance 1)
+  (c.beat "zeus" :boot "new")
+  (setv view (c.call "POST" "/workers/zeus/drain" {"boot" "old"} :actor "drain@zeus"))
+  (assert (get view "drain" "superseded") view)
+  (assert (not (get view "drain" "drained")) view)
+  (assert (= (get view "drain" "remaining") [(+ "task/" task.id)]))
+  ;; 新しい世代には drain を付けない。
+  (assert (not-in "zeus" c.state.drains))
+  (c.call "POST" "/heartbeat" {"name" "zeus" "labels" K3S "capacity" 10 "versions" {} "boot" "old"
+                               "statuses" [{"name" (+ "task/" task.id) "phase" "finished" "result" "R" "detail" ""}]}
+          :actor None)
+  (assert (= (. (get c.state.tasks task.id) phase) "finished"))
+  (assert (get (c.call "POST" "/workers/zeus/drain" {"boot" "old"} :actor "drain@zeus") "drain" "drained")))
+
+
 (deftest test-drain-requests-need-an-actor-and-a-known-worker
   (setv c (Coord))
   (c.call "POST" "/workers/atlas/drain" {} :actor None :expect 400)
@@ -319,6 +375,23 @@
   (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
   (<- during ((coordinator-of c) (worker-ready "atlas" "b1")))
   (assert (not during)))
+
+
+(deftest test-the-old-pod-prestop-sends-its-boot-and-ends-once-the-new-generation-has-named-itself
+  ;; preStop の Program(await-drained)は頼みに自分の世代を載せる。同じ名の新しい世代が名乗った後は、退いた世代の答え
+  ;; (その世代の task が無い = drained)で終わる — 新しい世代に drain を付けて 90 秒待たない。
+  (setv calls [])
+  (<- sent ((sim-time-handler :clock (SimClock))
+            ((scripted-coordinator [(drained True)] calls) (await-drained "atlas" 90.0 2.0 "old"))))
+  (assert (= (get sent "outcome") "drained"))
+  (assert (= (get (get (get calls 0) 2) "boot") "old"))
+  (setv c (Coord))
+  (c.beat "atlas" :boot "old")
+  (c.beat "atlas" :boot "new")
+  (<- result ((sim-time-handler :clock (SimClock)) ((coordinator-of c) (await-drained "atlas" 90.0 2.0 "old"))))
+  (assert (= (get result "outcome") "drained") result)
+  (assert (= (get result "elapsed") 0.0) result)
+  (assert (get result "last" "body" "drain" "superseded")))
 
 
 (deftest test-a-new-pod-is-not-ready-while-the-coordinator-still-sees-the-previous-pod
