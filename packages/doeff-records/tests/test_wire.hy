@@ -3,7 +3,7 @@
 (import json)
 (import doeff [run])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny Approval WatchCursor ListCursor Row Missing Page Written
+(import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written
                               RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset])
 (import doeff_records.effects [ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents])
 (import doeff_records.wire [WireRequest WireMalformed ANSWER-KINDS encode-request decode-request encode-answer decode-answer])
@@ -15,7 +15,7 @@
    (ListRows "parts")
    (ListRows "parts" :where {"color" "red"} :fields #("color") :cursor (ListCursor 2 "[\"p1\"]") :limit 5)
    (PutRow "parts" #("p1") {"label" "a" "color" None} (ExpectAbsent))
-   (PutRow "parts" #("p1") {"grant" "yes"} (ExpectVersion 4) :approval (Approval "t"))
+   (PutRow "parts" #("p1") {"grant" "yes"} (ExpectVersion 4))
    (PutRow "parts" #("p1") {} (ExpectAny))
    (WatchChanges #("parts" "tickets") (WatchCursor 1 7) :timeout 2.5 :limit 3)
    (AppendEvent "journal" "k1" {"n" [1 {"m" None}]})
@@ -73,6 +73,8 @@
                            #("put-row" {"table" "parts" "key" ["p1"] "value" {} "expect" {"kind" "version"}})
                            #("put-row" {"table" "parts" "key" ["p1"] "value" {} "expect" {"kind" "version" "version" 0}})
                            #("put-row" {"table" "parts" "key" ["p1"] "value" [] "expect" {"kind" "any"}})
+                           ;; 承認の印は廃止(契約で deprecated)— 値のある印は効かない承認を黙って捨てず断る。
+                           #("put-row" {"table" "parts" "key" ["p1"] "value" {} "expect" {"kind" "any"} "approval" {"token" "t"}})
                            #("watch-changes" {"tables" [] "cursor" {"epoch" 1 "sequence" 0}})
                            #("watch-changes" {"tables" ["parts"] "cursor" {"epoch" 1}})
                            #("append-event" {"stream" "journal" "idempotencyKey" "" "body" 1})
@@ -91,3 +93,12 @@
       (run (decode-answer operation body))
       (assert False (.format "形の違う答えを読んだ: {} {!r}" operation body))
       (except [WireMalformed] None))))
+
+
+(deftest test-a-put-row-from-an-older-client-with-a-null-approval-is-still-read
+  ;; 前の版の client は put-row の本文に "approval": null を添える — 記録の service と client の版が揃うまで読み飛ばす
+  ;; (契約 record-service.json で deprecated・次の版で鍵ごと消す)。今の client は鍵を送らない。
+  (setv body {"table" "parts" "key" ["p1"] "value" {"label" "a"} "expect" {"kind" "any"}})
+  (assert (= (. (run (decode-request (WireRequest "put-row" (| body {"approval" None})))) effect)
+             (PutRow "parts" #("p1") {"label" "a"} (ExpectAny))))
+  (assert (not-in "approval" (. (run (encode-request (PutRow "parts" #("p1") {"label" "a"} (ExpectAny)))) body))))
