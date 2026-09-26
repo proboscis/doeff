@@ -9,6 +9,7 @@
 ;;; 「その欄を消す」(PutRow の差分の None)。値の変わらない欄は書き手の名簿で照らさない(admission)ので、自分の欄だけを変えた
 ;;; 像を書けばよい。handler は増やさない — どの handler の組の上でも同じに動く。
 (require doeff-hy.macros [defk <-])
+(import dataclasses)
 (import dataclasses [dataclass field])
 (import types [NoneType])
 (import typing [Generic TypeVar])
@@ -67,9 +68,19 @@
 
 ;; --- 写し(純関数)------------------------------------------------------------------------------------------
 
+(defn #^ tuple model-field-names [#^ type model]
+  "純粋: 行の型の欄の名(pydantic の BaseModel は alias が在れば alias・dataclass は欄の名)。"
+  (if (dataclasses.is-dataclass model)
+      (tuple (gfor f (dataclasses.fields model) f.name))
+      (tuple (gfor #(name info) (.items model.model-fields) (or info.alias name)))))
+
+
 (defn #^ M value-of-fields [#^ (get RowType M) row-type #^ FrozenMap fields]
-  "行の値(欄 → JSON の値)→ 行の型の値。型に合わなければ pydantic の ValidationError(置き場の行が型と食い違う — 組み立ての誤り)。"
-  (.validate-python row-type.adapter (thaw-json fields)))
+  "行の値(欄 → JSON の値)→ 行の型の値。書きで値が None の欄は消える(PutRow の差分の None)ので、置き場に無い欄は None と読む —
+   既定値の無い None を許す欄(例 = dataclass の `(| str None)` の欄)も書いて読み戻せる。型に合わなければ pydantic の ValidationError
+   (置き場の行が型と食い違う — 組み立ての誤り)。"
+  (setv value (thaw-json fields))
+  (.validate-python row-type.adapter (| (dfor name (model-field-names row-type.model) :if (not-in name value) name None) value)))
 
 
 (defn #^ FrozenMap fields-of-value [#^ (get RowType M) row-type #^ M value]
