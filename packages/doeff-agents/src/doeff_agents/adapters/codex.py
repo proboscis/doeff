@@ -8,7 +8,7 @@ from doeff import Program, do
 
 from doeff_agents.io_effects import make_dirs, read_text, write_text
 from doeff_agents.io_root import IoGenerator, as_optional_str
-from doeff_agents.sessionhost.impls.ready_physics import CODEX_READY_PATTERN
+from doeff_agents.ready_physics import CODEX_READY_PATTERN
 
 from .base import AgentType, InjectionMethod, LaunchParams, cli_available
 
@@ -62,7 +62,7 @@ class CodexAdapter:
 
     @property
     def ready_pattern(self) -> str | None:
-        # Physics home: sessionhost/impls/ready_physics.hy (ADR-DOE-AGENTS-008
+        # Physics home: doeff_agents/ready_physics.hy (ADR-DOE-AGENTS-008
         # R1) — the idle composer with menu/MCP-boot exclusions.
         return CODEX_READY_PATTERN
 

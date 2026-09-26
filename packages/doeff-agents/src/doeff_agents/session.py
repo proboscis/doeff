@@ -34,7 +34,7 @@ from .monitor import (
 from doeff_agents.io_root import IoRoot
 
 from .session_backend import SessionBackend
-from .sessionhost.impls.ready_physics import has_claude_screen_reader_trust_prompt
+from .ready_physics import has_claude_screen_reader_trust_prompt
 from .shell import (
     assert_no_forbidden_agent_env,
     assert_session_env_is_non_auth_overlay,

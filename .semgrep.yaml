@@ -163,7 +163,7 @@ rules:
     severity: ERROR
     message: >
       Readiness pattern literals are defined ONLY in the physics home
-      (doeff_agents/sessionhost/impls/ready_physics.hy); adapters import the
+      (doeff_agents/ready_physics.hy); adapters import the
       constant. Re-defining a ready pattern literal in an adapter re-creates
       the two-homes drift banned by ADR-DOE-AGENTS-004
       protocol-physics-has-one-home (the 2026-07-05 incident class: the same
