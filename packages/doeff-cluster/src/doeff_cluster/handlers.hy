@@ -195,6 +195,7 @@
 
 (setv ROOT-NAME-PATTERN (re.compile r"[0-9a-f]{24}"))
 (setv SWEEP-EVERY-SECONDS 30)   ; 空きが下限を切っている間の掃除の間隔(固定の集合が変わった時はすぐ)
+(setv PRUNE-EVERY-SECONDS 1800)  ; uv の cache の prune を起こし直す間隔の下限(node の disk を他の物が使うと掃除では下限に戻らず、拍ごとに起き続けるため)
 
 
 (defclass PendingPrepare []
@@ -223,7 +224,7 @@
           self.pending {} self.failed {} self.waiting {} self.started 0
           self.pinned (frozenset) self.swept-at 0.0 self.views None
           ;; 走っている uv の cache の prune(待たない — 下の sweep)。
-          self.pruning None))
+          self.pruning None self.pruned-at 0.0))
 
   (defn #^ Path root-of [self #^ str key]
     (/ self.state "roots" (cut key (len ENV-KEY-PREFIX) None)))
@@ -417,10 +418,13 @@
           (shutil.rmtree entry :ignore-errors True))))
     ;; まだ下限を切っていれば uv の cache を prune する(venv の中の file は hardlink なので残る)。prune は uv の cache の lock を取るので、
     ;; 待つと root の準備の uv run が終わるまで worker のループ(heartbeat)が止まる — 別の process として起こして待たない。前の prune が
-    ;; 走っている間と、root の準備が走っている間は起こさない(準備と lock を競わない)。
+    ;; 走っている間と、root の準備が走っている間と、前の prune から PRUNE-EVERY-SECONDS の間は起こさない(準備と lock を競わない・
+    ;; 他の物が使う node の disk では prune で下限に戻らないので、拍ごとに起こし続けない)。
     (when (and (is-not self.pruning None) (is-not (.poll self.pruning) None))
       (setv self.pruning None))
-    (when (and (< (. (.disk-view self) free) disk.floor) (is self.pruning None) (not self.pending) (not self.waiting))
+    (when (and (< (. (.disk-view self) free) disk.floor) (is self.pruning None) (not self.pending) (not self.waiting)
+               (or (= self.pruned-at 0.0) (>= (- now self.pruned-at) PRUNE-EVERY-SECONDS)))
+      (setv self.pruned-at now)
       (setv self.pruning (subprocess.Popen [self.uv "cache" "prune"]
                                            :env (| (dict os.environ) {"UV_CACHE_DIR" (str (/ self.state "uv-cache"))})
                                            :stdin subprocess.DEVNULL :stdout subprocess.DEVNULL :stderr subprocess.DEVNULL
