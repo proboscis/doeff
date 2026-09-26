@@ -464,15 +464,92 @@
   (assert (in "lease" (. (get s.tasks id) detail))))
 
 
-(deftest test-a-restarted-worker-process-loses-its-detached-tasks-and-does-not-rerun-them
+(deftest test-a-restarted-worker-process-does-not-rerun-its-detached-tasks-and-they-are-lost-by-the-lease
+  ;; 2026-09-27までは新しい世代の heartbeat が来た拍に lost にしていた。旧い世代がまだ動いている(Pod の
+  ;; preStop の drain の間)こともあるので、旧い世代の task は旧い世代の heartbeat だけが延ばし、沈黙したら lease 切れで lost。
   (setv #(s _ _) (beat (ClusterState) "w" 0))
-  (setv #(s _ reply) (put-detached s "job-3" 0))
+  (setv #(s _ reply) (put-detached s "job-3" 0 :lease 10.0))
   (setv id (get reply "task"))
-  ;; 同じ名の worker が別の process の世代で名乗る(結果の報告を持っていても、前の世代の物としては受け取らない)
+  ;; 同じ名の worker が別の process の世代で名乗る(結果の報告を持っていても、前の世代の物としては受け取らない・走らせ直さない)
   (setv #(s _ body) (beat s "w" 1000 :boot "b2" :statuses [{"name" (+ "task/" id) "phase" "finished" "result" "R"}]))
   (assert (= (get body "tasks") []))
+  (assert (= (. (get s.tasks id) phase) "assigned"))
+  ;; 新しい世代の heartbeat は旧い世代の task の lease を延ばさない。旧い世代が戻らなければ lease 切れ(10 秒)で lost。
+  (setv #(s _ _) (beat s "w" 9000 :boot "b2"))
+  (setv s (tick s 10001 T))
   (assert (= (. (get s.tasks id) phase) "lost"))
-  (assert (in "作り直された" (. (get s.tasks id) detail))))
+  (assert (in "lease" (. (get s.tasks id) detail))))
+
+
+;; --- 同じ名の 2 つの世代(2026-09-27 04:44 JST の実測) ------------------------------------
+;; worker の Pod を消すと、旧 Pod は preStop の drain(約 40 秒)の間も worker の process を動かし、新 Pod の worker は同じ名で名乗る。
+;; 2 つの process が交互に heartbeat を送る。coordinator は初めて見た世代を新しい世代とし、退いた世代の heartbeat を断る。
+
+(defn alternate [s name now boots [statuses None]]
+  "boots の順に 50 ms おきに heartbeat を送る。返り値 #(状態 最後の時刻 世代 → 最後の返事)。"
+  (setv replies {})
+  (for [boot boots]
+    (+= now 50)
+    (setv #(s _ body) (beat s name now :boot boot :statuses (.get (or statuses {}) boot [])))
+    (setv (get replies boot) body))
+  #(s now replies))
+
+
+(deftest test-an-old-generation-heartbeat-does-not-lose-a-task-placed-on-the-new-generation
+  (setv #(s _ _) (beat (ClusterState) "w" 0 :boot "old"))
+  ;; 新 Pod の worker が 11 秒後に同じ名で名乗る。以後の task は新しい世代に置く。
+  (setv #(s _ _) (beat s "w" 11000 :boot "new"))
+  (setv #(s _ reply) (put-detached s "job-25" 11010))
+  (setv id (get reply "task"))
+  (assert (= (. (get s.tasks id) boot) "new"))
+  ;; 旧 Pod の drain の間、2 つの世代が交互に heartbeat を送る(実測は 2 秒ごと・ここは 50 ms ごと)。
+  (setv #(s now replies) (alternate s "w" 11010 ["old" "new" "old" "new" "old"]))
+  (setv task (get s.tasks id))
+  (assert (= #(task.phase task.boot) #("assigned" "new")) task.detail)
+  ;; 新しい世代の返事にだけ載る(旧い世代は走らせない)。coordinator の見る世代は新しい世代のまま。
+  (assert (= (lfor t (get replies "new" "tasks") (get t "id")) [id]))
+  (assert (= (get replies "old" "tasks") []))
+  (assert (get replies "old" "superseded"))
+  (assert (= (. (get s.workers "w") boot) "new"))
+  ;; 旧い世代の heartbeat は新しい世代の task の lease を延ばさず、新しい世代の heartbeat が延ばす。
+  (setv #(s _ _) (beat s "w" (+ now 50) :boot "new"))
+  (assert (= (. (get s.tasks id) lease-until-ms) (+ now 50 (. (get s.tasks id) lease-ms)))))
+
+
+(deftest test-a-task-on-the-old-generation-keeps-its-lease-and-result-while-the-old-generation-lives
+  (setv #(s _ _) (beat (ClusterState) "w" 0 :boot "old"))
+  (setv #(s _ reply) (put-detached s "job-24" 0 :lease 10.0))
+  (setv done (get reply "task"))
+  (setv #(s _ reply) (put-detached s "job-23" 0 :lease 10.0))
+  (setv silent (get reply "task"))
+  (setv #(s _ _) (beat s "w" 6000 :boot "new"))
+  ;; 新しい世代が来ても、旧い世代に置いた task は lost にしない(旧い世代は drain の間まだ走らせている)。
+  (assert (= (. (get s.tasks done) phase) "assigned"))
+  ;; 旧い世代の heartbeat は自分の世代の task の lease を延ばし、その task だけを返事に載せる。
+  (setv #(s _ body) (beat s "w" 9000 :boot "old"))
+  (assert (= (sorted (lfor t (get body "tasks") (get t "id"))) (sorted [done silent])))
+  ;; 旧い世代の終わりの報告は受ける(結果を捨てない)。
+  (setv #(s _ _) (beat s "w" 12000 :boot "old"
+                       :statuses [{"name" (+ "task/" done) "phase" "finished" "result" "R" "detail" ""}]))
+  (assert (= #((. (get s.tasks done) phase) (. (get s.tasks done) result)) #("finished" "R")))
+  ;; 旧い世代が消えた(heartbeat が止まった)= lease 切れで lost。新しい世代の heartbeat は延ばさない。
+  (setv #(s _ _) (beat s "w" 20000 :boot "new"))
+  (setv s (tick s 22001 T))
+  (assert (= (. (get s.tasks silent) phase) "lost"))
+  (assert (in "lease" (. (get s.tasks silent) detail)))
+  ;; 新しい世代の生存はそのまま(旧い世代の沈黙は worker の沈黙ではない)。
+  (assert (= (. (get s.workers "w") boot) "new")))
+
+
+(deftest test-the-generation-order-survives-a-coordinator-restart
+  (setv #(s _ _) (beat (ClusterState) "w" 0 :boot "old"))
+  (setv #(s _ _) (beat s "w" 1000 :boot "new"))
+  (setv again (state-from-kv (full-kv s) 2000))
+  (assert (= #((. (get again.workers "w") boot) (. (get again.workers "w") retired)) #("new" #("old"))))
+  ;; 読み直した後も、旧い世代の heartbeat は新しい世代を押しのけない。
+  (setv #(again _ body) (beat again "w" 2100 :boot "old"))
+  (assert (get body "superseded"))
+  (assert (= (. (get again.workers "w") boot) "new")))
 
 
 (deftest test-result-is-kept-after-the-worker-dies-until-release-or-retention
