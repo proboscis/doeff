@@ -15,6 +15,8 @@
 ;;; 2 つの handler(detached.hy):
 ;;;   detached-local   … 同じ VM の scheduler の task として走らせる(fake・模擬環境。外側の handler をそのまま継承する)
 ;;;   detached-cluster … coordinator の /detached の口へ出し、worker がその commit のコードを準備した子 process で走らせる
+(require doeff-hy.macros [val])
+(require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import doeff [EffectBase Program])
 (import .remote_model [TaskSucceeded TaskFailed decode-outcome])
@@ -61,9 +63,32 @@
   (#^ str key))
 
 
+(defclass [(dataclass :frozen True)] ReadRunners [EffectBase]
+  "task を受ける担い手(worker)の名簿を読む — 生存と drain の正本は coordinator の名簿(heartbeat)1 つ。呼び手が置き先を選ぶ・
+   機体の戻りを待つための読み。答え = RunnerFact の tuple(名の順)か RunnersUnreachable。")
+
+
 (defclass [(dataclass :frozen True)] SimulateRunnerLoss [EffectBase]
-  "模擬の担い手(worker)を死なせる。答え = 消えた task の数。fake(detached-local)と検の組だけが答える — 本番の handler の組には
-   答える者が無い(本物の worker の死は外で起きる)。")
+  "模擬の担い手(worker)を死なせる。runner = 死なせる担い手の名(None = 全部)。答え = 消えた task の数。fake(detached-local)と
+   検の組だけが答える — 本番の handler の組には答える者が無い(本物の worker の死は外で起きる)。"
+  (setv #^ (| str None) runner None))
+
+
+(defclass [(dataclass :frozen True)] SimulateRunnerDrain [EffectBase]
+  "模擬の担い手を drain にする(新しい task を置かない・走っている task は続く・名簿には live のまま残る — 抜けるのは担い手の process が止まった時 = SimulateRunnerLoss)。答え = その担い手で
+   まだ走っている task の数。fake と検の組だけが答える(本番の drain は coordinator の POST /workers/<名>/drain)。"
+  (#^ str runner))
+
+
+(defclass [(dataclass :frozen True)] SimulateRunnerReturn [EffectBase]
+  "模擬の担い手を戻す(生きていて drain でない — 死んだ・抜けた担い手の作り直し)。答え = None。fake と検の組だけが答える。"
+  (#^ str runner))
+
+
+(defclass [(dataclass :frozen True)] SimulateCoordinatorOutage [EffectBase]
+  "模擬の coordinator に seconds 秒届かなくする(作り直しの最中)。その間の送りと名簿の読みは届かず、待ちはまだ終わっていない
+   答えを返す。走っている task は止めない(担い手は coordinator の途絶で task を止めない)。答え = None。fake と検の組だけが答える。"
+  (#^ float seconds))
 
 
 ;; --- 答え --------------------------------------------------------------------------
@@ -126,9 +151,27 @@
 
 
 (defclass [(dataclass :frozen True)] DetachedPending []
-  "await の timeout を過ぎても終わっていない。phase = queued | assigned。"
+  "await の timeout を過ぎても終わっていない。phase = queued | assigned・runner = 置いた担い手の名(assigned の時だけ・届かない時は空)。"
   (#^ str key)
-  (#^ str phase))
+  (#^ str phase)
+  (setv #^ str runner ""))
+
+
+;; --- 担い手の名簿 --------------------------------------------------------------------------
+;; RunnerFact = 担い手 1 つ: name = worker の名・labels = label の (名 値) の組の tuple(名の順)・live = coordinator の名簿で
+;;   生きている(heartbeat が lease の内)・draining = 新しい task を受けない。
+;; RunnersUnreachable = coordinator に届かず名簿を読めなかった(担い手の生死は分からない — 死んだとみなさない)。
+
+(defrecord RunnerFact
+  #^ str name
+  #^ (get tuple #((get tuple #(str str)) ...)) labels
+  #^ bool live
+  #^ bool draining)
+
+(defrecord RunnersUnreachable
+  #^ str detail)
+
+(val RunnersAnswer (| (get tuple #(RunnerFact ...)) RunnersUnreachable))
 
 
 (setv DetachedOutcome (| DetachedSucceeded DetachedFailed DetachedLost DetachedCancelled DetachedVersionMismatch
