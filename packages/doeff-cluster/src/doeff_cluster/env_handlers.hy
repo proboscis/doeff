@@ -35,7 +35,7 @@
 (import doeff_core_effects.handlers [reader state])
 (import doeff_time [sync-time-handler])
 (import .runtime_env_model [EnvFailure EnvFailureKind RuntimeEnv runtime-env-of-json])
-(import .env_prepare [DiskFree EnsureMirror FetchCommit MaterializeTree FileSha256 TreeHash EnsureNativeWheel SyncProject
+(import .env_prepare [StageStarted DiskFree EnsureMirror FetchCommit MaterializeTree FileSha256 TreeHash EnsureNativeWheel SyncProject
                       InstallWheels WriteImportRoots CompileTree ProbeImports WriteEnvMarker
                       MirrorReady FetchState WheelReady SyncReport BytecodeReport ProbeReport
                       PrepareRequest KnownRoot EnvReady prepare-env env-marker->json ENV-MARKER ROOTS-PTH])
@@ -212,6 +212,15 @@
   (session val repo-keys (! (Ask "runtime-env.repo-keys")))
   (session val code-prepare (! (Ask "runtime-env.code-prepare")))
   (session val uv (! (Ask "runtime-env.uv")))
+  (session val progress (! (Ask "runtime-env.progress")))
+
+  (StageStarted [name]
+    ;; 進みの印: worker の EnvStore は印の file の時刻で先読みの停滞を見分ける(空 = 印を書かない)。
+    (when progress
+      (val tmp (Path (+ progress ".tmp")))
+      (.write-text tmp (+ name "\n") :encoding "utf-8")
+      (os.replace tmp progress))
+    (resume None))
 
   (DiskFree [path]
     (var probe (Path path))
@@ -270,9 +279,11 @@
     (resume (.strip result.stdout)))
 
   (EnsureNativeWheel [key package source-dir]
+    (val wheel-dir (/ (Path state-dir) "wheels" (.format "{}-{}" package key)))
     (with [_ (file-lock (/ (Path state-dir) "locks" (+ "wheel-" key)))]
-      (<- wheel (| WheelReady EnvFailure)
-          (wheel-of package source-dir (/ (Path state-dir) "wheels" (.format "{}-{}" package key)) state-dir uv)))
+      (<- wheel (| WheelReady EnvFailure) (wheel-of package source-dir wheel-dir state-dir uv)))
+    ;; 使った印(掃除は 7 日使われない wheel の dir を消す — env_upkeep.WHEEL-UNUSED-SECONDS)。
+    (when (isinstance wheel WheelReady) (os.utime wheel-dir))
     (resume wheel))
 
   (SyncProject [project-dir python groups no-install]
@@ -306,11 +317,12 @@
     (.write-text target (+ (.join "\n" roots) "\n") :encoding "utf-8")
     (resume None))
 
-  (CompileTree [project-dir tree roots carry-from]
+  (CompileTree [project-dir tree roots carry-from entries]
     (<- env dict (uv-environment state-dir))
     (val args (+ [uv "run" "--no-sync" "--frozen" "--project" project-dir "hy" code-prepare tree
                   "--revision" "env" "--import-roots" (.join "," roots)]
-                 (if (is carry-from None) [] ["--from" carry-from])))
+                 (if (is carry-from None) [] ["--from" carry-from])
+                 (if entries ["--entries" (.join "," entries)] [])))
     (<- result CommandResult (command args tree (| env {"PYTHONDONTWRITEBYTECODE" "1"})))
     (if (= result.code 0)
         (do (val found (.search (re.compile r"carried=(\d+) compiled=(\d+)") result.stderr))
@@ -377,10 +389,12 @@
   (.add-argument parser "--repo-keys" :default "")
   (.add-argument parser "--code-prepare" :required True)
   (.add-argument parser "--uv" :default "uv")
+  (.add-argument parser "--progress" :default "" :help "処理ステージの進みの印の file(worker が停滞を見分ける)")
   (setv args (.parse-args parser))
   (setv keys (if args.repo-keys (json.loads (.read-text (Path args.repo-keys) :encoding "utf-8")) {}))
   (setv settings {"runtime-env.state" args.state "runtime-env.repo-keys" keys
-                  "runtime-env.code-prepare" args.code-prepare "runtime-env.uv" args.uv})
+                  "runtime-env.code-prepare" args.code-prepare "runtime-env.uv" args.uv
+                  "runtime-env.progress" args.progress})
   (setv request (run (request-of-json (json.loads (.read-text (Path args.request) :encoding "utf-8")))))
   (setv answer (run (with-handlers [(state) (sync-time-handler) (reader settings) local-env] (prepare-env request))))
   (setv content (run (answer-json answer)))

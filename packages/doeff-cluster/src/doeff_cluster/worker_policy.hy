@@ -10,8 +10,8 @@
 ;; 理由つきの probe-failed で止まる。入れ替えの旧は止めない(書き手の空白を作らない)。FAILED は code-retry-ms の後に撃ち直す。
 (import dataclasses [replace])
 (import .worker_model [JobSpec CodeState CodeView ProcessView WorldView StopStage StopProgress ProbeState ProbeView
-  Outcome JobRecord WorkerPolicy JobPhase JobStatus PrepareCode PrepareEnv StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry
-  spec-hash code-key probed-job retired-name RETIRED-MARK])
+  Outcome JobRecord WorkerPolicy JobPhase JobStatus PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases
+  ProbeEntry spec-hash code-key probed-job retired-name RETIRED-MARK ENV-KEY-PREFIX])
 
 ;; 自己停止(2026-09-25): coordinator との連絡が fence(ClusterTiming.fence-ms)を越えて途絶えた worker は、自分の job を止めてきた
 ;; (coordinator は 45 秒で他へ移すので、同じ job が 2 つ動かないように)。ただし書き手(入れ替え handoff を宣言した job)は、旧と新が
@@ -164,10 +164,40 @@
     ;; 宣言から消えた・版や引数が変わった → 先に止める(旧新の同時稼働をしない)。
     True (stop-actions now process record policy)))
 
-(defn #^ tuple plan [#^ int now #^ tuple desired #^ WorldView world #^ dict records #^ WorkerPolicy policy]
-  (tuple (gfor name (job-names desired world)
-               action (plan-job now name desired world (.get records name (JobRecord name)) policy)
-               action)))
+(defn #^ tuple warm-actions [#^ int now #^ tuple warm #^ WorldView world #^ tuple job-actions #^ WorkerPolicy policy]
+  "先読み(2026-09-26): 温める表の env を、job の準備を撃った後に準備し始める(準備済み・準備中なら何もしない・失敗は code-retry-ms の後に
+   撃ち直す)。同じ拍に job が同じ root の準備を撃っていれば撃たない(job の準備が先に立つ)。"
+  (setv requested (sfor a job-actions :if (isinstance a PrepareEnv) a.key))
+  (tuple (gfor w warm
+               :setv code (code-of world w.key)
+               :if (and (not-in w.key requested)
+                        (or (is code None)
+                            (and (= code.state CodeState.FAILED)
+                                 (>= (- now (or code.failed-ms 0)) policy.code-retry-ms))))
+               (PrepareEnv w.key w.runtime-env :warm True))))
+
+(defn #^ frozenset pinned-env-keys [#^ tuple desired #^ WorldView world #^ tuple warm]
+  "掃除が消してはいけない root のキー(2026-09-26): 宣言の実行環境の job・走っている実行環境の process・温める表・準備中の root。
+   project ごとの最新の root は掃除の係が完成マーカーから守る(env_upkeep.sweep-choice)。"
+  (frozenset (+ (lfor spec desired :if spec.runtime-env (code-key spec))
+                (lfor p world.processes :if p.spec.runtime-env (code-key p.spec))
+                (lfor w warm w.key)
+                (lfor c world.codes :if (and (.startswith c.revision ENV-KEY-PREFIX) (= c.state CodeState.PREPARING)) c.revision))))
+
+(defn #^ tuple sweep-actions [#^ tuple desired #^ WorldView world #^ tuple warm]
+  "掃除の係へ固定の集合を渡す action(固定の集合が変わった時と、空きが下限を切った時だけ)。実行環境を扱わない worker は撃たない。"
+  (setv disk world.env-disk)
+  (if (is disk None)
+      #()
+      (do (setv pinned (pinned-env-keys desired world warm))
+          (if (or (!= pinned disk.pinned) (< disk.free disk.floor)) #((SweepEnvs pinned)) #()))))
+
+(defn #^ tuple plan [#^ int now #^ tuple desired #^ WorldView world #^ dict records #^ WorkerPolicy policy #^ tuple [warm #()]]
+  "1 拍の action: job ごとの action → 温める表の準備(job より後)→ 掃除の係への固定の集合。"
+  (setv jobs (tuple (gfor name (job-names desired world)
+                          action (plan-job now name desired world (.get records name (JobRecord name)) policy)
+                          action)))
+  (+ jobs (warm-actions now warm world jobs policy) (sweep-actions desired world warm)))
 
 (defn #^ JobRecord record-after [#^ int now #^ JobRecord record action [policy (WorkerPolicy)]]
   (cond

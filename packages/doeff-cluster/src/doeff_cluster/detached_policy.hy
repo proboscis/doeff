@@ -12,7 +12,7 @@
 (import typing [NamedTuple])
 (import .cluster_model [ClusterState TaskRecord requirements-of component-versions-of format-refusal])
 (import .cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-refusal])
-(import .detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS])
+(import .detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS OPEN-PHASES])
 
 (setv DETACHED-MAX-LEASE-SECONDS 3600)
 (setv DETACHED-MAX-RETAIN-SECONDS (* 30 24 3600))
@@ -68,7 +68,7 @@
           (Reply state 200 {"key" key "task" existing.id "created" False "phase" existing.phase})
           (Reply state 409 {"error" (.format "key {} は別の仕事(env {}・name {!r}・requires {})に使われている"
                                         key existing.env existing.name (dict existing.requires))}))))
-  (setv open-count (len (lfor t (.values state.tasks) :if (in t.phase #("queued" "assigned")) t))
+  (setv open-count (len (lfor t (.values state.tasks) :if (in t.phase OPEN-PHASES) t))
         detached-count (len (lfor t (.values state.tasks) :if t.detached t)))
   (when (>= open-count TASK-MAX-OPEN)
     (return (Reply state 429 {"error" (.format "終わっていない task が上限 {} 本に達している" TASK-MAX-OPEN) "open" open-count})))

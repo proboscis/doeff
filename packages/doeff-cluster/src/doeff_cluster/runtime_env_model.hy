@@ -157,8 +157,16 @@
   (setv #^ tuple env-vars #())
   (setv #^ tuple tools #())
   (setv #^ int format RUNTIME-ENV-FORMAT)
+  ;; 焼く範囲の入口の module の名(空 = import の根の下を全部焼く)。準備はこの module たちの import の閉包だけを焼き、閉包の外の
+  ;; module は子が import した時に作られる。root の file の中身を変えないのでキーに入れない(2026-09-26・#664 の実測: 焼く 1,063 file の
+  ;; うち task が読むのは約 2 割)。
+  (setv #^ tuple bytecode-entries #())
   (defn __post-init__ [self]  ; defk にできない: dataclass の検査の口
     (_check-tuple "RuntimeEnv.repos" self.repos RepoCheckout)
+    (_check-tuple "RuntimeEnv.bytecode-entries" self.bytecode-entries str)
+    (for [m self.bytecode-entries]
+      (when (not (all (gfor part (.split m ".") (.isidentifier part))))
+        (_invalid InvalidKind.INVALID-NAME (.format "焼く範囲の入口は module の名(点で区切る): {!r}" m))))
     (_check-tuple "RuntimeEnv.import-roots" self.import-roots str)
     (_check-tuple "RuntimeEnv.env-vars" self.env-vars EnvVar)
     (_check-tuple "RuntimeEnv.tools" self.tools ToolRequirement)
@@ -275,7 +283,8 @@
   (del (get material "platform"))
   (| material
      {"envVars" (lfor v env.env-vars {"name" v.name "value" v.value})
-      "tools" (lfor t env.tools {"name" t.name "version" t.version})}))
+      "tools" (lfor t env.tools {"name" t.name "version" t.version})}
+     (if env.bytecode-entries {"bytecodeEntries" (list env.bytecode-entries)} {})))
 
 
 (defk runtime-env-of-json [value]
@@ -295,7 +304,8 @@
       :import-roots (tuple (get value "importRoots"))
       :env-vars (tuple (gfor v (.get value "envVars" []) (EnvVar :name (get v "name") :value (get v "value"))))
       :tools (tuple (gfor t (.get value "tools" []) (ToolRequirement :name (get t "name") :version (.get t "version" ""))))
-      :format (.get value "format" RUNTIME-ENV-FORMAT)))
+      :format (.get value "format" RUNTIME-ENV-FORMAT)
+      :bytecode-entries (tuple (.get value "bytecodeEntries" []))))
     (except [error [KeyError TypeError AttributeError]]
       (raise (RuntimeEnvInvalid InvalidKind.BAD-JSON (.format "宣言の JSON の形が違う: {}: {}" (. (type error) __name__) error)))))
   env)

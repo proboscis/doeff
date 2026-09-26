@@ -2,15 +2,17 @@
 ;;; HTTP の要求 1 件への返事も、状態と要求と時刻から (次の状態 status 本文) を返す純粋な関数にする。I/O はしない。
 ;;; 割り当ては安定させる: 担い手が移し替えの期限内に生きていれば動かさない。
 (import dataclasses [replace asdict])
+(import functools)
 (import json)
 
 (import .worker_model [JobSpec])
-(import .cluster_model [ClusterJob WorkerInfo Placement ClusterTiming ClusterState TaskRecord Request Drain
-                        requirements-of component-versions-of task-record-to-json task-record-from-json ACCEPTED-FORMATS format-refusal])
+(import .cluster_model [ClusterJob WorkerInfo Placement ClusterTiming ClusterState TaskRecord Request Drain EnvFailed WarmEntry
+                        requirements-of component-versions-of task-record-to-json task-record-from-json ACCEPTED-FORMATS format-refusal
+                        PLACED-PHASES])
 (import .semaphore_model [SEMAPHORE-PREFIX lease-op semaphore-write-refusal semaphore-key])
 (import .base_follow_policy [FULL-SHA])
 (import doeff [run])
-(import .runtime_env_model [runtime-env-of-json RuntimeEnvInvalid])
+(import .runtime_env_model [runtime-env-of-json RuntimeEnvInvalid env-key])
 
 (setv JOB-ENTRY "doeff_cluster.job_entry")
 (setv MAX-EVENTS 200)
@@ -136,7 +138,18 @@
    "auditSeq" state.audit-seq
    "rollouts" state.rollouts
    "drains" (dfor #(k v) (.items state.drains) k (asdict v))
-   "surges" (dfor #(k v) (.items state.surges) k (asdict v))})
+   "surges" (dfor #(k v) (.items state.surges) k (asdict v))
+   "warms" (dfor #(k v) (.items state.warms) k (warm-entry-to-json v))})
+
+
+(defn #^ dict warm-entry-to-json [#^ WarmEntry entry]
+  "温める表の行 → 保存の JSON の形(state file と durable の KV が使う)。"
+  (| (asdict entry) {"requires" (dict entry.requires)}))
+
+
+(defn #^ WarmEntry warm-entry-from-json [#^ dict data]
+  "保存の JSON の形 → 温める表の行(warm-entry-to-json の逆)。"
+  (WarmEntry #** (| data {"requires" (requirements-of (get data "requires"))})))
 
 
 (defn #^ ClusterState state-from-json [#^ dict data #^ int now [board None] [board-versions None]]
@@ -168,6 +181,7 @@
     ;; drain の欄(2026-09-25)は、それより前の file には無い(空として読む)。
     :drains (dfor #(k v) (.items (.get data "drains" {})) k (Drain #** v))
     :surges (dfor #(k v) (.items (.get data "surges" {})) k (Placement #** v))
+    :warms (dfor #(k v) (.items (.get data "warms" {})) k (warm-entry-from-json v))
     :started-ms now))
 
 
@@ -258,7 +272,7 @@
   (for [a (+ (list (.values placements)) (list (.values state.surges)))]
     (when (in a.worker load) (+= (get load a.worker) 1)))
   (for [t (.values state.tasks)]
-    (when (and (= t.phase "assigned") (in t.worker load)) (+= (get load t.worker) 1)))
+    (when (and (in t.phase PLACED-PHASES) (in t.worker load)) (+= (get load t.worker) 1)))
   load)
 
 
@@ -343,6 +357,34 @@
                   (or (not (.get tool "version" "")) (= (.get tool "version") (get named (get tool "name"))))))))
 
 
+(defn #^ bool tools-cover [#^ (| dict None) declared #^ WorkerInfo worker]
+  "実行環境の宣言の道具(tools)を worker が全部名乗っているか(温める表の行を配る先を選ぶため)。"
+  (setv named (dict worker.tools))
+  (all (gfor tool (.get (or declared {}) "tools" [])
+             (and (in (get tool "name") named)
+                  (or (not (.get tool "version" "")) (= (.get tool "version") (get named (get tool "name"))))))))
+
+
+(defn [(functools.lru-cache :maxsize 4096)] _root-key [#^ str declared-text #^ str platform]
+  ;; 同じ宣言と platform の root のキーを拍ごとに計算し直さないための cache(宣言の JSON の文字列で引く)。
+  (run (env-key (run (runtime-env-of-json (json.loads declared-text))) platform)))
+
+
+(defn #^ str root-key-on [#^ dict declared #^ WorkerInfo worker]
+  "宣言の root を worker の上で呼ぶキー(worker の platform で計算 — worker が heartbeat で名乗るキーと同じ形)。"
+  (_root-key (json.dumps declared :sort-keys True :ensure-ascii False) worker.platform))
+
+
+(defn #^ bool env-ready-on [#^ (| dict None) declared #^ WorkerInfo worker]
+  "worker がその宣言の root を準備済みと名乗っているか(platform を名乗らない worker は準備済みにならない)。"
+  (and (is-not declared None) (bool worker.platform) (in (root-key-on declared worker) worker.env-ready)))
+
+
+(defn #^ bool env-room-on [#^ TaskRecord task #^ WorkerInfo worker]
+  "task を worker に置ける disk の条件か: disk の尽きた(exhausted)worker には、準備済みでない env の task を置かない。"
+  (or (is task.runtime-env None) (!= worker.env-capacity "exhausted") (env-ready-on task.runtime-env worker)))
+
+
 (defn #^ bool can-run-task [#^ TaskRecord task #^ WorkerInfo worker]
   "版が同じ worker にだけ送る(cloudpickle は版をまたいで復元できる保証が無い)。実行環境の task は worker の版と比べない —
    子 process は worker の venv ではなく env の root で走り、版の突き合わせは子 process が env の版と行う。準備に一時の失敗をした
@@ -394,7 +436,7 @@
   (cond
     (in task.phase DETACHED-TERMINAL)
       (if (> now (+ (or task.finished-ms now) task.retain-ms)) None task)
-    (and (= task.phase "assigned") (> now task.lease-until-ms))
+    (and (in task.phase PLACED-PHASES) (> now task.lease-until-ms))
       (end-detached task "lost" now
                     (.format "担い手の worker {} の lease が切れた(worker の死とみなす — task は走らせ直さない)" task.worker))
     True task))
@@ -418,7 +460,7 @@
             (when (is-not kept None) (setv (get tasks id) kept)))
       ;; 呼び手が問い合わせを止めた(止まった)= task も要らない。担い手は次の heartbeat で子 process を止める。
       (> now task.lease-until-ms) None
-      (and (= task.phase "assigned")
+      (and (in task.phase PLACED-PHASES)
            (or (not-in task.worker state.workers)
                (not (alive now (get state.workers task.worker) timing.reassign-after-ms))))
         (setv (get tasks id) (replace task :phase "failed" :finished-ms now
@@ -432,17 +474,22 @@
     (when (= task.phase "queued")
       ;; drain 中の worker には新しい task を置かない(置ける先が他に無ければ、drain が解けるまで待つ — 失敗にはしない)。
       (setv able (lfor w (.values state.workers) :if (and (alive now w timing.lease-ms) (can-run-task task w)) w)
-            able-now (lfor w able :if (not-in w.name draining) w))
+            ;; drain 中と、disk の尽きた worker(準備済みでない env の task)は避ける — 置ける先が他に無ければ待つ。
+            able-now (lfor w able :if (and (not-in w.name draining) (env-room-on task w)) w))
+      ;; 実行環境の task は、その env を準備済みの worker を優先する(空きの多さより先 — 準備を task の待ちに入れない・2026-09-26)。
       (setv free (sorted (lfor w able-now :if (< (get load w.name) w.capacity) w)
-                         :key (fn [w] #((get load w.name) w.name))))
+                         :key (fn [w] #((not (env-ready-on task.runtime-env w)) (get load w.name) w.name))))
       (cond
-        free (do (setv chosen (get free 0))
+        free (do (setv chosen (get free 0)
+                       ;; 準備済みの worker が無い置き先 = 冷たい起動(worker が準備してから走る)。phase を preparing にして assigned と分ける。
+                       phase (if (and (is-not task.runtime-env None) (not (env-ready-on task.runtime-env chosen)))
+                                 "preparing" "assigned"))
                  (+= (get load chosen.name) 1)
                  ;; 切り離した task は置いた worker の process の世代を覚え、lease を置いた時から数える。
                  (setv (get tasks id) (if task.detached
-                                          (replace task :phase "assigned" :worker chosen.name :started-ms now
+                                          (replace task :phase phase :worker chosen.name :started-ms now
                                                    :boot chosen.boot :lease-until-ms (+ now task.lease-ms))
-                                          (replace task :phase "assigned" :worker chosen.name :started-ms now))))
+                                          (replace task :phase phase :worker chosen.name :started-ms now))))
         ;; 準備の一時の失敗の後に、置き直せる別の worker が無い: 最後の失敗で終える。
         (and (not able) task.failure-kind)
           (setv (get tasks id) (end-env-failed task now task.detail))
@@ -491,7 +538,7 @@
   ;; 切り離した task は、置いた時と同じ process の世代の worker にだけ送る(作り直した worker の process で走らせ直さない)。
   (setv boot (. (.get state.workers worker (WorkerInfo worker #() 0 0)) boot))
   (lfor task (sorted (.values state.tasks) :key (fn [t] t.id))
-        :if (and (= task.phase "assigned") (= task.worker worker) (same-boot task boot))
+        :if (and (in task.phase PLACED-PHASES) (= task.worker worker) (same-boot task boot))
         (| {"id" task.id "name" task.name "env" task.env "revision" task.revision
             "versions" (dict task.versions) "blob" task.blob}
            (if task.detached {"detached" True} {})
@@ -517,7 +564,7 @@
     (setv name (.get status "name" ""))
     (when (.startswith name "task/")
       (setv id (cut name 5 None) task (.get tasks id))
-      (when (and task (= task.phase "assigned") (= task.worker worker) (same-boot task boot))
+      (when (and task (in task.phase PLACED-PHASES) (= task.worker worker) (same-boot task boot))
         (setv phase (.get status "phase"))
         (cond
           (= phase "env-failed") (setv (get tasks id) (absorb-env-failure task worker status now))
@@ -536,7 +583,7 @@
    世代の heartbeat なら lost(worker の process が作り直された = その上の task は消えた・走らせ直さない)。"
   (dfor #(id t) (.items tasks)
         id (cond
-             (not (and t.detached (= t.phase "assigned") (= t.worker worker))) t
+             (not (and t.detached (in t.phase PLACED-PHASES) (= t.worker worker))) t
              (not (same-boot t boot))
                (end-detached t "lost" now
                              (.format "担い手の worker {} の process が作り直された(task は走らせ直さない)" worker))
@@ -588,8 +635,22 @@
       (replace state :drains (dfor #(n d) (.items state.drains) :if (> d.until-ms now) n d))))
 
 
+(defn #^ ClusterState sweep-warms [#^ ClusterState state #^ int now]
+  "純粋: 期限を過ぎた温める表の行を消した状態(消す物が無ければ同じ object)。"
+  (if (all (gfor w (.values state.warms) (> w.until-ms now)))
+      state
+      (replace state :warms (dfor #(k w) (.items state.warms) :if (> w.until-ms now) k w))))
+
+
+(defn #^ int cold-starts [#^ dict before #^ dict after]
+  "待ちから preparing に置かれた task の数(準備済みの worker が無いまま置いた = 冷たい起動)。"
+  (len (lfor #(id t) (.items after)
+             :if (and (= t.phase "preparing") (in id before) (= (. (get before id) phase) "queued"))
+             id)))
+
+
 (defn #^ ClusterState reconcile [#^ int now #^ ClusterState state #^ ClusterTiming timing]
-  (setv state (forget-silent-workers (sweep-drains (sweep-board state now) now) now))
+  (setv state (forget-silent-workers (sweep-warms (sweep-drains (sweep-board state now) now) now) now))
   (setv before state.placements
         after (place-jobs now state timing)
         tasks (place-tasks now state after timing)
@@ -600,7 +661,8 @@
       (.append events {"at" now "job" name
                        "from" (if old old.worker None) "to" (if new new.worker None)
                        "generation" (if new new.generation None)})))
-  (replace state :placements after :tasks tasks :events (tuple (cut events (- MAX-EVENTS) None))))
+  (replace state :placements after :tasks tasks :events (tuple (cut events (- MAX-EVENTS) None))
+                 :env-cold-starts (+ state.env-cold-starts (cold-starts state.tasks tasks))))
 
 
 (defn #^ bool durable-changed [#^ ClusterState before #^ ClusterState after]
@@ -612,6 +674,7 @@
       (!= before.revision after.revision)
       (!= before.rollouts after.rollouts)
       (!= before.drains after.drains) (!= before.surges after.surges)
+      (!= before.warms after.warms)
       (!= (set before.workers) (set after.workers))
       (any (gfor #(n w) (.items after.workers)
                  :setv b (.get before.workers n)
@@ -633,22 +696,53 @@
   "heartbeat の中身(worker の label・容量・版と、各 job / task の状態)を状態へ写す。割り当ての調停はしない(呼び手が別の送り手
    = coordinator として調停する)。"
   (setv name (get body "name")
+        envs (.get body "envs" {})
         info (WorkerInfo name (tuple (sorted (.items (.get body "labels" {}))))
                          (int (.get body "capacity" 10)) now
                          (component-versions-of (.get body "versions" {}))
                          (.get body "boot")
-                         (component-versions-of (.get body "tools" {})))
+                         (component-versions-of (.get body "tools" {}))
+                         :platform (.get body "platform" "")
+                         :env-ready (frozenset (.get envs "ready" []))
+                         :env-preparing (frozenset (.get envs "preparing" []))
+                         :env-failed (tuple (gfor f (.get envs "failed" [])
+                                                  (EnvFailed (get f "key") (get f "kind") (.get f "detail" "")
+                                                             (bool (.get f "retryable" False)))))
+                         :env-capacity (.get body "envCapacity" "ok"))
         statuses (.get body "statuses" [])
         state (replace (absorb-boot state name (.get body "boot"))
                 :workers (| state.workers {name info})
                 :statuses (| state.statuses {name {"at" now "endpoint" (.get body "endpoint")
                                                   "jobs" (lfor s statuses (dfor #(k v) (.items s) :if (!= k "result") k v))}})))
-  (replace state :tasks (renew-detached (absorb-task-reports state name statuses now (.get body "boot")) name (.get body "boot") now)))
+  (replace state :tasks (promote-prepared (renew-detached (absorb-task-reports state name statuses now (.get body "boot"))
+                                                         name (.get body "boot") now)
+                                         info)))
 
 
-(defn #^ dict heartbeat-reply [#^ ClusterState state #^ str name #^ ClusterTiming timing [ready-instances None]]
+(defn #^ dict promote-prepared [#^ dict tasks #^ WorkerInfo worker]
+  "純粋: worker が env を準備済みと名乗った拍に、その worker の preparing の task を assigned へ進める。"
+  (dfor #(id t) (.items tasks)
+        id (if (and (= t.phase "preparing") (= t.worker worker.name) (env-ready-on t.runtime-env worker))
+               (replace t :phase "assigned")
+               t)))
+
+
+(defn #^ list warms-for [#^ ClusterState state #^ str worker #^ int now]
+  "worker に配る温める表の行(期限の内・requires の label と専用の印と宣言の道具が合う行)。heartbeat の返事の warm。"
+  (setv info (.get state.workers worker))
+  (if (is info None)
+      []
+      (lfor w (sorted (.values state.warms) :key (fn [w] w.key))
+            :if (and (> w.until-ms now) (labels-satisfy w.requires info) (tolerates w.requires info)
+                     (tools-cover w.runtime-env info))
+            {"key" w.key "runtimeEnv" w.runtime-env})))
+
+
+(defn #^ dict heartbeat-reply [#^ ClusterState state #^ str name #^ ClusterTiming timing [ready-instances None] #^ int [now 0]]
   {"jobs" (lfor s (jobs-for state name ready-instances) (spec-json s))
    "tasks" (tasks-for state name)
+   ;; 温める表のうち、この worker に合う行(2026-09-26 — worker は job の準備より低い優先度で準備する)。
+   "warm" (warms-for state name now)
    "timing" (asdict timing)
    ;; この worker が drain 中か(2026-09-25): worker は返事ごとに Pod の中の ready の file へ写し、readinessProbe は sh でそれを読む
    ;; (hy を起こす probe は込んだ node で 10 秒の timeout を越え、両方の Pod が同時に NotReady → DaemonSet が 2 台を同時に消した)。
@@ -689,7 +783,7 @@
   (setv refusal (or (format-refusal body) (runtime-env-refusal body)))
   (when refusal (return #(state 400 {"error" refusal})))
   (setv lease-seconds (float (.get body "leaseSeconds" 15.0))
-        open-count (len (lfor t (.values state.tasks) :if (in t.phase #("queued" "assigned")) t)))
+        open-count (len (lfor t (.values state.tasks) :if (or (= t.phase "queued") (in t.phase PLACED-PHASES)) t)))
   (when (not (< 0 lease-seconds (+ TASK-MAX-LEASE-SECONDS 1)))
     (return #(state 400 {"error" (.format "leaseSeconds は 0 より大きく {} 以下: {}" TASK-MAX-LEASE-SECONDS lease-seconds)})))
   (when (>= open-count TASK-MAX-OPEN)

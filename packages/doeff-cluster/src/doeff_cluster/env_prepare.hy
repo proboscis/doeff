@@ -18,6 +18,7 @@
 ;;;  11 完成      WriteEnvMarker                             完成マーカーを最後に置く(無い root は使わない)
 ;;;
 ;;; 時計は doeff-time の GetMonotonic(各処理ステージの秒をマーカーと答えに載せる)。
+;;; 各処理ステージの頭で StageStarted を出す(worker は進みの印で先読みの停滞を見分ける — env_upkeep.prepare-overdue)。
 (require doeff-hy.macros [defk <- val var])
 (require doeff-hy.record [defenum defrecord])
 (import collections.abc [Callable])
@@ -133,6 +134,11 @@
 
 ;; --- effect ------------------------------------------------------------------------------
 
+(defclass [(dataclass :frozen True)] StageStarted [EffectBase]
+  "処理ステージ name を始めた(進みの印 — 準備を頼んだ worker が停滞を見分けるため)。答え = None。"
+  (#^ str name))
+
+
 (defclass [(dataclass :frozen True)] DiskFree [EffectBase]
   "path を含む volume の空き(byte)。答え = int。"
   (#^ str path))
@@ -201,11 +207,13 @@
 
 (defclass [(dataclass :frozen True)] CompileTree [EffectBase]
   "tree の bytecode を root の venv の interpreter で作る(project-dir = その venv の project・roots = tree の中の import の根・
-   carry-from = 引き継ぎ元の同じ repo のツリーか None)。答え = BytecodeReport か EnvFailure。"
+   carry-from = 引き継ぎ元の同じ repo のツリーか None・entries = 焼く範囲の入口の module(空 = 根の下を全部 — 宣言の
+   bytecode-entries))。答え = BytecodeReport か EnvFailure。"
   (#^ str project-dir)
   (#^ str tree)
   (#^ tuple roots)
-  (#^ (| str None) carry-from))
+  (#^ (| str None) carry-from)
+  (setv #^ tuple entries #()))
 
 
 (defclass [(dataclass :frozen True)] ProbeImports [EffectBase]
@@ -414,7 +422,7 @@
     (when (and roots (is failure None))
       (<- carry (carry-source request.known request.env repo.name))
       (<- report (| BytecodeReport EnvFailure)
-          (CompileTree pdir (.format "{}/{}" request.root repo.name) roots carry))
+          (CompileTree pdir (.format "{}/{}" request.root repo.name) roots carry :entries request.env.bytecode-entries))
       (match report
         (EnvFailure) (:= failure report)
         (BytecodeReport :interpreter used) (:= interpreter used))))
@@ -467,6 +475,7 @@
   (var outcome (PrepareState))
   (for [stage STAGES]
     (when (isinstance outcome PrepareState)
+      (<- (StageStarted stage.name))
       (<- started float (GetMonotonic))
       (<- after (| PrepareState EnvFailure) (stage.run request outcome))
       (<- ended float (GetMonotonic))

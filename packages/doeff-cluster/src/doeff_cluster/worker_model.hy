@@ -174,11 +174,29 @@
   #("probe" "--factory" (value-of "--factory") "--env" (value-of "--env")))
 
 
+(defclass [(dataclass :frozen True)] EnvDisk []
+  "実行環境の root の置き場の disk の観測(2026-09-26): free = 空き(byte)・floor = 掃除を始める空きの下限・
+   pinned = 掃除の係が今持っている固定の集合(root のキー env-<キー>)。worker の判断は固定の集合が変わった時と、空きが下限を切った
+   時に SweepEnvs を撃つ。"
+  (#^ int free)
+  (#^ int floor)
+  (#^ frozenset pinned))
+
+
+(defclass [(dataclass :frozen True)] WarmEnv []
+  "coordinator の温める表から受けた env 1 つ(heartbeat の返事の warm)。key = この worker の root のキー(env-<キー>)・
+   runtime-env = 宣言の JSON の文字列。worker は job の準備より低い優先度で準備する(準備済みなら何もしない)。"
+  (#^ str key)
+  (#^ str runtime-env))
+
+
 (defclass [(dataclass :frozen True)] WorldView []
   (#^ tuple codes)
   (#^ tuple processes)
   ;; 入口の検めの観測(ProbeView)。既定は空(検めを知らない呼び手の WorldView をそのまま通す)。
-  (setv #^ tuple probes #()))
+  (setv #^ tuple probes #())
+  ;; 実行環境の root の置き場の disk(EnvDisk)。実行環境の job を扱わない worker は None(掃除をしない)。
+  (setv #^ (| EnvDisk None) env-disk None))
 
 
 (defclass StopStage [Enum]
@@ -257,7 +275,9 @@
 ;; --- 宣言の読み取り -------------------------------------------------------------
 
 (defclass [(dataclass :frozen True)] DesiredJobs []
-  (#^ tuple jobs))
+  (#^ tuple jobs)
+  ;; 温める env の列(WarmEnv — coordinator の温める表のうち、この worker の label に合う行)。宣言の file で動く worker は空。
+  (setv #^ tuple warm #()))
 
 
 (defclass [(dataclass :frozen True)] DesiredUnreadable []
@@ -295,7 +315,15 @@
   "実行環境(runtime env)の root を準備し始める(key = \"env-<キー>\"・runtime-env = 宣言の JSON の文字列)。完了は ObserveWorld の
    CodeView(鍵 = key・READY の path = root)で観測する。worker のループは待たない。"
   (#^ str key)
-  (#^ str runtime-env))
+  (#^ str runtime-env)
+  ;; 先読み(温める表から)の準備か。先読みは job の準備より後に起こし、同時の準備の枠の 1 つを job に残し、期限は停滞だけ。
+  (setv #^ bool warm False))
+
+
+(defclass [(dataclass :frozen True)] SweepEnvs [EffectBase]
+  "実行環境の root の掃除の係へ固定の集合(root のキー env-<キー> — 走っている job・宣言の job・準備中・温める表)を渡し、空きが
+   下限を切っていれば掃除させる(消す root の選びは env_upkeep.sweep-choice)。disk を空けて次の準備を通すため。"
+  (#^ frozenset pinned))
 
 
 (defclass [(dataclass :frozen True)] StartJob [EffectBase]
@@ -337,9 +365,11 @@
    次の担い手が取れるようにする。届かなければ何もしない(期限で切れる)。"
   (#^ str instance))
 
-(setv Action (| PrepareCode PrepareEnv StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry))
+(setv Action (| PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry))
 
 
 (defclass [(dataclass :frozen True)] WorkerState []
   (setv #^ tuple desired #())
-  (setv #^ dict records (field :default-factory dict)))
+  (setv #^ dict records (field :default-factory dict))
+  ;; 最後に読めた温める env の列(宣言が読めない拍もこれを使い続ける — desired と同じ)。
+  (setv #^ tuple warm #()))
