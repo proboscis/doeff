@@ -2,11 +2,13 @@
 ;; 関数の参照(module:attr)は Program を作る関数から導き、同じ関数へ解けること・宣言の項目が coordinator へ渡る形に残ること・
 ;; テスト用の main が宣言の持つ関数そのもので Program を作ることを確かめる。
 ;; 設定から本体の引数を作るのは program-arguments の 1 か所だけで、テスト用の main・実行先(job_entry)・再生(replay_main)が同じ
-;; 引数を作ること、設定の鍵と本体の引数の食い違いを宣言の時点で断ることも確かめる(設計検証の盲検 A・agora-redesign#639)。
+;; 引数を作ること、設定の鍵と本体の引数の食い違いを宣言の時点で断ることも確かめる(2026-09-26 の設計検証の盲検 A)。
 (require doeff-hy.macros [defk deftest <-])
 (import json)
+(import os)
 (import subprocess)
 (import sys)
+(import pathlib [Path])
 (import pytest)
 (import doeff_cluster.service_model [ServiceDef System service resolve system-declaration system-main program-arguments])
 (import tests.fixtures.services [tally tally-program tally-system flagged-program])
@@ -73,6 +75,7 @@
 ;; --- 設定から本体の引数を作る 1 か所(盲検 A: 組み立て側の欄 record を、テスト用の main は本体へ渡し、実行先は外していた)---
 
 (setv RECORD {"otlp" "http://127.0.0.1:9" "chunkSeconds" 3600 "flushSeconds" 0.1})
+(setv PACKAGE-ROOT (. (Path (os.path.abspath __file__)) parent parent))   ; 子 process の cwd(tests.fixtures を import する)
 
 
 (deftest test-program-arguments-leave-out-the-assembly-field
@@ -92,7 +95,7 @@
   (setv done (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.job_entry" "service"
                               "--factory" (get run-spec "factory") "--env" (get run-spec "env")
                               "--config" (json.dumps (get run-spec "config"))]
-                             :capture-output True :text True :timeout 120))
+                             :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120))
   (assert (= done.returncode 0) done.stderr)
   (assert (in "が終わった: 3" done.stderr) done.stderr))
 
