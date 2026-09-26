@@ -59,16 +59,16 @@
   (with [(pytest.raises ValueError)] (CodeLayout :overlay-path "../x")))
 
 (deftest test-code-layout-puts-the-base-paths-after-the-tree-roots
-  ;; agora-redesign #663: host の worker は土台の package(image に焼かない物)の路を宣言する。木の根が先(業務の code は task の版が勝つ)・
+  ;; 2026-09-26: host の worker は土台の package(image に焼かない物)の路を宣言する。木の根が先(業務の code は task の版が勝つ)・
   ;; 土台の路は機体の絶対 path だけ。宣言が無ければ今までと同じ(pod)。
-  (setv layout (CodeLayout :import-roots #("." "clients/hy") :base-paths #("/opt/acp/sdk/python")))
-  (assert (= (.pythonpath layout "/t") "/t:/t/clients/hy:/opt/acp/sdk/python"))
-  (assert (= (.roots-arg layout) ".,clients/hy"))
+  (setv layout (CodeLayout :import-roots #("." "vendor/hy") :base-paths #("/opt/base/sdk/python")))
+  (assert (= (.pythonpath layout "/t") "/t:/t/vendor/hy:/opt/base/sdk/python"))
+  (assert (= (.roots-arg layout) ".,vendor/hy"))
   (for [bad ["relative/sdk" "/a:/b" "/a,/b"]]
     (with [(pytest.raises ValueError)] (CodeLayout :base-paths #(bad)))))
 
 (deftest test-process-host-records-the-tree-and-pid-of-each-started-job [tmp-path capfd]
-  ;; agora-redesign #663: worker は起こした job ごとに、版・木の path・子の pid・worker の pid を記録に 1 行書く(新しい版の job を
+  ;; 2026-09-26: worker は起こした job ごとに、版・木の path・子の pid・worker の pid を記録に 1 行書く(新しい版の job を
   ;; worker の再起動なしに版の木の子 process で走らせたことを、worker の記録で示すため)。子の PYTHONPATH は木の根 → 土台の路。
   (import os)
   (import time)

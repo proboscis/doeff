@@ -266,7 +266,7 @@
         :cwd action.code-path :env env :stdout log :stderr subprocess.STDOUT
         :stdin subprocess.PIPE :start-new-session True))
       (finally (.close log)))
-    ;; 起こした job の記録(agora-redesign #663 — 「新しい版の job は worker を再起動せず、worker が展開した版の木の子 process で走る」を
+    ;; 起こした job の記録(2026-09-26 — 「新しい版の job は worker を再起動せず、worker が展開した版の木の子 process で走る」を
     ;; worker の記録で示すため): job の名・版・木の path・子の pid・worker の pid を 1 行。env と引数の値は書かない(資格を運びうる)。
     (.write sys.stderr (.format "worker: job-start name={} revision={} tree={} pid={} worker-pid={}\n"
                                 spec.name spec.revision action.code-path process.pid (os.getpid)))
