@@ -155,7 +155,12 @@
 (import doeff_agents.sessionhost.cache_host [cache-last-success-at cache-host-probe])
 (import doeff_agents.sessionhost.cache_host_model [HostCacheLastSuccessAt HostCacheWrite])
 (import doeff_agents.sessionhost.effects [ClockNow HeadlessKill])
-(import doeff_agents.sessionhost.headless_events [HeadlessEventAppend MemoryEventStore])
+(import doeff_agents.sessionhost.headless_events [HeadlessEventAppend MemoryEventStore FileEventStore
+                                                  EVENTS-SUFFIX CACHE-MARK])
+(import doeff_agents.sessionhost.headless_outbox [OutboxEventStore])
+(import doeff_agents.sessionhost.store [StoreActor])
+(import pathlib [Path])
+(import tempfile)
 (import doeff_agents.sessionhost.headless_process [HeadlessRegistry])
 (import doeff_agents.sessionhost.substrate_headless [headless-substrate])
 (import doeff_agents.sessionhost.acp.handlers [session-view-of])
@@ -177,8 +182,9 @@
     (resume (if completions (max completions) None))))
 
 (deftest test-clock-swapped-idle-cleanup-ping-and-next-cycle
+  ;; 登記簿の時計(既定は壁時計)は読まれたら落ちる時計にする — 時刻は ClockNow と積む行の at だけから決まる。
   (setv store (MemoryEventStore)
-        hosted (headless-substrate (HeadlessRegistry store))
+        hosted (headless-substrate (HeadlessRegistry store (fn [] (raise (AssertionError "the registry clock was read")))))
         state {"now" 0 "receipts" []}
         wire {"session_id" "resident" "agent_type" "claude" "backend_kind" "headless"
               "status" "running" "work_dir" "/same" "lifecycle" "multi_turn"
@@ -193,9 +199,9 @@
     (assert (= retired #()))
     (when (in now #(3300000 6600000))
       ;; provider応答は本番の書き手(子processの読み手)と同じく置き場へ積む。成功判定・保持の判断は実Program。
-      ;; locatorは本番の綴り(行のevents-path + ".cache-" + 操作id — cache-host-ping)。
+      ;; locatorは本番の形(行のevents-path + cacheの印 + 操作id — cache-host-ping)を置き場の定数で組む。
       (setv at (.isoformat (datetime.fromtimestamp (/ now 1000) timezone.utc))
-            locator f"/state/resident.events.jsonl.cache-ping-{now}")
+            locator (+ "/state/resident" EVENTS-SUFFIX CACHE-MARK f"ping-{now}"))
       (for [line #((json.dumps {"type" "assistant" "timestamp" at
                                 "message" {"id" f"response-{now}" "model" "model" "usage"
                                   {"cache_read_input_tokens" 64000 "cache_creation_input_tokens" 42
@@ -216,3 +222,42 @@
   (<- expired tuple (sessions-to-retire #(view) 10200000 600))
   (assert (= expired #("resident")))
   (assert (= view.turn-ended-at-ms 0)))
+
+;; cache-host-probe の答えは出来事の置き場の種類に依らない(agora-redesign#639 依頼書 P の設計検証・盲検 B)。
+;; 同じ出来事(stdout の行と stderr の行)を package の 3 つの置き場(memory・file・送り待ちの表)に積み、同じ
+;; 答えが返ることを検める。読み手が置き場の物理(例: stderr を locator + ".stderr" で読む)に触れると、
+;; その物理を持つ置き場だけ答えが変わってここが赤になる。
+(deftest test-cache-probe-answers-the-same-on-every-event-store
+  (setv at "1970-01-01T00:55:00+00:00"
+        scripts {MaintenanceState.SUCCEEDED
+                 [["stdout" (json.dumps {"type" "assistant" "timestamp" at
+                                         "message" {"id" "response-parity" "model" "model" "usage"
+                                           {"cache_read_input_tokens" 64000 "cache_creation_input_tokens" 42
+                                            "cache_creation" {"ephemeral_1h_input_tokens" 42}}}})]
+                  ["stderr" "warning: slow response"]
+                  ["stdout" (json.dumps {"type" "result" "is_error" False})]]
+                 MaintenanceState.FAILED
+                 [["stdout" (json.dumps {"type" "result" "is_error" True})]
+                  ["stderr" "API Error: 529 overloaded"]]})
+  (for [[expected script] (.items scripts)]
+    (setv answers {})
+    (for [kind #("memory" "file" "outbox")]
+      (with [tmp (tempfile.TemporaryDirectory :prefix f"cache-parity-{kind}-")]
+        (setv actor (when (= kind "outbox") (StoreActor (str (/ (Path tmp) "agentd.sqlite"))))
+              store (cond (= kind "memory") (MemoryEventStore)
+                          (= kind "file") (FileEventStore)
+                          True (OutboxEventStore actor.submit))
+              locator (+ (str (/ (Path tmp) "resident")) EVENTS-SUFFIX CACHE-MARK "ping-parity"))
+        (try
+          (.open-stream store locator)
+          (for [[stream line] script]
+            (.append store (HeadlessEventAppend locator stream line at)))
+          (setv pending (HostCacheRecord "ping-parity" "resident" 3600000 "process" locator
+                          :state MaintenanceState.RUNNING :started-at 3300000))
+          (<- probed HostCacheRecord ((headless-substrate (HeadlessRegistry store))
+            ((residency-world {"now" 3300000 "receipts" []}) (cache-host-probe pending))))
+          (setv (get answers kind) #(probed.state probed.reason probed.reply))
+          (finally (when actor (.close actor))))))
+    (assert (= (get answers "memory" 0) expected) f"{expected}: {answers}")
+    (assert (= (get answers "memory") (get answers "file") (get answers "outbox"))
+            f"置き場で答えが変わった({expected}): {answers}")))

@@ -4155,6 +4155,42 @@
                      "def test_job_outcome_of_maps_only_the_host_drained_row_to_the_planned_stop"
                      "def test_the_terminal_write_refuses_a_missing_or_foreign_cause_and_composes_the_result"]]
          (assert (in needle tests) f"R47 の反例の検が無い: {needle}")))
+     (deftest test-adr-doe-agents-012-every-session-category-pins-its-retryable-next-to-its-job-outcome
+       ;; R47 (3) の針(値 — agora-redesign#639 依頼書 P の設計検証・盲検 A): 器の行の終端の語(policy の凍結表
+       ;; TERMINAL-CAUSE-RETRYABLE)ごとに、行の retryable と、agentd の路で手番が閉じる結末(judgment.job-outcome-of)を
+       ;; 1 つの表で固定する。job-outcome-of は category の名で結末を決め retryable を読まない(上限の置き換え
+       ;; outcome-with-limit はこの後段)ので、凍結表だけを変えると(conformance README とその写しを揃えても)agentd の路では
+       ;; 何も変わらない。語を足す・retryable を変える変更はこの表を赤にし、agentd の路の結末をどうするかをその場で決めさせる。
+       (import doeff_agents.sessionhost.policy [TERMINAL-CAUSE-RETRYABLE])
+       (import doeff_agents.sessionhost.acp.effects [SessionView JobOutcome])
+       (import doeff_agents.sessionhost.acp.judgment [job-outcome-of])
+       (setv expected {"rate_limited" #(True "failed" "SessionFailed" "SessionFailed")
+                       "timed_out" #(True "failed" "SessionFailed" "SessionFailed")
+                       "vanished" #(True "failed" "SessionFailed" "SessionFailed")
+                       "prompt_undelivered" #(True "failed" "SessionFailed" "SessionFailed")
+                       "auth_failed" #(True "failed" "SessionFailed" "SessionFailed")
+                       "transport_failed" #(True "failed" "SessionFailed" "SessionFailed")
+                       "context_exhausted" #(False "failed" "SessionFailed" "SessionFailed")
+                       "runner_unavailable" #(False "failed" "SessionFailed" "SessionFailed")
+                       "protocol_error" #(False "failed" "SessionFailed" "SessionFailed")
+                       "run_failed" #(False "failed" "SessionFailed" "SessionFailed")
+                       "interactive_prompt_blocked" #(False "failed" "SessionFailed" "SessionFailed")
+                       "cancelled" #(False "failed" "SessionFailed" "SessionFailed")
+                       "host_drained" #(True "agentd-stopped" "host-drained" "HostDrained")}
+             observed {})
+       (for [[category retryable] (.items TERMINAL-CAUSE-RETRYABLE)]
+         (setv view (SessionView :session-id "s" :agent-type "claude"
+                                 :status (if (in category #{"cancelled" "host_drained"}) "stopped" "failed")
+                                 :work-dir "/work" :lifecycle "run_to_completion" :conversation {"session_id" "s"}
+                                 :effective-identity None :result-payload None
+                                 :terminal-cause {"category" category "retryable" retryable "reason" "why"}
+                                 :turn-ended-at-ms None))
+         (<- outcome JobOutcome (job-outcome-of view))
+         (setv (get observed category)
+               #(retryable (get outcome.cause "category") (get outcome.cause "reason")
+                 #* (gfor condition outcome.conditions (get condition "type")))))
+       (assert (= observed expected)
+               f"行の終端の語の retryable と agentd の路の結末の表が食い違う(R47 (3) — 凍結表を変えたら job-outcome-of の結末も決める): {observed}"))
      (deftest test-adr-doe-agents-012-own-node-row-is-the-live-row-of-the-library
        ;; R43 の針(構造): 写しは contracts.lock の kind = code で pin され sha が正本と一致・judgment は library の resolve-live-row を
        ;; import し node-row-named がそれを読む・綴りは node-row-entry-of の 1 点・旧形の名前の索引(gone でない最初の行)が無い・
