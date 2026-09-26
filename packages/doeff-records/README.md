@@ -69,8 +69,8 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
 
 - `doeff_records.memory.memory_records_handler(store, writer)` — `MemoryStore(schema)` の手元の表の上で答える。模擬環境・手元の
   1 process・単体の検に使う。同じ `MemoryStore` を別の `writer` の handler で包めば、1 つの置き場を複数の書き手が使う形になる。
-- `doeff_records.pg.pg_records_handler(host, writer)` — `PgRecordsHost(connection, schema, prefix=...)` の PostgreSQL の表で答える。
-  接続(psycopg 3・自動 commit)は composition root が開いて渡す(psycopg は extra `pg`)。表は状態の行の表(`state_rows`)と
+- `doeff_records.pg.pg_records_handler(host, writer)` — `PgRecordsHost(connection, schema, unreachable_errors=..., prefix=...)` の
+  PostgreSQL の表で答える。接続(psycopg 3・自動 commit)と接続の失敗の例外の型は composition root が渡す(psycopg は extra `pg`)。表は状態の行の表(`state_rows`)と
   追記の表(`append_rows`)と同じ列の形で、変更の列(`row_changes`)と置き場の版(`store_epoch`)を足す。書きは置き場ごとの
   advisory lock で直列にする(番号の順と commit の順を揃えるため — 理由は `pg_sql.hy` の頭の註)。
 
@@ -78,6 +78,61 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
 (`sim_time_handler`)の下では保持の期限も待ちも一瞬で進む。
 
 判断(期待・書きの許可・保持・索引・頁)は `doeff_records.admission` の純関数ちょうど 1 つで、handler はどれもそれを呼ぶ。
+
+## 記録の service の HTTP の口
+
+別の process(Python・TS・別の Hy)が同じ 6 つの操作を使うための口。`doeff_records.service.respond` は HTTP の要求 1 つを
+答え 1 つにする Program で、身元 → 本文の読み → 宣言に在る表か → 公開 effect を実行する、の順だけを持つ(判断は記録の handler)。
+
+| route | 本文 | 200 の答えの `kind` |
+|---|---|---|
+| `POST /v1/records/read-row` | `{table, key}` | `row` / `missing` |
+| `POST /v1/records/list-rows` | `{table, where?, fields?, cursor?, limit?}` | `page` / `reset` / `notIndexed` |
+| `POST /v1/records/put-row` | `{table, key, value, expect, approval?}` | `written` / `conflict` / `refused` |
+| `POST /v1/records/watch-changes` | `{tables, cursor, timeout?, limit?}` | `changes` / `reset` |
+| `POST /v1/records/append-event` | `{stream, idempotencyKey, body}` | `appended` / `refused` |
+| `POST /v1/records/read-events` | `{stream, after?, limit?}` | `events` |
+| `GET /healthz` | — | `{status: "ok"}` |
+
+- effect の答えの失敗(`Conflict`・`Refused`・`NotIndexed`・`Reset`・`Missing`)は 200 の本文の値。HTTP の断りは
+  `{error, reason}` で、`400 malformed`(知らないキー・足りないキー・型の違う値)・`401 unauthorized`(身元が引けない)・
+  `404 not-found`(宣言に無い表・知らない route)・`503 store-unavailable`(置き場に届かない = `Unreachable`)・`500 internal`。
+- 綴り(JSON の欄の名・`kind`・位置と期待の形)の正本は `doeff_records.wire`。口と client は両方これを呼ぶ。
+- 身元: `Authorization: Bearer <token>` を身元の名簿 `principals.json`(`{version: 1, principals: [{name, tokenSha256}]}`)で
+  書き手の名へ引く(`doeff_records.principals`)。引いた名で記録の handler を組むので、書き手の名は effect の引数にならない。
+  名簿に在っても表の宣言の書き手でなければ、書きは記録の判断が `Refused` にする。
+- 口を開く部品は `doeff_records.http_server.start_records_server(RecordsServerConfig(...))`(標準の `http.server`)。
+  PostgreSQL の置き場では要求ごとに接続を 1 本借りる(`doeff_records.pg_pool.PgHostPool`)。
+
+client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoint(base_url, token))` は、同じ公開 effect に口越しで
+答える。`401` は書き(`PutRow`・`AppendEvent`)なら `Refused`、読みなら `Unreachable`。`404` は `UndeclaredTable` を上げる。
+`WatchChanges` の待ちは client の時計で回す(口へは待たない問い合わせだけを送る)。
+
+## 置き場の手入れ(`doeff_records.maintenance`)
+
+公開 effect ではない 2 つの effect と、それを回す Program。memory と PostgreSQL の handler が答える。
+
+- `SweepExpired()` → `Swept(rows)` — 保持の期限を過ぎた行を消して `RowRemoved` を積み、期限を過ぎた出来事を捨てる(読み書きの前にも
+  同じ回収が走るが、誰も触らない置き場でも行が残らないように手入れの係が実行する)。
+- `PruneChanges(keep_seconds)` → `Pruned(floor, removed)` — `keep_seconds` より古い変更を変更の列から消し、floor を上げる。
+  floor より前の位置の `WatchChanges` は `Reset`(一覧から読み直す)。
+- `maintenance_loop(interval_seconds, keep_seconds, ticks)` — 手入れの係の本体(`ticks=None` で止めるまで)。
+
+## 記録の service を起動する(`doeff_records.main`)
+
+置き場の宣言と接続の開き方は呼び手の系が持つので、呼び手の系の入口が `serve_records_service` を呼ぶ:
+
+```hy
+(import psycopg)
+(import myapp.tables [SCHEMA])
+(import doeff_records.main [serve-records-service])
+(serve-records-service SCHEMA (fn [url] (psycopg.connect url :autocommit True))
+                       #(psycopg.OperationalError psycopg.InterfaceError))
+```
+
+env(接続 URL の file・身元の名簿の file・接頭辞・port・手入れの間隔・変更の列に残す秒)の一覧と既定は `main.hy` の頭の註。
+表は接頭辞(既定 `records_`)つきで、起動時に `CREATE ... IF NOT EXISTS` だけを流す(既存の表を消さない・変えない)。
+SIGTERM / SIGINT で口を閉じて接続を返す。
 
 ## 適合の筋書き
 
@@ -93,6 +148,8 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
 | `law_indexed_list_equals_filtered_scan` | 索引の `ListRows` は全件を読んで絞った結果と同じ |
 | `law_append_is_idempotent` | 同じ冪等キーの再送は前の番号・別の本文は `Refused` |
 | `law_watch_waits_for_a_change` | `WatchChanges` は変更が来るまで `timeout` まで待つ |
+| `law_none_removes_a_field` | 差分の値 None はその欄を消し、行の値は None を持たない |
+| `law_maintenance_prunes_and_sweeps` | 刈った変更より前の位置は `Reset`・floor の位置からは続けられ、行は消えない。回収は期限切れの行だけを 1 回消す |
 
 使い方: `LAW_SCHEMA` の定義で置き場を作り、`LawHarness(as_writer)`(書き手の名と Program → その書き手の handler で包んだ
 Program)を法に渡す。法は答えを順に並べた list を返すので、2 つの handler の組で同じ法を回して list を比べれば、答えが同じことも
@@ -109,3 +166,6 @@ DOEFF_RECORDS_TEST_PG_DSN=postgresql://postgres:pw@127.0.0.1:55433/postgres \
 ```
 
 env `DOEFF_RECORDS_TEST_PG_DSN` が無い時、PostgreSQL の検は skip と表示する(緑とは数えない)。
+
+法の検は 4 つの組で回す: `memory`・`pg`・`http-memory`・`http-pg`(後の 2 つは 127.0.0.1 に口を開き、client の handler で送る)。
+`test_parity_memory_pg.hy` は全部の法の答えの列が memory の組と等しいこと(番号・版・epoch・時刻まで)を確かめる。
