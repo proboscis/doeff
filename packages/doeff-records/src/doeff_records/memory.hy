@@ -5,7 +5,14 @@
 ;;; 時刻は doeff-time の GetTime(仮想の時計の下では保持の期限も一瞬で来る)、WatchChanges の待ちは Delay。
 ;;; 書き手の身元は handler を組む時の引数 writer(effect の欄にしない)。同じ MemoryStore を別の writer の handler で包めば、
 ;;; 1 つの置き場を複数の書き手が使う形になる。
+;;;
+;;; 置き場は thread の間で共有してよい(書き手の thread と実況の読みの thread が同じ MemoryStore を使う — この系の Python は GIL の無い
+;;; free-threaded)。置き場の不変条件(列・番号・索引)の持ち主は MemoryStore なので、錠(MemoryStore.lock・RLock)も置き場が持ち、
+;;; handler の各節は「保持の刈り(purge-expired)と操作」の組を錠の内で 1 つずつ行う(guarded)。WatchChanges の待ち(Delay で眠る間)は
+;;; 錠を持たない — 走査の 1 回だけを錠の内にする(持ったまま眠ると他の書きが止まる)。
 (require doeff-hy.macros [defhandler defk <-])
+(import threading)
+(import collections.abc [Callable])
 (import doeff [Pure])
 (import doeff_time [GetTime])
 (import doeff_records.watching [wait-for-changes])
@@ -29,9 +36,11 @@
 
 
 (defclass MemoryStore []
-  "memory の置き場: schema = 宣言(operator の欄を書ける主体の一覧 operators を含む)/ poll-seconds = WatchChanges が変更を待つ間の眠りの刻み。"
+  "memory の置き場: schema = 宣言(operator の欄を書ける主体の一覧 operators を含む)/ poll-seconds = WatchChanges が変更を待つ間の眠りの刻み /
+   lock = 置き場を読み書きする操作を 1 つずつにする錠(thread の間で置き場を共有するため — 同じ thread の入れ子は通す RLock)。"
   (defn #^ None __init__ [self #^ RecordsSchema schema * #^ float [poll-seconds DEFAULT-POLL-SECONDS]]
     (setv self.schema schema
+          self.lock (threading.RLock)
           self.poll-seconds poll-seconds
           self.epoch 1
           self.floor 0
@@ -47,9 +56,19 @@
 
 ;; --- 保持 ------------------------------------------------------------------------------------------------
 
+(defn #^ object guarded [#^ MemoryStore store #^ Callable operation]  ; defk にできない: 錠の内で同期に置き場を触る関数を 1 つ呼ぶ(pg.hy の guarded と同じ役)
+  "operation(引数なしの関数)を置き場の錠の内で呼ぶ — 保持の刈りと操作の組を、他の thread の操作と重ねない。"
+  (with [store.lock] (operation)))
+
+
 (defn #^ int purge-expired [#^ MemoryStore store #^ int now-ms]
   "保持の期限を過ぎた行を消して RowRemoved を積み、期限を過ぎた出来事を捨てる(どの操作の前にも呼ぶ — 読みに期限切れが見えない)。
-   答え = 消した行の数。"
+   答え = 消した行の数。錠の内で走る(単独で呼ばれても — RLock なので guarded の内からの入れ子も通る)。"
+  (with [store.lock] (purge-expired-locked store now-ms)))
+
+
+(defn #^ int purge-expired-locked [#^ MemoryStore store #^ int now-ms]  ; defk にできない: purge-expired が錠の内で同期に呼ぶ置き場の書き
+  "purge-expired の中身(呼び手が錠を持つ)。期限切れの出来事が 1 つも無ければ列を差し替えない。"
   (setv removed 0)
   ;; 期限を持つ(KeepFor の)表と列だけを走査する — 期限の無い置き場で操作ごとに全部の行と出来事を読み直すと、出来事の数の 2 乗で
   ;; 遅くなる(2026-09-26 の実測: 出来事 1 万で 1 筋書きが 1 分を越えた)。
@@ -65,13 +84,15 @@
       (.append store.changes (RowRemoved name stored.row.key store.head))))
   (when (not (any (gfor s (.values store.schema.streams) (isinstance s.retention KeepFor))))
     (return removed))
-  (setv kept (lfor event store.events
-                   :if (not (event-expired? (store.schema.stream event.stream) event.at now-ms))
-                   event))
-  (for [event store.events]
-    (when (event-expired? (store.schema.stream event.stream) event.at now-ms)
-      (.pop store.by-idempotency #(event.stream event.idempotency-key) None)))
-  (setv store.events kept)
+  (setv expired (lfor event store.events
+                      :if (event-expired? (store.schema.stream event.stream) event.at now-ms)
+                      event))
+  (when (not expired)
+    (return removed))
+  (for [event expired]
+    (.pop store.by-idempotency #(event.stream event.idempotency-key) None))
+  (setv gone (set (gfor event expired event.sequence)))
+  (setv store.events (lfor event store.events :if (not-in event.sequence gone) event))
   removed)
 
 
@@ -178,11 +199,12 @@
 
 
 (defn #^ int memory-advance-epoch [#^ MemoryStore store]
-  (+= store.epoch 1)
-  (setv store.floor store.head
-        store.changes []
-        store.changed-at {})
-  store.epoch)
+  (with [store.lock]
+    (+= store.epoch 1)
+    (setv store.floor store.head
+          store.changes []
+          store.changed-at {})
+    store.epoch))
 
 
 ;; --- 手入れ ------------------------------------------------------------------------------------------------
@@ -190,6 +212,11 @@
 (defk memory-prune-changes [store ask now-ms]
   {:pre [(: store MemoryStore) (: ask PruneChanges) (: now-ms int)] :post [(: % Pruned)]}
   "変更の列が際限なく伸びないように、keep-seconds より古い変更(刻 <= 今 − 保持)を消して floor を上げる。"
+  (guarded store (fn [] (prune-changes-locked store ask now-ms))))
+
+
+(defn #^ Pruned prune-changes-locked [#^ MemoryStore store #^ PruneChanges ask #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き
+  "memory-prune-changes の中身(呼び手が錠を持つ)。"
   (setv before (- now-ms (int (* 1000 ask.keep-seconds)))
         ;; 刈る範囲は番号の前方の連なり(刻が古い変更の最大の番号まで — PostgreSQL の handler と同じ)。
         edge (max (gfor change store.changes :if (<= (get store.changed-at change.sequence) before) change.sequence) :default 0)
@@ -205,32 +232,26 @@
 (defhandler memory-records-handler [#^ MemoryStore store #^ str writer]
   (ReadRow [table key]
     (<- now (GetTime))
-    (purge-expired store (epoch-ms now))
-    (resume (memory-read-row store effect)))
+    (resume (guarded store (fn [] (purge-expired store (epoch-ms now)) (memory-read-row store effect)))))
   (ListRows [table where fields cursor limit]
     (<- now (GetTime))
-    (purge-expired store (epoch-ms now))
-    (resume (memory-list-rows store effect)))
+    (resume (guarded store (fn [] (purge-expired store (epoch-ms now)) (memory-list-rows store effect)))))
   (PutRow [table key value expect]
     (<- now (GetTime))
-    (purge-expired store (epoch-ms now))
-    (resume (memory-put-row store writer effect (epoch-ms now))))
+    (resume (guarded store (fn [] (purge-expired store (epoch-ms now)) (memory-put-row store writer effect (epoch-ms now))))))
   (PutRows [writes]
     (<- now (GetTime))
-    (purge-expired store (epoch-ms now))
-    (resume (memory-put-rows store writer effect (epoch-ms now))))
+    (resume (guarded store (fn [] (purge-expired store (epoch-ms now)) (memory-put-rows store writer effect (epoch-ms now))))))
   (WatchChanges [tables cursor timeout limit]
-    (<- answer (wait-for-changes (fn [now-ms] (purge-expired store now-ms) (Pure (memory-watch-scan store effect)))
+    (<- answer (wait-for-changes (fn [now-ms] (Pure (guarded store (fn [] (purge-expired store now-ms) (memory-watch-scan store effect)))))
                                  store.poll-seconds timeout))
     (resume answer))
   (AppendEvent [stream idempotency-key body]
     (<- now (GetTime))
-    (purge-expired store (epoch-ms now))
-    (resume (memory-append store writer effect (epoch-ms now))))
+    (resume (guarded store (fn [] (purge-expired store (epoch-ms now)) (memory-append store writer effect (epoch-ms now))))))
   (ReadEvents [stream after limit]
     (<- now (GetTime))
-    (purge-expired store (epoch-ms now))
-    (resume (memory-read-events store effect)))
+    (resume (guarded store (fn [] (purge-expired store (epoch-ms now)) (memory-read-events store effect)))))
   (AdvanceStoreEpoch []
     (resume (memory-advance-epoch store)))
   (SweepExpired []
