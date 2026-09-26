@@ -4,3 +4,8 @@
 
 (defn #^ list plain-env [#^ dict config ctx]
   [(reader {"worker" "child" "base" 100})])
+
+
+(defn #^ list greeting-env [#^ dict config ctx]
+  "設定 greeting(env だけが読む設定)から reader を組む。"
+  [(reader {"greeting" (get config "greeting")})])
