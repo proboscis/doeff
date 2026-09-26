@@ -27,6 +27,7 @@ members = [
     "doeff-git",
     "doeff-google-secret-manager",
     "doeff-hy",
+    "doeff-hy-pytest",
     "doeff-image",
     "doeff-indexer",
     "doeff-jev",
@@ -900,6 +901,7 @@ source = { editable = "packages/doeff-hy" }
 dependencies = [
     { name = "doeff" },
     { name = "doeff-core-effects" },
+    { name = "doeff-hy-pytest" },
     { name = "hy" },
 ]
 
@@ -907,8 +909,14 @@ dependencies = [
 requires-dist = [
     { name = "doeff", editable = "." },
     { name = "doeff-core-effects", editable = "packages/doeff-core-effects" },
+    { name = "doeff-hy-pytest", editable = "packages/doeff-hy-pytest" },
     { name = "hy", specifier = ">=1.2.0" },
 ]
+
+[[package]]
+name = "doeff-hy-pytest"
+version = "0.1.0"
+source = { editable = "packages/doeff-hy-pytest" }
 
 [[package]]
 name = "doeff-image"
