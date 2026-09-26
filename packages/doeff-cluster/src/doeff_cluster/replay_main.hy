@@ -37,7 +37,7 @@
   (when (.get header "env")
     (resolve (get header "env")))
   (setv factory (resolve (get header "factory")))
-  (setv program (factory #** (program-arguments config)))
+  (setv program (factory #** (program-arguments factory config)))
   (setv state (ReplayState rec :from-ms args.from-ms :to-ms args.to-ms))
   (setv started (time.monotonic) end "program-returned" failure None)
   (try
