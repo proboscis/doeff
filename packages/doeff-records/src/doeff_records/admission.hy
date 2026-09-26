@@ -2,15 +2,15 @@
 ;;; 判断を handler ごとに写さない(写すと 1 つだけ古い答えを返す日が来る)。
 ;;;
 ;;; 判断の順(PutRow): 期待(Conflict)→ 鍵の形 → 宣言の外の欄 → 終端の行 → 鍵の欄の書き換え → 書き手 → 状態の語彙 →
-;;; operator の欄の主体 → 上限。
+;;; operator の欄の主体 → 上限。PutRows の束は、全部の行の期待 → 全部の行の書きの判定(1 行ずつは PutRow と同じ判断)。
 ;;; 期待を先に見るのは、古い版で書いた呼び手に「読み直せ」を先に返すため(読み直した後の書きが断られるかは、その時の行で決まる)。
 (import dataclasses [dataclass])
 (import datetime [datetime timezone])
 (import json)
 (import collections.abc [Mapping])
 (import doeff_hy.frozen [FrozenMap frozen-json-object thaw-json])
-(import doeff_records.values [TableDecl StreamDecl KeepFor Row Missing Conflict Refused NotIndexed Event
-                              ExpectAbsent ExpectVersion ExpectAny])
+(import doeff_records.values [RecordsSchema TableDecl StreamDecl KeepFor Row Missing Conflict Refused NotIndexed Event
+                              ExpectAbsent ExpectVersion ExpectAny RowsConflict RowsRefused])
 
 
 ;; --- JSON の値 ------------------------------------------------------------------------------------------------
@@ -174,6 +174,23 @@
       (operator-refusal decl writer changed operators)
       (size-refusal decl value)
       (Admitted value)))
+
+
+(defn #^ (| tuple RowsConflict RowsRefused) judge-put-rows [#^ RecordsSchema schema #^ str writer #^ tuple writes #^ tuple currents]  ; defk にできない: handler(memory・PG)が置き場の lock と transaction の中で同期に呼ぶ判断(この file の判断はすべて純関数の defn)
+  "PutRows の束を全部か 0 で書けるかの判断を 1 か所に置く(memory と PostgreSQL の handler が同じ答えを返すため)。
+   writes = RowWrite の tuple / currents = 各行の今の行(Row か None・writes と同じ順)。
+   答え = 全部通れば各行の Admitted の tuple(writes と同じ順)/ 期待の合わない行があれば束の順で最初の行の RowsConflict /
+   無ければ書きの判定で断られた最初の行の RowsRefused。
+   期待を全部の行で先に見るのは PutRow と同じ理由(古い版で書いた呼び手に「読み直せ」を先に返す — 断りは読み直した後の行で決まる)。"
+  (for [#(index #(write current)) (enumerate (zip writes currents :strict True))]
+    (setv conflict (judge-expect write.expect current))
+    (when conflict (return (RowsConflict index write.table write.key conflict.current))))
+  (setv admitted [])
+  (for [#(index #(write current)) (enumerate (zip writes currents :strict True))]
+    (setv verdict (judge-put (schema.table write.table) writer current write.key write.value :operators schema.operators))
+    (when (isinstance verdict Refused) (return (RowsRefused index write.table write.key verdict.reason)))
+    (.append admitted verdict))
+  (tuple admitted))
 
 
 ;; --- 保持 ------------------------------------------------------------------------------------------------

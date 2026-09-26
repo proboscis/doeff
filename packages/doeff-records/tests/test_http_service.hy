@@ -1,6 +1,6 @@
 ;; 記録の service の HTTP の口: 身元(名簿に無い token の書きは Refused で何も変えない)・断りの status と本文・宣言に無い表・
 ;; 置き場に届かない時の 503。置き場は memory(仮想の時計)— PostgreSQL の上の口は test_laws / test_parity の http-pg が確かめる。
-(require doeff-hy.macros [deftest defhandler])
+(require doeff-hy.macros [deftest defhandler defk val])
 (import contextlib [contextmanager])
 (import json)
 (import urllib.error [HTTPError])
@@ -8,8 +8,8 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_records.values [ExpectAbsent Missing Refused Unreachable UndeclaredTable Written Events])
-(import doeff_records.effects [ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents])
+(import doeff_records.values [ExpectAbsent ExpectAny Missing Refused Unreachable UndeclaredTable Written Events WrittenRows RowsRefused])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents])
 (import doeff_records.laws [LAW-SCHEMA])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.http_server [RecordsServerConfig start-records-server])
@@ -63,6 +63,60 @@
     (assert (= (. (run-as server clock maker (ReadEvents "journal")) items) #()))
     ;; 名簿に在る書き手の同じ書きは通る(断ったのは身元で、書きの形ではない)。
     (assert (isinstance (run-as server clock maker (PutRow "parts" #("p1") {"label" "a"} (ExpectAbsent))) Written))
+    (finally (.close server))))
+
+
+(defk status-and-error [reply]
+  {:pre [(: reply tuple)] :post [(: % tuple)]}
+  "raw の答え #(status 本文) を #(status 断りの語) にする(断りの形の比べを 1 行にするため)。"
+  #((get reply 0) (.get (get reply 1) "error")))
+
+
+(deftest test-a-put-rows-by-a-token-outside-the-roster-is-refused-at-the-first-row-and-changes-nothing
+  ;; 名簿に無い呼び手の束: 口は 401 で断り、client の handler は束の最初の行の RowsRefused にする(memory の handler で書き手でない呼び手の
+  ;; 束が最初の行で断られるのと同じ形)。1 行も書かない。
+  (val store (MemoryStore LAW-SCHEMA))
+  (val opened (open-service (memory-lease store)))
+  (val server (get opened 0))
+  (val clock (get opened 1))
+  (val writes #((RowWrite "parts" #("p1") {"label" "a"} (ExpectAbsent)) (RowWrite "parts" #("p2") {"label" "b"} (ExpectAbsent))))
+  (val maker (get LAW-TOKENS "maker"))
+  (try
+    (val answer (run-as server clock "not-in-roster" (PutRows writes)))
+    (assert (and (isinstance answer RowsRefused) (= #(answer.index answer.table answer.key) #(0 "parts" #("p1")))) (repr answer))
+    (assert (= (run-as server clock maker (ReadRow "parts" #("p1"))) (Missing)))
+    (assert (= (run-as server clock maker (ReadRow "parts" #("p2"))) (Missing)))
+    (val refused (raw server "POST" "/v1/records/put-rows"
+                      :body {"writes" [{"table" "parts" "key" ["p1"] "value" {"label" "a"} "expect" {"kind" "absent"}}]}
+                      :token "nope"))
+    (assert (= (! (status-and-error refused)) #(401 "unauthorized")) (repr refused))
+    ;; 名簿に在る書き手の同じ束は通る(断ったのは身元で、束の形ではない)。
+    (assert (isinstance (run-as server clock maker (PutRows writes)) WrittenRows))
+    (finally (.close server))))
+
+
+(deftest test-put-rows-refusals-carry-the-contract-status
+  ;; 束の形の誤り(同じ鍵が 2 度・空の束)は 400、宣言に無い表を名指す束は 404(client は UndeclaredTable を上げる)で、どれも 1 行も書かない。
+  (val store (MemoryStore LAW-SCHEMA))
+  (val opened (open-service (memory-lease store)))
+  (val server (get opened 0))
+  (val clock (get opened 1))
+  (val maker (get LAW-TOKENS "maker"))
+  (val one {"table" "parts" "key" ["p1"] "value" {"label" "a"} "expect" {"kind" "any"}})
+  (try
+    (val twice (raw server "POST" "/v1/records/put-rows" :body {"writes" [one one]} :token maker))
+    (assert (= (! (status-and-error twice)) #(400 "malformed")) (repr twice))
+    (val empty (raw server "POST" "/v1/records/put-rows" :body {"writes" []} :token maker))
+    (assert (= (! (status-and-error empty)) #(400 "malformed")) (repr empty))
+    (val undeclared (raw server "POST" "/v1/records/put-rows"
+                         :body {"writes" [one {"table" "nothing" "key" ["x"] "value" {} "expect" {"kind" "any"}}]} :token maker))
+    (assert (= (! (status-and-error undeclared)) #(404 "not-found")) (repr undeclared))
+    (try
+      (run-as server clock maker (PutRows #((RowWrite "parts" #("p1") {"label" "a"} (ExpectAny))
+                                            (RowWrite "nothing" #("x") {} (ExpectAny)))))
+      (assert False "宣言に無い表を名指す束が答えを返した")
+      (except [UndeclaredTable] None))
+    (assert (= (run-as server clock maker (ReadRow "parts" #("p1"))) (Missing)))
     (finally (.close server))))
 
 

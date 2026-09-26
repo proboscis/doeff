@@ -1,4 +1,4 @@
-;;; memory の handler — 公開 effect 6 つに手元の表と番号の列で答える(模擬環境・手元の 1 process・単体の検)。
+;;; memory の handler — 公開 effect 7 つに手元の表と番号の列で答える(模擬環境・手元の 1 process・単体の検)。
 ;;; 行の値は凍らせた写像なので、答えに出す Row は置き場の Row そのもの(写し取らなくても呼び手は変えられない)。
 ;;;
 ;;; 判断(期待・書きの許可・保持・索引・頁)は admission.hy の純関数ちょうど 1 つ。ここは置き場の data と番号の採り方だけを持つ。
@@ -9,12 +9,13 @@
 (import doeff [Pure])
 (import doeff_time [GetTime])
 (import doeff_records.watching [wait-for-changes])
-(import doeff_records.values [KeepFor RecordsSchema Row Missing Page Written RowChanged RowRemoved Changes Appended Event Events
-                              Reset WatchCursor ListCursor Refused])
-(import doeff_records.effects [ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents])
+(import doeff_hy.frozen [FrozenMap])
+(import doeff_records.values [KeepFor RecordsSchema Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
+                              Event Events Reset WatchCursor ListCursor Refused RowsConflict RowsRefused])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges AppendEvent ReadEvents])
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
-(import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-append row-expired?
+(import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired?
                                  event-expired? where-refusal row-matches? listed-row key-text next-watch-sequence
                                  epoch-ms])
 
@@ -101,23 +102,41 @@
         store.head))
 
 
+(defn #^ (| Row None) memory-current-row [#^ MemoryStore store #^ str table #^ tuple key]  ; defk にできない: 同期の置き場の書き(memory-put-row / memory-put-rows)が呼ぶ読み
+  "書きの判定に渡す今の行(無ければ None)を置き場から引く。"
+  (setv stored (.get (get store.rows table) (key-text key)))
+  (if (is stored None) None stored.row))
+
+
+(defn #^ Written memory-store-row [#^ MemoryStore store #^ str table #^ tuple key #^ (| Row None) current #^ FrozenMap value
+                                   #^ int now-ms]  ; defk にできない: 同期の置き場の書き(memory-put-row / memory-put-rows)が呼ぶ置き場の更新
+  "判定を通った 1 行を置き場に書き、変更の列に 1 つ積む(PutRow と PutRows の書きを 1 つにし、版と番号の採り方を揃えるため)。"
+  (setv version (if (is current None) 1 (+ current.version 1)))
+  (setv (get (get store.rows table) (key-text key)) (StoredRow (Row key value version) now-ms))
+  (+= store.head 1)
+  (setv (get store.changed-at store.head) now-ms)
+  (.append store.changes (RowChanged table key version value store.head))
+  (Written version value))
+
+
 (defn #^ object memory-put-row [#^ MemoryStore store #^ str writer #^ PutRow ask #^ int now-ms]
   (setv decl (store.schema.table ask.table)
-        table (get store.rows ask.table)
-        text (key-text ask.key)
-        stored (.get table text)
-        current (if (is stored None) None stored.row))
+        current (memory-current-row store ask.table ask.key))
   (setv conflict (judge-expect ask.expect current))
   (when conflict (return conflict))
   (setv verdict (judge-put decl writer current ask.key ask.value :operators store.schema.operators))
   (when (isinstance verdict Refused) (return verdict))
-  (setv version (if (is current None) 1 (+ current.version 1))
-        row (Row ask.key verdict.value version))
-  (setv (get table text) (StoredRow row now-ms))
-  (+= store.head 1)
-  (setv (get store.changed-at store.head) now-ms)
-  (.append store.changes (RowChanged ask.table ask.key version verdict.value store.head))
-  (Written version verdict.value))
+  (memory-store-row store ask.table ask.key current verdict.value now-ms))
+
+
+(defn #^ (| WrittenRows RowsConflict RowsRefused) memory-put-rows [#^ MemoryStore store #^ str writer #^ PutRows ask #^ int now-ms]  ; defk にできない: memory の handler が同期に呼ぶ置き場の書き(memory-put-row と同じ作法)
+  "PutRows の束を全部か 0 で書く: 全部の行の判定(admission.judge-put-rows)が通った時だけ、束の順に 1 行ずつ書いて変更を積む。"
+  (for [write ask.writes] (store.schema.table write.table))
+  (setv currents (tuple (gfor write ask.writes (memory-current-row store write.table write.key)))
+        verdict (judge-put-rows store.schema writer ask.writes currents))
+  (when (not (isinstance verdict tuple)) (return verdict))
+  (WrittenRows (tuple (gfor #(write current admitted) (zip ask.writes currents verdict :strict True)
+                            (memory-store-row store write.table write.key current admitted.value now-ms)))))
 
 
 (defn #^ object memory-watch-scan [#^ MemoryStore store #^ WatchChanges ask]
@@ -196,6 +215,10 @@
     (<- now (GetTime))
     (purge-expired store (epoch-ms now))
     (resume (memory-put-row store writer effect (epoch-ms now))))
+  (PutRows [writes]
+    (<- now (GetTime))
+    (purge-expired store (epoch-ms now))
+    (resume (memory-put-rows store writer effect (epoch-ms now))))
   (WatchChanges [tables cursor timeout limit]
     (<- answer (wait-for-changes (fn [now-ms] (purge-expired store now-ms) (Pure (memory-watch-scan store effect)))
                                  store.poll-seconds timeout))

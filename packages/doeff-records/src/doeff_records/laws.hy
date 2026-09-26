@@ -15,9 +15,9 @@
 (import doeff_core_effects.scheduler [Spawn Wait])
 (import doeff_time [Delay])
 (import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor KeepForever ExpectAbsent ExpectVersion ExpectAny
-                              WatchCursor ListCursor Row Missing Page Written Conflict Refused NotIndexed Reset
-                              Changes RowChanged RowRemoved Appended Events])
-(import doeff_records.effects [ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents])
+                              WatchCursor ListCursor Row Missing Page Written WrittenRows Conflict Refused NotIndexed Reset
+                              Changes RowChanged RowRemoved Appended Events RowsConflict RowsRefused])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents])
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.admission [row-matches?])
@@ -410,7 +410,67 @@
   [start w1 middle w2 pruned old kept again listed t1 done swept idle removed])
 
 
+;; --- 法 11: PutRows は全部か 0 ----------------------------------------------------------------------------------
+
+(defk law-put-rows-is-all-or-nothing [harness]
+  {:pre [(: harness LawHarness)] :post [(: % list)]}
+  "複数行の書き(PutRows)が 1 transaction の約束を守ることを、どの置き場の組でも同じに確かめるための法:
+   全部通る束は束の順の Written を返し、期待のずれ 1 行・書きの断り 1 行の束は 1 行も書かない・期待のずれは断りより先に答える・
+   確定した束の変更は束の順に続いた番号で 1 回ずつ見え、通らなかった束の変更は見えない。"
+  (val law "PutRows は全部か 0 で書き、確定した束の変更は束の順に続いた番号で見える")
+  (<- start (as-writer harness MAKER (ListRows "parts" :limit 1)))
+  (require-law (isinstance start Page) law (.format "最初の一覧: {!r}" start))
+  (<- seed (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent))))
+  (require-law (= seed (Written 1 (FrozenMap {"id" "p1" "label" "a" "state" "open"}))) law (.format "種の行: {!r}" seed))
+  (<- batch (as-writer harness MAKER
+              (PutRows #((RowWrite "parts" #("p1") (FrozenMap {"label" "b"}) (ExpectVersion 1))
+                         (RowWrite "parts" #("p2") (FrozenMap {"label" "c"}) (ExpectAbsent))
+                         (RowWrite "tickets" #("g1" "t1") (FrozenMap {"owner" "o1"}) (ExpectAbsent))))))
+  (require-law (= batch (WrittenRows #((Written 2 (FrozenMap {"id" "p1" "label" "b" "state" "open"}))
+                                       (Written 1 (FrozenMap {"id" "p2" "label" "c" "state" "open"}))
+                                       (Written 1 (FrozenMap {"group" "g1" "id" "t1" "owner" "o1" "state" "open"})))))
+               law (.format "全部通る束: {!r}" batch))
+  (val p1 (Row #("p1") (FrozenMap {"id" "p1" "label" "b" "state" "open"}) 2))
+  (val p2 (Row #("p2") (FrozenMap {"id" "p2" "label" "c" "state" "open"}) 1))
+  ;; 期待のずれ 1 行(束の 2 行目 — 1 行目は通る書き)。
+  (<- stale (as-writer harness MAKER
+              (PutRows #((RowWrite "parts" #("p2") (FrozenMap {"label" "d"}) (ExpectVersion 1))
+                         (RowWrite "parts" #("p1") (FrozenMap {"label" "e"}) (ExpectVersion 1))))))
+  (require-law (= stale (RowsConflict 1 "parts" #("p1") p1)) law (.format "期待のずれ 1 行の束: {!r}" stale))
+  ;; 書きの断り 1 行(painter は label の書き手でない — 束の 2 行目)。
+  (<- refused (as-writer harness PAINTER
+                (PutRows #((RowWrite "parts" #("p1") (FrozenMap {"color" "red"}) (ExpectVersion 2))
+                           (RowWrite "parts" #("p2") (FrozenMap {"label" "x"}) (ExpectVersion 1))))))
+  (require-law (and (isinstance refused RowsRefused) (= #(refused.index refused.table refused.key) #(1 "parts" #("p2"))))
+               law (.format "書きの断り 1 行の束: {!r}" refused))
+  ;; 断られる行(0 行目)と期待のずれの行(1 行目)が両方ある束は、期待のずれを先に答える。
+  (<- first-conflict (as-writer harness PAINTER
+                       (PutRows #((RowWrite "parts" #("p2") (FrozenMap {"label" "y"}) (ExpectVersion 1))
+                                  (RowWrite "parts" #("p1") (FrozenMap {"color" "red"}) (ExpectVersion 1))))))
+  (require-law (= first-conflict (RowsConflict 1 "parts" #("p1") p1)) law (.format "期待のずれを断りより先に: {!r}" first-conflict))
+  ;; 名簿に無い書き手の束は最初の行で断られ、行を作らない。
+  (<- stranger (as-writer harness STRANGER (PutRows #((RowWrite "parts" #("p9") (FrozenMap {"label" "z"}) (ExpectAbsent))))))
+  (require-law (and (isinstance stranger RowsRefused) (= stranger.index 0)) law (.format "書き手でない呼び手の束: {!r}" stranger))
+  (<- read-p1 (as-writer harness MAKER (ReadRow "parts" #("p1"))))
+  (<- read-p2 (as-writer harness MAKER (ReadRow "parts" #("p2"))))
+  (<- read-p9 (as-writer harness MAKER (ReadRow "parts" #("p9"))))
+  (require-law (and (= read-p1 p1) (= read-p2 p2) (= read-p9 (Missing))) law
+               (.format "通らなかった束が行を変えた: {!r} {!r} {!r}" read-p1 read-p2 read-p9))
+  (<- collected (collect-changes harness #("parts" "tickets") (WatchCursor start.epoch start.sequence) 100))
+  (val answers (get collected 0))
+  (val items (lfor answer answers :if (isinstance answer Changes) item answer.items item))
+  (require-law (= (lfor item items #(item.table item.key item.version))
+                  [#("parts" #("p1") 1) #("parts" #("p1") 2) #("parts" #("p2") 1) #("tickets" #("g1" "t1") 1)])
+               law (.format "確定した変更と見えた変更が違う(通らなかった束の変更が見えた・束の順でない): {!r}" items))
+  (val batch-sequences (lfor item (cut items 1 None) item.sequence))
+  (require-law (= batch-sequences (list (range (get batch-sequences 0) (+ (get batch-sequences 0) 3)))) law
+               (.format "束の変更の番号が続いていない: {!r}" batch-sequences))
+  (+ [start seed batch stale refused first-conflict stranger read-p1 read-p2 read-p9] answers))
+
+
 ;; 全部の法(名 → 法)。SHARED-LAWS = 時間を進めない法(仮想の時計を持たない組でも回せる・答えの比べに使う)。
+;; law-put-rows-is-all-or-nothing は SHARED-LAWS に入れない — SHARED-LAWS は前からの 6 つの effect だけで回る法の名簿で、
+;; PutRows を答えない handler の組(呼び手の系の写しの handler など)もこの名簿で答えを比べている。
 (setv LAWS {"stale-put-conflicts" law-stale-put-conflicts
             "committed-changes-appear-once-in-order" law-committed-changes-appear-once-in-order
             "epoch-change-resets" law-epoch-change-resets
@@ -421,7 +481,8 @@
             "append-is-idempotent" law-append-is-idempotent
             "watch-waits-for-a-change" law-watch-waits-for-a-change
             "none-removes-a-field" law-none-removes-a-field
-            "maintenance-prunes-and-sweeps" law-maintenance-prunes-and-sweeps})
+            "maintenance-prunes-and-sweeps" law-maintenance-prunes-and-sweeps
+            "put-rows-is-all-or-nothing" law-put-rows-is-all-or-nothing})
 (setv SHARED-LAWS #("stale-put-conflicts" "committed-changes-appear-once-in-order" "epoch-change-resets"
                     "undeclared-writes-are-refused" "operator-paths-need-an-operator" "indexed-list-equals-filtered-scan" "append-is-idempotent"
                     "none-removes-a-field"))

@@ -1,4 +1,5 @@
-;;; PostgreSQL の handler — 公開 effect 6 つに PostgreSQL の表で答える(本番の置き場)。
+;;; PostgreSQL の handler — 公開 effect 7 つに PostgreSQL の表で答える(本番の置き場)。
+;;; PutRows は PutRow と同じ置き場の lock と transaction 1 つの中で、全部の行を検めてから書く(途中の失敗は transaction ごと戻る)。
 ;;;
 ;;; 判断(期待・書きの許可・保持・索引・頁)は admission.hy の純関数ちょうど 1 つ(memory の handler と同じ関数)。
 ;;; 文は pg_sql.hy(純粋)で、流すのはこの file の PgRecordsHost だけ。接続は composition root が開いて渡す(psycopg 3・
@@ -13,12 +14,12 @@
 (import doeff [Pure])
 (import doeff_hy.frozen [FrozenMap frozen-json-object])
 (import doeff_time [GetTime])
-(import doeff_records.values [RecordsSchema KeepFor Row Missing Page Written RowChanged RowRemoved Changes Appended Event
-                              Events Reset WatchCursor ListCursor Refused Unreachable])
-(import doeff_records.effects [ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents])
+(import doeff_records.values [RecordsSchema KeepFor Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
+                              Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges AppendEvent ReadEvents])
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
-(import doeff_records.admission [AppendReplay judge-expect judge-put judge-append row-expired? where-refusal listed-row
+(import doeff_records.admission [AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? where-refusal listed-row
                                  key-text key-from-text canonical-json next-watch-sequence epoch-ms])
 (import doeff_records.watching [wait-for-changes])
 (import doeff_records.pg_sql [Statement DEFAULT-PREFIX checked-prefix schema-statements drop-statements lock-statement
@@ -172,23 +173,51 @@
         head))
 
 
+(defn #^ (| Row None) pg-locked-row [#^ PgRecordsHost host #^ str table #^ str text]  ; defk にできない: 開いた transaction の中で同期に流す(pg-put-row / pg-put-rows と同じ作法)
+  "書きの判定に渡す今の行(無ければ None)を、行の lock(FOR UPDATE)つきで読む。"
+  (setv record (host.fetch-one (lock-row-statement host.prefix table text)))
+  (if (is record None) None (row-of record)))
+
+
+(defn #^ Written pg-store-row [#^ PgRecordsHost host #^ str writer #^ str table #^ str text #^ (| Row None) current
+                               #^ FrozenMap value #^ int now-ms #^ int epoch]  ; defk にできない: 開いた transaction の中で同期に流す(pg-put-row / pg-put-rows と同じ作法)
+  "判定を通った 1 行を書き、変更の列に 1 つ積む(PutRow と PutRows の書きを 1 つにし、版と番号の採り方を揃えるため)。"
+  (setv version (if (is current None) 1 (+ current.version 1))
+        payload (canonical-json value))
+  (host.execute (upsert-row-statement host.prefix table text payload version now-ms writer host.origin-host epoch))
+  (host.execute (append-change-statement host.prefix table text version payload now-ms epoch))
+  (Written version value))
+
+
 (defn #^ object pg-put-row [#^ PgRecordsHost host #^ str writer #^ PutRow ask #^ int now-ms]
   (setv decl (host.schema.table ask.table)
         text (key-text ask.key))
   (with [(.transaction host.connection)]
     (host.execute (lock-statement host.prefix))
     (setv epoch (. (store-head host) epoch)
-          record (host.fetch-one (lock-row-statement host.prefix ask.table text))
-          current (if (is record None) None (row-of record))
+          current (pg-locked-row host ask.table text)
           conflict (judge-expect ask.expect current))
     (when conflict (return conflict))
     (setv verdict (judge-put decl writer current ask.key ask.value :operators host.schema.operators))
     (when (isinstance verdict Refused) (return verdict))
-    (setv version (if (is current None) 1 (+ current.version 1))
-          payload (canonical-json verdict.value))
-    (host.execute (upsert-row-statement host.prefix ask.table text payload version now-ms writer host.origin-host epoch))
-    (host.execute (append-change-statement host.prefix ask.table text version payload now-ms epoch)))
-  (Written version verdict.value))
+    (setv written (pg-store-row host writer ask.table text current verdict.value now-ms epoch)))
+  written)
+
+
+(defn #^ (| WrittenRows RowsConflict RowsRefused) pg-put-rows [#^ PgRecordsHost host #^ str writer #^ PutRows ask #^ int now-ms]  ; defk にできない: guarded の中で transaction を開いたまま同期に流す(pg-put-row と同じ作法)
+  "PutRows の束を全部か 0 で書く: 置き場の lock と transaction 1 つの中で全部の行を lock して読み、判定(admission.judge-put-rows)が
+   全部通った時だけ束の順に書いて変更を積む(lock の中なので番号は束の中で続く)。書きの途中の失敗は transaction ごと戻る。"
+  (for [write ask.writes] (host.schema.table write.table))
+  (setv texts (tuple (gfor write ask.writes (key-text write.key))))
+  (with [(.transaction host.connection)]
+    (host.execute (lock-statement host.prefix))
+    (setv epoch (. (store-head host) epoch)
+          currents (tuple (gfor #(write text) (zip ask.writes texts :strict True) (pg-locked-row host write.table text)))
+          verdict (judge-put-rows host.schema writer ask.writes currents))
+    (when (not (isinstance verdict tuple)) (return verdict))
+    (setv written (tuple (gfor #(write text current admitted) (zip ask.writes texts currents verdict :strict True)
+                               (pg-store-row host writer write.table text current admitted.value now-ms epoch)))))
+  (WrittenRows written))
 
 
 (defn #^ (| RowChanged RowRemoved) change-of [#^ tuple record]
@@ -271,6 +300,9 @@
   (PutRow [table key value expect]
     (<- now (GetTime))
     (resume (guarded host (fn [] (purge-expired host (epoch-ms now)) (pg-put-row host writer effect (epoch-ms now))))))
+  (PutRows [writes]
+    (<- now (GetTime))
+    (resume (guarded host (fn [] (purge-expired host (epoch-ms now)) (pg-put-rows host writer effect (epoch-ms now))))))
   (WatchChanges [tables cursor timeout limit]
     (<- answer (wait-for-changes (fn [now-ms] (Pure (guarded host (fn [] (purge-expired host now-ms) (pg-watch-scan host effect)))))
                                  host.poll-seconds timeout))
