@@ -1,0 +1,7 @@
+# 対象版: agora-controllers 87443ef7ca6eb49bf2033482b4c76242e5007e17・doeff a492bd01916264bf40c84e3dbb05d9ed2bdae6ec(修正前)・命令: cd <agora-controllers>; hy repro_b_bodies.hy /tmp/wt639/b-work
+same-module      読めた本体 1・違反 ['(.write-text ']
+other-module     読めた本体 0・違反 []
+wrapper          読めた本体 0・違反 []
+name-from-const  読めた本体 0・違反 []
+本物の repo: 検査が読めた本体 90・service_model を読む module の宣言の値が名指す本体 94
+exit=0

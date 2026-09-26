@@ -1,0 +1,88 @@
+# 対象版: doeff 750af206220be01a70ddd396603cff4351c7af4b + :env-config の実装(未 commit)・命令: pytest -q packages/doeff-cluster/tests
+test-admission: focused — 269 件(変更箇所の検証)
+...................................................................F.... [ 26%]
+........................................................................ [ 53%]
+........................................................................ [ 80%]
+.....................................................                    [100%]
+=================================== FAILURES ===================================
+__________ test_runner_death_loses_the_task_without_rerunning[served] __________
+
+doeff_interpreter = <function doeff_interpreter.<locals>.interpret at 0x29ebe9d3480>
+open_rig = <function open_served_rig at 0x29ebdf2e4c0>
+tmp_path = PosixPath('/tmp/pytest-of-kento/pytest-274/test_runner_death_loses_the_ta2')
+request = <FixtureRequest for <Function test_runner_death_loses_the_task_without_rerunning[served]>>
+
+    {:params {"open_rig" RIGS}}
+>   (<- ok (run-scenario (open-rig tmp-path request) runner-dies-mid-run))
+
+packages/doeff-cluster/tests/test_detached.hy:347: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/doeff-cluster/tests/conftest.py:31: in interpret
+    return run(scheduled(program))
+           ^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1071: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+packages/doeff-cluster/tests/test_detached.hy:347: in _hy_anon_32
+    (<- ok (run-scenario (open-rig tmp-path request) runner-dies-mid-run))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+packages/doeff-cluster/tests/test_detached.hy:233: in run_scenario
+    (<- ok (run-on rig (scenario rig)))
+             ^^^^^^^^^^^^^^^^^^^^^^^
+packages/doeff-cluster/tests/test_detached.hy:223: in run_on
+    (<- (with-handlers rig.handlers (with-worker rig scenario)))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+packages/doeff-cluster/tests/test_detached.hy:213: in with_worker
+    (<- scenario)
+         ^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+rig = <tests.test_detached.Rig object at 0x29ebd848290>
+
+    (defk runner-dies-mid-run [rig]
+      {:pre [(: rig Rig)] :post [(: % bool)]}
+      (<- (SubmitDetached (slow-add (* rig.slow 10) 5) :env ENV :key "k-lost" :lease-seconds rig.lease))
+      (<- (Delay (* rig.slow 0.3)))
+      (<- lost int (SimulateRunnerLoss))
+>     (assert (= lost 1))
+                ^^^^^^^
+E     AssertionError
+
+packages/doeff-cluster/tests/test_detached.hy:335: AssertionError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  test_runner_death_loses_the_task_without_rerunning.<locals>._hy_anon_32()  packages/doeff-cluster/tests/test_detached.hy:347
+    (<- ok (run-scenario (open-rig tmp-path request) runner-dies-mid-run))
+  run_scenario()  packages/doeff-cluster/tests/test_detached.hy:233
+    (<- ok (run-on rig (scenario rig)))
+  run_on()  packages/doeff-cluster/tests/test_detached.hy:223
+    (<- (with-handlers rig.handlers (with-worker rig scenario)))
+  with_worker()  packages/doeff-cluster/tests/test_detached.hy:213
+    (<- scenario)
+  runner_dies_mid_run()  packages/doeff-cluster/tests/test_detached.hy:335
+    (assert (= lost 1))
+  _hy_anon_32()  packages/doeff-cluster/tests/test_detached.hy:347
+    (<- ok (run-scenario (open-rig tmp-path request) runner-dies-mid-run))
+    handlers:
+      detached_cluster ↗
+      rig_runner_loss ↗
+      AsyncTimeRuntime.handle ↗
+      await_handler ↗
+      _scheduled_python ↗
+
+AssertionError: 
+
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156
+  /home/kento/.worktrees/doeff-wt-639-cluster-no-macros/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-cluster/tests/test_detached.hy::test_runner_death_loses_the_task_without_rerunning[served]
+1 failed, 268 passed, 1 warning in 42.12s
+exit=1

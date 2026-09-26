@@ -1,0 +1,46 @@
+# 対象版: agora-controllers origin/main f08f0fabc25b47780626f08e204df09aba35ae5d(git archive で /tmp/wt639/ac-main へ展開)・doeff-cluster = 611f47cb の source(この依頼の盲検の後の doeff の変更を含まない)・acp_controller = agent-control-plane/sdk/python(PYTHONPATH=/tmp/wt639/main-cluster/packages/doeff-cluster/src:/home/kento/repos/agent-control-plane/sdk/python)
+# 命令: cd /tmp/wt639/ac-main; PYTHONPATH=$PP <doeff の venv>/bin/python -m pytest -q controllers/worker/tests/test_conversation_writer.hy::test_writer_recording_covers_every_effect_and_replays_identically
+# 読んだ service_model = /tmp/wt639/main-cluster/packages/doeff-cluster/src/doeff_cluster/service_model.hy
+# 読んだ acp_controller = /home/kento/repos/agent-control-plane/sdk/python/acp_controller/__init__.py
+01:32:45
+    (setv #(lines program) (record-writer 2))
+    (<- recorded int program)
+    (assert (= recorded 2))
+    (setv kinds (set (gfor l lines :if (in (.get l "k") #("req" "call")) (get l "ty"))))
+    (for [t ["controllers.conversation.effects:WriteConversation" "controllers.conversation.effects:ProposeTitle"
+             "controllers.conversation.effects:ReadRequest" "doeff_cluster.metrics_model:ReadProcessGauges"]]
+>     (assert (in t kinds) (sorted kinds)))
+                ^^^^^^^^^
+E     AssertionError: ['doeff_cluster.metrics_model:ReadProcessGauges', 'doeff_cluster.metrics_model:ReportMetrics', 'doeff_cluster.readiness_model:ReportReady', 'doeff_cluster.semaphore_model:CreateNamedSemaphore', 'doeff_cluster.semaphore_model:HeldLease', 'doeff_cluster.shared_model:WriteShared', 'doeff_core_effects.effects:Ask', 'doeff_core_effects.scheduler:AcquireSemaphore', 'doeff_core_effects.scheduler:Spawn', 'doeff_core_effects.scheduler:Wait', 'doeff_time.effects.time:DelayEffect', 'doeff_time.effects.time:GetMonotonicEffect', 'doeff_time.effects.time:GetTimeEffect']
+controllers/worker/tests/test_conversation_writer.hy:316: AssertionError
+----------------------------- Captured stderr call -----------------------------
+doeff Traceback (most recent call last):
+  test_writer_recording_covers_every_effect_and_replays_identically.<locals>._hy_anon_29()  controllers/worker/tests/test_conversation_writer.hy:311
+    (<- recorded int program)
+  effect_recorder.<locals>._hy_anon_38()  /tmp/wt639/main-cluster/packages/doeff-cluster/src/doeff_cluster/record_handlers.hy:340
+    (isinstance prepared BaseException) (raise prepared)
+  _hy_anon_29()  controllers/worker/tests/test_conversation_writer.hy:316
+    (assert (in t kinds) (sorted kinds)))
+    handlers:
+      standby_divert ↗
+      conversation_write_tally ↗
+      lease_fence ↗
+      fake_conversation ↗
+      installed ↗
+      cluster_semaphore ↗
+      shared_memory ↗
+      fixed_gauges ↗
+      reader ↗
+      metrics_memory ↗
+      readiness_memory ↗
+      SimTimeRuntime.handle ↗
+      _scheduled_python ↗
+AssertionError: ['doeff_cluster.metrics_model:ReadProcessGauges', 'doeff_cluster.metrics_model:ReportMetrics', 'doeff_cluster.readiness_model:ReportReady', 'doeff_cluster.semaphore_model:CreateNamedSemaphore', 'doeff_cluster.semaphore_model:HeldLease', 'doeff_cluster.shared_model:WriteShared', 'doeff_core_effects.effects:Ask', 'doeff_core_effects.scheduler:AcquireSemaphore', 'doeff_core_effects.scheduler:Spawn', 'doeff_core_effects.scheduler:Wait', 'doeff_time.effects.time:DelayEffect', 'doeff_time.effects.time:GetMonotonicEffect', 'doeff_time.effects.time:GetTimeEffect']
+=============================== warnings summary ===============================
+../../../home/kento/.worktrees/doeff-wt-639-cluster-no-macros/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156
+  /home/kento/.worktrees/doeff-wt-639-cluster-no-macros/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED controllers/worker/tests/test_conversation_writer.hy::test_writer_recording_covers_every_effect_and_replays_identically
+1 failed, 1 warning in 39.77s
+exit=1

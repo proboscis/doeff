@@ -1,0 +1,31 @@
+# 対象版: agora-controllers f08f0fabc25b47780626f08e204df09aba35ae5d + :env-config への移し(未 commit)・doeff 6fc4d0c1ddcc48127505b10e0a3cd9bc3f92486a・file ごとに別の pytest
+## controllers/worker/tests/test_budget_writer.hy 01:10:23
+10 passed, 1 warning in 1.47s
+exit=0
+## controllers/worker/tests/test_conversation_writer.hy 01:10:25
+E     AssertionError: ['doeff_cluster.metrics_model:ReadProcessGauges', 'doeff_cluster.metrics_model:ReportMetrics', 'doeff_cluster.readiness_model:ReportReady', 'doeff_cluster.semaphore_model:CreateNamedSemaphore', 'doeff_cluster.semaphore_model:HeldLease', 'doeff_cluster.shared_model:WriteShared', 'doeff_core_effects.effects:Ask', 'doeff_core_effects.scheduler:AcquireSemaphore', 'doeff_core_effects.scheduler:Spawn', 'doeff_core_effects.scheduler:Wait', 'doeff_time.effects.time:DelayEffect', 'doeff_time.effects.time:GetMonotonicEffect', 'doeff_time.effects.time:GetTimeEffect']
+FAILED controllers/worker/tests/test_conversation_writer.hy::test_writer_recording_covers_every_effect_and_replays_identically
+1 failed, 7 passed, 1 warning in 1.42s
+exit=1
+## controllers/worker/tests/test_artifact_writer.hy 01:10:27
+7 passed, 1 warning in 0.92s
+exit=0
+## controllers/worker/tests/test_artifact_shadow.hy 01:10:29
+7 passed, 1 warning in 1.07s
+exit=0
+## controllers/worker/tests/test_budget_shadow.hy 01:10:31
+6 passed, 1 warning in 0.90s
+exit=0
+## controllers/worker/tests/test_conversation_shadow.hy 01:10:32
+8 passed, 2 warnings in 1.33s
+exit=0
+## controllers/agora_sim/tests/test_emulated_messaging.hy 01:10:34
+6 passed, 1 warning in 2.71s
+exit=0
+## controllers/agora_sim/tests/test_emulated_durable.hy 01:10:38
+18 passed, 1 warning in 5.69s
+exit=0
+## controllers/worker/adr/defadr_worker_business_code_touches_io_only_through_effects.hy 01:10:44
+10 passed, 1 warning in 359.82s (0:05:59)
+exit=0
+01:16:46

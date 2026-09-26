@@ -1,0 +1,212 @@
+# 対象版: doeff 757daf3dbe9695cb72b8e52e3b0ad89153ebb2fd + env の設定の検の先行(未 commit)・修正前
+
+deadline scale x1.0 (load/core) — per test 61s, watchdog 91s
+
+test-admission: focused — 15 件(変更箇所の検証)
+......F....FFFF                                                          [100%]
+=================================== FAILURES ===================================
+__________ test_program_arguments_are_the_settings_the_program_names ___________
+
+doeff_interpreter = <function doeff_interpreter.<locals>.interpret at 0x55b812d9c00>
+
+    (deftest test-program-arguments-are-the-settings-the-program-names
+      ;; 本体へは本体の引数の名の設定だけを渡す(JSON の鍵は Hy の引数名へ mangle する)。record は実行先の記録係の設定・greeting は
+      ;; env だけが読む設定で、本体へは渡らない。
+>     (assert (= (program-arguments greeter-program {"step-size" 2 "greeting" "hi" "record" RECORD}) {"step_size" 2})))
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+packages/doeff-cluster/tests/test_service_declaration.hy:85: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/doeff-cluster/tests/conftest.py:31: in interpret
+    return run(scheduled(program))
+           ^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1071: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+doeff/do.py:314: in thunk
+    return _make_stream(fn(*args, **kwargs))
+                        ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+>   (assert (= (program-arguments greeter-program {"step-size" 2 "greeting" "hi" "record" RECORD}) {"step_size" 2})))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: program_arguments() takes 1 positional argument but 2 were given
+
+packages/doeff-cluster/tests/test_service_declaration.hy:85: TypeError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  _hy_anon_12()  packages/doeff-cluster/tests/test_service_declaration.hy:85
+    (assert (= (program-arguments greeter-program {"step-size" 2 "greeting" "hi" "record" RECORD}) {"step_size" 2})))
+    handlers:
+      _scheduled_python ↗
+
+TypeError: program_arguments() takes 1 positional argument but 2 were given
+
+___________ test_an_env_setting_reaches_the_env_and_not_the_program ____________
+
+doeff_interpreter = <function doeff_interpreter.<locals>.interpret at 0x55b80f07b00>
+
+    (deftest test-an-env-setting-reaches-the-env-and-not-the-program
+      ;; :env-config は coordinator へ渡る平たい設定に入り、実行先で env が読み、本体の引数には入らない。
+>     (setv greeter (service "greeter" greeter-program :env "tests.fixtures.envs:greeting_env"
+
+packages/doeff-cluster/tests/test_service_declaration.hy:132: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/doeff-cluster/tests/conftest.py:31: in interpret
+    return run(scheduled(program))
+           ^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1071: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+doeff/do.py:314: in thunk
+    return _make_stream(fn(*args, **kwargs))
+                        ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+>   (setv greeter (service "greeter" greeter-program :env "tests.fixtures.envs:greeting_env"
+E   TypeError: service() got an unexpected keyword argument 'env_config'
+
+packages/doeff-cluster/tests/test_service_declaration.hy:132: TypeError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  _hy_anon_20()  packages/doeff-cluster/tests/test_service_declaration.hy:132
+    (setv greeter (service "greeter" greeter-program :env "tests.fixtures.envs:greeting_env"
+    handlers:
+      _scheduled_python ↗
+
+TypeError: service() got an unexpected keyword argument 'env_config'
+
+_________ test_a_program_argument_written_as_an_env_setting_is_refused _________
+
+doeff_interpreter = <function doeff_interpreter.<locals>.interpret at 0x55b80f0d980>
+
+    (deftest test-a-program-argument-written-as-an-env-setting-is-refused
+>     (with [raised (pytest.raises TypeError)]
+
+packages/doeff-cluster/tests/test_service_declaration.hy:146: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/doeff-cluster/tests/conftest.py:31: in interpret
+    return run(scheduled(program))
+           ^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1071: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+doeff/do.py:314: in thunk
+    return _make_stream(fn(*args, **kwargs))
+                        ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    (with [raised (pytest.raises TypeError)]
+      (service "greeter-misplaced" greeter-program :env "m:e" :config {} :env-config {"step-size" 2 "greeting" "hi"}))
+>   (assert (in "greeter-misplaced" (str raised.value)))
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+
+packages/doeff-cluster/tests/test_service_declaration.hy:148: AssertionError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  _hy_anon_22()  packages/doeff-cluster/tests/test_service_declaration.hy:148
+    (assert (in "greeter-misplaced" (str raised.value)))
+    handlers:
+      _scheduled_python ↗
+
+AssertionError: 
+
+_______ test_a_setting_owned_by_both_the_program_and_the_env_is_refused ________
+
+doeff_interpreter = <function doeff_interpreter.<locals>.interpret at 0x55b80f09f00>
+
+    (deftest test-a-setting-owned-by-both-the-program-and-the-env-is-refused
+>     (with [raised (pytest.raises TypeError)]
+
+packages/doeff-cluster/tests/test_service_declaration.hy:153: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/doeff-cluster/tests/conftest.py:31: in interpret
+    return run(scheduled(program))
+           ^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1071: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+doeff/do.py:314: in thunk
+    return _make_stream(fn(*args, **kwargs))
+                        ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    (with [raised (pytest.raises TypeError)]
+      (service "greeter-both" greeter-program :env "m:e" :config {"step-size" 2} :env-config {"step-size" 3 "greeting" "hi"}))
+>   (assert (in "greeter-both" (str raised.value)))
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AssertionError
+
+packages/doeff-cluster/tests/test_service_declaration.hy:155: AssertionError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  _hy_anon_24()  packages/doeff-cluster/tests/test_service_declaration.hy:155
+    (assert (in "greeter-both" (str raised.value)))
+    handlers:
+      _scheduled_python ↗
+
+AssertionError: 
+
+_____________ test_an_override_of_an_undeclared_setting_is_refused _____________
+
+doeff_interpreter = <function doeff_interpreter.<locals>.interpret at 0x55b80ee1080>
+
+    (deftest test-an-override-of-an-undeclared-setting-is-refused
+      ;; テスト用の main と coordinator への宣言の上書きは、宣言した設定(と組み立て側の欄)だけを変える。綴りの違う鍵を黙って足さない。
+>     (with [raised (pytest.raises TypeError)]
+
+packages/doeff-cluster/tests/test_service_declaration.hy:161: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/doeff-cluster/tests/conftest.py:31: in interpret
+    return run(scheduled(program))
+           ^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1071: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+doeff/do.py:314: in thunk
+    return _make_stream(fn(*args, **kwargs))
+                        ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+>   (with [raised (pytest.raises TypeError)]
+                    ^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE TypeError
+
+packages/doeff-cluster/tests/test_service_declaration.hy:161: Failed
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156
+  /home/kento/.worktrees/doeff-wt-639-cluster-no-macros/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-cluster/tests/test_service_declaration.hy::test_program_arguments_are_the_settings_the_program_names
+FAILED packages/doeff-cluster/tests/test_service_declaration.hy::test_an_env_setting_reaches_the_env_and_not_the_program
+FAILED packages/doeff-cluster/tests/test_service_declaration.hy::test_a_program_argument_written_as_an_env_setting_is_refused
+FAILED packages/doeff-cluster/tests/test_service_declaration.hy::test_a_setting_owned_by_both_the_program_and_the_env_is_refused
+FAILED packages/doeff-cluster/tests/test_service_declaration.hy::test_an_override_of_an_undeclared_setting_is_refused
+5 failed, 10 passed, 1 warning in 5.64s
+exit=1

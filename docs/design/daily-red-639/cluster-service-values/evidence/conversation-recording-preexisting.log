@@ -1,0 +1,12 @@
+== origin/main 87443ef7
+1 failed, 1 warning in 37.17s
+== 4aefa59c 4aefa59c
+1 failed, 1 warning in 35.56s
+== 4aefa59c^ 882e465e
+E   hy.errors.HyRequireError: No module named 'doeff_cluster.macros'
+ERROR controllers/worker/tests/test_conversation_writer.hy - hy.errors.HyRequ...
+1 warning, 1 error in 28.00s
+== 4aefa59c^ 882e465e doeff-cluster=/tmp/wt639/macro-cluster/packages/doeff-cluster/src
+1 failed, 1 warning in 41.25s
+== 4aefa59c 4aefa59c doeff-cluster=/tmp/wt639/old-cluster/packages/doeff-cluster/src
+1 failed, 1 warning in 41.21s

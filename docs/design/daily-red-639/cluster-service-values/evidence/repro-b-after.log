@@ -1,0 +1,13 @@
+# 対象版: agora-controllers 3bf9db5079646a970097c5db6e35d6d80cb0693c + M5 の書き換え(未 commit)・doeff 757daf3dbe9695cb72b8e52e3b0ad89153ebb2fd・命令: cd <agora-controllers>; hy repro_b_bodies_after.hy /tmp/wt639/b-work-after
+== 直の I/O の本体
+  same-module              読めた本体 1・違反 ['(.write-text ']・検められない宣言 []
+  other-module             読めた本体 1・違反 ['(.write-text ']・検められない宣言 []
+  wrapper-in-other-module  読めた本体 1・違反 ['(.write-text ']・検められない宣言 []
+  name-from-constant       読めた本体 1・違反 ['(.write-text ']・検められない宣言 []
+== effect だけの本体
+  same-module              読めた本体 1・違反 []・検められない宣言 []
+  other-module             読めた本体 1・違反 []・検められない宣言 []
+  wrapper-in-other-module  読めた本体 1・違反 []・検められない宣言 []
+  name-from-constant       読めた本体 1・違反 []・検められない宣言 []
+本物の repo: 読めた本体 94・違反 []・検められない宣言 []
+exit=0

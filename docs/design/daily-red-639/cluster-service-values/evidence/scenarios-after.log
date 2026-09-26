@@ -1,0 +1,49 @@
+# 対象版: doeff 6fc4d0c1ddcc48127505b10e0a3cd9bc3f92486a(修正後)・命令: cd evidence/repro; uv --project <doeff> run --no-sync hy scenarios.hy
+== S-DIST 正常例: 同じ宣言をテスト用の main と実行先で走らせる(record を宣言に書く)
+  宣言: OK
+  main: OK [3]
+  worker: exit=0 service:  が終わった: 3
+== S-DIST 反例: 本体が record という名の引数を取る(実行先は record を本体へ渡さない)
+  宣言: 失敗 TypeError: service flagged の設定が本体 flagged_program の引数と合わない: 引数 record は組み立て側の欄の名で、どの実行の道でも本体へ渡らない
+== S-CONC 正常例: :update handoff が coordinator への宣言に写る
+  宣言: OK
+  update: OK 'handoff'
+== S-CONC 反例: 語彙の外の入れ替えの形
+  宣言: 失敗 ValueError: service tally の :update は ('recreate', 'handoff') のどれか: 'rolling'
+== S-HW 正常例: :requires の条件が中身を解釈されずに写る
+  宣言: OK
+  requires: OK {'gpu': 'a100', 'kind': 'k3s'}
+== S-HW 反例: 文字列でない鍵の条件
+  宣言: 失敗 TypeError: service tally の :requires の鍵は文字列で書く: 1
+== S-STORE 正常例: env だけが読む設定を :env-config に書く(本体は step-size だけを取る)
+  宣言: OK
+  main: OK ['sim2']
+  worker: exit=0 service:  が終わった: 'hi2'
+== S-STORE 反例(修正前の書き方): env だけが読む設定を :config に書く — 本体の引数に無い鍵
+  宣言: 失敗 TypeError: service greeter の設定が本体 greeter_program の引数と合わない: 設定の鍵 greeting は本体の引数に無い(env だけが読む設定なら :env-config に書く)
+== S-STORE 反例: 本体の引数を :env-config に書く
+  宣言: 失敗 TypeError: service greeter の設定が本体 greeter_program の引数と合わない: 引数 step_size が :config に無い・env の設定 step-size は本体の引数の名(本体の設定なら :config に書く)
+== S-SIM 正常例: 上書きで周期を変えてテスト用の main で回す
+  宣言: OK
+  main-override: OK [1]
+== S-SIM 反例: 宣言に無い鍵の上書き(綴りの違い cycle)
+  宣言: OK
+
+doeff Traceback (most recent call last):
+
+  system_main_program()  ~/.worktrees/doeff-wt-639-cluster-no-macros/packages/doeff-cluster/src/doeff_cluster/service_model.hy:206
+    (<- task Task (Spawn (service-program service (.get overrides service.name))))
+  service_program()  ~/.worktrees/doeff-wt-639-cluster-no-macros/packages/doeff-cluster/src/doeff_cluster/service_model.hy:191
+    (factory #** (program-arguments factory (config-of service overrides))))
+  config_of()  ~/.worktrees/doeff-wt-639-cluster-no-macros/packages/doeff-cluster/src/doeff_cluster/service_model.hy:184
+    (raise (TypeError (.format "service {} の上書きに宣言に無い設定の鍵がある: {}" service.name (.join "・" unknown)))))
+    handlers:
+      reader ↗
+      _scheduled_python ↗
+
+TypeError: service keeper の上書きに宣言に無い設定の鍵がある: cycle
+
+  main-typo: 失敗 TypeError: service keeper の上書きに宣言に無い設定の鍵がある: cycle
+== S-SIM 反例: 本体の引数が設定に無い宣言
+  宣言: 失敗 TypeError: service tally の設定が本体 tally_program の引数と合わない: 引数 base が :config に無い
+exit=0
