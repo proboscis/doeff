@@ -321,6 +321,8 @@
         "packages/doeff-agents/src/doeff_agents/sessionhost/acp/entry.py"
       ],
       "allow": [
+        "sessionhost-ready-probe",
+        "agentd-host-slot-cli",
         "agentd-effects",
         "agentd-valve",
         "agentd-runtime",
@@ -352,6 +354,71 @@
       "typed": true
     },
     {
+      "name": "agentd-host-slot-cli",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/host_slot_cli.py"
+      ],
+      "responsibility": "器の入れ替えの blue/green の口(doeff-sessionhost host-slot — 据え付けの道具が撃つ)",
+      "layer": "runtime",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/host_slot_cli.py"
+      ],
+      "allow": [],
+      "typed": true
+    },
+    {
+      "name": "agentd-host-slots",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/host_slots.py"
+      ],
+      "responsibility": "器の区画(host slot)の置き場と状態の読み書き",
+      "layer": "runtime",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/host_slots.py"
+      ],
+      "allow": [],
+      "typed": true
+    },
+    {
+      "name": "sessionhost-drivers",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/drivers.py"
+      ],
+      "responsibility": "session host の 3 つの土台(tmux / zellij / herdr)の driver の選択",
+      "layer": "runtime",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/drivers.py"
+      ],
+      "allow": [],
+      "typed": true
+    },
+    {
+      "name": "sessionhost-drain-marker",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/drain_marker.py"
+      ],
+      "responsibility": "器の排水の印の file の読み書き(停止の拍に切った行の語を決める材料)",
+      "layer": "runtime",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/drain_marker.py"
+      ],
+      "allow": [],
+      "typed": true
+    },
+    {
+      "name": "sessionhost-ready-probe",
+      "paths": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/ready_probe.py"
+      ],
+      "responsibility": "session host の readiness の probe の口(doeff-sessionhost ready — socket に daemon.status を 1 回問う・Hy を import しない)",
+      "layer": "runtime",
+      "public": [
+        "packages/doeff-agents/src/doeff_agents/sessionhost/ready_probe.py"
+      ],
+      "allow": [],
+      "typed": true
+    },
+    {
       "name": "sessionhost-hostmain",
       "paths": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/hostmain.py"
@@ -361,7 +428,14 @@
       "public": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/hostmain.py"
       ],
-      "allow": [],
+      "allow": [
+        "sessionhost-relaymain",
+        "sessionhost-ready-probe",
+        "sessionhost-usage",
+        "agentd-effects",
+        "agentd-entry",
+        "agentd-valve"
+      ],
       "typed": false
     },
     {
@@ -382,6 +456,13 @@
       "layer": "runtime",
       "public": [],
       "allow": [
+        "sessionhost-hostmain",
+        "sessionhost-host",
+        "agentd-entry",
+        "sessionhost-policy",
+        "sessionhost-drivers",
+        "sessionhost-drain-marker",
+        "agentd-host-slots",
         "agentd-effects",
         "agentd-judgment",
         "agentd-join",
@@ -405,6 +486,11 @@
       "layer": "runtime",
       "public": [],
       "allow": [
+        "agentd-programs",
+        "sessionhost-headless-protocol",
+        "sessionhost-host",
+        "agentd-entry",
+        "sessionhost-drivers",
         "agentd-effects",
         "agentd-judgment",
         "agentd-join",

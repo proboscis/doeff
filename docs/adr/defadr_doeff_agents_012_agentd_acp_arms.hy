@@ -2741,15 +2741,27 @@
        (assert (is (. (acp-valve ["serve"] {ACP-VALVE-ENV "off"}) enabled) False))
        (assert (is (. (acp-valve ["serve" "--acp"] {}) enabled) True))
        (assert (is (. (acp-valve ["serve"] {ACP-VALVE-ENV "on"}) enabled) True))
-       ;; 弁は console script の入口(acp/entry.py)が持ち、host.hy / hostmain.py は agentd を知らない。
+       ;; 弁の判定は acp/valve.py の acp_valve の 1 点で、host.hy は agentd を知らない。
+       ;; agora-redesign #668(削除計画 deletion-plan-b-per-step.md 節 2 の準備 1): console script の入口は hostmain.py((c) の側)へ移り、
+       ;; hostmain.py は「agentd の腕が答える argv か」を acp の部品(acp.effects の綴り・acp.entry の副命令の綴り・acp_valve)に問うて
+       ;; 旧い入口(acp/entry.py)へ渡すだけ — 弁を自分で判定せず、agentd の thread も起こさない。acp を名指す行はその 5 行ちょうど。
+       ;; 削除 5-1 で acp/ を消す時に、hostmain.py の渡す枝とこの検を一緒に消す。
        (setv entry (.read-text (/ ACP-DIR "entry.py") :encoding "utf-8"))
        (assert (in "acp_valve(" entry))
-       (for [name ["host.hy" "hostmain.py"]]
-         (for [line (code-lines (/ SESSIONHOST-DIR name))]
-           (assert (not (or (in "sessionhost.acp" line)
-                            (in "acp_valve" line)
-                            (in "start_agentd_thread" line)))
-                   f"{name} は agentd の弁を持たない(弁は acp/entry.py の 1 点): {line}"))))
+       (for [line (code-lines (/ SESSIONHOST-DIR "host.hy"))]
+         (assert (not (or (in "sessionhost.acp" line)
+                          (in "acp_valve" line)
+                          (in "start_agentd_thread" line)))
+                 f"host.hy は agentd の弁を持たない(弁は acp/valve.py の 1 点): {line}"))
+       (setv arm-lines (lfor line (code-lines (/ SESSIONHOST-DIR "hostmain.py"))
+                             :if (or (in "sessionhost.acp" line) (in "acp_valve" line) (in "start_agentd_thread" line))
+                             (.strip line)))
+       (assert (= arm-lines ["from doeff_agents.sessionhost.acp.effects import JOIN_SUBCOMMAND"
+                             "from doeff_agents.sessionhost.acp.entry import HOST_SLOT_SUBCOMMAND"
+                             "from doeff_agents.sessionhost.acp.valve import acp_valve"
+                             "return acp_valve(argv, os.environ).enabled"
+                             "from doeff_agents.sessionhost.acp.entry import main as agentd_arm_main"])
+               f"hostmain.py が agentd を名指すのは腕へ渡す行ちょうど: {arm-lines}"))
      (deftest test-adr-doe-agents-012-capture-stops-at-zero-subscribers
        (assert (= (run (capture-verdict 0)) "stop"))
        (assert (= (run (capture-verdict None)) "stop"))
@@ -5320,7 +5332,7 @@
        (import ast)
        (setv forbidden #{"write_text" "write_bytes" "touch" "unlink" "remove" "rename" "replace" "mkdir" "makedirs"
                          "rmdir" "truncate" "write" "writelines" "symlink_to" "hardlink_to"})
-       (defn writes-in [source]
+       (defn #^ list writes-in [#^ str source]
          (setv found [])
          (for [node (ast.walk (ast.parse source))]
            (when (isinstance node ast.Call)
