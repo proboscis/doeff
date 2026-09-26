@@ -402,7 +402,40 @@
   (refuse-turn-capabilities (FollowUpEffect :handle (SessionHandle "x") :message "m") :handler "t")
   (import doeff_agents.handlers.testing [MockAgentHandler])
   (with [(pytest.raises AgentCapabilityUnsupportedError)]
-    (.handle-launch (MockAgentHandler) launch-effect)))
+    (.handle-launch (MockAgentHandler) launch-effect))
+  ;; 借りた token(turn_credential)を置けない端末の handler は、家の資格で黙って走らせずに断る(agora-redesign #665)。
+  (import doeff_agents.effects [TurnCredential])
+  (with [(pytest.raises AgentCapabilityUnsupportedError)]
+    (refuse-turn-capabilities (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path
+                                            :turn-credential (TurnCredential "tok-never-printed"))
+                              :handler "t")))
+
+
+(deftest test-headless-places-the-borrowed-access-token [tmp-path]
+  ;; agora-redesign #665: 借りた access token は型の欄(LaunchEffect.turn_credential)1 つから入り、子の claude の env の手番の資格の名
+  ;; (本番の agentd が貸与の札を運ぶ名 = TURN-AUTH-ENV-KEYS の 1 つ)にだけ置かれる。session_env から資格を入れる路は断られ、
+  ;; token は effect・家・宣言の repr に写らない。欄が無ければ家の env のまま(local の家の資格)。
+  (import doeff_agents.effects [LaunchEffect TurnCredential])
+  (import doeff_agents.handlers.headless [HeadlessClaudeConfig TURN-CREDENTIAL-ENV spec-of])
+  (import doeff_agents.sessionhost.policy [TURN-AUTH-ENV-KEYS])
+  (import doeff_claude_code.values [ClaudeHome])
+  (setv token "sk-ant-oat01-never-printed" config (HeadlessClaudeConfig (ClaudeHome (str (/ tmp-path "home")) {"PATH" "/usr/bin"})))
+  (assert (in TURN-CREDENTIAL-ENV TURN-AUTH-ENV-KEYS))
+  (setv launch (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path
+                             :turn-credential (TurnCredential token))
+        spec (spec-of config launch))
+  (assert (= (get spec.home.env TURN-CREDENTIAL-ENV) token))
+  (assert (= (get spec.home.env "PATH") "/usr/bin"))
+  (for [shown [(repr launch) (repr spec) (repr spec.home) (repr launch.turn-credential)]]
+    (assert (not-in token shown)))
+  (assert (not-in TURN-CREDENTIAL-ENV (. (spec-of config (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE
+                                                                         :work-dir tmp-path)) home env)))
+  (with [(pytest.raises ValueError)]
+    (spec-of config (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path
+                                  :session-env {TURN-CREDENTIAL-ENV token})))
+  (for [bad ["" "a\nb"]]
+    (with [(pytest.raises ValueError)]
+      (TurnCredential bad))))
 
 
 (deftest test-claude-agent-runtime-names-leave-the-substrate-to-doeff-agents [tmp-path]

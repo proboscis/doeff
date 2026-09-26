@@ -45,6 +45,11 @@
 
 (setv HANDLER-NAME "headless-claude-handler")
 
+;; 借りた access token(LaunchEffect.turn_credential)を置く env の名(agora-redesign #665)。手番の資格の env の語彙
+;; (sessionhost/policy.hy の TURN-AUTH-ENV-KEYS — 本番の agentd が貸与の札を運ぶ名と同じ)の 1 つであることは検
+;; (tests/test_headless_adapter.hy の test-headless-places-the-borrowed-access-token)が見る — adapter は session host を import しない。
+(setv TURN-CREDENTIAL-ENV "CLAUDE_CODE_OAUTH_TOKEN")
+
 
 ;; --- 設定と状態 ---------------------------------------------------------------------------------
 
@@ -90,10 +95,13 @@
 (defn #^ str new-ref [] (str (uuid.uuid4)))
 
 (defn #^ ClaudeSessionSpec spec-of [#^ HeadlessClaudeConfig config #^ LaunchEffect effect]
-  "LaunchEffect → 層 2 の会話の宣言。process の env = 家の env + session_env(非 auth の上書き)。"
+  "LaunchEffect → 層 2 の会話の宣言。process の env = 家の env + session_env(非 auth の上書き)+ 借りた access token
+   (turn_credential — 手番の資格の env の名 1 つにだけ置く。家の env と session_env は資格の env を持てない — 資格の入口は型の欄 1 つ)。"
   (assert-session-env-is-non-auth-overlay effect.session-env :context "LaunchEffect.session_env (headless-claude-handler)")
   (setv env (| (dict config.home.env) (dict (or effect.session-env {}))))
   (assert-no-forbidden-agent-env env :context "headless-claude-handler の process の env")
+  (when (is-not effect.turn-credential None)
+    (setv (get env TURN-CREDENTIAL-ENV) effect.turn-credential.oauth-token))
   (ClaudeSessionSpec :home (ClaudeHome config.home.config-dir env)
                      :cwd (str effect.work-dir)
                      :model effect.model
