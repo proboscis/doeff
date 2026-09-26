@@ -1,6 +1,6 @@
 ;; 本番の handler だけの検(替え玉の CLI)— 共通の筋書きに載らない handler の内側の約束:
 ;; 手番の終わりで process が降りる(#517)・冷えた続きの前の 1 回きりの命令・起動の失敗の型。
-(require doeff-hy.macros [deftest defk <-])
+(require doeff-hy.macros [deftest defk <- val])
 (import os.path)
 (import pathlib [Path])
 (import sys)
@@ -9,7 +9,7 @@
 (import doeff_time [Delay sync-time-handler])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession TurnInput])
 (import doeff_claude_code.lines [Completed])
-(import doeff_claude_code.effects [ClaudeStartTurn TurnStarted LaunchFailed])
+(import doeff_claude_code.effects [ClaudeStartTurn ClaudeExportSession TurnStarted LaunchFailed SessionExported SessionNotFound])
 (import doeff_claude_code.argv [transcript-path])
 (import doeff_claude_code.clock [clock-of])
 (import doeff_claude_code.handler [ClaudeCodeHost claude-code-handler])
@@ -89,3 +89,26 @@
   (<- outcome (with-real-handler host (ClaudeStartTurn (FreshSession sid) spec (TurnInput "x" "r"))))
   (assert (= outcome (LaunchFailed 3 "boom")) (repr outcome))
   (assert (is (.runtime host sid) None)))
+
+
+(deftest test-export-reads-the-transcript-of-the-real-path-of-the-cwd [tmp-path]
+  ;; 写しの取り出し: 置き場は cwd の実体の path(realpath)で決まる — symlink の cwd で頼んでも同じ transcript を読む。
+  ;; 本文は jsonl ちょうど。無い id・空の transcript は SessionNotFound。
+  (val spec (spec-in tmp-path))
+  (val alias (/ tmp-path "alias"))
+  (.symlink-to alias spec.cwd)
+  (val sid (str (uuid.uuid4)))
+  (val empty (str (uuid.uuid4)))
+  (val missing (str (uuid.uuid4)))
+  (val body "{\"type\":\"user\",\"text\":\"日本語の行\"}\n{\"type\":\"assistant\"}\n")
+  (val path (Path (transcript-path spec.home.config-dir (os.path.realpath spec.cwd) sid)))
+  (.mkdir path.parent :parents True)
+  (.write-text path body :encoding "utf-8")
+  (.write-text (Path (transcript-path spec.home.config-dir (os.path.realpath spec.cwd) empty)) "\n" :encoding "utf-8")
+  (val host (host-of #("/nonexistent/claude-binary")))
+  (<- exported (with-real-handler host (ClaudeExportSession spec.home (str alias) sid)))
+  (assert (= exported (SessionExported body)) (repr exported))
+  (<- blank (with-real-handler host (ClaudeExportSession spec.home spec.cwd empty)))
+  (assert (= blank (SessionNotFound empty)) (repr blank))
+  (<- absent (with-real-handler host (ClaudeExportSession spec.home spec.cwd missing)))
+  (assert (= absent (SessionNotFound missing)) (repr absent)))

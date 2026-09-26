@@ -1,11 +1,15 @@
-;;; doeff-claude-code の公開 effect 7 つと、その戻り値の型(設計 4.3)。
+;;; doeff-claude-code の公開 effect 8 つと、その戻り値の型(設計 4.3)。
+;;;
+;;; ClaudeStartTurn / ClaudeInjectInput / ClaudeInterruptTurn / ClaudeReadTurnEvents / ClaudeAnswerPermission /
+;;; ClaudeCloseSession / ClaudeSessionStatus / ClaudeExportSession。
 ;;;
 ;;; 単位は「claude の会話(session)と、その上の手番」。process の単位の操作(起こす・stdin に書く・信号・降ろす・pid の生存)は
 ;;; 公開しない — handler の内側の語彙。失敗は例外ではなく戻り値の型で返す(成功の型と失敗の型の判別可能な union)。
 ;;; handler の実装の誤り(I/O の予期しない例外)だけが例外として上がる。
+(require doeff-hy.macros [val])
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
-(import doeff_claude_code.values [ClaudeSessionSpec ClaudeHome ClaudeTurn TurnInput Allow Deny
+(import doeff_claude_code.values [ClaudeSessionSpec ClaudeHome ClaudeTurn TurnInput Allow Deny checked-session-id
                                   FreshSession ResumeSession ForkSession])
 (import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost])
 
@@ -58,6 +62,17 @@
   (#^ str cwd)
   (#^ str session-id))
 
+(defclass [(dataclass :frozen True)] ClaudeExportSession [EffectBase]
+  "会話の transcript の写しを家から取り出す(家の外に預けて、別の家へ ResumeSession の carry = Rebuilt で持ち込むため)。
+   cwd は ClaudeSessionStatus と同じく実体の path(realpath)へ正規化して置き場を決める。写すのは transcript の jsonl 1 つだけ
+   (subagent の記録・memory の dir は写さない)。session-id は会話の id の綴り(UUID — 置き場の外の path を名指せない)。
+   答え = SessionExported | SessionNotFound(transcript が無い・空)。"
+  (#^ ClaudeHome home)
+  (#^ str cwd)
+  (#^ str session-id)
+  (defn __post_init__ [self]
+    (checked-session-id self.session-id "ClaudeExportSession.session_id")))
+
 
 ;; --- 成功の戻り値 ---------------------------------------------------------------------------------
 
@@ -97,11 +112,18 @@
   (#^ (| Idle TurnRunning Closed) state)
   (#^ (| TranscriptPresent TranscriptAbsent) transcript))
 
+(defclass [(dataclass :frozen True)] SessionExported []
+  "transcript の写し: jsonl の本文ちょうど(空でない)。Rebuilt(jsonl-text) に渡すと同じ transcript が持ち込める。"
+  (#^ str jsonl-text)
+  (defn __post_init__ [self]
+    (when (not (and (isinstance self.jsonl-text str) (.strip self.jsonl-text)))
+      (raise (ValueError "SessionExported.jsonl_text は空でない文字列")))))
+
 
 ;; --- 失敗の戻り値 ---------------------------------------------------------------------------------
 
 (defclass [(dataclass :frozen True)] SessionNotFound []
-  "続きを頼んだ会話の transcript が手元に無く、持ち込み(carry)も無い。"
+  "続きを頼んだ会話の transcript が手元に無く、持ち込み(carry)も無い。ClaudeExportSession では transcript が無い・空。"
   (#^ str session-id))
 
 (defclass [(dataclass :frozen True)] SessionIdInUse []
@@ -138,3 +160,4 @@
 
 (setv StartTurnOutcome (| TurnStarted SessionNotFound SessionIdInUse TurnInFlight CarryRefused LaunchFailed
                           AttachmentRefused))
+(val ExportSessionOutcome (| SessionExported SessionNotFound))

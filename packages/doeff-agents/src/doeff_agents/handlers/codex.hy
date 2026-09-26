@@ -9,7 +9,7 @@
 (import doeff [Ask])
 (import doeff_agents.effects.agent [
   LaunchEffect MonitorEffect CaptureEffect
-  SendEffect StopEffect SessionHandle Observation])
+  SendEffect StopEffect SessionHandle Observation ExportContextEffect AgentCapabilityUnsupportedError])
 (import doeff_agents.effects.agent [refuse-turn-capabilities])
 (import doeff_agents.adapters.base [AgentType LaunchParams])
 (import doeff_agents.adapters.codex [CodexAdapter])
@@ -74,6 +74,12 @@
        "monitor" (MonitorState)
        "status" SessionStatus.BOOTING}}))
     (resume handle))
+
+  ;; 文脈の写し(agora-redesign #731)は codex の文脈では取り出せない — 黙って None を返さず断る。
+  ;; LaunchEffect.resume_snapshot は上の refuse-turn-capabilities が断る。
+  (ExportContextEffect [agent-type]
+    :when (= agent-type AgentType.CODEX)
+    (raise (AgentCapabilityUnsupportedError :capability "ExportContextEffect" :handler "codex-handler")))
 
   (MonitorEffect [handle]
     (setv active-backend backend)

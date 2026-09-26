@@ -592,6 +592,13 @@ class LaunchEffect(AgentEffectBase):
     Handlers that cannot continue a context refuse it with
     ``AgentCapabilityUnsupportedError`` rather than starting fresh.
 
+    ``resume_snapshot`` brings the ``resume_from`` context into this runtime
+    before it continues: an opaque copy of the context taken earlier with
+    ``ExportContextEffect`` (possibly by another runtime whose home is gone).
+    A context already present here is not overwritten. It needs
+    ``resume_from`` and must not be empty. Handlers that cannot bring a
+    context in refuse it with ``AgentCapabilityUnsupportedError``.
+
     Yields: SessionHandle
     """
 
@@ -612,6 +619,17 @@ class LaunchEffect(AgentEffectBase):
     # The borrowed access token for this session's turns (None = the handler's
     # own home credentials). See ``TurnCredential``.
     turn_credential: TurnCredential | None = None
+    # An opaque copy of the ``resume_from`` context (the answer of
+    # ``ExportContextEffect``) to bring in before continuing.
+    resume_snapshot: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.resume_snapshot is None:
+            return
+        if self.resume_from is None:
+            raise ValueError("LaunchEffect.resume_snapshot needs resume_from")
+        if not isinstance(self.resume_snapshot, str) or not self.resume_snapshot.strip():
+            raise ValueError("LaunchEffect.resume_snapshot must be a non-empty string")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -796,6 +814,24 @@ class EventsEffect(AgentEffectBase):
     wait_seconds: float = 0.0
 
 
+@dataclass(frozen=True, kw_only=True)
+class ExportContextEffect(AgentEffectBase):
+    """Take an opaque copy of an agent runtime context out of this runtime.
+
+    ``context_id`` is the value a turn end carried as ``resume_from``;
+    ``work_dir`` is the work dir the context ran in.  The copy is kept by the
+    caller (for example outside a disposable home) and brought back with
+    ``LaunchEffect(resume_from=context_id, resume_snapshot=copy)``.  Handlers
+    that cannot take a copy refuse it with ``AgentCapabilityUnsupportedError``.
+
+    Yields: str | None (the copy; None = this runtime has no such context)
+    """
+
+    agent_type: AgentType
+    work_dir: Path
+    context_id: str
+
+
 # =============================================================================
 # Session State Effects
 # =============================================================================
@@ -915,6 +951,7 @@ def Launch(  # noqa: N802
     ready_timeout: float = 120.0,
     session_env: dict[str, str] | None = None,
     resume_from: str | None = None,
+    resume_snapshot: str | None = None,
 ) -> LaunchEffect:
     """Create a Launch effect with flat fields."""
     return LaunchEffect(
@@ -931,6 +968,7 @@ def Launch(  # noqa: N802
         ready_timeout=ready_timeout,
         session_env=session_env,
         resume_from=resume_from,
+        resume_snapshot=resume_snapshot,
     )
 
 
@@ -1120,6 +1158,10 @@ def refuse_turn_capabilities(effect: AgentEffectBase, *, handler: str) -> None:
         raise AgentCapabilityUnsupportedError(
             capability="LaunchEffect.resume_from", handler=handler
         )
+    if isinstance(effect, LaunchEffect) and effect.resume_snapshot is not None:
+        raise AgentCapabilityUnsupportedError(
+            capability="LaunchEffect.resume_snapshot", handler=handler
+        )
     if isinstance(effect, LaunchEffect) and effect.turn_credential is not None:
         raise AgentCapabilityUnsupportedError(
             capability="LaunchEffect.turn_credential", handler=handler
@@ -1228,6 +1270,7 @@ __all__ = [
     "CleanupAgentSessionEffect",
     "Events",
     "EventsEffect",
+    "ExportContextEffect",
     "FollowUp",
     "FollowUpEffect",
     "GetAgentSession",

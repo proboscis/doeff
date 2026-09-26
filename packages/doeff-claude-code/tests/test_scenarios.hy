@@ -1,15 +1,15 @@
 ;; 公開 effect の筋書き — fake・本番の handler + 替え玉の CLI・本番の handler + 本物の claude の 3 つで同じ Program を走らせる
 ;; (設計 layer2-effects-design.md 8 節の不変条件)。筋書きは handler を知らない: ScenarioSettings で宣言を読み、公開 effect だけを撃つ。
-(require doeff-hy.macros [deftest <-])
+(require doeff-hy.macros [deftest <- val])
 (import dataclasses [replace])
 (import os.path)
 (import doeff_claude_code.values [ClaudeTurn TurnInput FreshSession ResumeSession ForkSession AskHost Allow LinkFromHome Rebuilt
                                   ImageAttachment])
 (import doeff_claude_code.lines [Init InputFate PermissionRequested TurnResult Completed Interrupted BackendLost])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
-                                   ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus
+                                   ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
                                    TurnStarted InputQueued InterruptRequested Answered SessionClosed
-                                   Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
+                                   SessionExported Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
                                    SessionNotFound SessionIdInUse TurnInFlight AttachmentRefused NoTurnInFlight
                                    UnknownTurn NoSuchRequest])
 (import doeff_claude_code.faults [ClaudeDropProcess])
@@ -217,3 +217,27 @@
                      (reply-prompt "REBUILT")))
   (<- again (read-to-end written.turn s.turn-timeout))
   (assert (isinstance again.end Completed) (repr again.end)))
+
+
+(deftest test-an-exported-transcript-carried-into-an-empty-home-continues-the-session
+  ;; 写しの往復: 家から transcript の写しを取り出し(ClaudeExportSession)、空の別の家へ ResumeSession(carry = Rebuilt(写し))で
+  ;; 持ち込むと、会話の記憶が続く。写しが無い id は SessionNotFound。本物の claude は別の家の資格が要るので fake と替え玉だけ。
+  {:interpreters ["fake" "stub"]}
+  (<- s (settings))
+  (val sid (new-id))
+  (<- first (start (FreshSession sid) s.base (remember-prompt "ALPHA-1")))
+  (<- _ (read-to-end first.turn s.turn-timeout))
+  (<- exported (ClaudeExportSession s.base.home s.base.cwd sid))
+  (assert (isinstance exported SessionExported) (repr exported))
+  (val missing (new-id))
+  (<- absent (ClaudeExportSession s.base.home s.base.cwd missing))
+  (assert (= absent (SessionNotFound missing)) (repr absent))
+  (val other (replace s.base :home s.other-home))
+  (<- none (ClaudeStartTurn (ResumeSession sid) other (typed (recall-prompt))))
+  (assert (= none (SessionNotFound sid)) (repr none))
+  (<- carried (start (ResumeSession sid :carry (Rebuilt exported.jsonl-text)) other (recall-prompt)))
+  (<- done (read-to-end carried.turn s.turn-timeout))
+  (assert (isinstance done.end Completed) (repr done.end))
+  (assert (in CODEWORD done.end.result-text) done.end.result-text)
+  (<- again (ClaudeExportSession s.other-home s.base.cwd sid))
+  (assert (.startswith again.jsonl-text exported.jsonl-text) (repr again)))
