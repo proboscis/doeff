@@ -1,0 +1,24 @@
+code-quality: passed (scope=changed)
+code-quality-base: {'revision': '87443ef7ca6eb49bf2033482b4c76242e5007e17', 'repo': '/home/kento/.worktrees/agora-controllers-wt-639-service-bodies-by-value'}
+code-quality-stage: fast(指定範囲・変更範囲の拡張なし・速い規則だけ)— 型検査(pyright / hy / cabal / tsc)はこの段では撃たない = 型は日次(--stage full)と手の名指しだけ。この passed は型を含まない
+code-quality-registration: controllers/agora_sim/scheduling.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: controllers/agora_sim/tests/test_emulated_custody.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: controllers/agora_sim/tests/test_emulated_scheduling.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: controllers/worker/adr/defadr_worker_business_code_touches_io_only_through_effects.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-timing: prepare 5.853s inventory=1138 scoped=813 sources=4 changed=4 selected=4
+code-quality-timing: verdict-lookup 0.0s hit=False key=bc69a2a38090
+code-quality-timing: candidate.sources 0s sources=4 selected=4 analyzed={} by_language={} cache_hits=0 cache_misses=0
+code-quality-timing: candidate.closure 0.0s affected=4 languages={'hy': 4} touched_languages=[]
+code-quality-timing: base.workspace 2.234s paths=1874
+code-quality-timing: base.read 0.153s inventory=1139 sources=4
+code-quality-timing: base.sources 0s sources=4 selected=4 analyzed={} by_language={} cache_hits=0 cache_misses=0
+code-quality-timing: base.closure 0.0s affected=4 languages={'hy': 4} touched_languages=['hy']
+code-quality-timing: base.unprojectable 0.0s paths=0
+code-quality-timing: base.boundary 0.061s modules=543 paths=1139
+code-quality-timing: base.policy 0.003s dependencies=0 findings=0
+code-quality-timing: observe-baseline 2.55s needed=True
+code-quality-timing: compare-observed 0.0s candidate=0 base=0 by_budget=0
+code-quality-timing: compare-guarantees 0.009s
+code-quality-coverage: partial / 対象 813 / 全体 1138 / 未導入 {'hy': 244, 'python': 65, 'shell': 15, 'sql': 1} / typed:true だが include に無い 3(型は日次(fast の段は compiler を撃たない)) / include の重複 0 / 基底の鍵の重複 0
+code-quality-baseline: 今回観測した既存違反 0 / 登録 59 件（自動増加しない）
+exit=0

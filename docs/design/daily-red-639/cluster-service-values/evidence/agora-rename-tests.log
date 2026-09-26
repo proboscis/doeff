@@ -1,0 +1,10 @@
+# 対象版: agora-controllers 87443ef7ca6eb49bf2033482b4c76242e5007e17 + 改名(未 commit)・doeff 26d883727e99de6a89ba72b0f9426b64a638f645 + 修正(未 commit)
+test-admission: focused — 6 件(変更箇所の検証)
+......                                                                   [100%]
+=============================== warnings summary ===============================
+../doeff-wt-639-cluster-no-macros/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156
+  /home/kento/.worktrees/doeff-wt-639-cluster-no-macros/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+6 passed, 1 warning in 59.19s
+exit=0

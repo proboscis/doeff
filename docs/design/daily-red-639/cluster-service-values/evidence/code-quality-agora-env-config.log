@@ -1,0 +1,23 @@
+code-quality: passed (scope=changed)
+code-quality-base: {'revision': 'f08f0fabc25b47780626f08e204df09aba35ae5d', 'repo': '/home/kento/.worktrees/agora-controllers-wt-639-env-config'}
+code-quality-stage: fast(指定範囲・変更範囲の拡張なし・速い規則だけ)— 型検査(pyright / hy / cabal / tsc)はこの段では撃たない = 型は日次(--stage full)と手の名指しだけ。この passed は型を含まない
+code-quality-registration: controllers/agora_sim/durable.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: controllers/agora_sim/mail_actors.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: controllers/worker/lab/artifact_shadow.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-timing: prepare 1.223s inventory=1138 scoped=813 sources=6 changed=7 selected=6
+code-quality-timing: verdict-lookup 0.0s hit=False key=3803c3a2389f
+code-quality-timing: candidate.sources 1.045s sources=6 selected=6 analyzed={'hy': 4} by_language={'hy': 1.04} cache_hits=0 cache_misses=4
+code-quality-timing: candidate.closure 0.0s affected=6 languages={'hy': 6} touched_languages=['hy']
+code-quality-timing: base.workspace 1.095s paths=1874
+code-quality-timing: base.read 0.114s inventory=1139 sources=6
+code-quality-timing: base.sources 0.052s sources=6 selected=6 analyzed={'hy': 4} by_language={'hy': 0.05} cache_hits=4 cache_misses=0
+code-quality-timing: base.closure 0.0s affected=6 languages={'hy': 6} touched_languages=['hy']
+code-quality-timing: base.unprojectable 0.0s paths=0
+code-quality-timing: base.boundary 0.047s modules=543 paths=1139
+code-quality-timing: base.policy 0.009s dependencies=146 findings=0
+code-quality-timing: observe-baseline 1.422s needed=True
+code-quality-timing: compare-observed 0.0s candidate=0 base=0 by_budget=0
+code-quality-timing: compare-guarantees 0.008s
+code-quality-coverage: partial / 対象 813 / 全体 1138 / 未導入 {'hy': 244, 'python': 65, 'shell': 15, 'sql': 1} / typed:true だが include に無い 3(型は日次(fast の段は compiler を撃たない)) / include の重複 0 / 基底の鍵の重複 0
+code-quality-baseline: 今回観測した既存違反 0 / 登録 59 件（自動増加しない）
+exit=0

@@ -1,0 +1,10 @@
+# 対象版: doeff 750af206220be01a70ddd396603cff4351c7af4b + :env-config の実装(未 commit)
+test-admission: focused — 19 件(変更箇所の検証)
+...................                                                      [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156
+  /home/kento/.worktrees/doeff-wt-639-cluster-no-macros/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+19 passed, 1 warning in 14.14s
+exit=0

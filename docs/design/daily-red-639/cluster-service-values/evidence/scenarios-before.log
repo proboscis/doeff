@@ -1,0 +1,82 @@
+# 対象版: doeff-cluster の source = a492bd01(修正前・PYTHONPATH の先頭 /tmp/wt639/old-cluster/packages/doeff-cluster/src)・他の package は同じ venv・命令: 同上
+# 読んだ service_model = /tmp/wt639/old-cluster/packages/doeff-cluster/src/doeff_cluster/service_model.hy
+== S-DIST 正常例: 同じ宣言をテスト用の main と実行先で走らせる(record を宣言に書く)
+  宣言: OK
+
+doeff Traceback (most recent call last):
+
+  system_main_program()  /tmp/wt639/old-cluster/packages/doeff-cluster/src/doeff_cluster/service_model.hy:129
+    (<- results list (Gather #* tasks))
+    handlers:
+      reader ↗
+      _scheduled_python ↗
+
+TypeError: tally_program() got an unexpected keyword argument 'record'
+
+  main: 失敗 TypeError: tally_program() got an unexpected keyword argument 'record'
+  worker: exit=0 service:  が終わった: 3
+== S-DIST 反例: 本体が record という名の引数を取る(実行先は record を本体へ渡さない)
+  宣言: OK
+  main: OK [101]
+  worker: exit=1 TypeError: flagged_program() missing 1 required positional argument: 'record'
+== S-CONC 正常例: :update handoff が coordinator への宣言に写る
+  宣言: OK
+  update: OK 'handoff'
+== S-CONC 反例: 語彙の外の入れ替えの形
+  宣言: 失敗 ValueError: service tally の :update は ('recreate', 'handoff') のどれか: 'rolling'
+== S-HW 正常例: :requires の条件が中身を解釈されずに写る
+  宣言: OK
+  requires: OK {'gpu': 'a100', 'kind': 'k3s'}
+== S-HW 反例: 文字列でない鍵の条件
+  宣言: 失敗 TypeError: service tally の :requires の鍵は文字列で書く: 1
+== S-STORE 正常例: env だけが読む設定を :env-config に書く(本体は step-size だけを取る)
+  宣言: 失敗 TypeError: service() got an unexpected keyword argument 'env_config'
+== S-STORE 反例(修正前の書き方): env だけが読む設定を :config に書く — 本体の引数に無い鍵
+  宣言: OK
+
+doeff Traceback (most recent call last):
+
+  system_main_program()  /tmp/wt639/old-cluster/packages/doeff-cluster/src/doeff_cluster/service_model.hy:129
+    (<- results list (Gather #* tasks))
+    handlers:
+      reader ↗
+      _scheduled_python ↗
+
+TypeError: greeter_program() got an unexpected keyword argument 'greeting'
+
+  main: 失敗 TypeError: greeter_program() got an unexpected keyword argument 'greeting'
+  worker: exit=1 TypeError: greeter_program() got an unexpected keyword argument 'greeting'
+== S-STORE 反例: 本体の引数を :env-config に書く
+  宣言: 失敗 TypeError: service() got an unexpected keyword argument 'env_config'
+== S-SIM 正常例: 上書きで周期を変えてテスト用の main で回す
+  宣言: OK
+  main-override: OK [1]
+== S-SIM 反例: 宣言に無い鍵の上書き(綴りの違い cycle)
+  宣言: OK
+
+doeff Traceback (most recent call last):
+
+  system_main_program()  /tmp/wt639/old-cluster/packages/doeff-cluster/src/doeff_cluster/service_model.hy:129
+    (<- results list (Gather #* tasks))
+    handlers:
+      reader ↗
+      _scheduled_python ↗
+
+TypeError: keeper_program() got an unexpected keyword argument 'cycle'. Did you mean 'cycles'?
+
+  main-typo: 失敗 TypeError: keeper_program() got an unexpected keyword argument 'cycle'. Did you mean 'cycles'?
+== S-SIM 反例: 本体の引数が設定に無い宣言
+  宣言: OK
+
+doeff Traceback (most recent call last):
+
+  system_main_program()  /tmp/wt639/old-cluster/packages/doeff-cluster/src/doeff_cluster/service_model.hy:129
+    (<- results list (Gather #* tasks))
+    handlers:
+      reader ↗
+      _scheduled_python ↗
+
+TypeError: tally_program() missing 1 required positional argument: 'base'
+
+  main: 失敗 TypeError: tally_program() missing 1 required positional argument: 'base'
+exit=0

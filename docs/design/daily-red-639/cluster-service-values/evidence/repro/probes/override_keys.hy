@@ -1,0 +1,40 @@
+;;; system-main / run-agora / system-declaration の上書き {service 名: {鍵: 値}} の literal を読み、宣言に無い鍵を数える(読むだけ)。
+(import sys re gc importlib)
+(import pathlib [Path])
+(import hy)
+(import hy.models [Expression Dict String])
+(import doeff [run])
+(import doeff_cluster.service_model [ServiceDef])
+(import controllers.worker.adr.defadr_worker_business_code_touches_io_only_through_effects :as adr)
+(setv root (Path.cwd))
+(for [name (run (adr.declaring-modules root #("controllers" "services")))]
+  (try (importlib.import-module name) (except [e Exception] (print "import できない" name e))))
+(setv declared {})
+(for [v (gc.get-objects)]
+  (when (isinstance v ServiceDef)
+    (.setdefault declared v.name (set))
+    (.update (get declared v.name) (gfor #(k _) v.config k))))
+(print "service の名" (len declared))
+(setv CALLERS (re.compile r"system-main|run-agora|system-declaration|service-program"))
+(setv hits 0 unknown [])
+(for [p (sorted (+ (list (.rglob (/ root "controllers") "*.hy")) (list (.rglob (/ root "scripts") "*.hy"))))]
+  (setv text (.read-text p :encoding "utf-8"))
+  (when (not (.search CALLERS text)) (continue))
+  (setv todo (list (hy.read-many (re.sub r"\A#!.*\n" "\n" text))))
+  (while todo
+    (setv form (.pop todo))
+    (when (isinstance form Dict)
+      (setv items (list form))
+      (for [i (range 0 (- (len items) 1) 2)]
+        (setv k (get items i) v (get items (+ i 1)))
+        (when (and (isinstance k String) (in (str k) declared) (isinstance v Dict))
+          (setv inner (list v))
+          (for [j (range 0 (- (len inner) 1) 2)]
+            (when (isinstance (get inner j) String)
+              (+= hits 1)
+              (when (not-in (str (get inner j)) (get declared (str k)))
+                (.append unknown #((str (.relative-to p root)) (str k) (str (get inner j))))))))))
+    (when (isinstance form (| Expression hy.models.List Dict hy.models.Tuple))
+      (.extend todo form))))
+(print "上書きの鍵の literal" hits "宣言に無い鍵" (len unknown))
+(for [u (sorted (set unknown))] (print " " #* u))

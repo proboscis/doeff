@@ -1,0 +1,4 @@
+# 対象版: doeff a492bd01916264bf40c84e3dbb05d9ed2bdae6ec の src + 新しい規則(未 commit)・修正前・命令: semgrep --config .semgrep.yaml packages/doeff-cluster/src
+doeff-cluster-program-arguments-are-built-in-one-place packages/doeff-cluster/src/doeff_cluster/job_entry.hy 83
+doeff-cluster-program-arguments-are-built-in-one-place packages/doeff-cluster/src/doeff_cluster/replay_main.hy 41
+exit=0

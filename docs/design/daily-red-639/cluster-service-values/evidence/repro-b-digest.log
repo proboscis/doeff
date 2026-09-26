@@ -1,0 +1,8 @@
+# 対象版: agora-controllers 3bf9db5079646a970097c5db6e35d6d80cb0693c + M5 の書き換え(未 commit)・修正前の ADR = 同じ版の HEAD の file(m5_before_adr_3bf9db50.hy)・doeff 757daf3dbe9695cb72b8e52e3b0ad89153ebb2fd・盲検 B の木 /tmp/blind-cluster-b/trees/ac-cx
+## mode=before
+修正前(字面の (service "名" f) と同じ module の defk・盲検の木の全体): 読めた本体 89・違反 []
+修正前: controllers/digest の中で読めた本体 = []
+exit=0
+## mode=after
+修正後(宣言の値から本体を引く・controllers/digest): 読めた本体 1・違反 [('controllers/digest/keeper.hy', 'digest_keeper_program', '(.read-text '), ('controllers/digest/keeper.hy', 'digest_keeper_program', '(.write-text ')]・検められない宣言 []
+exit=0

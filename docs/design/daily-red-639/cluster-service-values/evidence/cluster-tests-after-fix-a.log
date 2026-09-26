@@ -1,0 +1,65 @@
+# 対象版: doeff 26d883727e99de6a89ba72b0f9426b64a638f645 + 修正(未 commit)・命令: uv run --no-sync pytest -q packages/doeff-cluster/tests
+
+deadline scale x1.2 (load/core) — per test 72s, watchdog 107s
+
+test-admission: focused — 265 件(変更箇所の検証)
+........................................................................ [ 27%]
+........................................................................ [ 54%]
+.........................F.............................................. [ 81%]
+.................................................                        [100%]
+=================================== FAILURES ===================================
+________________ test_the_package_has_no_application_vocabulary ________________
+
+doeff_interpreter = <function doeff_interpreter.<locals>.interpret at 0x35adb2b2940>
+
+    (deftest test-the-package-has-no-application-vocabulary
+>     (setv found [])
+
+packages/doeff-cluster/tests/test_no_application_vocabulary.hy:64: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/doeff-cluster/tests/conftest.py:31: in interpret
+    return run(scheduled(program))
+           ^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1071: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+doeff/do.py:314: in thunk
+    return _make_stream(fn(*args, **kwargs))
+                        ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    (setv found [])
+    (for [p (scanned-files)]
+      (setv rel (.as-posix (.relative-to p ROOT)))
+      (for [#(word _) (hits-in rel)]
+        (.append found (.format "{}(file の名): {} — {}" rel word (get FORBIDDEN word))))
+      (for [#(word n) (hits-in (.read-text p :encoding "utf-8"))]
+        (.append found (.format "{}:{}: {} — {}" rel n word (get FORBIDDEN word)))))
+>   (assert (= found []) (.join "\n" found)))
+              ^^^^^^
+E   AssertionError: tests/test_service_declaration.hy:5: agora — 業務の系の名
+
+packages/doeff-cluster/tests/test_no_application_vocabulary.hy:71: AssertionError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  _hy_anon_3()  packages/doeff-cluster/tests/test_no_application_vocabulary.hy:71
+    (assert (= found []) (.join "\n" found)))
+    handlers:
+      _scheduled_python ↗
+
+AssertionError: tests/test_service_declaration.hy:5: agora — 業務の系の名
+
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156
+  /home/kento/.worktrees/doeff-wt-639-cluster-no-macros/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-cluster/tests/test_no_application_vocabulary.hy::test_the_package_has_no_application_vocabulary
+1 failed, 264 passed, 1 warning in 47.57s
+exit=1

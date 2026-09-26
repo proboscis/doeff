@@ -1,0 +1,8 @@
+# 対象版: agora-controllers f08f0fab(M5 の書き換えの commit の後・:env-config への移しの前)・doeff 757daf3d(:env-config の前)・命令: cd <agora-controllers>; hy repro/probes/unused_params.hy
+controllers/agora_sim/mail_actors.hy messaging_stand_in_program 使わない引数: ['namespace']
+controllers/worker/lab/artifact_shadow.hy artifact_shadow_program 使わない引数: ['http-timeout']
+controllers/worker/services/artifact_writer.hy artifact_writer_program 使わない引数: ['acp-url', 'http-timeout', 'token-file', 'lease-ttl', 'margin-ms']
+controllers/worker/services/budget_writer.hy budget_writer_program 使わない引数: ['token-file', 'lease-ttl', 'margin-ms']
+controllers/worker/services/conversation_writer.hy conversation_writer_program 使わない引数: ['lease-ttl', 'token-file', 'margin-ms']
+本体の数 94 使わない引数を持つ本体 5
+exit=0

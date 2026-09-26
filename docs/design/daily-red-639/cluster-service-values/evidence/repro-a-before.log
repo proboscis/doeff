@@ -1,0 +1,20 @@
+# 対象版: doeff a492bd01916264bf40c84e3dbb05d9ed2bdae6ec(修正前)・命令: uv --project /home/kento/.worktrees/doeff-wt-639-cluster-no-macros run --no-sync hy repro_a_record.hy
+
+doeff Traceback (most recent call last):
+
+  system_main_program()  ~/.worktrees/doeff-wt-639-cluster-no-macros/packages/doeff-cluster/src/doeff_cluster/service_model.hy:129
+    (<- results list (Gather #* tasks))
+    handlers:
+      _scheduled_python ↗
+
+TypeError: ledger_program() got an unexpected keyword argument 'record'
+
+== ledger(宣言に record・本体は知らない)
+  宣言: OK ServiceDef(name='ledger', factory='cluster_a_fixture:ledger_program', env='cluster_a_fixture:plain_env', requires=(), config=(('n', 1), ('record', {'otlp': 'http://127.0.0.1:9', 'chunkSeconds': 3600, 'flushSeconds': 2.0})), program_factory=<function ledger_program at 0x314a0f442c0>, readiness=None, update='recreate', base_from=None)
+  (a) system-main: 失敗 TypeError: ledger_program() got an unexpected keyword argument 'record'
+  (b) job_entry service: exit=0 service:  が終わった: 2
+== tally(本体の引数に record)
+  宣言: OK ServiceDef(name='tally', factory='cluster_a_fixture:tally_program', env='cluster_a_fixture:plain_env', requires=(), config=(('n', 1), ('record', True)), program_factory=<function tally_program at 0x314a0f445c0>, readiness=None, update='recreate', base_from=None)
+  (a) system-main: OK [101]
+  (b) job_entry service: exit=1 TypeError: tally_program() missing 1 required positional argument: 'record'
+exit=0

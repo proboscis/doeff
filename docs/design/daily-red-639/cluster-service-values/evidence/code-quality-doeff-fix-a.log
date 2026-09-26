@@ -1,0 +1,26 @@
+code-quality: passed (scope=changed)
+code-quality-base: {'revision': 'a492bd01916264bf40c84e3dbb05d9ed2bdae6ec', 'repo': '/home/kento/.worktrees/doeff-wt-639-cluster-no-macros'}
+code-quality-stage: fast(指定範囲・変更範囲の拡張なし・速い規則だけ)— 型検査(pyright / hy / cabal / tsc)はこの段では撃たない = 型は日次(--stage full)と手の名指しだけ。この passed は型を含まない
+code-quality-registration: packages/doeff-cluster/src/doeff_cluster/job_entry.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: packages/doeff-cluster/src/doeff_cluster/replay_main.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: packages/doeff-cluster/src/doeff_cluster/service_model.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: packages/doeff-cluster/tests/fixtures/services.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: packages/doeff-cluster/tests/test_service_declaration.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: tests/semgrep/fixtures/python/packages/doeff-cluster/src/doeff_cluster/program_arguments_copy_forbidden.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: tests/semgrep/test_vm_failfast_semgrep_rules.py: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-timing: prepare 4.619s inventory=1516 scoped=71 sources=8 changed=9 selected=7
+code-quality-timing: verdict-lookup 0.0s hit=False key=aa6cabc29cfa
+code-quality-timing: candidate.sources 0.106s sources=8 selected=8 analyzed={'hy': 1} by_language={'hy': 0.11} cache_hits=1 cache_misses=0
+code-quality-timing: candidate.closure 0.0s affected=8 languages={'?': 1, 'hy': 6, 'python': 1} touched_languages=[]
+code-quality-timing: base.workspace 3.737s paths=2681
+code-quality-timing: base.read 0.19s inventory=1514 sources=7
+code-quality-timing: base.sources 0.001s sources=7 selected=8 analyzed={'hy': 1} by_language={'hy': 0.0} cache_hits=1 cache_misses=0
+code-quality-timing: base.closure 0.0s affected=8 languages={'?': 2, 'hy': 5, 'python': 1} touched_languages=['hy', 'python']
+code-quality-timing: base.unprojectable 0.0s paths=0
+code-quality-timing: base.boundary 0.003s modules=54 paths=1514
+code-quality-timing: base.policy 0.0s dependencies=1 findings=0
+code-quality-timing: observe-baseline 4.093s needed=True
+code-quality-timing: compare-observed 0.0s candidate=0 base=0 by_budget=0
+code-quality-timing: compare-guarantees 0.021s
+code-quality-coverage: partial / 対象 71 / 全体 1516 / 未導入 {'executable-unknown': 1, 'hy': 316, 'javascript': 1, 'lua': 17, 'python': 986, 'rust': 107, 'shell': 12, 'typescript': 5} / typed:true だが include に無い 5(型は日次(fast の段は compiler を撃たない)) / include の重複 0 / 基底の鍵の重複 0
+code-quality-baseline: 今回観測した既存違反 0 / 登録 3 件（自動増加しない）

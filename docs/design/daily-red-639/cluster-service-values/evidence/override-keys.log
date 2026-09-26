@@ -1,0 +1,7 @@
+service の名 93
+上書きの鍵の literal 359 宣言に無い鍵 4
+  controllers/agora_sim/tests/test_emulated_coordinator.hy budget-writer generation
+  controllers/agora_sim/tests/test_emulated_coordinator.hy budget-writer job
+  controllers/agora_sim/tests/test_emulated_coordinator.hy budget-writer since_ms
+  controllers/agora_sim/tests/test_emulated_coordinator.hy budget-writer worker
+exit=0

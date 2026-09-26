@@ -1,0 +1,594 @@
+{
+  "version": 1,
+  "task_id": "lt-R5RQNYWQDEYZ1QXKMER5VRPQ3X",
+  "base_revision": "611f47cb15aa8b454fe312a546194b633297b088",
+  "author": {
+    "conversation_id": "c-QKRSZM0HRE0G3K33RYKG1R622T",
+    "model": "claude-opus-5-5",
+    "effort": "未申告(会話の起動口が effort を申告しない — 会話の既定のまま)"
+  },
+  "requirements": "agora-redesign#639 実装依頼書 2: doeff-cluster の macros.hy(defservice・defsystem)を、macro を定義してよい名簿の外から無くす(ADR-DOE-HY-005 R5・名簿は増やさない)。道 A(doeff-hy へ移す)か道 B(値と関数で書く)を選び理由を記録する — 道 B を採った。受入: test_adr_doe_hy_005_macros_live_only_in_doeff_hy の違反から macros.hy が消え、packages/doeff-cluster/tests の検が変更の前後で同じ結果、他 repo の呼び手を同じ日に直す。設計検証の記録を置く。完了の範囲 = 実装完了まで(道 B は本線 611f47cb・agora-controllers d3b7ef22。盲検の反例の修正も本線に着地済み — doeff ac38f799・2595d452・a871a475・54495f5c・dfffc6d3、agora-controllers 3bf9db50・f08f0fab・659f05c3)",
+  "design": {
+    "path": "design.md",
+    "sha256": "24cff304dc7810e72eb5661251ce5ad5b517d185a50400a951cad51d4d8f95d9"
+  },
+  "modules": [
+    {
+      "id": "M1",
+      "responsibility": "service 1 本の宣言を、実行先で解ける関数の参照と、持ち主で分けた設定を持つ不変の値として組み、組めない宣言をその場で断る(doeff-cluster service_model: ServiceDef・System・service・program-reference・string-keyed・check-program-arguments・UPDATE-FORMS・ASSEMBLY-KEYS)",
+      "owns": "宣言の欄(name・factory・env・requires・config・env-config・readiness・update・base-from)・参照の導き方・update の閉じた語彙・組み立て側の欄の名(record)",
+      "hides": "参照を __module__・__qualname__ から導くこと・欄を鍵の順の tuple に正規化すること・本体の引数の名の読み方",
+      "interface": "(service name program :env E [:requires d] [:config d] [:env-config d] [:readiness d] [:update s] [:base-from d]) → ServiceDef。失敗 = ValueError(入れ子の関数・lambda・未知の update)・TypeError(文字列でない鍵・知らない引数・設定の鍵と本体の引数の食い違い・持ち主の重なり・本体が組み立て側の欄の名を引数に取る)",
+      "effects": "なし、module の読み込みの時に値を組むだけ",
+      "lifetime": "module の最上位の不変の値。資源を持たないので解放は不要",
+      "invariants": ":config の鍵 = 本体の既定値の無い引数(組み立て側の欄を除く)・:env-config の鍵は本体の引数の名でも :config の鍵でも組み立て側の欄でもない・(resolve (program-reference f)) は f そのもの"
+    },
+    {
+      "id": "M2",
+      "responsibility": "同じ System から (a) 1 process で全 service を回す Program と (b) coordinator へ渡す JSON を導き、設定から本体の引数を作る唯一の場所を持つ(program-arguments・config-of・service-program・system-main・system-declaration・resolve)",
+      "owns": "coordinator の宣言の JSON の形・上書きの重ね方と検め・JSON の鍵から Hy の引数名への変換",
+      "hides": "(a) で関数を直に使うか参照を解くか",
+      "interface": "program-arguments(program, config) → dict・config-of(service, overrides) → dict(宣言に無い上書きの鍵は TypeError)・system-declaration(system, revision, overrides?) → list[dict]・system-main(system, overrides?) → Program[list]",
+      "effects": "(a) は doeff の scheduler の Spawn・Gather だけ。(b) と program-arguments は純粋",
+      "lifetime": "なし、呼ぶたびに組む。状態を持たない",
+      "invariants": "本体へ渡るのは本体の引数の名の設定だけ・run.config は :config と :env-config を重ねた平たい 1 つ・設定から引数を作る写しは他に無い(semgrep)"
+    },
+    {
+      "id": "M3",
+      "responsibility": "宣言の JSON の factory を解き、program-arguments で本体を組み、env には record を除いた設定の全体を渡して走らせる(job_entry service・replay_main・coordinator)",
+      "owns": "process の起動・handler の組み立て・記録の層(record の読み手)",
+      "hides": "worker の process・commit の準備",
+      "interface": "coordinator の宣言 JSON(M2 の出力)。起動の行に本体へ渡さない設定の鍵を印字する",
+      "effects": "実 I/O(process・HTTP・file)",
+      "lifetime": "service の process の寿命。落ちたら coordinator が起こし直す",
+      "invariants": "factory は module:attr で解ける・設定から引数を作る写しを持たない"
+    },
+    {
+      "id": "M4",
+      "responsibility": "業務の周回(アプリの defk <名>-program)",
+      "owns": "業務の判断・答え",
+      "hides": "なし、業務の判断を公開の契約の外へ出さない",
+      "interface": "defk の契約(:pre の引数 = 本体の設定だけ・:post の答え)",
+      "effects": "型のある doeff の effect だけ(共有の保存・scheduler・宛先ごとの effect)。file・lock・socket・子 process を直に触らない",
+      "lifetime": "Program の寿命(周回を続ける・cycles で有限)",
+      "invariants": "直の I/O が無い・env だけが読む設定を引数に持たない"
+    },
+    {
+      "id": "M5",
+      "responsibility": "宣言の値が名指す本体の中の直の I/O を、置き場と書き方を問わず断る(agora-controllers controllers/worker/adr/defadr_worker_business_code_touches_io_only_through_effects.hy の service-body-report)",
+      "owns": "宣言を作りうる module の閉包の求め方・断る語の正規表現",
+      "hides": "form の範囲を Hy の reader で取ること",
+      "interface": "pytest の検 test_a_service_body_that_touches_a_file_is_red_wherever_it_is_declared・test_a_declaration_the_checker_cannot_read_is_red・test_the_service_bodies_in_this_repo_touch_no_lock_socket_file",
+      "effects": "検査の道具として module を import し file を読む",
+      "lifetime": "検の走行ごと",
+      "invariants": "読めた本体が 0 なら赤・検められない宣言(import で落ちる module・最上位の defk として読めない本体)が 1 つでも在れば赤"
+    },
+    {
+      "id": "M6",
+      "responsibility": "doeff の repo で macro を定義してよいのは doeff-hy と名簿の file だけ(ADR-DOE-HY-005 R5)",
+      "owns": "名簿 MACRO-OWNER-ROSTER",
+      "hides": "なし、名簿は公開の一覧",
+      "interface": "test_adr_doe_hy_005_macros_live_only_in_doeff_hy",
+      "effects": "検査の道具として file を読む",
+      "lifetime": "検の走行ごと",
+      "invariants": "名簿の外の defmacro は赤"
+    },
+    {
+      "id": "M7",
+      "responsibility": "宣言の :env が名指す関数で、平たい run.config から service の effect の handler の組を作る(アプリの env の module。盲検の前の本文では id の無い「env の module」)",
+      "owns": "置き場・資格の file・lease の時間・外への口の設定(:env-config の鍵)",
+      "hides": "本体から見た effect の実装",
+      "interface": "(env config ctx) → handler の list",
+      "effects": "handler が実 I/O を持つ",
+      "lifetime": "service の process の寿命",
+      "invariants": "本体の引数を読まない・:env-config の設定は本体の引数へ漏れない(M1 の検め)"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S-DIST",
+      "axis": "distribution",
+      "applicability": "applicable",
+      "change": "1 process の main で確かめた系を、同じ宣言のまま cluster へ出す(新しい service を足して coordinator へ宣言する)。盲検 A: 実行先の記録の設定 record を宣言の :config に書く",
+      "claim": "宣言の値(M1)を変えずに M2 が JSON を出し、M3 が参照を解いて 1 process の main と同じ関数を得る。前提: 本体の関数は module の最上位にある",
+      "expected_scope": "アプリの宣言と本体だけ = M4(design-before-blind.md S-DIST)",
+      "actual_scope": "修正前(doeff a492bd01): record を宣言に書くと 1 process の main は unexpected keyword argument 'record'・実行先は exit 0 で答え 2。本体が record という名の引数を取ると main は正常・実行先は missing 'record' で exit 1。本物の repo の scheduling-placement-program も実行先へ出すと落ちる形だった。宣言と本体だけでは直せず、M1(組み立て側の欄の名)・M2(program-arguments)・M3(写しの削除)の変更が要った。修正後: 同じ宣言が両方の道で答え 3、record を引数に取る本体は宣言の時点で断られる",
+      "changed_modules": [
+        "M1",
+        "M2",
+        "M3",
+        "M4"
+      ],
+      "unchanged_modules": [
+        "M5",
+        "M6",
+        "M7"
+      ],
+      "reason": "知識の漏れ。M3 だけが知る『record は組み立て側の欄』が、M1 が本体の引数と定めた config の名前空間に同居し、設定から引数を作る処理が 3 か所(service-program・job_entry・replay_main)に写してあって record を外すのが後の 2 つだけだった。正当な契約の変更ではない",
+      "revision": "doeff 83937cd7(検の先行・semgrep 規則 doeff-cluster-program-arguments-are-built-in-one-place)・1ba7fcf7(program-arguments の 1 か所・ASSEMBLY-KEYS・check-program-arguments)・agora-controllers 3bf9db50(引数 record → journal)。修正後、同じ要求は宣言と本体(M4)だけで両方の道が同じ答えになることを再現で確かめた(evidence/repro-a-after.log・evidence/scenarios-after.log)"
+    },
+    {
+      "id": "S-CONC",
+      "axis": "concurrency",
+      "applicability": "applicable",
+      "change": "書き手の service を、版の入れ替えの時に書きが重ならないように渡す(handoff)",
+      "claim": "宣言の :update \"handoff\" を書くだけで M2 が JSON の update 欄に写し、M3 が新旧を並べて起こす。書きを 1 つに絞るのは本体の名前付き lease(M4)。前提: coordinator は handoff を実装済み",
+      "expected_scope": "アプリの宣言の 1 引数と本体の lease の扱い = M4(design-before-blind.md S-CONC)",
+      "actual_scope": "予想どおり。:update handoff が coordinator への宣言に写り、語彙の外(rolling)は宣言の時点で ValueError(修正前・修正後とも同じ — evidence/scenarios-before.log・evidence/scenarios-after.log)",
+      "changed_modules": [
+        "M4"
+      ],
+      "unchanged_modules": [
+        "M1",
+        "M2",
+        "M3",
+        "M5",
+        "M6",
+        "M7"
+      ],
+      "reason": "正当な契約の使用(宣言の欄を書くだけ)。入れ替えの形は M1 の閉じた語彙で、M2 は写すだけ",
+      "revision": "不要。予想どおりの範囲で、語彙の外の反例も宣言の時点で断られた"
+    },
+    {
+      "id": "S-HW",
+      "axis": "hardware",
+      "applicability": "applicable",
+      "change": "service を特定の種類の node(k3s の node・GPU を持つ機体)へ置く",
+      "claim": ":requires の文字列の鍵の写像に条件を書くだけ。M1・M2 は中身を解釈せず JSON へ写し、置き場を決めるのは coordinator の方策(M3)",
+      "expected_scope": "アプリの宣言の :requires = M4(条件の語が新しければ M3)(design-before-blind.md S-HW)",
+      "actual_scope": "予想どおり。{'gpu': 'a100', 'kind': 'k3s'} が解釈されずに写り、文字列でない鍵は宣言の時点で TypeError(修正前・修正後とも同じ)",
+      "changed_modules": [
+        "M4"
+      ],
+      "unchanged_modules": [
+        "M1",
+        "M2",
+        "M3",
+        "M5",
+        "M6",
+        "M7"
+      ],
+      "reason": "正当な契約の使用。条件の意味は coordinator の方策が持ち、宣言の値は写すだけ",
+      "revision": "不要。予想どおりの範囲"
+    },
+    {
+      "id": "S-EFF",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "service の本体が新しい外部の副作用(HTTP の読み・通知の送信)を要る。盲検 B: 本体を宣言と別の module に置き、本体が直に file を読み書きする",
+      "claim": "effect の型と handler(env の module)を足し、本体は effect を出すだけ。宣言(M1)と投影(M2)は変わらない。本体が直に I/O を書けば、どの dir でも M5 が赤にする",
+      "expected_scope": "アプリの effect の型・handler・env・本体 = M4 と env の module(M7)(design-before-blind.md S-EFF)",
+      "actual_scope": "修正前(agora-controllers 3bf9db50 の ADR): 宣言を別の module・包む関数・名前の定数で書くと M5 は本体を 1 本も読まず緑(4 形のうち赤は同じ module の形だけ)。本物の repo で読めた本体 90・宣言の値が名指す本体 94。盲検 B の差分(controllers/digest)は読めた本体 0。さらに外への口の設定(acp-url・http-timeout)が本体の使わない引数として漏れていた。修正後: 4 形とも直の I/O は赤・effect だけの本体は緑、本物の repo で 94 本を読み違反 0",
+      "changed_modules": [
+        "M1",
+        "M2",
+        "M3",
+        "M4",
+        "M5",
+        "M7"
+      ],
+      "unchanged_modules": [
+        "M6"
+      ],
+      "reason": "2 つの漏れ。(1) どの関数が本体かは M1 の値が持つのに M5 が字面から組み直し『宣言は本体と同じ module にある』と仮定していた(macro が 1 つの form に置いて暗黙に守っていた責務が、置き換えの表から抜けた)。(2) 設定の名前空間 1 つを本体の引数と env が共有し、env の設定が本体の契約へ漏れた。どちらも正当な契約の変更ではない",
+      "revision": "agora-controllers f08f0fab(M5 は宣言の値 ServiceDef から本体を引く・読めない宣言を赤・ADR R6)・doeff d9a42a41 / 16f97f6a(:env-config)・agora-controllers 659f05c3(使わない引数を外す)。修正後、新しい effect の要求は M4 と M7 だけで足り、直の I/O は置き場を問わず M5 が赤にすることを確かめた"
+    },
+    {
+      "id": "S-STORE",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "service の状態の置き場を worker の手元から共有の保存(や DB)へ変える。env の handler が資格の file・lease の時間を要る",
+      "claim": "本体は ReadShared/WriteShared の effect で読み書きし、置き場の選択は env の handler。本体が sqlite3・open などで直に保存すれば M5 が赤にする",
+      "expected_scope": "env の handler だけ = M7(本体は変えない)(design-before-blind.md S-STORE)",
+      "actual_scope": "修正前: env だけが読む設定(token-file・lease-ttl・margin-ms)を宣言の :config に書くと、本体が unexpected keyword argument で 1 process の main と実行先の両方とも落ちる。だから本物の repo の書き手 4 本は使わない引数として受けていた(本体 94 本のうち 5 本)。env の設定を足すたびに本体の公開の契約(M4)が変わり、M1・M2 に持ち主を分ける手段が無かった。盲検 B の本体(手元の file の cursor)は M5 に読まれず緑。修正後: :env-config に書いた設定は env だけが読み、本体に触れずに足せる。使わない引数 5 → 0",
+      "changed_modules": [
+        "M1",
+        "M2",
+        "M3",
+        "M4",
+        "M5",
+        "M7"
+      ],
+      "unchanged_modules": [
+        "M6"
+      ],
+      "reason": "知識の漏れ(S-EFF と同じ 2 つ)。置き場の設定は M7 の知識なのに、名前空間の共有で M4 の契約に入り込んでいた",
+      "revision": "doeff d9a42a41(検の先行 — 修正前の断面で 5 本が振る舞いの赤)・16f97f6a(:env-config・持ち主の重なりの検め・上書きの検め)・53193a83(README)・agora-controllers 659f05c3。修正後、env の設定を足す変更は M7 と宣言の :env-config だけで済み、本体は変わらないことを確かめた(evidence/scenarios-after.log・evidence/unused-params-after.log)"
+    },
+    {
+      "id": "S-SIM",
+      "axis": "simulation",
+      "applicability": "applicable",
+      "change": "系の全体を仮想の時計の上で決定的に回す(agora-controllers controllers/agora_sim)。上書きで周期を変える",
+      "claim": "同じ宣言の値を System で束ね、M2 の system-main が handler だけを差し替えて回す。宣言と本体は変わらない。設定の鍵が本体の引数に無ければ Program を組む時点で失敗し、黙って既定値にならない",
+      "expected_scope": "回す側の handler の組と上書きの設定だけ(組み立ての入口)。変わる module なし(design-before-blind.md S-SIM)",
+      "actual_scope": "正常例は予想どおり(上書きの cycles で答え [1])。食い違いは『組む時』ではなく走らせた時に初めて落ち、綴りの違う上書き(cycle)は Python の文言(unexpected keyword argument 'cycle')で落ちた。修正後は宣言の時点(引数 base が :config に無い)と上書きの時点(宣言に無い設定の鍵 cycle)で service の名と鍵を名指して断る",
+      "changed_modules": [
+        "M1",
+        "M2"
+      ],
+      "unchanged_modules": [
+        "M3",
+        "M4",
+        "M5",
+        "M6",
+        "M7"
+      ],
+      "reason": "予想の文言(組む時に失敗する)が実装より強かった(盲検 A の細部の指摘)。回す側の変更範囲は予想どおりで、M1・M2 の変更は検めの位置を宣言の時点へ前倒しした修正",
+      "revision": "doeff 1ba7fcf7(check-program-arguments)・16f97f6a(config-of の上書きの検め)。修正後の失敗の位置と文言を evidence/scenarios-after.log で確かめた"
+    }
+  ],
+  "checks": [
+    {
+      "status": "passed",
+      "id": "K01-S-DIST-negative-before-fix",
+      "scenarios": [
+        "S-DIST"
+      ],
+      "control": "negative",
+      "expectation": "修正前(doeff a492bd01 の doeff-cluster)で盲検 A の反例が成立する: record を宣言した service は 1 process の main と実行先で結果が食い違い、record を引数に取る本体は実行先だけで落ちる",
+      "observation": "(a) system-main: TypeError: ledger_program() got an unexpected keyword argument 'record'・(b) job_entry service: exit=0 答え 2。record を引数に取る tally: (b) exit=1 missing 1 required positional argument: 'record'",
+      "evidence": {
+        "path": "evidence/repro-a-before.log",
+        "sha256": "41ae38a457c1e4d2bb83364d89d6c4d32edb7a63c9f41c4fd428c3007f4fea8c"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K02-S-DIST-negative-semgrep",
+      "scenarios": [
+        "S-DIST"
+      ],
+      "control": "negative",
+      "expectation": "新しい semgrep 規則が修正前の src で設定から引数を作る写しを名指し、修正後は 0 件",
+      "observation": "修正前: job_entry.hy 83・replay_main.hy 41 の 2 件(evidence/semgrep-red-before-fix.log)。修正後: 発火 0 件(evidence/semgrep-after-fix.log)",
+      "evidence": {
+        "path": "evidence/semgrep-red-before-fix.log",
+        "sha256": "68a398fc949aab924f192f039c3b6e873e95781cb46bf7d0f6466a846214eefb"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K03-S-DIST-negative-after-fix",
+      "scenarios": [
+        "S-DIST"
+      ],
+      "control": "negative",
+      "expectation": "修正後、record を引数に取る本体は宣言の時点で service の名と理由を名指して断られる",
+      "observation": "宣言: 失敗 TypeError: service flagged の設定が本体 flagged_program の引数と合わない: 引数 record は組み立て側の欄の名で、どの実行の道でも本体へ渡らない",
+      "evidence": {
+        "path": "evidence/scenarios-after.log",
+        "sha256": "1dd7babc6a2d6f6b8b03925c2abba27c88ef62facb33437a3879b0036d47b1cb"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K04-S-DIST-negative-real-repo",
+      "scenarios": [
+        "S-DIST"
+      ],
+      "control": "negative",
+      "expectation": "修正後の doeff-cluster で agora-controllers の宣言を import すると、本物の scheduling-placement-program(引数 record)が宣言の時点で断られる",
+      "observation": "failed: controllers.agora_sim.incident_placement ほか — TypeError: service scheduling-placement の設定が本体 scheduling_placement_program の引数と合わない: 引数 record は組み立て側の欄の名で…",
+      "evidence": {
+        "path": "evidence/closure-probe-scheduling-record.log",
+        "sha256": "88ed554daa32ede26a39ef3a59519145552ec7123a2aea43f0d5f817df0ff054"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K05-S-DIST-positive",
+      "scenarios": [
+        "S-DIST"
+      ],
+      "control": "positive",
+      "expectation": "修正後、record を :config に書いた同じ宣言が 1 process の main と実行先で同じ答えになる",
+      "observation": "main: OK [3]・worker: exit=0 答え 3(evidence/repro-a-after.log でも ledger の (a)・(b) が同じ答え)",
+      "evidence": {
+        "path": "evidence/scenarios-after.log",
+        "sha256": "1dd7babc6a2d6f6b8b03925c2abba27c88ef62facb33437a3879b0036d47b1cb"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K06-S-DIST-positive-rename",
+      "scenarios": [
+        "S-DIST"
+      ],
+      "control": "positive",
+      "expectation": "agora-controllers の scheduling-placement の引数を journal に改名した後、それを使う検が修正後の doeff で緑",
+      "observation": "focused 6 件 passed",
+      "evidence": {
+        "path": "evidence/agora-rename-tests.log",
+        "sha256": "f33c3b7c23f17daf4c6f5d9dcc782d8dbab570b9cbebe3d9c81e397df2c0fe15"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K07-S-DIST-positive-named-tests",
+      "scenarios": [
+        "S-DIST",
+        "S-SIM"
+      ],
+      "control": "positive",
+      "expectation": "反例 A の修正の後、doeff-cluster の宣言の検と semgrep の規則の検が緑",
+      "observation": "focused 13 件 passed(test_service_declaration.hy ほか)",
+      "evidence": {
+        "path": "evidence/tests-green-after-fix.log",
+        "sha256": "2f56313f546719615ce07931193a438a19bebb9f19828454b9a141d679ba1d52"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K08-S-CONC-positive",
+      "scenarios": [
+        "S-CONC"
+      ],
+      "control": "positive",
+      "expectation": ":update handoff が coordinator への宣言の update 欄に写る",
+      "observation": "update: OK 'handoff'",
+      "evidence": {
+        "path": "evidence/scenarios-after.log",
+        "sha256": "1dd7babc6a2d6f6b8b03925c2abba27c88ef62facb33437a3879b0036d47b1cb"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K09-S-CONC-negative",
+      "scenarios": [
+        "S-CONC"
+      ],
+      "control": "negative",
+      "expectation": "語彙の外の入れ替えの形は宣言の時点で ValueError",
+      "observation": "ValueError: service tally の :update は ('recreate', 'handoff') のどれか: 'rolling'",
+      "evidence": {
+        "path": "evidence/scenarios-after.log",
+        "sha256": "1dd7babc6a2d6f6b8b03925c2abba27c88ef62facb33437a3879b0036d47b1cb"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K10-S-HW-positive",
+      "scenarios": [
+        "S-HW"
+      ],
+      "control": "positive",
+      "expectation": ":requires の条件が中身を解釈されずに写る",
+      "observation": "requires: OK {'gpu': 'a100', 'kind': 'k3s'}",
+      "evidence": {
+        "path": "evidence/scenarios-after.log",
+        "sha256": "1dd7babc6a2d6f6b8b03925c2abba27c88ef62facb33437a3879b0036d47b1cb"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K11-S-HW-negative",
+      "scenarios": [
+        "S-HW"
+      ],
+      "control": "negative",
+      "expectation": "文字列でない鍵の条件は宣言の時点で TypeError",
+      "observation": "TypeError: service tally の :requires の鍵は文字列で書く: 1",
+      "evidence": {
+        "path": "evidence/scenarios-after.log",
+        "sha256": "1dd7babc6a2d6f6b8b03925c2abba27c88ef62facb33437a3879b0036d47b1cb"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K12-S-EFF-negative-before-fix",
+      "scenarios": [
+        "S-EFF",
+        "S-STORE"
+      ],
+      "control": "negative",
+      "expectation": "修正前の M5 で盲検 B の反例が成立する: 同じ直の I/O の本体を別の module・包む関数・名前の定数で宣言すると読めた本体 0 で緑",
+      "observation": "same-module 読めた本体 1・違反 ['(.write-text ']/other-module・wrapper・name-from-const 読めた本体 0・違反 []。本物の repo: 検査が読めた本体 90・宣言の値が名指す本体 94",
+      "evidence": {
+        "path": "evidence/repro-b-before.log",
+        "sha256": "b5d680de33a18d086303037574230efde630c76d1559dc2796913d4e72c5db63"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K13-S-EFF-negative-after-fix",
+      "scenarios": [
+        "S-EFF"
+      ],
+      "control": "negative",
+      "expectation": "修正後の M5 は 4 形とも直の I/O の本体を赤にする",
+      "observation": "4 形とも 読めた本体 1・違反 ['(.write-text ']・検められない宣言 []",
+      "evidence": {
+        "path": "evidence/repro-b-after.log",
+        "sha256": "67a594f5f2806a6c3f5510927921e62a1b73774cfb46f76b7a120ace45630629"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K14-S-EFF-positive",
+      "scenarios": [
+        "S-EFF"
+      ],
+      "control": "positive",
+      "expectation": "修正後の M5 は effect だけの本体を 4 形とも緑にし、本体を 1 本読む(空の検査ではない)。本物の repo で宣言の値が名指す 94 本を読み違反 0",
+      "observation": "4 形とも 読めた本体 1・違反 []・検められない宣言 []。本物の repo: 読めた本体 94・違反 []・検められない宣言 []",
+      "evidence": {
+        "path": "evidence/repro-b-after.log",
+        "sha256": "67a594f5f2806a6c3f5510927921e62a1b73774cfb46f76b7a120ace45630629"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K15-S-EFF-positive-adr-file",
+      "scenarios": [
+        "S-EFF"
+      ],
+      "control": "positive",
+      "expectation": "書き換えた ADR の file の検(R6 の law の反例・読めない宣言の検・本物の repo の検を含む)が緑",
+      "observation": "10 passed",
+      "evidence": {
+        "path": "evidence/m5-adr-file-after.log",
+        "sha256": "5c4df9597b69ec67009da58d70633077a4b8f3e60afab06c827cb424280cb60a"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K16-S-STORE-negative-before-fix",
+      "scenarios": [
+        "S-STORE"
+      ],
+      "control": "negative",
+      "expectation": "修正前は env だけが読む設定を宣言に書く場所が無い: :env-config は受け付けず、:config に書くと本体が両方の道で落ちる",
+      "observation": "service() got an unexpected keyword argument 'env_config'・main / worker とも TypeError: greeter_program() got an unexpected keyword argument 'greeting'",
+      "evidence": {
+        "path": "evidence/scenarios-before.log",
+        "sha256": "c9bffd6e259a4df46aa8cc6c86af9f128b107573d16f08d5d8e5957d53d23003"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K17-S-STORE-negative-tests-before-fix",
+      "scenarios": [
+        "S-STORE",
+        "S-SIM"
+      ],
+      "control": "negative",
+      "expectation": "先に書いた :env-config と上書きの検が、修正前の断面で振る舞いの理由で赤(import の失敗ではない)",
+      "observation": "5 failed, 10 passed — DID NOT RAISE TypeError ほか(test_an_env_setting_reaches_the_env_and_not_the_program・test_an_override_of_an_undeclared_setting_is_refused など)",
+      "evidence": {
+        "path": "evidence/tests-env-config-red.log",
+        "sha256": "6f3c4b8c1b839c429ac492137568132536458755db8e9d01c939551bc826f0b1"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K18-S-STORE-negative-after-fix",
+      "scenarios": [
+        "S-STORE"
+      ],
+      "control": "negative",
+      "expectation": "修正後、env の設定を :config に書くと・本体の引数を :env-config に書くと、宣言の時点で持ち主を名指して断る",
+      "observation": "設定の鍵 greeting は本体の引数に無い(env だけが読む設定なら :env-config に書く)・引数 step_size が :config に無い・env の設定 step-size は本体の引数の名",
+      "evidence": {
+        "path": "evidence/scenarios-after.log",
+        "sha256": "1dd7babc6a2d6f6b8b03925c2abba27c88ef62facb33437a3879b0036d47b1cb"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K19-S-STORE-negative-blind-b-digest",
+      "scenarios": [
+        "S-STORE",
+        "S-EFF"
+      ],
+      "control": "negative",
+      "expectation": "盲検 B の差分そのもの(controllers/digest/keeper.hy が cursor を手元の file に直に読み書き)が、修正前は読まれず、修正後は 2 語で赤",
+      "observation": "修正前: controllers/digest の中で読めた本体 []。修正後: 読めた本体 1・違反 digest_keeper_program の (.read-text・(.write-text",
+      "evidence": {
+        "path": "evidence/repro-b-digest.log",
+        "sha256": "692caa4cf190fde1b860f6f85ee0248278f860372a81eb6eac80952a1067ff34"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K20-S-STORE-positive",
+      "scenarios": [
+        "S-STORE"
+      ],
+      "control": "positive",
+      "expectation": "修正後、:env-config に書いた設定は env が読み本体へは渡らず、1 process の main と実行先の両方で走る",
+      "observation": "main: OK ['sim2']・worker: exit=0 答え 'hi2'",
+      "evidence": {
+        "path": "evidence/scenarios-after.log",
+        "sha256": "1dd7babc6a2d6f6b8b03925c2abba27c88ef62facb33437a3879b0036d47b1cb"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K21-S-STORE-positive-real-repo",
+      "scenarios": [
+        "S-STORE",
+        "S-EFF"
+      ],
+      "control": "positive",
+      "expectation": "agora-controllers で env の設定を :env-config へ移した後、本体が使わない引数を持つ本体が 0",
+      "observation": "本体の数 94 使わない引数を持つ本体 0(修正前は 5 — evidence/unused-params-before.log)",
+      "evidence": {
+        "path": "evidence/unused-params-after.log",
+        "sha256": "bb776eb0a1d8d4e56a2a5ed67f139a770a17151004f05437a7241b7a68fdb523"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K22-S-STORE-positive-named-tests",
+      "scenarios": [
+        "S-STORE",
+        "S-SIM"
+      ],
+      "control": "positive",
+      "expectation": ":env-config の実装の後、doeff-cluster の宣言の検ほか焦点の検が緑",
+      "observation": "focused 19 件 passed",
+      "evidence": {
+        "path": "evidence/tests-env-config-green.log",
+        "sha256": "963911d17b00aa6ca9dbb010958a6e2e7d94060102ee5035c143b331cfb73355"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K23-S-STORE-positive-agora-writers",
+      "scenarios": [
+        "S-STORE"
+      ],
+      "control": "positive",
+      "expectation": "変えた書き手・影・模擬の検と ADR の file が緑。例外は test_conversation_writer.hy の記録と再生の 1 本で、この変更の前から赤(evidence/conversation-recording-preexisting.log — 本線 87443ef7・4aefa59c でも同じく赤。evidence/conversation-recording-preexisting-main.log — agora-controllers の本線 f08f0fab と盲検の後の doeff の変更を含まない doeff-cluster 611f47cb の組でも赤)",
+      "observation": "file ごとに exit=0(budget_writer 10・artifact_writer・shadow 3 本・emulated_messaging・emulated_durable 18・ADR 10)。conversation_writer は 1 failed, 7 passed(変更前から赤の 1 本)",
+      "evidence": {
+        "path": "evidence/agora-env-config-tests.log",
+        "sha256": "f58da6c2fb69d36025f5ae1fea00ce563807406b390f6c5b5f026cb077184343"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K24-S-SIM-positive",
+      "scenarios": [
+        "S-SIM"
+      ],
+      "control": "positive",
+      "expectation": "上書きで周期を変えてテスト用の main で回せる",
+      "observation": "main-override: OK [1]",
+      "evidence": {
+        "path": "evidence/scenarios-after.log",
+        "sha256": "1dd7babc6a2d6f6b8b03925c2abba27c88ef62facb33437a3879b0036d47b1cb"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K25-S-SIM-negative-before-fix",
+      "scenarios": [
+        "S-SIM"
+      ],
+      "control": "negative",
+      "expectation": "修正前は食い違いが走らせた時に初めて Python の文言で落ちる(宣言の時点では通る)",
+      "observation": "宣言: OK の後、main-typo: TypeError: keeper_program() got an unexpected keyword argument 'cycle'・main: missing 1 required positional argument: 'base'",
+      "evidence": {
+        "path": "evidence/scenarios-before.log",
+        "sha256": "c9bffd6e259a4df46aa8cc6c86af9f128b107573d16f08d5d8e5957d53d23003"
+      }
+    },
+    {
+      "status": "passed",
+      "id": "K26-S-SIM-negative-after-fix",
+      "scenarios": [
+        "S-SIM"
+      ],
+      "control": "negative",
+      "expectation": "修正後は宣言の時点と上書きの時点で service の名と鍵を名指して断る",
+      "observation": "TypeError: service keeper の上書きに宣言に無い設定の鍵がある: cycle・service tally の設定が本体 tally_program の引数と合わない: 引数 base が :config に無い",
+      "evidence": {
+        "path": "evidence/scenarios-after.log",
+        "sha256": "1dd7babc6a2d6f6b8b03925c2abba27c88ef62facb33437a3879b0036d47b1cb"
+      }
+    }
+  ],
+  "unresolved": []
+}
