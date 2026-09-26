@@ -1,6 +1,7 @@
 ;; 反例: 法は壊れた handler で赤になる — 法ごとに、その法だけを破る包みを memory の handler の内側に被せて回し、LawBroken を確かめる
 ;; (法が何も確かめずに緑になる形を外す)。
 (require doeff-hy.macros [deftest defhandler <-])
+(import dataclasses)
 (import datetime [datetime timezone])
 (import uuid)
 (import doeff [run with_handlers])
@@ -10,7 +11,8 @@
 (import doeff_records.effects [PutRow WatchChanges ListRows AppendEvent])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.laws [LAW-SCHEMA LawHarness LawBroken law-stale-put-conflicts law-committed-changes-appear-once-in-order
-                            law-epoch-change-resets law-undeclared-writes-are-refused law-transient-rows-expire
+                            law-epoch-change-resets law-undeclared-writes-are-refused law-operator-paths-need-an-operator
+                            law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-append-is-idempotent law-none-removes-a-field
                             law-maintenance-prunes-and-sweeps])
 (import doeff_records.maintenance [PruneChanges Pruned])
@@ -84,6 +86,11 @@
     (assert (breaks? law (broken-harness (MemoryStore LAW-SCHEMA) inner)) law.__name__))
   ;; 書き手を問わない handler(誰の書きも maker として通す)。
   (assert (breaks? law-undeclared-writes-are-refused (broken-harness (MemoryStore LAW-SCHEMA) None (fn [_] "maker"))))
+  ;; operator の主体を問わない置き場: agent(maker)も operator の一覧に入れた宣言 = agent が operator の欄を書ける。
+  (assert (breaks? law-operator-paths-need-an-operator
+                   (broken-harness (MemoryStore (dataclasses.replace LAW-SCHEMA :operators #("overseer" "maker"))) None)))
+  ;; 誰の書きも operator の主体として通す handler(身元を operator にすり替える)。
+  (assert (breaks? law-operator-paths-need-an-operator (broken-harness (MemoryStore LAW-SCHEMA) None (fn [_] "overseer"))))
   ;; 時計の進まない handler(保持の期限が来ない)— memory の handler の GetTime だけを止め、法の Delay は仮想の時計が進める。
   (setv store (MemoryStore LAW-SCHEMA))
   (assert (breaks? law-transient-rows-expire

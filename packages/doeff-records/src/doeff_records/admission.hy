@@ -1,7 +1,8 @@
 ;;; 書きの許可・保持・索引・頁の判断(純関数・I/O なし)。handler の組(memory・PG・写し)は全部この 1 つを呼ぶ —
 ;;; 判断を handler ごとに写さない(写すと 1 つだけ古い答えを返す日が来る)。
 ;;;
-;;; 判断の順(PutRow): 期待(Conflict)→ 鍵の形 → 宣言の外の欄 → 終端の行 → 鍵の欄の書き換え → 書き手 → 状態の語彙 → 承認 → 上限。
+;;; 判断の順(PutRow): 期待(Conflict)→ 鍵の形 → 宣言の外の欄 → 終端の行 → 鍵の欄の書き換え → 書き手 → 状態の語彙 →
+;;; operator の欄の主体 → 上限。
 ;;; 期待を先に見るのは、古い版で書いた呼び手に「読み直せ」を先に返すため(読み直した後の書きが断られるかは、その時の行で決まる)。
 (import dataclasses [dataclass])
 (import datetime [datetime timezone])
@@ -156,6 +157,17 @@
              (if (is reason None) None (Refused (.format "表 {} の欄 {!r} の承認が通らない: {}" decl.name guarded reason))))))
 
 
+(defn #^ (| Refused None) operator-refusal [#^ TableDecl decl #^ str writer #^ tuple changed #^ tuple operators] ; defk にできない: handler(memory・PG・写し)が同期に呼ぶ judge-put の 1 段(この file の判断はすべて純関数の defn)
+  "operator の宣言の欄を agent が書かないようにする: 変わる欄に operator-paths の欄があれば、書き手が operator の主体の一覧
+   (RecordsSchema.operators)に入っていること。書き手の名は handler を組む時に身元から入る値で、effect の引数には無い —
+   agent が operator を名乗る口は無い。"
+  (setv guarded (tuple (gfor name changed :if (in name decl.operator-paths) name)))
+  (if (and guarded (not-in writer operators))
+      (Refused (.format "表 {} の欄 {!r} は operator の宣言の欄で、書いてよいのは operator の主体 {!r} だけ({!r} はその中に無い)"
+                        decl.name guarded operators writer))
+      None))
+
+
 (defn #^ (| Refused None) size-refusal [#^ TableDecl decl #^ FrozenMap value]
   (when (is decl.size-budget None) (return None))
   (setv size (json-bytes value))
@@ -165,15 +177,22 @@
 
 
 (defn #^ (| Admitted Refused) judge-put [#^ TableDecl decl #^ str writer #^ (| Row None) current #^ tuple key #^ FrozenMap diff
-                                         #^ (| Approval None) approval #^ Callable approval-check]
-  "書きを許すか: Admitted(確定する値)か Refused(理由)。期待(judge-expect)は呼び手が先に見る。"
+                                         #^ (| Approval None) [approval None] #^ (| Callable None) [approval-check None]
+                                         * #^ (| tuple None) [operators None]]
+  "書きを許すか: Admitted(確定する値)か Refused(理由)。期待(judge-expect)は呼び手が先に見る。
+   operators = operator の主体の一覧(置き場の宣言の RecordsSchema.operators)— operator の宣言の欄の書きはこれで判定する。
+   ⚠ 移行の間だけ: operators を渡さない呼び手(外の系の写しの handler)は、今までの承認の印(approval /
+   approval-check)で判定する。写しが operators を渡すようになったら、承認の引数・approval-refusal・refuse-every-approval・
+   Approval をまとめて消す。"
   (setv shape (shape-refusal decl current key diff))
   (when shape (return shape))
   (setv changed (changed-fields decl current diff)
         value (landed-value decl current key diff))
   (or (writer-refusal decl writer changed)
       (state-refusal decl value)
-      (approval-refusal decl key changed approval approval-check)
+      (if (is operators None)
+          (approval-refusal decl key changed approval (or approval-check refuse-every-approval))
+          (operator-refusal decl writer changed operators))
       (size-refusal decl value)
       (Admitted value)))
 

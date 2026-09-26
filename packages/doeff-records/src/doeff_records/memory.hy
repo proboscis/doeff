@@ -6,7 +6,6 @@
 ;;; 書き手の身元は handler を組む時の引数 writer(effect の欄にしない)。同じ MemoryStore を別の writer の handler で包めば、
 ;;; 1 つの置き場を複数の書き手が使う形になる。
 (require doeff-hy.macros [defhandler defk <-])
-(import collections.abc [Callable])
 (import doeff [Pure])
 (import doeff_time [GetTime])
 (import doeff_records.watching [wait-for-changes])
@@ -17,7 +16,7 @@
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-append row-expired?
                                  event-expired? where-refusal row-matches? listed-row key-text next-watch-sequence
-                                 refuse-every-approval epoch-ms])
+                                 epoch-ms])
 
 (setv DEFAULT-POLL-SECONDS 0.05)
 
@@ -29,11 +28,9 @@
 
 
 (defclass MemoryStore []
-  "memory の置き場: schema = 宣言 / approval-check = 承認の確かめ方 / poll-seconds = WatchChanges が変更を待つ間の眠りの刻み。"
-  (defn #^ None __init__ [self #^ RecordsSchema schema * #^ Callable [approval-check refuse-every-approval]
-                          #^ float [poll-seconds DEFAULT-POLL-SECONDS]]
+  "memory の置き場: schema = 宣言(operator の欄を書ける主体の一覧 operators を含む)/ poll-seconds = WatchChanges が変更を待つ間の眠りの刻み。"
+  (defn #^ None __init__ [self #^ RecordsSchema schema * #^ float [poll-seconds DEFAULT-POLL-SECONDS]]
     (setv self.schema schema
-          self.approval-check approval-check
           self.poll-seconds poll-seconds
           self.epoch 1
           self.floor 0
@@ -108,7 +105,7 @@
         current (if (is stored None) None stored.row))
   (setv conflict (judge-expect ask.expect current))
   (when conflict (return conflict))
-  (setv verdict (judge-put decl writer current ask.key ask.value ask.approval store.approval-check))
+  (setv verdict (judge-put decl writer current ask.key ask.value :operators store.schema.operators))
   (when (isinstance verdict Refused) (return verdict))
   (setv version (if (is current None) 1 (+ current.version 1))
         row (Row ask.key verdict.value version))

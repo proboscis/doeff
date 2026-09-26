@@ -3,7 +3,7 @@
 ;; PostgreSQL は env DOEFF_RECORDS_TEST_PG_DSN が在る時だけ(無ければ skip と表示し、緑とは数えない)。
 (require doeff-hy.macros [deftest <-])
 (import doeff_records.laws [law-stale-put-conflicts law-committed-changes-appear-once-in-order law-epoch-change-resets
-                            law-undeclared-writes-are-refused law-transient-rows-expire
+                            law-undeclared-writes-are-refused law-operator-paths-need-an-operator law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-append-is-idempotent law-watch-waits-for-a-change
                             law-none-removes-a-field law-maintenance-prunes-and-sweeps])
 (import tests.interpreters [LawSetup])
@@ -67,4 +67,10 @@
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-maintenance-prunes-and-sweeps harness))
+  (assert transcript))
+
+(deftest test-operator-paths-need-an-operator
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-operator-paths-need-an-operator harness))
   (assert transcript))

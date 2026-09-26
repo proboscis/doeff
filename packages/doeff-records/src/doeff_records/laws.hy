@@ -22,7 +22,8 @@
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.admission [row-matches?])
 
-(setv MAKER "maker" PAINTER "painter" CLOSER "closer" STRANGER "stranger")
+;; OVERSEER = operator の主体(宣言の operators に入る唯一の書き手)— 法の中で operator の宣言の欄 grant を書ける。
+(setv MAKER "maker" PAINTER "painter" CLOSER "closer" STRANGER "stranger" OVERSEER "overseer")
 (setv TICKET-KEEP-SECONDS 60)
 
 (setv LAW-SCHEMA
@@ -30,7 +31,7 @@
     :tables (FrozenMap {"parts" (TableDecl :name "parts" :key-fields #("id")
                                 :fields #((FieldDecl "id" #(MAKER)) (FieldDecl "label" #(MAKER))
                                           (FieldDecl "color" #(MAKER PAINTER)) (FieldDecl "state" #(MAKER CLOSER))
-                                          (FieldDecl "note" #(MAKER)) (FieldDecl "grant" #(MAKER)))
+                                          (FieldDecl "note" #(MAKER)) (FieldDecl "grant" #(MAKER OVERSEER)))
                                 :indexes #("color" "label")
                                 :states #("open" "held" "closed") :terminal #("closed") :initial "open"
                                 :operator-paths #("grant") :size-budget 400)
@@ -40,7 +41,8 @@
                                   :indexes #("owner")
                                   :states #("open" "done") :terminal #("done") :initial "open"
                                   :retention (KeepFor TICKET-KEEP-SECONDS))})
-    :streams (FrozenMap {"journal" (StreamDecl :name "journal" :writers #(MAKER) :size-budget 200)})))
+    :streams (FrozenMap {"journal" (StreamDecl :name "journal" :writers #(MAKER) :size-budget 200)})
+    :operators #(OVERSEER)))
 
 
 (defclass LawBroken [AssertionError]
@@ -208,6 +210,35 @@
   (<- final (as-writer harness MAKER (ReadRow "parts" #("p1"))))
   (require-law (and (isinstance final Row) (= final.version 4)) law (.format "終端の行が変わった: {!r}" final))
   (+ [born] refusals [untouched nobody painted same closed frozen final]))
+
+
+;; --- 法 4b: operator の宣言の欄は operator の主体だけが書ける・他の欄は欄の書き手の宣言どおり ------------------------
+
+(defk law-operator-paths-need-an-operator [#^ LawHarness harness]
+  {:pre [(: harness LawHarness)] :post [(: % list)]}
+  "operator の宣言の欄を agent が書けないことを、どの置き場の組でも同じに確かめるための法:
+   欄の書き手でも operator の主体でなければ Refused・operator の主体は書ける・operator の主体でも欄の書き手でない欄は書けない・
+   operator-paths の外の欄には主体の区別が効かない。"
+  (setv law "operator の宣言の欄は operator の主体だけが書き、他の欄は欄の書き手の宣言どおり")
+  (<- born (as-writer harness MAKER (PutRow "parts" #("p5") (FrozenMap {"label" "a"}) (ExpectAbsent))))
+  (require-law (isinstance born Written) law (.format "行を作る: {!r}" born))
+  (setv refusals [])
+  (for [writer [MAKER STRANGER PAINTER]]
+    (<- answer (as-writer harness writer (PutRow "parts" #("p5") (FrozenMap {"grant" "yes"}) (ExpectAny))))
+    (require-law (isinstance answer Refused) law (.format "operator でない {} の grant の書き: {!r}" writer answer))
+    (.append refusals answer))
+  (<- granted (as-writer harness OVERSEER (PutRow "parts" #("p5") (FrozenMap {"grant" "yes"}) (ExpectVersion 1))))
+  (require-law (and (isinstance granted Written) (= granted.version 2) (= (get granted.value "grant") "yes")) law
+               (.format "operator の主体の grant の書き: {!r}" granted))
+  (<- overreach (as-writer harness OVERSEER (PutRow "parts" #("p5") (FrozenMap {"label" "z"}) (ExpectAny))))
+  (require-law (isinstance overreach Refused) law (.format "operator の主体が書き手でない欄を書いた: {!r}" overreach))
+  (<- labeled (as-writer harness MAKER (PutRow "parts" #("p5") (FrozenMap {"label" "b"}) (ExpectVersion 2))))
+  (require-law (and (isinstance labeled Written) (= labeled.version 3)) law
+               (.format "operator の欄の外は欄の書き手の宣言どおり: {!r}" labeled))
+  (<- final (as-writer harness MAKER (ReadRow "parts" #("p5"))))
+  (require-law (= final (Row #("p5") (FrozenMap {"id" "p5" "label" "b" "state" "open" "grant" "yes"}) 3)) law
+               (.format "断った書きが行を変えた: {!r}" final))
+  (+ [born] refusals [granted overreach labeled final]))
 
 
 ;; --- 法 5: transient の行は期限で消え、record の行は消えない ------------------------------------------------
@@ -385,6 +416,7 @@
             "committed-changes-appear-once-in-order" law-committed-changes-appear-once-in-order
             "epoch-change-resets" law-epoch-change-resets
             "undeclared-writes-are-refused" law-undeclared-writes-are-refused
+            "operator-paths-need-an-operator" law-operator-paths-need-an-operator
             "transient-rows-expire" law-transient-rows-expire
             "indexed-list-equals-filtered-scan" law-indexed-list-equals-filtered-scan
             "append-is-idempotent" law-append-is-idempotent
@@ -392,5 +424,5 @@
             "none-removes-a-field" law-none-removes-a-field
             "maintenance-prunes-and-sweeps" law-maintenance-prunes-and-sweeps})
 (setv SHARED-LAWS #("stale-put-conflicts" "committed-changes-appear-once-in-order" "epoch-change-resets"
-                    "undeclared-writes-are-refused" "indexed-list-equals-filtered-scan" "append-is-idempotent"
+                    "undeclared-writes-are-refused" "operator-paths-need-an-operator" "indexed-list-equals-filtered-scan" "append-is-idempotent"
                     "none-removes-a-field"))

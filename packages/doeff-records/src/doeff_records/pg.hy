@@ -19,7 +19,7 @@
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.admission [AppendReplay judge-expect judge-put judge-append row-expired? where-refusal listed-row
-                                 key-text key-from-text canonical-json next-watch-sequence refuse-every-approval epoch-ms])
+                                 key-text key-from-text canonical-json next-watch-sequence epoch-ms])
 (import doeff_records.watching [wait-for-changes])
 (import doeff_records.pg_sql [Statement DEFAULT-PREFIX checked-prefix schema-statements drop-statements lock-statement
                               store-head-statement read-row-statement lock-row-statement list-rows-statement
@@ -45,11 +45,11 @@
   "PostgreSQL の置き場 1 つ: connection = 自動 commit の psycopg の接続 / schema = 宣言 /
    unreachable-errors = 接続の失敗の例外の型(接続を開いた composition root が渡す — psycopg なら
    #(psycopg.OperationalError psycopg.InterfaceError))/ prefix = 表の名の接頭辞 /
-   origin-host = 行に刻む機体の名 / approval-check = 承認の確かめ方 / poll-seconds = WatchChanges の読み直しの間隔。
+   origin-host = 行に刻む機体の名 / poll-seconds = WatchChanges の読み直しの間隔。
    作る時に表を用意する(何度でも同じ)。"
   (defn #^ None __init__ [self #^ PgConnection connection #^ RecordsSchema schema * #^ tuple unreachable-errors
                           #^ str [prefix DEFAULT-PREFIX]
-                          #^ (| str None) [origin-host None] #^ Callable [approval-check refuse-every-approval]
+                          #^ (| str None) [origin-host None]
                           #^ float [poll-seconds DEFAULT-POLL-SECONDS]]
     (when (not (getattr connection "autocommit" False))
       (raise (ValueError "PgRecordsHost の接続は自動 commit(psycopg.connect(..., autocommit=True))— 書きの transaction は host が開く")))
@@ -57,7 +57,6 @@
           self.schema schema
           self.prefix (checked-prefix prefix)
           self.origin-host (or origin-host (socket.gethostname))
-          self.approval-check approval-check
           self.poll-seconds poll-seconds
           self.errors unreachable-errors)
     (for [statement (schema-statements self.prefix schema)]
@@ -183,7 +182,7 @@
           current (if (is record None) None (row-of record))
           conflict (judge-expect ask.expect current))
     (when conflict (return conflict))
-    (setv verdict (judge-put decl writer current ask.key ask.value ask.approval host.approval-check))
+    (setv verdict (judge-put decl writer current ask.key ask.value :operators host.schema.operators))
     (when (isinstance verdict Refused) (return verdict))
     (setv version (if (is current None) 1 (+ current.version 1))
           payload (canonical-json verdict.value))
