@@ -5,7 +5,8 @@
 ;;; 時刻は doeff-time の GetTime(仮想の時計の下では保持の期限も一瞬で来る)、WatchChanges の待ちは Delay。
 ;;; 書き手の身元は handler を組む時の引数 writer(effect の欄にしない)。同じ MemoryStore を別の writer の handler で包めば、
 ;;; 1 つの置き場を複数の書き手が使う形になる。
-(require doeff-hy.macros [defhandler])
+(require doeff-hy.macros [defhandler defk <-])
+(import collections.abc [Callable])
 (import doeff [Pure])
 (import doeff_time [GetTime])
 (import doeff_records.watching [wait-for-changes])
@@ -13,6 +14,7 @@
                               Reset WatchCursor ListCursor Refused])
 (import doeff_records.effects [ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents])
 (import doeff_records.faults [AdvanceStoreEpoch])
+(import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-append row-expired?
                                  event-expired? where-refusal row-matches? listed-row key-text next-watch-sequence
                                  refuse-every-approval epoch-ms])
@@ -22,13 +24,14 @@
 
 (defclass StoredRow []
   "置き場の行 1 つ: row = 答えに出す Row / updated-ms = 最後に書かれた刻。"
-  (defn __init__ [self #^ Row row #^ int updated-ms]
+  (defn #^ None __init__ [self #^ Row row #^ int updated-ms]
     (setv self.row row self.updated-ms updated-ms)))
 
 
 (defclass MemoryStore []
   "memory の置き場: schema = 宣言 / approval-check = 承認の確かめ方 / poll-seconds = WatchChanges が変更を待つ間の眠りの刻み。"
-  (defn __init__ [self #^ RecordsSchema schema * [approval-check refuse-every-approval] [poll-seconds DEFAULT-POLL-SECONDS]]
+  (defn #^ None __init__ [self #^ RecordsSchema schema * #^ Callable [approval-check refuse-every-approval]
+                          #^ float [poll-seconds DEFAULT-POLL-SECONDS]]
     (setv self.schema schema
           self.approval-check approval-check
           self.poll-seconds poll-seconds
@@ -37,6 +40,8 @@
           self.head 0
           self.rows (dfor name schema.tables name {})
           self.changes []
+          ;; 変更の番号 → 積んだ刻(epoch ミリ秒)— 刈り取り(PruneChanges)が古さを測るため。
+          self.changed-at {}
           self.event-head 0
           self.events []
           self.by-idempotency {})))
@@ -44,8 +49,10 @@
 
 ;; --- 保持 ------------------------------------------------------------------------------------------------
 
-(defn #^ None purge-expired [#^ MemoryStore store #^ int now-ms]
-  "保持の期限を過ぎた行を消して RowRemoved を積み、期限を過ぎた出来事を捨てる(どの操作の前にも呼ぶ — 読みに期限切れが見えない)。"
+(defn #^ int purge-expired [#^ MemoryStore store #^ int now-ms]
+  "保持の期限を過ぎた行を消して RowRemoved を積み、期限を過ぎた出来事を捨てる(どの操作の前にも呼ぶ — 読みに期限切れが見えない)。
+   答え = 消した行の数。"
+  (setv removed 0)
   (for [#(name decl) (sorted (.items store.schema.tables))]
     (setv table (get store.rows name))
     (for [text (sorted (lfor #(text stored) (.items table)
@@ -53,6 +60,8 @@
                              text))]
       (setv stored (.pop table text))
       (+= store.head 1)
+      (+= removed 1)
+      (setv (get store.changed-at store.head) now-ms)
       (.append store.changes (RowRemoved name stored.row.key store.head))))
   (setv kept (lfor event store.events
                    :if (not (event-expired? (store.schema.stream event.stream) event.at now-ms))
@@ -61,7 +70,7 @@
     (when (event-expired? (store.schema.stream event.stream) event.at now-ms)
       (.pop store.by-idempotency #(event.stream event.idempotency-key) None)))
   (setv store.events kept)
-  None)
+  removed)
 
 
 ;; --- 行 --------------------------------------------------------------------------------------------------
@@ -105,6 +114,7 @@
         row (Row ask.key verdict.value version))
   (setv (get table text) (StoredRow row now-ms))
   (+= store.head 1)
+  (setv (get store.changed-at store.head) now-ms)
   (.append store.changes (RowChanged ask.table ask.key version verdict.value store.head))
   (Written version verdict.value))
 
@@ -150,13 +160,29 @@
 (defn #^ int memory-advance-epoch [#^ MemoryStore store]
   (+= store.epoch 1)
   (setv store.floor store.head
-        store.changes [])
+        store.changes []
+        store.changed-at {})
   store.epoch)
+
+
+;; --- 手入れ ------------------------------------------------------------------------------------------------
+
+(defk memory-prune-changes [store ask now-ms]
+  {:pre [(: store MemoryStore) (: ask PruneChanges) (: now-ms int)] :post [(: % Pruned)]}
+  "変更の列が際限なく伸びないように、keep-seconds より古い変更(刻 <= 今 − 保持)を消して floor を上げる。"
+  (setv before (- now-ms (int (* 1000 ask.keep-seconds)))
+        ;; 刈る範囲は番号の前方の連なり(刻が古い変更の最大の番号まで — PostgreSQL の handler と同じ)。
+        edge (max (gfor change store.changes :if (<= (get store.changed-at change.sequence) before) change.sequence) :default 0)
+        old (lfor change store.changes :if (<= change.sequence edge) change))
+  (for [change old] (del (get store.changed-at change.sequence)))
+  (when old (setv store.floor (max store.floor (. (get old -1) sequence))))
+  (setv store.changes (lfor change store.changes :if (> change.sequence store.floor) change))
+  (Pruned store.floor (len old)))
 
 
 ;; --- handler ------------------------------------------------------------------------------------------------
 
-(defhandler memory-records-handler [store writer]
+(defhandler memory-records-handler [#^ MemoryStore store #^ str writer]
   (ReadRow [table key]
     (<- now (GetTime))
     (purge-expired store (epoch-ms now))
@@ -182,4 +208,11 @@
     (purge-expired store (epoch-ms now))
     (resume (memory-read-events store effect)))
   (AdvanceStoreEpoch []
-    (resume (memory-advance-epoch store))))
+    (resume (memory-advance-epoch store)))
+  (SweepExpired []
+    (<- now (GetTime))
+    (resume (Swept (purge-expired store (epoch-ms now)))))
+  (PruneChanges [keep-seconds]
+    (<- now (GetTime))
+    (<- pruned (memory-prune-changes store effect (epoch-ms now)))
+    (resume pruned)))

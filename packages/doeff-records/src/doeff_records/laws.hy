@@ -7,6 +7,7 @@
 ;;; Program)を渡す。書き手の名は宣言の欄の書き手の名(maker / painter / closer)と、どこにも載らない stranger。
 ;;; 保持の法(law-transient-rows-expire)は doeff-time の Delay で時間を進めるので、仮想の時計(sim-time-handler)の下で回す。
 ;;; 待ちの法(law-watch-waits-for-a-change)は doeff の scheduler の Spawn を使う。
+;;; 手入れの法(law-maintenance-prunes-and-sweeps)は手入れの effect(maintenance.SweepExpired / PruneChanges — 公開 effect ではない)も撃つ。
 (require doeff-hy.macros [defk <-])
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
@@ -18,6 +19,7 @@
                               Changes RowChanged RowRemoved Appended Events])
 (import doeff_records.effects [ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents])
 (import doeff_records.faults [AdvanceStoreEpoch])
+(import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.admission [row-matches?])
 
 (setv MAKER "maker" PAINTER "painter" CLOSER "closer" STRANGER "stranger")
@@ -342,6 +344,42 @@
   [born uncolored read not-yours keyless stateless nothing fresh listed])
 
 
+;; --- 法 10: 刈った変更より前の位置は Reset・回収は期限切れの行を消す ----------------------------------------------
+
+(defk law-maintenance-prunes-and-sweeps [#^ LawHarness harness]
+  {:pre [(: harness LawHarness)] :post [(: % list)]}
+  (setv law "刈った変更より前の位置は Reset・floor の位置からは続けられ・行は消えない。回収は期限切れの行だけを 1 回消す")
+  (<- start (as-writer harness MAKER (ListRows "parts")))
+  (<- w1 (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent))))
+  (<- middle (as-writer harness MAKER (ListRows "parts")))
+  (<- (Delay 100))
+  (<- w2 (as-writer harness MAKER (PutRow "parts" #("p2") (FrozenMap {"label" "b"}) (ExpectAbsent))))
+  (<- pruned (as-writer harness MAKER (PruneChanges 50)))
+  (require-law (= pruned (Pruned middle.sequence 1)) law (.format "50 秒より古い変更 1 つを刈る: {!r}" pruned))
+  (<- old (as-writer harness MAKER (WatchChanges #("parts") (WatchCursor start.epoch start.sequence))))
+  (require-law (= old (Reset start.epoch)) law (.format "刈った変更より前の位置: {!r}" old))
+  (<- kept (as-writer harness MAKER (WatchChanges #("parts") (WatchCursor middle.epoch middle.sequence))))
+  (require-law (and (isinstance kept Changes) (= (lfor item kept.items #(item.key item.version)) [#(#("p2") 1)]))
+               law (.format "floor の位置から続ける: {!r}" kept))
+  (<- again (as-writer harness MAKER (PruneChanges 50)))
+  (require-law (= again (Pruned middle.sequence 0)) law (.format "2 度目の刈り取りは何も消さない: {!r}" again))
+  (<- listed (as-writer harness MAKER (ListRows "parts")))
+  (require-law (= (lfor row listed.rows row.key) [#("p1") #("p2")]) law (.format "刈り取りが行を消した: {!r}" listed))
+  (<- t1 (as-writer harness MAKER (PutRow "tickets" #("g1" "t1") (FrozenMap {"owner" "o1"}) (ExpectAbsent))))
+  (<- done (as-writer harness MAKER (PutRow "tickets" #("g1" "t1") (FrozenMap {"state" "done"}) (ExpectVersion 1))))
+  (<- (Delay (+ TICKET-KEEP-SECONDS 1)))
+  (<- swept (as-writer harness MAKER (SweepExpired)))
+  (require-law (= swept (Swept 1)) law (.format "期限切れの行 1 つを回収する: {!r}" swept))
+  (<- idle (as-writer harness MAKER (SweepExpired)))
+  (require-law (= idle (Swept 0)) law (.format "2 度目の回収は何も消さない: {!r}" idle))
+  (<- removed (as-writer harness MAKER (WatchChanges #("tickets") kept.cursor)))
+  (require-law (and (isinstance removed Changes)
+                    (= (lfor item removed.items #((. (type item) __name__) item.key))
+                       [#("RowChanged" #("g1" "t1")) #("RowChanged" #("g1" "t1")) #("RowRemoved" #("g1" "t1"))]))
+               law (.format "回収した行が変更の列に RowRemoved で出ない: {!r}" removed))
+  [start w1 middle w2 pruned old kept again listed t1 done swept idle removed])
+
+
 ;; 全部の法(名 → 法)。SHARED-LAWS = 時間を進めない法(仮想の時計を持たない組でも回せる・答えの比べに使う)。
 (setv LAWS {"stale-put-conflicts" law-stale-put-conflicts
             "committed-changes-appear-once-in-order" law-committed-changes-appear-once-in-order
@@ -351,7 +389,8 @@
             "indexed-list-equals-filtered-scan" law-indexed-list-equals-filtered-scan
             "append-is-idempotent" law-append-is-idempotent
             "watch-waits-for-a-change" law-watch-waits-for-a-change
-            "none-removes-a-field" law-none-removes-a-field})
+            "none-removes-a-field" law-none-removes-a-field
+            "maintenance-prunes-and-sweeps" law-maintenance-prunes-and-sweeps})
 (setv SHARED-LAWS #("stale-put-conflicts" "committed-changes-appear-once-in-order" "epoch-change-resets"
                     "undeclared-writes-are-refused" "indexed-list-equals-filtered-scan" "append-is-idempotent"
                     "none-removes-a-field"))
