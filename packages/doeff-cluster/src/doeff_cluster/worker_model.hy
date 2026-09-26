@@ -45,14 +45,22 @@
 ;; 業務の repo の木の形(2026-09-25 — クラスタの仕組みを業務の repo から切り出した時に、木の形を worker の引数へ出した)。
 ;;   import-roots = 子 process の PYTHONPATH に並べる木の中の dir(前が先)。bytecode の準備(code_prepare)も同じ根で module 名を決める。
 ;;   overlay-path = 「<base>~<revision>」の木で、base の木の上に revision の物を重ねる dir。None = 重ねない(重ねる木を求められたら断る)。
+;;   base-paths = 土台(worker の実行環境)の側の import の路 — 木の根の**後ろ**に並べる機体の絶対 path(agora-redesign #663)。pod は土台の
+;;                package を image の venv に焼くので空。host の worker(zeus)は共有の venv に入れない土台の package(例 ACP の SDK)を
+;;                ここで宣言する。業務の code は常に木の根が先に勝つ(同じ名の module は task の版の物)。子の PYTHONPATH は木の根
+;;                と base-paths だけで、worker の process の PYTHONPATH は継がない(宣言の外の路が黙って混ざらない)。
 ;; 定義点はここ 1 つ(worker の CodeStore・ProbeStore・ProcessHost が同じ値を読む。値は worker の composition root が引数から作る)。
 (defclass [(dataclass :frozen True)] CodeLayout []
   (setv #^ tuple import-roots #("."))
   (setv #^ (| str None) overlay-path None)
+  (setv #^ tuple base-paths #())
 
   (defn __post-init__ [self]
     (when (not self.import-roots)
       (raise (ValueError "import-roots は 1 つ以上")))
+    (for [path self.base-paths]
+      (when (or (not (.startswith path "/")) (in ":" path) (in "," path))
+        (raise (ValueError (.format "土台の import の路は機体の絶対 path(`:` と `,` を含まない): {!r}" path)))))
     (for [root self.import-roots]
       (when (or (.startswith root "/") (in ".." (.split root "/")) (in ":" root) (in "," root))
         (raise (ValueError (.format "import の根は木の中の相対の dir: {!r}" root)))))
@@ -60,8 +68,8 @@
       (raise (ValueError (.format "重ねる dir は木の中の相対の dir: {!r}" self.overlay-path)))))
 
   (defn #^ str pythonpath [self #^ str tree]
-    "木の中の import の根を PYTHONPATH の形に(`.` は木そのもの)。"
-    (.join ":" (gfor root self.import-roots (if (= root ".") tree (+ tree "/" root)))))
+    "木の中の import の根と土台の import の路を PYTHONPATH の形に(`.` は木そのもの・木の根が先)。"
+    (.join ":" (+ (lfor root self.import-roots (if (= root ".") tree (+ tree "/" root))) (list self.base-paths))))
 
   (defn #^ str roots-arg [self]
     "code_prepare の --import-roots の値。"

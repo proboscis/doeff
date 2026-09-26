@@ -58,6 +58,36 @@
     (with [(pytest.raises ValueError)] (CodeLayout :import-roots bad)))
   (with [(pytest.raises ValueError)] (CodeLayout :overlay-path "../x")))
 
+(deftest test-code-layout-puts-the-base-paths-after-the-tree-roots
+  ;; agora-redesign #663: host の worker は土台の package(image に焼かない物)の路を宣言する。木の根が先(業務の code は task の版が勝つ)・
+  ;; 土台の路は機体の絶対 path だけ。宣言が無ければ今までと同じ(pod)。
+  (setv layout (CodeLayout :import-roots #("." "clients/hy") :base-paths #("/opt/acp/sdk/python")))
+  (assert (= (.pythonpath layout "/t") "/t:/t/clients/hy:/opt/acp/sdk/python"))
+  (assert (= (.roots-arg layout) ".,clients/hy"))
+  (for [bad ["relative/sdk" "/a:/b" "/a,/b"]]
+    (with [(pytest.raises ValueError)] (CodeLayout :base-paths #(bad)))))
+
+(deftest test-process-host-records-the-tree-and-pid-of-each-started-job [tmp-path capfd]
+  ;; agora-redesign #663: worker は起こした job ごとに、版・木の path・子の pid・worker の pid を記録に 1 行書く(新しい版の job を
+  ;; worker の再起動なしに版の木の子 process で走らせたことを、worker の記録で示すため)。子の PYTHONPATH は木の根 → 土台の路。
+  (import os)
+  (import time)
+  (import doeff_cluster.handlers [ProcessHost])
+  (import doeff_cluster.worker_model [JobSpec StartJob])
+  (setv tree (/ tmp-path "tree") out (/ tmp-path "seen"))
+  (.mkdir tree)
+  (.write-text (/ tree "probe_entry.py")
+               (+ "import os, pathlib\npathlib.Path(" (repr (str out)) ").write_text(os.environ['PYTHONPATH'] + '|' + os.getcwd())\n"))
+  (setv host (ProcessHost (str (/ tmp-path "logs")) "hy" :layout (CodeLayout :base-paths #("/opt/base"))))
+  (.start host (StartJob (JobSpec "task/t1" "probe_entry" #() "rev-a" :once True) 1 (str tree)))
+  (setv pid (. (get (.observe host) 0) pid))
+  (for [_ (range 200)] (when (.exists out) (break)) (time.sleep 0.05))
+  (setv [pythonpath cwd] (.split (.read-text out) "|"))
+  (assert (= pythonpath (+ (str tree) ":/opt/base")))
+  (assert (= cwd (str tree)))
+  (setv err (. (capfd.readouterr) err))
+  (assert (in (.format "job-start name=task/t1 revision=rev-a tree={} pid={} worker-pid={}" tree pid (os.getpid)) err) err))
+
 
 (defn git [repo #* args]
   (.strip (. (subprocess.run ["git" "-C" (str repo) #* args] :check True :capture-output True :text True) stdout)))

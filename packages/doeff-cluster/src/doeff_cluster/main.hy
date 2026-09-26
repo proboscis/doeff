@@ -42,11 +42,14 @@
   (.add-argument parser "--stop-grace" :type float :default 10.0)
   (.add-argument parser "--import-roots" :default "."
                  :help "業務の repo の木の中の import の根(`,` で並べる・前が先)— worker_model.CodeLayout")
+  (.add-argument parser "--base-pythonpath" :default ""
+                 :help "土台の import の路(機体の絶対 path を `,` で並べる・木の根の後ろ)— worker_model.CodeLayout(pod は空)")
   (.add-argument parser "--overlay-path" :default ""
                  :help "「<base>~<revision>」の木で revision の物を重ねる dir(空 = 重ねない)— worker_model.CodeLayout")
   (setv args (.parse-args parser))
   (setv layout (CodeLayout :import-roots (tuple (gfor r (.split args.import-roots ",") :if r r))
-                           :overlay-path (or args.overlay-path None)))
+                           :overlay-path (or args.overlay-path None)
+                           :base-paths (tuple (gfor p (.split args.base-pythonpath ",") :if p p))))
   (when (and args.coordinator (not args.name))
     (.error parser "--coordinator には --name が要る"))
   (setv state-dir (Path args.state-dir)
