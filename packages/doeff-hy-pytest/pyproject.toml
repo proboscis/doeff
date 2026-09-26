@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "doeff-hy-pytest"
+version = "0.1.0"
+description = "doeff-hy の pytest plugin だけの配布物(Hy の ast.unparse の差し替えの当て物を pytest の起動の時点で当てる)"
+readme = "README.md"
+requires-python = ">=3.10"
+# 依存を宣言しない: この plugin は doeff-hy に引かれて入る(doeff-hy → doeff-hy-pytest の向きだけ)。
+# 当て物の本体は doeff_hy.ast_unparse にあり、plugin はそれを import して当てるだけ。
+dependencies = []
+
+# pytest は pytest11 の entry point を持つ配布物の**全 module** に assert の書き換えの印を付ける。doeff-hy 自身がこの
+# entry point を持つと doeff_hy の .hy(macros.hy など)まで Python として書き換えようとして import が落ちる(wheel で
+# 入れた repo だけ — editable の install では印が付かない)。だから plugin は .hy を持たないこの配布物に置く。
+[project.entry-points.pytest11]
+doeff_hy = "doeff_hy_pytest"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/doeff_hy_pytest"]

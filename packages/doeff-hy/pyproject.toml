@@ -12,13 +12,14 @@ dependencies = [
     "doeff>=0.2.0",
     "doeff-core-effects",
     "hy>=1.2.0",
+    # pytest の plugin(Python 3.14 の Hy の ast.unparse の当て物を起動の時点で当てる)は別の配布物に置く —
+    # pytest は pytest11 の entry point を持つ配布物の全 module に assert の書き換えの印を付け、ここに置くと
+    # wheel で入れた repo で doeff_hy の .hy を Python として書き換えて import が落ちる(packages/doeff-hy-pytest)。
+    "doeff-hy-pytest",
 ]
 
 [project.scripts]
 doeff-hy-check = "doeff_hy.static_check:main"
-
-[project.entry-points.pytest11]
-doeff_hy = "doeff_hy.pytest_plugin"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/doeff_hy"]
@@ -26,3 +27,4 @@ packages = ["src/doeff_hy"]
 [tool.uv.sources]
 doeff = { workspace = true }
 doeff-core-effects = { workspace = true }
+doeff-hy-pytest = { workspace = true }
