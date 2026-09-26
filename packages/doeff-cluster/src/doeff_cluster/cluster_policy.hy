@@ -308,6 +308,13 @@
   (and (is-not boot None) (is-not worker None) (in boot worker.retired)))
 
 
+(defn #^ bool other-generation-boot [#^ ClusterState state #^ str name #^ (| str None) boot]
+  "純粋: drain の頼みの boot が、name の今の世代でない(退いた世代か、一度も見ていない世代)か。今の世代でない頼みに今の世代の
+   drain を付けないため。boot の無い頼み・今の世代を知らない worker(読み直しの直後の旧い形の置き場など)は今の世代の頼みとみなす。"
+  (setv worker (.get state.workers name))
+  (and (is-not boot None) (is-not worker None) (is-not worker.boot None) (!= boot worker.boot)))
+
+
 (defn #^ tuple retired-after [#^ (| WorkerInfo None) previous #^ (| str None) boot]
   "純粋: 退いていない世代 boot の heartbeat の後の、name の退いた世代の列(新しい順)。今の世代と違う boot = 新しい世代なので、
    今の世代を列の頭へ足す。"
@@ -816,11 +823,11 @@
 
 
 (defn #^ dict heartbeat-reply [#^ ClusterState state #^ str name #^ ClusterTiming timing [ready-instances None] #^ int [now 0]
-                               #^ (| str None) [boot None]]
-  "heartbeat を送った process に、動かす job・task・温める表・時間の設定・drain の印を返すため。boot = 送った process の世代。
-   退いた世代(superseded-boot)への返事は superseded-reply。"
+                               #^ (| str None) [boot None] #^ (| list None) [statuses None]]
+  "heartbeat を送った process に、動かす job・task・温める表・時間の設定・drain の印を返すため。boot = 送った process の世代・
+   statuses = その heartbeat の状態の報告。退いた世代(superseded-boot)への返事は superseded-reply。"
   (when (superseded-boot state name boot)
-    (return (superseded-reply state name boot timing ready-instances)))
+    (return (superseded-reply state name boot (or statuses []) timing ready-instances)))
   {"jobs" (lfor s (jobs-for state name ready-instances) (spec-json s))
    "tasks" (tasks-for state name boot)
    ;; 温める表のうち、この worker に合う行(2026-09-26 — worker は job の準備より低い優先度で準備する)。
@@ -833,12 +840,27 @@
    "formats" (list ACCEPTED-FORMATS)})
 
 
-(defn #^ dict superseded-reply [#^ ClusterState state #^ str name #^ str boot #^ ClusterTiming timing [ready-instances None]]
-  "退いた世代の process への heartbeat の返事(2026-09-27)。その世代に置いた切り離した task は載せて最後まで
-   走らせ、job は今までどおり名の置き先の物を載せる(退いた process は Pod の停止で止まる — 書き手の重なりは lease の柵が守る)。
-   温める表は載せない(退く process に準備させない)。draining = 真(ready の file を draining にする)・superseded = 真(退いた印)。"
-  {"jobs" (lfor s (jobs-for state name ready-instances) (spec-json s))
-   "tasks" (tasks-for state name boot)
+(defn #^ frozenset running-names [#^ list statuses]
+  "退いた世代の報告のうち、いま running の job の名(入れ替えで退いた process の行は元の名で数える)。退いた世代に動かし続けさせて
+   よい job を選ぶため。"
+  (frozenset (gfor row statuses
+                   :if (= (.get row "phase") "running")
+                   (or (.get row "retiredFrom") (.get row "name") ""))))
+
+
+(defn #^ dict superseded-reply [#^ ClusterState state #^ str name #^ str boot #^ list statuses #^ ClusterTiming timing
+                                [ready-instances None]]
+  "退いた世代の process への heartbeat の返事(2026-09-27)。退く process に新しい仕事を起こさせず、動いている物は安全に畳ませるため:
+   jobs = 名の置き先の入れ替え(handoff)の job のうち、その世代が running と報告している物だけ(lease を持ったまま Pod の停止まで
+   動かし、新しい世代の process が lease を取る。recreate の job は載せない = 止めて lease を返す。退いた後に置かれた job は、その
+   世代が動かしていないので載らない)。tasks = task.boot がその世代と等しい切り離した task だけ(最後まで走らせる。RemoteJob の
+   task は世代を記録しないので載せない)。温める表は載せない。draining = 真(ready の file を draining にする)・superseded = 真。"
+  (setv running (running-names statuses))
+  {"jobs" (lfor s (jobs-for state name ready-instances) :if (and s.handoff (in s.name running)) (spec-json s))
+   "tasks" (lfor row (tasks-for state name boot)
+                 :setv task (get state.tasks (get row "id"))
+                 :if (and task.detached (= task.boot boot))
+                 row)
    "warm" []
    "timing" (asdict timing)
    "draining" True
