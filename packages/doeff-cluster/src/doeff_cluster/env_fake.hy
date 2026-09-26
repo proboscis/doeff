@@ -19,7 +19,7 @@
 (import doeff [EffectBase])
 (import doeff_time [Delay])
 (import .runtime_env_model [EnvFailure EnvFailureKind CHILD-PROTOCOL])
-(import .env_prepare [DiskFree EnsureMirror FetchCommit MaterializeTree FileSha256 TreeHash EnsureNativeWheel SyncProject
+(import .env_prepare [StageStarted DiskFree EnsureMirror FetchCommit MaterializeTree FileSha256 TreeHash EnsureNativeWheel SyncProject
                       InstallWheels WriteImportRoots CompileTree ProbeImports WriteEnvMarker env-marker->json
                       MirrorReady FetchState WheelReady SyncReport BytecodeReport ProbeReport ENV-MARKER ROOTS-PTH])
 
@@ -70,7 +70,10 @@
   (setv #^ int downloads 0)
   (setv #^ int builds 0)
   (setv #^ int compiles 0)
-  (setv #^ int carried 0))
+  (setv #^ int carried 0)
+  ;; 始めた処理ステージの名(順)と、最後の bytecode の焼く範囲の入口。
+  (setv #^ tuple stages #())
+  (setv #^ tuple entries #()))
 
 
 ;; --- 観測の effect(fake だけが答える) ----------------------------------------------------
@@ -144,6 +147,9 @@
     (:= uv-failure failure)
     (resume None))
 
+  (StageStarted [name]
+    (:= log (replace log :stages (+ log.stages #(name))))
+    (resume None))
   (DiskFree [path]
     (resume world.disk-free))
   (EnsureMirror [url]
@@ -220,12 +226,12 @@
   (WriteImportRoots [project-dir roots]
     (setv (get files (.format "{}/.venv/{}" project-dir ROOTS-PTH)) (.join "\n" roots))
     (resume None))
-  (CompileTree [project-dir tree roots carry-from]
+  (CompileTree [project-dir tree roots carry-from entries]
     (val prefix (+ tree "/"))
     (val sources (lfor p files :if (and (.startswith p prefix) (.endswith p SOURCE-SUFFIXES)
                                         (not (any (gfor n NOT-COPIED (in n p)))))
                        p))
-    (:= log (replace log :compiles (+ log.compiles 1)
+    (:= log (replace log :compiles (+ log.compiles 1) :entries entries
                          :carried (+ log.carried (if (is carry-from None) 0 (len sources)))))
     (resume (BytecodeReport :interpreter (.format "{}/.venv/bin/python" project-dir)
                             :compiled (if (is carry-from None) (len sources) 0)

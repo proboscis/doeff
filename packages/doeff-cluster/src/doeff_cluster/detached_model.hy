@@ -146,7 +146,7 @@
 
 ;; --- 純粋な換算 ----------------------------------------------------------------------
 
-(setv OPEN-PHASES #("queued" "assigned"))
+(setv OPEN-PHASES #("queued" "preparing" "assigned"))
 
 
 (defn #^ DetachedOutcome outcome-from-task-outcome [#^ (| TaskSucceeded TaskFailed) outcome]

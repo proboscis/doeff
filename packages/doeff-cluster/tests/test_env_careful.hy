@@ -519,7 +519,10 @@
     (<- view (prepare rig (! (declare rig sha l1 LOCK))))
     (assert (= view.state CodeState.READY) view)
     (.append views view))
-  (val #(a b c) (lfor v views (Path v.path)))
+  (val roots (lfor v views (Path v.path)))
+  (val a (get roots 0))
+  (val b (get roots 1))
+  (val c (get roots 2))
   ;; 使った時刻: a(固定)が最も古く・b・c(最後に作った = project の最新)の順
   (for [#(root at) [#(a 1000) #(b 2000) #(c 3000)]]
     (.write-text (/ root ".last-used") "")

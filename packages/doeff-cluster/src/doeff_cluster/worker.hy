@@ -18,7 +18,8 @@
     True state.desired))
   (<- now int (now-epoch-ms))
   (<- world WorldView (ObserveWorld))
-  (setv actions (plan now desired world state.records policy))
+  (setv warm (cond stopping #() (isinstance read DesiredJobs) read.warm True state.warm))
+  (setv actions (plan now desired world state.records policy :warm warm))
   (for [action actions] (<- action))
   (setv records (records-after now state.records actions policy))
   ;; 状態の表示は action の後の観測から作る(起動・回収を 1 拍遅れで見せない)。
@@ -28,7 +29,7 @@
     (setv after observed))
   (setv report (statuses now desired after records policy))
   (<- (PublishStatus report (if (isinstance read DesiredUnreadable) read.reason "")))
-  #((WorkerState (if (isinstance read DesiredJobs) read.jobs state.desired) records)
+  #((WorkerState (if (isinstance read DesiredJobs) read.jobs state.desired) records warm)
     ;; 停止を確認できない process は待ち続けない(状態表示に残す)。
     (len (lfor s report :if (in s.phase #(JobPhase.RUNNING JobPhase.STOPPING)) s))))
 

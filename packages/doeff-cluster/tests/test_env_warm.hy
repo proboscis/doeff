@@ -134,7 +134,7 @@
 ;; --- 準備の期限と disk の状態(純粋) ------------------------------------------------------------
 
 (deftest test-prepare-deadlines-split-warm-stall-and-cold-or-warm-jobs
-  (val limits (PrepareLimits :cold-seconds 1800 :warm-seconds 300 :stall-seconds 600))
+  (val limits (PrepareLimits :cold-seconds 1800.0 :warm-seconds 300.0 :stall-seconds 600.0))
   ;; 先読み: 期限を掛けない — 処理ステージが 10 分進まない時だけ
   (<- long-but-moving bool (prepare-overdue True False 0.0 7000.0 7100.0 limits))
   (assert (not long-but-moving) "先読みは長くても進んでいれば止めない")
@@ -163,14 +163,16 @@
   {:pre [(: label str)] :post [(: % dict)]}
   "commit の名 → 宣言の JSON。"
   (<- env RuntimeEnv (env-of label "lib-1" LOCK))
-  (runtime-env->json env))
+  (<- declared dict (runtime-env->json env))
+  declared)
 
 
 (defk key-on [declared platform]
   {:pre [(: declared dict) (: platform str)] :post [(: % str)]}
   "宣言の JSON と worker の platform → worker の root のキー。"
   (<- env RuntimeEnv (runtime-env-of-json declared))
-  (env-key env platform))
+  (<- key str (env-key env platform))
+  key)
 
 
 (defn #^ WorkerInfo worker-of [#^ str name #^ tuple labels #^ int seen [ready #()] [capacity "ok"] [load-capacity 2]]
@@ -235,7 +237,7 @@
 
 (deftest test-cold-starts-are-counted-in-the-metrics
   (<- declared dict (declared-of "app-1"))
-  (val coordinator-state (ClusterState :workers {"w1" (worker-of "w1" #() 0)} :tasks {"t1" (env-task "t1" declared)}))
+  (val coordinator-state (ClusterState :workers {"w1" (worker-of "w1" #() 0)} :tasks {"t1" (env-task "t1" declared)} :next-task 2))
   (val submitted (respond coordinator-state (Request "POST" "/tasks" {}
                                                      {"env" "e" "blob" "b" "revision" "" "versions" {} "leaseSeconds" 60
                                                       "runtimeEnv" declared})

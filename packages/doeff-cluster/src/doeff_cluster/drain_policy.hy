@@ -125,7 +125,8 @@
 (defn #^ list detached-rows [#^ ClusterState state #^ str worker]
   "worker に置いた、まだ終わっていない切り離した task の名(task/<id>)。drain はこれが 0 になるまで Drained にしない
    (RemoteJob の task は数えない — 呼び手と寿命を共にし、drain で止まってよい)。"
-  (sorted (gfor t (.values state.tasks) :if (and t.detached (= t.phase "assigned") (= t.worker worker)) (+ "task/" t.id))))
+  (sorted (gfor t (.values state.tasks) :if (and t.detached (in t.phase #("assigned" "preparing")) (= t.worker worker))
+                (+ "task/" t.id))))
 
 
 (defn #^ (| dict None) drain-view [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]

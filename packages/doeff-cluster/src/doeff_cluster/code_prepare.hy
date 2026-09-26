@@ -20,8 +20,14 @@
 ;;;       [--from <前の木> --changed <変わった path の一覧 file>] [--import-roots .,sub/dir]
 ;;;
 ;;; import の根(木の中の dir・`,` で並べる・既定 `.`)は業務の repo の形で、worker の CodeLayout(worker_model)が渡す。
+;;;
+;;; 焼く範囲(2026-09-26・#664 の実測): --entries <module,…> を渡すと、その module たちの import の閉包(Hy の import / require と
+;;; Python の import を静的に辿る)だけを焼く。閉包の外の module は子が import した時に作られる(焼く物が減るだけで正しさは変わらない)。
+;;; 並列数の既定は cgroup の CPU の上限(pod の limits)— node の CPU の数で焼くと、上限 4 の pod で 16 並列になり周期の 97% が絞られた。
 (require doeff-hy.macros [defk defhandler <-])
 (import argparse)
+(import ast)
+(import math)
 (import dataclasses [dataclass])
 (import importlib.machinery)
 (import importlib.util)
@@ -165,6 +171,14 @@
   (setv #^ tuple roots DEFAULT-IMPORT-ROOTS))
 
 
+(defclass [(dataclass :frozen True)] ImportClosure [EffectBase]
+  "結果 = entries(module 名)の import の閉包に入る source の相対 path の frozenset(焼く範囲を絞るため)。"
+  (#^ str tree)
+  (#^ tuple sources)
+  (#^ tuple entries)
+  (#^ tuple roots))
+
+
 (defclass [(dataclass :frozen True)] WriteMarker [EffectBase]
   "完成の印を木の根へ置く(別の file へ書いて置き換える)。"
   (#^ str tree)
@@ -178,11 +192,18 @@
 ;; --- Program ---------------------------------------------------------------------------
 
 ;; 木を焼き、検めが通れば完成の印を置く。結果の "problem" が None でなければ印は置いていない。
-(defk prepare-tree [tree revision old changed jobs roots]
-  {:pre [(: tree str) (: revision str) (: old (| str None)) (: changed frozenset) (: jobs int) (: roots tuple)] :post [(: % dict)]}
+(defk prepare-tree [tree revision old changed jobs roots [entries #()]]
+  {:pre [(: tree str) (: revision str) (: old (| str None)) (: changed frozenset) (: jobs int) (: roots tuple) (: entries tuple)]
+   :post [(: % dict)]}
+  ;; entries が在れば、焼く物と検めの対象をその import の閉包に絞る(閉包の外は import の時に作られる)。
   (<- started float (GetMonotonic))
   (<- scanned tuple (ScanTree tree))
-  (setv #(sources pycs) scanned)
+  (setv #(all-sources pycs) scanned)
+  (setv scope None)
+  (when entries
+    (<- closure frozenset (ImportClosure tree (tuple all-sources) entries roots))
+    (setv scope closure))
+  (setv sources (if (is scope None) all-sources (lfor s all-sources :if (in s scope) s)))
   (setv carried 0)
   (when (is-not old None)
     (<- old-scan tuple (ScanTree old))
@@ -201,7 +222,8 @@
     (<- (Note f"  焼けない: {rel}: {reason}")))
   ;; 検め: 焼いた結果を木から読み直す(焼きの答えを信じず、置かれた物を数える)。
   (<- after tuple (ScanTree tree))
-  (setv #(after-sources after-pycs) after
+  (setv #(scanned-after after-pycs) after
+        after-sources (if (is scope None) scanned-after (lfor s scanned-after :if (in s scope) s))
         failed (frozenset (gfor #(rel _) failures rel))
         problem (tree-problem after-sources (frozenset after-pycs) failed roots))
   (if (is problem None)
@@ -252,6 +274,92 @@
   #((sorted sources) (sorted pycs)))
 
 
+(defn #^ int cpu-limit-of [#^ (| str None) cpu-max #^ int available]
+  "cgroup v2 の cpu.max の中身(\"<quota> <period>\" か \"max <period>\")と使える CPU の数 → 焼きの並列数(pod の上限を越えないため)。"
+  (setv parts (if cpu-max (.split cpu-max) []))
+  (if (and (= (len parts) 2) (!= (get parts 0) "max"))
+      (max 1 (min available (math.ceil (/ (int (get parts 0)) (int (get parts 1))))))
+      (max 1 available)))
+
+
+(defn #^ int usable-cpus []
+  "この process が使える CPU の数(affinity と cgroup の上限の小さい方)— 焼きの並列数の既定。"
+  (setv available (if (hasattr os "sched_getaffinity") (len (os.sched-getaffinity 0)) (or (os.cpu-count) 1))
+        path (Path "/sys/fs/cgroup/cpu.max"))
+  (cpu-limit-of (if (.is-file path) (.read-text path) None) available))
+
+
+(defn #^ tuple imported-names [#^ str rel #^ str text]
+  "source 1 つが import する名の列 #(#(点の数 名 取り出す名の tuple) …)(Hy は import と require の形、Python は ast)。
+   読めない file は空(閉包から外れるだけ — その module は import の時に作られる)。"
+  (setv found [])
+  (if (.endswith rel ".py")
+      (try
+        (for [node (ast.walk (ast.parse text))]
+          (cond
+            (isinstance node ast.Import) (for [a node.names] (.append found #(0 a.name #())))
+            (isinstance node ast.ImportFrom)
+              (.append found #(node.level (or node.module "") (tuple (gfor a node.names a.name))))))
+        (except [SyntaxError] None))
+      (try
+        (import hy)
+        (defn walk [form]
+          (when (isinstance form hy.models.Expression)
+            (when (and form (isinstance (get form 0) hy.models.Symbol) (in (str (get form 0)) #("import" "require")))
+              (setv items (list (cut form 1 None)) i 0 current None)
+              (while (< i (len items))
+                (setv item (get items i))
+                (cond
+                  (isinstance item hy.models.Keyword) (+= i 1)
+                  (isinstance item hy.models.Symbol)
+                    (do (setv name (str item) dots (- (len name) (len (.lstrip name "."))))
+                        (setv current #(dots (.join "." (gfor part (.split (.lstrip name ".") ".") :if part (hy.mangle part))) []))
+                        (.append found current))
+                  ;; 点を含む名は (. a b) の形で読まれる。相対の名は (. None b)・(.. None a b)(点の数 = 頭の記号の長さ)。
+                  (and (isinstance item hy.models.Expression) item (isinstance (get item 0) hy.models.Symbol)
+                       (= (.strip (str (get item 0)) ".") ""))
+                    (do (setv rest (list (cut item 1 None))
+                              relative (and rest (= (str (get rest 0)) "None"))
+                              dots (if relative (len (str (get item 0))) 0)
+                              parts (if relative (cut rest 1 None) rest))
+                        (setv current #(dots (.join "." (gfor part parts (hy.mangle (str part)))) []))
+                        (.append found current))
+                  (and (isinstance item hy.models.List) (is-not current None))
+                    (.extend (get current 2) (gfor x item :if (isinstance x hy.models.Symbol) (hy.mangle (str x)))))
+                (+= i 1))))
+          (when (isinstance form hy.models.Sequence)
+            (for [x form] (walk x))))
+        (for [form (hy.read-many text :filename rel)] (walk form))
+        (except [Exception] None)))
+  (tuple (gfor #(dots name names) found #(dots name (tuple names)))))
+
+
+(defn #^ frozenset import-closure [#^ str tree #^ (| list tuple) sources #^ tuple entries #^ tuple roots]
+  "entries(module 名)から import を静的に辿った閉包に入る source の相対 path(焼く範囲を task が読む module に絞るため)。
+   package の module を読むと、その上の package の __init__ も読む。木の外の module(標準・第三者)は辿らない。"
+  (setv by-module (dfor s sources :setv m (module-name s roots) :if (is-not m None) m s)
+        seen (set) queue (list entries))
+  (while queue
+    (setv name (.pop queue))
+    (setv parts (.split name "."))
+    ;; 上の package も読む(import a.b.c は a と a.b の __init__ を走らせる)。
+    (for [n (range 1 (+ (len parts) 1))]
+      (setv m (.join "." (cut parts 0 n)))
+      (when (and (in m by-module) (not-in m seen))
+        (.add seen m)
+        (setv rel (get by-module m)
+              package (if (.endswith rel #("__init__.py" "__init__.hy")) m (.join "." (cut (.split m ".") 0 -1))))
+        (for [#(dots target names) (imported-names rel (.read-text (/ (Path tree) rel) :encoding "utf-8" :errors "replace"))]
+          (setv base (if (> dots 0)
+                         (.join "." (+ (cut (.split package ".") 0 (max 0 (- (len (.split package ".")) (- dots 1)))) (if target [target] [])))
+                         target))
+          (when base
+            (.append queue base)
+            ;; from base import x の x が module なら、それも読む。
+            (for [x names] (.append queue (+ base "." x))))))))
+  (frozenset (gfor m seen (get by-module m))))
+
+
 (defn #^ int link-pycs [#^ str old #^ str new #^ tuple pycs]
   (setv count 0)
   (for [rel pycs]
@@ -286,6 +394,7 @@
 (defhandler local-tree []
   (ScanTree [tree] (resume (scan tree)))
   (LinkPycs [old new pycs] (resume (link-pycs old new pycs)))
+  (ImportClosure [tree sources entries roots] (resume (import-closure tree sources entries roots)))
   (CompileSources [tree items jobs roots] (resume (compile-sources tree items jobs roots)))
   (WriteMarker [tree content] (write-marker tree content) (resume None))
   (Note [line] (print line :file sys.stderr :flush True) (resume None)))
@@ -297,7 +406,8 @@
   (.add-argument parser "--revision" :required True)
   (.add-argument parser "--from" :dest "old")
   (.add-argument parser "--changed")
-  (.add-argument parser "--jobs" :type int :default (or (os.cpu-count) 1))
+  (.add-argument parser "--jobs" :type int :default (usable-cpus) :help "焼きの並列数(既定 = cgroup の CPU の上限)")
+  (.add-argument parser "--entries" :default "" :help "焼く範囲の入口の module(`,` で並べる・空 = 根の下を全部)")
   (.add-argument parser "--import-roots" :default "." :help "木の中の import の根(`,` で並べる・前が先)")
   (setv args (.parse-args parser))
   (setv roots (tuple (gfor r (.split args.import-roots ",") :if r r)))
@@ -311,7 +421,8 @@
   (_init-pool tree roots)
   (setv changed (frozenset (if args.changed (.split (.read-text (Path args.changed))) [])))
   (setv old (if args.old (str (.resolve (Path args.old))) None))
-  (setv summary (run ((sync-time-handler) ((local-tree) (prepare-tree tree args.revision old changed args.jobs roots)))))
+  (setv entries (tuple (gfor e (.split args.entries ",") :if e e)))
+  (setv summary (run ((sync-time-handler) ((local-tree) (prepare-tree tree args.revision old changed args.jobs roots entries)))))
   (when (is-not (get summary "problem") None)
     (print (+ "準備に失敗: " (get summary "problem")) :file sys.stderr :flush True)
     (sys.exit 1)))

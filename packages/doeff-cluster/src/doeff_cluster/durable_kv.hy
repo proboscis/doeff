@@ -17,11 +17,11 @@
 (import dataclasses [asdict replace])
 (import .cluster_model [ClusterState WorkerInfo Placement Drain component-versions-of task-record-to-json
                         task-record-from-json])
-(import .cluster_policy [job-to-json job-from-json board-changes value-size])
+(import .cluster_policy [job-to-json job-from-json board-changes value-size warm-entry-to-json warm-entry-from-json])
 
 (setv BOARD "board/")
 (setv PLACEMENT "placement/")
-(setv DRAIN "drain/" SURGE "surge/")
+(setv DRAIN "drain/" SURGE "surge/" WARM "warm/")
 ;; 改名の前の置き先の鍵(値の形は同じ)。起動時に読んで移すだけ。
 (setv LEGACY-PLACEMENT "assignment/") ; 新しく書くのには使わない(語彙の規則の旧い語 — 読みの互換のためだけに残す)
 
@@ -48,6 +48,7 @@
   (for [#(k r) (.items state.rollouts)] (setv (get kv (+ "rollout/" k)) r))
   (for [#(k d) (.items state.drains)] (setv (get kv (+ DRAIN k)) (asdict d)))
   (for [#(k a) (.items state.surges)] (setv (get kv (+ SURGE k)) (asdict a)))
+  (for [#(k w) (.items state.warms)] (setv (get kv (+ WARM k)) (warm-entry-to-json w)))
   (for [e state.audit] (setv (get kv (.format "audit/{:010d}" (get e "seq"))) e))
   kv)
 
@@ -100,6 +101,7 @@
     :rollouts (dict (part "rollout/"))
     :drains (dfor #(k v) (part DRAIN) k (Drain #** v))
     :surges (dfor #(k v) (part SURGE) k (Placement #** v))
+    :warms (dfor #(k v) (part WARM) k (warm-entry-from-json v))
     :audit (tuple (gfor #(_ e) (part "audit/") e))
     :board (dfor #(k v) (part BOARD) k (get v "value"))
     :board-versions (dfor #(k v) (part BOARD) k (get v "resourceVersion"))
