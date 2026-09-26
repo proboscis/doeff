@@ -117,6 +117,7 @@ def test_every_live_daemon_spawn_in_tests_goes_through_the_isolated_argv() -> No
         }
         if "sessionhost_serve_argv" not in called:
             offenders.append(path.name)
-    # 母集団が空だと恒真になる — 現に daemon を起こす 4 本(retry・real-agent retry・byte-faithful・headless)を数えられていることを確かめる。
-    assert len(spawners) >= 4, spawners
+    # 母集団が空だと恒真になる — 現に daemon を起こす 3 本(retry・real-agent retry・byte-faithful)を数えられていることを
+    # 確かめる(headless の 1 本は agora-redesign #668 で headless の器と一緒に退いた)。
+    assert len(spawners) >= 3, spawners
     assert offenders == [], offenders

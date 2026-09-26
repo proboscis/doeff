@@ -2,7 +2,7 @@
 
 段 10 lane 10o(agora-redesign #96・依頼者の追補 2026-09-14・法 012 R21): agentd は添付を**型つき**で
 器へ渡すだけで、CLI の綴り(claude の content の block・codex の input の項)は kind ごとの Dialogue
-(``headless_protocol``)が組む。だからこの module には CLI の綴りが 1 語も無い — ``mime`` は郵便の
+(今は doeff-claude-code の dialogue — session host の headless の器は agora-redesign #668 で退いた)が組む。だからこの module には CLI の綴りが 1 語も無い — ``mime`` は郵便の
 見出しの逐語を運ぶだけで、受ける種類の判断は ACP の契約(``message.spec.attachments`` の mime の閉語彙)と
 画面の糊が持つ(agentd は種類を判断しない)。
 

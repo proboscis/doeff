@@ -25,7 +25,6 @@ SESSIONHOST = Path(__file__).resolve().parents[1] / "src" / "doeff_agents" / "se
 OWNERS: dict[tuple[str, str], str] = {
     ("store.hy", "db-immediate-transaction"): "明示の transaction の唯一の型",
     ("store.hy", "db-migrate"): "開いた拍の schema 適用(actor が動く前・executescript は暗黙に COMMIT する)",
-    ("store.hy", "db-seed-from"): "自分で開いた写しの connection の上だけ(store の connection ではない)",
 }
 
 _CONTROL_WORDS = r"(BEGIN|COMMIT|END|ROLLBACK|SAVEPOINT|RELEASE)\b"

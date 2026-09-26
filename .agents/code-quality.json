@@ -1,37 +1,7 @@
 {
   "version": 1,
-  "_comment": "共通の品質検査(dotfiles agent/code_quality.py)の module 契約。初回の登録は段 2 の agentd(sessionhost/acp/・agora-redesign #19 / #20)だけ — 既存の sessionhost(deff / defhandler を持つ Hy)は投影の対象外なので include に入れず、依存先としてだけ宣言する。 段 2 lane 2d(agora-redesign #37)で headless backend の Python の module(headless_protocol / headless_process)と検を足す — headless.hy / substrate_headless.hy / impls/headless_argv.hy は deff / defhandler を持つ Hy なので、既存の sessionhost と同じく投影の対象外(依存先としてだけ宣言)。 段 6 lane 6f(agora-redesign #26)で 1 命令の参加 join の判断(join.hy・pure)を足す — env の綴りは effects.py の 1 点へ寄せたので valve / entry も effects を読む。 段 7 lane 7d-3(agora-redesign 7d の登記済み間隙 2)で profile の残量の観測(ReadProfileUsage → status.observed)の deftest(sessionhost_acp_profile_deftests.hy)を agentd-tests に足す(収集の wrapper .py は既存の wrapper 群と同じく契約の外)。 段 8 lane 4u(agora-redesign #49)で手番の出来事の耐久化(turn-record の entries への追記)の deftest(sessionhost_acp_turn_events_deftests.hy)を同じ agentd-tests に足す。 段 8q(agora-redesign #51)で会話の引き継ぎ(履歴からの再開・家と機体の cache の扱い)の deftest(sessionhost_acp_rehydrate_deftests.hy)を同じ agentd-tests に足す。 段 8 lane 4aa(agora-redesign #63)で実況の push の周期の deftest(sessionhost_acp_live_poll_deftests.hy)を同じ agentd-tests に足す。 段 10f 便 2(agora-redesign #82)で自己圧縮(compactAt)の deftest(sessionhost_acp_compact_deftests.hy)を同じ agentd-tests に足す。 card ki-9fc7d4bca4dc 便 3 で会話の自動記憶の行化(hydration と畳み戻し)の deftest(sessionhost_acp_memory_rows_deftests.hy)を同じ agentd-tests に足す — 併せて agentd-judgment の allow に sessionhost-headless-protocol を名乗る(card ki-2bd49c68b042 で入った cli-own-turn-result の import が宣言に写っていなかった・相手は layer = pure で I/O なし)。",
+  "_comment": "共通の品質検査(dotfiles agent/code_quality.py)の module 契約。初回の登録は段 2 の agentd(sessionhost/acp/・agora-redesign #19 / #20)だけ — 既存の sessionhost(deff / defhandler を持つ Hy)は投影の対象外なので include に入れず、依存先としてだけ宣言する。 段 2 lane 2d(agora-redesign #37)で headless backend の Python の module(headless_protocol / headless_process)と検を足す — headless.hy / substrate_headless.hy / impls/headless_argv.hy は deff / defhandler を持つ Hy なので、既存の sessionhost と同じく投影の対象外(依存先としてだけ宣言)。 段 6 lane 6f(agora-redesign #26)で 1 命令の参加 join の判断(join.hy・pure)を足す — env の綴りは effects.py の 1 点へ寄せたので valve / entry も effects を読む。 段 7 lane 7d-3(agora-redesign 7d の登記済み間隙 2)で profile の残量の観測(ReadProfileUsage → status.observed)の deftest(sessionhost_acp_profile_deftests.hy)を agentd-tests に足す(収集の wrapper .py は既存の wrapper 群と同じく契約の外)。 段 8 lane 4u(agora-redesign #49)で手番の出来事の耐久化(turn-record の entries への追記)の deftest(sessionhost_acp_turn_events_deftests.hy)を同じ agentd-tests に足す。 段 8q(agora-redesign #51)で会話の引き継ぎ(履歴からの再開・家と機体の cache の扱い)の deftest(sessionhost_acp_rehydrate_deftests.hy)を同じ agentd-tests に足す。 段 8 lane 4aa(agora-redesign #63)で実況の push の周期の deftest(sessionhost_acp_live_poll_deftests.hy)を同じ agentd-tests に足す。 段 10f 便 2(agora-redesign #82)で自己圧縮(compactAt)の deftest(sessionhost_acp_compact_deftests.hy)を同じ agentd-tests に足す。 card ki-9fc7d4bca4dc 便 3 で会話の自動記憶の行化(hydration と畳み戻し)の deftest(sessionhost_acp_memory_rows_deftests.hy)を同じ agentd-tests に足す — 併せて agentd-judgment の allow に sessionhost-headless-protocol を名乗る(card ki-2bd49c68b042 で入った cli-own-turn-result の import が宣言に写っていなかった・相手は layer = pure で I/O なし)。 agora-redesign #668(削除 5-1・2026-09-26): agentd(sessionhost/acp/)と session host の headless backend・契約の写しの口を退役し、それらの module 契約をこの台帳から外した。",
   "include": [
-    "scripts/sync_contracts.py",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/__init__.py",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.pyi",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/live_row.hy",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.pyi",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.pyi",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.hy",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/handlers.py",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/fake.py",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/valve.py",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/runtime.py",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/entry.py",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/usage.py",
-    "packages/doeff-agents/tests/test_sessionhost_usage.py",
-    "packages/doeff-agents/tests/test_sessionhost_acp.py",
-    "packages/doeff-agents/tests/test_sessionhost_acp_ended_cause.py",
-    "packages/doeff-agents/tests/sessionhost_acp_profile_deftests.hy",
-    "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy",
-    "packages/doeff-agents/tests/sessionhost_acp_rehydrate_deftests.hy",
-    "packages/doeff-agents/tests/sessionhost_acp_compact_deftests.hy",
-    "packages/doeff-agents/tests/sessionhost_acp_live_poll_deftests.hy",
-    "packages/doeff-agents/tests/sessionhost_acp_record_deftests.hy",
-    "packages/doeff-agents/tests/sessionhost_acp_memory_rows_deftests.hy",
-    "docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/headless_protocol.py",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/headless_process.py",
-    "packages/doeff-agents/tests/test_sessionhost_headless.py",
     "packages/doeff-agents/src/doeff_agents/io_effects.hy",
     "packages/doeff-agents/src/doeff_agents/io_handlers.hy",
     "packages/doeff-agents/src/doeff_agents/io_fake.hy",
@@ -41,10 +11,6 @@
     "packages/doeff-agents/src/doeff_agents/agentd_client.py",
     "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
     "packages/doeff-agents/src/doeff_agents/sessionhost/host.pyi",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/headless.hy",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/headless.pyi",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/impls/headless_argv.hy",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/impls/headless_argv.pyi",
     "packages/doeff-agents/src/doeff_agents/sessionhost/store.hy",
     "packages/doeff-agents/src/doeff_agents/sessionhost/store.pyi",
     "packages/doeff-agents/src/doeff_agents/io_root.py",
@@ -57,22 +23,6 @@
     "docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy",
     "packages/doeff-hy/src/doeff_hy/typecheck_handlers.hy",
     "packages/doeff-hy/src/doeff_hy/typecheck_handlers.pyi",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_observation.hy",
-    "packages/doeff-agents/tests/test_sessionhost_cache_observation.py",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_observation.pyi",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/response_usage.hy",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/response_usage.pyi",
-    "packages/doeff-agents/tests/test_sessionhost_response_usage.py",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_operation.py",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/io_types.py",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/loop_model.py",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/worker_loop.hy",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/worker_loop.pyi",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/async_dispatch.hy",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_wire.py",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_maintenance.hy",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_live.hy",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/cache_host_model.py",
     "packages/doeff-records/src/doeff_records/wire.hy",
     "packages/doeff-records/src/doeff_records/principals.hy",
     "packages/doeff-records/src/doeff_records/service.hy",
@@ -98,179 +48,6 @@
     ]
   },
   "modules": [
-    {
-      "name": "contracts-sync",
-      "paths": [
-        "scripts/sync_contracts.py"
-      ],
-      "responsibility": "ACP の契約の写しを作る 1 つの口(段 11 lane 11e・agora-redesign #126)— pin(contracts.lock の ACP の commit 1 つ)から取り寄せて生成し(--write / --pin)、生成物との差分 0 を撃つ(--check)。正本の repo は private・この repo は公開なので、写しの中で閉じる検(--check-copies: 写しが pin の sha256 ちょうど・契約の版と互換の規則・読む欄の実在・正本の名乗り)を分けて持ち、既定 pytest(packages/doeff-agents/tests/test_sessionhost_acp.py の写しの節)はその判断の 1 点を呼ぶ。判断は純関数・正本の取り寄せと file の読み書きだけが I/O。stdlib 単独(venv・依存不要)",
-      "layer": "io",
-      "public": [
-        "scripts/sync_contracts.py"
-      ],
-      "allow": [],
-      "typed": true
-    },
-    {
-      "name": "agentd-effects",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py"
-      ],
-      "responsibility": "agentd の要求(ACP の読み書き・watch・中継の push・custody の貸出・器の RPC・時計と file)と値の型。wire の綴り(kind 名・phase・principal)と値の宣言(AgentdSettings)の 1 点。data だけで I/O を行わない",
-      "layer": "effects",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/effects.py"
-      ],
-      "allow": [
-        "sessionhost-attachment"
-      ],
-      "typed": true
-    },
-    {
-      "name": "agentd-judgment",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.pyi"
-      ],
-      "responsibility": "agentd の純粋な判断(defk・bind ゼロ): 自分に結ばれた job か(唯一の判定)・status / charter / node の欄の写し・transcript → TurnDelta と entries・capture の是非・待ちの長さ。I/O の import なし",
-      "layer": "pure",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/judgment.pyi"
-      ],
-      "allow": [
-        "agentd-effects",
-        "sessionhost-attachment",
-        "acp-live-row",
-        "sessionhost-headless-protocol",
-        "agentd-cache-observation",
-        "agentd-response-usage",
-        "agentd-reply-channel"
-      ],
-      "typed": true
-    },
-    {
-      "name": "agentd-reply-channel",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/reply_channel.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/reply_channel.pyi",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/input_source.py"
-      ],
-      "responsibility": "届いた 1 通の出どころの判定(operator の chat / 依頼書への答え / 検収 / 依頼 / 他の会話からの郵便 / 機械の報せ)と、agent に見せる区切り・項の見出し・返し方の 1 点(設計 herdr-hud docs/design-checks/direct-chat-2026-09-24 §3)。I/O を持たない",
-      "layer": "pure",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/reply_channel.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/reply_channel.pyi",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/input_source.py"
-      ],
-      "allow": [],
-      "typed": true
-    },
-    {
-      "name": "acp-live-row",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/live_row.hy"
-      ],
-      "responsibility": "ACP の client library(clients/hy/acp_client/shared/live_row.hy)の**写し**(段 12 lane 12j・agora-redesign #320・contracts.lock の kind = code・口は scripts/sync_contracts.py ちょうど — ここで直さない): 名前が指す『生きている行』を解く 3 値の純関数(none / one / many・終端の行は候補にしない・生きている行は lease の新しい順)。agentd の自分の node の行の読み(judgment.node-row-named)がこれを読み、自前の名前の索引を持たない。判断も I/O も持たない(deftest は同梱)",
-      "layer": "pure",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/live_row.hy"
-      ],
-      "allow": [],
-      "typed": true
-    },
-    {
-      "name": "agentd-join",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.pyi"
-      ],
-      "responsibility": "1 命令の参加 `doeff-sessionhost join` の判断(defk・段 6 lane 6f): 宣言(flag > toml > 既定)→ JoinSpec → JoinPlan(host の argv と env の束)の 1 点と、所有の等級の検(宣言 × 機体の証拠 — OwnershipProbe を撃つ program と純関数の突合)。I/O の import なし",
-      "layer": "pure",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/join.pyi"
-      ],
-      "allow": [
-        "agentd-effects"
-      ],
-      "typed": true
-    },
-    {
-      "name": "agentd-programs",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.pyi"
-      ],
-      "responsibility": "agentd の program(defk・effect の列): 参加の heartbeat・Bound の受け(Running + 借用 + launch + inputs)・実況(transcript / frame)・記録(turn-record)・手番の終わり。1 tick = agentd-tick。判断と I/O を持たない",
-      "layer": "effects",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/agentd.pyi"
-      ],
-      "allow": [
-        "agentd-effects",
-        "agentd-judgment",
-        "sessionhost-attachment",
-        "agentd-cache-observation",
-        "agentd-cache-operation",
-        "agentd-response-usage"
-      ],
-      "typed": true
-    },
-    {
-      "name": "agentd-handlers",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/handlers.py"
-      ],
-      "responsibility": "agentd の要求を実世界で扱う handler: ACP の HTTP(bearer)・watch の SSE の読み手・custody の HTTP(借り手札)・器(sessionhost の RPC client)・時計 / 計器 / file。判断を持たない",
-      "layer": "io",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/handlers.py"
-      ],
-      "allow": [
-        "agentd-effects",
-        "agentd-client",
-        "sessionhost-attachment",
-        "agentd-cache-operation",
-        "agentd-io-types",
-        "sessionhost-cache-model"
-      ],
-      "typed": true
-    },
-    {
-      "name": "agentd-fake",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/fake.py"
-      ],
-      "responsibility": "agentd の要求を memory で受ける fake の handler(test と法の反例)。HTTP も socket も無い",
-      "layer": "io",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/fake.py"
-      ],
-      "allow": [
-        "agentd-effects",
-        "sessionhost-attachment",
-        "agentd-cache-operation",
-        "agentd-io-types"
-      ],
-      "typed": true
-    },
-    {
-      "name": "agentd-valve",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/valve.py"
-      ],
-      "responsibility": "agentd の弁(--acp / DOEFF_AGENTD_ACP)の判定 — 既定 off の値の宣言の 1 点。純関数(env と host の argv の綴りは effects.py を読む)",
-      "layer": "pure",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/valve.py"
-      ],
-      "allow": [
-        "agentd-effects"
-      ],
-      "typed": true
-    },
     {
       "name": "sessionhost-policy",
       "paths": [
@@ -302,101 +79,6 @@
       "typed": false
     },
     {
-      "name": "agentd-runtime",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/runtime.py",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/__init__.py"
-      ],
-      "responsibility": "agentd の composition root: env から値を読み、実 I/O の handler を選び、host の socket を待って tick の loop を daemon thread で回す。test は run_tick を fake の handler で呼ぶ。streamCapability は host の backend から導く(valve.backend_of → judgment.stream-capability-of-backend)。join(段 6 lane 6f)は宣言 file の読みと env の据えだけ(判断は join.hy)・所有の等級は thread を起こす前に join.ownership-preflight で検める(不一致 = 参加しない)",
-      "layer": "runtime",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/runtime.py",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/__init__.py"
-      ],
-      "allow": [
-        "agentd-effects",
-        "agentd-programs",
-        "agentd-handlers",
-        "agentd-valve",
-        "agentd-client",
-        "agentd-judgment",
-        "agentd-join",
-        "agentd-worker-loop",
-        "agentd-loop-model",
-        "agentd-io-types"
-      ],
-      "typed": true
-    },
-    {
-      "name": "agentd-entry",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/entry.py"
-      ],
-      "responsibility": "console script doeff-sessionhost の入口: 弁(serve --acp / DOEFF_AGENTD_ACP)が on なら agentd の thread を起こし、host の停止の hook に agentd の close_for_stop を登録し(段 10 lane 10h 便 2)、残りは今日の hostmain.main へ渡す。join(段 6 lane 6f)は宣言から env の束と host の argv を導いて同じ経路へ。`--help` / `join --help` は usage(sessionhost-usage)が実装の宣言から組んだ本文を stdout に出して exit 0 する",
-      "layer": "runtime",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/entry.py"
-      ],
-      "allow": [
-        "sessionhost-ready-probe",
-        "agentd-host-slot-cli",
-        "agentd-effects",
-        "agentd-valve",
-        "agentd-runtime",
-        "sessionhost-hostmain",
-        "sessionhost-relaymain",
-        "sessionhost-host",
-        "sessionhost-usage"
-      ],
-      "typed": true
-    },
-    {
-      "name": "sessionhost-usage",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/usage.py",
-        "packages/doeff-agents/tests/test_sessionhost_usage.py"
-      ],
-      "responsibility": "`doeff-sessionhost --help` / `join --help` の usage: 題目の判定(help_topic_of — 純関数・Hy を import しない)と本文の組み立て(usage_text)。flag の一覧は実装の宣言から導く — serve は host.hy の SERVE-FLAG-SPECS / SERVE-ENV-ONLY-SPECS、join は join.hy の JOIN-FLAG-SPECS、弁の旗は valve.py。綴りも既定値も 1 つも持たない(手で写した一覧は実装が動いた時に黙って古くなる)。読み手は entry.py ちょうど。同 paths の検は usage の内容を実装の宣言と突き合わせ、 console script の実射(stdout に出て exit 0)まで撃つ",
-      "layer": "runtime",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/usage.py"
-      ],
-      "allow": [
-        "agentd-effects",
-        "agentd-valve",
-        "agentd-join",
-        "sessionhost-host",
-        "sessionhost-relaymain"
-      ],
-      "typed": true
-    },
-    {
-      "name": "agentd-host-slot-cli",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/host_slot_cli.py"
-      ],
-      "responsibility": "器の入れ替えの blue/green の口(doeff-sessionhost host-slot — 据え付けの道具が撃つ)",
-      "layer": "runtime",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/host_slot_cli.py"
-      ],
-      "allow": [],
-      "typed": true
-    },
-    {
-      "name": "agentd-host-slots",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/host_slots.py"
-      ],
-      "responsibility": "器の区画(host slot)の置き場と状態の読み書き",
-      "layer": "runtime",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/host_slots.py"
-      ],
-      "allow": [],
-      "typed": true
-    },
-    {
       "name": "sessionhost-drivers",
       "paths": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/drivers.py"
@@ -405,32 +87,6 @@
       "layer": "runtime",
       "public": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/drivers.py"
-      ],
-      "allow": [],
-      "typed": true
-    },
-    {
-      "name": "sessionhost-drain-marker",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/drain_marker.py"
-      ],
-      "responsibility": "器の排水の印の file の読み書き(停止の拍に切った行の語を決める材料)",
-      "layer": "runtime",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/drain_marker.py"
-      ],
-      "allow": [],
-      "typed": true
-    },
-    {
-      "name": "sessionhost-ready-probe",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/ready_probe.py"
-      ],
-      "responsibility": "session host の readiness の probe の口(doeff-sessionhost ready — socket に daemon.status を 1 回問う・Hy を import しない)",
-      "layer": "runtime",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/ready_probe.py"
       ],
       "allow": [],
       "typed": true
@@ -446,77 +102,9 @@
         "packages/doeff-agents/src/doeff_agents/sessionhost/hostmain.py"
       ],
       "allow": [
-        "sessionhost-relaymain",
-        "sessionhost-ready-probe",
-        "sessionhost-usage",
-        "agentd-effects",
-        "agentd-entry",
-        "agentd-valve"
+        "sessionhost-relaymain"
       ],
       "typed": false
-    },
-    {
-      "name": "agentd-tests",
-      "paths": [
-        "packages/doeff-agents/tests/test_sessionhost_acp.py",
-        "packages/doeff-agents/tests/test_sessionhost_acp_ended_cause.py",
-        "packages/doeff-agents/tests/sessionhost_acp_profile_deftests.hy",
-        "packages/doeff-agents/tests/sessionhost_acp_turn_events_deftests.hy",
-        "packages/doeff-agents/tests/sessionhost_acp_rehydrate_deftests.hy",
-        "packages/doeff-agents/tests/sessionhost_acp_compact_deftests.hy",
-        "packages/doeff-agents/tests/sessionhost_acp_live_poll_deftests.hy",
-        "packages/doeff-agents/tests/sessionhost_acp_record_deftests.hy",
-        "packages/doeff-agents/tests/sessionhost_acp_memory_rows_deftests.hy",
-        "packages/doeff-agents/tests/test_sessionhost_acp_reply_channel.py"
-      ],
-      "responsibility": "agentd の焦点の検(fake の handler の e2e・判断の純関数・弁)と、profile の残量の観測の deftest(段 7 lane 7d-3)と、手番の出来事の耐久化の deftest(段 8 lane 4u・agora-redesign #49)と、実況の push の周期(購読者が居る間の events の読み ≤ 50 ms)の deftest(段 8 lane 4aa・agora-redesign #63)。収集の wrapper test_sessionhost_acp_profile.py / test_sessionhost_acp_turn_events.py / test_sessionhost_acp_live_poll.py は他の *_deftests.hy の wrapper と同じ足場で契約の外。自己圧縮(会話の宣言 compactAt と直前の手番の文脈の実測)の deftest sessionhost_acp_compact_deftests.hy(段 10f 便 2・agora-redesign #82)— wrapper test_sessionhost_acp_compact.py は同じ足場で契約の外。器の終端の cause(場面ごとの category / reason)の焦点の検 test_sessionhost_acp_ended_cause.py は同じ World を借りるので同じ module",
-      "layer": "runtime",
-      "public": [],
-      "allow": [
-        "sessionhost-hostmain",
-        "sessionhost-host",
-        "agentd-entry",
-        "sessionhost-policy",
-        "sessionhost-drivers",
-        "sessionhost-drain-marker",
-        "agentd-host-slots",
-        "agentd-effects",
-        "agentd-judgment",
-        "agentd-join",
-        "agentd-fake",
-        "agentd-handlers",
-        "agentd-runtime",
-        "agentd-valve",
-        "agentd-client",
-        "sessionhost-attachment",
-        "sessionhost-claude-code",
-        "agentd-reply-channel"
-      ],
-      "typed": true
-    },
-    {
-      "name": "adr-agents-012",
-      "paths": [
-        "docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy"
-      ],
-      "responsibility": "ADR-DOE-AGENTS-012(agentd の腕)の法と針(deftest)",
-      "layer": "runtime",
-      "public": [],
-      "allow": [
-        "agentd-programs",
-        "sessionhost-headless-protocol",
-        "sessionhost-host",
-        "agentd-entry",
-        "sessionhost-drivers",
-        "agentd-effects",
-        "agentd-judgment",
-        "agentd-join",
-        "agentd-fake",
-        "agentd-runtime",
-        "agentd-valve",
-        "sessionhost-policy"
-      ],
-      "typed": true
     },
     {
       "name": "sessionhost-relaymain",
@@ -551,63 +139,12 @@
       "typed": false
     },
     {
-      "name": "sessionhost-headless-protocol",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/headless_protocol.py"
-      ],
-      "responsibility": "headless backend の stdin / stdout の作法(純粋・I/O なし): claude の stream-json(prompt は stdin + EOF・result で手番の終わり・SIGINT で割り込み)と codex app-server の JSON-RPC(initialize → thread/start | resume → turn/start・turn/completed・turn/interrupt・server 要求の方策の表)の状態機械(Dialogue)、手番の次の 1 手の判断(turn_verdict)。効果は値(Step / TurnInput / Interrupt)で返す",
-      "layer": "pure",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/headless_protocol.py"
-      ],
-      "allow": [
-        "sessionhost-attachment"
-      ],
-      "typed": true
-    },
-    {
-      "name": "sessionhost-headless-process",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/headless_process.py"
-      ],
-      "responsibility": "headless backend の器(I/O): 子 process の起動・stdin の書き手 thread・stdout の読み手 thread(events file への追記・Dialogue の効果の運搬・観測の束)・SIGINT・kill・session の名の登記簿。判断を持たない(Dialogue の効果の値を運ぶだけ)",
-      "layer": "io",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/headless_process.py"
-      ],
-      "allow": [
-        "sessionhost-headless-protocol",
-        "sessionhost-attachment"
-      ],
-      "typed": true
-    },
-    {
-      "name": "sessionhost-headless-tests",
-      "paths": [
-        "packages/doeff-agents/tests/test_sessionhost_headless.py"
-      ],
-      "responsibility": "headless backend の焦点の検: 純粋な作法・器(替え玉の claude / codex の実 process)・host の RPC(backend=headless・tmpdir の store)・実 binary の --help の smoke と TERM の停止(段 10 lane 10h 便 2 — client は agentd-client)",
-      "layer": "runtime",
-      "public": [],
-      "allow": [
-        "sessionhost-headless-protocol",
-        "sessionhost-headless-process",
-        "sessionhost-host",
-        "sessionhost-headless",
-        "sessionhost-headless-argv",
-        "sessionhost-store",
-        "agentd-client",
-        "sessionhost-attachment"
-      ],
-      "typed": true
-    },
-    {
       "name": "sessionhost-host",
       "paths": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
         "packages/doeff-agents/src/doeff_agents/sessionhost/host.pyi"
       ],
-      "responsibility": "sessionhost の host(RPC の dispatch・handler stack・monitor loop — deff / defhandler の Hy・既存 + backend=headless の分岐。依存先として宣言・検が触る面の pyi。headless の登記簿 HEADLESS_REGISTRY を substrate_headless から持ち、検が再起動を再現する時に差し替える — 段 10 lane 10h)",
+      "responsibility": "sessionhost の host(RPC の dispatch・handler stack・monitor loop — deff / defhandler の Hy。依存先として宣言・検が触る面の pyi。backend は tmux / herdr — headless の分岐は agora-redesign #668 で退いた)",
       "layer": "runtime",
       "public": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
@@ -615,43 +152,7 @@
       ],
       "allow": [
         "sessionhost-store",
-        "sessionhost-headless-process",
-        "sessionhost-attachment",
-        "sessionhost-cache-model"
-      ],
-      "typed": false
-    },
-    {
-      "name": "sessionhost-headless",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/headless.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/headless.pyi"
-      ],
-      "responsibility": "headless backend の program(defk・effect の列): launch / send / interrupt / cancel / cleanup / capture / monitor。判断は headless_protocol の純関数、I/O は substrate_headless(deff を持つ Hy は投影の対象外 — 依存先として宣言・pyi は検が触る面)",
-      "layer": "effects",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/headless.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/headless.pyi"
-      ],
-      "allow": [
-        "sessionhost-headless-protocol"
-      ],
-      "typed": false
-    },
-    {
-      "name": "sessionhost-headless-argv",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/impls/headless_argv.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/impls/headless_argv.pyi"
-      ],
-      "responsibility": "headless の起動 argv と作法の per-kind 組み立て(claude の print mode の唯一の家・codex app-server)— deff / defhandler の Hy(依存先として宣言・pyi は検が触る面)",
-      "layer": "pure",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/impls/headless_argv.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/impls/headless_argv.pyi"
-      ],
-      "allow": [
-        "sessionhost-headless-protocol"
+        "sessionhost-attachment"
       ],
       "typed": false
     },
@@ -738,18 +239,8 @@
         "packages/doeff-agents/src/doeff_agents/io_root.py"
       ],
       "allow": [
-        "adr-agents-012",
         "adr-agents-013",
         "agentd-client",
-        "agentd-effects",
-        "agentd-entry",
-        "agentd-fake",
-        "agentd-handlers",
-        "agentd-judgment",
-        "agentd-programs",
-        "agentd-runtime",
-        "agentd-tests",
-        "agentd-valve",
         "driver-io-effects",
         "driver-io-effects-types",
         "driver-io-fake",
@@ -757,11 +248,6 @@
         "driver-io-handlers",
         "driver-io-handlers-types",
         "driver-io-test-support",
-        "sessionhost-headless",
-        "sessionhost-headless-argv",
-        "sessionhost-headless-process",
-        "sessionhost-headless-protocol",
-        "sessionhost-headless-tests",
         "sessionhost-host",
         "sessionhost-hostmain",
         "sessionhost-relaymain",
@@ -780,18 +266,8 @@
         "packages/doeff-agents/src/doeff_agents/io_effects.pyi"
       ],
       "allow": [
-        "adr-agents-012",
         "adr-agents-013",
         "agentd-client",
-        "agentd-effects",
-        "agentd-entry",
-        "agentd-fake",
-        "agentd-handlers",
-        "agentd-judgment",
-        "agentd-programs",
-        "agentd-runtime",
-        "agentd-tests",
-        "agentd-valve",
         "driver-io-effects",
         "driver-io-fake",
         "driver-io-fake-types",
@@ -799,11 +275,6 @@
         "driver-io-handlers-types",
         "driver-io-root",
         "driver-io-test-support",
-        "sessionhost-headless",
-        "sessionhost-headless-argv",
-        "sessionhost-headless-process",
-        "sessionhost-headless-protocol",
-        "sessionhost-headless-tests",
         "sessionhost-host",
         "sessionhost-hostmain",
         "sessionhost-relaymain",
@@ -822,18 +293,8 @@
         "packages/doeff-agents/src/doeff_agents/io_handlers.pyi"
       ],
       "allow": [
-        "adr-agents-012",
         "adr-agents-013",
         "agentd-client",
-        "agentd-effects",
-        "agentd-entry",
-        "agentd-fake",
-        "agentd-handlers",
-        "agentd-judgment",
-        "agentd-programs",
-        "agentd-runtime",
-        "agentd-tests",
-        "agentd-valve",
         "driver-io-effects",
         "driver-io-effects-types",
         "driver-io-fake",
@@ -841,11 +302,6 @@
         "driver-io-handlers",
         "driver-io-root",
         "driver-io-test-support",
-        "sessionhost-headless",
-        "sessionhost-headless-argv",
-        "sessionhost-headless-process",
-        "sessionhost-headless-protocol",
-        "sessionhost-headless-tests",
         "sessionhost-host",
         "sessionhost-hostmain",
         "sessionhost-relaymain",
@@ -864,18 +320,8 @@
         "packages/doeff-agents/src/doeff_agents/io_fake.pyi"
       ],
       "allow": [
-        "adr-agents-012",
         "adr-agents-013",
         "agentd-client",
-        "agentd-effects",
-        "agentd-entry",
-        "agentd-fake",
-        "agentd-handlers",
-        "agentd-judgment",
-        "agentd-programs",
-        "agentd-runtime",
-        "agentd-tests",
-        "agentd-valve",
         "driver-io-effects",
         "driver-io-effects-types",
         "driver-io-fake",
@@ -883,11 +329,6 @@
         "driver-io-handlers-types",
         "driver-io-root",
         "driver-io-test-support",
-        "sessionhost-headless",
-        "sessionhost-headless-argv",
-        "sessionhost-headless-process",
-        "sessionhost-headless-protocol",
-        "sessionhost-headless-tests",
         "sessionhost-host",
         "sessionhost-hostmain",
         "sessionhost-relaymain",
@@ -906,18 +347,8 @@
         "packages/doeff-agents/tests/fake_io_support.py"
       ],
       "allow": [
-        "adr-agents-012",
         "adr-agents-013",
         "agentd-client",
-        "agentd-effects",
-        "agentd-entry",
-        "agentd-fake",
-        "agentd-handlers",
-        "agentd-judgment",
-        "agentd-programs",
-        "agentd-runtime",
-        "agentd-tests",
-        "agentd-valve",
         "driver-io-effects",
         "driver-io-effects-types",
         "driver-io-fake",
@@ -925,11 +356,6 @@
         "driver-io-handlers",
         "driver-io-handlers-types",
         "driver-io-root",
-        "sessionhost-headless",
-        "sessionhost-headless-argv",
-        "sessionhost-headless-process",
-        "sessionhost-headless-protocol",
-        "sessionhost-headless-tests",
         "sessionhost-host",
         "sessionhost-hostmain",
         "sessionhost-relaymain",
@@ -948,19 +374,9 @@
         "packages/doeff-hy/src/doeff_hy/typecheck.hy"
       ],
       "allow": [
-        "adr-agents-012",
         "adr-agents-013",
         "adr-hy-005",
         "agentd-client",
-        "agentd-effects",
-        "agentd-entry",
-        "agentd-fake",
-        "agentd-handlers",
-        "agentd-judgment",
-        "agentd-programs",
-        "agentd-runtime",
-        "agentd-tests",
-        "agentd-valve",
         "doeff-hy-record",
         "driver-io-effects",
         "driver-io-effects-types",
@@ -970,11 +386,6 @@
         "driver-io-handlers-types",
         "driver-io-root",
         "driver-io-test-support",
-        "sessionhost-headless",
-        "sessionhost-headless-argv",
-        "sessionhost-headless-process",
-        "sessionhost-headless-protocol",
-        "sessionhost-headless-tests",
         "sessionhost-host",
         "sessionhost-hostmain",
         "sessionhost-relaymain",
@@ -993,19 +404,9 @@
         "packages/doeff-hy/src/doeff_hy/record.hy"
       ],
       "allow": [
-        "adr-agents-012",
         "adr-agents-013",
         "adr-hy-005",
         "agentd-client",
-        "agentd-effects",
-        "agentd-entry",
-        "agentd-fake",
-        "agentd-handlers",
-        "agentd-judgment",
-        "agentd-programs",
-        "agentd-runtime",
-        "agentd-tests",
-        "agentd-valve",
         "doeff-hy-typecheck",
         "driver-io-effects",
         "driver-io-effects-types",
@@ -1015,11 +416,6 @@
         "driver-io-handlers-types",
         "driver-io-root",
         "driver-io-test-support",
-        "sessionhost-headless",
-        "sessionhost-headless-argv",
-        "sessionhost-headless-process",
-        "sessionhost-headless-protocol",
-        "sessionhost-headless-tests",
         "sessionhost-host",
         "sessionhost-hostmain",
         "sessionhost-relaymain",
@@ -1042,18 +438,8 @@
         "docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy"
       ],
       "allow": [
-        "adr-agents-012",
         "adr-agents-013",
         "agentd-client",
-        "agentd-effects",
-        "agentd-entry",
-        "agentd-fake",
-        "agentd-handlers",
-        "agentd-judgment",
-        "agentd-programs",
-        "agentd-runtime",
-        "agentd-tests",
-        "agentd-valve",
         "doeff-hy-record",
         "doeff-hy-typecheck",
         "doeff-hy-typecheck-handlers",
@@ -1065,11 +451,6 @@
         "driver-io-handlers-types",
         "driver-io-root",
         "driver-io-test-support",
-        "sessionhost-headless",
-        "sessionhost-headless-argv",
-        "sessionhost-headless-process",
-        "sessionhost-headless-protocol",
-        "sessionhost-headless-tests",
         "sessionhost-host",
         "sessionhost-hostmain",
         "sessionhost-relaymain",
@@ -1101,77 +482,12 @@
       "paths": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/attachment.py"
       ],
-      "responsibility": "手番の入力に付く添付(画像)の型 — 器に依らない値ちょうど(段 10 lane 10o・agora-redesign #96)。mime と base64 の逐語・見出しの検めの材料・器の断りの理由・手番 1 回分の入力(本文 + 添付)。CLI の綴り(claude の block・codex の input の項)は持たない = 綴りの座は sessionhost-headless-protocol の Dialogue。判断も I/O も持たない",
+      "responsibility": "手番の入力に付く添付(画像)の型 — 器に依らない値ちょうど(段 10 lane 10o・agora-redesign #96)。mime と base64 の逐語・見出しの検めの材料・器の断りの理由・手番 1 回分の入力(本文 + 添付)。CLI の綴り(claude の block・codex の input の項)は持たない = 綴りの座は doeff-claude-code の Dialogue。判断も I/O も持たない",
       "layer": "pure",
       "public": [
         "packages/doeff-agents/src/doeff_agents/sessionhost/attachment.py"
       ],
       "allow": [],
-      "typed": true
-    },
-    {
-      "name": "agentd-cache-observation",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_observation.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_observation.pyi"
-      ],
-      "responsibility": "API応答のキャッシュ観測と実行元の保存。応答完了の時刻を期限の起点にしない",
-      "layer": "domain",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_observation.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_observation.pyi"
-      ],
-      "allow": [
-        "agentd-effects"
-      ],
-      "typed": true
-    },
-    {
-      "name": "agentd-cache-observation-tests",
-      "paths": [
-        "packages/doeff-agents/tests/test_sessionhost_cache_observation.py"
-      ],
-      "responsibility": "キャッシュ観測の時計・親API・期限・turn記録の接続検証",
-      "layer": "runtime",
-      "public": [],
-      "allow": [
-        "agentd-cache-observation",
-        "agentd-judgment",
-        "agentd-effects"
-      ],
-      "typed": true
-    },
-    {
-      "name": "agentd-response-usage",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/response_usage.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/response_usage.pyi"
-      ],
-      "responsibility": "手番の応答ごとの消費(出力は message_delta の最終値)と turn-record の status.responses の形。行へ写すのは手番の終わりの書きだけ",
-      "layer": "domain",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/response_usage.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/response_usage.pyi"
-      ],
-      "allow": [
-        "agentd-cache-observation",
-        "agentd-effects"
-      ],
-      "typed": true
-    },
-    {
-      "name": "agentd-response-usage-tests",
-      "paths": [
-        "packages/doeff-agents/tests/test_sessionhost_response_usage.py"
-      ],
-      "responsibility": "応答ごとの消費の畳み・上限の切り方・終わりの書きへの接続・契約の写しとの突合の検証",
-      "layer": "runtime",
-      "public": [],
-      "allow": [
-        "agentd-response-usage",
-        "agentd-judgment",
-        "agentd-effects"
-      ],
       "typed": true
     },
     {
@@ -1188,153 +504,6 @@
       "responsibility": "既存Claude backendのhandlerとCLI設定名の定義元。agentdの設定入力テストが参照するautoMemoryDirectoryの綴りはこのmoduleが所有し、複製しない。既存Hy backendの型検査は未導入であり、公開依存の登録は型検査合格の主張ではない。",
       "layer": "io",
       "typed": false
-    },
-    {
-      "name": "agentd-cache-operation",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_operation.py"
-      ],
-      "responsibility": "キャッシュ維持の専用操作とworker効果の契約",
-      "layer": "effects",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_operation.py"
-      ],
-      "allow": [
-        "agentd-effects"
-      ],
-      "typed": true
-    },
-    {
-      "name": "agentd-io-types",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/io_types.py"
-      ],
-      "responsibility": "I/O境界の型付き集合",
-      "layer": "effects",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/io_types.py"
-      ],
-      "allow": [
-        "agentd-effects"
-      ],
-      "typed": true
-    },
-    {
-      "name": "agentd-loop-model",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/loop_model.py"
-      ],
-      "responsibility": "同一VM内の通常処理と専用処理の停止・観測契約",
-      "layer": "effects",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/loop_model.py"
-      ],
-      "allow": [
-        "agentd-effects"
-      ],
-      "typed": true
-    },
-    {
-      "name": "agentd-worker-loop",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/worker_loop.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/worker_loop.pyi"
-      ],
-      "responsibility": "単一VM内で通常処理とキャッシュ維持を独立して実行",
-      "layer": "runtime",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/worker_loop.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/worker_loop.pyi"
-      ],
-      "allow": [
-        "agentd-effects",
-        "agentd-programs",
-        "agentd-judgment",
-        "agentd-loop-model",
-        "agentd-async-dispatch",
-        "agentd-cache-live",
-        "sessionhost-cache-model"
-      ],
-      "typed": true
-    },
-    {
-      "name": "agentd-async-dispatch",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/async_dispatch.hy"
-      ],
-      "responsibility": "同期I/O要求をAwaitに翻訳するhandler",
-      "layer": "runtime",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/async_dispatch.hy"
-      ],
-      "allow": [],
-      "typed": true
-    },
-    {
-      "name": "agentd-cache-wire",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_wire.py"
-      ],
-      "responsibility": "ACP専用操作のwire検証",
-      "layer": "domain",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_wire.py"
-      ],
-      "allow": [
-        "agentd-effects",
-        "agentd-cache-operation"
-      ],
-      "typed": true
-    },
-    {
-      "name": "agentd-cache-maintenance",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_maintenance.hy"
-      ],
-      "responsibility": "専用操作の永続状態から実行と復旧を決定",
-      "layer": "effects",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_maintenance.hy"
-      ],
-      "allow": [
-        "agentd-cache-operation"
-      ],
-      "typed": true
-    },
-    {
-      "name": "agentd-cache-live",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_live.hy"
-      ],
-      "responsibility": "専用操作をACP・sessionhost・認証効果へ翻訳",
-      "layer": "runtime",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/acp/cache_live.hy"
-      ],
-      "allow": [
-        "agentd-effects",
-        "agentd-judgment",
-        "agentd-cache-operation",
-        "agentd-cache-wire",
-        "agentd-cache-maintenance",
-        "sessionhost-cache-model"
-      ],
-      "typed": true
-    },
-    {
-      "name": "sessionhost-cache-model",
-      "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/cache_host_model.py"
-      ],
-      "responsibility": "専用pingの永続記録と排他契約",
-      "layer": "effects",
-      "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/cache_host_model.py"
-      ],
-      "allow": [
-        "agentd-cache-operation"
-      ],
-      "typed": true
     },
     {
       "name": "records-wire",
