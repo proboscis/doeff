@@ -33,6 +33,8 @@ from .monitor import (
 )
 from doeff_agents.io_root import IoRoot
 
+import hy  # noqa: F401 -- installs the .hy import hook (ready_physics.hy)
+
 from .session_backend import SessionBackend
 from .ready_physics import has_claude_screen_reader_trust_prompt
 from .shell import (
