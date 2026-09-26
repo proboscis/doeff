@@ -43,19 +43,25 @@
     (and (.get item "baseFrom") (.get item "base")) (get item "base")
     True (get item "revision")))
 
+(defn #^ (| str None) declared-runtime-env [#^ dict item]
+  "宣言 1 行の runtimeEnv(在れば)の正規化した JSON の文字列(JobSpec.runtime-env — 比べる欄)。無ければ None。"
+  (setv value (.get item "runtimeEnv"))
+  (if (is value None) None (json.dumps value :sort-keys True :ensure-ascii False)))
+
 (defn #^ JobSpec spec-of-declaration [#^ dict item]
-  "宣言 1 行 → worker が起動する形。run.kind = service なら job_entry の service 入口、無ければ entry と args をそのまま。"
-  (setv run (.get item "run") revision (declared-revision item))
+  "宣言 1 行 → worker が起動する形。run.kind = service なら job_entry の service 入口、無ければ entry と args をそのまま。
+   runtimeEnv を持つ宣言は、worker が env の root を準備してその venv で起こす(版は worker が env のキーへ置き換える)。"
+  (setv run (.get item "run") revision (declared-revision item) runtime (declared-runtime-env item))
   (cond
     (is run None)
       (JobSpec (get item "name") (get item "entry") (tuple (.get item "args" [])) revision
-               :base (.get item "base") :handoff (= (.get item "update") "handoff"))
+               :base (.get item "base") :handoff (= (.get item "update") "handoff") :runtime-env runtime)
     (= (.get run "kind") "service")
       (JobSpec (get item "name") JOB-ENTRY
                #("service" "--factory" (get run "factory") "--env" (get run "env")
                  "--config" (json.dumps (.get run "config" {}) :sort-keys True :ensure-ascii False))
                revision
-               :base (.get item "base") :handoff (= (.get item "update") "handoff"))
+               :base (.get item "base") :handoff (= (.get item "update") "handoff") :runtime-env runtime)
     True (raise (ValueError (+ "知らない run.kind: " (repr (.get run "kind")))))))
 
 
@@ -80,6 +86,13 @@
     (raise (ValueError (.format "overlay は 40 桁の commit: {!r}" overlay))))
   (when (and (is-not overlay None) (is base-from None))
     (raise (ValueError "overlay は baseFrom を持つ Service だけが使う(baseFrom の無い宣言は revision がそのまま定義の版)")))
+  ;; 実行環境の宣言(2026-09-26): commit は宣言の repos が持つので、image の版を追う baseFrom と
+  ;; 木を重ねる overlay とは併用しない(両方あれば断る — どちらの commit で起こすかが 2 つになる)。
+  (setv env-refusal (runtime-env-refusal item))
+  (when (is-not env-refusal None)
+    (raise (ValueError env-refusal)))
+  (when (and (is-not (.get item "runtimeEnv") None) (or (is-not base-from None) (is-not overlay None)))
+    (raise (ValueError "runtimeEnv を持つ宣言は baseFrom と overlay を持たない(commit は宣言の repos が決める)")))
   (ClusterJob (spec-of-declaration item)
               (tuple (sorted (.items (.get item "requires" {}))))
               (.get item "pin")
@@ -100,7 +113,8 @@
   (setv extra (| (if (= job.update "recreate") {} {"update" job.update})
                  (if (is job.base-from None) {} {"baseFrom" job.base-from})
                  (if (is job.spec.base None) {} {"base" job.spec.base})
-                 (if (is job.overlay None) {} {"overlay" job.overlay})))
+                 (if (is job.overlay None) {} {"overlay" job.overlay})
+                 (if (is job.spec.runtime-env None) {} {"runtimeEnv" (json.loads job.spec.runtime-env)})))
   (if (is job.run None)
       (| base extra {"entry" job.spec.entry "args" (list job.spec.args)})
       (| base extra {"run" job.run})))
@@ -110,6 +124,8 @@
   (| {"name" spec.name "entry" spec.entry "args" (list spec.args) "revision" spec.revision "once" spec.once}
      (if (is spec.placement None) {} {"placement" spec.placement})
      (if (is spec.base None) {} {"base" spec.base})
+     ;; 実行環境の job だけ: 宣言の JSON(worker が env の root を準備し、版を env のキーへ置き換える)。
+     (if (is spec.runtime-env None) {} {"runtimeEnv" (json.loads spec.runtime-env)})
      ;; 入れ替え(handoff)の job だけ: 形と、coordinator が Ready と数えている process の世代の名(worker は旧をこの後に止める)。
      (if spec.handoff {"handoff" True "readyInstance" spec.ready-instance} {})))
 

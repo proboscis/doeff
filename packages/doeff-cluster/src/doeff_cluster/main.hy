@@ -68,7 +68,7 @@
         ;; 実行環境(runtime env)の root の準備(別の process・worker は再起動しない)。
         envs (EnvStore (str state-dir) hy-command :repo-keys args.repo-keys :uv args.uv :min-free-bytes args.env-min-free)
         ;; 入口の検め(service の job の木を worker の実行環境で読み込めるか — 起こす前に試す)。
-        probes (ProbeStore hy-command :layout layout)
+        probes (ProbeStore hy-command :layout layout :uv args.uv :probe-dir (str (/ state-dir "probe")))
         policy (WorkerPolicy :stop-grace-ms (int (* args.stop-grace 1000)))
         stop (StopState))
   (defn on-signal [signum frame] (setv stop.requested True))
