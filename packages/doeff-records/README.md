@@ -16,6 +16,7 @@ composition root で渡す。書き手の名は effect の引数ではなく、h
 | `WatchChanges(tables, cursor, timeout, limit)` | 表の列・位置・待つ秒 | `Changes(items, cursor)` | `Reset(epoch)`・`Unreachable` |
 | `AppendEvent(stream, idempotency_key, body)` | 追記の列・冪等キー・本文 | `Appended(sequence)`(同じキーの再送は前の番号) | `Refused`・`Unreachable` |
 | `ReadEvents(stream, after, limit)` | 追記の列・この番号より後・上限 | `Events(items, last_sequence)` | `Unreachable` |
+| `PutRows(writes)` | 書きの束 = `RowWrite(table, key, value, expect)`(欄と意味は `PutRow` と同じ)の空でない tuple。同じ表の同じキーが 2 度出る束は作る時に `ValueError` | `WrittenRows(items)`(束の順の `Written`) | `RowsConflict(index, table, key, current)`・`RowsRefused(index, table, key, reason)`・`Unreachable` |
 
 lease(取る・延ばす・返す・書きの柵)はこの package に作らない。doeff-cluster の `LeaseOp` / `HeldLease`
 (`doeff_cluster.semaphore_model`)をそのまま使う。
@@ -29,6 +30,10 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
 - 版(`version`)は生まれた行が 1 で、書くたびに 1 増える。
 - `ListRows` の頁はキーの綴り(`admission.key_text`)の順。最初の頁の `epoch` と `sequence` から `WatchChanges` を始めると、
   一覧の後の変更を取りこぼさない。
+- `PutRows` は全部か 0 で書く: 1 行でも期待が合わないか断られれば、1 行も書かない。判定は `PutRow` と同じで、全部の行の期待を
+  先に見て(合わない行があれば束の順で最初の行の `RowsConflict`)、次に全部の行の書きの判定を見る(最初に断られた行の `RowsRefused`)。
+  確定した束は変更の列に束の順で 1 行ずつ、続いた番号で積む。PostgreSQL の handler は `PutRow` と同じ置き場の lock と
+  transaction 1 つの中で全部の行を検めてから書くので、書きの途中の失敗は transaction ごと戻る。
 - `WatchChanges` は確定した変更を、番号の順にちょうど 1 回ずつ返す(断られた書き・衝突した書きは出ない)。位置の `epoch` が置き場の版と
   違えば `Reset` を返すので、一覧から読み直す。
 - 例外で上がるのは組み立ての誤り(定義に無い表・列を名指した = `UndeclaredTable`)と実装の誤りだけ。
@@ -84,7 +89,7 @@ operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の�
 
 ## 記録の service の HTTP の口
 
-別の process(Python・TS・別の Hy)が同じ 6 つの操作を使うための口。`doeff_records.service.respond` は HTTP の要求 1 つを
+別の process(Python・TS・別の Hy)が同じ 7 つの操作を使うための口。`doeff_records.service.respond` は HTTP の要求 1 つを
 答え 1 つにする Program で、身元 → 本文の読み → 宣言に在る表か → 公開 effect を実行する、の順だけを持つ(判断は記録の handler)。
 
 | route | 本文 | 200 の答えの `kind` |
@@ -95,9 +100,10 @@ operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の�
 | `POST /v1/records/watch-changes` | `{tables, cursor, timeout?, limit?}` | `changes` / `reset` |
 | `POST /v1/records/append-event` | `{stream, idempotencyKey, body}` | `appended` / `refused` |
 | `POST /v1/records/read-events` | `{stream, after?, limit?}` | `events` |
+| `POST /v1/records/put-rows` | `{writes: [{table, key, value, expect}, …]}`(1 つ以上・同じ表の同じキーは 1 度だけ — 外れれば 400) | `writtenRows`(`items` = `written` の列)/ `rowsConflict`(`index, table, key, current`)/ `rowsRefused`(`index, table, key, reason`) |
 | `GET /healthz` | — | `{status: "ok"}` |
 
-- effect の答えの失敗(`Conflict`・`Refused`・`NotIndexed`・`Reset`・`Missing`)は 200 の本文の値。HTTP の断りは
+- effect の答えの失敗(`Conflict`・`Refused`・`NotIndexed`・`Reset`・`Missing`・`RowsConflict`・`RowsRefused`)は 200 の本文の値。HTTP の断りは
   `{error, reason}` で、`400 malformed`(知らないキー・足りないキー・型の違う値)・`401 unauthorized`(身元が引けない)・
   `404 not-found`(宣言に無い表・知らない route)・`503 store-unavailable`(置き場に届かない = `Unreachable`)・`500 internal`。
 - 綴り(JSON の欄の名・`kind`・位置と期待の形)の正本は `doeff_records.wire`。口と client は両方これを呼ぶ。
@@ -108,7 +114,7 @@ operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の�
   PostgreSQL の置き場では要求ごとに接続を 1 本借りる(`doeff_records.pg_pool.PgHostPool`)。
 
 client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoint(base_url, token))` は、同じ公開 effect に口越しで
-答える。`401` は書き(`PutRow`・`AppendEvent`)なら `Refused`、読みなら `Unreachable`。`404` は `UndeclaredTable` を上げる。
+答える。`401` は書き(`PutRow`・`AppendEvent`)なら `Refused`、`PutRows` なら束の最初の行の `RowsRefused`、読みなら `Unreachable`。`404` は `UndeclaredTable` を上げる。
 `WatchChanges` の待ちは client の時計で回す(口へは待たない問い合わせだけを送る)。
 
 ## 置き場の手入れ(`doeff_records.maintenance`)
@@ -154,10 +160,11 @@ SIGTERM / SIGINT で口を閉じて接続を返す。
 | `law_watch_waits_for_a_change` | `WatchChanges` は変更が来るまで `timeout` まで待つ |
 | `law_none_removes_a_field` | 差分の値 None はその欄を消し、行の値は None を持たない |
 | `law_maintenance_prunes_and_sweeps` | 刈った変更より前の位置は `Reset`・floor の位置からは続けられ、行は消えない。回収は期限切れの行だけを 1 回消す |
+| `law_put_rows_is_all_or_nothing` | `PutRows` は全部通る束だけを書き(束の順の `Written`)、期待のずれ 1 行・断り 1 行の束は 1 行も書かない。期待のずれを断りより先に答え、確定した束の変更は束の順に続いた番号で見える |
 
 使い方: `LAW_SCHEMA` の定義で置き場を作り、`LawHarness(as_writer)`(書き手の名と Program → その書き手の handler で包んだ
 Program)を法に渡す。法は答えを順に並べた list を返すので、2 つの handler の組で同じ法を回して list を比べれば、答えが同じことも
-確かめられる(`SHARED_LAWS` は時間を進めない法)。置き場の版を進める検の口は `doeff_records.faults.AdvanceStoreEpoch`(公開 effect ではない)。
+確かめられる(`SHARED_LAWS` は時間を進めない法のうち、前からの 6 つの effect だけで回る法 — `PutRows` を答えない handler の組でも回せる)。置き場の版を進める検の口は `doeff_records.faults.AdvanceStoreEpoch`(公開 effect ではない)。
 
 ## 検
 

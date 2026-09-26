@@ -5,7 +5,7 @@
 (import doeff_records.laws [law-stale-put-conflicts law-committed-changes-appear-once-in-order law-epoch-change-resets
                             law-undeclared-writes-are-refused law-operator-paths-need-an-operator law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-append-is-idempotent law-watch-waits-for-a-change
-                            law-none-removes-a-field law-maintenance-prunes-and-sweeps])
+                            law-none-removes-a-field law-maintenance-prunes-and-sweeps law-put-rows-is-all-or-nothing])
 (import tests.interpreters [LawSetup])
 
 
@@ -73,4 +73,10 @@
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-operator-paths-need-an-operator harness))
+  (assert transcript))
+
+(deftest test-put-rows-is-all-or-nothing
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-put-rows-is-all-or-nothing harness))
   (assert transcript))

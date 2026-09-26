@@ -1,25 +1,28 @@
-;;; 記録の service の wire の綴り(I/O なし)— 公開 effect 6 つの要求と答えを JSON の値へ写し、JSON の値から読む。
+;;; 記録の service の wire の綴り(I/O なし)— 公開 effect 7 つの要求と答えを JSON の値へ写し、JSON の値から読む。
 ;;;
 ;;; JSON(dict / list)と凍らせた値(FrozenMap・tuple・frozen の dataclass)の行き来はこの file の 1 か所だけ。
 ;;; HTTP の口(service.hy)と client の handler(http_client.hy)は両方ここを呼ぶ — 綴りを 2 か所に写さない。
 ;;; 契約: この file の綴りが正本。呼び手の系が契約の file(route・要求・答え・断り)と golden を持つ時は、その golden をこの口に通して照合する。
 ;;;
 ;;; 読みは境界の検め: 知らない鍵・足りない鍵・型の違う値は WireMalformed(黙って既定へ倒さない)。
-;;; effect の答えの失敗(Conflict・Refused・NotIndexed・Reset・Missing)は答えの値で、`kind` の欄で判別する。
+;;; effect の答えの失敗(Conflict・Refused・NotIndexed・Reset・Missing・RowsConflict・RowsRefused)は答えの値で、`kind` の欄で判別する。
 ;;; 置き場に届かない(Unreachable)は答えの本文ではなく HTTP の 503 の断りで運ぶ(service.hy)。
-(require doeff-hy.macros [defk <-])
+(require doeff-hy.macros [defk <- val])
 (import dataclasses [dataclass])
 (import doeff_hy.frozen [FrozenMap thaw-json])
-(import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written
-                              RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset])
-(import doeff_records.effects [ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents])
+(import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written WrittenRows
+                              RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset
+                              RowsConflict RowsRefused])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents])
 
 (setv PATH-PREFIX "/v1/records/")
 (setv OP-READ-ROW "read-row" OP-LIST-ROWS "list-rows" OP-PUT-ROW "put-row" OP-WATCH-CHANGES "watch-changes"
       OP-APPEND-EVENT "append-event" OP-READ-EVENTS "read-events")
-(setv OPERATIONS #(OP-READ-ROW OP-LIST-ROWS OP-PUT-ROW OP-WATCH-CHANGES OP-APPEND-EVENT OP-READ-EVENTS))
-;; 書きの操作(身元の名簿に無い呼び手の書きを、client の handler が Refused の答えにする操作)。
-(setv WRITE-OPERATIONS #(OP-PUT-ROW OP-APPEND-EVENT))
+;; 複数行を全部か 0 で書く操作(本文 = {writes: [{table key value expect} …]})— 前の 6 つの綴りは変えずに足した。
+(val OP-PUT-ROWS "put-rows")
+(setv OPERATIONS #(OP-READ-ROW OP-LIST-ROWS OP-PUT-ROW OP-WATCH-CHANGES OP-APPEND-EVENT OP-READ-EVENTS OP-PUT-ROWS))
+;; 書きの操作(身元の名簿に無い呼び手の書きを、client の handler が Refused / RowsRefused の答えにする操作)。
+(setv WRITE-OPERATIONS #(OP-PUT-ROW OP-APPEND-EVENT OP-PUT-ROWS))
 
 ;; 断りの語(契約 $defs.refusal の error の語彙のうち、この口が使う物)と HTTP の status。
 (setv ERROR-MALFORMED "malformed" ERROR-UNAUTHORIZED "unauthorized" ERROR-NOT-FOUND "not-found"
@@ -33,12 +36,14 @@
                     OP-PUT-ROW #("written" "conflict" "refused")
                     OP-WATCH-CHANGES #("changes" "reset")
                     OP-APPEND-EVENT #("appended" "refused")
-                    OP-READ-EVENTS #("events")})
+                    OP-READ-EVENTS #("events")
+                    OP-PUT-ROWS #("writtenRows" "rowsConflict" "rowsRefused")})
 
 ;; 境界の値の型(JSON の値・公開 effect・wire の本文で運ぶ答え)。
 (setv JsonValue (| dict list str int float bool None))
-(setv PublicEffect (| ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents))
-(setv WireAnswer (| Row Missing Page Written Conflict Refused NotIndexed Reset Changes Appended Events))
+(setv PublicEffect (| ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents PutRows))
+(setv WireAnswer (| Row Missing Page Written Conflict Refused NotIndexed Reset Changes Appended Events
+                    WrittenRows RowsConflict RowsRefused))
 
 
 (defclass WireMalformed [ValueError]
@@ -185,6 +190,34 @@
 
 ;; --- 要求 ------------------------------------------------------------------------------------------------
 
+(defk row-write-json [write]
+  {:pre [(: write RowWrite)] :post [(: % dict)]}
+  "PutRows の束の書き 1 つを wire の object(put-row の本文と同じ鍵 table・key・value・expect)にする。"
+  (<- expect (expect-json write.expect))
+  {"table" write.table "key" (list write.key) "value" (thaw-json write.value) "expect" expect})
+
+
+(defk row-write-from [value]
+  {:pre [(: value JsonValue)] :post [(: % RowWrite)]}
+  "wire の object から PutRows の束の書き 1 つを読む(鍵の組は put-row の本文と同じ・approval は受けない)。"
+  (<- body (object-of value "put-rows の書き" #("table" "key" "value" "expect") #()))
+  (<- table (string-of (get body "table") "writes[].table"))
+  (<- key (strings-of (get body "key") "writes[].key"))
+  (<- fields (json-object-in (get body "value") "writes[].value"))
+  (<- expect (expect-from (get body "expect")))
+  (RowWrite table key fields expect))
+
+
+(defk row-writes-from [body]
+  {:pre [(: body JsonValue)] :post [(: % tuple)]}
+  "put-rows の本文 {writes: [...]} から束の書き(RowWrite の tuple)を読む(同じ行が 2 度出る束・空の束は PutRows が作る時に断る)。"
+  (<- (object-of body "put-rows の本文" #("writes") #()))
+  (<- items (list-in (get body "writes") "writes"))
+  (val writes [])
+  (for [item items] (.append writes (! (row-write-from item))))
+  (tuple writes))
+
+
 (defk encode-request [ask]
   {:pre [(: ask PublicEffect)] :post [(: % WireRequest)]}
   "client の handler が撃つ公開 effect(ask)を、HTTP で送る操作の名と本文にする。"
@@ -202,7 +235,11 @@
     (AppendEvent :stream stream :idempotency_key idempotency-key :body body)
       (WireRequest OP-APPEND-EVENT {"stream" stream "idempotencyKey" idempotency-key "body" (thaw-json body)})
     (ReadEvents :stream stream :after after :limit limit)
-      (WireRequest OP-READ-EVENTS {"stream" stream "after" after "limit" limit})))
+      (WireRequest OP-READ-EVENTS {"stream" stream "after" after "limit" limit})
+    (PutRows :writes writes)
+      (do (val write-items [])
+          (for [write writes] (.append write-items (! (row-write-json write))))
+          (WireRequest OP-PUT-ROWS {"writes" write-items}))))
 
 
 (defk decode-request [request]
@@ -248,6 +285,8 @@
             (when (in "after" body) (setv (get keywords "after") (! (integer-of (get body "after") "after"))))
             (when (in "limit" body) (setv (get keywords "limit") (! (integer-of (get body "limit") "limit"))))
             (ReadEvents (! (string-of (get body "stream") "stream")) #** keywords))
+      "put-rows"
+        (PutRows (! (row-writes-from body)))
       _ (raise (WireMalformed (.format "知らない操作: {!r}(操作 = {})" request.operation OPERATIONS)))))
     (except [error WireMalformed] (raise error))
     (except [error #(TypeError ValueError)] (raise (! (malformed request.operation error)))))
@@ -263,7 +302,8 @@
     (PutRow :table table) (NamedStores #(table) #())
     (WatchChanges :tables tables) (NamedStores tables #())
     (AppendEvent :stream stream) (NamedStores #() #(stream))
-    (ReadEvents :stream stream) (NamedStores #() #(stream))))
+    (ReadEvents :stream stream) (NamedStores #() #(stream))
+    (PutRows :writes writes) (NamedStores (tuple (sorted (sfor write writes write.table))) #())))
 
 
 ;; --- 答え ------------------------------------------------------------------------------------------------
@@ -314,7 +354,15 @@
     (Events :items items :last_sequence last-sequence)
       (do (setv encoded [])
           (for [event items] (.append encoded (! (event-json event))))
-          {"kind" "events" "items" encoded "lastSequence" last-sequence})))
+          {"kind" "events" "items" encoded "lastSequence" last-sequence})
+    (WrittenRows :items items)
+      (do (val written-items [])
+          (for [written items] (.append written-items (! (encode-answer written))))
+          {"kind" "writtenRows" "items" written-items})
+    (RowsConflict :index index :table table :key key :current current)
+      {"kind" "rowsConflict" "index" index "table" table "key" (list key) "current" (! (encode-answer current))}
+    (RowsRefused :index index :table table :key key :reason reason)
+      {"kind" "rowsRefused" "index" index "table" table "key" (list key) "reason" reason}))
 
 
 (defk row-from [value]
@@ -359,6 +407,28 @@
   value)
 
 
+(defk written-rows-from [value]
+  {:pre [(: value JsonValue)] :post [(: % WrittenRows)]}
+  "wire の object から PutRows の確定(束の順の written の列)を読む。"
+  (<- (object-of value "writtenRows" #("kind" "items") #()))
+  (val items [])
+  (for [item (! (list-in (get value "items") "writtenRows.items"))] (.append items (! (answer-from item))))
+  (when (not (all (gfor item items (isinstance item Written))))
+    (raise (WireMalformed (.format "writtenRows.items は written の列: {!r}" value))))
+  (WrittenRows (tuple items)))
+
+
+(defk rows-conflict-from [value]
+  {:pre [(: value JsonValue)] :post [(: % RowsConflict)]}
+  "wire の object から PutRows の衝突(束の中の位置・行・今の値)を読む。"
+  (<- (object-of value "rowsConflict" #("kind" "index" "table" "key" "current") #()))
+  (<- current (answer-from (get value "current")))
+  (when (not (isinstance current #(Row Missing)))
+    (raise (WireMalformed (.format "rowsConflict.current は row | missing: {!r}" value))))
+  (RowsConflict (! (integer-of (get value "index") "rowsConflict.index")) (! (string-of (get value "table") "rowsConflict.table"))
+                (! (strings-of (get value "key") "rowsConflict.key")) current))
+
+
 (defk answer-from [value]
   {:pre [(: value JsonValue)] :post [(: % WireAnswer)]}
   "200 の本文から答えの値を読む(kind で判別)。"
@@ -401,6 +471,12 @@
             (setv items [])
             (for [item (! (list-in (get value "items") "events.items"))] (.append items (! (event-from item))))
             (Events (tuple items) (! (integer-of (get value "lastSequence") "events.lastSequence"))))
+      {"kind" "writtenRows"} (! (written-rows-from value))
+      {"kind" "rowsConflict"} (! (rows-conflict-from value))
+      {"kind" "rowsRefused"}
+        (do (<- (object-of value "rowsRefused" #("kind" "index" "table" "key" "reason") #()))
+            (RowsRefused (! (integer-of (get value "index") "rowsRefused.index")) (! (string-of (get value "table") "rowsRefused.table"))
+                         (! (strings-of (get value "key") "rowsRefused.key")) (! (string-of (get value "reason") "rowsRefused.reason"))))
       _ (raise (WireMalformed (.format "知らない答え: {!r}" value))))
     (except [error WireMalformed] (raise error))
     (except [error #(TypeError ValueError)] (raise (! (malformed "答え" error))))))

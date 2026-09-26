@@ -1,14 +1,14 @@
-;;; 記録の service の HTTP の口に公開 effect 6 つで答える client の handler — 別の process の Hy / Python の Program が、
+;;; 記録の service の HTTP の口に公開 effect 7 つで答える client の handler — 別の process の Hy / Python の Program が、
 ;;; memory や PostgreSQL の handler と同じ effect のまま記録の service を読み書きするため。
 ;;;
 ;;; 書き手の身元は effect の引数ではなく endpoint の token(handler を組む時に渡す)。service がその token を身元の名簿で書き手の名へ引く。
 ;;; 綴りは wire.hy(service と同じ 1 か所)。
 ;;;
 ;;; 答えの写し方:
-;;;   200                    wire の本文の答え(Row・Page・Written・Conflict・Refused・Changes …)
+;;;   200                    wire の本文の答え(Row・Page・Written・Conflict・Refused・Changes・WrittenRows・RowsConflict・RowsRefused …)
 ;;;   503 / 届かない          Unreachable(読みは撃ち直してよい・書きは期待つきなら撃ち直してよい)
-;;;   401(名簿に無い token)  書き(PutRow・AppendEvent)は Refused、読みは Unreachable — 書き手でない呼び手の書きが確定しないことを
-;;;                          memory の handler と同じ Refused の形で返す
+;;;   401(名簿に無い token)  書き(PutRow・AppendEvent)は Refused、PutRows は束の最初の行の RowsRefused、読みは Unreachable —
+;;;                          書き手でない呼び手の書きが確定しないことを memory の handler と同じ断りの形で返す
 ;;;   404(宣言に無い表)      UndeclaredTable を上げる(組み立ての誤り — memory の handler と同じ)
 ;;;   400 / 500              WireError を上げる(client か service の実装の誤り)
 ;;;
@@ -20,8 +20,8 @@
 (import socket)
 (import urllib.error [HTTPError URLError])
 (import urllib.request [Request urlopen])
-(import doeff_records.values [Refused Unreachable UndeclaredTable])
-(import doeff_records.effects [ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents])
+(import doeff_records.values [Refused Unreachable UndeclaredTable RowsRefused])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges AppendEvent ReadEvents])
 (import doeff_records.watching [wait-for-changes])
 (import doeff_records.wire [PATH-PREFIX WRITE-OPERATIONS PublicEffect WireAnswer JsonValue
                             encode-request decode-answer refusal-from])
@@ -70,6 +70,16 @@
       (raise (WireError (.format "{} の答え(status {})が JSON でない: {}" operation status error))))))
 
 
+(defk refused-write [ask reason]
+  {:pre [(: ask PublicEffect) (: reason str)] :post [(: % (| Refused RowsRefused))]}
+  "身元を認められなかった書きの答えを、その effect の断りの形にする(PutRows は束の最初の行の RowsRefused — memory の handler で
+   書き手でない呼び手の束が最初の行で断られるのと同じ形 / PutRow・AppendEvent は Refused)。"
+  (match ask
+    (PutRows :writes writes)
+      (RowsRefused 0 (. (get writes 0) table) (. (get writes 0) key) reason)
+    _ (Refused reason)))
+
+
 (defk call-service [endpoint ask]
   {:pre [(: endpoint RecordsEndpoint) (: ask PublicEffect)] :post [(: % (| WireAnswer Unreachable))]}
   "公開 effect(ask)1 つを service へ撃ち、答えの値にする(status の写し方は file の頭の表)。"
@@ -81,7 +91,7 @@
   (<- refusal (refusal-from reply.body))
   (match refusal.error
     "unauthorized" (if (in request.operation WRITE-OPERATIONS)
-                       (Refused (.format "記録の service が身元を認めない: {}" refusal.reason))
+                       (! (refused-write ask (.format "記録の service が身元を認めない: {}" refusal.reason)))
                        (Unreachable (.format "記録の service が身元を認めない: {}" refusal.reason)))
     "store-unavailable" (Unreachable refusal.reason)
     "not-found" (raise (UndeclaredTable refusal.reason))
@@ -96,6 +106,9 @@
     (<- answer (call-service endpoint effect))
     (resume answer))
   (PutRow [table key value expect]
+    (<- answer (call-service endpoint effect))
+    (resume answer))
+  (PutRows [writes]
     (<- answer (call-service endpoint effect))
     (resume answer))
   (WatchChanges [tables cursor timeout limit]

@@ -9,6 +9,7 @@
 ;;; 値を持つ型は作る時に受けた写像を凍らせる(実行時は dict を渡しても、欄には FrozenMap が入る — 型の注記は FrozenMap なので、
 ;;; 静的な検査は呼び手に FrozenMap / frozen-json-object で包ませる)。JSON へ書く境界は thaw-json で戻す。
 ;;; この汎用の層の上に、表ごとの行の型(pydantic の model か dataclass)で読み書きする層が typed.hy に在る — 業務の呼び手はそちらを使う。
+(require doeff-hy.macros [val])
 (import dataclasses [dataclass field])
 (import re)
 (import doeff_hy.frozen [FrozenMap freeze-json frozen-json-object frozen-map-of])
@@ -259,6 +260,13 @@
   (#^ FrozenMap value)
   (defn #^ None __post_init__ [self] (freeze-field self "value" "Written.value")))
 
+(defclass [(dataclass :frozen True)] WrittenRows []
+  "PutRows の束が全部確定した: items = 束の順の Written の tuple(束の i 番目の書きの答え = items の i 番目)。"
+  (#^ tuple items)
+  (defn #^ None __post_init__ [self]
+    (when (not (and (isinstance self.items tuple) (all (gfor item self.items (isinstance item Written)))))
+      (raise (TypeError (.format "WrittenRows.items は Written の tuple: {!r}" self.items))))))
+
 (defclass [(dataclass :frozen True)] RowChanged []
   "変更 1 つ: 行が書かれた(作られた・更新された)。value(凍らせた写像)と version は確定した後の値。"
   (#^ str table)
@@ -309,6 +317,22 @@
   "宣言が書きを許さない(書き手でない欄・宣言の外の欄・終端の行・状態の語彙の外・上限・承認が無い・冪等キーの別の本文)。"
   (#^ str reason))
 
+(defclass [(dataclass :frozen True)] RowsConflict []
+  "PutRows の束のある行の期待が今の行と合わない(束は 1 行も書いていない)。index = 束の中の位置(0 から)/ table・key = その行 /
+   current = その行の今の値(Row | Missing)。期待の合わない行が 2 つ以上あれば、束の順で最初の行。"
+  (#^ int index)
+  (#^ str table)
+  (#^ tuple key)
+  (#^ (| Row Missing) current))
+
+(defclass [(dataclass :frozen True)] RowsRefused []
+  "PutRows の束のある行を宣言が許さない(束は 1 行も書いていない)。index = 束の中の位置(0 から)/ table・key = その行 /
+   reason = PutRow の Refused と同じ理由の文。断られる行が 2 つ以上あれば、束の順で最初の行。"
+  (#^ int index)
+  (#^ str table)
+  (#^ tuple key)
+  (#^ str reason))
+
 (defclass [(dataclass :frozen True)] Unreachable []
   "置き場に届かない(結末は不明 — 読みは撃ち直してよい。書きは期待つきなら撃ち直してよい)。"
   (#^ str detail))
@@ -328,3 +352,4 @@
 (setv WatchChangesAnswer (| Changes Reset Unreachable))
 (setv AppendEventAnswer (| Appended Refused Unreachable))
 (setv ReadEventsAnswer (| Events Unreachable))
+(val PutRowsAnswer (| WrittenRows RowsConflict RowsRefused Unreachable))

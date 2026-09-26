@@ -1324,7 +1324,7 @@
       "paths": [
         "packages/doeff-records/src/doeff_records/wire.hy"
       ],
-      "responsibility": "記録の service の wire の綴りの唯一の置き場: 公開 effect 6 つの要求と答えを JSON の値へ写し、JSON の値から契約の形で読む(知らない鍵・足りない鍵・型の違いは WireMalformed)。I/O なし",
+      "responsibility": "記録の service の wire の綴りの唯一の置き場: 公開 effect 7 つの要求と答えを JSON の値へ写し、JSON の値から契約の形で読む(知らない鍵・足りない鍵・型の違いは WireMalformed)。I/O なし",
       "layer": "pure",
       "public": [
         "packages/doeff-records/src/doeff_records/wire.hy"
@@ -1472,7 +1472,7 @@
       "paths": [
         "packages/doeff-records/src/doeff_records/effects.hy"
       ],
-      "responsibility": "記録の公開 effect 6 つ(ReadRow・ListRows・PutRow・WatchChanges・AppendEvent・ReadEvents)の宣言。書き手の身元は引数にしない",
+      "responsibility": "記録の公開 effect 7 つ(ReadRow・ListRows・PutRow・WatchChanges・AppendEvent・ReadEvents・PutRows)と PutRows の書きの束の 1 行 RowWrite の宣言。書き手の身元は引数にしない",
       "layer": "effects",
       "public": [
         "packages/doeff-records/src/doeff_records/effects.hy"

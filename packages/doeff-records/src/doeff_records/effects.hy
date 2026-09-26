@@ -1,4 +1,5 @@
-;;; 記録の仕組みの公開 effect 6 つ(lease は既存の doeff-cluster の LeaseOp / HeldLease を使い、ここには作らない)。
+;;; 記録の仕組みの公開 effect 7 つ(lease は既存の doeff-cluster の LeaseOp / HeldLease を使い、ここには作らない)。
+;;; 7 つ目の PutRows は複数行を全部か 0 で書く(書きの束の 1 行 = RowWrite — PutRow と同じ欄)。
 ;;;
 ;;; 書き手の身元は effect の引数にしない — handler を組む時(composition root)に渡す。答えの型は values.hy。
 ;;; 欄 → 値の写像(PutRow.value・ListRows.where)と出来事の本文(AppendEvent.body)は、作る時に深く凍らせる(dict を渡してもよい)。
@@ -23,6 +24,16 @@
   (when (or (isinstance limit bool) (not (isinstance limit int)) (< limit 1))
     (raise (ValueError (.format "{} は 1 以上の整数: {!r}" what limit))))
   limit)
+
+
+(defn #^ None check-row-write [#^ object write #^ str what]  ; defk にできない: frozen dataclass の __post_init__ が作る時に同期に呼ぶ検め
+  "1 行の書きの欄(table・key・value・expect)を作る時に検め、value を深く凍らせる — PutRow と RowWrite の検めを 1 つにするため。"
+  (checked-table-name write.table (+ what ".table"))
+  (checked-key write.key (+ what ".key"))
+  (freeze-field write "value" (+ what ".value"))
+  (for [name write.value] (checked-field-name name (+ what ".value の欄")))
+  (when (not (isinstance write.expect #(ExpectAbsent ExpectVersion ExpectAny)))
+    (raise (TypeError (+ what ".expect は ExpectAbsent | ExpectVersion | ExpectAny")))))
 
 
 (defclass [(dataclass :frozen True)] ReadRow [EffectBase]
@@ -62,12 +73,33 @@
   (#^ FrozenMap value)
   (#^ object expect)
   (defn #^ None __post_init__ [self]
-    (checked-table-name self.table "PutRow.table")
-    (checked-key self.key "PutRow.key")
-    (freeze-field self "value" "PutRow.value")
-    (for [name self.value] (checked-field-name name "PutRow.value の欄"))
-    (when (not (isinstance self.expect #(ExpectAbsent ExpectVersion ExpectAny)))
-      (raise (TypeError "PutRow.expect は ExpectAbsent | ExpectVersion | ExpectAny")))))
+    (check-row-write self "PutRow")))
+
+
+(defclass [(dataclass :frozen True)] RowWrite []
+  "PutRows の束の書き 1 つ。欄と意味は PutRow と同じ(table・key・value = 欄の差分・expect = ExpectAbsent | ExpectVersion | ExpectAny)。
+   effect ではない(束の data)— 束ごと PutRows で撃つ。"
+  (#^ str table)
+  (#^ tuple key)
+  (#^ FrozenMap value)
+  (#^ object expect)
+  (defn #^ None __post_init__ [self]
+    (check-row-write self "RowWrite")))
+
+
+(defclass [(dataclass :frozen True)] PutRows [EffectBase]
+  "複数の行を全部か 0 で書く(1 行でも通らなければ 1 行も書かない)。writes = RowWrite の空でない tuple(同じ表の同じ鍵は 1 度だけ —
+   2 度出たら作る時に ValueError)。答え = WrittenRows(束の順の Written)| RowsConflict | RowsRefused(どちらも束の中の位置と行を持つ)|
+   Unreachable。判定は PutRow と同じ admission で、全部の行の期待を先に見て、次に全部の行の書きの判定を見る。
+   確定した時は変更の列に束の順で 1 行ずつ、続いた番号で積む。書き手の名は欄に無い(PutRow と同じく handler を組む時に入る)。"
+  (#^ tuple writes)
+  (defn #^ None __post_init__ [self]
+    (when (not (and (isinstance self.writes tuple) self.writes (all (gfor w self.writes (isinstance w RowWrite)))))
+      (raise (TypeError (.format "PutRows.writes は RowWrite の空でない tuple: {!r}" self.writes))))
+    (setv slots (lfor w self.writes #(w.table w.key))
+          repeated (sorted (sfor slot slots :if (> (.count slots slot) 1) slot)))
+    (when repeated
+      (raise (ValueError (.format "PutRows.writes に同じ行が 2 度出る(表・鍵): {!r}" repeated))))))
 
 
 (defclass [(dataclass :frozen True)] WatchChanges [EffectBase]

@@ -3,7 +3,7 @@
 (require doeff-hy.macros [deftest <-])
 (import doeff_hy.frozen [FrozenMap thaw-json])
 (import doeff_records.values [RecordsSchema Row Written RowChanged ExpectAbsent UndeclaredField])
-(import doeff_records.effects [PutRow ListRows AppendEvent ReadRow])
+(import doeff_records.effects [PutRow ListRows AppendEvent ReadRow RowWrite])
 (import doeff_records.admission [canonical-json])
 (import doeff_records.laws [LAW-SCHEMA MAKER])
 (import tests.interpreters [LawSetup])
@@ -27,6 +27,7 @@
   (assert (refuses? (fn [] (setv (get row.value "id") "x")) TypeError) "行の値に書けない")
   (assert (isinstance (hash row) int) "凍らせた行は hash できる")
   (for [built [(Written 1 {"a" 1}) (RowChanged "parts" #("p1") 1 {"a" 1} 1) (PutRow "parts" #("p1") {"a" 1} (ExpectAbsent))
+               (RowWrite "parts" #("p1") {"a" 1} (ExpectAbsent))
                (ListRows "parts" :where {"color" "red"})]]
     (assert (isinstance (or (getattr built "value" None) (getattr built "where" None)) FrozenMap) built))
   (setv event (AppendEvent "journal" "k1" {"list" [1 {"x" 2}]}))
