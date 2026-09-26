@@ -1,0 +1,12 @@
+# 2026-09-26T08:25:02+0900 版 72da0ff1195a8078909228ac8d1115c28daddeae(作業樹 doeff-wt-639-P-blind)+ 盲検 B の cache_host.hy の差分 + 新しい置き場の検 — 反例
+ M packages/doeff-agents/src/doeff_agents/sessionhost/cache_host.hy
+ M packages/doeff-agents/tests/sessionhost_cache_maintenance_deftests.hy
+$ PYTHONDONTWRITEBYTECODE=1 uv run --no-sync pytest -q -m 'not e2e' -p no:warnings packages/doeff-agents/tests/test_sessionhost_cache_maintenance.py
+                   MaintenanceState.FAILED
+                    ["stderr" "API Error: 529 overloaded"]]})
+E     AssertionError: 置き場で答えが変わった(failed): {'memory': (<MaintenanceState.FAILED: 'failed'>, 'provider-error', None), 'file': (<MaintenanceState.FAILED: 'failed'>, 'provider-error: API Error: 529 overloaded', None), 'outbox': (<MaintenanceState.FAILED: 'failed'>, 'provider-error', None)}
+packages/doeff-agents/tests/sessionhost_cache_maintenance_deftests.hy:261: AssertionError
+AssertionError: 置き場で答えが変わった(failed): {'memory': (<MaintenanceState.FAILED: 'failed'>, 'provider-error', None), 'file': (<MaintenanceState.FAILED: 'failed'>, 'provider-error: API Error: 529 overloaded', None), 'outbox': (<MaintenanceState.FAILED: 'failed'>, 'provider-error', None)}
+FAILED packages/doeff-agents/tests/test_sessionhost_cache_maintenance.py::test_cache_maintenance_program[test_cache_probe_answers_the_same_on_every_event_store]
+1 failed, 7 passed in 39.23s
+exit=1

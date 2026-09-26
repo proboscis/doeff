@@ -1,0 +1,71 @@
+
+deadline scale x1.2 (load/core) — per test 71s, watchdog 107s
+
+test-admission: focused — 82 件(変更箇所の検証)
+/Users/kento/.worktrees/doeff-wt-639-P-blind/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:156: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+  - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+  - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+  - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+  - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+  - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+  - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+  - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+  - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+  - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+  - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+  - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+  - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+  - docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy
+  - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+  - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+  - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+  - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+  - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+  - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+  - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+  - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+  - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+  - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+  - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+  - docs/adr/defadr_doeff_hy_004_defk_only.hy
+  - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+  - docs/adr/defadr_doeff_preset_001_retirement.hy
+Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+  warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+.............................................................F.......... [ 87%]
+....F.....                                                               [100%]
+=================================== FAILURES ===================================
+E   AssertionError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  _hy_anon_88()  packages/doeff-agents/tests/sessionhost_policy_deftests.hy:1527
+    (assert (= TERMINAL-CAUSE-RETRYABLE
+
+AssertionError: 
+
+/Users/kento/.worktrees/doeff-wt-639-P-blind/packages/doeff-agents/tests/sessionhost_policy_deftests.hy:1527: AssertionError
+E   doeff_vm.UnhandledEffect: no handler found for effect: HeadlessEventsSince (HeadlessEventsSince(locator='events', cursor=0))
+      handlers in scope (innermost→outermost): residency_world
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  cache_host_probe()  packages/doeff-agents/src/doeff_agents/sessionhost/cache_host.hy:51
+    (<- chunk (HeadlessEventsSince record.events-path 0))
+  _hy_anon_31()  packages/doeff-agents/tests/sessionhost_cache_maintenance_deftests.hy:197
+    (<- completed HostCacheRecord ((residency-world state) (cache-host-probe pending)))
+    handlers:
+      residency_world ↗
+  test_clock_swapped_idle_cleanup_ping_and_next_cycle.<locals>._hy_anon_31()  packages/doeff-agents/tests/sessionhost_cache_maintenance_deftests.hy:197
+    (<- completed HostCacheRecord ((residency-world state) (cache-host-probe pending)))
+
+UnhandledEffect: no handler found for effect: HeadlessEventsSince (HeadlessEventsSince(locator='events', cursor=0))
+  handlers in scope (innermost→outermost): residency_world
+
+/Users/kento/.worktrees/doeff-wt-639-P-blind/packages/doeff-agents/src/doeff_agents/sessionhost/cache_host.hy:51: doeff_vm.UnhandledEffect: no handler found for effect: HeadlessEventsSince (HeadlessEventsSince(locator='events', cursor=0))
+=========================== short test summary info ============================
+FAILED packages/doeff-agents/tests/test_sessionhost_policy.py::test_terminal_cause_retryable_frozen_table
+FAILED packages/doeff-agents/tests/test_sessionhost_cache_maintenance.py::test_cache_maintenance_program[test_clock_swapped_idle_cleanup_ping_and_next_cycle]
+2 failed, 80 passed in 45.71s

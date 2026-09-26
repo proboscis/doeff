@@ -1,0 +1,15 @@
+# 2026-09-26T08:19:25+0900 版 72da0ff1195a8078909228ac8d1115c28daddeae — 盲検 A の probe(source は変えず、表の反転を process の中で模す)
+$ PYTHONDONTWRITEBYTECODE=1 uv run --no-sync python evidence/blind-a/retryable_flip_probe.py
+context_exhausted  before retryable=False -> {'category': 'failed', 'reason': 'SessionFailed'} ('SessionFailed',)
+                   after  retryable=True  -> {'category': 'failed', 'reason': 'SessionFailed'} ('SessionFailed',)
+                   job outcome changed: False
+run_failed         before retryable=False -> {'category': 'failed', 'reason': 'SessionFailed'} ('SessionFailed',)
+                   after  retryable=True  -> {'category': 'failed', 'reason': 'SessionFailed'} ('SessionFailed',)
+                   job outcome changed: False
+host_drained       before retryable=True  -> {'category': 'agentd-stopped', 'reason': 'host-drained'} ('HostDrained',)
+                   after  retryable=False -> {'category': 'agentd-stopped', 'reason': 'host-drained'} ('HostDrained',)
+                   job outcome changed: False
+cancelled          before retryable=False -> {'category': 'failed', 'reason': 'SessionFailed'} ('SessionFailed',)
+                   after  retryable=True  -> {'category': 'failed', 'reason': 'SessionFailed'} ('SessionFailed',)
+                   job outcome changed: False
+exit=0

@@ -1,0 +1,21 @@
+# 2026-09-26T08:20:02+0900 版 72da0ff1195a8078909228ac8d1115c28daddeae(作業樹 doeff-wt-639-P-blind)— 盲検 B の再現
+## 差分を当てる前: probe
+memory  state=failed    reason='provider-error'
+file    state=failed    reason='provider-error'
+outbox  state=failed    reason='provider-error'
+key_of_locator(stdout locator)       = EventKey(session_id='resident', op='ping-err')
+key_of_locator(locator + '.stderr')  = EventKey(session_id='resident', op='ping-err.stderr')
+## 差分を当てた:  2 files changed, 35 insertions(+), 3 deletions(-)
+## 差分を当てた後: probe
+memory  state=failed    reason='provider-error'
+file    state=failed    reason='provider-error: API Error: 529 overloaded'
+outbox  state=failed    reason='provider-error'
+key_of_locator(stdout locator)       = EventKey(session_id='resident', op='ping-err')
+key_of_locator(locator + '.stderr')  = EventKey(session_id='resident', op='ping-err.stderr')
+## 差分を当てた後: 焦点の 3 file
+$ PYTHONDONTWRITEBYTECODE=1 uv run --no-sync pytest -q -m 'not e2e' -p no:warnings packages/doeff-agents/tests/test_sessionhost_policy.py packages/doeff-agents/tests/test_sessionhost_cache_maintenance.py packages/doeff-agents/tests/test_sessionhost_headless_events.py
+  warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+........................................................................ [ 72%]
+............................                                             [100%]
+100 passed in 52.39s
+pytest exit=0

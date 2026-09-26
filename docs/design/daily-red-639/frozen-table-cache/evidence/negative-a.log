@@ -1,0 +1,21 @@
+# 2026-09-26T08:52:01+0900 版 72da0ff1195a8078909228ac8d1115c28daddeae(作業樹 doeff-wt-639-P-blind)+ T-A(ADR-012 の検)— 盲検 A の反例(全出力 = negative-a-1.out / negative-a-2.out / negative-a-3.out)
+## A-1: 凍結表(policy.hy)と写し(M3)を揃えて context_exhausted を true にする(S1 の変更を M1・M3 で完全に行う)
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+$ PYTHONDONTWRITEBYTECODE=1 uv run --no-sync pytest -q -m 'not e2e' -p no:warnings -rf --tb=short packages/doeff-agents/tests/test_sessionhost_policy.py docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy -k 'frozen_table or pins_its_retryable'
+pytest exit=1
+E   AssertionError: 行の終端の語の retryable と agentd の路の結末の表が食い違う(R47 (3) — 凍結表を変えたら job-outcome-of の結末も決める): {'rate_limited': (True, 'failed', 'SessionFailed', 'SessionFailed'), 'timed_out': (True, 'failed', 'SessionFailed', 'SessionFailed'), 'vanished': (True, 'failed', 'SessionFailed', 'SessionFailed'), 'prompt_undelivered': (True, 'failed', 'SessionFailed', 'SessionFailed'), 'runner_unavailable': (F
+AssertionError: 行の終端の語の retryable と agentd の路の結末の表が食い違う(R47 (3) — 凍結表を変えたら job-outcome-of の結末も決める): {'rate_limited': (True, 'failed', 'SessionFailed', 'SessionFailed'), 'timed_out': (True, 'failed', 'SessionFailed', 'SessionFailed'), 'vanished': (True, 'failed', 'SessionFailed', 'SessionFailed'), 'prompt_undelivered': (True, 'failed', 'SessionFailed', 'SessionFailed'), 'runner_unavailable': (False
+FAILED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_every_session_category_pins_its_retryable_next_to_its_job_outcome
+1 failed, 2 passed, 147 deselected in 86.31s (0:01:26)
+## A-2: 凍結表と写しに新しい語 host_retired(true)を足す
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+$ (同じ命令)
+pytest exit=1
+E   AssertionError: 行の終端の語の retryable と agentd の路の結末の表が食い違う(R47 (3) — 凍結表を変えたら job-outcome-of の結末も決める): {'rate_limited': (True, 'failed', 'SessionFailed', 'SessionFailed'), 'timed_out': (True, 'failed', 'SessionFailed', 'SessionFailed'), 'vanished': (True, 'failed', 'SessionFailed', 'SessionFailed'), 'prompt_undelivered': (True, 'failed', 'SessionFailed', 'SessionFailed'), 'runner_unavailable': (F
+AssertionError: 行の終端の語の retryable と agentd の路の結末の表が食い違う(R47 (3) — 凍結表を変えたら job-outcome-of の結末も決める): {'rate_limited': (True, 'failed', 'SessionFailed', 'SessionFailed'), 'timed_out': (True, 'failed', 'SessionFailed', 'SessionFailed'), 'vanished': (True, 'failed', 'SessionFailed', 'SessionFailed'), 'prompt_undelivered': (True, 'failed', 'SessionFailed', 'SessionFailed'), 'runner_unavailable': (False
+FAILED docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy::test_adr_doe_agents_012_every_session_category_pins_its_retryable_next_to_its_job_outcome
+1 failed, 2 passed, 147 deselected in 69.31s (0:01:09)
+## 戻した後(差分は ADR-012 の T-A だけ)
+ M docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy
+pytest exit=0
+3 passed, 147 deselected in 71.66s (0:01:11)

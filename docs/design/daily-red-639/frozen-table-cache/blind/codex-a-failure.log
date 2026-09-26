@@ -1,0 +1,29 @@
+OpenAI Codex v0.156.0
+--------
+workdir: /Users/kento/.worktrees/doeff-wt-639-P-blind
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: low
+reasoning summaries: none
+session id: 01a0daca-53cf-7c32-b054-ff2aa7b33a61
+--------
+あなたは責務分離に対する反例を生成してください。
+repo の根で `PYTHONDONTWRITEBYTECODE=1 uv run --no-sync pytest -q -m 'not e2e' -p no:warnings <file>`。
+hook: SessionStart
+hook: SessionStart Completed
+hook: UserPromptSubmit
+hook: UserPromptSubmit Completed
+ERROR: Reconnecting... 2/5
+ERROR: Reconnecting... 3/5
+ERROR: Reconnecting... 4/5
+ERROR: Reconnecting... 5/5
+warning: Falling back from WebSockets to HTTPS transport. stream disconnected before completion: websocket closed by server before response.completed
+ERROR: Reconnecting... 1/5
+ERROR: Reconnecting... 2/5
+ERROR: Reconnecting... 3/5
+ERROR: Reconnecting... 4/5
+ERROR: Reconnecting... 5/5
+ERROR: unexpected status 401 Unauthorized: Incorrect API key provided: sk-<伏せた>. You can find your API key at https://platform.openai.com/account/api-keys., url: https://chatgpt.com/backend-api/codex/responses, cf-ray: a40da2b26db5e391-NRT, request id: 229324e8-0abe-4b4f-bf2d-a8a632b40ed0
+ERROR: unexpected status 401 Unauthorized: Incorrect API key provided: sk-<伏せた>. You can find your API key at https://platform.openai.com/account/api-keys., url: https://chatgpt.com/backend-api/codex/responses, cf-ray: a40da2b26db5e391-NRT, request id: 229324e8-0abe-4b4f-bf2d-a8a632b40ed0
