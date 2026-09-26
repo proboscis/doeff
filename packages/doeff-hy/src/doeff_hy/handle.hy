@@ -36,7 +36,9 @@
 
 (import hy.models [Expression Symbol List Keyword Sequence String])
 (import doeff-hy.positions [locate-synthesized])
-(import doeff-hy.static-view [static-view-enabled])
+(import doeff-hy.static-view [static-view-enabled report-findings])
+(import doeff-hy.binding-forms [parse-declaration Timing Mutability SessionName BodyKind
+                                legacy-session-finding legacy-session-message])
 
 (defn _do-import []
   "handler の本体を包む `_doeff-do` の import。型検査のための展開(doeff_hy/static_view.py)
@@ -64,21 +66,46 @@
   (if (= (str (get form 0)) "lazy-var") :var :val))
 
 (defn _parse-lazy [form]
-  "Parse (lazy[-val|-var] name body...) → #(name-sym body-forms mutability)."
+  "Parse (lazy[-val|-var] name body...) → #(name-sym body-forms mutability legacy?)."
   (assert (_is-lazy-clause form))
-  #((get form 1) (list (cut form 2 None)) (_lazy-mutability form)))
+  #((get form 1) (list (cut form 2 None)) (_lazy-mutability form) True))
 
-(defn _extract-lazy-clauses [clauses]
+(defn _extract-lazy-clauses [clauses [handler-name None]]
   "Split clauses into (lazy-defs, effect-clauses).
-   lazy-defs: list of #(name-sym body-forms mutability).
+   lazy-defs: list of #(name-sym body-forms mutability legacy?) — session val / session var
+   (ADR-DOE-HY-006)と旧い lazy / lazy-val / lazy-var の両方。旧い形は動きを変えず、
+   DeprecationWarning と doeff-hy-check の所見で session val / session var への移行を案内する。
    effect-clauses: remaining clauses."
   (setv lazys []
         effects [])
   (for [c clauses]
-    (if (_is-lazy-clause c)
-        (.append lazys (_parse-lazy c))
+    (setv decl (parse-declaration c))
+    (cond
+      (and (is-not decl None) (= (. decl timing) Timing.SESSION))
+        (.append lazys #((. decl symbol) [(. decl init)]
+                         (if (= (. decl mutability) Mutability.VAR) :var :val)
+                         False))
+      (is-not decl None)
+        (raise (SyntaxError (+ "\ndefhandler " (str handler-name) ": (" (. decl spelled) " "
+                               (. decl name) " …) は節の本体の中に書きます(その節の 1 回の実行の間の値)。\n"
+                               "  handler の直下(節と並べる所)に置くのは、セッションの間で共有する "
+                               "(session val " (. decl name) " 式) / (session var " (. decl name) " 式) です。"
+                               " [ADR-DOE-HY-006]\n")))
+      (_is-lazy-clause c)
+        (do
+          (import warnings)
+          (warnings.warn (legacy-session-message c (str handler-name)) DeprecationWarning
+                         :stacklevel 3)
+          (report-findings [(legacy-session-finding c (str handler-name))])
+          (.append lazys (_parse-lazy c)))
+      True
         (.append effects c)))
   #(lazys effects))
+
+(defn _session-names [lazy-defs]
+  "節の本体の書き換え(binding_forms)へ渡す、セッションに持つ名前の一覧。"
+  (lfor #(lname _ mut legacy?) lazy-defs
+    (SessionName (str lname) (if (= mut :var) Mutability.VAR Mutability.VAL) legacy?)))
 
 (defn _is-set-bang [form]
   "Check if form is (set! name expr)."
@@ -90,7 +117,7 @@
 (defn _check-set-bang-violations [lazy-defs clause-forms]
   "Raise SyntaxError if set! is used on a lazy-val name."
   (setv val-names
-    (set (gfor #(lname _ mut) lazy-defs :if (= mut :val) (str lname))))
+    (set (gfor #(lname _ mut _legacy) lazy-defs :if (= mut :val) (str lname))))
   (defn walk [form]
     (when (isinstance form Expression)
       (when (_is-set-bang form)
@@ -124,7 +151,7 @@
       (any (gfor f form (_references-symbol f sym-name)))
     True False))
 
-(defn _build-lazy-init-forms [handler-name lazy-name lazy-body]
+(defn _build-lazy-init-forms [handler-name lazy-name lazy-body [legacy? True]]
   "Build the yield-based lazy init code for one lazy def.
    Returns list of Hy forms (already in yield IR — no <- needed).
 
@@ -152,8 +179,13 @@
   (setv val-var (_fresh-lazy-tmp lazy-name "val"))
 
   ;; Build state key: __name__ + "/handler-name/lazy-name"
+  ;; 旧い lazy は今までの式のまま。session val / session var は公開の session-key 1 点でキーを作る
+  ;; (同じ文字列 — 外の handler と検査も doeff_hy.session.session_key で同じキーを引く)。
   (setv key-suffix (+ "/" (str handler-name) "/" (str lazy-name)))
-  (setv key-expr `(+ __name__ ~key-suffix))
+  (setv key-expr
+    (if legacy?
+        `(+ __name__ ~key-suffix)
+        `(_doeff-session-key __name__ ~(str handler-name) ~(str lazy-name))))
 
   ;; Key variable for set! macro to reference
   (setv key-var (Symbol (+ "_lazy_" (str lazy-name) "_key")))
@@ -381,7 +413,7 @@
   expanded)
 
 
-(defn _build-clause [clause [lazy-defs None] [handler-name None]]
+(defn _build-clause [clause [lazy-defs None] [handler-name None] [module-names None]]
   "Parse one handler clause: (EffectType [fields] [:when guard] body...).
    Validates termination. Returns #(effect-type cond-body).
    If lazy-defs is provided, inject lazy init for referenced lazy names."
@@ -408,6 +440,19 @@
   ;; the original (resume ...) forms, not the rewritten (yield (Resume ...)).
   (setv cbody (_tco-seq cbody))
 
+  ;; val / var / lazy val / lazy var / := の書き換え(ADR-DOE-HY-006)。節の欄・effect・k と
+  ;; handler の直下のセッションの名前は、本体の前から束縛されている名前。
+  (import doeff-hy.macros [_rewrite-bindings])
+  (setv cbody
+    (_rewrite-bindings cbody
+                       (if (is handler-name None)
+                           (+ "handle clause " (str etype))
+                           (+ "defhandler " (str handler-name) " clause " (str etype)))
+                       BodyKind.CLAUSE
+                       (+ (lfor f fields (str f)) ["effect" "k"])
+                       (_session-names (or lazy-defs []))
+                       :module module-names))
+
   ;; Expand <- and ! bindings → (setv name (yield expr))
   (setv cbody
     (_expand-handler-binds cbody
@@ -424,11 +469,11 @@
   ;; before rewrite-ops — lazy init forms are already in yield IR)
   (setv lazy-prefix [])
   (when (and lazy-defs handler-name)
-    (for [#(lname lbody _mut) lazy-defs]
+    (for [#(lname lbody _mut legacy?) lazy-defs]
       ;; Symbol scan: only inject if clause body references this lazy name
       (when (any (gfor form raw-body (_references-symbol form (str lname))))
         (.extend lazy-prefix
-          (_build-lazy-init-forms handler-name lname lbody)))))
+          (_build-lazy-init-forms handler-name lname lbody legacy?)))))
 
   ;; Field bindings: (setv field (. effect field))
   (setv bindings
@@ -451,7 +496,7 @@
   #(etype full-body))
 
 
-(defn _build-handler-expr [clauses [lazy-defs None] [handler-name None]]
+(defn _build-handler-expr [clauses [lazy-defs None] [handler-name None] [module-names None]]
   "Build handler expression from clauses. Returns _doeff-do wrapped fn.
    If lazy-defs is provided, lazy init is injected into clauses that reference them."
   (setv cond-forms [])
@@ -459,7 +504,8 @@
   (for [clause clauses]
     (setv #(etype body) (_build-clause clause
                                        :lazy-defs lazy-defs
-                                       :handler-name handler-name))
+                                       :handler-name handler-name
+                                       :module-names module-names))
     (.append cond-forms `(isinstance effect ~etype))
     (.append cond-forms body))
 
@@ -474,7 +520,7 @@
 ;; Public macros
 ;; ---------------------------------------------------------------------------
 
-(defmacro handle [body #* clauses]
+(defmacro handle [_hy-compiler body #* clauses]
   "Inline pattern-matching effect handler.
 
    (handle body
@@ -486,7 +532,8 @@
 
    Wraps body with the Rust handler node. Unmatched effects auto-Pass.
    Compile-time error if any clause branch lacks resume/transfer/pass."
-  (setv h-expr (_build-handler-expr clauses))
+  (import doeff-hy.macros [_module-names])
+  (setv h-expr (_build-handler-expr clauses :module-names (_module-names _hy-compiler)))
   (locate-synthesized `(do
      ~(_do-import)
      (import doeff [Resume Transfer Pass])
@@ -518,7 +565,7 @@
   wrapped)
 
 
-(defmacro defhandler [name #* rest]
+(defmacro defhandler [_hy-compiler name #* rest]
   "Named handler with optional parameters. Preserves s-expr body.
 
    ;; No params — plain handler value
@@ -540,12 +587,15 @@
        :when (matches-cost recompute-cost cost)
        (resume (compute field))))
 
-   ;; With lazy init (per-session via Get/Put + Some/Nothing)
+   ;; セッションの間で共有する値(状態の効果 Get / Put を通す — ADR-DOE-HY-006)
    (defhandler my-handler
-     (lazy client
-       (<- secret (Ask \"api_key\"))
-       (Client :password secret))
-     (Effect [field] (resume (.fetch client field))))
+     (session val client (Client :password (! (Ask \"api_key\"))))
+     (session var calls 0)
+     (Effect [field]
+       (:= calls (+ calls 1))
+       (resume (.fetch client field))))
+   ;; 旧い (lazy …) / (lazy-val …) / (lazy-var …) / (set! …) は動きを変えずに受け、
+   ;; DeprecationWarning で session val / session var / := への移行を案内する。
 
    ;; Terminal operations:
    ;;   (resume value)      — resume k, handler stays installed
@@ -577,14 +627,17 @@
     (setv clauses (cut clauses 1 None)))
 
   ;; Separate lazy defs from effect clauses
-  (setv #(lazy-defs effect-clauses) (_extract-lazy-clauses clauses))
+  (setv #(lazy-defs effect-clauses) (_extract-lazy-clauses clauses name))
 
+  (import doeff-hy.macros [_module-names])
+  (setv module-names (_module-names _hy-compiler))
   (setv handler-expr
     (if lazy-defs
         (_build-handler-expr effect-clauses
                              :lazy-defs lazy-defs
-                             :handler-name name)
-        (_build-handler-expr effect-clauses)))
+                             :handler-name name
+                             :module-names module-names)
+        (_build-handler-expr effect-clauses :handler-name name :module-names module-names)))
 
   ;; Preserve s-expr body as quoted list of all clauses (including lazy)
   (setv quoted-body `(quote ~(list clauses)))
@@ -593,7 +646,8 @@
   (setv lazy-imports
     (if lazy-defs
         `(do (import doeff [Some])
-             (import doeff_core_effects.effects [Get Put]))
+             (import doeff_core_effects.effects [Get Put])
+             (import doeff-hy.session [session-key :as _doeff-session-key]))
         `(do)))
 
   ;; defhandler produces a Program -> Program function instead of exposing a

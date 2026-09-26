@@ -112,3 +112,17 @@ agora-controllers の `controllers/worker` の 49 file(33 + 検体・テスト)�
 | 型のための形は切替(`static_view`)の間だけ出す(`<-` の形・型付きの `do`・`typed_resume`) | 実行時の展開・bytecode の cache・実行の費用を変えない | `_static-view?` の枝を消す |
 | 引数と結果の変数の注記は実行時の展開にも付ける(文字列) | 2 つの展開の食い違いを減らす。文字列なので定義の時に評価せず、後で定義する名前の型でも落ちない | `_annotate-params` / `_result-binding` を元に戻す |
 | 関数への属性は `setattr` で付ける | 型検査器が関数の未知の属性への代入を赤にするため。実行時の意味は同じ | 元の `(setv (. f attr) …)` に戻す |
+
+## 束縛の所見(ADR-DOE-HY-006)
+
+型の診断とは別に、macro が展開の時に出す所見を同じ出力に並べる(`doeff_hy/static_view.py` の `collect_findings` で集め、
+module の直下は source の一番外の並びを `binding_forms.module_findings` で読む)。
+
+| 規則 | 重さ | 何か |
+|---|---|---|
+| `doeff-hy-setv` | warning | defk・deftest・defhandler の節の本体と module の直下の setv(名前を束縛する物)— val か var を使う |
+| `doeff-hy-rebind` | error | 旧い書き方どうしの同じ名前の束縛し直し(for の変数と互いに排他な枝は数えない)・module の直下の val の名前の setv・効かない module の直下の `(:= …)` |
+| `doeff-hy-legacy-lazy` | warning | defhandler の旧い lazy / lazy-val / lazy-var / set!(session val / session var / := へ移す) |
+
+`doeff-hy-rebind` は束縛し直しの強制の 1 段目で、各 repo の本線で 0 件になってから展開の誤りへ切り替える(設計の記録
+`docs/design/defk-val-var-lazy/design.md` §8.3)。
