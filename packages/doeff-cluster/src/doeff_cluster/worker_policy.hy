@@ -148,15 +148,24 @@
 (defn #^ tuple plan-job [#^ int now #^ str name #^ tuple desired #^ WorldView world
                          #^ JobRecord record #^ WorkerPolicy policy]
   (setv want (desired-of desired name)
-        process (process-of world name))
+        process (process-of world name)
+        ;; 入れ替えの諦め(2026-09-26 — coordinator の handoff_policy が期限で決め、heartbeat の返事で運ぶ)。
+        abandoned (and (is-not want None) want.handoff want.handoff-abandoned))
   (cond
-    (is process None) (if (is want None) #() (start-actions now want world record policy))
+    ;; 諦めた入れ替えの新は起こし直さない(退いた旧が動き続ける)。宣言が変われば諦めは解け、次の拍で起こす。
+    (is process None) (if (or (is want None) abandoned) #() (start-actions now want world record policy))
     (is-not process.exit-code None)
       (+ #((ReapJob name process.pid
              (if (is record.stopping None) Outcome.EXITED Outcome.STOPPED) process.exit-code))
          ;; 終わった process の lease は、期限を待たずに返す(次の担い手がすぐ取れる)。
          (if process.instance #((ReleaseLeases process.instance)) #()))
     (is-not process.retired-from None) (retired-actions now process desired world record policy)
+    ;; 諦めた入れ替え: 今の宣言の spec の新の process を止める(止め始めた process は止め終える)。前の宣言の process(まだ退いて
+    ;; いない旧)は名から外さず、そのまま動かす — 新を起こさないので並べる理由が無い。
+    abandoned
+      (if (or (= want process.spec) (is-not record.stopping None))
+          (stop-actions now process record policy)
+          #())
     (and (= want process.spec) (is record.stopping None)) #()
     ;; spec が変わった handoff の job: 旧を止めずに新を並べる(退いた process が既に在る間は、並べずに止めてから起こす)。
     (and (is-not want None) want.handoff (is record.stopping None) (not (retired-exists world name)))
@@ -210,6 +219,7 @@
         True JobPhase.STOPPING)
     (is want None) JobPhase.STOPPED
     (and want.once (is-not record.last-outcome None)) JobPhase.FINISHED
+    (and want.handoff want.handoff-abandoned) JobPhase.HANDOFF-ABANDONED
     True
       (do
         (setv code (code-of world (code-key want)))
@@ -229,12 +239,15 @@
     :setv code (if (is want None) None (code-of world (code-key want)))
     :setv probe (if (is want None) None (probe-failure world want))
     :setv handing-off (and (is-not process None) (is-not want None) want.handoff (!= process.spec want) (is record.stopping None))
+    :setv abandoned (and (is-not want None) want.handoff want.handoff-abandoned)
     (JobStatus name (phase-of now want process world record policy)
       (if (is want None) None want.revision)
       (if (is process None) None process.spec.revision)
       (if (is process None) None process.pid)
       record.attempts
       (cond
+        ;; 入れ替えの諦め(coordinator の期限)。Service の status.handoff に期限と理由が出る。
+        abandoned "入れ替えを諦めた(新の process は止めて起こし直さない・旧は動かしたまま — 宣言が変わるまで)"
         (and (is-not code None) (= code.state CodeState.FAILED)) code.detail
         ;; 新の入口を読み込めない(入口の検めの理由)。入れ替えの途中なら旧が動いていることも示す。
         (and (is-not probe None) handing-off) (.format "入れ替えを待つ(旧は動かしたまま)— 新の入口を読み込めない: {}" probe.detail)

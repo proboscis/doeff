@@ -28,6 +28,7 @@
 (import hy)
 (import doeff [Program run])
 (import .runtime_env_model [RuntimeEnv runtime-env->json])
+(import .readiness_model [readiness-refusal])
 (import doeff_core_effects.scheduler [Spawn Gather Task])
 
 
@@ -40,7 +41,7 @@
   (#^ tuple requires)
   (#^ tuple config)
   (setv #^ object program-factory None)
-  (setv #^ (| dict None) readiness None)    ; {"windowSeconds": n}(ReportReady で Ready を報告する service だけ)
+  (setv #^ (| dict None) readiness None)    ; {"windowSeconds": n "handoffTimeoutSeconds": m?}(ReportReady で Ready を報告する service だけ)
   (setv #^ str update "recreate")          ; 入れ替えの形 recreate | handoff(worker_model.JobSpec の handoff)
   (setv #^ (| dict None) base-from None)   ; 土台の commit を追う Deployment(base_follow_policy)
   (setv #^ tuple env-config #()))           ; env だけが読む設定(鍵の順の (鍵 値) の組)。本体の引数にしない
@@ -148,10 +149,15 @@
    readiness {\"windowSeconds\" n} = 本体が ReportReady で報告する「準備できた」が直近 n 秒以内にある時だけ Ready(Rollout が見る)。
    update \"handoff\" = 版や設定が変わった時、新の process を旧と並べて起こし、新が Ready と数えられてから旧を止める(名前付きの lease で
    書きを 1 つに絞り、lease を待つ間も待機の拍で Ready を報告する service だけが使う)。既定は \"recreate\"(旧を止めてから新)。
+   readiness の handoffTimeoutSeconds(handoff の service だけ・既定 300)= 新が Ready になるまで待つ上限。越えたら coordinator が
+   入れ替えを諦める(新を止めて旧を残し、Service の status に理由を出す — 宣言が変わるまで)。
    base-from {\"kind\" \"Deployment\" \"namespace\" … \"name\" … \"container\" …} = 業務コードの版(土台の commit)をその Deployment の
    image の版へ追わせる(coordinator の base_follow_policy)。"
   (when (not-in update UPDATE-FORMS)
     (raise (ValueError (.format "service {} の :update は {} のどれか: {!r}" name UPDATE-FORMS update))))
+  (setv refusal (readiness-refusal readiness update))
+  (when (is-not refusal None)
+    (raise (ValueError (.format "service {} の :readiness: {}" name refusal))))
   (setv reference (program-reference program)
         settings (string-keyed name "config" (or config {}))
         env-settings (string-keyed name "env-config" (or env-config {})))

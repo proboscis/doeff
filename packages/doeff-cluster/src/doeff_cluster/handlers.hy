@@ -33,7 +33,9 @@
   (JobSpec (get job "name") (get job "entry") (tuple (.get job "args" [])) revision
            :once (.get job "once" False) :placement (.get job "placement")
            :base (.get job "base") :handoff (bool (.get job "handoff" False))
-           :ready-instance (.get job "readyInstance") :runtime-env runtime))
+           :ready-instance (.get job "readyInstance") :runtime-env runtime
+           ;; 入れ替えの諦め(coordinator の期限 — 返事の handoff の job だけが持つ・無ければ偽)。
+           :handoff-abandoned (bool (.get job "handoffAbandoned" False))))
 
 
 (defn #^ (| DesiredJobs DesiredUnreadable) parse-desired [#^ str text]
