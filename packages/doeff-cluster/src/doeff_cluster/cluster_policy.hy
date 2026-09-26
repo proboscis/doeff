@@ -6,13 +6,14 @@
 (import json)
 
 (import .worker_model [JobSpec])
-(import .cluster_model [ClusterJob WorkerInfo Placement ClusterTiming ClusterState TaskRecord Request Drain EnvFailed WarmEntry
+(import .cluster_model [ClusterJob WorkerInfo Placement ClusterTiming ClusterState TaskRecord Request Drain EnvFailed WarmEntry HandoffPhase
                         requirements-of component-versions-of task-record-to-json task-record-from-json ACCEPTED-FORMATS format-refusal
-                        PLACED-PHASES])
+                        PLACED-PHASES handoff-watch-from-json])
 (import .semaphore_model [SEMAPHORE-PREFIX lease-op semaphore-write-refusal semaphore-key])
 (import .base_follow_policy [FULL-SHA])
 (import doeff [run])
 (import .runtime_env_model [runtime-env-of-json RuntimeEnvInvalid env-key])
+(import .readiness_model [readiness-refusal])
 
 (setv JOB-ENTRY "doeff_cluster.job_entry")
 (setv MAX-EVENTS 200)
@@ -69,13 +70,13 @@
   (setv replicas (.get item "replicas" 1) readiness (.get item "readiness"))
   (when (not-in replicas #(0 1))
     (raise (ValueError (.format "replicas は 0 か 1(Service は 1 つだけ動かす): {!r}" replicas))))
-  (when (and (is-not readiness None)
-             (not (and (isinstance readiness dict) (isinstance (.get readiness "windowSeconds") #(int float))
-                       (> (get readiness "windowSeconds") 0))))
-    (raise (ValueError (.format "readiness は windowSeconds(正の数)を持つ dict: {!r}" readiness))))
   (setv update (.get item "update" "recreate") base-from (.get item "baseFrom"))
   (when (not-in update #("recreate" "handoff"))
     (raise (ValueError (.format "update は recreate か handoff: {!r}" update))))
+  ;; readiness の形(windowSeconds・入れ替えの期限 handoffTimeoutSeconds)は宣言の側と同じ規則(readiness_model.readiness-refusal)。
+  (setv readiness-problem (readiness-refusal readiness update))
+  (when (is-not readiness-problem None)
+    (raise (ValueError readiness-problem)))
   (when (and (is-not base-from None)
              (not (and (isinstance base-from dict) (= (.get base-from "kind") "Deployment")
                        (isinstance (.get base-from "namespace") str) (isinstance (.get base-from "name") str)
@@ -127,7 +128,9 @@
      ;; 実行環境の job だけ: 宣言の JSON(worker が env の root を準備し、版を env のキーへ置き換える)。
      (if (is spec.runtime-env None) {} {"runtimeEnv" (json.loads spec.runtime-env)})
      ;; 入れ替え(handoff)の job だけ: 形と、coordinator が Ready と数えている process の世代の名(worker は旧をこの後に止める)。
-     (if spec.handoff {"handoff" True "readyInstance" spec.ready-instance} {})))
+     (if spec.handoff {"handoff" True "readyInstance" spec.ready-instance} {})
+     ;; 入れ替えを諦めた job だけ(2026-09-26 — handoff_policy の期限): worker は新を止めて起こし直さず、旧を動かし続ける。
+     (if (and spec.handoff spec.handoff-abandoned) {"handoffAbandoned" True} {})))
 
 
 (defn #^ dict task-summary [#^ TaskRecord task]
@@ -155,7 +158,8 @@
    "rollouts" state.rollouts
    "drains" (dfor #(k v) (.items state.drains) k (asdict v))
    "surges" (dfor #(k v) (.items state.surges) k (asdict v))
-   "warms" (dfor #(k v) (.items state.warms) k (warm-entry-to-json v))})
+   "warms" (dfor #(k v) (.items state.warms) k (warm-entry-to-json v))
+   "handoffs" (dfor #(k w) (.items state.handoffs) k (.to-json w))})
 
 
 (defn #^ dict warm-entry-to-json [#^ WarmEntry entry]
@@ -198,6 +202,8 @@
     :drains (dfor #(k v) (.items (.get data "drains" {})) k (Drain #** v))
     :surges (dfor #(k v) (.items (.get data "surges" {})) k (Placement #** v))
     :warms (dfor #(k v) (.items (.get data "warms" {})) k (warm-entry-from-json v))
+    ;; 入れ替えの期限の見張り(2026-09-26)は、それより前の file には無い(空として読む)。
+    :handoffs (dfor #(k v) (.items (.get data "handoffs" {})) k (handoff-watch-from-json v))
     :started-ms now))
 
 
@@ -351,7 +357,8 @@
   "worker に割り当てた job の spec。割り当ての世代(placement)を載せる — worker は起こす process へ渡し、process は readiness と
    計器の報告に載せる(比べない欄なので、世代だけが変わっても worker は process を起こし直さない)。
    ready-instances = Service の名 → Ready と数えている process の世代の名(入れ替えの job に載せる・api_policy が求める)。
-   drain で並べた置き先(surge)がこの worker に在る job も載せる(新しい process を起こし、standby で lease を待つ)。"
+   drain で並べた置き先(surge)がこの worker に在る job も載せる(新しい process を起こし、standby で lease を待つ)。
+   入れ替えを諦めた job(state.handoffs の ABANDONED — handoff_policy)には諦めの印を載せる(worker は新を止めて旧を残す)。"
   (tuple (gfor job state.jobs
                :setv placed (.get state.placements job.spec.name)
                :setv surge (.get state.surges job.spec.name)
@@ -359,8 +366,10 @@
                              (and surge (= surge.worker worker) (> job.replicas 0)) surge
                              True None)
                :if a
+               :setv watch (.get state.handoffs job.spec.name)
                (replace job.spec :placement a.generation
-                        :ready-instance (.get (or ready-instances {}) job.spec.name)))))
+                        :ready-instance (.get (or ready-instances {}) job.spec.name)
+                        :handoff-abandoned (and (is-not watch None) (= watch.phase HandoffPhase.ABANDONED))))))
 
 
 ;; --- task ----------------------------------------------------------------------------
@@ -691,6 +700,7 @@
       (!= before.rollouts after.rollouts)
       (!= before.drains after.drains) (!= before.surges after.surges)
       (!= before.warms after.warms)
+      (!= before.handoffs after.handoffs)
       (!= (set before.workers) (set after.workers))
       (any (gfor #(n w) (.items after.workers)
                  :setv b (.get before.workers n)

@@ -7,6 +7,7 @@
 ;;; キー:
 ;;;   service/<名>  placement/<名>  worker/<名>  task/<id>  meta/<Kind/名>  rollout/<名>  audit/<番号 10 桁>  counter
 ;;;   drain/<worker の名>  surge/<名>(2026-09-25 — それより前の置き場には無い = 空として読む。旧い版の coordinator はこの鍵を読まずに無視する)
+;;;   handoff/<名>(2026-09-26 — 入れ替えの期限の見張り HandoffWatch。無い置き場は空として読む)
 ;;;   board/<盤のキー> = {"value" … "resourceVersion" …}
 ;;; worker/<名> は最後の連絡の時刻 lastSeenMs を持つ(2026-09-25 — heartbeat ごとではなく api_policy.mark-alive の拍ごとの写し)。
 ;;; 保存しない物(状態の報告・readiness・k8s の観測)は入れない。
@@ -14,14 +15,16 @@
 ;;; 置き先の鍵の改名(2026-09-25): 置き先(job をどの worker に置いたか)の鍵は placement/<名>。改名の前に書いた置き場には
 ;;; 旧い接頭辞(LEGACY-PLACEMENT)の鍵が残っているので、読みは両方を読み(同じ名なら新しい鍵が勝つ)、起動時に
 ;;; legacy-key-moves の 2 つの書きで新しい鍵へ移す — 新しい鍵を書き終えてから旧い鍵を消す。
+(require doeff-hy.macros [val])
 (import dataclasses [asdict replace])
 (import .cluster_model [ClusterState WorkerInfo Placement Drain component-versions-of task-record-to-json
-                        task-record-from-json])
+                        task-record-from-json handoff-watch-from-json])
 (import .cluster_policy [job-to-json job-from-json board-changes value-size warm-entry-to-json warm-entry-from-json])
 
 (setv BOARD "board/")
 (setv PLACEMENT "placement/")
 (setv DRAIN "drain/" SURGE "surge/" WARM "warm/")
+(val HANDOFF "handoff/")
 ;; 改名の前の置き先の鍵(値の形は同じ)。起動時に読んで移すだけ。
 (setv LEGACY-PLACEMENT "assignment/") ; 新しく書くのには使わない(語彙の規則の旧い語 — 読みの互換のためだけに残す)
 
@@ -49,6 +52,7 @@
   (for [#(k d) (.items state.drains)] (setv (get kv (+ DRAIN k)) (asdict d)))
   (for [#(k a) (.items state.surges)] (setv (get kv (+ SURGE k)) (asdict a)))
   (for [#(k w) (.items state.warms)] (setv (get kv (+ WARM k)) (warm-entry-to-json w)))
+  (for [#(k w) (.items state.handoffs)] (setv (get kv (+ HANDOFF k)) (.to-json w)))
   (for [e state.audit] (setv (get kv (.format "audit/{:010d}" (get e "seq"))) e))
   kv)
 
@@ -102,6 +106,7 @@
     :drains (dfor #(k v) (part DRAIN) k (Drain #** v))
     :surges (dfor #(k v) (part SURGE) k (Placement #** v))
     :warms (dfor #(k v) (part WARM) k (warm-entry-from-json v))
+    :handoffs (dfor #(k v) (part HANDOFF) k (handoff-watch-from-json v))
     :audit (tuple (gfor #(_ e) (part "audit/") e))
     :board (dfor #(k v) (part BOARD) k (get v "value"))
     :board-versions (dfor #(k v) (part BOARD) k (get v "resourceVersion"))
