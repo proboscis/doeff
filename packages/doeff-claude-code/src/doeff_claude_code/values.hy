@@ -34,7 +34,8 @@
   "claude の家: CLAUDE_CONFIG_DIR と、起こす process の env ちょうど(凍らせた写像 — 作る時に写し取る)。資格・PATH・HOME は
    上の層(composition root)が env に置く。handler は env を読むだけで os.environ を足さない。"
   (#^ str config-dir)
-  (setv #^ (get FrozenMap str) env (field :default-factory FrozenMap))
+  ;; env は資格(借りた access token)を持ちうるので repr に出さない(例外・log に写らない — agora-redesign #665)。
+  (setv #^ (get FrozenMap str) env (field :default-factory FrozenMap :repr False))
   (defn __post_init__ [self]
     (when (not (and (isinstance self.config-dir str) self.config-dir))
       (raise (ValueError (.format "ClaudeHome.config_dir は空でない文字列: {!r}" self.config-dir))))

@@ -108,6 +108,7 @@ _LAZY_EXPORTS = {
     "InterruptEffect": ".effects",
     "NoTurnInFlightError": ".effects",
     "ResumeTargetNotFoundError": ".effects",
+    "TurnCredential": ".effects",
     "TurnInputMode": ".effects",
     "AGENT_SESSIONS_KEY": ".handlers",
     "MOCK_AGENT_STATE_KEY": ".handlers",

@@ -557,6 +557,28 @@ class AgentEffectBase(EffectBase):
 # =============================================================================
 
 
+@dataclass(frozen=True)
+class TurnCredential:
+    """An access token the caller borrowed for this session's turns (agora-redesign #665).
+
+    The caller (e.g. an agent task that borrowed from a custody service) hands
+    the token over as a typed value, never through ``session_env`` (which stays
+    a non-auth overlay). A handler that can place it puts it into the agent
+    process's turn-auth env (``CLAUDE_CODE_OAUTH_TOKEN`` for Claude); a handler
+    that cannot refuses the launch via ``refuse_turn_capabilities``. Only the
+    access token travels — a refresh token is never carried. The token is kept
+    out of ``repr`` so effects and errors never print it.
+    """
+
+    oauth_token: str = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.oauth_token, str) or not self.oauth_token:
+            raise ValueError("TurnCredential.oauth_token must be a non-empty string")
+        if any(ch in self.oauth_token for ch in "\r\n\x00"):
+            raise ValueError("TurnCredential.oauth_token must be a single line")
+
+
 @dataclass(frozen=True, kw_only=True)
 class LaunchEffect(AgentEffectBase):
     """Launch a new agent session.
@@ -587,6 +609,9 @@ class LaunchEffect(AgentEffectBase):
     ready_timeout: float = 120.0
     session_env: dict[str, str] | None = None
     resume_from: str | None = None
+    # The borrowed access token for this session's turns (None = the handler's
+    # own home credentials). See ``TurnCredential``.
+    turn_credential: TurnCredential | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1088,11 +1113,16 @@ def refuse_turn_capabilities(effect: AgentEffectBase, *, handler: str) -> None:
 
     Terminal handlers call this before acting on ``LaunchEffect`` /
     ``FollowUpEffect``, so ``resume_from`` never silently starts a fresh
-    context and ``TurnInputMode.INJECT`` never silently becomes a keystroke.
+    context, a borrowed ``turn_credential`` is never silently dropped (the
+    launch would run on whatever home credentials the handler has), and ``TurnInputMode.INJECT`` never silently becomes a keystroke.
     """
     if isinstance(effect, LaunchEffect) and effect.resume_from is not None:
         raise AgentCapabilityUnsupportedError(
             capability="LaunchEffect.resume_from", handler=handler
+        )
+    if isinstance(effect, LaunchEffect) and effect.turn_credential is not None:
+        raise AgentCapabilityUnsupportedError(
+            capability="LaunchEffect.turn_credential", handler=handler
         )
     if isinstance(effect, FollowUpEffect) and effect.mode is not TurnInputMode.NEXT_TURN:
         raise AgentCapabilityUnsupportedError(
@@ -1234,6 +1264,7 @@ __all__ = [
     "StopSession",
     "StopSessionEffect",
     "TranscriptRef",
+    "TurnCredential",
     "TurnInputMode",
     "TurnRef",
     "agent",
