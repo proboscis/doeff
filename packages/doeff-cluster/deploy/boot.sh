@@ -118,6 +118,15 @@ repo_access() {
 # ready は hy を起こさないので root を要らない。
 if [ -n "${WORKER_DOEFF_COMMIT:-}" ] && [ "$role" != ready ] && [ "$role" != access ]; then
   doeff_root
+  # 起動の script も宣言した commit の物で続ける: image に焼いた script は最初の自己起動(root を用意するまで)だけを受け持つ。
+  # だから起動の script を直しても、WORKER_DOEFF_COMMIT を変えて入れ替えれば新しい script で起き、image を作り直さない。
+  # 引き継いだ先(DOEFF_BOOT_FROM_ROOT)ではもう引き継がない。
+  next=$root/packages/doeff-cluster/deploy/boot.sh
+  if [ -z "${DOEFF_BOOT_FROM_ROOT:-}" ] && [ -f "$next" ] && ! cmp -s "$next" "$0"; then
+    echo "boot: 起動の script を doeff $sha の物へ引き継ぐ" >&2
+    export DOEFF_BOOT_FROM_ROOT=1
+    exec sh "$next"
+  fi
 fi
 
 case "$role" in
