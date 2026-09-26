@@ -10,7 +10,7 @@
 (require doeff-hy.macros [defk <-])
 (import dataclasses [dataclass])
 (import doeff_hy.frozen [FrozenMap thaw-json])
-(import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny Approval WatchCursor ListCursor Row Missing Page Written
+(import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written
                               RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset])
 (import doeff_records.effects [ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents])
 
@@ -183,20 +183,6 @@
     _ (raise (WireMalformed (.format "expect は kind = absent | version | any の object: {!r}" value)))))
 
 
-(defk approval-json [approval]
-  {:pre [(: approval (| Approval None))] :post [(: % (| dict None))]}
-  "承認の印を wire の値にする(None = 添えない)。"
-  (if (is approval None) None {"token" approval.token}))
-
-
-(defk approval-from [value]
-  {:pre [(: value JsonValue)] :post [(: % (| Approval None))]}
-  "wire の値から承認の印を読む(null = 添えない)。"
-  (when (is value None) (return None))
-  (<- body (object-of value "approval" #("token") #()))
-  (Approval (! (string-of (get body "token") "approval.token"))))
-
-
 ;; --- 要求 ------------------------------------------------------------------------------------------------
 
 (defk encode-request [ask]
@@ -208,9 +194,8 @@
     (ListRows :table table :where where :fields fields :cursor cursor :limit limit)
       (WireRequest OP-LIST-ROWS {"table" table "where" (thaw-json where) "fields" (if (is fields None) None (list fields))
                                  "cursor" (! (list-cursor-json cursor)) "limit" limit})
-    (PutRow :table table :key key :value value :expect expect :approval approval)
-      (WireRequest OP-PUT-ROW {"table" table "key" (list key) "value" (thaw-json value) "expect" (! (expect-json expect))
-                               "approval" (! (approval-json approval))})
+    (PutRow :table table :key key :value value :expect expect)
+      (WireRequest OP-PUT-ROW {"table" table "key" (list key) "value" (thaw-json value) "expect" (! (expect-json expect))})
     (WatchChanges :tables tables :cursor cursor :timeout timeout :limit limit)
       (WireRequest OP-WATCH-CHANGES {"tables" (list tables) "cursor" (! (watch-cursor-json cursor)) "timeout" (float timeout)
                                      "limit" limit})
@@ -240,9 +225,12 @@
             (ListRows (! (string-of (get body "table") "table")) #** keywords))
       "put-row"
         (do (<- (object-of body "put-row の本文" #("table" "key" "value" "expect") #("approval")))
+            ;; approval は契約で deprecated(承認トークンは廃止 — operator の宣言の欄は書き手の主体で判じる)。前の版の client が
+            ;; 添える null だけを読み飛ばし、値のある印は効かない承認を黙って捨てないよう malformed で断る。次の契約の版で鍵ごと消す。
+            (when (is-not (.get body "approval") None)
+              (raise (WireMalformed "put-row の approval は廃止(operator の宣言の欄は書き手の主体で判じる — 印は効かない)")))
             (PutRow (! (string-of (get body "table") "table")) (! (strings-of (get body "key") "key"))
-                    (! (json-object-in (get body "value") "value")) (! (expect-from (get body "expect")))
-                    :approval (! (approval-from (.get body "approval")))))
+                    (! (json-object-in (get body "value") "value")) (! (expect-from (get body "expect")))))
       "watch-changes"
         (do (<- (object-of body "watch-changes の本文" #("tables" "cursor") #("timeout" "limit")))
             (setv keywords {})

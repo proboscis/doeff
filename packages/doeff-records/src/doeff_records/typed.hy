@@ -14,7 +14,7 @@
 (import typing [Generic TypeVar])
 (import pydantic [TypeAdapter])
 (import doeff_hy.frozen [FrozenMap frozen-json-object thaw-json])
-(import doeff_records.values [Row Missing Page Written Conflict RowChanged RowRemoved ListCursor Approval ExpectAbsent
+(import doeff_records.values [Row Missing Page Written Conflict RowChanged RowRemoved ListCursor ExpectAbsent
                               ExpectVersion ExpectAny checked-table-name])
 (import doeff_records.effects [ReadRow ListRows PutRow DEFAULT-LIST-LIMIT])
 
@@ -115,13 +115,12 @@
       answer))
 
 
-(defk put-typed [#^ (get RowType M) row-type #^ tuple key #^ M value #^ object expect * [approval None]]
-  {:pre [(: row-type RowType) (: key tuple) (: value row-type.model) (: expect (| ExpectAbsent ExpectVersion ExpectAny))
-         (: approval (| Approval NoneType))]
+(defk put-typed [#^ (get RowType M) row-type #^ tuple key #^ M value #^ object expect]
+  {:pre [(: row-type RowType) (: key tuple) (: value row-type.model) (: expect (| ExpectAbsent ExpectVersion ExpectAny))]
    :post [(: % "TypedWritten | TypedConflict | Refused | Unreachable")]}
-  "行の全体の像を書く: value = 行の型の値(値が None の欄は消す)/ expect = ExpectAbsent | ExpectVersion | ExpectAny /
-   approval = 承認の欄を書く時の印。答え = TypedWritten | TypedConflict | Refused | Unreachable。"
-  (<- answer (PutRow row-type.table key (fields-of-value row-type value) expect :approval approval))
+  "行の全体の像を書く: value = 行の型の値(値が None の欄は消す)/ expect = ExpectAbsent | ExpectVersion | ExpectAny。
+   答え = TypedWritten | TypedConflict | Refused | Unreachable。"
+  (<- answer (PutRow row-type.table key (fields-of-value row-type value) expect))
   (cond
     (isinstance answer Written) (TypedWritten answer.version (value-of-fields row-type answer.value))
     (isinstance answer Conflict) (TypedConflict (typed-current row-type answer.current))

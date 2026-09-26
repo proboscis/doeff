@@ -95,7 +95,7 @@
   (ListRows [table where fields cursor limit]
     (<- answer (call-service endpoint effect))
     (resume answer))
-  (PutRow [table key value expect approval]
+  (PutRow [table key value expect]
     (<- answer (call-service endpoint effect))
     (resume answer))
   (WatchChanges [tables cursor timeout limit]
