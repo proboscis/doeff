@@ -346,6 +346,11 @@
         "command": "doeff-runner.hy.filter.current-file",
         "title": "Current file を絞り込む",
         "icon": "$(filter)"
+      },
+      {
+        "command": "doeff-runner.hy.toggleRawOnly",
+        "title": "生の副作用に触る handler だけ表示(切り替え)",
+        "icon": "$(zap)"
       }
     ],
     "configuration": {
@@ -389,6 +394,22 @@
           ],
           "default": "prompt",
           "description": "When opening entrypoints from other git worktrees, optionally add that worktree folder to the current workspace (enables features like Go to Definition)."
+        },
+        "doeff-runner.hy.rawSideEffects": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "markdownDescription": "Hy の handler の「生の副作用」の目録に足す名前(分類 → 名前の配列)。分類は http / async / time / random / file / process / env / network / db / thread。名前は dotted の名前(`mylib.http` は `mylib.http.get` も拾う・末尾 `*` 可)、`.name` は method 名(弱い根拠)、`builtin:name` は組み込み。"
+        },
+        "doeff-runner.hy.rawSideEffectDiagnostics": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "生の副作用に直接触る defk / deff / defp を問題の一覧に警告として出す(業務の Program は effect で出し、実 I/O は handler に置く決まりの違反の候補)。"
         }
       }
     },
@@ -503,6 +524,11 @@
           "command": "doeff-runner.hy.refreshNavigation",
           "when": "view == doeff-hy-current-file",
           "group": "navigation@1"
+        },
+        {
+          "command": "doeff-runner.hy.toggleRawOnly",
+          "when": "view == doeff-hy-handlers",
+          "group": "navigation@0"
         }
       ],
       "view/item/context": [

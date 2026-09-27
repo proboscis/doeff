@@ -355,14 +355,9 @@ export async function resolveDefinition(
   }
 
   // d. workspace 全体の同名の定義
-  const everywhere: DefinitionTarget[] = [];
-  for (const entry of index.entries()) {
-    for (const def of entry.file.definitions) {
-      if (def.mangled === mangled) {
-        everywhere.push(hyTarget(entry, def));
-      }
-    }
-  }
+  const everywhere: DefinitionTarget[] = index
+    .definitionsNamed(mangled)
+    .map(({ entry, definition }) => hyTarget(entry, definition));
   if (everywhere.length > 0) {
     return resolution('workspace', everywhere, problems);
   }

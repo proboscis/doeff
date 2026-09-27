@@ -4,7 +4,7 @@
 import * as vscode from 'vscode';
 import type { Resolve } from './callGraph';
 import { HyCallHierarchyProvider, HyEffectCodeLensProvider } from './effectProviders';
-import { EffectGraphSource } from './effects';
+import { EffectGraphSource, PROGRAM_KINDS } from './effects';
 import { ChildProcessHyIndexer, type LocateIndexer } from './indexer';
 import { HY_EXCLUDE_GLOB, HyIndexService, isHyPath } from './indexService';
 import { ExternalModuleCache } from './externalCache';
@@ -12,6 +12,9 @@ import { HyNavTreeProvider, NAV_VIEWS, nodeDefinition } from './navPanel';
 import type { NavNode } from './navTree';
 import { HyNavigationProvider, toRange } from './providers';
 import { FsPythonModuleSource } from './pythonSource';
+import { DEFAULT_RAW_CATALOG, mergeRawCatalog, type RawCatalogEntry } from './rawCatalog';
+import { RawEffectSource } from './rawEffects';
+import { rawProgramDiagnostics } from './rawView';
 import { resolveDefinition } from './resolve';
 import { HyIndexStore } from './store';
 import { FS_CHANGE_STAMPS, UvModuleLocator } from './uvLocator';
@@ -22,6 +25,19 @@ const INDEXER_TIMEOUT_MS = 120_000;
 const PYTHON_GLOB_LIMIT = 20;
 /** 置き場が変わってから注記と木を出し直すまで待つ時間(編集の debounce と重ねて連打を避ける)。 */
 const VIEW_REFRESH_DEBOUNCE_MS = 400;
+
+/** 設定の節の名前(既存の doeff-runner の設定と同じ接頭辞)。 */
+const CONFIG_SECTION = 'doeff-runner.hy';
+
+/** 設定の目録の追加を読み、既定の目録に足す(読めない値は Output に理由を出す)。 */
+function readRawCatalog(log: vscode.OutputChannel): readonly RawCatalogEntry[] {
+  const extra: unknown = vscode.workspace.getConfiguration(CONFIG_SECTION).get('rawSideEffects');
+  const merged = mergeRawCatalog(DEFAULT_RAW_CATALOG, extra);
+  for (const problem of merged.problems) {
+    log.appendLine(`[hy] ${problem}`);
+  }
+  return merged.catalog;
+}
 
 /** Hy の機能が拡張から受け取る物 — binary の探し方と Output channel。 */
 export interface HyNavigationDeps {
@@ -79,10 +95,31 @@ export function registerHyNavigation(context: vscode.ExtensionContext, deps: HyN
     }
     return resolution;
   };
-  const provider = new HyNavigationProvider(store, python, external, graphs, deps.output);
+  // 生の副作用の目録は設定が変わった時だけ読み直す(判定の係は目録か表が変わった時だけ作り直す)
+  let catalog = readRawCatalog(deps.output);
+  const raw = new RawEffectSource(graphs, () => catalog, resolve);
+  const provider = new HyNavigationProvider(store, python, external, graphs, raw, deps.output);
   const hierarchy = new HyCallHierarchyProvider(graphs, resolve);
-  const lenses = new HyEffectCodeLensProvider(graphs, resolve);
-  const trees = NAV_VIEWS.map((v) => ({ ...v, provider: new HyNavTreeProvider(v.view, graphs, resolve, activeHyFile) }));
+  const lenses = new HyEffectCodeLensProvider(graphs, resolve, raw);
+  const trees = NAV_VIEWS.map((v) => ({ ...v, provider: new HyNavTreeProvider(v.view, graphs, resolve, raw, activeHyFile) }));
+  const diagnostics = vscode.languages.createDiagnosticCollection('doeff-hy-raw-side-effects');
+  // 直接 生に触る defk / deff / defp を問題の一覧へ(設定で入り切り・既定は切)
+  const updateDiagnostics = (): void => {
+    diagnostics.clear();
+    if (vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>('rawSideEffectDiagnostics') !== true) {
+      return;
+    }
+    const index = raw.current();
+    const byPath = new Map<string, vscode.Diagnostic[]>();
+    for (const d of rawProgramDiagnostics(graphs.current().definitionsOfKind(PROGRAM_KINDS, false), (ref) => index.direct(ref))) {
+      const diagnostic = new vscode.Diagnostic(toRange(d.range), d.message, vscode.DiagnosticSeverity.Warning);
+      diagnostic.source = 'doeff-hy';
+      byPath.set(d.path, [...(byPath.get(d.path) ?? []), diagnostic]);
+    }
+    for (const [filePath, list] of byPath) {
+      diagnostics.set(vscode.Uri.file(filePath), list);
+    }
+  };
   const selector: vscode.DocumentSelector = [
     { language: 'hy', scheme: 'file' },
     { pattern: '**/*.{hy,hyk,hyp}', scheme: 'file' }
@@ -100,14 +137,33 @@ export function registerHyNavigation(context: vscode.ExtensionContext, deps: HyN
       for (const tree of trees) {
         tree.provider.refresh();
       }
+      updateDiagnostics();
     }, VIEW_REFRESH_DEBOUNCE_MS);
   };
   const unsubscribeStore = store.onDidChange(scheduleRefresh);
   const unsubscribeExternal = external.onDidChange(scheduleRefresh);
 
+  const handlersTree = trees.find((t) => t.view === 'handlers');
   context.subscriptions.push(
     service,
     lenses,
+    diagnostics,
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration(`${CONFIG_SECTION}.rawSideEffects`)) {
+        catalog = readRawCatalog(deps.output);
+      }
+      if (event.affectsConfiguration(CONFIG_SECTION)) {
+        scheduleRefresh();
+      }
+    }),
+    vscode.commands.registerCommand('doeff-runner.hy.toggleRawOnly', async () => {
+      if (handlersTree === undefined) {
+        return;
+      }
+      const on = !handlersTree.provider.rawOnly;
+      handlersTree.provider.setRawOnly(on);
+      await vscode.commands.executeCommand('setContext', 'doeffHy.rawOnly', on);
+    }),
     { dispose: unsubscribeStore },
     { dispose: unsubscribeExternal },
     { dispose: () => (pending === undefined ? undefined : clearTimeout(pending)) },
@@ -155,6 +211,18 @@ export function registerHyNavigation(context: vscode.ExtensionContext, deps: HyN
         }
       })
     );
+    if (tree.view === 'handlers') {
+      // 「生だけ」の切り替えを view の上の札で見せる
+      context.subscriptions.push(
+        tree.provider.onDidChangeTreeData(() => {
+          const filter = tree.provider.filter === '' ? '' : `絞り込み: "${tree.provider.filter}"`;
+          const rawOnly = tree.provider.rawOnly ? '生の副作用に触る handler だけ表示中' : '';
+          const text = [rawOnly, filter].filter((t) => t !== '').join(' · ');
+          treeView.message = text === '' ? undefined : text;
+        })
+      );
+    }
   }
+  updateDiagnostics();
   service.start();
 }

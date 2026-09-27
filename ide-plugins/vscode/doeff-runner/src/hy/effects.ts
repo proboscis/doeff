@@ -78,6 +78,7 @@ export class EffectGraph {
   private readonly callsByCaller = new Map<string, CallSite[]>();
   private readonly refsByPath = new Map<string, DefRef[]>();
   private readonly allRefs: DefRef[] = [];
+  private readonly definedNames = new Set<string>();
 
   /** file の並びから表を作る(同じ path が 2 度あれば先の物を使う)。 */
   constructor(files: readonly GraphFile[]) {
@@ -94,6 +95,9 @@ export class EffectGraph {
       );
       this.refsByPath.set(pathKey, refs);
       this.allRefs.push(...refs);
+      for (const ref of refs) {
+        this.definedNames.add(ref.definition.mangled);
+      }
       for (const ref of refs) {
         const kind = ref.definition.kind;
         if (kind === 'defclass' || kind === 'defrecord') {
@@ -133,6 +137,11 @@ export class EffectGraph {
       ...index.entries().map((entry): GraphFile => ({ file: entry.file, external: false })),
       ...external.cachedFiles().map((file): GraphFile => ({ file, external: true }))
     ]);
+  }
+
+  /** 表のどこかにこの名前(mangled)の定義があるか(組み込みの呼び出しを解決しに行かないための絞り込み)。 */
+  hasDefinitionNamed(mangled: string): boolean {
+    return this.definedNames.has(mangled);
   }
 
   /** 名前(mangled)が effect かを答える — 判定の唯一の場所。 */
