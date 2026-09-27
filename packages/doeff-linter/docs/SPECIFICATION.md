@@ -413,3 +413,24 @@ mixed_concerns = { layer = "core", roles = ["judgment", "program"], warning_min 
   `layer` の層の説明(summary・knows・does_not_know)。mixed を `warning_min` 以上で warning、`info_min` 以上で info。較正の見張りは
   decide-tag(正例)と card-tags-of(反例)の mixed の確率を比べる。問いの文は `src/project/semantic.rs` の `MixedConcerns` の 1 か所。
 
+## 15. defk の素の呼び — DOEFF126
+
+coordinator の決定 2026-09-28(戻せる・agora-redesign #798 に記録)。事実: #798 の直しの便で `latest-by-ref` を defk に改めたのに、
+それを呼ぶ deff(`text-at`・`expected-inputs`)と検 4 file が素のまま呼んでいた — defk を素で呼ぶと答えではなく Program が返り、型の
+誤りで落ちずに静かに間違った値として流れる(検で見つかった)。記録は doeff の ADR-DOE-HY-007 R13。
+
+- **defk の集合**: repo の Hy の file(`(defk` の綴りを含む物)の最上位の `(defk 名 …)`(`do` と `eval-and-compile` の中も)を
+  `<module>.<名>` で集める。呼びの頭は file の import と定義の場所で module まで解いて比べる(`smells::Scope` と同じ)。追えない呼び
+  (引数で受けた関数・method)は拾わない。
+- **拾う所**(答えを値として使う所): 比べ・演算・真偽の組み合わせ(`=`・`+`・`in`・`not`・`and` …)と答えを読む組み込みの関数
+  (`len`・`str`・`get`・`sorted`・`isinstance` …)の引数、method の的(`(.get (f …) "欄")`)と属性(`(. (f …) 欄)`)、条件(`if`・`when`・
+  `unless`・`while` の頭・`cond` の条件)、繰り返しの元(`for` の束ねの元・内包表記の元)、record の欄(頭が大文字の型を作る呼びの引数 —
+  doeff の package の型と、effect として出す位置 `(<- (T …))`・`(! (T …))` の型は除く)。その位置の中の `if`・`when`・`cond`・`do`・`let`
+  の枝も同じ。
+- **拾わない所**: `(<- …)` の右辺・`(! …)`・`(return …)`、Program を受ける呼びの引数(repo の関数へ渡す形も — Program を受けて走らせる
+  関数かもしれず追えない)、名への束ね、関数の答えとして返す形。初版は「Program として渡す所の外は全部」だったが、agora の本線で 239 件
+  (Program を受けて走らせる run-on・in-record・run-wired などへ渡す形が大半)になり、error の重さでは外れが重いので、答えとして使う所に
+  絞った(本線 1 件)。
+- **重さ**: error(静かな誤りなので)。登録簿に載れば `registered_severity`(既定 warning)。母集団は `definitions` の業務の file と検の置き場。
+- **鍵**: `<path>::DOEFF126::<定義>::<呼んだ defk>`(定義の外は `<module>`)。位置は呼びの式。
+

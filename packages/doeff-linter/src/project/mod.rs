@@ -12,6 +12,7 @@ pub mod facts;
 pub mod names;
 pub mod registry;
 pub mod rule;
+pub mod bare_calls;
 pub mod semantic;
 pub mod smells;
 pub mod settings;
@@ -212,6 +213,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             if let Some(definitions) = &settings.definitions {
                 if wants_definitions(enabled) {
                     let failure = failure_types_for(root, enabled, &definitions.tags);
+                    let defks = defk_names_for(root, enabled);
                     let files: Vec<SourceFile> = hy_index::collect_hy_files(root)
                         .into_iter()
                         .filter_map(|path| {
@@ -227,6 +229,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                                 .map(|source| {
                                     let mut found = judge_definitions(file, &source, definitions, enabled, plain_callable_reasons(settings), hy.get(&file.rel));
                                     found.extend(judge_smells(file, &source, settings, definitions, enabled, &failure));
+                                    found.extend(judge_bare_calls(file, &source, definitions, enabled, &defks));
                                     found
                                 })
                                 .map_err(|error| format!("{}: 読めない: {}", file.rel, error))
@@ -326,6 +329,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     let file = SourceFile { rel: rel.clone(), path: path.clone(), language: Language::Hy };
                     drafts.extend(judge_definitions(&file, source, definitions, enabled, plain_callable_reasons(settings), hy_file.as_ref()));
                     drafts.extend(judge_smells(&file, source, settings, definitions, enabled, &failure_types_for(root, enabled, &definitions.tags)));
+                    drafts.extend(judge_bare_calls(&file, source, definitions, enabled, &defk_names_for(root, enabled)));
                 }
             }
             if let (Some(architecture), Some(rel), Some(language)) = (&settings.architecture, &rel, language_of(&path)) {
@@ -1816,7 +1820,7 @@ fn judge_semantic(
 
 /// 定義の書き方の規則のどれかが有効か。
 fn wants_definitions(enabled: &BTreeSet<ProjectRule>) -> bool {
-    if enabled.iter().any(|rule| rule.is_smell()) {
+    if enabled.iter().any(|rule| rule.is_smell()) || enabled.contains(&ProjectRule::DefkCalledBare) {
         return true;
     }
     [ProjectRule::DefnForbidden, ProjectRule::DeffNeedsReason, ProjectRule::DefinitionTagsRequired, ProjectRule::TestIsDeftest, ProjectRule::ClassWithBehaviour]
@@ -2033,6 +2037,54 @@ fn failure_types_for(root: &Path, enabled: &BTreeSet<ProjectRule>, reading: &set
         all.extend(smells::failure_types_in(&source, smells::Scope { module: &module, bindings: &facts.bindings }));
     }
     all
+}
+
+/// DOEFF126 の defk の集合を repo の Hy の file から集める(規則が有効な時だけ — 無ければ空)。`(defk` の綴りを含む file だけを読み、
+/// 最上位の defk の名を module まで含めた名にする。読めない file は飛ばす。
+fn defk_names_for(root: &Path, enabled: &BTreeSet<ProjectRule>) -> bare_calls::DefkNames {
+    let mut all = bare_calls::DefkNames::default();
+    if !enabled.contains(&ProjectRule::DefkCalledBare) {
+        return all;
+    }
+    for path in hy_index::collect_hy_files(root) {
+        let Some(rel) = relative_path(root, &path) else { continue };
+        let Ok(source) = std::fs::read_to_string(&path) else { continue };
+        if source.contains("(defk") {
+            all.extend(bare_calls::defk_names_in(&source, &module_of(&rel)));
+        }
+    }
+    all
+}
+
+/// DOEFF126: 業務の Hy の file(検の置き場も)で、defk の定義を素で呼んでいる所を判じる(error — 静かな誤りなので)。
+fn judge_bare_calls(
+    file: &SourceFile,
+    source: &str,
+    definitions: &settings::DefinitionSettings,
+    enabled: &BTreeSet<ProjectRule>,
+    defks: &bare_calls::DefkNames,
+) -> Vec<Draft> {
+    let in_population = is_definition_file(&file.rel, definitions) || is_test_file(&file.rel, definitions);
+    if !enabled.contains(&ProjectRule::DefkCalledBare) || !in_population || defks.is_empty() {
+        return Vec::new();
+    }
+    let lines = LineIndex::new(source);
+    let module = module_of(&file.rel);
+    let facts = read_facts(Language::Hy, source, &module, &definitions.tags);
+    bare_calls::bare_calls_in(source, smells::Scope { module: &module, bindings: &facts.bindings }, defks)
+        .into_iter()
+        .map(|call| Draft {
+            rule: ProjectRule::DefkCalledBare,
+            layer: None,
+            rel: file.rel.clone(),
+            path: file.path.clone(),
+            range: lines.range(call.span.start, call.span.end),
+            message: format!("{} の {} が defk {} を素で呼ぶ — 答えではなく Program が返る", file.rel, call.definition, call.callee),
+            detail: Some(call.detail()),
+            base: Severity::Error,
+            explain: Explain::BareDefkCall { call },
+        })
+        .collect()
 }
 
 /// DOEFF121 の問いを当てる定義の種類(関数と handler)。

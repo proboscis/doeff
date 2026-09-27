@@ -1409,3 +1409,55 @@ fn only_the_assembly_layer_may_read_a_dependency_protocol() {
     assert_eq!(code, 2);
     assert!(stderr.contains(":dependency-layers の ghost"), "{}", stderr);
 }
+
+#[test]
+fn defk_called_bare_is_an_error_and_program_positions_are_not() {
+    // 事実(#798): defk に改めた latest-by-ref を、deff と検が素のまま呼んでいた — Program が値として流れた。
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("pyproject.toml"),
+        "[tool.doeff-linter]\nenable = [\"DOEFF126\"]\n[tool.doeff-linter.definitions]\npaths = [\"app\"]\ntest_paths = [\"**/tests/**\"]\n[tool.doeff-linter.registry]\nfiles = [\"known.txt\"]\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("known.txt"), "app/core/texts.hy::DOEFF126::expected_inputs::latest_by_ref\n").unwrap();
+    let files = [
+        ("app/core/reads.hy", "(defk latest-by-ref [ref] {:tags {:context \"c\" :role \"program\"}} ref)\n(deff plain [x] x)\n"),
+        (
+            "app/core/texts.hy",
+            concat!(
+                "(import app.core.reads [latest-by-ref plain])\n",
+                "(deff text-at [ref] (.get (latest-by-ref ref) \"text\"))  ; defk にできない: 検の値\n",
+                "(deff expected-inputs [ref] (tuple (latest-by-ref ref)))  ; defk にできない: 検の値\n",
+                "(deff runner [ref] (run-on (latest-by-ref ref)))  ; defk にできない: Program を受けて走らせる\n",
+                "(defk good [ref] (<- row (latest-by-ref ref)) (return (plain row)))\n",
+            ),
+        ),
+        ("app/core/tests/test_reads.hy", "(import app.core.reads [latest-by-ref])\n(deftest test-reads (<- row (latest-by-ref 1)) (assert (= (latest-by-ref 1) row)))\n"),
+    ];
+    for (rel, text) in &files {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    let (code, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF126"),
+        vec![
+            "app/core/tests/test_reads.hy::DOEFF126::test_reads::latest_by_ref",
+            "app/core/texts.hy::DOEFF126::expected_inputs::latest_by_ref",
+            "app/core/texts.hy::DOEFF126::text_at::latest_by_ref"
+        ]
+    );
+    // 新しい素の呼びは error、登録簿に載った物は warning。defk でない plain の素の呼びは拾わない。
+    assert_eq!(violation(&report, "app/core/texts.hy::DOEFF126::text_at::latest_by_ref")["severity"], "error");
+    assert_eq!(violation(&report, "app/core/texts.hy::DOEFF126::expected_inputs::latest_by_ref")["severity"], "warning");
+    assert_eq!(code, 1);
+    let bare = violation(&report, "app/core/texts.hy::DOEFF126::text_at::latest_by_ref");
+    assert_eq!(bare["explanation"]["subject"], "定義 text_at(deff)が defk latest-by-ref を素で呼んでいる");
+    assert!(bare["hint"].as_str().unwrap().starts_with("(<- x (f …)) で束ねる"));
+    assert_eq!(bare["range"]["start"]["line"], 1);
+    // 1 file の実行(エディタの保存)でも repo の defk を知っている。
+    let (_, stdout, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "app/core/texts.hy"], Some("(import app.core.reads [latest-by-ref])\n(deff fresh [r] (len (latest-by-ref r)))\n"));
+    let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{}: {}\n{}", e, stdout, stderr));
+    assert_eq!(keys(&single, "DOEFF126"), vec!["app/core/texts.hy::DOEFF126::fresh::latest_by_ref"]);
+}

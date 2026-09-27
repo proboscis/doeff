@@ -205,6 +205,7 @@ impl Setup {
                 }
                 ProjectRule::TestIsDeftest => self.settings.definitions.as_ref().is_some_and(|d| !d.test_paths.is_empty()),
                 ProjectRule::ClassWithBehaviour => self.settings.definitions.is_some(),
+                ProjectRule::DefkCalledBare => self.settings.definitions.is_some(),
                 ProjectRule::JsonValueOutsideWire => self.settings.architecture.is_some(),
                 ProjectRule::ShapeCheckInJudgment => {
                     self.settings.definitions.is_some() && self.settings.smells.as_ref().is_some_and(|s| !s.shape_check_layers.is_empty())

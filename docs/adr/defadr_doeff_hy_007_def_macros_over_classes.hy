@@ -105,6 +105,7 @@
      (rule R10 "失敗の型は名前で決め打ちせず、宣言から取る: (a) defeffect の :failure / :absent に挙げた型(ADR-DOE-CORE-EFFECTS-003 R5)、(b) defrecord の頭の辞書の :failure True(effect の答えでない失敗の値 — 検めの関数が返す断りなど)。印は defrecord が class の属性 __doeff_failure__ に残し、doeff-linter は実行せずに読む。型は file の import と定義の場所で module まで解くので、同じ名の型が別の module にあっても宣言した方だけが失敗の型になる。印の形の選び方(2026-09-28・f143ee92 の席が決めた戻せる決定): defeffect の :failure は型の列だが、defrecord の :failure は字面の True / False — 型そのものの性質だから。Absent / Raise の作業(doeff-hy の macros.hy・handle.hy)と同じ file を触らないよう、印は record.hy の defrecord にだけ置いた。戻し方: 頭の辞書の受ける鍵から :failure を外し、DOEFF122 を defeffect の宣言だけで判じる形に戻す。")
      (rule R11 "Jev の規則 DOEFF205: 役が judgment / program の定義(定義の :tags か module の頭のタグ)に、入力の形の検めと業務の判断が混ざっているかを、混ざっている / 形の検めだけ / 判断だけ / どれでもない から Jev に選ばせる。物差しは repo の architecture.hy の層(設定 semantic.mixed_concerns.layer — agora は core)の説明。重さは warning まで(error にしない)。較正の正例 = decide-tag、反例 = 形の検めの無い純粋な判断(card-tags-of)。撃つのは --semantic / --semantic-all の時だけで、保存ごとの実行は cache を読むだけ(未判定は合格に数えない)。")
      (rule R12 "service の依存(doeff-linter DOEFF116)で、依存先のどの層を読んでよいかは読む側の層ごとに architecture.hy の layer の :dependency-layers で宣言する(無ければ :open-layers — 既定は intent)。operator の決定 2026-09-28 朝(逐語 \"A okay\" — 案 A「組み立ての entry に限り、依存先の service の protocol(翻訳の handler)も読んでよい。entry は全体を組む所なので」)を、層の名を linter に書かずに宣言で表すため。agora は (layer entry … :dependency-layers [intent protocol])。:depends-on に無い service を読むのは今までどおり違反、:dependency-layers を持たない層は今までどおり :open-layers だけ(2026-09-28・f143ee92 の席が決めた戻せる決定。戻し方: layer の :dependency-layers を読む形を外し、DOEFF116 を :open-layers だけで判じる形に戻す)。")
+     (rule R13 "defk の定義を素で呼んで、その答えを値として使わない(doeff-linter DOEFF126・error)。defk を素で呼ぶと答えではなく Program が返り、型の誤りで落ちずに静かに間違った値として流れる — agora-redesign #798 の直しの便で、defk に改めた latest-by-ref を deff(text-at・expected-inputs)と検 4 file が素のまま呼んでいた(検で見つかった)。defn / deff を defk に改める便が何百と続くので、呼び手の取り残しを見張る。拾うのは答えを値として使う所(比べ・演算・組み込みの関数・method・属性・条件・繰り返しの元・record の欄)だけで、Program を受ける呼びへ渡す形・名への束ね・関数の答えとして返す形は拾わない(初版の『Program の位置の外は全部』は agora の本線で 239 件と外れが多かった)。追えない呼び(引数で受けた関数・method)も拾わない。coordinator の決定 2026-09-28(戻せる — 戻し方: DOEFF126 を enable から外す。拾う所を広げるなら bare_calls.rs の VALUE_HEADS と位置の表を足す)。")
      (rule R6 "改訂の記録(2026-09-27):初版の『振る舞いを持つ class を作らない・外の library が class を要求する所だけ理由の註つきの逃げ道』は、operator の的の絞り込み 2 つで R3〜R5 に置き換えた。戻し方: 的を広げ直すなら、この改訂の commit を revert する(初版の R2〜R5 と law へ戻る)。")]
   :laws
     [(law world-touching-classes-become-foundation-handlers
@@ -136,6 +137,12 @@
           (counterexample "{\"landedAt\": \"3\"} を int の欄に黙って 3 として入れる — 型の違いを業務の失敗(Malformed)にせず飲み込む")]
        :enforced-by ["doeff-linter DOEFF120" "packages/doeff-hy/tests/defwire_deftests.hy"]
        :wiring "一部配線(2026-09-28)— parse と dump の往復・型違いの Malformed は defwire_deftests.hy が確かめる。DOEFF120 は doeff-linter の別の便(agora-redesign #840)")
+     (law defk-answers-are-not-used-bare
+       :statement "for_all repo の defk f と呼び (f …): 呼びの答えを値として使う所(比べ・演算・組み込みの関数・method・属性・条件・繰り返しの元・record の欄)に無い — 答えは (<- x (f …)) か (! (f …)) で受ける"
+       :counterexamples
+         [(counterexample "(deff text-at [ref] (.get (latest-by-ref ref) \"text\")) — latest-by-ref は defk。Program の .get を読み、答えのつもりで静かに間違う")]
+       :enforced-by ["doeff-linter DOEFF126"]
+       :wiring "配線(2026-09-28)— doeff-linter DOEFF126(wt/hy-defk-bare-call)")
      (law judgment-does-not-check-json-shape
        :statement "for_all 定義 d ∈ 判断の層: d の中に、文字列の鍵で読んだ欄 (.get x \"欄\") への isinstance が無い — 入力の形は通信の境目で型のある値に解く"
        :counterexamples

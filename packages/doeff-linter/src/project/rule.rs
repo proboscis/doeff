@@ -85,6 +85,8 @@ pub enum ProjectRule {
     FieldsJoinedIntoText,
     /// DOEFF125: for / while の中で蓄えを毎回作り直す。
     RebuiltAccumulator,
+    /// DOEFF126: defk の定義を素で呼ぶ(答えではなく Program が返り、静かに間違った値として流れる)。
+    DefkCalledBare,
     /// DOEFF201(意味・Jev): 翻訳の層の定義が業務の判断をしている。
     SemanticBusinessDecision,
     /// DOEFF202(意味・Jev): 判断の層の定義が通信の手段を知っている。
@@ -99,7 +101,7 @@ pub enum ProjectRule {
 
 impl ProjectRule {
     /// 全部の層の規則(出力の一覧と `ALL` の展開のため)。
-    pub const ALL: [ProjectRule; 30] = [
+    pub const ALL: [ProjectRule; 31] = [
         ProjectRule::LayerImportDirection,
         ProjectRule::LayerForbiddenModule,
         ProjectRule::LayerTypesOnly,
@@ -125,6 +127,7 @@ impl ProjectRule {
         ProjectRule::BindThenReturn,
         ProjectRule::FieldsJoinedIntoText,
         ProjectRule::RebuiltAccumulator,
+        ProjectRule::DefkCalledBare,
         ProjectRule::SemanticBusinessDecision,
         ProjectRule::SemanticTransportKnowledge,
         ProjectRule::SemanticPlainCallable,
@@ -160,6 +163,7 @@ impl ProjectRule {
             ProjectRule::BindThenReturn => "DOEFF123",
             ProjectRule::FieldsJoinedIntoText => "DOEFF124",
             ProjectRule::RebuiltAccumulator => "DOEFF125",
+            ProjectRule::DefkCalledBare => "DOEFF126",
             ProjectRule::SemanticBusinessDecision => "DOEFF201",
             ProjectRule::SemanticTransportKnowledge => "DOEFF202",
             ProjectRule::SemanticPlainCallable => "DOEFF203",
@@ -214,6 +218,7 @@ impl ProjectRule {
             | ProjectRule::BindThenReturn
             | ProjectRule::FieldsJoinedIntoText
             | ProjectRule::RebuiltAccumulator
+            | ProjectRule::DefkCalledBare
             | ProjectRule::SemanticMixedConcerns
             | ProjectRule::SemanticPlainCallable
             | ProjectRule::SemanticClassRole => false,
@@ -248,6 +253,7 @@ impl ProjectRule {
             ProjectRule::BindThenReturn => "<- の直後に return するだけ",
             ProjectRule::FieldsJoinedIntoText => "欄をつないで 1 本の文字列にする",
             ProjectRule::RebuiltAccumulator => "ループの中で蓄えを作り直す",
+            ProjectRule::DefkCalledBare => "defk を素で呼んで答えに使う",
             ProjectRule::SemanticBusinessDecision => "翻訳の層で業務の判断(Jev)",
             ProjectRule::SemanticTransportKnowledge => "判断の層が通信の手段を知る(Jev)",
             ProjectRule::SemanticPlainCallable => "deff の理由が合わない(Jev)",
@@ -275,7 +281,8 @@ impl ProjectRule {
             ProjectRule::DefnForbidden
             | ProjectRule::DeffNeedsReason
             | ProjectRule::DefinitionTagsRequired
-            | ProjectRule::TestIsDeftest => RuleFamily::Definition,
+            | ProjectRule::TestIsDeftest
+            | ProjectRule::DefkCalledBare => RuleFamily::Definition,
             ProjectRule::ClassWithBehaviour | ProjectRule::SemanticClassRole => RuleFamily::Class,
             ProjectRule::JsonValueOutsideWire => RuleFamily::Wire,
             ProjectRule::ShapeCheckInJudgment
@@ -318,6 +325,7 @@ impl ProjectRule {
             ProjectRule::BindThenReturn => "Bind Then Return",
             ProjectRule::FieldsJoinedIntoText => "Fields Joined Into Text",
             ProjectRule::RebuiltAccumulator => "Rebuilt Accumulator",
+            ProjectRule::DefkCalledBare => "defk Called Bare",
             ProjectRule::SemanticBusinessDecision => "Business Decision In Translation (Jev)",
             ProjectRule::SemanticTransportKnowledge => "Transport Knowledge In Core (Jev)",
             ProjectRule::SemanticPlainCallable => "Plain Callable Reason (Jev)",
@@ -357,6 +365,7 @@ impl ProjectRule {
             ProjectRule::BindThenReturn => "(<- x T (f …)) の直後に (return x) を置き、x を他で使わない形にしない",
             ProjectRule::FieldsJoinedIntoText => "同じ値の 2 つ以上の欄を + か f 文字列で 1 本の文字列につながない",
             ProjectRule::RebuiltAccumulator => "for / while の中で (:= xs (+ xs #(…))) と蓄えを毎回作り直さない",
+            ProjectRule::DefkCalledBare => "defk の定義は Program として渡す所((<- …) の右辺・(! …)・(return …)・Program を受ける呼びの引数)だけで呼ぶ — 素で呼ぶと答えではなく Program が返る",
             ProjectRule::SemanticMixedConcerns => "役が judgment / program の定義は、入力の形の検めと業務の判断を混ぜない(Jev の判定 — warning か info)",
             ProjectRule::SemanticClassRole => "DOEFF119 が何も出さない、処理を持つ method のある class は値の class(欄から計算するだけ)である(Jev の判定 — 外の世界の窓口か状態を持つ物なら warning か info)",
         }
@@ -393,6 +402,7 @@ impl ProjectRule {
             ProjectRule::BindThenReturn => "(return (! (f …))) と 1 つにするか、失敗なら (<- (Raise …)) で出す",
             ProjectRule::FieldsJoinedIntoText => "型のある値のまま渡す(欄を文字列に潰さない)— 文にするのは人に見せる境目の 1 か所だけ",
             ProjectRule::RebuiltAccumulator => "蓄えは内包表記(lfor)で 1 度に作る — ループの中で (+ xs #(…)) の作り直しを重ねない",
+            ProjectRule::DefkCalledBare => "(<- x (f …)) で束ねるか (! (f …)) で答えを受ける — 素の関数の中なら、その関数を defk にして呼び手を Program にする",
             ProjectRule::SemanticMixedConcerns => "形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする(Jev の外れなら登録簿に載せる)",
             ProjectRule::SemanticClassRole => "外の世界の窓口なら土台の handler(資源は (session val …))、状態なら handler の (session var …) 1 か所(Jev の外れなら登録簿に載せる)",
         }
@@ -404,7 +414,7 @@ mod tests {
     use super::*;
 
     /// DOEFF の ID → 割り当てるべき家族(依頼の表そのもの)。
-    const EXPECTED_FAMILIES: [(&str, RuleFamily); 30] = [
+    const EXPECTED_FAMILIES: [(&str, RuleFamily); 31] = [
         ("DOEFF101", RuleFamily::Layer),
         ("DOEFF102", RuleFamily::Layer),
         ("DOEFF103", RuleFamily::Layer),
@@ -432,6 +442,7 @@ mod tests {
         ("DOEFF124", RuleFamily::Smell),
         ("DOEFF125", RuleFamily::Smell),
         ("DOEFF205", RuleFamily::Smell),
+        ("DOEFF126", RuleFamily::Definition),
         ("DOEFF201", RuleFamily::Jev),
         ("DOEFF202", RuleFamily::Jev),
         ("DOEFF203", RuleFamily::Jev),
@@ -445,7 +456,7 @@ mod tests {
     }
 
     #[test]
-    fn family_matches_the_assignment_table_for_all_30_rules() {
+    fn family_matches_the_assignment_table_for_all_31_rules() {
         assert_eq!(EXPECTED_FAMILIES.len(), ProjectRule::ALL.len(), "割り当ての表が ALL の数と食い違う");
         for (id, expected) in EXPECTED_FAMILIES {
             let rule = ProjectRule::parse(id).unwrap_or_else(|| panic!("{} は ProjectRule に無い", id));

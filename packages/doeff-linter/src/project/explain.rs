@@ -217,6 +217,8 @@ pub enum Explain {
     TestNotDeftest { name: String, head: String },
     /// DOEFF119: 業務の code の defclass(外の世界に触る / 変わる状態を持つ / 欄だけ)。
     ClassShape { name: String, shape: ClassShapeFacts, verdict: ClassVerdict },
+    /// DOEFF126: defk の定義を素で呼んでいる。
+    BareDefkCall { call: super::bare_calls::BareCall },
     /// DOEFF121〜125: 臭いの規則(形の照らし)。
     Smell { smell: super::smells::Smell },
     /// DOEFF205: Jev が、判断の定義に形の検めと業務の判断が混ざっていると見た。
@@ -401,6 +403,13 @@ impl<'a> Narrator<'a> {
                 }
             }
             Explain::Smell { smell } => smell_text(smell),
+            Explain::BareDefkCall { call } => (
+                format!("定義 {}({})が defk {} を素で呼んでいる", call.definition, call.container, call.callee),
+                format!(
+                    "{} は defk なので、素で呼ぶと答えではなく Program が返る。その Program は型の誤りで落ちずに値として流れ、答えを使ったつもりの所で静かに間違う(dict の .get・比べ・文字列への埋め込み)。Program として渡す所 — (<- x …) の右辺・(! …)・(return …)・Program を受ける呼びの引数 — で呼ぶ。",
+                    call.callee
+                ),
+            ),
             Explain::MixedConcerns { name, kind, probability, layer } => (
                 format!("定義 {}({})", name, kind),
                 format!(

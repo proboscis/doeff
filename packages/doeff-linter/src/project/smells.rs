@@ -184,17 +184,17 @@ impl Smell {
 }
 
 /// `( … )` の中身(読み捨てを除く)。
-fn live(form: &Form) -> Option<Vec<&Form>> {
+pub(super) fn live(form: &Form) -> Option<Vec<&Form>> {
     form.paren_items().map(live_items)
 }
 
 /// 列の中身から読み捨て(`#_`)を除く。
-fn live_items(items: &[Form]) -> Vec<&Form> {
+pub(super) fn live_items(items: &[Form]) -> Vec<&Form> {
     items.iter().filter(|item| !matches!(item.node, Node::Discarded)).collect()
 }
 
 /// form の子(列の中身・注記の的・前置きの中身)。
-fn children(form: &Form) -> Vec<&Form> {
+pub(super) fn children(form: &Form) -> Vec<&Form> {
     match &form.node {
         Node::Seq { items, .. } => live_items(items),
         Node::Prefixed { inner: Some(inner), .. } | Node::Tagged { inner: Some(inner) } => vec![inner.as_ref()],
@@ -204,7 +204,7 @@ fn children(form: &Form) -> Vec<&Form> {
 }
 
 /// form の範囲を ByteSpan にする。
-fn span_of(form: &Form) -> ByteSpan {
+pub(super) fn span_of(form: &Form) -> ByteSpan {
     ByteSpan { start: form.span.start, end: form.span.end }
 }
 
@@ -224,18 +224,18 @@ struct Judge<'a> {
 }
 
 /// Hy の source と、form の綴りを読む道具。
-struct Hy<'a> {
-    src: &'a str,
+pub(super) struct Hy<'a> {
+    pub(super) src: &'a str,
 }
 
 impl<'a> Hy<'a> {
     /// form の綴り。
-    fn text(&self, form: &Form) -> &'a str {
+    pub(super) fn text(&self, form: &Form) -> &'a str {
         self.src.get(form.span.start..form.span.end).unwrap_or("")
     }
 
     /// 記号の綴り(記号でなければ None)。
-    fn symbol(&self, form: &Form) -> Option<&'a str> {
+    pub(super) fn symbol(&self, form: &Form) -> Option<&'a str> {
         match form.node {
             Node::Symbol => Some(self.text(form)),
             _ => None,
@@ -243,7 +243,7 @@ impl<'a> Hy<'a> {
     }
 
     /// 列の頭の綴り(記号か keyword — `(:= x v)` の `:=` は keyword として読まれる)。
-    fn head(&self, form: &Form) -> Option<&'a str> {
+    pub(super) fn head(&self, form: &Form) -> Option<&'a str> {
         let items = form.paren_items()?;
         let first = items.iter().find(|i| !matches!(i.node, Node::Discarded))?;
         match first.node {
@@ -352,7 +352,7 @@ impl<'a> Hy<'a> {
     }
 
     /// 列の頭の綴り(記号か keyword)を form 1 つから。
-    fn head_text(&self, form: &Form) -> Option<&'a str> {
+    pub(super) fn head_text(&self, form: &Form) -> Option<&'a str> {
         match form.node {
             Node::Symbol | Node::Keyword => Some(self.text(form)),
             _ => None,
