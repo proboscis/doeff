@@ -108,7 +108,8 @@
 (defk run-in-world [world scenario]
   {:pre [(: world EnvWorld) (: scenario Program)] :post [(: % bool)]}
   "筋書き(引数なしの defk の呼び出し = Program)を仮想の時計と env-world の下で走らせる。"
-  (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) (with-handlers (env-world world) scenario))))
+  (<- handlers list (env-world world))
+  (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) (with-handlers handlers scenario))))
   ok)
 
 
@@ -357,7 +358,8 @@
 (defk expect-failure [world env kind retryable]
   {:pre [(: world EnvWorld) (: env RuntimeEnv) (: kind EnvFailureKind) (: retryable bool)] :post [(: % bool)]}
   "world の下で env を準備すると kind の失敗(一時か恒久かも)になる。"
-  (<- failure EnvFailure ((state) ((sim-time-handler :clock (SimClock)) (with-handlers (env-world world) (failure-of env)))))
+  (<- handlers list (env-world world))
+  (<- failure EnvFailure ((state) ((sim-time-handler :clock (SimClock)) (with-handlers handlers (failure-of env)))))
   (assert (= failure.kind kind) (.format "{} のはずが {}: {}" kind failure.kind failure.detail))
   (assert (= failure.retryable retryable) failure)
   True)
