@@ -24,19 +24,14 @@
 
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
+;; 汎用の子 process の effect と答えの型は doeff-core-effects に 1 つ(agora-redesign #802 便 1)— この module は同じ型を re-export する
+;; (driver 層の使い手と検は今までどおり doeff_agents.io_effects から読める)。
+(import doeff_core_effects.process_effects [ProcessOutcome RunProcess ExecutableAt])
 
 
 ;; ---------------------------------------------------------------------------
 ;; 値(要求の答え)
 ;; ---------------------------------------------------------------------------
-
-(defclass [(dataclass :frozen True :kw-only True)] ProcessOutcome []
-  "子 process 1 回の結果。判断(成否の解釈)は呼び手が持つので raise しない。"
-  #^ int exit-code
-  #^ str stdout
-  #^ str stderr
-  #^ bool timed-out
-  (setv timed-out False))
 
 
 ;; ---------------------------------------------------------------------------
@@ -113,16 +108,6 @@
 ;; 子 process と socket
 ;; ---------------------------------------------------------------------------
 
-(defclass [(dataclass :frozen True :kw-only True)] RunProcess [EffectBase]
-  "子 process を 1 回走らせて終わりを待つ。終了 code は値で返る。"
-  #^ tuple argv
-  #^ (| str None) stdin
-  (setv stdin None)
-  #^ (| float None) timeout
-  (setv timeout None)
-  #^ (| str None) cwd
-  (setv cwd None))
-
 (defclass [(dataclass :frozen True :kw-only True)] SpawnDetached [EffectBase]
   "子 process を起こして待たない(常駐の起動)。stdout / stderr は log へ。"
   #^ tuple argv
@@ -145,10 +130,6 @@
    1 つの bool へ畳むと、呼び手が「死んだ」と「見えない」を区別できない。"
   #^ str socket-path
   #^ float timeout)
-
-(defclass [(dataclass :frozen True :kw-only True)] ExecutableAt [EffectBase]
-  "その path に実行できる file が在るか。"
-  #^ str path)
 
 (defclass [(dataclass :frozen True :kw-only True)] MonotonicTime [EffectBase]
   "単調時計の現在値(秒)。締切の計算に使う。")
