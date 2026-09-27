@@ -12,6 +12,10 @@ use super::settings::{LawSpec, LayerId, LayerSettings, RawSettingsSpec};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Placement {
     pub layer: LayerId,
+    /// 当たった置き場の実際の dir(例 controllers/land_notice/core)。
+    pub dir: String,
+    /// 置き場の `*` の段に当たった service の名(層が先の形なら None)。
+    pub service: Option<String>,
     /// 実効のタグの role(重なりを除き、出てきた順)。
     pub roles: Vec<String>,
 }
@@ -27,6 +31,14 @@ fn particle(word: &str, particle: &str) -> String {
     }
 }
 
+/// 助詞の直後に英数字で始まる語が来る時は空白を挟む(「この file は service billing の…」)。
+fn lead(text: &str) -> String {
+    match text.chars().next() {
+        Some(c) if c.is_ascii_alphanumeric() => format!(" {}", text),
+        _ => text.to_string(),
+    }
+}
+
 /// 違反の主体が定義の名だけの時の種類(業務の file の名か、定義の名か)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NameSubject {
@@ -38,7 +50,7 @@ pub enum NameSubject {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Explain {
     /// DOEFF101: 許されない層の module を import した。
-    ImportDirection { placement: Placement, target: String, target_layer: LayerId },
+    ImportDirection { placement: Placement, target: String, target_layer: LayerId, target_dir: String },
     /// DOEFF102: 層で禁じた module を import した。
     ForbiddenModule { placement: Placement, module: String },
     /// DOEFF103: 型だけの層に関数を置いた。
@@ -55,6 +67,24 @@ pub enum Explain {
     RawVia { placement: Placement, definition: String, through: Vec<String>, evidence: String, category: &'static str },
     /// DOEFF108: 業務の名に環境の語がある。
     EnvironmentName { subject: NameSubject, words: Vec<String> },
+    /// DOEFF109: 別の service の守る層を import した。
+    ServiceBoundary {
+        placement: Placement,
+        target: String,
+        target_service: String,
+        target_layer: LayerId,
+        target_dir: String,
+        open_layers: Vec<LayerId>,
+        shared: Vec<String>,
+    },
+    /// DOEFF110: defn / defn/a の定義。
+    DefnForbidden { name: String, head: String },
+    /// DOEFF111: 理由の註の無い deff。
+    DeffWithoutReason { name: String, marker: String },
+    /// DOEFF112: 定義の :tags に必須の鍵が無い。
+    DefinitionTagsMissing { name: String, head: String, missing: Vec<String>, has_tags: bool, module_default: bool },
+    /// DOEFF113: タグの :context が置き場の service と食い違う。
+    ContextMismatch { placement: Placement, contexts: Vec<String> },
 }
 
 /// 違反 1 件の説明(出力の explanation の欄)。
@@ -76,8 +106,8 @@ impl<'a> Narrator<'a> {
     /// 説明を作る(law が結びついていれば、その :statement を逐語で添える)。
     pub fn explain(&self, explain: &Explain, law: Option<&LawSpec>) -> Explanation {
         let (subject, reason) = match explain {
-            Explain::ImportDirection { placement, target, target_layer } => (
-                format!("import 先 {} は{}(path が {}/ の下) — {}", target, self.layer_phrase(*target_layer), self.dir(*target_layer), self.file_subject(placement)),
+            Explain::ImportDirection { placement, target, target_layer, target_dir } => (
+                format!("import 先 {} は{}(path が {}/ の下) — {}", target, self.layer_phrase(*target_layer), target_dir, self.file_subject(placement)),
                 format!(
                     "{}{} import してよいのは {} だけ。{}{}読むと、{}{}に触れる(模擬で handler を差し替えても、その所だけ本物に触る)。",
                     self.character(placement.layer),
@@ -149,6 +179,70 @@ impl<'a> Narrator<'a> {
                     self.name(placement.layer)
                 ),
             ),
+            Explain::ServiceBoundary { placement, target, target_service, target_layer, target_dir, open_layers, shared } => {
+                let own = placement.service.clone().unwrap_or_default();
+                let open: Vec<String> = open_layers.iter().map(|id| format!("層 {}", self.name(*id))).collect();
+                let mut readable = open.clone();
+                if !shared.is_empty() {
+                    readable.push(format!("共有の置き場 {}", shared.join("・")));
+                }
+                (
+                    format!(
+                        "import 先 {} は service {} の{}(path が {}/ の下) — {}",
+                        target,
+                        target_service,
+                        self.layer_phrase(*target_layer),
+                        target_dir,
+                        self.file_subject(placement)
+                    ),
+                    format!(
+                        "service {} の層 {} が service {} の層 {} を読んでいる。service をまたいで判断や翻訳を読むと、{} の中身を変えた時に {} が壊れる。{} に頼むことは {} の intent を通す(別の service から読んでよいのは {} だけ)。",
+                        own,
+                        self.name(placement.layer),
+                        target_service,
+                        self.name(*target_layer),
+                        target_service,
+                        own,
+                        target_service,
+                        target_service,
+                        if readable.is_empty() { "無し".to_string() } else { readable.join("・") }
+                    ),
+                )
+            }
+            Explain::ContextMismatch { placement, contexts } => (
+                format!("タグの :context = {} — {}", contexts.join("・"), self.file_subject(placement)),
+                format!(
+                    "dir は service {} を指すのに、タグは文脈 {} を名乗っている。タグで引いた時と dir で見た時に別の service に見える。:context を service の名に合わせるか、file を {} の dir へ移す(知らせ)。",
+                    placement.service.clone().unwrap_or_default(),
+                    contexts.join("・"),
+                    contexts.join("・")
+                ),
+            ),
+            Explain::DefnForbidden { name, head } => (
+                format!("定義 {}({})", name, head),
+                "defn は契約の辞書を持てず、:tags を書けない — タグで層・役・文脈を名乗れないので、閲覧のパネルにも linter の役の規則にも乗らない。defk で書く(素の callable が避けられない時だけ deff)。".to_string(),
+            ),
+            Explain::DeffWithoutReason { name, marker } => (
+                format!("定義 {}(deff)— 理由の註 `; {} …` が定義の行にも直前の行にも無い", name, marker),
+                "deff は defk の契約(:pre・:post と effect の検査)を外す逃げ道なので、なぜ defk にできないかを定義の横に書く。書けないなら defk にする。".to_string(),
+            ),
+            Explain::DefinitionTagsMissing { name, head, missing, has_tags, module_default } => (
+                format!(
+                    "定義 {}({})の :tags に {} が無い{}",
+                    name,
+                    head,
+                    missing.join("・"),
+                    if *has_tags { "" } else { "(契約の辞書に :tags そのものが無い)" }
+                ),
+                format!(
+                    "定義は :tags で文脈(context)と役(role)を名乗る。タグが無いと、この定義がどの層のどの役かを linter も閲覧のパネルも知れない。{}",
+                    if *module_default {
+                        "module の頭のタグでも補えていない。"
+                    } else {
+                        "この repo の設定では module の頭のタグで補えない(module_default = false)— 定義ごとに書く。"
+                    }
+                ),
+            ),
             Explain::EnvironmentName { subject, words } => (
                 match subject {
                     NameSubject::File { stem } => format!("業務の file の名 {}(環境の語 {} を含む)", stem, words.join("・")),
@@ -166,7 +260,7 @@ impl<'a> Narrator<'a> {
 
     /// module の層を何で決めたか(path の置き場所・タグ・両方の食い違い)。
     pub fn layer_reason(&self, placement: &Placement) -> String {
-        let base = format!("path の置き場所で決めた — {}/ の下は{}", self.dir(placement.layer), self.layer_phrase(placement.layer));
+        let base = format!("path の置き場所で決めた — {}/ の下は{}", placement.dir, lead(&self.site_phrase(placement)));
         if placement.roles.is_empty() {
             return format!("{}(タグで役を名乗っていない)", base);
         }
@@ -177,8 +271,8 @@ impl<'a> Narrator<'a> {
         let homes: Vec<String> = foreign.iter().map(|r| format!("タグの role {} は{}", r, self.role_home(r))).collect();
         format!(
             "path とタグが食い違う — path の置き場所 {}/ では{}、{}(層は path で決める)",
-            self.dir(placement.layer),
-            self.layer_phrase(placement.layer),
+            placement.dir,
+            lead(&self.site_phrase(placement)),
             homes.join("、")
         )
     }
@@ -190,9 +284,12 @@ impl<'a> Narrator<'a> {
         self.layers.and_then(|l| l.layers.get(id.0)).map(|l| l.name.clone()).unwrap_or_else(|| "?".to_string())
     }
 
-    /// 層の置き場所の dir。
-    fn dir(&self, id: LayerId) -> String {
-        self.layers.and_then(|l| l.layers.get(id.0)).map(|l| l.dir.clone()).unwrap_or_default()
+    /// 「service X の層 Y(要約)」(service の段が無ければ層だけ)。
+    fn site_phrase(&self, placement: &Placement) -> String {
+        match &placement.service {
+            Some(service) => format!("service {} の{}", service, self.layer_phrase(placement.layer)),
+            None => self.layer_phrase(placement.layer),
+        }
     }
 
     /// 「層 X(要約)」。
@@ -243,7 +340,7 @@ impl<'a> Narrator<'a> {
         } else {
             format!("タグの role = {}", placement.roles.join("・"))
         };
-        format!("この file は{} — path が {}/ の下、{}", self.layer_phrase(placement.layer), self.dir(placement.layer), tags)
+        format!("この file は{} — path が {}/ の下、{}", lead(&self.site_phrase(placement)), placement.dir, tags)
     }
 
     /// 層が import してよい層の並び。
@@ -317,8 +414,8 @@ impl<'a> Narrator<'a> {
         };
         format!(
             "この file は{} — path が {}/ の下、{}・{}{}",
-            self.layer_phrase(placement.layer),
-            self.dir(placement.layer),
+            lead(&self.site_phrase(placement)),
+            placement.dir,
             role_text,
             context_text,
             mismatch
@@ -359,7 +456,7 @@ mod tests {
     fn layers() -> LayerSettings {
         let spec = |name: &str, dir: &str, roles: &[&str], description: LayerDescription| LayerSpec {
             name: name.to_string(),
-            dir: dir.to_string(),
+            places: vec![crate::project::settings::PlacePattern::parse(dir).unwrap()],
             allowed: Some([LayerId(0)].into_iter().collect()),
             forbid_modules: BTreeSet::new(),
             types_only: false,
@@ -391,6 +488,9 @@ mod tests {
                 plain_definers: BTreeSet::new(),
                 effect_definers: BTreeSet::new(),
                 function_definers: BTreeSet::new(),
+                required: Vec::new(),
+                module_default: true,
+                require_on: BTreeSet::new(),
             },
         }
     }
@@ -399,7 +499,7 @@ mod tests {
     fn role_mismatch_names_both_the_path_and_the_tag() {
         let settings = layers();
         let narrator = Narrator { layers: Some(&settings), raw: None };
-        let placement = Placement { layer: LayerId(0), roles: vec!["translation".into()] };
+        let placement = Placement { layer: LayerId(0), dir: "app/core".into(), service: None, roles: vec!["translation".into()] };
         let explain = Explain::RoleMismatch { placement: placement.clone(), role: Some("translation".into()), context: Some("peer".into()) };
         let law = LawSpec { name: "role-law".into(), adr: None, statement: "role は層に合う".into(), rules: Vec::new(), layers: BTreeSet::new() };
         let out = narrator.explain(&explain, Some(&law));
@@ -422,9 +522,9 @@ mod tests {
     fn import_direction_uses_descriptions_and_falls_back_without_them() {
         let settings = layers();
         let narrator = Narrator { layers: Some(&settings), raw: None };
-        let placement = Placement { layer: LayerId(0), roles: vec!["judgment".into()] };
+        let placement = Placement { layer: LayerId(0), dir: "app/core".into(), service: None, roles: vec!["judgment".into()] };
         let out = narrator.explain(
-            &Explain::ImportDirection { placement, target: "app.foundation.io.send".into(), target_layer: LayerId(1) },
+            &Explain::ImportDirection { placement, target: "app.foundation.io.send".into(), target_layer: LayerId(1), target_dir: "app/foundation".into() },
             None,
         );
         assert!(out.subject.starts_with("import 先 app.foundation.io.send は層 foundation(path が app/foundation/ の下)"), "{}", out.subject);
@@ -434,7 +534,7 @@ mod tests {
             "層 core(業務の判断)は外の世界から最も遠い層で、業務の判断を知り、通信の手段は知らない。core が import してよいのは 層 core だけ。import 先の層 foundation は外の世界に最も近い層なので、core から読むと、core が層 foundation の持つ物に触れる(模擬で handler を差し替えても、その所だけ本物に触る)。"
         );
         assert_eq!(out.law_statement, None);
-        let untagged = Placement { layer: LayerId(1), roles: Vec::new() };
+        let untagged = Placement { layer: LayerId(1), dir: "app/foundation".into(), service: None, roles: Vec::new() };
         assert_eq!(narrator.layer_reason(&untagged), "path の置き場所で決めた — app/foundation/ の下は層 foundation(タグで役を名乗っていない)");
     }
 }

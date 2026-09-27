@@ -60,6 +60,8 @@ pub struct ModuleSummary {
     pub role: Option<String>,
     /// 層を何で決めたか(path の置き場所・タグ・両方の食い違い)。
     pub layer_reason: Option<String>,
+    /// 置き場の `*` の段に当たった service の名(無ければ None)。
+    pub service: Option<String>,
 }
 
 /// 層の規則の結果の全部。
@@ -105,7 +107,15 @@ struct SourceFile {
 struct LayerFile {
     file: SourceFile,
     module: String,
+    site: ModuleSite,
+}
+
+/// module の置き場 — 層と、当たった置き場の実際の dir と、`*` の段に当たった service の名。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ModuleSite {
     layer: LayerId,
+    dir: String,
+    service: Option<String>,
 }
 
 /// 層の規則を走らせる。root は正規化した repo の根、enabled は有効な規則。
@@ -137,6 +147,31 @@ pub fn run(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRu
                     report.errors.extend(errors);
                 }
             }
+            if let Some(definitions) = &settings.definitions {
+                if wants_definitions(enabled) {
+                    let files: Vec<SourceFile> = hy_index::collect_hy_files(root)
+                        .into_iter()
+                        .filter_map(|path| {
+                            let rel = relative_path(root, &path)?;
+                            is_definition_file(&rel, definitions).then_some(SourceFile { rel, path, language: Language::Hy })
+                        })
+                        .collect();
+                    let judged: Vec<Result<Vec<Draft>, String>> = files
+                        .par_iter()
+                        .map(|file| {
+                            std::fs::read_to_string(&file.path)
+                                .map(|source| judge_definitions(file, &source, definitions, enabled))
+                                .map_err(|error| format!("{}: 読めない: {}", file.rel, error))
+                        })
+                        .collect();
+                    for result in judged {
+                        match result {
+                            Ok(found) => drafts.extend(found),
+                            Err(error) => report.errors.push(error),
+                        }
+                    }
+                }
+            }
             if let Some(env) = &settings.environment {
                 if enabled.contains(&ProjectRule::EnvironmentName) {
                     for file in &env_files {
@@ -157,8 +192,8 @@ pub fn run(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRu
                 _ => None,
             };
             if let (Some(layers), Some(rel)) = (&settings.layers, &rel) {
-                if let Some((layer, language)) = classify_layer_file(rel, layers) {
-                    let file = LayerFile { file: SourceFile { rel: rel.clone(), path: path.clone(), language }, module: module_of(rel), layer };
+                if let Some((site, language)) = classify_layer_file(rel, layers) {
+                    let file = LayerFile { file: SourceFile { rel: rel.clone(), path: path.clone(), language }, module: module_of(rel), site };
                     let mut layer_files = collect_layer_files(root, layers);
                     layer_files.push(file.clone());
                     let index = module_index(&layer_files);
@@ -166,6 +201,12 @@ pub fn run(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRu
                     drafts.extend(found);
                     report.modules.extend(summary);
                     report.errors.extend(errors);
+                }
+            }
+            if let (Some(definitions), Some(rel)) = (&settings.definitions, &rel) {
+                if wants_definitions(enabled) && language_of(&path) == Some(Language::Hy) && is_definition_file(rel, definitions) {
+                    let file = SourceFile { rel: rel.clone(), path: path.clone(), language: Language::Hy };
+                    drafts.extend(judge_definitions(&file, source, definitions, enabled));
                 }
             }
             if let (Some(env), Some(rel)) = (&settings.environment, &rel) {
@@ -284,34 +325,44 @@ fn matches_place(rel: &str, place: &str) -> bool {
     }
 }
 
-/// 層の母集団の file か — 層の dir の下で、拡張子が合い、除く区切りを含まない。
-fn classify_layer_file(rel: &str, layers: &LayerSettings) -> Option<(LayerId, Language)> {
+/// 層の母集団の file か — どれかの層の置き場の下で、拡張子が合い、除く区切りを含まない。当たる置き場が 2 つ以上なら
+/// 段の多い方(より細かい置き場)を採り、同じなら層の順の先の方。
+fn classify_layer_file(rel: &str, layers: &LayerSettings) -> Option<(ModuleSite, Language)> {
     let language = language_of(Path::new(rel))?;
     let extension = Path::new(rel).extension()?.to_str()?;
     if !layers.extensions.contains(extension) || rel.split('/').any(|part| layers.exclude.contains(part)) {
         return None;
     }
-    layers.layers.iter().position(|layer| !layer.dir.is_empty() && under(rel, &layer.dir)).map(|index| (LayerId(index), language))
+    let mut best: Option<(usize, ModuleSite)> = None;
+    for (index, layer) in layers.layers.iter().enumerate() {
+        for place in &layer.places {
+            if let Some(found) = place.matches(rel) {
+                if best.as_ref().is_none_or(|(depth, _)| place.depth() > *depth) {
+                    best = Some((place.depth(), ModuleSite { layer: LayerId(index), dir: found.dir, service: found.service }));
+                }
+            }
+        }
+    }
+    best.map(|(_, site)| (site, language))
 }
 
-/// 層の dir の下の module を全部集める(層の順、層の中は path の順)。
+/// 層の置き場の下の module を全部集める(層の順、層の中は path の順)。
 fn collect_layer_files(root: &Path, layers: &LayerSettings) -> Vec<LayerFile> {
-    let mut out = Vec::new();
-    for (index, layer) in layers.layers.iter().enumerate() {
-        if layer.dir.is_empty() {
-            continue;
+    let mut found: BTreeMap<String, LayerFile> = BTreeMap::new();
+    let bases: BTreeSet<String> = layers.layers.iter().flat_map(|layer| layer.places.iter().map(|place| place.base())).collect();
+    for base in bases {
+        for path in walk_files(&root.join(&base)) {
+            let Some(rel) = relative_path(root, &path) else { continue };
+            if found.contains_key(&rel) {
+                continue;
+            }
+            if let Some((site, language)) = classify_layer_file(&rel, layers) {
+                found.insert(rel.clone(), LayerFile { module: module_of(&rel), site, file: SourceFile { rel, path, language } });
+            }
         }
-        let mut files: Vec<LayerFile> = walk_files(&root.join(&layer.dir))
-            .into_iter()
-            .filter_map(|path| {
-                let rel = relative_path(root, &path)?;
-                let (found, language) = classify_layer_file(&rel, layers)?;
-                (found == LayerId(index)).then(|| LayerFile { module: module_of(&rel), layer: found, file: SourceFile { rel, path, language } })
-            })
-            .collect();
-        files.sort_by(|a, b| a.file.rel.cmp(&b.file.rel));
-        out.extend(files);
     }
+    let mut out: Vec<LayerFile> = found.into_values().collect();
+    out.sort_by(|a, b| (a.site.layer, &a.file.rel).cmp(&(b.site.layer, &b.file.rel)));
     out
 }
 
@@ -320,9 +371,9 @@ fn walk_files(dir: &Path) -> Vec<PathBuf> {
     WalkDir::new(dir).follow_links(false).into_iter().filter_map(Result::ok).filter(|e| e.file_type().is_file()).map(|e| e.into_path()).collect()
 }
 
-/// module の綴り → 層 の索引(import の先を層へ解くため)。
-fn module_index(files: &[LayerFile]) -> HashMap<String, LayerId> {
-    files.iter().map(|f| (f.module.clone(), f.layer)).collect()
+/// module の綴り → 置き場 の索引(import の先を層と service へ解くため)。
+fn module_index(files: &[LayerFile]) -> HashMap<String, ModuleSite> {
+    files.iter().map(|f| (f.module.clone(), f.site.clone())).collect()
 }
 
 /// 層の module 1 つを判じる(違反の下書き・地図の 1 行・読めなかった理由)。
@@ -332,23 +383,24 @@ fn judge_layer_file(
     layers: &LayerSettings,
     settings: &ProjectSettings,
     enabled: &BTreeSet<ProjectRule>,
-    index: &HashMap<String, LayerId>,
+    index: &HashMap<String, ModuleSite>,
     hy_file: Option<&HyFileIndex>,
 ) -> (Vec<Draft>, Option<ModuleSummary>, Vec<String>) {
     let facts = read_facts(file.file.language, source, &file.module, &layers.tags);
     let errors = facts.errors.iter().map(|e| format!("{}: {}", file.file.rel, e)).collect();
     let lines = LineIndex::new(source);
-    let spec = &layers.layers[file.layer.0];
+    let spec = &layers.layers[file.site.layer.0];
     let mut roles: Vec<String> = Vec::new();
     for tags in facts.tag_sets() {
         if let Some(role) = tags.role.clone().filter(|r| !r.is_empty() && !roles.contains(r)) {
             roles.push(role);
         }
     }
-    let placement = Placement { layer: file.layer, roles };
+    let placement = Placement { layer: file.site.layer, dir: file.site.dir.clone(), service: file.site.service.clone(), roles };
+    let contexts: Vec<String> = facts.tag_sets().into_iter().filter_map(|t| t.context.clone()).filter(|c| !c.is_empty()).collect();
     let narrator = Narrator { layers: Some(layers), raw: settings.raw.as_ref() };
     let layer_reason = narrator.layer_reason(&placement);
-    let judge = LayerJudge { file, source, lines: &lines, layers, layer: file.layer, placement };
+    let judge = LayerJudge { file, source, lines: &lines, layers, layer: file.site.layer, placement };
     let mut drafts = Vec::new();
     if enabled.contains(&ProjectRule::ModuleDeclaresTags) {
         drafts.extend(judge.declares_tags(&facts));
@@ -365,8 +417,16 @@ fn judge_layer_file(
     if enabled.contains(&ProjectRule::LayerImportDirection) {
         drafts.extend(judge.import_direction(&facts, index));
     }
+    if let Some(services) = &settings.services {
+        if enabled.contains(&ProjectRule::ServiceBoundary) {
+            drafts.extend(judge.service_boundary(&facts, index, services));
+        }
+        if enabled.contains(&ProjectRule::ContextMatchesService) && services.check_context {
+            drafts.extend(judge.context_matches_service(&facts, &contexts, services));
+        }
+    }
     if let (Some(raw), Some(hy_file)) = (&settings.raw, hy_file) {
-        if !raw.allowed.contains(&file.layer) {
+        if !raw.allowed.contains(&file.site.layer) {
             if enabled.contains(&ProjectRule::RawSideEffectDirect) {
                 drafts.extend(judge.raw_direct(hy_file, raw));
             }
@@ -382,6 +442,7 @@ fn judge_layer_file(
         layer: Some(spec.name.clone()),
         context: tags.and_then(|t| t.context.clone()),
         role: tags.and_then(|t| t.role.clone()),
+        service: file.site.service.clone(),
         layer_reason: Some(layer_reason),
     };
     (drafts, Some(summary), errors)
@@ -523,7 +584,7 @@ impl<'a> LayerJudge<'a> {
     }
 
     /// DOEFF101: import の先が母集団の module(かその中の名)で、許された層の外なら破れ。
-    fn import_direction(&self, facts: &ModuleFacts, index: &HashMap<String, LayerId>) -> Vec<Draft> {
+    fn import_direction(&self, facts: &ModuleFacts, index: &HashMap<String, ModuleSite>) -> Vec<Draft> {
         let spec = &self.layers.layers[self.layer.0];
         let Some(allowed) = &spec.allowed else { return Vec::new() };
         let mut first: BTreeMap<&str, ByteSpan> = BTreeMap::new();
@@ -534,7 +595,8 @@ impl<'a> LayerJudge<'a> {
         first
             .into_iter()
             .filter_map(|(target, span)| {
-                let (owner, owner_layer) = resolve_target(target, index)?;
+                let (owner, owner_site) = resolve_target(target, index)?;
+                let owner_layer = owner_site.layer;
                 if owner == self.file.module || allowed.contains(&owner_layer) {
                     return None;
                 }
@@ -551,10 +613,88 @@ impl<'a> LayerJudge<'a> {
                         allowed_text
                     ),
                     Some(target.to_string()),
-                    Explain::ImportDirection { placement: self.placement.clone(), target: target.to_string(), target_layer: owner_layer },
+                    Explain::ImportDirection {
+                        placement: self.placement.clone(),
+                        target: target.to_string(),
+                        target_layer: owner_layer,
+                        target_dir: owner_site.dir.clone(),
+                    },
                 ))
             })
             .collect()
+    }
+
+    /// DOEFF109: service の境界 — この file(service A の守る層)が、別の service B の守る層の module を読んだら破れ。
+    /// B の開いた層(intent など)と共有の置き場と例外は読んでよい。service を持たない置き場(層が先の形)は判じない。
+    fn service_boundary(&self, facts: &ModuleFacts, index: &HashMap<String, ModuleSite>, services: &settings::ServiceSettings) -> Vec<Draft> {
+        let Some(own) = self.placement.service.as_deref() else { return Vec::new() };
+        if !services.guarded.contains(&self.layer) || services.shared.contains(own) {
+            return Vec::new();
+        }
+        let mut first: BTreeMap<&str, ByteSpan> = BTreeMap::new();
+        for import in &facts.imports {
+            first.entry(import.target.as_str()).or_insert(import.span);
+        }
+        first
+            .into_iter()
+            .filter_map(|(target, span)| {
+                let (_, site) = resolve_target(target, index)?;
+                let other = site.service.as_deref()?;
+                let crosses = other != own
+                    && !services.shared.contains(other)
+                    && !services.open.contains(&site.layer)
+                    && services.guarded.contains(&site.layer)
+                    && !services.exceptions.contains(&(own.to_string(), other.to_string()));
+                crosses.then(|| {
+                    self.draft(
+                        ProjectRule::ServiceBoundary,
+                        self.range(span),
+                        format!(
+                            "{}(service {} の層 {})が service {} の層 {} の {} を import する — 別の service は intent を通して頼む",
+                            self.file.file.rel,
+                            own,
+                            self.layer_name(self.layer),
+                            other,
+                            self.layer_name(site.layer),
+                            target
+                        ),
+                        Some(target.to_string()),
+                        Explain::ServiceBoundary {
+                            placement: self.placement.clone(),
+                            target: target.to_string(),
+                            target_service: other.to_string(),
+                            target_layer: site.layer,
+                            target_dir: site.dir.clone(),
+                            open_layers: services.open.iter().copied().collect(),
+                            shared: services.shared.iter().cloned().collect(),
+                        },
+                    )
+                })
+            })
+            .collect()
+    }
+
+    /// DOEFF113: タグの :context と dir の service が食い違う(info)。名の `-` と `_` は同じに見る。共有の置き場は見ない。
+    fn context_matches_service(&self, facts: &ModuleFacts, contexts: &[String], services: &settings::ServiceSettings) -> Option<Draft> {
+        let own = self.placement.service.as_deref()?;
+        if services.shared.contains(own) {
+            return None;
+        }
+        let norm = |text: &str| text.replace('-', "_");
+        let mut foreign: Vec<String> = contexts.iter().filter(|c| norm(c) != norm(own)).cloned().collect();
+        foreign.dedup();
+        let first = foreign.first()?;
+        let span = facts.tag_sets().into_iter().find(|t| t.context.as_deref() == Some(first.as_str())).map(|t| t.span);
+        let range = span.map(|s| self.range(s)).unwrap_or_else(|| first_line_range(self.source));
+        let mut draft = self.draft(
+            ProjectRule::ContextMatchesService,
+            range,
+            format!("{} のタグの :context {} が、置き場の service {} と食い違う", self.file.file.rel, foreign.join("・"), own),
+            Some(foreign.join("+")),
+            Explain::ContextMismatch { placement: self.placement.clone(), contexts: foreign.clone() },
+        );
+        draft.base = Severity::Info;
+        Some(draft)
     }
 
     /// DOEFF106: 定義の中の生の副作用の直接の証拠(強い証拠は error、弱い証拠は warning)。入れ子の定義と外の定義で
@@ -720,12 +860,110 @@ fn definition_label(definition: &Definition) -> String {
 }
 
 /// import の先を母集団の module へ解く(module そのもの、または `module.名`)。母集団の外なら None。
-fn resolve_target<'i>(target: &'i str, index: &HashMap<String, LayerId>) -> Option<(&'i str, LayerId)> {
-    if let Some(layer) = index.get(target) {
-        return Some((target, *layer));
+fn resolve_target<'i, 'x>(target: &'i str, index: &'x HashMap<String, ModuleSite>) -> Option<(&'i str, &'x ModuleSite)> {
+    if let Some(site) = index.get(target) {
+        return Some((target, site));
     }
     let (owner, _) = target.rsplit_once('.')?;
-    index.get(owner).map(|layer| (owner, *layer))
+    index.get(owner).map(|site| (owner, site))
+}
+
+// --- 定義の書き方(DOEFF110〜112)------------------------------------------------------
+
+/// 定義の書き方の規則のどれかが有効か。
+fn wants_definitions(enabled: &BTreeSet<ProjectRule>) -> bool {
+    [ProjectRule::DefnForbidden, ProjectRule::DeffNeedsReason, ProjectRule::DefinitionTagsRequired].iter().any(|rule| enabled.contains(rule))
+}
+
+/// 定義の規則の母集団の file か(置き場の 1 つの下 — 置き場が空なら全部 — で、除く置き場・区切りに当たらない Hy の file)。
+fn is_definition_file(rel: &str, definitions: &settings::DefinitionSettings) -> bool {
+    language_of(Path::new(rel)) == Some(Language::Hy)
+        && (definitions.paths.is_empty() || definitions.paths.iter().any(|place| matches_place(rel, place)))
+        && !definitions.exclude.iter().any(|place| matches_place(rel, place))
+        && !rel.split('/').any(|part| definitions.exclude_parts.contains(part))
+}
+
+/// 行の頭の byte の位置(offset を含む行と、その前の行)の本文を返す。
+fn line_and_previous(source: &str, offset: usize) -> (String, String) {
+    let offset = offset.min(source.len());
+    let line_start = source[..offset].rfind('\n').map(|at| at + 1).unwrap_or(0);
+    let line_end = source[offset..].find('\n').map(|at| offset + at).unwrap_or(source.len());
+    let previous = if line_start == 0 {
+        String::new()
+    } else {
+        let before = &source[..line_start - 1];
+        before[before.rfind('\n').map(|at| at + 1).unwrap_or(0)..].to_string()
+    };
+    (source[line_start..line_end].to_string(), previous)
+}
+
+/// DOEFF110〜112: file の定義の書き方を判じる(defn の禁止・deff の理由の註・定義のタグ必須)。
+fn judge_definitions(file: &SourceFile, source: &str, definitions: &settings::DefinitionSettings, enabled: &BTreeSet<ProjectRule>) -> Vec<Draft> {
+    let facts = read_facts(Language::Hy, source, &module_of(&file.rel), &definitions.tags);
+    let lines = LineIndex::new(source);
+    let reading = &definitions.tags;
+    let module_keys: BTreeSet<String> = match (&facts.module_tags, reading.module_default) {
+        (Some(tags), true) => tags.keys.clone(),
+        _ => BTreeSet::new(),
+    };
+    let draft = |rule: ProjectRule, span: ByteSpan, message: String, detail: String, explain: Explain| Draft {
+        rule,
+        layer: None,
+        rel: file.rel.clone(),
+        path: file.path.clone(),
+        range: lines.range(span.start, span.end),
+        message,
+        detail: Some(detail),
+        base: Severity::Error,
+        explain,
+    };
+    let mut drafts = Vec::new();
+    for definition in &facts.definitions {
+        let name = definition.name.name.clone();
+        let head = definition.head.as_str();
+        if enabled.contains(&ProjectRule::DefnForbidden) && matches!(head, "defn" | "defn/a") && !definition.compile_time {
+            drafts.push(draft(
+                ProjectRule::DefnForbidden,
+                definition.name.span,
+                format!("{} の {} は {} で書かれている — defk で書く", file.rel, name, head),
+                name.clone(),
+                Explain::DefnForbidden { name: name.clone(), head: head.to_string() },
+            ));
+        }
+        if enabled.contains(&ProjectRule::DeffNeedsReason) && head == "deff" {
+            let (line, previous) = line_and_previous(source, definition.start);
+            let has_reason = [line, previous].iter().any(|text| text.split_once(';').is_some_and(|(_, comment)| comment.contains(&definitions.deff_reason_marker)));
+            if !has_reason {
+                drafts.push(draft(
+                    ProjectRule::DeffNeedsReason,
+                    definition.name.span,
+                    format!("{} の deff {} に理由の註 `; {} …` が無い", file.rel, name, definitions.deff_reason_marker),
+                    name.clone(),
+                    Explain::DeffWithoutReason { name: name.clone(), marker: definitions.deff_reason_marker.clone() },
+                ));
+            }
+        }
+        if enabled.contains(&ProjectRule::DefinitionTagsRequired) && reading.require_on.contains(head) {
+            let own: BTreeSet<String> = definition.tags.as_ref().map(|t| t.keys.clone()).unwrap_or_default();
+            let missing: Vec<String> = reading.required.iter().filter(|key| !own.contains(*key) && !module_keys.contains(*key)).cloned().collect();
+            if !missing.is_empty() {
+                drafts.push(draft(
+                    ProjectRule::DefinitionTagsRequired,
+                    definition.name.span,
+                    format!("{} の {}({})の :tags に {} が無い", file.rel, name, head, missing.join("・")),
+                    name.clone(),
+                    Explain::DefinitionTagsMissing {
+                        name: name.clone(),
+                        head: head.to_string(),
+                        missing,
+                        has_tags: definition.tags.is_some(),
+                        module_default: reading.module_default,
+                    },
+                ));
+            }
+        }
+    }
+    drafts
 }
 
 // --- 環境の語(DOEFF108)---------------------------------------------------------------

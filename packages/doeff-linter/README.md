@@ -91,6 +91,11 @@ skip_test_functions = true
 | DOEFF106 | Raw Side Effect Placement | 生の副作用に直に触る定義は許された層にだけ置く(Hy) |
 | DOEFF107 | Raw Side Effect Via Call | 呼ぶ定義を通して生の副作用に届く定義の知らせ(info・Hy) |
 | DOEFF108 | Environment Name In Business Code | 業務の file・handler・組み立ての関数の名に環境の語を付けない |
+| DOEFF109 | Service Boundary | service A の判断と翻訳の層は、service B の同じ層を読まない(B の intent と共有の置き場は読める) |
+| DOEFF110 | No defn | Hy の定義は defn / defn/a ではなく defk で書く |
+| DOEFF111 | deff Needs A Reason | deff には `; defk にできない: <理由>` の註を付ける |
+| DOEFF112 | Definition Tags Required | defk・deff・defp・defhandler・defeffect は :tags で必須の鍵を名乗る |
+| DOEFF113 | Context Matches Service | タグの :context と置き場の service が食い違う(info) |
 
 ## 層の規則(Hy と Python)
 
@@ -164,6 +169,40 @@ reconciling = ["DOEFF104"]                                     # 照合中の規
 - 説明: 層の規則の違反は「これは何か(subject)」「なぜ違反か(reason)」「law の文」を持ち、editor-json の `explanation`・text の
   出力・agent の hook の文に出ます。各 module の `layer_reason` は層を何で決めたか(path の置き場所・タグとの食い違い)です。
 - `noqa` の註は Python の文ごとの規則だけに効きます。層の規則の既知の破れは登録簿に鍵を置きます。
+
+### 置き場のパターンと service(DOEFF109・113)
+
+層の置き場は綴りの列で書け、段 `*` が service の名に当たります(移行の途中は層が先の形と service が先の形を並べる)。
+
+```toml
+[tool.doeff-linter.layers]
+paths = { core = ["controllers/*/core", "controllers/core"], intent = ["controllers/*/intent", "controllers/intent"], foundation = "controllers/foundation" }
+
+[tool.doeff-linter.services]
+shared = ["shared"]                 # どの service からも読める置き場(controllers/shared/…)
+guarded_layers = ["core", "protocol"]
+open_layers = ["intent"]            # 別の service から読んでよい層
+exceptions = [{ from = "kanban", to = "automation" }]
+check_context = true                # タグの :context と service を照らす(DOEFF113・info)
+```
+
+2 つの置き場に当たる file は段の多い方(細かい方)を採ります。module の `service` と、説明の文(「service billing の層 core」)に出ます。
+
+### 定義の書き方(DOEFF110〜112)
+
+```toml
+[tool.doeff-linter.definitions]     # 母集団(paths が空なら repo の Hy の全部)
+paths = ["controllers", "services"]
+exclude = ["packages/doeff-hy/src/doeff_hy/macros"]   # 例: macro の持ち主
+deff_reason_marker = "defk にできない:"
+
+[tool.doeff-linter.tags]
+required = ["context", "role"]      # DOEFF112 の必須の鍵
+module_default = true               # module の頭の MODULE-TAGS で補えるか
+```
+
+`eval-and-compile` / `eval-when-compile` の中の defn(マクロの展開の時の関数)は DOEFF110 の外です。既存の破れは登録簿
+(`registry.files` の 1 行 1 鍵・鍵 = `<path>::<規則>::<定義の名>`)に載せると warning になり、新しい破れだけが error になります。
 
 ## エディタ向けの出力(editor-json)
 

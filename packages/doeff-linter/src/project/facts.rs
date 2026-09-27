@@ -32,6 +32,8 @@ pub struct NamedSpan {
 pub struct TagSet {
     pub context: Option<String>,
     pub role: Option<String>,
+    /// 空でない文字列の値を持つ鍵の全部(必須の鍵の検査のため)。
+    pub keys: std::collections::BTreeSet<String>,
     /// 辞書の位置。
     pub span: ByteSpan,
 }
@@ -72,7 +74,26 @@ pub struct ModuleFacts {
     pub functions: Vec<NamedSpan>,
     /// 読めなかった理由(読めた分の事実は残す)。
     pub errors: Vec<String>,
+    /// 定義の規則(defn の禁止・deff の理由・タグ必須)が読む定義(Hy だけ・`do` と compile の節の中も)。
+    pub definitions: Vec<DefinitionFact>,
 }
+
+/// 定義の規則が読む Hy の定義 1 つ。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefinitionFact {
+    /// 定義の頭(defn・defk・deff …)。
+    pub head: String,
+    pub name: NamedSpan,
+    /// 定義の form の始まり(理由の註を探す行のため)。
+    pub start: usize,
+    /// 契約の辞書の :tags(defeffect は辞書の :tags)。
+    pub tags: Option<TagSet>,
+    /// `eval-and-compile` / `eval-when-compile` の中(マクロの展開の時の関数)か。
+    pub compile_time: bool,
+}
+
+/// 定義の規則が見る定義の頭。
+const DEFINITION_HEADS: &[&str] = &["defn", "defn/a", "defk", "deff", "defp", "defpp", "defhandler", "defeffect"];
 
 impl ModuleFacts {
     /// module の実効のタグの全部(定義の :tags と、タグの無い定義に効く module の頭のタグ)。
@@ -114,9 +135,11 @@ fn hy_facts(source: &str, module: &str, reading: &TagReading) -> ModuleFacts {
         untagged: Vec::new(),
         imports: Vec::new(),
         functions: Vec::new(),
+        definitions: Vec::new(),
         errors: if reader.issues.is_empty() { Vec::new() } else { vec![format!("括弧か文字列が閉じていない所が {} か所ある", reader.issues.len())] },
     };
     hy.definitions(&forms, reading, &mut facts);
+    hy.definition_facts(&forms, false, reading, &mut facts.definitions);
     for form in &forms {
         hy.collect_imports(form, module, &mut facts.imports);
     }
@@ -181,10 +204,14 @@ impl<'a> HySource<'a> {
         };
         let mut found = false;
         let (mut context, mut role) = (None, None);
+        let mut keys = std::collections::BTreeSet::new();
         for pair in items.chunks(2) {
             if let [key, value] = pair {
                 if let (Some(name), Some(text)) = (self.keyword(key), self.string_value(value)) {
                     found = true;
+                    if !text.is_empty() {
+                        keys.insert(name.to_string());
+                    }
                     match name {
                         "context" => context = Some(text),
                         "role" => role = Some(text),
@@ -193,7 +220,7 @@ impl<'a> HySource<'a> {
                 }
             }
         }
-        found.then(|| TagSet { context, role, span: span_of(form) })
+        found.then(|| TagSet { context, role, keys, span: span_of(form) })
     }
 
     /// module の最上位の `(setv|val MODULE-TAGS {…})` を読む(最初の 1 つ)。
@@ -218,6 +245,48 @@ impl<'a> HySource<'a> {
             _ => form,
         };
         NamedSpan { name: hy_mangle(self.text(target)), span: span_of(target) }
+    }
+
+    /// 定義の規則が読む定義を集める(`do` と `eval-and-compile` / `eval-when-compile` の中も最上位として見る)。
+    fn definition_facts(&self, forms: &[Form], compile_time: bool, reading: &TagReading, out: &mut Vec<DefinitionFact>) {
+        for form in forms {
+            let Some(items) = paren(form) else { continue };
+            let Some(head) = items.first().and_then(|h| self.symbol(h)) else { continue };
+            match head {
+                "do" => self.definition_facts_refs(&items[1..], compile_time, reading, out),
+                "eval-and-compile" | "eval-when-compile" => self.definition_facts_refs(&items[1..], true, reading, out),
+                _ if DEFINITION_HEADS.contains(&head) && items.len() >= 2 => {
+                    // `(defn [decorators] name …)` は decorator の list を飛ばして名を読む。
+                    let name_form = match items.get(1) {
+                        Some(first) if first.bracket_items().is_some() && items.len() >= 3 => items[2],
+                        Some(first) => *first,
+                        None => continue,
+                    };
+                    let tags = if head == "defeffect" {
+                        self.effect_tags(&items)
+                    } else if reading.contract_definers.contains(head) {
+                        self.contract_tags(&items)
+                    } else {
+                        None
+                    };
+                    out.push(DefinitionFact {
+                        head: head.to_string(),
+                        name: self.defined_name(name_form),
+                        start: form.span.start,
+                        tags,
+                        compile_time,
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// `definition_facts` の、form の参照の列を受ける形。
+    fn definition_facts_refs(&self, forms: &[&Form], compile_time: bool, reading: &TagReading, out: &mut Vec<DefinitionFact>) {
+        for form in forms {
+            self.definition_facts(std::slice::from_ref(*form), compile_time, reading, out);
+        }
     }
 
     /// 最上位の定義ごとのタグと、関数の定義を読む。
@@ -364,6 +433,7 @@ fn python_facts(source: &str, module: &str, reading: &TagReading) -> ModuleFacts
         imports: Vec::new(),
         functions: Vec::new(),
         errors: Vec::new(),
+        definitions: Vec::new(),
     };
     let body = match parse(source, Mode::Module, "<module>") {
         Ok(Mod::Module(module)) => module.body,
@@ -395,10 +465,14 @@ fn python_module_tags(stmt: &Stmt, variable: &str) -> Option<TagSet> {
     }
     let mut found = false;
     let (mut context, mut role) = (None, None);
+    let mut keys = std::collections::BTreeSet::new();
     for (key, value) in dict.keys.iter().zip(dict.values.iter()) {
         if let (Some(Expr::Constant(key)), Expr::Constant(value)) = (key, value) {
             found = true;
             let text = python_str(&value.value);
+            if !text.is_empty() {
+                keys.insert(python_str(&key.value));
+            }
             match python_str(&key.value).as_str() {
                 "context" => context = Some(text),
                 "role" => role = Some(text),
@@ -406,7 +480,7 @@ fn python_module_tags(stmt: &Stmt, variable: &str) -> Option<TagSet> {
             }
         }
     }
-    found.then(|| ByteSpan { start: usize::from(dict.range.start()), end: usize::from(dict.range.end()) }).map(|span| TagSet { context, role, span })
+    found.then(|| ByteSpan { start: usize::from(dict.range.start()), end: usize::from(dict.range.end()) }).map(|span| TagSet { context, role, keys, span })
 }
 
 /// 定数を Python の `str()` の綴りにする。
@@ -515,7 +589,7 @@ mod tests {
 
     /// 既定のタグの読み方(設定の節が空の時の値)。
     fn reading() -> TagReading {
-        let layers = LayersSection { order: vec!["core".into()], paths: [("core".to_string(), "c".to_string())].into(), ..Default::default() };
+        let layers = LayersSection { order: vec!["core".into()], paths: [("core".to_string(), crate::project::settings::PathPatterns::One("c".to_string()))].into(), ..Default::default() };
         let sections = ProjectSections {
             layers: Some(&layers),
             tags: None,
@@ -524,6 +598,8 @@ mod tests {
             raw_side_effects: None,
             laws: &[],
             registry: None,
+            services: None,
+            definitions: None,
         };
         ProjectSettings::validate(&sections).unwrap().layers.unwrap().tags
     }

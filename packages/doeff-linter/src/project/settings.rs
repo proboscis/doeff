@@ -16,9 +16,9 @@ pub struct LayersSection {
     /// 層の名前(外の世界からの遠さの順)。
     #[serde(default)]
     pub order: Vec<String>,
-    /// 層の名前 → repo の根からの dir。
+    /// 層の名前 → repo の根からの置き場(1 つの綴りか、綴りの列)。段 `*` は service の名に当たる(例 `controllers/*/core`)。
     #[serde(default)]
-    pub paths: BTreeMap<String, String>,
+    pub paths: BTreeMap<String, PathPatterns>,
     /// 層の規則の外に置く path の区切り(dir の名か file の名の完全一致 — 例 `tests`・`conftest.py`)。
     #[serde(default)]
     pub exclude: Vec<String>,
@@ -40,6 +40,151 @@ pub struct LayersSection {
     /// 層の名前 → 層の説明(出力の layers と、違反の理由の文に差し込む)。
     #[serde(default)]
     pub describe: BTreeMap<String, LayerDescription>,
+}
+
+/// 層の置き場の書き方 — 1 つの綴りか、綴りの列(移行の途中は、層が先の形と service が先の形を並べて書く)。
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum PathPatterns {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl PathPatterns {
+    /// 綴りの列。
+    pub fn list(&self) -> Vec<&str> {
+        match self {
+            PathPatterns::One(one) => vec![one.as_str()],
+            PathPatterns::Many(many) => many.iter().map(String::as_str).collect(),
+        }
+    }
+}
+
+/// 置き場の綴りの 1 段(そのままの名か、service の名に当たる `*`)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlaceSegment {
+    Literal(String),
+    Service,
+}
+
+/// 置き場の綴り 1 つ(検めた後)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlacePattern {
+    /// 設定に書かれた綴り(揃えた後)。
+    pub text: String,
+    pub segments: Vec<PlaceSegment>,
+}
+
+/// file の path が置き場に当たった結果(実際の dir と、`*` に当たった service の名)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlaceMatch {
+    pub dir: String,
+    pub service: Option<String>,
+}
+
+impl PlacePattern {
+    /// 綴りを読む。空・`.`・絶対 path・`..`・段の中の `*`(`foo*`)・`*` の 2 つ以上は理由を返す。
+    pub fn parse(text: &str) -> Result<PlacePattern, String> {
+        let normalized = normalize_dir(text);
+        if normalized.is_empty() || normalized == "." || normalized.starts_with('/') {
+            return Err(format!("置き場 {:?} は repo の根の下の dir でない(空・`.`・絶対 path は使えない)", text));
+        }
+        let mut segments = Vec::new();
+        for part in normalized.split('/') {
+            match part {
+                "*" => segments.push(PlaceSegment::Service),
+                ".." | "." | "" => return Err(format!("置き場 {:?} に `..`・`.`・空の段は使えない", text)),
+                other if other.contains('*') => return Err(format!("置き場 {:?} の `*` は段まるごとだけに書ける", text)),
+                other => segments.push(PlaceSegment::Literal(other.to_string())),
+            }
+        }
+        if segments.iter().filter(|s| **s == PlaceSegment::Service).count() > 1 {
+            return Err(format!("置き場 {:?} の `*`(service の段)は 1 つまで", text));
+        }
+        Ok(PlacePattern { text: normalized, segments })
+    }
+
+    /// `*` より前のそのままの段(探索を始める dir)。
+    pub fn base(&self) -> String {
+        self.segments
+            .iter()
+            .take_while(|s| matches!(s, PlaceSegment::Literal(_)))
+            .map(|s| match s {
+                PlaceSegment::Literal(text) => text.as_str(),
+                PlaceSegment::Service => "",
+            })
+            .collect::<Vec<_>>()
+            .join("/")
+    }
+
+    /// file の repo の根からの path がこの置き場の下なら、実際の dir と service の名を返す。
+    pub fn matches(&self, rel: &str) -> Option<PlaceMatch> {
+        let parts: Vec<&str> = rel.split('/').collect();
+        if parts.len() <= self.segments.len() {
+            return None;
+        }
+        let mut service = None;
+        for (segment, part) in self.segments.iter().zip(parts.iter()) {
+            match segment {
+                PlaceSegment::Literal(text) if text == part => {}
+                PlaceSegment::Literal(_) => return None,
+                PlaceSegment::Service => service = Some(part.to_string()),
+            }
+        }
+        Some(PlaceMatch { dir: parts[..self.segments.len()].join("/"), service })
+    }
+
+    /// 段の数(当たった置き場が 2 つある時は、段の多い方を採る)。
+    pub fn depth(&self) -> usize {
+        self.segments.len()
+    }
+}
+
+/// `[tool.doeff-linter.services]` — service の境界(DOEFF109)と、タグの文脈と service の照らし(DOEFF113)。
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ServicesSection {
+    /// 入り切り(既定 true)。
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 共有の置き場の名(どの service からも読める — 例 shared)。
+    #[serde(default)]
+    pub shared: Vec<String>,
+    /// 境界を守る層(この層の module が別の service を読むと破れ — 例 core・protocol)。
+    #[serde(default)]
+    pub guarded_layers: Vec<String>,
+    /// 別の service から読んでよい層(例 intent)。
+    #[serde(default)]
+    pub open_layers: Vec<String>,
+    /// 例外(from の service が to の service を読んでよい)。
+    #[serde(default)]
+    pub exceptions: Vec<ServiceException>,
+    /// タグの :context と dir の service を照らすか(既定 true)。
+    #[serde(default = "default_true")]
+    pub check_context: bool,
+}
+
+/// service の境界の例外 1 件。
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceException {
+    pub from: String,
+    pub to: String,
+}
+
+/// 省略時に true の欄の既定値。
+fn default_true() -> bool {
+    true
+}
+
+/// service の境界の設定(検めた後)。
+#[derive(Debug, Clone)]
+pub struct ServiceSettings {
+    pub shared: BTreeSet<String>,
+    pub guarded: BTreeSet<LayerId>,
+    pub open: BTreeSet<LayerId>,
+    pub exceptions: BTreeSet<(String, String)>,
+    pub check_context: bool,
 }
 
 /// `[tool.doeff-linter.layers.describe.<層>]` — 層が何か(Rust には書かず、repo ごとの設定が持つ)。
@@ -70,6 +215,39 @@ pub struct TagsSection {
     pub plain_definers: Option<Vec<String>>,
     /// `(名 "doc"? {… :tags {…}})` の形の effect の型の定義の形(既定 defeffect)。
     pub effect_definers: Option<Vec<String>>,
+    /// DOEFF112: 定義の :tags に必須の鍵(既定 context・role)。
+    pub required: Option<Vec<String>>,
+    /// DOEFF112: module の頭のタグで定義のタグを補えるか(既定 true)。
+    pub module_default: Option<bool>,
+    /// DOEFF112: タグを必須にする定義の頭(既定 defk・deff・defp・defhandler・defeffect)。
+    pub require_on: Option<Vec<String>>,
+}
+
+/// `[tool.doeff-linter.definitions]` — 定義の書き方の規則(DOEFF110 defn の禁止・111 deff の理由・112 タグ必須)の母集団。
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct DefinitionsSection {
+    /// 判じる置き場(repo の根からの dir・末尾 `*` は前方一致)。空なら repo の Hy の全部。
+    #[serde(default)]
+    pub paths: Vec<String>,
+    /// 除く置き場(書き方は paths と同じ — 例 doeff-hy の macro の持ち主)。
+    #[serde(default)]
+    pub exclude: Vec<String>,
+    /// 除く path の区切り(dir の名の完全一致)。
+    #[serde(default)]
+    pub exclude_parts: Vec<String>,
+    /// deff の理由の註の目印(既定 `defk にできない:`)。
+    pub deff_reason_marker: Option<String>,
+}
+
+/// 定義の書き方の規則の設定(検めた後)。
+#[derive(Debug, Clone)]
+pub struct DefinitionSettings {
+    pub paths: Vec<String>,
+    pub exclude: Vec<String>,
+    pub exclude_parts: BTreeSet<String>,
+    pub deff_reason_marker: String,
+    pub tags: TagReading,
 }
 
 /// `[tool.doeff-linter.roles]` — role の閉じた一覧と、層ごとに許す role。
@@ -160,8 +338,8 @@ pub struct LayerId(pub usize);
 #[derive(Debug, Clone)]
 pub struct LayerSpec {
     pub name: String,
-    /// repo の根からの dir(区切りは `/`・末尾の `/` なし)。
-    pub dir: String,
+    /// repo の根からの置き場の綴り(`*` の段は service)。
+    pub places: Vec<PlacePattern>,
     /// import してよい層(None = 制限しない)。
     pub allowed: Option<BTreeSet<LayerId>>,
     pub forbid_modules: BTreeSet<String>,
@@ -181,6 +359,12 @@ pub struct TagReading {
     pub plain_definers: BTreeSet<String>,
     pub effect_definers: BTreeSet<String>,
     pub function_definers: BTreeSet<String>,
+    /// 定義の :tags に必須の鍵。
+    pub required: Vec<String>,
+    /// module の頭のタグで補えるか。
+    pub module_default: bool,
+    /// タグを必須にする定義の頭。
+    pub require_on: BTreeSet<String>,
 }
 
 /// 層の設定(検めた後)。
@@ -254,6 +438,8 @@ pub struct ProjectSettings {
     pub layers: Option<LayerSettings>,
     pub environment: Option<EnvironmentSettings>,
     pub raw: Option<RawSettingsSpec>,
+    pub services: Option<ServiceSettings>,
+    pub definitions: Option<DefinitionSettings>,
     pub laws: Vec<LawSpec>,
     pub registry: RegistrySpec,
 }
@@ -267,6 +453,8 @@ pub struct ProjectSections<'a> {
     pub raw_side_effects: Option<&'a RawSideEffectsSection>,
     pub laws: &'a [LawEntry],
     pub registry: Option<&'a RegistrySection>,
+    pub services: Option<&'a ServicesSection>,
+    pub definitions: Option<&'a DefinitionsSection>,
 }
 
 /// 既定の拡張子(Hy の 3 つと Python)。
@@ -295,10 +483,17 @@ impl ProjectSettings {
             if sections.roles.is_some() {
                 problems.push("roles: 層(layers)が無いと role の規則を当てられない".to_string());
             }
-            if sections.tags.is_some() {
-                problems.push("tags: 層(layers)が無いとタグを読む module が無い".to_string());
+            if sections.tags.is_some() && sections.definitions.is_none() {
+                problems.push("tags: 層(layers)か定義の規則(definitions)が無いとタグを読む module が無い".to_string());
             }
         }
+        let definitions = sections.definitions.map(|section| DefinitionSettings {
+            paths: section.paths.iter().map(|p| normalize_dir(p)).collect(),
+            exclude: section.exclude.iter().map(|p| normalize_dir(p)).collect(),
+            exclude_parts: section.exclude_parts.iter().cloned().collect(),
+            deff_reason_marker: section.deff_reason_marker.clone().unwrap_or_else(|| "defk にできない:".to_string()),
+            tags: tag_reading(sections.tags, sections.layers.and_then(|l| l.function_definers.as_ref())),
+        });
         let python_ids: BTreeSet<String> = crate::rules::get_all_rules().iter().map(|r| r.rule_id().to_string()).collect();
         let layer_names: Vec<String> = layers.as_ref().map(|l| l.layers.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();
         let find_layer = |name: &str, what: &str, problems: &mut Vec<String>| -> Option<LayerId> {
@@ -366,13 +561,28 @@ impl ProjectSettings {
                     .filter_map(|id| {
                         let rule = ProjectRule::parse(id);
                         if rule.is_none() {
-                            problems.push(format!("registry.reconciling: 規則 {} は層の規則(DOEFF101〜108)に無い", id));
+                            problems.push(format!("registry.reconciling: 規則 {} は層の規則(DOEFF101〜113)に無い", id));
                         }
                         rule
                     })
                     .collect(),
             })
             .unwrap_or_default();
+        let services = sections.services.filter(|s| s.enabled).map(|section| {
+            if layers.is_none() {
+                problems.push("services: 層(layers)が無いと service の境界を判じられない".to_string());
+            }
+            let ids = |names: &[String], what: &str, problems: &mut Vec<String>| -> BTreeSet<LayerId> {
+                names.iter().filter_map(|name| find_layer(name, what, problems)).collect()
+            };
+            ServiceSettings {
+                shared: section.shared.iter().cloned().collect(),
+                guarded: ids(&section.guarded_layers, "services.guarded_layers", &mut problems),
+                open: ids(&section.open_layers, "services.open_layers", &mut problems),
+                exceptions: section.exceptions.iter().map(|e| (e.from.clone(), e.to.clone())).collect(),
+                check_context: section.check_context,
+            }
+        });
         for law in sections.laws.iter().filter(|law| !law.layers.is_empty()) {
             let layered = law.rules.iter().any(|id| ProjectRule::parse(id).is_some_and(|rule| rule.is_layered()));
             if !layered {
@@ -380,7 +590,7 @@ impl ProjectSettings {
             }
         }
         if problems.is_empty() {
-            Ok(ProjectSettings { layers, environment, raw, laws, registry })
+            Ok(ProjectSettings { layers, environment, raw, services, definitions, laws, registry })
         } else {
             Err(problems)
         }
@@ -398,6 +608,30 @@ impl ProjectSettings {
     pub fn law_for_external(&self, id: &str) -> Option<&LawSpec> {
         let wanted = ProjectRuleOrExternal::External(id.to_uppercase());
         self.laws.iter().find(|law| law.rules.contains(&wanted))
+    }
+}
+
+/// タグの読み方を設定から作る(省略した欄は doeff-hy の既定の綴り)。
+fn tag_reading(tags: Option<&TagsSection>, function_definers: Option<&Vec<String>>) -> TagReading {
+    let tags = tags.cloned().unwrap_or_default();
+    TagReading {
+        module_variable_hy: tags.module_variable_hy.unwrap_or_else(|| "MODULE-TAGS".to_string()),
+        module_variable_py: tags.module_variable_py.unwrap_or_else(|| "MODULE_TAGS".to_string()),
+        contract_definers: tags
+            .contract_definers
+            .map(|v| v.into_iter().collect())
+            .unwrap_or_else(|| set_of(&["defk", "deff", "defp", "defpp", "defhandler"])),
+        plain_definers: tags.plain_definers.map(|v| v.into_iter().collect()).unwrap_or_else(|| set_of(&["defn", "defclass", "defrecord", "defenum"])),
+        effect_definers: tags.effect_definers.map(|v| v.into_iter().collect()).unwrap_or_else(|| set_of(&["defeffect"])),
+        function_definers: function_definers
+            .map(|v| v.iter().cloned().collect())
+            .unwrap_or_else(|| set_of(&["defk", "deff", "defp", "defpp", "defhandler", "defn"])),
+        required: tags.required.unwrap_or_else(|| vec!["context".to_string(), "role".to_string()]),
+        module_default: tags.module_default.unwrap_or(true),
+        require_on: tags
+            .require_on
+            .map(|v| v.into_iter().collect())
+            .unwrap_or_else(|| set_of(&["defk", "deff", "defp", "defhandler", "defeffect"])),
     }
 }
 
@@ -434,17 +668,21 @@ fn validate_layers(
     let layers = order
         .iter()
         .map(|name| {
-            let dir = match section.paths.get(name) {
-                Some(dir) => {
-                    let normalized = normalize_dir(dir);
-                    if normalized.is_empty() || normalized == "." || normalized.starts_with('/') || normalized.split('/').any(|part| part == "..") {
-                        problems.push(format!("layers.paths.{}: 置き場 {:?} は repo の根の下の dir でない(空・`.`・絶対 path・`..` は使えない)", name, dir));
-                    }
-                    normalized
-                }
+            let places: Vec<PlacePattern> = match section.paths.get(name) {
+                Some(patterns) => patterns
+                    .list()
+                    .into_iter()
+                    .filter_map(|text| match PlacePattern::parse(text) {
+                        Ok(place) => Some(place),
+                        Err(reason) => {
+                            problems.push(format!("layers.paths.{}: {}", name, reason));
+                            None
+                        }
+                    })
+                    .collect(),
                 None => {
                     problems.push(format!("layers.paths: 層 {} の置き場が無い", name));
-                    String::new()
+                    Vec::new()
                 }
             };
             let allowed = section.allow_imports.get(name).map(|names| {
@@ -469,7 +707,7 @@ fn validate_layers(
             });
             LayerSpec {
                 name: name.clone(),
-                dir,
+                places,
                 allowed,
                 forbid_modules: section.forbid_modules.get(name).map(|m| m.iter().cloned().collect()).unwrap_or_default(),
                 types_only: section.types_only.contains(name),
@@ -478,7 +716,13 @@ fn validate_layers(
             }
         })
         .collect();
-    let dirs: Vec<(&String, String)> = section.paths.iter().map(|(name, dir)| (name, normalize_dir(dir))).collect();
+    // `*` の無い置き場どうしの入れ子は、どちらの層か決まらない(`*` の置き場は段の多い方を採るので入れ子にならない)。
+    let dirs: Vec<(&String, String)> = section
+        .paths
+        .iter()
+        .flat_map(|(name, patterns)| patterns.list().into_iter().map(move |text| (name, normalize_dir(text))))
+        .filter(|(_, dir)| !dir.contains('*'))
+        .collect();
     for (a, dir_a) in &dirs {
         for (b, dir_b) in &dirs {
             if a != b && !dir_a.is_empty() && dir_b.starts_with(&format!("{}/", dir_a)) {
@@ -486,30 +730,12 @@ fn validate_layers(
             }
         }
     }
-    let tags = tags.cloned().unwrap_or_default();
     LayerSettings {
         layers,
         role_descriptions: roles.map(|r| r.describe.clone()).unwrap_or_default(),
         exclude: section.exclude.iter().cloned().collect(),
         extensions: section.extensions.as_ref().map(|e| e.iter().cloned().collect()).unwrap_or_else(default_extensions),
-        tags: TagReading {
-            module_variable_hy: tags.module_variable_hy.unwrap_or_else(|| "MODULE-TAGS".to_string()),
-            module_variable_py: tags.module_variable_py.unwrap_or_else(|| "MODULE_TAGS".to_string()),
-            contract_definers: tags
-                .contract_definers
-                .map(|v| v.into_iter().collect())
-                .unwrap_or_else(|| set_of(&["defk", "deff", "defp", "defpp", "defhandler"])),
-            plain_definers: tags
-                .plain_definers
-                .map(|v| v.into_iter().collect())
-                .unwrap_or_else(|| set_of(&["defn", "defclass", "defrecord", "defenum"])),
-            effect_definers: tags.effect_definers.map(|v| v.into_iter().collect()).unwrap_or_else(|| set_of(&["defeffect"])),
-            function_definers: section
-                .function_definers
-                .as_ref()
-                .map(|v| v.iter().cloned().collect())
-                .unwrap_or_else(|| set_of(&["defk", "deff", "defp", "defpp", "defhandler", "defn"])),
-        },
+        tags: tag_reading(tags, section.function_definers.as_ref()),
     }
 }
 
@@ -547,7 +773,7 @@ reconciling = ["DOEFF104"]
         )
         .unwrap();
         let layers = settings.layers.as_ref().unwrap();
-        assert_eq!(layers.layers[0].dir, "app/core");
+        assert_eq!(layers.layers[0].places[0].text, "app/core");
         assert_eq!(layers.layers[0].allowed.as_ref().unwrap().len(), 1);
         assert!(layers.layers[1].allowed.is_none(), "書かない層は制限しない");
         assert_eq!(settings.law_for(ProjectRule::LayerImportDirection, Some(LayerId(0))).map(|l| l.name.as_str()), Some("core-law"));
@@ -599,6 +825,28 @@ layers = ["core"]
         let text = problems.join("\n");
         for needle in ["2 度", "ghost", "nowhere", "translation", "DOEFF999", "DOEFF1O1", "env-by-layer"] {
             assert!(text.contains(needle), "{} が無い: {}", needle, text);
+        }
+    }
+}
+
+#[cfg(test)]
+mod place_tests {
+    use super::*;
+
+    #[test]
+    fn place_patterns_capture_the_service_segment() {
+        let pattern = PlacePattern::parse("./controllers/*/core/").unwrap();
+        assert_eq!(pattern.base(), "controllers");
+        assert_eq!(
+            pattern.matches("controllers/land_notice/core/goal.hy"),
+            Some(PlaceMatch { dir: "controllers/land_notice/core".into(), service: Some("land_notice".into()) })
+        );
+        assert_eq!(pattern.matches("controllers/core/goal.hy"), None);
+        assert_eq!(pattern.matches("controllers/land_notice/core"), None, "dir そのものは file でない");
+        let plain = PlacePattern::parse("controllers/core").unwrap();
+        assert_eq!(plain.matches("controllers/core/a/b.hy"), Some(PlaceMatch { dir: "controllers/core".into(), service: None }));
+        for bad in ["", ".", "/abs", "a/../b", "a/b*", "*/x/*"] {
+            assert!(PlacePattern::parse(bad).is_err(), "{:?}", bad);
         }
     }
 }

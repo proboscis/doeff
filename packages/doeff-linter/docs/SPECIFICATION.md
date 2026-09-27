@@ -59,6 +59,7 @@
   ],
   "modules": [                               // 層の母集団の module(地図の材料)
     {"path": "/abs/…/goal.hy", "layer": "core", "context": "kanban", "role": "program", "violations": 1,
+     "service": "kanban",                     // 置き場の `*` の段に当たった service(層が先の形なら null)
      "layer_reason": "path の置き場所で決めた — controllers/core/ の下は層 core(…)。タグの role = program もこの層の役"}
   ],
   "rules": [                                 // 走らせた規則と、針の無い law
@@ -108,6 +109,11 @@
 
 ## 4. 母集団
 
+- **置き場のパターン**: `layers.paths` の値は綴りか綴りの列。段 `*` は service の名に当たる(1 つまで・段まるごと)。file が 2 つの置き場に
+  当たる時は段の多い方、同じなら層の順の先の方。
+- **定義の規則の母集団**(DOEFF110〜112): `definitions.paths` の下(空なら repo の Hy の全部 — `.venv`・`node_modules`・`target`・`.git` は降りない)で、
+  `definitions.exclude` の下でなく、区切りが `definitions.exclude_parts` に無い Hy の file。
+
 - **層の母集団**: 各層の dir の下の file で、拡張子が `layers.extensions` に在り、path の区切りのどれも `layers.exclude` に無い物。
   module の綴りは repo の根からの path の拡張子を外し `/` を `.` にした物(`__init__` もそのまま)。
 - **業務の file**(DOEFF108): `environment_names.paths` のどれかの下(末尾 `*` は path の前方一致)で、`exclude` の下になく、
@@ -126,6 +132,11 @@
 | DOEFF105 | 実効のタグごとに、role か context が無いか空、または role が `roles.by_layer` の外なら破れ(1 module に同じ鍵が何度も出ることがある) | role(無ければ `None`) | タグの辞書 |
 | DOEFF106 | hy-index 版 3 の定義ごとの直接の証拠(raw.direct)が、`allowed_layers` の外の層の Hy の定義に在れば破れ。強い証拠は error、弱い証拠は warning。入れ子で重なる証拠は内側の定義に 1 度 | `<定義>::<証拠の名>` | 証拠の記号 |
 | DOEFF107 | 経由の証拠(raw.via — 全体の実行だけ)を info で出す。経路つき。1 定義で経路と証拠の名が同じ物は 1 件 | `<定義>::via::<経路>::<証拠の名>` | 定義の名 |
+| DOEFF109 | service を持つ file(置き場の `*` に当たった物)の層が `services.guarded_layers` に在り、import の先が別の service の守る層の module なら破れ。先が共有の置き場・`open_layers` の層・例外の組なら許す | import の先の綴り | 最初の import の記号 |
+| DOEFF110 | Hy の `defn` / `defn/a` の定義(decorator つきも)。`do` の中も最上位として見る。`eval-and-compile` / `eval-when-compile` の中は外 | 定義の名 | 定義の名 |
+| DOEFF111 | `deff` の定義の行か直前の行の註(`;` の後)に `definitions.deff_reason_marker` が無い | 定義の名 | 定義の名 |
+| DOEFF112 | `tags.require_on` の頭の定義の :tags(defeffect は辞書の :tags)に `tags.required` の鍵(空でない文字列)が無い。`module_default` なら module の頭のタグの鍵で補う | 定義の名 | 定義の名 |
+| DOEFF113 | service を持つ file のタグの :context が service の名と違う(`-` と `_` は同じに見る・共有の置き場は見ない)。info | 食い違う :context | タグの辞書 |
 | DOEFF108 | 業務の file の名(拡張子を外した名)と、Hy の最上位の handler(defhandler と `[effect k]` を受ける関数)・`assembly_files` の最上位の定義の名を `-`・`_`・`.` で切り、`words` に当たれば破れ。大文字だけの名(定数)は見ない | なし(file の名)/ mangle した定義の名 | 1 行目 / 定義の名 |
 
 ### タグの読み方(Hy)
