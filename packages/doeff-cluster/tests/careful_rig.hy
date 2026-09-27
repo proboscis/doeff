@@ -192,7 +192,7 @@
   (val tasks (/ rig.state "tasks"))
   (.mkdir tasks :parents True :exist-ok True)
   (.write-text (/ tasks (+ task-id ".blob")) (encode-program (appjobs.report)) :encoding "ascii")
-  (val spec (task-spec {"id" task-id "env" JOB-ENV "revision" "" "versions" (or versions (current-versions)) "blob" ""
+  (val spec (task-spec {"id" task-id "revision" "" "versions" (or versions (current-versions)) "blob" ""
                         "runtimeEnv" declared}
                        tasks))
   (<- key str (env-key env (current-platform)))

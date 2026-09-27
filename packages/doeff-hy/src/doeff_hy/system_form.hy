@@ -5,19 +5,19 @@
 ;;;     (land-notice (land-notice foundation)
 ;;;       :needs #{"pg-network"} :readiness {"windowSeconds" 30} :update "handoff" :environ {"POLL" "5.0"}))
 ;;;
-;;; 系 = 土台(handler の組を返す module の最上位の関数)を引数に受け、名前 → Program と約束(needs・readiness・update・environ・
-;;; base-from)の組を返す関数。job の Program は doeff-cluster の job API が受ける値 1 つ(ADR-DOE-CLUSTER-001 R1)。
+;;; 系 = 土台(handler の組を返す module の最上位の関数)を引数に受け、名前 → Program と約束(needs・readiness・update・environ)の組を
+;;; 返す関数(baseFrom・overlay は Program の job に無い — 詰めた commit と別の commit で解くことになるため)。job の Program は doeff-cluster の job API が受ける値 1 つ(ADR-DOE-CLUSTER-001 R1)。
 ;;;
 ;;; 形は静的に決まる物だけを受ける(doeff-linter が実行せずに読めるように — ADR-DOE-CLUSTER-001 R4b):
 ;;;   job の行 = (名の記号 (関数の記号 引数…) :鍵 値 …)。引数は系の引数の記号か literal(文字列・数・keyword・True/False/None と、
-;;;   それを入れた list と dict)。:needs は文字列の集合の literal、:readiness は文字列の鍵と数の dict、:environ と :base-from は
+;;;   それを入れた list と dict)。:needs は文字列の集合の literal、:readiness は文字列の鍵と数の dict、:environ は
 ;;;   文字列の鍵と文字列の値の dict、:update は "recreate" か "handoff"。外れれば展開の時の SyntaxError。
 ;;; 値の意味(readiness の窓の形・environ の名の衝突など)は doeff-cluster の service_model.system-of が呼ばれた時に検める。
 (import hy)
 (import hy.models [Dict Expression Float Integer Keyword List Set String Symbol])
 (import doeff-hy.declarations [needs-names])
 
-(setv JOB-KEYS #(":needs" ":readiness" ":update" ":environ" ":base-from"))
+(setv JOB-KEYS #(":needs" ":readiness" ":update" ":environ"))
 (setv UPDATE-FORMS #("recreate" "handoff"))
 (setv CONSTANT-SYMBOLS #("True" "False" "None"))
 
@@ -32,7 +32,7 @@
 
 
 (defn string-dict [form #^ str where #^ str key value-types #^ str value-word]  ; defk にできない: macro の展開の時に呼ぶ関数
-  "文字列の鍵の dict の literal を検め、鍵と値の form の組の list を返す(:readiness・:environ・:base-from の共通の読み)。"
+  "文字列の鍵の dict の literal を検め、鍵と値の form の組の list を返す(:readiness・:environ の共通の読み)。"
   (when (not (isinstance form Dict))
     (raise (SyntaxError (.format "{}: {} は文字列の鍵の dict の literal: {}" where key (hy.repr form)))))
   (setv pairs (list (zip (cut form None None 2) (cut form 1 None 2))))
@@ -103,7 +103,8 @@
     (if (and (isinstance head Keyword) rest)
         (.extend named [(String (hy.mangle (cut (str head) 1 None))) (.pop rest 0)])
         (.append positional head)))
-  `(doeff_cluster.service_model.CallShape ~(get program 0) [~@positional] {~@named}))
+  ;; CallShape は defrecord(構成子は名の引数だけを受ける)。
+  `(doeff_cluster.service_model.CallShape :function ~(get program 0) :args [~@positional] :kwargs {~@named}))
 
 
 (defn defsystem-form [name params body]  ; defk にできない: macro の展開の時に呼ぶ関数
