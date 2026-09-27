@@ -5,7 +5,10 @@ import { parseLintJson, type LintReport } from '../../lint/contract';
 import { lintArgs, splitCommand } from '../../lint/runner';
 import { LintStore } from '../../lint/store';
 import {
+  atLeast,
   diagnosticOf,
+  diagnosticsByPath,
+  parseMinSeverity,
   displayRange,
   inlineAnnotations,
   lintChildren,
@@ -212,5 +215,31 @@ suite('linter の違反を editor の上で見つけやすくする', () => {
     assert.deepStrictEqual(displayRange(info.range, 17), { start: { line: 0, character: 0 }, end: { line: 0, character: 17 } });
     assert.strictEqual(displayRange(info.range, undefined).end.character, 10000);
     assert.deepStrictEqual(displayRange(newBreach.range, 5), newBreach.range);
+  });
+});
+
+suite('linter の違反が数千件の時の出し方', () => {
+  test('作業係 D の doeff-linter の実出力の抜粋は契約の入口を通る(layers・explanation・layer_reason・service)', () => {
+    const r = report('real-excerpt.json');
+    assert.strictEqual(r.layers.length, 5);
+    assert.ok(r.violations.every((v) => v.explanation !== null));
+    assert.ok(r.modules.every((m) => m.layerReason !== null));
+    assert.ok(r.modules.every((m) => m.service === null), 'service の欄は在って、今の repo では null');
+  });
+
+  test('行末の注記と左端の印は既定で warning 以上だけ、波線は全部', () => {
+    const violations = report('report.json').violations;
+    assert.deepStrictEqual(atLeast(violations, 'warning').map((v) => v.severity), ['error', 'warning']);
+    assert.deepStrictEqual(atLeast(violations, 'error').map((v) => v.severity), ['error']);
+    assert.strictEqual(atLeast(violations, 'info').length, 3);
+    const byPath = diagnosticsByPath(violations);
+    assert.strictEqual([...byPath.values()].reduce((n, l) => n + l.length, 0), 3);
+    assert.strictEqual(byPath.get('/repo/controllers/kanban/core/goal.hy')?.length, 2);
+  });
+
+  test('設定の最小の重さ — 知らない値は undefined(呼ぶ側が理由を出す)', () => {
+    assert.strictEqual(parseMinSeverity('info'), 'info');
+    assert.strictEqual(parseMinSeverity('fatal'), undefined);
+    assert.strictEqual(parseMinSeverity(undefined), undefined);
   });
 });

@@ -5,7 +5,7 @@ import * as vscode from 'vscode';
 import type { LintSeverity } from './contract';
 import type { Linter, LintOutcome, LintRequest } from './runner';
 import type { LintStore } from './store';
-import { diagnosticOf, displayRange } from './view';
+import { diagnosticsByPath, displayRange } from './view';
 
 const EDIT_DEBOUNCE_MS = 800;
 
@@ -164,26 +164,33 @@ export class LintService implements vscode.Disposable {
 
   /** 置き場の違反を波線にして出し直す(重さ・文・規則の ID は linter の出力のまま)。 */
   private publishDiagnostics(): void {
-    const byPath = new Map<string, vscode.Diagnostic[]>();
-    for (const violation of this.store.violations()) {
-      const spec = diagnosticOf(violation);
-      // 空(0 幅)の範囲は見えないので、開いている document ならその行の長さまで、それ以外は行全体に広げる
-      const open = vscode.workspace.textDocuments.find((doc) => doc.uri.fsPath === violation.path);
-      const line = violation.range.start.line;
-      const lineLength = open !== undefined && line < open.lineCount ? open.lineAt(line).text.length : undefined;
-      const r = displayRange(violation.range, lineLength);
-      const diagnostic = new vscode.Diagnostic(
-        new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character),
-        spec.message,
-        toSeverity(spec.severity)
-      );
-      diagnostic.source = 'doeff-linter';
-      diagnostic.code = spec.code;
-      byPath.set(spec.path, [...(byPath.get(spec.path) ?? []), diagnostic]);
+    const started = Date.now();
+    // 空(0 幅)の範囲は見えないので、開いている document ならその行の長さまで、それ以外は行全体に広げる
+    const open = new Map(vscode.workspace.textDocuments.map((doc) => [doc.uri.fsPath, doc]));
+    const entries: Array<[vscode.Uri, vscode.Diagnostic[]]> = [];
+    for (const [filePath, specs] of diagnosticsByPath(this.store.violations())) {
+      const doc = open.get(filePath);
+      const list = specs.map((spec) => {
+        const line = spec.violation.range.start.line;
+        const lineLength = doc !== undefined && line < doc.lineCount ? doc.lineAt(line).text.length : undefined;
+        const r = displayRange(spec.violation.range, lineLength);
+        const diagnostic = new vscode.Diagnostic(
+          new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character),
+          spec.message,
+          toSeverity(spec.severity)
+        );
+        diagnostic.source = 'doeff-linter';
+        diagnostic.code = spec.code;
+        return diagnostic;
+      });
+      entries.push([vscode.Uri.file(filePath), list]);
     }
+    // file ごとに 1 度ずつではなく、まとめて 1 回で渡す
     this.diagnostics.clear();
-    for (const [filePath, list] of byPath) {
-      this.diagnostics.set(vscode.Uri.file(filePath), list);
+    this.diagnostics.set(entries);
+    const elapsed = Date.now() - started;
+    if (elapsed > 1000) {
+      this.log.appendLine(`[lint] 波線の設定に ${elapsed}ms かかった(違反 ${entries.reduce((n, [, l]) => n + l.length, 0)} 件)`);
     }
   }
 }

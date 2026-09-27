@@ -2,14 +2,15 @@
 // スクロールバー(overview ruler)の印。中身は view.ts の inlineAnnotations が作り、ここは VS Code の飾りへ写すだけ。
 // 判定はしない(何を出すかは linter の出力のまま)。
 
-import * as path from 'path';
 import * as vscode from 'vscode';
 import type { LintSeverity } from './contract';
 import type { LintStore } from './store';
-import { inlineAnnotations } from './view';
+import { atLeast, inlineAnnotations, parseMinSeverity } from './view';
 
 /** 行末の文を出すかの設定。 */
 export const INLINE_SETTING = 'doeff-runner.hy.lintInlineMessages';
+/** 行末の文と左端の印に出す最小の重さの設定(波線と問題の一覧は全部)。 */
+export const INLINE_MIN_SEVERITY_SETTING = 'doeff-runner.hy.lintInlineMinSeverity';
 
 /** 重さの色(テーマの色の名前)。 */
 function severityColor(severity: LintSeverity): string {
@@ -54,7 +55,12 @@ export class LintDecorations implements vscode.Disposable {
   };
   private readonly disposables: vscode.Disposable[] = [];
 
-  constructor(private readonly store: LintStore) {}
+  private reportedSetting: string | undefined;
+
+  constructor(
+    private readonly store: LintStore,
+    private readonly log: { appendLine(line: string): void }
+  ) {}
 
   /** 置き場・見えている editor・設定の変化で出し直し始める。 */
   start(): void {
@@ -63,7 +69,7 @@ export class LintDecorations implements vscode.Disposable {
       { dispose: unsubscribe },
       vscode.window.onDidChangeVisibleTextEditors(() => this.refresh()),
       vscode.workspace.onDidChangeConfiguration((event) => {
-        if (event.affectsConfiguration(INLINE_SETTING)) {
+        if (event.affectsConfiguration(INLINE_SETTING) || event.affectsConfiguration(INLINE_MIN_SEVERITY_SETTING)) {
           this.refresh();
         }
       })
@@ -74,10 +80,15 @@ export class LintDecorations implements vscode.Disposable {
   /** 見えている editor 全部の飾りを出し直す。 */
   refresh(): void {
     const inline = vscode.workspace.getConfiguration().get<boolean>(INLINE_SETTING) !== false;
-    const violations = this.store.violations();
+    const configured: unknown = vscode.workspace.getConfiguration().get(INLINE_MIN_SEVERITY_SETTING);
+    const minimum = parseMinSeverity(configured);
+    if (minimum === undefined && this.reportedSetting !== JSON.stringify(configured)) {
+      // 読めない値は理由を出し、既定の warning で続ける
+      this.reportedSetting = JSON.stringify(configured);
+      this.log.appendLine(`[lint] 設定 ${INLINE_MIN_SEVERITY_SETTING} の値 ${JSON.stringify(configured)} は error / warning / info のどれでもない — warning で出す`);
+    }
     for (const editor of vscode.window.visibleTextEditors) {
-      const here = path.normalize(editor.document.uri.fsPath);
-      const own = violations.filter((v) => path.normalize(v.path) === here);
+      const own = atLeast(this.store.violationsIn(editor.document.uri.fsPath), minimum ?? 'warning');
       const bySeverity: Record<LintSeverity, vscode.DecorationOptions[]> = { error: [], warning: [], info: [] };
       for (const annotation of inlineAnnotations(own)) {
         if (annotation.line >= editor.document.lineCount) {

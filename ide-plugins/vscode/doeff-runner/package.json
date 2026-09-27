@@ -509,6 +509,16 @@
             ]
           },
           "markdownDescription": "「タグで閲覧」の保存した見方。軸は service / layer / context / role / kind / raw / violation と tag:<鍵>(定義の :tags の鍵)。workspace の設定に置けば repo で共有できる。同梱の見方(service ▸ 層・層 ▸ service・生の副作用 ▸ service)は設定に無くても出る。"
+        },
+        "doeff-runner.hy.lintInlineMinSeverity": {
+          "type": "string",
+          "enum": [
+            "error",
+            "warning",
+            "info"
+          ],
+          "default": "warning",
+          "markdownDescription": "linter の違反のうち、行末の短い文と行の左端の印に出す最小の重さ(既定 warning = error と warning だけ)。波線と問題の一覧は全部出す。"
         }
       }
     },
