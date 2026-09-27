@@ -1,0 +1,90 @@
+;;; defsystem と :needs の形の検(doeff-hy の macro — ADR-DOE-CLUSTER-001 R4b・doeff-hy に検の収集が無いのでここに置く)。
+;;;
+;;; - defk / defhandler の頭の :needs は __doeff_needs__(frozenset)に残る。形は文字列の literal の集合だけ。
+;;; - defsystem は静的に決まる形だけを受け、外れれば展開の時に断る。関数には静的な記述 __doeff_system__ が付く。
+(require doeff-hy.macros [deftest defk <- val])
+(import hy)
+
+(val PRELUDE "
+(require doeff-hy.macros [defk defsystem <-])
+(import collections.abc [Callable])
+(require doeff-hy.handle [defhandler])
+(defclass Ping [])
+")
+
+
+(defk evaluate [source]
+  {:pre [(: source str)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "PRELUDE と source を 1 つの名前空間で評価し、名前空間を返す(宣言の属性を読むため)。"
+  (val namespace {"__name__" "defsystem_probe"})
+  (hy.eval (hy.read-many (+ PRELUDE source)) namespace)
+  namespace)
+
+
+(defk refusal [source]
+  {:pre [(: source str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "source の評価が断られることを確かめ、誤りの文を返す(断られなければ AssertionError)。"
+  (var message None)
+  (try
+    (hy.eval (hy.read-many (+ PRELUDE source)) {"__name__" "defsystem_probe"})
+    (except [error Exception]
+      (:= message (str error))))
+  (assert (is-not message None) (+ "断られなかった: " source))
+  message)
+
+
+(deftest test-needs-are-kept-on-defk-and-defhandler
+  (<- ns (evaluate "
+(defk cluster-foundation []
+  {:pre [] :post [(: % list)] :needs #{\"pg-network\" \"claude-cli\"} :tags {:context \"myapp\" :role \"foundation\"}}
+  [])
+(defhandler records-http
+  {:needs #{\"pg-network\"}}
+  (Ping [] (resume None)))
+(defk plain [] {:pre [] :post [(: % int)]} 1)
+"))
+  (assert (= (. (get ns "cluster_foundation") __doeff_needs__) (frozenset ["pg-network" "claude-cli"])))
+  (assert (= (. (get ns "records_http") __doeff_needs__) (frozenset ["pg-network"])))
+  (assert (is (. (get ns "plain") __doeff_needs__) None)))
+
+
+(deftest test-needs-must-be-a-set-of-string-literals
+  (<- a (refusal "(defk f [] {:pre [] :post [(: % int)] :needs [\"pg-network\"]} 1)"))
+  (assert (in ":needs は能力の名の文字列の集合" a) a)
+  (<- b (refusal "(defk f [] {:pre [] :post [(: % int)] :needs #{network}} 1)"))
+  (assert (in ":needs の要素は空でない文字列の literal" b) b))
+
+
+(deftest test-defsystem-keeps-a-static-description
+  (<- ns (evaluate "
+(defk notice [foundation poll] {:pre [(: foundation Callable) (: poll float)] :post [(: % int)]} 1)
+(defsystem land [foundation]
+  \"着地の系\"
+  (land-notice (notice foundation 5.0)
+    :needs #{\"pg-network\"} :readiness {\"windowSeconds\" 30} :update \"handoff\" :environ {\"POLL\" \"5.0\"}))
+"))
+  (val land (get ns "land"))
+  (assert (= land.__doc__ "着地の系"))
+  (assert (= land.__doeff_system__
+             {"name" "land" "params" ["foundation"]
+              "jobs" [{"name" "land-notice" "function" "notice" "needs" ["pg-network"] "readiness" {"windowSeconds" 30}
+                       "update" "handoff" "environ" {"POLL" "5.0"}}]})
+          land.__doeff_system__)
+  (assert (= land.__doeff_tags__.role "entry")))
+
+
+(deftest test-defsystem-refuses-forms-that-are-not-static
+  (<- a (refusal "(defsystem s [foundation] (job (make (compute foundation))))"))
+  (assert (in "Program の引数は系の引数" a) a)
+  (<- b (refusal "(defsystem s [foundation] (job (make foundation) :requires {\"kind\" \"k3s\"}))"))
+  (assert (in "鍵 :requires は受けない" b) b)
+  (<- c (refusal "(defsystem s [foundation] (job (make foundation) :update \"rolling\"))"))
+  (assert (in ":update は" c) c)
+  (<- d (refusal "(defsystem s [foundation] (job (make foundation) :environ {\"POLL\" 5}))"))
+  (assert (in ":environ の値は文字列" d) d)
+  (<- e (refusal "(defsystem s [foundation] (job (make foundation)) (job (make foundation)))"))
+  (assert (in "job の名 job が 2 回ある" e) e)
+  (<- f (refusal "(defsystem s [foundation] (job make))"))
+  (assert (in "Program は (関数の記号 引数…) の呼び出し" f) f)
+  (<- g (refusal "(defsystem s [foundation] \"説明だけ\")"))
+  (assert (in "job の行が 1 つも無い" g) g))
