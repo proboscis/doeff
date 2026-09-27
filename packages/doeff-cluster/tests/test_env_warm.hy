@@ -49,7 +49,8 @@
 (defk run-sim [world program]
   {:pre [(: world EnvWorld) (: program Program)] :post [(: % bool)]}
   "筋書きを速い模擬の組(状態・仮想の時計・env-world・実行先の reader)の下で走らせる。"
-  (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) (with-handlers (env-world world) ((reader {"base" 100}) program)))))
+  (<- handlers list (env-world world))
+  (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) (with-handlers handlers ((reader {"base" 100}) program)))))
   ok)
 
 

@@ -50,5 +50,6 @@
 
 (deftest test-the-local-warm-table-counts-only-matching-live-undrained-runners
   (<- world EnvWorld (base-world))
-  (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) (with-handlers (env-world world) (scenario)))))
+  (<- handlers list (env-world world))
+  (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) (with-handlers handlers (scenario)))))
   (assert ok))

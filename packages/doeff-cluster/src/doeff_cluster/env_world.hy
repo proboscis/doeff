@@ -24,7 +24,7 @@
 ;;;   unreachable.json 今届かない url の列(set-unreachable で差し替える)
 ;;; mirror の中身は mirror の dir の remote-url(URL)と fetched(取った commit の行)。
 ;;;
-;;;   (with-handlers (env-world world) program) — env-world は handler の列(外側が先): memory の置き場・台本の子 process・翻訳の設定・翻訳。
+;;;   (<- handlers (env-world world)) (with-handlers handlers program) — env-world は handler の列を返す Program(外側が先): memory の置き場・台本の子 process・翻訳の設定・翻訳。
 ;;;   外側に状態の置き場(doeff_core_effects の state)と時計が要る。
 (require doeff-hy.macros [defk deff defhandler <- val var])
 (require doeff-hy.record [defrecord defenum])
@@ -510,7 +510,7 @@
 
 
 
-(deff world-settings [world]  ; defk にできない: handler の組を並べる時(Program の外)に設定の辞書を作る
+(defk world-settings [world]
   {:pre [(: world EnvWorld)] :post [(: % dict)] :tags {:context "runtime-env" :role "entry"}}
   "翻訳の設定(runtime-env.*): 許可表 = 世界の remote の url から denied を除いた物(鍵なし)。"
   {"runtime-env.state" STATE-DIR
@@ -521,10 +521,10 @@
    "runtime-env.notes" NOTES-PATH})
 
 
-(deff world-files-of [world]  ; defk にできない: handler の組を並べる時(Program の外)に置き場の初めの中身を作る
+(defk world-files-of [world]
   {:pre [(: world EnvWorld)] :post [(: % MemoryFiles)] :tags {:context "runtime-env" :role "entry"}}
   "memory の置き場の初めの中身(state と world の dir・今の uv の失敗・今届かない url・空き)。"
-  (setv failure world.uv-failure)
+  (val failure world.uv-failure)
   (MemoryFiles :dirs #(STATE-DIR WORLD-DIR)
                :files (+ (if (is failure None)
                              #()
@@ -534,15 +534,15 @@
                :free world.disk-free))
 
 
-(deff env-world [world]  ; defk にできない: handler の列を返す — 入口と検が Program の外で並べる
+(defk env-world [world]
   {:pre [(: world EnvWorld)] :post [(: % list)] :tags {:context "runtime-env" :role "entry"}}
   "世界の宣言から、memory の置き場・台本の子 process・翻訳の設定・翻訳の handler の列(外側が先)を作る(外側に状態の置き場と時計が要る)。"
-  (setv script (ProcessScript :commands #((ScriptedCommand :name "git" :run (partial git-script world))
+  (val script (ProcessScript :commands #((ScriptedCommand :name "git" :run (partial git-script world))
                                          (ScriptedCommand :name "tar" :run tar-script)
                                          (ScriptedCommand :name "cp" :run cp-script)
                                          (ScriptedCommand :name "uv" :run (partial uv-script world)))))
-  (setv files (world-files-of world))
-  (setv settings (world-settings world))
+  (<- files MemoryFiles (world-files-of world))
+  (<- settings dict (world-settings world))
   [(memory-file-handler files) (scripted-process-handler script) (world-settings-reader settings) env-translation])
 
 
