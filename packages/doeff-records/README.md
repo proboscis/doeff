@@ -77,8 +77,10 @@ operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の�
 
 - `doeff_records.memory.memory_records_handler(store, writer)` — `MemoryStore(schema)` の手元の表の上で答える。模擬環境・手元の
   1 process・単体の検に使う。同じ `MemoryStore` を別の `writer` の handler で包めば、1 つの置き場を複数の書き手が使う形になる。
-- `doeff_records.pg.pg_records_handler(host, writer)` — `PgRecordsHost(connection, schema, unreachable_errors=..., prefix=...)` の
-  PostgreSQL の表で答える。接続(psycopg 3・自動 commit)と接続の失敗の例外の型は composition root が渡す(psycopg は extra `pg`)。表は状態の行の表(`state_rows`)と
+- `doeff_records.pg.pg_records_handler(host, writer)` — `PgRecordsHost(connection, store, unreachable_errors=...)` の
+  PostgreSQL の表で答える。`store` は `prepare_records_store(connection, schema, prefix)` の答えで、表の用意(移行)は process ごとに
+  この 1 度だけ(移行専用の advisory lock の transaction の中で流すので、複数の process が同時に用意しても UniqueViolation にならない)。
+  host を作っても文は流れない。接続(psycopg 3・自動 commit)と接続の失敗の例外の型は composition root が渡す(psycopg は extra `pg`)。表は状態の行の表(`state_rows`)と
   追記の表(`append_rows`)と同じ列の形で、変更の列(`row_changes`)と置き場の版(`store_epoch`)を足す。書きは置き場ごとの
   advisory lock で直列にする(番号の順と commit の順を揃えるため — 理由は `pg_sql.hy` の頭の註)。
 
@@ -111,7 +113,8 @@ operator の主体の名の tuple。既定の空 = 誰も `operator_paths` の�
   書き手の名へ引く(`doeff_records.principals`)。引いた名で記録の handler を組むので、書き手の名は effect の引数にならない。
   名簿に在っても表の宣言の書き手でなければ、書きは記録の判断が `Refused` にする。
 - 口を開く部品は `doeff_records.http_server.start_records_server(RecordsServerConfig(...))`(標準の `http.server`)。
-  PostgreSQL の置き場では要求ごとに接続を 1 本借りる(`doeff_records.pg_pool.PgHostPool`)。
+  PostgreSQL の置き場では要求ごとに接続を 1 本借りる(`doeff_records.pg_pool.PgHostPool(connect, store, ...)` — 表を用意し終えた
+  `store` を受け取り、借りた接続では表を用意し直さない)。
 
 client の handler `doeff_records.http_client.http_records_handler(RecordsEndpoint(base_url, token))` は、同じ公開 effect に口越しで
 答える。`401` は書き(`PutRow`・`AppendEvent`)なら `Refused`、`PutRows` なら束の最初の行の `RowsRefused`、読みなら `Unreachable`。`404` は `UndeclaredTable` を上げる。

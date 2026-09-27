@@ -22,7 +22,7 @@
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records.laws [LAW-SCHEMA LawHarness])
 (import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.pg [PgRecordsHost pg-records-handler drop-records-tables])
+(import doeff_records.pg [PgRecordsHost pg-records-handler drop-records-tables prepare-records-store])
 (import doeff_records.pg_pool [PgHostPool])
 (import doeff_records.principals [Roster token-digest])
 (import doeff_records.http_server [RecordsServerConfig start-records-server])
@@ -65,6 +65,11 @@
   "psycopg の接続の失敗の型(PgRecordsHost に渡す — psycopg は依存に無いので PostgreSQL の検の時だけ読む)。"
   (setv psycopg (importlib.import-module "psycopg"))
   #(psycopg.OperationalError psycopg.InterfaceError))
+
+
+(defn prepared-host [connection #^ str prefix]  ; defk にできない: 検の解釈器の組み立て(Program の外)で呼ぶ
+  "表を用意して(prepare-records-store)その接続の host を作る — 検の置き場 1 つにつき 1 度。"
+  (PgRecordsHost connection (prepare-records-store connection LAW-SCHEMA prefix) :unreachable-errors (pg-errors)))
 
 
 (defn harness-of [wrap]
@@ -121,8 +126,7 @@
           (interpreter-over (harness-of (fn [writer] (memory-records-handler store writer))) [] (fn [] None)))
     (= name PG)
       (do (setv connection (open-postgres)
-                host (PgRecordsHost connection LAW-SCHEMA :unreachable-errors (pg-errors)
-                                    :prefix (+ "t" (cut (. (uuid.uuid4) hex) 12) "_")))
+                host (prepared-host connection (+ "t" (cut (. (uuid.uuid4) hex) 12) "_")))
           (defn close []
             (drop-records-tables host)
             (.close connection))
@@ -135,8 +139,9 @@
     (= name HTTP-PG)
       (do (setv prefix (+ "t" (cut (. (uuid.uuid4) hex) 12) "_")
                 connection (open-postgres)
-                host (PgRecordsHost connection LAW-SCHEMA :unreachable-errors (pg-errors) :prefix prefix)
-                pool (PgHostPool open-postgres LAW-SCHEMA :unreachable-errors (pg-errors) :prefix prefix :size 4))
+                store (prepare-records-store connection LAW-SCHEMA prefix)
+                host (PgRecordsHost connection store :unreachable-errors (pg-errors))
+                pool (PgHostPool open-postgres store :unreachable-errors (pg-errors) :size 4))
           (defn close-pg []
             (.close pool)
             (drop-records-tables host)
