@@ -232,6 +232,22 @@
   (assert (= (. (job-from-json row-one) spec environ) #(#("TALLY_BASE" "1")))))
 
 
+(deftest test-the-environ-overlay-changes-only-declared-names-and-enters-the-spec-hash
+  ;; 配る先ごとの値(口の URL など)は宣言の :environ に重ねる上書きで渡す — declare の --environ と sim-cluster の :environ が同じ
+  ;; system-declaration の規則を使う。宣言に無い名・系に無い job・文字列でない値は断り、上書きは spec-hash に入る。
+  (<- one Job (tally-job {"TALLY_BASE" "1"}))
+  (val system (system-of "lab" #(one)))
+  (val plain (get (. (system-declaration system "rev1") rows) 0))
+  (val overlaid (get (. (system-declaration system "rev1" :environ {"tally" {"TALLY_BASE" "9"}}) rows) 0))
+  (assert (= (get overlaid "environ") {"TALLY_BASE" "9"}) overlaid)
+  (assert (!= (spec-hash (. (job-from-json plain) spec)) (spec-hash (. (job-from-json overlaid) spec))))
+  (for [#(overlay word) [#({"tally" {"UNDECLARED" "x"}} "UNDECLARED") #({"elsewhere" {"TALLY_BASE" "1"}} "elsewhere")
+                         #({"tally" {"TALLY_BASE" 9}} "TALLY_BASE")]]
+    (with [raised (pytest.raises ValueError)]
+      (system-declaration system "rev1" :environ overlay))
+    (assert (in word (str raised.value)) (str raised.value))))
+
+
 ;; --- 旧い形を断る入口(計画 2.8)---------------------------------------------------------------
 
 (deftest test-entry-1-the-job-constructor-refuses-the-old-arguments

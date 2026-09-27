@@ -233,8 +233,9 @@
   (with [raised (pytest.raises ValueError)]
     (<- (sim-cluster (beacons sim-foundation) (watch-beacon 1) :environ {"elsewhere" {"STEP" "7"}})))
   (assert (in "elsewhere" (str raised.value)) (str raised.value))
-  (with [(pytest.raises TypeError)]
-    (<- (sim-cluster (beacons sim-foundation) (watch-beacon 1) :environ {"beacon" {"STEP" 7}}))))
+  (with [raised (pytest.raises ValueError)]
+    (<- (sim-cluster (beacons sim-foundation) (watch-beacon 1) :environ {"beacon" {"STEP" 7}})))
+  (assert (in "STEP" (str raised.value)) (str raised.value)))
 
 
 (defk watch-trainer []
@@ -356,6 +357,8 @@
   (val first (get seen.processes 0))
   (val key (+ "quit/" first.instance))
   (assert (= first.exit-code 0) seen.processes)
+  ;; 値で抜けた process は、その値を記録に残す(検が有限の周回の答えを読む sim だけの観測 — 本番は捨てる)。
+  (assert (= first.value 3) first)
   (assert (<= (get seen.just-after key "n") 5) seen.just-after)
   (assert (= (get seen.later key "n") (get seen.just-after key "n")) #(seen.just-after seen.later)))
 

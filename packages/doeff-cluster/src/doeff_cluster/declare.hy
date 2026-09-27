@@ -1,7 +1,7 @@
 ;;; 系(defsystem の関数)から coordinator に渡す宣言を出す(ADR-DOE-CLUSTER-001)。
 ;;;
 ;;;   hy -m doeff_cluster.declare <module>:<系の関数> --foundation <module>:<土台の関数> --revision <commit>
-;;;       [--only 'job,…'] [--apply URL --actor <送り手>] [--replicas 0|1]
+;;;       [--only 'job,…'] [--environ FILE] [--apply URL --actor <送り手>] [--replicas 0|1]
 ;;;
 ;;; 系の関数に土台の関数を渡して System の値を作り、job ごとに Program を詰める(service_model.system-declaration)。
 ;;; 宣言の前に 2 つを検め、外れれば理由つきで終了 2(argparse の error と同じ — 計画 2.2 の E・9 節の P):
@@ -29,7 +29,7 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import .runtime_env [checkout-reads checked-declaring-checkout])
 (import .runtime_env_model [RepoCheckout RuntimeEnvInvalid])
-(import .service_model [resolve system-declaration foundation-needs-refusal System Declaration])
+(import .service_model [resolve system-declaration environ-overlay-refusal foundation-needs-refusal System Declaration])
 
 
 (defn #^ dict spec-for-update [#^ dict row #^ dict current [replicas None]]  ; defk にできない: CLI の入口(Program の外)が呼ぶ純粋な判断
@@ -103,6 +103,7 @@
   (.add-argument parser "--apply" "--put" :dest "apply")
   (.add-argument parser "--actor" :help "送り手(依頼の主体の id・作業係の名)。--apply に要る")
   (.add-argument parser "--replicas" :type int :choices [0 1])
+  (.add-argument parser "--environ" :default None :help "job ごとの environ の上書きの JSON の file({job: {名: 文字列}} — 宣言の :environ に書いた名の値だけを変える。配る先ごとの口の URL など)")
   (.add-argument parser "--config" :default None :help "受け付けない(旧い形 — 設定は Program の中の Ask と :environ で読む)")
   (.add-argument parser "--pin" :default None :help "受け付けない(旧い形 — Program を詰めた commit と別の commit で解くことになる)")
   (setv args (.parse-args parser))
@@ -122,7 +123,10 @@
     None None
     reason (.error parser reason))
   (setv only (sfor n (.split args.only ",") :if n n)
-        declaration (system-declaration system args.revision)
+        overlay (if args.environ (with [f (open args.environ :encoding "utf-8")] (json.load f)) {})
+        refusal (environ-overlay-refusal system overlay)
+        _ (when (is-not refusal None) (.error parser refusal))
+        declaration (system-declaration system args.revision :environ overlay)
         rows (lfor row declaration.rows :if (or (not only) (in (get row "name") only)) row)
         declaration (Declaration :rows rows
                                  :programs (dfor row rows :setv sha (get (get row "run") "program")
