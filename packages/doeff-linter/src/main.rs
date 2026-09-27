@@ -180,13 +180,18 @@ impl Setup {
                 | ProjectRule::RoleMatchesLayer => self.settings.layers.is_some(),
                 ProjectRule::RawSideEffectDirect | ProjectRule::RawSideEffectVia => self.settings.raw.is_some(),
                 ProjectRule::EnvironmentName => self.settings.environment.is_some(),
+                ProjectRule::ServiceBoundary | ProjectRule::ContextMatchesService => self.settings.services.is_some(),
+                ProjectRule::DefnForbidden | ProjectRule::DeffNeedsReason | ProjectRule::DefinitionTagsRequired => {
+                    self.settings.definitions.is_some()
+                }
             })
             .collect()
     }
 
     /// 層の規則の設定が 1 つでも在るか(無ければ層の規則を走らせない)。
     fn has_project_rules(&self) -> bool {
-        self.settings.layers.is_some() || self.settings.environment.is_some() || self.settings.raw.is_some()
+        self.settings.layers.is_some() || self.settings.environment.is_some() || self.settings.raw.is_some() || self.settings.services.is_some()
+            || self.settings.definitions.is_some()
     }
 }
 

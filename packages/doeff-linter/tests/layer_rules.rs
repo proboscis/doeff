@@ -552,3 +552,164 @@ fn describing_an_unknown_layer_is_a_config_error() {
     assert_eq!(code, 2);
     assert!(stderr.contains("layers.describe") && stderr.contains("ghost"), "{}", stderr);
 }
+
+/// service が先の形(controllers/<service>/{core,intent,protocol}/・controllers/shared/{core,intent}/・controllers/foundation/)と、
+/// 層が先の形(controllers/core/)を並べた設定の repo。
+fn service_repo(files: &[(&str, String)], extra: &str) -> tempfile::TempDir {
+    let dir = tempfile::TempDir::new().unwrap();
+    let config = format!(
+        r#"
+[tool.doeff-linter]
+enable = ["DOEFF101", "DOEFF104", "DOEFF105", "DOEFF109", "DOEFF113"]
+[tool.doeff-linter.layers]
+order = ["core", "intent", "protocol", "foundation", "entry"]
+paths = {{ core = ["controllers/*/core", "controllers/core"], intent = ["controllers/*/intent", "controllers/intent"], protocol = ["controllers/*/protocol", "controllers/protocol"], foundation = "controllers/foundation", entry = ["controllers/*/entry", "controllers/entry"] }}
+[tool.doeff-linter.layers.allow_imports]
+core = ["core", "intent"]
+protocol = ["protocol", "intent"]
+[tool.doeff-linter.roles.by_layer]
+core = ["judgment", "program", "type"]
+intent = ["intent", "type"]
+protocol = ["protocol"]
+[tool.doeff-linter.services]
+shared = ["shared"]
+guarded_layers = ["core", "protocol"]
+open_layers = ["intent"]
+{extra}
+"#
+    );
+    std::fs::write(dir.path().join("pyproject.toml"), config).unwrap();
+    for (rel, text) in files {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    dir
+}
+
+/// タグの頭の行(context と role)。
+fn tags(context: &str, role: &str) -> String {
+    format!("(val MODULE-TAGS {{:context \"{}\" :role \"{}\"}})\n", context, role)
+}
+
+#[test]
+fn service_first_layout_judges_layers_and_service_boundaries() {
+    let judge = tags("billing", "judgment");
+    let files = [
+        ("controllers/billing/core/decide.hy", judge.clone() + "(import controllers.custody.core.lease [pick])\n(import controllers.custody.intent.borrow [Borrow])\n(import controllers.shared.core.clock [today])\n(defn f [] 1)\n"),
+        ("controllers/billing/protocol/talk.hy", tags("billing", "protocol") + "(import controllers.custody.protocol.http [talk])\n(defn g [] 1)\n"),
+        ("controllers/custody/core/lease.hy", tags("custody", "judgment") + "(defn pick [] 1)\n"),
+        ("controllers/custody/intent/borrow.hy", tags("custody", "intent") + "(defclass Borrow [])\n"),
+        ("controllers/custody/protocol/http.hy", tags("custody", "protocol") + "(defn talk [] 1)\n"),
+        ("controllers/shared/core/clock.hy", tags("shared", "type") + "(defn today [] 1)\n"),
+        ("controllers/core/old.hy", tags("kanban", "judgment") + "(import controllers.custody.core.lease [pick])\n(defn h [] 1)\n"),
+        ("controllers/custody/core/misplaced.hy", tags("billing", "judgment") + "(defn m [] 1)\n"),
+    ];
+    let dir = service_repo(&files, "");
+    let (_, report) = editor(dir.path());
+    // 別の service の core と protocol を読むと破れ。intent と shared は読んでよい。層が先の形(service 無し)は判じない。
+    assert_eq!(
+        keys(&report, "DOEFF109"),
+        vec![
+            "controllers/billing/core/decide.hy::DOEFF109::controllers.custody.core.lease.pick",
+            "controllers/billing/protocol/talk.hy::DOEFF109::controllers.custody.protocol.http.talk",
+        ]
+    );
+    let crossing = explanation(&report, "controllers/billing/core/decide.hy::DOEFF109::controllers.custody.core.lease.pick");
+    assert!(crossing["subject"].as_str().unwrap().starts_with("import 先 controllers.custody.core.lease.pick は service custody の層 core(path が controllers/custody/core/ の下) — この file は service billing の層 core — path が controllers/billing/core/ の下"), "{}", crossing["subject"]);
+    assert!(crossing["reason"].as_str().unwrap().contains("service をまたいで判断や翻訳を読むと、custody の中身を変えた時に billing が壊れる。custody に頼むことは custody の intent を通す"), "{}", crossing["reason"]);
+    // 層の判定は service が先の形でも効く(core の置き場の 2 つの形)。
+    let modules = report["modules"].as_array().unwrap();
+    let decide = modules.iter().find(|m| m["path"].as_str().unwrap().ends_with("billing/core/decide.hy")).unwrap();
+    assert_eq!(decide["layer"], "core");
+    assert_eq!(decide["service"], "billing");
+    assert!(decide["layer_reason"].as_str().unwrap().contains("controllers/billing/core/ の下は service billing の層 core"), "{}", decide["layer_reason"]);
+    let old = modules.iter().find(|m| m["path"].as_str().unwrap().ends_with("controllers/core/old.hy")).unwrap();
+    assert_eq!(old["layer"], "core");
+    assert_eq!(old["service"], Value::Null);
+    // :context と dir の service の食い違いは info の知らせ。shared は見ない。
+    assert_eq!(keys(&report, "DOEFF113"), vec!["controllers/custody/core/misplaced.hy::DOEFF113::billing"]);
+    assert_eq!(violation(&report, "controllers/custody/core/misplaced.hy::DOEFF113::billing")["severity"], "info");
+
+    // 例外に書いた組は読んでよい。
+    let dir = service_repo(&files, "exceptions = [{ from = \"billing\", to = \"custody\" }]\n");
+    let (_, report) = editor(dir.path());
+    assert!(keys(&report, "DOEFF109").is_empty());
+}
+
+/// 定義の書き方の規則(DOEFF110〜112)だけの repo。
+fn definition_repo(files: &[(&str, &str)], extra: &str) -> tempfile::TempDir {
+    let dir = tempfile::TempDir::new().unwrap();
+    let config = format!(
+        r#"
+[tool.doeff-linter]
+enable = ["DOEFF110", "DOEFF111", "DOEFF112"]
+[tool.doeff-linter.definitions]
+exclude = ["vendor/macros"]
+exclude_parts = ["tests"]
+[tool.doeff-linter.registry]
+files = ["known.txt"]
+{extra}
+"#
+    );
+    std::fs::write(dir.path().join("pyproject.toml"), config).unwrap();
+    std::fs::write(dir.path().join("known.txt"), "").unwrap();
+    for (rel, text) in files {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    dir
+}
+
+#[test]
+fn defn_is_forbidden_deff_needs_a_reason_and_definitions_carry_tags() {
+    let source = r#"(defn helper [x] x)
+(defn [do] decorated [x] x)
+(eval-and-compile
+  (defn expand-time [form] form))
+(defk good [x] {:pre [] :tags {:context "billing" :role "judgment"}} x)
+(defk untagged [x] {:pre []} x)
+(defk half [x] {:tags {:context "billing"}} x)
+(deff callback [x] {:tags {:context "billing" :role "judgment"}} x)  ; defk にできない: 外の library の callback
+; defk にできない: 素の callable を渡す先
+(deff above [x] {:tags {:context "billing" :role "judgment"}} x)
+(deff bare [x] {:tags {:context "billing" :role "judgment"}} x)
+(defeffect Charge "請求" {:fields [amount] :answer int})
+"#;
+    let dir = definition_repo(
+        &[("app/billing/logic.hy", source), ("vendor/macros/m.hy", "(defn m [] 1)\n"), ("app/billing/tests/t.hy", "(defn t [] 1)\n")],
+        "",
+    );
+    let (code, report) = editor(dir.path());
+    assert_eq!(code, 1);
+    // defn は違反(decorator つきも)。eval-and-compile の中と、除いた置き場・検は外。
+    assert_eq!(keys(&report, "DOEFF110"), vec!["app/billing/logic.hy::DOEFF110::decorated", "app/billing/logic.hy::DOEFF110::helper"]);
+    // 理由の註は同じ行か直前の行。
+    assert_eq!(keys(&report, "DOEFF111"), vec!["app/billing/logic.hy::DOEFF111::bare"]);
+    // タグ必須: :tags が無い・必須の鍵が欠けた・defeffect。
+    assert_eq!(
+        keys(&report, "DOEFF112"),
+        vec!["app/billing/logic.hy::DOEFF112::Charge", "app/billing/logic.hy::DOEFF112::half", "app/billing/logic.hy::DOEFF112::untagged"]
+    );
+    let defn = explanation(&report, "app/billing/logic.hy::DOEFF110::helper");
+    assert_eq!(defn["subject"], "定義 helper(defn)");
+    assert!(defn["reason"].as_str().unwrap().starts_with("defn は契約の辞書を持てず、:tags を書けない"));
+    assert!(violation(&report, "app/billing/logic.hy::DOEFF110::helper")["hint"].as_str().unwrap().contains("; defk にできない: <理由>"));
+    let half = explanation(&report, "app/billing/logic.hy::DOEFF112::half");
+    assert_eq!(half["subject"], "定義 half(defk)の :tags に role が無い");
+    let untagged = explanation(&report, "app/billing/logic.hy::DOEFF112::untagged");
+    assert_eq!(untagged["subject"], "定義 untagged(defk)の :tags に context・role が無い(契約の辞書に :tags そのものが無い)");
+
+    // module の頭のタグで補える(module_default = true・既定)/ 補えない(false)。登録簿の鍵は warning。
+    let with_module = "(val MODULE-TAGS {:context \"billing\" :role \"judgment\"})\n(defk untagged [x] {:pre []} x)\n";
+    let dir = definition_repo(&[("app/a.hy", with_module)], "");
+    let (_, report) = editor(dir.path());
+    assert!(keys(&report, "DOEFF112").is_empty());
+    let dir = definition_repo(&[("app/a.hy", with_module)], "[tool.doeff-linter.tags]\nmodule_default = false\n");
+    std::fs::write(dir.path().join("known.txt"), "app/a.hy::DOEFF112::untagged\n").unwrap();
+    let (code, report) = editor(dir.path());
+    assert_eq!(violation(&report, "app/a.hy::DOEFF112::untagged")["severity"], "warning");
+    assert_eq!(violation(&report, "app/a.hy::DOEFF112::untagged")["registered"], true);
+    assert_eq!(code, 0);
+}

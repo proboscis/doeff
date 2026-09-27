@@ -4,7 +4,7 @@
 
 use crate::project::settings::{
     EnvironmentNamesSection, LawEntry, LayersSection, ProjectSections, ProjectSettings, RawSideEffectsSection, RegistrySection,
-    RolesSection, TagsSection,
+    RolesSection, ServicesSection, TagsSection, DefinitionsSection,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -65,6 +65,14 @@ pub struct Config {
     /// 既知の破れの登録簿と照合中の規則 — `[tool.doeff-linter.registry]`
     #[serde(default)]
     pub registry: Option<RegistrySection>,
+
+    /// service の境界(DOEFF109)と文脈の照らし(DOEFF113)— `[tool.doeff-linter.services]`
+    #[serde(default)]
+    pub services: Option<ServicesSection>,
+
+    /// 定義の書き方の規則(DOEFF110 defn の禁止・111 deff の理由・112 タグ必須)の母集団 — `[tool.doeff-linter.definitions]`
+    #[serde(default)]
+    pub definitions: Option<DefinitionsSection>,
 }
 
 impl Config {
@@ -78,6 +86,8 @@ impl Config {
             raw_side_effects: self.raw_side_effects.as_ref(),
             laws: &self.laws,
             registry: self.registry.as_ref(),
+            services: self.services.as_ref(),
+            definitions: self.definitions.as_ref(),
         })
     }
 }
@@ -189,7 +199,7 @@ pub fn load_config(path: Option<&Path>) -> Option<Config> {
 /// `[tool.doeff-linter]` の直下に書ける欄の名(Config の欄と同じ綴り)。
 const KNOWN_KEYS: &[&str] = &[
     "enable", "disable", "exclude", "rules", "git", "log_file", "layers", "tags", "roles", "environment_names", "raw_side_effects",
-    "laws", "registry",
+    "laws", "registry", "services", "definitions",
 ];
 
 /// 見つけた設定 file と、その中の `[tool.doeff-linter]` の節。

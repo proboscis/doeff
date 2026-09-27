@@ -66,6 +66,8 @@ pub struct EditorModule {
     pub violations: usize,
     /// 層を何で決めたか(path の置き場所・タグ・両方の食い違い)。
     pub layer_reason: Option<String>,
+    /// 置き場の `*` の段に当たった service の名(層が先の形なら null)。
+    pub service: Option<String>,
 }
 
 /// 層の説明 1 件(設定 `[tool.doeff-linter.layers.describe.<層>]` から。設定に無い欄は null)。
@@ -201,6 +203,7 @@ pub fn build(input: &EditorInput) -> EditorReport {
                 context: m.context.clone(),
                 role: m.role.clone(),
                 layer_reason: m.layer_reason.clone(),
+                service: m.service.clone(),
             }
         })
         .collect();
