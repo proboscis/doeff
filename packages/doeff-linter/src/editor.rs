@@ -112,7 +112,7 @@ pub fn build(input: &EditorInput) -> EditorReport {
     let mut violations = Vec::new();
     let mut errors: Vec<String> = input.project.errors.clone();
     for result in input.python {
-        let path = absolute(&PathBuf::from(&result.file_path));
+        let path = normalize_path(&PathBuf::from(&result.file_path));
         if let Some(error) = &result.error {
             errors.push(format!("{}: {}", path.display(), error));
             continue;
@@ -122,7 +122,13 @@ pub fn build(input: &EditorInput) -> EditorReport {
         }
         let source = match input.stdin {
             Some((stdin_path, text)) if stdin_path == path => text.to_string(),
-            _ => std::fs::read_to_string(&path).unwrap_or_default(),
+            _ => match std::fs::read_to_string(&path) {
+                Ok(text) => text,
+                Err(error) => {
+                    errors.push(format!("{}: 位置を求めるために読めない: {}", path.display(), error));
+                    String::new()
+                }
+            },
         };
         for violation in &result.violations {
             let law = input.settings.law_for_external(&violation.rule_id);
@@ -220,6 +226,19 @@ fn law_statement(law: &crate::project::settings::LawSpec) -> String {
         law.name.clone()
     } else {
         format!("{}: {}", law.name, law.statement)
+    }
+}
+
+/// path を出力と照合の唯一の形にする — 絶対にしてから正規化する(symlink と `..` を解く)。file がまだ無ければ
+/// 親の dir を正規化して名前をつなぐ。どちらも失敗したら絶対にしただけの path。
+pub fn normalize_path(path: &Path) -> PathBuf {
+    let absolute = absolute(path);
+    if let Ok(real) = absolute.canonicalize() {
+        return real;
+    }
+    match (absolute.parent().and_then(|parent| parent.canonicalize().ok()), absolute.file_name()) {
+        (Some(parent), Some(name)) => parent.join(name),
+        _ => absolute,
     }
 }
 

@@ -346,8 +346,8 @@ fn stdin_path_judges_unsaved_text_with_utf16_columns() {
     // 3 行目 "(import 日本.語 app.foundation.io [" の send は UTF-16 で 32 列目から(byte では 38)。
     assert_eq!(hit["range"]["start"], serde_json::json!({"line": 2, "character": 32}));
     assert_eq!(hit["range"]["end"], serde_json::json!({"line": 2, "character": 36}));
-    // path はエディタが渡した path のまま(disk の空の file ではなく stdin の内容を判じた)。
-    assert_eq!(hit["path"], path.to_str().unwrap());
+    // path は正規化した根 + 根からの path(全体の実行と同じ形)。disk の空の file ではなく stdin の内容を判じた。
+    assert_eq!(hit["path"], path.canonicalize().unwrap().to_str().unwrap());
     assert_eq!(report["modules"].as_array().unwrap().len(), 1, "1 file の実行は その file だけ");
     assert_eq!(report["modules"][0]["context"], "請求");
 }
@@ -394,4 +394,35 @@ fn explicit_config_file_and_root() {
     assert_eq!(code, 1, "{}", stderr);
     let report: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(keys(&report, "DOEFF104"), vec!["app/core/untagged.hy::DOEFF104"]);
+}
+
+#[test]
+fn misspelled_section_is_an_error_not_silence() {
+    let dir = repo(&[], "");
+    let text = std::fs::read_to_string(dir.path().join("pyproject.toml")).unwrap().replace("[tool.doeff-linter.layers]", "[tool.doeff-linter.layer]");
+    std::fs::write(dir.path().join("pyproject.toml"), text).unwrap();
+    let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("layer"), "{}", stderr);
+}
+
+#[test]
+fn stdin_and_whole_runs_agree_on_paths_through_a_symlink() {
+    let dir = repo(&[("app/core/untagged.hy", "(defn decide [x] x)\n"), ("app/billing/rel.py", "from .x import y\n")], "");
+    let outside = tempfile::TempDir::new().unwrap();
+    let link = outside.path().join("link");
+    std::os::unix::fs::symlink(dir.path(), &link).unwrap();
+    // 全体の実行(symlink の dir から)と、symlink を通した path の 1 file の実行で、同じ file の path が同じ。
+    let (_, whole) = editor(&link);
+    let whole_path = violation(&whole, "app/core/untagged.hy::DOEFF104")["path"].clone();
+    let via_link = link.join("app/core/untagged.hy");
+    let (_, stdout, _) = run(&link, &["--output-format", "editor-json", "--no-log", "--stdin", "--path", via_link.to_str().unwrap()], Some("(defn decide [x] x)\n"));
+    let single: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(violation(&single, "app/core/untagged.hy::DOEFF104")["path"], whole_path);
+    // path の引数で絞っても(symlink や `..` を通しても)Python の規則の違反は落ちない。
+    let dotted = link.join("app/core/../billing");
+    let (_, stdout, _) = run(&link, &["--output-format", "editor-json", "--no-log", dotted.to_str().unwrap()], None);
+    let narrowed: Value = serde_json::from_str(&stdout).unwrap();
+    assert!(narrowed["violations"].as_array().unwrap().iter().any(|v| v["rule"] == "DOEFF016"), "{}", narrowed);
+    assert!(narrowed["violations"].as_array().unwrap().iter().all(|v| v["path"].as_str().unwrap().contains("/app/billing/")));
 }

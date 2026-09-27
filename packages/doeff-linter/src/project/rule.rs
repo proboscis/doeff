@@ -54,6 +54,20 @@ impl ProjectRule {
         ProjectRule::ALL.into_iter().find(|rule| rule.id() == upper)
     }
 
+    /// 層ごとに判じる規則か(law の layers が効く規則)。DOEFF108 は業務の file 全体に当たり、層を持たない。
+    pub fn is_layered(self) -> bool {
+        match self {
+            ProjectRule::LayerImportDirection
+            | ProjectRule::LayerForbiddenModule
+            | ProjectRule::LayerTypesOnly
+            | ProjectRule::ModuleDeclaresTags
+            | ProjectRule::RoleMatchesLayer
+            | ProjectRule::RawSideEffectDirect
+            | ProjectRule::RawSideEffectVia => true,
+            ProjectRule::EnvironmentName => false,
+        }
+    }
+
     /// 題(人が読む短い名)。
     pub fn title(self) -> &'static str {
         match self {

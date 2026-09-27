@@ -218,7 +218,7 @@ fn only_paths(paths: &[String]) -> Option<Vec<PathBuf>> {
     if paths.iter().all(|p| p == ".") {
         return None;
     }
-    Some(paths.iter().map(|p| editor::absolute(Path::new(p))).map(|p| p.canonicalize().unwrap_or(p)).collect())
+    Some(paths.iter().map(|p| editor::normalize_path(Path::new(p))).collect())
 }
 
 /// 層の規則の違反を、今までの出力(text・json・hook)が読む形(Python の規則の違反と同じ Violation)に写す。
@@ -232,7 +232,13 @@ fn project_results(report: &ProjectReport, only: Option<&[PathBuf]>) -> Vec<Lint
         .into_iter()
         .map(|(path, findings)| {
             let path_text = path.to_string_lossy().into_owned();
-            let source = std::fs::read_to_string(&path).unwrap_or_default();
+            let source = match std::fs::read_to_string(&path) {
+                Ok(text) => text,
+                Err(error) => {
+                    eprintln!("doeff-linter: {}: 位置を求めるために読めない: {}", path_text, error);
+                    String::new()
+                }
+            };
             let mut result = LintResult::new(path_text.clone());
             result.violations = findings
                 .into_iter()
@@ -286,7 +292,7 @@ fn run_editor(args: &Args) -> ExitCode {
             eprintln!("doeff-linter: stdin を読めない: {}", error);
             return ExitCode::from(2);
         }
-        let path = editor::absolute(path);
+        let path = editor::normalize_path(path);
         let is_python = path.extension().is_some_and(|e| e == "py");
         let python_results = if is_python && !python_rules.is_empty() && !should_exclude(&path, &setup.exclude_patterns) {
             vec![lint_source(&path.to_string_lossy(), &source, &python_rules)]
@@ -560,7 +566,7 @@ fn run_normal(args: &Args) -> ExitCode {
         eprintln!("Found {} Python files", files.len());
     }
 
-    if files.is_empty() && !setup.has_project_rules() {
+    if files.is_empty() && (args.modified || !setup.has_project_rules()) {
         eprintln!("No Python files found");
         return ExitCode::SUCCESS;
     }
@@ -572,7 +578,8 @@ fn run_normal(args: &Args) -> ExitCode {
         for error in &report.errors {
             eprintln!("doeff-linter: {}", error);
         }
-        let only = if args.modified { None } else { only_paths(&args.paths) };
+        // --modified の時は、変更した file の違反だけにする(変更していない file の既知の違反で止めない)。
+        let only = if args.modified { Some(files.iter().map(|f| editor::normalize_path(f)).collect()) } else { only_paths(&args.paths) };
         results.extend(project_results(&report, only.as_deref()));
     }
 

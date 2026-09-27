@@ -424,7 +424,10 @@ fn python_def_name(source: &str, name: &str, stmt_start: usize) -> NamedSpan {
     let rest = source.get(stmt_start..).unwrap_or("");
     let at = rest
         .find("def ")
-        .and_then(|def_at| rest[def_at..].find(name).map(|name_at| stmt_start + def_at + name_at))
+        .and_then(|def_at| {
+            let after = def_at + "def ".len();
+            rest[after..].find(name).map(|name_at| stmt_start + after + name_at)
+        })
         .unwrap_or(stmt_start);
     NamedSpan { name: name.to_string(), span: ByteSpan { start: at, end: at + name.len() } }
 }
@@ -563,7 +566,8 @@ mod tests {
         assert_eq!(targets, vec!["app.intent.charge", "httpx", "x.y"]);
         assert_eq!(facts.module_tags.as_ref().and_then(|t| t.role.as_deref()), Some("None"));
         assert_eq!(facts.functions[0].name, "f");
-        assert_eq!(&src[facts.functions[0].span.start..facts.functions[0].span.end], "f");
+        // 名前 f は `def` の中の文字ではなく、名の位置を指す。
+        assert_eq!(facts.functions[0].span.start, src.find("def f").unwrap() + 4);
         let broken = read_facts(Language::Python, "def (:\n", "m", &reading());
         assert_eq!(broken.errors.len(), 1);
         let unclosed = read_facts(Language::Hy, "(defn f [x]\n", "m", &reading());
