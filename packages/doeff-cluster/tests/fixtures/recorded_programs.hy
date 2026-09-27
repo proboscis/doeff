@@ -2,14 +2,14 @@
 ;;;
 ;;; Program は自分の with-handlers で、外側から 土台(外の世界の fake)→ 境目の記録係(record_handlers.boundary-recorder)→ 翻訳の
 ;;; handler → 業務の本体 の順に並べる。記録係は翻訳の handler が出した汎用の effect(Ask・ReadShared・WriteShared)だけを見る。
-;;; scheduler も Program が自分で持つ(実行先 — job_entry・replay_main — は何も足さない)。
+;;; scheduler は土台(本体を包む module の最上位の関数 — 計画 10.1)が並べる(実行先 — job_entry・replay_main — は何も足さない)。
 ;;;
 ;;; 土台の関数と翻訳の組の関数は module の最上位の関数なので、Program には参照で詰まる(handler の値は本体の中で関数を呼んで作る —
 ;;; R3b)。子の process(job_entry・replay_main)は Program を解く時にこの module を import する。
 (require doeff-hy.macros [defk defhandler defeffect <- val var])
 (import collections.abc [Callable])
 (import os)
-(import doeff [with-handlers])
+(import doeff [with-handlers DoExpr EffectBase Program])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [state env-var-ask])
 (import doeff_core_effects.scheduler [scheduled])
@@ -69,12 +69,13 @@
 
 ;; --- 土台 ---------------------------------------------------------------------------------------------
 
-(defk world-foundation []
-  {:pre [] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "foundation"}}
-  "見本の土台(外の世界の fake): 宿の契約の Ask(host-reader — session の値を使うので外側に state)・environ を読む Ask(接頭辞の無い
-   env-var-ask — 宣言の :environ の EFFECT_RECORD_MODE・EFFECT_RECORD_OTLP・業務の設定に答え、環境に無い鍵は外へ通す)・共有の盤
-   (memory — process ごとに空から始まる)。"
-  [(state) host-reader (env-var-ask :prefix "") (shared-memory {})])
+(defk world-foundation [body]
+  {:pre [(: body (| Program EffectBase))] :post [(: % "body の答え")] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "見本の土台(外の世界の fake): scheduler と、宿の契約の Ask(host-reader — session の値を使うので外側に state)・environ を読む Ask
+   (接頭辞の無い env-var-ask — 宣言の :environ の EFFECT_RECORD_MODE・EFFECT_RECORD_OTLP・業務の設定に答え、環境に無い鍵は外へ通す)・
+   共有の盤(memory — process ごとに空から始まる)の下で本体を走らせる。"
+  (<- answer (scheduled (with-handlers [(state) host-reader (env-var-ask :prefix "") (shared-memory {})] body)))
+  answer)
 
 
 ;; --- 業務の Program --------------------------------------------------------------------------------------
@@ -106,7 +107,6 @@
 (defk ledger-program [foundation translation names]
   {:pre [(: foundation Callable) (: translation Callable) (: names tuple)] :post [(: % dict)]
    :tags {:context "doeff-cluster-test" :role "entry"}}
-  "job の Program: 土台と scheduler を自分で並べ、その下で ledger-inside を走らせる(実行先は何も足さない)。"
-  (<- base list (foundation))
-  (<- totals dict (scheduled (with-handlers base (ledger-inside translation names))))
+  "job の Program: 土台(scheduler と外の世界の fake)で ledger-inside を包んで走らせる(実行先は何も足さない)。"
+  (<- totals dict (foundation (ledger-inside translation names)))
   totals)
