@@ -715,6 +715,25 @@ fn defn_is_forbidden_deff_needs_a_reason_and_definitions_carry_tags() {
 }
 
 #[test]
+fn defrecord_header_tags_are_read_and_required_only_when_configured() {
+    // doeff-hy の defrecord の頭の辞書 {:tags … :check […]}(agora-redesign #798)。頭の辞書は省ける形なので、
+    // 既定の DOEFF112 は defrecord を数えない。require_on に足した repo では頭の辞書の :tags を必須にする。
+    let source = r#"(defrecord ChatId "chat の id" {:tags {:context "chat" :role "type"} :check [(ok? value)]} #^ str value)
+(defrecord Span {:check [(<= start end)]} #^ int start #^ int end)
+(defrecord Plain #^ str key)
+"#;
+    let dir = definition_repo(&[("app/chat/model.hy", source)], "");
+    let (_, report) = editor(dir.path());
+    assert!(keys(&report, "DOEFF112").is_empty());
+    let dir = definition_repo(
+        &[("app/chat/model.hy", source)],
+        "[tool.doeff-linter.tags]\nrequire_on = [\"defk\", \"deff\", \"defrecord\"]\n",
+    );
+    let (_, report) = editor(dir.path());
+    assert_eq!(keys(&report, "DOEFF112"), vec!["app/chat/model.hy::DOEFF112::Plain", "app/chat/model.hy::DOEFF112::Span"]);
+}
+
+#[test]
 fn registered_severity_per_rule_and_registry_relative_to_the_config_file() {
     let source = "(defn old [x] x)\n(defn new-one [x] x)\n";
     // 設定 file と登録簿を repo の外の同じ dir に置き、registry.config_files で設定 file からの相対で読む。

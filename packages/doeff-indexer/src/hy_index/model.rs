@@ -116,6 +116,10 @@ pub struct Definition {
     pub raw: RawMark,
     /// 定義が名乗ったタグ(版 3 への追加 — 契約の辞書の :tags と defeffect の :tags。文字列の値の鍵だけ。無ければ null)。
     pub tags: Option<std::collections::BTreeMap<String, String>>,
+    /// defrecord の頭の辞書の :check の式(書かれたとおりの綴り・書いた順)。頭の辞書を持つ defrecord だけが持ち
+    /// (:check が無ければ空の列)、それ以外の定義は欄ごと出さない(版 3 への追加)。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checks: Option<Vec<String>>,
 }
 
 /// 定義の種類(契約の kind の一覧ちょうど)。

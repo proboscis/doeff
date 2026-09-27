@@ -517,3 +517,36 @@ fn defeffect_is_a_definition_with_fields_bases_docstring_and_tags() {
     // defeffect の頭は呼び出しに入れない(予約語)。
     assert!(!file.calls.iter().any(|call| call.callee == "defeffect"));
 }
+
+#[test]
+fn defrecord_header_gives_tags_and_checks() {
+    // doeff-hy の defrecord の頭の辞書 {:tags … :check […]}(agora-redesign #798)。
+    let source = r#"(defrecord ChatId
+  "chat の id"
+  {:tags {:context "chat" :role "type"}
+   :check [(CHAT-ID-PATTERN.fullmatch value)]}
+  (#^ str value))
+(defrecord Span {:check [(>= start 0) (<= start end)]} #^ int start #^ int end)
+(defrecord Named {:tags {:context "chat" :role "type"}} #^ str kind)
+(defrecord Plain #^ str key)
+"#;
+    let file = index(source);
+    let chat = def(&file, "ChatId");
+    assert_eq!(chat.docstring.as_deref(), Some("chat の id"));
+    let tags = chat.tags.as_ref().expect("ChatId のタグ");
+    assert_eq!(tags.get("context").map(String::as_str), Some("chat"));
+    assert_eq!(tags.get("role").map(String::as_str), Some("type"));
+    assert_eq!(chat.checks.as_deref(), Some(&["(CHAT-ID-PATTERN.fullmatch value)".to_string()][..]));
+    // 頭の辞書は欄ではない。欄は辞書の後ろから読む。
+    assert_eq!(def(&file, "value").container.as_deref(), Some("ChatId"));
+    let span = def(&file, "Span");
+    assert!(span.tags.is_none());
+    assert_eq!(span.checks.as_ref().map(Vec::len), Some(2));
+    assert_eq!(def(&file, "end").container.as_deref(), Some("Span"));
+    // :tags だけの頭の辞書は checks が空の列、頭の辞書の無い形は checks を持たない(JSON の欄ごと出さない)。
+    assert_eq!(def(&file, "Named").checks.as_ref().map(Vec::len), Some(0));
+    let plain = def(&file, "Plain");
+    assert!(plain.tags.is_none() && plain.checks.is_none());
+    let json = serde_json::to_value(plain).expect("JSON");
+    assert!(json.get("checks").is_none());
+}

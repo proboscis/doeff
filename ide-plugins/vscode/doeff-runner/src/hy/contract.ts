@@ -81,6 +81,8 @@ export interface HyDefinition {
   readonly raw: HyRawMark;
   /** 定義が名乗ったタグ(契約の辞書の :tags と defeffect の :tags・文字列の値の鍵だけ)。無ければ null。版 3 への追加の欄なので、欄が無い出力は null として読む */
   readonly tags: Readonly<Record<string, string>> | null;
+  /** defrecord の頭の辞書の :check の式(書かれたとおりの綴り・書いた順)。頭の辞書を持つ defrecord だけが持ち、それ以外は null(欄が無い出力も null) */
+  readonly checks: readonly string[] | null;
 }
 
 /** 生の副作用の証拠 1 件。 */
@@ -350,8 +352,24 @@ function parseDefinition(value: unknown, where: string): HyDefinition {
     params,
     bases,
     raw: parseRawMark(value, where),
-    tags: parseTags(value, where)
+    tags: parseTags(value, where),
+    checks: parseChecks(value, kind, where)
   };
+}
+
+/** defrecord の checks の欄を検める(欄が無い・null は null。在れば文字列の列で、defrecord だけが持つ)。 */
+function parseChecks(parent: JsonObject, kind: string, where: string): readonly string[] | null {
+  const value = parent.checks;
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (kind !== 'defrecord') {
+    throw new ContractViolation(`${where}.checks: ${kind} は作る時の検めを持たない`);
+  }
+  if (!Array.isArray(value) || !value.every((item): item is string => typeof item === 'string')) {
+    throw new ContractViolation(`${where}.checks: 文字列の列でない`);
+  }
+  return value;
 }
 
 /** 定義の tags の欄を検める(欄が無い・null は null。在れば文字列の値だけの object)。 */

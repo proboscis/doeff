@@ -408,6 +408,8 @@ impl<'a> Analyzer<'a> {
             raw: RawMark::default(),
             // タグは契約の辞書を持つ定義と defeffect だけ(定義を積んだ後に読む側が埋める)
             tags: None,
+            // 作る時の検めの式(defrecord の頭の辞書の :check だけ — record_def が埋める)
+            checks: None,
         });
         self.definition_spans.push(full);
         text
@@ -495,8 +497,10 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// `(defrecord Name [bases]? "doc"? #^ T field …)` を読む(field は裸・括弧つき・注釈なしの記号のどれでもよい)。
-    /// 今の defrecord の macro は基底を書かない形だけなので、bases はふつう空。
+    /// `(defrecord Name [bases]? "doc"? {:tags {…} :check […]}? #^ T field …)` を読む(field は裸・括弧つき・注釈なしの
+    /// 記号のどれでもよい)。今の defrecord の macro は基底を書かない形だけなので、bases はふつう空。
+    /// 頭の辞書(doeff-hy の defrecord・agora-redesign #798)の :tags は定義のタグ(defk / defeffect と同じ読み方)、
+    /// :check の各式は書かれたとおりの綴りで checks に入れる(頭の辞書が無ければ checks は null)。
     fn record_def(&mut self, form: &Form, items: &[Form], container: Option<&str>) {
         let Some(name) = items.get(1).and_then(|first| self.def_name(first)) else {
             return;
@@ -505,9 +509,27 @@ impl<'a> Analyzer<'a> {
             Some(bases) => (self.base_names(bases), items.get(3..).unwrap_or_default()),
             None => (Vec::new(), items.get(2..).unwrap_or_default()),
         };
-        let (docstring, fields) = self.body_docstring(rest);
+        let (docstring, rest) = self.body_docstring(rest);
+        let (header, fields) = match rest.first() {
+            Some(first) if first.is_brace() => (Some(first), &rest[1..]),
+            _ => (None, rest),
+        };
         let kind = DefinitionKind::Defrecord;
         let record = self.push_def_with_bases(name, kind, form.span, container, docstring, Vec::new(), bases);
+        if let Some(header) = header {
+            let tags = self.dict_value(header, ":tags").filter(|v| v.is_brace()).and_then(|v| self.tags_of_dict(v));
+            let checks: Vec<String> = self
+                .dict_value(header, ":check")
+                .and_then(Form::bracket_items)
+                .map(|checks| {
+                    checks.iter().filter(|c| !matches!(c.node, Node::Discarded)).map(|c| self.text(c.span).to_string()).collect()
+                })
+                .unwrap_or_default();
+            if let Some(last) = self.definitions.last_mut() {
+                last.tags = tags;
+                last.checks = Some(checks);
+            }
+        }
         for field in fields {
             match &field.node {
                 Node::Symbol if !is_operator(self.text(field.span)) => {
