@@ -131,7 +131,7 @@ http・asyncio・時刻・乱数・file・process・環境変数・network・db�
 
 doeff の語(`defk`・`<-`・`Absent` など)・層・linter の違反と規則・service を、同じ絵で見分けるための icon の組です。絵柄は居心地のよい SF のゲームの sprite(小さなロボット・ドローン・貨物の木箱・データのカートリッジ・端末・宇宙港の建物・信号灯)で、枠は付けません。
 
-- **元の定義は `resources/pixel/glyphs.json` の 1 か所**です。icon ごとに名前・家族・一言の説明と、16×16 と 8×8 の点の格子(1 文字 = 1 点)を持ちます。
+- **元の定義は `resources/pixel/glyphs.json` の 1 か所**です。icon ごとに名前・家族・一言の説明と、32×32 と 16×16 の点の格子(1 文字 = 1 点)を持ちます。画面に出す大きさは 16 css px と 8 css px で、1 css px に縦横 2 点ずつを詰めます(Retina の画面では 1 点 = 1 画素)。版 2(2026-09-28)で、版 1 の 16×16 と 8×8 の絵を拡大ではなく 2 倍の点で描き直しました。
   - 文字の意味: `.` は透明、`0`〜`f` は PICO-8 の 16 色の番号、`L` は物に付いた小さな灯(消えている時は `lamp` の色、違反の重さで灯る)、`A` / `B` は service の旗の模様の色です。
   - 色は PICO-8 の 16 色だけを使います。外周だけを紺(`1`)で縁取ります(暗いテーマでは縁が消えて見え、明るいテーマでは形が消えません)。
   - 絵は `"picture": "<名前>"` で別の icon の絵を使えます(違反の欄の規則の家族が、語の sprite を写さずに使うため)。参照の参照と、格子と参照の両方を書くことは断ります。
@@ -150,10 +150,10 @@ doeff の語(`defk`・`<-`・`Absent` など)・層・linter の違反と規則�
 
 - **違反の重さは灯で出します**: 定義の kind・層・規則の家族・service の旗の sprite は灯(`L`)を持ち、違反の最も重い重さの色(赤 = error・琥珀 = warning・青 = info)に灯します。違反が無ければ消えた灯(暗い灰)です。どの規則がどの家族か・規則の短い名は doeff-linter の出力(`rules` の `family`・`title`、契約の更新 6)が決め、拡張は写しを持ちません。
 - **service の旗**: `serviceFlags.services` に並べた service の間で、同じ模様・同じ色の組が 0 組であることを生成の時に検算します。重なったら `serviceFlags.salt` を変えます。2 色は明るさの差が `minContrast` 以上の組だけから選びます。並べていない service の名前でも、拡張は同じ関数で同じ旗を作ります。
-- **生成物**(元の定義から作り、commit します): `resources/pixel/svg/{16,8}/<名前>.svg`、`resources/pixel/png/{16,8}/<名前>.png`(4 倍)、icon 字体 `resources/pixel/doeff-icons.woff`(単色は黒と紺の点)、`package.json` の `contributes.icons`(`$(doeff-<名前>)` で書けます)、拡張の icon `icon.png`(128×128)と `icon.svg`、activity bar の単色の輪郭 `resources/pixel/activitybar.svg`(24×24)。
+- **生成物**(元の定義から作り、commit します): `resources/pixel/svg/{32,16}/<名前>.svg`、`resources/pixel/png/{32,16}/<名前>.png`(2 倍)、icon 字体 `resources/pixel/doeff-icons.woff`(単色は黒と紺の点)、`package.json` の `contributes.icons`(`$(doeff-<名前>)` で書けます)、拡張の icon `icon.png`(128×128)と `icon.svg`、activity bar の単色の輪郭 `resources/pixel/activitybar.svg`(48×48 の点を 24 css px で)。
   - 生成物は手で書き換えません。`glyphs.json` を直して `npm run pixel` を実行します。
   - `npm run pixel:check` は、commit した生成物が元の定義と食い違えば終了コード 1 を返します。単体テストも同じ食い違いを赤にします。
-  - `npm run pixel:preview` は、全 icon を 16×16・8×8・拡大で並べた見本の HTML を `out/pixel/preview.html` に書きます。`node scripts/build-pixel.js --preview <file> --lint-json <editor-json の file> --compare <前の glyphs.json>` で、違反の欄の見本(linter の実際の出力から)と前の版との並べ比べも足せます。
+  - `npm run pixel:preview` は、全 icon を 32×32・16×16・拡大で並べた見本の HTML を `out/pixel/preview.html` に書きます。`node scripts/build-pixel.js --preview <file> --lint-json <editor-json の file> --compare <前の glyphs.json>` で、違反の欄の見本(linter の実際の出力から)と前の版との並べ比べも足せます。
 
 ### 拡張の中での使い方
 
@@ -165,7 +165,7 @@ doeff の語(`defk`・`<-`・`Absent` など)・層・linter の違反と規則�
 
 ### 決まった語の文字の置き換え
 
-Hy の file の決まった語を、**表示の上でだけ** 8×8 の sprite に置き換えます。file の文字は変えないので、保存・検索・コピー・画面読み上げは元の文字のままです(画面読み上げは本文を読み、飾りの画は読みません)。
+Hy の file の決まった語を、**表示の上でだけ** 小さい sprite(16×16 の点)に置き換えます。file の文字は変えないので、保存・検索・コピー・画面読み上げは元の文字のままです(画面読み上げは本文を読み、飾りの画は読みません)。
 
 - 置き換える語(種類): def* の頭(`definition`)・`<-`(`bind`)・`:tags` の辞書(`tags` — 1 行に収まる辞書は丸ごと 1 つの荷札に畳む)・`:pre` / `:post`(`contract`)・effect の頭(`effect` — `Ask` は吹き出しに置き換え、宣言した effect は名前を残して前に手紙の印)・`defhandler` / `handle` の中の `resume` / `finish`(`handler`)・失敗の語彙(`failure`)。文字列・註・`import` の並びの中は置き換えません。
 - カーソルの行と選んだ範囲の行は元の文字で見せます。見えている範囲だけに付けます。

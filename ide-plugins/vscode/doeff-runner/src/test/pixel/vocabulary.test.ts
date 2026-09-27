@@ -34,9 +34,9 @@ function glyphSet(): GlyphSet {
   return parsed.set;
 }
 
-/** sprite の灯(L)の点の位置(16×16)— 元の定義の格子から。 */
+/** sprite の灯(L)の点の位置(大きい sprite の 32×32)— 元の定義の格子から。 */
 function lampPoints(set: GlyphSet, name: string): Array<[number, number]> {
-  const grid = set.glyphs.find((g) => g.name === name)?.grids[16] ?? [];
+  const grid = set.glyphs.find((g) => g.name === name)?.grids[32] ?? [];
   return grid.flatMap((row, y) => [...row].flatMap((ch, x) => (ch === 'L' ? [[x, y] as [number, number]] : [])));
 }
 
@@ -216,24 +216,24 @@ suite('pixel art の gutter', () => {
     assert.strictEqual(parseGutterMode('fancy'), undefined);
   });
 
-  test('重ね合わせ — 16×16 の右下に 8×8 の印、印の周りの透明には黒の縁、左上は土台のまま', () => {
+  test('重ね合わせ — 32×32 の右下に 16×16 の印、印の周りの透明には黒の縁、左上は土台のまま', () => {
     const glyphs = new Map(allGlyphs(glyphSet()).map((g) => [g.name, g]));
-    const base = glyphs.get('defk')?.pixels[16];
-    const badge = glyphs.get('lint-error')?.pixels[8];
+    const base = glyphs.get('defk')?.pixels[32];
+    const badge = glyphs.get('lint-error')?.pixels[16];
     assert.ok(base !== undefined && badge !== undefined);
     const out = overlayBadge(base, badge);
-    for (let y = 0; y < 8; y++) {
-      for (let x = 0; x < 8; x++) {
+    for (let y = 0; y < 16; y++) {
+      for (let x = 0; x < 16; x++) {
         assert.strictEqual(out[y][x], base[y][x]);
         if (badge[y][x] !== null) {
-          assert.strictEqual(out[8 + y][8 + x], badge[y][x]);
+          assert.strictEqual(out[16 + y][16 + x], badge[y][x]);
         }
       }
     }
     // 印(火)の左端の点の左隣は黒の縁
     const row = badge.findIndex((r) => r.some((c) => c !== null));
     const col = badge[row].findIndex((c) => c !== null);
-    assert.strictEqual(out[8 + row][8 + col - 1], 0);
-    assert.deepStrictEqual(overlayBadge(null, badge)[8 + row][8 + col - 1], null);
+    assert.strictEqual(out[16 + row][16 + col - 1], 0);
+    assert.deepStrictEqual(overlayBadge(null, badge)[16 + row][16 + col - 1], null);
   });
 });

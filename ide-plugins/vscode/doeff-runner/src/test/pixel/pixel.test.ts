@@ -22,8 +22,8 @@ function glyphSet(): GlyphSet {
 /** 反例を作るために書き換える欄だけの形(読み込みの検査は parseGlyphSet が持つ — ここは書き換えの道具)。 */
 interface GlyphJson {
   families: Array<{ name: string; frame: unknown }>;
-  glyphs: Array<{ name: string; family: string; px16: string[]; px8: string[]; picture?: string }>;
-  serviceFlags: { colors: string[]; patterns: Array<{ px16: string[] }> };
+  glyphs: Array<{ name: string; family: string; px32: string[]; px16: string[]; picture?: string }>;
+  serviceFlags: { colors: string[]; patterns: Array<{ px32: string[] }> };
 }
 
 /** 元の定義の JSON を書き換えて読ませる(反例を作るため)。 */
@@ -68,9 +68,10 @@ suite('pixel art の icon — 元の定義', () => {
 
   test('反例 — 枠のある家族では、枠の中の地の外に絵の点を置くと断る(家族の枠は語が変えない)', () => {
     // 今の sprite の家族は枠を持たない(2026-09-28 に外した)。枠を戻した家族に、枠の外へ点を置いた絵を入れる
-    const edge = '.'.repeat(16);
-    const inner = `.${':'.repeat(14)}.`;
-    const frame = { fill: '7', px16: [edge, ...Array.from({ length: 14 }, () => inner), edge], px8: ['........', ...Array.from({ length: 6 }, () => '.::::::.'), '........'] };
+    const edge = '.'.repeat(32);
+    const inner = `.${':'.repeat(30)}.`;
+    const small = `.${':'.repeat(14)}.`;
+    const frame = { fill: '7', px32: [edge, ...Array.from({ length: 30 }, () => inner), edge], px16: ['.'.repeat(16), ...Array.from({ length: 14 }, () => small), '.'.repeat(16)] };
     assertInvalid(
       mutated((json) => {
         const family = json.families.find((x) => x.name === 'declaration');
@@ -79,7 +80,7 @@ suite('pixel art の icon — 元の定義', () => {
           throw new Error('declaration か defk が無い');
         }
         family.frame = frame;
-        defk.px16[0] = `8${defk.px16[0].slice(1)}`;
+        defk.px32[0] = `8${defk.px32[0].slice(1)}`;
       }),
       /枠の中の地の外に点がある/
     );
@@ -88,15 +89,15 @@ suite('pixel art の icon — 元の定義', () => {
   test('反例 — PICO-8 の外の文字・行の長さ違い・知らない家族・同じ名前を断る', () => {
     assertInvalid(
       mutated((json) => {
-        json.glyphs[0].px16[5] = `${json.glyphs[0].px16[5].slice(0, 15)}g`;
+        json.glyphs[0].px32[5] = `${json.glyphs[0].px32[5].slice(0, 31)}g`;
       }),
       /許されない文字/
     );
     assertInvalid(
       mutated((json) => {
-        json.glyphs[0].px8[2] = '.......';
+        json.glyphs[0].px16[2] = '.'.repeat(15);
       }),
-      /長さ 8 の文字列ではない/
+      /長さ 16 の文字列ではない/
     );
     assertInvalid(
       mutated((json) => {
@@ -137,14 +138,14 @@ suite('pixel art の icon — 元の定義', () => {
       mutated((json) => {
         json.glyphs[0].picture = 'defrecord';
       }),
-      /px16・px8\)と picture を両方は書かない/
+      /px32・px16\)と picture を両方は書かない/
     );
   });
 
   test('反例 — 旗の模様が布の形と合わない・見分けられる 2 色目が無い色を断る', () => {
     assertInvalid(
       mutated((json) => {
-        json.serviceFlags.patterns[0].px16[0] = 'A'.repeat(16);
+        json.serviceFlags.patterns[0].px32[0] = 'A'.repeat(32);
       }),
       /布の点と模様の点が合わない/
     );
@@ -173,8 +174,8 @@ suite('pixel art の icon — service の旗', () => {
     assert.deepStrictEqual(chooseFlag(set, 'brand-new-service'), chooseFlag(set, 'brand-new-service'));
     const flag = flagGlyph(set, 'brand-new-service');
     assert.strictEqual(flag.name, 'service-brand-new-service');
+    assert.strictEqual(flag.pixels[32].length, 32);
     assert.strictEqual(flag.pixels[16].length, 16);
-    assert.strictEqual(flag.pixels[8].length, 8);
   });
 
   test('重複の数え方 — 同じ模様・同じ色の組は重複', () => {
@@ -201,21 +202,21 @@ suite('pixel art の icon — 画と字体', () => {
   test('SVG は crispEdges の rect だけ・PNG は整数倍で拡大して補間しない', () => {
     const doe = allGlyphs(glyphSet()).find((g) => g.name === 'doe');
     assert.ok(doe !== undefined);
-    const svg = colorSvg(doe.pixels[16]);
+    const svg = colorSvg(doe.pixels[32]);
     assert.match(svg, /shape-rendering="crispEdges"/);
     assert.doesNotMatch(svg, /<path|<circle|filter/);
-    const bytes = png(doe.pixels[16], 8);
+    const bytes = png(doe.pixels[32], 4);
     assert.strictEqual(bytes.readUInt32BE(16), 128);
     assert.strictEqual(bytes.readUInt32BE(20), 128);
-    // IDAT を開いて、拡大した 8×8 の正方形の中の画素が全部同じ色であることを見る(ぼかしていない)
+    // IDAT を開いて、拡大した 4×4 の正方形の中の画素が全部同じ色であることを見る(ぼかしていない)
     const idat = bytes.subarray(bytes.indexOf('IDAT') + 4, bytes.indexOf('IEND') - 8);
     const raw = zlib.inflateSync(idat);
     const pixelAt = (x: number, y: number): string => raw.subarray(y * (128 * 4 + 1) + 1 + x * 4, y * (128 * 4 + 1) + 5 + x * 4).toString('hex');
-    for (let y = 0; y < 16; y++) {
-      for (let x = 0; x < 16; x++) {
-        const corner = pixelAt(x * 8, y * 8);
-        assert.strictEqual(pixelAt(x * 8 + 7, y * 8 + 7), corner);
-        assert.strictEqual(pixelAt(x * 8 + 3, y * 8 + 5), corner);
+    for (let y = 0; y < 32; y++) {
+      for (let x = 0; x < 32; x++) {
+        const corner = pixelAt(x * 4, y * 4);
+        assert.strictEqual(pixelAt(x * 4 + 3, y * 4 + 3), corner);
+        assert.strictEqual(pixelAt(x * 4 + 1, y * 4 + 2), corner);
       }
     }
   });

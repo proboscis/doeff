@@ -1,13 +1,13 @@
 // 拡張の icon 字体(contributes.icons の `$(doeff-<名>)`)の元 — icon ごとの文字の番号、SVG 字体の本文、package.json の
 // contributes.icons の欄。SVG 字体から woff への変換は生成の script(svg2ttf・ttf2woff)が持ち、ここは文字列だけを作る。
 
-import type { Glyph } from './glyphs';
+import { LARGE, type Glyph } from './glyphs';
 import { escapeXml, mergeRects } from './render';
 
-/** 字体の 1 点の大きさ(字体の単位)。16 点 × 64 = 1024 が em の高さ。 */
-const UNIT = 64;
+/** 字体の 1 点の大きさ(字体の単位)。32 点 × 32 = 1024 が em の高さ。 */
+const UNIT = 32;
 /** em の高さ(字体の単位)。 */
-export const UNITS_PER_EM = 16 * UNIT;
+export const UNITS_PER_EM = LARGE * UNIT;
 /** 私用領域の最初の文字(U+E000 から icon の並びの順に当てる)。 */
 const FIRST_CODEPOINT = 0xe000;
 /** 字体の名前(package.json の fontPath と見本の @font-face が同じ名前を使う)。 */
@@ -28,12 +28,12 @@ export function codepoints(glyphs: readonly Glyph[]): Codepoint[] {
 
 /** 字体の glyph 1 つの輪郭(y は上向き・基準線 0 から em の高さまで)。 */
 function glyphPath(mono: ReadonlyArray<ReadonlyArray<boolean>>): string {
-  const rects = mergeRects(16, 16, (x, y) => mono[y][x]);
+  const rects = mergeRects(LARGE, LARGE, (x, y) => mono[y][x]);
   return rects
     .map((r) => {
       const left = r.x * UNIT;
-      const top = (16 - r.y) * UNIT;
-      const bottom = (16 - r.y - r.height) * UNIT;
+      const top = (LARGE - r.y) * UNIT;
+      const bottom = (LARGE - r.y - r.height) * UNIT;
       const right = (r.x + r.width) * UNIT;
       // 外周は時計回りで揃える(重ならない長方形なので塗りの規則に依らない)
       return `M${left} ${bottom}L${left} ${top}L${right} ${top}L${right} ${bottom}Z`;

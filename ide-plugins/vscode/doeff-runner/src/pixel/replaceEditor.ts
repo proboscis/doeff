@@ -104,7 +104,7 @@ function visibleLines(editor: vscode.TextEditor): LineSpan[] {
   return editor.visibleRanges.map((r) => ({ start: Math.max(0, r.start.line - VISIBLE_MARGIN), end: r.end.line + VISIBLE_MARGIN }));
 }
 
-/** 文字の中の icon の css の大きさ — 8×8 の画を整数倍にして、文字の大きさに近づける(12〜19px の文字なら 16px)。 */
+/** 文字の中の icon の css の大きさ — 小さい sprite(16×16 の点・版 1 と同じく 8 css px を単位)を整数倍にして、文字の大きさに近づける(12〜19px の文字なら 16px)。 */
 function inlinePx(): number {
   const fontSize = vscode.workspace.getConfiguration('editor').get<number>('fontSize') ?? 14;
   return 8 * Math.max(1, Math.round(fontSize / 8));

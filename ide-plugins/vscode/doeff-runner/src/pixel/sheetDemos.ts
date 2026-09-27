@@ -5,7 +5,7 @@
 
 import type { LintReport, LintRuleFamily, LintSeverity, LintViolation } from '../lint/contract';
 import { groupDescription, groupTooltipLines, violationRoots, worstSeverity } from '../lint/view';
-import { composeTinted, overlayBadge, type Glyph, type GlyphSet, type Pixels } from './glyphs';
+import { composeTinted, DENSITY, LARGE, overlayBadge, SMALL, type Glyph, type GlyphSet, type Pixels } from './glyphs';
 import { dataUri, escapeXml, png } from './render';
 import { findReplacements, REPLACE_KIND_LABELS, REPLACE_KINDS, type Replacement } from './replace';
 import { litPixels, ruleFamilyGlyph, ruleIcon, SEVERITY_LAMP, worstMark } from './vocabulary';
@@ -21,7 +21,7 @@ function oldGroupPixels(old: GlyphSet, violations: readonly LintViolation[]): Pi
   const law = composeTinted(old, 'law', {});
   const mark = worstMark(violations);
   const badge = mark === undefined ? undefined : composeTinted(old, mark, {});
-  return law === undefined ? undefined : overlayBadge(law[16], badge?.[8] ?? null);
+  return law === undefined ? undefined : overlayBadge(law[LARGE], badge?.[SMALL] ?? null);
 }
 
 /** 枠つきの直し(2026-09-28 の最初の直し)の束の画 — 家族の絵を看板の枠で囲み、枠の色で重さ、Jev の判定はふくろうを重ねる。 */
@@ -31,7 +31,7 @@ function framedGroupPixels(old: GlyphSet, family: LintRuleFamily | null, severit
     return undefined;
   }
   const owl = jev && family !== 'jev' ? composeTinted(old, 'jev', {}) : undefined;
-  return owl === undefined ? framed[16] : overlayBadge(framed[16], owl[8]);
+  return owl === undefined ? framed[LARGE] : overlayBadge(framed[LARGE], owl[SMALL]);
 }
 
 /** 木の 1 行(VS Code の暗いテーマの木を真似る)。 */
@@ -128,7 +128,7 @@ ${familyRows}
 }
 
 /**
- * icon の並べ比べ — 同じ名前の icon を、比べる元の定義(枠つきの版)と今の元の定義で並べる(16×16 の 3 倍・実寸・8×8)。
+ * icon の並べ比べ — 同じ名前の icon を、比べる元の定義と今の元の定義で並べる(大きい sprite の 48 css px・実寸 16 css px・小さい sprite)。
  * 灯を持つ sprite は、灯した版(error)も添える。
  */
 export function compareDemo(set: GlyphSet, glyphs: readonly Glyph[], old: GlyphSet, oldGlyphs: readonly Glyph[]): string {
@@ -138,16 +138,16 @@ export function compareDemo(set: GlyphSet, glyphs: readonly Glyph[], old: GlyphS
     .map((g) => {
       const o = before.get(g.name);
       const lit = litPixels(set, { glyph: g.name, severity: 'error', flag: null });
-      const hasLamp = set.glyphs.find((x) => x.name === g.name)?.grids[16].some((row) => row.includes('L')) ?? false;
-      const oldCell = o === undefined ? '(無し)' : `${pixelImg(o.pixels[16], 48, o.name)} ${pixelImg(o.pixels[16], 16, o.name)} ${pixelImg(o.pixels[8], 16, o.name)}`;
-      const newCell = `${pixelImg(g.pixels[16], 48, g.name)} ${hasLamp && lit !== undefined ? pixelImg(lit, 48, 'lit') : ''} ${pixelImg(g.pixels[16], 16, g.name)} ${pixelImg(g.pixels[8], 16, g.name)}`;
-      return `<tr><td class="dark">${oldCell}</td><td class="dark">${newCell}</td><td class="light">${pixelImg(g.pixels[16], 32, g.name)}</td><td><code>${escapeXml(g.name)}</code></td><td>${escapeXml(g.summary)}</td></tr>`;
+      const hasLamp = set.glyphs.find((x) => x.name === g.name)?.grids[LARGE].some((row) => row.includes('L')) ?? false;
+      const oldCell = o === undefined ? '(無し)' : `${pixelImg(o.pixels[LARGE], 48, o.name)} ${pixelImg(o.pixels[LARGE], LARGE / DENSITY, o.name)} ${pixelImg(o.pixels[SMALL], LARGE / DENSITY, o.name)}`;
+      const newCell = `${pixelImg(g.pixels[LARGE], 48, g.name)} ${hasLamp && lit !== undefined ? pixelImg(lit, 48, 'lit') : ''} ${pixelImg(g.pixels[LARGE], LARGE / DENSITY, g.name)} ${pixelImg(g.pixels[SMALL], LARGE / DENSITY, g.name)}`;
+      return `<tr><td class="dark">${oldCell}</td><td class="dark">${newCell}</td><td class="light">${pixelImg(g.pixels[LARGE], 32, g.name)}</td><td><code>${escapeXml(g.name)}</code></td><td>${escapeXml(g.summary)}</td></tr>`;
     })
     .join('\n');
   return `
 <h2 id="compare">icon の並べ比べ — 枠つきの版と新しい版</h2>
 <p>左が枠つきの版(家族ごとに判子の枠・丸・赤い六角・床のタイル・看板の枠)、右が新しい版(枠の無い、居心地のよい SF のゲームの sprite)です。新しい版で灯を持つ物は、2 つ目に灯した版(error = 赤)を並べています。明るい背景の列は明るいテーマでの見え方です。</p>
-<table><tr><th>枠つきの版(3 倍・実寸・8×8)</th><th>新しい版(3 倍・灯した版・実寸・8×8)</th><th>明るい背景</th><th>名前</th><th>一言(新しい版)</th></tr>
+<table><tr><th>比べる版(3 倍・実寸・小さい sprite)</th><th>新しい版(3 倍・灯した版・実寸・小さい sprite)</th><th>明るい背景</th><th>名前</th><th>一言(新しい版)</th></tr>
 ${rows}
 </table>`;
 }
@@ -204,7 +204,7 @@ export function replaceDemo(glyphs: readonly Glyph[]): string {
   for (const r of found) {
     const glyph = byName.get(r.glyph);
     if (glyph !== undefined && !images.has(r.glyph)) {
-      images.set(r.glyph, pixelImg(glyph.pixels[8], 16, r.glyph));
+      images.set(r.glyph, pixelImg(glyph.pixels[SMALL], 16, r.glyph));
     }
   }
   const lines = HY_SAMPLE.split('\n');
@@ -215,7 +215,7 @@ export function replaceDemo(glyphs: readonly Glyph[]): string {
   ).join('<br>');
   const details = found.map((r) => {
     const glyph = byName.get(r.glyph);
-    return { original: r.original, display: r.display, summary: glyph?.summary ?? '', image: glyph === undefined ? '' : pixelImg(glyph.pixels[16], 32, r.glyph) };
+    return { original: r.original, display: r.display, summary: glyph?.summary ?? '', image: glyph === undefined ? '' : pixelImg(glyph.pixels[LARGE], 32, r.glyph) };
   });
   return `
 <h2 id="replace">エディタの文字の置き換え(動く見本)</h2>

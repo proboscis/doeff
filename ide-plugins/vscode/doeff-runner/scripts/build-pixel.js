@@ -130,7 +130,7 @@ function main() {
   // 元の定義から消えた icon の生成物が残っていないか(消すのは人が決める — ここでは名前を出すだけ)
   const expected = new Set([...files.keys()].map((r) => path.normalize(r)));
   const leftovers = [];
-  for (const dir of ['svg/16', 'svg/8', 'png/16', 'png/8']) {
+  for (const dir of ['svg/32', 'svg/16', 'svg/8', 'png/32', 'png/16', 'png/8']) {
     const full = path.join(ROOT, PIXEL_DIR, dir);
     if (!fs.existsSync(full)) {
       continue;

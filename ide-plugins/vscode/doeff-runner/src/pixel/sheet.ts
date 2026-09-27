@@ -1,11 +1,11 @@
-// icon の見本の一覧 — 1 枚の自己完結 HTML(画は data URI・字体は base64 の woff を埋める)。全 icon を 16×16・8×8・
+// icon の見本の一覧 — 1 枚の自己完結 HTML(画は data URI・字体は base64 の woff を埋める)。全 icon を 32×32・16×16・
 // 拡大で、暗い背景と明るい背景の両方に並べ、名前と一言を添える。service の旗の重複の検算もここに出す。linter の出力を
 // 渡せば「違反(linter)」の欄の見本を、いつも文字の置き換えの動く見本を足す(sheetDemos.ts)。
 
 import { activityBarMono, allGlyphs, extensionGlyph, flagReport } from './build';
 import { flagGlyphName } from './flags';
 import { codepoints, FONT_FAMILY } from './font';
-import { PICO8, type Glyph, type GlyphSet } from './glyphs';
+import { DENSITY, LARGE, PICO8, SMALL, type Glyph, type GlyphSet, type GlyphSize } from './glyphs';
 import { dataUri, escapeXml, monoSvg, png } from './render';
 import type { LintReport } from '../lint/contract';
 import { compareDemo, DEMO_CSS, panelDemo, replaceDemo } from './sheetDemos';
@@ -23,20 +23,20 @@ export interface PreviewLint {
 }
 
 /** 画 1 つの `<img>`(点を補間しない表示)。 */
-function img(glyph: Glyph, size: 16 | 8, shown: number): string {
+function img(glyph: Glyph, size: GlyphSize, shown: number): string {
   const src = dataUri('image/png', png(glyph.pixels[size], Math.max(1, Math.round(shown / size))));
   return `<img src="${src}" width="${shown}" height="${shown}" alt="${escapeXml(glyph.name)}">`;
 }
 
-/** icon 1 行 — 拡大・実寸(16・8)・2 倍・字体(単色)を暗い背景と明るい背景に。 */
+/** icon 1 行 — 拡大・実寸(16・8 css px)・2 倍・字体(単色)を暗い背景と明るい背景に。 */
 function glyphRow(glyph: Glyph, codepoint: number | undefined): string {
-  const actual = `${img(glyph, 16, 16)} ${img(glyph, 8, 8)}`;
-  const doubled = `${img(glyph, 16, 32)} ${img(glyph, 8, 16)}`;
+  const actual = `${img(glyph, LARGE, LARGE / DENSITY)} ${img(glyph, SMALL, SMALL / DENSITY)}`;
+  const doubled = `${img(glyph, LARGE, LARGE)} ${img(glyph, SMALL, SMALL)}`;
   const font = codepoint === undefined ? '' : `<span class="icon-font">&#x${codepoint.toString(16)};</span>`;
   return [
     '<tr>',
-    `<td class="big">${img(glyph, 16, 96)}</td>`,
-    `<td class="big">${img(glyph, 8, 48)}</td>`,
+    `<td class="big">${img(glyph, LARGE, 96)}</td>`,
+    `<td class="big">${img(glyph, SMALL, 48)}</td>`,
     `<td class="dark">${actual}<br>${doubled}<br>${font}</td>`,
     `<td class="light">${actual}<br>${doubled}<br>${font}</td>`,
     `<td><code>${escapeXml(glyph.name)}</code><br><code class="id">$(doeff-${escapeXml(glyph.name)})</code></td>`,
@@ -57,7 +57,7 @@ export function previewHtml(set: GlyphSet, woff: Buffer, lint: PreviewLint | nul
     return [
       `<h2>${escapeXml(family.label)} <small>${escapeXml(family.name)}</small></h2>`,
       `<p>${escapeXml(family.summary)}</p>`,
-      '<table><tr><th>拡大 16×16</th><th>拡大 8×8</th><th>暗い背景(実寸・2 倍・字体)</th><th>明るい背景</th><th>名前</th><th>一言</th></tr>',
+      '<table><tr><th>拡大 32×32</th><th>拡大 16×16</th><th>暗い背景(実寸・2 倍・字体)</th><th>明るい背景</th><th>名前</th><th>一言</th></tr>',
       rows,
       '</table>'
     ].join('\n');
@@ -68,7 +68,7 @@ export function previewHtml(set: GlyphSet, woff: Buffer, lint: PreviewLint | nul
     .map((c) => {
       const swatch = (color: number): string => `<span class="swatch" style="background:${PICO8[color]}"></span>${PICO8[color]}`;
       const flag = byName.get(flagGlyphName(c.service));
-      const pictures = flag === undefined ? '' : `${img(flag, 16, 48)} ${img(flag, 16, 16)} ${img(flag, 8, 16)}`;
+      const pictures = flag === undefined ? '' : `${img(flag, LARGE, 48)} ${img(flag, LARGE, LARGE / DENSITY)} ${img(flag, SMALL, LARGE / DENSITY)}`;
       return `<tr><td class="big">${pictures}</td><td><code>${escapeXml(c.service)}</code></td><td>${escapeXml(c.pattern)}</td><td>${swatch(c.primary)}</td><td>${swatch(c.secondary)}</td></tr>`;
     })
     .join('\n');
@@ -77,7 +77,7 @@ export function previewHtml(set: GlyphSet, woff: Buffer, lint: PreviewLint | nul
       ? `<p class="ok">重複の検算: ${report.choices.length} の service の旗で、同じ模様と同じ色の組を持つ物は 0 組(重複ゼロ)。</p>`
       : `<p class="ng">重複の検算: ${report.collisions.map((c) => `${c.services.join(' と ')}(${c.key})`).join('・')} が重なる。</p>`;
   const doe = extensionGlyph(set, glyphs);
-  const activity = monoSvg(activityBarMono(set), 24);
+  const activity = monoSvg(activityBarMono(set), set.extension.activityBar.length / DENSITY);
   const palette = PICO8.map((c, i) => `<span class="swatch big" style="background:${c}" title="${i.toString(16)} ${c}"></span>`).join('');
   return `<!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><title>doeff-runner の pixel art の icon(見本)</title>
@@ -122,8 +122,8 @@ ${compare === null ? '' : compareDemo(set, glyphs, compare.set, compare.glyphs)}
 ${replaceDemo(glyphs)}
 <h2 id="icons">拡張の icon</h2>
 <div class="hero">
-<div><img src="${dataUri('image/png', png(doe.pixels[16], set.extension.scale))}" width="128" height="128" alt="doe"><br>128×128(16×16 を ${set.extension.scale} 倍)</div>
-<div class="activity"><span style="background:#333;color:#ccc">${activity}</span><span style="background:#2c2c2c;color:#fff">${activity}</span><span style="background:#f3f3f3;color:#424242">${activity}</span><br>activity bar 用の単色 24×24(テーマの文字色で塗られる)</div>
+<div><img src="${dataUri('image/png', png(doe.pixels[LARGE], set.extension.scale))}" width="128" height="128" alt="doe"><br>128×128(32×32 を ${set.extension.scale} 倍)</div>
+<div class="activity"><span style="background:#333;color:#ccc">${activity}</span><span style="background:#2c2c2c;color:#fff">${activity}</span><span style="background:#f3f3f3;color:#424242">${activity}</span><br>activity bar 用の単色 48×48 の点を 24 css px で(テーマの文字色で塗られる)</div>
 </div>
 <p>${escapeXml(doe.summary)}</p>
 <h2>文法</h2>
