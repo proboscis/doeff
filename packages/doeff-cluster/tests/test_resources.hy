@@ -6,11 +6,12 @@
 (import doeff_cluster.worker_model [spec-hash])
 (import doeff_cluster.api_policy [respond])
 (import doeff_cluster.resource_policy [LEGACY-OWNER adopt-legacy])
-(import tests.program_rows [SAMPLE-RUN])
+(import tests.program_rows [SAMPLE-RUN program-placed program-run])
+(import doeff [run])
 
 (setv T (ClusterTiming))
 (setv V {"python" "3.14.0"})
-(setv SPEC {"revision" "r1" "needs" ["net"] "entry" "m" "args" []})
+(setv SPEC {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN})
 
 (defn req [method path [body None] [query None] [actor "c-me"]]
   (Request method path (or query {}) body :actor actor :peer "10.0.0.9"))
@@ -63,7 +64,8 @@
   (assert (= status 400) body)
   (assert (in "X-Actor" (get body "error")))
   ;; 盤と task は旧い client でも通し、送り元の番地で記録する
-  (setv #(s status _) (call s "POST" "/tasks" {"blob" "B" "versions" V "revision" "r" "needs" ["net"]} :actor None))
+  (setv #(s sha) (run (program-placed s V :now 1000)))
+  (setv #(s status _) (call s "POST" "/tasks" {"program" sha "revision" "r" "needs" ["net"]} :actor None))
   (assert (= status 200))
   (assert (= (get (get s.audit -1) "actor") "coordinator"))   ; 置き先の決め(調停)
   (assert (in "anonymous@10.0.0.9" (lfor e s.audit (get e "actor")))))
@@ -99,7 +101,7 @@
   (assert (= status 409) body)
   (assert (is s3 s2))
   ;; 版の無い行で既存を変えようとすると 409
-  (setv #(_ status _) (call s2 "PUT" "/jobs" {"jobs" [{"name" "shadow-a" "revision" "rX" "needs" ["net"] "entry" "m" "args" []}]}
+  (setv #(_ status _) (call s2 "PUT" "/jobs" {"jobs" [{"name" "shadow-a" "revision" "rX" "needs" ["net"] "run" SAMPLE-RUN}]}
                             :actor "c-coord"))
   (assert (= status 409))
   ;; 送り手の無い PUT /jobs は断る
@@ -107,7 +109,7 @@
 
 
 (deftest test-legacy-state-file-is-adopted-with-versions-and-a-legacy-owner
-  (setv legacy {"jobs" [{"name" "turn-runner" "revision" "r" "needs" ["net"] "pin" None "entry" "m" "args" []}]
+  (setv legacy {"jobs" [{"name" "turn-runner" "revision" "r" "needs" ["net"] "pin" None "run" SAMPLE-RUN}]
                 "assignments" {} "workers" [] "tasks" [] "nextTask" 1 "board" {"k" 1}}) ; 改名の前の file の形
   (setv s (adopt-legacy (state-from-json legacy 1000) 1000 T))
   (assert (= (. (get s.jobs 0) owner) LEGACY-OWNER))
@@ -118,11 +120,11 @@
   (assert (not-in "board" (state-to-json s)))
   ;; 誰でも 1 度だけ所有者を引き取れる。引き取った後は他の送り手が変えられない
   (setv #(s2 status _) (call s "PUT" "/resources/Service/turn-runner"
-                             {"spec" {"revision" "r" "needs" ["net"] "entry" "m" "args" [] "owner" "c-lab"} "resourceVersion" (rv s "Service" "turn-runner")}
+                             {"spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN "owner" "c-lab"} "resourceVersion" (rv s "Service" "turn-runner")}
                              :actor "c-lab"))
   (assert (= status 200))
   (setv #(_ status _) (call s2 "PUT" "/resources/Service/turn-runner"
-                            {"spec" {"revision" "r" "needs" ["net"] "entry" "m" "args" [] "owner" "c-thief"} "resourceVersion" (rv s2 "Service" "turn-runner")}
+                            {"spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN "owner" "c-thief"} "resourceVersion" (rv s2 "Service" "turn-runner")}
                             :actor "c-thief"))
   (assert (= status 403)))
 
@@ -234,7 +236,8 @@
 (deftest test-a-report-that-arrives-before-the-heartbeat-counts-once-the-heartbeat-catches-up
   ;; 新しい process の最初の報告が、担い手の heartbeat(新しい process の世代を載せる)より先に届く順。報告は世代ごとに残すので、
   ;; heartbeat が追いついた時に数える。
-  (setv spec (| SPEC {"readiness" {"windowSeconds" 30}}) new (| spec {"args" ["--x"]}))
+  ;; 新しい宣言 = 同一性(呼んだ関数の引数)を変えた Program の job(spec の指紋が変わる)。
+  (setv spec (| SPEC {"readiness" {"windowSeconds" 30}}) new (| spec {"run" (run (program-run "m:f" "--x"))}))
   (setv #(s _ _) (call (ClusterState :started-ms -1000000) "POST" "/resources/Service" {"name" "w" "spec" spec} :now 1000))
   (setv s (beat s "atlas" 1000))
   (setv s (beat s "atlas" 1500 (running-row spec "1-a")))
@@ -281,7 +284,7 @@
 
 
 (deftest test-metrics-are-exported-only-for-the-current-process-with-production-names
-  (setv spec (| SPEC {"readiness" {"windowSeconds" 30}}) new (| spec {"args" ["--apply"]}))
+  (setv spec (| SPEC {"readiness" {"windowSeconds" 30}}) new (| spec {"run" (run (program-run "m:f" "--apply"))}))
   (setv #(s _ _) (call (ClusterState :started-ms -1000000) "POST" "/resources/Service" {"name" "w" "spec" spec} :now 1000))
   (setv s (beat s "atlas" 1000))
   (setv s (beat s "atlas" 1500 (running-row spec "1-a")))

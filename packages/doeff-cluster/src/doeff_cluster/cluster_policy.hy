@@ -53,13 +53,12 @@
   (if (is value None) None (json.dumps value :sort-keys True :ensure-ascii False)))
 
 (defn #^ JobSpec spec-of-declaration [#^ dict item]
-  "宣言 1 行 → worker が起動する形。run.kind = service なら job_entry の service 入口、無ければ entry と args をそのまま。
+  "宣言 1 行 → worker が起動する形(job_entry の service 入口と詰めた Program の置き場のキー)。宣言の job は Program の job だけ —
+   run の無い行(生の entry と args を worker に直に起こさせる形)は理由つきで断る(ADR-DOE-CLUSTER-001 R1・R7 — 移行の期間は置かない)。
    runtimeEnv を持つ宣言は、worker が env の root を準備してその venv で起こす(版は worker が env のキーへ置き換える)。"
   (setv run (.get item "run") revision (declared-revision item) runtime (declared-runtime-env item))
   (cond
-    (is run None)
-      (JobSpec (get item "name") (get item "entry") (tuple (.get item "args" [])) revision
-               :base (.get item "base") :handoff (= (.get item "update") "handoff") :runtime-env runtime)
+    (is run None) (raise (ValueError (raw-entry-refusal item)))
     (= (.get run "kind") "service")
       (do (setv refusal (program-row-refusal item))
           (when refusal (raise (ValueError refusal)))
@@ -76,6 +75,14 @@
 (setv PROGRAM-SHA (re.compile r"[0-9a-f]{64}"))
 ;; 旧い宣言の run の欄(関数の参照 + 設定 + handler の組の import path — 2026-09-27 より前の形)。
 (setv OLD-RUN-KEYS #("factory" "env" "config"))
+
+
+(deff raw-entry-refusal [#^ dict item]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
+  {:pre [(: item dict)] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "run の無い宣言の行(worker に module と引数を直に起こさせる生の entry の job)を断る理由の文 — 書きの口の 400・保存の読み直しの
+   RefusedJob の理由に同じ文を出すため。宣言の job は Program の値 1 つだけ(ADR-DOE-CLUSTER-001 R1・R7)。"
+  (.format "生の entry の job(entry {!r}・args {!r}・run が無い)は受け付けない — job は Program の値 1 つで宣言する(defsystem と declare・ADR-DOE-CLUSTER-001 R1)"
+           (.get item "entry") (.get item "args")))
 
 
 (deff identity-hash [#^ dict run]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
@@ -179,9 +186,8 @@
                  (if (is job.overlay None) {} {"overlay" job.overlay})
                  (if (is job.spec.runtime-env None) {} {"runtimeEnv" (json.loads job.spec.runtime-env)})
                  (if job.spec.environ {"environ" (dict job.spec.environ)} {})))
-  (if (is job.run None)
-      (| base extra {"entry" job.spec.entry "args" (list job.spec.args)})
-      (| base extra {"run" job.run})))
+  ;; 受け付けた job は Program の job だけ(run を持つ — spec-of-declaration)。行は run を運ぶ(entry と args は worker の内部の形)。
+  (| base extra {"run" job.run}))
 
 
 (deff read-service-rows [#^ list rows]  ; defk にできない: 保存の読み直し(state file・durable KV — Program の外)が呼ぶ純粋な判断
@@ -214,7 +220,7 @@
 
 
 (defn #^ dict task-summary [#^ TaskRecord task]
-  "状態表示と保存に使う形(blob と結果は大きいので保存の時だけ別に足す)。切り離した task だけ呼び手の job id を足す
+  "状態表示と保存に使う形(結果は大きいので保存の時だけ別に足す)。切り離した task だけ呼び手の job id を足す
    (RemoteJob の task の形は以前と同じ)。"
   (| {"id" task.id "name" task.name "revision" task.revision "phase" task.phase
       "worker" task.worker "detail" task.detail "submittedMs" task.submitted-ms
@@ -365,14 +371,34 @@
   needs)
 
 
-(deff task-body-refusal [#^ dict body]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
-  {:pre [(: body dict)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "task(POST /tasks・PUT /detached)の本文が受けられない理由 — 旧い形の env(handler の組の import path)と needs の欠け。
-   task も Program の値 1 つで、handler は Program の中で並べる(ADR-DOE-CLUSTER-001 R1・R2・改訂 1 の J の 11)。"
-  (if (in "env" body)
-      (.format "旧い形の env {!r}(handler の組の import path)は受け付けない — handler は task の Program の中の with-handlers で並べる"
-               (get body "env"))
-      (needs-refusal body)))
+(deff task-body-refusal [#^ ClusterState state #^ dict body]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
+  {:pre [(: state ClusterState) (: body dict)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "task(POST /tasks・PUT /detached)の本文が受けられない理由 — 旧い形の env(handler の組の import path)・旧い形の blob(詰めた
+   Program を本文に載せる形)と versions(版の写し)・置き場のキー program の形と置き場に在るか・needs の欠け。task も Program の値 1 つで、handler は Program の
+   中で並べ(ADR-DOE-CLUSTER-001 R1・R2・改訂 1 の J の 11)、詰めた Program は service の宣言と同じく先に /programs/<sha> に置いて
+   本文は sha だけを運ぶ(R3b — service と task で運び方を分けない)。"
+  (let [program (.get body "program")]
+    (cond
+      (in "env" body)
+        (.format "旧い形の env {!r}(handler の組の import path)は受け付けない — handler は task の Program の中の with-handlers で並べる"
+                 (get body "env"))
+      (in "blob" body)
+        "旧い形の blob(詰めた Program を本文に載せる形)は受け付けない — 先に PUT /programs/<sha> で置き、本文は program に sha を書く"
+      ;; 版は Program と一緒に置いた版 1 つ(program-versions)。本文の写しは置いた版と食い違いうるので受けない(黙って捨てない)。
+      (in "versions" body)
+        "本文の versions は受け付けない — task の版は PUT /programs/<sha> で Program と一緒に置いた版を使う"
+      (not (and (isinstance program str) (PROGRAM-SHA.fullmatch program)))
+        (.format "program は詰めた Program の置き場のキー(64 桁の sha256): {!r}" program)
+      (not-in program state.programs)
+        (.format "program {} は置き場に無い — 先に PUT /programs/{} で置く" program program)
+      True (needs-refusal body))))
+
+
+(deff program-versions [#^ ClusterState state #^ str sha]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
+  {:pre [(: state ClusterState) (: sha str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "置き場に置いた Program の送り手の版(名の順の tuple)— task の版は詰めた Program と一緒に置いた版 1 つから取る(本文に版の写しを
+   運ばせない・置く worker の版と比べる — can-run-task)。呼ぶ前に task-body-refusal が置き場に在ることを確かめる。"
+  (component-versions-of (get state.programs sha "versions")))
 
 
 (deff needs-refusal [#^ dict body]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
@@ -654,8 +680,9 @@
 
 
 (defn #^ TaskRecord end-detached [#^ TaskRecord task #^ str phase #^ int now #^ str detail #^ (| str None) [result None]]
-  "純粋: 切り離した task を終わりの phase にする(終わりの phase は二度と変わらない)。blob は捨てて結果だけ持つ。"
-  (replace task :phase phase :finished-ms now :detail detail :result result :blob ""))
+  "純粋: 切り離した task を終わりの phase にする(終わりの phase は二度と変わらない)。置き場のキー program は持ったまま — 行が在る間
+   (結果の保持の間)は置き場の Program を参照し、行が消えたら program_policy.sweep-programs が猶予の後に消す(掃除の規則を 1 つにする)。"
+  (replace task :phase phase :finished-ms now :detail detail :result result))
 
 
 (defn #^ (| TaskRecord None) settle-detached [#^ TaskRecord task #^ int now]
@@ -745,7 +772,7 @@
 
 
 (defn #^ TaskRecord end-env-failed [#^ TaskRecord task #^ int now #^ str detail]
-  "純粋: 実行環境を準備できなかった task を終える(切り離した task は終わりの phase・blob を捨てる)。"
+  "純粋: 実行環境を準備できなかった task を終える(切り離した task は終わりの phase)。"
   (if task.detached
       (replace (end-detached task "env-failed" now detail) :failure-kind task.failure-kind :retryable task.retryable)
       (replace task :phase "env-failed" :finished-ms now :detail detail)))
@@ -769,8 +796,9 @@
   (setv boot (if (is boot None) (. (.get state.workers worker (WorkerInfo worker #() 0 0)) boot) boot))
   (lfor task (sorted (.values state.tasks) :key (fn [t] t.id))
         :if (and (in task.phase PLACED-PHASES) (= task.worker worker) (same-boot task boot))
+        ;; 詰めた Program は置き場のキー(sha)だけを運ぶ — worker が /programs/<sha> から取る(service の job と同じ・改訂 1 の F)。
         (| {"id" task.id "name" task.name "revision" task.revision
-            "versions" (dict task.versions) "blob" task.blob}
+            "versions" (dict task.versions) "program" task.program}
            ;; 切り離した task は、状態を失った coordinator が引き取れるだけの欄を持つ(worker が状態の報告に写す —
            ;; adopt-running-detached・2026-09-27)。
            (if task.detached {"detached" True "key" task.key "leaseMs" task.lease-ms "retainMs" task.retain-ms
@@ -981,10 +1009,10 @@
 
 
 ;; --- 状態を失った coordinator が、走っている切り離した task を止めさせない(2026-09-27) --------------------------
-;; worker は heartbeat の返事に載らない task の子 process を止め(worker_policy.plan-job — 宣言から消えた job)、その blob と結果の
-;; file を消す(handlers.CoordinatorLink.accept-tasks)。置き場を失った coordinator は task の行を持たないので、最初の返事で
+;; worker は heartbeat の返事に載らない task の子 process を止め(worker_policy.plan-job — 宣言から消えた job)、その結果の file と
+;; Program の cache を消す(handlers.CoordinatorLink.accept-tasks・accept-programs)。置き場を失った coordinator は task の行を持たないので、最初の返事で
 ;; 生きている worker の走っている切り離した task を全部止めさせ、呼び手の key も引けなくなっていた。worker は切り離した task の
-;; 状態の報告に、置かれた時の返事の行(blob を除く・key と lease と保持の長さを含む)を写して添える(欄 task)。coordinator は
+;; 状態の報告に、置かれた時の返事の行(Program の置き場のキー program・key と lease と保持の長さを含む)を写して添える(欄 task)。coordinator は
 ;; 行を持たない task/<id> を worker が走らせていると報告し、その写しを添えていれば、同じ行を引き取り(担い手 = その worker・
 ;; 世代 = その heartbeat の世代)、同じ heartbeat の返事に載せる(worker の宣言の spec が変わらない = 止めない)。
 ;; 引き取らない: 行を持つ task(終わった行を含む — 取り消し・lost は今までどおり止める)・写しの無い報告(旧い worker)・
@@ -1018,13 +1046,16 @@
             (not-in (.get status "phase") ADOPTABLE-PHASES))
     (return None))
   (setv id (cut row-name 5 None) key (.get echo "key") lease-ms (.get echo "leaseMs")
-        revision (.get echo "revision") needs (.get echo "needs" []))
+        revision (.get echo "revision") needs (.get echo "needs" []) program (.get echo "program"))
+  ;; 写しの program(置き場のキー)が無い・形の違う報告(blob を運んでいた旧い worker)は引き取らない。引き取った行は同じ sha を
+  ;; 参照する(担い手は cache の file を持っているので、状態を失った置き場に Program が無くても走り続ける)。
   (when (or (in id state.tasks) (!= (.get echo "id") id) (not (.get echo "detached"))
             (not (isinstance key str)) (not (isinstance lease-ms int))
             (not (isinstance revision str)) (not (isinstance needs list))
+            (not (and (isinstance program str) (PROGRAM-SHA.fullmatch program)))
             (any (gfor t (.values state.tasks) (= t.key key))))
     (return None))
-  (TaskRecord id (.get echo "name" "") "" revision
+  (TaskRecord id (.get echo "name" "") program revision
               (component-versions-of (.get echo "versions" {})) (capabilities-of needs "引き取る task の needs") lease-ms (+ now lease-ms) now
               :phase "assigned" :worker worker :started-ms now :detached True :key key :boot boot
               :retain-ms (int (.get echo "retainMs" 0)) :runtime-env (.get echo "runtimeEnv")
@@ -1141,7 +1172,8 @@
 
 
 (defn #^ tuple submit-task [#^ ClusterState state #^ dict body #^ int now [owner None]]
-  (setv refusal (or (format-refusal body) (runtime-env-refusal body) (task-body-refusal body)))
+  "POST /tasks: 呼び手の問い合わせに寿命を縛られた task の行を作る。本文は置き場に置いた Program の sha を運ぶ(task-body-refusal)。"
+  (setv refusal (or (format-refusal body) (runtime-env-refusal body) (task-body-refusal state body)))
   (when refusal (return #(state 400 {"error" refusal})))
   (setv lease-seconds (float (.get body "leaseSeconds" 15.0))
         open-count (len (lfor t (.values state.tasks) :if (or (= t.phase "queued") (in t.phase PLACED-PHASES)) t)))
@@ -1151,8 +1183,8 @@
     (return #(state 429 {"error" (.format "終わっていない task が上限 {} 本に達している" TASK-MAX-OPEN) "open" open-count})))
   (setv id (task-id state)
         lease-ms (int (* 1000 lease-seconds))
-        task (TaskRecord id (.get body "name" "") (get body "blob") (get body "revision")
-                         (component-versions-of (.get body "versions" {}))
+        task (TaskRecord id (.get body "name" "") (get body "program") (get body "revision")
+                         (program-versions state (get body "program"))
                          (request-needs body "task の needs")
                          lease-ms (+ now lease-ms) now
                          :runtime-env (.get body "runtimeEnv")))

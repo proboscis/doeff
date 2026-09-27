@@ -40,6 +40,7 @@
 
 
 (import tests.careful_rig [FIXTURES HY LOCK DEADLINE-SECONDS JOB-ENV git push-commit remote-repo url-of app-files Rig make-rig declare fake-log count-log downloads prepare run-task])
+(import tests.program_rows [SAMPLE-TASK-PROGRAM])
 
 ;; --- 筋書き ---------------------------------------------------------------------------------
 
@@ -307,7 +308,7 @@
   (assert (= view.state CodeState.READY) view)
   ;; task が来た最初の拍で子を起こす(PrepareEnv を挟まない = 準備が task の待ちに入らない)
   (val tasks (/ rig.state "tasks"))
-  (val spec (task-spec {"id" "t8" "env" JOB-ENV "revision" "" "versions" (current-versions) "blob" "" "runtimeEnv" declared}
+  (val spec (task-spec {"id" "t8" "revision" "" "versions" (current-versions) "program" SAMPLE-TASK-PROGRAM "runtimeEnv" declared}
                        tasks))
   (val first (plan 1 #(spec) (WorldView (.observe rig.envs) #()) {} policy :warm #(warm)))
   (assert (= first #((StartJob spec 1 view.path))) first)
@@ -317,7 +318,7 @@
   (<- a2 str (push-commit rig.app (! (app-files 2 LOCK)) "app 2"))
   (<- cold RuntimeEnv (declare rig a2 l1 LOCK))
   (<- cold-declared dict (runtime-env->json cold))
-  (val cold-spec (task-spec {"id" "t9" "env" JOB-ENV "revision" "" "versions" (current-versions) "blob" ""
+  (val cold-spec (task-spec {"id" "t9" "revision" "" "versions" (current-versions) "program" SAMPLE-TASK-PROGRAM
                              "runtimeEnv" cold-declared}
                             tasks))
   (val cold-first (plan 2 #(cold-spec) (WorldView (.observe rig.envs) #()) {} policy :warm #(warm)))

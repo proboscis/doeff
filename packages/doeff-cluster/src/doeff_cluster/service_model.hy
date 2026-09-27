@@ -19,13 +19,12 @@
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
-(import hashlib)
 (import importlib)
 (import json)
 (import doeff [DoExpr run])
 (import .cluster_model [capabilities-of])
 (import .readiness_model [readiness-refusal])
-(import .remote_model [encode-program current-versions])
+(import .remote_model [encode-program current-versions program-sha])
 (import .runtime_env_model [RuntimeEnv EnvVar runtime-env->json])
 
 (val UPDATE-FORMS #("recreate" "handoff"))
@@ -161,7 +160,7 @@
       (raise (ValueError (.format "job {} の :environ {} は実行環境の env-vars と同じ名 — 子の環境変数はどちらか 1 つで宣言する"
                                   j.name clash))))
     (setv blob (encode-program j.program)
-          sha (.hexdigest (hashlib.sha256 (.encode blob "ascii")))
+          sha (program-sha blob)
           identity (identity-of j.call (.format "job {}" j.name)))
     (setv (get programs sha) blob)
     (.append rows

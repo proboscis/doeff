@@ -1,10 +1,11 @@
-;;; doeff worker の composition root。宣言(file か coordinator)を読み、job と task を子 process として管理する。
+;;; doeff worker の composition root。coordinator から job と task を受け、子 process として管理する。
 ;;;
-;;;   hy -m doeff_cluster.main --desired desired.json --repo . --state-dir DIR
 ;;;   hy -m doeff_cluster.main --coordinator URL --name NAME [--provides a,b] [--exclusive a] --repo REPO --state-dir DIR
 ;;;
 ;;; --provides = この worker が提供する能力の名(`,` で並べる)・--exclusive = 専用の能力(provides の一部 — このどれかを要る job / task
 ;;; だけを受ける)。置き場所の名ではなく能力を名乗る(ADR-DOE-CLUSTER-001 R4b)。旧い --labels は受け付けない。
+;;; worker が job を受けるのは coordinator からだけ — 宣言の file から生の entry と args の job を直に起こす口(旧い --desired)は無い
+;;; (job は Program の値 1 つ・ADR-DOE-CLUSTER-001 R1・R7)。
 (require doeff-hy.macros [defk val])
 (import argparse)
 (import os)
@@ -15,8 +16,8 @@
 (import doeff_core_effects.handlers [await-handler slog-handler])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [async-time-handler])
-(import .handlers [CodeStore EnvStore CoordinatorLink ProcessHost ProbeStore coordinator-desired desired-file local-host
-                   status-file status-to-coordinator stop-flag lease-release-coordinator lease-release-none])
+(import .handlers [CodeStore EnvStore CoordinatorLink ProcessHost ProbeStore coordinator-desired local-host
+                   status-file status-to-coordinator stop-flag lease-release-coordinator])
 (import .remote_model [current-versions])
 (import .cluster_model [ClusterTiming capabilities-of])
 (import .worker [run-worker])
@@ -45,10 +46,9 @@
 
 (defn main []
   (setv parser (argparse.ArgumentParser :description "doeff worker(実験)"))
-  (setv source (.add-mutually-exclusive-group parser :required True))
-  (.add-argument source "--desired" :help "job の宣言(JSON の file)")
-  (.add-argument source "--coordinator" :help "job を割り当てる coordinator の URL。`,` で並べると前から順に試す(Mac は LAN・tailnet の順)")
-  (.add-argument parser "--name" :help "coordinator に名乗る worker の名前")
+  (.add-argument parser "--coordinator" :required True
+                 :help "job を割り当てる coordinator の URL。`,` で並べると前から順に試す(Mac は LAN・tailnet の順)")
+  (.add-argument parser "--name" :required True :help "coordinator に名乗る worker の名前")
   (.add-argument parser "--provides" :default "" :help "提供する能力の名(a,b)")
   (.add-argument parser "--exclusive" :default "" :help "専用の能力(provides の一部・a,b)— このどれかを要る仕事だけを受ける")
   (.add-argument parser "--node" :default "" :help "この worker の置かれた k8s の node の名(coordinator が node の label から能力を導く)")
@@ -87,16 +87,14 @@
   (setv layout (CodeLayout :import-roots (tuple (gfor r (.split args.import-roots ",") :if r r))
                            :overlay-path (or args.overlay-path None)
                            :base-paths (tuple (gfor p (.split args.base-pythonpath ",") :if p p))))
-  (when (and args.coordinator (not args.name))
-    (.error parser "--coordinator には --name が要る"))
   (setv state-dir (Path args.state-dir)
         hy-command (str (/ (. (Path sys.executable) parent) "hy"))
         codes (CodeStore args.repo (str (/ state-dir "code")) (if args.no-warm None hy-command) :layout layout)
         ;; 子 process(service の env)が coordinator と自分の名を知る口。資格は渡さない。
         host (ProcessHost (str (/ state-dir "logs")) hy-command
                           (| (run (passed-environment args.pass-env (dict os.environ)))
-                             {"DOEFF_WORKER_NAME" (or args.name "local")
-                              "DOEFF_WORKER_COORDINATOR" (or args.coordinator "")})
+                             {"DOEFF_WORKER_NAME" args.name
+                              "DOEFF_WORKER_COORDINATOR" args.coordinator})
                           :layout layout :uv args.uv)
         ;; 実行環境(runtime env)の root の準備(別の process・worker は再起動しない)。
         envs (EnvStore (str state-dir) hy-command :repo-keys args.repo-keys :uv args.uv :min-free-bytes args.env-min-free)
@@ -107,16 +105,14 @@
   (defn on-signal [signum frame] (setv stop.requested True))
   (signal.signal signal.SIGTERM on-signal)
   (signal.signal signal.SIGINT on-signal)
-  (setv source-handlers
-    (if args.coordinator
-        (do (setv link (CoordinatorLink args.coordinator args.name provides args.capacity
-                                        (int (* args.fence 1000))
-                                        :task-dir (str (/ state-dir "tasks")) :versions (current-versions)
-                                        :tools (parse-labels args.tools) :envs envs :exclusive exclusive :node args.node))
-            [(coordinator-desired link) (status-to-coordinator link) (lease-release-coordinator link)])
-        [(desired-file args.desired) lease-release-none]))
+  (setv link (CoordinatorLink args.coordinator args.name provides args.capacity
+                              (int (* args.fence 1000))
+                              :task-dir (str (/ state-dir "tasks")) :versions (current-versions)
+                              :tools (parse-labels args.tools) :envs envs :exclusive exclusive :node args.node))
   (setv program (run-worker policy))
-  (for [h [(local-host codes host probes envs) #* source-handlers (status-file (str (/ state-dir "status.json")) codes)
+  (for [h [(local-host codes host probes envs)
+           (coordinator-desired link) (status-to-coordinator link) (lease-release-coordinator link)
+           (status-file (str (/ state-dir "status.json")) codes)
            (stop-flag stop) slog-handler (async-time-handler) (await-handler)]]
     (setv program (h program)))
   (print "worker: 起動します" :file sys.stderr :flush True)

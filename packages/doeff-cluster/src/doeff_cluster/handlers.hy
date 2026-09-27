@@ -1,8 +1,8 @@
-;; worker の実 I/O。宣言の file・コードの展開(git archive)・子 process・状態の file・停止信号。
+;; worker の実 I/O。coordinator との連絡・コードの展開(git archive)・子 process・状態の file・停止信号。
 ;; どれもループを塞がない: 展開と子 process は Popen で起動し、結果は ObserveWorld で観測する。
 (require doeff-hy.macros [defhandler deff <-])
 (require doeff-hy.record [defrecord])
-(import hashlib json os re shutil signal subprocess sys tempfile time uuid)
+(import json os re shutil signal subprocess sys tempfile time uuid)
 (import enum [Enum])
 (import typing [IO])
 (import dataclasses [dataclass replace])
@@ -13,6 +13,7 @@
 (import doeff [run])
 (import .cluster_model [PROTOCOL-FORMAT])
 (import .host_contract [HOST-CONTRACT])
+(import .remote_model [program-sha])
 (import .runtime_env_model [runtime-env-of-json env-key current-platform EnvFailure EnvFailureKind])
 (import .env_prepare [ENV-MARKER])
 (import .env_upkeep [RootInfo PrepareLimits sweep-choice prepare-overdue env-capacity SWEEP-FLOOR-RATIO WHEEL-UNUSED-SECONDS])
@@ -34,7 +35,8 @@
 
 
 (defn #^ JobSpec declared-job-spec [#^ dict job]  ; defk にできない: 宣言の読み(Program の外の I/O の道具)が呼ぶ
-  "宣言の file の 1 行・heartbeat の返事の job 1 本 → worker が起動する形(runtimeEnv を持つ service は env の root で起こす)。"
+  "heartbeat の返事の job 1 本 → worker が起動する形(runtimeEnv を持つ service は env の root で起こす)。worker が job を受けるのは
+   coordinator からだけ(宣言の file を直に読む口は無い — ADR-DOE-CLUSTER-001 R1)。"
   (setv #(revision runtime key) (env-placement (.get job "runtimeEnv") (get job "revision")))
   (JobSpec (get job "name") (get job "entry") (tuple (.get job "args" [])) revision
            :once (.get job "once" False) :placement (.get job "placement")
@@ -53,18 +55,16 @@
   (/ program-dir (+ sha ".json")))
 
 
-(defn #^ (| DesiredJobs DesiredUnreadable) parse-desired [#^ str text]
-  (try
-    (setv data (json.loads text))
-    (DesiredJobs (tuple (gfor job (get data "jobs") (declared-job-spec job))))
-    (except [error Exception]
-      (DesiredUnreadable f"宣言を読めません: {(repr error)}"))))
-
-(defhandler desired-file [#^ str path]
-  (ReadDesired []
-    (resume (try
-      (parse-desired (.read-text (Path path) :encoding "utf-8"))
-      (except [error OSError] (DesiredUnreadable f"宣言の file を開けません: {(repr error)}"))))))
+(deff write-program-file [#^ Path program-dir #^ str sha #^ str blob #^ dict versions]  ; defk にできない: worker の I/O の道具(CoordinatorLink)が呼ぶ
+  {:pre [(: program-dir Path) (: sha str) (: blob str) (: versions dict)] :post [(: % Path)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "coordinator の /programs/<sha> から取った詰めた Program を、子の入口(job_entry の read-program)が読む形の cache の file に書くため。
+   形の定義点はここ 1 つ({\"blob\" \"versions\"} — service と task で同じ)。書きかけを子に見せないよう rename で置く。"
+  (let [path (program-file program-dir sha)
+        tmp (Path (+ (str path) ".tmp"))]
+    (.mkdir program-dir :parents True :exist-ok True)
+    (.write-text tmp (json.dumps {"blob" blob "versions" versions}) :encoding "utf-8")
+    (os.replace tmp path)
+    path))
 
 (setv TOOL (str (/ (. (.resolve (Path __file__)) parent) "code_prepare.hy")))
 
@@ -887,14 +887,16 @@
 
 
 (defn #^ JobSpec task-spec [#^ dict task #^ Path task-dir]
-  "coordinator が割り当てた task 1 本 → 1 度だけ走らせる job。blob と結果はこの worker の file(名前は task の id で決まる)。
+  "coordinator が割り当てた task 1 本 → 1 度だけ走らせる job。結果はこの worker の file(名前は task の id で決まる)。詰めた Program は
+   service の job と同じく置き場のキー program(sha)で持ち、CoordinatorLink.accept-programs が /programs/<sha> から cache へ取り、
+   ProcessHost が `--program <cache の file>` を足す(入口は `task --result <file> --program <file>` — 版は file の中の versions)。
    実行環境の task(runtimeEnv を持つ)は、env のキー(この worker の platform で計算)を root の置き場の鍵にする(env-placement)。"
   (setv id (get task "id"))
   (setv #(revision runtime key) (env-placement (.get task "runtimeEnv") (get task "revision")))
   (JobSpec (+ "task/" id) JOB-ENTRY
-           #("task" "--blob" (str (/ task-dir f"{id}.blob")) "--result" (str (/ task-dir f"{id}.result"))
-             "--versions" (json.dumps (get task "versions") :sort-keys True))
-           revision :once True :detached (bool (.get task "detached" False)) :runtime-env runtime :env-key key))
+           #("task" "--result" (str (/ task-dir f"{id}.result")))
+           revision :once True :detached (bool (.get task "detached" False)) :runtime-env runtime :env-key key
+           :program (get task "program")))
 
 
 (defclass CoordinatorLink []
@@ -940,39 +942,50 @@
       (os.replace tmp boot-file)))
 
   (defn #^ tuple accept-tasks [self #^ list tasks]
+    "heartbeat の返事の task の行 → 1 度だけ走らせる job。task ごとに、その Program の置き場のキーを印の file <id>.program に残し
+     (返事から外れた task の Program の cache を後で消すため — accept-programs)、返事から外れた task の結果の file を消す(この worker が
+     書いた物だけ)。切り離した task は返事の行をそのまま写しとして持つ(状態の報告に添える — 欄 task)。"
     (.mkdir self.task-dir :parents True :exist-ok True)
     (setv ids (sfor t tasks (get t "id")))
     (for [task tasks]
-      (setv blob (/ self.task-dir (+ (get task "id") ".blob")))
-      (when (not (.exists blob))
-        (setv tmp (Path (+ (str blob) ".tmp")))
-        (.write-text tmp (get task "blob") :encoding "ascii")
-        (os.replace tmp blob)))
+      (setv mark (/ self.task-dir (+ (get task "id") ".program")))
+      ;; 同じ id の印が別の sha を指していれば書き直す(印は cache の掃除にだけ使う — 子へ渡す file は返事の行の sha で決まる)。
+      (when (!= (if (.exists mark) (.read-text mark :encoding "ascii") None) (get task "program"))
+        (.write-text mark (get task "program") :encoding "ascii")))
+    ;; .blob = 詰めた Program を行に持っていた版の worker が書いた file(置き場 /programs の前)— 残っていれば一緒に消す。
     (for [entry (.iterdir self.task-dir)]
       (when (and (in entry.suffix #(".blob" ".result")) (not-in entry.stem ids))
         (.unlink entry :missing-ok True)))
-    (setv self.task-echo (dfor task tasks :if (.get task "detached")
-                               (get task "id") (dfor #(k v) (.items task) :if (!= k "blob") k v)))
+    (setv self.task-echo (dfor task tasks :if (.get task "detached") (get task "id") (dict task)))
     (tuple (gfor task tasks (task-spec task self.task-dir))))
 
-  (defn #^ None accept-programs [self #^ tuple jobs]
-    "宣言の Program の job のうち、cache に無い詰めた Program を coordinator の /programs/<sha> から取って書く(改訂 1 の F)。
-     中身の sha256 がキーと合わない物は書かない。取れなければ書かずに次の拍で試し直す(子は file が無いので起動の時に理由つきで落ちる)。"
+  (defn #^ None accept-programs [self #^ tuple specs]
+    "宣言の job と task のうち、cache に無い詰めた Program を coordinator の /programs/<sha> から取って書く(改訂 1 の F — service と
+     task で同じ仕組み)。中身の sha256 がキーと合わない物は書かない。取れなければ書かずに次の拍で試し直す(子は file が無いので起動の
+     時に理由つきで落ちる — task は結果の file に RemoteJobFailed)。返事から外れた task の Program の cache は、今の job と task の
+     どれも参照していなければ消す(task ごとの印 <id>.program から引く — service の job の Program は消さない)。"
     (.mkdir self.program-dir :parents True :exist-ok True)
-    (for [sha (sorted (sfor j jobs :if j.program j.program))]
+    (setv wanted (sfor s specs :if s.program s.program))
+    (for [sha (sorted wanted)]
       (setv path (program-file self.program-dir sha))
       (when (not (.exists path))
         (try
           (setv response (.request self.endpoint "GET" (+ "/programs/" sha)))
           (.raise-for-status response)
           (setv body (.json response))
-          (when (!= (.hexdigest (hashlib.sha256 (.encode (get body "blob") "ascii"))) sha)
+          (when (!= (program-sha (get body "blob")) sha)
             (raise (ValueError (+ "中身の sha256 がキーと合わない: " sha))))
-          (setv tmp (Path (+ (str path) ".tmp")))
-          (.write-text tmp (json.dumps {"blob" (get body "blob") "versions" (.get body "versions" {})}) :encoding "utf-8")
-          (os.replace tmp path)
+          (write-program-file self.program-dir sha (get body "blob") (.get body "versions" {}))
           (except [error Exception]
-            (print (.format "worker: Program {} を取れない: {!r}" sha error) :file sys.stderr :flush True))))))
+            (print (.format "worker: Program {} を取れない: {!r}" sha error) :file sys.stderr :flush True)))))
+    (setv current (sfor s specs :if (.startswith s.name "task/") (cut s.name 5 None)))
+    (when (.exists self.task-dir)
+      (for [mark (.glob self.task-dir "*.program")]
+        (when (not-in mark.stem current)
+          (setv sha (.strip (.read-text mark :encoding "ascii")))
+          (when (and sha (not-in sha wanted))
+            (.unlink (program-file self.program-dir sha) :missing-ok True))
+          (.unlink mark :missing-ok True)))))
 
   (defn #^ dict env-body [self]
     "heartbeat に足す root の名乗り(実行環境を扱う worker だけ): platform・準備済み / 準備中 / 失敗の root・disk の条件。"
@@ -1024,8 +1037,8 @@
       (when (and timing (in "fence_ms" timing))
         (setv self.fence-ms (int (get timing "fence_ms"))))
       (setv self.last-jobs (tuple (gfor job (get body "jobs") (declared-job-spec job))))
-      (.accept-programs self self.last-jobs)
       (setv self.last-tasks (.accept-tasks self (.get body "tasks" [])))
+      (.accept-programs self (+ self.last-jobs self.last-tasks))
       (setv self.last-warm (.accept-warm self (.get body "warm" [])))
       (DesiredJobs (+ self.last-jobs self.last-tasks) :warm self.last-warm)
       (except [error Exception]
@@ -1106,10 +1119,6 @@
 
 (defhandler lease-release-coordinator [#^ CoordinatorLink link]
   (ReleaseLeases [instance] (release-leases link instance) (resume None)))
-
-(defhandler lease-release-none
-  ;; 宣言の file で動く worker(coordinator も共有の保存も無い)は返す先が無い。
-  (ReleaseLeases [instance] (resume None)))
 
 (defhandler stop-flag [state]
   (WorkerStopRequested [] (resume state.requested)))

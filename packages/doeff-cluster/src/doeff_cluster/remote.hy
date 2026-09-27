@@ -3,7 +3,7 @@
 (require doeff-hy.macros [defhandler defk <-])
 (import json)
 (import time)
-(import .coordinator_http [CoordinatorEndpoint send-idempotent REPLY-SECONDS])
+(import .coordinator_http [CoordinatorEndpoint send-idempotent put-program REPLY-SECONDS IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_core_effects.scheduler [Spawn Wait])
 (import doeff_time [Delay])
 (import doeff [run])
@@ -30,8 +30,12 @@
     (setv self.revision revision self.runtime-env runtime-env self.endpoint (CoordinatorEndpoint url timeout 4)))
 
   (defn #^ str submit [self #^ str blob #^ frozenset needs #^ dict versions #^ str name #^ float lease-seconds]
+    "task を 1 本出す: 詰めた Program を版と一緒に置き場 /programs/<sha> に先に置き、本文は sha だけを運ぶ(service の宣言と同じ運び方 —
+     ADR-DOE-CLUSTER-001 R3b)。答え = coordinator の振った task の id。"
+    (setv #(sha put) (put-program self.endpoint blob versions IDEMPOTENT-DEADLINE-SECONDS))
+    (.raise-for-status put)
     (setv response (.request self.endpoint "POST" "/tasks"
-      :json (| {"blob" blob "versions" versions "revision" self.revision
+      :json (| {"program" sha "revision" self.revision
                 "needs" (sorted needs) "name" name "leaseSeconds" lease-seconds "format" PROTOCOL-FORMAT}
                (if (is self.runtime-env None) {} {"runtimeEnv" (run (runtime-env->json self.runtime-env))}))))
     (.raise-for-status response)
