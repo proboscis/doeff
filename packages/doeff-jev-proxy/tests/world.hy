@@ -63,14 +63,14 @@
   (val script (Script :calls [] :answer answer :delay delay))
   (<- handlers (world-handlers path script))
   (run (scheduled (with_handlers (+ [(await_handler) try_handler] handlers) (PrepareStore))))
-  (World :run (proxy-runner handlers) :script script :path path))
+  (World :run (proxy-runner (fn [] handlers)) :script script :path path))
 
 
 (defk reopen-world [world]
   {:pre [(: world World)] :post [(: % World)]}
   "同じ置き場の file の上に答え手の組を作り直すため(Pod の入れ替えと同じ)。"
   (<- handlers (world-handlers world.path world.script))
-  (World :run (proxy-runner handlers) :script world.script :path world.path))
+  (World :run (proxy-runner (fn [] handlers)) :script world.script :path world.path))
 
 
 (defk json-bytes [document]

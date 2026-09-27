@@ -50,6 +50,8 @@
   "この口の組で答える BaseHTTPRequestHandler の class を作る。"
   (defclass ProxyRequestHandler [BaseHTTPRequestHandler]
     (setv protocol-version "HTTP/1.1")
+    ;; 見出しと本文は別の write になる — 遅い網(tailnet の中継)で Nagle が本文の小さな segment を 1 往復待たせないように切る。
+    (setv disable-nagle-algorithm True)
 
     (defn #^ None reply [self #^ ProxyReply answer]
       "答えを書く。"
