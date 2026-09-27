@@ -11,6 +11,7 @@ class HttpRequest(EffectBase):
     timeout_seconds: float
     max_retries: int
     follow_redirects: bool
+    failures_as_values: bool
 
     def __init__(
         self,
@@ -23,6 +24,7 @@ class HttpRequest(EffectBase):
         timeout_seconds: float = ...,
         max_retries: int = ...,
         follow_redirects: bool = ...,
+        failures_as_values: bool = ...,
     ) -> None: ...
 
     def __repr__(self) -> str: ...
@@ -55,3 +57,10 @@ class HttpError(Exception):
     body_snippet: str
 
     def __init__(self, status: int, url: str, body_snippet: str) -> None: ...
+
+
+class HttpFailed:
+    url: str
+    detail: str
+
+    def __init__(self, *, url: str, detail: str) -> None: ...
