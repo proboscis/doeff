@@ -134,10 +134,12 @@
   (setv #^ (get tuple #(str ...)) input-refs #()))
 
 (defclass [(dataclass :frozen True)] Failed []
-  "CLI が誤りで終えた手番。detail = CLI が名乗った文(無ければ subtype)・api-error-status = API の誤りの HTTP status。"
+  "CLI が誤りで終えた手番。detail = CLI が名乗った文(無ければ subtype)・api-error-status = API の誤りの HTTP status・
+   usage = 誤りの前に消費した token(result の行が名乗った物 — 注入の断りのように result の行が無い終わりは空の Usage)。"
   (#^ str detail)
   (setv #^ (| int None) api-error-status None)
   (setv #^ str terminal-reason "")
+  (setv #^ Usage usage (field :default-factory Usage))
   (setv #^ (get tuple #(str ...)) input-refs #()))
 
 (defclass [(dataclass :frozen True)] Interrupted []

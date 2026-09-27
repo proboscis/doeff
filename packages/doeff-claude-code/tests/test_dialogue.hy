@@ -67,6 +67,14 @@
                               :input-refs #("msg-1")))))
 
 
+(deftest test-a-failed-result-carries-the-tokens-it-used
+  ;; 誤りで終えた手番も、result の行が名乗った usage を運ぶ(max_turns の打ち切りなどで消費した token を捨てない — agora-redesign #766)。
+  (val capped {"type" "result" "subtype" "error_max_turns" "is_error" True "result" ""
+               "usage" {"input_tokens" 5 "output_tokens" 6 "cache_read_input_tokens" 7}})
+  (val read (read-record (started) capped))
+  (assert (= read.end.usage (Usage :input-tokens 5 :output-tokens 6 :cache-read-input-tokens 7)) read.end))
+
+
 (deftest test-an-interrupt-with-unread-input-uses-control-request-and-continues
   ;; 読まれていない注入が在り interrupt_receipt_v1 を名乗った CLI: control_request → 答えの still_queued の注入が生き残り、
   ;; 手番は Interrupted で終わって同じ process の次の手番(continues)へ。次の result で本当に閉じる。

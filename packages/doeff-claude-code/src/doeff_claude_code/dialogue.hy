@@ -133,6 +133,7 @@
       (Failed :detail (or (.strip result.result-text) result.subtype "error")
               :api-error-status result.api-error-status
               :terminal-reason result.terminal-reason
+              :usage result.usage
               :input-refs refs)
       (Completed :result-text result.result-text
                  :usage result.usage

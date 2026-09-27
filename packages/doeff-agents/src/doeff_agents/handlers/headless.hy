@@ -14,7 +14,7 @@
 ;;;   FollowUpEffect(mode = INJECT)    → ClaudeInjectInput(走っている手番に足す)
 ;;;   InterruptEffect                  → ClaudeInterruptTurn(手番だけを止める。待たせた入力は次の手番で走る)
 ;;;   EventsEffect / AwaitResultEffect / MonitorEffect → ClaudeReadTurnEvents(行を層 3 の出来事と手番の終わりに写す)
-;;;   Completed.usage                  → AgentTurnCompleted.usage(AgentTurnUsage — cache_creation → cache_write・cache_read → cache_read。
+;;;   Completed.usage / Failed.usage   → AgentTurnCompleted.usage / AgentTurnFailed.usage(AgentTurnUsage — cache_creation → cache_write・cache_read → cache_read。
 ;;;                                      CLI が名乗らない欄は None のまま・4 欄とも無ければ usage = None)
 ;;;   StopEffect / StopSessionEffect / ReleaseSessionEffect → ClaudeCloseSession(待たせた入力は discarded の運命で閉じる)
 ;;;   CaptureEffect / AttachAgentSessionEffect → 画面が無いので AgentCapabilityUnsupportedError
@@ -149,7 +149,8 @@
       (AgentTurnCompleted :result-text end.result-text :input-refs end.input-refs :resume-from context-id
                           :usage (usage-of end.usage))
     (isinstance end Failed)
-      (AgentTurnFailed :detail end.detail :input-refs end.input-refs :resume-from context-id)
+      (AgentTurnFailed :detail end.detail :input-refs end.input-refs :resume-from context-id
+                       :usage (usage-of end.usage))
     (isinstance end Interrupted)
       (AgentTurnInterrupted :surviving-refs end.surviving-refs :dropped-refs end.dropped-refs :resume-from context-id)
     (isinstance end BackendLost)

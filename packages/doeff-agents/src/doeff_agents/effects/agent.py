@@ -160,11 +160,16 @@ class AgentTurnCompleted:
 
 @dataclass(frozen=True, kw_only=True)
 class AgentTurnFailed:
-    """The agent runtime ended the turn with an error."""
+    """The agent runtime ended the turn with an error.
+
+    ``usage`` = the tokens the turn used before the error (``None`` when the
+    runtime reports none).
+    """
 
     detail: str
     input_refs: tuple[str, ...] = ()
     resume_from: str
+    usage: AgentTurnUsage | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
