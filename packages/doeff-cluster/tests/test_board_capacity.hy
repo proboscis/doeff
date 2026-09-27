@@ -1,5 +1,5 @@
 ;;; 盤の掃除と容量(2026-09-25): 期限つきの行(ttlSeconds)・上限を越える書きの断り・task の上限・沈黙した worker を忘れる。
-(require doeff-hy.macros [deftest])
+(require doeff-hy.macros [deftest <- val])
 (import dataclasses [replace])
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming Request WorkerInfo TaskRecord])
 (import doeff_cluster.api_policy [respond tick])
@@ -7,6 +7,7 @@
 (import doeff_cluster.cluster_policy [BOARD-MAX-VALUE-BYTES BOARD-MAX-ROWS BOARD-MAX-BYTES TASK-MAX-OPEN WORKER-FORGET-MS
                           board-usage value-size])
 (import doeff_cluster.metrics_policy [metrics-text])
+(import tests.program_rows [SAMPLE-RUN SAMPLE-TASK-PROGRAM program-placed])
 
 (setv T (ClusterTiming))
 
@@ -86,25 +87,30 @@
 
 
 (deftest test-tasks-have-a-lease-cap-and-an-open-count-cap
-  (setv body {"blob" "b" "revision" "r" "needs" ["net"] "leaseSeconds" 7200})
-  (setv #(_ status _) (call (ClusterState) "POST" "/tasks" body))
-  (assert (= status 400))
+  ;; task の本文は置き場に置いた詰めた Program のキーを運ぶ(置き場に無い sha の task は受けない — 上限の検の前に置いておく)。
+  (<- empty tuple (program-placed (ClusterState) {} :now 1000))
+  (val body {"program" (get empty 1) "revision" "r" "needs" ["net"] "leaseSeconds" 7200})
+  (val capped (call (get empty 0) "POST" "/tasks" body))
+  (assert (= (get capped 1) 400) capped)
+  (assert (in "leaseSeconds" (get capped 2 "error")) capped)
   ;; 終わっていない task が上限に達した盤(置ける worker はあるが空きが無い = 待っている)
-  (setv queued (dfor i (range TASK-MAX-OPEN) (.format "t{}" i)
-                     (TaskRecord (.format "t{}" i) "n" "b" "r" #() #() 60000 999999999 0)))
-  (setv s (ClusterState :tasks queued :next-task (+ TASK-MAX-OPEN 1) :workers {"a" (WorkerInfo "a" #("net") 0 1000)}))
-  (setv #(_ status reply) (call s "POST" "/tasks" (| body {"leaseSeconds" 60})))
-  (assert (= status 429) reply)
+  (val queued (dfor i (range TASK-MAX-OPEN) (.format "t{}" i)
+                    (TaskRecord (.format "t{}" i) "n" SAMPLE-TASK-PROGRAM "r" #() #() 60000 999999999 0)))
+  (<- full tuple (program-placed (ClusterState :tasks queued :next-task (+ TASK-MAX-OPEN 1)
+                                               :workers {"a" (WorkerInfo "a" #("net") 0 1000)})
+                                 {} :now 1000))
+  (val over (call (get full 0) "POST" "/tasks" (| body {"leaseSeconds" 60})))
+  (assert (= (get over 1) 429) over)
   ;; 終わった task は数えない
-  (setv done (replace s :tasks (dfor #(k t) (.items queued) k (replace t :phase "finished"))))
-  (setv #(_ status _) (call done "POST" "/tasks" (| body {"leaseSeconds" 60})))
-  (assert (= status 200)))
+  (val done (replace (get full 0) :tasks (dfor #(k t) (.items queued) k (replace t :phase "finished"))))
+  (val fits (call done "POST" "/tasks" (| body {"leaseSeconds" 60})))
+  (assert (= (get fits 1) 200) fits))
 
 
 (deftest test-a-worker-silent-for-a-week-without-work-is-forgotten
   (setv old (WorkerInfo "newmac" #("net") 10 0) busy (WorkerInfo "atlas" #("net") 10 0))
   (setv s (ClusterState :workers {"newmac" old "atlas" busy}))
-  (setv #(s _ _) (call s "PUT" "/jobs" {"jobs" [{"name" "j" "entry" "m" "args" [] "revision" "r" "needs" ["net"] "pin" "atlas"}]} 1000))
+  (setv #(s _ _) (call s "PUT" "/jobs" {"jobs" [{"name" "j" "run" SAMPLE-RUN "revision" "r" "needs" ["net"] "pin" "atlas"}]} 1000))
   ;; atlas は置き先を持つので忘れない(置き先は移し替えの規則が扱う)
   (assert (in "j" s.placements))
   (setv later (tick s (+ WORKER-FORGET-MS 1) T))

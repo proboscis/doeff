@@ -6,7 +6,13 @@
 ;;   - 起きて JOB-START 後から毎拍 ReportReady(真)を送る。lease を持てば role active、持てなければ role standby(待機の拍)。
 ;;   - lease は 1 つ。持ち主が終わると、worker の ReleaseLeases で返る(期限を待たない)。空いた lease は次の拍に待機の process が取る。
 ;;   - TERM を受けた process は次の拍で終わる(本番の process と同じく SIGTERM で即座に終わる)。
-(require doeff-hy.macros [deftest])
+;;   - 入口の検め(Program の job の service は起こす前に検める)は通る。
+;;
+;; 宣言の口は baseFrom と overlay を受けない(Program の job は詰めた commit で解く — ADR-DOE-CLUSTER-001・改訂 1 の E。生の entry の
+;; job も受けない — R1・R7)。追随の係(base_follow_policy)の判断を確かめる筋書きは、Program の job を宣言してから coordinator の内部の値
+;; (ClusterJob.base-from)へ追随の元を直に置く。追随の係と baseFrom・overlay の欄の撤去は後の段。宣言の口の断りは
+;; test-declarations-cannot-carry-base-from-or-overlay。
+(require doeff-hy.macros [deftest val])
 (import dataclasses [replace])
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
@@ -20,7 +26,9 @@
 (import doeff_cluster.cluster_policy [still-live-somewhere])
 (import doeff_cluster.base_follow_policy [follow-bases image-entry BASE-FOLLOW-ACTOR])
 (import doeff_cluster.worker_model [JobSpec CodeView CodeState ProcessView WorldView WorkerPolicy JobRecord
-                        PrepareCode StartJob SignalJob ReapJob RetireJob ReleaseLeases StopStage code-key spec-hash])
+                        PrepareCode StartJob SignalJob ReapJob RetireJob ReleaseLeases StopStage ProbeEntry ProbeView ProbeState
+                        ForgetProbes code-key spec-hash])
+(import tests.program_rows [SAMPLE-RUN])
 (import doeff_cluster.worker_policy [plan records-after statuses])
 
 (setv T (ClusterTiming))
@@ -32,9 +40,10 @@
 (setv SHA1 (* "1" 40) SHA2 (* "2" 40) WRAP "w0")
 (setv IMG1 "zeus:5000/app:20260924-1111111" IMG2 "zeus:5000/app:20260925-2222222")
 (setv JOB-START 2000)
-(setv SERVICE {"revision" WRAP "needs" ["net"] "entry" "m" "args" [] "replicas" 1 "readiness" {"windowSeconds" 10}
-               "update" "handoff"
-               "baseFrom" {"kind" "Deployment" "namespace" "prod" "name" "app-writer" "container" "app-writer"}})
+(setv SERVICE {"revision" WRAP "needs" ["net"] "run" SAMPLE-RUN "replicas" 1 "readiness" {"windowSeconds" 10}
+               "update" "handoff"})
+;; 追随の元(本番の Deployment)。宣言の口では受けないので、coordinator の内部の値へ直に置く(Sim の組み立て)。
+(val BASE-FROM {"kind" "Deployment" "namespace" "prod" "name" "app-writer" "container" "app-writer"})
 
 
 (defn deployment [image]
@@ -49,11 +58,14 @@
           self.images {IMG1 {REVISION-LABEL SHA1} IMG2 {REVISION-LABEL SHA2}}
           self.policy (WorkerPolicy :stop-grace-ms 10000)
           self.records {} self.processes [] self.codes {} self.pids 100
+          self.probes {}           ; spec の指紋 → 入口の検めの観測(模擬では通す)
           self.lease None          ; lease を持つ process の世代の名
           self.desired #()
           self.log [])            ; 拍ごと #(時刻 active の世代 走っている process の数 Ready)
     (setv self.state (ClusterState :started-ms (- self.now 60000)))
     (self.call "POST" "/resources/Service" {"name" "writer-a" "spec" SERVICE})
+    ;; 追随の元を coordinator の内部の値へ直に置く(宣言の口は baseFrom を受けない — 頭の註)。
+    (setv self.state (replace self.state :jobs (tuple (gfor j self.state.jobs (replace j :base-from BASE-FROM)))))
     None)
 
   (defn call [self method path [body None] [actor "c-test"]]
@@ -65,11 +77,16 @@
   (defn world [self]
     (WorldView (tuple (gfor #(k ready-at) (.items self.codes) :if (<= ready-at self.now)
                             (CodeView k CodeState.READY (+ "/c/" k))))
-               (tuple self.processes)))
+               (tuple self.processes)
+               (tuple (.values self.probes))))
 
   (defn apply [self action]
     (cond
       (isinstance action PrepareCode) (.setdefault self.codes action.revision (+ self.now 1000))
+      (isinstance action ProbeEntry)
+        (setv (get self.probes (spec-hash action.spec)) (ProbeView (spec-hash action.spec) ProbeState.PASSED))
+      (isinstance action ForgetProbes)
+        (setv self.probes (dfor #(k v) (.items self.probes) :if (in k action.keep) k v))
       (isinstance action StartJob)
         (do (+= self.pids 1)
             (.append self.processes (ProcessView action.spec.name action.spec action.attempt self.pids self.now
@@ -192,38 +209,30 @@
   (assert (in "40 桁" (get (sim.call "GET" "/resources/Service/writer-a") "status" "base" "reason"))))
 
 
-(deftest test-redeclaring-without-base-keeps-the-followed-base
-  (setv sim (Sim))
-  (for [_ (range 12)] (sim.step))
-  (setv current (sim.call "GET" "/resources/Service/writer-a"))
-  ;; 宣言し直し(declare.hy の --apply と同じ: base を書かない spec)でも、追随の係が進めた base は保たれる。
-  (sim.call "PUT" "/resources/Service/writer-a" {"spec" (| SERVICE {"revision" "w1"}) "resourceVersion" (get current "resourceVersion")})
-  (assert (= (. (job-of sim) spec base) SHA1))
-  ;; 版の組(2026-09-25): overlay の無い宣言の定義の版は base と同じ commit(宣言の revision は base を観測する前だけ使う)。
-  (assert (= (. (job-of sim) spec revision) SHA1))
-  (assert (= (code-key (. (job-of sim) spec)) SHA1)))
-
-
-(deftest test-overlay-is-the-only-way-to-run-another-definition-revision
-  (setv sim (Sim) overlay (* "a" 40))
-  (for [_ (range 12)] (sim.step))
-  (setv current (sim.call "GET" "/resources/Service/writer-a"))
-  (sim.call "PUT" "/resources/Service/writer-a" {"spec" (| SERVICE {"overlay" overlay}) "resourceVersion" (get current "resourceVersion")})
-  (setv job (job-of sim))
-  (assert (= #(job.spec.base job.spec.revision job.overlay) #(SHA1 overlay overlay)))
-  (assert (= (code-key job.spec) (+ SHA1 "~" overlay)))
-  ;; 保存の形に overlay が残り、読み戻しても同じ。
-  (setv stored (get (sim.call "GET" "/resources/Service/writer-a") "spec"))
-  (assert (= (get stored "overlay") overlay) stored))
-
-
-(defn #^ None test-overlay-must-be-a-full-commit-on-a-followed-service []
+(deftest test-declarations-cannot-carry-base-from-or-overlay
+  ;; 宣言の口は baseFrom(image の版を追う)と overlay(定義だけ別の commit)を受けない — Program の job は詰めた commit で解く
+  ;; (ADR-DOE-CLUSTER-001・改訂 1 の E)。以前それを受けていた生の entry の job も受けない(R1・R7)。宣言し直しで追随を付けることも
+  ;; 外すこともできず、断った書きは追随している base を変えない。
   (import doeff_cluster.cluster_policy [job-from-json])
   (import pytest)
+  (val sim (Sim))
+  (for [_ (range 12)] (sim.step))
+  (assert (= (. (job-of sim) spec base) SHA1))
+  (val current (sim.call "GET" "/resources/Service/writer-a"))
+  (for [#(extra word) [#({"baseFrom" BASE-FROM} "baseFrom") #({"overlay" (* "a" 40)} "overlay")]]
+    (val answer (respond sim.state (Request "PUT" "/resources/Service/writer-a" {}
+                                            {"spec" (| SERVICE extra) "resourceVersion" (get current "resourceVersion")}
+                                            :actor "c-test")
+                         sim.now T))
+    (assert (= (get answer 1) 400) answer)
+    (assert (in word (get answer 2 "error")) answer)
+    (assert (is (get answer 0) sim.state) extra))
+  (assert (= (. (job-of sim) spec base) SHA1))
+  ;; 生の entry の行に付けた baseFrom・overlay も同じく断る(読み直しでは RefusedJob — test_old_declarations.hy)。
   (with [(pytest.raises ValueError)]
     (job-from-json (| SERVICE {"name" "x" "overlay" "abc1234"})))
   (with [(pytest.raises ValueError)]
-    (job-from-json {"name" "x" "revision" "r" "entry" "m" "overlay" (* "a" 40)})))
+    (job-from-json {"name" "x" "revision" "r" "entry" "m" "baseFrom" BASE-FROM "overlay" (* "a" 40)})))
 
 
 (defn test-image-entry-requires-a-full-commit []

@@ -17,7 +17,7 @@
 (import pathlib [Path])
 (import httpx)
 (import pytest)
-(import doeff [with_handlers Program])
+(import doeff [with_handlers Program run])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [reader await-handler])
 (import doeff_core_effects.scheduler [Spawn Cancel TaskCancelledError])
@@ -35,6 +35,7 @@
                                       DetachedVersionMismatch DetachedUnknown DetachedPending DetachedRefused])
 (import doeff_cluster.detached [detached-local DetachedLocalStore detached-cluster DetachedClient DEFAULT-RUNNER-PROVIDES])
 (import tests.detached_rig [slow-add RigWorker MemoryCoordinator worker-tick worker-loop])
+(import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed])
 
 (setv OTHER-VERSIONS {"python" "0.0.0" "doeff" "0"})
 ;; 筋書きの task が要る能力: 3 つの組の担い手(模擬の既定の担い手・RigWorker の既定)が共に提供する local。
@@ -468,7 +469,9 @@
                                          (if (is boot-at None) {} {"bootAt" boot-at}))))
 
 (defn put-detached [state key now [lease 10.0] [retain 100.0]]
-  (call state "PUT" (+ "/detached/" key) now {"blob" "B" "versions" V "revision" "r" "needs" ["net"]
+  ;; 詰めた Program を置き場に(版 V と一緒に)置いてから、本文は置き場のキーだけを運ぶ(service の宣言と同じ運び方)。
+  (setv #(state sha) (run (program-placed state V :now now)))
+  (call state "PUT" (+ "/detached/" key) now {"program" sha "revision" "r" "needs" ["net"]
                                               "leaseSeconds" lease "retainSeconds" retain}))
 
 ;; 読みの時刻は coordinator が起きてからの猶予(lease-ms)の後(猶予の内の知らない key は warming — detached_policy.detached-read)。
@@ -654,7 +657,7 @@
 
 
 ;; --- 置き場を失った coordinator と走っている切り離した task(2026-09-27 — #757)----------------------------
-;; worker は返事に載らない task の子 process を止め、blob と結果の file を消す。置き場を失った coordinator は task の行を持たないので、
+;; worker は返事に載らない task の子 process を止め、結果の file と Program の cache を消す。置き場を失った coordinator は task の行を持たないので、
 ;; 以前は最初の返事で生きている worker の走っている切り離した task を全部止めさせた。worker は状態の報告に置かれた時の行を写し、
 ;; coordinator はそれを引き取る。
 
@@ -671,7 +674,9 @@
   (assert (= (lfor t (get body "tasks") (get t "id")) [id]) body)
   (setv #(after) (.accept-tasks link (get body "tasks")))
   (assert (= after before) "引き取った行の宣言の spec が変わった(worker は子 process を止める)")
-  (assert (.exists (/ tmp-path "tasks" (+ id ".blob"))) "走っている task の blob が消えた")
+  ;; 引き取った行は同じ置き場のキーを運ぶ(担い手の cache の Program を使い続ける — 状態を失った置き場に Program が無くてもよい)。
+  (assert (= (get body "tasks" 0 "program") after.program SAMPLE-TASK-PROGRAM) body)
+  (assert (.exists (/ tmp-path "tasks" (+ id ".program"))) "走っている task の Program の印が消えた")
   (assert (= (phase-of fresh "job-amnesia") "assigned"))
   ;; 終わりの報告は呼び手の key で読める。
   (setv #(fresh _ _) (beat fresh "w" 6000 :boot-at 1000
@@ -696,7 +701,8 @@
   "もとの coordinator が task を置き、worker が受けて状態の報告に写しを添えるまで。返り値 #(もとの状態 id 報告を作る link 元の spec)。"
   (setv caps (or needs ["net"]))
   (setv #(s _ _) (beat (ClusterState) "w" 0 :boot-at 1000 :provides caps))
-  (setv #(s _ reply) (call s "PUT" "/detached/job-e" 0 {"blob" "B" "versions" V "revision" "r" "needs" caps
+  (setv #(s sha) (run (program-placed s V)))
+  (setv #(s _ reply) (call s "PUT" "/detached/job-e" 0 {"program" sha "revision" "r" "needs" caps
                                                         "leaseSeconds" 10.0 "retainSeconds" 100.0}))
   (setv id (get reply "task"))
   (setv #(s _ body) (beat s "w" 100 :boot-at 1000 :provides caps))
@@ -742,12 +748,13 @@
 
 (deftest test-a-coordinator-that-starts-without-a-store-does-not-reuse-task-ids [tmp-path]
   ;; 置き場の無いところから起きた coordinator が t1 から振り直すと、worker に残る前の t1 の blob で新しい t1 が走った
-  ;; (accept-tasks は blob が在れば書き直さない)。起動ごとに違う頭を振る。
+  ;; (以前の accept-tasks は blob の file が在れば書き直さなかった)。起動ごとに違う頭を振る。
   (setv #(_ id link _) (placed-echo tmp-path))
   (setv fresh (load-state (str (/ tmp-path "state.json")) (WalStore (str (/ tmp-path "wal"))) 123456))
   (setv #(fresh _ _) (beat fresh "other" 123500))
+  (setv #(fresh sha) (run (program-placed fresh V "TkVX" (+ 123500 T.lease-ms))))
   (setv #(fresh _ reply) (call fresh "PUT" "/detached/job-new" (+ 123500 T.lease-ms)
-                               {"blob" "NEW" "versions" V "revision" "r" "needs" ["net"] "leaseSeconds" 10.0}))
+                               {"program" sha "revision" "r" "needs" ["net"] "leaseSeconds" 10.0}))
   (assert (!= (get reply "task") id) #(reply id))
   (assert (= fresh.task-prefix "t1e240-") fresh.task-prefix)
   ;; 頭は保存と読み直しで戻る(state JSON と durable kv)。
@@ -798,7 +805,8 @@
   (setv id (get reply "task"))
   (setv #(s _ _) (beat s "w" 1000 :statuses [{"name" (+ "task/" id) "phase" "finished" "result" "R" "detail" ""}]))
   (assert (= (. (get s.tasks id) phase) "finished"))
-  (assert (= (. (get s.tasks id) blob) ""))           ; 終わった行は blob を捨て、結果だけ持つ
+  ;; 終わった行も置き場のキーを持つ(結果の保持の間は置き場の Program を参照し続け、行が消えたら掃除される)。
+  (assert (= (. (get s.tasks id) program) SAMPLE-TASK-PROGRAM))
   ;; 担い手が死んで lease の時間が過ぎても、結果はそのまま
   (setv s (tick s 60000 T))
   (setv #(_ _ view) (call s "GET" "/detached/job-4" 60000))
@@ -840,7 +848,8 @@
 (deftest test-remote-job-tasks-keep-their-caller-bound-lifetime
   ;; RemoteJob の task(/tasks)は今までどおり: 呼び手の問い合わせが lease を延ばし、drain は数えず、途絶で止める。
   (setv #(s _ _) (beat (ClusterState) "w" 0))
-  (setv #(s _ body) (call s "POST" "/tasks" 0 {"blob" "B" "versions" V "revision" "r" "needs" ["net"]
+  (setv #(s sha) (run (program-placed s V)))
+  (setv #(s _ body) (call s "POST" "/tasks" 0 {"program" sha "revision" "r" "needs" ["net"]
                                                "name" "n" "leaseSeconds" 5.0}))
   (setv id (get body "task"))
   (setv #(s _ body) (beat s "w" 100))
@@ -867,7 +876,9 @@
   ;; 口の答えは Reply(状態・status・本文)。task の行は needs を能力の名の名の順の tuple・版を ComponentVersion で持ち、保存と読み直しの
   ;; 後も同じ型。
   (setv #(s _ _) (beat (ClusterState) "w" 0))
-  (setv reply (submit-detached s "job-typed" {"blob" "B" "versions" V "revision" "r" "needs" ["x-tool" "cluster-net" "x-tool"]}
+  ;; 版は置き場に Program と一緒に置いた版(本文は版の写しを運ばない)。
+  (setv #(s sha) (run (program-placed s V)))
+  (setv reply (submit-detached s "job-typed" {"program" sha "revision" "r" "needs" ["x-tool" "cluster-net" "x-tool"]}
                                100))
   (assert (isinstance reply Reply))
   (assert (= #(reply.status (get reply.body "created")) #(200 True)))
@@ -888,7 +899,7 @@
   (setv #(_ status _) (put-detached s "job-9" 0 :retain (* 31 24 3600.0)))
   (assert (= status 400))
   (setv #(s _ _) (put-detached s "job-9" 0))
-  (setv #(_ status body) (call s "PUT" "/detached/job-9" 0 {"name" "other" "blob" "B" "versions" V "revision" "r" "needs" ["net"]}))
+  (setv #(_ status body) (call s "PUT" "/detached/job-9" 0 {"name" "other" "program" SAMPLE-TASK-PROGRAM "revision" "r" "needs" ["net"]}))
   (assert (= status 409) body))
 
 
@@ -900,7 +911,8 @@
   (<- env (env-of "app-1" "lib-1" LOCK))
   (<- declared (runtime-env->json env))
   (setv #(s _ _) (beat (ClusterState) "w" 0))
-  (val task {"blob" "B" "versions" V "revision" "r" "leaseSeconds" 10.0})
+  (setv #(s sha) (run (program-placed s V)))
+  (val task {"program" sha "revision" "r" "leaseSeconds" 10.0})
   (val warm {"runtimeEnv" declared "ttlSeconds" 60 "holder" "svc-a"})
   (val routes [#("POST" "/tasks" task) #("PUT" "/detached/job-n" task) #("POST" "/warm" warm)])
   (for [#(method path base) routes]

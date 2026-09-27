@@ -18,7 +18,7 @@
 (import doeff [Program])
 (import doeff_time [Delay GetTime])
 (import .clock [epoch-ms-of])
-(import .coordinator_http [CoordinatorEndpoint send-idempotent REPLY-SECONDS IDEMPOTENT-DEADLINE-SECONDS])
+(import .coordinator_http [CoordinatorEndpoint send-idempotent put-program REPLY-SECONDS IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff [run :as run-program])
 (import .cluster_model [PROTOCOL-FORMAT WorkerInfo])
 (import .runtime_env_model [RuntimeEnv EnvFailure runtime-env->json env-key current-platform])
@@ -431,7 +431,8 @@
     (+ "/detached/" (url-quote key :safe "") suffix))
 
   (defn #^ dict answer [self response]
-    (when (in response.status-code #(400 409 429))
+    ;; 413 = 詰めた Program が置き場の上限を越える(PUT /programs — program_policy.PROGRAM-MAX-BYTES)。
+    (when (in response.status-code #(400 409 413 429))
       (raise (DetachedRefused response.status-code (.get (.json response) "error" ""))))
     (.raise-for-status response)
     (.json response))
@@ -439,7 +440,11 @@
   (defn #^ dict submit [self #^ str key #^ str blob #^ frozenset needs #^ str name
                         #^ float lease-seconds
                         #^ float retain-seconds]
-    (setv body (| {"blob" blob "versions" (current-versions) "revision" self.revision "needs" (sorted needs)
+    "切り離した task を 1 本出す: 詰めた Program を版と一緒に置き場 /programs/<sha> に先に置き、本文は sha だけを運ぶ(service の宣言と
+     同じ運び方 — ADR-DOE-CLUSTER-001 R3b)。置きも送りも何度送っても同じ意味なので、通信の失敗を越えて送り直す。"
+    (setv #(sha put) (put-program self.endpoint blob (current-versions) self.deadline-seconds))
+    (.answer self put)
+    (setv body (| {"program" sha "revision" self.revision "needs" (sorted needs)
                    "name" name "leaseSeconds" lease-seconds "retainSeconds" retain-seconds "format" PROTOCOL-FORMAT}
                   (if (is self.runtime-env None) {} {"runtimeEnv" (run-program (runtime-env->json self.runtime-env))})))
     (.answer self (.resend self (fn [] (.request self.endpoint "PUT" (.path self key) :json body)))))

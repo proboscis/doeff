@@ -20,8 +20,9 @@
 (import doeff_cluster.service_model [job Job CallShape])
 (import tests.fixtures.services [tally-program])
 (import tests.fixtures.envs [plain-foundation])
+(import tests.program_rows [SAMPLE-RUN])
 (import doeff_cluster.worker_model [CodeView CodeState ProcessView WorldView WorkerPolicy PrepareCode StartJob SignalJob ReapJob
-                                    RetireJob spec-hash])
+                                    RetireJob ProbeEntry ProbeView ProbeState ForgetProbes spec-hash])
 (import doeff_cluster.worker_policy [plan records-after statuses])
 
 (val T (ClusterTiming))
@@ -29,9 +30,9 @@
 (val JOB-START 2000)
 (val TIMEOUT-SECONDS 30)
 (val WARMING "温まっていない env のキー env-k2・準備の失敗 prepare-timeout")
-(val HANDOFF {"revision" "r1" "needs" ["net"] "entry" "m" "args" [] "replicas" 1
+(val HANDOFF {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN "replicas" 1
               "readiness" {"windowSeconds" 10 "handoffTimeoutSeconds" TIMEOUT-SECONDS} "update" "handoff"})
-(val RECREATE {"revision" "r1" "needs" ["net"] "entry" "m" "args" [] "replicas" 1 "readiness" {"windowSeconds" 10}})
+(val RECREATE {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN "replicas" 1 "readiness" {"windowSeconds" 10}})
 
 
 (defclass Sim []
@@ -41,6 +42,7 @@
     (setv self.now 3000000
           self.policy (WorkerPolicy :stop-grace-ms 10000)
           self.records {} self.processes [] self.codes {} self.pids 100
+          self.probes {}          ; spec の指紋 → 入口の検めの観測(Program の job の service は起こす前に検める — 模擬では通す)
           self.desired #()
           self.broken #{}         ; ReportReady(偽)を送る版
           self.starts []          ; #(時刻 版 世代の名) — 起こした process の記録
@@ -58,15 +60,21 @@
     reply)
 
   (defn world [self]  ; defk にできない: 模擬の世界の method(worker の観測を作る)
-    "worker の観測(準備の済んだ木と、子 process)。"
+    "worker の観測(準備の済んだ木と、子 process と、入口の検め)。"
     (WorldView (tuple (gfor #(k ready-at) (.items self.codes) :if (<= ready-at self.now)
                             (CodeView k CodeState.READY (+ "/c/" k))))
-               (tuple self.processes)))
+               (tuple self.processes)
+               (tuple (.values self.probes))))
 
   (defn apply [self action]  ; defk にできない: 模擬の世界の method(worker の action を子 process の世界へ当てる)
     "worker の action を模擬の世界へ当てる(木の準備は 1 秒・TERM で即座に終わる)。"
     (cond
       (isinstance action PrepareCode) (.setdefault self.codes action.revision (+ self.now 1000))
+      ;; 入口の検め(Program の job の service は起こす前に検める)は通る — この模擬が確かめるのは入れ替えの期限。
+      (isinstance action ProbeEntry)
+        (setv (get self.probes (spec-hash action.spec)) (ProbeView (spec-hash action.spec) ProbeState.PASSED))
+      (isinstance action ForgetProbes)
+        (setv self.probes (dfor #(k v) (.items self.probes) :if (in k action.keep) k v))
       (isinstance action StartJob)
         (do (+= self.pids 1)
             (setv instance (.format "{}-sim{}" action.attempt self.now))

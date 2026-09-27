@@ -1,6 +1,7 @@
 ;;; 切り離した task の HTTP の口の純粋な判断(2026-09-25・effect は detached_model.hy)。I/O はしない。
 ;;;
-;;;   PUT    /detached/<key>          送る(job id = key で冪等)。{blob versions revision needs name leaseSeconds retainSeconds}
+;;;   PUT    /detached/<key>          送る(job id = key で冪等)。{program revision needs name leaseSeconds retainSeconds}
+;;;                                   program = 先に PUT /programs/<sha> で置いた詰めた Program の sha(版は置いた時の版 — service の宣言と同じ運び方)
 ;;;                                   → {"key" "task" "created" "phase"}。同じ key が在れば何も作らず created = false
 ;;;   GET    /detached/<key>          読む(lease に触らない)→ {"key" "phase" "detail" "result" "worker"}。知らない key は phase = unknown
 ;;;                                   (coordinator が起きた直後の猶予の内は 503・phase = warming — detached-read)
@@ -11,8 +12,9 @@
 ;;; renew-detached・absorb-detached-report)。ここは要求 1 件 → Reply(次の状態・status・本文)だけ。
 (import dataclasses [replace])
 (import typing [NamedTuple])
-(import .cluster_model [ClusterState ClusterTiming TaskRecord component-versions-of format-refusal])
-(import .cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-refusal task-id task-body-refusal request-needs])
+(import .cluster_model [ClusterState ClusterTiming TaskRecord format-refusal])
+(import .cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-refusal task-id task-body-refusal request-needs
+                         program-versions])
 (import .detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS OPEN-PHASES WARMING-PHASE])
 
 (setv DETACHED-MAX-LEASE-SECONDS 3600)
@@ -55,7 +57,7 @@
   (setv lease (.get body "leaseSeconds" DETACHED-DEFAULT-LEASE-SECONDS)
         retain (.get body "retainSeconds" DETACHED-DEFAULT-RETAIN-SECONDS)
         refusal (or (format-refusal body)
-                    (task-body-refusal body)
+                    (task-body-refusal state body)
                     (runtime-env-refusal body)
                     (key-refusal key)
                     (seconds-refusal "leaseSeconds" lease DETACHED-MAX-LEASE-SECONDS)
@@ -79,8 +81,8 @@
                                           DETACHED-MAX-RECORDS)})))
   (setv id (task-id state)
         lease-ms (int (* 1000 lease))
-        task (TaskRecord id (.get body "name" "") (get body "blob") (get body "revision")
-                         (component-versions-of (.get body "versions" {}))
+        task (TaskRecord id (.get body "name" "") (get body "program") (get body "revision")
+                         (program-versions state (get body "program"))
                          needs lease-ms (+ now lease-ms) now
                          :detached True :key key :retain-ms (int (* 1000 retain))
                          :runtime-env (.get body "runtimeEnv")))

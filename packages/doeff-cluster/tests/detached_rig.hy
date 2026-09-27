@@ -3,7 +3,7 @@
 ;;   slow-add                … 送る Program(自分で並べた base = 100 の reader の上で n を足す — 実行先は handler を足さない)
 ;;   RigWorker ほか           … 担い手: 本物の CoordinatorLink で heartbeat を送り、割り当てられた task を同じ VM で走らせる
 ;;   MemoryCoordinator       … 本物の coordinator の判断(api_policy.respond / tick)を httpx.MockTransport の後ろに置く
-(require doeff-hy.macros [defk <-])
+(require doeff-hy.macros [defk <- val var])
 (import json)
 (import urllib.parse [urlsplit parse-qsl])
 (import pathlib [Path])
@@ -16,10 +16,11 @@
 (import tests.clock_fixtures [clock-ms])
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming Request])
 (import doeff_cluster.api_policy [respond tick])
-(import doeff_cluster.handlers [CoordinatorLink])
+(import doeff_cluster.handlers [CoordinatorLink program-file])
+(import doeff_cluster.job_entry [read-program])
 (import doeff_cluster.detached [DEFAULT-RUNNER-PROVIDES])
-(import doeff_cluster.worker_model [DesiredJobs JobStatus JobPhase])
-(import doeff_cluster.remote_model [TaskSucceeded decode-program encode-outcome failed-from])
+(import doeff_cluster.worker_model [DesiredJobs JobStatus JobPhase JobSpec])
+(import doeff_cluster.remote_model [TaskSucceeded encode-outcome failed-from])
 
 
 ;; --- 送る Program -------------------------------------------------------------------------------
@@ -39,7 +40,7 @@
 
 
 ;; --- 担い手(coordinator の組・served の組が共有する)--------------------------------------------------------
-;; 本物の CoordinatorLink で heartbeat を送り、割り当てられた task の file(blob)を受け、同じ VM の scheduler の task として
+;; 本物の CoordinatorLink で heartbeat を送り、割り当てられた task の Program を置き場から cache へ受け、同じ VM の scheduler の task として
 ;; そのまま走らせ(handler を足さない — Program が自分で並べる)、結果の file を書いて報告する(子 process の入口 job_entry task と同じ手順 — 子 process そのものは
 ;; test_remote.hy が通す)。
 
@@ -54,22 +55,27 @@
 
 
 (defn #^ dict task-args [#^ tuple args]
-  "task の job の引数(\"task\" \"--blob\" P \"--result\" P \"--versions\" V)→ {欄: 値}。"
+  "task の job の引数(\"task\" \"--result\" P)→ {欄: 値}。詰めた Program は引数でなく spec.program(置き場のキー)で運ばれる。"
   (dfor i (range 1 (len args) 2) (cut (get args i) 2 None) (get args (+ i 1))))
 
 
-(defk run-rig-task [worker name args revision]
-  {:pre [(: worker RigWorker) (: name str) (: args dict) (: revision str)] :post [(: % bool)]}
-  (setv program (decode-program (.read-text (Path (get args "blob")) :encoding "ascii")))
-  (try
-    (<- value program)
-    (setv outcome (TaskSucceeded value))
-    (except [error TaskCancelledError]
-      (raise))
-    (except [error Exception]
-      (setv outcome (failed-from error))))
-  (.write-text (Path (get args "result")) (encode-outcome outcome) :encoding "ascii")
-  (.add worker.done name)
+(defk run-rig-task [worker spec]
+  {:pre [(: worker RigWorker) (: spec JobSpec)] :post [(: % bool)]}
+  "担い手の子 process の入口 job_entry task と同じ手順を同じ VM で: CoordinatorLink が /programs/<sha> から取った cache の file を
+   job_entry と同じ read-program で読み(版 → 復元)、走らせ、結果の file を書く。"
+  (val read (read-program (str (program-file worker.link.program-dir spec.program)) ""))
+  (var outcome None)
+  (if (is-not (get read 1) None)
+      (:= outcome (failed-from (get read 1)))
+      (try
+        (<- value (get read 0))
+        (:= outcome (TaskSucceeded value))
+        (except [error TaskCancelledError]
+          (raise))
+        (except [error Exception]
+          (:= outcome (failed-from error)))))
+  (.write-text (Path (get (task-args spec.args) "result")) (encode-outcome outcome) :encoding "ascii")
+  (.add worker.done spec.name)
   True)
 
 
@@ -80,7 +86,7 @@
     (setv specs (dfor s desired.jobs :if s.once s.name s))
     (for [#(name spec) (.items specs)]
       (when (not-in name worker.handles)
-        (<- handle (Spawn (run-rig-task worker name (task-args spec.args) spec.revision)))
+        (<- handle (Spawn (run-rig-task worker spec)))
         (setv (get worker.handles name) handle)))
     ;; 宣言から外れた task(取り消し・lost・結果を受け取り終えた)は止める。
     (for [name (list worker.handles)]

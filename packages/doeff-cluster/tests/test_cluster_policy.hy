@@ -4,6 +4,7 @@
 (import doeff_cluster.worker_model [JobSpec])
 (import doeff_cluster.cluster_model [ClusterJob WorkerInfo Placement ClusterTiming ClusterState])
 (import doeff_cluster.cluster_policy [place-jobs jobs-for])
+(import tests.program_rows [SAMPLE-TASK-PROGRAM])
 
 (setv T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
 
@@ -93,7 +94,7 @@
   (assert (= (. (get (place-jobs 2000 stopped T) "placer") worker) "atlas")))
 
 (defn task [id needs]
-  (TaskRecord id "digest" "blob" "rev" #((ComponentVersion "python" "3")) needs 15000 20000 0))
+  (TaskRecord id "digest" SAMPLE-TASK-PROGRAM "rev" #((ComponentVersion "python" "3")) needs 15000 20000 0))
 
 (deftest test-task-follows-the-same-dedicated-rule
   (setv workers {"mac" (replace (mac "mac") :versions #((ComponentVersion "python" "3")))

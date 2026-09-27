@@ -12,7 +12,8 @@
 (import doeff_cluster.durable_kv [full-kv state-from-kv DRAIN SURGE])
 (import doeff_cluster.drain_client [CoordinatorCall await-drained worker-ready drain-outcome ready-of])
 (import doeff_cluster.handlers [CoordinatorLink write-ready-file])
-(import tests.program_rows [SAMPLE-RUN])
+(import tests.program_rows [SAMPLE-RUN program-placed])
+(import doeff [run])
 (import os)
 (import subprocess)
 (import doeff_cluster.drain_main [read-boot])
@@ -71,6 +72,11 @@
     (+= self.now (* 1000 seconds))
     (setv self.state (tick self.state self.now T))
     None)
+
+  (defn #^ dict task-body [self #^ list needs #^ (| dict None) [extra None]]  ; defk にできない: 模擬の世界の method(置き場の状態を進めて本文を返す)
+    "task の本文: 詰めた Program を置き場に(送り手の版 {} で)置いてから、置き場のキーを運ぶ本文(service の宣言と同じ運び方)。"
+    (setv #(self.state sha) (run (program-placed self.state {} :now self.now)))
+    (| {"program" sha "revision" "r1" "needs" needs} (or extra {})))
 
   (defn #^ str placed [self #^ str name] (. (get self.state.placements name) worker))
   (defn #^ (| str None) surge [self #^ str name] (if (in name self.state.surges) (. (get self.state.surges name) worker) None))
@@ -205,11 +211,11 @@
   (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
   (c.call "POST" "/resources/Service" {"name" "n" "spec" (service)} :expect 201)
   (assert (= (c.placed "n") "zeus"))
-  (c.call "POST" "/tasks" {"blob" "x" "revision" "r1" "versions" {} "needs" K3S} :actor "c-test")
+  (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
   (assert (= (. (get c.state.tasks "t1") worker) "zeus"))
   ;; drain 中の worker しか置ける先が無い task は失敗にせず待つ。
   (c.call "POST" "/workers/zeus/drain" {} :actor "drain@zeus")
-  (c.call "POST" "/tasks" {"blob" "x" "revision" "r1" "versions" {} "needs" K3S} :actor "c-test")
+  (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
   (assert (= (. (get c.state.tasks "t2") phase) "queued")))
 
 
@@ -265,7 +271,7 @@
     (assert (not (get new-reply "draining")))
     (assert (get (c.call "GET" "/workers/zeus") "ready")))
   ;; 新しい世代には新しい task を置ける。
-  (c.call "POST" "/tasks" {"blob" "x" "revision" "r1" "versions" {} "needs" ["cluster-net"]}
+  (c.call "POST" "/tasks" (c.task-body ["cluster-net"])
           :actor "c-test")
   (assert (= #((. (get c.state.tasks "t1") phase) (. (get c.state.tasks "t1") worker)) #("assigned" "zeus"))))
 
@@ -278,14 +284,14 @@
   (c.call "POST" "/resources/Service" {"name" "w" "spec" (service)} :expect 201)
   (c.call "POST" "/resources/Service" {"name" "r" "spec" (service {"update" "recreate"})} :expect 201)
   (assert (= #((c.placed "w") (c.placed "r")) #("atlas" "atlas")))
-  (c.call "PUT" "/detached/job-own" {"blob" "B" "versions" {} "revision" "r" "needs" K3S "leaseSeconds" 60}
+  (c.call "PUT" "/detached/job-own" (c.task-body K3S {"revision" "r" "leaseSeconds" 60})
           :actor "c-test")
   (c.beat "atlas" ["w" "r"] :boot "old")
   (c.advance 1)
   (c.beat "atlas" :boot "new")
   ;; 退いた後に置かれた入れ替えの job と RemoteJob の task(どちらも名 atlas へ置かれる)。
   (c.call "POST" "/resources/Service" {"name" "w2" "spec" (service)} :expect 201)
-  (c.call "POST" "/tasks" {"blob" "x" "revision" "r1" "versions" {} "needs" K3S} :actor "c-test")
+  (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
   (setv remote (next (gfor t (.values c.state.tasks) :if (not t.detached) t))
         own (next (gfor t (.values c.state.tasks) :if t.detached t)))
   (assert (= #((c.placed "w2") remote.worker own.boot) #("atlas" "atlas" "old")))
@@ -317,7 +323,7 @@
   ;; 退いた世代の preStop は、その世代に置いた切り離した task が終わるまで待つ(走らせ直さない task を途中で殺さない)。
   (setv c (Coord #("zeus")))
   (c.beat "zeus" :boot "old")
-  (c.call "PUT" "/detached/job-24" {"blob" "B" "versions" {} "revision" "r" "needs" K3S "leaseSeconds" 60}
+  (c.call "PUT" "/detached/job-24" (c.task-body K3S {"revision" "r" "leaseSeconds" 60})
           :actor "c-test")
   (setv task (next (gfor t (.values c.state.tasks) :if (= t.key "job-24") t)))
   (assert (= #(task.worker task.boot) #("zeus" "old")))
