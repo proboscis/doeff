@@ -119,12 +119,39 @@
   {:tags {:context "wire" :role "judgment"}}
   (val row (LandingRow :lane-id "L1" :state LandState.LANDED :landed-at 7 :notes #((Note :note-text "z"))))
   (<- raw (dump row))
-  (assert (= raw {"laneId" "L1" "state" "landed" "landedAt" 7 "ratio" 0.0 "notes" [{"noteText" "z"}]}))
+  ;; 既定値と同じ欄(ratio 0.0)は書かない — 読みは既定値で埋めるので往復する。
+  (assert (= raw {"laneId" "L1" "state" "landed" "landedAt" 7 "notes" [{"noteText" "z"}]}))
   (<- back (parse LandingRow raw))
   (assert (= back row))
   (<- text (dump-json row))
   (<- back-from-text (parse-json LandingRow text))
   (assert (= back-from-text row)))
+
+
+(defwire Declared
+  "入れ子の任意の欄(null でなく欄の無いことで表す契約の形)"
+  {:names :camel}
+  (setv #^ (| str None) model None)
+  (setv #^ (| str None) work-dir None))
+
+(defwire Preference
+  "入れ子の型の欄と、既定値の無い None を許す欄を持つ行"
+  {:names :camel}
+  (#^ Declared agent)
+  (#^ (| str None) note)
+  (setv #^ (| str None) notify-view None))
+
+
+(deftest test-dump-omits-fields-at-their-default-even-when-nested
+  {:tags {:context "wire" :role "judgment"}}
+  (val row (Preference :agent (Declared :model "m") :note None))
+  ;; 既定値 None の欄は null を書かず欄ごと無い(入れ子の型の欄も)・既定値の無い欄は None でも null で書く。
+  (<- raw (dump row))
+  (assert (= raw {"agent" {"model" "m"} "note" None}))
+  (<- text (dump-json row))
+  (assert (= text "{\"agent\":{\"model\":\"m\"},\"note\":null}"))
+  (<- back (parse Preference raw))
+  (assert (= back row)))
 
 
 (deftest test-json-schema-uses-wire-names
