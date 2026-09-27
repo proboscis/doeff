@@ -75,11 +75,12 @@ pub fn get_rules_by_id() -> HashMap<String, Box<dyn LintRule>> {
         .collect()
 }
 
-/// Get all available rule IDs
+/// Get all available rule IDs(Python の文ごとの規則と、層の規則 DOEFF101〜108)
 pub fn get_all_rule_ids() -> Vec<String> {
     get_all_rules()
         .iter()
         .map(|rule| rule.rule_id().to_string())
+        .chain(crate::project::rule::ProjectRule::ALL.iter().map(|rule| rule.id().to_string()))
         .collect()
 }
 

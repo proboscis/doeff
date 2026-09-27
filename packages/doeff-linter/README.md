@@ -5,6 +5,8 @@ A high-performance linter for enforcing code quality and immutability patterns i
 ## Features
 
 - **27 specialized rules** for code quality, immutability, and workflow replay safety
+- **層の規則 DOEFF101〜108**(Hy と Python の両方): 純粋な層と外の世界に触る層の決まりを repo ごとの設定で判じる(下の「層の規則」)
+- **エディタ向けの出力** `--output-format editor-json`(doeff-runner が表示する。判定の正本はこの linter)
 - **Configurable via pyproject.toml**
 - **noqa comments** for per-line rule suppression
 - **Fast** - written in Rust for maximum performance
@@ -81,6 +83,89 @@ skip_test_functions = true
 | DOEFF012 | No Append Loop Pattern | Use list comprehension instead of empty list + for loop append |
 | DOEFF013 | Prefer Maybe Monad | Use `Maybe[T]` instead of `Optional[T]` or `T \| None` |
 | DOEFF014 | No Try-Except Blocks | Use doeff's error handling effects instead of try-except |
+| DOEFF101 | Layer Import Direction | 層の module は設定で許した層の module だけを import する |
+| DOEFF102 | Layer Forbidden Module | 層ごとに禁じた module(I/O の module など)を直に import しない |
+| DOEFF103 | Types-Only Layer | 型だけの層に関数と handler を定めない |
+| DOEFF104 | Module Declares Tags | 層の module の定義はタグで文脈(context)と役(role)を名乗る |
+| DOEFF105 | Role Matches Layer | タグの role はその層で許された物 |
+| DOEFF106 | Raw Side Effect Placement | 生の副作用に直に触る定義は許された層にだけ置く(Hy) |
+| DOEFF107 | Raw Side Effect Via Call | 呼ぶ定義を通して生の副作用に届く定義の知らせ(info・Hy) |
+| DOEFF108 | Environment Name In Business Code | 業務の file・handler・組み立ての関数の名に環境の語を付けない |
+
+## 層の規則(Hy と Python)
+
+DOEFF101〜108 は、repo の module の一覧と設定を見て判じる規則です。「業務の判断を持つ純粋な層」と「外の世界に触る層」を
+分け、import の向き・タグ・生の副作用の置き場・環境の語を検査します。層の名前・role・環境の語・登録簿の置き場は Rust に
+書き込まず、すべて repo ごとの設定から受け取ります。設定の節が無い規則は何も出しません。
+
+Hy の file は doeff-indexer の hy-index の解析(関数として呼ぶ)と読み取り器で読みます。Python の file は rustpython で読みます。
+詳しい決まり(鍵の綴り・重さ・読み方)は [docs/SPECIFICATION.md](docs/SPECIFICATION.md)、規則ごとの例は
+[docs/rules/DOEFF101-108.md](docs/rules/DOEFF101-108.md) にあります。
+
+```toml
+[tool.doeff-linter.layers]
+order = ["core", "intent", "protocol", "foundation", "entry"]   # 外の世界からの遠さの順
+paths = { core = "controllers/core", intent = "controllers/intent", protocol = "controllers/protocol", foundation = "controllers/foundation", entry = "controllers/entry" }
+exclude = ["tests", "__pycache__", "conftest.py"]              # 層の規則の外に置く dir や file の名
+types_only = ["intent"]                                        # 関数と handler を定めない層(DOEFF103)
+
+[tool.doeff-linter.layers.allow_imports]                       # 層ごとに import してよい層(DOEFF101)
+core = ["core", "intent"]
+intent = ["intent"]
+protocol = ["protocol", "intent"]
+foundation = ["foundation"]
+entry = ["core", "intent", "protocol", "foundation", "entry"]
+
+[tool.doeff-linter.layers.forbid_modules]                      # 層ごとに直に import しない module(DOEFF102)
+core = ["subprocess", "socket", "http", "urllib", "httpx"]
+
+[tool.doeff-linter.roles]                                      # role の閉じた一覧と、層ごとに許す role(DOEFF105)
+names = ["type", "judgment", "program", "intent", "protocol", "foundation", "entry"]
+[tool.doeff-linter.roles.by_layer]
+core = ["type", "judgment", "program"]
+intent = ["intent", "type"]
+
+[tool.doeff-linter.raw_side_effects]                           # 生の副作用に直に触ってよい層(DOEFF106・107)
+allowed_layers = ["foundation", "entry"]
+
+[tool.doeff-linter.environment_names]                          # 業務の名に付けない環境の語(DOEFF108)
+words = ["production", "emulated", "fake", "local", "machine", "wire"]
+paths = ["controllers/kanban", "controllers/intent/daily_verify_*"]   # 業務の file の置き場(末尾 * は前方一致)
+exclude = ["controllers/entry"]
+exclude_parts = ["tests"]
+assembly_files = ["handler_sets.hy"]                           # 最上位の定義の名を全部見る組み立ての file
+
+[[tool.doeff-linter.laws]]                                     # 規則と ADR の law の対応(出力の law・adr と鍵の綴り)
+name = "core-imports-only-intent"
+adr = "ADR-CONTROLLERS-CHOOSE-ENVIRONMENT-BY-HANDLER-SET"
+rules = ["DOEFF101", "DOEFF102"]
+layers = ["core"]
+statement = "module ∈ 層 core の module ⇒ …"
+
+[tool.doeff-linter.registry]                                   # 既知の破れの登録簿と、照合中の規則
+dirs = ["scripts/layer_imports/BREACHES"]                      # 1 鍵 1 file(*.txt の 1 行目が鍵)
+files = []                                                     # 1 行 1 鍵
+reconciling = ["DOEFF104"]                                     # 照合中の規則は info に下げる
+```
+
+- 鍵: `<repo の根からの path>::<law の名、無ければ規則の ID>[::<細目>]`(細目 = import の先・`definitions`・role など)。
+- 重さ: 新しい破れは error、登録簿に載った破れは warning(`registered: true`)、照合中の規則は info。DOEFF106 の弱い証拠
+  (method 名だけで見つけた物)は warning、DOEFF107 は常に info。
+- 終了コード: 0 = error なし、1 = error あり、2 = 引数・設定の誤り(設定の名前の食い違いは黙って捨てない)。
+- `noqa` の註は Python の文ごとの規則だけに効きます。層の規則の既知の破れは登録簿に鍵を置きます。
+
+## エディタ向けの出力(editor-json)
+
+```bash
+doeff-linter --output-format editor-json                              # repo 全体(cwd = repo の根)
+doeff-linter --output-format editor-json --stdin --path <file>        # 保存前の内容の 1 file
+doeff-linter --output-format editor-json --config lint.toml --root .  # 設定 file と repo の根を指定
+```
+
+出力は契約 lint-contract 版 1 の JSON 1 つです(`version`・`root`・`violations`・`modules`・`rules`・`errors`)。違反ごとに
+`rule`(DOEFF の ID)・`law`・`adr`・`severity`・`path`・`range`(0 始まりの行・UTF-16 の列)・`message`・`hint`・`key`・
+`registered` を持ちます。行だけの規則(DOEFF001〜031)も、その行の範囲を出します。形の詳細は
+[docs/SPECIFICATION.md](docs/SPECIFICATION.md)。既存の `--output-format json` の形は変えていません(層の規則の違反も同じ形で並びます)。
 
 ## Inline Suppression
 
@@ -133,7 +218,11 @@ Options:
       --disable <RULES>      Disable specific rules (comma-separated)
       --exclude <PATTERNS>   Exclude paths matching patterns
       --force-exclude        Apply exclusion rules to explicit file paths
-      --output-format <FMT>  Output format: text, json [default: text]
+      --output-format <FMT>  Output format: text, json, editor-json [default: text]
+      --config <FILE>        設定 file(pyproject.toml の形か、[tool.doeff-linter] の中身だけの TOML)
+      --root <DIR>           repo の根(層の置き場・登録簿・鍵の path の基準)
+      --stdin                保存前の内容を stdin から読む(editor-json・--path と一緒に)
+      --path <FILE>          --stdin の内容をどの file として判じるか
       --log-file <PATH>      Log violations to file [default: .doeff-lint.jsonl]
       --no-log               Disable logging to file
       --modified             Only lint git-modified files

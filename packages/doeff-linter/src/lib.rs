@@ -6,10 +6,14 @@
 //! - Code organization
 
 pub mod config;
+pub mod editor;
 pub mod logging;
 pub mod models;
 pub mod noqa;
+pub mod position;
+pub mod project;
 pub mod report;
+pub mod rule_info;
 pub mod rules;
 pub mod stats;
 pub mod utils;
@@ -214,7 +218,8 @@ pub fn collect_python_files_with_options(
     files
 }
 
-fn should_exclude(path: &Path, patterns: &[String]) -> bool {
+/// path が除く pattern(file の名の一致・部分一致か、path の区切りの一致)に当たるか。
+pub fn should_exclude(path: &Path, patterns: &[String]) -> bool {
     for pattern in patterns {
         if let Some(name) = path.file_name() {
             if let Some(name_str) = name.to_str() {
