@@ -136,8 +136,10 @@ export function ruleFamilyGlyph(family: LintRuleFamily | null, judgedByJev = fal
   }
 }
 
-/** 灯の色(PICO-8 の番号)— 違反の重さを sprite に付いた灯の色で出す(error = 赤・warning = 琥珀・info = 青)。 */
-export const SEVERITY_LAMP: Readonly<Record<LintSeverity, ColorIndex>> = { error: 8, warning: 9, info: 12 };
+/** 灯の色(色の組の番号)— 違反の重さを sprite に付いた灯の色で出すため(error = 赤・warning = 琥珀・info = 青。色は元の定義の lamps)。 */
+export function severityLamp(set: GlyphSet, severity: LintSeverity): ColorIndex {
+  return set.lamps[severity];
+}
 
 /**
  * 灯を灯した sprite 1 つ — gutter・木・違反の欄が使う唯一の画の形。灯(`L` の点)は違反の重さの色(重さが無ければ消えた
@@ -164,13 +166,13 @@ export function litKey(icon: LitIcon): string {
  * 重ねる。service の旗(`service-<名>`)は旗の決まりから作る。知らない名前は undefined。拡張と見本の HTML が同じ関数で作る。
  */
 export function litPixels(set: GlyphSet, icon: LitIcon): Pixels | undefined {
-  const lamp = icon.severity === null ? undefined : SEVERITY_LAMP[icon.severity];
+  const lamp = icon.severity === null ? undefined : severityLamp(set, icon.severity);
   const base = spritePixels(set, icon.glyph, lamp);
   if (base === undefined || icon.flag === null) {
     return base;
   }
   const flag = icon.flag.startsWith('service-') ? flagPixels(set, chooseFlag(set, icon.flag.slice('service-'.length)), SMALL) : composeTinted(set, icon.flag, {})?.[SMALL];
-  return flag === undefined ? base : overlayBadge(base, flag);
+  return flag === undefined ? base : overlayBadge(base, flag, set.outline[0]);
 }
 
 /** sprite 1 つの大きい格子(灯の色の上書きつき。service の旗も同じ口で)。 */

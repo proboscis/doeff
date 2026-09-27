@@ -14,7 +14,7 @@ import {
   ruleFamilyGlyph,
   litPixels,
   ruleIcon,
-  SEVERITY_LAMP,
+  severityLamp,
   tallyViolations,
   violationMark,
   worstMark
@@ -119,10 +119,10 @@ suite('pixel art の当て方 — 語・kind・違反の印', () => {
       const pixels = litPixels(set, ruleIcon('smell', severity, []));
       return lamps.map(([x, y]) => pixels?.[y][x] ?? null);
     };
-    assert.ok(at('error').every((c) => c === SEVERITY_LAMP.error));
-    assert.ok(at('warning').every((c) => c === SEVERITY_LAMP.warning));
-    assert.ok(at('info').every((c) => c === SEVERITY_LAMP.info));
-    assert.ok(at(null).every((c) => c === set.lamp), '違反の無い行(規則の一覧)は消えた灯');
+    assert.ok(at('error').every((c) => c === severityLamp(set, 'error')));
+    assert.ok(at('warning').every((c) => c === severityLamp(set, 'warning')));
+    assert.ok(at('info').every((c) => c === severityLamp(set, 'info')));
+    assert.ok(at(null).every((c) => c === set.lamps.off), '違反の無い行(規則の一覧)は消えた灯');
     const others = (severity: LintSeverity): string =>
       JSON.stringify(litPixels(set, ruleIcon('smell', severity, []))?.map((row, y) => row.map((c, x) => (lamps.some(([lx, ly]) => lx === x && ly === y) ? -1 : c))));
     assert.strictEqual(others('error'), others('info'));
@@ -150,7 +150,7 @@ suite('pixel art の当て方 — 語・kind・違反の印', () => {
       assert.ok(lampPoints(set, name).length > 0, `${name} に灯(L)が無い`);
     }
     const flag = litPixels(set, { glyph: 'service-kanban', severity: 'error', flag: null });
-    assert.ok(flag?.some((row) => row.includes(SEVERITY_LAMP.error)), 'service の旗の竿の先の灯が灯らない');
+    assert.ok(flag?.some((row) => row.includes(severityLamp(set, 'error'))), 'service の旗の竿の先の灯が灯らない');
   });
 
   test('違反の印 — error は火・warning は黄色の旗・info は青い旗・登録済みは足場・Jev はふくろう', () => {
@@ -216,12 +216,13 @@ suite('pixel art の gutter', () => {
     assert.strictEqual(parseGutterMode('fancy'), undefined);
   });
 
-  test('重ね合わせ — 32×32 の右下に 16×16 の印、印の周りの透明には黒の縁、左上は土台のまま', () => {
+  test('重ね合わせ — 32×32 の右下に 16×16 の印、印の周りの透明には縁の色、左上は土台のまま', () => {
     const glyphs = new Map(allGlyphs(glyphSet()).map((g) => [g.name, g]));
     const base = glyphs.get('defk')?.pixels[32];
     const badge = glyphs.get('lint-error')?.pixels[16];
     assert.ok(base !== undefined && badge !== undefined);
-    const out = overlayBadge(base, badge);
+    const edge = glyphSet().outline[0];
+    const out = overlayBadge(base, badge, edge);
     for (let y = 0; y < 16; y++) {
       for (let x = 0; x < 16; x++) {
         assert.strictEqual(out[y][x], base[y][x]);
@@ -230,10 +231,10 @@ suite('pixel art の gutter', () => {
         }
       }
     }
-    // 印(火)の左端の点の左隣は黒の縁
+    // 印(火)の左端の点の左隣は縁の色(元の定義の outline の先頭)
     const row = badge.findIndex((r) => r.some((c) => c !== null));
     const col = badge[row].findIndex((c) => c !== null);
-    assert.strictEqual(out[16 + row][16 + col - 1], 0);
-    assert.deepStrictEqual(overlayBadge(null, badge)[16 + row][16 + col - 1], null);
+    assert.strictEqual(out[16 + row][16 + col - 1], edge);
+    assert.deepStrictEqual(overlayBadge(null, badge, edge)[16 + row][16 + col - 1], null);
   });
 });
