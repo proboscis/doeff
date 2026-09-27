@@ -705,12 +705,13 @@ class _Walker:
             inner = _Where(Scope.DO_CONTEXT, head)
             parts, _ = self._sequence(node[1:], inner, state)
             return _Walked(self._rebuild(node, [node[0], *parts]), state)
-        if head == "handle" and len(node) >= 2:
+        if head in {"handle", "on-raise"} and len(node) >= 2:
             # 包む program は外の文脈。節は handle の macro が自分の本体として書き換える(val / var も
             # そこで効く)ので、外の lazy の名前は節の中では参照できない(先に val で取り出す)。
+            # on-raise のパターンと写し先は、Raise を受けた時に handler の中で評価する値の式(同じ扱い)。
             program, state = self.walk(node[1], where, state)
             for clause in node[2:]:
-                self._forbid_lazy_inside(clause, _Where(Scope.DEFINITION, "handle の節"))
+                self._forbid_lazy_inside(clause, _Where(Scope.DEFINITION, f"{head} の節"))
             return _Walked(self._rebuild(node, [node[0], program, *node[2:]]), state)
         if head in _FN_HEADS:
             inner = _Where(Scope.FN, head)

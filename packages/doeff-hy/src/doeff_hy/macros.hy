@@ -4,6 +4,7 @@
 ;;;   (require doeff-hy.macros [do! defk deff fnk <- ! <-> set! defp defpp deftest
 ;;;                             defpipeline traverse for/do
 ;;;                             defhandler handle with-handler defmcp-tool
+;;;                             on-raise absent-as   ; 不在と失敗の境目(ADR-DOE-CORE-EFFECTS-003)
 ;;;                             validate check])   ; validate / check は doeff-validation を入れて使う
 ;;;   (import doeff [do :as _doeff-do])
 ;;;
@@ -943,6 +944,39 @@ defk {name}: {{:post [...]}} is required.
 
 
 ;; ---------------------------------------------------------------------------
+;; on-raise / absent-as — 失敗と不在を値へ畳む境目(ADR-DOE-CORE-EFFECTS-003 R7・R8)
+;; ---------------------------------------------------------------------------
+;;
+;; maybe / result は関数(doeff_core_effects.outcomes)— パターンも字面も要らないので macro にしない。
+
+(defmacro on-raise [program #* clauses]
+  "(on-raise 本文 パターン [:if 番] 写し先 …) — 本文の中の Raise のうち、パターン(失敗の型の形)に合う物だけを写し先の
+   業務の答えにしてスコープを終える。合わない Raise は外へ渡し、成功はそのまま返す。
+
+   (<- answer (on-raise (do! (<- body (read-typed …) :absent (Conflict \"行が無い\"))
+                             (<- (revise …))
+                             (WriteLanded))
+                (Conflict d)        (WriteConflict :detail d)
+                (Unreachable d)     (WriteUnreachable :detail d)))
+
+   パターンは (型 欄 …) か (| (A …) (B …)) だけ — 何でも受ける形(_・名前 1 つ・object・Exception)は展開の時に断る。
+   Python の例外は受けない(Raise だけを見る)。番と写し先は値の式。 [ADR-DOE-CORE-EFFECTS-003 R7]"
+  (import doeff-hy.outcome-forms [on-raise-form])
+  (locate-synthesized (on-raise-form program clauses)))
+
+(defmacro absent-as [default program]
+  "(absent-as 既定値 本文) — 本文の中の Absent を既定値に畳む。
+
+   Absent を再開せず、既定値で absent-as のスコープを終える(奥の行に別の型の値を渡さない・不在を前提にしない続きを
+   走らせない)。字面の中の <- の不在を既定値で再開する形は、<- が宣言を持つ effect の答えを開く段階 2 で足す。
+   [ADR-DOE-CORE-EFFECTS-003 R8]
+
+   (<- n (absent-as 0 (count-rows \"k\")))   ; 不在なら n = 0"
+  (import doeff-hy.outcome-forms [absent-as-form])
+  (locate-synthesized (absent-as-form default program)))
+
+
+;; ---------------------------------------------------------------------------
 ;; Internal: binding helpers
 ;; ---------------------------------------------------------------------------
 
@@ -1289,10 +1323,11 @@ the effect in the enclosing do-context.
           (cond
             (and (is-not head None) (in head _BANG-OPAQUE-HEADS))
               node
-            ;; handle: the wrapped program (arg 1) is evaluated in the
+            ;; handle / on-raise: the wrapped program (arg 1) is evaluated in the
             ;; ENCLOSING do-context — walk it. The clauses own their own
-            ;; do-context — opaque.
-            (and (= head "handle") (>= (len node) 2))
+            ;; do-context (handle) or are value expressions the macro checks
+            ;; (on-raise: patterns and the answers they map to) — opaque.
+            (and (in head #{"handle" "on-raise"}) (>= (len node) 2))
               (hy.models.Expression
                 [(get node 0) (walk (get node 1) ctx) #* (cut node 2 None)])
             True

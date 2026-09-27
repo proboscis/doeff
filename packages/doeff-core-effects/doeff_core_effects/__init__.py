@@ -11,12 +11,15 @@ import importlib as _importlib
 
 from doeff_core_effects import _hy_submodules  # noqa: F401 - installs the lazy Hy finder first
 from doeff_core_effects.effects import (  # noqa: F401
+    Absent,
     Ask,
     Await,
     Get,
     Listen,
     Local,
     Put,
+    Raise,
+    Resumption,
     Slog,
     SlogEffect,
     Tell,
@@ -37,6 +40,13 @@ from doeff_core_effects.handlers import (  # noqa: F401
     try_handler,
     writer,
     writer_log,
+)
+from doeff_core_effects.outcomes import (  # noqa: F401 - absence and failure (ADR-DOE-CORE-EFFECTS-003)
+    RaiseCase,
+    absent_as,
+    maybe,
+    on_raise,
+    result,
 )
 from doeff_core_effects.scheduler import (  # noqa: F401
     PRIORITY_HIGH,
