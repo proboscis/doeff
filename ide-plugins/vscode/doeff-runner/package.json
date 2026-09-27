@@ -371,6 +371,11 @@
         "command": "doeff-runner.lint.toggleRules",
         "title": "規則の一覧 / 違反の一覧を切り替える",
         "icon": "$(law)"
+      },
+      {
+        "command": "doeff-runner.lint.showLayers",
+        "title": "層の説明の表を見る(linter)",
+        "icon": "$(layers)"
       }
     ],
     "configuration": {
@@ -570,6 +575,11 @@
           "command": "doeff-runner.lint.rerun",
           "when": "view == doeff-lint-map",
           "group": "navigation@0"
+        },
+        {
+          "command": "doeff-runner.lint.showLayers",
+          "when": "view == doeff-lint-map",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [

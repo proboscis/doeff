@@ -126,6 +126,9 @@ suite('linter の結果の見せ方', () => {
     assert.strictEqual(d.code, 'DOEFF201');
     assert.deepStrictEqual(d.message.split('\n'), [
       '層 core が層 foundation の controllers.foundation.records を import している',
+      'これは何か: この file は層 core — path が controllers/kanban/core/ の下',
+      'なぜ違反か: core は intent だけを import する。controllers.foundation.records は層 foundation',
+      'law: core の module は intent の module だけを import する',
       '直し方: core は intent だけを読む。記録は intent の effect を出し、protocol の翻訳の handler で訳す',
       '規則 DOEFF201 · law core-imports-only-intent · ADR-CONTROLLERS-CHOOSE-ENVIRONMENT-BY-HANDLER-SET'
     ]);

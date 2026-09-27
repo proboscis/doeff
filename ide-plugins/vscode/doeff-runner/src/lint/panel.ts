@@ -2,7 +2,8 @@
 // 木の中身は view.ts の純粋な関数が作り、ここは VS Code の TreeItem へ写すだけ。色は違反の有無だけで決める。
 
 import * as vscode from 'vscode';
-import type { LintViolation } from './contract';
+import type { LintLayer, LintViolation } from './contract';
+import { layerSummary, violationExplanationLines } from './layers';
 import { displayRange, lintChildren, mapRoots, ruleNodes, violationCount, violationRoots, type LintNode } from './view';
 import type { LintStore } from './store';
 
@@ -27,7 +28,7 @@ function countIcon(count: number, base: string): vscode.ThemeIcon {
 }
 
 /** 節を VS Code の TreeItem にする。 */
-export function lintTreeItem(node: LintNode): vscode.TreeItem {
+export function lintTreeItem(node: LintNode, layers: readonly LintLayer[]): vscode.TreeItem {
   const collapsed = vscode.TreeItemCollapsibleState.Collapsed;
   const none = vscode.TreeItemCollapsibleState.None;
   switch (node.tag) {
@@ -49,9 +50,7 @@ export function lintTreeItem(node: LintNode): vscode.TreeItem {
       const item = new vscode.TreeItem(v.message, none);
       item.description = `${v.range.start.line + 1} 行 · ${v.rule}${v.registered ? ' · 登録簿' : ''}`;
       item.tooltip = new vscode.MarkdownString(
-        [v.message, v.hint === null ? '' : `直し方: ${v.hint}`, `規則 \`${v.rule}\`${v.law === null ? '' : ` · law \`${v.law}\``}`]
-          .filter((l) => l !== '')
-          .join('\n\n')
+        [v.message, ...violationExplanationLines(v), `規則 \`${v.rule}\`${v.law === null ? '' : ` · law \`${v.law}\``}`].join('\n\n')
       );
       item.command = openViolation(v);
       item.iconPath = new vscode.ThemeIcon(v.severity === 'error' ? 'error' : v.severity === 'warning' ? 'warning' : 'info');
@@ -70,7 +69,9 @@ export function lintTreeItem(node: LintNode): vscode.TreeItem {
     case 'layer': {
       const item = new vscode.TreeItem(node.label, collapsed);
       const count = violationCount(node);
-      item.description = `${node.entries.length} file · 違反 ${count}`;
+      // 層の一行の説明は linter の layers から(出していなければ数だけ)
+      const summary = layerSummary(node.label, layers);
+      item.description = `${summary === '' ? '' : `${summary} · `}${node.entries.length} file · 違反 ${count}`;
       item.iconPath = countIcon(count, 'layers');
       return item;
     }
@@ -88,7 +89,7 @@ export function lintTreeItem(node: LintNode): vscode.TreeItem {
       const item = new vscode.TreeItem(node.entry.relative.split(/[\\/]/).pop() ?? node.entry.relative, state);
       const parts = [m.context, m.role].filter((p): p is string => p !== null);
       item.description = `${parts.join(' · ')}${parts.length > 0 ? ' · ' : ''}違反 ${m.violations}`;
-      item.tooltip = node.entry.relative;
+      item.tooltip = m.layerReason === null ? node.entry.relative : `${node.entry.relative}\n${m.layerReason}`;
       item.command = openAt(m.path, 0, 0);
       item.iconPath = countIcon(m.violations, 'file-code');
       return item;
@@ -136,7 +137,7 @@ export class LintViolationsTree implements vscode.TreeDataProvider<LintNode>, vs
 
   /** 節の表示。 */
   getTreeItem(node: LintNode): vscode.TreeItem {
-    return lintTreeItem(node);
+    return lintTreeItem(node, this.store.layers());
   }
 
   /** 節の子(最上段は law の束か規則の一覧)。 */
@@ -167,7 +168,7 @@ export class LintMapTree implements vscode.TreeDataProvider<LintNode>, vscode.Di
 
   /** 節の表示。 */
   getTreeItem(node: LintNode): vscode.TreeItem {
-    return lintTreeItem(node);
+    return lintTreeItem(node, this.store.layers());
   }
 
   /** 節の子(最上段は層の束)。 */

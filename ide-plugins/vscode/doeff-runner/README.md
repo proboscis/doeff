@@ -72,6 +72,19 @@ The extension bundles `doeff-indexer` binaries for common platforms (macOS, Linu
   - 上の `$(law)` で「規則の一覧」に切り替えます。針のつながっていない規則は灰色で、linter がまだ見ていない物です。
 - **「層の地図(linter)」パネル**: linter の `modules` の層(core・intent・protocol・foundation・entry・層の外)→ dir → file の木です。色は違反の有無だけで付けます。
 
+### 層を見分ける表示(linter の layers から)
+
+層とその説明、違反の理由は、すべて linter(doeff-linter の editor-json)が出します。拡張は文を持ちません。
+
+- **エクスプローラーの印**: file に層の頭文字(C・I・P・F・E …)を付けます。層の外の file には付けません。
+  - 文字は層を表し、色は違反の有無を優先します。違反のある file は問題の色(赤)、違反が無ければ linter の層の順に当てた色です。層は文字で、壊れているかは色で見分けます。
+  - tooltip には、linter の層の一行の説明と、その file の層を何で決めたか(`layer_reason`)を出します。
+- **ステータスバー**: 今開いている file の「層: protocol — 相手の話し方へ訳す handler(context: …)」を出します。押すと linter の `layers` の表(知っていること・知らないこと・迷った時の問い)を開きます。
+- **hover**: `MODULE-TAGS` の辞書と、定義の契約の辞書の `:tags` / `:role` の上で、書かれた role・linter の決めた層・層の決め方・層の説明を出します。
+  - 違反のある行では、その違反の「これは何か」「なぜ違反か」「law の :statement」「直し方」を出します。問題の一覧の文にも同じものを出し、行末の注記は短い文のままです。
+- **「層の地図(linter)」**: 層の項目の description に、linter の一行の説明を出します。
+- linter が説明を出さない時(古い binary、設定に説明が無い)は、層の名前だけを出し、説明の欄は空にします。説明は doeff-linter の設定 `[tool.doeff-linter.layers.describe.<層>]` に書きます。
+
 ### 生の副作用に触る handler の印(事実の表示)
 
 http・asyncio・時刻・乱数・file・process・環境変数・network・db・thread に直接触る定義に印を付けます。handler(defhandler と effect の節)を見分けるための機能です。同じ effect を実際の I/O で扱う本番の handler と、純粋な模擬の handler を並べて区別できます。
