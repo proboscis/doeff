@@ -28,7 +28,7 @@
 ;;;   外側に状態の置き場(doeff_core_effects の state)と時計が要る。
 (require doeff-hy.macros [defk deff defhandler <- val var])
 (require doeff-hy.record [defrecord defenum])
-(import dataclasses [dataclass])
+(import dataclasses [dataclass asdict])
 (import enum [StrEnum])
 (import functools [partial])
 (import hashlib)
@@ -528,15 +528,10 @@
   (MemoryFiles :dirs #(STATE-DIR WORLD-DIR)
                :files (+ (if (is failure None)
                              #()
-                             #((MemoryFile :path FAILURE-PATH :content (.encode (json.dumps (failure-json failure))))))
+                             ;; 世界の file の JSON は UvFailure の欄そのまま(fault は StrEnum なので文字で書かれる)。
+                             #((MemoryFile :path FAILURE-PATH :content (.encode (json.dumps (asdict failure))))))
                          #((MemoryFile :path UNREACHABLE-PATH :content (.encode (json.dumps (sorted world.unreachable))))))
                :free world.disk-free))
-
-
-(deff failure-json [failure]  ; defk にできない: 置き場の初めの中身(Program の外)と set-uv-failure の両方が JSON の境界で使う
-  {:pre [(: failure UvFailure)] :post [(: % dict)] :tags {:context "runtime-env" :role "foundation"}}
-  "uv の失敗を世界の file の JSON の形にするため(JSON の境界はここ 1 か所)。"
-  {"fault" failure.fault.value "detail" failure.detail})
 
 
 (deff env-world [world]  ; defk にできない: handler の列を返す — 入口と検が Program の外で並べる
@@ -575,7 +570,7 @@
 (defk set-uv-failure [failure]
   {:pre [(: failure (| UvFailure None))] :post [(: % None)] :tags {:context "runtime-env" :role "foundation"}}
   "筋書きが走行の途中で以後の uv の失敗を差し替えるため(None = 失敗させない)。"
-  (<- (write-json FAILURE-PATH (if (is failure None) None (failure-json failure))))
+  (<- (write-json FAILURE-PATH (if (is failure None) None (asdict failure))))
   None)
 
 
