@@ -12,9 +12,10 @@
 //! Jev の呼び出しを覚える代理(doeff の packages/doeff-jev-proxy・agora-redesign #843):
 //! - 宛先は repo ごとの設定 `[tool.doeff-linter.semantic] proxy_url` で向ける(機体全体の環境変数にしない — 会社の repo は向けない)。
 //!   env の JEV_BASE_URL が在ればそちらが勝つ。代理へは代理の token(proxy_token_file)だけを送り、TypeSafe のキーは送らない。
-//! - 決定的な規則の全体の実行(hook・引数なしの実行)は、手元の cache に無い定義を「覚えている時だけ答えて」の印
-//!   (見出し Cache-Control: only-if-cached)で代理に問い、返った答えを手元の cache に書く。本物の Jev は呼ばない。
-//!   代理に届かない・時間切れ(proxy_peek_timeout_ms・既定 1500)の時は手元の cache だけで動く。
+//! - 決定的な規則の全体の実行(hook・引数なしの実行)は、手元の cache に無い定義を代理に「覚えている時だけ」問い、返った答えを手元の
+//!   cache に書く。本物の Jev は呼ばない。問いは定義 1 つずつではなく、代理の鍵(proxy_key — 本文を正規化した sha256)の束
+//!   (POST <proxy_url>/peek・PEEK_BATCH 個ずつ)で撃つ — 定義が数千ある repo でも往復が数回で済み、本文を送らない。
+//!   代理に届かない・時間切れ(proxy_peek_timeout_ms・既定 DEFAULT_PROXY_PEEK_TIMEOUT_MS)の時は手元の cache だけで動く。
 //! - 較正の見張りの問いは覚えを使わない(Cache-Control: no-cache — model の中身が変わったことを代理の覚えが隠さないため)。
 //! - `--semantic-changed` は、指定の file のうち手元の cache に答えの無い定義(= 中身が変わった定義)だけを問う。
 //!   読み取りで壊れた箇所を含む定義(書きかけ)はどの実行でも問わない。
@@ -184,7 +185,7 @@ pub struct SemanticSection {
     pub proxy_url: Option<String>,
     /// 代理の身元の token の file(既定 ~/.config/jev/proxy-token)。
     pub proxy_token_file: Option<String>,
-    /// 覚えている時だけの問いの時間の上限(ms・既定 1500 — 全部の問いを合わせた上限)。
+    /// 覚えている時だけの問いの時間の上限(ms・既定 5000 — 全部の束を合わせた上限)。
     pub proxy_peek_timeout_ms: Option<u64>,
 }
 
@@ -222,8 +223,12 @@ pub struct ProxySettings {
 
 /// 代理の token の file の既定の置き場。
 pub const DEFAULT_PROXY_TOKEN_FILE: &str = "~/.config/jev/proxy-token";
-/// 覚えている時だけの問いの時間の上限の既定(ms)。
-pub const DEFAULT_PROXY_PEEK_TIMEOUT_MS: u64 = 1500;
+/// 覚えている時だけの問いの時間の上限の既定(ms — 全部の束を合わせた上限。遅い網の機体から数千の鍵を送っても収まる長さ)。
+pub const DEFAULT_PROXY_PEEK_TIMEOUT_MS: u64 = 5000;
+/// 覚えている時だけの問いの束 1 つの鍵の数(代理の上限 20000 の内 — 鍵 1 つは 67 byte 前後)。
+pub const PEEK_BATCH: usize = 1000;
+/// 代理の鍵の決まりの版(doeff の packages/doeff-jev-proxy/src/doeff_jev_proxy/key.hy の KEY-VERSION と同じ)。
+pub const PROXY_KEY_VERSION: &str = "jev-proxy-key-1";
 
 /// `[tool.doeff-linter.semantic] plain_callable`(読んだ形)。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
@@ -435,6 +440,19 @@ fn canonical(value: &Value) -> String {
     }
 }
 
+/// 問いの本文の代理の鍵(64 桁の小文字の 16 進)= sha256(PROXY_KEY_VERSION + "\n" + 決まった綴りの本文)。代理の決まり(doeff の
+/// packages/doeff-jev-proxy/src/doeff_jev_proxy/key.hy の normalize-request — object の鍵を符号位置の順に並べ・区切りの空白なし・
+/// 文字は UTF-8 のまま)と同じ鍵になる。本文は model を持つこと(代理は model の無い本文に既定の名を足してから綴る)。小数は綴りが
+/// 言語で違うので同じ鍵にならない(外れるだけで、別の問いの答えには当たらない — linter の本文は小数を持たない)。
+/// 同じ鍵になることは、代理の見本(packages/doeff-jev-proxy/tests/key_contract.json)を両方の検が読んで確かめる。
+pub fn proxy_key(body: &Value) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(PROXY_KEY_VERSION.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(canonical(body).as_bytes());
+    hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect()
+}
+
 /// 定義 1 つの state と cache の鍵を作る。鍵 = sha256(model・問いの JSON・層の説明・タグを消した source)。申告の役は鍵に入れない。
 #[allow(clippy::too_many_arguments)]
 pub fn item(
@@ -624,14 +642,12 @@ pub enum Freshness {
     Fresh,
 }
 
-/// 覚えている時だけの問いの結果。
+/// 覚えている時だけの問いの束の結果。
 #[derive(Debug, Clone, PartialEq)]
-pub enum Peeked {
-    /// 代理が覚えていた答え。
-    Hit(Answer),
-    /// 代理は覚えていない(本物の Jev は呼んでいない)。
-    Absent,
-    /// 代理に届かない・時間切れ・代理でない宛先(理由)。
+pub enum PeekedMany {
+    /// 代理が覚えていた答え(代理の鍵 → 答え — 覚えていない鍵は載らない・本物の Jev は呼んでいない)。
+    Remembered(BTreeMap<String, Answer>),
+    /// 代理に届かない・時間切れ・代理でない宛先・読めない答え(理由)。
     Unreachable(String),
 }
 
@@ -639,8 +655,10 @@ pub enum Peeked {
 pub trait Gateway: Sync {
     /// 1 つの定義に 1 つの問いを撃つ。
     fn ask(&self, state: &Value, question: &Value, freshness: Freshness) -> Result<Answer, String>;
-    /// 代理が覚えている時だけ答えを受け取る(本物の Jev を呼ばない)。代理でない宛先は Unreachable。
-    fn peek(&self, state: &Value, question: &Value, timeout: Duration) -> Peeked;
+    /// 問いの本文の代理の鍵(proxy_key)。宛先が代理でなければ None(覚えている時だけの問いは代理にだけ撃つ)。
+    fn proxy_key(&self, state: &Value, question: &Value) -> Option<String>;
+    /// 代理の鍵の束を代理に「覚えている時だけ」問う(本物の Jev を呼ばない・撃ち直さない)。代理でない宛先は Unreachable。
+    fn peek_many(&self, keys: &[String], timeout: Duration) -> PeekedMany;
     /// 宛先の model の名(cache の鍵と出力のため)。
     fn model(&self) -> String;
 }
@@ -868,30 +886,28 @@ impl Gateway for HttpGateway {
         Err(last)
     }
 
-    /// 覚えている時だけ問う(Cache-Control: only-if-cached・撃ち直さない)。代理でない宛先には撃たない(本物の Jev を呼ばないため)。
-    /// 代理の印(x-jev-proxy: hit)の無い 200 は答えとして使わない。
-    fn peek(&self, state: &Value, question: &Value, timeout: Duration) -> Peeked {
+    /// 代理の鍵(代理の宛先の時だけ — 本文は ask と同じ綴り)。
+    fn proxy_key(&self, state: &Value, question: &Value) -> Option<String> {
+        self.target.proxy.then(|| proxy_key(&self.body(state, question)))
+    }
+
+    /// 鍵の束を POST <proxy_url>/peek で覚えている時だけ問う(撃ち直さない)。代理でない宛先には撃たない(本物の Jev を呼ばないため)。
+    fn peek_many(&self, keys: &[String], timeout: Duration) -> PeekedMany {
         if !self.target.proxy {
-            return Peeked::Unreachable("宛先が代理でない(覚えている時だけの問いは代理にだけ撃つ)".to_string());
+            return PeekedMany::Unreachable("宛先が代理でない(覚えている時だけの問いは代理にだけ撃つ)".to_string());
         }
-        let mut request = self
-            .agent
-            .post(&self.target.base_url)
-            .timeout(timeout)
-            .set("content-type", "application/json")
-            .set("cache-control", "only-if-cached");
+        let url = format!("{}/peek", self.target.base_url.trim_end_matches('/'));
+        let mut request = self.agent.post(&url).timeout(timeout).set("content-type", "application/json");
         if let Some(key) = &self.target.api_key {
             request = request.set("authorization", &format!("Bearer {}", key));
         }
-        match request.send_string(&self.body(state, question).to_string()) {
-            Ok(ok) if ok.header("x-jev-proxy") == Some("hit") => match ok.into_string().map_err(|e| e.to_string()).and_then(|text| parse_answer(&text)) {
-                Ok(answer) => Peeked::Hit(answer),
-                Err(reason) => Peeked::Unreachable(format!("代理の答えを読めない: {}", reason)),
+        match request.send_string(&json!({ "keys": keys }).to_string()) {
+            Ok(ok) => match ok.into_string().map_err(|e| e.to_string()).and_then(|text| parse_remembered(&text)) {
+                Ok(answers) => PeekedMany::Remembered(answers),
+                Err(reason) => PeekedMany::Unreachable(format!("代理の答えを読めない: {}", reason)),
             },
-            Ok(_) => Peeked::Unreachable("代理の印(x-jev-proxy: hit)の無い答え".to_string()),
-            Err(ureq::Error::Status(504, _)) => Peeked::Absent,
-            Err(ureq::Error::Status(code, _)) => Peeked::Unreachable(format!("代理が HTTP {} を返した", code)),
-            Err(error) => Peeked::Unreachable(format!("代理に届かない: {}", error)),
+            Err(ureq::Error::Status(code, _)) => PeekedMany::Unreachable(format!("代理が HTTP {} を返した", code)),
+            Err(error) => PeekedMany::Unreachable(format!("代理に届かない: {}", error)),
         }
     }
 
@@ -921,6 +937,13 @@ pub fn parse_answer(text: &str) -> Result<Answer, String> {
     let input_tokens = usage.and_then(|u| u.get("input_tokens").or_else(|| u.get("inputTokens"))).and_then(Value::as_u64).unwrap_or(0);
     let served_model = value.get("model").and_then(Value::as_str).map(str::to_string);
     Ok(Answer { probability, cost_usd, input_tokens, served_model, choice, probabilities })
+}
+
+/// 代理の覚えている時だけの問いの束の答え {"answers": {鍵: Jev の答えの本文}} を読む(1 つでも読めなければ全体を読めないとする)。
+pub fn parse_remembered(text: &str) -> Result<BTreeMap<String, Answer>, String> {
+    let value: Value = serde_json::from_str(text).map_err(|e| format!("答えが JSON でない: {}", e))?;
+    let answers = value.get("answers").and_then(Value::as_object).ok_or_else(|| "答えに answers の object が無い".to_string())?;
+    answers.iter().map(|(key, answer)| parse_answer(&answer.to_string()).map(|a| (key.clone(), a))).collect()
 }
 
 /// cache の置き場(repo の根の .doeff-linter/semantic-cache/)。
@@ -1115,44 +1138,32 @@ pub fn evaluate(
             (item, cached)
         }).collect(),
     };
-    // 全体の実行・hook: 手元の cache に無い定義を代理に「覚えている時だけ」問う(全部を合わせた時間の上限つき・届かなければやめる)。
+    // 全体の実行・hook: 手元の cache に無い読める定義を、代理の鍵の束で代理に「覚えている時だけ」問う(本物の Jev は呼ばない)。
     let resolved = match (mode, gateway, &pool, settings.proxy.as_ref()) {
         (SemanticMode::Peek, Some(gateway), Ok(pool), Some(proxy)) => {
-            let deadline = Instant::now() + proxy.peek_timeout;
-            let stop = AtomicBool::new(false);
-            let peeked: Vec<(SemanticItem, Option<Result<Answer, String>>, bool)> = pool.install(|| {
-                resolved
-                    .into_par_iter()
-                    .map(|(item, cached)| {
-                        if cached.is_some() || stop.load(Ordering::Relaxed) {
-                            return (item, cached, false);
+            let wanted: Vec<Option<String>> = resolved
+                .iter()
+                .map(|(item, cached)| match cached {
+                    None if item.readable => gateway.proxy_key(&item.state, &item.question_json),
+                    _ => None,
+                })
+                .collect();
+            let keys: Vec<String> = wanted.iter().flatten().cloned().collect::<BTreeSet<String>>().into_iter().collect();
+            let remembered = if keys.is_empty() { BTreeMap::new() } else { peek_remembered(gateway, &keys, proxy.peek_timeout, pool) };
+            resolved
+                .into_iter()
+                .zip(wanted)
+                .map(|((item, cached), key)| match key.and_then(|k| remembered.get(&k)) {
+                    Some(answer) => {
+                        summary.peeked += 1;
+                        if let Err(reason) = write_cache(root, &item.key, answer) {
+                            errors.push(reason);
                         }
-                        let left = deadline.saturating_duration_since(Instant::now());
-                        if left.is_zero() {
-                            return (item, None, false);
-                        }
-                        match gateway.peek(&item.state, &item.question_json, left) {
-                            Peeked::Hit(answer) => (item, Some(Ok(answer)), true),
-                            Peeked::Absent => (item, None, false),
-                            Peeked::Unreachable(_) => {
-                                stop.store(true, Ordering::Relaxed);
-                                (item, None, false)
-                            }
-                        }
-                    })
-                    .collect()
-            });
-            let mut kept = Vec::new();
-            for (item, result, from_proxy) in peeked {
-                if let (true, Some(Ok(answer))) = (from_proxy, &result) {
-                    summary.peeked += 1;
-                    if let Err(reason) = write_cache(root, &item.key, answer) {
-                        errors.push(reason);
+                        (item, Some(Ok(answer.clone())))
                     }
-                }
-                kept.push((item, result));
-            }
-            kept
+                    None => (item, cached),
+                })
+                .collect()
         }
         _ => resolved,
     };
@@ -1181,6 +1192,35 @@ pub fn evaluate(
         }
     }
     SemanticOutcome { answered, summary, errors }
+}
+
+/// 代理の鍵の束を PEEK_BATCH 個ずつに分けて並べて代理に「覚えている時だけ」問い、覚えていた答えを集める。全部の束を合わせた時間の
+/// 上限つきで、どれかの束が届かなければ残りの束は撃たない(集まらなかった鍵は手元の cache だけで動く)。
+fn peek_remembered(gateway: &dyn Gateway, keys: &[String], timeout: Duration, pool: &rayon::ThreadPool) -> BTreeMap<String, Answer> {
+    let deadline = Instant::now() + timeout;
+    let unreachable = AtomicBool::new(false);
+    let batches: Vec<&[String]> = keys.chunks(PEEK_BATCH).collect();
+    pool.install(|| {
+        batches
+            .par_iter()
+            .map(|batch| {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() || unreachable.load(Ordering::Relaxed) {
+                    return BTreeMap::new();
+                }
+                match gateway.peek_many(batch, left) {
+                    PeekedMany::Remembered(answers) => answers,
+                    PeekedMany::Unreachable(_) => {
+                        unreachable.store(true, Ordering::Relaxed);
+                        BTreeMap::new()
+                    }
+                }
+            })
+            .reduce(BTreeMap::new, |mut all, part| {
+                all.extend(part);
+                all
+            })
+    })
 }
 
 impl SemanticItem {
