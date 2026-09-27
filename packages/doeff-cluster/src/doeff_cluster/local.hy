@@ -73,6 +73,7 @@
 ;;; が書いた値を、節の古い写しで上書きしない)。
 (require doeff-hy.macros [defk deff defhandler defeffect <- val var])
 (require doeff-hy.record [defrecord])
+(import collections.abc [Callable])
 (import dataclasses [dataclass replace])
 (import pathlib [Path])
 (import urllib.parse [quote :as url-quote unquote :as url-unquote])
@@ -345,14 +346,20 @@
 (defrecord SimOutside
   "sim の外の世界(本番では job の土台の handler が外の系 — 業務の store・外部の API — と話して答える effect に、sim では系の外側で
    答える物)。handlers = sim の全部の job と筋書きの外側に置く handler の組(外側が先 — 仮想の時計の内側)・effects = それが答える effect の型
-   (柵が外へ通す — isinstance で数えるので基底の型でよい)。job は effect を通してだけ外の世界を共有する(object を共有しない)。"
+   (柵が外へ通す — isinstance で数えるので基底の型でよい)。job は effect を通してだけ外の世界を共有する(object を共有しない)。
+   per-process = process ごとの外の handler の組を作る関数 (job の名 worker の名) → handler の list(None = 無し)。宿が process を起こす
+   時に 1 回呼び、柵の外側・sim の世界の内側に並べる — 本番で job ごと・機体ごとに違う外の口(記録の service の身元の token・預かり所の
+   借り手・機体の session の置き場)を、共有の外の世界(handlers)の手前で答えるため(agora-redesign #833 の条件「sim-cluster は担い手ごとに
+   handler の組を持つ」・#834)。作る handler も effects に載った型にだけ答える(柵がそれ以外を通さない)。"
   (#^ list handlers)
-  (#^ tuple effects))
+  (#^ tuple effects)
+  (setv #^ (| Callable None) per-process None))
 
 
 (defrecord SimPlan
   "sim の 1 回の走りの筋(sim-cluster が引数から作る)。declaration = 最初の宣言(environ の上書きを重ねた行)・environ = job 名 →
-   上書きの環境変数(Redeclare にも重ねる)・passable = 柵が外へ通す effect の型(SIM-PASSABLE と外の世界の effects)。"
+   上書きの環境変数(Redeclare にも重ねる)・passable = 柵が外へ通す effect の型(SIM-PASSABLE と外の世界の effects)・
+   per-process = process ごとの外の handler の組を作る関数(SimOutside.per-process — None = 無し)。"
   (#^ System system)
   (#^ Declaration declaration)
   (#^ tuple workers)
@@ -362,7 +369,8 @@
   (#^ ClusterTiming timing)
   (#^ ClusterNaming naming)
   (#^ WorkerPolicy policy)
-  (#^ tuple passable))
+  (#^ tuple passable)
+  (setv #^ (| Callable None) per-process None))
 
 
 (defrecord SimParts
@@ -545,6 +553,7 @@
     (raise (ValueError (.format "workers は名の重ならない SimWorker の 1 つ以上の tuple: {!r}" chosen))))
   (<- declaration Declaration (declaration-of system revision (or environ {})))
   (SimPlan :system system :declaration declaration :workers chosen :environ (or environ {}) :revision revision
+           :per-process (if (is outside None) None outside.per-process)
            :start-ms start-ms :timing (or timing (ClusterTiming)) :naming (ClusterNaming) :policy (or policy (WorkerPolicy))
            :passable (+ SIM-PASSABLE (if (is outside None) #() outside.effects))))
 
@@ -857,13 +866,15 @@
 (defrecord SimChild
   "sim の子 process 1 つに宿が答える物(宿の答え host-answers の引数)。ctx = 宿の契約の run-context・program-path = Program の path・
    environ = 宣言の :environ(上書きを重ねた物 — 名 → 値)・link = coordinator へ話す口(送り手 = job の名・居る所 = worker)・
-   pid = sim の中の process の番号・passable = 柵が外へ通す effect の型(SimPlan.passable)。"
+   pid = sim の中の process の番号・passable = 柵が外へ通す effect の型(SimPlan.passable)・outside = この process の外の handler の組
+   (SimOutside.per-process が作った物 — 柵の外側に並べる)。"
   (#^ RunContext ctx)
   (#^ str program-path)
   (#^ dict environ)
   (#^ SimLink link)
   (#^ int pid)
-  (#^ tuple passable))
+  (#^ tuple passable)
+  (setv #^ tuple outside #()))
 
 
 (defk send-report [child kind payload]
@@ -936,12 +947,24 @@
     (resume warm)))
 
 
+(defk process-outside [per-process job worker]
+  {:pre [(: per-process (| Callable None)) (: job str) (: worker str)] :post [(: % list)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "process ごとの外の handler の組を作るため(SimOutside.per-process を job の名と worker の名で呼ぶ — 無ければ空)。関数でない物・
+   list でない答えは断る(黙って外の世界を欠いた process を起こさない)。"
+  (when (is per-process None)
+    (return []))
+  (val made (per-process job worker))
+  (when (not (isinstance made list))
+    (raise (TypeError (.format "SimOutside の per-process の答えは handler の list(job {} ・worker {}): {!r}" job worker made))))
+  made)
+
+
 (defk run-fenced [program child once]
   {:pre [(: program DoExpr) (: child SimChild) (: once bool)] :post [(: % SimExit)] :tags {:context "doeff-cluster" :role "program"}}
   "Program を柵と答えの中で走らせ、終わり方を決めるため(本番の job_entry の service / task の入口の終わり方と同じ: service は
    値 = 0・例外 = 1、task は結果を書いて 0。止めの合図 = -15・Crash = 1・worker の死 = -9)。"
   (try
-    (<- value (with-handlers [(fence child.pid child.passable) (coordinator-answers child.link) (host-answers child)] program))
+    (<- value (with-handlers [#* child.outside (fence child.pid child.passable) (coordinator-answers child.link) (host-answers child)] program))
     (SimExit :code 0 :result (if once (encode-outcome (TaskSucceeded value)) None) :value (if once None value))
     (except [TaskCancelledError]
       (<- killed (| SimExit None) (KillOf child.pid))
@@ -1140,7 +1163,9 @@
     (<- program-path str (program-path-of spec.program))
     (val link (SimLink :queue parts.queue :actor spec.name :revision spec.revision :peer worker.name))
     (<- plan SimPlan (PlanOf))
-    (val child (SimChild :ctx ctx :program-path program-path :environ (dict spec.environ) :link link :pid pid :passable plan.passable))
+    (<- outside list (process-outside plan.per-process spec.name worker.name))
+    (val child (SimChild :ctx ctx :program-path program-path :environ (dict spec.environ) :link link :pid pid :passable plan.passable
+                         :outside (tuple outside)))
     (<- task Task (Spawn (sim-process worker.name spec child (.get truth.programs spec.program))))
     (<- (KeepHandle pid task))
     (resume None))
