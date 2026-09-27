@@ -9,6 +9,7 @@
 ;;; 当てる(composition root が選ぶ)。
 
 (require doeff-hy.handle [defhandler])
+(require doeff-hy.macros [<-])
 
 (import os)
 (import shutil)
@@ -19,6 +20,7 @@
 (import pathlib [Path])
 
 (import doeff [run])
+(import doeff_core_effects.os_process [run-subprocess])
 (import doeff_agents.io_effects [
   ProcessOutcome
   WhichExecutable
@@ -58,35 +60,6 @@
   (when (is-not mode None)
     (.chmod target mode))
   None)
-
-
-(defn _run-process-io [argv stdin timeout cwd]
-  (try
-    (setv outcome (subprocess.run (list argv)
-                                  :input stdin
-                                  :capture-output True
-                                  :text True
-                                  :encoding "utf-8"
-                                  :timeout timeout
-                                  :cwd cwd
-                                  :check False))
-    (ProcessOutcome :exit-code outcome.returncode
-                    :stdout (or outcome.stdout "")
-                    :stderr (or outcome.stderr "")
-                    :timed-out False)
-    (except [error subprocess.TimeoutExpired]
-      (ProcessOutcome :exit-code 124
-                      :stdout (_decoded error.stdout)
-                      :stderr (_decoded error.stderr)
-                      :timed-out True))))
-
-
-(defn _decoded [value]
-  "TimeoutExpired が持つ部分出力は bytes のことがある。"
-  (cond
-    (is value None) ""
-    (isinstance value bytes) (.decode value "utf-8" "replace")
-    True (str value)))
 
 
 (defn _spawn-detached-io [argv log-path cwd]
@@ -183,8 +156,10 @@
                 (tuple (sorted (gfor entry (.glob root pattern) (str entry))))
                 #())))
 
-  (RunProcess [argv stdin timeout cwd]
-    (resume (_run-process-io argv stdin timeout cwd)))
+  (RunProcess [argv stdin timeout cwd env output-path]
+    ;; 実装は汎用の subprocess-handler と同じ 1 つ(doeff_core_effects.os_process の run-subprocess — agora-redesign #802 便 1)。
+    (<- outcome (run-subprocess argv stdin timeout cwd env output-path))
+    (resume outcome))
 
   (SpawnDetached [argv log-path cwd]
     (resume (_spawn-detached-io argv log-path cwd)))
