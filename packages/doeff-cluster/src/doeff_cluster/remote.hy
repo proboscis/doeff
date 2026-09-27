@@ -16,7 +16,7 @@
 ;; --- handler A: 同じ VM の中で Spawn して待つ(テスト用) --------------------------------------
 ;; 外側の handler(テストの fake)をそのまま継承する。Program の例外は Wait が再送出し、呼び手の yield 点へ届く。
 (defhandler remote-inline []
-  (RemoteJob [program env needs name]
+  (RemoteJob [program needs name]
     (<- task (Spawn program))
     (<- result (Wait task))
     (resume result)))
@@ -29,9 +29,9 @@
   (defn __init__ [self #^ str url #^ str revision [timeout REPLY-SECONDS] #^ (| RuntimeEnv None) [runtime-env None]]
     (setv self.revision revision self.runtime-env runtime-env self.endpoint (CoordinatorEndpoint url timeout 4)))
 
-  (defn #^ str submit [self #^ str blob #^ str env #^ frozenset needs #^ dict versions #^ str name #^ float lease-seconds]
+  (defn #^ str submit [self #^ str blob #^ frozenset needs #^ dict versions #^ str name #^ float lease-seconds]
     (setv response (.request self.endpoint "POST" "/tasks"
-      :json (| {"env" env "blob" blob "versions" versions "revision" self.revision
+      :json (| {"blob" blob "versions" versions "revision" self.revision
                 "needs" (sorted needs) "name" name "leaseSeconds" lease-seconds "format" PROTOCOL-FORMAT}
                (if (is self.runtime-env None) {} {"runtimeEnv" (run (runtime-env->json self.runtime-env))}))))
     (.raise-for-status response)
@@ -83,10 +83,10 @@
 
 
 (defhandler remote-cluster [#^ TaskClient client [poll-seconds 1.0] [lease-seconds 15.0]]
-  (RemoteJob [program env needs name]
+  (RemoteJob [program needs name]
     ;; 送れない値は送る前に断る(encode-program が UnsendableProgram を投げ、呼び手へ届く)。
     (setv blob (encode-program program))
-    (setv task (.submit client blob env needs (current-versions) name lease-seconds))
+    (setv task (.submit client blob needs (current-versions) name lease-seconds))
     (<- outcome (wait-outcome client task poll-seconds))
     (if (isinstance outcome TaskSucceeded)
         (resume outcome.value)

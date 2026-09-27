@@ -39,20 +39,25 @@
 (val STARTS [])
 
 
-(defk timed-add [n]
-  {:pre [(: n int)] :post [(: % int)]}
-  "送る Program: 走り出した仮想の時刻を残し、実行先の base に n を足して返す。"
+(defk timed-add-body [n]
+  {:pre [(: n int)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
   (<- now float (GetMonotonic))
   (.append STARTS now)
   (<- base int (Ask "base"))
   (+ base n))
 
+(defk timed-add [n]
+  {:pre [(: n int)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "送る Program: 走り出した仮想の時刻を残し、自分で並べた reader の base に n を足して返す(時計は模擬の外側が答える)。"
+  (<- total int (with-handlers [(reader {"base" 100})] (timed-add-body n)))
+  total)
+
 
 (defk run-sim [world program]
   {:pre [(: world EnvWorld) (: program Program)] :post [(: % bool)]}
-  "筋書きを速い模擬の組(状態・仮想の時計・env-world・実行先の reader)の下で走らせる。"
+  "筋書きを速い模擬の組(状態・仮想の時計・env-world)の下で走らせる(送る Program の reader は Program が自分で並べる)。"
   (<- handlers list (env-world world))
-  (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) (with-handlers handlers ((reader {"base" 100}) program)))))
+  (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) (with-handlers handlers program))))
   ok)
 
 
@@ -60,7 +65,7 @@
   {:pre [(: store DetachedLocalStore) (: key str) (: n int)] :post [(: % float)]}
   "1 本送って答えを待ち、「送ってから Program が走り出すまで」の仮想の秒を返す。"
   (<- sent float (GetMonotonic))
-  (<- ((detached-local store) (SubmitDetached (timed-add n) :env "tests.fixtures.envs:plain_env" :needs (frozenset ["local"]) :key key)))
+  (<- ((detached-local store) (SubmitDetached (timed-add n) :needs (frozenset ["local"]) :key key)))
   (<- outcome ((detached-local store) (AwaitDetached key)))
   (assert (= outcome (DetachedSucceeded (+ 100 n))) outcome)
   (- (get STARTS -1) sent))
@@ -184,7 +189,7 @@
 
 
 (defn #^ TaskRecord env-task [#^ str id #^ dict declared [needs #("net")]]
-  (TaskRecord id "" "tests.fixtures.envs:plain_env" "blob" "" #() needs 60000 60000 0 :runtime-env declared))
+  (TaskRecord id "" "blob" "" #() needs 60000 60000 0 :runtime-env declared))
 
 
 (deftest test-warm-table-is-written-read-and-handed-to-matching-workers
@@ -302,7 +307,7 @@
   (<- declared dict (declared-of "app-1"))
   (val coordinator-state (ClusterState :workers {"w1" (worker-of "w1" #("net") 0)} :tasks {"t1" (env-task "t1" declared)} :next-task 2))
   (val submitted (respond coordinator-state (Request "POST" "/tasks" {}
-                                                     {"env" "e" "blob" "b" "revision" "" "versions" {} "needs" ["net"] "leaseSeconds" 60
+                                                     {"blob" "b" "revision" "" "versions" {} "needs" ["net"] "leaseSeconds" 60
                                                       "runtimeEnv" declared})
                           10 TIMING))
   (assert (in "doeff_worker_env_cold_start_total 2" (metrics-text (get submitted 0) 10 TIMING))
@@ -334,7 +339,7 @@
 
 (deftest test-the-worker-warms-after-its-jobs-and-retries-a-failed-warm-later
   (<- job-declared dict (declared-of "app-1"))
-  (val spec (task-spec {"id" "t1" "env" "e" "revision" "" "versions" {} "blob" "b" "runtimeEnv" job-declared}
+  (val spec (task-spec {"id" "t1" "revision" "" "versions" {} "blob" "b" "runtimeEnv" job-declared}
                        (. (__import__ "pathlib") (Path "/tmp/tasks"))))
   (<- warm WarmEnv (warm-env-of "app-2"))
   (val policy (WorkerPolicy))
@@ -351,7 +356,7 @@
 
 (deftest test-the-worker-pins-running-desired-warm-and-preparing-roots-for-the-sweep
   (<- job-declared dict (declared-of "app-1"))
-  (val spec (task-spec {"id" "t1" "env" "e" "revision" "" "versions" {} "blob" "b" "runtimeEnv" job-declared}
+  (val spec (task-spec {"id" "t1" "revision" "" "versions" {} "blob" "b" "runtimeEnv" job-declared}
                        (. (__import__ "pathlib") (Path "/tmp/tasks"))))
   (<- warm WarmEnv (warm-env-of "app-2"))
   (val world (WorldView #((CodeView "env-preparing" CodeState.PREPARING)) #() #()

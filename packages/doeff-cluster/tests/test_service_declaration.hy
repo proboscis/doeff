@@ -1,180 +1,298 @@
-;; service の宣言は値と関数で書く(ADR-DOE-HY-005 R5 — doeff-cluster に macro を置かない)。
-;; 関数の参照(module:attr)は Program を作る関数から導き、同じ関数へ解けること・宣言の項目が coordinator へ渡る形に残ること・
-;; テスト用の main が宣言の持つ関数そのもので Program を作ることを確かめる。
-;; 設定から本体の引数を作るのは program-arguments の 1 か所だけで、テスト用の main・実行先(job_entry)・再生(replay_main)が同じ
-;; 引数を作ること、設定の鍵と本体の引数の食い違いを宣言の時点で断ることも確かめる(2026-09-26 の設計検証の盲検 A)。
-;; env だけが読む設定は :env-config に書き、本体の引数にしない(盲検 B の指摘 — 本番の書き手は使わない引数で token の file を受けていた)。
-(require doeff-hy.macros [defk deftest <-])
+;; 系の宣言(ADR-DOE-CLUSTER-001 — job は Program の値 1 つ・handler は Program の中で並べる・宣言は defsystem で書く)。
+;;
+;; - defsystem の関数に土台を渡すと System の値になり、job ごとに Program の値と、それを作った呼び出しの形(CallShape)を持つ。
+;; - 宣言の行(system-declaration の rows)は詰めた Program の置き場のキー(sha)・identity(関数の参照と引数の正規 JSON)・版・
+;;   describe・environ を運び、詰めた中身は programs に別に出る(改訂 1 の A・F)。
+;; - 同一性(spec-hash)は identity・版・environ から作り、詰めた中身は比べない(cloudpickle の出力は揺れうる — 改訂 1 の A)。
+;; - 旧い宣言の形は受け付けない(計画 2.8 の入口 1・3・4 — 構成子の TypeError・旧い関数の不在・declare の CLI の error)。
+;; - 宣言した Program を実行先の入口(job_entry service)がそのまま走らせる(handler を足さない — Program が自分で並べる)。
+(require doeff-hy.macros [defk deftest <- val])
+(import hashlib)
 (import json)
 (import os)
 (import subprocess)
 (import sys)
 (import pathlib [Path])
 (import pytest)
-(import doeff_cluster.service_model [ServiceDef System service resolve system-declaration system-main program-arguments])
-(import tests.fixtures.services [tally tally-program tally-system flagged-program greeter-program])
+(import doeff_core_effects.handlers [reader])
+(import doeff_cluster.service_model :as service-model)
+(import doeff_cluster.service_model [Job System CallShape Declaration job system-of system-declaration identity-of
+                                     describe-identity job-named])
+(import doeff_cluster.cluster_policy [job-from-json identity-hash])
+(import doeff_cluster.host_contract [host-reader])
+(import doeff_cluster.remote_model [encode-program current-versions])
+(import doeff_cluster.runtime_env_model [EnvVar RuntimeEnvInvalid])
+(import doeff_cluster.worker_model [spec-hash])
+(import tests.fixtures.services [lab lab-pair tally-program greeter-program holding-program])
+(import tests.fixtures.envs [plain-foundation greeting-foundation])
+
+(val PACKAGE-ROOT (. (Path (os.path.abspath __file__)) parent parent))   ; 子 process の cwd(tests.fixtures を import する)
+(val TALLY-CALL (CallShape :function tally-program :args [plain-foundation 2] :kwargs {}))
 
 
-(deftest test-a-service-names-its-program-by-module-and-attribute
-  (assert (= tally (ServiceDef "tally" "tests.fixtures.services:tally_program" "tests.fixtures.envs:plain_env"
-                               #("cluster-net") #(#("base" 1) #("step" 2)) tally-program)))
-  ;; 実行先は参照を import して解く — 宣言した関数そのものに戻る。
-  (assert (is (resolve tally.factory) tally-program)))
+(defk tally-job [environ]
+  {:pre [(: environ dict)] :post [(: % Job)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "defsystem の展開と同じ呼び方で作った tally の job(environ だけを変える)。"
+  (job "tally" (tally-program plain-foundation 2) :call TALLY-CALL :needs #{"cluster-net"} :environ environ))
 
 
-(deftest test-a-service-without-needs-is-refused
-  ;; 要る能力を書かない宣言(どこにでも置ける仕事)は宣言の時点で断る(ADR-DOE-CLUSTER-001 R4b)。空の集合も同じ。
+(defk only-row [system]
+  {:pre [(: system System)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "job 1 つの系の宣言の行。"
+  (val rows (. (system-declaration system "rev1") rows))
+  (assert (= (len rows) 1) rows)
+  (get rows 0))
+
+
+(defk declare-cli [#* argv]
+  {:pre [] :post [(: % subprocess.CompletedProcess)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "declare の CLI を子 process で撃つ(cwd = package の根 — tests.fixtures を import する)。"
+  (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.declare" #* argv]
+                  :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120))
+
+
+;; --- 系の値 -------------------------------------------------------------------------------------
+
+(deftest test-a-system-holds-each-program-with-its-call-shape
+  ;; defsystem の関数に土台を渡すと System の値。job は Program の値と、それを作った呼び出しの形(関数と引数の値)を持つ。
+  (val system (lab plain-foundation))
+  (assert (= system.name "lab"))
+  (val tally (job-named system "tally"))
+  (assert (= tally.call TALLY-CALL) tally.call)
+  (assert (is tally.call.function tally-program))
+  (assert (= tally.needs (frozenset ["cluster-net"])))
+  (assert (= tally.environ #((EnvVar :name "TALLY_BASE" :value "1"))))
+  (assert (= #(tally.update tally.readiness) #("recreate" None)))
+  (assert (is (job-named system "nothing") None))
+  ;; Program は Program の値のまま(土台の handler を自分で並べるので、そのまま走らせて答えが出る)。
+  (<- total int tally.program)
+  (assert (= total 102)))
+
+
+(deftest test-job-names-in-a-system-do-not-overlap
+  (<- tally Job (tally-job {}))
   (with [raised (pytest.raises ValueError)]
-    (service "tally-nowhere" tally-program :env "m:e" :config {"step" 1 "base" 0}))
-  (assert (in "tally-nowhere" (str raised.value)))
+    (system-of "twice" #(tally tally)))
+  (assert (in "tally" (str raised.value)))
+  (assert (in "2 つ" (str raised.value))))
+
+
+(deftest test-a-job-without-needs-is-refused
+  ;; 要る能力を書かない job(どこにでも置ける仕事)は断る(R4b)。空の集合も、:needs の欠けも同じ。旧い label の形も能力の名にしない。
+  (with [raised (pytest.raises ValueError)]
+    (job "nowhere" (tally-program plain-foundation 1) :call TALLY-CALL :needs #{}))
+  (assert (in "nowhere" (str raised.value)))
   (assert (in ":needs が空" (str raised.value)))
-  (with [(pytest.raises ValueError)]
-    (service "tally-empty" tally-program :env "m:e" :needs (frozenset) :config {"step" 1 "base" 0}))
-  ;; 旧い label の形(鍵=値)は能力の名として受けない。
+  (with [raised (pytest.raises TypeError)]
+    (job "missing" (tally-program plain-foundation 1) :call TALLY-CALL))
+  (assert (in "needs" (str raised.value)))
   (with [raised (pytest.raises ValueError)]
-    (service "tally-label" tally-program :env "m:e" :needs (frozenset ["kind=k3s"]) :config {"step" 1 "base" 0}))
+    (job "label" (tally-program plain-foundation 1) :call TALLY-CALL :needs #{"kind=k3s"}))
   (assert (in "kind=k3s" (str raised.value))))
 
 
-(deftest test-a-program-without-a-module-level-name-is-refused
-  ;; 入れ子の関数と lambda は module:attr で引けない。実行先で初めて落ちる参照を宣言の時点で断る。
-  (defk inner-program [n]
-    {:pre [(: n int)] :post [(: % int)]}
-    n)
-  (with [raised (pytest.raises ValueError)]
-    (service "inner" inner-program :env "m:e" :needs (frozenset ["net"])))
-  (assert (in "inner_program" (str raised.value)))
-  (with [(pytest.raises ValueError)]
-    (service "anonymous" (fn [] None) :env "m:e" :needs (frozenset ["net"]))))
-
-
-(deftest test-option-keys-must-be-strings
-  ;; 宣言は JSON で coordinator へ渡る。keyword の鍵({:step 2})を黙って通さず、service の名と項目を名指して断る。
+(deftest test-a-job-must-carry-a-program-value
+  ;; job は Program の値 1 つを受ける(R1)。関数そのもの・呼び出しの結果でない値は断る。
   (with [raised (pytest.raises TypeError)]
-    (service "tally-keyword" tally-program :env "m:e" :needs (frozenset ["net"]) :config {:step 2}))
-  (assert (in "tally-keyword" (str raised.value)))
-  (assert (in "config" (str raised.value))))
+    (job "not-a-program" 3 :call TALLY-CALL :needs #{"net"}))
+  (assert (in "not-a-program" (str raised.value))))
 
 
-(deftest test-an-unknown-update-form-is-refused
+(deftest test-an-unknown-update-form-and-a-bad-readiness-are-refused
   (with [raised (pytest.raises ValueError)]
-    (service "tally-rolling" tally-program :env "m:e" :needs (frozenset ["net"]) :update "rolling"))
-  (assert (in "rolling" (str raised.value))))
+    (job "rolling" (tally-program plain-foundation 1) :call TALLY-CALL :needs #{"net"} :update "rolling"))
+  (assert (in "rolling" (str raised.value)))
+  (with [raised (pytest.raises ValueError)]
+    (job "no-window" (tally-program plain-foundation 1) :call TALLY-CALL :needs #{"net"} :update "handoff"
+         :readiness {"windowSeconds" "soon"}))
+  (assert (in "no-window" (str raised.value))))
 
 
-(deftest test-every-option-reaches-the-coordinator-declaration
-  (setv handoff (service "tally-handoff" tally-program :env "m:e" :needs (frozenset ["net"])
-                         :config {"step" 1 "base" 0}
-                         :readiness {"windowSeconds" 30}
-                         :update "handoff"
-                         :base-from {"kind" "Deployment" "namespace" "ns" "name" "app" "container" "c"}))
-  (setv #(row) (system-declaration (System "handoff-system" #(handoff)) "rev1"))
-  (assert (= row {"name" "tally-handoff"
+(deftest test-environ-names-follow-the-env-var-rules
+  ;; :environ は子の環境変数。名の形と worker の予約(DOEFF_)は実行環境の env-vars と同じ検め(EnvVar)で断る。
+  (with [(pytest.raises RuntimeEnvInvalid)]
+    (<- (tally-job {"lower-case" "1"})))
+  (with [(pytest.raises RuntimeEnvInvalid)]
+    (<- (tally-job {"DOEFF_WORKER_NAME" "x"})))
+  (with [(pytest.raises TypeError)]
+    (<- (tally-job {"POLL" 5}))))
+
+
+(deftest test-a-handler-value-or-a-nested-function-is-not-a-program-argument
+  ;; 土台は module の最上位の関数で渡す(参照で詰める)。handler の値・入れ子の関数・lambda を Program の引数にすると、宣言が handler を
+  ;; 値として運ぶか、実行先で引けない参照になるので、宣言の時点で断る(R3b・計画 6 節)。
+  (val made (reader {"base" 1}))
+  (with [raised (pytest.raises TypeError)]
+    (job "made-handler" (holding-program made 1) :call (CallShape :function holding-program :args [made 1] :kwargs {})
+         :needs #{"net"}))
+  (assert (in "made-handler" (str raised.value)))
+  (assert (in "handler の値" (str raised.value)))
+  ;; defhandler の値(module の最上位に在っても handler の値)。
+  (with [raised (pytest.raises TypeError)]
+    (job "defhandler" (holding-program host-reader 1) :call (CallShape :function holding-program :args [host-reader 1] :kwargs {})
+         :needs #{"net"}))
+  (assert (in "handler の値" (str raised.value)))
+  (defk inner-foundation []
+    {:pre [] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+    [])
+  (with [raised (pytest.raises TypeError)]
+    (job "inner" (tally-program inner-foundation 1) :call (CallShape :function tally-program :args [inner-foundation 1] :kwargs {})
+         :needs #{"net"}))
+  (assert (in "最上位" (str raised.value)))
+  (val anonymous (fn [] []))
+  (with [(pytest.raises TypeError)]
+    (job "anonymous" (tally-program anonymous 1) :call (CallShape :function tally-program :args [anonymous 1] :kwargs {})
+         :needs #{"net"}))
+  ;; 呼んだ関数そのものが入れ子でも同じ。
+  (with [(pytest.raises TypeError)]
+    (job "inner-call" (inner-foundation) :call (CallShape :function inner-foundation :args [] :kwargs {}) :needs #{"net"})))
+
+
+;; --- 宣言の行 -----------------------------------------------------------------------------------
+
+(deftest test-the-row-carries-the-identity-the-describe-and-the-program-key
+  (val declaration (system-declaration (lab plain-foundation) "rev1"))
+  (assert (isinstance declaration Declaration))
+  (val row (get declaration.rows 0))
+  (val run (get row "run"))
+  (val identity {"function" "tests.fixtures.services:tally_program"
+                 "args" [{"ref" "tests.fixtures.envs:plain_foundation"} 2]
+                 "kwargs" {}})
+  (assert (= row {"name" "tally"
                   "revision" "rev1"
-                  "needs" ["net"]
+                  "needs" ["cluster-net"]
                   "run" {"kind" "service"
-                         "factory" "tests.fixtures.services:tally_program"
-                         "env" "m:e"
-                         "config" {"step" 1 "base" 0}}
-                  "readiness" {"windowSeconds" 30}
-                  "update" "handoff"
-                  "baseFrom" {"kind" "Deployment" "namespace" "ns" "name" "app" "container" "c"}})))
+                         "program" (get run "program")
+                         "identity" identity
+                         "versions" (current-versions)
+                         "describe" "tests.fixtures.services:tally_program(tests.fixtures.envs:plain_foundation, 2)"}
+                  "environ" {"TALLY_BASE" "1"}})
+          row)
+  (assert (= (identity-of TALLY-CALL "tally") identity))
+  (assert (= (describe-identity identity) (get run "describe")))
+  ;; 行は置き場のキー(sha)だけを持ち、詰めた中身は programs に別に出る(中身の sha256 がキー)。
+  (val blob (get declaration.programs (get run "program")))
+  (assert (= (list declaration.programs) [(get run "program")]))
+  (assert (= (.hexdigest (hashlib.sha256 (.encode blob "ascii"))) (get run "program")))
+  (assert (not-in blob (json.dumps row)) "詰めた中身は行に載らない"))
 
 
-(deftest test-the-single-main-runs-the-declared-program
-  ;; テスト用の main は宣言が持つ関数そのもので Program を作る(設定に上書きを重ねる)。
-  (<- results list (system-main tally-system {"tally" {"step" 5}}))
-  (assert (= results [6])))
+(deftest test-every-option-reaches-the-declaration-row
+  ;; readiness と handoff は行に残る。recreate(既定)は update を書かない。名の引数(kwargs)も identity と describe に残る。
+  (val declaration (system-declaration (lab-pair plain-foundation) "rev1"))
+  (val rows (dfor r declaration.rows (get r "name") r))
+  (assert (= (sorted rows) ["greeter" "tally"]))
+  (val greeter (get rows "greeter"))
+  (assert (= (get greeter "readiness") {"windowSeconds" 30}))
+  (assert (= (get greeter "update") "handoff"))
+  (assert (not-in "update" (get rows "tally")))
+  (assert (not-in "readiness" (get rows "tally")))
+  (assert (= (len declaration.programs) 2) "job ごとに詰めた Program")
+  (val named (job "named" (tally-program :foundation plain-foundation :step 4)
+                  :call (CallShape :function tally-program :args [] :kwargs {"foundation" plain-foundation "step" 4})
+                  :needs #{"net"}))
+  (<- row dict (only-row (system-of "named" #(named))))
+  (assert (= (get row "run" "identity" "kwargs") {"foundation" {"ref" "tests.fixtures.envs:plain_foundation"} "step" 4}))
+  (assert (= (get row "run" "describe")
+             "tests.fixtures.services:tally_program(foundation=tests.fixtures.envs:plain_foundation, step=4)")))
 
 
-;; --- 設定から本体の引数を作る 1 か所(盲検 A: 組み立て側の欄 record を、テスト用の main は本体へ渡し、実行先は外していた)---
+(deftest test-the-same-program-packed-twice-keeps-the-same-identity
+  ;; 同じ宣言を 2 回詰める: 詰めた文字列(blob)は揺れうるが、同一性の指紋(identity-hash)と coordinator の spec-hash は同じ —
+  ;; 宣言し直すたびに入れ替えが起きない(改訂 1 の A)。
+  (<- first dict (only-row (lab plain-foundation)))
+  (<- second dict (only-row (lab plain-foundation)))
+  (assert (= (identity-hash (get first "run")) (identity-hash (get second "run"))))
+  (assert (= (spec-hash (. (job-from-json first) spec)) (spec-hash (. (job-from-json second) spec))))
+  ;; 詰めた中身が違っても(置き場のキーだけを変えた行でも)同一性は同じ — program は比べない欄。
+  (val moved (| second {"run" (| (get second "run") {"program" (* "f" 64)})}))
+  (assert (= (spec-hash (. (job-from-json first) spec)) (spec-hash (. (job-from-json moved) spec))))
+  (assert (= (. (job-from-json first) spec) (. (job-from-json moved) spec)))
+  ;; 引数の値が変われば同一性も変わる。
+  (val other (system-of "lab" #((job "tally" (tally-program plain-foundation 3)
+                                     :call (CallShape :function tally-program :args [plain-foundation 3] :kwargs {})
+                                     :needs #{"cluster-net"} :environ {"TALLY_BASE" "1"}))))
+  (<- changed dict (only-row other))
+  (assert (!= (identity-hash (get first "run")) (identity-hash (get changed "run"))))
+  (assert (!= (spec-hash (. (job-from-json first) spec)) (spec-hash (. (job-from-json changed) spec)))))
 
-(setv RECORD {"otlp" "http://127.0.0.1:9" "chunkSeconds" 3600 "flushSeconds" 0.1})
-(setv PACKAGE-ROOT (. (Path (os.path.abspath __file__)) parent parent))   ; 子 process の cwd(tests.fixtures を import する)
+
+(deftest test-changing-the-environ-changes-the-spec-hash
+  ;; environ は子の環境変数 — 変われば process を起こし直す(spec-hash に入る・改訂 1 の G)。
+  (<- one Job (tally-job {"TALLY_BASE" "1"}))
+  (<- two Job (tally-job {"TALLY_BASE" "2"}))
+  (<- none Job (tally-job {}))
+  (<- row-one dict (only-row (system-of "lab" #(one))))
+  (<- row-two dict (only-row (system-of "lab" #(two))))
+  (<- row-none dict (only-row (system-of "lab" #(none))))
+  (val hashes (lfor r [row-one row-two row-none] (spec-hash (. (job-from-json r) spec))))
+  (assert (= (len (set hashes)) 3) hashes)
+  (assert (= (. (job-from-json row-one) spec environ) #(#("TALLY_BASE" "1")))))
 
 
-(deftest test-program-arguments-are-the-settings-the-program-names
-  ;; 本体へは本体の引数の名の設定だけを渡す(JSON の鍵は Hy の引数名へ mangle する)。record は実行先の記録係の設定・greeting は
-  ;; env だけが読む設定で、本体へは渡らない。
-  (assert (= (program-arguments greeter-program {"step-size" 2 "greeting" "hi" "record" RECORD}) {"step_size" 2})))
+;; --- 旧い形を断る入口(計画 2.8)---------------------------------------------------------------
+
+(deftest test-entry-1-the-job-constructor-refuses-the-old-arguments
+  ;; 入口 1: 旧い引数(:env・:config・:env-config・:requires)は構成子に無いので TypeError(名を出す)。
+  (for [#(key value) [#("env" "m:e") #("config" {"step" 1}) #("env_config" {"greeting" "hi"}) #("requires" {"kind" "k3s"})]]
+    (with [raised (pytest.raises TypeError)]
+      (job "old" (tally-program plain-foundation 1) :call TALLY-CALL :needs #{"net"} #** {key value}))
+    (assert (in key (str raised.value)) (str raised.value))))
 
 
-(deftest test-the-single-main-and-the-worker-build-the-same-arguments
-  ;; 宣言の :config に record を書いた service を、テスト用の main と実行先の入口(job_entry service)の両方で走らせる。
-  (setv recorded (service "tally-recorded" tally-program :env "tests.fixtures.envs:plain_env" :needs (frozenset ["net"])
-                          :config {"step" 2 "base" 1 "record" RECORD}))
-  (<- results list (system-main (System "recorded" #(recorded))))
-  (assert (= results [3]))
-  (setv #(row) (system-declaration (System "recorded" #(recorded)) "rev1"))
-  (setv run-spec (get row "run"))
-  (assert (= (get run-spec "config") {"step" 2 "base" 1 "record" RECORD}))
-  (setv done (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.job_entry" "service"
-                              "--factory" (get run-spec "factory") "--env" (get run-spec "env")
-                              "--config" (json.dumps (get run-spec "config"))]
-                             :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120))
+(deftest test-entry-3-the-old-service-function-is-gone
+  ;; 入口 3: 旧い関数 service(と、関数の参照 + 設定の宣言を支えた道具)は消えた — import で落ちる。
+  (with [(pytest.raises ImportError)]
+    (import doeff_cluster.service_model [service]))
+  (for [name ["service" "ServiceDef" "system_main" "service_program" "config_of" "program_arguments" "settings_left_to_env"
+              "RECORD_KEY"]]
+    (assert (not (hasattr service-model name)) name)))
+
+
+(deftest test-entry-4-the-declare-cli-refuses-the-old-arguments
+  ;; 入口 4: declare の CLI は --config・--pin・System の値を指す形を argparse の error(終了 2)で断り、理由を出す。
+  (val base ["tests.fixtures.services:lab" "--foundation" "tests.fixtures.envs:plain_foundation" "--revision" "r"])
+  (<- config subprocess.CompletedProcess (declare-cli #* base "--config" "{}"))
+  (assert (= config.returncode 2) config.stderr)
+  (assert (in "--config は受け付けない" config.stderr) config.stderr)
+  (<- pin subprocess.CompletedProcess (declare-cli #* base "--pin" "worker-1"))
+  (assert (= pin.returncode 2) pin.stderr)
+  (assert (in "--pin は受け付けない" pin.stderr) pin.stderr)
+  (<- value subprocess.CompletedProcess (declare-cli "tests.fixtures.system_values:LAB_VALUE" #* (cut base 1 None)))
+  (assert (= value.returncode 2) value.stderr)
+  (assert (in "defsystem の関数" value.stderr) value.stderr)
+  (<- bare subprocess.CompletedProcess (declare-cli "tests.fixtures.services:lab" "--revision" "r"))
+  (assert (= bare.returncode 2) bare.stderr)
+  (assert (in "--foundation" bare.stderr) bare.stderr))
+
+
+(deftest test-the-declare-cli-prints-the-rows-and-the-describe
+  ;; --apply 無し: 宣言の行を JSON で印字し、job ごとの describe(呼んだ関数と引数)を stderr に出す。--only で絞る。
+  (<- done subprocess.CompletedProcess
+      (declare-cli "tests.fixtures.services:lab_pair" "--foundation" "tests.fixtures.envs:plain_foundation" "--revision" "r"
+                   "--only" "greeter"))
   (assert (= done.returncode 0) done.stderr)
-  (assert (in "が終わった: 3" done.stderr) done.stderr))
+  (val rows (get (json.loads done.stdout) "jobs"))
+  (assert (= (lfor r rows (get r "name")) ["greeter"]) rows)
+  (assert (= (get rows 0 "run" "identity" "function") "tests.fixtures.services:greeter_program"))
+  (assert (in "greeter: tests.fixtures.services:greeter_program(tests.fixtures.envs:plain_foundation, 3)" done.stderr)
+          done.stderr))
 
 
-(deftest test-a-config-key-the-program-does-not-take-is-refused
-  ;; 本体の引数に無い設定の鍵は、実行先で走らせた時に初めて落ちる。宣言の時点で service の名と鍵を名指して断る。
-  (with [raised (pytest.raises TypeError)]
-    (service "tally-extra" tally-program :env "m:e" :needs (frozenset ["net"]) :config {"step" 1 "base" 0 "stride" 3}))
-  (assert (in "tally-extra" (str raised.value)))
-  (assert (in "stride" (str raised.value))))
+;; --- 宣言した Program を実行先の入口で走らせる ----------------------------------------------------
 
-
-(deftest test-a-program-argument-missing-from-the-config-is-refused
-  (with [raised (pytest.raises TypeError)]
-    (service "tally-short" tally-program :env "m:e" :needs (frozenset ["net"]) :config {"step" 1}))
-  (assert (in "tally-short" (str raised.value)))
-  (assert (in "base" (str raised.value))))
-
-
-(deftest test-a-program-cannot-take-the-assembly-field-as-an-argument
-  ;; 実行先は record を本体へ渡さない。record という名の引数を持つ本体は、どの道でも同じ引数を受け取れないので宣言の時点で断る。
-  (with [raised (pytest.raises TypeError)]
-    (service "flagged" flagged-program :env "m:e" :needs (frozenset ["net"]) :config {"record" True "step" 1}))
-  (assert (in "flagged" (str raised.value)))
-  (assert (in "record" (str raised.value))))
-
-
-;; --- env だけが読む設定(盲検 B: env の設定が本体の公開の契約に入り、env の設定を足すたびに本体が変わっていた)---
-
-(deftest test-an-env-setting-reaches-the-env-and-not-the-program
-  ;; :env-config は coordinator へ渡る平たい設定に入り、実行先で env が読み、本体の引数には入らない。
-  (setv greeter (service "greeter" greeter-program :env "tests.fixtures.envs:greeting_env" :needs (frozenset ["net"])
-                         :config {"step-size" 2} :env-config {"greeting" "hi"}))
-  (setv #(row) (system-declaration (System "greet" #(greeter)) "rev1"))
-  (setv run-spec (get row "run"))
-  (assert (= (get run-spec "config") {"step-size" 2 "greeting" "hi"}))
-  (setv done (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.job_entry" "service"
-                              "--factory" (get run-spec "factory") "--env" (get run-spec "env")
-                              "--config" (json.dumps (get run-spec "config"))]
-                             :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120))
+(deftest test-the-worker-entry-runs-the-declared-program-as-is [tmp-path]
+  ;; 宣言が詰めた Program を、worker が /programs から取るのと同じ形の file で job_entry service に渡す。入口は handler を足さず、
+  ;; Program が自分で並べた土台の reader が答える(同じ venv で詰めて、子 process で解ける — 版の食い違いが無い)。
+  (val declaration (system-declaration (lab-pair greeting-foundation) "rev1"))
+  (val greeter (next (gfor r declaration.rows :if (= (get r "name") "greeter") r)))
+  (val run (get greeter "run"))
+  (val program-file (/ tmp-path "program.json"))
+  (.write-text program-file (json.dumps {"blob" (get declaration.programs (get run "program")) "versions" (get run "versions")})
+               :encoding "utf-8")
+  (val done (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.job_entry" "service"
+                             "--identity" (identity-hash run) "--program" (str program-file)]
+                            :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120
+                            :env (| (dict os.environ) {"DOEFF_WORKER_JOB" "greeter"})))
   (assert (= done.returncode 0) done.stderr)
-  (assert (in "が終わった: 'hi2'" done.stderr) done.stderr))
-
-
-(deftest test-a-program-argument-written-as-an-env-setting-is-refused
-  (with [raised (pytest.raises TypeError)]
-    (service "greeter-misplaced" greeter-program :env "m:e" :needs (frozenset ["net"]) :config {} :env-config {"step-size" 2 "greeting" "hi"}))
-  (assert (in "greeter-misplaced" (str raised.value)))
-  (assert (in "step-size" (str raised.value))))
-
-
-(deftest test-a-setting-owned-by-both-the-program-and-the-env-is-refused
-  (with [raised (pytest.raises TypeError)]
-    (service "greeter-both" greeter-program :env "m:e" :needs (frozenset ["net"]) :config {"step-size" 2} :env-config {"step-size" 3 "greeting" "hi"}))
-  (assert (in "greeter-both" (str raised.value)))
-  (assert (in "step-size" (str raised.value))))
-
-
-(deftest test-an-override-of-an-undeclared-setting-is-refused
-  ;; テスト用の main と coordinator への宣言の上書きは、宣言した設定(と組み立て側の欄)だけを変える。綴りの違う鍵を黙って足さない。
-  (with [raised (pytest.raises TypeError)]
-    (system-declaration tally-system "rev1" {"tally" {"stride" 1}}))
-  (assert (in "tally" (str raised.value)))
-  (assert (in "stride" (str raised.value)))
-  (setv #(row) (system-declaration tally-system "rev1" {"tally" {"step" 5 "record" RECORD}}))
-  (assert (= (get row "run" "config") {"step" 5 "base" 1 "record" RECORD})))
+  (assert (in "が終わった: 'hi3'" done.stderr) done.stderr))

@@ -1,42 +1,45 @@
-;;; 系の宣言(System の値)から coordinator に渡す宣言(b)を出す。
+;;; 系(defsystem の関数)から coordinator に渡す宣言を出す(ADR-DOE-CLUSTER-001)。
 ;;;
-;;;   hy -m doeff_cluster.declare <module>:<System の値の名> --revision <commit> [--pin 'service=commit,…']
-;;;       [--config '{"service": {"鍵": 値}}'] [--only 'service,…'] [--apply URL --actor <送り手>] [--replicas 0|1]
+;;;   hy -m doeff_cluster.declare <module>:<系の関数> --foundation <module>:<土台の関数> --revision <commit>
+;;;       [--only 'job,…'] [--apply URL --actor <送り手>] [--replicas 0|1]
 ;;;
-;;; --pin は service ごとに commit を差し替える(1 つだけ新しい commit にする時に使う。他の行は同じ形のまま = 止まらない)。
-;;; --apply を付けると、Service ごとに資源の口で書く(2026-09-24 から。旧い --put は同じ意味の別名):
+;;; 系の関数に土台の関数を渡して System の値を作り、job ごとに Program を詰める(service_model.system-declaration)。
+;;; 付けなければ宣言の行(と job ごとの describe = 呼んだ関数と引数)を印字するだけ。
+;;; --apply を付けると、先に詰めた Program を PUT /programs/<sha> で置き(改訂 1 の F)、次に Service ごとに資源の口で書く:
 ;;;   無ければ POST /resources/Service で作る(所有者 = --actor)。在れば GET で読んだ resourceVersion を付けて PUT する
 ;;;   (読んでから書くまでに誰かが書いていれば 409 で止まる — 他の作業係の変更を消さない)。所有者と replicas はいまの値を保つ
 ;;;   (replicas は Rollout が持つ。--replicas を付けた時だけ変える)。一覧に無い Service には触らない。
-;;; 付けなければ JSON を印字するだけ。
+;;; 旧い引数(--config・--pin)と、System の値を直に指す旧い形は受け付けない。
 (import argparse)
+(import importlib)
 (import json)
 (import sys)
 (import urllib.parse [quote :as url-quote])
-(import .service_model [resolve system-declaration])
+(import .service_model [resolve system-declaration System Declaration])
 
 
-(defn #^ list pin-revisions [#^ list jobs #^ dict pins]
-  "純粋: 名指した service の行だけ commit を差し替える。"
-  (lfor job jobs (if (in (get job "name") pins) (| job {"revision" (get pins (get job "name"))}) job)))
-
-
-(defn #^ dict spec-for-update [#^ dict row #^ dict current [replicas None]]
-  "純粋: 宣言の行 → PUT の spec。所有者と replicas と readiness の無い行の readiness はいまの資源の値を保つ。
-   base(土台の commit)は追随の係が持つ欄なので、baseFrom を持つ行ではいまの値を保つ(coordinator の側でも保つ — 二重の守り)。"
+(defn #^ dict spec-for-update [#^ dict row #^ dict current [replicas None]]  ; defk にできない: CLI の入口(Program の外)が呼ぶ純粋な判断
+  "宣言の行 → PUT の spec。所有者と replicas と readiness の無い行の readiness はいまの資源の値を保つ。"
   (setv spec (dfor #(k v) (.items row) :if (!= k "name") k v))
   (| {"readiness" (.get current "readiness")}
-     (if (and (.get spec "baseFrom") (.get current "base")) {"base" (get current "base")} {})
      spec
-     {"owner" (get current "owner")
+     {"owner" (.get current "owner")
       "replicas" (if (is replicas None) (.get current "replicas" 1) replicas)}))
 
 
-(defn apply-declaration [#^ str url #^ list jobs #^ str actor [replicas None]]
+(defn apply-declaration [#^ str url #^ Declaration declaration #^ str actor [replicas None]]  ; defk にできない: CLI の入口の HTTP の I/O
+  "詰めた Program を置いてから、宣言の行を資源の口で書く(どれかが失敗したら 1 で終わる)。"
   (import httpx)
-  (setv client (httpx.Client :base-url (.rstrip url "/") :headers {"X-Actor" actor} :trust-env False :timeout 10))
+  (setv client (httpx.Client :base-url (.rstrip url "/") :headers {"X-Actor" actor} :trust-env False :timeout 30))
   (setv failed False)
-  (for [row jobs]
+  (for [#(sha blob) (sorted (.items declaration.programs))]
+    (setv response (.put client (+ "/programs/" sha)
+                         :json {"blob" blob
+                                "versions" (get (get (get declaration.rows 0) "run") "versions")}))
+    (print (.format "program {}: {}" (cut sha 0 12) response.status-code))
+    (when (>= response.status-code 300) (setv failed True)))
+  (when failed (sys.exit 1))
+  (for [row declaration.rows]
     (setv name (get row "name") path (+ "/resources/Service/" (url-quote name :safe "")))
     (setv current (.get client path))
     (cond
@@ -55,27 +58,42 @@
   (when failed (sys.exit 1)))
 
 
-(defn main []
-  (setv parser (argparse.ArgumentParser :description "系の宣言(System の値)→ coordinator の宣言"))
-  (.add-argument parser "system" :help "module:attr(System の値の名)")
+(defn main []  ; defk にできない: CLI の入口
+  "宣言の CLI。旧い引数は理由つきで断る。"
+  (setv parser (argparse.ArgumentParser :description "系(defsystem の関数)→ coordinator の宣言"))
+  (.add-argument parser "system" :help "module:attr(defsystem の関数の名)")
+  (.add-argument parser "--foundation" :required True :help "module:attr(土台の関数 — handler の組を返す module の最上位の関数)")
   (.add-argument parser "--revision" :required True)
-  (.add-argument parser "--pin" :default "")
-  (.add-argument parser "--config" :default "{}")
-  (.add-argument parser "--only" :default "" :help "この service だけ(`,` で並べる)")
+  (.add-argument parser "--only" :default "" :help "この job だけ(`,` で並べる)")
   (.add-argument parser "--apply" "--put" :dest "apply")
   (.add-argument parser "--actor" :help "送り手(依頼の主体の id・作業係の名)。--apply に要る")
   (.add-argument parser "--replicas" :type int :choices [0 1])
+  (.add-argument parser "--config" :default None :help "受け付けない(旧い形 — 設定は Program の中の Ask と :environ で読む)")
+  (.add-argument parser "--pin" :default None :help "受け付けない(旧い形 — Program を詰めた commit と別の commit で解くことになる)")
   (setv args (.parse-args parser))
-  (setv pins (dict (gfor kv (.split args.pin ",") :if kv (.split kv "=" 1)))
-        only (sfor n (.split args.only ",") :if n n))
-  (setv jobs (lfor job (pin-revisions (system-declaration (resolve args.system) args.revision (json.loads args.config)) pins)
-                   :if (or (not only) (in (get job "name") only))
-                   job))
+  (when (is-not args.config None)
+    (.error parser "--config は受け付けない — 設定は Program の中の Ask と、宣言の :environ で読む(ADR-DOE-CLUSTER-001 R4)"))
+  (when (is-not args.pin None)
+    (.error parser "--pin は受け付けない — Program の job は宣言した commit でだけ解く"))
+  ;; System の値を指す旧い形は、関数に解く(resolve の契約 = Callable)前に見て、理由つきで断る。
+  (setv #(module _ attr) (.partition args.system ":"))
+  (when (and attr (isinstance (getattr (importlib.import-module module) attr None) System))
+    (.error parser "系の値ではなく、defsystem の関数(土台を受けて系を返す)を指す"))
+  (setv build (resolve args.system))
+  (setv system (build (resolve args.foundation))
+        only (sfor n (.split args.only ",") :if n n)
+        declaration (system-declaration system args.revision)
+        rows (lfor row declaration.rows :if (or (not only) (in (get row "name") only)) row)
+        declaration (Declaration :rows rows
+                                 :programs (dfor row rows :setv sha (get (get row "run") "program")
+                                                 sha (get declaration.programs sha))))
   (cond
     args.apply
       (do (when (not args.actor) (.error parser "--apply には --actor(送り手)が要る"))
-          (apply-declaration args.apply jobs args.actor args.replicas))
-    True (print (json.dumps {"jobs" jobs} :ensure-ascii False :indent 1))))
+          (apply-declaration args.apply declaration args.actor args.replicas))
+    True (do (for [row rows]
+               (print (.format "{}: {}" (get row "name") (get (get row "run") "describe")) :file sys.stderr))
+             (print (json.dumps {"jobs" rows} :ensure-ascii False :indent 1)))))
 
 
 (when (= __name__ "__main__")

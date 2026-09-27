@@ -32,9 +32,9 @@
 ;; ---------------------------------------------------------------------------
 
 (val RUNNER-HANDLER-ROSTER
-  {"scheduled" 2
-   "env-handlers" 2
-   "recording-layer" 1})  ; R5 の決定で 0 へ向ける(law runner-inserts-no-recorder)
+  {"scheduled" 0
+   "env-handlers" 0
+   "recording-layer" 0})  ; 2026-09-27 に全部 0(agora-redesign #833 段 3 — job_entry は (run program) だけ)
 
 (val JOB-ENTRY "packages/doeff-cluster/src/doeff_cluster/job_entry.hy")
 
@@ -115,14 +115,14 @@
          [(counterexample "job_entry が (scheduled (with-handlers (env-handlers …) program)) で包む — Program の外で scheduler と env の handler が効く(2026-09-27 の本線の形)")
           (counterexample "runner が『既定で』時計や記録係を足す — Program を読んでもどの handler が効くか分からない")]
        :enforced-by ["test-adr-doe-cluster-001-runner-handler-ratchet"]
-       :wiring "未配線(2026-09-27)— 針は runner の handler の呼び出しの増加を赤にする台帳だけで、0 の強制は無い。0 へ移す便(agora-redesign #829)が着地して台帳が空になった時に、この law の全体が配線される")
+       :wiring "配線済み(2026-09-27・agora-redesign #833 段 3)— 台帳の数は全部 0 で、job_entry が scheduled・env の関数・記録係の包みを 1 つでも書けば針が赤になる")
      (law service-and-task-share-one-entry
        :statement "for_all job j: j の入口の引数は Program の値 1 つ — service と task で入口の形が同じ"
        :counterexamples
          [(counterexample "service は --factory と --config、task は --blob で起こす — 同じ job なのに入口が 2 つある(2026-09-27 の本線の形)")
           (counterexample "service の宣言に :env-config を書いて設定を渡す — 設定は Program の中の Ask と os.environ を読む handler で読める")]
-       :enforced-by []
-       :wiring "未配線(2026-09-27)— 機械で検める針は無い。入口を 1 つにする便(agora-redesign #829)で検を足す")
+       :enforced-by ["test-adr-doe-cluster-001-one-entry-takes-a-program"]
+       :wiring "配線済み(2026-09-27・agora-redesign #833 段 3)— job_entry の service・task・probe の入口が --factory・--env・--config を受けないことを針が検める")
      (law runner-inserts-no-recorder
        :statement "for_all job j: j の effect の記録・再生の handler は j の Program の中の with-handlers(翻訳の handler と土台の handler の間)に在り、runner(job_entry)は記録係を差し込まない — RUNNER-HANDLER-ROSTER の recording-layer は 0"
        :counterexamples
@@ -130,7 +130,7 @@
           (counterexample "記録に WithObserve を使う — 見るだけで答えを見ないので、再生に要る答えが残らない(WithObserve は tracing・ログの用途に限る)")
           (counterexample "記録係を土台の handler の外側に置く — 翻訳の前の業務の effect まで記録し、外の世界との境目の汎用の effect だけを記録する形にならない")]
        :enforced-by ["test-adr-doe-cluster-001-runner-handler-ratchet"]
-       :wiring "未配線(2026-09-27)— 針は recording-layer の呼び出しを台帳の 1 から増やさないだけ。記録係を Program の中へ移す便(agora-redesign #829)が台帳の recording-layer を 0 に削った時に配線される")
+       :wiring "配線済み(2026-09-27・agora-redesign #833 段 3)— 台帳の recording-layer は 0 で、job_entry が記録係を足せば針が赤になる。記録係を Program の中に置く形(boundary-recorder)は段 4")
      (law programs-declare-capabilities-not-places
        :statement "for_all job j: j の宣言の :needs は能力の名前の集合で、置き場所の名前(kind・role・機体の名前)を含まない ∧ j が置かれた worker w について needs(j) ⊆ provides(w) ∧ for_all j の Program が並べる土台の handler f: needs(f) ⊆ needs(j) ∧ (\"company-machine\" ∈ provides(w) ⇔ w は会社の機体)"
        :counterexamples
@@ -173,6 +173,14 @@
        (assert (= stale [])
                (+ "台帳の削り忘れ(ADR-DOE-CLUSTER-001 R6 — 減らした便は RUNNER-HANDLER-ROSTER を同じ便で削る): "
                   (str stale))))
+     (deftest test-adr-doe-cluster-001-one-entry-takes-a-program
+       ;; 針: job_entry の入口は Program の値 1 つだけを受ける — 旧い入口の引数(--factory・--env・--config)が本文に在れば赤(R1・R3)。
+       (val repo-root (. (Path __file__) parent parent parent))
+       (val text (.read-text (/ repo-root JOB-ENTRY) :encoding "utf-8"))
+       (val old (lfor flag ["--factory" "--env" "--config"]
+                      :if (re.search (+ r"add-argument\s+\w+\s+\"" (re.escape flag) "\"") text)
+                      flag))
+       (assert (= old []) (+ "job_entry が旧い入口の引数を受けている(ADR-DOE-CLUSTER-001 R1・R3): " (str old))))
      (deftest test-adr-doe-cluster-001-ratchet-measure
        ;; 物差しの実演: 包みの呼び出しは数え、同じ名の定義や別の名は数えない。
        (val sample (+ "(defn env-handlers [env config ctx] None)\n"

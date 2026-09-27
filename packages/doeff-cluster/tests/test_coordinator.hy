@@ -1,5 +1,5 @@
 ;; coordinator: 作り直し・盤の compare-and-set・task の一生(置く・結果・期限・版・担い手の沈黙)・調停ループの Program・shim。
-(require doeff-hy.macros [deftest defhandler <-])
+(require doeff-hy.macros [deftest defhandler <- val])
 (import collections.abc [Callable])
 (import dataclasses [replace])
 (import subprocess)
@@ -9,7 +9,8 @@
 (import doeff_time [SimClock sim-time-handler])
 (import tests.clock_fixtures [clock-ms])
 (import doeff_cluster.cluster_model [ClusterTiming ClusterNaming ClusterState Request NextRequests Reply Persist CoordinatorStopRequested])
-(import doeff_cluster.cluster_policy [reconcile state-to-json state-from-json job-from-json])
+(import doeff_cluster.cluster_policy [reconcile state-to-json state-from-json job-from-json identity-hash])
+(import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM])
 (import doeff_cluster.api_policy [respond])
 (import doeff_cluster.coordinator [run-coordinator])
 (import doeff_cluster.wal_store [WalStore])
@@ -38,10 +39,12 @@
 
 
 (deftest test-service-declaration-becomes-the-job-entry-command
-  (setv job (job-from-json {"name" "turn-runner" "revision" "abc" "needs" ["net"]
-                            "run" {"kind" "service" "factory" "m:f" "env" "m:e" "config" {"b" 1 "a" None}}}))
+  ;; Program の job の行 → job_entry の service 入口。引数は identity の指紋だけ(詰めた Program は置き場のキーで運ぶ・比べない欄)。
+  (val job (job-from-json {"name" "runner" "revision" "abc" "needs" ["net"] "run" SAMPLE-RUN "environ" {"B" "1" "A" "2"}}))
   (assert (= job.spec.entry "doeff_cluster.job_entry"))
-  (assert (= job.spec.args #("service" "--factory" "m:f" "--env" "m:e" "--config" "{\"a\": null, \"b\": 1}"))))
+  (assert (= job.spec.args #("service" "--identity" (identity-hash SAMPLE-RUN))))
+  (assert (= job.spec.program SAMPLE-PROGRAM))
+  (assert (= job.spec.environ #(#("A" "2") #("B" "1"))) "environ は名の順の組"))
 
 
 (deftest test-board-compare-and-set
@@ -58,7 +61,7 @@
 
 
 (defn submit [state now [versions V] [lease 15.0]]
-  (setv #(state _ body) (respond state (req "POST" "/tasks" {"env" "m:e" "blob" "B" "versions" versions "revision" "r"
+  (setv #(state _ body) (respond state (req "POST" "/tasks" {"blob" "B" "versions" versions "revision" "r"
                                                               "needs" ["net"] "name" "n" "leaseSeconds" lease}) now T))
   #(state (get body "task")))
 

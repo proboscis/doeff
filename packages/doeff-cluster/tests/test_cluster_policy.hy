@@ -93,7 +93,7 @@
   (assert (= (. (get (place-jobs 2000 stopped T) "placer") worker) "atlas")))
 
 (defn task [id needs]
-  (TaskRecord id "digest" "m:e" "blob" "rev" #((ComponentVersion "python" "3")) needs 15000 20000 0))
+  (TaskRecord id "digest" "blob" "rev" #((ComponentVersion "python" "3")) needs 15000 20000 0))
 
 (deftest test-task-follows-the-same-dedicated-rule
   (setv workers {"mac" (replace (mac "mac") :versions #((ComponentVersion "python" "3")))
