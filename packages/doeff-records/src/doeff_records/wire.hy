@@ -10,6 +10,8 @@
 (require doeff-hy.macros [defk <- val])
 (import dataclasses [dataclass])
 (import doeff_hy.frozen [FrozenMap thaw-json])
+;; JSON の値の型の定義は doeff_hy.json_value の 1 か所だけ(agora-redesign #840)— ここは import して、この module の読み手へも同じ名で見せる。
+(import doeff_hy.json_value [JsonValue])
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written WrittenRows
                               RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset
                               RowsConflict RowsRefused])
@@ -39,8 +41,7 @@
                     OP-READ-EVENTS #("events")
                     OP-PUT-ROWS #("writtenRows" "rowsConflict" "rowsRefused")})
 
-;; 境界の値の型(JSON の値・公開 effect・wire の本文で運ぶ答え)。
-(setv JsonValue (| dict list str int float bool None))
+;; 境界の値の型(公開 effect・wire の本文で運ぶ答え)。JSON の値の型 JsonValue は上の import(doeff_hy.json_value)。
 (setv PublicEffect (| ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents PutRows))
 (setv WireAnswer (| Row Missing Page Written Conflict Refused NotIndexed Reset Changes Appended Events
                     WrittenRows RowsConflict RowsRefused))

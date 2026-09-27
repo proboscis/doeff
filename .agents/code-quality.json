@@ -20,6 +20,7 @@
     "packages/doeff-agents/tests/fake_io_support.py",
     "packages/doeff-hy/src/doeff_hy/typecheck.hy",
     "packages/doeff-hy/src/doeff_hy/record.hy",
+    "packages/doeff-hy/src/doeff_hy/json_value.py",
     "docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy",
     "packages/doeff-hy/src/doeff_hy/typecheck_handlers.hy",
     "packages/doeff-hy/src/doeff_hy/typecheck_handlers.pyi",
@@ -396,6 +397,19 @@
       "typed": true
     },
     {
+      "name": "doeff-hy-json-value",
+      "paths": [
+        "packages/doeff-hy/src/doeff_hy/json_value.py"
+      ],
+      "public": [
+        "packages/doeff-hy/src/doeff_hy/json_value.py"
+      ],
+      "allow": [],
+      "responsibility": "JSON の値の型 JsonValue / JsonObject の唯一の定義(型検査の時は再帰の別名・実行の時は isinstance に渡せる union)。触ってよいのは汎用の解き手と foundation の送受信だけ(agora-redesign #840)",
+      "layer": "domain",
+      "typed": true
+    },
+    {
       "name": "doeff-hy-record",
       "paths": [
         "packages/doeff-hy/src/doeff_hy/record.hy"
@@ -517,7 +531,8 @@
       ],
       "allow": [
         "records-values",
-        "records-effects"
+        "records-effects",
+        "doeff-hy-json-value"
       ],
       "typed": true
     },
