@@ -84,6 +84,10 @@ pub struct Config {
     /// 意味の規則(DOEFF201・202 — Jev)の層と閾値 — `[tool.doeff-linter.semantic]`
     #[serde(default)]
     pub semantic: Option<crate::project::semantic::SemanticSection>,
+
+    /// 臭いの規則(DOEFF121〜125)の設定 — `[tool.doeff-linter.smells]`
+    #[serde(default)]
+    pub smells: Option<crate::project::settings::SmellsSection>,
 }
 
 impl Config {
@@ -122,6 +126,23 @@ impl Config {
         if let (Some(arch), Some(layers)) = (&settings.architecture, settings.layers.as_mut()) {
             layers.infer_root = Some(crate::project::settings::normalize_dir(&arch.root));
         }
+        if let Some(section) = &self.smells {
+            let names: Vec<String> = settings.layers.as_ref().map(|l| l.layers.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();
+            let mut layers = std::collections::BTreeSet::new();
+            let mut unknown = Vec::new();
+            for name in &section.shape_check_layers {
+                match names.iter().position(|n| n == name) {
+                    Some(index) => {
+                        layers.insert(crate::project::settings::LayerId(index));
+                    }
+                    None => unknown.push(format!("smells.shape_check_layers: 層 {} は宣言した層に無い", name)),
+                }
+            }
+            if !unknown.is_empty() {
+                return Err(unknown);
+            }
+            settings.smells = Some(crate::project::settings::SmellSettings { shape_check_layers: layers });
+        }
         if let Some(section) = &self.semantic {
             let names: Vec<String> = settings.layers.as_ref().map(|l| l.layers.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();
             let mut unknown = Vec::new();
@@ -147,7 +168,22 @@ impl Config {
     fn project_settings_toml(&self) -> Result<ProjectSettings, Vec<String>> {
         let mut problems = Vec::new();
         let mut registered_severity = std::collections::BTreeMap::new();
+        let mut base_severity = std::collections::BTreeMap::new();
         for (id, rule) in &self.rules {
+            if let Some(text) = &rule.severity {
+                let parsed = match text.as_str() {
+                    "warning" => Some(Severity::Warning),
+                    "info" => Some(Severity::Info),
+                    _ => None,
+                };
+                match (ProjectRule::parse(id).filter(|r| r.is_smell()), parsed) {
+                    (Some(rule), Some(severity)) => {
+                        base_severity.insert(rule, severity);
+                    }
+                    (None, _) => problems.push(format!("rules.{}.severity: 臭いの規則(DOEFF121〜125)の ID ではない", id)),
+                    (_, None) => problems.push(format!("rules.{}.severity: {:?} は warning・info のどちらでもない(臭いの規則は error にしない)", id, text)),
+                }
+            }
             let Some(text) = &rule.registered_severity else { continue };
             let severity = match text.as_str() {
                 "error" => Some(Severity::Error),
@@ -169,6 +205,7 @@ impl Config {
             Err(more) => return Err(problems.into_iter().chain(more).collect()),
         };
         settings.registered_severity = registered_severity;
+        settings.severity = base_severity;
         Ok(settings)
     }
 
@@ -226,6 +263,9 @@ pub struct RuleConfig {
 
     /// 層の規則(DOEFF101〜113): 登録簿に載った破れの重さ(error・warning・info。既定 warning)
     pub registered_severity: Option<String>,
+
+    /// 臭いの規則(DOEFF121〜125): 重さ(warning・info。既定 warning — Absent / Raise が本線に入ったので info から上げた)
+    pub severity: Option<String>,
 }
 
 /// Find pyproject.toml file starting from a path and walking up
@@ -298,7 +338,7 @@ pub fn load_config(path: Option<&Path>) -> Option<Config> {
 /// `[tool.doeff-linter]` の直下に書ける欄の名(Config の欄と同じ綴り)。
 const KNOWN_KEYS: &[&str] = &[
     "enable", "disable", "exclude", "rules", "git", "log_file", "layers", "tags", "roles", "environment_names", "raw_side_effects",
-    "laws", "registry", "services", "definitions", "architecture", "semantic",
+    "laws", "registry", "services", "definitions", "architecture", "semantic", "smells",
 ];
 
 /// 見つけた設定 file と、その中の `[tool.doeff-linter]` の節。

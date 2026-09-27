@@ -43,6 +43,16 @@ pub enum ProjectRule {
     ClassWithBehaviour,
     /// DOEFF120: JsonValue(素の dict を名で包んだだけの型)を、汎用の解き手と :wire-modules に挙げた foundation の送受信の module の外で使わない。
     JsonValueOutsideWire,
+    /// DOEFF121: 判断の層の定義が、文字列の鍵で読んだ欄を isinstance で検める(JSON の形の検めが core に入っている)。
+    ShapeCheckInJudgment,
+    /// DOEFF122: match の腕が、失敗の型を受けて受けた値を return し直すだけ(手書きの例外の再送出)。
+    FailureRethrow,
+    /// DOEFF123: `(<- x T (f …))` の直後に `(return x)` が来て、x を他で使わない。
+    BindThenReturn,
+    /// DOEFF124: 同じ値の 2 つ以上の欄を 1 本の文字列につなぐ。
+    FieldsJoinedIntoText,
+    /// DOEFF125: for / while の中で蓄えを毎回作り直す。
+    RebuiltAccumulator,
     /// DOEFF201(意味・Jev): 翻訳の層の定義が業務の判断をしている。
     SemanticBusinessDecision,
     /// DOEFF202(意味・Jev): 判断の層の定義が通信の手段を知っている。
@@ -51,11 +61,13 @@ pub enum ProjectRule {
     SemanticPlainCallable,
     /// DOEFF204(意味・Jev): 処理を持つ method のある class が、外の世界の窓口か状態を持つ物の見込み。
     SemanticClassRole,
+    /// DOEFF205(意味・Jev): 判断の定義が、入力の形の検めと業務の判断を混ぜている見込み。
+    SemanticMixedConcerns,
 }
 
 impl ProjectRule {
     /// 全部の層の規則(出力の一覧と `ALL` の展開のため)。
-    pub const ALL: [ProjectRule; 24] = [
+    pub const ALL: [ProjectRule; 30] = [
         ProjectRule::LayerImportDirection,
         ProjectRule::LayerForbiddenModule,
         ProjectRule::LayerTypesOnly,
@@ -76,10 +88,16 @@ impl ProjectRule {
         ProjectRule::TestIsDeftest,
         ProjectRule::ClassWithBehaviour,
         ProjectRule::JsonValueOutsideWire,
+        ProjectRule::ShapeCheckInJudgment,
+        ProjectRule::FailureRethrow,
+        ProjectRule::BindThenReturn,
+        ProjectRule::FieldsJoinedIntoText,
+        ProjectRule::RebuiltAccumulator,
         ProjectRule::SemanticBusinessDecision,
         ProjectRule::SemanticTransportKnowledge,
         ProjectRule::SemanticPlainCallable,
         ProjectRule::SemanticClassRole,
+        ProjectRule::SemanticMixedConcerns,
     ];
 
     /// 規則の ID。
@@ -105,11 +123,29 @@ impl ProjectRule {
             ProjectRule::TestIsDeftest => "DOEFF118",
             ProjectRule::ClassWithBehaviour => "DOEFF119",
             ProjectRule::JsonValueOutsideWire => "DOEFF120",
+            ProjectRule::ShapeCheckInJudgment => "DOEFF121",
+            ProjectRule::FailureRethrow => "DOEFF122",
+            ProjectRule::BindThenReturn => "DOEFF123",
+            ProjectRule::FieldsJoinedIntoText => "DOEFF124",
+            ProjectRule::RebuiltAccumulator => "DOEFF125",
             ProjectRule::SemanticBusinessDecision => "DOEFF201",
             ProjectRule::SemanticTransportKnowledge => "DOEFF202",
             ProjectRule::SemanticPlainCallable => "DOEFF203",
             ProjectRule::SemanticClassRole => "DOEFF204",
+            ProjectRule::SemanticMixedConcerns => "DOEFF205",
         }
+    }
+
+    /// 臭いの規則(DOEFF121〜125 — 既定の重さ warning・設定の severity で info に下げられる)か。
+    pub fn is_smell(self) -> bool {
+        matches!(
+            self,
+            ProjectRule::ShapeCheckInJudgment
+                | ProjectRule::FailureRethrow
+                | ProjectRule::BindThenReturn
+                | ProjectRule::FieldsJoinedIntoText
+                | ProjectRule::RebuiltAccumulator
+        )
     }
 
     /// ID の綴り(大文字小文字は問わない)から規則を引く。層の規則でなければ None。
@@ -141,6 +177,12 @@ impl ProjectRule {
             | ProjectRule::TestIsDeftest
             | ProjectRule::ClassWithBehaviour
             | ProjectRule::JsonValueOutsideWire
+            | ProjectRule::ShapeCheckInJudgment
+            | ProjectRule::FailureRethrow
+            | ProjectRule::BindThenReturn
+            | ProjectRule::FieldsJoinedIntoText
+            | ProjectRule::RebuiltAccumulator
+            | ProjectRule::SemanticMixedConcerns
             | ProjectRule::SemanticPlainCallable
             | ProjectRule::SemanticClassRole => false,
         }
@@ -169,10 +211,16 @@ impl ProjectRule {
             ProjectRule::TestIsDeftest => "Tests Are deftest",
             ProjectRule::ClassWithBehaviour => "Class Touches The World Or Holds State",
             ProjectRule::JsonValueOutsideWire => "JsonValue Outside Wire Modules",
+            ProjectRule::ShapeCheckInJudgment => "Shape Check In Judgment",
+            ProjectRule::FailureRethrow => "Hand-Written Failure Rethrow",
+            ProjectRule::BindThenReturn => "Bind Then Return",
+            ProjectRule::FieldsJoinedIntoText => "Fields Joined Into Text",
+            ProjectRule::RebuiltAccumulator => "Rebuilt Accumulator",
             ProjectRule::SemanticBusinessDecision => "Business Decision In Translation (Jev)",
             ProjectRule::SemanticTransportKnowledge => "Transport Knowledge In Core (Jev)",
             ProjectRule::SemanticPlainCallable => "Plain Callable Reason (Jev)",
             ProjectRule::SemanticClassRole => "Class Role (Jev)",
+            ProjectRule::SemanticMixedConcerns => "Shape Check Mixed With Judgment (Jev)",
         }
     }
 
@@ -202,6 +250,12 @@ impl ProjectRule {
             ProjectRule::SemanticBusinessDecision => "翻訳の層の定義は、要求を相手の話し方へ言い換えるだけで、業務の判断をしない(Jev の判定・warning か info)",
             ProjectRule::SemanticTransportKnowledge => "判断の層の定義は、通信の手段(URL・HTTP・JSON の wire・SQL)を知らない(Jev の判定・warning か info)",
             ProjectRule::SemanticPlainCallable => "deff の理由の註の文は、architecture.hy が受け入れる理由(外の library が素の関数を呼ぶ等)に当たる(Jev の判定・warning か info)",
+            ProjectRule::ShapeCheckInJudgment => "判断の層(設定の smells.shape_check_layers)の定義は、文字列の鍵の (.get x \"欄\") とその欄への isinstance で入力の形を検めない",
+            ProjectRule::FailureRethrow => "match の腕が、失敗の型(defrecord の :failure True・defeffect の :failure / :absent の宣言)を受けて、受けた値かそれを包み直した値を return するだけにしない",
+            ProjectRule::BindThenReturn => "(<- x T (f …)) の直後に (return x) を置き、x を他で使わない形にしない",
+            ProjectRule::FieldsJoinedIntoText => "同じ値の 2 つ以上の欄を + か f 文字列で 1 本の文字列につながない",
+            ProjectRule::RebuiltAccumulator => "for / while の中で (:= xs (+ xs #(…))) と蓄えを毎回作り直さない",
+            ProjectRule::SemanticMixedConcerns => "役が judgment / program の定義は、入力の形の検めと業務の判断を混ぜない(Jev の判定 — warning か info)",
             ProjectRule::SemanticClassRole => "DOEFF119 が何も出さない、処理を持つ method のある class は値の class(欄から計算するだけ)である(Jev の判定 — 外の世界の窓口か状態を持つ物なら warning か info)",
         }
     }
@@ -232,6 +286,12 @@ impl ProjectRule {
             ProjectRule::SemanticBusinessDecision => "業務の判断は core の judgment へ移し、翻訳の handler はその答えを使うだけにする(Jev の外れなら登録簿に載せる)",
             ProjectRule::SemanticTransportKnowledge => "通信の手段は protocol の翻訳の handler へ移し、core は intent を出すだけにする(Jev の外れなら登録簿に載せる)",
             ProjectRule::SemanticPlainCallable => "種類が当たらないなら defk にする — 組み立て(handler の並び)なら `(defk handlers-of [foundation])` に・テストなら deftest に・値を組む補助なら defk にして `(<- …)` で呼ぶ(Jev の外れなら登録簿に載せる)",
+            ProjectRule::ShapeCheckInJudgment => "形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする",
+            ProjectRule::FailureRethrow => "失敗は (<- (Raise 失敗の値)) で出し(呼び手へ手で return し直さない)、受けて写す所だけ呼ぶ側で (on-raise 本文 (Refusal r) 写し先) と受ける(ADR-DOE-CORE-EFFECTS-003 R3・R7)",
+            ProjectRule::BindThenReturn => "(return (! (f …))) と 1 つにするか、失敗なら (<- (Raise …)) で出す",
+            ProjectRule::FieldsJoinedIntoText => "型のある値のまま渡す(欄を文字列に潰さない)— 文にするのは人に見せる境目の 1 か所だけ",
+            ProjectRule::RebuiltAccumulator => "蓄えは内包表記(lfor)で 1 度に作る — ループの中で (+ xs #(…)) の作り直しを重ねない",
+            ProjectRule::SemanticMixedConcerns => "形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする(Jev の外れなら登録簿に載せる)",
             ProjectRule::SemanticClassRole => "外の世界の窓口なら土台の handler(資源は (session val …))、状態なら handler の (session var …) 1 か所(Jev の外れなら登録簿に載せる)",
         }
     }

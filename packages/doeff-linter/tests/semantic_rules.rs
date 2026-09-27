@@ -39,6 +39,17 @@ fn fake_jev(drifted: bool) -> FakeJev {
             counter.fetch_add(1, Ordering::SeqCst);
             let body: Value = serde_json::from_slice(&body).unwrap();
             let source = body["state"]["definition"]["source"].as_str().unwrap_or("");
+            if body["questions"]["q"]["criteria"].get("mixed").is_some() {
+                // DOEFF205: 文字列の鍵の .get を持つ定義は mixed、それ以外は judgment-only。較正の例もこの規則で幅に入る。
+                let (choice, probabilities) = if source.contains(".get") {
+                    ("mixed", serde_json::json!({"mixed": 0.9, "shape-only": 0.05, "judgment-only": 0.04, "neither": 0.01}))
+                } else {
+                    ("judgment-only", serde_json::json!({"mixed": 0.03, "shape-only": 0.02, "judgment-only": 0.94, "neither": 0.01}))
+                };
+                let answer = serde_json::json!({"answers": {"q": {"type": "choice", "choice": choice, "probabilities": probabilities}}, "usage": {"input_tokens": 40}, "model": "jev-test-1"}).to_string();
+                let _ = write!(stream, "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}", answer.len(), answer);
+                continue;
+            }
             if body["questions"]["q"]["criteria"].get("external-world").is_some() {
                 // DOEFF204: client を欄に持つ class は external-world、それ以外は value。較正の合成の例もこの規則で幅に入る。
                 let (choice, probabilities) = if source.contains("client") {
@@ -307,4 +318,37 @@ fn class_role_asks_jev_only_for_classes_the_deterministic_rule_left_alone() {
     assert!(reader["hint"].as_str().unwrap().contains("(session val …)"));
     assert!(find(&report, "DOEFF204", "Point").is_none());
     assert_eq!(find(&report, "DOEFF119", "Raw").expect("Raw")["severity"], "error");
+}
+
+#[test]
+fn mixed_concerns_asks_jev_only_for_judgment_and_program_definitions() {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("pyproject.toml"),
+        "[tool.doeff-linter]\nenable = [\"DOEFF205\"]\n[tool.doeff-linter.definitions]\npaths = [\"app\"]\n[tool.doeff-linter.layers]\norder = [\"core\", \"protocol\"]\npaths = { core = \"app/core\", protocol = \"app/protocol\" }\n[tool.doeff-linter.layers.describe.core]\nsummary = \"業務の判断\"\nknows = \"業務の判断\"\ndoes_not_know = \"相手の話し方\"\n[tool.doeff-linter.semantic]\nmixed_concerns = { layer = \"core\" }\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.path().join("app/core")).unwrap();
+    std::fs::write(
+        dir.path().join("app/core/x.hy"),
+        concat!(
+            "(val MODULE-TAGS {:context \"kanban\" :role \"judgment\"})\n",
+            "(defk decide [payload] (val s (.get payload \"subject\")) (when (isinstance s str) (return 1)) 2)\n",
+            "(defk pure [board] (any (gfor c board.cards (= c.key 1))))\n",
+            "(defk shaped [p] {:tags {:context \"kanban\" :role \"type\"}} (.get p \"x\"))\n",
+        ),
+    )
+    .unwrap();
+    let jev = fake_jev(false);
+    let (_, report, stderr) = run(dir.path(), &jev.url, &["--semantic-all"]);
+    // 問うのは役 judgment の decide と pure(module の頭のタグ)— 役 type の shaped は問わない。較正は 2 例。
+    assert_eq!(report["semantic"]["asked"], 4, "{} {}", report["semantic"], stderr);
+    assert_eq!(report["semantic"]["calibration"], "ok");
+    let decide = find(&report, "DOEFF205", "decide").expect("decide");
+    assert_eq!(decide["severity"], "warning");
+    assert_eq!(decide["source"], "jev");
+    assert!(decide["explanation"]["reason"].as_str().unwrap().contains("入力の形の検め"), "{}", decide["explanation"]["reason"]);
+    assert!(decide["hint"].as_str().unwrap().contains("defwire"));
+    assert!(find(&report, "DOEFF205", "pure").is_none());
+    assert!(find(&report, "DOEFF205", "shaped").is_none());
 }
