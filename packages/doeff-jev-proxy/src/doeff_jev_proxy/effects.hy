@@ -2,12 +2,14 @@
 ;;;
 ;;;   PrepareStore      置き場の表を用意する(起動の時に 1 度 — 無ければ作る・在れば触らない)
 ;;;   LookupAnswer      鍵の覚えた答えを読む(今の版の model の答えだけ — 答えた model の版が変わった後の古い答えは無いと読む)
+;;;   LookupAnswers     鍵の束の覚えた答えを一度に読む(覚えている時だけの問いの束 — LookupAnswer と同じ版の決まり)
 ;;;   RememberAnswer    本物の Jev の答えを覚える(同じ鍵は置き換える)
 ;;;   ForgetAnswer      覚えた答えを消す(答え = 消したか)
 ;;;   ReadAnswer        覚えた答えを版を問わず読む(管理者が中身を見るため)
 ;;;   AskJev            本物の Jev に本文をそのまま問う
 ;;;   Coalesce          同じ鍵の同時の Program を 1 回だけ走らせ、答えを全員に配る
 ;;;   Count             計器の出来事を 1 つ数える
+;;;   CountTimes        計器の出来事を times 回数える(束の問いの当たりと外れ)
 ;;;   ReadCounters      計器の数を読む
 ;;;   IdentifyCaller    Authorization の見出しから呼び手の身元を引く
 (require doeff-hy.macros [defeffect])
@@ -29,6 +31,13 @@
    :answer (| StoredAnswer None)
    :tags {:context "jev-proxy" :role "intent"}})
 
+
+(defeffect LookupAnswers
+  "鍵の束の覚えた答えを一度に読む。LookupAnswer と同じく、答えた model の版が今の版と違う答えは無いと読む。答え = 覚えていた答えの
+   tuple(覚えていない鍵は載らない・並びは決めない)。"
+  {:fields [(: keys tuple)]
+   :answer tuple
+   :tags {:context "jev-proxy" :role "intent"}})
 
 (defeffect RememberAnswer
   "本物の Jev の答えを覚える。同じ鍵の答えは置き換え、その model の今の版を served-model にする。"
@@ -68,6 +77,13 @@
 (defeffect Count
   "計器の出来事を 1 つ数える。"
   {:fields [(: event Event)]
+   :answer None
+   :tags {:context "jev-proxy" :role "intent"}})
+
+
+(defeffect CountTimes
+  "計器の出来事を times 回数える(times が 0 なら何もしない)。"
+  {:fields [(: event Event) (: times int)]
    :answer None
    :tags {:context "jev-proxy" :role "intent"}})
 

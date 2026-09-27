@@ -11,6 +11,7 @@
 (import dataclasses [dataclass])
 (import hashlib)
 (import json)
+(import re)
 (import doeff_jev.target [DIRECT-MODEL])
 (import doeff_jev_proxy.values [Directive Header])
 
@@ -101,3 +102,33 @@
   {:pre [(: pairs list)] :post [(: % tuple)]}
   "(名 値) の組の列を見出しの列にするため(名は小文字)。"
   (tuple (gfor #(name value) pairs (Header :name (.lower name) :value value))))
+
+
+;; 覚えている時だけの問いの束 1 つで受ける鍵の数の上限(本文の上限 4 MiB の内 — 鍵 1 つは 67 byte 前後)。
+(val PEEK-MAX-KEYS 20000)
+
+
+(defrecord PeekKeys
+  "覚えている時だけの問いの束の鍵の列: keys = 重ねを除いた鍵(届いた順)。"
+  (#^ tuple keys))
+
+
+(defk peek-keys-of [body]
+  {:pre [(: body bytes)] :post [(: % (| PeekKeys BadRequest))]}
+  "覚えている時だけの問いの束の本文 {\"keys\": [鍵 …]} を読むため。鍵は 64 桁の小文字の 16 進(/v1/systemone の答えの見出し
+   x-jev-proxy-key と同じ鍵 — 呼び手は本文から同じ決まりで作る)。空・上限を超える・形の違う鍵は BadRequest。"
+  (val parsed (try
+                (json.loads (.decode body "utf-8"))
+                (except [error ValueError]
+                  (return (BadRequest :reason (.format "本文が UTF-8 の JSON でない: {}" error))))))
+  (when (not (isinstance parsed dict))
+    (return (BadRequest :reason "本文は JSON の object {keys}")))
+  (val keys (.get parsed "keys"))
+  (when (not (and (isinstance keys list) keys))
+    (return (BadRequest :reason "keys は空でない list")))
+  (when (> (len keys) PEEK-MAX-KEYS)
+    (return (BadRequest :reason (.format "keys は {} 個まで({} 個)" PEEK-MAX-KEYS (len keys)))))
+  (val malformed (lfor k keys :if (not (and (isinstance k str) (re.fullmatch "[0-9a-f]{64}" k))) k))
+  (when malformed
+    (return (BadRequest :reason (.format "鍵は 64 桁の小文字の 16 進: {!r}" (get malformed 0)))))
+  (PeekKeys :keys (tuple (dict.fromkeys keys))))
