@@ -1,0 +1,321 @@
+// `doeff-indexer hy-index` の出力 JSON(契約 版 1)の型と、読み込みの唯一の検査。
+// 契約の正本 = experiments/hy-highlighter/hy-index-contract.md。欄が欠けた・型が違う・版が違う JSON は
+// 理由つきで捨て、既定値で埋めない。
+
+export const HY_INDEX_CONTRACT_VERSION = 1;
+
+/** 契約の kind の一覧(閉じた集合)。足す時は契約と同時に直す。 */
+export const HY_DEFINITION_KINDS = [
+  'defn',
+  'defn/a',
+  'defmacro',
+  'defk',
+  'deff',
+  'defp',
+  'defpp',
+  'fnk-binding',
+  'defclass',
+  'defrecord',
+  'defenum',
+  'enum-member',
+  'field',
+  'method',
+  'defhandler',
+  'effect-clause',
+  'deftest',
+  'defadr',
+  'defsemgrep',
+  'law',
+  'defpipeline',
+  'defworkflow',
+  'defphase',
+  'defmcp-tool',
+  'deftype',
+  'defmain',
+  'variable'
+] as const;
+
+export type HyDefinitionKind = (typeof HY_DEFINITION_KINDS)[number];
+
+export interface HyPosition {
+  /** 0 始まりの行 */
+  readonly line: number;
+  /** UTF-16 の code unit での列(VS Code の Position と同じ) */
+  readonly character: number;
+}
+
+export interface HyRange {
+  readonly start: HyPosition;
+  readonly end: HyPosition;
+}
+
+export interface HyDefinition {
+  readonly name: string;
+  readonly mangled: string;
+  readonly kind: HyDefinitionKind;
+  readonly range: HyRange;
+  readonly fullRange: HyRange;
+  readonly container: string | null;
+  readonly docstring: string | null;
+  readonly params: readonly string[];
+}
+
+export interface HyImport {
+  readonly module: string;
+  readonly name: string | null;
+  readonly alias: string | null;
+  readonly range: HyRange;
+  readonly isRequire: boolean;
+}
+
+export interface HyReference {
+  readonly name: string;
+  readonly mangled: string;
+  readonly qualifier: string | null;
+  readonly range: HyRange;
+}
+
+export interface HyFileIndex {
+  readonly path: string;
+  readonly module: string;
+  readonly definitions: readonly HyDefinition[];
+  readonly imports: readonly HyImport[];
+  readonly references: readonly HyReference[];
+  readonly errors: readonly string[];
+}
+
+export interface HyIndexDocument {
+  readonly version: number;
+  readonly root: string;
+  readonly files: readonly HyFileIndex[];
+}
+
+/** 捨てた file の path(読めた時)と理由。 */
+export interface RejectedFile {
+  readonly path: string | null;
+  readonly reason: string;
+}
+
+export type HyIndexParseResult =
+  | { readonly tag: 'ok'; readonly document: HyIndexDocument; readonly rejected: readonly RejectedFile[] }
+  | { readonly tag: 'rejected'; readonly reason: string };
+
+/** 検査の途中で契約違反を見つけた時に投げる内部の例外(parse の外へは出さない)。 */
+class ContractViolation extends Error {}
+
+type JsonObject = { readonly [key: string]: unknown };
+
+/** 値が JSON の object(配列でない)であるかを見る。 */
+function isObject(value: unknown): value is JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** object から必須の欄を取り出す(欠けていれば契約違反)。 */
+function field(obj: JsonObject, key: string, where: string): unknown {
+  if (!Object.prototype.hasOwnProperty.call(obj, key)) {
+    throw new ContractViolation(`${where}: 欄 "${key}" が無い`);
+  }
+  return obj[key];
+}
+
+/** 文字列の欄を検める。 */
+function str(obj: JsonObject, key: string, where: string): string {
+  const value = field(obj, key, where);
+  if (typeof value !== 'string') {
+    throw new ContractViolation(`${where}.${key}: 文字列でない`);
+  }
+  return value;
+}
+
+/** 文字列か null の欄を検める(欄そのものは必須)。 */
+function strOrNull(obj: JsonObject, key: string, where: string): string | null {
+  const value = field(obj, key, where);
+  if (value !== null && typeof value !== 'string') {
+    throw new ContractViolation(`${where}.${key}: 文字列でも null でもない`);
+  }
+  return value;
+}
+
+/** 真偽値の欄を検める。 */
+function bool(obj: JsonObject, key: string, where: string): boolean {
+  const value = field(obj, key, where);
+  if (typeof value !== 'boolean') {
+    throw new ContractViolation(`${where}.${key}: 真偽値でない`);
+  }
+  return value;
+}
+
+/** 配列の欄を検める。 */
+function arr(obj: JsonObject, key: string, where: string): readonly unknown[] {
+  const value = field(obj, key, where);
+  if (!Array.isArray(value)) {
+    throw new ContractViolation(`${where}.${key}: 配列でない`);
+  }
+  return value;
+}
+
+/** object の欄を検める。 */
+function obj(parent: JsonObject, key: string, where: string): JsonObject {
+  const value = field(parent, key, where);
+  if (!isObject(value)) {
+    throw new ContractViolation(`${where}.${key}: object でない`);
+  }
+  return value;
+}
+
+/** 0 以上の整数の欄を検める(行・列)。 */
+function nat(parent: JsonObject, key: string, where: string): number {
+  const value = field(parent, key, where);
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    throw new ContractViolation(`${where}.${key}: 0 以上の整数でない`);
+  }
+  return value;
+}
+
+/** 位置 {line, character} を検める。 */
+function parsePosition(value: JsonObject, where: string): HyPosition {
+  return { line: nat(value, 'line', where), character: nat(value, 'character', where) };
+}
+
+/** 範囲 {start, end} を検める。 */
+function parseRange(parent: JsonObject, key: string, where: string): HyRange {
+  const value = obj(parent, key, where);
+  const at = `${where}.${key}`;
+  return {
+    start: parsePosition(obj(value, 'start', at), `${at}.start`),
+    end: parsePosition(obj(value, 'end', at), `${at}.end`)
+  };
+}
+
+/** 文字列が契約の kind のどれかであるかを見る。 */
+export function isHyDefinitionKind(value: string): value is HyDefinitionKind {
+  return (HY_DEFINITION_KINDS as readonly string[]).includes(value);
+}
+
+/** 定義 1 件を検める。 */
+function parseDefinition(value: unknown, where: string): HyDefinition {
+  if (!isObject(value)) {
+    throw new ContractViolation(`${where}: object でない`);
+  }
+  const kind = str(value, 'kind', where);
+  if (!isHyDefinitionKind(kind)) {
+    throw new ContractViolation(`${where}.kind: 契約に無い kind "${kind}"`);
+  }
+  const params = arr(value, 'params', where).map((param, i) => {
+    if (typeof param !== 'string') {
+      throw new ContractViolation(`${where}.params[${i}]: 文字列でない`);
+    }
+    return param;
+  });
+  return {
+    name: str(value, 'name', where),
+    mangled: str(value, 'mangled', where),
+    kind,
+    range: parseRange(value, 'range', where),
+    fullRange: parseRange(value, 'full_range', where),
+    container: strOrNull(value, 'container', where),
+    docstring: strOrNull(value, 'docstring', where),
+    params
+  };
+}
+
+/** import 1 件を検める。 */
+function parseImport(value: unknown, where: string): HyImport {
+  if (!isObject(value)) {
+    throw new ContractViolation(`${where}: object でない`);
+  }
+  return {
+    module: str(value, 'module', where),
+    name: strOrNull(value, 'name', where),
+    alias: strOrNull(value, 'alias', where),
+    range: parseRange(value, 'range', where),
+    isRequire: bool(value, 'is_require', where)
+  };
+}
+
+/** 参照 1 件を検める。 */
+function parseReference(value: unknown, where: string): HyReference {
+  if (!isObject(value)) {
+    throw new ContractViolation(`${where}: object でない`);
+  }
+  return {
+    name: str(value, 'name', where),
+    mangled: str(value, 'mangled', where),
+    qualifier: strOrNull(value, 'qualifier', where),
+    range: parseRange(value, 'range', where)
+  };
+}
+
+/** file 1 件を検める。 */
+function parseFile(value: JsonObject, where: string): HyFileIndex {
+  const errors = arr(value, 'errors', where).map((e, i) => {
+    if (typeof e !== 'string') {
+      throw new ContractViolation(`${where}.errors[${i}]: 文字列でない`);
+    }
+    return e;
+  });
+  return {
+    path: str(value, 'path', where),
+    module: str(value, 'module', where),
+    definitions: arr(value, 'definitions', where).map((d, i) =>
+      parseDefinition(d, `${where}.definitions[${i}]`)
+    ),
+    imports: arr(value, 'imports', where).map((d, i) => parseImport(d, `${where}.imports[${i}]`)),
+    references: arr(value, 'references', where).map((d, i) =>
+      parseReference(d, `${where}.references[${i}]`)
+    ),
+    errors
+  };
+}
+
+/**
+ * hy-index の stdout(文字列)を契約どおりの型に読む唯一の入口。
+ * 全体の形・版が違えば全部を捨て、file 単位の契約違反はその file だけを理由つきで捨てる。
+ */
+export function parseHyIndexJson(text: string): HyIndexParseResult {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch (error) {
+    return { tag: 'rejected', reason: `JSON として読めない: ${String(error)}` };
+  }
+  if (!isObject(raw)) {
+    return { tag: 'rejected', reason: '最上位が object でない' };
+  }
+  try {
+    const version = field(raw, 'version', '$');
+    if (version !== HY_INDEX_CONTRACT_VERSION) {
+      return {
+        tag: 'rejected',
+        reason: `契約の版が違う(期待 ${HY_INDEX_CONTRACT_VERSION}、実際 ${JSON.stringify(version)})`
+      };
+    }
+    const root = str(raw, 'root', '$');
+    const rawFiles = arr(raw, 'files', '$');
+    const files: HyFileIndex[] = [];
+    const rejected: RejectedFile[] = [];
+    rawFiles.forEach((rawFile, i) => {
+      const where = `$.files[${i}]`;
+      if (!isObject(rawFile)) {
+        rejected.push({ path: null, reason: `${where}: object でない` });
+        return;
+      }
+      const maybePath = typeof rawFile.path === 'string' ? rawFile.path : null;
+      try {
+        files.push(parseFile(rawFile, where));
+      } catch (error) {
+        if (error instanceof ContractViolation) {
+          rejected.push({ path: maybePath, reason: error.message });
+          return;
+        }
+        throw error;
+      }
+    });
+    return { tag: 'ok', document: { version, root, files }, rejected };
+  } catch (error) {
+    if (error instanceof ContractViolation) {
+      return { tag: 'rejected', reason: error.message };
+    }
+    throw error;
+  }
+}

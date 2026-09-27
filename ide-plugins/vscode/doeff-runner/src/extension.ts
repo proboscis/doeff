@@ -18,6 +18,7 @@ import {
   playlistArgsToDoeffRunArgs
 } from './playlists';
 import { multiTokenFuzzyMatch } from './search';
+import { registerHyNavigation } from './hy/register';
 
 const execFileAsync = promisify(cp.execFile);
 
@@ -2914,6 +2915,9 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Store extension context for bundled binary access
   extensionContext = context;
+
+  // Hy (doeff-hy) navigation: definition / references / outline / workspace symbols / hover.
+  registerHyNavigation(context, { locateIndexer: () => locateIndexer(), output });
 
   // Create state store for sharing state between TreeView and CodeLens
   const stateStore = new DoeffStateStore(context);

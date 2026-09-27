@@ -18,6 +18,8 @@
   ],
   "activationEvents": [
     "onLanguage:python",
+    "onLanguage:hy",
+    "workspaceContains:**/*.{hy,hyk,hyp}",
     "onCommand:doeff-runner.runDefault",
     "onCommand:doeff-runner.runOptions",
     "onCommand:doeff-runner.runConfig",
@@ -56,6 +58,20 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "languages": [
+      {
+        "id": "hy",
+        "aliases": [
+          "Hy",
+          "hy"
+        ],
+        "extensions": [
+          ".hy",
+          ".hyk",
+          ".hyp"
+        ]
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {
@@ -509,7 +525,8 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
-    "test": "vscode-test"
+    "test": "vscode-test",
+    "test:unit": "npm run compile && node scripts/run-unit-tests.js"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.7",

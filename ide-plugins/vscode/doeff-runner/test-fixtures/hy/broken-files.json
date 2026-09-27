@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "root": "/ws",
+  "files": [
+    {
+      "path": "/ws/no_module.hy",
+      "definitions": [],
+      "imports": [],
+      "references": [],
+      "errors": []
+    },
+    {
+      "path": "/ws/unknown_kind.hy",
+      "module": "unknown_kind",
+      "definitions": [
+        {
+          "name": "x",
+          "mangled": "x",
+          "kind": "defwhatever",
+          "range": {"start": {"line": 0, "character": 6}, "end": {"line": 0, "character": 7}},
+          "full_range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 9}},
+          "container": null,
+          "docstring": null,
+          "params": []
+        }
+      ],
+      "imports": [],
+      "references": [],
+      "errors": []
+    },
+    {
+      "path": "/ws/missing_is_require.hy",
+      "module": "missing_is_require",
+      "definitions": [],
+      "imports": [
+        {"module": "a", "name": null, "alias": null, "range": {"start": {"line": 0, "character": 8}, "end": {"line": 0, "character": 9}}}
+      ],
+      "references": [],
+      "errors": []
+    },
+    {
+      "path": "/ws/negative_line.hy",
+      "module": "negative_line",
+      "definitions": [],
+      "imports": [],
+      "references": [
+        {"name": "a", "mangled": "a", "qualifier": null, "range": {"start": {"line": -1, "character": 0}, "end": {"line": 0, "character": 1}}}
+      ],
+      "errors": []
+    },
+    {
+      "path": "/ws/good.hy",
+      "module": "good",
+      "definitions": [],
+      "imports": [],
+      "references": [],
+      "errors": ["3 行目: 括弧が閉じていない"]
+    }
+  ]
+}
