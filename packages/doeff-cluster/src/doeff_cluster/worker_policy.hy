@@ -14,7 +14,7 @@
 (import dataclasses [replace])
 (import .worker_model [JobSpec CodeState CodeView ProcessView WorldView StopStage StopProgress ProbeState ProbeView ProbeStatus
   Outcome JobRecord WorkerPolicy JobPhase JobStatus PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases
-  ProbeEntry spec-hash code-key probed-job retired-name RETIRED-MARK ENV-KEY-PREFIX])
+  ProbeEntry ForgetProbes spec-hash code-key probed-job retired-name RETIRED-MARK ENV-KEY-PREFIX])
 
 ;; 自己停止(2026-09-25): coordinator との連絡が fence(ClusterTiming.fence-ms)を越えて途絶えた worker は、自分の job を止めてきた
 ;; (coordinator は 45 秒で他へ移すので、同じ job が 2 つ動かないように)。ただし書き手(入れ替え handoff を宣言した job)は、旧と新が
@@ -230,12 +230,18 @@
       (do (setv pinned (pinned-env-keys desired world warm))
           (if (or (!= pinned disk.pinned) (< disk.free disk.floor)) #((SweepEnvs pinned)) #()))))
 
+(defn #^ tuple forget-probe-actions [#^ tuple desired #^ WorldView world]
+  "入口の検めの持ち主へ今の宣言の spec の指紋を渡す action(宣言に無い spec の検めの記録が観測に在る拍だけ — 2026-09-27)。
+   宣言に残る spec の記録(失敗の理由・回数)は落とさない。"
+  (setv keep (frozenset (gfor spec desired (spec-hash spec))))
+  (if (any (gfor probe world.probes (not-in probe.spec-hash keep))) #((ForgetProbes keep)) #()))
+
 (defn #^ tuple plan [#^ int now #^ tuple desired #^ WorldView world #^ dict records #^ WorkerPolicy policy #^ tuple [warm #()]]
-  "1 拍の action: job ごとの action → 温める表の準備(job より後)→ 掃除の係への固定の集合。"
+  "1 拍の action: job ごとの action → 温める表の準備(job より後)→ 掃除の係への固定の集合 → 検めの記録の片づけ。"
   (setv jobs (tuple (gfor name (job-names desired world)
                           action (plan-job now name desired world (.get records name (JobRecord name)) policy)
                           action)))
-  (+ jobs (warm-actions now warm world jobs policy) (sweep-actions desired world warm)))
+  (+ jobs (warm-actions now warm world jobs policy) (sweep-actions desired world warm) (forget-probe-actions desired world)))
 
 (defn #^ JobRecord record-after [#^ int now #^ JobRecord record action [policy (WorkerPolicy)]]
   (cond

@@ -66,6 +66,12 @@
   (setv #^ (| str None) overlay None))
 
 
+(defenum GenerationOrder CURRENT OLDER NEWER)
+;; heartbeat の process の世代が、同じ名の今の世代に比べてどれか(cluster_policy.generation-order — 2026-09-27)。
+;; CURRENT = 今の世代(初めての名・世代を名乗らない旧い worker を含む)・OLDER = 古い世代(名乗りとして受けない)・
+;; NEWER = 新しい世代(今の世代を退かせる)。
+
+
 (defclass [(dataclass :frozen True)] WorkerInfo []
   (#^ str name)
   (#^ tuple labels)
@@ -89,7 +95,11 @@
   (setv #^ tuple env-failed #())
   (setv #^ str env-capacity "ok")
   ;; 退いた世代(boot の欄の説明 — 位置で渡す欄の後ろに置く)。
-  (setv #^ (get tuple #(str ...)) retired #()))
+  (setv #^ (get tuple #(str ...)) retired #())
+  ;; 今の世代の process の起動時刻(epoch ms・heartbeat の bootAt — 2026-09-27)。今の世代と来た世代の両方の起動時刻を知る時は、
+  ;; 大きい方を新しい世代とする(cluster_policy.generation-order)。状態を失った coordinator に新しい世代が先に届いても、後から来た
+  ;; 古い世代に今の世代を明け渡さない。起動時刻を名乗らない旧い worker・旧い形の置き場は None(初めて見た順へ落とす)。保存する。
+  (setv #^ (| int None) boot-at None))
 
 
 (defclass [(dataclass :frozen True)] EnvFailed []

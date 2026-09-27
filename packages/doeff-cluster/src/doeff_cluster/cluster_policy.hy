@@ -6,7 +6,7 @@
 (import json)
 
 (import .worker_model [JobSpec])
-(import .cluster_model [ClusterJob WorkerInfo Placement ClusterTiming ClusterState TaskRecord Request Drain EnvFailed WarmEntry HandoffPhase
+(import .cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterTiming ClusterState TaskRecord Request Drain EnvFailed WarmEntry HandoffPhase
                         requirements-of component-versions-of task-record-to-json task-record-from-json ACCEPTED-FORMATS format-refusal
                         PLACED-PHASES handoff-watch-from-json])
 (import .semaphore_model [SEMAPHORE-PREFIX lease-op semaphore-write-refusal semaphore-key])
@@ -165,14 +165,22 @@
 
 (defn #^ dict worker-generations-json [#^ WorkerInfo worker]
   "worker の世代の順(今の世代と退いた世代)を保存の形へ写すため(state file と durable の KV が使う)。読み直した後も、退いた世代の
-   heartbeat を新しい世代と取り違えない。世代を知らない worker は欄を持たない(2026-09-27 より前の形と同じ)。"
+   heartbeat を新しい世代と取り違えない。世代を知らない worker は欄を持たない(2026-09-27 より前の形と同じ)。
+   bootAt = 今の世代の起動時刻(知る時だけ — generation-order)。"
   (| (if (is worker.boot None) {} {"boot" worker.boot})
-     (if worker.retired {"retired" (list worker.retired)} {})))
+     (if worker.retired {"retired" (list worker.retired)} {})
+     (if (is worker.boot-at None) {} {"bootAt" worker.boot-at})))
 
 
 (defn #^ dict worker-generations-from-json [#^ dict data]
-  "保存の形 → WorkerInfo の世代の欄(worker-generations-json の逆)。欄の無い旧い形は世代を知らない。"
-  {"boot" (.get data "boot") "retired" (tuple (.get data "retired" []))})
+  "保存の形 → WorkerInfo の世代の欄(worker-generations-json の逆)。欄の無い旧い形は世代・起動時刻を知らない。"
+  {"boot" (.get data "boot") "retired" (tuple (.get data "retired" [])) "boot_at" (boot-at-of data)})
+
+
+(defn #^ (| int None) boot-at-of [#^ dict body]
+  "heartbeat の本文・保存の形の bootAt(process の起動時刻・epoch ms)。整数でない値(欄の無い旧い worker を含む)は知らない = None。"
+  (setv value (.get body "bootAt"))
+  (if (and (isinstance value int) (not (isinstance value bool))) value None))
 
 
 (defn #^ dict warm-entry-to-json [#^ WarmEntry entry]
@@ -300,7 +308,27 @@
 ;; heartbeat = 新しい世代(今の世代を退かせる)・退いた世代の heartbeat = 古い世代(worker の名乗りとしては断る)。
 ;; 断るのは名乗りだけ: 退いた世代の上でまだ走っている切り離した task の終わりの報告と lease の延長は、その世代に置いた task に
 ;; 限って受ける(走らせ直さない task を途中で失わない — 旧い世代が消えたら lease 切れで lost)。
+;; 起動時刻(2026-09-27 — heartbeat の bootAt): 初めて見た順だけでは、状態を失った coordinator に生きている 2 世代のうち新しい方が
+;; 先に届くと、旧が今の世代・新が退いた世代になり、旧が死んだ後も新の heartbeat を断り続けて名が沈黙した。今の世代と来た世代の
+;; 両方の起動時刻を知る時は、起動時刻の大きい方を新しい世代とする(generation-order)。
 (setv RETIRED-BOOTS-KEPT 8)   ; 覚えておく退いた世代の数(1 回の作り直しで 1 つ増える — 旧い Pod が生きている間だけ要る)
+
+
+(defn #^ GenerationOrder generation-order [#^ (| WorkerInfo None) current #^ (| str None) boot #^ (| int None) boot-at]
+  "純粋: heartbeat の世代 boot(起動時刻 boot-at)が、名の今の世代 current に比べて今の世代か・古いか・新しいか。
+   両方の起動時刻を知っていて違えば、起動時刻の大きい方が新しい。どちらかを知らない(欄の無い旧い worker・旧い形の置き場)か
+   等しい時は初めて見た順: 退いた世代の列に在れば古い・在らなければ新しい。boot を名乗らない旧い worker・初めての名は今の世代。"
+  (cond
+    (or (is current None) (is boot None) (is current.boot None) (= boot current.boot)) GenerationOrder.CURRENT
+    (and (is-not boot-at None) (is-not current.boot-at None) (!= boot-at current.boot-at))
+      (if (< boot-at current.boot-at) GenerationOrder.OLDER GenerationOrder.NEWER)
+    (in boot current.retired) GenerationOrder.OLDER
+    True GenerationOrder.NEWER))
+
+
+(defn #^ tuple retired-with [#^ tuple retired #^ str boot]
+  "純粋: 退いた世代の列(新しい順)の頭に boot を足した列(重ねない・RETIRED-BOOTS-KEPT まで)。"
+  (tuple (cut (+ #(boot) (tuple (gfor b retired :if (!= b boot) b))) RETIRED-BOOTS-KEPT)))
 
 
 (defn #^ bool superseded-boot [#^ ClusterState state #^ str name #^ (| str None) boot]
@@ -317,12 +345,13 @@
 
 
 (defn #^ tuple retired-after [#^ (| WorkerInfo None) previous #^ (| str None) boot]
-  "純粋: 退いていない世代 boot の heartbeat の後の、name の退いた世代の列(新しい順)。今の世代と違う boot = 新しい世代なので、
-   今の世代を列の頭へ足す。"
+  "純粋: 古くない世代 boot(generation-order が CURRENT か NEWER)の heartbeat の後の、name の退いた世代の列(新しい順)。
+   今の世代と違う boot = 新しい世代なので、今の世代を列の頭へ足し、boot 自身は列から外す(以前に退いた世代と取り違えていた
+   新しい世代が起動時刻で名乗り直した時)。"
   (cond
     (is previous None) #()
     (or (is boot None) (is previous.boot None) (= previous.boot boot)) previous.retired
-    True (tuple (cut (+ #(previous.boot) previous.retired) RETIRED-BOOTS-KEPT))))
+    True (retired-with (tuple (gfor b previous.retired :if (!= b boot) b)) previous.boot)))
 
 
 (defn #^ ClusterState absorb-boot [#^ ClusterState state #^ str name #^ (| str None) boot]
@@ -616,7 +645,9 @@
         :if (and (in task.phase PLACED-PHASES) (= task.worker worker) (same-boot task boot))
         (| {"id" task.id "name" task.name "env" task.env "revision" task.revision
             "versions" (dict task.versions) "blob" task.blob}
-           (if task.detached {"detached" True} {})
+           ;; 切り離した task は、状態を失った coordinator が引き取れるだけの欄を持つ(worker が状態の報告に写す —
+           ;; adopt-running-detached・2026-09-27)。
+           (if task.detached {"detached" True "key" task.key "leaseMs" task.lease-ms "retainMs" task.retain-ms} {})
            (if (is-not task.runtime-env None) {"runtimeEnv" task.runtime-env} {}))))
 
 
@@ -753,8 +784,8 @@
       (!= (set before.workers) (set after.workers))
       (any (gfor #(n w) (.items after.workers)
                  :setv b (.get before.workers n)
-                 (or (is b None) (!= #(b.labels b.capacity b.versions b.boot b.retired)
-                                     #(w.labels w.capacity w.versions w.boot w.retired)))))))
+                 (or (is b None) (!= #(b.labels b.capacity b.versions b.boot b.retired b.boot-at)
+                                     #(w.labels w.capacity w.versions w.boot w.retired w.boot-at)))))))
 
 
 (defn #^ list board-changes [#^ ClusterState before #^ ClusterState after]
@@ -770,11 +801,17 @@
 
 (defn #^ ClusterState register-heartbeat [#^ ClusterState state #^ dict body #^ int now]
   "heartbeat の中身(worker の label・容量・版と、各 job / task の状態)を状態へ写す。割り当ての調停はしない(呼び手が別の送り手
-   = coordinator として調停する)。退いた世代の heartbeat(superseded-boot)は名乗りとして受けず、その世代に置いた task の
-   終わりの報告と lease の延長だけを写す(absorb-superseded-heartbeat)。"
-  (setv name (get body "name") boot (.get body "boot"))
-  (when (superseded-boot state name boot)
-    (return (absorb-superseded-heartbeat state name boot (.get body "statuses" []) now)))
+   = coordinator として調停する)。古い世代の heartbeat(generation-order が OLDER)は名乗りとして受けず、その世代を退いた世代の
+   列に載せ、その世代に置いた task の終わりの報告と lease の延長だけを写す(absorb-superseded-heartbeat)。
+   知らない切り離した task をその process が走らせていれば、先に引き取る(adopt-running-detached — 状態を失った coordinator)。"
+  (setv name (get body "name") boot (.get body "boot") boot-at (boot-at-of body)
+        previous (.get state.workers name)
+        order (generation-order previous boot boot-at)
+        state (adopt-running-detached state name boot (.get body "statuses" []) now))
+  (when (= order GenerationOrder.OLDER)
+    (return (absorb-superseded-heartbeat
+              (replace state :workers (| state.workers {name (replace previous :retired (retired-with previous.retired boot))}))
+              name boot (.get body "statuses" []) now)))
   (setv envs (.get body "envs" {})
         info (WorkerInfo name (tuple (sorted (.items (.get body "labels" {}))))
                          (int (.get body "capacity" 10)) now
@@ -788,12 +825,18 @@
                                                   (EnvFailed (get f "key") (get f "kind") (.get f "detail" "")
                                                              (bool (.get f "retryable" False)))))
                          :env-capacity (.get body "envCapacity" "ok")
-                         :retired (retired-after (.get state.workers name) boot))
+                         :retired (retired-after previous boot)
+                         ;; 同じ世代が起動時刻を名乗らなくなっても(版を戻した worker)、知っている起動時刻は捨てない。
+                         :boot-at (if (and (is boot-at None) (= order GenerationOrder.CURRENT) (is-not previous None)
+                                           (= previous.boot boot))
+                                      previous.boot-at
+                                      boot-at))
         statuses (.get body "statuses" [])
         state (replace (absorb-boot state name boot)
                 :workers (| state.workers {name info})
                 :statuses (| state.statuses {name {"at" now "endpoint" (.get body "endpoint")
-                                                  "jobs" (lfor s statuses (dfor #(k v) (.items s) :if (!= k "result") k v))}})))
+                                                  "jobs" (lfor s statuses (dfor #(k v) (.items s)
+                                                                                :if (not-in k #("result" "task")) k v))}})))
   (replace state :tasks (promote-prepared (renew-detached (absorb-task-reports state name statuses now boot) name boot now)
                                          info)))
 
@@ -802,6 +845,55 @@
   "退いた世代の process がまだ走らせている切り離した task を最後まで見届けるため: その世代に置いた task の終わりの報告と
    lease の延長だけを写す。worker の名乗り(生存・label・容量・版・世代)・job の状態の報告・drain は今の世代の物なので触らない。"
   (replace state :tasks (renew-detached (absorb-task-reports state name statuses now boot) name boot now)))
+
+
+;; --- 状態を失った coordinator が、走っている切り離した task を止めさせない(2026-09-27) --------------------------
+;; worker は heartbeat の返事に載らない task の子 process を止め(worker_policy.plan-job — 宣言から消えた job)、その blob と結果の
+;; file を消す(handlers.CoordinatorLink.accept-tasks)。置き場を失った coordinator は task の行を持たないので、最初の返事で
+;; 生きている worker の走っている切り離した task を全部止めさせ、呼び手の key も引けなくなっていた。worker は切り離した task の
+;; 状態の報告に、置かれた時の返事の行(blob を除く・key と lease と保持の長さを含む)を写して添える(欄 task)。coordinator は
+;; 行を持たない task/<id> を worker が走らせていると報告し、その写しを添えていれば、同じ行を引き取り(担い手 = その worker・
+;; 世代 = その heartbeat の世代)、同じ heartbeat の返事に載せる(worker の宣言の spec が変わらない = 止めない)。
+;; 引き取らない: 行を持つ task(終わった行を含む — 取り消し・lost は今までどおり止める)・写しの無い報告(旧い worker)・
+;; 走っていない報告・同じ key を別の行が使っている時。
+(setv ADOPTABLE-PHASES #{"preparing" "probing" "starting" "running"})
+
+
+(defn #^ (| int None) task-number [#^ str id]
+  "task の id(t<番号>)の番号。形の違う id は None。"
+  (if (and (.startswith id "t") (.isdigit (cut id 1 None))) (int (cut id 1 None)) None))
+
+
+(defn #^ (| TaskRecord None) adopted-task [#^ ClusterState state #^ str worker #^ (| str None) boot #^ dict status #^ int now]
+  "純粋: 状態の報告 1 行 → 引き取る切り離した task の行(引き取らない時は None)。"
+  (setv row-name (.get status "name" "") echo (.get status "task"))
+  (when (or (not (.startswith row-name "task/")) (not (isinstance echo dict))
+            (not-in (.get status "phase") ADOPTABLE-PHASES))
+    (return None))
+  (setv id (cut row-name 5 None) key (.get echo "key") lease-ms (.get echo "leaseMs"))
+  (when (or (in id state.tasks) (!= (.get echo "id") id) (not (.get echo "detached"))
+            (not (isinstance key str)) (not (isinstance lease-ms int))
+            (any (gfor t (.values state.tasks) (= t.key key))))
+    (return None))
+  (TaskRecord id (.get echo "name" "") (get echo "env") "" (get echo "revision")
+              (component-versions-of (.get echo "versions" {})) #() lease-ms (+ now lease-ms) now
+              :phase "assigned" :worker worker :started-ms now :detached True :key key :boot boot
+              :retain-ms (int (.get echo "retainMs" 0)) :runtime-env (.get echo "runtimeEnv")
+              :detail (.format "coordinator の置き場に行が無く、担い手 {} が走らせていた task を引き取った" worker)))
+
+
+(defn #^ ClusterState adopt-running-detached [#^ ClusterState state #^ str worker #^ (| str None) boot #^ list statuses #^ int now]
+  "純粋: heartbeat の状態の報告のうち、行を持たない走っている切り離した task を引き取った状態(引き取る物が無ければ同じ object)。
+   次に振る task の番号は引き取った id より後へ進める(同じ id を別の task に振らない)。"
+  (setv adopted {})
+  (for [status statuses]
+    (setv task (adopted-task (replace state :tasks (| state.tasks adopted)) worker boot status now))
+    (when (is-not task None) (setv (get adopted task.id) task)))
+  (if adopted
+      (replace state :tasks (| state.tasks adopted)
+               :next-task (max [state.next-task
+                                #* (gfor id adopted :setv n (task-number id) :if (is-not n None) (+ n 1))]))
+      state))
 
 
 (defn #^ dict promote-prepared [#^ dict tasks #^ WorkerInfo worker]

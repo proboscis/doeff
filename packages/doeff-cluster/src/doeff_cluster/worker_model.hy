@@ -388,12 +388,18 @@
   (#^ JobSpec spec)
   (#^ str code-path))
 
+(defclass [(dataclass :frozen True)] ForgetProbes [EffectBase]
+  "入口の検めの持ち主へ今の宣言の spec の指紋(spec-hash)の集合を渡し、集合に無い spec の検めの記録(答え・回数・前の回の失敗の
+   理由・時間切れの印・待ち)を落とさせる(2026-09-27)。走っている検めの process は止めない(終わった後の答えを次の拍で落とす)。
+   宣言から消えた spec の記録が worker の寿命の間ずっと増え続けないため。"
+  (#^ frozenset keep))
+
 (defclass [(dataclass :frozen True)] ReleaseLeases [EffectBase]
   "終了を確かめた process(世代の名 instance)が持っていた名前付きの lease を返す。process はもう書けないので、期限(TTL)を待たずに
    次の担い手が取れるようにする。届かなければ何もしない(期限で切れる)。"
   (#^ str instance))
 
-(setv Action (| PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry))
+(setv Action (| PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry ForgetProbes))
 
 
 (defclass [(dataclass :frozen True)] WorkerState []

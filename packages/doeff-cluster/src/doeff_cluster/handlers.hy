@@ -19,7 +19,7 @@
 (import .worker_policy [kept-when-cut-off])
 (import .worker_model [JobSpec CodeState CodeView ProcessView WorldView StopStage ProbeState ProbeView
   DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorkerStopRequested PublishStatus JobPhase EnvDisk WarmEnv
-  PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry spec-hash split-code-key probe-args CodeLayout
+  PrepareCode PrepareEnv SweepEnvs ForgetProbes StartJob SignalJob ReapJob RetireJob ReleaseLeases ProbeEntry spec-hash split-code-key probe-args CodeLayout
   ENV-KEY-PREFIX])
 
 (defn #^ tuple env-placement [#^ (| dict None) declared #^ str revision]  ; defk にできない: 宣言の読み(Program の外の I/O の道具)が呼ぶ
@@ -649,6 +649,20 @@
     (.discard self.timed-out key)
     (.append (.setdefault self.waiting #(action.code-path action.spec.runtime-env (if solo key None)) []) action.spec))
 
+  (defn #^ None forget [self #^ frozenset keep]
+    "宣言から消えた spec の検めの記録を落とすため(2026-09-27 — worker_model.ForgetProbes): keep(今の宣言の spec-hash)に無い spec の
+     答え・回数・前の回の失敗の理由・時間切れの印と、待っている束の中のその spec を落とす。走っている束の process は止めない
+     (終わった後の答えは次の拍の観測に出て、その拍の ForgetProbes で落ちる)。"
+    (setv running (sfor run (.values self.runs) spec run.specs (spec-hash spec)))
+    (for [batch (list self.waiting)]
+      (setv kept (lfor spec (get self.waiting batch) :if (in (spec-hash spec) keep) spec))
+      (if kept (setv (get self.waiting batch) kept) (del (get self.waiting batch))))
+    (for [table [self.done self.attempts self.last-failure]]
+      (for [key (list table)]
+        (when (and (not-in key keep) (not-in key running)) (del (get table key)))))
+    (for [key (list self.timed-out)]
+      (when (and (not-in key keep) (not-in key running)) (.discard self.timed-out key))))
+
   (defn #^ None launch [self #^ tuple batch #^ list specs]
     "束 1 本を起こす: 束の spec の対象を重ねずに並べ、shim を group の先頭にして 1 つの process で検める。"
     (setv #(code-path runtime-env _) batch
@@ -824,6 +838,7 @@
     (when (is-not envs None) (.sweep envs pinned))
     (resume None))
   (ProbeEntry [spec code-path] (.start probes (ProbeEntry spec code-path)) (resume None))
+  (ForgetProbes [keep] (.forget probes keep) (resume None))
   (StartJob [spec attempt code-path]
     (.start host (StartJob spec attempt code-path)) (resume None))
   (SignalJob [name pid stage] (.signal host (SignalJob name pid stage)) (resume None))
@@ -881,7 +896,13 @@
           self.last-tasks #()
           ;; この process の世代(heartbeat の boot)。coordinator は drain を頼まれた時の世代に付け、別の世代(Pod を作り直した後の
           ;; worker)の heartbeat で drain を解く(cluster_policy.absorb-boot・2026-09-25)。
-          self.boot (. (uuid.uuid4) hex))
+          self.boot (. (uuid.uuid4) hex)
+          ;; この process の起動時刻(heartbeat の bootAt・epoch ms — 2026-09-27)。世代を決める所で 1 回だけ決める。coordinator は
+          ;; 同じ名の 2 つの世代の新旧を、両方の起動時刻を知る時はこれで決める(cluster_policy.generation-order)。
+          self.boot-at (int (* (time.time) 1000))
+          ;; 切り離した task の id → 置かれた時の返事の行(blob を除く)。状態の報告に写して添え、状態を失った coordinator が
+          ;; 走っている task を引き取れるようにする(cluster_policy.adopt-running-detached・2026-09-27)。
+          self.task-echo {})
     ;; 世代を Pod の中の file へ書く(DOEFF_WORKER_BOOT_FILE)— readinessProbe が「coordinator の見る worker がこの Pod の物か」を
     ;; 比べる(drain_client.ready-of)。同じ node の前の Pod と名が同じなので、名だけでは見分けられない。
     (setv boot-file (os.environ.get "DOEFF_WORKER_BOOT_FILE"))
@@ -902,6 +923,8 @@
     (for [entry (.iterdir self.task-dir)]
       (when (and (in entry.suffix #(".blob" ".result")) (not-in entry.stem ids))
         (.unlink entry :missing-ok True)))
+    (setv self.task-echo (dfor task tasks :if (.get task "detached")
+                               (get task "id") (dfor #(k v) (.items task) :if (!= k "blob") k v)))
     (tuple (gfor task tasks (task-spec task self.task-dir))))
 
   (defn #^ dict env-body [self]
@@ -926,9 +949,12 @@
     (tuple out))
 
   (defn #^ list report [self #^ tuple statuses]
-    "状態の報告。終わった task には結果の file の中身(無ければ None = 結果なし)を添える。"
+    "状態の報告。終わった task には結果の file の中身(無ければ None = 結果なし)を添える。切り離した task には置かれた時の返事の行
+     (blob を除く — 欄 task)を添える。"
     (lfor s statuses
       :setv row (status-row s)
+      :setv echo (if (.startswith s.name "task/") (.get self.task-echo (cut s.name 5 None)) None)
+      :setv row (if (is echo None) row (| row {"task" echo}))
       (if (and (.startswith s.name "task/") (= s.phase JobPhase.FINISHED))
           (do (setv result (/ self.task-dir (+ (cut s.name 5 None) ".result")))
               (| row {"result" (if (.exists result) (.read-text result :encoding "ascii") None)}))
@@ -938,7 +964,8 @@
     (try
       (setv response (.request self.endpoint "POST" "/heartbeat"
         :json (| {"name" self.name "labels" self.labels "capacity" self.capacity "versions" self.versions
-                  "statuses" self.statuses "endpoint" self.endpoint.url "boot" self.boot "format" PROTOCOL-FORMAT
+                  "statuses" self.statuses "endpoint" self.endpoint.url "boot" self.boot "bootAt" self.boot-at
+                  "format" PROTOCOL-FORMAT
                   "tools" self.tools}
                  (.env-body self))))
       (.raise-for-status response)
