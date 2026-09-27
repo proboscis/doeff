@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { symbolAt } from '../../hy/cursor';
+import { NO_EXTERNAL_MODULES } from '../../hy/external';
 import { findPythonDefinitions, type PythonModuleSource } from '../../hy/python';
 import { FsPythonModuleSource } from '../../hy/pythonSource';
 import {
@@ -37,7 +38,7 @@ const NO_PYTHON: PythonModuleSource = {
 
 /** app.hy の中の記号を解決する。 */
 function resolveInApp(name: string, qualifier: string | null, python = NO_PYTHON): Promise<DefinitionResolution> {
-  return resolveDefinition(workspaceStore(), python, { filePath: APP, name, qualifier });
+  return resolveDefinition(workspaceStore(), python, NO_EXTERNAL_MODULES, { filePath: APP, name, qualifier });
 }
 
 suite('Hy のカーソルの記号', () => {
@@ -165,7 +166,7 @@ suite('Hy の定義へ移動', () => {
   });
 
   test('d. 見つからなければ workspace 全体の同名の定義を全部返す(module は定まらない)', async () => {
-    const r = await resolveDefinition(workspaceStore(), NO_PYTHON, {
+    const r = await resolveDefinition(workspaceStore(), NO_PYTHON, NO_EXTERNAL_MODULES, {
       filePath: '/ws/other/free.hy',
       name: 'helper',
       qualifier: null

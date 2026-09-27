@@ -4,6 +4,7 @@
 import * as vscode from 'vscode';
 import type { HyRange } from './contract';
 import { symbolAt } from './cursor';
+import type { ExternalFileView, ExternalModuleSource } from './external';
 import type { HyLog } from './indexService';
 import {
   buildOutline,
@@ -105,6 +106,7 @@ export class HyNavigationProvider
   constructor(
     private readonly index: HyIndexView,
     private readonly python: PythonModuleSource,
+    private readonly external: ExternalModuleSource & ExternalFileView,
     private readonly log: HyLog
   ) {}
 
@@ -117,7 +119,7 @@ export class HyNavigationProvider
     if (symbol === undefined) {
       return undefined;
     }
-    const resolution = await resolveDefinition(this.index, this.python, {
+    const resolution = await resolveDefinition(this.index, this.python, this.external, {
       filePath: document.uri.fsPath,
       name: symbol.name,
       qualifier: symbol.qualifier
@@ -128,7 +130,7 @@ export class HyNavigationProvider
     return { name: symbol.name, resolution };
   }
 
-  /** 定義へ移動 — 解決の段(同じ file → import 先 → Python → workspace 全体)の結果を返す。 */
+  /** 定義へ移動 — 解決の段(同じ file → import 先 → Python → workspace の外 → workspace 全体)の結果を返す。 */
   async provideDefinition(document: vscode.TextDocument, position: vscode.Position): Promise<vscode.Location[]> {
     const resolved = await this.resolveAt(document, position);
     return resolved === undefined ? [] : resolved.resolution.targets.map(targetLocation);
@@ -149,10 +151,10 @@ export class HyNavigationProvider
     );
   }
 
-  /** file の目次 — 索引の definitions を container で入れ子にした物。 */
+  /** file の目次 — 索引の definitions を container で入れ子にした物(workspace の外の file は移動の時に取った索引から)。 */
   provideDocumentSymbols(document: vscode.TextDocument): vscode.DocumentSymbol[] {
-    const entry = this.index.get(document.uri.fsPath);
-    return entry === undefined ? [] : buildOutline(entry.file).map(toDocumentSymbol);
+    const file = this.index.get(document.uri.fsPath)?.file ?? this.external.cachedFile(document.uri.fsPath);
+    return file === undefined ? [] : buildOutline(file).map(toDocumentSymbol);
   }
 
   /** workspace の記号の検索 — 全定義から query で絞る。 */

@@ -1,0 +1,102 @@
+{
+ "version": 1,
+ "root": "/deps/src",
+ "files": [
+  {
+   "path": "/deps/src/doeff_records/memory.hy",
+   "module": "doeff_records.memory",
+   "definitions": [
+    {
+     "name": "MemoryStore",
+     "mangled": "MemoryStore",
+     "kind": "defclass",
+     "range": {
+      "start": {
+       "line": 20,
+       "character": 10
+      },
+      "end": {
+       "line": 20,
+       "character": 21
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 20,
+       "character": 0
+      },
+      "end": {
+       "line": 40,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": "記録の memory の置き場",
+     "params": []
+    },
+    {
+     "name": "put-row",
+     "mangled": "put_row",
+     "kind": "method",
+     "range": {
+      "start": {
+       "line": 22,
+       "character": 8
+      },
+      "end": {
+       "line": 22,
+       "character": 15
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 22,
+       "character": 2
+      },
+      "end": {
+       "line": 25,
+       "character": 10
+      }
+     },
+     "container": "MemoryStore",
+     "docstring": null,
+     "params": [
+      "self",
+      "row"
+     ]
+    },
+    {
+     "name": "make-store",
+     "mangled": "make_store",
+     "kind": "defn",
+     "range": {
+      "start": {
+       "line": 42,
+       "character": 6
+      },
+      "end": {
+       "line": 42,
+       "character": 16
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 42,
+       "character": 0
+      },
+      "end": {
+       "line": 44,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": []
+    }
+   ],
+   "imports": [],
+   "references": [],
+   "errors": []
+  }
+ ]
+}

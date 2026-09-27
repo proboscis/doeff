@@ -4,9 +4,11 @@
 import * as vscode from 'vscode';
 import { ChildProcessHyIndexer, type LocateIndexer } from './indexer';
 import { HY_EXCLUDE_GLOB, HyIndexService } from './indexService';
+import { ExternalModuleCache } from './externalCache';
 import { HyNavigationProvider } from './providers';
 import { FsPythonModuleSource } from './pythonSource';
 import { HyIndexStore } from './store';
+import { FS_CHANGE_STAMPS, UvModuleLocator } from './uvLocator';
 
 /** 子 process 1 回の上限(大きな workspace の root 全体でも止まらない長さ)。 */
 const INDEXER_TIMEOUT_MS = 120_000;
@@ -36,7 +38,9 @@ export function registerHyNavigation(context: vscode.ExtensionContext, deps: HyN
         `Hy の定義へ移動・参照・目次を止めました。doeff-indexer を新しい版にしてください。(${reason})`
     );
   });
-  const provider = new HyNavigationProvider(store, python, deps.output);
+  // workspace の外の module(uv の依存)は workspace の Python 環境に uv で聞き、索引は別の cache に持つ
+  const external = new ExternalModuleCache(new UvModuleLocator(), indexer, FS_CHANGE_STAMPS, () => Date.now());
+  const provider = new HyNavigationProvider(store, python, external, deps.output);
   const selector: vscode.DocumentSelector = [
     { language: 'hy', scheme: 'file' },
     { pattern: '**/*.{hy,hyk,hyp}', scheme: 'file' }

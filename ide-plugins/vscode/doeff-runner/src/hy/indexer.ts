@@ -1,7 +1,7 @@
 // `doeff-indexer hy-index` を呼ぶ口(effect)と、それを子 process で実行する handler。
 // 子 process は同時に 1 つだけ走らせ、失敗は理由の文字列にして返す(例外を外へ漏らさない)。
 
-import * as cp from 'child_process';
+import { runProcess } from './childProcess';
 import { parseHyIndexJson, type HyIndexDocument, type RejectedFile } from './contract';
 
 /** 索引の依頼 — root 全体・指定の file・編集中の内容(stdin)。 */
@@ -37,51 +37,6 @@ export function hyIndexArgs(request: HyIndexRequest): string[] {
   }
 }
 
-/** 子 process 1 回の結果。 */
-type ProcessResult =
-  | { readonly tag: 'exited'; readonly code: number | null; readonly stdout: string; readonly stderr: string }
-  | { readonly tag: 'error'; readonly reason: string };
-
-/** 子 process を 1 回走らせ、stdout・stderr・終了コードを集める(時間切れは殺して理由にする)。 */
-function runProcess(
-  binary: string,
-  args: readonly string[],
-  cwd: string,
-  stdin: string | undefined,
-  timeoutMs: number
-): Promise<ProcessResult> {
-  return new Promise((resolve) => {
-    let settled = false;
-    // 結果を 1 度だけ返す(error と close の両方が来ても 2 度目は捨てる)
-    const finish = (result: ProcessResult): void => {
-      if (!settled) {
-        settled = true;
-        clearTimeout(timer);
-        resolve(result);
-      }
-    };
-    const child = cp.spawn(binary, [...args], { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    const timer = setTimeout(() => {
-      child.kill();
-      finish({ tag: 'error', reason: `${timeoutMs}ms を過ぎたので止めた` });
-    }, timeoutMs);
-    child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
-    child.on('error', (error) => finish({ tag: 'error', reason: `起動できない: ${error.message}` }));
-    child.on('close', (code) =>
-      finish({
-        tag: 'exited',
-        code,
-        stdout: Buffer.concat(stdout).toString('utf8'),
-        stderr: Buffer.concat(stderr).toString('utf8')
-      })
-    );
-    child.stdin.on('error', () => undefined); // 子が stdin を読まずに終わった時の EPIPE は close 側で扱う
-    child.stdin.end(stdin ?? '');
-  });
-}
 
 /** binary の探し方(拡張の既存の doeff-indexer の探索)を受け取る口。 */
 export type LocateIndexer = () => Promise<string>;
