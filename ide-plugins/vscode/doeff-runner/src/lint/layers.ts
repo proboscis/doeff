@@ -145,9 +145,13 @@ export function tagHoverMarkdown(tag: TagMention, module: LintModule | undefined
   return lines.join('\n');
 }
 
-/** 違反の説明の文(問題の一覧と hover 用)— subject・reason・law の :statement・直し方を、linter が出した分だけ。 */
+/** 違反の説明の文(問題の一覧と hover 用)— Jev の判定の印と確率、subject・reason・law の :statement・直し方を、linter が出した分だけ。 */
 export function violationExplanationLines(violation: LintViolation): string[] {
   const lines: string[] = [];
+  if (violation.source === 'jev') {
+    const p = violation.probability === null ? '' : ` p=${violation.probability.toFixed(2)}`;
+    lines.push(`Jev の判定(意味の規則・止めはしない)${p}`);
+  }
   if (violation.explanation !== null) {
     lines.push(`これは何か: ${violation.explanation.subject}`);
     lines.push(`なぜ違反か: ${violation.explanation.reason}`);

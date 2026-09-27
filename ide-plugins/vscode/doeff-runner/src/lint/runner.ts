@@ -9,7 +9,9 @@ import { parseLintJson, type LintReport } from './contract';
 /** linter への依頼 — repo 全体か、保存前の内容(stdin)の 1 file。 */
 export type LintRequest =
   | { readonly tag: 'root'; readonly root: string }
-  | { readonly tag: 'stdin'; readonly root: string; readonly path: string; readonly text: string };
+  | { readonly tag: 'stdin'; readonly root: string; readonly path: string; readonly text: string }
+  /** 保存した file の未判定の定義を Jev に問う(doeff-linter の --semantic・disk の内容を読む) */
+  | { readonly tag: 'semantic'; readonly root: string; readonly path: string };
 
 /** linter の結果 — 読めた・止めてある(設定で無効)・失敗した(理由)。 */
 export type LintOutcome =
@@ -55,13 +57,15 @@ export function splitCommand(command: string): string[] {
   return parts;
 }
 
-/** 依頼を linter の引数に写す(契約の「呼び出し」節のとおり — 全体は引数なし、1 file は --stdin --path)。 */
+/** 依頼を linter の引数に写す(契約の「呼び出し」節のとおり — 全体は引数なし、1 file は --stdin --path、Jev は --semantic <file>)。 */
 export function lintArgs(base: readonly string[], request: LintRequest): string[] {
   switch (request.tag) {
     case 'root':
       return [...base];
     case 'stdin':
       return [...base, '--stdin', '--path', request.path];
+    case 'semantic':
+      return [...base, '--semantic', request.path];
     default: {
       const unreachable: never = request;
       throw new Error(`網羅されていない依頼: ${JSON.stringify(unreachable)}`);

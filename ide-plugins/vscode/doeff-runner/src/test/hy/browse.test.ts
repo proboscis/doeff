@@ -72,7 +72,9 @@ function context(): BrowseContext {
     hint: null,
     key: null,
     registered: false,
-    explanation: null
+    explanation: null,
+    source: 'linter',
+    probability: null
   };
   return {
     lintModule: (p) => (p === IO ? module : undefined),

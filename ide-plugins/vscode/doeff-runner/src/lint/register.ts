@@ -6,6 +6,7 @@ import { LintDecorations } from './decorations';
 import { LayerFileDecorations, LayerHover, LayerStatusBar, showLayerTable } from './layerViews';
 import { LintMapTree, LintViolationsTree } from './panel';
 import { ChildProcessLinter } from './runner';
+import { semanticStatus } from './semantic';
 import { LintService } from './service';
 import { LintStore } from './store';
 
@@ -13,6 +14,10 @@ import { LintStore } from './store';
 const LINT_COMMAND_SETTING = 'doeff-runner.hy.lintCommand';
 /** linter 1 回の上限。 */
 const LINT_TIMEOUT_MS = 120_000;
+/** 保存した時の Jev の判定 1 回の上限。 */
+const SEMANTIC_TIMEOUT_MS = 30_000;
+/** 保存した時に Jev に問うかの設定。 */
+const SEMANTIC_ON_SAVE_SETTING = 'doeff-runner.hy.semanticOnSave';
 
 /** workspace の root の設定から linter の命令を読む(空なら無効)。 */
 function lintCommandFor(root: string): string {
@@ -25,7 +30,33 @@ export function registerLint(context: vscode.ExtensionContext, output: vscode.Ou
   const store = new LintStore();
   const linter = new ChildProcessLinter(lintCommandFor, LINT_TIMEOUT_MS);
   const diagnostics = vscode.languages.createDiagnosticCollection('doeff-linter');
-  const service = new LintService(store, linter, output, diagnostics);
+  // Jev の判定は別の子 process の口(同時に 1 本・決定的な実行を待たせない)
+  const semanticLinter = new ChildProcessLinter(lintCommandFor, SEMANTIC_TIMEOUT_MS);
+  const jevStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 39);
+  let notifiedOnce = false;
+  const service = new LintService(store, linter, output, diagnostics, {
+    linter: semanticLinter,
+    enabled: () => vscode.workspace.getConfiguration().get<boolean>(SEMANTIC_ON_SAVE_SETTING) !== false,
+    onState: (state) => {
+      const status = semanticStatus(state);
+      if (status === undefined) {
+        jevStatus.hide();
+        return;
+      }
+      jevStatus.text = status.text;
+      jevStatus.tooltip = status.tooltip;
+      jevStatus.backgroundColor = status.warning ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
+      jevStatus.show();
+    },
+    notify: (message) => {
+      // キーが無いことは session で一度だけ知らせる(キーの値は扱わない)
+      if (!notifiedOnce) {
+        notifiedOnce = true;
+        void vscode.window.showWarningMessage(message);
+      }
+    }
+  });
+  context.subscriptions.push(jevStatus);
   const violations = new LintViolationsTree(store);
   const map = new LintMapTree(store);
   // 行末の文・行の左端の印・右端のスクロールバーの印(細い info の波線は色付けの上で見えないため)
