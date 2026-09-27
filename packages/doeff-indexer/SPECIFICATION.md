@@ -6,6 +6,7 @@
 2. [Type Definitions](#type-definitions)
 3. [Detection Logic](#detection-logic)
 4. [CLI Commands](#cli-commands)
+   - [Hy Index (`hy-index`)](#hy-index-hy-index)
 5. [Type Filtering Rules](#type-filtering-rules)
 6. [@do Decorator Handling](#do-decorator-handling)
 7. [Integration with IDE Plugins](#integration-with-ide-plugins)
@@ -381,6 +382,66 @@ All `find-*` commands:
 - Rely exclusively on marker-based filtering
 - Return JSON arrays of matching entries
 - Exit with status 0 on success, non-zero on error
+
+## Hy Index (`hy-index`)
+
+Hy の file(`*.hy` / `*.hyk` / `*.hyp`)の定義・import・参照を JSON で出す。エディタの定義への移動・参照の検索・目次のためのもの。Python の索引(上の各コマンド)とは独立していて、Python の索引は作らない。実装は `src/hy_index/`。
+
+### 使い方
+
+```
+doeff-indexer hy-index --root <dir>                        # dir 以下の Hy の file を全部
+doeff-indexer hy-index --root <dir> --file <path>…         # 指定した file だけ(root は module 名の基準)
+doeff-indexer hy-index --root <dir> --stdin --path <path>  # 保存前の内容を stdin から読み、path の file として 1 件出す
+```
+
+- 探索では `.venv`・`node_modules`・`target`・`.git`・`__pycache__` の directory に降りない。
+- `--file` と `--path` の相対 path は `--root` を基準に解く。`--output` と `--pretty` は他のコマンドと同じ。
+- 読めない file・閉じていない括弧でも止まらない。読めた分を出し、その file の `errors` に理由(`行:列: …`、1 始まり)を積む。終了コードは 0。引数の誤り(`--stdin` に `--path` が無い・`--root` が directory でない等)だけ 2。
+
+### 出力の形(契約の版 1)
+
+```jsonc
+{
+  "version": 1,
+  "root": "/abs/root",
+  "files": [{
+    "path": "/abs/root/pkg/mod.hy",
+    "module": "pkg.mod",            // root からの相対 path。__init__.hy は親の package 名
+    "definitions": [{
+      "name": "classifier-peers",   // 書かれたとおりの綴り
+      "mangled": "classifier_peers",// - を _ に(先頭の - は残す)
+      "kind": "defn",
+      "range": {…},                 // 名前の位置
+      "full_range": {…},            // form 全体
+      "container": null,            // 入れ物の定義の名前(method・field・enum-member・effect-clause・入れ子の law 等)
+      "docstring": "…",             // 無ければ null
+      "params": ["jev-script", "store"]
+    }],
+    "imports": [{"module": "doeff_records.memory", "name": "MemoryStore", "alias": null, "range": {…}, "is_require": false}],
+    "references": [{"name": "c", "mangled": "c", "qualifier": "a.b", "range": {…}}],
+    "errors": []
+  }]
+}
+```
+
+- 位置は 0 始まりの行と UTF-16 の code unit の列(VS Code の Position と同じ。日本語は 1 文字 1、絵文字は 2)。
+- kind: `defn` `defn/a` `defmacro` `defk` `deff` `defp` `defpp` `fnk-binding`(今は出さない)`defclass` `defrecord` `defenum` `enum-member` `field` `method` `defhandler` `effect-clause` `deftest` `defadr` `defsemgrep` `law` `defpipeline` `defworkflow` `defphase` `defmcp-tool` `deftype` `defmain` `variable`。
+- `definitions` は file の top level の定義と、その直下の入れ子だけ。`(do …)`・`(eval-and-compile …)` の中は top level とみなす。関数の中の局所の束縛は入れない。
+  - defclass の body: `(defn …)` は `method`、`#^ T x`・`(#^ T x 既定値)`・`(setv x …)` は `field`。
+  - defrecord の field、defenum の member(`A` と `(A "値")` の両方)。
+  - defhandler: `(Effect [fields] …)` は `effect-clause`(params = fields)、`(session val|var x …)`・旧い `(lazy-val …)` / `(lazy-var …)` は `variable`。どちらも container = handler 名。
+  - defadr の中の `law`・`defsemgrep`・`deftest`、defworkflow の中の `defphase` は container = 外側の名前。
+  - `variable` = top level の `setv` / `setx`(`[a b]` の分解も)・`val` / `var`・`(lazy val …)`・`(session val|var …)`・`lazy-val` / `lazy-var`。
+- docstring: 関数の形は引数の後(defk / deff の `{:pre … :post …}` の後でもよい)の文字列で、後に form が続く時だけ。class・record・enum は body の先頭の文字列。defhandler は名前の後か引数の後。`law` は `:statement`、`defadr` は `:title`、`defmcp-tool` は説明の文字列。字下げは Python の `inspect.cleandoc` と同じく揃える。
+- `imports`: `(import m)`・`(import m :as a)`・`(import m [x y :as z])`・`(import m *)`・`(require m [names])`・`(require m :macros [..] :readers [..])`。range は alias → name → module の順で在るものを指す。関数の中の import も入れる。
+- `references`: すべての記号の出現を `.` で区切って 1 件ずつ入れる(`a.b.c` は a・b・c、c の qualifier は `"a.b"`)。入れないもの: 先頭に置かれた予約語(Hy の special form と doeff-hy の macro。`val` 等の普通の語の macro は file が require した時だけ予約語)・演算子・定数(`True` / `False` / `None` 等)・`_`・keyword(`:key`)・文字列の中身・註・`#_` で読み捨てた form・quote の中(quasiquote の中の `~x` は入れる)。f 文字列の `{…}` の中の記号は入れる。
+
+### 既知の制限
+
+- mangle は契約の単純な形(`-` → `_`)だけで、Hy の `?`・`!` などの記号の変換(`hyx_…`)はしない。
+- `(when …)` など条件の中の定義、`defdomain` など上の一覧に無い定義の形は `definitions` に入れない(参照には入る)。
+- f 文字列の `{x:>10}` の書式は `:` の前までを名前とみなす。`{x !r}` のように空白で区切る Hy の書き方は正しく読める。
 
 ## Type Filtering Rules
 

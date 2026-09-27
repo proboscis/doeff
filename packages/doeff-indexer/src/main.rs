@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
+use doeff_indexer::hy_index;
 use doeff_indexer::{
     build_index, entry_matches_with_markers, find_all_envs_for_program, find_interceptors,
     find_interpreters, find_kleisli, find_kleisli_with_type, find_transforms,
@@ -110,6 +111,21 @@ enum Commands {
         /// Qualified name of the program (e.g., "src.features.auth.login_program")
         #[arg(long)]
         program: String,
+    },
+
+    /// Index Hy files (*.hy / *.hyk / *.hyp): definitions, imports and references (hy-index contract v1)
+    HyIndex {
+        /// Index only these files (relative paths are resolved against --root, which also names modules)
+        #[arg(long, num_args = 1.., conflicts_with = "stdin")]
+        file: Vec<PathBuf>,
+
+        /// Read the unsaved content of one file from stdin (requires --path)
+        #[arg(long, default_value_t = false, requires = "path")]
+        stdin: bool,
+
+        /// Path of the file whose content is given on stdin
+        #[arg(long, requires = "stdin")]
+        path: Option<PathBuf>,
     },
 }
 
@@ -235,6 +251,10 @@ fn main() -> Result<()> {
         .ok();
 
     let cli = Cli::parse();
+    // hy-index は Python の索引を作らない(Python の索引とは独立の経路)。
+    if let Some(Commands::HyIndex { file, stdin, path }) = &cli.command {
+        return run_hy_index(&cli.root, file, *stdin, path.as_deref(), cli.output.as_deref(), cli.pretty);
+    }
     let mut index = build_index(&cli.root)?;
 
     // Process based on command
@@ -373,6 +393,9 @@ fn main() -> Result<()> {
 
             return Ok(());
         }
+
+        // 上の hy-index の分岐で処理して返っている。
+        Some(Commands::HyIndex { .. }) => {}
     }
 
     // Output the result
@@ -393,5 +416,56 @@ fn main() -> Result<()> {
         println!("{}", json);
     }
 
+    Ok(())
+}
+
+/// `hy-index` を走らせ、契約の JSON を 1 つ出す。root が directory でない時だけ終了コード 2。
+fn run_hy_index(
+    root: &Path,
+    files: &[PathBuf],
+    stdin: bool,
+    stdin_path: Option<&Path>,
+    output: Option<&Path>,
+    pretty: bool,
+) -> Result<()> {
+    let root = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
+    if !root.is_dir() {
+        eprintln!("hy-index: --root が directory ではない: {}", root.display());
+        std::process::exit(2);
+    }
+    let resolve = |path: &Path| if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
+    let index = match (stdin, stdin_path) {
+        (true, Some(path)) => {
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut std::io::stdin(), &mut bytes)?;
+            let source = String::from_utf8_lossy(&bytes);
+            let mut index = hy_index::index_stdin_source(&root, &resolve(path), &source);
+            if std::str::from_utf8(&bytes).is_err() {
+                for file in &mut index.files {
+                    file.errors.insert(0, "UTF-8 として読めない byte を U+FFFD に置き換えて読んだ".to_string());
+                }
+            }
+            index
+        }
+        (true, None) => {
+            eprintln!("hy-index: --stdin には --path が要る");
+            std::process::exit(2);
+        }
+        (false, _) if !files.is_empty() => {
+            let paths: Vec<PathBuf> = files.iter().map(|path| resolve(path)).collect();
+            hy_index::index_paths(&root, &paths)
+        }
+        (false, _) => hy_index::index_root(&root),
+    };
+    let json = if pretty { serde_json::to_string_pretty(&index)? } else { serde_json::to_string(&index)? };
+    match output {
+        Some(output_path) => {
+            if let Some(parent) = output_path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(output_path, json)?;
+        }
+        None => println!("{}", json),
+    }
     Ok(())
 }
