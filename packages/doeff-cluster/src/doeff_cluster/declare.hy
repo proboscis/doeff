@@ -10,6 +10,7 @@
 ;;;   (読んでから書くまでに誰かが書いていれば 409 で止まる — 他の作業係の変更を消さない)。所有者と replicas はいまの値を保つ
 ;;;   (replicas は Rollout が持つ。--replicas を付けた時だけ変える)。一覧に無い Service には触らない。
 ;;; 旧い引数(--config・--pin)と、System の値を直に指す旧い形は受け付けない。
+(require doeff-hy.macros [deff])
 (import argparse)
 (import importlib)
 (import json)
@@ -25,6 +26,14 @@
      spec
      {"owner" (.get current "owner")
       "replicas" (if (is replicas None) (.get current "replicas" 1) replicas)}))
+
+
+(deff create-body [#^ dict row #^ (| int None) replicas]  ; defk にできない: CLI の入口(Program の外)と sim-cluster の宣言が同じ形を作る純粋な判断
+  {:pre [(: row dict) (: replicas (| int None))] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "まだ無い Service を作る POST /resources/Service の本文を作るため(declare の CLI と手元の sim-cluster で同じ形)。replicas を付けなければ 1。"
+  {"name" (get row "name")
+   "spec" (| (dfor #(k v) (.items row) :if (!= k "name") k v)
+             {"replicas" (if (is replicas None) 1 replicas)})})
 
 
 (defn apply-declaration [#^ str url #^ Declaration declaration #^ str actor [replicas None]]  ; defk にできない: CLI の入口の HTTP の I/O
@@ -44,10 +53,7 @@
     (setv current (.get client path))
     (cond
       (= current.status-code 404)
-        (setv response (.post client "/resources/Service"
-                              :json {"name" name
-                                     "spec" (| (dfor #(k v) (.items row) :if (!= k "name") k v)
-                                               {"replicas" (if (is replicas None) 1 replicas)})}))
+        (setv response (.post client "/resources/Service" :json (create-body row replicas)))
       True
         (do (.raise-for-status current)
             (setv body (.json current))
@@ -62,7 +68,7 @@
   "宣言の CLI。旧い引数は理由つきで断る。"
   (setv parser (argparse.ArgumentParser :description "系(defsystem の関数)→ coordinator の宣言"))
   (.add-argument parser "system" :help "module:attr(defsystem の関数の名)")
-  (.add-argument parser "--foundation" :required True :help "module:attr(土台の関数 — handler の組を返す module の最上位の関数)")
+  (.add-argument parser "--foundation" :required True :help "module:attr(土台の関数 — 本体の Program を受けて自分の handler の下で走らせる module の最上位の関数)")
   (.add-argument parser "--revision" :required True)
   (.add-argument parser "--only" :default "" :help "この job だけ(`,` で並べる)")
   (.add-argument parser "--apply" "--put" :dest "apply")

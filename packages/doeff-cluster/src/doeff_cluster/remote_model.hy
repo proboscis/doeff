@@ -6,9 +6,10 @@
 ;;; (ADR-DOE-CLUSTER-001 R1・R2 — 実行先は handler を足さない)。handler の値も I/O の資源も送らない(送れば UnsendableProgram)。
 ;;; 送るのは cloudpickle した Program の値・要る能力・送り手の commit と版の識別だけ。
 ;;;
-;;; 2 つの handler(remote.hy):
-;;;   remote-inline  … 同じ VM で Spawn して待つ(テスト用。外側の handler をそのまま継承する)
-;;;   remote-cluster … coordinator へ出し、worker がその commit のコードを準備した子 process で走らせる
+;;; 答える物:
+;;;   remote-cluster(remote.hy)… coordinator へ出し、worker がその commit のコードを準備した子 process で走らせる
+;;;   sim-cluster の偽の宿(local.hy)… 手元で同じ要求を本物の coordinator の模擬へ送り、task を別の process(別のスコープ)で走らせる
+;;;   (呼び手の handler を継がない — 以前の remote-inline は継いでいたので消した)
 ;;;
 ;;; 意味は doeff の Spawn / Wait / Cancel と揃える: RemoteJob は「Spawn して Wait する」を 1 つにした形で、
 ;;; 並行に走らせたい・止めたい時は呼び手が Spawn / Cancel で包む(効果を 2 つに割らない)。
@@ -30,14 +31,14 @@
 (import traceback)
 (import os)
 (import cloudpickle)
-(import doeff [EffectBase])
+(import doeff [EffectBase Program])
 (import doeff.do)
 
 
 (defclass [(dataclass :frozen True)] RemoteJob [EffectBase]
   "program = 未実行の Program(値 — handler は Program の中の with-handlers で並べる・ADR-DOE-CLUSTER-001 R1・R2)・needs = 要る能力の名の frozenset(置く worker は needs ⊆ provides)。
    結果 = Program の戻り値。Program が投げた例外はそのまま呼び手へ届く。"
-  (#^ object program)
+  (#^ (| Program EffectBase) program)
   (setv #^ frozenset needs (frozenset))
   (setv #^ str name "")
   (defn __post-init__ [self]
@@ -87,7 +88,7 @@
   (#^ str kind)
   (#^ str message)
   (#^ str traceback)
-  (setv #^ object error None))
+  (setv #^ (| BaseException None) error None))
 
 
 (setv TaskOutcome (| TaskSucceeded TaskFailed))

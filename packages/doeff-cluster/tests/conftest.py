@@ -9,8 +9,16 @@
 
 from __future__ import annotations
 
+import importlib.util
+import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
+
+# doeff-effect-analyzer の Python の front end(foundation_check が使う開発の道具 — doeff-cluster の実行時の依存ではない)。
+# maturin の混ぜた project で、front end は Rust の拡張なしで読めるので、入っていなければ python/ を import の路に足す
+# (packages/doeff-effect-analyzer/tests/python/conftest.py と同じ扱い)。
+if importlib.util.find_spec("doeff_effect_analyzer") is None:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "doeff-effect-analyzer" / "python"))
 
 import pytest
 from doeff_adr.pytest_plugin import DoeffAdrHyFile
