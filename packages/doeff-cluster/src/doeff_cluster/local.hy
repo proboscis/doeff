@@ -164,7 +164,9 @@
   "sim の宿が起こした process 1 つ(ProcessesOf の答えの要素)。job = 起こした時の job の名(task は task/<id>)・instance = 世代の名・
    attempt = worker の試行の番号・pid = sim の中の番号・spec-hash = 起こした spec の指紋・ended-ms / exit-code = 終わった時だけ
    (exit-code: 0 = 値で終わった / task は結果を書いて終わった・1 = 例外か Crash・3 = Program を解けない・-15 = 止めの合図・
-   -9 = worker が node ごと死んだ)・detail = 終わった理由の 1 行(例外の型と文 — 本番の子の log の最後の行に当たる。値で終わった時は空)。"
+   -9 = worker が node ごと死んだ)・detail = 終わった理由の 1 行(例外の型と文 — 本番の子の log の最後の行に当たる。値で終わった時は空)・
+   value = service の Program が値で終わった時のその値(本番では捨てる — 検が有限の周回の答えを読むための sim だけの観測。task と値で終わらなかった
+   process は None)。"
   (#^ str job)
   (#^ str worker)
   (#^ str instance)
@@ -174,7 +176,8 @@
   (#^ int started-ms)
   (setv #^ (| int None) ended-ms None)
   (setv #^ (| int None) exit-code None)
-  (setv #^ str detail ""))
+  (setv #^ str detail "")
+  (setv #^ object value None))
 
 
 (defrecord SimReport
@@ -373,10 +376,11 @@
 
 (defrecord SimExit
   "sim の子 process の終わり方(本番の job_entry の入口の終わり方と同じ): code = exit-code・result = task の詰めた結果(service は None)・
-   detail = 終わった理由の 1 行(例外の型と文・値で終わった時は空)。"
+   detail = 終わった理由の 1 行(例外の型と文・値で終わった時は空)・value = service が値で終わった時のその値(SimProcess の value へ写す)。"
   (#^ int code)
   (#^ (| str None) result)
-  (setv #^ str detail ""))
+  (setv #^ str detail "")
+  (setv #^ object value None))
 
 
 (defrecord HostTruth
@@ -524,26 +528,9 @@
 (defk declaration-of [system revision environ]
   {:pre [(: system System) (: revision str) (: environ dict)] :post [(: % Declaration)] :tags {:context "doeff-cluster" :role "judgment"}}
   "系 → coordinator へ渡す宣言(本番の declare と同じ system-declaration)に、job ごとの environ の上書きを重ねるため(計画 2.7 の H・
-   改訂 1 の M — whole.hy の overrides の置き換え先)。系に無い job・宣言の :environ に無い名・文字列でない値は断る(黙って足さない)。"
-  (val names (sfor j system.jobs j.name))
-  (for [#(job given) (.items environ)]
-    (when (not-in job names)
-      (raise (ValueError (.format "environ の上書きの job {!r} は系 {} に無い(在るのは {})" job system.name (sorted names)))))
-    (when (not (isinstance given dict))
-      (raise (TypeError (.format "environ の上書き {!r} は名 → 文字列の dict: {!r}" job given)))))
-  (val declared (system-declaration system revision))
-  (var rows [])
-  (for [row declared.rows]
-    (val overlay (.get environ (get row "name") {}))
-    (val unknown (sorted (gfor k overlay :if (not-in k (get row "environ")) k)))
-    (when unknown
-      (raise (ValueError (.format "job {} の environ の上書き {} は宣言の :environ に無い名 — 宣言に書いた名だけを上書きする"
-                                  (get row "name") unknown))))
-    (val wrong (sorted (gfor #(k v) (.items overlay) :if (not (isinstance v str)) k)))
-    (when wrong
-      (raise (TypeError (.format "job {} の environ の上書き {} の値は文字列(本番の環境変数と同じ型)" (get row "name") wrong))))
-    (:= rows (+ rows [(| row {"environ" (| (get row "environ") overlay)})])))
-  (Declaration :rows rows :programs declared.programs))
+   改訂 1 の M — whole.hy の overrides の置き換え先)。上書きの規則(系に無い job・宣言の :environ に無い名・文字列でない値は断る)は
+   本番の declare と同じ 1 つ(service_model.environ-overlay-refusal)。"
+  (system-declaration system revision :environ environ))
 
 
 (defk sim-plan [system workers environ revision start-ms timing policy outside]
@@ -955,7 +942,7 @@
    値 = 0・例外 = 1、task は結果を書いて 0。止めの合図 = -15・Crash = 1・worker の死 = -9)。"
   (try
     (<- value (with-handlers [(fence child.pid child.passable) (coordinator-answers child.link) (host-answers child)] program))
-    (SimExit :code 0 :result (if once (encode-outcome (TaskSucceeded value)) None))
+    (SimExit :code 0 :result (if once (encode-outcome (TaskSucceeded value)) None) :value (if once None value))
     (except [TaskCancelledError]
       (<- killed (| SimExit None) (KillOf child.pid))
       (if (is killed None) (SimExit :code -15 :result None :detail "止めの合図") killed))
@@ -1440,7 +1427,7 @@
                                         :results (if (and task-id (is-not ended.result None))
                                                      (| truth.results {task-id ended.result})
                                                      truth.results))}))
-    (:= log (tuple (gfor r log (if (= r.pid pid) (replace r :ended-ms now :exit-code ended.code :detail ended.detail) r))))
+    (:= log (tuple (gfor r log (if (= r.pid pid) (replace r :ended-ms now :exit-code ended.code :detail ended.detail :value ended.value) r))))
     (:= handles (dfor #(k v) (.items handles) :if (!= k pid) k v))
     (:= children (dfor #(k v) (.items children) :if (!= k pid) k v))
     (:= finished (| finished (frozenset [pid])))
