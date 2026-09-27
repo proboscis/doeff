@@ -96,6 +96,8 @@ pub struct EditorReport {
     pub root: String,
     /// 層の順(外の世界から遠い順)と説明。
     pub layers: Vec<EditorLayer>,
+    /// architecture.hy の宣言(service の一覧 — name・dir・description・depends_on・layers と、層の宣言)。無ければ null。
+    pub architecture: Option<crate::project::architecture::Architecture>,
     pub violations: Vec<EditorViolation>,
     pub modules: Vec<EditorModule>,
     pub rules: Vec<EditorRule>,
@@ -211,6 +213,7 @@ pub fn build(input: &EditorInput) -> EditorReport {
         version: EDITOR_CONTRACT_VERSION,
         root: input.root.to_string_lossy().into_owned(),
         layers: layer_list(input.settings),
+        architecture: input.settings.architecture.clone(),
         violations,
         modules,
         rules: rule_list(input),

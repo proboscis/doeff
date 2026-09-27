@@ -175,3 +175,56 @@ agora-controllers の `scripts/module_tags.hy` の `breaches-of` と、DOEFF101�
 - DOEFF106・107 は Hy だけ(hy-index の事実が Hy だけのため)。module の最上位の式(定義の外)の副作用は数えない。
 - DOEFF108 は名前だけで判じ、handler が業務の effect に答えるかは見ない。
 - import の先は母集団の module にだけ解く。repo の中でも層の dir の外の module は数えない。
+
+## 9. architecture.hy — service と層の唯一の宣言
+
+repo の一番上の `architecture.hy`(または設定の `architecture = "<設定 file からの相対の path>"`)が、service と層を宣言する唯一の場所。
+doeff-linter はこれを **実行せずに** doeff-indexer の Hy の読み取り器で読む。在れば層・role は ここから写し、TOML の
+`[tool.doeff-linter.layers]`・`roles`・`services` は置けない(二重の宣言は設定の誤り)。TOML には規則の入り切り・重さ・登録簿の置き場所・
+law の対応だけを残す。無ければ TOML の設定で今どおり動く。doeff-hy の実行時の macro(defarchitecture・defservice・layer)は未実装。
+
+```hy
+(defarchitecture agora-controllers
+  :root "controllers"                         ; service の dir を置く根
+  :layers [(layer core :summary "…" :knows "…" :does-not-know "…" :question "…"
+                       :roles [type judgment program] :imports [core intent] :forbid-modules ["httpx"])
+           (layer intent … :types-only True)
+           (layer protocol …) (layer foundation …) (layer entry …)]   ; 外の世界から遠い順
+  :shared "shared"                            ; root/shared/<層>/ — どの service からも読める
+  :foundation foundation                      ; root/foundation/ — service の外の層(同じ名の layer が要る)
+  :open-layers [intent]                       ; 別の service から読んでよい層(既定 intent)
+  :roles {:judgment "業務の判断をする純粋な関数" …}   ; role の説明
+  :exclude ["tests" "__pycache__" "conftest.py"]    ; 既定のまま
+  :extensions ["hy" "py"]                           ; 既定 hy・hyk・hyp・py
+  :legacy ["controllers/agora_sim" (legacy "controllers/core" :layer core)])  ; 移行の途中の置き場(縮める向きだけ)
+(defservice land-notice "着地の報せ" {:depends-on [messaging] :layers [core intent protocol entry]})
+```
+
+- 層の置き場は `root/*/<層>`(service と shared)と、foundation の層は `root/<foundation>`、`(legacy "dir" :layer 層)` の dir。
+- service の dir は名の `-` を `_` にした物(`land-notice` → `controllers/land_notice/`)。`{:dir "…"}` で変えられる。
+- 読み違い(知らない鍵・重複した service や層・存在しない層や service の名・:foundation の層が無い)は `architecture.hy:行:列: 理由` の形で
+  設定の誤り(終了コード 2)。
+- editor-json の最上位に `architecture`(name・root・layers(name・summary・knows・does_not_know・question・roles)・shared・foundation・
+  open_layers・legacy・services(name・dir・description・depends_on・layers))。無ければ null。
+
+| 規則 | 判じ方 | 鍵の細目 | 位置 |
+|---|---|---|---|
+| DOEFF114 | root の下の module が、宣言した service の宣言した層・shared の層・foundation・legacy のどれにも入らない(root の直下、service の dir の直下)。`__init__` は外 | なし | file の頭 |
+| DOEFF115 | root の直下の dir が宣言した service・shared・foundation・legacy でない / service の中の dir が宣言した層でない。dir ごとに 1 件(鍵の path は dir) | なし | dir の最初の file の頭 |
+| DOEFF116 | service A の module が service B の module を import した時、B が A の :depends-on に無い、または読む先が B の :open-layers の層でない。shared と foundation は service ではないので見ない。宣言の DOEFF109 はこれに置き換わる(architecture.hy の在る repo では DOEFF109 の設定を置けない) | import の先 | import の記号 |
+| DOEFF117 | 宣言した依存(A の :depends-on の B)を、A のどの module も読んでいない。info。全体の実行だけ | `A>B` | architecture.hy の defservice の名 |
+| DOEFF113 | 宣言した service の中の :context の食い違いは warning に上がる | | |
+
+### 既存の道具との対応
+
+| 考え方 | doeff-linter(architecture.hy) | Tach | import-linter | Nx | Deptrac / ArchUnit |
+|---|---|---|---|---|---|
+| 部品の宣言 | `defservice`(dir = service) | `tach.toml` の `modules` | 契約の `containers` | project | layer / slice の定義 |
+| 部品の間の依存 | `:depends-on`(DOEFF116) | `depends_on` | `independence`・`forbidden` の契約 | タグの `depConstraints` | ruleset / `slices().should().notDependOnEachOther()` |
+| 公開する口 | `:open-layers`(intent の層) | `interfaces` | — | 公開の entry point | — |
+| 部品の中の層 | `:layers` と layer の `:imports`(DOEFF101) | `layers` | `layers` の契約 | タグの `onlyDependOnLibsWithTags` | layer の ruleset / `layeredArchitecture()` |
+| 宣言に無い物 | DOEFF114・115 | —(module に入らない file は対象外) | — | — | Deptrac の未分類(uncovered)の報告 |
+| 使っていない依存 | DOEFF117 | `tach check --exact`(使っていない depends_on) | — | — | — |
+| 既知の破れの固定 | 登録簿(`registry`)と `registered_severity` | 除外の設定 | `ignore_imports` | — | baseline / `FreezingArchRule` |
+
+intent の層は Tach の interfaces に当たる — 別の service が読んでよいのは、その service が外へ出す要求と答えの型(intent)だけ。

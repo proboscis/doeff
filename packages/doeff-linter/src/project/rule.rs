@@ -27,13 +27,21 @@ pub enum ProjectRule {
     DeffNeedsReason,
     /// DOEFF112: defk・deff・defp・defhandler・defeffect は :tags で必須の鍵を名乗る。
     DefinitionTagsRequired,
-    /// DOEFF113: タグの :context と dir の service が食い違う(info)。
+    /// DOEFF113: タグの :context と dir の service が食い違う(info。service を宣言していれば warning)。
     ContextMatchesService,
+    /// DOEFF114: 宣言されていない置き場所の module(architecture.hy の service の層・shared・foundation・legacy のどれでもない)。
+    UndeclaredPlace,
+    /// DOEFF115: 宣言に無い service の dir、service の中の宣言に無い層の dir。
+    UndeclaredDirectory,
+    /// DOEFF116: service の依存 — 宣言の :depends-on に無い service を読む、または依存先の intent 以外を読む。
+    ServiceDependency,
+    /// DOEFF117: 宣言したのに使っていない依存(info)。
+    UnusedDependency,
 }
 
 impl ProjectRule {
     /// 全部の層の規則(出力の一覧と `ALL` の展開のため)。
-    pub const ALL: [ProjectRule; 13] = [
+    pub const ALL: [ProjectRule; 17] = [
         ProjectRule::LayerImportDirection,
         ProjectRule::LayerForbiddenModule,
         ProjectRule::LayerTypesOnly,
@@ -47,6 +55,10 @@ impl ProjectRule {
         ProjectRule::DeffNeedsReason,
         ProjectRule::DefinitionTagsRequired,
         ProjectRule::ContextMatchesService,
+        ProjectRule::UndeclaredPlace,
+        ProjectRule::UndeclaredDirectory,
+        ProjectRule::ServiceDependency,
+        ProjectRule::UnusedDependency,
     ];
 
     /// 規則の ID。
@@ -65,6 +77,10 @@ impl ProjectRule {
             ProjectRule::DeffNeedsReason => "DOEFF111",
             ProjectRule::DefinitionTagsRequired => "DOEFF112",
             ProjectRule::ContextMatchesService => "DOEFF113",
+            ProjectRule::UndeclaredPlace => "DOEFF114",
+            ProjectRule::UndeclaredDirectory => "DOEFF115",
+            ProjectRule::ServiceDependency => "DOEFF116",
+            ProjectRule::UnusedDependency => "DOEFF117",
         }
     }
 
@@ -85,7 +101,9 @@ impl ProjectRule {
             | ProjectRule::RawSideEffectDirect
             | ProjectRule::RawSideEffectVia
             | ProjectRule::ServiceBoundary
-            | ProjectRule::ContextMatchesService => true,
+            | ProjectRule::ContextMatchesService
+            | ProjectRule::ServiceDependency => true,
+            ProjectRule::UndeclaredPlace | ProjectRule::UndeclaredDirectory | ProjectRule::UnusedDependency => false,
             ProjectRule::EnvironmentName
             | ProjectRule::DefnForbidden
             | ProjectRule::DeffNeedsReason
@@ -109,6 +127,10 @@ impl ProjectRule {
             ProjectRule::DeffNeedsReason => "deff Needs A Reason",
             ProjectRule::DefinitionTagsRequired => "Definition Tags Required",
             ProjectRule::ContextMatchesService => "Context Matches Service",
+            ProjectRule::UndeclaredPlace => "Undeclared Place",
+            ProjectRule::UndeclaredDirectory => "Undeclared Directory",
+            ProjectRule::ServiceDependency => "Service Dependency",
+            ProjectRule::UnusedDependency => "Unused Dependency",
         }
     }
 
@@ -128,6 +150,10 @@ impl ProjectRule {
             ProjectRule::DeffNeedsReason => "deff の定義の行か直前の行に、defk にできない理由の註を書く",
             ProjectRule::DefinitionTagsRequired => "defk・deff・defp・defhandler・defeffect は契約の辞書の :tags で必須の鍵(設定)を名乗る",
             ProjectRule::ContextMatchesService => "タグの :context は、その file が置かれた service の名と合う(知らせ)",
+            ProjectRule::UndeclaredPlace => "root の下の module は、architecture.hy で宣言した service の層・shared・foundation・legacy のどれかに置く",
+            ProjectRule::UndeclaredDirectory => "root の下の dir は宣言した service か shared・foundation・legacy で、service の中の dir は宣言した層",
+            ProjectRule::ServiceDependency => "service A が読んでよいのは、A の :depends-on に在る service の open-layers(intent)と shared だけ",
+            ProjectRule::UnusedDependency => "宣言した依存(:depends-on)を、その service のどの module も読んでいない(知らせ)",
         }
     }
 
@@ -147,6 +173,10 @@ impl ProjectRule {
             ProjectRule::DeffNeedsReason => "deff の行か直前の行に `; defk にできない: <理由>` を書く(書けないなら defk にする)",
             ProjectRule::DefinitionTagsRequired => "契約の辞書に :tags {:context \"…\" :role \"…\"} を書く",
             ProjectRule::ContextMatchesService => ":context を service の名に合わせるか、file を :context の service の dir へ移す",
+            ProjectRule::UndeclaredPlace => "architecture.hy に宣言するか、宣言した置き場所(<root>/<service>/<層>/)へ移す",
+            ProjectRule::UndeclaredDirectory => "architecture.hy に defservice か service の :layers を足すか、dir を宣言した置き場所へ移す",
+            ProjectRule::ServiceDependency => "依存先を :depends-on に足し、依存先の intent を出して頼む(判断や翻訳の module を直に読まない)",
+            ProjectRule::UnusedDependency => "使っていない依存を :depends-on から外す",
         }
     }
 }

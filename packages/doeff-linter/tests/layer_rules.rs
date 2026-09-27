@@ -747,3 +747,103 @@ registered_severity = "info"
     assert_eq!(code, 2);
     assert!(stderr.contains("registered_severity"), "{}", stderr);
 }
+
+/// architecture.hy を repo の根に置いた repo(TOML には規則の入り切りだけ)。
+fn architecture_repo(files: &[(&str, String)], toml_extra: &str) -> tempfile::TempDir {
+    let dir = tempfile::TempDir::new().unwrap();
+    let architecture = r#"
+(defarchitecture sample
+  :root "app"
+  :layers [(layer core :summary "業務の判断" :roles [judgment type] :imports [core intent])
+           (layer intent :summary "要求の型" :roles [intent type] :imports [intent] :types-only True)
+           (layer foundation :summary "汎用の I/O" :roles [foundation] :imports [foundation])]
+  :shared "shared"
+  :foundation foundation
+  :legacy ["app/old" (legacy "app/core" :layer core)])
+(defservice billing "請求" {:depends-on [custody ledger] :layers [core intent]})
+(defservice custody "預かり所" {:layers [core intent]})
+(defservice ledger "台帳" {:layers [core intent]})
+"#;
+    std::fs::write(dir.path().join("architecture.hy"), architecture).unwrap();
+    let toml = format!(
+        "[tool.doeff-linter]\nenable = [\"DOEFF101\", \"DOEFF104\", \"DOEFF105\", \"DOEFF113\", \"DOEFF114\", \"DOEFF115\", \"DOEFF116\", \"DOEFF117\"]\n{}",
+        toml_extra
+    );
+    std::fs::write(dir.path().join("pyproject.toml"), toml).unwrap();
+    for (rel, text) in files {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    dir
+}
+
+#[test]
+fn architecture_declares_services_layers_and_dependencies() {
+    let files = [
+        ("app/billing/core/decide.hy", tags("billing", "judgment") + "(import app.custody.intent.lease [Lease])\n(import app.custody.core.pick [pick])\n(import app.shared.core.clock [today])\n(defn f [] 1)\n"),
+        ("app/billing/intent/charge.hy", tags("billing", "intent") + "(defclass Charge [])\n"),
+        ("app/billing/core/wrong_context.hy", tags("custody", "judgment") + "(defn g [] 1)\n"),
+        ("app/billing/helpers.hy", tags("billing", "judgment") + "(defn h [] 1)\n"),
+        ("app/billing/scripts/tool.hy", tags("billing", "judgment") + "(defn t [] 1)\n"),
+        ("app/billing/scripts/tool2.hy", tags("billing", "judgment") + "(defn t2 [] 1)\n"),
+        ("app/custody/core/pick.hy", tags("custody", "judgment") + "(defn pick [] 1)\n"),
+        ("app/custody/intent/lease.hy", tags("custody", "intent") + "(defclass Lease [])\n"),
+        ("app/custody/core/uses_billing.hy", tags("custody", "judgment") + "(import app.billing.intent.charge [Charge])\n(defn u [] 1)\n"),
+        ("app/shared/core/clock.hy", tags("shared", "type") + "(defn today [] 1)\n"),
+        ("app/foundation/io.hy", tags("io", "foundation") + "(defn send [] 1)\n"),
+        ("app/old/anything.hy", "(defn legacy [] 1)\n".to_string()),
+        ("app/core/legacy_core.hy", tags("kanban", "judgment") + "(import app.foundation.io [send])\n(defn l [] 1)\n"),
+        ("app/mystery/core/x.hy", tags("mystery", "judgment") + "(defn x [] 1)\n"),
+        ("app/top.hy", "(defn top [] 1)\n".to_string()),
+    ];
+    let dir = architecture_repo(&files, "");
+    let (code, report) = editor(dir.path());
+    assert_eq!(code, 1, "{}", report);
+    // DOEFF114: root の直下と service の dir の直下の file。
+    assert_eq!(keys(&report, "DOEFF114"), vec!["app/billing/helpers.hy::DOEFF114", "app/top.hy::DOEFF114"]);
+    // DOEFF115: 宣言に無い service の dir と、service の中の宣言に無い層の dir(dir ごとに 1 件)。
+    assert_eq!(keys(&report, "DOEFF115"), vec!["app/billing/scripts::DOEFF115", "app/mystery::DOEFF115"]);
+    let undeclared = explanation(&report, "app/mystery::DOEFF115");
+    assert!(undeclared["subject"].as_str().unwrap().contains("service mystery は architecture.hy に宣言されていない"), "{}", undeclared["subject"]);
+    // DOEFF116: 依存先の intent 以外を読む・:depends-on に無い service を読む。shared と foundation は service ではない。
+    assert_eq!(
+        keys(&report, "DOEFF116"),
+        vec!["app/billing/core/decide.hy::DOEFF116::app.custody.core.pick.pick", "app/custody/core/uses_billing.hy::DOEFF116::app.billing.intent.charge.Charge"]
+    );
+    let undeclared_dependency = explanation(&report, "app/custody/core/uses_billing.hy::DOEFF116::app.billing.intent.charge.Charge");
+    assert!(undeclared_dependency["reason"].as_str().unwrap().contains("service custody の依存の宣言(:depends-on = 無し)に billing が無い"), "{}", undeclared_dependency["reason"]);
+    // DOEFF117(info): billing は ledger に依存すると宣言したが読んでいない。位置は architecture.hy。
+    let unused = violation(&report, "architecture.hy::DOEFF117::billing>ledger");
+    assert_eq!(unused["severity"], "info");
+    assert!(unused["path"].as_str().unwrap().ends_with("architecture.hy"));
+    // DOEFF113: 宣言した service の中の :context の食い違いは warning。
+    assert_eq!(violation(&report, "app/billing/core/wrong_context.hy::DOEFF113::custody")["severity"], "warning");
+    // legacy に :layer を添えた置き場は、層の規則を今どおり受ける(core から foundation を読むと DOEFF101)。
+    assert_eq!(keys(&report, "DOEFF101"), vec!["app/core/legacy_core.hy::DOEFF101::app.foundation.io.send"]);
+    // editor-json の architecture(service の一覧と層の宣言)。
+    let architecture = &report["architecture"];
+    assert_eq!(architecture["name"], "sample");
+    assert_eq!(architecture["services"][0]["name"], "billing");
+    assert_eq!(architecture["services"][0]["description"], "請求");
+    assert_eq!(architecture["services"][0]["depends_on"], serde_json::json!(["custody", "ledger"]));
+    assert_eq!(architecture["layers"][0]["summary"], "業務の判断");
+    assert_eq!(report["layers"][0]["name"], "core");
+}
+
+#[test]
+fn architecture_misreadings_and_double_declarations_are_config_errors() {
+    let dir = architecture_repo(&[], "");
+    std::fs::write(dir.path().join("architecture.hy"), "(defarchitecture s :root \"app\" :layers [(layer core)])\n(defservice a {:layers [ghost]})\n(defservice a {})\n").unwrap();
+    let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("ghost") && stderr.contains("service a が 2 度") && stderr.contains("architecture.hy:3:1"), "{}", stderr);
+    // 層を TOML と architecture.hy の両方で宣言するのは誤り(宣言は 1 か所)。
+    let dir = architecture_repo(&[], "[tool.doeff-linter.layers]\norder = [\"core\"]\npaths = { core = \"app/core\" }\n");
+    let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("二重の宣言"), "{}", stderr);
+    // architecture.hy が無い repo は今どおり(editor-json の architecture は null)。
+    let (_, report) = editor(repo(&[], "").path());
+    assert_eq!(report["architecture"], Value::Null);
+}

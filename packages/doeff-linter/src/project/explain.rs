@@ -39,6 +39,24 @@ fn lead(text: &str) -> String {
     }
 }
 
+/// 宣言されていない置き場所の file の種類(DOEFF114)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlaceProblem {
+    /// root の直下の file。
+    DirectlyUnderRoot,
+    /// service(か shared)の dir の直下の file — 層の dir の中に無い。
+    DirectlyUnderService { service: String },
+}
+
+/// 宣言に無い dir の種類(DOEFF115)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DirectoryProblem {
+    /// root の直下の dir が、宣言した service でも shared・foundation・legacy でもない。
+    ServiceNotDeclared { dir: String, services: Vec<String> },
+    /// service の中の dir が、その service の宣言した層でない。
+    LayerNotDeclared { service: String, layer: String, declared: Vec<String> },
+}
+
 /// 違反の主体が定義の名だけの時の種類(業務の file の名か、定義の名か)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NameSubject {
@@ -83,6 +101,24 @@ pub enum Explain {
     DeffWithoutReason { name: String, marker: String },
     /// DOEFF112: 定義の :tags に必須の鍵が無い。
     DefinitionTagsMissing { name: String, head: String, missing: Vec<String>, has_tags: bool, module_default: bool },
+    /// DOEFF114: 宣言されていない置き場所の file。
+    UndeclaredPlace { rel: String, problem: PlaceProblem, root: String },
+    /// DOEFF115: 宣言に無い dir。
+    UndeclaredDirectory { dir: String, problem: DirectoryProblem },
+    /// DOEFF116: service の依存の宣言に反する import。
+    ServiceDependency {
+        placement: Placement,
+        own: String,
+        target: String,
+        target_service: String,
+        target_layer: LayerId,
+        target_dir: String,
+        declared: bool,
+        depends_on: Vec<String>,
+        open_layers: Vec<String>,
+    },
+    /// DOEFF117: 宣言したのに使っていない依存。
+    UnusedDependency { service: String, dependency: String },
     /// DOEFF113: タグの :context が置き場の service と食い違う。
     ContextMismatch { placement: Placement, contexts: Vec<String> },
 }
@@ -242,6 +278,56 @@ impl<'a> Narrator<'a> {
                         "この repo の設定では module の頭のタグで補えない(module_default = false)— 定義ごとに書く。"
                     }
                 ),
+            ),
+            Explain::UndeclaredPlace { rel, problem, root } => (
+                match problem {
+                    PlaceProblem::DirectlyUnderRoot => format!("module {} — root {}/ の直下に在り、どの service の層にも入っていない", rel, root),
+                    PlaceProblem::DirectlyUnderService { service } => {
+                        format!("module {} — service {} の dir の直下に在り、層の dir(core・intent …)に入っていない", rel, service)
+                    }
+                },
+                format!(
+                    "architecture.hy が宣言した置き場所({}/<service>/<層>/・shared・foundation・legacy)のどれでもないので、どの service の何の層か分からない — 層の規則にも閲覧にも乗らない。architecture.hy に宣言するか、宣言した置き場所へ移す。",
+                    root
+                ),
+            ),
+            Explain::UndeclaredDirectory { dir, problem } => match problem {
+                DirectoryProblem::ServiceNotDeclared { dir: name, services } => (
+                    format!("dir {} — service {} は architecture.hy に宣言されていない(宣言した service = {})", dir, name, if services.is_empty() { "無し".to_string() } else { services.join("・") }),
+                    "宣言に無い service の dir は、何の仕事で何に依存するかが分からない。defservice で宣言するか、legacy に入れて移行を待つか、宣言した service の dir へ移す。".to_string(),
+                ),
+                DirectoryProblem::LayerNotDeclared { service, layer, declared } => (
+                    format!("dir {} — service {} の中の {} は、その service の宣言した層({})に無い", dir, service, layer, declared.join("・")),
+                    format!("service の中の dir は層(外の世界からの遠さ)だけで切る。{} は宣言した層でないので、中の module の層が決まらない。service の :layers に足すか、層の dir へ移す。", layer),
+                ),
+            },
+            Explain::ServiceDependency { placement, own, target, target_service, target_layer, target_dir, declared, depends_on, open_layers } => (
+                format!(
+                    "import 先 {} は service {} の{}(path が {}/ の下) — {}",
+                    target,
+                    target_service,
+                    self.layer_phrase(*target_layer),
+                    target_dir,
+                    self.file_subject(placement)
+                ),
+                if *declared {
+                    format!(
+                        "service {} は {} に依存すると宣言しているが、読めるのは {} の {} だけ。{} の判断や翻訳を直に読むと、{} の中身を変えた時に {} が壊れる。{} に頼むことは {} の intent を通す。",
+                        own, target_service, target_service, open_layers.join("・"), target_service, target_service, own, target_service, target_service
+                    )
+                } else {
+                    format!(
+                        "service {} の依存の宣言(:depends-on = {})に {} が無い。宣言に無い依存は、service の間の向きを architecture.hy から読めなくする。依存が要るなら :depends-on に足して {} の intent を通して頼み、要らないなら import を外す。",
+                        own,
+                        if depends_on.is_empty() { "無し".to_string() } else { depends_on.join("・") },
+                        target_service,
+                        target_service
+                    )
+                },
+            ),
+            Explain::UnusedDependency { service, dependency } => (
+                format!("service {} の :depends-on の {}", service, dependency),
+                format!("{} のどの module も {} を読んでいない(知らせ)。使っていない依存の宣言は、service の間の向きを実物より多く見せる。要らなければ :depends-on から外す。", service, dependency),
             ),
             Explain::EnvironmentName { subject, words } => (
                 match subject {
