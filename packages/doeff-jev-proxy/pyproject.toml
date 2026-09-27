@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "doeff-jev-proxy"
+version = "0.1.0"
+description = "Jev(TypeSafe の System One)の呼び出しを覚える代理のサーバー — 本文を正規化した sha256 を鍵に答えを覚え、初めての鍵だけを本物の Jev に渡す"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "doeff>=0.2.0",
+    "doeff-core-effects",
+    "doeff-hy",
+    "doeff-jev",
+    "doeff-records",
+    "hy>=1.3",
+    "httpx>=0.25.0",
+]
+
+[tool.hatch.build.targets.wheel]
+# import 名 doeff_jev_proxy は Hy の module だけの namespace package(__init__ を持たない — hy を読み込んだ process が import する)。
+packages = ["src/doeff_jev_proxy"]
+# editable の install は .py の無い dir を sys.path に載せない — src を明示して載せる。
+dev-mode-dirs = ["src"]
+
+[tool.uv.sources]
+doeff = { workspace = true }
+doeff-core-effects = { workspace = true }
+doeff-hy = { workspace = true }
+doeff-jev = { workspace = true }
+doeff-records = { workspace = true }
