@@ -13,7 +13,7 @@
 
 (setv tally (service "tally" tally-program
                      :env "tests.fixtures.envs:plain_env"
-                     :requires {"kind" "k3s"}
+                     :needs (frozenset ["cluster-net"])
                      :config {"step" 2 "base" 1}))
 
 (setv tally-system (System "tally-system" #(tally)))

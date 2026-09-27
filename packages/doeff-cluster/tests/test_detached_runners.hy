@@ -3,7 +3,7 @@
 ;; 戻り・coordinator の途絶を起こす(2026-09-26)。
 ;;
 ;; 同じ筋書きを 2 つの組で回し、fake が本物の coordinator の判断と同じ答えを返すことを確かめる:
-;;   fake        … detached-local(担い手 a〔role=x〕と b〔role=y〕)・仮想の時計
+;;   fake        … detached-local(担い手 a〔能力 x-tool〕と b〔能力 y-tool〕)・仮想の時計
 ;;   coordinator … 本物の coordinator の判断(api_policy.respond / tick — test_detached.hy の MemoryCoordinator)と、同じ名乗りの
 ;;                 担い手 2 つ(本物の CoordinatorLink)・本物の DetachedClient・仮想の時計
 ;; coordinator の途絶は fake の組だけで確かめる(本物の送り手の送り直しは実時間の monotonic で数えるので、仮想の時計の組では
@@ -17,7 +17,6 @@
 (import doeff_core_effects.handlers [reader])
 (import doeff_core_effects.scheduler [Spawn Cancel])
 (import doeff_time [Delay SimClock sim-time-handler])
-(import doeff_cluster.cluster_model [Requirement])
 (import doeff_cluster.remote_model [current-versions])
 (import doeff_cluster.detached_model [SubmitDetached AwaitDetached ReadRunners SimulateRunnerLoss SimulateRunnerDrain
                                       SimulateRunnerReturn SimulateCoordinatorOutage
@@ -26,11 +25,11 @@
 (import doeff_cluster.detached [detached-local DetachedLocalStore detached-cluster DetachedClient DetachedEvent])
 (import tests.detached_rig [ENV slow-add RigWorker MemoryCoordinator worker-tick worker-loop])
 
-(val RUNNERS #((RunnerFact :name "a" :labels #(#("role" "x")) :live True :draining False)
-                (RunnerFact :name "b" :labels #(#("role" "y")) :live True :draining False)))
-(val ON-X #((Requirement "role" "x")))
-(val ON-Y #((Requirement "role" "y")))
-(val ON-Z #((Requirement "role" "z")))
+(val RUNNERS #((RunnerFact :name "a" :provides #("x-tool") :exclusive #() :live True :draining False)
+                (RunnerFact :name "b" :provides #("y-tool") :exclusive #() :live True :draining False)))
+(val ON-X (frozenset ["x-tool"]))
+(val ON-Y (frozenset ["y-tool"]))
+(val ON-Z (frozenset ["z-tool"]))
 (val SLOW 3.0)
 (val LEASE 5.0)
 (val POLL 0.5)
@@ -56,11 +55,11 @@
   (defn __init__ [self #^ Path tmp-path transport]
     (setv self.tmp-path tmp-path self.transport transport self.workers {} self.boots 0))
 
-  (defn #^ RigWorker fresh [self #^ str name #^ dict labels]
+  (defn #^ RigWorker fresh [self #^ str name #^ tuple provides #^ tuple exclusive]
     "名乗る担い手を新しく作る(作り直しは新しい世代 — coordinator の drain は新しい世代の heartbeat で解ける)。"
     (+= self.boots 1)
     (setv worker (RigWorker "http://coordinator" (/ self.tmp-path (.format "tasks-{}-{}" name self.boots)) (current-versions)
-                            :transport self.transport :name name :labels labels)
+                            :transport self.transport :name name :provides provides :exclusive exclusive)
           (get self.workers name) worker)
     worker))
 
@@ -98,7 +97,7 @@
     ;; 置いた task を消す。drain の後の戻りでも、前の process は抜けてから新しい process が名乗る)。
     (val old (get runners.workers runner))
     (when (not old.dead) (<- (stop-worker old)))
-    (<- (start-worker (.fresh runners runner (dict old.link.labels))))
+    (<- (start-worker (.fresh runners runner old.link.provides old.link.exclusive)))
     (resume None)))
 
 
@@ -108,7 +107,7 @@
         transport (httpx.MockTransport coordinator.handle)
         runners (CoordinatorRunners tmp-path transport)
         operator (httpx.Client :transport transport :base-url "http://coordinator" :headers {"x-actor" "operator"}))
-  (for [fact RUNNERS] (.fresh runners fact.name (dict fact.labels)))
+  (for [fact RUNNERS] (.fresh runners fact.name fact.provides fact.exclusive))
   (RunnersRig "coordinator" [(sim-time-handler :clock clock) (reader {"worker" "child" "base" 100}) (rig-runners runners operator)
                              (detached-cluster (DetachedClient "http://coordinator" "r" :transport transport) :poll-seconds POLL)]
               runners.workers))
@@ -138,13 +137,13 @@
 
 (defk roster-and-placement []
   {:pre [] :post [(: % bool)]}
-  ;; 名簿は 2 つとも生きていて drain でない。role=y を求める task は b に置かれ、走っている間の待ちは b を名指す。
+  ;; 名簿は 2 つとも生きていて drain でない。能力 y-tool を要る task は b に置かれ、走っている間の待ちは b を名指す。
   (<- roster (ReadRunners))
   (val facts (by-name roster))
   (assert (= (sorted facts) ["a" "b"]) roster)
   (assert (all (gfor f (.values facts) (and f.live (not f.draining)))) roster)
-  (assert (= (. (get facts "a") labels) #(#("role" "x"))) roster)
-  (<- (SubmitDetached (slow-add SLOW 1) :env ENV :key "k-on-y" :requires ON-Y :lease-seconds LEASE))
+  (assert (= #((. (get facts "a") provides) (. (get facts "a") exclusive)) #(#("x-tool") #())) roster)
+  (<- (SubmitDetached (slow-add SLOW 1) :env ENV :key "k-on-y" :needs ON-Y :lease-seconds LEASE))
   (<- (Delay (* SLOW 0.3)))
   (<- early (AwaitDetached "k-on-y" :timeout-seconds 0.0))
   (assert (and (isinstance early DetachedPending) (= early.phase "assigned") (= early.runner "b")) early)
@@ -152,7 +151,7 @@
   (assert (= done (DetachedSucceeded 101)) done)
   True)
 
-(deftest test-the-roster-names-live-runners-and-a-task-goes-to-the-runner-with-its-label [open-rig tmp-path]
+(deftest test-the-roster-names-live-runners-and-a-task-goes-to-the-runner-with-its-capability [open-rig tmp-path]
   {:params {"open_rig" RIGS}}
   (<- ok (run-on (open-rig tmp-path) (roster-and-placement)))
   (assert ok))
@@ -161,8 +160,8 @@
 (defk one-runner-dies []
   {:pre [] :post [(: % bool)]}
   ;; a だけが死ぬ: a の task は消え(走らせ直さない)、b の task は終わる。lease の後の名簿で a は生きていない。
-  (<- (SubmitDetached (slow-add (* SLOW 4) 2) :env ENV :key "k-x" :requires ON-X :lease-seconds LEASE))
-  (<- (SubmitDetached (slow-add (* SLOW 2) 3) :env ENV :key "k-y" :requires ON-Y :lease-seconds LEASE))
+  (<- (SubmitDetached (slow-add (* SLOW 4) 2) :env ENV :key "k-x" :needs ON-X :lease-seconds LEASE))
+  (<- (SubmitDetached (slow-add (* SLOW 2) 3) :env ENV :key "k-y" :needs ON-Y :lease-seconds LEASE))
   (<- (Delay (* SLOW 0.3)))
   (<- lost int (SimulateRunnerLoss "a"))
   (assert (= lost 1) lost)
@@ -185,13 +184,13 @@
 
 (defk drain-then-return []
   {:pre [] :post [(: % bool)]}
-  ;; a を drain: 名簿で draining・role=x の task は置かれずに待つ(失敗にしない)。a が戻ると置かれて終わる。
+  ;; a を drain: 名簿で draining・x-tool を要る task は置かれずに待つ(失敗にしない)。a が戻ると置かれて終わる。
   (<- still int (SimulateRunnerDrain "a"))
   (assert (= still 0) still)
   (<- (Delay POLL))
   (<- roster (ReadRunners))
   (assert (. (get (by-name roster) "a") draining) roster)
-  (<- (SubmitDetached (slow-add SLOW 4) :env ENV :key "k-drain" :requires ON-X :lease-seconds LEASE))
+  (<- (SubmitDetached (slow-add SLOW 4) :env ENV :key "k-drain" :needs ON-X :lease-seconds LEASE))
   (<- (Delay (* 4 POLL)))
   (<- waiting (AwaitDetached "k-drain" :timeout-seconds 0.0))
   (assert (and (isinstance waiting DetachedPending) (= waiting.phase "queued")) waiting)
@@ -206,16 +205,16 @@
   (assert ok))
 
 
-(defk no-runner-with-the-label []
+(defk no-runner-with-the-capability []
   {:pre [] :post [(: % bool)]}
-  (<- (SubmitDetached (slow-add 0.0 5) :env ENV :key "k-z" :requires ON-Z :lease-seconds LEASE))
+  (<- (SubmitDetached (slow-add 0.0 5) :env ENV :key "k-z" :needs ON-Z :lease-seconds LEASE))
   (<- outcome (AwaitDetached "k-z"))
   (assert (isinstance outcome DetachedUnrunnable) outcome)
   True)
 
 (deftest test-a-task-no-runner-can-take-is-unrunnable [open-rig tmp-path]
   {:params {"open_rig" RIGS}}
-  (<- ok (run-on (open-rig tmp-path) (no-runner-with-the-label)))
+  (<- ok (run-on (open-rig tmp-path) (no-runner-with-the-capability)))
   (assert ok))
 
 
@@ -226,7 +225,7 @@
   (val rig (RunnersRig "fake" [(sim-time-handler :clock (SimClock)) (reader {"base" 100}) (detached-local store :poll-seconds POLL)] {}))
   (defk scenario []
     {:pre [] :post [(: % bool)]}
-    (<- (SubmitDetached (slow-add SLOW 6) :env ENV :key "k-cut" :requires ON-X :lease-seconds LEASE))
+    (<- (SubmitDetached (slow-add SLOW 6) :env ENV :key "k-cut" :needs ON-X :lease-seconds LEASE))
     (<- (SimulateCoordinatorOutage (* SLOW 2)))
     (<- roster (ReadRunners))
     (assert (isinstance roster RunnersUnreachable) roster)
@@ -234,7 +233,7 @@
     ;; 終わった結果が読める。
     (<- during (AwaitDetached "k-cut" :timeout-seconds (* SLOW 1.5)))
     (assert (isinstance during DetachedUnreachable) during)
-    (<- refused (SubmitDetached (slow-add 0.0 1) :env ENV :key "k-during" :requires ON-X :lease-seconds LEASE))
+    (<- refused (SubmitDetached (slow-add 0.0 1) :env ENV :key "k-during" :needs ON-X :lease-seconds LEASE))
     (assert (isinstance refused DetachedUnreachable) refused)
     (<- after (AwaitDetached "k-cut"))
     (assert (= after (DetachedSucceeded 106)) after)
@@ -259,7 +258,7 @@
   (val client (DetachedClient "http://coordinator" "r" :transport (httpx.MockTransport cut-off) :deadline-seconds 0.2))
   (defk scenario []
     {:pre [] :post [(: % bool)]}
-    (<- sent (SubmitDetached (slow-add 0.0 1) :env ENV :key "k-cut-real"))
+    (<- sent (SubmitDetached (slow-add 0.0 1) :env ENV :key "k-cut-real" :needs ON-X))
     (assert (isinstance sent DetachedUnreachable) sent)
     (<- awaited (AwaitDetached "k-cut-real" :timeout-seconds 1.0))
     (assert (isinstance awaited DetachedUnreachable) awaited)

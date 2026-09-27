@@ -32,7 +32,7 @@
 (setv SHA1 (* "1" 40) SHA2 (* "2" 40) WRAP "w0")
 (setv IMG1 "zeus:5000/app:20260924-1111111" IMG2 "zeus:5000/app:20260925-2222222")
 (setv JOB-START 2000)
-(setv SERVICE {"revision" WRAP "requires" {} "entry" "m" "args" [] "replicas" 1 "readiness" {"windowSeconds" 10}
+(setv SERVICE {"revision" WRAP "needs" ["net"] "entry" "m" "args" [] "replicas" 1 "readiness" {"windowSeconds" 10}
                "update" "handoff"
                "baseFrom" {"kind" "Deployment" "namespace" "prod" "name" "app-writer" "container" "app-writer"}})
 
@@ -87,7 +87,7 @@
     (for [a actions] (self.apply a))
     (setv self.records (records-after self.now self.records actions self.policy))
     (setv rows (lfor s (statuses self.now self.desired (self.world) self.records self.policy) (status-row s)))
-    (setv reply (self.call "POST" "/heartbeat" {"name" "zeus" "labels" {} "capacity" 10 "versions" V "statuses" rows} :actor None))
+    (setv reply (self.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "capacity" 10 "versions" V "statuses" rows} :actor None))
     (setv self.desired (tuple (gfor j (get reply "jobs")
                                     (JobSpec (get j "name") (get j "entry") (tuple (get j "args")) (get j "revision")
                                              :placement (.get j "placement") :base (.get j "base")
@@ -237,20 +237,21 @@
   ;; 入れ替えで退いた process(行の名は <名>#retired-<世代>)が居る間、その job はまだ動いていると数える(他の worker へ置かない)。
   (setv state (ClusterState :workers {} :statuses {}))
   (import doeff_cluster.cluster_model [WorkerInfo])
-  (setv state (replace state :workers {"zeus" (WorkerInfo "zeus" #() 10 1000)}
+  (setv state (replace state :workers {"zeus" (WorkerInfo "zeus" #("net") 10 1000)}
                              :statuses {"zeus" {"at" 1000 "jobs" [{"name" "a#retired-1-x" "phase" "running" "retiredFrom" "a"}]}}))
   (assert (still-live-somewhere 1000 state "a" T))
   (assert (not (still-live-somewhere 1000 state "b" T))))
 
 
 (defn test-heartbeat-age-per-worker-is-exposed []
-  ;; coordinator 自身の alert(DoeffWorkerHeartbeatStale)の材料: worker ごとの最後の heartbeat の古さと kind。忘れた worker は出ない。
+  ;; coordinator 自身の alert(DoeffWorkerHeartbeatStale)の材料: worker ごとの最後の heartbeat の古さ(label は worker の名だけ —
+  ;; 能力の名乗りは計器の label に写さない)。忘れた worker は出ない。
   (import doeff_cluster.cluster_model [WorkerInfo])
   (setv state (replace (ClusterState)
-                       :workers {"zeus" (WorkerInfo "zeus" #(#("kind" "k3s") #("host" "zeus")) 10 1000)
-                                 "proboscis-mbp" (WorkerInfo "proboscis-mbp" #(#("kind" "mac")) 10 61000)}))
+                       :workers {"zeus" (WorkerInfo "zeus" #("cluster-net" "net") 10 1000)
+                                 "proboscis-mbp" (WorkerInfo "proboscis-mbp" #("agent-cli") 10 61000 :exclusive #("agent-cli"))}))
   (setv text (metrics-text state 91000 T))
-  (assert (in "doeff_worker_worker_heartbeat_age_seconds{kind=\"k3s\",worker=\"zeus\"} 90.0" text) text)
-  (assert (in "doeff_worker_worker_heartbeat_age_seconds{kind=\"mac\",worker=\"proboscis-mbp\"} 30.0" text) text)
+  (assert (in "doeff_worker_worker_heartbeat_age_seconds{worker=\"zeus\"} 90.0" text) text)
+  (assert (in "doeff_worker_worker_heartbeat_age_seconds{worker=\"proboscis-mbp\"} 30.0" text) text)
   (setv forgotten (replace state :workers {"zeus" (get state.workers "zeus")}))
   (assert (not-in "proboscis-mbp" (metrics-text forgotten 91000 T))))

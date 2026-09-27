@@ -29,7 +29,7 @@
   (assert (= back.board-expiry {"w/process/atlas/7" 61000}))
   ;; 期限の前は残り、過ぎた後の最初の調停(要求の無い拍でも)で消える
   (setv #(s1 _ _) (call s "GET" "/state" None 60000))
-  (setv #(s2 _ _) (call s "POST" "/heartbeat" {"name" "atlas" "labels" {} "capacity" 1 "statuses" []} 61000))
+  (setv #(s2 _ _) (call s "POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "capacity" 1 "statuses" []} 61000))
   (assert (in "w/process/atlas/7" s1.board))
   (assert (not-in "w/process/atlas/7" s2.board))
   (assert (in "w/cycle" s2.board))
@@ -86,13 +86,13 @@
 
 
 (deftest test-tasks-have-a-lease-cap-and-an-open-count-cap
-  (setv body {"env" "e" "blob" "b" "revision" "r" "leaseSeconds" 7200})
+  (setv body {"env" "e" "blob" "b" "revision" "r" "needs" ["net"] "leaseSeconds" 7200})
   (setv #(_ status _) (call (ClusterState) "POST" "/tasks" body))
   (assert (= status 400))
   ;; 終わっていない task が上限に達した盤(置ける worker はあるが空きが無い = 待っている)
   (setv queued (dfor i (range TASK-MAX-OPEN) (.format "t{}" i)
                      (TaskRecord (.format "t{}" i) "n" "e" "b" "r" #() #() 60000 999999999 0)))
-  (setv s (ClusterState :tasks queued :next-task (+ TASK-MAX-OPEN 1) :workers {"a" (WorkerInfo "a" #() 0 1000)}))
+  (setv s (ClusterState :tasks queued :next-task (+ TASK-MAX-OPEN 1) :workers {"a" (WorkerInfo "a" #("net") 0 1000)}))
   (setv #(_ status reply) (call s "POST" "/tasks" (| body {"leaseSeconds" 60})))
   (assert (= status 429) reply)
   ;; 終わった task は数えない
@@ -102,9 +102,9 @@
 
 
 (deftest test-a-worker-silent-for-a-week-without-work-is-forgotten
-  (setv old (WorkerInfo "newmac" #() 10 0) busy (WorkerInfo "atlas" #() 10 0))
+  (setv old (WorkerInfo "newmac" #("net") 10 0) busy (WorkerInfo "atlas" #("net") 10 0))
   (setv s (ClusterState :workers {"newmac" old "atlas" busy}))
-  (setv #(s _ _) (call s "PUT" "/jobs" {"jobs" [{"name" "j" "entry" "m" "args" [] "revision" "r" "pin" "atlas"}]} 1000))
+  (setv #(s _ _) (call s "PUT" "/jobs" {"jobs" [{"name" "j" "entry" "m" "args" [] "revision" "r" "needs" ["net"] "pin" "atlas"}]} 1000))
   ;; atlas は置き先を持つので忘れない(置き先は移し替えの規則が扱う)
   (assert (in "j" s.placements))
   (setv later (tick s (+ WORKER-FORGET-MS 1) T))

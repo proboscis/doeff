@@ -20,7 +20,7 @@
 (import dataclasses [asdict replace])
 (import .cluster_model [ClusterState WorkerInfo Placement Drain component-versions-of task-record-to-json
                         task-record-from-json handoff-watch-from-json])
-(import .cluster_policy [job-to-json job-from-json board-changes value-size warm-entry-to-json warm-entry-from-json
+(import .cluster_policy [job-to-json job-from-json board-changes value-size warm-entry-to-json warm-entry-from-json worker-capabilities-of
                          worker-generations-json worker-generations-from-json])
 
 (setv BOARD "board/")
@@ -47,7 +47,8 @@
   (for [#(k a) (.items state.placements)] (setv (get kv (+ PLACEMENT k)) (asdict a)))
   (for [w (.values state.workers)]
     (setv seen (.get state.seen-marks w.name))
-    (setv (get kv (+ "worker/" w.name)) (| {"name" w.name "labels" (dict w.labels) "capacity" w.capacity "versions" (dict w.versions)}
+    (setv (get kv (+ "worker/" w.name)) (| {"name" w.name "provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity
+                                            "versions" (dict w.versions)}
                                            (worker-generations-json w)
                                            (if (is seen None) {} {"lastSeenMs" seen}))))
   (for [t (.values state.tasks)]
@@ -95,10 +96,14 @@
   (ClusterState
     :jobs (tuple (gfor #(_ v) (part "service/") (job-from-json v)))
     :placements (dfor #(k v) (+ (part LEGACY-PLACEMENT) (part PLACEMENT)) k (Placement #** v)) ; 後に並ぶ新しい鍵が勝つ
+    ;; 旧い形(labels だけ)の worker の行は読まない(cluster_policy.state-from-json と同じ — 次の heartbeat で作り直す)。
     :workers (dfor #(k w) (part "worker/")
-                   k (WorkerInfo (get w "name") (tuple (sorted (.items (get w "labels")))) (get w "capacity")
+                   :if (in "provides" w)
+                   :setv caps (worker-capabilities-of w (.format "保存の worker {}" (get w "name")))
+                   k (WorkerInfo (get w "name") (get caps 0) (get w "capacity")
                                  (.get w "lastSeenMs" unknown-seen)
                                  (component-versions-of (.get w "versions" {}))
+                                 :exclusive (get caps 1) :node (.get w "node" "")
                                  #** (worker-generations-from-json w)))
     :seen-marks (dfor #(k w) (part "worker/") :if (in "lastSeenMs" w) k (get w "lastSeenMs"))
     :tasks (dfor #(k t) (part "task/")
@@ -112,7 +117,7 @@
     :rollouts (dict (part "rollout/"))
     :drains (dfor #(k v) (part DRAIN) k (Drain #** v))
     :surges (dfor #(k v) (part SURGE) k (Placement #** v))
-    :warms (dfor #(k v) (part WARM) k (warm-entry-from-json v))
+    :warms (dfor #(k v) (part WARM) :setv entry (warm-entry-from-json v) :if (is-not entry None) k entry)
     :handoffs (dfor #(k v) (part HANDOFF) k (handoff-watch-from-json v))
     :audit (tuple (gfor #(_ e) (part "audit/") e))
     :board (dfor #(k v) (part BOARD) k (get v "value"))

@@ -17,9 +17,23 @@
 
 (deftest test-a-service-names-its-program-by-module-and-attribute
   (assert (= tally (ServiceDef "tally" "tests.fixtures.services:tally_program" "tests.fixtures.envs:plain_env"
-                               #(#("kind" "k3s")) #(#("base" 1) #("step" 2)) tally-program)))
+                               #("cluster-net") #(#("base" 1) #("step" 2)) tally-program)))
   ;; 実行先は参照を import して解く — 宣言した関数そのものに戻る。
   (assert (is (resolve tally.factory) tally-program)))
+
+
+(deftest test-a-service-without-needs-is-refused
+  ;; 要る能力を書かない宣言(どこにでも置ける仕事)は宣言の時点で断る(ADR-DOE-CLUSTER-001 R4b)。空の集合も同じ。
+  (with [raised (pytest.raises ValueError)]
+    (service "tally-nowhere" tally-program :env "m:e" :config {"step" 1 "base" 0}))
+  (assert (in "tally-nowhere" (str raised.value)))
+  (assert (in ":needs が空" (str raised.value)))
+  (with [(pytest.raises ValueError)]
+    (service "tally-empty" tally-program :env "m:e" :needs (frozenset) :config {"step" 1 "base" 0}))
+  ;; 旧い label の形(鍵=値)は能力の名として受けない。
+  (with [raised (pytest.raises ValueError)]
+    (service "tally-label" tally-program :env "m:e" :needs (frozenset ["kind=k3s"]) :config {"step" 1 "base" 0}))
+  (assert (in "kind=k3s" (str raised.value))))
 
 
 (deftest test-a-program-without-a-module-level-name-is-refused
@@ -28,28 +42,28 @@
     {:pre [(: n int)] :post [(: % int)]}
     n)
   (with [raised (pytest.raises ValueError)]
-    (service "inner" inner-program :env "m:e"))
+    (service "inner" inner-program :env "m:e" :needs (frozenset ["net"])))
   (assert (in "inner_program" (str raised.value)))
   (with [(pytest.raises ValueError)]
-    (service "anonymous" (fn [] None) :env "m:e")))
+    (service "anonymous" (fn [] None) :env "m:e" :needs (frozenset ["net"]))))
 
 
 (deftest test-option-keys-must-be-strings
   ;; 宣言は JSON で coordinator へ渡る。keyword の鍵({:step 2})を黙って通さず、service の名と項目を名指して断る。
   (with [raised (pytest.raises TypeError)]
-    (service "tally-keyword" tally-program :env "m:e" :config {:step 2}))
+    (service "tally-keyword" tally-program :env "m:e" :needs (frozenset ["net"]) :config {:step 2}))
   (assert (in "tally-keyword" (str raised.value)))
   (assert (in "config" (str raised.value))))
 
 
 (deftest test-an-unknown-update-form-is-refused
   (with [raised (pytest.raises ValueError)]
-    (service "tally-rolling" tally-program :env "m:e" :update "rolling"))
+    (service "tally-rolling" tally-program :env "m:e" :needs (frozenset ["net"]) :update "rolling"))
   (assert (in "rolling" (str raised.value))))
 
 
 (deftest test-every-option-reaches-the-coordinator-declaration
-  (setv handoff (service "tally-handoff" tally-program :env "m:e"
+  (setv handoff (service "tally-handoff" tally-program :env "m:e" :needs (frozenset ["net"])
                          :config {"step" 1 "base" 0}
                          :readiness {"windowSeconds" 30}
                          :update "handoff"
@@ -57,7 +71,7 @@
   (setv #(row) (system-declaration (System "handoff-system" #(handoff)) "rev1"))
   (assert (= row {"name" "tally-handoff"
                   "revision" "rev1"
-                  "requires" {}
+                  "needs" ["net"]
                   "run" {"kind" "service"
                          "factory" "tests.fixtures.services:tally_program"
                          "env" "m:e"
@@ -87,7 +101,7 @@
 
 (deftest test-the-single-main-and-the-worker-build-the-same-arguments
   ;; 宣言の :config に record を書いた service を、テスト用の main と実行先の入口(job_entry service)の両方で走らせる。
-  (setv recorded (service "tally-recorded" tally-program :env "tests.fixtures.envs:plain_env"
+  (setv recorded (service "tally-recorded" tally-program :env "tests.fixtures.envs:plain_env" :needs (frozenset ["net"])
                           :config {"step" 2 "base" 1 "record" RECORD}))
   (<- results list (system-main (System "recorded" #(recorded))))
   (assert (= results [3]))
@@ -105,14 +119,14 @@
 (deftest test-a-config-key-the-program-does-not-take-is-refused
   ;; 本体の引数に無い設定の鍵は、実行先で走らせた時に初めて落ちる。宣言の時点で service の名と鍵を名指して断る。
   (with [raised (pytest.raises TypeError)]
-    (service "tally-extra" tally-program :env "m:e" :config {"step" 1 "base" 0 "stride" 3}))
+    (service "tally-extra" tally-program :env "m:e" :needs (frozenset ["net"]) :config {"step" 1 "base" 0 "stride" 3}))
   (assert (in "tally-extra" (str raised.value)))
   (assert (in "stride" (str raised.value))))
 
 
 (deftest test-a-program-argument-missing-from-the-config-is-refused
   (with [raised (pytest.raises TypeError)]
-    (service "tally-short" tally-program :env "m:e" :config {"step" 1}))
+    (service "tally-short" tally-program :env "m:e" :needs (frozenset ["net"]) :config {"step" 1}))
   (assert (in "tally-short" (str raised.value)))
   (assert (in "base" (str raised.value))))
 
@@ -120,7 +134,7 @@
 (deftest test-a-program-cannot-take-the-assembly-field-as-an-argument
   ;; 実行先は record を本体へ渡さない。record という名の引数を持つ本体は、どの道でも同じ引数を受け取れないので宣言の時点で断る。
   (with [raised (pytest.raises TypeError)]
-    (service "flagged" flagged-program :env "m:e" :config {"record" True "step" 1}))
+    (service "flagged" flagged-program :env "m:e" :needs (frozenset ["net"]) :config {"record" True "step" 1}))
   (assert (in "flagged" (str raised.value)))
   (assert (in "record" (str raised.value))))
 
@@ -129,7 +143,7 @@
 
 (deftest test-an-env-setting-reaches-the-env-and-not-the-program
   ;; :env-config は coordinator へ渡る平たい設定に入り、実行先で env が読み、本体の引数には入らない。
-  (setv greeter (service "greeter" greeter-program :env "tests.fixtures.envs:greeting_env"
+  (setv greeter (service "greeter" greeter-program :env "tests.fixtures.envs:greeting_env" :needs (frozenset ["net"])
                          :config {"step-size" 2} :env-config {"greeting" "hi"}))
   (setv #(row) (system-declaration (System "greet" #(greeter)) "rev1"))
   (setv run-spec (get row "run"))
@@ -144,14 +158,14 @@
 
 (deftest test-a-program-argument-written-as-an-env-setting-is-refused
   (with [raised (pytest.raises TypeError)]
-    (service "greeter-misplaced" greeter-program :env "m:e" :config {} :env-config {"step-size" 2 "greeting" "hi"}))
+    (service "greeter-misplaced" greeter-program :env "m:e" :needs (frozenset ["net"]) :config {} :env-config {"step-size" 2 "greeting" "hi"}))
   (assert (in "greeter-misplaced" (str raised.value)))
   (assert (in "step-size" (str raised.value))))
 
 
 (deftest test-a-setting-owned-by-both-the-program-and-the-env-is-refused
   (with [raised (pytest.raises TypeError)]
-    (service "greeter-both" greeter-program :env "m:e" :config {"step-size" 2} :env-config {"step-size" 3 "greeting" "hi"}))
+    (service "greeter-both" greeter-program :env "m:e" :needs (frozenset ["net"]) :config {"step-size" 2} :env-config {"step-size" 3 "greeting" "hi"}))
   (assert (in "greeter-both" (str raised.value)))
   (assert (in "step-size" (str raised.value))))
 

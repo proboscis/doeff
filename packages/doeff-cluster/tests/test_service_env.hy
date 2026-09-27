@@ -47,12 +47,12 @@
 (deftest test-the-declaration-carries-the-runtime-env-and-refuses-base-from
   ;; 宣言の行が runtimeEnv を運ぶ。image の版を追う base-from の service を含む宣言は、commit が 2 つになるので断る。
   (<- declared-env RuntimeEnv (sample-env))
-  (val plain (service "quiet" quiet-program :env "tests.test_service_env:env" :config {"interval" 1.0}))
+  (val plain (service "quiet" quiet-program :env "tests.test_service_env:env" :needs (frozenset ["net"]) :config {"interval" 1.0}))
   (val rows (system-declaration (System "lab" #(plain)) "rev-1" :runtime-env declared-env))
   (<- env-json dict (runtime-env->json declared-env))
   (assert (= (get (get rows 0) "runtimeEnv") env-json) rows)
   (assert (not-in "runtimeEnv" (get (system-declaration (System "lab" #(plain)) "rev-1") 0)) "env を渡さない宣言は今の形のまま")
-  (val following (service "follow" quiet-program :env "tests.test_service_env:env" :config {"interval" 1.0}
+  (val following (service "follow" quiet-program :env "tests.test_service_env:env" :needs (frozenset ["net"]) :config {"interval" 1.0}
                           :base-from {"kind" "Deployment" "namespace" "n" "name" "d"}))
   (with [(pytest.raises ValueError)]
     (system-declaration (System "lab" #(plain following)) "rev-1" :runtime-env declared-env)))
@@ -63,7 +63,7 @@
   ;; 読めない宣言は断る。
   (<- declared-env RuntimeEnv (sample-env))
   (<- env-json dict (runtime-env->json declared-env))
-  (val row (get (system-declaration (System "lab" #((service "quiet" quiet-program :env "tests.test_service_env:env"
+  (val row (get (system-declaration (System "lab" #((service "quiet" quiet-program :env "tests.test_service_env:env" :needs (frozenset ["net"])
                                                              :config {"interval" 1.0})))
                                     "rev-1" :runtime-env declared-env)
                 0))
@@ -103,7 +103,7 @@
   ;; ready-instance)。worker が版を env のキーへ置き換えると両者が食い違い、env の service は Ready と数えられない(2026-09-26 の構成
   ;; レビューで見つけた欠陥)。版と指紋は両側で同じ・root の鍵だけが worker の中の値。
   (<- declared-env RuntimeEnv (sample-env))
-  (val row (get (system-declaration (System "lab" #((service "quiet" quiet-program :env "tests.test_service_env:env"
+  (val row (get (system-declaration (System "lab" #((service "quiet" quiet-program :env "tests.test_service_env:env" :needs (frozenset ["net"])
                                                              :config {"interval" 1.0} :update "handoff"
                                                              :readiness {"windowSeconds" 30})))
                                     "rev-1" :runtime-env declared-env)
@@ -170,7 +170,7 @@
   "service 1 本を宣言から env の root で起こして終わるまで待つ(宣言 → coordinator → heartbeat の返事 → worker の JobSpec → 準備 →
    入口の検め → 子)。答え = service が out に書いた行。"
   (import appservice)
-  (val declared (service "reporter" appservice.report-service :env "appjobs:env" :config {"out" (str out)}))
+  (val declared (service "reporter" appservice.report-service :env "appjobs:env" :needs (frozenset ["net"]) :config {"out" (str out)}))
   (val row (get (system-declaration (System "lab" #(declared)) "rev" :runtime-env env) 0))
   (val spec (declared-job-spec (spec-json (. (job-from-json row) spec))))
   (<- view (prepare rig env))

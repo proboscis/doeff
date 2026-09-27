@@ -9,7 +9,7 @@
 ;; 筋書き: 送って待つ / 同じ key の送り直し / 呼び手が消えても続き再接続 / 結果の後の担い手の死 / 走っている間の担い手の死 /
 ;;         lease は担い手が延ばす / 取り消し / Program の例外 / 知らない key と解放 / timeout / 版の不一致 / key の衝突。
 ;; その後に coordinator の判断(純粋な関数)と worker の途絶の検。
-(require doeff-hy.macros [deftest defk defhandler <-])
+(require doeff-hy.macros [deftest defk defhandler <- val])
 (import collections.abc [Callable])
 (import json)
 (import time)
@@ -23,7 +23,7 @@
 (import doeff_core_effects.scheduler [Spawn Cancel TaskCancelledError])
 (import doeff_time [Delay SimClock sim-time-handler async-time-handler])
 (import tests.clock_fixtures [clock-ms])
-(import doeff_cluster.cluster_model [ClusterState ClusterTiming Request Requirement ComponentVersion])
+(import doeff_cluster.cluster_model [ClusterState ClusterTiming Request ComponentVersion])
 (import doeff_cluster.detached_policy [Reply submit-detached])
 (import doeff_cluster.api_policy [respond tick])
 (import doeff_cluster.handlers [CoordinatorLink])
@@ -33,10 +33,12 @@
 (import doeff_cluster.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached SimulateRunnerLoss
                                       DetachedSubmitted DetachedSucceeded DetachedFailed DetachedLost DetachedCancelled
                                       DetachedVersionMismatch DetachedUnknown DetachedPending DetachedRefused])
-(import doeff_cluster.detached [detached-local DetachedLocalStore detached-cluster DetachedClient])
+(import doeff_cluster.detached [detached-local DetachedLocalStore detached-cluster DetachedClient DEFAULT-RUNNER-PROVIDES])
 (import tests.detached_rig [ENV slow-add RigWorker MemoryCoordinator worker-tick worker-loop])
 
 (setv OTHER-VERSIONS {"python" "0.0.0" "doeff" "0"})
+;; 筋書きの task が要る能力: 3 つの組の担い手(模擬の既定の担い手・RigWorker の既定)が共に提供する local。
+(setv LOCAL (frozenset DEFAULT-RUNNER-PROVIDES))
 
 
 (defk boom []
@@ -148,7 +150,7 @@
 
 (defk submit-and-await [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
-  (<- submitted DetachedSubmitted (SubmitDetached (slow-add rig.slow 1) :env ENV :key "k-basic" :lease-seconds rig.lease))
+  (<- submitted DetachedSubmitted (SubmitDetached (slow-add rig.slow 1) :env ENV :needs LOCAL :key "k-basic" :lease-seconds rig.lease))
   (assert (= submitted (DetachedSubmitted "k-basic" True)))
   (<- outcome (AwaitDetached "k-basic"))
   (assert (= outcome (DetachedSucceeded 101)) outcome)
@@ -162,13 +164,13 @@
 
 (defk resubmit-same-key [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
-  (<- first DetachedSubmitted (SubmitDetached (slow-add rig.slow 2) :env ENV :key "k-idem" :lease-seconds rig.lease))
-  (<- second DetachedSubmitted (SubmitDetached (slow-add rig.slow 2) :env ENV :key "k-idem" :lease-seconds rig.lease))
+  (<- first DetachedSubmitted (SubmitDetached (slow-add rig.slow 2) :env ENV :needs LOCAL :key "k-idem" :lease-seconds rig.lease))
+  (<- second DetachedSubmitted (SubmitDetached (slow-add rig.slow 2) :env ENV :needs LOCAL :key "k-idem" :lease-seconds rig.lease))
   (assert (= #(first.created second.created) #(True False)))
   (<- outcome (AwaitDetached "k-idem"))
   (assert (= outcome (DetachedSucceeded 102)) outcome)
   ;; 終わった後の送り直しも同じ行(走らせ直さない)。
-  (<- third DetachedSubmitted (SubmitDetached (slow-add rig.slow 2) :env ENV :key "k-idem" :lease-seconds rig.lease))
+  (<- third DetachedSubmitted (SubmitDetached (slow-add rig.slow 2) :env ENV :needs LOCAL :key "k-idem" :lease-seconds rig.lease))
   (assert (not third.created))
   (assert (= (rig.runs "k-idem") 1))
   True)
@@ -181,14 +183,14 @@
 
 (defk submit-then-wait [key seconds lease]
   {:pre [(: key str) (: seconds float) (: lease float)] :post [(: % DetachedSucceeded)]}
-  (<- (SubmitDetached (slow-add seconds 3) :env ENV :key key :lease-seconds lease))
+  (<- (SubmitDetached (slow-add seconds 3) :env ENV :needs LOCAL :key key :lease-seconds lease))
   (<- outcome (AwaitDetached key))
   outcome)
 
 (defk task-longer-than-the-lease [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
   ;; lease は担い手が延ばす: lease の 2 倍かかる task も、担い手が生きている限り消えない(呼び手の問い合わせは無くてよい)。
-  (<- (SubmitDetached (slow-add (* rig.lease 2) 11) :env ENV :key "k-long" :lease-seconds rig.lease))
+  (<- (SubmitDetached (slow-add (* rig.lease 2) 11) :env ENV :needs LOCAL :key "k-long" :lease-seconds rig.lease))
   (<- outcome (AwaitDetached "k-long"))
   (assert (= outcome (DetachedSucceeded 111)) outcome)
   True)
@@ -220,7 +222,7 @@
 
 (defk result-outlives-the-runner [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
-  (<- (SubmitDetached (slow-add 0.0 4) :env ENV :key "k-kept" :lease-seconds rig.lease))
+  (<- (SubmitDetached (slow-add 0.0 4) :env ENV :needs LOCAL :key "k-kept" :lease-seconds rig.lease))
   (<- outcome (AwaitDetached "k-kept"))
   (assert (= outcome (DetachedSucceeded 104)) outcome)
   ;; 結果の後に担い手が死んでも、結果は保持する(lease が切れる時間を過ぎても)。
@@ -239,14 +241,14 @@
 
 (defk runner-dies-mid-run [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
-  (<- (SubmitDetached (slow-add (* rig.slow 10) 5) :env ENV :key "k-lost" :lease-seconds rig.lease))
+  (<- (SubmitDetached (slow-add (* rig.slow 10) 5) :env ENV :needs LOCAL :key "k-lost" :lease-seconds rig.lease))
   (<- (Delay (* rig.slow 0.3)))
   (<- lost int (SimulateRunnerLoss))
   (assert (= lost 1))
   (<- outcome (AwaitDetached "k-lost"))
   (assert (isinstance outcome DetachedLost) outcome)
   ;; 走らせ直さない(同じ key の送り直しは消えた行を返すだけ)。
-  (<- again DetachedSubmitted (SubmitDetached (slow-add 0.0 5) :env ENV :key "k-lost" :lease-seconds rig.lease))
+  (<- again DetachedSubmitted (SubmitDetached (slow-add 0.0 5) :env ENV :needs LOCAL :key "k-lost" :lease-seconds rig.lease))
   (assert (not again.created))
   (<- still (AwaitDetached "k-lost"))
   (assert (isinstance still DetachedLost) still)
@@ -260,7 +262,7 @@
 
 (defk cancel-open-and-finished [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
-  (<- (SubmitDetached (slow-add (* rig.slow 10) 6) :env ENV :key "k-cancel" :lease-seconds rig.lease))
+  (<- (SubmitDetached (slow-add (* rig.slow 10) 6) :env ENV :needs LOCAL :key "k-cancel" :lease-seconds rig.lease))
   (<- (Delay (* rig.slow 0.3)))
   (<- cancelled bool (CancelDetached "k-cancel"))
   (assert cancelled)
@@ -269,7 +271,7 @@
   (<- twice bool (CancelDetached "k-cancel"))
   (assert (not twice))
   ;; 終わった後の取り消しは何もしない(結果は保持)。
-  (<- (SubmitDetached (slow-add 0.0 7) :env ENV :key "k-done" :lease-seconds rig.lease))
+  (<- (SubmitDetached (slow-add 0.0 7) :env ENV :needs LOCAL :key "k-done" :lease-seconds rig.lease))
   (<- done (AwaitDetached "k-done"))
   (assert (= done (DetachedSucceeded 107)) done)
   (<- late bool (CancelDetached "k-done"))
@@ -288,7 +290,7 @@
 
 (defk program-raises [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
-  (<- (SubmitDetached (boom) :env ENV :key "k-boom" :lease-seconds rig.lease))
+  (<- (SubmitDetached (boom) :env ENV :needs LOCAL :key "k-boom" :lease-seconds rig.lease))
   (<- outcome (AwaitDetached "k-boom"))
   (assert (isinstance outcome DetachedFailed) outcome)
   (assert (= outcome.kind "ValueError"))
@@ -306,7 +308,7 @@
   {:pre [(: rig Rig)] :post [(: % bool)]}
   (<- nothing (AwaitDetached "k-nope"))
   (assert (= nothing (DetachedUnknown "k-nope")))
-  (<- (SubmitDetached (slow-add 0.0 8) :env ENV :key "k-release" :lease-seconds rig.lease))
+  (<- (SubmitDetached (slow-add 0.0 8) :env ENV :needs LOCAL :key "k-release" :lease-seconds rig.lease))
   (<- done (AwaitDetached "k-release"))
   (assert (= done (DetachedSucceeded 108)))
   (<- released bool (ReleaseDetached "k-release"))
@@ -316,12 +318,12 @@
   (<- again bool (ReleaseDetached "k-release"))
   (assert (not again))
   ;; 解放した key は送り直せる(新しい task)。
-  (<- fresh DetachedSubmitted (SubmitDetached (slow-add 0.0 9) :env ENV :key "k-release" :lease-seconds rig.lease))
+  (<- fresh DetachedSubmitted (SubmitDetached (slow-add 0.0 9) :env ENV :needs LOCAL :key "k-release" :lease-seconds rig.lease))
   (assert fresh.created)
   (<- rerun (AwaitDetached "k-release"))
   (assert (= rerun (DetachedSucceeded 109)))
   ;; まだ終わっていない task は解放できない(先に取り消す)。
-  (<- (SubmitDetached (slow-add (* rig.slow 10) 1) :env ENV :key "k-open" :lease-seconds rig.lease))
+  (<- (SubmitDetached (slow-add (* rig.slow 10) 1) :env ENV :needs LOCAL :key "k-open" :lease-seconds rig.lease))
   (setv refused None)
   (try
     (<- (ReleaseDetached "k-open"))
@@ -338,7 +340,7 @@
 
 (defk await-times-out [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
-  (<- (SubmitDetached (slow-add rig.slow 10) :env ENV :key "k-timeout" :lease-seconds rig.lease))
+  (<- (SubmitDetached (slow-add rig.slow 10) :env ENV :needs LOCAL :key "k-timeout" :lease-seconds rig.lease))
   (<- pending (AwaitDetached "k-timeout" :timeout-seconds (* rig.slow 0.2)))
   (assert (isinstance pending DetachedPending) pending)
   (<- outcome (AwaitDetached "k-timeout"))
@@ -353,7 +355,7 @@
 
 (defk versions-differ [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
-  (<- submitted DetachedSubmitted (SubmitDetached (slow-add 0.0 1) :env ENV :key "k-version" :lease-seconds rig.lease))
+  (<- submitted DetachedSubmitted (SubmitDetached (slow-add 0.0 1) :env ENV :needs LOCAL :key "k-version" :lease-seconds rig.lease))
   (assert submitted.created)
   (<- outcome (AwaitDetached "k-version"))
   (assert (isinstance outcome DetachedVersionMismatch) outcome)
@@ -368,10 +370,10 @@
 
 (defk same-key-other-work [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
-  (<- (SubmitDetached (slow-add 0.0 1) :env ENV :key "k-conflict" :name "a" :lease-seconds rig.lease))
+  (<- (SubmitDetached (slow-add 0.0 1) :env ENV :needs LOCAL :key "k-conflict" :name "a" :lease-seconds rig.lease))
   (setv refused None)
   (try
-    (<- (SubmitDetached (slow-add 0.0 1) :env ENV :key "k-conflict" :name "b" :lease-seconds rig.lease))
+    (<- (SubmitDetached (slow-add 0.0 1) :env ENV :needs LOCAL :key "k-conflict" :name "b" :lease-seconds rig.lease))
     (except [error DetachedRefused] (setv refused error)))
   (assert (and refused (= refused.status 409)) refused)
   (<- outcome (AwaitDetached "k-conflict"))
@@ -384,35 +386,58 @@
   (assert ok))
 
 
-(defk same-key-other-requires [rig]
+(defk same-key-other-needs [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
-  ;; 同じ key で実行先の条件(Requirement)だけが違う送り直しも別の仕事 — 409。
-  (<- (SubmitDetached (slow-add (* rig.slow 10) 1) :env ENV :key "k-requires" :requires #((Requirement "role" "a"))
-                      :lease-seconds rig.lease))
+  ;; 同じ key で要る能力(needs)だけが違う送り直しも別の仕事 — 409。
+  (<- (SubmitDetached (slow-add (* rig.slow 10) 1) :env ENV :key "k-needs" :needs LOCAL :lease-seconds rig.lease))
   (setv refused None)
   (try
-    (<- (SubmitDetached (slow-add 0.0 1) :env ENV :key "k-requires" :requires #((Requirement "role" "b"))
-                        :lease-seconds rig.lease))
+    (<- (SubmitDetached (slow-add 0.0 1) :env ENV :key "k-needs" :needs (| LOCAL #{"gpu"}) :lease-seconds rig.lease))
     (except [error DetachedRefused] (setv refused error)))
   (assert (and refused (= refused.status 409)) refused)
-  (<- (CancelDetached "k-requires"))
+  (<- (CancelDetached "k-needs"))
   True)
 
-(deftest test-same-key-for-other-requires-is-refused [open-rig tmp-path request]
+(deftest test-same-key-for-other-needs-is-refused [open-rig tmp-path request]
   {:params {"open_rig" RIGS}}
-  (<- ok (run-scenario (open-rig tmp-path request) same-key-other-requires))
+  (<- ok (run-scenario (open-rig tmp-path request) same-key-other-needs))
   (assert ok))
 
 
-(deftest test-submit-detached-requires-is-a-tuple-of-requirement
-  ;; 対の生の tuple は受けない(欄の名 label・value を型が持つ)。
-  (setv raised None)
+(defk effect-refusal [make]
+  {:pre [(: make Callable)] :post [(: % str)]}
+  "effect を作って TypeError の文を返す(作れてしまえば AssertionError)。"
   (try
-    (SubmitDetached (slow-add 0.0 1) :env ENV :key "k" :requires #(#("kind" "k3s")))
-    (except [error TypeError] (setv raised error)))
-  (assert (is-not raised None))
-  (assert (= (. (SubmitDetached (slow-add 0.0 1) :env ENV :key "k" :requires #((Requirement "kind" "k3s"))) requires)
-             #((Requirement :label "kind" :value "k3s")))))
+    (make)
+    (except [error TypeError]
+      (return (str error))))
+  (raise (AssertionError "needs の誤りを作る時に断らなかった")))
+
+
+(deftest test-the-three-effects-refuse-empty-or-old-needs
+  ;; SubmitDetached・RemoteJob・WarmRuntimeEnv は needs を能力の名の空でない frozenset でだけ作れる(ADR-DOE-CLUSTER-001 R4b)。
+  ;; 空(書き忘れ)・旧い Requirement の組の tuple・label の形の名は、送る前の作る時点で TypeError。
+  (import doeff_cluster.remote_model [RemoteJob])
+  (import doeff_cluster.warm_model [WarmRuntimeEnv])
+  (import tests.env_fixtures [LOCK env-of])
+  (<- env (env-of "app-1" "lib-1" LOCK))
+  (val makers {"SubmitDetached" (fn [needs] (SubmitDetached (slow-add 0.0 1) :env ENV :key "k" :needs needs))
+               "RemoteJob" (fn [needs] (RemoteJob (slow-add 0.0 1) :env ENV :needs needs))
+               "WarmRuntimeEnv" (fn [needs] (WarmRuntimeEnv env needs 60.0 "tests"))})
+  (for [#(name make) (.items makers)]
+    (<- empty (effect-refusal (fn [] (make (frozenset)))))
+    (assert (and (in name empty) (in "空" empty)) empty)
+    ;; 旧い形: Requirement の (label value) の組の tuple。
+    (<- old (effect-refusal (fn [] (make #(#("kind" "k3s"))))))
+    (assert (in "frozenset" old) old)
+    (<- label (effect-refusal (fn [] (make (frozenset ["kind=k3s"])))))
+    (assert (in "kind=k3s" label) label)
+    (assert (= (. (make (frozenset ["cluster-net"])) needs) (frozenset ["cluster-net"]))))
+  ;; 書き忘れ(既定の空)も断る。
+  (<- missing (effect-refusal (fn [] (SubmitDetached (slow-add 0.0 1) :env ENV :key "k"))))
+  (assert (in "空" missing) missing)
+  (<- missing-remote (effect-refusal (fn [] (RemoteJob (slow-add 0.0 1) :env ENV))))
+  (assert (in "空" missing-remote) missing-remote))
 
 
 ;; --- coordinator の判断(純粋な関数)と worker の途絶 -------------------------------------------------------------
@@ -430,13 +455,13 @@
 (defn call [state method path now [body None]]
   (respond state (Request method path {} body :actor "test") now T))
 
-(defn beat [state name now [boot "b1"] [statuses None] [boot-at None] [labels None]]
-  (call state "POST" "/heartbeat" now (| {"name" name "labels" (or labels {}) "capacity" 10 "versions" V "boot" boot
+(defn beat [state name now [boot "b1"] [statuses None] [boot-at None] [provides None]]
+  (call state "POST" "/heartbeat" now (| {"name" name "provides" (or provides ["net"]) "capacity" 10 "versions" V "boot" boot
                                           "statuses" (or statuses [])}
                                          (if (is boot-at None) {} {"bootAt" boot-at}))))
 
 (defn put-detached [state key now [lease 10.0] [retain 100.0]]
-  (call state "PUT" (+ "/detached/" key) now {"env" "m:e" "blob" "B" "versions" V "revision" "r" "requires" {}
+  (call state "PUT" (+ "/detached/" key) now {"env" "m:e" "blob" "B" "versions" V "revision" "r" "needs" ["net"]
                                               "leaseSeconds" lease "retainSeconds" retain}))
 
 ;; 読みの時刻は coordinator が起きてからの猶予(lease-ms)の後(猶予の内の知らない key は warming — detached_policy.detached-read)。
@@ -631,7 +656,7 @@
   (setv #(s _ reply) (put-detached s "job-amnesia" 0 :lease 10.0 :retain 100.0))
   (setv id (get reply "task"))
   (setv #(s _ body) (beat s "w" 100 :boot-at 1000))
-  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" {} 10 60000 :task-dir (str (/ tmp-path "tasks"))))
+  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" #() 10 60000 :task-dir (str (/ tmp-path "tasks"))))
   (setv #(before) (.accept-tasks link (get body "tasks")))
   (setv rows (.report link #((JobStatus (+ "task/" id) JobPhase.RUNNING "r" "r" 42 1))))
   ;; 置き場を失った coordinator が起きる: 走っている task を同じ行で引き取り、同じ heartbeat の返事に載せる。
@@ -658,17 +683,17 @@
   (assert (= (get body "tasks") []) body))
 
 
-;; 直すべき所(構成レビュー 2026-09-27): 起きた直後の読み・requires・終わった報告・id の振り直し・欠けた写し。
+;; 直すべき所(構成レビュー 2026-09-27): 起きた直後の読み・needs・終わった報告・id の振り直し・欠けた写し。
 
-(defn #^ tuple placed-echo [#^ Path tmp-path #^ dict [requires None]]
+(defn #^ tuple placed-echo [#^ Path tmp-path #^ (| list None) [needs None]]
   "もとの coordinator が task を置き、worker が受けて状態の報告に写しを添えるまで。返り値 #(もとの状態 id 報告を作る link 元の spec)。"
-  (setv labels (or requires {}))
-  (setv #(s _ _) (beat (ClusterState) "w" 0 :boot-at 1000 :labels labels))
-  (setv #(s _ reply) (call s "PUT" "/detached/job-e" 0 {"env" "m:e" "blob" "B" "versions" V "revision" "r" "requires" labels
+  (setv caps (or needs ["net"]))
+  (setv #(s _ _) (beat (ClusterState) "w" 0 :boot-at 1000 :provides caps))
+  (setv #(s _ reply) (call s "PUT" "/detached/job-e" 0 {"env" "m:e" "blob" "B" "versions" V "revision" "r" "needs" caps
                                                         "leaseSeconds" 10.0 "retainSeconds" 100.0}))
   (setv id (get reply "task"))
-  (setv #(s _ body) (beat s "w" 100 :boot-at 1000 :labels labels))
-  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" {} 10 60000 :task-dir (str (/ tmp-path "tasks"))))
+  (setv #(s _ body) (beat s "w" 100 :boot-at 1000 :provides caps))
+  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" #() 10 60000 :task-dir (str (/ tmp-path "tasks"))))
   (setv #(spec) (.accept-tasks link (get body "tasks")))
   #(s id link spec))
 
@@ -688,12 +713,11 @@
   (assert (= #(status (get view "phase")) #(200 "unknown")) view))
 
 
-(deftest test-an-adopted-task-keeps-its-requirements [tmp-path]
-  (setv #(s id link spec) (placed-echo tmp-path {"kind" "k3s"}))
+(deftest test-an-adopted-task-keeps-its-needs [tmp-path]
+  (setv #(s id link spec) (placed-echo tmp-path ["cluster-net"]))
   (setv rows (.report link #((JobStatus (+ "task/" id) JobPhase.RUNNING "r" "r" 42 1))))
-  (setv #(fresh _ _) (beat (ClusterState) "w" 5000 :boot-at 1000 :statuses rows :labels {"kind" "k3s"}))
-  (assert (= (. (get fresh.tasks id) requires) (. (get s.tasks id) requires) #((Requirement "kind" "k3s"))))
-  (assert (= (. (get fresh.tasks id) requires) (. (get s.tasks id) requires))))
+  (setv #(fresh _ _) (beat (ClusterState) "w" 5000 :boot-at 1000 :statuses rows :provides ["cluster-net"]))
+  (assert (= (. (get fresh.tasks id) needs) (. (get s.tasks id) needs) #("cluster-net"))))
 
 
 (deftest test-an-empty-coordinator-adopts-a-finished-task-with-its-result [tmp-path]
@@ -716,7 +740,7 @@
   (setv fresh (load-state (str (/ tmp-path "state.json")) (WalStore (str (/ tmp-path "wal"))) 123456))
   (setv #(fresh _ _) (beat fresh "other" 123500))
   (setv #(fresh _ reply) (call fresh "PUT" "/detached/job-new" (+ 123500 T.lease-ms)
-                               {"env" "m:e" "blob" "NEW" "versions" V "revision" "r" "requires" {} "leaseSeconds" 10.0}))
+                               {"env" "m:e" "blob" "NEW" "versions" V "revision" "r" "needs" ["net"] "leaseSeconds" 10.0}))
   (assert (!= (get reply "task") id) #(reply id))
   (assert (= fresh.task-prefix "t1e240-") fresh.task-prefix)
   ;; 頭は保存と読み直しで戻る(state JSON と durable kv)。
@@ -737,7 +761,7 @@
 
 (defk amnesia-scenario [coordinator]
   {:pre [(: coordinator MemoryCoordinator)] :post [(: % bool)]}
-  (<- (SubmitDetached (slow-add 3.0 1) :env ENV :key "k-amnesia" :lease-seconds 5.0))
+  (<- (SubmitDetached (slow-add 3.0 1) :env ENV :needs LOCAL :key "k-amnesia" :lease-seconds 5.0))
   (<- (Delay 1.0))
   ;; coordinator が置き場を失って起き直す(task の行も worker の名乗りも無い)。呼び手はすぐ読む — worker の最初の heartbeat より
   ;; 先に届く読みも「知らない」と答えない(送り直させて並走させない)。
@@ -809,7 +833,7 @@
 (deftest test-remote-job-tasks-keep-their-caller-bound-lifetime
   ;; RemoteJob の task(/tasks)は今までどおり: 呼び手の問い合わせが lease を延ばし、drain は数えず、途絶で止める。
   (setv #(s _ _) (beat (ClusterState) "w" 0))
-  (setv #(s _ body) (call s "POST" "/tasks" 0 {"env" "m:e" "blob" "B" "versions" V "revision" "r" "requires" {}
+  (setv #(s _ body) (call s "POST" "/tasks" 0 {"env" "m:e" "blob" "B" "versions" V "revision" "r" "needs" ["net"]
                                                "name" "n" "leaseSeconds" 5.0}))
   (setv id (get body "task"))
   (setv #(s _ body) (beat s "w" 100))
@@ -827,26 +851,27 @@
         plain (JobSpec "plain" "doeff_cluster.job_entry" #() "r"))
   (assert (= (kept-when-cut-off #(detached remote writer plain)) #(detached writer)))
   ;; CoordinatorLink: 途絶が fence を越えたら、最後に受け取った宣言のうち切り離した task を動かし続ける
-  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" {} 1 60000))
+  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" #() 1 60000))
   (setv link.last-tasks #(detached remote) link.fence-ms 0 link.last-ok (- (time.monotonic) 1))
   (assert (= (.poll link) (DesiredJobs #(detached)))))
 
 
-(deftest test-detached-task-keeps-typed-requirements-and-versions-through-the-saved-state
-  ;; 口の答えは Reply(状態・status・本文)。task の行は条件を Requirement・版を ComponentVersion で持ち、保存と読み直しの後も同じ型。
+(deftest test-detached-task-keeps-typed-needs-and-versions-through-the-saved-state
+  ;; 口の答えは Reply(状態・status・本文)。task の行は needs を能力の名の名の順の tuple・版を ComponentVersion で持ち、保存と読み直しの
+  ;; 後も同じ型。
   (setv #(s _ _) (beat (ClusterState) "w" 0))
-  (setv reply (submit-detached s "job-typed" {"env" "m:e" "blob" "B" "versions" V "revision" "r" "requires" {"role" "x" "kind" "k3s"}}
+  (setv reply (submit-detached s "job-typed" {"env" "m:e" "blob" "B" "versions" V "revision" "r" "needs" ["x-tool" "cluster-net" "x-tool"]}
                                100))
   (assert (isinstance reply Reply))
   (assert (= #(reply.status (get reply.body "created")) #(200 True)))
   (setv task (get reply.state.tasks (get reply.body "task")))
-  (assert (= task.requires #((Requirement "kind" "k3s") (Requirement "role" "x"))))
-  (assert (all (gfor item task.requires (isinstance item Requirement))))
+  (assert (= task.needs #("cluster-net" "x-tool")))
+  (assert (all (gfor item task.needs (isinstance item str))))
   (assert (= task.versions #((ComponentVersion "doeff" "1") (ComponentVersion "python" "3.14.0"))))
   (assert (all (gfor item task.versions (isinstance item ComponentVersion))))
   (setv again (get (. (state-from-kv (full-kv reply.state) 0) tasks) task.id))
   (assert (= again task))
-  (assert (all (gfor item (+ again.requires again.versions) (isinstance item #(Requirement ComponentVersion))))))
+  (assert (= again.needs #("cluster-net" "x-tool"))))
 
 
 (deftest test-submit-refusals
@@ -856,5 +881,45 @@
   (setv #(_ status _) (put-detached s "job-9" 0 :retain (* 31 24 3600.0)))
   (assert (= status 400))
   (setv #(s _ _) (put-detached s "job-9" 0))
-  (setv #(_ status body) (call s "PUT" "/detached/job-9" 0 {"env" "other:env" "blob" "B" "versions" V "revision" "r"}))
+  (setv #(_ status body) (call s "PUT" "/detached/job-9" 0 {"env" "other:env" "blob" "B" "versions" V "revision" "r" "needs" ["net"]}))
   (assert (= status 409) body))
+
+
+(deftest test-bodies-without-needs-or-with-old-requires-are-refused-with-a-reason
+  ;; 要る能力を書かない本文(needs が無い・空)と旧い形の requires の本文は、POST /tasks・PUT /detached・POST /warm のどれでも
+  ;; 400 で理由を返し、状態を変えない(ADR-DOE-CLUSTER-001 R4b — どこにでも置ける仕事は無い・label の照合は受け付けない)。
+  (import tests.env_fixtures [LOCK env-of])
+  (import doeff_cluster.runtime_env_model [runtime-env->json])
+  (<- env (env-of "app-1" "lib-1" LOCK))
+  (<- declared (runtime-env->json env))
+  (setv #(s _ _) (beat (ClusterState) "w" 0))
+  (val task {"env" "m:e" "blob" "B" "versions" V "revision" "r" "leaseSeconds" 10.0})
+  (val warm {"runtimeEnv" declared "ttlSeconds" 60 "holder" "svc-a"})
+  (val routes [#("POST" "/tasks" task) #("PUT" "/detached/job-n" task) #("POST" "/warm" warm)])
+  (for [#(method path base) routes]
+    (for [#(extra reason) [#({} "空") #({"needs" []} "空") #({"requires" {"kind" "k3s"}} "旧い形の requires")
+                           #({"requires" {"kind" "k3s"} "needs" ["net"]} "旧い形の requires")
+                           #({"needs" ["kind=k3s"]} "label の形") #({"needs" {"kind" "k3s"}} "label の object")]]
+      (setv #(after status body) (call s method path 10 (| base extra)))
+      (assert (= status 400) #(method path extra status body))
+      (assert (in reason (get body "error")) #(method path extra body))
+      (assert (is after s) #(method path extra)))
+    ;; needs を書けば同じ本文が通る(断りは needs の欠けだけによる)。
+    (setv #(_ status body) (call s method path 10 (| base {"needs" ["net"]})))
+    (assert (= status 200) #(method path status body))))
+
+
+(deftest test-a-heartbeat-with-only-labels-is-refused
+  ;; 旧い worker の名乗り(labels だけ・provides が無い)は 400 で理由を返し、worker を名簿に載せない。
+  (setv #(after status body) (call (ClusterState) "POST" "/heartbeat" 0
+                                   {"name" "old" "labels" {"kind" "k3s"} "capacity" 10 "versions" V "boot" "b1" "statuses" []}))
+  (assert (= status 400) body)
+  (assert (in "旧い形の labels" (get body "error")) body)
+  (assert (not-in "old" after.workers))
+  ;; provides の外の exclusive・label の形の名も断る。
+  (setv #(_ status body) (call (ClusterState) "POST" "/heartbeat" 0
+                               {"name" "w" "provides" ["net"] "exclusive" ["gpu"] "capacity" 10 "versions" V "statuses" []}))
+  (assert (= status 400) body)
+  (setv #(_ status body) (call (ClusterState) "POST" "/heartbeat" 0
+                               {"name" "w" "provides" ["kind=k3s"] "capacity" 10 "versions" V "statuses" []}))
+  (assert (= status 400) body))

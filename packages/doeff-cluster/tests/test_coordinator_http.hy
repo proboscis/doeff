@@ -116,7 +116,7 @@
 (deftest test-heartbeat-silence-is-counted-across-an-address-switch
   ;; 自己停止の数え方(最後に届いた時刻)は宛先と無関係。宛先を替えても続き、替えた先で届けば 0 に戻る。
   (import time)
-  (setv net (FakeNet) link (CoordinatorLink f"{LAN},{TS}" "w" {} 1 20000 :transport (.transport net)))
+  (setv net (FakeNet) link (CoordinatorLink f"{LAN},{TS}" "w" #() 1 20000 :transport (.transport net)))
   (.update net.down #{"lan" "tailnet"})
   (setv link.last-ok (- (time.monotonic) 5))
   (setv first (.poll link))

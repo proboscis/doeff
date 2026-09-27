@@ -23,7 +23,7 @@
 (import doeff_cluster.detached [detached-local DetachedLocalStore])
 (import doeff_cluster.remote_model [version-diffs VersionDiff VersionMismatch failed-from])
 (import doeff_cluster.detached_model [outcome-from-task-outcome])
-(import doeff_cluster.cluster_model [ClusterState ClusterTiming TaskRecord WorkerInfo ComponentVersion Requirement])
+(import doeff_cluster.cluster_model [ClusterState ClusterTiming TaskRecord WorkerInfo ComponentVersion])
 (import doeff_cluster.cluster_policy [can-run-task absorb-env-failure place-tasks submit-task ENV-RETRIES])
 (import doeff_cluster.detached_policy [submit-detached])
 (import doeff_cluster.worker_model [JobSpec CodeView CodeState WorldView JobRecord WorkerPolicy JobPhase PrepareEnv
@@ -55,7 +55,7 @@
 (defk send-and-wait [store key n]
   {:pre [(: store DetachedLocalStore) (: key str) (: n int)] :post [(: % DetachedAwaited)]}
   "store の送り手の env で 1 本送り、答えを待つ。"
-  (<- ((detached-local store) (SubmitDetached (add-base n) :env "tests.fixtures.envs:plain_env" :key key)))
+  (<- ((detached-local store) (SubmitDetached (add-base n) :env "tests.fixtures.envs:plain_env" :needs (frozenset ["local"]) :key key)))
   (<- outcome ((detached-local store) (AwaitDetached key)))
   outcome)
 
@@ -98,8 +98,8 @@
   "筋書き 6: 同じ env の task を 2 本同時に送る → 準備は 1 本・2 本とも走る。"
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (val store (DetachedLocalStore :runtime-env env))
-  (<- ((detached-local store) (SubmitDetached (add-base 1) :env "tests.fixtures.envs:plain_env" :key "a")))
-  (<- ((detached-local store) (SubmitDetached (add-base 2) :env "tests.fixtures.envs:plain_env" :key "b")))
+  (<- ((detached-local store) (SubmitDetached (add-base 1) :env "tests.fixtures.envs:plain_env" :needs (frozenset ["local"]) :key "a")))
+  (<- ((detached-local store) (SubmitDetached (add-base 2) :env "tests.fixtures.envs:plain_env" :needs (frozenset ["local"]) :key "b")))
   (<- a ((detached-local store) (AwaitDetached "a")))
   (<- b ((detached-local store) (AwaitDetached "b")))
   (<- log EnvWorldLog (read-world-log))
@@ -159,14 +159,14 @@
   {:pre [(: env RuntimeEnv)] :post [(: % TaskRecord)]}
   "env を持つ待ちの task 1 本(送り手の版は worker と違う)。"
   (<- declared dict (runtime-env->json env))
-  (TaskRecord "t1" "" "tests.fixtures.envs:plain_env" "blob" "" #((ComponentVersion "doeff" "old")) #() 60000 60000 0
+  (TaskRecord "t1" "" "tests.fixtures.envs:plain_env" "blob" "" #((ComponentVersion "doeff" "old")) #("net") 60000 60000 0
               :runtime-env declared))
 
 
 (deftest test-env-tasks-are-placed-without-comparing-worker-versions
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- task TaskRecord (env-task env))
-  (val worker (WorkerInfo "w1" #() 1 0 #((ComponentVersion "doeff" "new"))))
+  (val worker (WorkerInfo "w1" #("net") 1 0 #((ComponentVersion "doeff" "new"))))
   (assert (can-run-task task worker) "env の task は worker の版と比べない")
   (assert (not (can-run-task (replace task :runtime-env None) worker)) "今の commit だけの task は今のまま版を比べる")
   (assert (not (can-run-task (replace task :avoid #("w1")) worker)) "準備に一時の失敗をした worker には置き直さない"))
@@ -190,7 +190,7 @@
   ;; 置き直せる別の worker が無ければ、最後の失敗で終える
   (val timing (ClusterTiming))
   (val requeued (absorb-env-failure (replace task :phase "assigned" :worker "w1" :detached True) "w1" report 10))
-  (val cluster (ClusterState :workers {"w1" (WorkerInfo "w1" #() 1 10 #())} :tasks {"t1" requeued}))
+  (val cluster (ClusterState :workers {"w1" (WorkerInfo "w1" #("net") 1 10 #())} :tasks {"t1" requeued}))
   (val placed (place-tasks 20 cluster {} timing))
   (assert (= (. (get placed "t1") phase) "env-failed") (get placed "t1"))
   (val view {"key" "k" "phase" "env-failed" "detail" "d" "failureKind" "repo-unreachable" "retryable" True})
@@ -200,7 +200,7 @@
 (deftest test-a-bad-declaration-or-format-is-refused-with-400
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- declared dict (runtime-env->json env))
-  (val base {"env" "e" "blob" "b" "revision" "" "versions" {} "leaseSeconds" 10})
+  (val base {"env" "e" "blob" "b" "revision" "" "versions" {} "needs" ["net"] "leaseSeconds" 10})
   (val broken (| declared {"repos" [{"name" "app" "url" APP-URL "commit" "main"}]}))
   (for [body [(| base {"runtimeEnv" broken}) (| base {"format" 99})]]
     (assert (= (get (submit-task (ClusterState) body 0) 1) 400) body)

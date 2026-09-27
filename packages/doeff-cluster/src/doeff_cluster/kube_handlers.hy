@@ -4,7 +4,7 @@
 (import json)
 (import pathlib [Path])
 (import httpx)
-(import .kube_model [ReadDeployment ScaleDeployment AnnotateDeployment KubeUnavailable])
+(import .kube_model [ReadDeployment ScaleDeployment AnnotateDeployment ReadNodeLabels KubeUnavailable])
 
 (setv SA-DIR "/var/run/secrets/kubernetes.io/serviceaccount")
 (setv API-URL "https://kubernetes.default.svc")
@@ -53,6 +53,10 @@
       (raise (KubeUnavailable (.format "k8s の API が {} を返した: {}" response.status-code (cut response.text 0 300)))))
     (.json response))
 
+  (defn #^ dict node-labels [self #^ str node]
+    "Node の metadata.labels(能力の導出の材料)。"
+    (or (get (get (.call self "GET" (.format "{}/api/v1/nodes/{}" self.base node) :headers (.headers self)) "metadata") "labels") {}))
+
   (defn #^ dict read [self #^ str namespace #^ str name]
     (deployment-view (.call self "GET" (.path self namespace name) :headers (.headers self))))
 
@@ -71,12 +75,14 @@
 
 
 (defhandler kube-api [#^ KubeClient client]
+  (ReadNodeLabels [node] (resume (.node-labels client node)))
   (ReadDeployment [namespace name] (resume (.read client namespace name)))
   (ScaleDeployment [namespace name replicas dry-run] (resume (.scale client namespace name replicas dry-run)))
   (AnnotateDeployment [namespace name annotations] (resume (.annotate client namespace name annotations))))
 
 
 (defhandler kube-unavailable [#^ str reason]
+  (ReadNodeLabels [node] (raise (KubeUnavailable reason)))
   (ReadDeployment [namespace name] (raise (KubeUnavailable reason)))
   (ScaleDeployment [namespace name replicas dry-run] (raise (KubeUnavailable reason)))
   (AnnotateDeployment [namespace name annotations] (raise (KubeUnavailable reason))))
@@ -85,9 +91,9 @@
 (defclass KubeMemory []
   "テストの k8s。deployments = 「ns/名」→ 観測の dict(specReplicas・readyReplicas・annotations …)。
    scale は宣言の台数だけを変える(Pod が立つ・消えるのはテストが .settle で進める)。calls = 受けた書きの記録。
-   down = 真の間は全部 KubeUnavailable(API の途絶)。"
-  (defn __init__ [self #^ dict deployments]
-    (setv self.deployments deployments self.calls [] self.down False))
+   down = 真の間は全部 KubeUnavailable(API の途絶)。nodes = node の名 → label の dict(能力の導出の検)。"
+  (defn __init__ [self #^ dict deployments #^ (| dict None) [nodes None]]
+    (setv self.deployments deployments self.calls [] self.down False self.nodes (or nodes {})))
 
   (defn #^ dict row [self #^ str namespace #^ str name]
     (when self.down (raise (KubeUnavailable "テストの k8s が止まっている")))
@@ -102,6 +108,10 @@
 
 
 (defhandler kube-memory [#^ KubeMemory kube]
+  (ReadNodeLabels [node]
+    (when kube.down (raise (KubeUnavailable "テストの k8s が止まっている")))
+    (when (not-in node kube.nodes) (raise (KubeUnavailable (+ "無い Node: " node))))
+    (resume (dict (get kube.nodes node))))
   (ReadDeployment [namespace name]
     (resume (| {"replicas" 0 "readyReplicas" 0 "availableReplicas" 0 "updatedReplicas" 0
                 "generation" 1 "observedGeneration" 1 "annotations" {} "images" {}}
