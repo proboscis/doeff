@@ -1,4 +1,5 @@
-;; 実行環境の先読み(WarmRuntimeEnv)・温まった worker を優先する置き先・掃除と disk の状態の検 — 速い模擬と純粋な判断(2026-09-26)。
+;; 実行環境の先読み(WarmRuntimeEnv)・温まった worker を優先する置き先・掃除と disk の状態の検 — 手元の runner sim-cluster と純粋な判断
+;; (2026-09-26・2026-09-28 に同じ VM の模擬 detached-local の筋書きを sim-cluster へ移した)。
 ;;
 ;; 筋書き(設計 worker-runtime-env.md 節 5):
 ;;   8 先読み: 送る前に WarmRuntimeEnv → 送る: 準備の時間が「送ってから Program が走り出すまで」に入らない(仮想の時計で 2 秒以内)
@@ -9,20 +10,20 @@
 ;; worker: 温める env を job より後に準備する(PrepareEnv :warm True)・固定の集合を掃除の係へ渡す(SweepEnvs)。
 ;; 準備の期限: 先読みは停滞(処理ステージが進まない)だけ・job の準備は冷たい / 温いで別の期限。
 ;; bytecode: 焼きの並列数は cgroup の CPU の上限・焼く範囲は入口の module の import の閉包。
-(require doeff-hy.macros [deftest defk <- val var])
-(import dataclasses [replace])
+(require doeff-hy.macros [deftest defk do! <- val var])
+(require doeff-hy.record [defrecord])
+(import dataclasses [dataclass replace])
 (import json)
-(import doeff [Program run with-handlers])
-(import doeff_core_effects.handlers [state reader])
-(import doeff_core_effects.effects [Ask])
-(import doeff_time [SimClock sim-time-handler GetMonotonic Delay])
+(import doeff [with-handlers])
+(import doeff_time [Delay])
+(import doeff_cluster.clock [now-epoch-ms])
 (import doeff_cluster.runtime_env_model [RuntimeEnv runtime-env->json runtime-env-of-json env-key current-platform])
-(import doeff_cluster.env_world [env-world EnvWorld EnvWorldLog read-world-log])
 (import doeff_cluster.detached_model [SubmitDetached AwaitDetached DetachedSucceeded])
-(import doeff_cluster.detached [detached-local DetachedLocalStore])
+(import doeff_cluster.local [sim-cluster SimWorker SimLink ClientLink coordinator-answers ReadCoordinator ProcessesOf PreparationsOf])
+(import doeff_cluster.service_model [system-of])
 (import doeff_cluster.warm_model [WarmRuntimeEnv ReadWarmState WarmState warm-key warm-state-of-json])
 (import doeff_cluster.env_upkeep [RootInfo PrepareLimits sweep-choice prepare-overdue env-capacity])
-(import doeff_cluster.cluster_model [ClusterState ClusterTiming TaskRecord WorkerInfo ComponentVersion Request])
+(import doeff_cluster.cluster_model [ClusterState ClusterTiming TaskRecord WorkerInfo ComponentVersion Request PlainText])
 (import doeff_cluster.cluster_policy [place-tasks register-heartbeat heartbeat-reply load-of tasks-for])
 (import doeff_cluster.api_policy [respond])
 (import doeff_cluster.metrics_policy [metrics-text])
@@ -31,94 +32,97 @@
 (import doeff_cluster.worker_policy [plan pinned-env-keys])
 (import doeff_cluster.handlers [task-spec])
 (import doeff_cluster.code_prepare [cpu-limit-of import-closure])
-(import tests.env_fixtures [LOCK env-of base-world])
+(import tests.env_fixtures [LOCK env-of])
+(import tests.detached_rig [slow-add])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed])
 
-;; Program が走り出した仮想の時刻(送ってからの待ちを測る)。
-(val STARTS [])
+;; --- 筋書き 8 と反例(手元の runner sim-cluster)-------------------------------------------------
+;; sim の worker は実行環境の root の準備に PREPARE-SECONDS かかる(sim の宿の SimWorker の prepare-seconds)。温める表の行は本物の
+;; coordinator が worker の heartbeat の返事に配り、本物の run-worker が先読み(PrepareEnv :warm)を撃ち、task の置き先(温まった worker・
+;; 冷たい起動の計器)は本物の coordinator が決める。送る task の実行環境の宣言は送り手の口(ClientLink を置き換えた SimLink の
+;; runtime-env — 本番の DetachedClient の runtime-env)が運ぶ。
+
+(val PREPARE-SECONDS 5.0)
+(val WARM-WORKERS #((SimWorker :name "w1" :provides (frozenset ["local"]) :prepare-seconds PREPARE-SECONDS)))
+(val NO-JOBS (system-of "warm-scenarios" #()))
+(val COLD-STARTS-METRIC "doeff_worker_env_cold_start_total")
 
 
-(defk timed-add-body [n]
-  {:pre [(: n int)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  (<- now float (GetMonotonic))
-  (.append STARTS now)
-  (<- base int (Ask "base"))
-  (+ base n))
-
-(defk timed-add [n]
-  {:pre [(: n int)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "送る Program: 走り出した仮想の時刻を残し、自分で並べた reader の base に n を足して返す(時計は模擬の外側が答える)。"
-  (<- total int (with-handlers [(reader {"base" 100})] (timed-add-body n)))
-  total)
+(defrecord Measured
+  "送った task の読み: waited = 送ってから task の process が起きるまでの仮想の秒・cold-starts = coordinator の冷たい起動の計器・
+   preparations = worker が起こした実行環境の root の準備(SimPreparation の列)。"
+  (#^ float waited)
+  (#^ float cold-starts)
+  (#^ tuple preparations))
 
 
-(defk run-sim [world program]
-  {:pre [(: world EnvWorld) (: program Program)] :post [(: % bool)]}
-  "筋書きを速い模擬の組(状態・仮想の時計・env-world)の下で走らせる(送る Program の reader は Program が自分で並べる)。"
-  (<- handlers list (env-world world))
-  (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) (with-handlers handlers program))))
-  ok)
+(defk metric-value [text name]
+  {:pre [(: text str) (: name str)] :post [(: % float)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "Prometheus の text から label の無い計器 name の値を読むため(無ければ 0)。"
+  (var value 0.0)
+  (for [line (.splitlines text)]
+    (when (.startswith line (+ name " "))
+      (:= value (float (get (.split line) -1)))))
+  value)
 
 
-(defk send-and-measure [store key n]
-  {:pre [(: store DetachedLocalStore) (: key str) (: n int)] :post [(: % float)]}
-  "1 本送って答えを待ち、「送ってから Program が走り出すまで」の仮想の秒を返す。"
-  (<- sent float (GetMonotonic))
-  (<- ((detached-local store) (SubmitDetached (timed-add n) :needs (frozenset ["local"]) :key key)))
-  (<- outcome ((detached-local store) (AwaitDetached key)))
+(defk send-and-measure [env key n]
+  {:pre [(: env RuntimeEnv) (: key str) (: n int)] :post [(: % Measured)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "env の送り手として 1 本送って答えを待ち、「送ってから task の process が起きるまで」の仮想の秒・冷たい起動の計器・準備の列を読むため。"
+  (<- link SimLink (ClientLink))
+  (<- sent int (now-epoch-ms))
+  (<- outcome (with-handlers [(coordinator-answers (replace link :runtime-env env))]
+                (do! (<- (SubmitDetached (slow-add 0.0 n) :needs (frozenset ["local"]) :key key))
+                     (<- awaited (AwaitDetached key))
+                     awaited)))
   (assert (= outcome (DetachedSucceeded (+ 100 n))) outcome)
-  (- (get STARTS -1) sent))
+  (<- state dict (ReadCoordinator "/state"))
+  (val ids (lfor t (get state "tasks") :if (= (.get t "key") key) (get t "id")))
+  (<- processes tuple (ProcessesOf (+ "task/" (get ids 0))))
+  (<- metrics PlainText (ReadCoordinator "/metrics"))
+  (<- cold float (metric-value metrics.text COLD-STARTS-METRIC))
+  (<- preparations tuple (PreparationsOf "w1"))
+  (Measured :waited (/ (- (. (get processes 0) started-ms) sent) 1000.0) :cold-starts cold
+            :preparations (tuple (gfor p preparations :if p.env p))))
 
-
-;; --- 筋書き 8 と反例(速い模擬) --------------------------------------------------------------
 
 (defk scenario-8 []
-  {:pre [] :post [(: % bool)]}
-  "送る前に温め、準備済みになってから送る → 待ちは 2 秒以内・冷たい起動 0・phase preparing を通らない。"
+  {:pre [] :post [(: % Measured)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "送る前に温め、準備済みになってから送る。"
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
-  (val store (DetachedLocalStore :runtime-env env))
-  (<- first WarmState ((detached-local store) (WarmRuntimeEnv env (frozenset ["local"]) 600.0 "tests")))
+  (<- first WarmState (WarmRuntimeEnv env (frozenset ["local"]) 600.0 "tests"))
   (<- expected str (warm-key env #("local")))
   (assert (= first.key expected) first)
   (var current first)
   (while (not current.ready)
     (<- (Delay 1.0))
-    (<- again WarmState ((detached-local store) (ReadWarmState first.key)))
+    (<- again WarmState (ReadWarmState first.key))
     (:= current again))
-  (assert (= current.ready #("local")) current)
-  (<- waited float (send-and-measure store "job-8" 8))
-  (assert (<= waited 2.0) (.format "温めた後の待ちは 2 秒以内: {}" waited))
-  (assert (= store.cold-starts 0) store.cold-starts)
-  (assert (not-in "preparing" (. (get store.records "job-8") phases)) (. (get store.records "job-8") phases))
-  (<- log EnvWorldLog (read-world-log))
-  (assert (= log.syncs 1) "温めた準備 1 回だけ(送った task は準備しない)")
-  True)
-
+  (assert (= current.ready #("w1")) current)
+  (<- measured Measured (send-and-measure env "job-8" 8))
+  measured)
 
 (deftest test-scenario-8-warming-keeps-preparation-out-of-the-wait
-  (.clear STARTS)
-  (<- world EnvWorld (base-world))
-  (<- ok bool (run-sim world (scenario-8)))
-  (assert ok))
-
+  ;; 温めた後の送り: 待ちは 2 秒以内(worker の拍と置き先の拍だけ)・冷たい起動 0・準備は温めた 1 回だけ(送った task は準備しない)。
+  (<- seen Measured (sim-cluster NO-JOBS (scenario-8) :workers WARM-WORKERS))
+  (assert (<= seen.waited 2.0) (.format "温めた後の待ちは 2 秒以内: {}" seen.waited))
+  (assert (= seen.cold-starts 0.0) seen.cold-starts)
+  (assert (= (lfor p seen.preparations p.warm) [True]) seen.preparations))
 
 (defk counterexample-8 []
-  {:pre [] :post [(: % bool)]}
-  "反例: 温めずに送る → 待ちが 2 秒を超え、冷たい起動 1・phase preparing を通ったことが記録に残る。"
+  {:pre [] :post [(: % Measured)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "反例: 温めずに送る。"
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
-  (val store (DetachedLocalStore :runtime-env env))
-  (<- waited float (send-and-measure store "job-cold" 9))
-  (assert (> waited 2.0) (.format "温めない送りは準備を待つ: {}" waited))
-  (assert (= store.cold-starts 1) store.cold-starts)
-  (assert (in "preparing" (. (get store.records "job-cold") phases)) (. (get store.records "job-cold") phases))
-  True)
-
+  (<- measured Measured (send-and-measure env "job-cold" 9))
+  measured)
 
 (deftest test-counterexample-sending-without-warming-waits-for-preparation
-  (.clear STARTS)
-  (<- world EnvWorld (base-world))
-  (<- ok bool (run-sim world (counterexample-8)))
-  (assert ok))
+  ;; 温めない送り: 待ちに準備(PREPARE-SECONDS)が入り 2 秒を超え、coordinator の冷たい起動の計器が 1 つ増え、準備は task の準備(先読み
+  ;; でない)1 回。
+  (<- seen Measured (sim-cluster NO-JOBS (counterexample-8) :workers WARM-WORKERS))
+  (assert (> seen.waited 2.0) (.format "温めない送りは準備を待つ: {}" seen.waited))
+  (assert (= seen.cold-starts 1.0) seen.cold-starts)
+  (assert (= (lfor p seen.preparations p.warm) [False]) seen.preparations))
 
 
 ;; --- 筋書き 9(掃除の選び — 純粋な関数) --------------------------------------------------------

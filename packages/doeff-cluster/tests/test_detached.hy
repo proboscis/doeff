@@ -1,7 +1,9 @@
 ;; 切り離した task(SubmitDetached / AwaitDetached / CancelDetached / ReleaseDetached — detached_model.hy)の契約の検。
 ;;
 ;; 同じ筋書き(doeff の Program)を 3 つの組で回す:
-;;   fake        … detached-local(同じ VM の scheduler の task)・仮想の時計
+;;   sim         … 手元の runner sim-cluster(本物の coordinator の調停ループと本物の run-worker・偽の宿が task の Program を柵の中で
+;;                 走らせる — 筋書きは検の側の呼び手として sim の送り手の口で話す)・仮想の時計。担い手の死は KillWorker
+;;                 (2026-09-28 まで同じ VM の模擬 detached-local の組だった — 呼び手の外側の handler を継ぐので消した)
 ;;   coordinator … 本物の coordinator の判断(api_policy.respond / tick)を httpx.MockTransport の後ろに置き、本物の DetachedClient と
 ;;                 本物の CoordinatorLink(heartbeat・task の file・結果の報告)で話す。担い手は同じ VM で Program を走らせる・仮想の時計
 ;;   served      … 本物の coordinator の process(hy -m doeff_cluster.coordinator・HTTP・追記の log。conftest の served_coordinator が
@@ -9,7 +11,7 @@
 ;; 筋書き: 送って待つ / 同じ key の送り直し / 呼び手が消えても続き再接続 / 結果の後の担い手の死 / 走っている間の担い手の死 /
 ;;         lease は担い手が延ばす / 取り消し / Program の例外 / 知らない key と解放 / timeout / 版の不一致 / key の衝突。
 ;; その後に coordinator の判断(純粋な関数)と worker の途絶の検。
-(require doeff-hy.macros [deftest defk defhandler <- val])
+(require doeff-hy.macros [deftest defk deff defhandler <- val])
 (import collections.abc [Callable])
 (import json)
 (import time)
@@ -30,16 +32,22 @@
 
 (import doeff_cluster.worker_model [DesiredJobs JobStatus JobPhase])
 (import doeff_cluster.remote_model [TaskSucceeded decode-program encode-outcome failed-from current-versions])
-(import doeff_cluster.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached SimulateRunnerLoss
+(import doeff_cluster.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached
                                       DetachedSubmitted DetachedSucceeded DetachedFailed DetachedLost DetachedCancelled
                                       DetachedVersionMismatch DetachedUnknown DetachedPending DetachedRefused])
-(import doeff_cluster.detached [detached-local DetachedLocalStore detached-cluster DetachedClient DEFAULT-RUNNER-PROVIDES])
-(import tests.detached_rig [slow-add RigWorker MemoryCoordinator worker-tick worker-loop])
+(import doeff_cluster.detached [detached-cluster DetachedClient])
+(import doeff_cluster.local [sim-cluster SimWorker KillWorker ReadCoordinator])
+(import doeff_cluster.service_model [system-of])
+(import tests.detached_rig [slow-add RigWorker MemoryCoordinator worker-tick worker-loop RIG-PROVIDES])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed])
 
 (setv OTHER-VERSIONS {"python" "0.0.0" "doeff" "0"})
-;; 筋書きの task が要る能力: 3 つの組の担い手(模擬の既定の担い手・RigWorker の既定)が共に提供する local。
-(setv LOCAL (frozenset DEFAULT-RUNNER-PROVIDES))
+;; 筋書きの task が要る能力: 3 つの組の担い手(sim の worker・RigWorker の既定)が共に提供する local。
+(setv LOCAL (frozenset RIG-PROVIDES))
+;; 3 つの組の担い手の名(筋書きの KillWorker が名指す)。
+(val RUNNER "w1")
+;; sim の組の系: job を持たない(筋書きだけが呼び手として coordinator に話し、task は worker が走らせる)。
+(val NO-JOBS (system-of "detached-scenarios" #()))
 
 
 (defk boom-body []
@@ -55,10 +63,11 @@
 
 
 (defhandler rig-runner-loss [#^ RigWorker worker]
-  ;; 担い手の死: heartbeat が止まり、走っていた task も消える(coordinator は lease の後に lost とする)。
-  (SimulateRunnerLoss []
-    (setv worker.dead True
-          running (lfor n worker.handles :if (not-in n worker.done) n))
+  ;; 担い手の死(sim の組の KillWorker と同じ effect に、coordinator・served の組の担い手で答える): heartbeat が止まり、走っていた
+  ;; task も消える(coordinator は lease の後に lost とする)。答え = 消えた(終わっていなかった)task の数。
+  (KillWorker [name]
+    (val running (lfor n worker.handles :if (not-in n worker.done) n))
+    (setv worker.dead True)
     (for [handle (.values worker.handles)] (<- (Cancel handle)))
     (when worker.loop (<- (Cancel worker.loop)))
     (resume (len running))))
@@ -67,17 +76,21 @@
 ;; --- 組 -----------------------------------------------------------------------------------------------------
 
 (defclass Rig []
-  "筋書きを回す組。handlers = 筋書きに被せる handler の組(外側が先)・worker = 担い手(fake は None)・slow / lease / poll = 時間の尺度。"
-  (defn __init__ [self #^ str kind #^ list handlers worker #^ float slow #^ float lease #^ float poll [runs None] [close None]]
+  "筋書きを回す組。handlers = 筋書きに被せる handler の組(外側が先 — sim は使わない)・worker = 担い手(sim は None)・
+   sim-workers = sim の組の worker(SimWorker の tuple — 他の組は None)・slow / lease / poll = 時間の尺度。"
+  (defn __init__ [self #^ str kind #^ list handlers worker #^ float slow #^ float lease #^ float poll [runs None] [close None]
+                  [sim-workers None]]
     (setv self.kind kind self.handlers handlers self.worker worker self.slow slow self.lease lease self.poll poll
-          self.runs runs self.close (or close (fn [] None)))))
+          self.runs runs self.close (or close (fn [] None)) self.sim-workers sim-workers)))
 
 
-(defn #^ Rig fake-rig [runner-versions]
-  (setv store (DetachedLocalStore :runner-versions runner-versions))
-  ;; 外側に reader を置かない: 送る Program が自分の handler を並べる(置けば、足りない handler を外側が黙って補ってしまう)。
-  (Rig "fake" [(sim-time-handler :clock (SimClock)) (detached-local store :poll-seconds 0.5)]
-       None 3.0 5.0 0.5 :runs (fn [key] store.runs)))
+(deff sim-rig [runner-versions]  ; defk にできない: pytest の params が渡す組を開く関数(open-sim-rig)が Program の外で呼ぶ
+  {:pre [(: runner-versions (| dict None))] :post [(: % Rig)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "sim の組を開くため: 担い手 = 能力 local の sim の worker 1 台(runner-versions = その worker の名乗る版 — None は送り手と同じ)。
+   送る Program が自分の handler を並べる(sim の宿は柵の中で走らせ、足りない handler を補わない)。task の始まりは worker の拍(0.5 秒)と
+   コードの準備の拍を挟むので、slow は他の組より長く取る(仮想の時計なので走る時間は増えない)。"
+  (Rig "sim" [] None 6.0 5.0 1.0
+       :sim-workers #((SimWorker :name RUNNER :provides LOCAL :versions runner-versions))))
 
 
 (defn #^ Rig coordinator-rig [#^ Path tmp-path runner-versions]
@@ -101,8 +114,8 @@
        worker 1.0 2.5 0.2 :runs runs))
 
 
-(defn #^ Rig open-fake-rig [#^ Path tmp-path request [runner-versions None]]
-  (fake-rig runner-versions))
+(defn #^ Rig open-sim-rig [#^ Path tmp-path request [runner-versions None]]
+  (sim-rig runner-versions))
 
 
 (defn #^ Rig open-coordinator-rig [#^ Path tmp-path request [runner-versions None]]
@@ -111,13 +124,13 @@
 
 (defn #^ Rig open-served-rig [#^ Path tmp-path request [runner-versions None]]
   ;; 本物の coordinator の process(conftest の served_coordinator・session で共有)は served の組の検が
-  ;; 走る時にだけ起こす(fake と coordinator の組だけを走らせる時は起動の数秒を払わない)。
+  ;; 走る時にだけ起こす(sim と coordinator の組だけを走らせる時は起動の数秒を払わない)。
   (served-rig (.getfixturevalue request "served_coordinator") tmp-path runner-versions))
 
 
 ;; 筋書き 1 つを 3 つの組で回す: 各 deftest は `:params {"open_rig" RIGS}` で組ごとの検に展開される
-;; (検の名 = `<筋書きの検>[fake]` / `[coordinator]` / `[served]`)。組を開く関数は (tmp-path request [runner-versions]) を受ける。
-(setv RIGS [(pytest.param open-fake-rig :id "fake")
+;; (検の名 = `<筋書きの検>[sim]` / `[coordinator]` / `[served]`)。組を開く関数は (tmp-path request [runner-versions]) を受ける。
+(setv RIGS [(pytest.param open-sim-rig :id "sim")
             (pytest.param open-coordinator-rig :id "coordinator")
             (pytest.param open-served-rig :id "served")])
 
@@ -139,11 +152,24 @@
 
 (defk run-on [rig scenario]
   {:pre [(: rig Rig) (: scenario Program)] :post [(: % bool)]}
+  ;; sim の組は筋書きを sim-cluster の中で回す(担い手は sim の worker)。他の組は handler を被せ、担い手を並べて回す。
   (try
-    (<- (with-handlers rig.handlers (with-worker rig scenario)))
+    (if (= rig.kind "sim")
+        (<- (sim-cluster NO-JOBS scenario :workers rig.sim-workers))
+        (<- (with-handlers rig.handlers (with-worker rig scenario))))
     (finally
       (rig.close)))
   True)
+
+
+(defk runs-of [rig key]
+  {:pre [(: rig Rig) (: key str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "key の task を coordinator が作った数(冪等の検 — sim の組は coordinator の GET /state を読む)。"
+  (cond
+    (= rig.kind "sim") (do (<- state dict (ReadCoordinator "/state"))
+                           (len (lfor t (get state "tasks") :if (= (.get t "key") key) t)))
+    (is rig.runs None) (raise (ValueError (.format "組 {} は作った数を数えられない" rig.kind)))
+    True (rig.runs key)))
 
 
 
@@ -180,7 +206,8 @@
   ;; 終わった後の送り直しも同じ行(走らせ直さない)。
   (<- third DetachedSubmitted (SubmitDetached (slow-add rig.slow 2) :needs LOCAL :key "k-idem" :lease-seconds rig.lease))
   (assert (not third.created))
-  (assert (= (rig.runs "k-idem") 1))
+  (<- runs int (runs-of rig "k-idem"))
+  (assert (= runs 1) runs)
   True)
 
 (deftest test-resubmitting-the-same-key-runs-once [open-rig tmp-path request]
@@ -234,7 +261,7 @@
   (<- outcome (AwaitDetached "k-kept"))
   (assert (= outcome (DetachedSucceeded 104)) outcome)
   ;; 結果の後に担い手が死んでも、結果は保持する(lease が切れる時間を過ぎても)。
-  (<- lost int (SimulateRunnerLoss))
+  (<- lost int (KillWorker RUNNER))
   (assert (= lost 0))
   (<- (Delay (* rig.lease 1.5)))
   (<- again (AwaitDetached "k-kept"))
@@ -251,7 +278,7 @@
   {:pre [(: rig Rig)] :post [(: % bool)]}
   (<- (SubmitDetached (slow-add (* rig.slow 10) 5) :needs LOCAL :key "k-lost" :lease-seconds rig.lease))
   (<- (Delay (* rig.slow 0.3)))
-  (<- lost int (SimulateRunnerLoss))
+  (<- lost int (KillWorker RUNNER))
   (assert (= lost 1))
   (<- outcome (AwaitDetached "k-lost"))
   (assert (isinstance outcome DetachedLost) outcome)
