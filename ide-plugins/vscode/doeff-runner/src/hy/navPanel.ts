@@ -7,6 +7,8 @@ import type { HyRange } from './contract';
 import type { DefRef, EffectGraphSource } from './effects';
 import { childNodes, rootNodes, type NavNode, type NavSection, type NavView } from './navTree';
 import { outlineKindOf } from './outline';
+import type { RawEffectSource } from './rawEffects';
+import { rawBadge, rawRoleOf } from './rawView';
 import { toRange, toSymbolKind } from './providers';
 
 /** view の id と木の種類の対応(package.json の views と同じ id)。 */
@@ -206,16 +208,18 @@ export function nodeDefinition(node: NavNode): DefRef | undefined {
   }
 }
 
-/** view 1 つの木 — 最上段は置き場の表から作り、子は展開した時に作る。 */
+/** view 1 つの木 — 最上段は置き場の表から作り、子は展開した時に作る。handler・節・プログラムには生の副作用の印を付ける。 */
 export class HyNavTreeProvider implements vscode.TreeDataProvider<NavNode>, vscode.Disposable {
   private readonly changed = new vscode.EventEmitter<NavNode | undefined>();
   readonly onDidChangeTreeData = this.changed.event;
   private filterText = '';
+  private rawOnlyFlag = false;
 
   constructor(
     private readonly view: NavView,
     private readonly graphs: EffectGraphSource,
     private readonly resolve: Resolve,
+    private readonly raw: RawEffectSource,
     private readonly currentFile: () => string | undefined
   ) {}
 
@@ -224,9 +228,20 @@ export class HyNavTreeProvider implements vscode.TreeDataProvider<NavNode>, vsco
     return this.filterText;
   }
 
+  /** 生の副作用に触る handler だけを出しているか。 */
+  get rawOnly(): boolean {
+    return this.rawOnlyFlag;
+  }
+
   /** 絞り込みを変えて出し直す。 */
   setFilter(text: string): void {
     this.filterText = text;
+    this.refresh();
+  }
+
+  /** 「生の副作用に触る handler だけ表示」を切り替えて出し直す。 */
+  setRawOnly(on: boolean): void {
+    this.rawOnlyFlag = on;
     this.refresh();
   }
 
@@ -240,17 +255,52 @@ export class HyNavTreeProvider implements vscode.TreeDataProvider<NavNode>, vsco
     this.changed.dispose();
   }
 
-  /** 節の表示。 */
-  getTreeItem(node: NavNode): vscode.TreeItem {
-    return toTreeItem(node);
+  /** 節の表示 — handler・節・プログラムには生の副作用の印(直接 = zap、経由 = 呼び出しの印、プログラム = 警告)を付ける。 */
+  async getTreeItem(node: NavNode): Promise<vscode.TreeItem> {
+    const item = toTreeItem(node);
+    const ref = node.tag === 'effect' ? undefined : nodeDefinition(node);
+    const role = ref === undefined ? undefined : rawRoleOf(ref.definition.kind);
+    if (ref === undefined || role === undefined) {
+      return item;
+    }
+    const badge = rawBadge(await this.raw.current().mark(ref), role);
+    if (badge === undefined) {
+      return item;
+    }
+    const icon = badge.tag === 'via' ? 'debug-stackframe' : role === 'program' ? 'warning' : 'zap';
+    item.iconPath = new vscode.ThemeIcon(icon);
+    item.description = `${badge.text} · ${typeof item.description === 'string' ? item.description : ''}`;
+    return item;
   }
 
-  /** 節の子(最上段は module の束)。 */
+  /** 節の子(最上段は module の束)。「生だけ」の時は Handlers の最上段を印のある handler に絞る。 */
   async getChildren(node?: NavNode): Promise<NavNode[]> {
     const graph = this.graphs.current();
     if (node === undefined) {
-      return rootNodes(graph, this.view, this.filterText, this.currentFile());
+      const roots = rootNodes(graph, this.view, this.filterText, this.currentFile());
+      return this.rawOnlyFlag && this.view === 'handlers' ? this.onlyRaw(roots) : roots;
     }
     return childNodes({ graph, resolve: this.resolve }, node);
+  }
+
+  /** module の束の中を、生の副作用の印がある handler だけにする(空の束は落とす)。 */
+  private async onlyRaw(groups: readonly NavNode[]): Promise<NavNode[]> {
+    const raw = this.raw.current();
+    const kept: NavNode[] = [];
+    for (const group of groups) {
+      if (group.tag !== 'group') {
+        continue;
+      }
+      const children: NavNode[] = [];
+      for (const child of group.children) {
+        if (child.tag === 'handler' && rawBadge(await raw.mark(child.ref), 'handler') !== undefined) {
+          children.push(child);
+        }
+      }
+      if (children.length > 0) {
+        kept.push({ tag: 'group', label: group.label, children });
+      }
+    }
+    return kept.length > 0 ? kept : [{ tag: 'empty', label: '生の副作用に触る handler はありません' }];
   }
 }

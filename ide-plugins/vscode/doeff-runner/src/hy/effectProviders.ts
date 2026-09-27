@@ -15,6 +15,8 @@ import { PROGRAM_KINDS, type CallSite, type DefRef, type EffectGraph, type Effec
 import { lensSpecs, lensTitle, type LensSpec } from './navigation';
 import { outlineKindOf } from './outline';
 import { toRange, toSymbolKind } from './providers';
+import type { RawEffectSource } from './rawEffects';
+import { rawEvidenceLocations, rawLensTitle, rawRoleOf } from './rawView';
 
 /** 呼び出し階層の項目にする定義の kind(effect のクラスは別に足す)。 */
 const HIERARCHY_KINDS = [...PROGRAM_KINDS, 'defn', 'defn/a', 'defhandler', 'effect-clause'] as const;
@@ -210,13 +212,14 @@ class HyCodeLens extends vscode.CodeLens {
 }
 
 /** コード上の注記 — effect のクラス・defhandler・defk / deff / defp の上。置き場が変わったら出し直す。 */
-export class HyEffectCodeLensProvider implements vscode.CodeLensProvider<HyCodeLens>, vscode.Disposable {
+export class HyEffectCodeLensProvider implements vscode.CodeLensProvider<vscode.CodeLens>, vscode.Disposable {
   private readonly changed = new vscode.EventEmitter<void>();
   readonly onDidChangeCodeLenses = this.changed.event;
 
   constructor(
     private readonly graphs: EffectGraphSource,
-    private readonly resolve: Resolve
+    private readonly resolve: Resolve,
+    private readonly raw: RawEffectSource
   ) {}
 
   /** 置き場か外の cache が変わった時に呼ぶ(注記を出し直させる)。 */
@@ -229,13 +232,37 @@ export class HyEffectCodeLensProvider implements vscode.CodeLensProvider<HyCodeL
     this.changed.dispose();
   }
 
-  /** file の注記を並べる(呼び出し元の数だけは開いた時に数える)。 */
-  provideCodeLenses(document: vscode.TextDocument): HyCodeLens[] {
-    return lensSpecs(this.graphs.current(), document.uri.fsPath).map((spec) => new HyCodeLens(spec));
+  /**
+   * file の注記を並べる(呼び出し元の数だけは開いた時に数える)。生の副作用の注記は、印のある
+   * defhandler・effect の節・直接触る defk / deff / defp にだけ、見出しと移動先を決めて出す。
+   */
+  async provideCodeLenses(document: vscode.TextDocument): Promise<vscode.CodeLens[]> {
+    const graph = this.graphs.current();
+    const lenses: vscode.CodeLens[] = lensSpecs(graph, document.uri.fsPath).map((spec) => new HyCodeLens(spec));
+    const raw = this.raw.current();
+    for (const ref of graph.definitionsIn(document.uri.fsPath)) {
+      const role = rawRoleOf(ref.definition.kind);
+      if (role === undefined) {
+        continue;
+      }
+      const mark = await raw.mark(ref);
+      const title = rawLensTitle(mark, role);
+      if (title === undefined) {
+        continue;
+      }
+      const locations = rawEvidenceLocations(mark, role).map(
+        (loc) => new vscode.Location(vscode.Uri.file(loc.path), toRange(loc.range))
+      );
+      lenses.push(new vscode.CodeLens(toRange(ref.definition.range), locationsCommand(title, refLocation(ref), locations)));
+    }
+    return lenses;
   }
 
-  /** 注記の見出しと、押した時の移動先を決める。 */
-  async resolveCodeLens(lens: HyCodeLens): Promise<HyCodeLens> {
+  /** 注記の見出しと、押した時の移動先を決める(生の副作用の注記は並べた時に決まっている)。 */
+  async resolveCodeLens(lens: vscode.CodeLens): Promise<vscode.CodeLens> {
+    if (!(lens instanceof HyCodeLens)) {
+      return lens;
+    }
     const spec = lens.spec;
     const anchor = refLocation(spec.ref);
     switch (spec.tag) {

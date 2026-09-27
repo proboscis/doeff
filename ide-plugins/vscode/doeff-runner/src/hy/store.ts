@@ -2,7 +2,7 @@
 // 外の世界には触らない(子 process の結果を入れるのは indexService の役目)。
 
 import * as path from 'path';
-import type { HyFileIndex } from './contract';
+import type { HyDefinition, HyFileIndex } from './contract';
 import { mangleDotted } from './mangle';
 
 /** 置き場の 1 件 — どの workspace root の索引として取ったかを添える(module 名の基準)。 */
@@ -16,8 +16,16 @@ export interface HyIndexView {
   get(filePath: string): HyStoreEntry | undefined;
   entries(): readonly HyStoreEntry[];
   byModule(module: string): readonly HyStoreEntry[];
+  /** 名前(mangled)の定義を全 file から引く(解決の最後の段と参照の数え上げ用) */
+  definitionsNamed(mangled: string): readonly NamedDefinition[];
   /** 書き換えのたびに増える数(派生の表を作り直すかの判定用) */
   readonly version: number;
+}
+
+/** 名前で引いた定義 1 件と、その file の索引。 */
+export interface NamedDefinition {
+  readonly entry: HyStoreEntry;
+  readonly definition: HyDefinition;
 }
 
 /** path の比べ方を 1 つに決める(区切り・`..` の揺れを消す)。 */
@@ -31,6 +39,7 @@ export class HyIndexStore implements HyIndexView {
   private readonly listeners = new Set<() => void>();
   private changes = 0;
   private moduleTable: { readonly version: number; readonly table: Map<string, HyStoreEntry[]> } | undefined;
+  private nameTable: { readonly version: number; readonly table: Map<string, NamedDefinition[]> } | undefined;
 
   /** 書き換えのたびに増える数。 */
   get version(): number {
@@ -59,6 +68,25 @@ export class HyIndexStore implements HyIndexView {
       this.moduleTable = { version: this.changes, table };
     }
     return this.moduleTable.table.get(mangleDotted(module)) ?? [];
+  }
+
+  /** 名前(mangled)の定義を全 file から引く(版ごとに 1 度だけ表を作る)。 */
+  definitionsNamed(mangled: string): readonly NamedDefinition[] {
+    if (this.nameTable === undefined || this.nameTable.version !== this.changes) {
+      const table = new Map<string, NamedDefinition[]>();
+      for (const entry of this.files.values()) {
+        for (const definition of entry.file.definitions) {
+          const list = table.get(definition.mangled);
+          if (list === undefined) {
+            table.set(definition.mangled, [{ entry, definition }]);
+          } else {
+            list.push({ entry, definition });
+          }
+        }
+      }
+      this.nameTable = { version: this.changes, table };
+    }
+    return this.nameTable.table.get(mangled) ?? [];
   }
 
   /** root 1 つの全体の索引で置き換える — 結果に無い、その root の古い file は消す。 */

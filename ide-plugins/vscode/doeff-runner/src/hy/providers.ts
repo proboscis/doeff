@@ -9,6 +9,8 @@ import type { ExternalFileView, ExternalModuleSource } from './external';
 import type { HyLog } from './indexService';
 import { mangle } from './mangle';
 import { definitionTargetsWithHandlers, hoverExtras, implementationTargets } from './navigation';
+import type { RawEffectSource } from './rawEffects';
+import { rawHoverLines, rawRoleOf } from './rawView';
 import {
   buildOutline,
   hoverMarkdown,
@@ -22,6 +24,8 @@ import { collectReferences, resolveDefinition, type DefinitionResolution, type D
 import type { HyIndexView } from './store';
 
 const WORKSPACE_SYMBOL_LIMIT = 500;
+/** hover に出す生の副作用の証拠の行の上限。 */
+const HOVER_RAW_LIMIT = 8;
 
 /** 契約の範囲を VS Code の Range にする。 */
 export function toRange(range: HyRange): vscode.Range {
@@ -112,6 +116,7 @@ export class HyNavigationProvider
     private readonly python: PythonModuleSource,
     private readonly external: ExternalModuleSource & ExternalFileView,
     private readonly graphs: EffectGraphSource,
+    private readonly raw: RawEffectSource,
     private readonly log: HyLog
   ) {}
 
@@ -205,7 +210,10 @@ export class HyNavigationProvider
     for (const target of resolved.resolution.targets) {
       if (target.tag === 'hy-definition' && parts.length < 3) {
         const ref = graph.refOf(target.path, target.definition);
-        const extras = ref === undefined ? [] : hoverExtras(graph, ref);
+        const role = ref === undefined ? undefined : rawRoleOf(ref.definition.kind);
+        const rawLines =
+          ref === undefined || role === undefined ? [] : rawHoverLines(await this.raw.current().mark(ref), role, HOVER_RAW_LIMIT);
+        const extras = ref === undefined ? [] : [...hoverExtras(graph, ref), ...(rawLines.length > 0 ? [rawLines.join('\n')] : [])];
         parts.push([hoverMarkdown(target.definition, target.module), ...extras].join('\n\n'));
       }
     }
