@@ -10,7 +10,7 @@
 ;;; 低い優先度で root を準備し、準備済みのキーを heartbeat で名乗る。準備の時間を task の待ちに入れないため(TI3 との関係は設計 節 3.2)。
 ;;; 使い方(いつ温め、いつ Ready を出すか)は送り手の方針で、ここは仕組みだけ。
 ;;;
-;;; handler: 同じ VM の模擬 = detached.hy の detached-local・本番 = detached.hy の warm-cluster(POST /warm・GET /warm/<キー>)。
+;;; handler: 本番 = detached.hy の warm-cluster(POST /warm・GET /warm/<キー>)。手元では sim-cluster(local.hy)の宿が同じ要求の形で答える。
 (require doeff-hy.macros [defk <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
