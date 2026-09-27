@@ -11,7 +11,7 @@
 
 (deftest test-unreachable-coordinator-is-unreadable-then-fences
   ;; 閉じた port へ向ける。fence 前は「読めない」(直前の宣言を続ける)、fence を超えたら空(全部止める)。
-  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" {} 1 60000))
+  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" #() 1 60000))
   (setv first (.poll link))
   (assert (isinstance first DesiredUnreadable))
   (assert (in "coordinator に届かない" first.reason))
@@ -24,7 +24,7 @@
 (import doeff_cluster.code_prepare [module-name carry-pairs compile-plan cache-rel])
 
 (deftest test-task-files-are-written-reported-and-cleaned [tmp-path]
-  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" {} 1 60000 :task-dir (str tmp-path)))
+  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" #() 1 60000 :task-dir (str tmp-path)))
   (setv task {"id" "t7" "env" "m:e" "revision" "r" "versions" {"b" "2" "a" "1"} "blob" "QkxPQg=="})
   (setv #(spec) (.accept-tasks link [task]))
   ;; 名前と引数は task の id と版で決まる(毎拍同じ形 = 起動し直さない)
@@ -75,7 +75,7 @@
   (setv server (ThreadingHTTPServer #("127.0.0.1" 0) Reply))
   (.start (threading.Thread :target server.serve-forever :daemon True))
   (try
-    (setv link (CoordinatorLink f"http://127.0.0.1:{(get server.server-address 1)}" "w" {} 1 10000))
+    (setv link (CoordinatorLink f"http://127.0.0.1:{(get server.server-address 1)}" "w" #() 1 10000))
     (assert (= (.poll link) (DesiredJobs #())))
     (assert (= link.fence-ms 20000))
     (finally (.shutdown server))))
@@ -105,7 +105,7 @@
                (if (= (get board key) (get body "expect"))
                    (do (setv (get board key) (get body "value")) (httpx.Response 200 :json {}))
                    (httpx.Response 409 :json {})))))
-  (setv link (CoordinatorLink "http://coord" "zeus" {} 1 60000 :transport (httpx.MockTransport handle)))
+  (setv link (CoordinatorLink "http://coord" "zeus" #() 1 60000 :transport (httpx.MockTransport handle)))
   (release-leases link "1-old")
   (assert (= (get board "semaphore/app-writer" "holders") {"zeus/2-new/cd34/1" 88}))
   (assert (= (get board "semaphore/other" "holders") {"atlas/1-old/ee/1" 77}) "別の worker の同じ名の世代は触らない")

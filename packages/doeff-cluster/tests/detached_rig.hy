@@ -16,6 +16,7 @@
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming Request])
 (import doeff_cluster.api_policy [respond tick])
 (import doeff_cluster.handlers [CoordinatorLink])
+(import doeff_cluster.detached [DEFAULT-RUNNER-PROVIDES])
 (import doeff_cluster.job_entry [RunContext env-handlers])
 (import doeff_cluster.worker_model [DesiredJobs JobStatus JobPhase])
 (import doeff_cluster.remote_model [TaskSucceeded decode-program encode-outcome failed-from])
@@ -38,9 +39,12 @@
 ;; test_remote.hy が通す)。
 
 (defclass RigWorker []
-  (defn __init__ [self #^ str url #^ Path task-dir #^ dict versions [transport None] #^ str [name "w1"] #^ (| dict None) [labels None]]
-    ;; name / labels = worker の名乗り(既定 = label の無い w1 — 担い手を 2 つ以上並べる検 test_detached_runners.hy が名指す)。
-    (setv self.link (CoordinatorLink url name (or labels {}) 10 20000 :task-dir (str task-dir) :versions versions :transport transport)
+  (defn __init__ [self #^ str url #^ Path task-dir #^ dict versions [transport None] #^ str [name "w1"]
+                  #^ tuple [provides DEFAULT-RUNNER-PROVIDES] #^ tuple [exclusive #()]]
+    ;; name / provides / exclusive = worker の名乗り(既定 = 模擬の既定の担い手と同じ能力 local の w1 — fake と coordinator の組で同じ
+    ;; needs の筋書きを回すため。担い手を 2 つ以上並べる検 test_detached_runners.hy が名指す)。
+    (setv self.link (CoordinatorLink url name provides 10 20000 :task-dir (str task-dir) :versions versions :transport transport
+                                     :exclusive exclusive)
           self.handles {} self.done #{} self.dead False self.loop None)))
 
 

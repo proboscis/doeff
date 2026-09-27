@@ -1,13 +1,14 @@
 ;;; coordinator の純粋な判断。宣言された job・task・worker の生存・今の割り当て・時刻から、次の割り当てを導く。
 ;;; HTTP の要求 1 件への返事も、状態と要求と時刻から (次の状態 status 本文) を返す純粋な関数にする。I/O はしない。
 ;;; 割り当ては安定させる: 担い手が移し替えの期限内に生きていれば動かさない。
+(require doeff-hy.macros [deff val])
 (import dataclasses [replace asdict])
 (import functools)
 (import json)
 
 (import .worker_model [JobSpec])
 (import .cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterTiming ClusterState TaskRecord Request Drain EnvFailed WarmEntry HandoffPhase
-                        requirements-of component-versions-of task-record-to-json task-record-from-json ACCEPTED-FORMATS format-refusal
+                        capabilities-of component-versions-of task-record-to-json task-record-from-json ACCEPTED-FORMATS format-refusal
                         PLACED-PHASES handoff-watch-from-json])
 (import .semaphore_model [SEMAPHORE-PREFIX lease-op semaphore-write-refusal semaphore-key])
 (import .base_follow_policy [FULL-SHA])
@@ -95,7 +96,7 @@
   (when (and (is-not (.get item "runtimeEnv") None) (or (is-not base-from None) (is-not overlay None)))
     (raise (ValueError "runtimeEnv を持つ宣言は baseFrom と overlay を持たない(commit は宣言の repos が決める)")))
   (ClusterJob (spec-of-declaration item)
-              (tuple (sorted (.items (.get item "requires" {}))))
+              (request-needs item "Service の needs")
               (.get item "pin")
               (.get item "run")
               replicas
@@ -108,7 +109,7 @@
 
 (defn #^ dict job-to-json [#^ ClusterJob job]
   (setv base {"name" job.spec.name "revision" job.spec.revision
-              "requires" (dict job.requires) "pin" job.pin
+              "needs" (list job.needs) "pin" job.pin
               "replicas" job.replicas "readiness" job.readiness "owner" job.owner})
   ;; 版の追随と入れ替えの欄は、使う宣言にだけ書く(使わない宣言の spec の形・版は以前と同じ)。
   (setv extra (| (if (= job.update "recreate") {} {"update" job.update})
@@ -148,7 +149,8 @@
    "jobs" (lfor j state.jobs (job-to-json j))
    "placements" (dfor #(k v) (.items state.placements) k (asdict v))
    "workers" (lfor w (.values state.workers)
-                   (| {"name" w.name "labels" (dict w.labels) "capacity" w.capacity "versions" (dict w.versions)}
+                   (| {"name" w.name "provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity
+                       "versions" (dict w.versions)}
                       (worker-generations-json w)))
    "tasks" (lfor t (.values state.tasks) (task-record-to-json t))
    "nextTask" state.next-task
@@ -186,12 +188,15 @@
 
 (defn #^ dict warm-entry-to-json [#^ WarmEntry entry]
   "温める表の行 → 保存の JSON の形(state file と durable の KV が使う)。"
-  (| (asdict entry) {"requires" (dict entry.requires)}))
+  (| (asdict entry) {"needs" (list entry.needs)}))
 
 
 (defn #^ WarmEntry warm-entry-from-json [#^ dict data]
-  "保存の JSON の形 → 温める表の行(warm-entry-to-json の逆)。"
-  (WarmEntry #** (| data {"requires" (requirements-of (get data "requires"))})))
+  "保存の JSON の形 → 温める表の行(warm-entry-to-json の逆)。旧い形(requires の object)の行は None(読み直しで捨てる — 期限つきの
+   頼みなので、頼み手が新しい形で頼み直す)。"
+  (if (in "requires" data)
+      None
+      (WarmEntry #** (| data {"needs" (capabilities-of (.get data "needs" []) "温める表の行の needs")}))))
 
 
 (defn #^ ClusterState state-from-json [#^ dict data #^ int now [board None] [board-versions None]]
@@ -202,10 +207,15 @@
    読んだ後の最初の書きで resource_policy.stamp が版を振る(送り手 = 移し替え)。"
   (ClusterState
     :jobs (tuple (gfor j (get data "jobs") (job-from-json j)))
+    ;; 旧い形(labels だけ — 2026-09-27 より前)の worker の行は読まない。能力を知らない worker に置かないため(次の heartbeat で
+    ;; 新しい形の名乗りから作り直す)。
     :workers (dfor w (.get data "workers" [])
+                   :if (in "provides" w)
+                   :setv caps (worker-capabilities-of w (.format "保存の worker {}" (get w "name")))
                    (get w "name")
-                   (WorkerInfo (get w "name") (tuple (sorted (.items (get w "labels")))) (get w "capacity") now
+                   (WorkerInfo (get w "name") (get caps 0) (get w "capacity") now
                                (component-versions-of (.get w "versions" {}))
+                               :exclusive (get caps 1) :node (.get w "node" "")
                                #** (worker-generations-from-json w)))
     ;; 改名の前の file は置き先を旧い名の欄に持つ(durable_kv.LEGACY-PLACEMENT と同じ改名)。両方を読み、新しい欄が勝つ。
     :placements (dfor #(k v) (.items (| (.get data "assignments" {}) (.get data "placements" {}))) k (Placement #** v))
@@ -225,7 +235,7 @@
     ;; drain の欄(2026-09-25)は、それより前の file には無い(空として読む)。
     :drains (dfor #(k v) (.items (.get data "drains" {})) k (Drain #** v))
     :surges (dfor #(k v) (.items (.get data "surges" {})) k (Placement #** v))
-    :warms (dfor #(k v) (.items (.get data "warms" {})) k (warm-entry-from-json v))
+    :warms (dfor #(k v) (.items (.get data "warms" {})) :setv entry (warm-entry-from-json v) :if (is-not entry None) k entry)
     ;; 入れ替えの期限の見張り(2026-09-26)は、それより前の file には無い(空として読む)。
     :handoffs (dfor #(k v) (.items (.get data "handoffs" {})) k (handoff-watch-from-json v))
     :started-ms now))
@@ -237,35 +247,55 @@
   (<= (- now worker.last-seen-ms) window-ms))
 
 
-(defn #^ bool labels-satisfy [#^ tuple requires #^ WorkerInfo worker]
-  (setv labels (dict worker.labels))
-  (all (gfor #(k v) requires (= (.get labels k) v))))
+(deff placeable [#^ tuple needs #^ WorkerInfo worker]  ; defk にできない: coordinator と模擬の置き先の選び(Program の外の純粋な判断)が呼ぶ
+  {:pre [(: needs tuple) (: worker WorkerInfo)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "needs の job / task をこの worker に置けるか — 置き場所の規則の定義点はここ 1 つ(ADR-DOE-CLUSTER-001 R4b):
+   needs ⊆ provides ∪ derived(node の label から coordinator が導いた能力)、かつ worker が専用の能力(exclusive)を持てば、そのどれかを needs に持つ(一般の仕事を専用の担い手に置かない)。"
+  (and (<= (set needs) (| (set worker.provides) (set worker.derived)))
+       (or (not worker.exclusive) (bool (& (set needs) (set worker.exclusive))))))
 
 
-;; 専用の印(k8s の taint に当たる)。worker の label `dedicated=<k>=<v>` は「label <k>=<v> を明示的に求める job / task だけを
-;; 置く」の意味。例: Mac の worker は label `role=agent` と `dedicated=role=agent` を持ち、`requires: {role: agent}` の
-;; agent の仕事だけを受ける。印を求めない一般の job は置かない。
-(setv DEDICATED-KEY "dedicated")
+(deff worker-capabilities-of [#^ dict body #^ str what]  ; defk にできない: heartbeat と保存の JSON を読む境界(Program の外)が呼ぶ
+  {:pre [(: body dict) (: what str)] :post [(: % tuple) (= (len %) 2)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "worker の名乗り(heartbeat の本文・保存の行)→ #(provides exclusive)。exclusive は provides の一部でなければならない。
+   旧い形(labels だけで provides の無い名乗り)は ValueError — label の等しさの照合は受け付けない(ADR-DOE-CLUSTER-001 R4b)。"
+  (when (and (in "labels" body) (not-in "provides" body))
+    (raise (ValueError (.format "{}: 旧い形の labels {!r} は受け付けない — worker は --provides と --exclusive で能力を名乗る"
+                                what (get body "labels")))))
+  (setv provides (capabilities-of (.get body "provides" []) (+ what " の provides")))
+  (setv exclusive (capabilities-of (.get body "exclusive" []) (+ what " の exclusive")))
+  (when (not (<= (set exclusive) (set provides)))
+    (raise (ValueError (.format "{}: exclusive {} は provides {} の一部で名乗る" what (list exclusive) (list provides)))))
+  #(provides exclusive))
 
 
-(defn #^ tuple dedicated-to [#^ WorkerInfo worker]
-  "worker の専用の印が求める label の組(無ければ空)。"
-  (setv value (.get (dict worker.labels) DEDICATED-KEY))
-  (if (and value (in "=" value))
-      (tuple (.split value "=" 1))
-      #()))
+(deff request-needs [#^ dict body #^ str what]  ; defk にできない: HTTP の本文・宣言の JSON を読む境界(Program の外)が呼ぶ
+  {:pre [(: body dict) (: what str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "送られた宣言・task・温める頼みの本文の needs → 名の順の tuple。旧い形の requires を持つ本文・空の needs は ValueError(理由つき)—
+   旧い宣言は受け付けない(operator 2026-09-27)・要る能力は必ず書く(改訂 1 の I)。"
+  (when (is-not (.get body "requires") None)
+    (raise (ValueError (.format "旧い形の requires {!r} は受け付けない — 要る能力の名の列 needs で書き直す(ADR-DOE-CLUSTER-001 R4b)"
+                                (get body "requires")))))
+  (setv needs (capabilities-of (.get body "needs" []) what))
+  (when (not needs)
+    (raise (ValueError (.format "{} が空 — 要る能力の名を 1 つ以上書く(どこにでも置ける仕事は無い・ADR-DOE-CLUSTER-001 R4b・改訂 1 の I)" what))))
+  needs)
 
 
-(defn #^ bool tolerates [#^ tuple requires #^ WorkerInfo worker]
-  "requires が worker の専用の印を明示的に求めているか(印の無い worker には何でも置ける)。"
-  (setv mark (dedicated-to worker))
-  (or (not mark) (in mark (tuple (gfor #(k v) requires #(k v))))))
+(deff needs-refusal [#^ dict body]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
+  {:pre [(: body dict)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "本文の needs(と旧い形の requires)が受けられない理由(受けられれば None)— 400 の理由の文を 1 か所で作るため。"
+  (try
+    (request-needs body "needs")
+    None
+    (except [error ValueError]
+      (str error))))
 
 
 (defn #^ bool eligible [#^ ClusterJob job #^ WorkerInfo worker]
+  "Service をこの worker に置けるか(pin と能力)。"
   (and (or (is job.pin None) (= job.pin worker.name))
-       (labels-satisfy job.requires worker)
-       (tolerates job.requires worker)))
+       (placeable job.needs worker)))
 
 
 ;; probing(2026-09-27)= starting の手前の入口の検めの間(その worker で起こしかけている — 他へ置かない)。
@@ -496,7 +526,7 @@
    子 process は worker の venv ではなく env の root で走り、版の突き合わせは子 process が env の版と行う。準備に一時の失敗をした
    worker(avoid)には置き直さない。"
   (and (or (is-not task.runtime-env None) (= task.versions worker.versions))
-       (labels-satisfy task.requires worker) (tolerates task.requires worker)
+       (placeable task.needs worker)
        (not-in worker.name task.avoid)
        (tools-satisfy task worker)))
 
@@ -507,8 +537,8 @@
                    (.format "{}({})" w.name
                             (.join "・" (lfor #(k v) w.versions :if (!= v (.get (dict task.versions) k))
                                               (.format "{}={}" k v))))))
-  (.format "版と label(専用の印を含む)が合う worker が無い。求める label {}・送り手の版 {}。生きている worker と版の違う所: {}"
-           (dict task.requires) (dict task.versions) (or (.join " / " seen) "(生きている worker が無い)")))
+  (.format "版と能力(専用の能力を含む)が合う worker が無い。要る能力 {}・送り手の版 {}。生きている worker と版の違う所: {}"
+           (list task.needs) (dict task.versions) (or (.join " / " seen) "(生きている worker が無い)")))
 
 
 (defn #^ dict unplaced-jobs [#^ int now #^ ClusterState state #^ ClusterTiming timing]
@@ -520,8 +550,8 @@
           (still-live-somewhere now state job.spec.name timing) "前の担い手が止め終えるのを待っている"
           (not (any (gfor w (.values state.workers) (and (alive now w timing.lease-ms) (eligible job w)
                                                           (not-in w.name (draining-workers state now))))))
-            (.format "置ける worker が無い(求める label {}・固定 {}。専用の印を持つ worker には、その印を求める job だけを置く。drain 中の worker には置かない)"
-                     (dict job.requires) job.pin)
+            (.format "置ける worker が無い(要る能力 {}・固定 {}。専用の能力を持つ worker には、そのどれかを要る job だけを置く。drain 中の worker には置かない)"
+                     (list job.needs) job.pin)
           True "置ける worker に空きが無い")))
 
 
@@ -549,9 +579,9 @@
 
 
 (defn #^ str unplaceable-phase [#^ TaskRecord task #^ ClusterState state #^ int now #^ ClusterTiming timing]
-  "置ける worker が無い切り離した task の終わりの phase。label の合う生きた worker はいるのに版だけが違う = version-mismatch。"
+  "置ける worker が無い切り離した task の終わりの phase。能力の合う生きた worker はいるのに版だけが違う = version-mismatch。"
   (if (any (gfor w (.values state.workers)
-                 (and (alive now w timing.lease-ms) (labels-satisfy task.requires w) (tolerates task.requires w))))
+                 (and (alive now w timing.lease-ms) (placeable task.needs w))))
       "version-mismatch"
       "failed"))
 
@@ -599,10 +629,10 @@
         ;; 準備の一時の失敗の後に、置き直せる別の worker が無い: 最後の失敗で終える。
         (and (not able) task.failure-kind)
           (setv (get tasks id) (end-env-failed task now task.detail))
-        ;; label の合う生きた worker はいるが、宣言の道具を名乗る worker が無い。
+        ;; 能力の合う生きた worker はいるが、宣言の道具を名乗る worker が無い。
         (and (not able) (is-not task.runtime-env None)
              (any (gfor w (.values state.workers)
-                        (and (alive now w timing.lease-ms) (labels-satisfy task.requires w) (tolerates task.requires w)))))
+                        (and (alive now w timing.lease-ms) (placeable task.needs w)))))
           (setv (get tasks id)
                 (end-env-failed (replace task :failure-kind "tool-missing" :retryable False) now
                                 (.format "宣言の道具 {} を名乗る worker が無い"
@@ -651,7 +681,7 @@
            ;; 切り離した task は、状態を失った coordinator が引き取れるだけの欄を持つ(worker が状態の報告に写す —
            ;; adopt-running-detached・2026-09-27)。
            (if task.detached {"detached" True "key" task.key "leaseMs" task.lease-ms "retainMs" task.retain-ms
-                              "requires" (dict task.requires)} {})
+                              "needs" (list task.needs)} {})
            (if (is-not task.runtime-env None) {"runtimeEnv" task.runtime-env} {}))))
 
 
@@ -788,8 +818,8 @@
       (!= (set before.workers) (set after.workers))
       (any (gfor #(n w) (.items after.workers)
                  :setv b (.get before.workers n)
-                 (or (is b None) (!= #(b.labels b.capacity b.versions b.boot b.retired b.boot-at)
-                                     #(w.labels w.capacity w.versions w.boot w.retired w.boot-at)))))))
+                 (or (is b None) (!= #(b.provides b.exclusive b.derived b.node b.capacity b.versions b.boot b.retired b.boot-at)
+                                     #(w.provides w.exclusive w.derived w.node w.capacity w.versions w.boot w.retired w.boot-at)))))))
 
 
 (defn #^ list board-changes [#^ ClusterState before #^ ClusterState after]
@@ -804,7 +834,7 @@
 ;; --- HTTP の要求への返事(判断の部品。要求の振り分けは api_policy) -----------------------------------
 
 (defn #^ ClusterState register-heartbeat [#^ ClusterState state #^ dict body #^ int now]
-  "heartbeat の中身(worker の label・容量・版と、各 job / task の状態)を状態へ写す。割り当ての調停はしない(呼び手が別の送り手
+  "heartbeat の中身(worker の能力・容量・版と、各 job / task の状態)を状態へ写す。割り当ての調停はしない(呼び手が別の送り手
    = coordinator として調停する)。古い世代の heartbeat(generation-order が OLDER)は名乗りとして受けず、その世代を退いた世代の
    列に載せ、その世代に置いた task の終わりの報告と lease の延長だけを写す(absorb-superseded-heartbeat)。
    知らない切り離した task をその process が走らせていれば、先に引き取る(adopt-running-detached — 状態を失った coordinator)。"
@@ -817,7 +847,9 @@
               (replace state :workers (| state.workers {name (replace previous :retired (retired-with previous.retired boot))}))
               name boot (.get body "statuses" []) now)))
   (setv envs (.get body "envs" {})
-        info (WorkerInfo name (tuple (sorted (.items (.get body "labels" {}))))
+        caps (worker-capabilities-of body (.format "worker {} の名乗り" name))
+        node (str (.get body "node" ""))
+        info (WorkerInfo name (tuple (gfor c (get caps 0) :if (not-in c state.derivable) c))
                          (int (.get body "capacity" 10)) now
                          (component-versions-of (.get body "versions" {}))
                          boot
@@ -834,7 +866,11 @@
                          :boot-at (if (and (is boot-at None) (= order GenerationOrder.CURRENT) (is-not previous None)
                                            (= previous.boot boot))
                                       previous.boot-at
-                                      boot-at))
+                                      boot-at)
+                         :exclusive (get caps 1)
+                         ;; node の label から導いた能力は、同じ node の間だけ前の観測を引き継ぐ(次の調停で読み直す)。
+                         :node node
+                         :derived (if (and (is-not previous None) (= previous.node node)) previous.derived #()))
         statuses (.get body "statuses" [])
         state (replace (absorb-boot state name boot)
                 :workers (| state.workers {name info})
@@ -889,14 +925,14 @@
             (not-in (.get status "phase") ADOPTABLE-PHASES))
     (return None))
   (setv id (cut row-name 5 None) key (.get echo "key") lease-ms (.get echo "leaseMs")
-        env (.get echo "env") revision (.get echo "revision") requires (.get echo "requires" {}))
+        env (.get echo "env") revision (.get echo "revision") needs (.get echo "needs" []))
   (when (or (in id state.tasks) (!= (.get echo "id") id) (not (.get echo "detached"))
             (not (isinstance key str)) (not (isinstance lease-ms int))
-            (not (isinstance env str)) (not (isinstance revision str)) (not (isinstance requires dict))
+            (not (isinstance env str)) (not (isinstance revision str)) (not (isinstance needs list))
             (any (gfor t (.values state.tasks) (= t.key key))))
     (return None))
   (TaskRecord id (.get echo "name" "") env "" revision
-              (component-versions-of (.get echo "versions" {})) (requirements-of requires) lease-ms (+ now lease-ms) now
+              (component-versions-of (.get echo "versions" {})) (capabilities-of needs "引き取る task の needs") lease-ms (+ now lease-ms) now
               :phase "assigned" :worker worker :started-ms now :detached True :key key :boot boot
               :retain-ms (int (.get echo "retainMs" 0)) :runtime-env (.get echo "runtimeEnv")
               :detail (.format "coordinator の置き場に行が無く、担い手 {} が走らせていた task を引き取った" worker)))
@@ -925,12 +961,12 @@
 
 
 (defn #^ list warms-for [#^ ClusterState state #^ str worker #^ int now]
-  "worker に配る温める表の行(期限の内・requires の label と専用の印と宣言の道具が合う行)。heartbeat の返事の warm。"
+  "worker に配る温める表の行(期限の内・能力(専用の能力を含む)と宣言の道具が合う行)。heartbeat の返事の warm。"
   (setv info (.get state.workers worker))
   (if (is info None)
       []
       (lfor w (sorted (.values state.warms) :key (fn [w] w.key))
-            :if (and (> w.until-ms now) (labels-satisfy w.requires info) (tolerates w.requires info)
+            :if (and (> w.until-ms now) (placeable w.needs info)
                      (tools-cover w.runtime-env info))
             {"key" w.key "runtimeEnv" w.runtime-env})))
 
@@ -987,7 +1023,7 @@
                                 {"resourceVersion" (.get (.get state.meta (+ "Service/" j.spec.name) {}) "resourceVersion")}))
    ;; live = heartbeat が lease の内・draining = 期限の内の drain(担い手の名簿の読み ReadRunners の正本 — 2026-09-26)。
    "workers" (dfor #(n w) (.items state.workers)
-                   n {"labels" (dict w.labels) "capacity" w.capacity "silentMs" (- now w.last-seen-ms)
+                   n {"provides" (list w.provides) "exclusive" (list w.exclusive) "derived" (list w.derived) "node" w.node "capacity" w.capacity "silentMs" (- now w.last-seen-ms)
                       "versions" (dict w.versions) "live" (alive now w timing.lease-ms)
                       "draining" (in n (draining-workers state now))})
    "placements" (dfor #(k v) (.items state.placements) k (asdict v))
@@ -1024,7 +1060,7 @@
         lease-ms (int (* 1000 lease-seconds))
         task (TaskRecord id (.get body "name" "") (get body "env") (get body "blob") (get body "revision")
                          (component-versions-of (.get body "versions" {}))
-                         (requirements-of (.get body "requires" {}))
+                         (request-needs body "task の needs")
                          lease-ms (+ now lease-ms) now
                          :runtime-env (.get body "runtimeEnv")))
   #((replace state :tasks (| state.tasks {id task}) :next-task (+ state.next-task 1)) 200 {"task" id}))
@@ -1118,3 +1154,39 @@
                                                  (| state.board-expiry {key (+ now (int (* 1000 ttl)))}))
                                :board-sizes (| state.board-sizes {key size}))
                 200 {"ok" True "resourceVersion" (+ version 1)})))))
+
+
+;; --- node の label から導く能力(ADR-DOE-CLUSTER-001 R4b・改訂 1 の I)------------------------------------------
+
+;; node の label を読み直す間隔(label は滅多に変わらない — 置き先を選ぶ時に古い観測を使っても、次の読みで直る)。
+(setv NODE-LABELS-TTL-MS 60000)
+
+
+(deff nodes-to-read [#^ ClusterState state #^ int now]  ; defk にできない: coordinator の調停(Program)が呼ぶ純粋な判断
+  {:pre [(: state ClusterState) (: now int)] :post [(: % list)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "label を読み直す node の名(整列)— node を名乗る worker の node のうち、観測が無いか古い物。能力の導出の材料を揃えるため。"
+  (sorted (sfor w (.values state.workers)
+                :if (and w.node (> (- now (.get (.get state.nodes w.node {}) "at" (- now NODE-LABELS-TTL-MS 1)))
+                                   NODE-LABELS-TTL-MS))
+                w.node)))
+
+
+(deff derived-capabilities [#^ dict labels #^ tuple table]  ; defk にできない: coordinator の調停(Program)が呼ぶ純粋な判断
+  {:pre [(: labels dict) (: table tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "node の label → その node の worker に足す能力(名の順)。table = ClusterNaming の node-capabilities #(#(鍵 値 能力) …)。"
+  (tuple (sorted (sfor #(key value capability) table :if (= (.get labels key) value) capability))))
+
+
+(deff with-derived-capabilities [#^ ClusterState state #^ tuple table]  ; defk にできない: coordinator の調停(Program)が呼ぶ純粋な判断
+  {:pre [(: state ClusterState) (: table tuple)] :post [(: % ClusterState)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "node の label の観測から、各 worker の derived(導いた能力)を作り直す。label を読めなかった node(error)の worker は前の値を保つ
+   (届かない間に会社の機体の能力を外したり足したりしない — 次に読めた時に直る)。node を名乗らない worker は空。"
+  (setv workers {})
+  (for [#(name w) (.items state.workers)]
+    (setv seen (.get state.nodes w.node))
+    (setv (get workers name)
+          (cond
+            (not w.node) (replace w :derived #())
+            (or (is seen None) (in "error" seen)) w
+            True (replace w :derived (derived-capabilities (get seen "labels") table)))))
+  (replace state :workers workers))

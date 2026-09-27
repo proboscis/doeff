@@ -1,7 +1,7 @@
 ;;; service(名前付きで個別に管理する常駐 job)の宣言の型と、宣言の組(System)から導く 2 つの形。
 ;;;
 ;;;   (a) system-main        = 全 service の Program を Spawn して Gather する 1 つの Program(テスト用の main。handler は差し替える)
-;;;   (b) system-declaration = coordinator に渡す宣言(service ごとに 名前・関数の参照・env・requires・commit・設定)
+;;;   (b) system-declaration = coordinator に渡す宣言(service ごとに 名前・関数の参照・env・needs・commit・設定)
 ;;;
 ;;; service どうしは戻り値でやり取りしない。共有の状態を読み書きする effect を通してだけつながる。
 ;;; 宣言の durable な形は「関数の参照(module:attr)+ commit」。実行先はその commit のコードを準備してから参照を解く。
@@ -12,7 +12,7 @@
 ;;;     {:pre [(: interval float)] :post [(: % int)]}
 ;;;     …)
 ;;;   (setv turn-placer (service "turn-placer" turn-placer-program
-;;;                              :env "myapp.envs:board_env" :requires {"kind" "k3s"} :config {"interval" 1.0}
+;;;                              :env "myapp.envs:board_env" :needs (frozenset ["gpu"]) :config {"interval" 1.0}
 ;;;                              :env-config {"token-file" "/etc/myapp/token"}))
 ;;;   (setv lab (System "lab" #(turn-placer)))
 ;;;
@@ -29,16 +29,17 @@
 (import doeff [Program run])
 (import .runtime_env_model [RuntimeEnv runtime-env->json])
 (import .readiness_model [readiness-refusal])
+(import .cluster_model [capabilities-of])
 (import doeff_core_effects.scheduler [Spawn Gather Task])
 
 
 (defclass [(dataclass :frozen True)] ServiceDef []
-  "service 1 本の宣言。requires と config は (鍵 値) の組を鍵の順に並べた tuple(比較と JSON 化のため)。
+  "service 1 本の宣言。needs は要る能力の名の名の順の tuple・config は (鍵 値) の組を鍵の順に並べた tuple(比較と JSON 化のため)。
    program-factory は宣言した module の中で持つ関数そのもの(テストと同じ process の main が直接使う)。"
   (#^ str name)
   (#^ str factory)
   (#^ str env)
-  (#^ tuple requires)
+  (#^ tuple needs)
   (#^ tuple config)
   (setv #^ object program-factory None)
   (setv #^ (| dict None) readiness None)    ; {"windowSeconds": n "handoffTimeoutSeconds": m?}(ReportReady で Ready を報告する service だけ)
@@ -137,7 +138,7 @@
 
 (defn #^ ServiceDef service [#^ str name #^ Callable program *  ; defk にできない: 宣言の値は module の読み込みの時に組む
                              #^ str env
-                             #^ (| dict None) [requires None]
+                             #^ (| frozenset None) [needs None]
                              #^ (| dict None) [config None]
                              #^ (| dict None) [env-config None]
                              #^ (| dict None) [readiness None]
@@ -145,7 +146,7 @@
                              #^ (| dict None) [base-from None]]
   "名前付きの常駐 job(service)を 1 つ宣言する。
    program = Program を作る module の最上位の関数(設定の鍵を引数に受ける — 食い違いはここで TypeError)。env = 実行先で組む handler の組を返す関数の import path。
-   requires = 置き場の条件・config = 本体の引数の設定・env-config = env だけが読む設定(どれも文字列の鍵の dict)。
+   needs = 要る能力の名の frozenset(置く worker は needs ⊆ provides)・config = 本体の引数の設定・env-config = env だけが読む設定(どれも文字列の鍵の dict)。
    readiness {\"windowSeconds\" n} = 本体が ReportReady で報告する「準備できた」が直近 n 秒以内にある時だけ Ready(Rollout が見る)。
    update \"handoff\" = 版や設定が変わった時、新の process を旧と並べて起こし、新が Ready と数えられてから旧を止める(名前付きの lease で
    書きを 1 つに絞り、lease を待つ間も待機の拍で Ready を報告する service だけが使う)。既定は \"recreate\"(旧を止めてから新)。
@@ -165,7 +166,10 @@
   (ServiceDef name
               reference
               env
-              (tuple (sorted (.items (string-keyed name "requires" (or requires {})))))
+              (do (setv caps (capabilities-of (or needs (frozenset)) (.format "service {} の :needs" name)))
+                  (when (not caps)
+                    (raise (ValueError (.format "service {} の :needs が空 — 要る能力の名を 1 つ以上書く" name))))
+                  caps)
               (tuple (sorted (.items settings)))
               program
               (if (is readiness None) None (string-keyed name "readiness" readiness))
@@ -235,7 +239,7 @@
   (lfor service system.services
     (| {"name" service.name
         "revision" revision
-        "requires" (dict service.requires)
+        "needs" (list service.needs)
         "run" {"kind" "service"
                "factory" service.factory
                "env" service.env
