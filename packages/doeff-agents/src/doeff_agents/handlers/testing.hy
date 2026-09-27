@@ -2,6 +2,7 @@
 
 (import datetime [datetime timezone])
 (import json)
+(import pathlib [Path])
 
 (import doeff_agents.adapters.base [AgentType])
 (import doeff_agents.effects.agent [refuse-turn-capabilities])
@@ -101,7 +102,7 @@
       (when (or (is mcp-servers None)
                 (not (in effect.mcp-server-name mcp-servers)))
         (raise (ValueError "MCP tools require an in-VM MCP server URL")))
-      (setv mcp-json-path (/ effect.work-dir ".mcp.json"))
+      (setv mcp-json-path (/ (Path effect.work-dir) ".mcp.json"))
       (.write-text
         mcp-json-path
         (json.dumps
