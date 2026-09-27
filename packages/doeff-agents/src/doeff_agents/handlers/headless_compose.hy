@@ -26,8 +26,12 @@
   [(claude-code-handler (ClaudeCodeHost (tuple command) (clock-of (sync-time-handler))))
    (headless-claude-handler config (HeadlessState))])
 
-(defn #^ list fake-headless-claude-handlers [#^ Callable responder [config-dir "fake-claude-home"]]
+(defn #^ list fake-headless-claude-handlers [responder [config-dir "fake-claude-home"] [world None]]
   "模擬の組: doeff-claude-code の fake の handler + headless の adapter(process も API も使わない)。
-   responder = (入力の本文 それまでの入力の tuple) → FakeReply(返事の本文・道具の秒数・許可の問いの要否)。"
-  [(fake-claude-code-handler (FakeClaudeWorld responder))
+   responder = (入力の本文 それまでの入力の tuple) → FakeReply(返事の本文・道具の秒数・許可の問いの要否)。
+   world = 呼び手が持つ fake の世界(FakeClaudeWorld — 検の口で家の中身を触る・同じ家の上で process を作り直す〔world.restarted〕
+   模擬のため)。responder と world はちょうど 1 つ。"
+  (when (= (is responder None) (is world None))
+    (raise (ValueError "fake-headless-claude-handlers は responder と world のちょうど 1 つを受ける")))
+  [(fake-claude-code-handler (if (is world None) (FakeClaudeWorld responder) world))
    (headless-claude-handler (HeadlessClaudeConfig (ClaudeHome config-dir)) (HeadlessState))])

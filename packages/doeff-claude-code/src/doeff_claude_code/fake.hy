@@ -2,26 +2,30 @@
 ;;;
 ;;; 時刻は doeff-time(GetMonotonic で手番の筋書きを進め、GetTime で行の at を刻む)。仮想の時計(sim-time-handler)の下では
 ;;; 道具の秒数も待ちも一瞬で進む。筋書き = 入力の本文と会話の記憶(それまでの入力)→ FakeReply(返事の本文・道具の秒数・
-;;; 許可の問いの要否)。行は本番と同じ ClaudeStreamLine / ClaudeLineKind の型で出す(型を 2 つ作らない)。
+;;; 許可の問いの要否・終わり方〔完了・失敗・process が消える〕・usage・途中の本文の行の数)。行は本番と同じ ClaudeStreamLine /
+;;; ClaudeLineKind の型で出す(型を 2 つ作らない)。
+;;;
+;;; 世界 = 家の中身(transcripts・activity — disk の上の物)と process の中の会話(sessions)。restarted は同じ家の上で process だけを
+;;; 作り直した世界(前の process の会話は前の世界で走り続け、新しい世界からは見えない — 上の層の process の作り直しの模擬)。
 ;;;
 ;;; 本番と共通の不変条件(1 つの会話に走る手番は多くとも 1 つ・StartTurn 1 回に終わりちょうど 1 つ・seq の単調増加・
 ;;; FreshSession の id の重複と ResumeSession の不在の断り・手番の外の足す / 止めるの断り・止めた後は Interrupted・閉じるは冪等・
 ;;; process の死の注入で BackendLost・次の ResumeSession は通る)を同じ筋書きの検で確かめる。
 (require doeff-hy.macros [defhandler defk <- val])
-(import dataclasses [dataclass replace])
+(import dataclasses [dataclass field replace])
 (import uuid)
 (import doeff_time [Delay GetMonotonic GetTime])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_claude_code.values [ClaudeTurn FreshSession ResumeSession ForkSession Rebuilt LinkFromHome IMAGE-MIMES])
 (import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage ToolResult InputFate PermissionRequested
-                                 TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd])
+                                 TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd Usage])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
                                    TurnStarted InputQueued InterruptRequested TurnEventPage Answered SessionClosed
                                    SessionStatus SessionExported Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
                                    SessionNotFound SessionIdInUse TurnInFlight AttachmentRefused NoTurnInFlight
                                    UnknownTurn NoSuchRequest])
-(import doeff_claude_code.faults [ClaudeDropProcess])
+(import doeff_claude_code.faults [ClaudeDropProcess ClaudeForgetSession])
 
 (setv QUICK-TURN-SECONDS 0.1)
 ;; 仮想の時計は datetime(マイクロ秒の刻み)なので、秒の小数の足し算の端数で「期限の直前」に留まらないように
@@ -33,10 +37,24 @@
 
 (defclass [(dataclass :frozen True)] FakeReply []
   "筋書きの 1 手番の返事: text = 最後の本文・tool-seconds = 道具が走る秒数(0 = 道具なし)・
-   needs-permission = 道具の前に許可の問いを出す。"
+   needs-permission = 道具の前に許可の問いを出す・fail = 期限で Failed(detail = この文)で終わる・lose = 期限で process が消えて
+   BackendLost(detail = この文)で終わる(fail と lose は多くとも 1 つ)・usage = Completed / Failed に載せる usage・
+   lines = 始めてから期限までの前半に、本文の行(AssistantMessage)を lines 行ほど等間隔に出す(出来事の量の多い手番)・
+   think-seconds = 道具を使わずに考える秒(道具の行を出さずに長く走る手番)。"
   (#^ str text)
   (setv #^ float tool-seconds 0.0)
-  (setv #^ bool needs-permission False))
+  (setv #^ bool needs-permission False)
+  (setv #^ (| str None) fail None)
+  (setv #^ (| str None) lose None)
+  (setv #^ Usage usage (field :default-factory Usage))
+  (setv #^ int lines 0)
+  ;; 道具なしで考える秒(0 = 既定の短い手番)。本文の行だけで、道具の行を出さずにこの秒まで走る。
+  (setv #^ float think-seconds 0.0)
+  (defn #^ None __post-init__ [self]
+    (when (and (is-not self.fail None) (is-not self.lose None))
+      (raise (ValueError "FakeReply の fail と lose は多くとも 1 つ")))
+    (when (< self.lines 0)
+      (raise (ValueError (+ "FakeReply の lines は 0 以上: " (str self.lines)))))))
 
 
 (defclass [(dataclass :frozen True)] FakeInjection []
@@ -56,7 +74,8 @@
     (setv #^ FakeReply self.reply reply)
     (setv #^ (get list str) self.refs (list refs))
     (setv #^ str self.phase "quick")
-    (setv #^ float self.due-at (+ started-at QUICK-TURN-SECONDS))
+    (setv #^ float self.due-at (+ started-at (max QUICK-TURN-SECONDS reply.think-seconds)))
+    (setv #^ int self.lines-emitted 0)
     (setv #^ (get list FakeInjection) self.injections [])
     (setv #^ (| str None) self.permission None)
     (setv #^ (get list ClaudeStreamLine) self.lines [])
@@ -81,6 +100,13 @@
           self.transcripts {}
           self.activity {}
           self.sessions {}))
+
+  (defn restarted [self]
+    "同じ家の上で process を作り直した世界: transcript と activity(家の中身)は同じ物を共有し、会話(process の中の状態)は空。
+     前の世界の走っている手番は前の世界で走り続ける(子 process は上の層の process の作り直しで止まらない)。"
+    (setv world (FakeClaudeWorld self.responder))
+    (setv world.transcripts self.transcripts world.activity self.activity)
+    world)
 
   (defn transcript-key [self home #^ str cwd #^ str session-id]
     #(home.config-dir cwd session-id)))
@@ -116,20 +142,54 @@
       (<- (emit session turn (InputFate injection.ref "started")))
       (.append extra (. (world.responder injection.text memory) text))))
   (setv text (.join " " (+ [turn.reply.text] extra)))
-  (<- (emit-all session turn [(AssistantMessage :text text) (TurnResult "success" False :terminal-reason "completed")]))
+  (<- (emit-all session turn [(AssistantMessage :text text)
+                              (TurnResult "success" False :terminal-reason "completed" :usage turn.reply.usage)]))
   (for [injection turn.injections]
     (<- (emit session turn (InputFate injection.ref "completed"))))
-  (<- (finish session turn (Completed :result-text text :input-refs (tuple turn.refs))))
+  (<- (finish session turn (Completed :result-text text :usage turn.reply.usage :input-refs (tuple turn.refs))))
+  None)
+
+(defn #^ float line-due-at [#^ FakeTurn turn #^ int index]
+  "本文の行 index(0 から)を出す時刻: 始めてから期限までの前半に等間隔。"
+  (+ turn.started-at (* (/ (- turn.due-at turn.started-at) 2) (/ index (max turn.reply.lines 1)))))
+
+(defn #^ (| float None) next-line-at [#^ FakeTurn turn]
+  "まだ出していない本文の行の次の時刻(無ければ None)。"
+  (if (and (in turn.phase #("quick" "tool")) (< turn.lines-emitted turn.reply.lines))
+      (line-due-at turn turn.lines-emitted)
+      None))
+
+(defk emit-due-lines [#^ FakeSession session #^ FakeTurn turn #^ float now]
+  {:pre [(: session FakeSession) (: turn FakeTurn) (: now float)] :post [(: % (type None))]}
+  "now までに来た本文の行を出す。"
+  (while (and (< turn.lines-emitted turn.reply.lines) (>= (+ now CLOCK-TICK) (line-due-at turn turn.lines-emitted)))
+    (<- (emit session turn (AssistantMessage :text (+ "line " (str turn.lines-emitted)))))
+    (+= turn.lines-emitted 1))
+  None)
+
+(defk end-scripted [#^ FakeSession session #^ FakeTurn turn]
+  {:pre [(: session FakeSession) (: turn FakeTurn)] :post [(: % (type None))]}
+  "筋書きが失敗か process の消失で終わる手番の終わり(注入は読まない)。"
+  (setv reply turn.reply)
+  (if (is-not reply.fail None)
+      (do
+        (<- (emit session turn (TurnResult "error_during_execution" True :terminal-reason "failed" :usage reply.usage)))
+        (<- (finish session turn (Failed reply.fail :terminal-reason "failed" :usage reply.usage :input-refs (tuple turn.refs)))))
+      (<- (finish session turn (BackendLost reply.lose))))
   None)
 
 (defk advance [#^ FakeClaudeWorld world #^ FakeSession session #^ FakeTurn turn]
   {:pre [(: world FakeClaudeWorld) (: session FakeSession) (: turn FakeTurn)] :post [(: % (type None))]}
   "今の時刻まで筋書きを進める。"
   (<- now (GetMonotonic))
+  (when (in turn.phase #("quick" "tool"))
+    (<- (emit-due-lines session turn now)))
   (when (and (in turn.phase #("quick" "tool")) (>= (+ now CLOCK-TICK) turn.due-at))
     (when (= turn.phase "tool")
       (<- (emit-all session turn [(ToolResult :tool-use-ids #("fake-tool")) (TaskEvent "fake-task" "completed")])))
-    (<- (complete-turn world session turn)))
+    (if (or (is-not turn.reply.fail None) (is-not turn.reply.lose None))
+        (<- (end-scripted session turn))
+        (<- (complete-turn world session turn))))
   None)
 
 (defk begin-fake-turn [#^ FakeClaudeWorld world #^ FakeSession session reply #^ tuple refs #^ bool announce]
@@ -254,7 +314,10 @@
     (<- now (GetMonotonic))
     (when (or lines (is-not turn.end None) (>= now deadline))
       (return (TurnEventPage lines (if lines (. (get lines -1) seq) request.after-seq) turn.end)))
-    (setv wake (if (in turn.phase #("quick" "tool")) (min turn.due-at deadline) deadline))
+    (setv line-at (next-line-at turn))
+    (setv wake (if (in turn.phase #("quick" "tool"))
+                   (min turn.due-at deadline (if (is line-at None) deadline line-at))
+                   deadline))
     (<- (Delay (max MIN-SLEEP (- wake now))))))
 
 (defk fake-answer [#^ FakeClaudeWorld world #^ ClaudeAnswerPermission request]
@@ -307,6 +370,21 @@
   (<- (finish session running (BackendLost "process killed (fake)")))
   True)
 
+(defk fake-forget [#^ FakeClaudeWorld world #^ str session-id]
+  {:pre [(: world FakeClaudeWorld) (: session-id str)] :post [(: % bool)]}
+  "家から会話を消す(家を空にした形): 走っている手番は BackendLost で終わり(終わりは読める)、その会話の transcript を忘れる。
+   以後の ResumeSession は SessionNotFound(写しを持ち込めば続く)。答え = 忘れた transcript が在ったか。"
+  (setv session (.get world.sessions session-id))
+  (when (is-not session None)
+    (setv running (.running session))
+    (when (is-not running None)
+      (<- (finish session running (BackendLost "home emptied (fake)")))))
+  (setv keys (lfor key world.transcripts :if (= (get key 2) session-id) key))
+  (for [key keys]
+    (del (get world.transcripts key))
+    (.pop world.activity key None))
+  (bool keys))
+
 
 ;; --- handler -----------------------------------------------------------------------------------
 
@@ -336,4 +414,7 @@
     (resume exported))
   (ClaudeDropProcess [session-id]
     (<- dropped (fake-drop world session-id))
-    (resume dropped)))
+    (resume dropped))
+  (ClaudeForgetSession [session-id]
+    (<- forgotten (fake-forget world session-id))
+    (resume forgotten)))

@@ -186,15 +186,19 @@ def headless_claude_agent_handlers(
 
 def fake_headless_claude_agent_handlers(
     *,
-    responder: Any,
+    responder: Any = None,
     config_dir: str = "fake-claude-home",
+    world: Any = None,
 ) -> list[Any]:
     """The same adapter over doeff-claude-code's fake handler (no process, no API).
 
     ``responder(text, memory) -> FakeReply`` scripts each turn
-    (``doeff_agents.handlers.headless_compose.FakeReply``).
+    (``doeff_agents.handlers.headless_compose.FakeReply``). Pass ``world``
+    (a ``FakeClaudeWorld`` the caller keeps — e.g. ``world.restarted()`` for a
+    new process over the same home) instead of ``responder``; exactly one.
+    Returns ``[fake layer-2 handler, headless adapter]`` (outer first).
     """
-    return _hy_headless_compose_module().fake_headless_claude_handlers(responder, config_dir)
+    return _hy_headless_compose_module().fake_headless_claude_handlers(responder, config_dir, world)
 
 
 def claude_agent_runtime_handlers(
@@ -224,15 +228,18 @@ def claude_agent_runtime_handlers(
 
 def fake_claude_agent_runtime_handlers(
     *,
-    responder: Any,
+    responder: Any = None,
     config_dir: str = "fake-claude-home",
+    world: Any = None,
 ) -> list[Any]:
     """The fake counterpart of ``claude_agent_runtime_handlers`` (no process, no API).
 
     ``responder(text, memory) -> FakeReply`` scripts each turn
-    (``doeff_agents.handlers.headless_compose.FakeReply``).
+    (``doeff_agents.handlers.headless_compose.FakeReply``), or ``world`` is a
+    ``FakeClaudeWorld`` the caller keeps (exactly one of the two).
+    Returns ``[fake layer-2 handler, headless adapter]`` (outer first).
     """
-    return fake_headless_claude_agent_handlers(responder=responder, config_dir=config_dir)
+    return fake_headless_claude_agent_handlers(responder=responder, config_dir=config_dir, world=world)
 
 
 _mock_effect_handler = MockAgentHandler()
