@@ -8,10 +8,21 @@
 //! - 重さは warning か info だけ(当たり外れを測り終えるまで error にしない — 設定でも選べない)。
 //! - 較正の見張り: 問いを撃つ実行ごとに、既知の正例と反例(data/semantic_calibration.json)を 1 回ずつ問い、確率が幅の外なら cache を捨てて警告する。
 //! API キーの値は、設定・出力・log・cache の鍵に書かない。
+//!
+//! Jev の呼び出しを覚える代理(doeff の packages/doeff-jev-proxy・agora-redesign #843):
+//! - 宛先は repo ごとの設定 `[tool.doeff-linter.semantic] proxy_url` で向ける(機体全体の環境変数にしない — 会社の repo は向けない)。
+//!   env の JEV_BASE_URL が在ればそちらが勝つ。代理へは代理の token(proxy_token_file)だけを送り、TypeSafe のキーは送らない。
+//! - 決定的な規則の全体の実行(hook・引数なしの実行)は、手元の cache に無い定義を「覚えている時だけ答えて」の印
+//!   (見出し Cache-Control: only-if-cached)で代理に問い、返った答えを手元の cache に書く。本物の Jev は呼ばない。
+//!   代理に届かない・時間切れ(proxy_peek_timeout_ms・既定 1500)の時は手元の cache だけで動く。
+//! - 較正の見張りの問いは覚えを使わない(Cache-Control: no-cache — model の中身が変わったことを代理の覚えが隠さないため)。
+//! - `--semantic-changed` は、指定の file のうち手元の cache に答えの無い定義(= 中身が変わった定義)だけを問う。
+//!   読み取りで壊れた箇所を含む定義(書きかけ)はどの実行でも問わない。
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use rayon::prelude::*;
 use regex::Regex;
@@ -152,7 +163,7 @@ pub struct QuestionSection {
 }
 
 /// `[tool.doeff-linter.semantic]`(読んだ形)。重さは warning と info だけで、error の欄は無い。宛先・model・キーはここに書かない
-/// (doeff-jev と同じ決め方 — 環境変数 JEV_* と ~/.config/jev/client.json)。
+/// (doeff-jev と同じ決め方 — 環境変数 JEV_* と ~/.config/jev/client.json)。例外は Jev の呼び出しを覚える代理の宛先 proxy_url(repo ごとに向ける)。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct SemanticSection {
@@ -169,6 +180,12 @@ pub struct SemanticSection {
     pub workers: Option<usize>,
     pub timeout_seconds: Option<u64>,
     pub source_limit: Option<usize>,
+    /// Jev の呼び出しを覚える代理の宛先(例 http://jev-proxy.example:8878/v1/systemone)。無ければ代理を使わない。
+    pub proxy_url: Option<String>,
+    /// 代理の身元の token の file(既定 ~/.config/jev/proxy-token)。
+    pub proxy_token_file: Option<String>,
+    /// 覚えている時だけの問いの時間の上限(ms・既定 1500 — 全部の問いを合わせた上限)。
+    pub proxy_peek_timeout_ms: Option<u64>,
 }
 
 /// `[tool.doeff-linter.semantic] mixed_concerns`(読んだ形)。
@@ -194,6 +211,19 @@ pub struct MixedConcernsSettings {
     pub warning_min: f64,
     pub info_min: f64,
 }
+
+/// 代理の設定(検めた後)。
+#[derive(Debug, Clone)]
+pub struct ProxySettings {
+    pub url: String,
+    pub token_file: String,
+    pub peek_timeout: Duration,
+}
+
+/// 代理の token の file の既定の置き場。
+pub const DEFAULT_PROXY_TOKEN_FILE: &str = "~/.config/jev/proxy-token";
+/// 覚えている時だけの問いの時間の上限の既定(ms)。
+pub const DEFAULT_PROXY_PEEK_TIMEOUT_MS: u64 = 1500;
 
 /// `[tool.doeff-linter.semantic] plain_callable`(読んだ形)。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
@@ -230,6 +260,8 @@ pub struct SemanticSettings {
     pub workers: usize,
     pub timeout: Duration,
     pub source_limit: usize,
+    /// Jev の呼び出しを覚える代理(無ければ使わない)。
+    pub proxy: Option<ProxySettings>,
 }
 
 
@@ -279,7 +311,22 @@ impl SemanticSettings {
             }
             Some(settings)
         });
+        let proxy = section.proxy_url.as_ref().and_then(|url| {
+            if !(url.starts_with("http://") || url.starts_with("https://")) {
+                problems.push(format!("semantic.proxy_url は http:// か https:// の URL: {}", url));
+                return None;
+            }
+            Some(ProxySettings {
+                url: url.clone(),
+                token_file: section.proxy_token_file.clone().unwrap_or_else(|| DEFAULT_PROXY_TOKEN_FILE.to_string()),
+                peek_timeout: Duration::from_millis(section.proxy_peek_timeout_ms.unwrap_or(DEFAULT_PROXY_PEEK_TIMEOUT_MS)),
+            })
+        });
+        if section.proxy_url.is_none() && (section.proxy_token_file.is_some() || section.proxy_peek_timeout_ms.is_some()) {
+            problems.push("semantic.proxy_token_file・proxy_peek_timeout_ms は proxy_url と一緒に書く".to_string());
+        }
         SemanticSettings {
+            proxy,
             plain_callable,
             class_role,
             mixed_concerns,
@@ -352,6 +399,15 @@ pub struct SemanticItem {
     pub layer: LayerId,
     pub state: Value,
     pub key: String,
+    /// 定義の source が読み取りで壊れていない(書きかけでない)か — 壊れた定義は問わない。
+    pub readable: bool,
+}
+
+/// 定義の source が Hy の読み取りで壊れた箇所(閉じない括弧・対応しない閉じ括弧・閉じない文字列)を持たないか。
+pub fn readable(source: &str) -> bool {
+    let mut reader = doeff_indexer::hy_index::reader::Reader::new(source, 0, source.len());
+    let forms = reader.read_all();
+    !forms.is_empty() && reader.issues.is_empty()
 }
 
 /// 申告の :tags を source から消す(申告を見せると Jev が引きずられる — jev-lint の TAGS と同じ)。
@@ -413,7 +469,7 @@ pub fn item(
         hasher.update(b"\n");
     }
     let key = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect();
-    SemanticItem { question, question_json: question.wire(), declared: None, rel: rel.to_string(), path: path.to_path_buf(), name: name.to_string(), kind, range, layer, state, key }
+    SemanticItem { question, question_json: question.wire(), declared: None, rel: rel.to_string(), path: path.to_path_buf(), name: name.to_string(), kind, range, layer, state, key, readable: readable(source) }
 }
 
 /// DOEFF203 の定義 1 つの state と cache の鍵を作る(state = 定義・書かれた理由。鍵 = sha256(model・問いの JSON・state))。
@@ -456,6 +512,7 @@ pub fn plain_callable_item(
         layer: LayerId(0),
         state,
         key,
+        readable: readable(source),
     }
 }
 
@@ -495,6 +552,7 @@ pub fn class_item(
         layer: LayerId(0),
         state,
         key,
+        readable: readable(source),
     }
 }
 
@@ -526,7 +584,7 @@ pub fn mixed_item(
         hasher.update(b"\n");
     }
     let key = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect();
-    SemanticItem { question, question_json, declared: None, rel: rel.to_string(), path: path.to_path_buf(), name: name.to_string(), kind, range, layer, state, key }
+    SemanticItem { question, question_json, declared: None, rel: rel.to_string(), path: path.to_path_buf(), name: name.to_string(), kind, range, layer, state, key, readable: readable(source) }
 }
 
 /// 較正の見張りで比べる確率 — Noul は答えの確率、DOEFF204 は external-world の確率(正例 = 窓口・反例 = 値の class)。
@@ -557,10 +615,32 @@ pub struct Answer {
     pub probabilities: Option<BTreeMap<String, f64>>,
 }
 
+/// 代理の覚えの使い方(代理への見出し Cache-Control)。代理でない宛先には何も足さない。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Freshness {
+    /// 覚えていれば覚えた答え・無ければ本物の Jev(見出しなし)。
+    Remembered,
+    /// 覚えを使わず本物の Jev に問い直す(no-cache — 較正の見張り)。
+    Fresh,
+}
+
+/// 覚えている時だけの問いの結果。
+#[derive(Debug, Clone, PartialEq)]
+pub enum Peeked {
+    /// 代理が覚えていた答え。
+    Hit(Answer),
+    /// 代理は覚えていない(本物の Jev は呼んでいない)。
+    Absent,
+    /// 代理に届かない・時間切れ・代理でない宛先(理由)。
+    Unreachable(String),
+}
+
 /// Jev へ問う口(本物は HTTP・検では偽物)。
 pub trait Gateway: Sync {
     /// 1 つの定義に 1 つの問いを撃つ。
-    fn ask(&self, state: &Value, question: &Value) -> Result<Answer, String>;
+    fn ask(&self, state: &Value, question: &Value, freshness: Freshness) -> Result<Answer, String>;
+    /// 代理が覚えている時だけ答えを受け取る(本物の Jev を呼ばない)。代理でない宛先は Unreachable。
+    fn peek(&self, state: &Value, question: &Value, timeout: Duration) -> Peeked;
     /// 宛先の model の名(cache の鍵と出力のため)。
     fn model(&self) -> String;
 }
@@ -596,8 +676,10 @@ pub struct JevTarget {
     pub model: String,
     pub wire: Wire,
     api_key: Option<String>,
-    /// env / file / default(記録用)。
+    /// env / file / default / repo(記録用 — repo = repo の設定の代理)。
     pub source: &'static str,
+    /// 宛先が Jev の呼び出しを覚える代理か(覚えている時だけの問いと no-cache の見出しは代理にだけ送る)。
+    pub proxy: bool,
 }
 
 impl std::fmt::Debug for JevTarget {
@@ -609,6 +691,7 @@ impl std::fmt::Debug for JevTarget {
             .field("wire", &self.wire)
             .field("api_key", &self.api_key.as_ref().map(|_| "<set>"))
             .field("source", &self.source)
+            .field("proxy", &self.proxy)
             .finish()
     }
 }
@@ -662,7 +745,27 @@ pub fn resolve_target(env: &dyn Fn(&str) -> Option<String>, read_text: &dyn Fn(&
             Wire::Direct => env_str("TYPESAFE_API_KEY").or_else(|| read_text(DIRECT_KEY_FILE)),
         };
     }
-    JevTarget { base_url: url, model, wire: resolved_wire, api_key: key.map(|k| k.trim().to_string()).filter(|k| !k.is_empty()), source }
+    JevTarget { base_url: url, model, wire: resolved_wire, api_key: key.map(|k| k.trim().to_string()).filter(|k| !k.is_empty()), source, proxy: false }
+}
+
+/// repo の設定の代理を重ねて宛先を解く(純粋)。env の JEV_BASE_URL が在ればそれが勝つ(代理を使わない)。代理へは代理の token だけを
+/// 送る(TYPESAFE_API_KEY などの本物のキーは送らない)。model は解いた direct の model(gateway を解いていれば direct の既定)。
+pub fn resolve_repo_target(env: &dyn Fn(&str) -> Option<String>, read_text: &dyn Fn(&str) -> Option<String>, proxy: Option<&ProxySettings>) -> JevTarget {
+    let base = resolve_target(env, read_text, None);
+    match proxy {
+        Some(proxy) if base.source != "env" => JevTarget {
+            base_url: proxy.url.clone(),
+            model: match base.wire {
+                Wire::Direct => base.model,
+                Wire::Gateway => DIRECT_MODEL.to_string(),
+            },
+            wire: Wire::Direct,
+            api_key: read_text(&proxy.token_file).map(|k| k.trim().to_string()).filter(|k| !k.is_empty()),
+            source: "repo",
+            proxy: true,
+        },
+        _ => base,
+    }
 }
 
 /// `~` を展開して file を読む(無ければ None — target.py の read_text_from_disk)。
@@ -677,6 +780,11 @@ pub fn read_text_from_disk(path: &str) -> Option<String> {
 /// この process の環境と home の file から宛先を解く(組み立て点だけが呼ぶ I/O — target.py の target_from_process_environment)。
 pub fn target_from_process_environment() -> JevTarget {
     resolve_target(&|key| std::env::var(key).ok(), &read_text_from_disk, None)
+}
+
+/// この process の環境・home の file・repo の代理の設定から宛先を解く(組み立て点だけが呼ぶ I/O)。
+pub fn target_for_repo(proxy: Option<&ProxySettings>) -> JevTarget {
+    resolve_repo_target(&|key| std::env::var(key).ok(), &read_text_from_disk, proxy)
 }
 
 /// 問いを gateway の綴りへ写す(noul は boolean — wire.py の _gateway_question)。
@@ -699,6 +807,9 @@ pub struct HttpGateway {
 impl HttpGateway {
     /// 宛先から口を作る。TypeSafe と Vercel の宛先でキーが無ければ理由を返す(値は出さない)。
     pub fn new(target: JevTarget, timeout: Duration) -> Result<HttpGateway, String> {
+        if target.proxy && target.api_key.is_none() {
+            return Err("Jev の API キーが無い(代理の token の file — [tool.doeff-linter.semantic] proxy_token_file・既定 ~/.config/jev/proxy-token)".to_string());
+        }
         let needs_key = target.base_url.contains("api.typesafe.ai") || target.base_url.contains(GATEWAY_HOST);
         if needs_key && target.api_key.is_none() {
             return Err(match target.wire {
@@ -710,18 +821,28 @@ impl HttpGateway {
     }
 }
 
-impl Gateway for HttpGateway {
-    /// 1 回問う(429・5xx は 3 回まで間を空けて撃ち直す)。
-    fn ask(&self, state: &Value, question: &Value) -> Result<Answer, String> {
-        let body = match self.target.wire {
+impl HttpGateway {
+    /// 問いの本文(direct と gateway の形 — 覚えている時だけの問いも同じ本文を送るので、代理の鍵が揃う)。
+    fn body(&self, state: &Value, question: &Value) -> Value {
+        match self.target.wire {
             Wire::Direct => json!({"state": state, "questions": {"q": question}, "model": self.target.model}),
             Wire::Gateway => json!({"state": state, "questions": {"q": gateway_question(question)}}),
-        };
+        }
+    }
+}
+
+impl Gateway for HttpGateway {
+    /// 1 回問う(429・5xx は 3 回まで間を空けて撃ち直す)。代理には Fresh の時だけ Cache-Control: no-cache を付ける。
+    fn ask(&self, state: &Value, question: &Value, freshness: Freshness) -> Result<Answer, String> {
+        let body = self.body(state, question);
         let mut last = String::new();
         for attempt in 0..4u64 {
             let mut request = self.agent.post(&self.target.base_url).set("content-type", "application/json");
             if let Some(key) = &self.target.api_key {
                 request = request.set("authorization", &format!("Bearer {}", key));
+            }
+            if self.target.proxy && freshness == Freshness::Fresh {
+                request = request.set("cache-control", "no-cache");
             }
             if self.target.wire == Wire::Gateway {
                 request = request
@@ -745,6 +866,33 @@ impl Gateway for HttpGateway {
             }
         }
         Err(last)
+    }
+
+    /// 覚えている時だけ問う(Cache-Control: only-if-cached・撃ち直さない)。代理でない宛先には撃たない(本物の Jev を呼ばないため)。
+    /// 代理の印(x-jev-proxy: hit)の無い 200 は答えとして使わない。
+    fn peek(&self, state: &Value, question: &Value, timeout: Duration) -> Peeked {
+        if !self.target.proxy {
+            return Peeked::Unreachable("宛先が代理でない(覚えている時だけの問いは代理にだけ撃つ)".to_string());
+        }
+        let mut request = self
+            .agent
+            .post(&self.target.base_url)
+            .timeout(timeout)
+            .set("content-type", "application/json")
+            .set("cache-control", "only-if-cached");
+        if let Some(key) = &self.target.api_key {
+            request = request.set("authorization", &format!("Bearer {}", key));
+        }
+        match request.send_string(&self.body(state, question).to_string()) {
+            Ok(ok) if ok.header("x-jev-proxy") == Some("hit") => match ok.into_string().map_err(|e| e.to_string()).and_then(|text| parse_answer(&text)) {
+                Ok(answer) => Peeked::Hit(answer),
+                Err(reason) => Peeked::Unreachable(format!("代理の答えを読めない: {}", reason)),
+            },
+            Ok(_) => Peeked::Unreachable("代理の印(x-jev-proxy: hit)の無い答え".to_string()),
+            Err(ureq::Error::Status(504, _)) => Peeked::Absent,
+            Err(ureq::Error::Status(code, _)) => Peeked::Unreachable(format!("代理が HTTP {} を返した", code)),
+            Err(error) => Peeked::Unreachable(format!("代理に届かない: {}", error)),
+        }
     }
 
     /// 宛先の model の名。
@@ -837,6 +985,8 @@ pub struct SemanticSummary {
     pub unjudged: usize,
     /// 今回 gateway へ撃った数(較正を含む)。
     pub asked: usize,
+    /// 今回、代理が覚えていた答えを受け取って手元の cache に書いた数(覚えている時だけの問い — 本物の Jev は呼んでいない)。
+    pub peeked: usize,
     /// 今回の費用(gateway が返した USD の和 — direct は費用を返さないので 0)。
     pub cost_usd: f64,
     /// 今回の入力のトークンの和。
@@ -850,10 +1000,14 @@ pub struct SemanticSummary {
 /// 何を撃つか。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SemanticMode {
-    /// cache を読むだけ(決定的な規則の実行)。
+    /// cache を読むだけ(エディタの編集中の決定的な実行)。
     CacheOnly,
+    /// cache を読み、無い定義は代理に「覚えている時だけ」問う(全体の実行・hook — 代理が無ければ CacheOnly と同じ)。
+    Peek,
     /// 指定した file の定義を撃つ(repo の根からの path)。
     Ask(BTreeSet<String>),
+    /// 指定した file の定義のうち、手元の cache に答えの無い定義(中身が変わった定義)だけを撃つ。
+    AskChanged(BTreeSet<String>),
     /// 全部の定義を撃つ。
     AskAll,
 }
@@ -880,10 +1034,15 @@ pub fn evaluate(
         ..SemanticSummary::default()
     };
     let mut errors = Vec::new();
-    let wants_ask = |item: &SemanticItem| match mode {
-        SemanticMode::CacheOnly => false,
-        SemanticMode::AskAll => true,
-        SemanticMode::Ask(targets) => targets.contains(&item.rel),
+    // 書きかけで読めない定義はどの実行でも問わない(未判定に数える)。
+    let wants_ask = |item: &SemanticItem| {
+        item.readable
+            && match mode {
+                SemanticMode::CacheOnly | SemanticMode::Peek => false,
+                SemanticMode::AskAll => true,
+                SemanticMode::Ask(targets) => targets.contains(&item.rel),
+                SemanticMode::AskChanged(targets) => targets.contains(&item.rel) && read_cache(root, &item.key).is_none(),
+            }
     };
     let asking = items.iter().any(wants_ask);
     let pool = rayon::ThreadPoolBuilder::new().num_threads(settings.workers).build();
@@ -891,7 +1050,7 @@ pub fn evaluate(
         match (gateway, &pool) {
             (Some(gateway), Ok(pool)) => {
                 let results: Vec<(bool, Result<Answer, String>)> = pool.install(|| {
-                    calibration.par_iter().map(|(c, expect)| (*expect, gateway.ask(&c.state, &c.question_json))).collect()
+                    calibration.par_iter().map(|(c, expect)| (*expect, gateway.ask(&c.state, &c.question_json, Freshness::Fresh))).collect()
                 });
                 summary.asked += results.len();
                 let mut drifted = Vec::new();
@@ -942,7 +1101,7 @@ pub fn evaluate(
                 .into_par_iter()
                 .map(|item| {
                     if wants_ask(&item) {
-                        let result = gateway.ask(&item.state, &item.question_json);
+                        let result = gateway.ask(&item.state, &item.question_json, Freshness::Remembered);
                         (item, Some(result))
                     } else {
                         let cached = read_cache(root, &item.key).map(Ok);
@@ -955,6 +1114,47 @@ pub fn evaluate(
             let cached = read_cache(root, &item.key).map(Ok);
             (item, cached)
         }).collect(),
+    };
+    // 全体の実行・hook: 手元の cache に無い定義を代理に「覚えている時だけ」問う(全部を合わせた時間の上限つき・届かなければやめる)。
+    let resolved = match (mode, gateway, &pool, settings.proxy.as_ref()) {
+        (SemanticMode::Peek, Some(gateway), Ok(pool), Some(proxy)) => {
+            let deadline = Instant::now() + proxy.peek_timeout;
+            let stop = AtomicBool::new(false);
+            let peeked: Vec<(SemanticItem, Option<Result<Answer, String>>, bool)> = pool.install(|| {
+                resolved
+                    .into_par_iter()
+                    .map(|(item, cached)| {
+                        if cached.is_some() || stop.load(Ordering::Relaxed) {
+                            return (item, cached, false);
+                        }
+                        let left = deadline.saturating_duration_since(Instant::now());
+                        if left.is_zero() {
+                            return (item, None, false);
+                        }
+                        match gateway.peek(&item.state, &item.question_json, left) {
+                            Peeked::Hit(answer) => (item, Some(Ok(answer)), true),
+                            Peeked::Absent => (item, None, false),
+                            Peeked::Unreachable(_) => {
+                                stop.store(true, Ordering::Relaxed);
+                                (item, None, false)
+                            }
+                        }
+                    })
+                    .collect()
+            });
+            let mut kept = Vec::new();
+            for (item, result, from_proxy) in peeked {
+                if let (true, Some(Ok(answer))) = (from_proxy, &result) {
+                    summary.peeked += 1;
+                    if let Err(reason) = write_cache(root, &item.key, answer) {
+                        errors.push(reason);
+                    }
+                }
+                kept.push((item, result));
+            }
+            kept
+        }
+        _ => resolved,
     };
     let mut answered = Vec::new();
     for (item, result) in resolved {
@@ -1038,5 +1238,35 @@ mod tests {
         assert_eq!((from_file.base_url.as_str(), from_file.model.as_str(), from_file.source), ("http://seimf:8000/v1/systemone", "file-model", "file"));
         let from_env = resolve_target(&env(&[("JEV_BASE_URL", "http://x/v1"), ("JEV_MODEL", "m")]), &files, None);
         assert_eq!((from_env.base_url.as_str(), from_env.model.as_str(), from_env.source), ("http://x/v1", "m", "env"));
+    }
+
+    #[test]
+    fn repo_proxy_gets_only_the_proxy_token_and_env_url_wins() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| move |key: &str| pairs.iter().find(|(k, _)| *k == key).map(|(_, v)| v.to_string());
+        let proxy = ProxySettings { url: "http://proxy:8878/v1/systemone".into(), token_file: "~/.config/jev/proxy-token".into(), peek_timeout: Duration::from_millis(1500) };
+        let token = |path: &str| (path == "~/.config/jev/proxy-token").then(|| "proxy-token\n".to_string());
+        // 代理へは代理の token だけ(env の TypeSafe のキーは送らない)。
+        let via = resolve_repo_target(&env(&[("TYPESAFE_API_KEY", "real-key")]), &token, Some(&proxy));
+        assert_eq!((via.base_url.as_str(), via.model.as_str(), via.wire, via.source, via.proxy), ("http://proxy:8878/v1/systemone", DIRECT_MODEL, Wire::Direct, "repo", true));
+        assert_eq!(via.api_key.as_deref(), Some("proxy-token"));
+        // token の file が無ければキー無し(TypeSafe のキーへ倒れない)。
+        let no_token = resolve_repo_target(&env(&[("TYPESAFE_API_KEY", "real-key")]), &|_| None, Some(&proxy));
+        assert_eq!(no_token.api_key, None);
+        assert!(HttpGateway::new(no_token, Duration::from_secs(1)).err().unwrap().contains("Jev の API キーが無い"));
+        // env の JEV_BASE_URL が在れば repo の代理を使わない。
+        let env_wins = resolve_repo_target(&env(&[("JEV_BASE_URL", "http://seimf/v1"), ("TYPESAFE_API_KEY", "k")]), &token, Some(&proxy));
+        assert_eq!((env_wins.base_url.as_str(), env_wins.proxy), ("http://seimf/v1", false));
+        // gateway を名指した環境でも、代理へは direct の形と direct の model で問う。
+        let gateway_env = resolve_repo_target(&env(&[("JEV_WIRE", "gateway")]), &token, Some(&proxy));
+        assert_eq!((gateway_env.wire, gateway_env.model.as_str()), (Wire::Direct, DIRECT_MODEL));
+    }
+
+    #[test]
+    fn half_written_definitions_are_not_readable() {
+        assert!(readable("(defk f [x] (+ x 1))"));
+        assert!(!readable("(defk f [x] (+ x"));
+        assert!(!readable("(defk f [x] \"open"));
+        assert!(!readable("(defk f [x] x))"));
+        assert!(!readable("   "));
     }
 }
