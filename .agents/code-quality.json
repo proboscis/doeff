@@ -678,7 +678,9 @@
       "public": [
         "packages/doeff-records/src/doeff_records/faults.hy"
       ],
-      "allow": [],
+      "allow": [
+        "records-values"
+      ],
       "typed": true
     },
     {

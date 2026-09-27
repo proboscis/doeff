@@ -10,17 +10,18 @@
 ;;; free-threaded)。置き場の不変条件(列・番号・索引)の持ち主は MemoryStore なので、錠(MemoryStore.lock・RLock)も置き場が持ち、
 ;;; handler の各節は「保持の刈り(purge-expired)と操作」の組を錠の内で 1 つずつ行う(guarded)。WatchChanges の待ち(Delay で眠る間)は
 ;;; 錠を持たない — 走査の 1 回だけを錠の内にする(持ったまま眠ると他の書きが止まる)。
-(require doeff-hy.macros [defhandler defk <-])
+(require doeff-hy.macros [defhandler defk <- val])
 (import threading)
 (import collections.abc [Callable])
-(import doeff [Pure])
+(import doeff [EffectBase Program Pure])
 (import doeff_time [GetTime])
 (import doeff_records.watching [wait-for-changes])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [KeepFor RecordsSchema Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
-                              Event Events Reset WatchCursor ListCursor Refused RowsConflict RowsRefused Unreachable])
+                              Event Events Reset WatchCursor ListCursor Refused RowsConflict RowsRefused Unreachable
+                              Conflict NotIndexed])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges AppendEvent ReadEvents])
-(import doeff_records.faults [AdvanceStoreEpoch SetStoreOutage])
+(import doeff_records.faults [AdvanceStoreEpoch SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired?
                                  event-expired? retention-group-of where-refusal row-matches? listed-row key-text next-watch-sequence
@@ -54,6 +55,8 @@
           self.by-idempotency {}
           ;; 届かない状態(検の口 faults.SetStoreOutage の値 — None = 届く)。
           self.outage None
+          ;; 置いた故障の列(検の口 faults.AddStoreFault の値 — 置いた順・空 = 故障なし)。
+          self.faults #()
           ;; 保持の期限で何かが消え得る最も早い刻(epoch ミリ秒・None = 消え得る物が無い)— purge-expired はこの刻より前なら走査しない。
           self.purge-due-ms None))
   ;; 錠は置き場の中身ではなく、この process の thread の間の取り決め — pickle と copy は錠を除いた中身だけを運び、戻した側で新しい錠を
@@ -67,6 +70,9 @@
     ;; 消え得る刻を持つ前に pickle した置き場は、次の操作で 1 度走査して刻を数え直す(0 = もう来ている)。
     (when (not-in "purge_due_ms" state)
       (setv self.purge-due-ms 0))
+    ;; 故障の列を持つ前に pickle した置き場は故障なし。
+    (when (not-in "faults" state)
+      (setv self.faults #()))
     (setv self.lock (threading.RLock))))
 
 
@@ -307,55 +313,109 @@
       None))
 
 
+;; --- 故障(検の口 faults.AddStoreFault / ClearStoreFaults)----------------------------------------------
+
+(defn #^ None memory-add-fault [#^ MemoryStore store #^ StoreFault fault]  ; defk にできない: handler の節と、doeff の実行の外で同期に筋書きを組む使い手(検の世界の支度)が呼ぶ置き場の書き
+  "故障を 1 つ置き場の故障の列の末尾に置く(AddStoreFault の節と同じ書き)。"
+  (when (not (isinstance fault StoreFault))
+    (raise (TypeError (.format "置けるのは StoreFault: {!r}" fault))))
+  (with [store.lock]
+    (setv store.faults (+ store.faults #(fault))))
+  None)
+
+
+(defn #^ None memory-clear-faults [#^ MemoryStore store #^ (| frozenset None) names]  ; defk にできない: handler の節と、doeff の実行の外で同期に筋書きを組む使い手が呼ぶ置き場の書き
+  "names と名が 1 つでも重なる故障を外す(None = 全部 — ClearStoreFaults の節と同じ書き)。"
+  (with [store.lock]
+    (setv store.faults (if (is names None)
+                           #()
+                           (tuple (gfor fault store.faults :if (not (& fault.names names)) fault)))))
+  None)
+
+
+(defk fault-for [store operation names ask]
+  {:pre [(: store MemoryStore) (: operation StoreOperation) (: names tuple) (: ask EffectBase)]
+   :post [(: % (| StoreFault None))]
+   :tags {:context "records" :role "foundation"}}
+  "ask(操作 operation で names の表と列に触る effect)に当たる故障のうち、置いた順で最初の 1 つ(無ければ None)。"
+  (for [fault store.faults]
+    (when (and (= fault.operation operation)
+               (any (gfor name names (in name fault.names)))
+               (or (is fault.matching None) (fault.matching ask)))
+      (return fault)))
+  None)
+
+
+(defk answered [store operation names ask program]
+  {:pre [(: store MemoryStore) (: operation StoreOperation) (: names tuple) (: ask EffectBase) (: program Program)]
+   ;; 答え = 公開 effect 7 つの答えの型のどれか(program の答えか、故障の答え Refused / Unreachable)。
+   :post [(: % (| Row Missing Page Reset NotIndexed Written Conflict Refused Unreachable WrittenRows RowsConflict RowsRefused
+                  Changes Appended Events))]
+   :tags {:context "records" :role "foundation"}}
+  "公開 effect ask の答え: 届かない状態(SetStoreOutage)が先・次に当たる故障(lands でなければ置き場に触らずに故障の答え・lands なら
+   program で置き場に着けてから故障の答え)・どちらも無ければ program の答え。"
+  (val down (unreachable-for store names))
+  (when down
+    (return down))
+  (<- fault (fault-for store operation names ask))
+  (when (and (is-not fault None) (not fault.lands))
+    (return fault.answer))
+  (<- answer program)
+  (if (is fault None) answer fault.answer))
+
+
+(defk at-now [store operation]
+  {:pre [(: store MemoryStore) (: operation Callable)]
+   ;; 答え = 置き場の操作の答え(公開 effect 7 つの答えの型のどれか)。
+   :post [(: % (| Row Missing Page Reset NotIndexed Written Conflict Refused Unreachable WrittenRows RowsConflict RowsRefused
+                  Changes Appended Events))]
+   :tags {:context "records" :role "foundation"}}
+  "いまの刻(epoch ミリ秒)を読み、置き場の錠の内で保持の刈りの後に operation(刻 → 答え)を呼ぶ(各節の置き場の操作の 1 つの形)。"
+  (<- now (GetTime))
+  (val now-ms (epoch-ms now))
+  (guarded store (fn [] (purge-expired store now-ms) (operation now-ms))))
+
+
 ;; --- handler ------------------------------------------------------------------------------------------------
 
+(val READ StoreOperation.READ)
+(val WRITE StoreOperation.WRITE)
+
+
 (defhandler memory-records-handler [#^ MemoryStore store #^ str writer]
-  ;; 各節の頭で届かない状態(faults.SetStoreOutage)を見る — 届かなければ置き場に触らずに Unreachable。
+  ;; 各節の答えは answered の 1 点を通る — 届かない状態(faults.SetStoreOutage)と故障(faults.AddStoreFault)を見てから置き場に触る。
   (ReadRow [table key]
-    (val down (unreachable-for store #(table)))
-    (if down
-        (resume down)
-        (do (<- now (GetTime))
-            (resume (guarded store (fn [] (purge-expired store (epoch-ms now)) (memory-read-row store effect)))))))
+    (<- answer (answered store READ #(table) effect (at-now store (fn [now-ms] (memory-read-row store effect)))))
+    (resume answer))
   (ListRows [table where fields cursor limit]
-    (val down (unreachable-for store #(table)))
-    (if down
-        (resume down)
-        (do (<- now (GetTime))
-            (resume (guarded store (fn [] (purge-expired store (epoch-ms now)) (memory-list-rows store effect)))))))
+    (<- answer (answered store READ #(table) effect (at-now store (fn [now-ms] (memory-list-rows store effect)))))
+    (resume answer))
   (PutRow [table key value expect]
-    (val down (unreachable-for store #(table)))
-    (if down
-        (resume down)
-        (do (<- now (GetTime))
-            (resume (guarded store (fn [] (purge-expired store (epoch-ms now)) (memory-put-row store writer effect (epoch-ms now))))))))
+    (<- answer (answered store WRITE #(table) effect (at-now store (fn [now-ms] (memory-put-row store writer effect now-ms)))))
+    (resume answer))
   (PutRows [writes]
-    (val down (unreachable-for store (tuple (gfor w writes w.table))))
-    (if down
-        (resume down)
-        (do (<- now (GetTime))
-            (resume (guarded store (fn [] (purge-expired store (epoch-ms now)) (memory-put-rows store writer effect (epoch-ms now))))))))
+    (<- answer (answered store WRITE (tuple (gfor w writes w.table)) effect
+                         (at-now store (fn [now-ms] (memory-put-rows store writer effect now-ms)))))
+    (resume answer))
   (WatchChanges [tables cursor timeout limit]
-    (val down (unreachable-for store (tuple tables)))
-    (if down
-        (resume down)
-        (do (<- answer (wait-for-changes (fn [now-ms] (Pure (guarded store (fn [] (purge-expired store now-ms) (memory-watch-scan store effect)))))
-                                         store.poll-seconds timeout))
-            (resume answer))))
+    (<- answer (answered store READ (tuple tables) effect
+                         (wait-for-changes (fn [now-ms] (Pure (guarded store (fn [] (purge-expired store now-ms) (memory-watch-scan store effect)))))
+                                           store.poll-seconds timeout)))
+    (resume answer))
   (AppendEvent [stream idempotency-key body]
-    (val down (unreachable-for store #(stream)))
-    (if down
-        (resume down)
-        (do (<- now (GetTime))
-            (resume (guarded store (fn [] (purge-expired store (epoch-ms now)) (memory-append store writer effect (epoch-ms now))))))))
+    (<- answer (answered store WRITE #(stream) effect (at-now store (fn [now-ms] (memory-append store writer effect now-ms)))))
+    (resume answer))
   (ReadEvents [stream after limit]
-    (val down (unreachable-for store #(stream)))
-    (if down
-        (resume down)
-        (do (<- now (GetTime))
-            (resume (guarded store (fn [] (purge-expired store (epoch-ms now)) (memory-read-events store effect)))))))
+    (<- answer (answered store READ #(stream) effect (at-now store (fn [now-ms] (memory-read-events store effect)))))
+    (resume answer))
   (SetStoreOutage [detail names]
     (setv store.outage (if (is detail None) None effect))
+    (resume None))
+  (AddStoreFault [fault]
+    (memory-add-fault store fault)
+    (resume None))
+  (ClearStoreFaults [names]
+    (memory-clear-faults store names)
     (resume None))
   (AdvanceStoreEpoch []
     (resume (memory-advance-epoch store)))
