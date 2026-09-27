@@ -37,6 +37,23 @@ pub struct LayersSection {
     /// 型だけの層で数える関数の定義の形(Hy の頭の綴り。既定 defk・deff・defp・defpp・defhandler・defn)。
     #[serde(default)]
     pub function_definers: Option<Vec<String>>,
+    /// 層の名前 → 層の説明(出力の layers と、違反の理由の文に差し込む)。
+    #[serde(default)]
+    pub describe: BTreeMap<String, LayerDescription>,
+}
+
+/// `[tool.doeff-linter.layers.describe.<層>]` — 層が何か(Rust には書かず、repo ごとの設定が持つ)。
+#[derive(Debug, Deserialize, Serialize, Default, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct LayerDescription {
+    /// 層の要約(例 業務の判断と Program)。
+    pub summary: Option<String>,
+    /// この層が知る物。
+    pub knows: Option<String>,
+    /// この層が知らない物。
+    pub does_not_know: Option<String>,
+    /// 迷った時の問い。
+    pub question: Option<String>,
 }
 
 /// `[tool.doeff-linter.tags]` — タグの読み方(doeff-hy の綴り。既定のままでよい)。
@@ -63,6 +80,9 @@ pub struct RolesSection {
     pub names: Vec<String>,
     #[serde(default)]
     pub by_layer: BTreeMap<String, Vec<String>>,
+    /// role → その役の説明(違反の理由の文に差し込む。一覧から外した古い役の説明も書ける)。
+    #[serde(default)]
+    pub describe: BTreeMap<String, String>,
 }
 
 /// `[tool.doeff-linter.environment_names]` — 業務の名に付けてはいけない環境の語。
@@ -148,6 +168,8 @@ pub struct LayerSpec {
     pub types_only: bool,
     /// 許す role(None = role の規則を当てない)。
     pub roles: Option<BTreeSet<String>>,
+    /// 層の説明(設定に無ければ欄は全部 None)。
+    pub description: LayerDescription,
 }
 
 /// タグの読み方(検めた後)。
@@ -165,6 +187,8 @@ pub struct TagReading {
 #[derive(Debug, Clone)]
 pub struct LayerSettings {
     pub layers: Vec<LayerSpec>,
+    /// role → 説明。
+    pub role_descriptions: BTreeMap<String, String>,
     pub exclude: BTreeSet<String>,
     pub extensions: BTreeSet<String>,
     pub tags: TagReading,
@@ -397,6 +421,7 @@ fn validate_layers(
         ("layers.allow_imports", section.allow_imports.keys().cloned().collect()),
         ("layers.forbid_modules", section.forbid_modules.keys().cloned().collect()),
         ("layers.types_only", section.types_only.clone()),
+        ("layers.describe", section.describe.keys().cloned().collect()),
         ("roles.by_layer", roles.map(|r| r.by_layer.keys().cloned().collect()).unwrap_or_default()),
     ] {
         for name in names {
@@ -449,6 +474,7 @@ fn validate_layers(
                 forbid_modules: section.forbid_modules.get(name).map(|m| m.iter().cloned().collect()).unwrap_or_default(),
                 types_only: section.types_only.contains(name),
                 roles: layer_roles,
+                description: section.describe.get(name).cloned().unwrap_or_default(),
             }
         })
         .collect();
@@ -463,6 +489,7 @@ fn validate_layers(
     let tags = tags.cloned().unwrap_or_default();
     LayerSettings {
         layers,
+        role_descriptions: roles.map(|r| r.describe.clone()).unwrap_or_default(),
         exclude: section.exclude.iter().cloned().collect(),
         extensions: section.extensions.as_ref().map(|e| e.iter().cloned().collect()).unwrap_or_else(default_extensions),
         tags: TagReading {

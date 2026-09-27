@@ -35,6 +35,9 @@
 {
   "version": 1,
   "root": "/abs/repo",                       // 正規化した repo の根
+  "layers": [                                // 層の順(外の世界から遠い順)と説明 — 設定 layers.describe から(無い欄は null)
+    {"name": "core", "summary": "業務の判断と Program", "knows": "…", "does_not_know": "…", "question": "迷った時の問い"}
+  ],
   "violations": [
     {
       "rule": "DOEFF101",                    // 規則の ID
@@ -46,11 +49,17 @@
       "message": "…",                        // 何が破れか(日本語)
       "hint": "…",                           // 直し方の 1 行
       "key": "controllers/core/goal.hy::core-imports-only-intent::controllers.foundation.records",  // 層の規則だけ。Python の規則は null
-      "registered": false                    // 登録簿に載っているか
+      "registered": false,                   // 登録簿に載っているか
+      "explanation": {                       // 層の規則だけ(Python の規則は null)
+        "subject": "これは何か(import 先とその層・定義と kind・file の層と、それを何で決めたか)",
+        "reason": "なぜ違反か(層の説明と規則を結ぶ文)",
+        "law_statement": "結びつけた law の :statement の逐語 or null"
+      }
     }
   ],
   "modules": [                               // 層の母集団の module(地図の材料)
-    {"path": "/abs/…/goal.hy", "layer": "core", "context": "kanban", "role": "program", "violations": 1}
+    {"path": "/abs/…/goal.hy", "layer": "core", "context": "kanban", "role": "program", "violations": 1,
+     "layer_reason": "path の置き場所で決めた — controllers/core/ の下は層 core(…)。タグの role = program もこの層の役"}
   ],
   "rules": [                                 // 走らせた規則と、針の無い law
     {"rule": "DOEFF101", "adr": "ADR-…", "statement": "core-imports-only-intent: …", "wired": true}
@@ -66,6 +75,15 @@
 - `rules`: 有効な規則ごとに、結びつけた law があれば law ごとに 1 件(`statement` = `<law の名>: <law の文>`)、無ければ規則の文で 1 件。
   設定の節が無い層の規則は `wired: false`(違反を出さない)。`rules` の空な law(針の無い law)は `rule` に law の名を入れて `wired: false`。
 
+### 説明の文(explanation・layer_reason)
+
+- 文の雛形は規則ごとに `src/project/explain.rs` の 1 か所だけにあり、層の名前・置き場所・層の説明(`layers.describe`)・
+  role の説明(`roles.describe`)・生の副作用を許す層・law の文を設定から差し込む。Rust に層の意味は書かない。
+- 層の説明が無い層は、層の順(「外の世界から最も遠い層」「外の世界からの遠さの順で 2 番目の層」…)と規則の決まりだけで文を作る。
+- `layer_reason`: 層は path の置き場所で決める。タグの role がその層で許されない時は「path とタグが食い違う」と書き、その role を
+  許す層(無ければ「どの層の役でもない」)を添える。DOEFF105 の subject にも同じ食い違いを書く。
+- 人が読む出力(text)と agent の hook の文にも、層の規則の違反ごとに「これは」「なぜ」「law」「直し方」「鍵」の行を出す。
+
 ## 3. 設定
 
 節ごとの欄は README の「層の規則」の例のとおり。読む時に次を検め、1 つでも食い違えば終了コード 2 と理由の列を出す:
@@ -79,7 +97,8 @@
 | `layers.forbid_modules` | 層 → 直に import しない module の綴り(前方一致 — `urllib.request` は `urllib.request.urlopen` に当たり `urllib.parse` には当たらない) | なし |
 | `layers` | `types_only`(層の名)・`function_definers` | defk・deff・defp・defpp・defhandler・defn |
 | `tags` | `module_variable_hy`・`module_variable_py`・`contract_definers`・`plain_definers`・`effect_definers` | MODULE-TAGS・MODULE_TAGS・defk deff defp defpp defhandler・defn defclass defrecord defenum・defeffect |
-| `roles` | `names`・`by_layer` | by_layer の無い層は DOEFF105 を当てない |
+| `roles` | `names`・`by_layer`・`describe`(role → 説明。一覧から外した古い役も書ける) | by_layer の無い層は DOEFF105 を当てない |
+| `layers.describe.<層>` | `summary`・`knows`・`does_not_know`・`question` | 無ければ説明の欄は null |
 | `raw_side_effects` | `allowed_layers`・`catalog_extra`(hy-index の `--raw-catalog-extra` と同じ形の JSON) | — |
 | `environment_names` | `words`・`paths`・`exclude`・`exclude_parts`・`extensions`・`assembly_files` | extensions = hy・hyk・hyp・py |
 | `laws`(配列) | `name`・`adr`・`statement`・`rules`・`layers` | layers が空なら全部の層 |
