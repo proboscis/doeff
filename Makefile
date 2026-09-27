@@ -4,7 +4,7 @@
 
 .PHONY: help install sync lint lint-ruff lint-pyright lint-semgrep lint-semgrep-docs lint-doeff lint-packages \
         test test-unit test-e2e test-packages test-rust test-all test-spec-audit-sa002 bench-smoke format check check-repo-hygiene \
-        pre-commit-install hooks-install clean install-opencode-spec-gap-tdd
+        pre-commit-install hooks-install enforcement-ledger clean install-opencode-spec-gap-tdd
 
 # Default target
 help:
@@ -74,6 +74,12 @@ pre-commit-install:
 hooks-install:
 	cp scripts/git-hooks/pre-commit "$$(git rev-parse --git-path hooks)/pre-commit"
 	chmod +x "$$(git rev-parse --git-path hooks)/pre-commit"
+
+# ADR-DOE-ENFORCE-001 R9: enforcement 台帳(docs/adr/enforcement-ledger.json)は生成物 — 手で書かず、これで作り直す。
+# 台帳から外れた項目(木から消えた law・検・規則)は名前で申告されるので、意図した削除かを確かめてから stage する。
+# 勘定は stdlib 単独の script(PEP 723)なので project の環境は要らない(doeff の sync を起こさない)。
+enforcement-ledger:
+	uv run --script scripts/check_enforcement_ledger.py --write
 
 # =============================================================================
 # Linting - Architectural Enforcement

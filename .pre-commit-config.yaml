@@ -29,12 +29,14 @@ repos:
         types: [python]
         pass_filenames: true
 
-      # ADR-DOE-ENFORCE-001 R5/R7: enforcement 資産と台帳は同じ commit で動く。
-      # 勘定の家 = scripts/check_enforcement_ledger.py(stdlib 単独)。
+      # ADR-DOE-ENFORCE-001 R5/R7/R9: enforcement 資産と台帳は同じ commit で動く。
+      # 勘定の家 = scripts/check_enforcement_ledger.py(stdlib 単独)。台帳は生成物 —
+      # 落ちたら `make enforcement-ledger` で作り直し、消えた項目を確かめて stage する。
+      # HEAD に既に在るずれは申告だけで、この commit 自身の増減が台帳に写っていれば通す(R9)。
       # pre-commit 未使用の機体は make hooks-install(scripts/git-hooks/pre-commit)。
       - id: enforcement-ledger
         name: enforcement ledger consistency (ADR-DOE-ENFORCE-001 R5/R7)
-        entry: python3 scripts/check_enforcement_ledger.py --staged
+        entry: uv run --script scripts/check_enforcement_ledger.py --staged
         language: system
         files: ^(docs/adr/|\.semgrep\.yaml)
         pass_filenames: false

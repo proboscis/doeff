@@ -34,5 +34,9 @@ fi
 
 # staged 断面(index)を突合する — working tree 突合は「台帳も直したが
 # stage し忘れた」を素通しするため。不一致は commit を止める(--no-verify で
-# 意識的に踏み越えた場合も日次 verify が捕まえる)。
-exec python3 "$CHECK" --staged
+# 意識的に踏み越えた場合も日次 verify が捕まえる)。台帳は生成物で、直しは
+# `make enforcement-ledger`。HEAD に既に在るずれは申告だけで、この commit 自身の
+# 増減が台帳に写っていれば通す(ADR-DOE-ENFORCE-001 R9 — 無関係なずれで塞いで
+# 迂回を常態にしない)。
+# 機体の python は撃たない — script の PEP 723 の宣言を uv が読む(依存なし)。
+exec uv run --script "$CHECK" --staged
