@@ -53,7 +53,8 @@
      (rule R5 "anti-drop ratchet: enforcement 台帳(defadr 数・law 数・defsemgrep 数・deftest enforcement 数)が黙って減ったら fail するメタテストを既定収集に置く(orch SpecInventorySpec の pytest 版)。台帳の意図的な削減は台帳ファイルの明示的更新を伴う。")
      [removed]
      [removed]
-     (rule R8 "日次の全体検証の母集団は root の pytest(testpaths)・package ごとの pytest(make test-packages)・Rust crate ごとの cargo test(make test-rust)の 3 つで、.agents/land-queue.toml の gate.full の別々の処理ステージに置く(2026-09-25 追加 — card acp:kanban-issue:[id])。後ろを止めてよいのは先頭の build の段(make sync)だけで、テストの段はどれも自分で make sync からやり直す(遠隔の同期は段ごとに target/ を消し、段は 1 つずつ手元へ倒れ得る)。1 つの母集団の赤は他の母集団を未実行にしない。package の母集団は packages/<p>/tests に fixtures 以外の test_*.py か test_*.hy を持つ全 package を訪ね、1 package の赤で止まらず、最後に失敗の package を名指して 0 以外で終わる。失敗名は repo の根からの相対で出す(日次の道具は失敗名を要約の行から逐語で取り、repo の根から pytest へそのまま渡す)。repo の test 名の file(test_*.py / *_test.py・fixtures の下を除く)は母集団の根の下か、tests/test_daily_test_population.py の理由つきの除外の表に在る。package は自分の pytest の設定を持たない(持つと root の ini と conftest が package の母集団に効かなくなる)。宣言の形はこの ADR の deftest、挙動の本体は tests/test_daily_test_population.py が固定し、どちらも root の段 = 日次で毎回走る。")]
+     (rule R8 "日次の全体検証の母集団は root の pytest(testpaths)・package ごとの pytest(make test-packages)・Rust crate ごとの cargo test(make test-rust)の 3 つで、.agents/land-queue.toml の gate.full の別々の処理ステージに置く(2026-09-25 追加 — card acp:kanban-issue:[id])。後ろを止めてよいのは先頭の build の段(make sync)だけで、テストの段はどれも自分で make sync からやり直す(遠隔の同期は段ごとに target/ を消し、段は 1 つずつ手元へ倒れ得る)。1 つの母集団の赤は他の母集団を未実行にしない。package の母集団は packages/<p>/tests に fixtures 以外の test_*.py か test_*.hy を持つ全 package を訪ね、1 package の赤で止まらず、最後に失敗の package を名指して 0 以外で終わる。失敗名は repo の根からの相対で出す(日次の道具は失敗名を要約の行から逐語で取り、repo の根から pytest へそのまま渡す)。repo の test 名の file(test_*.py / *_test.py・fixtures の下を除く)は母集団の根の下か、tests/test_daily_test_population.py の理由つきの除外の表に在る。package は自分の pytest の設定を持たない(持つと root の ini と conftest が package の母集団に効かなくなる)。宣言の形はこの ADR の deftest、挙動の本体は tests/test_daily_test_population.py が固定し、どちらも root の段 = 日次で毎回走る。")
+     [removed]
   :laws
     [(law default-pytest-sees-all-enforcement
        :statement "for_all declared_enforcement e: collected_by(default_pytest, e) AND (missing_dependency(e) => hard_fail, not skip)"
@@ -101,7 +102,16 @@
           (counterexample
              "package の dir から pytest を走らせた失敗名: 要約の行は cwd からの相対なので `FAILED tests/test_cli.py::…` になり、同名の test file を持つ 4 組(test_cli・test_effect_handlers・test_effects・test_types)が package をまたいで衝突し、日次の道具が repo の根から撃ち直せない")
           (counterexample
-             "期待する package の集合を Makefile の実走から取る固定のテスト: Makefile が root の testpaths に在る package を飛ばすと、訪ねた集合と期待が一緒に縮んで緑のまま残る(盲検 B)")])]
+             "期待する package の集合を Makefile の実走から取る固定のテスト: Makefile が root の testpaths に在る package を飛ばすと、訪ねた集合と期待が一緒に縮んで緑のまま残る(盲検 B)")])
+     (law ledger-is-generated-from-the-tree
+       :statement "ledger(tree) == inventory(tree) where inventory = sorted names of { defadr files, .semgrep.yaml rule ids, (law …) / (deftest …) / (defsemgrep …) forms read as Hy (not strings, comments, #_ forms) }; written only by check_enforcement_ledger --write; for_all commit c: hook passes c iff ledger(c) == inventory(c) OR (inventory(c) - inventory(HEAD)) == (ledger(c) - ledger(HEAD))"
+       :counterexamples
+         [(counterexample
+             "2026-09-26 e15f9516: ADR-DOE-AGENTS-012 の冊(deftest 69・law 56・defsemgrep 5)と semgrep の規則 7 本を消した commit が台帳の数を据え置いたまま本線へ入り、以後 docs/adr に触る 10 便以上が無関係なずれで hook に落ちて SKIP / --no-verify で外した")
+          (counterexample
+             "2026-09-17 ed98775a: 並行する 2 便が台帳の deftest の数をどちらも 104 → 105 と刻み、rebase は同じ行の同じ変更として黙って 105 に合わせた(実数 106)— 数は git の merge で足し算にならない")
+          (counterexample
+             "字面の数え text.count(\"(law \"): ADR-DOE-AGENTS-006 と ADR-DOE-CLUSTER-001 の註の中の綴りが law に数えられ、2026-09-28 の本線で law 134(形は 132)・deftest 82(形は 80)。註を 1 行足すだけで台帳が赤になる")])]
   :enforcement
     [(deftest test-adr-doe-enforce-001-docs-adr-in-default-testpaths
        ;; RED(2026-07-14): pyproject testpaths は docs/adr を含まない。R2 実装で green。
@@ -185,6 +195,11 @@
        (setv makefile (.read-text (/ root "Makefile") :encoding "utf-8"))
        (assert (in "hooks-install" makefile)
                "Makefile に hooks-install が無い — hook の導入経路の消失")
+       ;; R9: 台帳は生成物 — 生成の口(--write)と make の入口の実在。
+       (assert (in "--write" (.read-text checker :encoding "utf-8"))
+               "勘定の家に台帳の生成の口 --write が無い — R9(台帳を手で書く形への退行)")
+       (assert (in "enforcement-ledger:" makefile)
+               "Makefile に台帳の生成の入口 enforcement-ledger が無い — R9")
        ;; 挙動本体の現存 pin(削除退行を loud にする)。
        (assert (.exists (/ root "tests/test_enforcement_ledger_hook.py"))
                "R7 の挙動本体 tests/test_enforcement_ledger_hook.py が消えている")
