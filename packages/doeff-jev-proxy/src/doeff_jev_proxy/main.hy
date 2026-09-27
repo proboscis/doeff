@@ -20,12 +20,12 @@
 (import doeff_core_effects [await_handler try_handler])
 (import doeff_core_effects.http_handlers [http_production_handler])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_records.principals [decode-roster])
-(import doeff_jev.target [key_required target_from_process_environment])
+(import doeff_records.principals [Roster decode-roster])
+(import doeff_jev.target [JevTarget key_required target_from_process_environment])
 (import doeff_jev_proxy.values [ProxyRequest ProxyReply])
 (import doeff_jev_proxy.service [respond])
 (import doeff_jev_proxy.effects [PrepareStore])
-(import doeff_jev_proxy.handlers [new-flights sqlite-store-handler jev-upstream-handler roster-handler
+(import doeff_jev_proxy.handlers [Flights new-flights sqlite-store-handler jev-upstream-handler roster-handler
                                   single-flight-handler])
 (import doeff_jev_proxy.http_server [ProxyServerConfig start-proxy-server stop-server])
 
@@ -40,10 +40,22 @@
 (val DEFAULT-UPSTREAM-TIMEOUT 60.0)
 
 
-(defn #^ Callable proxy-runner [#^ list handlers]  ; defk にできない: HTTP の口が要求ごとに Program を走らせる関数(Program の外の入口)
-  "handler の組(外側が先 — 一番内側は single-flight-handler)を被せて respond を走らせる関数を作る。"
+(defn #^ Callable proxy-runner [#^ Callable handlers-for]  ; defk にできない: HTTP の口が要求ごとに Program を走らせる関数(Program の外の入口)
+  "要求ごとに handler の組を handlers-for() で作り(外側が先 — 一番内側は single-flight-handler)、respond を走らせる関数を作る。
+   組は要求ごとに作り直す: http-production-handler の HTTP の client は、包んだ Program 1 つが終わると閉じる(組を使い回すと
+   2 つ目の要求で「閉じた client」になる)。要求をまたいで共有する物(置き場の path・相乗りの表・名簿)は handlers-for が閉じ込めて渡す。"
   (fn [#^ ProxyRequest request]
-    (run (scheduled (with_handlers (+ [(await_handler) try_handler] handlers) (respond request))))))
+    (run (scheduled (with_handlers (+ [(await_handler) try_handler] (handlers-for)) (respond request))))))
+
+
+(defn #^ Callable production-handlers [#^ str path #^ JevTarget target #^ float timeout #^ Roster roster #^ frozenset admins
+                                       #^ Flights flights]  ; defk にできない: HTTP の口の callback(proxy-runner の関数)が要求ごとに呼ぶ組の作り手
+  "本番の答え手の組を要求ごとに作る関数を返す(外側が先: HTTP の実体 → 置き場 → 本物の Jev への翻訳 → 名簿 → 相乗り)。"
+  (fn [] [(http_production_handler)
+          (sqlite-store-handler path)
+          (jev-upstream-handler target timeout)
+          (roster-handler roster admins)
+          (single-flight-handler flights)]))
 
 
 (defn #^ None serve []  ; defk にできない: process の入口
@@ -58,14 +70,10 @@
         admins (frozenset (gfor name (.split (.get os.environ ENV-ADMINS "") ",") :if (.strip name) (.strip name)))
         timeout (float (.get os.environ ENV-UPSTREAM-TIMEOUT DEFAULT-UPSTREAM-TIMEOUT))
         flights (run (new-flights)))
-  (setv handlers [(http_production_handler)
-                  (sqlite-store-handler path)
-                  (jev-upstream-handler target timeout)
-                  (roster-handler roster admins)
-                  (single-flight-handler flights)]
-        runner (proxy-runner handlers))
+  (setv handlers-for (production-handlers path target timeout roster admins flights)
+        runner (proxy-runner handlers-for))
   ;; 表の用意は要求を受ける前に 1 度(同じ組の上で)。
-  (run (scheduled (with_handlers (+ [(await_handler) try_handler] handlers) (PrepareStore))))
+  (run (scheduled (with_handlers (+ [(await_handler) try_handler] (handlers-for)) (PrepareStore))))
   (setv running (start-proxy-server (ProxyServerConfig :runner runner
                                                        :host (.get os.environ ENV-HOST DEFAULT-HOST)
                                                        :port (int (.get os.environ ENV-PORT DEFAULT-PORT))))
