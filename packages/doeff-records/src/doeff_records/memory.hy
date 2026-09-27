@@ -128,7 +128,7 @@
 
 (defn #^ int purge-expired-locked [#^ MemoryStore store #^ int now-ms]  ; defk にできない: purge-expired が錠の内で同期に呼ぶ置き場の書き
   "purge-expired の中身(呼び手が錠を持つ)。消え得る刻(purge-due-ms)より前なら走査しない — 操作ごとに全部の行と出来事を読み直すと、
-   出来事の数の 2 乗で遅くなる(2026-09-27 の実測: 出来事 1 万の筋書き 1 つが 5 分を越えた・agora-redesign #786)。走査した後は刻を数え直す。"
+   出来事の数の 2 乗で遅くなる(2026-09-27 の実測: 出来事 1 万の筋書き 1 つが 5 分を越えた)。走査した後は刻を数え直す。"
   (when (or (is store.purge-due-ms None) (< now-ms store.purge-due-ms))
     (return 0))
   (setv removed (purge-expired-scan store now-ms))
