@@ -5,6 +5,8 @@
 ;;   describe・environ を運び、詰めた中身は programs に別に出る(改訂 1 の A・F)。
 ;; - 同一性(spec-hash)は identity・版・environ から作り、詰めた中身は比べない(cloudpickle の出力は揺れうる — 改訂 1 の A)。
 ;; - 旧い宣言の形は受け付けない(計画 2.8 の入口 1・3・4 — 構成子の TypeError・旧い関数の不在・declare の CLI の error)。
+;; - declare は宣言の前に、系の関数の checkout が汚れておらず HEAD = --revision であることと、土台の :needs ⊆ job の :needs を
+;;   検め、外れれば理由つきの終了 2(計画 2.2 の E・9 節の P)。
 ;; - 宣言した Program を実行先の入口(job_entry service)がそのまま走らせる(handler を足さない — Program が自分で並べる)。
 (require doeff-hy.macros [defk deftest <- val])
 (import hashlib)
@@ -266,17 +268,102 @@
   (assert (in "--foundation" bare.stderr) bare.stderr))
 
 
-(deftest test-the-declare-cli-prints-the-rows-and-the-describe
-  ;; --apply 無し: 宣言の行を JSON で印字し、job ごとの describe(呼んだ関数と引数)を stderr に出す。--only で絞る。
+;; --- declare の宣言の前の検め(計画 2.2 の E・9 節の P)----------------------------------------------
+;;
+;; 系の関数の module(tests/fixtures/declared_system.hy を写した declared_system.hy)を 1 commit 持ち、bare の remote へ push 済みの
+;; 一時の clone(本物の git)の中で declare を撃つ。汚れた checkout・HEAD と違う --revision・job の :needs に無い能力を名乗る土台は、
+;; どれも理由つきの終了 2 で断られ、宣言の行を印字しない。汚れておらず HEAD = --revision なら印字する。
+
+(val DECLARED-SYSTEM-SOURCE (/ PACKAGE-ROOT "tests" "fixtures" "declared_system.hy"))
+
+
+(defk git-in [cwd #* args]
+  {:pre [(: cwd Path) (: args tuple)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "検の一時の repo を作る・読むために git を 1 回呼ぶ(標準出力を返す)。"
+  (val done (subprocess.run ["git" "-C" (str cwd) "-c" "user.name=t" "-c" "user.email=t@example.invalid" #* args]
+                            :capture-output True :text True :check True))
+  (.strip done.stdout))
+
+
+(defk declared-checkout [base]
+  {:pre [(: base Path)] :post [(: % Path)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "bare の remote と、見本の系(declared_system.hy)を 1 commit 持つ push 済みの clone を base の下に作り、clone の path を返すため。"
+  (val remote (/ base "declared.git"))
+  (val work (/ base "declared"))
+  (<- (git-in base "init" "-q" "--bare" (str remote)))
+  (<- (git-in base "clone" "-q" (str remote) (str work)))
+  (.write-text (/ work "declared_system.hy") (.read-text DECLARED-SYSTEM-SOURCE :encoding "utf-8") :encoding "utf-8")
+  (<- (git-in work "add" "-A"))
+  (<- (git-in work "commit" "-q" "-m" "first"))
+  (<- (git-in work "push" "-q" "origin" "HEAD:main"))
+  (<- (git-in work "fetch" "-q" "origin"))
+  work)
+
+
+(defk declare-in [work #* argv]
+  {:pre [(: work Path)] :post [(: % subprocess.CompletedProcess)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "work の checkout の中で declare の CLI を子 process で撃つため(import の路 = work — 系の関数の module はそこに在る)。"
+  (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.declare" #* argv]
+                  :cwd (str work) :capture-output True :text True :timeout 120
+                  :env (| (dict os.environ) {"PYTHONPATH" (str work)})))
+
+
+(deftest test-the-declare-cli-prints-the-rows-from-a-clean-checkout-at-the-revision [tmp-path]
+  ;; 汚れておらず push 済みの checkout で HEAD = --revision: 宣言の行を JSON で印字し、job ごとの describe(呼んだ関数と引数)を
+  ;; stderr に出す。--only で絞る。
+  (<- work Path (declared-checkout tmp-path))
+  (<- head str (git-in work "rev-parse" "HEAD"))
   (<- done subprocess.CompletedProcess
-      (declare-cli "tests.fixtures.services:lab_pair" "--foundation" "tests.fixtures.envs:plain_foundation" "--revision" "r"
-                   "--only" "greeter"))
+      (declare-in work "declared_system:pair" "--foundation" "declared_system:net_foundation" "--revision" head "--only" "greeter"))
   (assert (= done.returncode 0) done.stderr)
   (val rows (get (json.loads done.stdout) "jobs"))
   (assert (= (lfor r rows (get r "name")) ["greeter"]) rows)
-  (assert (= (get rows 0 "run" "identity" "function") "tests.fixtures.services:greeter_program"))
-  (assert (in "greeter: tests.fixtures.services:greeter_program(tests.fixtures.envs:plain_foundation, 3)" done.stderr)
-          done.stderr))
+  (assert (= (get rows 0 "revision") head) rows)
+  (assert (= (get rows 0 "run" "identity" "function") "declared_system:greeter_program"))
+  (assert (in "greeter: declared_system:greeter_program(declared_system:net_foundation, 3)" done.stderr) done.stderr))
+
+
+(deftest test-the-declare-cli-refuses-a-checkout-with-uncommitted-changes [tmp-path]
+  ;; 系の関数の module に commit していない変更がある: 詰める Program の code が --revision の木と違いうるので宣言しない。
+  (<- work Path (declared-checkout tmp-path))
+  (<- head str (git-in work "rev-parse" "HEAD"))
+  (.write-text (/ work "declared_system.hy") (+ (.read-text (/ work "declared_system.hy") :encoding "utf-8") ";; 変更\n")
+               :encoding "utf-8")
+  (<- done subprocess.CompletedProcess
+      (declare-in work "declared_system:pair" "--foundation" "declared_system:net_foundation" "--revision" head))
+  (assert (= done.returncode 2) done.stderr)
+  (assert (in "dirty-tree" done.stderr) done.stderr)
+  (assert (= done.stdout "") done.stdout))
+
+
+(deftest test-the-declare-cli-refuses-a-revision-other-than-the-head [tmp-path]
+  ;; --revision が checkout の HEAD と違う(1 つ前の commit): 実行先がその版で展開する code と、いま詰める code がずれるので宣言しない。
+  (<- work Path (declared-checkout tmp-path))
+  (<- first str (git-in work "rev-parse" "HEAD"))
+  (.write-text (/ work "extra.py") "X = 1\n" :encoding "utf-8")
+  (<- (git-in work "add" "-A"))
+  (<- (git-in work "commit" "-q" "-m" "second"))
+  (<- (git-in work "push" "-q" "origin" "HEAD:main"))
+  (<- (git-in work "fetch" "-q" "origin"))
+  (<- done subprocess.CompletedProcess
+      (declare-in work "declared_system:pair" "--foundation" "declared_system:net_foundation" "--revision" first))
+  (assert (= done.returncode 2) done.stderr)
+  (assert (in "revision-differs" done.stderr) done.stderr)
+  (assert (in first done.stderr) done.stderr)
+  (assert (= done.stdout "") done.stdout))
+
+
+(deftest test-the-declare-cli-refuses-a-foundation-whose-needs-exceed-a-job [tmp-path]
+  ;; 土台の頭の :needs(cluster-net・gpu)が job の :needs(cluster-net)の一部でない: job が要る能力を書き漏らしているので宣言しない
+  ;; (置かれた worker が土台の要る能力を持たないまま起きる)。checkout は汚れておらず HEAD = --revision(断る理由は needs だけ)。
+  (<- work Path (declared-checkout tmp-path))
+  (<- head str (git-in work "rev-parse" "HEAD"))
+  (<- done subprocess.CompletedProcess
+      (declare-in work "declared_system:pair" "--foundation" "declared_system:wide_foundation" "--revision" head))
+  (assert (= done.returncode 2) done.stderr)
+  (assert (in "wide_foundation の :needs" done.stderr) done.stderr)
+  (assert (in "tally(足りない ['gpu'])" done.stderr) done.stderr)
+  (assert (= done.stdout "") done.stdout))
 
 
 ;; --- 宣言した Program を実行先の入口で走らせる ----------------------------------------------------

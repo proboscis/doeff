@@ -15,7 +15,7 @@
 ;;;   PUT /detached/<key> · GET /detached/<key> · POST /detached/<key>/cancel · DELETE /detached/<key>
 ;;;                           切り離した task を送る(job id で冪等)・読む(lease に触らない)・取り消す・保持を解く(detached_policy)
 ;;;   GET    /livez · /readyz   k8s の probe。調停ループを通さず、HTTP の受付(handler)が「ループが最後に要求を取りに来た時刻」だけで
-;;;                             答える(probe-verdict)。fsync・k8s の API・registry の読みでループが数秒遅れても落ちない(2026-09-25)。
+;;;                             答える(probe-verdict)。fsync・k8s の API の読みでループが数秒遅れても落ちない(2026-09-25)。
 ;;;
 ;;; 形: 調停ループは doeff の Program(run-coordinator)。並んでいる要求をまとめて受け(NextRequests)、純粋な判断
 ;;; (api_policy.respond / tick / plan-rollouts)で 1 件ずつ次の状態と返事を導き、まとまりの変化を 1 回で永続化してから
@@ -43,8 +43,6 @@
 (import .resource_policy [stamp adopt-legacy])
 (import .kube_model [ReadDeployment ScaleDeployment AnnotateDeployment ReadNodeLabels KubeUnavailable])
 (import .kube_handlers [kube-api kube-unavailable KubeClient])
-(import .image_model [ReadImageLabels ImageUnavailable])
-(import .base_follow_policy [due-deployments images-to-resolve image-entry follow-bases BASE-FOLLOW-ACTOR])
 ;; HTTP の受付と停止の合図(2026-09-25 に coordinator_inbox.hy へ分けた — 以前の import の口のためにここでも出す)。
 (import .coordinator_inbox [READY-STALL-SECONDS LIVE-STALL-SECONDS probe-verdict ReplySlot RequestInbox http-requests stop-flag
                             StopState])
@@ -57,9 +55,9 @@
 
 (defk rollout-tick [state timing naming now]
   {:pre [(: state ClusterState) (: timing ClusterTiming) (: naming ClusterNaming) (: now int)] :post [(: % ClusterState)]}
-  ;; 1. Rollout の相手と、土台の版を追う相手の Deployment を読む(届かなければ観測に error を置く = Unknown。台数は変えない)。
+  ;; 1. Rollout の相手の Deployment を読む(届かなければ観測に error を置く = Unknown。台数は変えない)。
   (setv observed (dict state.deployments))
-  (for [key (list (dict.fromkeys (+ (deployments-to-observe state now) (due-deployments state now))))]
+  (for [key (deployments-to-observe state now)]
     (setv #(ns name) (.split key "/" 1))
     (try
       (<- row dict (ReadDeployment ns name))
@@ -67,25 +65,15 @@
       (except [error KubeUnavailable]
         (setv (get observed key) {"at" now "error" (str error)}))))
   (setv before (replace state :deployments observed))
-  ;; 1b. 土台の版の追随(base_follow_policy): 本番の Deployment の image の LABEL を読み(新しい image の時だけ)、Service の base を進める。
-  (setv images (dict before.images))
-  (for [image (images-to-resolve before now)]
-    (try
-      (<- labels dict (ReadImageLabels image))
-      (setv (get images image) (image-entry labels now naming))
-      (except [error ImageUnavailable]
-        (setv (get images image) {"error" (str error) "at" now}))))
-  (setv with-images (replace before :images images))
-  ;; 1c. 能力の導出(改訂 1 の I): worker の置かれた node の label を読み(古い観測だけ)、node-capabilities の表から derived を作り直す。
-  (setv nodes (dict with-images.nodes))
-  (for [node (nodes-to-read with-images now)]
+  ;; 1b. 能力の導出(改訂 1 の I): worker の置かれた node の label を読み(古い観測だけ)、node-capabilities の表から derived を作り直す。
+  (setv nodes (dict before.nodes))
+  (for [node (nodes-to-read before now)]
     (try
       (<- labels dict (ReadNodeLabels node))
       (setv (get nodes node) {"labels" labels "at" now})
       (except [error KubeUnavailable]
         (setv (get nodes node) {"error" (str error) "at" now}))))
-  (setv with-images (with-derived-capabilities (replace with-images :nodes nodes) naming.node-capabilities))
-  (setv before (stamp with-images (follow-bases with-images now) BASE-FOLLOW-ACTOR now timing))
+  (setv before (with-derived-capabilities (replace before :nodes nodes) naming.node-capabilities))
   ;; 2. 純粋な判断で段を進め、action を出す。
   (setv #(planned actions) (plan-rollouts before now timing naming))
   (setv state (stamp before planned ROLLOUT-ACTOR now timing))
@@ -138,7 +126,7 @@
 
 (defk run-coordinator [state timing naming]
   {:pre [(: state ClusterState) (: timing ClusterTiming) (: naming ClusterNaming)] :post [(: % ClusterState)]}
-  ;; naming = 外の系と取り交わす名(Rollout の annotation・image の LABEL・node の label から導く能力)。composition root(main・模擬環境)が渡す。
+  ;; naming = 外の系と取り交わす名(Rollout の annotation・node の label から導く能力)。composition root(main・模擬環境)が渡す。
   ;; node の label から導く能力の名は、worker の自己申告として受けない(register-heartbeat が provides から外す — 改訂 1 の I)。
   (setv state (replace state :derivable (frozenset (gfor row naming.node-capabilities (get row 2)))))
   (while True
@@ -200,7 +188,7 @@
   (.add-argument parser "--state-file" :required True)
   (.add-argument parser "--port" :type int :default 8080)
   (.add-argument parser "--naming" :default "{}"
-                 :help "外の系と取り交わす名(JSON: ownerAnnotation・ownerScope・revisionLabel・versionLabels)— cluster_model.ClusterNaming")
+                 :help "外の系と取り交わす名(JSON: ownerAnnotation・ownerScope・nodeCapabilities)— cluster_model.ClusterNaming")
   (setv args (.parse-args parser))
   (setv naming (naming-from-json args.naming))
   (setv stop (StopState))

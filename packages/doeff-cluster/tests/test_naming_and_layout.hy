@@ -1,40 +1,37 @@
 ;; 業務の事情を引数へ出した口(2026-09-25 — 業務の repo から切り出した時)。
-;;   - ClusterNaming: Rollout が Deployment に付ける持ち主の annotation と、版の追随が読む image の LABEL は配備する側が決める
-;;   - CodeLayout: 子 process の PYTHONPATH の根と、overlay で重ねる dir は worker の引数が決める。重ねる dir の無い worker は重ねる木を断る
-(require doeff-hy.macros [deftest])
+;;   - ClusterNaming: Rollout が Deployment に付ける持ち主の annotation と、node の label から導く能力は配備する側が決める。
+;;     image の版を追う係の欄(revisionLabel・versionLabels — 2026-09-28 に係ごと消した)は理由つきで断る
+;;   - CodeLayout: 子 process の PYTHONPATH の根と土台の import の路は worker の引数が決める
+(require doeff-hy.macros [deftest val])
 (import json)
-(import subprocess)
-(import time)
 (import pytest)
 (import doeff_cluster.cluster_model [ClusterNaming naming-from-json])
-(import doeff_cluster.base_follow_policy [image-entry])
-(import doeff_cluster.worker_model [CodeLayout CodeState])
-(import doeff_cluster.handlers [CodeStore])
+(import doeff_cluster.worker_model [CodeLayout])
 (import tests.test_rollout [Sim FORWARD DEP])
 
 
 ;; --- ClusterNaming ------------------------------------------------------------------------------
 
 (deftest test-naming-from-json-takes-the-deployers-names-and-refuses-unknown-fields
-  (setv n (naming-from-json (json.dumps {"ownerAnnotation" "example.org/owned-by" "ownerScope" "lab"
-                                         "revisionLabel" "example.org/revision"
-                                         "versionLabels" {"runtime" "example.org/runtime"}})))
-  (assert (= n (ClusterNaming "example.org/owned-by" "lab" "example.org/revision" #(#("runtime" "example.org/runtime")))))
+  (val n (naming-from-json (json.dumps {"ownerAnnotation" "example.org/owned-by" "ownerScope" "lab"
+                                        "nodeCapabilities" [{"label" "example.org/gpu" "value" "true" "capability" "gpu"}]})))
+  (assert (= n (ClusterNaming :owner-annotation "example.org/owned-by" :owner-scope "lab"
+                              :node-capabilities #(#("example.org/gpu" "true" "gpu"))))
+          n)
   ;; 書かなかった欄は既定のまま
   (assert (= (naming-from-json "{}") (ClusterNaming)))
-  ;; 綴りを誤った欄を黙って捨てない(捨てると既定の名で annotation を付け・LABEL を読むことになる)
-  (with [e (pytest.raises ValueError)] (naming-from-json (json.dumps {"revisionLable" "x"})))
-  (assert (in "revisionLable" (str e.value)))
-  (with [(pytest.raises ValueError)] (ClusterNaming :version-labels #(#("revision" "x")))))
+  ;; 綴りを誤った欄を黙って捨てない(捨てると既定の名で annotation を付けることになる)
+  (with [e (pytest.raises ValueError)] (naming-from-json (json.dumps {"ownerAnnotaton" "x"})))
+  (assert (in "ownerAnnotaton" (str e.value))))
 
-
-(deftest test-image-entry-reads-the-deployers-labels
-  (setv sha (* "a" 40)
-        n (ClusterNaming :revision-label "example.org/revision" :version-labels #(#("runtime" "example.org/runtime"))))
-  (assert (= (image-entry {"example.org/revision" sha "example.org/runtime" "r1"} 7 n)
-             {"revision" sha "runtime" "r1" "at" 7}))
-  ;; 既定の名の LABEL しか無い image は、名の違う配備では版が読めない(黙って別の LABEL を読まない)
-  (assert (in "error" (image-entry {"org.opencontainers.image.revision" sha} 7 n))))
+(deftest test-naming-refuses-the-fields-of-the-removed-image-follower
+  ;; image の版を追う係(image の LABEL を読んで Service の土台の commit を進める)は消した。その係の欄を書いた naming は、黙って
+  ;; 捨てず理由つきで断る(coordinator は起動しない — Program の job は宣言した commit でだけ解く)。
+  (for [field ["revisionLabel" "versionLabels"]]
+    (with [e (pytest.raises ValueError)]
+      (naming-from-json (json.dumps {"ownerScope" "lab" field (if (= field "revisionLabel") "example.org/revision" {})})))
+    (assert (in field (str e.value)) (str e.value))
+    (assert (in "image の版を追う係は消した" (str e.value)) (str e.value))))
 
 
 (deftest test-the-rollout-marks-the-deployment-with-the-deployers-annotation
@@ -56,7 +53,8 @@
   (assert (= (.roots-arg (CodeLayout :import-roots #("." "vendor/hy"))) ".,vendor/hy"))
   (for [bad [#() #("/abs") #("../up") #("a:b") #("a,b")]]
     (with [(pytest.raises ValueError)] (CodeLayout :import-roots bad)))
-  (with [(pytest.raises ValueError)] (CodeLayout :overlay-path "../x")))
+  ;; 以前の重ねる dir(overlay-path — 定義だけを別の commit で重ねる木)は消した。欄が無いので渡せば TypeError。
+  (with [(pytest.raises TypeError)] (CodeLayout :overlay-path "app/wrap")))
 
 (deftest test-code-layout-puts-the-base-paths-after-the-tree-roots
   ;; 2026-09-26: host の worker は土台の package(image に焼かない物)の路を宣言する。木の根が先(業務の code は task の版が勝つ)・
@@ -88,29 +86,3 @@
   (setv err (. (capfd.readouterr) err))
   (assert (in (.format "job-start name=task/t1 revision=rev-a tree={} pid={} worker-pid={}" tree pid (os.getpid)) err) err))
 
-
-(defn git [repo #* args]
-  (.strip (. (subprocess.run ["git" "-C" (str repo) #* args] :check True :capture-output True :text True) stdout)))
-
-
-(defn test-a-worker-without-an-overlay-dir-refuses-a-layered-tree [tmp-path]
-  ;; 重ねる dir を持たない worker に「<base>~<revision>」を求めたら、base の木だけで黙って完成させず、準備を失敗にする。
-  (setv repo (/ tmp-path "repo") cache (/ tmp-path "cache"))
-  (.mkdir repo)
-  (git repo "init" "-q")
-  (.write-text (/ repo "m.py") "V = 1\n")
-  (git repo "add" "-A")
-  (git repo "-c" "user.name=t" "-c" "user.email=t@t" "commit" "-q" "-m" "a")
-  (setv a (git repo "rev-parse" "HEAD"))
-  (.write-text (/ repo "m.py") "V = 2\n")
-  (git repo "-c" "user.name=t" "-c" "user.email=t@t" "commit" "-qam" "b")
-  (setv b (git repo "rev-parse" "HEAD"))
-  (setv store (CodeStore (str repo) (str cache) None) key (+ a "~" b))
-  (.start store key)
-  (setv deadline (+ (time.monotonic) 60) view None)
-  (while (and (< (time.monotonic) deadline) (or (is view None) (= view.state CodeState.PREPARING)))
-    (setv view (next (gfor v (.observe store) :if (= v.revision key) v) None))
-    (time.sleep 0.05))
-  (assert (= view.state CodeState.FAILED) view)
-  (assert (in "重ねる dir が無い" view.detail) view.detail)
-  (assert (not (.exists (/ cache key)))))

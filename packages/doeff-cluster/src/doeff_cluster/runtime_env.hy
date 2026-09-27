@@ -7,13 +7,18 @@
 ;;;   sender-source-differs 送り手自身が動いている source(このパッケージの checkout)が、宣言の同じ repo の commit と違う
 ;;;                         (子で黙って版の不一致になる路を残さない)
 ;;;
+;;; 系の宣言(declare — 2026-09-28・計画 2.2 の E)も同じ読みを通す: 系の関数の source の在る checkout が汚れておらず push 済みで
+;;; (checked-repo と同じ断り)、HEAD が宣言の版そのものの時だけ宣言する(checked-declaring-checkout)。
+;;;   not-in-checkout       系の関数の source が git の checkout の中に無い(宣言の版と同じ code かを確かめられない)
+;;;   revision-differs      checkout の HEAD が宣言の版と違う(詰める Program の参照する code と、実行先が版で展開する code がずれる)
+;;;
 ;;;   (<- env (runtime-env-of-checkouts #((LocalCheckout :name "app" :path "/src/app")
 ;;;                                       (LocalCheckout :name "lib" :path "/src/lib"))
 ;;;                                     (ProjectOfCheckout :repo "app" :path "." :python "3.14")
 ;;;                                     #("app/." "app/vendor")
 ;;;                                     :sender-repo "lib"))
 ;;;
-;;; checkout の読みは effect(ReadCheckout・SenderSourceRoot・FileSha256)。答えるのは下の翻訳の handler checkout-reads 1 つで、doeff の汎用の
+;;; checkout の読みは effect(ReadCheckout・CheckoutRoot・SenderSourceRoot・FileSha256)。答えるのは下の翻訳の handler checkout-reads 1 つで、doeff の汎用の
 ;;; 子 process の effect(RunProcess — git を起こす)と file の effect(StatPath・ReadBytes)へ訳す。I/O を持たない(sha256 は計算だけ)。
 ;;; 環境で差し替えるのはその汎用の effect に答える土台の handler だけ(2026-09-27):
 ;;;   本物   [subprocess-handler os-file-handler checkout-reads](外側が先)
@@ -23,7 +28,8 @@
 ;;; 訳し方(git は `git -C <path> …` の 1 回ずつ・0 でない終わりは読めない checkout として RuntimeError — 前の本物の check=True と同じ):
 ;;;   ReadCheckout      rev-parse HEAD → remote get-url <remote> → status --porcelain --untracked-files=no(空でなければ dirty)→
 ;;;                     branch -r --contains <head> --list <remote>/*(空でなければ on-remote — 知識は手元の追跡の ref・最後の fetch による)
-;;;   SenderSourceRoot  SENDER-SOURCE-DIR(この module の dir)で rev-parse --show-toplevel。0 でなければ None(checkout の外)
+;;;   CheckoutRoot      <path> で rev-parse --show-toplevel。0 でなければ None(checkout の外)
+;;;   SenderSourceRoot  CheckoutRoot と同じ問いを SENDER-SOURCE-DIR(この module の dir)で
 ;;;   FileSha256        StatPath が file なら ReadBytes の sha256・file でなければ None
 (require doeff-hy.macros [defk defhandler defeffect <- val var])
 (require doeff-hy.record [defrecord])
@@ -76,6 +82,12 @@
    :tags {:context "runtime-env" :role "intent"}})
 
 
+(defeffect CheckoutRoot
+  "path(dir)を含む git の checkout の根。答え = 絶対 path か None(checkout の外 — git を起こせない時も)。"
+  {:fields [(: path str)]
+   :answer (| str None)
+   :tags {:context "runtime-env" :role "intent"}})
+
 (defeffect SenderSourceRoot
   "送り手自身が動いている source(このパッケージ)の checkout の根。答え = 絶対 path か None(checkout の外 — 例: wheel で入れた)。"
   {:answer (| str None)
@@ -97,6 +109,24 @@
                               (.format "{} の commit {} が remote {} の branch に無い(push していない)"
                                        checkout.name seen.head checkout.remote))))
   (RepoCheckout :name checkout.name :url seen.url :commit seen.head))
+
+
+(defk checked-declaring-checkout [path revision]
+  {:pre [(: path str) (: revision str)] :post [(: % RepoCheckout)] :tags {:context "runtime-env" :role "judgment"}}
+  "系の宣言(declare)の前に、系の関数の source(path = その module の file の dir)が、宣言の版 revision の commit そのものの
+   汚れていない・push 済みの checkout に在ることを確かめるため — declare が詰める Program の参照する code と、実行先が revision で
+   展開する code を一致させる(計画 2.2 の E)。汚れ・push していない commit は checked-repo と同じ理由で断り、checkout の外は
+   NOT-IN-CHECKOUT、HEAD が revision と違えば REVISION-DIFFERS で断る。"
+  (<- root (| str None) (CheckoutRoot path))
+  (when (is root None)
+    (raise (RuntimeEnvInvalid InvalidKind.NOT-IN-CHECKOUT
+                              (.format "系の関数の source({})が git の checkout の中に無い(宣言の版と同じ code かを確かめられない)" path))))
+  (<- repo RepoCheckout (checked-repo (LocalCheckout :name "system-source" :path root)))
+  (when (!= repo.commit revision)
+    (raise (RuntimeEnvInvalid InvalidKind.REVISION-DIFFERS
+                              (.format "系の関数の checkout({})の HEAD {} が宣言の版 {} と違う — 詰める Program の code と、実行先が版で展開する code がずれる(HEAD を版にするか、その版を checkout してから宣言する)"
+                                       root repo.commit revision))))
+  repo)
 
 
 (defk check-sender-source [checkouts repos sender-repo]
@@ -166,10 +196,10 @@
   (CheckoutState :head head :url url :dirty (bool status) :on-remote (bool containing)))
 
 
-(defk sender-source-root []
-  {:pre [] :post [(: % (| str None))]}
-  "送り手自身の source が在る checkout の根を git に聞くため(git の外・git を起こせない時は None — 宣言の commit と比べられない)。"
-  (<- outcome ProcessOutcome (RunProcess :argv #("git" "-C" SENDER-SOURCE-DIR "rev-parse" "--show-toplevel")))
+(defk checkout-root [path]
+  {:pre [(: path str)] :post [(: % (| str None))]}
+  "path を含む checkout の根を git に聞くため(git の外・git を起こせない時は None — 宣言の commit と比べられない)。"
+  (<- outcome ProcessOutcome (RunProcess :argv #("git" "-C" path "rev-parse" "--show-toplevel")))
   (if (= outcome.exit-code 0) (.strip outcome.stdout) None))
 
 
@@ -190,8 +220,11 @@
   (ReadCheckout [path remote]
     (<- state CheckoutState (checkout-state-at path remote))
     (resume state))
+  (CheckoutRoot [path]
+    (<- root (| str None) (checkout-root path))
+    (resume root))
   (SenderSourceRoot []
-    (<- root (| str None) (sender-source-root))
+    (<- root (| str None) (checkout-root SENDER-SOURCE-DIR))
     (resume root))
   (FileSha256 [path]
     (<- digest (| str None) (file-sha256 path))

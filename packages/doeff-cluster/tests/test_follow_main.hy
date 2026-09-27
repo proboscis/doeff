@@ -1,5 +1,6 @@
-;; 本番の業務コードの版への追随(2026-09-24): coordinator が本番の Deployment の image の版を読んで Service の base を進め、
-;; worker が Service の入れ替え(handoff)で新を旧と並べて起こし、新が Ready と数えられてから旧を止める。
+;; Service の入れ替え(handoff・2026-09-24): 宣言し直して版が変わると、worker が新を旧と並べて起こし、新が Ready と数えられてから
+;; 旧を止める。書き手(lease を持つ process)の居ない拍は旧が止まってから新が lease を取るまでの 1 拍以内で、process が 1 つも
+;; 居ない拍は無い。
 ;;
 ;; 仮想の時計の上の小さな世界で、coordinator の本物の判断(api_policy.respond・coordinator.rollout-tick)と worker の本物の判断
 ;; (worker_policy.plan / records-after / statuses)をつなぐ。process の中身(lease を持つ書き手)だけを模す:
@@ -8,10 +9,9 @@
 ;;   - TERM を受けた process は次の拍で終わる(本番の process と同じく SIGTERM で即座に終わる)。
 ;;   - 入口の検め(Program の job の service は起こす前に検める)は通る。
 ;;
-;; 宣言の口は baseFrom と overlay を受けない(Program の job は詰めた commit で解く — ADR-DOE-CLUSTER-001・改訂 1 の E。生の entry の
-;; job も受けない — R1・R7)。追随の係(base_follow_policy)の判断を確かめる筋書きは、Program の job を宣言してから coordinator の内部の値
-;; (ClusterJob.base-from)へ追随の元を直に置く。追随の係と baseFrom・overlay の欄の撤去は後の段。宣言の口の断りは
-;; test-declarations-cannot-carry-base-from-or-overlay。
+;; 以前この file は、image の版を追う係(本番の Deployment の image の LABEL を読んで Service の土台の commit を進める)の筋書きだった。
+;; 係は 2026-09-28 に消した(Program の job は宣言した commit でだけ解く — ADR-DOE-CLUSTER-001・計画 2.2 の E)ので、版を変えるのは
+;; 宣言し直しだけ。image の版を追う欄(baseFrom・base・overlay)を持つ宣言を断る検は test_old_declarations.hy。
 (require doeff-hy.macros [deftest val])
 (import dataclasses [replace])
 (import doeff [run with_handlers])
@@ -20,42 +20,29 @@
 (import doeff_cluster.api_policy [respond ready-instances])
 (import doeff_cluster.coordinator [rollout-tick])
 (import doeff_cluster.kube_handlers [KubeMemory kube-memory])
-(import doeff_cluster.image_handlers [image-memory split-image])
 (import doeff_cluster.handlers [status-row])
 (import doeff_cluster.metrics_policy [metrics-text])
 (import doeff_cluster.cluster_policy [still-live-somewhere])
-(import doeff_cluster.base_follow_policy [follow-bases image-entry BASE-FOLLOW-ACTOR])
 (import doeff_cluster.worker_model [JobSpec CodeView CodeState ProcessView WorldView WorkerPolicy JobRecord
                         PrepareCode StartJob SignalJob ReapJob RetireJob ReleaseLeases StopStage ProbeEntry ProbeView ProbeState
-                        ForgetProbes code-key spec-hash])
+                        ForgetProbes spec-hash])
 (import tests.program_rows [SAMPLE-RUN])
 (import doeff_cluster.worker_policy [plan records-after statuses])
 
 (setv T (ClusterTiming))
-;; 外の系と取り交わす名(配備する側が決める)。版の LABEL と、一緒に写す LABEL 1 つ。
-(setv N (ClusterNaming :revision-label "org.example.app-revision" :version-labels #(#("runtime" "org.example.runtime-revision"))))
-(setv REVISION-LABEL N.revision-label)
+(val N (ClusterNaming))
 (setv V {"python" "3.14.0"})
-(setv DEP "prod/app-writer")
-(setv SHA1 (* "1" 40) SHA2 (* "2" 40) WRAP "w0")
-(setv IMG1 "zeus:5000/app:20260924-1111111" IMG2 "zeus:5000/app:20260925-2222222")
+(val WRAP1 "w1")
+(val WRAP2 "w2")
 (setv JOB-START 2000)
-(setv SERVICE {"revision" WRAP "needs" ["net"] "run" SAMPLE-RUN "replicas" 1 "readiness" {"windowSeconds" 10}
+(setv SERVICE {"revision" WRAP1 "needs" ["net"] "run" SAMPLE-RUN "replicas" 1 "readiness" {"windowSeconds" 10}
                "update" "handoff"})
-;; 追随の元(本番の Deployment)。宣言の口では受けないので、coordinator の内部の値へ直に置く(Sim の組み立て)。
-(val BASE-FROM {"kind" "Deployment" "namespace" "prod" "name" "app-writer" "container" "app-writer"})
-
-
-(defn deployment [image]
-  {"specReplicas" 0 "replicas" 0 "readyReplicas" 0 "availableReplicas" 0 "updatedReplicas" 0
-   "generation" 1 "observedGeneration" 1 "annotations" {} "images" {"app-writer" image}})
 
 
 (defclass Sim []
   (defn __init__ [self]
     (setv self.now 2000000
-          self.kube (KubeMemory {DEP (deployment IMG1)})
-          self.images {IMG1 {REVISION-LABEL SHA1} IMG2 {REVISION-LABEL SHA2}}
+          self.kube (KubeMemory {})
           self.policy (WorkerPolicy :stop-grace-ms 10000)
           self.records {} self.processes [] self.codes {} self.pids 100
           self.probes {}           ; spec の指紋 → 入口の検めの観測(模擬では通す)
@@ -64,8 +51,6 @@
           self.log [])            ; 拍ごと #(時刻 active の世代 走っている process の数 Ready)
     (setv self.state (ClusterState :started-ms (- self.now 60000)))
     (self.call "POST" "/resources/Service" {"name" "writer-a" "spec" SERVICE})
-    ;; 追随の元を coordinator の内部の値へ直に置く(宣言の口は baseFrom を受けない — 頭の註)。
-    (setv self.state (replace self.state :jobs (tuple (gfor j self.state.jobs (replace j :base-from BASE-FROM)))))
     None)
 
   (defn call [self method path [body None] [actor "c-test"]]
@@ -73,6 +58,12 @@
     (assert (< status 300) #(method path status reply))
     (setv self.state state)
     reply)
+
+  (defn redeclare [self revision]
+    "宣言し直す(読んだ resourceVersion を付けて版だけを変える — declare の PUT と同じ形)。"
+    (setv current (self.call "GET" "/resources/Service/writer-a"))
+    (self.call "PUT" "/resources/Service/writer-a"
+               {"spec" (| SERVICE {"revision" revision}) "resourceVersion" (get current "resourceVersion")}))
 
   (defn world [self]
     (WorldView (tuple (gfor #(k ready-at) (.items self.codes) :if (<= ready-at self.now)
@@ -107,7 +98,7 @@
     (setv reply (self.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "capacity" 10 "versions" V "statuses" rows} :actor None))
     (setv self.desired (tuple (gfor j (get reply "jobs")
                                     (JobSpec (get j "name") (get j "entry") (tuple (get j "args")) (get j "revision")
-                                             :placement (.get j "placement") :base (.get j "base")
+                                             :placement (.get j "placement")
                                              :handoff (bool (.get j "handoff")) :ready-instance (.get j "readyInstance"))))))
 
   (defn processes-tick [self]
@@ -126,53 +117,46 @@
     (+= self.now 1000)
     (self.worker-tick)
     (self.processes-tick)
-    (setv self.state (run (scheduled (with_handlers [(kube-memory self.kube) (image-memory self.images)]
-                                       (rollout-tick self.state T N self.now)))))
+    (setv self.state (run (scheduled (with_handlers [(kube-memory self.kube)] (rollout-tick self.state T N self.now)))))
     (setv live (lfor p self.processes :if (is p.exit-code None) p))
     (.append self.log #(self.now self.lease (len live)
                         (get (self.call "GET" "/resources/Service/writer-a") "status" "ready")))))
 
 
-(defn job-of [sim] (next (gfor j sim.state.jobs :if (= j.spec.name "writer-a") j)))
-
-
-(deftest test-service-follows-the-production-image-and-hands-off-without-a-gap
-  (setv sim (Sim))
-  ;; 1. 最初の観測で base が本番の版(SHA1)へ進み、その木で process が起きて lease を取る。
+(deftest test-a-redeclared-service-hands-off-without-a-gap
+  (val sim (Sim))
+  ;; 1. 最初の版(WRAP1)の process が起きて lease を取る。
   (for [_ (range 15)] (sim.step))
-  (assert (= (. (job-of sim) spec base) SHA1))
-  (setv first-instance sim.lease)
+  (val first-instance sim.lease)
   (assert first-instance sim.log)
-  (setv events (get (sim.call "GET" "/events") "events"))
-  (assert (any (gfor e events (and (= (get e "actor") BASE-FOLLOW-ACTOR) (= (get e "changes" "spec.base") [None SHA1])))) events)
-  (assert (= (get (sim.call "GET" "/resources/Service/writer-a") "status" "base" "revision") SHA1))
-  ;; 2. 本番の配備の流れが image を上げる(Deployment の template の image だけが変わる・台数 0 のまま)。
-  (setv (get sim.kube.deployments DEP "images") {"app-writer" IMG2})
-  (setv changed-at sim.now old-stopped None new-first-ready None)
+  ;; 2. 宣言し直して版を WRAP2 へ。出来事の記録に送り手と前後の版。
+  (sim.redeclare WRAP2)
+  (val events (get (sim.call "GET" "/events") "events"))
+  (assert (any (gfor e events (and (= (get e "actor") "c-test") (= (.get (get e "changes") "spec.revision") [WRAP1 WRAP2]))))
+          events)
+  (val changed-at sim.now)
+  (var old-stopped None)
+  (var new-first-ready None)
   (for [_ (range 40)]
     (sim.step)
-    (setv old (next (gfor p sim.processes :if (= p.instance first-instance) p) None))
-    (when (and (is old-stopped None) (or (is old None) (is-not old.exit-code None))) (setv old-stopped sim.now))
-    (setv new (next (gfor p sim.processes :if (and (!= p.instance first-instance) (= p.spec.base SHA2)) p) None))
-    (when (and new (is new-first-ready None) (>= sim.now (+ new.started-ms JOB-START))) (setv new-first-ready sim.now)))
-  ;; base は 10 秒以内(読みの間)に SHA2 へ。出来事の記録に前後の値。
-  (assert (= (. (job-of sim) spec base) SHA2))
-  (setv events (get (sim.call "GET" "/events") "events"))
-  (assert (any (gfor e events (and (= (get e "actor") BASE-FOLLOW-ACTOR) (= (get e "changes" "spec.base") [SHA1 SHA2])))) events)
+    (val old (next (gfor p sim.processes :if (= p.instance first-instance) p) None))
+    (when (and (is old-stopped None) (or (is old None) (is-not old.exit-code None))) (:= old-stopped sim.now))
+    (val new (next (gfor p sim.processes :if (and (!= p.instance first-instance) (= p.spec.revision WRAP2)) p) None))
+    (when (and new (is new-first-ready None) (>= sim.now (+ new.started-ms JOB-START))) (:= new-first-ready sim.now)))
   ;; 旧を止めたのは、新が最初に Ready を報告した後。
   (assert (and old-stopped new-first-ready (< new-first-ready old-stopped)) #(new-first-ready old-stopped sim.log))
   ;; 書き手(lease を持つ process)の居ない拍は、旧が止まってから新が lease を取るまでの 1 拍以内。process が 1 つも居ない拍は 0。
-  (setv after (lfor row sim.log :if (>= (get row 0) changed-at) row))
+  (val after (lfor row sim.log :if (>= (get row 0) changed-at) row))
   (assert (<= (len (lfor row after :if (is (get row 1) None) row)) 1) after)
   (assert (= (len (lfor row after :if (= (get row 2) 0) row)) 0) after)
   ;; 最後は新の process 1 つだけが動いて lease を持ち、Service は Ready。
-  (setv live (lfor p sim.processes :if (is p.exit-code None) p))
+  (val live (lfor p sim.processes :if (is p.exit-code None) p))
   (assert (= (len live) 1) live)
-  (assert (= (. (get live 0) spec base) SHA2))
+  (assert (= (. (get live 0) spec revision) WRAP2))
   (assert (= sim.lease (. (get live 0) instance)))
   (assert (= (get (get sim.log -1) 3) "Ready") sim.log)
   ;; 計器: 仕事をしている Ready だけが ready_replicas。待機は standby。
-  (setv text (metrics-text sim.state sim.now T))
+  (val text (metrics-text sim.state sim.now T))
   (assert (in "doeff_worker_service_ready_replicas{service=\"writer-a\"} 1.0" text) text)
   (assert (in "doeff_worker_service_standby{service=\"writer-a\"} 0.0" text) text))
 
@@ -199,47 +183,6 @@
   (setv later (ready-instances sim.state "zeus" sim.now T))
   (assert (is (get early "writer-a") None) early)
   (assert (= (get later "writer-a") sim.lease) later))
-
-
-(deftest test-follow-does-not-move-the-base-without-a-readable-label
-  (setv sim (Sim))
-  (setv (get sim.images IMG1) {REVISION-LABEL "unknown"})
-  (for [_ (range 12)] (sim.step))
-  (assert (is (. (job-of sim) spec base) None))
-  (assert (in "40 桁" (get (sim.call "GET" "/resources/Service/writer-a") "status" "base" "reason"))))
-
-
-(deftest test-declarations-cannot-carry-base-from-or-overlay
-  ;; 宣言の口は baseFrom(image の版を追う)と overlay(定義だけ別の commit)を受けない — Program の job は詰めた commit で解く
-  ;; (ADR-DOE-CLUSTER-001・改訂 1 の E)。以前それを受けていた生の entry の job も受けない(R1・R7)。宣言し直しで追随を付けることも
-  ;; 外すこともできず、断った書きは追随している base を変えない。
-  (import doeff_cluster.cluster_policy [job-from-json])
-  (import pytest)
-  (val sim (Sim))
-  (for [_ (range 12)] (sim.step))
-  (assert (= (. (job-of sim) spec base) SHA1))
-  (val current (sim.call "GET" "/resources/Service/writer-a"))
-  (for [#(extra word) [#({"baseFrom" BASE-FROM} "baseFrom") #({"overlay" (* "a" 40)} "overlay")]]
-    (val answer (respond sim.state (Request "PUT" "/resources/Service/writer-a" {}
-                                            {"spec" (| SERVICE extra) "resourceVersion" (get current "resourceVersion")}
-                                            :actor "c-test")
-                         sim.now T))
-    (assert (= (get answer 1) 400) answer)
-    (assert (in word (get answer 2 "error")) answer)
-    (assert (is (get answer 0) sim.state) extra))
-  (assert (= (. (job-of sim) spec base) SHA1))
-  ;; 生の entry の行に付けた baseFrom・overlay も同じく断る(読み直しでは RefusedJob — test_old_declarations.hy)。
-  (with [(pytest.raises ValueError)]
-    (job-from-json (| SERVICE {"name" "x" "overlay" "abc1234"})))
-  (with [(pytest.raises ValueError)]
-    (job-from-json {"name" "x" "revision" "r" "entry" "m" "baseFrom" BASE-FROM "overlay" (* "a" 40)})))
-
-
-(defn test-image-entry-requires-a-full-commit []
-  (assert (= (get (image-entry {REVISION-LABEL SHA1 "org.example.runtime-revision" "d"} 5 N) "revision") SHA1))
-  (assert (= (get (image-entry {REVISION-LABEL SHA1 "org.example.runtime-revision" "d"} 5 N) "runtime") "d"))
-  (assert (in "error" (image-entry {REVISION-LABEL "abc1234"} 5 N)))
-  (assert (= (split-image IMG1) #("zeus:5000" "app" "20260924-1111111"))))
 
 
 (defn test-a-retired-process-still-counts-as-live []

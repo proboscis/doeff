@@ -1,6 +1,6 @@
 ;; コードの準備の失敗を完成品として公開しないこと・壊れた木を作り直すこと。
 ;; 焼きの Program は fake の handler で、CodeStore は手元の小さな git repo と偽の焼きの道具で確かめる。
-(require doeff-hy.macros [defhandler deftest <-])
+(require doeff-hy.macros [defhandler deftest <- val])
 (import json)
 (import os)
 (import subprocess)
@@ -11,7 +11,7 @@
 (import doeff_cluster.code_prepare [ScanTree LinkPycs CompileSources WriteMarker Note MARKER
                         prepare-tree tree-problem marker-problem marker-content cache-rel])
 (import doeff_cluster.handlers [CodeStore])
-(import doeff_cluster.worker_model [CodeState CodeLayout])
+(import doeff_cluster.worker_model [CodeState])
 
 
 ;; --- 焼きの Program(fake の handler)---------------------------------------------------
@@ -168,42 +168,27 @@
              (. (.stat (/ cache rev1 (cache-rel "pkg/m.py"))) st-ino))))
 
 
-(deftest test-layered-tree-takes-the-worker-dir-from-the-overlay-commit [tmp-path]
-  ;; 土台の木(本番の commit)に、重ねる commit の重ねる dir(app/wrap)を重ねる(2026-09-24 — 業務コードは本番・service の包みは宣言)。
-  ;; 土台に在る重ねる dir は消えて、重ねる commit の物だけが残る。前の重ねた木から引き継ぐ道も同じ検めを通る。
-  (setv repo (/ tmp-path "repo") cache (/ tmp-path "cache"))
-  (defn commit [files message]
-    (for [#(path text) (.items files)]
-      (.mkdir (. (/ repo path) parent) :parents True :exist-ok True)
-      (.write-text (/ repo path) text))
-    (git repo "add" "-A")
-    (git repo "-c" "user.name=t" "-c" "user.email=t@t" "commit" "-q" "-m" message)
-    (git repo "rev-parse" "HEAD"))
-  (.mkdir repo :parents True)
-  (git repo "init" "-q")
-  ;; 包みの branch の commit(worker の dir と、古い業務コード)
-  (setv wrap (commit {"app/__init__.py" "" "app/core/__init__.py" "" "app/core/loop.py" "V = 'old'\n"
-                      "app/wrap/__init__.py" "" "app/wrap/w.py" "W = 'wrap'\n"} "wrap"))
-  ;; 本番の commit(新しい業務コード・worker の dir は古い物が残っている形)
-  (setv base (commit {"app/core/loop.py" "V = 'new'\n" "app/wrap/w.py" "W = 'stale'\n"
-                      "app/wrap/extra.py" "E = 1\n"} "base"))
-  (setv store (CodeStore (str repo) (str cache) HY :layout (CodeLayout :overlay-path "app/wrap")) key (+ base "~" wrap))
-  (.start store key)
-  (setv view (wait-settled store key))
+(deftest test-a-previous-tree-this-repo-cannot-resolve-is-not-carried-from [tmp-path]
+  ;; 前の完成品の版をこの repo で解けない時(以前の「<base>~<revision>」の重ねる木の名・履歴から消えた commit — 2026-09-28 に
+  ;; 重ねる木を消した)は、引き継がずに全部を焼いて完成品にする。引き継ぎは速さのためだけで、引き継げないことを準備の失敗にしない。
+  (val made (make-repo tmp-path))
+  (val cache (/ tmp-path "cache"))
+  (val first (CodeStore (str (get made 0)) (str cache) HY))
+  (.start first (get made 1))
+  (assert (= (. (wait-settled first (get made 1)) state) CodeState.READY))
+  ;; 前の木の版(made の commit)を持たない別の履歴の repo で、同じ cache に次の版を準備する。
+  (val other (/ tmp-path "other"))
+  (.mkdir (/ other "pkg") :parents True)
+  (.write-text (/ other "pkg" "__init__.py") "")
+  (.write-text (/ other "pkg" "n.py") "Y = 2\n")
+  (git other "init" "-q")
+  (git other "add" ".")
+  (git other "-c" "user.name=t" "-c" "user.email=t@t" "commit" "-q" "-m" "other")
+  (val rev (git other "rev-parse" "HEAD"))
+  (val store (CodeStore (str other) (str cache) HY))
+  (assert (= (. (.latest-ready store) name) (get made 1)) "引き継ぎ元の候補は前の完成品")
+  (.start store rev)
+  (val view (wait-settled store rev))
   (assert (= view.state CodeState.READY) view.detail)
-  (setv tree (/ cache key))
-  (assert (= (.read-text (/ tree "app/core/loop.py")) "V = 'new'\n"))
-  (assert (= (.read-text (/ tree "app/wrap/w.py")) "W = 'wrap'\n"))
-  (assert (not (.exists (/ tree "app/wrap/extra.py"))) "土台の重ねる dir は残さない")
-  (assert (= (get (json.loads (.read-text (/ tree MARKER))) "revision") key))
-  ;; 本番が次の版へ進んだ(業務コードだけ変わる)→ 前の重ねた木から引き継いで準備する。
-  (setv base2 (commit {"app/core/loop.py" "V = 'newer'\n"} "base2"))
-  (setv key2 (+ base2 "~" wrap))
-  (.start store key2)
-  (setv view (wait-settled store key2))
-  (assert (= view.state CodeState.READY) view.detail)
-  (assert (= (.read-text (/ cache key2 "app/core/loop.py")) "V = 'newer'\n"))
-  (assert (= (.read-text (/ cache key2 "app/wrap/w.py")) "W = 'wrap'\n"))
-  ;; 変わっていない包みの .pyc は前の木と同じ inode(引き継いだ)。
-  (assert (= (. (.stat (/ cache key2 (cache-rel "app/wrap/w.py"))) st-ino)
-             (. (.stat (/ cache key (cache-rel "app/wrap/w.py"))) st-ino))))
+  (assert (= (get (json.loads (.read-text (/ cache rev MARKER))) "pycs") 2))
+  (assert (.exists (/ cache rev (cache-rel "pkg/n.py")))))

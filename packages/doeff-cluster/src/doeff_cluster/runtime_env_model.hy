@@ -42,10 +42,12 @@
 
 ;; --- 宣言の誤り ---------------------------------------------------------------------------
 
-;; 宣言の誤りの種類。後ろの 3 つは送り手の組み立て(runtime_env.hy)が断る物。
+;; 宣言の誤りの種類。DIRTY-TREE から後ろは送り手の手元の checkout を読んで断る物(runtime_env.hy)。NOT-IN-CHECKOUT と
+;; REVISION-DIFFERS は系の宣言(declare)が断る物: 系の関数の source が git の checkout の中に無い・checkout の HEAD が宣言の版と違う
+;; (2026-09-28 — 詰める Program の参照する code と、実行先が宣言の版で展開する code を一致させる)。
 (defenum InvalidKind
   INVALID-NAME DUPLICATE-REPO BAD-COMMIT BAD-URL BAD-SHA256 UNKNOWN-REPO BAD-PATH RESERVED-ENV-VAR EMPTY BAD-JSON
-  DIRTY-TREE COMMIT-NOT-ON-REMOTE SENDER-SOURCE-DIFFERS)
+  DIRTY-TREE COMMIT-NOT-ON-REMOTE SENDER-SOURCE-DIFFERS NOT-IN-CHECKOUT REVISION-DIFFERS)
 
 
 (defclass RuntimeEnvInvalid [ValueError]
