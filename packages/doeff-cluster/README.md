@@ -197,8 +197,10 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
 - **途絶**: worker は coordinator と途絶えても切り離した task を止めません(途絶が lease より長ければ coordinator が消失とし、再接続の
   返事から外れた時に止めます)。
 - **drain**: drain は worker の上の切り離した task が 0 になるまで `Drained` になりません(task は移せないので終わるのを待つ)。
-- handler: `detached-cluster`(coordinator の `/detached` の口と話す — `DetachedClient`)と `detached-local`(同じ VM の scheduler の
-  task で走らせる fake。`SimulateRunnerLoss` で担い手の死を起こせる)。
+- handler: `detached-cluster`(coordinator の `/detached` の口と話す — `DetachedClient`)。手元で確かめる時は handler を被せず、手元の
+  runner `sim-cluster`(`doeff_cluster.local`)で走らせる — sim の宿が同じ要求の形で本物の coordinator へ送り、本物の worker が task を
+  走らせる。担い手の死・止め・網の切断・drain・coordinator の止まりは検の effect(`KillWorker`・`StopWorker`・`StartWorker`・
+  `CutWorker`・`DrainWorker`・`StopCoordinator`・`CrashCoordinator`)で起こす。
 
 | HTTP | 意味 |
 |---|---|

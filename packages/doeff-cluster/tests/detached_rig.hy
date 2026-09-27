@@ -3,6 +3,7 @@
 ;;   slow-add                … 送る Program(自分で並べた base = 100 の reader の上で n を足す — 実行先は handler を足さない)
 ;;   RigWorker ほか           … 担い手: 本物の CoordinatorLink で heartbeat を送り、割り当てられた task を同じ VM で走らせる
 ;;   MemoryCoordinator       … 本物の coordinator の判断(api_policy.respond / tick)を httpx.MockTransport の後ろに置く
+;;   RIG-PROVIDES            … 担い手の既定の能力(sim-cluster の組の worker も同じ能力を名乗る — 同じ needs の筋書きを回すため)
 (require doeff-hy.macros [defk <- val var])
 (import json)
 (import urllib.parse [urlsplit parse-qsl])
@@ -18,9 +19,12 @@
 (import doeff_cluster.api_policy [respond tick])
 (import doeff_cluster.handlers [CoordinatorLink program-file])
 (import doeff_cluster.job_entry [read-program])
-(import doeff_cluster.detached [DEFAULT-RUNNER-PROVIDES])
 (import doeff_cluster.worker_model [DesiredJobs JobStatus JobPhase JobSpec])
 (import doeff_cluster.remote_model [TaskSucceeded encode-outcome failed-from])
+
+
+;; 担い手の既定の能力(筋書きの task の needs — sim の組・coordinator の組・served の組の担い手が共に提供する)。
+(val RIG-PROVIDES #("local"))
 
 
 ;; --- 送る Program -------------------------------------------------------------------------------
@@ -34,7 +38,7 @@
 (defk slow-add [seconds n]
   {:pre [(: seconds float) (: n int)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "送る Program: 自分の handler(base = 100 の reader)を本体の with-handlers で並べる(ADR-DOE-CLUSTER-001 R2 — 担い手は handler を
-   足さない)。時計(Delay)と scheduler は担い手の外側の模擬の時計が答える(同じ VM の担い手の模擬 — sim の柵の許可表と同じ扱い)。"
+   足さない)。時計(Delay)と scheduler は担い手の外側の時計が答える(sim の柵の許可表と同じ扱い)。"
   (<- total int (with-handlers [(reader {"base" 100})] (slow-add-body seconds n)))
   total)
 
@@ -46,8 +50,8 @@
 
 (defclass RigWorker []
   (defn __init__ [self #^ str url #^ Path task-dir #^ dict versions [transport None] #^ str [name "w1"]
-                  #^ tuple [provides DEFAULT-RUNNER-PROVIDES] #^ tuple [exclusive #()]]
-    ;; name / provides / exclusive = worker の名乗り(既定 = 模擬の既定の担い手と同じ能力 local の w1 — fake と coordinator の組で同じ
+                  #^ tuple [provides RIG-PROVIDES] #^ tuple [exclusive #()]]
+    ;; name / provides / exclusive = worker の名乗り(既定 = sim の組の worker と同じ能力 local の w1 — sim と coordinator の組で同じ
     ;; needs の筋書きを回すため。担い手を 2 つ以上並べる検 test_detached_runners.hy が名指す)。
     (setv self.link (CoordinatorLink url name provides 10 20000 :task-dir (str task-dir) :versions versions :transport transport
                                      :exclusive exclusive)

@@ -445,16 +445,10 @@
 
   (defn #^ dict report [self]
     "heartbeat で名乗る root の姿(coordinator の置き先と温める表の読みが使う): 準備済み・準備中・失敗のキー(env- を外した物)と
-     disk の条件。"
+     disk の条件(形は env-report — sim の宿と同じ関数)。"
     (setv views (if (is self.views None) (.observe self) self.views)
-          bare (fn [k] (cut k (len ENV-KEY-PREFIX) None))
           free (. (.disk-view self) free))
-    {"ready" (sorted (gfor v views :if (= v.state CodeState.READY) (bare v.revision)))
-     "preparing" (sorted (gfor v views :if (= v.state CodeState.PREPARING) (bare v.revision)))
-     "failed" (lfor v views :if (and (= v.state CodeState.FAILED) (is-not v.failure None))
-                    {"key" (bare v.revision) "kind" v.failure.kind.value "detail" v.failure.detail
-                     "retryable" v.failure.retryable})
-     "capacity" (run (env-capacity free self.min-free-bytes))}))
+    (env-report (tuple views) (run (env-capacity free self.min-free-bytes)))))
 
 
 (defn #^ int tree-bytes [#^ Path root]  ; defk にできない: EnvStore(Program の外の I/O の道具)が呼ぶ
@@ -990,24 +984,22 @@
           (.unlink mark :missing-ok True)))))
 
   (defn #^ dict env-body [self]
-    "heartbeat に足す root の名乗り(実行環境を扱う worker だけ): platform・準備済み / 準備中 / 失敗の root・disk の条件。"
+    "heartbeat に足す root の名乗り(実行環境を扱う worker だけ): platform・準備済み / 準備中 / 失敗の root・disk の条件
+     (形は env-heartbeat-part — sim の宿と同じ関数)。"
     (if (is self.envs None)
         {}
-        (do (setv envs (.report self.envs))
-            {"platform" (current-platform)
-             "envs" {"ready" (get envs "ready") "preparing" (get envs "preparing") "failed" (get envs "failed")}
-             "envCapacity" (get envs "capacity")})))
+        (env-heartbeat-part (.report self.envs) (current-platform))))
 
   (defn #^ tuple accept-warm [self #^ list rows]
-    "heartbeat の返事の温める表の行 → この worker の root のキーの WarmEnv(キーは行ごとに 1 度だけ計算する)。"
+    "heartbeat の返事の温める表の行 → この worker の root のキーの WarmEnv(キーは行ごとに 1 度だけ計算する — 計算は warm-env-of-row、
+     sim の宿と同じ関数)。"
     (when (is self.envs None) (return #()))
     (setv out [])
     (for [row rows]
       (setv text (json.dumps (get row "runtimeEnv") :sort-keys True :ensure-ascii False))
       (when (not-in text self.warm-keys)
-        (setv (get self.warm-keys text)
-              (+ ENV-KEY-PREFIX (run (env-key (run (runtime-env-of-json (get row "runtimeEnv"))) (current-platform))))))
-      (.append out (WarmEnv :key (get self.warm-keys text) :runtime-env text)))
+        (setv (get self.warm-keys text) (warm-env-of-row row (current-platform))))
+      (.append out (get self.warm-keys text)))
     (tuple out))
 
   (defn #^ list report [self #^ tuple statuses]
@@ -1045,6 +1037,36 @@
 
 
 ;; --- heartbeat の形(本番の CoordinatorLink と手元の sim-cluster の偽の宿 local.hy が同じ関数を使う — 本文を写さない)-------------
+
+(deff env-report [#^ tuple views #^ str capacity]  ; defk にできない: worker の I/O の道具(EnvStore)と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: views tuple) (: capacity str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "実行環境の root の観測(CodeView — 鍵が env- で始まる物だけを読む)と disk の条件を、heartbeat で名乗る root の姿(準備済み・準備中・
+   失敗のキーを env- を外して・disk の条件)にするため。"
+  (let [roots (lfor v views :if (.startswith v.revision ENV-KEY-PREFIX) v)
+        bare (fn [k] (cut k (len ENV-KEY-PREFIX) None))]
+    {"ready" (sorted (gfor v roots :if (= v.state CodeState.READY) (bare v.revision)))
+     "preparing" (sorted (gfor v roots :if (= v.state CodeState.PREPARING) (bare v.revision)))
+     "failed" (lfor v roots :if (and (= v.state CodeState.FAILED) (is-not v.failure None))
+                    {"key" (bare v.revision) "kind" v.failure.kind.value "detail" v.failure.detail
+                     "retryable" v.failure.retryable})
+     "capacity" capacity}))
+
+
+(deff env-heartbeat-part [#^ dict report #^ str platform]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: report dict) (: platform str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "root の姿(env-report)を heartbeat の本文に足す欄(platform・envs・envCapacity)にするため。"
+  {"platform" platform
+   "envs" {"ready" (get report "ready") "preparing" (get report "preparing") "failed" (get report "failed")}
+   "envCapacity" (get report "capacity")})
+
+
+(deff warm-env-of-row [#^ dict row #^ str platform]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が同じ判断で返事を読む
+  {:pre [(: row dict) (: platform str)] :post [(: % WarmEnv)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "heartbeat の返事の温める表の行 1 つを、この worker の root のキー(platform で計算した env のキーに env- を付けた物)の WarmEnv に
+   するため。"
+  (WarmEnv :key (+ ENV-KEY-PREFIX (run (env-key (run (runtime-env-of-json (get row "runtimeEnv"))) platform)))
+           :runtime-env (json.dumps (get row "runtimeEnv") :sort-keys True :ensure-ascii False)))
+
 
 (deff heartbeat-body [* #^ str name #^ tuple provides #^ tuple exclusive #^ str node #^ int capacity #^ dict versions
                       #^ list statuses #^ str endpoint #^ str boot #^ int boot-at #^ dict tools]  ; defk にできない: worker の I/O の道具(CoordinatorLink)と sim の宿が同じ形を作る純粋な判断
