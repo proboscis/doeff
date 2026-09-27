@@ -17,11 +17,11 @@
                                          runtime-env->json env-key current-platform])
 (import doeff_cluster.runtime_env [LocalCheckout ProjectOfCheckout runtime-env-of-checkouts checkout-reads])
 (import doeff_cluster.env_prepare [ENV-MARKER ROOTS-PTH])
-(import doeff_cluster.handlers [EnvStore ProcessHost task-spec])
+(import doeff_cluster.handlers [EnvStore ProcessHost task-spec write-program-file])
 (import doeff_cluster.worker_model [CodeState CodeView StartJob ReapJob Outcome WorldView WorkerPolicy PrepareEnv WarmEnv
                                     code-key])
 (import doeff_cluster.worker_policy [plan])
-(import doeff_cluster.remote_model [encode-program decode-outcome current-versions TaskSucceeded TaskFailed])
+(import doeff_cluster.remote_model [encode-program decode-outcome current-versions program-sha TaskSucceeded TaskFailed])
 
 (val FIXTURES (/ (. (Path __file__) (resolve) parent) "fixtures"))
 (val HY (str (/ (. (Path sys.executable) parent) "hy")))
@@ -186,17 +186,20 @@
 (defk run-task [rig env task-id [versions None] [host None]]
   {:pre [(: rig Rig) (: env RuntimeEnv) (: task-id str) (: versions (| dict None)) (: host (| ProcessHost None))]
    :post [(: % (| TaskSucceeded TaskFailed))]}
-  "準備済みの root で task を 1 本走らせる(worker の task-spec → ProcessHost の子 process → 結果の file)。答え = TaskSucceeded / TaskFailed。"
+  "準備済みの root で task を 1 本走らせる(worker の task-spec → ProcessHost の子 process → 結果の file)。答え = TaskSucceeded / TaskFailed。
+   詰めた Program は worker が置き場から取った cache と同じ形の file(ProcessHost の programs の dir)に、送り手の版 versions と一緒に置く。"
   (import appjobs)
   (<- declared dict (runtime-env->json env))
   (val tasks (/ rig.state "tasks"))
   (.mkdir tasks :parents True :exist-ok True)
-  (.write-text (/ tasks (+ task-id ".blob")) (encode-program (appjobs.report)) :encoding "ascii")
-  (val spec (task-spec {"id" task-id "revision" "" "versions" (or versions (current-versions)) "blob" ""
+  (val using (or host rig.host))
+  (val blob (encode-program (appjobs.report)))
+  (val sha (program-sha blob))
+  (write-program-file using.program-dir sha blob (or versions (current-versions)))
+  (val spec (task-spec {"id" task-id "revision" "" "versions" (or versions (current-versions)) "program" sha
                         "runtimeEnv" declared}
                        tasks))
   (<- key str (env-key env (current-platform)))
-  (val using (or host rig.host))
   (.start using (StartJob spec 1 (str (.root-of rig.envs (+ "env-" key)))))
   (val deadline (+ (time.monotonic) DEADLINE-SECONDS))
   (var ended None)
