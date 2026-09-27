@@ -95,11 +95,16 @@ class Await(EffectBase[_T], Generic[_T]):
     """Await a Python coroutine or future. Bridges async into doeff.
 
     yield Await(some_coroutine) → result
+
+    ``deadline`` (a ``time.monotonic()`` instant) marks a clock wait whose
+    completion time is known, e.g. ``asyncio.sleep``: the scheduler does not
+    report it as a stall until the deadline is exceeded (agora-redesign #765).
     """
 
-    def __init__(self, coroutine: Awaitable[_T]) -> None:
+    def __init__(self, coroutine: Awaitable[_T], deadline: float | None = None) -> None:
         super().__init__()
         self.coroutine = coroutine
+        self.deadline = deadline
 
     def __repr__(self):
         return "Await(...)"

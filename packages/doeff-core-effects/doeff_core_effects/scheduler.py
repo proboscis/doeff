@@ -25,6 +25,7 @@ import functools
 import logging
 import os
 import sys
+import time
 import warnings
 import weakref
 from collections.abc import Callable, Generator
@@ -308,8 +309,20 @@ class ReleaseSemaphore(EffectBase[None]):
 
 
 class CreateExternalPromise(EffectBase["ExternalPromise[_T]"], Generic[_T]):
-    def __init__(self) -> None:
+    """Create a promise completed from outside the run (another thread).
+
+    ``deadline`` marks a clock wait: the ``time.monotonic()`` instant by which
+    the producer is known to complete it (a timer / ``asyncio.sleep``). While
+    such a wait is pending and not overdue the scheduler is not stalled — it
+    knows when it will wake — so the stall warning stays silent; once the
+    deadline is exceeded by more than EXTERNAL_STALL_LOG_INTERVAL_SECONDS
+    without completion, the warning fires again (agora-redesign #765).
+    ``None`` = an open-ended external wait (the pre-#765 behaviour).
+    """
+
+    def __init__(self, deadline: float | None = None) -> None:
         super().__init__()
+        self.deadline = deadline
 
 
 class _SchedulerIntrospection(EffectBase):
@@ -841,7 +854,8 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         Blocks with a timeout so a stalled scheduler stays observable
         (#495b): every EXTERNAL_STALL_LOG_INTERVAL_SECONDS a warning with
         the parked-waiter summary is logged, then blocking continues —
-        semantics are unchanged.
+        semantics are unchanged. A pending clock wait that is not overdue
+        keeps the warning silent (#765, ``clock_wait_keeps_schedule``).
         """
         waited = 0.0
         while True:
@@ -851,6 +865,8 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 break
             except queue_mod.Empty:
                 waited += interval
+                if clock_wait_keeps_schedule(interval):
+                    continue
                 _logger.warning(
                     "scheduler stalled %.0fs waiting on external completions; "
                     "parked waiters: %s; semaphore waiters: %s",
@@ -859,6 +875,21 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                     live_semaphore_waiters() or "none",
                 )
         settle_external(action, pid, value)
+
+    def clock_wait_keeps_schedule(grace: float) -> bool:
+        """True while a pending clock wait (an external promise with a
+        ``deadline``) is due to wake the scheduler and none is overdue by more
+        than ``grace`` — the block is then a known sleep, not a stall (#765).
+        """
+        deadlines = [
+            promise["deadline"]
+            for promise in promises.values()
+            if promise["status"] == "pending" and promise.get("deadline") is not None
+        ]
+        if not deadlines:
+            return False
+        now = time.monotonic()
+        return all(now <= deadline + grace for deadline in deadlines)
 
     def settle_external(action: str, pid: int, value: object) -> None:
         """Apply one drained external completion.
@@ -1840,6 +1871,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         elif isinstance(effect, CreateExternalPromise):
             pid = alloc_promise()
             promises[pid]["external"] = True
+            promises[pid]["deadline"] = effect.deadline
             ep = register_handle(
                 ("promise", pid),
                 ExternalPromise(

@@ -63,7 +63,8 @@ class SyncTimeRuntime:
 
             @do
             def deferred():
-                ep = yield CreateExternalPromise()
+                # A timer wait: the scheduler knows when it wakes (#765).
+                ep = yield CreateExternalPromise(deadline=time.monotonic() + wait_seconds)
 
                 def _timer_done():
                     ep.complete(None)

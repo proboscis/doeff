@@ -466,7 +466,7 @@ def await_handler() -> ProgramHandler:
     @do
     def handler(effect, k):
         if isinstance(effect, Await):
-            ep = yield CreateExternalPromise()
+            ep = yield CreateExternalPromise(deadline=effect.deadline)
             loop = _get_await_bridge_loop()
 
             async def run_coro():

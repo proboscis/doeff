@@ -27,6 +27,14 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _clock_wait(sleep: Callable[[float], Awaitable[Any]], seconds: float) -> Await:
+    """An Await whose completion time is known: the scheduler does not count
+    it as stalled until ``seconds`` have passed (agora-redesign #765). The
+    deadline is on the scheduler's clock (``time.monotonic``), not on the
+    injectable ``monotonic`` that answers GetMonotonic."""
+    return Await(sleep(seconds), deadline=time.monotonic() + seconds)
+
+
 class AsyncTimeRuntime:
     """Runtime container for async wall-clock time effects."""
 
@@ -49,11 +57,11 @@ class AsyncTimeRuntime:
         # Task handle and defeating the scheduler's terminal-entry sweep
         # (ADR-DOE-CORE-EFFECTS-002).
         if isinstance(effect, DelayEffect):
-            yield Await(self._sleep(max(0.0, effect.seconds)))
+            yield _clock_wait(self._sleep, max(0.0, effect.seconds))
             return (yield Transfer(k, None))
         if isinstance(effect, WaitUntilEffect):
             wait_seconds = max(0.0, (effect.target - self._now()).total_seconds())
-            yield Await(self._sleep(wait_seconds))
+            yield _clock_wait(self._sleep, wait_seconds)
             return (yield Transfer(k, None))
         if isinstance(effect, GetTimeEffect):
             return (yield Transfer(k, self._now()))
@@ -65,7 +73,7 @@ class AsyncTimeRuntime:
 
             @do
             def deferred():
-                yield Await(sleep(wait_seconds))
+                yield _clock_wait(sleep, wait_seconds)
                 yield effect.program
 
             # Resume the caller with the spawned Task (same contract as
