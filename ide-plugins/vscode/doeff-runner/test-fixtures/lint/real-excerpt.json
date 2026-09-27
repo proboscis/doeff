@@ -1,0 +1,255 @@
+{
+ "version": 1,
+ "root": "/Users/kento/repos/agora-controllers",
+ "violations": [
+  {
+   "rule": "DOEFF110",
+   "law": null,
+   "adr": null,
+   "severity": "error",
+   "path": "/Users/kento/repos/agora-controllers/controllers/agent_task/handlers_agents.hy",
+   "range": {
+    "start": {
+     "line": 160,
+     "character": 13
+    },
+    "end": {
+     "line": 160,
+     "character": 21
+    }
+   },
+   "message": "controllers/agent_task/handlers_agents.hy の turn_key は defn で書かれている — defk で書く",
+   "hint": "defk にする。外の library の callback のように素の関数が要るなら deff にして、同じ行に `; defk にできない: <理由>` と :tags を書く",
+   "key": "controllers/agent_task/handlers_agents.hy::DOEFF110::turn_key",
+   "registered": false,
+   "explanation": {
+    "subject": "定義 turn_key(defn)",
+    "reason": "defn は契約の辞書を持てず、:tags を書けない — タグで層・役・文脈を名乗れないので、閲覧のパネルにも linter の役の規則にも乗らない。defk で書く(素の callable が避けられない時だけ deff)。",
+    "law_statement": null
+   }
+  },
+  {
+   "rule": "DOEFF110",
+   "law": null,
+   "adr": null,
+   "severity": "error",
+   "path": "/Users/kento/repos/agora-controllers/controllers/agent_task/handlers_agents.hy",
+   "range": {
+    "start": {
+     "line": 163,
+     "character": 13
+    },
+    "end": {
+     "line": 163,
+     "character": 22
+    }
+   },
+   "message": "controllers/agent_task/handlers_agents.hy の prompt_of は defn で書かれている — defk で書く",
+   "hint": "defk にする。外の library の callback のように素の関数が要るなら deff にして、同じ行に `; defk にできない: <理由>` と :tags を書く",
+   "key": "controllers/agent_task/handlers_agents.hy::DOEFF110::prompt_of",
+   "registered": false,
+   "explanation": {
+    "subject": "定義 prompt_of(defn)",
+    "reason": "defn は契約の辞書を持てず、:tags を書けない — タグで層・役・文脈を名乗れないので、閲覧のパネルにも linter の役の規則にも乗らない。defk で書く(素の callable が避けられない時だけ deff)。",
+    "law_statement": null
+   }
+  },
+  {
+   "rule": "DOEFF110",
+   "law": null,
+   "adr": null,
+   "severity": "warning",
+   "path": "/Users/kento/repos/agora-controllers/controllers/agent_task/envs.hy",
+   "range": {
+    "start": {
+     "line": 45,
+     "character": 29
+    },
+    "end": {
+     "line": 45,
+     "character": 38
+    }
+   },
+   "message": "controllers/agent_task/envs.hy の child_env は defn で書かれている — defk で書く",
+   "hint": "defk にする。外の library の callback のように素の関数が要るなら deff にして、同じ行に `; defk にできない: <理由>` と :tags を書く",
+   "key": "controllers/agent_task/envs.hy::DOEFF110::child_env",
+   "registered": true,
+   "explanation": {
+    "subject": "定義 child_env(defn)",
+    "reason": "defn は契約の辞書を持てず、:tags を書けない — タグで層・役・文脈を名乗れないので、閲覧のパネルにも linter の役の規則にも乗らない。defk で書く(素の callable が避けられない時だけ deff)。",
+    "law_statement": null
+   }
+  },
+  {
+   "rule": "DOEFF110",
+   "law": null,
+   "adr": null,
+   "severity": "warning",
+   "path": "/Users/kento/repos/agora-controllers/controllers/agent_task/envs.hy",
+   "range": {
+    "start": {
+     "line": 50,
+     "character": 23
+    },
+    "end": {
+     "line": 50,
+     "character": 39
+    }
+   },
+   "message": "controllers/agent_task/envs.hy の machine_from_env は defn で書かれている — defk で書く",
+   "hint": "defk にする。外の library の callback のように素の関数が要るなら deff にして、同じ行に `; defk にできない: <理由>` と :tags を書く",
+   "key": "controllers/agent_task/envs.hy::DOEFF110::machine_from_env",
+   "registered": true,
+   "explanation": {
+    "subject": "定義 machine_from_env(defn)",
+    "reason": "defn は契約の辞書を持てず、:tags を書けない — タグで層・役・文脈を名乗れないので、閲覧のパネルにも linter の役の規則にも乗らない。defk で書く(素の callable が避けられない時だけ deff)。",
+    "law_statement": null
+   }
+  },
+  {
+   "rule": "DOEFF108",
+   "law": "business-modules-carry-no-environment-name",
+   "adr": "ADR-CONTROLLERS-CHOOSE-ENVIRONMENT-BY-HANDLER-SET",
+   "severity": "info",
+   "path": "/Users/kento/repos/agora-controllers/controllers/agent_task/handler_sets.hy",
+   "range": {
+    "start": {
+     "line": 36,
+     "character": 14
+    },
+    "end": {
+     "line": 36,
+     "character": 25
+    }
+   },
+   "message": "controllers/agent_task/handler_sets.hy の machine_set が環境の語(machine)を含む — 業務の file と handler は環境を知らない。環境で差し替えるのは土台の汎用の handler だけ",
+   "hint": "環境の違いは土台の handler の差し替えで表し、業務の名からは環境の語を外す",
+   "key": "controllers/agent_task/handler_sets.hy::business-modules-carry-no-environment-name::machine_set",
+   "registered": true,
+   "explanation": {
+    "subject": "定義 machine_set(defn)の名(環境の語 machine を含む)",
+    "reason": "業務の code は環境(本番・模擬・手元)を知らない。語 machine は環境の違いを表すので、業務の名に入ると環境ごとに業務の答え手が分かれ、模擬の緑が本番の道を確かめなくなる。環境の違いは土台の汎用の handler の差し替えだけで表す。",
+    "law_statement": "module ∈ 層 core の module(と、層へ移す前の業務コード)⇒ file の名・defk / defhandler / defn の名・TRANSLATION-HANDLERS に並ぶ値の名に、環境の語(http・local・fake・memory・machine・emulated・production・wire・sim)が 0 件"
+   }
+  },
+  {
+   "rule": "DOEFF108",
+   "law": "business-modules-carry-no-environment-name",
+   "adr": "ADR-CONTROLLERS-CHOOSE-ENVIRONMENT-BY-HANDLER-SET",
+   "severity": "info",
+   "path": "/Users/kento/repos/agora-controllers/controllers/agent_task/handler_sets.hy",
+   "range": {
+    "start": {
+     "line": 41,
+     "character": 14
+    },
+    "end": {
+     "line": 41,
+     "character": 33
+    }
+   },
+   "message": "controllers/agent_task/handler_sets.hy の production_handlers が環境の語(production)を含む — 業務の file と handler は環境を知らない。環境で差し替えるのは土台の汎用の handler だけ",
+   "hint": "環境の違いは土台の handler の差し替えで表し、業務の名からは環境の語を外す",
+   "key": "controllers/agent_task/handler_sets.hy::business-modules-carry-no-environment-name::production_handlers",
+   "registered": true,
+   "explanation": {
+    "subject": "定義 production_handlers(defn)の名(環境の語 production を含む)",
+    "reason": "業務の code は環境(本番・模擬・手元)を知らない。語 production は環境の違いを表すので、業務の名に入ると環境ごとに業務の答え手が分かれ、模擬の緑が本番の道を確かめなくなる。環境の違いは土台の汎用の handler の差し替えだけで表す。",
+    "law_statement": "module ∈ 層 core の module(と、層へ移す前の業務コード)⇒ file の名・defk / defhandler / defn の名・TRANSLATION-HANDLERS に並ぶ値の名に、環境の語(http・local・fake・memory・machine・emulated・production・wire・sim)が 0 件"
+   }
+  }
+ ],
+ "modules": [
+  {
+   "path": "/Users/kento/repos/agora-controllers/controllers/core/chat_wake.hy",
+   "layer": "core",
+   "context": "chat",
+   "role": "judgment",
+   "violations": 0,
+   "layer_reason": "path の置き場所で決めた — controllers/core/ の下は層 core(業務の判断と Program)。タグの role = judgment もこの層の役",
+   "service": null
+  },
+  {
+   "path": "/Users/kento/repos/agora-controllers/controllers/core/daily_verify_judgment.hy",
+   "layer": "core",
+   "context": "daily-verify",
+   "role": "judgment",
+   "violations": 0,
+   "layer_reason": "path の置き場所で決めた — controllers/core/ の下は層 core(業務の判断と Program)。タグの role = judgment もこの層の役",
+   "service": null
+  },
+  {
+   "path": "/Users/kento/repos/agora-controllers/controllers/core/daily_verify_loop_types.hy",
+   "layer": "core",
+   "context": "daily-verify",
+   "role": "type",
+   "violations": 0,
+   "layer_reason": "path の置き場所で決めた — controllers/core/ の下は層 core(業務の判断と Program)。タグの role = type もこの層の役",
+   "service": null
+  }
+ ],
+ "rules": [
+  {
+   "rule": "DOEFF101",
+   "adr": "ADR-CONTROLLERS-CHOOSE-ENVIRONMENT-BY-HANDLER-SET",
+   "statement": "core-imports-only-intent: module ∈ 層 core の module ⇒ 層 protocol・foundation・entry の module の import が 0 件、かつ subprocess・socket・HTTP の client・file の読み書きの module の import が 0 件(同じ層の core と層 intent と doeff の基盤は許す)。実効のタグの無い定義と、層の dir とタグの role が食い違う定義も破れに数える",
+   "wired": true
+  },
+  {
+   "rule": "DOEFF101",
+   "adr": "ADR-CONTROLLERS-CHOOSE-ENVIRONMENT-BY-HANDLER-SET",
+   "statement": "intent-holds-only-types: module ∈ 層 intent の module ⇒ 定義は型(defclass・defrecord・defenum と effect の型)だけで、defk・defhandler の定義が 0 件。import は同じ層の intent と doeff の基盤(EffectBase・doeff-hy の record)だけ",
+   "wired": true
+  },
+  {
+   "rule": "DOEFF101",
+   "adr": "ADR-CONTROLLERS-CHOOSE-ENVIRONMENT-BY-HANDLER-SET",
+   "statement": "protocol-imports-only-intent-and-generic-effects: module ∈ 層 protocol の module ⇒ import は層 intent と doeff の package の汎用の effect(HttpRequest・doeff-records の読み書き・時計・file・process・Ask)と同じ層の protocol だけで、層 core・foundation・entry の import と I/O の module の直の import が 0 件。protocol の handler は受けた intent を汎用の effect へ出し直すだけで、業務の判断を持たない",
+   "wired": true
+  },
+  {
+   "rule": "DOEFF101",
+   "adr": "ADR-CONTROLLERS-CHOOSE-ENVIRONMENT-BY-HANDLER-SET",
+   "statement": "foundation-imports-no-upper-layer: module ∈ 層 foundation の module ⇒ 層 core・intent・protocol・entry の module の import が 0 件。doeff の package(汎用の effect の型)の import と、同じ層の foundation の module の import は許す",
+   "wired": true
+  }
+ ],
+ "layers": [
+  {
+   "name": "core",
+   "summary": "業務の判断と Program",
+   "knows": "業務の判断(いつ・誰に・何を)",
+   "does_not_know": "相手が誰か、どう通信するか",
+   "question": "通信の方法が変わってもこのコードは変わらないか?"
+  },
+  {
+   "name": "intent",
+   "summary": "core が外へ求める事の型",
+   "knows": "要求と答えの型だけ",
+   "does_not_know": "処理の中身",
+   "question": "関数が 1 つも無く、型の宣言だけか?"
+  },
+  {
+   "name": "protocol",
+   "summary": "intent を相手の話し方へ訳す handler",
+   "knows": "相手の話し方(要求を汎用の effect へ言い換える)",
+   "does_not_know": "本物か模擬か",
+   "question": "要求を別の汎用の effect に言い換えているだけか?"
+  },
+  {
+   "name": "foundation",
+   "summary": "汎用の I/O(環境で差し替えるのはここだけ)",
+   "knows": "本物の I/O(HTTP・DB・file・時計)",
+   "does_not_know": "業務のこと",
+   "question": "httpx や psycopg を直接呼ぶか?"
+  },
+  {
+   "name": "entry",
+   "summary": "組み立ての 1 点",
+   "knows": "どの組み合わせで起動するか",
+   "does_not_know": "判断も通信の中身も",
+   "question": "handler を並べて起動するだけか?"
+  }
+ ],
+ "errors": []
+}

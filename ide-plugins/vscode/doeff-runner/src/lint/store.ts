@@ -132,7 +132,12 @@ export class LintStore {
       const violations = new Map<string, LintViolation[]>();
       for (const violation of this.violations()) {
         const k = key(violation.path);
-        violations.set(k, [...(violations.get(k) ?? []), violation]);
+        const list = violations.get(k);
+        if (list === undefined) {
+          violations.set(k, [violation]);
+        } else {
+          list.push(violation);
+        }
       }
       this.pathTables = { modules, violations };
     }

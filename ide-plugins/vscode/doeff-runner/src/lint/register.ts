@@ -29,7 +29,7 @@ export function registerLint(context: vscode.ExtensionContext, output: vscode.Ou
   const violations = new LintViolationsTree(store);
   const map = new LintMapTree(store);
   // 行末の文・行の左端の印・右端のスクロールバーの印(細い info の波線は色付けの上で見えないため)
-  const decorations = new LintDecorations(store);
+  const decorations = new LintDecorations(store, output);
   const violationsView = vscode.window.createTreeView('doeff-lint-violations', { treeDataProvider: violations, showCollapseAll: true });
   const mapView = vscode.window.createTreeView('doeff-lint-map', { treeDataProvider: map, showCollapseAll: true });
   // 置き場が変わったら木を出し直す(波線は係が出し直す)

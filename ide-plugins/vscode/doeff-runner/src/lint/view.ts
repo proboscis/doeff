@@ -5,6 +5,16 @@ import * as path from 'path';
 import type { LintModule, LintRange, LintRule, LintSeverity, LintViolation } from './contract';
 import { violationExplanationLines } from './layers';
 
+/** 表の値の並びへ 1 件足す(数千件でも線形に束ねる)。 */
+export function pushTo<K, V>(table: Map<K, V[]>, key: K, value: V): void {
+  const list = table.get(key);
+  if (list === undefined) {
+    table.set(key, [value]);
+  } else {
+    list.push(value);
+  }
+}
+
 /** 波線 1 本の中身。 */
 export interface LintDiagnostic {
   readonly path: string;
@@ -87,7 +97,7 @@ export function violationRoots(violations: readonly LintViolation[]): LintNode[]
   const byLaw = new Map<string, LintViolation[]>();
   for (const violation of violations) {
     const label = groupLabel(violation);
-    byLaw.set(label, [...(byLaw.get(label) ?? []), violation]);
+    pushTo(byLaw, label, violation);
   }
   return [...byLaw.keys()].sort().map((label) => ({ tag: 'law', label, violations: byLaw.get(label) ?? [] }));
 }
@@ -116,12 +126,16 @@ export function mapRoots(
   }
   const roots = new Set(modules.map((m) => m.root));
   const byLayer = new Map<string, MapEntry[]>();
+  const violationsByPath = new Map<string, LintViolation[]>();
+  for (const violation of violations) {
+    pushTo(violationsByPath, path.normalize(violation.path), violation);
+  }
   for (const { root, module } of modules) {
     const inRoot = path.relative(root, module.path);
     const relative = roots.size > 1 ? path.join(path.basename(root), inRoot) : inRoot;
     const layer = module.layer ?? OUTSIDE_LAYERS;
-    const own = violations.filter((v) => path.normalize(v.path) === path.normalize(module.path));
-    byLayer.set(layer, [...(byLayer.get(layer) ?? []), { relative, module, violations: own }]);
+    const own = violationsByPath.get(path.normalize(module.path)) ?? [];
+    pushTo(byLayer, layer, { relative, module, violations: own });
   }
   // 層を決まった順(core → entry、知らない層、層の外)に並べるための順位
   const rank = (layer: string): number => {
@@ -146,7 +160,7 @@ function dirChildren(prefix: string, entries: readonly MapEntry[]): LintNode[] {
     if (parts.length <= 1) {
       files.push(entry);
     } else {
-      subdirs.set(parts[0], [...(subdirs.get(parts[0]) ?? []), entry]);
+        pushTo(subdirs, parts[0], entry);
     }
   }
   const dirs: LintNode[] = [...subdirs.keys()].sort().map((name) => ({
@@ -174,7 +188,7 @@ export function lintChildren(node: LintNode): LintNode[] {
     case 'law': {
       const byFile = new Map<string, LintViolation[]>();
       for (const violation of node.violations) {
-        byFile.set(violation.path, [...(byFile.get(violation.path) ?? []), violation]);
+        pushTo(byFile, violation.path, violation);
       }
       return [...byFile.keys()].sort().map((filePath) => ({
         tag: 'file',
@@ -239,7 +253,7 @@ export function inlineAnnotations(violations: readonly LintViolation[]): InlineA
   const byLine = new Map<number, LintViolation[]>();
   for (const violation of violations) {
     const line = violation.range.start.line;
-    byLine.set(line, [...(byLine.get(line) ?? []), violation]);
+    pushTo(byLine, line, violation);
   }
   return [...byLine.keys()]
     .sort((a, b) => a - b)
@@ -253,4 +267,28 @@ export function inlineAnnotations(violations: readonly LintViolation[]): InlineA
       const more = onLine.length > 1 ? `(他 ${onLine.length - 1} 件)` : '';
       return { line, severity: first.severity, text: `● ${first.rule} ${message}${more}`, count: onLine.length };
     });
+}
+
+/** 違反を file ごとの波線の中身にまとめる(数千件の全体の実行でも線形)。 */
+export function diagnosticsByPath(violations: readonly LintViolation[]): Map<string, LintDiagnostic[]> {
+  const byPath = new Map<string, LintDiagnostic[]>();
+  for (const violation of violations) {
+    pushTo(byPath, violation.path, diagnosticOf(violation));
+  }
+  return byPath;
+}
+
+/** 重さの順位(小さいほど重い)。 */
+export function severityRank(severity: LintSeverity): number {
+  return SEVERITY_RANK[severity];
+}
+
+/** 行末の注記と左端の印に出す違反 — 最小の重さ以上だけ(波線と問題の一覧は全部出す)。 */
+export function atLeast(violations: readonly LintViolation[], minimum: LintSeverity): LintViolation[] {
+  return violations.filter((v) => SEVERITY_RANK[v.severity] <= SEVERITY_RANK[minimum]);
+}
+
+/** 設定の最小の重さを読む(知らない値は既定の warning にせず undefined — 呼ぶ側が理由を出す)。 */
+export function parseMinSeverity(value: unknown): LintSeverity | undefined {
+  return value === 'error' || value === 'warning' || value === 'info' ? value : undefined;
 }
