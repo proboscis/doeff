@@ -418,6 +418,7 @@
 ;; --- coordinator の判断(純粋な関数)と worker の途絶 -------------------------------------------------------------
 
 (import doeff_cluster.durable_kv [full-kv state-from-kv])
+(import doeff_cluster.cluster_policy [state-to-json state-from-json])
 (import doeff_cluster.worker_model [JobSpec])
 (import doeff_cluster.worker_policy [kept-when-cut-off])
 (import doeff_cluster.handlers [task-spec])
@@ -427,9 +428,10 @@
 (defn call [state method path now [body None]]
   (respond state (Request method path {} body :actor "test") now T))
 
-(defn beat [state name now [boot "b1"] [statuses None]]
-  (call state "POST" "/heartbeat" now {"name" name "labels" {} "capacity" 10 "versions" V "boot" boot
-                                       "statuses" (or statuses [])}))
+(defn beat [state name now [boot "b1"] [statuses None] [boot-at None]]
+  (call state "POST" "/heartbeat" now (| {"name" name "labels" {} "capacity" 10 "versions" V "boot" boot
+                                          "statuses" (or statuses [])}
+                                         (if (is boot-at None) {} {"bootAt" boot-at}))))
 
 (defn put-detached [state key now [lease 10.0] [retain 100.0]]
   (call state "PUT" (+ "/detached/" key) now {"env" "m:e" "blob" "B" "versions" V "revision" "r" "requires" {}
@@ -550,6 +552,133 @@
   (setv #(again _ body) (beat again "w" 2100 :boot "old"))
   (assert (get body "superseded"))
   (assert (= (. (get again.workers "w") boot) "new")))
+
+
+;; --- 起動時刻で決める世代の新旧(2026-09-27 — #757)------------------------------------------------
+;; 初めて見た順だけでは、置き場を失った coordinator に新しい世代が先に届くと、後から来た古い世代が今の世代になり、古い世代が
+;; 止んだ後も新しい世代の heartbeat を断り続けて名が沈黙した。worker は heartbeat に process の起動時刻 bootAt を載せる。
+
+(deftest test-an-empty-coordinator-that-hears-the-new-generation-first-keeps-the-new-generation
+  (setv #(s _ _) (beat (ClusterState) "w" 0 :boot "new" :boot-at 2000))
+  (setv #(s _ old-reply) (beat s "w" 50 :boot "old" :boot-at 1000))
+  ;; 古い世代の heartbeat は superseded の答え・今の世代は新しい世代のまま。
+  (assert (get old-reply "superseded") old-reply)
+  (assert (= (. (get s.workers "w") boot) "new") (get s.workers "w"))
+  (assert (in "old" (. (get s.workers "w") retired)))
+  ;; 古い世代の preStop の drain は今の世代に付かない。
+  (setv #(s _ view) (call s "POST" "/workers/w/drain" 100 {"boot" "old"}))
+  (assert (not-in "w" s.drains) s.drains)
+  (assert (get view "drain" "superseded") view)
+  ;; 古い世代が止み、新しい世代だけが 5 秒ごとに heartbeat を送る → 60 秒後も新しい世代が生きていて ready。
+  (for [t (range 5000 65000 5000)]
+    (setv #(s _ reply) (beat s "w" t :boot "new" :boot-at 2000))
+    (assert (not (.get reply "superseded" False)) #(t reply)))
+  (setv s (tick s 65000 T))
+  (setv #(_ _ view) (call s "GET" "/workers/w" 65000))
+  (assert (= #((get view "alive") (get view "ready") (get view "boot")) #(True True "new")) view))
+
+
+(deftest test-workers-that-do-not-name-a-boot-time-keep-the-first-seen-order
+  ;; 起動時刻を名乗らない旧い worker は今までどおり(初めて見た順: 見ていない世代が新しい)。
+  (setv #(s _ _) (beat (ClusterState) "w" 0 :boot "a"))
+  (setv #(s _ reply) (beat s "w" 50 :boot "b"))
+  (assert (not (.get reply "superseded" False)))
+  (assert (= #((. (get s.workers "w") boot) (. (get s.workers "w") retired)) #("b" #("a"))))
+  (setv #(s _ reply) (beat s "w" 100 :boot "a"))
+  (assert (get reply "superseded"))
+  ;; 片方だけが起動時刻を名乗る時も初めて見た順。
+  (setv #(s _ _) (beat s "v" 0 :boot "a" :boot-at 2000))
+  (setv #(s _ _) (beat s "v" 50 :boot "b"))
+  (assert (= (. (get s.workers "v") boot) "b")))
+
+
+(deftest test-a-newer-boot-time-takes-the-name-back-from-the-retired-list
+  ;; 旧い coordinator が初めて見た順で退かせた世代でも、両方の起動時刻を知れば起動時刻の大きい方が今の世代。
+  (setv #(s _ _) (beat (ClusterState) "w" 0 :boot "new"))
+  (setv #(s _ _) (beat s "w" 50 :boot "old" :boot-at 1000))
+  (assert (= #((. (get s.workers "w") boot) (. (get s.workers "w") retired)) #("old" #("new"))))
+  (setv #(s _ reply) (beat s "w" 100 :boot "new" :boot-at 2000))
+  (assert (not (.get reply "superseded" False)) reply)
+  (assert (= #((. (get s.workers "w") boot) (. (get s.workers "w") retired)) #("new" #("old")))))
+
+
+(deftest test-the-boot-time-survives-the-state-file-and-the-durable-kv
+  (setv #(s _ _) (beat (ClusterState) "w" 0 :boot "old" :boot-at 1000))
+  (setv #(s _ _) (beat s "w" 100 :boot "new" :boot-at 2000))
+  (for [again [(state-from-kv (full-kv s) 200) (state-from-json (json.loads (json.dumps (state-to-json s))) 200)]]
+    (setv w (get again.workers "w"))
+    (assert (= #(w.boot w.retired w.boot-at) #("new" #("old") 2000)) w)
+    ;; 読み直した後も、一度も見ていない古い世代は起動時刻で古いと分かる(名乗りとして受けない)。
+    (setv #(again _ reply) (beat again "w" 300 :boot "older" :boot-at 500))
+    (assert (get reply "superseded") reply)
+    (assert (= (. (get again.workers "w") boot) "new")))
+  ;; 起動時刻の欄の無い旧い形の置き場は、起動時刻を知らない(初めて見た順へ落とす)。
+  (setv kv (full-kv s))
+  (del (get kv "worker/w" "bootAt"))
+  (assert (is (. (get (. (state-from-kv kv 200) workers) "w") boot-at) None)))
+
+
+;; --- 置き場を失った coordinator と走っている切り離した task(2026-09-27 — #757)----------------------------
+;; worker は返事に載らない task の子 process を止め、blob と結果の file を消す。置き場を失った coordinator は task の行を持たないので、
+;; 以前は最初の返事で生きている worker の走っている切り離した task を全部止めさせた。worker は状態の報告に置かれた時の行を写し、
+;; coordinator はそれを引き取る。
+
+(deftest test-an-empty-coordinator-adopts-the-running-detached-task-a-worker-reports [tmp-path]
+  (setv #(s _ _) (beat (ClusterState) "w" 0 :boot-at 1000))
+  (setv #(s _ reply) (put-detached s "job-amnesia" 0 :lease 10.0 :retain 100.0))
+  (setv id (get reply "task"))
+  (setv #(s _ body) (beat s "w" 100 :boot-at 1000))
+  (setv link (CoordinatorLink "http://127.0.0.1:9" "w" {} 10 60000 :task-dir (str (/ tmp-path "tasks"))))
+  (setv #(before) (.accept-tasks link (get body "tasks")))
+  (setv rows (.report link #((JobStatus (+ "task/" id) JobPhase.RUNNING "r" "r" 42 1))))
+  ;; 置き場を失った coordinator が起きる: 走っている task を同じ行で引き取り、同じ heartbeat の返事に載せる。
+  (setv #(fresh _ body) (beat (ClusterState) "w" 5000 :boot-at 1000 :statuses rows))
+  (assert (= (lfor t (get body "tasks") (get t "id")) [id]) body)
+  (setv #(after) (.accept-tasks link (get body "tasks")))
+  (assert (= after before) "引き取った行の宣言の spec が変わった(worker は子 process を止める)")
+  (assert (.exists (/ tmp-path "tasks" (+ id ".blob"))) "走っている task の blob が消えた")
+  (assert (= (phase-of fresh "job-amnesia") "assigned"))
+  ;; 終わりの報告は呼び手の key で読める。
+  (setv #(fresh _ _) (beat fresh "w" 6000 :boot-at 1000
+                           :statuses [{"name" (+ "task/" id) "phase" "finished" "result" "R" "detail" ""}]))
+  (setv #(_ _ view) (call fresh "GET" "/detached/job-amnesia" 6000))
+  (assert (= #((get view "phase") (get view "result")) #("finished" "R")) view)
+  ;; 次に振る id は引き取った id と重ならない。
+  (setv #(fresh _ other) (put-detached fresh "job-next" 6100))
+  (assert (!= (get other "task") id))
+  ;; 行を持つ task(取り消した)は引き取らない — 取り消し・lost は今までどおり止める。
+  (setv #(s _ _) (call s "POST" "/detached/job-amnesia/cancel" 200))
+  (setv #(s _ body) (beat s "w" 300 :boot-at 1000 :statuses rows))
+  (assert (= (get body "tasks") []) body)
+  ;; 写しの無い報告(旧い worker)は引き取らない。
+  (setv #(_ _ body) (beat (ClusterState) "w" 5000 :statuses [{"name" (+ "task/" id) "phase" "running"}]))
+  (assert (= (get body "tasks") []) body))
+
+
+(defk amnesia-scenario [coordinator]
+  {:pre [(: coordinator MemoryCoordinator)] :post [(: % bool)]}
+  (<- (SubmitDetached (slow-add 3.0 1) :env ENV :key "k-amnesia" :lease-seconds 5.0))
+  (<- (Delay 1.0))
+  ;; coordinator が置き場を失って起き直す(task の行も worker の名乗りも無い)。
+  (setv coordinator.state (ClusterState))
+  (<- (Delay 1.0))
+  (<- outcome (AwaitDetached "k-amnesia"))
+  (assert (= outcome (DetachedSucceeded 101)) outcome)
+  True)
+
+
+(deftest test-an-amnesic-coordinator-does-not-stop-the-running-detached-task [tmp-path]
+  ;; 本物の CoordinatorLink と本物の coordinator の判断で: 置き場を失った coordinator が起きても、担い手の worker は走っている
+  ;; 切り離した task を止めず、呼び手は同じ key で結果を受け取る。
+  (setv clock (SimClock)
+        coordinator (MemoryCoordinator clock)
+        transport (httpx.MockTransport coordinator.handle)
+        worker (RigWorker "http://coordinator" (/ tmp-path "tasks") (current-versions) :transport transport)
+        client (DetachedClient "http://coordinator" "r" :transport transport)
+        rig (Rig "coordinator" [(sim-time-handler :clock clock) (rig-runner-loss worker) (detached-cluster client :poll-seconds 0.5)]
+                 worker 3.0 5.0 0.5))
+  (<- ok (run-on rig (amnesia-scenario coordinator)))
+  (assert ok))
 
 
 (deftest test-result-is-kept-after-the-worker-dies-until-release-or-retention

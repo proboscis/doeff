@@ -7,7 +7,7 @@
 (import time)
 (import pathlib [Path])
 (import doeff_cluster.worker_model [JobSpec CodeState CodeView ProcessView WorldView ProbeState ProbeView ProbeStatus JobPhase JobRecord
-                        WorkerPolicy PrepareCode StartJob RetireJob ProbeEntry spec-hash probed-job probe-args])
+                        WorkerPolicy PrepareCode StartJob RetireJob ProbeEntry ForgetProbes spec-hash probed-job probe-args])
 (import doeff_cluster.worker_policy [plan statuses])
 (import doeff_cluster.handlers [ProbeStore probe-reason status-row])
 (import doeff_cluster.job_entry [probe-problem])
@@ -334,3 +334,48 @@
 (defn #^ None test-probe-reason-is-the-last-line []
   (assert (= (probe-reason 1 "Traceback\n  File x\nImportError: nope\n\n") "ImportError: nope"))
   (assert (in "終了 3" (probe-reason 3 ""))))
+
+
+;; --- 宣言から消えた spec の検めの記録(2026-09-27 — #757)--------------------------------------------------
+;; 検めの持ち主(ProbeStore)は答え・回数・前の回の失敗の理由・時間切れの印を spec-hash ごとに持ち、宣言から消えた spec の分を
+;; 落とさなかった(版を上げるたびに増え続ける)。plan が今の宣言の spec の指紋を渡し(ForgetProbes)、持ち主が集合に無い分を落とす。
+
+(deftest test-the-plan-hands-the-declared-spec-hashes-when-a-stale-probe-record-is-observed
+  (val stale (plan 0 #(S2) (world :codes #(READY2) :probes #((passed S2) (failed S1))) {} POLICY))
+  (assert (in (ForgetProbes (frozenset [(spec-hash S2)])) stale) stale)
+  ;; 宣言の spec の記録だけなら撃たない。
+  (val clean (plan 0 #(S2) (world :codes #(READY2) :probes #((passed S2))) {} POLICY))
+  (assert (not (any (gfor a clean (isinstance a ForgetProbes)))) clean))
+
+
+(defn #^ None test-probe-store-forgets-the-records-of-specs-no-longer-declared [#^ Path tmp-path]
+  (setv tree (probe-tree tmp-path))
+  (.write-text (/ tmp-path "probe_nap.hy") "(import time)\n(time.sleep 1)\n(defn program [] None)\n" :encoding "utf-8")
+  (setv store (ProbeStore HY :timeout-seconds 30)
+        kept (replace (service-spec "probe_broken:program" "probe_ok:handlers") :name "kept")
+        gone (replace (service-spec "probe_broken:program" "probe_ok:handlers") :name "gone")
+        nap (replace (service-spec "probe_nap:program" "probe_ok:handlers") :name "nap"))
+  (for [spec [kept gone]] (.start store (ProbeEntry spec tree)))
+  (setv first (observed store kept))
+  (observed store gone)
+  ;; 宣言に残る spec は撃ち直して 2 回目(前の回の失敗の理由を持つ)。
+  (.start store (ProbeEntry kept tree))
+  (observed store kept)
+  ;; 宣言から消えた spec の検めが走っている間に宣言が変わる。
+  (.start store (ProbeEntry nap tree))
+  (.observe store)
+  (setv keep (frozenset [(spec-hash kept)]))
+  (.forget store keep)
+  (setv views (dfor v (.observe store) v.spec-hash v))
+  (assert (not-in (spec-hash gone) views) views)
+  (for [table [store.done store.attempts store.last-failure]]
+    (assert (not-in (spec-hash gone) table) table))
+  ;; 宣言に残る spec の失敗の理由と回数は残る。
+  (setv k (get views (spec-hash kept)))
+  (assert (= #(k.state k.attempts k.last-failure) #(ProbeState.FAILED 2 first.detail)) k)
+  ;; 走っている検めの process は落とさない(終わった後の答えを次の片づけで落とす)。
+  (assert (= (. (get views (spec-hash nap)) state) ProbeState.RUNNING) views)
+  (assert (= (. (observed store nap) state) ProbeState.PASSED))
+  (.forget store keep)
+  (assert (= (sfor v (.observe store) v.spec-hash) #{(spec-hash kept)}))
+  (assert (= (set store.attempts) #{(spec-hash kept)}) store.attempts))
