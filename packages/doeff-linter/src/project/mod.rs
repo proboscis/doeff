@@ -6,6 +6,7 @@
 //! 流れ: 母集団の file を集める → file ごとに事実を読む(`facts.rs`)→ 規則ごとに違反の下書きを作る →
 //! law と登録簿の鍵を当てて重さを決める(`finish`)。
 
+pub mod explain;
 pub mod facts;
 pub mod names;
 pub mod registry;
@@ -21,6 +22,7 @@ use walkdir::WalkDir;
 
 use crate::models::Severity;
 use crate::position::{first_line_range, LineIndex, Position, Range};
+use explain::{Explain, Explanation, NameSubject, Narrator, Placement};
 use facts::{read_facts, ByteSpan, Language, ModuleFacts};
 use names::{environment_words_of, hy_mangle, is_upper_name, module_of};
 use registry::Registry;
@@ -44,6 +46,8 @@ pub struct Finding {
     /// 登録簿の鍵 `<path>::<law か規則の ID>[::<細目>]`。
     pub key: String,
     pub registered: bool,
+    /// これは何か・なぜ違反か・law の文(explain.rs が作る)。
+    pub explanation: Explanation,
 }
 
 /// 地図の材料 — 層の規則が読んだ module 1 つ。
@@ -54,6 +58,8 @@ pub struct ModuleSummary {
     pub layer: Option<String>,
     pub context: Option<String>,
     pub role: Option<String>,
+    /// 層を何で決めたか(path の置き場所・タグ・両方の食い違い)。
+    pub layer_reason: Option<String>,
 }
 
 /// 層の規則の結果の全部。
@@ -82,6 +88,8 @@ struct Draft {
     /// 鍵の `<規則>` の後ろの細目(無ければ None)。
     detail: Option<String>,
     base: Severity,
+    /// 説明の材料。
+    explain: Explain,
 }
 
 /// 母集団の file 1 つ。
@@ -331,7 +339,16 @@ fn judge_layer_file(
     let errors = facts.errors.iter().map(|e| format!("{}: {}", file.file.rel, e)).collect();
     let lines = LineIndex::new(source);
     let spec = &layers.layers[file.layer.0];
-    let judge = LayerJudge { file, source, lines: &lines, layers, layer: file.layer };
+    let mut roles: Vec<String> = Vec::new();
+    for tags in facts.tag_sets() {
+        if let Some(role) = tags.role.clone().filter(|r| !r.is_empty() && !roles.contains(r)) {
+            roles.push(role);
+        }
+    }
+    let placement = Placement { layer: file.layer, roles };
+    let narrator = Narrator { layers: Some(layers), raw: settings.raw.as_ref() };
+    let layer_reason = narrator.layer_reason(&placement);
+    let judge = LayerJudge { file, source, lines: &lines, layers, layer: file.layer, placement };
     let mut drafts = Vec::new();
     if enabled.contains(&ProjectRule::ModuleDeclaresTags) {
         drafts.extend(judge.declares_tags(&facts));
@@ -365,6 +382,7 @@ fn judge_layer_file(
         layer: Some(spec.name.clone()),
         context: tags.and_then(|t| t.context.clone()),
         role: tags.and_then(|t| t.role.clone()),
+        layer_reason: Some(layer_reason),
     };
     (drafts, Some(summary), errors)
 }
@@ -376,6 +394,8 @@ struct LayerJudge<'a> {
     lines: &'a LineIndex<'a>,
     layers: &'a LayerSettings,
     layer: LayerId,
+    /// この file の層と、タグで名乗った役(説明の主体)。
+    placement: Placement,
 }
 
 impl<'a> LayerJudge<'a> {
@@ -390,8 +410,9 @@ impl<'a> LayerJudge<'a> {
     }
 
     /// 下書きを 1 つ作る。
-    fn draft(&self, rule: ProjectRule, range: Range, message: String, detail: Option<String>) -> Draft {
+    fn draft(&self, rule: ProjectRule, range: Range, message: String, detail: Option<String>, explain: Explain) -> Draft {
         Draft {
+            explain,
             rule,
             layer: Some(self.layer),
             rel: self.file.file.rel.clone(),
@@ -414,6 +435,7 @@ impl<'a> LayerJudge<'a> {
                     self.range(first.span),
                     format!("{} の定義 {} にタグが無い — 契約の辞書の :tags {{:context … :role …}} か、module の頭のタグで文脈と役を名乗る", rel, names.join("・")),
                     None,
+                    Explain::UntaggedDefinitions { placement: self.placement.clone(), names: names.iter().map(|n| n.to_string()).collect() },
                 ))
             }
             (None, false, true) => Some(self.draft(
@@ -421,6 +443,7 @@ impl<'a> LayerJudge<'a> {
                 first_line_range(self.source),
                 format!("{} にタグ(:context と :role)が無い — 層の dir の下の module は文脈と役をタグで名乗る", rel),
                 None,
+                Explain::NoTags { placement: self.placement.clone() },
             )),
             _ => None,
         }
@@ -448,6 +471,7 @@ impl<'a> LayerJudge<'a> {
                         self.file.file.rel, role, spec.name, allowed_text
                     ),
                     Some(role),
+                    Explain::RoleMismatch { placement: self.placement.clone(), role: t.role.clone(), context: t.context.clone() },
                 )
             })
             .collect()
@@ -468,6 +492,7 @@ impl<'a> LayerJudge<'a> {
                 self.layer_name(self.layer)
             ),
             Some("definitions".to_string()),
+            Explain::TypesOnly { placement: self.placement.clone(), functions: names.iter().map(|n| n.to_string()).collect() },
         ))
     }
 
@@ -491,6 +516,7 @@ impl<'a> LayerJudge<'a> {
                     self.range(span),
                     format!("{}({})が module {} を import する — この層では直に import しない(I/O は許された層の handler が持つ)", self.file.file.rel, spec.name, top),
                     Some(top.to_string()),
+                    Explain::ForbiddenModule { placement: self.placement.clone(), module: top.to_string() },
                 )
             })
             .collect()
@@ -525,6 +551,7 @@ impl<'a> LayerJudge<'a> {
                         allowed_text
                     ),
                     Some(target.to_string()),
+                    Explain::ImportDirection { placement: self.placement.clone(), target: target.to_string(), target_layer: owner_layer },
                 ))
             })
             .collect()
@@ -565,6 +592,14 @@ impl<'a> LayerJudge<'a> {
                         allowed
                     ),
                     Some(format!("{}::{}", definition_label(definition), evidence.name)),
+                    Explain::RawDirect {
+                        placement: self.placement.clone(),
+                        definition: definition_label(definition),
+                        kind: definition.kind.as_str(),
+                        evidence: evidence.name.clone(),
+                        category: evidence.category.as_str(),
+                        weak: evidence.strength == RawStrength::Weak,
+                    },
                 );
                 draft.base = match evidence.strength {
                     RawStrength::Strong => Severity::Error,
@@ -630,6 +665,13 @@ impl<'a> LayerJudge<'a> {
                         via.evidence.path
                     ),
                     Some(format!("{}::via::{}::{}", definition_label(definition), path.join(">"), via.evidence.name)),
+                    Explain::RawVia {
+                        placement: self.placement.clone(),
+                        definition: definition_label(definition),
+                        through: path.iter().map(|p| p.to_string()).collect(),
+                        evidence: via.evidence.name.clone(),
+                        category: via.evidence.category.as_str(),
+                    },
                 );
                 draft.base = Severity::Info;
                 draft
@@ -734,7 +776,8 @@ fn judge_environment_names(file: &SourceFile, source: &str, env: &EnvironmentSet
     let mut drafts = Vec::new();
     let file_name = file.rel.rsplit('/').next().unwrap_or(&file.rel);
     let stem = file_name.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(file_name);
-    let draft = |range: Range, message: String, detail: Option<String>| Draft {
+    let draft = |range: Range, message: String, detail: Option<String>, explain: Explain| Draft {
+        explain,
         rule: ProjectRule::EnvironmentName,
         layer: None,
         rel: file.rel.clone(),
@@ -750,6 +793,7 @@ fn judge_environment_names(file: &SourceFile, source: &str, env: &EnvironmentSet
             first_line_range(source),
             format!("{} の file の名が環境の語({})を含む — 業務の file と handler は環境を知らない。環境で差し替えるのは土台の汎用の handler だけ", file.rel, words.join("・")),
             None,
+            Explain::EnvironmentName { subject: NameSubject::File { stem: stem.to_string() }, words: words.clone() },
         ));
     }
     let assembly_file = env.assembly_files.contains(file_name);
@@ -769,7 +813,8 @@ fn judge_environment_names(file: &SourceFile, source: &str, env: &EnvironmentSet
         drafts.push(draft(
             definition.range,
             format!("{} の {} が環境の語({})を含む — 業務の file と handler は環境を知らない。環境で差し替えるのは土台の汎用の handler だけ", file.rel, name, words.join("・")),
-            Some(name),
+            Some(name.clone()),
+            Explain::EnvironmentName { subject: NameSubject::Definition { name, kind: definition.kind.as_str() }, words },
         ));
     }
     drafts
@@ -779,6 +824,7 @@ fn judge_environment_names(file: &SourceFile, source: &str, env: &EnvironmentSet
 
 /// 下書きに law・鍵・登録簿・照合中を当てて違反にする(path と位置の順)。
 fn finish(drafts: Vec<Draft>, settings: &ProjectSettings, registry: &Registry) -> Vec<Finding> {
+    let narrator = Narrator { layers: settings.layers.as_ref(), raw: settings.raw.as_ref() };
     let mut findings: Vec<Finding> = drafts
         .into_iter()
         .map(|draft| {
@@ -809,6 +855,7 @@ fn finish(drafts: Vec<Draft>, settings: &ProjectSettings, registry: &Registry) -
                 hint: draft.rule.hint().to_string(),
                 key,
                 registered,
+                explanation: narrator.explain(&draft.explain, law),
             }
         })
         .collect();

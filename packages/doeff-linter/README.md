@@ -125,6 +125,15 @@ names = ["type", "judgment", "program", "intent", "protocol", "foundation", "ent
 core = ["type", "judgment", "program"]
 intent = ["intent", "type"]
 
+[tool.doeff-linter.roles.describe]                             # role の説明(違反の理由の文に差し込む)
+translation = "翻訳の handler — 今は層 protocol の役"
+
+[tool.doeff-linter.layers.describe.core]                       # 層の説明(出力の layers と、違反の「なぜ」の文に使う)
+summary = "業務の判断と Program"
+knows = "業務の判断(いつ・誰に・何を)"
+does_not_know = "相手が誰か、どう通信するか"
+question = "通信の方法が変わってもこのコードは変わらないか?"
+
 [tool.doeff-linter.raw_side_effects]                           # 生の副作用に直に触ってよい層(DOEFF106・107)
 allowed_layers = ["foundation", "entry"]
 
@@ -152,6 +161,8 @@ reconciling = ["DOEFF104"]                                     # 照合中の規
 - 重さ: 新しい破れは error、登録簿に載った破れは warning(`registered: true`)、照合中の規則は info。DOEFF106 の弱い証拠
   (method 名だけで見つけた物)は warning、DOEFF107 は常に info。
 - 終了コード: 0 = error なし、1 = error あり、2 = 引数・設定の誤り(設定の名前の食い違いは黙って捨てない)。
+- 説明: 層の規則の違反は「これは何か(subject)」「なぜ違反か(reason)」「law の文」を持ち、editor-json の `explanation`・text の
+  出力・agent の hook の文に出ます。各 module の `layer_reason` は層を何で決めたか(path の置き場所・タグとの食い違い)です。
 - `noqa` の註は Python の文ごとの規則だけに効きます。層の規則の既知の破れは登録簿に鍵を置きます。
 
 ## エディタ向けの出力(editor-json)

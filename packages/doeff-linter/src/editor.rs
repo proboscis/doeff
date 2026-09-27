@@ -10,6 +10,7 @@ use serde::Serialize;
 
 use crate::models::{LintResult, Severity};
 use crate::position::{line_range, Range};
+use crate::project::explain::Explanation;
 use crate::project::rule::ProjectRule;
 use crate::project::settings::{ProjectRuleOrExternal, ProjectSettings};
 use crate::project::ProjectReport;
@@ -51,6 +52,8 @@ pub struct EditorViolation {
     pub hint: Option<String>,
     pub key: Option<String>,
     pub registered: bool,
+    /// これは何か・なぜ違反か・law の文(層の規則だけ。Python の文ごとの規則は null)。
+    pub explanation: Option<Explanation>,
 }
 
 /// 地図の材料の module 1 つ。
@@ -61,6 +64,18 @@ pub struct EditorModule {
     pub context: Option<String>,
     pub role: Option<String>,
     pub violations: usize,
+    /// 層を何で決めたか(path の置き場所・タグ・両方の食い違い)。
+    pub layer_reason: Option<String>,
+}
+
+/// 層の説明 1 件(設定 `[tool.doeff-linter.layers.describe.<層>]` から。設定に無い欄は null)。
+#[derive(Debug, Clone, Serialize)]
+pub struct EditorLayer {
+    pub name: String,
+    pub summary: Option<String>,
+    pub knows: Option<String>,
+    pub does_not_know: Option<String>,
+    pub question: Option<String>,
 }
 
 /// 走らせた規則(と、ADR に在って針の無い law)の 1 件。
@@ -77,6 +92,8 @@ pub struct EditorRule {
 pub struct EditorReport {
     pub version: u32,
     pub root: String,
+    /// 層の順(外の世界から遠い順)と説明。
+    pub layers: Vec<EditorLayer>,
     pub violations: Vec<EditorViolation>,
     pub modules: Vec<EditorModule>,
     pub rules: Vec<EditorRule>,
@@ -144,6 +161,7 @@ pub fn build(input: &EditorInput) -> EditorReport {
                 hint: Some(info.fix.to_string()),
                 key: None,
                 registered: false,
+                explanation: None,
             });
         }
     }
@@ -159,6 +177,7 @@ pub fn build(input: &EditorInput) -> EditorReport {
             hint: Some(finding.hint.clone()),
             key: Some(finding.key.clone()),
             registered: finding.registered,
+            explanation: Some(finding.explanation.clone()),
         });
     }
     if let Some(only) = input.only {
@@ -181,17 +200,35 @@ pub fn build(input: &EditorInput) -> EditorReport {
                 layer: m.layer.clone(),
                 context: m.context.clone(),
                 role: m.role.clone(),
+                layer_reason: m.layer_reason.clone(),
             }
         })
         .collect();
     EditorReport {
         version: EDITOR_CONTRACT_VERSION,
         root: input.root.to_string_lossy().into_owned(),
+        layers: layer_list(input.settings),
         violations,
         modules,
         rules: rule_list(input),
         errors,
     }
+}
+
+/// 層の順と説明(層の設定が無ければ空)。
+fn layer_list(settings: &ProjectSettings) -> Vec<EditorLayer> {
+    settings
+        .layers
+        .iter()
+        .flat_map(|layers| layers.layers.iter())
+        .map(|layer| EditorLayer {
+            name: layer.name.clone(),
+            summary: layer.description.summary.clone(),
+            knows: layer.description.knows.clone(),
+            does_not_know: layer.description.does_not_know.clone(),
+            question: layer.description.question.clone(),
+        })
+        .collect()
 }
 
 /// 走らせた規則の一覧(law の文があれば law ごと)と、針の無い law。

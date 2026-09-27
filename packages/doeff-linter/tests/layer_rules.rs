@@ -35,6 +35,17 @@ core = ["judgment", "type"]
 intent = ["intent", "type"]
 foundation = ["foundation"]
 entry = ["entry"]
+[tool.doeff-linter.roles.describe]
+translation = "翻訳の handler"
+
+[tool.doeff-linter.layers.describe.core]
+summary = "業務の判断"
+knows = "業務の判断"
+does_not_know = "通信の手段"
+question = "通信が変わっても変わらないか?"
+
+[tool.doeff-linter.layers.describe.foundation]
+knows = "本物の I/O"
 
 [tool.doeff-linter.raw_side_effects]
 allowed_layers = ["foundation", "entry"]
@@ -439,4 +450,105 @@ fn stdin_and_whole_runs_agree_on_paths_through_a_symlink() {
     let narrowed: Value = serde_json::from_str(&stdout).unwrap();
     assert!(narrowed["violations"].as_array().unwrap().iter().any(|v| v["rule"] == "DOEFF016"), "{}", narrowed);
     assert!(narrowed["violations"].as_array().unwrap().iter().all(|v| v["path"].as_str().unwrap().contains("/app/billing/")));
+}
+
+/// 違反の explanation(subject・reason・law_statement)を鍵で引く。
+fn explanation<'a>(report: &'a Value, key: &str) -> &'a Value {
+    &violation(report, key)["explanation"]
+}
+
+#[test]
+fn every_layer_rule_explains_what_it_is_and_why() {
+    let dir = repo(
+        &[
+            ("app/intent/charge.hy", INTENT_HY),
+            ("app/foundation/io.hy", FOUNDATION_HY),
+            (
+                "app/core/bad.hy",
+                "(val MODULE-TAGS {:context \"billing\" :role \"judgment\"})\n(import app.foundation.io [send])\n(import httpx)\n(import time)\n(defn now [] (time.time))\n(defn later [] (now))\n",
+            ),
+            ("app/core/peer.hy", "(val MODULE-TAGS {:context \"peer\" :role \"translation\"})\n(defn f [] 1)\n"),
+            ("app/core/untagged.hy", "(defn decide [x] x)\n"),
+            ("app/core/empty.py", "X = 1\n"),
+            ("app/intent/funcs.hy", "(val MODULE-TAGS {:context \"billing\" :role \"intent\"})\n(defk decide [x] {:pre []} x)\n"),
+            ("app/billing/handlers_fake.hy", "(defhandler fake-charge [] (Charge [e k] (k 1)))\n"),
+        ],
+        "",
+    );
+    let (_, report) = editor(dir.path());
+    // DOEFF101: 主体は import 先とその層、理由は層の説明(設定)と import してよい層、law の文は逐語。
+    let direction = explanation(&report, "app/core/bad.hy::core-imports-only-intent::app.foundation.io.send");
+    assert_eq!(
+        direction["subject"],
+        "import 先 app.foundation.io.send は層 foundation(path が app/foundation/ の下) — この file は層 core(業務の判断) — path が app/core/ の下、タグの role = judgment"
+    );
+    assert_eq!(
+        direction["reason"],
+        "層 core(業務の判断)は外の世界から最も遠い層で、業務の判断を知り、通信の手段は知らない。core が import してよいのは 層 core・層 intent だけ。import 先の層 foundation は本物の I/O を持つので、core から読むと、core が層 foundation の持つ物に触れる(模擬で handler を差し替えても、その所だけ本物に触る)。"
+    );
+    assert_eq!(direction["law_statement"], "core は intent だけを読む");
+    // DOEFF102・104・106・107・108 と 103・105 も、主体と理由の文を持つ。
+    let forbidden = explanation(&report, "app/core/bad.hy::core-imports-only-intent::httpx");
+    assert!(forbidden["subject"].as_str().unwrap().starts_with("import 先 httpx(層 core で禁じた I/O の module) —"));
+    assert!(forbidden["reason"].as_str().unwrap().contains("I/O は層 foundation・層 entry の handler が持ち"), "{}", forbidden["reason"]);
+    let role = explanation(&report, "app/core/peer.hy::DOEFF105::translation");
+    assert!(role["subject"].as_str().unwrap().contains("path とタグが食い違う(role translation はどの層の役でもない(今の role の一覧に無い))"), "{}", role["subject"]);
+    assert!(role["reason"].as_str().unwrap().starts_with("role translation(翻訳の handler)は"), "{}", role["reason"]);
+    assert_eq!(role["law_statement"], Value::Null, "law の無い規則は null");
+    let untagged = explanation(&report, "app/core/untagged.hy::DOEFF104");
+    assert!(untagged["subject"].as_str().unwrap().starts_with("定義 decide(タグ無し)"));
+    assert!(explanation(&report, "app/core/empty.py::DOEFF104")["subject"].as_str().unwrap().starts_with("この module はタグを何も名乗っていない"));
+    let types = explanation(&report, "app/intent/funcs.hy::DOEFF103::definitions");
+    // intent には説明が無い — 層の順と規則の決まりだけで文を作る。
+    assert_eq!(
+        types["reason"],
+        "層 intent は外の世界からの遠さの順で 2 番目の層。型の宣言だけを置く層なので、処理の中身を持つ関数と handler は置けない(別の層へ移す)。"
+    );
+    let raw = explanation(&report, "app/core/bad.hy::DOEFF106::now::time.time");
+    assert!(raw["subject"].as_str().unwrap().starts_with("定義 now(defn)が time.time(time の生の副作用・import を通した名前か組み込みの強い証拠)に直に触る"), "{}", raw["subject"]);
+    let via = report["violations"].as_array().unwrap().iter().find(|v| v["rule"] == "DOEFF107").unwrap();
+    assert!(via["explanation"]["subject"].as_str().unwrap().starts_with("定義 later が now を通して time.time"));
+    let env = explanation(&report, "app/billing/handlers_fake.hy::no-environment-name::fake_charge");
+    assert_eq!(env["subject"], "定義 fake_charge(defhandler)の名(環境の語 fake を含む)");
+    assert_eq!(env["law_statement"], "業務の名に環境の語が無い");
+    // module の layer_reason と、最上位の layers(説明の無い層は name だけ)。
+    let modules = report["modules"].as_array().unwrap();
+    let peer = modules.iter().find(|m| m["path"].as_str().unwrap().ends_with("peer.hy")).unwrap();
+    assert!(peer["layer_reason"].as_str().unwrap().starts_with("path とタグが食い違う"), "{}", peer["layer_reason"]);
+    let good = modules.iter().find(|m| m["path"].as_str().unwrap().ends_with("app/intent/charge.hy")).unwrap();
+    assert_eq!(good["layer_reason"], "path の置き場所で決めた — app/intent/ の下は層 intent。タグの role = intent もこの層の役");
+    assert_eq!(
+        report["layers"],
+        serde_json::json!([
+            {"name": "core", "summary": "業務の判断", "knows": "業務の判断", "does_not_know": "通信の手段", "question": "通信が変わっても変わらないか?"},
+            {"name": "intent", "summary": null, "knows": null, "does_not_know": null, "question": null},
+            {"name": "foundation", "summary": null, "knows": "本物の I/O", "does_not_know": null, "question": null},
+            {"name": "entry", "summary": null, "knows": null, "does_not_know": null, "question": null}
+        ])
+    );
+    // Python の文ごとの規則の explanation は null(契約で許す形)。
+    let python = report["violations"].as_array().unwrap().iter().find(|v| v["rule"] == "DOEFF016");
+    if let Some(python) = python {
+        assert_eq!(python["explanation"], Value::Null);
+    }
+}
+
+#[test]
+fn text_output_carries_what_and_why_for_agents() {
+    let dir = repo(&[("app/core/peer.hy", "(val MODULE-TAGS {:context \"peer\" :role \"translation\"})\n(defn f [] 1)\n")], "");
+    let (code, stdout, _) = run(dir.path(), &["--no-log"], None);
+    assert_eq!(code, 1);
+    assert!(stdout.contains("これは: この file は層 core(業務の判断)"), "{}", stdout);
+    assert!(stdout.contains("なぜ: role translation(翻訳の handler)は"), "{}", stdout);
+    assert!(stdout.contains("直し方: "), "{}", stdout);
+}
+
+#[test]
+fn describing_an_unknown_layer_is_a_config_error() {
+    let dir = repo(&[], "");
+    let text = std::fs::read_to_string(dir.path().join("pyproject.toml")).unwrap() + "\n[tool.doeff-linter.layers.describe.ghost]\nsummary = \"無い層\"\n";
+    std::fs::write(dir.path().join("pyproject.toml"), text).unwrap();
+    let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("layers.describe") && stderr.contains("ghost"), "{}", stderr);
 }

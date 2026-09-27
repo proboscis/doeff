@@ -243,10 +243,18 @@ fn project_results(report: &ProjectReport, only: Option<&[PathBuf]>) -> Vec<Lint
             result.violations = findings
                 .into_iter()
                 .map(|f| {
-                    let message = match &f.law {
-                        Some(law) => format!("[{}] {}(鍵 {})", law, f.message, f.key),
-                        None => format!("{}(鍵 {})", f.message, f.key),
+                    // 人と agent が読む形 — 短い 1 行の後に「これは」(主体)・「なぜ」(理由)・law の文・直し方・鍵を並べる。
+                    let head = match &f.law {
+                        Some(law) => format!("[{}] {}", law, f.message),
+                        None => f.message.clone(),
                     };
+                    let mut lines = vec![head, format!("これは: {}", f.explanation.subject), format!("なぜ: {}", f.explanation.reason)];
+                    if let Some(statement) = &f.explanation.law_statement {
+                        lines.push(format!("law: {}", statement));
+                    }
+                    lines.push(format!("直し方: {}", f.hint));
+                    lines.push(format!("鍵: {}", f.key));
+                    let message = lines.join("\n");
                     Violation::new(f.rule.id().to_string(), message, offset_of(&source, f.range.start), path_text.clone(), f.severity)
                 })
                 .collect();
@@ -429,6 +437,7 @@ fn run_as_hook(args: &Args) -> ExitCode {
                     file_path: v.file_path.clone(),
                     line,
                     source_line,
+                    detail: ProjectRule::parse(&v.rule_id).map(|_| v.message.clone()),
                 });
         }
     }
@@ -473,6 +482,8 @@ struct ViolationSummary {
     file_path: String,
     line: usize,
     source_line: String,
+    /// 層の規則の違反の文(これは・なぜ・直し方 — agent が理由を読んで直せるように)。
+    detail: Option<String>,
 }
 
 fn build_followup_message(grouped: &BTreeMap<String, Vec<ViolationSummary>>) -> String {
@@ -492,6 +503,11 @@ fn build_followup_message(grouped: &BTreeMap<String, Vec<ViolationSummary>>) -> 
                 message.push_str(&format!(" → `{}`", v.source_line));
             }
             message.push('\n');
+            if let Some(detail) = &v.detail {
+                for line in detail.lines() {
+                    message.push_str(&format!("  {}\n", line));
+                }
+            }
         }
         if violations.len() > 5 {
             message.push_str(&format!("- ... and {} more\n", violations.len() - 5));
@@ -732,6 +748,12 @@ fn print_text_grouped(results: &[doeff_linter::models::LintResult]) {
             );
             if !v.source_line.is_empty() {
                 println!("      {}", v.source_line.bright_white());
+            }
+            // 層の規則は違反ごとに文が違う(これは・なぜ・law・直し方・鍵)ので、1 件ずつ出す。
+            if ProjectRule::parse(rule_id).is_some() {
+                for line in v.message.lines() {
+                    println!("      {}", line);
+                }
             }
         }
     }
