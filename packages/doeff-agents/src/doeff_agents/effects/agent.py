@@ -13,7 +13,7 @@ Key design:
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any
 
 from doeff import EffectBase
@@ -628,7 +628,9 @@ class LaunchEffect(AgentEffectBase):
 
     session_name: str
     agent_type: AgentType
-    work_dir: Path
+    # A plain path value: the handler builds the filesystem ``Path`` (and the
+    # directory) itself, so a caller never needs filesystem types to ask.
+    work_dir: str | PurePath
     prompt: str | None = None
     model: str | None = None
     mcp_tools: tuple["McpToolDef", ...] = ()
@@ -852,7 +854,8 @@ class ExportContextEffect(AgentEffectBase):
     """
 
     agent_type: AgentType
-    work_dir: Path
+    # A plain path value, like ``LaunchEffect.work_dir``.
+    work_dir: str | PurePath
     context_id: str
 
 
@@ -964,7 +967,7 @@ def Launch(  # noqa: N802
     session_name: str,
     *,
     agent_type: AgentType,
-    work_dir: Path,
+    work_dir: str | PurePath,
     prompt: str | None = None,
     model: str | None = None,
     mcp_tools: tuple["McpToolDef", ...] = (),

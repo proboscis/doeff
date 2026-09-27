@@ -132,7 +132,7 @@ class DaemonAgentHandler(AgentHandler):
         return self._launch(
             session_name=effect.session_name,
             agent_type=effect.agent_type,
-            work_dir=effect.work_dir,
+            work_dir=Path(effect.work_dir),
             prompt=effect.prompt,
             model=effect.model,
             effort=effect.effort,

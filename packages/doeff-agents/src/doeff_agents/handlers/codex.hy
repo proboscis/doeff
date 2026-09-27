@@ -21,6 +21,7 @@
 (import doeff_agents.session [deliver-prompt-when-ready])
 (import doeff_agents [tmux])
 
+(import pathlib [Path])
 (import shlex)
 
 
@@ -37,6 +38,8 @@
     (refuse-turn-capabilities effect :handler "codex-handler")
     (assert-session-env-is-non-auth-overlay session-env
       :context "LaunchEffect.session_env (codex-handler)")
+    ;; effect は path を純粋な値で運ぶ — file 系の Path はここで作る。
+    (setv work-path (Path work-dir))
     (setv launch-env (dict (or session-env {})))
     (when (is-not codex-home None)
       (setv (get launch-env "CODEX_HOME") (str codex-home)))
@@ -46,9 +49,9 @@
     (when mcp-tools
       (raise (NotImplementedError "Codex MCP tools are not supported by codex-handler")))
     (setv session-info (.new-session active-backend
-      (tmux.SessionConfig :session-name session-name :work-dir work-dir :env launch-env)))
+      (tmux.SessionConfig :session-name session-name :work-dir work-path :env launch-env)))
     (setv params (LaunchParams
-      :work-dir work-dir
+      :work-dir work-path
       :prompt prompt
       :model model
       :effort effort

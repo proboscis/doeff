@@ -107,6 +107,32 @@ class TestClaudeHandlerLaunch:
         project = data["projects"][str(work_dir.resolve())]
         assert project["hasTrustDialogAccepted"] is True
 
+    def test_launch_accepts_work_dir_as_plain_string(self, tmp_path, monkeypatch):
+        # The effect carries the path as a plain value; the handler builds the
+        # filesystem Path (callers never need filesystem types to ask).
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
+
+        backend = FakeTmuxBackend()
+        work_dir = tmp_path / "workdir"
+        work_dir.mkdir()
+
+        @do
+        def program():
+            return (yield Perform(LaunchEffect(
+                session_name="str-workdir",
+                agent_type=AgentType.CLAUDE,
+                work_dir=str(work_dir),
+                prompt="test",
+            )))
+
+        _run(program(), backend)
+
+        assert backend.sessions["str-workdir"]["work_dir"] == work_dir
+        data = json.loads((fake_home / ".claude.json").read_text())
+        assert str(work_dir.resolve()) in data.get("projects", {})
+
     def test_launch_sends_claude_command(self, tmp_path):
         backend = FakeTmuxBackend()
         prompt = "do stuff"
