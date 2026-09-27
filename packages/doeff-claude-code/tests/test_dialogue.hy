@@ -68,7 +68,7 @@
 
 
 (deftest test-a-failed-result-carries-the-tokens-it-used
-  ;; 誤りで終えた手番も、result の行が名乗った usage を運ぶ(max_turns の打ち切りなどで消費した token を捨てない — agora-redesign #766)。
+  ;; 誤りで終えた手番も、result の行が名乗った usage を運ぶ(max_turns の打ち切りなどで消費した token を捨てない)。
   (val capped {"type" "result" "subtype" "error_max_turns" "is_error" True "result" ""
                "usage" {"input_tokens" 5 "output_tokens" 6 "cache_read_input_tokens" 7}})
   (val read (read-record (started) capped))

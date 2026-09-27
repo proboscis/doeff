@@ -64,6 +64,18 @@ def test_async_handler_delegates_non_time_effects() -> None:
 _STALL_INTERVAL = 0.05
 
 
+class _OnStallReport(logging.Handler):
+    """Calls ``on_report`` when the scheduler logs a stall (from any thread)."""
+
+    def __init__(self, on_report) -> None:
+        super().__init__(level=logging.WARNING)
+        self._on_report = on_report
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if "scheduler stalled" in record.getMessage():
+            self._on_report()
+
+
 def _stall_messages(caplog) -> list[str]:
     return [
         record.getMessage()
@@ -94,10 +106,19 @@ def test_async_wait_until_is_not_reported_as_stalled(stall_watch) -> None:
 
 
 def test_async_delay_that_oversleeps_its_deadline_is_reported(stall_watch) -> None:
-    # Counterexample: the clock wait does not wake at its deadline (the sleep
-    # overruns by 10 intervals), so the scheduler is stalled and must say so.
-    async def oversleep(seconds: float) -> None:
-        await asyncio.sleep(seconds + _STALL_INTERVAL * 10)
+    # Counterexample: the clock wait does not wake at its deadline — it wakes
+    # only when the scheduler reports the stall (no fixed oversleep), so the
+    # scheduler must say so.  If it never does, the guard ends the wait with
+    # TimeoutError and the run fails.
+    async def wake_on_stall_report(seconds: float) -> None:
+        loop = asyncio.get_running_loop()
+        reported = asyncio.Event()
+        watcher = _OnStallReport(lambda: loop.call_soon_threadsafe(reported.set))
+        logging.getLogger("doeff_core_effects.scheduler").addHandler(watcher)
+        try:
+            await asyncio.wait_for(reported.wait(), timeout=seconds + _STALL_INTERVAL * 40)
+        finally:
+            logging.getLogger("doeff_core_effects.scheduler").removeHandler(watcher)
 
-    run_with_handlers(async_time_handler(sleep=oversleep)(_delay_program(_STALL_INTERVAL)))
+    run_with_handlers(async_time_handler(sleep=wake_on_stall_report)(_delay_program(_STALL_INTERVAL)))
     assert _stall_messages(stall_watch), "an overdue clock wait must be reported as stalled"

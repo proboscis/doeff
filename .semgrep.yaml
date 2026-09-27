@@ -283,6 +283,9 @@ rules:
         - "**/doeff_cluster/**"
       exclude:
         - "**/doeff_cluster/service_model.hy"
+        # code_prepare は import の記号(Hy の名)を Python の module の名に直すのに hy.mangle を使う — 設定の鍵を
+        # 引数の名に直す写しではない(日次 t69 の誤検出・agora-redesign#639)。
+        - "**/doeff_cluster/code_prepare.hy"
 
   - id: doeff-agents-idle-shell-vocabulary-is-policy-owned
     languages:

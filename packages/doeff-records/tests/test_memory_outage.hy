@@ -1,6 +1,6 @@
 ;; 検の口 faults.SetStoreOutage(置き場に届かない状態を起こす・戻す)を memory の置き場が答える形の検。
 ;; 使い手(記録の service の不達・一部の表の断りを筋書きにする業務の検と模擬)は、業務の effect に答える偽の handler を書かず、
-;; 正典の memory の置き場をこの口で「届かない」にする(agora-redesign #783)。
+;; 正典の memory の置き場をこの口で「届かない」にする。
 ;;   届かない間: 名に当たる公開 effect 7 つは Unreachable(detail)・置き場は変わらない / 名に当たらない表と列は今までどおり
 ;;   戻した後: 届かない間に撃った書きは 1 つも残っていない・読み書きは今までどおり
 (require doeff-hy.macros [deftest defk <- val])
