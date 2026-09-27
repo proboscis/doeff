@@ -46,6 +46,8 @@ Extensions are registered automatically when `doeff_hy` is imported.
 | `do!` | Monadic do block — inline effect sequencing |
 | `<-` | Perform effect, bind result — `(<- name Type effect)` also asserts `isinstance` |
 | `!` | Inline effect bind in argument position |
+| `on-raise` | Map matching `Raise` reasons to answers — `(on-raise body (Conflict d) answer …)` |
+| `absent-as` | Fold `Absent` into a default — `(absent-as 0 body)` |
 | `defpipeline` | Named-stage pipeline composition |
 | `traverse` | Applicative traverse over collections |
 | `for/do` | SQL-like comprehension with effects |
@@ -62,6 +64,19 @@ wherever the bind is written. The 2- and 3-element forms add no check.
 `(<- x None effect)` and `#(int None)` check against `type(None)` at runtime
 (`_runtime-type` in `macros.hy` is the one place that maps it). `(| int None)`
 needs no mapping.
+
+### Absence and failure (ADR-DOE-CORE-EFFECTS-003)
+
+Expected absence and failure are two effects in `doeff_core_effects.effects`: `Absent(why)`
+(the Maybe side) and `Raise(reason)` (the Result side). Code writes only the success path;
+the places that want to *do* something about absence or failure fold them into values:
+`maybe` (Absent → `Nothing`) and `result` (Raise → `Err`) from `doeff_core_effects.outcomes`,
+and the `on-raise` / `absent-as` macros. The nesting order picks the shape:
+`(result (maybe b))` is `Ok(Some v)` / `Ok(Nothing)` / `Err(e)`.
+
+A `defhandler` clause may end its scope without resuming with `(finish value)`. Every path
+of a clause must end with resume / transfer / finish / reperform / raise; `Raise` and `Absent`
+clauses never resume; finishing an ordinary effect needs `:finish-reason "…"`.
 
 ### Static type checking
 

@@ -13,6 +13,9 @@
 ;;; Handler clause operations (terminal — handler gives up control):
 ;;;   (resume value)        — Resume k with value, handler stays installed
 ;;;   (transfer value)      — Resume k with value, handler removed (tail-call)
+;;;   (finish value)        — Drop k; the handled scope answers value (ADR-DOE-CORE-EFFECTS-003 R15).
+;;;                           Raise / Absent clauses finish freely; an ordinary effect's clause
+;;;                           needs :finish-reason "…" (e.g. a deadline that stops the whole run)
 ;;;   (reperform effect)    — Forward effect+k to outer handler (OCaml 5 reperform)
 ;;;   (pass)                — DEPRECATED: use (reperform effect)
 ;;;
@@ -27,9 +30,14 @@
 ;;; Clause guards:
 ;;;   (EffectType [fields] :when pred body...)  — auto-reperform if pred is false
 ;;;
-;;; Compile-time checks:
-;;;   - Every clause body must reach resume/transfer/reperform/raise on ALL branches
-;;;   - Missing terminal in any if/cond branch → SyntaxError at macro expansion
+;;; Checks (ADR-DOE-CORE-EFFECTS-003 R15 — a forgotten resume never ends a scope silently):
+;;;   - Every clause body must reach resume/transfer/finish/reperform/raise on ALL branches
+;;;     (each if / cond / match / try branch; cond ends with True, match with a bare _) →
+;;;     SyntaxError at macro expansion
+;;;   - A clause's ending must match its effect's declared resumption (Resumption): no resume of
+;;;     Raise / Absent, no finish of an ordinary effect without :finish-reason — by name at
+;;;     expansion, by the effect type when the handler first wraps a body (ClauseEndingError)
+;;;   - A clause that leaves without resume / finish at run time → RuntimeError
 ;;;
 ;;; S-expr preservation:
 ;;;   - defhandler stores __doeff_body__ for introspection (like defk)
@@ -221,13 +229,14 @@
     (_sym-name (get form 0))))
 
 (defn _terminates [form]
-  "Check if a single form always reaches resume/transfer/pass/raise."
+  "Check if a single form always reaches resume/transfer/finish/reperform/raise — on every path
+   (each if / cond / match / try branch; when / unless / and / or / loops never guarantee it)."
   (setv head (_head-name form))
   (cond
     (is head None) False
 
     ;; Direct terminals
-    (in head ["resume" "transfer" "pass" "reperform" "raise"]) True
+    (in head ["resume" "transfer" "finish" "pass" "reperform" "raise"]) True
 
     ;; (if test then else) — both branches must terminate
     (= head "if")
@@ -235,28 +244,40 @@
            (_terminates (get form 2))
            (_terminates (get form 3)))
 
-    ;; (cond test1 body1 test2 body2 ...) — all bodies must terminate
+    ;; (cond test1 body1 test2 body2 ...) — all bodies must terminate and the last test is True
+    ;; (otherwise a value that matches no test falls through)
     (= head "cond")
       (let [pairs (cut form 1 None)
+            tests (cut pairs 0 None 2)
             bodies (cut pairs 1 None 2)]
         (and (> (len bodies) 0)
+             (= (len tests) (len bodies))
+             (in (str (get tests -1)) #{"True" "else" ":else"})
              (all (gfor b bodies (_terminates b)))))
+
+    ;; (match subject pattern body ...) — every arm terminates and the last arm is irrefutable
+    (= head "match")
+      (do (import doeff-hy.clause-endings [match-terminates?])
+          (match-terminates? form))
 
     ;; (do form1 form2 ...) — sequence terminates if any form terminates
     (= head "do")
       (_seq-terminates (cut form 1 None))
 
-    ;; (let [...] body...) — check body forms
-    (= head "let")
+    ;; (let [...] body...) / (with [...] body...) — check body forms
+    (in head ["let" "with"])
       (and (>= (len form) 3)
            (_seq-terminates (cut form 2 None)))
 
-    ;; (try body (except ...)) — terminates if body terminates
+    ;; (try body (except ...)) — the body and every except clause terminate
     (= head "try")
-      (_seq-terminates (cut form 1 None))
+      (do (import doeff-hy.clause-endings [try-terminates?])
+          (try-terminates? form))
 
-    ;; (when test body...) — only one branch, doesn't guarantee termination
-    (= head "when") False
+    ;; One-branch and short-circuit forms and loops never guarantee termination; a resume inside a
+    ;; nested function or comprehension does not run as the clause's step at all
+    (in head ["when" "unless" "and" "or" "for" "while"
+              "fn" "fn/a" "defn" "defn/a" "lfor" "gfor" "dfor" "sfor" "quote" "quasiquote"]) False
 
     ;; Anything else: check if it recursively contains a terminal
     True (any (gfor f (cut form 1 None) (_terminates f)))))
@@ -270,7 +291,9 @@
   (when (not (_seq-terminates clause-body))
     (raise (SyntaxError
       (+ "handle clause for " etype-str
-         ": missing resume/transfer/pass on some branch")))))
+         ": missing resume/transfer/finish/reperform on some branch — every if / cond / match / try"
+         " branch must end the clause (cond needs a final True, match a final _); a clause that should"
+         " end its scope without resuming says so with (finish value) [ADR-DOE-CORE-EFFECTS-003 R15]")))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -338,9 +361,10 @@
 ;; ---------------------------------------------------------------------------
 
 (defn _rewrite-ops [form]
-  "Recursively rewrite resume/transfer/pass/reperform in handler clause body.
-   (resume expr)      → (yield (Resume k expr))
+  "Recursively rewrite resume/transfer/finish/pass/reperform in handler clause body.
+   (resume expr)      → (yield (Resume k expr))  — and marks the clause as resumed
    (transfer expr)    → (yield (Transfer k expr))
+   (finish expr)      → (return expr)  — drop the continuation, the handled scope answers expr
    (reperform effect) → (yield (Pass effect k))     — OCaml 5 aligned
    (pass)             → (yield (Pass effect k))      — deprecated, use reperform"
   (cond
@@ -353,16 +377,27 @@
           ;; 型検査のための展開(doeff_hy/static_view.py): core の typed_resume / typed_transfer
           ;; で、答えの値を effect の答えの型(EffectBase[T] の T)と突き合わせる。`effect` は
           ;; 節の `(isinstance effect EffectType)` で絞られている。実行時の展開は Resume / Transfer。
+          ;; 非末尾の resume は続きが終わると節へ戻る — 戻った後で「再開した」と記す(値の式や続きで出た例外を節が
+          ;; 握りつぶして抜けた道は印が付かず、実行の時に誤りになる・ADR-DOE-CORE-EFFECTS-003 R15)。
           (and (= hname "resume") (= (len form) 2) (static-view-enabled))
-            `(yield (do (import doeff [typed-resume])
-                        (typed-resume effect k ~(_rewrite-ops (get form 1)))))
+            `(do (setv _doeff_resumed_value
+                       (yield (do (import doeff [typed-resume])
+                                  (typed-resume effect k ~(_rewrite-ops (get form 1))))))
+                 (setv _doeff_clause_resumed True)
+                 _doeff_resumed_value)
 
           (and (= hname "transfer") (= (len form) 2) (static-view-enabled))
             `(yield (do (import doeff [typed-transfer])
                         (typed-transfer effect k ~(_rewrite-ops (get form 1)))))
 
           (and (= hname "resume") (= (len form) 2))
-            `(yield (Resume k ~(_rewrite-ops (get form 1))))
+            `(do (setv _doeff_resumed_value (yield (Resume k ~(_rewrite-ops (get form 1)))))
+                 (setv _doeff_clause_resumed True)
+                 _doeff_resumed_value)
+
+          ;; (finish value) — 続きを捨て、handler を置いたスコープの答えを value にする(再開しない終わり方)。
+          (and (= hname "finish") (= (len form) 2))
+            `(return ~(_rewrite-ops (get form 1)))
 
           (and (= hname "transfer") (= (len form) 2))
             `(yield (Transfer k ~(_rewrite-ops (get form 1))))
@@ -415,10 +450,13 @@
   expanded)
 
 
-(defn _build-clause [clause [lazy-defs None] [handler-name None] [module-names None]]
-  "Parse one handler clause: (EffectType [fields] [:when guard] body...).
-   Validates termination. Returns #(effect-type cond-body).
+(defn _build-clause [clause [lazy-defs None] [handler-name None] [module-names None] [specs None]]
+  "Parse one handler clause: (EffectType [fields] [:when guard] [:finish-reason \"…\"] body...).
+   Validates termination and the clause's ending against the effect (ADR-DOE-CORE-EFFECTS-003 R15).
+   Returns #(effect-type cond-body). When `specs` is a list, appends the clause's ending
+   description for the definition-time check (clause_endings.check-clause-endings).
    If lazy-defs is provided, inject lazy init for referenced lazy names."
+  (import doeff-hy.clause-endings [parse-clause-options clause-ops check-clause-by-name ending-spec-form])
   (assert (isinstance clause Expression)
           "handle clause must be an expression")
   (assert (>= (len clause) 3)
@@ -427,16 +465,28 @@
   (setv etype (get clause 0))
   (setv fields (get clause 1))
   (setv raw-body (list (cut clause 2 None)))
+  (setv where (if (is handler-name None)
+                  (+ "handle clause " (str etype))
+                  (+ "defhandler " (str handler-name) " clause " (str etype))))
 
   (assert (isinstance fields List)
           "handle clause fields must be [field1 ...]")
 
-  ;; Extract :when guard
-  (setv #(guard cbody) (_parse-guard raw-body))
+  ;; Extract :when guard and :finish-reason
+  (setv options (parse-clause-options raw-body where))
+  (setv guard (. options guard))
+  (setv cbody (. options body))
   (setv cbody-written cbody)
 
   ;; Termination check BEFORE rewriting (on original body)
   (_check-clause-terminates (str etype) cbody)
+
+  ;; The clause's ending against what the effect declares — by name at expansion (Raise / Absent,
+  ;; finish without a reason), by the effect type's declaration when the handler is defined.
+  (setv ops (clause-ops cbody))
+  (check-clause-by-name etype ops options where)
+  (when (is-not specs None)
+    (.append specs (ending-spec-form etype ops options)))
 
   ;; TCO: tail-position (resume expr) → (transfer expr)
   ;; Must run BEFORE _expand-handler-binds and _rewrite-ops so it sees
@@ -492,25 +542,40 @@
     (lfor f fields
       `(setv ~f (. effect ~(Symbol (str f))))))
 
-  ;; Rewrite resume/transfer/pass (lazy-prefix is already in yield IR,
-  ;; but _rewrite-ops only touches resume/transfer/pass — safe to pass through)
+  ;; Rewrite resume/transfer/finish/pass (lazy-prefix is already in yield IR,
+  ;; but _rewrite-ops only touches the clause operations — safe to pass through)
   (setv rewritten (+ lazy-prefix (lfor form cbody (_rewrite-ops form))))
+
+  ;; A clause that leaves without resume / finish (transfer / reperform / raise never return) is an
+  ;; error at run time — the VM would otherwise end the handled scope silently with the clause's value
+  ;; (ADR-DOE-CORE-EFFECTS-003 R15).
+  (setv checked
+    `(do (setv _doeff_clause_resumed False)
+         (setv _doeff_clause_value (do ~@rewritten))
+         (if _doeff_clause_resumed
+             _doeff_clause_value
+             (raise (do (import doeff-hy.clause-endings [fell-through :as _doeff-fell-through])
+                        (_doeff-fell-through ~(if (is handler-name None) "handle" (str handler-name))
+                                             ~(str etype)))))))
 
   ;; Build body: bindings first, then guard, then logic
   (setv full-body
     (if (is guard None)
-        `(do ~@bindings ~@rewritten)
+        `(do ~@bindings ~checked)
         `(do ~@bindings
              ~@guard-prefix
              (if (not ~guard)
                  (yield (Pass effect k))
-                 (do ~@rewritten)))))
+                 ~checked))))
 
   #(etype full-body))
 
 
-(defn _build-handler-expr [clauses [lazy-defs None] [handler-name None] [module-names None]]
+(defn _build-handler-expr [clauses [lazy-defs None] [handler-name None] [module-names None] [specs None]]
   "Build handler expression from clauses. Returns _doeff-do wrapped fn.
+   When `specs` is a list, appends each clause's ending description — the caller emits the check
+   of those against the effects' declared resumption (ADR-DOE-CORE-EFFECTS-003 R15 — catches what
+   the name alone cannot, e.g. an aliased Raise).
    If lazy-defs is provided, lazy init is injected into clauses that reference them."
   (setv cond-forms [])
 
@@ -518,7 +583,8 @@
     (setv #(etype body) (_build-clause clause
                                        :lazy-defs lazy-defs
                                        :handler-name handler-name
-                                       :module-names module-names))
+                                       :module-names module-names
+                                       :specs specs))
     (.append cond-forms `(isinstance effect ~etype))
     (.append cond-forms body))
 
@@ -544,13 +610,17 @@
        (resume (+ x 1))))
 
    Wraps body with the Rust handler node. Unmatched effects auto-Pass.
-   Compile-time error if any clause branch lacks resume/transfer/pass."
+   Compile-time error if any clause branch lacks resume/transfer/finish/reperform; each clause's
+   ending is checked against its effect's declared resumption when the handle form is evaluated."
   (import doeff-hy.macros [_module-names])
-  (setv h-expr (_build-handler-expr clauses :module-names (_module-names _hy-compiler)))
+  (setv specs [])
+  (setv h-expr (_build-handler-expr clauses :module-names (_module-names _hy-compiler) :specs specs))
   (locate-synthesized `(do
      ~(_do-import)
      (import doeff [Resume Transfer Pass])
      (import doeff_vm [WithHandler])
+     (import doeff-hy.clause-endings [check-clause-endings :as _doeff-check-clause-endings])
+     (_doeff-check-clause-endings "handle" [~@specs])
      (WithHandler ~h-expr ~body))))
 
 
@@ -653,13 +723,19 @@
 
   (import doeff-hy.macros [_module-names])
   (setv module-names (_module-names _hy-compiler))
+  (setv specs [])
   (setv handler-expr
     (if lazy-defs
         (_build-handler-expr effect-clauses
                              :lazy-defs lazy-defs
                              :handler-name name
-                             :module-names module-names)
-        (_build-handler-expr effect-clauses :handler-name name :module-names module-names)))
+                             :module-names module-names
+                             :specs specs)
+        (_build-handler-expr effect-clauses :handler-name name :module-names module-names :specs specs)))
+  ;; 節の終わり方と effect の再開の宣言の照合は、handler を初めて本文に被せた時に 1 回(定義より後に書いた effect の型も
+  ;; 引けるように — ADR-DOE-CORE-EFFECTS-003 R15)。
+  (setv endings-check
+    `(_doeff-check-clause-endings-once __doeff-handler-data__ ~(str name) __doeff-clause-endings__))
 
   ;; Preserve s-expr body as quoted list of all clauses (including lazy)
   (setv quoted-body `(quote ~(list clauses)))
@@ -680,11 +756,14 @@
          ~(_do-import)
          (import doeff [Resume Transfer Pass])
          (import doeff_vm [WithHandler])
+         (import doeff-hy.clause-endings [check-clause-endings-once :as _doeff-check-clause-endings-once])
          ~lazy-imports
          (setv ~name
            ((fn []
               (setv __doeff-handler-data__ ~handler-expr)
+              (setv __doeff-clause-endings__ (fn [] [~@specs]))
               (defn __doeff-handler-fn__ [__doeff-body__]
+                ~endings-check
                 (WithHandler __doeff-handler-data__ __doeff-body__))
               (setattr __doeff-handler-fn__ "__doc__" ~docstring)
               (setattr __doeff-handler-fn__ "_doeff_is_handler_fn" True)
@@ -698,10 +777,13 @@
          ~(_do-import)
          (import doeff [Resume Transfer Pass])
          (import doeff_vm [WithHandler])
+         (import doeff-hy.clause-endings [check-clause-endings-once :as _doeff-check-clause-endings-once])
          ~lazy-imports
          (defn ~name [~@params]
            (setv __doeff-handler-data__ ~handler-expr)
+           (setv __doeff-clause-endings__ (fn [] [~@specs]))
            (defn __doeff-handler-fn__ [__doeff-body__]
+             ~endings-check
              (WithHandler __doeff-handler-data__ __doeff-body__))
            (setattr __doeff-handler-fn__ "__doc__" ~docstring)
            (setattr __doeff-handler-fn__ "_doeff_is_handler_fn" True)
