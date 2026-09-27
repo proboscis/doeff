@@ -966,11 +966,12 @@ impl<'a> Analyzer<'a> {
         for accessor in accessors {
             match accessor.paren_items() {
                 Some([method, args @ ..]) if matches!(method.node, Node::Symbol) => {
-                    self.reference(method.span);
+                    self.member_reference(method.span);
                     for arg in args {
                         self.walk(arg, Quoting::None);
                     }
                 }
+                _ if matches!(accessor.node, Node::Symbol) => self.member_reference(accessor.span),
                 _ => self.walk(accessor, Quoting::None),
             }
         }
@@ -1092,12 +1093,24 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// 記号の出現を `.` で区切って参照に積む(演算子・定数・`_` は除く)。
+    /// 記号の出現を `.` で区切って参照に積む(演算子・定数・`_` は除く)。`(.m x)` の頭の `.m` と dotted の 2 つ目
+    /// 以降の区切りは属性・method の名前(member)。
     fn reference(&mut self, span: Span) {
+        self.push_reference(span, false);
+    }
+
+    /// `(. obj attr (method args))` の属性と method の名前を参照に積む(書き方は裸の記号でも、値の上の member)。
+    fn member_reference(&mut self, span: Span) {
+        self.push_reference(span, true);
+    }
+
+    /// 記号の出現を `.` で区切って参照に積む。member = 記号の全部の区切りが値の上の属性・method の名前。
+    fn push_reference(&mut self, span: Span, member: bool) {
         let text = self.text(span);
         if text.is_empty() || text == "_" || CONSTANTS.contains(&text) || is_operator(text) {
             return;
         }
+        let method_head = text.starts_with('.');
         let mut qualifier: Option<String> = None;
         let mut offset = 0;
         for part in text.split('.') {
@@ -1111,6 +1124,7 @@ impl<'a> Analyzer<'a> {
                 mangled: mangle(part),
                 qualifier: qualifier.clone(),
                 range: self.lines.range(start, start + part.len()),
+                member: member || method_head || qualifier.is_some(),
             });
             qualifier = Some(match qualifier {
                 Some(prefix) => format!("{}.{}", prefix, part),
