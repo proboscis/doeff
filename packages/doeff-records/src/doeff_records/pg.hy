@@ -9,7 +9,9 @@
 (require doeff-hy.macros [defhandler defk <-])
 (import json)
 (import socket)
+(import dataclasses [dataclass])
 (import collections.abc [Callable])
+(import contextlib [AbstractContextManager])
 (import typing [NamedTuple Protocol TypeVar])
 (import doeff [Pure])
 (import doeff_hy.frozen [FrozenMap frozen-json-object])
@@ -23,6 +25,7 @@
                                  key-text key-from-text canonical-json next-watch-sequence epoch-ms])
 (import doeff_records.watching [wait-for-changes])
 (import doeff_records.pg_sql [Statement DEFAULT-PREFIX checked-prefix schema-statements drop-statements lock-statement
+                              migrate-lock-statement
                               store-head-statement read-row-statement lock-row-statement list-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
                               changes-statement advance-epoch-statement forget-changes-statement prune-changes-statement find-event-statement
@@ -32,38 +35,64 @@
 (setv T (TypeVar "T"))
 
 
+(defclass PgCursor [Protocol]
+  "文を流した答えの cursor の面(psycopg 3 の Cursor がこれを満たす)。"
+  (defn #^ list fetchall [self] "残りの行を全部読む。" (raise NotImplementedError))
+  (defn #^ (| tuple None) fetchone [self] "次の行を 1 つ読む(無ければ None)。" (raise NotImplementedError)))
+
+
 (defclass PgConnection [Protocol]
   "PgRecordsHost が使う接続の面(psycopg 3 の Connection がこれを満たす — psycopg はこの package の依存に無いので型で名指さない)。"
   (#^ bool autocommit)
   (#^ bool closed)
   (#^ bool broken)
-  (defn #^ object execute [self #^ str query #^ tuple params] "文を流し、cursor を返す。" ...)
-  (defn #^ object transaction [self] "with で使う transaction を開く。" ...)
-  (defn #^ None close [self] "接続を閉じる。" ...))
+  (defn #^ PgCursor execute [self #^ str query #^ tuple params] "文を流し、cursor を返す。" (raise NotImplementedError))
+  (defn #^ AbstractContextManager transaction [self] "with で使う transaction を開く。" (raise NotImplementedError))
+  (defn #^ None close [self] "接続を閉じる。" (raise NotImplementedError)))
+
+
+(defn #^ PgConnection autocommit-connection [#^ PgConnection connection] ; defk にできない: PgRecordsHost の組み立て(Program の外)で呼ぶ
+  (when (not (getattr connection "autocommit" False))
+    (raise (ValueError "PgRecordsHost の接続は自動 commit(psycopg.connect(..., autocommit=True))— 書きの transaction は host が開く")))
+  connection)
+
+
+(defclass [(dataclass :frozen True)] PreparedStore []
+  "表を用意し終えた置き場: schema = 宣言 / prefix = 表の名の接頭辞(検め済み)。作るのは prepare-records-store だけで、
+   PgRecordsHost はこれを受け取る — 表を用意せずに host は作れず、host は接続ごとに表を用意し直さない。"
+  (#^ RecordsSchema schema)
+  (#^ str prefix))
+
+
+(defn #^ PreparedStore prepare-records-store [#^ PgConnection connection #^ RecordsSchema schema #^ str [prefix DEFAULT-PREFIX]]  ; defk にできない: composition root が Program を走らせる前に呼ぶ
+  "表を用意する(移行)— process ごとに 1 度、composition root が最初の接続 1 本で呼ぶ。文は移行の lock の transaction の中で流す:
+   同じ置き場を同時に用意する別の process(replicas > 1・入れ替えの重なり)は lock を待ち、先の commit の後で IF NOT EXISTS が
+   何もしない(lock が無いと同時の CREATE INDEX IF NOT EXISTS が競って遅れた方が UniqueViolation)。"
+  (setv checked (checked-prefix prefix))
+  (autocommit-connection connection)
+  (with [(.transaction connection)]
+    (for [statement (+ #((migrate-lock-statement checked)) (schema-statements checked schema))]
+      (.execute connection statement.text statement.params)))
+  (PreparedStore schema checked))
 
 
 (defclass PgRecordsHost []
-  "PostgreSQL の置き場 1 つ: connection = 自動 commit の psycopg の接続 / schema = 宣言 /
+  "PostgreSQL の置き場 1 つ: connection = 自動 commit の psycopg の接続 / store = 用意し終えた置き場(prepare-records-store の答え)/
    unreachable-errors = 接続の失敗の例外の型(接続を開いた composition root が渡す — psycopg なら
-   #(psycopg.OperationalError psycopg.InterfaceError))/ prefix = 表の名の接頭辞 /
+   #(psycopg.OperationalError psycopg.InterfaceError))/
    origin-host = 行に刻む機体の名 / poll-seconds = WatchChanges の読み直しの間隔。
-   作る時に表を用意する(何度でも同じ)。"
-  (defn #^ None __init__ [self #^ PgConnection connection #^ RecordsSchema schema * #^ tuple unreachable-errors
-                          #^ str [prefix DEFAULT-PREFIX]
+   作る時に文を流さない(表の用意は prepare-records-store の 1 度だけ)。"
+  (defn #^ None __init__ [self #^ PgConnection connection #^ PreparedStore store * #^ tuple unreachable-errors
                           #^ (| str None) [origin-host None]
                           #^ float [poll-seconds DEFAULT-POLL-SECONDS]]
-    (when (not (getattr connection "autocommit" False))
-      (raise (ValueError "PgRecordsHost の接続は自動 commit(psycopg.connect(..., autocommit=True))— 書きの transaction は host が開く")))
-    (setv self.connection connection
-          self.schema schema
-          self.prefix (checked-prefix prefix)
+    (setv self.connection (autocommit-connection connection)
+          self.schema store.schema
+          self.prefix store.prefix
           self.origin-host (or origin-host (socket.gethostname))
           self.poll-seconds poll-seconds
-          self.errors unreachable-errors)
-    (for [statement (schema-statements self.prefix schema)]
-      (self.execute statement)))
+          self.errors unreachable-errors))
 
-  (defn #^ object execute [self #^ Statement statement]
+  (defn #^ PgCursor execute [self #^ Statement statement]
     (.execute self.connection statement.text statement.params))
 
   (defn #^ list fetch-all [self #^ Statement statement]
