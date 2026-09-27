@@ -198,6 +198,10 @@
                        (if (in job.spec.name state.handoffs)
                            {"handoff" (.status-json (get state.handoffs job.spec.name) (handoff-timeout-ms job.readiness))}
                            {}))}))
+  ;; 受け付けない Service の行(改訂 1 の C): spec は元の行のまま・status に理由。
+  (for [r (.values state.refused)]
+    (setv (get out (key-of "Service" r.name))
+          {"spec" (dfor #(k v) (.items r.row) :if (!= k "name") k v) "status" {"refused" r.reason}}))
   (for [w (.values state.workers)]
     (setv (get out (key-of "Worker" w.name))
           {"spec" {"provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity "versions" (dict w.versions)}
@@ -207,7 +211,7 @@
                         {})}))
   (for [t (.values state.tasks)]
     (setv (get out (key-of "Task" t.id))
-          {"spec" (| {"name" t.name "env" t.env "revision" t.revision "needs" (list t.needs)}
+          {"spec" (| {"name" t.name "revision" t.revision "needs" (list t.needs)}
                      (if t.detached {"key" t.key} {}))
            "status" {"phase" t.phase "worker" t.worker "detail" t.detail}}))
   (for [#(name r) (.items state.rollouts)]
@@ -358,7 +362,8 @@
     (= kind "Service")
       (do (when (any (gfor j state.jobs (= j.spec.name name))) (refuse 409 (+ "もう在る Service: " name)))
           (setv job (job-from-json (| spec {"name" name "owner" owner})))
-          (replace state :jobs (+ state.jobs #(job))))
+          ;; 受け付けない行(RefusedJob)と同じ名なら、新しい形の宣言で置き換える(改訂 1 の C)。
+          (replace state :jobs (+ state.jobs #(job)) :refused (dfor #(k v) (.items state.refused) :if (!= k name) k v)))
     (= kind "Rollout")
       (do (when (in name state.rollouts) (refuse 409 (+ "もう在る Rollout: " name)))
           (setv spec (validate-rollout-spec (| spec {"owner" owner})))
@@ -381,6 +386,13 @@
   (cond
     (= kind "Service")
       (do (setv current (next (gfor j state.jobs :if (= j.spec.name name) j) None))
+          ;; 受け付けない行(RefusedJob)は、新しい形の宣言の PUT で受け付けた job に置き換える(改訂 1 の C)。
+          (when (and (is current None) (in name state.refused))
+            (check-version state key (.get body "resourceVersion"))
+            (setv job (job-from-json (| spec {"name" name "owner" (or (valid-actor (.get spec "owner"))
+                                                                    (.get (. (get state.refused name) row) "owner") actor)})))
+            (return (replace state :jobs (+ state.jobs #(job))
+                                   :refused (dfor #(k v) (.items state.refused) :if (!= k name) k v))))
           (when (is current None) (refuse 404 (+ "無い Service: " name)))
           (check-version state key (.get body "resourceVersion"))
           (check-owner-change current.owner (.get spec "owner") actor)
@@ -415,6 +427,8 @@
   (cond
     (= kind "Service")
       (do (setv current (next (gfor j state.jobs :if (= j.spec.name name) j) None))
+          (when (and (is current None) (in name state.refused))
+            (return (replace state :refused (dfor #(k v) (.items state.refused) :if (!= k name) k v))))
           (when (is current None) (refuse 404 (+ "無い Service: " name)))
           (when (and (!= actor current.owner) (not force))
             (refuse 403 (.format "宣言を消せるのは所有者({})か、明示の force つきの delete だけ" current.owner)))

@@ -8,7 +8,7 @@
 ;; 筋書き: (a) 期限の内に Ready → 旧が止まる(今と同じ)・(b) 期限を越えて NotReady → 新が止まり起こし直されず、旧は動き続け、
 ;; status に段と理由(ReportReady の reason を含む)— coordinator を作り直しても諦めは保たれる・(c) 宣言を変えると諦めが解けて
 ;; 新しい spec の入れ替えが始まる・(d) recreate の Service は今と同じ。
-(require doeff-hy.macros [deftest val var])
+(require doeff-hy.macros [deftest defk <- val var])
 (import dataclasses [replace])
 (import pytest)
 (import doeff_cluster.cluster_model [ClusterTiming ClusterState Request])
@@ -17,7 +17,9 @@
 (import doeff_cluster.cluster_policy [job-from-json])
 (import doeff_cluster.handlers [status-row declared-job-spec])
 (import doeff_cluster.readiness_model [handoff-timeout-ms HANDOFF-TIMEOUT-SECONDS])
-(import doeff_cluster.service_model [service])
+(import doeff_cluster.service_model [job Job CallShape])
+(import tests.fixtures.services [tally-program])
+(import tests.fixtures.envs [plain-foundation])
 (import doeff_cluster.worker_model [CodeView CodeState ProcessView WorldView WorkerPolicy PrepareCode StartJob SignalJob ReapJob
                                     RetireJob spec-hash])
 (import doeff_cluster.worker_policy [plan records-after statuses])
@@ -167,9 +169,11 @@
 
 ;; --- 宣言の形 -------------------------------------------------------------------------------
 
-(defn tally-program [interval]  ; defk にできない: service の宣言の参照先(宣言の組み立てだけに使う — 走らせない)
-  "宣言の検めの検だけに使う本体。"
-  interval)
+(defk declared-job [#^ (| dict None) readiness #^ str update]
+  {:pre [(: update str)] :post [(: % Job)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "readiness と update だけを変えた job の宣言(系の値の構成子 job — defsystem の展開が呼ぶ口を直に呼ぶ)。"
+  (job "w" (tally-program plain-foundation 1) :call (CallShape :function tally-program :args [plain-foundation 1] :kwargs {})
+       :needs (frozenset ["net"]) :update update :readiness readiness))
 
 
 (deftest test-the-handoff-deadline-is-declared-in-readiness-and-checked-at-both-entrances
@@ -179,20 +183,19 @@
   (assert (= HANDOFF-TIMEOUT-SECONDS 300))
   (assert (= (handoff-timeout-ms {"windowSeconds" 10}) 300000))
   (assert (= (handoff-timeout-ms {"windowSeconds" 10 "handoffTimeoutSeconds" 45}) 45000))
-  (val declared (service "w" tally-program :env "m:e" :needs (frozenset ["net"]) :config {"interval" 1.0} :update "handoff"
-                         :readiness {"windowSeconds" 10 "handoffTimeoutSeconds" 45}))
+  (<- declared Job (declared-job {"windowSeconds" 10 "handoffTimeoutSeconds" 45} "handoff"))
   (assert (= declared.readiness {"windowSeconds" 10 "handoffTimeoutSeconds" 45}))
   (assert (= (. (job-from-json (| {"name" "w"} HANDOFF)) readiness) {"windowSeconds" 10 "handoffTimeoutSeconds" TIMEOUT-SECONDS}))
   (for [bad [{"windowSeconds" 10 "handoffTimeoutSeconds" 0} {"windowSeconds" 10 "handoffTimeoutSeconds" -5}
              {"windowSeconds" 10 "handoffTimeoutSeconds" True} {"windowSeconds" 10 "handoffTimeoutSeconds" "300"}
              {"windowSeconds" 10 "handoffTimeoutSecond" 300}]]
     (with [(pytest.raises ValueError)]
-      (service "w" tally-program :env "m:e" :needs (frozenset ["net"]) :config {"interval" 1.0} :update "handoff" :readiness bad))
+      (<- (declared-job bad "handoff")))
     (with [(pytest.raises ValueError)]
       (job-from-json (| {"name" "w"} HANDOFF {"readiness" bad}))))
   ;; recreate の Service は期限を持たない(効かない欄を黙って受けない)。
   (with [(pytest.raises ValueError)]
-    (service "w" tally-program :env "m:e" :needs (frozenset ["net"]) :config {"interval" 1.0} :readiness {"windowSeconds" 10 "handoffTimeoutSeconds" 45}))
+    (<- (declared-job {"windowSeconds" 10 "handoffTimeoutSeconds" 45} "recreate")))
   (with [(pytest.raises ValueError)]
     (job-from-json (| {"name" "w"} RECREATE {"readiness" {"windowSeconds" 10 "handoffTimeoutSeconds" 45}}))))
 

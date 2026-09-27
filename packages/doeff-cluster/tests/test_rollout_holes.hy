@@ -45,7 +45,7 @@
 
 
 (deftest test-task-leases-survive-coordinator-downtime
-  (setv task (TaskRecord "t1" "n" "e" "b" "r" #() #() 15000 (+ 1000 15000) 1000))
+  (setv task (TaskRecord "t1" "n" "b" "r" #() #() 15000 (+ 1000 15000) 1000))
   (setv state (ClusterState :tasks {"t1" task} :alive-ms 5000))
   (setv #(after gap) (resume-after-downtime state 65000))
   (assert (= gap 60000))

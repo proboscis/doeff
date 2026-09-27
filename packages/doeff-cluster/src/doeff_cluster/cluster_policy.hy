@@ -4,16 +4,18 @@
 (require doeff-hy.macros [deff val])
 (import dataclasses [replace asdict])
 (import functools)
+(import hashlib)
 (import json)
+(import re)
 
 (import .worker_model [JobSpec])
-(import .cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterTiming ClusterState TaskRecord Request Drain EnvFailed WarmEntry HandoffPhase
+(import .cluster_model [ClusterJob WorkerInfo GenerationOrder Placement ClusterTiming ClusterState TaskRecord Request Drain EnvFailed WarmEntry HandoffPhase RefusedJob
                         capabilities-of component-versions-of task-record-to-json task-record-from-json ACCEPTED-FORMATS format-refusal
                         PLACED-PHASES handoff-watch-from-json])
 (import .semaphore_model [SEMAPHORE-PREFIX lease-op semaphore-write-refusal semaphore-key])
 (import .base_follow_policy [FULL-SHA])
 (import doeff [run])
-(import .runtime_env_model [runtime-env-of-json RuntimeEnvInvalid env-key])
+(import .runtime_env_model [runtime-env-of-json RuntimeEnvInvalid EnvVar env-key])
 (import .readiness_model [readiness-refusal])
 
 (setv JOB-ENTRY "doeff_cluster.job_entry")
@@ -59,12 +61,71 @@
       (JobSpec (get item "name") (get item "entry") (tuple (.get item "args" [])) revision
                :base (.get item "base") :handoff (= (.get item "update") "handoff") :runtime-env runtime)
     (= (.get run "kind") "service")
-      (JobSpec (get item "name") JOB-ENTRY
-               #("service" "--factory" (get run "factory") "--env" (get run "env")
-                 "--config" (json.dumps (.get run "config" {}) :sort-keys True :ensure-ascii False))
-               revision
-               :base (.get item "base") :handoff (= (.get item "update") "handoff") :runtime-env runtime)
+      (do (setv refusal (program-row-refusal item))
+          (when refusal (raise (ValueError refusal)))
+          (JobSpec (get item "name") JOB-ENTRY #("service" "--identity" (identity-hash run))
+                   revision
+                   :handoff (= (.get item "update") "handoff") :runtime-env runtime
+                   :program (get run "program")
+                   :environ (tuple (sorted (.items (.get item "environ" {}))))))
     True (raise (ValueError (+ "知らない run.kind: " (repr (.get run "kind")))))))
+
+
+;; --- Program の job の行(ADR-DOE-CLUSTER-001・改訂 1 の A・E・F・G) -------------------------------------
+
+(setv PROGRAM-SHA (re.compile r"[0-9a-f]{64}"))
+;; 旧い宣言の run の欄(関数の参照 + 設定 + handler の組の import path — 2026-09-27 より前の形)。
+(setv OLD-RUN-KEYS #("factory" "env" "config"))
+
+
+(deff identity-hash [#^ dict run]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
+  {:pre [(: run dict)] :post [(: % str) (= (len %) 16)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "Program の job の同一性の指紋 = identity(関数の参照と引数の正規 JSON)と versions の sha256 の頭 16 桁。job の引数に載り、
+   spec-hash(revision・environ と一緒)の材料になる。詰めた Program の中身(program の sha)は入れない — 揺れるため(改訂 1 の A)。"
+  (cut (.hexdigest (hashlib.sha256 (.encode (json.dumps {"identity" (get run "identity") "versions" (.get run "versions" {})}
+                                                        :sort-keys True :ensure-ascii False :separators #("," ":"))
+                                            "utf-8")))
+       0 16))
+
+
+(deff program-row-refusal [#^ dict item]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
+  {:pre [(: item dict)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "Program の job の宣言の行が受けられない理由(受けられれば None)。旧い形(run.factory・run.env・run.config・requires)・
+   baseFrom と overlay(Program を詰めた commit と別の commit で解くことになる — 改訂 1 の E)・置き場のキーの形・identity の欠け・
+   environ の名(EnvVar の検め・実行環境の env-vars との重なり — 改訂 1 の G)を検める。"
+  (setv run (get item "run")
+        old (lfor k OLD-RUN-KEYS :if (in k run) k)
+        environ (.get item "environ" {})
+        declared (lfor v (.get (or (.get item "runtimeEnv") {}) "envVars" []) (get v "name")))
+  (cond
+    old (.format "旧い宣言の形(run の {})は受け付けない — Program の値 1 つで宣言し直す(ADR-DOE-CLUSTER-001 R1・R3b)"
+                 (.join "・" old))
+    (is-not (.get item "requires") None) "旧い宣言の形(requires)は受け付けない — 要る能力 needs で宣言し直す(R4b)"
+    (or (is-not (.get item "baseFrom") None) (is-not (.get item "overlay") None))
+      "Program の job は baseFrom・overlay を持たない(詰めた commit と別の commit で解くことになる)"
+    (not (and (isinstance (.get run "program") str) (PROGRAM-SHA.fullmatch (get run "program"))))
+      (.format "run.program は詰めた Program の置き場のキー(64 桁の sha256): {!r}" (.get run "program"))
+    (not (and (isinstance (.get run "identity") dict) (isinstance (.get (get run "identity") "function") str)))
+      "run.identity(呼んだ関数の参照と引数)が無い"
+    (not (isinstance environ dict)) (.format "environ は文字列の鍵と値の object: {!r}" environ)
+    True (environ-refusal environ declared)))
+
+
+(deff environ-refusal [#^ dict environ #^ list declared]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
+  {:pre [(: environ dict) (: declared list)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "宣言の environ が受けられない理由。名と値は実行環境の env-vars と同じ検め(runtime_env_model.EnvVar — 名の形・worker の予約)で、
+   env-vars と同じ名は断る(子の環境変数の足し口を 1 つにする — 改訂 1 の G)。"
+  (for [#(k v) (.items environ)]
+    (when (not (isinstance v str))
+      (return (.format "environ の {} の値は文字列: {!r}" k v)))
+    (try
+      (EnvVar :name k :value v)
+      (except [error RuntimeEnvInvalid]
+        (return (.format "environ の {}: {}" k error)))))
+  (setv clash (sorted (gfor k environ :if (in k declared) k)))
+  (if clash
+      (.format "environ の {} は実行環境の env-vars と同じ名 — どちらか 1 つで宣言する" clash)
+      None))
 
 
 (defn #^ ClusterJob job-from-json [#^ dict item]
@@ -116,14 +177,32 @@
                  (if (is job.base-from None) {} {"baseFrom" job.base-from})
                  (if (is job.spec.base None) {} {"base" job.spec.base})
                  (if (is job.overlay None) {} {"overlay" job.overlay})
-                 (if (is job.spec.runtime-env None) {} {"runtimeEnv" (json.loads job.spec.runtime-env)})))
+                 (if (is job.spec.runtime-env None) {} {"runtimeEnv" (json.loads job.spec.runtime-env)})
+                 (if job.spec.environ {"environ" (dict job.spec.environ)} {})))
   (if (is job.run None)
       (| base extra {"entry" job.spec.entry "args" (list job.spec.args)})
       (| base extra {"run" job.run})))
 
 
+(deff read-service-rows [#^ list rows]  ; defk にできない: 保存の読み直し(state file・durable KV — Program の外)が呼ぶ純粋な判断
+  {:pre [(: rows list)] :post [(: % tuple) (= (len %) 2)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "保存の Service の行の列 → #(受け付けた ClusterJob の tuple  名 → RefusedJob)。読めない行(旧い宣言の形・壊れた行)は落とさずに
+   RefusedJob にして理由を持つ — 新しい coordinator が旧い置き場を読んで落ちないため(改訂 1 の C)。"
+  (setv jobs [] refused {})
+  (for [row rows]
+    (try
+      (.append jobs (job-from-json row))
+      (except [error [KeyError TypeError ValueError]]
+        (setv name (str (.get row "name" "?")))
+        (setv (get refused name) (RefusedJob :name name :row row :reason (.format "{}: {}" (. (type error) __name__) error))))))
+  #((tuple jobs) refused))
+
+
 (defn #^ dict spec-json [#^ JobSpec spec]
   (| {"name" spec.name "entry" spec.entry "args" (list spec.args) "revision" spec.revision "once" spec.once}
+     ;; Program の job だけ(改訂 1 の F・G): 詰めた Program の置き場のキー(worker が /programs/<sha> から取る)と子の環境変数。
+     (if spec.program {"program" spec.program} {})
+     (if spec.environ {"environ" (dict spec.environ)} {})
      (if (is spec.placement None) {} {"placement" spec.placement})
      (if (is spec.base None) {} {"base" spec.base})
      ;; 実行環境の job だけ: 宣言の JSON(worker が env の root を準備し、版を env のキーへ置き換える)。
@@ -137,7 +216,7 @@
 (defn #^ dict task-summary [#^ TaskRecord task]
   "状態表示と保存に使う形(blob と結果は大きいので保存の時だけ別に足す)。切り離した task だけ呼び手の job id を足す
    (RemoteJob の task の形は以前と同じ)。"
-  (| {"id" task.id "name" task.name "env" task.env "revision" task.revision "phase" task.phase
+  (| {"id" task.id "name" task.name "revision" task.revision "phase" task.phase
       "worker" task.worker "detail" task.detail "submittedMs" task.submitted-ms
       "startedMs" task.started-ms "finishedMs" task.finished-ms "leaseUntilMs" task.lease-until-ms}
      (if task.detached {"detached" True "key" task.key} {})))
@@ -146,7 +225,8 @@
 (defn #^ dict state-to-json [#^ ClusterState state]
   "資源の状態の保存の形。盤は入れない(盤は行ごとに別の file — SaveBoardRow)。"
   {"formatVersion" 2
-   "jobs" (lfor j state.jobs (job-to-json j))
+   "jobs" (+ (lfor j state.jobs (job-to-json j)) (lfor r (.values state.refused) r.row))
+   "programs" state.programs
    "placements" (dfor #(k v) (.items state.placements) k (asdict v))
    "workers" (lfor w (.values state.workers)
                    (| {"name" w.name "provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity
@@ -205,8 +285,11 @@
    この時点から移し替えの期限が過ぎた後に移る(その頃には自分で止まっている)。
    board = 行ごとの file から読んだ盤(渡さなければ、旧い形の file に在った盤)。資源の版の欄が無い旧い形の file は、
    読んだ後の最初の書きで resource_policy.stamp が版を振る(送り手 = 移し替え)。"
+  (setv #(jobs refused) (read-service-rows (list (get data "jobs"))))
   (ClusterState
-    :jobs (tuple (gfor j (get data "jobs") (job-from-json j)))
+    :jobs jobs
+    :refused refused
+    :programs (.get data "programs" {})
     ;; 旧い形(labels だけ — 2026-09-27 より前)の worker の行は読まない。能力を知らない worker に置かないため(次の heartbeat で
     ;; 新しい形の名乗りから作り直す)。
     :workers (dfor w (.get data "workers" [])
@@ -280,6 +363,16 @@
   (when (not needs)
     (raise (ValueError (.format "{} が空 — 要る能力の名を 1 つ以上書く(どこにでも置ける仕事は無い・ADR-DOE-CLUSTER-001 R4b・改訂 1 の I)" what))))
   needs)
+
+
+(deff task-body-refusal [#^ dict body]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
+  {:pre [(: body dict)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "task(POST /tasks・PUT /detached)の本文が受けられない理由 — 旧い形の env(handler の組の import path)と needs の欠け。
+   task も Program の値 1 つで、handler は Program の中で並べる(ADR-DOE-CLUSTER-001 R1・R2・改訂 1 の J の 11)。"
+  (if (in "env" body)
+      (.format "旧い形の env {!r}(handler の組の import path)は受け付けない — handler は task の Program の中の with-handlers で並べる"
+               (get body "env"))
+      (needs-refusal body)))
 
 
 (deff needs-refusal [#^ dict body]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
@@ -676,7 +769,7 @@
   (setv boot (if (is boot None) (. (.get state.workers worker (WorkerInfo worker #() 0 0)) boot) boot))
   (lfor task (sorted (.values state.tasks) :key (fn [t] t.id))
         :if (and (in task.phase PLACED-PHASES) (= task.worker worker) (same-boot task boot))
-        (| {"id" task.id "name" task.name "env" task.env "revision" task.revision
+        (| {"id" task.id "name" task.name "revision" task.revision
             "versions" (dict task.versions) "blob" task.blob}
            ;; 切り離した task は、状態を失った coordinator が引き取れるだけの欄を持つ(worker が状態の報告に写す —
            ;; adopt-running-detached・2026-09-27)。
@@ -807,7 +900,7 @@
 (defn #^ bool durable-changed [#^ ClusterState before #^ ClusterState after]
   "資源の状態の file(state.json)の保存が要る変化か。worker の生存の時刻・状態の報告・readiness・k8s の観測は保存しない。
    盤は含まない(盤は行ごとの file へ別に書く — board-changes)。"
-  (or (!= before.jobs after.jobs) (!= before.placements after.placements)
+  (or (!= before.jobs after.jobs) (!= before.refused after.refused) (!= before.programs after.programs) (!= before.placements after.placements)
       (!= before.tasks after.tasks)
       (!= before.next-task after.next-task) (!= before.task-prefix after.task-prefix)
       (!= before.revision after.revision)
@@ -925,13 +1018,13 @@
             (not-in (.get status "phase") ADOPTABLE-PHASES))
     (return None))
   (setv id (cut row-name 5 None) key (.get echo "key") lease-ms (.get echo "leaseMs")
-        env (.get echo "env") revision (.get echo "revision") needs (.get echo "needs" []))
+        revision (.get echo "revision") needs (.get echo "needs" []))
   (when (or (in id state.tasks) (!= (.get echo "id") id) (not (.get echo "detached"))
             (not (isinstance key str)) (not (isinstance lease-ms int))
-            (not (isinstance env str)) (not (isinstance revision str)) (not (isinstance needs list))
+            (not (isinstance revision str)) (not (isinstance needs list))
             (any (gfor t (.values state.tasks) (= t.key key))))
     (return None))
-  (TaskRecord id (.get echo "name" "") env "" revision
+  (TaskRecord id (.get echo "name" "") "" revision
               (component-versions-of (.get echo "versions" {})) (capabilities-of needs "引き取る task の needs") lease-ms (+ now lease-ms) now
               :phase "assigned" :worker worker :started-ms now :detached True :key key :boot boot
               :retain-ms (int (.get echo "retainMs" 0)) :runtime-env (.get echo "runtimeEnv")
@@ -1048,7 +1141,7 @@
 
 
 (defn #^ tuple submit-task [#^ ClusterState state #^ dict body #^ int now [owner None]]
-  (setv refusal (or (format-refusal body) (runtime-env-refusal body)))
+  (setv refusal (or (format-refusal body) (runtime-env-refusal body) (task-body-refusal body)))
   (when refusal (return #(state 400 {"error" refusal})))
   (setv lease-seconds (float (.get body "leaseSeconds" 15.0))
         open-count (len (lfor t (.values state.tasks) :if (or (= t.phase "queued") (in t.phase PLACED-PHASES)) t)))
@@ -1058,7 +1151,7 @@
     (return #(state 429 {"error" (.format "終わっていない task が上限 {} 本に達している" TASK-MAX-OPEN) "open" open-count})))
   (setv id (task-id state)
         lease-ms (int (* 1000 lease-seconds))
-        task (TaskRecord id (.get body "name" "") (get body "env") (get body "blob") (get body "revision")
+        task (TaskRecord id (.get body "name" "") (get body "blob") (get body "revision")
                          (component-versions-of (.get body "versions" {}))
                          (request-needs body "task の needs")
                          lease-ms (+ now lease-ms) now

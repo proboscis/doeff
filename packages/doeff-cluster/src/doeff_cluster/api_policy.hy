@@ -20,6 +20,8 @@
 ;;;                                      boot = 頼み手の process の世代。退いた世代の頼みは今の世代に drain を付けない(2026-09-27)
 ;;;   POST   /warm {"runtimeEnv" "needs" "ttlSeconds" "holder"} · GET /warm/<キー>
 ;;;                        実行環境の温める表(2026-09-26 — warm_policy。答えは WarmState)
+;;;   PUT /programs/<sha> {"blob" "versions"} · GET /programs/<sha>
+;;;                        詰めた Program の置き場(2026-09-27 — program_policy。宣言の行と heartbeat の返事は sha だけを運ぶ)
 ;;;   PUT /detached/<key> · GET /detached/<key> · POST /detached/<key>/cancel · DELETE /detached/<key>
 ;;;                        切り離した task(呼び手と寿命を切り離した task — 送る・読む・取り消す・保持を解く。detached_policy)
 ;;; 書きには header X-Actor(依頼の主体の id・作業係の名・worker の名)が要る。盤と task は無ければ送り元の番地で記録する。
@@ -39,6 +41,7 @@
 (import .detached_policy [Reply submit-detached detached-read cancel-detached release-detached])
 (import .rollout_policy [rollout-step target-key deployment-owners drift-status action-due shift-clocks TERMINAL-PHASES])
 (import .warm_policy [warm-write warm-read])
+(import .program_policy [program-write program-read sweep-programs])
 
 (setv OBSERVATION-STALE-MS 15000)   ; これより古い k8s の観測は Unknown
 (setv ROLLOUT-ACTOR "rollout-controller")
@@ -49,7 +52,8 @@
   (setv changed (stamp before after actor now timing)
         ;; drain(2026-09-25): 割り当ての後に、drain 中の worker の上の入れ替えの Service を並べる・付け替える(readiness を読む)。
         ;; 入れ替えの期限(2026-09-26): 最後に、入れ替えの Service の期限の見張りを進める(heartbeat の返事はこの後の状態から作る)。
-        reconciled (watch-handoffs now (advance-drains now (reconcile now changed timing) timing) timing))
+        ;; 詰めた Program の置き場(改訂 1 の F): 参照の無くなった物を掃除する。
+        reconciled (sweep-programs (watch-handoffs now (advance-drains now (reconcile now changed timing) timing) timing) now))
   (stamp changed reconciled COORDINATOR now timing))
 
 
@@ -315,7 +319,8 @@
         (board-write state (.join "/" (cut parts 1 None)) body now)
       (and (= method "POST") (= parts ["tasks"]))
         (do (setv #(after status reply) (submit-task state body now))
-            #((settle state after (loose-actor request) now timing) status reply))
+            ;; 断った本文(400・429)は状態を変えない — 調停も通さず同じ状態を返す。
+            #((if (is after state) state (settle state after (loose-actor request) now timing)) status reply))
       (and (= method "GET") (= head "tasks") (= (len parts) 2)) (poll-task state (get parts 1) now)
       (and (= method "DELETE") (= head "tasks") (= (len parts) 2))
         #((settle state (replace state :tasks (dfor #(k v) (.items state.tasks) :if (!= k (get parts 1)) k v))
@@ -327,6 +332,12 @@
                   #(after status reply) (warm-write state body now actor timing))
             #((if (is after state) state (settle state after actor now timing)) status reply))
       (and (= method "GET") (= head "warm") (= (len parts) 2)) (warm-read state (get parts 1) now timing)
+      ;; --- 詰めた Program の置き場(2026-09-27 — program_policy・改訂 1 の F)---
+      (and (= method "PUT") (= head "programs") (= (len parts) 2))
+        (do (setv actor (loose-actor request)
+                  #(after status reply) (program-write state (get parts 1) body now))
+            #((if (is after state) state (settle state after actor now timing)) status reply))
+      (and (= method "GET") (= head "programs") (= (len parts) 2)) (program-read state (get parts 1))
       ;; --- 切り離した task(2026-09-25 — detached_policy)---
       (and (= method "PUT") (= head "detached") (= (len parts) 2))
         (detached-reply state (submit-detached state (get parts 1) body now) request now timing)
