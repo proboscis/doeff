@@ -3,11 +3,19 @@
 use clap::Parser;
 use colored::*;
 use doeff_linter::{
-    collect_python_files_with_options, config, lint_files_parallel, logging::{LintLogEntry, LintLogger}, models::Severity, rules,
+    collect_python_files_with_options, config,
+    editor::{self, EditorInput},
+    lint_files_parallel, lint_source,
+    logging::{LintLogEntry, LintLogger},
+    models::{LintResult, Severity, Violation},
+    position::offset_of,
+    project::{self, rule::ProjectRule, settings::ProjectSettings, ProjectReport, Target},
+    rule_info::get_rule_info,
+    rules, should_exclude,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 #[derive(Parser, Debug)]
@@ -37,6 +45,9 @@ EXAMPLES:
   doeff-linter --disable DOEFF001        Disable specific rule
   doeff-linter --modified                Lint only git-modified files
   doeff-linter --output-format json      Output in JSON format
+  doeff-linter --output-format editor-json            エディタ向けの JSON(repo 全体)
+  doeff-linter --output-format editor-json --stdin --path <file>   保存前の内容の 1 file
+  doeff-linter --config <file> --root <dir> ...       設定 file と repo の根を指定
 "#)]
 struct Args {
     /// Files or directories to lint
@@ -55,13 +66,29 @@ struct Args {
     #[arg(long, value_delimiter = ',')]
     exclude: Vec<String>,
 
-    /// Output format: text, json
+    /// Output format: text, json, editor-json
     #[arg(long, default_value = "text")]
     output_format: String,
 
     /// Ignore pyproject.toml configuration
     #[arg(long)]
     no_config: bool,
+
+    /// 設定 file(`[tool.doeff-linter]` を持つ pyproject.toml の形か、節の中身だけの TOML)。無ければ上へ探す
+    #[arg(long)]
+    config: Option<PathBuf>,
+
+    /// repo の根(層の置き場・登録簿・鍵の path の基準)。既定は見つけた pyproject.toml の dir、--config の時は今の dir
+    #[arg(long)]
+    root: Option<PathBuf>,
+
+    /// 保存前の内容を stdin から読む(--path が要る・editor-json の時だけ)
+    #[arg(long)]
+    stdin: bool,
+
+    /// --stdin の内容をどの file として判じるか
+    #[arg(long)]
+    path: Option<PathBuf>,
 
     /// Show verbose output
     #[arg(short, long)]
@@ -107,6 +134,121 @@ struct HookOutput {
     followup_message: Option<String>,
 }
 
+/// 出力の形(閉じた集合)。知らない綴りは今までどおり text として扱う。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputFormat {
+    Text,
+    Json,
+    EditorJson,
+}
+
+impl OutputFormat {
+    /// `--output-format` の綴りを読む。
+    fn parse(text: &str) -> OutputFormat {
+        match text {
+            "json" => OutputFormat::Json,
+            "editor-json" => OutputFormat::EditorJson,
+            _ => OutputFormat::Text,
+        }
+    }
+}
+
+/// 設定を読んで決めた実行の前提(設定・repo の根・有効な規則・除く pattern・層の規則の設定)。
+struct Setup {
+    config: Option<config::Config>,
+    root: PathBuf,
+    enabled_rules: Option<Vec<String>>,
+    exclude_patterns: Vec<String>,
+    settings: ProjectSettings,
+}
+
+impl Setup {
+    /// 有効な層の規則(`enable`・`disable` を当てた後)。
+    fn project_rules(&self) -> BTreeSet<ProjectRule> {
+        project::enabled_rules(self.enabled_rules.as_deref())
+    }
+
+    /// 層の規則のうち、設定の節が在って判定がつながっている物。
+    fn project_wired(&self) -> BTreeSet<ProjectRule> {
+        self.project_rules()
+            .into_iter()
+            .filter(|rule| match rule {
+                ProjectRule::LayerImportDirection
+                | ProjectRule::LayerForbiddenModule
+                | ProjectRule::LayerTypesOnly
+                | ProjectRule::ModuleDeclaresTags
+                | ProjectRule::RoleMatchesLayer => self.settings.layers.is_some(),
+                ProjectRule::RawSideEffectDirect | ProjectRule::RawSideEffectVia => self.settings.raw.is_some(),
+                ProjectRule::EnvironmentName => self.settings.environment.is_some(),
+            })
+            .collect()
+    }
+
+    /// 層の規則の設定が 1 つでも在るか(無ければ層の規則を走らせない)。
+    fn has_project_rules(&self) -> bool {
+        self.settings.layers.is_some() || self.settings.environment.is_some() || self.settings.raw.is_some()
+    }
+}
+
+/// 設定を探して読み、repo の根と有効な規則を決める。設定が読めない・名前が食い違う時は理由の文(終了コード 2)。
+fn prepare(args: &Args) -> Result<Setup, String> {
+    let cwd = std::env::current_dir().map_err(|e| format!("今の dir を読めない: {}", e))?;
+    let loaded = if args.no_config {
+        None
+    } else {
+        config::load_config_checked(args.config.as_deref(), &cwd)?
+    };
+    let root = match (&args.root, &loaded, &args.config) {
+        (Some(root), _, _) => root.clone(),
+        (None, Some(found), None) => found.path.parent().map(Path::to_path_buf).unwrap_or_else(|| cwd.clone()),
+        _ => cwd.clone(),
+    };
+    let root = root.canonicalize().map_err(|e| format!("repo の根 {} を読めない: {}", root.display(), e))?;
+    let config = loaded.map(|l| l.config);
+    let settings = match &config {
+        Some(config) => config.project_settings().map_err(|problems| format!("設定の誤り:\n  {}", problems.join("\n  ")))?,
+        None => ProjectSettings::default(),
+    };
+    let (enabled_rules, exclude_patterns) = config::merge_config(config.as_ref(), &args.enable, &args.disable, &args.exclude);
+    Ok(Setup { config, root, enabled_rules, exclude_patterns, settings })
+}
+
+/// 違反を出す file を path の引数で絞る時の path の列(既定の "." なら None = 全部)。
+fn only_paths(paths: &[String]) -> Option<Vec<PathBuf>> {
+    if paths.iter().all(|p| p == ".") {
+        return None;
+    }
+    Some(paths.iter().map(|p| editor::absolute(Path::new(p))).map(|p| p.canonicalize().unwrap_or(p)).collect())
+}
+
+/// 層の規則の違反を、今までの出力(text・json・hook)が読む形(Python の規則の違反と同じ Violation)に写す。
+/// only があれば、その path の下の file の違反だけにする。
+fn project_results(report: &ProjectReport, only: Option<&[PathBuf]>) -> Vec<LintResult> {
+    let mut by_path: BTreeMap<PathBuf, Vec<&project::Finding>> = BTreeMap::new();
+    for finding in report.findings.iter().filter(|f| only.is_none_or(|only| only.iter().any(|p| f.path.starts_with(p)))) {
+        by_path.entry(finding.path.clone()).or_default().push(finding);
+    }
+    by_path
+        .into_iter()
+        .map(|(path, findings)| {
+            let path_text = path.to_string_lossy().into_owned();
+            let source = std::fs::read_to_string(&path).unwrap_or_default();
+            let mut result = LintResult::new(path_text.clone());
+            result.violations = findings
+                .into_iter()
+                .map(|f| {
+                    let message = match &f.law {
+                        Some(law) => format!("[{}] {}(鍵 {})", law, f.message, f.key),
+                        None => format!("{}(鍵 {})", f.message, f.key),
+                    };
+                    Violation::new(f.rule.id().to_string(), message, offset_of(&source, f.range.start), path_text.clone(), f.severity)
+                })
+                .collect();
+            result
+        })
+        .collect()
+}
+
 fn main() -> ExitCode {
     let args = Args::parse();
 
@@ -114,7 +256,91 @@ fn main() -> ExitCode {
         return run_as_hook(&args);
     }
 
-    run_normal(&args)
+    match OutputFormat::parse(&args.output_format) {
+        OutputFormat::EditorJson => run_editor(&args),
+        OutputFormat::Text | OutputFormat::Json => run_normal(&args),
+    }
+}
+
+/// `--output-format editor-json` — エディタ向けの JSON を 1 つ出す。終了コード 0 = 新しい破れ(error)なし、1 = あり、2 = 引数・設定の誤り。
+fn run_editor(args: &Args) -> ExitCode {
+    let setup = match prepare(args) {
+        Ok(setup) => setup,
+        Err(reason) => {
+            eprintln!("doeff-linter: {}", reason);
+            return ExitCode::from(2);
+        }
+    };
+    let python_rules = rules::get_enabled_rules(setup.enabled_rules.as_deref());
+    let python_ids: Vec<String> = python_rules.iter().map(|r| r.rule_id().to_string()).collect();
+    let project_rules = setup.project_rules();
+    let project_wired = setup.project_wired();
+
+    let (python_results, project_report, stdin_file, only) = if args.stdin {
+        let Some(path) = &args.path else {
+            eprintln!("doeff-linter: --stdin には --path が要る");
+            return ExitCode::from(2);
+        };
+        let mut source = String::new();
+        if let Err(error) = io::stdin().read_to_string(&mut source) {
+            eprintln!("doeff-linter: stdin を読めない: {}", error);
+            return ExitCode::from(2);
+        }
+        let path = editor::absolute(path);
+        let is_python = path.extension().is_some_and(|e| e == "py");
+        let python_results = if is_python && !python_rules.is_empty() && !should_exclude(&path, &setup.exclude_patterns) {
+            vec![lint_source(&path.to_string_lossy(), &source, &python_rules)]
+        } else {
+            Vec::new()
+        };
+        let project_report = if setup.has_project_rules() {
+            project::run(&setup.root, &setup.settings, &project_rules, Target::Single { path: path.clone(), source: &source })
+        } else {
+            ProjectReport::default()
+        };
+        (python_results, project_report, Some((path, source)), None)
+    } else {
+        if args.path.is_some() {
+            eprintln!("doeff-linter: --path は --stdin と一緒に使う");
+            return ExitCode::from(2);
+        }
+        let python_results = if python_rules.is_empty() {
+            Vec::new()
+        } else {
+            let files = collect_python_files_with_options(&args.paths, &setup.exclude_patterns, args.force_exclude);
+            lint_files_parallel(&files, &python_rules)
+        };
+        let project_report = if setup.has_project_rules() {
+            project::run(&setup.root, &setup.settings, &project_rules, Target::Whole)
+        } else {
+            ProjectReport::default()
+        };
+        (python_results, project_report, None, only_paths(&args.paths))
+    };
+
+    let report = editor::build(&EditorInput {
+        root: &setup.root,
+        python: &python_results,
+        stdin: stdin_file.as_ref().map(|(p, s)| (p.as_path(), s.as_str())),
+        project: &project_report,
+        settings: &setup.settings,
+        python_rules: &python_ids,
+        project_rules: &project_rules,
+        project_wired: &project_wired,
+        only: only.as_deref(),
+    });
+    match serde_json::to_string(&report) {
+        Ok(text) => println!("{}", text),
+        Err(error) => {
+            eprintln!("doeff-linter: 出力を JSON にできない: {}", error);
+            return ExitCode::from(2);
+        }
+    }
+    if report.has_errors() {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 fn run_as_hook(args: &Args) -> ExitCode {
@@ -142,20 +368,23 @@ fn run_as_hook(args: &Args) -> ExitCode {
         .workspace_roots
         .unwrap_or_else(|| vec![".".to_string()]);
 
-    // Load config
-    let config = if args.no_config {
-        None
-    } else {
-        config::load_config(None)
+    // Load config(hook は agent を止めないので、設定が読めない時は理由を stderr に出して設定なしで続ける)
+    let setup = match prepare(args) {
+        Ok(setup) => setup,
+        Err(reason) => {
+            eprintln!("doeff-linter: {}(設定なしで続ける)", reason);
+            let (enabled_rules, exclude_patterns) = config::merge_config(None, &args.enable, &args.disable, &args.exclude);
+            Setup {
+                config: None,
+                root: std::env::current_dir().unwrap_or_default(),
+                enabled_rules,
+                exclude_patterns,
+                settings: ProjectSettings::default(),
+            }
+        }
     };
-
-    // Merge CLI args with config
-    let (enabled_rules, exclude_patterns) = config::merge_config(
-        config.as_ref(),
-        &args.enable,
-        &args.disable,
-        &args.exclude,
-    );
+    let config = setup.config.clone();
+    let (enabled_rules, exclude_patterns) = (setup.enabled_rules.clone(), setup.exclude_patterns.clone());
 
     // Get rules
     let all_rules = rules::get_enabled_rules(enabled_rules.as_deref());
@@ -163,14 +392,18 @@ fn run_as_hook(args: &Args) -> ExitCode {
     // Collect files (hook mode always respects exclusions)
     let files = collect_python_files_with_options(&paths, &exclude_patterns, true);
 
-    if files.is_empty() {
-        // No files to lint, output empty response
+    // Lint files(層の規則の違反も同じ形で足す)
+    let mut results = lint_files_parallel(&files, &all_rules);
+    if setup.has_project_rules() {
+        let report = project::run(&setup.root, &setup.settings, &setup.project_rules(), Target::Whole);
+        results.extend(project_results(&report, only_paths(&paths).as_deref()));
+    }
+
+    if results.iter().all(|r| r.violations.is_empty()) {
+        // No violations, output empty response
         println!("{}", serde_json::json!({}));
         return ExitCode::SUCCESS;
     }
-
-    // Lint files
-    let results = lint_files_parallel(&files, &all_rules);
 
     // Group and count violations
     let mut grouped: BTreeMap<String, Vec<ViolationSummary>> = BTreeMap::new();
@@ -265,20 +498,20 @@ fn build_followup_message(grouped: &BTreeMap<String, Vec<ViolationSummary>>) -> 
 }
 
 fn run_normal(args: &Args) -> ExitCode {
-    // Load config
-    let config = if args.no_config {
-        None
-    } else {
-        config::load_config(None)
+    if args.stdin || args.path.is_some() {
+        eprintln!("doeff-linter: --stdin と --path は --output-format editor-json の時だけ使う");
+        return ExitCode::from(2);
+    }
+    // Load config(読めない設定は黙って捨てず、理由を出して終了コード 2)
+    let setup = match prepare(args) {
+        Ok(setup) => setup,
+        Err(reason) => {
+            eprintln!("doeff-linter: {}", reason);
+            return ExitCode::from(2);
+        }
     };
-
-    // Merge CLI args with config
-    let (enabled_rules, exclude_patterns) = config::merge_config(
-        config.as_ref(),
-        &args.enable,
-        &args.disable,
-        &args.exclude,
-    );
+    let config = setup.config.clone();
+    let (enabled_rules, exclude_patterns) = (setup.enabled_rules.clone(), setup.exclude_patterns.clone());
 
     if args.verbose {
         eprintln!("Enabled rules: {:?}", enabled_rules);
@@ -305,11 +538,11 @@ fn run_normal(args: &Args) -> ExitCode {
         // Get git-modified files
         let base_path = args.paths.first().map(|s| s.as_str()).unwrap_or(".");
         let modified_files = get_git_modified_files(base_path);
-        
+
         if args.verbose {
             eprintln!("Git modified files: {:?}", modified_files);
         }
-        
+
         // Filter by exclude patterns and convert to PathBuf
         // Modified mode always applies exclusions (like force_exclude)
         modified_files
@@ -327,13 +560,21 @@ fn run_normal(args: &Args) -> ExitCode {
         eprintln!("Found {} Python files", files.len());
     }
 
-    if files.is_empty() {
+    if files.is_empty() && !setup.has_project_rules() {
         eprintln!("No Python files found");
         return ExitCode::SUCCESS;
     }
 
-    // Lint files
-    let results = lint_files_parallel(&files, &all_rules);
+    // Lint files(層の規則の違反も同じ形で足す)
+    let mut results = lint_files_parallel(&files, &all_rules);
+    if setup.has_project_rules() {
+        let report = project::run(&setup.root, &setup.settings, &setup.project_rules(), Target::Whole);
+        for error in &report.errors {
+            eprintln!("doeff-linter: {}", error);
+        }
+        let only = if args.modified { None } else { only_paths(&args.paths) };
+        results.extend(project_results(&report, only.as_deref()));
+    }
 
     // Count violations
     let mut error_count = 0;
@@ -351,11 +592,11 @@ fn run_normal(args: &Args) -> ExitCode {
     }
 
     // Output results
-    match args.output_format.as_str() {
-        "json" => {
+    match OutputFormat::parse(&args.output_format) {
+        OutputFormat::Json => {
             print_json(&results);
         }
-        _ => {
+        OutputFormat::Text | OutputFormat::EditorJson => {
             print_text_grouped(&results);
         }
     }
@@ -398,158 +639,6 @@ fn run_normal(args: &Args) -> ExitCode {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS
-    }
-}
-
-/// Rule info with description and fix suggestion
-struct RuleInfo {
-    name: &'static str,
-    description: &'static str,
-    fix: &'static str,
-}
-
-fn get_rule_info(rule_id: &str) -> RuleInfo {
-    match rule_id {
-        "DOEFF001" => RuleInfo {
-            name: "Builtin Shadowing",
-            description: "A function parameter or variable shadows a Python builtin (e.g., `list`, `dict`, `id`).",
-            fix: "Rename the variable to avoid shadowing: `items` instead of `list`, `mapping` instead of `dict`.",
-        },
-        "DOEFF002" => RuleInfo {
-            name: "Mutable Attribute Naming",
-            description: "A mutable class attribute (list, dict, set) doesn't follow the `_mut_` naming convention.",
-            fix: "Prefix mutable attributes with `_mut_`: `self._mut_items = []` instead of `self.items = []`.",
-        },
-        "DOEFF003" => RuleInfo {
-            name: "Max Mutable Attributes",
-            description: "A class has too many mutable attributes, indicating potential design issues.",
-            fix: "Refactor the class to reduce mutable state, or split into smaller classes.",
-        },
-        "DOEFF004" => RuleInfo {
-            name: "No os.environ Access",
-            description: "Direct access to `os.environ` breaks dependency injection principles.",
-            fix: "Inject configuration as function parameters or use a config dataclass instead.",
-        },
-        "DOEFF005" => RuleInfo {
-            name: "No Setter Methods",
-            description: "Setter methods (set_*, @property.setter) violate immutability principles.",
-            fix: "Use immutable patterns: return new instances with modified values instead of mutating.",
-        },
-        "DOEFF006" => RuleInfo {
-            name: "No Tuple Returns",
-            description: "Returning raw tuples reduces code readability and type safety.",
-            fix: "Use a dataclass or NamedTuple: `@dataclass class Result: value: int; error: str`.",
-        },
-        "DOEFF007" => RuleInfo {
-            name: "No Mutable Argument Mutations",
-            description: "Mutating function arguments (list.append, dict.update) causes side effects.",
-            fix: "Create a copy first: `items = items.copy(); items.append(x)` or return new collections.",
-        },
-        "DOEFF008" => RuleInfo {
-            name: "No Dataclass Attribute Mutation",
-            description: "Mutating dataclass attributes after creation breaks immutability.",
-            fix: "Use `frozen=True` dataclasses and `dataclasses.replace()` to create modified copies.",
-        },
-        "DOEFF009" => RuleInfo {
-            name: "Missing Return Type Annotation",
-            description: "Functions without return type annotations reduce code clarity and type safety.",
-            fix: "Add return type: `def foo() -> int:` or `def bar() -> None:` for no return value.",
-        },
-        "DOEFF010" => RuleInfo {
-            name: "Test File Placement",
-            description: "Test files should be in a `tests/` directory, not mixed with source code.",
-            fix: "Move test files to a dedicated `tests/` directory at the project root.",
-        },
-        "DOEFF011" => RuleInfo {
-            name: "No Flag/Mode Arguments",
-            description: "Functions and dataclasses use flag/mode arguments instead of callbacks or protocol objects.",
-            fix: "Accept a callback or protocol object. Example: instead of `def process(data, use_cache: bool)`, use `def process(data, cache: CacheProtocol)` or `def process(data, get_cached: Callable[[Data], Result])`.",
-        },
-        "DOEFF012" => RuleInfo {
-            name: "No Append Loop Pattern",
-            description: "Empty list initialization followed by for-loop append obscures the data transformation pipeline.",
-            fix: "Use list comprehension: `data = [process(x) for x in items]`. For complex logic, extract to a named function. If mutation is required (queue/stack ops, BFS/DFS, dynamic algorithms), add `# noqa: DOEFF012` to the for-loop line.",
-        },
-        "DOEFF013" => RuleInfo {
-            name: "Prefer Maybe Monad",
-            description: "Optional[X] or X | None type annotations should use doeff's Maybe monad for explicit null handling.",
-            fix: "Use `Maybe[X]` instead of `Optional[X]`. Import with `from doeff import Maybe, Some, NOTHING`. Use `Maybe.from_optional(value)` to convert existing Optional values.",
-        },
-        "DOEFF014" => RuleInfo {
-            name: "No Try-Except Blocks",
-            description: "Using try-except blocks hides error handling flow. Use doeff's error handling effects instead.",
-            fix: "Use `Safe(program)` to get a Result, `program.recover(fallback)` for fallbacks, `program.first_success(alt1, alt2)` for alternatives, or `Catch(program, handler)` to transform errors.",
-        },
-        "DOEFF015" => RuleInfo {
-            name: "No Zero-Argument Program Entrypoints",
-            description: "Program entrypoints should not be created by zero-argument factory functions.",
-            fix: "Pass explicit arguments to make configuration visible: `process(data=input, threshold=0.5)`.",
-        },
-        "DOEFF016" => RuleInfo {
-            name: "No Relative Imports",
-            description: "Relative imports make code harder to understand and refactor.",
-            fix: "Use absolute imports: `from mypackage.module import func` instead of `from .module import func`.",
-        },
-        "DOEFF017" => RuleInfo {
-            name: "No Program Type Parameters",
-            description: "@do functions should accept type T, not Program[T]. Program[T] prevents auto-unwrapping.",
-            fix: "Change parameter type from `Program[T]` to `T`. If intentional (Program transforms), suppress with `# noqa: DOEFF017`.",
-        },
-        "DOEFF018" => RuleInfo {
-            name: "No Ask in Try Block",
-            description: "Using `yield Ask(...)` inside try blocks can cause unexpected behavior.",
-            fix: "Move the Ask outside the try block, or use doeff's error handling effects like `Safe()` or `recover()`.",
-        },
-        "DOEFF019" => RuleInfo {
-            name: "No Ask with Fallback",
-            description: "Using fallback values with Ask defeats the purpose of dependency injection.",
-            fix: "Remove the fallback and ensure dependencies are properly provided at runtime.",
-        },
-        "DOEFF020" => RuleInfo {
-            name: "Program Naming Convention",
-            description: "Program type variables should use 'p_' prefix for consistency.",
-            fix: "Rename the variable: `data_program` → `p_data`.",
-        },
-        "DOEFF021" => RuleInfo {
-            name: "No __all__ Declaration",
-            description: "This project defaults to exporting everything from modules.",
-            fix: "Remove the `__all__` declaration. If needed for specific reasons, use `# noqa: DOEFF021`.",
-        },
-        "DOEFF022" => RuleInfo {
-            name: "Prefer @do Decorated Functions",
-            description: "Functions should use @do decorator to enable structured effects and logging with `yield slog`.",
-            fix: "Add @do decorator and use `yield slog(\"message\", key=value)` for structured logging. If intentional, suppress with `# noqa: DOEFF022`.",
-        },
-        "DOEFF023" => RuleInfo {
-            name: "Pipeline Marker Required",
-            description: "@do functions used to create Program entrypoints must have `# doeff: pipeline` marker.",
-            fix: "Add `# doeff: pipeline` marker after @do decorator, def line, or in docstring to acknowledge pipeline-oriented programming.",
-        },
-        "DOEFF024" => RuleInfo {
-            name: "No Recover with Ask",
-            description: "Using `recover()` with `ask()` defeats dependency injection.",
-            fix: "Ensure dependencies are properly provided instead of using fallbacks.",
-        },
-        "DOEFF030" => RuleInfo {
-            name: "Ask Result Type Annotation",
-            description: "Results of `yield ask(...)` must be assigned to typed variables, and callable injections must use Protocol keys with @impl providers.",
-            fix: "Use `value: Type = yield ask(\"key\")`. For callable injection, define a Protocol, ask with that Protocol, and provide an `@impl(Protocol)` function.",
-        },
-        "DOEFF031" => RuleInfo {
-            name: "No Redundant @do Wrapper Entrypoints",
-            description: "Avoid creating Program entrypoints by calling @do wrappers that only forward args to a single yielded call and return it.",
-            fix: "Replace `p_x: Program[...] = wrapper(...)` with `p_x: Program[...] = underlying(...)` using the same arguments. If the wrapper is intentional (naming/tracing), add `# noqa: DOEFF031`.",
-        },
-        "NOQA001" => RuleInfo {
-            name: "Malformed noqa Comment",
-            description: "The noqa comment format appears incorrect and may not suppress the intended rule.",
-            fix: "Use ` - ` (space-dash-space) to separate the rule ID from explanation. Example: `# noqa: DOEFF001 - reason`",
-        },
-        _ => RuleInfo {
-            name: "Unknown Rule",
-            description: "Unknown rule violation.",
-            fix: "Check the documentation for more information.",
-        },
     }
 }
 

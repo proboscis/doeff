@@ -2,6 +2,10 @@
 //!
 //! Loads configuration from pyproject.toml [tool.doeff-linter] section
 
+use crate::project::settings::{
+    EnvironmentNamesSection, LawEntry, LayersSection, ProjectSections, ProjectSettings, RawSideEffectsSection, RegistrySection,
+    RolesSection, TagsSection,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -33,6 +37,49 @@ pub struct Config {
     /// Defaults to ".doeff-lint.jsonl"
     #[serde(default = "default_log_file")]
     pub log_file: Option<String>,
+
+    /// 層の規則(DOEFF101〜105)の層の順・置き場・import の決まり — `[tool.doeff-linter.layers]`
+    #[serde(default)]
+    pub layers: Option<LayersSection>,
+
+    /// タグの読み方 — `[tool.doeff-linter.tags]`(既定のままでよい)
+    #[serde(default)]
+    pub tags: Option<TagsSection>,
+
+    /// role の閉じた一覧と層ごとに許す role — `[tool.doeff-linter.roles]`
+    #[serde(default)]
+    pub roles: Option<RolesSection>,
+
+    /// 業務の名に付けてはいけない環境の語(DOEFF108)— `[tool.doeff-linter.environment_names]`
+    #[serde(default)]
+    pub environment_names: Option<EnvironmentNamesSection>,
+
+    /// 生の副作用に直に触ってよい層(DOEFF106・107)— `[tool.doeff-linter.raw_side_effects]`
+    #[serde(default)]
+    pub raw_side_effects: Option<RawSideEffectsSection>,
+
+    /// 規則 ID と ADR の law の対応 — `[[tool.doeff-linter.laws]]`
+    #[serde(default)]
+    pub laws: Vec<LawEntry>,
+
+    /// 既知の破れの登録簿と照合中の規則 — `[tool.doeff-linter.registry]`
+    #[serde(default)]
+    pub registry: Option<RegistrySection>,
+}
+
+impl Config {
+    /// 層の規則の節を検めて、規則が読む形にする(名前の食い違いは理由の文の列)。
+    pub fn project_settings(&self) -> Result<ProjectSettings, Vec<String>> {
+        ProjectSettings::validate(&ProjectSections {
+            layers: self.layers.as_ref(),
+            tags: self.tags.as_ref(),
+            roles: self.roles.as_ref(),
+            environment_names: self.environment_names.as_ref(),
+            raw_side_effects: self.raw_side_effects.as_ref(),
+            laws: &self.laws,
+            registry: self.registry.as_ref(),
+        })
+    }
 }
 
 fn default_log_file() -> Option<String> {
@@ -137,6 +184,39 @@ pub fn load_config(path: Option<&Path>) -> Option<Config> {
     let config: Config = doeff_linter.clone().try_into().ok()?;
 
     Some(config)
+}
+
+/// 見つけた設定 file と、その中の `[tool.doeff-linter]` の節。
+#[derive(Debug, Clone)]
+pub struct LoadedConfig {
+    pub config: Config,
+    /// 設定を読んだ file。
+    pub path: PathBuf,
+}
+
+/// 設定 file を読む。`[tool.doeff-linter]` の節を持つ file(pyproject.toml の形)でも、節の中身だけを書いた file でもよい。
+/// 読めない・TOML でない・欄の型が違う時は理由の文を返す(黙って既定値にしない)。
+pub fn load_config_file(path: &Path) -> Result<Config, String> {
+    let content = std::fs::read_to_string(path).map_err(|e| format!("{} を読めない: {}", path.display(), e))?;
+    let value: toml::Value = toml::from_str(&content).map_err(|e| format!("{} は TOML として読めない: {}", path.display(), e))?;
+    let section = match value.get("tool").and_then(|tool| tool.get("doeff-linter")) {
+        Some(section) => section.clone(),
+        None => value,
+    };
+    section.try_into().map_err(|e: toml::de::Error| format!("{} の [tool.doeff-linter] を読めない: {}", path.display(), e))
+}
+
+/// 設定を探して読む: explicit(`--config`)があればそれを、無ければ start から上へ `[tool.doeff-linter]` を持つ pyproject.toml を探す。
+/// 見つからなければ Ok(None)。見つけた file が読めなければ Err。
+pub fn load_config_checked(explicit: Option<&Path>, start: &Path) -> Result<Option<LoadedConfig>, String> {
+    let path = match explicit {
+        Some(path) => path.to_path_buf(),
+        None => match find_config_pyproject_toml(start) {
+            Some(path) => path,
+            None => return Ok(None),
+        },
+    };
+    load_config_file(&path).map(|config| Some(LoadedConfig { config, path }))
 }
 
 // Re-export get_all_rule_ids from rules module

@@ -10,7 +10,8 @@ mod model;
 mod position;
 mod raw;
 pub mod raw_catalog;
-mod reader;
+/// Hy の読み取り器(form の木)。doeff-linter が同じ読み取りで `:tags` の辞書と import の式を読むために公開する。
+pub mod reader;
 
 #[cfg(test)]
 mod tests;
@@ -24,6 +25,7 @@ pub use model::{
     Call, Definition, DefinitionKind, HyFileIndex, HyIndex, Import, Position, Range, RawEvidence, RawEvidenceKind, RawMark,
     RawStep, RawStrength, RawVia, RawViaScope, Reference, CONTRACT_VERSION,
 };
+pub use position::LineIndex;
 pub use raw::{annotate as annotate_raw, matches_pattern};
 pub use raw_catalog::{RawCatalog, RawCategory};
 
