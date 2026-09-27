@@ -2,7 +2,7 @@
 ;;;
 ;;; 記録 = 1 つの process(run)が出した effect の問いと答えの出来事の列。行は JSON で、欄 "k" が種類:
 ;;;
-;;;   run    先頭の 1 行。形の版・service・run の名・worker・process の世代・版(revision / base)・設定・始まりの時刻
+;;;   run    先頭の 1 行。形の版・service・run の名・worker・process の世代・版(revision)・Program の置き場のキー(program)・送り手の版(versions)・始まりの時刻
 ;;;   chunk  区切り(chunk-seconds ごと)の頭。区切りごとに差分の元を忘れるので、各区切りの最初の値は丸ごと(断面)
 ;;;   req    問い。e = 出来事の番号(run の中で 0 から 1 ずつ・問いの id を兼ねる)・t = task の名・at = 壁時計の ms・
 ;;;          ty = effect の型の名・a = 引数(大きければ ad = 差分・ab = 元の出来事の番号・ak = 差分の鍵)
@@ -201,7 +201,7 @@
     (setv (get (get s "counts") (get d "kind")) (+ 1 (.get (get s "counts") (get d "kind") 0)))
     (setv (get s "lastAt") (get d "at")))
   {"run" (.get rec.header "run") "service" (.get rec.header "service")
-   "recordedRevision" (.get rec.header "revision") "recordedBase" (.get rec.header "base")
+   "recordedRevision" (.get rec.header "revision")
    "events" (len rec.events) "consumed" consumed
    "matched" counts
    "decisionDiffs" ds

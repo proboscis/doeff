@@ -137,16 +137,18 @@
          [(counterexample "service の宣言に :requires {\"kind\" \"k3s\"} を書く — Program が要る物ではなく置き場所を名指し、同じ能力を持つ別の置き場所へ動かせない(2026-09-27 の本線の形)")
           (counterexample "agora の宣言に role=agent-exp を書いて実験用の namespace を選ぶ — 置き場所の選び方がコードに入る")
           (counterexample "会社の資格を読む土台の handler を並べた Program が :needs に company-machine を書かない — 会社でない機体の worker に置かれ、会社の資格の境界が破れる(linter の違反)")]
-       :enforced-by ["doeff-linter(規則の番号は未定)" "coordinator の置き方(needs ⊆ provides)"]
-       :wiring "未配線(2026-09-27)— :needs の宣言・土台の handler の :needs の照らし(linter)・coordinator の needs ⊆ provides の置き方はどれも未実装で、今は :requires と labels-satisfy が動いている")
+       :enforced-by ["coordinator の置き方 cluster_policy.placeable(packages/doeff-cluster/tests/test_cluster_policy.hy)"
+                     "declare の土台の :needs の検め service_model.foundation-needs-refusal(packages/doeff-cluster/tests/test_service_declaration.hy)"
+                     "doeff-linter(土台が並べる handler の :needs の照らし — 規則の番号は未定)"]
+       :wiring "一部配線(2026-09-28・agora-redesign #833)— :needs の宣言(defk・defhandler・defsystem)・coordinator の needs ⊆ provides ∪ derived の置き方・company-machine を worker の自己申告でなく node の label から導く所・declare の土台の :needs ⊆ job の :needs は実装と検がある。土台が並べる handler の :needs の照らし(linter)は未配線")
      (law old-declarations-are-refused
        :statement "for_all 宣言 d: d が旧い欄(:env・:config・:env-config・:requires)か env の関数か declare の --config を使う ⇒ 宣言の時点で理由の文つきで断られる(新しい API への読み替えも、警告だけで通すことも無い)"
        :counterexamples
          [(counterexample "移行の間だけ :requires を :needs に読み替えて通す — 同じ系に新旧の宣言が並び、どちらの意味で置かれたかが宣言から読めない")
           (counterexample "旧い :env を受けて警告を出すだけにする — 警告は読まれず、旧い形が残り続ける")
           (counterexample "doeff-cluster だけ先に切り替え、agora-controllers の書き直しを後の便に回す — 本線の利用者が壊れた宣言のまま残る(同じ切り替えで行う)")]
-       :enforced-by ["doeff-cluster の宣言の検め(service・declare — 未実装)"]
-       :wiring "未配線(2026-09-27)— 今の service・declare は旧い欄を受け付ける。新しい API へ切り替える便(agora-redesign #833)で、旧い欄を断る検め(と反例の検)を足す")
+       :enforced-by ["packages/doeff-cluster/tests/test_old_declarations.hy ほか — 旧い形を断る入口ごとの反例(宣言の構成子・defsystem・declare の CLI・資源の口・PUT /jobs・保存の読み直し・heartbeat・worker の起動・task の本文・効果の構成子・job_entry・replay_main・probe)"]
+       :wiring "配線済み(2026-09-28・agora-redesign #833)— doeff-cluster の旧い形を断る入口の全部に反例の検がある。agora-controllers の宣言の CLI の入口は書き直し(#834)で同じく断る")
      (law handlers-inside-the-recorder-are-deterministic
        :statement "for_all 記録係より内側の handler h: h は時計・乱数・I/O を直に読まない(非決定の入力は汎用の effect として記録係の下の土台の handler が答える)— よって for_all 記録 r: r を再生した計算は、記録係に届かない effect についても記録の時と同じ答えを出し、ReplayDiverged を上げない(scheduler の並行の順番は live の扱いの突き合わせの外)"
        :counterexamples
