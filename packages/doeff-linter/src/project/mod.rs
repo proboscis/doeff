@@ -903,7 +903,8 @@ impl<'a> LayerJudge<'a> {
     }
 
     /// DOEFF116: service の依存 — この file の service A が別の service B の module を読む時、B は A の :depends-on に在り、
-    /// 読む先は B の open-layers の層(intent)であること。共有の置き場と foundation は service ではないので見ない。
+    /// 読む先は、この file の層が依存先で読んでよい層(層の :dependency-layers — 組み立ての entry は intent と protocol —、
+    /// 無ければ :open-layers の intent)であること。共有の置き場と foundation は service ではないので見ない。
     /// 別の service を読んだ組は、宣言したのに使っていない依存(DOEFF117)のために返す。
     fn service_dependencies(
         &self,
@@ -936,7 +937,8 @@ impl<'a> LayerJudge<'a> {
                 continue;
             }
             let declared = own.is_some_and(|s| s.depends_on.contains(&other_name));
-            let open = architecture.open_layers.iter().any(|l| *l == self.layer_name(site.layer));
+            let readable = architecture.dependency_layers_for(self.layer_name(self.placement.layer));
+            let open = readable.iter().any(|l| *l == self.layer_name(site.layer));
             if declared && open {
                 continue;
             }
@@ -945,7 +947,17 @@ impl<'a> LayerJudge<'a> {
                 ProjectRule::ServiceDependency,
                 self.range(span),
                 if declared {
-                    format!("{}(service {})が依存先 {} の層 {} の {} を読む — 依存先で読めるのは {} だけ", self.file.file.rel, own_name, other_name, self.layer_name(site.layer), target, architecture.open_layers.join("・"))
+                    format!(
+                        "{}(service {}・層 {})が依存先 {} の層 {} の {} を読む — 層 {} が依存先で読めるのは {} だけ",
+                        self.file.file.rel,
+                        own_name,
+                        self.layer_name(self.placement.layer),
+                        other_name,
+                        self.layer_name(site.layer),
+                        target,
+                        self.layer_name(self.placement.layer),
+                        readable.join("・")
+                    )
                 } else {
                     format!("{}(service {})が :depends-on に無い service {} の {} を読む", self.file.file.rel, own_name, other_name, target)
                 },
@@ -959,7 +971,8 @@ impl<'a> LayerJudge<'a> {
                     target_dir: site.dir.clone(),
                     declared,
                     depends_on,
-                    open_layers: architecture.open_layers.clone(),
+                    open_layers: readable.to_vec(),
+                    widened: readable != architecture.open_layers.as_slice(),
                 },
             ));
         }
