@@ -59,6 +59,7 @@ from doeff_effect_analyzer.program_effects import (
     Unresolved,
     _body_nodes,
     _Bound,
+    _bound_operand,
     _call_bindings,
     _do_decorator,
     _Facts,
@@ -656,7 +657,7 @@ def stack_of(
             | ast.YieldFrom(value=inner)
             | ast.Await(value=inner)
         ):
-            stack = stack_of(inner, scope, filename, depth=deeper)
+            stack = stack_of(_bound_operand(inner, scope), scope, filename, depth=deeper)
         case ast.Name(id=name) if scope.resolve(expr) is UNBOUND and name in scope.local_values:
             stack = stack_of(scope.local_values[name], scope, filename, depth=deeper)
         case ast.Call(func=func) if (builder := _builder_function(scope.resolve(func))) is not None:

@@ -464,6 +464,11 @@ def _doeff_program_module() -> types.ModuleType:
     return importlib.import_module("doeff.program")
 
 
+def _open_bind_function() -> Any:
+    """``doeff_core_effects.outcomes.open_bind`` — what every ``<-`` / ``!`` bind yields."""
+    return importlib.import_module("doeff_core_effects.outcomes").open_bind
+
+
 def _with_handlers_function() -> Any:
     """``doeff.with_handlers`` — installs a handler list around a Program."""
     return _doeff_program_module().with_handlers
@@ -659,7 +664,21 @@ class _Scope:
                 return _instance_attribute(base, expr.attr)
             if base is not UNBOUND and hasattr(base, expr.attr):
                 return getattr(base, expr.attr)
+        if isinstance(expr, ast.Call):
+            return self._imported_module(expr)
         return UNBOUND
+
+    def _imported_module(self, call: ast.Call) -> Any:
+        """``__import__("pkg.mod", fromlist=...)`` → the module ``pkg.mod`` (the form
+        doeff-hy's expansions use to reach a helper without an import statement).
+        Without ``fromlist`` ``__import__`` answers the top package, so only that form is read."""
+        if self.resolve(call.func) is not __import__ or not call.args:
+            return UNBOUND
+        name = call.args[0]
+        has_fromlist = any(item.arg == "fromlist" for item in call.keywords)
+        if not (isinstance(name, ast.Constant) and isinstance(name.value, str)) or not has_fromlist:
+            return UNBOUND
+        return importlib.import_module(name.value)
 
     def _resolve_name(self, name: str) -> Any:
         if name in self.local_imports:
@@ -1062,6 +1081,17 @@ def _argument(call: ast.Call, index: int, keyword: str) -> ast.expr | None:
     return None
 
 
+def _bound_operand(expr: ast.expr, scope: _Scope) -> ast.expr:
+    """What a yielded ``expr`` runs: ``open_bind(e)`` / ``open_bind(e, absent)`` → ``e``
+    (what doeff-hy's ``<-`` / ``!`` yield — ADR-DOE-CORE-EFFECTS-003), anything else →
+    itself.  open_bind performs ``e`` itself — an undeclared effect or a Program passes
+    through unchanged, a declared one is opened after it runs."""
+    if not isinstance(expr, ast.Call) or scope.resolve(expr.func) is not _open_bind_function():
+        return expr
+    operand = _argument(expr, 0, "expr")
+    return expr if operand is None else operand
+
+
 def _install_form(call: ast.Call, scope: _Scope) -> _InstallForm | None:
     """``with_handlers(stack, body)`` / ``WithHandler(h, body)`` / ``h(body)``."""
     head = scope.resolve(call.func)
@@ -1182,6 +1212,11 @@ class _Reader:
             facts.unresolved.append(
                 ("yielded a value that is not a call", ast.unparse(expr), location)
             )
+            return
+        opened = _bound_operand(call, scope)
+        if opened is not call:
+            # doeff-hy's ``(<- x e)`` / ``(! e)`` yield ``open_bind(e)``: e is what runs.
+            self._performed(opened, scope, filename, facts)
             return
         form = _install_form(call, scope)
         if form is not None:
