@@ -209,8 +209,12 @@ full_sessions = 1
 
 # 追随と揃えの後の作り直し(dotfiles ADR-DOTFILES-017 の [follow]・agora-redesign #650 B15)。
 # この機体の主 checkout(~/repos/doeff)を本線へ fast-forward した**直後**に、その checkout で撃つ sh の 1 文。
-# 撃つ場面は 2 つで、同じ宣言を読む: (1) この repo の着地の窓の追随(pod の共有 checkout)(2) 他の区画の runner が
+# 撃つ場面は 2 つで、同じ宣言を読む: (1) この repo の着地の窓の追随(2026-09-28 から merge-queue-land の Pod — その Pod の
+# 入口が $HOME/repos/doeff と $HOME/dotfiles を Pod の区画の clone へ結ぶ〔merge-queue deploy/land/entry.sh の link_checkout〕ので、
+# 追随した checkout が門の読む doeff そのもの。python3 は Pod の起動の script が PATH に置く)(2) 他の区画の runner が
 # 便を取る前に、門が読む doeff の checkout を揃える時(zeus・Mac・pod — 依存する区画の [land-queue] reads と --depends-on)。
+# ⚠ この命令が前提にする機体の置き場($HOME/dotfiles/agent/venv-run.sh)は、窓を回す機体の側が用意する(2026-09-28 の実弾:
+#   merge-queue-land の Pod に置き場が無く、L515・L518〜L520 の追随が follow-failed — 直しは Pod の入口の側・agora-redesign #838)。
 # ⇒ なぜこの命令か:
 #   - `uv sync --frozen` = uv.lock を書き換えない(揃えた checkout を dirty にしない)。agent/venv-run.sh が uv.lock の
 #     変化で撃つ同期と同じ形(`--all-packages` を足すと、その同期が次に余りの package を外し、2 つが打ち消し合う)。
