@@ -1,8 +1,10 @@
-//! 意味の規則と Jev の呼び出しを覚える代理(agora-redesign #843)の検。代理は手元の偽の HTTP(127.0.0.1)で、覚えは本文の綴りを鍵にする。
-//! 反例: 全体の実行は代理に「覚えている時だけ」問い、本物の Jev を呼ばせない・代理に届かなくても止まらない・編集中の 1 file(--stdin)は
+//! 意味の規則と Jev の呼び出しを覚える代理(agora-redesign #843)の検。代理は手元の偽の HTTP(127.0.0.1)で、覚えは本文の代理の鍵
+//! (proxy_key)で引く。反例: 全体の実行は代理に鍵の束で「覚えている時だけ」問い(定義 1 つずつ撃たない・本文を送らない)、本物の Jev を
+//! 呼ばせない・代理に届かなくても止まらない・編集中の 1 file(--stdin)は
 //! 代理に問わない・--semantic-changed は中身の変わった定義だけを問い、書きかけで読めない定義は問わない・較正は覚えを使わない・
 //! 代理には代理の token だけを送る(TypeSafe のキーを送らない)・env の JEV_BASE_URL が repo の代理より勝つ。
 
+use doeff_linter::project::semantic::{proxy_key, PEEK_BATCH};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -12,15 +14,18 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// 偽の代理に届いた問い 1 つ(見出し Cache-Control・Authorization・定義の名)。
+/// 偽の代理に届いた問い 1 つ(path・見出し Cache-Control・Authorization・定義の名・束の鍵の数)。
 #[derive(Debug, Clone)]
 struct Seen {
+    path: String,
     cache_control: String,
     authorization: String,
     name: String,
+    keys: usize,
 }
 
-/// 偽の代理: 本文の綴り → 答えを覚え、Cache-Control の only-if-cached / no-cache を代理と同じに扱う。
+/// 偽の代理: 本文の代理の鍵(linter の proxy_key — 代理と同じ鍵になることは key_contract の検が確かめる)→ 答えを覚え、
+/// /v1/systemone の no-cache と、/v1/systemone/peek(覚えている時だけの問いの束)を代理と同じに扱う。
 struct FakeProxy {
     url: String,
     seen: Arc<Mutex<Vec<Seen>>>,
@@ -43,7 +48,7 @@ fn fake_proxy() -> FakeProxy {
     let url = format!("http://{}/v1/systemone", listener.local_addr().unwrap());
     let seen = Arc::new(Mutex::new(Vec::new()));
     let log = seen.clone();
-    let memory: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let memory: Arc<Mutex<HashMap<String, Value>>> = Arc::new(Mutex::new(HashMap::new()));
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
@@ -51,6 +56,9 @@ fn fake_proxy() -> FakeProxy {
             let memory = memory.clone();
             std::thread::spawn(move || {
                 let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request_line = String::new();
+                reader.read_line(&mut request_line).unwrap();
+                let path = request_line.split_whitespace().nth(1).unwrap_or("").to_string();
                 let (mut length, mut cache_control, mut authorization) = (0usize, String::new(), String::new());
                 loop {
                     let mut line = String::new();
@@ -68,28 +76,36 @@ fn fake_proxy() -> FakeProxy {
                 }
                 let mut raw = vec![0u8; length];
                 reader.read_exact(&mut raw).unwrap();
-                let text = String::from_utf8(raw).unwrap();
-                let body: Value = serde_json::from_str(&text).unwrap();
-                let name = body["state"]["definition"]["name"].as_str().unwrap_or("").to_string();
-                log.lock().unwrap().push(Seen { cache_control: cache_control.clone(), authorization, name });
-                let remembered = memory.lock().unwrap().get(&text).cloned();
-                let (status, marker, answer) = match (cache_control.as_str(), remembered) {
-                    ("only-if-cached", Some(answer)) => ("200 OK", "hit", answer),
-                    ("only-if-cached", None) => ("504 Gateway Timeout", "absent", r#"{"error":"not-cached"}"#.to_string()),
-                    ("no-cache", _) | (_, None) => {
-                        let answer = answer_for(&body).to_string();
-                        memory.lock().unwrap().insert(text, answer.clone());
-                        ("200 OK", "miss", answer)
+                let body: Value = serde_json::from_slice(&raw).unwrap();
+                let (status, marker, answer) = if path.ends_with("/peek") {
+                    let keys: Vec<String> = body["keys"].as_array().unwrap().iter().map(|k| k.as_str().unwrap().to_string()).collect();
+                    log.lock().unwrap().push(Seen { path: path.clone(), cache_control, authorization, name: String::new(), keys: keys.len() });
+                    let remembered = memory.lock().unwrap();
+                    let found: serde_json::Map<String, Value> =
+                        keys.iter().filter_map(|k| remembered.get(k).map(|a| (k.clone(), a.clone()))).collect();
+                    ("200 OK", "peek", serde_json::json!({ "answers": found }))
+                } else {
+                    let name = body["state"]["definition"]["name"].as_str().unwrap_or("").to_string();
+                    log.lock().unwrap().push(Seen { path: path.clone(), cache_control: cache_control.clone(), authorization, name, keys: 0 });
+                    let key = proxy_key(&body);
+                    let remembered = memory.lock().unwrap().get(&key).cloned();
+                    match (cache_control.as_str(), remembered) {
+                        ("no-cache", _) | (_, None) => {
+                            let answer = answer_for(&body);
+                            memory.lock().unwrap().insert(key, answer.clone());
+                            ("200 OK", "miss", answer)
+                        }
+                        (_, Some(answer)) => ("200 OK", "hit", answer),
                     }
-                    (_, Some(answer)) => ("200 OK", "hit", answer),
                 };
+                let text = answer.to_string();
                 let _ = write!(
                     stream,
                     "HTTP/1.1 {}\r\ncontent-type: application/json\r\nx-jev-proxy: {}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                     status,
                     marker,
-                    answer.len(),
-                    answer
+                    text.len(),
+                    text
                 );
             });
         }
@@ -197,11 +213,14 @@ fn whole_run_takes_remembered_answers_from_the_proxy_without_asking_jev() {
     assert!(calibration.iter().all(|s| s.cache_control == "no-cache"), "較正は覚えを使わない: {:?}", calibration);
     assert!(seen.iter().filter(|s| !calibration.iter().any(|c| c.name == s.name)).all(|s| s.cache_control.is_empty()));
     assert!(seen.iter().all(|s| s.authorization == format!("Bearer {}", PROXY_TOKEN)), "代理には代理の token だけ: {:?}", seen);
-    // 手元の cache の空の worktree(B)の全体の実行は、代理に「覚えている時だけ」問うて答えを得る。本物の Jev への問い(印なし)は 0。
+    // 手元の cache の空の worktree(B)の全体の実行は、代理に鍵の束で「覚えている時だけ」問うて答えを得る。束は 1 つ(定義 4 つの鍵)で、
+    // 本物の Jev への問い(/v1/systemone)は 0。
     let second = repo(FILES, &proxy.url, token.path());
     let (plain, _) = run(second.path(), &[], None, &[]);
     let seen = proxy.take();
-    assert!(!seen.is_empty() && seen.iter().all(|s| s.cache_control == "only-if-cached"), "{:?}", seen);
+    assert_eq!(seen.len(), 1, "{:?}", seen);
+    assert_eq!((seen[0].path.as_str(), seen[0].keys), ("/v1/systemone/peek", 4));
+    assert_eq!(seen[0].authorization, format!("Bearer {}", PROXY_TOKEN));
     assert_eq!(plain["semantic"]["asked"], 0);
     assert_eq!(plain["semantic"]["peeked"], 4, "{}", plain["semantic"]);
     assert_eq!(plain["semantic"]["unjudged"], 0);
@@ -274,4 +293,36 @@ fn env_base_url_wins_over_the_repo_proxy() {
     assert!(proxy.take().is_empty(), "env の宛先が在れば repo の代理を使わない");
     let seen = other.take();
     assert!(!seen.is_empty() && seen.iter().all(|s| s.authorization == "Bearer env-key" && s.cache_control.is_empty()), "{:?}", seen);
+}
+
+#[test]
+fn whole_run_peeks_thousands_of_definitions_in_a_few_batches() {
+    // 定義が数千ある repo でも、覚えている時だけの問いは PEEK_BATCH 個ずつの束で撃つ(定義 1 つずつ撃たない)。
+    let proxy = fake_proxy();
+    let token = token_file();
+    let many: String = (0..(PEEK_BATCH * 2 + 500)).map(|i| format!("(defk step-{} [x] (+ x {}))\n", i, i)).collect();
+    let files: Vec<(&str, &str)> = vec![("app/protocol/many.hy", many.as_str())];
+    let first = repo(&files, &proxy.url, token.path());
+    let _ = run(first.path(), &["--semantic-all"], None, &[]);
+    proxy.take();
+    let second = repo(&files, &proxy.url, token.path());
+    let (plain, _) = run(second.path(), &[], None, &[]);
+    let seen = proxy.take();
+    assert!(seen.iter().all(|s| s.path == "/v1/systemone/peek"), "本物の Jev への問いは 0");
+    let mut sizes: Vec<usize> = seen.iter().map(|s| s.keys).collect();
+    sizes.sort();
+    assert_eq!(sizes, vec![500, PEEK_BATCH, PEEK_BATCH], "束は 3 つ");
+    assert_eq!(plain["semantic"]["peeked"], PEEK_BATCH * 2 + 500, "{}", plain["semantic"]);
+    assert_eq!(plain["semantic"]["unjudged"], 0);
+}
+
+#[test]
+fn proxy_key_matches_the_proxy_key_contract_sample() {
+    // 代理(doeff の packages/doeff-jev-proxy)の鍵の決まりの見本を、代理の検(test_key_contract_sample_is_the_proxy_key)と同じ file で読む。
+    // 片方の決まりだけを変えると、どちらかが赤になる。
+    let cases: Vec<Value> = serde_json::from_str(include_str!("../../doeff-jev-proxy/tests/key_contract.json")).unwrap();
+    assert!(cases.len() >= 4);
+    for case in cases {
+        assert_eq!(proxy_key(&case["body"]), case["key"].as_str().unwrap(), "{}", case["body"]);
+    }
 }
