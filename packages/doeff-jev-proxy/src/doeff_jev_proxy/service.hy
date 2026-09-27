@@ -6,6 +6,8 @@
 ;;;                               only-if-cached = 覚えている時だけ答える(無ければ 504・Jev を呼ばない)/ no-cache = 問い直して覚え直す。
 ;;;                               答えの見出し x-jev-proxy = hit / miss / coalesced / refreshed / absent / upstream-error、
 ;;;                               x-jev-proxy-key = 鍵(誤りとした答えを消す時に使う)
+;;;   POST   /v1/systemone/peek   覚えている時だけの問いの束。本文 {"keys": [鍵 …]}(鍵は x-jev-proxy-key と同じ・20000 個まで)に、
+;;;                               覚えている答えだけを {"answers": {鍵: 答えの本文}} で返す(本物の Jev を呼ばない)。身元の token が要る
 ;;;   GET    /healthz             生きているか(身元は要らない)
 ;;;   GET    /metrics             計器(Prometheus の text・身元は要らない — 数だけで問いの中身を出さない)
 ;;;   GET    /v1/stats            計器(JSON・身元の token が要る)
@@ -16,8 +18,10 @@
 (import json)
 (import doeff_jev_proxy.values [Directive Event Header ProxyRequest ProxyReply StoredAnswer UpstreamReply UpstreamUnreachable Fetched
                                 Coalesced Counters Caller Stranger])
-(import doeff_jev_proxy.effects [LookupAnswer RememberAnswer ForgetAnswer ReadAnswer AskJev Coalesce Count ReadCounters IdentifyCaller])
-(import doeff_jev_proxy.key [NormalizedRequest BadRequest NotAnAnswer normalize-request header-value directive-of answer-model])
+(import doeff_jev_proxy.effects [LookupAnswer LookupAnswers RememberAnswer ForgetAnswer ReadAnswer AskJev Coalesce Count CountTimes ReadCounters
+                                 IdentifyCaller])
+(import doeff_jev_proxy.key [NormalizedRequest BadRequest NotAnAnswer PeekKeys normalize-request header-value directive-of answer-model
+                             peek-keys-of])
 
 (val ASK-PATH "/v1/systemone")
 (val ANSWERS-PREFIX "/v1/answers/")
@@ -163,6 +167,22 @@
   reply)
 
 
+(defk answer-remembered-many [request]
+  {:pre [(: request ProxyRequest)] :post [(: % ProxyReply)]}
+  "覚えている時だけの問いの束に答えるため — 鍵の束のうち覚えている答えだけを返し(本物の Jev を呼ばない)、当たりと外れを数える。"
+  (<- caller (identified request))
+  (when (isinstance caller ProxyReply) (return caller))
+  (<- wanted (peek-keys-of request.body))
+  (when (isinstance wanted BadRequest)
+    (<- bad (refused 400 "bad-request" wanted.reason))
+    (return bad))
+  (<- found (LookupAnswers wanted.keys))
+  (<- (CountTimes Event.PEEK-HIT (len found)))
+  (<- (CountTimes Event.PEEK-MISS (- (len wanted.keys) (len found))))
+  (<- reply (json-reply 200 {"answers" (dfor stored found stored.key (json.loads stored.body))} #()))
+  reply)
+
+
 (defk counter-summary [counters]
   {:pre [(: counters Counters)] :post [(: % dict)]}
   "計器の数から、問いの数・節約した呼び出しの数・当たった率を出すため(当たった率 = 本物の Jev を呼ばずに済んだ問い ÷ 覚えを
@@ -274,6 +294,7 @@
   "要求 1 つを口(method と path)で振り分けて答えるため。"
   (<- reply (match #(request.method request.path)
               #("POST" "/v1/systemone") (ask request)
+              #("POST" "/v1/systemone/peek") (answer-remembered-many request)
               #("GET" "/healthz") (json-reply 200 {"ok" True} #())
               #("GET" "/metrics") (metrics request)
               #("GET" "/v1/stats") (stats request)

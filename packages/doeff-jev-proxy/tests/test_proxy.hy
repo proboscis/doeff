@@ -1,7 +1,9 @@
 ;; 代理の反例: 鍵の正規化・覚えている時だけの印・本物の Jev に届かない時・同じ鍵の同時の問いを 1 回にまとめる・身元と管理者・
-;; 問い直し・答えた model の版が変わった時・置き場が起動をまたいで残ること。本物の Jev は台本(tests/world.hy)。
+;; 問い直し・答えた model の版が変わった時・置き場が起動をまたいで残ること・覚えている時だけの問いの束・呼び手と同じ鍵の見本。
+;; 本物の Jev は台本(tests/world.hy)。
 (require doeff-hy.macros [deftest defk <- val var])
 (import json)
+(import pathlib [Path])
 (import threading)
 (import doeff_jev_proxy.values [ProxyReply UpstreamReply UpstreamUnreachable])
 (import doeff_jev_proxy.key [BadRequest normalize-request])
@@ -156,3 +158,54 @@
   (<- after (asking restarted body None))
   (assert (= (! (header after "x-jev-proxy")) "hit"))
   (assert (= (len world.script.calls) 1)))
+
+
+(defk peeking [world keys token]
+  {:pre [(: world World) (: keys list) (: token (| str None))] :post [(: % ProxyReply)]}
+  "鍵の束で覚えている時だけの問い(POST /v1/systemone/peek)を撃つため。"
+  (<- body (json-bytes {"keys" keys}))
+  (<- request (request-of "POST" "/v1/systemone/peek" body token None))
+  (world.run request))
+
+
+(deftest test-peek-many-returns-only-remembered-answers-and-never-calls-jev
+  ;; 覚えている時だけの問いの束は、鍵の束のうち覚えている答えだけを返し、本物の Jev を 1 度も呼ばない。重ねた鍵は 1 つに数える。
+  ;; 形の違う鍵・空の束・身元の無い呼び手は断る。答えた model の版が変わった後の古い答えは、束でも返さない。
+  (val answers (lfor #(p m) [#(0.1 "jev-1") #(0.2 "jev-2")]
+                     (UpstreamReply :status 200 :body (.encode (json.dumps {"answers" {"q" {"noul" p}} "model" m}) "utf-8"))))
+  (<- world (open-world (fn [_] (.pop answers 0)) 0.0))
+  (<- a (question "(defk a [] 1)" "jev-latest"))
+  (<- b (question "(defk b [] 2)" "jev-latest"))
+  (<- first (asking world a None))
+  (<- ka (normalize-request a))
+  (<- kb (normalize-request b))
+  (<- peeked (peeking world [ka.key kb.key ka.key] WORKER-TOKEN))
+  (assert (= peeked.status 200) peeked)
+  (val found (get (json.loads peeked.body) "answers"))
+  (assert (= (list (.keys found)) [ka.key]) "覚えている鍵の答えだけを返す")
+  (assert (= (get found ka.key) (json.loads first.body)) "問うた時と同じ答え")
+  (assert (= (len world.script.calls) 1) "束の問いは本物の Jev を呼ばない")
+  (<- stats (stats-of world))
+  (assert (= #((get (get stats "events") "peek-hit") (get (get stats "events") "peek-miss")) #(1 1)) "重ねた鍵は 1 つに数える")
+  (<- malformed (peeking world ["NOT-A-KEY"] WORKER-TOKEN))
+  (assert (= malformed.status 400) malformed)
+  (<- empty (peeking world [] WORKER-TOKEN))
+  (assert (= empty.status 400) empty)
+  (<- stranger (peeking world [ka.key] None))
+  (assert (= stranger.status 401) stranger)
+  (<- (asking world b None))
+  (<- retired (peeking world [ka.key kb.key] WORKER-TOKEN))
+  (assert (= (list (.keys (get (json.loads retired.body) "answers"))) [kb.key]) "jev-1 で覚えた a は、今の版 jev-2 では束でも返らない")
+  (assert (= (len world.script.calls) 2)))
+
+
+(deftest test-key-contract-sample-is-the-proxy-key
+  ;; 呼び手(doeff-linter の src/project/semantic.rs の proxy_key)が本文から鍵を作る決まりの見本 tests/key_contract.json が、
+  ;; 代理の鍵と同じであること。linter の検(tests/semantic_proxy.rs)も同じ見本を読む — 片方の決まりだけを変えると、どちらかが赤になる。
+  ;; 見本は日本語・絵文字・逃がす文字・制御文字・鍵の並び(符号位置の順)・入れ子・真偽・null・整数を持つ(小数は持たない — 綴りが
+  ;; 言語で違う。linter の本文は小数を持たない)。
+  (val cases (json.loads (.read-text (/ (. (Path __file__) parent) "key_contract.json") :encoding "utf-8")))
+  (assert (>= (len cases) 4))
+  (for [case cases]
+    (<- normalized (normalize-request (.encode (json.dumps (get case "body")) "utf-8")))
+    (assert (= normalized.key (get case "key")) (get case "body"))))
