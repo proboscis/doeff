@@ -852,6 +852,202 @@ fn python_imports(body: &[Stmt], module: &str, out: &mut Vec<ImportTarget>) {
     }
 }
 
+// --- 名の使用(DOEFF120 — JsonValue の使い場所)---------------------------------------------
+
+/// source の中の、名 names の使用の位置を全部集める(位置の順)。
+///
+/// - Hy: 読み取り器の記号で、最後の `.` の段が名の物(import・`(setv 名 …)`・`#^ 名 x`・`(: x 名)`・`#(str 名)` …)。
+///   文字列・註・docstring・`#_` で読み捨てた form は数えない。位置は記号の最後の段。
+/// - Python: 字句の名(名前・属性の名・import の名)と、注釈(引数・戻り値・`x: T`)と型の別名(`X: TypeAlias = "…"`・`type X = …`)の
+///   文字列の中の語(前後が識別子の文字でない物)。docstring と註は数えない。
+pub fn name_occurrences(language: Language, source: &str, names: &[&str]) -> Vec<ByteSpan> {
+    let mut found = Vec::new();
+    match language {
+        Language::Hy => {
+            let mut reader = Reader::new(source, 0, source.len());
+            for form in &reader.read_all() {
+                hy_name_occurrences(source, form, names, &mut found);
+            }
+        }
+        Language::Python => {
+            // 字句が読めなくなった所で止める(読めた所までの名は数える)。
+            found.extend(rustpython_parser::lexer::lex(source, Mode::Module).map_while(Result::ok).filter_map(|(token, range)| match token {
+                rustpython_parser::Tok::Name { name } if names.contains(&name.as_str()) => Some(text_span(range)),
+                _ => None,
+            }));
+            if let Ok(Mod::Module(module)) = parse(source, Mode::Module, "<module>") {
+                python_type_strings(source, &module.body, names, &mut found);
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// Hy の form の木から、最後の段が名の記号を集める。
+fn hy_name_occurrences(source: &str, form: &Form, names: &[&str], out: &mut Vec<ByteSpan>) {
+    match &form.node {
+        Node::Symbol => {
+            let text = source.get(form.span.start..form.span.end).unwrap_or("");
+            let last = text.rsplit('.').next().unwrap_or(text);
+            if names.contains(&last) {
+                out.push(ByteSpan { start: form.span.end - last.len(), end: form.span.end });
+            }
+        }
+        Node::Seq { items, .. } => {
+            for item in items {
+                hy_name_occurrences(source, item, names, out);
+            }
+        }
+        Node::Prefixed { inner, .. } | Node::Tagged { inner } => {
+            if let Some(inner) = inner {
+                hy_name_occurrences(source, inner, names, out);
+            }
+        }
+        Node::Annotated { annotation, target } => {
+            for part in [annotation, target].into_iter().flatten() {
+                hy_name_occurrences(source, part, names, out);
+            }
+        }
+        Node::Keyword | Node::Str { .. } | Node::Number | Node::Discarded => {}
+    }
+}
+
+/// Python の文の列から、注釈と型の別名の式の中の文字列を探し、その中の名の語を集める(関数・class・if・try などの中も)。
+fn python_type_strings(source: &str, body: &[Stmt], names: &[&str], out: &mut Vec<ByteSpan>) {
+    let in_expr = |expr: &Expr, out: &mut Vec<ByteSpan>| python_expr_strings(source, expr, names, out);
+    for stmt in body {
+        match stmt {
+            Stmt::AnnAssign(node) => {
+                in_expr(&node.annotation, out);
+                // `X: TypeAlias = "…"` の値は型の式(文字列で前方参照を書く)。
+                let alias = match node.annotation.as_ref() {
+                    Expr::Name(name) => name.id.as_str() == "TypeAlias",
+                    Expr::Attribute(attribute) => attribute.attr.as_str() == "TypeAlias",
+                    _ => false,
+                };
+                if let (true, Some(value)) = (alias, &node.value) {
+                    in_expr(value, out);
+                }
+            }
+            Stmt::TypeAlias(node) => in_expr(&node.value, out),
+            Stmt::FunctionDef(def) => {
+                python_arguments_strings(source, &def.args, names, out);
+                if let Some(returns) = &def.returns {
+                    in_expr(returns, out);
+                }
+                python_type_strings(source, &def.body, names, out);
+            }
+            Stmt::AsyncFunctionDef(def) => {
+                python_arguments_strings(source, &def.args, names, out);
+                if let Some(returns) = &def.returns {
+                    in_expr(returns, out);
+                }
+                python_type_strings(source, &def.body, names, out);
+            }
+            Stmt::ClassDef(def) => python_type_strings(source, &def.body, names, out),
+            Stmt::For(node) => {
+                python_type_strings(source, &node.body, names, out);
+                python_type_strings(source, &node.orelse, names, out);
+            }
+            Stmt::AsyncFor(node) => {
+                python_type_strings(source, &node.body, names, out);
+                python_type_strings(source, &node.orelse, names, out);
+            }
+            Stmt::While(node) => {
+                python_type_strings(source, &node.body, names, out);
+                python_type_strings(source, &node.orelse, names, out);
+            }
+            Stmt::If(node) => {
+                python_type_strings(source, &node.body, names, out);
+                python_type_strings(source, &node.orelse, names, out);
+            }
+            Stmt::With(node) => python_type_strings(source, &node.body, names, out),
+            Stmt::AsyncWith(node) => python_type_strings(source, &node.body, names, out),
+            Stmt::Match(node) => {
+                for case in &node.cases {
+                    python_type_strings(source, &case.body, names, out);
+                }
+            }
+            Stmt::Try(node) => {
+                python_type_strings(source, &node.body, names, out);
+                for handler in &node.handlers {
+                    let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler;
+                    python_type_strings(source, &h.body, names, out);
+                }
+                python_type_strings(source, &node.orelse, names, out);
+                python_type_strings(source, &node.finalbody, names, out);
+            }
+            Stmt::TryStar(node) => {
+                python_type_strings(source, &node.body, names, out);
+                for handler in &node.handlers {
+                    let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler;
+                    python_type_strings(source, &h.body, names, out);
+                }
+                python_type_strings(source, &node.orelse, names, out);
+                python_type_strings(source, &node.finalbody, names, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// 関数の引数の注釈の中の文字列の語を集める。
+fn python_arguments_strings(source: &str, args: &rustpython_ast::Arguments, names: &[&str], out: &mut Vec<ByteSpan>) {
+    let with_default = args.posonlyargs.iter().chain(args.args.iter()).chain(args.kwonlyargs.iter()).map(|a| &a.def);
+    let bare = args.vararg.iter().chain(args.kwarg.iter()).map(|a| a.as_ref());
+    for arg in with_default.chain(bare) {
+        if let Some(annotation) = &arg.annotation {
+            python_expr_strings(source, annotation, names, out);
+        }
+    }
+}
+
+/// 型の式の中の文字列(`"JsonValue"`・`dict[str, "JsonValue"]`・`"A | B"`)を探し、その literal の中の名の語の位置を集める。
+fn python_expr_strings(source: &str, expr: &Expr, names: &[&str], out: &mut Vec<ByteSpan>) {
+    let recurse = |inner: &Expr, out: &mut Vec<ByteSpan>| python_expr_strings(source, inner, names, out);
+    match expr {
+        Expr::Constant(constant) if matches!(constant.value, Constant::Str(_)) => {
+            let span = text_span(constant.range);
+            out.extend(word_occurrences(source.get(span.start..span.end).unwrap_or(""), names).into_iter().map(|at| ByteSpan { start: span.start + at.start, end: span.start + at.end }));
+        }
+        Expr::Subscript(node) => {
+            recurse(&node.value, out);
+            recurse(&node.slice, out);
+        }
+        Expr::BinOp(node) => {
+            recurse(&node.left, out);
+            recurse(&node.right, out);
+        }
+        Expr::Tuple(node) => node.elts.iter().for_each(|e| recurse(e, out)),
+        Expr::List(node) => node.elts.iter().for_each(|e| recurse(e, out)),
+        Expr::Attribute(node) => recurse(&node.value, out),
+        Expr::Starred(node) => recurse(&node.value, out),
+        Expr::Call(node) => {
+            recurse(&node.func, out);
+            node.args.iter().for_each(|e| recurse(e, out));
+            node.keywords.iter().for_each(|k| recurse(&k.value, out));
+        }
+        _ => {}
+    }
+}
+
+/// text の中の、名 names の語(前後が識別子の文字でない物)の位置(text の中の byte の範囲)。
+fn word_occurrences(text: &str, names: &[&str]) -> Vec<ByteSpan> {
+    let identifier = |c: char| c == '_' || c.is_alphanumeric();
+    let mut found = Vec::new();
+    for name in names {
+        for (at, _) in text.match_indices(name) {
+            let before = text[..at].chars().next_back();
+            let after = text[at + name.len()..].chars().next();
+            if !before.is_some_and(identifier) && !after.is_some_and(identifier) {
+                found.push(ByteSpan { start: at, end: at + name.len() });
+            }
+        }
+    }
+    found
+}
+
 /// rustpython の範囲を ByteSpan にする。
 fn text_span(range: rustpython_parser::text_size::TextRange) -> ByteSpan {
     ByteSpan { start: usize::from(range.start()), end: usize::from(range.end()) }
@@ -931,5 +1127,17 @@ mod tests {
         let unclosed = read_facts(Language::Hy, "(defn f [x]\n", "m", &reading());
         assert_eq!(unclosed.errors.len(), 1);
         assert_eq!(unclosed.untagged.len(), 1);
+    }
+
+    #[test]
+    fn name_occurrences_count_symbols_and_type_strings_but_not_prose() {
+        let names = ["JsonValue", "JsonObject"];
+        let text = |source: &str, spans: Vec<ByteSpan>| spans.into_iter().map(|s| source[s.start..s.end].to_string()).collect::<Vec<_>>();
+        // Hy: import・注釈・点つきの名の最後の段・quote の中は数え、文字列・註・#_・別の名(JsonValues)は数えない。
+        let hy = "(import m [JsonValue])\n; JsonValue\n(setv x #^ wire.JsonObject y)\n\"JsonValue\"\n#_ JsonValue\n(setv JsonValues 1 q '(JsonValue))\n";
+        assert_eq!(text(hy, name_occurrences(Language::Hy, hy, &names)), vec!["JsonValue", "JsonObject", "JsonValue"]);
+        // Python: 名・属性・import の名と、注釈と型の別名の文字列の中の語。docstring・註・f 文字列・語の一部は数えない。
+        let py = "\"\"\"JsonValue\"\"\"\nfrom m import JsonValue\n# JsonValue\ndef f(a: \"MyJsonValue\", b: \"list[JsonObject]\") -> \"JsonValue\":\n    return f\"{a} JsonValue\"\nx = m.JsonObject\n";
+        assert_eq!(text(py, name_occurrences(Language::Python, py, &names)), vec!["JsonValue", "JsonObject", "JsonValue", "JsonObject"]);
     }
 }
