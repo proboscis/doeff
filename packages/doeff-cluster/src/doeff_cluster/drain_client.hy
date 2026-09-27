@@ -7,7 +7,7 @@
 ;;;   = 子を止めて lease を返す、に落ちるだけ)。
 ;;; - readinessProbe(worker-ready): 自分が coordinator から見て生きていて drain 中でないか(新しい Pod が heartbeat を送り始め、
 ;;;   前の Pod の drain が解けた後にだけ Ready — DaemonSet は Ready を待って次の node の Pod を入れ替える)。
-(require doeff-hy.macros [defk <-])
+(require doeff-hy.macros [defk deff <- val])
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 (import doeff_time [Delay GetMonotonic])
@@ -31,6 +31,14 @@
   (+ "/workers/" name))
 
 
+(deff drain-request [#^ str name #^ float ttl-seconds #^ (| str None) own-boot]  ; defk にできない: preStop の Program と手元の sim-cluster の宿(local.hy)が同じ形を作る純粋な判断
+  {:pre [(: name str) (: ttl-seconds float) (: own-boot (| str None))] :post [(: % tuple) (= (len %) 4)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "drain の頼みを要求 #(method path query 本文) にするため。ttl-seconds = drain の期限・own-boot = 頼み手の worker の process の世代
+   (在れば、同じ名の別の世代には drain を付けない — drain_policy.request-drain)。"
+  #("POST" (+ (worker-path name) "/drain") {} (| {"ttlSeconds" ttl-seconds} (if own-boot {"boot" own-boot} {}))))
+
+
 (defn #^ (| str None) drain-outcome [#^ dict answer #^ float elapsed #^ float deadline]
   "純粋: 頼んだ答えと経過の秒から、待つのを終えるか。終えるなら結末の名(drained | unknown-worker | refused | timeout)、
    待ち続けるなら None。届かない・coordinator が 5xx の間は上限まで頼み直す(coordinator の作り直しの間も待つ)。"
@@ -51,10 +59,9 @@
   ;; own-boot = この Pod の worker の process の世代(ready-of と同じ file)。頼みに載せると、同じ名の新しい Pod の worker が名乗った
   ;; 後の頼み(退いた世代の頼み)は新しい世代に drain を付けず、この世代に置いた task が終わるのを待つ答えになる(2026-09-27)。
   (<- started float (GetMonotonic))
-  (setv ttl (+ deadline DRAIN-TTL-MARGIN-SECONDS)
-        body (| {"ttlSeconds" ttl} (if own-boot {"boot" own-boot} {})))
+  (val request (drain-request name (float (+ deadline DRAIN-TTL-MARGIN-SECONDS)) own-boot))
   (while True
-    (<- answer dict (CoordinatorCall "POST" (+ (worker-path name) "/drain") body))
+    (<- answer dict (CoordinatorCall (get request 0) (get request 1) (get request 3)))
     (<- at float (GetMonotonic))
     (setv outcome (drain-outcome answer (- at started) deadline))
     (when (is-not outcome None)

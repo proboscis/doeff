@@ -15,6 +15,9 @@
 (import doeff_cluster.readiness_model [ReportReady])
 (import doeff_cluster.remote_model [RemoteJob])
 (import doeff_cluster.shared_model [ReadShared WriteShared])
+(import doeff_cluster.detached_model [SubmitDetached AwaitDetached DetachedSucceeded])
+(import doeff_cluster.host_contract [HOST-CONTRACT])
+(import doeff_cluster.job_context [RunContext])
 
 (val NET (frozenset ["cluster-net"]))
 
@@ -138,6 +141,54 @@
   0)
 
 
+(defk child-writer [prefix instance]
+  {:pre [(: prefix str) (: instance str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "process の中で Spawn した task の見本: 盤の <prefix><世代の名> に拍の数を書き続ける(process と一緒に止まるかを盤で見るため)。"
+  (var n 0)
+  (while True
+    (:= n (+ n 1))
+    (<- (WriteShared (+ prefix instance) {"n" n}))
+    (<- (Delay 1.0)))
+  n)
+
+(defk spawning-body [prefix beats]
+  {:pre [(: prefix str) (: beats int)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "子の task(child-writer)を起こして盤に書き続けさせ、自分は準備できたと報告し続ける。beats > 0 なら beats 拍の後に値で抜ける
+   (process が終わる)。子は自分の世代の名(宿の契約の run-context)を鍵に書く。"
+  (<- ctx RunContext (Ask HOST-CONTRACT.run-context-key))
+  (<- (Spawn (child-writer prefix ctx.instance)))
+  (var n 0)
+  (while (or (<= beats 0) (< n beats))
+    (<- (ReportReady True "子が書いている"))
+    (<- (Delay 1.0))
+    (:= n (+ n 1)))
+  n)
+
+(defk pulse-body []
+  {:pre [] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "準備できたと報告し続けるだけ(coordinator に届かなくても落ちない — 報告は観測)。"
+  (var n 0)
+  (while True
+    (<- (ReportReady True "動いている"))
+    (<- (Delay 1.0))
+    (:= n (+ n 1)))
+  n)
+
+(defk detaching-body [n key]
+  {:pre [(: n int) (: key str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "切り離した task を 1 本出して待ち(自分の reader を持つ add-task — 答え = 100 + n)、答えを盤の key に書いてから、準備できたと報告
+   し続ける(sim の宿が SubmitDetached・AwaitDetached に本番と同じ要求で答えるかを見るため)。"
+  (<- submitted (SubmitDetached (add-task sim-task-foundation n) :key "svc-detached" :needs NET :name "add"))
+  (<- outcome (AwaitDetached submitted.key))
+  (<- (WriteShared key {"created" submitted.created
+                        "value" (if (isinstance outcome DetachedSucceeded) outcome.value None)
+                        "outcome" (. (type outcome) __name__)}))
+  (while True
+    (<- (ReportReady True "出した"))
+    (<- (Delay 1.0)))
+  0)
+
+
 ;; --- task の Program ----------------------------------------------------------------------------------
 
 (defk sim-task-foundation [body]
@@ -213,6 +264,24 @@
   r)
 
 
+(defk spawning-program [foundation prefix beats]
+  {:pre [(: foundation Callable) (: prefix str) (: beats int)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "service: spawning-body を土台で包む。"
+  (<- n int (foundation (spawning-body prefix beats)))
+  n)
+
+(defk pulse-program [foundation]
+  {:pre [(: foundation Callable)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "service: pulse-body を土台で包む。"
+  (<- n int (foundation (pulse-body)))
+  n)
+
+(defk detaching-program [foundation n key]
+  {:pre [(: foundation Callable) (: n int) (: key str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "service: detaching-body を土台で包む。"
+  (<- r int (foundation (detaching-body n key)))
+  r)
+
 ;; --- 系 ------------------------------------------------------------------------------------------------
 
 (defsystem beacons [foundation]
@@ -266,3 +335,19 @@
 (defsystem gpu-only [foundation]
   "見本の系: どの worker も提供しない能力を要る service"
   (trainer (beacon-program foundation "gpu/beat" 1.0) :needs #{"gpu"} :environ {"STEP" "1"}))
+
+(defsystem spawners [foundation]
+  "見本の系: 子の task に盤へ書き続けさせる service 1 つ(止まらない)"
+  (spawner (spawning-program foundation "spawn/" 0) :needs #{"cluster-net"}))
+
+(defsystem quitters [foundation]
+  "見本の系: 子の task に盤へ書かせ、自分は 3 拍で値を返して抜ける service 1 つ"
+  (quitter (spawning-program foundation "quit/" 3) :needs #{"cluster-net"}))
+
+(defsystem pulses [foundation]
+  "見本の系: 準備できたと報告し続けるだけの service 1 つ"
+  (pulse (pulse-program foundation) :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
+
+(defsystem detaching [foundation]
+  "見本の系: 切り離した task を出して待つ service 1 つ"
+  (detacher (detaching-program foundation 3 "detached/result") :needs #{"cluster-net"}))

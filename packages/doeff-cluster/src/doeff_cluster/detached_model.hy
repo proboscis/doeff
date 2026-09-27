@@ -11,9 +11,10 @@
 ;;; 失敗は例外ではなく値(DetachedOutcome)で返す。例外にするのは呼び手の誤り(送れない値 UnsendableProgram・同じ key の別の仕事・
 ;;; 上限越え DetachedRefused)だけ。
 ;;;
-;;; 2 つの handler(detached.hy):
-;;;   detached-local   … 同じ VM の scheduler の task として走らせる(fake・模擬環境。外側の handler をそのまま継承する)
+;;; handler(detached.hy):
 ;;;   detached-cluster … coordinator の /detached の口へ出し、worker がその commit のコードを準備した子 process で走らせる
+;;; 手元で確かめる時は handler を被せず、手元の runner sim-cluster(local.hy)の宿が同じ要求の形で本物の coordinator の口へ送る
+;;; (2026-09-28 — 同じ VM で走らせる模擬 detached-local は、呼び手の外側の handler を継いで足りない handler を黙って補うので消した)。
 (require doeff-hy.macros [val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
@@ -67,29 +68,6 @@
 (defclass [(dataclass :frozen True)] ReadRunners [EffectBase]
   "task を受ける担い手(worker)の名簿を読む — 生存と drain の正本は coordinator の名簿(heartbeat)1 つ。呼び手が置き先を選ぶ・
    機体の戻りを待つための読み。答え = RunnerFact の tuple(名の順)か RunnersUnreachable。")
-
-
-(defclass [(dataclass :frozen True)] SimulateRunnerLoss [EffectBase]
-  "模擬の担い手(worker)を死なせる。runner = 死なせる担い手の名(None = 全部)。答え = 消えた task の数。fake(detached-local)と
-   検の組だけが答える — 本番の handler の組には答える者が無い(本物の worker の死は外で起きる)。"
-  (setv #^ (| str None) runner None))
-
-
-(defclass [(dataclass :frozen True)] SimulateRunnerDrain [EffectBase]
-  "模擬の担い手を drain にする(新しい task を置かない・走っている task は続く・名簿には live のまま残る — 抜けるのは担い手の process が止まった時 = SimulateRunnerLoss)。答え = その担い手で
-   まだ走っている task の数。fake と検の組だけが答える(本番の drain は coordinator の POST /workers/<名>/drain)。"
-  (#^ str runner))
-
-
-(defclass [(dataclass :frozen True)] SimulateRunnerReturn [EffectBase]
-  "模擬の担い手を戻す(生きていて drain でない — 死んだ・抜けた担い手の作り直し)。答え = None。fake と検の組だけが答える。"
-  (#^ str runner))
-
-
-(defclass [(dataclass :frozen True)] SimulateCoordinatorOutage [EffectBase]
-  "模擬の coordinator に seconds 秒届かなくする(作り直しの最中)。その間の送りと名簿の読みは届かず、待ちはまだ終わっていない
-   答えを返す。走っている task は止めない(担い手は coordinator の途絶で task を止めない)。答え = None。fake と検の組だけが答える。"
-  (#^ float seconds))
 
 
 ;; --- 答え --------------------------------------------------------------------------
@@ -178,7 +156,7 @@
 
 (setv DetachedOutcome (| DetachedSucceeded DetachedFailed DetachedLost DetachedCancelled DetachedVersionMismatch
                          DetachedUnrunnable DetachedEnvUnavailable DetachedUnknown))
-;; DetachedUnreachable = coordinator に届かなかった(作り直しの最中・網の途絶)。送りも待ちも同じ値で答え、fake と本物が同じ形を返す —
+;; DetachedUnreachable = coordinator に届かなかった(作り直しの最中・網の途絶)。送りも待ちも同じ値で答え、本番の client と sim の宿が同じ形を返す —
 ;; 呼び手は「届かない」を例外でなく値で受け、task の死と取り違えない(2026-09-26)。
 (defrecord DetachedUnreachable
   #^ str detail)

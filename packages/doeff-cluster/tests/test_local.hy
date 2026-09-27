@@ -2,7 +2,8 @@
 ;;
 ;; sim の土台(tests.fixtures.envs の sim-foundation)で作った系の値を、本物の coordinator(emulated-handlers)と本物の run-worker(偽の宿)の
 ;; 上で、仮想の時計で走らせる。検の筋書き(scenario)は同じ scheduler・同じ時計で並んで走り、検の effect(Crash・Redeclare・ReportsOf・
-;; ReadinessOf・ProcessesOf・SharedRows)で世界を動かし・読む。時間を進めるのは Delay。
+;; ReadinessOf・ProcessesOf・SharedRows・ReadCoordinator・StopCoordinator・CrashCoordinator・CoordinatorRuns・KillWorker・StopWorker・
+;; StartWorker・CutWorker・DrainWorker)で世界を動かし・読む。時間を進めるのは Delay。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
@@ -13,12 +14,13 @@
 (import doeff_cluster.job_context [RunContext])
 (import doeff_cluster.remote_model [UnsendableProgram TaskFailed decode-outcome])
 (import doeff_cluster.worker_model [JobSpec])
-(import doeff_cluster.local [sim-cluster sim-process SimChild EndProcess SimWorker SimProcess SimReport SimReadiness
-                             Crash Redeclare ReportsOf ReadinessOf ProcessesOf SharedRows])
+(import doeff_cluster.local [sim-cluster sim-process SimChild SimLink EndProcess SimWorker SimProcess SimReport SimReadiness
+                             SimCoordinatorRun Crash Redeclare ReportsOf ReadinessOf ProcessesOf SharedRows ReadCoordinator
+                             StopCoordinator CrashCoordinator CoordinatorRuns KillWorker StopWorker StartWorker CutWorker DrainWorker])
 (import doeff_cluster.service_model [System CallShape job system-of])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons beacons-v2 handoff-beacons handoff-beacons-v2 relay flavors fenced gpu-only
-                                    holding-unloadable Unloadable])
+                                    holding-unloadable Unloadable spawners quitters pulses detaching])
 
 
 (defrecord Seen
@@ -280,7 +282,8 @@
   ;; 結果(RemoteJobFailed)を書いて 0 で終わる。
   (val ends [])
   (val ctx (RunContext "sim://coordinator" "w" "r" "svc"))
-  (val child (SimChild :ctx ctx :program-path "" :environ {} :queue (RequestQueue) :pid 7))
+  (val child (SimChild :ctx ctx :program-path "" :environ {} :pid 7
+                       :link (SimLink :queue (RequestQueue) :actor "svc" :revision "r" :peer "w")))
   (<- (with-handlers [(end-recorder ends)]
         (sim-process "w" (JobSpec "svc" "doeff_cluster.job_entry" #("service") "r" :program (* "a" 64)) child None)))
   (<- (with-handlers [(end-recorder ends)]
@@ -295,3 +298,300 @@
   (val outcome (decode-outcome task.result))
   (assert (isinstance outcome TaskFailed) outcome)
   (assert (= outcome.kind "RemoteJobFailed") outcome))
+
+
+;; --- process の中の task(段 5b の 1)----------------------------------------------------------------------
+
+(defrecord Spawned
+  "子の task の検の読み: 世界を動かす前・直後・後の盤の行と、job の process の列。"
+  (#^ dict before)
+  (#^ dict just-after)
+  (#^ dict later)
+  (#^ tuple processes))
+
+
+(defk crash-spawner []
+  {:pre [] :post [(: % Spawned)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 6 秒待って盤を読み、spawner を Crash で落とし、落ちた直後と 12 秒後に盤を読む。"
+  (<- (Delay 6.0))
+  (<- before dict (SharedRows "spawn/"))
+  (<- (Crash "spawner"))
+  (<- (Delay 0.1))
+  (<- just dict (SharedRows "spawn/"))
+  (<- (Delay 12.0))
+  (<- later dict (SharedRows "spawn/"))
+  (<- processes tuple (ProcessesOf "spawner"))
+  (Spawned :before before :just-after just :later later :processes processes))
+
+
+(deftest test-a-crash-also-stops-the-tasks-the-process-spawned
+  ;; 本番の子 process の中の task は process と一緒に消える。sim でも Crash で落とした process の中で Spawn した task(盤に世代の名の
+  ;; 鍵で書き続ける)は止まり、起こし直した新しい世代の task だけが書き続ける。
+  (<- seen Spawned (sim-cluster (spawners sim-foundation) (crash-spawner)))
+  (val old (get seen.processes 0))
+  (val new (get seen.processes -1))
+  (val old-key (+ "spawn/" old.instance))
+  (assert (= old.exit-code 1) seen.processes)
+  (assert (>= (get seen.before old-key "n") 2) seen.before)
+  (assert (= (get seen.later old-key "n") (get seen.just-after old-key "n")) #(seen.just-after seen.later))
+  (assert (!= old.instance new.instance) seen.processes)
+  (assert (is new.exit-code None) seen.processes)
+  (assert (>= (get seen.later (+ "spawn/" new.instance) "n") 2) seen.later))
+
+
+(defk watch-quitter []
+  {:pre [] :post [(: % Spawned)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 8 秒待って盤を読み、3 秒後にもう一度読む。"
+  (<- (Delay 8.0))
+  (<- first dict (SharedRows "quit/"))
+  (<- (Delay 3.0))
+  (<- second dict (SharedRows "quit/"))
+  (<- processes tuple (ProcessesOf "quitter"))
+  (Spawned :before {} :just-after first :later second :processes processes))
+
+
+(deftest test-a-process-that-returns-takes-its-spawned-tasks-with-it
+  ;; process が値で抜けた(本番の子 process の終わり)後は、中で Spawn した task も書かない。
+  (<- seen Spawned (sim-cluster (quitters sim-foundation) (watch-quitter)))
+  (val first (get seen.processes 0))
+  (val key (+ "quit/" first.instance))
+  (assert (= first.exit-code 0) seen.processes)
+  (assert (<= (get seen.just-after key "n") 5) seen.just-after)
+  (assert (= (get seen.later key "n") (get seen.just-after key "n")) #(seen.just-after seen.later)))
+
+
+;; --- 切り離した task を service が出す(段 5b の 2)------------------------------------------------------
+
+(deftest test-a-service-submits-and-awaits-a-detached-task-through-the-host
+  ;; service の SubmitDetached・AwaitDetached に sim の宿が本番の detached-cluster と同じ要求(PUT /programs・PUT /detached)で答え、
+  ;; 本物の coordinator が task を worker に置き、worker が task の Program を走らせた答えが service に返る。
+  (<- rows dict (sim-cluster (detaching sim-foundation) (watch-rows 15.0 "detached/")))
+  (assert (= (get rows "detached/result") {"created" True "value" 103 "outcome" "DetachedSucceeded"}) rows))
+
+
+;; --- coordinator の止まり・落ち(段 5b の 4)----------------------------------------------------------------
+
+(defrecord Outage
+  "coordinator の止まりの検の読み: 止める前の盤・止まっている間の ready・作り直した後の job の姿・Pod の一生の列。"
+  (#^ dict before)
+  (#^ SimReadiness during)
+  (#^ Seen after)
+  (#^ tuple runs))
+
+
+(defk pause-coordinator [crash seconds]
+  {:pre [(: crash bool) (: seconds float)] :post [(: % Outage)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 8 秒待って盤を読み、coordinator を止める(crash なら次の Persist で落とす)。2 秒後に ready を読み、止まっている秒 + 25 秒
+   待って beacon を読む。"
+  (<- (Delay 8.0))
+  (<- before dict (SharedRows "beacon/"))
+  (if crash
+      (<- (CrashCoordinator seconds))
+      (<- (StopCoordinator seconds)))
+  (<- (Delay 2.0))
+  (<- during SimReadiness (ReadinessOf "beacon"))
+  (<- (Delay (+ seconds 25.0)))
+  (<- after Seen (seen-of "beacon" "beacon/"))
+  (<- runs tuple (CoordinatorRuns))
+  (Outage :before before :during during :after after :runs runs))
+
+
+(deftest test-a-stopped-coordinator-is-recreated-from-its-store-after-the-downtime
+  ;; 優雅な停止: 止まっている間は届かない(ready は読めない)。止まっている秒の後に同じ置き場から読み直して作り直し、盤の行と Service
+  ;; は残り、service は Ready に戻る。
+  (<- seen Outage (sim-cluster (beacons sim-foundation) (pause-coordinator False 10.0)))
+  (assert (= (len seen.runs) 2) seen.runs)
+  (val first (get seen.runs 0))
+  (val second (get seen.runs 1))
+  (assert (= first.outcome "stopped") first)
+  (assert (>= (- second.started-ms first.ended-ms) 10000) seen.runs)
+  (assert (is second.ended-ms None) second)
+  (assert (= seen.during.state "Missing") seen.during)
+  (assert (= seen.after.readiness.state "Ready") seen.after.readiness)
+  (assert (> (get seen.after.rows "beacon/a" "n") 0) seen.after.rows))
+
+
+(deftest test-a-coordinator-that-fails-to-persist-drops-its-replies-and-is-recreated
+  ;; Persist の失敗: 返事をせずに落ちる(その拍の書きの送り手には接続の失敗 — 盤に書けなかった beacon は例外で落ちる)。止まっている秒の
+  ;; 後に置き場から作り直し、service は起こし直されて Ready に戻る。
+  (<- seen Outage (sim-cluster (beacons sim-foundation) (pause-coordinator True 5.0)))
+  (assert (= (len seen.runs) 2) seen.runs)
+  (val first (get seen.runs 0))
+  (val second (get seen.runs 1))
+  (assert (in "Persist の失敗" first.outcome) first)
+  (assert (>= (- second.started-ms first.ended-ms) 5000) seen.runs)
+  (assert (= seen.after.readiness.state "Ready") seen.after.readiness)
+  (assert (any (gfor p seen.after.processes (and (= p.exit-code 1) (in "RemoteJobFailed" p.detail)))) seen.after.processes)
+  (assert (is (. (get seen.after.processes -1) exit-code) None) seen.after.processes))
+
+
+;; --- worker の死・止め・網の切断・drain(段 5b の 4)----------------------------------------------------
+
+(val TWO-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]))
+                   (SimWorker :name "w2" :provides (frozenset ["cluster-net"]))))
+
+
+(defrecord Moved
+  "worker を動かす検の読み: 動かした effect の答え・動かす前と後の process・盤の行・動かした worker の coordinator の見え方。"
+  (#^ (| int dict None) answer)
+  (#^ str host)
+  (#^ tuple before)
+  (#^ tuple mid)
+  (#^ tuple after)
+  (#^ dict just-rows)
+  (#^ dict later-rows)
+  (#^ dict view))
+
+
+(defk kill-host [job prefix]
+  {:pre [(: job str) (: prefix str)] :post [(: % Moved)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 8 秒待って job の process の worker を node ごと死なせ、直後と 70 秒後(lease と移し替えの時間の後)に読む。"
+  (<- (Delay 8.0))
+  (<- before tuple (ProcessesOf job))
+  (val host (. (get before 0) worker))
+  (<- n int (KillWorker host))
+  (<- (Delay 0.1))
+  (<- just dict (SharedRows prefix))
+  (<- (Delay 70.0))
+  (<- later dict (SharedRows prefix))
+  (<- after tuple (ProcessesOf job))
+  (<- view dict (ReadCoordinator (+ "/workers/" host)))
+  (Moved :answer n :host host :before before :mid #() :after after :just-rows just :later-rows later :view view))
+
+
+(deftest test-a-dead-worker-takes-its-processes-and-their-tasks-and-the-job-moves
+  ;; worker が node ごと死ぬ: 子 process は exit -9(中で Spawn した task も止まる)・heartbeat が止まり、coordinator は lease の後に
+  ;; 生きていないと数え、移し替えの時間の後に job を生きている worker へ置く。
+  (<- seen Moved (sim-cluster (spawners sim-foundation) (kill-host "spawner" "spawn/") :workers TWO-WORKERS))
+  (assert (= seen.answer 1) seen.answer)
+  (val old (get seen.after 0))
+  (val new (get seen.after -1))
+  (assert (= old.exit-code -9) seen.after)
+  (val old-key (+ "spawn/" old.instance))
+  (assert (= (get seen.later-rows old-key "n") (get seen.just-rows old-key "n")) #(seen.just-rows seen.later-rows))
+  (assert (!= new.worker seen.host) seen.after)
+  (assert (is new.exit-code None) seen.after)
+  (assert (>= (get seen.later-rows (+ "spawn/" new.instance) "n") 1) seen.later-rows)
+  (assert (not (get seen.view "alive")) seen.view))
+
+
+(defk stop-and-start-host []
+  {:pre [] :post [(: % Moved)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 8 秒待って pulse の worker を優雅に止め(抜けるまで待つ)、新しい世代で起こし直して 10 秒後に読む。"
+  (<- (Delay 8.0))
+  (<- before tuple (ProcessesOf "pulse"))
+  (val host (. (get before 0) worker))
+  (<- (StopWorker host))
+  (<- mid tuple (ProcessesOf "pulse"))
+  (<- again bool (StartWorker host))
+  (<- twice bool (StartWorker host))
+  (<- (Delay 10.0))
+  (<- after tuple (ProcessesOf "pulse"))
+  (<- view dict (ReadCoordinator (+ "/workers/" host)))
+  (Moved :answer {"again" again "twice" twice} :host host :before before :mid mid :after after :just-rows {} :later-rows {}
+         :view view))
+
+
+(deftest test-a-stopped-worker-stops-its-jobs-and-a-new-generation-takes-them-back
+  ;; 優雅な停止(本番の SIGTERM): 抜けるまでに全 job を止めの合図(-15)で回収する。StartWorker は新しい世代(boot)で起こし、動いて
+  ;; いる worker には偽を返す。新しい世代が job を起こし直す。
+  (<- seen Moved (sim-cluster (pulses sim-foundation) (stop-and-start-host)))
+  (val first (get seen.mid 0))
+  (assert (= first.exit-code -15) seen.mid)
+  (assert (= seen.answer {"again" True "twice" False}) seen.answer)
+  (val last (get seen.after -1))
+  (assert (is last.exit-code None) seen.after)
+  (assert (!= last.instance first.instance) seen.after)
+  (assert (get seen.view "alive") seen.view)
+  (assert (.endswith (get seen.view "boot") "-boot2") seen.view))
+
+
+(defk cut-host []
+  {:pre [] :post [(: % Moved)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 8 秒待って pulse の worker の網を 90 秒切り、10 秒後と 70 秒後に読む。"
+  (<- (Delay 8.0))
+  (<- before tuple (ProcessesOf "pulse"))
+  (val host (. (get before 0) worker))
+  (<- (CutWorker host 90.0))
+  (<- (Delay 10.0))
+  (<- mid tuple (ProcessesOf "pulse"))
+  (<- (Delay 60.0))
+  (<- after tuple (ProcessesOf "pulse"))
+  (<- view dict (ReadCoordinator (+ "/workers/" host)))
+  (Moved :answer None :host host :before before :mid mid :after after :just-rows {} :later-rows {} :view view))
+
+
+(deftest test-a-cut-off-worker-keeps-its-process-until-the-fence-and-the-job-moves
+  ;; 網の切断: heartbeat が届かない間も子 process は動き続け(10 秒後)、fence(20 秒)を越えると本物の worker_policy の判断で lease を
+  ;; 持たない job を止める(-15)。coordinator は移し替えの時間の後に、網のつながった worker へ置く。
+  (<- seen Moved (sim-cluster (pulses sim-foundation) (cut-host) :workers TWO-WORKERS))
+  (val first (get seen.mid 0))
+  (assert (is first.exit-code None) seen.mid)
+  (val stopped (get seen.after 0))
+  (assert (= stopped.exit-code -15) seen.after)
+  (assert (>= (- stopped.ended-ms (+ (. (get seen.before 0) started-ms) 0)) 20000) seen.after)
+  (val moved (get seen.after -1))
+  (assert (!= moved.worker seen.host) seen.after)
+  (assert (is moved.exit-code None) seen.after)
+  (assert (not (get seen.view "alive")) seen.view))
+
+
+(defk drain-host []
+  {:pre [] :post [(: % Moved)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 10 秒待って beacon の worker の drain を頼み、25 秒後に読む。"
+  (<- (Delay 10.0))
+  (<- before tuple (ProcessesOf "beacon"))
+  (val host (. (get before 0) worker))
+  (<- answer dict (DrainWorker host))
+  (<- (Delay 25.0))
+  (<- after tuple (ProcessesOf "beacon"))
+  (<- view dict (ReadCoordinator (+ "/workers/" host)))
+  (Moved :answer answer :host host :before before :mid #() :after after :just-rows {} :later-rows {} :view view))
+
+
+(deftest test-a-drained-worker-hands-its-handoff-service-to-another-worker
+  ;; drain(本番の preStop と同じ頼み): coordinator は drain 中の worker の上の入れ替えの service を、もう 1 台の worker に並べて起こし、
+  ;; 新しい世代が Ready になってから旧を止める。worker は drain 中と見える(ready でない)。
+  (<- seen Moved (sim-cluster (handoff-beacons sim-foundation) (drain-host) :workers TWO-WORKERS))
+  (assert (isinstance seen.answer dict) seen.answer)
+  (assert (= (get seen.answer "status") 200) seen.answer)
+  (assert (get seen.view "draining") seen.view)
+  (assert (not (get seen.view "ready")) seen.view)
+  (val old (get seen.after 0))
+  (val new (get seen.after -1))
+  (assert (= old.exit-code -15) seen.after)
+  (assert (!= new.worker seen.host) seen.after)
+  (assert (is new.exit-code None) seen.after))
+
+
+(deftest test-a-counterexample-worker-that-ignores-the-fence-leaves-two-live-processes
+  ;; 反例(fence の意味): coordinator に届かない間も job を止めない壊れた worker(ignores-fence)では、移し替えの後に同じ job の process が
+  ;; 2 つ同時に動く — 本物の worker_policy の fence がそれを防いでいることの裏返し。
+  (val workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :ignores-fence True)
+                 (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :ignores-fence True)))
+  (<- seen Moved (sim-cluster (pulses sim-foundation) (cut-host) :workers workers))
+  (val live (lfor p seen.after :if (is p.exit-code None) p))
+  (assert (= (sorted (sfor p live p.worker)) ["w1" "w2"]) seen.after))
+
+
+(defk start-late []
+  {:pre [] :post [(: % Moved)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 止まったまま始まる worker の上の pulse を 10 秒後に読み、worker を起こして 10 秒後にもう一度読む。"
+  (<- (Delay 10.0))
+  (<- before tuple (ProcessesOf "pulse"))
+  (<- started bool (StartWorker "late"))
+  (<- (Delay 10.0))
+  (<- after tuple (ProcessesOf "pulse"))
+  (<- view dict (ReadCoordinator "/workers/late"))
+  (Moved :answer (int started) :host "late" :before before :mid #() :after after :just-rows {} :later-rows {} :view view))
+
+
+(deftest test-a-worker-that-starts-down-takes-the-job-only-after-it-is-started
+  ;; starts-down: 後から加わる node。起こすまで job は置かれず(process が無い)、StartWorker の後に名乗って job を受ける。
+  (<- seen Moved (sim-cluster (pulses sim-foundation) (start-late)
+                              :workers #((SimWorker :name "late" :provides (frozenset ["cluster-net"]) :starts-down True))))
+  (assert (= seen.before #()) seen.before)
+  (assert (= seen.answer 1) seen.answer)
+  (assert (= (lfor p seen.after p.worker) ["late"]) seen.after)
+  (assert (is (. (get seen.after 0) exit-code) None) seen.after)
+  (assert (get seen.view "alive") seen.view))
