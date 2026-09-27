@@ -12,7 +12,7 @@
 (import dataclasses [dataclass])
 (import doeff [run with_handlers])
 (import doeff_core_effects.handlers [state])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects.scheduler [scheduled Spawn Wait])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadDiskFree
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree CopyFile
@@ -220,22 +220,36 @@
 
 
 (defn test-memory-files-can-be-read-back-and-locks-are-exclusive []
+  (setv log [])
+  (defk contender []
+    {:pre [] :post [(: % None)] :tags {:context "file-system" :role "program"}}
+    "2 本目の task: 取られている錠を待ち、取れたら記録して放す。"
+    (<- held LockHeld (AcquireLock "/r/lock"))
+    (.append log "B got")
+    (<- (ReleaseLock held))
+    None)
   (defk twice []
-    {:pre [] :post [(: % tuple)]}
+    {:pre [] :post [(: % tuple)] :tags {:context "file-system" :role "program"}}
+    "錠を取ったまま 2 本目の task を起こし、放すまで 2 本目が取れないことと、放した後に取れることを確かめる筋。"
     (<- first (AcquireLock "/r/lock"))
-    (<- second (AcquireLock "/r/lock"))
+    (<- task (Spawn (contender)))
+    (.append log "A release")
     (<- (ReleaseLock first))
+    (<- (Wait task))
     (<- third (AcquireLock "/r/lock"))
+    (<- (ReleaseLock third))
     (<- seen MemoryFiles (ReadMemoryFiles))
     (<- free int (ReadDiskFree "/r/missing"))
-    #(first second third seen free))
-  (setv #(first second third seen free) (on [(state) (memory-file-handler (MemoryFiles :dirs #("/r") :free 1234))] (twice)))
+    #(first third seen free))
+  (setv #(first third seen free) (on [(state) (memory-file-handler (MemoryFiles :dirs #("/r") :free 1234))] (twice)))
   ;; 空き(#831)は置き場の設定の値で答え、錠や書きで置き場を作り直しても保つ。
   (assert (= free 1234) free)
   (assert (= seen.free 1234) seen)
   (assert (isinstance first LockHeld) first)
-  (assert (and (isinstance second FileFailed) (in "Resource temporarily unavailable" second.detail)) second)
+  ;; 錠は本物の flock と同じく取れるまで待つ(#835): 2 本目は 1 本目が放した後にだけ取れる(待たずに断るのではない)。
+  (assert (= log ["A release" "B got"]) log)
   (assert (isinstance third LockHeld) third)
+  (assert (= seen.locks #()) seen)
   (assert (= (lfor f seen.files f.path) ["/r/lock"]) seen))
 
 

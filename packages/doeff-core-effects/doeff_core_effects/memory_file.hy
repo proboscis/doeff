@@ -2,12 +2,15 @@
 ;;; session の値に持ち、本物の file system と同じ所で断る(FileFailed の detail も OSError の文の形):
 ;;;   親の dir が無い(No such file or directory)・途中や先が file(Not a directory)・dir へ書く / 読む(Is a directory)・中身の在る dir への
 ;;;   rename(Directory not empty)・dir を自分の下へ rename(Invalid argument)・無い path を消す。
-;;; symlink は持たない(PathKind.SYMLINK は出ない — StatPath の follow-symlinks = False も True と同じ答え)。錠は待てない(同じ錠を 2 度取ると断る — 1 つの VM の中の筋書きで待つと止まるため)。
+;;; symlink は持たない(PathKind.SYMLINK は出ない — StatPath の follow-symlinks = False も True と同じ答え)。錠は本物と同じく取れるまで待つ
+;;; (取られている時だけ scheduler の CreatePromise / Wait で待つので、並行の筋書きは外側に scheduler が要る — scheduler の無い 1 本の
+;;; 筋書きで同じ錠を 2 度取るのは、本物の自分待ちと同じく止まる誤り)。
 ;;; path は絶対 path だけを受ける(相対 path は呼び手の誤り — ValueError)。業務を知らない: 初めの中身は呼び手が渡す。
 ;;; ReadMemoryFiles で今の中身を読める(検と筋書きが置き場を覗く口)。session の値の置き場(doeff_core_effects の state)は外側に要る。
 (require doeff-hy.macros [defhandler defk <- val var])
 (import posixpath)
 (import dataclasses [replace :as with-fields])
+(import doeff_core_effects.scheduler [CreatePromise CompletePromise Wait])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree CopyFile
                                          CopyTree RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree])
@@ -20,7 +23,6 @@
 (val EXISTS "[Errno 17] File exists")
 (val NOT-EMPTY "[Errno 39] Directory not empty")
 (val INVALID "[Errno 22] Invalid argument")
-(val LOCKED "[Errno 11] Resource temporarily unavailable")
 
 
 (defk refused [reason path]
@@ -239,6 +241,8 @@
 (defhandler memory-file-handler [#^ MemoryFiles initial]
   ;; 引数に残す理由: 初めの中身は筋書きごとに違う値(設定ではなく模擬の世界そのもの)。
   (session var store initial)
+  ;; 錠を待つ手(#(path Promise) の列・待った順)。置き場の中身ではないので MemoryFiles には入れない。
+  (session var waiters #())
   (StatPath [path follow-symlinks]
     (<- at str (normal path))
     (<- answer PathStat (stat-in store at))
@@ -304,8 +308,12 @@
   (AcquireLock [path]
     (<- at str (normal path))
     (if (in at store.locks)
-        (do (<- answer FileFailed (refused LOCKED at))
-            (resume answer))
+        ;; 取られている錠は、本物の flock と同じく放されるまで待つ(scheduler の Promise で — 空いている錠は scheduler に触れずに即答)。
+        ;; 放した側(ReleaseLock)が錠を locks に残したまま次の待ち手へ手渡すので、起きた待ち手はそのまま持ち主になる。
+        (do (<- promise (CreatePromise))
+            (:= waiters (+ waiters #(#(at promise))))
+            (<- (Wait promise.future))
+            (resume (LockHeld :path at :token (len store.locks))))
         (do (<- kind PathKind (kind-in store at))
             (<- made (if (= kind PathKind.MISSING) (with-file store at b"" None) (return-store store)))
             (if (isinstance made FileFailed)
@@ -313,8 +321,15 @@
                 (do (:= store (with-fields made :locks (+ made.locks #(at))))
                     (resume (LockHeld :path at :token (len store.locks))))))))
   (ReleaseLock [held]
-    (:= store (with-fields store :locks (tuple (gfor p store.locks :if (!= p held.path) p))))
-    (resume None))
+    (val waiting (lfor #(p promise) waiters :if (= p held.path) promise))
+    (if waiting
+        ;; 待ち手が在れば、錠を locks に残したまま先に待った 1 人へ手渡す(横入りさせない)。
+        (do (val handed (get waiting 0))
+            (:= waiters (tuple (gfor w waiters :if (is-not (get w 1) handed) w)))
+            (<- (CompletePromise handed None))
+            (resume None))
+        (do (:= store (with-fields store :locks (tuple (gfor p store.locks :if (!= p held.path) p))))
+            (resume None))))
   (ReadDiskFree [path]
     (resume store.free))
   (ReadMemoryFiles []

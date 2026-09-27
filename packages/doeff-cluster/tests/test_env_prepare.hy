@@ -18,13 +18,14 @@
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_cluster.env_handlers [editable-dirs])
 (import doeff_core_effects.handlers [state])
+(import doeff_core_effects.scheduler [Spawn Gather])
 (import doeff_time [SimClock sim-time-handler GetMonotonic])
 (import doeff_cluster.runtime_env_model [RepoCheckout NativeWheel PythonProject ToolRequirement EnvVar RuntimeEnv
                                          RuntimeEnvInvalid InvalidKind EnvFailure EnvFailureKind env-key key-material
                                          runtime-env->json runtime-env-of-json])
 (import doeff_cluster.env_prepare [PrepareRequest KnownRoot EnvReady prepare-env ENV-MARKER ROOTS-PTH])
 (import doeff_cluster.env_world [env-world EnvWorld EnvWorldLog WorldRemote WorldCommit WorldFile read-world-log world-files
-                                set-uv-failure])
+                                set-uv-failure set-unreachable UvFailure UvFault])
 
 (setv PLATFORM "linux-x86_64")
 (import tests.env_fixtures [LOCK APP-URL LIB-URL sha-of lock-sha app-commit lib-commit env-of base-world])
@@ -293,6 +294,25 @@
   (assert ok))
 
 
+(defk concurrent-wheel-scenario []
+  {:pre [] :post [(: % bool)] :tags {:context "runtime-env" :role "program"}}
+  "同じ native の source(同じ wheel のキー)の 2 つの準備を並行させる筋: 錠を待つので build は 1 回で、両方とも完成する(#835)。"
+  (<- before EnvWorldLog (read-world-log))
+  (<- one (Spawn (prepare (! (env-of "app-1" "lib-1" LOCK)) #())))
+  (<- two (Spawn (prepare (! (env-of "app-2" "lib-1" LOCK)) #())))
+  (<- results list (Gather one two))
+  (<- after EnvWorldLog (read-world-log))
+  (assert (all (gfor r results (isinstance r EnvReady))) results)
+  (assert (= (- after.builds before.builds) 1) (.format "build は 1 回のはずが {} 回" (- after.builds before.builds)))
+  True)
+
+
+(deftest test-two-concurrent-preparations-of-one-wheel-build-it-once
+  (<- world EnvWorld (base-world))
+  (<- ok bool (run-in-world world (concurrent-wheel-scenario)))
+  (assert ok))
+
+
 (defk three-repos-scenario []
   {:pre [] :post [(: % bool)]}
   "筋書き 7: repo を 3 つ → 3 つのツリーが root の下に兄弟で並び、import の根が宣言の順で .pth に並ぶ。"
@@ -356,14 +376,41 @@
   (val wrong (+ (if (= (get h 0) "0") "1" "0") (cut h 1 None)))
   (<- (expect-failure world (replace env :project (replace env.project :lock-sha256 wrong)) EnvFailureKind.LOCK-MISMATCH False))
   ;; uv を失敗させる
-  (for [#(kind retryable) [#(EnvFailureKind.LOCK-STALE False) #(EnvFailureKind.SYNC-FAILED True)
-                           #(EnvFailureKind.PYTHON-UNAVAILABLE True) #(EnvFailureKind.NATIVE-BUILD-FAILED False)]]
-    (<- (expect-failure (replace world :uv-failure (EnvFailure :kind kind :detail "uv の失敗" :retryable retryable))
-                        env kind retryable)))
+  ;; 世界は uv の側の語で失敗を宣言し、業務の kind と一時かは翻訳が uv の出力と終わりから読み分ける。
+  (for [#(fault kind retryable) [#(UvFault.LOCK-OUTDATED EnvFailureKind.LOCK-STALE False)
+                                 #(UvFault.INDEX-UNREACHABLE EnvFailureKind.SYNC-FAILED True)
+                                 #(UvFault.SDIST-BUILD-ERROR EnvFailureKind.SYNC-FAILED False)
+                                 #(UvFault.NO-INTERPRETER EnvFailureKind.PYTHON-UNAVAILABLE True)
+                                 #(UvFault.BUILD-KILLED EnvFailureKind.NATIVE-BUILD-FAILED True)
+                                 #(UvFault.BUILD-ERROR EnvFailureKind.NATIVE-BUILD-FAILED False)]]
+    (<- (expect-failure (replace world :uv-failure (UvFailure :fault fault :detail "uv の失敗")) env kind retryable)))
   ;; 空きを 0 にする
   (<- (expect-failure (replace world :disk-free 0) env EnvFailureKind.DISK-FULL True))
   ;; 子の約束の版が worker の扱える範囲の外
   (<- (expect-failure (replace world :child-protocol 99) env EnvFailureKind.ENV-INCOMPATIBLE False)))
+
+
+(defk fetch-after-mirror-scenario [unreachable expected-kind expected-retryable]
+  {:pre [(: unreachable frozenset) (: expected-kind EnvFailureKind) (: expected-retryable bool)] :post [(: % bool)]
+   :tags {:context "runtime-env" :role "program"}}
+  "mirror が在る状態で次の commit を取りに行く筋: 1 回目の準備で mirror を作り、届かない url を差し替えて、次の commit の準備の失敗を読む。"
+  (<- first (prepare (! (env-of "app-1" "lib-1" LOCK)) #()))
+  (assert (isinstance first EnvReady) first)
+  (<- (set-unreachable unreachable))
+  (<- failure EnvFailure (failure-of (! (env-of "app-unpushed" "lib-1" LOCK))))
+  (assert (= failure.kind expected-kind) (.format "{} のはずが {}: {}" expected-kind failure.kind failure.detail))
+  (assert (= failure.retryable expected-retryable) failure)
+  True)
+
+
+(deftest test-a-fetch-that-cannot-reach-an-existing-mirror-is-unreachable-not-missing
+  ;; mirror が在る状態で remote に届かなくなると、無い commit ではなく一時の届かない(repo-unreachable)で答える。
+  (<- world EnvWorld (base-world))
+  (<- ok bool (run-in-world world (fetch-after-mirror-scenario (frozenset #(APP-URL)) EnvFailureKind.REPO-UNREACHABLE True)))
+  (assert ok)
+  ;; 反例: 届く remote に commit が無い時は、恒久の commit-missing のまま。
+  (<- ok bool (run-in-world world (fetch-after-mirror-scenario (frozenset) EnvFailureKind.COMMIT-MISSING False)))
+  (assert ok))
 
 
 (deftest test-a-third-party-package-shadowing-a-root-is-refused

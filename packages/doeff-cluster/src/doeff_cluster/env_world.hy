@@ -7,8 +7,10 @@
 ;;; 世界の宣言 EnvWorld:
 ;;;   remotes     = url → commit → ツリーの中身(file の path と文字)。uv.lock の中身もツリーに入れる。
 ;;;   denied      = worker の許可表から外す url(設定 runtime-env.repo-keys に載せない — 断るのは prepare-env)。
-;;;   unreachable = 届かない url(git の clone と fetch が「Could not read from remote repository」で終わる)。
-;;;   uv-failure  = uv の失敗を 1 つ起こす(sync の失敗は sync で・native の build の失敗は build で返る)。
+;;;   unreachable = 初めから届かない url(git の clone と fetch が「Could not read from remote repository」で終わる — 走行の途中で
+;;;                 変えるには set-unreachable)。
+;;;   uv-failure  = uv の失敗を 1 つ起こす(UvFailure — uv の側の語で宣言する。sync の失敗は sync で・build の失敗は build で返る。
+;;;                 業務の kind と一時かは翻訳 env-translation が出力と終わりから読み分ける — 世界は業務の語を持たない)。
 ;;;   disk-free   = 空き(byte)。child-protocol = root の中の子の入口の約束の版。
 ;;; 模擬の uv.lock の書き方: 1 行 1 package で `名==版`、第三者の package の最上位の import の名は ` top=a,b` で添える
 ;;; (処理ステージ 10 の名前の影を起こすため)。editable で入る package は ` editable=<project の dir からの相対 path>` を添える
@@ -19,13 +21,15 @@
 ;;;   notes.log       準備の記録の行(設定 runtime-env.notes)
 ;;;   uv-cache.json   取りに行った package の名(同じ lock の 2 回目は download 0)
 ;;;   uv-failure.json 今の uv の失敗(set-uv-failure で差し替える)
+;;;   unreachable.json 今届かない url の列(set-unreachable で差し替える)
 ;;; mirror の中身は mirror の dir の remote-url(URL)と fetched(取った commit の行)。
 ;;;
 ;;;   (with-handlers (env-world world) program) — env-world は handler の列(外側が先): memory の置き場・台本の子 process・翻訳の設定・翻訳。
 ;;;   外側に状態の置き場(doeff_core_effects の state)と時計が要る。
 (require doeff-hy.macros [defk deff defhandler <- val var])
-(require doeff-hy.record [defrecord])
+(require doeff-hy.record [defrecord defenum])
 (import dataclasses [dataclass])
+(import enum [StrEnum])
 (import functools [partial])
 (import hashlib)
 (import json)
@@ -37,7 +41,7 @@
 (import doeff_core_effects.memory_file [memory-file-handler])
 (import doeff_core_effects.scripted_process [ScriptedCommand ProcessScript scripted-process-handler])
 (import doeff_time [Delay])
-(import .runtime_env_model [EnvFailure EnvFailureKind CHILD-PROTOCOL])
+(import .runtime_env_model [CHILD-PROTOCOL])
 (import .env_handlers [env-translation])
 
 (val SOURCE-SUFFIXES #(".py" ".hy"))
@@ -50,6 +54,7 @@
 (val NOTES-PATH "/world/notes.log")
 (val CACHE-PATH "/world/uv-cache.json")
 (val FAILURE-PATH "/world/uv-failure.json")
+(val UNREACHABLE-PATH "/world/unreachable.json")
 (val CODE-PREPARE "/tools/code_prepare.hy")
 ;; 本物の git・uv と同じ終わり(届かない・無い物 = 128・使い方の誤り = 129)と、失敗の出力の語(翻訳が本物と同じく読み分ける)。
 (val GIT-FATAL 128)
@@ -59,6 +64,24 @@
 
 
 ;; --- 世界の宣言 -----------------------------------------------------------------------------
+
+;; uv の失敗の種類(uv の側の語):
+;;   LOCK-OUTDATED       sync が「lock を直す必要があるが --locked」で終わる
+;;   NO-INTERPRETER      sync が「Python の interpreter が無い」で終わる
+;;   INDEX-UNREACHABLE   sync が package の index に届かない
+;;   SDIST-BUILD-ERROR   sync が source の配布物の build に失敗する
+;;   BUILD-KILLED        build が signal で殺される(負の終わり)
+;;   BUILD-ERROR         build が compiler の誤りで終わる(終わり 1)
+(defenum UvFault LOCK-OUTDATED NO-INTERPRETER INDEX-UNREACHABLE SDIST-BUILD-ERROR BUILD-KILLED BUILD-ERROR)
+(val SYNC-FAULTS #(UvFault.LOCK-OUTDATED UvFault.NO-INTERPRETER UvFault.INDEX-UNREACHABLE UvFault.SDIST-BUILD-ERROR))
+(val BUILD-FAULTS #(UvFault.BUILD-KILLED UvFault.BUILD-ERROR))
+
+
+(defrecord UvFailure
+  "世界が起こす uv の失敗 1 つ(fault = 種類・detail = 出力に添える文)。"
+  (#^ UvFault fault)
+  (#^ str detail))
+
 
 (defrecord WorldFile
   "ツリーの中の file 1 つ(repo の中の相対 path と中身)。"
@@ -83,7 +106,7 @@
   (#^ tuple remotes)
   (setv #^ frozenset denied (frozenset))
   (setv #^ frozenset unreachable (frozenset))
-  (setv #^ (| EnvFailure None) uv-failure None)
+  (setv #^ (| UvFailure None) uv-failure None)
   (setv #^ int disk-free (** 2 40))
   (setv #^ int child-protocol CHILD-PROTOCOL)
   (setv #^ float cold-seconds 60.0)
@@ -223,12 +246,20 @@
 
 ;; --- git ----------------------------------------------------------------------------------
 
+(defk unreachable-now []
+  {:pre [] :post [(: % tuple)] :tags {:context "runtime-env" :role "foundation"}}
+  "今届かない url の列(世界の file から — set-unreachable で走行の途中に変わる)。"
+  (<- seen list (read-json UNREACHABLE-PATH []))
+  (tuple seen))
+
+
 (defk git-clone [world args]
   {:pre [(: world EnvWorld) (: args tuple)] :post [(: % ProcessOutcome)]}
   "git clone --bare <url> <tmp> に答えるため(届かない url は本物と同じ語で終わる・mirror の dir に URL と取った commit の file を置く)。"
   (val url (get args -2))
   (val tmp (get args -1))
-  (if (in url world.unreachable)
+  (<- unreachable tuple (unreachable-now))
+  (if (in url unreachable)
       (ProcessOutcome :stdout "" :stderr UNREACHABLE-TEXT :exit-code GIT-FATAL)
       (do (<- (write-file (posixpath.join tmp "remote-url") url))
           (<- (write-file (posixpath.join tmp "fetched") ""))
@@ -258,8 +289,9 @@
   (val ref (get args -1))
   (<- commit (| WorldCommit None) (commit-of world ref))
   (<- fetched str (read-or-empty (posixpath.join mirror "fetched")))
+  (<- unreachable tuple (unreachable-now))
   (cond
-    (in url world.unreachable) (ProcessOutcome :stdout "" :stderr UNREACHABLE-TEXT :exit-code GIT-FATAL)
+    (in url unreachable) (ProcessOutcome :stdout "" :stderr UNREACHABLE-TEXT :exit-code GIT-FATAL)
     (.startswith ref "+refs/") (ProcessOutcome :stdout "" :stderr "" :exit-code 0)
     (is commit None) (ProcessOutcome :stdout "" :stderr (.format "fatal: couldn't find remote ref {}\n" ref) :exit-code GIT-FATAL)
     (in ref (.splitlines fetched)) (ProcessOutcome :stdout "" :stderr "" :exit-code 0)
@@ -341,23 +373,22 @@
 ;; --- uv -----------------------------------------------------------------------------------
 
 (defk uv-failure-now []
-  {:pre [] :post [(: % (| EnvFailure None))]}
-  "今の uv の失敗(世界の file から)。"
+  {:pre [] :post [(: % (| UvFailure None))] :tags {:context "runtime-env" :role "foundation"}}
+  "今の uv の失敗(世界の file から — set-uv-failure で走行の途中に変わる)。"
   (<- seen (read-json FAILURE-PATH None))
   (if (is seen None)
       None
-      (EnvFailure :kind (EnvFailureKind (get seen "kind")) :detail (get seen "detail") :retryable (get seen "retryable"))))
+      (UvFailure :fault (UvFault (get seen "fault")) :detail (get seen "detail"))))
 
 
 (defk sync-failure-text [failure]
-  {:pre [(: failure EnvFailure)] :post [(: % str)]}
-  "uv sync の失敗を本物の uv と同じ語の出力にするため(翻訳が本物と同じく kind と一時かを読み分ける)。"
-  (match failure.kind
-    EnvFailureKind.LOCK-STALE "error: The lockfile at `uv.lock` needs to be updated, but `--locked` was provided.\n"
-    EnvFailureKind.PYTHON-UNAVAILABLE "error: No interpreter found for Python\n"
-    _ (if failure.retryable
-          "error: Failed to fetch: `https://pypi.org/simple`\n"
-          "error: Failed to build the source distribution\n")))
+  {:pre [(: failure UvFailure)] :post [(: % str)] :tags {:context "runtime-env" :role "foundation"}}
+  "uv sync の失敗を本物の uv と同じ語の出力にするため(業務の kind と一時かは翻訳が本物と同じくこの語から読み分ける)。"
+  (match failure.fault
+    UvFault.LOCK-OUTDATED "error: The lockfile at `uv.lock` needs to be updated, but `--locked` was provided.\n"
+    UvFault.NO-INTERPRETER "error: No interpreter found for Python\n"
+    UvFault.INDEX-UNREACHABLE "error: Failed to fetch: `https://pypi.org/simple`\n"
+    _ "error: Failed to build the source distribution\n"))
 
 
 (defk uv-sync [world args]
@@ -366,8 +397,8 @@
   (<- pdir (| str None) (option-of args "--project"))
   (<- python (| str None) (option-of args "--python"))
   (<- no-install tuple (options-of args "--no-install-package"))
-  (<- failure (| EnvFailure None) (uv-failure-now))
-  (if (and failure (in failure.kind #(EnvFailureKind.LOCK-STALE EnvFailureKind.SYNC-FAILED EnvFailureKind.PYTHON-UNAVAILABLE)))
+  (<- failure (| UvFailure None) (uv-failure-now))
+  (if (and failure (in failure.fault SYNC-FAULTS))
       (do (<- text str (sync-failure-text failure))
           (ProcessOutcome :stdout "" :stderr (+ text failure.detail "\n") :exit-code 1))
       (do (<- lock str (read-or-empty (posixpath.join pdir "uv.lock")))
@@ -394,10 +425,10 @@
 (defk uv-build [world args]
   {:pre [(: world EnvWorld) (: args tuple)] :post [(: % ProcessOutcome)]}
   "uv build --wheel --out-dir <dir> <source> に答える: native の build(冷たい秒)で dir に wheel を 1 つ置く。"
-  (<- failure (| EnvFailure None) (uv-failure-now))
-  (if (and failure (= failure.kind EnvFailureKind.NATIVE-BUILD-FAILED))
-      ;; signal での終了(負の終わり)は一時、compiler の誤り(1)は恒久 — 本物と同じく翻訳が終わりで読み分ける。
-      (ProcessOutcome :stdout "" :stderr (+ failure.detail "\n") :exit-code (if failure.retryable -9 1))
+  (<- failure (| UvFailure None) (uv-failure-now))
+  (if (and failure (in failure.fault BUILD-FAULTS))
+      ;; signal での終了は負の終わり、compiler の誤りは 1 — 一時か恒久かは翻訳が本物と同じく終わりで読み分ける。
+      (ProcessOutcome :stdout "" :stderr (+ failure.detail "\n") :exit-code (if (= failure.fault UvFault.BUILD-KILLED) -9 1))
       (do (<- (Delay world.cold-seconds))
           (<- out (| str None) (option-of args "--out-dir"))
           (<- (write-file (posixpath.join out (+ (posixpath.basename (get args -1)) ".whl")) ""))
@@ -492,15 +523,20 @@
 
 (deff world-files-of [world]  ; defk にできない: handler の組を並べる時(Program の外)に置き場の初めの中身を作る
   {:pre [(: world EnvWorld)] :post [(: % MemoryFiles)] :tags {:context "runtime-env" :role "entry"}}
-  "memory の置き場の初めの中身(state と world の dir・今の uv の失敗・空き)。"
+  "memory の置き場の初めの中身(state と world の dir・今の uv の失敗・今届かない url・空き)。"
   (setv failure world.uv-failure)
   (MemoryFiles :dirs #(STATE-DIR WORLD-DIR)
-               :files (if (is failure None)
-                          #()
-                          #((MemoryFile :path FAILURE-PATH
-                                        :content (.encode (json.dumps {"kind" failure.kind.value "detail" failure.detail
-                                                                       "retryable" failure.retryable})))))
+               :files (+ (if (is failure None)
+                             #()
+                             #((MemoryFile :path FAILURE-PATH :content (.encode (json.dumps (failure-json failure))))))
+                         #((MemoryFile :path UNREACHABLE-PATH :content (.encode (json.dumps (sorted world.unreachable))))))
                :free world.disk-free))
+
+
+(deff failure-json [failure]  ; defk にできない: 置き場の初めの中身(Program の外)と set-uv-failure の両方が JSON の境界で使う
+  {:pre [(: failure UvFailure)] :post [(: % dict)] :tags {:context "runtime-env" :role "foundation"}}
+  "uv の失敗を世界の file の JSON の形にするため(JSON の境界はここ 1 か所)。"
+  {"fault" failure.fault.value "detail" failure.detail})
 
 
 (deff env-world [world]  ; defk にできない: handler の列を返す — 入口と検が Program の外で並べる
@@ -537,9 +573,14 @@
 
 
 (defk set-uv-failure [failure]
-  {:pre [(: failure (| EnvFailure None))] :post [(: % None)]}
-  "以後の uv の失敗を差し替える(None = 失敗させない)。"
-  (<- (write-json FAILURE-PATH (if (is failure None)
-                                   None
-                                   {"kind" failure.kind.value "detail" failure.detail "retryable" failure.retryable})))
+  {:pre [(: failure (| UvFailure None))] :post [(: % None)] :tags {:context "runtime-env" :role "foundation"}}
+  "筋書きが走行の途中で以後の uv の失敗を差し替えるため(None = 失敗させない)。"
+  (<- (write-json FAILURE-PATH (if (is failure None) None (failure-json failure))))
+  None)
+
+
+(defk set-unreachable [urls]
+  {:pre [(: urls frozenset)] :post [(: % None)] :tags {:context "runtime-env" :role "foundation"}}
+  "筋書きが走行の途中で届かない url の列を差し替えるため(mirror が在る状態で届かなくなる筋を起こす)。"
+  (<- (write-json UNREACHABLE-PATH (sorted urls)))
   None)
