@@ -1,4 +1,4 @@
-//! エディタ向けの出力 `--output-format editor-json`(契約 lint-contract-v1.md 版 1)の形と、その組み立て。
+//! エディタ向けの出力 `--output-format editor-json`(契約 = docs/SPECIFICATION.md 2 節・版 2)の形と、その組み立て。
 //!
 //! linter が規則の判定の唯一の正本で、エディタ(doeff-runner)はこの JSON を表示するだけ。Python の文ごとの規則
 //! (DOEFF001〜031)と層の規則(DOEFF101〜108)の違反を 1 つの形に揃える。位置は 0 始まりの行・UTF-16 の列。
@@ -20,8 +20,9 @@ use crate::project::settings::{ProjectRuleOrExternal, ProjectSettings};
 use crate::project::ProjectReport;
 use crate::rule_info::get_rule_info;
 
-/// 契約の版。形を変える時は契約と一緒に上げる。
-pub const EDITOR_CONTRACT_VERSION: u32 = 1;
+/// 契約の版。形を変える時は契約と一緒に上げる。版 2 = defk / deff の見出し `signatures` と束縛の型 `bindings` を足した
+/// (agora-redesign #849 — エディタが型・effect・tags を読むだけの表示で描くため)。
+pub const EDITOR_CONTRACT_VERSION: u32 = 2;
 
 /// 違反の重さ(契約の閉じた集合)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -122,6 +123,10 @@ pub struct EditorReport {
     /// architecture.hy の宣言(service の一覧 — name・dir・description・depends_on・layers と、層の宣言)。無ければ null。
     pub architecture: Option<crate::project::architecture::Architecture>,
     pub violations: Vec<EditorViolation>,
+    /// `--stdin` の file の defk / deff の見出し(版 2・全体の実行では空)。
+    pub signatures: Vec<crate::project::signatures::Signature>,
+    /// `--stdin` の file の束縛(`<-`・val・var・setv・:=)の型(版 2・全体の実行では空)。
+    pub bindings: Vec<crate::project::signatures::Binding>,
     pub modules: Vec<EditorModule>,
     pub rules: Vec<EditorRule>,
     pub errors: Vec<String>,
@@ -149,6 +154,8 @@ pub struct EditorInput<'a> {
     pub project_wired: &'a BTreeSet<ProjectRule>,
     /// 違反を出す file を絞る(None なら全部)。
     pub only: Option<&'a [PathBuf]>,
+    /// `--stdin` の Hy の file の見出しと束縛(版 2)。
+    pub signatures: Option<&'a crate::project::signatures::FileSignatures>,
 }
 
 /// 出力を組み立てる。
@@ -244,6 +251,8 @@ pub fn build(input: &EditorInput) -> EditorReport {
         architecture: input.settings.architecture.clone(),
         semantic: input.project.semantic.clone(),
         violations,
+        signatures: input.signatures.map(|s| s.signatures.clone()).unwrap_or_default(),
+        bindings: input.signatures.map(|s| s.bindings.clone()).unwrap_or_default(),
         modules,
         rules: rule_list(input),
         errors,
@@ -387,6 +396,7 @@ mod tests {
             project_rules,
             project_wired,
             only: None,
+            signatures: None,
         }
     }
 

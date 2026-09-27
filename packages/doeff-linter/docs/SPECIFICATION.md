@@ -42,11 +42,11 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
 登録簿に載った既知の破れ(warning)と照合中の規則の違反(info)では 1 にしない。CI や agent の hook で「新しい破れだけを止める」
 ためである(この決定は戻せる。戻すなら `EditorReport::has_errors` を違反の有無に替える)。
 
-## 2. editor-json の形(版 1)
+## 2. editor-json の形(版 2)
 
 ```jsonc
 {
-  "version": 1,
+  "version": 2,
   "linter": {"version": "0.2.0", "commit": "<sha>"},  // この出力を作った binary と組んだ doeff の commit(版 1 への追加の欄)
   "root": "/abs/repo",                       // 正規化した repo の根
   "layers": [                                // 層の順(外の世界から遠い順)と説明 — 設定 layers.describe から(無い欄は null)
@@ -95,6 +95,8 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
   (`layer`・`tags`・`raw`・`naming`・`place`・`definition`・`class`・`wire`・`smell`・`jev`・`python`・`law` の閉じた集合。
   Python の文ごとの規則(DOEFF001〜031・NOQA001・知らない ID)は `python`、針の無い law は `law`)— エディタが規則の一覧を
   束ねて見せる時に使う。名と家族の判定は linter が持ち、エディタは写しを持たない。
+
+- `signatures`・`bindings`(版 2): `--stdin` の Hy の file の defk / deff の見出しと束縛の型。全体の実行では空の列。形と読み方は 16 節。
 
 ### 説明の文(explanation・layer_reason)
 
@@ -453,3 +455,56 @@ coordinator の決定 2026-09-28(戻せる・agora-redesign #798 に記録)。�
 - **拾えない範囲**(ADR-DOE-HY-007 R14): 呼び手が defk を変数や欄に入れてから渡す形・partial などで包んで渡す形、呼び先がその引数を
   さらに別の関数へ渡してそこで素で呼ぶ形(1 段だけ追う)、呼び先が method・入れ子の関数・名で引けない物、repo の外の呼び手。
 
+## 16. defk の見出しと束縛の型 — editor-json 版 2(agora-redesign #849)
+
+エディタ(doeff-runner)が defk の型・effect・tags を読むだけの表示で描くための材料。型の読み方はこの linter の
+`src/project/signatures.rs` の 1 か所に置き、エディタは写しを持たない(operator 2026-09-28 "I will never edit the source manually" —
+書く向きの変換は持たない)。`--stdin --path <file>` の時だけ、その file の分を出す(全体の実行では空)。
+
+```jsonc
+"signatures": [{
+  "kind": "defk",                        // defk | deff
+  "name": "fetch", "path": "/abs/core/flow.hy",
+  "range": {…},                          // 名の範囲
+  "full_range": {…},                     // 定義の form 全体
+  "contract_range": {…},                 // 契約の辞書 {:pre … :post … :effects … :tags …}(無ければ null)
+  "params": [{"name": "id", "type": TypeRef | null}],   // :pre の (: 名 型)。書いていなければ null
+  "answer": TypeRef | null,              // :post の (: % 型)(無ければ名の注記 #^ T)
+  "absent": true,                        // 答えが Maybe か(Absent が呼び手へ抜けうる)
+  "raises": [TypeRef],                   // 呼び手へ抜けうる Raise の型
+  "effects": {"declared": [EffectRef] | null,   // :effects(#800)。書いていなければ null
+              "inferred": [EffectRef]},         // 推論(下)
+  "tags": {"context": "demo", "role": "program"}
+}],
+"bindings": [{
+  "form": "<-",                          // <- | val | var | setv | :=
+  "name": "row", "path": "…",
+  "range": {…}, "form_range": {…}, "head_range": {…},   // 名・form 全体(括弧を含む)・頭の記号
+  "annotation_range": {…} | null,        // (<- x T e) の T
+  "value_range": {…} | null,
+  "type": TypeRef | null,                // 分からなければ null(別の型で埋めない)
+  "origin": "effect",                    // annotation | effect | call | literal | constructor | var | unknown
+  "absent": true, "raises": [TypeRef]
+}]
+// TypeRef = {"kind": "name", "name": "Row", "definition": {"path", "range"} | null}
+//         | {"kind": "union", "members": [TypeRef]} | {"kind": "apply", "head": TypeRef, "args": [TypeRef]}
+//         | {"kind": "unknown", "text": "書かれた綴り"}
+// EffectRef = {"name", "definition": {"path", "range"} | null, "answer": TypeRef | null, "absent": [TypeRef], "failure": [TypeRef]}
+```
+
+- **型の式**: 記号は名、`(| a b)` は和(入れ子は平らにする)、`(of H a …)` は当て、それ以外は読めない式(`unknown`)。名は file の
+  import と定義の場所で module まで解き(`smells::Scope`)、repo の Hy の定義(defrecord・defwire・defenum・defclass・defeffect・deftype・
+  頭が大文字の val)に当たれば `definition` に位置を入れる。組み込みの型と解けない名は null。
+- **推論した effect**: 本体で撃った呼び(`(<- …)` の右辺・`(! …)` の中身)の頭が defeffect ならその effect、defk ならその defk の
+  推論を足す。repo の Hy の file 全部から集めた表の上の不動点(保存前の file は stdin の中身で読む)。handler で受けた effect は引かない
+  (上から見積もった集合)。宣言との食い違いはそのまま出し、エディタが見せる。
+- **Absent と Raise**: `:absent` を宣言した effect(か `absent` の defk)を撃つと答えは Maybe。`(<- … :absent F)` は F の頭の型の
+  Raise に替わり、`absent-as` の中は Absent を受けている。Raise = 撃った effect の `:failure` と撃った defk の Raise(`on-raise` の
+  program の中は引く)。
+- **束縛の型**: `(<- x T e)` は注釈(Absent / Raise は e から)、`(<- x e)` は e の頭が effect なら値の答え(`:answer` の要素から
+  `:absent` と `:failure` を除いた物)、defk ならその答え。`val` / `var` / `setv` は字面(文字列・数・真偽・None・辞書・列)・型の名の呼び・
+  deff の答え・`(! e)`。`(var x None)` は後で別の値を入れる置き場なので分からない(null)。`(:= x v)` は同じ最上位の定義の中の
+  `(var x …)` の型。quote の中は読まない。
+- **時間**: 保存前の 1 file の実行で、repo の Hy の file を全部読んで表を作る(agora-controllers の約 950 file で 0.4〜1.2 秒)。
+- **エディタ側の知らない語**: 閉じた集合(規則の家族・見出しの種類・束縛の形と出どころ・型の式の種類)に linter が語を足しても、
+  エディタは出力を捨てず、その項目だけ既定の見た目にして「拡張が古い」を出す(#848)。

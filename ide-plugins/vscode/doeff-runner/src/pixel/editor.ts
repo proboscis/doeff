@@ -2,6 +2,7 @@
 // (replaceEditor.ts)・状態バーの doe。何を出すかは vocabulary.ts と replace.ts の純粋な関数が hy-index と linter の
 // 出力から決め、ここは VS Code の飾り・hover・状態バーへ写すだけ。判定はしない。
 
+import type { DefkView } from '../defk/view';
 import * as vscode from 'vscode';
 import type { EffectGraphSource } from '../hy/effects';
 import { isHyPath } from '../hy/indexService';
@@ -200,12 +201,15 @@ export function registerPixelEditor(
   effects: EffectGraphSource,
   lint: LintStore,
   icons: IconSource,
-  output: vscode.OutputChannel
+  output: vscode.OutputChannel,
+  defk: DefkView
 ): void {
   const gutter = new PixelGutter(hy, lint, icons, output);
   const replacements = new ReplacementCache(effects);
-  // 索引が変わると effect の表が変わる(宣言した effect の頭の印)ので出し直す
-  const replacer = new PixelTextReplacer(replacements, icons, output, (listener) => hy.onDidChange(listener));
+  // 索引が変わると effect の表が変わる(宣言した effect の頭の印)ので出し直す。defk の見出しと束縛が隠した文字の上には描かない
+  const replacer = new PixelTextReplacer(replacements, icons, output, (listener) => hy.onDidChange(listener), (editor) => defk.hiddenSpans(editor));
+  const offDefk = defk.onDidRedraw(() => replacer.redraw());
+  context.subscriptions.push({ dispose: offDefk });
   context.subscriptions.push(
     gutter,
     replacer,

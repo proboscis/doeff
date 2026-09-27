@@ -21,6 +21,7 @@ import { multiTokenFuzzyMatch } from './search';
 import { registerHyNavigation } from './hy/register';
 import { registerLint } from './lint/register';
 import { registerBrowse } from './hy/browsePanel';
+import { registerDefkView } from './defk/view';
 import { PixelIcons, type IconSource } from './pixel/icons';
 import { pixelOwnsGutter, registerPixelEditor, treeIconsEnabled } from './pixel/editor';
 
@@ -2931,7 +2932,9 @@ export function activate(context: vscode.ExtensionContext) {
   // Browse definitions by service / layer / tags (display only).
   registerBrowse(context, hyStore, lintStore, output, treePixels);
   // エディタの上の pixel art(gutter の種類の icon と状態の印・決まった語の文字の置き換えと hover・状態バーの doe)
-  registerPixelEditor(context, hyStore, hyNavigation.effects, lintStore, pixelIcons, output);
+  // defk の見出し(型の流れ・effect・tags)と束縛の型 — linter の editor-json 版 2 を読むだけの表示(agora-redesign #849)
+  const defkView = registerDefkView(context, lintStore, (name) => pixelIcons.sprite(name), output);
+  registerPixelEditor(context, hyStore, hyNavigation.effects, lintStore, pixelIcons, output, defkView);
 
   // Create state store for sharing state between TreeView and CodeLens
   const stateStore = new DoeffStateStore(context);
