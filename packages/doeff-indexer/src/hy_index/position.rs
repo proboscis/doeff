@@ -3,7 +3,8 @@
 use serde::Serialize;
 
 /// 契約の位置。VS Code の Position と同じ単位(行は 0 始まり、列は UTF-16 の code unit)。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+/// 順序は行、次に列(範囲の包含を比べるため)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct Position {
     pub line: u32,
     pub character: u32,

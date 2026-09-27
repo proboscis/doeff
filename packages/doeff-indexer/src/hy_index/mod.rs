@@ -1,6 +1,6 @@
 //! Hy の file(`*.hy` / `*.hyk` / `*.hyp`)の索引 — `doeff-indexer hy-index` の本体。
 //!
-//! 定義・import・参照を契約 `hy-index-contract.md`(版 1)の形で出す。Python の索引
+//! 定義・import・参照を契約 `hy-index-contract.md`(版 1)と `hy-index-contract-v2.md`(版 2 の追加 = bases・calls)の形で出す。Python の索引
 //! (`indexer.rs`)とは独立で、互いの挙動を変えない。読めない file・壊れた括弧でも止まらず、
 //! 読めた分を出して `errors` に理由を積む。
 
@@ -16,7 +16,7 @@ use std::path::{Component, Path, PathBuf};
 
 pub use analyze::mangle;
 pub use model::{
-    Definition, DefinitionKind, HyFileIndex, HyIndex, Import, Position, Range, Reference, CONTRACT_VERSION,
+    Call, Definition, DefinitionKind, HyFileIndex, HyIndex, Import, Position, Range, Reference, CONTRACT_VERSION,
 };
 
 /// 探索で降りない directory の名前(契約の一覧)。
@@ -109,6 +109,7 @@ pub fn index_source(root: &Path, path: &Path, source: &str) -> HyFileIndex {
         definitions: analysis.definitions,
         imports: analysis.imports,
         references: analysis.references,
+        calls: analysis.calls,
         errors: analysis.errors,
     }
 }
@@ -121,6 +122,7 @@ fn failed_file(root: &Path, path: &Path, reason: &str) -> HyFileIndex {
         definitions: Vec::new(),
         imports: Vec::new(),
         references: Vec::new(),
+        calls: Vec::new(),
         errors: vec![reason.to_string()],
     }
 }
