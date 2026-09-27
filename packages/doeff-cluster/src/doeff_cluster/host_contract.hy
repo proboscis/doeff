@@ -18,6 +18,8 @@
 ;;; Program と宿の答え(HOST-CONTRACT の 3 つとクラスタの約束の effect)のどちらも答えなければ、本番の子と同じ未処理の例外
 ;;; (doeff.UnhandledEffect)で process を落とす — sim の外側(検の handler・sim の世界)が本番には無い答えを黙って返さないため。
 ;;; 時計のうち SetTime(仮想の時計を系ごと動かす)と ScheduleAt(時計の handler が外側で Spawn する = 柵の外で走る)は通さない。
+;;; 柵は Program の Spawn を包み直して(process の中の task として覚える — process の終わりで一緒に止める)外へ送り、その包みが出す
+;;; 登録(local.hy の KeepChild — sim の仕組みの effect)だけは表の外でも通す。
 (require doeff-hy.macros [defhandler val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
