@@ -54,6 +54,10 @@ pub struct EditorViolation {
     pub registered: bool,
     /// これは何か・なぜ違反か・law の文(層の規則だけ。Python の文ごとの規則は null)。
     pub explanation: Option<Explanation>,
+    /// 判定の出どころ(linter = 決定的な規則・jev = Jev の意味の判定)。
+    pub source: crate::project::FindingOrigin,
+    /// Jev の判定の確率(Jev の違反だけ・他は null)。
+    pub probability: Option<f64>,
 }
 
 /// 地図の材料の module 1 つ。
@@ -96,6 +100,8 @@ pub struct EditorReport {
     pub root: String,
     /// 層の順(外の世界から遠い順)と説明。
     pub layers: Vec<EditorLayer>,
+    /// 意味の規則(Jev)の要約 — model・通信の形・判定済み / 未判定の数・今回撃った数と費用・較正の結果。設定が無ければ null。
+    pub semantic: Option<crate::project::semantic::SemanticSummary>,
     /// architecture.hy の宣言(service の一覧 — name・dir・description・depends_on・layers と、層の宣言)。無ければ null。
     pub architecture: Option<crate::project::architecture::Architecture>,
     pub violations: Vec<EditorViolation>,
@@ -166,6 +172,8 @@ pub fn build(input: &EditorInput) -> EditorReport {
                 key: None,
                 registered: false,
                 explanation: None,
+                source: crate::project::FindingOrigin::Linter,
+                probability: None,
             });
         }
     }
@@ -182,6 +190,8 @@ pub fn build(input: &EditorInput) -> EditorReport {
             key: Some(finding.key.clone()),
             registered: finding.registered,
             explanation: Some(finding.explanation.clone()),
+            source: finding.origin,
+            probability: finding.probability,
         });
     }
     if let Some(only) = input.only {
@@ -214,6 +224,7 @@ pub fn build(input: &EditorInput) -> EditorReport {
         root: input.root.to_string_lossy().into_owned(),
         layers: layer_list(input.settings),
         architecture: input.settings.architecture.clone(),
+        semantic: input.project.semantic.clone(),
         violations,
         modules,
         rules: rule_list(input),

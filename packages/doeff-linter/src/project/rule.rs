@@ -37,11 +37,15 @@ pub enum ProjectRule {
     ServiceDependency,
     /// DOEFF117: 宣言したのに使っていない依存(info)。
     UnusedDependency,
+    /// DOEFF201(意味・Jev): 翻訳の層の定義が業務の判断をしている。
+    SemanticBusinessDecision,
+    /// DOEFF202(意味・Jev): 判断の層の定義が通信の手段を知っている。
+    SemanticTransportKnowledge,
 }
 
 impl ProjectRule {
     /// 全部の層の規則(出力の一覧と `ALL` の展開のため)。
-    pub const ALL: [ProjectRule; 17] = [
+    pub const ALL: [ProjectRule; 19] = [
         ProjectRule::LayerImportDirection,
         ProjectRule::LayerForbiddenModule,
         ProjectRule::LayerTypesOnly,
@@ -59,6 +63,8 @@ impl ProjectRule {
         ProjectRule::UndeclaredDirectory,
         ProjectRule::ServiceDependency,
         ProjectRule::UnusedDependency,
+        ProjectRule::SemanticBusinessDecision,
+        ProjectRule::SemanticTransportKnowledge,
     ];
 
     /// 規則の ID。
@@ -81,6 +87,8 @@ impl ProjectRule {
             ProjectRule::UndeclaredDirectory => "DOEFF115",
             ProjectRule::ServiceDependency => "DOEFF116",
             ProjectRule::UnusedDependency => "DOEFF117",
+            ProjectRule::SemanticBusinessDecision => "DOEFF201",
+            ProjectRule::SemanticTransportKnowledge => "DOEFF202",
         }
     }
 
@@ -102,7 +110,9 @@ impl ProjectRule {
             | ProjectRule::RawSideEffectVia
             | ProjectRule::ServiceBoundary
             | ProjectRule::ContextMatchesService
-            | ProjectRule::ServiceDependency => true,
+            | ProjectRule::ServiceDependency
+            | ProjectRule::SemanticBusinessDecision
+            | ProjectRule::SemanticTransportKnowledge => true,
             ProjectRule::UndeclaredPlace | ProjectRule::UndeclaredDirectory | ProjectRule::UnusedDependency => false,
             ProjectRule::EnvironmentName
             | ProjectRule::DefnForbidden
@@ -131,6 +141,8 @@ impl ProjectRule {
             ProjectRule::UndeclaredDirectory => "Undeclared Directory",
             ProjectRule::ServiceDependency => "Service Dependency",
             ProjectRule::UnusedDependency => "Unused Dependency",
+            ProjectRule::SemanticBusinessDecision => "Business Decision In Translation (Jev)",
+            ProjectRule::SemanticTransportKnowledge => "Transport Knowledge In Core (Jev)",
         }
     }
 
@@ -154,6 +166,8 @@ impl ProjectRule {
             ProjectRule::UndeclaredDirectory => "root の下の dir は宣言した service か shared・foundation・legacy で、service の中の dir は宣言した層",
             ProjectRule::ServiceDependency => "service A が読んでよいのは、A の :depends-on に在る service の open-layers(intent)と shared だけ",
             ProjectRule::UnusedDependency => "宣言した依存(:depends-on)を、その service のどの module も読んでいない(知らせ)",
+            ProjectRule::SemanticBusinessDecision => "翻訳の層の定義は、要求を相手の話し方へ言い換えるだけで、業務の判断をしない(Jev の判定・warning か info)",
+            ProjectRule::SemanticTransportKnowledge => "判断の層の定義は、通信の手段(URL・HTTP・JSON の wire・SQL)を知らない(Jev の判定・warning か info)",
         }
     }
 
@@ -177,6 +191,8 @@ impl ProjectRule {
             ProjectRule::UndeclaredDirectory => "architecture.hy に defservice か service の :layers を足すか、dir を宣言した置き場所へ移す",
             ProjectRule::ServiceDependency => "依存先を :depends-on に足し、依存先の intent を出して頼む(判断や翻訳の module を直に読まない)",
             ProjectRule::UnusedDependency => "使っていない依存を :depends-on から外す",
+            ProjectRule::SemanticBusinessDecision => "業務の判断は core の judgment へ移し、翻訳の handler はその答えを使うだけにする(Jev の外れなら登録簿に載せる)",
+            ProjectRule::SemanticTransportKnowledge => "通信の手段は protocol の翻訳の handler へ移し、core は intent を出すだけにする(Jev の外れなら登録簿に載せる)",
         }
     }
 }

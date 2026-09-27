@@ -450,6 +450,8 @@ pub struct ProjectSettings {
     pub config_dir: Option<std::path::PathBuf>,
     /// repo の一番上の architecture.hy(service と層の唯一の宣言)。在れば層・role は ここから写す。
     pub architecture: Option<super::architecture::Architecture>,
+    /// 意味の規則(DOEFF201・202 — Jev)の設定。
+    pub semantic: Option<super::semantic::SemanticSettings>,
     pub laws: Vec<LawSpec>,
     pub registry: RegistrySpec,
 }
@@ -610,6 +612,7 @@ impl ProjectSettings {
                 registered_severity: BTreeMap::new(),
                 config_dir: None,
                 architecture: None,
+                semantic: None,
                 laws,
                 registry,
             })

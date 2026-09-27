@@ -12,6 +12,7 @@ pub mod facts;
 pub mod names;
 pub mod registry;
 pub mod rule;
+pub mod semantic;
 pub mod settings;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -49,6 +50,20 @@ pub struct Finding {
     pub registered: bool,
     /// これは何か・なぜ違反か・law の文(explain.rs が作る)。
     pub explanation: Explanation,
+    /// 判定の出どころ(決定的な規則か Jev か)。
+    pub origin: FindingOrigin,
+    /// Jev の判定の確率(Jev の違反だけ)。
+    pub probability: Option<f64>,
+}
+
+/// 違反の判定の出どころ。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FindingOrigin {
+    /// 決定的な規則。
+    Linter,
+    /// Jev の意味の判定。
+    Jev,
 }
 
 /// 地図の材料 — 層の規則が読んだ module 1 つ。
@@ -72,6 +87,8 @@ pub struct ProjectReport {
     pub modules: Vec<ModuleSummary>,
     /// 読めなかった file・登録簿・目録の理由。
     pub errors: Vec<String>,
+    /// 意味の規則の要約(設定が無ければ None)。
+    pub semantic: Option<semantic::SemanticSummary>,
 }
 
 /// 何を判じるか — repo 全体か、保存前の内容の 1 file。
@@ -121,6 +138,12 @@ struct ModuleSite {
 
 /// 層の規則を走らせる。root は正規化した repo の根、enabled は有効な規則。
 pub fn run(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRule>, target: Target) -> ProjectReport {
+    run_with(root, settings, enabled, target, &semantic::SemanticMode::CacheOnly)
+}
+
+/// 層の規則を走らせる(意味の規則をどう扱うかを選べる — 既定の `run` は cache を読むだけ)。
+pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRule>, target: Target, semantic_mode: &semantic::SemanticMode) -> ProjectReport {
+    let semantic_files: Vec<(LayerFile, Option<String>)>;
     let mut report = ProjectReport::default();
     let mut registry = Registry::load(root, &settings.registry.dirs, &settings.registry.files);
     if !settings.registry.config_files.is_empty() {
@@ -137,6 +160,7 @@ pub fn run(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRu
     match target {
         Target::Whole => {
             let layer_files = settings.layers.as_ref().map(|layers| collect_layer_files(root, layers)).unwrap_or_default();
+            semantic_files = layer_files.iter().map(|f| (f.clone(), None)).collect();
             let env_files = settings.environment.as_ref().map(|env| collect_environment_files(root, env)).unwrap_or_default();
             let hy = whole_hy_index(root, settings, enabled, &raw, &layer_files, &env_files, wants_raw);
             if let Some(layers) = &settings.layers {
@@ -205,6 +229,15 @@ pub fn run(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRu
         }
         Target::Single { path, source } => {
             let rel = relative_path(root, &path);
+            semantic_files = match (&settings.layers, &rel) {
+                (Some(layers), Some(rel)) => classify_layer_file(rel, layers)
+                    .map(|(site, language)| {
+                        let file = LayerFile { file: SourceFile { rel: rel.clone(), path: root.join(rel), language }, module: module_of(rel), site };
+                        vec![(file, Some(source.to_string()))]
+                    })
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
             // 根の中の file は、全体の実行と同じく「根 + 根からの path」を出す(エディタが結果を差し替える鍵を揃えるため)。
             let path = rel.as_ref().map(|r| root.join(r)).unwrap_or(path);
             let hy_file = match (language_of(&path), wants_raw || enabled.contains(&ProjectRule::EnvironmentName)) {
@@ -243,6 +276,15 @@ pub fn run(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRu
                     }
                 }
             }
+        }
+    }
+    if let (Some(semantic), Some(layers)) = (&settings.semantic, &settings.layers) {
+        let wanted = [ProjectRule::SemanticBusinessDecision, ProjectRule::SemanticTransportKnowledge].iter().any(|r| enabled.contains(r));
+        if wanted {
+            let (found, summary, errors) = judge_semantic(root, semantic, layers, enabled, &semantic_files, semantic_mode);
+            drafts.extend(found);
+            report.errors.extend(errors);
+            report.semantic = Some(summary);
         }
     }
     report.findings = finish(drafts, settings, &registry);
@@ -1152,6 +1194,172 @@ fn judge_unused_dependencies(root: &Path, architecture: &architecture::Architect
     drafts
 }
 
+// --- 意味の規則(DOEFF201・202 — Jev)---------------------------------------------------
+
+/// 意味の問いを当てる定義の kind(型と関数と handler — 値の束縛・検・macro は問わない)。
+fn semantic_kind(kind: DefinitionKind) -> bool {
+    matches!(
+        kind,
+        DefinitionKind::Defn
+            | DefinitionKind::DefnAsync
+            | DefinitionKind::Defk
+            | DefinitionKind::Deff
+            | DefinitionKind::Defp
+            | DefinitionKind::Defpp
+            | DefinitionKind::Defhandler
+            | DefinitionKind::Defeffect
+            | DefinitionKind::Defclass
+            | DefinitionKind::Defrecord
+            | DefinitionKind::Defenum
+    )
+}
+
+/// 較正の例の kind の綴りを 'static にするための一覧(semantic_kind と同じ kind)。
+const SEMANTIC_KIND_NAMES: &[&str] = &["defn", "defn/a", "defk", "deff", "defp", "defpp", "defhandler", "defeffect", "defclass", "defrecord", "defenum"];
+
+/// 規則と問いの対応。
+fn semantic_rule(question: semantic::SemanticQuestion) -> ProjectRule {
+    match question {
+        semantic::SemanticQuestion::BusinessDecision => ProjectRule::SemanticBusinessDecision,
+        semantic::SemanticQuestion::TransportKnowledge => ProjectRule::SemanticTransportKnowledge,
+    }
+}
+
+/// DOEFF201・202: 設定した層の Hy の最上位の定義を Jev の問いにし、cache を読むか(既定)撃つ(--semantic)。答えの無い定義は未判定の数。
+fn judge_semantic(
+    root: &Path,
+    settings: &semantic::SemanticSettings,
+    layers: &LayerSettings,
+    enabled: &BTreeSet<ProjectRule>,
+    files: &[(LayerFile, Option<String>)],
+    mode: &semantic::SemanticMode,
+) -> (Vec<Draft>, semantic::SemanticSummary, Vec<String>) {
+    let target = semantic::target_from_process_environment();
+    let model = target.model.clone();
+    let wire = format!("{:?}({})", target.wire, target.source).to_lowercase();
+    let mut errors = Vec::new();
+    let gateway: Option<semantic::HttpGateway> = match mode {
+        semantic::SemanticMode::CacheOnly => None,
+        _ => match semantic::HttpGateway::new(target, settings.timeout) {
+            Ok(gateway) => Some(gateway),
+            Err(reason) => {
+                errors.push(format!("意味の規則: {}", reason));
+                None
+            }
+        },
+    };
+    let mut items = Vec::new();
+    let mut roles_of: HashMap<String, Vec<String>> = HashMap::new();
+    for (file, source) in files {
+        if file.file.language != Language::Hy {
+            continue;
+        }
+        let questions: Vec<semantic::SemanticQuestion> = semantic::SemanticQuestion::ALL
+            .into_iter()
+            .filter(|q| enabled.contains(&semantic_rule(*q)) && settings.questions.get(q).is_some_and(|s| s.layers.contains(&file.site.layer)))
+            .collect();
+        if questions.is_empty() {
+            continue;
+        }
+        let text = match source {
+            Some(text) => text.clone(),
+            None => match std::fs::read_to_string(&file.file.path) {
+                Ok(text) => text,
+                Err(error) => {
+                    errors.push(format!("{}: 読めない: {}", file.file.rel, error));
+                    continue;
+                }
+            },
+        };
+        let facts = read_facts(Language::Hy, &text, &file.module, &layers.tags);
+        let mut roles: Vec<String> = Vec::new();
+        for tags in facts.tag_sets() {
+            if let Some(role) = tags.role.clone().filter(|r| !r.is_empty() && !roles.contains(r)) {
+                roles.push(role);
+            }
+        }
+        roles_of.insert(file.file.rel.clone(), roles);
+        let index = hy_index::index_source(root, &file.file.path, &text);
+        let spec = &layers.layers[file.site.layer.0];
+        for definition in index.definitions.iter().filter(|d| d.container.is_none() && semantic_kind(d.kind)) {
+            let start = crate::position::offset_of(&text, definition.full_range.start);
+            let end = crate::position::offset_of(&text, definition.full_range.end);
+            let body = text.get(start..end).unwrap_or("");
+            for question in &questions {
+                items.push(semantic::item(
+                    settings,
+                    &model,
+                    *question,
+                    &file.file.rel,
+                    &file.file.path,
+                    &definition.name,
+                    definition.kind.as_str(),
+                    definition.range,
+                    body,
+                    file.site.layer,
+                    &spec.name,
+                    &spec.description,
+                ));
+            }
+        }
+    }
+    // 較正の見張りの例(同梱の正例と反例)を、その問いを当てる最初の層の説明で組む。
+    let calibration: Vec<(semantic::SemanticItem, bool)> = semantic::calibration_examples()
+        .into_iter()
+        .filter_map(|example| {
+            let question = match ProjectRule::parse(&example.rule)? {
+                ProjectRule::SemanticBusinessDecision => semantic::SemanticQuestion::BusinessDecision,
+                ProjectRule::SemanticTransportKnowledge => semantic::SemanticQuestion::TransportKnowledge,
+                _ => return None,
+            };
+            let layer = *settings.questions.get(&question)?.layers.iter().next()?;
+            let spec = &layers.layers[layer.0];
+            let kind: &'static str = SEMANTIC_KIND_NAMES.iter().find(|k| **k == example.kind).copied().unwrap_or("defn");
+            let range = Range { start: Position { line: 0, character: 0 }, end: Position { line: 0, character: 0 } };
+            let item = semantic::item(settings, &model, question, &example.path, Path::new(&example.path), &example.name, kind, range, &example.source, layer, &spec.name, &spec.description);
+            Some((item, example.expect))
+        })
+        .collect();
+    let outcome = semantic::evaluate(root, settings, items, mode, gateway.as_ref().map(|g| g as &dyn semantic::Gateway), &calibration);
+    errors.extend(outcome.errors);
+    let mut summary = outcome.summary;
+    summary.model = model;
+    summary.wire = wire;
+    let drafts = outcome
+        .answered
+        .into_iter()
+        .filter_map(|(item, probability)| {
+            let base = settings.severity(item.question, probability)?;
+            let spec = &layers.layers[item.layer.0];
+            let placement = Placement { layer: item.layer, dir: String::new(), service: None, roles: Vec::new() };
+            let file_layer = files.iter().find(|(f, _)| f.file.rel == item.rel).map(|(f, _)| f.site.clone());
+            let placement = match file_layer {
+                Some(site) => Placement { layer: site.layer, dir: site.dir, service: site.service, roles: roles_of.get(&item.rel).cloned().unwrap_or_default() },
+                None => placement,
+            };
+            Some(Draft {
+                rule: semantic_rule(item.question),
+                layer: Some(item.layer),
+                rel: item.rel.clone(),
+                path: item.path.clone(),
+                range: item.range,
+                message: format!(
+                    "{} の {}({})— Jev の判定 p={:.2}: {}",
+                    item.rel,
+                    item.name,
+                    spec.name,
+                    probability,
+                    item.question.meaning()
+                ),
+                detail: Some(hy_mangle(&item.name)),
+                base,
+                explain: Explain::Semantic { placement, definition: item.name.clone(), kind: item.kind, question: item.question, probability },
+            })
+        })
+        .collect();
+    (drafts, summary, errors)
+}
+
 // --- 定義の書き方(DOEFF110〜112)------------------------------------------------------
 
 /// 定義の書き方の規則のどれかが有効か。
@@ -1365,7 +1573,13 @@ fn finish(drafts: Vec<Draft>, settings: &ProjectSettings, registry: &Registry) -
                     (_, base) => base,
                 }
             };
+            let probability = match &draft.explain {
+                Explain::Semantic { probability, .. } => Some(*probability),
+                _ => None,
+            };
             Finding {
+                origin: if probability.is_some() { FindingOrigin::Jev } else { FindingOrigin::Linter },
+                probability,
                 rule: draft.rule,
                 law: law.map(|l| l.name.clone()),
                 adr: law.and_then(|l| l.adr.clone()),

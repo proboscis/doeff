@@ -228,3 +228,42 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
 | 既知の破れの固定 | 登録簿(`registry`)と `registered_severity` | 除外の設定 | `ignore_imports` | — | baseline / `FreezingArchRule` |
 
 intent の層は Tach の interfaces に当たる — 別の service が読んでよいのは、その service が外へ出す要求と答えの型(intent)だけ。
+
+## 10. 意味の規則(DOEFF201・202 — Jev)
+
+決定的な規則では読めない「コードが何をしているか」を、Jev(TypeSafe の System One の model)に Noul(確率)の問いで問う。
+
+| 規則 | 問い(英語のまま・`src/project/semantic.rs` の 1 か所) | 当てる層(設定) | 既定の閾値 |
+|---|---|---|---|
+| DOEFF201 | 要求を相手の話し方へ言い換えるのを越えて、業務の判断(誰に許すか・業務の決まり・宛先・業務の結果)をしているか(jev-lint の J2) | `semantic.business_decision.layers` | warning p ≥ 0.8・info p ≥ 0.6 |
+| DOEFF202 | 通信の手段(URL や query・HTTP の method や status・JSON の wire・SQL・宛先の address)を知っているか(jev-lint の J3) | `semantic.transport_knowledge.layers` | warning p ≥ 0.6・info p ≥ 0.4 |
+
+- **撃つのは `--semantic`(path の引数の file、無ければ git で変わった file)と `--semantic-all`(設定した層の全定義)の時だけ。** 決定的な規則の実行
+  (エディタの保存ごと・hook・text / json)は cache を読むだけで、Jev を呼ばない(キーも要らない)。
+- 問う定義 = 設定した層の Hy の最上位の defn・defk・deff・defp・defpp・defhandler・defeffect・defclass・defrecord・defenum。
+- state = 定義の名・kind・file・申告の `:tags` を消した source(`semantic.source_limit` 字 = 既定 1,800 で切る)・置かれた層の説明(architecture.hy の layer の説明か、
+  `layers.describe`)。
+- cache = repo の根の `.doeff-linter/semantic-cache/<鍵>.json`(git の外に置く — `.gitignore` に足すかは repo ごと)。鍵 = sha256(model・問いの JSON・層の説明・
+  タグを消した source)。申告の役は鍵に入れず、判定の後にコードで比べる。cache の答えが無い定義は違反にせず、最上位の `semantic.unjudged` に数える(合格に倒さない)。
+- 重さは warning か info だけ(当たり外れを測り終えるまで error にしない — 設定にも error の欄は無い)。外れは登録簿に載せる。
+- 宛先・model・キーは doeff の `packages/doeff-jev/src/doeff_jev/target.py` と同じ決め方(Rust に写した — 決め方は 1 つ):
+  環境変数 `JEV_BASE_URL` / `JEV_MODEL` / `JEV_WIRE` / `JEV_API_KEY` / `JEV_API_KEY_FILE` → 設定 file `~/.config/jev/client.json` → 既定 = TypeSafe 直
+  (`https://api.typesafe.ai/v1/systemone`・model `jev-latest`・キーは `TYPESAFE_API_KEY` → `~/.config/jev/api_key`)。gateway は名指した時だけ。
+  通信の形(direct と gateway の要求と答え)は同じ package の `wire.py` の写し。キーの値は設定・出力・log・cache の鍵に書かない。
+- 同時に `semantic.workers`(既定 8)本・時間切れ `semantic.timeout_seconds`(既定 30)・429 と 5xx は 3 回まで撃ち直す。撃てなかった定義は理由を `errors` に積み、未判定に数える。
+- **較正の見張り**: 撃つ実行ごとに、同梱の正例と反例(`data/semantic_calibration.json` — jev-lint の札の際どくない物、問いごとに 1 つずつ)を 1 回問い、正例 p ≥ 0.8・反例 p ≤ 0.2 の
+  幅から外れたら cache を捨てて `errors` に警告を出す(model の中身が変わった疑い)。答えた model の版つきの名は `semantic.served_model` に出す(direct の答えだけが返す)。
+
+設定:
+
+```toml
+[tool.doeff-linter.semantic]
+business_decision = { layers = ["protocol"], warning = 0.8, info = 0.6 }
+transport_knowledge = { layers = ["core"], warning = 0.6, info = 0.4 }
+workers = 8
+timeout_seconds = 30
+source_limit = 1800
+```
+
+editor-json: violation の `source`(`linter` = 決定的な規則・`jev` = 意味の判定)と `probability`(Jev の違反だけ)、最上位の `semantic`
+(`model`・`wire`・`judged`・`unjudged`・`asked`・`cost_usd`(gateway だけが返す)・`input_tokens`・`served_model`・`calibration` = not-run / ok / drifted / failed)。
