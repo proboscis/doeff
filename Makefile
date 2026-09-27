@@ -57,9 +57,11 @@ install:
 # [removed]
 # (invariant-checks) を常時有効にする。tests/test_vm_invariant_checks_enabled.py が
 # フラグを hard-fail で検査する(skip 禁止)。
+# maturin は dev の依存(pyproject.toml)で、プロジェクトの環境から呼ぶ — 機体に手で入れた道具に頼らない
+# (Mac で `maturin: command not found` — [issue] 課題 7)。--no-sync = 直前の uv sync の環境をそのまま使う。
 sync:
 	uv sync --group dev
-	cd packages/doeff-vm && maturin develop --release --features invariant-checks
+	cd packages/doeff-vm && uv run --no-sync maturin develop --release --features invariant-checks
 
 pre-commit-install:
 	uv run pre-commit install
