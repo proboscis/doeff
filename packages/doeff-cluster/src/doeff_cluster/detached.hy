@@ -29,7 +29,7 @@
 (import .warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmFailure warm-key warm-state-of-json])
 (import doeff_time [GetMonotonic])
 (import .detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners SimulateRunnerLoss
-                         SimulateRunnerDrain SimulateRunnerReturn SimulateCoordinatorOutage
+                         SimulateRunnerDrain SimulateRunnerReturn SimulateCoordinatorOutage WARMING-PHASE
                          DetachedSubmitted DetachedSucceeded DetachedLost DetachedCancelled DetachedVersionMismatch
                          DetachedEnvUnavailable DetachedUnrunnable
                          DetachedPending DetachedUnknown DetachedRefused DetachedOutcome DetachedAwaited
@@ -443,7 +443,12 @@
     (.answer self (.resend self (fn [] (.request self.endpoint "PUT" (.path self key) :json body)))))
 
   (defn #^ dict read [self #^ str key]
-    (.answer self (.resend self (fn [] (.request self.endpoint "GET" (.path self key))))))
+    ;; 503 = coordinator が起きた直後で行の無い key を知らないと言えない(phase warming — detached_policy.detached-read)。本文を返し、
+    ;; 待ちの側(await-cluster)が届かないと同じに扱う。
+    (setv response (.resend self (fn [] (.request self.endpoint "GET" (.path self key)))))
+    (if (= response.status-code 503)
+        (.json response)
+        (.answer self response)))
 
   (defn #^ bool cancel [self #^ str key]
     ;; 取り消しは何度送っても同じ意味(終わりの phase は変わらない)。
@@ -478,9 +483,12 @@
   (var waited 0.0)
   (while True
     (setv view (try (.read client key) (except [error httpx.TransportError] error)))
-    (when (isinstance view httpx.TransportError)
+    ;; 起きた直後の coordinator の「まだ分からない」(phase warming)も届かないと同じ(知らない key と読んで送り直さない)。
+    (when (or (isinstance view httpx.TransportError) (= (.get view "phase") WARMING-PHASE))
       (when (is-not timeout-seconds None)
-        (return (DetachedUnreachable :detail (.format "coordinator に届かない: {}" view))))
+        (return (DetachedUnreachable :detail (.format "coordinator に届かない: {}" (if (isinstance view dict)
+                                                                                       (.get view "error" "")
+                                                                                       view)))))
       (<- (Delay poll-seconds))
       (continue))
     (setv outcome (outcome-of-view view))

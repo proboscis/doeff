@@ -152,6 +152,7 @@
                       (worker-generations-json w)))
    "tasks" (lfor t (.values state.tasks) (task-record-to-json t))
    "nextTask" state.next-task
+   "taskPrefix" state.task-prefix
    "meta" state.meta
    "revision" state.revision
    "audit" (list state.audit)
@@ -212,6 +213,7 @@
                  (get t "id")
                  (task-record-from-json t))
     :next-task (.get data "nextTask" 1)
+    :task-prefix (.get data "taskPrefix" "t")
     :board (if (is board None) (.get data "board" {}) board)
     :board-versions (or board-versions (dfor k (.get data "board" {}) k 1))
     :board-sizes (dfor #(k v) (.items (if (is board None) (.get data "board" {}) board)) k (value-size v))
@@ -310,7 +312,8 @@
 ;; 限って受ける(走らせ直さない task を途中で失わない — 旧い世代が消えたら lease 切れで lost)。
 ;; 起動時刻(2026-09-27 — heartbeat の bootAt): 初めて見た順だけでは、状態を失った coordinator に生きている 2 世代のうち新しい方が
 ;; 先に届くと、旧が今の世代・新が退いた世代になり、旧が死んだ後も新の heartbeat を断り続けて名が沈黙した。今の世代と来た世代の
-;; 両方の起動時刻を知る時は、起動時刻の大きい方を新しい世代とする(generation-order)。
+;; 両方の起動時刻を知る時は、起動時刻の大きい方を新しい世代とする(generation-order)。起動時刻は worker の node の時計なので、
+;; node の間の時計の差が同じ名の作り直しの間隔を越えると新旧が逆に読まれる(その差は作り直しの間隔より十分小さいと前提する)。
 (setv RETIRED-BOOTS-KEPT 8)   ; 覚えておく退いた世代の数(1 回の作り直しで 1 つ増える — 旧い Pod が生きている間だけ要る)
 
 
@@ -647,7 +650,8 @@
             "versions" (dict task.versions) "blob" task.blob}
            ;; 切り離した task は、状態を失った coordinator が引き取れるだけの欄を持つ(worker が状態の報告に写す —
            ;; adopt-running-detached・2026-09-27)。
-           (if task.detached {"detached" True "key" task.key "leaseMs" task.lease-ms "retainMs" task.retain-ms} {})
+           (if task.detached {"detached" True "key" task.key "leaseMs" task.lease-ms "retainMs" task.retain-ms
+                              "requires" (dict task.requires)} {})
            (if (is-not task.runtime-env None) {"runtimeEnv" task.runtime-env} {}))))
 
 
@@ -775,7 +779,7 @@
    盤は含まない(盤は行ごとの file へ別に書く — board-changes)。"
   (or (!= before.jobs after.jobs) (!= before.placements after.placements)
       (!= before.tasks after.tasks)
-      (!= before.next-task after.next-task)
+      (!= before.next-task after.next-task) (!= before.task-prefix after.task-prefix)
       (!= before.revision after.revision)
       (!= before.rollouts after.rollouts)
       (!= before.drains after.drains) (!= before.surges after.surges)
@@ -855,13 +859,27 @@
 ;; 行を持たない task/<id> を worker が走らせていると報告し、その写しを添えていれば、同じ行を引き取り(担い手 = その worker・
 ;; 世代 = その heartbeat の世代)、同じ heartbeat の返事に載せる(worker の宣言の spec が変わらない = 止めない)。
 ;; 引き取らない: 行を持つ task(終わった行を含む — 取り消し・lost は今までどおり止める)・写しの無い報告(旧い worker)・
-;; 走っていない報告・同じ key を別の行が使っている時。
-(setv ADOPTABLE-PHASES #{"preparing" "probing" "starting" "running"})
+;; 走っても終わってもいない報告・同じ key を別の行が使っている時・欠けた写し。終わった報告(finished・code-failed)も引き取り、
+;; 同じ heartbeat の終わりの報告でその終わりへ写す(worker は返事に無い task の結果の file を消すので、引き取らなければ結果を
+;; 失い、呼び手は完走した仕事を送り直す)。
+(setv ADOPTABLE-PHASES #{"preparing" "probing" "starting" "running" "finished" "code-failed"})
 
 
-(defn #^ (| int None) task-number [#^ str id]
-  "task の id(t<番号>)の番号。形の違う id は None。"
-  (if (and (.startswith id "t") (.isdigit (cut id 1 None))) (int (cut id 1 None)) None))
+(defn #^ (| int None) task-number [#^ str prefix #^ str id]
+  "task の id(<頭><番号>)がこの coordinator の頭 prefix の物なら、その番号(次に振る番号を越えさせるため)。他の頭の id は None。"
+  (setv rest (cut id (len prefix) None))
+  (if (and (.startswith id prefix) (.isdigit rest)) (int rest) None))
+
+
+(defn #^ str task-id [#^ ClusterState state]
+  "次に振る task の id(頭 + 番号)。"
+  (.format "{}{}" state.task-prefix state.next-task))
+
+
+(defn #^ str fresh-task-prefix [#^ int now]
+  "置き場の無いところから起きた coordinator の task の id の頭(起動の時刻の 16 進 — 起動ごとに違う)。前の coordinator が振った id
+   (t<番号> か別の起動の頭)と重ならない。"
+  (.format "t{:x}-" now))
 
 
 (defn #^ (| TaskRecord None) adopted-task [#^ ClusterState state #^ str worker #^ (| str None) boot #^ dict status #^ int now]
@@ -870,13 +888,15 @@
   (when (or (not (.startswith row-name "task/")) (not (isinstance echo dict))
             (not-in (.get status "phase") ADOPTABLE-PHASES))
     (return None))
-  (setv id (cut row-name 5 None) key (.get echo "key") lease-ms (.get echo "leaseMs"))
+  (setv id (cut row-name 5 None) key (.get echo "key") lease-ms (.get echo "leaseMs")
+        env (.get echo "env") revision (.get echo "revision") requires (.get echo "requires" {}))
   (when (or (in id state.tasks) (!= (.get echo "id") id) (not (.get echo "detached"))
             (not (isinstance key str)) (not (isinstance lease-ms int))
+            (not (isinstance env str)) (not (isinstance revision str)) (not (isinstance requires dict))
             (any (gfor t (.values state.tasks) (= t.key key))))
     (return None))
-  (TaskRecord id (.get echo "name" "") (get echo "env") "" (get echo "revision")
-              (component-versions-of (.get echo "versions" {})) #() lease-ms (+ now lease-ms) now
+  (TaskRecord id (.get echo "name" "") env "" revision
+              (component-versions-of (.get echo "versions" {})) (requirements-of requires) lease-ms (+ now lease-ms) now
               :phase "assigned" :worker worker :started-ms now :detached True :key key :boot boot
               :retain-ms (int (.get echo "retainMs" 0)) :runtime-env (.get echo "runtimeEnv")
               :detail (.format "coordinator の置き場に行が無く、担い手 {} が走らせていた task を引き取った" worker)))
@@ -892,7 +912,7 @@
   (if adopted
       (replace state :tasks (| state.tasks adopted)
                :next-task (max [state.next-task
-                                #* (gfor id adopted :setv n (task-number id) :if (is-not n None) (+ n 1))]))
+                                #* (gfor id adopted :setv n (task-number state.task-prefix id) :if (is-not n None) (+ n 1))]))
       state))
 
 
@@ -1000,7 +1020,7 @@
     (return #(state 400 {"error" (.format "leaseSeconds は 0 より大きく {} 以下: {}" TASK-MAX-LEASE-SECONDS lease-seconds)})))
   (when (>= open-count TASK-MAX-OPEN)
     (return #(state 429 {"error" (.format "終わっていない task が上限 {} 本に達している" TASK-MAX-OPEN) "open" open-count})))
-  (setv id (.format "t{}" state.next-task)
+  (setv id (task-id state)
         lease-ms (int (* 1000 lease-seconds))
         task (TaskRecord id (.get body "name" "") (get body "env") (get body "blob") (get body "revision")
                          (component-versions-of (.get body "versions" {}))

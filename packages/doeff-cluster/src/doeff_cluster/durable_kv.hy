@@ -40,7 +40,9 @@
 
 (defn #^ dict durable-kv [#^ ClusterState state]
   "盤を除いた耐久の状態のキーの表。"
-  (setv kv {"counter" {"nextTask" state.next-task "revision" state.revision "auditSeq" state.audit-seq "aliveMs" state.alive-ms}})
+  (setv kv {"counter" (| {"nextTask" state.next-task "revision" state.revision "auditSeq" state.audit-seq "aliveMs" state.alive-ms}
+                         ;; task の id の頭(以前からの "t" は書かない — 以前の形と同じ)。
+                         (if (= state.task-prefix "t") {} {"taskPrefix" state.task-prefix}))})
   (for [j state.jobs] (setv (get kv (+ "service/" j.spec.name)) (job-to-json j)))
   (for [#(k a) (.items state.placements)] (setv (get kv (+ PLACEMENT k)) (asdict a)))
   (for [w (.values state.workers)]
@@ -102,6 +104,7 @@
     :tasks (dfor #(k t) (part "task/")
                  k (task-record-from-json t))
     :next-task (.get counter "nextTask" 1)
+    :task-prefix (.get counter "taskPrefix" "t")
     :revision (.get counter "revision" 0)
     :audit-seq (.get counter "auditSeq" 0)
     :alive-ms alive-ms

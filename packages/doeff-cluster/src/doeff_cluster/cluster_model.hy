@@ -311,6 +311,10 @@
   (setv #^ dict placements (field :default-factory dict)) ; job の名 → Placement
   (setv #^ dict tasks (field :default-factory dict))
   (setv #^ int next-task 1)
+  ;; task の id の頭(2026-09-27 — #757)。id = <頭><番号>。以前からの置き場は "t"(t1, t2 …)。置き場の無いところから起きた
+  ;; coordinator は起動ごとに違う頭を振る(cluster_policy.fresh-task-prefix)— 前の coordinator が振った id(worker に blob が
+  ;; 残り、子 process が走っているかもしれない)を振り直さない。保存する(counter の taskPrefix)。
+  (setv #^ str task-prefix "t")
   (setv #^ dict board (field :default-factory dict))
   (setv #^ dict statuses (field :default-factory dict))  ; worker 名 → {"at" ms "jobs" [...]}(保存しない)
   (setv #^ tuple events #())                            ; 割り当ての移り変わり(直近 200 件・保存しない)
