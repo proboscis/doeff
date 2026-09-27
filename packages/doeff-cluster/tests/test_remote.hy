@@ -1,6 +1,7 @@
-;; RemoteJob: 同じ VM の handler(A)と、worker の子 process の入口(job_entry task)を通す往復。
-;; task も Program の値 1 つで、handler は Program が本体の with-handlers で自分で並べる(ADR-DOE-CLUSTER-001 R1・R2)。実行先は handler を
-;; 足さない。handler の値は詰めない(R3b — encode-program が UnsendableProgram で断る)。
+;; RemoteJob: 手元の sim-cluster(偽の宿が task を別の process — 別のスコープ — で走らせる)と、worker の子 process の入口(job_entry task)を
+;; 通す往復。task も Program の値 1 つで、handler は Program が自分で並べる(ADR-DOE-CLUSTER-001 R1・R2)。実行先は handler を足さず、呼び手の
+;; handler も継がない(以前の remote-inline は継いでいたので消した — 段 5)。handler の値は詰めない(R3b — encode-program が
+;; UnsendableProgram で断る)。
 (require doeff-hy.macros [deftest defk <- val var])
 (import json)
 (import os)
@@ -11,32 +12,41 @@
 (import pytest)
 (import doeff [run DoExpr with-handlers])
 (import doeff_core_effects.handlers [reader])
+(import doeff_time [Delay])
 (import doeff_cluster.remote_model [RemoteJob UnsendableProgram VersionMismatch RemoteJobFailed
                                           TaskSucceeded TaskFailed encode-program decode-program decode-outcome
                                           current-versions version-mismatch])
 (import doeff_cluster.remote_model [program-sha])
 (import doeff_cluster.handlers [write-program-file])
-(import doeff_cluster.remote [remote-inline])
+(import doeff_cluster.local [sim-cluster SharedRows ProcessesOf])
+(import tests.fixtures.envs [sim-foundation])
+(import tests.fixtures.sim_programs [delegating])
 (import tests.fixtures.services [self-contained-program holding-program bare-program])
 (import tests.fixtures.entry_programs [answer-base based-add counter-program boom-program])
 
 (val NET (frozenset ["net"]))
 
 
-(deftest test-inline-handler-runs-the-program-with-its-own-handlers
-  ;; 外側に reader を置かない: Program が自分で並べた handler だけで答える。
-  (<- a int (with-handlers [(remote-inline)] (RemoteJob (based-add 3) :needs NET)))
-  (assert (= a 103))
-  (<- b str (with-handlers [(remote-inline)] (RemoteJob (counter-program "card") :needs NET)))
-  (assert (= b "card-1")))
+(defk watch-delegator []
+  {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: task が走り終わるまで 20 秒待ち、delegator が盤に書いた結果と、delegator の process の数を読む。"
+  (<- (Delay 20.0))
+  (<- rows dict (SharedRows "remote/"))
+  (<- processes tuple (ProcessesOf "delegator"))
+  (| rows {"processes" (len processes)}))
 
 
-(deftest test-inline-handler-returns-the-program-exception-to-the-caller
-  (var caught None)
-  (try
-    (<- (with-handlers [(remote-inline)] (RemoteJob (boom-program) :needs NET)))
-    (except [error ValueError] (:= caught error)))
-  (assert (= (str caught) "業務の失敗 base=100")))
+(deftest test-a-remote-job-runs-in-its-own-process-and-its-answer-comes-back
+  ;; service の中から出した task は、別の process(別のスコープ)で走り、答えが呼び手へ返る。自分で reader を並べた add-task は
+  ;; 100 + 3。reader を並べない orphan-task は、呼び手が並べた reader(base = 1)を継がないので答えが無く、呼び手には失敗が届く
+  ;; (呼び手の handler を継ぐ remote-inline なら黙って 1 と答えていた)。
+  (<- rows dict (sim-cluster (delegating sim-foundation) (watch-delegator)))
+  (assert (= (get rows "remote/result" "sum") 103) rows)
+  (val orphan (get rows "remote/result" "orphan"))
+  (assert (.startswith orphan "失敗") orphan)
+  (assert (in "Ask" orphan) orphan)
+  ;; 呼び手の service は 1 度だけ起きた(task の失敗で落ちていない)。
+  (assert (= (get rows "processes") 1) rows))
 
 
 (deftest test-program-holding-a-lock-is-refused-before-sending
@@ -68,7 +78,7 @@
   (with [raised (pytest.raises UnsendableProgram)]
     (encode-program (holding-program (reader {"base" 1}) 1)))
   (assert (in "Program の本体の中で関数を呼んで作る" (str raised.value)) (str raised.value))
-  ;; RemoteJob の送り手(remote-inline は詰めないので、送り手の 1 か所 encode-program を直に)も同じ。
+  ;; RemoteJob の送り手(本番の remote-cluster と sim の宿が通る 1 か所 encode-program)も同じ。
   (with [(pytest.raises UnsendableProgram)]
     (encode-program (RemoteJob (holding-program answer-base 1) :needs NET))))
 
