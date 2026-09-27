@@ -1,0 +1,106 @@
+[
+  {
+    "body": {
+      "state": {
+        "definition": {
+          "name": "may-post?",
+          "kind": "defk",
+          "file": "app/protocol/chat.hy",
+          "source": "(defk 投稿してよいか? [who] \"a\\\"b\\\\c\n\tend\")"
+        },
+        "layer": {
+          "name": "protocol",
+          "summary": "翻訳の handler",
+          "knows": null,
+          "does_not_know": null
+        }
+      },
+      "questions": {
+        "q": {
+          "type": "noul",
+          "instructions": "Does the code in `definition.source` make a business decision?",
+          "criteria": {
+            "true": "It decides.",
+            "false": "It only translates."
+          }
+        }
+      },
+      "model": "jev-latest"
+    },
+    "key": "ad29291ac73b2eb86d5c309c98c826c627e3a9d233a4e81f1ef28aba3441cb11"
+  },
+  {
+    "body": {
+      "state": {
+        "definition": {
+          "name": "route",
+          "kind": "deff",
+          "reason": "外の library の callback",
+          "tags": [
+            1,
+            2,
+            [
+              3,
+              true,
+              false,
+              null
+            ]
+          ],
+          "count": 0,
+          "big": 12345678901234
+        }
+      },
+      "questions": {
+        "q": {
+          "type": "choice",
+          "instructions": "Pick one.",
+          "choices": {
+            "library-callback": "外の library",
+            "config-read": "設定を読む",
+            "none": "どれでもない"
+          }
+        }
+      },
+      "model": "jev-1.13.0"
+    },
+    "key": "ace6322fecd1978c82bfb4c77b184337d9f24ffac2a8bd05acbd7819485aabed"
+  },
+  {
+    "body": {
+      "state": {
+        "z": 1,
+        "a": 2,
+        "é": 3,
+        "日": 4,
+        "😀": 5,
+        "Z": 6,
+        "a b": 7,
+        "": 8,
+        "aa": 9,
+        "a\u0000": 10
+      },
+      "questions": {
+        "q": {
+          "type": "noul"
+        }
+      },
+      "model": "jev-latest"
+    },
+    "key": "04aa3a9bc680d3ff4d99ee337746e8ecba7cf6b4dfe87998815f25850fa7bade"
+  },
+  {
+    "body": {
+      "state": {
+        "text": "制御 \u0001 \u001f と DEL  と行の区切り     と絵 😀 と / と <script>"
+      },
+      "questions": {
+        "q": {
+          "type": "noul",
+          "instructions": "空白  二つ と 末尾の空白 "
+        }
+      },
+      "model": "jev-latest"
+    },
+    "key": "c5d0069446a34cc5da2ea18ba67dc05ebf76589b05c27dc645b7617e0b856250"
+  }
+]

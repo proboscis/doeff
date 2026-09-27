@@ -1,7 +1,7 @@
 ;;; Jev の呼び出しを覚える代理の答え手。
 ;;;
-;;;   sqlite-store-handler   覚えた答えと計器の置き場(SQLite の file 1 つ — 土台の I/O)。PrepareStore・LookupAnswer・RememberAnswer・ForgetAnswer・
-;;;                          ReadAnswer・Count・ReadCounters
+;;;   sqlite-store-handler   覚えた答えと計器の置き場(SQLite の file 1 つ — 土台の I/O)。PrepareStore・LookupAnswer・LookupAnswers・
+;;;                          RememberAnswer・ForgetAnswer・ReadAnswer・Count・CountTimes・ReadCounters
 ;;;   jev-upstream-handler   AskJev を汎用の HttpRequest に出し直す(翻訳だけ — 実 I/O は外側の http-production-handler)。
 ;;;                          キーは本物の Jev への見出しにだけ載せ、答えにも理由の文にも載せない
 ;;;   single-flight-handler  Coalesce — 同じ鍵の同時の Program を 1 回だけ走らせる(錠と印 — 土台の同期。要求ごとの thread の間で共有する)
@@ -24,7 +24,8 @@
 (import doeff_records.principals [Roster Principal Unauthorized identify])
 (import doeff_jev.target [JevTarget])
 (import doeff_jev_proxy.values [Event StoredAnswer UpstreamReply UpstreamUnreachable Coalesced Counters Caller Stranger])
-(import doeff_jev_proxy.effects [PrepareStore LookupAnswer RememberAnswer ForgetAnswer ReadAnswer AskJev Coalesce Count ReadCounters IdentifyCaller])
+(import doeff_jev_proxy.effects [PrepareStore LookupAnswer LookupAnswers RememberAnswer ForgetAnswer ReadAnswer AskJev Coalesce Count CountTimes
+                                ReadCounters IdentifyCaller])
 
 ;; 置き場の表(起動の時に 1 度だけ流す — 既存の表を消さない・変えない)。
 (val SCHEMA-STATEMENTS
@@ -38,6 +39,12 @@
   "SELECT a.key, a.model, a.served_model, a.body, a.hits FROM answers a LEFT JOIN served_models s ON s.model = a.model
    WHERE a.key = ? AND (s.served_model IS NULL OR a.served_model = '' OR a.served_model = s.served_model)")
 (val READ-SQL "SELECT key, model, served_model, body, hits FROM answers WHERE key = ?")
+;; 鍵の束を引く(LOOKUP-SQL と同じ版の決まり・{} に鍵の数だけの ? を入れる)。
+(val LOOKUP-MANY-SQL
+  "SELECT a.key, a.model, a.served_model, a.body, a.hits FROM answers a LEFT JOIN served_models s ON s.model = a.model
+   WHERE a.key IN ({}) AND (s.served_model IS NULL OR a.served_model = '' OR a.served_model = s.served_model)")
+;; 鍵の束を 1 度の SELECT で引く数(SQLite の変数の数の上限 999 より小さく)。
+(val LOOKUP-CHUNK 500)
 ;; 同じ SQLite の file を複数の thread が開く時の待ちの上限(秒)。
 (val BUSY-SECONDS 30.0)
 ;; 同時の問いの相乗りが先頭の答えを待つ上限(秒 — 本物の Jev の時間切れより長く)。
@@ -79,6 +86,18 @@
                 None
                 (StoredAnswer :key (get row 0) :model (get row 1) :served-model (get row 2) :body (bytes (get row 3))
                               :hits (+ (get row 4) 1)))))
+  (LookupAnswers [keys]
+    (with [connection (closing (sqlite3.connect path :timeout BUSY-SECONDS))]
+      (val chunks (lfor start (range 0 (len keys) LOOKUP-CHUNK) (cut keys start (+ start LOOKUP-CHUNK))))
+      (val rows (lfor chunk chunks
+                      row (.fetchall (.execute connection (.format LOOKUP-MANY-SQL (.join "," (* ["?"] (len chunk)))) chunk))
+                      row))
+      (when rows
+        (val now (time.time))
+        (.executemany connection "UPDATE answers SET hits = hits + 1, last_hit_at = ? WHERE key = ?" (lfor row rows #(now (get row 0))))
+        (.commit connection)))
+    (resume (tuple (gfor row rows (StoredAnswer :key (get row 0) :model (get row 1) :served-model (get row 2) :body (bytes (get row 3))
+                                                :hits (+ (get row 4) 1))))))
   (RememberAnswer [key model served-model request body]
     (with [connection (closing (sqlite3.connect path :timeout BUSY-SECONDS))]
       (val now (time.time))
@@ -107,6 +126,14 @@
       (.execute connection "INSERT INTO counters (event, count) VALUES (?, 1) ON CONFLICT(event) DO UPDATE SET count = count + 1"
                 #((str event)))
       (.commit connection))
+    (resume None))
+  (CountTimes [event times]
+    (when (> times 0)
+      (with [connection (closing (sqlite3.connect path :timeout BUSY-SECONDS))]
+        (.execute connection
+                  "INSERT INTO counters (event, count) VALUES (?, ?) ON CONFLICT(event) DO UPDATE SET count = count + excluded.count"
+                  #((str event) times))
+        (.commit connection)))
     (resume None))
   (ReadCounters []
     (with [connection (closing (sqlite3.connect path :timeout BUSY-SECONDS))]
