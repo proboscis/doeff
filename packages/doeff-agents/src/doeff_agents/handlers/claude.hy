@@ -104,11 +104,13 @@
     ;; R9: session-env は非 auth overlay(binding 所有キーは loud 拒否)。
     (assert-session-env-is-non-auth-overlay session-env
       :context "LaunchEffect.session_env (claude-handler)")
+    ;; effect は path を純粋な値で運ぶ — file 系の Path はここで作る。
+    (setv work-path (Path work-dir))
     (setv active-backend backend)
     (when (is active-backend None)
       (<- active-backend (Ask SessionBackend)))
     ;; 1. Trust
-    (_trust-workdir work-dir)
+    (_trust-workdir work-path)
     ;; 2. MCP server — tools run INSIDE the main VM as spawned tasks, not
     ;;    in a separate run() from the HTTP thread. This way the scheduler,
     ;;    sim_time clock, and state handler are shared between the pipeline
@@ -130,7 +132,7 @@
       (<- ready-ep (CreateExternalPromise))
       (.start server :ready-promise ready-ep)
       (<- _ (Wait ready-ep.future))
-      (_write-mcp-json work-dir server mcp-server-name)
+      (_write-mcp-json work-path server mcp-server-name)
       ;; Spawn the dispatch loop as a scheduler child task — inherits the
       ;; parent's scheduler so sim_time / state are shared. daemon: the
       ;; loop parked on its wakeup ep when the root body returns is its
@@ -139,10 +141,10 @@
       (set! mcp-servers (| mcp-servers {session-name server})))
     ;; 3. Tmux session
     (setv session-info (.new-session active-backend
-      (tmux.SessionConfig :session-name session-name :work-dir work-dir :env session-env)))
+      (tmux.SessionConfig :session-name session-name :work-dir work-path :env session-env)))
     ;; 4. Launch command
     (setv params (LaunchParams
-      :work-dir work-dir
+      :work-dir work-path
       :prompt prompt
       :model model
       :effort effort

@@ -591,6 +591,8 @@ class TmuxAgentHandler(AgentHandler):
         """
         refuse_turn_capabilities(effect, handler="TmuxAgentHandler")
         adapter = get_adapter(effect.agent_type)
+        # The effect carries a plain path value; the filesystem Path is built here.
+        work_dir = Path(effect.work_dir)
 
         if not self._io(adapter.available()):
             raise AgentNotAvailableError(f"{effect.agent_type.value} CLI is not available")
@@ -627,9 +629,9 @@ class TmuxAgentHandler(AgentHandler):
                 # Default to a per-launch isolated home under the workdir so
                 # state cannot leak between concurrent agent runs or with
                 # the user's interactive Claude Code session.
-                agent_home = effect.work_dir / ".agent-home"
+                agent_home = work_dir / ".agent-home"
             trusted_workspaces = self._claude_runtime_policy.trusted_workspaces or (
-                effect.work_dir,
+                work_dir,
             )
             self._prepare_claude_home(agent_home, trusted_workspaces)
             agent_env_exports.update(
@@ -650,7 +652,7 @@ class TmuxAgentHandler(AgentHandler):
                 if policy_home is not None
                 else os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
             )
-            self._io(trust_workspace_in_codex_home(codex_home, effect.work_dir))
+            self._io(trust_workspace_in_codex_home(codex_home, work_dir))
             agent_env_exports["CODEX_HOME"] = codex_home
 
         active_mcp_servers: dict[str, str] = dict(mcp_servers or {})
@@ -664,7 +666,7 @@ class TmuxAgentHandler(AgentHandler):
         # Schema-only sessions carry no domain tools but still need .mcp.json
         # so the agent can reach the report_result server (ADR-DOE-AGENTS-005).
         if active_mcp_servers:
-            self._write_mcp_json(effect.work_dir, active_mcp_servers)
+            self._write_mcp_json(work_dir, active_mcp_servers)
 
         # Disable oh-my-zsh's auto-update prompt. Without isolated HOME the
         # user's `.zshrc` would suppress this, but with `HOME=<work_dir>/
@@ -678,7 +680,7 @@ class TmuxAgentHandler(AgentHandler):
 
         tmux_config = tmux.SessionConfig(
             session_name=effect.session_name,
-            work_dir=effect.work_dir,
+            work_dir=work_dir,
             env=session_env or None,
         )
         session_info = self._backend.new_session(tmux_config)
@@ -697,7 +699,7 @@ class TmuxAgentHandler(AgentHandler):
             adapter=adapter,
             pane_id=session_info.pane_id,
             agent_type=effect.agent_type,
-            work_dir=effect.work_dir,
+            work_dir=work_dir,
             lifecycle=effect.lifecycle,
         )
         self._record_snapshot("session_started", handle, SessionStatus.BOOTING)
@@ -705,7 +707,7 @@ class TmuxAgentHandler(AgentHandler):
         try:
             argv = adapter.launch_command(
                 LaunchParams(
-                    work_dir=effect.work_dir,
+                    work_dir=work_dir,
                     prompt=effect.prompt,
                     model=effect.model,
                     effort=effect.effort,
