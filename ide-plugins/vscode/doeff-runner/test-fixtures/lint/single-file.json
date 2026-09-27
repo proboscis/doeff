@@ -1,5 +1,5 @@
 {
- "version": 1,
+ "version": 2,
  "root": "/repo",
  "violations": [
   {
@@ -53,5 +53,5 @@
    "wired": true
   }
  ],
- "errors": []
+ "signatures": [], "bindings": [], "errors": []
 }
