@@ -17,7 +17,7 @@
 ;; 標準 library 以外で許す最上位の名(doeff_ で始まる物は別に許す)。
 (setv ALLOWED-THIRD-PARTY (frozenset #("doeff" "hy" "httpx" "cloudpickle")))
 ;; package 名を書かない検査の対象 = 実行環境の宣言と準備の code。
-(setv ENV-MODULES #("runtime_env_model.hy" "runtime_env.hy" "env_prepare.hy" "env_fake.hy" "env_handlers.hy"))
+(setv ENV-MODULES #("runtime_env_model.hy" "runtime_env.hy" "env_prepare.hy" "env_world.hy" "env_handlers.hy"))
 
 (setv HY-IMPORT (re.compile r"\((?:import|require)\s+([A-Za-z_.][A-Za-z0-9_.\-]*)"))
 (setv HY-IMPORT-LIST (re.compile r"\(import\s+\[([^\]]*)\]"))

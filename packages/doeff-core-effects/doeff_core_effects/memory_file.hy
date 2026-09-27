@@ -7,9 +7,10 @@
 ;;; ReadMemoryFiles で今の中身を読める(検と筋書きが置き場を覗く口)。session の値の置き場(doeff_core_effects の state)は外側に要る。
 (require doeff-hy.macros [defhandler defk <- val var])
 (import posixpath)
+(import dataclasses [replace :as with-fields])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree CopyFile
-                                         CopyTree RenamePath RemoveTree AcquireLock ReleaseLock])
+                                         CopyTree RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree])
 
 ;; 置き場の根と、断りの文(OSError の文と同じ形)。
 (val ROOT "/")
@@ -84,7 +85,7 @@
     (when (= kind PathKind.MISSING)
       (.append added current))
     (:= current (posixpath.dirname current)))
-  (MemoryFiles :files store.files :dirs (+ store.dirs (tuple (reversed added))) :locks store.locks))
+  (with-fields store :dirs (+ store.dirs (tuple (reversed added)))))
 
 
 (defk with-file [store path content mode]
@@ -97,8 +98,7 @@
   (when (= kind PathKind.DIRECTORY)
     (<- answer FileFailed (refused IS-DIRECTORY path))
     (return answer))
-  (MemoryFiles :files (+ (tuple (gfor f store.files :if (!= f.path path) f)) #((MemoryFile :path path :content content :mode mode)))
-               :dirs store.dirs :locks store.locks))
+  (with-fields store :files (+ (tuple (gfor f store.files :if (!= f.path path) f)) #((MemoryFile :path path :content content :mode mode)))))
 
 
 (defk content-of [store path]
@@ -144,9 +144,8 @@
 (defk without-tree [store path]
   {:pre [(: store MemoryFiles) (: path str)] :post [(: % MemoryFiles)]}
   "path とその下の全部を除いた置き場を作るため。"
-  (MemoryFiles :files (tuple (gfor f store.files :if (not (or (= f.path path) (under? f.path path))) f))
-               :dirs (tuple (gfor d store.dirs :if (not (or (= d path) (under? d path))) d))
-               :locks store.locks))
+  (with-fields store :files (tuple (gfor f store.files :if (not (or (= f.path path) (under? f.path path))) f))
+                 :dirs (tuple (gfor d store.dirs :if (not (or (= d path) (under? d path))) d))))
 
 
 (defk remove-in [store path]
@@ -220,7 +219,7 @@
   (for [d cleared.dirs]
     (<- new-dir str (if (inside d) (moved d source target) (return-path d)))
     (.append dirs new-dir))
-  (MemoryFiles :files (tuple files) :dirs (tuple dirs) :locks cleared.locks))
+  (with-fields cleared :files (tuple files) :dirs (tuple dirs)))
 
 
 (defk return-path [path]
@@ -311,11 +310,13 @@
             (<- made (if (= kind PathKind.MISSING) (with-file store at b"" None) (return-store store)))
             (if (isinstance made FileFailed)
                 (resume made)
-                (do (:= store (MemoryFiles :files made.files :dirs made.dirs :locks (+ made.locks #(at))))
+                (do (:= store (with-fields made :locks (+ made.locks #(at))))
                     (resume (LockHeld :path at :token (len store.locks))))))))
   (ReleaseLock [held]
-    (:= store (MemoryFiles :files store.files :dirs store.dirs :locks (tuple (gfor p store.locks :if (!= p held.path) p))))
+    (:= store (with-fields store :locks (tuple (gfor p store.locks :if (!= p held.path) p))))
     (resume None))
+  (ReadDiskFree [path]
+    (resume store.free))
   (ReadMemoryFiles []
     (resume store)))
 

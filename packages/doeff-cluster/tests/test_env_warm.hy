@@ -12,12 +12,12 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (import dataclasses [replace])
 (import json)
-(import doeff [Program run])
+(import doeff [Program run with-handlers])
 (import doeff_core_effects.handlers [state reader])
 (import doeff_core_effects.effects [Ask])
 (import doeff_time [SimClock sim-time-handler GetMonotonic Delay])
 (import doeff_cluster.runtime_env_model [RuntimeEnv runtime-env->json runtime-env-of-json env-key current-platform])
-(import doeff_cluster.env_fake [fake-env FakeEnvWorld FakeEnvLog ReadFakeEnvLog])
+(import doeff_cluster.env_world [env-world EnvWorld EnvWorldLog read-world-log])
 (import doeff_cluster.detached_model [SubmitDetached AwaitDetached DetachedSucceeded])
 (import doeff_cluster.detached [detached-local DetachedLocalStore])
 (import doeff_cluster.warm_model [WarmRuntimeEnv ReadWarmState WarmState warm-key warm-state-of-json])
@@ -47,9 +47,9 @@
 
 
 (defk run-sim [world program]
-  {:pre [(: world FakeEnvWorld) (: program Program)] :post [(: % bool)]}
-  "筋書きを速い模擬の組(状態・仮想の時計・fake-env・実行先の reader)の下で走らせる。"
-  (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) ((fake-env world) ((reader {"base" 100}) program)))))
+  {:pre [(: world EnvWorld) (: program Program)] :post [(: % bool)]}
+  "筋書きを速い模擬の組(状態・仮想の時計・env-world・実行先の reader)の下で走らせる。"
+  (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) (with-handlers (env-world world) ((reader {"base" 100}) program)))))
   ok)
 
 
@@ -83,14 +83,14 @@
   (assert (<= waited 2.0) (.format "温めた後の待ちは 2 秒以内: {}" waited))
   (assert (= store.cold-starts 0) store.cold-starts)
   (assert (not-in "preparing" (. (get store.records "job-8") phases)) (. (get store.records "job-8") phases))
-  (<- log FakeEnvLog (ReadFakeEnvLog))
+  (<- log EnvWorldLog (read-world-log))
   (assert (= log.syncs 1) "温めた準備 1 回だけ(送った task は準備しない)")
   True)
 
 
 (deftest test-scenario-8-warming-keeps-preparation-out-of-the-wait
   (.clear STARTS)
-  (<- world FakeEnvWorld (base-world))
+  (<- world EnvWorld (base-world))
   (<- ok bool (run-sim world (scenario-8)))
   (assert ok))
 
@@ -109,7 +109,7 @@
 
 (deftest test-counterexample-sending-without-warming-waits-for-preparation
   (.clear STARTS)
-  (<- world FakeEnvWorld (base-world))
+  (<- world EnvWorld (base-world))
   (<- ok bool (run-sim world (counterexample-8)))
   (assert ok))
 

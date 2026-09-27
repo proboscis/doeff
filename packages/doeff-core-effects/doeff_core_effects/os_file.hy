@@ -10,7 +10,7 @@
 (import pathlib [Path])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld StatPath ReadText ReadBytes WriteText WriteBytes
                                          AppendText MakeDirectory ListDirectory WalkTree CopyFile CopyTree RenamePath RemoveTree
-                                         AcquireLock ReleaseLock])
+                                         AcquireLock ReleaseLock ReadDiskFree])
 
 
 (defk failed [path error]
@@ -172,6 +172,15 @@
   (try (fcntl.flock held.token fcntl.LOCK-UN) (finally (os.close held.token))))
 
 
+(defk disk-free [path]
+  {:pre [(: path str)] :post [(: % (| int FileFailed))]}
+  "path を含む file system の空きを読むため(無い path は在る親で測る)。"
+  (var probe (Path path))
+  (while (not (.exists probe)) (:= probe probe.parent))
+  (try (. (shutil.disk-usage probe) free)
+       (except [error OSError] (FileFailed :path path :detail (str error)))))
+
+
 (defhandler os-file-handler
   ;; 本物の file system(頭の註)。
   (StatPath [path follow-symlinks]
@@ -218,4 +227,7 @@
     (resume answer))
   (ReleaseLock [held]
     (<- answer (guarded held.path (fn [] (_release held))))
+    (resume answer))
+  (ReadDiskFree [path]
+    (<- answer (disk-free path))
     (resume answer)))

@@ -1,4 +1,4 @@
-;; 実行環境(runtime env)の task を送って走らせる検 — 速い模擬(detached-local の同じ VM の task・env_fake の fake-env・仮想の時計)と、
+;; 実行環境(runtime env)の task を送って走らせる検 — 速い模擬(detached-local の同じ VM の task・env_world の模擬の世界・仮想の時計)と、
 ;; coordinator と worker の純粋な判断。
 ;;
 ;; 速い模擬の筋書き(設計 worker-runtime-env.md 節 5):
@@ -12,12 +12,12 @@
 (import dataclasses [replace])
 (import json)
 (import pytest)
-(import doeff [Program])
+(import doeff [Program with-handlers])
 (import doeff_core_effects.handlers [state reader])
 (import doeff_core_effects.effects [Ask])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.runtime_env_model [RuntimeEnv EnvFailure EnvFailureKind runtime-env->json env-key current-platform])
-(import doeff_cluster.env_fake [fake-env FakeEnvWorld FakeEnvLog ReadFakeEnvLog])
+(import doeff_cluster.env_world [env-world EnvWorld EnvWorldLog read-world-log])
 (import doeff_cluster.detached_model [SubmitDetached AwaitDetached DetachedSucceeded DetachedEnvUnavailable DetachedAwaited
                                       DetachedVersionMismatch outcome-of-view])
 (import doeff_cluster.detached [detached-local DetachedLocalStore])
@@ -45,9 +45,9 @@
 
 
 (defk run-sim [world program]
-  {:pre [(: world FakeEnvWorld) (: program Program)] :post [(: % bool)]}
-  "筋書きを速い模擬の組(状態・仮想の時計・fake-env・実行先の reader)の下で走らせる。"
-  (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) ((fake-env world) ((reader {"base" 100}) program)))))
+  {:pre [(: world EnvWorld) (: program Program)] :post [(: % bool)]}
+  "筋書きを速い模擬の組(状態・仮想の時計・env-world・実行先の reader)の下で走らせる。"
+  (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) (with-handlers (env-world world) ((reader {"base" 100}) program)))))
   ok)
 
 
@@ -71,11 +71,11 @@
   (val root-1 (. (get store.records "job-1") root))
   (<- key-1 str (env-key env-1 (current-platform)))
   (assert (= root-1 (.format "/state/roots/{}" key-1)) "task は準備した env の root で走った")
-  (<- before FakeEnvLog (ReadFakeEnvLog))
+  (<- before EnvWorldLog (read-world-log))
   (<- env-2 RuntimeEnv (env-of "app-2" "lib-1" LOCK))
   (setv store.runtime-env env-2)
   (<- second (send-and-wait store "job-2" 2))
-  (<- after FakeEnvLog (ReadFakeEnvLog))
+  (<- after EnvWorldLog (read-world-log))
   (assert (= second (DetachedSucceeded 102)) second)
   (val root-2 (. (get store.records "job-2") root))
   (assert (!= root-2 root-1) "新しい commit は新しい root で走る")
@@ -86,7 +86,7 @@
 
 (deftest test-a-task-runs-in-the-prepared-root-and-a-new-commit-gets-a-new-root
   (.clear RAN)
-  (<- world FakeEnvWorld (base-world))
+  (<- world EnvWorld (base-world))
   (<- ok bool (run-sim world (scenario-1-and-2)))
   (assert ok)
   (assert (= RAN [1 2])))
@@ -101,7 +101,7 @@
   (<- ((detached-local store) (SubmitDetached (add-base 2) :env "tests.fixtures.envs:plain_env" :key "b")))
   (<- a ((detached-local store) (AwaitDetached "a")))
   (<- b ((detached-local store) (AwaitDetached "b")))
-  (<- log FakeEnvLog (ReadFakeEnvLog))
+  (<- log EnvWorldLog (read-world-log))
   (assert (= #(a b) #((DetachedSucceeded 101) (DetachedSucceeded 102))) #(a b))
   (assert (= store.prepares 1) store.prepares)
   (assert (= log.syncs 1) log)
@@ -109,7 +109,7 @@
 
 
 (deftest test-two-tasks-of-one-env-share-one-preparation
-  (<- world FakeEnvWorld (base-world))
+  (<- world EnvWorld (base-world))
   (<- ok bool (run-sim world (scenario-6)))
   (assert ok))
 
@@ -129,7 +129,7 @@
 
 (deftest test-a-failed-preparation-answers-its-kind-without-running-the-program
   (.clear RAN)
-  (<- world FakeEnvWorld (base-world))
+  (<- world EnvWorld (base-world))
   ;; 恒久の失敗は 1 回で答える
   (<- (run-sim (replace world :denied (frozenset #(LIB-URL))) (failure-scenario EnvFailureKind.REPO-DENIED False 1)))
   ;; 一時の失敗は置き直し(ENV-RETRIES 回)の後に答える

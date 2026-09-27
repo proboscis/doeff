@@ -1,4 +1,4 @@
-;; 実行環境の宣言(runtime_env_model)と準備の Program(env_prepare の prepare-env)の検 — 速い模擬(env_fake の fake-env・仮想の時計)。
+;; 実行環境の宣言(runtime_env_model)と準備の Program(env_prepare の prepare-env)の検 — 速い模擬(env_world の模擬の世界・仮想の時計)。
 ;;
 ;; 準備の段で確かめられる筋書き(設計 worker-runtime-env.md 節 5):
 ;;   2 送り手の repo の commit だけ変える → 新しい root・sync は増えるが download は 0
@@ -14,7 +14,8 @@
 (import json)
 (import pytest)
 (import pathlib [Path])
-(import doeff [Program run])
+(import doeff [Program run with-handlers])
+(import doeff_core_effects.os_file [os-file-handler])
 (import doeff_cluster.env_handlers [editable-dirs])
 (import doeff_core_effects.handlers [state])
 (import doeff_time [SimClock sim-time-handler GetMonotonic])
@@ -22,8 +23,8 @@
                                          RuntimeEnvInvalid InvalidKind EnvFailure EnvFailureKind env-key key-material
                                          runtime-env->json runtime-env-of-json])
 (import doeff_cluster.env_prepare [PrepareRequest KnownRoot EnvReady prepare-env ENV-MARKER ROOTS-PTH])
-(import doeff_cluster.env_fake [fake-env FakeEnvWorld FakeEnvLog FakeRemote FakeCommit FakeFile ReadFakeEnvLog ListFakeFiles
-                                SetFakeUvFailure])
+(import doeff_cluster.env_world [env-world EnvWorld EnvWorldLog WorldRemote WorldCommit WorldFile read-world-log world-files
+                                set-uv-failure])
 
 (setv PLATFORM "linux-x86_64")
 (import tests.env_fixtures [LOCK APP-URL LIB-URL sha-of lock-sha app-commit lib-commit env-of base-world])
@@ -101,19 +102,19 @@
 
 
 ;; --- 準備の筋書き --------------------------------------------------------------------------
-;; 筋書きは 1 つの handler の組(仮想の時計 + fake-env)の下で走る defk に書き、確かめも中に置く(fake の状態はその組の間だけ)。
+;; 筋書きは 1 つの handler の組(仮想の時計 + env-world)の下で走る defk に書き、確かめも中に置く(fake の状態はその組の間だけ)。
 
 (defk run-in-world [world scenario]
-  {:pre [(: world FakeEnvWorld) (: scenario Program)] :post [(: % bool)]}
-  "筋書き(引数なしの defk の呼び出し = Program)を仮想の時計と fake-env の下で走らせる。"
-  (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) ((fake-env world) scenario))))
+  {:pre [(: world EnvWorld) (: scenario Program)] :post [(: % bool)]}
+  "筋書き(引数なしの defk の呼び出し = Program)を仮想の時計と env-world の下で走らせる。"
+  (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) (with-handlers (env-world world) scenario))))
   ok)
 
 
 (defk files-under [root]
   {:pre [(: root str)] :post [(: % dict)]}
   "root の下の模擬の file の path → 中身。"
-  (<- files tuple (ListFakeFiles root))
+  (<- files tuple (world-files root))
   (dfor f files f.path f.text))
 
 
@@ -132,7 +133,7 @@
   (<- files dict (files-under ready.root))
   (assert (in (.format "{}/app/uv.lock" ready.root) files))
   (assert (in (.format "{}/lib/native/core/lib.rs" ready.root) files))
-  (assert (= (get files (.format "{}/app/.venv/{}" ready.root ROOTS-PTH)) (.format "{0}/app\n{0}/app/vendor" ready.root)))
+  (assert (= (get files (.format "{}/app/.venv/lib/python3.14/site-packages/{}" ready.root ROOTS-PTH)) (.format "{0}/app\n{0}/app/vendor\n" ready.root)))
   (val marker (json.loads (get files (.format "{}/{}" ready.root ENV-MARKER))))
   (assert (= (get marker "key") ready.key))
   (assert (= (get marker "interpreter") ready.interpreter))
@@ -142,7 +143,7 @@
 
 
 (deftest test-a-cold-root-is-prepared-and-marked
-  (<- world FakeEnvWorld (base-world))
+  (<- world EnvWorld (base-world))
   (<- ok bool (run-in-world world (cold-scenario)))
   (assert ok))
 
@@ -159,7 +160,7 @@
   (<- env RuntimeEnv (env-of "app-editable" "lib-1" EDITABLE-LOCK))
   (<- ready (prepare env #()))
   (assert (isinstance ready EnvReady) ready)
-  (<- log FakeEnvLog (ReadFakeEnvLog))
+  (<- log EnvWorldLog (read-world-log))
   (val trees (dfor #(tree roots) log.compiled-trees tree roots))
   (assert (= (get trees (.format "{}/app" ready.root)) #("." "vendor")) trees)
   (assert (= (.get trees (.format "{}/lib" ready.root)) #("." "extra/src"))
@@ -178,7 +179,7 @@
   (.write-text (/ site "_editable_impl_lib_core.pth") (+ (str (/ root "lib/packages/core/src")) "\n"))
   (.write-text (/ site "_other.pth") (+ "import sys\n# note\n" (str (/ tmp-path "outside")) "\n"))
   (.write-text (/ site ROOTS-PTH) (str (/ root "app")))
-  (assert (= (run (editable-dirs (str site) (str root))) #("lib" "lib/packages/core/src"))))
+  (assert (= (run (with-handlers [os-file-handler] (editable-dirs (str site) (str root)))) #("lib" "lib/packages/core/src"))))
 
 
 ;; 反例(構成レビュー 2026-09-27): editable で入るだけの依存の repo の bytecode は最適化で、焼けなくても env は作れる(子は import の時に
@@ -193,14 +194,14 @@
   (<- env RuntimeEnv (env-of "app-native-only" "lib-1" NATIVE-ONLY-LOCK))
   (<- ready (prepare env #()))
   (assert (isinstance ready EnvReady) (.format "editable だけの repo の焼きの失敗で env が失敗した: {}" ready))
-  (<- log FakeEnvLog (ReadFakeEnvLog))
+  (<- log EnvWorldLog (read-world-log))
   (assert (any (gfor n log.notes (in "lib" n))) log.notes)
   True)
 
 
 (deftest test-an-editable-only-repo-that-cannot-be-compiled-does-not-fail-the-env
-  (<- world FakeEnvWorld (base-world))
-  (<- app FakeCommit (app-commit "app-native-only" NATIVE-ONLY-LOCK "V = 6\n"))
+  (<- world EnvWorld (base-world))
+  (<- app WorldCommit (app-commit "app-native-only" NATIVE-ONLY-LOCK "V = 6\n"))
   (<- ok bool (run-in-world (replace world :remotes (tuple (gfor r world.remotes
                                                                  (if (= r.url APP-URL) (replace r :commits (+ r.commits #(app))) r))))
                             (native-only-editable-scenario)))
@@ -208,8 +209,8 @@
 
 
 (deftest test-editable-dependencies-in-the-root-are-compiled-too
-  (<- world FakeEnvWorld (base-world))
-  (<- app FakeCommit (app-commit "app-editable" EDITABLE-LOCK "V = 5\n"))
+  (<- world EnvWorld (base-world))
+  (<- app WorldCommit (app-commit "app-editable" EDITABLE-LOCK "V = 5\n"))
   (<- ok bool (run-in-world (replace world :remotes (tuple (gfor r world.remotes
                                                                  (if (= r.url APP-URL) (replace r :commits (+ r.commits #(app))) r))))
                             (editable-scenario)))
@@ -222,13 +223,13 @@
    変わらない repo のツリーは複製・bytecode は前の root から引き継ぐ。"
   (<- first-env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- first (prepare first-env #()))
-  (<- before FakeEnvLog (ReadFakeEnvLog))
+  (<- before EnvWorldLog (read-world-log))
   (<- second-env RuntimeEnv (env-of "app-2" "lib-1" LOCK))
   (<- known tuple (known-of first))
   (<- started float (GetMonotonic))
   (<- second (prepare second-env known))
   (<- ended float (GetMonotonic))
-  (<- after FakeEnvLog (ReadFakeEnvLog))
+  (<- after EnvWorldLog (read-world-log))
   (assert (isinstance second EnvReady) second)
   (assert (!= second.root first.root) "新しい commit は新しい root")
   (assert (= #(second.downloaded second.built) #(0 0)))
@@ -244,7 +245,7 @@
 
 
 (deftest test-changing-only-the-project-commit-makes-a-warm-root
-  (<- world FakeEnvWorld (base-world))
+  (<- world EnvWorld (base-world))
   (<- ok bool (run-in-world world (commit-only-scenario)))
   (assert ok))
 
@@ -254,9 +255,9 @@
   "筋書き 3: lock を変える → 新しいキー・増えた package だけ download・bytecode は引き継がない(Hy と doeff-hy が変わり得る)。"
   (<- first (prepare (! (env-of "app-1" "lib-1" LOCK)) #()))
   (<- known tuple (known-of first))
-  (<- before FakeEnvLog (ReadFakeEnvLog))
+  (<- before EnvWorldLog (read-world-log))
   (<- changed (prepare (! (env-of "app-3" "lib-1" (+ LOCK "rich==13.9.4 top=rich\n"))) known))
-  (<- after FakeEnvLog (ReadFakeEnvLog))
+  (<- after EnvWorldLog (read-world-log))
   (assert (isinstance changed EnvReady) changed)
   (assert (!= changed.key first.key))
   (assert (= changed.downloaded 1))
@@ -265,7 +266,7 @@
 
 
 (deftest test-changing-the-lock-downloads-only-the-new-packages
-  (<- world FakeEnvWorld (base-world))
+  (<- world EnvWorld (base-world))
   (<- ok bool (run-in-world world (lock-change-scenario)))
   (assert ok))
 
@@ -274,11 +275,11 @@
   {:pre [] :post [(: % bool)]}
   "筋書き 5: native の source を変える → build が 1 回だけ増え、同じ source の次の root は wheel を使い回す。"
   (<- first (prepare (! (env-of "app-1" "lib-1" LOCK)) #()))
-  (<- before FakeEnvLog (ReadFakeEnvLog))
+  (<- before EnvWorldLog (read-world-log))
   (<- changed (prepare (! (env-of "app-1" "lib-2" LOCK)) (! (known-of first))))
-  (<- mid FakeEnvLog (ReadFakeEnvLog))
+  (<- mid EnvWorldLog (read-world-log))
   (<- again (prepare (! (env-of "app-2" "lib-2" LOCK)) (! (known-of first changed))))
-  (<- after FakeEnvLog (ReadFakeEnvLog))
+  (<- after EnvWorldLog (read-world-log))
   (assert (= (- mid.builds before.builds) 1))
   (assert (= changed.built 1))
   (assert (= (- after.builds mid.builds) 0))
@@ -287,7 +288,7 @@
 
 
 (deftest test-changing-the-native-source-builds-once
-  (<- world FakeEnvWorld (base-world))
+  (<- world EnvWorld (base-world))
   (<- ok bool (run-in-world world (native-change-scenario)))
   (assert ok))
 
@@ -305,16 +306,16 @@
   (<- files dict (files-under ready.root))
   (for [name ["app" "lib" "tools"]]
     (assert (any (gfor p files (.startswith p (.format "{}/{}/" ready.root name)))) name))
-  (assert (= (get files (.format "{}/app/.venv/{}" ready.root ROOTS-PTH))
-             (.format "{0}/tools/src\n{0}/app\n{0}/lib" ready.root)))
+  (assert (= (get files (.format "{}/app/.venv/lib/python3.14/site-packages/{}" ready.root ROOTS-PTH))
+             (.format "{0}/tools/src\n{0}/app\n{0}/lib\n" ready.root)))
   True)
 
 
 (deftest test-three-repos-sit-side-by-side-with-roots-in-declared-order
-  (<- world FakeEnvWorld (base-world))
-  (<- tools FakeCommit (lib-commit "tools-1" ""))
-  (val tools-commit (replace tools :files #((FakeFile :path "src/tool/__init__.py" :text "Z = 3\n"))))
-  (<- ok bool (run-in-world (replace world :remotes (+ world.remotes #((FakeRemote :url "file:///remotes/tools.git"
+  (<- world EnvWorld (base-world))
+  (<- tools WorldCommit (lib-commit "tools-1" ""))
+  (val tools-commit (replace tools :files #((WorldFile :path "src/tool/__init__.py" :text "Z = 3\n"))))
+  (<- ok bool (run-in-world (replace world :remotes (+ world.remotes #((WorldRemote :url "file:///remotes/tools.git"
                                                                                     :commits #(tools-commit)))))
                             (three-repos-scenario)))
   (assert ok))
@@ -334,16 +335,16 @@
 
 
 (defk expect-failure [world env kind retryable]
-  {:pre [(: world FakeEnvWorld) (: env RuntimeEnv) (: kind EnvFailureKind) (: retryable bool)] :post [(: % bool)]}
+  {:pre [(: world EnvWorld) (: env RuntimeEnv) (: kind EnvFailureKind) (: retryable bool)] :post [(: % bool)]}
   "world の下で env を準備すると kind の失敗(一時か恒久かも)になる。"
-  (<- failure EnvFailure ((state) ((sim-time-handler :clock (SimClock)) ((fake-env world) (failure-of env)))))
+  (<- failure EnvFailure ((state) ((sim-time-handler :clock (SimClock)) (with-handlers (env-world world) (failure-of env)))))
   (assert (= failure.kind kind) (.format "{} のはずが {}: {}" kind failure.kind failure.detail))
   (assert (= failure.retryable retryable) failure)
   True)
 
 
 (deftest test-each-failure-comes-back-as-its-kind
-  (<- world FakeEnvWorld (base-world))
+  (<- world EnvWorld (base-world))
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   ;; URL を許可表から外す / 届かない
   (<- (expect-failure (replace world :denied (frozenset #(LIB-URL))) env EnvFailureKind.REPO-DENIED False))
@@ -367,6 +368,6 @@
 
 (deftest test-a-third-party-package-shadowing-a-root-is-refused
   ;; 反例: 第三者の package が根と同じ最上位の名(app)を持つと、根の module が隠れるので env-incompatible で断る。
-  (<- world FakeEnvWorld (base-world))
+  (<- world EnvWorld (base-world))
   (<- (expect-failure world (! (env-of "app-shadow" "lib-1" (+ LOCK "vendor-shadow==1.0 top=app\n")))
                       EnvFailureKind.ENV-INCOMPATIBLE False)))

@@ -1,4 +1,4 @@
-;;; 丁寧な模擬の fake の uv(test_env_careful.hy が PATH の先頭に置く sh の包みから起こす)。本物の local-env が呼ぶ 4 つの命令だけを模す:
+;;; 丁寧な模擬の fake の uv(test_env_careful.hy が PATH の先頭に置く sh の包みから起こす)。本物の準備の process(env_handlers の翻訳 env-translation)が呼ぶ 4 つの命令だけを模す:
 ;;;
 ;;;   uv sync --locked --project P --python X --no-default-groups [--group g]… [--no-install-package n]…
 ;;;       P/.venv を作る: bin/python は検の interpreter への symlink、site-packages の .pth が検の環境の site-packages を足す

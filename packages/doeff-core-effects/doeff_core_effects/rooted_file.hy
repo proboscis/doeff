@@ -16,14 +16,14 @@
 (import doeff [EffectBase])
 (import doeff_core_effects.file_effects [FileFailed PathStat LockHeld StatPath ReadText ReadBytes WriteText WriteBytes AppendText
                                          MakeDirectory ListDirectory WalkTree CopyFile CopyTree RenamePath RemoveTree AcquireLock
-                                         ReleaseLock])
+                                         ReleaseLock ReadDiskFree])
 
 ;; path 1 つを持つ effect と、写し元と写し先の 2 つを持つ effect。
 (val PATH-EFFECTS #(StatPath ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree RemoveTree
-                    AcquireLock))
+                    AcquireLock ReadDiskFree))
 (val MOVE-EFFECTS #(CopyFile CopyTree RenamePath))
-;; file の effect の答えの型の和(失敗・様子・錠・中身・一覧・答えの無い書き)。
-(val ANSWER (| FileFailed PathStat LockHeld str bytes tuple None))
+;; file の effect の答えの型の和(失敗・様子・錠・中身・一覧・空きの byte・答えの無い書き)。
+(val ANSWER (| FileFailed PathStat LockHeld str bytes tuple int None))
 
 
 (defk outer-path [root path]

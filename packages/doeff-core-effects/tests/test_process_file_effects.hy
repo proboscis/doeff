@@ -14,7 +14,7 @@
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory])
-(import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath
+(import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadDiskFree
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree CopyFile
                                          CopyTree RenamePath RemoveTree AcquireLock ReleaseLock])
 (import doeff_core_effects.os_process [subprocess-handler])
@@ -77,6 +77,10 @@
     (assert (= replaced.stdout "|足した|足した") replaced)
     (setv inherited (on [subprocess-handler] (RunProcess :argv ENV-PROBE)))
     (assert (= inherited.stdout "継いだ|親|") inherited)
+    ;; env-drop(#831)は EXTEND で継ぐ名のうち型に合う物を外す(足した名は外さない)。REPLACE では読まない。
+    (setv dropped (on [subprocess-handler] (RunProcess :argv ENV-PROBE :env ENV-GIVEN :env-mode EnvMode.EXTEND
+                                                       :env-drop #("DOEFF_INH*" "DOEFF_ADDED"))))
+    (assert (= dropped.stdout "|足した|足した") dropped)
     (finally (del (get os.environ "DOEFF_INHERITED"))
              (del (get os.environ "DOEFF_SHADOWED")))))
 
@@ -94,6 +98,8 @@
     (on [(state) (memory-file-handler (MemoryFiles)) (scripted-process-handler script)] request))
   (assert (= (. (scripted (RunProcess :argv #("show") :env ENV-GIVEN :env-mode EnvMode.EXTEND)) stdout)
              "DOEFF_INHERITED=継いだ,DOEFF_SHADOWED=足した,DOEFF_ADDED=足した"))
+  (assert (= (. (scripted (RunProcess :argv #("show") :env ENV-GIVEN :env-mode EnvMode.EXTEND :env-drop #("DOEFF_INH*" "DOEFF_ADDED"))) stdout)
+             "DOEFF_SHADOWED=足した,DOEFF_ADDED=足した"))
   (assert (= (. (scripted (RunProcess :argv #("show") :env ENV-GIVEN)) stdout) "DOEFF_SHADOWED=足した,DOEFF_ADDED=足した"))
   (assert (= (. (scripted (RunProcess :argv #("show"))) stdout) "None")))
 
@@ -171,7 +177,9 @@
     (setv root (os.path.realpath tmp))
     (setv real (on [os-file-handler] (journey root)))
     (assert (= (stat.S_IMODE (. (os.stat (+ root "/a/b")) st_mode)) 0o700))
-    (assert (= (stat.S_IMODE (. (os.stat (+ root "/a/b/config")) st_mode)) 0o600)))
+    (assert (= (stat.S_IMODE (. (os.stat (+ root "/a/b/config")) st_mode)) 0o600))
+    ;; 空き(#831): 無い path は在る親の file system で測る。
+    (assert (> (on [os-file-handler] (ReadDiskFree (+ root "/missing/deeper"))) 0)))
   (setv memory (on [(state) (memory-file-handler (MemoryFiles :dirs #("/memory-root")))] (journey "/memory-root")))
   (for [#(i #(a b)) (enumerate (zip real.answers memory.answers))]
     (assert (= a b) #(i a b)))
@@ -219,8 +227,12 @@
     (<- (ReleaseLock first))
     (<- third (AcquireLock "/r/lock"))
     (<- seen MemoryFiles (ReadMemoryFiles))
-    #(first second third seen))
-  (setv #(first second third seen) (on [(state) (memory-file-handler (MemoryFiles :dirs #("/r")))] (twice)))
+    (<- free int (ReadDiskFree "/r/missing"))
+    #(first second third seen free))
+  (setv #(first second third seen free) (on [(state) (memory-file-handler (MemoryFiles :dirs #("/r") :free 1234))] (twice)))
+  ;; 空き(#831)は置き場の設定の値で答え、錠や書きで置き場を作り直しても保つ。
+  (assert (= free 1234) free)
+  (assert (= seen.free 1234) seen)
   (assert (isinstance first LockHeld) first)
   (assert (and (isinstance second FileFailed) (in "Resource temporarily unavailable" second.detail)) second)
   (assert (isinstance third LockHeld) third)

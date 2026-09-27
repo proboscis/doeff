@@ -2,11 +2,12 @@
 ;;;
 ;;; worker は宣言(runtime_env_model の RuntimeEnv)を受けると、env のキーの root をこの Program で準備し、完成マーカーを置いた
 ;;; root の中の子 process で task を走らせる。worker の process は変わらない(新しい commit・lock・native は新しい root を作るだけ)。
-;;; I/O は全部 effect で、本物の handler は env_handlers.hy の local-env、速い模擬の handler は env_fake.hy の fake-env。
+;;; I/O は全部 effect で、答えるのは env_handlers.hy の翻訳 env-translation 1 つ(本番と模擬で同じ)。翻訳は doeff の汎用の effect(子 process・
+;;; file system)を出し直し、本番は本物の答え手・模擬は env_world の台本と memory の置き場が答える。
 ;;;
 ;;; 処理ステージ(失敗はその場で EnvFailure を値で返し、後の処理ステージを走らせない — どれも子 process を起こす前):
 ;;;   1 空き      DiskFree                                   空きが下限を切れば disk-full
-;;;   2 mirror    EnsureMirror / FetchCommit                 repo-denied・repo-unreachable・commit-missing
+;;;   2 mirror    RepoAllowed / EnsureMirror / FetchCommit   worker の許可表に無い URL = repo-denied・repo-unreachable・commit-missing
 ;;;   3 展開      MaterializeTree                            同じ commit のツリーを持つ別の root があれば複製(.venv・マーカー・__pycache__ を除く)
 ;;;   4 lock      FileSha256                                 展開した uv.lock が宣言の sha256 と違えば lock-mismatch
 ;;;   5 native    TreeHash / EnsureNativeWheel               キーの wheel が無ければ build(native-build-failed)
@@ -150,8 +151,15 @@
   (#^ str path))
 
 
+(defeffect RepoAllowed
+  "url が worker の許可表(clone してよい URL)に在るか。答え = bool。断る判断(repo-denied)は prepare-env が持つ。"
+  {:fields [(: url str)]
+   :answer bool
+   :tags {:context "runtime-env" :role "intent"}})
+
+
 (defclass [(dataclass :frozen True)] EnsureMirror [EffectBase]
-  "url の bare mirror を用意する(無ければ clone・url ごとに排他)。答え = MirrorReady か EnvFailure(repo-denied・repo-unreachable)。"
+  "url の bare mirror を用意する(無ければ clone・url ごとに排他)。答え = MirrorReady か EnvFailure(repo-unreachable)。"
   (#^ str url))
 
 
@@ -349,12 +357,16 @@
 
 (defk stage-mirrors [request state]
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % (| PrepareState EnvFailure))]}
-  "宣言した repo ごとに mirror を用意して commit を揃える(worker が取れない commit はここで断る)。"
+  "宣言した repo ごとに mirror を用意して commit を揃える(worker の許可表に無い URL と、worker が取れない commit はここで断る)。"
   (var mirrors [])
   (var failure None)
   (for [repo request.env.repos]
     (when (is failure None)
-      (<- ready (| MirrorReady EnvFailure) (EnsureMirror repo.url))
+      (<- allowed bool (RepoAllowed repo.url))
+      (<- ready (| MirrorReady EnvFailure)
+          (if allowed
+              (EnsureMirror repo.url)
+              (env-failure EnvFailureKind.REPO-DENIED (.format "worker の許可表に無い URL: {}" repo.url))))
       (match ready
         (EnvFailure) (:= failure ready)
         (MirrorReady :path path)

@@ -156,9 +156,9 @@
                 (tuple (sorted (gfor entry (.glob root pattern) (str entry))))
                 #())))
 
-  (RunProcess [argv stdin timeout cwd env env-mode output-path]
+  (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop]
     ;; 実装は汎用の subprocess-handler と同じ 1 つ(doeff_core_effects.os_process の run-subprocess — agora-redesign #802 便 1)。
-    (<- outcome (run-subprocess argv stdin timeout cwd env env-mode output-path))
+    (<- outcome (run-subprocess argv stdin timeout cwd env env-mode output-path env-drop))
     (resume outcome))
 
   (SpawnDetached [argv log-path cwd]

@@ -19,6 +19,7 @@
 ;;;   RemoveTree     file か dir を中身ごと消す(無ければ断る)。答え = None
 ;;;   AcquireLock    錠の file を排他で取る(取れるまで待つ)。答え = LockHeld
 ;;;   ReleaseLock    取った錠を放す。答え = None
+;;;   ReadDiskFree   path を含む file system の空き(byte・無い path は在る親で測る — agora-redesign #831)。答え = int
 ;;;
 ;;; memory の置き場の語彙(本物の file system には無い): MemoryFile / MemoryFiles = 置き場の初めの形と今の中身・ReadMemoryFiles = 今の中身を
 ;;; 読む effect(検と筋書きが置き場を覗くため — memory-file-handler だけが答える)。
@@ -145,6 +146,11 @@
   (#^ LockHeld held))
 
 
+(defclass [(dataclass :frozen True)] ReadDiskFree [EffectBase]
+  "path を含む file system の空きを読む(頭の註)。"
+  (#^ str path))
+
+
 (defrecord MemoryFile
   "memory の置き場の file 1 つ(path = 絶対 path・content = 中身の bytes・mode = 与えた mode か None)。"
   (#^ str path)
@@ -153,10 +159,12 @@
 
 
 (defrecord MemoryFiles
-  "memory の置き場の中身(files = file の列・dirs = dir の絶対 path の列 — 根 / は暗に在る・locks = 取られている錠の path)。"
+  "memory の置き場の中身(files = file の列・dirs = dir の絶対 path の列 — 根 / は暗に在る・locks = 取られている錠の path・free = ReadDiskFree
+   に答える空きの byte)。"
   (setv #^ (get tuple #(MemoryFile ...)) files #())
   (setv #^ (get tuple #(str ...)) dirs #())
-  (setv #^ (get tuple #(str ...)) locks #()))
+  (setv #^ (get tuple #(str ...)) locks #())
+  (setv #^ int free (** 2 40)))
 
 
 (defclass [(dataclass :frozen True)] ReadMemoryFiles [EffectBase]

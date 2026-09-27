@@ -11,6 +11,7 @@
 ;;; 並び: file の答え手をこの handler より外側に置く。session の値の置き場(doeff_core_effects の state)はさらに外側に要る。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
+(import fnmatch)
 (import posixpath)
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
@@ -41,14 +42,17 @@
   (ProcessOutcome :exit-code NOT-STARTED-CODE :stdout "" :stderr "" :started False :start-error detail))
 
 
-(defk scripted-child-env [inherited env env-mode]
-  {:pre [(: inherited tuple) (: env (| tuple None)) (: env-mode EnvMode)] :post [(: % (| tuple None))]}
-  "台本に渡す子の環境を作るため: None と REPLACE は渡された env のまま(前からの振る舞い)、EXTEND は台本の世界の環境 inherited に env を
-   足した全部(同じ名は env が勝つ — 本物の subprocess-handler の child-environment と同じ規則)。"
+(defk scripted-child-env [inherited env env-mode env-drop]
+  {:pre [(: inherited tuple) (: env (| tuple None)) (: env-mode EnvMode) (: env-drop tuple)] :post [(: % (| tuple None))]}
+  "台本に渡す子の環境を作るため: None と REPLACE は渡された env のまま(前からの振る舞い)、EXTEND は台本の世界の環境 inherited から env-drop の
+   型に合う名を外して env を足した全部(同じ名は env が勝つ — 本物の subprocess-handler の child-environment と同じ規則)。"
   (match #(env env-mode)
     #(None _) None
     #(_ EnvMode.EXTEND) (do (val added (sfor e env e.name))
-                            (+ (tuple (gfor e inherited :if (not-in e.name added) e)) env))
+                            (+ (tuple (gfor e inherited :if (not (or (in e.name added)
+                                                                     (any (gfor p env-drop (fnmatch.fnmatchcase e.name p)))))
+                                            e))
+                               env))
     _ env))
 
 
@@ -72,9 +76,9 @@
 (defhandler scripted-process-handler [#^ ProcessScript script]
   ;; 引数に残す理由: 台本の表と環境は筋書きごとに違う値(設定ではなく模擬の世界そのもの)。
   (session var jobs 0)
-  (RunProcess [argv stdin timeout cwd env env-mode output-path]
-    ;; 台本が見る env は子の環境変数の全部にそろえる(EXTEND は台本の世界の環境 script.env を継いで足す — 本物の subprocess-handler と同じ)。
-    (<- child-env (| tuple None) (scripted-child-env script.env env env-mode))
+  (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop]
+    ;; 台本が見る env は子の環境変数の全部にそろえる(EXTEND は台本の世界の環境 script.env から env-drop を外して足す — 本物の subprocess-handler と同じ)。
+    (<- child-env (| tuple None) (scripted-child-env script.env env env-mode env-drop))
     (<- outcome ProcessOutcome (run-scripted script.commands (RunProcess :argv argv :stdin stdin :timeout timeout :cwd cwd :env child-env
                                                                           :output-path output-path)))
     (when (is-not output-path None)

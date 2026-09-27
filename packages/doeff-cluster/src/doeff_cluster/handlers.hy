@@ -413,7 +413,7 @@
     (when (.is-dir roots)
       (for [entry (.iterdir roots)]
         (when (and (.startswith entry.name ".") (in ".broken." entry.name)) (shutil.rmtree entry :ignore-errors True))))
-    ;; 7 日使われない native の wheel(使うたびに dir の時刻を進める — env_handlers の EnsureNativeWheel)。
+    ;; 7 日使われない native の wheel(使うたびに dir の中の印の file を置き換えて dir の時刻を進める — env_handlers の EnsureNativeWheel)。
     (setv wheels (/ self.state "wheels"))
     (when (.is-dir wheels)
       (for [entry (.iterdir wheels)]

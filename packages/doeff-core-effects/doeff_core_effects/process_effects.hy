@@ -11,6 +11,8 @@
 ;;;     REPLACE(既定)  tuple が子の環境変数の全部(前からの振る舞い)
 ;;;     EXTEND         呼び手の環境を継いだ上で tuple を足す(同じ名は tuple が勝つ)
 ;;;   env が None の時は env-mode を読まない(呼び手の環境を全部継ぐ)。
+;;;   RunProcess の env-drop(agora-redesign #831)= EXTEND で継ぐ呼び手の環境から外す名の型(fnmatch — `UV_*` のように)の tuple。既定 #()
+;;;   = 外さない。REPLACE と env None の時は読まない(REPLACE は継がないので外す物が無い)。子に呼び手の venv や道具の設定を持ち込ませない時に使う。
 ;;;   ProcessOutcome の started(False = 起こせなかった — OSError を値で)・start-error(その理由)。exit-code は子の returncode を丸めずに
 ;;;   持つ(負の値 = signal・137 など)。時間切れは timed-out True(exit-code 124)、起こせない時は exit-code 127。
 ;;;
@@ -60,6 +62,8 @@
   (setv env None)
   #^ EnvMode env-mode
   (setv env-mode EnvMode.REPLACE)
+  #^ (get tuple #(str ...)) env-drop
+  (setv env-drop #())
   #^ (| str None) output-path
   (setv output-path None))
 
