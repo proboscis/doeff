@@ -10,7 +10,7 @@
 (import subprocess)
 (import sys)
 (import pathlib [Path])
-(import doeff_cluster.cluster_model [ClusterTiming ClusterState Request RefusedJob])
+(import doeff_cluster.cluster_model [ClusterTiming ClusterState Request RefusedJob TaskRecord task-record-to-json])
 (import doeff_cluster.cluster_policy [state-to-json state-from-json])
 (import doeff_cluster.durable_kv [full-kv state-from-kv])
 (import doeff_cluster.api_policy [respond])
@@ -201,3 +201,28 @@
                             :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120))
   (assert (= done.returncode 2) done.stderr)
   (assert (in "旧い --labels は受け付けない" done.stderr) done.stderr))
+
+
+(defk old-task-rows []
+  {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "3880944e(2026-09-27 より前)の coordinator が保存した task の行の形 — 今の TaskRecord に無い env(handler の組の import path)を持つ。
+   終わった行(finished)と、まだ終わっていない行(queued)の 2 つ。durable KV の鍵 → 行。"
+  (val base (task-record-to-json (TaskRecord :id "t1" :name "agent-turn" :program None :revision "r1" :versions #() :needs #("agent")
+                                             :lease-ms 15000 :lease-until-ms 0 :submitted-ms 1000)))
+  (val old (| (dfor #(k v) (.items base) :if (not-in k #("program" "needs")) k v)
+              {"env" "controllers.scheduling.turns.envs:turn_task_env"}))
+  {"task/t1" (| old {"phase" "finished" "result" "done"})
+   "task/t2" (| old {"id" "t2" "phase" "queued"})})
+
+
+(deftest test-entry-7-old-task-rows-with-an-env-are-read-and-an-unended-one-fails-with-a-reason
+  ;; 入口 7(task の行): 今の TaskRecord に無い欄(env)を持つ旧い行でも、読み直しは落ちない(実弾 2026-09-28 の予行 — 3880944e の
+  ;; 行の env で TypeError になり coordinator が起きなかった)。終わった行はそのまま読み、まだ終わっていない行は failed と理由。
+  (<- rows dict (old-task-rows))
+  (val kv (| (full-kv (ClusterState)) rows))
+  (val state (state-from-kv kv 5000))
+  (val done (get state.tasks "t1"))
+  (val pending (get state.tasks "t2"))
+  (assert (= #(done.phase done.result) #("finished" "done")) done)
+  (assert (= pending.phase "failed") pending)
+  (assert (in "env" pending.detail) pending.detail))
