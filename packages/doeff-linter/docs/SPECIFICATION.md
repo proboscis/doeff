@@ -194,7 +194,8 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
   :layers [(layer core :summary "…" :knows "…" :does-not-know "…" :question "…"
                        :roles [type judgment program] :imports [core intent] :forbid-modules ["httpx"])
            (layer intent … :types-only True)
-           (layer protocol …) (layer foundation …) (layer entry …)]   ; 外の世界から遠い順
+           (layer protocol …) (layer foundation …)
+           (layer entry … :dependency-layers [intent protocol])]   ; 外の世界から遠い順。:dependency-layers = 依存先で読んでよい層(既定 :open-layers)
   :shared "shared"                            ; root/shared/<層>/ — どの service からも読める
   :foundation foundation                      ; root/foundation/ — service の外の層(同じ名の layer が要る)
   :open-layers [intent]                       ; 別の service から読んでよい層(既定 intent)
@@ -221,7 +222,7 @@ law の対応だけを残す。無ければ TOML の設定で今どおり動く�
 |---|---|---|---|
 | DOEFF114 | root の下の module が、宣言した service の宣言した層・shared の層・foundation のどれにも入らない(root の直下・service の dir の直下・宣言に無い dir の中 — 層が先の dir も旧い機能の dir も例外なし)。file ごとに 1 件。hint に移し先の案(`<root>/<:context のタグ>/<path の段の層か :role のタグの層>/<名>`)。`__init__` は外 | なし | file の頭 |
 | DOEFF115 | root の直下の dir が宣言した service・shared・foundation でない / service の中の dir が宣言した層でない。dir ごとに 1 件(鍵の path は dir) | なし | dir の最初の file の頭 |
-| DOEFF116 | service A の module が service B の module を import した時、B が A の :depends-on に無い、または読む先が B の :open-layers の層でない。shared と foundation は service ではないので見ない。宣言の DOEFF109 はこれに置き換わる(architecture.hy の在る repo では DOEFF109 の設定を置けない) | import の先 | import の記号 |
+| DOEFF116 | service A の module が service B の module を import した時、B が A の :depends-on に無い、または読む先が、A の module の層が依存先で読んでよい層(その層の `:dependency-layers`、無ければ `:open-layers`)でない。組み立ての層(agora は entry)だけ `:dependency-layers [intent protocol]` で依存先の翻訳の handler も読める(operator 2026-09-28 "A okay")。shared と foundation は service ではないので見ない。宣言の DOEFF109 はこれに置き換わる(architecture.hy の在る repo では DOEFF109 の設定を置けない) | import の先 | import の記号 |
 | DOEFF117 | 宣言した依存(A の :depends-on の B)を、A のどの module も読んでいない。info。全体の実行だけ | `A>B` | architecture.hy の defservice の名 |
 | DOEFF113 | 宣言した service の中の :context の食い違いは warning に上がる | | |
 

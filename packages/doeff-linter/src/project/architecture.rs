@@ -6,7 +6,8 @@
 //!   :root "controllers"
 //!   :layers [(layer core :summary "…" :knows "…" :does-not-know "…" :question "…" :roles [judgment program type]
 //!                        :imports [core intent] :forbid-modules ["httpx"])
-//!            (layer intent … :types-only true) (layer protocol …) (layer foundation …) (layer entry …)]
+//!            (layer intent … :types-only true) (layer protocol …) (layer foundation …)
+//!            (layer entry … :dependency-layers [intent protocol])]   ; 依存先のどの層を読んでよいか(既定 = :open-layers)
 //!   :shared "shared"                 ; どの service からも読める置き場(root/shared/<層>/)
 //!   :foundation "foundation"         ; service の外の層(root/foundation/)— :layers に同じ名の layer が要る
 //!   :open-layers [intent]            ; 別の service から読んでよい層(Tach の interfaces に当たる)
@@ -44,6 +45,10 @@ pub struct ArchLayer {
     pub forbid_modules: Vec<String>,
     #[serde(skip)]
     pub types_only: bool,
+    /// この層の module が、:depends-on に宣言した依存先の service のどの層を読んでよいか(None = :open-layers)。
+    /// 例: 組み立ての層 entry は依存先の intent と protocol(翻訳の handler)を読んで全体を組む(operator 2026-09-28 "A okay")。
+    #[serde(skip)]
+    pub dependency_layers: Option<Vec<String>>,
 }
 
 /// service 1 つの宣言。
@@ -98,6 +103,15 @@ pub struct Architecture {
 }
 
 impl Architecture {
+    /// 層 reader の module が、依存先の service の中で読んでよい層(層の :dependency-layers、無ければ :open-layers)。
+    pub fn dependency_layers_for(&self, reader: &str) -> &[String] {
+        self.layers
+            .iter()
+            .find(|l| l.name == reader)
+            .and_then(|l| l.dependency_layers.as_deref())
+            .unwrap_or(&self.open_layers)
+    }
+
     /// file を読んで宣言にする(読めない・形が違う時は位置つきの理由の列)。
     pub fn load(path: &Path) -> Result<Architecture, Vec<String>> {
         let source = std::fs::read_to_string(path).map_err(|e| vec![format!("{} を読めない: {}", path.display(), e)])?;
@@ -487,6 +501,7 @@ impl<'a> Parser<'a> {
             imports: None,
             forbid_modules: Vec::new(),
             types_only: false,
+            dependency_layers: None,
         };
         let rest: Vec<&Form> = items.iter().skip(2).copied().collect();
         for (key, value) in self.pairs(&rest) {
@@ -498,6 +513,7 @@ impl<'a> Parser<'a> {
                 ":roles" => layer.roles = self.names(value, ":roles"),
                 ":imports" => layer.imports = Some(self.names(value, ":imports")),
                 ":forbid-modules" => layer.forbid_modules = self.names(value, ":forbid-modules"),
+                ":dependency-layers" => layer.dependency_layers = Some(self.names(value, ":dependency-layers")),
                 ":types-only" => match self.symbol(value) {
                     Some("True" | "true") => layer.types_only = true,
                     Some("False" | "false") => layer.types_only = false,
@@ -549,6 +565,11 @@ impl<'a> Parser<'a> {
             for target in layer.imports.iter().flatten() {
                 if !layers.contains(target.as_str()) {
                     push(&mut self.problems, format!("layer {} の :imports の {} は :layers に無い", layer.name, target));
+                }
+            }
+            for target in layer.dependency_layers.iter().flatten() {
+                if !layers.contains(target.as_str()) {
+                    push(&mut self.problems, format!("layer {} の :dependency-layers の {} は :layers に無い", layer.name, target));
                 }
             }
         }

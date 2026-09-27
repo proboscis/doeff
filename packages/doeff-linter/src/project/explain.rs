@@ -197,7 +197,10 @@ pub enum Explain {
         target_dir: String,
         declared: bool,
         depends_on: Vec<String>,
+        /// この file の層が依存先で読んでよい層(層の :dependency-layers か :open-layers)。
         open_layers: Vec<String>,
+        /// この file の層が :dependency-layers で :open-layers より広く読める層か(組み立ての entry)。
+        widened: bool,
     },
     /// DOEFF117: 宣言したのに使っていない依存。
     UnusedDependency { service: String, dependency: String },
@@ -505,7 +508,7 @@ impl<'a> Narrator<'a> {
                     format!("service の中の dir は層(外の世界からの遠さ)だけで切る。{} は宣言した層でないので、中の module の層が決まらない。service の :layers に足すか、層の dir へ移す。", layer),
                 ),
             },
-            Explain::ServiceDependency { placement, own, target, target_service, target_layer, target_dir, declared, depends_on, open_layers } => (
+            Explain::ServiceDependency { placement, own, target, target_service, target_layer, target_dir, declared, depends_on, open_layers, widened } => (
                 format!(
                     "import 先 {} は service {} の{}(path が {}/ の下) — {}",
                     target,
@@ -516,8 +519,22 @@ impl<'a> Narrator<'a> {
                 ),
                 if *declared {
                     format!(
-                        "service {} は {} に依存すると宣言しているが、読めるのは {} の {} だけ。{} の判断や翻訳を直に読むと、{} の中身を変えた時に {} が壊れる。{} に頼むことは {} の intent を通す。",
-                        own, target_service, target_service, open_layers.join("・"), target_service, target_service, own, target_service, target_service
+                        "service {} は {} に依存すると宣言しているが、{}の module が読めるのは {} の {} だけ。{} の判断や翻訳を直に読むと、{} の中身を変えた時に {} が壊れる。{} に頼むことは {} の intent を通す。{}",
+                        own,
+                        target_service,
+                        self.layer_phrase(placement.layer),
+                        target_service,
+                        open_layers.join("・"),
+                        target_service,
+                        target_service,
+                        own,
+                        target_service,
+                        target_service,
+                        if *widened {
+                            ""
+                        } else {
+                            "(依存先のほかの層を読めるのは、architecture.hy の layer に :dependency-layers で広げた層 — 全体を組む組み立ての層 — だけ)"
+                        }
                     )
                 } else {
                     format!(

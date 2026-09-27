@@ -1354,3 +1354,58 @@ fn smells_have_clean_counterparts_and_run_on_a_single_file() {
     assert_eq!(keys(&report, "DOEFF122"), vec!["app/core/clean.hy::DOEFF122::decide_tag::add_said"]);
     assert_eq!(keys(&report, "DOEFF121"), vec!["app/core/clean.hy::DOEFF121::decide_tag::subject"]);
 }
+
+#[test]
+fn only_the_assembly_layer_may_read_a_dependency_protocol() {
+    // operator 2026-09-28 "A okay": 組み立ての entry に限り、:depends-on に宣言した依存先の protocol(翻訳の handler)も読んでよい。
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("architecture.hy"),
+        r#"(defarchitecture sample
+  :root "app"
+  :layers [(layer core :roles [judgment type])
+           (layer intent :roles [intent type])
+           (layer protocol :roles [protocol])
+           (layer entry :roles [entry] :dependency-layers [intent protocol])])
+(defservice automation "自動化" {:depends-on [messaging] :layers [core intent protocol entry]})
+(defservice messaging "郵便" {:layers [core intent protocol]})
+(defservice ledger "台帳" {:layers [core intent protocol]})
+"#,
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("pyproject.toml"), "[tool.doeff-linter]\nenable = [\"DOEFF116\"]\n").unwrap();
+    let files = [
+        ("app/messaging/protocol/reception.hy", tags("messaging", "protocol") + "(defn translate [] 1)\n"),
+        ("app/messaging/intent/submit.hy", tags("messaging", "intent") + "(defclass Submit [])\n"),
+        ("app/ledger/protocol/book.hy", tags("ledger", "protocol") + "(defn book [] 1)\n"),
+        // entry が依存先の protocol と intent を読む = 通る。
+        ("app/automation/entry/handlers.hy", tags("automation", "entry") + "(import app.messaging.protocol.reception [translate])\n(import app.messaging.intent.submit [Submit])\n(defn handlers [] 1)\n"),
+        // core が依存先の protocol を読む = 違反(entry 以外は intent だけ)。
+        ("app/automation/core/plan.hy", tags("automation", "judgment") + "(import app.messaging.protocol.reception [translate])\n(defn plan [] 1)\n"),
+        // entry が宣言に無い service の protocol を読む = 違反。
+        ("app/automation/entry/main.hy", tags("automation", "entry") + "(import app.ledger.protocol.book [book])\n(defn main [] 1)\n"),
+    ];
+    for (rel, text) in &files {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    let (code, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF116"),
+        vec![
+            "app/automation/core/plan.hy::DOEFF116::app.messaging.protocol.reception.translate",
+            "app/automation/entry/main.hy::DOEFF116::app.ledger.protocol.book.book"
+        ]
+    );
+    assert_eq!(code, 1);
+    let core = violation(&report, "app/automation/core/plan.hy::DOEFF116::app.messaging.protocol.reception.translate");
+    assert!(core["message"].as_str().unwrap().contains("層 core が依存先で読めるのは intent だけ"), "{}", core["message"]);
+    assert!(core["explanation"]["reason"].as_str().unwrap().contains(":dependency-layers で広げた層"), "{}", core["explanation"]["reason"]);
+    // 存在しない層の名は設定の誤り。
+    let text = std::fs::read_to_string(dir.path().join("architecture.hy")).unwrap().replace(":dependency-layers [intent protocol]", ":dependency-layers [intent ghost]");
+    std::fs::write(dir.path().join("architecture.hy"), text).unwrap();
+    let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
+    assert_eq!(code, 2);
+    assert!(stderr.contains(":dependency-layers の ghost"), "{}", stderr);
+}

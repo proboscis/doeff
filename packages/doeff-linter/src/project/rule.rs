@@ -33,7 +33,7 @@ pub enum ProjectRule {
     UndeclaredPlace,
     /// DOEFF115: 宣言に無い service の dir、service の中の宣言に無い層の dir。
     UndeclaredDirectory,
-    /// DOEFF116: service の依存 — 宣言の :depends-on に無い service を読む、または依存先の intent 以外を読む。
+    /// DOEFF116: service の依存 — 宣言の :depends-on に無い service を読む、または依存先の読めない層(層の :dependency-layers か :open-layers の外)を読む。
     ServiceDependency,
     /// DOEFF117: 宣言したのに使っていない依存(info)。
     UnusedDependency,
@@ -242,7 +242,7 @@ impl ProjectRule {
             ProjectRule::ContextMatchesService => "タグの :context は、その file が置かれた service の名と合う(知らせ)",
             ProjectRule::UndeclaredPlace => "root の下の module は、architecture.hy で宣言した service の層・shared・foundation・legacy のどれかに置く",
             ProjectRule::UndeclaredDirectory => "root の下の dir は宣言した service か shared・foundation・legacy で、service の中の dir は宣言した層",
-            ProjectRule::ServiceDependency => "service A が読んでよいのは、A の :depends-on に在る service の open-layers(intent)と shared だけ",
+            ProjectRule::ServiceDependency => "service A が読んでよいのは、A の :depends-on に在る service の、A の module の層が読める層(その層の :dependency-layers — 組み立ての層は intent と protocol —、無ければ :open-layers の intent)と shared だけ",
             ProjectRule::UnusedDependency => "宣言した依存(:depends-on)を、その service のどの module も読んでいない(知らせ)",
             ProjectRule::TestIsDeftest => "検の置き場(設定の test_paths)の検は deftest で書く — 名が test- / test_ で始まる defn・deff・defk・fn の束縛を置かない",
             ProjectRule::ClassWithBehaviour => "業務の code の defclass は値の class だけ — method か欄の初期値が生の副作用に触る class(error)と、method が self の欄を書き換える class(warning)を書かない。欄だけの class は defrecord を勧める(info)。例外・Enum・Protocol・外の library の基底を継ぐ class は許す。名前では判じない",
