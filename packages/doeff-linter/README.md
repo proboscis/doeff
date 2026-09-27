@@ -232,8 +232,11 @@ repo の一番上の `architecture.hy` に `defarchitecture`(root・層・shared
 ### 意味の規則(DOEFF201・202 — Jev)
 
 `--semantic`(指定の file か git で変わった file)と `--semantic-all` の時だけ Jev(TypeSafe)に問い、答えを repo の根の
-`.doeff-linter/semantic-cache/` に残します。普段の実行(エディタ・hook)は cache を読むだけです。重さは warning か info だけ。
-宛先とキーは doeff-jev と同じ決め方(`JEV_*` → `~/.config/jev/client.json` → TypeSafe 直・`TYPESAFE_API_KEY`)。詳しくは
+`.doeff-linter/semantic-cache/` に残します。`--semantic-changed` を足すと、中身が変わった定義(cache に答えの無い定義)だけを問います。
+書きかけで読めない定義は問いません。普段の実行は Jev を呼びません: エディタの 1 file(`--stdin`)は cache を読むだけ、全体の実行と hook は
+cache を読み、Jev の呼び出しを覚える代理(`[tool.doeff-linter.semantic] proxy_url`)が設定されていれば、cache に無い定義を代理に
+「覚えている時だけ」問います。重さは warning か info だけ。宛先とキーは doeff-jev と同じ決め方(`JEV_*` → `~/.config/jev/client.json` →
+TypeSafe 直・`TYPESAFE_API_KEY`)で、repo の `proxy_url` があれば代理(代理の token だけを送る)。詳しくは
 [docs/SPECIFICATION.md](docs/SPECIFICATION.md) の 10 節。
 
 ### 素の関数の理由と検の書き方(DOEFF110・111・118・203)
