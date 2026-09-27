@@ -40,11 +40,16 @@ fn fake_jev(drifted: bool) -> FakeJev {
             let body: Value = serde_json::from_slice(&body).unwrap();
             let source = body["state"]["definition"]["source"].as_str().unwrap_or("");
             if body["questions"]["q"]["type"] == "choice" {
-                // DOEFF203: sorted の key を渡す定義は library-callback、handler の並びを組む定義は none を選ぶ。
+                // DOEFF203: sorted の key は library-callback、設定を読む定義は config-read(受け入れない型)、
+                // 検の補助は library-callback を選ぶが受け入れない答えの和が大きい、それ以外は none。
                 let (choice, probabilities) = if source.contains("sorted") {
-                    ("library-callback", serde_json::json!({"library-callback": 0.9, "process-entry": 0.02, "none": 0.08}))
+                    ("library-callback", serde_json::json!({"library-callback": 0.9, "config-read": 0.02, "none": 0.08}))
+                } else if source.contains("getenv") {
+                    ("config-read", serde_json::json!({"library-callback": 0.1, "config-read": 0.8, "none": 0.1}))
+                } else if source.contains("fixture") {
+                    ("library-callback", serde_json::json!({"library-callback": 0.5, "config-read": 0.2, "none": 0.3}))
                 } else {
-                    ("none", serde_json::json!({"library-callback": 0.1, "process-entry": 0.05, "none": 0.85}))
+                    ("none", serde_json::json!({"library-callback": 0.1, "config-read": 0.05, "none": 0.85}))
                 };
                 counter.fetch_add(1, Ordering::SeqCst);
                 let answer = serde_json::json!({"answers": {"q": {"type": "choice", "choice": choice, "probabilities": probabilities}}, "usage": {"input_tokens": 50}, "model": "jev-test-1"}).to_string();
@@ -211,34 +216,50 @@ fn semantic_severity_cannot_be_error_and_thresholds_are_checked() {
 }
 
 #[test]
-fn plain_callable_reason_is_checked_against_the_code() {
+fn plain_callable_reason_is_accepted_or_rejected_by_jev() {
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::write(
         dir.path().join("architecture.hy"),
         r#"(defarchitecture s :root "app" :layers [(layer core)]
-  :plain-callable-reasons [(reason library-callback "外の library が素の関数として呼ぶ") (reason process-entry "process の入口")])
+  :plain-callable-reasons [(reason library-callback "外の library が素の関数として呼ぶ")]
+  :rejected-plain-callable-reasons [(reason config-read "設定・環境変数を読む" :fix "Ask などの effect で設定を受け取る defk にする")])
 "#,
     )
     .unwrap();
     std::fs::write(
         dir.path().join("pyproject.toml"),
-        "[tool.doeff-linter]\nenable = [\"DOEFF203\"]\n[tool.doeff-linter.definitions]\n[tool.doeff-linter.semantic]\nplain_callable = { info_below = 0.3 }\n",
+        "[tool.doeff-linter]\nenable = [\"DOEFF203\"]\n[tool.doeff-linter.definitions]\n[tool.doeff-linter.semantic]\nplain_callable = { warning_min = 0.4, info_min = 0.4 }\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.path().join("app/core")).unwrap();
     std::fs::write(
         dir.path().join("app/core/x.hy"),
-        "(deff by-key [row] (sorted rows :key row))  ; defk にできない(library-callback): sorted の key\n(deff handlers [f] [f])  ; defk にできない(library-callback): handler の組を組む\n(deff legacy [f] f)  ; defk にできない: 旧い形は問わない\n",
+        concat!(
+            "(deff by-key [row] (sorted rows :key row))  ; defk にできない: sorted の key\n",
+            "(deff settings [] (os.getenv \"X\"))  ; defk にできない: handler の組み立てが設定を読む\n",
+            "(deff handlers [f] [f])  ; defk にできない(library-callback): handler の組を組む\n",
+            "(deff helper [] (fixture))  ; defk にできない: 検の値を組む口\n",
+            "(deff ditto [] 1)  ; defk にできない: 同上\n",
+        ),
     )
     .unwrap();
     let jev = fake_jev(false);
     let (_, report, stderr) = run(dir.path(), &jev.url, &["--semantic-all"]);
-    // 種類を名乗った deff 2 つだけを問う(旧い形は問わない・Noul の較正の例も撃たない)。
-    assert_eq!(report["semantic"]["asked"], 2, "{} {}", report["semantic"], stderr);
-    let doubts: Vec<&Value> = report["violations"].as_array().unwrap().iter().filter(|v| v["rule"] == "DOEFF203").collect();
-    assert_eq!(doubts.len(), 1);
-    assert_eq!(doubts[0]["severity"], "info");
-    assert_eq!(doubts[0]["source"], "jev");
-    assert_eq!(doubts[0]["probability"], 0.1);
-    assert!(doubts[0]["explanation"]["reason"].as_str().unwrap().contains("Jev が選んだのは none(p=0.85)"), "{}", doubts[0]["explanation"]["reason"]);
+    // 理由の文がある deff 4 つを問う(「同上」は DOEFF111 が出すので問わない・Noul の較正の例も撃たない)。
+    assert_eq!(report["semantic"]["asked"], 4, "{} {}", report["semantic"], stderr);
+    let doubt = |name: &str| find(&report, "DOEFF203", name).cloned();
+    assert!(doubt("by_key").is_none(), "受け入れる理由は出ない");
+    let settings = doubt("settings").expect("config-read");
+    assert_eq!(settings["severity"], "warning");
+    assert_eq!(settings["source"], "jev");
+    assert_eq!(settings["probability"], 0.8);
+    assert!(settings["explanation"]["reason"].as_str().unwrap().contains("この理由は受け入れられない — 近い型は config-read(設定・環境変数を読む)"), "{}", settings["explanation"]["reason"]);
+    assert_eq!(settings["hint"], "Ask などの effect で設定を受け取る defk にする");
+    assert_eq!(settings["explanation"]["subject"], "定義 settings(deff)— 書かれた理由「handler の組み立てが設定を読む」");
+    let handlers = doubt("handlers").expect("none");
+    assert_eq!(handlers["severity"], "warning");
+    assert!(handlers["explanation"]["reason"].as_str().unwrap().contains("宣言した受け入れる理由のどれにも当たらず"));
+    let helper = doubt("helper").expect("疑わしい受け入れ");
+    assert_eq!(helper["severity"], "info");
+    assert!(helper["explanation"]["reason"].as_str().unwrap().contains("受け入れない答えの確率の和が 0.50"), "{}", helper["explanation"]["reason"]);
 }

@@ -96,6 +96,7 @@ skip_test_functions = true
 | DOEFF111 | deff Needs A Reason | deff には `; defk にできない: <理由>` の註を付ける |
 | DOEFF112 | Definition Tags Required | defk・deff・defp・defhandler・defeffect は :tags で必須の鍵を名乗る |
 | DOEFF113 | Context Matches Service | タグの :context と置き場の service が食い違う(info) |
+| DOEFF118 | Tests Are deftest | 検の置き場の検は deftest で書く(名が test の defn・deff・defk・fn の束縛を置かない) |
 
 ## 層の規則(Hy と Python)
 
@@ -228,10 +229,11 @@ repo の一番上の `architecture.hy` に `defarchitecture`(root・層・shared
 宛先とキーは doeff-jev と同じ決め方(`JEV_*` → `~/.config/jev/client.json` → TypeSafe 直・`TYPESAFE_API_KEY`)。詳しくは
 [docs/SPECIFICATION.md](docs/SPECIFICATION.md) の 10 節。
 
-### 素の関数の理由の種類(DOEFF110・111・203)
+### 素の関数の理由と検の書き方(DOEFF110・111・118・203)
 
-architecture.hy の `:plain-callable-reasons` に理由の種類の閉じた一覧を宣言すると、deff の註は `; defk にできない(<種類>): <詳細>` の形で、種類が一覧に在り
-詳細が固有であることを求めます(「同上」は違反)。DOEFF203 は Jev に「本当に素の関数でなければならないか」を種類 + none から選ばせます。
+deff には `; defk にできない: <自由な理由>` を書きます。決定的に違反にするのは註が無い・理由が空・「同上」だけ(DOEFF111)。
+理由を受け入れるかは Jev(DOEFF203)が、architecture.hy の `:plain-callable-reasons`(受け入れる理由)と
+`:rejected-plain-callable-reasons`(受け入れない型と直し方)から選んで決めます。検の置き場(`definitions.test_paths`)では検は deftest だけ(DOEFF118)。
 詳しくは [docs/SPECIFICATION.md](docs/SPECIFICATION.md) の 11 節。
 
 ## エディタ向けの出力(editor-json)

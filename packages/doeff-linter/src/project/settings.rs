@@ -238,6 +238,9 @@ pub struct DefinitionsSection {
     pub exclude_parts: Vec<String>,
     /// deff の理由の註の目印(既定 `defk にできない:`)。
     pub deff_reason_marker: Option<String>,
+    /// 検の置き場(DOEFF118)— glob(`**` は 0 個以上の段・`*` は段の中の任意の綴り・`/` を含まない綴りは file の名に当てる)。
+    #[serde(default)]
+    pub test_paths: Vec<String>,
 }
 
 /// 定義の書き方の規則の設定(検めた後)。
@@ -248,6 +251,7 @@ pub struct DefinitionSettings {
     pub exclude_parts: BTreeSet<String>,
     pub deff_reason_marker: String,
     pub tags: TagReading,
+    pub test_paths: Vec<String>,
 }
 
 /// `[tool.doeff-linter.roles]` — role の閉じた一覧と、層ごとに許す role。
@@ -505,6 +509,7 @@ impl ProjectSettings {
             exclude_parts: section.exclude_parts.iter().cloned().collect(),
             deff_reason_marker: section.deff_reason_marker.clone().unwrap_or_else(|| "defk にできない:".to_string()),
             tags: tag_reading(sections.tags, sections.layers.and_then(|l| l.function_definers.as_ref())),
+            test_paths: section.test_paths.clone(),
         });
         let python_ids: BTreeSet<String> = crate::rules::get_all_rules().iter().map(|r| r.rule_id().to_string()).collect();
         let layer_names: Vec<String> = layers.as_ref().map(|l| l.layers.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();

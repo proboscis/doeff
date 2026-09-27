@@ -277,6 +277,19 @@ impl<'a> HySource<'a> {
                         compile_time,
                     });
                 }
+                // `(setv 名 (fn …))` / `(val 名 (fn …))` は head = "fn" の定義として数える(検の関数の規則 DOEFF118 のため)。
+                "setv" | "val" if items.len() == 3 => {
+                    let is_fn = paren(items[2]).and_then(|inner| inner.first().and_then(|h| self.symbol(h))).is_some_and(|h| matches!(h, "fn" | "fn/a"));
+                    if is_fn && self.symbol(items[1]).is_some() {
+                        out.push(DefinitionFact {
+                            head: "fn".to_string(),
+                            name: self.defined_name(items[1]),
+                            start: form.span.start,
+                            tags: None,
+                            compile_time,
+                        });
+                    }
+                }
                 _ => {}
             }
         }

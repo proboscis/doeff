@@ -695,7 +695,7 @@ fn defn_is_forbidden_deff_needs_a_reason_and_definitions_carry_tags() {
     let defn = explanation(&report, "app/billing/logic.hy::DOEFF110::helper");
     assert_eq!(defn["subject"], "定義 helper(defn)");
     assert!(defn["reason"].as_str().unwrap().starts_with("defn は契約の辞書を持てず、:tags を書けない"));
-    assert!(violation(&report, "app/billing/logic.hy::DOEFF110::helper")["hint"].as_str().unwrap().starts_with("defk にする(素の関数でなければならない理由が種類に当たらない)"));
+    assert!(violation(&report, "app/billing/logic.hy::DOEFF110::helper")["hint"].as_str().unwrap().starts_with("defk にする(素の関数でなければならない理由が見当たらない)"));
     let half = explanation(&report, "app/billing/logic.hy::DOEFF112::half");
     assert_eq!(half["subject"], "定義 half(defk)の :tags に role が無い");
     let untagged = explanation(&report, "app/billing/logic.hy::DOEFF112::untagged");
@@ -871,34 +871,78 @@ fn reason_repo(source: &str, registry: &str) -> tempfile::TempDir {
 }
 
 #[test]
-fn deff_reasons_name_a_declared_kind_with_a_specific_detail() {
-    let source = r#"(deff by-key [row] (get row "k"))  ; defk にできない(library-callback): sorted の key が素の関数で呼ぶ
-(deff same [row] row)  ; defk にできない(library-callback): 同上
-(deff empty [row] row)  ; defk にできない(library-callback):
-(deff odd [row] row)  ; defk にできない(handler-assembly): handler の組を組む
-(deff old-form [row] row)  ; defk にできない: 入口の実行の 1 回
-(deff registered-old [row] row)  ; defk にできない: 同上
-(defn main [] 1)  ; defk にできない(process-entry): argparse の入口
+fn deff_reasons_are_free_text_and_only_missing_empty_or_ditto_is_an_error() {
+    let source = r#"(deff by-key [row] (get row "k"))  ; defk にできない: sorted の key が素の関数で呼ぶ
+(deff kinded [row] row)  ; defk にできない(library-callback): dataclass の __post_init__ が呼ぶ
+(deff odd-kind [row] row)  ; defk にできない(handler-assembly): handler の組を組む
+(deff same [row] row)  ; defk にできない: 同上
+(deff same2 [row] row)  ; defk にできない: 上と同じ(sorted の key)
+(deff empty [row] row)  ; defk にできない:
+(deff registered-same [row] row)  ; defk にできない: 同上
+(deff bare [row] row)
+(defn main [] 1)  ; defk にできない(library-callback): sorted の key
 (defn helper [] 1)
 "#;
-    let dir = reason_repo(source, "app/core/x.hy::DOEFF111::registered_old\n");
+    let dir = reason_repo(source, "app/core/x.hy::DOEFF111::registered_same\n");
     let (_, report) = editor(dir.path());
+    // 決定的に出すのは註が無い・理由が空・「同上」とその変形だけ。種類の札は要求しない(一覧に無い種類も受け付ける)。
     assert_eq!(
         keys(&report, "DOEFF111"),
-        vec!["app/core/x.hy::DOEFF111::empty", "app/core/x.hy::DOEFF111::odd", "app/core/x.hy::DOEFF111::old_form", "app/core/x.hy::DOEFF111::registered_old", "app/core/x.hy::DOEFF111::same"]
+        vec![
+            "app/core/x.hy::DOEFF111::bare",
+            "app/core/x.hy::DOEFF111::empty",
+            "app/core/x.hy::DOEFF111::registered_same",
+            "app/core/x.hy::DOEFF111::same",
+            "app/core/x.hy::DOEFF111::same2"
+        ]
     );
-    // 一覧に無い種類・空の詳細・「同上」は error、種類の無い旧い形は warning(登録簿に載れば info)。
-    assert_eq!(violation(&report, "app/core/x.hy::DOEFF111::odd")["severity"], "error");
-    assert_eq!(violation(&report, "app/core/x.hy::DOEFF111::same")["severity"], "error");
-    assert_eq!(violation(&report, "app/core/x.hy::DOEFF111::empty")["severity"], "error");
-    assert_eq!(violation(&report, "app/core/x.hy::DOEFF111::old_form")["severity"], "warning");
-    assert_eq!(violation(&report, "app/core/x.hy::DOEFF111::registered_old")["severity"], "info");
+    for key in ["bare", "empty", "same", "same2"] {
+        assert_eq!(violation(&report, &format!("app/core/x.hy::DOEFF111::{}", key))["severity"], "error", "{}", key);
+    }
+    assert_eq!(violation(&report, "app/core/x.hy::DOEFF111::registered_same")["severity"], "warning");
     let same = violation(&report, "app/core/x.hy::DOEFF111::same");
-    assert!(same["explanation"]["reason"].as_str().unwrap().contains("種類 library-callback = 外の library が素の関数として呼ぶ"), "{}", same["explanation"]["reason"]);
+    assert!(same["explanation"]["reason"].as_str().unwrap().contains("library-callback(外の library が素の関数として呼ぶ"), "{}", same["explanation"]["reason"]);
     assert!(same["hint"].as_str().unwrap().contains("「同上」は使わない"));
-    let odd = violation(&report, "app/core/x.hy::DOEFF111::odd");
-    assert!(odd["hint"].as_str().unwrap().contains("(defk handlers-of [foundation])"), "{}", odd["hint"]);
-    // defn: 同じ行の註が種類に当たれば「deff にする」、当たらなければ「defk にする」。
-    assert!(violation(&report, "app/core/x.hy::DOEFF110::main")["hint"].as_str().unwrap().starts_with("deff にする(種類 process-entry"));
+    // defn: 同じ行の註が一覧の種類を名乗れば「deff にする」、そうでなければ「defk にする」。
+    assert!(violation(&report, "app/core/x.hy::DOEFF110::main")["hint"].as_str().unwrap().starts_with("deff にする(理由 library-callback"));
     assert!(violation(&report, "app/core/x.hy::DOEFF110::helper")["hint"].as_str().unwrap().starts_with("defk にする"));
+}
+
+#[test]
+fn tests_are_deftest_only_in_the_configured_test_places() {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("pyproject.toml"),
+        "[tool.doeff-linter]\nenable = [\"DOEFF118\"]\n[tool.doeff-linter.definitions]\ntest_paths = [\"**/tests/**\", \"test_*.hy\"]\n[tool.doeff-linter.registry]\nfiles = [\"known.txt\"]\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("known.txt"), "app/tests/t.hy::DOEFF118::test_old\n").unwrap();
+    let write = |rel: &str, text: &str| {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write(
+        "app/tests/t.hy",
+        "(defn test-a [] 1)\n(deff test_b [] 1)\n(defk test-c [] 1)\n(setv test-d (fn [] 1))\n(defn test-old [] 1)\n(defn helper [] 1)\n(deftest test-good [] 1)\n(setv test-value 3)\n",
+    );
+    write("app/core/test_top.hy", "(defn test-e [] 1)\n");
+    write("app/core/logic.hy", "(defn test-f [] 1)\n");
+    let (code, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF118"),
+        vec![
+            "app/core/test_top.hy::DOEFF118::test_e",
+            "app/tests/t.hy::DOEFF118::test_a",
+            "app/tests/t.hy::DOEFF118::test_b",
+            "app/tests/t.hy::DOEFF118::test_c",
+            "app/tests/t.hy::DOEFF118::test_d",
+            "app/tests/t.hy::DOEFF118::test_old"
+        ]
+    );
+    assert_eq!(violation(&report, "app/tests/t.hy::DOEFF118::test_a")["severity"], "error");
+    assert_eq!(violation(&report, "app/tests/t.hy::DOEFF118::test_old")["severity"], "warning");
+    assert_eq!(violation(&report, "app/tests/t.hy::DOEFF118::test_d")["explanation"]["subject"], "定義 test_d(fn)— 検の置き場の、名が test で始まる関数");
+    assert!(violation(&report, "app/tests/t.hy::DOEFF118::test_a")["hint"].as_str().unwrap().starts_with("deftest にする"));
+    assert_eq!(code, 1);
 }

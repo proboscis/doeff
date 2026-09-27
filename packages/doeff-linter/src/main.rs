@@ -116,7 +116,7 @@ struct Args {
     #[arg(long)]
     no_log: bool,
 
-    /// 意味の規則(DOEFF201・202)で Jev に問う — 対象は path の引数の file、無ければ git で変わった file。これが無い実行は cache を読むだけ
+    /// 意味の規則(DOEFF201・202・203)で Jev に問う — 対象は path の引数の file、無ければ git で変わった file。これが無い実行は cache を読むだけ
     #[arg(long)]
     semantic: bool,
 
@@ -199,6 +199,7 @@ impl Setup {
                 ProjectRule::DefnForbidden | ProjectRule::DeffNeedsReason | ProjectRule::DefinitionTagsRequired => {
                     self.settings.definitions.is_some()
                 }
+                ProjectRule::TestIsDeftest => self.settings.definitions.as_ref().is_some_and(|d| !d.test_paths.is_empty()),
             })
             .collect()
     }

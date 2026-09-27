@@ -71,6 +71,8 @@ pub struct LegacyPlace {
 pub struct ReasonKind {
     pub name: String,
     pub description: String,
+    /// 受け入れない理由の型の直し方(`:fix "…"` — 受け入れる理由には無い)。
+    pub fix: Option<String>,
 }
 
 /// architecture.hy の全体。
@@ -84,8 +86,10 @@ pub struct Architecture {
     pub open_layers: Vec<String>,
     pub legacy: Vec<LegacyPlace>,
     pub services: Vec<ArchService>,
-    /// 素の関数を許す理由の種類の閉じた一覧(DOEFF111・DOEFF203)。
+    /// 素の関数を許す理由の種類の閉じた一覧(DOEFF203 の受け入れる答え)。
     pub plain_callable_reasons: Vec<ReasonKind>,
+    /// 受け入れない理由の型と直し方(DOEFF203 の受け入れない答え — 設定の読み込み・検の補助・組み立て …)。
+    pub rejected_plain_callable_reasons: Vec<ReasonKind>,
     #[serde(skip)]
     pub role_descriptions: BTreeMap<String, String>,
     #[serde(skip)]
@@ -330,6 +334,7 @@ impl<'a> Parser<'a> {
             legacy: Vec::new(),
             services: Vec::new(),
             plain_callable_reasons: Vec::new(),
+            rejected_plain_callable_reasons: Vec::new(),
             role_descriptions: BTreeMap::new(),
             exclude: vec!["tests".into(), "__pycache__".into(), "conftest.py".into()],
             extensions: None,
@@ -362,22 +367,9 @@ impl<'a> Parser<'a> {
                 }
                 ":exclude" => arch.exclude = self.names(value, ":exclude"),
                 ":extensions" => arch.extensions = Some(self.names(value, ":extensions")),
-                ":plain-callable-reasons" => {
-                    let entries = self.bracket(value).unwrap_or_else(|| {
-                        self.problem(value, ":plain-callable-reasons は (reason 名 \"説明\") の列");
-                        Vec::new()
-                    });
-                    for entry in entries {
-                        let parts = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("reason"));
-                        let reason = parts.and_then(|p| Some(ReasonKind { name: self.name(p.get(1)?)?, description: self.string(p.get(2)?)? }));
-                        match reason {
-                            Some(reason) if arch.plain_callable_reasons.iter().any(|r| r.name == reason.name) => {
-                                self.problem(entry, &format!("理由の種類 {} が 2 度宣言されている", reason.name))
-                            }
-                            Some(reason) => arch.plain_callable_reasons.push(reason),
-                            None => self.problem(entry, ":plain-callable-reasons の要素は (reason 名 \"説明\")"),
-                        }
-                    }
+                ":plain-callable-reasons" => arch.plain_callable_reasons = self.reasons(value, ":plain-callable-reasons"),
+                ":rejected-plain-callable-reasons" => {
+                    arch.rejected_plain_callable_reasons = self.reasons(value, ":rejected-plain-callable-reasons")
                 }
                 ":roles" => match self.brace(value) {
                     Some(entries) => {
@@ -436,6 +428,40 @@ impl<'a> Parser<'a> {
             self.problem(form, "defarchitecture に :layers が無い");
         }
         Some(arch)
+    }
+
+    /// 理由の列 `[(reason 名 "説明" :fix "直し方"?) …]` を読む(同じ名が 2 度あれば理由を積む)。
+    fn reasons(&mut self, value: &Form, what: &str) -> Vec<ReasonKind> {
+        let entries = self.bracket(value).unwrap_or_else(|| {
+            self.problem(value, &format!("{} は (reason 名 \"説明\") の列", what));
+            Vec::new()
+        });
+        let mut out: Vec<ReasonKind> = Vec::new();
+        for entry in entries {
+            let parts = self.paren(entry).filter(|p| p.first().and_then(|h| self.symbol(h)) == Some("reason"));
+            let Some(parts) = parts else {
+                self.problem(entry, &format!("{} の要素は (reason 名 \"説明\" :fix \"直し方\"?)", what));
+                continue;
+            };
+            let (Some(name), Some(description)) = (parts.get(1).and_then(|f| self.name(f)), parts.get(2).and_then(|f| self.string(f))) else {
+                self.problem(entry, &format!("{} の要素は (reason 名 \"説明\" :fix \"直し方\"?)", what));
+                continue;
+            };
+            let rest: Vec<&Form> = parts.iter().skip(3).copied().collect();
+            let mut fix = None;
+            for (key, text) in self.pairs(&rest) {
+                match self.text(key) {
+                    ":fix" => fix = self.string(text),
+                    other => self.problem(key, &format!("reason の知らない鍵 {}(:fix だけ)", other)),
+                }
+            }
+            if out.iter().any(|r| r.name == name) {
+                self.problem(entry, &format!("理由 {} が 2 度宣言されている", name));
+                continue;
+            }
+            out.push(ReasonKind { name, description, fix });
+        }
+        out
     }
 
     /// `(layer 名 :summary "…" :knows "…" :does-not-know "…" :question "…" :roles [..] :imports [..] :forbid-modules [..] :types-only true)`。

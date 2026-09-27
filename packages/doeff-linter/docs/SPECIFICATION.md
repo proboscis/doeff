@@ -135,7 +135,8 @@
 | DOEFF107 | 経由の証拠(raw.via — 全体の実行だけ)を info で出す。経路つき。1 定義で経路と証拠の名が同じ物は 1 件 | `<定義>::via::<経路>::<証拠の名>` | 定義の名 |
 | DOEFF109 | service を持つ file(置き場の `*` に当たった物)の層が `services.guarded_layers` に在り、import の先が別の service の守る層の module なら破れ。先が共有の置き場・`open_layers` の層・例外の組なら許す | import の先の綴り | 最初の import の記号 |
 | DOEFF110 | Hy の `defn` / `defn/a` の定義(decorator つきも)。`do` の中も最上位として見る。`eval-and-compile` / `eval-when-compile` の中は外 | 定義の名 | 定義の名 |
-| DOEFF111 | `deff` の定義の行か直前の行の註(`;` の後)に `definitions.deff_reason_marker` が無い | 定義の名 | 定義の名 |
+| DOEFF111 | `deff` の定義の行か直前の行の註(`;` の後)に `definitions.deff_reason_marker` が無い、または理由が空・「同上」とその変形 | 定義の名 | 定義の名 |
+| DOEFF118 | `definitions.test_paths` に当たる file の、名が `test_` で始まる defn・defn/a・deff・defk・fn の束縛 | 定義の名 | 定義の名 |
 | DOEFF112 | `tags.require_on` の頭の定義の :tags(defeffect は辞書の :tags)に `tags.required` の鍵(空でない文字列)が無い。`module_default` なら module の頭のタグの鍵で補う | 定義の名 | 定義の名 |
 | DOEFF113 | service を持つ file のタグの :context が service の名と違う(`-` と `_` は同じに見る・共有の置き場は見ない)。info | 食い違う :context | タグの辞書 |
 | DOEFF108 | 業務の file の名(拡張子を外した名)と、Hy の最上位の handler(defhandler と `[effect k]` を受ける関数)・`assembly_files` の最上位の定義の名を `-`・`_`・`.` で切り、`words` に当たれば破れ。大文字だけの名(定数)は見ない | なし(file の名)/ mangle した定義の名 | 1 行目 / 定義の名 |
@@ -269,24 +270,31 @@ editor-json: violation の `source`(`linter` = 決定的な規則・`jev` = 意�
 (`model`・`wire`・`judged`・`unjudged`・`asked`・`cost_usd`(gateway だけが返す)・`input_tokens`・`served_model`・`calibration` = not-run / ok / drifted / failed)。
 
 
-## 11. 素の関数(deff)の理由の種類 — DOEFF110・111・203
+## 11. 素の関数(deff)の理由と検の書き方 — DOEFF110・111・118・203
 
-architecture.hy の `defarchitecture` に、素の関数を許す理由の種類の閉じた一覧を宣言する(名と説明は Rust に書かない):
+operator 裁定 2026-09-27(逐語 "yeah reading config, that's exactly where effects like Ask comes in, no excuse" / "yeah non-deftest must be forbidden" /
+"about the reason text, we want jev to tell if it's acceptable right?"): 理由の種類の札は書かせない。受け入れるかは Jev が理由の文と source を見て決める。
+
+architecture.hy の `defarchitecture` に、受け入れる理由と受け入れない理由の型を宣言する(名・説明・直し方は Rust に書かない):
 
 ```hy
-:plain-callable-reasons [(reason library-callback "外の library が素の関数として呼ぶ(sorted の key・dataclass の hook・内包表記の中の値)")
-                         (reason framework-entry "framework の規約が決まった形の関数を呼ぶ(pytest の fixture・doeff-cluster の job_entry)")
-                         (reason process-entry "process の入口の main(defp にして doeff の CLI で走らせられない時だけ)")
+:plain-callable-reasons [(reason library-callback "外の library が素の関数を決まった形で呼ぶ(sorted の key・dataclass の __post_init__ など)")
                          (reason macro-time "マクロの展開の時に呼ぶ")]
+:rejected-plain-callable-reasons [(reason config-read "設定の file・環境変数・引数を読む" :fix "Ask などの effect で設定を受け取る defk にする")
+                                  (reason test-helper "検の本体・検の値を組む補助" :fix "deftest にし、補助は defk にして (<- …) で呼ぶ")
+                                  (reason handler-assembly "handler の並びを組み立てる" :fix "(defk handlers-of [foundation] …) にする")]
 ```
 
-- 註の形: `; defk にできない(<種類>): <この定義に固有の詳細>`(括弧と `:` は全角でもよい)。定義の行か、直前の註だけの行に書く。
-- **DOEFF111**(一覧を宣言した repo): 註が無い・種類が一覧に無い・詳細が空か「同上」は error。種類の無い旧い形(`; defk にできない: …`)は移行の間は warning
-  (登録簿に載れば info)。reason に種類の一覧と、名乗った種類の説明を差し込む。hint = 「組み立て(handler の並び)なら `(defk handlers-of [foundation])` に・
-  テストなら deftest に・値を組む補助なら defk にして `(<- …)` で呼ぶ」。一覧の無い repo は今どおり目印の有無だけを見る。
-- **DOEFF110**: defn の同じ行の註の種類が一覧に在れば hint =「deff にする(種類 X)」、無ければ「defk にする(理由が種類に当たらない)」。
-- **登録簿**: 登録簿に載った warning は info に下げる(載った error は `registered_severity`・既定 warning)。
-- **DOEFF203**(意味・Jev・Choice): 種類を名乗った deff ごとに、定義の source と名乗った種類と詳細を state にして、一覧の種類 + none から「本当に素の関数でなければ
-  ならない理由」を選ばせる(問いの文は `src/project/semantic.rs` の `plain_callable_wire` に英語で 1 か所・criteria は一覧の説明)。名乗った種類の確率が
-  `semantic.plain_callable.info_below`(既定 0.3)未満で info、`warning_below`(書いた時だけ)未満で warning。error にはしない。撃つのは `--semantic` /
-  `--semantic-all` の時だけで、較正の見張りは Noul の問い(DOEFF201・202)が有効な時だけ撃つ。
+- 註の形: `; defk にできない: <自由な理由>`(定義の行か、直前の註だけの行)。`; defk にできない(<種類>): <理由>` も受け付けるが要求しない。
+- **DOEFF111**(決定的): 註が無い・理由が空・「同上」とその変形(上と同じ・上に同じ・前と同じ・同前)だけを error。理由の中身は判じない。
+  reason に受け入れる理由の一覧を差し込む。
+- **DOEFF110**: defn の同じ行の註が一覧の種類を名乗れば hint =「deff にする(理由 X)」、そうでなければ「defk にする」。
+- **DOEFF203**(意味・Jev・Choice): 理由の文がある deff ごとに、定義の source(タグを消した物)と理由の文を state にして、受け入れる理由・受け入れない型・none
+  から選ばせる(問いの文は `src/project/semantic.rs` の `plain_callable_wire` に英語で 1 か所)。重さ:
+  受け入れない答え(型か none)を選び確率が `semantic.plain_callable.warning_min`(既定 0.4)以上 → warning、それ未満 → info。受け入れる理由を選んでも
+  受け入れない答えの確率の和が `info_min`(既定 0.4)以上 → info。error にはしない。reason と hint には、選ばれた受け入れない型の `:fix` を出す。
+  撃つのは `--semantic` / `--semantic-all` の時だけ。閾値は仮置き(当たり外れを測り終えるまで)。
+- **DOEFF118**(検は deftest だけ): `definitions.test_paths` の glob(`**` = 0 個以上の段・`*` = 段の中の任意の綴り・`/` の無い綴りは file の名に当てる)
+  に当たる Hy の file で、mangle した名が `test_` で始まる `defn`・`defn/a`・`deff`・`defk` と `(setv 名 (fn …))` / `(val 名 (fn …))` は error。鍵は
+  `<path>::DOEFF118::<名>`。登録簿に載れば `registered_severity`。
+

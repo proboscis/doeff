@@ -36,21 +36,24 @@ impl SemanticQuestion {
     /// 全部の問い。
     pub const ALL: [SemanticQuestion; 2] = [SemanticQuestion::BusinessDecision, SemanticQuestion::TransportKnowledge];
 
-    /// DOEFF203 の問い(Choice)。criteria は architecture.hy の理由の種類(名 → 説明)と none。問いの文は英語でここ 1 か所。
-    pub fn plain_callable_wire(reasons: &[(String, String)]) -> Value {
+    /// DOEFF203 の問い(Choice)。criteria は architecture.hy の受け入れる理由・受け入れない理由の型(名 → 説明)と none。問いの文は英語でここ 1 か所。
+    pub fn plain_callable_wire(accepted: &[(String, String)], rejected: &[(String, String)]) -> Value {
         let mut criteria = serde_json::Map::new();
-        for (name, description) in reasons {
-            criteria.insert(name.clone(), Value::String(description.clone()));
+        for (name, description) in accepted {
+            criteria.insert(name.clone(), Value::String(format!("Acceptable reason: {}", description)));
+        }
+        for (name, description) in rejected {
+            criteria.insert(name.clone(), Value::String(format!("Not an acceptable reason: {}", description)));
         }
         criteria.insert(
             "none".to_string(),
-            Value::String("None of the reasons applies: the code could be a doeff Program (defk) — for example assembling a list of handlers, a test body, or a helper that builds or projects values; its caller can run it as a Program.".to_string()),
+            Value::String("No listed reason fits, and the stated reason does not show that code outside doeff must call this definition as a plain function; it could be a doeff Program (defk).".to_string()),
         );
         json!({
             "type": "choice",
             "instructions": {
-                "question": "Why must the definition in `definition.source` be a plain Python callable instead of a doeff Program (defk)? Choose the reason that actually applies, judged by who calls this code and how.",
-                "note": "A plain callable is justified only when code outside doeff calls it directly with a fixed signature (a library callback, a framework convention, a process entry point, or macro expansion time). `declared_reason` is what the author claimed; judge the code itself and do not simply trust the claim."
+                "question": "Is the reason in `stated_reason` an acceptable reason for the definition in `definition.source` to be a plain Python callable (deff) instead of a doeff Program (defk)? Choose the listed reason that actually describes the situation, judged by the code and by who calls it.",
+                "note": "A plain callable is acceptable only when code outside doeff calls it directly with a fixed signature that cannot run a Program. Reading configuration or environment variables, test helpers, and assembling handler lists are not acceptable: those can be doeff Programs (Ask and other effects, deftest, a defk that returns the handlers)."
             },
             "criteria": Value::Object(criteria)
         })
@@ -81,7 +84,7 @@ impl SemanticQuestion {
                     "false": "The code only translates: it builds or reads the wire form, maps failures, or checks shapes."
                 }
             }),
-            SemanticQuestion::PlainCallable => Self::plain_callable_wire(&[]),
+            SemanticQuestion::PlainCallable => Self::plain_callable_wire(&[], &[]),
             SemanticQuestion::TransportKnowledge => json!({
                 "type": "noul",
                 "instructions": "Does the code in `definition.source` know how communication is carried out: URLs or URL paths and query strings, HTTP methods, status codes or headers, JSON wire field names or JSON encoding and decoding, SQL, or network endpoint addresses?",
@@ -125,7 +128,7 @@ pub struct SemanticSection {
     pub business_decision: QuestionSection,
     #[serde(default)]
     pub transport_knowledge: QuestionSection,
-    /// DOEFF203: 名乗った種類の確率がこれ未満なら info / warning(warning は書いた時だけ)。
+    /// DOEFF203: 理由を受け入れるかの閾値(受け入れない答えの確率で warning / info)。
     pub plain_callable: Option<PlainCallableSection>,
     pub workers: Option<usize>,
     pub timeout_seconds: Option<u64>,
@@ -136,17 +139,17 @@ pub struct SemanticSection {
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct PlainCallableSection {
-    /// 名乗った種類の確率がこれ未満で info(既定 0.3)。
-    pub info_below: Option<f64>,
-    /// 名乗った種類の確率がこれ未満で warning(書いた時だけ・info_below 以下)。
-    pub warning_below: Option<f64>,
+    /// Jev が受け入れない答え(受け入れない型か none)を選び、その確率がこれ以上で warning(既定 0.4)。
+    pub warning_min: Option<f64>,
+    /// 受け入れる答えを選んでも、受け入れない答えの確率の和がこれ以上なら info(既定 0.4)。
+    pub info_min: Option<f64>,
 }
 
 /// DOEFF203 の設定(検めた後)。
 #[derive(Debug, Clone, Copy)]
 pub struct PlainCallableSettings {
-    pub info_below: f64,
-    pub warning_below: Option<f64>,
+    pub warning_min: f64,
+    pub info_min: f64,
 }
 
 /// 問い 1 つの設定(検めた後)。
@@ -188,10 +191,9 @@ impl SemanticSettings {
             }
         }
         let plain_callable = section.plain_callable.as_ref().map(|p| {
-            let settings = PlainCallableSettings { info_below: p.info_below.unwrap_or(0.3), warning_below: p.warning_below };
-            let bad = !(0.0..=1.0).contains(&settings.info_below) || settings.warning_below.is_some_and(|w| !(0.0..=1.0).contains(&w) || w > settings.info_below);
-            if bad {
-                problems.push(format!("semantic.plain_callable: 閾値は 0〜1 で warning_below ≤ info_below(info_below = {})", settings.info_below));
+            let settings = PlainCallableSettings { warning_min: p.warning_min.unwrap_or(0.4), info_min: p.info_min.unwrap_or(0.4) };
+            if !(0.0..=1.0).contains(&settings.warning_min) || !(0.0..=1.0).contains(&settings.info_min) {
+                problems.push(format!("semantic.plain_callable: 閾値は 0〜1(warning_min = {}・info_min = {})", settings.warning_min, settings.info_min));
             }
             settings
         });
@@ -204,15 +206,15 @@ impl SemanticSettings {
         }
     }
 
-    /// DOEFF203: 名乗った種類の確率から重さを決める(低いほど重い・閾値より高ければ None)。
-    pub fn plain_callable_severity(&self, declared_probability: f64) -> Option<crate::models::Severity> {
+    /// DOEFF203: 重さを決める — 受け入れない答えを選び確率が warning_min 以上なら warning、受け入れない答えを選んだがそれ未満か、
+    /// 受け入れる答えを選んでも受け入れない答えの確率の和が info_min 以上なら info。error にはしない。
+    pub fn plain_callable_severity(&self, chosen_accepted: bool, chosen_probability: f64, rejected_total: f64) -> Option<crate::models::Severity> {
         let spec = self.plain_callable?;
-        if spec.warning_below.is_some_and(|w| declared_probability < w) {
-            Some(crate::models::Severity::Warning)
-        } else if declared_probability < spec.info_below {
-            Some(crate::models::Severity::Info)
-        } else {
-            None
+        match chosen_accepted {
+            false if chosen_probability >= spec.warning_min => Some(crate::models::Severity::Warning),
+            false => Some(crate::models::Severity::Info),
+            true if rejected_total >= spec.info_min => Some(crate::models::Severity::Info),
+            true => None,
         }
     }
 
@@ -309,26 +311,27 @@ pub fn item(
     SemanticItem { question, question_json: question.wire(), declared: None, rel: rel.to_string(), path: path.to_path_buf(), name: name.to_string(), kind, range, layer, state, key }
 }
 
-/// DOEFF203 の定義 1 つの state と cache の鍵を作る(state = 定義・名乗った種類と詳細。鍵 = sha256(model・問いの JSON・state))。
+/// DOEFF203 の定義 1 つの state と cache の鍵を作る(state = 定義・書かれた理由。鍵 = sha256(model・問いの JSON・state))。
 #[allow(clippy::too_many_arguments)]
 pub fn plain_callable_item(
     settings: &SemanticSettings,
     model: &str,
-    reasons: &[(String, String)],
+    accepted: &[(String, String)],
+    rejected: &[(String, String)],
     rel: &str,
     path: &Path,
     name: &str,
     kind: &'static str,
     range: doeff_indexer::hy_index::Range,
     source: &str,
-    declared: &str,
-    detail: &str,
+    stated_kind: Option<&str>,
+    stated: &str,
 ) -> SemanticItem {
     let stripped = truncate(&strip_tags(source), settings.source_limit);
-    let question_json = SemanticQuestion::plain_callable_wire(reasons);
+    let question_json = SemanticQuestion::plain_callable_wire(accepted, rejected);
     let state = json!({
         "definition": {"name": name, "kind": kind, "file": rel, "source": stripped},
-        "declared_reason": {"kind": declared, "detail": detail},
+        "stated_reason": {"text": stated, "kind": stated_kind},
     });
     let mut hasher = Sha256::new();
     for part in [model.to_string(), canonical(&question_json), canonical(&state)] {
@@ -339,7 +342,7 @@ pub fn plain_callable_item(
     SemanticItem {
         question: SemanticQuestion::PlainCallable,
         question_json,
-        declared: Some(declared.to_string()),
+        declared: stated_kind.map(str::to_string),
         rel: rel.to_string(),
         path: path.to_path_buf(),
         name: name.to_string(),
