@@ -4,8 +4,9 @@
 ;;   handler を 1 つも足さない: 自分で handler を並べた Program は走り、並べない Program の effect は答えが無く 0 以外で終わる。
 ;; - 版の食い違いは最初の段で確かめる: この検の process(= declare と同じ venv)で詰めた Program を子が解ける。versions を書き換えた file・
 ;;   file の無い時は解かずに理由つきで止まる(service は 3・probe は 1)。
-;; - 旧い引数(--factory・--env・--config — 計画 2.8 の入口 13・task の --blob・--versions)は argparse の error。旧い再生の入口(入口 14)は
-;;   理由つきで止まる。task の入口の検(同じ Program の file を読む)は test_remote.hy。
+;; - 旧い引数(--factory・--env・--config — 計画 2.8 の入口 13・task の --blob・--versions)は argparse の error。再生の道具(入口 14)も
+;;   旧い --config を argparse の error で理由つきで断り、版の合わない Program の file は解かずに 3 で止まる(記録 → 再生の通しの検は
+;;   test_boundary_recorder.hy)。task の入口の検(同じ Program の file を読む)は test_remote.hy。
 (require doeff-hy.macros [deftest defk <- val])
 (import json)
 (import os)
@@ -104,8 +105,20 @@
   (assert (in "--program" bare.stderr) bare.stderr))
 
 
-(deftest test-the-old-replay-entry-stops-with-its-reason
-  ;; 計画 2.8 の入口 14: 旧い再生の入口(header の factory・--config)は段 4 まで理由つきで止まる(旧い記録は再生しない)。
-  (<- done (entry "doeff_cluster.replay_main" "--config" "{}"))
-  (assert (= done.returncode 2) done.stderr)
-  (assert (in "旧い再生の入口" done.stderr) done.stderr))
+(deftest test-the-replay-entry-refuses-the-old-config-and-a-program-from-another-version [tmp-path]
+  ;; 計画 2.8 の入口 14: 再生の道具は記録した Program をそのまま走らせる。旧い形(--config で設定を外から渡して Program を作り直す)は
+  ;; argparse の error で理由つきで断る(必須の引数を揃えても断る)。
+  (val recording (/ tmp-path "recording.jsonl"))
+  (.write-text recording (+ (json.dumps {"k" "run" "format" 2 "startedMs" 0}) "\n") :encoding "utf-8")
+  (val out (/ tmp-path "report.json"))
+  (<- path (program-file (/ tmp-path "p.json") (bare-program 1) (current-versions)))
+  (<- old (entry "doeff_cluster.replay_main" "--recording" (str recording) "--program" path "--out" (str out) "--config" "{}"))
+  (assert (= old.returncode 2) old.stderr)
+  (assert (in "--config は受け付けない" old.stderr) old.stderr)
+  ;; 版の合わない Program の file(旧い記録・別の版の記録)は解かずに 3 で止まり、報告を書かない(改訂 1 の O)。
+  (<- other (program-file (/ tmp-path "q.json") (bare-program 1) (| (current-versions) {"cloudpickle" "0.0.1"})))
+  (<- refused (entry "doeff_cluster.replay_main" "--recording" (str recording) "--program" other "--out" (str out)))
+  (assert (= refused.returncode 3) refused.stderr)
+  (assert (in "版が違うので Program を解かない" refused.stderr) refused.stderr)
+  (assert (in "cloudpickle: 送り手 0.0.1" refused.stderr) refused.stderr)
+  (assert (not (.exists out)) "版の合わない時は報告を書かない"))
