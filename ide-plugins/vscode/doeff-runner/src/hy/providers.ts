@@ -4,8 +4,11 @@
 import * as vscode from 'vscode';
 import type { HyRange } from './contract';
 import { symbolAt } from './cursor';
+import type { EffectGraphSource } from './effects';
 import type { ExternalFileView, ExternalModuleSource } from './external';
 import type { HyLog } from './indexService';
+import { mangle } from './mangle';
+import { definitionTargetsWithHandlers, hoverExtras, implementationTargets } from './navigation';
 import {
   buildOutline,
   hoverMarkdown,
@@ -21,12 +24,12 @@ import type { HyIndexView } from './store';
 const WORKSPACE_SYMBOL_LIMIT = 500;
 
 /** 契約の範囲を VS Code の Range にする。 */
-function toRange(range: HyRange): vscode.Range {
+export function toRange(range: HyRange): vscode.Range {
   return new vscode.Range(range.start.line, range.start.character, range.end.line, range.end.character);
 }
 
 /** 目次の記号の種類を VS Code の SymbolKind にする(網羅を compiler が確かめる)。 */
-function toSymbolKind(kind: OutlineSymbolKind): vscode.SymbolKind {
+export function toSymbolKind(kind: OutlineSymbolKind): vscode.SymbolKind {
   switch (kind) {
     case 'Function':
       return vscode.SymbolKind.Function;
@@ -64,7 +67,7 @@ function toSymbolKind(kind: OutlineSymbolKind): vscode.SymbolKind {
 }
 
 /** 行き先 1 件を VS Code の Location にする(module そのものは file の先頭)。 */
-function targetLocation(target: DefinitionTarget): vscode.Location {
+export function targetLocation(target: DefinitionTarget): vscode.Location {
   const uri = vscode.Uri.file(target.path);
   switch (target.tag) {
     case 'hy-definition':
@@ -101,12 +104,14 @@ export class HyNavigationProvider
     vscode.ReferenceProvider,
     vscode.DocumentSymbolProvider,
     vscode.WorkspaceSymbolProvider,
-    vscode.HoverProvider
+    vscode.HoverProvider,
+    vscode.ImplementationProvider
 {
   constructor(
     private readonly index: HyIndexView,
     private readonly python: PythonModuleSource,
     private readonly external: ExternalModuleSource & ExternalFileView,
+    private readonly graphs: EffectGraphSource,
     private readonly log: HyLog
   ) {}
 
@@ -130,10 +135,29 @@ export class HyNavigationProvider
     return { name: symbol.name, resolution };
   }
 
-  /** 定義へ移動 — 解決の段(同じ file → import 先 → Python → workspace の外 → workspace 全体)の結果を返す。 */
+  /**
+   * 定義へ移動(Cmd+クリック)— 解決の段(同じ file → import 先 → Python → workspace の外 → workspace 全体)の結果。
+   * effect の名前なら、それを扱う全 handler の節も足す(複数なら VS Code が peek で選ばせる)。
+   */
   async provideDefinition(document: vscode.TextDocument, position: vscode.Position): Promise<vscode.Location[]> {
     const resolved = await this.resolveAt(document, position);
-    return resolved === undefined ? [] : resolved.resolution.targets.map(targetLocation);
+    if (resolved === undefined) {
+      return [];
+    }
+    return definitionTargetsWithHandlers(this.graphs.current(), resolved.resolution, mangle(resolved.name)).map(
+      targetLocation
+    );
+  }
+
+  /** 実装へ移動(Cmd+F12)— effect の上なら扱う全 handler の節、handler の上ならその節の一覧。 */
+  async provideImplementation(document: vscode.TextDocument, position: vscode.Position): Promise<vscode.Location[]> {
+    const resolved = await this.resolveAt(document, position);
+    if (resolved === undefined) {
+      return [];
+    }
+    return implementationTargets(this.graphs.current(), resolved.resolution, mangle(resolved.name)).map(
+      (ref) => new vscode.Location(vscode.Uri.file(ref.path), toRange(ref.definition.range))
+    );
   }
 
   /** 参照の一覧 — 定義の module が定まれば、それで絞って全 file から集める。 */
@@ -177,9 +201,12 @@ export class HyNavigationProvider
       return undefined;
     }
     const parts: string[] = [];
+    const graph = this.graphs.current();
     for (const target of resolved.resolution.targets) {
       if (target.tag === 'hy-definition' && parts.length < 3) {
-        parts.push(hoverMarkdown(target.definition, target.module));
+        const ref = graph.refOf(target.path, target.definition);
+        const extras = ref === undefined ? [] : hoverExtras(graph, ref);
+        parts.push([hoverMarkdown(target.definition, target.module), ...extras].join('\n\n'));
       }
     }
     if (parts.length === 0) {

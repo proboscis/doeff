@@ -16,6 +16,8 @@ export interface HyIndexView {
   get(filePath: string): HyStoreEntry | undefined;
   entries(): readonly HyStoreEntry[];
   byModule(module: string): readonly HyStoreEntry[];
+  /** 書き換えのたびに増える数(派生の表を作り直すかの判定用) */
+  readonly version: number;
 }
 
 /** path の比べ方を 1 つに決める(区切り・`..` の揺れを消す)。 */
@@ -27,6 +29,13 @@ export function normalizeKey(filePath: string): string {
 export class HyIndexStore implements HyIndexView {
   private readonly files = new Map<string, HyStoreEntry>();
   private readonly listeners = new Set<() => void>();
+  private changes = 0;
+  private moduleTable: { readonly version: number; readonly table: Map<string, HyStoreEntry[]> } | undefined;
+
+  /** 書き換えのたびに増える数。 */
+  get version(): number {
+    return this.changes;
+  }
 
   /** 1 file の索引を引く。 */
   get(filePath: string): HyStoreEntry | undefined {
@@ -40,8 +49,16 @@ export class HyIndexStore implements HyIndexView {
 
   /** module 名(mangle して比べる)が一致する file を返す。 */
   byModule(module: string): readonly HyStoreEntry[] {
-    const wanted = mangleDotted(module);
-    return this.entries().filter((entry) => mangleDotted(entry.file.module) === wanted);
+    if (this.moduleTable === undefined || this.moduleTable.version !== this.changes) {
+      // 解決は呼び出しの数だけ module を引くので、版ごとに 1 度だけ表を作る
+      const table = new Map<string, HyStoreEntry[]>();
+      for (const entry of this.files.values()) {
+        const key = mangleDotted(entry.file.module);
+        table.set(key, [...(table.get(key) ?? []), entry]);
+      }
+      this.moduleTable = { version: this.changes, table };
+    }
+    return this.moduleTable.table.get(mangleDotted(module)) ?? [];
   }
 
   /** root 1 つの全体の索引で置き換える — 結果に無い、その root の古い file は消す。 */
@@ -96,6 +113,7 @@ export class HyIndexStore implements HyIndexView {
 
   /** 購読者へ書き換えを知らせる。 */
   private emit(): void {
+    this.changes += 1;
     for (const listener of this.listeners) {
       listener();
     }

@@ -1,5 +1,5 @@
 {
- "version": 1,
+ "version": 2,
  "root": "/ws",
  "files": [
   {
@@ -34,7 +34,8 @@
      "docstring": "アプリを走らせる",
      "params": [
       "cfg"
-     ]
+     ],
+     "bases": []
     },
     {
      "name": "helper",
@@ -62,7 +63,8 @@
      },
      "container": null,
      "docstring": null,
-     "params": []
+     "params": [],
+     "bases": []
     },
     {
      "name": "Store",
@@ -90,7 +92,8 @@
      },
      "container": null,
      "docstring": "置き場",
-     "params": []
+     "params": [],
+     "bases": []
     },
     {
      "name": "path",
@@ -118,7 +121,8 @@
      },
      "container": "Store",
      "docstring": null,
-     "params": []
+     "params": [],
+     "bases": []
     },
     {
      "name": "save",
@@ -149,7 +153,8 @@
      "params": [
       "self",
       "row"
-     ]
+     ],
+     "bases": []
     },
     {
      "name": "Color",
@@ -177,7 +182,8 @@
      },
      "container": null,
      "docstring": null,
-     "params": []
+     "params": [],
+     "bases": []
     },
     {
      "name": "RED",
@@ -205,7 +211,8 @@
      },
      "container": "Color",
      "docstring": null,
-     "params": []
+     "params": [],
+     "bases": []
     },
     {
      "name": "app-handler",
@@ -233,7 +240,8 @@
      },
      "container": null,
      "docstring": null,
-     "params": []
+     "params": [],
+     "bases": []
     },
     {
      "name": "Ask",
@@ -263,7 +271,8 @@
      "docstring": null,
      "params": [
       "key"
-     ]
+     ],
+     "bases": []
     },
     {
      "name": "test-run-app",
@@ -291,7 +300,8 @@
      },
      "container": null,
      "docstring": null,
-     "params": []
+     "params": [],
+     "bases": []
     },
     {
      "name": "orphan",
@@ -319,7 +329,8 @@
      },
      "container": "Missing",
      "docstring": null,
-     "params": []
+     "params": [],
+     "bases": []
     }
    ],
    "imports": [
@@ -789,6 +800,7 @@
      }
     }
    ],
+   "calls": [],
    "errors": []
   },
   {
@@ -823,7 +835,8 @@
      "docstring": null,
      "params": [
       "name"
-     ]
+     ],
+     "bases": []
     },
     {
      "name": "parse-it",
@@ -853,7 +866,8 @@
      "docstring": null,
      "params": [
       "text"
-     ]
+     ],
+     "bases": []
     }
    ],
    "imports": [],
@@ -889,6 +903,7 @@
      }
     }
    ],
+   "calls": [],
    "errors": []
   },
   {
@@ -921,7 +936,8 @@
      },
      "container": null,
      "docstring": null,
-     "params": []
+     "params": [],
+     "bases": []
     }
    ],
    "imports": [],
@@ -942,6 +958,7 @@
      }
     }
    ],
+   "calls": [],
    "errors": []
   },
   {
@@ -974,7 +991,8 @@
      },
      "container": null,
      "docstring": null,
-     "params": []
+     "params": [],
+     "bases": []
     },
     {
      "name": "name",
@@ -1002,11 +1020,13 @@
      },
      "container": "Record",
      "docstring": null,
-     "params": []
+     "params": [],
+     "bases": []
     }
    ],
    "imports": [],
    "references": [],
+   "calls": [],
    "errors": []
   },
   {
@@ -1039,11 +1059,13 @@
      },
      "container": null,
      "docstring": null,
-     "params": []
+     "params": [],
+     "bases": []
     }
    ],
    "imports": [],
    "references": [],
+   "calls": [],
    "errors": []
   },
   {
@@ -1076,11 +1098,13 @@
      },
      "container": null,
      "docstring": null,
-     "params": []
+     "params": [],
+     "bases": []
     }
    ],
    "imports": [],
    "references": [],
+   "calls": [],
    "errors": []
   },
   {
@@ -1113,7 +1137,8 @@
      },
      "container": null,
      "docstring": null,
-     "params": []
+     "params": [],
+     "bases": []
     },
     {
      "name": "format-name",
@@ -1141,7 +1166,8 @@
      },
      "container": null,
      "docstring": null,
-     "params": []
+     "params": [],
+     "bases": []
     }
    ],
    "imports": [],
@@ -1192,6 +1218,7 @@
      }
     }
    ],
+   "calls": [],
    "errors": []
   },
   {
@@ -1233,6 +1260,7 @@
      }
     }
    ],
+   "calls": [],
    "errors": []
   },
   {
@@ -1285,6 +1313,728 @@
        "character": 18
       }
      }
+    }
+   ],
+   "calls": [],
+   "errors": []
+  },
+  {
+   "path": "/ws/pkg/effects.hy",
+   "module": "pkg.effects",
+   "definitions": [
+    {
+     "name": "PutRow",
+     "mangled": "PutRow",
+     "kind": "defclass",
+     "range": {
+      "start": {
+       "line": 2,
+       "character": 9
+      },
+      "end": {
+       "line": 2,
+       "character": 15
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 2,
+       "character": 0
+      },
+      "end": {
+       "line": 4,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": "行を書く effect",
+     "params": [],
+     "bases": [
+      "EffectBase"
+     ]
+    },
+    {
+     "name": "GetRow",
+     "mangled": "GetRow",
+     "kind": "defclass",
+     "range": {
+      "start": {
+       "line": 6,
+       "character": 9
+      },
+      "end": {
+       "line": 6,
+       "character": 15
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 6,
+       "character": 0
+      },
+      "end": {
+       "line": 7,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": [],
+     "bases": [
+      "doeff.EffectBase"
+     ]
+    },
+    {
+     "name": "SpecialPut",
+     "mangled": "SpecialPut",
+     "kind": "defclass",
+     "range": {
+      "start": {
+       "line": 9,
+       "character": 9
+      },
+      "end": {
+       "line": 9,
+       "character": 19
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 9,
+       "character": 0
+      },
+      "end": {
+       "line": 10,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": [],
+     "bases": [
+      "PutRow"
+     ]
+    },
+    {
+     "name": "Plain",
+     "mangled": "Plain",
+     "kind": "defclass",
+     "range": {
+      "start": {
+       "line": 12,
+       "character": 9
+      },
+      "end": {
+       "line": 12,
+       "character": 14
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 12,
+       "character": 0
+      },
+      "end": {
+       "line": 13,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": [],
+     "bases": [
+      "object"
+     ]
+    },
+    {
+     "name": "save-row",
+     "mangled": "save_row",
+     "kind": "defk",
+     "range": {
+      "start": {
+       "line": 15,
+       "character": 6
+      },
+      "end": {
+       "line": 15,
+       "character": 14
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 15,
+       "character": 0
+      },
+      "end": {
+       "line": 20,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": [
+      "row"
+     ],
+     "bases": []
+    },
+    {
+     "name": "helper-fn",
+     "mangled": "helper_fn",
+     "kind": "defn",
+     "range": {
+      "start": {
+       "line": 22,
+       "character": 6
+      },
+      "end": {
+       "line": 22,
+       "character": 15
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 22,
+       "character": 0
+      },
+      "end": {
+       "line": 23,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": [
+      "x"
+     ],
+     "bases": []
+    },
+    {
+     "name": "memory-handler",
+     "mangled": "memory_handler",
+     "kind": "defhandler",
+     "range": {
+      "start": {
+       "line": 25,
+       "character": 12
+      },
+      "end": {
+       "line": 25,
+       "character": 26
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 25,
+       "character": 0
+      },
+      "end": {
+       "line": 34,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": [],
+     "bases": []
+    },
+    {
+     "name": "PutRow",
+     "mangled": "PutRow",
+     "kind": "effect-clause",
+     "range": {
+      "start": {
+       "line": 27,
+       "character": 3
+      },
+      "end": {
+       "line": 27,
+       "character": 9
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 27,
+       "character": 2
+      },
+      "end": {
+       "line": 29,
+       "character": 10
+      }
+     },
+     "container": "memory-handler",
+     "docstring": null,
+     "params": [
+      "row"
+     ],
+     "bases": []
+    },
+    {
+     "name": "GetRow",
+     "mangled": "GetRow",
+     "kind": "effect-clause",
+     "range": {
+      "start": {
+       "line": 31,
+       "character": 3
+      },
+      "end": {
+       "line": 31,
+       "character": 9
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 31,
+       "character": 2
+      },
+      "end": {
+       "line": 33,
+       "character": 10
+      }
+     },
+     "container": "memory-handler",
+     "docstring": null,
+     "params": [
+      "key"
+     ],
+     "bases": []
+    },
+    {
+     "name": "load-row",
+     "mangled": "load_row",
+     "kind": "deff",
+     "range": {
+      "start": {
+       "line": 36,
+       "character": 6
+      },
+      "end": {
+       "line": 36,
+       "character": 14
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 36,
+       "character": 0
+      },
+      "end": {
+       "line": 38,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": [
+      "key"
+     ],
+     "bases": []
+    }
+   ],
+   "imports": [],
+   "references": [],
+   "calls": [
+    {
+     "callee": "PutRow",
+     "mangled": "PutRow",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 16,
+       "character": 8
+      },
+      "end": {
+       "line": 16,
+       "character": 14
+      }
+     },
+     "caller": 4,
+     "performed": true
+    },
+    {
+     "callee": "helper-fn",
+     "mangled": "helper_fn",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 17,
+       "character": 3
+      },
+      "end": {
+       "line": 17,
+       "character": 12
+      }
+     },
+     "caller": 4,
+     "performed": false
+    },
+    {
+     "callee": "GetRow",
+     "mangled": "GetRow",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 18,
+       "character": 8
+      },
+      "end": {
+       "line": 18,
+       "character": 14
+      }
+     },
+     "caller": 4,
+     "performed": false
+    },
+    {
+     "callee": "Plain",
+     "mangled": "Plain",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 19,
+       "character": 3
+      },
+      "end": {
+       "line": 19,
+       "character": 8
+      }
+     },
+     "caller": 4,
+     "performed": false
+    },
+    {
+     "callee": "resume",
+     "mangled": "resume",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 28,
+       "character": 5
+      },
+      "end": {
+       "line": 28,
+       "character": 11
+      }
+     },
+     "caller": 7,
+     "performed": false
+    },
+    {
+     "callee": "helper-fn",
+     "mangled": "helper_fn",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 32,
+       "character": 5
+      },
+      "end": {
+       "line": 32,
+       "character": 14
+      }
+     },
+     "caller": 8,
+     "performed": false
+    },
+    {
+     "callee": "GetRow",
+     "mangled": "GetRow",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 37,
+       "character": 8
+      },
+      "end": {
+       "line": 37,
+       "character": 14
+      }
+     },
+     "caller": 9,
+     "performed": true
+    },
+    {
+     "callee": "PutRow",
+     "mangled": "PutRow",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 37,
+       "character": 22
+      },
+      "end": {
+       "line": 37,
+       "character": 28
+      }
+     },
+     "caller": 9,
+     "performed": true
+    },
+    {
+     "callee": "save-row",
+     "mangled": "save_row",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 40,
+       "character": 1
+      },
+      "end": {
+       "line": 40,
+       "character": 9
+      }
+     },
+     "caller": null,
+     "performed": false
+    }
+   ],
+   "errors": []
+  },
+  {
+   "path": "/ws/pkg/logging_handler.hy",
+   "module": "pkg.logging_handler",
+   "definitions": [
+    {
+     "name": "logging-handler",
+     "mangled": "logging_handler",
+     "kind": "defhandler",
+     "range": {
+      "start": {
+       "line": 2,
+       "character": 12
+      },
+      "end": {
+       "line": 2,
+       "character": 27
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 2,
+       "character": 0
+      },
+      "end": {
+       "line": 9,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": [],
+     "bases": []
+    },
+    {
+     "name": "PutRow",
+     "mangled": "PutRow",
+     "kind": "effect-clause",
+     "range": {
+      "start": {
+       "line": 4,
+       "character": 3
+      },
+      "end": {
+       "line": 4,
+       "character": 9
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 4,
+       "character": 2
+      },
+      "end": {
+       "line": 5,
+       "character": 10
+      }
+     },
+     "container": "logging-handler",
+     "docstring": null,
+     "params": [
+      "row"
+     ],
+     "bases": []
+    },
+    {
+     "name": "Tell",
+     "mangled": "Tell",
+     "kind": "effect-clause",
+     "range": {
+      "start": {
+       "line": 7,
+       "character": 3
+      },
+      "end": {
+       "line": 7,
+       "character": 7
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 7,
+       "character": 2
+      },
+      "end": {
+       "line": 8,
+       "character": 10
+      }
+     },
+     "container": "logging-handler",
+     "docstring": null,
+     "params": [
+      "msg"
+     ],
+     "bases": []
+    },
+    {
+     "name": "announce",
+     "mangled": "announce",
+     "kind": "defk",
+     "range": {
+      "start": {
+       "line": 11,
+       "character": 6
+      },
+      "end": {
+       "line": 11,
+       "character": 14
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 11,
+       "character": 0
+      },
+      "end": {
+       "line": 13,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": [],
+     "bases": []
+    }
+   ],
+   "imports": [
+    {
+     "module": "pkg.effects",
+     "name": "save-row",
+     "alias": null,
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 21
+      },
+      "end": {
+       "line": 0,
+       "character": 29
+      }
+     },
+     "is_require": false
+    },
+    {
+     "module": "pkg.effects",
+     "name": "PutRow",
+     "alias": null,
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 30
+      },
+      "end": {
+       "line": 0,
+       "character": 36
+      }
+     },
+     "is_require": false
+    }
+   ],
+   "references": [],
+   "calls": [
+    {
+     "callee": "Tell",
+     "mangled": "Tell",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 12,
+       "character": 8
+      },
+      "end": {
+       "line": 12,
+       "character": 12
+      }
+     },
+     "caller": 3,
+     "performed": true
+    },
+    {
+     "callee": "save-row",
+     "mangled": "save_row",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 12,
+       "character": 20
+      },
+      "end": {
+       "line": 12,
+       "character": 28
+      }
+     },
+     "caller": 3,
+     "performed": false
+    },
+    {
+     "callee": "SpecialPut",
+     "mangled": "SpecialPut",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 13,
+       "character": 8
+      },
+      "end": {
+       "line": 13,
+       "character": 18
+      }
+     },
+     "caller": 3,
+     "performed": true
+    },
+    {
+     "callee": "print",
+     "mangled": "print",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 5,
+       "character": 5
+      },
+      "end": {
+       "line": 5,
+       "character": 10
+      }
+     },
+     "caller": 1,
+     "performed": false
+    },
+    {
+     "callee": "Emit",
+     "mangled": "Emit",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 13,
+       "character": 30
+      },
+      "end": {
+       "line": 13,
+       "character": 34
+      }
+     },
+     "caller": 3,
+     "performed": true
     }
    ],
    "errors": []

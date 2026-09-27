@@ -7,15 +7,26 @@ import { loadDocument, readFixture } from './fixtures';
 suite('Hy 索引の契約の読み込み', () => {
   test('契約どおりの fixture は全 file が読める', () => {
     const document = loadDocument('workspace.json');
-    assert.strictEqual(document.version, 1);
-    assert.strictEqual(document.files.length, 9);
+    assert.strictEqual(document.version, 2);
+    assert.strictEqual(document.files.length, 11);
     const app = document.files.find((f) => f.module === 'pkg.app');
     assert.ok(app);
     assert.strictEqual(app.definitions[0].fullRange.end.line, 14);
     assert.strictEqual(app.imports[0].isRequire, false);
+    const effects = document.files.find((f) => f.module === 'pkg.effects');
+    assert.ok(effects);
+    assert.deepStrictEqual(effects.definitions[1].bases, ['doeff.EffectBase']);
+    assert.deepStrictEqual(effects.calls[0], {
+      callee: 'PutRow',
+      mangled: 'PutRow',
+      qualifier: null,
+      range: { start: { line: 16, character: 8 }, end: { line: 16, character: 14 } },
+      caller: 4,
+      performed: true
+    });
   });
 
-  test('版が違う JSON は全体を理由つきで捨てる', () => {
+  test('版 1 の JSON は全体を理由つきで捨てる(版 2 だけを受け付ける)', () => {
     const parsed = parseHyIndexJson(readFixture('bad-version.json'));
     assert.strictEqual(parsed.tag, 'rejected');
     assert.match(parsed.tag === 'rejected' ? parsed.reason : '', /版が違う/);
@@ -33,7 +44,7 @@ suite('Hy 索引の契約の読み込み', () => {
     assert.match(parsed.tag === 'rejected' ? parsed.reason : '', /"files"/);
   });
 
-  test('欄の欠け・契約に無い kind・負の行の file はその file だけ理由つきで捨てる', () => {
+  test('欄の欠け・契約に無い kind・負の行・基底・呼び出し元の添字の違反はその file だけ理由つきで捨てる', () => {
     const parsed = parseHyIndexJson(readFixture('broken-files.json'));
     assert.strictEqual(parsed.tag, 'ok');
     if (parsed.tag !== 'ok') {
@@ -45,11 +56,15 @@ suite('Hy 索引の契約の読み込み', () => {
     );
     assert.deepStrictEqual(parsed.document.files[0].errors, ['3 行目: 括弧が閉じていない']);
     const reasons = new Map(parsed.rejected.map((r) => [r.path, r.reason]));
-    assert.strictEqual(parsed.rejected.length, 4);
+    assert.strictEqual(parsed.rejected.length, 8);
     assert.match(reasons.get('/ws/no_module.hy') ?? '', /"module" が無い/);
     assert.match(reasons.get('/ws/unknown_kind.hy') ?? '', /契約に無い kind "defwhatever"/);
     assert.match(reasons.get('/ws/missing_is_require.hy') ?? '', /"is_require" が無い/);
     assert.match(reasons.get('/ws/negative_line.hy') ?? '', /0 以上の整数でない/);
+    assert.match(reasons.get('/ws/missing_bases.hy') ?? '', /"bases" が無い/);
+    assert.match(reasons.get('/ws/bases_on_defn.hy') ?? '', /defn は基底を持たない/);
+    assert.match(reasons.get('/ws/caller_out_of_range.hy') ?? '', /caller: definitions の添字でない/);
+    assert.match(reasons.get('/ws/missing_calls.hy') ?? '', /"calls" が無い/);
   });
 });
 
