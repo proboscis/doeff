@@ -15,10 +15,17 @@ function key(filePath: string): string {
   return path.normalize(filePath);
 }
 
+/** path で引く表。 */
+interface PathTables {
+  readonly modules: ReadonlyMap<string, LintModule>;
+  readonly violations: ReadonlyMap<string, readonly LintViolation[]>;
+}
+
 /** linter の結果の置き場。書き換えのたびに購読者へ知らせる。 */
 export class LintStore {
   private readonly roots = new Map<string, RootState>();
   private readonly listeners = new Set<() => void>();
+  private pathTables: PathTables | undefined;
 
   /** root の全体の実行の結果で置き換える(それまでの file の差し替えは捨てる)。 */
   replaceRoot(root: string, report: LintReport): void {
@@ -107,14 +114,29 @@ export class LintStore {
 
   /** file の module の要約(linter の結果に無ければ undefined)。 */
   moduleFor(filePath: string): LintModule | undefined {
-    const wanted = key(filePath);
-    return this.modules().find((m) => key(m.module.path) === wanted)?.module;
+    return this.tables().modules.get(key(filePath));
   }
 
   /** file の今の違反。 */
-  violationsIn(filePath: string): LintViolation[] {
-    const wanted = key(filePath);
-    return this.violations().filter((v) => key(v.path) === wanted);
+  violationsIn(filePath: string): readonly LintViolation[] {
+    return this.tables().violations.get(key(filePath)) ?? [];
+  }
+
+  /** path で引く表(置き場が変わるまで使い回す — 定義 2 万件の閲覧が 1 件ずつ引くため)。 */
+  private tables(): PathTables {
+    if (this.pathTables === undefined) {
+      const modules = new Map<string, LintModule>();
+      for (const { module } of this.modules()) {
+        modules.set(key(module.path), module);
+      }
+      const violations = new Map<string, LintViolation[]>();
+      for (const violation of this.violations()) {
+        const k = key(violation.path);
+        violations.set(k, [...(violations.get(k) ?? []), violation]);
+      }
+      this.pathTables = { modules, violations };
+    }
+    return this.pathTables;
   }
 
   /** linter 自身が読めなかった file などの理由。 */
@@ -130,6 +152,7 @@ export class LintStore {
 
   /** 購読者へ書き換えを知らせる。 */
   private emit(): void {
+    this.pathTables = undefined;
     for (const listener of this.listeners) {
       listener();
     }

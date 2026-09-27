@@ -60,7 +60,8 @@
     "onView:doeff-hy-programs",
     "onView:doeff-hy-current-file",
     "onView:doeff-lint-violations",
-    "onView:doeff-lint-map"
+    "onView:doeff-lint-map",
+    "onView:doeff-hy-browse"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -135,6 +136,10 @@
         {
           "id": "doeff-lint-map",
           "name": "層の地図(linter)"
+        },
+        {
+          "id": "doeff-hy-browse",
+          "name": "タグで閲覧"
         }
       ]
     },
@@ -376,6 +381,31 @@
         "command": "doeff-runner.lint.showLayers",
         "title": "層の説明の表を見る(linter)",
         "icon": "$(layers)"
+      },
+      {
+        "command": "doeff-runner.browse.pickView",
+        "title": "保存した見方を選ぶ",
+        "icon": "$(bookmark)"
+      },
+      {
+        "command": "doeff-runner.browse.chooseOrder",
+        "title": "並べ方(軸の順)を選ぶ",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "doeff-runner.browse.addFilter",
+        "title": "絞り込む(軸 = 値)",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "doeff-runner.browse.clearFilters",
+        "title": "絞り込みを解除",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "doeff-runner.browse.saveView",
+        "title": "今の見方に名前を付けて保存",
+        "icon": "$(save)"
       }
     ],
     "configuration": {
@@ -441,6 +471,44 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "linter の違反のある行の末尾に、重さごとの色で短い文(● 規則 文)を出す。行の左端の印と右端のスクロールバーの印は常に出す。"
+        },
+        "doeff-runner.hy.browseViews": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "order": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 3
+              },
+              "filters": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "axis": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "required": [
+              "name",
+              "order"
+            ]
+          },
+          "markdownDescription": "「タグで閲覧」の保存した見方。軸は service / layer / context / role / kind / raw / violation と tag:<鍵>(定義の :tags の鍵)。workspace の設定に置けば repo で共有できる。同梱の見方(service ▸ 層・層 ▸ service・生の副作用 ▸ service)は設定に無くても出る。"
         }
       }
     },
@@ -580,6 +648,31 @@
           "command": "doeff-runner.lint.showLayers",
           "when": "view == doeff-lint-map",
           "group": "navigation@1"
+        },
+        {
+          "command": "doeff-runner.browse.pickView",
+          "when": "view == doeff-hy-browse",
+          "group": "navigation@0"
+        },
+        {
+          "command": "doeff-runner.browse.chooseOrder",
+          "when": "view == doeff-hy-browse",
+          "group": "navigation@1"
+        },
+        {
+          "command": "doeff-runner.browse.addFilter",
+          "when": "view == doeff-hy-browse",
+          "group": "navigation@2"
+        },
+        {
+          "command": "doeff-runner.browse.clearFilters",
+          "when": "view == doeff-hy-browse",
+          "group": "navigation@3"
+        },
+        {
+          "command": "doeff-runner.browse.saveView",
+          "when": "view == doeff-hy-browse",
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [

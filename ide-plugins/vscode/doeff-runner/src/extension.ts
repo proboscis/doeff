@@ -20,6 +20,7 @@ import {
 import { multiTokenFuzzyMatch } from './search';
 import { registerHyNavigation } from './hy/register';
 import { registerLint } from './lint/register';
+import { registerBrowse } from './hy/browsePanel';
 
 const execFileAsync = promisify(cp.execFile);
 
@@ -2918,9 +2919,11 @@ export function activate(context: vscode.ExtensionContext) {
   extensionContext = context;
 
   // Hy (doeff-hy) navigation: definition / references / outline / workspace symbols / hover.
-  registerHyNavigation(context, { locateIndexer: () => locateIndexer(), output });
+  const hyStore = registerHyNavigation(context, { locateIndexer: () => locateIndexer(), output });
   // doeff-linter's findings (the linter is the source of truth; the editor only displays them).
-  registerLint(context, output);
+  const lintStore = registerLint(context, output);
+  // Browse definitions by service / layer / tags (display only).
+  registerBrowse(context, hyStore, lintStore, output);
 
   // Create state store for sharing state between TreeView and CodeLens
   const stateStore = new DoeffStateStore(context);
