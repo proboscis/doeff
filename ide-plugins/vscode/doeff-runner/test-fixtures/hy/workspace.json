@@ -1,0 +1,1245 @@
+{
+ "version": 1,
+ "root": "/ws",
+ "files": [
+  {
+   "path": "/ws/pkg/app.hy",
+   "module": "pkg.app",
+   "definitions": [
+    {
+     "name": "run-app",
+     "mangled": "run_app",
+     "kind": "defn",
+     "range": {
+      "start": {
+       "line": 10,
+       "character": 6
+      },
+      "end": {
+       "line": 10,
+       "character": 13
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 10,
+       "character": 0
+      },
+      "end": {
+       "line": 14,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": "アプリを走らせる",
+     "params": [
+      "cfg"
+     ]
+    },
+    {
+     "name": "helper",
+     "mangled": "helper",
+     "kind": "defn",
+     "range": {
+      "start": {
+       "line": 16,
+       "character": 6
+      },
+      "end": {
+       "line": 16,
+       "character": 12
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 16,
+       "character": 0
+      },
+      "end": {
+       "line": 18,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": []
+    },
+    {
+     "name": "Store",
+     "mangled": "Store",
+     "kind": "defclass",
+     "range": {
+      "start": {
+       "line": 20,
+       "character": 9
+      },
+      "end": {
+       "line": 20,
+       "character": 14
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 20,
+       "character": 0
+      },
+      "end": {
+       "line": 30,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": "置き場",
+     "params": []
+    },
+    {
+     "name": "path",
+     "mangled": "path",
+     "kind": "field",
+     "range": {
+      "start": {
+       "line": 21,
+       "character": 7
+      },
+      "end": {
+       "line": 21,
+       "character": 11
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 21,
+       "character": 2
+      },
+      "end": {
+       "line": 21,
+       "character": 10
+      }
+     },
+     "container": "Store",
+     "docstring": null,
+     "params": []
+    },
+    {
+     "name": "save",
+     "mangled": "save",
+     "kind": "method",
+     "range": {
+      "start": {
+       "line": 23,
+       "character": 8
+      },
+      "end": {
+       "line": 23,
+       "character": 12
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 23,
+       "character": 2
+      },
+      "end": {
+       "line": 26,
+       "character": 10
+      }
+     },
+     "container": "Store",
+     "docstring": null,
+     "params": [
+      "self",
+      "row"
+     ]
+    },
+    {
+     "name": "Color",
+     "mangled": "Color",
+     "kind": "defenum",
+     "range": {
+      "start": {
+       "line": 32,
+       "character": 8
+      },
+      "end": {
+       "line": 32,
+       "character": 13
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 32,
+       "character": 0
+      },
+      "end": {
+       "line": 32,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": []
+    },
+    {
+     "name": "RED",
+     "mangled": "RED",
+     "kind": "enum-member",
+     "range": {
+      "start": {
+       "line": 32,
+       "character": 14
+      },
+      "end": {
+       "line": 32,
+       "character": 17
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 32,
+       "character": 2
+      },
+      "end": {
+       "line": 32,
+       "character": 10
+      }
+     },
+     "container": "Color",
+     "docstring": null,
+     "params": []
+    },
+    {
+     "name": "app-handler",
+     "mangled": "app_handler",
+     "kind": "defhandler",
+     "range": {
+      "start": {
+       "line": 34,
+       "character": 12
+      },
+      "end": {
+       "line": 34,
+       "character": 23
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 34,
+       "character": 0
+      },
+      "end": {
+       "line": 40,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": []
+    },
+    {
+     "name": "Ask",
+     "mangled": "Ask",
+     "kind": "effect-clause",
+     "range": {
+      "start": {
+       "line": 36,
+       "character": 3
+      },
+      "end": {
+       "line": 36,
+       "character": 6
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 36,
+       "character": 2
+      },
+      "end": {
+       "line": 38,
+       "character": 10
+      }
+     },
+     "container": "app-handler",
+     "docstring": null,
+     "params": [
+      "key"
+     ]
+    },
+    {
+     "name": "test-run-app",
+     "mangled": "test_run_app",
+     "kind": "deftest",
+     "range": {
+      "start": {
+       "line": 42,
+       "character": 9
+      },
+      "end": {
+       "line": 42,
+       "character": 21
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 42,
+       "character": 0
+      },
+      "end": {
+       "line": 44,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": []
+    },
+    {
+     "name": "orphan",
+     "mangled": "orphan",
+     "kind": "method",
+     "range": {
+      "start": {
+       "line": 46,
+       "character": 8
+      },
+      "end": {
+       "line": 46,
+       "character": 14
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 46,
+       "character": 2
+      },
+      "end": {
+       "line": 46,
+       "character": 10
+      }
+     },
+     "container": "Missing",
+     "docstring": null,
+     "params": []
+    }
+   ],
+   "imports": [
+    {
+     "module": "pkg.util",
+     "name": "format-name",
+     "alias": null,
+     "range": {
+      "start": {
+       "line": 1,
+       "character": 18
+      },
+      "end": {
+       "line": 1,
+       "character": 29
+      }
+     },
+     "is_require": false
+    },
+    {
+     "module": "pkg.util",
+     "name": "parse-it",
+     "alias": "parse",
+     "range": {
+      "start": {
+       "line": 2,
+       "character": 31
+      },
+      "end": {
+       "line": 2,
+       "character": 36
+      }
+     },
+     "is_require": false
+    },
+    {
+     "module": "pkg.lib",
+     "name": null,
+     "alias": "L",
+     "range": {
+      "start": {
+       "line": 3,
+       "character": 20
+      },
+      "end": {
+       "line": 3,
+       "character": 21
+      }
+     },
+     "is_require": false
+    },
+    {
+     "module": "numpy_like.core",
+     "name": null,
+     "alias": null,
+     "range": {
+      "start": {
+       "line": 4,
+       "character": 8
+      },
+      "end": {
+       "line": 4,
+       "character": 23
+      }
+     },
+     "is_require": false
+    },
+    {
+     "module": "numpy_like.core",
+     "name": "compute",
+     "alias": null,
+     "range": {
+      "start": {
+       "line": 5,
+       "character": 25
+      },
+      "end": {
+       "line": 5,
+       "character": 32
+      }
+     },
+     "is_require": false
+    },
+    {
+     "module": "numpy_like.core",
+     "name": "max-size",
+     "alias": null,
+     "range": {
+      "start": {
+       "line": 5,
+       "character": 33
+      },
+      "end": {
+       "line": 5,
+       "character": 41
+      }
+     },
+     "is_require": false
+    },
+    {
+     "module": "pkg.models",
+     "name": "Record",
+     "alias": null,
+     "range": {
+      "start": {
+       "line": 6,
+       "character": 20
+      },
+      "end": {
+       "line": 6,
+       "character": 26
+      }
+     },
+     "is_require": false
+    },
+    {
+     "module": ".sibling",
+     "name": "sib-fn",
+     "alias": null,
+     "range": {
+      "start": {
+       "line": 7,
+       "character": 19
+      },
+      "end": {
+       "line": 7,
+       "character": 25
+      }
+     },
+     "is_require": false
+    },
+    {
+     "module": "pyp",
+     "name": null,
+     "alias": "P",
+     "range": {
+      "start": {
+       "line": 8,
+       "character": 16
+      },
+      "end": {
+       "line": 8,
+       "character": 17
+      }
+     },
+     "is_require": false
+    },
+    {
+     "module": "pkg",
+     "name": "util",
+     "alias": null,
+     "range": {
+      "start": {
+       "line": 9,
+       "character": 13
+      },
+      "end": {
+       "line": 9,
+       "character": 17
+      }
+     },
+     "is_require": false
+    }
+   ],
+   "references": [
+    {
+     "name": "run-app",
+     "mangled": "run_app",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 10,
+       "character": 6
+      },
+      "end": {
+       "line": 10,
+       "character": 13
+      }
+     }
+    },
+    {
+     "name": "format-name",
+     "mangled": "format_name",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 11,
+       "character": 3
+      },
+      "end": {
+       "line": 11,
+       "character": 14
+      }
+     }
+    },
+    {
+     "name": "parse",
+     "mangled": "parse",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 12,
+       "character": 3
+      },
+      "end": {
+       "line": 12,
+       "character": 8
+      }
+     }
+    },
+    {
+     "name": "L",
+     "mangled": "L",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 13,
+       "character": 3
+      },
+      "end": {
+       "line": 13,
+       "character": 4
+      }
+     }
+    },
+    {
+     "name": "lib-fn",
+     "mangled": "lib_fn",
+     "qualifier": "L",
+     "range": {
+      "start": {
+       "line": 13,
+       "character": 5
+      },
+      "end": {
+       "line": 13,
+       "character": 11
+      }
+     }
+    },
+    {
+     "name": "helper",
+     "mangled": "helper",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 17,
+       "character": 3
+      },
+      "end": {
+       "line": 17,
+       "character": 9
+      }
+     }
+    },
+    {
+     "name": "compute",
+     "mangled": "compute",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 47,
+       "character": 3
+      },
+      "end": {
+       "line": 47,
+       "character": 10
+      }
+     }
+    },
+    {
+     "name": "Record",
+     "mangled": "Record",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 48,
+       "character": 3
+      },
+      "end": {
+       "line": 48,
+       "character": 9
+      }
+     }
+    },
+    {
+     "name": "name",
+     "mangled": "name",
+     "qualifier": "Record",
+     "range": {
+      "start": {
+       "line": 48,
+       "character": 10
+      },
+      "end": {
+       "line": 48,
+       "character": 14
+      }
+     }
+    },
+    {
+     "name": "Color",
+     "mangled": "Color",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 49,
+       "character": 3
+      },
+      "end": {
+       "line": 49,
+       "character": 8
+      }
+     }
+    },
+    {
+     "name": "RED",
+     "mangled": "RED",
+     "qualifier": "Color",
+     "range": {
+      "start": {
+       "line": 49,
+       "character": 9
+      },
+      "end": {
+       "line": 49,
+       "character": 12
+      }
+     }
+    },
+    {
+     "name": "sib-fn",
+     "mangled": "sib_fn",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 50,
+       "character": 3
+      },
+      "end": {
+       "line": 50,
+       "character": 9
+      }
+     }
+    },
+    {
+     "name": "util",
+     "mangled": "util",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 51,
+       "character": 3
+      },
+      "end": {
+       "line": 51,
+       "character": 7
+      }
+     }
+    },
+    {
+     "name": "format-name",
+     "mangled": "format_name",
+     "qualifier": "util",
+     "range": {
+      "start": {
+       "line": 51,
+       "character": 8
+      },
+      "end": {
+       "line": 51,
+       "character": 19
+      }
+     }
+    },
+    {
+     "name": "numpy_like",
+     "mangled": "numpy_like",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 52,
+       "character": 3
+      },
+      "end": {
+       "line": 52,
+       "character": 13
+      }
+     }
+    },
+    {
+     "name": "core",
+     "mangled": "core",
+     "qualifier": "numpy_like",
+     "range": {
+      "start": {
+       "line": 52,
+       "character": 14
+      },
+      "end": {
+       "line": 52,
+       "character": 18
+      }
+     }
+    },
+    {
+     "name": "compute",
+     "mangled": "compute",
+     "qualifier": "numpy_like.core",
+     "range": {
+      "start": {
+       "line": 52,
+       "character": 19
+      },
+      "end": {
+       "line": 52,
+       "character": 26
+      }
+     }
+    }
+   ],
+   "errors": []
+  },
+  {
+   "path": "/ws/pkg/util.hy",
+   "module": "pkg.util",
+   "definitions": [
+    {
+     "name": "format-name",
+     "mangled": "format_name",
+     "kind": "defk",
+     "range": {
+      "start": {
+       "line": 3,
+       "character": 6
+      },
+      "end": {
+       "line": 3,
+       "character": 17
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 3,
+       "character": 0
+      },
+      "end": {
+       "line": 6,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": [
+      "name"
+     ]
+    },
+    {
+     "name": "parse-it",
+     "mangled": "parse_it",
+     "kind": "defn",
+     "range": {
+      "start": {
+       "line": 8,
+       "character": 6
+      },
+      "end": {
+       "line": 8,
+       "character": 14
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 8,
+       "character": 0
+      },
+      "end": {
+       "line": 9,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": [
+      "text"
+     ]
+    }
+   ],
+   "imports": [],
+   "references": [
+    {
+     "name": "format-name",
+     "mangled": "format_name",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 3,
+       "character": 6
+      },
+      "end": {
+       "line": 3,
+       "character": 17
+      }
+     }
+    },
+    {
+     "name": "format-name",
+     "mangled": "format_name",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 12,
+       "character": 4
+      },
+      "end": {
+       "line": 12,
+       "character": 15
+      }
+     }
+    }
+   ],
+   "errors": []
+  },
+  {
+   "path": "/ws/pkg/lib.hy",
+   "module": "pkg.lib",
+   "definitions": [
+    {
+     "name": "lib-fn",
+     "mangled": "lib_fn",
+     "kind": "defn",
+     "range": {
+      "start": {
+       "line": 2,
+       "character": 6
+      },
+      "end": {
+       "line": 2,
+       "character": 12
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 2,
+       "character": 0
+      },
+      "end": {
+       "line": 4,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": []
+    }
+   ],
+   "imports": [],
+   "references": [
+    {
+     "name": "lib-fn",
+     "mangled": "lib_fn",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 2,
+       "character": 6
+      },
+      "end": {
+       "line": 2,
+       "character": 12
+      }
+     }
+    }
+   ],
+   "errors": []
+  },
+  {
+   "path": "/ws/pkg/models.hy",
+   "module": "pkg.models",
+   "definitions": [
+    {
+     "name": "Record",
+     "mangled": "Record",
+     "kind": "defrecord",
+     "range": {
+      "start": {
+       "line": 1,
+       "character": 11
+      },
+      "end": {
+       "line": 1,
+       "character": 17
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 1,
+       "character": 0
+      },
+      "end": {
+       "line": 3,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": []
+    },
+    {
+     "name": "name",
+     "mangled": "name",
+     "kind": "field",
+     "range": {
+      "start": {
+       "line": 2,
+       "character": 5
+      },
+      "end": {
+       "line": 2,
+       "character": 9
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 2,
+       "character": 2
+      },
+      "end": {
+       "line": 2,
+       "character": 10
+      }
+     },
+     "container": "Record",
+     "docstring": null,
+     "params": []
+    }
+   ],
+   "imports": [],
+   "references": [],
+   "errors": []
+  },
+  {
+   "path": "/ws/pkg/sibling.hy",
+   "module": "pkg.sibling",
+   "definitions": [
+    {
+     "name": "sib-fn",
+     "mangled": "sib_fn",
+     "kind": "defn",
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 6
+      },
+      "end": {
+       "line": 0,
+       "character": 12
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 0,
+       "character": 0
+      },
+      "end": {
+       "line": 1,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": []
+    }
+   ],
+   "imports": [],
+   "references": [],
+   "errors": []
+  },
+  {
+   "path": "/ws/pkg/__init__.hy",
+   "module": "pkg",
+   "definitions": [
+    {
+     "name": "VERSION",
+     "mangled": "VERSION",
+     "kind": "variable",
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 6
+      },
+      "end": {
+       "line": 0,
+       "character": 13
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 0,
+       "character": 0
+      },
+      "end": {
+       "line": 0,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": []
+    }
+   ],
+   "imports": [],
+   "references": [],
+   "errors": []
+  },
+  {
+   "path": "/ws/other/dup.hy",
+   "module": "other.dup",
+   "definitions": [
+    {
+     "name": "helper",
+     "mangled": "helper",
+     "kind": "defn",
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 6
+      },
+      "end": {
+       "line": 0,
+       "character": 12
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 0,
+       "character": 0
+      },
+      "end": {
+       "line": 1,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": []
+    },
+    {
+     "name": "format-name",
+     "mangled": "format_name",
+     "kind": "defn",
+     "range": {
+      "start": {
+       "line": 3,
+       "character": 6
+      },
+      "end": {
+       "line": 3,
+       "character": 17
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 3,
+       "character": 0
+      },
+      "end": {
+       "line": 4,
+       "character": 10
+      }
+     },
+     "container": null,
+     "docstring": null,
+     "params": []
+    }
+   ],
+   "imports": [],
+   "references": [
+    {
+     "name": "helper",
+     "mangled": "helper",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 6
+      },
+      "end": {
+       "line": 0,
+       "character": 12
+      }
+     }
+    },
+    {
+     "name": "format-name",
+     "mangled": "format_name",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 3,
+       "character": 6
+      },
+      "end": {
+       "line": 3,
+       "character": 17
+      }
+     }
+    },
+    {
+     "name": "format-name",
+     "mangled": "format_name",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 6,
+       "character": 3
+      },
+      "end": {
+       "line": 6,
+       "character": 14
+      }
+     }
+    }
+   ],
+   "errors": []
+  },
+  {
+   "path": "/ws/other/user.hy",
+   "module": "other.user",
+   "definitions": [],
+   "imports": [
+    {
+     "module": "other.dup",
+     "name": "format-name",
+     "alias": null,
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 20
+      },
+      "end": {
+       "line": 0,
+       "character": 31
+      }
+     },
+     "is_require": false
+    }
+   ],
+   "references": [
+    {
+     "name": "format-name",
+     "mangled": "format_name",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 2,
+       "character": 3
+      },
+      "end": {
+       "line": 2,
+       "character": 14
+      }
+     }
+    }
+   ],
+   "errors": []
+  },
+  {
+   "path": "/ws/other/free.hy",
+   "module": "other.free",
+   "definitions": [],
+   "imports": [],
+   "references": [
+    {
+     "name": "format-name",
+     "mangled": "format_name",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 1,
+       "character": 3
+      },
+      "end": {
+       "line": 1,
+       "character": 14
+      }
+     }
+    },
+    {
+     "name": "helper",
+     "mangled": "helper",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 2,
+       "character": 3
+      },
+      "end": {
+       "line": 2,
+       "character": 9
+      }
+     }
+    },
+    {
+     "name": "format-name",
+     "mangled": "format_name",
+     "qualifier": "self",
+     "range": {
+      "start": {
+       "line": 3,
+       "character": 7
+      },
+      "end": {
+       "line": 3,
+       "character": 18
+      }
+     }
+    }
+   ],
+   "errors": []
+  }
+ ]
+}
