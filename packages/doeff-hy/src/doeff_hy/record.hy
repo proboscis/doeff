@@ -14,14 +14,13 @@
 ;;; 正本は ACP の `docs/contracts/` で、書き手はそこから写した欄を宣言する。
 ;;; ここは形の足場だけを持つ(道具の層)。
 ;;;
-;;; 投影の規則(この macro が静的検査を通れる理由): `defrecord` は
-;;; quasiquote 1 つだけで書かれた template macro で、共通の品質検査
-;;; (`~/dotfiles/agent/quality/hy_macro.py`)が現物の形を検証し、逐語の置換で
-;;; 展開できる。使う側の module 契約に `"macros": {"defrecord": "template"}`
-;;; を宣言する必要は無い — 由来が固定表(`doeff_hy.macros` / `doeff_hy.record`)
-;;; に載っているので、`hy_projection` が展開の規則を持つ。
+;;; 投影の規則(この macro が静的検査を通れる理由): `defrecord` は展開の時に
+;;; 頭の辞書を読む計算をするので template macro ではない(defenum と同じ「fixed」)。
+;;; 共通の品質検査の側に専用の読み方の規則(`quality.hy_record` の
+;;; record_declaration)が在り、この module の頭注の展開と 1 対 1 に対応する。
+;;; 使う側の module 契約に宣言は要らない — 由来が固定表(`doeff_hy.record`)に載っている。
 ;;;
-;;; 使い方:
+;;; 使い方(頭の辞書の無い形 — 前からの形そのまま):
 ;;;   (require doeff-hy.record [defrecord])
 ;;;   (import dataclasses [dataclass])
 ;;;
@@ -33,8 +32,55 @@
 ;;;
 ;;;   (TurnRecordRow :conversation-id c :turn-id t :phase "Running" :ended-at None)
 ;;;
-;;; ⚠ template macro の形は閉じている(docstring も他の式も置けない)。
-;;; だから説明はこの module の頭注が持つ — 説明の定義点は 1 つ。
+;;; 展開: (defclass [(dataclass :frozen True :kw-only True)] Name [] 欄 …)。
+;;; `dataclass` は使う側の scope の名前を指す(使う側が import する)。
+;;;
+;;; ---------------------------------------------------------------------------
+;;; 頭の辞書 {:tags … :check […]} — 定義のタグと作る時の検め(どちらも省ける)
+;;; ---------------------------------------------------------------------------
+;;;
+;;; 出自 = agora-redesign #798 と operator 2026-09-27 "perfect, lets go with def*"
+;;; (道具が読む宣言は def*・データの型は defrecord・振る舞いを持つ class は作らない)。
+;;; dataclass の `__post_init__` に defn を書いて値を検めていた形を、defrecord の節へ移す。
+;;;
+;;;   (setv CHAT-ID-PATTERN (re.compile r"c-[0-9A-HJKMNP-TV-Z]{26}"))
+;;;
+;;;   (defrecord ChatId
+;;;     "chat の id"
+;;;     {:tags  {:context "chat" :role "type"}
+;;;      :check [(CHAT-ID-PATTERN.fullmatch value)]}
+;;;     (#^ str value))
+;;;
+;;; - 頭の辞書は名前(と docstring)の直後に 1 つ。受ける鍵は :tags と :check だけ(他の鍵は展開の誤り)。
+;;; - :tags は defk / deff と同じ契約({:context "…" :role "…"}・役は declarations.ROLES)。
+;;;   class の属性 `__doeff_tags__`(DefinitionTags)に残す。
+;;; - :check は真偽の式の list。各式は欄の名前で欄を参照し、作る時に書いた順に評価する。
+;;;   偽なら ValueError「ChatId の欄 value が検め (CHAT-ID-PATTERN.fullmatch value) で落ちた: value='x'」。
+;;;   欄を 1 つも参照しない式・型の (: 欄 型)(型は欄の注記で書く)は展開の誤り。
+;;;   式の綴りの列を class の属性 `__doeff_checks__` に残す。
+;;;
+;;; 検めに使う述語の置き場(設計の要): __post_init__ は Program を実行できないので、
+;;; :check から defk は呼べない(呼ぶと Program が返り、真に見えて黙って通る — だから
+;;; 結果が Program / effect なら TypeError で止める)。述語は関数にせず、
+;;;   1. 式を :check にそのまま書く(`(<= start end)`・`(in kind KINDS)`)。
+;;;   2. 式が使う値は module の定数に置く(正規表現・閉じた集合 — `(setv CHAT-ID-PATTERN …)`)。
+;;;   3. 同じ検めを別の型でも使いたい時は、その欄の型を検め済みの record にする
+;;;      (`#^ ChatId chat` — 文字列の欄に同じ述語を並べない)。
+;;; どうしても名前つきの述語が要る時だけ、純粋な deff に理由の註
+;;; (`; defk にできない: defrecord の :check が作る時に呼ぶ`)と :tags {… :role "judgment"} を付ける。
+;;;
+;;; 展開(頭の辞書つき):
+;;;   (do (import doeff_hy.declarations doeff_hy.record)
+;;;       (defclass [(dataclass :frozen True :kw-only True)] ChatId []
+;;;         "chat の id"
+;;;         ((annotate value str))
+;;;         (defn __post-init__ [self]
+;;;           (setv value self.value)
+;;;           (doeff_hy.record.require-check "ChatId" #("value") "(CHAT-ID-PATTERN.fullmatch value)"
+;;;                                          (CHAT-ID-PATTERN.fullmatch value) {"value" value})
+;;;           None))
+;;;       (setattr ChatId "__doeff_tags__" (doeff_hy.declarations.DefinitionTags :context "chat" :role "type"))
+;;;       (setattr ChatId "__doeff_checks__" #("(CHAT-ID-PATTERN.fullmatch value)")))
 ;;;
 ;;; ---------------------------------------------------------------------------
 ;;; `defenum` — 閉じた値の集合(文字列の Enum)を 1 行で建てる
@@ -75,11 +121,119 @@
 ;;; 展開の基底の `StrEnum` は、defrecord の `dataclass` と同じく使う側の
 ;;; scope の名前を指す(Python 3.11 以上は `enum.StrEnum`)。
 
+(require doeff-hy.macros [deff])
 (import dataclasses [dataclass])
+(import hy)
+(import hy.models [Dict Expression List String Symbol])
+(import doeff_hy.declarations [declared-value refuse-unknown-keys tags-form])
+
+;; defrecord の頭の辞書が受ける鍵(どちらも省ける)。
+(setv RECORD-KEYS #(":tags" ":check"))
 
 
-(defmacro defrecord [name #* fields]
-  `(defclass [(dataclass :frozen True :kw-only True)] ~name [] ~@fields))
+(defn record-field-names [fields]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "defrecord の欄の form から欄の名前(mangle した名)を順に取る。
+   `#^ T x` = (annotate x T)・`(#^ T x)` = ((annotate x T))・`(setv #^ T x 既定値)`・裸の記号 x を欄と読む
+   (hy-index の record_def と同じ読み方)。それ以外の form(method など)は欄ではない。"
+  (setv names [])
+  (for [form fields]
+    (setv target
+      (cond
+        (isinstance form Symbol) form
+        (and (isinstance form Expression) form (= (str (get form 0)) "annotate")) (get form 1)
+        (and (isinstance form Expression) (= (len form) 1)
+             (isinstance (get form 0) Expression) (get form 0)
+             (= (str (get (get form 0) 0)) "annotate"))
+          (get (get form 0) 1)
+        (and (isinstance form Expression) (>= (len form) 2) (= (str (get form 0)) "setv")
+             (isinstance (get form 1) Expression) (= (str (get (get form 1) 0)) "annotate"))
+          (get (get form 1) 1)
+        True None))
+    (when (isinstance target Symbol)
+      (.append names (hy.mangle target))))
+  names)
+
+
+(defn check-fields [check field-names]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "検めの式 check が参照する欄の名前(mangle した名・欄の順)。`value.x` のような dotted の記号は頭の名で読む。"
+  (setv seen (set)
+        pending [check])
+  (while pending
+    (setv form (.pop pending))
+    (cond
+      (and (isinstance form Symbol) (get (.split (str form) ".") 0))
+        (.add seen (hy.mangle (get (.split (str form) ".") 0)))
+      (and (isinstance form hy.models.Sequence) (not (isinstance form String)))
+        (.extend pending form)))
+  (lfor n field-names :if (in n seen) n))
+
+
+(defn record-form [name docstring header fields]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "頭の辞書 {:tags … :check […]} つきの defrecord の展開の form を作る。
+   :check の各式は __post_init__ の中で、参照する欄をその場の名前に束縛して評価する(作る時に 1 つずつ・書いた順)。"
+  (setv where (+ "defrecord " (str name)))
+  (refuse-unknown-keys header RECORD-KEYS where)
+  (setv checks (declared-value header ":check")
+        tags (declared-value header ":tags")
+        names (record-field-names fields))
+  (when (and (is-not checks None) (not (isinstance checks List)))
+    (raise (SyntaxError (.format "{}: :check は検めの式の list([(pred 欄) …] の形): {}" where (hy.repr checks)))))
+  (setv statements []
+        bound [])
+  (for [check (or checks [])]
+    (when (and (isinstance check Expression) (>= (len check) 3)
+               (isinstance (get check 0) hy.models.Keyword) (= (str (get check 0)) ":"))
+      (raise (SyntaxError (.format "{}: :check の {} — 欄の型は欄の注記 #^ 型 で書く(:check は真偽の式だけ)" where (hy.repr check)))))
+    (setv used (check-fields check names))
+    (when (not used)
+      (raise (SyntaxError (.format "{}: :check の {} は欄を 1 つも参照しない(欄 = {})" where (hy.repr check) (.join " " names)))))
+    (.extend bound (lfor n used :if (not-in n bound) n))
+    (.append statements
+      `(doeff_hy.record.require-check
+         ~(str name) #(~@(lfor n used (String (hy.unmangle n)))) ~(.lstrip (hy.repr check) "'")
+         ~check {~@(sum (lfor n used [(String (hy.unmangle n)) (Symbol n)]) [])})))
+  (setv post-init
+    (if statements
+        [`(defn __post-init__ [self]
+            ~@(lfor n bound `(setv ~(Symbol n) (. self ~(Symbol n))))
+            ~@statements
+            None)]
+        []))
+  `(do
+     (import doeff_hy.declarations doeff_hy.record)
+     (defclass [(dataclass :frozen True :kw-only True)] ~name []
+       ~@(if (is docstring None) [] [docstring])
+       ~@fields
+       ~@post-init)
+     (setattr ~name "__doeff_tags__" ~(tags-form tags where))
+     (setattr ~name "__doeff_checks__" #(~@(lfor c (or checks []) (String (.lstrip (hy.repr c) "'")))))))
+
+
+(defmacro defrecord [name #* forms]
+  (setv docstring None
+        rest (list forms))
+  (when (and rest (isinstance (get rest 0) String))
+    (setv docstring (get rest 0)
+          rest (cut rest 1 None)))
+  (if (and rest (isinstance (get rest 0) Dict))
+      (record-form name docstring (get rest 0) (cut rest 1 None))
+      `(defclass [(dataclass :frozen True :kw-only True)] ~name [] ~@forms)))
+
+
+(deff require-check [#^ str record #^ tuple fields #^ str check result #^ dict values]  ; defk にできない: defrecord の展開が dataclass の __post_init__ から呼ぶ(Program を実行できない所)
+  {:pre [(: record str) (: fields tuple) (: check str) (: result "検めの式の値 — 真偽として読む(Program なら誤り)") (: values dict)]
+   :post [(: % None)]
+   :tags {:context "doeff-hy" :role "judgment"}}
+  "defrecord の :check の 1 式の結果を検める。偽なら ValueError で「どの型のどの欄がどの検めで落ちたか」と欄の値を名指す。
+   結果が Program / effect(defk を :check で呼んだ形)なら TypeError — Program は真に見えて黙って通ってしまうため。"
+  (import doeff [DoExpr EffectBase])
+  (when (isinstance result #(DoExpr EffectBase))
+    (raise (TypeError (.format "{} の :check の {} が Program を返した — :check は純粋な式で書く(defk は作る時に呼べない)" record check))))
+  (when (not result)
+    (raise (ValueError (.format "{} の欄 {} が検め {} で落ちた: {}"
+                                record (.join "・" fields) check
+                                (.join " " (gfor #(k v) (.items values) (.format "{}={!r}" k v)))))))
+  None)
 
 
 ;; 展開の時に member の名前から値を計算する(template macro の形の外 — 頭注)。

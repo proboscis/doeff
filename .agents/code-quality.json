@@ -425,7 +425,7 @@
       "layer": "domain",
       "typed": true,
       "macros": {
-        "defrecord": "template",
+        "defrecord": "fixed",
         "defenum": "fixed"
       }
     },
