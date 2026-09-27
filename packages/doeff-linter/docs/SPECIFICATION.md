@@ -9,6 +9,8 @@
 |---|---|
 | `doeff-linter --output-format editor-json [<path>…]` | repo 全体を判じる。path を渡すと、その下の file の違反と module だけを出す(判定は全体で行う) |
 | `doeff-linter --output-format editor-json --stdin --path <file>` | stdin の内容を `<file>` として判じる(保存前の内容)。出すのはその file の違反と module だけ |
+| `doeff-linter --output-format editor-json --semantic <file>` | 保存した `<file>` の定義を Jev に問うて判じる(意味の規則 — 10 節) |
+| `doeff-linter --output-format editor-json --stdin --path <file> --semantic --semantic-changed` | stdin の内容の定義のうち、中身が変わった定義(cache に答えの無い定義)だけを Jev に問う。書きかけで読めない定義は問わない(エディタが編集中に打つのが止まった時) |
 | `--config <file>` | 設定 file。`[tool.doeff-linter]` を持つ pyproject.toml の形でも、節の中身だけの TOML でもよい |
 | `--root <dir>` | repo の根。層の置き場・登録簿・鍵の path はここからの相対 |
 
@@ -246,8 +248,11 @@ intent の層は Tach の interfaces に当たる — 別の service が読ん�
 | DOEFF201 | 要求を相手の話し方へ言い換えるのを越えて、業務の判断(誰に許すか・業務の決まり・宛先・業務の結果)をしているか(jev-lint の J2) | `semantic.business_decision.layers` | warning p ≥ 0.8・info p ≥ 0.6 |
 | DOEFF202 | 通信の手段(URL や query・HTTP の method や status・JSON の wire・SQL・宛先の address)を知っているか(jev-lint の J3) | `semantic.transport_knowledge.layers` | warning p ≥ 0.6・info p ≥ 0.4 |
 
-- **撃つのは `--semantic`(path の引数の file、無ければ git で変わった file)と `--semantic-all`(設定した層の全定義)の時だけ。** 決定的な規則の実行
-  (エディタの保存ごと・hook・text / json)は cache を読むだけで、Jev を呼ばない(キーも要らない)。
+- **撃つのは `--semantic`(path の引数の file、`--stdin` なら `--path` の file、無ければ git で変わった file)と `--semantic-all`(設定した層の全定義)の時だけ。**
+  `--semantic-changed` を足すと、そのうち手元の cache に答えの無い定義(中身が変わった定義)だけを撃つ(エディタが編集中に打つのが止まった時に使う)。
+  決定的な規則の実行は Jev を呼ばない(キーも要らない): エディタの 1 file(`--stdin`)は cache を読むだけ、全体の実行(hook・text / json)は cache を読み、
+  代理が設定されていれば cache に無い定義を代理に「覚えている時だけ」問う(下の「Jev の呼び出しを覚える代理」)。
+- **書きかけで読めない定義(閉じない括弧・対応しない閉じ括弧・閉じない文字列)は、どの実行でも問わない**(未判定に数える)。
 - 問う定義 = 設定した層の Hy の最上位の defn・defk・deff・defp・defpp・defhandler・defeffect・defclass・defrecord・defenum。
 - state = 定義の名・kind・file・申告の `:tags` を消した source(`semantic.source_limit` 字 = 既定 1,800 で切る)・置かれた層の説明(architecture.hy の layer の説明か、
   `layers.describe`)。
@@ -271,10 +276,24 @@ transport_knowledge = { layers = ["core"], warning = 0.6, info = 0.4 }
 workers = 8
 timeout_seconds = 30
 source_limit = 1800
+# Jev の呼び出しを覚える代理(doeff の packages/doeff-jev-proxy)— 無ければ使わない
+proxy_url = "http://jev-proxy.example:8878/v1/systemone"
+proxy_token_file = "~/.config/jev/proxy-token"   # 既定
+proxy_peek_timeout_ms = 1500                     # 既定(覚えている時だけの問いの全部を合わせた上限)
 ```
 
+**Jev の呼び出しを覚える代理**: 本文(state・問い・model)を正規化した sha256 で答えを覚え、初めての鍵だけを本物の Jev に渡す server
+(doeff の `packages/doeff-jev-proxy`・口は TypeSafe の `/v1/systemone` と同じ)。
+
+- 宛先は repo ごとの設定 `proxy_url` で向ける(機体全体の環境変数にはしない — 向けない repo は今までどおり)。環境変数 `JEV_BASE_URL` が在ればそちらが勝つ。
+- 代理へは代理の token(`proxy_token_file` の中身)だけを送る。TypeSafe のキーは送らない。token の file が無ければ撃たない(キーが無いのと同じ理由を出す)。
+- 全体の実行・hook は、手元の cache に無い定義を見出し `Cache-Control: only-if-cached`(覚えている時だけ答える・無ければ 504 で本物の Jev を呼ばない)で問い、
+  返った答え(見出し `x-jev-proxy: hit` の物だけ)を手元の cache に書く。代理に届かない・時間切れの時は、残りを問わず手元の cache だけで動く。
+- 較正の見張りの問いは `Cache-Control: no-cache`(覚えを使わない — model の中身が変わったことを代理の覚えが隠さないため)。
+
 editor-json: violation の `source`(`linter` = 決定的な規則・`jev` = 意味の判定)と `probability`(Jev の違反だけ)、最上位の `semantic`
-(`model`・`wire`・`judged`・`unjudged`・`asked`・`cost_usd`(gateway だけが返す)・`input_tokens`・`served_model`・`calibration` = not-run / ok / drifted / failed)。
+(`model`・`wire`・`judged`・`unjudged`・`asked`・`peeked`(代理が覚えていた答えを受け取った数)・`cost_usd`(gateway だけが返す)・`input_tokens`・
+`served_model`・`calibration` = not-run / ok / drifted / failed)。`wire` は宛先の形と決め方(例 `direct(default)`・`direct(env)`・`direct(repo)` = repo の代理)。
 
 
 ## 11. 素の関数(deff)の理由と検の書き方 — DOEFF110・111・118・203
