@@ -124,7 +124,7 @@ pub struct DefinitionFact {
 }
 
 /// 定義の規則が見る定義の頭。
-const DEFINITION_HEADS: &[&str] = &["defn", "defn/a", "defk", "deff", "defp", "defpp", "defhandler", "defeffect", "defrecord"];
+const DEFINITION_HEADS: &[&str] = &["defn", "defn/a", "defk", "deff", "defp", "defpp", "defhandler", "defeffect", "defrecord", "defwire"];
 
 impl ModuleFacts {
     /// module の実効のタグの全部(定義の :tags と、タグの無い定義に効く module の頭のタグ)。

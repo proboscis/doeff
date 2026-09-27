@@ -660,7 +660,7 @@ fn tag_reading(tags: Option<&TagsSection>, function_definers: Option<&Vec<String
             .unwrap_or_else(|| set_of(&["defk", "deff", "defp", "defpp", "defhandler"])),
         plain_definers: tags.plain_definers.map(|v| v.into_iter().collect()).unwrap_or_else(|| set_of(&["defn", "defclass", "defenum"])),
         effect_definers: tags.effect_definers.map(|v| v.into_iter().collect()).unwrap_or_else(|| set_of(&["defeffect"])),
-        record_definers: tags.record_definers.map(|v| v.into_iter().collect()).unwrap_or_else(|| set_of(&["defrecord"])),
+        record_definers: tags.record_definers.map(|v| v.into_iter().collect()).unwrap_or_else(|| set_of(&["defrecord", "defwire"])),
         function_definers: function_definers
             .map(|v| v.iter().cloned().collect())
             .unwrap_or_else(|| set_of(&["defk", "deff", "defp", "defpp", "defhandler", "defn"])),
