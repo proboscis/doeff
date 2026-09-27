@@ -431,6 +431,11 @@
           "default": "doeff-linter --output-format editor-json",
           "scope": "resource",
           "markdownDescription": "規則の判定の正本である linter を呼ぶ命令(workspace ごと)。拡張は出力(契約 lint-contract-v1 の JSON)を表示するだけで、自分では判定しない。全体は引数なし、編集中の file は `--stdin --path <path>` を足して呼ぶ。空にすると linter を呼ばない。"
+        },
+        "doeff-runner.hy.lintInlineMessages": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "linter の違反のある行の末尾に、重さごとの色で短い文(● 規則 文)を出す。行の左端の印と右端のスクロールバーの印は常に出す。"
         }
       }
     },

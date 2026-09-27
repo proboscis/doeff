@@ -6,6 +6,8 @@ import { lintArgs, splitCommand } from '../../lint/runner';
 import { LintStore } from '../../lint/store';
 import {
   diagnosticOf,
+  displayRange,
+  inlineAnnotations,
   lintChildren,
   mapRoots,
   OUTSIDE_LAYERS,
@@ -151,7 +153,7 @@ suite('linter の結果の見せ方', () => {
 
   test('層の地図 — 層の順(知らない層は後、層の外は最後)→ dir → file、数は linter の要約のまま', () => {
     const modules = report('report.json').modules.map((module) => ({ root: '/repo', module }));
-    const roots = mapRoots(modules);
+    const roots = mapRoots(modules, report('report.json').violations);
     assert.deepStrictEqual(roots.map(show), [
       'layer core (2)',
       'layer intent (1)',
@@ -168,5 +170,44 @@ suite('linter の結果の見せ方', () => {
       'module controllers/kanban/core/plan.hy (0)'
     ]);
     assert.deepStrictEqual(lintChildren(roots[4]).map(show), ['dir scripts (0)']);
+  });
+
+  test('地図の file を展開すると、その file の違反が行の順に出る(違反の無い file は子なし)', () => {
+    const r = report('report.json');
+    const roots = mapRoots(r.modules.map((module) => ({ root: '/repo', module })), r.violations);
+    const core = lintChildren(lintChildren(lintChildren(roots[0])[0])[0])[0];
+    const [goal, plan] = lintChildren(core);
+    assert.deepStrictEqual(lintChildren(goal).map(show), ['violation 3 warning', 'violation 12 error']);
+    assert.deepStrictEqual(lintChildren(plan), []);
+  });
+});
+
+suite('linter の違反を editor の上で見つけやすくする', () => {
+  test('行末の注記 — 行ごとに 1 つ、最も強い重さの先頭の違反と、同じ行の他の件数', () => {
+    const [newBreach, known, info] = report('report.json').violations;
+    const sameLine = { ...info, severity: 'error' as const, range: known.range, rule: 'DOEFF102', message: '同じ行の別の違反' };
+    const annotations = inlineAnnotations([newBreach, known, sameLine, info]);
+    assert.deepStrictEqual(
+      annotations.map((a) => `${a.line} ${a.severity} ${a.count} ${a.text}`),
+      [
+        '0 info 1 ● DOEFF101 setv の再代入',
+        '3 error 2 ● DOEFF102 同じ行の別の違反(他 1 件)',
+        '12 error 1 ● DOEFF201 層 core が層 foundation の controllers.foundation.records を import している'
+      ]
+    );
+  });
+
+  test('長い文は … で切る', () => {
+    const [v] = report('report.json').violations;
+    const [a] = inlineAnnotations([{ ...v, message: 'あ'.repeat(200) }]);
+    assert.ok(a.text.endsWith('…'));
+    assert.ok(a.text.length < 110);
+  });
+
+  test('空(0 幅)の範囲は行全体に広げ、幅のある範囲はそのまま', () => {
+    const [newBreach, , info] = report('report.json').violations;
+    assert.deepStrictEqual(displayRange(info.range, 17), { start: { line: 0, character: 0 }, end: { line: 0, character: 17 } });
+    assert.strictEqual(displayRange(info.range, undefined).end.character, 10000);
+    assert.deepStrictEqual(displayRange(newBreach.range, 5), newBreach.range);
   });
 });

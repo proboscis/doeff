@@ -2,7 +2,7 @@
 // 判定はしない(何が違反かも、地図の層・色も linter の出力のまま)。VS Code には触らない。
 
 import * as path from 'path';
-import type { LintModule, LintRule, LintSeverity, LintViolation } from './contract';
+import type { LintModule, LintRange, LintRule, LintSeverity, LintViolation } from './contract';
 
 /** 波線 1 本の中身。 */
 export interface LintDiagnostic {
@@ -48,6 +48,8 @@ export type LintNode =
 export interface MapEntry {
   readonly relative: string;
   readonly module: LintModule;
+  /** その file の今の違反(展開すると 1 件ずつ出す) */
+  readonly violations: readonly LintViolation[];
 }
 
 /** 束の中の違反の数(地図の色は違反の有無だけで決める)。 */
@@ -106,7 +108,10 @@ const LAYER_ORDER = ['core', 'intent', 'protocol', 'foundation', 'entry'];
 export const OUTSIDE_LAYERS = '(層の外)';
 
 /** 地図の最上段 — 層ごとの束。 */
-export function mapRoots(modules: ReadonlyArray<{ readonly root: string; readonly module: LintModule }>): LintNode[] {
+export function mapRoots(
+  modules: ReadonlyArray<{ readonly root: string; readonly module: LintModule }>,
+  violations: readonly LintViolation[]
+): LintNode[] {
   if (modules.length === 0) {
     return [{ tag: 'message', label: 'linter の地図の材料(modules)がまだありません' }];
   }
@@ -116,7 +121,8 @@ export function mapRoots(modules: ReadonlyArray<{ readonly root: string; readonl
     const inRoot = path.relative(root, module.path);
     const relative = roots.size > 1 ? path.join(path.basename(root), inRoot) : inRoot;
     const layer = module.layer ?? OUTSIDE_LAYERS;
-    byLayer.set(layer, [...(byLayer.get(layer) ?? []), { relative, module }]);
+    const own = violations.filter((v) => path.normalize(v.path) === path.normalize(module.path));
+    byLayer.set(layer, [...(byLayer.get(layer) ?? []), { relative, module, violations: own }]);
   }
   // 層を決まった順(core → entry、知らない層、層の外)に並べるための順位
   const rank = (layer: string): number => {
@@ -156,6 +162,13 @@ function dirChildren(prefix: string, entries: readonly MapEntry[]): LintNode[] {
   return [...dirs, ...modules];
 }
 
+/** 違反を行の順の節にする(file の子・地図の file の子)。 */
+function violationsByLine(violations: readonly LintViolation[]): LintNode[] {
+  return [...violations]
+    .sort((a, b) => a.range.start.line - b.range.start.line || a.range.start.character - b.range.start.character)
+    .map((violation) => ({ tag: 'violation', violation }));
+}
+
 /** 節の子を作る(展開した時に呼ぶ)。 */
 export function lintChildren(node: LintNode): LintNode[] {
   switch (node.tag) {
@@ -172,16 +185,15 @@ export function lintChildren(node: LintNode): LintNode[] {
       }));
     }
     case 'file':
-      return [...node.violations]
-        .sort((a, b) => a.range.start.line - b.range.start.line)
-        .map((violation) => ({ tag: 'violation', violation }));
+      return violationsByLine(node.violations);
+    case 'module':
+      return violationsByLine(node.entry.violations);
     case 'layer':
       return dirChildren('', node.entries);
     case 'dir':
       return dirChildren(node.prefix, node.entries);
     case 'violation':
     case 'rule':
-    case 'module':
     case 'message':
       return [];
     default: {
@@ -189,4 +201,57 @@ export function lintChildren(node: LintNode): LintNode[] {
       throw new Error(`網羅されていない節: ${JSON.stringify(unreachable)}`);
     }
   }
+}
+
+/** 行の長さが分からない時に、行全体とみなす列(VS Code は行の長さに切り詰める)。 */
+export const WHOLE_LINE = 10_000;
+
+/** 表示に使う範囲 — linter の範囲が空(0 幅)なら、その行の全体に広げる(見える波線と選択にする)。 */
+export function displayRange(range: LintRange, lineLength: number | undefined): LintRange {
+  const empty = range.start.line === range.end.line && range.start.character === range.end.character;
+  if (!empty) {
+    return range;
+  }
+  return {
+    start: { line: range.start.line, character: 0 },
+    end: { line: range.start.line, character: lineLength ?? WHOLE_LINE }
+  };
+}
+
+/** 重さの強い順(同じ行の注記の色は最も強い物で決める)。 */
+const SEVERITY_RANK: Readonly<Record<LintSeverity, number>> = { error: 0, warning: 1, info: 2 };
+
+/** 行末の注記 1 つ — 行・その行の最も強い重さ・短い文。 */
+export interface InlineAnnotation {
+  readonly line: number;
+  readonly severity: LintSeverity;
+  readonly text: string;
+  readonly count: number;
+}
+
+/** 注記の文に載せる文の長さの上限(長い文は … で切る)。 */
+const INLINE_MESSAGE_LIMIT = 90;
+
+/**
+ * 1 つの file の違反から行末の注記を作る — 行ごとに 1 つ、最も強い重さの先頭の違反を「● 規則 文」、
+ * 同じ行に複数あれば「(他 N 件)」を添える。行の順に返す。
+ */
+export function inlineAnnotations(violations: readonly LintViolation[]): InlineAnnotation[] {
+  const byLine = new Map<number, LintViolation[]>();
+  for (const violation of violations) {
+    const line = violation.range.start.line;
+    byLine.set(line, [...(byLine.get(line) ?? []), violation]);
+  }
+  return [...byLine.keys()]
+    .sort((a, b) => a - b)
+    .map((line) => {
+      const onLine = [...(byLine.get(line) ?? [])].sort(
+        (a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || a.range.start.character - b.range.start.character
+      );
+      const first = onLine[0];
+      const message =
+        first.message.length > INLINE_MESSAGE_LIMIT ? `${first.message.slice(0, INLINE_MESSAGE_LIMIT - 1)}…` : first.message;
+      const more = onLine.length > 1 ? `(他 ${onLine.length - 1} 件)` : '';
+      return { line, severity: first.severity, text: `● ${first.rule} ${message}${more}`, count: onLine.length };
+    });
 }

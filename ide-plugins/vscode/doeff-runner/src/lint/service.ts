@@ -5,7 +5,7 @@ import * as vscode from 'vscode';
 import type { LintSeverity } from './contract';
 import type { Linter, LintOutcome, LintRequest } from './runner';
 import type { LintStore } from './store';
-import { diagnosticOf } from './view';
+import { diagnosticOf, displayRange } from './view';
 
 const EDIT_DEBOUNCE_MS = 800;
 
@@ -167,7 +167,11 @@ export class LintService implements vscode.Disposable {
     const byPath = new Map<string, vscode.Diagnostic[]>();
     for (const violation of this.store.violations()) {
       const spec = diagnosticOf(violation);
-      const r = violation.range;
+      // 空(0 幅)の範囲は見えないので、開いている document ならその行の長さまで、それ以外は行全体に広げる
+      const open = vscode.workspace.textDocuments.find((doc) => doc.uri.fsPath === violation.path);
+      const line = violation.range.start.line;
+      const lineLength = open !== undefined && line < open.lineCount ? open.lineAt(line).text.length : undefined;
+      const r = displayRange(violation.range, lineLength);
       const diagnostic = new vscode.Diagnostic(
         new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character),
         spec.message,
