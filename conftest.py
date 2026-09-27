@@ -315,7 +315,7 @@ def _watchdog_timeout_for_item(item) -> int:
 #
 # A skip alone is silent: the run would read "measured, nothing red" for a
 # test that never ran.  So at the end of the session the unmet premises are
-# named as "not executed" in the check layer's own format — one line per word
+# named as "not executed" in the check layer's own format — one line per skipped test
 # (dotfiles agentcli remote_check — the file the land tool reads; it records
 # the line as missing coverage, not as a red).  The format is read from the
 # check layer on every run and never copied here: a copy keeps agreeing with
@@ -498,7 +498,12 @@ def _unmet_premises(
 
 
 def pytest_terminal_summary(terminalreporter):
-    """Name the unmet machine premises as not executed: one line per check-layer word."""
+    """Name the unmet machine premises as not executed: one line per skipped test.
+
+    One line per test, not one per check-layer word: the check layer folds a
+    reason to 300 characters, so a line that joined several tests lost the
+    node ids at its end (agora-redesign#645 item 5).
+    """
     unmet = _unmet_premises(
         terminalreporter.stats.get("skipped", []),
         terminalreporter.config.stash.get(_UNMET_WORDS, {}),
@@ -510,7 +515,8 @@ def pytest_terminal_summary(terminalreporter):
     unknown: dict[str, list[str]] = {}
     for word, named in unmet.items():
         if layer is not None and word in layer.UNEXECUTED_KINDS:
-            terminalreporter.write(layer.unexecuted_line([word], "; ".join(named)))
+            for entry in named:
+                terminalreporter.write(layer.unexecuted_line([word], entry))
         else:
             unknown[word] = named
     if not unknown:

@@ -229,7 +229,7 @@ def _declarations(check_layer: ModuleType, result: pytest.RunResult) -> tuple:
 def test_tool_that_does_not_start_is_skipped_and_named_not_executed(
     tmp_path: Path, check_layer: ModuleType | None, codex: str | None, said: str
 ) -> None:
-    """The daily pod's shape: both tests skipped, named on one not-executed line."""
+    """The daily pod's shape: both tests skipped, each named on its own not-executed line."""
     result, home = _sample_machine(tmp_path, codex=codex, with_check_layer=True)
 
     result.assert_outcomes(skipped=2)
@@ -244,11 +244,39 @@ def test_tool_that_does_not_start_is_skipped_and_named_not_executed(
         )
         return
     declarations = _declarations(check_layer, result)
-    assert [declaration.kind for declaration in declarations] == ["tool-absent"]
-    assert declarations[0].reason.startswith(f"{FIRST_NODEID}: ")
-    assert said in declarations[0].reason
+    assert [declaration.kind for declaration in declarations] == ["tool-absent", "tool-absent"]
+    assert [declaration.reason.split(": ", 1)[0] for declaration in declarations] == [
+        FIRST_NODEID,
+        SECOND_NODEID,
+    ]
+    assert all(said in declaration.reason for declaration in declarations)
     # The land tool must not retry this on the same machine: only another machine can answer.
     assert declarations[0].kind in check_layer.MACHINE_BOUND_UNEXECUTED_KINDS
+
+
+def test_every_skipped_test_keeps_its_node_id_however_many_there_are(
+    check_layer: ModuleType | None,
+) -> None:
+    """The check layer folds a reason to 300 characters; one line per test keeps every node id.
+
+    Counterexample: the old shape joined the tests of one word into one line, and the
+    node ids after the fold were lost (agora-redesign#645 item 5).
+    """
+    if check_layer is None:
+        pytest.skip("no check layer on this machine: nothing folds the reason")
+    detail = "exits 127: codex: router entry point, no binary behind it"
+    entries = [f"packages/doeff-x/tests/test_codex_{i}.py::test_worker_{i}: {detail}" for i in range(4)]
+
+    def named(text: str) -> list[str]:
+        return [d.reason.split(": ", 1)[0] for d in check_layer.parse_unexecuted_all(text)]
+
+    per_test = "".join(check_layer.unexecuted_line(["tool-absent"], entry) for entry in entries)
+    assert named(per_test) == [entry.split(": ", 1)[0] for entry in entries]
+    joined = check_layer.unexecuted_line(["tool-absent"], "; ".join(entries))
+    last = entries[-1].split(": ", 1)[0]
+    assert last not in check_layer.parse_unexecuted_all(joined)[0].reason, (
+        "the counterexample no longer loses a node id: the fold is not at 300 characters"
+    )
 
 
 def test_tool_that_starts_and_then_fails_is_red_and_not_declared(
@@ -436,7 +464,7 @@ def test_checkout_premise_on_a_machine_without_git_names_the_tool(
 def test_each_unmet_premise_is_named_under_its_own_word(
     tmp_path: Path, check_layer: ModuleType | None, machine_tool
 ) -> None:
-    """A tool and a checkout unmet in one run: one not-executed line per check-layer word."""
+    """A tool and a checkout unmet in one run: each test named under its own check-layer word."""
     missing = tmp_path / "no-checkout"
     sample = (
         SAMPLE_TEST
@@ -458,11 +486,16 @@ def test_each_unmet_premise_is_named_under_its_own_word(
     if check_layer is None:
         result.stdout.fnmatch_lines([f"3 test(s) {SUMMARY_WITHOUT_CHECK_LAYER}: *"])
         return
-    declarations = {d.kind: d.reason for d in _declarations(check_layer, result)}
+    declarations: dict[str, list[str]] = {}
+    for declaration in _declarations(check_layer, result):
+        declarations.setdefault(declaration.kind, []).append(declaration.reason)
     assert sorted(declarations) == ["premise-unmet", "tool-absent"]
-    assert declarations["tool-absent"].startswith(f"{FIRST_NODEID}: codex")
-    assert CHECKOUT_NODEID not in declarations["tool-absent"]
-    assert declarations["premise-unmet"] == f"{CHECKOUT_NODEID}: checkout {missing} is missing"
+    assert [reason.split(": ", 1)[0] for reason in declarations["tool-absent"]] == [
+        FIRST_NODEID,
+        SECOND_NODEID,
+    ]
+    assert all(": codex" in reason for reason in declarations["tool-absent"])
+    assert declarations["premise-unmet"] == [f"{CHECKOUT_NODEID}: checkout {missing} is missing"]
 
 
 def test_custody_copy_test_names_a_machine_without_the_custody_checkout(
