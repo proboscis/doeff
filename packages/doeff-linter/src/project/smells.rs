@@ -1,7 +1,7 @@
 //! 臭いの規則(DOEFF121〜125)— 業務の Hy の定義の中の、型と effect で書けるのに手で書いた形を拾う。
 //!
 //! operator 2026-09-28(逐語 "lets add them")。題材は agora-controllers の controllers/kanban/core/tag_judgment.hy の decide-tag。
-//! どれも決定的な形の照らしで、重さの既定は info(ADR-DOE-HY-007 R8)。
+//! どれも決定的な形の照らしで、重さの既定は warning(ADR-DOE-HY-007 R9 — Absent / Raise が本線に入ったので info から上げた)。
 //!
 //! - DOEFF121: 判断の層(設定の `smells.shape_check_layers`)の定義が、文字列の鍵の `(.get x "欄")` と、その欄への `isinstance` で
 //!   入力の形を検める(JSON の形の検めが core に入っている)。

@@ -60,7 +60,7 @@
 ;;;   式の綴りの列を class の属性 `__doeff_checks__` に残す。
 ;;; - :failure True は「この型は失敗の値」の印(値は字面の True / False だけ)。class の属性 `__doeff_failure__` に残し、
 ;;;   doeff-linter が実行せずに読む(手書きの失敗の再送出 DOEFF122 が、match の腕の型を失敗の型と知るため — 型の名から
-;;;   推し量らない。ADR-DOE-HY-007 R9)。effect の答えの失敗は defeffect の :failure / :absent で宣言する(ADR-DOE-CORE-EFFECTS-003
+;;;   推し量らない。ADR-DOE-HY-007 R10)。effect の答えの失敗は defeffect の :failure / :absent で宣言する(ADR-DOE-CORE-EFFECTS-003
 ;;;   R5)— こちらは effect の答えでない値(検めの関数が返す断りなど)のための印。
 ;;;
 ;;; 検めに使う述語の置き場(設計の要): __post_init__ は Program を実行できないので、
