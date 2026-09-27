@@ -69,3 +69,12 @@
   "外の系の store を effect で共有する 2 つの service"
   (writer (writer-program foundation) :needs #{"cluster-net"})
   (reader (reader-program foundation) :needs #{"cluster-net"}))
+
+
+(defhandler signed-puts [#^ dict rows #^ str job]
+  {:tags {:context "doeff-cluster-test" :role "foundation"}}
+  ;; process ごとの外の口の見本(本番の job ごとの身元の token に当たる): 書きを「job の名/鍵」の行にして答える。読みは答えず、
+  ;; 共有の外の世界(memory-store)へ渡す。
+  (StorePut [key value]
+    (setv (get rows (+ job "/" key)) value)
+    (resume None)))

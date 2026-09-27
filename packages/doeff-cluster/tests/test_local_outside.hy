@@ -4,7 +4,7 @@
 (import doeff_time [Delay])
 (import doeff_cluster.local [sim-cluster SimOutside ProcessesOf])
 (import tests.fixtures.envs [sim-foundation])
-(import tests.fixtures.outside_programs [shared-store memory-store StorePut StoreGet])
+(import tests.fixtures.outside_programs [shared-store memory-store signed-puts StorePut StoreGet])
 
 
 (defk wait-seconds [seconds]
@@ -34,3 +34,15 @@
   (<- processes tuple (sim-cluster (shared-store sim-foundation) (crashed-processes "writer")))
   (assert processes)
   (assert (any (gfor p processes (and (is-not p.exit-code None) (!= p.exit-code 0) (in "StorePut" p.detail)))) processes))
+
+
+(deftest test-per-process-outside-handlers-answer-before-the-shared-world-with-the-job-name
+  ;; process ごとの外の handler の組(SimOutside.per-process — job の名と worker の名で作る)は、柵の外側・共有の外の世界の手前で
+  ;; 答える: 書きは job の名つきの行になり、共有の store の "count" には届かない(読み手は数を見ないので "seen" も書かない)。
+  (val rows {})
+  (<- answer (sim-cluster (shared-store sim-foundation) (wait-seconds 30.0)
+                          :outside (SimOutside :handlers [(memory-store rows)] :effects #(StorePut StoreGet)
+                                               :per-process (fn [job worker] [(signed-puts rows job)]))))
+  (assert (>= (.get rows "writer/count" 0) 10) rows)
+  (assert (not-in "count" rows) rows)
+  (assert (not-in "reader/seen" rows) rows))
