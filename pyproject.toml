@@ -154,6 +154,9 @@ disable = ["DOEFF013"]  # Prefer Maybe Monad - intentionally using Optional/None
 
 [dependency-groups]
 dev = [
+    # make sync builds the Rust VM with maturin — declared here so every machine gets it
+    # from the lock, not from a tool installed by hand (agora-redesign#645 item 7).
+    "maturin>=1.5,<2",
     "pytest>=8.1.1",
     "pytest-asyncio>=0.24.0",
     "ruff>=0.8.0",
