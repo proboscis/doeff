@@ -1,41 +1,25 @@
 // pixel art の icon の元の定義(resources/pixel/glyphs.json)の型と、読み込みの唯一の検査、家族の枠と中の絵の重ね合わせ。
-// 色は PICO-8 の 16 色だけ。格子の 1 文字 = 1 点(`.` = 透明、`0`〜`f` = 色の番号、枠の `:` = 中の地、`A` / `B` = 家族や
-// 語ごとの色の差し替え、`L` = 物に付いた小さな灯 — 消えている時は元の定義の lamp の色、違反の重さで灯す)。VS Code には触らない(生成の script・拡張の実行時・検の 3 か所が同じ関数を使う)。
+// 色は元の定義の色の組(palette)の表だけ — 格子は色を番号の文字で参照するので、表を差し替えれば全部の sprite の色が変わる。
+// 格子の 1 文字 = 1 点(`.` = 透明、`0`〜`9`・`a`〜`v` = 色の組の番号、枠の `:` = 中の地、`A` / `B` = 家族や
+// 語ごとの色の差し替え、`L` = 物に付いた小さな灯 — 消えている時は元の定義の lamps.off の色、違反の重さで灯す)。VS Code には触らない(生成の script・拡張の実行時・検の 3 か所が同じ関数を使う)。
 
 /** 元の定義の版。 */
-export const GLYPHS_VERSION = 2;
+export const GLYPHS_VERSION = 3;
 
-/** PICO-8 の 16 色(番号の順)。これ以外の色は使わない。 */
-export const PICO8 = [
-  '#000000',
-  '#1D2B53',
-  '#7E2553',
-  '#008751',
-  '#AB5236',
-  '#5F574F',
-  '#C2C3C7',
-  '#FFF1E8',
-  '#FF004D',
-  '#FFA300',
-  '#FFEC27',
-  '#00E436',
-  '#29ADFF',
-  '#83769C',
-  '#FF77A8',
-  '#FFCCAA'
-] as const;
+/** 色の組 — 番号の順の `#RRGGBB`(元の定義の palette の表。sprite の格子は番号の文字で参照する)。 */
+export type Palette = readonly string[];
 
 /** 色の明るさ(0〜1・sRGB の重みの和)— 旗の 2 色が見分けられるかを測るため。 */
-export function lightness(color: ColorIndex): number {
-  const hex = PICO8[color];
+export function lightness(palette: Palette, color: ColorIndex): number {
+  const hex = palette[color];
   const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
-/** 色の番号の文字(`0`〜`f`)。 */
-const COLOR_CHARS = '0123456789abcdef';
+/** 色の番号の文字(`0`〜`9`・`a`〜`v` — 色の組は 32 色まで)。 */
+const COLOR_CHARS = '0123456789abcdefghijklmnopqrstuv';
 
-/** 色の番号(0〜15)。 */
+/** 色の番号(色の組の表の位置)。 */
 export type ColorIndex = number;
 
 /** 重ね合わせた後の格子 — 行ごとの点(null = 透明)。 */
@@ -62,8 +46,6 @@ export const ACTIVITY_BAR_SIZE = 24 * DENSITY;
 /** 色の差し替えの名前(枠の `A` / `B` と、物に付いた灯の `L`)。 */
 export const TINT_SLOTS = ['A', 'B', 'L'] as const;
 
-/** 字体(単色)と輪郭に数える色 — 黒(0)と紺(1)。sprite の外周はこのどちらかで縁取る。 */
-export const OUTLINE_COLORS: readonly ColorIndex[] = [0, 1];
 export type TintSlot = (typeof TINT_SLOTS)[number];
 export type Tint = Readonly<Partial<Record<TintSlot, ColorIndex>>>;
 
@@ -125,10 +107,20 @@ export interface ServiceFlags {
 
 /** 拡張の icon — 色つきの icon の名前と、activity bar の単色の輪郭(48×48 の点を 24 css px で出す)。 */
 export interface ExtensionIcon {
+  /** 小さく出る所(16・32)で使う語の icon の名前 */
   readonly glyph: string;
+  /**
+   * 拡張の一覧の icon(128×128)の格子 — 32×32 を拡大すると細部が足りないので別に描く(64×64 を 2 倍、または
+   * 128×128 をそのまま)。格子の点の数 × scale が EXTENSION_ICON_PX
+   */
+  readonly icon: readonly string[];
+  /** 拡張の一覧の icon の格子の拡大の倍率(整数) */
   readonly scale: number;
   readonly activityBar: readonly string[];
 }
+
+/** 拡張の一覧の icon の大きさ(画素)。 */
+export const EXTENSION_ICON_PX = 128;
 
 /** 元の定義の全体。 */
 export interface GlyphSet {
@@ -137,8 +129,20 @@ export interface GlyphSet {
   readonly glyphs: readonly GlyphSource[];
   readonly serviceFlags: ServiceFlags;
   readonly extension: ExtensionIcon;
-  /** 消えている灯(`L`)の色 — 灯は違反の重さの色で灯す */
-  readonly lamp: ColorIndex;
+  /** 色の組(番号の順の `#RRGGBB`)— 生成物・拡張・見本の画はすべてこの表で色を引く */
+  readonly palette: Palette;
+  /** 灯(`L`)の色 — 消えている時と違反の重さごと */
+  readonly lamps: Lamps;
+  /** 輪郭の色 — 字体(単色)に数える色。先頭は右下の印の周りに足す縁の色 */
+  readonly outline: readonly ColorIndex[];
+}
+
+/** 灯の色 — 消えている時(off)と違反の重さ(error・warning・info)。 */
+export interface Lamps {
+  readonly off: ColorIndex;
+  readonly error: ColorIndex;
+  readonly warning: ColorIndex;
+  readonly info: ColorIndex;
 }
 
 /** 読み込みの結果 — 読めたか、理由つきで読めなかったか。 */
@@ -188,9 +192,60 @@ function list(value: JsonObject, key: string, where: string): readonly unknown[]
 /** 色の番号の文字を読む。 */
 function colorOf(value: unknown, where: string): ColorIndex {
   if (typeof value !== 'string' || value.length !== 1 || !COLOR_CHARS.includes(value)) {
-    fail(`${where}: PICO-8 の色の番号(0〜f の 1 文字)ではない: ${JSON.stringify(value)}`);
+    fail(`${where}: 色の番号(0〜9・a〜v の 1 文字)ではない: ${JSON.stringify(value)}`);
   }
   return COLOR_CHARS.indexOf(value);
+}
+
+/** 色の組の中の番号を読む(色の組に無い番号は断る)。 */
+function paletteColorOf(value: unknown, palette: Palette, where: string): ColorIndex {
+  const color = colorOf(value, where);
+  if (color >= palette.length) {
+    fail(`${where}: 色の組(${palette.length} 色)に無い番号: ${JSON.stringify(value)}`);
+  }
+  return color;
+}
+
+/**
+ * 色の組の表を読む — 1 行 = `{ "char": 番号の文字, "color": "#RRGGBB", "role": 役の一言 }`。番号の文字は 0 から順に
+ * 並べる(表の位置が番号 — 抜けや入れ替わりは断る)。2 色以上 32 色まで。
+ */
+function paletteOf(value: unknown, where: string): Palette {
+  if (!Array.isArray(value) || value.length < 2 || value.length > COLOR_CHARS.length) {
+    fail(`${where}: 2〜${COLOR_CHARS.length} 行の配列ではない`);
+  }
+  return value.map((row: unknown, i) => {
+    const r = record(row, `${where}[${i}]`);
+    const ch = text(r, 'char', `${where}[${i}]`);
+    if (ch !== COLOR_CHARS[i]) {
+      fail(`${where}[${i}].char: 番号の順の文字 ${COLOR_CHARS[i]} ではない: ${JSON.stringify(ch)}`);
+    }
+    const color = text(r, 'color', `${where}[${i}]`);
+    if (!/^#[0-9A-F]{6}$/.test(color)) {
+      fail(`${where}[${i}].color: 大文字の #RRGGBB ではない: ${JSON.stringify(color)}`);
+    }
+    text(r, 'role', `${where}[${i}]`);
+    return color;
+  });
+}
+
+/** 灯の色(off・error・warning・info)を読む。 */
+function lampsOf(value: unknown, palette: Palette, where: string): Lamps {
+  const r = record(value, where);
+  return {
+    off: paletteColorOf(r.off, palette, `${where}.off`),
+    error: paletteColorOf(r.error, palette, `${where}.error`),
+    warning: paletteColorOf(r.warning, palette, `${where}.warning`),
+    info: paletteColorOf(r.info, palette, `${where}.info`)
+  };
+}
+
+/** 輪郭の色(1 色以上)を読む。 */
+function outlineOf(value: unknown, palette: Palette, where: string): readonly ColorIndex[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    fail(`${where}: 1 色以上の配列ではない`);
+  }
+  return value.map((c: unknown, i) => paletteColorOf(c, palette, `${where}[${i}]`));
 }
 
 /** 文字が色の差し替えの名前(A / B / L)であるかを見る。 */
@@ -236,6 +291,8 @@ function gridOf(value: unknown, size: number, allowed: string, where: string): r
 const FRAME_CHARS = `.:${COLOR_CHARS}ABL`;
 /** 絵の格子の文字 — 透明(枠を見せる)・色・差し替え。 */
 const PICTURE_CHARS = `.${COLOR_CHARS}ABL`;
+/** 拡張の一覧の icon の格子の文字 — 透明・色・灯(差し替えの A / B は使わない)。 */
+const ICON_CHARS = `.${COLOR_CHARS}L`;
 /** 旗の模様の文字。 */
 const PATTERN_CHARS = '.AB';
 /** 単色の格子の文字(`#` = 点)。 */
@@ -320,9 +377,9 @@ function resolvePictures(raw: readonly RawGlyph[]): GlyphSource[] {
 }
 
 /** service の旗の決まり(色・模様・検算する名前)を検める。 */
-function serviceFlagsOf(value: unknown, where: string): ServiceFlags {
+function serviceFlagsOf(value: unknown, palette: Palette, where: string): ServiceFlags {
   const r = record(value, where);
-  const colors = list(r, 'colors', where).map((c, i) => colorOf(c, `${where}.colors[${i}]`));
+  const colors = list(r, 'colors', where).map((c, i) => paletteColorOf(c, palette, `${where}.colors[${i}]`));
   if (new Set(colors).size !== colors.length || colors.length < 2) {
     fail(`${where}.colors: 重ならない 2 色以上ではない`);
   }
@@ -348,8 +405,8 @@ function serviceFlagsOf(value: unknown, where: string): ServiceFlags {
     fail(`${where}.patterns: 模様が 1 つも無い`);
   }
   for (const color of colors) {
-    if (!colors.some((c) => c !== color && Math.abs(lightness(c) - lightness(color)) >= minContrast)) {
-      fail(`${where}.colors: 色 ${color.toString(16)} と明るさの差が ${minContrast} 以上の色が無い`);
+    if (!colors.some((c) => c !== color && Math.abs(lightness(palette, c) - lightness(palette, color)) >= minContrast)) {
+      fail(`${where}.colors: 色 ${COLOR_CHARS[color]} と明るさの差が ${minContrast} 以上の色が無い`);
     }
   }
   return { family: text(r, 'family', where), salt: r.salt, colors, minContrast, patterns, services };
@@ -362,7 +419,15 @@ function extensionOf(value: unknown, where: string): ExtensionIcon {
   if (typeof scale !== 'number' || !Number.isInteger(scale) || scale < 1) {
     fail(`${where}.scale: 1 以上の整数ではない`);
   }
-  return { glyph: text(r, 'glyph', where), scale, activityBar: gridOf(r.activityBar, ACTIVITY_BAR_SIZE, MONO_CHARS, `${where}.activityBar`) };
+  if (EXTENSION_ICON_PX % scale !== 0) {
+    fail(`${where}.scale: ${EXTENSION_ICON_PX} を割り切る整数ではない: ${scale}`);
+  }
+  return {
+    glyph: text(r, 'glyph', where),
+    icon: gridOf(r.icon, EXTENSION_ICON_PX / scale, ICON_CHARS, `${where}.icon`),
+    scale,
+    activityBar: gridOf(r.activityBar, ACTIVITY_BAR_SIZE, MONO_CHARS, `${where}.activityBar`)
+  };
 }
 
 /** 絵が枠の中の地(`:`)の外に点を置いていないかを確かめる(家族の文法 — 枠は家族、中は語)。 */
@@ -395,8 +460,48 @@ function checkPattern(pattern: FlagPattern, frame: Frame): void {
   }
 }
 
-/** 全体の整合 — 名前の重なり・知らない家族・枠の外の点・差し替えの不足。 */
+/** 格子と差し替えの色の番号が全部、色の組の中にあるかを確かめる(表に無い番号の点は描けない)。 */
+function checkColors(set: GlyphSet): void {
+  const known = new Set(COLOR_CHARS.slice(0, set.palette.length));
+  const checkGrid = (grid: readonly string[], where: string): void => {
+    grid.forEach((row, y) => {
+      for (const ch of row) {
+        if (COLOR_CHARS.includes(ch) && !known.has(ch)) {
+          fail(`${where}[${y}]: 色の組(${set.palette.length} 色)に無い番号 ${JSON.stringify(ch)}`);
+        }
+      }
+    });
+  };
+  const checkTint = (tint: Tint, where: string): void => {
+    for (const [slot, color] of Object.entries(tint)) {
+      if (color !== undefined && color >= set.palette.length) {
+        fail(`${where}.${slot}: 色の組(${set.palette.length} 色)に無い番号`);
+      }
+    }
+  };
+  for (const family of set.families) {
+    if (family.frame !== null) {
+      checkTint(family.frame.tint, `families(${family.name}).frame.tint`);
+      if (typeof family.frame.fill === 'number' && family.frame.fill >= set.palette.length) {
+        fail(`families(${family.name}).frame.fill: 色の組に無い番号`);
+      }
+      for (const size of SIZES) {
+        checkGrid(family.frame.grids[size], `families(${family.name}).frame.px${size}`);
+      }
+    }
+  }
+  for (const glyph of set.glyphs) {
+    checkTint(glyph.tint, `glyphs(${glyph.name}).tint`);
+    for (const size of SIZES) {
+      checkGrid(glyph.grids[size], `glyphs(${glyph.name}).px${size}`);
+    }
+  }
+  checkGrid(set.extension.icon, 'extension.icon');
+}
+
+/** 全体の整合 — 色の組の外の番号・名前の重なり・知らない家族・枠の外の点・差し替えの不足。 */
 function checkSet(set: GlyphSet): void {
+  checkColors(set);
   const families = new Map(set.families.map((f) => [f.name, f]));
   if (families.size !== set.families.length) {
     fail('families: 同じ名前の家族が 2 つある');
@@ -447,13 +552,16 @@ export function parseGlyphSet(source: string): GlyphSetParseResult {
     if (root.version !== GLYPHS_VERSION) {
       fail(`version: ${GLYPHS_VERSION} ではない: ${JSON.stringify(root.version)}`);
     }
+    const palette = paletteOf(root.palette, 'palette');
     const set: GlyphSet = {
       version: GLYPHS_VERSION,
       families: list(root, 'families', 'glyphs.json').map((f, i) => familyOf(f, `families[${i}]`)),
       glyphs: resolvePictures(list(root, 'glyphs', 'glyphs.json').map((g, i) => glyphOf(g, `glyphs[${i}]`))),
-      serviceFlags: serviceFlagsOf(root.serviceFlags, 'serviceFlags'),
+      serviceFlags: serviceFlagsOf(root.serviceFlags, palette, 'serviceFlags'),
       extension: extensionOf(root.extension, 'extension'),
-      lamp: colorOf(root.lamp, 'lamp')
+      palette,
+      lamps: lampsOf(root.lamps, palette, 'lamps'),
+      outline: outlineOf(root.outline, palette, 'outline')
     };
     checkSet(set);
     return { tag: 'ok', set };
@@ -514,11 +622,11 @@ export interface Glyph {
 }
 
 /** 単色の点 — 明示の格子か、大きい sprite の輪郭の色(黒と紺)の点。 */
-function monoOf(source: GlyphSource, large: Pixels): boolean[][] {
+function monoOf(source: GlyphSource, large: Pixels, outline: readonly ColorIndex[]): boolean[][] {
   if (source.mono !== null) {
     return source.mono.map((row) => [...row].map((ch) => ch === '#'));
   }
-  return large.map((row) => row.map((c) => c !== null && OUTLINE_COLORS.includes(c)));
+  return large.map((row) => row.map((c) => c !== null && outline.includes(c)));
 }
 
 /**
@@ -531,7 +639,7 @@ export function composeTinted(set: GlyphSet, name: string, override: Tint): Read
     return undefined;
   }
   const frame = set.families.find((f) => f.name === source.family)?.frame ?? null;
-  const tint = { L: set.lamp, ...source.tint, ...override };
+  const tint = { L: set.lamps.off, ...source.tint, ...override };
   return { 32: composePixels(frame, source.grids[32], tint, 32), 16: composePixels(frame, source.grids[16], tint, 16) };
 }
 
@@ -540,23 +648,24 @@ export function composeGlyphs(set: GlyphSet): Glyph[] {
   const families = new Map(set.families.map((f) => [f.name, f]));
   return set.glyphs.map((source) => {
     const frame = families.get(source.family)?.frame ?? null;
-    const tint = { L: set.lamp, ...source.tint };
+    const tint = { L: set.lamps.off, ...source.tint };
     const large = composePixels(frame, source.grids[32], tint, 32);
     return {
       name: source.name,
       family: source.family,
       summary: source.summary,
       pixels: { 32: large, 16: composePixels(frame, source.grids[16], tint, 16) },
-      mono: monoOf(source, large)
+      mono: monoOf(source, large, set.outline)
     };
   });
 }
 
 /**
  * 大きい sprite(32×32)の右下に小さい sprite(16×16)の印を重ねる(gutter と木で「種類の icon + 状態の印」を 1 つの画に
- * するため)。印の点の周りの透明な点には黒(色 0)の縁を 1 点足して、土台の絵と混ざらないようにする。土台が無ければ印だけ。
+ * するため)。印の点の周りの透明な点には縁の色 edge(元の定義の outline の先頭)を 1 点足して、土台の絵と混ざらない
+ * ようにする。土台が無ければ印だけ。
  */
-export function overlayBadge(base: Pixels | null, badge: Pixels | null): Pixels {
+export function overlayBadge(base: Pixels | null, badge: Pixels | null, edge: ColorIndex): Pixels {
   const grid: Array<Array<ColorIndex | null>> = Array.from({ length: LARGE }, (_, y) =>
     Array.from({ length: LARGE }, (_, x) => (base === null ? null : base[y][x]))
   );
@@ -575,9 +684,14 @@ export function overlayBadge(base: Pixels | null, badge: Pixels | null): Pixels 
       }
       const touches = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => at(x + dx, y + dy) !== null);
       if (touches && base !== null) {
-        grid[gy][gx] = 0;
+        grid[gy][gx] = edge;
       }
     }
   }
   return grid;
+}
+
+/** 拡張の一覧の icon(128×128 の元の格子)の点 — 生成の script が icon.png・icon.svg を作り、見本が並べるため(灯は消えた色)。 */
+export function extensionIconPixels(set: GlyphSet): Pixels {
+  return set.extension.icon.map((row) => [...row].map((ch) => resolveChar(ch, { L: set.lamps.off }, {})));
 }

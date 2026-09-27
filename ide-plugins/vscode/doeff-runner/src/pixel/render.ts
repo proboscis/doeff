@@ -2,7 +2,7 @@
 // 同じ格子から、拡張の木・gutter・hover・見本の HTML・生成の script が同じ画を得る。VS Code には触らない。
 
 import * as zlib from 'zlib';
-import { PICO8, type ColorIndex, type Pixels } from './glyphs';
+import type { ColorIndex, Palette, Pixels } from './glyphs';
 
 /** 同じ色の点をまとめた長方形(点の単位)。 */
 export interface PixelRect {
@@ -67,15 +67,15 @@ function colorsIn(pixels: Pixels): ColorIndex[] {
   return [...seen].sort((a, b) => a - b);
 }
 
-/** 色つきの SVG — 色ごとに長方形をまとめ、`shape-rendering="crispEdges"` で点の縁をぼかさない。 */
-export function colorSvg(pixels: Pixels, cssSize?: number, title?: string): string {
+/** 色つきの SVG — 色の番号を色の組で引き、色ごとに長方形をまとめ、`shape-rendering="crispEdges"` で点の縁をぼかさない。 */
+export function colorSvg(pixels: Pixels, palette: Palette, cssSize?: number, title?: string): string {
   const size = pixels.length;
   const shown = cssSize ?? size;
   const parts: string[] = [];
   for (const color of colorsIn(pixels)) {
     const rects = mergeRects(size, size, (x, y) => pixels[y][x] === color);
     const body = rects.map((r) => `<rect x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}"/>`).join('');
-    parts.push(`<g fill="${PICO8[color]}">${body}</g>`);
+    parts.push(`<g fill="${palette[color]}">${body}</g>`);
   }
   const label = title === undefined ? '' : `<title>${escapeXml(title)}</title>`;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${shown}" height="${shown}" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges">${label}${parts.join('')}</svg>\n`;
@@ -123,9 +123,9 @@ function chunk(type: string, data: Buffer): Buffer {
   return Buffer.concat([length, typed, crc]);
 }
 
-/** 16 進の色(`#RRGGBB`)を 3 つの byte にする。 */
-function rgb(color: ColorIndex): [number, number, number] {
-  const hex = PICO8[color];
+/** 色の番号を色の組で引き、16 進の色(`#RRGGBB`)を 3 つの byte にする。 */
+function rgb(palette: Palette, color: ColorIndex): [number, number, number] {
+  const hex = palette[color];
   return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
 }
 
@@ -133,7 +133,7 @@ function rgb(color: ColorIndex): [number, number, number] {
  * PNG — 1 点を scale × scale の正方形にそのまま拡大する(補間しない・透明は alpha 0)。
  * 画素の値と圧縮の設定が決まっているので、同じ格子からは同じ byte 列になる(生成物の食い違いの検に使う)。
  */
-export function png(pixels: Pixels, scale: number): Buffer {
+export function png(pixels: Pixels, palette: Palette, scale: number): Buffer {
   const size = pixels.length;
   const side = size * scale;
   const raw = Buffer.alloc(side * (side * 4 + 1));
@@ -144,7 +144,7 @@ export function png(pixels: Pixels, scale: number): Buffer {
       const c = pixels[Math.floor(y / scale)][Math.floor(x / scale)];
       const at = rowStart + 1 + x * 4;
       if (c !== null) {
-        const [r, g, b] = rgb(c);
+        const [r, g, b] = rgb(palette, c);
         raw[at] = r;
         raw[at + 1] = g;
         raw[at + 2] = b;

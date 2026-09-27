@@ -1,8 +1,8 @@
 // 元の定義(glyphs.json)から生成物の全部を作る純粋な関数 — icon の全部(語の icon + service の旗)・SVG・PNG・拡張の
-// icon(128×128 の色つき)・activity bar の輪郭(48×48 の点を 24 css px で出す単色)。file に書くか食い違いを検めるかは生成の script が決める。
+// icon(128×128 の色つき — 32×32 の拡大ではなく別に描いた格子から)・activity bar の輪郭(48×48 の点を 24 css px で出す単色)。file に書くか食い違いを検めるかは生成の script が決める。
 
 import { chooseFlag, flagCollisions, flagGlyph, type FlagChoice, type FlagCollision } from './flags';
-import { composeGlyphs, DENSITY, LARGE, SIZES, type Glyph, type GlyphSet, type GlyphSize } from './glyphs';
+import { composeGlyphs, DENSITY, EXTENSION_ICON_PX, extensionIconPixels, SIZES, type Glyph, type GlyphSet, type GlyphSize } from './glyphs';
 import { colorSvg, monoSvg, png } from './render';
 
 /** pixel art の icon の置き場(拡張の root からの相対)。 */
@@ -60,13 +60,14 @@ export function assetFiles(set: GlyphSet): Map<string, string | Buffer> {
   const files = new Map<string, string | Buffer>();
   for (const glyph of glyphs) {
     for (const size of SIZES) {
-      files.set(svgPath(glyph.name, size), colorSvg(glyph.pixels[size], size / DENSITY, glyph.summary));
-      files.set(pngPath(glyph.name, size), png(glyph.pixels[size], PNG_SCALE));
+      files.set(svgPath(glyph.name, size), colorSvg(glyph.pixels[size], set.palette, size / DENSITY, glyph.summary));
+      files.set(pngPath(glyph.name, size), png(glyph.pixels[size], set.palette, PNG_SCALE));
     }
   }
   const doe = extensionGlyph(set, glyphs);
-  files.set('icon.png', png(doe.pixels[LARGE], set.extension.scale));
-  files.set('icon.svg', colorSvg(doe.pixels[LARGE], LARGE * set.extension.scale, doe.summary));
+  const icon = extensionIconPixels(set);
+  files.set('icon.png', png(icon, set.palette, set.extension.scale));
+  files.set('icon.svg', colorSvg(icon, set.palette, EXTENSION_ICON_PX, doe.summary));
   files.set(`${PIXEL_DIR}/activitybar.svg`, monoSvg(activityBarMono(set), set.extension.activityBar.length / DENSITY));
   return files;
 }

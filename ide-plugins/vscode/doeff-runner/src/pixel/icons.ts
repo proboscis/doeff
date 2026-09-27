@@ -7,7 +7,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { allGlyphs, PIXEL_DIR, svgPath } from './build';
 import { flagGlyph } from './flags';
-import { DENSITY, LARGE, parseGlyphSet, SMALL, type Glyph, type GlyphSet } from './glyphs';
+import { DENSITY, LARGE, parseGlyphSet, SMALL, type Glyph, type GlyphSet, type Palette } from './glyphs';
 import { colorSvg, dataUri, png } from './render';
 import { litKey, litPixels, type LitIcon } from './vocabulary';
 
@@ -71,14 +71,20 @@ export class PixelIcons implements IconSource {
     return made;
   }
 
+  /** 名前の icon と、それを塗る色の組(元の定義を読めていない時と知らない名前は undefined)。 */
+  private drawn(name: string): { readonly glyph: Glyph; readonly palette: Palette } | undefined {
+    const glyph = this.glyph(name);
+    return glyph === undefined || this.set === undefined ? undefined : { glyph, palette: this.set.palette };
+  }
+
   /** 大きい sprite の icon — 生成済みの SVG の file、無ければ(知らない service の旗)data URI。 */
   icon(name: string): vscode.Uri | undefined {
-    const glyph = this.glyph(name);
-    if (glyph === undefined) {
+    const found = this.drawn(name);
+    if (found === undefined) {
       return undefined;
     }
     const file = path.join(this.extensionPath, svgPath(name, LARGE));
-    return fs.existsSync(file) ? vscode.Uri.file(file) : vscode.Uri.parse(dataUri('image/svg+xml', colorSvg(glyph.pixels[LARGE], LARGE / DENSITY)));
+    return fs.existsSync(file) ? vscode.Uri.file(file) : vscode.Uri.parse(dataUri('image/svg+xml', colorSvg(found.glyph.pixels[LARGE], found.palette, LARGE / DENSITY)));
   }
 
   /** 灯を灯した sprite(同じ組は使い回す)。 */
@@ -87,8 +93,9 @@ export class PixelIcons implements IconSource {
     if (this.composites.has(key)) {
       return this.composites.get(key);
     }
-    const pixels = this.set === undefined ? undefined : litPixels(this.set, icon);
-    const uri = pixels === undefined ? undefined : vscode.Uri.parse(dataUri('image/svg+xml', colorSvg(pixels, LARGE / DENSITY)));
+    const set = this.set;
+    const pixels = set === undefined ? undefined : litPixels(set, icon);
+    const uri = pixels === undefined || set === undefined ? undefined : vscode.Uri.parse(dataUri('image/svg+xml', colorSvg(pixels, set.palette, LARGE / DENSITY)));
     this.composites.set(key, uri);
     return uri;
   }
@@ -99,8 +106,8 @@ export class PixelIcons implements IconSource {
     if (this.composites.has(key)) {
       return this.composites.get(key);
     }
-    const glyph = this.glyph(name);
-    const uri = glyph === undefined ? undefined : vscode.Uri.parse(dataUri('image/svg+xml', colorSvg(glyph.pixels[SMALL], px)));
+    const found = this.drawn(name);
+    const uri = found === undefined ? undefined : vscode.Uri.parse(dataUri('image/svg+xml', colorSvg(found.glyph.pixels[SMALL], found.palette, px)));
     this.composites.set(key, uri);
     return uri;
   }
@@ -112,11 +119,11 @@ export class PixelIcons implements IconSource {
     if (cached !== undefined) {
       return cached;
     }
-    const glyph = this.glyph(name);
+    const found = this.drawn(name);
     const html =
-      glyph === undefined
+      found === undefined
         ? ''
-        : `<img src="${dataUri('image/png', png(glyph.pixels[LARGE], 2))}" width="${cssPx}" height="${cssPx}" alt="${name}">`;
+        : `<img src="${dataUri('image/png', png(found.glyph.pixels[LARGE], found.palette, 2))}" width="${cssPx}" height="${cssPx}" alt="${name}">`;
     this.images.set(key, html);
     return html;
   }

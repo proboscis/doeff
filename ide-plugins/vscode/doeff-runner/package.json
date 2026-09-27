@@ -1252,7 +1252,7 @@
         }
       },
       "doeff-doe": {
-        "description": "doeff runner — 封蝋つきの手紙(effect)をくわえた雌鹿",
+        "description": "doeff runner — Program(中央の機械)は外に触れず管で要求を出し、差し替えられる 3 つの箱(handler)が答えを返す",
         "default": {
           "fontPath": "resources/pixel/doeff-icons.woff",
           "fontCharacter": "\\E02E"

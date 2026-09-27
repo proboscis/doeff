@@ -5,7 +5,7 @@ import * as zlib from 'zlib';
 import { allGlyphs, assetFiles, flagReport, PIXEL_DIR } from '../../pixel/build';
 import { chooseFlag, flagCollisions, flagGlyph } from '../../pixel/flags';
 import { codepoints, FONT_PATH, iconContributions, svgFont } from '../../pixel/font';
-import { lightness, parseGlyphSet, PICO8, type GlyphSet } from '../../pixel/glyphs';
+import { lightness, parseGlyphSet, type GlyphSet } from '../../pixel/glyphs';
 import { colorSvg, mergeRects, png } from '../../pixel/render';
 
 const ROOT = path.join(__dirname, '..', '..', '..');
@@ -54,14 +54,15 @@ suite('pixel art の icon — 元の定義', () => {
     assert.strictEqual(set.serviceFlags.services.length, 17);
   });
 
-  test('色は PICO-8 の 16 色だけ — 生成した SVG に他の色が出ない', () => {
-    const palette = new Set<string>(PICO8);
-    for (const [file, body] of assetFiles(glyphSet())) {
+  test('色は元の定義の色の組の表だけ — 生成した SVG に表の外の色が出ない', () => {
+    const set = glyphSet();
+    const palette = new Set<string>(set.palette);
+    for (const [file, body] of assetFiles(set)) {
       if (!file.endsWith('.svg')) {
         continue;
       }
       for (const color of String(body).match(/#[0-9A-Fa-f]{6}/g) ?? []) {
-        assert.ok(palette.has(color.toUpperCase()), `${file} に PICO-8 の外の色 ${color}`);
+        assert.ok(palette.has(color.toUpperCase()), `${file} に色の組の外の色 ${color}`);
       }
     }
   });
@@ -86,10 +87,10 @@ suite('pixel art の icon — 元の定義', () => {
     );
   });
 
-  test('反例 — PICO-8 の外の文字・行の長さ違い・知らない家族・同じ名前を断る', () => {
+  test('反例 — 格子に許されない文字・行の長さ違い・知らない家族・同じ名前を断る', () => {
     assertInvalid(
       mutated((json) => {
-        json.glyphs[0].px32[5] = `${json.glyphs[0].px32[5].slice(0, 31)}g`;
+        json.glyphs[0].px32[5] = `${json.glyphs[0].px32[5].slice(0, 31)}w`;
       }),
       /許されない文字/
     );
@@ -142,6 +143,43 @@ suite('pixel art の icon — 元の定義', () => {
     );
   });
 
+  test('色の組 — 表を差し替えると全部の sprite の色が変わり、格子は番号の文字だけを持つ', () => {
+    const set = glyphSet();
+    const doe = allGlyphs(set).find((g) => g.name === 'defk');
+    assert.ok(doe !== undefined);
+    const swapped = mutated((json) => {
+      const table = (json as unknown as { palette: Array<{ color: string }> }).palette;
+      table[0].color = '#123456';
+    });
+    assert.strictEqual(swapped.tag, 'ok');
+    if (swapped.tag === 'ok') {
+      assert.match(colorSvg(doe.pixels[32], swapped.set.palette), /#123456/);
+      assert.doesNotMatch(colorSvg(doe.pixels[32], set.palette), /#123456/);
+    }
+  });
+
+  test('反例 — 色の組に無い番号・番号の順でない表・#RRGGBB でない色を断る', () => {
+    const table = (json: GlyphJson): Array<{ char: string; color: string }> => (json as unknown as { palette: Array<{ char: string; color: string }> }).palette;
+    assertInvalid(
+      mutated((json) => {
+        json.glyphs[0].px32[3] = `${json.glyphs[0].px32[3].slice(0, 31)}v`;
+      }),
+      /色の組\(\d+ 色\)に無い番号 "v"/
+    );
+    assertInvalid(
+      mutated((json) => {
+        table(json)[1].char = '9';
+      }),
+      /番号の順の文字 1 ではない/
+    );
+    assertInvalid(
+      mutated((json) => {
+        table(json)[2].color = 'red';
+      }),
+      /#RRGGBB ではない/
+    );
+  });
+
   test('反例 — 旗の模様が布の形と合わない・見分けられる 2 色目が無い色を断る', () => {
     assertInvalid(
       mutated((json) => {
@@ -151,7 +189,7 @@ suite('pixel art の icon — 元の定義', () => {
     );
     assertInvalid(
       mutated((json) => {
-        json.serviceFlags.colors = ['7', 'f'];
+        json.serviceFlags.colors = ['5', '9'];
       }),
       /明るさの差/
     );
@@ -165,7 +203,7 @@ suite('pixel art の icon — service の旗', () => {
     assert.deepStrictEqual(report.collisions, []);
     for (const c of report.choices) {
       assert.notStrictEqual(c.primary, c.secondary);
-      assert.ok(Math.abs(lightness(c.primary) - lightness(c.secondary)) >= set.serviceFlags.minContrast, c.service);
+      assert.ok(Math.abs(lightness(set.palette, c.primary) - lightness(set.palette, c.secondary)) >= set.serviceFlags.minContrast, c.service);
     }
   });
 
@@ -202,10 +240,10 @@ suite('pixel art の icon — 画と字体', () => {
   test('SVG は crispEdges の rect だけ・PNG は整数倍で拡大して補間しない', () => {
     const doe = allGlyphs(glyphSet()).find((g) => g.name === 'doe');
     assert.ok(doe !== undefined);
-    const svg = colorSvg(doe.pixels[32]);
+    const svg = colorSvg(doe.pixels[32], glyphSet().palette);
     assert.match(svg, /shape-rendering="crispEdges"/);
     assert.doesNotMatch(svg, /<path|<circle|filter/);
-    const bytes = png(doe.pixels[32], 4);
+    const bytes = png(doe.pixels[32], glyphSet().palette, 4);
     assert.strictEqual(bytes.readUInt32BE(16), 128);
     assert.strictEqual(bytes.readUInt32BE(20), 128);
     // IDAT を開いて、拡大した 4×4 の正方形の中の画素が全部同じ色であることを見る(ぼかしていない)

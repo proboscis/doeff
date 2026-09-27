@@ -5,15 +5,15 @@
 
 import type { LintReport, LintRuleFamily, LintSeverity, LintViolation } from '../lint/contract';
 import { groupDescription, groupTooltipLines, violationRoots, worstSeverity } from '../lint/view';
-import { composeTinted, DENSITY, LARGE, overlayBadge, SMALL, type Glyph, type GlyphSet, type Pixels } from './glyphs';
+import { composeTinted, DENSITY, LARGE, overlayBadge, SMALL, type Glyph, type GlyphSet, type Palette, type Pixels } from './glyphs';
 import { dataUri, escapeXml, png } from './render';
 import { findReplacements, REPLACE_KIND_LABELS, REPLACE_KINDS, type Replacement } from './replace';
-import { litPixels, ruleFamilyGlyph, ruleIcon, SEVERITY_LAMP, worstMark } from './vocabulary';
+import { litPixels, ruleFamilyGlyph, ruleIcon, severityLamp, worstMark } from './vocabulary';
 
 /** 格子を `<img>` にする(整数倍の PNG・補間なし)。 */
-function pixelImg(pixels: Pixels, shown: number, alt: string): string {
+function pixelImg(palette: Palette, pixels: Pixels, shown: number, alt: string): string {
   const scale = Math.max(1, Math.round(shown / pixels.length));
-  return `<img src="${dataUri('image/png', png(pixels, scale))}" width="${shown}" height="${shown}" alt="${escapeXml(alt)}">`;
+  return `<img src="${dataUri('image/png', png(pixels, palette, scale))}" width="${shown}" height="${shown}" alt="${escapeXml(alt)}">`;
 }
 
 /** 0.6.20 の束の画 — 天秤の上に最も強い印を小さく重ねた物(どの行もほぼ同じ絵)。比べる元の定義の絵で作る。 */
@@ -21,17 +21,17 @@ function oldGroupPixels(old: GlyphSet, violations: readonly LintViolation[]): Pi
   const law = composeTinted(old, 'law', {});
   const mark = worstMark(violations);
   const badge = mark === undefined ? undefined : composeTinted(old, mark, {});
-  return law === undefined ? undefined : overlayBadge(law[LARGE], badge?.[SMALL] ?? null);
+  return law === undefined ? undefined : overlayBadge(law[LARGE], badge?.[SMALL] ?? null, old.outline[0]);
 }
 
 /** 枠つきの直し(2026-09-28 の最初の直し)の束の画 — 家族の絵を看板の枠で囲み、枠の色で重さ、Jev の判定はふくろうを重ねる。 */
 function framedGroupPixels(old: GlyphSet, family: LintRuleFamily | null, severity: LintSeverity | null, jev: boolean): Pixels | undefined {
-  const framed = composeTinted(old, ruleFamilyGlyph(family), severity === null ? {} : { A: SEVERITY_LAMP[severity] });
+  const framed = composeTinted(old, ruleFamilyGlyph(family), severity === null ? {} : { A: severityLamp(old, severity) });
   if (framed === undefined) {
     return undefined;
   }
   const owl = jev && family !== 'jev' ? composeTinted(old, 'jev', {}) : undefined;
-  return owl === undefined ? framed[LARGE] : overlayBadge(framed[LARGE], owl[SMALL]);
+  return owl === undefined ? framed[LARGE] : overlayBadge(framed[LARGE], owl[SMALL], old.outline[0]);
 }
 
 /** 木の 1 行(VS Code の暗いテーマの木を真似る)。 */
@@ -62,14 +62,14 @@ export function panelDemo(set: GlyphSet, glyphs: readonly Glyph[], lint: LintRep
     if (old !== null) {
       const oldPixels = oldGroupPixels(old, node.violations);
       const oldLabel = node.violations.find((v) => v.law !== null)?.law ?? node.rule;
-      before.push(treeRow(oldPixels === undefined ? '' : pixelImg(oldPixels, 16, 'law'), oldLabel, `${node.violations.length} 件`, null));
+      before.push(treeRow(oldPixels === undefined ? '' : pixelImg(old.palette, oldPixels, 16, 'law'), oldLabel, `${node.violations.length} 件`, null));
       const framedPixels = framedGroupPixels(old, node.summary.family, severity, node.violations.some((v) => v.source === 'jev'));
-      framed.push(treeRow(framedPixels === undefined ? '' : pixelImg(framedPixels, 16, 'framed'), label, groupDescription(node.violations), null));
+      framed.push(treeRow(framedPixels === undefined ? '' : pixelImg(old.palette, framedPixels, 16, 'framed'), label, groupDescription(node.violations), null));
     }
     const icon = ruleIcon(node.summary.family, severity, node.violations);
     const pixels = litPixels(set, icon);
-    after.push(treeRow(pixels === undefined ? '' : pixelImg(pixels, 16, icon.glyph), label, groupDescription(node.violations), tooltip));
-    zoomed.push(treeRow(pixels === undefined ? '' : pixelImg(pixels, 32, icon.glyph), label, groupDescription(node.violations), tooltip));
+    after.push(treeRow(pixels === undefined ? '' : pixelImg(set.palette, pixels, 16, icon.glyph), label, groupDescription(node.violations), tooltip));
+    zoomed.push(treeRow(pixels === undefined ? '' : pixelImg(set.palette, pixels, 32, icon.glyph), label, groupDescription(node.violations), tooltip));
   }
   // 家族ごとの規則(linter の出力の rules から — 拡張は写しを持たない)
   const families = new Map<LintRuleFamily, Array<{ rule: string; title: string }>>();
@@ -89,7 +89,7 @@ export function panelDemo(set: GlyphSet, glyphs: readonly Glyph[], lint: LintRep
       const pictures = ([null, 'error', 'warning', 'info'] as const)
         .map((sev) => {
           const p = litPixels(set, ruleIcon(family, sev, []));
-          return p === undefined ? '' : pixelImg(p, 32, `${family} ${sev ?? 'off'}`);
+          return p === undefined ? '' : pixelImg(set.palette, p, 32, `${family} ${sev ?? 'off'}`);
         })
         .join(' ');
       const names = rules.map((r) => `<code>${escapeXml(r.rule)}</code> ${escapeXml(r.title)}`).join('<br>');
@@ -99,7 +99,7 @@ export function panelDemo(set: GlyphSet, glyphs: readonly Glyph[], lint: LintRep
   const pairs = (['smell', 'class'] as const)
     .map((family) => {
       const p = litPixels(set, { glyph: ruleFamilyGlyph(family, true), severity: 'warning', flag: null });
-      return p === undefined ? '' : pixelImg(p, 48, family);
+      return p === undefined ? '' : pixelImg(set.palette, p, 48, family);
     })
     .join(' ');
   const oldColumns =
@@ -139,9 +139,9 @@ export function compareDemo(set: GlyphSet, glyphs: readonly Glyph[], old: GlyphS
       const o = before.get(g.name);
       const lit = litPixels(set, { glyph: g.name, severity: 'error', flag: null });
       const hasLamp = set.glyphs.find((x) => x.name === g.name)?.grids[LARGE].some((row) => row.includes('L')) ?? false;
-      const oldCell = o === undefined ? '(無し)' : `${pixelImg(o.pixels[LARGE], 48, o.name)} ${pixelImg(o.pixels[LARGE], LARGE / DENSITY, o.name)} ${pixelImg(o.pixels[SMALL], LARGE / DENSITY, o.name)}`;
-      const newCell = `${pixelImg(g.pixels[LARGE], 48, g.name)} ${hasLamp && lit !== undefined ? pixelImg(lit, 48, 'lit') : ''} ${pixelImg(g.pixels[LARGE], LARGE / DENSITY, g.name)} ${pixelImg(g.pixels[SMALL], LARGE / DENSITY, g.name)}`;
-      return `<tr><td class="dark">${oldCell}</td><td class="dark">${newCell}</td><td class="light">${pixelImg(g.pixels[LARGE], 32, g.name)}</td><td><code>${escapeXml(g.name)}</code></td><td>${escapeXml(g.summary)}</td></tr>`;
+      const oldCell = o === undefined ? '(無し)' : `${pixelImg(old.palette, o.pixels[LARGE], 48, o.name)} ${pixelImg(old.palette, o.pixels[LARGE], LARGE / DENSITY, o.name)} ${pixelImg(old.palette, o.pixels[SMALL], LARGE / DENSITY, o.name)}`;
+      const newCell = `${pixelImg(set.palette, g.pixels[LARGE], 48, g.name)} ${hasLamp && lit !== undefined ? pixelImg(set.palette, lit, 48, 'lit') : ''} ${pixelImg(set.palette, g.pixels[LARGE], LARGE / DENSITY, g.name)} ${pixelImg(set.palette, g.pixels[SMALL], LARGE / DENSITY, g.name)}`;
+      return `<tr><td class="dark">${oldCell}</td><td class="dark">${newCell}</td><td class="light">${pixelImg(set.palette, g.pixels[LARGE], 32, g.name)}</td><td><code>${escapeXml(g.name)}</code></td><td>${escapeXml(g.summary)}</td></tr>`;
     })
     .join('\n');
   return `
@@ -197,14 +197,14 @@ function sampleLine(text: string, line: number, found: readonly Replacement[], i
  * 文字の置き換えの動く見本 — 見本の Hy を拡張と同じ関数で置き換え、種類ごとの入り切り・行を押すとその行が元の文字
  * (カーソルの行の真似)・icon を押すと元の文字をそのまま(コピーできる)と icon と一言を出す。
  */
-export function replaceDemo(glyphs: readonly Glyph[]): string {
+export function replaceDemo(palette: Palette, glyphs: readonly Glyph[]): string {
   const byName = new Map(glyphs.map((g) => [g.name, g]));
   const found = findReplacements(HY_SAMPLE, (name) => name === 'WatchOnce');
   const images = new Map<string, string>();
   for (const r of found) {
     const glyph = byName.get(r.glyph);
     if (glyph !== undefined && !images.has(r.glyph)) {
-      images.set(r.glyph, pixelImg(glyph.pixels[SMALL], 16, r.glyph));
+      images.set(r.glyph, pixelImg(palette, glyph.pixels[SMALL], 16, r.glyph));
     }
   }
   const lines = HY_SAMPLE.split('\n');
@@ -215,7 +215,7 @@ export function replaceDemo(glyphs: readonly Glyph[]): string {
   ).join('<br>');
   const details = found.map((r) => {
     const glyph = byName.get(r.glyph);
-    return { original: r.original, display: r.display, summary: glyph?.summary ?? '', image: glyph === undefined ? '' : pixelImg(glyph.pixels[LARGE], 32, r.glyph) };
+    return { original: r.original, display: r.display, summary: glyph?.summary ?? '', image: glyph === undefined ? '' : pixelImg(palette, glyph.pixels[LARGE], 32, r.glyph) };
   });
   return `
 <h2 id="replace">エディタの文字の置き換え(動く見本)</h2>
