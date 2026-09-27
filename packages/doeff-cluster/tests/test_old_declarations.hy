@@ -52,8 +52,11 @@
    #("生の entry の job(run が無い)" RAW-ENTRY "生の entry の job")
    #("旧い run と新しい欄の混在" (| ROW {"run" (| SAMPLE-RUN {"config" {}})}) "run の config")
    #("requires" (| ROW {"requires" {"kind" "k3s"}}) "requires")
-   #("baseFrom" (| ROW {"baseFrom" {"kind" "Deployment" "namespace" "n" "name" "d"}}) "baseFrom・overlay")
+   #("baseFrom" (| ROW {"baseFrom" {"kind" "Deployment" "namespace" "n" "name" "d"}}) "baseFrom")
    #("overlay" (| ROW {"overlay" (* "b" 40)}) "overlay")
+   ;; image の版を追う係が書いていた土台の commit(係は 2026-09-28 に消した — 旧い coordinator の行は baseFrom と組で持つ)。
+   #("base" (| ROW {"base" (* "c" 40)}) "base を持たない")
+   #("追随の組" (| ROW {"baseFrom" {"kind" "Deployment" "namespace" "n" "name" "d"} "base" (* "c" 40)}) "baseFrom・base")
    #("置き場のキーの形" (| ROW {"run" (| SAMPLE-RUN {"program" "not-a-sha"})}) "run.program")
    #("identity の欠け" (| ROW {"run" (dfor #(k v) (.items SAMPLE-RUN) :if (!= k "identity") k v)}) "run.identity")
    #("environ の値が文字列でない" (| ROW {"environ" {"POLL" 5}}) "environ の POLL")

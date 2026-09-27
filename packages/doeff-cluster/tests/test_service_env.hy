@@ -3,7 +3,7 @@
 ;; 前は runtimeEnv を運ぶのは task だけで、service の路(宣言 → coordinator の ClusterJob → heartbeat の返事 → worker → 入口の検め)には
 ;; 欄が無く、service は image の venv の doeff で動き続けた(doeff を変えるには image を作り直すしかない)。
 ;;
-;; 速い検: 宣言の行が runtimeEnv を運ぶ・baseFrom / overlay との併用を断る・coordinator が spec と heartbeat の返事に載せる・worker が版を
+;; 速い検: 宣言の行が runtimeEnv を運ぶ・image の版を追う欄(baseFrom)を持つ行を断る・coordinator が spec と heartbeat の返事に載せる・worker が版を
 ;;        env のキーへ置き換える・入口の検めを root の venv で撃つ・子の文脈から自分の env を読む。
 ;; 丁寧な模擬(test_env_careful と同じ世界 — 本物の git・fake の uv・本物の EnvStore / ProbeStore / ProcessHost): service を宣言から
 ;;        env の root で起こし、送り手の commit だけ変えた 2 回目の宣言で新しい root の source の値が返り、worker の process は同じ。
@@ -77,8 +77,8 @@
 
 
 (deftest test-the-coordinator-carries-the-runtime-env-to-the-worker
-  ;; coordinator: 宣言の runtimeEnv を JobSpec の比べる欄に持ち、spec の JSON と heartbeat の返事に載せる。baseFrom・overlay との併用と
-  ;; 読めない宣言は断る。
+  ;; coordinator: 宣言の runtimeEnv を JobSpec の比べる欄に持ち、spec の JSON と heartbeat の返事に載せる。image の版を追う欄
+  ;; (baseFrom — 係ごと消した)を持つ行と読めない宣言は断る。
   (<- declared-env RuntimeEnv (sample-env))
   (<- env-json dict (runtime-env->json declared-env))
   (<- plain System (quiet-system "recreate" None {}))

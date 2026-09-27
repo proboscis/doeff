@@ -33,7 +33,7 @@
   None)
 
 (defn #^ (| CodeView None) code-of [#^ WorldView world #^ str key]
-  "key = worker_model.code-key(版そのもの、または土台に重ねた木の鍵)。"
+  "key = worker_model.code-key(版そのもの、または実行環境の root の鍵)。"
   (for [code world.codes]
     (when (= code.revision key) (return code)))
   None)

@@ -13,7 +13,6 @@
 (import .worker_model [spec-hash])
 (import .cluster_policy [job-from-json job-to-json alive still-live-somewhere unplaced-jobs task-summary])
 (import .rollout_policy [validate-rollout-spec rollout-targets target-key TERMINAL-PHASES])
-(import .base_follow_policy [base-observation])
 (import .readiness_model [handoff-timeout-ms])
 
 (setv LEGACY-OWNER "legacy:jobs")        ; 旧い PUT /jobs の頃からの宣言の所有者(誰でも 1 度だけ引き取れる)
@@ -187,8 +186,6 @@
           {"spec" (service-spec job)
            "status" (| {"worker" (if a a.worker None) "placement" (if a a.generation None)
                         "ready" (get (service-readiness state job.spec.name now timing) "state")}
-                       ;; 土台の版の追随の観測(本番の Deployment の image と、その LABEL の commit)。追う宣言にだけ載せる。
-                       (if job.base-from {"base" (base-observation state job now)} {})
                        ;; drain で並べた置き先(2026-09-25)。在る間だけ載せる(無い Service の status の形・版は以前と同じ)。
                        (if (in job.spec.name state.surges)
                            {"surge" (. (get state.surges job.spec.name) worker)}
@@ -396,10 +393,6 @@
           (when (is current None) (refuse 404 (+ "無い Service: " name)))
           (check-version state key (.get body "resourceVersion"))
           (check-owner-change current.owner (.get spec "owner") actor)
-          ;; base は追随の係(base-follow)が持つ欄: baseFrom を持つ宣言の書き換えが base を書かなければ、いまの値を保つ
-          ;; (宣言し直すたびに base が落ちて、土台の無い木への入れ替えと追随の係による戻しの 2 回の入れ替えが起きないように)。
-          (when (and (.get spec "baseFrom") (not-in "base" spec) (is-not current.spec.base None))
-            (setv (get spec "base") current.spec.base))
           (setv job (job-from-json (| spec {"name" name "owner" (or (valid-actor (.get spec "owner")) current.owner)})))
           (replace state :jobs (tuple (gfor j state.jobs (if (= j.spec.name name) job j)))))
     (= kind "Rollout")
