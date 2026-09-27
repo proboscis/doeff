@@ -237,7 +237,7 @@ impl<'a> HySource<'a> {
             } else if reading.plain_definers.contains(head) {
                 Some(None)
             } else if reading.effect_definers.contains(head) {
-                Some(self.keyword_tags(&items))
+                Some(self.effect_tags(&items))
             } else {
                 None
             };
@@ -249,40 +249,45 @@ impl<'a> HySource<'a> {
         }
     }
 
-    /// 契約の辞書の :tags を読む — 名の後の引数の list と docstring を飛ばした最初の辞書(名から 4 つ目まで)。
-    fn contract_tags(&self, items: &[&Form]) -> Option<TagSet> {
+    /// 辞書の form の :tags の値を、鍵と値の組で読む(同じ鍵が 2 度あれば後の物)。
+    fn dict_tags(&self, dict: &Form) -> Option<TagSet> {
+        let entries = match &dict.node {
+            Node::Seq { delim: Delim::Brace, items } => live_items(items),
+            _ => return None,
+        };
         let mut found = None;
-        for part in items.iter().skip(2).take(4) {
-            if part.is_brace() {
-                let entries = match &part.node {
-                    Node::Seq { items, .. } => live_items(items),
-                    _ => Vec::new(),
-                };
-                // 鍵と値の組ではなく、隣り合う 2 つを全部の位置で見る(module_tags.hy の hy-definitions と同じ読み方)。
-                for pair in entries.windows(2) {
-                    if self.keyword(pair[0]) == Some("tags") && pair[1].is_brace() {
-                        found = self.tags_of_dict(pair[1]);
-                    }
+        for pair in entries.chunks(2) {
+            if let [key, value] = pair {
+                if self.keyword(key) == Some("tags") && value.is_brace() {
+                    found = self.tags_of_dict(value);
                 }
-                break;
-            }
-            let skippable = self.string_value(part).is_some() || part.bracket_items().is_some();
-            if !skippable {
-                break;
             }
         }
         found
     }
 
-    /// `(defeffect 名 … :tags {…} …)` の鍵と値の並びから :tags を読む。
-    fn keyword_tags(&self, items: &[&Form]) -> Option<TagSet> {
-        let mut found = None;
-        for index in 2..items.len().saturating_sub(1) {
-            if self.keyword(items[index]) == Some("tags") && items[index + 1].is_brace() {
-                found = self.tags_of_dict(items[index + 1]);
+    /// 名の後の要素を順に見て、飛ばせる物(skippable)の後の最初の辞書の :tags を読む(limit = 名の後に見る数)。
+    /// 辞書より前に飛ばせない物が来たら、タグは無い。
+    fn first_dict_tags(&self, items: &[&Form], limit: usize, skippable: impl Fn(&Form) -> bool) -> Option<TagSet> {
+        for part in items.iter().skip(2).take(limit) {
+            if part.is_brace() {
+                return self.dict_tags(part);
+            }
+            if !skippable(part) {
+                return None;
             }
         }
-        found
+        None
+    }
+
+    /// 契約の辞書の :tags を読む — 名の後の引数の list と docstring を飛ばした最初の辞書(名から 4 つ目まで)。
+    fn contract_tags(&self, items: &[&Form]) -> Option<TagSet> {
+        self.first_dict_tags(items, 4, |part| self.string_value(part).is_some() || part.bracket_items().is_some())
+    }
+
+    /// `(defeffect 名 "doc"? {:fields […] :answer 型 :tags {…}})` の辞書の :tags を読む(名から 2 つ目まで・docstring だけ飛ばす)。
+    fn effect_tags(&self, items: &[&Form]) -> Option<TagSet> {
+        self.first_dict_tags(items, 2, |part| self.string_value(part).is_some())
     }
 
     /// form の中の `(import …)` の式を全部読む(関数の中や入口の節の中の import も数える)。
@@ -529,7 +534,8 @@ mod tests {
 (defk plan [x] "計画" {:pre [] :tags {:context "billing" :role "program"}} x)
 (defk #^ int typed [x] {:tags {}} x)
 (defhandler h #_ ignored {:tags {:context "billing" :role "protocol"}} (E [e k] (k 1)))
-(defeffect Charge :fields [amount] :tags {:context "billing" :role "intent"})
+(defeffect Charge "請求" {:fields [amount] :answer int :tags {:context "billing" :role "intent"}})
+(defeffect Old :fields [amount] :tags {:context "billing" :role "intent"})
 (defn helper [] 1)
 (val MODULE-TAGS {:context "billing" :role "judgment"})
 (defn [do] decorated [x] x)
@@ -539,7 +545,8 @@ mod tests {
         assert_eq!(tagged, vec![("plan", Some("program")), ("h", Some("protocol")), ("Charge", Some("intent"))]);
         // 空の :tags は名乗っていない。#^ の型注釈の後の名を読む。
         let untagged: Vec<&str> = facts.untagged.iter().map(|n| n.name.as_str()).collect();
-        assert_eq!(untagged[..2], ["typed", "helper"]);
+        // doeff-hy が受けない鍵と値の並びの形(Old)はタグとして読まない(module_tags.hy と同じ)。
+        assert_eq!(untagged[..3], ["typed", "Old", "helper"]);
         assert_eq!(facts.module_tags.as_ref().and_then(|t| t.role.as_deref()), Some("judgment"));
         // module の頭のタグはタグの無い定義に効く。
         assert_eq!(facts.tag_sets().len(), 4);

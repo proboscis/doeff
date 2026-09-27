@@ -37,6 +37,7 @@ export const HY_DEFINITION_KINDS = [
   'field',
   'method',
   'defhandler',
+  'defeffect',
   'effect-clause',
   'deftest',
   'defadr',
@@ -74,10 +75,12 @@ export interface HyDefinition {
   readonly container: string | null;
   readonly docstring: string | null;
   readonly params: readonly string[];
-  /** defclass / defrecord の基底の記号(書かれたとおり、dotted も 1 つの文字列)。他の kind は常に [] */
+  /** defclass / defrecord の基底の記号(書かれたとおり、dotted も 1 つの文字列)と、defeffect の ["EffectBase"]。他の kind は常に [] */
   readonly bases: readonly string[];
   /** 生の副作用の証拠(版 3 — 事実であって規則の判定ではない。判定の正本は linter) */
   readonly raw: HyRawMark;
+  /** 定義が名乗ったタグ(契約の辞書の :tags と defeffect の :tags・文字列の値の鍵だけ)。無ければ null。版 3 への追加の欄なので、欄が無い出力は null として読む */
+  readonly tags: Readonly<Record<string, string>> | null;
 }
 
 /** 生の副作用の証拠 1 件。 */
@@ -333,7 +336,7 @@ function parseDefinition(value: unknown, where: string): HyDefinition {
   }
   const params = strArray(value, 'params', where);
   const bases = strArray(value, 'bases', where);
-  if (bases.length > 0 && kind !== 'defclass' && kind !== 'defrecord') {
+  if (bases.length > 0 && kind !== 'defclass' && kind !== 'defrecord' && kind !== 'defeffect') {
     throw new ContractViolation(`${where}.bases: ${kind} は基底を持たない`);
   }
   return {
@@ -346,8 +349,28 @@ function parseDefinition(value: unknown, where: string): HyDefinition {
     docstring: strOrNull(value, 'docstring', where),
     params,
     bases,
-    raw: parseRawMark(value, where)
+    raw: parseRawMark(value, where),
+    tags: parseTags(value, where)
   };
+}
+
+/** 定義の tags の欄を検める(欄が無い・null は null。在れば文字列の値だけの object)。 */
+function parseTags(parent: JsonObject, where: string): Readonly<Record<string, string>> | null {
+  const value = parent.tags;
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (!isObject(value)) {
+    throw new ContractViolation(`${where}.tags: object でも null でもない`);
+  }
+  const tags: Record<string, string> = {};
+  for (const [key, text] of Object.entries(value)) {
+    if (typeof text !== 'string') {
+      throw new ContractViolation(`${where}.tags.${key}: 文字列でない`);
+    }
+    tags[key] = text;
+  }
+  return tags;
 }
 
 /** 呼び出し 1 件を検める(caller は同じ file の definitions の添字の範囲に入ること)。 */

@@ -14,6 +14,7 @@ export type OutlineSymbolKind =
   | 'Field'
   | 'Object'
   | 'Event'
+  | 'Struct'
   | 'Variable'
   | 'Module'
   | 'Namespace'
@@ -56,6 +57,8 @@ export function outlineKindOf(kind: HyDefinitionKind): OutlineSymbolKind {
       return 'Field';
     case 'defhandler':
       return 'Object';
+    case 'defeffect':
+      return 'Struct';
     case 'effect-clause':
       return 'Event';
     case 'variable':

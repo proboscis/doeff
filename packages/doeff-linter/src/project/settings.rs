@@ -28,7 +28,7 @@ pub struct LayersSection {
     /// 層の名前 → import してよい層の名前(同じ層も書く)。書かない層は制限しない。
     #[serde(default)]
     pub allow_imports: BTreeMap<String, Vec<String>>,
-    /// 層の名前 → 直に import してはいけない module の一番上の綴り(例 httpx・subprocess)。
+    /// 層の名前 → 直に import してはいけない module の綴り(前方一致 — 例 httpx・urllib.request)。
     #[serde(default)]
     pub forbid_modules: BTreeMap<String, Vec<String>>,
     /// 型だけを置く層(関数と handler を定めない)。
@@ -51,7 +51,7 @@ pub struct TagsSection {
     pub contract_definers: Option<Vec<String>>,
     /// タグを書く場所の無い定義の形(module の頭のタグに頼る)。
     pub plain_definers: Option<Vec<String>>,
-    /// 鍵と値の並びに `:tags` を持つ effect の型の定義の形。
+    /// `(名 "doc"? {… :tags {…}})` の形の effect の型の定義の形(既定 defeffect)。
     pub effect_definers: Option<Vec<String>>,
 }
 

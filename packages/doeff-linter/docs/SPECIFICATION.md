@@ -76,7 +76,7 @@
 |---|---|---|
 | `layers` | `order`・`paths`(層 → dir)・`exclude`(dir や file の名の完全一致)・`extensions` | extensions = hy・hyk・hyp・py |
 | `layers.allow_imports` | 層 → import してよい層 | 書かない層は制限しない |
-| `layers.forbid_modules` | 層 → 直に import しない module の一番上の綴り | なし |
+| `layers.forbid_modules` | 層 → 直に import しない module の綴り(前方一致 — `urllib.request` は `urllib.request.urlopen` に当たり `urllib.parse` には当たらない) | なし |
 | `layers` | `types_only`(層の名)・`function_definers` | defk・deff・defp・defpp・defhandler・defn |
 | `tags` | `module_variable_hy`・`module_variable_py`・`contract_definers`・`plain_definers`・`effect_definers` | MODULE-TAGS・MODULE_TAGS・defk deff defp defpp defhandler・defn defclass defrecord defenum・defeffect |
 | `roles` | `names`・`by_layer` | by_layer の無い層は DOEFF105 を当てない |
@@ -101,7 +101,7 @@
 | 規則 | 判じ方 | 細目 | 位置 |
 |---|---|---|---|
 | DOEFF101 | import の先を母集団の module(その物か、`module.名` の module)へ解き、自分以外で `allow_imports` の外の層なら破れ。母集団の外(doeff・標準の library)は数えない。同じ先の import は 1 件 | import の先の綴り | 最初の import の記号 |
-| DOEFF102 | import の先の一番上の綴りが `forbid_modules` に在れば破れ。綴りごとに 1 件 | 一番上の綴り | 最初の import の記号 |
+| DOEFF102 | import の先の綴りが `forbid_modules` のどれかと同じか、その下位の module / 名なら破れ(名の順に照らして最初に当たった物)。当たった module ごとに 1 件 | 当たった module の綴り | 最初の import の記号 |
 | DOEFF103 | `types_only` の層の module に関数の定義(Hy は `function_definers` の頭の最上位の式、Python は最上位の def)があれば 1 件 | `definitions` | 最初の関数の名 |
 | DOEFF104 | タグの無い定義があって module の頭のタグも無い、または定義が 1 つも無く頭のタグも無い | なし | 最初のタグの無い定義の名 / 1 行目 |
 | DOEFF105 | 実効のタグごとに、role か context が無いか空、または role が `roles.by_layer` の外なら破れ(1 module に同じ鍵が何度も出ることがある) | role(無ければ `None`) | タグの辞書 |
@@ -113,7 +113,7 @@
 
 - module の頭のタグ: 最上位の `(setv|val MODULE-TAGS {…})`(3 要素ちょうど)の最初の 1 つ。
 - 定義のタグ: `contract_definers` の頭の最上位の式で、名から 4 つ目までの要素を見て、文字列と `[…]` を飛ばした最初の辞書の
-  `:tags {…}`。`effect_definers` の頭の式は鍵と値の並びの `:tags {…}`。`plain_definers` の頭の式はタグ無しに数える。
+  `:tags {…}`(辞書の中は鍵と値の組で読む)。`effect_definers`(既定 defeffect)の頭の式は `(defeffect 名 "doc"? {:fields […] :answer 型 :tags {…}})` の形で、名から 2 つ目までのうち docstring を飛ばした最初の辞書の `:tags`。鍵と値を並べただけの古い形はタグとして読まない。`plain_definers` の頭の式はタグ無しに数える。
 - 辞書は、文字列の値を持つ keyword の鍵が 1 つ以上ある時だけ「名乗った」とみなす(空の辞書は名乗っていない)。
 - 同じ名の定義が 2 つあれば、後の物のタグで前の物を上書きする。
 - 実効のタグ = 定義のタグ全部 + (タグの無い定義がある、または定義のタグが 1 つも無い時の)module の頭のタグ。

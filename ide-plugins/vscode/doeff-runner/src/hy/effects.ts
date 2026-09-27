@@ -100,7 +100,7 @@ export class EffectGraph {
       }
       for (const ref of refs) {
         const kind = ref.definition.kind;
-        if (kind === 'defclass' || kind === 'defrecord') {
+        if (kind === 'defclass' || kind === 'defrecord' || kind === 'defeffect') {
           push(this.classesByName, ref.definition.mangled, ref);
           classBases.push({ ref, bases: ref.definition.bases.map(baseName) });
         } else if (kind === 'effect-clause') {
@@ -152,7 +152,7 @@ export class EffectGraph {
   /** 定義が effect のクラスかを答える。 */
   isEffectClass(ref: DefRef): boolean {
     const kind = ref.definition.kind;
-    return (kind === 'defclass' || kind === 'defrecord') && this.effects.has(ref.definition.mangled);
+    return (kind === 'defclass' || kind === 'defrecord' || kind === 'defeffect') && this.effects.has(ref.definition.mangled);
   }
 
   /** effect の名前の束(クラスの定義つき)を返す。effect でなければ undefined。 */

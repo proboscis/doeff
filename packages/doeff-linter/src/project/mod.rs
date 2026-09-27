@@ -471,14 +471,16 @@ impl<'a> LayerJudge<'a> {
         ))
     }
 
-    /// DOEFF102: この層に禁じた module を直に import しない(一番上の綴りごとに 1 件、位置は最初の import)。
+    /// DOEFF102: この層に禁じた module を直に import しない。import の綴りの前方一致で照らす(同じ綴りか、その下位の module / 名 —
+    /// `urllib.request` は `urllib.request.urlopen` に当たり、`urllib.parse` には当たらない)。当たった module ごとに 1 件、位置は最初の import。
     fn forbidden_modules(&self, facts: &ModuleFacts) -> Vec<Draft> {
         let spec = &self.layers.layers[self.layer.0];
         let mut first: BTreeMap<&str, ByteSpan> = BTreeMap::new();
         for import in &facts.imports {
-            let top = import.target.split('.').next().unwrap_or("");
-            if spec.forbid_modules.contains(top) {
-                first.entry(top).or_insert(import.span);
+            let target = import.target.as_str();
+            let hit = spec.forbid_modules.iter().find(|module| target == module.as_str() || target.starts_with(&format!("{}.", module)));
+            if let Some(module) = hit {
+                first.entry(module.as_str()).or_insert(import.span);
             }
         }
         first
