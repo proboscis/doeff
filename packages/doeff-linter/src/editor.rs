@@ -2,6 +2,10 @@
 //!
 //! linter が規則の判定の唯一の正本で、エディタ(doeff-runner)はこの JSON を表示するだけ。Python の文ごとの規則
 //! (DOEFF001〜031)と層の規則(DOEFF101〜108)の違反を 1 つの形に揃える。位置は 0 始まりの行・UTF-16 の列。
+//!
+//! `rules` の各項目には短い日本語の名(`title`)と規則の家族(`family`)を持たせる — エディタが規則ごとの行に
+//! 名を添え、家族で行の絵を変えるため。名と家族の正本は linter 側(層の規則は `project::rule::ProjectRule`・
+//! Python の規則は `rule_info::RuleInfo`)にあり、エディタは写しを持たない。版は上げない(欄の追加だけ — 契約の更新 6)。
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -11,7 +15,7 @@ use serde::Serialize;
 use crate::models::{LintResult, Severity};
 use crate::position::{line_range, Range};
 use crate::project::explain::Explanation;
-use crate::project::rule::ProjectRule;
+use crate::project::rule::{ProjectRule, RuleFamily};
 use crate::project::settings::{ProjectRuleOrExternal, ProjectSettings};
 use crate::project::ProjectReport;
 use crate::rule_info::get_rule_info;
@@ -91,6 +95,10 @@ pub struct EditorRule {
     pub adr: Option<String>,
     pub statement: String,
     pub wired: bool,
+    /// 短い日本語の名(違反の形。エディタが規則ごとの見出しに使う)。契約の更新 6。
+    pub title: String,
+    /// 規則の家族(エディタが違反の欄の行の絵を選ぶ閉じた集合)。契約の更新 6。
+    pub family: RuleFamily,
 }
 
 /// 出力の全体。
@@ -252,24 +260,63 @@ fn layer_list(settings: &ProjectSettings) -> Vec<EditorLayer> {
 fn rule_list(input: &EditorInput) -> Vec<EditorRule> {
     let mut rules = Vec::new();
     for id in input.python_rules {
+        // Python の文ごとの規則(DOEFF001〜031)。層の規則の ID がここに紛れることは無いので家族は python 固定。
+        let info = get_rule_info(id);
         match input.settings.law_for_external(id) {
-            Some(law) => rules.push(EditorRule { rule: id.clone(), adr: law.adr.clone(), statement: law_statement(law), wired: true }),
-            None => rules.push(EditorRule { rule: id.clone(), adr: None, statement: get_rule_info(id).description.to_string(), wired: true }),
+            Some(law) => rules.push(EditorRule {
+                rule: id.clone(),
+                adr: law.adr.clone(),
+                statement: law_statement(law),
+                wired: true,
+                title: info.label.to_string(),
+                family: RuleFamily::Python,
+            }),
+            None => rules.push(EditorRule {
+                rule: id.clone(),
+                adr: None,
+                statement: info.description.to_string(),
+                wired: true,
+                title: info.label.to_string(),
+                family: RuleFamily::Python,
+            }),
         }
     }
     for rule in input.project_rules {
         let wired = input.project_wired.contains(rule);
+        let title = rule.label().to_string();
+        let family = rule.family();
         let laws: Vec<_> =
             input.settings.laws.iter().filter(|law| law.rules.contains(&ProjectRuleOrExternal::Project(*rule))).collect();
         if laws.is_empty() {
-            rules.push(EditorRule { rule: rule.id().to_string(), adr: None, statement: rule.statement().to_string(), wired });
+            rules.push(EditorRule {
+                rule: rule.id().to_string(),
+                adr: None,
+                statement: rule.statement().to_string(),
+                wired,
+                title: title.clone(),
+                family,
+            });
         }
         for law in laws {
-            rules.push(EditorRule { rule: rule.id().to_string(), adr: law.adr.clone(), statement: law_statement(law), wired });
+            rules.push(EditorRule {
+                rule: rule.id().to_string(),
+                adr: law.adr.clone(),
+                statement: law_statement(law),
+                wired,
+                title: title.clone(),
+                family,
+            });
         }
     }
     for law in input.settings.laws.iter().filter(|law| law.rules.is_empty()) {
-        rules.push(EditorRule { rule: law.name.clone(), adr: law.adr.clone(), statement: law_statement(law), wired: false });
+        rules.push(EditorRule {
+            rule: law.name.clone(),
+            adr: law.adr.clone(),
+            statement: law_statement(law),
+            wired: false,
+            title: "自動の判定がまだ無い決まり".to_string(),
+            family: RuleFamily::Law,
+        });
     }
     rules
 }
@@ -304,4 +351,75 @@ pub fn absolute(path: &Path) -> PathBuf {
         std::env::current_dir().map(|cwd| cwd.join(path)).unwrap_or_else(|_| path.to_path_buf())
     };
     joined.components().filter(|c| !matches!(c, std::path::Component::CurDir)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project::settings::LawSpec;
+    use crate::project::ProjectReport;
+
+    /// `rule_list` を呼ぶための最小の `EditorInput` を組み立てる。
+    fn build_input<'a>(
+        python_rules: &'a [String],
+        project_rules: &'a BTreeSet<ProjectRule>,
+        project_wired: &'a BTreeSet<ProjectRule>,
+        project: &'a ProjectReport,
+        settings: &'a ProjectSettings,
+    ) -> EditorInput<'a> {
+        EditorInput {
+            root: Path::new("/repo"),
+            python: &[],
+            stdin: None,
+            project,
+            settings,
+            python_rules,
+            project_rules,
+            project_wired,
+            only: None,
+        }
+    }
+
+    #[test]
+    fn rule_list_has_title_and_family_for_layer_python_and_law_entries() {
+        let python_rules = vec!["DOEFF001".to_string()];
+        let mut project_rules = BTreeSet::new();
+        project_rules.insert(ProjectRule::DefnForbidden); // DOEFF110
+        let project_wired = BTreeSet::new();
+        let project = ProjectReport { findings: Vec::new(), modules: Vec::new(), errors: Vec::new(), semantic: None };
+        let mut settings = ProjectSettings::default();
+        settings.laws.push(LawSpec {
+            name: "no-針-law".to_string(),
+            adr: None,
+            statement: "".to_string(),
+            rules: Vec::new(), // 規則を持たない law
+            layers: BTreeSet::new(),
+        });
+        let input = build_input(&python_rules, &project_rules, &project_wired, &project, &settings);
+
+        let rules = rule_list(&input);
+
+        let python_rule = rules.iter().find(|r| r.rule == "DOEFF001").expect("DOEFF001 が rules に無い");
+        assert_eq!(python_rule.title, "変数名が builtin を隠す");
+        assert_eq!(python_rule.family, RuleFamily::Python);
+
+        let layer_rule = rules.iter().find(|r| r.rule == "DOEFF110").expect("DOEFF110 が rules に無い");
+        assert_eq!(layer_rule.title, "defn を使っている");
+        assert_eq!(layer_rule.family, RuleFamily::Definition);
+
+        let law_rule = rules.iter().find(|r| r.rule == "no-針-law").expect("針の無い law が rules に無い");
+        assert_eq!(law_rule.title, "自動の判定がまだ無い決まり");
+        assert_eq!(law_rule.family, RuleFamily::Law);
+
+        // JSON でも title・family が欄として出る(3 種類とも)。
+        let json = serde_json::to_value(&rules).unwrap();
+        for id in ["DOEFF001", "DOEFF110", "no-針-law"] {
+            let entry = json.as_array().unwrap().iter().find(|v| v["rule"] == id).unwrap();
+            assert!(entry.get("title").is_some(), "{} に title が無い", id);
+            assert!(entry.get("family").is_some(), "{} に family が無い", id);
+        }
+        assert_eq!(json.as_array().unwrap().iter().find(|v| v["rule"] == "DOEFF110").unwrap()["family"], "definition");
+        assert_eq!(json.as_array().unwrap().iter().find(|v| v["rule"] == "DOEFF001").unwrap()["family"], "python");
+        assert_eq!(json.as_array().unwrap().iter().find(|v| v["rule"] == "no-針-law").unwrap()["family"], "law");
+    }
 }
