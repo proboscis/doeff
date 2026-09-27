@@ -20,10 +20,7 @@
    "updatedReplicas" (.get status "updatedReplicas" 0)
    "generation" (.get meta "generation" 0)
    "observedGeneration" (.get status "observedGeneration" 0)
-   "annotations" (or (.get meta "annotations") {})
-   ;; pod template の container の名 → image(本番の配備の流れが apply で決めた版 — Service の土台の追随が読む)。
-   "images" (dfor c (or (.get (.get (.get spec "template" {}) "spec" {}) "containers") [])
-                  (.get c "name" "") (.get c "image" ""))})
+   "annotations" (or (.get meta "annotations") {})})
 
 
 (defclass KubeClient []
@@ -114,7 +111,7 @@
     (resume (dict (get kube.nodes node))))
   (ReadDeployment [namespace name]
     (resume (| {"replicas" 0 "readyReplicas" 0 "availableReplicas" 0 "updatedReplicas" 0
-                "generation" 1 "observedGeneration" 1 "annotations" {} "images" {}}
+                "generation" 1 "observedGeneration" 1 "annotations" {}}
                (.row kube namespace name))))
   (ScaleDeployment [namespace name replicas dry-run]
     (setv row (.row kube namespace name))

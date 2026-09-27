@@ -15,7 +15,7 @@
 (import .cluster_model [Request NextRequests Reply CoordinatorStopRequested PlainText ACCEPTED-FORMATS])
 
 ;; probe の閾値(秒)。ループは要求が無くても 1 秒ごとに NextRequests を出すので、ふだんの「最後に取りに来てから」は 1 秒 + 1 まとまりの
-;; 処理(fsync の実測の最大 2.9〜3.6 秒・longhorn の詰まりで最長 13 秒・k8s と registry の読みは各 3 秒で打ち切り)。
+;; 処理(fsync の実測の最大 2.9〜3.6 秒・longhorn の詰まりで最長 13 秒・k8s の読みは 3 秒で打ち切り)。
 ;; readiness はそれより十分長い 30 秒(worker の返事の上限 REPLY-SECONDS 15 秒の 2 倍)、liveness は「固まった」と言える 120 秒。
 ;; liveness が落ちると kubelet が container を作り直す(状態は耐久の置き場から読み直す)。
 (setv READY-STALL-SECONDS 30.0)

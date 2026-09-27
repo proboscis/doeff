@@ -64,8 +64,6 @@
                  :help "業務の repo の木の中の import の根(`,` で並べる・前が先)— worker_model.CodeLayout")
   (.add-argument parser "--base-pythonpath" :default ""
                  :help "土台の import の路(機体の絶対 path を `,` で並べる・木の根の後ろ)— worker_model.CodeLayout(pod は空)")
-  (.add-argument parser "--overlay-path" :default ""
-                 :help "「<base>~<revision>」の木で revision の物を重ねる dir(空 = 重ねない)— worker_model.CodeLayout")
   (.add-argument parser "--repo-keys" :default ""
                  :help "実行環境の task の許可表(JSON の file — clone してよい URL → deploy key の file。空 = どの URL も断る)")
   (.add-argument parser "--uv" :default "uv" :help "実行環境の準備と子の起動に使う uv の命令")
@@ -85,7 +83,6 @@
   (when (not (<= (set exclusive) (set provides)))
     (.error parser (.format "--exclusive {} は --provides {} の一部で名乗る" (list exclusive) (list provides))))
   (setv layout (CodeLayout :import-roots (tuple (gfor r (.split args.import-roots ",") :if r r))
-                           :overlay-path (or args.overlay-path None)
                            :base-paths (tuple (gfor p (.split args.base-pythonpath ",") :if p p))))
   (setv state-dir (Path args.state-dir)
         hy-command (str (/ (. (Path sys.executable) parent) "hy"))
