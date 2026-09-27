@@ -1,26 +1,26 @@
-;; 実行環境(runtime env)の task を送って走らせる検 — 速い模擬(detached-local の同じ VM の task・env_world の模擬の世界・仮想の時計)と、
-;; coordinator と worker の純粋な判断。
+;; 実行環境(runtime env)の task を送って走らせる検 — 手元の runner sim-cluster(本物の coordinator と本物の run-worker・仮想の時計)と、
+;; coordinator と worker の純粋な判断(2026-09-28 まで速い模擬は同じ VM の模擬 detached-local だった — 呼び手の外側の handler を継ぐので
+;; 消した)。
 ;;
-;; 速い模擬の筋書き(設計 worker-runtime-env.md 節 5):
-;;   1 宣言 → 準備 → 実行: 結果が返り、task は準備した root で走った
-;;   2 送り手の repo の commit だけ変えて再送: 新しい root で走り、download は 0(worker の pid が同じは丁寧な模擬で確かめる)
+;; sim-cluster の筋書き(設計 worker-runtime-env.md 節 5):
+;;   1 宣言 → 準備 → 実行: 結果が返り、task は worker が準備した env の root が揃った後に走った
+;;   2 送り手の repo の commit だけ変えて再送: 新しい env のキーの root を準備して走る(download 0 と worker の pid は準備の層の検と丁寧な
+;;     模擬で確かめる)
 ;;   6 同じ env の task を 2 本同時に: 準備は 1 本・2 本とも走る
-;; 失敗: 準備の失敗は Program を走らせずに DetachedEnvUnavailable(kind・一時か)。一時の物は置き直し(準備し直し)の後の答え。
+;; 失敗: 準備の失敗は Program を走らせずに DetachedEnvUnavailable(kind・一時か)。一時の物は試した worker を避けた置き直しの後の答え。
 ;; coordinator: env の task は worker の版と比べずに置く・一時の失敗は試した worker を避けて 2 回まで置き直す・宣言と本文の形の版の誤りは 400。
 ;; worker: env の task は PrepareEnv で root を準備し、失敗は ENV-FAILED と kind を報告する。
 (require doeff-hy.macros [deftest defk <- val var])
-(import dataclasses [replace])
+(require doeff-hy.record [defrecord])
+(import dataclasses [dataclass replace])
 (import json)
 (import pytest)
-(import doeff [Program with-handlers])
-(import doeff_core_effects.handlers [state reader])
-(import doeff_core_effects.effects [Ask])
-(import doeff_time [SimClock sim-time-handler])
+(import doeff [with-handlers])
 (import doeff_cluster.runtime_env_model [RuntimeEnv EnvFailure EnvFailureKind runtime-env->json env-key current-platform])
-(import doeff_cluster.env_world [env-world EnvWorld EnvWorldLog read-world-log])
-(import doeff_cluster.detached_model [SubmitDetached AwaitDetached DetachedSucceeded DetachedEnvUnavailable DetachedAwaited
+(import doeff_cluster.detached_model [SubmitDetached AwaitDetached DetachedSucceeded DetachedEnvUnavailable
                                       DetachedVersionMismatch outcome-of-view])
-(import doeff_cluster.detached [detached-local DetachedLocalStore])
+(import doeff_cluster.local [sim-cluster SimWorker SimLink ClientLink coordinator-answers ReadCoordinator ProcessesOf PreparationsOf])
+(import doeff_cluster.service_model [system-of])
 (import doeff_cluster.remote_model [version-diffs VersionDiff VersionMismatch failed-from])
 (import doeff_cluster.detached_model [outcome-from-task-outcome])
 (import doeff_cluster.cluster_model [ClusterState ClusterTiming TaskRecord WorkerInfo ComponentVersion])
@@ -30,118 +30,133 @@
                                     PrepareCode code-key])
 (import doeff_cluster.worker_policy [plan statuses])
 (import doeff_cluster.handlers [task-spec status-row])
-(import tests.env_fixtures [LOCK APP-URL LIB-URL env-of base-world])
+(import tests.env_fixtures [LOCK APP-URL LIB-URL env-of])
+(import tests.detached_rig [slow-add])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed])
 
-;; 走った印(Program が走ったかを数える — 準備の失敗では 0 のまま)。
-(val RAN [])
+;; --- 手元の runner sim-cluster の筋書き ------------------------------------------------------------
+;; 本物の coordinator が env の task を置き、本物の run-worker が PrepareEnv で root の準備を撃ち、sim の宿が準備(即座に揃う・env-failure を
+;; 持つ worker は失敗で終わる)を記録する。送る task の実行環境の宣言は送り手の口(ClientLink を置き換えた SimLink の runtime-env — 本番の
+;; DetachedClient の runtime-env)が運ぶ。root の中身(新しい commit は新しい root・同じ lock の download 0・同じキーの準備は 1 本の本物の
+;; 答え手)は準備の層の検(test_env_prepare.hy — env_world の模擬の世界)と丁寧な模擬(test_env_careful.hy — 本物の EnvStore)が持つ。
+
+(val NO-JOBS (system-of "env-scenarios" #()))
+(val LOCAL (frozenset ["local"]))
 
 
-(defk add-base-body [n]
-  {:pre [(: n int)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  (<- base int (Ask "base"))
-  (.append RAN n)
-  (+ base n))
-
-(defk add-base [n]
-  {:pre [(: n int)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "送る Program: 自分で並べた reader の base に n を足して返す(走った印を残す — 実行先は handler を足さない)。"
-  (<- total int (with-handlers [(reader {"base" 100})] (add-base-body n)))
-  total)
+(defrecord Sent
+  "env の task を送った筋書きの読み: outcomes = key → 答え・preparations = worker ごとの実行環境の root の準備(SimPreparation の列)・
+   processes = key → task の process の列(Program が走ったか)。"
+  (#^ dict outcomes)
+  (#^ dict preparations)
+  (#^ dict processes))
 
 
-(defk run-sim [world program]
-  {:pre [(: world EnvWorld) (: program Program)] :post [(: % bool)]}
-  "筋書きを速い模擬の組(状態・仮想の時計・env-world)の下で走らせる(送る Program の reader は Program が自分で並べる)。"
-  (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) (with-handlers (env-world world) program))))
-  ok)
+(defk submit-and-await-all [keys n]
+  {:pre [(: keys tuple) (: n int)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "keys の task(slow-add — 答え = 100 + n + 順番)を全部送ってから、全部の答えを待つため(答え = key → 答え)。"
+  (for [#(i key) (enumerate keys)]
+    (<- (SubmitDetached (slow-add 0.0 (+ n i)) :needs LOCAL :key key)))
+  (var got {})
+  (for [key keys]
+    (<- outcome (AwaitDetached key))
+    (:= got (| got {key outcome})))
+  got)
 
 
-(defk send-and-wait [store key n]
-  {:pre [(: store DetachedLocalStore) (: key str) (: n int)] :post [(: % DetachedAwaited)]}
-  "store の送り手の env で 1 本送り、答えを待つ。"
-  (<- ((detached-local store) (SubmitDetached (add-base n) :needs (frozenset ["local"]) :key key)))
-  (<- outcome ((detached-local store) (AwaitDetached key)))
-  outcome)
+(defk send-all [env keys n]
+  {:pre [(: env RuntimeEnv) (: keys tuple) (: n int)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "env の送り手(実行環境の宣言を運ぶ口)として submit-and-await-all を回すため。"
+  (<- link SimLink (ClientLink))
+  (<- outcomes dict (with-handlers [(coordinator-answers (replace link :runtime-env env))] (submit-and-await-all keys n)))
+  outcomes)
 
 
-;; --- 速い模擬の筋書き ----------------------------------------------------------------------
+(defk seen-after [outcomes workers]
+  {:pre [(: outcomes dict) (: workers tuple)] :post [(: % Sent)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "送った task の答えに、worker ごとの準備と key ごとの process の列を添えるため。"
+  (<- state dict (ReadCoordinator "/state"))
+  (var preparations {})
+  (for [w workers]
+    (<- made tuple (PreparationsOf w))
+    (:= preparations (| preparations {w (tuple (gfor p made :if p.env p))})))
+  (var processes {})
+  (for [key outcomes]
+    (val ids (lfor t (get state "tasks") :if (= (.get t "key") key) (get t "id")))
+    (<- found tuple (ProcessesOf (+ "task/" (get ids 0))))
+    (:= processes (| processes {key found})))
+  (Sent :outcomes outcomes :preparations preparations :processes processes))
+
 
 (defk scenario-1-and-2 []
-  {:pre [] :post [(: % bool)]}
+  {:pre [] :post [(: % Sent)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き 1・2: 宣言 → 準備 → 実行、次に project の commit だけ変えて再送。"
   (<- env-1 RuntimeEnv (env-of "app-1" "lib-1" LOCK))
-  (val store (DetachedLocalStore :runtime-env env-1))
-  (<- first (send-and-wait store "job-1" 1))
-  (assert (= first (DetachedSucceeded 101)) first)
-  (val root-1 (. (get store.records "job-1") root))
-  (<- key-1 str (env-key env-1 (current-platform)))
-  (assert (= root-1 (.format "/state/roots/{}" key-1)) "task は準備した env の root で走った")
-  (<- before EnvWorldLog (read-world-log))
   (<- env-2 RuntimeEnv (env-of "app-2" "lib-1" LOCK))
-  (setv store.runtime-env env-2)
-  (<- second (send-and-wait store "job-2" 2))
-  (<- after EnvWorldLog (read-world-log))
-  (assert (= second (DetachedSucceeded 102)) second)
-  (val root-2 (. (get store.records "job-2") root))
-  (assert (!= root-2 root-1) "新しい commit は新しい root で走る")
-  (assert (= (- after.syncs before.syncs) 1))
-  (assert (= (- after.downloads before.downloads) 0) "同じ lock なので download は 0")
-  True)
+  (<- first dict (send-all env-1 #("job-1") 1))
+  (<- second dict (send-all env-2 #("job-2") 2))
+  (<- seen Sent (seen-after (| first second) #("w1")))
+  seen)
 
 
-(deftest test-a-task-runs-in-the-prepared-root-and-a-new-commit-gets-a-new-root
-  (.clear RAN)
-  (<- world EnvWorld (base-world))
-  (<- ok bool (run-sim world (scenario-1-and-2)))
-  (assert ok)
-  (assert (= RAN [1 2])))
+(deftest test-a-task-runs-after-its-root-is-prepared-and-a-new-commit-prepares-a-new-root
+  (<- seen Sent (sim-cluster NO-JOBS (scenario-1-and-2) :workers #((SimWorker :name "w1" :provides LOCAL))))
+  (assert (= seen.outcomes {"job-1" (DetachedSucceeded 101) "job-2" (DetachedSucceeded 102)}) seen.outcomes)
+  (<- env-1 RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- env-2 RuntimeEnv (env-of "app-2" "lib-1" LOCK))
+  (<- key-1 str (env-key env-1 (current-platform)))
+  (<- key-2 str (env-key env-2 (current-platform)))
+  ;; task は worker が準備した env の root(env-<キー>)で走った・新しい commit は新しい root を準備した。
+  (assert (= (lfor p (get seen.preparations "w1") p.key) [(+ "env-" key-1) (+ "env-" key-2)]) (get seen.preparations "w1"))
+  (assert (all (gfor p (get seen.preparations "w1") (<= p.ready-ms (. (get (get seen.processes (if (.endswith p.key key-1) "job-1" "job-2")) 0) started-ms))))
+          #(seen.preparations seen.processes)))
 
 
 (defk scenario-6 []
-  {:pre [] :post [(: % bool)]}
-  "筋書き 6: 同じ env の task を 2 本同時に送る → 準備は 1 本・2 本とも走る。"
+  {:pre [] :post [(: % Sent)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き 6: 同じ env の task を 2 本同時に送る。"
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
-  (val store (DetachedLocalStore :runtime-env env))
-  (<- ((detached-local store) (SubmitDetached (add-base 1) :needs (frozenset ["local"]) :key "a")))
-  (<- ((detached-local store) (SubmitDetached (add-base 2) :needs (frozenset ["local"]) :key "b")))
-  (<- a ((detached-local store) (AwaitDetached "a")))
-  (<- b ((detached-local store) (AwaitDetached "b")))
-  (<- log EnvWorldLog (read-world-log))
-  (assert (= #(a b) #((DetachedSucceeded 101) (DetachedSucceeded 102))) #(a b))
-  (assert (= store.prepares 1) store.prepares)
-  (assert (= log.syncs 1) log)
-  True)
+  (<- outcomes dict (send-all env #("a" "b") 1))
+  (<- seen Sent (seen-after outcomes #("w1")))
+  seen)
 
 
 (deftest test-two-tasks-of-one-env-share-one-preparation
-  (<- world EnvWorld (base-world))
-  (<- ok bool (run-sim world (scenario-6)))
-  (assert ok))
+  ;; 準備は 1 本(worker は準備中・準備済みの root を準備し直さない)・2 本とも走る。準備に時間のかかる worker で確かめる。
+  (<- seen Sent (sim-cluster NO-JOBS (scenario-6) :workers #((SimWorker :name "w1" :provides LOCAL :prepare-seconds 3.0))))
+  (assert (= seen.outcomes {"a" (DetachedSucceeded 101) "b" (DetachedSucceeded 102)}) seen.outcomes)
+  (assert (= (len (get seen.preparations "w1")) 1) seen.preparations))
 
 
-(defk failure-scenario [expect-kind expect-retryable expect-prepares]
-  {:pre [(: expect-kind EnvFailureKind) (: expect-retryable bool) (: expect-prepares int)] :post [(: % bool)]}
-  "準備が失敗する世界で 1 本送る → Program は走らず DetachedEnvUnavailable。一時の失敗は準備し直した後の答え。"
+(defk failure-scenario [workers]
+  {:pre [(: workers tuple)] :post [(: % Sent)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "準備が失敗する worker の上で 1 本送る。"
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
-  (val store (DetachedLocalStore :runtime-env env))
-  (<- outcome (send-and-wait store "job" 7))
-  (assert (isinstance outcome DetachedEnvUnavailable) outcome)
-  (assert (= outcome.kind expect-kind.value) outcome)
-  (assert (= outcome.retryable expect-retryable) outcome)
-  (assert (= store.prepares expect-prepares) store.prepares)
-  True)
+  (<- outcomes dict (send-all env #("job") 7))
+  (<- seen Sent (seen-after outcomes workers))
+  seen)
 
 
 (deftest test-a-failed-preparation-answers-its-kind-without-running-the-program
-  (.clear RAN)
-  (<- world EnvWorld (base-world))
-  ;; 恒久の失敗は 1 回で答える
-  (<- (run-sim (replace world :denied (frozenset #(LIB-URL))) (failure-scenario EnvFailureKind.REPO-DENIED False 1)))
-  ;; 一時の失敗は置き直し(ENV-RETRIES 回)の後に答える
-  (<- (run-sim (replace world :unreachable (frozenset #(APP-URL)))
-               (failure-scenario EnvFailureKind.REPO-UNREACHABLE True (+ 1 ENV-RETRIES))))
-  (assert (= RAN []) "準備に失敗した task の Program は走らない"))
+  ;; 恒久の失敗は 1 回で答える(Program は走らない)。
+  (val denied (EnvFailure :kind EnvFailureKind.REPO-DENIED :detail "許可表に無い" :retryable False))
+  (<- seen Sent (sim-cluster NO-JOBS (failure-scenario #("w1"))
+                             :workers #((SimWorker :name "w1" :provides LOCAL :env-failure denied))))
+  (val outcome (get seen.outcomes "job"))
+  (assert (isinstance outcome DetachedEnvUnavailable) outcome)
+  (assert (= #(outcome.kind outcome.retryable) #(EnvFailureKind.REPO-DENIED.value False)) outcome)
+  (assert (= (len (get seen.preparations "w1")) 1) seen.preparations)
+  (assert (= (get seen.processes "job") #()) "準備に失敗した task の Program は走らない")
+  ;; 一時の失敗は、試した worker を避けて置き直した(ENV-RETRIES 回)後に答える。
+  (val unreachable (EnvFailure :kind EnvFailureKind.REPO-UNREACHABLE :detail "届かない" :retryable True))
+  (val names (tuple (gfor i (range (+ 1 ENV-RETRIES)) (.format "w{}" (+ i 1)))))
+  (<- again Sent (sim-cluster NO-JOBS (failure-scenario names)
+                              :workers (tuple (gfor n names (SimWorker :name n :provides LOCAL :env-failure unreachable)))))
+  (val temporary (get again.outcomes "job"))
+  (assert (isinstance temporary DetachedEnvUnavailable) temporary)
+  (assert (= #(temporary.kind temporary.retryable) #(EnvFailureKind.REPO-UNREACHABLE.value True)) temporary)
+  (assert (= (sorted (gfor #(n made) (.items again.preparations) (len made))) (* [1] (+ 1 ENV-RETRIES))) again.preparations)
+  (assert (= (get again.processes "job") #()) "準備に失敗した task の Program は走らない"))
 
 
 ;; --- 版の突き合わせ ------------------------------------------------------------------------
