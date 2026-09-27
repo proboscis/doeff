@@ -111,10 +111,18 @@ _WATCHDOG_TIMEOUT = int(_WATCHDOG_BASE * _DEADLINE_SCALE)
 _watchdog_timer: threading.Timer | None = None
 
 
-def _watchdog_expired(config: pytest.Config, timeout: int, nodeid: str) -> None:
+# The pytest plugin name under which the daily run's session writer (dotfiles
+# agent/tests/session_answer.py) is registered.  It names each session with a
+# token, and on a daily run the land tool reads a session's failed-test names
+# only from its token lines — the bare FAILED line below looks the same as an
+# inner pytest's line copied into a failed test's output (agora-redesign#645).
+_SESSION_ANSWER_PLUGIN = "ai-session-answer"
+
+
+def _watchdog_expired(config: pytest.Config, timeout: int, nodeid: str, phase: str) -> None:
     """Last resort: name the hung test and end the process with exit status 1."""
     line = (
-        f"FAILED {nodeid} - WATCHDOG: no progress for {timeout}s beyond all timeouts; "
+        f"FAILED {nodeid}{phase} - WATCHDOG: no progress for {timeout}s beyond all timeouts; "
         f"the process was ended and the tests after it did not run"
     )
     try:
@@ -124,6 +132,13 @@ def _watchdog_expired(config: pytest.Config, timeout: int, nodeid: str) -> None:
         capman = config.pluginmanager.getplugin("capturemanager")
         if capman is not None:
             capman.suspend_global_capture(in_=True)
+        # On a daily run, answer through the session writer: it names the hung
+        # test with the session's token and writes the session's answer, so the
+        # hang is read as this session's red rather than as a session that
+        # vanished without answering.
+        session = config.pluginmanager.get_plugin(_SESSION_ANSWER_PLUGIN)
+        if session is not None:
+            session.answer_stopped(nodeid)
         if config.pluginmanager.getplugin("terminalreporter") is None:
             print(line, flush=True)
         else:
@@ -138,14 +153,16 @@ def _watchdog_expired(config: pytest.Config, timeout: int, nodeid: str) -> None:
         os._exit(1)
 
 
-def _reset_watchdog(config: pytest.Config, nodeid: str, timeout: int | None = None) -> None:
+def _reset_watchdog(
+    config: pytest.Config, nodeid: str, timeout: int | None = None, phase: str = ""
+) -> None:
     """Start watching one test phase, so a hang there is ended under that test's name."""
     global _watchdog_timer  # noqa: PLW0603
     if _watchdog_timer is not None:
         _watchdog_timer.cancel()
     active_timeout = timeout or _WATCHDOG_TIMEOUT
     _watchdog_timer = threading.Timer(
-        active_timeout, _watchdog_expired, args=(config, active_timeout, nodeid)
+        active_timeout, _watchdog_expired, args=(config, active_timeout, nodeid, phase)
     )
     _watchdog_timer.daemon = True
     _watchdog_timer.start()
@@ -281,7 +298,7 @@ def pytest_runtest_setup(item):
 
 def pytest_runtest_teardown(item, nextitem):
     """Reset watchdog after each test (covers slow teardown)."""
-    _reset_watchdog(item.config, f"{item.nodeid} (teardown)")
+    _reset_watchdog(item.config, item.nodeid, phase=" (teardown)")
 
 
 def pytest_sessionfinish(session, exitstatus):

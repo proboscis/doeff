@@ -49,8 +49,15 @@ import time
 from pathlib import Path
 
 
-def test_before():
+class _SessionAnswer:
+    # Stand-in for the daily run's session writer (dotfiles agent/tests/session_answer.py).
+    def answer_stopped(self, nodeid):
+        Path("answered").write_text(nodeid)
+
+
+def test_before(request):
     Path("ran-before").touch()
+    request.config.pluginmanager.register(_SessionAnswer(), "ai-session-answer")
 
 
 def test_blocks_signals_and_hangs():
@@ -110,3 +117,8 @@ def test_the_watchdog_names_the_hung_test_and_ends_with_status_1(tmp_path: Path)
     ), result.stdout
     assert (tmp_path / "ran-before").exists()
     assert not (tmp_path / "ran-after").exists()
+    # On a daily run the hung test is named through the session writer too — the land tool
+    # reads a named session's failures only from its token lines (agora-redesign#645).
+    answered = tmp_path / "answered"
+    assert answered.exists(), "the watchdog did not answer through the session writer"
+    assert answered.read_text() == "test_probe.py::test_blocks_signals_and_hangs"
