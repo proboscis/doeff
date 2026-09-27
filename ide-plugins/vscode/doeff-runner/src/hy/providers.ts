@@ -51,6 +51,8 @@ export function toSymbolKind(kind: OutlineSymbolKind): vscode.SymbolKind {
       return vscode.SymbolKind.Object;
     case 'Event':
       return vscode.SymbolKind.Event;
+    case 'Struct':
+      return vscode.SymbolKind.Struct;
     case 'Variable':
       return vscode.SymbolKind.Variable;
     case 'Module':

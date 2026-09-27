@@ -1,0 +1,268 @@
+{
+ "version": 3,
+ "root": "/ws",
+ "files": [
+  {
+   "path": "/ws/pkg/intent.hy",
+   "module": "pkg.intent",
+   "definitions": [
+    {
+     "name": "BorrowToken",
+     "mangled": "BorrowToken",
+     "kind": "defeffect",
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 11
+      },
+      "end": {
+       "line": 0,
+       "character": 22
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 0,
+       "character": 0
+      },
+      "end": {
+       "line": 0,
+       "character": 121
+      }
+     },
+     "container": null,
+     "docstring": "預かり所から token を借りる",
+     "params": [
+      "profile",
+      "ttl"
+     ],
+     "bases": [
+      "EffectBase"
+     ],
+     "raw": {
+      "direct": [],
+      "via": []
+     },
+     "tags": {
+      "context": "custody",
+      "role": "intent"
+     }
+    },
+    {
+     "name": "borrow",
+     "mangled": "borrow",
+     "kind": "defk",
+     "range": {
+      "start": {
+       "line": 1,
+       "character": 6
+      },
+      "end": {
+       "line": 1,
+       "character": 12
+      }
+     },
+     "full_range": {
+      "start": {
+       "line": 1,
+       "character": 0
+      },
+      "end": {
+       "line": 3,
+       "character": 8
+      }
+     },
+     "container": null,
+     "docstring": "借りる",
+     "params": [
+      "profile"
+     ],
+     "bases": [],
+     "raw": {
+      "direct": [],
+      "via": []
+     },
+     "tags": {
+      "context": "custody",
+      "role": "program"
+     }
+    }
+   ],
+   "imports": [],
+   "references": [
+    {
+     "name": "BorrowToken",
+     "mangled": "BorrowToken",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 11
+      },
+      "end": {
+       "line": 0,
+       "character": 22
+      }
+     }
+    },
+    {
+     "name": "profile",
+     "mangled": "profile",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 53
+      },
+      "end": {
+       "line": 0,
+       "character": 60
+      }
+     }
+    },
+    {
+     "name": "ttl",
+     "mangled": "ttl",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 61
+      },
+      "end": {
+       "line": 0,
+       "character": 64
+      }
+     }
+    },
+    {
+     "name": "str",
+     "mangled": "str",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 0,
+       "character": 74
+      },
+      "end": {
+       "line": 0,
+       "character": 77
+      }
+     }
+    },
+    {
+     "name": "borrow",
+     "mangled": "borrow",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 1,
+       "character": 6
+      },
+      "end": {
+       "line": 1,
+       "character": 12
+      }
+     }
+    },
+    {
+     "name": "profile",
+     "mangled": "profile",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 1,
+       "character": 14
+      },
+      "end": {
+       "line": 1,
+       "character": 21
+      }
+     }
+    },
+    {
+     "name": "token",
+     "mangled": "token",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 2,
+       "character": 6
+      },
+      "end": {
+       "line": 2,
+       "character": 11
+      }
+     }
+    },
+    {
+     "name": "BorrowToken",
+     "mangled": "BorrowToken",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 2,
+       "character": 13
+      },
+      "end": {
+       "line": 2,
+       "character": 24
+      }
+     }
+    },
+    {
+     "name": "profile",
+     "mangled": "profile",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 2,
+       "character": 25
+      },
+      "end": {
+       "line": 2,
+       "character": 32
+      }
+     }
+    },
+    {
+     "name": "token",
+     "mangled": "token",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 3,
+       "character": 2
+      },
+      "end": {
+       "line": 3,
+       "character": 7
+      }
+     }
+    }
+   ],
+   "calls": [
+    {
+     "callee": "BorrowToken",
+     "mangled": "BorrowToken",
+     "qualifier": null,
+     "range": {
+      "start": {
+       "line": 2,
+       "character": 13
+      },
+      "end": {
+       "line": 2,
+       "character": 24
+      }
+     },
+     "caller": 1,
+     "performed": true
+    }
+   ],
+   "errors": []
+  }
+ ],
+ "raw_via": "computed",
+ "raw_catalog_problems": []
+}

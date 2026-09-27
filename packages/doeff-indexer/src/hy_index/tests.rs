@@ -490,3 +490,30 @@ fn calls_survive_broken_sources() {
     let file = index("(a.b. 1)\n");
     assert_eq!(calls_named(&file, "b")[0].qualifier.as_deref(), Some("a"));
 }
+
+#[test]
+fn defeffect_is_a_definition_with_fields_bases_docstring_and_tags() {
+    let source = r#"(defeffect BorrowToken "預かり所から token を借りる" {:fields [#^ str profile ttl] :answer str :tags {:context "custody" :role "intent"}})
+(defeffect Bare {:fields []})
+(defk plan [x] "計画" {:pre [] :tags {:context "billing" :role "program" :n 1}} x)
+(defhandler h {:tags {}} (E [e k] (k 1)))
+(defn f [] 1)
+"#;
+    let file = index(source);
+    let effect = def(&file, "BorrowToken");
+    assert_eq!(effect.kind.as_str(), "defeffect");
+    assert_eq!(effect.bases, vec!["EffectBase"]);
+    assert_eq!(effect.params, vec!["profile", "ttl"]);
+    assert_eq!(effect.docstring.as_deref(), Some("預かり所から token を借りる"));
+    let tags = effect.tags.as_ref().expect("タグ");
+    assert_eq!(tags.get("context").map(String::as_str), Some("custody"));
+    assert_eq!(tags.get("role").map(String::as_str), Some("intent"));
+    assert!(def(&file, "Bare").tags.is_none());
+    // 契約の辞書の :tags(文字列の値の鍵だけ)。空の辞書と、契約の辞書を持たない定義は null。
+    let plan = def(&file, "plan").tags.as_ref().expect("plan のタグ");
+    assert_eq!(plan.len(), 2);
+    assert!(def(&file, "h").tags.is_none());
+    assert!(def(&file, "f").tags.is_none());
+    // defeffect の頭は呼び出しに入れない(予約語)。
+    assert!(!file.calls.iter().any(|call| call.callee == "defeffect"));
+}

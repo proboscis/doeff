@@ -26,7 +26,7 @@ foundation = ["foundation"]
 entry = ["core", "intent", "foundation", "entry"]
 
 [tool.doeff-linter.layers.forbid_modules]
-core = ["httpx", "subprocess"]
+core = ["httpx", "subprocess", "urllib.request"]
 
 [tool.doeff-linter.roles]
 names = ["judgment", "type", "intent", "foundation", "entry"]
@@ -174,7 +174,7 @@ fn import_direction_bad_and_good_in_hy_and_python() {
 fn forbidden_module_and_types_only_layer() {
     let dir = repo(
         &[
-            ("app/core/net.hy", "(val MODULE-TAGS {:context \"billing\" :role \"judgment\"})\n(import httpx)\n(import urllib.parse [quote])\n(defn f [] 1)\n"),
+            ("app/core/net.hy", "(val MODULE-TAGS {:context \"billing\" :role \"judgment\"})\n(import httpx)\n(import urllib.parse [quote])\n(import urllib.request [urlopen])\n(defn f [] 1)\n"),
             ("app/core/proc.py", "MODULE_TAGS = {\"context\": \"billing\", \"role\": \"judgment\"}\ndef f():\n    import subprocess\n    return subprocess\n"),
             ("app/intent/bad.hy", "(val MODULE-TAGS {:context \"billing\" :role \"intent\"})\n(defclass Charge [])\n(defk decide [x] {:pre [] :post []} x)\n"),
             ("app/intent/bad_py.py", "MODULE_TAGS = {\"context\": \"billing\", \"role\": \"intent\"}\nclass Charge: ...\ndef decide(x):\n    return x\n"),
@@ -183,7 +183,15 @@ fn forbidden_module_and_types_only_layer() {
         "",
     );
     let (_, report) = editor(dir.path());
-    assert_eq!(keys(&report, "DOEFF102"), vec!["app/core/net.hy::core-imports-only-intent::httpx", "app/core/proc.py::core-imports-only-intent::subprocess"]);
+    // 前方一致: urllib.request.urlopen は urllib.request に当たり、純粋な urllib.parse は当たらない。
+    assert_eq!(
+        keys(&report, "DOEFF102"),
+        vec![
+            "app/core/net.hy::core-imports-only-intent::httpx",
+            "app/core/net.hy::core-imports-only-intent::urllib.request",
+            "app/core/proc.py::core-imports-only-intent::subprocess",
+        ]
+    );
     // law の無い層(intent)の規則は、鍵の <規則> の欄が規則の ID になる。
     assert_eq!(keys(&report, "DOEFF103"), vec!["app/intent/bad.hy::DOEFF103::definitions", "app/intent/bad_py.py::DOEFF103::definitions"]);
     let intent = violation(&report, "app/intent/bad.hy::DOEFF103::definitions");
@@ -205,11 +213,17 @@ fn tags_are_declared_and_roles_match_the_layer() {
             ("app/core/wrong_role.hy", "(val MODULE-TAGS {:context \"billing\" :role \"translation\"})\n(defn f [] 1)\n"),
             ("app/core/no_context.py", "MODULE_TAGS = {\"role\": \"judgment\"}\n"),
             ("app/core/tests/test_x.hy", "(defn test-x [] 1)\n"),
+            // defeffect の辞書の :tags で名乗る — 良い例(module の頭のタグは要らない)。タグの無い defeffect は悪い例。
+            ("app/intent/effects.hy", "(defeffect Charge \"請求\" {:fields [amount] :answer int :tags {:context \"billing\" :role \"intent\"}})\n"),
+            ("app/intent/untagged_effect.hy", "(defeffect Refund {:fields [amount] :answer int})\n"),
         ],
         "",
     );
     let (_, report) = editor(dir.path());
-    assert_eq!(keys(&report, "DOEFF104"), vec!["app/core/untagged.hy::DOEFF104", "app/core/untagged_py.py::DOEFF104"]);
+    assert_eq!(
+        keys(&report, "DOEFF104"),
+        vec!["app/core/untagged.hy::DOEFF104", "app/core/untagged_py.py::DOEFF104", "app/intent/untagged_effect.hy::DOEFF104"]
+    );
     assert_eq!(keys(&report, "DOEFF105"), vec!["app/core/no_context.py::DOEFF105::judgment", "app/core/wrong_role.hy::DOEFF105::translation"]);
     let untagged = violation(&report, "app/core/untagged.hy::DOEFF104");
     assert!(untagged["message"].as_str().unwrap().contains("decide・plan"));

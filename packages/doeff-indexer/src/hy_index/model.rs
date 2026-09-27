@@ -114,6 +114,8 @@ pub struct Definition {
     pub bases: Vec<String>,
     /// 生の副作用の証拠(版 3 — 規則の判定ではなく事実。判定の正本は linter)。
     pub raw: RawMark,
+    /// 定義が名乗ったタグ(版 3 への追加 — 契約の辞書の :tags と defeffect の :tags。文字列の値の鍵だけ。無ければ null)。
+    pub tags: Option<std::collections::BTreeMap<String, String>>,
 }
 
 /// 定義の種類(契約の kind の一覧ちょうど)。
@@ -149,6 +151,8 @@ pub enum DefinitionKind {
     Method,
     #[serde(rename = "defhandler")]
     Defhandler,
+    #[serde(rename = "defeffect")]
+    Defeffect,
     #[serde(rename = "effect-clause")]
     EffectClause,
     #[serde(rename = "deftest")]
@@ -194,6 +198,7 @@ impl DefinitionKind {
             DefinitionKind::Field => "field",
             DefinitionKind::Method => "method",
             DefinitionKind::Defhandler => "defhandler",
+            DefinitionKind::Defeffect => "defeffect",
             DefinitionKind::EffectClause => "effect-clause",
             DefinitionKind::Deftest => "deftest",
             DefinitionKind::Defadr => "defadr",

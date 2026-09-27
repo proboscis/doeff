@@ -7,11 +7,11 @@
 //! 写し元は色を付けるための分類を出す。ここは索引の契約(定義の名前と form 全体の範囲・
 //! container・docstring・params、import、参照)を出す。
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use super::model::{Call, Definition, DefinitionKind, Import, RawMark, Reference};
 use super::position::LineIndex;
-use super::reader::{matching_brace, Form, Node, Prefix, ReadIssue, Reader, Span, StrKind};
+use super::reader::{matching_brace, Delim, Form, Node, Prefix, ReadIssue, Reader, Span, StrKind};
 
 /// Hy の special form と core の macro — 先頭に置かれた時は予約語(参照に入れない)。
 const HY_KEYWORDS: &[&str] = &[
@@ -28,7 +28,7 @@ const HY_KEYWORDS: &[&str] = &[
 /// doeff-hy の form のうち、どこに現れても予約語のもの(定義と束縛の構文)。
 const DOEFF_KEYWORDS: &[&str] = &[
     "defk", "deff", "defp", "defpp", "fnk", "do!", "<-", "<->", "for/do", "deftest", "defpipeline",
-    "defmcp-tool", "set!", "defhandler", "resume", "with-handler", "defrecord", "defenum",
+    "defmcp-tool", "set!", "defhandler", "defeffect", "resume", "with-handler", "defrecord", "defenum",
     "defworkflow", "defphase", "defadr", "defsemgrep", "law", "lazy-val", "lazy-var",
 ];
 
@@ -38,6 +38,9 @@ const DOEFF_REQUIRED_KEYWORDS: &[&str] = &[
     "parallel-for", "loop", "time!", "random!", "pipeline", "agent!", "gate!", "workspace!",
     "merge!",
 ];
+
+/// 契約の辞書(`{:pre … :post … :tags …}`)を持てる定義の頭。
+const CONTRACT_DEFINERS: &[&str] = &["defk", "deff", "defp", "defpp", "defhandler"];
 
 /// doeff-hy の束縛の構文の頭。defk / deftest / defhandler の macro が本体の中で読むので、file が
 /// require していなくても構文であり、呼び出しには入れない。
@@ -268,6 +271,16 @@ impl<'a> Analyzer<'a> {
 
     /// 先頭の綴りが定義の形なら定義を積む(`container` は入れ物の定義の名前)。
     fn definition(&mut self, form: &Form, head: &str, items: &[Form], container: Option<&str>) {
+        let before = self.definitions.len();
+        self.definition_by_head(form, head, items, container);
+        // 契約の辞書を持つ定義(defk・deff・defp・defpp・defhandler)は、その辞書の :tags を定義のタグとして控える。
+        if CONTRACT_DEFINERS.contains(&head) && self.definitions.len() > before {
+            self.definitions[before].tags = self.contract_tags(items);
+        }
+    }
+
+    /// 先頭の綴りごとに定義を読む。
+    fn definition_by_head(&mut self, form: &Form, head: &str, items: &[Form], container: Option<&str>) {
         match head {
             "defn" => self.function_def(form, items, DefinitionKind::Defn, container),
             "defn/a" => self.function_def(form, items, DefinitionKind::DefnAsync, container),
@@ -278,6 +291,7 @@ impl<'a> Analyzer<'a> {
             "defrecord" => self.record_def(form, items, container),
             "defenum" => self.enum_def(form, items, container),
             "defhandler" => self.handler_def(form, items, container),
+            "defeffect" => self.effect_def(form, items, container),
             "deftest" => {
                 self.named_def(form, items, DefinitionKind::Deftest, DocRule::Leading, container);
             }
@@ -392,6 +406,8 @@ impl<'a> Analyzer<'a> {
             bases,
             // 生の副作用の証拠は file をまたぐので、全 file の解析の後に raw.rs が埋める
             raw: RawMark::default(),
+            // タグは契約の辞書を持つ定義と defeffect だけ(定義を積んだ後に読む側が埋める)
+            tags: None,
         });
         self.definition_spans.push(full);
         text
@@ -517,6 +533,92 @@ impl<'a> Analyzer<'a> {
             if let Some(span) = target.and_then(|target| self.def_name(target)) {
                 self.push_def(span, DefinitionKind::EnumMember, member.span, Some(&enum_name), None, Vec::new());
             }
+        }
+    }
+
+    /// 辞書の form から、文字列の値を持つ keyword の鍵の組を読む(1 つも無ければ None — 空の辞書は名乗っていない)。
+    fn tags_of_dict(&self, dict: &Form) -> Option<BTreeMap<String, String>> {
+        let Node::Seq { delim: Delim::Brace, items } = &dict.node else {
+            return None;
+        };
+        let items: Vec<&Form> = items.iter().filter(|item| !matches!(item.node, Node::Discarded)).collect();
+        let tags: BTreeMap<String, String> = items
+            .chunks(2)
+            .filter_map(|pair| match pair {
+                [key, value] if matches!(key.node, Node::Keyword) => {
+                    let text = match &value.node {
+                        Node::Str { kind: StrKind::Plain, body } => Some(unescape(&self.src[body.start..body.end])),
+                        Node::Str { kind: StrKind::Raw | StrKind::Bracket, body } => Some(self.src[body.start..body.end].to_string()),
+                        _ => None,
+                    }?;
+                    Some((self.text(key.span).trim_start_matches(':').to_string(), text))
+                }
+                _ => None,
+            })
+            .collect();
+        (!tags.is_empty()).then_some(tags)
+    }
+
+    /// 辞書の form の中の `key` の値の form(無ければ None)。鍵と値の組で読む。
+    fn dict_value<'f>(&self, dict: &'f Form, key: &str) -> Option<&'f Form> {
+        let Node::Seq { delim: Delim::Brace, items } = &dict.node else {
+            return None;
+        };
+        let items: Vec<&Form> = items.iter().filter(|item| !matches!(item.node, Node::Discarded)).collect();
+        let mut found = None;
+        for pair in items.chunks(2) {
+            if let [k, v] = pair {
+                if matches!(k.node, Node::Keyword) && self.text(k.span) == key {
+                    found = Some(*v);
+                }
+            }
+        }
+        found
+    }
+
+    /// 契約の辞書の :tags を読む — 名の後の引数の list と docstring を飛ばした最初の辞書(名から 4 つ目まで)。
+    fn contract_tags(&self, items: &[Form]) -> Option<BTreeMap<String, String>> {
+        let items: Vec<&Form> = items.iter().filter(|item| !matches!(item.node, Node::Discarded)).collect();
+        for part in items.iter().skip(2).take(4) {
+            if part.is_brace() {
+                return self.dict_value(part, ":tags").filter(|v| v.is_brace()).and_then(|v| self.tags_of_dict(v));
+            }
+            let skippable = matches!(part.node, Node::Str { kind: StrKind::Plain | StrKind::Raw | StrKind::Bracket, .. })
+                || part.bracket_items().is_some();
+            if !skippable {
+                break;
+            }
+        }
+        None
+    }
+
+    /// `(defeffect Name "doc"? {:fields [a b] :answer T :tags {…}})` を読む(doeff-hy の effect の型 — 常に EffectBase を継ぐ
+    /// frozen の dataclass)。params は :fields の名、bases は EffectBase、タグは辞書の :tags。
+    fn effect_def(&mut self, form: &Form, items: &[Form], container: Option<&str>) {
+        let Some(name) = items.get(1).and_then(|first| self.def_name(first)) else {
+            return;
+        };
+        let live: Vec<&Form> = items.iter().filter(|item| !matches!(item.node, Node::Discarded)).collect();
+        let mut docstring = None;
+        let mut params = Vec::new();
+        let mut tags = None;
+        for part in live.iter().skip(2).take(2) {
+            if part.is_brace() {
+                if let Some(fields) = self.dict_value(part, ":fields").and_then(Form::bracket_items) {
+                    params = self.param_names(fields);
+                }
+                tags = self.dict_value(part, ":tags").filter(|v| v.is_brace()).and_then(|v| self.tags_of_dict(v));
+                break;
+            }
+            match string_value(self.src)(part) {
+                Some(doc) => docstring = Some(doc),
+                None => break,
+            }
+        }
+        let bases = vec!["EffectBase".to_string()];
+        self.push_def_with_bases(name, DefinitionKind::Defeffect, form.span, container, docstring, params, bases);
+        if let Some(last) = self.definitions.last_mut() {
+            last.tags = tags;
         }
     }
 
